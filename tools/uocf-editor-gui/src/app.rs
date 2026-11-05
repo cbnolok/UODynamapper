@@ -95,6 +95,15 @@ pub enum MultiCollectionSource {
     EnhancedClient,
 }
 
+/// A loaded MultiCollection.uop kept aside while the other client folder's is the one the tabs show and edit.
+pub struct ParkedMultiCollection {
+    pub source: MultiCollectionSource,
+    pub collection: Arc<MultiCollection>,
+    pub path: PathBuf,
+    pub housing_pieces: Option<Arc<HousingPieces>>,
+    pub housing_index: Option<Arc<HousingIndex>>,
+}
+
 /// Part and entry filters of the multis panel.
 #[derive(PartialEq, Eq, Clone, Copy, Debug)]
 pub struct MultiPartFilters {
@@ -1908,6 +1917,8 @@ pub struct UocfEditorApp {
     pub multi_collection_path: Option<PathBuf>,
     pub housing_pieces: Option<Arc<HousingPieces>>,
     pub housing_index: Option<Arc<HousingIndex>>,
+    /// The other client folder's MultiCollection.uop, when both folders have one.
+    pub other_multi_collection: Option<ParkedMultiCollection>,
     pub multi_part_filters: MultiPartFilters,
     pub housing_panel: crate::ui::housing::HousingPanelState,
     pub animation_definitions_panel: crate::ui::animation_definitions::AnimationDefinitionsPanelState,
@@ -2009,6 +2020,7 @@ impl UocfEditorApp {
             multi_collection_path: None,
             housing_pieces: None,
             housing_index: None,
+            other_multi_collection: None,
             multi_part_filters: MultiPartFilters::default(),
             housing_panel: Default::default(),
             animation_definitions_panel: Default::default(),
@@ -2217,6 +2229,7 @@ impl UocfEditorApp {
         self.multi_collection_path = None;
         self.housing_pieces = None;
         self.housing_index = None;
+        self.other_multi_collection = None;
         self.selected_multi_uop_hash = None;
         self.selected_localized_file_hash = None;
         self.localized_strings_editor = Default::default();
@@ -2624,6 +2637,8 @@ impl UocfEditorApp {
                     match MultiCollection::load(&uop_path) {
                         Ok(collection) => {
                             let count = collection.items.len();
+                            // The Classic folder's stays loaded, aside: the Multis tab switches between them.
+                            self.park_multi_collection();
                             self.multi_collection = Some(Arc::new(collection));
                             self.multi_collection_source = Some(MultiCollectionSource::EnhancedClient);
                             self.multi_collection_path = Some(uop_path.clone());
@@ -3981,6 +3996,48 @@ impl UocfEditorApp {
         summary
     }
 
+    /// Whether the MultiCollection.uop of `source`'s folder is loaded, shown or kept aside.
+    pub fn has_multi_collection(&self, source: MultiCollectionSource) -> bool {
+        (self.multi_collection.is_some() && self.multi_collection_source == Some(source))
+            || self.other_multi_collection.as_ref().is_some_and(|other| other.source == source)
+    }
+
+    /// Moves the shown MultiCollection.uop, with its housing.bin, aside.
+    fn park_multi_collection(&mut self) {
+        let (Some(collection), Some(source), Some(path)) =
+            (self.multi_collection.take(), self.multi_collection_source.take(), self.multi_collection_path.take())
+        else {
+            return;
+        };
+        self.other_multi_collection = Some(ParkedMultiCollection {
+            source,
+            collection,
+            path,
+            housing_pieces: self.housing_pieces.take(),
+            housing_index: self.housing_index.take(),
+        });
+    }
+
+    /// Shows the MultiCollection.uop of `source`'s folder in the tabs, and keeps the shown one aside. The multi
+    /// editor's history belongs to the collection it edited, so it starts over; the caller makes sure nothing is
+    /// left unsaved (`ui::multis`).
+    pub fn show_multi_collection(&mut self, source: MultiCollectionSource) {
+        if self.multi_collection_source == Some(source) {
+            return;
+        }
+        let Some(other) = self.other_multi_collection.take_if(|other| other.source == source) else {
+            return;
+        };
+        self.park_multi_collection();
+        self.multi_collection = Some(other.collection);
+        self.multi_collection_source = Some(other.source);
+        self.multi_collection_path = Some(other.path);
+        self.housing_pieces = other.housing_pieces;
+        self.housing_index = other.housing_index;
+        self.multi_editor.edits = Default::default();
+        self.multi_editor.error = None;
+    }
+
     pub fn select_raw_multi_collection_housing(&mut self) -> bool {
         let hash = uocf::enhanced::multis::housing_hash();
         if let Some(path) = self.multi_collection_path.clone() {
@@ -4501,6 +4558,7 @@ pub(crate) mod tests {
             multi_collection_path: None,
             housing_pieces: None,
             housing_index: None,
+            other_multi_collection: None,
             multi_part_filters: MultiPartFilters::default(),
             housing_panel: Default::default(),
             animation_definitions_panel: Default::default(),
@@ -5014,6 +5072,44 @@ pub(crate) mod tests {
         assert_eq!(app.selected_uop_idx, Some(1));
         assert_eq!(app.selected_file_hash, Some(expected));
         assert_eq!(app.selected_multi_uop_hash, Some(expected));
+    }
+
+    #[test]
+    fn both_folders_multi_collections_stay_loaded_and_either_can_be_shown() {
+        use uocf::enhanced::multis::MultiItem;
+        const CC_MULTI: u32 = 1;
+        const EC_MULTI: u32 = 2;
+        const ADDED_MULTI: u32 = 3;
+        let collection = |id| Arc::new(MultiCollection::from_items(vec![MultiItem::new(id, Vec::new())]).unwrap());
+        let cc_path = PathBuf::from("cc/MultiCollection.uop");
+        let ec_path = PathBuf::from("ec/MultiCollection.uop");
+        let mut app = test_app();
+        // As the client load does: the Classic folder's first, then the Enhanced folder's.
+        app.multi_collection = Some(collection(CC_MULTI));
+        app.multi_collection_source = Some(MultiCollectionSource::ClassicClient);
+        app.multi_collection_path = Some(cc_path.clone());
+        app.park_multi_collection();
+        app.multi_collection = Some(collection(EC_MULTI));
+        app.multi_collection_source = Some(MultiCollectionSource::EnhancedClient);
+        app.multi_collection_path = Some(ec_path.clone());
+
+        assert!(app.has_multi_collection(MultiCollectionSource::ClassicClient));
+        assert!(app.has_multi_collection(MultiCollectionSource::EnhancedClient));
+        let shown = Arc::make_mut(app.multi_collection.as_mut().unwrap());
+        app.multi_editor.add_multi(shown, ADDED_MULTI, None).unwrap();
+        app.multi_editor.edits.mark_saved();
+
+        app.show_multi_collection(MultiCollectionSource::ClassicClient);
+        assert_eq!(app.multi_collection_source, Some(MultiCollectionSource::ClassicClient));
+        assert_eq!(app.multi_collection_path.as_deref(), Some(cc_path.as_path()));
+        assert!(app.multi_collection.as_ref().unwrap().get(CC_MULTI).is_some());
+        assert!(!app.multi_editor.edits.can_undo(), "the history of the other collection is gone");
+
+        app.show_multi_collection(MultiCollectionSource::EnhancedClient);
+        assert_eq!(app.multi_collection_path.as_deref(), Some(ec_path.as_path()));
+        let shown = app.multi_collection.as_ref().unwrap();
+        assert!(shown.get(EC_MULTI).is_some() && shown.get(ADDED_MULTI).is_some(), "kept aside with its edits");
+        assert_eq!(app.other_multi_collection.as_ref().map(|other| other.source), Some(MultiCollectionSource::ClassicClient));
     }
 
     #[test]

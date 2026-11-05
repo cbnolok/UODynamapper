@@ -4,7 +4,6 @@ use crate::app::{
 use crate::ui::{
     arrow_delta, enhanced_files_availability, enhanced_folder_source, folder_files_availability, list_sort_controls,
     move_selection, multi_editor, sorted_indices_by, source_choice, ClientSource, SourceAvailability, CLASSIC_FOLDER,
-    ENHANCED_FOLDER,
 };
 
 const MULTI_MUL_FILES: &str = "multi.mul and multi.idx";
@@ -221,14 +220,14 @@ fn source_available(source: MultisSource, has_classic: bool, has_uop: bool) -> b
     }
 }
 
-/// multi.mul is MUL; MultiCollection.uop is CC UOP, KR UOP or EC UOP by the folder it was loaded from. One collection
-/// loads: the Enhanced folder's when both folders have one.
+/// multi.mul is MUL; MultiCollection.uop is CC UOP, KR UOP or EC UOP by the folder it was loaded from. Each folder's
+/// collection loads; the tabs show and edit one at a time, the Enhanced folder's first.
 fn multis_source_selector(app: &mut UocfEditorApp, ui: &mut egui::Ui, has_classic: bool) {
     let ctx = ui.ctx().clone();
     let cc_path = app.settings.cc_path.as_deref();
     let ec_path = app.settings.ec_path.as_deref();
-    let collection = app.multi_collection.as_ref().and(app.multi_collection_source);
-    let collection_source = match collection {
+    let shown = app.multi_collection.as_ref().and(app.multi_collection_source);
+    let collection_source = match shown {
         Some(MultiCollectionSource::ClassicClient) => Some(ClientSource::CcUop),
         Some(MultiCollectionSource::EnhancedClient) => ec_path.map(|folder| enhanced_folder_source(&ctx, folder)),
         None => None,
@@ -237,33 +236,61 @@ fn multis_source_selector(app: &mut UocfEditorApp, ui: &mut egui::Ui, has_classi
         MultisSource::ClassicMul => Some(ClientSource::Mul),
         MultisSource::Uop => collection_source,
     };
+    let switch_blocker = multi_collection_switch_blocker(app);
+    // The collection not shown is greyed while the shown one has edits that would be lost with the switch.
+    let collection_availability = |collection: MultiCollectionSource, availability: SourceAvailability| {
+        match (availability, &switch_blocker) {
+            (SourceAvailability::Found(_), Some(blocker)) if shown.is_some_and(|shown| shown != collection) => {
+                SourceAvailability::Missing(blocker.clone())
+            }
+            (availability, _) => availability,
+        }
+    };
     let clicked = source_choice(ui, selected, |source| match source {
         ClientSource::Mul => folder_files_availability(cc_path, CLASSIC_FOLDER, MULTI_MUL_FILES, has_classic),
-        ClientSource::CcUop => match (cc_path, collection) {
-            (Some(folder), Some(MultiCollectionSource::EnhancedClient)) => SourceAvailability::Missing(format!(
-                "No {MULTI_COLLECTION_FILE} loaded from {}: one collection loads, the {ENHANCED_FOLDER} folder's.",
-                folder.display(),
-            )),
-            _ => folder_files_availability(
+        ClientSource::CcUop => collection_availability(
+            MultiCollectionSource::ClassicClient,
+            folder_files_availability(
                 cc_path,
                 CLASSIC_FOLDER,
                 MULTI_COLLECTION_FILE,
-                collection == Some(MultiCollectionSource::ClassicClient),
+                app.has_multi_collection(MultiCollectionSource::ClassicClient),
             ),
-        },
-        ClientSource::KrUop | ClientSource::EcUop => enhanced_files_availability(
-            &ctx,
-            ec_path,
-            source,
-            MULTI_COLLECTION_FILE,
-            collection == Some(MultiCollectionSource::EnhancedClient),
+        ),
+        ClientSource::KrUop | ClientSource::EcUop => collection_availability(
+            MultiCollectionSource::EnhancedClient,
+            enhanced_files_availability(
+                &ctx,
+                ec_path,
+                source,
+                MULTI_COLLECTION_FILE,
+                app.has_multi_collection(MultiCollectionSource::EnhancedClient),
+            ),
         ),
     });
     match clicked {
         Some(ClientSource::Mul) => app.multis_source = MultisSource::ClassicMul,
-        Some(_) => app.multis_source = MultisSource::Uop,
+        Some(ClientSource::CcUop) => {
+            app.multis_source = MultisSource::Uop;
+            app.show_multi_collection(MultiCollectionSource::ClassicClient);
+        }
+        Some(ClientSource::KrUop | ClientSource::EcUop) => {
+            app.multis_source = MultisSource::Uop;
+            app.show_multi_collection(MultiCollectionSource::EnhancedClient);
+        }
         None => {}
     }
+}
+
+/// Why the shown MultiCollection.uop can't give way to the other folder's now: unsaved multi edits, which live in
+/// it, or unsaved housing pieces, whose MultiCollection.uop save copies it.
+fn multi_collection_switch_blocker(app: &UocfEditorApp) -> Option<String> {
+    [multi_editor::TAB_EDITOR, super::housing::TAB_EDITOR].iter().find(|editor| (editor.is_dirty)(app)).map(|editor| {
+        format!(
+            "Save or discard the unsaved changes to {} first: they belong to the {MULTI_COLLECTION_FILE} shown.",
+            editor.label,
+        )
+    })
 }
 
 fn multi_collection_source_label(app: &UocfEditorApp) -> &'static str {
@@ -1764,5 +1791,21 @@ mod tests {
         assert!(part_passes_filters(&part(false, false), only_other, true));
         assert!(!part_passes_filters(&part(false, true), only_other, true));
         assert!(part_passes_filters(&part(false, false), only_housing, false));
+    }
+
+    #[test]
+    fn unsaved_multi_edits_keep_the_shown_collection() {
+        const ADDED_MULTI: u32 = 4;
+        let mut app = crate::app::tests::test_app();
+        app.multi_collection = Some(Arc::new(uocf::enhanced::multis::MultiCollection::from_items(Vec::new()).unwrap()));
+        assert_eq!(multi_collection_switch_blocker(&app), None);
+
+        let shown = Arc::make_mut(app.multi_collection.as_mut().unwrap());
+        app.multi_editor.add_multi(shown, ADDED_MULTI, None).unwrap();
+        let blocker = multi_collection_switch_blocker(&app).expect("unsaved edits block the switch");
+        assert!(blocker.contains(multi_editor::TAB_EDITOR.label), "{blocker}");
+
+        app.multi_editor.edits.mark_saved();
+        assert_eq!(multi_collection_switch_blocker(&app), None);
     }
 }
