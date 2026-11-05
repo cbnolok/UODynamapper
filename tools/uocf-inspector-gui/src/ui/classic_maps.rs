@@ -25,11 +25,13 @@ use uocf::classic::tiledata::TileData;
 use uocf::map_edition::MapEdition;
 use uocf::utils::path::find_file_ignoring_case;
 
+use super::{tab_source_choice, ClientSource, SourceAvailability};
 use crate::app::UopInspectorApp;
 
 const TILEDATA_FILE: &str = "tiledata.mul";
-/// The Classic map containers with the labels of their source buttons, in the order every tab shows them.
-pub(super) const MAP_SOURCES: [(ClassicMapFormat, &str); 2] = [(ClassicMapFormat::Mul, "MUL"), (ClassicMapFormat::Uop, "CC UOP")];
+/// The Classic map containers with the sources their buttons stand for, in the order every tab shows them.
+pub(super) const MAP_SOURCES: [(ClassicMapFormat, ClientSource); 2] =
+    [(ClassicMapFormat::Mul, ClientSource::Mul), (ClassicMapFormat::Uop, ClientSource::CcUop)];
 const MIN_ZOOM: f32 = 0.05;
 const MAX_ZOOM: f32 = 16.0;
 const DEFAULT_ZOOM: f32 = 0.25;
@@ -140,16 +142,20 @@ pub(super) fn refresh_found_maps(
     present
 }
 
+/// The tooltip of a map source the CC folder holds.
+pub(super) fn map_found_text(facet: u32, format: ClassicMapFormat) -> String {
+    format!("{} in the Classic Client folder.", map_file_names(facet, format).join(" or "))
+}
+
 /// The MUL and CC UOP buttons; a source not found is greyed, with a tooltip naming its files.
 pub(super) fn map_source_buttons(ui: &mut egui::Ui, format: &mut ClassicMapFormat, present: [bool; MAP_SOURCES.len()], facet: u32) {
-    ui.horizontal(|ui| {
-        for (&(source, label), present) in MAP_SOURCES.iter().zip(present) {
-            let button = egui::Button::selectable(*format == source, label);
-            if ui.add_enabled(present, button).on_disabled_hover_text(map_not_found_text(facet, source)).clicked() {
-                *format = source;
-            }
-        }
-    });
+    let availability = |source: ClassicMapFormat| match MAP_SOURCES.iter().position(|&(candidate, _)| candidate == source) {
+        Some(index) if present[index] => SourceAvailability::Found(map_found_text(facet, source)),
+        _ => SourceAvailability::Missing(map_not_found_text(facet, source)),
+    };
+    if let Some(source) = tab_source_choice(ui, &MAP_SOURCES, *format, availability) {
+        *format = source;
+    }
 }
 
 fn load_facet(cc_path: PathBuf, facet: u32, format: ClassicMapFormat, difs: ClassicDifOptions, tiledata: Option<Arc<TileData>>, max_side: u32) -> eyre::Result<(LoadedFacet, egui::ColorImage)> {

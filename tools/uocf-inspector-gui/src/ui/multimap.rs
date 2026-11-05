@@ -26,7 +26,8 @@ use uocf::enhanced::facet_radar::{radar_dds_file_name, FacetRadarDds};
 use uocf::map_edition::MapEdition;
 use uocf::utils::path::find_file_ignoring_case;
 
-use super::classic_maps::{classic_map_found, map_not_found_text};
+use super::classic_maps::{classic_map_found, map_found_text, map_not_found_text};
+use super::{tab_source_choice, ClientSource, SourceAvailability};
 
 const GENERATED_PLAIN_KEY: u64 = 0x6F00000000000001;
 const GENERATED_ARTISTIC_KEY: u64 = 0x6F00000000000002;
@@ -39,11 +40,11 @@ const FULL_SCALE: u32 = 1;
 const FULL_SIZE_LEVEL: u32 = 0;
 const RGB_CHANNELS: usize = 3;
 const OPAQUE: u8 = u8::MAX;
-/// The radar sources, in the order and with the labels of the source buttons of every tab.
-const RADAR_SOURCES: [(MultimapRadarSource, &str); 3] = [
-    (MultimapRadarSource::Mul, "MUL"),
-    (MultimapRadarSource::CcUop, "CC UOP"),
-    (MultimapRadarSource::EcUop, "EC UOP"),
+/// The radar sources with the sources their buttons stand for, in the order every tab shows them.
+const RADAR_SOURCES: [(MultimapRadarSource, ClientSource); 3] = [
+    (MultimapRadarSource::Mul, ClientSource::Mul),
+    (MultimapRadarSource::CcUop, ClientSource::CcUop),
+    (MultimapRadarSource::EcUop, ClientSource::EcUop),
 ];
 const NO_CC_FOLDER: &str = "No Classic Client folder is set (File > Search Paths).";
 const NO_EC_FOLDER: &str = "No Enhanced Client folder is set (File > Search Paths).";
@@ -102,6 +103,15 @@ fn source_present(source: MultimapRadarSource, cc_path: Option<&Path>, ec_path: 
     match classic_format(source) {
         Some(format) => cc_path.is_some_and(|cc_path| classic_map_found(cc_path, map_id, format)),
         None => ec_path.is_some_and(|ec_path| enhanced_radar_path(ec_path, map_id).is_some()),
+    }
+}
+
+/// The tooltip of a source the folders hold.
+fn source_found_text(source: MultimapRadarSource, map_id: u32) -> String {
+    match (classic_format(source), u8::try_from(map_id)) {
+        (Some(format), _) => map_found_text(map_id, format),
+        (None, Ok(facet)) => format!("{} in the Enhanced Client folder.", radar_dds_file_name(facet)),
+        (None, Err(_)) => format!("The Enhanced Client radar image of map {map_id}."),
     }
 }
 
@@ -238,15 +248,14 @@ fn radar_source_controls(app: &mut UopInspectorApp, ui: &mut egui::Ui) {
         ui.add(egui::DragValue::new(&mut state.map_id).range(0..=u32::from(u8::MAX)));
     });
     let present = refresh_found_sources(state, cc_path.as_deref(), ec_path.as_deref());
-    ui.horizontal(|ui| {
-        for (&(source, label), present) in RADAR_SOURCES.iter().zip(present) {
-            let button = egui::Button::selectable(state.source == source, label);
-            let missing = source_missing_text(source, cc_path.as_deref(), ec_path.as_deref(), state.map_id);
-            if ui.add_enabled(present, button).on_disabled_hover_text(missing).clicked() {
-                state.source = source;
-            }
-        }
-    });
+    let map_id = state.map_id;
+    let availability = |source: MultimapRadarSource| match RADAR_SOURCES.iter().position(|&(candidate, _)| candidate == source) {
+        Some(index) if present[index] => SourceAvailability::Found(source_found_text(source, map_id)),
+        _ => SourceAvailability::Missing(source_missing_text(source, cc_path.as_deref(), ec_path.as_deref(), map_id)),
+    };
+    if let Some(source) = tab_source_choice(ui, &RADAR_SOURCES, state.source, availability) {
+        state.source = source;
+    }
     let classic = classic_format(state.source).is_some();
     ui.horizontal(|ui| {
         ui.add_enabled(classic, egui::Checkbox::new(&mut state.include_verdata, "verdata")).on_disabled_hover_text(PATCHES_CLASSIC_ONLY);

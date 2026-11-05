@@ -2,6 +2,7 @@ use crate::app::{GumpSource, GumpViewerTab, PaperdollEquipmentInput, UopInspecto
 use crate::ui::ec_interface_textures;
 use crate::ui::ec_paperdoll::{self, Definitions, FrameSets, WearableRules, WornItem, PAPERDOLL_UOP_NAME};
 use crate::ui::{arrow_delta, centered_row_offset, go_to_field, list_sort_controls, move_selection, sorted_indices_by};
+use crate::ui::{tab_source_choice, ClientSource, SourceAvailability};
 use eframe::egui;
 use knuffel::Decode;
 use std::sync::Arc;
@@ -25,10 +26,10 @@ const PAPERDOLL_PROFILE_KDL: &str =
 const MUL_GUMP_PREVIEW_KEY: u64 = 0x6D00000000000000;
 const CC_UOP_GUMP_PREVIEW_KEY: u64 = 0x6C00000000000000;
 const EC_GUMP_PREVIEW_KEY: u64 = 0x6E00000000000000;
-/// The gump sources, in the order and with the labels of the source buttons of every tab. There is no KR UOP: the
-/// Enhanced Client's files hold one set of gump images, in `Interface.uop`.
-const GUMP_SOURCES: [(GumpSource, &str); 3] =
-    [(GumpSource::Mul, "MUL"), (GumpSource::CcUop, "CC UOP"), (GumpSource::EcUop, "EC UOP")];
+/// The gump sources with the sources their buttons stand for, in the order every tab shows them. There is no KR UOP:
+/// the Enhanced Client's files hold one set of gump images, in `Interface.uop`.
+const GUMP_SOURCES: [(GumpSource, ClientSource); 3] =
+    [(GumpSource::Mul, ClientSource::Mul), (GumpSource::CcUop, ClientSource::CcUop), (GumpSource::EcUop, ClientSource::EcUop)];
 const INTERFACE_UOP_NAME: &str = "interface.uop";
 /// Image preview keys of the rendered paperdolls, or-ed with the body id.
 const PAPERDOLL_PREVIEW_KEY: u64 = 0x7000000000000000;
@@ -257,7 +258,7 @@ fn classic_container(source: GumpSource) -> Option<GumpContainer> {
 }
 
 fn source_label(source: GumpSource) -> &'static str {
-    GUMP_SOURCES.iter().find(|(candidate, _)| *candidate == source).map_or("", |(_, label)| label)
+    GUMP_SOURCES.iter().find(|(candidate, _)| *candidate == source).map_or("", |(_, client)| client.label())
 }
 
 /// Whether the loaded client files hold `source`.
@@ -267,6 +268,15 @@ fn source_present(app: &UopInspectorApp, source: GumpSource) -> bool {
         None => app.uop_cache.loaded_uops.iter().any(|loaded| {
             loaded.path.file_name().and_then(|name| name.to_str()).is_some_and(|name| name.eq_ignore_ascii_case(INTERFACE_UOP_NAME))
         }),
+    }
+}
+
+/// The tooltip of a source the loaded files hold.
+fn source_found_text(source: GumpSource) -> &'static str {
+    match source {
+        GumpSource::Mul => "gumpidx.mul and gumpart.mul in the Classic Client folder.",
+        GumpSource::CcUop => "gumpartLegacyMUL.uop in the Classic Client folder.",
+        GumpSource::EcUop => "Interface.uop in the Enhanced Client folder.",
     }
 }
 
@@ -294,12 +304,15 @@ pub fn ui_gumps(app: &mut UopInspectorApp, ctx: &egui::Context, ui: &mut egui::U
         }
 
         ui.horizontal(|ui| {
-            for (source, label) in GUMP_SOURCES {
-                let button = egui::Button::selectable(app.selected_gump_source == source, label);
-                let present = source_present(app, source);
-                if ui.add_enabled(present, button).on_disabled_hover_text(source_missing_text(source)).clicked() {
-                    app.selected_gump_source = source;
+            let availability = |source| {
+                if source_present(app, source) {
+                    SourceAvailability::Found(source_found_text(source).to_string())
+                } else {
+                    SourceAvailability::Missing(source_missing_text(source).to_string())
                 }
+            };
+            if let Some(source) = tab_source_choice(ui, &GUMP_SOURCES, app.selected_gump_source, availability) {
+                app.selected_gump_source = source;
             }
             ui.separator();
             ui.selectable_value(

@@ -396,6 +396,19 @@ pub(crate) fn source_choice(
     source_buttons(ui, selected, availability).0
 }
 
+/// [`source_choice`] over a tab's own sources, each paired in `sources` with the [`ClientSource`] its button stands
+/// for; a client source no pair names is left out. Returns the tab source clicked this frame.
+pub(crate) fn tab_source_choice<S: Copy + PartialEq>(
+    ui: &mut egui::Ui,
+    sources: &[(S, ClientSource)],
+    selected: S,
+    availability: impl Fn(S) -> SourceAvailability,
+) -> Option<S> {
+    let tab_source = |client: ClientSource| sources.iter().find(|&&(_, candidate)| candidate == client).map(|&(source, _)| source);
+    let selected = sources.iter().find(|&&(source, _)| source == selected).map(|&(_, client)| client);
+    source_choice(ui, selected, |client| tab_source(client).map_or(SourceAvailability::NotApplicable, &availability)).and_then(tab_source)
+}
+
 /// The buttons of [`source_choice`], with the response of each.
 fn source_buttons(
     ui: &mut egui::Ui,
