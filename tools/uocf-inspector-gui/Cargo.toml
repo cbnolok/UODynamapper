@@ -21,10 +21,7 @@ egui.workspace = true
 egui_extras.workspace = true
 image = { workspace = true, features = ["png"] }
 image-postprocess = { path = "../../lib/image-postprocess" }
-udd-conv = { path = "../../lib/udd-conv" }
-udd-assets = { path = "../../lib/udd-assets" }
 udd-kdl = { path = "../../lib/udd-kdl" }
-udd-image-codecs = { path = "../../lib/udd-image-codecs", features = ["ktx2"] }
 uocf = { path = "../../lib/uocf" }
 particle-sim = { path = "../../lib/ec-effects/particle-sim" }
 effect-gltf = { path = "../../lib/ec-effects/effect-gltf" }
