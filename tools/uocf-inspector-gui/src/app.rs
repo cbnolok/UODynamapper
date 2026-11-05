@@ -2800,6 +2800,18 @@ impl UopInspectorApp {
                 }
             }
         }
+
+        // The dictionary shipped with the tools: in the release's shared/ folder, or in the source checkout. One
+        // beside the executable was loaded by the scan above.
+        let exe_dir = std::env::current_exe().ok().and_then(|exe_path| exe_path.parent().map(std::path::Path::to_path_buf));
+        match uocf::utils::bundled_files::resolve(None, uocf::utils::bundled_files::HASH_DICTIONARY) {
+            Ok(path) if path.parent() == exe_dir.as_deref() => {}
+            Ok(path) => match self.dictionary.load_dic(&path) {
+                Ok(_) => self.log(format!("Loaded the shipped DIC dictionary: {}", path.display())),
+                Err(e) => self.log(format!("Failed to load DIC dictionary {}: {}", path.display(), e)),
+            },
+            Err(e) => self.log(e.to_string()),
+        }
     }
 
     fn scan_dir_for_dicts(&mut self, dir: impl AsRef<std::path::Path>) {
