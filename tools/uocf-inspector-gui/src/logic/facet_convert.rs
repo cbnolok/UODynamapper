@@ -190,9 +190,12 @@ fn kr_land_map(fallback: Option<u16>) -> eyre::Result<KrLandMap> {
 mod tests {
     use super::*;
     use crate::ui::test_support::{client_roots, output_path, CLASSIC_CLIENT_ROOTS_ENV, EC_CLIENT_ROOTS_ENV};
+    use uocf::classic::facet_image::{facet_image_file_name, FacetImageFile};
     use uocf::classic::facet_sources::{statics_file_names, ClassicDifOptions, ClassicFacetSources};
+    use uocf::classic::map::{FELUCCA_HEIGHT, ML_FELUCCA_WIDTH, PRE_ML_FELUCCA_WIDTH};
     use uocf::classic::map_write::ClassicMapBlocks;
     use uocf::classic::statics_write::ClassicStaticsBlocks;
+    use uocf::classic::target_client::TargetClient;
     use uocf::classic::world::ClassicWorld;
     use uocf::enhanced::facet_package::{detect_facet_dialect, EcFacetPackage};
     use uocf::enhanced::facet_sector::facet_package_file_name;
@@ -210,10 +213,10 @@ mod tests {
     const LAND_Z: i8 = 1;
     const FILL: LandFill = LandFill { land: 5, z: 2 };
     const FELUCCA: u8 = 0;
-    const OLD_FELUCCA: MapSizeCells = MapSizeCells { width: 6144, height: 4096 };
+    const OLD_FELUCCA: MapSizeCells = MapSizeCells { width: PRE_ML_FELUCCA_WIDTH, height: FELUCCA_HEIGHT };
     /// A cell of the ground a client ships, for the checks after a resize.
     const PROBE: (u32, u32) = (1000, 1000);
-    const CURRENT_FELUCCA: MapSizeCells = MapSizeCells { width: 7168, height: 4096 };
+    const CURRENT_FELUCCA: MapSizeCells = MapSizeCells { width: ML_FELUCCA_WIDTH, height: FELUCCA_HEIGHT };
     /// A land id of the Kingdom Reborn land map, for the land it has no material for.
     const KR_FALLBACK_LAND: u16 = 3;
     const NOT_KR_LAND: u16 = u16::MAX;
@@ -240,16 +243,34 @@ mod tests {
         FacetSource::Classic { dir: dir.to_path_buf(), edition: MapEdition::Standard, difs: DifChoice::Ignore }
     }
 
+    /// `world` as the Classic files of `facet` in `dir`.
+    fn write_classic_folder(dir: &Path, world: &ClassicWorld, facet: u8) {
+        std::fs::create_dir_all(dir).unwrap();
+        world.map.write_mul(&dir.join(format!("map{facet}.mul"))).unwrap();
+        let [index, data] = statics_file_names(u32::from(facet), MapEdition::Standard);
+        world.statics.write_mul(&dir.join(index), &dir.join(data)).unwrap();
+    }
+
+    fn narrow_world(height: u32) -> ClassicWorld {
+        ClassicWorld::filled(MapSizeCells { width: SMALL_WIDTH, height }, LandFill { land: LAND, z: LAND_Z }).unwrap()
+    }
+
     /// A folder holding a narrow Classic facet, and the folder to write to.
     fn small_client(name: &str) -> (PathBuf, PathBuf) {
         let dir = output_path(&format!("{name}-source"));
         let output = output_path(&format!("{name}-output"));
-        std::fs::create_dir_all(&dir).unwrap();
-        let world = ClassicWorld::filled(MapSizeCells { width: SMALL_WIDTH, height: SMALL_HEIGHT }, LandFill { land: LAND, z: LAND_Z }).unwrap();
-        world.map.write_mul(&dir.join(format!("map{SMALL_FACET}.mul"))).unwrap();
-        let [index, data] = statics_file_names(u32::from(SMALL_FACET), MapEdition::Standard);
-        world.statics.write_mul(&dir.join(index), &dir.join(data)).unwrap();
+        write_classic_folder(&dir, &narrow_world(SMALL_HEIGHT), SMALL_FACET);
         (dir, output)
+    }
+
+    fn root_name(root: &Path) -> String {
+        root.file_name().unwrap().to_string_lossy().replace(' ', "-")
+    }
+
+    /// The facet the client's own files hold.
+    fn shipped_world(root: &Path, facet: u8) -> ClassicWorld {
+        let sources = ClassicFacetSources::resolve(&[root.to_path_buf()], u32::from(facet), &SOURCE_MAP_FORMATS, ClassicDifOptions::NONE, MapEdition::Standard).unwrap();
+        ClassicWorld::load(&sources, None).unwrap().0
     }
 
     fn open_package(path: &Path, facet: u8) -> EcFacetPackage {
@@ -378,6 +399,173 @@ mod tests {
             println!("{name}: same bytes; converts to Classic at {}x{}", geometry.width, geometry.height);
             clean(&[&output, &classic_dir]);
         }
+    }
+
+    #[test]
+    #[ignore = "needs real Classic clients, one before Mondain's Legacy among them: set UO_CLASSIC_CLIENT_ROOTS and TMPDIR, and run with --ignored"]
+    fn a_target_client_gives_the_size_of_its_table_and_refuses_another() {
+        /// `map0.mul` at 6144 x 4096 and at 7168 x 4096, in bytes.
+        const OLD_FELUCCA_BYTES: u64 = 77_070_336;
+        const CURRENT_FELUCCA_BYTES: u64 = 89_915_392;
+        let source = output_path("facet-target-size-source");
+        write_classic_folder(&source, &narrow_world(FELUCCA_HEIGHT), FELUCCA);
+        let mut sizes = Vec::new();
+        for root in client_roots(CLASSIC_CLIENT_ROOTS_ENV) {
+            let name = root_name(&root);
+            let output = output_path(&format!("facet-target-size-{name}"));
+            let target = ConvertRequest { facet: FELUCCA, target_facet: FELUCCA, target_client: Some(root.clone()), facet_image: FacetImageMode::None, ..request(classic(&source), FacetTarget::ClassicMul, output.clone()) };
+            for note in convert_facet(&target).unwrap() {
+                println!("{name}: {note}");
+            }
+            // The client's own map tells the size apart from the table in its executable.
+            let shipped = shipped_world(&root, FELUCCA).size_cells();
+            let (bytes, other) = if shipped == OLD_FELUCCA { (OLD_FELUCCA_BYTES, CURRENT_FELUCCA) } else { (CURRENT_FELUCCA_BYTES, OLD_FELUCCA) };
+            let path = output.join(format!("map{FELUCCA}.mul"));
+            assert_eq!(std::fs::metadata(&path).unwrap().len(), bytes, "{name}");
+            let map = ClassicMapBlocks::read_mul(&path, u32::from(FELUCCA), Some(shipped)).unwrap();
+            assert_eq!(map.size_cells(), shipped, "{name}");
+            assert_eq!(map.cell(0, 0).unwrap(), (LAND, LAND_Z), "{name}");
+            assert_eq!(map.cell(SMALL_WIDTH, 0).unwrap(), (LandFill::VOID.land, LandFill::VOID.z), "{name}");
+
+            let refused = output_path(&format!("facet-target-size-refused-{name}"));
+            let error = convert_facet(&ConvertRequest { size: Some(other), crop: true, output_dir: refused.clone(), ..target.clone() }).unwrap_err();
+            let error = format!("{error:#}");
+            assert!(error.contains("the size table of") && error.contains("uo-client-patcher-gui"), "{name}: {error}");
+            assert!(!refused.exists(), "{name}: refused, yet it wrote");
+            println!("{name}: written at {}x{}, {}x{} refused", shipped.width, shipped.height, other.width, other.height);
+            sizes.push(shipped);
+            clean(&[&output]);
+        }
+        clean(&[&source]);
+        assert!(sizes.contains(&OLD_FELUCCA) && sizes.contains(&CURRENT_FELUCCA), "both sizes are needed, got {sizes:?}");
+    }
+
+    #[test]
+    #[ignore = "needs real Classic clients, one that draws facet04.mul and one that does not: set UO_CLASSIC_CLIENT_ROOTS and TMPDIR, and run with --ignored"]
+    fn a_target_client_that_draws_the_image_gets_it_in_step_with_the_map() {
+        /// A tile inside Tokuno, and a land z it does not have.
+        const TILE: (u32, u32) = (724, 724);
+        const RAISED_Z: i8 = 100;
+        let image_name = facet_image_file_name(u32::from(SMALL_FACET));
+        let (mut drawing, mut not_drawing) = (0, 0);
+        for root in client_roots(CLASSIC_CLIENT_ROOTS_ENV) {
+            let name = root_name(&root);
+            let output = output_path(&format!("facet-target-image-{name}"));
+            let written = output.join(&image_name);
+            let run = |mode, source| {
+                clean(&[&output]);
+                let target = ConvertRequest { target_client: Some(root.clone()), facet_image: mode, ..request(source, FacetTarget::ClassicMul, output.clone()) };
+                let notes = convert_facet(&target).unwrap();
+                println!("{name}: {mode:?}: {:?}", notes.iter().filter(|note| note.contains(&image_name)).collect::<Vec<_>>());
+                notes
+            };
+            let told = |notes: &[String], text: &str| assert!(notes.iter().any(|note| note.contains(text)), "{name}: no {text:?} in {notes:?}");
+            if !TargetClient::open(&root).unwrap().reads_facet_image(u32::from(SMALL_FACET)) {
+                not_drawing += 1;
+                run(FacetImageMode::Update, classic(&root));
+                assert!(!written.exists(), "{name}");
+                let notes = run(FacetImageMode::Keep, classic(&root));
+                assert!(!written.exists(), "{name}");
+                told(&notes, "does not draw");
+                clean(&[&output]);
+                continue;
+            }
+            drawing += 1;
+            let shipped_path = find_file_ignoring_case(&root, &image_name).unwrap();
+            let shipped = std::fs::read(&shipped_path).unwrap();
+
+            let notes = run(FacetImageMode::Update, classic(&root));
+            assert!(std::fs::read(&written).unwrap() == shipped, "{name}: the unchanged map's image differs");
+            told(&notes, "unchanged (the map is the target's)");
+
+            let notes = run(FacetImageMode::Keep, classic(&root));
+            assert!(std::fs::read(&written).unwrap() == shipped, "{name}: the kept image differs");
+            told(&notes, "unchanged (as chosen)");
+
+            let notes = run(FacetImageMode::None, classic(&root));
+            assert!(!written.exists(), "{name}");
+            told(&notes, "written (as chosen)");
+
+            let shipped_image = FacetImageFile::load(&shipped_path).unwrap();
+            let notes = run(FacetImageMode::Regenerate, classic(&root));
+            let rendered = FacetImageFile::load(&written).unwrap();
+            assert_eq!((rendered.width(), rendered.height()), (shipped_image.width(), shipped_image.height()), "{name}");
+            told(&notes, "rendered whole");
+
+            let mut edited = shipped_world(&root, SMALL_FACET);
+            let (x, y) = TILE;
+            let (land, _) = edited.map.cell(x, y).unwrap();
+            edited.map.set_cell(x, y, land, RAISED_Z).unwrap();
+            let source = output_path(&format!("facet-target-image-source-{name}"));
+            write_classic_folder(&source, &edited, SMALL_FACET);
+            let notes = run(FacetImageMode::Update, classic(&source));
+            told(&notes, "re-rendered by the slope rule");
+            let updated = FacetImageFile::load(&written).unwrap();
+            let changed: Vec<u32> = (0..shipped_image.rows().len()).filter(|&row| shipped_image.rows()[row] != updated.rows()[row]).map(|row| row as u32).collect();
+            // The tile and the one left of it are on row y, the one above on row y - 1.
+            assert!(!changed.is_empty() && changed.iter().all(|&row| row == y || row == y - 1), "{name}: rows changed: {changed:?}");
+            println!("{name}: one edited cell changes rows {changed:?} of the image");
+            clean(&[&output, &source]);
+        }
+        assert!(drawing > 0 && not_drawing > 0, "needs a client that draws {image_name} and one that does not: {drawing} and {not_drawing}");
+    }
+
+    #[test]
+    #[ignore = "needs real Classic clients, one with 16,384 item tiles and one with more: set UO_CLASSIC_CLIENT_ROOTS and TMPDIR, and run with --ignored"]
+    fn a_target_client_tiledata_tells_the_tile_ids_it_lacks() {
+        /// An item id past 16,384 tiles and within the later clients' 65,536.
+        const GRAPHIC: u16 = 0x7000;
+        let source = output_path("facet-target-tiledata-source");
+        let mut world = narrow_world(SMALL_HEIGHT);
+        world.statics.add_static(0, 0, GRAPHIC, 0, 0).unwrap();
+        write_classic_folder(&source, &world, SMALL_FACET);
+        let (mut lacking, mut having) = (0, 0);
+        for root in client_roots(CLASSIC_CLIENT_ROOTS_ENV) {
+            let name = root_name(&root);
+            let counts = TargetClient::open(&root).unwrap().tiledata_counts().unwrap().unwrap();
+            let output = output_path(&format!("facet-target-tiledata-{name}"));
+            let target = ConvertRequest { target_client: Some(root.clone()), facet_image: FacetImageMode::None, ..request(classic(&source), FacetTarget::ClassicMul, output.clone()) };
+            let notes = convert_facet(&target).unwrap();
+            let note = notes.iter().find(|note| note.contains("use ids it does not have"));
+            println!("{name}: {} item tiles: {note:?}", counts.items);
+            if usize::from(GRAPHIC) >= counts.items {
+                lacking += 1;
+                let note = note.unwrap_or_else(|| panic!("{name}: no note in {notes:?}"));
+                assert!(note.starts_with("warning: the target tiledata.mul has"), "{name}: {note}");
+                assert!(note.contains(&format!("{} item tiles", counts.items)) && note.contains(&GRAPHIC.to_string()), "{name}: {note}");
+            } else {
+                having += 1;
+                assert!(note.is_none(), "{name}: {note:?}");
+            }
+            clean(&[&output]);
+        }
+        clean(&[&source]);
+        assert!(lacking > 0 && having > 0, "needs a client that lacks the id and one that has it: {lacking} and {having}");
+    }
+
+    #[test]
+    #[ignore = "needs real Classic clients: set UO_CLASSIC_CLIENT_ROOTS and TMPDIR, and run with --ignored"]
+    fn a_folder_holding_a_copy_of_the_target_client_is_refused_as_the_output() {
+        const KEPT: &[u8] = b"the target client's map";
+        let (source, output) = small_client("facet-target-output");
+        for root in client_roots(CLASSIC_CLIENT_ROOTS_ENV) {
+            let name = root_name(&root);
+            let client = output_path(&format!("facet-target-output-{name}"));
+            std::fs::create_dir_all(&client).unwrap();
+            let shipped_exe = TargetClient::open(&root).unwrap().exe;
+            let exe = client.join(shipped_exe.file_name().unwrap());
+            std::fs::copy(&shipped_exe, &exe).unwrap();
+            let kept = client.join(format!("map{SMALL_FACET}.mul"));
+            std::fs::write(&kept, KEPT).unwrap();
+            for target_client in [&client, &exe] {
+                let target = ConvertRequest { target_client: Some(target_client.clone()), ..request(classic(&source), FacetTarget::ClassicMul, client.clone()) };
+                let error = format!("{:#}", convert_facet(&target).unwrap_err());
+                assert!(error.contains("holds the target client's files"), "{name}: {error}");
+                assert_eq!(std::fs::read(&kept).unwrap(), KEPT, "{name}");
+            }
+            clean(&[&client]);
+        }
+        clean(&[&source, &output]);
     }
 
     #[test]
