@@ -738,11 +738,21 @@ the same day ([`bc7_alpha_plane_search.md`](bc7_alpha_plane_search.md)). The use
   - **RGBA storage** (Classic or Enhanced converted to RGBA, custom 32-bit art): every filter, and BC1, BC3 or BC7.
   - Which filters keep the palette is measured on real frames, not assumed from the algorithm's name.
 
+- **Lossy gumps and land** (the user, 2026-11-05):
+  - **Gumps take BC1 in both clients.** Classic gumps treat black as transparent, which is BC1's one-bit alpha, so BC1 beats BC3 there:
+    zstd 19 19.6 MB and 74 MB of VRAM at a median of 83.0, against BC3's 21.3 MB, 148 MB and 82.3, and BC7 with fix C's 37.1 MB,
+    148 MB and 85.5. Enhanced is alike (BC1 83.1, BC7 85.8), though BC1's worst gump scores 20.1 against BC3's 24.3, probably one with
+    soft alpha edges (not checked). Paperdoll gumps of PartialHue items stay lossless, by the exact-greys rule above.
+  - **Enhanced land takes BC7** (fix C): 9.2 MB against 17.73 MB lossless today, a median of 93.7 and a worst of 88.8. BC3 has the higher
+    median, 98.8 at 6.5 MB, but the lower worst, 86.1; BC7 should beat it on median too, which points at the encoder (re-measure pending).
+  - **Classic land stays lossless in both paths.** BC7 is 12.6 MB on disk against 11.07 MB for today's lossless JPEG XL package, with a
+    median of 75.5 and 29 % of textures at 80 or more; it would save only VRAM, 59 MB down to 15.
+
 **Open:**
 
 | Question | Recommendation | Depends on |
 |---|---|---|
-| Lossy rows on the PC preset | The user's proposal: Enhanced BC1 for equipment and BC3 for other animations, BC7 for land textures or gumps, Classic BC1 on creatures only, converging on one or two lossy formats if the mix needs too many branches or pipelines. Against LZ4 HC's lossless size, BC3 and BC7 with fix C both save disk as well as VRAM on Enhanced, so BC7 is no longer ruled out by size | Fractional zoom, upscaled sprites and the cost of alternating formats in painter order, being measured |
+| Lossy rows on the PC preset (animations; gumps and land are decided above) | The user's proposal: Enhanced BC1 for equipment and BC3 for other animations, BC7 for land textures or gumps, Classic BC1 on creatures only, converging on one or two lossy formats if the mix needs too many branches or pipelines. Against LZ4 HC's lossless size, BC3 and BC7 with fix C both save disk as well as VRAM on Enhanced, so BC7 is no longer ruled out by size | Fractional zoom, upscaled sprites and the cost of alternating formats in painter order, being measured |
 | Load unit | One stream per (action, direction), faced direction first | The user |
 | Where the low-end tier's quality floor sits, and which RDO level it uses | 80 as a floor, no RDO unless a target needs it | The user's eye: `blocks-preview/` crops, including BC3 against BC7 |
 | Whether indexed frames stay the default once filtering is counted | Yes: the indexed filter costs 1.43–1.57× BC7 on the Radeon 880M, 2.4–3.1 % of a 60 fps frame in a crowd at 1.5× | The user; one AMD iGPU only |
