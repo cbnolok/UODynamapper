@@ -102,7 +102,7 @@ That aligns with the current UODynamapper investigation: `tex_land_ec.uddp` shou
 
 When the renderer is in EC/enhanced land mode, an unresolved EC land route is a data or resolver failure, not a rendering style choice.
 
-Do not silently fall back from a missing EC land texture to the Classic Client texmap path. Black or otherwise explicit missing output is preferred during investigation because it preserves the failure signal and keeps bad EC routing visible. A fix should identify the missing land ids, trace them through `TerrainTranscode.kdl`, embedded `tex_land_ec.uddp` transcode metadata, `TerrainDefinition.uop` provenance, and override data, then repair the incorrect data or resolver behavior.
+Do not silently fall back from a missing EC land texture to the Classic Client texmap path. Black or otherwise explicit missing output is preferred during investigation because it preserves the failure signal and keeps bad EC routing visible. A fix should identify the missing land ids, trace them through the routing table embedded in `tex_land_ec.uddp` (`metadata/transcode.bin`, packed from `TerrainTranscode.kdl`; the runtime reads no loose copy), `TerrainDefinition.uop` provenance, and override data, then repair the incorrect data or resolver behavior.
 
 Classic fallback is acceptable only as an explicitly named user-facing compatibility mode or diagnostic mode. It must not be the default behavior for EC land rendering regressions.
 
@@ -196,7 +196,7 @@ Design rules for this routing file:
 - Do not copy EC TerrainDefinition layers into KR routing unless the KR source package proves the same relationship.
 - Let manual/reviewed routing override generated routing in file order, matching the existing `TerrainTranscode.kdl` conflict behavior.
 - Keep the routing KDL separate from `EcTerrainOverrides.kdl`; the latter is about EC material behavior, not KR family routing.
-- Use `udd-pack pack-ec-textures --land-transcode-kdl <routing.kdl>` when intentionally embedding a non-default routing table into `tex_land_ec.uddp`.
+- The routing table lives in `tex_land_ec.uddp`: `pack-ec-textures` always embeds one, the shipped `TerrainTranscode.kdl` by default. Use `udd-cli pack pack-ec-textures --land-transcode-kdl <routing.kdl>` when intentionally embedding a non-default routing table; `udd-cli pack audit-land-routing-kdl` tries a candidate table against a package before packing it.
 
 ## 6. Classification Matrix For This Repo
 

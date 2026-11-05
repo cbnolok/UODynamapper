@@ -21,7 +21,8 @@ copy a different client's table into the packer.
 - `uocf::enhanced::legacy_terrain_map` parses the source CSV and retains it verbatim.
 - The EC land packer embeds it as `metadata/legacy_terrain_map.csv`.
 - `TexLandEcPackage` builds the source routing base from this metadata, then
-  applies embedded KDL and loose KDL as explicit policy overlays.
+  applies the embedded KDL (`metadata/transcode.bin`, always packed) as an
+  explicit policy overlay. The runtime reads no loose KDL.
 - `source_terrain_map()` exposes the original routes and subtypes even when
   an explicit overlay selects a different material.
 - Missing EC material images still remain explicitly black. This source graph

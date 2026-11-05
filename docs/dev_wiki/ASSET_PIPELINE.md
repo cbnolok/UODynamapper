@@ -156,7 +156,7 @@ Important rule:
 ## Current EC Classification Notes
 
 - The `Rotated` flag (formerly `Unused1`) on EC tileart entries is currently treated as the strongest primary land hint when building the semantic translation table for EC land classification.
-- `TerrainTranscode.kdl` is still the active loose override for mapping Classic Client land ids to EC material ids at runtime.
+- `TerrainTranscode.kdl` maps Classic Client land ids to EC material ids, over the client's own `legacyterrainmap.csv` routes. It lives in `tex_land_ec.uddp`: the packer always embeds it as `metadata/transcode.bin` (the copy shipped with the tools, or the one given with `--land-transcode-kdl`), and the runtime reads only that copy. Dynamapper reads no loose copy, so an edit takes effect after a repack, and a package without the table fails to load with a message to repack it.
 - EC terrain materials come from `TerrainDefinition.uop`. Reviewed layer-texture substitutions it does not carry live in `EcTerrainOverrides.kdl` (currently none: the file has no entries); liquid motion and edge softness come from the UOP (tweaks, `coverage_exponent`), so the file has no liquid or policy nodes. The hand-written `TerrainDefinition.kdl` from before the UOP was parsed, and its audit commands, were removed.
 - The current target architecture for EC textures is a three-way split built from one classification pass: `ec_textures_land.uddp`, `ec_textures_art.uddp`, and `ec_textures_layers.uddp`.
 - The long-term direction is to keep shared source textures intact and let runtime sampling windows and semantic lookup tables choose the correct sub-rect or layer at render time.

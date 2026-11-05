@@ -1299,7 +1299,9 @@ Terrain package build:
 7. Build sparse slot records and alias records.
 8. Write terrain provenance for every material alias and selected/available
    layer.
-9. Embed KDL-derived override metadata and transcode metadata when present.
+9. Embed KDL-derived override metadata when present, and always the terrain
+   routing table (`TerrainTranscode.kdl`: the copy shipped with the tools, or
+   the one given with `--land-transcode-kdl`).
 
 Tile metadata build:
 
@@ -1316,7 +1318,9 @@ Runtime:
 
 1. Load UDDP map/statics, `tilemeta.uddp`, `tex_art_cc.uddp`,
    `tex_art_ec.uddp`, and `tex_land_ec.uddp`.
-2. Load loose `TerrainTranscode.kdl` and apply it over embedded transcode data.
+2. Apply the terrain routing table embedded in `tex_land_ec.uddp` over the
+   client's `legacyterrainmap.csv` routes. There is no loose copy; a package
+   without the table fails to load with a message to repack it.
 3. Load loose `EcTerrainOverrides.kdl` and apply it over embedded terrain
    override defaults.
 4. Build land shader lookup entries from terrain provenance and override refs.
@@ -1367,7 +1371,8 @@ Runtime:
   - `metadata/slots.bin`: sparse slot table keyed by runtime land/art slot id
   - `metadata/terrain_provenance.bin`: material-to-texture provenance
   - optional `metadata/terrain_overrides.json`: embedded KDL-derived defaults
-  - optional `metadata/transcode.bin`: embedded transcode table
+  - `metadata/transcode.bin`: the terrain routing table, `TerrainTranscode.kdl`
+    as packed (required)
 - `terrain_provenance.bin` v4 stores:
   - material id
   - material name id
@@ -1435,7 +1440,10 @@ Active KDL files live in `dynamapper/assets/cc_ec_convtables/`.
 
 `TerrainTranscode.kdl`:
 
-- Loose fallback table mapping CC land ids to EC material ids.
+- Table mapping CC land ids to EC material ids. The packer embeds it in
+  `tex_land_ec.uddp` as `metadata/transcode.bin`, and the runtime reads only
+  that copy: repack to apply an edit. The app package does not ship the file;
+  the tools package keeps it in `shared/cc_ec_convtables/`.
 - Keep it to id routing. Do not add visual policy here.
 - It remains active for ids not fully resolved through direct
   `TerrainDefinition.uop` aliases.
