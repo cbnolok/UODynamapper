@@ -1,0 +1,38 @@
+[package]
+name = "uocf-editor-gui"
+version = "0.1.0"
+edition = "2024"
+#resolver = "3"
+
+[lints.clippy]
+collapsible_if = "allow"
+empty_line_after_doc_comments = "allow"
+items_after_test_module = "allow"
+manual_div_ceil = "allow"
+manual_is_multiple_of = "allow"
+needless_range_loop = "allow"
+needless_lifetimes = "allow"
+nonminimal_bool = "allow"
+too_many_arguments = "allow"
+
+[dependencies]
+eframe.workspace = true
+egui.workspace = true
+egui_extras.workspace = true
+image = { workspace = true, features = ["png"] }
+image-postprocess = { path = "../../lib/image-postprocess" }
+udd-kdl = { path = "../../lib/udd-kdl" }
+uocf = { path = "../../lib/uocf" }
+particle-sim = { path = "../../lib/ec-effects/particle-sim" }
+effect-gltf = { path = "../../lib/ec-effects/effect-gltf" }
+gamebryo-nif = { path = "../../lib/ec-effects/gamebryo-nif" }
+rfd.workspace = true
+udd-logging = { path = "../../lib/udd-logging" }
+gui-shared = { path = "../../lib/gui-shared" }
+rodio.workspace = true
+serde.workspace = true
+color-eyre.workspace = true
+# Only for the Decode derives: their code names the knuffel crate. Parse through udd-kdl.
+knuffel.workspace = true
+log.workspace = true
+workspace-hack.workspace = true

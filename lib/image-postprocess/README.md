@@ -67,7 +67,7 @@ available for visual comparison.
   source RGBA into indexed semantics, normalizes through a canonical palette,
   runs a scaler with explicit transparency rules, and restricts the final
   raster through `StrictSnap`, `RampAwareSnap`, `ExpandedPalette`, or `NoSnap`.
-- Upscale preview is available in `uocf-inspector-gui` for visual comparison.
+- Upscale preview is available in `uocf-editor-gui` for visual comparison.
 - Algorithm implementations are adapted from the sources listed in the main
   [README.md](../../README.md) (Algorithms section).
 

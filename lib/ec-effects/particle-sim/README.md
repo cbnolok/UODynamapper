@@ -287,7 +287,7 @@ to match the client, and the research docs mark it **confirmed**. Each item give
 - **Impact:** Where the hued effect sorts against the object and other effects. Its look is unchanged.
 - **Verify:** Yes: identify object vtable slots +0x11c and +0x124.
 
-### Preview only (uocf-inspector-gui Effects tab, examples)
+### Preview only (uocf-editor-gui Effects tab, examples)
 
 **22. MESH clones use the default camera and lighting.**
 
@@ -314,7 +314,7 @@ to match the client, and the research docs mark it **confirmed**. Each item give
   lowercase render name. Two MESH NIFs in one part with the same embedded name share one texture: the
   last one loaded wins.
 - **Client:** Each NIF's texture object is its own.
-- **Evidence:** `tools/uocf-inspector-gui/src/logic/effect_preview.rs`, `nif_textures` (`embedded` map). The
+- **Evidence:** `tools/uocf-editor-gui/src/logic/effect_preview.rs`, `nif_textures` (`embedded` map). The
   packer has no such problem: it renames them `<nif name>#<index>` (`udd-assets` README, `effects_ec.uddp`).
 - **Impact:** Wrong texture on one of the meshes, in the inspector only. No shipped Chaos part is known to
   hit it.

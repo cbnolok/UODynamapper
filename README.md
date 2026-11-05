@@ -126,9 +126,9 @@ research and pipeline maintenance rather than common user workflows):
   `AnimationFrame*.uop` as single-entry `.vd` files or Michelangelo/UOAnimTool
   `.uop` patch streams.
 
-### uocf-inspector-gui
+### uocf-editor-gui
 
-[`uocf-inspector-gui`](tools/uocf-inspector-gui/README.md) — graphical inspector for Ultima Online source formats. Reads
+[`uocf-editor-gui`](tools/uocf-editor-gui/README.md) — graphical inspector and editor for Ultima Online source formats. Reads
 directly from client installation files without requiring prior conversion.
 Views: UOP package explorer (with optional `.dic` dictionary resolution), CC
 art tiles, CC/EC tiledata and tileart metadata, CC and EC mobile animations,
@@ -142,7 +142,7 @@ Classic Client and Enhanced Client sources.
 dictionaries (`.dic` files). Load an existing dictionary, point the tool at a
 directory of `.uop` packages, define candidate path templates in TOML, and run
 a background hash-expansion search. Saves results as a `.dic` file compatible
-with MPE (Mythic Package Editor) and `uocf-inspector-gui`.
+with MPE (Mythic Package Editor) and `uocf-editor-gui`.
 
 The shared starting-point dictionary lives at
 `tools/_shared_assets/Dictionary.dic`. `uop-tool merge-dic` can merge multiple

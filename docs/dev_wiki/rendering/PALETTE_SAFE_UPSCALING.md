@@ -101,7 +101,7 @@ palette snap pass is also valid and uses the current image dimensions unchanged.
 
 ## CLI Usage
 
-The same pass names are accepted by the UOCF inspector preview copy action and
+The same pass names are accepted by the UOCF editor preview copy action and
 by `udd-pack` converter commands.
 
 Classic art:

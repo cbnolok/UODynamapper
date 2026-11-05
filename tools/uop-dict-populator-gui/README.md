@@ -13,7 +13,7 @@ package inspection and extraction.
   configured numeric range and checks each candidate hash against the packages.
 - Run the search in the background with live progress and logging.
 - Save the expanded dictionary back to a `.dic` file compatible with MPE
-  (Mythic Package Editor) and the `uocf-inspector-gui`.
+  (Mythic Package Editor) and the `uocf-editor-gui`.
 
 ## TOML template format
 

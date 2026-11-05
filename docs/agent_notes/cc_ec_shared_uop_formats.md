@@ -118,4 +118,4 @@ Enhanced ones and 1,068 of the Classic art entries, but others still come out as
 0x4821, of 0xF82 bytes, reads as 2x2).
 
 An empty image handed to egui is a wgpu validation error, and wgpu's default handler panics. The inspector's textures
-go through `tools/uocf-inspector-gui/src/ui/textures.rs`, which turns that into a message.
+go through `tools/uocf-editor-gui/src/ui/textures.rs`, which turns that into a message.

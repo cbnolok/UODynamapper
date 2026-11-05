@@ -3,7 +3,7 @@
 //! texture taken from the package, a fixed-step simulation that can be scrubbed (re-simulated from 0 with the same
 //! seed), and software rendering with particle-sim's rasterizer. No egui here.
 //!
-//! The scene is the one the uocf inspector builds from client files (`effect_preview.rs` there), with the package
+//! The scene is the one the uocf editor builds from client files (`effect_preview.rs` there), with the package
 //! as its only input: Chaos parts get their MESH `.nif`s from the package systems, NIF parts their textures by
 //! the names in their descs (`<nif>#<i>` for embedded pixels), and every part is placed with
 //! [`EffectPlacement::seen_by`] the client camera. NIF and Chaos parts are drawn in one sorted draw group

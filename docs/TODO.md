@@ -290,7 +290,7 @@ Done or superseded. Blend inputs (`SecondaryBase`, `BlendAlpha`, `CoverageAlpha`
   (`dynamapper/src/core/render/dialogs/gump.rs:544`) swaps 5 and 13 (torso and chest), shifts 22–25 and puts the backpack at
   26 instead of 21, and `priority_for` applies every matching rule where the client takes the item's own rule, else "any".
   The traced rule is in `scripts/dev-helpers/ec-research/ghidra-paperdoll/results/uosa_paperdoll.md`, and
-  `tools/uocf-inspector-gui/src/ui/ec_paperdoll.rs` follows it. Found 2026-11-05.
+  `tools/uocf-editor-gui/src/ui/ec_paperdoll.rs` follows it. Found 2026-11-05.
 
 ### Export And Tooling
 

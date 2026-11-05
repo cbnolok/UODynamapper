@@ -21,7 +21,7 @@ members = [
     "tools/uoppackage-cli",
     "tools/udd-conv-gui",
     "tools/uddp-inspector-gui",
-    "tools/uocf-inspector-gui",
+    "tools/uocf-editor-gui",
     "tools/uop-dict-populator-gui",
     "tools/uo-client-patcher-gui",
     "tools/webmap-export-cli",
@@ -145,7 +145,7 @@ debug = false
 #[profile.profiling.package.uddp-inspector-gui]
 #[profile.profiling.package.udd-image-codecs]
 #[profile.profiling.package.uocf-cli]
-#[profile.profiling.package.uocf-inspector-gui]
+#[profile.profiling.package.uocf-editor-gui]
 #[profile.profiling.package.uop-dict-populator-gui]
 #[profile.profiling.package.uo-client-patcher-gui]
 
@@ -291,7 +291,7 @@ debug = "line-tables-only"
 debug-assertions = true
 #strip = "debuginfo"
 
-[profile.dev.package.uocf-inspector-gui]
+[profile.dev.package.uocf-editor-gui]
 opt-level = 1
 debug = "line-tables-only"
 debug-assertions = true

@@ -1,7 +1,7 @@
 # Effects rendering: status and approximations
 
 Status of the EC particle effects pipeline (`lib/ec-effects/particle-sim`, the `effects_ec.uddp` packer in
-`lib/udd-conv/src/effects_ec.rs`, and the uocf-inspector-gui Effects tab) after the October 2026 UOSA.exe
+`lib/udd-conv/src/effects_ec.rs`, and the uocf-editor-gui Effects tab) after the October 2026 UOSA.exe
 tracing. The full list of known differences, with evidence and impact, is in
 [`lib/ec-effects/particle-sim/README.md`, "Known differences from the client"](../../lib/ec-effects/particle-sim/README.md#known-differences-from-the-client).
 The client research is in

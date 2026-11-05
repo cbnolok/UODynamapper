@@ -226,8 +226,8 @@ app_assets_unread := "regression_fixtures shaders/postprocess_ec_doc shaders/pos
 app_assets_unread_ext := "md"
 tool_docs := "README.md docs/USER_TROUBLESHOOTING.md tools/udd-conv-cli/UPSCALE_PROFILES.md"
 # The end-user tools. uocf-devtools-cli stays out: research and diagnostic commands, built only with dev-tool-tests.
-tool_bins := "udd-cli udd-conv-gui uddp-inspector-gui uo-client-patcher-gui uocf-cli uocf-inspector-gui uop-dict-populator-gui uoppackage-cli webmap-export-cli"
-tool_packages := "-p udd-conv-cli -p uocf-cli -p udd-conv-gui -p uddp-inspector-gui -p uo-client-patcher-gui -p uocf-inspector-gui -p uop-dict-populator-gui -p uoppackage-cli -p webmap-export-cli"
+tool_bins := "udd-cli udd-conv-gui uddp-inspector-gui uo-client-patcher-gui uocf-cli uocf-editor-gui uop-dict-populator-gui uoppackage-cli webmap-export-cli"
+tool_packages := "-p udd-conv-cli -p uocf-cli -p udd-conv-gui -p uddp-inspector-gui -p uo-client-patcher-gui -p uocf-editor-gui -p uop-dict-populator-gui -p uoppackage-cli -p webmap-export-cli"
 # The data files the tools read, each copied into the tools package's shared/ folder (a folder keeps its name), where
 # uocf::utils::bundled_files finds them from bin/. The CLI-only package ships them too: udd-cli reads the tables.
 tool_shared := "tools/_shared_assets/Dictionary.dic dynamapper/assets/cc_ec_convtables"

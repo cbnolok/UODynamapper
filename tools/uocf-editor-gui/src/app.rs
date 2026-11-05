@@ -1,0 +1,5055 @@
+use crate::logic::{ClientData, Dictionary, UopCache};
+use crate::ui::ClientSource;
+use uocf::enhanced::client_dialect::ClientDialect;
+use eframe::egui;
+use image_postprocess::palette::{
+    palette_safe_upscale, DitherPolicy, PaletteModel, PaletteUpscaleConfig, RgbaFilterScaler, SnapMode,
+    TransparencyPolicy,
+};
+use image_postprocess::upscaling::{EnhancementFilter, UpscaleFilter};
+use std::num::NonZero;
+use std::collections::{HashMap, HashSet};
+use std::path::{Path, PathBuf};
+use std::sync::{mpsc, Arc};
+use std::time::Instant;
+use uocf::classic::art::ArtMap;
+pub use uocf::classic::art::ArtSource;
+use uocf::classic::cliloc::Cliloc;
+use uocf::classic::gump::GumpMap;
+use uocf::classic::multimap_render::SourceRect;
+use uocf::classic::multimap_rle::MultimapRleImage;
+use uocf::classic::sound::SoundMap;
+use uocf::audio::decode::DecodedAudio;
+use uocf::enhanced::audio::{AudioEntry, AudioKind, AudioPackage, AudioTables};
+use uocf::enhanced::hues::EcHuePackage;
+use uocf::enhanced::localized_strings::{LocalizedStringsPackage, LOCALIZED_STRINGS_UOP_NAME};
+use uocf::enhanced::housing::HousingPieces;
+use uocf::enhanced::multis::MultiCollection;
+use uocf::classic::tiledata::TileData;
+use uocf::enhanced::string_dictionary::UoStringDictionary;
+use uocf::enhanced::tileart::{
+    ArtTexture, TaeAppearanceFilter, TaeFlag,
+    TextureItem as TileArtTextureItem, TextureType as TileArtTextureType, TileArtEntry,
+};
+use uocf::enhanced::terrain_definition::TerrainDefinitionEntry;
+use uocf::enhanced::textures::{ECImageFormat, TextureFile, TextureItem as RawTextureItem};
+use uocf::uop_container::hash::hash_file_name_single;
+use uocf::uop_container::package::{LoadMode, UopPackage};
+use serde::{Deserialize, Serialize};
+
+const TERRAIN_TEXTURE_GUESS_MAX_ID: u32 = 4096;
+const TERRAIN_TEXTURE_GUESS_EXTENSIONS: [&str; 2] = ["dds", "tga"];
+
+#[derive(PartialEq, Eq, Clone, Copy, Debug, Serialize, Deserialize)]
+pub enum ViewMode {
+    Home,
+    UopExplorer,
+    TexArtCc,
+    CcTileData,
+    TileMetadata,
+    Animations,
+    AnimData,
+    Gumps,
+    Multis,
+    Housing,
+    Effects,
+    Multimap,
+    Hues,
+    Clilocs,
+    TerrainDefinition,
+    StringDictionary,
+    Sounds,
+    AnimationDefinitions,
+    ClassicMaps,
+    ClassicFonts,
+    ClassicDefs,
+}
+
+#[derive(PartialEq, Eq, Clone, Copy, Debug, Serialize, Deserialize)]
+pub enum TileMetadataSource {
+    CcTileData,
+    EcTileArt,
+}
+
+#[derive(PartialEq, Eq, Clone, Copy, Debug, Serialize, Deserialize)]
+pub enum HuesSource {
+    CcMul,
+    EcUop,
+}
+
+#[derive(PartialEq, Eq, Clone, Copy, Debug, Serialize, Deserialize)]
+pub enum EcHueingMode {
+    Cc,
+    Ec,
+}
+
+#[derive(PartialEq, Eq, Clone, Copy, Debug, Serialize, Deserialize)]
+pub enum MultisSource {
+    ClassicMul,
+    Uop,
+}
+
+#[derive(PartialEq, Eq, Clone, Copy, Debug)]
+pub enum MultiCollectionSource {
+    ClassicClient,
+    EnhancedClient,
+}
+
+/// Part and entry filters of the multis panel.
+#[derive(PartialEq, Eq, Clone, Copy, Debug)]
+pub struct MultiPartFilters {
+    /// Also list and draw the parts the client never draws (EC `not_drawn`, classic parts without the
+    /// visible flag).
+    pub show_hidden: bool,
+    /// Keep the parts whose tile id is a housing.bin piece.
+    pub show_housing_parts: bool,
+    /// Keep the parts whose tile id is not a housing.bin piece.
+    pub show_other_parts: bool,
+    /// List only the multis referenced by the housing.bin multi lists.
+    pub only_housing_multis: bool,
+    /// Leave out of the list the multis with no parts.
+    pub hide_empty_multis: bool,
+}
+
+impl Default for MultiPartFilters {
+    fn default() -> Self {
+        Self {
+            show_hidden: false,
+            show_housing_parts: true,
+            show_other_parts: true,
+            only_housing_multis: false,
+            hide_empty_multis: false,
+        }
+    }
+}
+
+/// housing.bin ids looked up by the multis panel filters.
+#[derive(Debug, Default)]
+pub struct HousingIndex {
+    /// Tile ids of the `solid` and `windows` lists.
+    pub piece_tile_ids: HashSet<u32>,
+    /// Multi ids of the `multis` lists (stair blocks).
+    pub multi_ids: HashSet<u32>,
+}
+
+impl HousingIndex {
+    pub fn from_pieces(housing: &HousingPieces) -> Self {
+        let mut index = Self::default();
+        for (_, piece) in housing.pieces() {
+            index
+                .piece_tile_ids
+                .extend(piece.solid.iter().chain(&piece.windows).map(|slot| slot.id));
+            index.multi_ids.extend(piece.multis.iter().map(|slot| slot.id));
+        }
+        index
+    }
+}
+
+pub fn concrete_art_tile_source(source: ArtSource) -> ArtSource {
+    match source {
+        ArtSource::Any => ArtSource::CcUop,
+        ArtSource::EcUop => ArtSource::EcUopLegacy,
+        source => source,
+    }
+}
+
+#[derive(PartialEq, Eq, Clone, Copy, Debug, Serialize, Deserialize)]
+pub enum LocalizedStringsSource {
+    Cliloc,
+    LocalizedStringsUop,
+}
+
+/// Where the Gumps tab reads gumps.
+#[derive(PartialEq, Eq, Clone, Copy, Debug, Serialize, Deserialize)]
+pub enum GumpSource {
+    /// `gumpidx.mul` and `gumpart.mul`.
+    Mul,
+    /// `gumpartLegacyMUL.uop`.
+    CcUop,
+    /// The gump images of the Enhanced Client's `Interface.uop`.
+    EcUop,
+}
+
+#[derive(PartialEq, Eq, Clone, Copy, Debug)]
+pub enum GumpViewerTab {
+    StandardGumps,
+    Paperdoll,
+    /// The native images of the Enhanced Client's `Interface.uop`.
+    InterfaceImages,
+}
+
+#[derive(PartialEq, Eq, Clone, Copy, Debug)]
+pub enum MultimapPreviewSelection {
+    Loaded,
+    Plain,
+    Artistic,
+}
+
+/// Where the Multimap builder reads the facet's radar image.
+#[derive(PartialEq, Eq, Clone, Copy, Debug)]
+pub enum MultimapRadarSource {
+    /// `mapN.mul` and its statics, coloured from `radarcol.mul`.
+    Mul,
+    /// `mapNLegacyMUL.uop` and its statics, coloured from `radarcol.mul`.
+    CcUop,
+    /// The Enhanced Client's own radar image of the facet, `facetNN.dds`.
+    EcUop,
+}
+
+pub struct MultimapConverterState {
+    pub source: MultimapRadarSource,
+    /// Which sources the client folders hold for the map, looked for once per folders and map.
+    pub found: Option<crate::ui::multimap::FoundRadarSources>,
+    pub map_id: u32,
+    pub include_verdata: bool,
+    pub include_map_difs: bool,
+    pub include_static_difs: bool,
+    pub source_x: u32,
+    pub source_y: u32,
+    pub source_width_enabled: bool,
+    pub source_height_enabled: bool,
+    pub source_width: u32,
+    pub source_height: u32,
+    pub output_width: u32,
+    pub output_height: u32,
+    pub edge_threshold: u16,
+    pub line_radius: u32,
+    pub status: String,
+}
+
+impl Default for MultimapConverterState {
+    fn default() -> Self {
+        Self {
+            source: MultimapRadarSource::Mul,
+            found: None,
+            map_id: 0,
+            include_verdata: false,
+            include_map_difs: false,
+            include_static_difs: false,
+            source_x: 0,
+            source_y: 0,
+            source_width_enabled: false,
+            source_height_enabled: false,
+            source_width: uocf::classic::multimap_rle::DEFAULT_WIDTH.saturating_mul(2),
+            source_height: uocf::classic::multimap_rle::DEFAULT_HEIGHT.saturating_mul(2),
+            output_width: uocf::classic::multimap_rle::DEFAULT_WIDTH,
+            output_height: uocf::classic::multimap_rle::DEFAULT_HEIGHT,
+            edge_threshold: 28,
+            line_radius: 0,
+            status: String::new(),
+        }
+    }
+}
+
+#[derive(Clone)]
+pub struct GeneratedMultimapPreview {
+    pub label: String,
+    pub source_label: String,
+    pub source_width: u32,
+    pub source_height: u32,
+    pub crop: SourceRect,
+    pub image: MultimapRleImage,
+}
+
+pub struct MultimapConversionOutput {
+    pub plain: GeneratedMultimapPreview,
+    pub artistic: GeneratedMultimapPreview,
+}
+
+pub struct MultimapWorkerResult {
+    pub result: Result<MultimapConversionOutput, String>,
+}
+
+#[derive(PartialEq, Eq, Clone, Copy, Debug)]
+#[derive(Default)]
+pub enum UpscalePreviewAlgorithm {
+    None,
+    Nearest,
+    Bilinear,
+    CatmullRom,
+    Lanczos3,
+    Lq,
+    SuperSai,
+    FsrEasu,
+    #[default]
+    FsrEasuRcas,
+    KLDepixelize,
+    Nedi,
+    TwoSai,
+    SuperEagle,
+    HqSimple,
+    HqTrue,
+    Epx,
+    Xbrz,
+    SuperXbr,
+    Cut1,
+    Cut2,
+    Cut3,
+    ScaleFx,
+    OmniScale,
+    Jinc2,
+    Jinc2Sharp,
+    Jinc2Sharper,
+    Jinc2Sharpest,
+    Mmpx,
+    Vibrance,
+    Saturation,
+    SelectiveWarm,
+    SelectiveGreen,
+    LocalLaplacianClarity,
+    ContrastEnhance,
+    AdaptiveLogContrast,
+    PaletteSnapStrict,
+    PaletteSnapRampAware,
+    PaletteSnapExpanded,
+    PaletteDitherReinsertCheckerboard,
+    ScaleFxSmartDeblur,
+    GuestrDeblur,
+    UnsharpMask,
+    HighPassSharpen,
+}
+
+
+impl UpscalePreviewAlgorithm {
+    pub fn all() -> &'static [Self] {
+        &[
+            Self::None,
+            Self::Nearest,
+            Self::Bilinear,
+            Self::CatmullRom,
+            Self::Lanczos3,
+            Self::Lq,
+            Self::SuperSai,
+            Self::FsrEasu,
+            Self::FsrEasuRcas,
+            Self::KLDepixelize,
+            Self::Nedi,
+            Self::TwoSai,
+            Self::SuperEagle,
+            Self::HqSimple,
+            Self::HqTrue,
+            Self::Epx,
+            Self::Xbrz,
+            Self::SuperXbr,
+            Self::Cut1,
+            Self::Cut2,
+            Self::Cut3,
+            Self::ScaleFx,
+            Self::OmniScale,
+            Self::Jinc2,
+            Self::Jinc2Sharp,
+            Self::Jinc2Sharper,
+            Self::Jinc2Sharpest,
+            Self::Mmpx,
+            Self::Vibrance,
+            Self::Saturation,
+            Self::SelectiveWarm,
+            Self::SelectiveGreen,
+            Self::LocalLaplacianClarity,
+            Self::ContrastEnhance,
+            Self::AdaptiveLogContrast,
+            Self::PaletteSnapStrict,
+            Self::PaletteSnapRampAware,
+            Self::PaletteSnapExpanded,
+            Self::PaletteDitherReinsertCheckerboard,
+            Self::ScaleFxSmartDeblur,
+            Self::GuestrDeblur,
+            Self::UnsharpMask,
+            Self::HighPassSharpen,
+        ]
+    }
+
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::None => "No Upscaling",
+            Self::Nearest => "Nearest",
+            Self::Bilinear => "Bilinear",
+            Self::CatmullRom => "CatmullRom",
+            Self::Lanczos3 => "Lanczos3",
+            Self::Lq => "lqx",
+            Self::SuperSai => "Super2xSaI",
+            Self::FsrEasu => "FSR EASU",
+            Self::FsrEasuRcas => "FSR EASU + RCAS",
+            Self::KLDepixelize => "Kopf-Lischinski",
+            Self::Nedi => "NEDI",
+            Self::TwoSai => "2xSaI",
+            Self::SuperEagle => "SuperEagle",
+            Self::HqSimple => "hqx simple",
+            Self::HqTrue => "hqx true",
+            Self::Epx => "EPX",
+            Self::Xbrz => "xBRz",
+            Self::SuperXbr => "Super-xBR",
+            Self::Cut1 => "CUT1",
+            Self::Cut2 => "CUT2",
+            Self::Cut3 => "CUT3",
+            Self::ScaleFx => "ScaleFX",
+            Self::OmniScale => "OmniScale",
+            Self::Jinc2 => "Jinc2",
+            Self::Jinc2Sharp => "Jinc2 Sharp",
+            Self::Jinc2Sharper => "Jinc2 Sharper",
+            Self::Jinc2Sharpest => "Jinc2 Sharpest",
+            Self::Mmpx => "MMPX",
+            Self::Vibrance => "Vibrance Boost",
+            Self::Saturation => "Saturation Boost",
+            Self::SelectiveWarm => "Selective Red/Orange Boost",
+            Self::SelectiveGreen => "Selective Green Boost",
+            Self::LocalLaplacianClarity => "Local Laplacian Clarity",
+            Self::ContrastEnhance => "Contrast Enhance",
+            Self::AdaptiveLogContrast => "Adaptive Log Contrast",
+            Self::PaletteSnapStrict => "Palette Snap Strict",
+            Self::PaletteSnapRampAware => "Palette Snap Ramp-Aware",
+            Self::PaletteSnapExpanded => "Palette Snap Expanded",
+            Self::PaletteDitherReinsertCheckerboard => "Palette Re-dither Checkerboard",
+            Self::ScaleFxSmartDeblur => "ScaleFX Smart Deblur",
+            Self::GuestrDeblur => "Libretro Deblur",
+            Self::UnsharpMask => "Unsharp Mask",
+            Self::HighPassSharpen => "High-pass Sharpen",
+        }
+    }
+
+    pub fn scale_options(self) -> &'static [u32] {
+        match self {
+            Self::None => &[1],
+            Self::SuperSai | Self::Nedi | Self::TwoSai | Self::SuperEagle => &[2],
+            Self::SuperXbr | Self::Cut1 | Self::Cut2 | Self::Cut3 => &[2],
+            Self::Mmpx => &[2, 4],
+            Self::Vibrance => &[20, 30, 40],
+            Self::Saturation => &[115, 125, 130],
+            Self::SelectiveWarm | Self::SelectiveGreen => &[20, 30, 40],
+            Self::LocalLaplacianClarity => &[15, 25, 30],
+            Self::ContrastEnhance => &[20, 35, 50],
+            Self::AdaptiveLogContrast => &[75, 80, 90],
+            Self::PaletteSnapStrict | Self::PaletteSnapRampAware | Self::PaletteDitherReinsertCheckerboard => &[1],
+            Self::PaletteSnapExpanded => &[8, 16, 32],
+            Self::ScaleFxSmartDeblur | Self::GuestrDeblur | Self::UnsharpMask | Self::HighPassSharpen => &[1],
+            _ => &[2, 3, 4],
+        }
+    }
+
+    pub fn scale_value_label(self, value: u32) -> String {
+        match self {
+            Self::Vibrance
+            | Self::SelectiveWarm
+            | Self::SelectiveGreen
+            | Self::LocalLaplacianClarity
+            | Self::ContrastEnhance => format!("{value}%"),
+            Self::Saturation => format!("{:.2}x", value as f32 / 100.0),
+            Self::AdaptiveLogContrast => format!("{:.2} gamma", value as f32 / 100.0),
+            Self::PaletteSnapStrict => "strict".to_string(),
+            Self::PaletteSnapRampAware => "ramp".to_string(),
+            Self::PaletteSnapExpanded => format!("{value} colors"),
+            Self::PaletteDitherReinsertCheckerboard => "checker".to_string(),
+            _ => format!("{value}x"),
+        }
+    }
+
+    pub fn is_palette_snap(self) -> bool {
+        matches!(
+            self,
+            Self::PaletteSnapStrict | Self::PaletteSnapRampAware | Self::PaletteSnapExpanded | Self::PaletteDitherReinsertCheckerboard
+        )
+    }
+
+    pub fn palette_config(self, scale: u32) -> Option<PaletteUpscaleConfig> {
+        let mut config = PaletteUpscaleConfig::default();
+        config.snap_mode = match self {
+            Self::PaletteSnapStrict => SnapMode::StrictSnap,
+            Self::PaletteSnapRampAware => SnapMode::RampAwareSnap,
+            Self::PaletteSnapExpanded => SnapMode::ExpandedPalette {
+                max_derived_colors: scale as usize,
+            },
+            Self::PaletteDitherReinsertCheckerboard => {
+                config.dither_policy = DitherPolicy::ReinsertCheckerboard;
+                SnapMode::StrictSnap
+            }
+            _ => return None,
+        };
+        Some(config)
+    }
+
+    pub fn to_filter(self, scale: u32) -> UpscaleFilter {
+        let scale = if self.scale_options().contains(&scale) {
+            scale
+        } else {
+            self.scale_options()[0]
+        };
+
+        match (self, scale) {
+            (Self::None, _) => UpscaleFilter::None,
+            (Self::Nearest, 2) => UpscaleFilter::Nearest2x,
+            (Self::Nearest, 3) => UpscaleFilter::Nearest3x,
+            (Self::Nearest, _) => UpscaleFilter::Nearest4x,
+            (Self::Bilinear, 2) => UpscaleFilter::Bilinear2x,
+            (Self::Bilinear, 3) => UpscaleFilter::Bilinear3x,
+            (Self::Bilinear, _) => UpscaleFilter::Bilinear4x,
+            (Self::CatmullRom, 2) => UpscaleFilter::CatmullRom2x,
+            (Self::CatmullRom, 3) => UpscaleFilter::CatmullRom3x,
+            (Self::CatmullRom, _) => UpscaleFilter::CatmullRom4x,
+            (Self::Lanczos3, 2) => UpscaleFilter::Lanczos3_2x,
+            (Self::Lanczos3, 3) => UpscaleFilter::Lanczos3_3x,
+            (Self::Lanczos3, _) => UpscaleFilter::Lanczos3_4x,
+            (Self::Lq, 2) => UpscaleFilter::Lq2x,
+            (Self::Lq, 3) => UpscaleFilter::Lq3x,
+            (Self::Lq, _) => UpscaleFilter::Lq4x,
+            (Self::SuperSai, _) => UpscaleFilter::SuperSai2x,
+            (Self::FsrEasu, 2) => UpscaleFilter::FsrEasu2x,
+            (Self::FsrEasu, 3) => UpscaleFilter::FsrEasu3x,
+            (Self::FsrEasu, _) => UpscaleFilter::FsrEasu4x,
+            (Self::FsrEasuRcas, 2) => UpscaleFilter::FsrEasuRcas2x,
+            (Self::FsrEasuRcas, 3) => UpscaleFilter::FsrEasuRcas3x,
+            (Self::FsrEasuRcas, _) => UpscaleFilter::FsrEasuRcas4x,
+            (Self::KLDepixelize, 2) => UpscaleFilter::KLDepixelize2x,
+            (Self::KLDepixelize, 3) => UpscaleFilter::KLDepixelize3x,
+            (Self::KLDepixelize, _) => UpscaleFilter::KLDepixelize4x,
+            (Self::Nedi, _) => UpscaleFilter::Nedi2x,
+            (Self::TwoSai, _) => UpscaleFilter::TwoSai2x,
+            (Self::SuperEagle, _) => UpscaleFilter::SuperEagle2x,
+            (Self::HqSimple, 2) => UpscaleFilter::Hq2xSimple,
+            (Self::HqSimple, 3) => UpscaleFilter::Hq3xSimple,
+            (Self::HqSimple, _) => UpscaleFilter::Hq4xSimple,
+            (Self::HqTrue, 2) => UpscaleFilter::Hq2xTrue,
+            (Self::HqTrue, 3) => UpscaleFilter::Hq3xTrue,
+            (Self::HqTrue, _) => UpscaleFilter::Hq4xTrue,
+            (Self::Epx, 2) => UpscaleFilter::Epx2x,
+            (Self::Epx, 3) => UpscaleFilter::Epx3x,
+            (Self::Epx, _) => UpscaleFilter::Epx4x,
+            (Self::Xbrz, 2) => UpscaleFilter::Xbrz2x,
+            (Self::Xbrz, 3) => UpscaleFilter::Xbrz3x,
+            (Self::Xbrz, _) => UpscaleFilter::Xbrz4x,
+            (Self::SuperXbr, _) => UpscaleFilter::SuperXbr2x,
+            (Self::Cut1, _) => UpscaleFilter::Cut1_2x,
+            (Self::Cut2, _) => UpscaleFilter::Cut2_2x,
+            (Self::Cut3, _) => UpscaleFilter::Cut3_2x,
+            (Self::ScaleFx, 2) => UpscaleFilter::ScaleFx2x,
+            (Self::ScaleFx, 3) => UpscaleFilter::ScaleFx3x,
+            (Self::ScaleFx, _) => UpscaleFilter::ScaleFx4x,
+            (Self::OmniScale, 2) => UpscaleFilter::OmniScale2x,
+            (Self::OmniScale, 3) => UpscaleFilter::OmniScale3x,
+            (Self::OmniScale, _) => UpscaleFilter::OmniScale4x,
+            (Self::Jinc2, 2) => UpscaleFilter::Jinc2_2x,
+            (Self::Jinc2, 3) => UpscaleFilter::Jinc2_3x,
+            (Self::Jinc2, _) => UpscaleFilter::Jinc2_4x,
+            (Self::Jinc2Sharp, 2) => UpscaleFilter::Jinc2Sharp2x,
+            (Self::Jinc2Sharp, 3) => UpscaleFilter::Jinc2Sharp3x,
+            (Self::Jinc2Sharp, _) => UpscaleFilter::Jinc2Sharp4x,
+            (Self::Jinc2Sharper, 2) => UpscaleFilter::Jinc2Sharper2x,
+            (Self::Jinc2Sharper, 3) => UpscaleFilter::Jinc2Sharper3x,
+            (Self::Jinc2Sharper, _) => UpscaleFilter::Jinc2Sharper4x,
+            (Self::Jinc2Sharpest, 2) => UpscaleFilter::Jinc2Sharpest2x,
+            (Self::Jinc2Sharpest, 3) => UpscaleFilter::Jinc2Sharpest3x,
+            (Self::Jinc2Sharpest, _) => UpscaleFilter::Jinc2Sharpest4x,
+            (Self::Mmpx, 2) => UpscaleFilter::Mmpx2x,
+            (Self::Mmpx, _) => UpscaleFilter::Mmpx4x,
+            (
+                Self::Vibrance
+                | Self::Saturation
+                | Self::SelectiveWarm
+                | Self::SelectiveGreen
+                | Self::LocalLaplacianClarity
+                | Self::ContrastEnhance
+                | Self::AdaptiveLogContrast
+                | Self::ScaleFxSmartDeblur
+                | Self::GuestrDeblur
+                | Self::UnsharpMask
+                | Self::HighPassSharpen
+                | Self::PaletteSnapStrict
+                | Self::PaletteSnapRampAware
+                | Self::PaletteSnapExpanded
+                | Self::PaletteDitherReinsertCheckerboard,
+                _,
+            ) => UpscaleFilter::None,
+        }
+    }
+
+    pub fn to_enhancement_filter(self, scale: u32) -> Option<EnhancementFilter> {
+        let scale = if self.scale_options().contains(&scale) {
+            scale
+        } else {
+            self.scale_options()[0]
+        };
+
+        match (self, scale) {
+            (Self::Vibrance, value) => Some(EnhancementFilter::Vibrance {
+                factor: value as f32 / 100.0,
+            }),
+            (Self::Saturation, value) => Some(EnhancementFilter::Saturation {
+                factor: value as f32 / 100.0,
+            }),
+            (Self::SelectiveWarm, value) => Some(EnhancementFilter::SelectiveWarm {
+                factor: value as f32 / 100.0,
+            }),
+            (Self::SelectiveGreen, value) => Some(EnhancementFilter::SelectiveGreen {
+                factor: value as f32 / 100.0,
+            }),
+            (Self::LocalLaplacianClarity, 15) => Some(EnhancementFilter::LocalLaplacianClarity { radius: 2, amount: 0.15 }),
+            (Self::LocalLaplacianClarity, 25) => Some(EnhancementFilter::LocalLaplacianClarity { radius: 3, amount: 0.25 }),
+            (Self::LocalLaplacianClarity, _) => Some(EnhancementFilter::LocalLaplacianClarity { radius: 4, amount: 0.30 }),
+            (Self::ContrastEnhance, 20) => Some(EnhancementFilter::ContrastEnhance {
+                intensity: 0.20,
+                threshold: 0.05,
+                blur_spread: 2.0,
+            }),
+            (Self::ContrastEnhance, 35) => Some(EnhancementFilter::ContrastEnhance {
+                intensity: 0.35,
+                threshold: 0.08,
+                blur_spread: 2.5,
+            }),
+            (Self::ContrastEnhance, _) => Some(EnhancementFilter::ContrastEnhance {
+                intensity: 0.50,
+                threshold: 0.15,
+                blur_spread: 3.0,
+            }),
+            (Self::AdaptiveLogContrast, 75) => Some(EnhancementFilter::AdaptiveLogContrast { radius: 3.0, gamma: 0.75 }),
+            (Self::AdaptiveLogContrast, 80) => Some(EnhancementFilter::AdaptiveLogContrast { radius: 3.0, gamma: 0.80 }),
+            (Self::AdaptiveLogContrast, _) => Some(EnhancementFilter::AdaptiveLogContrast { radius: 3.0, gamma: 0.90 }),
+            (Self::ScaleFxSmartDeblur, _) => Some(EnhancementFilter::ScaleFxSmartDeblur {
+                deblur_offset: 0.6,
+                deblur_strength: 0.55,
+                smart_deblur: 0.4,
+            }),
+            (Self::GuestrDeblur, _) => Some(EnhancementFilter::GuestrDeblur),
+            (Self::UnsharpMask, _) => Some(EnhancementFilter::UnsharpMask { radius: 1.0, amount: 0.35 }),
+            (Self::HighPassSharpen, _) => Some(EnhancementFilter::HighPassSharpen { radius: 2.0, strength: 0.18 }),
+            _ => None,
+        }
+    }
+}
+
+#[derive(PartialEq, Eq, Clone, Copy, Debug)]
+pub struct UpscalePreviewPass {
+    pub algorithm: UpscalePreviewAlgorithm,
+    pub scale: u32,
+}
+
+impl Default for UpscalePreviewPass {
+    fn default() -> Self {
+        Self {
+            algorithm: UpscalePreviewAlgorithm::default(),
+            scale: 2,
+        }
+    }
+}
+
+impl UpscalePreviewPass {
+    pub fn clamp_scale(&mut self) {
+        if !self.algorithm.scale_options().contains(&self.scale) {
+            self.scale = self.algorithm.scale_options()[0];
+        }
+    }
+
+    pub fn filter(self) -> UpscaleFilter {
+        self.algorithm.to_filter(self.scale)
+    }
+
+    pub fn enhancement_filter(self) -> Option<EnhancementFilter> {
+        self.algorithm.to_enhancement_filter(self.scale)
+    }
+
+    pub fn palette_config(self) -> Option<PaletteUpscaleConfig> {
+        self.algorithm.palette_config(self.scale)
+    }
+
+    pub fn display_value(self) -> String {
+        if self.algorithm.is_palette_snap() {
+            self.algorithm.scale_value_label(self.scale)
+        } else {
+            format!("{:?}", self.filter())
+        }
+    }
+}
+
+pub struct UpscalePreviewResult {
+    pub source_key: u64,
+    pub passes: Vec<UpscalePreviewPass>,
+    pub width: u32,
+    pub height: u32,
+    pub rgba: Vec<u8>,
+    pub elapsed_ms: u128,
+    pub palette_status: String,
+}
+
+pub struct UopEntryLabel {
+    pub hash: u64,
+    pub display_name: String,
+    pub search_name: String,
+}
+
+fn should_show_uop_entry(file: &uocf::uop_container::file::UopFile, hide_empty_entries: bool) -> bool {
+    !hide_empty_entries || file.has_size()
+}
+
+pub fn guess_uop_image_format_from_payload(data: &[u8]) -> Option<(&'static str, ECImageFormat)> {
+    if data.starts_with(b"DDS ") {
+        return Some(("dds", ECImageFormat::DDS));
+    }
+
+    if data.len() >= 18 {
+        let image_type = data[2];
+        if (image_type == 2 || image_type == 10) && data[1] <= 1 {
+            return Some(("tga", ECImageFormat::TGA));
+        }
+    }
+
+    None
+}
+
+fn terrain_texture_guess_candidate(texture_id: u32, extension: &str) -> String {
+    format!("build/terraintexture/{texture_id:08}.{extension}")
+}
+
+fn collect_terrain_texture_guess_names(package: &UopPackage) -> HashMap<u64, String> {
+    let mut names = HashMap::new();
+    for texture_id in 0..=TERRAIN_TEXTURE_GUESS_MAX_ID {
+        for extension in TERRAIN_TEXTURE_GUESS_EXTENSIONS {
+            let candidate = terrain_texture_guess_candidate(texture_id, extension);
+            let hash = hash_file_name_single(&candidate);
+            if package.get_file_by_hash(hash).is_some() {
+                names.entry(hash).or_insert(candidate);
+            }
+        }
+    }
+    names
+}
+
+fn is_terrain_texture_uop_path(path: &Path) -> bool {
+    path.file_name()
+        .and_then(|name| name.to_str())
+        .map(|name| name.eq_ignore_ascii_case("terraintexture.uop"))
+        .unwrap_or(false)
+}
+
+#[derive(Clone, Debug)]
+pub struct AnimationFrameUopEntry {
+    pub package_index: usize,
+    pub file_hash: u64,
+    pub body_id: u32,
+    pub action_id: Option<u16>,
+    pub direction: Option<u8>,
+    pub group_id: Option<u8>,
+    pub source_index: u32,
+}
+
+pub struct AnimationFrameUopScanResult {
+    pub key: (u8, usize),
+    pub entries: Vec<AnimationFrameUopEntry>,
+    /// New (hash, path) pairs discovered during the scan, not previously in the dictionary.
+    pub new_dic_entries: Vec<(u64, String)>,
+}
+
+pub fn upscale_filter_cli_value(filter: UpscaleFilter) -> &'static str {
+    match filter {
+        UpscaleFilter::None => "none",
+        UpscaleFilter::Nearest2x => "nearest2x",
+        UpscaleFilter::Nearest3x => "nearest3x",
+        UpscaleFilter::Nearest4x => "nearest4x",
+        UpscaleFilter::Bilinear2x => "bilinear2x",
+        UpscaleFilter::Bilinear3x => "bilinear3x",
+        UpscaleFilter::Bilinear4x => "bilinear4x",
+        UpscaleFilter::CatmullRom2x => "catmull-rom2x",
+        UpscaleFilter::CatmullRom3x => "catmull-rom3x",
+        UpscaleFilter::CatmullRom4x => "catmull-rom4x",
+        UpscaleFilter::Lanczos3_2x => "lanczos3-2x",
+        UpscaleFilter::Lanczos3_3x => "lanczos3-3x",
+        UpscaleFilter::Lanczos3_4x => "lanczos3-4x",
+        UpscaleFilter::SuperSai2x => "super-sai2x",
+        UpscaleFilter::FsrEasu2x => "fsr-easu2x",
+        UpscaleFilter::FsrEasu3x => "fsr-easu3x",
+        UpscaleFilter::FsrEasu4x => "fsr-easu4x",
+        UpscaleFilter::FsrEasuRcas2x => "fsr-easu-rcas2x",
+        UpscaleFilter::FsrEasuRcas3x => "fsr-easu-rcas3x",
+        UpscaleFilter::FsrEasuRcas4x => "fsr-easu-rcas4x",
+        UpscaleFilter::KLDepixelize2x => "kl-depixelize2x",
+        UpscaleFilter::KLDepixelize3x => "kl-depixelize3x",
+        UpscaleFilter::KLDepixelize4x => "kl-depixelize4x",
+        UpscaleFilter::Nedi2x => "nedi2x",
+        UpscaleFilter::TwoSai2x => "two-sai2x",
+        UpscaleFilter::SuperEagle2x => "super-eagle2x",
+        UpscaleFilter::Lq2x => "lq2x",
+        UpscaleFilter::Lq3x => "lq3x",
+        UpscaleFilter::Lq4x => "lq4x",
+        UpscaleFilter::Hq2xSimple => "hq2x-simple",
+        UpscaleFilter::Hq3xSimple => "hq3x-simple",
+        UpscaleFilter::Hq4xSimple => "hq4x-simple",
+        UpscaleFilter::Hq2xTrue => "hq2x-true",
+        UpscaleFilter::Hq3xTrue => "hq3x-true",
+        UpscaleFilter::Hq4xTrue => "hq4x-true",
+        UpscaleFilter::Epx2x => "epx2x",
+        UpscaleFilter::Epx3x => "epx3x",
+        UpscaleFilter::Epx4x => "epx4x",
+        UpscaleFilter::Xbrz2x => "xbr2x",
+        UpscaleFilter::Xbrz3x => "xbr3x",
+        UpscaleFilter::Xbrz4x => "xbr4x",
+        UpscaleFilter::SuperXbr2x => "super-xbr2x",
+        UpscaleFilter::Cut1_2x => "cut1-2x",
+        UpscaleFilter::Cut2_2x => "cut2-2x",
+        UpscaleFilter::Cut3_2x => "cut3-2x",
+        UpscaleFilter::ScaleFx2x => "scalefx2x",
+        UpscaleFilter::ScaleFx3x => "scalefx3x",
+        UpscaleFilter::ScaleFx4x => "scalefx4x",
+        UpscaleFilter::OmniScale2x => "omniscale2x",
+        UpscaleFilter::OmniScale3x => "omniscale3x",
+        UpscaleFilter::OmniScale4x => "omniscale4x",
+        UpscaleFilter::Jinc2_2x => "jinc2-2x",
+        UpscaleFilter::Jinc2_3x => "jinc2-3x",
+        UpscaleFilter::Jinc2_4x => "jinc2-4x",
+        UpscaleFilter::Jinc2Sharp2x => "jinc2-sharp2x",
+        UpscaleFilter::Jinc2Sharp3x => "jinc2-sharp3x",
+        UpscaleFilter::Jinc2Sharp4x => "jinc2-sharp4x",
+        UpscaleFilter::Jinc2Sharper2x => "jinc2-sharper2x",
+        UpscaleFilter::Jinc2Sharper3x => "jinc2-sharper3x",
+        UpscaleFilter::Jinc2Sharper4x => "jinc2-sharper4x",
+        UpscaleFilter::Jinc2Sharpest2x => "jinc2-sharpest2x",
+        UpscaleFilter::Jinc2Sharpest3x => "jinc2-sharpest3x",
+        UpscaleFilter::Jinc2Sharpest4x => "jinc2-sharpest4x",
+        UpscaleFilter::Mmpx2x => "mmpx2x",
+        UpscaleFilter::Mmpx4x => "mmpx4x",
+    }
+}
+
+pub fn upscale_pass_cli_value(pass: UpscalePreviewPass) -> String {
+    if pass.algorithm.is_palette_snap() {
+        match pass.algorithm {
+            UpscalePreviewAlgorithm::PaletteSnapStrict => "palette-snap-strict".to_string(),
+            UpscalePreviewAlgorithm::PaletteSnapRampAware => {
+                "palette-snap-ramp-aware".to_string()
+            }
+            UpscalePreviewAlgorithm::PaletteSnapExpanded => {
+                format!("palette-snap-expanded-{}", pass.scale)
+            }
+            UpscalePreviewAlgorithm::PaletteDitherReinsertCheckerboard => {
+                "palette-dither-reinsert-checkerboard".to_string()
+            }
+            _ => unreachable!(),
+        }
+    } else if pass.enhancement_filter().is_some() {
+        match pass.algorithm {
+            UpscalePreviewAlgorithm::Vibrance => "vibrance".to_string(),
+            UpscalePreviewAlgorithm::Saturation => "saturation".to_string(),
+            UpscalePreviewAlgorithm::SelectiveWarm => "selective-warm".to_string(),
+            UpscalePreviewAlgorithm::SelectiveGreen => "selective-green".to_string(),
+            UpscalePreviewAlgorithm::LocalLaplacianClarity => "local-laplacian-clarity".to_string(),
+            UpscalePreviewAlgorithm::ContrastEnhance => "contrast-enhance".to_string(),
+            UpscalePreviewAlgorithm::AdaptiveLogContrast => "adaptive-log-contrast".to_string(),
+            UpscalePreviewAlgorithm::ScaleFxSmartDeblur => "scalefx-smart-deblur".to_string(),
+            UpscalePreviewAlgorithm::GuestrDeblur => "guestr-deblur".to_string(),
+            UpscalePreviewAlgorithm::UnsharpMask => "unsharp-mask".to_string(),
+            UpscalePreviewAlgorithm::HighPassSharpen => "high-pass-sharpen".to_string(),
+            _ => unreachable!(),
+        }
+    } else {
+        upscale_filter_cli_value(pass.filter()).to_string()
+    }
+}
+
+fn apply_upscale_preview_passes(
+    width: u32,
+    height: u32,
+    rgba: Vec<u8>,
+    passes: &[UpscalePreviewPass],
+) -> (u32, u32, Vec<u8>, String) {
+    let transparency = TransparencyPolicy::default();
+    let source_palette = PaletteModel::from_rgba(width, height, &rgba, &transparency).ok();
+    let mut width = width;
+    let mut height = height;
+    let mut rgba = rgba;
+    let mut palette_status = String::new();
+    let mut index = 0usize;
+
+    while index < passes.len() {
+        let pass = passes[index];
+        if pass.algorithm.is_palette_snap() {
+            if let Some(config) = pass.palette_config() {
+                match apply_palette_snap_pass(
+                    width,
+                    height,
+                    &rgba,
+                    source_palette.as_ref(),
+                    &config,
+                    UpscaleFilter::None,
+                ) {
+                    Ok((next_width, next_height, next_rgba, status)) => {
+                        width = next_width;
+                        height = next_height;
+                        rgba = next_rgba;
+                        palette_status = status;
+                    }
+                    Err(status) => palette_status = status,
+                }
+            }
+            index += 1;
+            continue;
+        }
+
+        if let Some(filter) = pass.enhancement_filter() {
+            rgba = filter.apply(width, height, &rgba);
+            index += 1;
+            continue;
+        }
+
+        let filter = pass.filter();
+        if let Some(next_pass) = passes.get(index + 1).copied() {
+            if let Some(config) = next_pass.palette_config() {
+                match apply_palette_snap_pass(
+                    width,
+                    height,
+                    &rgba,
+                    source_palette.as_ref(),
+                    &config,
+                    filter,
+                ) {
+                    Ok((next_width, next_height, next_rgba, status)) => {
+                        width = next_width;
+                        height = next_height;
+                        rgba = next_rgba;
+                        palette_status = status;
+                    }
+                    Err(status) => {
+                        let (next_width, next_height, next_rgba) =
+                            filter.apply(width, height, &rgba);
+                        width = next_width;
+                        height = next_height;
+                        rgba = next_rgba;
+                        palette_status = status;
+                    }
+                }
+                index += 2;
+                continue;
+            }
+        }
+
+        let (next_width, next_height, next_rgba) = filter.apply(width, height, &rgba);
+        width = next_width;
+        height = next_height;
+        rgba = next_rgba;
+        index += 1;
+    }
+
+    (width, height, rgba, palette_status)
+}
+
+fn apply_palette_snap_pass(
+    width: u32,
+    height: u32,
+    rgba: &[u8],
+    source_palette: Option<&PaletteModel>,
+    config: &PaletteUpscaleConfig,
+    filter: UpscaleFilter,
+) -> Result<(u32, u32, Vec<u8>, String), String> {
+    let scaler = RgbaFilterScaler::new(filter);
+    let result = palette_safe_upscale(width, height, rgba, source_palette, &scaler, config)
+        .map_err(|error| format!("Palette snap failed: {error:?}"))?;
+    let status = format!(
+        "Palette snap: {} off-palette candidates, {} source colors, {} final colors",
+        result.diagnostics.off_palette_candidates,
+        result
+            .diagnostics
+            .stages
+            .first()
+            .map_or(0, |stage| stage.distinct_opaque_colors),
+        result
+            .diagnostics
+            .stages
+            .last()
+            .map_or(0, |stage| stage.distinct_opaque_colors)
+    );
+    Ok((result.width, result.height, result.rgba, status))
+}
+
+#[derive(Clone, Debug)]
+pub struct PaperdollEquipmentInput {
+    pub slot: String,
+    pub item_id: String,
+    pub hue: String,
+}
+
+impl Default for PaperdollEquipmentInput {
+    fn default() -> Self {
+        Self {
+            slot: String::new(),
+            item_id: String::new(),
+            hue: "0".to_string(),
+        }
+    }
+}
+
+#[derive(Clone)]
+pub struct TerrainDefinitionFileEntry {
+    pub filename_hash: u64,
+    pub byte_len: usize,
+    pub raw_prefix: Vec<u8>,
+    pub entry: TerrainDefinitionEntry,
+}
+
+#[derive(Clone)]
+pub struct TileArtFileEntry {
+    pub filename_hash: u64,
+    pub entry: TileArtEntry,
+}
+
+#[derive(Clone, Debug)]
+pub struct EcTileArtSample {
+    pub sampled_art_id: u32,
+    pub texture_id: u32,
+    pub path: String,
+    pub left: u32,
+    pub top: u32,
+    pub right: u32,
+    pub bottom: u32,
+    pub offset_x: i32,
+    pub offset_y: i32,
+}
+
+#[derive(Clone)]
+pub struct CcTileDataRow {
+    pub art_id: u32,
+    pub id: String,
+    pub kind: &'static str,
+    pub name: String,
+    pub flags_raw: String,
+    pub flags_summary: String,
+    pub texture_id: String,
+    pub height: String,
+    pub weight: String,
+    pub quality: String,
+    pub quantity: String,
+    pub anim_id: String,
+    pub value: String,
+    pub search_text: String,
+}
+
+#[derive(Clone)]
+pub struct ArtViewerRow {
+    pub art_id: u32,
+    pub label: String,
+    pub group: &'static str,
+    pub search_text: String,
+}
+
+#[derive(Clone)]
+pub struct TileArtDisplayRow {
+    pub filename_hash: u64,
+    pub tile_id: String,
+    /// The text of the record's name index; empty without the string dictionary.
+    pub name: String,
+    pub old_id: String,
+    pub body_type: String,
+    pub flags_raw: String,
+    pub flags_summary: String,
+    pub search_text: String,
+}
+
+#[derive(Clone)]
+pub struct StringDictionaryRow {
+    pub index: String,
+    pub offset: String,
+    pub value: String,
+    pub search_text: String,
+}
+
+#[derive(Clone)]
+pub struct LocalizedStringDisplayFile {
+    pub filename_hash: u64,
+    pub rows: Vec<LocalizedStringDisplayRow>,
+}
+
+#[derive(Clone)]
+pub struct LocalizedStringDisplayRow {
+    pub entry_index: usize,
+    pub id: String,
+    pub unk: String,
+    pub search_text: String,
+}
+
+#[derive(Clone, Debug)]
+pub struct SoundListEntry {
+    pub slot_id: u32,
+    pub name: String,
+    pub pcm_bytes: usize,
+    pub duration_seconds: f64,
+}
+
+/// One `Audio.uop` entry of the sounds view: a table id's file, or an entry no table row names.
+#[derive(Clone, Debug)]
+pub struct EcAudioListEntry {
+    pub hash: u64,
+    /// The name the tables give.
+    pub table_name: Option<String>,
+    pub kind: Option<AudioKind>,
+    pub id: Option<u32>,
+}
+
+/// Which client's sounds the sounds view shows.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum SoundSource {
+    #[default]
+    Classic,
+    Enhanced,
+    /// `Music/Digital/Config.txt` and the music files of a Classic client.
+    ClassicMusic,
+}
+
+#[derive(Clone)]
+pub struct ClilocFileEntry {
+    pub label: String,
+    pub path: PathBuf,
+    pub cliloc: Arc<Cliloc>,
+}
+
+pub struct SoundPlayer {
+    device_sink: rodio::MixerDeviceSink,
+    player: Option<rodio::Player>,
+}
+
+#[derive(Clone)]
+pub struct InspectorImagePreview {
+    pub key: u64,
+    pub label: String,
+    pub width: u32,
+    pub height: u32,
+    pub rgba: Arc<[u8]>,
+}
+
+impl SoundPlayer {
+    pub fn new() -> color_eyre::eyre::Result<Self> {
+        let mut device_sink = rodio::DeviceSinkBuilder::open_default_sink()?;
+        device_sink.log_on_drop(false);
+        Ok(Self {
+            device_sink,
+            player: None,
+        })
+    }
+
+    /// Plays decoded audio (MP3, WAV or Classic PCM, decoded by `uocf::audio::decode`).
+    pub fn play(&mut self, audio: &DecodedAudio) -> color_eyre::eyre::Result<()> {
+        self.stop();
+        let channels = NonZero::new(audio.channels).ok_or_else(|| color_eyre::eyre::eyre!("audio without channels"))?;
+        let sample_rate = NonZero::new(audio.sample_rate).ok_or_else(|| color_eyre::eyre::eyre!("audio without a sample rate"))?;
+        let source = rodio::buffer::SamplesBuffer::new(channels, sample_rate, audio.samples_f32());
+        let player = rodio::Player::connect_new(self.device_sink.mixer());
+        player.append(source);
+        self.player = Some(player);
+        Ok(())
+    }
+
+    pub fn stop(&mut self) {
+        if let Some(player) = self.player.take() {
+            player.stop();
+        }
+    }
+
+    pub fn is_playing(&self) -> bool {
+        self.player.as_ref().is_some_and(|player| !player.empty())
+    }
+}
+
+#[derive(Serialize, Deserialize, Clone, Default)]
+pub struct AppSettings {
+    pub cc_path: Option<PathBuf>,
+    pub ec_path: Option<PathBuf>,
+    pub dict_path: Option<PathBuf>,
+    pub last_view_mode: Option<ViewMode>,
+}
+
+fn collect_sound_entries(sounds: &SoundMap) -> Vec<SoundListEntry> {
+    let mut entries = Vec::new();
+    for slot_id in 0..sounds.slot_count() as u32 {
+        if let Ok(Some(sound)) = sounds.read_slot(slot_id) {
+            let pcm_bytes = sound.pcm_data.len();
+            let duration_seconds = sound.duration_seconds();
+            entries.push(SoundListEntry {
+                slot_id,
+                name: sound.name,
+                pcm_bytes,
+                duration_seconds,
+            });
+        }
+    }
+    entries
+}
+
+/// The table ids' entries in id order (sound, its legacy WAV, music), then the entries no row names.
+fn collect_ec_audio_entries(audio: &AudioPackage) -> Vec<EcAudioListEntry> {
+    let mut entries = Vec::new();
+    let mut listed = HashSet::new();
+    if let AudioTables::Enhanced { sounds, music } = audio.tables() {
+        let ids = sounds
+            .keys()
+            .flat_map(|&id| [(AudioKind::Sound, id), (AudioKind::LegacySound, id)])
+            .chain(music.keys().map(|&id| (AudioKind::Music, id)));
+        for (kind, id) in ids {
+            let Some(name) = audio.entry_name_for(kind, id) else { continue };
+            let hash = hash_file_name_single(&name);
+            if audio.package().get_file_by_hash(hash).is_some() && listed.insert(hash) {
+                entries.push(EcAudioListEntry { hash, table_name: Some(name), kind: Some(kind), id: Some(id) });
+            }
+        }
+    }
+    for hash in audio.hashes() {
+        if listed.insert(hash) {
+            entries.push(EcAudioListEntry { hash, table_name: audio.name_of(hash).map(str::to_owned), kind: None, id: None });
+        }
+    }
+    entries
+}
+
+pub(crate) fn collect_cc_tiledata_rows(tiledata: &TileData) -> Vec<CcTileDataRow> {
+    let mut rows = Vec::with_capacity(tiledata.land_tiles().len() + tiledata.item_tiles().len());
+    rows.extend(tiledata.land_tiles().iter().map(cc_land_row));
+    rows.extend(tiledata.item_tiles().iter().map(cc_item_row));
+    rows
+}
+
+pub(crate) fn cc_land_row(tile: &uocf::classic::tiledata::LandTile) -> CcTileDataRow {
+    let art_id = tile.tile_id as u32;
+    let id = tile.tile_id.to_string();
+    let name = tile.name_ascii().to_string();
+    let flags_raw = format!("0x{:016X}", tile.flags.internal_flags);
+    let flags_summary = classic_tile_flags_summary(tile.flags);
+    let texture_id = tile.texture_id.to_string();
+    let search_text = format!(
+        "{} land {} {} {} {}",
+        id,
+        name.to_lowercase(),
+        flags_raw.to_lowercase(),
+        flags_summary.to_lowercase(),
+        texture_id
+    );
+    CcTileDataRow {
+        art_id,
+        id,
+        kind: "Land",
+        name,
+        flags_raw,
+        flags_summary,
+        texture_id,
+        height: String::new(),
+        weight: String::new(),
+        quality: String::new(),
+        quantity: String::new(),
+        anim_id: String::new(),
+        value: String::new(),
+        search_text,
+    }
+}
+
+pub(crate) fn cc_item_row(tile: &uocf::classic::tiledata::ItemTile) -> CcTileDataRow {
+    let art_id = tile.tile_id as u32 + 0x4000;
+    let id = tile.tile_id.to_string();
+    let name = tile.name_ascii().to_string();
+    let flags_raw = format!("0x{:016X}", tile.flags.internal_flags);
+    let flags_summary = classic_tile_flags_summary(tile.flags);
+    let height = tile.height_raw().to_string();
+    let weight = tile.weight.to_string();
+    let quality = tile.quality.to_string();
+    let quantity = tile.quantity.to_string();
+    let anim_id = tile.anim_id.to_string();
+    let hue_extra = tile.hue_extra.to_string();
+    let stacking_offset = tile.stacking_offset.to_string();
+    let value = tile.value.to_string();
+    let search_text = format!(
+        "{} item {} {} {} height {} weight {} quality {} quantity {} anim {} hue {} stack {} value {}",
+        id,
+        name.to_lowercase(),
+        flags_raw.to_lowercase(),
+        flags_summary.to_lowercase(),
+        height,
+        weight,
+        quality,
+        quantity,
+        anim_id,
+        hue_extra,
+        stacking_offset,
+        value
+    );
+    CcTileDataRow {
+        art_id,
+        id,
+        kind: "Item",
+        name,
+        flags_raw,
+        flags_summary,
+        texture_id: String::new(),
+        height,
+        weight,
+        quality,
+        quantity,
+        anim_id,
+        value,
+        search_text,
+    }
+}
+
+/// The old id of a tileart.uop record that replaces no Classic tile: the format's default.
+const TILEART_NO_OLD_ID: i32 = 0x00FF_FFFF;
+
+pub(crate) fn collect_tileart_display_rows(
+    entries: &[TileArtFileEntry],
+    string_dictionary: Option<&UoStringDictionary>,
+) -> Vec<TileArtDisplayRow> {
+    entries
+        .iter()
+        .map(|file| {
+            let entry = &file.entry;
+            let tile_id = entry.tile_id.to_string();
+            let name = string_dictionary
+                .and_then(|strings| strings.get_string((entry.string_dict_off as usize).checked_sub(1)?))
+                .unwrap_or_default()
+                .to_owned();
+            let old_id = if entry.old_id == TILEART_NO_OLD_ID { String::new() } else { entry.old_id.to_string() };
+            let body_type = entry.body_type.to_string();
+            let properties_summary = tileart_properties_summary(entry);
+            let flags_raw = format!("0x{:016X}", entry.flags1.bits());
+            let flags_summary = tileart_flags_summary(entry.flags1);
+            let texture_summary = tileart_texture_summary(entry, string_dictionary);
+            let appearance_summary = tileart_appearance_summary(&entry.appearance_vector);
+            let search_text = format!(
+                "{} {} {} {} {} {} {} {} {}",
+                tile_id,
+                name.to_lowercase(),
+                old_id,
+                body_type,
+                properties_summary.to_lowercase(),
+                flags_raw.to_lowercase(),
+                flags_summary.to_lowercase(),
+                texture_summary.to_lowercase(),
+                appearance_summary.to_lowercase()
+            );
+            TileArtDisplayRow {
+                filename_hash: file.filename_hash,
+                tile_id,
+                name,
+                old_id,
+                body_type,
+                flags_raw,
+                flags_summary,
+                search_text,
+            }
+        })
+        .collect()
+}
+
+pub(crate) fn classic_tile_flags_summary(flags: uocf::classic::tiledata::Flags) -> String {
+    let labels = [
+        (flags.background(), "Background"),
+        (flags.weapon(), "Weapon"),
+        (flags.transparent(), "Transparent"),
+        (flags.translucent(), "Translucent"),
+        (flags.wall(), "Wall"),
+        (flags.damaging(), "Damaging"),
+        (flags.impassable(), "Impassable"),
+        (flags.wet(), "Wet"),
+        (flags.internal_flags & 0x0000_0100 != 0, "Unknown08"),
+        (flags.surface(), "Surface"),
+        (flags.bridge(), "Bridge"),
+        (flags.generic(), "Generic/Stackable"),
+        (flags.window(), "Window"),
+        (flags.noshoot(), "NoShoot"),
+        (flags.prefixa(), "ArticleA"),
+        (flags.prefixan(), "ArticleAn"),
+        (flags.internal(), "Internal"),
+        (flags.foliage(), "Foliage"),
+        (flags.partialhue(), "PartialHue"),
+        (flags.internal_flags & 0x0008_0000 != 0, "Unknown19"),
+        (flags.map(), "Map"),
+        (flags.container(), "Container"),
+        (flags.wearable(), "Wearable"),
+        (flags.lightsource(), "LightSource"),
+        (flags.animated(), "Animated"),
+        (flags.nodiagonal(), "NoDiagonal"),
+        (flags.internal_flags & 0x0400_0000 != 0, "Unknown26"),
+        (flags.armor(), "Armor"),
+        (flags.roof(), "Roof"),
+        (flags.door(), "Door"),
+        (flags.stairback(), "StairBack"),
+        (flags.stairright(), "StairRight"),
+        (flags.nohouse(), "NoHouse"),
+        (flags.nodraw(), "NoDraw"),
+        (flags.rotated(), "Rotated"),
+        (flags.alphablend(), "AlphaBlend"),
+        (flags.noshadow(), "NoShadow"),
+        (flags.pixelbleed(), "PixelBleed"),
+        (flags.playanimonce(), "PlayAnimOnce"),
+        (flags.multimovable(), "MultiMovable"),
+    ];
+
+    let active = labels
+        .iter()
+        .filter_map(|(active, label)| active.then_some(*label))
+        .collect::<Vec<_>>();
+    if active.is_empty() {
+        "none".to_string()
+    } else {
+        active.join(", ")
+    }
+}
+
+pub(crate) fn tileart_property_name(id: u8) -> &'static str {
+    match id {
+        0 => "Weight",
+        1 => "Quality",
+        2 => "Quantity",
+        3 => "Height",
+        4 => "Value",
+        5 => "AC/VC",
+        6 => "Layer",
+        7 => "Key7",
+        8 => "Appearance",
+        9 => "Race",
+        10 => "Gender",
+        11 => "Paperdoll",
+        _ => "Unknown",
+    }
+}
+
+fn tileart_properties_summary(entry: &TileArtEntry) -> String {
+    let mut parts = Vec::new();
+    for prop in entry.prop_vector1.iter().chain(entry.prop_vector2.iter()) {
+        parts.push(format!("{}={}", tileart_property_name(prop.id), prop.val));
+    }
+
+    if parts.is_empty() {
+        "none".to_string()
+    } else {
+        parts.join(", ")
+    }
+}
+
+pub(crate) fn tileart_flags_summary(flags: TaeFlag) -> String {
+    let labels = [
+        (TaeFlag::Background, "Background"),
+        (TaeFlag::Weapon, "Weapon"),
+        (TaeFlag::Transparent, "Transparent"),
+        (TaeFlag::Translucent, "Translucent"),
+        (TaeFlag::Wall, "Wall"),
+        (TaeFlag::Damaging, "Damaging"),
+        (TaeFlag::Impassable, "Impassable"),
+        (TaeFlag::Wet, "Wet"),
+        (TaeFlag::Ignored, "Ignored"),
+        (TaeFlag::Surface, "Surface"),
+        (TaeFlag::Bridge, "Bridge"),
+        (TaeFlag::Generic, "Generic"),
+        (TaeFlag::Window, "Window"),
+        (TaeFlag::NoShoot, "NoShoot"),
+        (TaeFlag::ArticleA, "ArticleA"),
+        (TaeFlag::ArticleAn, "ArticleAn"),
+        (TaeFlag::Mongen, "Mongen"),
+        (TaeFlag::Foliage, "Foliage"),
+        (TaeFlag::PartialHue, "PartialHue"),
+        (TaeFlag::UseNewArt, "UseNewArt"),
+        (TaeFlag::Map, "Map"),
+        (TaeFlag::Container, "Container"),
+        (TaeFlag::Wearable, "Wearable"),
+        (TaeFlag::LightSource, "LightSource"),
+        (TaeFlag::Animation, "Animation"),
+        (TaeFlag::HoverOver, "HoverOver"),
+        (TaeFlag::ArtUsed, "ArtUsed"),
+        (TaeFlag::Armor, "Armor"),
+        (TaeFlag::Roof, "Roof"),
+        (TaeFlag::Door, "Door"),
+        (TaeFlag::StairBack, "StairBack"),
+        (TaeFlag::StairRight, "StairRight"),
+        (TaeFlag::NoHouse, "NoHouse"),
+        (TaeFlag::NoDraw, "NoDraw"),
+        (TaeFlag::Rotated, "Rotated"),
+        (TaeFlag::AlphaBlend, "AlphaBlend"),
+        (TaeFlag::NoShadow, "NoShadow"),
+        (TaeFlag::PixelBleed, "PixelBleed"),
+        (TaeFlag::Unused2, "Unused2"),
+        (TaeFlag::PlayAnimOnce, "PlayAnimOnce"),
+        (TaeFlag::MultiMovable, "MultiMovable"),
+    ];
+
+    let active = labels
+        .iter()
+        .filter_map(|(flag, label)| flags.contains(*flag).then_some(*label))
+        .collect::<Vec<_>>();
+    if active.is_empty() {
+        "none".to_string()
+    } else {
+        active.join(", ")
+    }
+}
+
+fn tileart_texture_summary(
+    entry: &TileArtEntry,
+    string_dictionary: Option<&UoStringDictionary>,
+) -> String {
+    if let Some(dict) = string_dictionary {
+        let art_data = entry.process(dict);
+        let mut parts = Vec::new();
+        for block in art_data.texture_items {
+            for item in block {
+                parts.push(format!("{}:{:?}:{}", item.id, item.texture_type, item.path));
+            }
+        }
+        if !parts.is_empty() {
+            return parts.join(" | ");
+        }
+    }
+
+    let mut parts = Vec::new();
+    for (block_index, block) in entry.texture_vector.iter().enumerate() {
+        if block.has_texture == 1 {
+            parts.push(format!("block {}: {} refs", block_index, block.texture_items_count));
+        }
+    }
+    parts.join(" | ")
+}
+
+fn tileart_appearance_summary(appearance: &[TaeAppearanceFilter]) -> String {
+    if appearance.is_empty() {
+        return "none".to_string();
+    }
+
+    let mut by_body = 0usize;
+    let mut by_gender = 0usize;
+    let mut animation_by_body = 0usize;
+    for item in appearance {
+        match item {
+            TaeAppearanceFilter::ByOwnerBodyType(_) => by_body += 1,
+            TaeAppearanceFilter::ByOwnerGender { .. } => by_gender += 1,
+            TaeAppearanceFilter::AnimationByOwnerBodyType(_) => animation_by_body += 1,
+        }
+    }
+
+    format!(
+        "{} filters (body {}, gender {}, animation body {})",
+        appearance.len(),
+        by_body,
+        by_gender,
+        animation_by_body
+    )
+}
+
+pub(crate) fn collect_string_dictionary_rows(dictionary: &UoStringDictionary) -> Vec<StringDictionaryRow> {
+    dictionary
+        .iter()
+        .map(|(index, value)| {
+            let offset = index + 1;
+            StringDictionaryRow {
+                index: index.to_string(),
+                offset: offset.to_string(),
+                value: value.to_string(),
+                search_text: format!(
+                    "{} {} {}",
+                    index,
+                    offset,
+                    value.to_lowercase()
+                ),
+            }
+        })
+        .collect()
+}
+
+fn collect_localized_string_rows(
+    package: &LocalizedStringsPackage,
+) -> Vec<LocalizedStringDisplayFile> {
+    package
+        .files
+        .iter()
+        .map(|file| LocalizedStringDisplayFile {
+            filename_hash: file.filename_hash,
+            rows: file
+                .strings
+                .entries
+                .iter()
+                .enumerate()
+                .map(|(entry_index, entry)| LocalizedStringDisplayRow {
+                    entry_index,
+                    id: entry.id.to_string(),
+                    unk: format!("0x{:02X}", entry.unk),
+                    search_text: format!("{} {}", entry.id, entry.text.to_lowercase()),
+                })
+                .collect(),
+        })
+        .collect()
+}
+
+/// The file names of `paths`, for a log line: `art.mul and artLegacyMUL.uop`.
+fn client_files_label(paths: &[&Path]) -> String {
+    paths
+        .iter()
+        .map(|path| path.file_name().map_or_else(|| path.display().to_string(), |name| name.to_string_lossy().into_owned()))
+        .collect::<Vec<_>>()
+        .join(" and ")
+}
+
+/// The extension of the editor's own converted packages, read beside the client files: no client source.
+const UDD_PACKAGE_EXTENSION: &str = "uddp";
+const UOP_EXTENSION: &str = "uop";
+
+/// The sources of `paths` as the selectors name them, for a log line: ` (CC UOP)`, ` (MUL, CC UOP)`; nothing for the
+/// files outside the client folders. A UOP package is the source of its folder's client; another file of the Classic
+/// folder is MUL.
+fn client_sources_tag(paths: &[&Path], cc_path: Option<&Path>, ec_path: Option<&Path>) -> String {
+    let mut sources = Vec::new();
+    for path in paths {
+        let extension = path.extension().and_then(|extension| extension.to_str()).unwrap_or_default();
+        let is_uop = extension.eq_ignore_ascii_case(UOP_EXTENSION);
+        let in_classic = cc_path.is_some_and(|folder| path.starts_with(folder));
+        let source = match ec_path.filter(|folder| path.starts_with(folder)) {
+            Some(folder) if is_uop => Some(if ClientDialect::of_client_dir(folder).is_kingdom_reborn() {
+                ClientSource::KrUop
+            } else {
+                ClientSource::EcUop
+            }),
+            _ if in_classic && is_uop => Some(ClientSource::CcUop),
+            _ if in_classic && !extension.eq_ignore_ascii_case(UDD_PACKAGE_EXTENSION) => Some(ClientSource::Mul),
+            _ => None,
+        };
+        if let Some(source) = source.filter(|source| !sources.contains(source)) {
+            sources.push(source);
+        }
+    }
+    if sources.is_empty() {
+        String::new()
+    } else {
+        format!(" ({})", sources.iter().map(|source| source.label()).collect::<Vec<_>>().join(", "))
+    }
+}
+
+/// `count` entries, for a log line: `1 entry`, `2 entries`.
+fn entries_label(count: usize) -> String {
+    if count == 1 { format!("{count} entry") } else { format!("{count} entries") }
+}
+
+/// The files of `names` that `base_path` holds, in that order.
+fn existing_client_files(base_path: &Path, names: &[&str]) -> Vec<PathBuf> {
+    names.iter().filter_map(|name| find_client_file_case_insensitive(base_path, name)).collect()
+}
+
+/// The Classic art files `ArtMap::load` reads, in its order.
+const CLASSIC_ART_FILE_NAMES: [&str; 4] = ["art.mul", "artLegacyMUL.uop", "LegacyTexture.uop", "Texture.uop"];
+/// The Classic gump files `GumpMap::load` reads, in its order.
+const CLASSIC_GUMP_FILE_NAMES: [&str; 2] = ["gumpart.mul", "gumpartLegacyMUL.uop"];
+/// The Classic animation files `AnimMap::load` reads, by file index.
+const CLASSIC_ANIM_FILE_NAMES: [&str; uocf::classic::anim::MAX_ANIM_FILES as usize] =
+    ["anim.mul", "anim2.mul", "anim3.mul", "anim4.mul", "anim5.mul", "anim6.mul"];
+/// The EC packages the cache loads that a parser above already reported: their cache load goes to the debug log.
+const EC_UOPS_REPORTED_BY_A_PARSER: [&str; 8] = [
+    "string_dictionary.uop",
+    "localizedstrings.uop",
+    "hues.uop",
+    "multicollection.uop",
+    "tileart.uop",
+    "terraindefinition.uop",
+    "legacytexture.uop",
+    "texture.uop",
+];
+
+fn load_cliloc_files(base_path: &Path, mut log: impl FnMut(String)) -> Vec<ClilocFileEntry> {
+    let mut candidates: Vec<PathBuf> = Vec::new();
+    let Ok(entries) = std::fs::read_dir(base_path) else {
+        return Vec::new();
+    };
+
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if !path.is_file() {
+            continue;
+        }
+        let Some(name) = path.file_name().and_then(|name| name.to_str()) else {
+            continue;
+        };
+        if !is_cliloc_file_name(name) {
+            continue;
+        }
+        candidates.push(path);
+    }
+
+    candidates.sort_by_key(|path| {
+        path.file_name()
+            .and_then(|name| name.to_str())
+            .map(|name| name.to_ascii_lowercase())
+            .unwrap_or_default()
+    });
+
+    let mut clilocs = Vec::new();
+    for path in candidates {
+        let label = path
+            .file_name()
+            .and_then(|name| name.to_str())
+            .map(str::to_string)
+            .unwrap_or_else(|| path.display().to_string());
+        match Cliloc::load(&path) {
+            Ok(cliloc) => clilocs.push(ClilocFileEntry {
+                label,
+                path,
+                cliloc: Arc::new(cliloc),
+            }),
+            Err(error) => log(format!("Failed to load {label}: {error}")),
+        }
+    }
+
+    clilocs
+}
+
+fn is_cliloc_file_name(name: &str) -> bool {
+    let lower = name.to_ascii_lowercase();
+    lower.starts_with("cliloc.") && lower.len() > "cliloc.".len()
+}
+
+fn default_cliloc_file_index(clilocs: &[ClilocFileEntry]) -> Option<usize> {
+    clilocs
+        .iter()
+        .position(|entry| entry.label.eq_ignore_ascii_case("cliloc.enu"))
+        .or_else(|| clilocs.first().map(|_| 0))
+}
+
+fn find_localized_strings_uop(base_path: &Path) -> Option<PathBuf> {
+    find_client_file_case_insensitive(base_path, LOCALIZED_STRINGS_UOP_NAME)
+}
+
+const ANIMATIONFRAME_UOP_NAMES: [&str; 6] = [
+    "AnimationFrame1.uop",
+    "AnimationFrame2.uop",
+    "AnimationFrame3.uop",
+    "AnimationFrame4.uop",
+    "AnimationFrame5.uop",
+    "AnimationFrame6.uop",
+];
+
+pub(crate) fn find_client_file_case_insensitive(base_path: &Path, file_name: &str) -> Option<PathBuf> {
+    let direct_path = base_path.join(file_name);
+    if direct_path.exists() {
+        return Some(direct_path);
+    }
+
+    let entries = std::fs::read_dir(base_path).ok()?;
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if !path.is_file() {
+            continue;
+        }
+        if path
+            .file_name()
+            .and_then(|name| name.to_str())
+            .map(|name| name.eq_ignore_ascii_case(file_name))
+            .unwrap_or(false)
+        {
+            return Some(path);
+        }
+    }
+
+    None
+}
+
+/// What is typed in each tab's search box.
+#[derive(Default)]
+pub struct TabSearches {
+    pub animations: String,
+    pub animdata: String,
+    pub art: String,
+    pub clilocs: String,
+    pub hues: String,
+    pub multis: String,
+    pub string_dictionary: String,
+    pub terrain_definition: String,
+    pub tile_metadata: String,
+    pub uop_browser: String,
+}
+
+pub struct UocfEditorApp {
+    pub settings: AppSettings,
+    pub logs: Vec<String>,
+    /// What [`Self::log_warning_once`] already logged.
+    logged_once: HashSet<String>,
+    pub(crate) multi_preview_cache: crate::ui::multis::MultiPreviewCache,
+    pub(crate) unsaved_changes: crate::ui::unsaved_changes::UnsavedChanges,
+    /// Why the last image a view asked for has no texture.
+    pub last_texture_problem: Option<String>,
+    gpu_errors: crate::ui::textures::GpuErrors,
+    pub show_search_paths: bool,
+
+    pub dictionary: Dictionary,
+    pub uo_string_dictionary: Option<Arc<UoStringDictionary>>,
+    pub string_dictionary_rows: Option<Arc<Vec<StringDictionaryRow>>>,
+    pub string_dictionary_editor: crate::ui::string_dictionary::StringDictionaryEditor,
+    pub hues_editor: crate::ui::hues_editor::HuesEditor,
+    pub classic_multi_editor: crate::ui::classic_multi_editor::ClassicMultiEditor,
+    pub multimap_editor: crate::ui::multimap_editor::MultimapEditor,
+    pub cliloc: Option<Arc<Cliloc>>,
+    pub cliloc_files: Vec<ClilocFileEntry>,
+    pub localized_strings: Option<Arc<LocalizedStringsPackage>>,
+    pub localized_string_rows: Option<Arc<Vec<LocalizedStringDisplayFile>>>,
+    pub string_dictionary_raw_hash: Option<u64>,
+    pub uop_cache: UopCache,
+    pub client_data: Option<ClientData>,
+    pub cc_tiledata: Option<Arc<TileData>>,
+    pub cc_tiledata_rows: Option<Arc<Vec<CcTileDataRow>>>,
+    pub art_viewer_rows: Option<Arc<Vec<ArtViewerRow>>>,
+    pub art_viewer_rows_source: Option<ArtSource>,
+    pub cc_gumps: Option<Arc<GumpMap>>,
+    pub cc_sounds: Option<Arc<SoundMap>>,
+    pub cc_sound_entries: Option<Arc<Vec<SoundListEntry>>>,
+    pub ec_audio: Option<Arc<AudioPackage>>,
+    pub ec_audio_entries: Option<Arc<Vec<EcAudioListEntry>>>,
+    /// The selected `Audio.uop` entry, read.
+    pub ec_audio_selected: Option<Arc<AudioEntry>>,
+    pub selected_ec_audio_hash: Option<u64>,
+    pub sound_source: SoundSource,
+    pub cc_multimap: Option<Arc<MultimapRleImage>>,
+    pub cc_multimap_path: Option<PathBuf>,
+    pub generated_multimap_plain: Option<GeneratedMultimapPreview>,
+    pub generated_multimap_artistic: Option<GeneratedMultimapPreview>,
+    pub sound_player: Option<SoundPlayer>,
+
+    pub selected_uop_idx: Option<usize>,
+    pub selected_file_hash: Option<u64>,
+    pub selected_tex_art_cc_id: Option<u32>,
+    pub selected_terrain_def_hash: Option<u64>,
+    pub selected_tileart_hash: Option<u64>,
+    pub selected_ec_hue_hash: Option<u64>,
+    pub selected_multi_uop_hash: Option<u64>,
+    pub selected_localized_file_hash: Option<u64>,
+    pub selected_cliloc_file_idx: Option<usize>,
+    // pub selected_cc_tile_id: Option<u32>,
+    pub selected_legacy_source: ArtSource,
+
+    pub searches: TabSearches,
+    pub find_hash_query: String,
+    pub hide_empty_uop_entries: bool,
+    pub guess_terrain_texture_file_format: bool,
+    pub status_message: String,
+    pub view_mode: ViewMode,
+    pub tile_metadata_source: TileMetadataSource,
+    pub hues_source: HuesSource,
+    pub multis_source: MultisSource,
+    pub localized_strings_source: LocalizedStringsSource,
+    pub multimap_preview_selection: MultimapPreviewSelection,
+    pub multimap_converter: MultimapConverterState,
+    pub multimap_worker_rx: Option<mpsc::Receiver<MultimapWorkerResult>>,
+    pub multimap_worker_active: bool,
+
+    pub texture_previews: HashMap<u64, egui::TextureHandle>,
+    pub ec_texture_previews: HashMap<u32, egui::TextureHandle>,
+    pub ec_texture_preview_source_keys: HashMap<u32, u64>,
+    pub uop_entry_labels: HashMap<usize, Arc<Vec<UopEntryLabel>>>,
+    pub uop_entry_payloads: HashMap<(usize, u64), Arc<[u8]>>,
+    /// The UOP explorer's open text entries.
+    pub entry_text_edits: crate::logic::entry_text_editor::EntryTextEdits,
+    pub terrain_texture_guess_names: HashMap<usize, Arc<HashMap<u64, String>>>,
+    pub animationframe_uop_entries: HashMap<(u8, usize), Arc<Vec<AnimationFrameUopEntry>>>,
+    pub animationframe_uop_worker_rx: Option<mpsc::Receiver<AnimationFrameUopScanResult>>,
+    pub animationframe_uop_worker_key: Option<(u8, usize)>,
+    pub selected_animationframe_file_hash: Option<u64>,
+    pub multimap_texture: Option<egui::TextureHandle>,
+    /// The Classic art or gump import of the Art and Gumps views.
+    pub classic_image_import: crate::ui::classic_image_import::ClassicImageImport,
+    pub image_preview_sources: HashMap<u64, InspectorImagePreview>,
+    pub current_image_preview_key: Option<u64>,
+    pub show_upscale_preview: bool,
+    pub upscale_preview_passes: Vec<UpscalePreviewPass>,
+    pub upscale_preview_zoom: f32,
+    pub upscale_original_texture: Option<egui::TextureHandle>,
+    pub upscale_original_texture_key: Option<u64>,
+    pub upscale_preview_texture: Option<egui::TextureHandle>,
+    pub upscale_preview_texture_key: Option<(u64, Vec<UpscalePreviewPass>)>,
+    pub upscale_preview_worker_key: Option<(u64, Vec<UpscalePreviewPass>)>,
+    pub upscale_preview_worker_rx: Option<mpsc::Receiver<UpscalePreviewResult>>,
+    pub upscale_preview_size: [u32; 2],
+    pub upscale_preview_elapsed_ms: Option<u128>,
+    pub upscale_preview_status: String,
+
+    // Gumps and paperdolls
+    pub selected_gump_source: GumpSource,
+    pub selected_gump_viewer_tab: GumpViewerTab,
+    pub selected_gump_id: String,
+    pub standard_gump_ids: Vec<u32>,
+    pub paperdoll_gump_ids: Vec<u32>,
+    pub gump_list_source: Option<GumpSource>,
+    pub gump_list_profile: String,
+    pub gump_list_status: String,
+    pub selected_paperdoll_profile: String,
+    pub paperdoll_body_id: String,
+    pub paperdoll_body_hue: String,
+    pub paperdoll_equipment: Vec<PaperdollEquipmentInput>,
+    pub paperdoll_preview: Option<egui::TextureHandle>,
+
+    // Animations
+    pub selected_anim_id: u32,
+    pub selected_animdata_id: u32,
+    pub selected_animdata_art_source: ArtSource,
+    pub animdata_frame_delay_ms: f32,
+    pub selected_anim_file_idx: u8,
+    pub current_frame_idx: usize,
+    pub is_playing: bool,
+    pub last_frame_time: f64,
+    pub playback_speed: f32,
+    pub loop_animation: bool,
+
+    /// `AnimationSequence.uop` entry of the selected body type, with that body type.
+    pub selected_anim_sequence: Option<(u32, uocf::animation_sequence::AnimationSequence)>,
+    pub selected_action_id: u16,
+    pub selected_direction: u8,
+
+    pub selected_multi_id: u32,
+    pub selected_sound_slot: u32,
+    pub selected_sound_id: u32,
+    pub sound_search_query: String,
+    pub selected_hue_id: u16,
+    pub selected_ec_hue_id: u16,
+    pub selected_ec_hueing_mode: EcHueingMode,
+    pub selected_cliloc_number: i32,
+    pub multimap_zoom: f32,
+    /// The Classic maps, fonts and def file views.
+    pub classic_file_views: crate::ui::ClassicFileViews,
+    pub ec_interface_textures: crate::ui::ec_interface_textures::EcInterfaceTexturesState,
+
+    pub terrain_def_package: Option<Arc<uocf::enhanced::terrain_definition::TerrainDefinitionPackage>>,
+    pub terrain_def_files: Option<Arc<Vec<TerrainDefinitionFileEntry>>>,
+    pub ec_tileart_entries: Option<Arc<Vec<TileArtFileEntry>>>,
+    pub ec_tileart_rows: Option<Arc<Vec<TileArtDisplayRow>>>,
+    /// The loaded tileart.uop, the source of the tileart editor's saved copies.
+    pub ec_tileart_path: Option<PathBuf>,
+    pub ec_hues: Option<Arc<EcHuePackage>>,
+    pub multi_collection: Option<Arc<MultiCollection>>,
+    pub multi_collection_source: Option<MultiCollectionSource>,
+    pub multi_collection_path: Option<PathBuf>,
+    pub housing_pieces: Option<Arc<HousingPieces>>,
+    pub housing_index: Option<Arc<HousingIndex>>,
+    pub multi_part_filters: MultiPartFilters,
+    pub housing_panel: crate::ui::housing::HousingPanelState,
+    pub animation_definitions_panel: crate::ui::animation_definitions::AnimationDefinitionsPanelState,
+    pub animations_view: crate::ui::animations::AnimationsView,
+    pub localized_strings_editor: crate::ui::clilocs::LocalizedStringsEditor,
+    pub effects_panel: crate::ui::effects::EffectsPanelState,
+    pub multi_editor: crate::logic::multi_editor::MultiEditor,
+    pub tileart_editor: crate::logic::tileart_editor::TileArtEditor,
+    pub tiledata_editor: crate::ui::tiledata_editor::TileDataEditor,
+    pub animdata_editor: crate::ui::animdata_editor::AnimDataEditor,
+    pub waypoint_document: Option<crate::logic::waypoint_editor::WaypointDocument>,
+    pub legacy_terrain_editor: Option<crate::logic::legacy_terrain_editor::LegacyTerrainEditor>,
+    pub terrain_definition_editor: Option<crate::logic::terrain_definition_editor::TerrainDefinitionEditor>,
+}
+
+impl UocfEditorApp {
+    pub fn new(cc: &eframe::CreationContext<'_>) -> Self {
+        color_eyre::install().ok();
+
+        let settings: AppSettings = cc
+            .storage
+            .and_then(|s| eframe::get_value(s, "uocf_editor_settings"))
+            .unwrap_or_default();
+
+        let mut app = Self {
+            settings: settings.clone(),
+            logs: Vec::new(),
+            logged_once: HashSet::new(),
+            multi_preview_cache: Default::default(),
+            unsaved_changes: Default::default(),
+            last_texture_problem: None,
+            gpu_errors: Default::default(),
+            show_search_paths: false,
+
+            dictionary: Dictionary::new(),
+            uo_string_dictionary: None,
+            string_dictionary_rows: None,
+            string_dictionary_editor: Default::default(),
+            hues_editor: Default::default(),
+            classic_multi_editor: Default::default(),
+            multimap_editor: Default::default(),
+            cliloc: None,
+            cliloc_files: Vec::new(),
+            localized_strings: None,
+            localized_string_rows: None,
+            string_dictionary_raw_hash: None,
+            uop_cache: UopCache::new(),
+            client_data: None,
+            cc_tiledata: None,
+            cc_tiledata_rows: None,
+            art_viewer_rows: None,
+            art_viewer_rows_source: None,
+            cc_gumps: None,
+            cc_sounds: None,
+            cc_sound_entries: None,
+            ec_audio: None,
+            ec_audio_entries: None,
+            ec_audio_selected: None,
+            selected_ec_audio_hash: None,
+            sound_source: SoundSource::default(),
+            cc_multimap: None,
+            cc_multimap_path: None,
+            generated_multimap_plain: None,
+            generated_multimap_artistic: None,
+            sound_player: None,
+            selected_uop_idx: None,
+            selected_file_hash: None,
+            selected_tex_art_cc_id: None,
+            selected_terrain_def_hash: None,
+            selected_tileart_hash: None,
+            selected_ec_hue_hash: None,
+            selected_multi_uop_hash: None,
+            selected_localized_file_hash: None,
+            selected_cliloc_file_idx: None,
+            // selected_cc_tile_id: None,
+            selected_legacy_source: ArtSource::Any,
+            searches: TabSearches::default(),
+            find_hash_query: String::new(),
+            hide_empty_uop_entries: true,
+            guess_terrain_texture_file_format: false,
+            status_message: String::new(),
+            view_mode: settings.last_view_mode.unwrap_or(ViewMode::Home),
+            tile_metadata_source: TileMetadataSource::CcTileData,
+            hues_source: HuesSource::CcMul,
+            multis_source: MultisSource::ClassicMul,
+            localized_strings_source: LocalizedStringsSource::Cliloc,
+            multimap_preview_selection: MultimapPreviewSelection::Loaded,
+            multimap_converter: MultimapConverterState::default(),
+            multimap_worker_rx: None,
+            multimap_worker_active: false,
+            terrain_def_package: None,
+            terrain_def_files: None,
+            ec_tileart_entries: None,
+            ec_tileart_rows: None,
+            ec_tileart_path: None,
+            ec_hues: None,
+            multi_collection: None,
+            multi_collection_source: None,
+            multi_collection_path: None,
+            housing_pieces: None,
+            housing_index: None,
+            multi_part_filters: MultiPartFilters::default(),
+            housing_panel: Default::default(),
+            animation_definitions_panel: Default::default(),
+            animations_view: Default::default(),
+            localized_strings_editor: Default::default(),
+            effects_panel: Default::default(),
+            multi_editor: Default::default(),
+            tileart_editor: Default::default(),
+            tiledata_editor: Default::default(),
+            animdata_editor: Default::default(),
+            waypoint_document: None,
+            legacy_terrain_editor: None,
+            terrain_definition_editor: None,
+            texture_previews: HashMap::new(),
+            ec_texture_previews: HashMap::new(),
+            ec_texture_preview_source_keys: HashMap::new(),
+            uop_entry_labels: HashMap::new(),
+            uop_entry_payloads: HashMap::new(),
+            entry_text_edits: Default::default(),
+            terrain_texture_guess_names: HashMap::new(),
+            animationframe_uop_entries: HashMap::new(),
+            animationframe_uop_worker_rx: None,
+            animationframe_uop_worker_key: None,
+            selected_animationframe_file_hash: None,
+            multimap_texture: None,
+            classic_image_import: Default::default(),
+            image_preview_sources: HashMap::new(),
+            current_image_preview_key: None,
+            show_upscale_preview: false,
+            upscale_preview_passes: vec![UpscalePreviewPass::default()],
+            upscale_preview_zoom: 1.0,
+            upscale_original_texture: None,
+            upscale_original_texture_key: None,
+            upscale_preview_texture: None,
+            upscale_preview_texture_key: None,
+            upscale_preview_worker_key: None,
+            upscale_preview_worker_rx: None,
+            upscale_preview_size: [0, 0],
+            upscale_preview_elapsed_ms: None,
+            upscale_preview_status: String::new(),
+            selected_gump_source: GumpSource::Mul,
+            selected_gump_viewer_tab: GumpViewerTab::StandardGumps,
+            selected_gump_id: String::new(),
+            standard_gump_ids: Vec::new(),
+            paperdoll_gump_ids: Vec::new(),
+            gump_list_source: None,
+            gump_list_profile: String::new(),
+            gump_list_status: String::new(),
+            selected_paperdoll_profile: "human_male".to_string(),
+            paperdoll_body_id: String::new(),
+            paperdoll_body_hue: "0".to_string(),
+            paperdoll_equipment: vec![PaperdollEquipmentInput::default(); 6],
+            paperdoll_preview: None,
+
+            selected_anim_id: 0,
+            selected_animdata_id: 0,
+            selected_animdata_art_source: ArtSource::CcUop,
+            animdata_frame_delay_ms: 100.0,
+            selected_anim_file_idx: 0,
+            current_frame_idx: 0,
+            is_playing: false,
+            last_frame_time: 0.0,
+            playback_speed: 1.0,
+            loop_animation: true,
+            selected_anim_sequence: None,
+            selected_action_id: 0,
+            selected_direction: 0,
+            selected_multi_id: 0,
+            selected_sound_slot: 0,
+            selected_sound_id: 0,
+            sound_search_query: String::new(),
+            selected_hue_id: 0,
+            selected_ec_hue_id: 1,
+            selected_ec_hueing_mode: EcHueingMode::Cc,
+            selected_cliloc_number: 0,
+            multimap_zoom: 0.25,
+            classic_file_views: Default::default(),
+            ec_interface_textures: Default::default(),
+        };
+
+        app.log("UOCF Editor starting...");
+        app.log("Loading previous settings...");
+        if let Some(render_state) = &cc.wgpu_render_state {
+            app.gpu_errors.install(render_state);
+        }
+        app.trigger_reload();
+
+        app
+    }
+
+    pub fn log(&mut self, msg: impl Into<String>) {
+        let msg = msg.into();
+        log::info!("{}", msg);
+        self.logs.push(msg);
+    }
+
+    /// Logs a warning: something missing or not loaded.
+    pub fn log_warning(&mut self, msg: impl Into<String>) {
+        let msg = msg.into();
+        log::warn!("{}", msg);
+        self.logs.push(msg);
+    }
+
+    /// [`Self::log_warning`] the first time `message` is reported; for problems found while drawing, which repeat
+    /// every frame.
+    pub fn log_warning_once(&mut self, message: impl Into<String>) {
+        let message = message.into();
+        if self.logged_once.insert(message.clone()) {
+            self.log_warning(message);
+        }
+    }
+
+    /// The one line of loaded files: `Loaded <files>: <what they hold>`. Their paths go to the debug log.
+    pub fn log_loaded(&mut self, paths: &[&Path], details: impl std::fmt::Display) {
+        for path in paths {
+            log::debug!("Read {}", path.display());
+        }
+        let sources = client_sources_tag(paths, self.settings.cc_path.as_deref(), self.settings.ec_path.as_deref());
+        self.log(format!("Loaded {}{sources}: {details}", client_files_label(paths)));
+    }
+
+    /// The one line of files that failed to load, a warning: `Failed to load <files>: <reason>`.
+    pub fn log_load_failure(&mut self, paths: &[&Path], reason: impl std::fmt::Display) {
+        for path in paths {
+            log::debug!("Could not read {}", path.display());
+        }
+        let sources = client_sources_tag(paths, self.settings.cc_path.as_deref(), self.settings.ec_path.as_deref());
+        self.log_warning(format!("Failed to load {}{sources}: {reason}", client_files_label(paths)));
+    }
+
+    /// Creates a texture, or reports why the image cannot be one (`ui::textures`): in the log and the status bar
+    /// once, and in [`Self::last_texture_problem`] for the view that asked.
+    pub fn checked_texture(
+        &mut self,
+        ctx: &egui::Context,
+        name: impl Into<String>,
+        size: [usize; 2],
+        rgba: &[u8],
+        options: egui::TextureOptions,
+    ) -> Option<egui::TextureHandle> {
+        let name = name.into();
+        match crate::ui::textures::load_rgba(ctx, name.as_str(), size, rgba, options) {
+            Ok(handle) => Some(handle),
+            Err(problem) => {
+                let message = format!("Cannot show {name}: {problem}.");
+                if !self.logged_once.contains(&message) {
+                    self.status_message = message.clone();
+                }
+                self.last_texture_problem = Some(message.clone());
+                self.log_warning_once(message);
+                None
+            }
+        }
+    }
+
+    /// Moves the GPU errors of the renderer to the log and the status bar.
+    pub fn report_gpu_errors(&mut self) {
+        for error in self.gpu_errors.take_unread() {
+            let message = format!("GPU error: {error}");
+            self.status_message = message.clone();
+            self.log_warning_once(message);
+        }
+    }
+
+    pub fn select_cliloc_file(&mut self, index: usize) {
+        if let Some(entry) = self.cliloc_files.get(index) {
+            self.selected_cliloc_file_idx = Some(index);
+            self.cliloc = Some(Arc::clone(&entry.cliloc));
+        }
+    }
+
+    pub fn trigger_reload(&mut self) {
+        self.log("Starting asset reload...");
+        self.ec_hues = None;
+        self.uo_string_dictionary = None;
+        self.string_dictionary_rows = None;
+        self.string_dictionary_editor = Default::default();
+        self.hues_editor = Default::default();
+        self.classic_multi_editor = Default::default();
+        self.multimap_editor = Default::default();
+        self.string_dictionary_raw_hash = None;
+        self.client_data = None;
+        self.cc_tiledata = None;
+        self.cc_tiledata_rows = None;
+        self.art_viewer_rows = None;
+        self.art_viewer_rows_source = None;
+        self.ec_tileart_entries = None;
+        self.ec_tileart_rows = None;
+        self.ec_tileart_path = None;
+        self.multi_editor = Default::default();
+        self.tileart_editor = Default::default();
+        self.tiledata_editor = Default::default();
+        self.animdata_editor = Default::default();
+        self.animations_view = Default::default();
+        self.waypoint_document = None;
+        self.legacy_terrain_editor = None;
+        self.terrain_definition_editor = None;
+        self.selected_ec_hue_hash = None;
+        self.cliloc = None;
+        self.cliloc_files.clear();
+        self.selected_cliloc_file_idx = None;
+        self.localized_strings = None;
+        self.localized_string_rows = None;
+        self.multi_collection = None;
+        self.multi_collection_source = None;
+        self.multi_collection_path = None;
+        self.housing_pieces = None;
+        self.housing_index = None;
+        self.selected_multi_uop_hash = None;
+        self.selected_localized_file_hash = None;
+        self.localized_strings_editor = Default::default();
+        self.cc_sounds = None;
+        self.cc_sound_entries = None;
+        self.ec_audio = None;
+        self.ec_audio_entries = None;
+        self.ec_audio_selected = None;
+        self.selected_ec_audio_hash = None;
+        self.cc_gumps = None;
+        self.uop_cache.loaded_uops.clear();
+        self.selected_uop_idx = None;
+        self.selected_file_hash = None;
+        self.cc_multimap = None;
+        self.cc_multimap_path = None;
+        self.generated_multimap_plain = None;
+        self.generated_multimap_artistic = None;
+        self.multimap_preview_selection = MultimapPreviewSelection::Loaded;
+        self.multimap_worker_rx = None;
+        self.multimap_worker_active = false;
+        self.texture_previews.clear();
+        self.ec_texture_previews.clear();
+        self.uop_entry_labels.clear();
+        self.uop_entry_payloads.clear();
+        self.terrain_texture_guess_names.clear();
+        self.animationframe_uop_entries.clear();
+        self.animationframe_uop_worker_rx = None;
+        self.animationframe_uop_worker_key = None;
+        self.selected_animationframe_file_hash = None;
+        self.multimap_texture = None;
+        self.paperdoll_preview = None;
+        self.image_preview_sources.clear();
+        self.ec_texture_preview_source_keys.clear();
+        self.current_image_preview_key = None;
+        self.upscale_original_texture = None;
+        self.upscale_original_texture_key = None;
+        self.upscale_preview_texture = None;
+        self.upscale_preview_texture_key = None;
+        self.upscale_preview_worker_key = None;
+        self.upscale_preview_worker_rx = None;
+        self.upscale_preview_size = [0, 0];
+        self.upscale_preview_elapsed_ms = None;
+        self.upscale_preview_status.clear();
+        if let Some(player) = &mut self.sound_player {
+            player.stop();
+        }
+
+        // 1. Try to load CC assets (mul and uop)
+        if let Some(path) = self.settings.cc_path.clone() {
+            log::debug!("Loading the Classic client files from {}", path.display());
+            let art_res = ArtMap::load(&path);
+            let td_res = TileData::load(path.join("tiledata.mul"));
+            let gump_files = existing_client_files(&path, &CLASSIC_GUMP_FILE_NAMES);
+            let gump_files: Vec<&Path> = gump_files.iter().map(PathBuf::as_path).take(1).collect();
+            match GumpMap::load(&path) {
+                Ok(gumps) => {
+                    self.log_loaded(&gump_files, format_args!("{} gump ids", gumps.max_id()));
+                    self.cc_gumps = Some(Arc::new(gumps));
+                }
+                Err(e) if gump_files.is_empty() => log::debug!("No Classic gump art: {e:#}"),
+                Err(e) => self.log_load_failure(&gump_files, format_args!("{e:#}")),
+            }
+            let sound_files = existing_client_files(
+                &path,
+                &[uocf::classic::sound::SOUND_MUL_FILE_NAME, uocf::classic::sound::SOUND_UOP_FILE_NAME],
+            );
+            let sound_files: Vec<&Path> = sound_files.iter().map(PathBuf::as_path).take(1).collect();
+            let loaded_sounds = match SoundMap::has_sound_files(&path).then(|| SoundMap::load(&path)) {
+                Some(Ok(sounds)) => {
+                    self.log_loaded(&sound_files, format_args!("{} sound slots", sounds.slot_count()));
+                    Some(Arc::new(sounds))
+                }
+                Some(Err(e)) => {
+                    self.log_load_failure(&sound_files, format_args!("{e:#}"));
+                    None
+                }
+                None => None,
+            };
+            let loaded_sound_entries = loaded_sounds
+                .as_ref()
+                .map(|sounds| Arc::new(collect_sound_entries(sounds)));
+            self.cc_sounds = loaded_sounds.clone();
+            self.cc_sound_entries = loaded_sound_entries.clone();
+            if let Some(multimap_path) = find_client_file_case_insensitive(&path, "Multimap.rle") {
+                match uocf::classic::multimap_rle::load_rle(&multimap_path) {
+                    Ok(multimap) => {
+                        self.log_loaded(&[&multimap_path], format_args!("{}x{} pixels", multimap.width, multimap.height));
+                        self.cc_multimap = Some(Arc::new(multimap));
+                        self.cc_multimap_path = Some(multimap_path.clone());
+                    }
+                    Err(e) => self.log_load_failure(&[&multimap_path], format_args!("{e:#}")),
+                }
+            }
+            let tiledata_path = path.join("tiledata.mul");
+            let loaded_tiledata = match td_res {
+                Ok(td) => {
+                    self.log_loaded(
+                        &[&tiledata_path],
+                        format_args!("{} land and {} item tiles", td.land_tiles().len(), td.item_tiles().len()),
+                    );
+                    let td = Arc::new(td);
+                    self.cc_tiledata_rows = Some(Arc::new(collect_cc_tiledata_rows(&td)));
+                    self.cc_tiledata = Some(Arc::clone(&td));
+                    Some(td)
+                }
+                Err(e) => {
+                    self.log_load_failure(&[&tiledata_path], format_args!("{e:#}"));
+                    self.cc_tiledata = None;
+                    self.cc_tiledata_rows = None;
+                    None
+                }
+            };
+
+            let art_files = existing_client_files(&path, &CLASSIC_ART_FILE_NAMES);
+            let art_files: Vec<&Path> = art_files.iter().map(PathBuf::as_path).collect();
+            match art_res {
+                Ok(art) => {
+                    self.log_loaded(&art_files, format_args!("{} art ids", art.max_id()));
+                    let td = loaded_tiledata.unwrap_or_else(|| Arc::new(TileData::new_empty()));
+                    let multi_path = path.join("multi.mul");
+                    let multis = match uocf::classic::multi::MultiMap::load(&path) {
+                        Ok(multis) => {
+                            self.log_loaded(&[&multi_path], format_args!("{} multi ids", multis.max_id()));
+                            Some(Arc::new(multis))
+                        }
+                        Err(e) if !multi_path.exists() => {
+                            log::debug!("No multi.mul: {e:#}");
+                            None
+                        }
+                        Err(e) => {
+                            self.log_load_failure(&[&multi_path], format_args!("{e:#}"));
+                            None
+                        }
+                    };
+                    let cliloc_files = load_cliloc_files(&path, |msg| self.log_warning(msg));
+                    for entry in &cliloc_files {
+                        self.log_loaded(&[&entry.path], format_args!("{} strings", entry.cliloc.len()));
+                    }
+                    self.cliloc_files = cliloc_files;
+                    if let Some(index) = default_cliloc_file_index(&self.cliloc_files) {
+                        self.select_cliloc_file(index);
+                    }
+                    let hues_path = path.join("hues.mul");
+                    let hues = match uocf::classic::hues::load_hues(&hues_path) {
+                        Ok(hues) => {
+                            self.log_loaded(&[&hues_path], format_args!("{} hues", hues.len()));
+                            Some(Arc::new(hues))
+                        }
+                        Err(e) if !hues_path.exists() => {
+                            log::debug!("No hues.mul: {e:#}");
+                            None
+                        }
+                        Err(e) => {
+                            self.log_load_failure(&[&hues_path], format_args!("{e:#}"));
+                            None
+                        }
+                    };
+                    let animdata_path = path.join("animdata.mul");
+                    let animdata = match uocf::classic::animdata::AnimData::load(&animdata_path) {
+                        Ok(animdata) => {
+                            self.log_loaded(&[&animdata_path], entries_label(animdata.entries.len()));
+                            Some(Arc::new(animdata))
+                        }
+                        Err(e) if !animdata_path.exists() => {
+                            log::debug!("No animdata.mul: {e:#}");
+                            None
+                        }
+                        Err(e) => {
+                            self.log_load_failure(&[&animdata_path], format_args!("{e:#}"));
+                            None
+                        }
+                    };
+                    let anim_files = existing_client_files(&path, &CLASSIC_ANIM_FILE_NAMES);
+                    let anim_files: Vec<&Path> = anim_files.iter().map(PathBuf::as_path).collect();
+                    let anim_map = match uocf::classic::anim::AnimMap::load(&path) {
+                        Ok(anim_map) => {
+                            let indexed = (0..uocf::classic::anim::MAX_ANIM_FILES)
+                                .filter_map(|file| anim_map.source_index_count(file))
+                                .sum::<usize>();
+                            if !anim_files.is_empty() {
+                                self.log_loaded(&anim_files, format_args!("{indexed} animation index entries"));
+                            }
+                            Some(Arc::new(anim_map))
+                        }
+                        Err(e) if anim_files.is_empty() => {
+                            log::debug!("No Classic animation files: {e:#}");
+                            None
+                        }
+                        Err(e) => {
+                            self.log_load_failure(&anim_files, format_args!("{e:#}"));
+                            None
+                        }
+                    };
+                    self.client_data = Some(ClientData {
+                        path: path.clone(),
+                        art: Arc::new(art),
+                        tiledata: td,
+                        multis,
+                        _ec_multis: None,
+                        hues,
+                        animdata,
+                        anim_map,
+                    });
+                }
+                Err(e) if art_files.is_empty() => {
+                    self.log_load_failure(&[&path.join(CLASSIC_ART_FILE_NAMES[0])], format_args!("{e:#}"));
+                }
+                Err(e) => self.log_load_failure(&art_files, format_args!("{e:#}")),
+            }
+
+            for uop_name in ["artlegacymul.uop", "artLegacyMUL.uop"] {
+                let uop_path = path.join(uop_name);
+                if uop_path.exists() {
+                    match UopPackage::load(&uop_path) {
+                        Ok(package) => {
+                            log::debug!("Cached {} for the UOP browser", uop_path.display());
+                            self.uop_cache.loaded_uops.push(Arc::new(crate::logic::uop_cache::LoadedUop {
+                                path: uop_path,
+                                package,
+                            }));
+                        }
+                        Err(e) => self.log_load_failure(&[&uop_path], format_args!("{e:#}")),
+                    }
+                    break;
+                }
+            }
+
+            for uop_name in ["MultiCollection.uop", "multicollection.uop"] {
+                let uop_path = path.join(uop_name);
+                if uop_path.exists() {
+                    match MultiCollection::load(&uop_path) {
+                        Ok(collection) => {
+                            let count = collection.items.len();
+                            self.multi_collection = Some(Arc::new(collection));
+                            self.multi_collection_source = Some(MultiCollectionSource::ClassicClient);
+                            self.multi_collection_path = Some(uop_path.clone());
+                            let housing = self.load_housing_pieces(&uop_path);
+                            self.log_loaded(&[&uop_path], format_args!("{}{housing}", entries_label(count)));
+                        }
+                        Err(e) => self.log_load_failure(&[&uop_path], format_args!("{e:#}")),
+                    }
+                    match UopPackage::load(&uop_path) {
+                        Ok(package) => {
+                            log::debug!("Cached {} for the UOP browser", uop_path.display());
+                            self.uop_cache.add(uop_path, package);
+                        }
+                        Err(e) => self.log_load_failure(&[&uop_path], format_args!("{e:#}")),
+                    }
+                    break;
+                }
+            }
+
+            for uop_name in ANIMATIONFRAME_UOP_NAMES {
+                if let Some(uop_path) = find_client_file_case_insensitive(&path, uop_name) {
+                    if self
+                        .uop_cache
+                        .loaded_uops
+                        .iter()
+                        .any(|loaded| loaded.path.as_path() == uop_path.as_path())
+                    {
+                        continue;
+                    }
+                    match UopPackage::load_with_mode(&uop_path, LoadMode::Lazy) {
+                        Ok(package) => {
+                            self.log_loaded(&[&uop_path], entries_label(package.file_count() as usize));
+                            self.uop_cache.add(uop_path, package);
+                        }
+                        Err(e) => self.log_load_failure(&[&uop_path], format_args!("{e:#}")),
+                    }
+                }
+            }
+
+            if let Some(uop_path) =
+                find_client_file_case_insensitive(&path, "AnimationSequence.uop")
+            {
+                if !self
+                    .uop_cache
+                    .loaded_uops
+                    .iter()
+                    .any(|loaded| loaded.path.as_path() == uop_path.as_path())
+                {
+                    match UopPackage::load_with_mode(&uop_path, LoadMode::Lazy) {
+                        Ok(package) => {
+                            self.log_loaded(&[&uop_path], entries_label(package.file_count() as usize));
+                            self.uop_cache.add(uop_path, package);
+                        }
+                        Err(e) => self.log_load_failure(&[&uop_path], format_args!("{e:#}")),
+                    }
+                }
+            }
+        }
+
+        // 2. Try to load EC assets (string dictionary and legacy texture)
+        if let Some(ec_base_path) = self.settings.ec_path.clone() {
+            log::debug!("Loading the Enhanced client files from {}", ec_base_path.display());
+            match AudioPackage::load(&ec_base_path) {
+                Ok(Some(audio)) => {
+                    self.ec_audio_entries = Some(Arc::new(collect_ec_audio_entries(&audio)));
+                    let audio_path = audio.path().to_path_buf();
+                    self.log_loaded(&[&audio_path], entries_label(audio.package().file_count() as usize));
+                    self.ec_audio = Some(Arc::new(audio));
+                    if self.cc_sounds.is_none() {
+                        self.sound_source = SoundSource::Enhanced;
+                    }
+                }
+                Ok(None) => {}
+                Err(e) => self.log_load_failure(
+                    &[&ec_base_path.join(uocf::enhanced::audio::AUDIO_UOP_FILE_NAME)],
+                    format_args!("{e:#}"),
+                ),
+            }
+
+            // Try load string dictionary
+            let sd_path = ec_base_path.join("string_dictionary.uop");
+            if sd_path.exists() {
+                match UoStringDictionary::load(&sd_path) {
+                    Ok(dict) => {
+                        self.log_loaded(&[&sd_path], format_args!("{} strings", dict.len()));
+                        let rows = collect_string_dictionary_rows(&dict);
+                        self.uo_string_dictionary = Some(Arc::new(dict));
+                        self.string_dictionary_rows = Some(Arc::new(rows));
+                        if let Ok(package) = UopPackage::load(&sd_path) {
+                            self.string_dictionary_raw_hash = package
+                                .get_file_by_hash(0)
+                                .map(|file| file.filename_hash())
+                                .or_else(|| package.iter_files().find(|file| file.has_size()).map(|file| file.filename_hash()));
+                        }
+                    }
+                    Err(e) => self.log_load_failure(&[&sd_path], format_args!("{e:#}")),
+                }
+            }
+
+            // Try load LegacyTexture.uop and attach to CC art if available
+            let lt_path = ec_base_path.join("LegacyTexture.uop");
+            if lt_path.exists() {
+                match UopPackage::load(&lt_path) {
+                    Ok(package) => {
+                        self.log_loaded(&[&lt_path], format_args!("{} of EC legacy art", entries_label(package.file_count() as usize)));
+                        if let Some(client) = &mut self.client_data {
+                            let mut art = (*client.art).clone();
+                            art = art.with_uop(package.clone());
+                            client.art = Arc::new(art);
+                        } else {
+                            // If no CC path, load it standalone
+                            let art = ArtMap::load_standalone_uop(package.clone());
+                            self.client_data = Some(ClientData {
+                                path: ec_base_path.clone(),
+                                art: Arc::new(art),
+                                tiledata: Arc::new(TileData::new_empty()),
+                                multis: None,
+                                _ec_multis: None,
+                                hues: None,
+                                animdata: None,
+                                anim_map: None,
+                            });
+                        }
+                    }
+                    Err(e) => self.log_load_failure(&[&lt_path], format_args!("{e:#}")),
+                }
+            }
+
+            if let Some(texture_path) =
+                find_client_file_case_insensitive(&ec_base_path, "Texture.uop")
+            {
+                match UopPackage::load(&texture_path) {
+                    Ok(package) => {
+                        self.log_loaded(&[&texture_path], format_args!("{} of KR art", entries_label(package.file_count() as usize)));
+                        if let Some(client) = &mut self.client_data {
+                            let mut art = (*client.art).clone();
+                            art = art.with_ec_kr_uop(package.clone());
+                            client.art = Arc::new(art);
+                        } else {
+                            let art = ArtMap::load_standalone_ec_kr_uop(package.clone());
+                            self.client_data = Some(ClientData {
+                                path: ec_base_path.clone(),
+                                art: Arc::new(art),
+                                tiledata: Arc::new(TileData::new_empty()),
+                                multis: None,
+                                _ec_multis: None,
+                                hues: None,
+                                animdata: None,
+                                anim_map: None,
+                            });
+                        }
+                    }
+                    Err(e) => self.log_load_failure(&[&texture_path], format_args!("{e:#}")),
+                }
+            }
+
+            if let Some(hues_path) =
+                find_client_file_case_insensitive(&ec_base_path, "hues.uop")
+            {
+                match EcHuePackage::load(&hues_path) {
+                    Ok(hues) => {
+                        self.log_loaded(&[&hues_path], format_args!("{} hue bitmaps", hues.bitmaps.len()));
+                        self.ec_hues = Some(Arc::new(hues));
+                    }
+                    Err(e) => self.log_load_failure(&[&hues_path], format_args!("{e:#}")),
+                }
+            }
+
+            for uop_name in ["MultiCollection.uop", "multicollection.uop"] {
+                let uop_path = ec_base_path.join(uop_name);
+                if uop_path.exists() {
+                    match MultiCollection::load(&uop_path) {
+                        Ok(collection) => {
+                            let count = collection.items.len();
+                            self.multi_collection = Some(Arc::new(collection));
+                            self.multi_collection_source = Some(MultiCollectionSource::EnhancedClient);
+                            self.multi_collection_path = Some(uop_path.clone());
+                            let housing = self.load_housing_pieces(&uop_path);
+                            self.log_loaded(&[&uop_path], format_args!("{}{housing}", entries_label(count)));
+                        }
+                        Err(e) => self.log_load_failure(&[&uop_path], format_args!("{e:#}")),
+                    }
+                    break;
+                }
+            }
+
+            if let Some(uop_path) = find_localized_strings_uop(&ec_base_path) {
+                match LocalizedStringsPackage::load(&uop_path) {
+                    Ok(strings) => {
+                        let count = strings.len();
+                        let rows = collect_localized_string_rows(&strings);
+                        self.localized_strings = Some(Arc::new(strings));
+                        self.localized_string_rows = Some(Arc::new(rows));
+                        self.localized_strings_editor = crate::ui::clilocs::LocalizedStringsEditor::for_package(uop_path.clone());
+                        self.log_loaded(&[&uop_path], format_args!("{count} strings"));
+                    }
+                    Err(e) => self.log_load_failure(&[&uop_path], format_args!("{e:#}")),
+                }
+            }
+
+            // Load additional EC UOPs into the cache for exploration
+            let ec_uops = [
+                "string_dictionary.uop",
+                "localizedstrings.uop",
+                "LocalizedStrings.uop",
+                "hues.uop",
+                "MultiCollection.uop",
+                "multicollection.uop",
+                "tileart.uop",
+                "terraindefinition.uop",
+                "terraintexture.uop",
+                "legacytexture.uop",
+                "legacyterrain.uop",
+                "texture.uop",
+                "interface.uop",
+                "waypoint.uop",
+                "AnimationSequence.uop",
+                "AnimationFrame1.uop",
+                "AnimationFrame2.uop",
+                "AnimationFrame3.uop",
+                "AnimationFrame4.uop",
+                "AnimationFrame5.uop",
+                "AnimationFrame6.uop",
+            ];
+            for uop_name in ec_uops {
+                if let Some(uop_path) =
+                    find_client_file_case_insensitive(&ec_base_path, uop_name)
+                {
+                    if self
+                        .uop_cache
+                        .loaded_uops
+                        .iter()
+                        .any(|loaded| loaded.path.as_path() == uop_path.as_path())
+                    {
+                        continue;
+                    }
+                    let load_mode = if uop_name.eq_ignore_ascii_case("interface.uop")
+                        || uop_name.eq_ignore_ascii_case("AnimationSequence.uop")
+                        || ANIMATIONFRAME_UOP_NAMES
+                            .iter()
+                            .any(|name| uop_name.eq_ignore_ascii_case(name))
+                    {
+                        LoadMode::Lazy
+                    } else {
+                        LoadMode::Eager
+                    };
+                    match UopPackage::load_with_mode(&uop_path, load_mode) {
+                        Ok(package) => {
+                            if EC_UOPS_REPORTED_BY_A_PARSER.iter().any(|name| uop_name.eq_ignore_ascii_case(name)) {
+                                log::debug!("Cached {} for the UOP browser", uop_path.display());
+                            } else {
+                                self.log_loaded(&[&uop_path], entries_label(package.file_count() as usize));
+                            }
+                            self.uop_cache.loaded_uops.push(Arc::new(crate::logic::uop_cache::LoadedUop {
+                                path: uop_path,
+                                package,
+                            }));
+                        }
+                        Err(e) => self.log_load_failure(&[&uop_path], format_args!("{e:#}")),
+                    }
+                }
+            }
+
+            let tileart_path = ec_base_path.join("tileart.uop");
+            if tileart_path.exists() {
+                match UopPackage::load(&tileart_path) {
+                    Ok(package) => {
+                        let mut entries = Vec::new();
+                        let mut failed = 0usize;
+                        for file in package.iter_files() {
+                            match TileArtEntry::parse_raw(file) {
+                                Ok(entry) => entries.push(TileArtFileEntry {
+                                    filename_hash: file.filename_hash(),
+                                    entry,
+                                }),
+                                Err(_) => failed += 1,
+                            }
+                        }
+                        entries.sort_by_key(|file| file.entry.tile_id);
+                        let rows = collect_tileart_display_rows(
+                            &entries,
+                            self.uo_string_dictionary.as_deref(),
+                        );
+                        let count = entries.len();
+                        self.ec_tileart_entries = Some(Arc::new(entries));
+                        self.ec_tileart_rows = Some(Arc::new(rows));
+                        self.ec_tileart_path = Some(tileart_path.clone());
+                        self.log_loaded(&[&tileart_path], format_args!("{count} records ({failed} unreadable)"));
+                    }
+                    Err(e) => self.log_load_failure(&[&tileart_path], format_args!("{e:#}")),
+                }
+            }
+
+            // Also load TerrainDefinitionPackage for the ad-hoc viewer
+            if let Some(td_path) = find_client_file_case_insensitive(&ec_base_path, "TerrainDefinition.uop") {
+                match UopPackage::load(&td_path) {
+                    Ok(package) => {
+                        let dict_arc = self.uo_string_dictionary.clone();
+                        let dict = dict_arc.as_deref();
+                        let package_error = match uocf::enhanced::terrain_definition::TerrainDefinitionPackage::from_package(
+                            &package,
+                            dict,
+                        ) {
+                            Ok(pkg) => {
+                                self.terrain_def_package = Some(Arc::new(pkg));
+                                None
+                            }
+                            Err(e) => Some(e),
+                        };
+
+                        let mut files = Vec::new();
+                        let mut failed = 0usize;
+                        for file in package.iter_files() {
+                            if !file.has_size() {
+                                continue;
+                            }
+
+                            let data = match file.unpack() {
+                                Ok(data) => data,
+                                Err(_) => {
+                                    failed += 1;
+                                    continue;
+                                }
+                            };
+                            match uocf::enhanced::terrain_definition::parse_entry(file, dict) {
+                                Ok(entry) => {
+                                    files.push(TerrainDefinitionFileEntry {
+                                        filename_hash: file.filename_hash(),
+                                        byte_len: data.len(),
+                                        raw_prefix: data[..data.len().min(256)].to_vec(),
+                                        entry,
+                                    });
+                                }
+                                Err(_) => failed += 1,
+                            }
+                        }
+                        files.sort_by_key(|file| file.entry.id);
+                        let count = files.len();
+                        self.terrain_def_files = Some(Arc::new(files));
+                        match package_error {
+                            None => self.log_loaded(&[&td_path], format_args!("{count} files ({failed} unreadable)")),
+                            Some(e) => self.log_load_failure(
+                                &[&td_path],
+                                format_args!("{e:#}; {count} files read one by one ({failed} unreadable)"),
+                            ),
+                        }
+                    }
+                    Err(e) => self.log_load_failure(&[&td_path], format_args!("{e:#}")),
+                }
+            }
+        }
+
+        // 3. Try to load .dic hash dictionary from settings path
+        if let Some(path) = self.settings.dict_path.clone() {
+            match self.dictionary.load_dic(&path) {
+                Ok(_) => {
+                    let count = self.dictionary.count();
+                    self.log_loaded(&[&path], format_args!("{count} named hashes in all"));
+                }
+                Err(e) => self.log_load_failure(&[&path], format_args!("{e:#}")),
+            }
+        }
+
+        // 4. Always try to find .dic dicts in current folder as well
+        self.load_local_dictionaries();
+    }
+
+    fn load_local_dictionaries(&mut self) {
+        // Try current dir
+        self.scan_dir_for_dicts(".");
+
+        // Try exe dir
+        if let Ok(exe_path) = std::env::current_exe() {
+            if let Some(dir) = exe_path.parent() {
+                if dir != std::path::Path::new(".") {
+                    self.scan_dir_for_dicts(dir);
+                }
+            }
+        }
+
+        // The dictionary shipped with the tools: in the release's shared/ folder, or in the source checkout. One
+        // beside the executable was loaded by the scan above.
+        let exe_dir = std::env::current_exe().ok().and_then(|exe_path| exe_path.parent().map(std::path::Path::to_path_buf));
+        match uocf::utils::bundled_files::resolve(None, uocf::utils::bundled_files::HASH_DICTIONARY) {
+            Ok(path) if path.parent() == exe_dir.as_deref() => {}
+            Ok(path) => match self.dictionary.load_dic(&path) {
+                Ok(_) => self.log(format!("Loaded the shipped DIC dictionary: {}", path.display())),
+                Err(e) => self.log(format!("Failed to load DIC dictionary {}: {}", path.display(), e)),
+            },
+            Err(e) => self.log(e.to_string()),
+        }
+    }
+
+    fn scan_dir_for_dicts(&mut self, dir: impl AsRef<std::path::Path>) {
+        let dir = dir.as_ref();
+        if let Ok(entries) = std::fs::read_dir(dir) {
+            for entry in entries.flatten() {
+                let path = entry.path();
+                if path.is_file() && path.extension().and_then(|s| s.to_str()) == Some("dic") {
+                    log::debug!("Found a hash dictionary candidate: {}", path.display());
+                    match self.dictionary.load_dic(&path) {
+                        Ok(_) => {
+                            let count = self.dictionary.count();
+                            self.log_loaded(&[&path], format_args!("{count} named hashes in all"));
+                        }
+                        Err(_) => {
+                            // Silently ignore if it's not a valid dictionary.
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    pub fn register_current_image_preview(
+        &mut self,
+        key: u64,
+        label: impl Into<String>,
+        width: u32,
+        height: u32,
+        rgba: &[u8],
+    ) {
+        if width == 0 || height == 0 {
+            return;
+        }
+        let expected_len = width as usize * height as usize * 4;
+        if rgba.len() != expected_len {
+            return;
+        }
+
+        self.image_preview_sources.entry(key).or_insert_with(|| InspectorImagePreview {
+                    key,
+                    label: label.into(),
+                    width,
+                    height,
+                    rgba: Arc::<[u8]>::from(rgba),
+                });
+        self.select_image_preview(key);
+    }
+
+    pub fn select_image_preview(&mut self, key: u64) {
+        if !self.image_preview_sources.contains_key(&key) {
+            return;
+        }
+        if self.current_image_preview_key != Some(key) {
+            self.current_image_preview_key = Some(key);
+            self.upscale_original_texture_key = None;
+            self.upscale_preview_texture_key = None;
+            self.upscale_preview_worker_key = None;
+            self.upscale_preview_worker_rx = None;
+            self.upscale_preview_elapsed_ms = None;
+            self.upscale_preview_status.clear();
+        }
+    }
+
+    pub fn current_image_preview(&self) -> Option<&InspectorImagePreview> {
+        self.current_image_preview_key
+            .and_then(|key| self.image_preview_sources.get(&key))
+    }
+
+    pub fn current_upscale_preview_passes(&self) -> Vec<UpscalePreviewPass> {
+        self.upscale_preview_passes.clone()
+    }
+
+    pub fn clamp_upscale_preview_passes(&mut self) {
+        if self.upscale_preview_passes.is_empty() {
+            self.upscale_preview_passes
+                .push(UpscalePreviewPass::default());
+        }
+        for pass in &mut self.upscale_preview_passes {
+            pass.clamp_scale();
+        }
+    }
+
+    pub fn refresh_upscale_preview_textures(&mut self, ctx: &egui::Context) {
+        self.clamp_upscale_preview_passes();
+        self.poll_upscale_preview_worker(ctx);
+        let Some(source) = self.current_image_preview().cloned() else {
+            self.upscale_original_texture = None;
+            self.upscale_original_texture_key = None;
+            self.upscale_preview_texture = None;
+            self.upscale_preview_texture_key = None;
+            self.upscale_preview_worker_key = None;
+            self.upscale_preview_worker_rx = None;
+            self.upscale_preview_size = [0, 0];
+            self.upscale_preview_elapsed_ms = None;
+            self.upscale_preview_status.clear();
+            return;
+        };
+
+        if self.upscale_original_texture_key != Some(source.key) {
+            self.upscale_original_texture = self.checked_texture(
+                ctx,
+                format!("uocf_upscale_original_{:016X}", source.key),
+                [source.width as usize, source.height as usize],
+                &source.rgba,
+                egui::TextureOptions::NEAREST,
+            );
+            self.upscale_original_texture_key = Some(source.key);
+        }
+
+        let passes = self.current_upscale_preview_passes();
+        let texture_key = (source.key, passes.clone());
+        if self.upscale_preview_texture_key == Some(texture_key.clone())
+            || self.upscale_preview_worker_key == Some(texture_key.clone())
+        {
+            return;
+        }
+
+        self.upscale_preview_texture = None;
+        self.upscale_preview_texture_key = None;
+        self.upscale_preview_size = [0, 0];
+        self.upscale_preview_elapsed_ms = None;
+        self.upscale_preview_status = "Computing preview...".to_string();
+
+        let source_key = source.key;
+        let source_width = source.width;
+        let source_height = source.height;
+        let source_rgba = Arc::clone(&source.rgba);
+        let worker_passes = passes.clone();
+        let (tx, rx) = mpsc::channel();
+        std::thread::spawn(move || {
+            let started = Instant::now();
+            let (width, height, rgba, palette_status) = apply_upscale_preview_passes(
+                source_width,
+                source_height,
+                source_rgba.to_vec(),
+                &worker_passes,
+            );
+            let _ = tx.send(UpscalePreviewResult {
+                source_key,
+                passes: worker_passes,
+                width,
+                height,
+                rgba,
+                elapsed_ms: started.elapsed().as_millis(),
+                palette_status,
+            });
+        });
+
+        self.upscale_preview_worker_key = Some(texture_key);
+        self.upscale_preview_worker_rx = Some(rx);
+        ctx.request_repaint();
+    }
+
+    fn poll_upscale_preview_worker(&mut self, ctx: &egui::Context) {
+        let result = match self.upscale_preview_worker_rx.as_ref().map(|rx| rx.try_recv()) {
+            Some(Ok(result)) => Some(result),
+            Some(Err(mpsc::TryRecvError::Empty)) | None => return,
+            Some(Err(mpsc::TryRecvError::Disconnected)) => {
+                self.upscale_preview_worker_rx = None;
+                self.upscale_preview_worker_key = None;
+                self.upscale_preview_status = "Preview worker stopped.".to_string();
+                return;
+            }
+        };
+
+        let Some(result) = result else {
+            return;
+        };
+        let texture_key = (result.source_key, result.passes.clone());
+        self.upscale_preview_worker_rx = None;
+        self.upscale_preview_worker_key = None;
+        if self.current_image_preview_key == Some(result.source_key) {
+            self.upscale_preview_texture = self.checked_texture(
+                ctx,
+                format!("uocf_upscale_preview_{:016X}_{:?}", result.source_key, result.passes),
+                [result.width as usize, result.height as usize],
+                &result.rgba,
+                egui::TextureOptions::NEAREST,
+            );
+            self.upscale_preview_texture_key = Some(texture_key);
+            self.upscale_preview_size = [result.width, result.height];
+            self.upscale_preview_elapsed_ms = Some(result.elapsed_ms);
+            self.upscale_preview_status = result.palette_status;
+            ctx.request_repaint();
+        }
+    }
+
+    pub fn open_uop(&mut self) {
+        if let Some(path) = crate::dialog::file_dialog()
+            .add_filter("UOP Packages", &["uop"])
+            .pick_file()
+        {
+            match UopPackage::load_with_mode(&path, LoadMode::Eager) {
+                Ok(package) => {
+                    self.uop_cache.add(path.clone(), package);
+                    self.selected_uop_idx = Some(self.uop_cache.loaded_uops.len() - 1);
+                    self.status_message = format!("Loaded {}", path.display());
+                    self.view_mode = ViewMode::UopExplorer;
+                }
+                Err(e) => {
+                    self.status_message = format!("Failed to load UOP: {}", e);
+                }
+            }
+        }
+    }
+
+    pub fn get_uop_texture(
+        &mut self,
+        ctx: &egui::Context,
+        hash: u64,
+        data: &[u8],
+        name: &str,
+    ) -> Option<egui::TextureHandle> {
+        if let Some(handle) = self.texture_previews.get(&hash).cloned() {
+            self.select_image_preview(hash);
+            return Some(handle);
+        }
+
+        let lower_name = name.to_lowercase();
+        if lower_name.ends_with(".bmp") {
+            let (width, height, pixels) = uocf::enhanced::hues::decode_hue_image_to_rgba(data).ok()?;
+            let handle = self.checked_texture(ctx, name, [width as usize, height as usize], &pixels, Default::default())?;
+            self.texture_previews.insert(hash, handle.clone());
+            self.register_current_image_preview(hash, name, width, height, &pixels);
+            return Some(handle);
+        }
+
+        if let Some(decoded) = crate::ui::textures::decode_classic_uop_entry(&lower_name, data) {
+            return match decoded {
+                Ok((width, height, pixels)) => {
+                    let size = [width as usize, height as usize];
+                    let handle = self.checked_texture(ctx, name, size, &pixels, Default::default())?;
+                    self.texture_previews.insert(hash, handle.clone());
+                    self.register_current_image_preview(hash, name, width, height, &pixels);
+                    Some(handle)
+                }
+                Err(problem) => {
+                    self.last_texture_problem = Some(format!("{name}: {problem}"));
+                    None
+                }
+            };
+        }
+
+        let format = if lower_name.ends_with(".dds") {
+            ECImageFormat::DDS
+        } else if lower_name.ends_with(".tga") {
+            ECImageFormat::TGA
+        } else if let Some((_, format)) = guess_uop_image_format_from_payload(data) {
+            format
+        } else {
+            ECImageFormat::Unknown
+        };
+
+        let tex_file = TextureFile {
+            metadata: RawTextureItem::absent(),
+            is_ec: true,
+            format,
+            props: None,
+            raw_data: data.into(),
+            image_data_offset: 0,
+        };
+
+        match tex_file.decode_to_rgba() {
+            Ok(img) => {
+                let size = [img.width() as usize, img.height() as usize];
+                let pixels = img.to_rgba8();
+                let handle = self.checked_texture(ctx, name, size, pixels.as_raw(), Default::default())?;
+                self.texture_previews.insert(hash, handle.clone());
+                self.register_current_image_preview(
+                    hash,
+                    name,
+                    size[0] as u32,
+                    size[1] as u32,
+                    pixels.as_raw(),
+                );
+                Some(handle)
+            }
+            Err(error) => {
+                self.last_texture_problem = Some(format!("{name}: {error:#}"));
+                None
+            }
+        }
+    }
+
+    pub fn selected_uop_is_terrain_texture(&self, uop_idx: usize) -> bool {
+        self.uop_cache
+            .loaded_uops
+            .get(uop_idx)
+            .map(|loaded| is_terrain_texture_uop_path(&loaded.path))
+            .unwrap_or(false)
+    }
+
+    pub fn set_guess_terrain_texture_file_format(&mut self, enabled: bool) {
+        if self.guess_terrain_texture_file_format != enabled {
+            self.guess_terrain_texture_file_format = enabled;
+            self.uop_entry_labels.clear();
+            self.terrain_texture_guess_names.clear();
+        }
+    }
+
+    pub fn set_hide_empty_uop_entries(&mut self, enabled: bool) {
+        if self.hide_empty_uop_entries != enabled {
+            self.hide_empty_uop_entries = enabled;
+            self.uop_entry_labels.clear();
+            if enabled {
+                self.selected_file_hash = None;
+            }
+        }
+    }
+
+    fn get_terrain_texture_guess_names(&mut self, uop_idx: usize) -> Option<Arc<HashMap<u64, String>>> {
+        if !self.guess_terrain_texture_file_format || !self.selected_uop_is_terrain_texture(uop_idx) {
+            return None;
+        }
+
+        if let Some(names) = self.terrain_texture_guess_names.get(&uop_idx).cloned() {
+            return Some(names);
+        }
+
+        let loaded = self.uop_cache.loaded_uops.get(uop_idx)?.clone();
+        let names = Arc::new(collect_terrain_texture_guess_names(&loaded.package));
+        self.terrain_texture_guess_names.insert(uop_idx, Arc::clone(&names));
+        Some(names)
+    }
+
+    pub fn resolve_uop_entry_display_name(&mut self, uop_idx: usize, hash: u64) -> String {
+        if let Some(name) = self.dictionary.resolve(hash) {
+            return name.to_string();
+        }
+
+        if let Some(names) = self.get_terrain_texture_guess_names(uop_idx) {
+            if let Some(name) = names.get(&hash) {
+                return name.clone();
+            }
+        }
+
+        format!("{:016X}", hash)
+    }
+
+    pub fn get_uop_entry_labels(&mut self, uop_idx: usize) -> Arc<Vec<UopEntryLabel>> {
+        if let Some(labels) = self.uop_entry_labels.get(&uop_idx).cloned() {
+            return labels;
+        }
+
+        let Some(loaded) = self.uop_cache.loaded_uops.get(uop_idx).cloned() else {
+            return Arc::new(Vec::new());
+        };
+        let guessed_names = self.get_terrain_texture_guess_names(uop_idx);
+
+        let labels = loaded
+            .package
+            .iter_files()
+            .filter(|file| should_show_uop_entry(file, self.hide_empty_uop_entries))
+            .map(|file| {
+                let hash = file.filename_hash();
+                let display_name = self
+                    .dictionary
+                    .resolve(hash)
+                    .map(str::to_string)
+                    .or_else(|| guessed_names.as_ref().and_then(|names| names.get(&hash).cloned()))
+                    .unwrap_or_else(|| format!("{:016X}", hash));
+                let search_name = display_name.to_lowercase();
+                UopEntryLabel {
+                    hash,
+                    display_name,
+                    search_name,
+                }
+            })
+            .collect::<Vec<_>>();
+
+        let labels = Arc::new(labels);
+        self.uop_entry_labels.insert(uop_idx, Arc::clone(&labels));
+        labels
+    }
+
+    pub fn get_uop_entry_payload(&mut self, uop_idx: usize, hash: u64) -> Option<Arc<[u8]>> {
+        let key = (uop_idx, hash);
+        if let Some(payload) = self.uop_entry_payloads.get(&key).cloned() {
+            return Some(payload);
+        }
+
+        let loaded = self.uop_cache.loaded_uops.get(uop_idx)?.clone();
+        let payload = loaded.package.unpack_file_arc_by_hash(hash).ok()??;
+        self.uop_entry_payloads.insert(key, Arc::clone(&payload));
+        Some(payload)
+    }
+
+    pub fn save_entry(&mut self, hash: u64, name: &str) {
+        if let Some(uop_idx) = self.selected_uop_idx {
+            let loaded = &self.uop_cache.loaded_uops[uop_idx];
+            if loaded.package.get_file_by_hash(hash).is_some() {
+                if let Some(path) = crate::dialog::file_dialog()
+                    .set_file_name(name)
+                    .set_title("Extract Entry")
+                    .save_file()
+                {
+                    match loaded.package.unpack_file_by_hash(hash) {
+                        Ok(Some(data)) => {
+                            if let Err(e) = std::fs::write(&path, data) {
+                                self.status_message = format!("Failed to save: {}", e);
+                            } else {
+                                self.status_message = format!("Extracted to: {}", path.display());
+                            }
+                        }
+                        Ok(None) => {
+                            self.status_message = format!("Entry {:016X} is not in package", hash);
+                        }
+                        Err(e) => {
+                            self.status_message = format!("Failed to unpack: {}", e);
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    pub fn get_ec_texture_by_id(
+        &mut self,
+        ctx: &egui::Context,
+        texture_id: u32,
+    ) -> Option<egui::TextureHandle> {
+        if let Some(handle) = self.ec_texture_previews.get(&texture_id).cloned() {
+            if let Some(key) = self.ec_texture_preview_source_keys.get(&texture_id).copied() {
+                self.select_image_preview(key);
+            }
+            return Some(handle);
+        }
+
+        let loaded_uops = self.uop_cache.loaded_uops.clone();
+        for loaded in &loaded_uops {
+            let candidates = [
+                format!("build/worldart/{:08}.dds", texture_id),
+                format!("build/worldart/{:08}.tga", texture_id),
+                format!("build/tileartlegacy/{:08}.dds", texture_id),
+                format!("build/tileartlegacy/{:08}.tga", texture_id),
+                format!("build/tileartenhanced/{:08}.dds", texture_id),
+                format!("build/tileartenhanced/{:08}.tga", texture_id),
+            ];
+
+            for path in candidates {
+                let hash = uocf::uop_container::hash::hash_file_name_single(&path);
+                if loaded.package.get_file_by_hash(hash).is_some() {
+                    if let Ok(Some(data)) = loaded.package.unpack_file_by_hash(hash) {
+                        if let Some(handle) = self.get_uop_texture(ctx, hash, &data, &path) {
+                            self.ec_texture_previews.insert(texture_id, handle.clone());
+                            self.ec_texture_preview_source_keys.insert(texture_id, hash);
+                            return Some(handle);
+                        }
+                    }
+                }
+            }
+        }
+        None
+    }
+
+    /// The image of a tileart texture item, from its family's folder: `worldart` and `tileartlegacy` share ids. It does
+    /// not become the image the upscaler works on, because a record draws several of these per frame.
+    pub fn tileart_item_texture(&mut self, ctx: &egui::Context, texture_type: TileArtTextureType, id: u32) -> Option<egui::TextureHandle> {
+        let own_folder;
+        let folders: &[&str] = match tileart_texture_path_prefix(texture_type) {
+            Some(folder) => {
+                own_folder = [folder];
+                &own_folder
+            }
+            None => &TILEART_ITEM_FOLDERS,
+        };
+        let loaded_uops = self.uop_cache.loaded_uops.clone();
+        for folder in folders {
+            for extension in TILEART_ITEM_IMAGE_EXTENSIONS {
+                let path = format!("{folder}/{id:08}.{extension}");
+                let hash = uocf::uop_container::hash::hash_file_name_single(&path);
+                if let Some(handle) = self.texture_previews.get(&hash) {
+                    return Some(handle.clone());
+                }
+                for loaded in &loaded_uops {
+                    if let Ok(Some(data)) = loaded.package.unpack_file_by_hash(hash) {
+                        return self.get_uop_texture(ctx, hash, &data, &path);
+                    }
+                }
+            }
+        }
+        None
+    }
+
+    fn get_uop_art_image_texture(
+        &mut self,
+        ctx: &egui::Context,
+        key: u64,
+        art_id: u32,
+        source: ArtSource,
+        scratch: &[u8],
+    ) -> Option<egui::TextureHandle> {
+        let format = if scratch.starts_with(b"DDS ") {
+            ECImageFormat::DDS
+        } else {
+            ECImageFormat::TGA
+        };
+        let tex_file = TextureFile {
+            metadata: RawTextureItem::absent(),
+            is_ec: source.is_ec_uop(),
+            format,
+            props: None,
+            raw_data: Arc::from(scratch),
+            image_data_offset: 0,
+        };
+        let img = tex_file.decode_to_rgba().ok()?;
+        let mut rgba = img.to_rgba8();
+        if cc_hue_should_apply_to_art(art_id, source) && self.selected_hue_id > 0 {
+            if let Some(hue) = self
+                .client_data
+                .as_ref()
+                .and_then(|client| client.hues.as_ref())
+                .and_then(|hues| hues.get((self.selected_hue_id as usize).saturating_sub(1)))
+            {
+                for pixel in rgba.as_mut().chunks_exact_mut(4) {
+                    let r = pixel[0] as u32;
+                    let g = pixel[1] as u32;
+                    let b = pixel[2] as u32;
+                    let a = pixel[3] as u32;
+                    let color = (a << 24) | (r << 16) | (g << 8) | b;
+                    let hued = hue.apply_to_color32(color, false);
+
+                    pixel[0] = ((hued >> 16) & 0xFF) as u8;
+                    pixel[1] = ((hued >> 8) & 0xFF) as u8;
+                    pixel[2] = (hued & 0xFF) as u8;
+                    pixel[3] = ((hued >> 24) & 0xFF) as u8;
+                }
+            }
+        }
+        let handle = self.checked_texture(
+            ctx,
+            format!("uop_art_image_{}_{:?}_h{}", art_id, source, self.selected_hue_id),
+            [rgba.width() as usize, rgba.height() as usize],
+            rgba.as_raw(),
+            Default::default(),
+        )?;
+        self.texture_previews.insert(key, handle.clone());
+        self.register_current_image_preview(
+            key,
+            format!("art {} {:?} hue {}", art_id, source, self.selected_hue_id),
+            rgba.width(),
+            rgba.height(),
+            rgba.as_raw(),
+        );
+        Some(handle)
+    }
+
+    fn get_tex_art_cc_texture_from_source(
+        &mut self,
+        ctx: &egui::Context,
+        art_id: u32,
+        source: ArtSource,
+    ) -> Option<egui::TextureHandle> {
+        let hue_id = self.selected_hue_id;
+        let key = 0xCC000000 | (source as u64) << 48 | (hue_id as u64) << 32 | art_id as u64;
+        if let Some(handle) = self.texture_previews.get(&key).cloned() {
+            self.select_image_preview(key);
+            return Some(handle);
+        }
+
+        if let Some(client) = &self.client_data {
+            let art = Arc::clone(&client.art);
+            let hues = client.hues.clone();
+            let mut scratch = Vec::new();
+            if art_id < 0x4000 {
+                if art
+                    .get_raw_art_data_from_source(art_id, source, &mut scratch)
+                    .is_ok()
+                {
+                    if scratch.starts_with(b"DDS ") {
+                        return self.get_uop_art_image_texture(ctx, key, art_id, source, &scratch);
+                    }
+                    if source != ArtSource::Mul {
+                        if let Some(handle) =
+                            self.get_uop_art_image_texture(ctx, key, art_id, source, &scratch)
+                        {
+                            return Some(handle);
+                        }
+                    }
+
+                    let mut pixels = [0u8; 44 * 44 * 4];
+                    if uocf::classic::art::decode_land_tile_from_raw(&scratch, &mut pixels)
+                        .is_ok()
+                    {
+                        let handle = self.checked_texture(
+                            ctx,
+                            format!("cc_land_{}_{:?}_h{}", art_id, source, hue_id),
+                            [44, 44],
+                            &pixels[..],
+                            Default::default(),
+                        )?;
+                        self.texture_previews.insert(key, handle.clone());
+                        self.register_current_image_preview(
+                            key,
+                            format!("land art {} {:?} hue {}", art_id, source, hue_id),
+                            44,
+                            44,
+                            &pixels[..],
+                        );
+                        return Some(handle);
+                    }
+                }
+            } else {
+                if art
+                    .get_raw_art_data_from_source(art_id, source, &mut scratch)
+                    .is_ok()
+                    && scratch.starts_with(b"DDS ")
+                {
+                    return self.get_uop_art_image_texture(ctx, key, art_id, source, &scratch);
+                }
+
+                if let Ok((w, h, mut pixels)) =
+                    art.decode_static_tile_from_source(art_id, source, &mut scratch)
+                {
+                    // Apply hue if selected
+                    if hue_id > 0 {
+                        if let Some(hues) = &hues {
+                            if let Some(hue) = hues.get((hue_id as usize).saturating_sub(1)) {
+                                for i in (0..pixels.len()).step_by(4) {
+                                    let r = pixels[i] as u32;
+                                    let g = pixels[i + 1] as u32;
+                                    let b = pixels[i + 2] as u32;
+                                    let a = pixels[i + 3] as u32;
+                                    let color = (a << 24) | (r << 16) | (g << 8) | b;
+
+                                    let hued = hue.apply_to_color32(color, false);
+
+                                    pixels[i] = ((hued >> 16) & 0xFF) as u8;
+                                    pixels[i + 1] = ((hued >> 8) & 0xFF) as u8;
+                                    pixels[i + 2] = (hued & 0xFF) as u8;
+                                    pixels[i + 3] = ((hued >> 24) & 0xFF) as u8;
+                                }
+                            }
+                        }
+                    }
+
+                    let handle = self.checked_texture(
+                        ctx,
+                        format!("cc_static_{}_{:?}_h{}", art_id, source, hue_id),
+                        [w as usize, h as usize],
+                        &pixels[..],
+                        Default::default(),
+                    )?;
+                    self.texture_previews.insert(key, handle.clone());
+                    self.register_current_image_preview(
+                        key,
+                        format!("static art {} {:?} hue {}", art_id, source, hue_id),
+                        w as u32,
+                        h as u32,
+                        &pixels[..],
+                    );
+                    return Some(handle);
+                }
+            }
+        }
+        None
+    }
+
+    pub fn get_tex_art_cc_texture(
+        &mut self,
+        ctx: &egui::Context,
+        art_id: u32,
+    ) -> Option<egui::TextureHandle> {
+        self.get_tex_art_cc_texture_from_source(ctx, art_id, self.selected_legacy_source)
+    }
+
+    pub fn get_tex_art_texture_from_source(
+        &mut self,
+        ctx: &egui::Context,
+        art_id: u32,
+        source: ArtSource,
+    ) -> Option<egui::TextureHandle> {
+        self.get_tex_art_cc_texture_from_source(ctx, art_id, source)
+    }
+
+    pub fn get_animdata_art_texture_from_source(
+        &mut self,
+        ctx: &egui::Context,
+        art_id: u32,
+        source: ArtSource,
+        frame_index: usize,
+        _frame_count: usize,
+    ) -> Option<egui::TextureHandle> {
+        let concrete_source = concrete_art_tile_source(source);
+        let hue_id = self.selected_hue_id;
+        if !matches!(concrete_source, ArtSource::EcUopLegacy | ArtSource::EcUopKr) {
+            // The Classic path hues through hues.mul; without it, through Hues.uop.
+            let classic_hues = self.client_data.as_ref().is_some_and(|client| client.hues.is_some());
+            if hue_id != 0 && !classic_hues {
+                let hued = self.get_tex_art_texture_with_ec_hue_from_source(ctx, art_id, source, hue_id);
+                if hued.is_some() {
+                    return hued;
+                }
+            }
+            return self.get_tex_art_texture_from_source(ctx, art_id, source);
+        }
+
+        let sample = self.animdata_tileart_sample(art_id, concrete_source)?;
+        let hueing_mode = self.selected_ec_hueing_mode;
+        let key = 0xAD00_0000_0000_0000u64
+            ^ hash_file_name_single(&sample.path)
+            ^ ((hueing_mode as u64) << 56)
+            ^ ((concrete_source as u64) << 48)
+            ^ ((hue_id as u64) << 32)
+            ^ (sample.sampled_art_id as u64);
+        if let Some(handle) = self.texture_previews.get(&key).cloned() {
+            self.select_image_preview(key);
+            return Some(handle);
+        }
+
+        let (width, height, mut pixels) =
+            self.decode_art_item_rgba_from_source(sample.texture_id, concrete_source)?;
+        if hue_id != 0 {
+            if let Some(hue_table) = self.ec_hue_lookup_table(hue_id, hueing_mode) {
+                apply_ec_hue_table_to_rgba(&mut pixels, &hue_table, hueing_mode);
+            }
+        }
+        let (width, height, pixels) = crop_rgba_rect(
+            width,
+            height,
+            &pixels,
+            sample.left,
+            sample.top,
+            sample.right,
+            sample.bottom,
+        )?;
+        let handle = self.checked_texture(
+            ctx,
+            format!(
+                "animdata_art_{}_{}_{}_h{}",
+                sample.sampled_art_id, sample.texture_id, frame_index, hue_id
+            ),
+            [width as usize, height as usize],
+            &pixels,
+            Default::default(),
+        )?;
+        self.texture_previews.insert(key, handle.clone());
+        self.register_current_image_preview(
+            key,
+            format!(
+                "animdata art {} {:?} -> {} [{},{}..{},{}] hue {}",
+                sample.sampled_art_id,
+                concrete_source,
+                sample.path,
+                sample.left,
+                sample.top,
+                sample.right,
+                sample.bottom,
+                hue_id
+            ),
+            width,
+            height,
+            &pixels,
+        );
+        Some(handle)
+    }
+
+    pub fn animdata_tileart_sample(
+        &self,
+        art_id: u32,
+        source: ArtSource,
+    ) -> Option<EcTileArtSample> {
+        let entries = self.ec_tileart_entries.as_ref()?;
+        let index = entries
+            .binary_search_by_key(&art_id, |file| file.entry.tile_id)
+            .ok()?;
+        let dictionary = self.uo_string_dictionary.as_deref()?;
+        let art_data = entries[index].entry.process(dictionary);
+        match concrete_art_tile_source(source) {
+            ArtSource::EcUopLegacy => {
+                let texture = art_data.cc_texture?;
+                let path_prefix = tileart_sample_path_prefix(
+                    &art_data.texture_items,
+                    1,
+                    texture.texture_id,
+                    TileArtTextureType::TileArtLegacy,
+                    "build/tileartlegacy",
+                );
+                ec_tileart_sample_from_texture(art_id, texture, path_prefix)
+            }
+            ArtSource::EcUopKr => {
+                let texture = art_data.ec_texture?;
+                let path_prefix = tileart_sample_path_prefix(
+                    &art_data.texture_items,
+                    0,
+                    texture.texture_id,
+                    TileArtTextureType::WorldArt,
+                    "build/worldart",
+                );
+                ec_tileart_sample_from_texture(art_id, texture, path_prefix)
+            }
+            ArtSource::Mul | ArtSource::CcUop | ArtSource::EcUop | ArtSource::Any => None,
+        }
+    }
+
+    pub fn animdata_art_source_request_label(
+        &self,
+        art_id: u32,
+        source: ArtSource,
+        frame_index: usize,
+    ) -> String {
+        match source {
+            ArtSource::Mul => format!("Source request: art.mul/artidx.mul art_id {art_id} (0x{art_id:04X})"),
+            ArtSource::CcUop => {
+                format!("Source request: artLegacyMUL.uop build/artlegacymul/{art_id:08}.tga")
+            }
+            ArtSource::EcUop | ArtSource::EcUopLegacy => {
+                if let Some(sample) = self.animdata_tileart_sample(art_id, source) {
+                    format!(
+                        "Source request: tileart.uop tile {} -> LegacyTexture.uop {}, rect {},{}..{},{} offset {},{}",
+                        sample.sampled_art_id,
+                        sample.path,
+                        sample.left,
+                        sample.top,
+                        sample.right,
+                        sample.bottom,
+                        sample.offset_x,
+                        sample.offset_y
+                    )
+                } else {
+                    format!("Source request: tileart.uop tile {art_id} -> LegacyTexture.uop metadata unavailable, frame {frame_index}")
+                }
+            }
+            ArtSource::EcUopKr => {
+                if let Some(sample) = self.animdata_tileart_sample(art_id, source) {
+                    format!(
+                        "Source request: tileart.uop tile {} -> Texture.uop {}, rect {},{}..{},{} offset {},{}",
+                        sample.sampled_art_id,
+                        sample.path,
+                        sample.left,
+                        sample.top,
+                        sample.right,
+                        sample.bottom,
+                        sample.offset_x,
+                        sample.offset_y
+                    )
+                } else {
+                    format!("Source request: tileart.uop tile {art_id} -> Texture.uop metadata unavailable, frame {frame_index}")
+                }
+            }
+            ArtSource::Any => format!("Source request: auto art_id {art_id} (0x{art_id:04X})"),
+        }
+    }
+
+    pub fn get_tex_art_texture_with_ec_hue_from_source(
+        &mut self,
+        ctx: &egui::Context,
+        art_id: u32,
+        source: ArtSource,
+        hue_id: u16,
+    ) -> Option<egui::TextureHandle> {
+        let hueing_mode = self.selected_ec_hueing_mode;
+        let key = 0xEC00_0000_0000_0000u64
+            | ((hueing_mode as u64) << 56)
+            | ((source as u64) << 48)
+            | ((hue_id as u64) << 32)
+            | art_id as u64;
+        if let Some(handle) = self.texture_previews.get(&key).cloned() {
+            self.select_image_preview(key);
+            return Some(handle);
+        }
+
+        let hue_table = self.ec_hue_lookup_table(hue_id, hueing_mode)?;
+        let (width, height, mut pixels) = self.decode_art_item_rgba_from_source(art_id, source)?;
+        apply_ec_hue_table_to_rgba(&mut pixels, &hue_table, hueing_mode);
+
+        let handle = self.checked_texture(
+            ctx,
+            format!("ec_hued_art_{}_{:?}_h{}", art_id, source, hue_id),
+            [width as usize, height as usize],
+            &pixels,
+            egui::TextureOptions::NEAREST,
+        )?;
+        self.texture_previews.insert(key, handle.clone());
+        self.register_current_image_preview(
+            key,
+            format!("art {} {:?} EC hue {} {:?}", art_id, source, hue_id, hueing_mode),
+            width,
+            height,
+            &pixels,
+        );
+        Some(handle)
+    }
+
+    fn decode_art_item_rgba_from_source(
+        &self,
+        art_id: u32,
+        source: ArtSource,
+    ) -> Option<(u32, u32, Vec<u8>)> {
+        if art_id < uocf::classic::art::STATIC_TILE_ID_BASE && !source.is_ec_uop() {
+            return None;
+        }
+
+        let client = self.client_data.as_ref()?;
+        let art = Arc::clone(&client.art);
+        let mut scratch = Vec::new();
+        if art
+            .get_raw_art_data_from_source(art_id, source, &mut scratch)
+            .is_ok()
+        {
+            let format = if scratch.starts_with(b"DDS ") {
+                ECImageFormat::DDS
+            } else {
+                ECImageFormat::TGA
+            };
+            if source != ArtSource::Mul || scratch.starts_with(b"DDS ") {
+                let tex_file = TextureFile {
+                    metadata: RawTextureItem::absent(),
+                    is_ec: source.is_ec_uop(),
+                    format,
+                    props: None,
+                    raw_data: Arc::from(scratch.as_slice()),
+                    image_data_offset: 0,
+                };
+                if let Ok(img) = tex_file.decode_to_rgba() {
+                    let rgba = img.to_rgba8();
+                    return Some((rgba.width(), rgba.height(), rgba.into_raw()));
+                }
+            }
+        }
+
+        scratch.clear();
+        art.decode_static_tile_from_source(art_id, source, &mut scratch)
+            .ok()
+            .map(|(width, height, pixels)| (width as u32, height as u32, pixels))
+    }
+
+    /// Whether a package of this file name is loaded.
+    pub fn has_loaded_uop(&self, file_name: &str) -> bool {
+        self.uop_cache.loaded_uops.iter().any(|loaded| {
+            loaded.path.file_name().and_then(|name| name.to_str()).is_some_and(|name| name.eq_ignore_ascii_case(file_name))
+        })
+    }
+
+    fn ec_hue_lookup_table(&self, hue_id: u16, hueing_mode: EcHueingMode) -> Option<Vec<u8>> {
+        let hash = uocf::enhanced::hues::hue_bitmap_hash(hue_id);
+        let loaded_uops = self.uop_cache.loaded_uops.clone();
+        for loaded in &loaded_uops {
+            let is_hues = loaded
+                .path
+                .file_name()
+                .and_then(|name| name.to_str())
+                .map(|name| name.eq_ignore_ascii_case(uocf::enhanced::hues::HUES_UOP_NAME))
+                .unwrap_or(false);
+            if !is_hues {
+                continue;
+            }
+            let Ok(Some(data)) = loaded.package.unpack_file_by_hash(hash) else {
+                continue;
+            };
+            let Ok((width, height, pixels)) = uocf::enhanced::hues::decode_hue_image_to_rgba(&data) else {
+                continue;
+            };
+            return match hueing_mode {
+                EcHueingMode::Cc => build_ec_hue_lookup_table(width, height, &pixels),
+                EcHueingMode::Ec => build_ec_hue_lookup_strip(width, height, &pixels),
+            };
+        }
+        None
+    }
+
+    pub fn get_multimap_texture(&mut self, ctx: &egui::Context) -> Option<egui::TextureHandle> {
+        let key = 0x6F00000000000000;
+        if let Some(handle) = self.multimap_texture.clone() {
+            self.select_image_preview(key);
+            return Some(handle);
+        }
+
+        let multimap = Arc::clone(self.cc_multimap.as_ref()?);
+        let rgba = multimap.to_rgba8();
+        let handle = self.checked_texture(
+            ctx,
+            "cc_multimap_rle",
+            [multimap.width as usize, multimap.height as usize],
+            &rgba,
+            Default::default(),
+        )?;
+        self.multimap_texture = Some(handle.clone());
+        self.register_current_image_preview(
+            key,
+            "multimap.rle",
+            multimap.width,
+            multimap.height,
+            &rgba,
+        );
+        Some(handle)
+    }
+
+    pub fn get_generated_multimap_texture(
+        &mut self,
+        ctx: &egui::Context,
+        selection: MultimapPreviewSelection,
+    ) -> Option<egui::TextureHandle> {
+        let (key, texture_name, preview) = match selection {
+            MultimapPreviewSelection::Plain => (
+                0x6F00000000000001,
+                "generated_multimap_plain",
+                self.generated_multimap_plain.as_ref()?,
+            ),
+            MultimapPreviewSelection::Artistic => (
+                0x6F00000000000002,
+                "generated_multimap_artistic",
+                self.generated_multimap_artistic.as_ref()?,
+            ),
+            MultimapPreviewSelection::Loaded => return self.get_multimap_texture(ctx),
+        };
+        if let Some(handle) = self.texture_previews.get(&key).cloned() {
+            self.select_image_preview(key);
+            return Some(handle);
+        }
+
+        let rgba = preview.image.to_rgba8();
+        let (width, height) = (preview.image.width, preview.image.height);
+        let label = preview.label.clone();
+        let handle = self.checked_texture(
+            ctx,
+            texture_name,
+            [width as usize, height as usize],
+            &rgba,
+            Default::default(),
+        )?;
+        self.texture_previews.insert(key, handle.clone());
+        self.register_current_image_preview(key, label, width, height, &rgba);
+        Some(handle)
+    }
+
+    pub fn select_raw_uop_entry(&mut self, package_name: &str, file_hash: u64) -> bool {
+        let package_name = package_name.to_ascii_lowercase();
+        let Some(index) = self.uop_cache.loaded_uops.iter().position(|loaded| {
+            loaded
+                .path
+                .file_name()
+                .and_then(|name| name.to_str())
+                .map(|name| name.eq_ignore_ascii_case(&package_name))
+                .unwrap_or(false)
+        }) else {
+            return false;
+        };
+
+        self.selected_uop_idx = Some(index);
+        self.selected_file_hash = Some(file_hash);
+        self.find_hash_query = format!("{:016X}", file_hash);
+        self.view_mode = ViewMode::UopExplorer;
+        true
+    }
+
+    pub fn select_raw_uop_entry_at_path(&mut self, package_path: &Path, file_hash: u64) -> bool {
+        let Some(index) = self.uop_cache.loaded_uops.iter().position(|loaded| {
+            loaded.path.as_path() == package_path
+        }) else {
+            return false;
+        };
+
+        self.selected_uop_idx = Some(index);
+        self.selected_file_hash = Some(file_hash);
+        self.find_hash_query = format!("{:016X}", file_hash);
+        self.view_mode = ViewMode::UopExplorer;
+        true
+    }
+
+    pub fn select_raw_ec_hue_bitmap(&mut self, hue_id: u16) -> bool {
+        let hash = uocf::enhanced::hues::hue_bitmap_hash(hue_id);
+        if self.select_raw_uop_entry(uocf::enhanced::hues::HUES_UOP_NAME, hash) {
+            self.selected_ec_hue_hash = Some(hash);
+            return true;
+        }
+        false
+    }
+
+    pub fn select_raw_ec_hues_atlas(&mut self) -> bool {
+        let hash = uocf::enhanced::hues::hues_atlas_hash();
+        if self.select_raw_uop_entry(uocf::enhanced::hues::HUES_UOP_NAME, hash) {
+            self.selected_ec_hue_hash = Some(hash);
+            return true;
+        }
+        false
+    }
+
+    pub fn select_raw_ec_huenames(&mut self) -> bool {
+        let hash = uocf::enhanced::hues::huenames_hash();
+        if self.select_raw_uop_entry(uocf::enhanced::hues::HUES_UOP_NAME, hash) {
+            self.selected_ec_hue_hash = Some(hash);
+            return true;
+        }
+        false
+    }
+
+    pub fn select_raw_ec_hue_palette(&mut self) -> bool {
+        let hash = uocf::enhanced::hues::FIXED_PALETTE_HASH;
+        if self.select_raw_uop_entry(uocf::enhanced::hues::HUES_UOP_NAME, hash) {
+            self.selected_ec_hue_hash = Some(hash);
+            return true;
+        }
+        false
+    }
+
+    pub fn select_raw_multi_collection_entry(&mut self, multi_id: u32) -> bool {
+        let hash = uocf::enhanced::multis::multi_collection_hash(multi_id);
+        if let Some(path) = self.multi_collection_path.clone() {
+            if self.select_raw_uop_entry_at_path(&path, hash) {
+                self.selected_multi_uop_hash = Some(hash);
+                return true;
+            }
+        }
+
+        if self.select_raw_uop_entry(uocf::enhanced::multis::MULTI_COLLECTION_UOP_NAME, hash)
+            || self.select_raw_uop_entry("multicollection.uop", hash)
+        {
+            self.selected_multi_uop_hash = Some(hash);
+            return true;
+        }
+        false
+    }
+
+    /// Loads the housing.bin of a MultiCollection.uop; returns what it holds for the package's log line, or `""`.
+    fn load_housing_pieces(&mut self, uop_path: &Path) -> String {
+        let (housing_pieces, summary) = match HousingPieces::load(uop_path) {
+            Ok(Some(housing)) => {
+                let summary = format!(
+                    ", housing.bin {} tile types and {} pieces",
+                    housing.tile_types.len(),
+                    housing.pieces().count()
+                );
+                (Some(Arc::new(housing)), summary)
+            }
+            Ok(None) => (None, String::new()),
+            Err(e) => {
+                self.log_warning(format!("Failed to load housing.bin: {e:#}"));
+                (None, String::new())
+            }
+        };
+        self.housing_pieces = housing_pieces;
+        self.housing_index = self
+            .housing_pieces
+            .as_deref()
+            .map(|housing| Arc::new(HousingIndex::from_pieces(housing)));
+        summary
+    }
+
+    pub fn select_raw_multi_collection_housing(&mut self) -> bool {
+        let hash = uocf::enhanced::multis::housing_hash();
+        if let Some(path) = self.multi_collection_path.clone() {
+            if self.select_raw_uop_entry_at_path(&path, hash) {
+                self.selected_multi_uop_hash = Some(hash);
+                return true;
+            }
+        }
+
+        if self.select_raw_uop_entry(uocf::enhanced::multis::MULTI_COLLECTION_UOP_NAME, hash)
+            || self.select_raw_uop_entry("multicollection.uop", hash)
+        {
+            self.selected_multi_uop_hash = Some(hash);
+            return true;
+        }
+        false
+    }
+
+    pub fn select_raw_localized_strings_file(&mut self, hash: u64) -> bool {
+        if self.select_raw_uop_entry(
+            uocf::enhanced::localized_strings::LOCALIZED_STRINGS_UOP_NAME,
+            hash,
+        ) || self.select_raw_uop_entry("LocalizedStrings.uop", hash)
+        {
+            self.selected_localized_file_hash = Some(hash);
+            return true;
+        }
+        false
+    }
+
+    pub fn get_hues_uop_texture(
+        &mut self,
+        ctx: &egui::Context,
+        hash: u64,
+        name: &str,
+    ) -> Option<egui::TextureHandle> {
+        let preview_key = 0x4855_4553_0000_0000u64 ^ hash;
+        if let Some(handle) = self.texture_previews.get(&preview_key).cloned() {
+            self.select_image_preview(preview_key);
+            return Some(handle);
+        }
+
+        let loaded_uops = self.uop_cache.loaded_uops.clone();
+        for loaded in &loaded_uops {
+            let is_hues = loaded
+                .path
+                .file_name()
+                .and_then(|name| name.to_str())
+                .map(|name| name.eq_ignore_ascii_case(uocf::enhanced::hues::HUES_UOP_NAME))
+                .unwrap_or(false);
+            if !is_hues {
+                continue;
+            }
+            if loaded.package.get_file_by_hash(hash).is_some() {
+                if let Ok(Some(data)) = loaded.package.unpack_file_by_hash(hash) {
+                    let lower_name = name.to_lowercase();
+                    if lower_name.ends_with(".bmp") {
+                        let (width, height, pixels) =
+                            uocf::enhanced::hues::decode_hue_image_to_rgba(&data).ok()?;
+                        let handle = self.checked_texture(
+                            ctx,
+                            name,
+                            [width as usize, height as usize],
+                            &pixels,
+                            egui::TextureOptions::NEAREST,
+                        )?;
+                        self.texture_previews.insert(preview_key, handle.clone());
+                        self.register_current_image_preview(preview_key, name, width, height, &pixels);
+                        return Some(handle);
+                    }
+
+                    let format = if lower_name.ends_with(".dds") {
+                        ECImageFormat::DDS
+                    } else if lower_name.ends_with(".tga") {
+                        ECImageFormat::TGA
+                    } else {
+                        ECImageFormat::Unknown
+                    };
+
+                    let tex_file = TextureFile {
+                        metadata: RawTextureItem::absent(),
+                        is_ec: true,
+                        format,
+                        props: None,
+                        raw_data: data.into(),
+                        image_data_offset: 0,
+                    };
+
+                    if let Ok(img) = tex_file.decode_to_rgba() {
+                        let size = [img.width() as usize, img.height() as usize];
+                        let pixels = img.to_rgba8();
+                        let handle =
+                            self.checked_texture(ctx, name, size, pixels.as_raw(), egui::TextureOptions::NEAREST)?;
+                        self.texture_previews.insert(preview_key, handle.clone());
+                        self.register_current_image_preview(
+                            preview_key,
+                            name,
+                            size[0] as u32,
+                            size[1] as u32,
+                            pixels.as_raw(),
+                        );
+                        return Some(handle);
+                    }
+                }
+            }
+        }
+        None
+    }
+
+    pub fn select_raw_art_entry(&mut self, art_id: u32, source: ArtSource) -> bool {
+        let candidates: &[(&str, &str)] = match source {
+            ArtSource::CcUop => &[("artlegacymul.uop", "build/artlegacymul/{id:08}.tga")],
+            ArtSource::EcUop | ArtSource::EcUopLegacy => &[
+                ("legacytexture.uop", "build/tileartlegacy/{id:08}.dds"),
+                ("legacytexture.uop", "build/tileartlegacy/{id:08}.tga"),
+                ("legacytexture.uop", "build/legacytexture/{id:08}.tga"),
+            ],
+            ArtSource::EcUopKr => &[
+                ("texture.uop", "build/worldart/{id:08}.dds"),
+                ("texture.uop", "build/worldart/{id:08}.tga"),
+                ("texture.uop", "build/tileartenhanced/{id:08}.dds"),
+                ("texture.uop", "build/tileartenhanced/{id:08}.tga"),
+            ],
+            ArtSource::Mul | ArtSource::Any => return false,
+        };
+
+        for (package_name, template) in candidates {
+            let package_art_id = match source {
+                ArtSource::CcUop => {
+                    uocf::classic::art::normalize_static_art_id_for_source(art_id, source)
+                }
+                ArtSource::EcUop | ArtSource::EcUopLegacy | ArtSource::EcUopKr => art_id,
+                ArtSource::Mul | ArtSource::Any => return false,
+            };
+            let path = template.replace("{id:08}", &format!("{:08}", package_art_id));
+            let hash = hash_file_name_single(&path);
+            if self.select_raw_uop_entry(package_name, hash) {
+                return true;
+            }
+        }
+
+        false
+    }
+}
+
+/// A tileart texture item names `Data\\<family>\\<id>...`; the image is stored in a package at `<folder>/%08d.<extension>`.
+const TILEART_ITEM_IMAGE_EXTENSIONS: [&str; 2] = ["dds", "tga"];
+/// Where to look for an item of a family with no folder of its own (`Data\\Textures`).
+const TILEART_ITEM_FOLDERS: [&str; 3] = ["build/worldart", "build/tileartlegacy", "build/tileartenhanced"];
+
+/// The bitmap row holding a hue's table; the row below it is a flat swatch.
+const EC_HUE_TABLE_ROW: u32 = uocf::enhanced::hues::HUE_TABLE_IMAGE_ROW as u32;
+
+fn build_ec_hue_lookup_table(width: u32, height: u32, pixels: &[u8]) -> Option<Vec<u8>> {
+    if width == 0 || height == 0 || pixels.len() != width as usize * height as usize * 4 {
+        return None;
+    }
+
+    let mut table = vec![0u8; 32 * 4];
+    let sample_horizontally = width >= height;
+    for color_index in 0..32usize {
+        let (src_x, src_y) = if sample_horizontally {
+            let x = if width <= 1 {
+                0
+            } else {
+                color_index as u32 * (width - 1) / 31
+            };
+            (x, EC_HUE_TABLE_ROW)
+        } else {
+            let y = if height <= 1 {
+                0
+            } else {
+                color_index as u32 * (height - 1) / 31
+            };
+            (width / 2, y)
+        };
+        let src = ((src_y * width + src_x) as usize) * 4;
+        table[color_index * 4..color_index * 4 + 4].copy_from_slice(&pixels[src..src + 4]);
+    }
+    Some(table)
+}
+
+fn build_ec_hue_lookup_strip(width: u32, height: u32, pixels: &[u8]) -> Option<Vec<u8>> {
+    if width == 0 || height == 0 || pixels.len() != width as usize * height as usize * 4 {
+        return None;
+    }
+
+    let sample_horizontally = width >= height;
+    let color_count = if sample_horizontally { width } else { height } as usize;
+    let mut table = vec![0u8; color_count * 4];
+    for color_index in 0..color_count {
+        let (src_x, src_y) = if sample_horizontally {
+            (color_index as u32, EC_HUE_TABLE_ROW)
+        } else {
+            (width / 2, color_index as u32)
+        };
+        let src = ((src_y * width + src_x) as usize) * 4;
+        table[color_index * 4..color_index * 4 + 4].copy_from_slice(&pixels[src..src + 4]);
+    }
+    Some(table)
+}
+
+fn apply_ec_hue_table_to_rgba(
+    pixels: &mut [u8],
+    hue_table: &[u8],
+    hueing_mode: EcHueingMode,
+) {
+    if hue_table.len() < 4 || hue_table.len() % 4 != 0 {
+        return;
+    }
+
+    let color_count = hue_table.len() / 4;
+    for pixel in pixels.chunks_exact_mut(4) {
+        let alpha = pixel[3];
+        if alpha == 0 {
+            continue;
+        }
+
+        let color_index = ec_hue_color_index(pixel, hueing_mode, color_count);
+        let src = color_index * 4;
+        let color = [hue_table[src], hue_table[src + 1], hue_table[src + 2]];
+        pixel[0] = color[0];
+        pixel[1] = color[1];
+        pixel[2] = color[2];
+        pixel[3] = alpha;
+    }
+}
+
+fn ec_hue_color_index(
+    pixel: &[u8],
+    hueing_mode: EcHueingMode,
+    color_count: usize,
+) -> usize {
+    match hueing_mode {
+        EcHueingMode::Cc => {
+            (pixel[0] >> 3).min(31) as usize
+        }
+        EcHueingMode::Ec => {
+            pixel[0] as usize * (color_count - 1) / 255
+        }
+    }
+}
+
+fn cc_hue_should_apply_to_art(art_id: u32, source: ArtSource) -> bool {
+    art_id >= uocf::classic::art::STATIC_TILE_ID_BASE || source.is_ec_uop()
+}
+
+fn tileart_sample_path_prefix(
+    texture_items: &[Vec<TileArtTextureItem>],
+    block_index: usize,
+    texture_id: u32,
+    preferred_type: TileArtTextureType,
+    default_prefix: &'static str,
+) -> &'static str {
+    let Some(items) = texture_items.get(block_index) else {
+        return default_prefix;
+    };
+
+    let selected_type = items
+        .iter()
+        .find(|item| item.id == texture_id && item.texture_type == preferred_type)
+        .or_else(|| items.iter().find(|item| item.id == texture_id))
+        .map(|item| item.texture_type);
+
+    selected_type
+        .and_then(tileart_texture_path_prefix)
+        .unwrap_or(default_prefix)
+}
+
+fn tileart_texture_path_prefix(texture_type: TileArtTextureType) -> Option<&'static str> {
+    match texture_type {
+        TileArtTextureType::WorldArt => Some("build/worldart"),
+        TileArtTextureType::TileArtLegacy => Some("build/tileartlegacy"),
+        TileArtTextureType::TileArtEnhanced => Some("build/tileartenhanced"),
+        TileArtTextureType::Textures | TileArtTextureType::Undefined => None,
+    }
+}
+
+fn ec_tileart_sample_from_texture(
+    sampled_art_id: u32,
+    texture: ArtTexture,
+    path_prefix: &str,
+) -> Option<EcTileArtSample> {
+    if texture.start_x < 0
+        || texture.start_y < 0
+        || texture.end_x <= texture.start_x
+        || texture.end_y <= texture.start_y
+    {
+        return None;
+    }
+
+    Some(EcTileArtSample {
+        sampled_art_id,
+        texture_id: texture.texture_id,
+        path: format!("{}/{:08}.dds", path_prefix, texture.texture_id),
+        left: texture.start_x as u32,
+        top: texture.start_y as u32,
+        right: texture.end_x as u32,
+        bottom: texture.end_y as u32,
+        offset_x: texture.offset_x,
+        offset_y: texture.offset_y,
+    })
+}
+
+fn crop_rgba_rect(
+    width: u32,
+    height: u32,
+    pixels: &[u8],
+    left: u32,
+    top: u32,
+    right: u32,
+    bottom: u32,
+) -> Option<(u32, u32, Vec<u8>)> {
+    if left >= right || top >= bottom || right > width || bottom > height {
+        return None;
+    }
+
+    let width_usize = width as usize;
+    let height_usize = height as usize;
+    if pixels.len() != width_usize.checked_mul(height_usize)?.checked_mul(4)? {
+        return None;
+    }
+
+    let left = left as usize;
+    let top = top as usize;
+    let crop_width = (right as usize).checked_sub(left)?;
+    let crop_height = (bottom as usize).checked_sub(top)?;
+    let mut cropped = vec![0u8; crop_width.checked_mul(crop_height)?.checked_mul(4)?];
+    for row_index in 0..crop_height {
+        let src_start = ((top + row_index) * width_usize + left) * 4;
+        let src_end = src_start + crop_width * 4;
+        let dst_start = row_index * crop_width * 4;
+        cropped[dst_start..dst_start + crop_width * 4]
+            .copy_from_slice(&pixels[src_start..src_end]);
+    }
+
+    Some((crop_width as u32, crop_height as u32, cropped))
+}
+
+impl eframe::App for UocfEditorApp {
+    fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
+        let ctx = ui.ctx().clone();
+        crate::ui::draw_ui(self, &ctx, ui);
+    }
+
+    fn save(&mut self, storage: &mut dyn eframe::Storage) {
+        self.settings.last_view_mode = Some(self.view_mode);
+        eframe::set_value(storage, "uocf_editor_settings", &self.settings);
+    }
+}
+
+#[cfg(test)]
+pub(crate) mod tests {
+    use super::*;
+
+    #[test]
+    fn load_log_lines_name_the_source_and_count_entries() {
+        let (cc, ec) = (Path::new("/clients/classic"), Path::new("/clients/enhanced"));
+        let tag = |paths: &[&Path]| client_sources_tag(paths, Some(cc), Some(ec));
+        assert_eq!(tag(&[cc.join("MultiCollection.uop").as_path()]), " (CC UOP)");
+        assert_eq!(tag(&[ec.join("MultiCollection.uop").as_path()]), " (EC UOP)");
+        assert_eq!(tag(&[cc.join("art.mul").as_path(), cc.join("artLegacyMUL.uop").as_path()]), " (MUL, CC UOP)");
+        assert_eq!(tag(&[cc.join("Cliloc.enu").as_path()]), " (MUL)");
+        assert_eq!(tag(&[cc.join("gumps_cc.uddp").as_path()]), "");
+        assert_eq!(tag(&[Path::new("/elsewhere/tileart.uop")]), "");
+        assert_eq!(entries_label(1), "1 entry");
+        assert_eq!(entries_label(2), "2 entries");
+    }
+
+    fn test_cliloc_payload(text: &str) -> Vec<u8> {
+        let mut bytes = Vec::new();
+        bytes.extend_from_slice(&1_i32.to_le_bytes());
+        bytes.extend_from_slice(&2_i16.to_le_bytes());
+        bytes.extend_from_slice(&100_i32.to_le_bytes());
+        bytes.push(0);
+        bytes.extend_from_slice(&(text.len() as i16).to_le_bytes());
+        bytes.extend_from_slice(text.as_bytes());
+        bytes
+    }
+
+    pub(crate) fn test_app() -> UocfEditorApp {
+        UocfEditorApp {
+            settings: AppSettings::default(),
+            logs: Vec::new(),
+            logged_once: HashSet::new(),
+            multi_preview_cache: Default::default(),
+            unsaved_changes: Default::default(),
+            last_texture_problem: None,
+            gpu_errors: Default::default(),
+            show_search_paths: false,
+            dictionary: Dictionary::new(),
+            uo_string_dictionary: None,
+            string_dictionary_rows: None,
+            string_dictionary_editor: Default::default(),
+            hues_editor: Default::default(),
+            classic_multi_editor: Default::default(),
+            multimap_editor: Default::default(),
+            cliloc: None,
+            cliloc_files: Vec::new(),
+            localized_strings: None,
+            localized_string_rows: None,
+            string_dictionary_raw_hash: None,
+            uop_cache: UopCache::new(),
+            client_data: None,
+            cc_tiledata: None,
+            cc_tiledata_rows: None,
+            art_viewer_rows: None,
+            art_viewer_rows_source: None,
+            cc_gumps: None,
+            cc_sounds: None,
+            cc_sound_entries: None,
+            ec_audio: None,
+            ec_audio_entries: None,
+            ec_audio_selected: None,
+            selected_ec_audio_hash: None,
+            sound_source: SoundSource::default(),
+            cc_multimap: None,
+            cc_multimap_path: None,
+            generated_multimap_plain: None,
+            generated_multimap_artistic: None,
+            sound_player: None,
+            selected_uop_idx: None,
+            selected_file_hash: None,
+            selected_tex_art_cc_id: None,
+            selected_terrain_def_hash: None,
+            selected_tileart_hash: None,
+            selected_ec_hue_hash: None,
+            selected_multi_uop_hash: None,
+            selected_localized_file_hash: None,
+            selected_cliloc_file_idx: None,
+            selected_legacy_source: ArtSource::Any,
+            searches: TabSearches::default(),
+            find_hash_query: String::new(),
+            hide_empty_uop_entries: true,
+            guess_terrain_texture_file_format: false,
+            status_message: String::new(),
+            view_mode: ViewMode::Home,
+            tile_metadata_source: TileMetadataSource::CcTileData,
+            hues_source: HuesSource::CcMul,
+            multis_source: MultisSource::ClassicMul,
+            localized_strings_source: LocalizedStringsSource::Cliloc,
+            multimap_preview_selection: MultimapPreviewSelection::Loaded,
+            multimap_converter: MultimapConverterState::default(),
+            multimap_worker_rx: None,
+            multimap_worker_active: false,
+            texture_previews: HashMap::new(),
+            ec_texture_previews: HashMap::new(),
+            ec_texture_preview_source_keys: HashMap::new(),
+            uop_entry_labels: HashMap::new(),
+            uop_entry_payloads: HashMap::new(),
+            entry_text_edits: Default::default(),
+            terrain_texture_guess_names: HashMap::new(),
+            animationframe_uop_entries: HashMap::new(),
+            animationframe_uop_worker_rx: None,
+            animationframe_uop_worker_key: None,
+            selected_animationframe_file_hash: None,
+            multimap_texture: None,
+            classic_image_import: Default::default(),
+            image_preview_sources: HashMap::new(),
+            current_image_preview_key: None,
+            show_upscale_preview: false,
+            upscale_preview_passes: vec![UpscalePreviewPass::default()],
+            upscale_preview_zoom: 1.0,
+            upscale_original_texture: None,
+            upscale_original_texture_key: None,
+            upscale_preview_texture: None,
+            upscale_preview_texture_key: None,
+            upscale_preview_worker_key: None,
+            upscale_preview_worker_rx: None,
+            upscale_preview_size: [0, 0],
+            upscale_preview_elapsed_ms: None,
+            upscale_preview_status: String::new(),
+            selected_gump_source: GumpSource::Mul,
+            selected_gump_viewer_tab: GumpViewerTab::StandardGumps,
+            selected_gump_id: String::new(),
+            standard_gump_ids: Vec::new(),
+            paperdoll_gump_ids: Vec::new(),
+            gump_list_source: None,
+            gump_list_profile: String::new(),
+            gump_list_status: String::new(),
+            selected_paperdoll_profile: "human_male".to_string(),
+            paperdoll_body_id: String::new(),
+            paperdoll_body_hue: "0".to_string(),
+            paperdoll_equipment: vec![PaperdollEquipmentInput::default(); 6],
+            paperdoll_preview: None,
+            selected_anim_id: 0,
+            selected_animdata_id: 0,
+            selected_animdata_art_source: ArtSource::CcUop,
+            animdata_frame_delay_ms: 100.0,
+            selected_anim_file_idx: 0,
+            current_frame_idx: 0,
+            is_playing: false,
+            last_frame_time: 0.0,
+            playback_speed: 1.0,
+            loop_animation: true,
+            selected_anim_sequence: None,
+            selected_action_id: 0,
+            selected_direction: 0,
+            selected_multi_id: 0,
+            selected_sound_slot: 0,
+            selected_sound_id: 0,
+            sound_search_query: String::new(),
+            selected_hue_id: 0,
+            selected_ec_hue_id: 1,
+            selected_ec_hueing_mode: EcHueingMode::Cc,
+            selected_cliloc_number: 0,
+            multimap_zoom: 0.25,
+            classic_file_views: Default::default(),
+            ec_interface_textures: Default::default(),
+            terrain_def_package: None,
+            terrain_def_files: None,
+            ec_tileart_entries: None,
+            ec_tileart_rows: None,
+            ec_tileart_path: None,
+            ec_hues: None,
+            multi_collection: None,
+            multi_collection_source: None,
+            multi_collection_path: None,
+            housing_pieces: None,
+            housing_index: None,
+            multi_part_filters: MultiPartFilters::default(),
+            housing_panel: Default::default(),
+            animation_definitions_panel: Default::default(),
+            animations_view: Default::default(),
+            localized_strings_editor: Default::default(),
+            effects_panel: Default::default(),
+            multi_editor: Default::default(),
+            tileart_editor: Default::default(),
+            tiledata_editor: Default::default(),
+            animdata_editor: Default::default(),
+            waypoint_document: None,
+            legacy_terrain_editor: None,
+            terrain_definition_editor: None,
+        }
+    }
+
+    #[test]
+    fn test_uocf_editor_app_manual_log() {
+        let mut app = test_app();
+
+        assert_eq!(app.logs.len(), 0);
+        app.log("hello test");
+        assert_eq!(app.logs.len(), 1);
+        assert_eq!(app.logs[0], "hello test", "the Home tab shows the text without the terminal's colour codes");
+    }
+
+    #[test]
+    fn terrain_texture_guess_covers_common_image_extensions() {
+        let dds = "build/terraintexture/00000042.dds";
+        let tga = "build/terraintexture/00000042.tga";
+        let mut package = UopPackage::new_default();
+        package
+            .add_file_from_memory(b"dds", dds, uocf::uop_container::file::CompressionFlag::None)
+            .expect("add dds terrain texture");
+        package
+            .add_file_from_memory(b"tga", tga, uocf::uop_container::file::CompressionFlag::None)
+            .expect("add tga terrain texture");
+
+        let names = collect_terrain_texture_guess_names(&package);
+        assert_eq!(
+            names.get(&hash_file_name_single(dds)).map(String::as_str),
+            Some(dds)
+        );
+        assert_eq!(
+            names.get(&hash_file_name_single(tga)).map(String::as_str),
+            Some(tga)
+        );
+    }
+
+    #[test]
+    fn uop_entry_filter_hides_empty_records_by_default() {
+        let empty = uocf::uop_container::file::UopFile::new();
+        let populated = uocf::uop_container::file::UopFile::new()
+            .create_file_from_bytes(
+                b"payload",
+                hash_file_name_single("build/terraintexture/00000042.dds"),
+                uocf::uop_container::file::CompressionFlag::None,
+            )
+            .expect("create populated UOP file");
+
+        assert!(!should_show_uop_entry(&empty, true));
+        assert!(should_show_uop_entry(&empty, false));
+        assert!(should_show_uop_entry(&populated, true));
+    }
+
+    #[test]
+    fn uop_image_format_guess_uses_payload_content() {
+        let mut tga = vec![0; 18];
+        tga[2] = 2;
+        tga[12..14].copy_from_slice(&1_u16.to_le_bytes());
+        tga[14..16].copy_from_slice(&1_u16.to_le_bytes());
+        tga[16] = 32;
+
+        assert_eq!(
+            guess_uop_image_format_from_payload(b"DDS payload"),
+            Some(("dds", ECImageFormat::DDS))
+        );
+        assert_eq!(
+            guess_uop_image_format_from_payload(&tga),
+            Some(("tga", ECImageFormat::TGA))
+        );
+        assert_eq!(guess_uop_image_format_from_payload(b"not image"), None);
+    }
+
+    #[test]
+    fn palette_snap_preview_pass_restricts_bilinear_output_to_source_colors() {
+        let rgba = vec![
+            255, 0, 0, 255, 0, 0, 255, 255,
+            0, 0, 255, 255, 255, 0, 0, 255,
+        ];
+        let passes = [
+            UpscalePreviewPass {
+                algorithm: UpscalePreviewAlgorithm::Bilinear,
+                scale: 2,
+            },
+            UpscalePreviewPass {
+                algorithm: UpscalePreviewAlgorithm::PaletteSnapStrict,
+                scale: 1,
+            },
+        ];
+
+        let (width, height, pixels, status) = apply_upscale_preview_passes(2, 2, rgba, &passes);
+
+        assert_eq!((width, height), (4, 4));
+        assert!(status.contains("Palette snap"));
+        for pixel in pixels.chunks_exact(4) {
+            assert!(pixel == [255, 0, 0, 255] || pixel == [0, 0, 255, 255]);
+        }
+    }
+
+    #[test]
+    fn palette_snap_preview_pass_is_part_of_pass_identity() {
+        let strict = UpscalePreviewPass {
+            algorithm: UpscalePreviewAlgorithm::PaletteSnapStrict,
+            scale: 1,
+        };
+        let expanded = UpscalePreviewPass {
+            algorithm: UpscalePreviewAlgorithm::PaletteSnapExpanded,
+            scale: 16,
+        };
+        let redither = UpscalePreviewPass {
+            algorithm: UpscalePreviewAlgorithm::PaletteDitherReinsertCheckerboard,
+            scale: 1,
+        };
+
+        assert_ne!(strict, expanded);
+        assert_eq!(upscale_pass_cli_value(strict), "palette-snap-strict");
+        assert_eq!(upscale_pass_cli_value(expanded), "palette-snap-expanded-16");
+        assert_eq!(upscale_pass_cli_value(redither), "palette-dither-reinsert-checkerboard");
+    }
+
+    #[test]
+    fn load_cliloc_files_discovers_translations_and_prefers_enu() {
+        let unique = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let dir = std::env::temp_dir().join(format!(
+            "uocf_editor_cliloc_translations_{}_{}",
+            std::process::id(),
+            unique
+        ));
+        std::fs::create_dir(&dir).unwrap();
+        std::fs::write(dir.join("Cliloc.deu"), test_cliloc_payload("bank")).unwrap();
+        std::fs::write(dir.join("Cliloc.enu"), test_cliloc_payload("bank")).unwrap();
+        std::fs::write(dir.join("tiledata.mul"), []).unwrap();
+
+        let mut logs = Vec::new();
+        let clilocs = load_cliloc_files(&dir, |msg| logs.push(msg));
+
+        assert!(logs.is_empty());
+        assert_eq!(clilocs.len(), 2);
+        assert_eq!(clilocs[0].label, "Cliloc.deu");
+        assert_eq!(clilocs[1].label, "Cliloc.enu");
+        assert_eq!(default_cliloc_file_index(&clilocs), Some(1));
+
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn select_raw_uop_entry_selects_matching_package() {
+        let mut app = test_app();
+        app.uop_cache
+            .add(PathBuf::from("tileart.uop"), UopPackage::new_default());
+
+        assert!(app.select_raw_uop_entry("TileArt.uop", 0x1234));
+        assert_eq!(app.selected_uop_idx, Some(0));
+        assert_eq!(app.selected_file_hash, Some(0x1234));
+        assert_eq!(app.find_hash_query, "0000000000001234");
+        assert_eq!(app.view_mode, ViewMode::UopExplorer);
+    }
+
+    #[test]
+    fn select_raw_uop_entry_rejects_missing_package() {
+        let mut app = test_app();
+
+        assert!(!app.select_raw_uop_entry("missing.uop", 0x1234));
+        assert_eq!(app.selected_uop_idx, None);
+        assert_eq!(app.selected_file_hash, None);
+        assert_eq!(app.view_mode, ViewMode::Home);
+    }
+
+    #[test]
+    fn select_raw_ec_hue_bitmap_uses_hues_package() {
+        let mut app = test_app();
+        app.uop_cache
+            .add(PathBuf::from("hues.uop"), UopPackage::new_default());
+
+        let expected = uocf::enhanced::hues::hue_bitmap_hash(42);
+        assert!(app.select_raw_ec_hue_bitmap(42));
+        assert_eq!(app.selected_uop_idx, Some(0));
+        assert_eq!(app.selected_file_hash, Some(expected));
+        assert_eq!(app.selected_ec_hue_hash, Some(expected));
+        assert_eq!(app.find_hash_query, format!("{expected:016X}"));
+    }
+
+    #[test]
+    fn select_raw_ec_hues_special_files_use_expected_hashes() {
+        let mut app = test_app();
+        app.uop_cache
+            .add(PathBuf::from("hues.uop"), UopPackage::new_default());
+
+        assert!(app.select_raw_ec_hues_atlas());
+        assert_eq!(app.selected_file_hash, Some(uocf::enhanced::hues::hues_atlas_hash()));
+
+        assert!(app.select_raw_ec_huenames());
+        assert_eq!(app.selected_file_hash, Some(uocf::enhanced::hues::huenames_hash()));
+
+        assert!(app.select_raw_ec_hue_palette());
+        assert_eq!(app.selected_file_hash, Some(uocf::enhanced::hues::FIXED_PALETTE_HASH));
+    }
+
+    #[test]
+    fn missing_hues_uop_does_not_select_raw_ec_hue() {
+        let mut app = test_app();
+
+        assert!(!app.select_raw_ec_hue_bitmap(1));
+        assert_eq!(app.selected_uop_idx, None);
+        assert_eq!(app.selected_file_hash, None);
+        assert_eq!(app.view_mode, ViewMode::Home);
+    }
+
+    #[test]
+    fn ec_hue_application_uses_cc_style_intensity_steps() {
+        let mut hue_table = vec![0u8; 32 * 4];
+        for color_index in 0..32usize {
+            let offset = color_index * 4;
+            hue_table[offset] = color_index as u8;
+            hue_table[offset + 1] = color_index as u8 + 1;
+            hue_table[offset + 2] = color_index as u8 + 2;
+            hue_table[offset + 3] = 255;
+        }
+
+        let mut pixels = vec![
+            0, 0, 0, 240,
+            16, 16, 16, 200,
+            255, 255, 255, 128,
+        ];
+
+        apply_ec_hue_table_to_rgba(&mut pixels, &hue_table, EcHueingMode::Cc);
+
+        assert_eq!(&pixels[0..4], &[0, 1, 2, 240]);
+        assert_eq!(&pixels[4..8], &[2, 3, 4, 200]);
+        assert_eq!(&pixels[8..12], &[31, 32, 33, 128]);
+    }
+
+    #[test]
+    fn ec_hue_application_can_use_full_strip_pixels() {
+        let mut hue_table = vec![0u8; 256 * 4];
+        for color_index in 0..256usize {
+            let offset = color_index * 4;
+            hue_table[offset] = color_index as u8;
+            hue_table[offset + 1] = (color_index + 1).min(255) as u8;
+            hue_table[offset + 2] = (color_index + 2).min(255) as u8;
+            hue_table[offset + 3] = 255;
+        }
+
+        let mut pixels = vec![
+            0, 0, 0, 240,
+            127, 127, 127, 200,
+            255, 255, 255, 128,
+        ];
+
+        apply_ec_hue_table_to_rgba(&mut pixels, &hue_table, EcHueingMode::Ec);
+
+        assert_eq!(&pixels[0..4], &[0, 1, 2, 240]);
+        assert_eq!(&pixels[4..8], &[127, 128, 129, 200]);
+        assert_eq!(&pixels[8..12], &[255, 255, 255, 128]);
+    }
+
+    #[test]
+    fn ec_hue_tables_read_the_gradient_row_not_the_swatch() {
+        const WIDTH: u32 = 256;
+        const SWATCH: [u8; 4] = [9, 9, 9, 255];
+        let mut bitmap = Vec::new();
+        for x in 0..WIDTH {
+            bitmap.extend_from_slice(&[x as u8, 0, 0, 255]);
+        }
+        for _ in 0..WIDTH {
+            bitmap.extend_from_slice(&SWATCH);
+        }
+
+        let strip = build_ec_hue_lookup_strip(WIDTH, 2, &bitmap).unwrap();
+        assert_eq!(&strip[100 * 4..101 * 4], &[100, 0, 0, 255]);
+        let table = build_ec_hue_lookup_table(WIDTH, 2, &bitmap).unwrap();
+        assert_eq!(&table[31 * 4..32 * 4], &[255, 0, 0, 255]);
+    }
+
+    #[test]
+    fn ec_hue_cc_mode_uses_red_channel_table_index() {
+        let mut hue_table = vec![0u8; 32 * 4];
+        for color_index in 0..32usize {
+            let offset = color_index * 4;
+            hue_table[offset] = color_index as u8;
+            hue_table[offset + 1] = color_index as u8 + 1;
+            hue_table[offset + 2] = color_index as u8 + 2;
+            hue_table[offset + 3] = 255;
+        }
+        let mut pixels = vec![
+            96, 32, 32, 240,
+            32, 96, 32, 200,
+        ];
+
+        apply_ec_hue_table_to_rgba(&mut pixels, &hue_table, EcHueingMode::Cc);
+
+        assert_eq!(&pixels[0..4], &[12, 13, 14, 240]);
+        assert_eq!(&pixels[4..8], &[4, 5, 6, 200]);
+    }
+
+    #[test]
+    fn cc_hues_apply_to_ec_static_uop_art_ids() {
+        assert!(cc_hue_should_apply_to_art(0x4000, ArtSource::CcUop));
+        assert!(!cc_hue_should_apply_to_art(0x0001, ArtSource::CcUop));
+        assert!(cc_hue_should_apply_to_art(0x0001, ArtSource::EcUopLegacy));
+        assert!(cc_hue_should_apply_to_art(0x0001, ArtSource::EcUopKr));
+    }
+
+    #[test]
+    fn ec_tileart_sample_uses_legacy_texture_window() {
+        let sample = ec_tileart_sample_from_texture(
+            1148,
+            ArtTexture {
+                texture_id: 1148,
+                start_x: 0,
+                start_y: 0,
+                end_x: 44,
+                end_y: 166,
+                offset_x: 2,
+                offset_y: -3,
+            },
+            "build/tileartlegacy",
+        )
+        .expect("valid tileart window should resolve");
+
+        assert_eq!(sample.sampled_art_id, 1148);
+        assert_eq!(sample.texture_id, 1148);
+        assert_eq!(sample.path, "build/tileartlegacy/00001148.dds");
+        assert_eq!((sample.left, sample.top, sample.right, sample.bottom), (0, 0, 44, 166));
+        assert_eq!((sample.offset_x, sample.offset_y), (2, -3));
+    }
+
+    #[test]
+    fn ec_tileart_sample_can_use_kr_worldart_window() {
+        let sample = ec_tileart_sample_from_texture(
+            1150,
+            ArtTexture {
+                texture_id: 1147,
+                start_x: 34,
+                start_y: 0,
+                end_x: 105,
+                end_y: 262,
+                offset_x: 1,
+                offset_y: 0,
+            },
+            "build/worldart",
+        )
+        .expect("valid tileart window should resolve");
+
+        assert_eq!(sample.sampled_art_id, 1150);
+        assert_eq!(sample.texture_id, 1147);
+        assert_eq!(sample.path, "build/worldart/00001147.dds");
+        assert_eq!((sample.left, sample.top, sample.right, sample.bottom), (34, 0, 105, 262));
+        assert_eq!((sample.offset_x, sample.offset_y), (1, 0));
+    }
+
+    #[test]
+    fn tileart_sample_path_prefix_uses_matching_texture_family() {
+        let texture_items = vec![vec![
+            TileArtTextureItem {
+                texture_type: TileArtTextureType::TileArtEnhanced,
+                id: 77,
+                ..Default::default()
+            },
+            TileArtTextureItem {
+                texture_type: TileArtTextureType::WorldArt,
+                id: 88,
+                ..Default::default()
+            },
+        ]];
+
+        assert_eq!(
+            tileart_sample_path_prefix(
+                &texture_items,
+                0,
+                77,
+                TileArtTextureType::WorldArt,
+                "build/worldart",
+            ),
+            "build/tileartenhanced"
+        );
+    }
+
+    #[test]
+    fn crop_rgba_rect_uses_explicit_tileart_bounds() {
+        let width = 4u32;
+        let height = 3u32;
+        let mut pixels = vec![0u8; width as usize * height as usize * 4];
+        for y in 0..height as usize {
+            for x in 0..width as usize {
+                let offset = (y * width as usize + x) * 4;
+                pixels[offset] = (y * width as usize + x) as u8;
+                pixels[offset + 3] = 255;
+            }
+        }
+
+        let (crop_width, crop_height, cropped) =
+            crop_rgba_rect(width, height, &pixels, 1, 1, 3, 3)
+                .expect("valid rectangle should crop");
+
+        assert_eq!((crop_width, crop_height), (2, 2));
+        assert_eq!(cropped[0], 5);
+        assert_eq!(cropped[4], 6);
+        assert_eq!(cropped[8], 9);
+        assert_eq!(cropped[12], 10);
+    }
+
+    #[test]
+    fn find_client_file_case_insensitive_accepts_ec_hues_casing() {
+        let mut dir = std::env::temp_dir();
+        dir.push(format!(
+            "uocf_editor_hues_case_{}",
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        std::fs::create_dir(&dir).unwrap();
+        let path = dir.join("Hues.uop");
+        std::fs::write(&path, []).unwrap();
+
+        assert_eq!(
+            find_client_file_case_insensitive(&dir, "hues.uop").as_deref(),
+            Some(path.as_path())
+        );
+
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn find_localized_strings_uop_accepts_ec_casing() {
+        let mut dir = std::env::temp_dir();
+        dir.push(format!(
+            "uocf_editor_localized_strings_case_{}",
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        std::fs::create_dir(&dir).unwrap();
+        let path = dir.join("LocalizedStrings.UOP");
+        std::fs::write(&path, []).unwrap();
+
+        assert_eq!(find_localized_strings_uop(&dir).as_deref(), Some(path.as_path()));
+
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn collect_localized_string_rows_caches_display_and_search_text() {
+        let package = LocalizedStringsPackage {
+            files: vec![uocf::enhanced::localized_strings::LocalizedStringsFile {
+                filename_hash: 0x1234,
+                byte_len: 0,
+                strings: uocf::enhanced::localized_strings::LocalizedStringTable {
+                    header1: 0,
+                    header2: 0,
+                    entries: vec![uocf::enhanced::localized_strings::LocalizedStringEntry {
+                        id: 500052,
+                        unk: 0xAB,
+                        text: "Bank Balance".to_string(),
+                    }],
+                },
+            }],
+        };
+
+        let rows = collect_localized_string_rows(&package);
+
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].filename_hash, 0x1234);
+        assert_eq!(rows[0].rows.len(), 1);
+        assert_eq!(rows[0].rows[0].entry_index, 0);
+        assert_eq!(rows[0].rows[0].id, "500052");
+        assert_eq!(rows[0].rows[0].unk, "0xAB");
+        assert!(rows[0].rows[0].search_text.contains("500052"));
+        assert!(rows[0].rows[0].search_text.contains("bank balance"));
+    }
+
+    #[test]
+    fn select_raw_multi_collection_entry_uses_expected_hash() {
+        let mut app = test_app();
+        app.uop_cache
+            .add(PathBuf::from("MultiCollection.uop"), UopPackage::new_default());
+
+        let expected = uocf::enhanced::multis::multi_collection_hash(7);
+        assert!(app.select_raw_multi_collection_entry(7));
+        assert_eq!(app.selected_file_hash, Some(expected));
+        assert_eq!(app.selected_multi_uop_hash, Some(expected));
+    }
+
+    #[test]
+    fn select_raw_multi_collection_entry_prefers_loaded_source_path() {
+        let mut app = test_app();
+        let cc_path = PathBuf::from("cc/MultiCollection.uop");
+        let ec_path = PathBuf::from("ec/MultiCollection.uop");
+        app.uop_cache.add(cc_path, UopPackage::new_default());
+        app.uop_cache.add(ec_path.clone(), UopPackage::new_default());
+        app.multi_collection_path = Some(ec_path);
+
+        let expected = uocf::enhanced::multis::multi_collection_hash(7);
+        assert!(app.select_raw_multi_collection_entry(7));
+        assert_eq!(app.selected_uop_idx, Some(1));
+        assert_eq!(app.selected_file_hash, Some(expected));
+        assert_eq!(app.selected_multi_uop_hash, Some(expected));
+    }
+
+    #[test]
+    fn select_raw_localized_strings_file_uses_expected_hash() {
+        let mut app = test_app();
+        app.uop_cache
+            .add(PathBuf::from("localizedstrings.uop"), UopPackage::new_default());
+
+        assert!(app.select_raw_localized_strings_file(0x1234));
+        assert_eq!(app.selected_file_hash, Some(0x1234));
+        assert_eq!(app.selected_localized_file_hash, Some(0x1234));
+    }
+
+    #[test]
+    fn housing_index_collects_piece_tiles_and_stair_multis() {
+        use uocf::enhanced::housing::{HousingPiece, HousingSlot, HousingTileType, HOUSING_TILE_TYPE_STAIRS};
+
+        let slot = |slot, id| HousingSlot { slot, id };
+        let housing = HousingPieces {
+            tile_types: vec![HousingTileType {
+                tile_type: HOUSING_TILE_TYPE_STAIRS,
+                pieces: vec![HousingPiece {
+                    category: 0,
+                    group: 0,
+                    feature_mask: 0,
+                    tooltip_cliloc: 0,
+                    solid: vec![slot(1, 0x10)],
+                    multis: vec![slot(1, 7600)],
+                    windows: vec![slot(2, 0x20)],
+                }],
+            }],
+        };
+
+        let index = HousingIndex::from_pieces(&housing);
+
+        assert_eq!(index.piece_tile_ids, HashSet::from([0x10, 0x20]));
+        assert_eq!(index.multi_ids, HashSet::from([7600]));
+    }
+}

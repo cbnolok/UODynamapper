@@ -7530,7 +7530,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "uocf-inspector-gui"
+name = "uocf-editor-gui"
 version = "0.1.0"
 dependencies = [
  "color-eyre",

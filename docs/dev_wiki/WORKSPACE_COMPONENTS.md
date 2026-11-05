@@ -114,7 +114,7 @@ Package-manager and legacy conversion tools built by the `uocf-cli` crate:
 
 ### UOCF Graphical Frontends
 
-- `uocf-inspector-gui`: inspector for UOCF-supported source client formats.
+- `uocf-editor-gui`: inspector and editor for UOCF-supported source client formats.
 - `uop-dict-populator-gui`: GUI for building and expanding UOP hash dictionaries.
 
 ## CLI Tools
@@ -163,9 +163,9 @@ GUI frontend for the UODynamapper conversion pipeline.
 
 Inspector for converted `.uddp` packages, atlas layers, logical files, and metadata slots.
 
-### `tools/uocf-inspector-gui/`
+### `tools/uocf-editor-gui/`
 
-Inspector for UOCF-supported source client formats, including `.uop` packages, `tiledata.mul`, and Enhanced Client `tileart.uop` metadata.
+Inspector and editor for UOCF-supported source client formats, including `.uop` packages, `tiledata.mul`, and Enhanced Client `tileart.uop` metadata.
 
 ### `tools/uop-dict-populator-gui/`
 
