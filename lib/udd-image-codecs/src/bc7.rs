@@ -1427,6 +1427,94 @@ mod tests {
         }
     }
 
+    /// Mode 4 stores a 2-bit and a 3-bit weight plane, each in the field of its size, whichever plane the index
+    /// flag gives to colour. The block goes through the `dds` decoder and is compared with the format's own rule.
+    #[test]
+    fn mode4_decodes_each_weight_plane_for_every_index_flag_and_rotation() {
+        use tables::{BC7_WEIGHTS2, BC7_WEIGHTS3};
+
+        const SEED: u64 = 0x9E37_79B9_7F4A_7C15;
+        const BLOCKS_PER_CASE: usize = 2048;
+        const BLOCK_PIXELS: usize = (BC7_BLOCK_EDGE * BC7_BLOCK_EDGE) as usize;
+        const ROTATIONS: u32 = 4;
+        const COLOR_ENDPOINT_BITS: u32 = 5;
+        const ALPHA_ENDPOINT_BITS: u32 = 6;
+        const ALPHA_CHANNEL: usize = 3;
+        const CHANNEL_BITS: u32 = 8;
+        const WEIGHT_BITS: u32 = 6;
+        const WEIGHT_ONE: u32 = 1 << WEIGHT_BITS;
+        const WEIGHT_ROUNDING: u32 = WEIGHT_ONE / 2;
+
+        fn expand(value: u32, bits: u32) -> u32 {
+            let shifted = value << (CHANNEL_BITS - bits);
+            shifted | (shifted >> bits)
+        }
+        fn interpolate(low: u32, high: u32, weight: u32) -> u8 {
+            (((WEIGHT_ONE - weight) * low + weight * high + WEIGHT_ROUNDING) >> WEIGHT_BITS) as u8
+        }
+
+        let extent = ImageExtent::new(BC7_BLOCK_EDGE, BC7_BLOCK_EDGE).unwrap();
+        let mut state = SEED;
+        let mut next = |limit: usize| {
+            state ^= state << 13;
+            state ^= state >> 7;
+            state ^= state << 17;
+            (state % limit as u64) as u32
+        };
+        for index_flag in [0u32, 1] {
+            for rotation in 0..ROTATIONS {
+                for _ in 0..BLOCKS_PER_CASE {
+                    let mut endpoint = |bits: u32| next(1 << bits);
+                    let low = [
+                        endpoint(COLOR_ENDPOINT_BITS),
+                        endpoint(COLOR_ENDPOINT_BITS),
+                        endpoint(COLOR_ENDPOINT_BITS),
+                        endpoint(ALPHA_ENDPOINT_BITS),
+                    ];
+                    let high = [
+                        endpoint(COLOR_ENDPOINT_BITS),
+                        endpoint(COLOR_ENDPOINT_BITS),
+                        endpoint(COLOR_ENDPOINT_BITS),
+                        endpoint(ALPHA_ENDPOINT_BITS),
+                    ];
+                    let weights3: [u8; BLOCK_PIXELS] = std::array::from_fn(|_| next(BC7_WEIGHTS3.len()) as u8);
+                    let weights2: [u8; BLOCK_PIXELS] = std::array::from_fn(|_| next(BC7_WEIGHTS2.len()) as u8);
+
+                    let mut block = [0u8; BC7_BLOCK_BYTES];
+                    analytical::encode_mode4(
+                        &mut block, low[0], low[1], low[2], low[3], high[0], high[1], high[2], high[3], &weights3,
+                        &weights2, rotation, index_flag,
+                    );
+
+                    let expected: Vec<u8> = (0..BLOCK_PIXELS)
+                        .flat_map(|index| {
+                            let three = BC7_WEIGHTS3[weights3[index] as usize];
+                            let two = BC7_WEIGHTS2[weights2[index] as usize];
+                            let (color_weight, alpha_weight) = if index_flag == 1 { (three, two) } else { (two, three) };
+                            let mut pixel: [u8; 4] = std::array::from_fn(|channel| {
+                                let (bits, weight) = if channel == ALPHA_CHANNEL {
+                                    (ALPHA_ENDPOINT_BITS, alpha_weight)
+                                } else {
+                                    (COLOR_ENDPOINT_BITS, color_weight)
+                                };
+                                interpolate(expand(low[channel], bits), expand(high[channel], bits), weight)
+                            });
+                            if rotation > 0 {
+                                pixel.swap(ALPHA_CHANNEL, rotation as usize - 1);
+                            }
+                            pixel
+                        })
+                        .collect();
+                    assert_eq!(
+                        decode_bc7_to_rgba8888(&block, extent).unwrap(),
+                        expected,
+                        "index flag {index_flag}, rotation {rotation}"
+                    );
+                }
+            }
+        }
+    }
+
     #[test]
     fn bc7_progress_counts_encode_and_rdo_passes_separately() {
         let extent = ImageExtent::new(8, 8).expect("extent");

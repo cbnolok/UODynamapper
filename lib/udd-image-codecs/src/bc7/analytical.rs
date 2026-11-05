@@ -3855,11 +3855,7 @@ pub fn encode_mode4(
     // 2 leftover bits from ha (ha is 6-bit, 30+6+6=42 total, 42-40=2 left)
     let mut y = (x >> 40) & 3;
     // 2-bit alpha indices (if index_flag=1, w1 is alpha; if 0, w1 is RGB)
-    let (p2, p3) = if index_flag == 1 {
-        (&w1, &w0)
-    } else {
-        (&w0, &w1)
-    };
+    let (p2, p3) = (&w1, &w0);
     y |= pack_2bit_anchor0_weights(p2, inv1) << 2;
     block[6..10].copy_from_slice(&y.to_le_bytes()[0..4]);
     // 3-bit RGB indices
