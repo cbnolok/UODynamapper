@@ -14,6 +14,8 @@ const SCANNING_REPAINT: std::time::Duration = std::time::Duration::from_millis(1
 /// Index of the first `AnimationFrame*.uop` in the package names (group 0).
 const FIRST_UOP_PACKAGE_NUMBER: u8 = 1;
 const HEX_PREFIX: &str = "0x";
+/// `anim{N}.mul` is MUL file index `N - 1` (index 0 is `anim.mul`).
+const MUL_FILE_NUMBER_OFFSET: u16 = 1;
 
 /// Where the frames of an action are stored.
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
@@ -51,8 +53,7 @@ impl ActionKey {
     /// Where the frames come from, as the list shows it.
     pub(super) fn provenance(&self) -> String {
         match self.source {
-            ActionSource::Mul { file_index: 0, first_index } => format!("anim.mul idx {first_index}"),
-            ActionSource::Mul { file_index, first_index } => format!("anim{}.mul idx {first_index}", file_index + 1),
+            ActionSource::Mul { file_index, first_index } => format!("{} idx {first_index}", mul_file_name(file_index)),
             ActionSource::Uop { group, .. } => format!("AnimationFrame{}.uop", group + FIRST_UOP_PACKAGE_NUMBER),
         }
     }
@@ -62,6 +63,14 @@ impl ActionKey {
             ActionSource::Mul { file_index, first_index } => (self.body, self.action, file_index, 0, u64::from(first_index)),
             ActionSource::Uop { package_index, file_hash, group } => (self.body, self.action, group, package_index, file_hash),
         }
+    }
+}
+
+/// `anim.mul`, `anim2.mul`, ... for MUL file `file_index`.
+pub(super) fn mul_file_name(file_index: u8) -> String {
+    match file_index {
+        0 => "anim.mul".to_string(),
+        index => format!("anim{}.mul", u16::from(index) + MUL_FILE_NUMBER_OFFSET),
     }
 }
 
@@ -255,6 +264,19 @@ pub(super) fn action_keys(app: &mut UopInspectorApp, source: ArtSource) -> Optio
     app.animations_view.list.keys.as_ref().map(|(_, keys)| keys.clone())
 }
 
+/// A selectable row of the list, its text on the left (a sized button centres it).
+fn list_row(ui: &mut egui::Ui, size: egui::Vec2, selected: bool, text: &str) -> egui::Response {
+    let (rect, response) = ui.allocate_exact_size(size, egui::Sense::click());
+    let visuals = ui.style().interact_selectable(&response, selected);
+    if selected || response.hovered() {
+        ui.painter().rect_filled(rect, visuals.corner_radius, visuals.weak_bg_fill);
+    }
+    let position = rect.left_center() + egui::vec2(ui.spacing().button_padding.x, 0.0);
+    let font = egui::TextStyle::Button.resolve(ui.style());
+    ui.painter().text(position, egui::Align2::LEFT_CENTER, text, font, visuals.text_color());
+    response
+}
+
 /// Filter, go to, sort, and the list itself; arrows move the selection when no field has the keyboard.
 pub(super) fn show_action_list(app: &mut UopInspectorApp, ctx: &egui::Context, ui: &mut egui::Ui, match_unhashed: bool) {
     let source = app.selected_legacy_source;
@@ -338,14 +360,14 @@ pub(super) fn show_action_list(app: &mut UopInspectorApp, ctx: &egui::Context, u
                     let marker = if open { "⏷" } else { "⏵" };
                     let has_selection = selected.is_some_and(|key| key.body == body);
                     let text = format!("{marker} Body {body} ({actions} action{})", if actions == 1 { "" } else { "s" });
-                    if ui.add_sized([width, row_height], egui::Button::selectable(has_selection && !open, text)).clicked() {
+                    if list_row(ui, egui::vec2(width, row_height), has_selection && !open, &text).clicked() {
                         toggled = Some(body);
                     }
                 }
                 ListRow::Action(index) => {
                     let key = visible[index];
                     let text = format!("{ACTION_ROW_INDENT}Action {} · {}", key.action, key.provenance());
-                    if ui.add_sized([width, row_height], egui::Button::selectable(selected == Some(key), text)).clicked() {
+                    if list_row(ui, egui::vec2(width, row_height), selected == Some(key), &text).clicked() {
                         clicked = Some(key);
                     }
                 }

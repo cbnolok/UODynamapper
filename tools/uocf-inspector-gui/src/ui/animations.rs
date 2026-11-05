@@ -23,6 +23,9 @@ pub(crate) struct AnimationsView {
     pub(super) list: AnimationListState,
     pub(super) frames: FramesViewState,
     pub(super) hue: AnimationHueState,
+    /// The body type and the loaded package count of the last `AnimationSequence` lookup, so a missing entry is
+    /// looked up once.
+    sequence_lookup: Option<(u32, usize)>,
 }
 
 const ANIMATION_CONTROLS_PANEL_WIDTH: f32 = 280.0;
@@ -151,18 +154,22 @@ pub fn ui_animations(app: &mut UopInspectorApp, ctx: &egui::Context, ui: &mut eg
         let body_type = selected_sequence_id(app);
 
         // Try to load AnimationSequence if not already loaded for this body type
-        if app.selected_anim_sequence.as_ref().map(|(id, _)| *id) != Some(body_type) {
+        let lookup = (body_type, app.uop_cache.loaded_uops.len());
+        if app.animations_view.sequence_lookup != Some(lookup) {
+            app.animations_view.sequence_lookup = Some(lookup);
             let mut found_seq = None;
             for loaded in &app.uop_cache.loaded_uops {
                 if loaded.path.file_name().unwrap_or_default().to_string_lossy().contains("AnimationSequence") {
                     let hash = hash_file_name_single(&AnimationSequence::entry_path(body_type));
-                    if let Some(file) = loaded.package.get_file_by_hash(hash) {
-                        if let Ok(data) = file.unpack() {
-                            if let Ok(seq) = AnimationSequence::parse(&data) {
-                                found_seq = Some((body_type, seq));
-                                break;
-                            }
+                    // The package is loaded lazily: its entries are read from the file on demand.
+                    match loaded.package.unpack_file_by_hash(hash).map(|data| data.map(|data| AnimationSequence::parse(&data))) {
+                        Ok(Some(Ok(seq))) => {
+                            found_seq = Some((body_type, seq));
+                            break;
                         }
+                        Ok(Some(Err(error))) => log::warn!("AnimationSequence {body_type}: {error:#}"),
+                        Err(error) => log::warn!("AnimationSequence {body_type}: {error}"),
+                        Ok(None) => {}
                     }
                 }
             }
@@ -187,7 +194,11 @@ pub fn ui_animations(app: &mut UopInspectorApp, ctx: &egui::Context, ui: &mut eg
                 ui.weak(format!("(action {} is an alias of {})", app.selected_action_id, key.action));
             }
             if let Some(sequence) = sequence {
-                ui.weak(format!("· AnimationSequence {sequence}"));
+                if app.selected_anim_sequence.as_ref().is_some_and(|(id, _)| *id == sequence) {
+                    ui.weak(format!("· AnimationSequence {sequence}"));
+                } else {
+                    ui.weak(format!("· no AnimationSequence {sequence}"));
+                }
             }
         });
         ui.horizontal_wrapped(|ui| {
@@ -365,8 +376,11 @@ fn action_target(app: &mut UopInspectorApp) -> Result<ActionTarget, String> {
             .then(|| find(FALLBACK_FRAMES_BODY))
             .flatten()
     });
-    key.map(|key| ActionTarget { key, sequence })
-        .ok_or_else(|| format!("Body {body} has no action {action} in the {} files.", animation_source_label(source)))
+    let files = match source {
+        ArtSource::Mul => animation_list::mul_file_name(group),
+        _ => "AnimationFrame UOP packages".to_string(),
+    };
+    key.map(|key| ActionTarget { key, sequence }).ok_or_else(|| format!("Body {body} has no action {action} in {files}."))
 }
 
 /// Hash of everything the frames of `key` are decoded from.
@@ -387,7 +401,7 @@ fn decode_action(app: &mut UopInspectorApp, key: ActionKey, sequence: Option<u32
             let Ok(body) = u16::try_from(key.body) else {
                 return ActionFrames::from_error(format!("Body {} is outside the classic MUL animation layout", key.body));
             };
-            let split = format!("one {} entry per direction", key.provenance().split(' ').next().unwrap_or_default());
+            let split = format!("one {} entry per direction", animation_list::mul_file_name(file_index));
             ActionFrames::classic(
                 |direction| {
                     let index = uocf::classic::anim::classic_animation_source_index_from_identity(file_index, body, key.action, direction)?;

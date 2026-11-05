@@ -25,6 +25,8 @@ const GRID_DEFAULT_ZOOM: f32 = 0.5;
 /// Share of the central panel's height the player may take; the grid gets the rest.
 const PLAYER_HEIGHT_SHARE: f32 = 0.45;
 const ROW_LABEL_WIDTH: f32 = 96.0;
+/// Frames are shown numbered from 1, in the player and the grid.
+const DISPLAYED_FIRST_FRAME: usize = 1;
 /// Seconds a frame shows at speed 1, as the player always did.
 const BASE_FRAME_SECONDS: f64 = 0.1;
 const CELL_ROUNDING: f32 = 2.0;
@@ -198,6 +200,9 @@ pub(super) fn world_direction(is_ec: bool, stored: u8) -> u8 {
     if is_ec { stored } else { stored + FIRST_STORED_DIRECTION }
 }
 
+/// Between the parts of a direction label; the grid puts them on lines of their own.
+const LABEL_SEPARATOR: &str = " · ";
+
 /// "3 SE", plus the world direction drawn as its mirror.
 pub(super) fn direction_label(is_ec: bool, stored: u8) -> String {
     let world = world_direction(is_ec, stored);
@@ -205,7 +210,7 @@ pub(super) fn direction_label(is_ec: bool, stored: u8) -> String {
         return stored.to_string();
     };
     match MIRROR_DIRECTION_SUM.checked_sub(world).filter(|&mirror| mirror < FIRST_STORED_DIRECTION && mirror != world) {
-        Some(mirror) => format!("{stored} {name} · {} mirrored", COMPASS[usize::from(mirror)]),
+        Some(mirror) => format!("{stored} {name}{LABEL_SEPARATOR}{} mirrored", COMPASS[usize::from(mirror)]),
         None => format!("{stored} {name}"),
     }
 }
@@ -235,15 +240,21 @@ pub(super) struct AnchoredZoom {
     pub zoom: f32,
     viewport: Option<egui::Rect>,
     offset: egui::Vec2,
+    /// Another action is shown: it opens at the top left.
+    scroll_to_start: bool,
 }
 
 impl AnchoredZoom {
     const fn new(zoom: f32) -> Self {
-        Self { zoom, viewport: None, offset: egui::Vec2::ZERO }
+        Self { zoom, viewport: None, offset: egui::Vec2::ZERO, scroll_to_start: false }
     }
 
     /// Applies this frame's gesture; returns the scroll offset to show it with.
     fn update(&mut self, ui: &egui::Ui, range: RangeInclusive<f32>) -> Option<egui::Vec2> {
+        if std::mem::take(&mut self.scroll_to_start) {
+            self.offset = egui::Vec2::ZERO;
+            return Some(egui::Vec2::ZERO);
+        }
         let viewport = self.viewport?;
         let pointer = ui.input(|input| input.pointer.hover_pos())?;
         if !ui.rect_contains_pointer(viewport) {
@@ -298,7 +309,10 @@ pub(super) fn decoded_frames(app: &mut UopInspectorApp, key: u64, decode: impl F
         }
     }
     let frames = Arc::new(decode(app));
-    app.animations_view.frames.decoded = Some((key, frames.clone()));
+    let view = &mut app.animations_view.frames;
+    view.decoded = Some((key, frames.clone()));
+    view.player_zoom.scroll_to_start = true;
+    view.grid_zoom.scroll_to_start = true;
     frames
 }
 
@@ -340,7 +354,7 @@ fn frame_texture(
     let texture = (image.width > 0 && image.height > 0)
         .then(|| {
             let size = [usize::from(image.width), usize::from(image.height)];
-            app.checked_texture(ctx, format!("animation_frame_{key:016x}_{index}"), size, &drawn_rgba(image, hue), Default::default())
+            app.checked_texture(ctx, format!("animation_frame_{key:016x}_{index}"), size, &drawn_rgba(image, hue), egui::TextureOptions::NEAREST)
         })
         .flatten();
     app.animations_view.frames.textures.insert(index, texture.clone());
@@ -411,7 +425,7 @@ pub(super) fn show_player(
         ui.label(format!(
             "Direction {}{mirror_note} · frame {} / {frame_count}",
             direction_label(frames.is_ec, row.direction),
-            frame_index + 1
+            frame_index + DISPLAYED_FIRST_FRAME
         ));
         if let Some(image) = image_index.map(|index| &frames.images[index]) {
             ui.label(format!("· {}x{}, center {},{}", image.width, image.height, image.center_x, image.center_y));
@@ -490,7 +504,12 @@ pub(super) fn show_grid(app: &mut UopInspectorApp, ctx: &egui::Context, ui: &mut
                     Some(error) => format!("{}\n{error}", direction_label(frames.is_ec, row.direction)),
                     None => format!("{}\n{} frames", direction_label(frames.is_ec, row.direction), row.frames.len()),
                 };
-                ui.add_sized([ROW_LABEL_WIDTH, cell.y], egui::Label::new(label).wrap());
+                let label = label.replace(LABEL_SEPARATOR, "\n");
+                let size = egui::vec2(ROW_LABEL_WIDTH, cell.y);
+                ui.allocate_ui_with_layout(size, egui::Layout::top_down(egui::Align::Min), |ui| {
+                    ui.set_min_size(size);
+                    ui.add(egui::Label::new(label).wrap());
+                });
                 for (column, image_index) in row.frames.iter().enumerate() {
                     let (rect, response) = ui.allocate_exact_size(cell, egui::Sense::click());
                     let is_selected = selected == Some(row_index) && app.current_frame_idx.min(row.frames.len() - 1) == column;
@@ -500,11 +519,13 @@ pub(super) fn show_grid(app: &mut UopInspectorApp, ctx: &egui::Context, ui: &mut
                             paint_bottom_centred(ui, &texture, rect, zoom, false);
                             let image = &frames.images[index];
                             let number = image.number.map(|number| format!(", number {number}")).unwrap_or_default();
-                            response.clone().on_hover_text(format!("Frame {column}{number}: {}x{}", image.width, image.height));
+                            let shown = column + DISPLAYED_FIRST_FRAME;
+                            response.clone().on_hover_text(format!("Frame {shown}{number}: {}x{}", image.width, image.height));
                         }
                         None => {
                             ui.painter().text(rect.center(), egui::Align2::CENTER_CENTER, "gap", egui::FontId::default(), ui.visuals().weak_text_color());
-                            response.clone().on_hover_text(format!("Frame {column}: no frame with this number"));
+                            let shown = column + DISPLAYED_FIRST_FRAME;
+                            response.clone().on_hover_text(format!("Frame {shown}: no frame with this number"));
                         }
                     }
                     if is_selected {
