@@ -56,11 +56,14 @@ struct MultiPreviewData {
 #[derive(Clone, Copy, Default)]
 struct PartRenderInfo {
     is_floor: bool,
-    width_delta: i32,
-    height_delta: i32,
-    offset_x: i32,
-    offset_y: i32,
+    /// The `tileart.uop` offsets of the drawn window, in source pixels: `x_off` from the tile's left vertex to the
+    /// window's left edge, `y_off` down from the tile's bottom vertex to the window's bottom edge. `None` draws the
+    /// Classic client's way: centred on the tile, bottom on its bottom vertex.
+    window_offset: Option<(i32, i32)>,
+    /// Classic pixels per source pixel, from the record's art scale; `None` is one.
+    pixel_scale: Option<f32>,
     texture_id: Option<u32>,
+    /// The `tileart.uop` window of the image the client draws; the rest of the texture is not drawn.
     clip_rect: Option<MultiSourceClip>,
     /// The source of the art when it is not the selected one: a tile without KR art.
     art_source: Option<ArtSource>,
@@ -83,8 +86,17 @@ struct PreviewRenderPart {
     size: egui::Vec2,
 }
 
-const CLASSIC_STATIC_TILE_PIXEL_WIDTH: f32 = 44.0;
-const ENHANCED_STATIC_TILE_PIXEL_WIDTH: f32 = 64.0;
+/// Half the width and height of a tile's diamond, in classic pixels: its bottom vertex is this far right of its left
+/// one, and a map step moves this far across and down the screen.
+const TILE_HALF_SIDE: f32 = 22.0;
+/// Classic pixels a Z step raises a part.
+const Z_STEP_PIXELS: f32 = 4.0;
+/// The `tileart.uop` art scale that draws one source pixel as one classic pixel: a scale `s` draws it `s / 1.5`
+/// classic pixels (traced, `UOTileArt::BuildImageWindowQuad` 0x00459b00; see
+/// `scripts/dev-helpers/ec-research/ghidra-legacy-art-scale/results/uosa_legacy_art_scale.md`).
+const TILEART_SCALE_OF_ONE_CLASSIC_PIXEL: f32 = 1.5;
+/// Side of the box drawn for a part without art, in classic pixels.
+const MISSING_PART_SIDE: f32 = 14.0;
 const CLASSIC_MULTI_SIDEBAR_WIDTH: f32 = 250.0;
 const UOP_MULTI_SIDEBAR_WIDTH: f32 = 300.0;
 /// Classic `multi.mul` part flag set on the parts the client draws.
@@ -854,8 +866,6 @@ fn draw_preview(
     let span_x = ((max_x as i32) - (min_x as i32) + 1).max(1);
     let span_y = ((max_y as i32) - (min_y as i32) + 1).max(1);
     let span_z = ((max_z as i32) - (min_z as i32)).max(0);
-    let tile_w = 22.0f32;
-    let tile_h = 22.0f32;
     refresh_multi_preview_cache(app);
     let art_source = concrete_art_tile_source(app.selected_legacy_source);
     let mut sorted_parts: Vec<_> = parts
@@ -863,11 +873,11 @@ fn draw_preview(
         .map(|part| {
             let info = part_render_info(app, part.item_id, art_source);
             let texture = get_multi_part_texture(app, ctx, part.item_id, &info);
-            let art_scale = multi_preview_art_scale(info.art_source.unwrap_or(art_source));
+            let art_scale = info.pixel_scale.unwrap_or(1.0);
             let size = texture
                 .as_ref()
                 .map(|handle| handle.size_vec2() * art_scale)
-                .unwrap_or_else(|| egui::vec2(14.0, 14.0) * art_scale);
+                .unwrap_or_else(|| egui::Vec2::splat(MISSING_PART_SIDE));
             PreviewRenderPart {
                 index: part.source_index,
                 part: part.clone(),
@@ -895,14 +905,14 @@ fn draw_preview(
     let mut content_min = egui::pos2(f32::INFINITY, f32::INFINITY);
     let mut content_max = egui::pos2(f32::NEG_INFINITY, f32::NEG_INFINITY);
     for render_part in &sorted_parts {
-        let pos = preview_part_position(render_part, min_x, min_y, min_z, tile_w, tile_h);
+        let pos = preview_part_position(render_part, min_x, min_y, min_z);
         content_min.x = content_min.x.min(pos.x);
         content_min.y = content_min.y.min(pos.y);
         content_max.x = content_max.x.max(pos.x + render_part.size.x);
         content_max.y = content_max.y.max(pos.y + render_part.size.y);
     }
     if show_center {
-        let center_pos = multi_center_position(min_x, min_y, min_z, tile_w, tile_h);
+        let center_pos = multi_center_position(min_x, min_y, min_z);
         content_min.x = content_min.x.min(center_pos.x - 24.0);
         content_min.y = content_min.y.min(center_pos.y - 24.0);
         content_max.x = content_max.x.max(center_pos.x + 24.0);
@@ -911,8 +921,8 @@ fn draw_preview(
     if !content_min.x.is_finite() {
         content_min = egui::pos2(0.0, 0.0);
         content_max = egui::pos2(
-            (span_x as f32 + span_y as f32) * tile_w,
-            (span_x as f32 + span_y as f32) * tile_h + span_z as f32 * 4.0,
+            (span_x as f32 + span_y as f32) * TILE_HALF_SIDE,
+            (span_x as f32 + span_y as f32) * TILE_HALF_SIDE + span_z as f32 * Z_STEP_PIXELS,
         );
     }
 
@@ -937,7 +947,7 @@ fn draw_preview(
             );
 
         for render_part in sorted_parts {
-            let part_pos = preview_part_position(&render_part, min_x, min_y, min_z, tile_w, tile_h);
+            let part_pos = preview_part_position(&render_part, min_x, min_y, min_z);
             if let Some(handle) = render_part.texture {
                 let draw_pos = (rect.min + egui::vec2(
                     origin.x - rect.min.x + part_pos.x,
@@ -959,11 +969,7 @@ fn draw_preview(
                 paint_hidden_part_outline(&painter, part_rect, render_part.part.hidden);
                 paint_selected_part_highlight(&painter, part_rect, render_part.index, selected_part_index);
             } else {
-                let fallback_pos = origin + part_pos.to_vec2();
-                let part_rect = egui::Rect::from_center_size(
-                    fallback_pos,
-                    render_part.size,
-                );
+                let part_rect = egui::Rect::from_min_size(origin + part_pos.to_vec2(), render_part.size);
                 let fill = if render_part.part.hidden {
                     MISSING_PART_FILL_COLOR.gamma_multiply(f32::from(HIDDEN_PART_TINT_ALPHA) / f32::from(u8::MAX))
                 } else {
@@ -976,7 +982,7 @@ fn draw_preview(
         }
 
         if show_center {
-            let center = origin + multi_center_position(min_x, min_y, min_z, tile_w, tile_h).to_vec2();
+            let center = origin + multi_center_position(min_x, min_y, min_z).to_vec2();
             let stroke = egui::Stroke::new(2.0_f32, egui::Color32::from_rgb(255, 220, 64));
             painter.line_segment(
                 [center + egui::vec2(-18.0, 0.0), center + egui::vec2(18.0, 0.0)],
@@ -991,35 +997,39 @@ fn draw_preview(
     });
 }
 
-fn preview_part_position(
-    render_part: &PreviewRenderPart,
-    min_x: i16,
-    min_y: i16,
-    min_z: i16,
-    tile_w: f32,
-    tile_h: f32,
-) -> egui::Pos2 {
-    let part = &render_part.part;
-    let info = render_part.info;
-    let x = ((part.x as i32) - (min_x as i32)) as f32;
-    let y = ((part.y as i32) - (min_y as i32)) as f32;
-    let scale = render_part.scale;
-    let base_x = (x - y) * tile_w + info.height_delta as f32 * scale;
-    let base_y = (x + y) * tile_h
-        + info.width_delta as f32 * scale
-        + info.height_delta as f32 * scale
-        - (part.original_z as f32 * 4.0);
-
+/// The bottom (south) vertex of the diamond of the tile `(x, y)` at Z `z`, in preview pixels.
+fn tile_bottom_vertex(x: i32, y: i32, z: i32) -> egui::Pos2 {
     egui::pos2(
-        base_x + info.offset_x as f32 * scale,
-        base_y + info.offset_y as f32 * scale + (min_z as f32 * 4.0),
+        (x - y) as f32 * TILE_HALF_SIDE + TILE_HALF_SIDE,
+        (x + y) as f32 * TILE_HALF_SIDE - z as f32 * Z_STEP_PIXELS,
     )
 }
 
-fn multi_center_position(min_x: i16, min_y: i16, min_z: i16, tile_w: f32, tile_h: f32) -> egui::Pos2 {
-    let x = -(min_x as f32);
-    let y = -(min_y as f32);
-    egui::pos2((x - y) * tile_w, (x + y) * tile_h + (min_z as f32 * 4.0))
+/// Top-left corner of a part's image. Both clients put the bottom edge of the image on the tile's bottom vertex,
+/// raised 4 pixels per Z. The Classic client centres it (left edge `floor(width / 2)` left of the vertex); the EC
+/// client puts the left edge `x_off` right of the tile's left vertex and moves the bottom `y_off` down, both from the
+/// record's window, which hold the same centring in 92 % of the records and an authored shift of a few pixels in the
+/// rest (traced: `scripts/dev-helpers/ec-research/ghidra-legacy-art-scale/results/uosa_legacy_art_scale.md`).
+fn preview_part_position(render_part: &PreviewRenderPart, min_x: i16, min_y: i16, min_z: i16) -> egui::Pos2 {
+    let part = &render_part.part;
+    let vertex = tile_bottom_vertex(
+        i32::from(part.x) - i32::from(min_x),
+        i32::from(part.y) - i32::from(min_y),
+        i32::from(part.original_z) - i32::from(min_z),
+    );
+    let size = render_part.size;
+    let (left, bottom_shift) = match render_part.info.window_offset {
+        Some((x_off, y_off)) => {
+            (vertex.x - TILE_HALF_SIDE + x_off as f32 * render_part.scale, y_off as f32 * render_part.scale)
+        }
+        None => (vertex.x - (size.x / 2.0).floor(), 0.0),
+    };
+    egui::pos2(left, vertex.y + bottom_shift - size.y)
+}
+
+/// Centre of the diamond of the multi's tile `(0, 0)` at Z 0.
+fn multi_center_position(min_x: i16, min_y: i16, min_z: i16) -> egui::Pos2 {
+    tile_bottom_vertex(-i32::from(min_x), -i32::from(min_y), -i32::from(min_z)) - egui::vec2(0.0, TILE_HALF_SIDE)
 }
 
 fn paint_hidden_part_outline(painter: &egui::Painter, rect: egui::Rect, hidden: bool) {
@@ -1256,15 +1266,6 @@ fn concrete_art_tile_source(source: ArtSource) -> ArtSource {
     }
 }
 
-fn multi_preview_art_scale(source: ArtSource) -> f32 {
-    match source {
-        ArtSource::EcUopKr => {
-            CLASSIC_STATIC_TILE_PIXEL_WIDTH / ENHANCED_STATIC_TILE_PIXEL_WIDTH
-        }
-        ArtSource::Mul | ArtSource::CcUop | ArtSource::EcUop | ArtSource::EcUopLegacy | ArtSource::Any => 1.0,
-    }
-}
-
 /// How to draw a part, worked out once per tile and art source.
 fn part_render_info(app: &mut UopInspectorApp, item_id: u16, source: ArtSource) -> PartRenderInfo {
     let key = (item_id, source as u8);
@@ -1313,32 +1314,45 @@ fn work_out_part_render_info(app: &UopInspectorApp, item_id: u16, source: ArtSou
     if let Some(entries) = &app.ec_tileart_entries {
         let position = app.multi_preview_cache.tileart_by_tile.as_ref().and_then(|index| index.get(&(item_id as u32)));
         if let Some(file) = position.and_then(|position| entries.get(*position)) {
-            if let Some(texture) = multi_tileart_texture(app, file, source) {
-                info.texture_id = Some(texture.texture_id);
-                info.clip_rect = Some(MultiSourceClip {
-                    left: texture.start_x,
-                    top: texture.start_y,
-                    right: texture.end_x,
-                    bottom: texture.end_y,
-                });
-                info.width_delta = texture.start_y - texture.end_y;
-                info.offset_x = texture.offset_x;
-                info.offset_y = texture.offset_y;
-            } else {
-                let image_offset = match source {
-                    ArtSource::EcUopKr => &file.entry.ec_img_offset,
-                    ArtSource::EcUop | ArtSource::EcUopLegacy => &file.entry.cc_img_offset,
-                    ArtSource::Mul | ArtSource::CcUop | ArtSource::Any => &file.entry.cc_img_offset,
-                };
-                info.width_delta = image_offset.y_start - image_offset.y_end;
-                info.height_delta = image_offset.x_start;
-                info.offset_x = image_offset.x_off;
-                info.offset_y = image_offset.y_off;
+            // The EC client draws a window of the record's image at the record's scale; the Classic client reads no
+            // tileart.uop.
+            match source {
+                ArtSource::EcUopKr => {
+                    if let Some(texture) = multi_tileart_texture(app, file, source) {
+                        // The enhanced window's ends are inclusive (traced, `BuildSpriteDescriptor` mode 1).
+                        info.texture_id = Some(texture.texture_id);
+                        info.clip_rect = Some(MultiSourceClip {
+                            left: texture.start_x,
+                            top: texture.start_y,
+                            right: texture.end_x + 1,
+                            bottom: texture.end_y + 1,
+                        });
+                        info.window_offset = Some((texture.offset_x, texture.offset_y));
+                        info.pixel_scale = tileart_pixel_scale(file.entry.world_art_scale);
+                    }
+                }
+                ArtSource::EcUop | ArtSource::EcUopLegacy => {
+                    let window = &file.entry.cc_img_offset;
+                    info.clip_rect = Some(MultiSourceClip {
+                        left: window.x_start,
+                        top: window.y_start,
+                        right: window.x_end,
+                        bottom: window.y_end,
+                    });
+                    info.window_offset = Some((window.x_off, window.y_off));
+                    info.pixel_scale = tileart_pixel_scale(file.entry.legacy_art_scale);
+                }
+                ArtSource::Mul | ArtSource::CcUop | ArtSource::Any => {}
             }
         }
     }
 
     info
+}
+
+/// Classic pixels per source pixel at a record's art scale; `None` for a scale that draws nothing.
+fn tileart_pixel_scale(scale: f32) -> Option<f32> {
+    (scale.is_finite() && scale > 0.0).then_some(scale / TILEART_SCALE_OF_ONE_CLASSIC_PIXEL)
 }
 
 fn multi_tileart_texture(
@@ -1415,6 +1429,96 @@ mod tests {
         app.ec_tileart_entries = Some(Arc::new(Vec::new()));
         refresh_multi_preview_cache(&mut app);
         assert!(app.multi_preview_cache.render_info.is_empty());
+    }
+
+    fn render_part(size: egui::Vec2, info: PartRenderInfo, x: i16, y: i16, z: i16) -> PreviewRenderPart {
+        PreviewRenderPart {
+            index: 0,
+            part: PreviewPart { x, y, z, original_z: z, ..part(false, false) },
+            info,
+            scale: info.pixel_scale.unwrap_or(1.0),
+            texture: None,
+            size,
+        }
+    }
+
+    #[test]
+    fn a_part_without_a_record_is_centred_on_its_tile_bottom_on_the_bottom_vertex() {
+        const WIDTH: f32 = 45.0;
+        const HEIGHT: f32 = 100.0;
+        const Z: i16 = 5;
+        let size = egui::vec2(WIDTH, HEIGHT);
+        let origin = preview_part_position(&render_part(size, PartRenderInfo::default(), 0, 0, 0), 0, 0, 0);
+        // The bottom vertex of the tile (0, 0) is at (22, 0); floor(45 / 2) = 22.
+        assert_eq!(origin, egui::pos2(0.0, -HEIGHT));
+
+        let moved = preview_part_position(&render_part(size, PartRenderInfo::default(), 1, 0, Z), 0, 0, 0);
+        assert_eq!(moved - origin, egui::vec2(TILE_HALF_SIDE, TILE_HALF_SIDE - f32::from(Z) * Z_STEP_PIXELS));
+    }
+
+    #[test]
+    fn a_record_window_places_the_part_by_its_offsets_at_its_scale() {
+        // Tile 3240: a 148x137 window with x_off -52 (= 22 - 74), raised 2 pixels.
+        const X_OFF: i32 = -52;
+        const Y_OFF: i32 = -2;
+        let size = egui::vec2(148.0, 137.0);
+        let info = PartRenderInfo { window_offset: Some((X_OFF, Y_OFF)), pixel_scale: Some(1.0), ..Default::default() };
+        let position = preview_part_position(&render_part(size, info, 0, 0, 0), 0, 0, 0);
+        assert_eq!(position, egui::pos2(X_OFF as f32, Y_OFF as f32 - size.y));
+
+        let half = PartRenderInfo { pixel_scale: Some(0.5), ..info };
+        let position = preview_part_position(&render_part(size * 0.5, half, 0, 0, 0), 0, 0, 0);
+        assert_eq!(position, egui::pos2(X_OFF as f32 * 0.5, Y_OFF as f32 * 0.5 - size.y * 0.5));
+    }
+
+    #[test]
+    fn a_record_art_scale_of_one_and_a_half_draws_a_source_pixel_as_a_classic_pixel() {
+        assert_eq!(tileart_pixel_scale(TILEART_SCALE_OF_ONE_CLASSIC_PIXEL), Some(1.0));
+        assert_eq!(tileart_pixel_scale(0.0), None);
+        assert_eq!(tileart_pixel_scale(f32::NAN), None);
+    }
+
+    /// The box of the visible pixels of a tile drawn at the multi's origin from `source`, in preview pixels.
+    fn visible_tile_box(app: &mut UopInspectorApp, item_id: u16, source: ArtSource) -> [i32; 4] {
+        let info = part_render_info(app, item_id, source);
+        let art_id = multi_part_art_id(item_id, &info, source);
+        let (width, height, pixels) = decode_multi_part_rgba(app, art_id, source, info.clip_rect).expect("art");
+        let (width, height) = (width as usize, height as usize);
+        let visible = |x: usize, y: usize| pixels[(y * width + x) * 4 + 3] > 0;
+        let columns: Vec<_> = (0..width).filter(|&x| (0..height).any(|y| visible(x, y))).collect();
+        let rows: Vec<_> = (0..height).filter(|&y| (0..width).any(|x| visible(x, y))).collect();
+        let scale = info.pixel_scale.unwrap_or(1.0);
+        let size = egui::vec2(width as f32, height as f32) * scale;
+        let position = preview_part_position(&render_part(size, info, 0, 0, 0), 0, 0, 0);
+        let edge = |origin: f32, pixel: usize| (origin + pixel as f32 * scale) as i32;
+        [
+            edge(position.x, columns[0]),
+            edge(position.y, rows[0]),
+            edge(position.x, columns[columns.len() - 1] + 1),
+            edge(position.y, rows[rows.len() - 1] + 1),
+        ]
+    }
+
+    #[test]
+    #[ignore = "reads the real Classic and Enhanced clients"]
+    fn both_art_sources_put_a_tile_where_their_clients_do() {
+        use crate::ui::test_support::{client_roots, CLASSIC_CLIENT_ROOTS_ENV, EC_CLIENT_ROOTS_ENV};
+        let mut app = crate::app::tests::test_app();
+        app.settings.cc_path = client_roots(CLASSIC_CLIENT_ROOTS_ENV).into_iter().next();
+        app.settings.ec_path = client_roots(EC_CLIENT_ROOTS_ENV).into_iter().next();
+        app.trigger_reload();
+        refresh_multi_preview_cache(&mut app);
+
+        // 0x812D: a 111-row CC image and a 187-row EC window, which drew 76 pixels apart when the image hung from
+        // the window's top; 0x79D2: 271 and 272 rows; 0x3EAC: the same 44x44 image.
+        for tile in [0x812D, 0x79D2, 0x3EAC] {
+            let classic = visible_tile_box(&mut app, tile, ArtSource::CcUop);
+            assert_eq!(visible_tile_box(&mut app, tile, ArtSource::EcUopLegacy), classic, "tile {tile:#06X}");
+        }
+        // 0x50E2: a 43-wide image the EC record puts 1 pixel left of the Classic centring (x_off 0, not 22 - 21).
+        let classic = visible_tile_box(&mut app, 0x50E2, ArtSource::CcUop);
+        let enhanced = visible_tile_box(&mut app, 0x50E2, ArtSource::EcUopLegacy);
+        assert_eq!(enhanced, [classic[0] - 1, classic[1], classic[2] - 1, classic[3]]);
     }
 
     #[test]
