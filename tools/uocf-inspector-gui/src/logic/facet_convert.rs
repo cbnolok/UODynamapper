@@ -1,42 +1,35 @@
-//! Whole-facet conversion behind the Maps tab: any of Classic MUL, Classic UOP, Enhanced Client facet and Kingdom
-//! Reborn facet to any other, with a resize to another client's facet size, on the model of `uocf-cli facet convert`.
-//!
-//! A save without changes is the source as it is: a Classic file to its own container, facet, edition and size is copied,
-//! and so is a facet package to its own kind. Rewriting a Classic file through the encoders would not always give its
-//! bytes: in the old clients' files a map block's header is not its index, and a static index entry's third field varies.
-//! A Classic UOP written over the same facet with a change keeps the source's layout and its unchanged entries.
+//! Whole-facet conversion behind the Maps tab: the tab's choices as a [`uocf::facet_convert`] conversion, the one behind
+//! `uocf-cli facet convert`, where a save without changes is the source as it is.
 
 use std::path::{Path, PathBuf};
 
-use color_eyre::eyre::{self, WrapErr};
-use uocf::classic::facet_image::{facet_image_file_name, FacetImageFile};
-use uocf::classic::facet_image_render::{
-    plan_facet_image, FacetImageMode, FacetImagePlan, FacetImageRenderer, SHIPPED_STYLE_MATCH_PERCENT,
-};
-use uocf::classic::facet_sources::{ClassicDifOptions, ClassicFacetSources, ClassicMapFormat, MapDifFiles, StaticDifFiles};
+use color_eyre::eyre;
+use uocf::classic::facet_image_render::FacetImageMode;
 use uocf::classic::map::MapSizeCells;
-use uocf::classic::target_client::TargetClient;
-use uocf::classic::world::{ClassicWorld, LandFill};
-use uocf::client_exe::facet_dimensions::ClientFamily;
-use uocf::enhanced::facet_encoder::build_facet_from_world;
-use uocf::enhanced::facet_package::{detect_facet_dialect, EcFacetPackage};
-use uocf::enhanced::facet_radar::{edition_radar_dds_file_name, RadarPalette};
-use uocf::enhanced::facet_sector::{data_map_entry_path, facet_package_file_name, FacetGeometry};
-use uocf::enhanced::facet_to_classic::facet_to_classic;
-use uocf::kr::facet::facet_encoder::build_kr_facet_from_world;
+use uocf::classic::world::LandFill;
+use uocf::facet_convert::{ClassicContainers, ConversionSource, ConversionTarget, ConvertHints, FacetConversion, ParsedValues, SourceDifs};
 use uocf::kr::facet::kr_land_map::KrLandMap;
 use uocf::map_edition::MapEdition;
-use uocf::uop_container::hash::hash_file_name_single;
-use uocf::uop_container::package::UopPackage;
-use uocf::utils::output_file::write_through_temp;
-use uocf::utils::path::find_file_ignoring_case;
 
-/// The map containers a Classic source folder is searched for, in order.
-const SOURCE_MAP_FORMATS: [ClassicMapFormat; 2] = [ClassicMapFormat::Uop, ClassicMapFormat::Mul];
-const RADARCOL_NAME: &str = "radarcol.mul";
-/// The tool that changes a client's facet size table.
-const PATCHER_TOOL: &str = "uo-client-patcher-gui";
 const PACKAGE_NAME_PREFIX: &str = "facet";
+/// What the messages of the conversion call the tab's controls.
+const HINTS: ConvertHints = ConvertHints {
+    standard_edition: "choose the standard edition",
+    target_is: "the target is",
+    size_is: "",
+    crop: "tick Crop",
+    allow_lossy: "tick Accept losses",
+    accepted_losses: "Accepted losses",
+    bake_difs: "choose Bake them all",
+    choose_container: "choose a Classic target",
+    image_choice: "the world map image choice is",
+    image_needs_client: "it needs a target client that draws facetNN.mul",
+    image_classic_only: "the world map image choice applies to Classic targets only.",
+    image_kept: "as chosen",
+    image_refused: "as chosen",
+    image_regenerate: "choose Render the whole image",
+    no_radarcol: "in the source or target client's folder",
+};
 
 /// What to do with the dif files of a Classic source.
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
@@ -57,6 +50,16 @@ impl DifChoice {
             Self::AsTheClientApplies => "As its client applies them",
             Self::Bake => "Bake them all",
             Self::Ignore => "Ignore them",
+        }
+    }
+}
+
+impl From<DifChoice> for SourceDifs {
+    fn from(choice: DifChoice) -> Self {
+        match choice {
+            DifChoice::AsTheClientApplies => Self::AsTheClientApplies,
+            DifChoice::Bake => Self::Bake,
+            DifChoice::Ignore => Self::Ignore,
         }
     }
 }
@@ -95,11 +98,13 @@ impl FacetTarget {
         matches!(self, Self::ClassicMul | Self::ClassicUop | Self::ClassicBoth)
     }
 
-    fn family(self) -> ClientFamily {
+    fn conversion_target(self) -> ConversionTarget {
         match self {
-            Self::ClassicMul | Self::ClassicUop | Self::ClassicBoth => ClientFamily::Classic,
-            Self::Enhanced => ClientFamily::Enhanced,
-            Self::KingdomReborn => ClientFamily::KingdomReborn,
+            Self::ClassicMul => ConversionTarget::Classic(ClassicContainers::Mul),
+            Self::ClassicUop => ConversionTarget::Classic(ClassicContainers::Uop),
+            Self::ClassicBoth => ConversionTarget::Classic(ClassicContainers::Both),
+            Self::Enhanced => ConversionTarget::Enhanced,
+            Self::KingdomReborn => ConversionTarget::KingdomReborn,
         }
     }
 }
@@ -140,73 +145,35 @@ pub fn package_name_facet(path: &Path) -> Option<(u8, MapEdition)> {
     }
 }
 
-struct ClassicFiles {
-    map: PathBuf,
-    map_format: ClassicMapFormat,
-    index: PathBuf,
-    data: PathBuf,
-}
-
-/// A facet read for the conversion.
-struct Source {
-    world: ClassicWorld,
-    edition: MapEdition,
-    /// The package of a Classic UOP source, whose layout a UOP written over the same facet keeps.
-    template: Option<UopPackage>,
-    /// The files of a Classic source when the world is what they hold, without baked difs.
-    files: Option<ClassicFiles>,
-    /// Folders and files the outputs must not overwrite.
-    inputs: Vec<PathBuf>,
-    /// Folders a radarcol.mul may be found in.
-    dirs: Vec<PathBuf>,
-}
-
 /// Converts and saves the facet; returns what was done, line by line.
 pub fn convert_facet(request: &ConvertRequest) -> eyre::Result<Vec<String>> {
-    if request.target == FacetTarget::KingdomReborn && request.target_edition.is_variant() {
-        eyre::bail!("Kingdom Reborn has no variant facet packages: choose the standard edition");
-    }
-    let mut notes = Vec::new();
-    let client = open_target_client(request)?;
-    let size = requested_size(request, client.as_ref())?;
     let kr_land = kr_land_map(request.kr_fallback_land)?;
-    let source = match &request.source {
-        FacetSource::Package(path) => {
-            let dir = path.parent().map(Path::to_path_buf).unwrap_or_default();
-            let mut package = open_package(path, request.facet, &mut notes)?;
-            let edition = package_name_facet(path).map_or(MapEdition::Standard, |(_, edition)| edition);
-            if is_same_package(request, &package, edition, size) {
-                std::fs::create_dir_all(&request.output_dir).wrap_err_with(|| format!("create {}", request.output_dir.display()))?;
-                check_output_dir(&request.output_dir, &[path.clone(), dir])?;
-                let output = request.output_dir.join(facet_package_file_name(request.target_facet, edition.is_variant()));
-                package.save(&output)?;
-                notes.push(format!("Wrote {}: the package as it is.", output.display()));
-                return Ok(notes);
-            }
-            let world = package_world(path, &package, &kr_land, request.allow_lossy, &mut notes)?;
-            Source { world, edition, template: None, files: None, inputs: vec![path.clone(), dir.clone()], dirs: vec![dir] }
-        }
-        FacetSource::Classic { dir, edition, difs } => load_classic(request, dir, *edition, *difs, &mut notes)?,
+    let (source, difs) = match &request.source {
+        FacetSource::Classic { dir, edition, difs } => (ConversionSource::ClassicFolder { dir: dir.clone(), edition: *edition }, (*difs).into()),
+        FacetSource::Package(path) => (ConversionSource::Package(path.clone()), SourceDifs::default()),
     };
-
-    let resized = size.is_some_and(|size| size != source.world.size_cells());
-    let world = resize(source.world, size, request, &mut notes)?;
-    if let Some(client) = &client {
-        check_target_client(client, &world, request.target_facet, &mut notes)?;
-    }
-    std::fs::create_dir_all(&request.output_dir).wrap_err_with(|| format!("create {}", request.output_dir.display()))?;
-    check_output_dir(&request.output_dir, &source.inputs)?;
-    if request.target.is_classic() {
-        let same_names = request.target_facet == request.facet && request.target_edition == source.edition;
-        let template = source.template.filter(|_| same_names);
-        let files = source.files.as_ref().filter(|_| same_names && !resized);
-        write_classic(&world, request, template, files, &mut notes)?;
-        write_facet_image(request, client.as_ref(), &world, &mut notes)?;
-    } else {
-        let mut dirs = source.dirs;
-        dirs.extend(client.as_ref().map(|client| client.dir.clone()));
-        write_package(&world, request, &dirs, &kr_land, &mut notes)?;
-    }
+    let conversion = FacetConversion {
+        source,
+        facet: request.facet,
+        difs,
+        target: request.target.conversion_target(),
+        target_facet: request.target_facet,
+        target_edition: Some(request.target_edition),
+        target_client: request.target_client.clone(),
+        crop: request.crop,
+        uop_template: None,
+        target_tiledata: None,
+        allow_lossy: request.allow_lossy,
+        radarcol: None,
+        kr_land,
+        // The combo shows only with a target client, so a choice left at its start gets no word about a target that draws no image.
+        facet_image: (request.target.is_classic() && request.facet_image != FacetImageMode::default()).then_some(request.facet_image),
+        keep_unchanged: true,
+        output_dir: request.output_dir.clone(),
+    };
+    let values = ParsedValues { source_size: Ok(None), size: Ok(request.size), fill: Ok(request.fill) };
+    let mut notes = Vec::new();
+    uocf::facet_convert::convert_facet(&conversion, values, &HINTS, &mut |line| notes.push(line))?;
     Ok(notes)
 }
 
@@ -219,338 +186,19 @@ fn kr_land_map(fallback: Option<u16>) -> eyre::Result<KrLandMap> {
     Ok(land_map.with_fallback(land))
 }
 
-fn open_target_client(request: &ConvertRequest) -> eyre::Result<Option<TargetClient>> {
-    let client = request.target_client.as_deref().map(TargetClient::open).transpose()?;
-    if let Some(client) = &client {
-        let expected = request.target.family();
-        if client.family() != expected {
-            eyre::bail!("{} is a {} client, but the target is {} files", client.exe.display(), client.family().label(), expected.label());
-        }
-    }
-    Ok(client)
-}
-
-/// The size asked for, when one is: the size table of the target client refuses another one.
-fn requested_size(request: &ConvertRequest, client: Option<&TargetClient>) -> eyre::Result<Option<MapSizeCells>> {
-    let table = client.map(|client| client.facet_size(u32::from(request.target_facet))).transpose()?;
-    match (request.size, table) {
-        (Some(size), Some(table)) if size != table => eyre::bail!(
-            "{}x{} differs from the {}x{} the size table of {} gives facet {}; to give that client a bigger map, patch its size table with {PATCHER_TOOL}",
-            size.width,
-            size.height,
-            table.width,
-            table.height,
-            client.expect("a table size has a client").exe.display(),
-            request.target_facet
-        ),
-        (Some(size), _) | (None, Some(size)) => Ok(Some(size)),
-        (None, None) => Ok(None),
-    }
-}
-
-fn open_package(path: &Path, facet: u8, notes: &mut Vec<String>) -> eyre::Result<EcFacetPackage> {
-    let load = || UopPackage::load(path).wrap_err_with(|| format!("load {}", path.display()));
-    let loaded = load()?;
-    let dialect = detect_facet_dialect(&loaded, facet).wrap_err_with(|| format!("read {}", path.display()))?;
-    let package = EcFacetPackage::from_package_dialect(loaded, facet, None, dialect)?;
-    if package.package().unpack_file_by_hash(hash_file_name_single(&data_map_entry_path(facet)))?.is_some() {
-        return Ok(package);
-    }
-    // No data.map: the size comes from the client's size table, when its executable is next to it.
-    let dir = path.parent().map(Path::to_path_buf).unwrap_or_default();
-    match TargetClient::open(&dir).and_then(|client| client.facet_size(u32::from(facet))) {
-        Ok(size) => {
-            notes.push(format!("{} has no data.map: {}x{} from the size table.", path.display(), size.width, size.height));
-            EcFacetPackage::from_package_dialect(load()?, facet, Some(FacetGeometry::new(size.width, size.height)), dialect)
-        }
-        Err(error) => {
-            notes.push(format!("{} has no data.map and no readable client executable is next to it ({error:#}): using the stock size of facet {facet}.", path.display()));
-            Ok(package)
-        }
-    }
-}
-
-/// Whether the target is the package's own kind, facet, edition and size.
-fn is_same_package(request: &ConvertRequest, package: &EcFacetPackage, edition: MapEdition, size: Option<MapSizeCells>) -> bool {
-    let family = if package.dialect().is_kingdom_reborn() { ClientFamily::KingdomReborn } else { ClientFamily::Enhanced };
-    let geometry = package.geometry();
-    request.target.family() == family
-        && request.target_facet == request.facet
-        && request.target_edition == edition
-        && size.is_none_or(|size| size == MapSizeCells { width: geometry.width, height: geometry.height })
-}
-
-fn package_world(path: &Path, package: &EcFacetPackage, kr_land: &KrLandMap, allow_lossy: bool, notes: &mut Vec<String>) -> eyre::Result<ClassicWorld> {
-    let converted = facet_to_classic(package, Some(kr_land))?;
-    if let Some(note) = converted.losses.rebuilt_delimiters() {
-        notes.push(format!("{}: {note}", path.display()));
-    }
-    let losses = converted.losses.real_losses().describe();
-    if !losses.is_empty() {
-        let list = losses.join("\n");
-        if !allow_lossy {
-            eyre::bail!("{} does not convert without losses (tick Accept losses to accept them):\n{list}", path.display());
-        }
-        notes.push(format!("Accepted losses:\n{list}"));
-    }
-    Ok(converted.world)
-}
-
-/// The dif kinds to bake from `dir`, and a note when the choice could not be told.
-fn dif_options(choice: DifChoice, dir: &Path, facet: u32, notes: &mut Vec<String>) -> ClassicDifOptions {
-    match choice {
-        DifChoice::Bake => ClassicDifOptions::ALL,
-        DifChoice::Ignore => ClassicDifOptions::NONE,
-        DifChoice::AsTheClientApplies => {
-            let dirs = [dir.to_path_buf()];
-            if MapDifFiles::find(&dirs, facet).is_err() && StaticDifFiles::find(&dirs, facet).is_err() {
-                return ClassicDifOptions::NONE;
-            }
-            match TargetClient::open(dir).ok().and_then(|client| client.difs().cloned()) {
-                Some(usage) => {
-                    notes.push(format!("Source difs: land {}, statics {} (from the client of {}).", usage.land.describe(), usage.statics.describe(), dir.display()));
-                    ClassicDifOptions { map_difs: usage.land.applies() == Some(true), static_difs: usage.statics.applies() == Some(true) }
-                }
-                None => {
-                    notes.push(format!("{} has dif files for facet {facet}, but whether its client applies them is unknown (no readable executable): not baked.", dir.display()));
-                    ClassicDifOptions::NONE
-                }
-            }
-        }
-    }
-}
-
-fn load_classic(request: &ConvertRequest, dir: &Path, edition: MapEdition, difs: DifChoice, notes: &mut Vec<String>) -> eyre::Result<Source> {
-    let facet = u32::from(request.facet);
-    let difs = dif_options(difs, dir, facet, notes);
-    let sources = ClassicFacetSources::resolve(&[dir.to_path_buf()], facet, &SOURCE_MAP_FORMATS, difs, edition)?;
-    let size = TargetClient::open(dir).ok().filter(|client| client.family() == ClientFamily::Classic).and_then(|client| client.facet_size(facet).ok());
-    let (world, map_bake, static_bake) = ClassicWorld::load(&sources, size)?;
-    let baked = map_bake.is_some() || static_bake.is_some();
-    let read = world.size_cells();
-    notes.push(format!("Read Classic facet {facet} ({} edition, {}x{}) from {}.", sources.edition, read.width, read.height, sources.map.path.display()));
-    notes.extend(sources.base_facet_warning());
-    for (kind, bake) in [("map", map_bake), ("static", static_bake)] {
-        if let Some(bake) = bake {
-            notes.push(format!("Baked the {kind} difs: {} listed, {} blocks patched (a later id wins), {} outside the map.", bake.listed, bake.distinct, bake.outside));
-        }
-    }
-    let unsorted = world.unsorted_static_blocks();
-    if unsorted > 0 && !request.target.is_classic() {
-        notes.push(format!("{unsorted} static blocks are not in (y, x) order; a facet keeps each cell's statics but not their order across cells, so converting back to Classic sorts them."));
-    }
-    let template = match sources.map.format {
-        ClassicMapFormat::Uop => Some(UopPackage::load(&sources.map.path).wrap_err_with(|| format!("load {}", sources.map.path.display()))?),
-        ClassicMapFormat::Mul => None,
-    };
-    let mut inputs = vec![sources.map.path.clone(), dir.to_path_buf()];
-    let mut files = None;
-    if let Ok(statics) = sources.statics_files() {
-        inputs.extend([statics.index.clone(), statics.statics.clone()]);
-        if !baked {
-            files = Some(ClassicFiles { map: sources.map.path.clone(), map_format: sources.map.format, index: statics.index.clone(), data: statics.statics.clone() });
-        }
-    }
-    Ok(Source { world, edition: sources.edition, template, files, inputs, dirs: vec![dir.to_path_buf()] })
-}
-
-fn resize(world: ClassicWorld, size: Option<MapSizeCells>, request: &ConvertRequest, notes: &mut Vec<String>) -> eyre::Result<ClassicWorld> {
-    let from = world.size_cells();
-    let Some(size) = size.filter(|size| *size != from) else {
-        return Ok(world);
-    };
-    let (resized, report) = world.resized(size, request.fill, request.crop).wrap_err_with(|| {
-        format!("the target is smaller; tick Crop to drop that content, or give the target client a bigger map with {PATCHER_TOOL}")
-    })?;
-    notes.push(format!("Resized {}x{} to {}x{}.", from.width, from.height, size.width, size.height));
-    notes.extend(report.describe());
-    Ok(resized)
-}
-
-/// Era checks: Trammel read from Felucca's files, applied difs, tile ids past the target's tiledata.
-fn check_target_client(client: &TargetClient, world: &ClassicWorld, facet: u8, notes: &mut Vec<String>) -> eyre::Result<()> {
-    if facet == 1 && client.trammel_reads_map0() {
-        notes.push(format!("{} builds Trammel from map0 and the facet-1 difs; it does not read map1 files.", client.exe.display()));
-    }
-    if let Some(difs) = client.difs() {
-        for (kind, applies) in [("map", difs.land.applies()), ("static", difs.statics.applies())] {
-            if applies == Some(true) {
-                notes.push(format!("{} applies its {kind} difs for facet {facet} on top of the files written when the server sends their counts.", client.exe.display()));
-            }
-        }
-    }
-    if let Some(counts) = client.tiledata_counts()? {
-        let report = world.tile_ids_beyond(counts.land, counts.items);
-        if !report.is_empty() {
-            notes.push(format!(
-                "The target tiledata.mul has {} land and {} item tiles: {} land cells (up to {:?}) and {} statics (up to {:?}) use ids it does not have.",
-                counts.land, counts.items, report.land_cells, report.max_land, report.statics, report.max_graphic
-            ));
-        }
-    }
-    Ok(())
-}
-
-/// Fails when `output_dir` is one of `inputs` or holds one of them.
-fn check_output_dir(output_dir: &Path, inputs: &[PathBuf]) -> eyre::Result<()> {
-    let output = output_dir.canonicalize().wrap_err_with(|| format!("resolve {}", output_dir.display()))?;
-    for input in inputs {
-        let Ok(input) = input.canonicalize() else { continue };
-        if input == output || input.parent() == Some(output.as_path()) {
-            eyre::bail!("the output folder {} holds the source files; choose another one", output_dir.display());
-        }
-    }
-    Ok(())
-}
-
-/// Writes the map and the statics under the file names of the target facet and edition.
-fn write_classic(world: &ClassicWorld, request: &ConvertRequest, template: Option<UopPackage>, files: Option<&ClassicFiles>, notes: &mut Vec<String>) -> eyre::Result<()> {
-    let (facet, dir) = (u32::from(request.target_facet), &request.output_dir);
-    let x = request.target_edition.file_suffix();
-    let unchanged = |format: ClassicMapFormat| files.filter(|files| files.map_format == format);
-    if matches!(request.target, FacetTarget::ClassicMul | FacetTarget::ClassicBoth) {
-        let path = dir.join(format!("map{facet}{x}.mul"));
-        match unchanged(ClassicMapFormat::Mul) {
-            Some(files) => copy_as_it_is(&files.map, &path, notes)?,
-            None => {
-                world.map.write_mul(&path)?;
-                notes.push(format!("Wrote {}.", path.display()));
-            }
-        }
-    }
-    if matches!(request.target, FacetTarget::ClassicUop | FacetTarget::ClassicBoth) {
-        let path = dir.join(format!("map{facet}{x}LegacyMUL.uop"));
-        match unchanged(ClassicMapFormat::Uop) {
-            Some(files) => copy_as_it_is(&files.map, &path, notes)?,
-            None => {
-                let report = world.map.write_uop(&path, facet, template)?;
-                notes.push(format!("Wrote {} ({} entries written, {} unchanged, {} removed).", path.display(), report.written, report.unchanged, report.removed));
-            }
-        }
-    }
-    let (index, data) = (dir.join(format!("staidx{facet}{x}.mul")), dir.join(format!("statics{facet}{x}.mul")));
-    if let Some(files) = files {
-        copy_as_it_is(&files.index, &index, notes)?;
-        copy_as_it_is(&files.data, &data, notes)?;
-        return Ok(());
-    }
-    world.statics.write_mul(&index, &data)?;
-    let size = world.size_cells();
-    notes.push(format!("Wrote {} and {} ({}x{}, {} statics).", index.display(), data.display(), size.width, size.height, world.statics.static_count()));
-    Ok(())
-}
-
-fn copy_as_it_is(source: &Path, output: &Path, notes: &mut Vec<String>) -> eyre::Result<()> {
-    write_through_temp(output, |temp| {
-        std::fs::copy(source, temp).map(|_| ()).wrap_err_with(|| format!("copy {} to {}", source.display(), output.display()))
-    })?;
-    notes.push(format!("Wrote {}: the source file as it is.", output.display()));
-    Ok(())
-}
-
-/// The target's facet as it is, to compare the converted one with.
-fn load_target_world(dir: &Path, facet: u32, edition: MapEdition, size: MapSizeCells) -> eyre::Result<ClassicWorld> {
-    let sources = ClassicFacetSources::resolve(&[dir.to_path_buf()], facet, &SOURCE_MAP_FORMATS, ClassicDifOptions::NONE, edition)?;
-    Ok(ClassicWorld::load(&sources, Some(size))?.0)
-}
-
-/// The `facetNN.mul` of a target client that draws it: the 7.0.x clients read it without bounds checks, tile (x, y)
-/// at column x of row y, so an image of another size draws the wrong tiles.
-fn write_facet_image(request: &ConvertRequest, client: Option<&TargetClient>, world: &ClassicWorld, notes: &mut Vec<String>) -> eyre::Result<()> {
-    let facet = u32::from(request.target_facet);
-    let Some(client) = client.filter(|client| client.reads_facet_image(facet)) else {
-        return Ok(());
-    };
-    let (mode, edition) = (request.facet_image, request.target_edition);
-    let name = facet_image_file_name(facet);
-    let current_image = find_file_ignoring_case(&client.dir, &name).and_then(|path| match FacetImageFile::load(&path) {
-        Ok(image) => Some(image),
-        Err(error) => {
-            notes.push(format!("{error:#}: the target's {name} is treated as missing."));
-            None
-        }
-    });
-    let size = world.size_cells();
-    let fits = current_image.as_ref().is_some_and(|image| image.check_size(size.width, size.height).is_ok());
-    if edition.is_variant() && mode == FacetImageMode::Update && fits {
-        notes.push(format!("{name} not written: the shipped images follow the standard edition, not the {edition} one; choose Regenerate to render it from this one."));
-        return Ok(());
-    }
-    let current_world = if mode == FacetImageMode::Update && fits {
-        load_target_world(&client.dir, facet, edition, size)
-            .inspect_err(|error| notes.push(format!("The target's map could not be read to compare with: {error:#}")))
-            .ok()
-    } else {
-        None
-    };
-    let renderer = FacetImageRenderer::load(&client.dir);
-    let plan = plan_facet_image(mode, world, current_image.as_ref(), current_world.as_ref(), renderer.as_ref().ok()).map_err(|error| match &renderer {
-        Err(load) => eyre::eyre!("{name}: {error:#} ({load:#})"),
-        Ok(_) => error.wrap_err(name.clone()),
-    })?;
-    let path = request.output_dir.join(&name);
-    match plan {
-        FacetImagePlan::Unchanged(image) => {
-            image.save(&path)?;
-            notes.push(format!("Wrote {}: the target's image, unchanged.", path.display()));
-        }
-        FacetImagePlan::Updated(image, update) => {
-            image.save(&path)?;
-            notes.push(format!(
-                "Wrote {}: {} tiles re-rendered by the slope rule, {} pixels changed in {} rows ({} bit-15 pixels of unchanged tiles kept).",
-                path.display(),
-                update.tiles_rendered,
-                update.pixels_changed,
-                update.rows_changed,
-                update.undrawn_kept
-            ));
-        }
-        FacetImagePlan::Rendered(image, reason) => {
-            image.save(&path)?;
-            notes.push(format!(
-                "Wrote {} ({}x{}), rendered whole from the map by the slope rule ({}): an approximation, about {SHIPPED_STYLE_MATCH_PERCENT} % of pixels match the shipped style.",
-                path.display(),
-                image.width(),
-                image.height(),
-                reason.describe()
-            ));
-        }
-        FacetImagePlan::NotWritten => notes.push(format!("No {name} written.")),
-    }
-    Ok(())
-}
-
-/// Writes the Enhanced Client or Kingdom Reborn package, and its radar image with a radarcol.mul in `dirs`.
-fn write_package(world: &ClassicWorld, request: &ConvertRequest, dirs: &[PathBuf], kr_land: &KrLandMap, notes: &mut Vec<String>) -> eyre::Result<()> {
-    let (facet, edition) = (request.target_facet, request.target_edition);
-    let radarcol = dirs.iter().find_map(|dir| find_file_ignoring_case(dir, RADARCOL_NAME));
-    let palette = radarcol.as_deref().map(RadarPalette::load_radarcol).transpose()?;
-    let (mut package, radar) = if request.target == FacetTarget::KingdomReborn {
-        build_kr_facet_from_world(world, facet, palette.as_ref(), kr_land)?
-    } else {
-        build_facet_from_world(world, facet, palette.as_ref())?
-    };
-    let path = request.output_dir.join(facet_package_file_name(facet, edition.is_variant()));
-    package.save(&path)?;
-    notes.push(format!("Wrote {}.", path.display()));
-    match (radar, radarcol) {
-        (Some(radar), Some(radarcol)) => {
-            let path = request.output_dir.join(edition_radar_dds_file_name(facet, edition));
-            radar.save(&path)?;
-            notes.push(format!("Wrote {} (colours from {}).", path.display(), radarcol.display()));
-        }
-        _ => notes.push(format!("No radar image written: no {RADARCOL_NAME} in the source or target client's folder.")),
-    }
-    Ok(())
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::ui::test_support::{client_roots, output_path, CLASSIC_CLIENT_ROOTS_ENV, EC_CLIENT_ROOTS_ENV};
-    use uocf::classic::facet_sources::statics_file_names;
+    use uocf::classic::facet_sources::{statics_file_names, ClassicDifOptions, ClassicFacetSources};
     use uocf::classic::map_write::ClassicMapBlocks;
     use uocf::classic::statics_write::ClassicStaticsBlocks;
+    use uocf::classic::world::ClassicWorld;
+    use uocf::enhanced::facet_package::{detect_facet_dialect, EcFacetPackage};
+    use uocf::enhanced::facet_sector::facet_package_file_name;
+    use uocf::facet_convert::SOURCE_MAP_FORMATS;
+    use uocf::uop_container::package::UopPackage;
+    use uocf::utils::path::find_file_ignoring_case;
 
     /// The smallest shipped facet, Tokuno, whose height the map readers know; a narrow copy of it is quick to convert.
     const SMALL_FACET: u8 = 4;
@@ -602,6 +250,12 @@ mod tests {
         let [index, data] = statics_file_names(u32::from(SMALL_FACET), MapEdition::Standard);
         world.statics.write_mul(&dir.join(index), &dir.join(data)).unwrap();
         (dir, output)
+    }
+
+    fn open_package(path: &Path, facet: u8) -> EcFacetPackage {
+        let package = UopPackage::load(path).unwrap();
+        let dialect = detect_facet_dialect(&package, facet).unwrap();
+        EcFacetPackage::from_package_dialect(package, facet, None, dialect).unwrap()
     }
 
     fn clean(dirs: &[&Path]) {
@@ -707,7 +361,7 @@ mod tests {
         for root in client_roots(EC_CLIENT_ROOTS_ENV) {
             let name = root.file_name().unwrap().to_string_lossy().into_owned();
             let path = find_file_ignoring_case(&root, &facet_package_file_name(SMALL_FACET, false)).unwrap();
-            let package = open_package(&path, SMALL_FACET, &mut Vec::new()).unwrap();
+            let package = open_package(&path, SMALL_FACET);
             let target = if package.dialect().is_kingdom_reborn() { FacetTarget::KingdomReborn } else { FacetTarget::Enhanced };
             let output = output_path(&format!("facet-same-{}", name.replace(' ', "-")));
             let notes = convert_facet(&request(FacetSource::Package(path.clone()), target, output.clone())).unwrap();
@@ -749,7 +403,7 @@ mod tests {
         let unknown = ConvertRequest { kr_fallback_land: Some(NOT_KR_LAND), ..current.clone() };
         assert!(convert_facet(&unknown).is_err(), "a fallback the land map lacks");
         convert_facet(&ConvertRequest { kr_fallback_land: Some(KR_FALLBACK_LAND), ..current.clone() }).unwrap();
-        let package = open_package(&current.output_dir.join(facet_package_file_name(FELUCCA, false)), FELUCCA, &mut Vec::new()).unwrap();
+        let package = open_package(&current.output_dir.join(facet_package_file_name(FELUCCA, false)), FELUCCA);
         assert!(package.dialect().is_kingdom_reborn());
         assert_eq!((package.geometry().width, package.geometry().height), (OLD_FELUCCA.width, OLD_FELUCCA.height));
         println!("{}: Felucca written as a Kingdom Reborn package of {}x{} with a fallback land", root.display(), OLD_FELUCCA.width, OLD_FELUCCA.height);
@@ -761,7 +415,7 @@ mod tests {
             for note in convert_facet(&request).unwrap() {
                 println!("{note}");
             }
-            let package = open_package(&kr.join(facet_package_file_name(FELUCCA, false)), FELUCCA, &mut Vec::new()).unwrap();
+            let package = open_package(&kr.join(facet_package_file_name(FELUCCA, false)), FELUCCA);
             assert!(package.dialect().is_kingdom_reborn());
             println!("{}: Felucca written as a Kingdom Reborn package of {}x{}", root.display(), package.geometry().width, package.geometry().height);
             folders.push(kr);
@@ -769,7 +423,7 @@ mod tests {
 
         for root in client_roots(EC_CLIENT_ROOTS_ENV) {
             let path = find_file_ignoring_case(&root, &facet_package_file_name(FELUCCA, false)).unwrap();
-            let package = open_package(&path, FELUCCA, &mut Vec::new()).unwrap();
+            let package = open_package(&path, FELUCCA);
             if !package.dialect().is_kingdom_reborn() {
                 continue;
             }
@@ -780,7 +434,7 @@ mod tests {
             for note in convert_facet(&request).unwrap() {
                 println!("{note}");
             }
-            let package = open_package(&kr.join(facet_package_file_name(FELUCCA, false)), FELUCCA, &mut Vec::new()).unwrap();
+            let package = open_package(&kr.join(facet_package_file_name(FELUCCA, false)), FELUCCA);
             assert!(package.dialect().is_kingdom_reborn());
             assert_eq!((package.geometry().width, package.geometry().height), (size.width, size.height));
             println!("{}: Felucca written as a Kingdom Reborn package of {}x{}", root.display(), size.width, size.height);

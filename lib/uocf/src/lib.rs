@@ -13,6 +13,7 @@ pub mod client_exe;
 pub mod ec_material_axes;
 pub mod enhanced;
 mod errors;
+pub mod facet_convert;
 pub mod kr;
 pub mod map_edition;
 pub mod uop_container;
