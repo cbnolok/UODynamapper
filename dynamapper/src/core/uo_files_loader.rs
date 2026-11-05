@@ -188,6 +188,9 @@ impl Plugin for UOFilesPlugin {
     }
 }
 
+/// How many unresolved terrain override texture refs the load log names.
+const UNRESOLVED_OVERRIDE_REF_LOG_SAMPLE: usize = 8;
+
 fn log_tex_land_ec_coverage(lg: &impl Fn(&str), package: &udd_assets::tex_land_ec::TexLandEcPackage) {
     let populated_slot_count = package
         .slots()
@@ -205,6 +208,35 @@ fn log_tex_land_ec_coverage(lg: &impl Fn(&str), package: &udd_assets::tex_land_e
         lg(&format!("Loaded {} original GameData.uop terrain routes with preserved subtypes.", source_map.routes.len()));
     } else {
         lg("No original GameData.uop terrain routes are embedded; rebuild EC land with the current converter to recover source terrain routes.");
+    }
+    let summary = package.terrain_override_load_summary();
+    lg(&format!(
+        "Embedded EcTerrainOverrides.kdl: entries={} actions={} texture_refs={} resolved={}.",
+        summary.entry_count,
+        summary.action_count,
+        summary.texture_ref_count,
+        summary.resolved_texture_ref_count,
+    ));
+    if !summary.unresolved_texture_refs.is_empty() {
+        let sample = summary
+            .unresolved_texture_refs
+            .iter()
+            .take(UNRESOLVED_OVERRIDE_REF_LOG_SAMPLE)
+            .map(|texture_ref| {
+                format!(
+                    "{}:{}:{}",
+                    texture_ref.material_id,
+                    texture_ref.role,
+                    texture_ref.texture_id
+                )
+            })
+            .collect::<Vec<_>>()
+            .join(", ");
+        bevy::log::warn!(
+            "Embedded EcTerrainOverrides.kdl references {} texture(s) that are not packed in tex_land_ec.uddp. Falling back where needed. Sample: {}",
+            summary.unresolved_texture_refs.len(),
+            sample
+        );
     }
 }
 
@@ -360,7 +392,7 @@ pub fn sys_setup_uo_data(mut commands: Commands, settings: Res<Settings>) {
     };
 
     let tex_land_ec_path = resolve_optional_uddp_path(&udd_path, "tex_land_ec.uddp");
-    let mut tex_land_ec_package = if let Some(tex_land_ec_path) = tex_land_ec_path {
+    let tex_land_ec_package = if let Some(tex_land_ec_path) = tex_land_ec_path {
         log_source_choice(
             &lg,
             "enhanced land package",
@@ -515,60 +547,8 @@ pub fn sys_setup_uo_data(mut commands: Commands, settings: Res<Settings>) {
 
     lg("Done loading UO Data.");
 
-    // The CC-EC land routing table (TerrainTranscode.kdl) is embedded in tex_land_ec.uddp, which applies it.
-    let asset_root = crate::core::constants::valid_asset_dir();
-    let terrain_overrides_path = asset_root.join("cc_ec_convtables/EcTerrainOverrides.kdl");
-    if terrain_overrides_path.is_file() {
-        lg(&format!(
-            "Loading EcTerrainOverrides.kdl from: {}",
-            terrain_overrides_path.display()
-        ));
-        if let Some(tex_land_ec) = tex_land_ec_package.as_mut() {
-            match tex_land_ec.set_terrain_overrides_from_kdl(&terrain_overrides_path) {
-                Ok(summary) => {
-                    lg(&format!(
-                        "Applied loose EcTerrainOverrides.kdl to EC land package: entries={} actions={} texture_refs={} resolved={}.",
-                        summary.entry_count,
-                        summary.action_count,
-                        summary.texture_ref_count,
-                        summary.resolved_texture_ref_count,
-                    ));
-                    if !summary.unresolved_texture_refs.is_empty() {
-                        let sample = summary
-                            .unresolved_texture_refs
-                            .iter()
-                            .take(8)
-                            .map(|texture_ref| {
-                                format!(
-                                    "{}:{}:{}",
-                                    texture_ref.material_id,
-                                    texture_ref.role,
-                                    texture_ref.texture_id
-                                )
-                            })
-                            .collect::<Vec<_>>()
-                            .join(", ");
-                        bevy::log::warn!(
-                            "Loose EcTerrainOverrides.kdl references {} texture(s) that are not packed in tex_land_ec.uddp. Falling back where needed. Sample: {}",
-                            summary.unresolved_texture_refs.len(),
-                            sample
-                        );
-                    }
-                }
-                // Optional when absent; a file that is present must be valid.
-                Err(e) => crate::configs::settings::exit_on_startup_config_error(&e),
-            }
-        } else {
-            bevy::log::warn!(
-                "EcTerrainOverrides.kdl exists, but tex_land_ec.uddp is not loaded; loose terrain overrides were ignored."
-            );
-        }
-    } else {
-        lg(&format!(
-            "EcTerrainOverrides.kdl not found at {}",
-            terrain_overrides_path.display()
-        ));
-    }
+    // The CC-EC land routing table (TerrainTranscode.kdl) and the terrain overrides (EcTerrainOverrides.kdl) are
+    // embedded in tex_land_ec.uddp, which applies them.
 
     let multi_definitions = load_multi_definitions(&udd_path, &lg, &lg_err);
 

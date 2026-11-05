@@ -7,8 +7,10 @@ use udd_conv::upscale::UpscaleConfig;
 use udd_assets::{
     tex_land_ec::{
         TexLandEcTerrainProvenanceRecord,
+        TERRAIN_OVERRIDES_SCHEMA, TERRAIN_OVERRIDES_SCHEMA_VERSION,
         UDDP_PAGE_MANIFEST_ENTRY_VPATH, UDDP_SLOT_MANIFEST_ENTRY_VPATH,
-        UDDP_SOURCE_MATERIALS_ENTRY_VPATH, UDDP_TERRAIN_PROVENANCE_ENTRY_VPATH, UDDP_TRANSCODE_ENTRY_VPATH,
+        UDDP_SOURCE_MATERIALS_ENTRY_VPATH, UDDP_TERRAIN_OVERRIDES_ENTRY_VPATH, UDDP_TERRAIN_PROVENANCE_ENTRY_VPATH,
+        UDDP_TRANSCODE_ENTRY_VPATH,
     },
     tex_art_cc::{MISSING_PAGE_INDEX, page_entry_path, PagePixelFormat},
     TexLandEcPackage,
@@ -23,6 +25,14 @@ const EMPTY_TRANSCODE_KDL: &[u8] = b"";
 /// A land id only the shipped TerrainTranscode.kdl routes (its row `t 0 435 436 437`), and its material.
 const SHIPPED_TABLE_ADDED_LAND_ID: u32 = 435;
 const SHIPPED_TABLE_ADDED_LAND_MATERIAL: u32 = 0;
+
+/// Terrain overrides without entries: every material draws its source items.
+fn empty_terrain_overrides_json() -> Vec<u8> {
+    format!(
+        r#"{{"schema": "{TERRAIN_OVERRIDES_SCHEMA}", "schema_version": {TERRAIN_OVERRIDES_SCHEMA_VERSION}, "entries": []}}"#
+    )
+    .into_bytes()
+}
 
 #[test]
 fn conversion_embeds_original_game_data_routes_and_subtypes() {
@@ -48,6 +58,9 @@ fn conversion_embeds_original_game_data_routes_and_subtypes() {
     assert_eq!(package.transcode[&203], 4);
     // No table given: the shipped TerrainTranscode.kdl is embedded.
     assert_eq!(package.transcode[&SHIPPED_TABLE_ADDED_LAND_ID], SHIPPED_TABLE_ADDED_LAND_MATERIAL);
+    // Nor overrides: the shipped EcTerrainOverrides.kdl is embedded.
+    let overrides = String::from_utf8(package.read_terrain_overrides_metadata().unwrap()).unwrap();
+    assert!(overrides.contains(udd_conv::conversion_tables::EC_TERRAIN_OVERRIDES_KDL.name), "{overrides}");
     let source_map = package.source_terrain_map().unwrap();
     assert_eq!(source_map.routes[&15853].subtype, 1);
     assert_eq!(source_map.source_csv, bytes);
@@ -230,6 +243,17 @@ fn runtime_reader_can_unpack_page_and_slot_metadata() {
             path_hash64: None,
             id: None,
             data: EMPTY_TRANSCODE_KDL,
+        })
+        .unwrap();
+    package
+        .add_file(AddFileRequest {
+            data_type: DataType::Metadata as u8,
+            compression: CompressionFlag::ZstdNoDict,
+            width: 0, height: 0,
+            virtual_path: Some(UDDP_TERRAIN_OVERRIDES_ENTRY_VPATH),
+            path_hash64: None,
+            id: None,
+            data: &empty_terrain_overrides_json(),
         })
         .unwrap();
     let page_path = page_entry_path(0, PagePixelFormat::Rgba8888);
@@ -522,6 +546,17 @@ fn runtime_slot_resolution_uses_direct_slots_before_provenance_fallback() {
             path_hash64: None,
             id: None,
             data: EMPTY_TRANSCODE_KDL,
+        })
+        .unwrap();
+    package
+        .add_file(AddFileRequest {
+            data_type: DataType::Metadata as u8,
+            compression: CompressionFlag::ZstdNoDict,
+            width: 0, height: 0,
+            virtual_path: Some(UDDP_TERRAIN_OVERRIDES_ENTRY_VPATH),
+            path_hash64: None,
+            id: None,
+            data: &empty_terrain_overrides_json(),
         })
         .unwrap();
 

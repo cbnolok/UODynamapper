@@ -178,10 +178,7 @@ fn extract_tex_land_ec(package: &UddpReader, out_dir: &Path) -> eyre::Result<boo
         package.gutter(),
         package.slots().iter().filter(|slot| slot.is_present()).count(),
         package.terrain_provenance().len(),
-        terrain_overrides_metadata
-            .as_ref()
-            .map(|bytes| bytes.len())
-            .unwrap_or(0),
+        terrain_overrides_metadata.len(),
         terrain_override_entries,
         ignore_count,
         resolved_override_textures.len(),
@@ -192,9 +189,7 @@ fn extract_tex_land_ec(package: &UddpReader, out_dir: &Path) -> eyre::Result<boo
         effective_slot_changes.len(),
     );
     write_text_file(&metadata_dir.join("summary.txt"), &summary)?;
-    if let Some(bytes) = terrain_overrides_metadata {
-        std::fs::write(metadata_dir.join("terrain_overrides.json"), bytes)?;
-    }
+    std::fs::write(metadata_dir.join("terrain_overrides.json"), terrain_overrides_metadata)?;
     if !package.terrain_override_details().is_empty() {
         let mut details = package
             .terrain_override_details()

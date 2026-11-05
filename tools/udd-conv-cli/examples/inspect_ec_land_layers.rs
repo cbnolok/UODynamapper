@@ -13,7 +13,8 @@ use uocf::enhanced::terrain_definition::TerrainDefinitionEntry;
 struct Args {
     #[arg(long)]
     package: PathBuf,
-    /// Optional loose policy, applied after embedded overrides just as at runtime.
+    /// Optional candidate EcTerrainOverrides.kdl, tried in place of the embedded overrides (the runtime reads only
+    /// the embedded ones).
     #[arg(long)]
     overrides: Option<PathBuf>,
     /// A new JSON file. Existing evidence is never overwritten.

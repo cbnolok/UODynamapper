@@ -210,8 +210,7 @@ pub fn audit_ec_terrain_primary_selection(
     let packaged_override_summary = packed_terrain
         .as_ref()
         .map(packaged_terrain_override_summary)
-        .transpose()?
-        .flatten();
+        .transpose()?;
     let mut entries = Vec::new();
     let mut class_counts = BTreeMap::<String, u64>::new();
     let mut flag_counts = BTreeMap::<String, u64>::new();
@@ -2711,12 +2710,10 @@ fn packed_terrain_provenance_by_material(
 
 fn packaged_terrain_override_summary(
     package: &TexLandEcPackage,
-) -> eyre::Result<Option<PackagedTerrainOverrideSummaryReport>> {
-    let Some(bytes) = package.read_terrain_overrides_metadata()? else {
-        return Ok(None);
-    };
+) -> eyre::Result<PackagedTerrainOverrideSummaryReport> {
+    let bytes = package.read_terrain_overrides_metadata()?;
     let value = serde_json::from_slice::<serde_json::Value>(&bytes)?;
-    Ok(Some(PackagedTerrainOverrideSummaryReport {
+    Ok(PackagedTerrainOverrideSummaryReport {
         schema: value
             .get("schema")
             .and_then(|value| value.as_str())
@@ -2731,7 +2728,7 @@ fn packaged_terrain_override_summary(
             .and_then(|value| value.as_str())
             .map(str::to_string),
         byte_count: bytes.len(),
-    }))
+    })
 }
 
 fn packed_terrain_provenance_report(

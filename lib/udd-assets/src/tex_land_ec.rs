@@ -30,7 +30,7 @@ pub const UDDP_TERRAIN_OVERRIDES_ENTRY_VPATH: &str = "metadata/terrain_overrides
 pub const UDDP_TRANSCODE_ENTRY_VPATH: &str = "metadata/transcode.bin";
 pub const UDDP_LEGACY_TERRAIN_MAP_ENTRY_VPATH: &str = "metadata/legacy_terrain_map.csv";
 pub const UDDP_SOURCE_MATERIALS_ENTRY_VPATH: &str = "metadata/source_materials.json";
-/// `schema` and `schema_version` of the optional terrain overrides JSON entry.
+/// `schema` and `schema_version` of the terrain overrides JSON entry.
 pub const TERRAIN_OVERRIDES_SCHEMA: &str = "tex_land_ec_terrain_overrides";
 pub const TERRAIN_OVERRIDES_SCHEMA_VERSION: u32 = 1;
 
@@ -471,6 +471,8 @@ impl TexLandEcPackage {
             .min()
     }
 
+    /// Replaces the embedded terrain overrides with a candidate table, for the audits and examples that try a table
+    /// before it is packed. The runtime reads only the embedded overrides.
     pub fn set_terrain_overrides_from_kdl(
         &mut self,
         path: impl AsRef<Path>,
@@ -738,16 +740,9 @@ impl TexLandEcPackage {
         })
     }
 
-    pub fn read_terrain_overrides_metadata(&self) -> eyre::Result<Option<Vec<u8>>> {
-        if self
-            .package
-            .find_by_path_hash(xxh64_virtual_path(UDDP_TERRAIN_OVERRIDES_ENTRY_VPATH))
-            .is_none()
-        {
-            return Ok(None);
-        }
-
-        read_path_entry(&self.package, UDDP_TERRAIN_OVERRIDES_ENTRY_VPATH).map(Some)
+    /// The embedded terrain overrides JSON (`EcTerrainOverrides.kdl` as packed), which every loaded package carries.
+    pub fn read_terrain_overrides_metadata(&self) -> eyre::Result<Vec<u8>> {
+        read_path_entry(&self.package, UDDP_TERRAIN_OVERRIDES_ENTRY_VPATH)
     }
 
     pub fn atlas_cache_enabled(&self) -> bool {
@@ -1178,7 +1173,8 @@ fn read_transcode_from_package(package: &UddpReader) -> eyre::Result<HashMap<u32
     Ok(crate::eckr_terrain_kdl::EckrTerrainRouting::from_str(UDDP_TRANSCODE_ENTRY_VPATH, text)?.to_map())
 }
 
-/// The optional terrain overrides entry; an entry that is present must parse.
+/// The embedded terrain overrides (`EcTerrainOverrides.kdl` as packed), the only terrain overrides the runtime reads:
+/// the packer always writes them, and they must parse.
 fn read_terrain_overrides_metadata_maps_from_package(
     package: &UddpReader,
 ) -> eyre::Result<(
@@ -1187,7 +1183,10 @@ fn read_terrain_overrides_metadata_maps_from_package(
     HashMap<u32, Vec<TexLandEcTerrainOverrideTextureRef>>,
 )> {
     if package.find_by_path_hash(xxh64_virtual_path(UDDP_TERRAIN_OVERRIDES_ENTRY_VPATH)).is_none() {
-        return Ok(Default::default());
+        eyre::bail!(
+            "tex_land_ec.uddp missing {UDDP_TERRAIN_OVERRIDES_ENTRY_VPATH}, the terrain overrides \
+             (EcTerrainOverrides.kdl); repack it with the current udd-cli"
+        );
     }
     let bytes = read_path_entry_cow(package, UDDP_TERRAIN_OVERRIDES_ENTRY_VPATH)?;
     parse_terrain_overrides_metadata_maps(bytes.as_ref())
@@ -1663,6 +1662,19 @@ mod tests {
         let reader = UddpReader::open(builder.build().expect("build test package")).expect("open package");
         let error = TexLandEcPackage::from_uddp_package(reader).err().expect("a package without the table").to_string();
         assert!(error.contains(UDDP_TRANSCODE_ENTRY_VPATH) && error.contains("repack"), "{error}");
+    }
+
+    #[test]
+    fn a_package_without_the_terrain_overrides_asks_for_a_repack() {
+        let mut builder = UddpBuilder::new(LookupMode::VirtualPathHash);
+        add_metadata_file(&mut builder, UDDP_PAGE_MANIFEST_ENTRY_VPATH, &page_manifest_bytes());
+        add_metadata_file(&mut builder, UDDP_SLOT_MANIFEST_ENTRY_VPATH, &slot_manifest_bytes());
+        add_metadata_file(&mut builder, UDDP_TERRAIN_PROVENANCE_ENTRY_VPATH, &terrain_provenance_bytes());
+        add_metadata_file(&mut builder, UDDP_TRANSCODE_ENTRY_VPATH, EMPTY_TRANSCODE_KDL);
+        add_metadata_file(&mut builder, UDDP_SOURCE_MATERIALS_ENTRY_VPATH, EMPTY_SOURCE_MATERIALS_JSON);
+        let reader = UddpReader::open(builder.build().expect("build test package")).expect("open package");
+        let error = TexLandEcPackage::from_uddp_package(reader).err().expect("a package without the overrides").to_string();
+        assert!(error.contains(UDDP_TERRAIN_OVERRIDES_ENTRY_VPATH) && error.contains("repack"), "{error}");
     }
 
     #[test]
