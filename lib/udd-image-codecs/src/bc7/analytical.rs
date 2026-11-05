@@ -3598,6 +3598,25 @@ pub fn pack_bc7_rgba(block: &mut [u8; 16], pixels: &[Pixel; 16], flags: u32) {
     }
 
     *block = best_block;
+
+    // Alpha's own plane can win on blocks the correlation test above doesn't offer it to, and `pack_mode4_or_5` only
+    // estimates its error, so the two candidates are compared by decoding them.
+    if mn[3] != mx[3] {
+        let mut plane_block = [0u8; 16];
+        pack_mode4_or_5(&mut plane_block, pixels, ALPHA_PLANE);
+        if decoded_error(&plane_block, pixels) < decoded_error(block, pixels) {
+            *block = plane_block;
+        }
+    }
+}
+
+/// The channel index `pack_mode4_or_5` takes to give alpha its own weight plane.
+const ALPHA_PLANE: usize = 3;
+
+fn decoded_error(block: &[u8; 16], pixels: &[Pixel; 16]) -> u64 {
+    let bits = u128::from_le_bytes(*block);
+    super::rdo::decode_bc7_error_bounded::<false>(bits, pixels, 0, false, u64::MAX, None)
+        .expect("the encoder writes valid modes")
 }
 
 // ─── 8. MODES 4 AND 5 (DUAL-PLANE) ───────────────────────────────────────────

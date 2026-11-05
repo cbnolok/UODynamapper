@@ -207,6 +207,8 @@ Storing the converted textures as BC7 within the UDDP package creates a file tha
 
 To mitigate the inherent size increase of the 8bpp BC7 format, UODynamapper uses a **Supercompression** pass (applying `ZstdNoDict` compression on top of the BC7 payload). Even though BC7 is a fixed-rate GPU format, Zstd is highly effective at compressing the repeating, identical BC7 16-byte blocks that are generated for transparent or flat-color "empty space" regions within the atlas pages.
 
+Packages built with `--bc7` before 2026-11-05 keep blocks from an older encoder until rebuilt: see [`bc7_alpha_plane_search.md`](../agent_notes/bc7_alpha_plane_search.md).
+
 ### 2.5 `tex_aux_ec.uddp`
 
 Holds the non-base support images (hue masks, terrain-surface masks, liquid inputs) that runtime consumers read through tilemeta texture refs. These are images that are not atlased. Each image is keyed by its source texture id, with one image per id; the first ref seen wins.

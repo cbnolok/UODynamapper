@@ -1,7 +1,7 @@
 # UDDP mobile animation format: needs, constraints, desires, failed attempts
 
 Status (2026-11-05): **measuring is finished, and the user has made the first format decisions (section 8). Nothing is
-implemented yet, and the compressor and the lossy rows are still open.** This file says what the format has to do and what we
+implemented yet, and the lossy rows are still open: fractional zoom and upscaled sprites are being measured first.** This file says what the format has to do and what we
 already tried, so nobody repeats a dead end. Section 9 lists every option set aside, and why. The measurements and their method are in
 [`proposals/2026-11-01-mobile-anim-codec.md`](proposals/2026-11-01-mobile-anim-codec.md), which ends with the recommendation
 and the list of decisions, and the benchmark is
@@ -657,7 +657,8 @@ is 1900.7 MB at 85.40, at the same VRAM; BC1's one-bit alpha takes its min to �
 
 The repo's BC7 encoder had a real bug at the converter's flags: mode 4 with index flag 0 packed each weight plane into the other's
 field. The user approved that fix, and it landed on 2026-11-05. Any BC7 figure from before that date and not labelled with a fixed
-encoder reads the bug: section 12 of the proposal has the details, and two further encoder changes that wait for the user.
+encoder reads the bug: section 12 of the proposal has the details. Fix C, the search change that lets alpha have its own plane, landed
+the same day ([`bc7_alpha_plane_search.md`](bc7_alpha_plane_search.md)). The colour step is still undecided.
 
 **Made by the user on 2026-11-05:**
 
@@ -669,13 +670,17 @@ encoder reads the bug: section 12 of the proposal has the details, and two furth
   branch. A package holding two, such as a low-end mix or custom BC7 art beside indexed frames, needs both paths live, and there
   a shared shader with a branch was level with grouped pipelines at 100/0 and 90/10 (proposal, section 15).
 - **The 60 fps bar for integrated GPUs applies at fullscreen.** See `renderer_release_performance.md` for where this stands.
+- **The lossless compressor is LZ4 HC.** On the chosen layouts, expanded for VRAM, with the creature crowd on 4 threads, five directions /
+  faced: Enhanced is 2268.0 MB before duplicates at 36.4 / 7.5 ms and 169.5 / 34.9 ms in the worst crowd, against zstd 19's 1881.1 MB
+  at 100.3 / 20.5 ms and 451.1 / 92.2 ms, so 2.75× as fast for 21 % more disk. Classic is 888.4 MB at 12.6 / 2.7 ms against zstd 19's
+  733.4 MB at 37.0 / 7.5 ms, about 2.9× as fast. The gap reaches 3–4× only if LZ4 HC's frames stay as spans in VRAM.
+- **The BC7 encoder takes fix C,** which landed the same day.
 
 **Open:**
 
 | Question | Recommendation | Depends on |
 |---|---|---|
-| Lossless compressor | Enhanced in the chosen layout, expanded: zstd 19 is 1881.1 MB before duplicates at 100.3 / 20.5 ms, worst crowd 451.1 / 92.2 ms. LZ4 HC is 2268.0 MB at 36.4 / 7.5 ms, worst crowd 169.5 / 34.9 ms, so it's the only one to pass the worst crowd with five directions, at 21 % more disk and 1.14× shipped | The user |
-| Lossy row on Enhanced desktop | BC3: the only lossy row that saves disk as well as VRAM. BC7 with fix C is larger than the lossless row | The user, from `blocks-preview/` |
+| Lossy rows on the PC preset | The user's proposal: Enhanced BC1 for equipment and BC3 for other animations, BC7 for land textures or gumps, Classic BC1, converging on one or two lossy formats if the mix needs too many branches or pipelines. BC3 is the only Enhanced row that saves disk as well as VRAM; BC7 with fix C is larger than the lossless row | Fractional zoom, upscaled sprites and the cost of alternating formats in painter order, being measured |
 | Load unit | One stream per (action, direction), faced direction first | The user |
 | Where the low-end tier's quality floor sits, and which RDO level it uses | 80 as a floor, no RDO unless a target needs it | The user's eye: `blocks-preview/` crops, including BC3 against BC7 |
 | Whether indexed frames stay the default once filtering is counted | Yes: the indexed filter costs 1.43–1.57× BC7 on the Radeon 880M, 2.4–3.1 % of a 60 fps frame in a crowd at 1.5× | The user; one AMD iGPU only |
@@ -683,8 +688,7 @@ encoder reads the bug: section 12 of the proposal has the details, and two furth
 | Whether phones and web get their own low-end packs or one Basis Universal pack | Stay on the universal R8/RG8 pack, and ASTC 4×4 only if VRAM forces it. No Basis row was both smaller and better than the plain format beside it | The user |
 | Whether the low-end tier uses BC1, BC3 or BC7 | Classic BC1. Enhanced BC3 + colour or BC7 with fix C, not BC1 | The user |
 | Which GPU layout holds frames in VRAM | R8/RG8 with faced-first loading, not whole atlas pages. Row spans in linear memory only if a device proves too small | The user; no low-end device measured |
-| Whether the BC7 encoder takes fix C | Yes: section 12 of the proposal | The user |
-| Whether lossy packs take the colour step | Not for what it shows at 1×: about +5 % on disk, and I couldn't see it at game size on NPCs. It clears small specks on a few bodies when zoomed, and halves the pixels under 80 on BC3. **Measure fractional zoom first:** the seam filter's hardware sample (`art/main.wesl`) reads straight RGB, so at seams beside transparent pixels it mixes in the colour stored under them. That is transparent black without the step, and every sheet so far is at 1× with no filter, so this effect is unmeasured. Storing premultiplied colour is the untested alternative | The user; a test that doesn't exist yet |
+| Whether lossy packs take the colour step | Not for what it shows at 1×: about +5 % on disk, and on the sheets it isn't visible at game size on NPCs (the user agreed by eye, 2026-11-05). It clears small specks on a few bodies when zoomed, and halves the pixels under 80 on BC3. **Fractional zoom decides it:** the seam filter's hardware sample (`art/main.wesl`) reads straight RGB, so at seams beside transparent pixels it mixes in the colour stored under them. That is transparent black without the step, and every sheet so far is at 1× with no filter. Storing premultiplied colour is the alternative under test | The user; the zoom test |
 | Runtime interpolation for high frame rates | A separate study | The full frame set |
 | Whether to offer an opt-in flag for unreached art | Keep all | Section 7's trace |
 
@@ -701,6 +705,7 @@ are from [the codec proposal](proposals/2026-11-01-mobile-anim-codec.md), on eve
 | Enhanced painted + coverage spans | 1808.7 MB, 129.0 / 26.3 ms | 61 MB doesn't justify being slower (2026-11-05) |
 | Enhanced coders per class (section 10's assignment) | 1761.7 MB, 232.3 / 57.7 ms | Same decision, and almost no margin on the line |
 | One shader with a format branch on every install | 8–26 % slower when every sprite takes the cheap path | Pipelines compiled at startup from the package's formats cost nothing. The branch stays for mixed packages only (2026-11-05) |
+| zstd 19 as the lossless compressor | Enhanced 1881.1 MB before duplicates, 100.3 / 20.5 ms, worst crowd 451.1 / 92.2 ms. LZ4 HC is 2268.0 MB, 36.4 / 7.5 ms, worst 169.5 / 34.9 ms | 2.75× the decode speed is worth 21 % more disk, and LZ4 HC is the only one to pass the worst crowd with five directions (2026-11-05) |
 | Lossless only, or lossy only | | Both paths are supported (2026-11-05) |
 | Halved frames | See section 4 | All frames are kept (2026-11-04) |
 | Runtime BC7 | See section 4 | Off for now; possibly later for upscaled animations |

@@ -1417,7 +1417,7 @@ fn smooth_block_error_scale_from_pixels(
 }
 
 #[inline(always)]
-fn decode_bc7_error_bounded<const COLLECT_STATS: bool>(
+pub(super) fn decode_bc7_error_bounded<const COLLECT_STATS: bool>(
     block_bits: u128,
     source: &RgbaBlock,
     mode_hint: u8,

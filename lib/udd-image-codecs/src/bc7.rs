@@ -1515,6 +1515,62 @@ mod tests {
         }
     }
 
+    /// A sprite's edge has alpha falling with colour, so the correlation test in `pack_bc7_rgba` doesn't offer alpha its
+    /// own plane there. The encoder has to try that plane anyway, and keep it whenever it decodes closer. The error is
+    /// measured through the `dds` decoder, not the encoder's own.
+    #[test]
+    fn alpha_plane_is_kept_when_it_decodes_closer_on_sprite_edges() {
+        use analytical::{pack_bc7_rgba, pack_mode4_or_5, Pixel, FLAG_PBIT_OPT_M6, FLAG_USE_DUAL_PLANE, FLAG_USE_TRIVIAL_M6};
+
+        const SEED: u64 = 0x9E37_79B9_7F4A_7C15;
+        const BLOCKS: usize = 4096;
+        const BLOCK_PIXELS: usize = (BC7_BLOCK_EDGE * BC7_BLOCK_EDGE) as usize;
+        const ALPHA_PLANE: usize = 3;
+        const CHANNEL_RANGE: usize = 256;
+        const COVERAGE_LEVELS: usize = 16;
+        const MAX_COVERAGE_LEVEL: usize = COVERAGE_LEVELS - 1;
+        const MAX_CHANNEL: usize = CHANNEL_RANGE - 1;
+        const TRANSPARENT_ONE_IN: usize = 3;
+        const COLOUR_SPREAD: usize = 32;
+
+        let extent = ImageExtent::new(BC7_BLOCK_EDGE, BC7_BLOCK_EDGE).unwrap();
+        let flags = FLAG_PBIT_OPT_M6 | FLAG_USE_DUAL_PLANE | FLAG_USE_TRIVIAL_M6;
+        let error_of = |block: &[u8; BC7_BLOCK_BYTES], pixels: &[Pixel; BLOCK_PIXELS]| -> u64 {
+            let decoded = decode_bc7_to_rgba8888(block, extent).unwrap();
+            decoded.iter().zip(pixels.iter().flatten()).map(|(d, s)| u64::from(d.abs_diff(*s)).pow(2)).sum()
+        };
+        let mut state = SEED;
+        let mut next = |limit: usize| {
+            state ^= state << 13;
+            state ^= state >> 7;
+            state ^= state << 17;
+            (state % limit as u64) as usize
+        };
+
+        for _ in 0..BLOCKS {
+            // One colour with some spread, on coverage levels as Enhanced frames have them, beside transparent black.
+            let base: [usize; 3] = std::array::from_fn(|_| next(CHANNEL_RANGE));
+            let pixels: [Pixel; BLOCK_PIXELS] = std::array::from_fn(|_| {
+                if next(TRANSPARENT_ONE_IN) == 0 {
+                    return [0; 4];
+                }
+                let coverage = next(COVERAGE_LEVELS) * MAX_CHANNEL / MAX_COVERAGE_LEVEL;
+                let mut channel = |value: usize| (value + next(COLOUR_SPREAD)).min(MAX_CHANNEL) as u8;
+                let colour = [channel(base[0]), channel(base[1]), channel(base[2])];
+                [colour[0], colour[1], colour[2], coverage as u8]
+            });
+
+            let mut chosen = [0u8; BC7_BLOCK_BYTES];
+            pack_bc7_rgba(&mut chosen, &pixels, flags);
+            let mut plane = [0u8; BC7_BLOCK_BYTES];
+            pack_mode4_or_5(&mut plane, &pixels, ALPHA_PLANE);
+            assert!(
+                error_of(&chosen, &pixels) <= error_of(&plane, &pixels),
+                "the block alpha's own plane encodes closer to {pixels:?}"
+            );
+        }
+    }
+
     #[test]
     fn bc7_progress_counts_encode_and_rdo_passes_separately() {
         let extent = ImageExtent::new(8, 8).expect("extent");
