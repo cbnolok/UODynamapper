@@ -823,12 +823,12 @@ fn discover_animationframe_paths(client_dir: &Path) -> Vec<PathBuf> {
         .collect()
 }
 
-/// The EcMobileAnimations.kdl to read: the one given, else the copy shipped with the tools. `None` when it is not
-/// found and the options allow packing without it.
+/// The EcMobileAnimations.kdl to read: the one given, else the copy shipped with the tools. A given table must exist;
+/// `None` only when none was given, the shipped copy is not found and the options allow packing without it.
 fn resolve_ec_mobile_animations_kdl(options: &MobileAnimEcAtlasOptions) -> eyre::Result<Option<PathBuf>> {
     match bundled_files::resolve(options.metadata_path.as_deref(), EC_MOBILE_ANIMATIONS_KDL) {
         Ok(path) => Ok(Some(path)),
-        Err(_) if options.allow_missing_metadata => Ok(None),
+        Err(_) if options.allow_missing_metadata && options.metadata_path.is_none() => Ok(None),
         Err(error) => Err(error),
     }
 }
@@ -3545,7 +3545,7 @@ mod tests {
         assert_eq!(&dst[0..4], &[0, 0, 0, 0]);
     }
 
-    /// No table given: the shipped one. A given table must exist, unless the options allow packing without it.
+    /// No table given: the shipped one. A given table must exist, even when the options allow packing without one.
     #[test]
     fn mobile_animation_kdl_defaults_to_the_shipped_table() {
         let shipped = EC_MOBILE_ANIMATIONS_KDL.checkout_dir().join(EC_MOBILE_ANIMATIONS_KDL.relative_path());
@@ -3557,7 +3557,8 @@ mod tests {
         let error = resolve_ec_mobile_animations_kdl(&options).unwrap_err().to_string();
         assert!(error.contains(&missing.display().to_string()), "{error}");
         let options = MobileAnimEcAtlasOptions { allow_missing_metadata: true, ..options };
-        assert_eq!(resolve_ec_mobile_animations_kdl(&options).unwrap(), None);
+        let error = resolve_ec_mobile_animations_kdl(&options).unwrap_err().to_string();
+        assert!(error.contains(&missing.display().to_string()), "{error}");
     }
 
     #[test]
