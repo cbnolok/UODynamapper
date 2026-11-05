@@ -15,7 +15,6 @@ use crate::ui::{
     classic_music, enhanced_files_availability, enhanced_folder_source, folder_files_availability, go_to_field,
     list_sort_controls, sorted_indices_by, source_choice, ClientSource, SourceAvailability, CLASSIC_FOLDER,
 };
-use uocf::utils::path::find_file_ignoring_case;
 
 const SOUNDS_LIST_PANEL_WIDTH: f32 = 280.0;
 const CLASSIC_MUSIC_LABEL: &str = "Classic music";
@@ -83,16 +82,12 @@ pub(super) fn source_selector(app: &mut UopInspectorApp, ui: &mut egui::Ui) {
         SoundSource::ClassicMusic => None,
     };
     let has_audio = app.ec_audio.is_some();
-    let classic_file = |source: ClientSource, file: &str| {
-        let loaded = classic == Some(source);
-        match (&cc_path, classic) {
-            (Some(folder), Some(other)) if !loaded && find_file_ignoring_case(folder, file).is_some() => SourceAvailability::Missing(format!(
-                "{file} is in {}, but the Classic sounds load from one file: {} when both are there.",
-                folder.display(),
-                if other == ClientSource::Mul { SOUND_MUL_FILE_NAME } else { SOUND_UOP_FILE_NAME },
-            )),
-            _ => folder_files_availability(cc_path.as_deref(), CLASSIC_FOLDER, file, loaded),
-        }
+    let classic_file = |source: ClientSource, file: &str| match (&cc_path, classic) {
+        (Some(folder), Some(ClientSource::Mul)) if source == ClientSource::CcUop => SourceAvailability::Missing(format!(
+            "No {file} loaded from {}: the Classic sounds load from one file, and {SOUND_MUL_FILE_NAME} comes first.",
+            folder.display(),
+        )),
+        _ => folder_files_availability(cc_path.as_deref(), CLASSIC_FOLDER, file, classic == Some(source)),
     };
     ui.horizontal_wrapped(|ui| {
         let clicked = source_choice(ui, selected, |source| match source {
