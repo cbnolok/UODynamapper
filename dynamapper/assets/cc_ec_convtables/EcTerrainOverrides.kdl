@@ -1,10 +1,13 @@
 // EcTerrainOverrides.kdl
 //
 // Purpose:
-// - Loose, user-editable integration/override table for EC terrain materials.
-// - Loaded by the app from `assets/cc_ec_convtables/EcTerrainOverrides.kdl`
-//   after `tex_land_ec.uddp` is loaded.
-// - Can replace embedded terrain override metadata without repacking UDDP files.
+// - User-editable integration/override table for EC terrain materials.
+// - The EC land packer embeds it in `tex_land_ec.uddp` as
+//   `metadata/terrain_overrides.json` (this shipped copy, or the one given with
+//   `--land-terrain-overrides-kdl`), and packs the textures it references.
+// - The app reads only that embedded copy, so an edit takes effect after a
+//   repack. The app package does not ship this file; the tools package keeps
+//   it in `shared/cc_ec_convtables/`.
 // - Use this only for reviewed facts or user policy choices that are not
 //   currently derivable from original EC source files.
 //

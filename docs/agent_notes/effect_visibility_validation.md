@@ -48,7 +48,8 @@ cargo run -p udd-conv-cli --example inspect_ec_land_layers -- \
 ```
 
 It preserves authored definitions beside effective roles and present slots.
-Omit `--overrides` to inspect embedded policy only. It refuses an existing output.
+`--overrides` tries a candidate table in place of the embedded one; omit it to inspect
+what the runtime draws (it reads only the embedded overrides). It refuses an existing output.
 An available normal slot is still not proof of sampled visible fragments.
 
 ## Other effect gates

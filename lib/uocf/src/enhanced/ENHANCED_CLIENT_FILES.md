@@ -1299,9 +1299,10 @@ Terrain package build:
 7. Build sparse slot records and alias records.
 8. Write terrain provenance for every material alias and selected/available
    layer.
-9. Embed KDL-derived override metadata when present, and always the terrain
-   routing table (`TerrainTranscode.kdl`: the copy shipped with the tools, or
-   the one given with `--land-transcode-kdl`).
+9. Always embed the terrain overrides (`EcTerrainOverrides.kdl`, as
+   override metadata) and the terrain routing table (`TerrainTranscode.kdl`):
+   the copies shipped with the tools, or the ones given with
+   `--land-terrain-overrides-kdl` and `--land-transcode-kdl`.
 
 Tile metadata build:
 
@@ -1321,8 +1322,9 @@ Runtime:
 2. Apply the terrain routing table embedded in `tex_land_ec.uddp` over the
    client's `legacyterrainmap.csv` routes. There is no loose copy; a package
    without the table fails to load with a message to repack it.
-3. Load loose `EcTerrainOverrides.kdl` and apply it over embedded terrain
-   override defaults.
+3. Apply the terrain overrides embedded in `tex_land_ec.uddp`. There is no
+   loose copy either; a package without them fails to load with a message to
+   repack it.
 4. Build land shader lookup entries from terrain provenance and override refs.
 5. For statics, choose regular art, CC art, or EC land-atlas rendering from
    source mode and `tilemeta` visual kind.
@@ -1370,7 +1372,8 @@ Runtime:
   - `metadata/pages.bin`: page dimensions, count, pixel format, used extents
   - `metadata/slots.bin`: sparse slot table keyed by runtime land/art slot id
   - `metadata/terrain_provenance.bin`: material-to-texture provenance
-  - optional `metadata/terrain_overrides.json`: embedded KDL-derived defaults
+  - `metadata/terrain_overrides.json`: the terrain overrides,
+    `EcTerrainOverrides.kdl` as packed (required)
   - `metadata/transcode.bin`: the terrain routing table, `TerrainTranscode.kdl`
     as packed (required)
 - `terrain_provenance.bin` v4 stores:
@@ -1415,7 +1418,10 @@ Runtime:
 
 ## 10. KDL Files
 
-Active KDL files live in `dynamapper/assets/cc_ec_convtables/`.
+Active KDL files live in `dynamapper/assets/cc_ec_convtables/`. The packers
+and audits read them (the tools package ships them in
+`shared/cc_ec_convtables/`); Dynamapper reads none of them, and the app
+package does not ship them.
 
 `EcTerrainOverrides.kdl`:
 
@@ -1430,12 +1436,12 @@ Active KDL files live in `dynamapper/assets/cc_ec_convtables/`.
   from the source data. The four liquid entries (5, 10, 49, 70) equalled the
   source water items and are gone, as is terrain 52's `t0`/`t1` (material 51's
   obsidian textures, not its own items). The file has no entries.
-- The packer embeds it into `tex_land_ec.uddp` as
+- The packer always embeds it into `tex_land_ec.uddp` as
   `metadata/terrain_overrides.json` and also packs referenced override textures.
-- Runtime also loads the loose file and applies it over the embedded defaults.
-  Loose overrides are fast for local experiments such as dark/light mountains
-  or snow variants. A loose override can only use texture pixels already packed
-  into `tex_land_ec.uddp`; missing refs are warned and fall back.
+- The runtime reads only that embedded copy: repack to apply an edit. To try a
+  candidate table against a package first, use the `inspect_ec_land_layers`
+  example (`--overrides`) or `audit-ec-terrain-overrides`. Refs to textures the
+  package lacks are warned at load and fall back.
 - Prefer reason-code values over prose in machine-readable fields.
 
 `TerrainTranscode.kdl`:
@@ -1487,7 +1493,7 @@ When a case is unclear:
 2. Record the current automatic decision and reason flags.
 3. Prefer narrow source-derived criteria over id hardcoding.
 4. Use `EcTerrainOverrides.kdl` for reviewed exceptions.
-5. Warn and fall back when loose overrides point to unpacked texture ids.
+5. Warn and fall back when overrides point to texture ids that are not packed.
 6. Do not change runtime rendering policy until the metadata phase supports the
    decision.
 
