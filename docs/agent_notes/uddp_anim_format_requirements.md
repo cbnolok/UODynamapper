@@ -680,9 +680,16 @@ the same day ([`bc7_alpha_plane_search.md`](bc7_alpha_plane_search.md)). The col
   lossless and is now 0.84× it; BC3 goes from 0.78× to 0.65×. Classic's BC1 is 0.58× lossless, and its BC7 with fix C, 918.4 MB, is still
   larger. The block rows also decode slower than lossless now, because they use zstd: Enhanced BC3 is 50.4 / 10.2 ms and BC7 with fix C 50.9 / 10.3 ms, against 36.4 / 7.5 ms.
 - **The BC7 encoder takes fix C,** which landed the same day.
-- **Classic equipment and humanoid animations are lossless in every pack,** so block formats reach only creatures. Equipment means listed EQUIPMENT in
-  `mobtypes.txt` or reached by any worn tile: 608 ids, of which 65 aren't listed at all, 17 of those with PartialHue. Humanoid means listed HUMAN, 26 ids.
-  A dressed character's layers therefore share one format, and the format changes only between characters and creatures.
+- **Classic equipment and wearer animations are lossless in every pack,** so block formats reach only creatures. Wearers are only the humans, elves and
+  gargoyles that can equip items. The classes come from the placeholder rule under "Telling equipment apart", and all 1143 placeholders match between
+  Enhanced's and Classic's `tileart.uop` on body type and race:
+  - **Wearer:** the placeholder sets race. 13 bodies: humans 400–403, elves 605–608, gargoyles 666, 667, 694, 695, and 1253.
+  - **Equipment:** no race, on a wearer's map (400, 666, 1253). This includes bodies `mobtypes.txt` lists as HUMAN, such as 183–186.
+  - **Creature, may take a block format:** any other map, so orcs (17), lizardmen (35) and ratmen (42). Body 990 is listed HUMAN but plays its own map.
+  - **No placeholder:** `mobtypes.txt`, then any worn tile that reaches the body. What nothing classifies stays lossless.
+  No PartialHue tile in `tiledata.mul` reaches a body this calls a creature. A dressed character's layers share one format, so the format changes
+  only between characters and creatures.
+- **A server's 0x8000 on a block-coded creature gets an approximate grey test, logged once** (the user, 2026-11-05). Its tolerance isn't set yet.
 - **Classic data that can take partial hue stays lossless: exact greys can't be lost.** The client hues only pixels whose 5-bit channels match
   (`(c & 0x3FF) == c >> 5`, [traced](../../scripts/dev-helpers/ec-research/ghidra-classic-frames/results/classic_frames.md)), with the red byte as the key. On every Classic body BC1
   breaks that test on 30.60 % of grey pixels at 5 bits and 84.31 % at 8, and changes the key on 56.19 %. What it covers:
@@ -703,7 +710,6 @@ the same day ([`bc7_alpha_plane_search.md`](bc7_alpha_plane_search.md)). The col
 | Whether the low-end tier block-codes only large bodies, and at what size | Classic: BC1 above 2500 px, with a median of 81.77 on coded bodies, measured before equipment and humanoids were kept lossless and being re-measured. Enhanced: the same mix with BC7 fix C is 1931.1 MB against 1539.0 MB for BC3 + colour on every body | The user; a second shader path and hue from colour are unbuilt |
 | Whether phones and web get their own low-end packs or one Basis Universal pack | Stay on the universal R8/RG8 pack, and ASTC 4×4 only if VRAM forces it. No Basis row was both smaller and better than the plain format beside it | The user |
 | LZ4 HC with a dictionary | Not measured. LZ4 reads only a dictionary's last 64 KiB and has no entropy stage, so zstd's −3.0 % per body doesn't carry over. The rows being run: trained per body, the body's standing stream, one shared per package | The bench, then the user |
-| What a lossy Classic pack draws when a server sets 0x8000 on a block-coded creature | An approximate grey test, logged once, or a lossless pack for shards that rely on it | The user |
 | Whether the low-end tier uses BC1, BC3 or BC7 | Classic BC1, on creatures only. Enhanced BC3 + colour or BC7 with fix C, not BC1 | The user |
 | Which GPU layout holds frames in VRAM | R8/RG8 with faced-first loading, not whole atlas pages. Row spans in linear memory only if a device proves too small | The user; no low-end device measured |
 | Whether lossy packs take the colour step | Not for what it shows at 1×: about +5 % on disk, and on the sheets it isn't visible at game size on NPCs (the user agreed by eye, 2026-11-05). It clears small specks on a few bodies when zoomed, and halves the pixels under 80 on BC3. **Fractional zoom decides it:** the seam filter's hardware sample (`art/main.wesl`) reads straight RGB, so at seams beside transparent pixels it mixes in the colour stored under them. That is transparent black without the step, and every sheet so far is at 1× with no filter. Storing premultiplied colour is the alternative under test | The user; the zoom test |
