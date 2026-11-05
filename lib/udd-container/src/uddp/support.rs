@@ -178,15 +178,13 @@ pub(crate) fn jxl_compress_level(
 ) -> Result<Vec<u8>, String> {
     use jpegxl_rs::encoder_builder;
     use jpegxl_rs::encode::EncoderFrame;
-    use jpegxl_rs::parallel::threads_runner::ThreadsRunner;
 
-    let parallel_runner = ThreadsRunner::default();
     let mut encoder = encoder_builder()
         .has_alpha(true)
         .lossless(true)
         .uses_original_profile(true)
         .speed(level)
-        .parallel_runner(&parallel_runner)
+        .parallel_runner(&RayonJxlRunner)
         .build()
         .map_err(|e| e.to_string())?;
 
@@ -288,14 +286,15 @@ type JxlRunnerFn = unsafe extern "C-unwind" fn(
     u32,
 ) -> jpegxl_rs::parallel::JxlParallelRetCode;
 
-/// Hands libjxl's parallel decode work (a frame's 256x256 groups, among others) to the rayon pool
-/// of the calling thread, so a decode starts no threads of its own. A caller that already decodes
-/// entries on rayon workers gets work stealing instead of a second pool competing for the cores,
-/// and a caller outside rayon (Bevy's task pools, the main thread) blocks while the global pool
-/// decodes. libjxl's own thread runner can't be shared that way: it runs one job at a time.
+/// Hands libjxl's parallel decode and encode work (a frame's 256x256 groups, among others) to the
+/// rayon pool of the calling thread, so a decode or an encode starts no threads of its own. A caller
+/// that already decodes entries on rayon workers gets work stealing instead of a second pool
+/// competing for the cores, and a caller outside rayon (Bevy's task pools, the main thread) blocks
+/// while the global pool does the work. libjxl's own thread runner can't be shared that way: it runs one
+/// job at a time.
 struct RayonJxlRunner;
 
-/// libjxl's opaque decode state, handed to the workers that run its callback.
+/// libjxl's opaque decode or encode state, handed to the workers that run its callback.
 #[derive(Clone, Copy)]
 struct JxlOpaque(*mut std::ffi::c_void);
 
