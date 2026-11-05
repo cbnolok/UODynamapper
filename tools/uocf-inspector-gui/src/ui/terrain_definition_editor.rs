@@ -12,6 +12,7 @@ use uocf::uop_container::package::UopPackage;
 
 use super::UOP_PATCHER_NOTE;
 use super::unsaved_changes::{tab_on_screen, TabEditor};
+use super::{arrow_delta, move_selection};
 use crate::app::{UopInspectorApp, ViewMode};
 use crate::logic::terrain_definition_editor::{TerrainDefinitionEditor, TerrainDefinitionField};
 
@@ -72,7 +73,13 @@ fn save_with_dialog(app: &mut UopInspectorApp, editor: &mut TerrainDefinitionEdi
 }
 
 const ROW_HEIGHT: f32 = 22.0;
-const TABLE_MAX_HEIGHT: f32 = 320.0;
+/// Share of the editor's height the definition table starts with; the selected definition shows below it.
+const TABLE_HEIGHT_SHARE: f32 = 0.5;
+const TABLE_MIN_HEIGHT: f32 = 120.0;
+const DETAILS_MIN_HEIGHT: f32 = 120.0;
+const TABLE_PANEL_ID: &str = "terrain_definition_table_panel";
+const NO_SELECTION_HINT: &str =
+    "Click an id, or move with the arrow keys, to show the aliases, texture layers and shader values of a definition here.";
 const ID_COLUMN_WIDTH: f32 = 50.0;
 const NAME_COLUMN_WIDTH: f32 = 200.0;
 const VALUE_COLUMN_WIDTH: f32 = 90.0;
@@ -207,7 +214,8 @@ fn drag<T: egui::emath::Numeric>(
 }
 
 /// Filter, duplicate, the definitions as editable rows, and the aliases, layers and shader values of the selected
-/// one.
+/// one. The table and the selected definition share the height left, at a split that can be dragged; the arrow keys
+/// move the selection unless a field has the keyboard.
 fn editor_table(ui: &mut egui::Ui, editor: &mut TerrainDefinitionEditor) {
     let mut actions = Vec::new();
     ui.horizontal_wrapped(|ui| {
@@ -220,82 +228,105 @@ fn editor_table(ui: &mut egui::Ui, editor: &mut TerrainDefinitionEditor) {
     });
     let ids = editor.visible_ids();
     ui.label(format!("{} of {} definitions", ids.len(), editor.definitions.len()));
+    let keyed = arrow_delta(ui, ui.memory(|memory| memory.focused().is_some()))
+        .and_then(|delta| move_selection(&ids, editor.selected, delta))
+        .filter(|&id| Some(id) != editor.selected);
+    if keyed.is_some() {
+        editor.selected = keyed;
+    }
+    let scroll_row = keyed.and_then(|id| ids.iter().position(|&visible| visible == id));
     let definitions = &editor.definitions;
     let shaders = &editor.shaders;
     let selected = editor.selected;
-    egui::ScrollArea::horizontal().id_salt("terrain_definition_table").show(ui, |ui| {
-        TableBuilder::new(ui)
-            .id_salt("terrain_definition_rows")
-            .striped(true)
-            .max_scroll_height(TABLE_MAX_HEIGHT)
-            .cell_layout(egui::Layout::left_to_right(egui::Align::Center))
-            .column(Column::exact(ID_COLUMN_WIDTH))
-            .column(Column::initial(NAME_COLUMN_WIDTH).resizable(true))
-            .columns(Column::exact(VALUE_COLUMN_WIDTH), 2)
-            .column(Column::initial(SHADER_COLUMN_WIDTH).resizable(true))
-            .column(Column::auto().at_least(ACTIONS_COLUMN_WIDTH))
-            .header(ROW_HEIGHT, |mut header| {
-                for title in ["id", "name", "coverage exp.", "aliases", "shader", ""] {
-                    header.col(|ui| {
-                        ui.strong(title);
-                    });
+    let available = ui.available_height();
+    egui::Panel::top(TABLE_PANEL_ID)
+        .resizable(true)
+        .default_size(available * TABLE_HEIGHT_SHARE)
+        .size_range(TABLE_MIN_HEIGHT..=(available - DETAILS_MIN_HEIGHT).max(TABLE_MIN_HEIGHT))
+        .show(ui, |ui| {
+            egui::ScrollArea::horizontal().id_salt("terrain_definition_table").show(ui, |ui| {
+                let mut table = TableBuilder::new(ui)
+                    .id_salt("terrain_definition_rows")
+                    .striped(true)
+                    .auto_shrink([false, false])
+                    .cell_layout(egui::Layout::left_to_right(egui::Align::Center))
+                    .column(Column::exact(ID_COLUMN_WIDTH))
+                    .column(Column::initial(NAME_COLUMN_WIDTH).resizable(true))
+                    .columns(Column::exact(VALUE_COLUMN_WIDTH), 2)
+                    .column(Column::initial(SHADER_COLUMN_WIDTH).resizable(true))
+                    .column(Column::remainder().at_least(ACTIONS_COLUMN_WIDTH));
+                if let Some(row) = scroll_row {
+                    table = table.scroll_to_row(row, Some(egui::Align::Center));
                 }
-            })
-            .body(|body| {
-                body.rows(ROW_HEIGHT, ids.len(), |mut row| {
-                    let id = ids[row.index()];
-                    let definition = &definitions[&id];
-                    row.col(|ui| {
-                        if ui.selectable_label(selected == Some(id), id.to_string()).clicked() {
-                            actions.push(Action::Select(id));
-                        }
-                    });
-                    row.col(|ui| {
-                        ui.label(definition.name.as_deref().unwrap_or("?"))
-                            .on_hover_text(format!("string {}", definition.name_index));
-                    });
-                    row.col(|ui| {
-                        drag(ui, definition.coverage_exponent(), FLOAT_DRAG_SPEED, &mut actions, id,
-                            TerrainDefinitionField::CoverageExponent, |definition, value| definition.set_coverage_exponent(value));
-                    });
-                    row.col(|ui| {
-                        ui.label(definition.aliases.len().to_string());
-                    });
-                    row.col(|ui| match &definition.texture {
-                        Some(texture) => {
-                            let current = shaders.get(&texture.shader_name_index).cloned().unwrap_or_default();
-                            egui::ComboBox::from_id_salt(("terrain_shader", id)).selected_text(current).show_ui(ui, |ui| {
-                                for (&index, name) in shaders {
-                                    if ui.selectable_label(index == texture.shader_name_index, name).clicked()
-                                        && index != texture.shader_name_index
-                                    {
-                                        actions.push(Action::Shader(id, index));
-                                    }
-                                }
+                table
+                    .header(ROW_HEIGHT, |mut header| {
+                        for title in ["id", "name", "coverage exp.", "aliases", "shader", ""] {
+                            header.col(|ui| {
+                                ui.strong(title);
                             });
                         }
-                        None => {
-                            ui.colored_label(WARNING_COLOR, "no shader block");
-                        }
+                    })
+                    .body(|body| {
+                        body.rows(ROW_HEIGHT, ids.len(), |mut row| {
+                            let id = ids[row.index()];
+                            let definition = &definitions[&id];
+                            row.set_selected(selected == Some(id));
+                            row.col(|ui| {
+                                if ui.selectable_label(selected == Some(id), id.to_string()).clicked() {
+                                    actions.push(Action::Select(id));
+                                }
+                            });
+                            row.col(|ui| {
+                                ui.label(definition.name.as_deref().unwrap_or("?"))
+                                    .on_hover_text(format!("string {}", definition.name_index));
+                            });
+                            row.col(|ui| {
+                                drag(ui, definition.coverage_exponent(), FLOAT_DRAG_SPEED, &mut actions, id,
+                                    TerrainDefinitionField::CoverageExponent, |definition, value| definition.set_coverage_exponent(value));
+                            });
+                            row.col(|ui| {
+                                ui.label(definition.aliases.len().to_string());
+                            });
+                            row.col(|ui| match &definition.texture {
+                                Some(texture) => {
+                                    let current = shaders.get(&texture.shader_name_index).cloned().unwrap_or_default();
+                                    egui::ComboBox::from_id_salt(("terrain_shader", id)).selected_text(current).show_ui(ui, |ui| {
+                                        for (&index, name) in shaders {
+                                            if ui.selectable_label(index == texture.shader_name_index, name).clicked()
+                                                && index != texture.shader_name_index
+                                            {
+                                                actions.push(Action::Shader(id, index));
+                                            }
+                                        }
+                                    });
+                                }
+                                None => {
+                                    ui.colored_label(WARNING_COLOR, "no shader block");
+                                }
+                            });
+                            row.col(|ui| {
+                                if ui.small_button("Edit").on_hover_text("Shows its aliases, layers and shader values.").clicked() {
+                                    actions.push(Action::Select(id));
+                                }
+                                if ui.small_button("Duplicate").on_hover_text("Copies it as the new material id.").clicked() {
+                                    actions.push(Action::Duplicate(id));
+                                }
+                                if ui.small_button("Delete").clicked() {
+                                    actions.push(Action::Remove(id));
+                                }
+                            });
+                        });
                     });
-                    row.col(|ui| {
-                        if ui.small_button("Edit").on_hover_text("Shows its aliases, layers and shader values.").clicked() {
-                            actions.push(Action::Select(id));
-                        }
-                        if ui.small_button("Duplicate").on_hover_text("Copies it as the new material id.").clicked() {
-                            actions.push(Action::Duplicate(id));
-                        }
-                        if ui.small_button("Delete").clicked() {
-                            actions.push(Action::Remove(id));
-                        }
-                    });
-                });
             });
+        });
+    egui::ScrollArea::both().id_salt("terrain_definition_details").auto_shrink([false, false]).show(ui, |ui| {
+        match selected.and_then(|id| definitions.get(&id)) {
+            Some(definition) => definition_details(ui, editor, definition, &mut actions),
+            None => {
+                ui.weak(NO_SELECTION_HINT);
+            }
+        }
     });
-    if let Some(definition) = selected.and_then(|id| definitions.get(&id)) {
-        ui.separator();
-        definition_details(ui, editor, definition, &mut actions);
-    }
     for action in actions {
         match action {
             Action::BreakCoalescing => editor.edits.break_coalescing(),
@@ -466,6 +497,44 @@ mod tests {
 
             (on_tab.discard)(&mut app);
             assert!(!(on_tab.is_dirty)(&app) && !(other.is_dirty)(&app), "{tab:?}");
+        }
+    }
+
+    #[test]
+    fn the_editor_fills_a_small_window_and_the_arrow_keys_move_the_selection() {
+        const WINDOW: egui::Vec2 = egui::vec2(1280.0, 800.0);
+        /// The table spans at least this share of the window width.
+        const MIN_WIDTH_SHARE: f32 = 0.9;
+        const IDS: [u32; 3] = [1, 2, 3];
+        let mut package = UopPackage::new_default();
+        for id in IDS {
+            let definition = TerrainDefinitionEntry { id, ..TerrainDefinitionEntry::default() };
+            let path = uocf::enhanced::terrain_definition::terrain_definition_entry_path(id);
+            package.add_file_from_memory(&definition.to_bytes().unwrap(), &path, uocf::uop_container::file::CompressionFlag::Zlib).unwrap();
+        }
+        let source = std::path::PathBuf::from(TERRAIN_DEFINITION_UOP_NAME);
+        let mut app = test_app();
+        app.terrain_definition_editor = Some(TerrainDefinitionEditor::open(source.clone(), &package, None).unwrap());
+        let ctx = egui::Context::default();
+        let frame = |app: &mut UopInspectorApp, key: Option<egui::Key>| {
+            let events = key
+                .map(|key| egui::Event::Key { key, physical_key: None, pressed: true, repeat: false, modifiers: egui::Modifiers::NONE })
+                .into_iter()
+                .collect();
+            let input = egui::RawInput { screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, WINDOW)), events, ..Default::default() };
+            let _ = ctx.run_ui(input, |ui| {
+                egui::CentralPanel::default().show(ui, |ui| ui_terrain_definition_editor(app, ui, &source, &package));
+            });
+        };
+        frame(&mut app, None);
+        let table = egui::containers::panel::PanelState::load(&ctx, egui::Id::new(TABLE_PANEL_ID)).unwrap().outer_rect;
+        assert!(table.width() >= WINDOW.x * MIN_WIDTH_SHARE, "{table:?}");
+        assert!(table.height() >= TABLE_MIN_HEIGHT && table.bottom() + DETAILS_MIN_HEIGHT <= WINDOW.y, "{table:?}");
+
+        let selected = |app: &UopInspectorApp| app.terrain_definition_editor.as_ref().unwrap().selected;
+        for (key, expected) in [(egui::Key::ArrowDown, IDS[0]), (egui::Key::ArrowDown, IDS[1]), (egui::Key::ArrowUp, IDS[0])] {
+            frame(&mut app, Some(key));
+            assert_eq!(selected(&app), Some(expected), "{key:?}");
         }
     }
 

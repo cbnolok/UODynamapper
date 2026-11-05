@@ -1,5 +1,5 @@
 use crate::app::{TerrainDefinitionFileEntry, UopInspectorApp};
-use crate::ui::{list_sort_controls, sorted_indices_by, terrain_definition_editor};
+use crate::ui::{arrow_delta, list_sort_controls, move_selection, sorted_indices_by, terrain_definition_editor};
 use eframe::egui;
 use uocf::enhanced::terrain_definition::{TerrainDefinitionEntry, TerrainTextureType};
 use std::collections::BTreeSet;
@@ -21,10 +21,9 @@ pub fn ui_terrain_definition(app: &mut UopInspectorApp, ctx: &egui::Context, ui:
         .cloned();
 
     if let Some(loaded) = package.as_ref().filter(|loaded| terrain_definition_editor::is_editing(app, &loaded.path)) {
+        // The editor lays out the whole panel: its table and the selected definition scroll by themselves.
         egui::CentralPanel::default().show(ui, |ui| {
-            egui::ScrollArea::vertical().show(ui, |ui| {
-                terrain_definition_editor::ui_terrain_definition_editor(app, ui, &loaded.path, &loaded.package);
-            });
+            terrain_definition_editor::ui_terrain_definition_editor(app, ui, &loaded.path, &loaded.package);
         });
         return;
     }
@@ -43,45 +42,65 @@ pub fn ui_terrain_definition(app: &mut UopInspectorApp, ctx: &egui::Context, ui:
             let sort = list_sort_controls(ui, "terrain_definition_files", &["ID", "Name", "Hash", "Bytes"], 0);
             ui.separator();
 
+            let sorted_indices = sorted_indices_by(files, sort.ordering(), |left, right| {
+                match sort.option_index {
+                    1 => left
+                        .entry
+                        .name
+                        .as_deref()
+                        .unwrap_or("Unknown")
+                        .to_ascii_lowercase()
+                        .cmp(
+                            &right
+                                .entry
+                                .name
+                                .as_deref()
+                                .unwrap_or("Unknown")
+                                .to_ascii_lowercase(),
+                        ),
+                    2 => left.filename_hash.cmp(&right.filename_hash),
+                    3 => left.byte_len.cmp(&right.byte_len),
+                    _ => left.entry.id.cmp(&right.entry.id),
+                }
+            });
+            let visible: Vec<usize> = sorted_indices
+                .into_iter()
+                .filter(|&index| {
+                    let file = &files[index];
+                    let entry = &file.entry;
+                    let name = entry.name.as_deref().unwrap_or("Unknown");
+                    app.searches.terrain_definition.is_empty()
+                        || name.to_lowercase().contains(&app.searches.terrain_definition.to_lowercase())
+                        || entry.id.to_string().contains(&app.searches.terrain_definition)
+                        || format!("{:016X}", file.filename_hash).to_lowercase().contains(&app.searches.terrain_definition.to_lowercase())
+                })
+                .collect();
+            // The arrow keys browse the list, unless a text field has the keyboard.
+            let hashes: Vec<u64> = visible.iter().map(|&index| files[index].filename_hash).collect();
+            let keyboard_moved = match arrow_delta(ui, ui.ctx().text_edit_focused())
+                .and_then(|delta| move_selection(&hashes, app.selected_terrain_def_hash, delta))
+            {
+                Some(hash) if Some(hash) != app.selected_terrain_def_hash => {
+                    app.selected_terrain_def_hash = Some(hash);
+                    true
+                }
+                _ => false,
+            };
+
             egui::ScrollArea::vertical().show(ui, |ui| {
-                let sorted_indices = sorted_indices_by(files, sort.ordering(), |left, right| {
-                    match sort.option_index {
-                        1 => left
-                            .entry
-                            .name
-                            .as_deref()
-                            .unwrap_or("Unknown")
-                            .to_ascii_lowercase()
-                            .cmp(
-                                &right
-                                    .entry
-                                    .name
-                                    .as_deref()
-                                    .unwrap_or("Unknown")
-                                    .to_ascii_lowercase(),
-                            ),
-                        2 => left.filename_hash.cmp(&right.filename_hash),
-                        3 => left.byte_len.cmp(&right.byte_len),
-                        _ => left.entry.id.cmp(&right.entry.id),
-                    }
-                });
-                for index in sorted_indices {
+                for index in visible {
                     let file = &files[index];
                     let entry = &file.entry;
                     let name = entry.name.as_deref().unwrap_or("Unknown");
 
-                    if !app.searches.terrain_definition.is_empty() {
-                        if !name.to_lowercase().contains(&app.searches.terrain_definition.to_lowercase()) &&
-                           !entry.id.to_string().contains(&app.searches.terrain_definition) &&
-                           !format!("{:016X}", file.filename_hash).to_lowercase().contains(&app.searches.terrain_definition.to_lowercase()) {
-                            continue;
-                        }
-                    }
-
                     let is_selected = app.selected_terrain_def_hash == Some(file.filename_hash);
                     let label = format!("[{}] {} ({:016X})", entry.id, name, file.filename_hash);
 
-                    if ui.selectable_label(is_selected, label).clicked() {
+                    let response = ui.selectable_label(is_selected, label);
+                    if keyboard_moved && is_selected {
+                        response.scroll_to_me(Some(egui::Align::Center));
+                    }
+                    if response.clicked() {
                         app.selected_terrain_def_hash = Some(file.filename_hash);
                     }
                 }
@@ -110,7 +129,8 @@ pub fn ui_terrain_definition(app: &mut UopInspectorApp, ctx: &egui::Context, ui:
     egui::CentralPanel::default().show(ui, |ui| {
         if let Some(selected_hash) = app.selected_terrain_def_hash {
             if let Some(file) = files.iter().find(|file| file.filename_hash == selected_hash) {
-                egui::ScrollArea::vertical().show(ui, |ui| {
+                // Both ways: the texture layer grid is wider than a small window.
+                egui::ScrollArea::both().auto_shrink([false, false]).show(ui, |ui| {
                     ui_terrain_file(app, ctx, ui, file);
                 });
             }
