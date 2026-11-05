@@ -36,6 +36,7 @@ Stated by the user, most important first.
 | 6 | **Upscaled sprites**, using the filters we already have, chosen at conversion or inspection time. | The user prefers upscaling before conversion, since that works with more filters. |
 | 7 | **Dynamapper reads only UDDP, never UOP.** | Any animation data that lives in other client files, such as `tileart.uop`, must be carried into the package. |
 | 8 | **Custom animations added to the MUL files must survive conversion.** | Stated 2026-11-02. See "Custom animations in MUL files" below. |
+| 9 | **A custom or override table for bodies and worn items.** | New wearers such as dwarves, and custom frames for existing items on them (lower, smaller), are planned. The placeholder rule alone can't say those. Stated 2026-11-05. |
 
 Also needed, derived from the above and from how the art works:
 
@@ -337,6 +338,12 @@ gargoyle bodies 666 and 667 (a "shortsword" and a "war mace"). 735 plays its own
 themselves. So those tile anim ids look like old values that collide with reused body ids, which is an inference. In Classic
 `Equipconv.def` also has to be followed: it reaches 21 of the 42 `EQUIPMENT` MUL bodies no tile points at. The other 21 are
 unexplained.
+
+**Both clients already hold per-wearer rows, with no fixed list of races.** Enhanced: `tileart.uop`'s appearance filters, on 346 of 1126 wearable tiles.
+A row is (owner placeholder, appearance), and `AppearanceFilterByOwnerBodyType::Apply` takes the first match without testing race. Classic: `Equipconv.def`,
+104 rows of (body, equipment id, converted id, gump, hue). The wear check compares action maps only (`BuildLayers`, "Not letting a %u(sq %u) wear a %u(sq %u)").
+For draw order, race is one of four keys in a rule table where -1 is a wildcard (`FUN_00468e30`, read from the decompile; where that table loads from isn't
+traced). Only `lib/uocf` reads these rows today: no package carries item-to-wearer data.
 
 **Empty space inside the frames.** Whole-frame cropping is already in the converters and in every bench figure, and it has
 nothing more to give. What remains is inside the cropped box: only 31–44 % of it is painted, and about half lies outside
@@ -688,7 +695,7 @@ the same day ([`bc7_alpha_plane_search.md`](bc7_alpha_plane_search.md)). The col
   - **Creature, may take a block format:** any other map, so orcs (17), lizardmen (35) and ratmen (42). Body 990 is listed HUMAN but plays its own map.
   - **No placeholder:** `mobtypes.txt`, then any worn tile that reaches the body. What nothing classifies stays lossless.
   No PartialHue tile in `tiledata.mul` reaches a body this calls a creature. A dressed character's layers share one format, so the format changes
-  only between characters and creatures.
+  only between characters and creatures. This is the default for official data: the table in need 9 overrides it.
 - **A server's 0x8000 on a block-coded creature gets an approximate grey test, logged once** (the user, 2026-11-05). Its tolerance isn't set yet.
 - **Classic data that can take partial hue stays lossless: exact greys can't be lost.** The client hues only pixels whose 5-bit channels match
   (`(c & 0x3FF) == c >> 5`, [traced](../../scripts/dev-helpers/ec-research/ghidra-classic-frames/results/classic_frames.md)), with the red byte as the key. On every Classic body BC1
@@ -709,6 +716,7 @@ the same day ([`bc7_alpha_plane_search.md`](bc7_alpha_plane_search.md)). The col
 | Whether indexed frames stay the default once filtering is counted | Yes: the indexed filter costs 1.43–1.57× BC7 on the Radeon 880M, 2.4–3.1 % of a 60 fps frame in a crowd at 1.5× | The user; one AMD iGPU only |
 | Whether the low-end tier block-codes only large bodies, and at what size | Classic: BC1 above 2500 px, with a median of 81.77 on coded bodies, measured before equipment and humanoids were kept lossless and being re-measured. Enhanced: the same mix with BC7 fix C is 1931.1 MB against 1539.0 MB for BC3 + colour on every body | The user; a second shader path and hue from colour are unbuilt |
 | Whether phones and web get their own low-end packs or one Basis Universal pack | Stay on the universal R8/RG8 pack, and ASTC 4×4 only if VRAM forces it. No Basis row was both smaller and better than the plain format beside it | The user |
+| The custom body and wear table (need 9) | Proposed 2026-11-05: one strict KDL file given to the packers. `body` rows set kind, race, gender and action map; `wear` rows set an item's frames per wearer. It wins over the client's rows and the placeholder rule, and packages store the resolved result, so the renderer never sees the rule | The user |
 | LZ4 HC with a dictionary | Not measured. LZ4 reads only a dictionary's last 64 KiB and has no entropy stage, so zstd's −3.0 % per body doesn't carry over. The rows being run: trained per body, the body's standing stream, one shared per package | The bench, then the user |
 | Whether the low-end tier uses BC1, BC3 or BC7 | Classic BC1, on creatures only. Enhanced BC3 + colour or BC7 with fix C, not BC1 | The user |
 | Which GPU layout holds frames in VRAM | R8/RG8 with faced-first loading, not whole atlas pages. Row spans in linear memory only if a device proves too small | The user; no low-end device measured |
