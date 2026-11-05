@@ -32,26 +32,29 @@ every variant, so it is left out of the payload sizes: 14 MB for Classic and 22 
 
 | Question | Answer |
 | --- | --- |
-| **The recommendation** | **Indexed slot planes, zstd 19, one stream per (action, direction), faced direction first.** Lossless. About 761 MB Classic (0.89× a real BC7 pack, 0.72× shipped) and 2000 MB Enhanced (1.01×, 1.01×). The user decides; section 8 has the alternatives. |
-| **300 new actions on 4 threads** (the user's line: about 250 ms; section 8) | Classic / Enhanced: 14.7 / 31.1 ms uniform, or 3.1 / 7.0 ms faced direction only. The 300 largest pairs take 278 / 496 ms, or 58 / 103 ms faced only. |
-| **The crowd that decides: creatures** (section 9) | 300 pairs of non-equipment bodies, 105.6 / 216.6 Mpx: zstd 19 takes 41 / 120 ms, or 8.4 / 23 ms faced. Luma + MED and block motion now fail with all five directions (305 to 920 ms). A town of 50 dressed NPCs is 6.5 / 16.5 ms. |
-| **Layouts that beat the rectangle** (section 9) | No residual, no tables, no shipped statistics. **Classic, row spans:** −3.5 % at the same crowd speed, ≈ 708 MB with duplicates, ≈ 689 MB with a dictionary per body. **Enhanced, both planes in row spans:** ≈ 1869 MB, −7 %, and faster than the rectangle. **Enhanced, painted only + coverage in row spans:** ≈ 1806 MB, −10 %, 7 % slower, ≈ 1795 MB with duplicates. |
-| **The tight residual decode** (section 9) | Enhanced left: 717 MB/s, 0.83× zstd 19 in the same run, and 133 ms on creatures. Painted only, with no residual, is 1.5 % smaller at the same speed, so the residual isn't needed. |
-| Faster, at a size cost | LZ4 HC: 3.9 / 9.7 ms and 80 / 174 ms on the largest, about 22 % larger on disk. |
-| Smaller, at a speed cost | Enhanced only: luma + MED + zstd 19 is −9 % and 128 ms; block motion + tANS is −14 % and 239 ms. Rank coding is the smallest (0.80× shipped) and fails the line at 1010 ms. |
+| **The recommendation** | **Indexed, lossless, zstd 19, one stream per (action, direction), faced direction first.** Classic in row spans, 706.5 MB with duplicates as pointers (0.82 × a real BC7 pack, 0.67 × shipped). Enhanced with both planes in row spans, 1869.6 MB (0.94 ×, 0.94 ×), or painted + coverage spans at 1808.7 MB (0.91 ×, 0.91 ×) if disk leads. **Fix the BC7 encoder whatever the format.** A low-end pack is a separate option, below. The user decides; the Recommendation section has the reasons. |
+| **300 new actions on 4 threads** (the user's line: about 250 ms; section 8) | Every recommended row passes on creatures and dressed NPCs, five directions and faced. Uniform crowd: 14.7 / 31.1 ms, or 3.1 / 7.0 ms faced. The 300 largest pairs take 278 / 496 ms with all five directions, and 58 / 103 ms faced. Timings are boost off, EPP `balance_power`. |
+| **The crowd that decides: creatures** (section 9) | 300 pairs of non-equipment bodies, 105.6 / 216.6 Mpx. Zstd 19 takes 38.7 / 108.0 ms in the quiet rerun (40.6 / 120.1 in the first run), or 7.7 / 21.7 ms faced. Luma + MED and block motion fail with all five directions (305 to 920 ms). A town of 50 dressed NPCs is 5.8 / 14.1 ms. |
+| **Layouts that beat the rectangle** (sections 9, 16; every body, decoded back) | No residual, no tables, no shipped statistics. **Classic, row spans:** 733.4 MB, −3.6 %, at the same crowd speed. **Enhanced, both planes in row spans:** 1881.1 MB, −6.6 %, and faster than the rectangle. **Enhanced, painted only + coverage spans:** 1819.9 MB, −9.6 %, about 7 % slower. |
+| **Coders per class** (section 10) | On Classic a class rule adds nothing: row spans with a dictionary per body is 702.5 MB sampled as one coder, and a per-stream id reaches 702.4. On Enhanced it saves 2.4 %: the assignment is 1761.7 MB on every body, 0.875 ×, at 232 ms on creatures, so it has almost no margin. |
+| **The tight residual decode** (section 9) | Enhanced left is 717 MB/s, 0.83 × zstd 19 in the same run. Painted only, with no residual, is smaller at the same speed, so the residual isn't needed. |
+| Faster, at a size cost | LZ4 HC: 3 to 4 × faster, and passes the worst crowd with all five directions. 22 % larger on disk (929.7 / 2459.3 MB). |
+| Smaller, at a speed cost | Enhanced only: every-pixel coverage tANS is 1718.2 MB, −15 %, and fails five directions at about 590 ms if used on every class. Rank coding is the smallest and fails the line. |
 | Why is the floor so high? | It isn't per-frame palette noise. Static pixels take 4–5 % of the index bits in most actions; the rest is fine spatial detail at about 6 bits. Enhanced has one palette per action. |
 | Redundancy between bodies or clients | None. A solid `--long=31` stream saves 1 %. Classic UOP and Enhanced aren't the same renders (0 % same shape, 1.8 % same RGB555). |
-| A real video codec | AV1 CRF 30: 0.57–0.68× BC7 at SSIMULACRA2 84–86, LOSSY. Under 2 % of pixels keep their colour, the palette and hue are gone, and it fails the line at about 0.9 s. |
-| Disk, Classic, whole-body units | **Indexed R8, whole batch, zstd 19: 658 MB, 0.84× today's BC7.** The deduplicated palette table adds 19.8 MB. Lossless. |
-| Disk, Enhanced, whole-body units | **Indexed RG8, planar, zstd 19: 1921 MB, 1.05× today's BC7.** The deduplicated palette table adds 29.5 MB. Lossless. |
+| A real video codec | AV1 CRF 30: 0.57–0.68 × BC7 at SSIMULACRA2 84–86, LOSSY. Under 2 % of pixels keep their colour, the palette and hue are gone, and it fails the line at about 0.9 s. |
+| Disk, every body, per stream | Lossless plain planes at zstd 19: **761.1 MB Classic, 2013.8 MB Enhanced,** palette table in (19.8 / 32.4 MB). Whole-body units would be 677.4 / 1950.8 MB, but they fail the line. |
 | zstd level, LDM | Level 19 is 7 % smaller than level 9 (Classic) and 6 % smaller (Enhanced). Long-distance matching gains under 1 %. |
 | 8×8 block copy, frame difference | **No gain.** Block copy is 0.5 % larger, and the difference from the previous frame is 14–55 % larger. |
-| VRAM, Classic | R8 needs 2.42 GB for the whole set, and BC7 2.52 GB. **R8 is no larger than BC7, and it is lossless with hue in the shader.** |
-| VRAM, Enhanced | RG8 needs 9.83 GB and BC7 5.11 GB. RG8 is twice the size of BC7. |
+| **The BC7 encoder** (section 12) | **The repo's encoder has a real bug that reaches every package built with `--bc7`.** `encode_mode4` packs the 3-bit plane into the 2-bit field. Fix A is approved and lands after this benchmark: it lifts Enhanced's median from 60.21 to 69.99. Fix C, a search change that isn't approved yet, takes it to 85.40 and Classic's from 67.39 to 87.51. Fix C changes disk by −0.7 % on Enhanced and +2.6 % on Classic. |
+| **Does a lossy row beat lossless at 80?** (section 16; every body) | **BC7: Classic no,** RDO 1 is 823.2 MB at 80.20, against 733.4 MB. **Enhanced narrowly, and only by median:** fix C with RDO 1 is 1728.9 MB at 81.03, 0.98 × the assignment, with 368 of 926 bodies under 80. **BC3 and BC1 do better.** Enhanced's BC3 is 1463.1 MB at 81.72, 0.83 ×. BC3 + colour is 1539.0 MB at 84.52, 0.87 ×, with 204 of 926 under 80. Classic's BC1 is 514.2 MB at 82.90, 0.70 × row spans, with 327 of 1022 under 80. |
+| **VRAM** (section 11) | The whole set: Classic R8 2.42 GB, BC7 2.52 GB, BC1 1.26 GB. Enhanced RG8 9.83 GB, BC7 and BC3 5.11 GB, BC1 2.56 GB. **What's loaded matters first:** a creature crowd's faced frames are 25.8 / 79.9 MB against 132.7 / 396.6 MB for five directions. Whole pages undo that: 3.0 MB of frames holds 804 MB of Enhanced pages. |
+| **GPU cost** (section 15; ratios on one AMD GPU) | The indexed filter is 1.43 to 1.57 × BC7, 0.05 to 0.15 ms more at the crowd's pixels, and row spans are 1.84 to 2.13 ×. The crowd's faced pass takes at most 2.5 % of a 60 fps frame with the indexed filter and 3.3 % with row spans. **This GPU can't prove low-end results.** |
+| **A low-end pack** (sections 13, 14, 17) | **Classic BC1 is the good one:** half the VRAM, 514.2 MB at 82.90 on every body, or 445.8 MB at 81.05 with block reuse on the sample. **Enhanced can't use BC1,** whose one-bit alpha removes edges (min −47.93). **BC3 + colour is the row to look at:** BC7's VRAM, 1539.0 MB at 84.52, 0.81 × BC7 with fix C and level with it at the 80 line (722 against 712 of 926). It has a third of fix C's edge error and lower colour accuracy (29.76 against 31.34 dB). **No phone format under BC7's bytes reaches 80:** ASTC 6×6 is 75.28 / 73.08 and ETC2 RGB8A1 is 74.05 / 71.63. ASTC 4×4 does at 90.41 / 87.62, but it's larger than lossless on disk. |
 | Enhanced at 8 bpp | **No.** 19 % of pixels have partial coverage (per-body median 32 %), and the (index, coverage) pairs fit 255 entries in under 1 % of bodies. |
-| Runtime BC7 | About **22–23 Mpx/s per thread**, 19–43× the decode time. That is too slow for the first-draw path, but feasible as a background step after the indexed frames are drawn. It is only worth it for Enhanced. **The user has decided: no runtime BC7 for now,** possibly later as an option for upscaled animations. |
-| GPU BC7 | Not worth building now. Classic gains nothing from it, and pack-time BC7 already covers RGBA art. Reconsider only if Enhanced VRAM becomes the limit. |
-| 2× upscale | MMPX costs 1.38–1.48× the 1× size and stays indexed. xBRZ/hqx requantized to 256 colours cost 2.9–3.7×, about the same as BC7 (3.1–4.2×), with SSIMULACRA2 above 91 at the median. |
+| Runtime BC7 | About **22–23 Mpx/s per thread**, 19–43 × the decode time. **The user has decided: no runtime BC7 for now,** possibly later as an option for upscaled animations. |
+| Basis Universal (section 14) | Its one gain is a single file for every GPU, against one pack per platform group. No Basis row is both smaller and better than the plain block format beside it. Every load pays a transcode, so with all five directions on creatures nothing passes the line on Enhanced, and on Classic only ETC1S to BC1, which has no alpha. |
+| 2× upscale | MMPX costs 1.38–1.48 × the 1× size and stays indexed. xBRZ/hqx requantized to 256 colours cost 2.9–3.7 ×, about the same as BC7 (3.1–4.2 ×), with SSIMULACRA2 above 91 at the median. |
 | Motion | An exact 8×8 shift between neighbouring frames is rare: 3 % of blocks (Classic) and under 1 % (Enhanced). Keyframe interpolation would have to be approximate. |
 | Load unit | A whole-body batch takes a median of 0.9 ms (Classic) or 5.0 ms (Enhanced) to decode, and up to 197 / 363 ms. A per-action batch shows its first frame in a median of 34 / 96 µs, with a maximum of 6 / 10 ms (boost off, EPP power). In the newer CPU state one action stream takes a median of 20 / 70 µs (section 8). |
 
@@ -75,6 +78,8 @@ renderer's web-map export had ended. No other agent was running.
   - The timed steps themselves run alone, on a one-thread pool.
 - **The quiet medians are 3–20 % lower than the contended run's.** Classic block copy is 20 % lower, most Classic
   steps 10–15 % and every Enhanced step under 10 %. No conclusion changed.
+
+**The last reruns (sections 9, 13, 14 and 17, on the night of 2026-11-05)** ran in that same state, on the first L3 cluster (CPUs 0-3 and 10-13). A log recorded both clusters' load every 30 s. The other cluster stayed at 1.0 to 1.2 % busy on average per job, with a peak of 4 %, so these rows count as quiet. Rows from an earlier window, when builds ran at idle priority on the other cluster, moved by at most 2.4 % on five directions and changed no pass or fail. **Runs differ more than rows do,** so compare a row only with the zstd 19 row of its own table. Size rows aren't timed and may share cores.
 
 ## 1. Sizes
 
@@ -1054,7 +1059,7 @@ these rows answer.
 - **Kinds:** every part of this section splits by Classic's `mobtypes.txt`, by id. Enhanced ships none, so its split
   borrows Classic's, and Classic MUL goes through `Bodyconv.def` for anim2-5. Only `tk` uses the placeholder rule; these
   parts ran before the rule was settled and keep their split. "Creatures" means monster, animal, sea monster and human.
-- **Disk** is the same estimate as in section 8: the sample scaled by the whole-set zstd 19 row, plus the palette table.
+- **Disk** in bold is measured on every body, with every stream decoded back (section 16). A row marked ≈ is still the estimate from section 8: the sample scaled by the whole-set zstd 19 row, plus the palette table. The estimates ran up to 0.8 % low against the rows measured since.
   Read it as within about 1 %. **× real pack** is against 856.6 / 1987.9 MB and **× shipped** against 1060.3 / 1984.5 MB.
 
 ### The crowds
@@ -1086,19 +1091,19 @@ where zstd 19 read 42.6 and 115.2 ms, so their ratios hold. All rows are lossles
 
 | # | Candidate | Creatures, five directions, 1 / 4 threads ms | Creatures, faced, 1 / 4 | Dressed NPCs, five directions, 1 / 4 | Dressed NPCs, faced, 1 / 4 | Uniform, 4 threads, five / faced | Worst, 4 threads, five / faced | Decode MB/s, one thread | Disk MB | × zstd 19 | × real pack | × shipped |
 |---|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|
-| 1 | Row spans (a), LZ4 HC, kept as spans | 35.9 / **10.3** | 7.8 / **2.2** | 6.3 / **1.8** | 1.4 / **0.4** | **3.2** / **0.8** | **65.1** / **14.5** | 2955 | ≈ 892 | 1.17 | 1.04 | 0.84 |
-| 2 | Slot plane, LZ4 HC | 41.9 / **12.0** | 8.7 / **2.5** | 5.4 / **1.6** | 1.1 / **0.4** | **3.8** / **0.9** | **82.8** / **17.2** | 2685 | ≈ 931 | 1.22 | 1.09 | 0.88 |
-| 3 | Row spans (a), LZ4 HC, expanded | 44.1 / **12.6** | 9.2 / **2.7** | 10.2 / **2.7** | 2.3 / **0.7** | **4.2** / **1.0** | **77.1** / **17.1** | 2171 | ≈ 892 | 1.17 | 1.04 | 0.84 |
+| 1 | Row spans (a), LZ4 HC, kept as spans | 35.9 / **10.3** | 7.8 / **2.2** | 6.3 / **1.8** | 1.4 / **0.4** | **3.2** / **0.8** | **65.1** / **14.5** | 2955 | **888.4** | 1.17 | 1.04 | 0.84 |
+| 2 | Slot plane, LZ4 HC | 41.9 / **12.0** | 8.7 / **2.5** | 5.4 / **1.6** | 1.1 / **0.4** | **3.8** / **0.9** | **86.1** / **17.9** | 2685 | **929.7** | 1.22 | 1.09 | 0.88 |
+| 3 | Row spans (a), LZ4 HC, expanded | 44.1 / **12.6** | 9.2 / **2.7** | 10.2 / **2.7** | 2.3 / **0.7** | **4.2** / **1.0** | **77.1** / **17.1** | 2171 | **888.4** | 1.17 | 1.04 | 0.84 |
 | 4 | BC7, zstd 7 (today, stored; not lossless) | 109.7 / **29.1** | 22.5 / **5.9** | 23.7 / **5.6** | 4.5 / **1.3** | **9.6** / not run | **183.8** / not run | not in this run | ≈ 874 | 1.15 | 1.02 | 0.82 |
-| 5 | Row spans (a), zstd 19, kept as spans | 133.2 / **35.7** | 26.7 / **7.3** | 22.0 / **5.7** | 4.7 / **1.2** | **13.6** / **2.9** | 250.4 / **51.6** | 753 | ≈ 735 | 0.97 | 0.86 | 0.69 |
-| 6 | Row spans (a), zstd 19, expanded | 140.7 / **40.2** | 30.3 / **8.3** | 26.0 / **6.7** | 5.4 / **1.5** | **14.2** / **3.2** | 262.2 / **55.4** | 687 | ≈ 735 | 0.97 | 0.86 | 0.69 |
-| 7 | Row spans (a), zstd 19, expanded, duplicates pointed at one blob | 140.7 / **40.2** | 30.3 / **8.3** | 26.0 / **6.7** | 5.4 / **1.5** | **14.2** / **3.2** | 262.2 / **55.4** | 687 | ≈ 708 | 0.93 | 0.83 | 0.67 |
-| 8 | Row spans (a), best dictionary per body, expanded | 147.5 / **41.7** | 36.7 / **9.9** | 29.3 / **7.3** | 9.3 / **2.5** | **13.8** / **3.2** | 286.8 / **60.4** | 702 | ≈ 716 | 0.94 | 0.84 | 0.68 |
-| 9 | Row spans (a), best dictionary per body, duplicates (2 + 3 + 8a) | 147.5 / **41.7** | 36.7 / **9.9** | 29.3 / **7.3** | 9.3 / **2.5** | **13.8** / **3.2** | 286.8 / **60.4** | 702 | ≈ 689 | 0.91 | 0.80 | 0.65 |
-| 10 | Slot plane, zstd 19 | 150.2 / **40.6** | 30.9 / **8.4** | 24.6 / **6.5** | 5.2 / **1.4** | **15.0** / **3.2** | 276.9 / **57.2** | 667 | ≈ 761 | 1.00 | 0.89 | 0.72 |
-| 11 | Slot plane, best dictionary per body | 151.4 / **41.8** | 35.5 / **9.9** | 26.3 / **7.0** | 7.8 / **2.1** | not run | not run | 690 | ≈ 751 | 0.99 | 0.88 | 0.71 |
-| 12 | Slot plane, best dictionary per body, duplicates (2 + 3) | 151.4 / **41.8** | 35.5 / **9.9** | 26.3 / **7.0** | 7.8 / **2.1** | not run | not run | 690 | ≈ 724 | 0.95 | 0.84 | 0.68 |
-| 13 | Painted only (b), runs apart, zstd 19, expanded | 155.0 / **44.0** | 32.9 / **9.0** | 31.1 / **7.9** | 6.3 / **1.7** | **15.1** / **3.5** | 277.4 / **57.1** | 624 | ≈ 744 | 0.98 | 0.87 | 0.70 |
+| 5 | Row spans (a), zstd 19, kept as spans | 133.2 / **35.7** | 26.7 / **7.3** | 22.0 / **5.7** | 4.7 / **1.2** | **13.6** / **2.9** | 250.4 / **51.6** | 753 | **733.4** | 0.96 | 0.86 | 0.69 |
+| 6 | Row spans (a), zstd 19, expanded | 140.7 / **40.2** | 30.3 / **8.3** | 26.0 / **6.7** | 5.4 / **1.5** | **14.2** / **3.2** | 262.2 / **55.4** | 687 | **733.4** | 0.96 | 0.86 | 0.69 |
+| 7 | Row spans (a), zstd 19, expanded, duplicates pointed at one blob | 140.7 / **40.2** | 30.3 / **8.3** | 26.0 / **6.7** | 5.4 / **1.5** | **14.2** / **3.2** | 262.2 / **55.4** | 687 | **706.5** | 0.93 | 0.82 | 0.67 |
+| 8 | Row spans (a), best dictionary per body, expanded | 146.0 / **39.3** | 34.3 / **9.2** | 28.0 / **7.2** | 8.9 / **2.3** | **14.4** / **3.7** | 281.6 / **60.7** | 702 | **711.1** | 0.93 | 0.83 | 0.67 |
+| 9 | Row spans (a), best dictionary per body, duplicates (2 + 3 + 8a) | 146.0 / **39.3** | 34.3 / **9.2** | 28.0 / **7.2** | 8.9 / **2.3** | **14.4** / **3.7** | 281.6 / **60.7** | 702 | **692.3** | 0.91 | 0.81 | 0.65 |
+| 10 | Slot plane, zstd 19 | 150.2 / **40.6** | 30.9 / **8.4** | 24.6 / **6.5** | 5.2 / **1.4** | **13.5** / **2.9** | 276.3 / **56.5** | 667 | **761.1** | 1.00 | 0.89 | 0.72 |
+| 11 | Slot plane, best dictionary per body | 150.0 / **40.7** | 34.1 / **9.3** | 25.1 / **6.4** | 7.3 / **1.9** | not run | not run | 690 | ≈ 751 | 0.99 | 0.88 | 0.71 |
+| 12 | Slot plane, best dictionary per body, duplicates (2 + 3) | 150.0 / **40.7** | 34.1 / **9.3** | 25.1 / **6.4** | 7.3 / **1.9** | not run | not run | 690 | ≈ 724 | 0.95 | 0.84 | 0.68 |
+| 13 | Painted only (b), runs apart, zstd 19, expanded | 155.0 / **44.0** | 32.9 / **9.0** | 31.1 / **7.9** | 6.3 / **1.7** | **15.1** / **3.5** | 277.4 / **57.1** | 624 | **746.8** | 0.98 | 0.87 | 0.70 |
 | 14 | Luma, MED, zstd 19 | 1102 / 305.0 | 222.4 / **59.5** | 142.4 / **37.4** | 29.8 / **7.9** | **93.4** / **21.1** | 2186 / 448.0 | 98 | ≈ 828 | 1.09 | 0.97 | 0.78 |
 | 15 | Luma, MED, 10 streams, zstd 19 | 1455 / 402.9 | 294.5 / **78.7** | 200.7 / **52.5** | 42.4 / **10.9** | **125.7** / **27.6** | 2873 / 593.0 | 70 | ≈ 840 | 1.10 | 0.98 | 0.79 |
 | 16 | Luma, MED, 10 streams, tANS | 1678 / 458.7 | 379.7 / **105.4** | 256.7 / **65.5** | 92.8 / **24.7** | **146.8** / **38.1** | 3287 / 684.0 | 65 | ≈ 813 | 1.07 | 0.95 | 0.77 |
@@ -1109,41 +1114,38 @@ where zstd 19 read 42.6 and 115.2 ms, so their ratios hold. All rows are lossles
 
 | # | Candidate | Creatures, five directions, 1 / 4 threads ms | Creatures, faced, 1 / 4 | Dressed NPCs, five directions, 1 / 4 | Dressed NPCs, faced, 1 / 4 | Uniform, 4 threads, five / faced | Worst, 4 threads, five / faced | Decode MB/s, one thread | Disk MB | × zstd 19 | × real pack | × shipped |
 |---|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|
-| 1 | Painted only + coverage row spans, LZ4 HC, kept as spans | 91.5 / **24.1** | 18.8 / **5.2** | 11.4 / **3.1** | 2.4 / **0.7** | **6.7** / **1.6** | **104.8** / **24.5** | 4380 | ≈ 2178 | 1.09 | 1.10 | 1.10 |
-| 2 | Painted only (b), LZ4 HC, kept as spans | 100.2 / **26.8** | 20.9 / **5.7** | 11.0 / **2.9** | 2.3 / **0.7** | **7.0** / **1.7** | **117.9** / **24.7** | 4242 | ≈ 2210 | 1.11 | 1.11 | 1.11 |
-| 3 | Both planes in row spans (c), LZ4 HC, kept as spans | 109.8 / **28.0** | 22.5 / **5.8** | 12.5 / **3.3** | 2.6 / **0.8** | **7.6** / **1.7** | **121.3** / **25.2** | 3896 | ≈ 2253 | 1.13 | 1.13 | 1.14 |
-| 4 | Slot + coverage planes, LZ4 HC | 135.8 / **35.9** | 28.4 / **7.4** | 14.8 / **3.9** | 3.2 / **0.9** | **9.9** / **2.1** | **167.9** / **34.8** | 3047 | ≈ 2446 | 1.22 | 1.23 | 1.23 |
-| 5 | Both planes in row spans (c), LZ4 HC, expanded | 131.7 / **36.4** | 28.4 / **7.5** | 21.5 / **5.7** | 4.5 / **1.2** | **11.6** / **2.6** | **161.5** / **33.4** | 2580 | ≈ 2253 | 1.13 | 1.13 | 1.14 |
+| 1 | Painted only + coverage row spans, LZ4 HC, kept as spans | 91.5 / **24.1** | 18.8 / **5.2** | 11.4 / **3.1** | 2.4 / **0.7** | **6.8** / **1.5** | **111.5** / **23.1** | 4380 | **2192.3** | 1.09 | 1.10 | 1.10 |
+| 2 | Painted only (b), LZ4 HC, kept as spans | 100.2 / **26.8** | 20.9 / **5.7** | 11.0 / **2.9** | 2.3 / **0.7** | **7.0** / **1.6** | **125.4** / **26.1** | 4242 | ≈ 2225 | 1.10 | 1.12 | 1.12 |
+| 3 | Both planes in row spans (c), LZ4 HC, kept as spans | 109.8 / **28.0** | 22.5 / **5.8** | 12.5 / **3.3** | 2.6 / **0.8** | **7.7** / **1.7** | **129.6** / **27.2** | 3896 | **2268.0** | 1.13 | 1.14 | 1.14 |
+| 4 | Slot + coverage planes, LZ4 HC | 135.8 / **35.9** | 28.4 / **7.4** | 14.8 / **3.9** | 3.2 / **0.9** | **9.9** / **2.1** | **173.1** / **35.6** | 3047 | **2459.3** | 1.22 | 1.24 | 1.24 |
+| 5 | Both planes in row spans (c), LZ4 HC, expanded | 131.7 / **36.4** | 28.4 / **7.5** | 21.5 / **5.7** | 4.5 / **1.2** | **11.1** / **2.6** | **169.5** / **34.9** | 2580 | **2268.0** | 1.13 | 1.14 | 1.14 |
 | 6 | BC7, zstd 7 (today, stored; not lossless) | 201.8 / **51.4** | 41.0 / **10.5** | 30.2 / **7.5** | 6.0 / **1.6** | **15.3** / not run | **231.1** / not run | not in this run | ≈ 1904 | 0.95 | 0.96 | 0.96 |
-| 7 | Painted only (b), LZ4 HC, expanded | 258.6 / **67.9** | 53.0 / **14.3** | 39.8 / **10.1** | 8.4 / **2.2** | **19.4** / **4.4** | 271.0 / **56.0** | 1459 | ≈ 2210 | 1.11 | 1.11 | 1.11 |
-| 8 | Painted only + coverage row spans, LZ4 HC, expanded | 262.2 / **68.0** | 53.9 / **14.7** | 44.1 / **11.2** | 9.4 / **2.5** | **21.1** / **4.8** | 274.5 / **56.9** | 1368 | ≈ 2178 | 1.09 | 1.10 | 1.10 |
-| 9 | Painted only + coverage row spans, zstd 19, kept as spans | 332.6 / **85.8** | 69.4 / **18.2** | 45.4 / **11.1** | 9.0 / **2.4** | **24.7** / **5.2** | 383.9 / **78.7** | 1175 | ≈ 1806 | 0.90 | 0.91 | 0.91 |
-| 10 | Painted only (b), zstd 19, kept as spans | 349.9 / **90.3** | 73.0 / **19.0** | 44.6 / **11.2** | 8.9 / **2.4** | **23.8** / **5.8** | 404.0 / **82.4** | 1151 | ≈ 1830 | 0.92 | 0.92 | 0.92 |
-| 11 | Both planes in row spans (c), zstd 19, kept as spans | 361.9 / **92.0** | 72.4 / **18.7** | 47.0 / **12.0** | 10.1 / **2.6** | **25.8** / **5.6** | 429.2 / **85.9** | 1084 | ≈ 1869 | 0.93 | 0.94 | 0.94 |
-| 12 | Both planes in row spans (c), zstd 19, expanded | 389.3 / **100.3** | 78.7 / **20.5** | 55.1 / **14.1** | 11.2 / **2.9** | **29.3** / **6.7** | 455.0 / **92.9** | 960 | ≈ 1869 | 0.93 | 0.94 | 0.94 |
-| 13 | Row spans (a), zstd 19, expanded | 421.4 / **108.6** | 84.8 / **22.3** | 60.6 / **15.3** | 12.3 / **3.1** | **31.2** / **6.9** | 474.9 / **97.4** | 895 | ≈ 1942 | 0.97 | 0.98 | 0.98 |
-| 14 | Slot + coverage planes, zstd 19 | 442.5 / **120.1** | 94.7 / **23.3** | 57.9 / **16.5** | 12.5 / **3.3** | **30.8** / **6.8** | 493.8 / **102.4** | 866 | ≈ 2000 | 1.00 | 1.01 | 1.01 |
-| 15 | Painted only + coverage row spans, zstd 19, expanded | 505.3 / **129.0** | 101.3 / **26.3** | 75.7 / **20.0** | 15.9 / **4.4** | **37.6** / **8.4** | 572.5 / **117.1** | 736 | ≈ 1806 | 0.90 | 0.91 | 0.91 |
-| 16 | Painted only + coverage row spans, zstd 19, expanded, duplicates (2 + 8) | 505.3 / **129.0** | 101.3 / **26.3** | 75.7 / **20.0** | 15.9 / **4.4** | **37.6** / **8.4** | 572.5 / **117.1** | 736 | ≈ 1795 | 0.90 | 0.90 | 0.90 |
-| 17 | Painted only (b), zstd 19, expanded | 504.5 / **130.3** | 103.5 / **27.6** | 77.1 / **19.5** | 15.8 / **4.1** | **36.8** / **8.3** | 557.3 / **114.2** | 754 | ≈ 1830 | 0.92 | 0.92 | 0.92 |
-| 18 | Luma, left, zstd 19, tight (item 4) | 519.6 / **132.9** | 104.5 / **27.0** | 80.4 / **21.9** | 16.7 / **4.6** | **38.3** / **8.6** | 541.1 / **110.4** | 717 | ≈ 1858 | 0.93 | 0.93 | 0.94 |
-| 19 | Luma, left, tight, coverage row spans | 513.5 / **137.9** | 109.9 / **28.5** | 83.1 / **22.5** | 18.2 / **4.7** | **39.9** / **9.0** | 540.7 / **110.2** | 699 | ≈ 1834 | 0.92 | 0.92 | 0.92 |
-| 20 | Plain or left per stream, tight (item 5) | 512.4 / **138.3** | 108.7 / **28.1** | 74.8 / **20.3** | 16.4 / **4.3** | **36.8** / **8.5** | 546.3 / **110.8** | 722 | ≈ 1854 | 0.93 | 0.93 | 0.93 |
-| 21 | Zstd 19, coverage runs zstd 19, partial tANS by context | 749.9 / **202.9** | 216.7 / **55.0** | 176.4 / **45.1** | 97.8 / **25.3** | not run | not run | 531 | ≈ 1968 | 0.98 | 0.99 | 0.99 |
-| 22 | Luma, left, tight, coverage runs zstd 19, partial tANS by context, duplicates (2 + 4 + 6) | 824.0 / **212.5** | 229.9 / **59.3** | 196.9 / **51.7** | 103.0 / **27.1** | not run | not run | 469 | ≈ 1816 | 0.91 | 0.91 | 0.92 |
-| 23 | Painted only, coverage runs zstd 19, partial tANS by context, duplicates | 813.8 / **218.3** | 227.2 / **58.0** | 190.5 / **50.2** | 101.0 / **25.4** | not run | not run | 485 | ≈ 1789 | 0.89 | 0.90 | 0.90 |
+| 7 | Painted only (b), LZ4 HC, expanded | 258.6 / **67.9** | 53.0 / **14.3** | 39.8 / **10.1** | 8.4 / **2.2** | **19.2** / **4.2** | 278.5 / **57.2** | 1459 | ≈ 2225 | 1.10 | 1.12 | 1.12 |
+| 8 | Painted only + coverage row spans, LZ4 HC, expanded | 262.2 / **68.0** | 53.9 / **14.7** | 44.1 / **11.2** | 9.4 / **2.5** | **20.6** / **4.5** | 280.9 / **58.0** | 1368 | **2192.3** | 1.09 | 1.10 | 1.10 |
+| 9 | Painted only + coverage row spans, zstd 19, kept as spans | 332.6 / **85.8** | 69.4 / **18.2** | 45.4 / **11.1** | 9.0 / **2.4** | **22.9** / **4.8** | 383.4 / **77.9** | 1175 | **1819.9** | 0.90 | 0.92 | 0.92 |
+| 10 | Painted only (b), zstd 19, kept as spans | 349.9 / **90.3** | 73.0 / **19.0** | 44.6 / **11.2** | 8.9 / **2.4** | **23.3** / **5.0** | 397.9 / **81.6** | 1151 | **1845.3** | 0.92 | 0.93 | 0.93 |
+| 11 | Both planes in row spans (c), zstd 19, kept as spans | 361.9 / **92.0** | 72.4 / **18.7** | 47.0 / **12.0** | 10.1 / **2.6** | **24.3** / **5.2** | 416.1 / **84.8** | 1084 | **1881.1** | 0.93 | 0.95 | 0.95 |
+| 12 | Both planes in row spans (c), zstd 19, expanded | 389.3 / **100.3** | 78.7 / **20.5** | 55.1 / **14.1** | 11.2 / **2.9** | **28.1** / **6.0** | 451.1 / **92.2** | 960 | **1881.1** | 0.93 | 0.95 | 0.95 |
+| 13 | Row spans (a), zstd 19, expanded | 421.4 / **108.6** | 84.8 / **22.3** | 60.6 / **15.3** | 12.3 / **3.1** | **31.2** / **6.9** | 474.9 / **97.4** | 895 | **1955.7** | 0.97 | 0.98 | 0.99 |
+| 14 | Slot + coverage planes, zstd 19 | 442.5 / **120.1** | 94.7 / **23.3** | 57.9 / **16.5** | 12.5 / **3.3** | **29.4** / **6.3** | 491.4 / **99.8** | 866 | **2013.8** | 1.00 | 1.01 | 1.01 |
+| 15 | Painted only + coverage row spans, zstd 19, expanded | 505.3 / **129.0** | 101.3 / **26.3** | 75.7 / **20.0** | 15.9 / **4.4** | **36.8** / **7.8** | 548.0 / **112.2** | 736 | **1819.9** | 0.90 | 0.92 | 0.92 |
+| 16 | Painted only + coverage row spans, zstd 19, expanded, duplicates (2 + 8) | 505.3 / **129.0** | 101.3 / **26.3** | 75.7 / **20.0** | 15.9 / **4.4** | **36.8** / **7.8** | 548.0 / **112.2** | 736 | **1808.7** | 0.90 | 0.91 | 0.91 |
+| 17 | Painted only (b), zstd 19, expanded | 504.5 / **130.3** | 103.5 / **27.6** | 77.1 / **19.5** | 15.8 / **4.1** | **35.7** / **7.6** | 545.8 / **111.9** | 754 | **1845.3** | 0.92 | 0.93 | 0.93 |
+| 18 | Luma, left, zstd 19, tight (item 4) | 519.6 / **132.9** | 104.5 / **27.0** | 80.4 / **21.9** | 16.7 / **4.6** | **38.3** / **8.6** | 541.1 / **110.4** | 717 | ≈ 1871 | 0.93 | 0.94 | 0.94 |
+| 19 | Luma, left, tight, coverage row spans | 513.5 / **137.9** | 109.9 / **28.5** | 83.1 / **22.5** | 18.2 / **4.7** | **39.9** / **9.0** | 540.7 / **110.2** | 699 | ≈ 1847 | 0.92 | 0.93 | 0.93 |
+| 20 | Plain or left per stream, tight (item 5) | 512.4 / **138.3** | 108.7 / **28.1** | 74.8 / **20.3** | 16.4 / **4.3** | **36.8** / **8.5** | 546.3 / **110.8** | 722 | ≈ 1864 | 0.93 | 0.94 | 0.94 |
+| 21 | Zstd 19, coverage runs zstd 19, partial tANS by context | 749.9 / **202.9** | 216.7 / **55.0** | 176.4 / **45.1** | 97.8 / **25.3** | not run | not run | 531 | ≈ 1982 | 0.98 | 1.00 | 1.00 |
+| 22 | Luma, left, tight, coverage runs zstd 19, partial tANS by context, duplicates (2 + 4 + 6) | 824.0 / **212.5** | 229.9 / **59.3** | 196.9 / **51.7** | 103.0 / **27.1** | not run | not run | 469 | ≈ 1829 | 0.91 | 0.92 | 0.92 |
+| 23 | Painted only, coverage runs zstd 19, partial tANS by context, duplicates | 813.8 / **218.3** | 227.2 / **58.0** | 190.5 / **50.2** | 101.0 / **25.4** | not run | not run | 485 | **1794.0** | 0.89 | 0.90 | 0.90 |
 | 24 | Luma, MED, zstd 19 | 2080 / 530.4 | 416.6 / **111.5** | 209.4 / **54.5** | 43.1 / **12.0** | **127.9** / **28.1** | 2624 / 539.0 | 213 | ≈ 1823 | 0.91 | 0.92 | 0.92 |
-| 25 | Painted only, coverage every pixel tANS by context, duplicates | 2316 / 591.2 | 532.6 / **137.2** | 319.7 / **81.1** | 138.2 / **34.6** | not run | not run | 183 | ≈ 1701 | 0.85 | 0.86 | 0.86 |
-| 26 | Luma, left, tight, coverage every pixel tANS by context, duplicates (2 + 4 + 6) | 2334 / 596.0 | 534.9 / **136.7** | 325.6 / **83.9** | 139.4 / **37.1** | not run | not run | 181 | ≈ 1728 | 0.86 | 0.87 | 0.87 |
+| 25 | Painted only, coverage every pixel tANS by context, duplicates | 2316 / 591.2 | 532.6 / **137.2** | 319.7 / **81.1** | 138.2 / **34.6** | not run | not run | 183 | **1707.6** | 0.85 | 0.86 | 0.86 |
+| 26 | Luma, left, tight, coverage every pixel tANS by context, duplicates (2 + 4 + 6) | 2334 / 596.0 | 534.9 / **136.7** | 325.6 / **83.9** | 139.4 / **37.1** | not run | not run | 181 | ≈ 1740 | 0.86 | 0.88 | 0.88 |
 | 27 | Luma, MED, 10 streams, zstd 19 | 2688 / 679.9 | 531.3 / **136.4** | 276.1 / **76.0** | 59.6 / **15.5** | **168.9** / **36.8** | 3451 / 707.0 | 157 | ≈ 1845 | 0.92 | 0.93 | 0.93 |
-| 28 | Luma, MED, 10 streams, tANS | 3081 / 781.3 | 655.5 / **176.1** | 350.0 / **91.3** | 113.6 / **29.6** | **199.9** / **53.6** | 4005 / 825.0 | 141 | ≈ 1816 | 0.91 | 0.91 | 0.92 |
-| 29 | Luma, MED + block motion, tANS | 3641 / 919.7 | 784.9 / **200.2** | 431.0 / **111.1** | 147.9 / **37.7** | **239.2** / **65.0** | 4732 / 973.0 | 118 | ≈ 1712 | 0.86 | 0.86 | 0.86 |
-| 30 | Rank + previous frame, rANS (reference) | 11698 / 2961 | 2362 / 597.4 | 2546 / 646.4 | 547.2 / **146.5** | 1010 / **216.4** | 11704 / 2381 | 24 | ≈ 1597 | 0.80 | 0.80 | 0.80 |
+| 28 | Luma, MED, 10 streams, tANS | 3081 / 781.3 | 655.5 / **176.1** | 350.0 / **91.3** | 113.6 / **29.6** | **199.9** / **53.6** | 4005 / 825.0 | 141 | ≈ 1816 | 0.90 | 0.91 | 0.92 |
+| 29 | Luma, MED + block motion, tANS | 3641 / 919.7 | 784.9 / **200.2** | 431.0 / **111.1** | 147.9 / **37.7** | **239.2** / **65.0** | 4732 / 973.0 | 118 | ≈ 1712 | 0.85 | 0.86 | 0.86 |
+| 30 | Rank + previous frame, rANS (reference) | 11698 / 2961 | 2362 / 597.4 | 2546 / 646.4 | 547.2 / **146.5** | 1010 / **216.4** | 11704 / 2381 | 24 | ≈ 1597 | 0.79 | 0.80 | 0.80 |
 
-**The Enhanced worst crowd of the row-span and painted rows** comes from a second, narrowed run. The first `tu` job
-stopped at the 18 GB resident watchdog after 14 of its 26 Enhanced row sets, because coded streams of earlier rows stay
-cached for reuse. The rerun's zstd 19 row agrees with the first run (497.7 against 493.8 ms, five directions; 101.2
-against 102.4 ms, faced). It ran with background builds on the other cluster.
+**The uniform and worst columns come from two runs.** The first `tu` job stopped at the 18 GB resident watchdog after 14 of its 26 Enhanced row sets, because coded streams of earlier rows stay cached for reuse. A narrowed quiet rerun covers the row-span, painted and dictionary rows, and those rows use it: the cluster log has the other cluster at 1 % busy through it, peak 2 %. **Its zstd 19 rows are the anchors for them:** Classic 13.5 / 2.9 ms uniform and 276.3 / 56.5 ms worst, Enhanced 29.4 / 6.3 and 491.4 / 99.8. The first run's zstd 19 agrees: 15.0 / 3.2, 276.9 / 57.2, 30.8 / 6.8 and 493.8 / 102.4. No row changed between pass and fail.
 
 **What the ranking by creatures changes:**
 
@@ -1243,12 +1245,12 @@ training only on its own streams, with no fixed tables or shipped statistics:
   Classic's crowd, about level on Enhanced.
 - **Reading the "best dictionary" crowd rows:** the first runs chose a dictionary on each crowd body's few streams, where
   one rarely repays itself, so only 1 to 3 bodies used one and those rows were a lower bound. The creature and dressed
-  columns above come from the rerun that chooses over the whole body, as a real package would, with the dictionary's load
-  included. Its Enhanced rows ran with background builds on the other cluster. Its Classic rows ended two minutes before the job was pinned away from those builds, so they may have shared the machine with them: read them against the zstd 19 row of the same run. The
+  columns above come from a quiet rerun that chooses over the whole body, as a real package would, with the dictionary's
+  load included. **That rerun's own zstd 19 row is 38.7 and 7.7 ms on Classic's creatures, where the table's first run has 40.6 and 8.4, so read a dictionary row against 38.7.** The
   rows stay inside the line, but a dictionary is read once per body: on Classic's creature crowd the faced-only read goes
-  from 6.4 MB to 19.0 MB (slot plane) and from 6.2 MB to 25.6 MB (row spans), and the faced time goes from 8.4 to 9.9 ms (slot plane) and from 8.1 to 9.9 ms (row spans).
-  With dictionaries already loaded the row-span times are 40.1 and 8.9 ms. The uniform and worst columns of these
-  rows still come from the first run. On Enhanced a dictionary saves 0.1 % and doesn't change the order.
+  from 6.4 MB to 19.0 MB (slot plane) and from 6.2 MB to 25.6 MB (row spans), and the faced time goes from 7.7 to 9.3 ms (slot plane) and from 7.5 to 9.2 ms (row spans).
+  With dictionaries already loaded the row-span times are 39.5 and 8.6 ms. On Enhanced a dictionary saves 0.1 % and doesn't change the order.
+- **Runs differ more than rows do.** Enhanced's zstd 19 on creatures is 120.1 ms in the table's run and 108.0 ms in the same rerun, both quiet by the cluster log and the load average. Row spans (a) is 0.96 × zstd 19 in the rerun and 0.90 × in the first. So a gap of a few percent between two rows from different runs means nothing here. Compare a row with the zstd 19 row of its own run.
 
 ### 4. A tight residual decode: the main question for Enhanced
 
@@ -2504,6 +2506,8 @@ Share of the scope's MB in R8 or RG8, then in BC1 (padding shifts it slightly). 
 
 **So BC1 against BC7 can't be decided from the repo's BC7 rows.** With fix C, BC7 beats BC1 by 6 points on Classic at 1.8× the disk, and by 15 on Enhanced at 2.1×. The gap to ISPC on Enhanced is most of it a search problem rather than a limit: fix A alone stays 10 points under ISPC, and fix C closes all but 0.8 of them on the median. p5 and the worst body stay 5 to 9 points under ISPC.
 
+**On every body the result holds (section 16):** the repo's median is 67.39 on Classic and 60.21 on Enhanced, fix A 68.37 and 69.99, fix C 87.51 and 85.40, and fix C + colour 87.89 and 87.14. Bodies at 80 or better out of 1022 and 926 go from 191 and 93 to 782 and 712 with fix C.
+
 **Sample:** every 40th body by pixels, 26 Classic bodies (3221 streams) and 24 Enhanced bodies (4459 streams), classes in the table further down. `q` at every 10th body (103 and 93 bodies) repeats the repo rows.
 
 **Labels:** every BC7 row names its encoder.
@@ -2803,6 +2807,54 @@ Every 40th body by pixels. MB are this sample's zstd 19 scaled to the whole set,
 | fix C + colour | 853.2 | 87.81 / 70.06, 31.86 | 26.5 | 83.68 / 83.68, 28.15 | 315.0 | 87.21 / 86.37, 34.61 | 748.4 | 87.36 / 84.60, 33.41 |
 | ISPC basic + colour | 889.4 | 88.29 / 75.74, 32.74 | 27.5 | 85.78 / 85.78, 29.75 | 326.0 | 88.18 / 87.89, 35.30 | 797.9 | 88.34 / 87.20, 35.41 |
 
+#### Every 10th body: the same encoders, on enough bodies per class
+
+103 Classic and 93 Enhanced bodies; the same dump as the mix rows. Idle priority, sizes and scores only.
+
+**Classic**
+
+| encoder | zstd 19 MB | SSIMULACRA2 median | p5 | min | bodies at 80 or better | RGB PSNR dB |
+|---|---:|---:|---:|---:|---:|---:|
+| BC1 (`dds` High) | 504.2 | 83.17 | 65.67 | 41.97 | 71 of 103 | 30.13 |
+| repo | 873.1 | 67.91 | 51.48 | 23.59 | 20 of 103 | 26.07 |
+| repo + colour | 945.5 | 75.65 | 58.56 | 29.34 | 37 of 103 | 33.00 |
+
+By class: MB, then SSIMULACRA2 median / min, bodies at 80 or better, RGB PSNR dB.
+
+| encoder | equipment MB | score | NPC small MB | score | NPC medium MB | score | NPC large MB | score |
+|---|---:|---|---:|---|---:|---|---:|---|
+| BC1 (`dds` High) | 106.5 | 83.50 / 62.88, 35 of 54, 27.67 | 15.5 | 84.61 / 41.97, 5 of 9, 28.56 | 111.0 | 81.77 / 75.52, 16 of 21, 30.74 | 262.6 | 81.49 / 80.64, 8 of 8, 31.13 |
+| repo | 166.6 | 71.40 / 32.24, 13 of 54, 22.20 | 25.4 | 66.05 / 25.18, 0 of 9, 23.23 | 192.9 | 59.75 / 44.10, 0 of 21, 26.25 | 473.7 | 63.40 / 60.59, 0 of 8, 28.57 |
+| repo + colour | 195.5 | 78.12 / 47.79, 25 of 54, 29.98 | 28.6 | 74.79 / 29.34, 2 of 9, 33.13 | 208.6 | 72.46 / 63.18, 2 of 21, 33.00 | 496.8 | 72.38 / 66.46, 0 of 8, 34.99 |
+
+**Enhanced**
+
+| encoder | zstd 19 MB | SSIMULACRA2 median | p5 | min | bodies at 80 or better | RGB PSNR dB |
+|---|---:|---:|---:|---:|---:|---:|
+| BC1 (`dds` High) | 911.2 | 74.90 | 51.11 | -46.34 | 17 of 93 | 30.85 |
+| repo | 1890.4 | 60.36 | 45.10 | 37.36 | 10 of 93 | 26.49 |
+| repo + colour | 1980.7 | 29.13 | 1.81 | -19.00 | 4 of 93 | 26.52 |
+| fix A + colour | 1970.0 | 77.20 | 64.19 | 52.17 | 32 of 93 | 31.39 |
+| **fix C** | 1873.0 | 85.74 | 63.02 | 51.11 | 73 of 93 | 32.37 |
+| **fix C, RDO 0.5** | 1773.8 | 84.12 | 62.58 | 51.02 | 69 of 93 | 31.93 |
+| **fix C, RDO 1** | 1697.9 | 81.23 | 61.35 | 49.55 | 59 of 93 | 31.12 |
+| fix C + colour | 1963.9 | 87.22 | 68.22 | 54.25 | 76 of 93 | 33.71 |
+| fix C + colour, RDO 1 | 1762.5 | 83.00 | 66.06 | 52.71 | 66 of 93 | 32.02 |
+
+By class: MB, then SSIMULACRA2 median / min, bodies at 80 or better, RGB PSNR dB.
+
+| encoder | equipment MB | score | NPC small MB | score | NPC medium MB | score | NPC large MB | score |
+|---|---:|---|---:|---|---:|---|---:|---|
+| BC1 (`dds` High) | 268.5 | 75.41 / 20.55, 15 of 57, 30.37 | 9.5 | 66.99 / 62.39, 1 of 4, 29.17 | 163.5 | 73.12 / -46.34, 0 of 19, 29.79 | 469.8 | 72.37 / 55.03, 1 of 13, 31.57 |
+| repo | 561.9 | 65.13 / 37.36, 10 of 57, 24.89 | 19.9 | 54.79 / 53.97, 0 of 4, 23.47 | 348.6 | 58.50 / 48.42, 0 of 19, 26.46 | 960.0 | 57.47 / 41.43, 0 of 13, 27.80 |
+| repo + colour | 606.3 | 37.88 / -19.00, 4 of 57, 24.59 | 21.6 | 13.07 / -3.18, 0 of 4, 24.03 | 364.1 | 25.75 / 1.81, 0 of 19, 26.39 | 988.7 | 21.14 / 0.74, 0 of 13, 28.18 |
+| fix A + colour | 600.6 | 78.25 / 52.17, 27 of 57, 30.18 | 21.4 | 73.76 / 70.93, 1 of 4, 27.55 | 362.6 | 76.94 / 72.03, 3 of 19, 30.96 | 985.5 | 76.75 / 71.32, 1 of 13, 32.55 |
+| **fix C** | 554.8 | 85.58 / 51.11, 40 of 57, 31.07 | 20.0 | 81.92 / 79.14, 3 of 4, 28.16 | 345.4 | 85.95 / 77.62, 18 of 19, 31.84 | 952.8 | 86.18 / 78.07, 12 of 13, 33.70 |
+| **fix C, RDO 0.5** | 512.0 | 83.46 / 51.02, 39 of 57, 30.66 | 19.2 | 81.22 / 73.73, 3 of 4, 28.06 | 332.0 | 84.05 / 77.42, 15 of 19, 31.51 | 910.5 | 84.87 / 77.66, 12 of 13, 33.14 |
+| **fix C, RDO 1** | 489.4 | 81.41 / 49.55, 34 of 57, 30.01 | 18.6 | 79.59 / 73.15, 2 of 4, 27.66 | 319.5 | 80.77 / 76.77, 13 of 19, 30.83 | 870.4 | 81.23 / 76.28, 10 of 13, 32.11 |
+| fix C + colour | 598.4 | 86.81 / 54.25, 41 of 57, 32.72 | 21.4 | 84.51 / 83.06, 4 of 4, 30.38 | 361.0 | 87.42 / 78.66, 18 of 19, 33.25 | 983.2 | 87.40 / 83.11, 13 of 13, 34.66 |
+| fix C + colour, RDO 1 | 519.8 | 83.41 / 52.71, 36 of 57, 31.14 | 19.7 | 83.54 / 81.80, 4 of 4, 29.44 | 332.1 | 83.00 / 77.76, 16 of 19, 31.88 | 890.9 | 82.36 / 78.88, 10 of 13, 32.70 |
+
 ### The smallest fix: a proposal
 
 **Fix A is approved by the user and lands after this benchmark, through the coordinator. Fix C and the colour step are not decided.** Nothing here is applied: the repo's encoder is unchanged, so no row mixes encoders.
@@ -2868,11 +2920,13 @@ Every 40th body by pixels. MB are this sample's zstd 19 scaled to the whole set,
 
 | | lossless to beat | rows that do, median at 80 or above | smallest |
 |---|---|---|---|
-| **Classic** | row spans ≈735 MB, zstd 19 ≈761 MB | BC1 (504.2 MB, 83.17), its reuse pass at λ 0.5 and 1, BC3 (583.9 MB, 83.25), BC3 + colour (614.1 MB, 83.70) | **BC1, block reuse λ 1: 445.8 MB, 81.05.** λ 2 falls to 78.45. |
-| **Enhanced** | best in-line assignment ≈1767 MB (section 10), zstd 19 ≈2000 MB | BC3 (1445.4 MB, 82.23), BC3 + colour (1521.8 MB, 84.66) | **BC3: 1445.4 MB, 82.23** |
+| **Classic** | row spans 733.4 MB, zstd 19 761.1 MB (every body) | BC1 (504.2 MB, 83.17), its reuse pass at λ 0.5 and 1, BC3 (583.9 MB, 83.25), BC3 + colour (614.1 MB, 83.70) | **BC1, block reuse λ 1: 445.8 MB, 81.05.** λ 2 falls to 78.45. |
+| **Enhanced** | section 10's assignment 1761.7 MB, zstd 19 2013.8 MB (every body) | BC3 (1445.4 MB, 82.23), BC3 + colour (1521.8 MB, 84.66) | **BC3: 1445.4 MB, 82.23** |
+
+**On every body (section 16),** Enhanced's BC3 is 1463.1 MB at 81.72 and BC3 + colour 1539.0 MB at 84.52, and Classic's BC1 is 514.2 MB at 82.90. The answers above don't change. This table stays on the sample because the reuse pass ran only there.
 
 - **No repo BC7 row beats lossless on disk at 80 or above.** The only one at 80 is Classic with colour and RDO 0.5 (889.5 MB, 81.11). It's larger than lossless, and λ 1 and 2 fall under 80.
-- **Fix C changes that on Enhanced, and only there.** Section 12 has the rows: on the named sample, fix C with RDO 0.5 (1738 MB, 83.58), RDO 1 (1670 MB, 81.38) and fix C + colour with RDO 1 (1741 MB, 82.47) are all under Enhanced's best in-line lossless (≈1767 MB). The every-10th-body rows in section 12 test that again. On Classic, no BC7 row beats lossless at 80: RDO 1 is about 903 MB at 79.32, against ≈735 MB.
+- **Fix C changes that on Enhanced, and only there, and only just.** On every body, fix C with RDO 1 is 1728.9 MB at 81.03, against the assignment's 1761.7 MB, with 558 of 926 bodies at 80. Section 16 has the table. On Classic it's 823.2 MB at 80.20 against 733.4 MB, so no BC7 row beats lossless at 80.
 - **BC1 on Enhanced isn't at 80.** 911.2 MB, median 74.90, but p5 51.11 and min −46.34, because one-bit alpha removes anti-aliased edges (below).
 - **Medians hide the worst bodies.** Classic's BC1 has p5 65.67 and min 41.97, and only 71 of 103 bodies reach 80. Enhanced's BC3 + colour has 74 of 93.
 
@@ -2880,7 +2934,7 @@ Every 40th body by pixels. MB are this sample's zstd 19 scaled to the whole set,
 
 - **At the same VRAM as BC7,** BC3 from `dds` is 23 to 35 % smaller on disk than the repo's BC7 and scores higher than it on both clients, because BC1's colour modes aren't hit by the bug and BC4's alpha plane is independent of colour.
 - **Classic:** BC3 adds nothing over BC1. 583.9 MB against 504.2 MB, at 83.25 against 83.17, since Classic's alpha is one bit and BC1 holds it. It's also twice the VRAM.
-- **Enhanced:** BC3 stays the smallest at 80 or above (1445.4 MB, 82.23; with colour 1521.8 MB, 84.66) and has by far the best coverage: 0.186 levels against 0.51 to 0.61 for BC7 with fix C. BC3_on the named sample, fix C with RDO 0.5 (1738 MB, 83.58), RDO 1 (1670 MB, 81.38) and fix C + colour with RDO 1 (1741 MB, 82.47) are all under Enhanced's best in-line lossless (≈1767 MB). The every-10th-body rows in section 12 test that again. On Classic, no BC7 row beats lossless at 80: RDO 1 is about 903 MB at 79.32, against ≈735 MB.
+- **Enhanced:** BC3 stays the smallest at 80 or above in this sample (1445.4 MB, 82.23; with colour 1521.8 MB, 84.66) and has by far the best coverage: 0.186 levels against 0.51 to 0.61 for BC7 with fix C. Fix C with RDO 1 costs about 280 MB more at about the same score, so BC3 has the disk and the edges, and BC7 the colour, as the next line says. On every body it stays the smallest at 80: section 16 has 1463.1 MB at 81.72, with colour 1539.0 MB at 84.52, and coverage error 0.211 levels against 0.628 for fix C.
 - BC3's colour is still BC1's: 4 colours a block on one line. Its RGB PSNR on Enhanced is 29.51 to 30.87 dB, against 31.33 to 32.73 dB for BC7 with fix C and 32.86 to 33.97 dB for ISPC, and its hue error is 1.98 to 2.29 levels against 1.55 to 1.80 for BC7 with fix C.
 
 **Enhanced's coverage as one-bit alpha** (BC1, threshold at one half): 87.89 % of edge pixels move by a level or more, 3.488 levels on average and at worst 8 of 16, and 11.571 % of painted pixels disappear. BC3's BC4 plane moves 0.81 % of edge pixels, 0.186 levels on average. The repo's BC7 moves 37.62 %, and its opaque interiors suffer too: 18.287 % of solid pixels stop being solid.
@@ -2893,7 +2947,7 @@ Every 40th body by pixels. MB are this sample's zstd 19 scaled to the whole set,
 
 **BC1's reuse pass is cheap and honest.** On Classic it saves 5.9 %, 11.6 % and 20.2 % at λ 0.5, 1 and 2, losing 0.8, 2.1 and 4.7 points. Its encode time is 0.9 worker s/Mpx. BC7's RDO saves more on the repo encoder, partly by replacing corrupt blocks, and costs 3 to 8 worker s/Mpx. On the fixed encoder, in section 12, it's cleaner and costs about the same.
 
-**Decode (`qc`):** every block row passes the 250 ms line by a wide margin, because a block row is only zstd in front of the upload. The tables below use the placeholder rule's crowds, so they differ a little from section 9's, and they ran with "background builds on the other cluster", at load 4.6 to 13.9. Read them against each table's own zstd 19 row. On Enhanced creatures, at 4 threads over five directions, plain planes take 100.9 ms, BC7 50 ms, BC3 51 ms and BC1 29 ms.
+**Decode (`qc`):** every block row passes the 250 ms line by a wide margin, because a block row is only zstd in front of the upload. The tables below are a quiet rerun, with the other cluster 1.1 % busy on average and 2 % at its peak, using the placeholder rule's crowds, so they differ a little from section 9's. Read them against each table's own zstd 19 row. On Enhanced creatures, at 4 threads over five directions, plain planes take 100.4 ms, BC7 49.8 ms, BC3 50.4 ms and BC1 28.8 ms. An earlier run with background builds on the other cluster moved no five-direction row by more than 2.4 %, so it changes nothing here.
 
 #### Classic: disk, pack time and quality
 
@@ -3039,140 +3093,1852 @@ Every 40th body by pixels. MB are this sample's zstd 19 scaled to the whole set,
 
 | candidate | load unit | read from disk MB | all drawable, 1 thread ms | 4 threads ms | within 250 ms on 4 threads | worst job ms | job p95 ms | VRAM stored MB | RGBA8 MB |
 |---|---|---:|---:|---:|---:|---:|---:|---:|---:|
-| plain planes, zstd 19 | action+direction | 41.2 | 177.8 | 50.0 | yes | 9.2 | 1.5 | 132.7 | 530.7 |
-| plain planes, zstd 19 | facing direction only | 8.2 | 35.7 | 10.3 | yes | 1.9 | 0.3 | 25.8 | 103.2 |
-| BC7 (repo), zstd 19 | action+direction | 47.8 | 140.1 | 39.2 | yes | 6.7 | 1.2 | 135.6 | 530.7 |
-| BC7 (repo), zstd 19 | facing direction only | 9.5 | 27.8 | 8.1 | yes | 1.4 | 0.3 | 26.4 | 103.2 |
-| BC7 (repo), RDO lambda 1, zstd 19 | action+direction | 41.2 | 135.4 | 38.1 | yes | 6.9 | 1.1 | 135.6 | 530.7 |
-| BC7 (repo), RDO lambda 1, zstd 19 | facing direction only | 8.2 | 26.9 | 7.9 | yes | 1.5 | 0.2 | 26.4 | 103.2 |
-| BC7 (repo), colour under transparent pixels, zstd 19 | action+direction | 50.0 | 137.6 | 38.4 | yes | 6.7 | 1.2 | 135.6 | 530.7 |
-| BC7 (repo), colour under transparent pixels, zstd 19 | facing direction only | 10.0 | 27.2 | 8.0 | yes | 1.4 | 0.3 | 26.4 | 103.2 |
-| BC7 (repo), colour under transparent pixels, RDO lambda 1, zstd 19 | action+direction | 44.9 | 136.6 | 38.2 | yes | 6.9 | 1.1 | 135.6 | 530.7 |
+| plain planes, zstd 19 | action+direction | 41.2 | 178.4 | 50.0 | yes | 9.3 | 1.5 | 132.7 | 530.7 |
+| plain planes, zstd 19 | facing direction only | 8.2 | 35.5 | 10.3 | yes | 1.9 | 0.3 | 25.8 | 103.2 |
+| BC7 (repo), zstd 19 | action+direction | 47.8 | 140.1 | 39.0 | yes | 6.7 | 1.2 | 135.6 | 530.7 |
+| BC7 (repo), zstd 19 | facing direction only | 9.5 | 28.0 | 8.0 | yes | 1.4 | 0.3 | 26.4 | 103.2 |
+| BC7 (repo), RDO lambda 1, zstd 19 | action+direction | 41.2 | 135.7 | 37.9 | yes | 6.9 | 1.1 | 135.6 | 530.7 |
+| BC7 (repo), RDO lambda 1, zstd 19 | facing direction only | 8.2 | 26.8 | 7.8 | yes | 1.5 | 0.2 | 26.4 | 103.2 |
+| BC7 (repo), colour under transparent pixels, zstd 19 | action+direction | 50.0 | 137.4 | 38.2 | yes | 6.6 | 1.2 | 135.6 | 530.7 |
+| BC7 (repo), colour under transparent pixels, zstd 19 | facing direction only | 10.0 | 27.4 | 7.9 | yes | 1.4 | 0.3 | 26.4 | 103.2 |
+| BC7 (repo), colour under transparent pixels, RDO lambda 1, zstd 19 | action+direction | 44.9 | 135.7 | 38.0 | yes | 6.8 | 1.1 | 135.6 | 530.7 |
 | BC7 (repo), colour under transparent pixels, RDO lambda 1, zstd 19 | facing direction only | 8.9 | 27.0 | 7.9 | yes | 1.4 | 0.2 | 26.4 | 103.2 |
-| BC1, zstd 19 | action+direction | 26.5 | 84.0 | 23.5 | yes | 3.9 | 0.7 | 67.8 | 530.7 |
-| BC1, zstd 19 | facing direction only | 5.3 | 16.7 | 4.8 | yes | 0.8 | 0.1 | 13.2 | 103.2 |
-| BC1, block reuse lambda 1, zstd 19 | action+direction | 24.2 | 89.2 | 24.9 | yes | 4.1 | 0.7 | 67.8 | 530.7 |
+| BC1, zstd 19 | action+direction | 26.5 | 83.6 | 23.3 | yes | 3.9 | 0.7 | 67.8 | 530.7 |
+| BC1, zstd 19 | facing direction only | 5.3 | 17.1 | 5.3 | yes | 0.8 | 0.1 | 13.2 | 103.2 |
+| BC1, block reuse lambda 1, zstd 19 | action+direction | 24.2 | 88.9 | 24.8 | yes | 4.1 | 0.7 | 67.8 | 530.7 |
 | BC1, block reuse lambda 1, zstd 19 | facing direction only | 4.8 | 17.6 | 5.1 | yes | 0.9 | 0.1 | 13.2 | 103.2 |
-| BC3 (BC1 colour + BC4 coverage), zstd 19 | action+direction | 29.9 | 128.9 | 35.8 | yes | 5.5 | 1.1 | 135.6 | 530.7 |
-| BC3 (BC1 colour + BC4 coverage), zstd 19 | facing direction only | 6.0 | 25.7 | 7.3 | yes | 1.2 | 0.2 | 26.4 | 103.2 |
+| BC3 (BC1 colour + BC4 coverage), zstd 19 | action+direction | 29.9 | 128.2 | 35.6 | yes | 5.5 | 1.1 | 135.6 | 530.7 |
+| BC3 (BC1 colour + BC4 coverage), zstd 19 | facing direction only | 6.0 | 25.6 | 7.3 | yes | 1.2 | 0.2 | 26.4 | 103.2 |
 
 #### Classic, dressed NPCs: 300 pairs of 258 bodies, 9.7 Mpx trimmed; a pair's Mpx: median 0.020, p95 0.11, max 0.14
 
 | candidate | load unit | read from disk MB | all drawable, 1 thread ms | 4 threads ms | within 250 ms on 4 threads | worst job ms | job p95 ms | VRAM stored MB | RGBA8 MB |
 |---|---|---:|---:|---:|---:|---:|---:|---:|---:|
-| plain planes, zstd 19 | action+direction | 3.6 | 23.0 | 5.9 | yes | 0.3 | 0.2 | 9.7 | 39.0 |
+| plain planes, zstd 19 | action+direction | 3.6 | 22.9 | 5.9 | yes | 0.3 | 0.2 | 9.7 | 39.0 |
 | plain planes, zstd 19 | facing direction only | 0.7 | 4.8 | 1.3 | yes | 0.1 | 0.0 | 2.0 | 8.0 |
-| BC7 (repo), zstd 19 | action+direction | 4.8 | 24.1 | 6.2 | yes | 0.2 | 0.2 | 10.8 | 39.0 |
-| BC7 (repo), zstd 19 | facing direction only | 1.0 | 5.1 | 1.3 | yes | 0.1 | 0.0 | 2.2 | 8.0 |
-| BC7 (repo), RDO lambda 1, zstd 19 | action+direction | 3.7 | 21.1 | 5.5 | yes | 0.2 | 0.2 | 10.8 | 39.0 |
-| BC7 (repo), RDO lambda 1, zstd 19 | facing direction only | 0.8 | 4.3 | 1.1 | yes | 0.0 | 0.0 | 2.2 | 8.0 |
-| BC7 (repo), colour under transparent pixels, zstd 19 | action+direction | 5.6 | 22.8 | 5.9 | yes | 0.2 | 0.2 | 10.8 | 39.0 |
-| BC7 (repo), colour under transparent pixels, zstd 19 | facing direction only | 1.1 | 4.8 | 1.2 | yes | 0.1 | 0.0 | 2.2 | 8.0 |
-| BC7 (repo), colour under transparent pixels, RDO lambda 1, zstd 19 | action+direction | 4.9 | 21.4 | 5.5 | yes | 0.2 | 0.2 | 10.8 | 39.0 |
-| BC7 (repo), colour under transparent pixels, RDO lambda 1, zstd 19 | facing direction only | 1.0 | 4.5 | 1.2 | yes | 0.0 | 0.0 | 2.2 | 8.0 |
-| BC1, zstd 19 | action+direction | 3.0 | 16.0 | 4.1 | yes | 0.2 | 0.1 | 5.4 | 39.0 |
+| BC7 (repo), zstd 19 | action+direction | 4.8 | 23.8 | 6.1 | yes | 0.2 | 0.2 | 10.8 | 39.0 |
+| BC7 (repo), zstd 19 | facing direction only | 1.0 | 4.9 | 1.3 | yes | 0.0 | 0.0 | 2.2 | 8.0 |
+| BC7 (repo), RDO lambda 1, zstd 19 | action+direction | 3.7 | 20.8 | 5.4 | yes | 0.2 | 0.2 | 10.8 | 39.0 |
+| BC7 (repo), RDO lambda 1, zstd 19 | facing direction only | 0.8 | 4.4 | 1.2 | yes | 0.0 | 0.0 | 2.2 | 8.0 |
+| BC7 (repo), colour under transparent pixels, zstd 19 | action+direction | 5.6 | 22.6 | 5.8 | yes | 0.2 | 0.2 | 10.8 | 39.0 |
+| BC7 (repo), colour under transparent pixels, zstd 19 | facing direction only | 1.1 | 4.7 | 1.3 | yes | 0.1 | 0.0 | 2.2 | 8.0 |
+| BC7 (repo), colour under transparent pixels, RDO lambda 1, zstd 19 | action+direction | 4.9 | 21.1 | 5.5 | yes | 0.2 | 0.2 | 10.8 | 39.0 |
+| BC7 (repo), colour under transparent pixels, RDO lambda 1, zstd 19 | facing direction only | 1.0 | 4.4 | 1.2 | yes | 0.0 | 0.0 | 2.2 | 8.0 |
+| BC1, zstd 19 | action+direction | 3.0 | 15.8 | 4.1 | yes | 0.2 | 0.1 | 5.4 | 39.0 |
 | BC1, zstd 19 | facing direction only | 0.6 | 3.4 | 0.9 | yes | 0.0 | 0.0 | 1.1 | 8.0 |
-| BC1, block reuse lambda 1, zstd 19 | action+direction | 2.7 | 16.5 | 4.2 | yes | 0.2 | 0.1 | 5.4 | 39.0 |
-| BC1, block reuse lambda 1, zstd 19 | facing direction only | 0.6 | 3.5 | 0.9 | yes | 0.0 | 0.0 | 1.1 | 8.0 |
-| BC3 (BC1 colour + BC4 coverage), zstd 19 | action+direction | 3.6 | 25.8 | 6.6 | yes | 0.3 | 0.2 | 10.8 | 39.0 |
-| BC3 (BC1 colour + BC4 coverage), zstd 19 | facing direction only | 0.7 | 5.4 | 1.4 | yes | 0.1 | 0.0 | 2.2 | 8.0 |
+| BC1, block reuse lambda 1, zstd 19 | action+direction | 2.7 | 16.1 | 4.2 | yes | 0.2 | 0.1 | 5.4 | 39.0 |
+| BC1, block reuse lambda 1, zstd 19 | facing direction only | 0.6 | 3.3 | 0.9 | yes | 0.0 | 0.0 | 1.1 | 8.0 |
+| BC3 (BC1 colour + BC4 coverage), zstd 19 | action+direction | 3.6 | 25.5 | 6.5 | yes | 0.2 | 0.2 | 10.8 | 39.0 |
+| BC3 (BC1 colour + BC4 coverage), zstd 19 | facing direction only | 0.7 | 5.3 | 1.4 | yes | 0.1 | 0.0 | 2.2 | 8.0 |
 
 #### Enhanced, creatures: 300 pairs of 198 bodies, 198.3 Mpx trimmed; a pair's Mpx: median 0.366, p95 1.99, max 8.19
 
 | candidate | load unit | read from disk MB | all drawable, 1 thread ms | 4 threads ms | within 250 ms on 4 threads | worst job ms | job p95 ms | VRAM stored MB | RGBA8 MB |
 |---|---|---:|---:|---:|---:|---:|---:|---:|---:|
-| plain planes, zstd 19 | action+direction | 78.5 | 398.1 | 100.9 | yes | 18.1 | 3.6 | 396.6 | 793.1 |
-| plain planes, zstd 19 | facing direction only | 15.7 | 80.6 | 20.6 | yes | 3.2 | 0.7 | 79.9 | 159.7 |
-| BC7 (repo), zstd 19 | action+direction | 73.0 | 196.5 | 50.4 | yes | 8.9 | 1.7 | 202.8 | 793.1 |
-| BC7 (repo), zstd 19 | facing direction only | 14.6 | 39.8 | 11.5 | yes | 1.6 | 0.4 | 40.8 | 159.7 |
-| BC7 (repo), RDO lambda 1, zstd 19 | action+direction | 63.8 | 196.1 | 49.7 | yes | 9.0 | 1.7 | 202.8 | 793.1 |
-| BC7 (repo), RDO lambda 1, zstd 19 | facing direction only | 12.8 | 39.4 | 10.0 | yes | 1.7 | 0.4 | 40.8 | 159.7 |
-| BC7 (repo), colour under transparent pixels, zstd 19 | action+direction | 75.6 | 196.1 | 50.2 | yes | 8.8 | 1.7 | 202.8 | 793.1 |
+| plain planes, zstd 19 | action+direction | 78.5 | 395.1 | 100.4 | yes | 17.9 | 3.6 | 396.6 | 793.1 |
+| plain planes, zstd 19 | facing direction only | 15.7 | 80.3 | 20.5 | yes | 3.1 | 0.8 | 79.9 | 159.7 |
+| BC7 (repo), zstd 19 | action+direction | 73.0 | 196.8 | 49.8 | yes | 8.8 | 1.7 | 202.8 | 793.1 |
+| BC7 (repo), zstd 19 | facing direction only | 14.6 | 39.5 | 10.1 | yes | 1.6 | 0.4 | 40.8 | 159.7 |
+| BC7 (repo), RDO lambda 1, zstd 19 | action+direction | 63.8 | 195.9 | 49.6 | yes | 9.0 | 1.7 | 202.8 | 793.1 |
+| BC7 (repo), RDO lambda 1, zstd 19 | facing direction only | 12.8 | 39.1 | 10.0 | yes | 1.6 | 0.4 | 40.8 | 159.7 |
+| BC7 (repo), colour under transparent pixels, zstd 19 | action+direction | 75.6 | 196.9 | 50.0 | yes | 8.8 | 1.7 | 202.8 | 793.1 |
 | BC7 (repo), colour under transparent pixels, zstd 19 | facing direction only | 15.1 | 39.6 | 10.1 | yes | 1.6 | 0.4 | 40.8 | 159.7 |
-| BC7 (repo), colour under transparent pixels, RDO lambda 1, zstd 19 | action+direction | 65.8 | 193.5 | 50.2 | yes | 8.8 | 1.7 | 202.8 | 793.1 |
-| BC7 (repo), colour under transparent pixels, RDO lambda 1, zstd 19 | facing direction only | 13.2 | 39.2 | 9.9 | yes | 1.6 | 0.4 | 40.8 | 159.7 |
-| BC1, zstd 19 | action+direction | 35.5 | 113.5 | 29.1 | yes | 4.9 | 1.0 | 101.4 | 793.1 |
-| BC1, zstd 19 | facing direction only | 7.1 | 22.8 | 5.8 | yes | 0.9 | 0.2 | 20.4 | 159.7 |
-| BC1, block reuse lambda 1, zstd 19 | action+direction | 33.0 | 120.3 | 30.6 | yes | 5.5 | 1.0 | 101.4 | 793.1 |
-| BC1, block reuse lambda 1, zstd 19 | facing direction only | 6.6 | 24.0 | 6.2 | yes | 1.0 | 0.2 | 20.4 | 159.7 |
-| BC3 (BC1 colour + BC4 coverage), zstd 19 | action+direction | 53.8 | 199.1 | 50.6 | yes | 6.6 | 1.8 | 202.8 | 793.1 |
-| BC3 (BC1 colour + BC4 coverage), zstd 19 | facing direction only | 10.8 | 40.2 | 10.3 | yes | 1.3 | 0.4 | 40.8 | 159.7 |
+| BC7 (repo), colour under transparent pixels, RDO lambda 1, zstd 19 | action+direction | 65.8 | 193.3 | 49.0 | yes | 8.9 | 1.7 | 202.8 | 793.1 |
+| BC7 (repo), colour under transparent pixels, RDO lambda 1, zstd 19 | facing direction only | 13.2 | 38.5 | 9.9 | yes | 1.6 | 0.4 | 40.8 | 159.7 |
+| BC1, zstd 19 | action+direction | 35.5 | 113.6 | 28.8 | yes | 4.9 | 1.0 | 101.4 | 793.1 |
+| BC1, zstd 19 | facing direction only | 7.1 | 22.7 | 5.8 | yes | 0.9 | 0.2 | 20.4 | 159.7 |
+| BC1, block reuse lambda 1, zstd 19 | action+direction | 33.0 | 119.8 | 30.5 | yes | 5.5 | 1.0 | 101.4 | 793.1 |
+| BC1, block reuse lambda 1, zstd 19 | facing direction only | 6.6 | 23.8 | 6.2 | yes | 1.0 | 0.2 | 20.4 | 159.7 |
+| BC3 (BC1 colour + BC4 coverage), zstd 19 | action+direction | 53.8 | 199.1 | 50.4 | yes | 6.6 | 1.8 | 202.8 | 793.1 |
+| BC3 (BC1 colour + BC4 coverage), zstd 19 | facing direction only | 10.8 | 39.9 | 10.2 | yes | 1.3 | 0.4 | 40.8 | 159.7 |
 
 #### Enhanced, dressed NPCs: 300 pairs of 257 bodies, 15.8 Mpx trimmed; a pair's Mpx: median 0.033, p95 0.17, max 0.25
 
 | candidate | load unit | read from disk MB | all drawable, 1 thread ms | 4 threads ms | within 250 ms on 4 threads | worst job ms | job p95 ms | VRAM stored MB | RGBA8 MB |
 |---|---|---:|---:|---:|---:|---:|---:|---:|---:|
-| plain planes, zstd 19 | action+direction | 9.9 | 57.6 | 14.6 | yes | 0.8 | 0.5 | 31.6 | 63.2 |
-| plain planes, zstd 19 | facing direction only | 2.0 | 11.6 | 3.0 | yes | 0.2 | 0.1 | 6.4 | 12.7 |
-| BC7 (repo), zstd 19 | action+direction | 8.7 | 32.3 | 8.1 | yes | 0.4 | 0.3 | 17.2 | 63.2 |
-| BC7 (repo), zstd 19 | facing direction only | 1.8 | 6.5 | 1.7 | yes | 0.1 | 0.1 | 3.5 | 12.7 |
-| BC7 (repo), RDO lambda 1, zstd 19 | action+direction | 7.1 | 31.2 | 7.6 | yes | 0.3 | 0.2 | 17.2 | 63.2 |
-| BC7 (repo), RDO lambda 1, zstd 19 | facing direction only | 1.4 | 6.0 | 1.6 | yes | 0.1 | 0.1 | 3.5 | 12.7 |
-| BC7 (repo), colour under transparent pixels, zstd 19 | action+direction | 9.4 | 31.8 | 8.1 | yes | 0.4 | 0.3 | 17.2 | 63.2 |
-| BC7 (repo), colour under transparent pixels, zstd 19 | facing direction only | 1.9 | 6.5 | 1.7 | yes | 0.1 | 0.1 | 3.5 | 12.7 |
-| BC7 (repo), colour under transparent pixels, RDO lambda 1, zstd 19 | action+direction | 7.7 | 28.8 | 7.3 | yes | 0.3 | 0.2 | 17.2 | 63.2 |
-| BC7 (repo), colour under transparent pixels, RDO lambda 1, zstd 19 | facing direction only | 1.5 | 5.9 | 1.5 | yes | 0.1 | 0.1 | 3.5 | 12.7 |
-| BC1, zstd 19 | action+direction | 4.3 | 20.6 | 5.4 | yes | 0.2 | 0.2 | 8.6 | 63.2 |
-| BC1, zstd 19 | facing direction only | 0.9 | 4.2 | 1.1 | yes | 0.0 | 0.0 | 1.7 | 12.7 |
+| plain planes, zstd 19 | action+direction | 9.9 | 57.0 | 14.6 | yes | 0.7 | 0.5 | 31.6 | 63.2 |
+| plain planes, zstd 19 | facing direction only | 2.0 | 11.7 | 3.1 | yes | 0.2 | 0.1 | 6.4 | 12.7 |
+| BC7 (repo), zstd 19 | action+direction | 8.7 | 31.8 | 8.1 | yes | 0.4 | 0.3 | 17.2 | 63.2 |
+| BC7 (repo), zstd 19 | facing direction only | 1.8 | 6.6 | 1.8 | yes | 0.1 | 0.1 | 3.5 | 12.7 |
+| BC7 (repo), RDO lambda 1, zstd 19 | action+direction | 7.1 | 30.0 | 7.7 | yes | 0.3 | 0.2 | 17.2 | 63.2 |
+| BC7 (repo), RDO lambda 1, zstd 19 | facing direction only | 1.4 | 6.2 | 1.7 | yes | 0.1 | 0.1 | 3.5 | 12.7 |
+| BC7 (repo), colour under transparent pixels, zstd 19 | action+direction | 9.4 | 31.5 | 8.1 | yes | 0.4 | 0.3 | 17.2 | 63.2 |
+| BC7 (repo), colour under transparent pixels, zstd 19 | facing direction only | 1.9 | 6.6 | 1.7 | yes | 0.1 | 0.1 | 3.5 | 12.7 |
+| BC7 (repo), colour under transparent pixels, RDO lambda 1, zstd 19 | action+direction | 7.7 | 28.7 | 7.4 | yes | 0.3 | 0.2 | 17.2 | 63.2 |
+| BC7 (repo), colour under transparent pixels, RDO lambda 1, zstd 19 | facing direction only | 1.5 | 5.9 | 1.7 | yes | 0.1 | 0.1 | 3.5 | 12.7 |
+| BC1, zstd 19 | action+direction | 4.3 | 20.6 | 5.3 | yes | 0.2 | 0.2 | 8.6 | 63.2 |
+| BC1, zstd 19 | facing direction only | 0.9 | 4.3 | 1.2 | yes | 0.0 | 0.0 | 1.7 | 12.7 |
 | BC1, block reuse lambda 1, zstd 19 | action+direction | 3.8 | 20.8 | 5.4 | yes | 0.2 | 0.2 | 8.6 | 63.2 |
 | BC1, block reuse lambda 1, zstd 19 | facing direction only | 0.8 | 4.4 | 1.2 | yes | 0.1 | 0.0 | 1.7 | 12.7 |
-| BC3 (BC1 colour + BC4 coverage), zstd 19 | action+direction | 7.5 | 35.2 | 8.8 | yes | 0.4 | 0.3 | 17.2 | 63.2 |
-| BC3 (BC1 colour + BC4 coverage), zstd 19 | facing direction only | 1.5 | 7.0 | 1.8 | yes | 0.1 | 0.1 | 3.5 | 12.7 |
+| BC3 (BC1 colour + BC4 coverage), zstd 19 | action+direction | 7.5 | 34.3 | 8.8 | yes | 0.4 | 0.3 | 17.2 | 63.2 |
+| BC3 (BC1 colour + BC4 coverage), zstd 19 | facing direction only | 1.5 | 7.1 | 1.9 | yes | 0.1 | 0.1 | 3.5 | 12.7 |
+
+## 14. Phones, Apple, Basis Universal and the low-end mix (`qm`, tools outside the workspace)
+
+**Measure only: the user decides.** Third-party encoders ran from a scratch project under `uodynamapper-scratch/lossy-encoders`. Nothing from them is in the repo. Streams are one per (action, direction) throughout, and each stream's blocks are encoded as a strip, so any match search stays inside the stream.
+
+**Encoders and settings:**
+
+- **ETC2 RGB8A1:** etc2comp (Apache-2.0), effort 40. It holds image height in 16 bits, so a strip taller than 65535 pixels wraps. The tool encodes in pieces of 16000 blocks.
+- **ETC2 "reuse":** no RDO encoder for ETC2 RGB8A1 was found. The tool has a small selector-reuse pass like the BC1 one. **These rows are a bound on what such a pass gives,** not the result of a shipping encoder.
+- **ASTC:** ARM astc-encoder through `astcenc-rs` 0.2.0 (bindings Unlicense, encoder Apache-2.0), LDR RGBA profile, preset medium, default alpha weighting. A `thorough` row is in the Basis tables below.
+- **All rows use linear, equal-weight error,** as the BC rows do, not perceptual weights.
+
+### ASTC 6×6 against BC1
+
+**Arm's published figure doesn't hold on these sprites.** Arm reports 3.56 bpp beating BC1's 4 bpp by about 1.5 dB on general images. Here ASTC 6×6 is **below** BC1 in RGB PSNR in every class on both clients: by 0.18 to 1.90 dB on Classic and by 2 to 4 dB on Enhanced. The table below has each class.
+
+**What ASTC 6×6 does keep is Enhanced's edges, which is why the user asked about it:**
+
+| Enhanced, every 10th | zstd 19 MB | median / p5 / min | at 80 or better | painted pixels gone | edge error, levels of 16 |
+|---|---:|---|---:|---:|---:|
+| BC1 | 911.2 | 74.90 / 51.11 / −46.34 | 17 of 93 | 11.571 % | 3.488 |
+| ASTC 6×6 | 1065.0 | 73.08 / 56.49 / 39.20 | 16 of 93 | 0.406 % | 0.970 |
+| ASTC 8×8 | 649.7 | 57.59 / 41.09 / 28.84 | 9 of 93 | 0.531 % | 1.489 |
+| ASTC 4×4 | 2128.9 | 87.62 / 70.59 / 55.89 | 78 of 93 | 0.222 % | 0.323 |
+
+- **Enhanced:** ASTC 6×6 trades colour for edges. Its median is about the same as BC1's, its worst bodies are much better, and it's 17 % larger on disk. Neither reaches 80.
+- **Classic:** BC1 wins outright. It has 83.17 and 71 of 103 bodies at 80, against 75.28 and 33 of 103 for ASTC 6×6, at about the same disk (504.2 and 525.6 MB). Classic's alpha is one bit, so ASTC's full alpha buys nothing there.
+- **Only ASTC 4×4 has a median at 80 or above on both clients,** and on disk it's larger than lossless on both (1022.2 MB and 2128.9 MB).
+
+**Padding.** ASTC blocks round tiny sprites up, so 6×6's nominal 11 % VRAM saving over BC1 shrinks: 0.514 bytes a pixel against 0.547 on Enhanced's equipment, and 0.457 against 0.508 on large NPCs. At 8×8 the bytes are 0.307 to 0.260, about half of BC1's.
+
+**RDO on the phone formats:**
+
+- **astcenc has none.** Nothing in its headers offers rate-distortion optimisation.
+- **Basis Universal's ASTC path has a windowed RDO** that reuses the config and endpoints of the left, upper and diagonal blocks, so it stays inside a frame. It has a gate: blocks under a minimum PSNR (default 35 dB, alpha 38 dB) aren't replaced. At 6×6 and 8×8 most of these blocks are under the gate, so the default barely changes the size. The Basis tables below include rows with the gate lowered.
+- **ETC2:** only the bound above. λ 1 saves about 7 % on both clients for less than one SSIMULACRA2 point. λ 4 saves about 21 % and costs 3.6 points on Classic and 4.9 on Enhanced.
+
+**One thing not explained:** etc2comp loses 0.101 % of painted pixels on Classic (worst channel error 255), where the format itself can hold them all. This wasn't traced. It may be how the encoder picks its transparent selector.
+
+Encode cost in worker seconds per Mpx, all at pack time: ETC2 2.0 to 2.2, ETC2 reuse 3.1 to 3.4, ASTC 4×4 3.5 to 3.8, 6×6 3.8 to 4.6, 8×8 4.7 to 6.2.
+
+#### Classic: every 10th body, disk at the whole-set scale and quality
+
+| row | block MB | zstd 7 MB | zstd 19 MB | SSIMULACRA2 median | p5 | min | bodies at 80 or better | channel error mean | worst | RGB PSNR dB | painted pixels gone | transparent pixels painted |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+| ASTC 4 x 4 | 2510.9 | 1036.1 | 1022.2 | 90.41 | 77.63 | 70.36 | 93 of 103 | 1.985 | 124 | 37.91 | 0.000 % | 0.000 % |
+| ASTC 6 x 6 | 1146.1 | 532.9 | 525.6 | 75.28 | 58.12 | 43.93 | 33 of 103 | 5.518 | 212 | 29.22 | 0.000 % | 0.086 % |
+| ASTC 8 x 8 | 660.3 | 319.1 | 313.5 | 59.86 | 35.63 | 1.50 | 10 of 103 | 9.181 | 231 | 24.89 | 0.000 % | 0.651 % |
+| BC1 (`dds`, High) | 1255.5 | 520.3 | 504.2 | 83.17 | 65.67 | 41.97 | 71 of 103 | 5.045 | 189 | 30.13 | 0.000 % | 0.000 % |
+| ETC2 RGB8A1 | 1255.5 | 534.8 | 517.3 | 74.05 | 55.98 | 39.80 | 15 of 103 | 5.418 | 255 | 29.56 | 0.101 % | 0.014 % |
+| ETC2 RGB8A1, reuse 1 (a bound) | 1255.5 | 498.1 | 482.1 | 73.37 | 55.84 | 40.03 | 14 of 103 | 5.733 | 255 | 29.36 | 0.101 % | 0.014 % |
+| ETC2 RGB8A1, reuse 4 (a bound) | 1255.5 | 419.0 | 405.3 | 70.49 | 53.49 | 39.46 | 8 of 103 | 7.216 | 255 | 28.01 | 0.101 % | 0.014 % |
+
+#### Classic: by class: zstd 19 MB, then SSIMULACRA2 median / min, bodies at 80 or better, RGB PSNR dB
+
+| row | equipment MB | SSIMULACRA2 median / min, bodies at 80 or better, RGB PSNR dB | NPC small MB | SSIMULACRA2 median / min, bodies at 80 or better, RGB PSNR dB | NPC medium MB | SSIMULACRA2 median / min, bodies at 80 or better, RGB PSNR dB | NPC large MB | SSIMULACRA2 median / min, bodies at 80 or better, RGB PSNR dB | not listed MB | SSIMULACRA2 median / min, bodies at 80 or better, RGB PSNR dB |
+|---|---:|---|---:|---|---:|---|---:|---|---:|---|
+| ASTC 4 x 4 | 202.1 | 88.31 / 72.80, 45 of 54, 36.36 | 30.5 | 91.26 / 70.36, 8 of 9, 36.15 | 228.5 | 91.27 / 87.39, 21 of 21, 37.92 | 544.8 | 90.60 / 89.11, 8 of 8, 38.72 | 16.4 | 91.80 / 80.54, 11 of 11, 33.53 |
+| ASTC 6 x 6 | 114.2 | 74.94 / 49.56, 18 of 54, 25.95 | 16.0 | 77.18 / 43.93, 2 of 9, 26.66 | 117.0 | 74.87 / 61.87, 4 of 21, 29.66 | 269.5 | 74.46 / 67.93, 2 of 8, 30.95 | 9.0 | 85.12 / 47.36, 7 of 11, 24.78 |
+| ASTC 8 x 8 | 71.6 | 60.31 / 17.24, 7 of 54, 21.38 | 9.8 | 56.16 / 23.42, 0 of 9, 22.46 | 69.4 | 55.26 / 26.94, 0 of 21, 25.53 | 157.2 | 57.88 / 42.82, 0 of 8, 26.67 | 5.5 | 76.46 / 1.50, 3 of 11, 20.79 |
+| BC1 (`dds`, High) | 106.5 | 83.50 / 62.88, 35 of 54, 27.67 | 15.5 | 84.61 / 41.97, 5 of 9, 28.56 | 111.0 | 81.77 / 75.52, 16 of 21, 30.74 | 262.6 | 81.49 / 80.64, 8 of 8, 31.13 | 8.7 | 85.74 / 54.48, 7 of 11, 25.51 |
+| ETC2 RGB8A1 | 108.9 | 74.14 / 51.76, 10 of 54, 27.33 | 15.9 | 72.82 / 39.80, 0 of 9, 28.08 | 113.4 | 71.55 / 60.90, 3 of 21, 29.62 | 270.3 | 77.17 / 69.89, 1 of 8, 30.59 | 8.7 | 73.85 / 53.43, 1 of 11, 26.01 |
+| ETC2 RGB8A1, reuse 1 (a bound) | 104.9 | 74.25 / 51.77, 10 of 54, 27.31 | 15.6 | 72.83 / 40.03, 1 of 9, 28.06 | 105.6 | 70.24 / 59.85, 2 of 21, 29.42 | 247.5 | 75.69 / 69.25, 0 of 8, 30.28 | 8.6 | 73.84 / 53.51, 1 of 11, 26.01 |
+| ETC2 RGB8A1, reuse 4 (a bound) | 96.5 | 73.56 / 49.93, 7 of 54, 26.80 | 14.6 | 68.37 / 39.46, 0 of 9, 27.54 | 89.0 | 61.65 / 52.95, 0 of 21, 28.05 | 197.0 | 61.21 / 53.79, 0 of 8, 28.45 | 8.2 | 73.64 / 52.40, 1 of 11, 25.79 |
+
+#### Classic: hue
+
+| row | key changed | moved, mean | worst | full hue channel error, mean | worst | hued pixels off by 8 or more | partial hue error, mean | worst | grey stops being grey, 8 bit | 5 bit | colour becomes grey, 8 bit | 5 bit |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+| ASTC 4 x 4 | 35.48 % | 0.374 | 14 | 1.596 | 104 | 31.160 % | 4.189 | 255 | 40.69 % | 31.09 % | 2.452 % | 9.077 % |
+| ASTC 6 x 6 | 56.02 % | 0.812 | 27 | 3.478 | 200 | 49.832 % | 8.845 | 255 | 42.37 % | 30.03 % | 9.441 % | 16.337 % |
+| ASTC 8 x 8 | 66.61 % | 1.295 | 29 | 5.587 | 216 | 60.442 % | 13.069 | 255 | 36.54 % | 24.69 % | 17.084 % | 22.744 % |
+| BC1 (`dds`, High) | 50.70 % | 0.707 | 22 | 3.102 | 160 | 46.511 % | 8.677 | 255 | 81.45 % | 41.54 % | 1.627 % | 5.337 % |
+| ETC2 RGB8A1 | 54.98 % | 0.794 | 31 | 3.346 | 224 | 48.210 % | 8.203 | 255 | 31.55 % | 30.01 % | 8.720 % | 11.860 % |
+| ETC2 RGB8A1, reuse 1 (a bound) | 58.05 % | 0.836 | 31 | 3.514 | 224 | 50.748 % | 8.622 | 255 | 33.38 % | 30.83 % | 9.365 % | 12.252 % |
+| ETC2 RGB8A1, reuse 4 (a bound) | 65.84 % | 1.030 | 31 | 4.349 | 224 | 58.364 % | 10.184 | 255 | 37.75 % | 34.59 % | 10.277 % | 12.997 % |
+
+#### Enhanced: every 10th body, disk at the whole-set scale and quality
+
+| row | block MB | zstd 7 MB | zstd 19 MB | SSIMULACRA2 median | p5 | min | bodies at 80 or better | channel error mean | worst | RGB PSNR dB | painted pixels gone | transparent pixels painted |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+| ASTC 4 x 4 | 5112.1 | 2155.8 | 2128.9 | 87.62 | 70.59 | 55.89 | 78 of 93 | 2.638 | 186 | 35.14 | 0.222 % | 0.241 % |
+| ASTC 6 x 6 | 2331.2 | 1080.9 | 1065.0 | 73.08 | 56.49 | 39.20 | 16 of 93 | 6.088 | 240 | 28.22 | 0.406 % | 0.758 % |
+| ASTC 8 x 8 | 1346.2 | 659.5 | 649.7 | 57.59 | 41.09 | 28.84 | 9 of 93 | 9.271 | 255 | 24.69 | 0.531 % | 2.162 % |
+| BC1 (`dds`, High) | 2556.0 | 939.2 | 911.2 | 74.90 | 51.11 | -46.34 | 17 of 93 | 4.750 | 194 | 30.85 | 11.571 % | 0.000 % |
+| ETC2 RGB8A1 | 2556.0 | 958.3 | 926.9 | 71.63 | 49.79 | -46.41 | 10 of 93 | 4.979 | 255 | 30.45 | 11.582 % | 0.005 % |
+| ETC2 RGB8A1, reuse 1 (a bound) | 2556.0 | 891.7 | 864.7 | 71.25 | 49.98 | -46.41 | 11 of 93 | 5.297 | 255 | 30.21 | 11.582 % | 0.005 % |
+| ETC2 RGB8A1, reuse 4 (a bound) | 2556.0 | 759.6 | 737.4 | 66.69 | 48.90 | -46.50 | 10 of 93 | 6.738 | 255 | 28.70 | 11.582 % | 0.005 % |
+
+#### Enhanced: by class: zstd 19 MB, then SSIMULACRA2 median / min, bodies at 80 or better, RGB PSNR dB
+
+| row | equipment MB | SSIMULACRA2 median / min, bodies at 80 or better, RGB PSNR dB | NPC small MB | SSIMULACRA2 median / min, bodies at 80 or better, RGB PSNR dB | NPC medium MB | SSIMULACRA2 median / min, bodies at 80 or better, RGB PSNR dB | NPC large MB | SSIMULACRA2 median / min, bodies at 80 or better, RGB PSNR dB |
+|---|---:|---|---:|---|---:|---|---:|---|
+| ASTC 4 x 4 | 651.5 | 86.67 / 55.89, 42 of 57, 34.00 | 22.3 | 83.52 / 83.22, 4 of 4, 30.94 | 383.2 | 87.66 / 84.33, 19 of 19, 34.46 | 1071.9 | 88.36 / 85.01, 13 of 13, 36.41 |
+| ASTC 6 x 6 | 338.6 | 73.92 / 39.20, 14 of 57, 26.71 | 11.7 | 64.63 / 60.92, 0 of 4, 25.25 | 192.1 | 72.31 / 65.76, 1 of 19, 27.86 | 522.6 | 75.05 / 63.85, 1 of 13, 29.61 |
+| ASTC 8 x 8 | 213.4 | 61.26 / 28.84, 9 of 57, 23.12 | 7.4 | 45.14 / 42.49, 0 of 4, 22.32 | 117.0 | 54.98 / 45.74, 0 of 19, 24.41 | 311.9 | 60.47 / 44.06, 0 of 13, 26.06 |
+| BC1 (`dds`, High) | 268.5 | 75.41 / 20.55, 15 of 57, 30.37 | 9.5 | 66.99 / 62.39, 1 of 4, 29.17 | 163.5 | 73.12 / -46.34, 0 of 19, 29.79 | 469.8 | 72.37 / 55.03, 1 of 13, 31.57 |
+| ETC2 RGB8A1 | 271.9 | 72.37 / 20.64, 10 of 57, 30.20 | 9.6 | 65.17 / 61.42, 0 of 4, 28.50 | 166.8 | 70.20 / -46.41, 0 of 19, 29.54 | 478.6 | 71.30 / 54.11, 0 of 13, 30.96 |
+| ETC2 RGB8A1, reuse 1 (a bound) | 249.2 | 71.93 / 20.59, 11 of 57, 29.96 | 9.4 | 65.13 / 61.37, 0 of 4, 28.47 | 161.6 | 69.79 / -46.41, 0 of 19, 29.43 | 444.4 | 70.38 / 53.89, 0 of 13, 30.66 |
+| ETC2 RGB8A1, reuse 4 (a bound) | 222.2 | 69.99 / 20.53, 10 of 57, 28.79 | 8.8 | 64.62 / 59.17, 0 of 4, 27.85 | 145.1 | 64.51 / -46.50, 0 of 19, 28.40 | 361.2 | 62.56 / 48.90, 0 of 13, 28.77 |
+
+#### Enhanced: hue
+
+| row | key changed | key moved, mean | worst | hued channel error, mean | worst | hued pixels off by 8 or more |
+|---|---:|---:|---:|---:|---:|---:|
+| ASTC 4 x 4 | 75.30 % | 2.760 | 161 | 1.072 | 158 | 5.101 % |
+| ASTC 6 x 6 | 87.66 % | 6.512 | 210 | 2.548 | 206 | 19.856 % |
+| ASTC 8 x 8 | 90.88 % | 9.993 | 253 | 3.927 | 240 | 31.684 % |
+| BC1 (`dds`, High) | 88.51 % | 5.165 | 193 | 2.012 | 193 | 14.133 % |
+| ETC2 RGB8A1 | 89.36 % | 5.402 | 255 | 2.110 | 240 | 15.056 % |
+| ETC2 RGB8A1, reuse 1 (a bound) | 90.85 % | 5.745 | 255 | 2.233 | 240 | 16.362 % |
+| ETC2 RGB8A1, reuse 4 (a bound) | 93.07 % | 7.333 | 255 | 2.851 | 240 | 24.667 % |
+
+#### Enhanced: coverage at edges
+
+| row | edge pixels' error, mean levels | worst | edge pixels off by a level or more | solid pixels no longer solid |
+|---|---:|---:|---:|---:|
+| ASTC 4 x 4 | 0.323 | 10.8 | 9.01 % | 2.295 % |
+| ASTC 6 x 6 | 0.970 | 15.1 | 36.56 % | 6.079 % |
+| ASTC 8 x 8 | 1.489 | 15.1 | 50.67 % | 9.676 % |
+| BC1 (`dds`, High) | 3.488 | 8.0 | 87.89 % | 0.000 % |
+| ETC2 RGB8A1 | 3.491 | 15.1 | 87.89 % | 0.016 % |
+| ETC2 RGB8A1, reuse 1 (a bound) | 3.491 | 15.1 | 87.89 % | 0.016 % |
+| ETC2 RGB8A1, reuse 4 (a bound) | 3.491 | 15.1 | 87.89 % | 0.016 % |
+
+#### Arm's claim on these sprites: ASTC 6 x 6 against BC1, per class
+
+| client | class | BC1 RGB PSNR dB | ASTC 6 x 6 RGB PSNR dB | difference dB | BC1 SSIMULACRA2 median | ASTC 6 x 6 median | difference | BC1 bodies at 80 | ASTC 6 x 6 bodies at 80 | ASTC 8 x 8 median |
+|---|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+| Classic | equipment | 27.67 | 25.95 | -1.72 | 83.50 | 74.94 | -8.56 | 35 of 54 | 18 of 54 | 60.31 |
+| Classic | NPC small | 28.56 | 26.66 | -1.90 | 84.61 | 77.18 | -7.43 | 5 of 9 | 2 of 9 | 56.16 |
+| Classic | NPC medium | 30.74 | 29.66 | -1.08 | 81.77 | 74.87 | -6.90 | 16 of 21 | 4 of 21 | 55.26 |
+| Classic | NPC large | 31.13 | 30.95 | -0.18 | 81.49 | 74.46 | -7.03 | 8 of 8 | 2 of 8 | 57.88 |
+| Enhanced | equipment | 30.37 | 26.71 | -3.66 | 75.41 | 73.92 | -1.49 | 15 of 57 | 14 of 57 | 61.26 |
+| Enhanced | NPC small | 29.17 | 25.25 | -3.92 | 66.99 | 64.63 | -2.36 | 1 of 4 | 0 of 4 | 45.14 |
+| Enhanced | NPC medium | 29.79 | 27.86 | -1.93 | 73.12 | 72.31 | -0.81 | 0 of 19 | 1 of 19 | 54.98 |
+| Enhanced | NPC large | 31.57 | 29.61 | -1.96 | 72.37 | 75.05 | +2.68 | 1 of 13 | 1 of 13 | 60.47 |
+
+#### Padding: block pixels over true pixels, and what it does to the bytes a true pixel takes
+
+| client | row | class | x pixels | raw bytes a pixel | stored bits a true pixel | stored bits a painted pixel |
+|---|---|---|---:|---:|---:|---:|
+| Classic | ETC2 RGB8A1 | equipment | 1.112 | 0.556 | 2.095 | 6.143 |
+| Classic | ETC2 RGB8A1 | NPC small | 1.079 | 0.539 | 2.371 | 5.493 |
+| Classic | ETC2 RGB8A1 | NPC medium | 1.038 | 0.519 | 1.891 | 4.329 |
+| Classic | ETC2 RGB8A1 | NPC large | 1.014 | 0.507 | 1.496 | 3.907 |
+| Classic | ASTC 4 x 4 | equipment | 1.112 | 1.112 | 3.889 | 11.400 |
+| Classic | ASTC 4 x 4 | NPC small | 1.079 | 1.079 | 4.537 | 10.513 |
+| Classic | ASTC 4 x 4 | NPC medium | 1.038 | 1.038 | 3.809 | 8.718 |
+| Classic | ASTC 4 x 4 | NPC large | 1.014 | 1.014 | 3.015 | 7.874 |
+| Classic | ASTC 6 x 6 | equipment | 1.197 | 0.532 | 2.198 | 6.445 |
+| Classic | ASTC 6 x 6 | NPC small | 1.131 | 0.503 | 2.380 | 5.514 |
+| Classic | ASTC 6 x 6 | NPC medium | 1.065 | 0.473 | 1.950 | 4.464 |
+| Classic | ASTC 6 x 6 | NPC large | 1.024 | 0.455 | 1.491 | 3.895 |
+| Classic | ASTC 8 x 8 | equipment | 1.270 | 0.318 | 1.378 | 4.039 |
+| Classic | ASTC 8 x 8 | NPC small | 1.188 | 0.297 | 1.464 | 3.392 |
+| Classic | ASTC 8 x 8 | NPC medium | 1.091 | 0.273 | 1.157 | 2.650 |
+| Classic | ASTC 8 x 8 | NPC large | 1.034 | 0.258 | 0.870 | 2.271 |
+| Enhanced | ETC2 RGB8A1 | equipment | 1.094 | 0.547 | 1.823 | 4.155 |
+| Enhanced | ETC2 RGB8A1 | NPC small | 1.072 | 0.536 | 1.777 | 4.788 |
+| Enhanced | ETC2 RGB8A1 | NPC medium | 1.038 | 0.519 | 1.637 | 3.667 |
+| Enhanced | ETC2 RGB8A1 | NPC large | 1.017 | 0.508 | 1.336 | 3.950 |
+| Enhanced | ASTC 4 x 4 | equipment | 1.094 | 1.094 | 4.369 | 9.957 |
+| Enhanced | ASTC 4 x 4 | NPC small | 1.072 | 1.072 | 4.139 | 11.155 |
+| Enhanced | ASTC 4 x 4 | NPC medium | 1.038 | 1.038 | 3.760 | 8.425 |
+| Enhanced | ASTC 4 x 4 | NPC large | 1.017 | 1.017 | 2.992 | 8.846 |
+| Enhanced | ASTC 6 x 6 | equipment | 1.157 | 0.514 | 2.271 | 5.174 |
+| Enhanced | ASTC 6 x 6 | NPC small | 1.124 | 0.499 | 2.183 | 5.883 |
+| Enhanced | ASTC 6 x 6 | NPC medium | 1.065 | 0.473 | 1.885 | 4.223 |
+| Enhanced | ASTC 6 x 6 | NPC large | 1.029 | 0.457 | 1.459 | 4.313 |
+| Enhanced | ASTC 8 x 8 | equipment | 1.227 | 0.307 | 1.431 | 3.261 |
+| Enhanced | ASTC 8 x 8 | NPC small | 1.176 | 0.294 | 1.378 | 3.714 |
+| Enhanced | ASTC 8 x 8 | NPC medium | 1.091 | 0.273 | 1.148 | 2.572 |
+| Enhanced | ASTC 8 x 8 | NPC large | 1.040 | 0.260 | 0.871 | 2.574 |
+
+#### Classic, creatures, 300 pairs, 132.7 Mpx in five directions (quiet rerun)
+
+| row | to | load unit | read MB | 1 thread ms | 4 threads ms | within the line | worst job ms |
+|---|---|---|---:|---:|---:|---|---:|
+| plain planes, zstd 19 | planes | five directions | 41.2 | 179.4 | 50.4 | yes | 9.2 |
+| plain planes, zstd 19 | planes | faced only | 8.2 | 35.9 | 10.4 | yes | 2.0 |
+| etc2-a1 | blocks | five directions | 27.0 | 83.1 | 23.2 | yes | 4.0 |
+| etc2-a1 | blocks | faced only | 5.4 | 16.5 | 4.7 | yes | 0.8 |
+| etc2-a1-reuse-1 | blocks | five directions | 25.9 | 83.8 | 23.3 | yes | 3.9 |
+| etc2-a1-reuse-1 | blocks | faced only | 5.1 | 16.5 | 4.8 | yes | 0.9 |
+| astc-4 | blocks | five directions | 54.6 | 137.7 | 38.6 | yes | 6.9 |
+| astc-4 | blocks | faced only | 10.9 | 27.3 | 7.9 | yes | 1.5 |
+| astc-6 | blocks | five directions | 27.1 | 73.1 | 20.3 | yes | 3.3 |
+| astc-6 | blocks | faced only | 5.4 | 14.4 | 4.2 | yes | 0.7 |
+| astc-8 | blocks | five directions | 15.9 | 49.3 | 13.6 | yes | 2.0 |
+| astc-8 | blocks | faced only | 3.2 | 9.7 | 2.9 | yes | 0.4 |
+
+#### Classic, dressed NPCs, 300 pairs, 9.7 Mpx in five directions (quiet rerun)
+
+| row | to | load unit | read MB | 1 thread ms | 4 threads ms | within the line | worst job ms |
+|---|---|---|---:|---:|---:|---|---:|
+| plain planes, zstd 19 | planes | five directions | 3.6 | 22.8 | 5.9 | yes | 0.3 |
+| plain planes, zstd 19 | planes | faced only | 0.7 | 4.7 | 1.3 | yes | 0.1 |
+| etc2-a1 | blocks | five directions | 3.0 | 15.2 | 4.0 | yes | 0.2 |
+| etc2-a1 | blocks | faced only | 0.6 | 3.3 | 0.9 | yes | 0.0 |
+| etc2-a1-reuse-1 | blocks | five directions | 2.9 | 15.2 | 3.9 | yes | 0.2 |
+| etc2-a1-reuse-1 | blocks | faced only | 0.6 | 3.2 | 0.9 | yes | 0.0 |
+| astc-4 | blocks | five directions | 5.7 | 22.7 | 5.8 | yes | 0.2 |
+| astc-4 | blocks | faced only | 1.2 | 4.8 | 1.3 | yes | 0.1 |
+| astc-6 | blocks | five directions | 3.2 | 14.5 | 3.7 | yes | 0.1 |
+| astc-6 | blocks | faced only | 0.7 | 3.0 | 0.8 | yes | 0.0 |
+| astc-8 | blocks | five directions | 2.0 | 11.8 | 3.0 | yes | 0.1 |
+| astc-8 | blocks | faced only | 0.4 | 2.5 | 0.7 | yes | 0.0 |
+
+#### Enhanced, creatures, 300 pairs, 198.3 Mpx in five directions (quiet rerun)
+
+| row | to | load unit | read MB | 1 thread ms | 4 threads ms | within the line | worst job ms |
+|---|---|---|---:|---:|---:|---|---:|
+| plain planes, zstd 19 | planes | five directions | 78.5 | 402.3 | 102.2 | yes | 18.9 |
+| plain planes, zstd 19 | planes | faced only | 15.7 | 81.8 | 20.8 | yes | 3.2 |
+| etc2-a1 | blocks | five directions | 36.0 | 111.8 | 28.7 | yes | 5.1 |
+| etc2-a1 | blocks | faced only | 7.2 | 22.2 | 5.7 | yes | 0.9 |
+| etc2-a1-reuse-1 | blocks | five directions | 34.9 | 112.7 | 28.8 | yes | 5.0 |
+| etc2-a1-reuse-1 | blocks | faced only | 7.0 | 22.5 | 5.8 | yes | 0.9 |
+| astc-4 | blocks | five directions | 80.6 | 194.3 | 49.2 | yes | 8.9 |
+| astc-4 | blocks | faced only | 16.1 | 39.1 | 10.0 | yes | 1.6 |
+| astc-6 | blocks | five directions | 39.6 | 101.8 | 26.0 | yes | 4.1 |
+| astc-6 | blocks | faced only | 7.9 | 20.3 | 5.2 | yes | 0.7 |
+| astc-8 | blocks | five directions | 23.8 | 66.8 | 16.9 | yes | 2.5 |
+| astc-8 | blocks | faced only | 4.8 | 13.3 | 3.5 | yes | 0.5 |
+
+#### Enhanced, dressed NPCs, 300 pairs, 15.8 Mpx in five directions (quiet rerun)
+
+| row | to | load unit | read MB | 1 thread ms | 4 threads ms | within the line | worst job ms |
+|---|---|---|---:|---:|---:|---|---:|
+| plain planes, zstd 19 | planes | five directions | 9.9 | 59.3 | 16.1 | yes | 1.0 |
+| plain planes, zstd 19 | planes | faced only | 2.0 | 12.2 | 3.5 | yes | 0.2 |
+| etc2-a1 | blocks | five directions | 4.3 | 20.2 | 5.2 | yes | 0.2 |
+| etc2-a1 | blocks | faced only | 0.9 | 4.2 | 1.1 | yes | 0.1 |
+| etc2-a1-reuse-1 | blocks | five directions | 4.1 | 19.7 | 5.1 | yes | 0.2 |
+| etc2-a1-reuse-1 | blocks | faced only | 0.8 | 4.1 | 1.1 | yes | 0.1 |
+| astc-4 | blocks | five directions | 9.8 | 30.9 | 7.9 | yes | 0.4 |
+| astc-4 | blocks | faced only | 2.0 | 6.3 | 1.7 | yes | 0.1 |
+| astc-6 | blocks | five directions | 5.1 | 18.0 | 4.6 | yes | 0.2 |
+| astc-6 | blocks | faced only | 1.0 | 3.8 | 1.0 | yes | 0.1 |
+| astc-8 | blocks | five directions | 3.2 | 13.1 | 3.4 | yes | 0.1 |
+| astc-8 | blocks | faced only | 0.6 | 2.8 | 0.7 | yes | 0.0 |
+
+
+### Basis Universal
+
+**No Basis row is both smaller and better than the plain block format beside it.** Where one is smaller, it scores lower, and the reverse. Upstream Basis Universal (HEAD 073eb6a, Apache-2.0) ran from the scratch project, one file per (action, direction). Every 40th body (26 Classic, 24 Enhanced) for ETC1S, UASTC and XUBC7, and every 80th (13 and 12) for the windowed ASTC rows and XUASTC. MB are each sample scaled to the whole set, so compare a row with the BC1 or ASTC row of its own sample, not with the every-10th tables.
+
+**Against the rows it would replace,** native target, on the same bodies. Median / p5 / min, then bodies at 80 or better:
+
+| Client, sample | row | MB | score | at 80 |
+|---|---|---:|---|---:|
+| Classic, 40th | BC1, zstd 19 | 563.9 | 80.62 / 63.85 / 52.47 | 15 of 26 |
+| Classic, 40th | ETC1S q50 | 584.7 | 69.22 / 28.13 / 20.15 | 6 of 26 |
+| Classic, 40th | ETC1S q128 | 678.4 | 74.81 / 34.76 / 25.28 | 10 of 26 |
+| Classic, 40th | UASTC, RDO 4 | 1111.6 | 81.00 / 66.13 / 60.56 | 16 of 26 |
+| Classic, 40th | XUBC7 q75, RDO 10 | 1328.0 | 83.74 / 65.25 / 61.02 | 18 of 26 |
+| Enhanced, 40th | BC1, zstd 19 | 876.9 | 71.45 / 28.49 / 16.78 | 5 of 24 |
+| Enhanced, 40th | ETC1S q50 | 1106.4 | 68.02 / 51.62 / 49.07 | 6 of 24 |
+| Enhanced, 40th | ETC1S q128 | 1343.1 | 75.57 / 55.15 / 52.86 | 9 of 24 |
+| Enhanced, 40th | UASTC, RDO 4 | 2030.1 | 80.32 / 73.14 / 70.16 | 13 of 24 |
+| Enhanced, 40th | XUBC7 q75, RDO 10 | 2485.3 | 83.91 / 71.26 / 67.55 | 21 of 24 |
+| Classic, 80th | ASTC 6×6, astcenc, zstd 19 | 594.7 | 73.85 / 62.89 / 62.89 | 4 of 13 |
+| Classic, 80th | ASTC 6×6, Basis, zstd 19 | 583.7 | 70.14 / 60.75 / 60.75 | 1 of 13 |
+| Classic, 80th | ASTC 6×6, Basis RDO, 5 dB | 579.2 | 68.89 / 57.71 / 57.71 | 1 of 13 |
+| Classic, 80th | XUASTC 6×6 q75 | 787.8 | 69.39 / 60.72 / 60.72 | 1 of 13 |
+| Enhanced, 80th | ASTC 6×6, astcenc, zstd 19 | 1080.2 | 67.04 / 46.05 / 46.05 | 2 of 12 |
+| Enhanced, 80th | ASTC 6×6, Basis, zstd 19 | 1067.9 | 66.08 / 41.62 / 41.62 | 2 of 12 |
+| Enhanced, 80th | ASTC 6×6, Basis RDO, 5 dB | 1054.7 | 66.33 / 40.47 / 40.47 | 1 of 12 |
+| Enhanced, 80th | XUASTC 6×6 q75 | 1400.8 | 66.15 / 41.80 / 41.80 | 1 of 12 |
+
+- **ETC1S:** larger than BC1 with zstd on both clients, and lower in score at q50. Its worst bodies fall hard on Classic: p5 28.13 against BC1's 63.85. On Enhanced it keeps edges better than BC1, whose p5 is 28.49.
+- **UASTC:** 83.05 on Classic and 82.68 on Enhanced at 1 byte a pixel in VRAM, below fix C's 86.31 and 86.12 on the same bodies. RDO 4, the strongest level run, saves about 3 %. It still leaves Classic 1.5 times above row spans, and Enhanced above every zstd 19 lossless row.
+- **XUBC7:** the best Basis score, and larger than every lossless row on both clients.
+- **XUASTC:** about 30 % larger than plain ASTC 6×6 with zstd, at a lower score. The excess sits on small streams: Enhanced equipment takes 3.004 bits a true pixel against 1.961, and large NPCs 1.898 against 1.630. Classic is 3.666 against 2.381, and 2.299 against 1.905.
+
+**The overhead on small streams is why.** Each `.basis` file carries its own tables. ETC1S at q50, bytes a block by stream size, against raw BC1's 8:
+
+| Stream size, blocks | Classic | Enhanced |
+|---:|---:|---:|
+| up to 16 | 37.61 | 62.11 |
+| up to 64 | 17.70 | 21.08 |
+| up to 256 | 9.16 | 11.22 |
+| up to 1024 | 5.26 | 5.63 |
+| up to 4096 | 3.37 | 4.05 |
+| more | 2.74 | 2.41 |
+
+**So does it only work as atlases? No, but it only pays in larger units.** `.basis` images in one file may differ in size, so it works without an atlas, and the rows here have none. One file a body is 1.507 times smaller on Classic and 1.409 times on Enhanced (`t_bodies_*`). Scaling the q50 rows by those ratios gives about 388 MB and 785 MB, which are estimates at q50's scores, not packed results. A file holds one set of tables and transcodes image by image, so a faced-only load would read the body's tables and one direction's images. That read wasn't measured.
+
+**Transcoding moves quality too.** The score depends on the target as well as the file, since all four alpha targets are 1 byte a pixel and don't hold what the file held:
+
+| Row, Classic / Enhanced medians at the 40th | native | to BC7 | to ASTC 4×4 | to BC3 | to ETC2 + EAC |
+|---|---:|---:|---:|---:|---:|
+| UASTC | 83.05 / 82.68 | 83.26 / 82.48 | 83.03 / 82.73 | 76.82 / 78.33 | 77.08 / 77.46 |
+| ETC1S q128 | 74.81 / 75.57 | 71.31 / 71.39 | 72.14 / 73.64 | 71.60 / 74.89 | 74.81 / 75.56 |
+| XUBC7 q75, RDO 10 | 83.74 / 83.91 | 83.74 / 83.91 | 75.05 / 76.07 | 77.22 / 78.76 | 67.17 / 71.87 |
+
+- **BC1 as a target doesn't work here.** Upstream's `cTFBC1_RGB` is "Opaque only, no punchthrough alpha support yet", so every animation frame with transparency would have to take BC3's 1 byte a pixel. **That means Basis can't reach BC1's or ETC2 RGB8A1's half-byte VRAM with these sprites.** That rules out the point of the low-end tier on the desktop path.
+- **XUASTC 6×6 q75 transcodes too,** at every 80th: Classic 69.39 native, 71.24 to BC7, 69.82 to BC3, 65.92 to ETC2 + EAC; Enhanced 66.15, 65.84, 63.76, 56.81. None reaches 80.
+
+**ASTC RDO:** `astcenc` has none. Basis's windowed RDO is the only one reachable, and it only reuses config and endpoints from the left, upper and diagonal blocks, so it stays inside a frame and a stream. Its default gate (`m_ls_min_psnr` 35 dB) skips almost every block at 6×6 and 8×8, so the default RDO row was the same size as the row without it. With the gate lowered to 15 dB and 5 dB allowed, it saves 0.8 % on Classic and 1.2 % on Enhanced, at a lower score. **It isn't worth the encode time:** Basis's ASTC encoder costs about 35 worker seconds a Mpx against astcenc's 4.3 at preset medium, and astcenc's own rows score higher.
+
+**`thorough` doesn't change the verdict:** at every 40th, ASTC 6×6 goes from 71.80 to 72.80 on Classic and 70.64 to 71.94 on Enhanced, at 1 % more disk and about twice the encode time. It stays below 80 and below BC1's Classic score.
+
+**Does Basis pass the crowd line? Mostly not with five directions.** Quiet runs, with the other cluster 1 % busy. A cell is file read + transcode to that target, on 4 threads. Plain planes at zstd 19 in the same runs take 50.7 and 102.2 ms with five directions, and 10.5 and 20.8 ms faced.
+
+| Crowd, target | ETC1S q50, Classic / Enhanced ms | UASTC RDO 1 | XUBC7 q75 |
+|---|---:|---:|---:|
+| Creatures, five directions, to BC1, no alpha | **226.1** / 314.0 | 448.0 / 587.1 | 2039.5 / 2512.9 |
+| Creatures, five directions, to BC3 | 376.0 / 571.9 | 524.0 / 699.5 | 2117.9 / 2647.1 |
+| Creatures, five directions, to BC7 | 1086.1 / 1464.7 | 508.7 / 690.9 | 1012.7 / 1194.1 |
+| Creatures, five directions, to ETC2 + EAC | 251.4 / 374.1 | 470.1 / 651.7 | 2116.1 / 2773.6 |
+| Creatures, five directions, to ASTC 4×4 | 446.8 / 676.2 | 254.1 / 330.1 | 2278.5 / 2783.6 |
+| Creatures, faced, to BC1, no alpha | **46.2** / **63.6** | **92.3** / **117.0** | 415.2 / 504.0 |
+| Creatures, faced, to BC3 | **74.9** / **116.9** | **107.6** / **141.4** | 430.8 / 531.9 |
+| Creatures, faced, to BC7 | **220.4** / 294.5 | **102.4** / **138.8** | **208.2** / **241.7** |
+| Creatures, faced, to ETC2 + EAC | **50.4** / **76.1** | **96.5** / **130.6** | 431.7 / 557.2 |
+| Creatures, faced, to ASTC 4×4 | **89.7** / **138.6** | **52.2** / **66.7** | 463.4 / 560.4 |
+
+- **With five directions on creatures, the only pass is Classic's ETC1S to BC1, and that target has no alpha.** ETC1S to ETC2 and UASTC to ASTC 4×4 sit right at the line on Classic, at 251.4 and 254.1 ms. Nothing passes on Enhanced.
+- **Faced only, ETC1S and UASTC pass almost everywhere,** except ETC1S to BC7 on Enhanced. XUBC7 passes only to BC7, its own target.
+- **Even each client's fastest row is 4.5 × and 3.1 × plain planes,** so a passing row uses most of the line before the upload starts.
+- **Dressed NPCs pass everywhere on Classic.** On Enhanced with five directions, XUBC7 fails to every target but BC7; every other Enhanced row passes.
+- **Not measured:** `xuastc-6-q75` in the crowd. It scored below plain ASTC 6×6 and was larger, so it wouldn't change anything.
+
+#### Classic: every 40th body: disk at the whole-set scale and quality
+
+| row | block MB | zstd 7 MB | zstd 19 MB | SSIMULACRA2 median | p5 | min | bodies at 80 or better | channel error mean | worst | RGB PSNR dB | painted pixels gone | transparent pixels painted |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+| ASTC 6 x 6 | 1163.0 | 588.8 | 580.7 | 71.80 | 53.05 | 44.73 | 7 of 26 | 6.847 | 199 | 28.07 | 0.000 % | 0.123 % |
+| ASTC 6 x 6, thorough | 1163.0 | 594.1 | 586.4 | 72.80 | 53.79 | 46.42 | 8 of 26 | 6.645 | 186 | 28.37 | 0.000 % | 0.078 % |
+| BC1 (`dds`, High) | 1269.5 | 576.6 | 563.9 | 80.62 | 63.85 | 52.47 | 15 of 26 | 6.590 | 141 | 28.73 | 0.000 % | 0.000 % |
+| ETC1S q128, to ASTC 4 x 4 | 678.4 | 657.0 | 678.4 | 72.14 | 34.14 | 25.30 | 9 of 26 | 7.463 | 157 | 27.74 | 0.000 % | 0.000 % |
+| ETC1S q128, to BC3 | 678.4 | 657.0 | 678.4 | 71.60 | 34.89 | 25.72 | 7 of 26 | 7.464 | 141 | 27.77 | 0.000 % | 0.000 % |
+| ETC1S q128, to BC7 | 678.4 | 657.0 | 678.4 | 71.31 | 30.15 | 23.79 | 9 of 26 | 7.489 | 143 | 27.69 | 0.000 % | 0.000 % |
+| ETC1S q128, to ETC2 + EAC | 678.4 | 657.0 | 678.4 | 74.81 | 34.76 | 25.28 | 10 of 26 | 7.305 | 136 | 28.00 | 0.000 % | 0.000 % |
+| ETC1S q128, native | 678.4 | 657.0 | 678.4 | 74.81 | 34.76 | 25.28 | 10 of 26 | 7.305 | 136 | 28.00 | 0.000 % | 0.000 % |
+| ETC1S q50, to ASTC 4 x 4 | 584.7 | 562.5 | 584.7 | 65.62 | 27.71 | 20.46 | 6 of 26 | 9.518 | 191 | 25.69 | 0.000 % | 0.033 % |
+| ETC1S q50, to BC3 | 584.7 | 562.5 | 584.7 | 67.15 | 27.91 | 20.46 | 4 of 26 | 9.487 | 191 | 25.71 | 0.000 % | 0.006 % |
+| ETC1S q50, to BC7 | 584.7 | 562.5 | 584.7 | 64.96 | 23.96 | 19.42 | 6 of 26 | 9.492 | 196 | 25.69 | 0.000 % | 0.040 % |
+| ETC1S q50, to ETC2 + EAC | 584.7 | 562.5 | 584.7 | 69.22 | 28.13 | 20.15 | 6 of 26 | 9.382 | 191 | 25.82 | 0.000 % | 0.006 % |
+| ETC1S q50, native | 584.7 | 562.5 | 584.7 | 69.22 | 28.13 | 20.15 | 6 of 26 | 9.382 | 191 | 25.82 | 0.000 % | 0.006 % |
+| UASTC, to ASTC 4 x 4 | 2583.7 | 1165.6 | 1147.4 | 83.03 | 66.44 | 60.65 | 17 of 26 | 3.730 | 130 | 32.84 | 0.000 % | 0.002 % |
+| UASTC, to BC3 | 2583.7 | 1165.6 | 1147.4 | 76.82 | 59.33 | 48.61 | 10 of 26 | 7.367 | 158 | 27.78 | 0.000 % | 0.002 % |
+| UASTC, to BC7 | 2583.7 | 1165.6 | 1147.4 | 83.26 | 66.27 | 60.67 | 17 of 26 | 3.816 | 130 | 32.72 | 0.000 % | 0.002 % |
+| UASTC, to ETC2 + EAC | 2583.7 | 1165.6 | 1147.4 | 77.08 | 46.68 | 33.52 | 9 of 26 | 6.463 | 167 | 28.70 | 0.000 % | 0.002 % |
+| UASTC, native | 2583.7 | 1165.6 | 1147.4 | 83.05 | 66.46 | 60.68 | 17 of 26 | 3.715 | 130 | 32.86 | 0.000 % | 0.002 % |
+| UASTC, RDO 1, to ASTC 4 x 4 | 2583.7 | 1164.1 | 1146.0 | 83.01 | 66.15 | 60.59 | 17 of 26 | 3.762 | 130 | 32.79 | 0.000 % | 0.002 % |
+| UASTC, RDO 1, to BC3 | 2583.7 | 1164.1 | 1146.0 | 76.81 | 59.34 | 48.58 | 10 of 26 | 7.387 | 158 | 27.77 | 0.000 % | 0.002 % |
+| UASTC, RDO 1, to BC7 | 2583.7 | 1164.1 | 1146.0 | 83.22 | 65.97 | 60.60 | 17 of 26 | 3.851 | 130 | 32.66 | 0.000 % | 0.002 % |
+| UASTC, RDO 1, to ETC2 + EAC | 2583.7 | 1164.1 | 1146.0 | 77.09 | 46.63 | 33.51 | 9 of 26 | 6.475 | 167 | 28.69 | 0.000 % | 0.002 % |
+| UASTC, RDO 1, native | 2583.7 | 1164.1 | 1146.0 | 83.04 | 66.17 | 60.62 | 17 of 26 | 3.746 | 130 | 32.81 | 0.000 % | 0.002 % |
+| UASTC, RDO 4, to ASTC 4 x 4 | 2583.7 | 1129.6 | 1111.6 | 81.00 | 66.11 | 60.52 | 16 of 26 | 4.615 | 130 | 31.10 | 0.000 % | 0.003 % |
+| UASTC, RDO 4, to BC3 | 2583.7 | 1129.6 | 1111.6 | 75.27 | 59.32 | 48.54 | 8 of 26 | 7.999 | 158 | 27.19 | 0.000 % | 0.002 % |
+| UASTC, RDO 4, to BC7 | 2583.7 | 1129.6 | 1111.6 | 81.30 | 65.94 | 60.54 | 16 of 26 | 4.695 | 130 | 31.02 | 0.000 % | 0.003 % |
+| UASTC, RDO 4, to ETC2 + EAC | 2583.7 | 1129.6 | 1111.6 | 75.66 | 46.66 | 33.48 | 7 of 26 | 6.993 | 167 | 28.19 | 0.000 % | 0.003 % |
+| UASTC, RDO 4, native | 2583.7 | 1129.6 | 1111.6 | 81.00 | 66.13 | 60.56 | 16 of 26 | 4.603 | 130 | 31.11 | 0.000 % | 0.003 % |
+| XUBC7 q75, RDO 10, to ASTC 4 x 4 | 1328.0 | 1177.9 | 1328.0 | 75.05 | 61.07 | 55.95 | 8 of 26 | 6.246 | 149 | 28.87 | 0.000 % | 0.647 % |
+| XUBC7 q75, RDO 10, to BC3 | 1328.0 | 1177.9 | 1328.0 | 77.22 | 59.70 | 49.89 | 9 of 26 | 8.005 | 150 | 27.44 | 0.000 % | 0.002 % |
+| XUBC7 q75, RDO 10, to BC7 | 1328.0 | 1177.9 | 1328.0 | 83.74 | 65.25 | 61.02 | 18 of 26 | 4.926 | 113 | 31.45 | 0.000 % | 0.002 % |
+| XUBC7 q75, RDO 10, to ETC2 + EAC | 1328.0 | 1177.9 | 1328.0 | 67.17 | 39.91 | 28.05 | 5 of 26 | 8.801 | 171 | 26.25 | 0.000 % | 20.311 % |
+| XUBC7 q75, RDO 10, native | 1328.0 | 1177.9 | 1328.0 | 83.74 | 65.25 | 61.02 | 18 of 26 | 4.926 | 113 | 31.45 | 0.000 % | 0.002 % |
+
+#### Classic: every 40th body: sizes in this sample and encode time
+
+| row | raw MB | zstd 7 MB | zstd 19 MB | stored MB | encode, worker s a Mpx |
+|---|---:|---:|---:|---:|---:|
+| astc-6 | 23.1 | 11.7 | 11.5 | 11.5 | 3.487 |
+| astc-6-thorough | 23.1 | 11.8 | 11.6 | 11.6 | 6.560 |
+| etc1s-q50 | 11.6 | 11.2 | 10.9 | 11.6 | 2.652 |
+| etc1s-q128 | 13.5 | 13.0 | 12.8 | 13.5 | 2.236 |
+| uastc | 51.3 | 23.1 | 22.8 | 22.8 | 5.911 |
+| uastc-rdo-1 | 51.3 | 23.1 | 22.8 | 22.8 | 10.108 |
+| uastc-rdo-4 | 51.3 | 22.4 | 22.1 | 22.1 | 10.305 |
+| xubc7-q75-r10 | 26.4 | 23.4 | 23.1 | 26.4 | 2.602 |
+
+#### Classic: every 40th body: hue
+
+| row | key changed | moved, mean | worst | full hue channel error, mean | worst | hued pixels off by 8 or more | partial hue error, mean | worst | grey stops being grey, 8 bit | 5 bit | colour becomes grey, 8 bit | 5 bit |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+| ASTC 6 x 6 | 62.46 % | 0.943 | 25 | 4.132 | 184 | 58.138 % | 10.093 | 255 | 40.23 % | 29.15 % | 10.467 % | 14.185 % |
+| ASTC 6 x 6, thorough | 61.55 % | 0.915 | 24 | 4.009 | 176 | 57.260 % | 9.894 | 255 | 34.58 % | 25.22 % | 10.927 % | 14.355 % |
+| BC1 (`dds`, High) | 60.11 % | 0.875 | 18 | 3.861 | 136 | 56.427 % | 9.271 | 255 | 77.80 % | 41.70 % | 0.869 % | 2.650 % |
+| ETC1S q128, to ASTC 4 x 4 | 66.53 % | 1.040 | 20 | 4.521 | 152 | 61.461 % | 9.287 | 255 | 41.75 % | 36.12 % | 4.096 % | 7.266 % |
+| ETC1S q128, to BC3 | 65.81 % | 1.029 | 18 | 4.491 | 136 | 61.124 % | 10.275 | 255 | 72.75 % | 41.98 % | 2.912 % | 6.563 % |
+| ETC1S q128, to BC7 | 66.07 % | 1.045 | 18 | 4.570 | 136 | 61.433 % | 9.291 | 255 | 50.73 % | 43.64 % | 2.686 % | 5.185 % |
+| ETC1S q128, to ETC2 + EAC | 65.76 % | 1.011 | 17 | 4.383 | 128 | 60.623 % | 9.145 | 255 | 41.83 % | 39.26 % | 4.083 % | 5.472 % |
+| ETC1S q128, native | 65.76 % | 1.011 | 17 | 4.383 | 128 | 60.623 % | 9.145 | 255 | 41.83 % | 39.26 % | 4.083 % | 5.472 % |
+| ETC1S q50, to ASTC 4 x 4 | 71.41 % | 1.295 | 24 | 5.636 | 176 | 66.700 % | 11.227 | 255 | 43.95 % | 38.16 % | 4.310 % | 7.986 % |
+| ETC1S q50, to BC3 | 70.98 % | 1.284 | 24 | 5.616 | 176 | 66.626 % | 12.108 | 255 | 72.54 % | 44.23 % | 3.188 % | 6.609 % |
+| ETC1S q50, to BC7 | 71.10 % | 1.296 | 25 | 5.674 | 184 | 66.772 % | 11.178 | 255 | 52.16 % | 45.09 % | 2.855 % | 5.271 % |
+| ETC1S q50, to ETC2 + EAC | 70.85 % | 1.271 | 24 | 5.525 | 176 | 66.102 % | 11.092 | 255 | 43.85 % | 41.39 % | 4.322 % | 5.620 % |
+| ETC1S q50, native | 70.85 % | 1.271 | 24 | 5.525 | 176 | 66.102 % | 11.092 | 255 | 43.85 % | 41.39 % | 4.322 % | 5.620 % |
+| UASTC, to ASTC 4 x 4 | 47.69 % | 0.573 | 15 | 2.466 | 112 | 43.140 % | 5.694 | 255 | 45.11 % | 31.94 % | 3.344 % | 7.106 % |
+| UASTC, to BC3 | 62.62 % | 0.977 | 20 | 4.279 | 152 | 58.438 % | 10.092 | 255 | 76.63 % | 44.26 % | 2.204 % | 4.862 % |
+| UASTC, to BC7 | 46.62 % | 0.565 | 15 | 2.428 | 112 | 42.147 % | 5.768 | 255 | 44.61 % | 31.42 % | 3.425 % | 6.997 % |
+| UASTC, to ETC2 + EAC | 62.60 % | 0.921 | 20 | 4.002 | 144 | 57.693 % | 9.171 | 255 | 31.04 % | 30.01 % | 9.000 % | 9.738 % |
+| UASTC, native | 49.41 % | 0.591 | 15 | 2.544 | 112 | 44.663 % | 5.683 | 255 | 45.14 % | 33.63 % | 3.343 % | 7.133 % |
+| UASTC, RDO 1, to ASTC 4 x 4 | 47.94 % | 0.577 | 15 | 2.484 | 112 | 43.380 % | 5.748 | 255 | 46.02 % | 32.65 % | 3.336 % | 7.105 % |
+| UASTC, RDO 1, to BC3 | 62.75 % | 0.979 | 20 | 4.287 | 152 | 58.545 % | 10.114 | 255 | 76.83 % | 44.35 % | 2.207 % | 4.873 % |
+| UASTC, RDO 1, to BC7 | 46.85 % | 0.569 | 15 | 2.445 | 112 | 42.363 % | 5.826 | 255 | 45.52 % | 32.05 % | 3.417 % | 7.006 % |
+| UASTC, RDO 1, to ETC2 + EAC | 62.66 % | 0.922 | 20 | 4.006 | 144 | 57.746 % | 9.185 | 255 | 31.10 % | 30.07 % | 9.020 % | 9.754 % |
+| UASTC, RDO 1, native | 49.63 % | 0.595 | 15 | 2.560 | 112 | 44.875 % | 5.734 | 255 | 45.99 % | 34.38 % | 3.335 % | 7.138 % |
+| UASTC, RDO 4, to ASTC 4 x 4 | 51.95 % | 0.675 | 15 | 2.920 | 112 | 47.379 % | 6.585 | 255 | 46.60 % | 32.34 % | 3.378 % | 7.039 % |
+| UASTC, RDO 4, to BC3 | 65.03 % | 1.055 | 20 | 4.627 | 152 | 60.883 % | 10.710 | 255 | 77.26 % | 44.73 % | 2.234 % | 4.923 % |
+| UASTC, RDO 4, to BC7 | 51.15 % | 0.669 | 15 | 2.890 | 112 | 46.632 % | 6.653 | 255 | 46.11 % | 31.96 % | 3.460 % | 6.972 % |
+| UASTC, RDO 4, to ETC2 + EAC | 64.70 % | 0.983 | 20 | 4.275 | 144 | 59.828 % | 9.733 | 255 | 30.96 % | 29.92 % | 9.370 % | 10.094 % |
+| UASTC, RDO 4, native | 53.32 % | 0.690 | 15 | 2.984 | 112 | 48.584 % | 6.576 | 255 | 46.62 % | 33.76 % | 3.378 % | 7.058 % |
+| XUBC7 q75, RDO 10, to ASTC 4 x 4 | 60.29 % | 0.868 | 19 | 3.770 | 144 | 55.605 % | 8.182 | 255 | 54.32 % | 35.01 % | 2.665 % | 6.113 % |
+| XUBC7 q75, RDO 10, to BC3 | 67.07 % | 1.063 | 19 | 4.664 | 136 | 62.768 % | 10.734 | 255 | 77.29 % | 42.99 % | 2.449 % | 5.108 % |
+| XUBC7 q75, RDO 10, to BC7 | 55.12 % | 0.695 | 15 | 3.030 | 112 | 50.624 % | 6.798 | 255 | 51.37 % | 34.43 % | 2.139 % | 4.960 % |
+| XUBC7 q75, RDO 10, to ETC2 + EAC | 69.53 % | 1.213 | 22 | 5.298 | 160 | 64.879 % | 11.723 | 255 | 26.61 % | 25.79 % | 12.234 % | 12.964 % |
+| XUBC7 q75, RDO 10, native | 55.12 % | 0.695 | 15 | 3.030 | 112 | 50.624 % | 6.798 | 255 | 51.37 % | 34.43 % | 2.139 % | 4.960 % |
+
+#### Enhanced: every 40th body: disk at the whole-set scale and quality
+
+| row | block MB | zstd 7 MB | zstd 19 MB | SSIMULACRA2 median | p5 | min | bodies at 80 or better | channel error mean | worst | RGB PSNR dB | painted pixels gone | transparent pixels painted |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+| ASTC 6 x 6 | 2349.6 | 1076.3 | 1059.9 | 70.64 | 59.44 | 59.44 | 6 of 24 | 7.309 | 213 | 26.90 | 0.597 % | 0.882 % |
+| ASTC 6 x 6, thorough | 2349.6 | 1087.0 | 1071.9 | 71.94 | 59.85 | 59.80 | 6 of 24 | 7.129 | 231 | 27.09 | 0.576 % | 0.815 % |
+| BC1 (`dds`, High) | 2569.2 | 900.4 | 876.9 | 71.45 | 28.49 | 16.78 | 5 of 24 | 5.042 | 185 | 30.28 | 14.412 % | 0.000 % |
+| ETC1S q128, to ASTC 4 x 4 | 1343.1 | 1301.8 | 1343.1 | 73.64 | 50.24 | 38.98 | 7 of 24 | 7.720 | 181 | 26.67 | 1.680 % | 4.368 % |
+| ETC1S q128, to BC3 | 1343.1 | 1301.8 | 1343.1 | 74.89 | 50.27 | 42.73 | 7 of 24 | 7.687 | 181 | 26.78 | 1.896 % | 0.502 % |
+| ETC1S q128, to BC7 | 1343.1 | 1301.8 | 1343.1 | 71.39 | 51.73 | 50.44 | 7 of 24 | 7.789 | 206 | 26.65 | 1.229 % | 6.939 % |
+| ETC1S q128, to ETC2 + EAC | 1343.1 | 1301.8 | 1343.1 | 75.56 | 55.14 | 52.83 | 9 of 24 | 7.399 | 181 | 27.11 | 1.812 % | 0.642 % |
+| ETC1S q128, native | 1343.1 | 1301.8 | 1343.1 | 75.57 | 55.15 | 52.86 | 9 of 24 | 7.402 | 181 | 27.11 | 1.702 % | 1.307 % |
+| ETC1S q50, to ASTC 4 x 4 | 1106.4 | 1062.0 | 1106.4 | 64.25 | 47.13 | 31.58 | 5 of 24 | 9.629 | 255 | 24.95 | 1.782 % | 4.701 % |
+| ETC1S q50, to BC3 | 1106.4 | 1062.0 | 1106.4 | 65.52 | 47.37 | 34.74 | 5 of 24 | 9.589 | 255 | 25.04 | 2.097 % | 0.856 % |
+| ETC1S q50, to BC7 | 1106.4 | 1062.0 | 1106.4 | 62.68 | 46.17 | 41.91 | 6 of 24 | 9.645 | 229 | 24.99 | 1.313 % | 7.112 % |
+| ETC1S q50, to ETC2 + EAC | 1106.4 | 1062.0 | 1106.4 | 68.01 | 51.61 | 49.06 | 6 of 24 | 9.378 | 255 | 25.19 | 2.025 % | 0.907 % |
+| ETC1S q50, native | 1106.4 | 1062.0 | 1106.4 | 68.02 | 51.62 | 49.07 | 6 of 24 | 9.383 | 255 | 25.19 | 1.906 % | 1.493 % |
+| UASTC, to ASTC 4 x 4 | 5205.1 | 2140.2 | 2102.7 | 82.73 | 73.51 | 70.20 | 17 of 24 | 4.450 | 165 | 30.79 | 0.450 % | 1.645 % |
+| UASTC, to BC3 | 5205.1 | 2140.2 | 2102.7 | 78.33 | 63.78 | 62.95 | 9 of 24 | 6.908 | 213 | 27.72 | 0.883 % | 1.633 % |
+| UASTC, to BC7 | 5205.1 | 2140.2 | 2102.7 | 82.48 | 73.54 | 70.19 | 18 of 24 | 4.518 | 165 | 30.71 | 0.447 % | 1.674 % |
+| UASTC, to ETC2 + EAC | 5205.1 | 2140.2 | 2102.7 | 77.46 | 60.53 | 59.02 | 9 of 24 | 7.168 | 227 | 26.97 | 0.486 % | 3.089 % |
+| UASTC, native | 5205.1 | 2140.2 | 2102.7 | 82.68 | 73.44 | 70.24 | 17 of 24 | 4.436 | 165 | 30.79 | 0.450 % | 1.645 % |
+| UASTC, RDO 1, to ASTC 4 x 4 | 5205.1 | 2131.8 | 2094.2 | 82.63 | 73.36 | 70.21 | 17 of 24 | 4.505 | 165 | 30.73 | 0.440 % | 1.619 % |
+| UASTC, RDO 1, to BC3 | 5205.1 | 2131.8 | 2094.2 | 78.27 | 63.84 | 63.02 | 9 of 24 | 6.947 | 213 | 27.70 | 0.893 % | 1.604 % |
+| UASTC, RDO 1, to BC7 | 5205.1 | 2131.8 | 2094.2 | 82.47 | 73.37 | 70.19 | 17 of 24 | 4.574 | 165 | 30.66 | 0.437 % | 1.685 % |
+| UASTC, RDO 1, to ETC2 + EAC | 5205.1 | 2131.8 | 2094.2 | 77.45 | 60.51 | 59.08 | 9 of 24 | 7.203 | 227 | 26.95 | 0.478 % | 3.048 % |
+| UASTC, RDO 1, native | 5205.1 | 2131.8 | 2094.2 | 82.61 | 73.29 | 70.24 | 17 of 24 | 4.489 | 165 | 30.73 | 0.440 % | 1.619 % |
+| UASTC, RDO 4, to ASTC 4 x 4 | 5205.1 | 2067.0 | 2030.1 | 80.35 | 73.20 | 70.13 | 13 of 24 | 5.112 | 165 | 29.98 | 0.457 % | 1.660 % |
+| UASTC, RDO 4, to BC3 | 5205.1 | 2067.0 | 2030.1 | 76.48 | 63.78 | 62.94 | 8 of 24 | 7.375 | 213 | 27.34 | 0.906 % | 1.627 % |
+| UASTC, RDO 4, to BC7 | 5205.1 | 2067.0 | 2030.1 | 80.25 | 73.22 | 70.11 | 14 of 24 | 5.173 | 165 | 29.92 | 0.454 % | 1.726 % |
+| UASTC, RDO 4, to ETC2 + EAC | 5205.1 | 2067.0 | 2030.1 | 76.70 | 60.48 | 59.01 | 7 of 24 | 7.560 | 227 | 26.72 | 0.495 % | 3.086 % |
+| UASTC, RDO 4, native | 5205.1 | 2067.0 | 2030.1 | 80.32 | 73.14 | 70.16 | 13 of 24 | 5.101 | 165 | 29.98 | 0.457 % | 1.660 % |
+| XUBC7 q75, RDO 10, to ASTC 4 x 4 | 2485.3 | 2200.1 | 2485.3 | 76.07 | 64.85 | 63.39 | 8 of 24 | 6.725 | 190 | 27.72 | 0.572 % | 3.587 % |
+| XUBC7 q75, RDO 10, to BC3 | 2485.3 | 2200.1 | 2485.3 | 78.76 | 63.08 | 62.64 | 10 of 24 | 7.335 | 187 | 27.62 | 0.643 % | 3.004 % |
+| XUBC7 q75, RDO 10, to BC7 | 2485.3 | 2200.1 | 2485.3 | 83.91 | 71.26 | 67.55 | 21 of 24 | 5.025 | 180 | 30.77 | 0.432 % | 3.016 % |
+| XUBC7 q75, RDO 10, to ETC2 + EAC | 2485.3 | 2200.1 | 2485.3 | 71.87 | 57.03 | 56.71 | 5 of 24 | 8.751 | 182 | 25.49 | 0.224 % | 10.476 % |
+| XUBC7 q75, RDO 10, native | 2485.3 | 2200.1 | 2485.3 | 83.91 | 71.26 | 67.55 | 21 of 24 | 5.025 | 180 | 30.77 | 0.432 % | 3.016 % |
+
+#### Enhanced: every 40th body: sizes in this sample and encode time
+
+| row | raw MB | zstd 7 MB | zstd 19 MB | stored MB | encode, worker s a Mpx |
+|---|---:|---:|---:|---:|---:|
+| astc-6 | 53.1 | 24.3 | 24.0 | 24.0 | 3.935 |
+| astc-6-thorough | 53.1 | 24.6 | 24.2 | 24.2 | 7.515 |
+| etc1s-q50 | 25.0 | 24.0 | 23.6 | 25.0 | 3.095 |
+| etc1s-q128 | 30.4 | 29.4 | 29.0 | 30.4 | 2.822 |
+| uastc | 117.7 | 48.4 | 47.5 | 47.5 | 6.118 |
+| uastc-rdo-1 | 117.7 | 48.2 | 47.4 | 47.4 | 8.607 |
+| uastc-rdo-4 | 117.7 | 46.7 | 45.9 | 45.9 | 8.661 |
+| xubc7-q75-r10 | 56.2 | 49.7 | 49.2 | 56.2 | 2.339 |
+
+#### Enhanced: every 40th body: hue
+
+| row | key changed | key moved, mean | worst | hued channel error, mean | worst | hued pixels off by 8 or more |
+|---|---:|---:|---:|---:|---:|---:|
+| ASTC 6 x 6 | 91.25 % | 7.880 | 213 | 3.081 | 210 | 24.598 % |
+| ASTC 6 x 6, thorough | 90.38 % | 7.697 | 231 | 3.010 | 225 | 23.994 % |
+| BC1 (`dds`, High) | 89.73 % | 5.568 | 143 | 2.166 | 143 | 15.738 % |
+| ETC1S q128, to ASTC 4 x 4 | 93.20 % | 8.487 | 181 | 3.308 | 174 | 27.034 % |
+| ETC1S q128, to BC3 | 92.78 % | 8.465 | 181 | 3.297 | 174 | 27.395 % |
+| ETC1S q128, to BC7 | 92.84 % | 8.778 | 181 | 3.424 | 174 | 28.532 % |
+| ETC1S q128, to ETC2 + EAC | 92.94 % | 8.059 | 181 | 3.145 | 174 | 25.843 % |
+| ETC1S q128, native | 92.94 % | 8.062 | 181 | 3.146 | 174 | 25.856 % |
+| ETC1S q50, to ASTC 4 x 4 | 94.45 % | 10.489 | 253 | 4.106 | 240 | 34.271 % |
+| ETC1S q50, to BC3 | 94.02 % | 10.449 | 255 | 4.087 | 240 | 34.545 % |
+| ETC1S q50, to BC7 | 94.13 % | 10.660 | 223 | 4.177 | 223 | 35.368 % |
+| ETC1S q50, to ETC2 + EAC | 94.27 % | 10.124 | 253 | 3.963 | 240 | 33.285 % |
+| ETC1S q50, native | 94.27 % | 10.129 | 253 | 3.965 | 240 | 33.302 % |
+| UASTC, to ASTC 4 x 4 | 81.94 % | 4.752 | 151 | 1.840 | 151 | 13.404 % |
+| UASTC, to BC3 | 91.41 % | 7.610 | 173 | 2.966 | 166 | 24.236 % |
+| UASTC, to BC7 | 82.23 % | 4.815 | 152 | 1.865 | 152 | 13.729 % |
+| UASTC, to ETC2 + EAC | 92.51 % | 7.843 | 200 | 3.051 | 193 | 24.438 % |
+| UASTC, native | 81.27 % | 4.734 | 151 | 1.833 | 151 | 13.387 % |
+| UASTC, RDO 1, to ASTC 4 x 4 | 82.43 % | 4.825 | 151 | 1.867 | 151 | 13.678 % |
+| UASTC, RDO 1, to BC3 | 91.47 % | 7.647 | 173 | 2.982 | 166 | 24.441 % |
+| UASTC, RDO 1, to BC7 | 82.79 % | 4.890 | 152 | 1.894 | 152 | 14.003 % |
+| UASTC, RDO 1, to ETC2 + EAC | 92.59 % | 7.876 | 200 | 3.063 | 193 | 24.594 % |
+| UASTC, RDO 1, native | 81.77 % | 4.804 | 151 | 1.860 | 151 | 13.658 % |
+| UASTC, RDO 4, to ASTC 4 x 4 | 84.71 % | 5.548 | 151 | 2.157 | 151 | 16.766 % |
+| UASTC, RDO 4, to BC3 | 91.99 % | 8.147 | 173 | 3.181 | 166 | 26.764 % |
+| UASTC, RDO 4, to BC7 | 84.93 % | 5.605 | 152 | 2.180 | 152 | 17.097 % |
+| UASTC, RDO 4, to ETC2 + EAC | 93.12 % | 8.250 | 200 | 3.213 | 193 | 26.372 % |
+| UASTC, RDO 4, native | 84.23 % | 5.534 | 151 | 2.152 | 151 | 16.752 % |
+| XUBC7 q75, RDO 10, to ASTC 4 x 4 | 90.82 % | 7.282 | 190 | 2.838 | 184 | 22.447 % |
+| XUBC7 q75, RDO 10, to BC3 | 92.27 % | 8.009 | 165 | 3.125 | 158 | 26.873 % |
+| XUBC7 q75, RDO 10, to BC7 | 88.46 % | 5.425 | 153 | 2.115 | 153 | 15.923 % |
+| XUBC7 q75, RDO 10, to ETC2 + EAC | 93.82 % | 9.593 | 180 | 3.760 | 172 | 30.522 % |
+| XUBC7 q75, RDO 10, native | 88.46 % | 5.425 | 153 | 2.115 | 153 | 15.923 % |
+
+#### Enhanced: every 40th body: coverage at edges
+
+| row | edge pixels' error, mean levels | worst | edge pixels off by a level or more | solid pixels no longer solid |
+|---|---:|---:|---:|---:|
+| ASTC 6 x 6 | 1.122 | 15.1 | 42.66 % | 8.111 % |
+| ASTC 6 x 6, thorough | 1.079 | 15.1 | 41.27 % | 7.360 % |
+| BC1 (`dds`, High) | 3.914 | 8.0 | 89.67 % | 0.000 % |
+| ETC1S q128, to ASTC 4 x 4 | 0.996 | 6.6 | 41.32 % | 13.244 % |
+| ETC1S q128, to BC3 | 0.857 | 5.5 | 36.04 % | 1.879 % |
+| ETC1S q128, to BC7 | 0.971 | 6.4 | 39.87 % | 20.349 % |
+| ETC1S q128, to ETC2 + EAC | 0.843 | 5.3 | 35.02 % | 2.564 % |
+| ETC1S q128, native | 0.845 | 5.3 | 35.00 % | 3.662 % |
+| ETC1S q50, to ASTC 4 x 4 | 1.107 | 12.7 | 45.32 % | 13.892 % |
+| ETC1S q50, to BC3 | 0.977 | 12.0 | 40.83 % | 2.789 % |
+| ETC1S q50, to BC7 | 1.086 | 12.7 | 43.87 % | 21.255 % |
+| ETC1S q50, to ETC2 + EAC | 0.962 | 12.0 | 39.98 % | 3.260 % |
+| ETC1S q50, native | 0.966 | 12.0 | 39.73 % | 4.464 % |
+| UASTC, to ASTC 4 x 4 | 0.696 | 9.8 | 27.01 % | 7.910 % |
+| UASTC, to BC3 | 0.804 | 10.0 | 31.87 % | 6.117 % |
+| UASTC, to BC7 | 0.702 | 10.0 | 27.49 % | 36.002 % |
+| UASTC, to ETC2 + EAC | 0.741 | 9.7 | 28.89 % | 10.374 % |
+| UASTC, native | 0.696 | 9.8 | 26.97 % | 7.765 % |
+| UASTC, RDO 1, to ASTC 4 x 4 | 0.695 | 9.8 | 26.95 % | 8.148 % |
+| UASTC, RDO 1, to BC3 | 0.807 | 10.0 | 31.87 % | 6.288 % |
+| UASTC, RDO 1, to BC7 | 0.703 | 10.0 | 27.40 % | 39.613 % |
+| UASTC, RDO 1, to ETC2 + EAC | 0.743 | 9.7 | 28.86 % | 10.575 % |
+| UASTC, RDO 1, native | 0.695 | 9.8 | 26.92 % | 7.978 % |
+| UASTC, RDO 4, to ASTC 4 x 4 | 0.724 | 9.8 | 28.46 % | 8.243 % |
+| UASTC, RDO 4, to BC3 | 0.833 | 10.0 | 33.30 % | 6.367 % |
+| UASTC, RDO 4, to BC7 | 0.731 | 10.0 | 28.89 % | 39.686 % |
+| UASTC, RDO 4, to ETC2 + EAC | 0.770 | 9.7 | 30.34 % | 10.673 % |
+| UASTC, RDO 4, native | 0.724 | 9.8 | 28.43 % | 8.074 % |
+| XUBC7 q75, RDO 10, to ASTC 4 x 4 | 0.955 | 12.3 | 37.44 % | 10.543 % |
+| XUBC7 q75, RDO 10, to BC3 | 0.658 | 10.4 | 20.89 % | 11.209 % |
+| XUBC7 q75, RDO 10, to BC7 | 0.607 | 10.2 | 18.29 % | 13.289 % |
+| XUBC7 q75, RDO 10, to ETC2 + EAC | 0.644 | 10.2 | 19.57 % | 26.503 % |
+| XUBC7 q75, RDO 10, native | 0.607 | 10.2 | 18.29 % | 13.289 % |
+
+#### Classic: every 80th body: disk at the whole-set scale and quality
+
+| row | block MB | zstd 7 MB | zstd 19 MB | SSIMULACRA2 median | p5 | min | bodies at 80 or better | channel error mean | worst | RGB PSNR dB | painted pixels gone | transparent pixels painted |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+| ASTC 6 x 6 | 1162.2 | 603.3 | 594.7 | 73.85 | 62.89 | 62.89 | 4 of 13 | 6.548 | 174 | 27.92 | 0.000 % | 0.187 % |
+| ASTC 8 x 8 | 676.9 | 366.6 | 360.3 | 60.60 | 33.61 | 33.61 | 0 of 13 | 10.980 | 212 | 23.56 | 0.000 % | 1.313 % |
+| ASTC 6 x 6, Basis encoder | 1162.2 | 595.2 | 583.7 | 70.14 | 60.75 | 60.75 | 1 of 13 | 7.231 | 192 | 26.98 | 0.000 % | 0.196 % |
+| ASTC 6 x 6, Basis RDO 2 dB, gate 20 dB | 1162.2 | 594.4 | 582.3 | 70.00 | 60.49 | 60.49 | 1 of 13 | 7.283 | 192 | 26.94 | 0.000 % | 0.197 % |
+| ASTC 6 x 6, Basis RDO 5 dB, gate 15 dB | 1162.2 | 592.0 | 579.2 | 68.89 | 57.71 | 57.71 | 1 of 13 | 7.473 | 199 | 26.74 | 0.000 % | 0.217 % |
+| ASTC 8 x 8, Basis encoder | 676.9 | 365.2 | 358.4 | 54.55 | 25.43 | 25.43 | 0 of 13 | 12.052 | 220 | 22.72 | 0.003 % | 1.107 % |
+| ASTC 8 x 8, Basis RDO 2 dB, gate 20 dB | 676.9 | 363.6 | 356.6 | 54.55 | 24.38 | 24.38 | 0 of 13 | 12.147 | 220 | 22.67 | 0.003 % | 1.089 % |
+| BC1 (`dds`, High) | 1269.3 | 586.7 | 572.2 | 83.03 | 70.68 | 70.68 | 8 of 13 | 6.366 | 132 | 28.71 | 0.000 % | 0.000 % |
+| XUASTC 6 x 6 q75, to ASTC 6 x 6 | 787.8 | 748.6 | 787.8 | 69.38 | 60.72 | 60.72 | 1 of 13 | 7.849 | 192 | 26.63 | 0.000 % | 0.227 % |
+| XUASTC 6 x 6 q75, to BC3 | 787.8 | 748.6 | 787.8 | 69.82 | 57.53 | 57.53 | 1 of 13 | 9.759 | 192 | 25.05 | 0.000 % | 0.204 % |
+| XUASTC 6 x 6 q75, to BC7 | 787.8 | 748.6 | 787.8 | 71.24 | 59.01 | 59.01 | 1 of 13 | 8.325 | 191 | 26.20 | 0.000 % | 0.748 % |
+| XUASTC 6 x 6 q75, to ETC2 + EAC | 787.8 | 748.6 | 787.8 | 65.92 | 43.87 | 43.87 | 1 of 13 | 10.275 | 213 | 24.42 | 0.000 % | 19.622 % |
+| XUASTC 6 x 6 q75, native | 787.8 | 748.6 | 787.8 | 69.39 | 60.72 | 60.72 | 1 of 13 | 7.844 | 192 | 26.63 | 0.000 % | 0.227 % |
+
+#### Classic: every 80th body: sizes in this sample and encode time
+
+| row | raw MB | zstd 7 MB | zstd 19 MB | stored MB | encode, worker s a Mpx |
+|---|---:|---:|---:|---:|---:|
+| astc-6 | 11.6 | 6.0 | 5.9 | 5.9 | 4.241 |
+| astc-8 | 6.8 | 3.7 | 3.6 | 3.6 | 5.447 |
+| bastc-6 | 11.6 | 5.9 | 5.8 | 5.8 | 38.724 |
+| bastc-6-rdo-2-min-20 | 11.6 | 5.9 | 5.8 | 5.8 | 35.615 |
+| bastc-6-rdo-5-min-15 | 11.6 | 5.9 | 5.8 | 5.8 | 34.141 |
+| bastc-8 | 6.8 | 3.6 | 3.6 | 3.6 | 37.631 |
+| bastc-8-rdo-2-min-20 | 6.8 | 3.6 | 3.6 | 3.6 | 36.219 |
+| xuastc-6-q75 | 7.9 | 7.5 | 7.4 | 7.9 | 41.485 |
+
+#### Classic: every 80th body: hue
+
+| row | key changed | moved, mean | worst | full hue channel error, mean | worst | hued pixels off by 8 or more | partial hue error, mean | worst | grey stops being grey, 8 bit | 5 bit | colour becomes grey, 8 bit | 5 bit |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+| ASTC 6 x 6 | 60.74 % | 0.928 | 22 | 4.113 | 160 | 57.064 % | 10.533 | 255 | 30.74 % | 23.74 % | 9.409 % | 11.711 % |
+| ASTC 8 x 8 | 70.96 % | 1.488 | 27 | 6.587 | 200 | 67.606 % | 15.961 | 255 | 26.44 % | 21.81 % | 16.887 % | 18.493 % |
+| ASTC 6 x 6, Basis encoder | 62.41 % | 1.011 | 24 | 4.477 | 176 | 58.745 % | 10.920 | 255 | 31.70 % | 25.82 % | 8.971 % | 11.246 % |
+| ASTC 6 x 6, Basis RDO 2 dB, gate 20 dB | 62.63 % | 1.017 | 24 | 4.503 | 176 | 58.964 % | 10.977 | 255 | 31.73 % | 25.86 % | 8.987 % | 11.275 % |
+| ASTC 6 x 6, Basis RDO 5 dB, gate 15 dB | 63.23 % | 1.040 | 25 | 4.608 | 184 | 59.571 % | 11.186 | 255 | 31.70 % | 25.85 % | 9.117 % | 11.383 % |
+| ASTC 8 x 8, Basis encoder | 72.25 % | 1.616 | 26 | 7.155 | 192 | 68.989 % | 16.588 | 255 | 30.56 % | 25.33 % | 15.382 % | 17.200 % |
+| ASTC 8 x 8, Basis RDO 2 dB, gate 20 dB | 72.45 % | 1.628 | 26 | 7.208 | 192 | 69.209 % | 16.716 | 255 | 30.27 % | 25.12 % | 15.675 % | 17.475 % |
+| BC1 (`dds`, High) | 60.80 % | 0.884 | 16 | 3.952 | 120 | 57.506 % | 10.683 | 255 | 81.33 % | 40.05 % | 0.668 % | 3.465 % |
+| XUASTC 6 x 6 q75, to ASTC 6 x 6 | 65.61 % | 1.081 | 24 | 4.793 | 176 | 61.870 % | 11.526 | 255 | 31.02 % | 25.11 % | 9.220 % | 11.224 % |
+| XUASTC 6 x 6 q75, to BC3 | 70.79 % | 1.310 | 24 | 5.800 | 176 | 67.125 % | 13.844 | 255 | 82.18 % | 40.69 % | 1.789 % | 7.915 % |
+| XUASTC 6 x 6 q75, to BC7 | 66.65 % | 1.139 | 24 | 5.037 | 176 | 62.885 % | 11.486 | 255 | 39.62 % | 31.03 % | 6.292 % | 9.300 % |
+| XUASTC 6 x 6 q75, to ETC2 + EAC | 71.86 % | 1.407 | 27 | 6.219 | 200 | 68.098 % | 14.392 | 255 | 23.52 % | 23.00 % | 13.576 % | 13.798 % |
+| XUASTC 6 x 6 q75, native | 65.61 % | 1.082 | 24 | 4.795 | 176 | 61.867 % | 11.518 | 255 | 30.98 % | 25.09 % | 9.219 % | 11.220 % |
+
+#### Enhanced: every 80th body: disk at the whole-set scale and quality
+
+| row | block MB | zstd 7 MB | zstd 19 MB | SSIMULACRA2 median | p5 | min | bodies at 80 or better | channel error mean | worst | RGB PSNR dB | painted pixels gone | transparent pixels painted |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+| ASTC 6 x 6 | 2345.4 | 1093.0 | 1080.2 | 67.04 | 46.05 | 46.05 | 2 of 12 | 7.176 | 214 | 27.29 | 0.565 % | 0.811 % |
+| ASTC 8 x 8 | 1356.0 | 671.0 | 662.1 | 55.65 | 33.87 | 33.87 | 1 of 12 | 10.649 | 251 | 23.92 | 0.672 % | 2.189 % |
+| ASTC 6 x 6, Basis encoder | 2345.4 | 1081.9 | 1067.9 | 66.08 | 41.62 | 41.62 | 2 of 12 | 7.565 | 239 | 26.76 | 0.766 % | 0.780 % |
+| ASTC 6 x 6, Basis RDO 2 dB, gate 20 dB | 2345.4 | 1078.9 | 1063.8 | 66.36 | 41.74 | 41.74 | 1 of 12 | 7.634 | 239 | 26.71 | 0.775 % | 0.792 % |
+| ASTC 6 x 6, Basis RDO 5 dB, gate 15 dB | 2345.4 | 1072.2 | 1054.7 | 66.33 | 40.47 | 40.47 | 1 of 12 | 7.898 | 239 | 26.38 | 0.798 % | 0.882 % |
+| ASTC 8 x 8, Basis encoder | 1356.0 | 668.2 | 658.8 | 53.53 | 30.37 | 30.37 | 1 of 12 | 11.083 | 254 | 23.54 | 0.822 % | 2.282 % |
+| ASTC 8 x 8, Basis RDO 2 dB, gate 20 dB | 1356.0 | 666.2 | 656.2 | 52.90 | 30.36 | 30.36 | 1 of 12 | 11.168 | 254 | 23.49 | 0.825 % | 2.291 % |
+| BC1 (`dds`, High) | 2565.3 | 976.6 | 955.9 | 72.85 | 52.73 | 52.73 | 3 of 12 | 5.605 | 151 | 29.90 | 9.311 % | 0.000 % |
+| XUASTC 6 x 6 q75, to ASTC 6 x 6 | 1400.8 | 1340.7 | 1400.8 | 66.19 | 41.76 | 41.76 | 1 of 12 | 8.110 | 239 | 26.43 | 0.758 % | 1.016 % |
+| XUASTC 6 x 6 q75, to BC3 | 1400.8 | 1340.7 | 1400.8 | 63.76 | 39.11 | 39.11 | 1 of 12 | 9.798 | 237 | 24.96 | 1.034 % | 0.712 % |
+| XUASTC 6 x 6 q75, to BC7 | 1400.8 | 1340.7 | 1400.8 | 65.84 | 40.75 | 40.75 | 1 of 12 | 8.612 | 238 | 25.93 | 0.645 % | 3.214 % |
+| XUASTC 6 x 6 q75, to ETC2 + EAC | 1400.8 | 1340.7 | 1400.8 | 56.81 | 35.85 | 35.85 | 1 of 12 | 10.596 | 250 | 24.12 | 0.176 % | 10.085 % |
+| XUASTC 6 x 6 q75, native | 1400.8 | 1340.7 | 1400.8 | 66.15 | 41.80 | 41.80 | 1 of 12 | 8.103 | 239 | 26.43 | 0.758 % | 1.007 % |
+
+#### Enhanced: every 80th body: sizes in this sample and encode time
+
+| row | raw MB | zstd 7 MB | zstd 19 MB | stored MB | encode, worker s a Mpx |
+|---|---:|---:|---:|---:|---:|
+| astc-6 | 26.7 | 12.5 | 12.3 | 12.3 | 4.284 |
+| astc-8 | 15.5 | 7.6 | 7.5 | 7.5 | 5.350 |
+| bastc-6 | 26.7 | 12.3 | 12.2 | 12.2 | 35.209 |
+| bastc-6-rdo-2-min-20 | 26.7 | 12.3 | 12.1 | 12.1 | 34.244 |
+| bastc-6-rdo-5-min-15 | 26.7 | 12.2 | 12.0 | 12.0 | 33.203 |
+| bastc-8 | 15.5 | 7.6 | 7.5 | 7.5 | 35.995 |
+| bastc-8-rdo-2-min-20 | 15.5 | 7.6 | 7.5 | 7.5 | 39.320 |
+| xuastc-6-q75 | 16.0 | 15.3 | 15.1 | 16.0 | 39.401 |
+
+#### Enhanced: every 80th body: hue
+
+| row | key changed | key moved, mean | worst | hued channel error, mean | worst | hued pixels off by 8 or more |
+|---|---:|---:|---:|---:|---:|---:|
+| ASTC 6 x 6 | 93.41 % | 7.901 | 203 | 3.132 | 199 | 25.321 % |
+| ASTC 8 x 8 | 95.74 % | 11.913 | 243 | 4.735 | 236 | 39.190 % |
+| ASTC 6 x 6, Basis encoder | 93.65 % | 8.308 | 223 | 3.292 | 216 | 26.711 % |
+| ASTC 6 x 6, Basis RDO 2 dB, gate 20 dB | 93.74 % | 8.397 | 223 | 3.327 | 216 | 27.110 % |
+| ASTC 6 x 6, Basis RDO 5 dB, gate 15 dB | 93.94 % | 8.717 | 229 | 3.455 | 222 | 28.245 % |
+| ASTC 8 x 8, Basis encoder | 95.81 % | 12.362 | 242 | 4.914 | 234 | 40.309 % |
+| ASTC 8 x 8, Basis RDO 2 dB, gate 20 dB | 95.86 % | 12.474 | 242 | 4.959 | 234 | 40.706 % |
+| BC1 (`dds`, High) | 92.30 % | 6.343 | 142 | 2.520 | 142 | 19.720 % |
+| XUASTC 6 x 6 q75, to ASTC 6 x 6 | 94.60 % | 9.030 | 223 | 3.581 | 216 | 30.230 % |
+| XUASTC 6 x 6 q75, to BC3 | 95.46 % | 11.075 | 231 | 4.400 | 224 | 38.069 % |
+| XUASTC 6 x 6 q75, to BC7 | 94.93 % | 9.659 | 227 | 3.835 | 226 | 32.638 % |
+| XUASTC 6 x 6 q75, to ETC2 + EAC | 95.99 % | 12.156 | 220 | 4.828 | 213 | 40.378 % |
+| XUASTC 6 x 6 q75, native | 94.57 % | 9.026 | 223 | 3.580 | 216 | 30.199 % |
+
+#### Enhanced: every 80th body: coverage at edges
+
+| row | edge pixels' error, mean levels | worst | edge pixels off by a level or more | solid pixels no longer solid |
+|---|---:|---:|---:|---:|
+| ASTC 6 x 6 | 1.286 | 14.2 | 49.18 % | 5.879 % |
+| ASTC 8 x 8 | 1.940 | 15.1 | 65.61 % | 9.354 % |
+| ASTC 6 x 6, Basis encoder | 1.367 | 15.1 | 52.54 % | 5.348 % |
+| ASTC 6 x 6, Basis RDO 2 dB, gate 20 dB | 1.373 | 15.1 | 52.77 % | 5.254 % |
+| ASTC 6 x 6, Basis RDO 5 dB, gate 15 dB | 1.416 | 15.1 | 53.83 % | 5.275 % |
+| ASTC 8 x 8, Basis encoder | 2.055 | 15.1 | 68.25 % | 8.794 % |
+| ASTC 8 x 8, Basis RDO 2 dB, gate 20 dB | 2.062 | 15.1 | 68.42 % | 8.699 % |
+| BC1 (`dds`, High) | 3.801 | 8.0 | 89.20 % | 0.000 % |
+| XUASTC 6 x 6 q75, to ASTC 6 x 6 | 1.410 | 15.1 | 54.12 % | 5.809 % |
+| XUASTC 6 x 6 q75, to BC3 | 1.505 | 15.1 | 57.13 % | 4.390 % |
+| XUASTC 6 x 6 q75, to BC7 | 1.554 | 15.1 | 56.84 % | 31.577 % |
+| XUASTC 6 x 6 q75, to ETC2 + EAC | 1.460 | 14.9 | 52.36 % | 21.423 % |
+| XUASTC 6 x 6 q75, native | 1.409 | 15.1 | 54.08 % | 5.769 % |
+
+Classic ETC1S, a file a stream against a file a body:
+
+```text
+cc: etc1s-q50: 11.6 MB in one file a stream, 7.7 MB in one file a body (1.507 x), 26 bodies, 3221 streams
+  up to 16 blocks: 102 streams, 0.0 MB, 37.61 bytes a block (raw BC1 is 8)
+  up to 64 blocks: 560 streams, 0.4 MB, 17.70 bytes a block (raw BC1 is 8)
+  up to 256 blocks: 1137 streams, 1.6 MB, 9.16 bytes a block (raw BC1 is 8)
+  up to 1024 blocks: 914 streams, 2.2 MB, 5.26 bytes a block (raw BC1 is 8)
+  up to 4096 blocks: 296 streams, 2.1 MB, 3.37 bytes a block (raw BC1 is 8)
+  up to more blocks: 212 streams, 5.2 MB, 2.74 bytes a block (raw BC1 is 8)
+```
+
+Enhanced ETC1S, a file a stream against a file a body:
+
+```text
+ec: etc1s-q50: 25.0 MB in one file a stream, 17.8 MB in one file a body (1.409 x), 24 bodies, 4459 streams
+  up to 16 blocks: 1 streams, 0.0 MB, 62.11 bytes a block (raw BC1 is 8)
+  up to 64 blocks: 277 streams, 0.3 MB, 21.08 bytes a block (raw BC1 is 8)
+  up to 256 blocks: 1278 streams, 2.1 MB, 11.22 bytes a block (raw BC1 is 8)
+  up to 1024 blocks: 1568 streams, 5.1 MB, 5.63 bytes a block (raw BC1 is 8)
+  up to 4096 blocks: 920 streams, 6.7 MB, 4.05 bytes a block (raw BC1 is 8)
+  up to more blocks: 415 streams, 10.8 MB, 2.41 bytes a block (raw BC1 is 8)
+```
+
+#### Classic, creatures, 300 pairs, 132.7 Mpx in five directions (transcode from the file; quiet rerun)
+
+| row | to | load unit | read MB | 1 thread ms | 4 threads ms | within the line | worst job ms |
+|---|---|---|---:|---:|---:|---|---:|
+| plain planes, zstd 19 | planes | five directions | 41.2 | 180.1 | 50.7 | yes | 9.7 |
+| plain planes, zstd 19 | planes | faced only | 8.2 | 36.5 | 10.5 | yes | 2.0 |
+| etc1s-q50 | bc1-opaque | five directions | 19.6 | 826.6 | 226.1 | yes | 32.5 |
+| etc1s-q50 | bc1-opaque | faced only | 3.9 | 166.5 | 46.2 | yes | 6.4 |
+| etc1s-q50 | bc3 | five directions | 19.6 | 1388.7 | 376.0 | no | 66.2 |
+| etc1s-q50 | bc3 | faced only | 3.9 | 276.9 | 74.9 | yes | 12.4 |
+| etc1s-q50 | bc7 | five directions | 19.6 | 3901.1 | 1086.1 | no | 228.5 |
+| etc1s-q50 | bc7 | faced only | 3.9 | 775.4 | 220.4 | yes | 40.8 |
+| etc1s-q50 | etc2-eac | five directions | 19.6 | 928.3 | 251.4 | no | 37.2 |
+| etc1s-q50 | etc2-eac | faced only | 3.9 | 185.2 | 50.4 | yes | 6.9 |
+| etc1s-q50 | astc-4 | five directions | 19.6 | 1656.4 | 446.8 | no | 83.1 |
+| etc1s-q50 | astc-4 | faced only | 3.9 | 330.1 | 89.7 | yes | 16.6 |
+| uastc-rdo-1 | bc1-opaque | five directions | 53.9 | 1598.3 | 448.0 | no | 84.8 |
+| uastc-rdo-1 | bc1-opaque | faced only | 10.7 | 316.9 | 92.3 | yes | 18.7 |
+| uastc-rdo-1 | bc3 | five directions | 53.9 | 1883.7 | 524.0 | no | 96.0 |
+| uastc-rdo-1 | bc3 | faced only | 10.7 | 371.7 | 107.6 | yes | 21.4 |
+| uastc-rdo-1 | bc7 | five directions | 53.9 | 1814.6 | 508.7 | no | 113.6 |
+| uastc-rdo-1 | bc7 | faced only | 10.7 | 357.3 | 102.4 | yes | 20.0 |
+| uastc-rdo-1 | etc2-eac | five directions | 53.9 | 1688.9 | 470.1 | no | 85.2 |
+| uastc-rdo-1 | etc2-eac | faced only | 10.7 | 336.9 | 96.5 | yes | 18.0 |
+| uastc-rdo-1 | astc-4 | five directions | 53.9 | 911.9 | 254.1 | no | 48.5 |
+| uastc-rdo-1 | astc-4 | faced only | 10.7 | 181.2 | 52.2 | yes | 10.2 |
+| xubc7-q75-r10 | bc1-opaque | five directions | 53.0 | 7309.3 | 2039.5 | no | 415.4 |
+| xubc7-q75-r10 | bc1-opaque | faced only | 10.6 | 1443.7 | 415.2 | no | 82.6 |
+| xubc7-q75-r10 | bc3 | five directions | 53.0 | 7600.6 | 2117.9 | no | 429.5 |
+| xubc7-q75-r10 | bc3 | faced only | 10.6 | 1501.7 | 430.8 | no | 85.0 |
+| xubc7-q75-r10 | bc7 | five directions | 53.0 | 3627.7 | 1012.7 | no | 188.9 |
+| xubc7-q75-r10 | bc7 | faced only | 10.6 | 721.5 | 208.2 | yes | 40.6 |
+| xubc7-q75-r10 | etc2-eac | five directions | 53.0 | 7588.2 | 2116.1 | no | 415.8 |
+| xubc7-q75-r10 | etc2-eac | faced only | 10.6 | 1506.4 | 431.7 | no | 83.7 |
+| xubc7-q75-r10 | astc-4 | five directions | 53.0 | 8140.0 | 2278.5 | no | 475.8 |
+| xubc7-q75-r10 | astc-4 | faced only | 10.6 | 1610.4 | 463.4 | no | 94.5 |
+
+#### Classic, dressed NPCs, 300 pairs, 9.7 Mpx in five directions (transcode from the file; quiet rerun)
+
+| row | to | load unit | read MB | 1 thread ms | 4 threads ms | within the line | worst job ms |
+|---|---|---|---:|---:|---:|---|---:|
+| plain planes, zstd 19 | planes | five directions | 3.6 | 22.7 | 5.9 | yes | 0.3 |
+| plain planes, zstd 19 | planes | faced only | 0.7 | 4.7 | 1.2 | yes | 0.1 |
+| etc1s-q50 | bc1-opaque | five directions | 3.7 | 142.1 | 36.3 | yes | 1.4 |
+| etc1s-q50 | bc1-opaque | faced only | 0.8 | 29.6 | 7.5 | yes | 0.3 |
+| etc1s-q50 | bc3 | five directions | 3.7 | 197.7 | 50.1 | yes | 2.2 |
+| etc1s-q50 | bc3 | faced only | 0.8 | 40.5 | 10.5 | yes | 0.5 |
+| etc1s-q50 | bc7 | five directions | 3.7 | 359.4 | 90.4 | yes | 6.4 |
+| etc1s-q50 | bc7 | faced only | 0.8 | 73.7 | 18.9 | yes | 1.4 |
+| etc1s-q50 | etc2-eac | five directions | 3.7 | 158.8 | 40.7 | yes | 1.7 |
+| etc1s-q50 | etc2-eac | faced only | 0.8 | 33.2 | 8.5 | yes | 0.4 |
+| etc1s-q50 | astc-4 | five directions | 3.7 | 216.2 | 54.9 | yes | 2.4 |
+| etc1s-q50 | astc-4 | faced only | 0.8 | 44.9 | 11.6 | yes | 0.5 |
+| uastc-rdo-1 | bc1-opaque | five directions | 6.2 | 195.9 | 49.6 | yes | 2.5 |
+| uastc-rdo-1 | bc1-opaque | faced only | 1.3 | 40.2 | 10.4 | yes | 0.6 |
+| uastc-rdo-1 | bc3 | five directions | 6.2 | 239.6 | 61.0 | yes | 3.0 |
+| uastc-rdo-1 | bc3 | faced only | 1.3 | 49.4 | 12.7 | yes | 0.7 |
+| uastc-rdo-1 | bc7 | five directions | 6.2 | 201.9 | 51.2 | yes | 2.6 |
+| uastc-rdo-1 | bc7 | faced only | 1.3 | 41.6 | 10.7 | yes | 0.5 |
+| uastc-rdo-1 | etc2-eac | five directions | 6.2 | 229.3 | 58.0 | yes | 3.0 |
+| uastc-rdo-1 | etc2-eac | faced only | 1.3 | 47.1 | 12.1 | yes | 0.6 |
+| uastc-rdo-1 | astc-4 | five directions | 6.2 | 106.5 | 26.8 | yes | 1.3 |
+| uastc-rdo-1 | astc-4 | faced only | 1.3 | 21.7 | 5.7 | yes | 0.3 |
+| xubc7-q75-r10 | bc1-opaque | five directions | 8.6 | 694.5 | 177.7 | yes | 11.0 |
+| xubc7-q75-r10 | bc1-opaque | faced only | 1.8 | 142.0 | 36.7 | yes | 2.3 |
+| xubc7-q75-r10 | bc3 | five directions | 8.6 | 744.7 | 189.8 | yes | 11.6 |
+| xubc7-q75-r10 | bc3 | faced only | 1.8 | 151.4 | 39.0 | yes | 2.3 |
+| xubc7-q75-r10 | bc7 | five directions | 8.6 | 350.8 | 90.2 | yes | 6.0 |
+| xubc7-q75-r10 | bc7 | faced only | 1.8 | 72.0 | 18.6 | yes | 1.2 |
+| xubc7-q75-r10 | etc2-eac | five directions | 8.6 | 798.0 | 203.6 | yes | 11.8 |
+| xubc7-q75-r10 | etc2-eac | faced only | 1.8 | 163.4 | 41.8 | yes | 2.4 |
+| xubc7-q75-r10 | astc-4 | five directions | 8.6 | 693.2 | 177.7 | yes | 10.3 |
+| xubc7-q75-r10 | astc-4 | faced only | 1.8 | 142.8 | 36.7 | yes | 2.2 |
+
+#### Enhanced, creatures, 300 pairs, 198.3 Mpx in five directions (transcode from the file; quiet rerun)
+
+| row | to | load unit | read MB | 1 thread ms | 4 threads ms | within the line | worst job ms |
+|---|---|---|---:|---:|---:|---|---:|
+| plain planes, zstd 19 | planes | five directions | 78.5 | 402.2 | 102.2 | yes | 18.1 |
+| plain planes, zstd 19 | planes | faced only | 15.7 | 81.7 | 20.8 | yes | 3.1 |
+| etc1s-q50 | bc1-opaque | five directions | 31.7 | 1242.9 | 314.0 | no | 38.3 |
+| etc1s-q50 | bc1-opaque | faced only | 6.3 | 251.4 | 63.6 | yes | 6.8 |
+| etc1s-q50 | bc3 | five directions | 31.7 | 2250.0 | 571.9 | no | 74.7 |
+| etc1s-q50 | bc3 | faced only | 6.3 | 457.3 | 116.9 | yes | 13.4 |
+| etc1s-q50 | bc7 | five directions | 31.7 | 5810.7 | 1464.7 | no | 252.4 |
+| etc1s-q50 | bc7 | faced only | 6.3 | 1166.1 | 294.5 | no | 43.9 |
+| etc1s-q50 | etc2-eac | five directions | 31.7 | 1480.8 | 374.1 | no | 39.4 |
+| etc1s-q50 | etc2-eac | faced only | 6.3 | 298.7 | 76.1 | yes | 7.5 |
+| etc1s-q50 | astc-4 | five directions | 31.7 | 2665.2 | 676.2 | no | 92.0 |
+| etc1s-q50 | astc-4 | faced only | 6.3 | 546.1 | 138.6 | yes | 17.7 |
+| uastc-rdo-1 | bc1-opaque | five directions | 80.8 | 2292.8 | 587.1 | no | 108.8 |
+| uastc-rdo-1 | bc1-opaque | faced only | 16.2 | 469.0 | 117.0 | yes | 19.3 |
+| uastc-rdo-1 | bc3 | five directions | 80.8 | 2756.4 | 699.5 | no | 124.3 |
+| uastc-rdo-1 | bc3 | faced only | 16.2 | 559.4 | 141.4 | yes | 22.8 |
+| uastc-rdo-1 | bc7 | five directions | 80.8 | 2732.7 | 690.9 | no | 111.4 |
+| uastc-rdo-1 | bc7 | faced only | 16.2 | 549.1 | 138.8 | yes | 20.4 |
+| uastc-rdo-1 | etc2-eac | five directions | 80.8 | 2573.5 | 651.7 | no | 109.4 |
+| uastc-rdo-1 | etc2-eac | faced only | 16.2 | 517.3 | 130.6 | yes | 19.8 |
+| uastc-rdo-1 | astc-4 | five directions | 80.8 | 1311.1 | 330.1 | no | 61.4 |
+| uastc-rdo-1 | astc-4 | faced only | 16.2 | 263.3 | 66.7 | yes | 11.2 |
+| xubc7-q75-r10 | bc1-opaque | five directions | 80.3 | 9976.1 | 2512.9 | no | 512.3 |
+| xubc7-q75-r10 | bc1-opaque | faced only | 16.1 | 2000.9 | 504.0 | no | 92.3 |
+| xubc7-q75-r10 | bc3 | five directions | 80.3 | 10503.4 | 2647.1 | no | 526.0 |
+| xubc7-q75-r10 | bc3 | faced only | 16.1 | 2110.3 | 531.9 | no | 94.8 |
+| xubc7-q75-r10 | bc7 | five directions | 80.3 | 4726.9 | 1194.1 | no | 259.4 |
+| xubc7-q75-r10 | bc7 | faced only | 16.1 | 950.5 | 241.7 | yes | 47.3 |
+| xubc7-q75-r10 | etc2-eac | five directions | 80.3 | 11042.3 | 2773.6 | no | 505.3 |
+| xubc7-q75-r10 | etc2-eac | faced only | 16.1 | 2212.3 | 557.2 | no | 90.2 |
+| xubc7-q75-r10 | astc-4 | five directions | 80.3 | 11088.3 | 2783.6 | no | 535.0 |
+| xubc7-q75-r10 | astc-4 | faced only | 16.1 | 2231.5 | 560.4 | no | 95.8 |
+
+#### Enhanced, dressed NPCs, 300 pairs, 15.8 Mpx in five directions (transcode from the file; quiet rerun)
+
+| row | to | load unit | read MB | 1 thread ms | 4 threads ms | within the line | worst job ms |
+|---|---|---|---:|---:|---:|---|---:|
+| plain planes, zstd 19 | planes | five directions | 9.9 | 58.8 | 14.9 | yes | 0.7 |
+| plain planes, zstd 19 | planes | faced only | 2.0 | 11.8 | 3.1 | yes | 0.2 |
+| etc1s-q50 | bc1-opaque | five directions | 5.5 | 197.3 | 50.4 | yes | 2.2 |
+| etc1s-q50 | bc1-opaque | faced only | 1.1 | 39.8 | 10.4 | yes | 0.5 |
+| etc1s-q50 | bc3 | five directions | 5.5 | 290.4 | 74.6 | yes | 3.7 |
+| etc1s-q50 | bc3 | faced only | 1.1 | 59.4 | 15.3 | yes | 0.8 |
+| etc1s-q50 | bc7 | five directions | 5.5 | 576.1 | 145.8 | yes | 7.7 |
+| etc1s-q50 | bc7 | faced only | 1.1 | 117.1 | 29.9 | yes | 1.7 |
+| etc1s-q50 | etc2-eac | five directions | 5.5 | 229.8 | 58.7 | yes | 2.8 |
+| etc1s-q50 | etc2-eac | faced only | 1.1 | 46.9 | 12.2 | yes | 0.6 |
+| etc1s-q50 | astc-4 | five directions | 5.5 | 312.8 | 80.3 | yes | 3.8 |
+| etc1s-q50 | astc-4 | faced only | 1.1 | 64.2 | 16.5 | yes | 0.8 |
+| uastc-rdo-1 | bc1-opaque | five directions | 10.2 | 288.1 | 74.3 | yes | 3.9 |
+| uastc-rdo-1 | bc1-opaque | faced only | 2.0 | 58.4 | 15.1 | yes | 0.8 |
+| uastc-rdo-1 | bc3 | five directions | 10.2 | 358.4 | 91.7 | yes | 4.8 |
+| uastc-rdo-1 | bc3 | faced only | 2.0 | 72.6 | 18.8 | yes | 1.0 |
+| uastc-rdo-1 | bc7 | five directions | 10.2 | 307.2 | 78.7 | yes | 4.2 |
+| uastc-rdo-1 | bc7 | faced only | 2.0 | 62.0 | 16.0 | yes | 0.9 |
+| uastc-rdo-1 | etc2-eac | five directions | 10.2 | 347.7 | 88.7 | yes | 4.5 |
+| uastc-rdo-1 | etc2-eac | faced only | 2.0 | 70.5 | 18.1 | yes | 0.9 |
+| uastc-rdo-1 | astc-4 | five directions | 10.2 | 155.0 | 39.7 | yes | 1.8 |
+| uastc-rdo-1 | astc-4 | faced only | 2.0 | 31.6 | 8.1 | yes | 0.4 |
+| xubc7-q75-r10 | bc1-opaque | five directions | 12.8 | 1046.5 | 270.1 | no | 16.4 |
+| xubc7-q75-r10 | bc1-opaque | faced only | 2.6 | 211.3 | 55.1 | yes | 3.4 |
+| xubc7-q75-r10 | bc3 | five directions | 12.8 | 1125.8 | 291.2 | no | 17.5 |
+| xubc7-q75-r10 | bc3 | faced only | 2.6 | 227.3 | 59.2 | yes | 3.7 |
+| xubc7-q75-r10 | bc7 | five directions | 12.8 | 518.0 | 134.5 | yes | 8.5 |
+| xubc7-q75-r10 | bc7 | faced only | 2.6 | 105.4 | 27.7 | yes | 1.9 |
+| xubc7-q75-r10 | etc2-eac | five directions | 12.8 | 1247.2 | 322.5 | no | 18.3 |
+| xubc7-q75-r10 | etc2-eac | faced only | 2.6 | 251.1 | 65.3 | yes | 3.8 |
+| xubc7-q75-r10 | astc-4 | five directions | 12.8 | 1062.0 | 274.9 | no | 15.5 |
+| xubc7-q75-r10 | astc-4 | faced only | 2.6 | 215.4 | 55.7 | yes | 3.3 |
+
+
+### The low-end mix: a block format above a size threshold
+
+The `tk` results already answer this for lossless disk, where one coder is right. This part measures the mix for the low-end tier only. **The layout is a per-body choice:** a body whose median cropped frame area is above the threshold takes a block format for all its frames, and the rest stay lossless R8 or RG8. **Lossless here is plain planes at zstd 19, per stream,** not the row-span coder, in both the disk and decode rows.
+
+**Reading the tables below:**
+
+- **Classic's BC1 is the only format in the mix where most coded bodies reach 80:** 28 of 33 above 2500 px, 9 of 9 above 10000, 2 of 2 above 40000. Above 2500 px it has a median of 81.77 and a min of 75.52, takes 523.5 MB on disk (0.72 × all lossless), and halves the creature crowd's VRAM (69.2 MB against 132.7, five directions). Dressed NPCs barely benefit (8.6 MB against 9.7), because they're mostly small bodies.
+- **Enhanced, BC1 doesn't work at any threshold.** Above 2500 px only 1 of 38 bodies reaches 80, with a p5 of −13.58 and a min of −46.34, from one-bit alpha.
+- **Enhanced, ASTC 6×6 above 2500 px** keeps its edges (min 63.85, median 73.08) but only 2 of 38 bodies reach 80.
+- **Enhanced, BC7 depends entirely on the encoder.** Above 2500 px, the repo's encoder as called gets 0 of 38 bodies to 80 (median 58.44). With fix C it's 36 of 38 (median 86.18, min 77.62) at 1931.1 MB, and with fix C and RDO 1 it's 28 of 38 (median 81.40, min 76.28) at 1805.4 MB. Those rows come from a scratch copy, not the repo encoder.
+- **Enhanced, BC1 on large bodies with BC7 on the rest** works only at a high threshold. Above 10000 px with fix C on the rest it takes 1390.0 MB, with 62 of 93 bodies at 80 and a min of 51.11. Above 2500 px the medium bodies bring back the −46.34.
+- **ASTC 8×8 never approaches 80 on these bodies,** with medians of 55 to 64. It's the smallest row by far, so it's the one to look at in the crops below before ruling it out.
+
+**Crowd VRAM isn't the whole set's.** Large bodies are 59.8 % of Classic's whole-set pixels and 76 to 78 % of its creature crowd's, and none of its dressed crowd's. Equipment is 17 % of the set but 54 % of the dressed crowd. So a threshold saves on creatures and does almost nothing for dressed NPCs. Enhanced has the same shape: large is 76 % of creatures, and equipment is 54 % of dressed.
+
+**Crops to look at** are in `/home/claudio/rust-target/uodynamapper-scratch/anim-codec/blocks-preview/`, with an `index.txt`: worst and median frames for BC1, ASTC 6×6 and ASTC 8×8 next to lossless, on large bodies and on a few equipment frames. They're extracted art, so they aren't committed.
+
+**Bodies to look at first,** worst at each threshold:
+
+| client | format | above 2500 | above 10000 | above 40000 |
+|---|---|---|---|---|
+| Classic | BC1 | anim2.mul 16 (75.5), anim4.mul 202 (78.5), anim.mul 24 (78.6) | AnimationFrame4.uop 1434 (80.6), AnimationFrame2.uop 1484 (81.1) | anim5.mul 198 (81.2), AnimationFrame3.uop 1248 (82.9) |
+| Classic | ASTC 6×6 | anim2.mul 16 (61.9), AnimationFrame4.uop 1434 (67.9), anim2.mul 49 (69.1) | AnimationFrame4.uop 1434 (67.9), AnimationFrame2.uop 1484 (70.1) | anim5.mul 198 (74.4), AnimationFrame3.uop 1248 (77.9) |
+| Classic | ASTC 8×8 | anim2.mul 16 (26.9), anim2.mul 49 (38.3), AnimationFrame2.uop 432 (41.2) | AnimationFrame4.uop 1434 (42.8), AnimationFrame2.uop 1484 (49.2) | anim5.mul 198 (57.9), AnimationFrame3.uop 1248 (64.2) |
+| Enhanced | BC1 | 16 (−46.3), 777 (−13.6), 1245 (40.5) | 11 (55.0), 1248 (56.9), 315 (68.0) | 1248 (56.9), 106 (79.0) |
+| Enhanced | ASTC 6×6 | 830 (63.9), 675 (65.8), 67 (65.8) | 830 (63.9), 432 (70.1), 1419 (71.8) | the table's last column |
+| Enhanced | ASTC 8×8 | 830 (44.1), 1255 (45.7), 307 (46.6) | 830 (44.1), 432 (54.2), 1419 (55.4) | the table's last column |
+
+**Not measured here:** hue from colour instead of index, in a real renderer. Section 15 has a headless measurement of the second shader path; it doesn't replace a renderer test.
+
+#### Classic: the mix on every 10th body; scores and hue are the block-coded bodies only
+
+| above | format | bodies | Mpx coded | disk MB | x all lossless | SSIMULACRA2 median | p5 | min | at 80 or better | RGB PSNR dB | channel error | painted pixels gone | hue key changed | key moved | hued error | hued worst | edge levels, mean | worst bodies |
+|---:|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---|
+| 0 | BC1 (`dds`, High) | 103 | 249.9 | 504.2 | 0.694 | 83.17 | 65.67 | 41.97 | 71 of 103 | 30.13 | 5.045 | 0.000 % | 50.70 % | 0.707 | 3.102 | 160 | 0.000 | AnimationFrame4.uop body 831 (NPC small, median 525 px): 42.0; anim3.mul body 371 (not listed, median 1624 px): 54.5; anim4.mul body 667 (equipment, median 144 px): 62.9 |
+| 0 | ASTC 6 x 6 | 103 | 249.9 | 525.6 | 0.723 | 75.28 | 58.12 | 43.93 | 33 of 103 | 29.22 | 5.518 | 0.000 % | 56.02 % | 0.812 | 3.478 | 200 | 0.000 | AnimationFrame4.uop body 831 (NPC small, median 525 px): 43.9; anim3.mul body 371 (not listed, median 1624 px): 47.4; anim4.mul body 667 (equipment, median 144 px): 49.6 |
+| 0 | ASTC 8 x 8 | 103 | 249.9 | 313.5 | 0.431 | 59.86 | 35.63 | 1.50 | 10 of 103 | 24.89 | 9.181 | 0.000 % | 66.61 % | 1.295 | 5.587 | 216 | 0.000 | anim3.mul body 371 (not listed, median 1624 px): 1.5; anim4.mul body 515 (equipment, median 1504 px): 17.2; AnimationFrame4.uop body 831 (NPC small, median 525 px): 23.4 |
+| 2500 | BC1 (`dds`, High) | 33 | 207.7 | 523.5 | 0.720 | 81.77 | 78.52 | 75.52 | 28 of 33 | 30.87 | 4.606 | 0.000 % | 48.38 % | 0.649 | 2.838 | 160 | 0.000 | anim2.mul body 16 (NPC medium, median 2964 px): 75.5; anim4.mul body 202 (NPC medium, median 5016 px): 78.5; anim.mul body 24 (NPC medium, median 2730 px): 78.6 |
+| 2500 | ASTC 6 x 6 | 33 | 207.7 | 536.8 | 0.739 | 74.87 | 67.93 | 61.87 | 7 of 33 | 30.42 | 4.857 | 0.000 % | 53.50 % | 0.727 | 3.082 | 200 | 0.000 | anim2.mul body 16 (NPC medium, median 2964 px): 61.9; AnimationFrame4.uop body 1434 (NPC large, median 21952 px): 67.9; anim2.mul body 49 (NPC medium, median 6975 px): 69.1 |
+| 2500 | ASTC 8 x 8 | 33 | 207.7 | 370.8 | 0.510 | 55.60 | 38.33 | 26.94 | 0 of 33 | 26.18 | 7.953 | 0.000 % | 63.92 % | 1.133 | 4.854 | 216 | 0.000 | anim2.mul body 16 (NPC medium, median 2964 px): 26.9; anim2.mul body 49 (NPC medium, median 6975 px): 38.3; AnimationFrame2.uop body 432 (NPC medium, median 6831 px): 41.2 |
+| 10000 | BC1 (`dds`, High) | 9 | 150.2 | 580.5 | 0.799 | 81.60 | 80.64 | 80.64 | 9 of 9 | 31.11 | 4.487 | 0.000 % | 46.40 % | 0.619 | 2.678 | 96 | 0.000 | AnimationFrame4.uop body 1434 (NPC large, median 21952 px): 80.6; AnimationFrame2.uop body 1484 (NPC large, median 12750 px): 81.1; anim5.mul body 198 (NPC large, median 79305 px): 81.2 |
+| 10000 | ASTC 6 x 6 | 9 | 150.2 | 587.3 | 0.808 | 74.46 | 67.93 | 67.93 | 2 of 9 | 30.93 | 4.634 | 0.000 % | 53.13 % | 0.701 | 2.915 | 200 | 0.000 | AnimationFrame4.uop body 1434 (NPC large, median 21952 px): 67.9; AnimationFrame2.uop body 1484 (NPC large, median 12750 px): 70.1; anim5.mul body 101 (equipment, median 16652 px): 73.7 |
+| 10000 | ASTC 8 x 8 | 9 | 150.2 | 474.5 | 0.653 | 57.88 | 42.82 | 42.82 | 0 of 9 | 26.65 | 7.581 | 0.000 % | 63.68 % | 1.087 | 4.589 | 216 | 0.000 | AnimationFrame4.uop body 1434 (NPC large, median 21952 px): 42.8; AnimationFrame2.uop body 1484 (NPC large, median 12750 px): 49.2; anim5.mul body 101 (equipment, median 16652 px): 52.1 |
+| 40000 | BC1 (`dds`, High) | 2 | 93.8 | 638.2 | 0.878 | 81.24 | 81.24 | 81.24 | 2 of 2 | 31.18 | 4.245 | 0.000 % | 41.87 % | 0.563 | 2.385 | 96 | 0.000 | anim5.mul body 198 (NPC large, median 79305 px): 81.2; AnimationFrame3.uop body 1248 (NPC large, median 76473 px): 82.9 |
+| 40000 | ASTC 6 x 6 | 2 | 93.8 | 641.4 | 0.883 | 74.37 | 74.37 | 74.37 | 0 of 2 | 31.28 | 4.382 | 0.000 % | 50.30 % | 0.647 | 2.575 | 184 | 0.000 | anim5.mul body 198 (NPC large, median 79305 px): 74.4; AnimationFrame3.uop body 1248 (NPC large, median 76473 px): 77.9 |
+| 40000 | ASTC 8 x 8 | 2 | 93.8 | 573.0 | 0.788 | 57.88 | 57.88 | 57.88 | 0 of 2 | 26.99 | 7.176 | 0.000 % | 60.91 % | 0.999 | 4.082 | 216 | 0.000 | anim5.mul body 198 (NPC large, median 79305 px): 57.9; AnimationFrame3.uop body 1248 (NPC large, median 76473 px): 64.2 |
+
+#### Enhanced: the mix on every 10th body; scores and hue are the block-coded bodies only
+
+| above | format | bodies | Mpx coded | disk MB | x all lossless | SSIMULACRA2 median | p5 | min | at 80 or better | RGB PSNR dB | channel error | painted pixels gone | hue key changed | key moved | hued error | hued worst | edge levels, mean | worst bodies |
+|---:|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---|
+| 0 | BC1 (`dds`, High) | 93 | 479.9 | 911.2 | 0.441 | 74.90 | 51.11 | -46.34 | 17 of 93 | 30.85 | 4.750 | 11.571 % | 88.51 % | 5.165 | 2.012 | 193 | 3.488 | EC body 16 (NPC medium, median 8979 px): -46.3; EC body 777 (NPC medium, median 3740 px): -13.6; EC body 533 (equipment, median 527 px): 20.5 |
+| 0 | BC7 (repo as called) | 93 | 479.9 | 1890.4 | 0.916 | 60.36 | 45.10 | 37.36 | 10 of 93 | 26.49 | 6.262 | 0.081 % | 84.81 % | 6.801 | 2.676 | 240 | 1.261 | EC body 1481 (equipment, median 506 px): 37.4; EC body 520 (equipment, median 1073 px): 41.1; EC body 11 (NPC large, median 13392 px): 41.4 |
+| 0 | ASTC 6 x 6 | 93 | 479.9 | 1065.0 | 0.516 | 73.08 | 56.49 | 39.20 | 16 of 93 | 28.22 | 6.088 | 0.406 % | 87.66 % | 6.512 | 2.548 | 206 | 0.970 | EC body 1481 (equipment, median 506 px): 39.2; EC body 868 (equipment, median 391 px): 46.7; EC body 463 (equipment, median 306 px): 52.0 |
+| 0 | ASTC 8 x 8 | 93 | 479.9 | 649.7 | 0.315 | 57.59 | 41.09 | 28.84 | 9 of 93 | 24.69 | 9.271 | 0.531 % | 90.88 % | 9.993 | 3.927 | 240 | 1.489 | EC body 1481 (equipment, median 506 px): 28.8; EC body 520 (equipment, median 1073 px): 35.4; EC body 868 (equipment, median 391 px): 37.2 |
+| 0 | BC7 (fix A + colour step) | 93 | 479.9 | 1970.0 | 0.954 | 77.20 | 64.19 | 52.17 | 32 of 93 | 31.39 | 3.837 | 0.472 % | 83.28 % | 4.106 | 1.595 | 220 | 0.514 | EC body 1530 (equipment, median 680 px): 52.2; EC body 1481 (equipment, median 506 px): 52.6; EC body 868 (equipment, median 391 px): 56.2 |
+| 0 | BC7 (fix C) | 93 | 479.9 | 1873.0 | 0.907 | 85.74 | 63.02 | 51.11 | 73 of 93 | 32.37 | 3.625 | 0.531 % | 83.36 % | 3.865 | 1.497 | 221 | 0.543 | EC body 1481 (equipment, median 506 px): 51.1; EC body 1530 (equipment, median 680 px): 52.8; EC body 868 (equipment, median 391 px): 53.9 |
+| 0 | BC7 (fix C + colour step) | 93 | 479.9 | 1963.9 | 0.951 | 87.22 | 68.22 | 54.25 | 76 of 93 | 33.71 | 3.192 | 0.443 % | 82.71 % | 3.405 | 1.315 | 220 | 0.453 | EC body 1530 (equipment, median 680 px): 54.3; EC body 1481 (equipment, median 506 px): 54.6; EC body 868 (equipment, median 391 px): 58.4 |
+| 0 | BC7 (fix C, RDO 1) | 93 | 479.9 | 1697.9 | 0.823 | 81.23 | 61.35 | 49.55 | 59 of 93 | 31.12 | 4.438 | 0.735 % | 85.50 % | 4.654 | 1.804 | 232 | 0.597 | EC body 1481 (equipment, median 506 px): 49.6; EC body 1530 (equipment, median 680 px): 51.0; EC body 868 (equipment, median 391 px): 52.4 |
+| 0 | BC7 (fix C + colour, RDO 1) | 93 | 479.9 | 1762.5 | 0.854 | 83.00 | 66.06 | 52.71 | 66 of 93 | 32.02 | 4.084 | 0.597 % | 85.17 % | 4.286 | 1.661 | 220 | 0.507 | EC body 1530 (equipment, median 680 px): 52.7; EC body 1481 (equipment, median 506 px): 53.9; EC body 868 (equipment, median 391 px): 57.1 |
+| 2500 | BC1 (`dds`, High) | 38 | 404.9 | 1165.0 | 0.564 | 73.24 | -13.58 | -46.34 | 1 of 38 | 31.12 | 4.592 | 10.346 % | 87.94 % | 5.046 | 1.964 | 193 | 3.375 | EC body 16 (NPC medium, median 8979 px): -46.3; EC body 777 (NPC medium, median 3740 px): -13.6; EC body 1245 (NPC medium, median 4554 px): 40.5 |
+| 2500 | BC7 (repo as called) | 38 | 404.9 | 1942.0 | 0.941 | 58.44 | 42.94 | 41.43 | 0 of 38 | 27.36 | 5.501 | 0.073 % | 83.89 % | 6.050 | 2.375 | 240 | 1.081 | EC body 11 (NPC large, median 13392 px): 41.4; EC body 1248 (NPC large, median 78260 px): 42.9; EC body 830 (NPC large, median 11495 px): 45.1 |
+| 2500 | ASTC 6 x 6 | 38 | 404.9 | 1268.2 | 0.614 | 73.08 | 65.76 | 63.85 | 2 of 38 | 29.06 | 5.517 | 0.313 % | 86.91 % | 5.961 | 2.328 | 206 | 0.847 | EC body 830 (NPC large, median 11495 px): 63.9; EC body 675 (equipment, median 2664 px): 65.8; EC body 67 (NPC medium, median 4050 px): 65.8 |
+| 2500 | ASTC 8 x 8 | 38 | 404.9 | 935.7 | 0.453 | 56.60 | 45.74 | 44.06 | 0 of 38 | 25.53 | 8.376 | 0.419 % | 90.15 % | 9.154 | 3.593 | 240 | 1.302 | EC body 830 (NPC large, median 11495 px): 44.1; EC body 1255 (NPC medium, median 7056 px): 45.7; EC body 307 (NPC medium, median 5548 px): 46.6 |
+| 2500 | BC1, the rest BC7 (repo as called) | 93 | 479.9 | 1113.3 | 0.539 | 70.21 | 41.07 | -46.34 | 11 of 93 | 28.49 | 5.595 | 8.583 % | 88.18 % | 6.058 | 2.371 | 240 | 2.963 | EC body 16 (NPC medium, median 8979 px): -46.3; EC body 777 (NPC medium, median 3740 px): -13.6; EC body 1481 (equipment, median 506 px): 37.4 |
+| 2500 | BC1, the rest BC7 (repo) + colour step | 93 | 479.9 | 1147.0 | 0.556 | 56.87 | -3.18 | -46.34 | 5 of 93 | 28.35 | 5.374 | 9.506 % | 87.91 % | 5.823 | 2.274 | 240 | 3.302 | EC body 16 (NPC medium, median 8979 px): -46.3; EC body 815 (equipment, median 1054 px): -19.0; EC body 1041 (equipment, median 1540 px): -13.8 |
+| 2500 | BC7 (fix A + colour step) | 38 | 404.9 | 1992.3 | 0.965 | 76.94 | 72.03 | 71.32 | 6 of 38 | 32.04 | 3.550 | 0.357 % | 82.61 % | 3.829 | 1.483 | 190 | 0.463 | EC body 830 (NPC large, median 11495 px): 71.3; EC body 1255 (NPC medium, median 7056 px): 72.0; EC body 1407 (NPC medium, median 9576 px): 74.1 |
+| 2500 | BC7 (fix C) | 38 | 404.9 | 1931.1 | 0.936 | 86.18 | 78.07 | 77.62 | 36 of 38 | 33.08 | 3.335 | 0.405 % | 82.71 % | 3.578 | 1.382 | 221 | 0.478 | EC body 1407 (NPC medium, median 9576 px): 77.6; EC body 1248 (NPC large, median 78260 px): 78.1; EC body 307 (NPC medium, median 5548 px): 80.6 |
+| 2500 | BC7 (fix C + colour step) | 38 | 404.9 | 1988.1 | 0.963 | 87.40 | 82.26 | 78.66 | 37 of 38 | 34.20 | 3.002 | 0.334 % | 82.13 % | 3.210 | 1.236 | 174 | 0.402 | EC body 1407 (NPC medium, median 9576 px): 78.7; EC body 1255 (NPC medium, median 7056 px): 82.3; EC body 307 (NPC medium, median 5548 px): 82.3 |
+| 2500 | BC7 (fix C, RDO 1) | 38 | 404.9 | 1805.4 | 0.875 | 81.40 | 76.77 | 76.28 | 28 of 38 | 31.71 | 4.126 | 0.560 % | 84.83 % | 4.355 | 1.683 | 232 | 0.525 | EC body 1248 (NPC large, median 78260 px): 76.3; EC body 1407 (NPC medium, median 9576 px): 76.8; EC body 1255 (NPC medium, median 7056 px): 77.0 |
+| 2500 | BC7 (fix C + colour, RDO 1) | 38 | 404.9 | 1845.4 | 0.894 | 82.39 | 78.62 | 77.76 | 31 of 38 | 32.44 | 3.859 | 0.452 % | 84.53 % | 4.065 | 1.570 | 174 | 0.448 | EC body 1407 (NPC medium, median 9576 px): 77.8; EC body 1255 (NPC medium, median 7056 px): 78.6; EC body 830 (NPC large, median 11495 px): 78.9 |
+| 2500 | BC1, the rest BC7 (fix A + colour step) | 93 | 479.9 | 1142.7 | 0.554 | 75.60 | 52.58 | -46.34 | 27 of 93 | 30.67 | 4.710 | 8.739 % | 87.67 % | 5.119 | 1.995 | 220 | 2.675 | EC body 16 (NPC medium, median 8979 px): -46.3; EC body 777 (NPC medium, median 3740 px): -13.6; EC body 1245 (NPC medium, median 4554 px): 40.5 |
+| 2500 | BC1, the rest BC7 (fix C) | 93 | 479.9 | 1106.9 | 0.536 | 77.19 | 52.79 | -46.34 | 38 of 93 | 30.89 | 4.673 | 8.758 % | 87.66 % | 5.082 | 1.980 | 194 | 2.692 | EC body 16 (NPC medium, median 8979 px): -46.3; EC body 777 (NPC medium, median 3740 px): -13.6; EC body 1245 (NPC medium, median 4554 px): 40.5 |
+| 2500 | BC1, the rest BC7 (fix C + colour step) | 93 | 479.9 | 1140.8 | 0.553 | 78.03 | 54.58 | -46.34 | 40 of 93 | 31.25 | 4.502 | 8.729 % | 87.48 % | 4.913 | 1.913 | 220 | 2.659 | EC body 16 (NPC medium, median 8979 px): -46.3; EC body 777 (NPC medium, median 3740 px): -13.6; EC body 1245 (NPC medium, median 4554 px): 40.5 |
+| 2500 | BC1, the rest BC7 (fix C, RDO 1) | 93 | 479.9 | 1057.4 | 0.512 | 76.06 | 51.00 | -46.34 | 32 of 93 | 30.65 | 4.845 | 8.835 % | 88.08 % | 5.243 | 2.043 | 193 | 2.712 | EC body 16 (NPC medium, median 8979 px): -46.3; EC body 777 (NPC medium, median 3740 px): -13.6; EC body 1245 (NPC medium, median 4554 px): 40.5 |
+| 2500 | BC1, the rest BC7 (fix C + colour, RDO 1) | 93 | 479.9 | 1082.0 | 0.524 | 77.02 | 53.92 | -46.34 | 36 of 93 | 30.98 | 4.701 | 8.785 % | 88.00 % | 5.103 | 1.989 | 220 | 2.679 | EC body 16 (NPC medium, median 8979 px): -46.3; EC body 777 (NPC medium, median 3740 px): -13.6; EC body 1245 (NPC medium, median 4554 px): 40.5 |
+| 10000 | BC1 (`dds`, High) | 13 | 279.7 | 1501.9 | 0.728 | 72.37 | 55.03 | 55.03 | 1 of 13 | 31.57 | 4.380 | 6.816 % | 88.21 % | 4.916 | 1.903 | 193 | 3.417 | EC body 11 (NPC large, median 13392 px): 55.0; EC body 1248 (NPC large, median 78260 px): 56.9; EC body 315 (NPC large, median 17316 px): 68.0 |
+| 10000 | BC7 (repo as called) | 13 | 279.7 | 1992.1 | 0.965 | 57.47 | 41.43 | 41.43 | 0 of 13 | 27.80 | 5.193 | 0.099 % | 86.67 % | 5.853 | 2.291 | 240 | 1.177 | EC body 11 (NPC large, median 13392 px): 41.4; EC body 1248 (NPC large, median 78260 px): 42.9; EC body 830 (NPC large, median 11495 px): 45.1 |
+| 10000 | ASTC 6 x 6 | 13 | 279.7 | 1554.7 | 0.753 | 75.05 | 63.85 | 63.85 | 1 of 13 | 29.61 | 5.263 | 0.305 % | 89.61 % | 5.816 | 2.265 | 203 | 0.968 | EC body 830 (NPC large, median 11495 px): 63.9; EC body 432 (NPC large, median 12250 px): 70.1; EC body 1419 (NPC large, median 32928 px): 71.8 |
+| 10000 | ASTC 8 x 8 | 13 | 279.7 | 1344.1 | 0.651 | 60.47 | 44.06 | 44.06 | 0 of 13 | 26.06 | 7.948 | 0.406 % | 92.97 % | 8.919 | 3.494 | 240 | 1.484 | EC body 830 (NPC large, median 11495 px): 44.1; EC body 432 (NPC large, median 12250 px): 54.2; EC body 1419 (NPC large, median 32928 px): 55.4 |
+| 10000 | BC1, the rest BC7 (repo as called) | 93 | 479.9 | 1400.2 | 0.678 | 63.36 | 46.69 | 37.36 | 11 of 93 | 27.49 | 5.893 | 3.558 % | 85.53 % | 6.352 | 2.490 | 240 | 2.025 | EC body 1481 (equipment, median 506 px): 37.4; EC body 520 (equipment, median 1073 px): 41.1; EC body 1530 (equipment, median 680 px): 45.6 |
+| 10000 | BC1, the rest BC7 (repo) + colour step | 93 | 479.9 | 1461.8 | 0.708 | 34.62 | 4.01 | -19.00 | 5 of 93 | 27.38 | 5.487 | 5.288 % | 85.03 % | 5.908 | 2.307 | 240 | 2.668 | EC body 815 (equipment, median 1054 px): -19.0; EC body 1041 (equipment, median 1540 px): -13.8; EC body 90 (NPC small, median 735 px): -3.2 |
+| 10000 | BC7 (fix A + colour step) | 13 | 279.7 | 2017.6 | 0.977 | 76.75 | 71.32 | 71.32 | 1 of 13 | 32.55 | 3.442 | 0.315 % | 85.52 % | 3.790 | 1.461 | 174 | 0.523 | EC body 830 (NPC large, median 11495 px): 71.3; EC body 243 (NPC large, median 26085 px): 74.4; EC body 315 (NPC large, median 17316 px): 75.5 |
+| 10000 | BC7 (fix C) | 13 | 279.7 | 1985.0 | 0.962 | 86.18 | 78.07 | 78.07 | 12 of 13 | 33.70 | 3.193 | 0.362 % | 85.52 % | 3.475 | 1.334 | 221 | 0.552 | EC body 1248 (NPC large, median 78260 px): 78.1; EC body 830 (NPC large, median 11495 px): 82.0; EC body 1419 (NPC large, median 32928 px): 83.4 |
+| 10000 | BC7 (fix C + colour step) | 13 | 279.7 | 2015.4 | 0.976 | 87.40 | 83.11 | 83.11 | 13 of 13 | 34.66 | 2.938 | 0.296 % | 85.07 % | 3.183 | 1.217 | 174 | 0.474 | EC body 830 (NPC large, median 11495 px): 83.1; EC body 1248 (NPC large, median 78260 px): 83.5; EC body 1419 (NPC large, median 32928 px): 83.8 |
+| 10000 | BC7 (fix C, RDO 1) | 13 | 279.7 | 1902.6 | 0.922 | 81.23 | 76.28 | 76.28 | 10 of 13 | 32.11 | 4.014 | 0.497 % | 87.67 % | 4.304 | 1.655 | 232 | 0.599 | EC body 1248 (NPC large, median 78260 px): 76.3; EC body 830 (NPC large, median 11495 px): 77.2; EC body 1419 (NPC large, median 32928 px): 79.2 |
+| 10000 | BC7 (fix C + colour, RDO 1) | 13 | 279.7 | 1923.1 | 0.932 | 82.36 | 78.88 | 78.88 | 10 of 13 | 32.70 | 3.815 | 0.405 % | 87.46 % | 4.086 | 1.569 | 174 | 0.521 | EC body 830 (NPC large, median 11495 px): 78.9; EC body 1248 (NPC large, median 78260 px): 79.6; EC body 1419 (NPC large, median 32928 px): 79.8 |
+| 10000 | BC1, the rest BC7 (fix A + colour step) | 93 | 479.9 | 1454.4 | 0.705 | 76.97 | 56.87 | 52.17 | 32 of 93 | 30.95 | 4.321 | 3.837 % | 84.59 % | 4.702 | 1.829 | 220 | 1.501 | EC body 1530 (equipment, median 680 px): 52.2; EC body 1481 (equipment, median 506 px): 52.6; EC body 11 (NPC large, median 13392 px): 55.0 |
+| 10000 | BC1, the rest BC7 (fix C) | 93 | 479.9 | 1390.0 | 0.673 | 84.65 | 56.42 | 51.11 | 62 of 93 | 31.43 | 4.235 | 3.872 % | 84.67 % | 4.627 | 1.799 | 194 | 1.520 | EC body 1481 (equipment, median 506 px): 51.1; EC body 1530 (equipment, median 680 px): 52.8; EC body 868 (equipment, median 391 px): 53.9 |
+| 10000 | BC1, the rest BC7 (fix C + colour step) | 93 | 479.9 | 1450.5 | 0.703 | 86.37 | 58.37 | 54.25 | 64 of 93 | 32.17 | 3.924 | 3.818 % | 84.25 % | 4.312 | 1.675 | 220 | 1.456 | EC body 1530 (equipment, median 680 px): 54.3; EC body 1481 (equipment, median 506 px): 54.6; EC body 11 (NPC large, median 13392 px): 55.0 |
+| 10000 | BC1, the rest BC7 (fix C, RDO 1) | 93 | 479.9 | 1297.3 | 0.628 | 80.24 | 56.39 | 49.55 | 50 of 93 | 30.87 | 4.636 | 4.006 % | 85.70 % | 4.984 | 1.939 | 193 | 1.558 | EC body 1481 (equipment, median 506 px): 49.6; EC body 1530 (equipment, median 680 px): 51.0; EC body 868 (equipment, median 391 px): 52.4 |
+| 10000 | BC1, the rest BC7 (fix C + colour, RDO 1) | 93 | 479.9 | 1341.3 | 0.650 | 82.34 | 57.08 | 52.71 | 57 of 93 | 31.48 | 4.377 | 3.915 % | 85.48 % | 4.724 | 1.838 | 220 | 1.494 | EC body 1530 (equipment, median 680 px): 52.7; EC body 1481 (equipment, median 506 px): 53.9; EC body 11 (NPC large, median 13392 px): 55.0 |
+| 40000 | BC1 (`dds`, High) | 2 | 113.5 | 1866.2 | 0.904 | 56.87 | 56.87 | 56.87 | 0 of 2 | 32.11 | 3.824 | 4.318 % | 82.57 % | 4.076 | 1.529 | 193 | 3.895 | EC body 1248 (NPC large, median 78260 px): 56.9; EC body 106 (NPC large, median 46512 px): 79.0 |
+| 40000 | BC7 (repo as called) | 2 | 113.5 | 2048.5 | 0.992 | 42.94 | 42.94 | 42.94 | 0 of 2 | 29.32 | 4.014 | 0.175 % | 83.83 % | 4.227 | 1.607 | 240 | 1.117 | EC body 1248 (NPC large, median 78260 px): 42.9; EC body 106 (NPC large, median 46512 px): 60.4 |
+| 40000 | ASTC 6 x 6 | 2 | 113.5 | 1885.7 | 0.913 | 77.08 | 77.08 | 77.08 | 1 of 2 | 31.02 | 4.217 | 0.217 % | 84.74 % | 4.462 | 1.683 | 197 | 0.921 | EC body 1248 (NPC large, median 78260 px): 77.1; EC body 106 (NPC large, median 46512 px): 81.8 |
+| 40000 | ASTC 8 x 8 | 2 | 113.5 | 1802.0 | 0.873 | 63.78 | 63.78 | 63.78 | 0 of 2 | 27.32 | 6.480 | 0.283 % | 89.39 % | 6.868 | 2.615 | 240 | 1.463 | EC body 1248 (NPC large, median 78260 px): 63.8; EC body 106 (NPC large, median 46512 px): 74.3 |
+| 40000 | BC1, the rest BC7 (repo as called) | 93 | 479.9 | 1708.1 | 0.827 | 60.65 | 45.60 | 37.36 | 10 of 93 | 26.70 | 6.242 | 0.979 % | 84.54 % | 6.792 | 2.669 | 240 | 1.497 | EC body 1481 (equipment, median 506 px): 37.4; EC body 520 (equipment, median 1073 px): 41.1; EC body 11 (NPC large, median 13392 px): 41.4 |
+| 40000 | BC1, the rest BC7 (repo) + colour step | 93 | 479.9 | 1788.8 | 0.867 | 30.07 | 1.81 | -19.00 | 4 of 93 | 26.67 | 5.669 | 3.422 % | 83.80 % | 6.132 | 2.397 | 240 | 2.468 | EC body 815 (equipment, median 1054 px): -19.0; EC body 1041 (equipment, median 1540 px): -13.8; EC body 90 (NPC small, median 735 px): -3.2 |
+| 40000 | BC7 (fix A + colour step) | 2 | 113.5 | 2056.9 | 0.996 | 78.79 | 78.79 | 78.79 | 1 of 2 | 34.30 | 2.766 | 0.194 % | 82.69 % | 2.928 | 1.087 | 171 | 0.545 | EC body 1248 (NPC large, median 78260 px): 78.8; EC body 106 (NPC large, median 46512 px): 82.2 |
+| 40000 | BC7 (fix C) | 2 | 113.5 | 2048.0 | 0.992 | 78.07 | 78.07 | 78.07 | 1 of 2 | 34.60 | 2.671 | 0.225 % | 82.54 % | 2.823 | 1.045 | 221 | 0.548 | EC body 1248 (NPC large, median 78260 px): 78.1; EC body 106 (NPC large, median 46512 px): 89.3 |
+| 40000 | BC7 (fix C + colour step) | 2 | 113.5 | 2056.9 | 0.996 | 83.48 | 83.48 | 83.48 | 2 of 2 | 35.64 | 2.509 | 0.187 % | 82.23 % | 2.652 | 0.976 | 154 | 0.499 | EC body 1248 (NPC large, median 78260 px): 83.5; EC body 106 (NPC large, median 46512 px): 90.5 |
+| 40000 | BC7 (fix C, RDO 1) | 2 | 113.5 | 2018.5 | 0.978 | 76.28 | 76.28 | 76.28 | 1 of 2 | 33.12 | 3.334 | 0.289 % | 85.05 % | 3.471 | 1.277 | 232 | 0.599 | EC body 1248 (NPC large, median 78260 px): 76.3; EC body 106 (NPC large, median 46512 px): 85.7 |
+| 40000 | BC7 (fix C + colour, RDO 1) | 2 | 113.5 | 2024.6 | 0.981 | 79.64 | 79.64 | 79.64 | 1 of 2 | 33.78 | 3.208 | 0.243 % | 84.95 % | 3.334 | 1.224 | 170 | 0.548 | EC body 1248 (NPC large, median 78260 px): 79.6; EC body 106 (NPC large, median 46512 px): 86.0 |
+| 40000 | BC1, the rest BC7 (fix A + colour step) | 93 | 479.9 | 1779.3 | 0.862 | 77.12 | 64.05 | 52.17 | 31 of 93 | 31.07 | 4.069 | 1.366 % | 83.26 % | 4.367 | 1.696 | 220 | 0.799 | EC body 1530 (equipment, median 680 px): 52.2; EC body 1481 (equipment, median 506 px): 52.6; EC body 868 (equipment, median 391 px): 56.2 |
+| 40000 | BC1, the rest BC7 (fix C) | 93 | 479.9 | 1691.2 | 0.819 | 85.58 | 56.87 | 51.11 | 72 of 93 | 31.95 | 3.876 | 1.418 % | 83.37 % | 4.147 | 1.607 | 194 | 0.827 | EC body 1481 (equipment, median 506 px): 51.1; EC body 1530 (equipment, median 680 px): 52.8; EC body 868 (equipment, median 391 px): 53.9 |
+| 40000 | BC1, the rest BC7 (fix C + colour step) | 93 | 479.9 | 1773.2 | 0.859 | 87.07 | 66.39 | 54.25 | 74 of 93 | 33.02 | 3.475 | 1.339 % | 82.79 % | 3.722 | 1.439 | 220 | 0.742 | EC body 1530 (equipment, median 680 px): 54.3; EC body 1481 (equipment, median 506 px): 54.6; EC body 1248 (NPC large, median 78260 px): 56.9 |
+| 40000 | BC1, the rest BC7 (fix C, RDO 1) | 93 | 479.9 | 1545.6 | 0.749 | 81.12 | 56.87 | 49.55 | 58 of 93 | 30.96 | 4.551 | 1.609 % | 84.96 % | 4.797 | 1.864 | 193 | 0.878 | EC body 1481 (equipment, median 506 px): 49.6; EC body 1530 (equipment, median 680 px): 51.0; EC body 868 (equipment, median 391 px): 52.4 |
+| 40000 | BC1, the rest BC7 (fix C + colour, RDO 1) | 93 | 479.9 | 1604.1 | 0.777 | 82.77 | 62.39 | 52.71 | 65 of 93 | 31.73 | 4.222 | 1.480 % | 84.66 % | 4.457 | 1.731 | 220 | 0.791 | EC body 1530 (equipment, median 680 px): 52.7; EC body 1481 (equipment, median 506 px): 53.9; EC body 1248 (NPC large, median 78260 px): 56.9 |
+
+#### Classic: resident MB under the mix: pixels padded to each format's block, no atlas waste, no tables, no hue masks
+
+| layout | whole set, every direction (x 9.681) | creatures, five directions | creatures, faced only | dressed NPCs, five directions | dressed NPCs, faced only |
+|---|---:|---:|---:|---:|---:|
+| all lossless | 2419.0 | 132.7 | 25.8 | 9.7 | 2.0 |
+| above 0: BC1 | 1255.5 | 67.8 | 13.2 | 5.4 | 1.1 |
+| above 0: BC7 | 2511.0 | 135.6 | 26.4 | 10.8 | 2.2 |
+| above 0: ASTC 6 x 6 | 1146.1 | 61.2 | 11.9 | 5.2 | 1.1 |
+| above 0: ASTC 8 x 8 | 660.3 | 34.9 | 6.8 | 3.1 | 0.6 |
+| above 2500: BC1 | 1434.2 | 69.2 | 13.5 | 8.6 | 1.8 |
+| above 2500: BC7 | 2460.5 | 135.4 | 26.3 | 9.9 | 2.0 |
+| above 2500: ASTC 6 x 6 | 1333.5 | 62.6 | 12.2 | 8.5 | 1.7 |
+| above 2500: ASTC 8 x 8 | 935.7 | 37.0 | 7.2 | 8.0 | 1.6 |
+| above 10000: BC1 | 1702.4 | 81.7 | 16.0 | 9.7 | 2.0 |
+| above 10000: BC7 | 2439.7 | 134.3 | 26.1 | 9.7 | 2.0 |
+| above 10000: ASTC 6 x 6 | 1627.0 | 76.3 | 15.0 | 9.7 | 2.0 |
+| above 10000: ASTC 8 x 8 | 1341.0 | 56.0 | 11.1 | 9.7 | 2.0 |
+| above 40000: BC1 | 1969.9 | 105.5 | 20.7 | 9.7 | 2.0 |
+| above 40000: BC7 | 2428.9 | 133.2 | 25.9 | 9.7 | 2.0 |
+| above 40000: ASTC 6 x 6 | 1921.9 | 102.6 | 20.1 | 9.7 | 2.0 |
+| above 40000: ASTC 8 x 8 | 1743.7 | 91.8 | 18.1 | 9.7 | 2.0 |
+
+#### Classic: each class's resident MB and share
+
+| view | format | equipment | NPC small | NPC medium | NPC large | not listed |
+|---|---|---:|---:|---:|---:|---:|
+| whole set, every direction (x 9.681) | lossless | 415.7, 17.2 % | 53.7, 2.2 % | 479.9, 19.8 % | 1445.8, 59.8 % | 23.9, 1.0 % |
+| whole set, every direction (x 9.681) | BC1 | 231.1, 18.4 % | 29.0, 2.3 % | 249.0, 19.8 % | 733.2, 58.4 % | 13.3, 1.1 % |
+| whole set, every direction (x 9.681) | BC7 | 462.1, 18.4 % | 57.9, 2.3 % | 498.1, 19.8 % | 1466.3, 58.4 % | 26.5, 1.1 % |
+| whole set, every direction (x 9.681) | ASTC 6 x 6 | 221.2, 19.3 % | 27.0, 2.4 % | 227.1, 19.8 % | 658.1, 57.4 % | 12.6, 1.1 % |
+| whole set, every direction (x 9.681) | ASTC 8 x 8 | 132.0, 20.0 % | 15.9, 2.4 % | 131.0, 19.8 % | 373.7, 56.6 % | 7.7, 1.2 % |
+| creatures, five directions | lossless | 0.0, 0.0 % | 3.0, 2.2 % | 26.1, 19.7 % | 103.6, 78.1 % | 0.0, 0.0 % |
+| creatures, five directions | BC1 | 0.0, 0.0 % | 1.6, 2.4 % | 13.6, 20.0 % | 52.6, 77.6 % | 0.0, 0.0 % |
+| creatures, five directions | BC7 | 0.0, 0.0 % | 3.2, 2.4 % | 27.2, 20.0 % | 105.3, 77.6 % | 0.0, 0.0 % |
+| creatures, five directions | ASTC 6 x 6 | 0.0, 0.0 % | 1.5, 2.5 % | 12.4, 20.3 % | 47.3, 77.3 % | 0.0, 0.0 % |
+| creatures, five directions | ASTC 8 x 8 | 0.0, 0.0 % | 0.9, 2.5 % | 7.2, 20.5 % | 26.9, 77.0 % | 0.0, 0.0 % |
+| creatures, faced only | lossless | 0.0, 0.0 % | 0.6, 2.3 % | 5.3, 20.6 % | 19.9, 77.1 % | 0.0, 0.0 % |
+| creatures, faced only | BC1 | 0.0, 0.0 % | 0.3, 2.4 % | 2.8, 20.9 % | 10.1, 76.6 % | 0.0, 0.0 % |
+| creatures, faced only | BC7 | 0.0, 0.0 % | 0.6, 2.4 % | 5.5, 20.9 % | 20.2, 76.6 % | 0.0, 0.0 % |
+| creatures, faced only | ASTC 6 x 6 | 0.0, 0.0 % | 0.3, 2.5 % | 2.5, 21.2 % | 9.1, 76.3 % | 0.0, 0.0 % |
+| creatures, faced only | ASTC 8 x 8 | 0.0, 0.0 % | 0.2, 2.6 % | 1.5, 21.4 % | 5.2, 76.0 % | 0.0, 0.0 % |
+| dressed NPCs, five directions | lossless | 5.3, 54.4 % | 2.0, 20.9 % | 2.4, 24.7 % | 0.0, 0.0 % | 0.0, 0.0 % |
+| dressed NPCs, five directions | BC1 | 3.0, 55.8 % | 1.1, 20.4 % | 1.3, 23.8 % | 0.0, 0.0 % | 0.0, 0.0 % |
+| dressed NPCs, five directions | BC7 | 6.0, 55.8 % | 2.2, 20.4 % | 2.6, 23.8 % | 0.0, 0.0 % | 0.0, 0.0 % |
+| dressed NPCs, five directions | ASTC 6 x 6 | 2.9, 56.7 % | 1.0, 20.1 % | 1.2, 23.2 % | 0.0, 0.0 % | 0.0, 0.0 % |
+| dressed NPCs, five directions | ASTC 8 x 8 | 1.8, 57.3 % | 0.6, 19.7 % | 0.7, 23.0 % | 0.0, 0.0 % | 0.0, 0.0 % |
+| dressed NPCs, faced only | lossless | 1.1, 54.7 % | 0.4, 20.5 % | 0.5, 24.9 % | 0.0, 0.0 % | 0.0, 0.0 % |
+| dressed NPCs, faced only | BC1 | 0.6, 56.0 % | 0.2, 20.2 % | 0.3, 23.8 % | 0.0, 0.0 % | 0.0, 0.0 % |
+| dressed NPCs, faced only | BC7 | 1.2, 56.0 % | 0.4, 20.2 % | 0.5, 23.8 % | 0.0, 0.0 % | 0.0, 0.0 % |
+| dressed NPCs, faced only | ASTC 6 x 6 | 0.6, 56.9 % | 0.2, 20.0 % | 0.2, 23.0 % | 0.0, 0.0 % | 0.0, 0.0 % |
+| dressed NPCs, faced only | ASTC 8 x 8 | 0.4, 57.2 % | 0.1, 19.8 % | 0.1, 23.0 % | 0.0, 0.0 % | 0.0, 0.0 % |
+
+#### Enhanced: resident MB under the mix: pixels padded to each format's block, no atlas waste, no tables, no hue masks
+
+| layout | whole set, every direction (x 10.245) | creatures, five directions | creatures, faced only | dressed NPCs, five directions | dressed NPCs, faced only |
+|---|---:|---:|---:|---:|---:|
+| all lossless | 9834.0 | 396.6 | 79.9 | 31.6 | 6.4 |
+| above 0: BC1 | 2556.1 | 101.4 | 20.4 | 8.6 | 1.7 |
+| above 0: BC7 | 5112.2 | 202.8 | 40.8 | 17.2 | 3.5 |
+| above 0: ASTC 6 x 6 | 2331.3 | 91.5 | 18.4 | 8.0 | 1.6 |
+| above 0: ASTC 8 x 8 | 1346.3 | 52.2 | 10.5 | 4.8 | 1.0 |
+| above 2500: BC1 | 3665.1 | 106.4 | 21.4 | 21.3 | 4.3 |
+| above 2500: BC7 | 5792.4 | 205.9 | 41.5 | 25.0 | 5.0 |
+| above 2500: ASTC 6 x 6 | 3461.1 | 96.6 | 19.5 | 21.1 | 4.2 |
+| above 2500: ASTC 8 x 8 | 2638.2 | 58.0 | 11.7 | 19.6 | 4.0 |
+| above 2500: BC1, the rest BC7 | 2984.9 | 103.2 | 20.8 | 13.5 | 2.7 |
+| above 10000: BC1 | 5559.9 | 171.5 | 34.3 | 31.6 | 6.4 |
+| above 10000: BC7 | 7017.1 | 248.2 | 49.8 | 31.6 | 6.4 |
+| above 10000: ASTC 6 x 6 | 5413.0 | 163.7 | 32.7 | 31.6 | 6.4 |
+| above 10000: ASTC 8 x 8 | 4848.0 | 134.0 | 26.7 | 31.6 | 6.4 |
+| above 10000: BC1, the rest BC7 | 3655.1 | 126.0 | 25.3 | 17.2 | 3.5 |
+| above 40000: BC1 | 8096.5 | 305.8 | 61.4 | 31.6 | 6.4 |
+| above 40000: BC7 | 8684.7 | 336.5 | 67.7 | 31.6 | 6.4 |
+| above 40000: ASTC 6 x 6 | 8035.5 | 302.7 | 60.8 | 31.6 | 6.4 |
+| above 40000: ASTC 8 x 8 | 7807.3 | 290.7 | 58.3 | 31.6 | 6.4 |
+| above 40000: BC1, the rest BC7 | 4524.0 | 172.0 | 34.6 | 17.2 | 3.5 |
+
+#### Enhanced: each class's resident MB and share
+
+| view | format | equipment | NPC small | NPC medium | NPC large | not listed |
+|---|---|---:|---:|---:|---:|---:|
+| whole set, every direction (x 10.245) | lossless | 2386.0, 24.3 % | 86.1, 0.9 % | 1630.7, 16.6 % | 5731.2, 58.3 % | 0.0, 0.0 % |
+| whole set, every direction (x 10.245) | BC1 | 652.6, 25.5 % | 23.1, 0.9 % | 423.3, 16.6 % | 1457.1, 57.0 % | 0.0, 0.0 % |
+| whole set, every direction (x 10.245) | BC7 | 1305.2, 25.5 % | 46.2, 0.9 % | 846.7, 16.6 % | 2914.2, 57.0 % | 0.0, 0.0 % |
+| whole set, every direction (x 10.245) | ASTC 6 x 6 | 613.7, 26.3 % | 21.5, 0.9 % | 385.9, 16.6 % | 1310.2, 56.2 % | 0.0, 0.0 % |
+| whole set, every direction (x 10.245) | ASTC 8 x 8 | 366.0, 27.2 % | 12.7, 0.9 % | 222.4, 16.5 % | 745.2, 55.4 % | 0.0, 0.0 % |
+| creatures, five directions | lossless | 0.0, 0.0 % | 6.8, 1.7 % | 87.9, 22.2 % | 301.8, 76.1 % | 0.0, 0.0 % |
+| creatures, five directions | BC1 | 0.0, 0.0 % | 1.8, 1.8 % | 22.8, 22.5 % | 76.7, 75.7 % | 0.0, 0.0 % |
+| creatures, five directions | BC7 | 0.0, 0.0 % | 3.7, 1.8 % | 45.6, 22.5 % | 153.5, 75.7 % | 0.0, 0.0 % |
+| creatures, five directions | ASTC 6 x 6 | 0.0, 0.0 % | 1.7, 1.9 % | 20.8, 22.7 % | 69.0, 75.4 % | 0.0, 0.0 % |
+| creatures, five directions | ASTC 8 x 8 | 0.0, 0.0 % | 1.0, 1.9 % | 12.0, 22.9 % | 39.2, 75.2 % | 0.0, 0.0 % |
+| creatures, faced only | lossless | 0.0, 0.0 % | 1.4, 1.7 % | 17.3, 21.7 % | 61.2, 76.6 % | 0.0, 0.0 % |
+| creatures, faced only | BC1 | 0.0, 0.0 % | 0.4, 1.8 % | 4.5, 22.0 % | 15.6, 76.2 % | 0.0, 0.0 % |
+| creatures, faced only | BC7 | 0.0, 0.0 % | 0.7, 1.8 % | 9.0, 22.0 % | 31.1, 76.2 % | 0.0, 0.0 % |
+| creatures, faced only | ASTC 6 x 6 | 0.0, 0.0 % | 0.3, 1.9 % | 4.1, 22.2 % | 14.0, 75.9 % | 0.0, 0.0 % |
+| creatures, faced only | ASTC 8 x 8 | 0.0, 0.0 % | 0.2, 2.0 % | 2.4, 22.4 % | 8.0, 75.6 % | 0.0, 0.0 % |
+| dressed NPCs, five directions | lossless | 17.0, 53.9 % | 5.5, 17.5 % | 9.0, 28.6 % | 0.0, 0.0 % | 0.0, 0.0 % |
+| dressed NPCs, five directions | BC1 | 4.7, 55.0 % | 1.5, 17.5 % | 2.4, 27.5 % | 0.0, 0.0 % | 0.0, 0.0 % |
+| dressed NPCs, five directions | BC7 | 9.4, 55.0 % | 3.0, 17.5 % | 4.7, 27.5 % | 0.0, 0.0 % | 0.0, 0.0 % |
+| dressed NPCs, five directions | ASTC 6 x 6 | 4.5, 55.8 % | 1.3, 16.8 % | 2.2, 27.4 % | 0.0, 0.0 % | 0.0, 0.0 % |
+| dressed NPCs, five directions | ASTC 8 x 8 | 2.7, 56.7 % | 0.8, 16.6 % | 1.3, 26.7 % | 0.0, 0.0 % | 0.0, 0.0 % |
+| dressed NPCs, faced only | lossless | 3.5, 54.2 % | 1.1, 17.4 % | 1.8, 28.4 % | 0.0, 0.0 % | 0.0, 0.0 % |
+| dressed NPCs, faced only | BC1 | 1.0, 55.4 % | 0.3, 17.3 % | 0.5, 27.3 % | 0.0, 0.0 % | 0.0, 0.0 % |
+| dressed NPCs, faced only | BC7 | 1.9, 55.4 % | 0.6, 17.3 % | 0.9, 27.3 % | 0.0, 0.0 % | 0.0, 0.0 % |
+| dressed NPCs, faced only | ASTC 6 x 6 | 0.9, 56.2 % | 0.3, 16.6 % | 0.4, 27.2 % | 0.0, 0.0 % | 0.0, 0.0 % |
+| dressed NPCs, faced only | ASTC 8 x 8 | 0.6, 57.1 % | 0.2, 16.4 % | 0.3, 26.5 % | 0.0, 0.0 % | 0.0, 0.0 % |
+
+#### Classic, creatures, 300 pairs, 132.7 Mpx in five directions (quiet rerun)
+
+| row | to | load unit | read MB | 1 thread ms | 4 threads ms | within the line | worst job ms |
+|---|---|---|---:|---:|---:|---|---:|
+| all lossless | memory | five directions | 41.2 | 180.5 | 50.6 | yes | 9.4 |
+| all lossless | memory | faced only | 8.2 | 36.0 | 10.4 | yes | 2.0 |
+| above 0: BC1 | memory | five directions | 26.5 | 84.2 | 23.4 | yes | 3.9 |
+| above 0: BC1 | memory | faced only | 5.3 | 16.5 | 4.8 | yes | 0.8 |
+| above 0: ASTC 6 x 6 | memory | five directions | 27.1 | 73.5 | 20.4 | yes | 3.3 |
+| above 0: ASTC 6 x 6 | memory | faced only | 5.4 | 14.5 | 4.1 | yes | 0.7 |
+| above 0: ASTC 8 x 8 | memory | five directions | 15.9 | 49.4 | 13.7 | yes | 2.0 |
+| above 0: ASTC 8 x 8 | memory | faced only | 3.2 | 9.8 | 2.8 | yes | 0.4 |
+| above 2500: BC1 | memory | five directions | 26.8 | 86.8 | 24.2 | yes | 3.9 |
+| above 2500: BC1 | memory | faced only | 5.3 | 17.3 | 4.9 | yes | 0.8 |
+| above 2500: ASTC 6 x 6 | memory | five directions | 27.4 | 76.3 | 21.2 | yes | 3.3 |
+| above 2500: ASTC 6 x 6 | memory | faced only | 5.4 | 15.1 | 4.3 | yes | 0.7 |
+| above 2500: ASTC 8 x 8 | memory | five directions | 16.6 | 53.2 | 14.6 | yes | 2.0 |
+| above 2500: ASTC 8 x 8 | memory | faced only | 3.3 | 10.6 | 3.0 | yes | 0.4 |
+| above 10000: BC1 | memory | five directions | 29.7 | 107.9 | 29.5 | yes | 3.9 |
+| above 10000: BC1 | memory | faced only | 5.9 | 21.5 | 6.0 | yes | 0.8 |
+| above 10000: ASTC 6 x 6 | memory | five directions | 30.0 | 99.8 | 27.2 | yes | 3.3 |
+| above 10000: ASTC 6 x 6 | memory | faced only | 6.0 | 19.9 | 5.6 | yes | 0.7 |
+| above 10000: ASTC 8 x 8 | memory | five directions | 21.8 | 82.8 | 22.1 | yes | 2.1 |
+| above 10000: ASTC 8 x 8 | memory | faced only | 4.4 | 16.7 | 4.6 | yes | 0.4 |
+| above 40000: BC1 | memory | five directions | 35.9 | 143.5 | 38.2 | yes | 3.9 |
+| above 40000: BC1 | memory | faced only | 7.1 | 28.4 | 7.7 | yes | 0.8 |
+| above 40000: ASTC 6 x 6 | memory | five directions | 36.0 | 140.6 | 36.9 | yes | 3.3 |
+| above 40000: ASTC 6 x 6 | memory | faced only | 7.2 | 27.8 | 7.5 | yes | 0.7 |
+| above 40000: ASTC 8 x 8 | memory | five directions | 32.2 | 131.5 | 34.0 | yes | 2.7 |
+| above 40000: ASTC 8 x 8 | memory | faced only | 6.4 | 26.2 | 6.9 | yes | 0.5 |
+
+#### Classic, dressed NPCs, 300 pairs, 9.7 Mpx in five directions (quiet rerun)
+
+| row | to | load unit | read MB | 1 thread ms | 4 threads ms | within the line | worst job ms |
+|---|---|---|---:|---:|---:|---|---:|
+| all lossless | memory | five directions | 3.6 | 22.8 | 5.9 | yes | 0.3 |
+| all lossless | memory | faced only | 0.7 | 4.7 | 1.2 | yes | 0.1 |
+| above 0: BC1 | memory | five directions | 3.0 | 15.4 | 4.0 | yes | 0.2 |
+| above 0: BC1 | memory | faced only | 0.6 | 3.2 | 0.9 | yes | 0.0 |
+| above 0: ASTC 6 x 6 | memory | five directions | 3.2 | 14.4 | 3.7 | yes | 0.1 |
+| above 0: ASTC 6 x 6 | memory | faced only | 0.7 | 3.0 | 0.8 | yes | 0.0 |
+| above 0: ASTC 8 x 8 | memory | five directions | 2.0 | 11.6 | 3.0 | yes | 0.1 |
+| above 0: ASTC 8 x 8 | memory | faced only | 0.4 | 2.4 | 0.7 | yes | 0.0 |
+| above 2500: BC1 | memory | five directions | 3.4 | 20.6 | 5.3 | yes | 0.2 |
+| above 2500: BC1 | memory | faced only | 0.7 | 4.3 | 1.1 | yes | 0.0 |
+| above 2500: ASTC 6 x 6 | memory | five directions | 3.5 | 20.2 | 5.2 | yes | 0.2 |
+| above 2500: ASTC 6 x 6 | memory | faced only | 0.7 | 4.2 | 1.1 | yes | 0.0 |
+| above 2500: ASTC 8 x 8 | memory | five directions | 3.2 | 19.6 | 5.1 | yes | 0.2 |
+| above 2500: ASTC 8 x 8 | memory | faced only | 0.7 | 4.2 | 1.1 | yes | 0.0 |
+| above 10000: BC1 | memory | five directions | 3.5 | 22.8 | 5.9 | yes | 0.3 |
+| above 10000: BC1 | memory | faced only | 0.7 | 4.8 | 1.2 | yes | 0.1 |
+| above 10000: ASTC 6 x 6 | memory | five directions | 3.5 | 22.7 | 5.9 | yes | 0.3 |
+| above 10000: ASTC 6 x 6 | memory | faced only | 0.7 | 4.7 | 1.3 | yes | 0.1 |
+| above 10000: ASTC 8 x 8 | memory | five directions | 3.5 | 22.7 | 5.9 | yes | 0.3 |
+| above 10000: ASTC 8 x 8 | memory | faced only | 0.7 | 4.7 | 1.3 | yes | 0.1 |
+| above 40000: BC1 | memory | five directions | 3.6 | 22.8 | 5.9 | yes | 0.3 |
+| above 40000: BC1 | memory | faced only | 0.7 | 4.8 | 1.3 | yes | 0.1 |
+| above 40000: ASTC 6 x 6 | memory | five directions | 3.6 | 22.8 | 5.8 | yes | 0.3 |
+| above 40000: ASTC 6 x 6 | memory | faced only | 0.7 | 4.8 | 1.3 | yes | 0.1 |
+| above 40000: ASTC 8 x 8 | memory | five directions | 3.6 | 22.8 | 5.8 | yes | 0.3 |
+| above 40000: ASTC 8 x 8 | memory | faced only | 0.7 | 4.8 | 1.3 | yes | 0.1 |
+
+#### Enhanced, creatures, 300 pairs, 198.3 Mpx in five directions (quiet rerun)
+
+| row | to | load unit | read MB | 1 thread ms | 4 threads ms | within the line | worst job ms |
+|---|---|---|---:|---:|---:|---|---:|
+| all lossless | memory | five directions | 78.5 | 401.4 | 102.0 | yes | 18.3 |
+| all lossless | memory | faced only | 15.7 | 82.0 | 20.8 | yes | 3.1 |
+| above 0: BC1 | memory | five directions | 35.5 | 114.1 | 29.0 | yes | 4.9 |
+| above 0: BC1 | memory | faced only | 7.1 | 22.7 | 5.9 | yes | 0.9 |
+| above 0: BC7 | memory | five directions | 73.0 | 197.8 | 50.2 | yes | 8.8 |
+| above 0: BC7 | memory | faced only | 14.6 | 40.0 | 10.2 | yes | 1.6 |
+| above 0: ASTC 6 x 6 | memory | five directions | 39.6 | 102.0 | 26.0 | yes | 4.1 |
+| above 0: ASTC 6 x 6 | memory | faced only | 7.9 | 20.4 | 5.3 | yes | 0.7 |
+| above 0: ASTC 8 x 8 | memory | five directions | 23.8 | 67.1 | 17.0 | yes | 2.5 |
+| above 0: ASTC 8 x 8 | memory | faced only | 4.8 | 13.3 | 3.4 | yes | 0.5 |
+| above 2500: BC1 | memory | five directions | 36.5 | 121.2 | 30.9 | yes | 4.9 |
+| above 2500: BC1 | memory | faced only | 7.3 | 24.3 | 6.2 | yes | 0.9 |
+| above 2500: BC7 | memory | five directions | 73.3 | 203.1 | 51.7 | yes | 8.9 |
+| above 2500: BC7 | memory | faced only | 14.7 | 40.7 | 10.4 | yes | 1.6 |
+| above 2500: ASTC 6 x 6 | memory | five directions | 40.5 | 109.9 | 27.8 | yes | 4.0 |
+| above 2500: ASTC 6 x 6 | memory | faced only | 8.1 | 21.9 | 5.6 | yes | 0.7 |
+| above 2500: ASTC 8 x 8 | memory | five directions | 25.0 | 75.7 | 19.1 | yes | 2.5 |
+| above 2500: ASTC 8 x 8 | memory | faced only | 5.0 | 15.1 | 3.8 | yes | 0.4 |
+| above 2500: BC1, the rest BC7 | memory | five directions | 36.3 | 117.0 | 29.7 | yes | 4.9 |
+| above 2500: BC1, the rest BC7 | memory | faced only | 7.3 | 23.3 | 6.0 | yes | 0.9 |
+| above 10000: BC1 | memory | five directions | 48.5 | 195.8 | 49.4 | yes | 4.9 |
+| above 10000: BC1 | memory | faced only | 9.7 | 39.4 | 9.9 | yes | 0.9 |
+| above 10000: BC7 | memory | five directions | 75.4 | 255.2 | 64.8 | yes | 8.9 |
+| above 10000: BC7 | memory | faced only | 15.1 | 51.2 | 13.1 | yes | 1.7 |
+| above 10000: ASTC 6 x 6 | memory | five directions | 51.1 | 187.7 | 47.4 | yes | 4.1 |
+| above 10000: ASTC 6 x 6 | memory | faced only | 10.2 | 37.7 | 9.5 | yes | 0.7 |
+| above 10000: ASTC 8 x 8 | memory | five directions | 39.7 | 163.2 | 41.1 | yes | 2.5 |
+| above 10000: ASTC 8 x 8 | memory | faced only | 7.9 | 32.5 | 8.2 | yes | 0.4 |
+| above 10000: BC1, the rest BC7 | memory | five directions | 46.2 | 139.2 | 35.1 | yes | 4.9 |
+| above 10000: BC1, the rest BC7 | memory | faced only | 9.2 | 27.8 | 7.1 | yes | 0.9 |
+| above 40000: BC1 | memory | five directions | 67.4 | 324.9 | 81.8 | yes | 5.5 |
+| above 40000: BC1 | memory | faced only | 13.5 | 65.7 | 16.5 | yes | 1.2 |
+| above 40000: BC7 | memory | five directions | 77.5 | 348.9 | 87.6 | yes | 8.8 |
+| above 40000: BC7 | memory | faced only | 15.5 | 70.5 | 17.7 | yes | 1.6 |
+| above 40000: ASTC 6 x 6 | memory | five directions | 68.0 | 321.7 | 81.0 | yes | 5.5 |
+| above 40000: ASTC 6 x 6 | memory | faced only | 13.6 | 65.3 | 16.5 | yes | 1.2 |
+| above 40000: ASTC 8 x 8 | memory | five directions | 63.6 | 312.9 | 78.9 | yes | 5.5 |
+| above 40000: ASTC 8 x 8 | memory | faced only | 12.7 | 63.1 | 15.9 | yes | 1.2 |
+| above 40000: BC1, the rest BC7 | memory | five directions | 62.9 | 176.4 | 44.2 | yes | 4.9 |
+| above 40000: BC1, the rest BC7 | memory | faced only | 12.6 | 35.3 | 8.9 | yes | 0.9 |
+
+#### Enhanced, dressed NPCs, 300 pairs, 15.8 Mpx in five directions (quiet rerun)
+
+| row | to | load unit | read MB | 1 thread ms | 4 threads ms | within the line | worst job ms |
+|---|---|---|---:|---:|---:|---|---:|
+| all lossless | memory | five directions | 9.9 | 58.7 | 14.9 | yes | 0.7 |
+| all lossless | memory | faced only | 2.0 | 11.8 | 3.1 | yes | 0.2 |
+| above 0: BC1 | memory | five directions | 4.3 | 20.7 | 5.3 | yes | 0.2 |
+| above 0: BC1 | memory | faced only | 0.9 | 4.3 | 1.2 | yes | 0.1 |
+| above 0: BC7 | memory | five directions | 8.7 | 32.2 | 8.2 | yes | 0.4 |
+| above 0: BC7 | memory | faced only | 1.8 | 6.6 | 1.7 | yes | 0.1 |
+| above 0: ASTC 6 x 6 | memory | five directions | 5.1 | 18.0 | 4.7 | yes | 0.2 |
+| above 0: ASTC 6 x 6 | memory | faced only | 1.0 | 3.8 | 1.0 | yes | 0.0 |
+| above 0: ASTC 8 x 8 | memory | five directions | 3.2 | 13.3 | 3.3 | yes | 0.1 |
+| above 0: ASTC 8 x 8 | memory | faced only | 0.6 | 2.7 | 0.7 | yes | 0.0 |
+| above 2500: BC1 | memory | five directions | 7.7 | 42.9 | 10.8 | yes | 0.4 |
+| above 2500: BC1 | memory | faced only | 1.5 | 8.8 | 2.3 | yes | 0.1 |
+| above 2500: BC7 | memory | five directions | 9.6 | 47.3 | 12.0 | yes | 0.4 |
+| above 2500: BC7 | memory | faced only | 1.9 | 9.7 | 2.5 | yes | 0.1 |
+| above 2500: ASTC 6 x 6 | memory | five directions | 8.0 | 42.0 | 10.6 | yes | 0.4 |
+| above 2500: ASTC 6 x 6 | memory | faced only | 1.6 | 8.6 | 2.2 | yes | 0.1 |
+| above 2500: ASTC 8 x 8 | memory | five directions | 7.1 | 40.1 | 10.2 | yes | 0.4 |
+| above 2500: ASTC 8 x 8 | memory | faced only | 1.4 | 8.2 | 2.1 | yes | 0.1 |
+| above 2500: BC1, the rest BC7 | memory | five directions | 6.9 | 27.6 | 7.0 | yes | 0.2 |
+| above 2500: BC1, the rest BC7 | memory | faced only | 1.4 | 5.8 | 1.5 | yes | 0.0 |
+| above 10000: BC1 | memory | five directions | 9.9 | 58.1 | 14.9 | yes | 0.8 |
+| above 10000: BC1 | memory | faced only | 2.0 | 11.9 | 3.1 | yes | 0.2 |
+| above 10000: BC7 | memory | five directions | 9.9 | 57.6 | 14.8 | yes | 0.7 |
+| above 10000: BC7 | memory | faced only | 2.0 | 11.8 | 3.1 | yes | 0.2 |
+| above 10000: ASTC 6 x 6 | memory | five directions | 9.9 | 58.1 | 14.9 | yes | 0.8 |
+| above 10000: ASTC 6 x 6 | memory | faced only | 2.0 | 11.8 | 3.1 | yes | 0.2 |
+| above 10000: ASTC 8 x 8 | memory | five directions | 9.9 | 57.9 | 14.9 | yes | 0.7 |
+| above 10000: ASTC 8 x 8 | memory | faced only | 2.0 | 11.8 | 3.1 | yes | 0.2 |
+| above 10000: BC1, the rest BC7 | memory | five directions | 8.7 | 32.1 | 8.2 | yes | 0.4 |
+| above 10000: BC1, the rest BC7 | memory | faced only | 1.8 | 6.7 | 1.8 | yes | 0.1 |
+| above 40000: BC1 | memory | five directions | 9.9 | 58.2 | 14.9 | yes | 0.8 |
+| above 40000: BC1 | memory | faced only | 2.0 | 11.8 | 3.2 | yes | 0.2 |
+| above 40000: BC7 | memory | five directions | 9.9 | 57.9 | 14.9 | yes | 0.7 |
+| above 40000: BC7 | memory | faced only | 2.0 | 11.8 | 3.1 | yes | 0.2 |
+| above 40000: ASTC 6 x 6 | memory | five directions | 9.9 | 57.9 | 14.8 | yes | 0.7 |
+| above 40000: ASTC 6 x 6 | memory | faced only | 2.0 | 11.8 | 3.1 | yes | 0.2 |
+| above 40000: ASTC 8 x 8 | memory | five directions | 9.9 | 58.0 | 14.9 | yes | 0.8 |
+| above 40000: ASTC 8 x 8 | memory | faced only | 2.0 | 11.8 | 3.1 | yes | 0.2 |
+| above 40000: BC1, the rest BC7 | memory | five directions | 8.7 | 32.6 | 8.2 | yes | 0.4 |
+| above 40000: BC1, the rest BC7 | memory | faced only | 1.8 | 6.5 | 1.7 | yes | 0.1 |
+
+## 15. GPU cost, headless (`gpu-cost`)
+
+**Measure only, no renderer change.** A scratch Vulkan tool (`uodynamapper-scratch/gpu-cost`, on the workspace's `wgpu` 30.0) draws the creature crowd offscreen with timestamp queries. Nothing from it is in the repo.
+
+**This GPU can't prove low-end results.** The adapter reports AMD Radeon 880M Graphics (RADV STRIX1), radv Mesa 26.2.6, not the 890M the brief named. It's above the integrated GPUs the 60 fps goal has to hold on, so read the ratios between layouts and not the milliseconds. Shares of a 60 fps frame are for this GPU only.
+
+**What it draws:**
+
+- The crowd's 300 faced streams from the every-10th dump, one frame each, packed in a single 8192 px wide atlas with a 4 px gutter. Classic's is 8192 × 3672, Enhanced's 8192 × 5532.
+- Instanced quads into a 1920 × 1080 RGBA8 target with premultiplied blending and no depth test, at random places, so sprites overlap as a crowd does. Eight frame sets rotate through the passes, so a row isn't one lucky frame.
+- 1 × puts a fragment's centre on a texel; 1.5 × is the fractional case. **The filter is the real one:** `world/pixel_art_filters.wesl`'s seam filter, with `art/main.wesl` taking one hardware sample through it.
+- **Indexed layouts can't use the hardware filter,** so they gather and blend by hand: Classic R8 is 1 gather + 4 palette reads, Enhanced RG8 is 2 gathers + 4 palette reads. Partial coverage is blended premultiplied, as a sampler does on BC7's alpha. A hardware-sampled row is 1 sample.
+- Every row is timed inside the same seven rounds of 16 passes, interleaved, so drift cancels. A cell is the median round. A shader per row is generated with the unused paths removed before compiling, as `shader_defs` would.
+
+**Layouts,** 3.19 Mpx of Classic's faced creature crowd and 3.98 Mpx of Enhanced's at 1 ×; 7.17 and 8.96 Mpx at 1.5 ×. Each cell is the GPU pass, its ratio to that client's nearest indexed draw, and its share of a 60 fps frame on this GPU.
+
+| layout | fetches | Classic, 1 × | Classic, 1.5 × | Enhanced, 1 × | Enhanced, 1.5 × |
+|---|---:|---:|---:|---:|---:|
+| index, load, 1 palette read | nearest: 1 texel fetch + 1 palette read | 0.152 ms, 1.00 ×, 0.9 % | not filtered | 0.207 ms, 1.00 ×, 1.2 % | not filtered |
+| index, manual filter | Classic 1 gather + 4 palette reads; Enhanced 2 gathers + 4 palette reads | 0.175 ms, 1.15 ×, 1.0 % | 0.324 ms, 2.13 ×, 1.9 % | 0.229 ms, 1.10 ×, 1.4 % | 0.409 ms, 1.97 ×, 2.5 % |
+| index, manual filter, 1 read when the fraction is zero | the same with a branch | 0.191 ms, 1.25 ×, 1.1 % | 0.400 ms, 2.64 ×, 2.4 % | 0.254 ms, 1.23 ×, 1.5 % | 0.523 ms, 2.52 ×, 3.1 % |
+| row spans, nearest | nearest: 2 buffer reads + 1 palette read | 0.155 ms, 1.02 ×, 0.9 % | not filtered | 0.196 ms, 0.95 ×, 1.2 % | not filtered |
+| row spans, manual filter | filter: 4 row-table reads + 4 pixels + 4 palette reads | 0.225 ms, 1.48 ×, 1.3 % | 0.423 ms, 2.79 ×, 2.5 % | 0.292 ms, 1.41 ×, 1.8 % | 0.555 ms, 2.68 ×, 3.3 % |
+| BC1 | 1 hardware sample | 0.115 ms, 0.76 ×, 0.7 % | 0.207 ms, 1.37 ×, 1.2 % | 0.137 ms, 0.66 ×, 0.8 % | 0.249 ms, 1.20 ×, 1.5 % |
+| BC7 | 1 hardware sample | 0.122 ms, 0.80 ×, 0.7 % | 0.214 ms, 1.42 ×, 1.3 % | 0.147 ms, 0.71 ×, 0.9 % | 0.261 ms, 1.26 ×, 1.6 % |
+| RGBA8 expanded at upload | 1 hardware sample | 0.205 ms, 1.34 ×, 1.2 % | 0.272 ms, 1.79 ×, 1.6 % | 0.249 ms, 1.21 ×, 1.5 % | 0.331 ms, 1.60 ×, 2.0 % |
+
+**Ratios that decide it,** hardware-sampled BC7 against the indexed filter, in the same pass:
+
+| client | scale | index filter ÷ BC7 | index filter ÷ BC1 | row spans filter ÷ BC7 | row spans filter ÷ index filter | RGBA8 ÷ BC7 | index filter − BC7, this GPU |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| Classic | 1 × | 1.43 × | 1.52 × | 1.84 × | 1.29 × | 1.68 × | 0.053 ms |
+| Classic | 1.5 × | 1.51 × | 1.57 × | 1.98 × | 1.31 × | 1.27 × | 0.110 ms |
+| Enhanced | 1 × | 1.56 × | 1.67 × | 1.99 × | 1.28 × | 1.69 × | 0.082 ms |
+| Enhanced | 1.5 × | 1.57 × | 1.64 × | 2.13 × | 1.36 × | 1.27 × | 0.148 ms |
+
+**Hue on every sprite:**
+
+| path | Classic, 1 × | Classic, 1.5 × | Enhanced, 1 × | Enhanced, 1.5 × |
+|---|---:|---:|---:|---:|
+| index filter, a hue read per tap | 0.249 ms, 1.64 × | 0.469 ms, 3.09 × | 0.335 ms, 1.62 × | 0.619 ms, 2.99 × |
+| index filter, a palette row hued in advance | 0.175 ms, 1.15 × | 0.324 ms, 2.13 × | 0.229 ms, 1.10 × | 0.409 ms, 1.97 × |
+| row spans filter, a hue read per tap | 0.303 ms, 2.00 × | 0.567 ms, 3.74 × | 0.394 ms, 1.90 × | 0.734 ms, 3.55 × |
+| row spans filter, a palette row hued in advance | 0.232 ms, 1.52 × | 0.435 ms, 2.87 × | 0.301 ms, 1.45 × | 0.566 ms, 2.73 × |
+| BC1, hue read after the sample | 0.143 ms, 0.94 × | 0.259 ms, 1.70 × | 0.169 ms, 0.81 × | 0.310 ms, 1.49 × |
+| BC1, hue read and an R8 mask sample | 0.163 ms, 1.07 × | 0.294 ms, 1.94 × | 0.192 ms, 0.93 × | 0.351 ms, 1.69 × |
+| BC7, hue read after the sample | 0.154 ms, 1.02 × | 0.277 ms, 1.82 × | 0.187 ms, 0.90 × | 0.337 ms, 1.63 × |
+| BC7, hue read and an R8 mask sample | 0.173 ms, 1.14 × | 0.307 ms, 2.02 × | 0.209 ms, 1.01 × | 0.375 ms, 1.81 × |
+| RGBA8, hue read after the sample | 0.226 ms, 1.48 × | 0.337 ms, 2.22 × | 0.277 ms, 1.34 × | 0.415 ms, 2.00 × |
+| RGBA8, hue read and an R8 mask sample | 0.251 ms, 1.65 × | 0.366 ms, 2.40 × | 0.306 ms, 1.48 × | 0.447 ms, 2.16 × |
+
+**Branch against separate pipelines, on the same sprites:** a is a pipeline per format with sprites grouped; b is one shader with a per-instance branch; c is a pipeline per format with a switch on every draw, the worst case for a mixed pack in a blended pass. The mix is the share of sprites on the first format.
+
+| client | pair | scale | mix | a ms | b ms | c ms | b ÷ a | c ÷ a |
+|---|---|---:|---:|---:|---:|---:|---:|---:|
+| Classic | R8, load, 1 palette read + BC1, 1 hardware sample | 1 × | 100 / 0 | 0.152 | 0.151 | 0.170 | 0.993 | 1.118 |
+| Classic | R8, load, 1 palette read + BC1, 1 hardware sample | 1 × | 90 / 10 | 0.152 | 0.149 | 0.168 | 0.980 | 1.105 |
+| Classic | R8, load, 1 palette read + BC1, 1 hardware sample | 1 × | 50 / 50 | 0.147 | 0.142 | 0.158 | 0.966 | 1.075 |
+| Classic | R8, load, 1 palette read + BC1, 1 hardware sample | 1 × | 0 / 100 | 0.114 | 0.123 | 0.130 | 1.079 | 1.140 |
+| Classic | R8, 1 gather, 4 palette reads + BC1, 1 hardware sample | 1.5 × | 100 / 0 | 0.324 | 0.325 | 0.367 | 1.003 | 1.133 |
+| Classic | R8, 1 gather, 4 palette reads + BC1, 1 hardware sample | 1.5 × | 90 / 10 | 0.324 | 0.320 | 0.362 | 0.988 | 1.117 |
+| Classic | R8, 1 gather, 4 palette reads + BC1, 1 hardware sample | 1.5 × | 50 / 50 | 0.295 | 0.291 | 0.329 | 0.986 | 1.115 |
+| Classic | R8, 1 gather, 4 palette reads + BC1, 1 hardware sample | 1.5 × | 0 / 100 | 0.207 | 0.229 | 0.258 | 1.106 | 1.246 |
+| Classic | row spans, 2 rows, 4 pixels, 4 palette reads + BC1, 1 hardware sample | 1.5 × | 100 / 0 | 0.424 | 0.437 | 0.441 | 1.031 | 1.040 |
+| Classic | row spans, 2 rows, 4 pixels, 4 palette reads + BC1, 1 hardware sample | 1.5 × | 90 / 10 | 0.419 | 0.431 | 0.435 | 1.029 | 1.038 |
+| Classic | row spans, 2 rows, 4 pixels, 4 palette reads + BC1, 1 hardware sample | 1.5 × | 50 / 50 | 0.350 | 0.388 | 0.378 | 1.109 | 1.080 |
+| Classic | row spans, 2 rows, 4 pixels, 4 palette reads + BC1, 1 hardware sample | 1.5 × | 0 / 100 | 0.207 | 0.251 | 0.259 | 1.213 | 1.251 |
+| Enhanced | RG8, load, 1 palette read + BC7, 1 hardware sample | 1 × | 100 / 0 | 0.207 | 0.204 | 0.242 | 0.986 | 1.169 |
+| Enhanced | RG8, load, 1 palette read + BC7, 1 hardware sample | 1 × | 90 / 10 | 0.208 | 0.203 | 0.240 | 0.976 | 1.154 |
+| Enhanced | RG8, load, 1 palette read + BC7, 1 hardware sample | 1 × | 50 / 50 | 0.193 | 0.186 | 0.218 | 0.964 | 1.130 |
+| Enhanced | RG8, load, 1 palette read + BC7, 1 hardware sample | 1 × | 0 / 100 | 0.146 | 0.157 | 0.181 | 1.075 | 1.240 |
+| Enhanced | RG8, 2 gathers, 4 palette reads + BC7, 1 hardware sample | 1.5 × | 100 / 0 | 0.409 | 0.414 | 0.464 | 1.012 | 1.134 |
+| Enhanced | RG8, 2 gathers, 4 palette reads + BC7, 1 hardware sample | 1.5 × | 90 / 10 | 0.409 | 0.411 | 0.462 | 1.005 | 1.130 |
+| Enhanced | RG8, 2 gathers, 4 palette reads + BC7, 1 hardware sample | 1.5 × | 50 / 50 | 0.363 | 0.365 | 0.424 | 1.006 | 1.168 |
+| Enhanced | RG8, 2 gathers, 4 palette reads + BC7, 1 hardware sample | 1.5 × | 0 / 100 | 0.262 | 0.290 | 0.350 | 1.107 | 1.336 |
+| Enhanced | RG8, 2 gathers, 4 palette reads + BC1, 1 hardware sample | 1.5 × | 100 / 0 | 0.409 | 0.414 | 0.464 | 1.012 | 1.134 |
+| Enhanced | RG8, 2 gathers, 4 palette reads + BC1, 1 hardware sample | 1.5 × | 90 / 10 | 0.407 | 0.409 | 0.461 | 1.005 | 1.133 |
+| Enhanced | RG8, 2 gathers, 4 palette reads + BC1, 1 hardware sample | 1.5 × | 50 / 50 | 0.353 | 0.359 | 0.404 | 1.017 | 1.144 |
+| Enhanced | RG8, 2 gathers, 4 palette reads + BC1, 1 hardware sample | 1.5 × | 0 / 100 | 0.249 | 0.277 | 0.310 | 1.112 | 1.245 |
+| Enhanced | row spans, 2 rows, 4 pixels, 4 palette reads + BC7, 1 hardware sample | 1.5 × | 100 / 0 | 0.554 | 0.571 | 0.577 | 1.031 | 1.042 |
+| Enhanced | row spans, 2 rows, 4 pixels, 4 palette reads + BC7, 1 hardware sample | 1.5 × | 90 / 10 | 0.549 | 0.565 | 0.570 | 1.029 | 1.038 |
+| Enhanced | row spans, 2 rows, 4 pixels, 4 palette reads + BC7, 1 hardware sample | 1.5 × | 50 / 50 | 0.442 | 0.501 | 0.490 | 1.133 | 1.109 |
+| Enhanced | row spans, 2 rows, 4 pixels, 4 palette reads + BC7, 1 hardware sample | 1.5 × | 0 / 100 | 0.261 | 0.330 | 0.348 | 1.264 | 1.333 |
+
+**Registers,** from `RADV_DEBUG=shaderstats,nocache`, pixel shader only. AMD only: another vendor allocates differently.
+
+**Classic:**
+
+| pipeline | VGPRs allocated | pre-scheduling | SGPRs pre-scheduling | spilled | instructions | branches | VMEM | code bytes | subgroups per SIMD |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+| R8, 1 gather, 4 palette reads / no hue | 32 | 13 | 22 | 0 | 155 | 1 | 7 | 800 | 32 |
+| R8, gather, 1 read when the fraction is zero / no hue | 32 | 14 | 18 | 0 | 198 | 4 | 9 | 1060 | 32 |
+| row spans, 2 rows, 4 pixels, 4 palette reads / no hue | 32 | 14 | 10 | 0 | 258 | 7 | 14 | 1320 | 32 |
+| BC1, 1 hardware sample / no hue | 16 | 8 | 16 | 0 | 83 | 1 | 2 | 436 | 32 |
+| BC7, 1 hardware sample / no hue | 16 | 8 | 16 | 0 | 83 | 1 | 2 | 436 | 32 |
+| RGBA8 expanded, 1 hardware sample / no hue | 16 | 8 | 16 | 0 | 83 | 1 | 2 | 436 | 32 |
+| R8, load, 1 palette read / no hue | 8 | 7 | 17 | 0 | 70 | 2 | 4 | 376 | 32 |
+| row spans, 1 row, 1 pixel, 1 palette read / no hue | 8 | 7 | 14 | 0 | 112 | 4 | 6 | 572 | 32 |
+| R8, load, 1 palette read / hue texture | 8 | 7 | 18 | 0 | 85 | 3 | 6 | 468 | 32 |
+| row spans, 1 row, 1 pixel, 1 palette read / hue texture | 8 | 8 | 20 | 0 | 127 | 5 | 8 | 664 | 32 |
+| R8, 1 gather, 4 palette reads / hue texture | 32 | 15 | 21 | 0 | 207 | 5 | 12 | 1124 | 32 |
+| row spans, 2 rows, 4 pixels, 4 palette reads / hue texture | 32 | 16 | 21 | 0 | 318 | 11 | 19 | 1668 | 32 |
+| BC1, 1 hardware sample / hue texture | 24 | 9 | 22 | 0 | 93 | 1 | 4 | 508 | 32 |
+| BC1, 1 hardware sample / hue texture and R8 mask | 24 | 9 | 22 | 0 | 102 | 1 | 5 | 548 | 32 |
+| BC7, 1 hardware sample / hue texture | 24 | 9 | 22 | 0 | 93 | 1 | 4 | 508 | 32 |
+| BC7, 1 hardware sample / hue texture and R8 mask | 24 | 9 | 22 | 0 | 102 | 1 | 5 | 548 | 32 |
+| RGBA8 expanded, 1 hardware sample / hue texture | 24 | 9 | 22 | 0 | 93 | 1 | 4 | 508 | 32 |
+| RGBA8 expanded, 1 hardware sample / hue texture and R8 mask | 24 | 9 | 22 | 0 | 102 | 1 | 5 | 548 | 32 |
+| branch: R8, load, 1 palette read + BC1, 1 hardware sample | 16 | 10 | 17 | 0 | 127 | 4 | 6 | 680 | 32 |
+| branch: R8, 1 gather, 4 palette reads + BC1, 1 hardware sample | 24 | 14 | 16 | 0 | 194 | 3 | 9 | 1036 | 32 |
+| branch: row spans, 2 rows, 4 pixels, 4 palette reads + BC1, 1 hardware sample | 24 | 14 | 18 | 0 | 310 | 9 | 16 | 1576 | 32 |
+
+**Enhanced:**
+
+| pipeline | VGPRs allocated | pre-scheduling | SGPRs pre-scheduling | spilled | instructions | branches | VMEM | code bytes | subgroups per SIMD |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+| RG8, 2 gathers, 4 palette reads / no hue | 32 | 13 | 22 | 0 | 155 | 1 | 8 | 808 | 32 |
+| RG8, gathers, 1 read when the fraction is zero / no hue | 32 | 16 | 16 | 0 | 203 | 4 | 10 | 1056 | 32 |
+| row spans, 2 rows, 4 pixels, 4 palette reads / no hue | 32 | 14 | 9 | 0 | 270 | 7 | 14 | 1376 | 32 |
+| BC1, 1 hardware sample / no hue | 16 | 8 | 16 | 0 | 83 | 1 | 2 | 436 | 32 |
+| BC7, 1 hardware sample / no hue | 16 | 8 | 16 | 0 | 83 | 1 | 2 | 436 | 32 |
+| RGBA8 expanded, 1 hardware sample / no hue | 16 | 8 | 16 | 0 | 83 | 1 | 2 | 436 | 32 |
+| RG8, load, 1 palette read / no hue | 8 | 7 | 17 | 0 | 72 | 2 | 4 | 388 | 32 |
+| row spans, 1 row, 1 pixel, 1 palette read / no hue | 8 | 7 | 13 | 0 | 117 | 4 | 6 | 600 | 32 |
+| RG8, load, 1 palette read / hue texture | 8 | 7 | 17 | 0 | 88 | 3 | 6 | 484 | 32 |
+| row spans, 1 row, 1 pixel, 1 palette read / hue texture | 8 | 8 | 16 | 0 | 132 | 5 | 8 | 692 | 32 |
+| RG8, 2 gathers, 4 palette reads / hue texture | 32 | 15 | 22 | 0 | 209 | 5 | 13 | 1152 | 32 |
+| row spans, 2 rows, 4 pixels, 4 palette reads / hue texture | 32 | 16 | 21 | 0 | 328 | 11 | 19 | 1736 | 32 |
+| BC1, 1 hardware sample / hue texture | 24 | 9 | 22 | 0 | 93 | 1 | 4 | 508 | 32 |
+| BC1, 1 hardware sample / hue texture and R8 mask | 24 | 9 | 22 | 0 | 102 | 1 | 5 | 548 | 32 |
+| BC7, 1 hardware sample / hue texture | 24 | 9 | 22 | 0 | 93 | 1 | 4 | 508 | 32 |
+| BC7, 1 hardware sample / hue texture and R8 mask | 24 | 9 | 22 | 0 | 102 | 1 | 5 | 548 | 32 |
+| RGBA8 expanded, 1 hardware sample / hue texture | 24 | 9 | 22 | 0 | 93 | 1 | 4 | 508 | 32 |
+| RGBA8 expanded, 1 hardware sample / hue texture and R8 mask | 24 | 9 | 22 | 0 | 102 | 1 | 5 | 548 | 32 |
+| branch: RG8, load, 1 palette read + BC7, 1 hardware sample | 16 | 10 | 17 | 0 | 129 | 4 | 6 | 688 | 32 |
+| branch: RG8, 2 gathers, 4 palette reads + BC7, 1 hardware sample | 32 | 16 | 16 | 0 | 198 | 3 | 10 | 1036 | 32 |
+| branch: RG8, 2 gathers, 4 palette reads + BC1, 1 hardware sample | 32 | 16 | 16 | 0 | 198 | 3 | 10 | 1036 | 32 |
+| branch: row spans, 2 rows, 4 pixels, 4 palette reads + BC7, 1 hardware sample | 32 | 14 | 17 | 0 | 322 | 9 | 16 | 1632 | 32 |
+
+
+**What the registers say:**
+
+- **Does a branch reserve the path not taken? Yes, as the user expected.** Registers are allocated per shader, whichever path a sprite takes. BC1 alone uses 16 VGPRs allocated, 8 before scheduling. In one shader with nearest R8 that becomes 16 and 10; with Classic's gather, 24 and 14; with Enhanced's gather, 32 and 16. So the BC1 sprites in that shader run with registers their path doesn't need.
+- **Read the pre-scheduling counts.** AMD allocates VGPRs in groups of 8, and the allocated figure depends on what the scheduler does. It doesn't even rise steadily: Classic's gather alone is 32 allocated and 13 before scheduling, and the same gather sharing a shader with BC1 is 24 and 14.
+- **The manual filter costs registers:** 32 against 16 for a hardware sample. Hardware-sampled BC paths also take fewer instructions (83 against 155).
+- **Nothing spills, and no test shader comes near a vendor limit.** For context only, Mali Valhall halves its threads above 32 work registers on several GPUs and Intel drops from SIMD16 to SIMD8 at 64. The 13 to 16 VGPRs before scheduling sit under both, but those are AMD's counts in AMD's compiler. **`malioc` would be needed to say anything about Mali, and it isn't installed.**
+
+**Does the reserved register show in the timing? Only on the cheap path.** The table above has the same sprites three ways. In the quiet run:
+
+- **When most sprites take the expensive path, the branch costs nothing:** b ÷ a is 0.98 to 1.03 at 100/0 and 90/10, on every pair.
+- **When all sprites take the cheap path in a shader that also holds the expensive one,** the branch costs 8 % with R8 load, about 11 % with the gather, and 21 to 26 % with row spans.
+- **At 50/50** the branch is level with grouped pipelines with load or gather (0.96 to 1.02), and 11 to 13 % behind with row spans.
+- **A pipeline switch on every draw is usually the worst case:** c ÷ a is 1.04 to 1.34, and it's the larger of b and c on 26 of the 28 rows. Grouping needs sprites that can be drawn out of order, which a blended pass can't always do.
+
+So a per-format shader only pays when one pipeline's sprites can be grouped and they're the cheap ones. In a mostly indexed pack, a shared shader loses nothing measurable here. These are ratios on one AMD GPU.
+
+**The real art shader, for the starting point.** Method: `RADV_DEBUG=shaderstats,nocache gpu-cost real`, which compiles `dynamapper/assets/shaders/world/art/main.wesl` through `wesl` 0.6 and wgpu as it stands, from the repo, and reads the pixel shader's statistics. The file's last commit is `01003ab7`, and it's byte-identical to `ad2975dd` where it was first measured. Its only `@if` features are `STATIC_PICK` and `STATIC_PICK_MSAA`; everything else is a runtime uniform. **So the rows below aren't `shader_defs` that exist.** They're text rewrites in a scratch copy, with uniforms fixed as literals, standing in for features that could exist. No renderer change was made.
+
+| `art/main.wesl`, pixel shader | VGPRs allocated | pre-scheduling | SGPRs pre-scheduling | spilled | instructions | branches | VMEM | code bytes | subgroups per SIMD |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+| the renderer's art/main.wesl: as it is, every @if off | 56 | 50 | 73 | 0 | 7754 | 85 | 81 | 40320 | 18 |
+| the renderer's art/main.wesl: opaque pass only | 48 | 47 | 68 | 0 | 7486 | 73 | 70 | 38852 | 20 |
+| the renderer's art/main.wesl: transparent pass only | 48 | 47 | 68 | 0 | 7494 | 73 | 70 | 38912 | 20 |
+| the renderer's art/main.wesl: shadow pass only | 32 | 19 | 22 | 0 | 306 | 4 | 13 | 1688 | 32 |
+| the renderer's art/main.wesl: billboards only (no flat quads, no wet), every pass | 40 | 38 | 56 | 0 | 2803 | 30 | 30 | 14188 | 24 |
+| the renderer's art/main.wesl: billboards, transparent pass | 40 | 38 | 55 | 0 | 2549 | 24 | 19 | 12788 | 24 |
+| the renderer's art/main.wesl: billboards, transparent pass, no water, surface profile or grunge | 40 | 38 | 51 | 0 | 1614 | 19 | 18 | 8468 | 24 |
+| the renderer's art/main.wesl: the same, also no grading or tonemap | 40 | 38 | 51 | 0 | 1504 | 17 | 18 | 7884 | 24 |
+
+
+- **Sprite fetches are small against this shader.** A filtered indexed sprite is 155 to 270 instructions and 8 to 14 VMEM operations. The art shader is 7754 instructions and 81 VMEM operations, of which billboards in the transparent pass use 2549 and 19. The filter's cost matters less than what that shader does around it, on any layout.
+- **Splitting recovers registers and instructions.** One path per pass moves it from 56 to 48 VGPRs, and billboards only to 40 with 18 → 24 subgroups per SIMD. The shadow pass alone would be 32 VGPRs and 306 instructions.
+
+**The other half of "drawable": getting the crowd to the GPU.** `gpu-cost upload` times the faced frames going up through `queue.write_texture`, once as a single write of the atlas and once frame by frame, until the queue is idle again. This GPU shares system memory, so a discrete card over PCIe can differ. Not measured there.
+
+| client | layout | MB, one write | ms | MB/s | MB, frame by frame | ms | MB/s |
+|---|---|---:|---:|---:|---:|---:|---:|
+| Classic | R8 index | 30.1 | 3.82 | 7883 | 25.8 | 18.47 | 1397 |
+| Classic | BC1 | 15.0 | 1.43 | 10538 | 13.2 | 15.36 | 858 |
+| Classic | BC7 | 30.1 | 2.43 | 12357 | 26.4 | 16.82 | 1567 |
+| Classic | RGBA8 | 120.3 | 8.70 | 13826 | 103.2 | 24.70 | 4176 |
+| Classic | row spans: table and pixels, storage buffers | 14.7 | 1.04 | 14055 |  |  |  |
+| Enhanced | RG8 index | 90.6 | 7.66 | 11829 | 79.9 | 30.16 | 2648 |
+| Enhanced | BC1 | 22.7 | 2.04 | 11099 | 20.4 | 22.02 | 928 |
+| Enhanced | BC7 | 45.3 | 3.64 | 12465 | 40.8 | 24.10 | 1695 |
+| Enhanced | RGBA8 | 181.3 | 38.20 | 4745 | 159.7 | 58.89 | 2712 |
+| Enhanced | row spans: table and pixels, storage buffers | 39.3 | 2.66 | 14783 |  |  |  |
+
+
+**Does the crowd stay drawable?** Decode on 4 threads plus the upload, summed, against the user's line of about 250 ms. Decode is `qc`'s quiet rerun on the placeholder rule's creature crowd, the same crowd `gpu-cost` draws, so each row is zstd 19 per stream. The upload was measured for the faced frames only, so **the × 5 columns are an estimate, not a run.** A sum is the pessimistic case, since a real load could upload while other workers decode.
+
+| client | what the GPU holds | decode, faced ms | one write, faced ms | **total, faced** | decode, five directions ms | one write × 5 | **total, five directions** | frame by frame × 5 | total, five directions |
+|---|---|---:|---:|---:|---:|---:|---:|---:|---:|
+| Classic | R8 rectangle | 10.3 | 3.82 | **14.1** | 50.0 | 19.1 | **69.1** | 92.3 | 142.3 |
+| Classic | BC1 | 5.3 | 1.43 | **6.7** | 23.3 | 7.1 | **30.4** | 76.8 | 100.1 |
+| Classic | BC7 | 8.0 | 2.43 | **10.4** | 39.0 | 12.2 | **51.1** | 84.1 | 123.1 |
+| Enhanced | RG8 rectangle | 20.5 | 7.66 | **28.2** | 100.4 | 38.3 | **138.7** | 150.8 | 251.2 |
+| Enhanced | BC1 | 5.8 | 2.04 | **7.8** | 28.8 | 10.2 | **39.0** | 110.1 | 138.9 |
+| Enhanced | BC7 | 10.1 | 3.64 | **13.7** | 49.8 | 18.2 | **68.0** | 120.5 | 170.3 |
+
+- **Every row passes when uploads are batched,** with room to spare on faced loads: 28.2 ms is the slowest. With all five directions the slowest is Enhanced's RG8 at about 139 ms.
+- **Frame by frame is the one way to reach the line.** Enhanced RG8 sums to about 251 ms with all five directions, and 150.8 ms of that is writes. The bytes aren't the cost: 2852 small writes take 30.16 ms where one write of the larger atlas takes 7.66 ms. So a crowd's frames should go up in one write per load, or a few.
+- **Row spans go up fastest,** 1.04 / 2.66 ms for 14.7 / 39.3 MB. Their decode is the "kept as spans" row of section 9, faster than expanded. They pay for it in the shader instead: section 15's filter table.
+- **This machine shares memory between CPU and GPU.** A discrete card over PCIe isn't measured, and it's where upload would differ most.
+
+**What this section can't say:**
+
+- **Low-end GPUs.** The Radeon 880M is above the integrated GPUs the 60 fps goal has to hold on. Read ratios between layouts. No millisecond figure here is a low-end result.
+- **Other vendors.** Register counts are AMD's compiler on AMD's hardware. The vendor limits above are for context only. `malioc` would be needed to say anything about Mali, and it wasn't installed.
+- **The real renderer.** No renderer code changed, and the crowd draws without the art shader's work around it. Hue from colour instead of index, and a second shader path, are measured here headless and not in a renderer.
+- **Shaders on ETC2 or ASTC.** `gpu-cost` has no such rows. The hardware-sampled BC rows are the nearest stand-in, and that's an assumption.
+
+## 16. The final candidates on every body (`wl`, `qw`)
+
+The earlier sections use samples. This one runs the final candidates on **every body in the set,** so these totals replace the estimates. Nothing here is timed.
+
+- **Lossless (`wl`):** each layout coded on every stream and **decoded back and compared,** on all 1022 Classic and 926 Enhanced bodies. Totals include the palette table.
+- **BC7 (`qw`):** every stream encoded with one encoder, then scored. "Repo" is a byte-identical scratch copy of the encoder in `lib/udd-image-codecs/src/bc7`. The fixed rows are that copy with the lines in section 12. **The repo encoder itself is unchanged.**
+- **BC3 and BC1 (`qw`):** the same streams through `dds` 0.2.0 at `CompressionQuality::High`, labelled by that encoder. The last subsection compares them with the BC7 rows.
+- **What "score" covers:** SSIMULACRA2 runs per body on a mosaic of up to 64 frames (`SSIM_FRAMES_PER_BODY`), so a body's score samples its frames. Hue, coverage and PSNR cover every pixel.
+- **RDO runs in the encoder's segments:** above 2048 blocks a stream is split for parallel work, so the longest streams search a little less than they could.
+
+**Classic, lossless:** 1022 bodies, 138426 streams, 2419.0 Mpx, and a palette table of 19.8 MB counted in each total.
+
+| layout | total MB | × zstd 19 | equipment | NPC small | NPC medium | NPC large | not listed | duplicates dropped MB | total without them MB |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+| plain planes, zstd 19 | 761.1 | 1.000 | 120.7 | 24.0 | 141.1 | 446.1 | 9.5 | 27.7 | 733.4 |
+| plain planes, LZ4 HC | 929.7 | 1.222 | 163.8 | 30.1 | 171.1 | 532.9 | 12.0 | 32.7 | 897.0 |
+| **a: row spans, zstd 19** | 733.4 | 0.964 | 116.5 | 23.1 | 135.9 | 429.0 | 9.2 | 26.9 | 706.5 |
+| a: row spans, LZ4 HC | 888.4 | 1.167 | 155.8 | 28.8 | 164.6 | 507.9 | 11.5 | 31.5 | 856.9 |
+| a: row spans, best dictionary per body | 711.1 | 0.934 | 112.9 | 22.4 | 130.8 | 416.7 | 8.6 | 18.8 | 692.3 |
+| b: painted only, runs apart, zstd 19 | 746.8 | 0.981 | 121.5 | 23.8 | 138.9 | 433.3 | 9.5 | 27.3 | 719.5 |
+
+**Enhanced, lossless:** 926 bodies, 158133 streams, 4916.9 Mpx, and a palette table of 32.4 MB counted in each total.
+
+| layout | total MB | × zstd 19 | equipment | NPC small | NPC medium | NPC large | not listed | duplicates dropped MB | total without them MB |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+| plain planes, zstd 19 | 2013.8 | 1.000 | 506.7 | 30.3 | 394.9 | 1049.5 | 0.0 | 12.3 | 2001.5 |
+| plain planes, LZ4 HC | 2459.3 | 1.221 | 665.2 | 39.0 | 475.4 | 1247.3 | 0.0 | 15.5 | 2443.8 |
+| **a: row spans, zstd 19** | 1955.7 | 0.971 | 495.4 | 29.5 | 383.0 | 1015.4 | 0.0 | 12.0 | 1943.7 |
+| b: painted only, zstd 19 | 1845.3 | 0.916 | 455.6 | 27.2 | 362.0 | 968.0 | 0.0 | 11.4 | 1833.9 |
+| **b: painted only, coverage in row spans, zstd 19** | 1819.9 | 0.904 | 449.9 | 26.8 | 356.6 | 954.3 | 0.0 | 11.2 | 1808.7 |
+| b: painted only, every coverage tANS by context | 1718.2 | 0.853 | 415.6 | 24.8 | 334.6 | 910.8 | 0.0 | 10.6 | 1707.6 |
+| b: painted only, runs zstd 19, partial tANS by context | 1805.1 | 0.896 | 444.1 | 26.7 | 353.9 | 948.1 | 0.0 | 11.1 | 1794.0 |
+| b: painted only, coverage in row spans, LZ4 HC | 2192.3 | 1.089 | 568.7 | 33.5 | 427.0 | 1130.6 | 0.0 | 13.7 | 2178.6 |
+| **c: both planes in row spans, zstd 19** | 1881.1 | 0.934 | 462.6 | 27.7 | 368.1 | 990.2 | 0.0 | 11.5 | 1869.6 |
+| c: both planes in row spans, LZ4 HC | 2268.0 | 1.126 | 588.4 | 34.9 | 441.4 | 1171.0 | 0.0 | 14.1 | 2253.9 |
+
+**Section 10's assignment on every body** (equipment, small and medium with every coverage tANS by context; large with coverage in row spans): 1761.7 MB, 0.875 × zstd 19. There are no bodies outside the four classes on Enhanced.
+
+**Classic, block formats on every body,** labelled by encoder:
+
+| encoder | block MB | zstd 7 MB | zstd 19 MB | SSIMULACRA2 median | p5 | min | bodies at 80 or better | RGB PSNR dB | painted pixels gone | transparent pixels painted |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+| repo, as the converter calls it | 2517.5 | 911.6 | 894.7 | 67.39 | 46.76 | 0.72 | 191 of 1022 | 25.56 | 0.021 % | 7.406 % |
+| fix A (approved, not merged) | 2517.5 | 911.8 | 894.9 | 68.37 | 51.05 | 35.31 | 193 of 1022 | 25.86 | 0.000 % | 7.405 % |
+| fix A + colour | 2517.5 | 985.6 | 965.6 | 87.56 | 65.43 | 43.71 | 796 of 1022 | 33.60 | 0.000 % | 0.019 % |
+| **fix C** (includes fix A) | 2517.5 | 936.8 | 918.4 | 87.51 | 63.77 | 38.67 | 782 of 1022 | 33.20 | 0.000 % | 0.002 % |
+| fix C + colour | 2517.5 | 988.4 | 968.0 | 87.89 | 65.67 | 43.72 | 810 of 1022 | 33.77 | 0.000 % | 0.000 % |
+| **fix C, RDO 1** | 2517.5 | 846.8 | 823.2 | 80.20 | 60.25 | 37.57 | 534 of 1022 | 31.35 | 0.000 % | 0.021 % |
+| BC1, `dds` High | 1258.7 | 529.1 | 514.2 | 82.90 | 63.85 | 41.97 | 695 of 1022 | 29.48 | 0.000 % | 0.000 % |
+
+**Classic, by class:** zstd 19 MB, then SSIMULACRA2 median / min, bodies at 80 or better, RGB PSNR dB.
+
+| encoder | equipment MB | score | NPC small MB | score | NPC medium MB | score | NPC large MB | score | not listed MB | score |
+|---|---:|---|---:|---|---:|---|---:|---|---:|---|
+| repo, as the converter calls it | 167.2 | 70.95 / 19.21, 124 of 550, 22.87 | 29.2 | 60.76 / 0.72, 3 of 95, 23.06 | 167.8 | 60.94 / 36.88, 1 of 173, 25.23 | 518.2 | 62.94 / 30.91, 0 of 101, 27.10 | 12.3 | 81.39 / 23.59, 63 of 103, 22.62 |
+| fix A (approved, not merged) | 167.2 | 71.21 / 35.31, 126 of 550, 23.02 | 29.2 | 62.36 / 35.32, 3 of 95, 23.19 | 167.8 | 63.27 / 36.88, 1 of 173, 25.45 | 518.3 | 66.18 / 49.27, 0 of 101, 27.56 | 12.3 | 81.40 / 40.72, 63 of 103, 23.24 |
+| fix A + colour | 197.2 | 85.14 / 43.71, 368 of 550, 32.64 | 32.6 | 88.68 / 45.27, 85 of 95, 33.35 | 182.1 | 88.98 / 64.71, 166 of 173, 33.48 | 540.2 | 87.60 / 66.69, 97 of 101, 34.05 | 13.5 | 89.57 / 54.96, 80 of 103, 30.29 |
+| **fix C** (includes fix A) | 177.8 | 84.85 / 38.67, 356 of 550, 31.63 | 30.1 | 88.89 / 42.93, 85 of 95, 32.90 | 173.0 | 88.89 / 76.28, 168 of 173, 33.33 | 524.9 | 88.00 / 71.10, 99 of 101, 33.82 | 12.5 | 89.80 / 47.18, 74 of 103, 29.18 |
+| fix C + colour | 198.1 | 85.40 / 43.72, 377 of 550, 32.83 | 32.6 | 88.77 / 45.27, 85 of 95, 33.43 | 182.8 | 89.24 / 76.48, 169 of 173, 33.86 | 540.9 | 88.19 / 72.55, 99 of 101, 34.14 | 13.5 | 89.57 / 54.99, 80 of 103, 30.35 |
+| **fix C, RDO 1** | 157.0 | 78.34 / 37.57, 223 of 550, 30.03 | 27.3 | 82.05 / 41.52, 62 of 95, 31.05 | 156.0 | 81.56 / 70.91, 120 of 173, 31.42 | 471.7 | 80.67 / 67.80, 64 of 101, 31.85 | 11.2 | 81.73 / 45.36, 65 of 103, 28.30 |
+| BC1, `dds` High | 107.4 | 82.77 / 42.43, 339 of 550, 28.37 | 17.5 | 82.72 / 41.97, 67 of 95, 28.49 | 97.5 | 82.50 / 63.85, 131 of 173, 29.54 | 284.5 | 82.20 / 62.45, 80 of 101, 29.92 | 7.3 | 85.74 / 48.62, 78 of 103, 26.96 |
+
+**Classic, bodies under 80:**
+
+| encoder | equipment | NPC small | NPC medium | NPC large | not listed |
+|---|---:|---:|---:|---:|---:|
+| repo, as the converter calls it | 426 of 550, 92.7 % of its pixels | 92 of 95, 99.7 % of its pixels | 172 of 173, 99.9 % of its pixels | 101 of 101, 100.0 % of its pixels | 40 of 103, 88.4 % of its pixels |
+| fix A (approved, not merged) | 424 of 550, 92.6 % of its pixels | 92 of 95, 99.7 % of its pixels | 172 of 173, 99.9 % of its pixels | 101 of 101, 100.0 % of its pixels | 40 of 103, 88.4 % of its pixels |
+| fix A + colour | 182 of 550, 29.4 % of its pixels | 10 of 95, 5.1 % of its pixels | 7 of 173, 6.4 % of its pixels | 4 of 101, 2.2 % of its pixels | 23 of 103, 45.2 % of its pixels |
+| **fix C** (includes fix A) | 194 of 550, 30.7 % of its pixels | 10 of 95, 5.1 % of its pixels | 5 of 173, 5.6 % of its pixels | 2 of 101, 1.5 % of its pixels | 29 of 103, 48.3 % of its pixels |
+| fix C + colour | 173 of 550, 28.1 % of its pixels | 10 of 95, 5.1 % of its pixels | 4 of 173, 4.1 % of its pixels | 2 of 101, 1.5 % of its pixels | 23 of 103, 45.2 % of its pixels |
+| **fix C, RDO 1** | 327 of 550, 54.8 % of its pixels | 33 of 95, 26.9 % of its pixels | 53 of 173, 28.8 % of its pixels | 37 of 101, 38.4 % of its pixels | 38 of 103, 74.2 % of its pixels |
+| BC1, `dds` High | 211 of 550, 39.8 % of its pixels | 28 of 95, 35.8 % of its pixels | 42 of 173, 22.5 % of its pixels | 21 of 101, 16.6 % of its pixels | 25 of 103, 50.2 % of its pixels |
+
+- Lowest bodies, **fix C** (includes fix A): anim4.mul body 655 (equipment, 38.67, median 308 px); anim4.mul body 671 (equipment, 39.80, median 280 px); AnimationFrame4.uop body 831 (NPC small, 42.93, median 525 px); anim4.mul body 204 (NPC small, 45.24, median 975 px); anim3.mul body 372 (not listed, 47.18, median 667 px); AnimationFrame2.uop body 326 (equipment, 50.40, median 160 px); anim4.mul body 653 (equipment, 52.97, median 104 px); AnimationFrame2.uop body 1485 (NPC small, 53.09, median 1085 px); anim5.mul body 208 (NPC small, 53.44, median 675 px); anim4.mul body 658 (equipment, 53.50, median 561 px); AnimationFrame2.uop body 332 (equipment, 53.62, median 160 px); anim.mul body 417 (equipment, 53.63, median 280 px); anim4.mul body 657 (equipment, 54.50, median 300 px); anim2.mul body 15 (NPC small, 54.52, median 945 px); AnimationFrame2.uop body 330 (equipment, 54.77, median 144 px)
+- Lowest bodies, fix C + colour: anim4.mul body 655 (equipment, 43.72, median 308 px); AnimationFrame4.uop body 831 (NPC small, 45.27, median 525 px); anim4.mul body 671 (equipment, 46.23, median 280 px); anim4.mul body 204 (NPC small, 50.32, median 975 px); anim.mul body 417 (equipment, 54.58, median 280 px); anim3.mul body 372 (not listed, 54.99, median 667 px); anim2.mul body 15 (NPC small, 55.44, median 945 px); anim4.mul body 658 (equipment, 55.73, median 561 px); AnimationFrame2.uop body 1485 (NPC small, 55.85, median 1085 px); AnimationFrame3.uop body 661 (equipment, 56.48, median 420 px); anim3.mul body 595 (equipment, 56.61, median 132 px); AnimationFrame3.uop body 657 (equipment, 56.94, median 340 px); AnimationFrame2.uop body 326 (equipment, 56.97, median 160 px); anim4.mul body 653 (equipment, 57.05, median 104 px); anim5.mul body 208 (NPC small, 57.76, median 675 px)
+- Lowest bodies, **fix C, RDO 1**: anim4.mul body 655 (equipment, 37.57, median 308 px); anim4.mul body 671 (equipment, 38.82, median 280 px); AnimationFrame4.uop body 831 (NPC small, 41.52, median 525 px); anim4.mul body 204 (NPC small, 45.04, median 975 px); anim3.mul body 372 (not listed, 45.36, median 667 px); AnimationFrame2.uop body 326 (equipment, 49.00, median 160 px); AnimationFrame2.uop body 1485 (NPC small, 51.22, median 1085 px); anim4.mul body 658 (equipment, 51.32, median 561 px); anim4.mul body 653 (equipment, 51.33, median 104 px); anim.mul body 417 (equipment, 52.01, median 280 px); anim2.mul body 15 (NPC small, 52.26, median 945 px); AnimationFrame2.uop body 330 (equipment, 52.36, median 144 px); AnimationFrame3.uop body 661 (equipment, 52.46, median 420 px); AnimationFrame2.uop body 332 (equipment, 52.78, median 160 px); anim4.mul body 657 (equipment, 52.90, median 300 px)
+- Lowest bodies, BC1, `dds` High: AnimationFrame4.uop body 831 (NPC small, 41.97, median 525 px); anim4.mul body 655 (equipment, 42.43, median 308 px); anim4.mul body 671 (equipment, 45.61, median 280 px); anim4.mul body 204 (NPC small, 46.77, median 975 px); anim3.mul body 369 (not listed, 48.62, median 1539 px); AnimationFrame1.uop body 322 (equipment, 50.23, median 126 px); anim3.mul body 372 (not listed, 51.53, median 667 px); anim2.mul body 15 (NPC small, 52.47, median 945 px); anim.mul body 417 (equipment, 53.53, median 280 px); anim4.mul body 658 (equipment, 54.02, median 561 px); anim3.mul body 371 (not listed, 54.48, median 1624 px); AnimationFrame2.uop body 1485 (NPC small, 54.71, median 1085 px); AnimationFrame3.uop body 661 (equipment, 55.19, median 420 px); AnimationFrame3.uop body 657 (equipment, 55.29, median 340 px); anim3.mul body 595 (equipment, 55.86, median 132 px)
+
+**Classic, hue:**
+
+| encoder | key changed | moved, mean | full hue error, mean | hued pixels off by 8 or more | partial hue error, mean | grey stops being grey, 8 bit | 5 bit | colour becomes grey, 8 bit | 5 bit |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+| repo, as the converter calls it | 53.16 % | 1.043 | 4.604 | 49.980 % | 8.844 | 48.56 % | 32.14 % | 0.300 % | 4.307 % |
+| fix A (approved, not merged) | 52.57 % | 1.003 | 4.423 | 49.388 % | 8.634 | 48.55 % | 32.09 % | 0.298 % | 4.295 % |
+| fix A + colour | 43.00 % | 0.513 | 2.250 | 39.291 % | 5.455 | 43.53 % | 30.31 % | 0.794 % | 4.486 % |
+| **fix C** (includes fix A) | 44.18 % | 0.533 | 2.326 | 40.161 % | 5.707 | 42.23 % | 28.95 % | 1.841 % | 6.127 % |
+| fix C + colour | 42.78 % | 0.506 | 2.222 | 39.109 % | 5.413 | 43.28 % | 30.14 % | 0.792 % | 4.449 % |
+| **fix C, RDO 1** | 50.51 % | 0.657 | 2.864 | 46.184 % | 7.204 | 50.71 % | 34.63 % | 2.309 % | 6.285 % |
+| BC1, `dds` High | 56.19 % | 0.805 | 3.566 | 52.569 % | 10.108 | 84.31 % | 30.60 % | 0.873 % | 3.190 % |
+
+**Enhanced, block formats on every body,** labelled by encoder:
+
+| encoder | block MB | zstd 7 MB | zstd 19 MB | SSIMULACRA2 median | p5 | min | bodies at 80 or better | RGB PSNR dB | painted pixels gone | transparent pixels painted |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+| repo, as the converter calls it | 5106.4 | 1946.0 | 1914.7 | 60.21 | 42.94 | 4.39 | 93 of 926 | 25.89 | 0.060 % | 3.892 % |
+| fix A (approved, not merged) | 5106.4 | 1945.2 | 1913.9 | 69.99 | 55.61 | 41.20 | 163 of 926 | 26.70 | 0.036 % | 3.890 % |
+| fix A + colour | 5106.4 | 2027.4 | 1996.0 | 77.43 | 64.05 | 45.57 | 318 of 926 | 30.56 | 0.484 % | 3.491 % |
+| **fix C** (includes fix A) | 5106.4 | 1936.2 | 1900.7 | 85.40 | 64.34 | 43.84 | 712 of 926 | 31.34 | 0.540 % | 2.642 % |
+| fix C + colour | 5106.4 | 2025.1 | 1990.6 | 87.14 | 67.86 | 47.72 | 756 of 926 | 32.51 | 0.455 % | 3.097 % |
+| fix C, RDO 0.5 | 5106.4 | 1852.5 | 1803.9 | 83.90 | 63.39 | 43.25 | 680 of 926 | 30.97 | 0.667 % | 2.853 % |
+| **fix C, RDO 1** | 5106.4 | 1778.2 | 1728.9 | 81.03 | 62.05 | 42.09 | 558 of 926 | 30.26 | 0.742 % | 3.057 % |
+| fix C + colour, RDO 1 | 5106.4 | 1848.2 | 1796.7 | 82.48 | 66.55 | 45.94 | 653 of 926 | 31.11 | 0.605 % | 3.375 % |
+| BC1, `dds` High | 2553.2 | 955.6 | 929.5 | 73.75 | 52.00 | -47.93 | 170 of 926 | 29.75 | 10.361 % | 0.000 % |
+| BC3, `dds` High | 5106.4 | 1533.5 | 1463.1 | 81.72 | 63.38 | 43.12 | 585 of 926 | 28.55 | 0.151 % | 0.260 % |
+| BC3, `dds` High, colour step | 5106.4 | 1606.4 | 1539.0 | 84.52 | 66.43 | 46.73 | 722 of 926 | 29.76 | 0.151 % | 0.260 % |
+
+**Enhanced, by class:** zstd 19 MB, then SSIMULACRA2 median / min, bodies at 80 or better, RGB PSNR dB.
+
+| encoder | equipment MB | score | NPC small MB | score | NPC medium MB | score | NPC large MB | score |
+|---|---:|---|---:|---|---:|---|---:|---|
+| repo, as the converter calls it | 478.4 | 63.75 / 18.41, 92 of 558, 23.79 | 27.5 | 58.31 / 37.59, 0 of 51, 24.58 | 372.2 | 55.94 / 4.39, 0 of 187, 25.71 | 1036.6 | 59.37 / 30.63, 1 of 130, 27.26 |
+| fix A (approved, not merged) | 478.1 | 70.93 / 41.20, 156 of 558, 24.42 | 27.4 | 66.93 / 54.96, 3 of 51, 24.99 | 372.0 | 69.09 / 50.34, 3 of 187, 26.61 | 1036.4 | 70.94 / 57.23, 1 of 130, 28.20 |
+| fix A + colour | 514.7 | 79.11 / 45.57, 254 of 558, 29.19 | 29.8 | 75.44 / 65.45, 13 of 51, 29.35 | 387.4 | 76.16 / 58.75, 31 of 187, 30.36 | 1064.1 | 76.65 / 62.46, 20 of 130, 31.36 |
+| **fix C** (includes fix A) | 472.3 | 85.49 / 43.84, 384 of 558, 29.86 | 27.2 | 85.53 / 64.34, 42 of 51, 30.48 | 369.9 | 85.74 / 70.79, 170 of 187, 31.40 | 1031.3 | 84.70 / 72.32, 116 of 130, 32.10 |
+| fix C + colour | 512.4 | 87.21 / 47.72, 414 of 558, 31.43 | 29.6 | 87.72 / 68.76, 45 of 51, 32.42 | 386.4 | 87.61 / 71.40, 176 of 187, 32.77 | 1062.2 | 85.92 / 72.90, 121 of 130, 32.94 |
+| fix C, RDO 0.5 | 437.3 | 83.76 / 43.25, 373 of 558, 29.54 | 26.3 | 83.88 / 63.75, 39 of 51, 30.23 | 355.2 | 84.44 / 70.63, 156 of 187, 31.06 | 985.1 | 83.48 / 71.02, 112 of 130, 31.68 |
+| **fix C, RDO 1** | 419.4 | 81.14 / 42.09, 320 of 558, 28.99 | 25.5 | 81.27 / 62.76, 34 of 51, 29.72 | 341.8 | 81.42 / 70.07, 132 of 187, 30.37 | 942.1 | 80.12 / 68.24, 72 of 130, 30.86 |
+| fix C + colour, RDO 1 | 448.3 | 82.92 / 45.94, 362 of 558, 30.16 | 27.7 | 83.44 / 67.90, 43 of 51, 31.26 | 354.7 | 82.68 / 70.84, 154 of 187, 31.37 | 966.0 | 81.29 / 68.79, 94 of 130, 31.46 |
+| BC1, `dds` High | 229.1 | 74.80 / 20.55, 154 of 558, 29.27 | 13.3 | 72.25 / -47.93, 5 of 51, 29.27 | 177.2 | 71.98 / -46.34, 5 of 187, 29.98 | 509.8 | 72.91 / -47.35, 6 of 130, 29.87 |
+| BC3, `dds` High | 418.0 | 82.34 / 43.12, 341 of 558, 27.32 | 24.6 | 81.50 / 62.82, 33 of 51, 27.29 | 291.7 | 81.70 / 63.89, 130 of 187, 28.70 | 728.8 | 81.16 / 63.02, 81 of 130, 29.14 |
+| BC3, `dds` High, colour step | 450.7 | 85.17 / 46.73, 411 of 558, 29.09 | 26.4 | 84.97 / 67.12, 45 of 51, 29.65 | 306.3 | 84.52 / 65.05, 159 of 187, 30.10 | 755.6 | 83.48 / 65.08, 107 of 130, 29.95 |
+
+**Enhanced, bodies under 80:**
+
+| encoder | equipment | NPC small | NPC medium | NPC large |
+|---|---:|---:|---:|---:|
+| repo, as the converter calls it | 466 of 558, 96.6 % of its pixels | 51 of 51, 100.0 % of its pixels | 187 of 187, 100.0 % of its pixels | 129 of 130, 100.0 % of its pixels |
+| fix A (approved, not merged) | 402 of 558, 89.2 % of its pixels | 48 of 51, 98.5 % of its pixels | 184 of 187, 98.7 % of its pixels | 129 of 130, 100.0 % of its pixels |
+| fix A + colour | 304 of 558, 70.9 % of its pixels | 38 of 51, 72.6 % of its pixels | 156 of 187, 82.0 % of its pixels | 110 of 130, 87.1 % of its pixels |
+| **fix C** (includes fix A) | 174 of 558, 23.8 % of its pixels | 9 of 51, 10.0 % of its pixels | 17 of 187, 8.9 % of its pixels | 14 of 130, 13.8 % of its pixels |
+| fix C + colour | 144 of 558, 20.1 % of its pixels | 6 of 51, 4.0 % of its pixels | 11 of 187, 5.4 % of its pixels | 9 of 130, 9.2 % of its pixels |
+| fix C, RDO 0.5 | 185 of 558, 26.2 % of its pixels | 12 of 51, 14.8 % of its pixels | 31 of 187, 16.1 % of its pixels | 18 of 130, 17.1 % of its pixels |
+| **fix C, RDO 1** | 238 of 558, 40.2 % of its pixels | 17 of 51, 20.0 % of its pixels | 55 of 187, 27.7 % of its pixels | 58 of 130, 57.0 % of its pixels |
+| fix C + colour, RDO 1 | 196 of 558, 31.1 % of its pixels | 8 of 51, 6.3 % of its pixels | 33 of 187, 17.1 % of its pixels | 36 of 130, 43.5 % of its pixels |
+| BC1, `dds` High | 404 of 558, 91.9 % of its pixels | 46 of 51, 95.6 % of its pixels | 182 of 187, 97.4 % of its pixels | 124 of 130, 96.5 % of its pixels |
+| BC3, `dds` High | 217 of 558, 39.0 % of its pixels | 18 of 51, 23.7 % of its pixels | 57 of 187, 28.3 % of its pixels | 49 of 130, 47.1 % of its pixels |
+| BC3, `dds` High, colour step | 147 of 558, 22.8 % of its pixels | 6 of 51, 4.6 % of its pixels | 28 of 187, 15.0 % of its pixels | 23 of 130, 22.3 % of its pixels |
+
+- Lowest bodies, **fix C** (includes fix A): EC body 871 (equipment, 43.84, median 552 px); EC body 329 (equipment, 49.15, median 286 px); EC body 1520 (equipment, 49.82, median 187 px); EC body 332 (equipment, 50.47, median 352 px); EC body 1480 (equipment, 51.11, median 506 px); EC body 1481 (equipment, 51.11, median 506 px); EC body 982 (equipment, 51.32, median 136 px); EC body 657 (equipment, 51.65, median 672 px); EC body 1565 (equipment, 51.69, median 336 px); EC body 917 (equipment, 51.83, median 240 px); EC body 1295 (equipment, 52.17, median 504 px); EC body 1529 (equipment, 52.79, median 680 px); EC body 1530 (equipment, 52.79, median 680 px); EC body 327 (equipment, 52.94, median 368 px); EC body 326 (equipment, 53.21, median 350 px)
+- Lowest bodies, fix C + colour: EC body 871 (equipment, 47.72, median 552 px); EC body 329 (equipment, 53.19, median 286 px); EC body 1529 (equipment, 54.25, median 680 px); EC body 1530 (equipment, 54.25, median 680 px); EC body 1480 (equipment, 54.58, median 506 px); EC body 1481 (equipment, 54.58, median 506 px); EC body 327 (equipment, 56.28, median 368 px); EC body 674 (equipment, 56.55, median 630 px); EC body 1565 (equipment, 56.81, median 336 px); EC body 527 (equipment, 56.85, median 728 px); EC body 1430 (equipment, 57.65, median 238 px); EC body 982 (equipment, 57.96, median 136 px); EC body 657 (equipment, 57.96, median 672 px); EC body 868 (equipment, 58.37, median 391 px); EC body 1520 (equipment, 58.88, median 187 px)
+- Lowest bodies, **fix C, RDO 1**: EC body 871 (equipment, 42.09, median 552 px); EC body 329 (equipment, 48.44, median 286 px); EC body 1480 (equipment, 49.55, median 506 px); EC body 1481 (equipment, 49.55, median 506 px); EC body 1520 (equipment, 49.73, median 187 px); EC body 332 (equipment, 50.16, median 352 px); EC body 657 (equipment, 50.41, median 672 px); EC body 1565 (equipment, 50.79, median 336 px); EC body 917 (equipment, 50.83, median 240 px); EC body 1529 (equipment, 51.00, median 680 px); EC body 1530 (equipment, 51.00, median 680 px); EC body 1295 (equipment, 51.14, median 504 px); EC body 326 (equipment, 51.23, median 350 px); EC body 982 (equipment, 51.42, median 136 px); EC body 327 (equipment, 51.68, median 368 px)
+- Lowest bodies, BC1, `dds` High: EC body 261 (NPC small, -47.93, median 2107 px); EC body 273 (NPC large, -47.35, median 13392 px); EC body 16 (NPC medium, -46.34, median 8979 px); EC body 1247 (NPC large, -38.93, median 11880 px); EC body 168 (NPC medium, -36.85, median 8586 px); EC body 158 (NPC medium, -36.11, median 8910 px); EC body 165 (NPC medium, -34.88, median 6150 px); EC body 144 (NPC small, -23.10, median 924 px); EC body 123 (NPC large, -21.92, median 23364 px); EC body 756 (NPC medium, -16.24, median 3330 px); EC body 1246 (NPC large, -14.99, median 13108 px); EC body 777 (NPC medium, -13.58, median 3740 px); EC body 145 (NPC large, -13.50, median 22320 px); EC body 790 (NPC medium, -12.23, median 2989 px); EC body 740 (NPC medium, -4.87, median 7500 px)
+- Lowest bodies, BC3, `dds` High: EC body 871 (equipment, 43.12, median 552 px); EC body 917 (equipment, 47.82, median 240 px); EC body 1520 (equipment, 48.44, median 187 px); EC body 329 (equipment, 49.22, median 286 px); EC body 982 (equipment, 49.34, median 136 px); EC body 322 (equipment, 49.74, median 264 px); EC body 940 (equipment, 50.73, median 1360 px); EC body 674 (equipment, 51.16, median 630 px); EC body 657 (equipment, 51.24, median 672 px); EC body 326 (equipment, 51.43, median 350 px); EC body 332 (equipment, 51.60, median 352 px); EC body 327 (equipment, 51.83, median 368 px); EC body 1565 (equipment, 52.37, median 336 px); EC body 1480 (equipment, 52.69, median 506 px); EC body 1481 (equipment, 52.69, median 506 px)
+- Lowest bodies, BC3, `dds` High, colour step: EC body 871 (equipment, 46.73, median 552 px); EC body 329 (equipment, 53.70, median 286 px); EC body 940 (equipment, 54.09, median 1360 px); EC body 1529 (equipment, 54.65, median 680 px); EC body 1530 (equipment, 54.65, median 680 px); EC body 674 (equipment, 54.82, median 630 px); EC body 327 (equipment, 55.45, median 368 px); EC body 527 (equipment, 55.48, median 728 px); EC body 982 (equipment, 55.64, median 136 px); EC body 1520 (equipment, 55.79, median 187 px); EC body 1565 (equipment, 55.94, median 336 px); EC body 1480 (equipment, 56.08, median 506 px); EC body 1481 (equipment, 56.08, median 506 px); EC body 326 (equipment, 57.18, median 350 px); EC body 322 (equipment, 57.46, median 264 px)
+
+**Enhanced, hue:**
+
+| encoder | key changed | moved, mean | hued error, mean | worst | hued pixels off by 8 or more |
+|---|---:|---:|---:|---:|---:|
+| repo, as the converter calls it | 87.01 % | 7.659 | 3.011 | 240 | 21.690 % |
+| fix A (approved, not merged) | 86.84 % | 7.192 | 2.825 | 231 | 20.665 % |
+| fix A + colour | 85.52 % | 4.722 | 1.836 | 220 | 11.993 % |
+| **fix C** (includes fix A) | 85.68 % | 4.523 | 1.754 | 223 | 11.616 % |
+| fix C + colour | 85.05 % | 4.010 | 1.551 | 220 | 9.203 % |
+| fix C, RDO 0.5 | 86.64 % | 4.807 | 1.866 | 232 | 12.899 % |
+| **fix C, RDO 1** | 87.58 % | 5.317 | 2.068 | 232 | 15.426 % |
+| fix C + colour, RDO 1 | 87.22 % | 4.892 | 1.902 | 239 | 13.476 % |
+| BC1, `dds` High | 91.48 % | 5.972 | 2.335 | 214 | 17.610 % |
+| BC3, `dds` High | 91.38 % | 6.809 | 2.660 | 234 | 21.388 % |
+| BC3, `dds` High, colour step | 90.55 % | 5.935 | 2.316 | 222 | 17.536 % |
+
+**Enhanced, coverage,** in levels of 16:
+
+| encoder | edge pixels error, mean | worst | edge pixels off by a level or more | solid pixels no longer solid |
+|---|---:|---:|---:|---:|
+| repo, as the converter calls it | 1.521 | 15.1 | 45.90 % | 17.986 % |
+| fix A (approved, not merged) | 1.408 | 15.1 | 43.76 % | 17.213 % |
+| fix A + colour | 0.603 | 14.6 | 16.46 % | 10.187 % |
+| **fix C** (includes fix A) | 0.628 | 13.6 | 21.13 % | 5.980 % |
+| fix C + colour | 0.519 | 13.6 | 13.63 % | 5.141 % |
+| fix C, RDO 0.5 | 0.653 | 14.1 | 22.77 % | 6.391 % |
+| **fix C, RDO 1** | 0.684 | 14.1 | 24.48 % | 6.713 % |
+| fix C + colour, RDO 1 | 0.574 | 14.1 | 17.18 % | 5.988 % |
+| BC1, `dds` High | 3.677 | 8.0 | 88.12 % | 0.000 % |
+| BC3, `dds` High | 0.211 | 1.7 | 0.91 % | 0.375 % |
+| BC3, `dds` High, colour step | 0.211 | 1.7 | 0.91 % | 0.375 % |
+
+### Does any fixed BC7 row beat lossless at the 80 line?
+
+**Enhanced yes, narrowly and only by its median. Classic no.** Fix C is the scratch copy with the lines of section 12, and none of this is in the repo.
+
+| Client | lossless to beat, every body | fixed BC7 row | zstd 19 MB | × lossless | median / p5 / min | at 80 or better |
+|---|---|---|---:|---:|---|---:|
+| Enhanced | section 10's assignment, 1761.7 MB | **fix C, RDO 1** | 1728.9 | 0.981 | 81.03 / 62.05 / 42.09 | 558 of 926 |
+| Enhanced | painted + coverage spans, 1819.9 MB | fix C + colour, RDO 1 | 1796.7 | 0.987 | 82.48 / 66.55 / 45.94 | 653 of 926 |
+| Enhanced | painted + coverage spans, 1819.9 MB | fix C, RDO 0.5 | 1803.9 | 0.991 | 83.90 / 63.39 / 43.25 | 680 of 926 |
+| Enhanced | both planes in spans, 1881.1 MB | fix C, no RDO | 1900.7 | 1.010 | 85.40 / 64.34 / 43.84 | 712 of 926 |
+| Classic | row spans, 733.4 MB | fix C, RDO 1 | 823.2 | 1.122 | 80.20 / 60.25 / 37.57 | 534 of 1022 |
+| Classic | row spans, 733.4 MB | fix C, no RDO | 918.4 | 1.252 | 87.51 / 63.77 / 38.67 | 782 of 1022 |
+
+- **Smallest λ:** on Enhanced, **λ 1 under the assignment,** and λ 0.5 under painted + coverage spans. Plain fix C, with no RDO, is 1 % over both planes in spans. λ 2 wasn't run on every body, because at every 40th it falls to a median of 74.81.
+- **The median hides 40 %.** At λ 1, 368 of Enhanced's 926 bodies are under 80, and they hold 57 % of NPC large's pixels. Fix C without RDO has 214 under 80. "Beats lossless at the 80 line" is true of the median only, and the margin is 2 %.
+- **Equipment is the weak class on every row,** with the lowest minimums. The lowest bodies are all small: Enhanced body 871 has a median frame of 552 px, and Classic's anim4.mul body 655 has 308 px.
+- **Classic's BC7 can't reach lossless at 80.** At λ 1 it's 12 % larger than row spans and already at 80.20, so a higher λ would drop under the line before it got there.
+- **What BC7 buys on Enhanced isn't disk.** It's half the VRAM (5106 MB against RG8's 9834 MB of pixels) and a faster crowd than the assignment; section 17 has both. What it costs is exact colour, exact coverage and hue by index.
+- **The colour step:** on every body it adds 4.7 % on Enhanced and 5.4 % on Classic. It raises the median by 1.74 and 0.38, p5 by 3.52 and 1.90, and min by 3.88 and 5.05. Bodies at 80 go from 712 to 756 and from 782 to 810.
+- **Fix A alone isn't enough.** It lifts Enhanced's median from 60.21 to 69.99 and Classic's from 67.39 to 68.37. Fix C takes them to 85.40 and 87.51 for 0.7 % less on Enhanced and 2.6 % more on Classic. Fix A + colour reaches 77.43 and 87.56.
+
+### BC3 and BC1 on every body
+
+**These rows change the answer for a low-end pack, not for the default. On Enhanced, BC3 is the smallest row at 80, at BC7's VRAM. On Classic, BC1 is the smallest, at half of it.** The encoder is `dds` 0.2.0, already a workspace dependency, at `CompressionQuality::High` with no dithering, on the same streams. Section 12's fixes don't touch it. These are size rows: they share cores with other work and aren't timed.
+
+| Client | row, encoder | zstd 19 MB | × lossless | median / p5 / min | at 80 or better | RGB PSNR dB | edge error, levels | hued error |
+|---|---|---:|---:|---|---:|---:|---:|---:|
+| Enhanced | **BC3, `dds` High** | 1463.1 | 0.831 | 81.72 / 63.38 / 43.12 | 585 of 926 | 28.55 | 0.211 | 2.660 |
+| Enhanced | **BC3 + colour, `dds` High** | 1539.0 | 0.874 | 84.52 / 66.43 / 46.73 | 722 of 926 | 29.76 | 0.211 | 2.316 |
+| Enhanced | BC7, fix C, RDO 1 | 1728.9 | 0.981 | 81.03 / 62.05 / 42.09 | 558 of 926 | 30.26 | 0.684 | 2.068 |
+| Enhanced | BC7, fix C | 1900.7 | 1.079 | 85.40 / 64.34 / 43.84 | 712 of 926 | 31.34 | 0.628 | 1.754 |
+| Enhanced | BC7, fix C + colour | 1990.6 | 1.130 | 87.14 / 67.86 / 47.72 | 756 of 926 | 32.51 | 0.519 | 1.551 |
+| Enhanced | BC1, `dds` High | 929.5 | 0.528 | 73.75 / 52.00 / −47.93 | 170 of 926 | 29.75 | 3.677 | 2.335 |
+| Classic | **BC1, `dds` High** | 514.2 | 0.701 | 82.90 / 63.85 / 41.97 | 695 of 1022 | 29.48 | n/a | 3.566 |
+| Classic | BC7, fix C, RDO 1 | 823.2 | 1.122 | 80.20 / 60.25 / 37.57 | 534 of 1022 | 31.35 | n/a | 2.864 |
+| Classic | BC7, fix C | 918.4 | 1.252 | 87.51 / 63.77 / 38.67 | 782 of 1022 | 33.20 | n/a | 2.326 |
+
+The lossless column compares Enhanced with section 10's assignment (1761.7 MB) and Classic with row spans (733.4 MB). Against Enhanced's both planes in spans (1881.1 MB), BC3 is 0.778 × and BC3 + colour 0.818 ×. Classic's source alpha is one bit, so it has no edge levels.
+
+- **BC3 beats BC7's RDO row on every SSIMULACRA2 figure.** It's 0.85 × the disk of fix C with RDO 1, with a higher median, p5 and min, and 585 bodies at 80 against 558.
+- **BC3 + colour against BC7 with fix C, at the same VRAM:** 0.81 × the disk, 0.88 lower on the median, higher on p5 and min, and 722 bodies at 80 against 712. It leads on equipment (411 against 384 of 558) and NPC small (45 against 42 of 51). Fix C leads on NPC medium (170 against 159 of 187) and NPC large (116 against 107 of 130), and NPC large is about half the disk.
+- **BC3 gives up colour and keeps edges.** Against fix C, BC3 + colour is 1.58 dB lower in RGB PSNR, its hued error is 2.316 levels against 1.754, and the hue key changes on 90.55 % of hueable pixels against 85.68 %. Its edge error is a third of fix C's, 0.211 levels against 0.628, and 0.151 % of painted pixels disappear against 0.540 %. One score weighs those together, so the crops matter, and **`blocks-preview/` has no BC3 crops yet.**
+- **The median still hides bodies.** BC3 has 341 of 926 under 80, and BC3 + colour 204: equipment 147 (22.8 % of its pixels), NPC small 6 (4.6 %), medium 28 (15.0 %), large 23 (22.3 %). Fix C has 214.
+- **Classic's BC1 loses no pixels:** its alpha is one bit, so none disappear and none appear. It's 0.70 × row spans on disk, and 1258.7 MB of VRAM against R8's 2419.0 MB. Against BC7 with fix C it gives up 4.61 on the median and 87 bodies at 80, while p5 holds (63.85 against 63.77). 327 of 1022 bodies are under 80: equipment has 211 of them, with 39.8 % of its pixels. Its colour is the weak point, with hued error 3.566 against 2.326.
+- **BC1 stays out on Enhanced:** 10.361 % of painted pixels disappear, 88.12 % of edge pixels move by a level or more, the min is −47.93, and only 170 of 926 bodies reach 80.
+- **The every-10th sample held.** Enhanced's BC3 went from 1445.4 MB at 82.23 to 1463.1 MB at 81.72, BC3 + colour from 1521.8 MB at 84.66 to 1539.0 MB at 84.52, and Classic's BC1 from 504.2 MB at 83.17 to 514.2 MB at 82.90. Disk rose by 1 to 2 %.
+- **Not run on every body:** Classic's BC3, which adds nothing over BC1 on the sample (section 13) at twice the VRAM, and the BC1 block-reuse pass, whose 445.8 MB stays an every-10th figure. **BC3 + colour's decode wasn't timed either.** On BC7 the colour step moved the crowd rows by under 1 ms.
+
+## 17. One table per platform group
+
+**Measure only: the user decides.** Every row keeps one stream per (action, direction), so faced-only loading works on all of them. Each cell comes from a log named in the sections above.
+
+**How to read them:**
+
+- **Disk** is zstd 19. "Every body" rows are section 16's. "Every 10th" rows are a sample scaled by its share of the pixels, and they run a little under the whole set; the BC rows have every body where it was run.
+- **VRAM** is resident pixels with padding to whole blocks, with no atlas waste, tables or masks. Section 11 adds those.
+- **Decode** is creatures, then dressed NPCs, in ms on 4 threads, five directions / faced only. A block row is zstd in front of the upload. **Every row passes the 250 ms line.**
+- **Timing state:** boost off, EPP balance_power, platform profile performance, on the first L3 cluster. BC rows: quiet rerun. Read a row against the plain zstd 19 row of the same table.
+- **Quality** is SSIMULACRA2 median / p5 / min on composited frames, per body, then bodies at 80 or better.
+- **Hue** is the share of hueable pixels whose key changed, then the mean channel error after a real hue. Enhanced's key is the red byte; Classic's is its top 5 bits, under a full hue.
+
+### Desktop: BC
+
+GTX 900/10 series, Polaris and up, with integrated GPUs held to 60 fps. BC1, BC3, BC7 all take one hardware sample. **GPU cost:** in the same pass, BC7 is 0.71 to 0.80 × nearest index at 1 × and 1.26 to 1.42 × at 1.5 ×, and the indexed filter is 1.43 to 1.57 × BC7. Section 15 has the table; those are ratios on one AMD GPU.
+
+| client | format, encoder | bodies | disk MB | VRAM whole set MB | VRAM creatures, five / faced MB | decode, creatures ms | decode, dressed ms | quality | at 80 | hue |
+|---|---|---|---:|---:|---:|---:|---:|---|---:|---|
+| Classic | BC1, `dds` High | every body | 514.2 | 1258.7 | 67.8 / 13.2 | 23.3 / 5.3 | 4.1 / 0.9 | 82.90 / 63.85 / 41.97 | 695 of 1022 | 56.19 %, 3.566 |
+| Classic | BC1, block reuse λ 1 (`lossy.rs`) | every 10th | 445.8 | 1255.5 | 67.8 / 13.2 | 24.8 / 5.1 | 4.2 / 0.9 | 81.05 / 65.55 / 42.09 | 58 of 103 | 55.25 %, 3.336 |
+| Classic | BC3, `dds` High | every 10th | 583.9 | 2510.9 | 135.6 / 26.4 | 35.6 / 7.3 | 6.5 / 1.4 | 83.25 / 64.44 / 39.87 | 73 of 103 | 51.60 %, 3.087 |
+| Classic | BC7, repo encoder as it is | every body | 894.7 | 2517.5 | 135.6 / 26.4 | 39.0 / 8.0 | 6.1 / 1.3 | 67.39 / 46.76 / 0.72 | 191 of 1022 | 53.16 %, 4.604 |
+| Classic | BC7, fix C (scratch copy) | every body | 918.4 | 2517.5 | 135.6 / 26.4 | 38.5 / 7.9 | 6.0 / 1.3 | 87.51 / 63.77 / 38.67 | 782 of 1022 | 44.18 %, 2.326 |
+| Classic | BC7, fix C + colour (scratch copy) | every body | 968.0 | 2517.5 | 135.6 / 26.4 | 38.2 / 7.9 | 5.8 / 1.2 | 87.89 / 65.67 / 43.72 | 810 of 1022 | 42.78 %, 2.222 |
+| Classic | BC7, fix C, RDO 1 (scratch copy) | every body | 823.2 | 2517.5 | 135.6 / 26.4 | 38.1 / 7.9 | 5.6 / 1.2 | 80.20 / 60.25 / 37.57 | 534 of 1022 | 50.51 %, 2.864 |
+| Classic | anchor: plain planes, zstd 19 |  |  |  |  | 50.0 / 10.3 | 5.9 / 1.3 | lossless |  | exact |
+| Enhanced | BC1, `dds` High | every body | 929.5 | 2553.2 | 101.4 / 20.4 | 28.8 / 5.8 | 5.3 / 1.2 | 73.75 / 52.00 / -47.93 | 170 of 926 | 91.48 %, 2.335 |
+| Enhanced | BC3, `dds` High | every body | 1463.1 | 5106.4 | 202.8 / 40.8 | 50.4 / 10.2 | 8.8 / 1.9 | 81.72 / 63.38 / 43.12 | 585 of 926 | 91.38 %, 2.660 |
+| Enhanced | BC3 + colour, `dds` High | every body | 1539.0 | 5106.4 | 202.8 / 40.8 | not run | not run | 84.52 / 66.43 / 46.73 | 722 of 926 | 90.55 %, 2.316 |
+| Enhanced | BC7, repo encoder as it is | every body | 1914.7 | 5106.4 | 202.8 / 40.8 | 49.8 / 10.1 | 8.1 / 1.8 | 60.21 / 42.94 / 4.39 | 93 of 926 | 87.01 %, 3.011 |
+| Enhanced | BC7, fix C (scratch copy) | every body | 1900.7 | 5106.4 | 202.8 / 40.8 | 50.9 / 10.3 | 8.4 / 1.8 | 85.40 / 64.34 / 43.84 | 712 of 926 | 85.68 %, 1.754 |
+| Enhanced | BC7, fix C + colour (scratch copy) | every body | 1990.6 | 5106.4 | 202.8 / 40.8 | 50.4 / 10.2 | 8.2 / 1.7 | 87.14 / 67.86 / 47.72 | 756 of 926 | 85.05 %, 1.551 |
+| Enhanced | BC7, fix C, RDO 1 (scratch copy) | every body | 1728.9 | 5106.4 | 202.8 / 40.8 | 50.9 / 10.2 | 8.1 / 1.7 | 81.03 / 62.05 / 42.09 | 558 of 926 | 87.58 %, 2.068 |
+| Enhanced | anchor: plain planes, zstd 19 |  |  |  |  | 100.4 / 20.5 | 14.6 / 3.1 | lossless |  | exact |
+
+
+- **VRAM of BC3 and BC7 is the same,** 1 byte a pixel; BC1 is half. Whole-set VRAM is the row's own padded block total. Creature VRAM is padded blocks on the same crowd as the decode column.
+- **BC3 + colour's decode wasn't timed.** It's a size row on every body. On BC7 the colour step moved the crowd rows by under 1 ms.
+- **BC1 drops Enhanced's edges:** section 13 has the coverage error. It loses painted pixels, and its p5 and min show it.
+- **Hue:** a block format can't hue by index, so the shader hues from colour, and **no real renderer does that yet.** Section 11 has the masks: Enhanced needs one on 8.2 % of frames, and Classic would on 79.4 % if a block format must hue greys.
+
+### Phones and Apple: ETC2 and ASTC
+
+Every 10th body. **GPU cost isn't measured:** `gpu-cost` has no ETC2 or ASTC rows, and Mali or Apple figures would need those GPUs. VRAM for creatures is padded blocks, with ETC2 RGB8A1 at BC1's bytes and ASTC 4×4 at BC7's. Basis Universal is in section 14: no Basis row is both smaller and better than the plain block format beside it. ETC2 RGBA8, BC3's counterpart at 1 byte a pixel, wasn't measured; ASTC 4×4 is the row at those bytes.
+
+| client | format, encoder | disk MB | VRAM whole set MB | VRAM creatures, five / faced MB | decode, creatures ms | decode, dressed ms | quality | at 80 | hue |
+|---|---|---:|---:|---:|---:|---:|---|---:|---|
+| Classic | ETC2 RGB8A1, etc2comp effort 40 | 517.3 | 1255.5 | 67.8 / 13.2 | 23.2 / 4.7 | 4.0 / 0.9 | 74.05 / 55.98 / 39.80 | 15 of 103 | 54.98 %, 3.346 |
+| Classic | ETC2 RGB8A1, reuse 1 (**a bound**) | 482.1 | 1255.5 | 67.8 / 13.2 | 23.3 / 4.8 | 3.9 / 0.9 | 73.37 / 55.84 / 40.03 | 14 of 103 | 58.05 %, 3.514 |
+| Classic | ASTC 4×4, astcenc medium | 1022.2 | 2510.9 | 135.6 / 26.4 | 38.6 / 7.9 | 5.8 / 1.3 | 90.41 / 77.63 / 70.36 | 93 of 103 | 35.48 %, 1.596 |
+| Classic | ASTC 6×6, astcenc medium | 525.6 | 1146.1 | 61.2 / 11.9 | 20.3 / 4.2 | 3.7 / 0.8 | 75.28 / 58.12 / 43.93 | 33 of 103 | 56.02 %, 3.478 |
+| Classic | ASTC 8×8, astcenc medium | 313.5 | 660.3 | 34.9 / 6.8 | 13.6 / 2.9 | 3.0 / 0.7 | 59.86 / 35.63 / 1.50 | 10 of 103 | 66.61 %, 5.587 |
+| Classic | anchor: plain planes, zstd 19 |  |  |  | 50.4 / 10.4 | 5.9 / 1.3 | lossless |  | exact |
+| Enhanced | ETC2 RGB8A1, etc2comp effort 40 | 926.9 | 2556.0 | 101.4 / 20.4 | 28.7 / 5.7 | 5.2 / 1.1 | 71.63 / 49.79 / -46.41 | 10 of 93 | 89.36 %, 2.110 |
+| Enhanced | ETC2 RGB8A1, reuse 1 (**a bound**) | 864.7 | 2556.0 | 101.4 / 20.4 | 28.8 / 5.8 | 5.1 / 1.1 | 71.25 / 49.98 / -46.41 | 11 of 93 | 90.85 %, 2.233 |
+| Enhanced | ASTC 4×4, astcenc medium | 2128.9 | 5112.1 | 202.8 / 40.8 | 49.2 / 10.0 | 7.9 / 1.7 | 87.62 / 70.59 / 55.89 | 78 of 93 | 75.30 %, 1.072 |
+| Enhanced | ASTC 6×6, astcenc medium | 1065.0 | 2331.2 | 91.5 / 18.4 | 26.0 / 5.2 | 4.6 / 1.0 | 73.08 / 56.49 / 39.20 | 16 of 93 | 87.66 %, 2.548 |
+| Enhanced | ASTC 8×8, astcenc medium | 649.7 | 1346.2 | 52.2 / 10.5 | 16.9 / 3.5 | 3.4 / 0.7 | 57.59 / 41.09 / 28.84 | 9 of 93 | 90.88 %, 3.927 |
+| Enhanced | anchor: plain planes, zstd 19 |  |  |  | 102.2 / 20.8 | 16.1 / 3.5 | lossless |  | exact |
+
+
+### Universal: R8 and RG8
+
+R8 and RG8 exist on every GPU in scope, web and phones included, so this path needs no second pack. **GPU cost:** the shader must gather and blend by hand, at 1.43 to 1.57 × BC7 in the same pass; nearest at integer scale is 1.25 to 1.41 × BC7. Disk is every body with the palette table, with every stream decoded back and compared. VRAM is the expanded rectangle, on each table's own crowd; a row-span layout in linear memory is in section 11. **The crowds differ from the tables above:** these rows use `mobtypes.txt`'s crowds from section 9, 105.6 and 216.6 Mpx, and the assignment uses section 10's placeholder rule. Compare a row with its own client's plain row.
+
+| client | layout on disk | disk MB, every body | VRAM whole set MB | VRAM creatures, five / faced MB | decode, creatures ms | decode, dressed ms | quality | hue |
+|---|---|---:|---:|---:|---:|---:|---|---|
+| Classic | plain planes, zstd 19 | 761.1 | 2419.0 | 106.8 / 21.4 | 38.7 / 7.7 | 5.8 / 1.3 | lossless | exact, by index |
+| Classic | **row spans, zstd 19** | 733.4 | 2419.0 | 106.8 / 21.4 | 37.0 / 7.5 | 6.5 / 1.4 | lossless | exact, by index |
+| Classic | row spans, best dictionary a body | 711.1 | 2419.0 | 106.8 / 21.4 | 39.3 / 9.2 | 7.2 / 2.3 | lossless | exact, by index |
+| Enhanced | plain planes, zstd 19 | 2013.8 | 9834.0 | 433.4 / 85.2 | 120.1 / 23.3 | 16.5 / 3.3 | lossless | exact, by index |
+| Enhanced | **both planes in row spans, zstd 19** | 1881.1 | 9834.0 | 433.4 / 85.2 | 100.3 / 20.5 | 14.1 / 2.9 | lossless | exact, by index |
+| Enhanced | painted + coverage spans, zstd 19 | 1819.9 | 9834.0 | 433.4 / 85.2 | 129.0 / 26.3 | 20.0 / 4.4 | lossless | exact, by index |
+| Enhanced | section 10's assignment (coverage tANS on all but large) | 1761.7 | 9834.0 | 396.6 / 79.9 | 232.3 / 57.7 | 81.7 / 34.7 | lossless | exact, by index |
 
 ## Recommendation
 
-The ranking is crowd speed first and size second, with the user's line of 300 new actions in about 250 ms on 4 threads.
-Section 8 has the numbers. **Nothing here is a format change: the user decides.**
+The ranking is crowd speed first and size second, with the user's line of 300 new actions in about 250 ms on 4 threads, and faster is better among rows that pass. Section 17 has one table per platform group. **Nothing here is a format change: the user decides.**
 
-1. **Store official animations indexed, lossless, zstd 19, as one stream per (action, direction).**
-   - **Classic:** R8 slot plane. **Enhanced:** RG8 as two planes, indices and then coverages. **Palettes:** one
-     deduplicated table, with hue in the shader.
-   - **Load the direction an NPC faces first, and the other four when it turns.**
-   - **Speed on 4 threads, Classic / Enhanced:** uniform crowd 3.1 / 7.0 ms for the faced direction and 14.7 / 31.1 ms
-     for all five. The worst crowd is 58 / 103 ms for the faced direction. All five directions miss there, at 278 / 496
-     ms, on a crowd of 918 / 1231 Mpx where upload would dominate anyway. Turning costs at most 6.6 / 3.7 ms on the
-     uniform crowd and 16.4 ms on the worst one.
-   - **Disk:** about 761 MB for Classic (0.97× BC7, 0.89× a real pack, 0.72× referenced shipped) and about 2000 MB for
-     Enhanced (1.10×, 1.01×, 1.01×), against the whole-body 677 and 1951 MB.
-   - **VRAM:** 5.8 / 21.1 MB for a uniform crowd's faced directions, 28.3 / 100 MB for all five.
-   - **It's the fastest candidate that's smaller than a real BC7 pack for Classic and level with it for Enhanced.**
-2. **The choices the user may want to take differently,** each one a measured trade against item 1:
-   - **LZ4 HC instead of zstd 19:** 3–4× faster, passes the worst crowd with all directions (80 / 174 ms), about 22 %
-     larger on disk. A per-stream codec id would allow it per body.
-   - **Enhanced only, luma + MED + zstd 19:** −9 % on disk (0.92× shipped), 4× slower (128 ms), still passes the uniform
-     crowd. Block motion with tANS is −14 % (0.86× shipped), 7.7× slower (239 ms), and has almost no margin.
-   - **Not worth considering:** rank coding fails the line, even though it's the smallest (0.80× shipped).
-3. **Keep everything by default, and don't assume shipped data.** See "Custom MUL animations" in section 8: no dropping
-   of unreached art, index 0 flagged per batch, and no trained tables.
-4. **Keep custom 32-bit art and colour-making upscales on BC7 at pack time,** or requantize them into the indexed path
-   when the SSIMULACRA2 floor is acceptable. **No runtime BC7 for now, by the user's decision;** possibly later as an
-   option for upscaled animations.
-5. **The runtime:**
+1. **Store official animations indexed, lossless, zstd 19, as one stream per (action, direction).** Every GPU in scope reads R8 and RG8, so one pack reaches web, phones, Apple, Windows and Linux. There's no quality question, and hue stays exact because it works on the index.
+   - **Classic: row spans, with duplicate streams as pointers.** 706.5 MB on every body, 0.82 × a real BC7 pack and 0.67 × shipped. On creatures it takes 37.0 ms with five directions and 7.5 ms faced, level with the plain rectangle's 38.7 and 7.7 in the same run.
+   - **Enhanced: both planes in row spans, with duplicates as pointers.** 1869.6 MB, 0.94 × a real BC7 pack and 0.94 × shipped. On creatures it takes 100.3 / 20.5 ms where the rectangle takes 120.1 / 23.3 in the same run, so it's both smaller and faster.
+   - **If disk leads on Enhanced:** painted only + coverage spans is 1808.7 MB, 0.91 ×, at 129.0 / 26.3 ms. Section 10's assignment is 1761.7 MB before duplicates, 0.875 × plain zstd 19, at 232.3 / 57.7 ms. That's inside the line with almost no margin.
+   - **Palettes:** one deduplicated table, with hue in the shader. **Load the direction an NPC faces first,** and the other four when it turns: 5 × less decode and VRAM.
+   - **Why not BC7 on disk:** on Classic, every BC7 row is larger than lossless, at any quality (RDO 1: 823.2 MB at 80.20, against 733.4 MB). On Enhanced, BC7 with fix C is 1900.7 MB at 85.40, larger than every row above. Only RDO 1 gets under them, at 1728.9 MB, and 368 of 926 bodies are then under 80.
+   - **The close call is Enhanced on desktop.** BC3 + colour is 0.82 × both planes in spans on disk and 0.52 × on VRAM, with about half the crowd decode. It takes one hardware sample, and BC1 and BC7 cost 0.60 to 0.64 × the indexed filter there; BC3 itself wasn't in the GPU test. It pays with fidelity: 204 of 926 bodies are under 80, hue has to work from colour, which no real renderer does yet, and phones need another pack. Lossless stays first because it needs one pack and has no quality question. If the user accepts those costs on desktop, it's the row in item 4.
+2. **Fix the BC7 encoder, whatever the user decides about animations.** Fix A is approved. **Take fix C with it:** it's about 15 lines, it moves disk by −0.7 % on Enhanced and +2.6 % on Classic, and it costs 0.14 worker seconds a Mpx against 0.05. On the shipped samples it lifts `tex_art_ec` from 53.25 to 87.46, `tex_art_cc` from 64.95 to 86.80 and `tex_aux_ec` from 87.34 to 95.09. Section 12 has the exact lines. **The colour step is a separate choice:** on every body it adds 4.7 % on Enhanced and 5.4 % on Classic for +1.74 and +0.38 on the median, and +3.52 and +1.90 on p5. It needs a check first that nothing reads colour under alpha 0 from a decoded page.
+3. **Enhanced's VRAM is the real price of item 1,** and the only one. RG8 is 1.93 × BC7: a creature crowd's faced frames are 79.9 MB against 40.8 MB, and five directions 396.6 MB against 202.8 MB. **Start with RG8 and faced-first loading,** because that's simple and lossless, and take one of these only when a target device proves too small:
+   - **Row spans held in linear memory:** 0.97 × BC7, lossless, at 1.99 to 2.13 × BC7 on the GPU, in a shader that can't use a hardware sampler.
+   - **The low-end pack below:** BC3 or BC7, at the bytes of BC7.
+   - Not whole atlas pages, under any layout. They turn 3.0 MB of a dressed crowd's frames into 804 MB.
+4. **Offer a low-end pack as a pack-time choice, not as the default.** It keeps the same streams, so faced-first loading still works. Runtime BC7 stays off.
+   - **Desktop, Classic: BC1 above 2500 px, lossless R8 below.** 523.5 MB, 0.72 × plain lossless. Coded bodies have a median of 81.77 and a min of 75.52, with 28 of 33 at 80 or better. Whole-set VRAM goes to 1434.2 MB from 2419.0 MB, and the creature crowd's to 69.2 MB from 132.7 MB. Dressed NPCs barely change, because they're small bodies. All-BC1 is 514.2 MB at 82.90 on every body, with 695 of 1022 at 80 (504.2 MB on the sample the mix uses). Its min is 41.97, on small bodies the mix keeps exact.
+   - **Desktop, Enhanced: BC3 + colour, or BC7 with fix C. Not BC1.** One-bit alpha takes BC1's min to −47.93, and only 170 of 926 bodies reach 80. At the same VRAM on every body, BC3 + colour is 1539.0 MB at 84.52 / 66.43 / 46.73, with 722 of 926 at 80. BC7 with fix C is 1900.7 MB at 85.40 / 64.34 / 43.84, with 712. **So the original clients' DXT5 is the better choice for this art on disk:** 0.81 × fix C's bytes, and its separate alpha block has a third of the edge error (0.211 levels against 0.628). BC7 keeps colour better (31.34 dB against 29.76, hued error 1.754 against 2.316) and has more large bodies at 80 (116 against 107 of 130). Plain BC3 is 1463.1 MB at 81.72, with 585 of 926. The user should look at both, and `blocks-preview/` has no BC3 crops yet.
+   - **Phones and Apple: stay on the universal path unless VRAM forces otherwise.** ASTC 4×4 is the only phone row at 80 or better (90.41 / 87.62), and it's larger than lossless on disk (1022.2 / 2128.9 MB). ASTC 6×6 and ETC2 RGB8A1 halve the disk but score 75.28 / 73.08 and 74.05 / 71.63. Arm's figure of 6×6 beating BC1 by about 1.5 dB doesn't hold on these sprites: it's below BC1 in every class. Crops are in `blocks-preview/`; the user judges those by eye.
+   - **What a block format costs besides quality:** hue must work from colour rather than from an index, and **no real renderer does that yet.** Section 13 has hue errors, and section 11 the masks. A second shader path is cheap when most sprites stay indexed, since a per-instance branch was level with grouped pipelines at 100/0 and 90/10.
+5. **Keep everything by default, and don't assume shipped data.** See "Custom MUL animations" in section 8: no dropping of unreached art, index 0 flagged per batch, and no trained tables. Classic's row spans treat index 0 as transparent, so a batch where it's opaque needs the flag or the plain rectangle. Enhanced's painted-only layout has the same caveat for coverage 0.
+6. **Keep custom 32-bit art and colour-making upscales on BC7 at pack time,** with the fixed encoder, or requantize them into the indexed path when the SSIMULACRA2 floor is acceptable. **No runtime BC7 for now, by the user's decision;** possibly later as an option for upscaled animations.
+7. **The runtime:**
    - an existence index per (body, action, direction), so existence is never answered from data;
    - 4 decoding worker threads, with the current direction first;
-   - long-lived R8/RG8 atlas pages with hue in the shader;
-   - measure upload next: no run here includes it.
-6. **Upscaling:** store 1× plus a filter id and filter when a direction loads, for EPX, MMPX and hqx. Store xBRZ if it's
-   wanted: it's too slow to filter at load (268 / 510 ms estimated even for faced directions). MMPX stored indexed is
-   the alternative when disk allows.
-7. **Lossy tiers aren't recommended.** Near-lossless index, reduced coverage, merged palettes, halved frames and AV1 are
-   measured for the user to judge. AV1 is the only large saving, and it fails both the crowd line and colour fidelity.
+   - long-lived R8/RG8 atlas pages, filled by streams rather than by whole pages;
+   - **one upload per load, not one per frame:** frame by frame takes 4 to 11 × longer, and it's the only thing here that brings a crowd near the line (section 15);
+   - **a palette row hued in advance, not a hue read per tap:** 1.10 to 1.15 × a plain index draw at 1 ×, against 1.62 to 1.64 ×;
+   - nearest at integer scale, and the manual filter only at fractional scale;
+   - **a shared shader by default,** with a per-format pipeline only where one format's sprites can be grouped and they're the cheap ones. Splitting the art shader itself recovers far more: in a scratch rewrite, billboards in the transparent pass go from 56 to 40 VGPRs and from 7754 to 2549 instructions.
+8. **Upscaling:** store 1× plus a filter id and filter when a direction loads, for EPX, MMPX and hqx. Store xBRZ if it's wanted: it's too slow to filter at load (268 / 510 ms estimated even for faced directions). MMPX stored indexed is the alternative when disk allows.
+9. **Other lossy tiers aren't recommended.** Near-lossless index, reduced coverage, merged palettes, halved frames and AV1 are measured for the user to judge. AV1 is the only large saving, and it fails both the crowd line and colour fidelity. Basis Universal's one gain is a single file for every GPU. No Basis row was both smaller and better than the plain block format beside it, and with five directions on creatures its transcode fails the line on all but one row.
+
+**Still not measured:** any low-end GPU; Mali or Apple GPU cost (`malioc` isn't installed); hue from colour or a second shader path in a real renderer; upload over PCIe to a discrete card; ETC2 RGBA8, BC3's counterpart on phones at 1 byte a pixel.
 
 ## Decisions for the user
 
 | Question | Options | Recommendation |
 | --- | --- | --- |
-| Stream layout (section 9) | rectangle; row spans; Enhanced both planes in row spans; Enhanced painted only + coverage in row spans | **Row spans on Classic.** On Enhanced, **painted only + coverage spans** if disk leads (−10 %, 7 % slower on creatures), **both planes in row spans** if speed leads (−7 %, faster) |
-| Duplicate streams (section 9) | none; a pointer to one blob | **Pointer:** −3.6 % on Classic, −0.6 % on Enhanced, one table lookup |
-| Dictionary per body (section 9) | none; best per body | **None by default.** Classic −2.6 % on row spans, at pack time and a possible +12 % decode. The user may want it for Classic |
+| Storage of official animations | lossless indexed with zstd 19; with LZ4 HC; keep BC7; BC3 | **Lossless indexed:** 0.82 × / 0.94 × a real BC7 pack, passes the crowd line, hue exact. LZ4 HC is 22 % larger and 3–4 × faster if the user prefers speed. On Enhanced desktop, BC3 + colour is the close call: 0.82 × the disk and 0.52 × the VRAM, but lossy |
+| Stream layout (sections 9, 16) | rectangle; row spans; Enhanced both planes in row spans; Enhanced painted only + coverage in row spans; section 10's assignment | **Row spans on Classic** (−3.6 %). On Enhanced, **both planes in row spans** (−6.6 %, faster) if speed leads; **painted only + coverage spans** (−9.6 %, about 7 % slower) if disk leads; the assignment (−12.5 %) has almost no margin |
+| Duplicate streams (section 9) | none; a pointer to one blob | **Pointer:** −3.7 % on Classic's row spans, −0.6 % on Enhanced, one table lookup |
+| Dictionary per body (section 9) | none; best per body | **None by default.** On Classic row spans it's −3.0 % (711.1 MB), at pack time, and it reads 25.6 MB instead of 6.2 MB for a faced crowd. The user may want it for Classic |
 | Split boxes (section 9) | one box per frame; up to 2 | **One.** Bytes don't move, and it saves 5 to 7 % of a town's atlas, under 1.5 MB |
-| Storage of official animations | indexed slot planes with zstd 19; with LZ4 HC; with luma + MED; keep BC7 | **Indexed zstd 19:** lossless, hue in the shader, 0.97× / 1.10× BC7, passes the crowd line |
-| Load unit | whole body (a), per action, or per (action, direction) | **Per (action, direction):** on the uniform crowd, whole-body units fail the line with every lossless candidate but LZ4 HC. Streams cost +12 % / +3 % on disk against whole-body zstd 19 |
-| What to load first | all directions, or the faced one | **The faced one:** 4–5× less decode and VRAM, and only this passes the worst crowd with zstd 19 |
-| Enhanced size against speed | zstd 19 (1.01× shipped, 31 ms); luma + MED (0.92×, 128 ms); block motion (0.86×, 239 ms) | **zstd 19,** since speed outranks size and it isn't close; the user may value the 9 % |
-| Enhanced VRAM | RG8 (16 bpp); background runtime BC7 (off by the user's decision); split 8+4 bpp pages (not measured) | **RG8,** with faced directions keeping crowds small |
+| Load unit | whole body (a), per action, or per (action, direction) | **Per (action, direction):** whole-body units fail the line with every lossless candidate but LZ4 HC. Streams cost +12 % / +3 % on disk against whole-body zstd 19 |
+| What to load first | all directions, or the faced one | **The faced one:** 5 × less decode and VRAM, and only this passes the worst crowd with zstd 19 |
+| BC7 encoder (section 12) | fix A (approved); fix A + C; with the colour step | **Fix A + C.** The colour step is the user's call: about +5 % on disk for a better p5 and min |
+| Enhanced VRAM (sections 11, 15) | RG8 (2 bytes a pixel); row spans in linear memory (0.97 × BC7, 2 × its GPU cost); a BC3 or BC7 pack (lossy) | **RG8 with faced-first loading,** with the others kept for a device that proves too small. Not measured on one |
+| Low-end pack, Classic | none; BC1; BC1 above a size; BC1 with block reuse | **BC1 above 2500 px, lossless below** (523.5 MB, min 75.52). All-BC1 is 514.2 MB at 82.90 on every body. BC1 block reuse λ 1 is the smallest at 80 on the sample (445.8 MB, 81.05), and the user should view the crops |
+| Low-end pack, Enhanced | none; BC3; BC3 + colour; BC7 fix C; BC7 fix C, RDO 1; ASTC 6×6 | **BC3 + colour or BC7 fix C,** at the same VRAM: 1539.0 MB at 84.52 against 1900.7 MB at 85.40. BC3 keeps edges, BC7 keeps colour. Not BC1: its one-bit alpha removes edges |
+| Phones and Apple | R8/RG8; ASTC 4×4; ASTC 6×6; ETC2 RGB8A1; Basis | **R8/RG8.** ASTC 4×4 if VRAM forces it. The rest score under 80, so the user judges them by eye |
+| Shader paths (section 15) | one pipeline per format; one shader with a branch | **One shader with a branch** in a mostly indexed pack: level at 100/0 and 90/10. It costs 8 to 26 % only when every sprite takes the cheap path |
 | Colour-making upscales | requantized indexed (i); RGBA (ii); BC7 (iii) | **(i)** where SSIMULACRA2 stays high; the user picks a floor (e.g. 80) below which an animation falls back to (iii) |
-| Lossy tiers | near-lossless, coverage levels, merged palettes, halved frames, AV1 | **None by default.** The user judges from the sheets in `uodynamapper-scratch/anim-codec/halved/` and `av1/` |
+| Other lossy tiers | near-lossless, coverage levels, merged palettes, halved frames, AV1, Basis | **None by default.** The user judges from the sheets in `uodynamapper-scratch/anim-codec/halved/` and `av1/` |
 | Unreached art | keep all; an opt-in flag from the install's own files | **Keep all.** The flag waits for tracing the callers (section 7) |
 | Keyframe interpolation | exact-shift motion; approximate flow | A separate study; block warp tears on limbs in the halved-frame sheets |
 
