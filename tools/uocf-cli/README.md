@@ -35,7 +35,9 @@
   land map's, graphics or hues above 0xFFFF, missing sectors) is refused unless
   `--allow-lossy`; stale delimiters only warn, with their count, since the delimiter rule
   rebuilds them. For a bigger map in an old client, patch its size table with
-  `uo-client-patcher-gui` instead.
+  `uo-client-patcher-gui` instead. The output folder cannot be a source folder or the target
+  client's, whose files have the names of the ones written. Each file written is whole or
+  not there: a failed write leaves the file it would replace.
   With `--to classic` and a `--target-client` that draws the world map images (7.0.x:
   its executable names `facetNN.mul`), the facet's image is written too. The client reads
   it without bounds checks, tile (x, y) at column x of row y, so an image of another size

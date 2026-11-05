@@ -58,6 +58,12 @@ Enhanced Client and Kingdom Reborn parsers:
 Kingdom Reborn facet format support (format shared with EC, with minor
 differences). Parsed via the `enhanced` facet decoder/encoder.
 
+### `facet_convert.rs`
+
+One facet between Classic, Enhanced Client and Kingdom Reborn files, with the checks
+against a target client: what `uocf-cli facet convert` and the inspector's `Convert and
+save a facet` both call.
+
 ### `animation_sequence.rs`
 
 Shared animation sequence metadata helper.

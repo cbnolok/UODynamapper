@@ -184,7 +184,8 @@ The 2024 file has 1,314 blocks, with 660 `coveredBy`, 498 `covers`, 472 `remove`
 - `tiledata.mul` (all six layouts), `radarcol.mul`, `animdata.mul`, `Multimap.rle`, `multi.mul`, `light.mul` and
   `texmaps.mul` write back byte for byte on every era (UO Gold to the 2024 client). Maps (MUL and UOP) and
   statics write back byte for byte on the modern clients and in the modern layout from Gold and ML; the difs are
-  baked into them; `facet convert` moves a facet between Classic, EC and KR files and between client sizes.
+  baked into them; `facet convert` and the inspector's Maps tab move a facet between Classic, EC and KR files and
+  between client sizes (`uocf::facet_convert`).
   Verdata has a reader only. Art and gumps are exported as PNG and imported from an image into copies of either
   container (`classic/image_files.rs`, `uocf-cli classic-image`, the Art and Gumps views).
 - The remap def files (`Body`, `Bodyconv`, `Equipconv`, `Corpse`, `art`, `gump`, `TexTerr`, `Anim1-4`) read strictly

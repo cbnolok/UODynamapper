@@ -219,7 +219,7 @@ pub struct ConvertArgs {
     /// update). A rendered tile is an approximation of the shipped style.
     #[arg(long, value_enum)]
     pub facet_image: Option<FacetImageArg>,
-    /// Output folder (created; must not be a source folder).
+    /// Output folder (created; must not be a source folder or the target client's).
     #[arg(short, long)]
     pub output_dir: PathBuf,
 }
