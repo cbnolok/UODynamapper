@@ -71,8 +71,10 @@ something other than pixels limits it. The road and town fixtures top out near t
 every preset at small sizes, which also points away from pixels there. This doesn't attribute time
 to passes.
 
-KR at lava at 1900x1080 is the only cell under 60 fps at that size. At the screen's own width,
-Enhanced and KR are under the integrated-GPU bar of 60 fps almost everywhere. A scratch rewrite in
+**The bar is 60 fps at fullscreen on integrated GPUs (the user, 2026-11-05).** KR at lava at 1900x1080 is the
+only cell under 60 fps at that size. Maximized on this screen, Enhanced needs 1.5-1.9x its rate and KR 2.0-2.8x; Classic passes.
+True fullscreen at 2880x1800 has about 6 % more pixels than the maximized rows and wasn't run, and neither was a lesser
+integrated GPU. A scratch rewrite in
 [the animation codec proposal](proposals/2026-11-01-mobile-anim-codec.md) (section 15) suggests where
 to look first: splitting `art/main.wesl` took billboards from 7754 to 2549 instructions.
 

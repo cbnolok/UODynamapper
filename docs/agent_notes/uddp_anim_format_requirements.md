@@ -1,7 +1,8 @@
 # UDDP mobile animation format: needs, constraints, desires, failed attempts
 
-Status (2026-11-05): **measuring is finished and no format is chosen yet: the user decides.** This file says what the format
-has to do and what we already tried, so nobody repeats a dead end. The measurements and their method are in
+Status (2026-11-05): **measuring is finished, and the user has made the first format decisions (section 8). Nothing is
+implemented yet, and the compressor and the lossy rows are still open.** This file says what the format has to do and what we
+already tried, so nobody repeats a dead end. Section 9 lists every option set aside, and why. The measurements and their method are in
 [`proposals/2026-11-01-mobile-anim-codec.md`](proposals/2026-11-01-mobile-anim-codec.md), which ends with the recommendation
 and the list of decisions, and the benchmark is
 `lib/udd-conv/tests/integration/mobile_anim_codec.rs` with `mobile_anim_codec/shrink*`.
@@ -658,11 +659,23 @@ The repo's BC7 encoder had a real bug at the converter's flags: mode 4 with inde
 field. The user approved that fix, and it landed on 2026-11-05. Any BC7 figure from before that date and not labelled with a fixed
 encoder reads the bug: section 12 of the proposal has the details, and two further encoder changes that wait for the user.
 
+**Made by the user on 2026-11-05:**
+
+- **Both a lossless and a lossy path are supported.** Which one a package uses is chosen at pack time.
+- **Enhanced's lossless layout is both planes in row spans,** the faster of the two zstd rows: 1869.6 MB at 100.3 / 20.5 ms
+  against painted + coverage spans at 1808.7 MB and 129.0 / 26.3 ms. 61 MB over gigabytes isn't worth being slower.
+- **Compile only the shader pipelines a package needs, at startup.** A package's contents don't change at runtime, so its
+  formats can be read once and the other paths never compiled. A package with one format gets one pipeline with no format
+  branch. A package holding two, such as a low-end mix or custom BC7 art beside indexed frames, needs both paths live, and there
+  a shared shader with a branch was level with grouped pipelines at 100/0 and 90/10 (proposal, section 15).
+- **The 60 fps bar for integrated GPUs applies at fullscreen.** See `renderer_release_performance.md` for where this stands.
+
 **Open:**
 
 | Question | Recommendation | Depends on |
 |---|---|---|
-| Storage per client | Indexed slot planes, lossless, zstd 19, hue in the shader; LZ4 HC is the alternative at about 22 % more disk | The user |
+| Lossless compressor | Enhanced in the chosen layout, expanded: zstd 19 is 1881.1 MB before duplicates at 100.3 / 20.5 ms, worst crowd 451.1 / 92.2 ms. LZ4 HC is 2268.0 MB at 36.4 / 7.5 ms, worst crowd 169.5 / 34.9 ms, so it's the only one to pass the worst crowd with five directions, at 21 % more disk and 1.14× shipped | The user |
+| Lossy row on Enhanced desktop | BC3: the only lossy row that saves disk as well as VRAM. BC7 with fix C is larger than the lossless row | The user, from `blocks-preview/` |
 | Load unit | One stream per (action, direction), faced direction first | The user |
 | Where the low-end tier's quality floor sits, and which RDO level it uses | 80 as a floor, no RDO unless a target needs it | The user's eye: `blocks-preview/` crops, including BC3 against BC7 |
 | Whether indexed frames stay the default once filtering is counted | Yes: the indexed filter costs 1.43–1.57× BC7 on the Radeon 880M, 2.4–3.1 % of a 60 fps frame in a crowd at 1.5× | The user; one AMD iGPU only |
@@ -670,6 +683,61 @@ encoder reads the bug: section 12 of the proposal has the details, and two furth
 | Whether phones and web get their own low-end packs or one Basis Universal pack | Stay on the universal R8/RG8 pack, and ASTC 4×4 only if VRAM forces it. No Basis row was both smaller and better than the plain format beside it | The user |
 | Whether the low-end tier uses BC1, BC3 or BC7 | Classic BC1. Enhanced BC3 + colour or BC7 with fix C, not BC1 | The user |
 | Which GPU layout holds frames in VRAM | R8/RG8 with faced-first loading, not whole atlas pages. Row spans in linear memory only if a device proves too small | The user; no low-end device measured |
-| Whether the BC7 encoder takes fix C and colour under transparent pixels | Fix C yes; the colour step is about +5 % on disk for a better p5 and min | The user |
+| Whether the BC7 encoder takes fix C | Yes: section 12 of the proposal | The user |
+| Whether lossy packs take the colour step | Not for what it shows at 1×: about +5 % on disk, and I couldn't see it at game size on NPCs. It clears small specks on a few bodies when zoomed, and halves the pixels under 80 on BC3. **Measure fractional zoom first:** the seam filter's hardware sample (`art/main.wesl`) reads straight RGB, so at seams beside transparent pixels it mixes in the colour stored under them. That is transparent black without the step, and every sheet so far is at 1× with no filter, so this effect is unmeasured. Storing premultiplied colour is the untested alternative | The user; a test that doesn't exist yet |
 | Runtime interpolation for high frame rates | A separate study | The full frame set |
 | Whether to offer an opt-in flag for unreached art | Keep all | Section 7's trace |
+
+## 9. Options set aside, and why
+
+Section 4 has the earlier failed attempts, and section 6 the outside proposals. This adds what the final rounds set aside. Figures
+are from [the codec proposal](proposals/2026-11-01-mobile-anim-codec.md), on every body unless marked; decode is the creature crowd on
+4 threads, five directions / faced. Repeat one only with a new reason.
+
+**Decided by the user:**
+
+| Option | Figures | Why not |
+|---|---|---|
+| Enhanced painted + coverage spans | 1808.7 MB, 129.0 / 26.3 ms | 61 MB doesn't justify being slower (2026-11-05) |
+| Enhanced coders per class (section 10's assignment) | 1761.7 MB, 232.3 / 57.7 ms | Same decision, and almost no margin on the line |
+| One shader with a format branch on every install | 8–26 % slower when every sprite takes the cheap path | Pipelines compiled at startup from the package's formats cost nothing. The branch stays for mixed packages only (2026-11-05) |
+| Lossless only, or lossy only | | Both paths are supported (2026-11-05) |
+| Halved frames | See section 4 | All frames are kept (2026-11-04) |
+| Runtime BC7 | See section 4 | Off for now; possibly later for upscaled animations |
+
+**Set aside by the measurements, with nobody asking for them:**
+
+| Option | Figures | Why not |
+|---|---|---|
+| Plain rectangle, Enhanced | 2013.8 MB before duplicates, 120.1 / 23.3 ms | Larger and slower than row spans |
+| Index in spans with a plain coverage plane, Enhanced | 1955.7 MB before duplicates, 108.6 / 22.3 ms | Larger and slower than both planes in spans |
+| Plain rectangle, Classic | 38.7 / 7.7 ms against 37.0 / 7.5 | Row spans are level on speed and 3.6 % smaller |
+| Whole-body load unit | Fails the line with every lossless candidate but LZ4 HC | Per (action, direction) costs +12 % / +3 % on disk and lets a crowd load only what it draws |
+| Loading all five directions at once | Worst crowd about 260–550 ms | Faced first passes at about 55–112 ms, with 5× less decode and VRAM |
+| Luma, MED + block motion, tANS | Classic ≈ 784 MB, 1.03× zstd 19, 524.0 / 125.3 ms | Larger and slower than zstd 19 |
+| Rank + previous frame, rANS | Classic ≈ 712 MB, 1762 / 361.2 ms | Smallest, and fails the line |
+| Split boxes | Bytes don't move; under 1.5 MB of a town's atlas | Not worth a second box |
+| BC7 as the default on disk | Classic RDO 1 823.2 MB at 80.20 against 733.4 MB. Enhanced fix C 1900.7 MB at 85.40 | Larger than lossless, and lossy |
+| BC7 fix C with RDO 1, Enhanced | 1728.9 MB at 81.03, 558 of 926 at 80 | BC3 beats it on every score at 0.85× the disk |
+| BC1, Enhanced | 929.5 MB at 73.75 / 52.00 / −47.93, 170 of 926 at 80 | One-bit alpha: 10.361 % of painted pixels disappear |
+| BC3, Classic | Every 10th: 583.9 MB at 83.25, BC1 504.2 MB at 83.17 | Classic's alpha is one bit, so it gains nothing at twice the VRAM |
+| R8 index + BC4 coverage | 1.47× BC7's VRAM; 0.9971 % of pixels change level | Not lossless, and not small |
+| BC7 mode 7 on (fix B) | Sample, with fix C + colour: Enhanced 88.12 at 1994 MB against 87.36 at 1943 MB | Small gain; the converter doesn't set those flags. Bugs B remain in those paths (proposal, section 12) |
+| ISPC BC7 | Sample: Enhanced 86.94 / 74.10 / 70.34 at 1988 MB, about 40 worker seconds a Mpx against 0.14 | Near fix C's median at about 280× the encode cost; `intel_tex_2`'s licence wasn't verified |
+| ASTC 8×8 | Every 10th, Classic / Enhanced: 313.5 / 649.7 MB, 59.86 / 57.59 | Far below the 80 line |
+| AV1 per (action, direction) | Classic CRF 20: 0.0 % of hue-flagged pixels exact | Fails the crowd line and colour fidelity |
+| Whole atlas pages as the load unit | 3.0 MB of a dressed crowd's frames holds 804 MB | Long-lived pages filled by streams instead |
+| One upload per frame | 4–11× longer than one upload per load | The only thing that brings a crowd near the line |
+| A hue read per filter tap | 1.62–1.64× a plain index draw, against 1.10–1.15× for a palette row hued in advance, at 1× | Hue the palette row in advance |
+
+**Parked: not chosen now, and may return if a need appears:**
+
+| Option | Figures | Returns if |
+|---|---|---|
+| Row spans held in linear memory | 0.97× BC7's VRAM, lossless, 1.99–2.13× BC7 on the GPU | A device proves too small for RG8 |
+| Dictionary per body | Classic −3.0 %, 711.1 MB; reads 25.6 MB instead of 6.2 MB for a faced crowd | The user wants it for Classic |
+| BC1 with block reuse, λ 1 | Classic, every 10th: 445.8 MB at 81.05 | The crops pass the user's eye |
+| ASTC 4×4 | Every 10th, Classic / Enhanced: 1022.2 / 2128.9 MB at 90.41 / 87.62 | VRAM forces it on a phone; larger than lossless on disk |
+| ASTC 6×6, ETC2 RGB8A1 | 75.28 / 73.08 and 74.05 / 71.63, both under the 80 line. ETC2 loses 11.582 % of Enhanced's painted pixels | The user accepts them by eye |
+| Basis Universal | No row both smaller and better than the plain format beside it | One file for every GPU matters more than size |
+| xBRZ filtered at load | Too slow even for faced directions: 268 / 510 ms, estimated | Stored instead, if it's wanted |

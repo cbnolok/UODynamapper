@@ -4922,6 +4922,9 @@ The ranking is crowd speed first and size second, with the user's line of 300 ne
 
 ## Decisions for the user
 
+The user's answers so far, and every option set aside with its reason, are in sections 8 and 9 of
+[the requirements](../uddp_anim_format_requirements.md).
+
 | Question | Options | Recommendation |
 | --- | --- | --- |
 | Storage of official animations | lossless indexed with zstd 19; with LZ4 HC; keep BC7; BC3 | **Lossless indexed:** 0.82 × / 0.94 × a real BC7 pack, passes the crowd line, hue exact. LZ4 HC is 22 % larger and 3–4 × faster if the user prefers speed. On Enhanced desktop, BC3 + colour is the close call: 0.82 × the disk and 0.52 × the VRAM, but lossy |

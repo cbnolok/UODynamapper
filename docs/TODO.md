@@ -9,6 +9,7 @@ It intentionally excludes work that is already landed or already reduced to comp
 Primary targets:
 - 400+ FPS in military orthographic gameplay mode.
 - 144+ FPS minimum in advanced perspective features.
+- 60+ FPS at fullscreen on integrated GPUs, in every preset. Not met yet: `docs/agent_notes/renderer_release_performance.md`.
 - Low RAM/VRAM footprint with strict batching and cache discipline.
 - Baseline hardware: GTX 1060 class GPU.
 
