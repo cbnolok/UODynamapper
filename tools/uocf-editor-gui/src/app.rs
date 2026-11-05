@@ -1289,7 +1289,7 @@ pub(crate) fn cc_item_row(tile: &uocf::classic::tiledata::ItemTile) -> CcTileDat
 }
 
 /// The old id of a tileart.uop record that replaces no Classic tile: the format's default.
-const TILEART_NO_OLD_ID: i32 = 0x00FF_FFFF;
+pub(crate) const TILEART_NO_OLD_ID: i32 = 0x00FF_FFFF;
 
 pub(crate) fn collect_tileart_display_rows(
     entries: &[TileArtFileEntry],

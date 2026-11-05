@@ -16,7 +16,7 @@ use uocf::enhanced::tileart::{
     TILEART_SHADER_BLOCK_PRESENT, TILEART_SITTING_WORD_COUNT, TILEART_UOP_NAME,
 };
 
-use crate::app::{tileart_property_name, TileArtFileEntry, UocfEditorApp, ViewMode};
+use crate::app::{tileart_property_name, TileArtFileEntry, UocfEditorApp, ViewMode, TILEART_NO_OLD_ID};
 use crate::logic::tileart_editor::{save_tileart, EffectsDraft, TileArtEditor, TileArtField, TileArtStore};
 use crate::ui::unsaved_changes::TabEditor;
 use crate::ui::UOP_PATCHER_NOTE;
@@ -245,7 +245,7 @@ pub(super) fn record_panel(
                     ui.weak(format!("0x{:04X}", entry.tile_id));
                 });
                 ui.end_row();
-                fields.number(ui, "Old id", "old_id", entry.old_id, |entry, value| entry.old_id = value);
+                fields.old_id(ui, entry.old_id);
                 fields.number(ui, "Body type", "body_type", entry.body_type, |entry, value| entry.body_type = value);
                 fields.number(ui, "Facing", "facing", entry.facing, |entry, value| entry.facing = value);
                 fields.number(ui, "field_60", "field_60", entry.field_60, |entry, value| entry.field_60 = value);
@@ -356,6 +356,28 @@ impl Fields<'_> {
         if response.changed() {
             self.push(field, move |entry| set(entry, value));
         }
+    }
+
+    /// The old id, blank when the record replaces no Classic tile, as in the table; a blank field stores that value.
+    fn old_id(&mut self, ui: &mut egui::Ui, current: i32) {
+        let none = f64::from(TILEART_NO_OLD_ID);
+        ui.label("Old id");
+        let mut value = current;
+        let drag = egui::DragValue::new(&mut value)
+            .speed(VALUE_DRAG_SPEED)
+            .custom_formatter(move |value, _| if value == none { String::new() } else { value.to_string() })
+            .custom_parser(move |text| match text.trim() {
+                "" => Some(none),
+                text => text.parse().ok(),
+            });
+        let response = ui.add(drag).on_hover_text(format!(
+            "The Classic tile id the record stands for. Blank: none (stored as {TILEART_NO_OLD_ID})."
+        ));
+        self.session(&response);
+        if response.changed() {
+            self.push("old_id", move |entry| entry.old_id = value);
+        }
+        ui.end_row();
     }
 
     fn float(&mut self, ui: &mut egui::Ui, label: &str, field: TileArtField, current: f32, set: fn(&mut TileArtEntry, f32)) {
