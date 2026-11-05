@@ -989,9 +989,14 @@ fn cliloc_text_label(ui: &mut egui::Ui, lookups: &Lookups, cliloc: u32) {
 }
 
 fn thumbnail(ui: &mut egui::Ui, handle: &egui::TextureHandle) -> egui::Response {
+    ui.add(egui::Image::new(handle).fit_to_exact_size(thumbnail_size(handle)).sense(egui::Sense::click()))
+}
+
+/// The drawn size of a thumbnail: the image, shrunk to fit [`THUMBNAIL_MAX_SIDE`].
+fn thumbnail_size(handle: &egui::TextureHandle) -> egui::Vec2 {
     let size = handle.size_vec2();
     let scale = (THUMBNAIL_MAX_SIDE / size.x.max(size.y)).min(1.0);
-    ui.add(egui::Image::new(handle).fit_to_exact_size(size * scale).sense(egui::Sense::click()))
+    size * scale
 }
 
 fn jump_to_art(app: &mut UopInspectorApp, tile_id: u32) {
@@ -1139,7 +1144,13 @@ fn category_details(app: &mut UopInspectorApp, ctx: &egui::Context, ui: &mut egu
             ui.end_row();
         }
         ui.label("Preview tile");
-        ui.horizontal(|ui| {
+        // The row is as tall as the thumbnail from its start: a row of text height centres the tile on that height,
+        // and the tile hangs over the next rows.
+        let row_height = preview_texture
+            .as_ref()
+            .map_or(ui.spacing().interact_size.y, |texture| thumbnail_size(texture).y.max(ui.spacing().interact_size.y));
+        let row_size = egui::vec2(ui.available_width(), row_height);
+        ui.allocate_ui_with_layout(row_size, egui::Layout::left_to_right(egui::Align::Center), |ui| {
             match preview_tile {
                 Some(tile) => ui.monospace(format!("{tile:#06X}")),
                 None => ui.weak("none"),
