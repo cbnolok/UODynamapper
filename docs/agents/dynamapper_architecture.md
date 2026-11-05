@@ -39,6 +39,7 @@ Three modes: **Classic 2D (0)**, **Enhanced Classic (1)**, **KR-like (2)**. Alwa
 ### TOML Configuration
 
 - **No defaults in Rust.** Never use `.unwrap_or()` or `.unwrap_or_default()` when loading settings. All settings must be explicit in TOML files; missing settings must fail fast with a clear error.
+- Bundled `assets/settings/` files load strictly. The app never writes them: it saves to `cache/settings/`, whose files overlay the bundled file of the same name and load leniently (`load_user_settings`), so a copy from an older build still opens.
 - All keybindings are defined in `assets/settings/keybindings.toml`, accessed via `Settings.keybindings`. Never hardcode `KeyCode` for primary actions.
 
 ### Bevy
