@@ -1,4 +1,6 @@
 use crate::logic::{ClientData, Dictionary, UopCache};
+use crate::ui::ClientSource;
+use uocf::enhanced::client_dialect::ClientDialect;
 use eframe::egui;
 use image_postprocess::palette::{
     palette_safe_upscale, DitherPolicy, PaletteModel, PaletteUpscaleConfig, RgbaFilterScaler, SnapMode,
@@ -1572,6 +1574,45 @@ fn client_files_label(paths: &[&Path]) -> String {
         .join(" and ")
 }
 
+/// The extension of the inspector's own converted packages, read beside the client files: no client source.
+const UDD_PACKAGE_EXTENSION: &str = "uddp";
+const UOP_EXTENSION: &str = "uop";
+
+/// The sources of `paths` as the selectors name them, for a log line: ` (CC UOP)`, ` (MUL, CC UOP)`; nothing for the
+/// files outside the client folders. A UOP package is the source of its folder's client; another file of the Classic
+/// folder is MUL.
+fn client_sources_tag(paths: &[&Path], cc_path: Option<&Path>, ec_path: Option<&Path>) -> String {
+    let mut sources = Vec::new();
+    for path in paths {
+        let extension = path.extension().and_then(|extension| extension.to_str()).unwrap_or_default();
+        let is_uop = extension.eq_ignore_ascii_case(UOP_EXTENSION);
+        let in_classic = cc_path.is_some_and(|folder| path.starts_with(folder));
+        let source = match ec_path.filter(|folder| path.starts_with(folder)) {
+            Some(folder) if is_uop => Some(if ClientDialect::of_client_dir(folder).is_kingdom_reborn() {
+                ClientSource::KrUop
+            } else {
+                ClientSource::EcUop
+            }),
+            _ if in_classic && is_uop => Some(ClientSource::CcUop),
+            _ if in_classic && !extension.eq_ignore_ascii_case(UDD_PACKAGE_EXTENSION) => Some(ClientSource::Mul),
+            _ => None,
+        };
+        if let Some(source) = source.filter(|source| !sources.contains(source)) {
+            sources.push(source);
+        }
+    }
+    if sources.is_empty() {
+        String::new()
+    } else {
+        format!(" ({})", sources.iter().map(|source| source.label()).collect::<Vec<_>>().join(", "))
+    }
+}
+
+/// `count` entries, for a log line: `1 entry`, `2 entries`.
+fn entries_label(count: usize) -> String {
+    if count == 1 { format!("{count} entry") } else { format!("{count} entries") }
+}
+
 /// The files of `names` that `base_path` holds, in that order.
 fn existing_client_files(base_path: &Path, names: &[&str]) -> Vec<PathBuf> {
     names.iter().filter_map(|name| find_client_file_case_insensitive(base_path, name)).collect()
@@ -2085,7 +2126,8 @@ impl UopInspectorApp {
         for path in paths {
             log::debug!("Read {}", path.display());
         }
-        self.log(format!("Loaded {}: {details}", client_files_label(paths)));
+        let sources = client_sources_tag(paths, self.settings.cc_path.as_deref(), self.settings.ec_path.as_deref());
+        self.log(format!("Loaded {}{sources}: {details}", client_files_label(paths)));
     }
 
     /// The one line of files that failed to load, a warning: `Failed to load <files>: <reason>`.
@@ -2093,7 +2135,8 @@ impl UopInspectorApp {
         for path in paths {
             log::debug!("Could not read {}", path.display());
         }
-        self.log_warning(format!("Failed to load {}: {reason}", client_files_label(paths)));
+        let sources = client_sources_tag(paths, self.settings.cc_path.as_deref(), self.settings.ec_path.as_deref());
+        self.log_warning(format!("Failed to load {}{sources}: {reason}", client_files_label(paths)));
     }
 
     /// Creates a texture, or reports why the image cannot be one (`ui::textures`): in the log and the status bar
@@ -2334,7 +2377,7 @@ impl UopInspectorApp {
                     let animdata_path = path.join("animdata.mul");
                     let animdata = match uocf::classic::animdata::AnimData::load(&animdata_path) {
                         Ok(animdata) => {
-                            self.log_loaded(&[&animdata_path], format_args!("{} entries", animdata.entries.len()));
+                            self.log_loaded(&[&animdata_path], entries_label(animdata.entries.len()));
                             Some(Arc::new(animdata))
                         }
                         Err(e) if !animdata_path.exists() => {
@@ -2411,7 +2454,7 @@ impl UopInspectorApp {
                             self.multi_collection_source = Some(MultiCollectionSource::ClassicClient);
                             self.multi_collection_path = Some(uop_path.clone());
                             let housing = self.load_housing_pieces(&uop_path);
-                            self.log_loaded(&[&uop_path], format_args!("{count} entries{housing}"));
+                            self.log_loaded(&[&uop_path], format_args!("{}{housing}", entries_label(count)));
                         }
                         Err(e) => self.log_load_failure(&[&uop_path], format_args!("{e:#}")),
                     }
@@ -2438,7 +2481,7 @@ impl UopInspectorApp {
                     }
                     match UopPackage::load_with_mode(&uop_path, LoadMode::Lazy) {
                         Ok(package) => {
-                            self.log_loaded(&[&uop_path], format_args!("{} entries", package.file_count()));
+                            self.log_loaded(&[&uop_path], entries_label(package.file_count() as usize));
                             self.uop_cache.add(uop_path, package);
                         }
                         Err(e) => self.log_load_failure(&[&uop_path], format_args!("{e:#}")),
@@ -2457,7 +2500,7 @@ impl UopInspectorApp {
                 {
                     match UopPackage::load_with_mode(&uop_path, LoadMode::Lazy) {
                         Ok(package) => {
-                            self.log_loaded(&[&uop_path], format_args!("{} entries", package.file_count()));
+                            self.log_loaded(&[&uop_path], entries_label(package.file_count() as usize));
                             self.uop_cache.add(uop_path, package);
                         }
                         Err(e) => self.log_load_failure(&[&uop_path], format_args!("{e:#}")),
@@ -2473,7 +2516,7 @@ impl UopInspectorApp {
                 Ok(Some(audio)) => {
                     self.ec_audio_entries = Some(Arc::new(collect_ec_audio_entries(&audio)));
                     let audio_path = audio.path().to_path_buf();
-                    self.log_loaded(&[&audio_path], format_args!("{} entries", audio.package().file_count()));
+                    self.log_loaded(&[&audio_path], entries_label(audio.package().file_count() as usize));
                     self.ec_audio = Some(Arc::new(audio));
                     if self.cc_sounds.is_none() {
                         self.sound_source = SoundSource::Enhanced;
@@ -2511,7 +2554,7 @@ impl UopInspectorApp {
             if lt_path.exists() {
                 match UopPackage::load(&lt_path) {
                     Ok(package) => {
-                        self.log_loaded(&[&lt_path], format_args!("{} entries of EC legacy art", package.file_count()));
+                        self.log_loaded(&[&lt_path], format_args!("{} of EC legacy art", entries_label(package.file_count() as usize)));
                         if let Some(client) = &mut self.client_data {
                             let mut art = (*client.art).clone();
                             art = art.with_uop(package.clone());
@@ -2540,7 +2583,7 @@ impl UopInspectorApp {
             {
                 match UopPackage::load(&texture_path) {
                     Ok(package) => {
-                        self.log_loaded(&[&texture_path], format_args!("{} entries of KR art", package.file_count()));
+                        self.log_loaded(&[&texture_path], format_args!("{} of KR art", entries_label(package.file_count() as usize)));
                         if let Some(client) = &mut self.client_data {
                             let mut art = (*client.art).clone();
                             art = art.with_ec_kr_uop(package.clone());
@@ -2585,7 +2628,7 @@ impl UopInspectorApp {
                             self.multi_collection_source = Some(MultiCollectionSource::EnhancedClient);
                             self.multi_collection_path = Some(uop_path.clone());
                             let housing = self.load_housing_pieces(&uop_path);
-                            self.log_loaded(&[&uop_path], format_args!("{count} entries{housing}"));
+                            self.log_loaded(&[&uop_path], format_args!("{}{housing}", entries_label(count)));
                         }
                         Err(e) => self.log_load_failure(&[&uop_path], format_args!("{e:#}")),
                     }
@@ -2658,7 +2701,7 @@ impl UopInspectorApp {
                             if EC_UOPS_REPORTED_BY_A_PARSER.iter().any(|name| uop_name.eq_ignore_ascii_case(name)) {
                                 log::debug!("Cached {} for the UOP browser", uop_path.display());
                             } else {
-                                self.log_loaded(&[&uop_path], format_args!("{} entries", package.file_count()));
+                                self.log_loaded(&[&uop_path], entries_label(package.file_count() as usize));
                             }
                             self.uop_cache.loaded_uops.push(Arc::new(crate::logic::uop_cache::LoadedUop {
                                 path: uop_path,
@@ -4292,6 +4335,20 @@ impl eframe::App for UopInspectorApp {
 #[cfg(test)]
 pub(crate) mod tests {
     use super::*;
+
+    #[test]
+    fn load_log_lines_name_the_source_and_count_entries() {
+        let (cc, ec) = (Path::new("/clients/classic"), Path::new("/clients/enhanced"));
+        let tag = |paths: &[&Path]| client_sources_tag(paths, Some(cc), Some(ec));
+        assert_eq!(tag(&[cc.join("MultiCollection.uop").as_path()]), " (CC UOP)");
+        assert_eq!(tag(&[ec.join("MultiCollection.uop").as_path()]), " (EC UOP)");
+        assert_eq!(tag(&[cc.join("art.mul").as_path(), cc.join("artLegacyMUL.uop").as_path()]), " (MUL, CC UOP)");
+        assert_eq!(tag(&[cc.join("Cliloc.enu").as_path()]), " (MUL)");
+        assert_eq!(tag(&[cc.join("gumps_cc.uddp").as_path()]), "");
+        assert_eq!(tag(&[Path::new("/elsewhere/tileart.uop")]), "");
+        assert_eq!(entries_label(1), "1 entry");
+        assert_eq!(entries_label(2), "2 entries");
+    }
 
     fn test_cliloc_payload(text: &str) -> Vec<u8> {
         let mut bytes = Vec::new();
