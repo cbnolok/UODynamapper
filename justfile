@@ -217,9 +217,12 @@ cargo_profile_stable    :=\
 # tables), README.md and docs/. The tools package: UODynamapper-tools/ holds bin/, shared/ and docs/.
 app_docs := "docs/keybindings.md docs/USER_TROUBLESHOOTING.md"
 # Left out of the app's assets/ copy, as nothing reads them at run time: these folders and files below assets/ (the
-# land routing table is embedded in tex_land_ec.uddp; the tools package ships it in shared/), and the notes (the files
-# with this extension, beside the shaders).
-app_assets_unread := "regression_fixtures shaders/postprocess_ec_doc shaders/postprocess_kr_doc cc_ec_convtables/TerrainTranscode.kdl"
+# conversion tables are read by the packers, which embed what the app needs in the .uddp files; the tools package
+# ships them in shared/), and the notes (the files with this extension, beside the shaders). A folder they leave
+# empty goes too.
+app_assets_unread := "regression_fixtures shaders/postprocess_ec_doc shaders/postprocess_kr_doc" +\
+    " cc_ec_convtables/TerrainTranscode.kdl cc_ec_convtables/EcTerrainOverrides.kdl" +\
+    " cc_ec_convtables/EcSurfaceOverrides.kdl cc_ec_convtables/EcMobileAnimations.kdl"
 app_assets_unread_ext := "md"
 tool_docs := "README.md docs/USER_TROUBLESHOOTING.md tools/udd-conv-cli/UPSCALE_PROFILES.md"
 # The end-user tools. uocf-devtools-cli stays out: research and diagnostic commands, built only with dev-tool-tests.
@@ -516,6 +519,7 @@ package name="dynamapper-pkg" target="":
         rm -rf "$APP_DIR/assets/$unread"
     done
     find "$APP_DIR/assets" -type f -name '*.{{app_assets_unread_ext}}' -delete
+    find "$APP_DIR/assets" -type d -empty -delete
     [ -f "README.md" ] && cp "README.md" "$APP_DIR/"
     mkdir -p "$APP_DIR/docs"
     for doc in {{app_docs}}; do
@@ -549,6 +553,8 @@ package name="dynamapper-pkg" target="":
     Copy-Item -Recurse 'dynamapper/assets' "$appDir/assets"
     foreach ($unread in '{{app_assets_unread}}'.Split(' ')) { if (Test-Path "$appDir/assets/$unread") { Remove-Item -Recurse -Force "$appDir/assets/$unread" } }
     Get-ChildItem -Path "$appDir/assets" -Recurse -File -Filter '*.{{app_assets_unread_ext}}' | Remove-Item -Force
+    # Deepest first, so a folder holding only empty folders goes too.
+    Get-ChildItem -Path "$appDir/assets" -Recurse -Directory | Sort-Object { $_.FullName.Length } -Descending | Where-Object { -not (Get-ChildItem -LiteralPath $_.FullName -Force) } | Remove-Item -Force
     if (Test-Path 'README.md') { Copy-Item 'README.md' "$appDir/" }
     foreach ($doc in '{{app_docs}}'.Split(' ')) { if (Test-Path $doc) { Copy-Item $doc "$appDir/docs/" } }
     foreach ($util in '{{tool_bins}}'.Split(' ')) { if (Test-Path "$releaseDir/$util.exe") { Copy-Item "$releaseDir/$util.exe" "$toolsDir/bin/" } }
