@@ -59,6 +59,8 @@ const PROPERTY_COLUMNS: [(&str, &str); 3] = [("Key", ""), ("Name", ""), ("Value"
 const STACK_ALIAS_COLUMNS: [(&str, &str); 2] = [("Amount", ""), ("Amount id", "")];
 const BODY_APPEARANCE_COLUMNS: [(&str, &str); 2] = [("Body", ""), ("Appearance", "")];
 const GENDER_APPEARANCE_COLUMNS: [(&str, &str); 2] = [("Gender", ""), ("Appearance", "")];
+/// Title of the column of the rows' Delete buttons.
+const DELETE_COLUMN: &str = "Delete";
 const TEXTURE_ITEM_COLUMNS: [(&str, &str); 7] = [
     ("Item", ""),
     ("Name index", STRING_INDEX_HOVER),
@@ -465,7 +467,7 @@ impl Fields<'_> {
     fn props(&mut self, ui: &mut egui::Ui, field: TileArtField, props: &[TaeProp], second: bool) {
         egui::Grid::new((field, self.hash, "rows")).striped(true).show(ui, |ui| {
             if !props.is_empty() {
-                header_row(ui, &PROPERTY_COLUMNS);
+                header_row(ui, &PROPERTY_COLUMNS, self.editable);
             }
             for (index, prop) in props.iter().enumerate() {
                 let (mut key, mut value) = (prop.id, prop.val);
@@ -545,7 +547,7 @@ impl Fields<'_> {
         let field = "stack_aliases";
         egui::Grid::new((field, self.hash)).striped(true).show(ui, |ui| {
             if !aliases.is_empty() {
-                header_row(ui, &STACK_ALIAS_COLUMNS);
+                header_row(ui, &STACK_ALIAS_COLUMNS, self.editable);
             }
             for (index, alias) in aliases.iter().enumerate() {
                 let (mut amount, mut amount_id) = (alias.amount, alias.amount_id);
@@ -588,7 +590,7 @@ impl Fields<'_> {
             match filter {
                 TaeAppearanceFilter::ByOwnerGender { gender, appearance } => {
                     egui::Grid::new(("tileart_gender_appearance", self.hash, index)).striped(true).show(ui, |ui| {
-                        header_row(ui, &GENDER_APPEARANCE_COLUMNS);
+                        header_row(ui, &GENDER_APPEARANCE_COLUMNS, false);
                         self.inline_number(ui, field, *gender, move |entry, value| {
                             if let Some(TaeAppearanceFilter::ByOwnerGender { gender, .. }) = entry.appearance_vector.get_mut(index) {
                                 *gender = value;
@@ -676,7 +678,7 @@ impl Fields<'_> {
         let field = "appearance";
         egui::Grid::new(("tileart_body_appearances", self.hash, filter)).striped(true).show(ui, |ui| {
             if !mappings.is_empty() {
-                header_row(ui, &BODY_APPEARANCE_COLUMNS);
+                header_row(ui, &BODY_APPEARANCE_COLUMNS, self.editable);
             }
             for (row, mapping) in mappings.iter().enumerate() {
                 self.inline_number(ui, field, mapping.body_type, move |entry, value| {
@@ -750,7 +752,7 @@ impl Fields<'_> {
         egui::ScrollArea::horizontal().id_salt(("tileart_texture_items_scroll", self.hash, index)).show(ui, |ui| {
             egui::Grid::new(("tileart_texture_items", self.hash, index)).striped(true).show(ui, |ui| {
                 if !block.texture_items.is_empty() {
-                    header_row(ui, &TEXTURE_ITEM_COLUMNS);
+                    header_row(ui, &TEXTURE_ITEM_COLUMNS, self.editable);
                 }
                 for (item_index, item) in block.texture_items.iter().enumerate() {
                     ui.label(item_index.to_string());
@@ -858,12 +860,16 @@ impl Fields<'_> {
 }
 
 /// The header row of a sub-record table: its column titles, each with its hover text when it has one.
-fn header_row(ui: &mut egui::Ui, columns: &[(&str, &str)]) {
+/// The titles of `columns`, then of the rows' Delete buttons when they have them.
+fn header_row(ui: &mut egui::Ui, columns: &[(&str, &str)], deletable: bool) {
     for (title, hover) in columns {
         let label = ui.strong(*title);
         if !hover.is_empty() {
             label.on_hover_text(*hover);
         }
+    }
+    if deletable {
+        ui.strong(DELETE_COLUMN);
     }
     ui.end_row();
 }

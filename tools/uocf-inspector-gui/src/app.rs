@@ -1277,6 +1277,9 @@ pub(crate) fn cc_item_row(tile: &uocf::classic::tiledata::ItemTile) -> CcTileDat
     }
 }
 
+/// The old id of a tileart.uop record that replaces no Classic tile: the format's default.
+const TILEART_NO_OLD_ID: i32 = 0x00FF_FFFF;
+
 pub(crate) fn collect_tileart_display_rows(
     entries: &[TileArtFileEntry],
     string_dictionary: Option<&UoStringDictionary>,
@@ -1290,7 +1293,7 @@ pub(crate) fn collect_tileart_display_rows(
                 .and_then(|strings| strings.get_string((entry.string_dict_off as usize).checked_sub(1)?))
                 .unwrap_or_default()
                 .to_owned();
-            let old_id = entry.old_id.to_string();
+            let old_id = if entry.old_id == TILEART_NO_OLD_ID { String::new() } else { entry.old_id.to_string() };
             let body_type = entry.body_type.to_string();
             let properties_summary = tileart_properties_summary(entry);
             let flags_raw = format!("0x{:016X}", entry.flags1.bits());
