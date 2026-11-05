@@ -222,7 +222,7 @@ pub fn convert_facet(request: &FacetConversion, values: ParsedValues, hints: &Co
         OpenedSource::Package(mut package) if request.keep_unchanged => {
             let (client, size) = open_target(request, package.edition, size, hints)?;
             if is_same_package(request, &package, size) {
-                prepare_output_dir(&request.output_dir, &[package.path.clone(), package.dir.clone()])?;
+                prepare_output_dir(&request.output_dir, &[package.path.clone(), package.dir.clone()], client.as_ref())?;
                 let output = request.output_dir.join(facet_package_file_name(request.target_facet, package.edition.is_variant()));
                 package.package.save(&output)?;
                 report(format!("Wrote {}: the package as it is.", output.display()));
@@ -276,7 +276,7 @@ pub fn convert_facet(request: &FacetConversion, values: ParsedValues, hints: &Co
         }
     }
 
-    prepare_output_dir(&request.output_dir, &source.inputs)?;
+    prepare_output_dir(&request.output_dir, &source.inputs, client.as_ref())?;
     match request.target {
         ConversionTarget::Classic(containers) => {
             let containers = match containers {
@@ -559,18 +559,26 @@ fn check_target_client(client: &TargetClient, facet: u8, report: Report<'_>) {
     }
 }
 
-fn prepare_output_dir(output_dir: &Path, inputs: &[PathBuf]) -> eyre::Result<()> {
+fn prepare_output_dir(output_dir: &Path, inputs: &[PathBuf], client: Option<&TargetClient>) -> eyre::Result<()> {
     std::fs::create_dir_all(output_dir).wrap_err_with(|| format!("create {}", output_dir.display()))?;
-    check_output_dir(output_dir, inputs)
+    check_output_dir(output_dir, inputs, client)
 }
 
-/// Fails when `output_dir` is one of `inputs` or holds one of them.
-pub fn check_output_dir(output_dir: &Path, inputs: &[PathBuf]) -> eyre::Result<()> {
+/// Fails when `output_dir` is one of `inputs` or holds one of them, or holds the target client: the files written have
+/// the names of the ones it reads.
+pub fn check_output_dir(output_dir: &Path, inputs: &[PathBuf], client: Option<&TargetClient>) -> eyre::Result<()> {
     let output = output_dir.canonicalize().wrap_err_with(|| format!("resolve {}", output_dir.display()))?;
     for input in inputs {
         let Ok(input) = input.canonicalize() else { continue };
         if input == output || input.parent() == Some(output.as_path()) {
             eyre::bail!("the output folder {} holds the source files; choose another one", output_dir.display());
+        }
+    }
+    if let Some(client) = client {
+        // The folder of a bare relative executable is an empty path, which does not resolve: the executable tells it then.
+        let holds_exe = client.exe.canonicalize().ok().as_deref().and_then(Path::parent) == Some(output.as_path());
+        if holds_exe || client.dir.canonicalize().is_ok_and(|dir| dir == output) {
+            eyre::bail!("the output folder {} holds the target client's files; choose another one", output_dir.display());
         }
     }
     Ok(())
@@ -770,6 +778,10 @@ fn write_package(world: &ClassicWorld, request: &FacetConversion, edition: MapEd
 mod tests {
     use super::*;
     use crate::classic::facet_sources::statics_file_names;
+    use crate::classic::target_client::CLASSIC_EXE;
+    use crate::client_config::login_servers::ENHANCED_EXE;
+    use crate::client_exe::classic_facets::tests::{synthetic_classic, CLASSIC_NAMES};
+    use crate::client_exe::facet_dimensions::tests::synthetic_client;
     use crate::utils::output_file::block_temp_file;
 
     const FACET: u8 = 4;
@@ -868,6 +880,70 @@ mod tests {
         block_temp_file(&copied.join(&index));
         assert!(convert(&keeping).is_err());
         assert_eq!(std::fs::read(copied.join(&index)).unwrap(), EXISTING);
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    /// `conversion` with the target client given as `client_dir` and as `exe`, into `client_dir`: refused, with the
+    /// file `kept` as it was.
+    fn assert_refused_over_the_target_client(conversion: FacetConversion, client_dir: &Path, exe: &Path, kept: &Path) {
+        let before = std::fs::read(kept).unwrap();
+        for target_client in [client_dir, exe] {
+            let attempt = FacetConversion {
+                target_client: Some(target_client.to_path_buf()),
+                output_dir: client_dir.to_path_buf(),
+                ..conversion.clone()
+            };
+            let error = format!("{:#}", convert(&attempt).unwrap_err());
+            assert!(error.contains("holds the target client's files"), "{error}");
+            assert!(std::fs::read(kept).unwrap() == before);
+        }
+    }
+
+    #[test]
+    fn a_folder_holding_the_target_client_is_refused_as_the_output() {
+        const TABLE_COPIES: usize = 2;
+        let root = temp("classic_target_output");
+        let (source, client, elsewhere) = (root.join("source"), root.join("client"), root.join("elsewhere"));
+        std::fs::create_dir_all(&source).unwrap();
+        std::fs::create_dir_all(&client).unwrap();
+        classic_source(&source);
+        let exe = client.join(CLASSIC_EXE);
+        std::fs::write(&exe, synthetic_classic(CLASSIC_NAMES.len(), TABLE_COPIES)).unwrap();
+        let map = client.join(format!("map{FACET}.mul"));
+        std::fs::write(&map, b"the target client's map").unwrap();
+        let conversion = request(&source, ConversionTarget::Classic(ClassicContainers::Mul), &elsewhere);
+        assert_refused_over_the_target_client(conversion.clone(), &client, &exe, &map);
+        // Another folder takes the same conversion.
+        convert(&FacetConversion { target_client: Some(exe), ..conversion }).unwrap();
+        assert!(elsewhere.join(format!("map{FACET}.mul")).exists());
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn a_package_saved_as_it_is_refuses_the_folder_of_the_target_client_too() {
+        /// Tokuno in the stock size table.
+        const STOCK_SIDE: u32 = 1448;
+        let root = temp("package_target_output");
+        let (source, client, elsewhere) = (root.join("source"), root.join("client"), root.join("elsewhere"));
+        std::fs::create_dir_all(&source).unwrap();
+        std::fs::create_dir_all(&client).unwrap();
+        let world = ClassicWorld::filled(MapSizeCells { width: STOCK_SIDE, height: STOCK_SIDE }, LandFill::VOID).unwrap();
+        let (mut package, _) = build_facet_from_world(&world, FACET, None).unwrap();
+        let package_path = source.join(facet_package_file_name(FACET, false));
+        package.save(&package_path).unwrap();
+        let exe = client.join(ENHANCED_EXE);
+        std::fs::write(&exe, synthetic_client(None, false)).unwrap();
+        let kept = client.join(facet_package_file_name(FACET, false));
+        std::fs::write(&kept, b"the target client's package").unwrap();
+        let conversion = FacetConversion {
+            source: ConversionSource::Package(package_path),
+            keep_unchanged: true,
+            ..request(&source, ConversionTarget::Enhanced, &elsewhere)
+        };
+        assert_refused_over_the_target_client(conversion.clone(), &client, &exe, &kept);
+        // The conversion is the one that saves the package as it is.
+        let lines = convert(&FacetConversion { target_client: Some(exe), ..conversion }).unwrap();
+        assert!(lines.iter().any(|line| line.contains("the package as it is")), "{lines:?}");
         std::fs::remove_dir_all(root).unwrap();
     }
 

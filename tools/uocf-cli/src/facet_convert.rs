@@ -378,7 +378,10 @@ pub fn run_patch_classic(args: PatchClassicArgs) -> eyre::Result<()> {
     std::fs::create_dir_all(&args.output_dir).wrap_err_with(|| format!("create {}", args.output_dir.display()))?;
     let mut inputs = vec![sources.map.path.clone()];
     inputs.extend(sources.map.path.parent().map(Path::to_path_buf));
-    check_output_dir(&args.output_dir, &inputs)?;
+    if let Ok(files) = sources.statics_files() {
+        inputs.extend([files.index.clone(), files.statics.clone()]);
+    }
+    check_output_dir(&args.output_dir, &inputs, None)?;
     let (container, template) = match sources.map.format {
         ClassicMapFormat::Mul => (ClassicContainer::Mul, None),
         ClassicMapFormat::Uop => (ClassicContainer::Uop, Some(load_package(&sources.map.path)?)),
@@ -647,6 +650,29 @@ mod tests {
         let cell: Vec<_> = statics.cell_statics(1, 1).unwrap().iter().map(|record| (record.graphic, record.z, record.hue)).collect();
         assert_eq!(cell, [(0x0E76, 9, 0x21), (0x1234, 7, 0x22)]);
         assert!(run(&["patch-classic", "--map", map.to_str().unwrap(), "--staidx", index.to_str().unwrap(), "--statics", data.to_str().unwrap(), "--facet", FACET, "--size", SIZE, "--x", "1", "--y", "1", "-o", uop_dir.to_str().unwrap()]).is_err());
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn patch_classic_refuses_the_folder_of_statics_named_one_by_one() {
+        let root = temp("patch_statics_folder");
+        let (maps, statics) = (root.join("maps"), root.join("statics"));
+        std::fs::create_dir_all(&maps).unwrap();
+        std::fs::create_dir_all(&statics).unwrap();
+        let world = world();
+        let map = maps.join(format!("map{FACET}.mul"));
+        world.map.write_mul(&map).unwrap();
+        let (index, data) = (statics.join(format!("staidx{FACET}.mul")), statics.join(format!("statics{FACET}.mul")));
+        world.statics.write_mul(&index, &data).unwrap();
+        let before = (std::fs::read(&index).unwrap(), std::fs::read(&data).unwrap());
+        let error = run(&[
+            "patch-classic", "--map", map.to_str().unwrap(), "--staidx", index.to_str().unwrap(), "--statics",
+            data.to_str().unwrap(), "--facet", FACET, "--size", SIZE, "--x", "1", "--y", "1", "--add-static", "0x1234,7,0x22",
+            "-o", statics.to_str().unwrap(),
+        ])
+        .unwrap_err();
+        assert!(format!("{error:#}").contains("holds the source files"), "{error:#}");
+        assert!((std::fs::read(&index).unwrap(), std::fs::read(&data).unwrap()) == before);
         std::fs::remove_dir_all(root).unwrap();
     }
 

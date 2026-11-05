@@ -11,6 +11,8 @@ use std::process::Command;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use uocf::classic::facet_image::{facet_image_file_name, FacetImageFile};
+use uocf::classic::target_client::CLASSIC_EXE;
+use uocf::utils::path::find_file_ignoring_case;
 
 const CLIENT_DIR_ENV: &str = "UO_CC_CLIENT_DIR";
 /// Tokuno: the smallest facet with an image.
@@ -45,6 +47,29 @@ fn shipped_image(client: &Path) -> (PathBuf, FacetImageFile) {
     let path = uocf::utils::path::find_file_ignoring_case(client, &facet_image_file_name(FACET)).expect("facet04.mul");
     let image = FacetImageFile::load(&path).unwrap();
     (path, image)
+}
+
+#[test]
+#[ignore = "needs a real client: set UO_CC_CLIENT_DIR and run with --ignored"]
+fn a_folder_holding_a_copy_of_the_target_client_is_refused_as_the_output() {
+    let client = client_dir();
+    let target = temp_dir("target-output");
+    fs::create_dir_all(&target).unwrap();
+    let exe = target.join(CLASSIC_EXE);
+    fs::copy(find_file_ignoring_case(&client, CLASSIC_EXE).expect("client.exe"), &exe).unwrap();
+    let kept = target.join(format!("map{FACET}.mul"));
+    fs::write(&kept, b"the target client's map").unwrap();
+    for target_client in [&target, &exe] {
+        let output = Command::new(env!("CARGO_BIN_EXE_uocf-cli"))
+            .args(["facet", "convert", "--client-dir", client.to_str().unwrap(), "--facet", &FACET.to_string(), "--to", "classic"])
+            .args(["--container", "mul", "--target-client", target_client.to_str().unwrap(), "--output-dir", target.to_str().unwrap()])
+            .output()
+            .expect("run uocf-cli");
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        assert!(!output.status.success() && stderr.contains("holds the target client's files"), "{stderr}");
+        assert_eq!(fs::read(&kept).unwrap(), b"the target client's map");
+    }
+    fs::remove_dir_all(target).unwrap();
 }
 
 #[test]
