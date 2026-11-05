@@ -179,8 +179,14 @@ pub fn ui_animation_definitions(app: &mut UopInspectorApp, ctx: &egui::Context, 
 }
 
 /// `AnimationDefinition.uop` of the Enhanced Client folder of the search paths.
-fn client_package(app: &UopInspectorApp) -> Option<PathBuf> {
+pub(super) fn client_package(app: &UopInspectorApp) -> Option<PathBuf> {
     find_file_ignoring_case(app.settings.ec_path.as_deref()?, ANIMATION_DEFINITION_UOP_NAME)
+}
+
+/// The package open in the editor, and whether it is in the Kingdom Reborn dialect.
+pub(super) fn opened_package(app: &UopInspectorApp) -> Option<(PathBuf, bool)> {
+    let editor = app.animation_definitions_panel.editor.as_ref()?;
+    Some((editor.source.clone(), editor.dialect.is_kingdom_reborn()))
 }
 
 fn strings(app: &UopInspectorApp) -> Option<Arc<UoStringDictionary>> {

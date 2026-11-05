@@ -1,13 +1,20 @@
 use eframe::egui;
 use crate::app::{classic_tile_flags_summary, concrete_art_tile_source, ArtSource, ArtViewerRow, UopInspectorApp, ViewMode};
 use crate::logic::ClientData;
-use super::{arrow_delta, go_to_field, list_sort_controls, move_selection, sorted_indices_by};
+use super::{
+    arrow_delta, folder_files_availability, go_to_field, list_sort_controls, move_selection, sorted_indices_by,
+    source_choice, ClientSource, CLASSIC_FOLDER, ENHANCED_FOLDER,
+};
 use super::classic_image_import::{ui_classic_image_panel, PreferredContainer};
 use uocf::classic::image_files::ClassicImageKind;
 use std::sync::Arc;
 use uocf::classic::art::{static_art_id_for_source, STATIC_TILE_ID_BASE};
 
 const ART_VIEWER_LIST_PANEL_WIDTH: f32 = 300.0;
+const ART_MUL_FILES: &str = "art.mul and artidx.mul";
+const ART_CC_UOP_FILE: &str = "artLegacyMUL.uop";
+const ART_KR_UOP_FILE: &str = "Texture.uop (the Kingdom Reborn art the Enhanced Client carries)";
+const ART_EC_UOP_FILE: &str = "LegacyTexture.uop (the classic-style art the Enhanced Client draws by default)";
 
 pub fn ui_art_viewer(app: &mut UopInspectorApp, ctx: &egui::Context, ui: &mut egui::Ui) {
     app.selected_legacy_source = concrete_art_tile_source(app.selected_legacy_source);
@@ -20,14 +27,9 @@ pub fn ui_art_viewer(app: &mut UopInspectorApp, ctx: &egui::Context, ui: &mut eg
 
             ui.horizontal(|ui| {
                 ui.label("Source:");
-                egui::ComboBox::from_id_salt("art_source_combo")
-                    .selected_text(art_source_label(app.selected_legacy_source))
-                    .show_ui(ui, |ui| {
-                        ui.selectable_value(&mut app.selected_legacy_source, ArtSource::Mul, "Legacy MUL (.mul)");
-                        ui.selectable_value(&mut app.selected_legacy_source, ArtSource::CcUop, "CC UOP (artLegacyMUL)");
-                        ui.selectable_value(&mut app.selected_legacy_source, ArtSource::EcUopLegacy, "EC Legacy UOP (LegacyTexture)");
-                        ui.selectable_value(&mut app.selected_legacy_source, ArtSource::EcUopKr, "KR/New UOP (Texture)");
-                    });
+                if let Some(source) = art_source_choice(app, ui, app.selected_legacy_source) {
+                    app.selected_legacy_source = source;
+                }
             });
 
             let mut art_search_has_focus = false;
@@ -291,14 +293,38 @@ fn ui_art_row(
     }
 }
 
-fn art_source_label(source: ArtSource) -> &'static str {
+/// The selector source of an art source. The art of `Texture.uop` is the Kingdom Reborn art the Enhanced Client
+/// carries: KR UOP. The classic-style art of `LegacyTexture.uop`, which the Enhanced Client draws by default: EC UOP.
+pub(super) fn art_client_source(source: ArtSource) -> ClientSource {
     match source {
-        ArtSource::Any => "CC UOP (artLegacyMUL)",
-        ArtSource::Mul => "Legacy MUL (.mul)",
-        ArtSource::CcUop => "CC UOP (artLegacyMUL)",
-        ArtSource::EcUop | ArtSource::EcUopLegacy => "EC Legacy UOP (LegacyTexture)",
-        ArtSource::EcUopKr => "KR/New UOP (Texture)",
+        ArtSource::Mul => ClientSource::Mul,
+        ArtSource::CcUop | ArtSource::Any => ClientSource::CcUop,
+        ArtSource::EcUopKr => ClientSource::KrUop,
+        ArtSource::EcUop | ArtSource::EcUopLegacy => ClientSource::EcUop,
     }
+}
+
+fn art_source_of(source: ClientSource) -> ArtSource {
+    match source {
+        ClientSource::Mul => ArtSource::Mul,
+        ClientSource::CcUop => ArtSource::CcUop,
+        ClientSource::KrUop => ArtSource::EcUopKr,
+        ClientSource::EcUop => ArtSource::EcUopLegacy,
+    }
+}
+
+/// The art source buttons, `current` pressed; returns the art source clicked.
+pub(super) fn art_source_choice(app: &UopInspectorApp, ui: &mut egui::Ui, current: ArtSource) -> Option<ArtSource> {
+    let art = app.client_data.as_ref().map(|client| Arc::clone(&client.art));
+    let has = |source: ClientSource| art.as_ref().is_some_and(|art| art.max_id_for_source(art_source_of(source)) > 0);
+    let (cc_path, ec_path) = (app.settings.cc_path.as_deref(), app.settings.ec_path.as_deref());
+    let clicked = source_choice(ui, Some(art_client_source(current)), |source| match source {
+        ClientSource::Mul => folder_files_availability(cc_path, CLASSIC_FOLDER, ART_MUL_FILES, has(source)),
+        ClientSource::CcUop => folder_files_availability(cc_path, CLASSIC_FOLDER, ART_CC_UOP_FILE, has(source)),
+        ClientSource::KrUop => folder_files_availability(ec_path, ENHANCED_FOLDER, ART_KR_UOP_FILE, has(source)),
+        ClientSource::EcUop => folder_files_availability(ec_path, ENHANCED_FOLDER, ART_EC_UOP_FILE, has(source)),
+    });
+    clicked.map(art_source_of)
 }
 
 fn ui_cc_tiledata(app: &mut UopInspectorApp, ctx: &egui::Context, ui: &mut egui::Ui) {
