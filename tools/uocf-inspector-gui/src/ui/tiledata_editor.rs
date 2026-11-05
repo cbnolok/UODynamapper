@@ -162,15 +162,10 @@ fn save(app: &mut UopInspectorApp) {
     }
 }
 
-/// Writes `tiledata` to `output`, outside the client folder `client_dir`: neither into that folder nor over its
-/// tiledata.mul through a link.
+/// Writes `tiledata` to `output`, anywhere but over the loaded tiledata.mul of `client_dir`, by name or through a link,
+/// as the other editors do.
 fn save_copy(tiledata: &TileData, client_dir: Option<&Path>, output: &Path) -> color_eyre::eyre::Result<()> {
     if let Some(client_dir) = client_dir {
-        color_eyre::eyre::ensure!(
-            !output.parent().is_some_and(|folder| same_file(folder, client_dir)),
-            "{} is in the client folder: save the copy in another folder",
-            output.display()
-        );
         if let Some(source) = find_file_ignoring_case(client_dir, TILEDATA_FILE_NAME) {
             uocf::utils::output_file::refuse_same_file([source.as_path()], output, "loaded tiledata.mul")?;
         }
@@ -367,7 +362,10 @@ mod tests {
 
     /// An app with a tiledata whose item tile `EDITED_TILE` was changed through the panel's path.
     fn app_with_an_edited_tile() -> UopInspectorApp {
-        let path = std::env::temp_dir().join(format!("inspector_tiledata_editor_{}.mul", std::process::id()));
+        // Tests run in parallel: each call needs its own file, or one test removes it while another reads it.
+        static CALLS: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+        let call = CALLS.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        let path = std::env::temp_dir().join(format!("inspector_tiledata_editor_{}_{call}.mul", std::process::id()));
         std::fs::write(&path, vec![0u8; FILE_BYTES]).unwrap();
         let tiledata = TileData::load(path.clone()).unwrap();
         std::fs::remove_file(&path).unwrap();
@@ -416,9 +414,9 @@ mod tests {
         assert_eq!(parse_flags("not hex", true), None);
     }
 
-    /// A save goes anywhere but the client folder, and a link to the loaded file elsewhere is refused too.
+    /// A save goes anywhere but over the loaded file, and a link to the loaded file elsewhere is refused too.
     #[test]
-    fn a_save_refuses_the_client_folder() {
+    fn a_save_refuses_the_loaded_file() {
         let app = app_with_an_edited_tile();
         let tiledata = app.cc_tiledata.as_ref().unwrap();
         let root = std::env::temp_dir().join(format!("inspector_tiledata_save_{}", std::process::id()));
@@ -430,7 +428,9 @@ mod tests {
         std::fs::write(&source, tiledata.to_bytes().unwrap()).unwrap();
 
         assert!(save_copy(tiledata, Some(&client_dir), &source).is_err());
-        assert!(save_copy(tiledata, Some(&client_dir), &client_dir.join("copy.mul")).is_err());
+        let beside = client_dir.join("copy.mul");
+        save_copy(tiledata, Some(&client_dir), &beside).unwrap();
+        assert_eq!(std::fs::read(&beside).unwrap(), tiledata.to_bytes().unwrap());
         let link = output_dir.join("link.mul");
         std::fs::hard_link(&source, &link).unwrap();
         assert!(save_copy(tiledata, Some(&client_dir), &link).is_err());
