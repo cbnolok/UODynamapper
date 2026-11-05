@@ -94,6 +94,17 @@ fn next_preview_frame(definition: &AnimationDefinition, set: u32, frame: usize) 
     definition.sets.get(&next).filter(|set| !set.frames.is_empty()).map(|_| (next, 0))
 }
 
+/// The first frame of the animation: the first of the start set, where Reset goes and Loop starts again.
+fn first_preview_frame(definition: &AnimationDefinition) -> Option<(u32, usize)> {
+    definition.sets.get(&definition.start_set).filter(|set| !set.frames.is_empty()).map(|_| (definition.start_set, 0))
+}
+
+/// The frame played after `frame` of `set`: the next one, else with `looping` the first frame of the animation, like
+/// the animdata preview. `None` stops.
+fn played_preview_frame(definition: &AnimationDefinition, set: u32, frame: usize, looping: bool) -> Option<(u32, usize)> {
+    next_preview_frame(definition, set, frame).or_else(|| looping.then(|| first_preview_frame(definition)).flatten())
+}
+
 /// The effects of one frame, edited as KDL text.
 struct EffectsDraft {
     id: u32,
@@ -786,6 +797,7 @@ fn details_panel(app: &mut UopInspectorApp, ctx: &egui::Context, ui: &mut egui::
 /// The frames themselves: one frame large, played at the set's interval and through its successors, in the chosen art
 /// source and hue.
 fn frame_preview(app: &mut UopInspectorApp, ctx: &egui::Context, ui: &mut egui::Ui, id: u32, definition: &AnimationDefinition) {
+    let looping = &mut app.loop_animation;
     let preview = &mut app.animation_definitions_panel.preview;
     if preview.item != Some(id) || !definition.sets.contains_key(&preview.set) {
         *preview = FramePreview { item: Some(id), set: definition.start_set, zoom_index: preview.zoom_index, ..FramePreview::default() };
@@ -794,7 +806,7 @@ fn frame_preview(app: &mut UopInspectorApp, ctx: &egui::Context, ui: &mut egui::
     if preview.playing {
         let interval = definition.sets.get(&preview.set).map_or(0.0, |set| f64::from(set.frame_interval)).max(PREVIEW_MIN_FRAME_SECONDS);
         if now - preview.last_advance >= interval {
-            match next_preview_frame(definition, preview.set, preview.frame) {
+            match played_preview_frame(definition, preview.set, preview.frame, *looping) {
                 Some((set, frame)) => (preview.set, preview.frame) = (set, frame),
                 None => preview.playing = false,
             }
@@ -816,6 +828,10 @@ fn frame_preview(app: &mut UopInspectorApp, ctx: &egui::Context, ui: &mut egui::
             preview.playing = !preview.playing;
             preview.last_advance = now;
         }
+        if ui.button("Reset").clicked() {
+            (preview.set, preview.frame) = first_preview_frame(definition).unwrap_or((definition.start_set, 0));
+            preview.playing = false;
+        }
         let frame_count = definition.sets.get(&preview.set).map_or(0, |set| set.frames.len());
         if ui.add_enabled(preview.frame > 0, egui::Button::new("Prev")).clicked() {
             preview.frame -= 1;
@@ -823,6 +839,7 @@ fn frame_preview(app: &mut UopInspectorApp, ctx: &egui::Context, ui: &mut egui::
         if ui.add_enabled(preview.frame + 1 < frame_count, egui::Button::new("Next")).clicked() {
             preview.frame += 1;
         }
+        ui.checkbox(looping, "Loop");
         ui.separator();
         let zoom_index = preview.zoom_index.get_or_insert(PREVIEW_DEFAULT_ZOOM_INDEX);
         for (index, (_, label)) in PREVIEW_ZOOMS.iter().enumerate() {
@@ -1003,5 +1020,18 @@ mod tests {
         assert_eq!(next_preview_frame(&definition, 0, 0), None);
         assert_eq!(next_preview_frame(&definition, 1, 0), None);
         assert_eq!(next_preview_frame(&definition, 7, 0), None);
+    }
+
+    #[test]
+    fn loop_starts_the_animation_again_at_the_start_set_and_reset_goes_there() {
+        let mut definition = definition([(0, set(None, 1)), (3, set(Some(4), 2)), (4, set(None, 1))]);
+        definition.start_set = 3;
+        assert_eq!(first_preview_frame(&definition), Some((3, 0)));
+        assert_eq!(played_preview_frame(&definition, 3, 1, true), Some((4, 0)), "the chain goes on first");
+        assert_eq!(played_preview_frame(&definition, 4, 0, true), Some((3, 0)));
+        assert_eq!(played_preview_frame(&definition, 4, 0, false), None);
+        assert_eq!(played_preview_frame(&definition, 0, 0, true), Some((3, 0)), "a set picked by hand loops to the start");
+        definition.start_set = 9;
+        assert_eq!(played_preview_frame(&definition, 4, 0, true), None, "a missing start set stops");
     }
 }
