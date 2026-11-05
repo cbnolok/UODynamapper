@@ -1,13 +1,18 @@
-use crate::app::{concrete_art_tile_source, ArtSource, EcHueingMode, HuesSource, UopInspectorApp};
+use crate::app::{concrete_art_tile_source, EcHueingMode, HuesSource, UopInspectorApp};
 use eframe::egui;
-use super::{arrow_delta, go_to_field, list_sort_controls, move_selection, sorted_indices_by};
+use super::{
+    arrow_delta, enhanced_files_availability, enhanced_folder_source, folder_files_availability, go_to_field,
+    list_sort_controls, move_selection, sorted_indices_by, source_choice, ClientSource, SourceAvailability,
+    CLASSIC_FOLDER,
+};
 use uocf::classic::art::{static_art_id_for_source, STATIC_TILE_ID_BASE};
 use uocf::enhanced::hues::{
     atlas_coord_for_hue, hue_bitmap_path, HUE_STRIP_WIDTH, HUES_ATLAS_HEIGHT, HUES_ATLAS_PATH,
-    HUENAMES_PATH, FIXED_PALETTE_HASH, FIXED_PALETTE_NAME, MAX_EC_HUES,
+    HUENAMES_PATH, FIXED_PALETTE_HASH, FIXED_PALETTE_NAME, MAX_EC_HUES, HUES_UOP_NAME,
 };
 
 const CC_HUES_LIST_PANEL_WIDTH: f32 = 300.0;
+const HUES_MUL_NAME: &str = "hues.mul";
 const EC_HUES_LIST_PANEL_WIDTH: f32 = 320.0;
 
 pub fn ui_hues(app: &mut UopInspectorApp, ctx: &egui::Context, ui: &mut egui::Ui) {
@@ -26,12 +31,7 @@ pub fn ui_hues(app: &mut UopInspectorApp, ctx: &egui::Context, ui: &mut egui::Ui
 
     egui::Panel::top("hues_file_tabs").show(ui, |ui| {
         ui.horizontal(|ui| {
-            if has_cc_hues {
-                ui.selectable_value(&mut app.hues_source, HuesSource::CcMul, "hues.mul");
-            }
-            if has_ec_hues {
-                ui.selectable_value(&mut app.hues_source, HuesSource::EcUop, "hues.uop");
-            }
+            hues_source_selector(app, ui, has_cc_hues, has_ec_hues);
             if has_cc_hues || has_ec_hues {
                 ui.separator();
                 let source = app.hues_source;
@@ -43,6 +43,30 @@ pub fn ui_hues(app: &mut UopInspectorApp, ctx: &egui::Context, ui: &mut egui::Ui
     match app.hues_source {
         HuesSource::CcMul => ui_cc_hues(app, ctx, ui),
         HuesSource::EcUop => ui_ec_hues(app, ctx, ui),
+    }
+}
+
+/// hues.mul is MUL, hues.uop KR UOP or EC UOP by the Enhanced folder's client. The Classic client keeps its hues in
+/// hues.mul only: no CC UOP.
+fn hues_source_selector(app: &mut UopInspectorApp, ui: &mut egui::Ui, has_cc_hues: bool, has_ec_hues: bool) {
+    let ctx = ui.ctx().clone();
+    let cc_path = app.settings.cc_path.as_deref();
+    let ec_path = app.settings.ec_path.as_deref();
+    let selected = match app.hues_source {
+        HuesSource::CcMul => Some(ClientSource::Mul),
+        HuesSource::EcUop => ec_path.map(|folder| enhanced_folder_source(&ctx, folder)),
+    };
+    let clicked = source_choice(ui, selected, |source| match source {
+        ClientSource::Mul => folder_files_availability(cc_path, CLASSIC_FOLDER, HUES_MUL_NAME, has_cc_hues),
+        ClientSource::CcUop => SourceAvailability::NotApplicable,
+        ClientSource::KrUop | ClientSource::EcUop => {
+            enhanced_files_availability(&ctx, ec_path, source, HUES_UOP_NAME, has_ec_hues)
+        }
+    });
+    match clicked {
+        Some(ClientSource::Mul) => app.hues_source = HuesSource::CcMul,
+        Some(_) => app.hues_source = HuesSource::EcUop,
+        None => {}
     }
 }
 
@@ -186,22 +210,11 @@ fn ui_cc_hues(app: &mut UopInspectorApp, ctx: &egui::Context, ui: &mut egui::Ui)
 fn ui_hue_preview_item_picker(app: &mut UopInspectorApp, ui: &mut egui::Ui) -> u32 {
     app.selected_legacy_source = concrete_art_tile_source(app.selected_legacy_source);
 
-    ui.horizontal(|ui| {
+    ui.horizontal_wrapped(|ui| {
         ui.label("Item source:");
-        egui::ComboBox::from_id_salt("hue_preview_item_source")
-            .selected_text(match app.selected_legacy_source {
-                ArtSource::Mul => "CC MUL",
-                ArtSource::CcUop => "CC UOP",
-                ArtSource::EcUop | ArtSource::EcUopLegacy => "EC Legacy UOP",
-                ArtSource::EcUopKr => "KR/New UOP",
-                ArtSource::Any => "CC UOP",
-            })
-            .show_ui(ui, |ui| {
-                ui.selectable_value(&mut app.selected_legacy_source, ArtSource::Mul, "CC MUL");
-                ui.selectable_value(&mut app.selected_legacy_source, ArtSource::CcUop, "CC UOP");
-                ui.selectable_value(&mut app.selected_legacy_source, ArtSource::EcUopLegacy, "EC Legacy UOP");
-                ui.selectable_value(&mut app.selected_legacy_source, ArtSource::EcUopKr, "KR/New UOP");
-            });
+        if let Some(source) = super::art_viewer::art_source_choice(app, ui, app.selected_legacy_source) {
+            app.selected_legacy_source = source;
+        }
     });
 
     let selected_art_id = app
