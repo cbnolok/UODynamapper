@@ -216,9 +216,10 @@ cargo_profile_stable    :=\
 # The app package: UODynamapper/ holds dynamapper, the assets/ tree it reads (settings, shaders, fonts, the KDL
 # tables), README.md and docs/. The tools package: UODynamapper-tools/ holds bin/, shared/ and docs/.
 app_docs := "docs/keybindings.md docs/USER_TROUBLESHOOTING.md"
-# Left out of the app's assets/ copy, as nothing reads them at run time: these folders below assets/, and the notes
-# (the files with this extension, beside the shaders).
-app_assets_unread_dirs := "regression_fixtures shaders/postprocess_ec_doc shaders/postprocess_kr_doc"
+# Left out of the app's assets/ copy, as nothing reads them at run time: these folders and files below assets/ (the
+# land routing table is embedded in tex_land_ec.uddp; the tools package ships it in shared/), and the notes (the files
+# with this extension, beside the shaders).
+app_assets_unread := "regression_fixtures shaders/postprocess_ec_doc shaders/postprocess_kr_doc cc_ec_convtables/TerrainTranscode.kdl"
 app_assets_unread_ext := "md"
 tool_docs := "README.md docs/USER_TROUBLESHOOTING.md tools/udd-conv-cli/UPSCALE_PROFILES.md"
 # The end-user tools. uocf-devtools-cli stays out: research and diagnostic commands, built only with dev-tool-tests.
@@ -511,7 +512,7 @@ package name="dynamapper-pkg" target="":
     echo "Packaging {{name}} from $RELEASE_DIR..."
     [ -f "$RELEASE_DIR/dynamapper" ] && cp "$RELEASE_DIR/dynamapper" "$APP_DIR/"
     cp -r dynamapper/assets "$APP_DIR/"
-    for unread in {{app_assets_unread_dirs}}; do
+    for unread in {{app_assets_unread}}; do
         rm -rf "$APP_DIR/assets/$unread"
     done
     find "$APP_DIR/assets" -type f -name '*.{{app_assets_unread_ext}}' -delete
@@ -546,7 +547,7 @@ package name="dynamapper-pkg" target="":
     Write-Host "Packaging {{name}} from $releaseDir..."
     if (Test-Path "$releaseDir/dynamapper.exe") { Copy-Item "$releaseDir/dynamapper.exe" "$appDir/" }
     Copy-Item -Recurse 'dynamapper/assets' "$appDir/assets"
-    foreach ($unread in '{{app_assets_unread_dirs}}'.Split(' ')) { if (Test-Path "$appDir/assets/$unread") { Remove-Item -Recurse -Force "$appDir/assets/$unread" } }
+    foreach ($unread in '{{app_assets_unread}}'.Split(' ')) { if (Test-Path "$appDir/assets/$unread") { Remove-Item -Recurse -Force "$appDir/assets/$unread" } }
     Get-ChildItem -Path "$appDir/assets" -Recurse -File -Filter '*.{{app_assets_unread_ext}}' | Remove-Item -Force
     if (Test-Path 'README.md') { Copy-Item 'README.md' "$appDir/" }
     foreach ($doc in '{{app_docs}}'.Split(' ')) { if (Test-Path $doc) { Copy-Item $doc "$appDir/docs/" } }
