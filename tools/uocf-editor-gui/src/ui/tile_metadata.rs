@@ -21,6 +21,8 @@ const ITEM_ART_ID_BASE: u32 = uocf::classic::art::STATIC_TILE_ID_BASE;
 const METADATA_TABLE_HEIGHT: f32 = 300.0;
 /// A table may be dragged this low and still keep its header and a row.
 const METADATA_TABLE_MIN_SCROLLED_HEIGHT: f32 = 40.0;
+/// Context data key of whether a table filled the space last frame, with no record's details under it.
+const METADATA_TABLE_FILLED_ID_SALT: &str = "metadata_table_filled";
 const TABLE_HEADER_HEIGHT: f32 = 20.0;
 /// Starting width of the art and texture preview beside the record's fields.
 const PREVIEW_PANEL_WIDTH: f32 = 440.0;
@@ -229,18 +231,34 @@ fn property_text(entry: &TileArtEntry, key: PropertyKey) -> String {
         .unwrap_or_default()
 }
 
-/// A resizable table on top of the remaining space with `columns`; `cells` draws the shown row at a position.
+/// The selected row of a table, and whether its record's details are drawn under the table.
+struct TableSelection {
+    /// Position of the selected row among the shown ones.
+    position: Option<usize>,
+    /// Bring the selected row into view this frame.
+    scroll: bool,
+    details_below: bool,
+}
+
+/// A table with `columns`; `cells` draws the shown row at a position. With a record's details below (drawn after it),
+/// it is a resizable table on top of the remaining space; without, it fills the space. The selected row is scrolled to
+/// when asked, and when the table shrinks for the details that just appeared.
 fn metadata_table(
     ui: &mut egui::Ui,
     id: &'static str,
     columns: &[(&str, f32)],
     row_count: usize,
-    scroll_to: Option<usize>,
+    selection: TableSelection,
     mut cells: impl FnMut(usize, &mut TableRow<'_, '_>),
 ) {
     let min_width = columns.iter().map(|(_, width)| width).sum::<f32>();
     let text_height = egui::TextStyle::Body.resolve(ui.style()).size;
-    egui::Panel::top(id).resizable(true).default_size(METADATA_TABLE_HEIGHT).show(ui, |ui| {
+    let filled_id = egui::Id::new((id, METADATA_TABLE_FILLED_ID_SALT));
+    let was_filled = ui.ctx().data(|data| data.get_temp::<bool>(filled_id)).unwrap_or(false);
+    ui.ctx().data_mut(|data| data.insert_temp(filled_id, !selection.details_below));
+    let shrinks = was_filled && selection.details_below;
+    let scroll_to = selection.position.filter(|_| selection.scroll || shrinks);
+    let table = |ui: &mut egui::Ui| {
         egui::ScrollArea::horizontal().auto_shrink([false, false]).show(ui, |ui| {
             ui.set_min_width(min_width);
             let mut builder = TableBuilder::new(ui)
@@ -273,7 +291,22 @@ fn metadata_table(
                     });
                 });
         });
-    });
+    };
+    if selection.details_below {
+        egui::Panel::top(id).resizable(true).default_size(METADATA_TABLE_HEIGHT).show(ui, table);
+    } else {
+        // The panel's margins, so the rows stay in place when a selection brings the panel in.
+        egui::Frame::side_top_panel(ui.style()).show(ui, table);
+    }
+}
+
+/// Whether the selected record's details can go under a table drawn with `details_below`. A row clicked in a table that
+/// filled the space shows its details from the next frame, asked for here, once the table has made room.
+fn details_fit(ui: &egui::Ui, details_below: bool) -> bool {
+    if !details_below {
+        ui.ctx().request_repaint();
+    }
+    details_below
 }
 
 /// The art or textures of the selection, on the right of the space under a table; drawn before [`record_pane`].
@@ -340,7 +373,9 @@ fn cc_tiledata(
         app.selected_tex_art_cc_id = move_selection(&shown_ids, app.selected_tex_art_cc_id, delta);
         scroll = true;
     }
-    let scroll_to = scroll.then(|| app.selected_tex_art_cc_id.and_then(|id| shown_ids.iter().position(|&shown| shown == id))).flatten();
+    let position = app.selected_tex_art_cc_id.and_then(|id| shown_ids.iter().position(|&shown| shown == id));
+    let has_record = |art_id: u32| rows.iter().any(|row| row.art_id == art_id);
+    let details_below = app.selected_tex_art_cc_id.is_some_and(&has_record);
     ui.label(format!(
         "{} land tiles, {} item tiles ({} flag bits); {} shown",
         tiledata.land_tiles().len(),
@@ -349,12 +384,13 @@ fn cc_tiledata(
         shown.len()
     ));
     let selected = &mut app.selected_tex_art_cc_id;
-    metadata_table(ui, "tiledata_table", &TILEDATA_COLUMNS, shown.len(), scroll_to, |position, row| {
+    let selection = TableSelection { position, scroll, details_below };
+    metadata_table(ui, "tiledata_table", &TILEDATA_COLUMNS, shown.len(), selection, |position, row| {
         cc_row_cells(row, &rows[shown[position]], selected);
     });
 
     let change = match app.selected_tex_art_cc_id {
-        Some(art_id) if rows.iter().any(|row| row.art_id == art_id) => {
+        Some(art_id) if has_record(art_id) && details_fit(ui, details_below) => {
             let art = app.get_tex_art_texture_from_source(ctx, art_id, concrete_art_tile_source(app.selected_legacy_source));
             let editable = app.tiledata_editor.enabled;
             let kind = if art_id < ITEM_ART_ID_BASE { "land" } else { "item" };
@@ -459,16 +495,18 @@ fn ec_tileart(
         app.selected_tileart_hash = move_selection(&shown_hashes, app.selected_tileart_hash, delta);
         scroll = true;
     }
-    let scroll_to =
-        scroll.then(|| app.selected_tileart_hash.and_then(|hash| shown_hashes.iter().position(|&shown| shown == hash))).flatten();
+    let position = app.selected_tileart_hash.and_then(|hash| shown_hashes.iter().position(|&shown| shown == hash));
+    let record = |selected: Option<u64>| selected.and_then(|hash| entries.iter().find(|file| file.filename_hash == hash));
+    let details_below = record(app.selected_tileart_hash).is_some();
     ui.label(format!("{} tileart.uop entries; {} shown", entries.len(), shown.len()));
     let selected = &mut app.selected_tileart_hash;
-    metadata_table(ui, "tileart_table", &TILEART_COLUMNS, shown.len(), scroll_to, |position, row| {
+    let selection = TableSelection { position, scroll, details_below };
+    metadata_table(ui, "tileart_table", &TILEART_COLUMNS, shown.len(), selection, |position, row| {
         let index = shown[position];
         ec_row_cells(row, &rows[index], &entries[index].entry, selected);
     });
 
-    if let Some(file) = app.selected_tileart_hash.and_then(|hash| entries.iter().find(|file| file.filename_hash == hash)) {
+    if let Some(file) = record(app.selected_tileart_hash).filter(|_| details_fit(ui, details_below)) {
         preview_pane(ui, |ui| tile_preview::tileart_preview(app, ctx, ui, &file.entry));
         record_pane(ui, |ui| {
             egui::ScrollArea::vertical().id_salt("tileart_record").auto_shrink([false, false]).show(ui, |ui| {
