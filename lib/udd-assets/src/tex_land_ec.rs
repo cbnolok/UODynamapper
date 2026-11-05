@@ -361,7 +361,7 @@ impl TexLandEcPackage {
         let mut transcode: HashMap<u32, u32> = source_terrain_map.as_ref()
             .into_iter().flat_map(|map| map.routes.values())
             .map(|route| (u32::from(route.legacy_id), route.material_id)).collect();
-        // Explicit embedded/loose KDL remains a policy overlay, never the source census.
+        // The embedded KDL remains a policy overlay, never the source census.
         transcode.extend(read_transcode_from_package(&package)?);
         let (
             terrain_override_actions,
@@ -387,6 +387,7 @@ impl TexLandEcPackage {
         })
     }
 
+    /// Lays a candidate routing table over the embedded one, for the audits that try a table before it is packed.
     pub fn set_transcode(&mut self, transcode: HashMap<u32, u32>) {
         self.transcode.extend(transcode);
     }
@@ -1162,10 +1163,14 @@ fn parse_terrain_provenance_manifest(bytes: &[u8]) -> eyre::Result<Vec<TexLandEc
     Ok(records)
 }
 
-/// The optional embedded KDL routing overlay; an entry that is present must parse.
+/// The embedded KDL routing overlay (`TerrainTranscode.kdl`), the only routing table the runtime reads: the packer
+/// always writes it, and it must parse.
 fn read_transcode_from_package(package: &UddpReader) -> eyre::Result<HashMap<u32, u32>> {
     if package.find_by_path_hash(xxh64_virtual_path(UDDP_TRANSCODE_ENTRY_VPATH)).is_none() {
-        return Ok(HashMap::new());
+        eyre::bail!(
+            "tex_land_ec.uddp missing {UDDP_TRANSCODE_ENTRY_VPATH}, the terrain routing table (TerrainTranscode.kdl); \
+             repack it with the current udd-cli"
+        );
     }
     let bytes = read_path_entry_cow(package, UDDP_TRANSCODE_ENTRY_VPATH)?;
     let text = std::str::from_utf8(bytes.as_ref())
@@ -1475,6 +1480,8 @@ mod tests {
     use udd_container::{AddFileRequest, CompressionFlag, DataType, LookupMode, UddpBuilder};
 
     const EMPTY_SOURCE_MATERIALS_JSON: &[u8] = b"[]";
+    /// A routing table without rows: the client's routes apply unchanged.
+    const EMPTY_TRANSCODE_KDL: &[u8] = b"";
 
     fn add_metadata_file(
         package: &mut UddpBuilder,
@@ -1638,11 +1645,24 @@ mod tests {
             }];
             add_metadata_file(&mut builder, UDDP_SOURCE_MATERIALS_ENTRY_VPATH, &serde_json::to_vec(&source).unwrap());
         } else {
+            add_metadata_file(&mut builder, UDDP_TRANSCODE_ENTRY_VPATH, EMPTY_TRANSCODE_KDL);
             add_metadata_file(&mut builder, UDDP_SOURCE_MATERIALS_ENTRY_VPATH, EMPTY_SOURCE_MATERIALS_JSON);
         }
         let bytes = builder.build().expect("build test package");
         TexLandEcPackage::from_uddp_package(UddpReader::open(bytes).expect("open package"))
             .expect("load test package")
+    }
+
+    #[test]
+    fn a_package_without_the_routing_table_asks_for_a_repack() {
+        let mut builder = UddpBuilder::new(LookupMode::VirtualPathHash);
+        add_metadata_file(&mut builder, UDDP_PAGE_MANIFEST_ENTRY_VPATH, &page_manifest_bytes());
+        add_metadata_file(&mut builder, UDDP_SLOT_MANIFEST_ENTRY_VPATH, &slot_manifest_bytes());
+        add_metadata_file(&mut builder, UDDP_TERRAIN_PROVENANCE_ENTRY_VPATH, &terrain_provenance_bytes());
+        add_metadata_file(&mut builder, UDDP_SOURCE_MATERIALS_ENTRY_VPATH, EMPTY_SOURCE_MATERIALS_JSON);
+        let reader = UddpReader::open(builder.build().expect("build test package")).expect("open package");
+        let error = TexLandEcPackage::from_uddp_package(reader).err().expect("a package without the table").to_string();
+        assert!(error.contains(UDDP_TRANSCODE_ENTRY_VPATH) && error.contains("repack"), "{error}");
     }
 
     #[test]

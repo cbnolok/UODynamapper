@@ -2102,6 +2102,8 @@ mod tests {
             &ec_land_terrain_overrides_json(),
         );
         add_metadata_file(&mut builder, udd_assets::tex_land_ec::UDDP_SOURCE_MATERIALS_ENTRY_VPATH, b"[]");
+        // A routing table without rows.
+        add_metadata_file(&mut builder, udd_assets::tex_land_ec::UDDP_TRANSCODE_ENTRY_VPATH, b"");
         let bytes = builder.build().expect("build test package");
         udd_assets::TexLandEcPackage::from_uddp_package(
             UddpReader::open(bytes).expect("open test package"),

@@ -8,7 +8,6 @@ use crate::core::system_sets::StartupSysSet;
 use crate::prelude::*;
 use bevy::prelude::*;
 use parking_lot::Mutex;
-use std::collections::HashMap;
 use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -115,10 +114,6 @@ pub struct ClassicFontsRes(pub Arc<uocf::classic::fonts::ClassicFonts>);
 /// Optional packed hue lookup texture and metadata.
 #[derive(Resource)]
 pub struct HuesPackageRes(pub Arc<udd_assets::HuesPackage>);
-
-/// Classic land-id routing table for Enhanced/KR land material ids.
-#[derive(Resource)]
-pub struct EckrTerrainRoutingRes(pub Arc<HashMap<u32, u32>>);
 
 pub struct UoFilesSettings {
     pub udd_folder: PathBuf,
@@ -377,7 +372,7 @@ pub fn sys_setup_uo_data(mut commands: Commands, settings: Res<Settings>) {
                 .unwrap_or_else(|_| panic!("Error loading {}", tex_land_ec_path.display())),
             AtlasCacheOptions::enabled(),
         )
-        .unwrap_or_else(|_| panic!("Error loading {}", tex_land_ec_path.display()));
+        .unwrap_or_else(|error| panic!("Error loading {}: {error:#}", tex_land_ec_path.display()));
         log_tex_land_ec_coverage(&lg, &package);
         Some(package)
     } else {
@@ -520,41 +515,8 @@ pub fn sys_setup_uo_data(mut commands: Commands, settings: Res<Settings>) {
 
     lg("Done loading UO Data.");
 
-    // Load CC-EC conversion table from KDL.
+    // The CC-EC land routing table (TerrainTranscode.kdl) is embedded in tex_land_ec.uddp, which applies it.
     let asset_root = crate::core::constants::valid_asset_dir();
-    let transcode_filename = "TerrainTranscode.kdl";
-    let transcode_path = asset_root.join("cc_ec_convtables").join(transcode_filename);
-
-    if transcode_path.exists() {
-        lg(&format!(
-            "Loading terrain routing from: {}",
-            transcode_path.display()
-        ));
-        match udd_assets::eckr_terrain_kdl::EckrTerrainRouting::load(&transcode_path) {
-            Ok(transcode) => {
-                lg(&format!("Loaded {transcode_filename} (loose file)"));
-                let transcode_map = transcode.to_map();
-
-                // Apply override to EC land package if present
-                if let Some(tex_land_ec) = tex_land_ec_package.as_mut() {
-                    lg(&format!(
-                        "Applying loose {transcode_filename} as override to EC land package."
-                    ));
-                    tex_land_ec.set_transcode(transcode_map.clone());
-                }
-
-                commands.insert_resource(EckrTerrainRoutingRes(Arc::new(transcode_map)));
-            }
-            // Optional when absent; a file that is present must be valid.
-            Err(e) => crate::configs::settings::exit_on_startup_config_error(&e),
-        }
-    } else {
-        lg(&format!(
-            "{transcode_filename} not found at {}",
-            transcode_path.display()
-        ));
-    }
-
     let terrain_overrides_path = asset_root.join("cc_ec_convtables/EcTerrainOverrides.kdl");
     if terrain_overrides_path.is_file() {
         lg(&format!(
@@ -709,22 +671,17 @@ fn load_multi_definitions(
 #[cfg(test)]
 mod tests {
     use std::collections::BTreeMap;
-    use std::path::{Path, PathBuf};
-
-    /// The loose terrain transcode the loader overlays on the EC land package.
-    const LOOSE_TRANSCODE_PATH: &str = "assets/cc_ec_convtables/TerrainTranscode.kdl";
+    use std::path::PathBuf;
 
     #[test]
     #[ignore = "requires current canonical packages in DYNAMAPPER_TEST_PACKAGES"]
     fn classic_land_routes_follow_the_client_terrain_map() {
         let root = PathBuf::from(std::env::var_os("DYNAMAPPER_TEST_PACKAGES")
             .expect("set DYNAMAPPER_TEST_PACKAGES to the matching current package directory"));
-        let mut package = udd_assets::tex_land_ec::TexLandEcPackage::load(root.join("tex_land_ec.uddp")).unwrap();
-        let loose = Path::new(env!("CARGO_MANIFEST_DIR")).join(LOOSE_TRANSCODE_PATH);
-        package.set_transcode(udd_assets::eckr_terrain_kdl::EckrTerrainRouting::load(&loose).unwrap().to_map());
+        let package = udd_assets::tex_land_ec::TexLandEcPackage::load(root.join("tex_land_ec.uddp")).unwrap();
         let client = package.source_terrain_map().expect("the package embeds legacyterrainmap.csv").routes.clone();
         assert!(!client.is_empty());
-        // Same as the loader: the client's map, then the package's and the loose KDL's routes over it.
+        // Same as the loader: the client's map, then the package's embedded KDL routes over it.
         let differing: BTreeMap<u16, (u32, Option<u32>)> = client
             .values()
             .filter_map(|route| {
