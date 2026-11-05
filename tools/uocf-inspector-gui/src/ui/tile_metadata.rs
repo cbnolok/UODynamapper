@@ -7,7 +7,11 @@ use egui_extras::{Column, TableBuilder, TableRow};
 use uocf::classic::tiledata::TileData;
 use uocf::enhanced::tileart::{tileart_entry_hash, PropertyKey, TileArtEntry};
 
-use super::{arrow_delta, list_sort_controls, move_selection, sorted_indices_by, tile_preview, tileart_editor, tiledata_editor};
+use super::{
+    arrow_delta, enhanced_files_availability, enhanced_folder_source, folder_files_availability, list_sort_controls,
+    move_selection, sorted_indices_by, source_choice, tile_preview, tileart_editor, tiledata_editor, ClientSource,
+    SourceAvailability, CLASSIC_FOLDER,
+};
 use crate::app::{concrete_art_tile_source, CcTileDataRow, TileArtDisplayRow, TileArtFileEntry, TileMetadataSource, UopInspectorApp};
 use crate::logic::effects_editor::parse_id;
 
@@ -23,6 +27,8 @@ const PREVIEW_PANEL_WIDTH: f32 = 440.0;
 const GO_TO_FIELD_WIDTH: f32 = 90.0;
 const HEX_DIGITS: usize = 4;
 const TAB_STATE_ID: &str = "tile_metadata_tab";
+const TILEDATA_FILE: &str = "tiledata.mul";
+const TILEART_FILE: &str = "tileart.uop";
 /// The tiledata.mul columns and their least widths; the last one takes the rest.
 const TILEDATA_COLUMNS: [(&str, f32); 12] = [
     ("ID", 60.0),
@@ -79,13 +85,38 @@ pub fn ui_tile_metadata(app: &mut UopInspectorApp, ctx: &egui::Context, ui: &mut
     });
 }
 
+/// tiledata.mul is MUL, tileart.uop KR UOP or EC UOP by the Enhanced folder's client. The Classic client keeps its
+/// tile metadata in tiledata.mul only: no CC UOP.
+fn source_selector(app: &mut UopInspectorApp, ui: &mut egui::Ui) {
+    let ctx = ui.ctx().clone();
+    let cc_path = app.settings.cc_path.as_deref();
+    let ec_path = app.settings.ec_path.as_deref();
+    let has_tiledata = app.cc_tiledata.is_some();
+    let has_tileart = app.ec_tileart_entries.is_some();
+    let selected = match app.tile_metadata_source {
+        TileMetadataSource::CcTileData => Some(ClientSource::Mul),
+        TileMetadataSource::EcTileArt => ec_path.map(|folder| enhanced_folder_source(&ctx, folder)),
+    };
+    let clicked = source_choice(ui, selected, |source| match source {
+        ClientSource::Mul => folder_files_availability(cc_path, CLASSIC_FOLDER, TILEDATA_FILE, has_tiledata),
+        ClientSource::CcUop => SourceAvailability::NotApplicable,
+        ClientSource::KrUop | ClientSource::EcUop => {
+            enhanced_files_availability(&ctx, ec_path, source, TILEART_FILE, has_tileart)
+        }
+    });
+    match clicked {
+        Some(ClientSource::Mul) => app.tile_metadata_source = TileMetadataSource::CcTileData,
+        Some(_) => app.tile_metadata_source = TileMetadataSource::EcTileArt,
+        None => {}
+    }
+}
+
 /// The tab's contents, also drawn by the Art tab's tiledata view.
 pub(super) fn contents(app: &mut UopInspectorApp, ctx: &egui::Context, ui: &mut egui::Ui) {
     ui.horizontal(|ui| {
         ui.heading("Tile Metadata");
         ui.separator();
-        ui.selectable_value(&mut app.tile_metadata_source, TileMetadataSource::CcTileData, "tiledata.mul");
-        ui.selectable_value(&mut app.tile_metadata_source, TileMetadataSource::EcTileArt, "tileart.uop");
+        source_selector(app, ui);
         ui.separator();
         if ui.button("Raw UOP").clicked() {
             match app.tile_metadata_source {
