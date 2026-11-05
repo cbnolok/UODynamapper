@@ -10,6 +10,7 @@ use uocf::enhanced::dds_writer::SizeChange;
 
 use crate::app::UopInspectorApp;
 use crate::ui::image_export::export_rgba_png;
+use crate::ui::{source_choice, ClientSource, SourceAvailability};
 
 /// Height of the stored-image preview; it scrolls beyond.
 const PREVIEW_MAX_HEIGHT: f32 = 240.0;
@@ -80,6 +81,14 @@ fn container_short_label(container: &ClassicImageContainer) -> String {
     }
 }
 
+/// The source button of a container: MUL or CC UOP.
+fn container_source(container: &ClassicImageContainer) -> ClientSource {
+    match container {
+        ClassicImageContainer::Mul { .. } => ClientSource::Mul,
+        ClassicImageContainer::Uop(_) => ClientSource::CcUop,
+    }
+}
+
 /// The export/import panel of `kind` id `id`, for the Classic client folder of the settings.
 pub fn ui_classic_image_panel(app: &mut UopInspectorApp, ctx: &egui::Context, ui: &mut egui::Ui, kind: ClassicImageKind, id: u32, preferred: PreferredContainer) {
     let Some(dir) = app.settings.cc_path.clone() else {
@@ -99,13 +108,27 @@ fn ui_panel(app: &mut UopInspectorApp, ctx: &egui::Context, ui: &mut egui::Ui, s
         return;
     }
     let before = state.selected;
-    egui::ComboBox::from_id_salt("classic_image_import_files")
-        .selected_text(container_short_label(&state.found[state.selected].container))
-        .show_ui(ui, |ui| {
-            for (index, files) in state.found.iter().enumerate() {
-                ui.selectable_value(&mut state.selected, index, container_short_label(&files.container));
-            }
-        });
+    // Only the Classic client's files are written here: no KR UOP or EC UOP.
+    let kind = state.found[state.selected].kind.label();
+    let position = |source: ClientSource| state.found.iter().position(|files| container_source(&files.container) == source);
+    let clicked = source_choice(ui, Some(container_source(&state.found[state.selected].container)), |source| match source {
+        ClientSource::Mul | ClientSource::CcUop => match position(source) {
+            Some(index) => SourceAvailability::Found(format!(
+                "{} in {}",
+                container_short_label(&state.found[index].container),
+                dir.display()
+            )),
+            None => SourceAvailability::Missing(format!(
+                "No Classic {kind} {} in {}.",
+                if source == ClientSource::Mul { "MUL files" } else { "UOP package" },
+                dir.display()
+            )),
+        },
+        ClientSource::KrUop | ClientSource::EcUop => SourceAvailability::NotApplicable,
+    });
+    if let Some(index) = clicked.and_then(position) {
+        state.selected = index;
+    }
     let files = state.found[state.selected].clone();
     if before != state.selected || state.prepared.as_ref().is_some_and(|(selected, prepared_id, _)| *selected != state.selected || *prepared_id != id) {
         state.prepared = None;
