@@ -42,7 +42,7 @@ use crate::logic::effects_editor::{
     FileOverride, FileUser, NameIndex, PacketRoute, ParticleKindFilter, PathStep, PACKET_UNREACHABLE_NOTE,
 };
 use crate::ui::unsaved_changes::TabEditor;
-use crate::ui::UOP_PATCHER_NOTE;
+use crate::ui::{arrow_delta, move_selection, UOP_PATCHER_NOTE};
 
 const BROWSE_PANEL_WIDTH: f32 = 360.0;
 const PREVIEW_PANEL_WIDTH: f32 = 420.0;
@@ -59,12 +59,12 @@ const VALUE_DRAG_SPEED: f64 = 0.1;
 const FLOAT_DRAG_SPEED: f64 = 0.01;
 /// Masks are typed, not dragged.
 const NO_DRAG_SPEED: f64 = 0.0;
-/// Zoom factor per scrolled point over the preview.
-const ZOOM_PER_SCROLL_POINT: f32 = 0.002;
 /// Camera turn per dragged point (secondary button) over the preview, degrees.
 const ORBIT_DEGREES_PER_POINT: f32 = 0.5;
 const SEED_DRAG_SPEED: f64 = 1.0;
 const MS_PER_SECOND: f32 = 1000.0;
+/// Decimals of the seconds shown on the timeline.
+const TIMELINE_DECIMALS: usize = 2;
 const ERROR_COLOR: egui::Color32 = egui::Color32::from_rgb(230, 90, 90);
 const WARNING_COLOR: egui::Color32 = egui::Color32::from_rgb(230, 180, 60);
 const NOTE_COLOR: egui::Color32 = egui::Color32::from_rgb(140, 170, 220);
@@ -1270,7 +1270,8 @@ fn browse_panel(app: &mut UopInspectorApp, lookups: &Lookups, ui: &mut egui::Ui)
     }
 }
 
-/// A selectable list of rows, scrolled to the selected row on request.
+/// A selectable list of rows, scrolled to the selected row on request. The arrow keys move the selection, unless a
+/// text field has the keyboard, and keep the new row in view. Returns the row clicked or moved to.
 fn row_list(
     ui: &mut egui::Ui,
     salt: &str,
@@ -1280,22 +1281,35 @@ fn row_list(
     mut row: impl FnMut(&mut egui::Ui, usize) -> bool,
 ) -> Option<usize> {
     let row_height = ui.spacing().interact_size.y;
+    let spacing = ui.spacing().item_spacing.y;
+    let keyed = arrow_delta(ui, ui.ctx().text_edit_focused())
+        .and_then(|delta| move_selection(&(0..count).collect::<Vec<_>>(), selected_row, delta))
+        .filter(|&index| Some(index) != selected_row);
     let mut area = egui::ScrollArea::vertical().id_salt(salt).auto_shrink([false, false]);
     if scroll {
         if let Some(index) = selected_row {
-            let spacing = ui.spacing().item_spacing.y;
             area = area.vertical_scroll_offset(index as f32 * (row_height + spacing));
         }
     }
     let mut clicked = None;
     area.show_rows(ui, row_height, count, |ui, range| {
+        if let Some(index) = keyed {
+            // The row may be outside the drawn range: its place follows from the first drawn row.
+            let top = ui.max_rect().top() + (index as f32 - range.start as f32) * (row_height + spacing);
+            let rect = egui::Rect::from_min_size(egui::pos2(ui.max_rect().left(), top), egui::vec2(ui.max_rect().width(), row_height));
+            ui.scroll_to_rect(rect, None);
+        }
         for index in range {
             if row(ui, index) {
                 clicked = Some(index);
             }
         }
     });
-    clicked
+    if keyed.is_some() {
+        // The rows were drawn with the previous selection.
+        ui.ctx().request_repaint();
+    }
+    clicked.or(keyed)
 }
 
 fn entries_list(app: &mut UopInspectorApp, lookups: &Lookups, ui: &mut egui::Ui) {
@@ -2545,15 +2559,8 @@ fn preview_panel(app: &mut UopInspectorApp, lookups: &Lookups, ctx: &egui::Conte
 
     // Playback clock.
     if preview.playing {
-        preview.clock_ms += ui.input(|input| input.stable_dt) * MS_PER_SECOND * preview.speed;
-        if preview.clock_ms >= timeline_ms {
-            if preview.repeat {
-                preview.clock_ms = 0.0;
-            } else {
-                preview.clock_ms = timeline_ms;
-                preview.playing = false;
-            }
-        }
+        let elapsed_s = ui.input(|input| input.stable_dt) * preview.speed;
+        (preview.clock_ms, preview.playing) = advance_clock(preview.clock_ms, elapsed_s, timeline_ms, preview.repeat);
         ctx.request_repaint();
     }
     advance_simulation(preview, &scene);
@@ -2596,7 +2603,8 @@ fn preview_panel(app: &mut UopInspectorApp, lookups: &Lookups, ctx: &egui::Conte
                 let image = egui::Image::new(texture).fit_to_exact_size(egui::vec2(side, side)).sense(egui::Sense::click_and_drag());
                 let response = ui.vertical_centered(|ui| ui.add(image)).inner;
                 let response = response.on_hover_text(
-                    "Drag to pan, right-drag to turn the camera, scroll to zoom, double-click to reset the view.",
+                    "Drag to pan, right-drag to turn the camera, Ctrl or Shift + wheel (or pinch) to zoom, double-click to reset \
+                     the view.",
                 );
                 if response.dragged_by(egui::PointerButton::Primary) {
                     let scale = PREVIEW_RESOLUTION_PX as f32 / side;
@@ -2609,9 +2617,9 @@ fn preview_panel(app: &mut UopInspectorApp, lookups: &Lookups, ctx: &egui::Conte
                     preview.view.orbit = preview.view.orbit.turned(-delta.x, delta.y);
                 }
                 if response.hovered() {
-                    let scroll = ui.input(|input| input.smooth_scroll_delta.y);
-                    if scroll != 0.0 {
-                        preview.view.zoom = (preview.view.zoom * (scroll * ZOOM_PER_SCROLL_POINT).exp()).clamp(MIN_ZOOM, MAX_ZOOM);
+                    let zoom = ui.input(|input| input.zoom_delta());
+                    if zoom != 1.0 {
+                        preview.view.zoom = (preview.view.zoom * zoom).clamp(MIN_ZOOM, MAX_ZOOM);
                     }
                 }
                 if response.double_clicked() {
@@ -2632,10 +2640,10 @@ fn preview_panel(app: &mut UopInspectorApp, lookups: &Lookups, ctx: &egui::Conte
                 if ui.button(RESTART_ICON).on_hover_text("Restart from 0").clicked() {
                     preview.clock_ms = 0.0;
                 }
-                let mut seconds = preview.clock_ms / MS_PER_SECOND;
-                let slider = egui::Slider::new(&mut seconds, 0.0..=timeline_ms / MS_PER_SECOND).suffix(" s").max_decimals(2);
-                if ui.add(slider).on_hover_text("Scrub: re-simulates from 0 with the same seed.").changed() {
-                    preview.clock_ms = seconds * MS_PER_SECOND;
+                if timeline_slider(ui, &mut preview.clock_ms, timeline_ms)
+                    .on_hover_text("Scrub: re-simulates from 0 with the same seed.")
+                    .changed()
+                {
                     preview.playing = false;
                 }
             });
@@ -2995,6 +3003,35 @@ fn hue_swatch(ui: &mut egui::Ui, atlas: Option<&particle_sim::raster::RasterText
     }
 }
 
+/// The playback clock (milliseconds) `elapsed_s` seconds later, and whether it still plays: it wraps around a
+/// repeating timeline and stops at the end of one that does not repeat.
+fn advance_clock(clock_ms: f32, elapsed_s: f32, timeline_ms: f32, repeat: bool) -> (f32, bool) {
+    let clock_ms = clock_ms + elapsed_s * MS_PER_SECOND;
+    if clock_ms < timeline_ms {
+        (clock_ms, true)
+    } else if repeat && timeline_ms > 0.0 {
+        (clock_ms % timeline_ms, true)
+    } else {
+        (timeline_ms, false)
+    }
+}
+
+/// The scrubber of the playback clock (milliseconds), which changes the clock only when it is moved. It must not
+/// clamp or round the clock it is given: the slider would then report a change on every frame the clock runs, and
+/// the change stops the playback.
+fn timeline_slider(ui: &mut egui::Ui, clock_ms: &mut f32, timeline_ms: f32) -> egui::Response {
+    let mut seconds = *clock_ms / MS_PER_SECOND;
+    let slider = egui::Slider::new(&mut seconds, 0.0..=timeline_ms / MS_PER_SECOND)
+        .suffix(" s")
+        .max_decimals(TIMELINE_DECIMALS)
+        .clamping(egui::SliderClamping::Edits);
+    let response = ui.add(slider);
+    if response.changed() {
+        *clock_ms = seconds * MS_PER_SECOND;
+    }
+    response
+}
+
 /// Brings the simulation to the playback clock: forward in steps, or re-simulated from 0 when going back or when
 /// the camera turned.
 fn advance_simulation(preview: &mut PreviewPanel, scene: &PreviewScene) {
@@ -3118,6 +3155,96 @@ mod tests {
             poll_files_load(app, &ctx);
             std::thread::sleep(WORKER_POLL);
         }
+    }
+
+    /// An app on the Effects tab with the test collection and files.
+    fn effects_app(dir: &Path) -> UopInspectorApp {
+        let strings = dictionary();
+        let files = EffectFiles::open(&files_package(dir), Some(&strings)).unwrap();
+        let mut app = crate::app::tests::test_app();
+        app.view_mode = crate::app::ViewMode::Effects;
+        app.uo_string_dictionary = Some(Arc::new(strings));
+        let state = &mut app.effects_panel;
+        state.files = Some(Arc::new(files));
+        state.document = EffectsDocument::new(collection(), CollectionSource::None);
+        app
+    }
+
+    fn key_press(key: egui::Key) -> egui::RawInput {
+        let event = egui::Event::Key { key, physical_key: None, pressed: true, repeat: false, modifiers: egui::Modifiers::NONE };
+        egui::RawInput { events: vec![event], ..Default::default() }
+    }
+
+    #[test]
+    fn the_clock_wraps_around_a_repeating_timeline_and_stops_at_the_end_of_another() {
+        const TIMELINE_MS: f32 = 1000.0;
+        assert_eq!(advance_clock(100.0, 0.25, TIMELINE_MS, true), (350.0, true));
+        let (clock_ms, playing) = advance_clock(900.0, 0.25, TIMELINE_MS, true);
+        assert!(playing && (clock_ms - 150.0).abs() < 1e-3, "{clock_ms}");
+        assert_eq!(advance_clock(900.0, 0.25, TIMELINE_MS, false), (TIMELINE_MS, false));
+    }
+
+    /// The bug that stopped the playback after one frame: the slider rounded the running clock to its decimals
+    /// and reported that as a change, which is a scrub.
+    #[test]
+    fn the_timeline_does_not_report_a_running_clock_as_a_scrub() {
+        const TIMELINE_MS: f32 = 2000.0;
+        const RUNNING_CLOCK_MS: f32 = 16.666;
+        let mut clock_ms = RUNNING_CLOCK_MS;
+        let mut changed = None;
+        let _ = egui::Context::default().run_ui(egui::RawInput::default(), |ui| {
+            changed = Some(timeline_slider(ui, &mut clock_ms, TIMELINE_MS).changed());
+        });
+        assert_eq!(changed, Some(false));
+        assert_eq!(clock_ms, RUNNING_CLOCK_MS);
+    }
+
+    #[test]
+    fn the_preview_plays_on_over_frames() {
+        const FRAMES: usize = 30;
+        let dir = scratch_dir("playback");
+        let mut app = effects_app(&dir);
+        app.effects_panel.selection = Some(EffectsSelection::Entry { entry: 0 });
+        let ctx = egui::Context::default();
+        for _ in 0..FRAMES {
+            let _ = ctx.run_ui(egui::RawInput::default(), |ui| {
+                let ctx = ui.ctx().clone();
+                crate::ui::draw_ui(&mut app, &ctx, ui);
+            });
+        }
+        let preview = &app.effects_panel.preview;
+        assert!(preview.playing, "still playing");
+        let frame_ms = egui::RawInput::default().predicted_dt * MS_PER_SECOND;
+        assert!(preview.clock_ms > frame_ms * (FRAMES / 2) as f32, "the clock ran: {} ms", preview.clock_ms);
+        assert!(ctx.has_requested_repaint(), "a playing preview asks for the next frame");
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn the_arrow_keys_browse_the_file_list() {
+        let dir = scratch_dir("arrow_keys");
+        let mut app = effects_app(&dir);
+        app.effects_panel.view = BrowseView::Files;
+        let ctx = egui::Context::default();
+        let press = |app: &mut UopInspectorApp, key| {
+            let _ = ctx.run_ui(key_press(key), |ui| {
+                let ctx = ui.ctx().clone();
+                crate::ui::draw_ui(app, &ctx, ui);
+            });
+        };
+        let (rows, visible) = file_rows(&mut app.effects_panel);
+        let hash_at = |row: usize| rows[visible[row]].hash;
+        let selected = |app: &UopInspectorApp| match app.effects_panel.selection {
+            Some(EffectsSelection::File { hash }) => Some(hash),
+            _ => None,
+        };
+        press(&mut app, egui::Key::ArrowDown);
+        assert_eq!(selected(&app), Some(hash_at(0)), "the first row");
+        press(&mut app, egui::Key::ArrowDown);
+        assert_eq!(selected(&app), Some(hash_at(1)));
+        press(&mut app, egui::Key::ArrowUp);
+        assert_eq!(selected(&app), Some(hash_at(0)));
+        std::fs::remove_dir_all(dir).unwrap();
     }
 
     #[test]
