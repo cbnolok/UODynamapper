@@ -1,14 +1,13 @@
 use crate::app::{
     AnimationFrameUopEntry, AnimationFrameUopScanResult, ArtSource, UopInspectorApp,
 };
+use crate::ui::animation_frames::{self, ActionFrames, FramesViewState};
 use crate::ui::animation_list::{self, ActionKey, ActionSource, AnimationListState};
-use crate::ui::image_export::{export_rgba_png, sanitize_file_stem};
 use color_eyre::eyre;
 use eframe::egui;
 use std::hash::{Hash, Hasher};
 use std::path::{Path, PathBuf};
-use std::time::Duration;
-use uocf::animation_sequence::{AnimationSequence, DIRECTION_COUNT, FIRST_FRAME_NUMBER};
+use uocf::animation_sequence::{AnimationSequence, DIRECTION_COUNT};
 use uocf::classic::animationframe_cc::AnimationFrameCc;
 use uocf::classic::michelangelo_uop_codec::{
     export_anim_blocks_from_mul, MichelangeloPatch, MichelangeloPatchEntry,
@@ -21,6 +20,7 @@ use uocf::uop_container::hash::hash_file_name_single;
 #[derive(Default)]
 pub(crate) struct AnimationsView {
     pub(super) list: AnimationListState,
+    pub(super) frames: FramesViewState,
 }
 
 const ANIMATION_CONTROLS_PANEL_WIDTH: f32 = 280.0;
@@ -140,251 +140,73 @@ pub fn ui_animations(app: &mut UopInspectorApp, ctx: &egui::Context, ui: &mut eg
         });
 
     egui::CentralPanel::default().show(ui, |ui| {
-        if app.client_data.is_some() {
-            let body_type = selected_sequence_id(app);
-
-            // Try to load AnimationSequence if not already loaded for this body type
-            if app.selected_anim_sequence.as_ref().map(|(id, _)| *id) != Some(body_type) {
-                let mut found_seq = None;
-                for loaded in &app.uop_cache.loaded_uops {
-                    if loaded
-                        .path
-                        .file_name()
-                        .unwrap_or_default()
-                        .to_string_lossy()
-                        .contains("AnimationSequence")
-                    {
-                        let hash = hash_file_name_single(&AnimationSequence::entry_path(body_type));
-                        if let Some(file) = loaded.package.get_file_by_hash(hash) {
-                            if let Ok(data) = file.unpack() {
-                                if let Ok(seq) = AnimationSequence::parse(&data) {
-                                    found_seq = Some((body_type, seq));
-                                    break;
-                                }
-                            }
-                        }
-                    }
-                }
-                app.selected_anim_sequence = found_seq;
-            }
-            let body_id = selected_frames_body_id(app);
-            match action_target(app) {
-                Ok(ActionTarget { key, sequence }) => {
-                    ui.horizontal_wrapped(|ui| {
-                        ui.strong(format!("Body {} · action {} · {}", key.body, key.action, key.provenance()));
-                        if let Some(sequence) = sequence {
-                            ui.weak(format!("AnimationSequence {sequence}"));
-                        }
-                    });
-                    show_action_file_controls(app, ui, key);
-                }
-                Err(message) => {
-                    ui.label(message);
-                }
-            }
-
-            let frames_res: eyre::Result<Vec<uocf::classic::anim::AnimFrame>> = match app
-                .selected_legacy_source
-            {
-                ArtSource::Mul => app
-                    .client_data
-                    .as_ref()
-                    .and_then(|client| client.anim_map.as_ref())
-                    .ok_or_else(|| eyre::eyre!("Classic animation MUL sources are not loaded"))
-                    .and_then(|anim_map| {
-                        let source_index = selected_mul_source_index(app, body_id)?;
-                        anim_map.decode_animation_index(app.selected_anim_file_idx, source_index)
-                    }),
-                ArtSource::CcUop => {
-                    let entry = selected_cc_animationframe_entry(app, body_id);
-                    entry.and_then(|entry| {
-                        let data = animationframe_payload(app, &entry)?;
-                        AnimationFrameCc::decode_direction(&data, app.selected_direction)
-                    })
-                }
-                ArtSource::EcUop | ArtSource::EcUopLegacy | ArtSource::EcUopKr => {
-                    // Like the client, a placeholder whose appearance has no frames shows body 0.
-                    let entry = selected_ec_animationframe_entry(app, body_id).or_else(|error| {
-                        if selected_body_definition(app).is_some() && body_id != FALLBACK_FRAMES_BODY {
-                            selected_ec_animationframe_entry(app, FALLBACK_FRAMES_BODY)
-                        } else {
-                            Err(error)
-                        }
-                    });
-                    entry.and_then(|entry| {
-                        let data = animationframe_payload(app, &entry)?;
-                        decode_amo_animationframe_payload(&data)
-                    })
-                }
-                _ => Err(eyre::eyre!("Source not supported yet")),
-            };
-
-            match frames_res {
-                Ok(all_frames) => {
-                    let logical_frames = if matches!(
-                        app.selected_legacy_source,
-                        ArtSource::EcUop | ArtSource::EcUopLegacy | ArtSource::EcUopKr
-                    ) && app.selected_animationframe_file_hash.is_none()
-                    {
-                        if let Some((_, seq)) = &app.selected_anim_sequence {
-                            sequence_direction_frame_positions(
-                                seq,
-                                app.selected_action_id,
-                                app.selected_direction,
-                            )
-                        } else {
-                            None
-                        }
-                    } else {
-                        None
-                    };
-
-                    let frames = if let Some(positions) = &logical_frames {
-                        positions
-                            .iter()
-                            .filter_map(|&idx| all_frames.get(idx))
-                            .cloned()
-                            .collect::<Vec<_>>()
-                    } else {
-                        all_frames
-                    };
-
-                    if frames.is_empty() {
-                        ui.label("Animation has no frames (or empty logical sequence)");
-                    } else {
-                        if app.is_playing {
-                            let time = ctx.input(|i| i.time);
-                            let frame_delay = 0.1 / app.playback_speed as f64;
-                            if time - app.last_frame_time > frame_delay {
-                                app.current_frame_idx += 1;
-                                if app.current_frame_idx >= frames.len() {
-                                    if app.loop_animation {
-                                        app.current_frame_idx = 0;
-                                    } else {
-                                        app.current_frame_idx = frames.len() - 1;
-                                        app.is_playing = false;
-                                    }
-                                }
-                                app.last_frame_time = time;
-                            }
-                            // egui draws only on input: wake up for the next frame while playing.
-                            if app.is_playing {
-                                let wait = (app.last_frame_time + frame_delay - time).max(0.0);
-                                ctx.request_repaint_after(Duration::from_secs_f64(wait));
-                            }
-                        }
-
-                        let frame_idx = app.current_frame_idx.min(frames.len() - 1);
-                        let frame = &frames[frame_idx];
-
-                        ui.horizontal(|ui| {
-                            ui.label(format!("Frame {} / {}", frame_idx + 1, frames.len()));
-                            if logical_frames.is_some() {
-                                ui.separator();
-                                ui.label(format!(
-                                    "Action: {}, Direction: {}",
-                                    app.selected_action_id, app.selected_direction
-                                ));
-                            }
-                        });
-                        ui.label(format!(
-                            "Size: {}x{}, Center: {},{}",
-                            frame.width, frame.height, frame.center_x, frame.center_y
-                        ));
-
-                        if frame.width > 0 && frame.height > 0 {
-                            if ui.button("Export PNG").clicked() {
-                                let source = animation_source_label(app.selected_legacy_source);
-                                let name = sanitize_file_stem(
-                                    &format!(
-                                        "{source}_body_{}_action_{}_dir_{}_frame_{}",
-                                        body_id,
-                                        app.selected_action_id,
-                                        app.selected_direction,
-                                        frame_idx
-                                    ),
-                                    "animation_frame",
-                                );
-                                match export_rgba_png(
-                                    format!("{name}.png"),
-                                    frame.width as u32,
-                                    frame.height as u32,
-                                    &frame.data,
-                                ) {
-                                    Ok(Some(path)) => {
-                                        app.status_message =
-                                            format!("Exported animation frame to {path}.");
-                                    }
-                                    Ok(None) => {}
-                                    Err(e) => {
-                                        app.status_message =
-                                            format!("Failed to export animation frame: {e}");
-                                    }
-                                }
-                            }
-
-                            // Every input of the decode is in the key: one that left out the action or the direction
-                            // showed the cached frame of another entry.
-                            let mut hasher = std::collections::hash_map::DefaultHasher::new();
-                            (
-                                "animation_frame",
-                                app.selected_legacy_source as u8,
-                                body_id,
-                                app.selected_action_id,
-                                app.selected_direction,
-                                app.selected_anim_file_idx,
-                                app.selected_animationframe_file_hash,
-                                logical_frames.is_some(),
-                                frame_idx,
-                            )
-                                .hash(&mut hasher);
-                            let key = hasher.finish();
-
-                            let handle = match app.texture_previews.get(&key).cloned() {
-                                Some(handle) => Some(handle),
-                                None => {
-                                    let name = format!("anim_{}_{}_{}", body_id, app.selected_action_id, frame_idx);
-                                    let size = [frame.width as usize, frame.height as usize];
-                                    let handle = app.checked_texture(ctx, name, size, &frame.data[..], Default::default());
-                                    if let Some(handle) = &handle {
-                                        app.texture_previews.insert(key, handle.clone());
-                                    }
-                                    handle
-                                }
-                            };
-                            match handle {
-                                Some(handle) => {
-                                    app.register_current_image_preview(
-                                        key,
-                                        format!(
-                                            "animation {} action {} frame {}",
-                                            body_id, app.selected_action_id, frame_idx
-                                        ),
-                                        frame.width as u32,
-                                        frame.height as u32,
-                                        &frame.data,
-                                    );
-
-                                    ui.image(&handle);
-                                }
-                                None => {
-                                    ui.label("(This frame cannot be shown: see the status bar.)");
-                                }
-                            }
-                        } else {
-                            ui.label("(Empty frame)");
-                        }
-                    }
-                }
-                Err(e) => {
-                    ui.label(format!("Error loading animation: {}", e));
-                }
-            }
-        } else {
+        if app.client_data.is_none() {
             ui.centered_and_justified(|ui| {
                 ui.label("Load client data first");
             });
+            return;
         }
+        let body_type = selected_sequence_id(app);
+
+        // Try to load AnimationSequence if not already loaded for this body type
+        if app.selected_anim_sequence.as_ref().map(|(id, _)| *id) != Some(body_type) {
+            let mut found_seq = None;
+            for loaded in &app.uop_cache.loaded_uops {
+                if loaded.path.file_name().unwrap_or_default().to_string_lossy().contains("AnimationSequence") {
+                    let hash = hash_file_name_single(&AnimationSequence::entry_path(body_type));
+                    if let Some(file) = loaded.package.get_file_by_hash(hash) {
+                        if let Ok(data) = file.unpack() {
+                            if let Ok(seq) = AnimationSequence::parse(&data) {
+                                found_seq = Some((body_type, seq));
+                                break;
+                            }
+                        }
+                    }
+                }
+            }
+            app.selected_anim_sequence = found_seq;
+        }
+
+        let ActionTarget { key, sequence } = match action_target(app) {
+            Ok(target) => target,
+            Err(message) => {
+                ui.label(message);
+                return;
+            }
+        };
+        let decode_key = action_decode_key(app, key, sequence);
+        let frames = animation_frames::decoded_frames(app, decode_key, |app| decode_action(app, key, sequence));
+        ui.horizontal_wrapped(|ui| {
+            ui.strong(format!("Body {} · action {} · {}", key.body, key.action, key.provenance()));
+            if key.body != app.selected_anim_id {
+                ui.weak(format!("(drawn for body {})", app.selected_anim_id));
+            }
+            if key.action != app.selected_action_id {
+                ui.weak(format!("(action {} is an alias of {})", app.selected_action_id, key.action));
+            }
+            if let Some(sequence) = sequence {
+                ui.weak(format!("· AnimationSequence {sequence}"));
+            }
+        });
+        ui.horizontal_wrapped(|ui| {
+            ui.weak(&frames.split);
+            if frames.unplaced > 0 {
+                ui.colored_label(egui::Color32::YELLOW, format!("{} frames fall in no direction", frames.unplaced));
+            }
+            if frames.failed > 0 {
+                ui.colored_label(egui::Color32::YELLOW, format!("{} frames failed to decode (see the log)", frames.failed));
+            }
+        });
+        show_action_file_controls(app, ui, key);
+        if let Some(error) = &frames.error {
+            ui.label(format!("Error loading animation: {error}"));
+            return;
+        }
+        ui.separator();
+        let name = format!("{}_body_{}_action_{}", animation_source_label(app.selected_legacy_source), key.body, key.action);
+        animation_frames::show_player(app, ctx, ui, &frames, &name);
+        ui.separator();
+        animation_frames::show_grid(app, ctx, ui, &frames);
     });
 }
 
@@ -542,6 +364,58 @@ fn action_target(app: &mut UopInspectorApp) -> Result<ActionTarget, String> {
         .ok_or_else(|| format!("Body {body} has no action {action} in the {} files.", animation_source_label(source)))
 }
 
+/// Hash of everything the frames of `key` are decoded from.
+fn action_decode_key(app: &UopInspectorApp, key: ActionKey, sequence: Option<u32>) -> u64 {
+    let sequence_loaded = app.selected_anim_sequence.as_ref().is_some_and(|(id, _)| Some(*id) == sequence);
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    (app.selected_legacy_source as u8, key, sequence, sequence_loaded, app.uop_cache.loaded_uops.len()).hash(&mut hasher);
+    hasher.finish()
+}
+
+/// The frames of every stored direction of `key`'s action.
+fn decode_action(app: &mut UopInspectorApp, key: ActionKey, sequence: Option<u32>) -> ActionFrames {
+    match key.source {
+        ActionSource::Mul { file_index, .. } => {
+            let Some(anim_map) = app.client_data.as_ref().and_then(|client| client.anim_map.clone()) else {
+                return ActionFrames::from_error("Classic animation MUL sources are not loaded".to_string());
+            };
+            let Ok(body) = u16::try_from(key.body) else {
+                return ActionFrames::from_error(format!("Body {} is outside the classic MUL animation layout", key.body));
+            };
+            let split = format!("one {} entry per direction", key.provenance().split(' ').next().unwrap_or_default());
+            ActionFrames::classic(
+                |direction| {
+                    let index = uocf::classic::anim::classic_animation_source_index_from_identity(file_index, body, key.action, direction)?;
+                    anim_map.has_anim(file_index, index).then(|| anim_map.decode_animation_index(file_index, index))
+                },
+                split,
+            )
+        }
+        ActionSource::Uop { package_index, file_hash, .. } => {
+            let payload = listed_uop_entry(app, package_index, file_hash)
+                .ok_or_else(|| eyre::eyre!("AnimationFrame entry {file_hash:#018x} is no longer listed"))
+                .and_then(|entry| animationframe_payload(app, &entry));
+            let payload = match payload {
+                Ok(payload) => payload,
+                Err(error) => return ActionFrames::from_error(format!("{error:#}")),
+            };
+            if !is_ec_source(app.selected_legacy_source) {
+                let split = "one AnimationFrame entry holding every direction".to_string();
+                return ActionFrames::classic(|direction| Some(AnimationFrameCc::decode_direction(&payload, direction)), split);
+            }
+            let sequence = app.selected_anim_sequence.as_ref().filter(|(id, _)| Some(*id) == sequence).map(|(_, sequence)| sequence);
+            ActionFrames::enhanced(&payload, sequence, key.action).unwrap_or_else(|error| ActionFrames::from_error(format!("{error:#}")))
+        }
+    }
+}
+
+/// The scanned AnimationFrame UOP entry of a listed action.
+fn listed_uop_entry(app: &mut UopInspectorApp, package_index: usize, file_hash: u64) -> Option<AnimationFrameUopEntry> {
+    let source = app.selected_legacy_source;
+    let entries = animationframe_uop_entries(app, source)?;
+    entries.iter().find(|entry| entry.package_index == package_index && entry.file_hash == file_hash).cloned()
+}
+
 /// Export and replace of the frames of `key`'s action.
 fn show_action_file_controls(app: &mut UopInspectorApp, ui: &mut egui::Ui, key: ActionKey) {
     match key.source {
@@ -551,14 +425,10 @@ fn show_action_file_controls(app: &mut UopInspectorApp, ui: &mut egui::Ui, key: 
             }
         }
         ActionSource::Uop { package_index, file_hash, .. } => {
-            let source = app.selected_legacy_source;
-            let entry = animationframe_uop_entries(app, source).and_then(|entries| {
-                entries.iter().find(|entry| entry.package_index == package_index && entry.file_hash == file_hash).cloned()
-            });
-            let Some(entry) = entry else {
+            let Some(entry) = listed_uop_entry(app, package_index, file_hash) else {
                 return;
             };
-            if is_ec_source(source) {
+            if is_ec_source(app.selected_legacy_source) {
                 show_animationframe_replace_controls(app, ui, &entry, key.body, key.action);
             } else {
                 show_classic_frames_controls(app, ui, &ClassicFramesTarget::Uop { entry, body_id: key.body, action: key.action });
@@ -965,90 +835,6 @@ fn replace_classic_frames(app: &UopInspectorApp, target: &ClassicFramesTarget, d
     }
 }
 
-fn selected_cc_animationframe_entry(
-    app: &mut UopInspectorApp,
-    body_id: u32,
-) -> eyre::Result<AnimationFrameUopEntry> {
-    let entries = animationframe_uop_entries(app, ArtSource::CcUop)
-        .ok_or_else(|| eyre::eyre!("Scanning CC AnimationFrame UOP metadata"))?;
-    entries
-        .iter()
-        .find(|entry| {
-            app.selected_animationframe_file_hash == Some(entry.file_hash)
-                && entry.body_id == body_id
-                && entry.action_id == Some(app.selected_action_id)
-                && entry.direction == Some(app.selected_direction)
-        })
-        .or_else(|| {
-            entries.iter().find(|entry| {
-                app.selected_animationframe_file_hash == Some(entry.file_hash)
-                    && entry.body_id == body_id
-            })
-        })
-        .or_else(|| {
-            entries.iter().find(|entry| {
-                entry.body_id == body_id
-                    && entry.action_id == Some(app.selected_action_id)
-                    && entry.direction == Some(app.selected_direction)
-                    && entry.group_id == Some(app.selected_anim_file_idx)
-            })
-        })
-        .or_else(|| {
-            entries.iter().find(|entry| {
-                entry.body_id == body_id
-                    && entry.action_id == Some(app.selected_action_id)
-                    && entry.direction == Some(app.selected_direction)
-            })
-        })
-        .cloned()
-        .ok_or_else(|| {
-            eyre::eyre!(
-                "Animation body {} action {} direction {} not found in loaded CC AnimationFrame UOPs",
-                body_id,
-                app.selected_action_id,
-                app.selected_direction
-            )
-        })
-}
-
-fn selected_ec_animationframe_entry(
-    app: &mut UopInspectorApp,
-    body_id: u32,
-) -> eyre::Result<AnimationFrameUopEntry> {
-    let source = app.selected_legacy_source;
-    let entries = animationframe_uop_entries(app, source)
-        .ok_or_else(|| eyre::eyre!("Scanning EC AnimationFrame UOP metadata"))?;
-    // A listed entry is drawn as stored; a typed body through its placeholder's frames body and the resolved action.
-    if let Some(entry) = app
-        .selected_animationframe_file_hash
-        .and_then(|hash| entries.iter().find(|entry| entry.file_hash == hash))
-    {
-        return Ok(entry.clone());
-    }
-    let action = app
-        .selected_anim_sequence
-        .as_ref()
-        .and_then(|(_, sequence)| sequence.resolve_action(u32::from(app.selected_action_id), FLYING_ANIMATIONS_ENABLED))
-        .and_then(|action| u16::try_from(action).ok())
-        .unwrap_or(app.selected_action_id);
-    entries
-        .iter()
-        .find(|entry| {
-            entry.body_id == body_id
-                && entry.action_id == Some(action)
-                && entry.group_id == Some(app.selected_anim_file_idx)
-        })
-        .or_else(|| entries.iter().find(|entry| entry.body_id == body_id && entry.action_id == Some(action)))
-        .cloned()
-        .ok_or_else(|| {
-            eyre::eyre!(
-                "Animation body {} action {} not found in loaded EC AnimationFrame UOPs",
-                body_id,
-                action
-            )
-        })
-}
-
 fn animationframe_payload(
     app: &UopInspectorApp,
     entry: &AnimationFrameUopEntry,
@@ -1085,23 +871,6 @@ fn animationframe_payload(
                 loaded.path.display()
             )
         })
-}
-
-fn decode_amo_animationframe_payload(data: &[u8]) -> eyre::Result<Vec<uocf::classic::anim::AnimFrame>> {
-    let animation = uocf::enhanced::animationframe::AnimationFrame::load(data)?;
-    let mut decoded_frames = Vec::with_capacity(animation.frames.len());
-    for entry in &animation.frames {
-        if let Ok(decoded) = animation.decode_frame(entry) {
-            decoded_frames.push(uocf::classic::anim::AnimFrame {
-                width: decoded.width,
-                height: decoded.height,
-                center_x: decoded.center_x,
-                center_y: decoded.center_y,
-                data: decoded.data,
-            });
-        }
-    }
-    Ok(decoded_frames)
 }
 
 pub(super) fn animationframe_uop_entries(
@@ -1563,20 +1332,6 @@ fn selected_frames_body_id(app: &UopInspectorApp) -> u32 {
         return app.selected_anim_id;
     }
     selected_body_definition(app).map_or(app.selected_anim_id, |definition| definition.requested_frames_body())
-}
-
-/// Entry positions, in the action's `AnimationFrame` entry, of the frames of `direction` of
-/// `action`, resolved like the client. A mirrored direction lists the frames of its source
-/// direction, unflipped. Assumes frame numbers without gaps (position = number - 1).
-fn sequence_direction_frame_positions(
-    sequence: &AnimationSequence,
-    action: u16,
-    direction: u8,
-) -> Option<Vec<usize>> {
-    let action = sequence.resolve_action(u32::from(action), FLYING_ANIMATIONS_ENABLED)?;
-    let frames = sequence.direction_frames(action, direction)?;
-    let first = (frames.first_frame_number - FIRST_FRAME_NUMBER) as usize;
-    Some((first..first + frames.count as usize).collect())
 }
 
 fn selected_mul_source_index(app: &UopInspectorApp, body_id: u32) -> eyre::Result<u32> {
