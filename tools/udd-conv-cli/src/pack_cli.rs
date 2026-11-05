@@ -19,7 +19,9 @@ use color_eyre::eyre;
 use serde::Serialize;
 use uocf::map_edition::MapEdition;
 use uocf::utils::bundled_files;
-use udd_conv::conversion_tables::{EC_MOBILE_ANIMATIONS_KDL, EC_SURFACE_OVERRIDES_KDL, EC_TERRAIN_OVERRIDES_KDL};
+use udd_conv::conversion_tables::{
+    EC_MOBILE_ANIMATIONS_KDL, EC_SURFACE_OVERRIDES_KDL, EC_TERRAIN_OVERRIDES_KDL, TERRAIN_TRANSCODE_KDL,
+};
 use udd_conv::{
     classic_patches::ClassicPatchOptions,
     tex_aux_ec::pack_tex_aux_ec,
@@ -977,7 +979,7 @@ enum Commands {
         tilemeta_output: Option<PathBuf>,
         #[arg(long = "tilemeta-use-ec-radarcol", default_value_t = false)]
         tilemeta_use_ec_radarcol: bool,
-        #[arg(long, help = "Embed this terrain routing KDL in tex_land_ec.uddp instead of auto-discovered TerrainTranscode.kdl.")]
+        #[arg(long, help = "Embed this TerrainTranscode.kdl (the terrain routing table) in tex_land_ec.uddp. Default: the copy shipped with the tools.")]
         land_transcode_kdl: Option<PathBuf>,
         #[arg(long, help = "Apply this EcTerrainOverrides.kdl to tex_land_ec.uddp. Default: the copy shipped with the tools.")]
         land_terrain_overrides_kdl: Option<PathBuf>,
@@ -1801,6 +1803,7 @@ where
             // Before the art pass, so a missing table fails the command at once.
             let land_terrain_overrides_kdl =
                 bundled_files::resolve(land_terrain_overrides_kdl.as_deref(), EC_TERRAIN_OVERRIDES_KDL)?;
+            let land_transcode_kdl = bundled_files::resolve(land_transcode_kdl.as_deref(), TERRAIN_TRANSCODE_KDL)?;
             let art_out_file = resolve_output_path(&art_output);
             let land_out_file = resolve_output_path(&land_output);
             let tilemeta_out_file = tilemeta_output
@@ -1905,7 +1908,7 @@ where
                     pixel_format: land_output_format.pixel_format,
                     bc7_rdo_lambda: land_output_format.bc7_rdo_lambda,
                     bc7_rdo_lookback_blocks: land_output_format.bc7_rdo_lookback_blocks,
-                    transcode_kdl_path: land_transcode_kdl,
+                    transcode_kdl_path: Some(land_transcode_kdl),
                     terrain_overrides_kdl_path: Some(land_terrain_overrides_kdl),
                 },
             )?;

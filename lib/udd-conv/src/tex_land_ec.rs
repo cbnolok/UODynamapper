@@ -45,8 +45,10 @@ use crate::package_progress::{
     AssetProgressReporter, AssetTaskProgressStage,
     build_and_write_package_with_progress,
 };
+use crate::conversion_tables::TERRAIN_TRANSCODE_KDL;
 use crate::source_paths::{find_first_existing_file, source_path_label_from_dirs};
 use udd_assets::tex_art_cc::{page_entry_path, PagePixelFormat};
+use uocf::utils::bundled_files;
 use udd_assets::tex_land_ec::{
     TexLandEcPageRecord, TexLandEcSlotRecord, TexLandEcTerrainProvenanceRecord,
     MISSING_PAGE_INDEX, MISSING_PAGE_TILE_INDEX, MISSING_SLOT_ID, MISSING_TERRAIN_LAYER_INDEX,
@@ -164,6 +166,8 @@ pub struct TexLandEcAtlasOptions {
     pub pixel_format: PagePixelFormat,
     pub bc7_rdo_lambda: f32,
     pub bc7_rdo_lookback_blocks: usize,
+    /// The TerrainTranscode.kdl to embed; when unset, the copy shipped with the tools
+    /// ([`TERRAIN_TRANSCODE_KDL`]). The package always carries one: it is the only routing table the runtime reads.
     pub transcode_kdl_path: Option<PathBuf>,
     /// The EcTerrainOverrides.kdl to apply; when unset, one in the source dirs or the working directory is used.
     pub terrain_overrides_kdl_path: Option<PathBuf>,
@@ -393,6 +397,8 @@ pub fn convert_tex_land_ec_uop_to_tex_land_ec_uddp_from_loaded_sources_with_prog
     mut package_progress: impl FnMut(udd_container::BuildProgress),
 ) -> eyre::Result<TexLandEcBuildSummary> {
     validate_options(options)?;
+    // Before the decode and the packing, so a missing or invalid table fails at once.
+    let (transcode_kdl_path, transcode_bytes) = read_transcode_kdl(options.transcode_kdl_path.as_deref())?;
     let payload_progress_reporter = AssetProgressReporter::new(payload_progress);
     let payload_progress = |progress| payload_progress_reporter.report(progress);
 
@@ -491,22 +497,6 @@ pub fn convert_tex_land_ec_uop_to_tex_land_ec_uddp_from_loaded_sources_with_prog
         .map(|manifest| manifest.entry_count)
         .unwrap_or(0);
 
-    let transcode_kdl_path = if let Some(path) = options.transcode_kdl_path.as_ref() {
-        if !path.is_file() {
-            eyre::bail!("terrain transcode KDL not found: {}", path.display());
-        }
-        Some(path.clone())
-    } else {
-        find_first_existing_file(
-            source_dirs,
-            &[
-                "TerrainTranscode.kdl",
-                "cc_ec_convtables/TerrainTranscode.kdl",
-                "dynamapper/assets/cc_ec_convtables/TerrainTranscode.kdl",
-            ],
-        )
-    };
-
     info!(
         "Converting EC Land from TerrainDefinition.uop / Texture.uop to {}",
         out_file.display()
@@ -563,23 +553,17 @@ pub fn convert_tex_land_ec_uop_to_tex_land_ec_uddp_from_loaded_sources_with_prog
         })?;
     }
 
-    if let Some(transcode_path) = transcode_kdl_path {
-        let transcode_bytes = fs::read(&transcode_path)?;
-        // The runtime reads the embedded copy strictly; reject a file it would not read.
-        let transcode_text = std::str::from_utf8(&transcode_bytes)
-            .wrap_err_with(|| format!("{}: not UTF-8 text", transcode_path.display()))?;
-        udd_assets::eckr_terrain_kdl::EckrTerrainRouting::from_str(&transcode_path.display().to_string(), transcode_text)?;
-        package.add_file(AddFileRequest {
-            data_type: DataType::Metadata as u8,
-            compression: CompressionFlag::ZstdNoDict,
-            width: 0,
-            height: 0,
-            virtual_path: Some(UDDP_TRANSCODE_ENTRY_VPATH),
-            path_hash64: None,
-            id: None,
-            data: &transcode_bytes,
-        })?;
-    }
+    info!("Embedding terrain routing from {}", transcode_kdl_path.display());
+    package.add_file(AddFileRequest {
+        data_type: DataType::Metadata as u8,
+        compression: CompressionFlag::ZstdNoDict,
+        width: 0,
+        height: 0,
+        virtual_path: Some(UDDP_TRANSCODE_ENTRY_VPATH),
+        path_hash64: None,
+        id: None,
+        data: &transcode_bytes,
+    })?;
 
     if let Some(game_data_path) = find_first_existing_file(source_dirs, &["GameData.uop"]) {
         let source_map = uocf::enhanced::legacy_terrain_map::LegacyTerrainMap::load(&game_data_path)
@@ -842,6 +826,16 @@ fn validate_options(options: &TexLandEcAtlasOptions) -> eyre::Result<()> {
         eyre::bail!("BC7 compression requires atlas dimensions divisible by 4");
     }
     Ok(())
+}
+
+/// The terrain routing table to embed, and its bytes: the one given, else the copy shipped with the tools.
+fn read_transcode_kdl(given: Option<&Path>) -> eyre::Result<(PathBuf, Vec<u8>)> {
+    let path = bundled_files::resolve(given, TERRAIN_TRANSCODE_KDL)?;
+    let bytes = fs::read(&path).wrap_err_with(|| format!("read {}", path.display()))?;
+    // The runtime reads the embedded copy strictly; reject a file it would not read.
+    let text = std::str::from_utf8(&bytes).wrap_err_with(|| format!("{}: not UTF-8 text", path.display()))?;
+    udd_assets::eckr_terrain_kdl::EckrTerrainRouting::from_str(&path.display().to_string(), text)?;
+    Ok((path, bytes))
 }
 
 struct SerializedTerrainOverridesMetadata {
@@ -1933,5 +1927,25 @@ terrain 52 {
         assert!(json.contains("\"material_id\": 52"));
         assert!(json.contains("\"code\": \"reviewed_layer_texture\""));
         assert!(json.contains("\"texture_id\": 2000510"));
+    }
+
+    /// No table given: the shipped one. A given table must exist and read strictly.
+    #[test]
+    fn the_routing_table_defaults_to_the_shipped_one_and_must_be_valid() {
+        let (shipped, bytes) = read_transcode_kdl(None).expect("the shipped routing table");
+        assert_eq!(shipped, TERRAIN_TRANSCODE_KDL.checkout_dir().join(TERRAIN_TRANSCODE_KDL.relative_path()));
+        assert_eq!(bytes, std::fs::read(&shipped).unwrap());
+
+        let dir = std::env::temp_dir().join(format!("ec_terrain_transcode_test_{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let missing = dir.join("missing.kdl");
+        let error = read_transcode_kdl(Some(&missing)).unwrap_err().to_string();
+        assert!(error.contains(&missing.display().to_string()), "{error}");
+
+        let invalid = dir.join("invalid.kdl");
+        std::fs::write(&invalid, "row 1 2\n").unwrap();
+        let error = read_transcode_kdl(Some(&invalid)).unwrap_err().to_string();
+        let _ = std::fs::remove_dir_all(&dir);
+        assert!(error.contains("unknown node `row`"), "{error}");
     }
 }

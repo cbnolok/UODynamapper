@@ -42,7 +42,7 @@ use udd_conv_cli::{
     tool_cli::{diff_paths_report, export_csv_auto_report, hash_path_report, DiffKind},
     upscale_profile_config::load_upscale_profile as load_upscale_profile_config,
 };
-use udd_conv::conversion_tables::{EC_MOBILE_ANIMATIONS_KDL, EC_TERRAIN_OVERRIDES_KDL};
+use udd_conv::conversion_tables::{EC_MOBILE_ANIMATIONS_KDL, EC_TERRAIN_OVERRIDES_KDL, TERRAIN_TRANSCODE_KDL};
 use uocf::utils::bundled_files::{self, BundledFile};
 use crate::app::UddConvApp;
 use crate::models::{
@@ -531,6 +531,7 @@ impl UddConvApp {
             if sources.is_empty() { eyre::bail!("No source dirs"); }
             ensure_output_parent(&output)?;
             let terrain_overrides_kdl = conversion_table(&settings, EC_TERRAIN_OVERRIDES_KDL)?;
+            let transcode_kdl = conversion_table(&settings, TERRAIN_TRANSCODE_KDL)?;
 
             let compression = texture_compression(
                 settings.opt_tex_land_ec,
@@ -571,7 +572,7 @@ impl UddConvApp {
                     },
                     bc7_rdo_lambda: bc7_rdo_lambda(&settings, settings.opt_tex_land_ec),
                     bc7_rdo_lookback_blocks: bc7_rdo_lookback_blocks(&settings),
-                    transcode_kdl_path: None,
+                    transcode_kdl_path: Some(transcode_kdl),
                     terrain_overrides_kdl_path: Some(terrain_overrides_kdl),
                 },
                 |task_progress| progress.task_progress_with_extract_label(task_progress, extract_label),

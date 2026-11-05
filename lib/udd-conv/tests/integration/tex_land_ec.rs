@@ -8,7 +8,7 @@ use udd_assets::{
     tex_land_ec::{
         TexLandEcTerrainProvenanceRecord,
         UDDP_PAGE_MANIFEST_ENTRY_VPATH, UDDP_SLOT_MANIFEST_ENTRY_VPATH,
-        UDDP_SOURCE_MATERIALS_ENTRY_VPATH, UDDP_TERRAIN_PROVENANCE_ENTRY_VPATH,
+        UDDP_SOURCE_MATERIALS_ENTRY_VPATH, UDDP_TERRAIN_PROVENANCE_ENTRY_VPATH, UDDP_TRANSCODE_ENTRY_VPATH,
     },
     tex_art_cc::{MISSING_PAGE_INDEX, page_entry_path, PagePixelFormat},
     TexLandEcPackage,
@@ -18,6 +18,11 @@ use udd_container::CompressionFlag;
 fn ignore_asset_progress(_: udd_conv::package_progress::AssetTaskProgress) {}
 
 const EMPTY_SOURCE_MATERIALS_JSON: &[u8] = b"[]";
+/// A routing table without rows: the client's routes apply unchanged.
+const EMPTY_TRANSCODE_KDL: &[u8] = b"";
+/// A land id only the shipped TerrainTranscode.kdl routes (its row `t 0 435 436 437`), and its material.
+const SHIPPED_TABLE_ADDED_LAND_ID: u32 = 435;
+const SHIPPED_TABLE_ADDED_LAND_MATERIAL: u32 = 0;
 
 #[test]
 fn conversion_embeds_original_game_data_routes_and_subtypes() {
@@ -41,6 +46,8 @@ fn conversion_embeds_original_game_data_routes_and_subtypes() {
     ).unwrap();
     let package = TexLandEcPackage::load(&output).unwrap();
     assert_eq!(package.transcode[&203], 4);
+    // No table given: the shipped TerrainTranscode.kdl is embedded.
+    assert_eq!(package.transcode[&SHIPPED_TABLE_ADDED_LAND_ID], SHIPPED_TABLE_ADDED_LAND_MATERIAL);
     let source_map = package.source_terrain_map().unwrap();
     assert_eq!(source_map.routes[&15853].subtype, 1);
     assert_eq!(source_map.source_csv, bytes);
@@ -212,6 +219,17 @@ fn runtime_reader_can_unpack_page_and_slot_metadata() {
             path_hash64: None,
             id: None,
             data: EMPTY_SOURCE_MATERIALS_JSON,
+        })
+        .unwrap();
+    package
+        .add_file(AddFileRequest {
+            data_type: DataType::Metadata as u8,
+            compression: CompressionFlag::ZstdNoDict,
+            width: 0, height: 0,
+            virtual_path: Some(UDDP_TRANSCODE_ENTRY_VPATH),
+            path_hash64: None,
+            id: None,
+            data: EMPTY_TRANSCODE_KDL,
         })
         .unwrap();
     let page_path = page_entry_path(0, PagePixelFormat::Rgba8888);
@@ -495,6 +513,17 @@ fn runtime_slot_resolution_uses_direct_slots_before_provenance_fallback() {
             data: EMPTY_SOURCE_MATERIALS_JSON,
         })
         .unwrap();
+    package
+        .add_file(AddFileRequest {
+            data_type: DataType::Metadata as u8,
+            compression: CompressionFlag::ZstdNoDict,
+            width: 0, height: 0,
+            virtual_path: Some(UDDP_TRANSCODE_ENTRY_VPATH),
+            path_hash64: None,
+            id: None,
+            data: EMPTY_TRANSCODE_KDL,
+        })
+        .unwrap();
 
     for (page_index, page) in pages.iter().enumerate() {
         let page_path = page_entry_path(page_index as u32, PagePixelFormat::Rgba8888);
@@ -521,7 +550,7 @@ fn runtime_slot_resolution_uses_direct_slots_before_provenance_fallback() {
         TexLandEcPackage::from_uddp_package(UddpReader::open(package.build().unwrap()).unwrap())
             .unwrap();
 
-    // Mock the runtime transcode table injection that the dynamapper does:
+    // Mock the routes of the embedded transcode table:
     package.transcode.insert(54, 54);
     package.transcode.insert(171, 171);
     package.transcode.insert(4, 4);
