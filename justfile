@@ -218,7 +218,7 @@ cargo_profile_stable    :=\
 app_docs := "docs/keybindings.md docs/USER_TROUBLESHOOTING.md"
 # Left out of the app's assets/ copy, as nothing reads them at run time: these folders below assets/, and the notes
 # (the files with this extension, beside the shaders).
-app_assets_unread_dirs := "regression_fixtures"
+app_assets_unread_dirs := "regression_fixtures shaders/postprocess_ec_doc shaders/postprocess_kr_doc"
 app_assets_unread_ext := "md"
 tool_docs := "README.md docs/USER_TROUBLESHOOTING.md tools/udd-conv-cli/UPSCALE_PROFILES.md"
 # The end-user tools. uocf-devtools-cli stays out: research and diagnostic commands, built only with dev-tool-tests.
