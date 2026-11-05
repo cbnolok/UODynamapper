@@ -717,7 +717,6 @@ impl UddConvApp {
                     upscale_passes: upscale_filter_passes(settings.upscale_mobile_anim_ec),
                     upscale_profile,
                     metadata_path,
-                    tables_dir: None,
                     allow_missing_metadata: settings.ec_mobile_anim_allow_missing_kdl,
                 },
                 |task_progress| progress.task_progress_with_extract_label(task_progress, extract_label),

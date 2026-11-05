@@ -39,7 +39,8 @@ use crate::package_progress::{
 };
 use crate::rgba_bounds::{count_nonzero_alpha, nonzero_alpha_bounds, RgbaBounds};
 use crate::prefix_search::{longest_fitting_prefix, LazyPrefix};
-use crate::source_paths::{find_first_dir_matching, find_first_existing_file};
+use crate::conversion_tables::EC_MOBILE_ANIMATIONS_KDL;
+use crate::source_paths::find_first_dir_matching;
 use crate::upscale::{apply_upscale_passes_owned, UpscaleFilter, UpscalePass};
 use crate::upscale_profile::{UpscaleImageType, UpscaleProfile, UpscaleTarget};
 use crate::{extrude_rgba_rect_edges, resolve_packing_axis, AtlasPackingMode};
@@ -58,6 +59,7 @@ use udd_assets::mobile_anim_ec::{
     SKIPPED_FRAME_MASK_BITS, SOURCE_HINT_MANIFEST_ENTRY_PATH,
 };
 use udd_assets::tex_art_cc::PagePixelFormat;
+use uocf::utils::bundled_files;
 
 pub const DEFAULT_ATLAS_PAGE_WIDTH: u32 = 2048;
 pub const DEFAULT_ATLAS_PAGE_HEIGHT: u32 = 2048;
@@ -178,8 +180,9 @@ pub struct MobileAnimEcAtlasOptions {
     pub bc7_rdo_lookback_blocks: usize,
     pub upscale_passes: Vec<UpscalePass>,
     pub upscale_profile: Option<Arc<UpscaleProfile>>,
+    /// The EcMobileAnimations.kdl to read; when unset, the copy shipped with the tools ([`EC_MOBILE_ANIMATIONS_KDL`]).
     pub metadata_path: Option<PathBuf>,
-    pub tables_dir: Option<PathBuf>,
+    /// Write empty item metadata instead of failing when that table is not found.
     pub allow_missing_metadata: bool,
 }
 
@@ -196,7 +199,6 @@ impl Default for MobileAnimEcAtlasOptions {
             upscale_passes: Vec::new(),
             upscale_profile: None,
             metadata_path: None,
-            tables_dir: None,
             allow_missing_metadata: false,
         }
     }
@@ -419,20 +421,14 @@ pub fn convert_animationframe_uop_to_mobile_anim_ec_uddp_from_sources_with_progr
     let mut stage_timings = MobileAnimEcStageTimings::default();
     let planning_timer = Instant::now();
     let stage_timer = Instant::now();
-    let metadata_path = find_ec_mobile_animations_kdl(
-        source_dirs,
-        options.metadata_path.as_deref(),
-        options.tables_dir.as_deref(),
-    );
+    let metadata_path = resolve_ec_mobile_animations_kdl(options)?;
     let (items, source_hints) = if let Some(metadata_path) = metadata_path.as_ref() {
         let metadata = EcMobileAnimationsKdl::load(metadata_path)?;
         println!("Using EC mobile animation metadata: {}", metadata_path.display());
         build_item_metadata(&metadata)?
-    } else if options.allow_missing_metadata {
+    } else {
         println!("EcMobileAnimations.kdl was not found; writing empty EC mobile animation item metadata.");
         (Vec::new(), Vec::new())
-    } else {
-        eyre::bail!("missing EcMobileAnimations.kdl for EC mobile animation metadata");
     };
     stage_timings.metadata = stage_timer.elapsed();
 
@@ -827,40 +823,14 @@ fn discover_animationframe_paths(client_dir: &Path) -> Vec<PathBuf> {
         .collect()
 }
 
-fn find_ec_mobile_animations_kdl(
-    source_dirs: &[PathBuf],
-    explicit_path: Option<&Path>,
-    tables_dir: Option<&Path>,
-) -> Option<PathBuf> {
-    if let Some(path) = explicit_path {
-        if path.is_file() {
-            return Some(path.to_path_buf());
-        }
+/// The EcMobileAnimations.kdl to read: the one given, else the copy shipped with the tools. `None` when it is not
+/// found and the options allow packing without it.
+fn resolve_ec_mobile_animations_kdl(options: &MobileAnimEcAtlasOptions) -> eyre::Result<Option<PathBuf>> {
+    match bundled_files::resolve(options.metadata_path.as_deref(), EC_MOBILE_ANIMATIONS_KDL) {
+        Ok(path) => Ok(Some(path)),
+        Err(_) if options.allow_missing_metadata => Ok(None),
+        Err(error) => Err(error),
     }
-    if let Some(dir) = tables_dir {
-        let path = if dir.is_file() {
-            dir.to_path_buf()
-        } else {
-            dir.join("EcMobileAnimations.kdl")
-        };
-        if path.is_file() {
-            return Some(path);
-        }
-    }
-    find_first_existing_file(source_dirs, &[
-        "EcMobileAnimations.kdl",
-        "cc_ec_convtables/EcMobileAnimations.kdl",
-        "dynamapper/assets/cc_ec_convtables/EcMobileAnimations.kdl",
-    ])
-    .or_else(|| {
-        std::env::current_dir()
-            .ok()
-            .and_then(|cwd| find_first_existing_file(&[cwd], &[
-                "EcMobileAnimations.kdl",
-                "cc_ec_convtables/EcMobileAnimations.kdl",
-                "dynamapper/assets/cc_ec_convtables/EcMobileAnimations.kdl",
-            ]))
-    })
 }
 
 fn build_item_metadata(
@@ -3575,17 +3545,19 @@ mod tests {
         assert_eq!(&dst[0..4], &[0, 0, 0, 0]);
     }
 
+    /// No table given: the shipped one. A given table must exist, unless the options allow packing without it.
     #[test]
-    fn mobile_animation_kdl_resolver_uses_tables_dir() {
-        let dir = temp_test_dir("tables");
-        std::fs::create_dir_all(&dir).expect("create temp tables dir");
-        let kdl_path = dir.join("EcMobileAnimations.kdl");
-        std::fs::write(&kdl_path, "").expect("write temp kdl");
+    fn mobile_animation_kdl_defaults_to_the_shipped_table() {
+        let shipped = EC_MOBILE_ANIMATIONS_KDL.checkout_dir().join(EC_MOBILE_ANIMATIONS_KDL.relative_path());
+        let options = MobileAnimEcAtlasOptions::default();
+        assert_eq!(resolve_ec_mobile_animations_kdl(&options).unwrap(), Some(shipped));
 
-        let resolved = find_ec_mobile_animations_kdl(&[], None, Some(&dir));
-        let _ = std::fs::remove_dir_all(&dir);
-
-        assert_eq!(resolved, Some(kdl_path));
+        let missing = temp_test_dir("tables").join("EcMobileAnimations.kdl");
+        let options = MobileAnimEcAtlasOptions { metadata_path: Some(missing.clone()), ..Default::default() };
+        let error = resolve_ec_mobile_animations_kdl(&options).unwrap_err().to_string();
+        assert!(error.contains(&missing.display().to_string()), "{error}");
+        let options = MobileAnimEcAtlasOptions { allow_missing_metadata: true, ..options };
+        assert_eq!(resolve_ec_mobile_animations_kdl(&options).unwrap(), None);
     }
 
     #[test]
@@ -3601,7 +3573,6 @@ mod tests {
             upscale_passes: Vec::new(),
             upscale_profile: None,
             metadata_path: None,
-            tables_dir: None,
             allow_missing_metadata: false,
         };
 
@@ -3629,7 +3600,6 @@ mod tests {
             upscale_passes: Vec::new(),
             upscale_profile: None,
             metadata_path: None,
-            tables_dir: None,
             allow_missing_metadata: false,
         };
 
@@ -3662,7 +3632,6 @@ mod tests {
             upscale_passes: Vec::new(),
             upscale_profile: None,
             metadata_path: None,
-            tables_dir: None,
             allow_missing_metadata: false,
         };
 
@@ -3691,7 +3660,6 @@ mod tests {
             upscale_passes: Vec::new(),
             upscale_profile: None,
             metadata_path: None,
-            tables_dir: None,
             allow_missing_metadata: false,
         };
 
@@ -4034,7 +4002,6 @@ mod tests {
             upscale_passes: Vec::new(),
             upscale_profile: None,
             metadata_path: None,
-            tables_dir: None,
             allow_missing_metadata: false,
         };
         let mut frames_by_body = sample_sequence_frames();
@@ -4161,7 +4128,6 @@ mod tests {
             upscale_passes: Vec::new(),
             upscale_profile: None,
             metadata_path: None,
-            tables_dir: None,
             allow_missing_metadata: false,
         };
         let (_, placements) = pack_frames_into_pages(source_frames, &options).unwrap();
@@ -4304,7 +4270,6 @@ mod tests {
             upscale_passes: Vec::new(),
             upscale_profile: None,
             metadata_path: None,
-            tables_dir: None,
             allow_missing_metadata: false,
         };
         let (pages, placements) = pack_frames_into_pages(vec![half_hued_frame(NO_SEQUENCE_BODY, 0, 4, 4)], &options).unwrap();

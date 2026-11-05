@@ -1692,7 +1692,6 @@ where
                     upscale_passes: convert_upscale_passes(upscale_passes),
                     upscale_profile,
                     metadata_path: Some(resolve_ec_mobile_animations_kdl(ec_mobile_animations_kdl, tables)?),
-                    tables_dir: None,
                     allow_missing_metadata: false,
                 },
             )?;
