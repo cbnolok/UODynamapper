@@ -1,7 +1,7 @@
 use color_eyre::eyre::{self, WrapErr};
 use std::collections::HashMap;
 use std::panic::{self, AssertUnwindSafe};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 use std::sync::atomic::{AtomicBool, Ordering};
 use udd_conv::{
@@ -42,6 +42,7 @@ use udd_conv_cli::{
     tool_cli::{diff_paths_report, export_csv_auto_report, hash_path_report, DiffKind},
     upscale_profile_config::load_upscale_profile as load_upscale_profile_config,
 };
+use uocf::utils::bundled_files::{self, BundledFile, EC_MOBILE_ANIMATIONS_KDL, EC_TERRAIN_OVERRIDES_KDL};
 use crate::app::UddConvApp;
 use crate::models::{
     AppSettings, AssetPackProgress, AssetPackProgressState, AssetPackTask, LogLevel, LogMessage,
@@ -253,6 +254,13 @@ fn load_upscale_profile(settings: &AppSettings) -> eyre::Result<Option<Arc<udd_c
                 .wrap_err_with(|| format!("load upscale profile {}", path.display()))
         })
         .transpose()
+}
+
+/// A conversion table: the one in the Dynamapper Routing Files folder when that is set, else the copy shipped with the
+/// tools.
+fn conversion_table(settings: &AppSettings, file: BundledFile) -> eyre::Result<PathBuf> {
+    let given = settings.dynamapper_routing_dir.as_deref().map(|dir| file.in_dir(dir));
+    bundled_files::resolve(given.as_deref(), file)
 }
 
 fn upscale_filter_passes(filter: UpscaleFilter) -> Vec<UpscalePass> {
@@ -521,6 +529,7 @@ impl UddConvApp {
             let sources = gather_ec_source_dirs(settings.ec_dir.as_ref());
             if sources.is_empty() { eyre::bail!("No source dirs"); }
             ensure_output_parent(&output)?;
+            let terrain_overrides_kdl = conversion_table(&settings, EC_TERRAIN_OVERRIDES_KDL)?;
 
             let compression = texture_compression(
                 settings.opt_tex_land_ec,
@@ -562,6 +571,7 @@ impl UddConvApp {
                     bc7_rdo_lambda: bc7_rdo_lambda(&settings, settings.opt_tex_land_ec),
                     bc7_rdo_lookback_blocks: bc7_rdo_lookback_blocks(&settings),
                     transcode_kdl_path: None,
+                    terrain_overrides_kdl_path: Some(terrain_overrides_kdl),
                 },
                 |task_progress| progress.task_progress_with_extract_label(task_progress, extract_label),
                 |build_progress| progress.build_progress(build_progress),
@@ -667,6 +677,12 @@ impl UddConvApp {
             let sources = gather_ec_source_dirs(settings.ec_dir.as_ref());
             if sources.is_empty() { eyre::bail!("No source dirs"); }
             ensure_output_parent(&output)?;
+            // Without the table the packer writes empty item metadata, when the settings allow it.
+            let metadata_path = match conversion_table(&settings, EC_MOBILE_ANIMATIONS_KDL) {
+                Ok(path) => Some(path),
+                Err(_) if settings.ec_mobile_anim_allow_missing_kdl => None,
+                Err(error) => return Err(error),
+            };
 
             let compression = texture_compression(
                 settings.opt_mobile_anim_ec,
@@ -698,8 +714,8 @@ impl UddConvApp {
                     bc7_rdo_lookback_blocks: bc7_rdo_lookback_blocks(&settings),
                     upscale_passes: upscale_filter_passes(settings.upscale_mobile_anim_ec),
                     upscale_profile,
-                    metadata_path: None,
-                    tables_dir: settings.dynamapper_routing_dir.clone(),
+                    metadata_path,
+                    tables_dir: None,
                     allow_missing_metadata: settings.ec_mobile_anim_allow_missing_kdl,
                 },
                 |task_progress| progress.task_progress_with_extract_label(task_progress, extract_label),

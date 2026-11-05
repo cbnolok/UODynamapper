@@ -64,11 +64,11 @@ impl UddConvApp {
                                 .on_hover_text(
                                     "Directory containing KDL metadata files shipped with UODynamapper — \
                                     not part of the UO client.\n\n\
-                                    Currently used to locate EcMobileAnimations.kdl for EC mobile animation \
-                                    packing. If not set, the packer automatically searches the EC source \
-                                    directory and common relative paths (cc_ec_convtables/, \
-                                    dynamapper/assets/cc_ec_convtables/), so this field is only needed \
-                                    when running the GUI from a directory where those paths are not reachable."
+                                    Used to locate EcMobileAnimations.kdl for EC mobile animation packing and \
+                                    EcTerrainOverrides.kdl for EC land packing. If not set, the packer uses the \
+                                    copies shipped with the tools (shared/cc_ec_convtables/ in a release, \
+                                    dynamapper/assets/cc_ec_convtables/ in a source checkout), so this field is \
+                                    only needed to pack with edited tables."
                                 );
                         });
                         if ui.button("Select Folder...").clicked() {
@@ -85,7 +85,7 @@ impl UddConvApp {
                         } else {
                             ui.colored_label(
                                 egui::Color32::YELLOW,
-                                "Not selected (auto-discovered from source dirs or working directory)",
+                                "Not selected (uses the tables shipped with the tools)",
                             );
                         }
                         ui.end_row();
