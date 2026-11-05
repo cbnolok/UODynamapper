@@ -696,6 +696,26 @@ the same day ([`bc7_alpha_plane_search.md`](bc7_alpha_plane_search.md)). The col
   - **No placeholder:** `mobtypes.txt`, then any worn tile that reaches the body. What nothing classifies stays lossless.
   No PartialHue tile in `tiledata.mul` reaches a body this calls a creature. A dressed character's layers share one format, so the format changes
   only between characters and creatures. This is the default for official data: the table in need 9 overrides it.
+- **A custom table overrides the class rule and adds per-wearer frames** (need 9; the user, 2026-11-05). It's built with the format, not before. One strict
+  KDL file goes to the packers, with these rows (the ids are made up):
+
+  ```kdl
+  // Like a mobtypes row, plus what mobtypes can't say.
+  body 2100 kind="wearer" race=3 gender=0 actions=400
+  body 2200 kind="equipment" actions=400
+
+  // Same item, other frames, on one wearer. Like an Equipconv row.
+  wear tile=5141 on=2100 body=2200 gump=72200
+  ```
+
+  - **Priority:** the table, then the client's own rows and the placeholder rule, then `mobtypes.txt`, then worn tiles, then lossless.
+  - **Packages store the result,** so the renderer never reads the rule, the table or a `.uop` file. Changing the table means repacking.
+  - **It can override official bodies too,** and an optional `coding="lossless"` forces that on one body. Race is an open number, not a list of three.
+  - **These fail the pack:** an unknown key, a duplicate row, a body with no frames, and equipment whose map differs from its wearer's, which the client
+    only skips silently.
+  - **Frames aren't its job.** They still come from UOP, MUL or custom 32-bit art (need 5).
+  - **A new wearer starts on an existing map,** such as dwarves on 400. An item with no version for it then draws the human one, as the client's wear check
+    allows. Giving the wearer its own map hides such items instead, so no extra setting is needed.
 - **A server's 0x8000 on a block-coded creature gets an approximate grey test, logged once** (the user, 2026-11-05). Its tolerance isn't set yet.
 - **Classic data that can take partial hue stays lossless: exact greys can't be lost.** The client hues only pixels whose 5-bit channels match
   (`(c & 0x3FF) == c >> 5`, [traced](../../scripts/dev-helpers/ec-research/ghidra-classic-frames/results/classic_frames.md)), with the red byte as the key. On every Classic body BC1
@@ -716,7 +736,6 @@ the same day ([`bc7_alpha_plane_search.md`](bc7_alpha_plane_search.md)). The col
 | Whether indexed frames stay the default once filtering is counted | Yes: the indexed filter costs 1.43–1.57× BC7 on the Radeon 880M, 2.4–3.1 % of a 60 fps frame in a crowd at 1.5× | The user; one AMD iGPU only |
 | Whether the low-end tier block-codes only large bodies, and at what size | Classic: BC1 above 2500 px, with a median of 81.77 on coded bodies, measured before equipment and humanoids were kept lossless and being re-measured. Enhanced: the same mix with BC7 fix C is 1931.1 MB against 1539.0 MB for BC3 + colour on every body | The user; a second shader path and hue from colour are unbuilt |
 | Whether phones and web get their own low-end packs or one Basis Universal pack | Stay on the universal R8/RG8 pack, and ASTC 4×4 only if VRAM forces it. No Basis row was both smaller and better than the plain format beside it | The user |
-| The custom body and wear table (need 9) | Proposed 2026-11-05: one strict KDL file given to the packers. `body` rows set kind, race, gender and action map; `wear` rows set an item's frames per wearer. It wins over the client's rows and the placeholder rule, and packages store the resolved result, so the renderer never sees the rule | The user |
 | LZ4 HC with a dictionary | Not measured. LZ4 reads only a dictionary's last 64 KiB and has no entropy stage, so zstd's −3.0 % per body doesn't carry over. The rows being run: trained per body, the body's standing stream, one shared per package | The bench, then the user |
 | Whether the low-end tier uses BC1, BC3 or BC7 | Classic BC1, on creatures only. Enhanced BC3 + colour or BC7 with fix C, not BC1 | The user |
 | Which GPU layout holds frames in VRAM | R8/RG8 with faced-first loading, not whole atlas pages. Row spans in linear memory only if a device proves too small | The user; no low-end device measured |

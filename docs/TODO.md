@@ -206,6 +206,8 @@ These need a person at the GUI or in a running client; the code side is done.
 
 ### Classic Equipment And Mount Animation Sources
 
+- Build the custom body and wear table with the animation format, and carry item-to-wearer rows (tileart filters, `Equipconv.def`, the table) in both
+  animation packages. The design is in `docs/agent_notes/uddp_anim_format_requirements.md`, section 8.
 - Carry the tile-to-appearance data and `IsMountBody`'s list in the Classic animation package, and add a reader call that
   takes the object drawn as well as the requested id. Traced in
   `scripts/dev-helpers/ec-research/ghidra-classic-frames/results/uop_reachability.md`. Do it with the animation format
