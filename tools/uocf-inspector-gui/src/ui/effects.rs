@@ -21,8 +21,8 @@ use uocf::enhanced::string_dictionary::UoStringDictionary;
 
 use crate::app::{TileArtFileEntry, UopInspectorApp, ViewMode};
 use crate::logic::effect_files::{
-    canonical_script, check_script, decode_texture, latin1_decode, latin1_encode, read_import, EffectFiles, FileFilter,
-    FileKind, FileRow, FileStatus, ScriptIssue, ScriptSeverity, IMPORTABLE_EXTENSIONS,
+    canonical_script, check_script, decode_texture, is_nif_name, latin1_decode, latin1_encode, read_import, EffectFiles,
+    FileFilter, FileKind, FileRow, FileStatus, ScriptIssue, ScriptSeverity, IMPORTABLE_EXTENSIONS,
 };
 use crate::logic::effect_preview::{
     contact_sheet, export_times, fit_bounds, load_hue_atlas, preview_view, render_canvas, render_frames,
@@ -105,6 +105,7 @@ const FILES_LOAD_HOVER: &str = "Every file is unpacked once, to learn its kind a
     files, their previews and the checks that need them appear when it ends.";
 const COLLECTION_SOURCE_NEEDED: &str = "Needs an EffectDefinitionCollection.uop as the source of the copy.";
 const GUIDE_HINT: &str = "What each definition does, and how this tab works.";
+const UNREFERENCED_FILE_NOTE: &str = "No collection entry, tileart record, Chaos script or NIF scene names this file.";
 
 const UOP_FILTER: (&str, &[&str]) = ("UOP package", &["uop"]);
 const KDL_FILTER: (&str, &[&str]) = ("KDL text", &["kdl"]);
@@ -1213,7 +1214,7 @@ fn file_users(state: &mut EffectsPanelState, lookups: &Lookups) -> Arc<HashMap<u
         .filter(|file| !file.entry.effects.is_empty())
         .map(|file| (file.entry.tile_id, file.entry.effects.as_slice()))
         .collect();
-    let scripts = lookups.files.as_ref().map(|files| files.script_references(state.document.files())).unwrap_or_default();
+    let scripts = lookups.files.as_ref().map(|files| files.file_references(state.document.files())).unwrap_or_default();
     let name_of = |particle: &ParticleEffect| lookups.particle_name(particle);
     let users = Arc::new(build_file_users(state.document.collection(), &tileart, &name_of, &scripts));
     state.users_cache = Some(UsersCache { key, users: Arc::clone(&users) });
@@ -2181,7 +2182,8 @@ fn file_user_label(user: FileUser, state: &EffectsPanelState, lookups: &Lookups)
         }
         FileUser::Script(hash) => {
             let name = lookups.files.as_ref().and_then(|files| files.name(state.document.files(), hash));
-            format!("script {}", name.unwrap_or_else(|| format!("{hash:016x}")))
+            let kind = if name.as_deref().is_some_and(is_nif_name) { "NIF scene" } else { "script" };
+            format!("{kind} {}", name.unwrap_or_else(|| format!("{hash:016x}")))
         }
     }
 }
@@ -2227,10 +2229,12 @@ fn file_details(app: &mut UopInspectorApp, lookups: &Lookups, ctx: &egui::Contex
     });
 
     let mut select_user = None;
-    ui.collapsing(format!("Used by ({})", users.get(&hash).map_or(0, Vec::len)), |ui| {
-        match users.get(&hash) {
+    egui::CollapsingHeader::new(format!("Referenced by ({})", users.get(&hash).map_or(0, Vec::len)))
+        .id_salt("effects_file_users")
+        .default_open(true)
+        .show(ui, |ui| match users.get(&hash) {
             None => {
-                ui.weak("No collection entry, tileart record or script names this file.");
+                ui.weak(UNREFERENCED_FILE_NOTE);
             }
             Some(list) => {
                 for &user in list {
@@ -2239,8 +2243,7 @@ fn file_details(app: &mut UopInspectorApp, lookups: &Lookups, ctx: &egui::Contex
                     }
                 }
             }
-        }
-    });
+        });
     if let Some(user) = select_user {
         select(state, Some(file_user_selection(user)), true);
         return;

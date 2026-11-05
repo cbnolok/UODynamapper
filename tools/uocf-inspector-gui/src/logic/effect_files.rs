@@ -1,11 +1,12 @@
-//! `EffectTexture.uop` for the Effects panel: the loaded package with the kind and script references of every
-//! file, the pending file changes of the document laid over it, the browse filter, the Chaos script checks,
+//! `EffectTexture.uop` for the Effects panel: the loaded package with the kind and the script and NIF references of
+//! every file, the pending file changes of the document laid over it, the browse filter, the Chaos script checks,
 //! texture decoding, imports from disk and saving to a new package. No egui here.
 
 use std::collections::{BTreeMap, HashMap};
 use std::path::Path;
 use std::sync::Arc;
 
+use gamebryo_nif::{NiSourceTexture, NifFile};
 use particle_sim::chaos::compile::compile_chaos_source;
 use particle_sim::chaos::ChaosIssueSeverity as CompileSeverity;
 use particle_sim::mips::decode_dds_levels;
@@ -112,7 +113,7 @@ pub struct FileRow {
     /// Payload size in bytes.
     pub size: usize,
     pub status: FileStatus,
-    /// Files a Chaos script names as texture or mesh.
+    /// Files a Chaos script names as texture or mesh, or the external textures of a NIF scene.
     pub references: Vec<String>,
 }
 
@@ -121,6 +122,7 @@ impl FileRow {
         let kind = FileKind::detect(payload, name.as_deref());
         let references = match kind {
             FileKind::Chaos => script_references(payload),
+            FileKind::Nif => nif_references(payload),
             _ => Vec::new(),
         };
         Self { hash, name, kind, size: payload.len(), status, references }
@@ -130,6 +132,23 @@ impl FileRow {
     pub fn label(&self) -> String {
         self.name.clone().unwrap_or_else(|| format!("{:016x}", self.hash))
     }
+}
+
+/// The external textures a NIF scene names (`NiSourceTexture` file names, as the client reads them from the
+/// package); empty when it does not parse.
+pub fn nif_references(payload: &[u8]) -> Vec<String> {
+    let Ok(nif) = NifFile::read(payload) else {
+        return Vec::new();
+    };
+    let mut names: Vec<String> = nif
+        .blocks_of::<NiSourceTexture>()
+        .filter(|(_, source)| source.external.get() || source.src_pixel_data.is_none())
+        .map(|(_, source)| source.filename.to_string_lossy())
+        .filter(|name| !name.is_empty())
+        .collect();
+    names.sort_unstable();
+    names.dedup();
+    names
 }
 
 /// The files a script references (texture and mesh names); empty when it does not parse.
@@ -232,8 +251,9 @@ impl EffectFiles {
         }
     }
 
-    /// The scripts with their references, with the pending changes applied, for the "used by" links.
-    pub fn script_references(&self, overrides: &BTreeMap<u64, FileOverride>) -> Vec<(u64, Vec<String>)> {
+    /// The scripts and NIF scenes with their references, with the pending changes applied, for the "referenced by"
+    /// links.
+    pub fn file_references(&self, overrides: &BTreeMap<u64, FileOverride>) -> Vec<(u64, Vec<String>)> {
         self.rows(overrides)
             .into_iter()
             .filter(|row| row.status != FileStatus::Removed && !row.references.is_empty())
@@ -515,6 +535,27 @@ mod tests {
     fn scripts_list_their_files() {
         assert_eq!(script_references(SCRIPT.as_bytes()), ["Spark.TGA"]);
         assert!(script_references(b"not a script").is_empty());
+    }
+
+    #[test]
+    fn nif_scenes_list_their_external_textures() {
+        use gamebryo_nif::{Header, NiBool, NiNode, NifString, Ref};
+        const EXTERNAL: &str = "c:\\fx\\Spark.TGA";
+        let texture = || {
+            let mut source = NiSourceTexture::default();
+            source.filename = NifString::from(EXTERNAL);
+            source.external = NiBool::TRUE;
+            source
+        };
+        let nif = NifFile {
+            header: Header::default(),
+            blocks: vec![NiNode::default().into(), texture().into(), texture().into()],
+            roots: vec![Ref::new(0)],
+        };
+        let references = nif_references(&nif.write().unwrap());
+        assert_eq!(references, [EXTERNAL]);
+        assert_eq!(effect_texture_hash(&references[0]), effect_texture_hash("spark.tga"), "the package name");
+        assert!(nif_references(b"not a scene").is_empty());
     }
 
     #[test]

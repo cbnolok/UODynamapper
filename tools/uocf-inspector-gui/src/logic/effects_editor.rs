@@ -1110,7 +1110,7 @@ pub enum FileUser {
     Entry(usize),
     /// A tileart record (tile id) has a particle with the file's name.
     TileArt(u32),
-    /// A Chaos script (name hash) names the file as a texture or mesh.
+    /// A Chaos script (name hash) names the file as a texture or mesh, or a NIF scene names it as a texture.
     Script(u64),
 }
 
