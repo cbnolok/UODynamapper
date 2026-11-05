@@ -4,6 +4,10 @@ use crate::app::{
 use crate::ui::animation_frames::{self, ActionFrames, FramesViewState};
 use crate::ui::animation_hue::{self, AnimationHueState};
 use crate::ui::animation_list::{self, ActionKey, ActionSource, AnimationListState};
+use crate::ui::{
+    enhanced_files_availability, enhanced_folder_source, folder_files_availability, source_choice, ClientSource,
+    CLASSIC_FOLDER,
+};
 use color_eyre::eyre;
 use eframe::egui;
 use std::hash::{Hash, Hasher};
@@ -26,12 +30,18 @@ pub(crate) struct AnimationsView {
     /// The body type and the loaded package count of the last `AnimationSequence` lookup, so a missing entry is
     /// looked up once.
     sequence_lookup: Option<(u32, usize)>,
+    /// The source the controls showed last, so a switch from any tab resets what belongs to the old source.
+    shown_source: Option<ArtSource>,
 }
 
 const ANIMATION_CONTROLS_PANEL_WIDTH: f32 = 280.0;
 const ANIMATION_ACTIONS_PANEL_WIDTH: f32 = 260.0;
 /// Client default of the `flying_animations` setting, used to resolve sequence actions.
 const FLYING_ANIMATIONS_ENABLED: bool = true;
+/// The anim file index of a source without MUL files: anim.mul, or the first AnimationFrame package.
+const DEFAULT_ANIM_FILE_INDEX: u8 = 0;
+const ANIM_MUL_FILES: &str = "anim*.mul and anim*.idx";
+const ANIMATION_FRAME_UOP_FILES: &str = "AnimationFrame*.uop";
 
 pub fn ui_animations(app: &mut UopInspectorApp, ctx: &egui::Context, ui: &mut egui::Ui) {
     egui::Panel::left("anim_controls")
@@ -71,15 +81,12 @@ pub fn ui_animations(app: &mut UopInspectorApp, ctx: &egui::Context, ui: &mut eg
 
             ui.separator();
             ui.heading("Source");
-            let previous_source = app.selected_legacy_source;
-            ui.horizontal(|ui| {
-                ui.radio_value(&mut app.selected_legacy_source, ArtSource::Mul, "MUL");
-                ui.radio_value(&mut app.selected_legacy_source, ArtSource::CcUop, "CC UOP");
-                ui.radio_value(&mut app.selected_legacy_source, ArtSource::EcUop, "EC UOP");
-            });
-            if app.selected_legacy_source != previous_source {
+            animation_source_selector(app, ui);
+            let shown_source = app.animations_view.shown_source.replace(app.selected_legacy_source);
+            if shown_source.is_some_and(|shown| !same_animation_files(shown, app.selected_legacy_source)) {
                 app.selected_animationframe_file_hash = None;
                 app.current_frame_idx = 0;
+                app.selected_anim_file_idx = first_anim_file_index(app, app.selected_legacy_source);
             }
 
             if app.selected_legacy_source == ArtSource::Mul {
@@ -1336,6 +1343,68 @@ fn selected_body_definition(app: &UopInspectorApp) -> Option<MobileBodyDefinitio
 
 pub(super) fn is_ec_source(source: ArtSource) -> bool {
     matches!(source, ArtSource::EcUop | ArtSource::EcUopLegacy | ArtSource::EcUopKr)
+}
+
+/// Whether two sources read the same animation files: every Enhanced Client source reads the AnimationFrame packages
+/// of the Enhanced folder.
+fn same_animation_files(a: ArtSource, b: ArtSource) -> bool {
+    a == b || (is_ec_source(a) && is_ec_source(b))
+}
+
+/// A valid anim file index for `source`: the first loaded MUL file for MUL, the default index otherwise.
+fn first_anim_file_index(app: &UopInspectorApp, source: ArtSource) -> u8 {
+    let anim_map = app.client_data.as_ref().and_then(|client| client.anim_map.as_ref());
+    match (source, anim_map) {
+        (ArtSource::Mul, Some(anim_map)) => (0..uocf::classic::anim::MAX_ANIM_FILES)
+            .find(|&file_index| anim_map.source_index_count(file_index).is_some())
+            .unwrap_or(DEFAULT_ANIM_FILE_INDEX),
+        _ => DEFAULT_ANIM_FILE_INDEX,
+    }
+}
+
+/// Whether an AnimationFrame package of `folder` is loaded.
+fn has_animationframe_packages(app: &UopInspectorApp, folder: Option<&Path>) -> bool {
+    folder.is_some_and(|folder| {
+        app.uop_cache
+            .loaded_uops
+            .iter()
+            .any(|loaded| animationframe_package_group_id(&loaded.path).is_some() && loaded.path.starts_with(folder))
+    })
+}
+
+/// The source buttons. Every Enhanced Client source reads the same AnimationFrame packages, so the one of the
+/// Enhanced folder's client is pressed; a click on it keeps its art source in step: Texture.uop for KR UOP.
+fn animation_source_selector(app: &mut UopInspectorApp, ui: &mut egui::Ui) {
+    let ctx = ui.ctx().clone();
+    let cc_path = app.settings.cc_path.clone();
+    let ec_path = app.settings.ec_path.clone();
+    let enhanced = ec_path.as_deref().map(|folder| enhanced_folder_source(&ctx, folder));
+    let selected = match app.selected_legacy_source {
+        ArtSource::Mul => Some(ClientSource::Mul),
+        ArtSource::CcUop => Some(ClientSource::CcUop),
+        ArtSource::EcUop | ArtSource::EcUopLegacy | ArtSource::EcUopKr => enhanced,
+        ArtSource::Any => None,
+    };
+    let has_mul = app.client_data.as_ref().is_some_and(|client| client.anim_map.is_some());
+    let has_cc_uop = has_animationframe_packages(app, cc_path.as_deref());
+    let has_ec_uop = has_animationframe_packages(app, ec_path.as_deref());
+    let clicked = source_choice(ui, selected, |source| match source {
+        ClientSource::Mul => folder_files_availability(cc_path.as_deref(), CLASSIC_FOLDER, ANIM_MUL_FILES, has_mul),
+        ClientSource::CcUop => {
+            folder_files_availability(cc_path.as_deref(), CLASSIC_FOLDER, ANIMATION_FRAME_UOP_FILES, has_cc_uop)
+        }
+        ClientSource::KrUop | ClientSource::EcUop => {
+            enhanced_files_availability(&ctx, ec_path.as_deref(), source, ANIMATION_FRAME_UOP_FILES, has_ec_uop)
+        }
+    });
+    if let Some(source) = clicked {
+        app.selected_legacy_source = match source {
+            ClientSource::Mul => ArtSource::Mul,
+            ClientSource::CcUop => ArtSource::CcUop,
+            ClientSource::KrUop => ArtSource::EcUopKr,
+            ClientSource::EcUop => ArtSource::EcUop,
+        };
+    }
 }
 
 /// `AnimationSequence.uop` entry of the selected server body: its placeholder body type, else
