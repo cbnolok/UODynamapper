@@ -34,6 +34,7 @@ const MATRIX_FLOATS: usize = 9;
 const MATRIX_COLUMNS: usize = 3;
 /// Width of a link combo box.
 const LINK_COMBO_WIDTH: f32 = 220.0;
+const NAME_FILTER_WIDTH: f32 = 140.0;
 const CURVE_HEIGHT: f32 = 100.0;
 const CURVE_STROKE_WIDTH: f32 = 1.5;
 const CURVE_POINT_RADIUS: f32 = 2.5;
@@ -66,6 +67,8 @@ pub struct NifEditorState {
     view: NifListView,
     /// A block type (or base type) the block list is limited to.
     type_filter: Option<&'static str>,
+    /// Text the labels of the listed blocks contain (index, type or name), any case.
+    name_filter: String,
     /// Show the fields absent with the current values (conditions not met).
     show_absent: bool,
     /// The outcome of the last edit (count fields updated or not).
@@ -195,8 +198,10 @@ pub fn nif_editor(
                     ui.selectable_value(&mut editor.type_filter, Some(type_name), type_name);
                 }
             });
+            ui.add(egui::TextEdit::singleline(&mut editor.name_filter).hint_text("index, type or name").desired_width(NAME_FILTER_WIDTH));
         }
     });
+    let name_filter = editor.name_filter.trim().to_lowercase();
     editor.selected_block = editor.selected_block.min(nif.blocks.len().saturating_sub(1));
     egui::ScrollArea::vertical().id_salt("effects_nif_blocks").max_height(BLOCK_LIST_HEIGHT).show(ui, |ui| {
         match editor.view {
@@ -218,6 +223,9 @@ pub fn nif_editor(
             NifListView::Blocks => {
                 for (index, block) in nif.blocks.iter().enumerate() {
                     if editor.type_filter.is_some_and(|filter| !block.block_type().is_a(filter)) {
+                        continue;
+                    }
+                    if !name_filter.is_empty() && !block_label(&nif, index).to_lowercase().contains(&name_filter) {
                         continue;
                     }
                     if ui.selectable_label(editor.selected_block == index, block_label(&nif, index)).clicked() {
