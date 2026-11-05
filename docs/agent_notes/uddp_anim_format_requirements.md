@@ -674,13 +674,16 @@ the same day ([`bc7_alpha_plane_search.md`](bc7_alpha_plane_search.md)). The col
   faced: Enhanced is 2268.0 MB before duplicates at 36.4 / 7.5 ms and 169.5 / 34.9 ms in the worst crowd, against zstd 19's 1881.1 MB
   at 100.3 / 20.5 ms and 451.1 / 92.2 ms, so 2.75× as fast for 21 % more disk. Classic is 888.4 MB at 12.6 / 2.7 ms against zstd 19's
   733.4 MB at 37.0 / 7.5 ms, about 2.9× as fast. The gap reaches 3–4× only if LZ4 HC's frames stay as spans in VRAM.
+  **This moves the lossy comparisons,** which were all made against zstd 19's sizes. Enhanced's BC7 with fix C, 1900.7 MB, was slightly larger than
+  lossless and is now 0.84× it; BC3 goes from 0.78× to 0.65×. Classic's BC1 is 0.58× lossless, and its BC7 with fix C, 918.4 MB, is still
+  larger. The block rows also decode slower than lossless now, because they use zstd: Enhanced BC3 is 50.4 / 10.2 ms and BC7 with fix C 50.9 / 10.3 ms, against 36.4 / 7.5 ms.
 - **The BC7 encoder takes fix C,** which landed the same day.
 
 **Open:**
 
 | Question | Recommendation | Depends on |
 |---|---|---|
-| Lossy rows on the PC preset | The user's proposal: Enhanced BC1 for equipment and BC3 for other animations, BC7 for land textures or gumps, Classic BC1, converging on one or two lossy formats if the mix needs too many branches or pipelines. BC3 is the only Enhanced row that saves disk as well as VRAM; BC7 with fix C is larger than the lossless row | Fractional zoom, upscaled sprites and the cost of alternating formats in painter order, being measured |
+| Lossy rows on the PC preset | The user's proposal: Enhanced BC1 for equipment and BC3 for other animations, BC7 for land textures or gumps, Classic BC1, converging on one or two lossy formats if the mix needs too many branches or pipelines. Against LZ4 HC's lossless size, BC3 and BC7 with fix C both save disk as well as VRAM on Enhanced, so BC7 is no longer ruled out by size | Fractional zoom, upscaled sprites and the cost of alternating formats in painter order, being measured |
 | Load unit | One stream per (action, direction), faced direction first | The user |
 | Where the low-end tier's quality floor sits, and which RDO level it uses | 80 as a floor, no RDO unless a target needs it | The user's eye: `blocks-preview/` crops, including BC3 against BC7 |
 | Whether indexed frames stay the default once filtering is counted | Yes: the indexed filter costs 1.43–1.57× BC7 on the Radeon 880M, 2.4–3.1 % of a 60 fps frame in a crowd at 1.5× | The user; one AMD iGPU only |
@@ -722,7 +725,7 @@ are from [the codec proposal](proposals/2026-11-01-mobile-anim-codec.md), on eve
 | Luma, MED + block motion, tANS | Classic ≈ 784 MB, 1.03× zstd 19, 524.0 / 125.3 ms | Larger and slower than zstd 19 |
 | Rank + previous frame, rANS | Classic ≈ 712 MB, 1762 / 361.2 ms | Smallest, and fails the line |
 | Split boxes | Bytes don't move; under 1.5 MB of a town's atlas | Not worth a second box |
-| BC7 as the default on disk | Classic RDO 1 823.2 MB at 80.20 against 733.4 MB. Enhanced fix C 1900.7 MB at 85.40 | Larger than lossless, and lossy |
+| BC7 as the default on disk | Classic RDO 1 823.2 MB at 80.20 against 733.4 MB. Enhanced fix C 1900.7 MB at 85.40 | Larger than lossless, and lossy. Measured against zstd 19: against LZ4 HC (888.4 / 2268.0 MB) both are smaller, so size no longer rules it out on its own, and it stays aside for being lossy |
 | BC7 fix C with RDO 1, Enhanced | 1728.9 MB at 81.03, 558 of 926 at 80 | BC3 beats it on every score at 0.85× the disk |
 | BC1, Enhanced | 929.5 MB at 73.75 / 52.00 / −47.93, 170 of 926 at 80 | One-bit alpha: 10.361 % of painted pixels disappear |
 | BC3, Classic | Every 10th: 583.9 MB at 83.25, BC1 504.2 MB at 83.17 | Classic's alpha is one bit, so it gains nothing at twice the VRAM |
