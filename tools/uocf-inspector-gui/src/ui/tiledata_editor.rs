@@ -32,8 +32,6 @@ const VALUE_DRAG_SPEED: f64 = 0.1;
 const ERROR_COLOR: egui::Color32 = egui::Color32::from_rgb(230, 90, 90);
 const WARNING_COLOR: egui::Color32 = egui::Color32::from_rgb(230, 180, 60);
 const DIRTY_MARKER: &str = "*";
-/// Largest side of the tile's art beside its fields.
-const ART_PREVIEW_SIDE: f32 = 128.0;
 
 /// The flags by bit, named as `classic_tile_flags_summary` names them. Unnamed bits stay reachable through the value.
 const FLAG_BITS: [(u32, &str); 40] = [
@@ -203,8 +201,8 @@ fn tile_change_slot(tiledata: &TileData, art_id: u32) -> Option<TileChange> {
     }
 }
 
-/// The fields of the tile `art_id`, beside its art; returns its new contents when one changed.
-pub(super) fn record_panel(ui: &mut egui::Ui, tiledata: &TileData, art_id: u32, art: Option<&egui::TextureHandle>, editable: bool) -> Option<TileChange> {
+/// The fields of the tile `art_id` (its art is in the tab's preview); returns its new contents when one changed.
+pub(super) fn record_panel(ui: &mut egui::Ui, tiledata: &TileData, art_id: u32, editable: bool) -> Option<TileChange> {
     let mut tile = tile_change_slot(tiledata, art_id)?;
     let mut changed = false;
     record_columns(ui, editable, |columns| {
@@ -220,15 +218,6 @@ pub(super) fn record_panel(ui: &mut egui::Ui, tiledata: &TileData, art_id: u32, 
         };
         let wide = tiledata.has_64_bit_flags();
         group(columns, "Flags", |ui| changed |= flag_fields(ui, art_id, flags, wide));
-        group(columns, "Art", |ui| match art {
-            Some(art) => {
-                let scale = (ART_PREVIEW_SIDE / art.size_vec2().max_elem()).min(1.0);
-                ui.add(egui::Image::new(art).fit_to_exact_size(art.size_vec2() * scale));
-            }
-            None => {
-                ui.weak("no art for this tile in the source chosen in the Art tab");
-            }
-        });
     });
     changed.then_some(tile)
 }

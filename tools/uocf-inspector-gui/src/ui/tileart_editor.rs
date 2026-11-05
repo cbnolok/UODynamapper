@@ -38,6 +38,9 @@ const FLAG_FIELD_WIDTH: f32 = 150.0;
 const FLAG_CELL_WIDTH: f32 = 140.0;
 /// A record's groups go in as many columns of at least this width as fit.
 const GROUP_MIN_WIDTH: f32 = 330.0;
+/// The texture blocks and effects take this many group widths: their tables have many columns.
+const WIDE_GROUP_SPAN: f32 = 2.0;
+const WIDE_GROUP_MIN_WIDTH: f32 = WIDE_GROUP_SPAN * GROUP_MIN_WIDTH;
 /// How much of a field's colour stays while the record is read only: its values must stay readable.
 const READ_ONLY_ALPHA: f32 = 0.85;
 const RADAR_SWATCH_SIDE: f32 = 16.0;
@@ -51,6 +54,20 @@ const SHADER_IMPLEMENTATION_HOVER: &str = "The shader implementation index the c
 const SOURCE_KIND_HOVER: &str = "0 loads the texture, 2 loads it and forces wrap addressing, and any other value makes the client skip it.";
 const SAMPLER_HOVER: &str = "Not read by the client, which binds an item to the shader map at its position.";
 const VALUE_LISTS_HOVER: &str = "The client keeps up to 4 values.";
+/// Column titles of the sub-record tables, each with its hover text ("" for none).
+const PROPERTY_COLUMNS: [(&str, &str); 3] = [("Key", ""), ("Name", ""), ("Value", "")];
+const STACK_ALIAS_COLUMNS: [(&str, &str); 2] = [("Amount", ""), ("Amount id", "")];
+const BODY_APPEARANCE_COLUMNS: [(&str, &str); 2] = [("Body", ""), ("Appearance", "")];
+const GENDER_APPEARANCE_COLUMNS: [(&str, &str); 2] = [("Gender", ""), ("Appearance", "")];
+const TEXTURE_ITEM_COLUMNS: [(&str, &str); 7] = [
+    ("Item", ""),
+    ("Name index", STRING_INDEX_HOVER),
+    ("Path", ""),
+    ("Source", SOURCE_KIND_HOVER),
+    ("Stretch", ""),
+    ("Sampler", SAMPLER_HOVER),
+    ("UV set", ""),
+];
 const EFFECTS_TEXT_ROWS: usize = 6;
 const EFFECTS_APPLY_HOVER: &str = "Reads the text into the record (undoable). Text that is not applied is not saved.";
 /// The appearance filters a record can gain.
@@ -162,10 +179,15 @@ pub(super) fn toolbar(app: &mut UopInspectorApp, ctx: &egui::Context, ui: &mut e
 
 /// Draws a record's groups in as many equal columns as fit, the fields readable but locked unless `editable`.
 pub(super) fn record_columns(ui: &mut egui::Ui, editable: bool, add_groups: impl FnOnce(&mut [egui::Ui])) {
+    columns_at_least(ui, editable, GROUP_MIN_WIDTH, add_groups);
+}
+
+/// [`record_columns`] for groups that need `min_width` (tables of many columns).
+fn columns_at_least(ui: &mut egui::Ui, editable: bool, min_width: f32, add_groups: impl FnOnce(&mut [egui::Ui])) {
     ui.scope(|ui| {
         ui.visuals_mut().disabled_alpha = READ_ONLY_ALPHA;
         ui.add_enabled_ui(editable, |ui| {
-            let count = ((ui.available_width() / GROUP_MIN_WIDTH) as usize).max(1);
+            let count = ((ui.available_width() / min_width) as usize).max(1);
             ui.columns(count, add_groups);
         });
     });
@@ -272,7 +294,9 @@ pub(super) fn record_panel(
         group(columns, "Sitting", |ui| fields.sitting(ui, entry.sitting.as_ref()));
         group(columns, "Stack aliases", |ui| fields.stack_aliases(ui, &entry.stack_alias_vector));
         group(columns, "Appearance filters", |ui| fields.appearance(ui, &entry.appearance_vector));
-        group(columns, "Texture blocks", |ui| fields.texture_blocks(ui, entry));
+    });
+    columns_at_least(ui, editable, WIDE_GROUP_MIN_WIDTH, |columns| {
+        group(columns, "Texture blocks", |ui| fields.texture_blocks(ui, entry, strings));
         group(columns, "Effects", |ui| fields.effects(ui, &entry.effects, strings, effects_draft));
     });
 }
@@ -440,6 +464,9 @@ impl Fields<'_> {
     /// A property list: key and value per row, add and delete.
     fn props(&mut self, ui: &mut egui::Ui, field: TileArtField, props: &[TaeProp], second: bool) {
         egui::Grid::new((field, self.hash, "rows")).striped(true).show(ui, |ui| {
+            if !props.is_empty() {
+                header_row(ui, &PROPERTY_COLUMNS);
+            }
             for (index, prop) in props.iter().enumerate() {
                 let (mut key, mut value) = (prop.id, prop.val);
                 let key_changed = ui.add(egui::DragValue::new(&mut key).speed(VALUE_DRAG_SPEED)).changed();
@@ -517,11 +544,12 @@ impl Fields<'_> {
     fn stack_aliases(&mut self, ui: &mut egui::Ui, aliases: &[TaeStackAlias]) {
         let field = "stack_aliases";
         egui::Grid::new((field, self.hash)).striped(true).show(ui, |ui| {
+            if !aliases.is_empty() {
+                header_row(ui, &STACK_ALIAS_COLUMNS);
+            }
             for (index, alias) in aliases.iter().enumerate() {
                 let (mut amount, mut amount_id) = (alias.amount, alias.amount_id);
-                ui.label("Amount");
                 let amount_changed = ui.add(egui::DragValue::new(&mut amount).speed(VALUE_DRAG_SPEED)).changed();
-                ui.label("Amount id");
                 let amount_id_changed = ui.add(egui::DragValue::new(&mut amount_id).speed(VALUE_DRAG_SPEED)).changed();
                 if amount_changed || amount_id_changed {
                     self.push(field, move |entry| {
@@ -559,19 +587,19 @@ impl Fields<'_> {
             });
             match filter {
                 TaeAppearanceFilter::ByOwnerGender { gender, appearance } => {
-                    ui.horizontal(|ui| {
-                        ui.label("Gender");
+                    egui::Grid::new(("tileart_gender_appearance", self.hash, index)).striped(true).show(ui, |ui| {
+                        header_row(ui, &GENDER_APPEARANCE_COLUMNS);
                         self.inline_number(ui, field, *gender, move |entry, value| {
                             if let Some(TaeAppearanceFilter::ByOwnerGender { gender, .. }) = entry.appearance_vector.get_mut(index) {
                                 *gender = value;
                             }
                         });
-                        ui.label("Appearance");
                         self.inline_number(ui, field, *appearance, move |entry, value| {
                             if let Some(TaeAppearanceFilter::ByOwnerGender { appearance, .. }) = entry.appearance_vector.get_mut(index) {
                                 *appearance = value;
                             }
                         });
+                        ui.end_row();
                     });
                 }
                 TaeAppearanceFilter::ByOwnerBodyType(mappings) | TaeAppearanceFilter::AnimationByOwnerBodyType(mappings) => {
@@ -647,14 +675,15 @@ impl Fields<'_> {
     fn body_appearances(&mut self, ui: &mut egui::Ui, filter: usize, mappings: &[TaeBodyAppearance]) {
         let field = "appearance";
         egui::Grid::new(("tileart_body_appearances", self.hash, filter)).striped(true).show(ui, |ui| {
+            if !mappings.is_empty() {
+                header_row(ui, &BODY_APPEARANCE_COLUMNS);
+            }
             for (row, mapping) in mappings.iter().enumerate() {
-                ui.label("Body");
                 self.inline_number(ui, field, mapping.body_type, move |entry, value| {
                     if let Some(mapping) = body_appearances(entry, filter).and_then(|mappings| mappings.get_mut(row)) {
                         mapping.body_type = value;
                     }
                 });
-                ui.label("Appearance");
                 self.inline_number(ui, field, mapping.appearance, move |entry, value| {
                     if let Some(mapping) = body_appearances(entry, filter).and_then(|mappings| mappings.get_mut(row)) {
                         mapping.appearance = value;
@@ -679,7 +708,7 @@ impl Fields<'_> {
         }
     }
 
-    fn texture_blocks(&mut self, ui: &mut egui::Ui, entry: &TileArtEntry) {
+    fn texture_blocks(&mut self, ui: &mut egui::Ui, entry: &TileArtEntry, strings: Option<&UoStringDictionary>) {
         let field = "texture_blocks";
         for (index, block) in entry.texture_vector.iter().enumerate() {
             if entry.version == TILEART_KR_RECORD_VERSION && index == TILEART_SHADER_BLOCK_ENHANCED {
@@ -695,13 +724,14 @@ impl Fields<'_> {
                 });
             }
             if present {
-                self.texture_block(ui, index, block);
+                self.texture_block(ui, index, block, strings);
             }
         }
     }
 
-    fn texture_block(&mut self, ui: &mut egui::Ui, index: usize, block: &TaeTexture) {
+    fn texture_block(&mut self, ui: &mut egui::Ui, index: usize, block: &TaeTexture, strings: Option<&UoStringDictionary>) {
         let field = "texture_blocks";
+        let text_of = |offset: u32| strings.and_then(|strings| strings.get_string(offset.checked_sub(1)? as usize));
         ui.horizontal_wrapped(|ui| {
             ui.label("Shader name").on_hover_text(STRING_INDEX_HOVER);
             self.inline_number(ui, field, block.type_string_off, move |entry, value| {
@@ -709,6 +739,7 @@ impl Fields<'_> {
                     block.type_string_off = value;
                 }
             });
+            ui.weak(text_of(block.type_string_off).unwrap_or("-"));
             ui.label("Implementation").on_hover_text(SHADER_IMPLEMENTATION_HOVER);
             self.inline_number(ui, field, block.field_04, move |entry, value| {
                 if let Some(block) = entry.texture_vector.get_mut(index) {
@@ -716,47 +747,57 @@ impl Fields<'_> {
                 }
             });
         });
-        for (item_index, item) in block.texture_items.iter().enumerate() {
-            ui.horizontal_wrapped(|ui| {
-                ui.label(format!("Item {item_index}: name")).on_hover_text(STRING_INDEX_HOVER);
-                self.inline_number(ui, field, item.name_string_off, move |entry, value| {
-                    if let Some(item) = texture_item(entry, index, item_index) {
-                        item.name_string_off = value;
-                    }
-                });
-                ui.label("Source").on_hover_text(SOURCE_KIND_HOVER);
-                self.inline_number(ui, field, item.source_kind, move |entry, value| {
-                    if let Some(item) = texture_item(entry, index, item_index) {
-                        item.source_kind = value;
-                    }
-                });
-                ui.label("Stretch");
-                self.inline_float(ui, field, item.texture_stretch, move |entry, value| {
-                    if let Some(item) = texture_item(entry, index, item_index) {
-                        item.texture_stretch = value;
-                    }
-                });
-                ui.label("Sampler").on_hover_text(SAMPLER_HOVER);
-                self.inline_number(ui, field, item.sampler_index, move |entry, value| {
-                    if let Some(item) = texture_item(entry, index, item_index) {
-                        item.sampler_index = value;
-                    }
-                });
-                ui.label("UV set");
-                self.inline_number(ui, field, item.uv_set, move |entry, value| {
-                    if let Some(item) = texture_item(entry, index, item_index) {
-                        item.uv_set = value;
-                    }
-                });
-                if self.editable && ui.small_button("Delete").clicked() {
-                    self.push(field, move |entry| {
-                        if let Some(block) = entry.texture_vector.get_mut(index) {
-                            block.texture_items.remove(item_index);
+        egui::ScrollArea::horizontal().id_salt(("tileart_texture_items_scroll", self.hash, index)).show(ui, |ui| {
+            egui::Grid::new(("tileart_texture_items", self.hash, index)).striped(true).show(ui, |ui| {
+                if !block.texture_items.is_empty() {
+                    header_row(ui, &TEXTURE_ITEM_COLUMNS);
+                }
+                for (item_index, item) in block.texture_items.iter().enumerate() {
+                    ui.label(item_index.to_string());
+                    self.inline_number(ui, field, item.name_string_off, move |entry, value| {
+                        if let Some(item) = texture_item(entry, index, item_index) {
+                            item.name_string_off = value;
                         }
                     });
+                    match text_of(item.name_string_off) {
+                        Some(path) => {
+                            ui.label(path_file_name(path)).on_hover_text(path);
+                        }
+                        None => {
+                            ui.weak("-");
+                        }
+                    }
+                    self.inline_number(ui, field, item.source_kind, move |entry, value| {
+                        if let Some(item) = texture_item(entry, index, item_index) {
+                            item.source_kind = value;
+                        }
+                    });
+                    self.inline_float(ui, field, item.texture_stretch, move |entry, value| {
+                        if let Some(item) = texture_item(entry, index, item_index) {
+                            item.texture_stretch = value;
+                        }
+                    });
+                    self.inline_number(ui, field, item.sampler_index, move |entry, value| {
+                        if let Some(item) = texture_item(entry, index, item_index) {
+                            item.sampler_index = value;
+                        }
+                    });
+                    self.inline_number(ui, field, item.uv_set, move |entry, value| {
+                        if let Some(item) = texture_item(entry, index, item_index) {
+                            item.uv_set = value;
+                        }
+                    });
+                    if self.editable && ui.small_button("Delete").clicked() {
+                        self.push(field, move |entry| {
+                            if let Some(block) = entry.texture_vector.get_mut(index) {
+                                block.texture_items.remove(item_index);
+                            }
+                        });
+                    }
+                    ui.end_row();
                 }
             });
-        }
+        });
         if self.editable && ui.small_button("Add item").clicked() {
             self.push(field, move |entry| {
                 if let Some(block) = entry.texture_vector.get_mut(index) {
@@ -814,6 +855,22 @@ impl Fields<'_> {
         });
         ui.separator();
     }
+}
+
+/// The header row of a sub-record table: its column titles, each with its hover text when it has one.
+fn header_row(ui: &mut egui::Ui, columns: &[(&str, &str)]) {
+    for (title, hover) in columns {
+        let label = ui.strong(*title);
+        if !hover.is_empty() {
+            label.on_hover_text(*hover);
+        }
+    }
+    ui.end_row();
+}
+
+/// The last part of a texture path (`Build\TileArtLegacy\00001234.tga`): the full path is the hover text.
+fn path_file_name(path: &str) -> &str {
+    path.rsplit(['\\', '/']).next().unwrap_or(path)
 }
 
 fn appearance_filter_name(filter: &TaeAppearanceFilter) -> &'static str {
@@ -908,9 +965,14 @@ fn single_key(keys: Option<Vec<u64>>) -> Option<u64> {
     }
 }
 
+/// Asks where to write the copy, starting outside the client folder (in the home folder).
 fn save_path() -> Option<PathBuf> {
     let (name, extensions) = UOP_FILTER;
-    crate::dialog::file_dialog().add_filter(name, extensions).set_file_name(TILEART_UOP_NAME).save_file()
+    let mut dialog = crate::dialog::file_dialog().add_filter(name, extensions).set_file_name(TILEART_UOP_NAME);
+    if let Some(home) = std::env::home_dir() {
+        dialog = dialog.set_directory(home);
+    }
+    dialog.save_file()
 }
 
 fn save(app: &mut UopInspectorApp, source: &Path, output: &Path) {

@@ -27,7 +27,7 @@ use uocf::enhanced::multis::MultiCollection;
 use uocf::classic::tiledata::TileData;
 use uocf::enhanced::string_dictionary::UoStringDictionary;
 use uocf::enhanced::tileart::{
-    ArtTexture, TaeAppearanceFilter, TaeFlag, TaeSittingAnimation,
+    ArtTexture, TaeAppearanceFilter, TaeFlag,
     TextureItem as TileArtTextureItem, TextureType as TileArtTextureType, TileArtEntry,
 };
 use uocf::enhanced::terrain_definition::TerrainDefinitionEntry;
@@ -1041,18 +1041,12 @@ pub struct ArtViewerRow {
 pub struct TileArtDisplayRow {
     pub filename_hash: u64,
     pub tile_id: String,
+    /// The text of the record's name index; empty without the string dictionary.
+    pub name: String,
     pub old_id: String,
     pub body_type: String,
-    pub properties_summary: String,
     pub flags_raw: String,
     pub flags_summary: String,
-    pub ec_window: String,
-    pub ec_offset: String,
-    pub cc_window: String,
-    pub cc_offset: String,
-    pub texture_summary: String,
-    pub sitting_summary: String,
-    pub appearance_summary: String,
     pub search_text: String,
 }
 
@@ -1306,41 +1300,21 @@ pub(crate) fn collect_tileart_display_rows(
         .map(|file| {
             let entry = &file.entry;
             let tile_id = entry.tile_id.to_string();
+            let name = string_dictionary
+                .and_then(|strings| strings.get_string((entry.string_dict_off as usize).checked_sub(1)?))
+                .unwrap_or_default()
+                .to_owned();
             let old_id = entry.old_id.to_string();
             let body_type = entry.body_type.to_string();
             let properties_summary = tileart_properties_summary(entry);
             let flags_raw = format!("0x{:016X}", entry.flags1.bits());
             let flags_summary = tileart_flags_summary(entry.flags1);
-            let ec_window = format!(
-                "{},{} -> {},{}",
-                entry.ec_img_offset.x_start,
-                entry.ec_img_offset.y_start,
-                entry.ec_img_offset.x_end,
-                entry.ec_img_offset.y_end
-            );
-            let ec_offset = format!(
-                "{},{}",
-                entry.ec_img_offset.x_off,
-                entry.ec_img_offset.y_off
-            );
-            let cc_window = format!(
-                "{},{} -> {},{}",
-                entry.cc_img_offset.x_start,
-                entry.cc_img_offset.y_start,
-                entry.cc_img_offset.x_end,
-                entry.cc_img_offset.y_end
-            );
-            let cc_offset = format!(
-                "{},{}",
-                entry.cc_img_offset.x_off,
-                entry.cc_img_offset.y_off
-            );
             let texture_summary = tileart_texture_summary(entry, string_dictionary);
-            let sitting_summary = tileart_sitting_summary(entry.sitting.as_ref());
             let appearance_summary = tileart_appearance_summary(&entry.appearance_vector);
             let search_text = format!(
-                "{} {} {} {} {} {} {} {}",
+                "{} {} {} {} {} {} {} {} {}",
                 tile_id,
+                name.to_lowercase(),
                 old_id,
                 body_type,
                 properties_summary.to_lowercase(),
@@ -1352,18 +1326,11 @@ pub(crate) fn collect_tileart_display_rows(
             TileArtDisplayRow {
                 filename_hash: file.filename_hash,
                 tile_id,
+                name,
                 old_id,
                 body_type,
-                properties_summary,
                 flags_raw,
                 flags_summary,
-                ec_window,
-                ec_offset,
-                cc_window,
-                cc_offset,
-                texture_summary,
-                sitting_summary,
-                appearance_summary,
                 search_text,
             }
         })
@@ -1536,18 +1503,6 @@ fn tileart_texture_summary(
         }
     }
     parts.join(" | ")
-}
-
-fn tileart_sitting_summary(sitting: Option<&TaeSittingAnimation>) -> String {
-    if let Some(sitting) = sitting {
-        format!(
-            "yes (directions {}, seat offset {}, {}, window shift {}, unused {}, {})",
-            sitting.direction_mask, sitting.seat_offset_x, sitting.seat_offset_y,
-            sitting.window_shift, sitting.field_10, sitting.field_14
-        )
-    } else {
-        "no".to_string()
-    }
 }
 
 fn tileart_appearance_summary(appearance: &[TaeAppearanceFilter]) -> String {

@@ -15,6 +15,8 @@ pub mod multis;
 mod multi_editor;
 mod tileart_editor;
 pub mod tiledata_editor;
+mod tile_metadata;
+mod tile_preview;
 pub mod housing;
 pub mod effects;
 mod effects_guide;
@@ -554,7 +556,7 @@ pub fn draw_ui(app: &mut UopInspectorApp, ctx: &egui::Context, ui: &mut egui::Ui
             art_viewer::ui_art_viewer(app, ctx, ui);
         }
         crate::app::ViewMode::TileMetadata => {
-            art_viewer::ui_tile_metadata(app, ctx, ui);
+            tile_metadata::ui_tile_metadata(app, ctx, ui);
         }
         crate::app::ViewMode::Animations => {
             animations::ui_animations(app, ctx, ui);
