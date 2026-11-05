@@ -213,10 +213,16 @@ cargo_profile_stable    :=\
     if is_windows == "true" { "$env:RUSTFLAGS=$env:RUSTFLAGS_PROFILE_STABLE; cargo" }           else { "export RUSTFLAGS=\"$RUSTFLAGS_PROFILE_STABLE\"; cargo" }
 
 # --- Release Package Contents ---
+# The app package: UODynamapper/ holds dynamapper, the whole assets/ tree it reads (settings, shaders, fonts, the KDL
+# tables), README.md and docs/. The tools package: UODynamapper-tools/ holds bin/, shared/ and docs/.
 app_docs := "docs/keybindings.md docs/USER_TROUBLESHOOTING.md"
-tool_docs := "README.md docs/USER_TROUBLESHOOTING.md"
-tool_bins := "udd-cli udd-conv-gui uddp-inspector-gui uocf-cli uocf-inspector-gui uop-dict-populator-gui uoppackage-cli webmap-export-cli"
-tool_packages := "-p udd-conv-cli -p uocf-cli -p udd-conv-gui -p uddp-inspector-gui -p uocf-inspector-gui -p uop-dict-populator-gui -p uoppackage-cli -p webmap-export-cli"
+tool_docs := "README.md docs/USER_TROUBLESHOOTING.md tools/udd-conv-cli/UPSCALE_PROFILES.md"
+# The end-user tools. uocf-devtools-cli stays out: research and diagnostic commands, built only with dev-tool-tests.
+tool_bins := "udd-cli udd-conv-gui uddp-inspector-gui uo-client-patcher-gui uocf-cli uocf-inspector-gui uop-dict-populator-gui uoppackage-cli webmap-export-cli"
+tool_packages := "-p udd-conv-cli -p uocf-cli -p udd-conv-gui -p uddp-inspector-gui -p uo-client-patcher-gui -p uocf-inspector-gui -p uop-dict-populator-gui -p uoppackage-cli -p webmap-export-cli"
+# The data files the tools read, each copied into the tools package's shared/ folder (a folder keeps its name), where
+# uocf::utils::bundled_files finds them from bin/. The CLI-only package ships them too: udd-cli reads the tables.
+tool_shared := "tools/_shared_assets/Dictionary.dic dynamapper/assets/cc_ec_convtables"
 # The static musl builds ship only these. A static musl binary can't load shared libraries (dlopen fails with "Dynamic
 # loading not supported"), and dynamapper and the GUI tools load their windowing, GPU and audio libraries that way.
 cli_bins := "udd-cli uocf-cli uoppackage-cli webmap-export-cli"
@@ -404,13 +410,21 @@ verify-package-inputs target="":
             missing=1
         fi
     }
+    require_path() {
+        if [ ! -e "$1" ]; then
+            echo "missing file or directory: $1"
+            missing=1
+        fi
+    }
 
     require_file "$RELEASE_DIR/dynamapper"
     for util in {{tool_bins}}; do
         require_file "$RELEASE_DIR/$util"
     done
     require_dir "dynamapper/assets"
-    require_file "tools/_shared_assets/Dictionary.dic"
+    for item in {{tool_shared}}; do
+        require_path "$item"
+    done
     for doc in {{app_docs}} {{tool_docs}}; do
         require_file "$doc"
     done
@@ -426,10 +440,11 @@ verify-package-inputs target="":
     $missing = $false
     function Require-File([string]$path) { if (-not (Test-Path -Path $path -PathType Leaf)) { Write-Host "missing file: $path"; $script:missing = $true } }
     function Require-Dir([string]$path) { if (-not (Test-Path -Path $path -PathType Container)) { Write-Host "missing directory: $path"; $script:missing = $true } }
+    function Require-Path([string]$path) { if (-not (Test-Path -Path $path)) { Write-Host "missing file or directory: $path"; $script:missing = $true } }
     Require-File "$releaseDir/dynamapper.exe"
     foreach ($util in '{{tool_bins}}'.Split(' ')) { Require-File "$releaseDir/$util.exe" }
     Require-Dir 'dynamapper/assets'
-    Require-File 'tools/_shared_assets/Dictionary.dic'
+    foreach ($item in '{{tool_shared}}'.Split(' ')) { Require-Path $item }
     foreach ($doc in ('{{app_docs}} {{tool_docs}}'.Split(' '))) { Require-File $doc }
     if ($missing) { exit 1 }
 
@@ -444,9 +459,15 @@ package-release-cli name="dynamapper-pkg" target="":
     fi
     TOOLS_DIR="artifact/{{name}}-tools/UODynamapper-tools"
     missing=0
-    for input in $(printf "$RELEASE_DIR/%s " {{cli_bins}}) tools/_shared_assets/Dictionary.dic {{tool_docs}}; do
+    for input in $(printf "$RELEASE_DIR/%s " {{cli_bins}}) {{tool_docs}}; do
         if [ ! -f "$input" ]; then
             echo "missing file: $input"
+            missing=1
+        fi
+    done
+    for input in {{tool_shared}}; do
+        if [ ! -e "$input" ]; then
+            echo "missing file or directory: $input"
             missing=1
         fi
     done
@@ -456,7 +477,9 @@ package-release-cli name="dynamapper-pkg" target="":
     for util in {{cli_bins}}; do
         cp "$RELEASE_DIR/$util" "$TOOLS_DIR/bin/"
     done
-    cp tools/_shared_assets/Dictionary.dic "$TOOLS_DIR/shared/"
+    for item in {{tool_shared}}; do
+        cp -r "$item" "$TOOLS_DIR/shared/"
+    done
     for doc in {{tool_docs}}; do
         cp "$doc" "$TOOLS_DIR/docs/"
     done
@@ -493,7 +516,9 @@ package name="dynamapper-pkg" target="":
     for util in {{tool_bins}}; do
         [ -f "$RELEASE_DIR/$util" ] && cp "$RELEASE_DIR/$util" "$TOOLS_DIR/bin/"
     done
-    [ -f "tools/_shared_assets/Dictionary.dic" ] && cp "tools/_shared_assets/Dictionary.dic" "$TOOLS_DIR/shared/"
+    for item in {{tool_shared}}; do
+        [ -e "$item" ] && cp -r "$item" "$TOOLS_DIR/shared/"
+    done
     for doc in {{tool_docs}}; do
         [ -f "$doc" ] && cp "$doc" "$TOOLS_DIR/docs/"
     done
@@ -516,7 +541,7 @@ package name="dynamapper-pkg" target="":
     if (Test-Path 'README.md') { Copy-Item 'README.md' "$appDir/" }
     foreach ($doc in '{{app_docs}}'.Split(' ')) { if (Test-Path $doc) { Copy-Item $doc "$appDir/docs/" } }
     foreach ($util in '{{tool_bins}}'.Split(' ')) { if (Test-Path "$releaseDir/$util.exe") { Copy-Item "$releaseDir/$util.exe" "$toolsDir/bin/" } }
-    if (Test-Path 'tools/_shared_assets/Dictionary.dic') { Copy-Item 'tools/_shared_assets/Dictionary.dic' "$toolsDir/shared/" }
+    foreach ($item in '{{tool_shared}}'.Split(' ')) { if (Test-Path $item) { Copy-Item -Recurse $item "$toolsDir/shared/" } }
     foreach ($doc in '{{tool_docs}}'.Split(' ')) { if (Test-Path $doc) { Copy-Item $doc "$toolsDir/docs/" } }
     Write-Host "Packaging complete: $appDir and $toolsDir"
 

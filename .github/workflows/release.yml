@@ -95,7 +95,7 @@ jobs:
         uses: actions/upload-artifact@v6
         with:
           name: dynamapper-linux-x86_64-tools
-          path: artifact/dynamapper-linux-x86_64-tools/UODynamapper-tools/*
+          path: artifact/dynamapper-linux-x86_64-tools/*
           retention-days: ${{ github.ref_name == 'prereleases' && 7 || 90 }}
 
   build-linux-arm64:
@@ -559,9 +559,14 @@ jobs:
           mkdir -p release-assets
           shopt -s nullglob
 
+          # Every archive holds one folder: UODynamapper/ (the app) or UODynamapper-tools/ (bin/, shared/, docs/).
           for artifact_dir in artifacts/*; do
             [[ -d "$artifact_dir" ]] || continue
             artifact_name="$(basename "$artifact_dir")"
+            # Artifacts come back with every file mode 644: make the Linux and macOS binaries executable again.
+            for binary in "$artifact_dir"/UODynamapper/dynamapper "$artifact_dir"/UODynamapper-tools/bin/*; do
+              if [[ -f "$binary" ]]; then chmod +x "$binary"; fi
+            done
             (
               cd "$artifact_dir"
               zip -r "../../release-assets/${artifact_name}.zip" ./*
