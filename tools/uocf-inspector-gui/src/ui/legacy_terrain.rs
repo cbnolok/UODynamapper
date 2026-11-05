@@ -62,7 +62,7 @@ pub(super) fn ui_legacy_terrain_view(
             {
                 match LegacyTerrainEditor::open(source.to_path_buf(), package) {
                     Ok(opened) => editor = Some(opened),
-                    Err(error) => app.log(format!("Failed to open the LegacyTerrain editor: {error}")),
+                    Err(error) => app.log_warning(format!("Failed to open the LegacyTerrain editor: {error}")),
                 }
             }
         }

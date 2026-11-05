@@ -78,6 +78,7 @@ fn loaded_rle_controls(app: &mut UopInspectorApp, ui: &mut egui::Ui) {
             {
                 match multimap_rle::load_rle(&path) {
                     Ok(image) => {
+                        app.log_loaded(&[&path], format_args!("{}x{} pixels", image.width, image.height));
                         app.cc_multimap = Some(std::sync::Arc::new(image));
                         app.cc_multimap_path = Some(path.clone());
                         app.multimap_texture = None;
@@ -86,6 +87,7 @@ fn loaded_rle_controls(app: &mut UopInspectorApp, ui: &mut egui::Ui) {
                     }
                     Err(error) => {
                         app.status_message = format!("Failed to load RLE: {error}");
+                        app.log_load_failure(&[&path], format_args!("{error:#}"));
                     }
                 }
             }

@@ -92,7 +92,7 @@ impl AnimMap {
                 let mul_file = File::open(mul_path)?;
                 let mul = unsafe { memmap2::Mmap::map(&mul_file)? };
                 sources.push(Some(AnimSource { idx, mul }));
-                log::info!("uocf: Loaded animation source {}", idx_name);
+                log::debug!("uocf: Loaded animation source {}", idx_name);
             } else {
                 sources.push(None);
             }

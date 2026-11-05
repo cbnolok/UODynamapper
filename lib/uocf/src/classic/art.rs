@@ -457,22 +457,22 @@ impl ArtMap {
                 .wrap_err_with(|| format!("Failed to open {}", mul_path.display()))?;
             let mmap = unsafe { Mmap::map(&mul_handle)? };
             art_mmap = Some(Arc::new(mmap));
-            log::info!("uocf: Loaded classic Art.mul format (memory-mapped)");
+            log::debug!("uocf: Loaded classic Art.mul format (memory-mapped)");
         }
 
         if let Some(path) = cc_uop_path {
             cc_uop_package = Some(UopPackage::load(&path)?);
-            log::info!("uocf: Loaded newer art UOP format from {}", path.display());
+            log::debug!("uocf: Loaded newer art UOP format from {}", path.display());
         }
 
         if let Some(path) = ec_uop_path {
             ec_uop_package = Some(UopPackage::load(&path)?);
-            log::info!("uocf: Loaded EC art UOP format from {}", path.display());
+            log::debug!("uocf: Loaded EC art UOP format from {}", path.display());
         }
 
         if let Some(path) = ec_kr_uop_path {
             ec_kr_uop_package = Some(UopPackage::load(&path)?);
-            log::info!("uocf: Loaded EC KR art UOP format from {}", path.display());
+            log::debug!("uocf: Loaded EC KR art UOP format from {}", path.display());
         }
 
         if idx_file.is_none() && cc_uop_package.is_none() && ec_uop_package.is_none() && ec_kr_uop_package.is_none() {

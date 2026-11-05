@@ -37,7 +37,8 @@ pub(crate) struct MultiPreviewCache {
     tileart_by_tile: Option<HashMap<u32, usize>>,
     render_info: HashMap<(u16, u8), PartRenderInfo>,
     missing_art: HashSet<u64>,
-    logged_missing: HashSet<(u16, u8)>,
+    /// The multis and art sources whose parts without art were reported.
+    logged_missing: HashSet<(u32, u8)>,
     classic_parts: Option<(u32, Arc<Vec<MultiPart>>)>,
     classic_empty_multis: Option<Arc<HashSet<u32>>>,
 }
@@ -106,6 +107,8 @@ const HIDDEN_PART_TINT_ALPHA: u8 = 96;
 const HIDDEN_PART_OUTLINE_WIDTH: f32 = 1.0;
 const HIDDEN_PART_OUTLINE_COLOR: egui::Color32 = egui::Color32::from_rgb(255, 64, 255);
 const MISSING_PART_FILL_COLOR: egui::Color32 = egui::Color32::BLUE;
+/// Most tile ids a warning about parts without art names; it counts the rest.
+const MISSING_ART_LISTED_TILES: usize = 5;
 /// Where a tile without KR art finds its art: the classic files first, as the official EC draws classic art unless a
 /// tile asks for its new art.
 const KR_ART_FALLBACK_SOURCES: [ArtSource; 3] = [ArtSource::CcUop, ArtSource::Mul, ArtSource::EcUopLegacy];
@@ -661,7 +664,7 @@ pub(crate) fn draw_collection_multi_preview(
             housing_piece: is_housing_piece(app.housing_index.as_deref(), part.item_id),
         })
         .collect();
-    draw_preview(app, ctx, ui, &parts, None, false, "housing");
+    draw_preview(app, ctx, ui, &parts, None, false, "housing", multi_id);
     true
 }
 
@@ -824,7 +827,8 @@ fn draw_multi_details(
                     preview_available,
                     egui::Layout::top_down(egui::Align::Center),
                     |ui| {
-                        draw_preview(app, ctx, ui, parts, selected_part_index, show_center, "inline");
+                        let multi_id = app.selected_multi_id;
+                        draw_preview(app, ctx, ui, parts, selected_part_index, show_center, "inline", multi_id);
                     },
                 );
             },
@@ -839,7 +843,8 @@ fn draw_multi_details(
             .default_size(egui::vec2(1000.0, 720.0))
             .resizable(true)
             .show(ctx, |ui| {
-                draw_preview(app, ctx, ui, parts, selected_part_index, show_center, "detached");
+                let multi_id = app.selected_multi_id;
+                draw_preview(app, ctx, ui, parts, selected_part_index, show_center, "detached", multi_id);
             });
         ctx.data_mut(|data| data.insert_temp(detached_window_id, open));
     }
@@ -853,6 +858,7 @@ fn draw_preview(
     selected_part_index: Option<usize>,
     show_center: bool,
     scroll_id_salt: &'static str,
+    multi_id: u32,
 ) {
     let (min_x, max_x, min_y, max_y) = parts.iter().fold(
         (0i16, 0i16, 0i16, 0i16),
@@ -872,7 +878,7 @@ fn draw_preview(
         .iter()
         .map(|part| {
             let info = part_render_info(app, part.item_id, art_source);
-            let texture = get_multi_part_texture(app, ctx, part.item_id, &info);
+            let texture = cached_multi_part_texture(app, ctx, part.item_id, &info);
             let art_scale = info.pixel_scale.unwrap_or(1.0);
             let size = texture
                 .as_ref()
@@ -888,6 +894,14 @@ fn draw_preview(
             }
         })
         .collect();
+    let without_art: Vec<_> = sorted_parts
+        .iter()
+        .filter(|part| part.texture.is_none())
+        .map(|part| (part.part.item_id, part.info))
+        .collect();
+    if !without_art.is_empty() {
+        report_parts_without_art(app, multi_id, &without_art);
+    }
     let fallback_parts = sorted_parts.iter().filter(|part| part.info.art_source.is_some()).count();
     if fallback_parts > 0 {
         ui.weak(format!("{fallback_parts} of {} parts have no KR art: drawn with classic art.", sorted_parts.len()))
@@ -1068,22 +1082,67 @@ fn multi_part_art_id(item_id: u16, info: &PartRenderInfo, source: ArtSource) -> 
         .unwrap_or_else(|| static_art_id_for_source(item_id as u32, source))
 }
 
-/// The art of a part. A part without art is reported once.
-fn get_multi_part_texture(
-    app: &mut UopInspectorApp,
-    ctx: &egui::Context,
-    item_id: u16,
-    info: &PartRenderInfo,
-) -> Option<egui::TextureHandle> {
-    let texture = cached_multi_part_texture(app, ctx, item_id, info);
-    if texture.is_none() {
-        let source = info.art_source.unwrap_or(concrete_art_tile_source(app.selected_legacy_source));
-        if app.multi_preview_cache.logged_missing.insert((item_id, source as u8)) {
-            let art_id = multi_part_art_id(item_id, info, source);
-            log_missing_multi_part_texture(app, item_id, art_id, source);
+/// Warns once per multi and art source about its parts drawn without art: one line with the count of the tiles
+/// missing from the source and the first of them, one more for the tiles whose art fails to decode.
+fn report_parts_without_art(app: &mut UopInspectorApp, multi_id: u32, parts: &[(u16, PartRenderInfo)]) {
+    let selected = concrete_art_tile_source(app.selected_legacy_source);
+    let mut by_source: Vec<(ArtSource, Vec<u16>, Vec<u16>)> = Vec::new();
+    for (item_id, info) in parts {
+        let source = info.art_source.unwrap_or(selected);
+        if app.multi_preview_cache.logged_missing.contains(&(multi_id, source as u8)) {
+            continue;
+        }
+        let present = app.client_data.as_ref().is_some_and(|client| {
+            client.art.has_id_from_source(multi_part_art_id(*item_id, info, source), source)
+        });
+        let position = match by_source.iter().position(|(known, _, _)| *known == source) {
+            Some(position) => position,
+            None => {
+                by_source.push((source, Vec::new(), Vec::new()));
+                by_source.len() - 1
+            }
+        };
+        let (_, missing, undecodable) = &mut by_source[position];
+        if present { undecodable.push(*item_id) } else { missing.push(*item_id) }
+    }
+    for (source, missing, undecodable) in by_source {
+        app.multi_preview_cache.logged_missing.insert((multi_id, source as u8));
+        let label = art_source_label(source);
+        if app.client_data.is_none() {
+            app.log_warning_once(format!("Multi preview: no art is loaded, {label} or other."));
+            continue;
+        }
+        if !missing.is_empty() {
+            app.log_warning(format!("Multi {multi_id} preview: {} without {label} art: {}.", tiles_label(&missing), tile_list(&missing)));
+        }
+        if !undecodable.is_empty() {
+            app.log_warning(format!(
+                "Multi {multi_id} preview: {} whose {label} art failed to decode: {}.",
+                tiles_label(&undecodable),
+                tile_list(&undecodable)
+            ));
         }
     }
-    texture
+}
+
+fn tiles_label(tiles: &[u16]) -> String {
+    let distinct: HashSet<_> = tiles.iter().collect();
+    match distinct.len() {
+        1 => "1 tile".to_string(),
+        count => format!("{count} tiles"),
+    }
+}
+
+/// The first [`MISSING_ART_LISTED_TILES`] distinct tile ids, and how many more.
+fn tile_list(tiles: &[u16]) -> String {
+    let mut distinct = tiles.to_vec();
+    distinct.sort_unstable();
+    distinct.dedup();
+    let listed: Vec<String> = distinct.iter().take(MISSING_ART_LISTED_TILES).map(|tile| format!("{tile:#06X}")).collect();
+    match distinct.len().saturating_sub(MISSING_ART_LISTED_TILES) {
+        0 => listed.join(", "),
+        more => format!("{} and {more} more", listed.join(", ")),
+    }
 }
 
 /// The art of a part, decoded once. Art that could not be had is remembered too: a redraw does not look for it again.
@@ -1228,36 +1287,6 @@ fn decode_multi_uop_art_rgba(scratch: &[u8], source: ArtSource) -> Option<(u32, 
     Some((rgba.width(), rgba.height(), rgba.into_raw()))
 }
 
-fn log_missing_multi_part_texture(
-    app: &mut UopInspectorApp,
-    item_id: u16,
-    art_id: u32,
-    source: ArtSource,
-) {
-    let has_art = app
-        .client_data
-        .as_ref()
-        .map(|client| client.art.has_id_from_source(art_id, source))
-        .unwrap_or(false);
-    let message = if app.client_data.is_none() {
-        format!(
-            "Multi preview cannot render item 0x{item_id:04X}: no CC art map is loaded for {:?}.",
-            source
-        )
-    } else if has_art {
-        format!(
-            "Multi preview failed to decode item 0x{item_id:04X} as art 0x{art_id:04X} from {:?}.",
-            source
-        )
-    } else {
-        format!(
-            "Multi preview missing item 0x{item_id:04X}: art 0x{art_id:04X} is not present in {:?}.",
-            source
-        )
-    };
-    app.log_once(message);
-}
-
 fn concrete_art_tile_source(source: ArtSource) -> ArtSource {
     match source {
         ArtSource::Any => ArtSource::CcUop,
@@ -1400,19 +1429,31 @@ mod tests {
     }
 
     #[test]
-    fn a_missing_part_is_looked_for_and_logged_once_however_many_redraws() {
+    fn a_missing_part_is_looked_for_once_however_many_redraws() {
         let ctx = egui::Context::default();
         let mut app = crate::app::tests::test_app();
         let info = PartRenderInfo::default();
-        let logged = |app: &UopInspectorApp| app.logs.iter().filter(|log| log.contains("Multi preview")).count();
-
-        assert!(get_multi_part_texture(&mut app, &ctx, MISSING_TILE, &info).is_none());
-        let first = logged(&app);
-        assert_eq!(first, 1);
         for _ in 0..REDRAWS {
-            assert!(get_multi_part_texture(&mut app, &ctx, MISSING_TILE, &info).is_none());
+            assert!(cached_multi_part_texture(&mut app, &ctx, MISSING_TILE, &info).is_none());
         }
-        assert_eq!(logged(&app), first);
+        assert_eq!(app.multi_preview_cache.missing_art.len(), 1);
+    }
+
+    #[test]
+    fn the_parts_without_art_of_a_multi_get_one_warning_with_the_first_ids() {
+        const MULTI: u32 = 7;
+        const TILES: u16 = 8;
+        let mut app = crate::app::tests::test_app();
+        let parts: Vec<_> = (0..TILES).map(|tile| (MISSING_TILE + tile, PartRenderInfo::default())).collect();
+        for _ in 0..REDRAWS {
+            report_parts_without_art(&mut app, MULTI, &parts);
+        }
+        assert_eq!(app.logs, ["Multi preview: no art is loaded, CC UOP or other."]);
+
+        assert_eq!(tile_list(&[3, 1, 2, 1]), "0x0001, 0x0002, 0x0003");
+        let many: Vec<u16> = (0..TILES).collect();
+        assert_eq!(tile_list(&many), "0x0000, 0x0001, 0x0002, 0x0003, 0x0004 and 3 more");
+        assert_eq!(tiles_label(&many), "8 tiles");
     }
 
     #[test]

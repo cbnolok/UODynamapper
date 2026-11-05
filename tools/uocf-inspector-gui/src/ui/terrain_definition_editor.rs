@@ -127,7 +127,7 @@ pub(super) fn ui_terrain_definition_editor(app: &mut UopInspectorApp, ui: &mut e
                 let dictionary = app.uo_string_dictionary.as_deref();
                 match TerrainDefinitionEditor::open(source.to_path_buf(), package, dictionary) {
                     Ok(opened) => editor = Some(opened),
-                    Err(error) => app.log(format!("Failed to open the TerrainDefinition editor: {error}")),
+                    Err(error) => app.log_warning(format!("Failed to open the TerrainDefinition editor: {error}")),
                 }
             }
         }

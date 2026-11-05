@@ -249,12 +249,12 @@ impl GumpMap {
                 .wrap_err_with(|| format!("Failed to open {}", mul_path.display()))?;
             let mmap = unsafe { Mmap::map(&mul_handle)? };
             gump_mmap = Some(Arc::new(mmap));
-            log::info!("uocf: Loaded classic gump MUL format (memory-mapped)");
+            log::debug!("uocf: Loaded classic gump MUL format (memory-mapped)");
         }
 
         if let Some(path) = uop_path {
             uop_package = Some(UopPackage::load_with_mode(&path, LoadMode::Lazy)?);
-            log::info!("uocf: Loaded gump UOP format from {}", path.display());
+            log::debug!("uocf: Loaded gump UOP format from {}", path.display());
         }
 
         if idx_file.is_none() && uop_package.is_none() {

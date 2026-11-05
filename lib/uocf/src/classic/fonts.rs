@@ -727,7 +727,7 @@ impl ClassicFonts {
         let fonts_path = first_existing(client_path, &["fonts.mul", "Fonts.mul"]);
         let ascii_fonts = if let Some(path) = fonts_path {
             let fonts = load_ascii_fonts(&path)?;
-            log::info!(
+            log::debug!(
                 "uocf: Loaded classic fonts.mul with {} ASCII font face(s)",
                 fonts.len()
             );

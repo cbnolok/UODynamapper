@@ -1572,27 +1572,59 @@ fn collect_localized_string_rows(
 }
 
 fn load_optional_gumps_package(
+    app: &mut UopInspectorApp,
     base_path: &Path,
     file_name: &str,
-    mut log: impl FnMut(String),
 ) -> Option<GumpsPackage> {
     let package_path = base_path.join(file_name);
     if !package_path.exists() {
         return None;
     }
 
-    log(format!("Loading gump package from {}", package_path.display()));
     match GumpsPackage::load(&package_path) {
         Ok(package) => {
-            log(format!("Successfully loaded {file_name}."));
+            app.log_loaded(&[&package_path], format_args!("{} gumps", package.atlas_slots().len()));
             Some(package)
         }
         Err(error) => {
-            log(format!("Failed to load {file_name}: {error}"));
+            app.log_load_failure(&[&package_path], format_args!("{error:#}"));
             None
         }
     }
 }
+
+/// The file names of `paths`, for a log line: `art.mul and artLegacyMUL.uop`.
+fn client_files_label(paths: &[&Path]) -> String {
+    paths
+        .iter()
+        .map(|path| path.file_name().map_or_else(|| path.display().to_string(), |name| name.to_string_lossy().into_owned()))
+        .collect::<Vec<_>>()
+        .join(" and ")
+}
+
+/// The files of `names` that `base_path` holds, in that order.
+fn existing_client_files(base_path: &Path, names: &[&str]) -> Vec<PathBuf> {
+    names.iter().filter_map(|name| find_client_file_case_insensitive(base_path, name)).collect()
+}
+
+/// The Classic art files `ArtMap::load` reads, in its order.
+const CLASSIC_ART_FILE_NAMES: [&str; 4] = ["art.mul", "artLegacyMUL.uop", "LegacyTexture.uop", "Texture.uop"];
+/// The Classic gump files `GumpMap::load` reads, in its order.
+const CLASSIC_GUMP_FILE_NAMES: [&str; 2] = ["gumpart.mul", "gumpartLegacyMUL.uop"];
+/// The Classic animation files `AnimMap::load` reads, by file index.
+const CLASSIC_ANIM_FILE_NAMES: [&str; uocf::classic::anim::MAX_ANIM_FILES as usize] =
+    ["anim.mul", "anim2.mul", "anim3.mul", "anim4.mul", "anim5.mul", "anim6.mul"];
+/// The EC packages the cache loads that a parser above already reported: their cache load goes to the debug log.
+const EC_UOPS_REPORTED_BY_A_PARSER: [&str; 8] = [
+    "string_dictionary.uop",
+    "localizedstrings.uop",
+    "hues.uop",
+    "multicollection.uop",
+    "tileart.uop",
+    "terraindefinition.uop",
+    "legacytexture.uop",
+    "texture.uop",
+];
 
 fn load_cliloc_files(base_path: &Path, mut log: impl FnMut(String)) -> Vec<ClilocFileEntry> {
     let mut candidates: Vec<PathBuf> = Vec::new();
@@ -1709,7 +1741,7 @@ pub struct TabSearches {
 pub struct UopInspectorApp {
     pub settings: AppSettings,
     pub logs: Vec<String>,
-    /// What [`Self::log_once`] already logged.
+    /// What [`Self::log_warning_once`] already logged.
     logged_once: HashSet<String>,
     pub(crate) multi_preview_cache: crate::ui::multis::MultiPreviewCache,
     pub(crate) unsaved_changes: crate::ui::unsaved_changes::UnsavedChanges,
@@ -2066,12 +2098,36 @@ impl UopInspectorApp {
         self.logs.push(msg);
     }
 
-    /// Logs `message` the first time it is reported; for problems found while drawing, which repeat every frame.
-    pub fn log_once(&mut self, message: impl Into<String>) {
+    /// Logs a warning: something missing or not loaded.
+    pub fn log_warning(&mut self, msg: impl Into<String>) {
+        let msg = msg.into();
+        log::warn!("{}", msg);
+        self.logs.push(msg);
+    }
+
+    /// [`Self::log_warning`] the first time `message` is reported; for problems found while drawing, which repeat
+    /// every frame.
+    pub fn log_warning_once(&mut self, message: impl Into<String>) {
         let message = message.into();
         if self.logged_once.insert(message.clone()) {
-            self.log(message);
+            self.log_warning(message);
         }
+    }
+
+    /// The one line of loaded files: `Loaded <files>: <what they hold>`. Their paths go to the debug log.
+    pub fn log_loaded(&mut self, paths: &[&Path], details: impl std::fmt::Display) {
+        for path in paths {
+            log::debug!("Read {}", path.display());
+        }
+        self.log(format!("Loaded {}: {details}", client_files_label(paths)));
+    }
+
+    /// The one line of files that failed to load, a warning: `Failed to load <files>: <reason>`.
+    pub fn log_load_failure(&mut self, paths: &[&Path], reason: impl std::fmt::Display) {
+        for path in paths {
+            log::debug!("Could not read {}", path.display());
+        }
+        self.log_warning(format!("Failed to load {}: {reason}", client_files_label(paths)));
     }
 
     /// Creates a texture, or reports why the image cannot be one (`ui::textures`): in the log and the status bar
@@ -2093,7 +2149,7 @@ impl UopInspectorApp {
                     self.status_message = message.clone();
                 }
                 self.last_texture_problem = Some(message.clone());
-                self.log_once(message);
+                self.log_warning_once(message);
                 None
             }
         }
@@ -2104,7 +2160,7 @@ impl UopInspectorApp {
         for error in self.gpu_errors.take_unread() {
             let message = format!("GPU error: {error}");
             self.status_message = message.clone();
-            self.log_once(message);
+            self.log_warning_once(message);
         }
     }
 
@@ -2203,25 +2259,34 @@ impl UopInspectorApp {
 
         // 1. Try to load CC assets (mul and uop)
         if let Some(path) = self.settings.cc_path.clone() {
-            self.log(format!("Trying to load CC assets from {}", path.display()));
-            if let Some(package) = load_optional_gumps_package(&path, "gumps_cc.uddp", |msg| self.log(msg)) {
+            log::debug!("Loading the Classic client files from {}", path.display());
+            if let Some(package) = load_optional_gumps_package(self, &path, "gumps_cc.uddp") {
                 self.cc_gumps_package = Some(Arc::new(package));
             }
             let art_res = ArtMap::load(&path);
             let td_res = TileData::load(path.join("tiledata.mul"));
+            let gump_files = existing_client_files(&path, &CLASSIC_GUMP_FILE_NAMES);
+            let gump_files: Vec<&Path> = gump_files.iter().map(PathBuf::as_path).take(1).collect();
             match GumpMap::load(&path) {
                 Ok(gumps) => {
+                    self.log_loaded(&gump_files, format_args!("{} gump ids", gumps.max_id()));
                     self.cc_gumps = Some(Arc::new(gumps));
-                    self.log("Loading CC gump art... Success");
                 }
-                Err(e) => {
-                    self.log(format!("Loading CC gump art... Failed: {}", e));
-                }
+                Err(e) if gump_files.is_empty() => log::debug!("No Classic gump art: {e:#}"),
+                Err(e) => self.log_load_failure(&gump_files, format_args!("{e:#}")),
             }
+            let sound_files = existing_client_files(
+                &path,
+                &[uocf::classic::sound::SOUND_MUL_FILE_NAME, uocf::classic::sound::SOUND_UOP_FILE_NAME],
+            );
+            let sound_files: Vec<&Path> = sound_files.iter().map(PathBuf::as_path).take(1).collect();
             let loaded_sounds = match SoundMap::has_sound_files(&path).then(|| SoundMap::load(&path)) {
-                Some(Ok(sounds)) => Some(Arc::new(sounds)),
+                Some(Ok(sounds)) => {
+                    self.log_loaded(&sound_files, format_args!("{} sound slots", sounds.slot_count()));
+                    Some(Arc::new(sounds))
+                }
                 Some(Err(e)) => {
-                    self.log(format!("Loading CC sounds... Failed: {e:#}"));
+                    self.log_load_failure(&sound_files, format_args!("{e:#}"));
                     None
                 }
                 None => None,
@@ -2234,51 +2299,110 @@ impl UopInspectorApp {
             if let Some(multimap_path) = find_client_file_case_insensitive(&path, "Multimap.rle") {
                 match uocf::classic::multimap_rle::load_rle(&multimap_path) {
                     Ok(multimap) => {
+                        self.log_loaded(&[&multimap_path], format_args!("{}x{} pixels", multimap.width, multimap.height));
                         self.cc_multimap = Some(Arc::new(multimap));
                         self.cc_multimap_path = Some(multimap_path.clone());
-                        self.log(format!("Loaded multimap.rle from {}", multimap_path.display()));
                     }
-                    Err(e) => {
-                        self.log(format!("Failed to load multimap.rle: {}", e));
-                    }
+                    Err(e) => self.log_load_failure(&[&multimap_path], format_args!("{e:#}")),
                 }
             }
+            let tiledata_path = path.join("tiledata.mul");
             let loaded_tiledata = match td_res {
                 Ok(td) => {
+                    self.log_loaded(
+                        &[&tiledata_path],
+                        format_args!("{} land and {} item tiles", td.land_tiles().len(), td.item_tiles().len()),
+                    );
                     let td = Arc::new(td);
                     self.cc_tiledata_rows = Some(Arc::new(collect_cc_tiledata_rows(&td)));
                     self.cc_tiledata = Some(Arc::clone(&td));
                     Some(td)
                 }
                 Err(e) => {
-                    self.log(format!("tiledata.mul unavailable: {}", e));
+                    self.log_load_failure(&[&tiledata_path], format_args!("{e:#}"));
                     self.cc_tiledata = None;
                     self.cc_tiledata_rows = None;
                     None
                 }
             };
 
+            let art_files = existing_client_files(&path, &CLASSIC_ART_FILE_NAMES);
+            let art_files: Vec<&Path> = art_files.iter().map(PathBuf::as_path).collect();
             match art_res {
                 Ok(art) => {
+                    self.log_loaded(&art_files, format_args!("{} art ids", art.max_id()));
                     let td = loaded_tiledata.unwrap_or_else(|| Arc::new(TileData::new_empty()));
-                    let multis = uocf::classic::multi::MultiMap::load(&path)
-                        .ok()
-                        .map(Arc::new);
-                    let cliloc_files = load_cliloc_files(&path, |msg| self.log(msg));
+                    let multi_path = path.join("multi.mul");
+                    let multis = match uocf::classic::multi::MultiMap::load(&path) {
+                        Ok(multis) => {
+                            self.log_loaded(&[&multi_path], format_args!("{} multi ids", multis.max_id()));
+                            Some(Arc::new(multis))
+                        }
+                        Err(e) if !multi_path.exists() => {
+                            log::debug!("No multi.mul: {e:#}");
+                            None
+                        }
+                        Err(e) => {
+                            self.log_load_failure(&[&multi_path], format_args!("{e:#}"));
+                            None
+                        }
+                    };
+                    let cliloc_files = load_cliloc_files(&path, |msg| self.log_warning(msg));
+                    for entry in &cliloc_files {
+                        self.log_loaded(&[&entry.path], format_args!("{} strings", entry.cliloc.len()));
+                    }
                     self.cliloc_files = cliloc_files;
                     if let Some(index) = default_cliloc_file_index(&self.cliloc_files) {
                         self.select_cliloc_file(index);
                     }
-                    let hues = uocf::classic::hues::load_hues(&path.join("hues.mul"))
-                        .ok()
-                        .map(Arc::new);
-                    let animdata = uocf::classic::animdata::AnimData::load(path.join("animdata.mul"))
-                        .ok()
-                        .map(Arc::new);
-                    let anim_map = match uocf::classic::anim::AnimMap::load(&path) {
-                        Ok(anim_map) => Some(Arc::new(anim_map)),
+                    let hues_path = path.join("hues.mul");
+                    let hues = match uocf::classic::hues::load_hues(&hues_path) {
+                        Ok(hues) => {
+                            self.log_loaded(&[&hues_path], format_args!("{} hues", hues.len()));
+                            Some(Arc::new(hues))
+                        }
+                        Err(e) if !hues_path.exists() => {
+                            log::debug!("No hues.mul: {e:#}");
+                            None
+                        }
                         Err(e) => {
-                            self.log(format!("Classic animation MUL sources unavailable: {}", e));
+                            self.log_load_failure(&[&hues_path], format_args!("{e:#}"));
+                            None
+                        }
+                    };
+                    let animdata_path = path.join("animdata.mul");
+                    let animdata = match uocf::classic::animdata::AnimData::load(&animdata_path) {
+                        Ok(animdata) => {
+                            self.log_loaded(&[&animdata_path], format_args!("{} entries", animdata.entries.len()));
+                            Some(Arc::new(animdata))
+                        }
+                        Err(e) if !animdata_path.exists() => {
+                            log::debug!("No animdata.mul: {e:#}");
+                            None
+                        }
+                        Err(e) => {
+                            self.log_load_failure(&[&animdata_path], format_args!("{e:#}"));
+                            None
+                        }
+                    };
+                    let anim_files = existing_client_files(&path, &CLASSIC_ANIM_FILE_NAMES);
+                    let anim_files: Vec<&Path> = anim_files.iter().map(PathBuf::as_path).collect();
+                    let anim_map = match uocf::classic::anim::AnimMap::load(&path) {
+                        Ok(anim_map) => {
+                            let indexed = (0..uocf::classic::anim::MAX_ANIM_FILES)
+                                .filter_map(|file| anim_map.source_index_count(file))
+                                .sum::<usize>();
+                            if !anim_files.is_empty() {
+                                self.log_loaded(&anim_files, format_args!("{indexed} animation index entries"));
+                            }
+                            Some(Arc::new(anim_map))
+                        }
+                        Err(e) if anim_files.is_empty() => {
+                            log::debug!("No Classic animation files: {e:#}");
+                            None
+                        }
+                        Err(e) => {
+                            self.log_load_failure(&anim_files, format_args!("{e:#}"));
                             None
                         }
                     };
@@ -2292,11 +2416,11 @@ impl UopInspectorApp {
                         animdata,
                         anim_map,
                     });
-                    self.log("Loading CC assets... Success");
                 }
-                Err(e) => {
-                    self.log(format!("Loading CC assets... Failed: {}", e));
+                Err(e) if art_files.is_empty() => {
+                    self.log_load_failure(&[&path.join(CLASSIC_ART_FILE_NAMES[0])], format_args!("{e:#}"));
                 }
+                Err(e) => self.log_load_failure(&art_files, format_args!("{e:#}")),
             }
 
             for uop_name in ["artlegacymul.uop", "artLegacyMUL.uop"] {
@@ -2304,15 +2428,13 @@ impl UopInspectorApp {
                 if uop_path.exists() {
                     match UopPackage::load(&uop_path) {
                         Ok(package) => {
+                            log::debug!("Cached {} for the UOP browser", uop_path.display());
                             self.uop_cache.loaded_uops.push(Arc::new(crate::logic::uop_cache::LoadedUop {
                                 path: uop_path,
                                 package,
                             }));
-                            self.log(format!("Loading {} into cache... Success", uop_name));
                         }
-                        Err(e) => {
-                            self.log(format!("Loading {} into cache... Failed: {}", uop_name, e));
-                        }
+                        Err(e) => self.log_load_failure(&[&uop_path], format_args!("{e:#}")),
                     }
                     break;
                 }
@@ -2321,24 +2443,23 @@ impl UopInspectorApp {
             for uop_name in ["MultiCollection.uop", "multicollection.uop"] {
                 let uop_path = path.join(uop_name);
                 if uop_path.exists() {
-                    self.log(format!("Parsing {} from {}", uop_name, uop_path.display()));
                     match MultiCollection::load(&uop_path) {
                         Ok(collection) => {
                             let count = collection.items.len();
                             self.multi_collection = Some(Arc::new(collection));
                             self.multi_collection_source = Some(MultiCollectionSource::ClassicClient);
                             self.multi_collection_path = Some(uop_path.clone());
-                            self.log(format!("Parsed {} MultiCollection.uop entries.", count));
-                            self.load_housing_pieces(&uop_path);
+                            let housing = self.load_housing_pieces(&uop_path);
+                            self.log_loaded(&[&uop_path], format_args!("{count} entries{housing}"));
                         }
-                        Err(e) => self.log(format!("Failed to parse {}: {}", uop_name, e)),
+                        Err(e) => self.log_load_failure(&[&uop_path], format_args!("{e:#}")),
                     }
                     match UopPackage::load(&uop_path) {
                         Ok(package) => {
+                            log::debug!("Cached {} for the UOP browser", uop_path.display());
                             self.uop_cache.add(uop_path, package);
-                            self.log(format!("Loading {} into cache... Success", uop_name));
                         }
-                        Err(e) => self.log(format!("Loading {} into cache... Failed: {}", uop_name, e)),
+                        Err(e) => self.log_load_failure(&[&uop_path], format_args!("{e:#}")),
                     }
                     break;
                 }
@@ -2356,12 +2477,10 @@ impl UopInspectorApp {
                     }
                     match UopPackage::load_with_mode(&uop_path, LoadMode::Lazy) {
                         Ok(package) => {
+                            self.log_loaded(&[&uop_path], format_args!("{} entries", package.file_count()));
                             self.uop_cache.add(uop_path, package);
-                            self.log(format!("Loading {} into cache... Success", uop_name));
                         }
-                        Err(e) => {
-                            self.log(format!("Loading {} into cache... Failed: {}", uop_name, e));
-                        }
+                        Err(e) => self.log_load_failure(&[&uop_path], format_args!("{e:#}")),
                     }
                 }
             }
@@ -2377,15 +2496,10 @@ impl UopInspectorApp {
                 {
                     match UopPackage::load_with_mode(&uop_path, LoadMode::Lazy) {
                         Ok(package) => {
+                            self.log_loaded(&[&uop_path], format_args!("{} entries", package.file_count()));
                             self.uop_cache.add(uop_path, package);
-                            self.log("Loading AnimationSequence.uop into cache... Success");
                         }
-                        Err(e) => {
-                            self.log(format!(
-                                "Loading AnimationSequence.uop into cache... Failed: {}",
-                                e
-                            ));
-                        }
+                        Err(e) => self.log_load_failure(&[&uop_path], format_args!("{e:#}")),
                     }
                 }
             }
@@ -2393,37 +2507,37 @@ impl UopInspectorApp {
 
         // 2. Try to load EC assets (string dictionary and legacy texture)
         if let Some(ec_base_path) = self.settings.ec_path.clone() {
-            self.log(format!(
-                "Trying to load EC assets from {}",
-                ec_base_path.display()
-            ));
-            if let Some(package) = load_optional_gumps_package(&ec_base_path, "gumps_ec.uddp", |msg| self.log(msg)) {
+            log::debug!("Loading the Enhanced client files from {}", ec_base_path.display());
+            if let Some(package) = load_optional_gumps_package(self, &ec_base_path, "gumps_ec.uddp") {
                 self.ec_gumps_package = Some(Arc::new(package));
             }
 
             match AudioPackage::load(&ec_base_path) {
                 Ok(Some(audio)) => {
                     self.ec_audio_entries = Some(Arc::new(collect_ec_audio_entries(&audio)));
-                    self.log(format!("Loaded EC audio from {}", audio.path().display()));
+                    let audio_path = audio.path().to_path_buf();
+                    self.log_loaded(&[&audio_path], format_args!("{} entries", audio.package().file_count()));
                     self.ec_audio = Some(Arc::new(audio));
                     if self.cc_sounds.is_none() {
                         self.sound_source = SoundSource::Enhanced;
                     }
                 }
                 Ok(None) => {}
-                Err(e) => self.log(format!("Loading EC audio... Failed: {e:#}")),
+                Err(e) => self.log_load_failure(
+                    &[&ec_base_path.join(uocf::enhanced::audio::AUDIO_UOP_FILE_NAME)],
+                    format_args!("{e:#}"),
+                ),
             }
 
             // Try load string dictionary
             let sd_path = ec_base_path.join("string_dictionary.uop");
             if sd_path.exists() {
-                self.log(format!("Loading string dictionary from {}", sd_path.display()));
                 match UoStringDictionary::load(&sd_path) {
                     Ok(dict) => {
+                        self.log_loaded(&[&sd_path], format_args!("{} strings", dict.len()));
                         let rows = collect_string_dictionary_rows(&dict);
                         self.uo_string_dictionary = Some(Arc::new(dict));
                         self.string_dictionary_rows = Some(Arc::new(rows));
-                        self.log("Successfully loaded EC string dictionary.");
                         if let Ok(package) = UopPackage::load(&sd_path) {
                             self.string_dictionary_raw_hash = package
                                 .get_file_by_hash(0)
@@ -2431,23 +2545,20 @@ impl UopInspectorApp {
                                 .or_else(|| package.iter_files().find(|file| file.has_size()).map(|file| file.filename_hash()));
                         }
                     }
-                    Err(e) => {
-                        self.log(format!("Failed to load EC string dictionary: {}", e));
-                    }
+                    Err(e) => self.log_load_failure(&[&sd_path], format_args!("{e:#}")),
                 }
             }
 
             // Try load LegacyTexture.uop and attach to CC art if available
             let lt_path = ec_base_path.join("LegacyTexture.uop");
             if lt_path.exists() {
-                self.log(format!("Loading LegacyTexture.uop from {}", lt_path.display()));
                 match UopPackage::load(&lt_path) {
                     Ok(package) => {
+                        self.log_loaded(&[&lt_path], format_args!("{} entries of EC legacy art", package.file_count()));
                         if let Some(client) = &mut self.client_data {
                             let mut art = (*client.art).clone();
                             art = art.with_uop(package.clone());
                             client.art = Arc::new(art);
-                            self.log("Attached LegacyTexture.uop to CC art.");
                         } else {
                             // If no CC path, load it standalone
                             let art = ArtMap::load_standalone_uop(package.clone());
@@ -2461,26 +2572,22 @@ impl UopInspectorApp {
                                 animdata: None,
                                 anim_map: None,
                             });
-                            self.log("Loaded standalone Legacy Art UOP from EC folder.");
                         }
                     }
-                    Err(e) => {
-                        self.log(format!("Failed to load LegacyTexture.uop: {}", e));
-                    }
+                    Err(e) => self.log_load_failure(&[&lt_path], format_args!("{e:#}")),
                 }
             }
 
             if let Some(texture_path) =
                 find_client_file_case_insensitive(&ec_base_path, "Texture.uop")
             {
-                self.log(format!("Loading Texture.uop from {}", texture_path.display()));
                 match UopPackage::load(&texture_path) {
                     Ok(package) => {
+                        self.log_loaded(&[&texture_path], format_args!("{} entries of KR art", package.file_count()));
                         if let Some(client) = &mut self.client_data {
                             let mut art = (*client.art).clone();
                             art = art.with_ec_kr_uop(package.clone());
                             client.art = Arc::new(art);
-                            self.log("Attached Texture.uop to CC art as KR/New UOP art.");
                         } else {
                             let art = ArtMap::load_standalone_ec_kr_uop(package.clone());
                             self.client_data = Some(ClientData {
@@ -2493,56 +2600,43 @@ impl UopInspectorApp {
                                 animdata: None,
                                 anim_map: None,
                             });
-                            self.log("Loaded standalone Texture.uop from EC folder as KR/New UOP art.");
                         }
                     }
-                    Err(e) => {
-                        self.log(format!("Failed to load Texture.uop: {}", e));
-                    }
+                    Err(e) => self.log_load_failure(&[&texture_path], format_args!("{e:#}")),
                 }
             }
 
             if let Some(hues_path) =
                 find_client_file_case_insensitive(&ec_base_path, "hues.uop")
             {
-                self.log(format!("Parsing hues.uop from {}", hues_path.display()));
                 match EcHuePackage::load(&hues_path) {
                     Ok(hues) => {
-                        let bitmap_count = hues.bitmaps.len();
+                        self.log_loaded(&[&hues_path], format_args!("{} hue bitmaps", hues.bitmaps.len()));
                         self.ec_hues = Some(Arc::new(hues));
-                        self.log(format!("Parsed EC hues.uop with {} hue bitmaps.", bitmap_count));
                     }
-                    Err(e) => {
-                        self.log(format!("Failed to parse hues.uop: {}", e));
-                    }
+                    Err(e) => self.log_load_failure(&[&hues_path], format_args!("{e:#}")),
                 }
             }
 
             for uop_name in ["MultiCollection.uop", "multicollection.uop"] {
                 let uop_path = ec_base_path.join(uop_name);
                 if uop_path.exists() {
-                    self.log(format!("Parsing {} from {}", uop_name, uop_path.display()));
                     match MultiCollection::load(&uop_path) {
                         Ok(collection) => {
                             let count = collection.items.len();
                             self.multi_collection = Some(Arc::new(collection));
                             self.multi_collection_source = Some(MultiCollectionSource::EnhancedClient);
                             self.multi_collection_path = Some(uop_path.clone());
-                            self.log(format!("Parsed {} MultiCollection.uop entries.", count));
-                            self.load_housing_pieces(&uop_path);
+                            let housing = self.load_housing_pieces(&uop_path);
+                            self.log_loaded(&[&uop_path], format_args!("{count} entries{housing}"));
                         }
-                        Err(e) => self.log(format!("Failed to parse {}: {}", uop_name, e)),
+                        Err(e) => self.log_load_failure(&[&uop_path], format_args!("{e:#}")),
                     }
                     break;
                 }
             }
 
             if let Some(uop_path) = find_localized_strings_uop(&ec_base_path) {
-                let uop_name = uop_path
-                    .file_name()
-                    .and_then(|name| name.to_str())
-                    .unwrap_or(LOCALIZED_STRINGS_UOP_NAME);
-                self.log(format!("Parsing {} from {}", uop_name, uop_path.display()));
                 match LocalizedStringsPackage::load(&uop_path) {
                     Ok(strings) => {
                         let count = strings.len();
@@ -2550,9 +2644,9 @@ impl UopInspectorApp {
                         self.localized_strings = Some(Arc::new(strings));
                         self.localized_string_rows = Some(Arc::new(rows));
                         self.localized_strings_editor = crate::ui::clilocs::LocalizedStringsEditor::for_package(uop_path.clone());
-                        self.log(format!("Parsed {} localized string entries.", count));
+                        self.log_loaded(&[&uop_path], format_args!("{count} strings"));
                     }
-                    Err(e) => self.log(format!("Failed to parse {}: {}", uop_name, e)),
+                    Err(e) => self.log_load_failure(&[&uop_path], format_args!("{e:#}")),
                 }
             }
 
@@ -2604,22 +2698,23 @@ impl UopInspectorApp {
                     };
                     match UopPackage::load_with_mode(&uop_path, load_mode) {
                         Ok(package) => {
+                            if EC_UOPS_REPORTED_BY_A_PARSER.iter().any(|name| uop_name.eq_ignore_ascii_case(name)) {
+                                log::debug!("Cached {} for the UOP browser", uop_path.display());
+                            } else {
+                                self.log_loaded(&[&uop_path], format_args!("{} entries", package.file_count()));
+                            }
                             self.uop_cache.loaded_uops.push(Arc::new(crate::logic::uop_cache::LoadedUop {
                                 path: uop_path,
                                 package,
                             }));
-                            self.log(format!("Loading {} into cache... Success", uop_name));
                         }
-                        Err(e) => {
-                            self.log(format!("Loading {} into cache... Failed: {}", uop_name, e));
-                        }
+                        Err(e) => self.log_load_failure(&[&uop_path], format_args!("{e:#}")),
                     }
                 }
             }
 
             let tileart_path = ec_base_path.join("tileart.uop");
             if tileart_path.exists() {
-                self.log(format!("Parsing tileart.uop from {}", tileart_path.display()));
                 match UopPackage::load(&tileart_path) {
                     Ok(package) => {
                         let mut entries = Vec::new();
@@ -2642,39 +2737,28 @@ impl UopInspectorApp {
                         self.ec_tileart_entries = Some(Arc::new(entries));
                         self.ec_tileart_rows = Some(Arc::new(rows));
                         self.ec_tileart_path = Some(tileart_path.clone());
-                        self.log(format!(
-                            "Parsed {} tileart.uop entries ({} skipped).",
-                            count, failed
-                        ));
+                        self.log_loaded(&[&tileart_path], format_args!("{count} records ({failed} unreadable)"));
                     }
-                    Err(e) => {
-                        self.log(format!("Failed to load tileart.uop: {}", e));
-                    }
+                    Err(e) => self.log_load_failure(&[&tileart_path], format_args!("{e:#}")),
                 }
             }
 
             // Also load TerrainDefinitionPackage for the ad-hoc viewer
             if let Some(td_path) = find_client_file_case_insensitive(&ec_base_path, "TerrainDefinition.uop") {
-                self.log(format!(
-                    "Parsing TerrainDefinitionPackage from {}",
-                    td_path.display()
-                ));
                 match UopPackage::load(&td_path) {
                     Ok(package) => {
                         let dict_arc = self.uo_string_dictionary.clone();
                         let dict = dict_arc.as_deref();
-                        match uocf::enhanced::terrain_definition::TerrainDefinitionPackage::from_package(
+                        let package_error = match uocf::enhanced::terrain_definition::TerrainDefinitionPackage::from_package(
                             &package,
                             dict,
                         ) {
                             Ok(pkg) => {
                                 self.terrain_def_package = Some(Arc::new(pkg));
-                                self.log("Successfully parsed TerrainDefinitionPackage.");
+                                None
                             }
-                            Err(e) => {
-                                self.log(format!("Failed to parse TerrainDefinitionPackage: {}", e));
-                            }
-                        }
+                            Err(e) => Some(e),
+                        };
 
                         let mut files = Vec::new();
                         let mut failed = 0usize;
@@ -2705,34 +2789,27 @@ impl UopInspectorApp {
                         files.sort_by_key(|file| file.entry.id);
                         let count = files.len();
                         self.terrain_def_files = Some(Arc::new(files));
-                        self.log(format!(
-                            "Parsed {} TerrainDefinition.uop files ({} skipped).",
-                            count, failed
-                        ));
+                        match package_error {
+                            None => self.log_loaded(&[&td_path], format_args!("{count} files ({failed} unreadable)")),
+                            Some(e) => self.log_load_failure(
+                                &[&td_path],
+                                format_args!("{e:#}; {count} files read one by one ({failed} unreadable)"),
+                            ),
+                        }
                     }
-                    Err(e) => {
-                        self.log(format!("Failed to load TerrainDefinition.uop: {}", e));
-                    }
+                    Err(e) => self.log_load_failure(&[&td_path], format_args!("{e:#}")),
                 }
             }
         }
 
         // 3. Try to load .dic hash dictionary from settings path
         if let Some(path) = self.settings.dict_path.clone() {
-            self.log(format!(
-                "Trying to load dictionary from {}",
-                path.display()
-            ));
             match self.dictionary.load_dic(&path) {
                 Ok(_) => {
-                    self.log(format!(
-                        "Loaded DIC dictionary with {} named entries",
-                        self.dictionary.count()
-                    ));
+                    let count = self.dictionary.count();
+                    self.log_loaded(&[&path], format_args!("{count} named hashes in all"));
                 }
-                Err(e) => {
-                    self.log(format!("Failed to load DIC dictionary: {}", e));
-                }
+                Err(e) => self.log_load_failure(&[&path], format_args!("{e:#}")),
             }
         }
 
@@ -2772,13 +2849,11 @@ impl UopInspectorApp {
             for entry in entries.flatten() {
                 let path = entry.path();
                 if path.is_file() && path.extension().and_then(|s| s.to_str()) == Some("dic") {
-                    self.log(format!("Found DIC dictionary candidate: {}", path.display()));
+                    log::debug!("Found a hash dictionary candidate: {}", path.display());
                     match self.dictionary.load_dic(&path) {
                         Ok(_) => {
-                            self.log(format!(
-                                "Successfully loaded DIC dictionary: {}",
-                                path.display()
-                            ));
+                            let count = self.dictionary.count();
+                            self.log_loaded(&[&path], format_args!("{count} named hashes in all"));
                         }
                         Err(_) => {
                             // Silently ignore if it's not a valid dictionary.
@@ -3995,26 +4070,29 @@ impl UopInspectorApp {
         false
     }
 
-    fn load_housing_pieces(&mut self, uop_path: &Path) {
-        self.housing_pieces = match HousingPieces::load(uop_path) {
+    /// Loads the housing.bin of a MultiCollection.uop; returns what it holds for the package's log line, or `""`.
+    fn load_housing_pieces(&mut self, uop_path: &Path) -> String {
+        let (housing_pieces, summary) = match HousingPieces::load(uop_path) {
             Ok(Some(housing)) => {
-                self.log(format!(
-                    "Parsed housing.bin: {} tile types, {} pieces.",
+                let summary = format!(
+                    ", housing.bin {} tile types and {} pieces",
                     housing.tile_types.len(),
                     housing.pieces().count()
-                ));
-                Some(Arc::new(housing))
+                );
+                (Some(Arc::new(housing)), summary)
             }
-            Ok(None) => None,
+            Ok(None) => (None, String::new()),
             Err(e) => {
-                self.log(format!("Failed to parse housing.bin from {}: {}", uop_path.display(), e));
-                None
+                self.log_warning(format!("Failed to load housing.bin: {e:#}"));
+                (None, String::new())
             }
         };
+        self.housing_pieces = housing_pieces;
         self.housing_index = self
             .housing_pieces
             .as_deref()
             .map(|housing| Arc::new(HousingIndex::from_pieces(housing)));
+        summary
     }
 
     pub fn select_raw_multi_collection_housing(&mut self) -> bool {
