@@ -45,6 +45,7 @@ use std::path::Path;
 
 use crate::classic::facet_image::{FacetImageFile, UNDRAWN_BIT};
 use crate::classic::map::MapBlock;
+use crate::classic::radar::radar_top_static;
 use crate::classic::radarcol::load_radarcol;
 use crate::classic::statics_write::StaticRecord;
 use crate::classic::tiledata::TileData;
@@ -171,10 +172,10 @@ impl FacetImageRenderer {
     /// The radar colour of a tile before shading: its highest static reaching the land, else the land.
     fn base_colour(&self, land: u16, land_z: i8, statics: &[StaticRecord]) -> u16 {
         let height = |graphic: u16| i16::from(self.item_heights.get(usize::from(graphic)).copied().unwrap_or(0));
-        let top = statics.iter().max_by_key(|record| (i16::from(record.z) + height(record.graphic), record.z));
+        let top = radar_top_static(statics, |record| (record.graphic, record.z), height);
         let item = top
-            .filter(|record| i16::from(record.z) + height(record.graphic) >= i16::from(land_z))
-            .and_then(|record| self.radarcol.get(RADARCOL_ITEM_BASE + usize::from(record.graphic)));
+            .filter(|&(_, top)| top >= i16::from(land_z))
+            .and_then(|(record, _)| self.radarcol.get(RADARCOL_ITEM_BASE + usize::from(record.graphic)));
         item.or_else(|| self.radarcol.get(usize::from(land))).copied().unwrap_or(0)
     }
 

@@ -58,3 +58,4 @@ pub mod help_index;
 pub mod asset_map;
 pub mod facet_image;
 pub mod facet_image_render;
+pub mod radar;
