@@ -96,6 +96,12 @@ const MAP_BLOCK_FILE_SIZE: usize = 196;
 /// up to Mondain's Legacy (UO Gold's `map0.mul` is 77,070,336 bytes, 768 x 512 blocks) and 7168 wide since. So the
 /// width comes from the file: its block count over the facet's block rows.
 pub const CLASSIC_FACET_HEIGHTS: [u32; 6] = [4096, 4096, 1600, 2048, 1448, 4096];
+/// The width of Felucca and Trammel up to Mondain's Legacy.
+pub const PRE_ML_FELUCCA_WIDTH: u32 = 6144;
+/// The width of Felucca and Trammel since Mondain's Legacy.
+pub const ML_FELUCCA_WIDTH: u32 = 7168;
+/// The height of Felucca and Trammel.
+pub const FELUCCA_HEIGHT: u32 = 4096;
 
 /// Map blocks in each `build/mapNlegacymul/NNNNNNNN.dat` entry of a `mapNLegacyMUL.uop` package.
 pub const UOP_MAP_BLOCKS_PER_ENTRY: u32 = 4096;
@@ -1111,9 +1117,6 @@ mod tests {
     /// UO Gold's `map0.mul` (6144 x 4096) and a later one (7168 x 4096), in bytes.
     const GOLD_MAP0_SIZE: u64 = 77_070_336;
     const ML_MAP0_SIZE: u64 = 89_915_392;
-    const PRE_ML_FELUCCA_WIDTH: u32 = 6144;
-    const ML_FELUCCA_WIDTH: u32 = 7168;
-    const FELUCCA_HEIGHT: u32 = 4096;
     const TOKUNO_SIDE: u32 = 1448;
 
     fn blocks(file_size: u64) -> u64 {

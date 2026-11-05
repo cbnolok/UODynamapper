@@ -11,7 +11,7 @@ use crate::app::UopInspectorApp;
 const UNICODE_FONT_SLOTS: usize = 20;
 const PAGE_GLYPHS: u32 = 256;
 const LAST_PAGE: u32 = (u16::MAX as u32 + 1) / PAGE_GLYPHS - 1;
-pub(super) const FOREGROUND: [u8; 4] = [255, 255, 255, 255];
+pub(super) const FOREGROUND: [u8; 4] = [u8::MAX; 4];
 const MIN_ZOOM: f32 = 1.0;
 const MAX_ZOOM: f32 = 8.0;
 const DEFAULT_ZOOM: f32 = 2.0;

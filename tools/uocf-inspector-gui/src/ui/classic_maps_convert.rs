@@ -9,7 +9,7 @@ use std::time::Duration;
 use eframe::egui;
 use uocf::classic::facet_image_render::FacetImageMode;
 use uocf::classic::facet_sources::CLASSIC_FACET_NAMES;
-use uocf::classic::map::MapSizeCells;
+use uocf::classic::map::{MapSizeCells, FELUCCA_HEIGHT, ML_FELUCCA_WIDTH, PRE_ML_FELUCCA_WIDTH};
 use uocf::classic::world::{LandFill, VOID_LAND_ID, VOID_LAND_Z};
 use uocf::client_exe::facet_dimensions::{FACET_SIDE_ALIGNMENT, MAX_FACET_SIDE};
 use uocf::map_edition::MapEdition;
@@ -24,8 +24,8 @@ const LAND_HEX_DIGITS: usize = 4;
 /// Sizes the shipped clients give facets 0 and 1 (`docs/agent_notes/cc_file_coverage.md`): the older one is the size of
 /// the clients before Mondain's Legacy.
 const SIZE_PRESETS: [(&str, MapSizeCells); 2] = [
-    ("Felucca, Trammel of the old clients: 6144 x 4096", MapSizeCells { width: 6144, height: 4096 }),
-    ("Felucca, Trammel: 7168 x 4096", MapSizeCells { width: 7168, height: 4096 }),
+    ("Felucca, Trammel of the old clients: 6144 x 4096", MapSizeCells { width: PRE_ML_FELUCCA_WIDTH, height: FELUCCA_HEIGHT }),
+    ("Felucca, Trammel: 7168 x 4096", MapSizeCells { width: ML_FELUCCA_WIDTH, height: FELUCCA_HEIGHT }),
 ];
 const AUTOMATIC_SIZE_TEXT: &str = "The target client's, else the source's";
 const CUSTOM_SIZE_TEXT: &str = "Custom";
@@ -348,6 +348,13 @@ mod tests {
     use super::*;
 
     const OUTPUT: &str = "/copy";
+
+    #[test]
+    fn a_size_preset_names_its_size() {
+        for (name, size) in SIZE_PRESETS {
+            assert!(name.ends_with(&format!(": {} x {}", size.width, size.height)), "{name}");
+        }
+    }
     const CLASSIC_DIR: &str = "/client";
     const PACKAGE: &str = "/client/facet2x.uop";
 
