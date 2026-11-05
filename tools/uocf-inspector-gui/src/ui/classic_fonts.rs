@@ -5,6 +5,7 @@ use eframe::egui;
 use uocf::classic::fonts::{ASCII_GLYPH_COUNT, ASCII_PRINTABLE_START, ClassicFonts, FontRgbaImage};
 
 use super::classic_fonts_editor::FontsEditor;
+use super::{arrow_delta, move_selection};
 use crate::app::UopInspectorApp;
 
 /// `ClassicFonts` looks for `unifont.mul` to `unifont19.mul`.
@@ -24,6 +25,14 @@ const CELL_FRAME: f32 = 14.0;
 const DEFAULT_SAMPLE: &str = "The quick brown fox jumps over the lazy dog 0123456789";
 const TOOLS_PANEL_WIDTH: f32 = 220.0;
 const SELECTED_STROKE_WIDTH: f32 = 2.0;
+const GO_TO_WIDTH: f32 = 90.0;
+const GO_TO_HINT: &str = "A, U+00E9, 233";
+const GO_TO_HOVER: &str = "A character, its code point (U+00E9 or 0xE9) or its decimal code (233), then Enter. A single \
+                           digit is the character itself.";
+const FIRST_ASCII_CODE: u32 = ASCII_PRINTABLE_START as u32;
+const LAST_ASCII_CODE: u32 = FIRST_ASCII_CODE + ASCII_GLYPH_COUNT as u32 - 1;
+const LAST_CODE_POINT: u32 = u16::MAX as u32;
+const HEX_RADIX: u32 = 16;
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub(super) enum FontChoice {
@@ -52,6 +61,13 @@ pub struct ClassicFontsState {
     /// The font, the page and the editor's generation.
     built_for: Option<(FontChoice, u32, u64)>,
     pub(super) editor: FontsEditor,
+    /// What "Go to" was given.
+    go_to: String,
+    /// The glyph "Go to" found, outlined while viewing, and whether the grid still has to scroll to it.
+    found: Option<u32>,
+    scroll_to_found: bool,
+    /// Why the last "Go to" found nothing.
+    go_to_note: Option<String>,
 }
 
 impl Default for ClassicFontsState {
@@ -66,6 +82,10 @@ impl Default for ClassicFontsState {
             sample_texture: None,
             built_for: None,
             editor: FontsEditor::default(),
+            go_to: String::new(),
+            found: None,
+            scroll_to_found: false,
+            go_to_note: None,
         }
     }
 }
@@ -118,6 +138,62 @@ fn build_glyphs(ctx: &egui::Context, fonts: &ClassicFonts, editor: &FontsEditor,
     glyphs
 }
 
+/// The code "Go to" was given: `U+00E9` or `0xE9` (hexadecimal), a single character (itself, digits too), or a
+/// decimal code.
+fn parse_code(text: &str) -> Option<u32> {
+    let text = text.trim();
+    let hex = ["U+", "u+", "0x", "0X"].iter().find_map(|prefix| text.strip_prefix(prefix));
+    if let Some(hex) = hex {
+        return u32::from_str_radix(hex, HEX_RADIX).ok();
+    }
+    let mut chars = text.chars();
+    match (chars.next(), chars.next()) {
+        (Some(single), None) => Some(single as u32),
+        _ => text.parse().ok(),
+    }
+}
+
+/// Shows the glyph `state.go_to` names in the chosen font: turns to its Unicode page, selects it for editing and
+/// scrolls the grid to it, or says why it cannot.
+fn go_to(state: &mut ClassicFontsState) {
+    let Some(Ok(fonts)) = &state.fonts else {
+        return;
+    };
+    state.go_to_note = None;
+    let Some(code) = parse_code(&state.go_to) else {
+        state.go_to_note = Some(format!("\"{}\" is not a character or a code.", state.go_to.trim()));
+        return;
+    };
+    let present = match state.choice {
+        FontChoice::Ascii(_) => (FIRST_ASCII_CODE..=LAST_ASCII_CODE).contains(&code),
+        FontChoice::Unicode(font) => {
+            code <= LAST_CODE_POINT
+                && match state.editor.unicode_file(font) {
+                    Some(file) => file.glyph(code as u16).is_some(),
+                    None => matches!(fonts.unicode_glyph(font, code as u16), Ok(Some(_))),
+                }
+        }
+    };
+    if !present {
+        state.go_to_note = Some(format!("{} U+{code:04X} has no glyph in this font.", char_label(code)));
+        return;
+    }
+    if let FontChoice::Unicode(_) = state.choice {
+        state.page = code / PAGE_GLYPHS;
+    }
+    state.editor.select(code);
+    state.found = Some(code);
+    state.scroll_to_found = true;
+}
+
+/// The fonts of the list, in its order.
+fn font_choices(fonts: &ClassicFonts) -> Vec<FontChoice> {
+    (0..fonts.ascii_font_count())
+        .map(FontChoice::Ascii)
+        .chain((0..UNICODE_FONT_SLOTS).filter(|&font| fonts.unicode_font_exists(font)).map(FontChoice::Unicode))
+        .collect()
+}
+
 fn choice_label(choice: FontChoice) -> String {
     match choice {
         FontChoice::Ascii(font) => format!("ASCII font {font} (fonts.mul)"),
@@ -154,25 +230,45 @@ pub fn ui_classic_fonts(app: &mut UopInspectorApp, ctx: &egui::Context, ui: &mut
             }
             None => return,
         };
-        egui::ScrollArea::vertical().show(ui, |ui| {
-            for font in 0..fonts.ascii_font_count() {
-                ui.selectable_value(&mut state.choice, FontChoice::Ascii(font), choice_label(FontChoice::Ascii(font)));
+        let choices = font_choices(fonts);
+        // The arrow keys browse the list, unless a text field has the keyboard.
+        let keyboard_moved = match arrow_delta(ui, ui.ctx().text_edit_focused()).and_then(|delta| move_selection(&choices, Some(state.choice), delta)) {
+            Some(choice) if choice != state.choice => {
+                state.choice = choice;
+                true
             }
-            for font in (0..UNICODE_FONT_SLOTS).filter(|&font| fonts.unicode_font_exists(font)) {
-                ui.selectable_value(&mut state.choice, FontChoice::Unicode(font), choice_label(FontChoice::Unicode(font)));
+            _ => false,
+        };
+        egui::ScrollArea::vertical().show(ui, |ui| {
+            for &choice in &choices {
+                let response = ui.selectable_value(&mut state.choice, choice, choice_label(choice));
+                if keyboard_moved && state.choice == choice {
+                    response.scroll_to_me(Some(egui::Align::Center));
+                }
             }
         });
     });
 
     egui::CentralPanel::default().show(ui, |ui| {
-        let Some(Ok(fonts)) = &state.fonts else { return };
+        if !matches!(state.fonts, Some(Ok(_))) {
+            return;
+        }
         ui.heading(choice_label(state.choice));
         ui.horizontal(|ui| {
             ui.add(egui::Slider::new(&mut state.zoom, MIN_ZOOM..=MAX_ZOOM).text("Zoom"));
             if let FontChoice::Unicode(_) = state.choice {
                 ui.add(egui::DragValue::new(&mut state.page).range(0..=LAST_PAGE).prefix("page ").custom_formatter(|page, _| format!("{:04X}", page as u32 * PAGE_GLYPHS)));
             }
+            ui.label("Go to:");
+            let field = ui.add(egui::TextEdit::singleline(&mut state.go_to).hint_text(GO_TO_HINT).desired_width(GO_TO_WIDTH)).on_hover_text(GO_TO_HOVER);
+            if field.lost_focus() && ui.input(|input| input.key_pressed(egui::Key::Enter)) {
+                go_to(state);
+            }
+            if let Some(note) = &state.go_to_note {
+                ui.colored_label(ui.visuals().warn_fg_color, note);
+            }
         });
+        let Some(Ok(fonts)) = &state.fonts else { return };
         if let FontChoice::Unicode(font) = state.choice {
             ui.horizontal(|ui| {
                 ui.label("Sample:");
@@ -204,7 +300,8 @@ pub fn ui_classic_fonts(app: &mut UopInspectorApp, ctx: &egui::Context, ui: &mut
         if state.glyphs.is_empty() {
             ui.weak("No glyph on this page.");
         }
-        egui::ScrollArea::vertical().show(ui, |ui| {
+        let outlined = if editing { Some(state.editor.selected()) } else { state.found };
+        let grid = egui::ScrollArea::vertical().show(ui, |ui| {
             ui.horizontal_wrapped(|ui| {
                 let tallest = state.glyphs.iter().map(|glyph| glyph.size.y).fold(0.0, f32::max);
                 for glyph in &state.glyphs {
@@ -226,14 +323,17 @@ pub fn ui_classic_fonts(app: &mut UopInspectorApp, ctx: &egui::Context, ui: &mut
                             .response
                         })
                         .inner;
+                    if outlined == Some(glyph.code) {
+                        let stroke = egui::Stroke::new(SELECTED_STROKE_WIDTH, ui.visuals().selection.bg_fill);
+                        ui.painter().rect_stroke(response.rect, 0.0, stroke, egui::StrokeKind::Inside);
+                        if state.scroll_to_found {
+                            response.scroll_to_me(Some(egui::Align::Center));
+                        }
+                    }
                     if editing {
                         let response = response.interact(egui::Sense::click());
                         if response.clicked() {
                             state.editor.select(glyph.code);
-                        }
-                        if state.editor.selected() == glyph.code {
-                            let stroke = egui::Stroke::new(SELECTED_STROKE_WIDTH, ui.visuals().selection.bg_fill);
-                            ui.painter().rect_stroke(response.rect, 0.0, stroke, egui::StrokeKind::Inside);
                         }
                         response.on_hover_text(&glyph.details);
                     } else {
@@ -242,5 +342,122 @@ pub fn ui_classic_fonts(app: &mut UopInspectorApp, ctx: &egui::Context, ui: &mut
                 }
             });
         });
+        // "Go to" turns the page and fills the grid in the same frame.
+        state.scroll_to_found = false;
+        // Ctrl or Shift + wheel, or a pinch, over the glyphs zooms them.
+        if ui.rect_contains_pointer(grid.inner_rect) {
+            let zoom = ui.input(|input| input.zoom_delta());
+            if zoom != 1.0 {
+                state.zoom = (state.zoom * zoom).clamp(MIN_ZOOM, MAX_ZOOM);
+            }
+        }
     });
+}
+
+#[cfg(test)]
+mod tests {
+    use std::path::{Path, PathBuf};
+
+    use uocf::classic::fonts::{unicode_font_file_name, AsciiFont, AsciiFontGlyph, AsciiFontsFile, UnicodeFontData, UnicodeFontGlyph};
+
+    use super::*;
+    use crate::app::tests::test_app;
+    use crate::ui::test_support::output_path;
+
+    const ASCII_FONTS: usize = 2;
+    const GLYPH_SIDE: u8 = 2;
+    /// 'é', on the first page.
+    const NEAR_CODE: u16 = 0x00E9;
+    /// On a later page.
+    const FAR_CODE: u16 = 0x4E00;
+    const ABSENT_CODE: u16 = 0x4E01;
+
+    /// A client folder with two ASCII fonts and one Unicode font, which the loader also lists as font 1.
+    fn client_folder(name: &str) -> PathBuf {
+        let folder = output_path(name);
+        std::fs::create_dir_all(&folder).unwrap();
+        let pixels = vec![0; usize::from(GLYPH_SIDE) * usize::from(GLYPH_SIDE)];
+        let glyph = AsciiFontGlyph { width: GLYPH_SIDE, height: GLYPH_SIDE, unknown: 0, pixels };
+        let font = AsciiFont { header: 0, glyphs: vec![glyph; ASCII_GLYPH_COUNT] };
+        AsciiFontsFile { fonts: vec![font; ASCII_FONTS], tail: Vec::new() }.save(&folder.join("fonts.mul")).unwrap();
+        let mut unicode = UnicodeFontData::default();
+        for code in [NEAR_CODE, FAR_CODE] {
+            unicode.set_glyph(code, Some(UnicodeFontGlyph::blank(GLYPH_SIDE, GLYPH_SIDE))).unwrap();
+        }
+        unicode.save(&folder.join(unicode_font_file_name(0))).unwrap();
+        folder
+    }
+
+    fn fonts_app(folder: &Path) -> UopInspectorApp {
+        let mut app = test_app();
+        app.view_mode = crate::app::ViewMode::ClassicFonts;
+        app.settings.cc_path = Some(folder.to_path_buf());
+        app
+    }
+
+    fn frame(ctx: &egui::Context, app: &mut UopInspectorApp, input: egui::RawInput) {
+        let _ = ctx.run_ui(input, |ui| crate::ui::draw_ui(app, ctx, ui));
+    }
+
+    fn key_press(key: egui::Key) -> egui::RawInput {
+        let event = egui::Event::Key { key, physical_key: None, pressed: true, repeat: false, modifiers: egui::Modifiers::NONE };
+        egui::RawInput { events: vec![event], ..Default::default() }
+    }
+
+    #[test]
+    fn codes_are_read_as_a_character_a_code_point_or_a_decimal_code() {
+        assert_eq!(parse_code("A"), Some(u32::from('A')));
+        assert_eq!(parse_code("5"), Some(u32::from('5')), "a single digit is the character");
+        assert_eq!(parse_code("é"), Some(0xE9));
+        assert_eq!(parse_code(" U+00E9 "), Some(0xE9));
+        assert_eq!(parse_code("0x4e00"), Some(0x4E00));
+        assert_eq!(parse_code("233"), Some(233));
+        assert_eq!(parse_code("U+"), None);
+        assert_eq!(parse_code("abc"), None);
+    }
+
+    #[test]
+    fn the_arrow_keys_browse_the_font_list() {
+        let folder = client_folder("fonts-arrows");
+        let mut app = fonts_app(&folder);
+        let ctx = egui::Context::default();
+        frame(&ctx, &mut app, egui::RawInput::default());
+        assert_eq!(app.classic_file_views.fonts.choice, FontChoice::Ascii(0));
+        let expected = [FontChoice::Ascii(1), FontChoice::Unicode(0), FontChoice::Unicode(1), FontChoice::Unicode(1)];
+        for choice in expected {
+            frame(&ctx, &mut app, key_press(egui::Key::ArrowDown));
+            assert_eq!(app.classic_file_views.fonts.choice, choice);
+        }
+        frame(&ctx, &mut app, key_press(egui::Key::ArrowUp));
+        assert_eq!(app.classic_file_views.fonts.choice, FontChoice::Unicode(0));
+        std::fs::remove_dir_all(&folder).unwrap();
+    }
+
+    #[test]
+    fn go_to_turns_to_the_page_of_a_glyph_and_selects_it() {
+        let folder = client_folder("fonts-go-to");
+        let fonts = ClassicFonts::load(&folder).unwrap();
+        let mut state = ClassicFontsState { fonts: Some(Ok(fonts)), choice: FontChoice::Unicode(0), ..Default::default() };
+        state.go_to = format!("U+{FAR_CODE:04X}");
+        go_to(&mut state);
+        assert_eq!((state.page, state.found, state.editor.selected()), (u32::from(FAR_CODE) / PAGE_GLYPHS, Some(u32::from(FAR_CODE)), u32::from(FAR_CODE)));
+        assert!(state.scroll_to_found && state.go_to_note.is_none());
+
+        state.go_to = format!("U+{ABSENT_CODE:04X}");
+        go_to(&mut state);
+        assert!(state.go_to_note.is_some(), "no glyph");
+        assert_eq!(state.found, Some(u32::from(FAR_CODE)), "kept");
+
+        state.choice = FontChoice::Ascii(0);
+        state.go_to = "A".to_owned();
+        go_to(&mut state);
+        assert_eq!(state.found, Some(u32::from('A')));
+        state.go_to = "é".to_owned();
+        go_to(&mut state);
+        assert_eq!(state.found, Some(u32::from('é')), "ASCII fonts end at 255");
+        state.go_to = "U+0100".to_owned();
+        go_to(&mut state);
+        assert!(state.go_to_note.is_some(), "past the ASCII font");
+        std::fs::remove_dir_all(&folder).unwrap();
+    }
 }
