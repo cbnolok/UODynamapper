@@ -1,10 +1,12 @@
 use crate::app::{GumpSource, GumpViewerTab, PaperdollEquipmentInput, UopInspectorApp};
 use crate::ui::ec_interface_textures;
+use crate::ui::ec_paperdoll::{self, Definitions, FrameSets, WearableRules, WornItem, PAPERDOLL_UOP_NAME};
 use crate::ui::{arrow_delta, centered_row_offset, go_to_field, list_sort_controls, move_selection, sorted_indices_by};
 use eframe::egui;
 use knuffel::Decode;
 use std::sync::Arc;
 use std::sync::OnceLock;
+use uocf::enhanced::hues::{EcHueTables, HUES_UOP_NAME};
 use uocf::enhanced::textures::{ECImageFormat, TextureFile, TextureItem as RawTextureItem};
 use uocf::uop_container::hash::hash_file_name_single;
 use uocf::uop_container::package::{LoadMode, UopPackage};
@@ -18,6 +20,15 @@ const GUMP_SPLIT_MIN_RATIO: f32 = 0.20;
 const GUMP_SPLIT_MAX_RATIO: f32 = 0.80;
 const PAPERDOLL_PROFILE_KDL: &str =
     include_str!("../../../../dynamapper/assets/runtime_specs/paperdoll/PaperdollProfiles.kdl");
+/// Image preview keys of the rendered paperdolls, or-ed with the body id.
+const PAPERDOLL_PREVIEW_KEY: u64 = 0x7000000000000000;
+const EC_PAPERDOLL_PREVIEW_KEY: u64 = 0x7100000000000000;
+/// egui memory of the `Paperdoll.uop` frame sets, with the Enhanced Client folder.
+const EC_PAPERDOLL_FRAME_SETS_ID: &str = "uocf_ec_paperdoll_frame_sets";
+const EC_PAPERDOLL_NOTE: &str = "EC: the body and item frames of Paperdoll.uop, placed around the body's anchor and \
+                                 drawn in the paperdoll order of wearables.xml (WearableRules.kdl). An item's layer \
+                                 comes from its tileart.uop Layer property, else its tiledata layer; the Slot column \
+                                 and the profile are not used.";
 
 #[derive(Clone)]
 struct PaperdollProfile {
@@ -479,6 +490,10 @@ fn ui_paperdoll(
 
         right.separator();
         right.heading("Paperdoll");
+        let enhanced = app.selected_gump_source == GumpSource::Enhanced;
+        if enhanced {
+            right.label(EC_PAPERDOLL_NOTE);
+        }
         egui::ComboBox::from_label("Profile")
             .selected_text(profile_by_id(profiles, &app.selected_paperdoll_profile).label.as_str())
             .show_ui(right, |ui| {
@@ -525,6 +540,9 @@ fn ui_paperdoll(
                 ui.end_row();
 
                 let tiledata = app.cc_tiledata.as_ref().map(Arc::clone);
+                let ec_tileart = app.ec_tileart_entries.as_ref().map(Arc::clone);
+                let ec_frame_sets = if enhanced { cached_ec_paperdoll_frame_sets(app, ctx) } else { None };
+                let body_id = parse_u32_field(&app.paperdoll_body_id).unwrap_or_default();
                 let mut remove_index = None;
                 let mut inspect_item_id = None;
                 for (index, row) in app.paperdoll_equipment.iter_mut().enumerate() {
@@ -542,12 +560,22 @@ fn ui_paperdoll(
                         });
                     ui.text_edit_singleline(&mut row.item_id);
                     ui.text_edit_singleline(&mut row.hue);
-                    ui.monospace(equipment_detail(
-                        tiledata.as_deref(),
-                        selected_profile,
-                        row.slot.as_str(),
-                        row.item_id.as_str(),
-                    ));
+                    if enhanced {
+                        ui.monospace(ec_equipment_detail(
+                            ec_frame_sets.as_deref(),
+                            ec_tileart.as_deref().map(Vec::as_slice),
+                            tiledata.as_deref(),
+                            body_id,
+                            row.item_id.as_str(),
+                        ));
+                    } else {
+                        ui.monospace(equipment_detail(
+                            tiledata.as_deref(),
+                            selected_profile,
+                            row.slot.as_str(),
+                            row.item_id.as_str(),
+                        ));
+                    }
                     if ui.button("Hue").clicked() {
                         row.hue = app.selected_hue_id.to_string();
                         app.paperdoll_preview = None;
@@ -592,9 +620,9 @@ fn ui_paperdoll(
             }
             if ui.button("Render").clicked() {
                 match render_paperdoll(app, ctx) {
-                    Ok(handle) => {
+                    Ok((handle, status)) => {
                         app.paperdoll_preview = Some(handle);
-                        app.status_message = "Rendered paperdoll preview.".to_string();
+                        app.status_message = status;
                     }
                     Err(error) => {
                         app.paperdoll_preview = None;
@@ -1060,10 +1088,142 @@ fn equipment_detail(
     )
 }
 
+/// The Derived column of an EC item row.
+fn ec_equipment_detail(
+    frame_sets: Option<&FrameSets>,
+    tileart: Option<&[crate::app::TileArtFileEntry]>,
+    tiledata: Option<&uocf::classic::tiledata::TileData>,
+    body_id: u32,
+    item_id: &str,
+) -> String {
+    if item_id.trim().is_empty() {
+        return String::new();
+    }
+    let Ok(item_id) = parse_u32_field(item_id) else {
+        return "invalid item id".to_string();
+    };
+    let Some(tileart) = tileart else {
+        return "tileart.uop is not loaded".to_string();
+    };
+    ec_paperdoll::item_detail(frame_sets, Definitions(tileart), body_id, item_id, tiledata_layer(tiledata, item_id))
+}
+
+/// The layer of an item in tiledata, if it has one.
+fn tiledata_layer(tiledata: Option<&uocf::classic::tiledata::TileData>, item_id: u32) -> Option<u8> {
+    let item = tiledata?.item_tiles().get(usize::try_from(item_id).ok()?)?;
+    (item.quality != 0).then_some(item.quality)
+}
+
+/// The `Paperdoll.uop` frame sets of the Enhanced Client folder, if they have been read.
+fn cached_ec_paperdoll_frame_sets(app: &UopInspectorApp, ctx: &egui::Context) -> Option<Arc<FrameSets>> {
+    let ec_path = app.settings.ec_path.as_ref()?;
+    ctx.data(|data| data.get_temp::<Arc<FrameSets>>(egui::Id::new((EC_PAPERDOLL_FRAME_SETS_ID, ec_path))))
+}
+
+/// The `Paperdoll.uop` frame sets of the Enhanced Client folder, read on first use.
+fn ec_paperdoll_frame_sets(app: &UopInspectorApp, ctx: &egui::Context) -> color_eyre::eyre::Result<Arc<FrameSets>> {
+    if let Some(sets) = cached_ec_paperdoll_frame_sets(app, ctx) {
+        return Ok(sets);
+    }
+    let ec_path = app
+        .settings
+        .ec_path
+        .as_ref()
+        .ok_or_else(|| color_eyre::eyre::eyre!("No Enhanced Client folder is set."))?;
+    let path = crate::app::find_client_file_case_insensitive(ec_path, PAPERDOLL_UOP_NAME)
+        .ok_or_else(|| color_eyre::eyre::eyre!("No {PAPERDOLL_UOP_NAME} in {}.", ec_path.display()))?;
+    let sets = Arc::new(FrameSets::load(&path)?);
+    ctx.data_mut(|data| data.insert_temp(egui::Id::new((EC_PAPERDOLL_FRAME_SETS_ID, ec_path)), Arc::clone(&sets)));
+    Ok(sets)
+}
+
+/// The tables of the given hues, from the cached `hues.uop` or the one of the Enhanced Client folder.
+fn ec_paperdoll_hue_tables(app: &UopInspectorApp, hues: Vec<u16>) -> color_eyre::eyre::Result<EcHueTables> {
+    if hues.iter().all(|&hue| hue == 0) {
+        return Ok(EcHueTables::default());
+    }
+    let cached = app.uop_cache.loaded_uops.iter().find(|loaded| {
+        loaded
+            .path
+            .file_name()
+            .and_then(|name| name.to_str())
+            .is_some_and(|name| name.eq_ignore_ascii_case(HUES_UOP_NAME))
+    });
+    if let Some(loaded) = cached {
+        return ec_paperdoll::hue_tables(&loaded.package, hues);
+    }
+    let path = app
+        .settings
+        .ec_path
+        .as_ref()
+        .and_then(|ec_path| crate::app::find_client_file_case_insensitive(ec_path, HUES_UOP_NAME))
+        .ok_or_else(|| color_eyre::eyre::eyre!("No {HUES_UOP_NAME} in the Enhanced Client folder to hue with."))?;
+    ec_paperdoll::hue_tables(&UopPackage::load_with_mode(&path, LoadMode::Lazy)?, hues)
+}
+
+/// The Enhanced Client's paperdoll: `Paperdoll.uop` frames found and ordered as the client does.
+fn render_ec_paperdoll(
+    app: &mut UopInspectorApp,
+    ctx: &egui::Context,
+) -> color_eyre::eyre::Result<(egui::TextureHandle, String)> {
+    let body_id = parse_u32_field(&app.paperdoll_body_id)?;
+    let tileart = app
+        .ec_tileart_entries
+        .as_ref()
+        .map(Arc::clone)
+        .ok_or_else(|| color_eyre::eyre::eyre!("tileart.uop of the Enhanced Client is not loaded."))?;
+    let sets = ec_paperdoll_frame_sets(app, ctx)?;
+    let tiledata = app.cc_tiledata.as_ref().map(Arc::clone);
+    let mut items = Vec::new();
+    for row in &app.paperdoll_equipment {
+        if row.item_id.trim().is_empty() {
+            continue;
+        }
+        let item_id = parse_u32_field(&row.item_id)?;
+        items.push(WornItem {
+            item_id,
+            hue: parse_optional_hue(&row.hue),
+            tiledata_layer: tiledata_layer(tiledata.as_deref(), item_id),
+        });
+    }
+    let body_hue = parse_optional_hue(&app.paperdoll_body_hue);
+    let hues = ec_paperdoll_hue_tables(app, items.iter().map(|item| item.hue).chain([body_hue]).collect())?;
+    let rules = WearableRules::embedded().map_err(|error| color_eyre::eyre::eyre!("{error}"))?;
+    let paperdoll = ec_paperdoll::build(&sets, Definitions(&tileart), rules, &hues, body_id, body_hue, &items)?;
+    let (width, height, pixels) = ec_paperdoll::compose(&paperdoll.frames);
+    let handle = super::textures::load_rgba(
+        ctx,
+        format!("paperdoll_{:?}_{body_id}", app.selected_gump_source),
+        [width as usize, height as usize],
+        &pixels,
+        Default::default(),
+    )
+    .map_err(|problem| color_eyre::eyre::eyre!("Cannot show the paperdoll: {problem}."))?;
+    app.register_current_image_preview(
+        EC_PAPERDOLL_PREVIEW_KEY | u64::from(body_id),
+        format!("EC paperdoll {body_id}"),
+        width,
+        height,
+        &pixels,
+    );
+    for note in &paperdoll.notes {
+        log::info!("EC paperdoll {body_id}: {note}");
+    }
+    let status = if paperdoll.notes.is_empty() {
+        format!("Rendered the EC paperdoll of body {body_id}.")
+    } else {
+        format!("Rendered the EC paperdoll of body {body_id}; {}.", paperdoll.notes.join("; "))
+    };
+    Ok((handle, status))
+}
+
 fn render_paperdoll(
     app: &mut UopInspectorApp,
     ctx: &egui::Context,
-) -> color_eyre::eyre::Result<egui::TextureHandle> {
+) -> color_eyre::eyre::Result<(egui::TextureHandle, String)> {
+    if app.selected_gump_source == GumpSource::Enhanced {
+        return render_ec_paperdoll(app, ctx);
+    }
     let body_id = parse_u32_field(&app.paperdoll_body_id)?;
     let profile = profile_by_id(paperdoll_profiles(), &app.selected_paperdoll_profile);
     let mut layers = vec![PaperdollLayer {
@@ -1110,7 +1270,7 @@ fn render_paperdoll(
         Default::default(),
     )
     .map_err(|problem| color_eyre::eyre::eyre!("Cannot show the paperdoll: {problem}."))?;
-    let key = 0x7000000000000000 | u64::from(body_id);
+    let key = PAPERDOLL_PREVIEW_KEY | u64::from(body_id);
     app.register_current_image_preview(
         key,
         format!("paperdoll {} {}", app.selected_paperdoll_profile, body_id),
@@ -1118,7 +1278,7 @@ fn render_paperdoll(
         height,
         &pixels,
     );
-    Ok(handle)
+    Ok((handle, "Rendered paperdoll preview.".to_string()))
 }
 
 fn compose_paperdoll(
@@ -1265,7 +1425,7 @@ fn apply_hue(
     Ok(())
 }
 
-fn alpha_blend_at(
+pub(super) fn alpha_blend_at(
     canvas: &mut [u8],
     canvas_width: u32,
     dst_x: i32,

@@ -16,6 +16,15 @@ Programs `UOSA.exe` (SHA-256 `5a5e9dc536c836d1bf10b6f86bb88f61a6ae078f519d4060d3
 | UOSA | 0x0050ba30 | `ECPaperdollTexture::GetLayerFrame` | probable name: vtable 0x00ca9298 slot 6 |
 | UOSA | 0x0050c550 | `CCPaperdollTexture::GetLayerFrame` | probable name: vtable 0x00ca92b8 slot 6 |
 | UOSA | 0x0050a240 | `PaperdollTextures::ReleasePaperdollFrameSets` | probable |
+| UOSA | 0x0050b690 | (not renamed) | probable `ECPaperdollTexture::GetLayers`: vtable 0x00ca9298 slot 5 |
+| UOSA | 0x00430f60 | `UOAnimations::FindFrameEntry` | (action, number), 32-bit compare |
+| UOSA | 0x00842bb2 | `UOObjectDefinitionBase::GetAppearance` | the +0xbc of `FindLayerFrame` |
+| UOSA | 0x0084b3c4 | `AppearanceFilterByOwnerBodyType::Apply` | |
+| UOSA | 0x0084b485 | `AppearanceFilterByOwnerGender::Apply` | |
+| UOSA | 0x00468810 | `UOAnimations::BuildEquipmentLayerOrder` | the walking order (+0xf8) and the paperdoll one (+0x160) |
+| UOSA | 0x00468e30 | (not renamed) | applies the `wearables.xml` overrides to a draw order |
+| UOSA | 0x00468660 | (not renamed) | picks the `draworder` record of a key |
+| UOSA | 0x00468230 | (not renamed) | probable `wearables.xml` loader: reads "draworderpriority" at 0x004682a9 |
 | UOKR | 0x004d9f80 | `PaperdollTextures::LoadPaperdollFrameSets` | same requests |
 
 Globals (not renamed): UOSA 0x00e33d3c male set (asset 0x40), 0x00e33d44 female set (asset 0x41); UOKR
@@ -47,11 +56,63 @@ Globals (not renamed): UOSA 0x00e33d3c male set (asset 0x40), 0x00e33d44 female 
    `Paperdoll` property (11) redirects to the definition of value + 10,000,000. `FindLayerFrame` follows the
    `Appearance` property (8, same + 10,000,000) up to 5 levels, then searches (action = gender, number = a
    definition value read through vtable +0xbc). A miss is retried in the male set with action 0. The palette
-   takes the item's hue. **confirmed** for the flow, **probable** for what +0xbc returns.
+   takes the item's hue. **confirmed** for the flow, **probable** for what +0xbc returns. Since read: +0xbc is
+   `GetAppearance` (item 8). **confirmed**.
 7. **Frame numbers.** Mobile bodies and item animation ids: the male set has 400 (human), 402, 605 (elf), 607,
    666 (gargoyle); the female set 401, 606, 608, 667 (and 400). EC: 578 male frames (numbers 105..9986), 577
    female (185..9985); KR: 313 and 333 (183..1019). **probable** (the ids match the body and tiledata animation
    numbers; the code only passes +0x50 through).
+
+## Worn items on the EC paperdoll
+
+8. **Frame number of an item.** `FindLayerFrame` (0x0050b850) gives up past depth 5. A definition with an
+   `Appearance` property (8; `HasProperty` vtable +0x64, value +0x68) first tries the definition value +
+   10,000,000, recursively, and returns its frame when one is found. Otherwise the number is `GetAppearance`
+   (0x00842bb2) of the definition for the wearer: the `Appearance` value, else the tile id, unless one of the
+   definition's appearance filters applies first (subtype 2, the animation filter, is skipped; the first filter
+   that applies wins). `AppearanceFilterByOwnerBodyType::Apply` (0x0084b3c4) matches the wearer's `Appearance`,
+   else its tile id (vtable +0x10), against each row's body type; `AppearanceFilterByOwnerGender::Apply`
+   (0x0084b485) matches the wearer's gender (+0xd4). `FindFrameEntry` (0x00430f60) compares 32-bit numbers, so a
+   number past 65,535 finds no 16-bit frame. **confirmed**.
+9. **Which layers.** The layer list (0x0050b690, vtable slot 5) reads the 26 layer bytes of the mobile at +0x160,
+   the paperdoll order, and skips layers 0, 0x15 (backpack) and 0x19 (mount). The face layer (0x0F) item takes
+   the value of item vtable +0x68 in place of its tile id when that is non-zero (in `GetLayerFrame`; what +0x68
+   holds was not traced). **confirmed** for the reads.
+10. **Paperdoll order.** `UOAnimations::BuildEquipmentLayerOrder` (0x00468810) reads the wearer definition's race
+    (`HasRace` +0xc8, `GetRace` +0xd0, 1 when absent) and gender (+0xcc, +0xd4, 0 when absent). The walking order
+    (+0xf8) is keyed (race, gender, frameset, direction); the paperdoll one (+0x160) is keyed (race, gender, -1,
+    9) at 0x00468b0a..0x00468b4e. Both go through 0x00468e30; a layer whose priority ends at 0 or less gets 0x1e,
+    not drawn; the others their layer byte (0x00468b77..0x00468b90). **confirmed**. Direction 9 is the
+    `paperdoll` direction of `wearables.xml` and race 1/2/3 human/elf/gargoyle. **probable** (string order).
+11. **The rules.** 0x00468e30: 0x00468660 picks the first `draworder` record whose 4 key ints match (-1 on the
+    record side matches anything; the walk order of the list was not traced). For each worn layer
+    (0x004687b0), the rule map at this+0x88 (a `std::map` keyed by (layer, item)) gives the rule of the exact
+    item, else the one for any item (-1). Each override matches on its 4 key fields (-1 = any); its conditions
+    (layer, item) are OR-ed, one matching when that layer wears that item, or any item for -1; an override with
+    no condition applies. The last matching override sets the priority. 0x0046d7b0 then sorts the (priority,
+    layer) pairs. **confirmed**.
+12. **Names.** The slot names are a table of string pointers at 0x00db9ba0 whose index is the layer: drag,
+    righthand, lefthand, feet, legs, torso, head, hands, finger1, talisman, neck, hair, waist, chest, lwrist,
+    face, facialhair, abovechest, ears, arms, cape, backpack, dress, skirt, feetlegs, riding; a null, then the
+    genders (any, male, female) and the races (any, human, elf, gargoyle). The file is `Data/wearables.xml`
+    (0x00ca0d78) of `MainMisc.uop`; `dynamapper/assets/runtime_specs/paperdoll/WearableRules.kdl` is its
+    translation. **confirmed** (probe `~/ghidra_scripts/FindRawAddressBytesTextTables.java`).
+13. **Override loader.** 0x00468230 reads an `override`: its key (0x00467b10), `draworderpriority` (strtol), then
+    only the 26 attributes the slot table names (loop at 0x004682e2), each "any" (-1) or a comma list. Any other
+    attribute is dropped: the shipped `<override draworderpriority="11900" belowchest="8097,8059,8189"/>` of
+    `chest` keeps no condition, so it always applies, and as it follows the `dress` / `abovechest` hiding
+    overrides it wins over them; only the later 12500 override (dress 39301, 39302, 41674, 41675) beats it.
+    **confirmed** for the loader; the outcome follows item 11.
+14. **Shipped data** (EC 2024 `tileart.uop`, `Paperdoll.uop`). The filters' body types are 10,000,000 + body
+    (10,000,666 and 10,000,667, the gargoyles), matching the wearer definition's tile id. Of the 1125 records
+    with a drawn Layer property, 983 find a frame for a human man and 1054 for a woman; about 70 have a frame
+    in neither set (9801..9892, the talismans 12120..12123 among them) and the man misses the female-only
+    pieces besides (7168..7181: frames 921..927 of the female set). **confirmed** (the inspector's ignored
+    tests `shipped_bodies_and_wearables_find_their_frames`, `a_shipped_outfit_composes_over_the_body`).
+
+The inspector's Gumps > Paperdoll tab with the EC source follows items 4..13
+(`tools/uocf-inspector-gui/src/ui/ec_paperdoll.rs`). Not followed: the face layer's +0x68 value (item 9), and
+the walk order of the `draworder` records (item 11; the inspector takes the `paperdoll` one).
 
 ## For a writer
 

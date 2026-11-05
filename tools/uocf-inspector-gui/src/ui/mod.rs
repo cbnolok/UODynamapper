@@ -25,6 +25,7 @@ pub mod hues;
 pub mod hues_editor;
 pub mod image_export;
 pub mod gumps;
+mod ec_paperdoll;
 pub mod clilocs;
 pub mod terrain_definition;
 pub mod string_dictionary;
