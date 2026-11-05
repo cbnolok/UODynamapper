@@ -39,8 +39,6 @@ const MAX_ZOOM: f32 = 16.0;
 const DEFAULT_ZOOM: f32 = 0.25;
 /// Zoom factor of one press of the zoom buttons.
 const ZOOM_STEP: f32 = 1.25;
-/// Exponent of the zoom factor per point of mouse wheel scroll.
-const WHEEL_ZOOM_RATE: f32 = 0.002;
 const ACTUAL_SIZE_ZOOM: f32 = 1.0;
 const TOOLS_PANEL_WIDTH: f32 = 300.0;
 const MAP_WINDOW_ID: &str = "uocf_classic_maps_window";
@@ -257,7 +255,7 @@ pub fn ui_classic_maps(app: &mut UopInspectorApp, ctx: &egui::Context, ui: &mut 
             }
             ui.small(&loaded.sources);
         }
-        ui.weak("Wheel or pinch zooms at the pointer, dragging moves the map.");
+        ui.weak("Shift+wheel, Ctrl+wheel or a pinch zooms at the pointer; the wheel and dragging move the map.");
         ui.weak("Hover a tile for its land and statics; click to keep it.");
         ui.separator();
         super::classic_maps_convert::section(&mut state.convert, &classic_dir, ui, ctx);
@@ -334,7 +332,7 @@ fn map_view(state: &mut ClassicMapsState, ui: &mut egui::Ui) {
     let mut area = egui::ScrollArea::both().id_salt("classic_maps_map").scroll_source(egui::scroll_area::ScrollSource {
         scroll_bar: true,
         drag: egui::scroll_area::DragScroll::Always,
-        mouse_wheel: false,
+        mouse_wheel: true,
     });
     if let Some(offset) = state.pending_offset.take() {
         area = area.scroll_offset(offset);
@@ -361,8 +359,8 @@ fn map_view(state: &mut ClassicMapsState, ui: &mut egui::Ui) {
 
     let pointer = ui.input(|input| input.pointer.hover_pos()).filter(|_| ui.rect_contains_pointer(output.inner_rect));
     if pointer.is_some() {
-        let (wheel, pinch) = ui.input(|input| (input.smooth_scroll_delta.y, input.zoom_delta()));
-        zoom *= pinch * (wheel * WHEEL_ZOOM_RATE).exp();
+        // Shift+wheel, Ctrl+wheel and a pinch; the plain wheel scrolls the area above (gui_shared's input options).
+        zoom *= ui.input(|input| input.zoom_delta());
     }
     let zoom = zoom.clamp(MIN_ZOOM, MAX_ZOOM);
     if zoom != state.zoom {

@@ -217,6 +217,15 @@ pub(super) fn sorted_indices_by<T>(
     indices
 }
 
+/// The zoom factor of no zoom.
+pub(crate) const NO_ZOOM: f32 = 1.0;
+
+/// This frame's zoom factor for a view drawn in `rect`: Shift+wheel, Ctrl+wheel or a pinch while the pointer is over
+/// it, else `NO_ZOOM`. The plain wheel scrolls instead (see `gui_shared::install_zoom_and_scroll_input_options`).
+pub(crate) fn hovered_zoom_factor(ui: &egui::Ui, rect: egui::Rect) -> f32 {
+    if ui.rect_contains_pointer(rect) { ui.input(|input| input.zoom_delta()) } else { NO_ZOOM }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

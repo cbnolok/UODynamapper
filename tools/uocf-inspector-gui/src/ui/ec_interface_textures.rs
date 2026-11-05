@@ -27,7 +27,11 @@ const LIST_PANEL_WIDTH: f32 = 360.0;
 const THUMBNAIL_SIDE: f32 = 32.0;
 /// Largest side of a thumbnail's texture: larger images are scaled down before they are kept.
 const THUMBNAIL_TEXTURE_SIDE: u32 = 64;
-const PREVIEW_ZOOMS: [(f32, &str); 4] = [(1.0, "1x"), (2.0, "2x"), (4.0, "4x"), (8.0, "8x")];
+/// The preview's zoom buttons, as powers of two: 1x, 2x, 4x, 8x.
+const PREVIEW_ZOOM_STEPS: [f32; 4] = [0.0, 1.0, 2.0, 3.0];
+/// Bounds of the preview's zoom, as powers of two (1/8x to 16x), for the wheel and a pinch.
+const MIN_PREVIEW_ZOOM_LOG2: f32 = -3.0;
+const MAX_PREVIEW_ZOOM_LOG2: f32 = 4.0;
 const EXPORT_FALLBACK_NAME: &str = "interface_texture";
 const EMPTY_IMAGE_NOTE: &str = "This entry is an empty image: a TGA header of 0 x 0 pixels, as shipped.";
 
@@ -61,7 +65,8 @@ pub struct EcInterfaceTexturesState {
     folder: Option<String>,
     filter: String,
     selected: Option<u64>,
-    zoom_index: usize,
+    /// The preview's zoom as a power of two: 0, the default, shows the image at its size.
+    zoom_log2: f32,
     /// `None` for an entry that does not decode.
     thumbnails: HashMap<u64, Option<egui::TextureHandle>>,
 }
@@ -259,9 +264,12 @@ fn ui_details(app: &mut UopInspectorApp, ctx: &egui::Context, ui: &mut egui::Ui,
     let texture = app.get_uop_texture(ctx, hash, &payload, &name);
     ui.heading(entry.file_name());
     ui.horizontal_wrapped(|ui| {
-        let zoom_index = &mut app.ec_interface_textures.zoom_index;
-        for (index, (_, label)) in PREVIEW_ZOOMS.iter().enumerate() {
-            ui.selectable_value(zoom_index, index, *label);
+        let zoom_log2 = &mut app.ec_interface_textures.zoom_log2;
+        for step in PREVIEW_ZOOM_STEPS {
+            ui.selectable_value(zoom_log2, step, format!("{}x", step.exp2()));
+        }
+        if !PREVIEW_ZOOM_STEPS.contains(zoom_log2) {
+            ui.label(format!("{:.2}x", zoom_log2.exp2()));
         }
         ui.separator();
         if ui.add_enabled(texture.is_some(), egui::Button::new("Export PNG...")).clicked() {
@@ -302,10 +310,16 @@ fn ui_details(app: &mut UopInspectorApp, ctx: &egui::Context, ui: &mut egui::Ui,
         ui.label(if is_empty_image(&payload) { EMPTY_IMAGE_NOTE } else { "This entry does not decode as an image." });
         return;
     };
-    let (zoom, _) = PREVIEW_ZOOMS[app.ec_interface_textures.zoom_index];
-    egui::ScrollArea::both().id_salt("ec_interface_texture_preview").auto_shrink([false, false]).show(ui, |ui| {
-        ui.add(egui::Image::new(&texture).fit_to_exact_size(texture.size_vec2() * zoom).texture_options(egui::TextureOptions::NEAREST));
+    ui.weak("Shift+wheel, Ctrl+wheel or a pinch over the image zooms it.");
+    let zoom_log2 = &mut app.ec_interface_textures.zoom_log2;
+    let output = egui::ScrollArea::both().id_salt("ec_interface_texture_preview").auto_shrink([false, false]).show(ui, |ui| {
+        let size = texture.size_vec2() * zoom_log2.exp2();
+        ui.add(egui::Image::new(&texture).fit_to_exact_size(size).texture_options(egui::TextureOptions::NEAREST));
     });
+    let factor = super::hovered_zoom_factor(ui, output.inner_rect);
+    if factor != super::NO_ZOOM {
+        *zoom_log2 = (*zoom_log2 + factor.log2()).clamp(MIN_PREVIEW_ZOOM_LOG2, MAX_PREVIEW_ZOOM_LOG2);
+    }
 }
 
 fn export_png(app: &mut UopInspectorApp, hash: u64, file_name: &str) {

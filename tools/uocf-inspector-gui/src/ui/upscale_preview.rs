@@ -12,6 +12,11 @@ const UPSCALE_PREVIEW_UPSCALED_VIEWPORT_WIDTH: f32 = 520.0;
 const UPSCALE_PREVIEW_UPSCALED_VIEWPORT_HEIGHT: f32 = 620.0;
 const UPSCALE_PREVIEW_ORIGINAL_VIEWPORT_ID: &str = "uocf_upscale_preview_original";
 const UPSCALE_PREVIEW_UPSCALED_VIEWPORT_ID: &str = "uocf_upscale_preview_upscaled";
+const MIN_ZOOM: f32 = 0.1;
+const MAX_ZOOM: f32 = 20.0;
+const RESET_ZOOM: f32 = 1.0;
+/// Zoom factor of one press of the zoom buttons.
+const ZOOM_BUTTON_STEP: f32 = 1.2;
 
 pub fn ui_upscale_preview_window(app: &mut UopInspectorApp, ctx: &egui::Context, _ui: &mut egui::Ui) {
     if !app.show_upscale_preview {
@@ -89,17 +94,18 @@ pub fn ui_upscale_preview_window(app: &mut UopInspectorApp, ctx: &egui::Context,
             ui.separator();
             ui.horizontal(|ui| {
                 if ui.button("-").clicked() {
-                    zoom = (zoom / 1.2).max(0.1);
+                    zoom = (zoom / ZOOM_BUTTON_STEP).max(MIN_ZOOM);
                 }
                 if ui.button("+").clicked() {
-                    zoom = (zoom * 1.2).min(20.0);
+                    zoom = (zoom * ZOOM_BUTTON_STEP).min(MAX_ZOOM);
                 }
-                ui.add(egui::Slider::new(&mut zoom, 0.1..=20.0).logarithmic(true));
+                ui.add(egui::Slider::new(&mut zoom, MIN_ZOOM..=MAX_ZOOM).logarithmic(true));
                 if ui.button("Reset Zoom").clicked() {
-                    zoom = 1.0;
+                    zoom = RESET_ZOOM;
                 }
                 ui.label(format!("{:.1}x", zoom));
             });
+            ui.weak("Shift+wheel, Ctrl+wheel or a pinch over an image zooms it.");
         });
 
     let original_viewport = egui::ViewportId::from_hash_of(UPSCALE_PREVIEW_ORIGINAL_VIEWPORT_ID);
@@ -121,7 +127,7 @@ pub fn ui_upscale_preview_window(app: &mut UopInspectorApp, ctx: &egui::Context,
                 }
 
                 egui::CentralPanel::default().show(ui, |ui| {
-                    egui::ScrollArea::both()
+                    let output = egui::ScrollArea::both()
                         .id_salt("uocf_upscale_preview_original_image")
                         .show(ui, |ui| {
                             ui.label(format!("Original {}x{}", source.width, source.height));
@@ -132,6 +138,7 @@ pub fn ui_upscale_preview_window(app: &mut UopInspectorApp, ctx: &egui::Context,
                                 )));
                             }
                         });
+                    zoom = (zoom * super::hovered_zoom_factor(ui, output.inner_rect)).clamp(MIN_ZOOM, MAX_ZOOM);
                 });
             },
         );
@@ -150,7 +157,7 @@ pub fn ui_upscale_preview_window(app: &mut UopInspectorApp, ctx: &egui::Context,
                 }
 
                 egui::CentralPanel::default().show(ui, |ui| {
-                    egui::ScrollArea::both()
+                    let output = egui::ScrollArea::both()
                         .id_salt("uocf_upscale_preview_upscaled_image")
                         .show(ui, |ui| {
                             if upscaled_size[0] > 0 {
@@ -172,6 +179,7 @@ pub fn ui_upscale_preview_window(app: &mut UopInspectorApp, ctx: &egui::Context,
                                 ui.label(status.as_str());
                             }
                         });
+                    zoom = (zoom * super::hovered_zoom_factor(ui, output.inner_rect)).clamp(MIN_ZOOM, MAX_ZOOM);
                 });
             },
         );
