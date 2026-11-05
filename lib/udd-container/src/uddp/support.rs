@@ -273,6 +273,87 @@ pub(crate) fn jxl_decompress(data: &[u8]) -> Result<Vec<u8>, String> {
     jxl_decompress_payload(data)
 }
 
+/// libjxl's `JXL_PARALLEL_RET_SUCCESS`: the runner or its init callback finished without error.
+const JXL_PARALLEL_RET_SUCCESS: jpegxl_rs::parallel::JxlParallelRetCode = 0;
+/// libjxl's `JXL_PARALLEL_RET_RUNNER_ERROR`: the runner itself failed, which fails the decode.
+const JXL_PARALLEL_RET_RUNNER_ERROR: jpegxl_rs::parallel::JxlParallelRetCode = -1;
+
+/// libjxl's `JxlParallelRunner` callback type, which jpegxl-rs doesn't re-export.
+type JxlRunnerFn = unsafe extern "C-unwind" fn(
+    *mut std::ffi::c_void,
+    *mut std::ffi::c_void,
+    jpegxl_rs::parallel::JxlParallelRunInit,
+    jpegxl_rs::parallel::JxlParallelRunFunction,
+    u32,
+    u32,
+) -> jpegxl_rs::parallel::JxlParallelRetCode;
+
+/// Hands libjxl's parallel decode work (a frame's 256x256 groups, among others) to the rayon pool
+/// of the calling thread, so a decode starts no threads of its own. A caller that already decodes
+/// entries on rayon workers gets work stealing instead of a second pool competing for the cores,
+/// and a caller outside rayon (Bevy's task pools, the main thread) blocks while the global pool
+/// decodes. libjxl's own thread runner can't be shared that way: it runs one job at a time.
+struct RayonJxlRunner;
+
+/// libjxl's opaque decode state, handed to the workers that run its callback.
+#[derive(Clone, Copy)]
+struct JxlOpaque(*mut std::ffi::c_void);
+
+// SAFETY: libjxl's run callback is made to be called from several threads at once with the same
+// opaque pointer, each call with a distinct thread id.
+unsafe impl Send for JxlOpaque {}
+unsafe impl Sync for JxlOpaque {}
+
+impl JxlOpaque {
+    /// Taking `self` makes closures capture the whole wrapper, not its raw pointer field.
+    fn get(self) -> *mut std::ffi::c_void {
+        self.0
+    }
+}
+
+/// Runs `func` for every value in `start_range..end_range` on the current rayon pool. libjxl sizes
+/// its per-thread state from the count given to `init` and indexes it by thread id, so the pool's
+/// worker index is the id. `rayon::scope` runs its body on a worker of the caller's pool (the global
+/// pool for a caller outside rayon), so every item runs on one of that pool's workers, even an item
+/// rayon doesn't split off, and a worker runs one item at a time. A panic becomes a runner error
+/// rather than unwinding into libjxl.
+unsafe extern "C-unwind" fn run_jxl_on_rayon(
+    _runner_opaque: *mut std::ffi::c_void,
+    jpegxl_opaque: *mut std::ffi::c_void,
+    init: jpegxl_rs::parallel::JxlParallelRunInit,
+    func: jpegxl_rs::parallel::JxlParallelRunFunction,
+    start_range: u32,
+    end_range: u32,
+) -> jpegxl_rs::parallel::JxlParallelRetCode {
+    use rayon::prelude::*;
+
+    let opaque = JxlOpaque(jpegxl_opaque);
+    let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        rayon::scope(|_| {
+            let init_status = unsafe { init(opaque.get(), rayon::current_num_threads()) };
+            if init_status != JXL_PARALLEL_RET_SUCCESS {
+                return init_status;
+            }
+            (start_range..end_range).into_par_iter().for_each(|value| {
+                let thread_id = rayon::current_thread_index().expect("a rayon scope runs on a pool worker");
+                unsafe { func(opaque.get(), value, thread_id) };
+            });
+            JXL_PARALLEL_RET_SUCCESS
+        })
+    }));
+    outcome.unwrap_or(JXL_PARALLEL_RET_RUNNER_ERROR)
+}
+
+impl jpegxl_rs::parallel::ParallelRunner for RayonJxlRunner {
+    fn runner(&self) -> JxlRunnerFn {
+        run_jxl_on_rayon
+    }
+
+    fn as_opaque_ptr(&self) -> *mut std::ffi::c_void {
+        std::ptr::null_mut()
+    }
+}
+
 fn jxl_decompress_payload(data: &[u8]) -> Result<Vec<u8>, String> {
     use jpegxl_rs::decoder_builder;
     use jpegxl_rs::decode::Pixels;
@@ -285,6 +366,7 @@ fn jxl_decompress_payload(data: &[u8]) -> Result<Vec<u8>, String> {
     let encoded = &data[8..];
 
     let decoder = decoder_builder()
+        .parallel_runner(&RayonJxlRunner)
         .build()
         .map_err(|e| e.to_string())?;
 

@@ -343,6 +343,75 @@ fn path_hash_package_roundtrip_reads_jpegxl_zstd_rgba_entry() {
     );
 }
 
+/// Sides of a JPEG XL test page that spans several of libjxl's 256-pixel groups, so the decoder has
+/// parallel work for its runner, with partial groups on the right and bottom edges.
+const MULTI_GROUP_JXL_WIDTH: u32 = 600;
+const MULTI_GROUP_JXL_HEIGHT: u32 = 520;
+const MULTI_GROUP_JXL_PAGES: u32 = 3;
+/// Every this many columns and rows a block of the page is fully transparent, as atlas gaps are.
+const MULTI_GROUP_JXL_HOLE_PERIOD: u32 = 37;
+const MULTI_GROUP_JXL_HOLE_SIDE: u32 = 11;
+
+fn multi_group_jxl_page(page: u32) -> Vec<u8> {
+    let mut rgba = Vec::with_capacity((MULTI_GROUP_JXL_WIDTH * MULTI_GROUP_JXL_HEIGHT * 4) as usize);
+    for y in 0..MULTI_GROUP_JXL_HEIGHT {
+        for x in 0..MULTI_GROUP_JXL_WIDTH {
+            let hole = x % MULTI_GROUP_JXL_HOLE_PERIOD < MULTI_GROUP_JXL_HOLE_SIDE
+                && y % MULTI_GROUP_JXL_HOLE_PERIOD < MULTI_GROUP_JXL_HOLE_SIDE;
+            if hole {
+                rgba.extend_from_slice(&[0, 0, 0, 0]);
+            } else {
+                let noise = (x ^ y).wrapping_mul(2_654_435_761).rotate_left(page + 7);
+                rgba.extend_from_slice(&[(x + page * 40) as u8, (y * 3) as u8, noise as u8, 255 - (noise >> 24) as u8 % 2]);
+            }
+        }
+    }
+    rgba
+}
+
+#[test]
+fn multi_group_jpegxl_pages_decode_identically_on_the_rayon_runner_from_parallel_callers() {
+    use rayon::prelude::*;
+
+    let pages: Vec<Vec<u8>> = (0..MULTI_GROUP_JXL_PAGES).map(multi_group_jxl_page).collect();
+    let mut builder = UddpBuilder::new(LookupMode::SparseId);
+    for (id, rgba) in pages.iter().enumerate() {
+        builder
+            .add_file(AddFileRequest {
+                data_type: DataType::Texture as u8,
+                compression: CompressionFlag::JpegXl,
+                width: MULTI_GROUP_JXL_WIDTH,
+                height: MULTI_GROUP_JXL_HEIGHT,
+                virtual_path: None,
+                path_hash64: None,
+                id: Some(id as u32),
+                data: rgba,
+            })
+            .expect("add multi-group jxl page");
+    }
+    let reader = UddpReader::open(builder.build().expect("build package")).expect("open package");
+
+    // One caller at a time: libjxl's groups run on the global rayon pool.
+    for (id, rgba) in pages.iter().enumerate() {
+        assert!(reader.read_file_by_sparse_id(id as u32).expect("read jxl page") == *rgba, "page {id} differs");
+    }
+
+    // Callers that are rayon workers themselves: the group jobs nest into their pool.
+    (0..MULTI_GROUP_JXL_PAGES as usize).into_par_iter().for_each(|id| {
+        assert!(reader.read_file_by_sparse_id(id as u32).expect("read jxl page") == pages[id], "page {id} differs");
+    });
+
+    // Callers outside rayon, as Bevy's task pools are, decoding at the same time.
+    std::thread::scope(|scope| {
+        for (id, rgba) in pages.iter().enumerate() {
+            let reader = &reader;
+            scope.spawn(move || {
+                assert!(reader.read_file_by_sparse_id(id as u32).expect("read jxl page") == *rgba, "page {id} differs");
+            });
+        }
+    });
+}
+
 #[test]
 fn dense_id_package_roundtrip_reads_entries() {
     let mut builder = UddpBuilder::new(LookupMode::DenseId);
