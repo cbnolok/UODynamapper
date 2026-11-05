@@ -179,34 +179,22 @@ pub enum MultimapPreviewSelection {
     Artistic,
 }
 
+/// Where the Multimap builder reads the facet's radar image.
 #[derive(PartialEq, Eq, Clone, Copy, Debug)]
-pub enum MultimapConversionSource {
-    Ktx2,
-    ClientRadar,
-}
-
-#[derive(PartialEq, Eq, Clone, Copy, Debug)]
-pub enum MultimapMapSourcePreference {
+pub enum MultimapRadarSource {
+    /// `mapN.mul` and its statics, coloured from `radarcol.mul`.
     Mul,
-    Uop,
-}
-
-impl MultimapMapSourcePreference {
-    pub fn to_udd_conv(self) -> udd_conv::classic_sources::SourceFormatPreference {
-        match self {
-            Self::Mul => udd_conv::classic_sources::SourceFormatPreference::Mul,
-            Self::Uop => udd_conv::classic_sources::SourceFormatPreference::Uop,
-        }
-    }
+    /// `mapNLegacyMUL.uop` and its statics, coloured from `radarcol.mul`.
+    CcUop,
+    /// The Enhanced Client's own radar image of the facet, `facetNN.dds`.
+    EcUop,
 }
 
 pub struct MultimapConverterState {
-    pub source: MultimapConversionSource,
-    pub ktx2_path: String,
-    pub tilemeta_path: String,
+    pub source: MultimapRadarSource,
+    /// Which sources the client folders hold for the map, looked for once per folders and map.
+    pub found: Option<crate::ui::multimap::FoundRadarSources>,
     pub map_id: u32,
-    pub map_source_preference: MultimapMapSourcePreference,
-    pub use_ec_radarcol: bool,
     pub include_verdata: bool,
     pub include_map_difs: bool,
     pub include_static_difs: bool,
@@ -226,12 +214,9 @@ pub struct MultimapConverterState {
 impl Default for MultimapConverterState {
     fn default() -> Self {
         Self {
-            source: MultimapConversionSource::Ktx2,
-            ktx2_path: String::new(),
-            tilemeta_path: String::new(),
+            source: MultimapRadarSource::Mul,
+            found: None,
             map_id: 0,
-            map_source_preference: MultimapMapSourcePreference::Mul,
-            use_ec_radarcol: false,
             include_verdata: false,
             include_map_difs: false,
             include_static_difs: false,

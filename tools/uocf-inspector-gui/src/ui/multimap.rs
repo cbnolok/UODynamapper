@@ -1,20 +1,53 @@
+//! The Multimap tab: shows `Multimap.rle`, and builds a plain and an artistic one from a facet's radar image.
+//!
+//! The radar image comes from the client files: the Classic map and statics coloured by `radarcol.mul`
+//! ([`uocf::classic::radar`], as the Maps tab draws them) from `mapN.mul` (MUL) or `mapNLegacyMUL.uop` (CC UOP), or
+//! the Enhanced Client's own radar image `facetNN.dds` (EC UOP; the folder's `facetN.uop` maps carry no land
+//! colours). There is no KR UOP source: the Enhanced files hold one radar image per facet.
+
 use crate::app::{
-    GeneratedMultimapPreview, MultimapConversionOutput, MultimapConversionSource,
-    MultimapConverterState, MultimapPreviewSelection, MultimapWorkerResult, UopInspectorApp,
+    GeneratedMultimapPreview, MultimapConversionOutput, MultimapConverterState,
+    MultimapPreviewSelection, MultimapRadarSource, MultimapWorkerResult, UopInspectorApp,
 };
+use color_eyre::eyre::{self, WrapErr};
 use eframe::egui;
 use std::path::{Path, PathBuf};
 use std::sync::mpsc;
 use std::thread;
+use uocf::classic::facet_sources::{ClassicDifOptions, ClassicFacetSources, ClassicMapFormat};
 use uocf::classic::multimap_render::{
     render_multimap, DecodedRgba, MultimapRenderOptions, MultimapStyle,
 };
 use uocf::classic::multimap_rle::{self, MultimapRleImage, BLACK_PIXEL};
+use uocf::classic::radar::{load_client_radarcol, render_radar, RadarColours, RADAR_RGBA_CHANNELS};
+use uocf::classic::tiledata::TileData;
+use uocf::classic::verdata::Verdata;
+use uocf::enhanced::facet_radar::{radar_dds_file_name, FacetRadarDds};
+use uocf::map_edition::MapEdition;
+use uocf::utils::path::find_file_ignoring_case;
+
+use super::classic_maps::{classic_map_found, map_not_found_text};
 
 const GENERATED_PLAIN_KEY: u64 = 0x6F00000000000001;
 const GENERATED_ARTISTIC_KEY: u64 = 0x6F00000000000002;
 const MULTIMAP_TOOLS_PANEL_WIDTH: f32 = 340.0;
 const MULTIMAP_ZOOM_RANGE: std::ops::RangeInclusive<f32> = 0.05..=2.0;
+const TILEDATA_FILE: &str = "tiledata.mul";
+/// The radar is read at one pixel per tile.
+const FULL_SCALE: u32 = 1;
+/// The full-size mip of `facetNN.dds`.
+const FULL_SIZE_LEVEL: u32 = 0;
+const RGB_CHANNELS: usize = 3;
+const OPAQUE: u8 = u8::MAX;
+/// The radar sources, in the order and with the labels of the source buttons of every tab.
+const RADAR_SOURCES: [(MultimapRadarSource, &str); 3] = [
+    (MultimapRadarSource::Mul, "MUL"),
+    (MultimapRadarSource::CcUop, "CC UOP"),
+    (MultimapRadarSource::EcUop, "EC UOP"),
+];
+const NO_CC_FOLDER: &str = "No Classic Client folder is set (File > Search Paths).";
+const NO_EC_FOLDER: &str = "No Enhanced Client folder is set (File > Search Paths).";
+const PATCHES_CLASSIC_ONLY: &str = "The patches apply to the Classic map files; the Enhanced Client's radar image is read as shipped.";
 
 struct GenerateRequest {
     input: GenerateInput,
@@ -29,18 +62,84 @@ struct GenerateRequest {
 }
 
 enum GenerateInput {
-    Ktx2(PathBuf),
-    ClientRadar {
+    /// The Classic map and statics of `map_id`, coloured by `radarcol.mul`.
+    ClassicRadar {
         cc_path: PathBuf,
-        ec_path: Option<PathBuf>,
-        tilemeta_path: Option<PathBuf>,
         map_id: u32,
-        map_source_preference: crate::app::MultimapMapSourcePreference,
-        use_ec_radarcol: bool,
+        format: ClassicMapFormat,
+        difs: ClassicDifOptions,
         include_verdata: bool,
-        include_map_difs: bool,
-        include_static_difs: bool,
     },
+    /// The Enhanced Client's radar image.
+    EnhancedRadar(PathBuf),
+}
+
+/// Which of [`RADAR_SOURCES`] the client folders hold for a map, with the folders and map they were looked for in.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct FoundRadarSources {
+    cc_path: Option<PathBuf>,
+    ec_path: Option<PathBuf>,
+    map_id: u32,
+    present: [bool; RADAR_SOURCES.len()],
+}
+
+/// The Classic map container of a source; `None` for the Enhanced radar image.
+fn classic_format(source: MultimapRadarSource) -> Option<ClassicMapFormat> {
+    match source {
+        MultimapRadarSource::Mul => Some(ClassicMapFormat::Mul),
+        MultimapRadarSource::CcUop => Some(ClassicMapFormat::Uop),
+        MultimapRadarSource::EcUop => None,
+    }
+}
+
+/// `facetNN.dds` of map `map_id` in the Enhanced Client folder `ec_path`, if it is there.
+fn enhanced_radar_path(ec_path: &Path, map_id: u32) -> Option<PathBuf> {
+    let facet = u8::try_from(map_id).ok()?;
+    find_file_ignoring_case(ec_path, &radar_dds_file_name(facet))
+}
+
+fn source_present(source: MultimapRadarSource, cc_path: Option<&Path>, ec_path: Option<&Path>, map_id: u32) -> bool {
+    match classic_format(source) {
+        Some(format) => cc_path.is_some_and(|cc_path| classic_map_found(cc_path, map_id, format)),
+        None => ec_path.is_some_and(|ec_path| enhanced_radar_path(ec_path, map_id).is_some()),
+    }
+}
+
+/// The tooltip of a source the folders do not hold.
+fn source_missing_text(source: MultimapRadarSource, cc_path: Option<&Path>, ec_path: Option<&Path>, map_id: u32) -> String {
+    match (classic_format(source), cc_path, ec_path) {
+        (Some(_), None, _) => NO_CC_FOLDER.to_string(),
+        (Some(format), Some(_), _) => map_not_found_text(map_id, format),
+        (None, _, None) => NO_EC_FOLDER.to_string(),
+        (None, _, Some(_)) => match u8::try_from(map_id) {
+            Ok(facet) => format!("{} was not found in the Enhanced Client folder.", radar_dds_file_name(facet)),
+            Err(_) => format!("The Enhanced Client has no radar image for map {map_id}."),
+        },
+    }
+}
+
+/// Which sources the folders hold for the map, looked for again only when the folders or the map changed. When
+/// they changed and the chosen source is not there, the first source found is chosen.
+fn refresh_found_sources(state: &mut MultimapConverterState, cc_path: Option<&Path>, ec_path: Option<&Path>) -> [bool; RADAR_SOURCES.len()] {
+    if let Some(found) = &state.found {
+        if found.cc_path.as_deref() == cc_path && found.ec_path.as_deref() == ec_path && found.map_id == state.map_id {
+            return found.present;
+        }
+    }
+    let present = RADAR_SOURCES.map(|(source, _)| source_present(source, cc_path, ec_path, state.map_id));
+    let chosen = RADAR_SOURCES.iter().position(|&(source, _)| source == state.source);
+    if !chosen.is_some_and(|index| present[index]) {
+        if let Some(index) = present.iter().position(|&present| present) {
+            state.source = RADAR_SOURCES[index].0;
+        }
+    }
+    state.found = Some(FoundRadarSources {
+        cc_path: cc_path.map(Path::to_path_buf),
+        ec_path: ec_path.map(Path::to_path_buf),
+        map_id: state.map_id,
+        present,
+    });
+    present
 }
 
 pub fn ui_multimap(app: &mut UopInspectorApp, ctx: &egui::Context, ui: &mut egui::Ui) {
@@ -103,23 +202,7 @@ fn loaded_rle_controls(app: &mut UopInspectorApp, ui: &mut egui::Ui) {
 
 fn converter_controls(app: &mut UopInspectorApp, ui: &mut egui::Ui) {
     let active = app.multimap_worker_active;
-    ui.horizontal(|ui| {
-        ui.selectable_value(
-            &mut app.multimap_converter.source,
-            MultimapConversionSource::Ktx2,
-            "KTX2",
-        );
-        ui.selectable_value(
-            &mut app.multimap_converter.source,
-            MultimapConversionSource::ClientRadar,
-            "Map Data",
-        );
-    });
-
-    match app.multimap_converter.source {
-        MultimapConversionSource::Ktx2 => ktx2_source_controls(&mut app.multimap_converter, ui),
-        MultimapConversionSource::ClientRadar => client_radar_controls(app, ui),
-    }
+    radar_source_controls(app, ui);
 
     ui.separator();
     crop_controls(&mut app.multimap_converter, ui);
@@ -145,64 +228,35 @@ fn converter_controls(app: &mut UopInspectorApp, ui: &mut egui::Ui) {
     }
 }
 
-fn ktx2_source_controls(state: &mut MultimapConverterState, ui: &mut egui::Ui) {
-    ui.horizontal(|ui| {
-        ui.label("File");
-        ui.text_edit_singleline(&mut state.ktx2_path);
-        if ui.button("...").clicked() {
-            if let Some(path) = crate::dialog::file_dialog()
-                .add_filter("KTX2", &["ktx2"])
-                .pick_file()
-            {
-                state.ktx2_path = path.display().to_string();
-            }
-        }
-    });
-}
-
-fn client_radar_controls(app: &mut UopInspectorApp, ui: &mut egui::Ui) {
+/// The map, the MUL / CC UOP / EC UOP buttons (a source not found greyed, with a tooltip) and the patches of a
+/// Classic map.
+fn radar_source_controls(app: &mut UopInspectorApp, ui: &mut egui::Ui) {
+    let (cc_path, ec_path) = (app.settings.cc_path.clone(), app.settings.ec_path.clone());
     let state = &mut app.multimap_converter;
     ui.horizontal(|ui| {
         ui.label("Map");
-        ui.add(egui::DragValue::new(&mut state.map_id).range(0..=255));
+        ui.add(egui::DragValue::new(&mut state.map_id).range(0..=u32::from(u8::MAX)));
     });
+    let present = refresh_found_sources(state, cc_path.as_deref(), ec_path.as_deref());
     ui.horizontal(|ui| {
-        ui.selectable_value(
-            &mut state.map_source_preference,
-            crate::app::MultimapMapSourcePreference::Mul,
-            "MUL",
-        );
-        ui.selectable_value(
-            &mut state.map_source_preference,
-            crate::app::MultimapMapSourcePreference::Uop,
-            "UOP",
-        );
-    });
-    ui.horizontal(|ui| {
-        ui.checkbox(&mut state.include_verdata, "verdata");
-        ui.checkbox(&mut state.include_map_difs, "map difs");
-        ui.checkbox(&mut state.include_static_difs, "static difs");
-    });
-    ui.checkbox(&mut state.use_ec_radarcol, "EC radar colors");
-
-    ui.horizontal(|ui| {
-        ui.label("tilemeta");
-        ui.text_edit_singleline(&mut state.tilemeta_path);
-        if ui.button("...").clicked() {
-            if let Some(path) = crate::dialog::file_dialog()
-                .add_filter("UDDP", &["uddp"])
-                .pick_file()
-            {
-                state.tilemeta_path = path.display().to_string();
+        for (&(source, label), present) in RADAR_SOURCES.iter().zip(present) {
+            let button = egui::Button::selectable(state.source == source, label);
+            let missing = source_missing_text(source, cc_path.as_deref(), ec_path.as_deref(), state.map_id);
+            if ui.add_enabled(present, button).on_disabled_hover_text(missing).clicked() {
+                state.source = source;
             }
         }
     });
+    let classic = classic_format(state.source).is_some();
+    ui.horizontal(|ui| {
+        ui.add_enabled(classic, egui::Checkbox::new(&mut state.include_verdata, "verdata")).on_disabled_hover_text(PATCHES_CLASSIC_ONLY);
+        ui.add_enabled(classic, egui::Checkbox::new(&mut state.include_map_difs, "map difs")).on_disabled_hover_text(PATCHES_CLASSIC_ONLY);
+        ui.add_enabled(classic, egui::Checkbox::new(&mut state.include_static_difs, "static difs")).on_disabled_hover_text(PATCHES_CLASSIC_ONLY);
+    });
 
-    if let Some(path) = &app.settings.cc_path {
-        ui.monospace(format!("CC {}", path.display()));
-    }
-    if let Some(path) = &app.settings.ec_path {
-        ui.monospace(format!("EC {}", path.display()));
+    let folder = if classic { cc_path.map(|path| format!("CC {}", path.display())) } else { ec_path.map(|path| format!("EC {}", path.display())) };
+    if let Some(folder) = folder {
+        ui.monospace(folder);
     }
 }
 
@@ -365,24 +419,27 @@ fn draw_selected_preview(app: &mut UopInspectorApp, ctx: &egui::Context, ui: &mu
         ui.monospace(format!("crop {}x{}+{},{}", crop.width, crop.height, crop.x, crop.y));
     }
 
-    ui.add(
-        egui::Slider::new(&mut app.multimap_zoom, MULTIMAP_ZOOM_RANGE)
-            .logarithmic(true)
-            .text("Zoom"),
-    );
-    // Ctrl or Shift and the wheel, or a pinch, zoom the image under the pointer; the wheel alone scrolls it.
-    let zoom = ui.input(|input| input.zoom_delta());
-    if zoom != 1.0 && ui.rect_contains_pointer(ui.available_rect_before_wrap()) {
-        app.multimap_zoom =
-            (app.multimap_zoom * zoom).clamp(*MULTIMAP_ZOOM_RANGE.start(), *MULTIMAP_ZOOM_RANGE.end());
-    }
+    ui.horizontal(|ui| {
+        ui.add(
+            egui::Slider::new(&mut app.multimap_zoom, MULTIMAP_ZOOM_RANGE)
+                .logarithmic(true)
+                .text("Zoom"),
+        );
+        ui.weak("Shift or Ctrl + wheel zooms; the wheel scrolls.");
+    });
     let size = egui::vec2(
         details.width as f32 * app.multimap_zoom,
         details.height as f32 * app.multimap_zoom,
     );
-    egui::ScrollArea::both().show(ui, |ui| {
+    let view = egui::ScrollArea::both().show(ui, |ui| {
         ui.add(egui::Image::new(&handle).fit_to_exact_size(size));
     });
+    // Shift or Ctrl + wheel, or a pinch, zoom the image under the pointer; the wheel alone scrolls it.
+    let zoom = super::hovered_zoom_factor(ui, view.inner_rect);
+    if zoom != super::NO_ZOOM {
+        app.multimap_zoom =
+            (app.multimap_zoom * zoom).clamp(*MULTIMAP_ZOOM_RANGE.start(), *MULTIMAP_ZOOM_RANGE.end());
+    }
 }
 
 struct PreviewDetails {
@@ -488,30 +545,20 @@ fn preview_available(
 
 fn build_generate_request(app: &UopInspectorApp) -> Result<GenerateRequest, String> {
     let state = &app.multimap_converter;
-    let input = match state.source {
-        MultimapConversionSource::Ktx2 => {
-            let path = path_from_text(&state.ktx2_path)
-                .ok_or_else(|| "Select a KTX2 source file.".to_string())?;
-            GenerateInput::Ktx2(path)
-        }
-        MultimapConversionSource::ClientRadar => {
-            let cc_path = app
-                .settings
-                .cc_path
-                .clone()
-                .ok_or_else(|| "Set a Classic Client path first.".to_string())?;
-            let tilemeta_path = path_from_text(&state.tilemeta_path);
-            GenerateInput::ClientRadar {
-                cc_path,
-                ec_path: app.settings.ec_path.clone(),
-                tilemeta_path,
-                map_id: state.map_id,
-                map_source_preference: state.map_source_preference,
-                use_ec_radarcol: state.use_ec_radarcol,
-                include_verdata: state.include_verdata,
-                include_map_difs: state.include_map_difs,
-                include_static_difs: state.include_static_difs,
-            }
+    let (cc_path, ec_path) = (app.settings.cc_path.as_deref(), app.settings.ec_path.as_deref());
+    let input = match classic_format(state.source) {
+        Some(format) => GenerateInput::ClassicRadar {
+            cc_path: cc_path.ok_or_else(|| NO_CC_FOLDER.to_string())?.to_path_buf(),
+            map_id: state.map_id,
+            format,
+            difs: ClassicDifOptions { map_difs: state.include_map_difs, static_difs: state.include_static_difs },
+            include_verdata: state.include_verdata,
+        },
+        None => {
+            let path = ec_path
+                .and_then(|ec_path| enhanced_radar_path(ec_path, state.map_id))
+                .ok_or_else(|| source_missing_text(state.source, cc_path, ec_path, state.map_id))?;
+            GenerateInput::EnhancedRadar(path)
         }
     };
 
@@ -526,15 +573,6 @@ fn build_generate_request(app: &UopInspectorApp) -> Result<GenerateRequest, Stri
         edge_threshold: state.edge_threshold,
         line_radius: state.line_radius,
     })
-}
-
-fn path_from_text(value: &str) -> Option<PathBuf> {
-    let trimmed = value.trim();
-    if trimmed.is_empty() {
-        None
-    } else {
-        Some(PathBuf::from(trimmed))
-    }
 }
 
 fn start_worker(app: &mut UopInspectorApp, request: GenerateRequest) {
@@ -631,119 +669,47 @@ fn generate_multimaps(request: GenerateRequest) -> color_eyre::eyre::Result<Mult
     })
 }
 
-fn load_source_rgba(request: &GenerateRequest) -> color_eyre::eyre::Result<(DecodedRgba, String)> {
+fn load_source_rgba(request: &GenerateRequest) -> eyre::Result<(DecodedRgba, String)> {
     match &request.input {
-        GenerateInput::Ktx2(path) => {
-            let (width, height, rgba) =
-                udd_image_codecs::ktx2::decode_ktx2_bc7_zstd_to_rgba8888(path)?;
-            Ok((
-                DecodedRgba::new(width, height, rgba)?,
-                path.display().to_string(),
-            ))
+        GenerateInput::ClassicRadar { cc_path, map_id, format, difs, include_verdata } => {
+            classic_radar_rgba(cc_path, *map_id, *format, *difs, *include_verdata)
         }
-        GenerateInput::ClientRadar {
-            cc_path,
-            ec_path,
-            tilemeta_path,
-            map_id,
-            map_source_preference,
-            use_ec_radarcol,
-            include_verdata,
-            include_map_difs,
-            include_static_difs,
-        } => {
-            let tilemeta_path = resolve_tilemeta_path(
-                cc_path,
-                ec_path.as_deref(),
-                tilemeta_path.as_deref(),
-                *map_id,
-                *use_ec_radarcol,
-                *include_verdata,
-                *include_map_difs,
-                *include_static_difs,
-            )?;
-            let source_dirs = [cc_path.clone()];
-            let patch_options = udd_conv::classic_patches::ClassicPatchOptions {
-                verdata: *include_verdata,
-                map_difs: *include_map_difs,
-                static_difs: *include_static_difs,
-                ..udd_conv::classic_patches::ClassicPatchOptions::NONE
-            };
-            let radar_result = udd_conv::cc_radar::build_facet_radar_rgba_with_options(
-                &source_dirs,
-                &tilemeta_path.path,
-                *map_id,
-                map_source_preference.to_udd_conv(),
-                &patch_options,
-            );
-            if tilemeta_path.delete_after_use {
-                let _ = std::fs::remove_file(&tilemeta_path.path);
-            }
-            let (width, height, rgba) = radar_result?;
-            Ok((
-                DecodedRgba::new(width, height, rgba)?,
-                format!("map{} radar", map_id),
-            ))
-        }
+        GenerateInput::EnhancedRadar(path) => enhanced_radar_rgba(path),
     }
 }
 
-struct ResolvedTilemetaPath {
-    path: PathBuf,
-    delete_after_use: bool,
-}
-
-fn resolve_tilemeta_path(
+/// The radar of Classic map `map_id` in `cc_path`, as the Maps tab draws it, at one pixel per tile.
+fn classic_radar_rgba(
     cc_path: &Path,
-    ec_path: Option<&Path>,
-    explicit_tilemeta_path: Option<&Path>,
     map_id: u32,
-    use_ec_radarcol: bool,
+    format: ClassicMapFormat,
+    difs: ClassicDifOptions,
     include_verdata: bool,
-    include_map_difs: bool,
-    include_static_difs: bool,
-) -> color_eyre::eyre::Result<ResolvedTilemetaPath> {
-    if let Some(path) = explicit_tilemeta_path {
-        return Ok(ResolvedTilemetaPath {
-            path: path.to_path_buf(),
-            delete_after_use: false,
-        });
+) -> eyre::Result<(DecodedRgba, String)> {
+    let dirs = [cc_path.to_path_buf()];
+    let sources = ClassicFacetSources::resolve(&dirs, map_id, &[format], difs, MapEdition::Standard)?;
+    let verdata = if include_verdata { Verdata::load_from_dirs(&dirs)? } else { None };
+    let mut plane = sources.load_map_plane(None, verdata.clone())?;
+    let size = plane.size_cells();
+    let statics = sources.load_statics_reader(size.width, size.height, verdata.clone())?.load_all()?;
+    let tiledata = find_file_ignoring_case(cc_path, TILEDATA_FILE)
+        .map(|path| TileData::load_with_verdata(path, verdata))
+        .transpose()?;
+    let colours = RadarColours::with_tiledata(load_client_radarcol(cc_path)?, tiledata.as_ref());
+    let radar = render_radar(&mut plane, &statics, &colours, FULL_SCALE)?;
+    let label = format!("map{map_id} radar from {}", sources.map.path.display());
+    Ok((DecodedRgba::new(radar.width, radar.height, radar.rgba)?, label))
+}
+
+/// The Enhanced Client's radar image `path` (`facetNN.dds`), its full-size mip.
+fn enhanced_radar_rgba(path: &Path) -> eyre::Result<(DecodedRgba, String)> {
+    let dds = FacetRadarDds::load(path)?;
+    let rgb = dds.decode_level_rgb8(FULL_SIZE_LEVEL);
+    let mut rgba = Vec::with_capacity(rgb.len() / RGB_CHANNELS * RADAR_RGBA_CHANNELS);
+    for pixel in rgb.chunks_exact(RGB_CHANNELS) {
+        rgba.extend_from_slice(pixel);
+        rgba.push(OPAQUE);
     }
-
-    let path = std::env::temp_dir().join(format!(
-        "uocf_inspector_multimap_tilemeta_{}_{}.uddp",
-        std::process::id(),
-        map_id
-    ));
-    let patch_options = udd_conv::classic_patches::ClassicPatchOptions {
-        verdata: include_verdata,
-        map_difs: include_map_difs,
-        static_difs: include_static_difs,
-        ..udd_conv::classic_patches::ClassicPatchOptions::NONE
-    };
-    let options = udd_conv::tilemeta::TileMetaBuildOptions {
-        use_ec_radarcol,
-        classic_patches: patch_options,
-        ..Default::default()
-    };
-
-    if let Some(ec_path) = ec_path {
-        udd_conv::tilemeta::build_tilemeta_uddp_from_split_sources(
-            cc_path,
-            ec_path,
-            &path,
-            &options,
-        )?;
-    } else {
-        udd_conv::tilemeta::build_tilemeta_uddp_from_sources(
-            &[cc_path.to_path_buf()],
-            &path,
-            &options,
-        )?;
-    }
-
-    Ok(ResolvedTilemetaPath {
-        path,
-        delete_after_use: true,
-    })
+    let decoded = DecodedRgba::new(dds.width(), dds.height(), rgba).wrap_err_with(|| path.display().to_string())?;
+    Ok((decoded, path.display().to_string()))
 }

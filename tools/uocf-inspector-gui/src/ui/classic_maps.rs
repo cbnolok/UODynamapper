@@ -2,38 +2,34 @@
 //! land tile and the statics of the tile under the pointer, and of a clicked tile.
 //!
 //! A tile takes the colour of its highest static (by its top, `z` plus the `tiledata.mul` height, then by `z`)
-//! when that static's top is not below the land, else the land's colour, as `udd_conv::cc_radar` picks.
+//! when that static's top is not below the land, else the land's colour ([`uocf::classic::radar`]).
+//!
+//! The map is read from `mapN.mul` (MUL) or `mapNLegacyMUL.uop` (CC UOP), as chosen. The Enhanced Client's facets
+//! are another format, without `radarcol.mul`, so the tab has no KR UOP or EC UOP source.
 //!
 //! The map zooms at the pointer and can move to a window of its own, which stays open while other tabs are in use.
 //!
 //! The facet's files are not edited here; [`super::classic_maps_convert`] converts and saves a whole facet.
 
-use color_eyre::eyre::{self, WrapErr};
+use color_eyre::eyre;
 use eframe::egui;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::{Arc, mpsc};
-use uocf::classic::facet_sources::{CLASSIC_FACET_NAMES, ClassicDifOptions, ClassicFacetSources, ClassicMapFormat};
+use uocf::classic::facet_sources::{
+    map_file_names, CLASSIC_FACET_NAMES, ClassicDifOptions, ClassicFacetSources, ClassicMapFormat,
+};
 use uocf::classic::map::{MapBlockRelPos, MapPlane};
-use uocf::classic::radarcol::load_radarcol;
+use uocf::classic::radar::{load_client_radarcol, radar_scale, render_radar, RadarColours};
 use uocf::classic::statics::{PackedStaticTile, StaticsStore, UO_BLOCK_DIM};
 use uocf::classic::tiledata::TileData;
 use uocf::map_edition::MapEdition;
-use uocf::utils::color::Rgb555;
 use uocf::utils::path::find_file_ignoring_case;
 
 use crate::app::UopInspectorApp;
 
-const RADARCOL_FILE: &str = "radarcol.mul";
 const TILEDATA_FILE: &str = "tiledata.mul";
-/// `radarcol.mul` holds the land colours, then the item colours from this index on.
-const RADARCOL_ITEM_BASE: usize = 0x4000;
-/// MUL first, as the radar builders read it; a UOP map when there is no MUL.
-const MAP_FORMATS: [ClassicMapFormat; 2] = [ClassicMapFormat::Mul, ClassicMapFormat::Uop];
-const RGBA_CHANNELS: usize = 4;
-const OPAQUE: u8 = 255;
-/// Shift of a 5-bit channel to 8 bits, and of its high bits into the low ones.
-const CHANNEL_SHIFT: u32 = 3;
-const CHANNEL_REFILL_SHIFT: u32 = 2;
+/// The Classic map containers with the labels of their source buttons, in the order every tab shows them.
+pub(super) const MAP_SOURCES: [(ClassicMapFormat, &str); 2] = [(ClassicMapFormat::Mul, "MUL"), (ClassicMapFormat::Uop, "CC UOP")];
 const MIN_ZOOM: f32 = 0.05;
 const MAX_ZOOM: f32 = 16.0;
 const DEFAULT_ZOOM: f32 = 0.25;
@@ -60,6 +56,9 @@ struct LoadedFacet {
 
 pub struct ClassicMapsState {
     facet: u32,
+    format: ClassicMapFormat,
+    /// Which of [`MAP_SOURCES`] the CC folder holds for the facet, looked for once per folder and facet.
+    found: Option<(PathBuf, u32, [bool; MAP_SOURCES.len()])>,
     map_difs: bool,
     static_difs: bool,
     zoom: f32,
@@ -79,6 +78,8 @@ impl Default for ClassicMapsState {
     fn default() -> Self {
         Self {
             facet: 0,
+            format: ClassicMapFormat::Mul,
+            found: None,
             map_difs: false,
             static_difs: false,
             zoom: DEFAULT_ZOOM,
@@ -104,70 +105,66 @@ fn fit_zoom(view: egui::Vec2, width: u32, height: u32) -> f32 {
     (view.x / width.max(1) as f32).min(view.y / height.max(1) as f32).clamp(MIN_ZOOM, MAX_ZOOM)
 }
 
-fn expand_channel(channel: u8) -> u8 {
-    (channel << CHANNEL_SHIFT) | (channel >> CHANNEL_REFILL_SHIFT)
+/// Whether the CC folder `cc_path` holds facet `facet`'s map in `format` (or, for a facet built from a base facet,
+/// the base facet's map and the facet's difs).
+pub(super) fn classic_map_found(cc_path: &Path, facet: u32, format: ClassicMapFormat) -> bool {
+    ClassicFacetSources::resolve(&[cc_path.to_path_buf()], facet, &[format], ClassicDifOptions::NONE, MapEdition::Standard).is_ok()
 }
 
-fn radar_rgba(color: Option<&Rgb555>) -> [u8; RGBA_CHANNELS] {
-    color.map_or([0, 0, 0, OPAQUE], |color| [expand_channel(color.r()), expand_channel(color.g()), expand_channel(color.b()), OPAQUE])
+/// The tooltip of a map source the CC folder does not hold.
+pub(super) fn map_not_found_text(facet: u32, format: ClassicMapFormat) -> String {
+    format!("{} was not found in the Classic Client folder.", map_file_names(facet, format).join(" or "))
 }
 
-fn item_height(tiledata: Option<&TileData>, graphic: u16) -> i16 {
-    tiledata.and_then(|tiledata| tiledata.item_tiles().get(usize::from(graphic))).map_or(0, |tile| i16::from(tile.height_raw()))
+/// Which of [`MAP_SOURCES`] `cc_path` holds for `facet`, looked for again only when the folder or facet changed
+/// since `found`. When the folder or facet changes and `format` is not there, the first source found is chosen.
+pub(super) fn refresh_found_maps(
+    found: &mut Option<(PathBuf, u32, [bool; MAP_SOURCES.len()])>,
+    format: &mut ClassicMapFormat,
+    cc_path: &Path,
+    facet: u32,
+) -> [bool; MAP_SOURCES.len()] {
+    if let Some((path, found_facet, present)) = found.as_ref() {
+        if path == cc_path && *found_facet == facet {
+            return *present;
+        }
+    }
+    let present = MAP_SOURCES.map(|(source, _)| classic_map_found(cc_path, facet, source));
+    let chosen = MAP_SOURCES.iter().position(|&(source, _)| source == *format);
+    if !chosen.is_some_and(|index| present[index]) {
+        if let Some(index) = present.iter().position(|&present| present) {
+            *format = MAP_SOURCES[index].0;
+        }
+    }
+    *found = Some((cc_path.to_path_buf(), facet, present));
+    present
 }
 
-/// The static drawn on the radar at a cell of a block: the highest top, then the highest `z`.
-fn radar_static(tiles: &[PackedStaticTile], cell_x: u32, cell_y: u32, tiledata: Option<&TileData>) -> Option<PackedStaticTile> {
-    tiles
-        .iter()
-        .copied()
-        .filter(|tile| u32::from(tile.x_offset()) == cell_x && u32::from(tile.y_offset()) == cell_y)
-        .max_by_key(|tile| (i16::from(tile.z) + item_height(tiledata, tile.graphic), tile.z))
+/// The MUL and CC UOP buttons; a source not found is greyed, with a tooltip naming its files.
+pub(super) fn map_source_buttons(ui: &mut egui::Ui, format: &mut ClassicMapFormat, present: [bool; MAP_SOURCES.len()], facet: u32) {
+    ui.horizontal(|ui| {
+        for (&(source, label), present) in MAP_SOURCES.iter().zip(present) {
+            let button = egui::Button::selectable(*format == source, label);
+            if ui.add_enabled(present, button).on_disabled_hover_text(map_not_found_text(facet, source)).clicked() {
+                *format = source;
+            }
+        }
+    });
 }
 
-fn load_facet(cc_path: PathBuf, facet: u32, difs: ClassicDifOptions, tiledata: Option<Arc<TileData>>, max_side: u32) -> eyre::Result<(LoadedFacet, egui::ColorImage)> {
+fn load_facet(cc_path: PathBuf, facet: u32, format: ClassicMapFormat, difs: ClassicDifOptions, tiledata: Option<Arc<TileData>>, max_side: u32) -> eyre::Result<(LoadedFacet, egui::ColorImage)> {
     let dirs = [cc_path.clone()];
-    let sources = ClassicFacetSources::resolve(&dirs, facet, &MAP_FORMATS, difs, MapEdition::Standard)?;
+    let sources = ClassicFacetSources::resolve(&dirs, facet, &[format], difs, MapEdition::Standard)?;
     let mut plane = sources.load_map_plane(None, None)?;
     let size = plane.size_cells();
     let statics = sources.load_statics_reader(size.width, size.height, None)?.load_all()?;
-    let radarcol_path = find_file_ignoring_case(&cc_path, RADARCOL_FILE).ok_or_else(|| eyre::eyre!("no {RADARCOL_FILE} in {}", cc_path.display()))?;
-    let radarcol = load_radarcol(&radarcol_path).wrap_err_with(|| radarcol_path.display().to_string())?;
+    let radarcol = load_client_radarcol(&cc_path)?;
     let tiledata = match tiledata {
         Some(tiledata) => Some(tiledata),
         None => find_file_ignoring_case(&cc_path, TILEDATA_FILE).and_then(|path| TileData::load(path).ok()).map(Arc::new),
     };
-
-    let scale = size.width.max(size.height).div_ceil(max_side.max(1)).max(1);
-    let (image_width, image_height) = (size.width.div_ceil(scale), size.height.div_ceil(scale));
-    let mut rgba = vec![0u8; image_width as usize * image_height as usize * RGBA_CHANNELS];
-    let blocks_y = size.height / UO_BLOCK_DIM;
-    for block_x in 0..size.width / UO_BLOCK_DIM {
-        let mut column: Vec<MapBlockRelPos> = (0..blocks_y).map(|y| MapBlockRelPos { x: block_x, y }).collect();
-        plane.load_blocks(&mut column)?;
-        for block_y in 0..blocks_y {
-            let block = plane.block(MapBlockRelPos { x: block_x, y: block_y }).ok_or_else(|| eyre::eyre!("block {block_x},{block_y} not read"))?;
-            let tiles = statics.block_tiles(block_x, block_y);
-            for cell_y in 0..UO_BLOCK_DIM {
-                for cell_x in 0..UO_BLOCK_DIM {
-                    let (x, y) = (block_x * UO_BLOCK_DIM + cell_x, block_y * UO_BLOCK_DIM + cell_y);
-                    if x % scale != 0 || y % scale != 0 {
-                        continue;
-                    }
-                    let land = block.cell(cell_x, cell_y)?;
-                    let color = match radar_static(tiles, cell_x, cell_y, tiledata.as_deref()) {
-                        Some(tile) if i16::from(tile.z) + item_height(tiledata.as_deref(), tile.graphic) >= i16::from(land.z) => {
-                            radarcol.get(RADARCOL_ITEM_BASE + usize::from(tile.graphic))
-                        }
-                        _ => radarcol.get(usize::from(land.id)),
-                    };
-                    let at = ((y / scale) as usize * image_width as usize + (x / scale) as usize) * RGBA_CHANNELS;
-                    rgba[at..at + RGBA_CHANNELS].copy_from_slice(&radar_rgba(color));
-                }
-            }
-        }
-        plane.evict_idle_blocks(std::time::Duration::ZERO);
-    }
+    let colours = RadarColours::with_tiledata(radarcol, tiledata.as_deref());
+    let radar = render_radar(&mut plane, &statics, &colours, radar_scale(size.width, size.height, max_side))?;
     let mut label = format!("{} ({})", sources.map.path.display(), sources.map.format.label());
     if let Some(files) = &sources.statics {
         label.push_str(&format!(", {}", files.statics.display()));
@@ -175,8 +172,8 @@ fn load_facet(cc_path: PathBuf, facet: u32, difs: ClassicDifOptions, tiledata: O
     if sources.map_difs.is_some() || sources.static_difs.is_some() {
         label.push_str(", difs");
     }
-    let image = egui::ColorImage::from_rgba_unmultiplied([image_width as usize, image_height as usize], &rgba);
-    Ok((LoadedFacet { facet, sources: label, width: size.width, height: size.height, scale, plane, statics, tiledata }, image))
+    let image = egui::ColorImage::from_rgba_unmultiplied([radar.width as usize, radar.height as usize], &radar.rgba);
+    Ok((LoadedFacet { facet, sources: label, width: size.width, height: size.height, scale: radar.scale, plane, statics, tiledata }, image))
 }
 
 fn facet_name(facet: u32) -> String {
@@ -232,15 +229,18 @@ pub fn ui_classic_maps(app: &mut UopInspectorApp, ctx: &egui::Context, ui: &mut 
                 ui.selectable_value(&mut state.facet, facet, facet_name(facet));
             }
         });
+        let present = refresh_found_maps(&mut state.found, &mut state.format, &cc_path, state.facet);
+        map_source_buttons(ui, &mut state.format, present, state.facet);
         ui.checkbox(&mut state.map_difs, "Map difs");
         ui.checkbox(&mut state.static_difs, "Static difs");
         let busy = state.worker.is_some();
         if ui.add_enabled(!busy, egui::Button::new(if busy { "Reading..." } else { "Read facet" })).clicked() {
             let (sender, receiver) = mpsc::channel();
-            let (facet, difs) = (state.facet, ClassicDifOptions { map_difs: state.map_difs, static_difs: state.static_difs });
+            let (facet, format) = (state.facet, state.format);
+            let difs = ClassicDifOptions { map_difs: state.map_difs, static_difs: state.static_difs };
             let max_side = u32::try_from(ctx.input(|input| input.max_texture_side)).unwrap_or(u32::MAX);
             std::thread::spawn(move || {
-                let _ = sender.send(load_facet(cc_path, facet, difs, tiledata, max_side).map_err(|error| format!("{error:#}")));
+                let _ = sender.send(load_facet(cc_path, facet, format, difs, tiledata, max_side).map_err(|error| format!("{error:#}")));
             });
             state.worker = Some(receiver);
         }
@@ -455,7 +455,11 @@ mod tests {
     fn a_shipped_facet_renders_and_reports_its_tiles() {
         let roots = std::env::var_os(CLIENT_ROOTS_ENV).unwrap_or_else(|| panic!("set {CLIENT_ROOTS_ENV}"));
         for root in std::env::split_paths(&roots) {
-            let Ok((mut loaded, image)) = load_facet(root.clone(), FACET, ClassicDifOptions::NONE, None, u32::MAX) else {
+            let Some(format) = MAP_SOURCES.into_iter().map(|(format, _)| format).find(|&format| classic_map_found(&root, FACET, format)) else {
+                println!("{}: no facet {FACET}", root.display());
+                continue;
+            };
+            let Ok((mut loaded, image)) = load_facet(root.clone(), FACET, format, ClassicDifOptions::NONE, None, u32::MAX) else {
                 println!("{}: no facet {FACET}", root.display());
                 continue;
             };
@@ -465,7 +469,7 @@ mod tests {
             let block = MapBlockRelPos { x: loaded.width / 2 / UO_BLOCK_DIM, y: loaded.height / 2 / UO_BLOCK_DIM };
             loaded.plane.load_blocks(&mut [block]).unwrap();
             assert!(loaded.plane.block(block).is_some());
-            let (_, small) = load_facet(root.clone(), FACET, ClassicDifOptions::NONE, None, SMALL_TEXTURE_SIDE).unwrap();
+            let (_, small) = load_facet(root.clone(), FACET, format, ClassicDifOptions::NONE, None, SMALL_TEXTURE_SIDE).unwrap();
             assert!(small.size[0] <= SMALL_TEXTURE_SIDE as usize && small.size[1] <= SMALL_TEXTURE_SIDE as usize);
             println!("{}: facet {FACET} {} x {}, {} colours, {}", root.display(), loaded.width, loaded.height, colors.len(), loaded.sources);
         }
