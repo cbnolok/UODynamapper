@@ -44,6 +44,9 @@ const WARNING_COLOR: egui::Color32 = egui::Color32::from_rgb(230, 180, 60);
 const PREVIEW_STATE_ID: &str = "tile_metadata_preview";
 /// The lines under a small texture wrap at this width, not at the texture's.
 const MIN_CAPTION_WIDTH: f32 = 160.0;
+/// A column scrolled out on the left with less than this in view keeps its text at its own left edge: pinned to the
+/// view, the text would wrap too narrow.
+const MIN_PINNED_WIDTH: f32 = 80.0;
 
 /// What a shader block draws, by its position and the record version.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -274,21 +277,24 @@ pub(super) fn tileart_preview(app: &mut UopInspectorApp, ctx: &egui::Context, ui
                 .and_then(|block| block.type_string_off.checked_sub(1))
                 .and_then(|offset| dictionary.get_string(offset as usize));
             let primary = primary_texture_position(shader);
-            ui.horizontal(|ui| {
-                ui.strong(format!("Block {}: {}", first.block_index, block_role_label(role)));
-                if let Some(shader) = shader {
-                    ui.weak(shader);
-                }
-                if let Some(scale) = block_scale(entry, role) {
-                    ui.weak(format!("scale {scale}"));
+            let view_right = ui.clip_rect().right();
+            pinned_to_view(ui, view_right, |ui| {
+                ui.horizontal_wrapped(|ui| {
+                    ui.strong(format!("Block {}: {}", first.block_index, block_role_label(role)));
+                    if let Some(shader) = shader {
+                        ui.weak(shader);
+                    }
+                    if let Some(scale) = block_scale(entry, role) {
+                        ui.weak(format!("scale {scale}"));
+                    }
+                });
+                if role == BlockRole::Light {
+                    ui.weak(format!(
+                        "light scale {}, offsets {}, {} (view space)",
+                        entry.light_scale, entry.light_offset_x, entry.light_offset_y
+                    ));
                 }
             });
-            if role == BlockRole::Light {
-                ui.weak(format!(
-                    "light scale {}, offsets {}, {} (view space)",
-                    entry.light_scale, entry.light_offset_x, entry.light_offset_y
-                ));
-            }
             ui.horizontal_top(|ui| {
                 ui.spacing_mut().item_spacing.x = TEXTURE_SPACING;
                 for item in block {
@@ -342,63 +348,87 @@ fn texture(
     overlays: Overlays,
 ) {
     let extra = item.id >= FIRST_EXTRA_TEXTURE_ID;
-    ui.label(format!("{} {}", texture_type_label(item.texture_type), item.id)).on_hover_text(&item.path);
-    ui.weak(format!("item {}{}, stretch {}", item.item_index, if primary { ", primary" } else { "" }, item.texture_stretch));
-    let Some(handle) = app.tileart_item_texture(ctx, item.texture_type, item.id) else {
-        ui.colored_label(WARNING_COLOR, "missing");
-        return;
-    };
+    let handle = app.tileart_item_texture(ctx, item.texture_type, item.id);
     let scale = if extra { zoom * EXTRA_TEXTURE_SCALE } else { zoom };
-    let size = handle.size_vec2();
     let window = if extra { None } else { sprite_window(entry, block_role(entry.version, item.block_index)) };
-    let extent = overlay_extent(size, window.as_ref(), overlays);
     // The cross at the offsets' point reaches past the extent by its radius.
     let margin = egui::Vec2::splat(ORIGIN_MARK_RADIUS);
-    let (room, response) = ui.allocate_exact_size(extent.size() * scale + margin + margin, egui::Sense::hover());
+    let extent = handle.as_ref().map(|handle| overlay_extent(handle.size_vec2(), window.as_ref(), overlays));
+    let room_size = extent.map(|extent| extent.size() * scale + margin + margin);
+    // The lines over and under the texture wrap at its width: a wider line would widen the column past the image.
+    ui.set_max_width(room_size.map_or(0.0, |size| size.x).max(MIN_CAPTION_WIDTH));
+    let column_right = ui.max_rect().right();
+    pinned_to_view(ui, column_right, |ui| {
+        caption(ui, egui::RichText::new(format!("{} {}", texture_type_label(item.texture_type), item.id))).on_hover_text(&item.path);
+        let primary_note = if primary { ", primary" } else { "" };
+        caption(ui, egui::RichText::new(format!("item {}{primary_note}, stretch {}", item.item_index, item.texture_stretch)).weak());
+        if handle.is_none() {
+            caption(ui, egui::RichText::new("missing").color(WARNING_COLOR));
+        }
+    });
+    let (Some(handle), Some(extent), Some(room_size)) = (handle, extent, room_size) else {
+        return;
+    };
+    let size = handle.size_vec2();
+    let (room, response) = ui.allocate_exact_size(room_size, egui::Sense::hover());
     let image_rect = egui::Rect::from_min_size(room.min + margin - extent.min.to_vec2() * scale, size * scale);
     image(&handle, size * scale).paint_at(ui, image_rect);
     pixel_hover(response, image_rect, scale);
-    // The lines under the texture wrap at its width: a wider line would widen the column past the image, and its
-    // start would scroll out of view on the left while the image still shows.
-    ui.set_max_width(room.width().max(MIN_CAPTION_WIDTH));
-    caption(ui, egui::RichText::new(format!("{} x {}", size.x, size.y)).weak());
-    let Some(window) = window else {
-        return;
-    };
-    let to_screen = |point: egui::Pos2| image_rect.min + point.to_vec2() * scale;
-    let painter = ui.painter();
-    if overlays.bounding_box && !window.is_empty() {
-        let bounds = egui::Rect::from_two_pos(to_screen(window.min), to_screen(window.max));
-        let stroke = egui::Stroke::new(OVERLAY_STROKE_WIDTH, BOUNDING_BOX_COLOR);
-        painter.rect_stroke(bounds, 0.0, stroke, egui::StrokeKind::Outside);
+    if let Some(window) = &window {
+        let to_screen = |point: egui::Pos2| image_rect.min + point.to_vec2() * scale;
+        let painter = ui.painter();
+        if overlays.bounding_box && !window.is_empty() {
+            let bounds = egui::Rect::from_two_pos(to_screen(window.min), to_screen(window.max));
+            let stroke = egui::Stroke::new(OVERLAY_STROKE_WIDTH, BOUNDING_BOX_COLOR);
+            painter.rect_stroke(bounds, 0.0, stroke, egui::StrokeKind::Outside);
+        }
+        if overlays.offsets {
+            let stroke = egui::Stroke::new(OVERLAY_STROKE_WIDTH, OFFSETS_COLOR);
+            let origin = to_screen(window.origin());
+            let corner = to_screen(egui::pos2(window.min.x, window.max.y));
+            painter.line_segment([origin, egui::pos2(corner.x, origin.y)], stroke);
+            painter.line_segment([egui::pos2(corner.x, origin.y), corner], stroke);
+            painter.line_segment([origin - egui::vec2(ORIGIN_MARK_RADIUS, 0.0), origin + egui::vec2(ORIGIN_MARK_RADIUS, 0.0)], stroke);
+            painter.line_segment([origin - egui::vec2(0.0, ORIGIN_MARK_RADIUS), origin + egui::vec2(0.0, ORIGIN_MARK_RADIUS)], stroke);
+        }
     }
-    if overlays.offsets {
-        let stroke = egui::Stroke::new(OVERLAY_STROKE_WIDTH, OFFSETS_COLOR);
-        let origin = to_screen(window.origin());
-        let corner = to_screen(egui::pos2(window.min.x, window.max.y));
-        painter.line_segment([origin, egui::pos2(corner.x, origin.y)], stroke);
-        painter.line_segment([egui::pos2(corner.x, origin.y), corner], stroke);
-        painter.line_segment([origin - egui::vec2(ORIGIN_MARK_RADIUS, 0.0), origin + egui::vec2(ORIGIN_MARK_RADIUS, 0.0)], stroke);
-        painter.line_segment([origin - egui::vec2(0.0, ORIGIN_MARK_RADIUS), origin + egui::vec2(0.0, ORIGIN_MARK_RADIUS)], stroke);
-    }
-    caption(
-        ui,
-        egui::RichText::new(format!(
-            "{}: {}, {} to {}, {}; offsets {}, {}",
-            window.label, window.min.x, window.min.y, window.max.x, window.max.y, window.offset.x, window.offset.y
-        ))
-        .weak(),
-    );
-    if window.is_empty() {
-        caption(ui, egui::RichText::new("The window is empty: no box.").weak());
-    } else if !window.fits(handle.size()) {
-        caption(ui, egui::RichText::new("The window is not inside this image.").color(WARNING_COLOR));
-    }
+    pinned_to_view(ui, column_right, |ui| {
+        caption(ui, egui::RichText::new(format!("{} x {}", size.x, size.y)).weak());
+        let Some(window) = &window else {
+            return;
+        };
+        caption(
+            ui,
+            egui::RichText::new(format!(
+                "{}: {}, {} to {}, {}; offsets {}, {}",
+                window.label, window.min.x, window.min.y, window.max.x, window.max.y, window.offset.x, window.offset.y
+            ))
+            .weak(),
+        );
+        if window.is_empty() {
+            caption(ui, egui::RichText::new("The window is empty: no box.").weak());
+        } else if !window.fits(handle.size()) {
+            caption(ui, egui::RichText::new("The window is not inside this image.").color(WARNING_COLOR));
+        }
+    });
 }
 
-/// A line under a texture, wrapped at the column's width.
-fn caption(ui: &mut egui::Ui, text: egui::RichText) {
-    ui.add(egui::Label::new(text).wrap());
+/// A line over or under a texture, wrapped at the column's width.
+fn caption(ui: &mut egui::Ui, text: egui::RichText) -> egui::Response {
+    ui.add(egui::Label::new(text).wrap())
+}
+
+/// Lays out `add_contents` top-down from the pane's visible left edge when the pane has scrolled sideways past the
+/// left of `ui`, wrapping at the visible width up to `right`: the text of a block or a texture stays in view while its
+/// image does, instead of scrolling out on the left.
+fn pinned_to_view(ui: &mut egui::Ui, right: f32, add_contents: impl FnOnce(&mut egui::Ui)) {
+    let cursor = ui.cursor();
+    let view = ui.clip_rect();
+    let (visible_left, visible_right) = (cursor.left().max(view.left()), right.min(view.right()));
+    let (left, right) =
+        if visible_right - visible_left >= MIN_PINNED_WIDTH { (visible_left, visible_right) } else { (cursor.left(), right) };
+    let rect = egui::Rect::from_min_max(egui::pos2(left, cursor.top()), egui::pos2(right, ui.max_rect().bottom().max(cursor.top())));
+    ui.scope_builder(egui::UiBuilder::new().max_rect(rect).layout(egui::Layout::top_down(egui::Align::Min)), add_contents);
 }
 
 fn texture_type_label(texture_type: TextureType) -> &'static str {
