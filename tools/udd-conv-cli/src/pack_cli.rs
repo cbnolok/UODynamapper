@@ -18,6 +18,7 @@ use clap::{ArgGroup, Args, Parser, Subcommand};
 use color_eyre::eyre;
 use serde::Serialize;
 use uocf::map_edition::MapEdition;
+use uocf::utils::bundled_files::{self, EC_MOBILE_ANIMATIONS_KDL, EC_SURFACE_OVERRIDES_KDL, EC_TERRAIN_OVERRIDES_KDL};
 use udd_conv::{
     classic_patches::ClassicPatchOptions,
     tex_aux_ec::pack_tex_aux_ec,
@@ -160,6 +161,18 @@ impl From<CliMapEdition> for MapEdition {
 const MAP_EDITION_HELP: &str = "Map edition to read: standard, or variant (the x files mapNx / staidxNx / staticsNx \
 the server selects with the 0xA9 flag 0x8000; facets 0, 1, 2 and 5 only, the others read their standard files). The \
 variant never falls back to the standard files. The dif options apply to whichever edition is selected.";
+
+const TERRAIN_OVERRIDES_HELP: &str = "EcTerrainOverrides.kdl to read. Default: the copy shipped with the tools.";
+const SURFACE_OVERRIDES_HELP: &str = "EcSurfaceOverrides.kdl to read. Default: the copy shipped with the tools.";
+
+/// The EcMobileAnimations.kdl of `--ec-mobile-animations-kdl`, else of `--tables` (the file, or the folder holding it),
+/// else the copy shipped with the tools.
+fn resolve_ec_mobile_animations_kdl(exact: Option<PathBuf>, tables: Option<PathBuf>) -> eyre::Result<PathBuf> {
+    let given = exact.or_else(|| tables.map(|tables| {
+        if tables.is_dir() { EC_MOBILE_ANIMATIONS_KDL.in_dir(&tables) } else { tables }
+    }));
+    bundled_files::resolve(given.as_deref(), EC_MOBILE_ANIMATIONS_KDL)
+}
 
 /// The Classic options of a map, statics or radar command.
 fn facet_patch_options(classic_patches: ClassicPatchArgs, map_edition: CliMapEdition) -> ClassicPatchOptions {
@@ -937,9 +950,9 @@ enum Commands {
         bc7_rdo_lambda: f32,
         #[arg(long, value_parser = parse_bc7_rdo_lookback_blocks, default_value_t = udd_conv::bc7::DEFAULT_BC7_RDO_LOOKBACK_BLOCKS, help = "BC7 RDO lookback preset in previous BC7 blocks.")]
         bc7_rdo_lookback_blocks: usize,
-        #[arg(long, help = "Directory containing EcMobileAnimations.kdl, or the KDL file itself.")]
+        #[arg(long, help = "Directory containing EcMobileAnimations.kdl, or the KDL file itself. Default: the copy shipped with the tools.")]
         tables: Option<PathBuf>,
-        #[arg(long = "ec-mobile-animations-kdl", help = "Exact EcMobileAnimations.kdl path.")]
+        #[arg(long = "ec-mobile-animations-kdl", help = "Exact EcMobileAnimations.kdl path. Default: the copy shipped with the tools.")]
         ec_mobile_animations_kdl: Option<PathBuf>,
         #[arg(long = "upscale-pass", value_enum, help = "Add an upscale pass before atlas encoding. Repeat to chain filters.")]
         upscale_passes: Vec<CliUpscaleFilter>,
@@ -965,6 +978,8 @@ enum Commands {
         tilemeta_use_ec_radarcol: bool,
         #[arg(long, help = "Embed this terrain routing KDL in tex_land_ec.uddp instead of auto-discovered TerrainTranscode.kdl.")]
         land_transcode_kdl: Option<PathBuf>,
+        #[arg(long, help = "Apply this EcTerrainOverrides.kdl to tex_land_ec.uddp. Default: the copy shipped with the tools.")]
+        land_terrain_overrides_kdl: Option<PathBuf>,
         #[arg(long, default_value_t = EC_ART_DEFAULT_ATLAS_PAGE_WIDTH)]
         art_atlas_width: u32,
         #[arg(long, default_value_t = EC_ART_DEFAULT_ATLAS_PAGE_HEIGHT)]
@@ -1077,11 +1092,8 @@ enum Commands {
     AuditEcTerrainPrimarySelection {
         #[command(flatten)]
         source_dirs: SourceDirArgs,
-        #[arg(
-            long = "terrain-overrides",
-            default_value = "dynamapper/assets/cc_ec_convtables/EcTerrainOverrides.kdl"
-        )]
-        terrain_overrides: PathBuf,
+        #[arg(long = "terrain-overrides", help = TERRAIN_OVERRIDES_HELP)]
+        terrain_overrides: Option<PathBuf>,
         #[arg(long = "tex-land-ec")]
         tex_land_ec: Option<PathBuf>,
         #[arg(long, default_value = "ec_terrain_primary_selection.json")]
@@ -1091,11 +1103,8 @@ enum Commands {
     ReportEcTerrainPracticalReview {
         #[command(flatten)]
         source_dirs: SourceDirArgs,
-        #[arg(
-            long = "terrain-overrides",
-            default_value = "dynamapper/assets/cc_ec_convtables/EcTerrainOverrides.kdl"
-        )]
-        terrain_overrides: PathBuf,
+        #[arg(long = "terrain-overrides", help = TERRAIN_OVERRIDES_HELP)]
+        terrain_overrides: Option<PathBuf>,
         #[arg(long = "tex-land-ec")]
         tex_land_ec: Option<PathBuf>,
         #[arg(long, default_value = "ec_terrain_practical_review.json")]
@@ -1105,11 +1114,8 @@ enum Commands {
     AuditEcTerrainOverrides {
         #[command(flatten)]
         source_dirs: SourceDirArgs,
-        #[arg(
-            long = "terrain-overrides",
-            default_value = "dynamapper/assets/cc_ec_convtables/EcTerrainOverrides.kdl"
-        )]
-        terrain_overrides: PathBuf,
+        #[arg(long = "terrain-overrides", help = TERRAIN_OVERRIDES_HELP)]
+        terrain_overrides: Option<PathBuf>,
         #[arg(long, default_value = "ec_terrain_overrides_audit.json")]
         output: PathBuf,
     },
@@ -1132,11 +1138,8 @@ enum Commands {
         tex_art_ec: Option<PathBuf>,
         #[arg(long = "ec-land")]
         tex_land_ec: PathBuf,
-        #[arg(
-            long = "surface-overrides",
-            default_value = "dynamapper/assets/cc_ec_convtables/EcSurfaceOverrides.kdl"
-        )]
-        surface_overrides: PathBuf,
+        #[arg(long = "surface-overrides", help = SURFACE_OVERRIDES_HELP)]
+        surface_overrides: Option<PathBuf>,
         #[arg(long, default_value = "ec_surface_redirection.json")]
         output: PathBuf,
     },
@@ -1685,8 +1688,8 @@ where
                     bc7_rdo_lookback_blocks: output_format.bc7_rdo_lookback_blocks,
                     upscale_passes: convert_upscale_passes(upscale_passes),
                     upscale_profile,
-                    metadata_path: ec_mobile_animations_kdl,
-                    tables_dir: tables,
+                    metadata_path: Some(resolve_ec_mobile_animations_kdl(ec_mobile_animations_kdl, tables)?),
+                    tables_dir: None,
                     allow_missing_metadata: false,
                 },
             )?;
@@ -1749,6 +1752,7 @@ where
             tilemeta_output,
             tilemeta_use_ec_radarcol,
             land_transcode_kdl,
+            land_terrain_overrides_kdl,
             art_atlas_width,
             art_atlas_height,
             art_gutter,
@@ -1793,6 +1797,9 @@ where
         } => {
             let paths = collect_source_dirs(&source_dir_args)?;
             let ec_paths = collect_ec_source_dirs(&source_dir_args)?;
+            // Before the art pass, so a missing table fails the command at once.
+            let land_terrain_overrides_kdl =
+                bundled_files::resolve(land_terrain_overrides_kdl.as_deref(), EC_TERRAIN_OVERRIDES_KDL)?;
             let art_out_file = resolve_output_path(&art_output);
             let land_out_file = resolve_output_path(&land_output);
             let tilemeta_out_file = tilemeta_output
@@ -1898,6 +1905,7 @@ where
                     bc7_rdo_lambda: land_output_format.bc7_rdo_lambda,
                     bc7_rdo_lookback_blocks: land_output_format.bc7_rdo_lookback_blocks,
                     transcode_kdl_path: land_transcode_kdl,
+                    terrain_overrides_kdl_path: Some(land_terrain_overrides_kdl),
                 },
             )?;
             info!(
@@ -1983,10 +1991,10 @@ where
         } => {
             let paths = collect_ec_source_dirs(&source_dir_args)?;
             let out_file = resolve_output_path(&output);
-            let terrain_overrides = terrain_overrides.exists().then_some(terrain_overrides);
+            let terrain_overrides = bundled_files::resolve(terrain_overrides.as_deref(), EC_TERRAIN_OVERRIDES_KDL)?;
             audit_ec_terrain_primary_selection(
                 &paths,
-                terrain_overrides.as_deref(),
+                Some(&terrain_overrides),
                 tex_land_ec.as_deref(),
                 &out_file,
             )?;
@@ -1999,10 +2007,10 @@ where
         } => {
             let paths = collect_ec_source_dirs(&source_dir_args)?;
             let out_file = resolve_output_path(&output);
-            let terrain_overrides = terrain_overrides.exists().then_some(terrain_overrides);
+            let terrain_overrides = bundled_files::resolve(terrain_overrides.as_deref(), EC_TERRAIN_OVERRIDES_KDL)?;
             write_ec_terrain_practical_review(
                 &paths,
-                terrain_overrides.as_deref(),
+                Some(&terrain_overrides),
                 tex_land_ec.as_deref(),
                 &out_file,
             )?;
@@ -2014,6 +2022,7 @@ where
         } => {
             let paths = collect_ec_source_dirs(&source_dir_args)?;
             let out_file = resolve_output_path(&output);
+            let terrain_overrides = bundled_files::resolve(terrain_overrides.as_deref(), EC_TERRAIN_OVERRIDES_KDL)?;
             audit_ec_terrain_overrides(&paths, &terrain_overrides, &out_file)?;
         }
         Commands::AuditLandRoutingKdl {
@@ -2033,13 +2042,13 @@ where
         } => {
             let paths = collect_ec_source_dirs(&source_dir_args)?;
             let out_file = resolve_output_path(&output);
-            let surface_overrides = surface_overrides.exists().then_some(surface_overrides);
+            let surface_overrides = bundled_files::resolve(surface_overrides.as_deref(), EC_SURFACE_OVERRIDES_KDL)?;
             audit_ec_surface_redirection(
                 &paths,
                 &tilemeta,
                 tex_art_ec.as_deref(),
                 &tex_land_ec,
-                surface_overrides.as_deref(),
+                Some(&surface_overrides),
                 &out_file,
             )?;
         }

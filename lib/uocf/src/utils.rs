@@ -1,3 +1,4 @@
+pub mod bundled_files;
 pub mod color;
 pub mod config_toml;
 pub mod math;

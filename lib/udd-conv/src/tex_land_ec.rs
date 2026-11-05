@@ -165,6 +165,8 @@ pub struct TexLandEcAtlasOptions {
     pub bc7_rdo_lambda: f32,
     pub bc7_rdo_lookback_blocks: usize,
     pub transcode_kdl_path: Option<PathBuf>,
+    /// The EcTerrainOverrides.kdl to apply; when unset, one in the source dirs or the working directory is used.
+    pub terrain_overrides_kdl_path: Option<PathBuf>,
 }
 
 impl Default for TexLandEcAtlasOptions {
@@ -187,6 +189,7 @@ impl Default for TexLandEcAtlasOptions {
             bc7_rdo_lambda: crate::bc7::DEFAULT_BC7_RDO_LAMBDA,
             bc7_rdo_lookback_blocks: crate::bc7::DEFAULT_BC7_RDO_LOOKBACK_BLOCKS,
             transcode_kdl_path: None,
+            terrain_overrides_kdl_path: None,
         }
     }
 }
@@ -399,14 +402,21 @@ pub fn convert_tex_land_ec_uop_to_tex_land_ec_uddp_from_loaded_sources_with_prog
         .iter()
         .map(|entry| entry.aliases.len() as u32)
         .sum();
-    let terrain_overrides_kdl_path = find_first_existing_file_in_sources_or_cwd(
-        source_dirs,
-        &[
-            "EcTerrainOverrides.kdl",
-            "cc_ec_convtables/EcTerrainOverrides.kdl",
-            "dynamapper/assets/cc_ec_convtables/EcTerrainOverrides.kdl",
-        ],
-    );
+    let terrain_overrides_kdl_path = if let Some(path) = options.terrain_overrides_kdl_path.as_ref() {
+        if !path.is_file() {
+            eyre::bail!("terrain overrides KDL not found: {}", path.display());
+        }
+        Some(path.clone())
+    } else {
+        find_first_existing_file_in_sources_or_cwd(
+            source_dirs,
+            &[
+                "EcTerrainOverrides.kdl",
+                "cc_ec_convtables/EcTerrainOverrides.kdl",
+                "dynamapper/assets/cc_ec_convtables/EcTerrainOverrides.kdl",
+            ],
+        )
+    };
     let terrain_overrides = terrain_overrides_kdl_path
         .as_ref()
         .map(|path| EcTerrainOverrides::load(path).map(|overrides| (path.clone(), overrides)))
@@ -1719,6 +1729,7 @@ pub fn encode_slot_manifest(
             bc7_rdo_lambda: crate::bc7::DEFAULT_BC7_RDO_LAMBDA,
             bc7_rdo_lookback_blocks: crate::bc7::DEFAULT_BC7_RDO_LOOKBACK_BLOCKS,
             transcode_kdl_path: None,
+            terrain_overrides_kdl_path: None,
         },
     )
 }
@@ -1794,6 +1805,7 @@ mod tests {
             bc7_rdo_lambda: crate::bc7::DEFAULT_BC7_RDO_LAMBDA,
             bc7_rdo_lookback_blocks: crate::bc7::DEFAULT_BC7_RDO_LOOKBACK_BLOCKS,
             transcode_kdl_path: None,
+            terrain_overrides_kdl_path: None,
         };
 
         let (page, leftovers) = build_page(0, vec![tile(11, 3, 3)], &options).unwrap();
