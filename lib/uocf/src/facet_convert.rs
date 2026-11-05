@@ -276,7 +276,12 @@ pub fn convert_facet(request: &FacetConversion, values: ParsedValues, hints: &Co
         }
     }
 
-    prepare_output_dir(&request.output_dir, &source.inputs, client.as_ref())?;
+    // A Classic target reads the UOP template like a source, and the file it writes can take the template's name.
+    let mut inputs = source.inputs.clone();
+    if matches!(request.target, ConversionTarget::Classic(_)) {
+        inputs.extend(request.uop_template.iter().cloned());
+    }
+    prepare_output_dir(&request.output_dir, &inputs, client.as_ref())?;
     match request.target {
         ConversionTarget::Classic(containers) => {
             let containers = match containers {
@@ -916,6 +921,26 @@ mod tests {
         // Another folder takes the same conversion.
         convert(&FacetConversion { target_client: Some(exe), ..conversion }).unwrap();
         assert!(elsewhere.join(format!("map{FACET}.mul")).exists());
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn a_folder_holding_the_uop_template_is_refused_as_the_output() {
+        const TEMPLATE_BYTES: &[u8] = b"the template";
+        let root = temp("template_output");
+        let (source, templates) = (root.join("source"), root.join("templates"));
+        std::fs::create_dir_all(&source).unwrap();
+        std::fs::create_dir_all(&templates).unwrap();
+        classic_source(&source);
+        let template = templates.join(format!("map{FACET}LegacyMUL.uop"));
+        std::fs::write(&template, TEMPLATE_BYTES).unwrap();
+        let conversion = FacetConversion {
+            uop_template: Some(template.clone()),
+            ..request(&source, ConversionTarget::Classic(ClassicContainers::Uop), &templates)
+        };
+        let error = format!("{:#}", convert(&conversion).unwrap_err());
+        assert!(error.contains("holds the source files"), "{error}");
+        assert!(std::fs::read(&template).unwrap() == TEMPLATE_BYTES);
         std::fs::remove_dir_all(root).unwrap();
     }
 
