@@ -10,6 +10,7 @@ pub mod cc_radar;
 pub mod cc_statics;
 pub mod classic_sources;
 pub mod classic_patches;
+pub mod conversion_tables;
 pub mod tex_land_cc;
 pub mod tex_art_ec;
 pub mod tex_land_ec;

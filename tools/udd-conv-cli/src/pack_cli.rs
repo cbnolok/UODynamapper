@@ -18,7 +18,8 @@ use clap::{ArgGroup, Args, Parser, Subcommand};
 use color_eyre::eyre;
 use serde::Serialize;
 use uocf::map_edition::MapEdition;
-use uocf::utils::bundled_files::{self, EC_MOBILE_ANIMATIONS_KDL, EC_SURFACE_OVERRIDES_KDL, EC_TERRAIN_OVERRIDES_KDL};
+use uocf::utils::bundled_files;
+use udd_conv::conversion_tables::{EC_MOBILE_ANIMATIONS_KDL, EC_SURFACE_OVERRIDES_KDL, EC_TERRAIN_OVERRIDES_KDL};
 use udd_conv::{
     classic_patches::ClassicPatchOptions,
     tex_aux_ec::pack_tex_aux_ec,

@@ -42,7 +42,8 @@ use udd_conv_cli::{
     tool_cli::{diff_paths_report, export_csv_auto_report, hash_path_report, DiffKind},
     upscale_profile_config::load_upscale_profile as load_upscale_profile_config,
 };
-use uocf::utils::bundled_files::{self, BundledFile, EC_MOBILE_ANIMATIONS_KDL, EC_TERRAIN_OVERRIDES_KDL};
+use udd_conv::conversion_tables::{EC_MOBILE_ANIMATIONS_KDL, EC_TERRAIN_OVERRIDES_KDL};
+use uocf::utils::bundled_files::{self, BundledFile};
 use crate::app::UddConvApp;
 use crate::models::{
     AppSettings, AssetPackProgress, AssetPackProgressState, AssetPackTask, LogLevel, LogMessage,
