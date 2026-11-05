@@ -1,7 +1,14 @@
 use crate::app::{
     ArtSource, HousingIndex, MultiCollectionSource, MultiPartFilters, MultisSource, UopInspectorApp, ViewMode,
 };
-use crate::ui::{arrow_delta, list_sort_controls, move_selection, multi_editor, sorted_indices_by};
+use crate::ui::{
+    arrow_delta, enhanced_files_availability, enhanced_folder_source, folder_files_availability, list_sort_controls,
+    move_selection, multi_editor, sorted_indices_by, source_choice, ClientSource, SourceAvailability, CLASSIC_FOLDER,
+    ENHANCED_FOLDER,
+};
+
+const MULTI_MUL_FILES: &str = "multi.mul and multi.idx";
+const MULTI_COLLECTION_FILE: &str = "MultiCollection.uop";
 use eframe::egui;
 use std::collections::hash_map::DefaultHasher;
 use std::collections::{HashMap, HashSet};
@@ -191,24 +198,13 @@ pub fn ui_multis(app: &mut UopInspectorApp, ctx: &egui::Context, ui: &mut egui::
     }
 
     egui::Panel::top("multis_source_tabs").show(ui, |ui| {
-        ui.horizontal(|ui| {
-            if has_classic {
-                ui.selectable_value(&mut app.multis_source, MultisSource::ClassicMul, "multi.mul/.idx");
-            }
-            if has_uop {
-                let label = format!("{} MultiCollection.uop", multi_collection_source_label(app));
-                ui.selectable_value(&mut app.multis_source, MultisSource::Uop, label);
-            }
+        ui.horizontal_wrapped(|ui| {
+            multis_source_selector(app, ui, has_classic);
             ui.separator();
             ui.label("Art:");
-            egui::ComboBox::from_id_salt("multis_art_source")
-                .selected_text(art_source_label(app.selected_legacy_source))
-                .show_ui(ui, |ui| {
-                    ui.selectable_value(&mut app.selected_legacy_source, ArtSource::Mul, "MUL");
-                    ui.selectable_value(&mut app.selected_legacy_source, ArtSource::CcUop, "CC UOP");
-                    ui.selectable_value(&mut app.selected_legacy_source, ArtSource::EcUopLegacy, "EC Legacy UOP");
-                    ui.selectable_value(&mut app.selected_legacy_source, ArtSource::EcUopKr, "KR/New UOP");
-                });
+            if let Some(source) = super::art_viewer::art_source_choice(app, ui, app.selected_legacy_source) {
+                app.selected_legacy_source = source;
+            }
         });
     });
 
@@ -225,6 +221,51 @@ fn source_available(source: MultisSource, has_classic: bool, has_uop: bool) -> b
     }
 }
 
+/// multi.mul is MUL; MultiCollection.uop is CC UOP, KR UOP or EC UOP by the folder it was loaded from. One collection
+/// loads: the Enhanced folder's when both folders have one.
+fn multis_source_selector(app: &mut UopInspectorApp, ui: &mut egui::Ui, has_classic: bool) {
+    let ctx = ui.ctx().clone();
+    let cc_path = app.settings.cc_path.as_deref();
+    let ec_path = app.settings.ec_path.as_deref();
+    let collection = app.multi_collection.as_ref().and(app.multi_collection_source);
+    let collection_source = match collection {
+        Some(MultiCollectionSource::ClassicClient) => Some(ClientSource::CcUop),
+        Some(MultiCollectionSource::EnhancedClient) => ec_path.map(|folder| enhanced_folder_source(&ctx, folder)),
+        None => None,
+    };
+    let selected = match app.multis_source {
+        MultisSource::ClassicMul => Some(ClientSource::Mul),
+        MultisSource::Uop => collection_source,
+    };
+    let clicked = source_choice(ui, selected, |source| match source {
+        ClientSource::Mul => folder_files_availability(cc_path, CLASSIC_FOLDER, MULTI_MUL_FILES, has_classic),
+        ClientSource::CcUop => match (cc_path, collection) {
+            (Some(folder), Some(MultiCollectionSource::EnhancedClient)) => SourceAvailability::Missing(format!(
+                "No {MULTI_COLLECTION_FILE} loaded from {}: one collection loads, the {ENHANCED_FOLDER} folder's.",
+                folder.display(),
+            )),
+            _ => folder_files_availability(
+                cc_path,
+                CLASSIC_FOLDER,
+                MULTI_COLLECTION_FILE,
+                collection == Some(MultiCollectionSource::ClassicClient),
+            ),
+        },
+        ClientSource::KrUop | ClientSource::EcUop => enhanced_files_availability(
+            &ctx,
+            ec_path,
+            source,
+            MULTI_COLLECTION_FILE,
+            collection == Some(MultiCollectionSource::EnhancedClient),
+        ),
+    });
+    match clicked {
+        Some(ClientSource::Mul) => app.multis_source = MultisSource::ClassicMul,
+        Some(_) => app.multis_source = MultisSource::Uop,
+        None => {}
+    }
+}
+
 fn multi_collection_source_label(app: &UopInspectorApp) -> &'static str {
     match app.multi_collection_source {
         Some(MultiCollectionSource::ClassicClient) => "CC",
@@ -234,13 +275,7 @@ fn multi_collection_source_label(app: &UopInspectorApp) -> &'static str {
 }
 
 fn art_source_label(source: ArtSource) -> &'static str {
-    match source {
-        ArtSource::Any => "CC UOP",
-        ArtSource::Mul => "MUL",
-        ArtSource::CcUop => "CC UOP",
-        ArtSource::EcUop | ArtSource::EcUopLegacy => "EC Legacy UOP",
-        ArtSource::EcUopKr => "KR/New UOP",
-    }
+    super::art_viewer::art_client_source(source).label()
 }
 
 fn ui_classic_multis(app: &mut UopInspectorApp, ctx: &egui::Context, ui: &mut egui::Ui) {
