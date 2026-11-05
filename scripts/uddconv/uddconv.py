@@ -9,7 +9,8 @@ from pathlib import Path
 
 DEFAULT_ZSTD_VALUE = ""
 DEFAULT_ZSTD_ARGS = ["--zstd"]
-DEFAULT_GUMP_ARGS = ["--jxl"]
+# No format flag: the packer's default, lossless Zstd 19 atlas pages.
+DEFAULT_GUMP_ARGS: list[str] = []
 DEFAULT_TABLES_DIR = str(Path(__file__).resolve().parents[2] / "dynamapper/assets/cc_ec_convtables")
 
 
@@ -345,11 +346,11 @@ def main() -> int:
             args.output_dir,
             args.maps,
             format_and_zstd_args(args, prefix="cc-art-", default_format="jxl", global_zstd=global_zstd),
-            format_and_zstd_args(args, prefix="cc-land-", default_format="jxl", global_zstd=global_zstd),
+            format_and_zstd_args(args, prefix="cc-land-", global_zstd=global_zstd),
             format_and_zstd_args(args, prefix="cc-anim-", default_format="jxl", global_zstd=global_zstd),
             format_and_zstd_args(args, prefix="ec-anim-", default_format="jxl", global_zstd=global_zstd),
             format_and_zstd_args(args, prefix="art-", cli_prefix="art-", default_format="jxl", global_zstd=global_zstd),
-            format_and_zstd_args(args, prefix="land-", cli_prefix="land-", default_format="jxl", global_zstd=global_zstd),
+            format_and_zstd_args(args, prefix="land-", cli_prefix="land-", global_zstd=global_zstd),
             args.tables,
             non_texture_zstd,
             gump_args,

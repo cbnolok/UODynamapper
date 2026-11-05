@@ -302,7 +302,7 @@ fn draw_assets_overview(ui: &mut egui::Ui, app: &mut UddConvApp) {
                             .strong()
                             .color(egui::Color32::from_rgb(100, 200, 255)),
                     );
-                    ui.label(egui::RichText::new("BC7 saves VRAM. BC7+zstd saves disk. Jpeg XL is lossless.").weak());
+                    ui.label(egui::RichText::new("BC7 saves VRAM. BC7+zstd saves disk. Raw+zstd and Jpeg XL are lossless; Raw+zstd decodes many times faster.").weak());
                     ui.label(egui::RichText::new("BC7 outputs use automatic 4x4-aligned atlas placement.").weak());
                     ui.label(egui::RichText::new("Land textures always include filtering-aware gutters.").weak());
                 });
@@ -613,7 +613,7 @@ fn draw_zstd_level_cell(ui: &mut egui::Ui, level: &mut i32) {
                 .speed(1)
                 .range(1..=22),
         )
-            .on_hover_text("Lower levels are faster and larger. Level 7 is the balanced default; 19-22 can be much slower for smaller packages.");
+            .on_hover_text("Lower levels pack faster and larger; 19-22 can pack much slower for smaller packages. Land textures default to 19, the rest to 7.");
     });
 }
 

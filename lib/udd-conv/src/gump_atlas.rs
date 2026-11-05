@@ -4,6 +4,7 @@ use guillotiere::{size2, AtlasAllocator};
 use crate::progress::{ProgressBar, ProgressStyle};
 use udd_container::{AddFileRequest, AddOwnedFileRequest, CompressionFlag, DataType, UddpBuilder};
 
+use crate::page_compression::LOSSLESS_PAGE_COMPRESSION;
 use crate::tex_art_cc::crop_rgba_page;
 use crate::{merge_unplaced_tiles, resolve_packing_axis, AtlasPackingMode};
 
@@ -37,7 +38,7 @@ impl Default for GumpAtlasOptions {
             atlas_width: DEFAULT_GUMP_ATLAS_WIDTH,
             atlas_height: DEFAULT_GUMP_ATLAS_HEIGHT,
             gutter: DEFAULT_GUMP_ATLAS_GUTTER,
-            compression: CompressionFlag::ZstdNoDict,
+            compression: LOSSLESS_PAGE_COMPRESSION,
         }
     }
 }

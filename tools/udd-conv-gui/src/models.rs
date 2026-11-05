@@ -2,6 +2,7 @@ use std::path::PathBuf;
 use serde::{Deserialize, Serialize};
 use udd_conv::classic_sources::SourceFormatPreference;
 use udd_conv::cc_radar::RadarFormat;
+use udd_conv::page_compression::LOSSLESS_PAGE_ZSTD_LEVEL;
 use udd_conv::upscale::UpscaleFilter;
 use uocf::map_edition::MapEdition;
 
@@ -95,9 +96,9 @@ impl Default for AppSettings {
             opt_mobile_anim_ec: default_mobile_anim_optimization(),
             opt_tex_aux_ec: TextureOptimization::None,
             zstd_tex_art_cc: default_zstd_level(),
-            zstd_tex_land_cc: default_zstd_level(),
+            zstd_tex_land_cc: LOSSLESS_PAGE_ZSTD_LEVEL,
             zstd_tex_art_ec: default_zstd_level(),
-            zstd_tex_land_ec: default_zstd_level(),
+            zstd_tex_land_ec: LOSSLESS_PAGE_ZSTD_LEVEL,
             zstd_tilemeta: default_zstd_level(),
             zstd_mobile_anim_cc: default_zstd_level(),
             zstd_mobile_anim_ec: default_zstd_level(),
@@ -267,6 +268,16 @@ mod tests {
         );
         assert_eq!(settings.opt_mobile_anim_cc, TextureOptimization::Bc7);
         assert_eq!(settings.opt_mobile_anim_ec, TextureOptimization::Bc7);
+    }
+
+    #[test]
+    fn app_settings_default_packs_land_as_lossless_zstd() {
+        let settings = AppSettings::default();
+
+        assert_eq!(settings.opt_tex_land_cc, TextureOptimization::None);
+        assert_eq!(settings.opt_tex_land_ec, TextureOptimization::None);
+        assert_eq!(settings.zstd_tex_land_cc, LOSSLESS_PAGE_ZSTD_LEVEL);
+        assert_eq!(settings.zstd_tex_land_ec, LOSSLESS_PAGE_ZSTD_LEVEL);
     }
 
     #[test]

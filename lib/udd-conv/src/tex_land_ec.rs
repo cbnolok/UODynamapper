@@ -46,6 +46,7 @@ use crate::package_progress::{
     build_and_write_package_with_progress,
 };
 use crate::conversion_tables::{EC_TERRAIN_OVERRIDES_KDL, TERRAIN_TRANSCODE_KDL};
+use crate::page_compression::LOSSLESS_PAGE_COMPRESSION;
 use crate::source_paths::{find_first_existing_file, source_path_label_from_dirs};
 use udd_assets::tex_art_cc::{page_entry_path, PagePixelFormat};
 use uocf::utils::bundled_files;
@@ -181,7 +182,7 @@ impl Default for TexLandEcAtlasOptions {
             atlas_width: DEFAULT_ATLAS_PAGE_WIDTH,
             atlas_height: DEFAULT_ATLAS_PAGE_HEIGHT,
             gutter: DEFAULT_ATLAS_GUTTER,
-            compression: CompressionFlag::JpegXl,
+            compression: LOSSLESS_PAGE_COMPRESSION,
             upscale_64: UpscaleConfig::default(),
             upscale_128: UpscaleConfig::default(),
             upscale_256: UpscaleConfig::default(),

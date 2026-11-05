@@ -36,6 +36,7 @@ use crate::package_progress::{
     AssetProgressReporter, AssetTaskProgressStage,
     build_and_write_package_with_progress,
 };
+use crate::page_compression::LOSSLESS_PAGE_COMPRESSION;
 use crate::source_paths::{find_first_existing_file, source_path_label};
 use udd_assets::tex_art_cc::PagePixelFormat;
 use udd_assets::tex_land_cc::{
@@ -80,7 +81,7 @@ impl Default for TexLandCcAtlasOptions {
             atlas_width: DEFAULT_ATLAS_PAGE_WIDTH,
             atlas_height: DEFAULT_ATLAS_PAGE_HEIGHT,
             gutter: DEFAULT_ATLAS_GUTTER,
-            compression: CompressionFlag::JpegXl,
+            compression: LOSSLESS_PAGE_COMPRESSION,
             upscale_64: UpscaleConfig::default(),
             upscale_128: UpscaleConfig::default(),
             upscale_64_passes: Vec::new(),

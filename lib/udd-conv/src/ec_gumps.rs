@@ -15,6 +15,7 @@ use crate::gump_atlas::{
     add_gump_atlas_files, is_paperdoll_equipment_gump_id, DecodedGump, GumpAtlasOptions,
 };
 use crate::package_progress::build_and_write_package;
+use crate::page_compression::LOSSLESS_PAGE_COMPRESSION;
 use crate::source_paths::source_path_label_from_dirs;
 use crate::upscale::{apply_upscale_passes, UpscalePass};
 use crate::upscale_profile::{UpscaleImageType, UpscaleProfile, UpscaleTarget};
@@ -36,7 +37,7 @@ impl Default for EcGumpsOptions {
         Self {
             max_id: EC_GUMP_DEFAULT_MAX_ID,
             compression: CompressionFlag::ZstdNoDict,
-            atlas_compression: CompressionFlag::ZstdNoDict,
+            atlas_compression: LOSSLESS_PAGE_COMPRESSION,
             paperdoll_upscale_passes: Vec::new(),
             single_upscale_passes: Vec::new(),
             upscale_profile: None,
