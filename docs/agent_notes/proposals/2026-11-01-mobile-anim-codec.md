@@ -4903,7 +4903,7 @@ The layouts are the ones in the crowd tables: Classic in row spans, Enhanced wit
 | Classic | 49.4 / 14.2, 9.8 / 3.0, 9.4 / 2.4, 1.9 / 0.6 | 44.1 / 12.6, 9.2 / 2.7, 10.2 / 2.7, 2.3 / 0.7 |
 | Enhanced | 114.3 / 29.4, 23.3 / 6.1, 20.1 / 5.2, 4.3 / 1.1 | 131.7 / 36.4, 28.4 / 7.5, 21.5 / 5.7, 4.5 / 1.2 |
 
-This bench is a separate build with the repo's release profile but not the repo's `.cargo/config.toml` rustflags (no forced frame pointers, mold instead of wild). The cause of that drift isn't known. Between two runs of this bench, a row's one-thread time moved by a median of 0.9 % on Classic and 1.2 % on Enhanced. Don't mix these times with section 9's.
+This bench is a separate build with the repo's release profile but not the repo's `.cargo/config.toml` rustflags, so its frames carry no forced frame pointers. The cause of that drift isn't known. Between two runs of this bench, a row's one-thread time moved by a median of 0.9 % on Classic and 1.2 % on Enhanced. Don't mix these times with section 9's.
 
 ### Classic, row spans, 1022 bodies
 
