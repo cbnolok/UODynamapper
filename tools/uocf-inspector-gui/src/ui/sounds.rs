@@ -5,15 +5,21 @@ use eframe::egui;
 use uocf::audio::decode::{decode, decode_classic_pcm, DecodedAudio};
 use uocf::audio::validate::FormatPolicy;
 use uocf::audio::{AudioContent, AudioFormat};
-use uocf::classic::sound::SOUND_HEADER_BYTES;
+use uocf::classic::sound::{SOUND_HEADER_BYTES, SOUND_MUL_FILE_NAME, SOUND_UOP_FILE_NAME};
 use uocf::classic::sound_edit::{sound_header, ClassicSoundEditor};
-use uocf::enhanced::audio::{AudioKind, AudioPackage, AUDIO_ENTRY_ROOT};
+use uocf::enhanced::audio::{AudioKind, AudioPackage, AUDIO_ENTRY_ROOT, AUDIO_UOP_FILE_NAME};
 use uocf::enhanced::audio_edit::{AudioImportOptions, AudioPackageEditor, AudioPut, AudioTarget, NewAudio};
 
 use crate::app::{SoundPlayer, SoundSource, UopInspectorApp};
-use crate::ui::{classic_music, go_to_field, list_sort_controls, sorted_indices_by};
+use crate::ui::{
+    classic_music, enhanced_files_availability, enhanced_folder_source, folder_files_availability, go_to_field,
+    list_sort_controls, sorted_indices_by, source_choice, ClientSource, SourceAvailability, CLASSIC_FOLDER,
+};
+use uocf::utils::path::find_file_ignoring_case;
 
 const SOUNDS_LIST_PANEL_WIDTH: f32 = 280.0;
+const CLASSIC_MUSIC_LABEL: &str = "Classic music";
+const CLASSIC_MUSIC_HOVER: &str = "The music of the Classic client folder: Music/Digital/Config.txt and its files.";
 /// The replace options, kept in the egui memory.
 const CONVERT_OPTION_ID: &str = "sounds_replace_convert";
 const ALLOW_UNVERIFIED_OPTION_ID: &str = "sounds_replace_allow_unverified";
@@ -27,13 +33,13 @@ const ALLOW_UNVERIFIED_HOVER: &str = "Accept, with warnings, audio the client's 
 
 pub fn ui_sounds(app: &mut UopInspectorApp, ctx: &egui::Context, ui: &mut egui::Ui) {
     let sources = available_sources(app);
-    let Some(&(first, _)) = sources.first() else {
+    let Some(&first) = sources.first() else {
         egui::CentralPanel::default().show(ui, |ui| {
             ui.label("Select a Classic Client path (sound.mul or soundLegacyMUL.uop) or an Enhanced Client path (Audio.uop).");
         });
         return;
     };
-    if !sources.iter().any(|&(source, _)| source == app.sound_source) {
+    if !sources.contains(&app.sound_source) {
         app.sound_source = first;
     }
     match app.sound_source {
@@ -43,31 +49,71 @@ pub fn ui_sounds(app: &mut UopInspectorApp, ctx: &egui::Context, ui: &mut egui::
     }
 }
 
-/// What the loaded clients have to show, with the switch's labels.
-fn available_sources(app: &UopInspectorApp) -> Vec<(SoundSource, &'static str)> {
+/// What the loaded clients have to show.
+fn available_sources(app: &UopInspectorApp) -> Vec<SoundSource> {
     let mut sources = Vec::new();
     if app.cc_sounds.is_some() {
-        sources.push((SoundSource::Classic, "Classic"));
+        sources.push(SoundSource::Classic);
     }
     if app.ec_audio.is_some() {
-        sources.push((SoundSource::Enhanced, "Enhanced"));
+        sources.push(SoundSource::Enhanced);
     }
     if app.settings.cc_path.is_some() {
-        sources.push((SoundSource::ClassicMusic, "Classic music"));
+        sources.push(SoundSource::ClassicMusic);
     }
     sources
 }
 
-/// The switch of the audio sources, when there are more than one.
+/// The source of the loaded Classic sounds: the Classic client loads them from one file, sound.mul when it is there.
+fn classic_sounds_source(app: &UopInspectorApp) -> Option<ClientSource> {
+    let sounds = app.cc_sounds.as_ref()?;
+    Some(if sounds.source_label() == SOUND_MUL_FILE_NAME { ClientSource::Mul } else { ClientSource::CcUop })
+}
+
+/// The audio sources, then the Classic music view: it is another view of the Classic folder, not a source of sounds.
 pub(super) fn source_selector(app: &mut UopInspectorApp, ui: &mut egui::Ui) {
-    let sources = available_sources(app);
-    if sources.len() > 1 {
-        ui.horizontal(|ui| {
-            for (source, label) in sources {
-                ui.selectable_value(&mut app.sound_source, source, label);
+    let ctx = ui.ctx().clone();
+    let classic = classic_sounds_source(app);
+    let cc_path = app.settings.cc_path.clone();
+    let ec_path = app.settings.ec_path.clone();
+    let enhanced = ec_path.as_deref().map(|folder| enhanced_folder_source(&ctx, folder));
+    let selected = match app.sound_source {
+        SoundSource::Classic => classic,
+        SoundSource::Enhanced => enhanced,
+        SoundSource::ClassicMusic => None,
+    };
+    let has_audio = app.ec_audio.is_some();
+    let classic_file = |source: ClientSource, file: &str| {
+        let loaded = classic == Some(source);
+        match (&cc_path, classic) {
+            (Some(folder), Some(other)) if !loaded && find_file_ignoring_case(folder, file).is_some() => SourceAvailability::Missing(format!(
+                "{file} is in {}, but the Classic sounds load from one file: {} when both are there.",
+                folder.display(),
+                if other == ClientSource::Mul { SOUND_MUL_FILE_NAME } else { SOUND_UOP_FILE_NAME },
+            )),
+            _ => folder_files_availability(cc_path.as_deref(), CLASSIC_FOLDER, file, loaded),
+        }
+    };
+    ui.horizontal_wrapped(|ui| {
+        let clicked = source_choice(ui, selected, |source| match source {
+            ClientSource::Mul => classic_file(source, SOUND_MUL_FILE_NAME),
+            ClientSource::CcUop => classic_file(source, SOUND_UOP_FILE_NAME),
+            ClientSource::KrUop | ClientSource::EcUop => {
+                enhanced_files_availability(&ctx, ec_path.as_deref(), source, AUDIO_UOP_FILE_NAME, has_audio)
             }
         });
-    }
+        match clicked {
+            Some(ClientSource::Mul | ClientSource::CcUop) => app.sound_source = SoundSource::Classic,
+            Some(ClientSource::KrUop | ClientSource::EcUop) => app.sound_source = SoundSource::Enhanced,
+            None => {}
+        }
+        ui.separator();
+        ui.add_enabled_ui(cc_path.is_some(), |ui| {
+            ui.selectable_value(&mut app.sound_source, SoundSource::ClassicMusic, CLASSIC_MUSIC_LABEL)
+                .on_hover_text(CLASSIC_MUSIC_HOVER)
+                .on_disabled_hover_text(format!("{CLASSIC_MUSIC_HOVER} No {CLASSIC_FOLDER} folder is set."));
+        });
+    });
 }
 
 /// Starts playback, opening the audio output on first use.
