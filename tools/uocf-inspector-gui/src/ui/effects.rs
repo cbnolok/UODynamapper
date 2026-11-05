@@ -105,7 +105,9 @@ const FILES_LOAD_HOVER: &str = "Every file is unpacked once, to learn its kind a
     files, their previews and the checks that need them appear when it ends.";
 const COLLECTION_SOURCE_NEEDED: &str = "Needs an EffectDefinitionCollection.uop as the source of the copy.";
 const GUIDE_HINT: &str = "What each definition does, and how this tab works.";
-const UNREFERENCED_FILE_NOTE: &str = "No collection entry, tileart record, Chaos script or NIF scene names this file.";
+/// Checked on the shipped EC client: its UI files, executable and other packages name no file of the package.
+const UNREFERENCED_FILE_NOTE: &str = "No collection entry, tileart record, Chaos script or NIF scene names this file, and \
+                                      the client's UI files and other packages name no effect file.";
 
 const UOP_FILTER: (&str, &[&str]) = ("UOP package", &["uop"]);
 const KDL_FILTER: (&str, &[&str]) = ("KDL text", &["kdl"]);
