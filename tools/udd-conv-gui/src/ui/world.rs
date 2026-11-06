@@ -1,5 +1,6 @@
 use crate::app::UddConvApp;
 use crate::ui::VALIDATE_AFTER_PACKING_TOOLTIP;
+use crate::ui::layout::{card_title, draw_card_grid, page_heading};
 use crate::logic::dif_check::{exe_line, status_detail, status_line, DifCheckRequest, CLASSIC_CLIENT_EXE_NAME};
 use eframe::egui;
 use udd_conv::cc_radar::RadarFormat;
@@ -17,7 +18,7 @@ const DIF_CHECK_INDENT: f32 = 16.0;
 impl UddConvApp {
     pub fn ui_world(&mut self, ui: &mut egui::Ui) {
         ui.vertical(|ui| {
-            ui.heading("World Data Packing");
+            ui.label(page_heading("World Data Packing"));
             ui.label("Convert map and statics mul files into optimized block packages.");
             ui.add_space(15.0);
 
@@ -68,55 +69,56 @@ impl UddConvApp {
 
             ui.add_space(10.0);
 
-            for map_id in 0..=5 {
-                ui.group(|ui| {
-                    ui.set_width(ui.available_width());
-                    ui.horizontal(|ui| {
-                        ui.set_min_width(80.0);
-                        ui.label(egui::RichText::new(format!("Map {}", map_id)).strong());
+            let frame = egui::Frame::group(ui.style());
+            draw_card_grid(ui, "world_map_cards", frame, |cards| {
+                for map_id in 0..=5 {
+                    cards.card(|ui| {
+                        ui.horizontal(|ui| {
+                            ui.set_min_width(80.0);
+                            ui.label(card_title(format!("Map {}", map_id)));
 
-                        ui.add_enabled_ui(!is_busy, |ui| {
-                            ui.horizontal(|ui| {
-                                ui.spacing_mut().item_spacing.x = 5.0;
+                            ui.add_enabled_ui(!is_busy, |ui| {
+                                ui.horizontal(|ui| {
+                                    ui.spacing_mut().item_spacing.x = 5.0;
 
-                                if ui.button("Map").clicked() {
-                                    self.convert_map(map_id);
-                                }
-                                if ui.button("Statics").clicked() {
-                                    self.convert_statics(map_id);
-                                }
-                                if ui.button("RadarMap").clicked() {
-                                    self.convert_radar(map_id);
-                                }
-
-                                let radar_path = self.get_output_path(&format!(
-                                    "facet0{}.{}",
-                                    map_id,
-                                    self.settings.radar_format.extension()
-                                ));
-                                if radar_path.exists() {
-                                    if ui.button("👁 View").clicked() {
-                                        self.show_preview(&radar_path);
+                                    if ui.button("Map").clicked() {
+                                        self.convert_map(map_id);
                                     }
-                                }
+                                    if ui.button("Statics").clicked() {
+                                        self.convert_statics(map_id);
+                                    }
+                                    if ui.button("RadarMap").clicked() {
+                                        self.convert_radar(map_id);
+                                    }
 
-                                ui.separator();
+                                    let radar_path = self.get_output_path(&format!(
+                                        "facet0{}.{}",
+                                        map_id,
+                                        self.settings.radar_format.extension()
+                                    ));
+                                    if radar_path.exists() {
+                                        if ui.button("👁 View").clicked() {
+                                            self.show_preview(&radar_path);
+                                        }
+                                    }
 
-                                if ui
-                                    .button(
-                                        egui::RichText::new("ALL")
-                                            .color(egui::Color32::from_rgb(100, 200, 255)),
-                                    )
-                                    .clicked()
-                                {
-                                    self.convert_all(map_id);
-                                }
+                                    ui.separator();
+
+                                    if ui
+                                        .button(
+                                            egui::RichText::new("ALL")
+                                                .color(egui::Color32::from_rgb(100, 200, 255)),
+                                        )
+                                        .clicked()
+                                    {
+                                        self.convert_all(map_id);
+                                    }
+                                });
                             });
                         });
                     });
-                });
-                ui.add_space(5.0);
-            }
+                }
+            });
         });
     }
 

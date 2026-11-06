@@ -8,6 +8,7 @@ use crate::models::{
     TextureOptimization, DEFAULT_ZSTD_LEVEL,
 };
 use crate::ui::VALIDATE_AFTER_PACKING_TOOLTIP;
+use crate::ui::layout::{card_title, draw_card_grid, page_heading, section_heading, CardGrid};
 use eframe::egui;
 use udd_conv::cc_gumps::CC_LOSSY_SINGLE_GUMP_FORMAT;
 use udd_conv::classic_sources::{resolve_classic_gump_source, SourceFormatPreference};
@@ -29,7 +30,7 @@ impl UddConvApp {
         ui.vertical(|ui| {
             ui.spacing_mut().item_spacing = egui::vec2(8.0, 10.0);
 
-            ui.heading("Asset Packing");
+            ui.label(page_heading("Asset Packing"));
             ui.label("Convert basic client assets into UODynamapper optimized packages.");
             ui.add_space(6.0);
             draw_assets_overview(ui, self);
@@ -41,205 +42,35 @@ impl UddConvApp {
             }
 
             draw_section_header(ui, "Shared Metadata", "Classic tiledata with Enhanced tileart and string dictionary data");
-            let tilemeta_progress = self.asset_pack_progress(AssetPackTask::TileMeta);
-            let (clicked, stop_clicked, _) = draw_asset_card(
-                ui,
-                "Tile Metadata",
-                "Unified metadata and radar color data",
-                None,
-                &tilemeta_progress,
-                !is_busy,
-                None,
-                Some(&mut self.settings.zstd_tilemeta),
-                None,
-                None,
-                None,
-                None,
-                vec![],
-            );
-            if clicked {
-                self.convert_tilemeta();
-            }
-            if stop_clicked { self.request_cancel_conversion(); }
+            draw_asset_cards(ui, "shared_metadata_cards", |cards| {
+                cards.card(|ui| self.ui_tilemeta(ui, is_busy));
+            });
 
             ui.add_space(4.0);
             draw_section_header(ui, "Hues and Lights", "Read from both clients: hues.uddp and world_lights.uddp");
-            self.ui_hues(ui, is_busy);
-            self.ui_world_lights(ui, is_busy);
+            draw_asset_cards(ui, "hues_and_lights_cards", |cards| {
+                cards.card(|ui| self.ui_hues(ui, is_busy));
+                cards.card(|ui| self.ui_world_lights(ui, is_busy));
+            });
 
             ui.add_space(4.0);
             draw_section_header(ui, "Classic Client", "Assets read from the Classic Client directory");
-            let tex_art_cc_metadata_source = tex_art_cc_metadata_source_label(self);
-            let tex_art_cc_progress = self.asset_pack_progress(AssetPackTask::TexArtCc);
-            let (clicked, stop_clicked, preview) = draw_asset_card(
-                ui,
-                "Classic Art",
-                "Items and land textures from art.mul",
-                Some(&tex_art_cc_metadata_source),
-                &tex_art_cc_progress,
-                !is_busy,
-                Some(&mut self.settings.zstd_tex_art_cc),
-                None,
-                Some(&mut self.settings.opt_tex_art_cc),
-                None,
-                Some((
-                    &mut self.settings.bc7_rdo_enabled,
-                    &mut self.settings.bc7_rdo_lambda,
-                    &mut self.settings.bc7_rdo_lookback_blocks,
-                )),
-                Some((&mut self.settings.upscale_tex_art_cc, Some(crate::models::UpscalePreviewTarget::TexArtCc))),
-                vec![],
-            );
-            if clicked { self.convert_tex_art_cc(); }
-            if stop_clicked { self.request_cancel_conversion(); }
-            if let Some((target, filter)) = preview { self.open_upscale_preview(target, filter); }
-
-            let tex_land_cc_progress = self.asset_pack_progress(AssetPackTask::TexLandCc);
-            let (clicked, stop_clicked, preview) = draw_asset_card(
-                ui,
-                "Classic Texmaps",
-                "High-resolution terrain textures from texmaps.mul",
-                None,
-                &tex_land_cc_progress,
-                !is_busy,
-                Some(&mut self.settings.zstd_tex_land_cc),
-                None,
-                Some(&mut self.settings.opt_tex_land_cc),
-                Some(CLASSIC_LAND_LOSSY_REFUSAL),
-                None,
-                None,
-                vec![
-                    ("64x64", &mut self.settings.upscale_tex_land_cc_64, crate::models::UpscalePreviewTarget::TexLandCc64),
-                    ("128x128", &mut self.settings.upscale_tex_land_cc_128, crate::models::UpscalePreviewTarget::TexLandCc128),
-                ],
-            );
-            if clicked { self.convert_tex_land_cc(); }
-            if stop_clicked { self.request_cancel_conversion(); }
-            if let Some((target, filter)) = preview { self.open_upscale_preview(target, filter); }
-
-            let mobile_anim_cc_progress = self.asset_pack_progress(AssetPackTask::MobileAnimCc);
-            let (clicked, stop_clicked, _) = draw_asset_card(
-                ui,
-                "Classic Mobile Animations",
-                "Creatures and mobiles from anim*.mul and AnimationFrame*.uop",
-                None,
-                &mobile_anim_cc_progress,
-                !is_busy,
-                Some(&mut self.settings.zstd_mobile_anim_cc),
-                None,
-                Some(&mut self.settings.opt_mobile_anim_cc),
-                None,
-                Some((
-                    &mut self.settings.bc7_rdo_enabled,
-                    &mut self.settings.bc7_rdo_lambda,
-                    &mut self.settings.bc7_rdo_lookback_blocks,
-                )),
-                Some((&mut self.settings.upscale_mobile_anim_cc, None)),
-                vec![],
-            );
-            if clicked { self.convert_mobile_anim_cc(); }
-            if stop_clicked { self.request_cancel_conversion(); }
+            draw_asset_cards(ui, "classic_client_cards", |cards| {
+                cards.card(|ui| self.ui_tex_art_cc(ui, is_busy));
+                cards.card(|ui| self.ui_tex_land_cc(ui, is_busy));
+                cards.card(|ui| self.ui_mobile_anim_cc(ui, is_busy));
+            });
 
             ui.add_space(4.0);
             draw_section_header(ui, "Enhanced Client", "Assets read from the Enhanced Client directory");
-            let tex_art_ec_progress = self.asset_pack_progress(AssetPackTask::TexArtEc);
-            let (clicked, stop_clicked, preview) = draw_asset_card(
-                ui,
-                "Enhanced Art",
-                "Static items from worldart",
-                None,
-                &tex_art_ec_progress,
-                !is_busy,
-                Some(&mut self.settings.zstd_tex_art_ec),
-                None,
-                Some(&mut self.settings.opt_tex_art_ec),
-                None,
-                Some((
-                    &mut self.settings.bc7_rdo_enabled,
-                    &mut self.settings.bc7_rdo_lambda,
-                    &mut self.settings.bc7_rdo_lookback_blocks,
-                )),
-                Some((&mut self.settings.upscale_tex_art_ec, Some(crate::models::UpscalePreviewTarget::TexArtEc))),
-                vec![],
-            );
-            if clicked { self.convert_tex_art_ec(); }
-            if stop_clicked { self.request_cancel_conversion(); }
-            if let Some((target, filter)) = preview { self.open_upscale_preview(target, filter); }
-
-            let tex_land_ec_progress = self.asset_pack_progress(AssetPackTask::TexLandEc);
-            let (clicked, stop_clicked, preview) = draw_asset_card(
-                ui,
-                "Enhanced Land",
-                "High-resolution terrain textures",
-                None,
-                &tex_land_ec_progress,
-                !is_busy,
-                Some(&mut self.settings.zstd_tex_land_ec),
-                None,
-                Some(&mut self.settings.opt_tex_land_ec),
-                None,
-                // The lossy Enhanced land is BC7 without RDO.
-                None,
-                None,
-                vec![
-                    ("64x64", &mut self.settings.upscale_tex_land_ec_64, crate::models::UpscalePreviewTarget::TexLandEc64),
-                    ("128x128", &mut self.settings.upscale_tex_land_ec_128, crate::models::UpscalePreviewTarget::TexLandEc128),
-                    ("256x256", &mut self.settings.upscale_tex_land_ec_256, crate::models::UpscalePreviewTarget::TexLandEc256),
-                    ("512x512", &mut self.settings.upscale_tex_land_ec_512, crate::models::UpscalePreviewTarget::TexLandEc512),
-                ],
-            );
-            if clicked { self.convert_tex_land_ec(); }
-            if stop_clicked { self.request_cancel_conversion(); }
-            if let Some((target, filter)) = preview { self.open_upscale_preview(target, filter); }
-
-            let tex_aux_ec_progress = self.asset_pack_progress(AssetPackTask::TexAuxEc);
-            let (clicked, stop_clicked, _) = draw_asset_card(
-                ui,
-                "Enhanced Auxiliary Textures",
-                "Non-base auxiliary texture refs (support, alpha mask, noise) from tilemeta",
-                None,
-                &tex_aux_ec_progress,
-                !is_busy,
-                Some(&mut self.settings.zstd_tex_aux_ec),
-                None,
-                Some(&mut self.settings.opt_tex_aux_ec),
-                None,
-                Some((
-                    &mut self.settings.bc7_rdo_enabled,
-                    &mut self.settings.bc7_rdo_lambda,
-                    &mut self.settings.bc7_rdo_lookback_blocks,
-                )),
-                Some((&mut self.settings.upscale_tex_aux_ec, None)),
-                vec![],
-            );
-            if clicked { self.convert_tex_aux_ec(); }
-            if stop_clicked { self.request_cancel_conversion(); }
-
-            let mobile_anim_ec_progress = self.asset_pack_progress(AssetPackTask::MobileAnimEc);
-            let (clicked, stop_clicked, _) = draw_asset_card(
-                ui,
-                "Enhanced Mobile Animations",
-                "Creatures and mobiles from AnimationFrame*.uop",
-                None,
-                &mobile_anim_ec_progress,
-                !is_busy,
-                Some(&mut self.settings.zstd_mobile_anim_ec),
-                None,
-                Some(&mut self.settings.opt_mobile_anim_ec),
-                None,
-                Some((
-                    &mut self.settings.bc7_rdo_enabled,
-                    &mut self.settings.bc7_rdo_lambda,
-                    &mut self.settings.bc7_rdo_lookback_blocks,
-                )),
-                Some((&mut self.settings.upscale_mobile_anim_ec, None)),
-                vec![],
-            );
-            if clicked { self.convert_mobile_anim_ec(); }
-            if stop_clicked { self.request_cancel_conversion(); }
-
-            self.ui_effects_ec(ui, is_busy);
-            self.ui_terrain_meta(ui, is_busy);
+            draw_asset_cards(ui, "enhanced_client_cards", |cards| {
+                cards.card(|ui| self.ui_tex_art_ec(ui, is_busy));
+                cards.card(|ui| self.ui_tex_land_ec(ui, is_busy));
+                cards.card(|ui| self.ui_tex_aux_ec(ui, is_busy));
+                cards.card(|ui| self.ui_mobile_anim_ec(ui, is_busy));
+                cards.card(|ui| self.ui_effects_ec(ui, is_busy));
+                cards.card(|ui| self.ui_terrain_meta(ui, is_busy));
+            });
 
             ui.add_space(4.0);
             draw_section_header(ui, "Gumps", "Interface gumps of both clients: gumps_cc.uddp and gumps_ec.uddp");
@@ -247,52 +78,253 @@ impl UddConvApp {
         });
     }
 
+    fn ui_tilemeta(&mut self, ui: &mut egui::Ui, is_busy: bool) {
+        let tilemeta_progress = self.asset_pack_progress(AssetPackTask::TileMeta);
+        let (clicked, stop_clicked, _) = draw_asset_card(
+            ui,
+            "Tile Metadata",
+            "Unified metadata and radar color data",
+            None,
+            &tilemeta_progress,
+            !is_busy,
+            None,
+            Some(&mut self.settings.zstd_tilemeta),
+            None,
+            None,
+            None,
+            None,
+            vec![],
+        );
+        if clicked {
+            self.convert_tilemeta();
+        }
+        if stop_clicked { self.request_cancel_conversion(); }
+    }
+
+    fn ui_tex_art_cc(&mut self, ui: &mut egui::Ui, is_busy: bool) {
+        let tex_art_cc_metadata_source = tex_art_cc_metadata_source_label(self);
+        let tex_art_cc_progress = self.asset_pack_progress(AssetPackTask::TexArtCc);
+        let (clicked, stop_clicked, preview) = draw_asset_card(
+            ui,
+            "Classic Art",
+            "Items and land textures from art.mul",
+            Some(&tex_art_cc_metadata_source),
+            &tex_art_cc_progress,
+            !is_busy,
+            Some(&mut self.settings.zstd_tex_art_cc),
+            None,
+            Some(&mut self.settings.opt_tex_art_cc),
+            None,
+            Some((
+                &mut self.settings.bc7_rdo_enabled,
+                &mut self.settings.bc7_rdo_lambda,
+                &mut self.settings.bc7_rdo_lookback_blocks,
+            )),
+            Some((&mut self.settings.upscale_tex_art_cc, Some(crate::models::UpscalePreviewTarget::TexArtCc))),
+            vec![],
+        );
+        if clicked { self.convert_tex_art_cc(); }
+        if stop_clicked { self.request_cancel_conversion(); }
+        if let Some((target, filter)) = preview { self.open_upscale_preview(target, filter); }
+    }
+
+    fn ui_tex_land_cc(&mut self, ui: &mut egui::Ui, is_busy: bool) {
+        let tex_land_cc_progress = self.asset_pack_progress(AssetPackTask::TexLandCc);
+        let (clicked, stop_clicked, preview) = draw_asset_card(
+            ui,
+            "Classic Texmaps",
+            "High-resolution terrain textures from texmaps.mul",
+            None,
+            &tex_land_cc_progress,
+            !is_busy,
+            Some(&mut self.settings.zstd_tex_land_cc),
+            None,
+            Some(&mut self.settings.opt_tex_land_cc),
+            Some(CLASSIC_LAND_LOSSY_REFUSAL),
+            None,
+            None,
+            vec![
+                ("64x64", &mut self.settings.upscale_tex_land_cc_64, crate::models::UpscalePreviewTarget::TexLandCc64),
+                ("128x128", &mut self.settings.upscale_tex_land_cc_128, crate::models::UpscalePreviewTarget::TexLandCc128),
+            ],
+        );
+        if clicked { self.convert_tex_land_cc(); }
+        if stop_clicked { self.request_cancel_conversion(); }
+        if let Some((target, filter)) = preview { self.open_upscale_preview(target, filter); }
+    }
+
+    fn ui_mobile_anim_cc(&mut self, ui: &mut egui::Ui, is_busy: bool) {
+        let mobile_anim_cc_progress = self.asset_pack_progress(AssetPackTask::MobileAnimCc);
+        let (clicked, stop_clicked, _) = draw_asset_card(
+            ui,
+            "Classic Mobile Animations",
+            "Creatures and mobiles from anim*.mul and AnimationFrame*.uop",
+            None,
+            &mobile_anim_cc_progress,
+            !is_busy,
+            Some(&mut self.settings.zstd_mobile_anim_cc),
+            None,
+            Some(&mut self.settings.opt_mobile_anim_cc),
+            None,
+            Some((
+                &mut self.settings.bc7_rdo_enabled,
+                &mut self.settings.bc7_rdo_lambda,
+                &mut self.settings.bc7_rdo_lookback_blocks,
+            )),
+            Some((&mut self.settings.upscale_mobile_anim_cc, None)),
+            vec![],
+        );
+        if clicked { self.convert_mobile_anim_cc(); }
+        if stop_clicked { self.request_cancel_conversion(); }
+    }
+
+    fn ui_tex_art_ec(&mut self, ui: &mut egui::Ui, is_busy: bool) {
+        let tex_art_ec_progress = self.asset_pack_progress(AssetPackTask::TexArtEc);
+        let (clicked, stop_clicked, preview) = draw_asset_card(
+            ui,
+            "Enhanced Art",
+            "Static items from worldart",
+            None,
+            &tex_art_ec_progress,
+            !is_busy,
+            Some(&mut self.settings.zstd_tex_art_ec),
+            None,
+            Some(&mut self.settings.opt_tex_art_ec),
+            None,
+            Some((
+                &mut self.settings.bc7_rdo_enabled,
+                &mut self.settings.bc7_rdo_lambda,
+                &mut self.settings.bc7_rdo_lookback_blocks,
+            )),
+            Some((&mut self.settings.upscale_tex_art_ec, Some(crate::models::UpscalePreviewTarget::TexArtEc))),
+            vec![],
+        );
+        if clicked { self.convert_tex_art_ec(); }
+        if stop_clicked { self.request_cancel_conversion(); }
+        if let Some((target, filter)) = preview { self.open_upscale_preview(target, filter); }
+    }
+
+    fn ui_tex_land_ec(&mut self, ui: &mut egui::Ui, is_busy: bool) {
+        let tex_land_ec_progress = self.asset_pack_progress(AssetPackTask::TexLandEc);
+        let (clicked, stop_clicked, preview) = draw_asset_card(
+            ui,
+            "Enhanced Land",
+            "High-resolution terrain textures",
+            None,
+            &tex_land_ec_progress,
+            !is_busy,
+            Some(&mut self.settings.zstd_tex_land_ec),
+            None,
+            Some(&mut self.settings.opt_tex_land_ec),
+            None,
+            // The lossy Enhanced land is BC7 without RDO.
+            None,
+            None,
+            vec![
+                ("64x64", &mut self.settings.upscale_tex_land_ec_64, crate::models::UpscalePreviewTarget::TexLandEc64),
+                ("128x128", &mut self.settings.upscale_tex_land_ec_128, crate::models::UpscalePreviewTarget::TexLandEc128),
+                ("256x256", &mut self.settings.upscale_tex_land_ec_256, crate::models::UpscalePreviewTarget::TexLandEc256),
+                ("512x512", &mut self.settings.upscale_tex_land_ec_512, crate::models::UpscalePreviewTarget::TexLandEc512),
+            ],
+        );
+        if clicked { self.convert_tex_land_ec(); }
+        if stop_clicked { self.request_cancel_conversion(); }
+        if let Some((target, filter)) = preview { self.open_upscale_preview(target, filter); }
+    }
+
+    fn ui_tex_aux_ec(&mut self, ui: &mut egui::Ui, is_busy: bool) {
+        let tex_aux_ec_progress = self.asset_pack_progress(AssetPackTask::TexAuxEc);
+        let (clicked, stop_clicked, _) = draw_asset_card(
+            ui,
+            "Enhanced Auxiliary Textures",
+            "Non-base auxiliary texture refs (support, alpha mask, noise) from tilemeta",
+            None,
+            &tex_aux_ec_progress,
+            !is_busy,
+            Some(&mut self.settings.zstd_tex_aux_ec),
+            None,
+            Some(&mut self.settings.opt_tex_aux_ec),
+            None,
+            Some((
+                &mut self.settings.bc7_rdo_enabled,
+                &mut self.settings.bc7_rdo_lambda,
+                &mut self.settings.bc7_rdo_lookback_blocks,
+            )),
+            Some((&mut self.settings.upscale_tex_aux_ec, None)),
+            vec![],
+        );
+        if clicked { self.convert_tex_aux_ec(); }
+        if stop_clicked { self.request_cancel_conversion(); }
+    }
+
+    fn ui_mobile_anim_ec(&mut self, ui: &mut egui::Ui, is_busy: bool) {
+        let mobile_anim_ec_progress = self.asset_pack_progress(AssetPackTask::MobileAnimEc);
+        let (clicked, stop_clicked, _) = draw_asset_card(
+            ui,
+            "Enhanced Mobile Animations",
+            "Creatures and mobiles from AnimationFrame*.uop",
+            None,
+            &mobile_anim_ec_progress,
+            !is_busy,
+            Some(&mut self.settings.zstd_mobile_anim_ec),
+            None,
+            Some(&mut self.settings.opt_mobile_anim_ec),
+            None,
+            Some((
+                &mut self.settings.bc7_rdo_enabled,
+                &mut self.settings.bc7_rdo_lambda,
+                &mut self.settings.bc7_rdo_lookback_blocks,
+            )),
+            Some((&mut self.settings.upscale_mobile_anim_ec, None)),
+            vec![],
+        );
+        if clicked { self.convert_mobile_anim_ec(); }
+        if stop_clicked { self.request_cancel_conversion(); }
+    }
+
     fn ui_hues(&mut self, ui: &mut egui::Ui, is_busy: bool) {
         let source = hues_source(&self.settings);
         let progress = self.asset_pack_progress(AssetPackTask::Hues);
         let mut clicked = false;
         let mut stop_clicked = false;
-        asset_card_frame(ui).show(ui, |ui| {
-            ui.set_min_width(ui.available_width());
-            ui.vertical(|ui| {
-                ui.spacing_mut().item_spacing = egui::vec2(6.0, 8.0);
-                (clicked, stop_clicked) = draw_asset_card_header(
-                    ui,
-                    "Hues",
-                    "Hue palettes from hues.mul or Hues.uop",
-                    Some(&hues_source_label(&source)),
-                    &progress,
-                    !is_busy,
-                );
-                ui.separator();
-                let settings = &mut self.settings;
-                ui.add_enabled_ui(!is_busy, |ui| {
-                    ui.horizontal_wrapped(|ui| {
-                        ui.spacing_mut().item_spacing = egui::vec2(12.0, 8.0);
-                        // The ramp spreads hues.mul colours; a Hues.uop is copied as it is.
-                        let ramp_applies = !matches!(source, HuesSource::Uop(_));
-                        draw_control_cell(ui, "Hue Ramp", HUE_RAMP_CELL_WIDTH, |ui| {
-                            ui.horizontal(|ui| {
-                                for (ramp, label, tooltip) in [
-                                    (HueRamp::Linear, "Linear", HUE_RAMP_LINEAR_TOOLTIP),
-                                    (HueRamp::Flat, "Flat", HUE_RAMP_FLAT_TOOLTIP),
-                                ] {
-                                    if ui
-                                        .add_enabled(
-                                            ramp_applies,
-                                            egui::Button::selectable(settings.hues_ramp == ramp, label),
-                                        )
-                                        .on_hover_text(tooltip)
-                                        .on_disabled_hover_text(HUE_RAMP_REFUSAL)
-                                        .clicked()
-                                    {
-                                        settings.hues_ramp = ramp;
-                                    }
+        ui.vertical(|ui| {
+            ui.spacing_mut().item_spacing = egui::vec2(6.0, 8.0);
+            (clicked, stop_clicked) = draw_asset_card_header(
+                ui,
+                "Hues",
+                "Hue palettes from hues.mul or Hues.uop",
+                Some(&hues_source_label(&source)),
+                &progress,
+                !is_busy,
+            );
+            ui.separator();
+            let settings = &mut self.settings;
+            ui.add_enabled_ui(!is_busy, |ui| {
+                ui.horizontal_wrapped(|ui| {
+                    ui.spacing_mut().item_spacing = egui::vec2(12.0, 8.0);
+                    // The ramp spreads hues.mul colours; a Hues.uop is copied as it is.
+                    let ramp_applies = !matches!(source, HuesSource::Uop(_));
+                    draw_control_cell(ui, "Hue Ramp", HUE_RAMP_CELL_WIDTH, |ui| {
+                        ui.horizontal(|ui| {
+                            for (ramp, label, tooltip) in [
+                                (HueRamp::Linear, "Linear", HUE_RAMP_LINEAR_TOOLTIP),
+                                (HueRamp::Flat, "Flat", HUE_RAMP_FLAT_TOOLTIP),
+                            ] {
+                                if ui
+                                    .add_enabled(
+                                        ramp_applies,
+                                        egui::Button::selectable(settings.hues_ramp == ramp, label),
+                                    )
+                                    .on_hover_text(tooltip)
+                                    .on_disabled_hover_text(HUE_RAMP_REFUSAL)
+                                    .clicked()
+                                {
+                                    settings.hues_ramp = ramp;
                                 }
-                            });
+                            }
                         });
-                        draw_package_compression_cells(ui, &mut settings.hues_no_compression, &mut settings.zstd_hues);
                     });
+                    draw_package_compression_cells(ui, &mut settings.hues_no_compression, &mut settings.zstd_hues);
                 });
             });
         });
@@ -305,32 +337,29 @@ impl UddConvApp {
         let progress = self.asset_pack_progress(AssetPackTask::WorldLights);
         let mut clicked = false;
         let mut stop_clicked = false;
-        asset_card_frame(ui).show(ui, |ui| {
-            ui.set_min_width(ui.available_width());
-            ui.vertical(|ui| {
-                ui.spacing_mut().item_spacing = egui::vec2(6.0, 8.0);
-                (clicked, stop_clicked) = draw_asset_card_header(
-                    ui,
-                    "World Lights",
-                    "Light textures from light.mul and TerrainTexture.uop",
-                    Some(&source),
-                    &progress,
-                    !is_busy,
-                );
-                ui.separator();
-                let settings = &mut self.settings;
-                ui.add_enabled_ui(!is_busy, |ui| {
-                    ui.horizontal_wrapped(|ui| {
-                        ui.spacing_mut().item_spacing = egui::vec2(12.0, 8.0);
-                        draw_package_compression_cells(
-                            ui,
-                            &mut settings.lights_no_compression,
-                            &mut settings.zstd_lights,
-                        );
-                    });
+        ui.vertical(|ui| {
+            ui.spacing_mut().item_spacing = egui::vec2(6.0, 8.0);
+            (clicked, stop_clicked) = draw_asset_card_header(
+                ui,
+                "World Lights",
+                "Light textures from light.mul and TerrainTexture.uop",
+                Some(&source),
+                &progress,
+                !is_busy,
+            );
+            ui.separator();
+            let settings = &mut self.settings;
+            ui.add_enabled_ui(!is_busy, |ui| {
+                ui.horizontal_wrapped(|ui| {
+                    ui.spacing_mut().item_spacing = egui::vec2(12.0, 8.0);
+                    draw_package_compression_cells(
+                        ui,
+                        &mut settings.lights_no_compression,
+                        &mut settings.zstd_lights,
+                    );
                 });
-                draw_gump_note(ui, WORLD_LIGHTS_PATCH_NOTE, egui::Color32::GRAY);
             });
+            draw_gump_note(ui, WORLD_LIGHTS_PATCH_NOTE, egui::Color32::GRAY);
         });
         if clicked { self.convert_world_lights(); }
         if stop_clicked { self.request_cancel_conversion(); }
@@ -341,65 +370,62 @@ impl UddConvApp {
         let progress = self.asset_pack_progress(AssetPackTask::EffectsEc);
         let mut clicked = false;
         let mut stop_clicked = false;
-        asset_card_frame(ui).show(ui, |ui| {
-            ui.set_min_width(ui.available_width());
-            ui.vertical(|ui| {
-                ui.spacing_mut().item_spacing = egui::vec2(6.0, 8.0);
-                (clicked, stop_clicked) = draw_asset_card_header(
-                    ui,
-                    "Enhanced Effects",
-                    "Effect definitions, particle systems and their textures",
-                    Some(&source),
-                    &progress,
-                    !is_busy,
-                );
-                ui.separator();
-                let settings = &mut self.settings;
-                ui.add_enabled_ui(!is_busy, |ui| {
-                    ui.horizontal_wrapped(|ui| {
-                        ui.spacing_mut().item_spacing = egui::vec2(12.0, 8.0);
-                        draw_control_cell(ui, "Textures", EFFECTS_FORMAT_CELL_WIDTH, |ui| {
-                            ui.horizontal(|ui| {
-                                for (bc7, label, tooltip) in [
-                                    (false, "RGBA8", EFFECTS_EC_RGBA_TOOLTIP),
-                                    (true, "BC7", EFFECTS_EC_BC7_TOOLTIP),
-                                ] {
-                                    if ui
-                                        .add(egui::Button::selectable(settings.effects_ec_bc7 == bc7, label))
-                                        .on_hover_text(tooltip)
-                                        .clicked()
-                                    {
-                                        settings.effects_ec_bc7 = bc7;
-                                    }
-                                }
-                            });
-                        });
-                        draw_package_zstd_cell(ui, &mut settings.zstd_effects_ec, true, EFFECTS_EC_ZSTD_TOOLTIP);
-                        draw_control_cell(ui, "Error Findings", EFFECTS_STRICT_CELL_WIDTH, |ui| {
-                            ui.checkbox(&mut settings.effects_ec_strict, "Strict")
-                                .on_hover_text(EFFECTS_EC_STRICT_TOOLTIP);
-                        });
-                        draw_control_cell(ui, "Findings Report", EFFECTS_REPORT_CELL_WIDTH, |ui| {
-                            ui.horizontal(|ui| {
-                                if ui.button("Select...").on_hover_text(EFFECTS_EC_REPORT_TOOLTIP).clicked() {
-                                    if let Some(path) = uot_gui::save_file_dialog(EFFECTS_EC_REPORT_DEFAULT_NAME) {
-                                        settings.effects_ec_report = Some(path);
-                                    }
-                                }
+        ui.vertical(|ui| {
+            ui.spacing_mut().item_spacing = egui::vec2(6.0, 8.0);
+            (clicked, stop_clicked) = draw_asset_card_header(
+                ui,
+                "Enhanced Effects",
+                "Effect definitions, particle systems and their textures",
+                Some(&source),
+                &progress,
+                !is_busy,
+            );
+            ui.separator();
+            let settings = &mut self.settings;
+            ui.add_enabled_ui(!is_busy, |ui| {
+                ui.horizontal_wrapped(|ui| {
+                    ui.spacing_mut().item_spacing = egui::vec2(12.0, 8.0);
+                    draw_control_cell(ui, "Textures", EFFECTS_FORMAT_CELL_WIDTH, |ui| {
+                        ui.horizontal(|ui| {
+                            for (bc7, label, tooltip) in [
+                                (false, "RGBA8", EFFECTS_EC_RGBA_TOOLTIP),
+                                (true, "BC7", EFFECTS_EC_BC7_TOOLTIP),
+                            ] {
                                 if ui
-                                    .add_enabled(settings.effects_ec_report.is_some(), egui::Button::new("Clear"))
-                                    .on_hover_text("Write no findings file")
+                                    .add(egui::Button::selectable(settings.effects_ec_bc7 == bc7, label))
+                                    .on_hover_text(tooltip)
                                     .clicked()
                                 {
-                                    settings.effects_ec_report = None;
+                                    settings.effects_ec_bc7 = bc7;
                                 }
-                            });
-                            let report = match &settings.effects_ec_report {
-                                Some(path) => path.display().to_string(),
-                                None => "None: the summary counts the findings".to_string(),
-                            };
-                            ui.label(egui::RichText::new(report).weak());
+                            }
                         });
+                    });
+                    draw_package_zstd_cell(ui, &mut settings.zstd_effects_ec, true, EFFECTS_EC_ZSTD_TOOLTIP);
+                    draw_control_cell(ui, "Error Findings", EFFECTS_STRICT_CELL_WIDTH, |ui| {
+                        ui.checkbox(&mut settings.effects_ec_strict, "Strict")
+                            .on_hover_text(EFFECTS_EC_STRICT_TOOLTIP);
+                    });
+                    draw_control_cell(ui, "Findings Report", EFFECTS_REPORT_CELL_WIDTH, |ui| {
+                        ui.horizontal(|ui| {
+                            if ui.button("Select...").on_hover_text(EFFECTS_EC_REPORT_TOOLTIP).clicked() {
+                                if let Some(path) = uot_gui::save_file_dialog(EFFECTS_EC_REPORT_DEFAULT_NAME) {
+                                    settings.effects_ec_report = Some(path);
+                                }
+                            }
+                            if ui
+                                .add_enabled(settings.effects_ec_report.is_some(), egui::Button::new("Clear"))
+                                .on_hover_text("Write no findings file")
+                                .clicked()
+                            {
+                                settings.effects_ec_report = None;
+                            }
+                        });
+                        let report = match &settings.effects_ec_report {
+                            Some(path) => path.display().to_string(),
+                            None => "None: the summary counts the findings".to_string(),
+                        };
+                        ui.label(egui::RichText::new(report).weak());
                     });
                 });
             });
@@ -417,20 +443,17 @@ impl UddConvApp {
         let progress = self.asset_pack_progress(AssetPackTask::TerrainMeta);
         let mut clicked = false;
         let mut stop_clicked = false;
-        asset_card_frame(ui).show(ui, |ui| {
-            ui.set_min_width(ui.available_width());
-            ui.vertical(|ui| {
-                ui.spacing_mut().item_spacing = egui::vec2(6.0, 8.0);
-                (clicked, stop_clicked) = draw_asset_card_header(
-                    ui,
-                    "Terrain Metadata",
-                    "Terrain blending tables from TerrainDefinition.uop: terrain_meta.bin",
-                    Some(&source),
-                    &progress,
-                    !is_busy,
-                );
-                draw_gump_note(ui, TERRAIN_META_NOTE, egui::Color32::GRAY);
-            });
+        ui.vertical(|ui| {
+            ui.spacing_mut().item_spacing = egui::vec2(6.0, 8.0);
+            (clicked, stop_clicked) = draw_asset_card_header(
+                ui,
+                "Terrain Metadata",
+                "Terrain blending tables from TerrainDefinition.uop: terrain_meta.bin",
+                Some(&source),
+                &progress,
+                !is_busy,
+            );
+            draw_gump_note(ui, TERRAIN_META_NOTE, egui::Color32::GRAY);
         });
         if clicked { self.convert_terrain_meta(); }
         if stop_clicked { self.request_cancel_conversion(); }
@@ -448,181 +471,183 @@ impl UddConvApp {
             }
             ui.label(egui::RichText::new("Classic first, so the Enhanced gumps can share with it").weak());
         });
+        draw_asset_cards(ui, "gumps_cards", |cards| {
+            cards.card(|ui| self.ui_gumps_cc(ui, is_busy));
+            cards.card(|ui| self.ui_gumps_ec(ui, is_busy));
+        });
+    }
 
+    fn ui_gumps_cc(&mut self, ui: &mut egui::Ui, is_busy: bool) {
         let gumps_cc_source = gumps_cc_source_label(self);
         let gumps_cc_progress = self.asset_pack_progress(AssetPackTask::GumpsCc);
         let mut clicked = false;
         let mut stop_clicked = false;
-        asset_card_frame(ui).show(ui, |ui| {
-            ui.set_min_width(ui.available_width());
-            ui.vertical(|ui| {
-                ui.spacing_mut().item_spacing = egui::vec2(6.0, 8.0);
-                (clicked, stop_clicked) = draw_asset_card_header(
-                    ui,
-                    "Classic Gumps",
-                    "Gumps from gumpart.mul/gumpidx.mul or gumpartLegacyMUL.uop",
-                    Some(&gumps_cc_source),
-                    &gumps_cc_progress,
-                    !is_busy,
-                );
-                ui.separator();
-                let settings = &mut self.settings;
-                ui.add_enabled_ui(!is_busy, |ui| {
-                    ui.horizontal_wrapped(|ui| {
-                        ui.spacing_mut().item_spacing = egui::vec2(12.0, 8.0);
-                        draw_control_cell(ui, "Read First", GUMP_SOURCE_CELL_WIDTH, |ui| {
-                            ui.horizontal(|ui| {
-                                for preference in [SourceFormatPreference::Mul, SourceFormatPreference::Uop] {
-                                    let label = preference.preferred_first()[0].label();
-                                    if ui
-                                        .add(egui::Button::selectable(settings.gumps_cc_source == preference, label))
-                                        .on_hover_text(GUMPS_CC_SOURCE_TOOLTIP)
-                                        .clicked()
-                                    {
-                                        settings.gumps_cc_source = preference;
-                                    }
+        ui.vertical(|ui| {
+            ui.spacing_mut().item_spacing = egui::vec2(6.0, 8.0);
+            (clicked, stop_clicked) = draw_asset_card_header(
+                ui,
+                "Classic Gumps",
+                "Gumps from gumpart.mul/gumpidx.mul or gumpartLegacyMUL.uop",
+                Some(&gumps_cc_source),
+                &gumps_cc_progress,
+                !is_busy,
+            );
+            ui.separator();
+            let settings = &mut self.settings;
+            ui.add_enabled_ui(!is_busy, |ui| {
+                ui.horizontal_wrapped(|ui| {
+                    ui.spacing_mut().item_spacing = egui::vec2(12.0, 8.0);
+                    draw_control_cell(ui, "Read First", GUMP_SOURCE_CELL_WIDTH, |ui| {
+                        ui.horizontal(|ui| {
+                            for preference in [SourceFormatPreference::Mul, SourceFormatPreference::Uop] {
+                                let label = preference.preferred_first()[0].label();
+                                if ui
+                                    .add(egui::Button::selectable(settings.gumps_cc_source == preference, label))
+                                    .on_hover_text(GUMPS_CC_SOURCE_TOOLTIP)
+                                    .clicked()
+                                {
+                                    settings.gumps_cc_source = preference;
                                 }
-                            });
+                            }
                         });
-                        draw_gump_format_cell(
-                            ui,
-                            &mut settings.gumps_cc_bc1,
-                            CC_LOSSY_SINGLE_GUMP_FORMAT,
-                            GUMPS_CC_BC1_TOOLTIP,
-                            EC_LOSSY_SINGLE_GUMP_FORMAT,
-                            GUMPS_CC_BC7_REFUSAL,
-                        );
-                        draw_gump_zstd_cell(ui, &mut settings.zstd_gumps_cc);
-                        draw_gump_upscale_cell(
-                            ui,
-                            "Paperdoll Upscale",
-                            "gumps_cc_paperdoll_upscale",
-                            &mut settings.upscale_gumps_cc_paperdoll,
-                            GUMPS_PAPERDOLL_UPSCALE_TOOLTIP,
-                        );
-                        draw_gump_upscale_cell(
-                            ui,
-                            "Single Gump Upscale",
-                            "gumps_cc_single_upscale",
-                            &mut settings.upscale_gumps_cc_single,
-                            GUMPS_SINGLE_UPSCALE_TOOLTIP,
-                        );
                     });
+                    draw_gump_format_cell(
+                        ui,
+                        &mut settings.gumps_cc_bc1,
+                        CC_LOSSY_SINGLE_GUMP_FORMAT,
+                        GUMPS_CC_BC1_TOOLTIP,
+                        EC_LOSSY_SINGLE_GUMP_FORMAT,
+                        GUMPS_CC_BC7_REFUSAL,
+                    );
+                    draw_gump_zstd_cell(ui, &mut settings.zstd_gumps_cc);
+                    draw_gump_upscale_cell(
+                        ui,
+                        "Paperdoll Upscale",
+                        "gumps_cc_paperdoll_upscale",
+                        &mut settings.upscale_gumps_cc_paperdoll,
+                        GUMPS_PAPERDOLL_UPSCALE_TOOLTIP,
+                    );
+                    draw_gump_upscale_cell(
+                        ui,
+                        "Single Gump Upscale",
+                        "gumps_cc_single_upscale",
+                        &mut settings.upscale_gumps_cc_single,
+                        GUMPS_SINGLE_UPSCALE_TOOLTIP,
+                    );
                 });
-                draw_gump_note(ui, &gumps_lossless_note("Classic partial hue needs"), egui::Color32::GRAY);
             });
+            draw_gump_note(ui, &gumps_lossless_note("Classic partial hue needs"), egui::Color32::GRAY);
         });
         if clicked { self.convert_gumps_cc(); }
         if stop_clicked { self.request_cancel_conversion(); }
+    }
 
+    fn ui_gumps_ec(&mut self, ui: &mut egui::Ui, is_busy: bool) {
         let ec_source = EcGumpSource::of(&self.settings);
         let gumps_cc = self.gumps_cc_output();
         let share = ec_gumps_share(self.settings.gumps_ec_sharing, &gumps_cc, gumps_cc.is_file());
         let gumps_ec_progress = self.asset_pack_progress(AssetPackTask::GumpsEc);
         let mut clicked = false;
         let mut stop_clicked = false;
-        asset_card_frame(ui).show(ui, |ui| {
-            ui.set_min_width(ui.available_width());
-            ui.vertical(|ui| {
-                ui.spacing_mut().item_spacing = egui::vec2(6.0, 8.0);
-                (clicked, stop_clicked) = draw_asset_card_header(
-                    ui,
-                    "Enhanced Gumps",
-                    "Gumps from Interface.uop or an extracted gumpart folder",
-                    Some(&ec_source.label()),
-                    &gumps_ec_progress,
-                    !is_busy,
-                );
-                ui.separator();
-                let settings = &mut self.settings;
-                ui.add_enabled_ui(!is_busy, |ui| {
-                    ui.horizontal_wrapped(|ui| {
-                        ui.spacing_mut().item_spacing = egui::vec2(12.0, 8.0);
-                        draw_control_cell(ui, "Extracted Gumpart Folder", GUMP_GUMPART_CELL_WIDTH, |ui| {
-                            ui.horizontal(|ui| {
-                                if ui.button("Select...").on_hover_text(GUMPS_EC_GUMPART_TOOLTIP).clicked() {
-                                    if let Some(dir) = uot_gui::pick_folder() {
-                                        settings.gumps_ec_gumpart_dir = Some(dir);
-                                    }
+        ui.vertical(|ui| {
+            ui.spacing_mut().item_spacing = egui::vec2(6.0, 8.0);
+            (clicked, stop_clicked) = draw_asset_card_header(
+                ui,
+                "Enhanced Gumps",
+                "Gumps from Interface.uop or an extracted gumpart folder",
+                Some(&ec_source.label()),
+                &gumps_ec_progress,
+                !is_busy,
+            );
+            ui.separator();
+            let settings = &mut self.settings;
+            ui.add_enabled_ui(!is_busy, |ui| {
+                ui.horizontal_wrapped(|ui| {
+                    ui.spacing_mut().item_spacing = egui::vec2(12.0, 8.0);
+                    draw_control_cell(ui, "Extracted Gumpart Folder", GUMP_GUMPART_CELL_WIDTH, |ui| {
+                        ui.horizontal(|ui| {
+                            if ui.button("Select...").on_hover_text(GUMPS_EC_GUMPART_TOOLTIP).clicked() {
+                                if let Some(dir) = uot_gui::pick_folder() {
+                                    settings.gumps_ec_gumpart_dir = Some(dir);
                                 }
+                            }
+                            if ui
+                                .add_enabled(settings.gumps_ec_gumpart_dir.is_some(), egui::Button::new("Clear"))
+                                .on_hover_text("Read the Enhanced client folder")
+                                .clicked()
+                            {
+                                settings.gumps_ec_gumpart_dir = None;
+                            }
+                        });
+                        let folder = match &settings.gumps_ec_gumpart_dir {
+                            Some(dir) => dir.display().to_string(),
+                            None => "None: the Enhanced client folder".to_string(),
+                        };
+                        ui.label(egui::RichText::new(folder).weak());
+                    });
+                    draw_control_cell(ui, "Max Gump Id", GUMP_MAX_ID_CELL_WIDTH, |ui| {
+                        ui.add_enabled(
+                            !matches!(ec_source, EcGumpSource::Extracted(_)),
+                            egui::DragValue::new(&mut settings.gumps_ec_max_id).speed(GUMP_MAX_ID_DRAG_SPEED),
+                        )
+                        .on_hover_text(GUMPS_EC_MAX_ID_TOOLTIP)
+                        .on_disabled_hover_text(GUMPS_EC_MAX_ID_REFUSAL);
+                    });
+                    draw_gump_format_cell(
+                        ui,
+                        &mut settings.gumps_ec_bc7,
+                        EC_LOSSY_SINGLE_GUMP_FORMAT,
+                        GUMPS_EC_BC7_TOOLTIP,
+                        CC_LOSSY_SINGLE_GUMP_FORMAT,
+                        GUMPS_EC_BC1_REFUSAL,
+                    );
+                    draw_gump_zstd_cell(ui, &mut settings.zstd_gumps_ec);
+                    draw_gump_upscale_cell(
+                        ui,
+                        "Paperdoll Upscale",
+                        "gumps_ec_paperdoll_upscale",
+                        &mut settings.upscale_gumps_ec_paperdoll,
+                        GUMPS_PAPERDOLL_UPSCALE_TOOLTIP,
+                    );
+                    draw_gump_upscale_cell(
+                        ui,
+                        "Single Gump Upscale",
+                        "gumps_ec_single_upscale",
+                        &mut settings.upscale_gumps_ec_single,
+                        GUMPS_SINGLE_UPSCALE_TOOLTIP,
+                    );
+                    let share_tooltip = gumps_ec_share_tooltip(settings);
+                    draw_control_cell(ui, "Classic Twins", GUMP_SHARING_CELL_WIDTH, |ui| {
+                        ui.horizontal(|ui| {
+                            for (sharing, label) in [
+                                (GumpsEcSharing::ShareWithGumpsCc, "Share with gumps_cc"),
+                                (GumpsEcSharing::Standalone, "Pack standalone"),
+                            ] {
                                 if ui
-                                    .add_enabled(settings.gumps_ec_gumpart_dir.is_some(), egui::Button::new("Clear"))
-                                    .on_hover_text("Read the Enhanced client folder")
+                                    .add(egui::Button::selectable(settings.gumps_ec_sharing == sharing, label))
+                                    .on_hover_text(share_tooltip.as_str())
                                     .clicked()
                                 {
-                                    settings.gumps_ec_gumpart_dir = None;
+                                    settings.gumps_ec_sharing = sharing;
                                 }
-                            });
-                            let folder = match &settings.gumps_ec_gumpart_dir {
-                                Some(dir) => dir.display().to_string(),
-                                None => "None: the Enhanced client folder".to_string(),
-                            };
-                            ui.label(egui::RichText::new(folder).weak());
-                        });
-                        draw_control_cell(ui, "Max Gump Id", GUMP_MAX_ID_CELL_WIDTH, |ui| {
-                            ui.add_enabled(
-                                !matches!(ec_source, EcGumpSource::Extracted(_)),
-                                egui::DragValue::new(&mut settings.gumps_ec_max_id).speed(GUMP_MAX_ID_DRAG_SPEED),
-                            )
-                            .on_hover_text(GUMPS_EC_MAX_ID_TOOLTIP)
-                            .on_disabled_hover_text(GUMPS_EC_MAX_ID_REFUSAL);
-                        });
-                        draw_gump_format_cell(
-                            ui,
-                            &mut settings.gumps_ec_bc7,
-                            EC_LOSSY_SINGLE_GUMP_FORMAT,
-                            GUMPS_EC_BC7_TOOLTIP,
-                            CC_LOSSY_SINGLE_GUMP_FORMAT,
-                            GUMPS_EC_BC1_REFUSAL,
-                        );
-                        draw_gump_zstd_cell(ui, &mut settings.zstd_gumps_ec);
-                        draw_gump_upscale_cell(
-                            ui,
-                            "Paperdoll Upscale",
-                            "gumps_ec_paperdoll_upscale",
-                            &mut settings.upscale_gumps_ec_paperdoll,
-                            GUMPS_PAPERDOLL_UPSCALE_TOOLTIP,
-                        );
-                        draw_gump_upscale_cell(
-                            ui,
-                            "Single Gump Upscale",
-                            "gumps_ec_single_upscale",
-                            &mut settings.upscale_gumps_ec_single,
-                            GUMPS_SINGLE_UPSCALE_TOOLTIP,
-                        );
-                        let share_tooltip = gumps_ec_share_tooltip(settings);
-                        draw_control_cell(ui, "Classic Twins", GUMP_SHARING_CELL_WIDTH, |ui| {
-                            ui.horizontal(|ui| {
-                                for (sharing, label) in [
-                                    (GumpsEcSharing::ShareWithGumpsCc, "Share with gumps_cc"),
-                                    (GumpsEcSharing::Standalone, "Pack standalone"),
-                                ] {
-                                    if ui
-                                        .add(egui::Button::selectable(settings.gumps_ec_sharing == sharing, label))
-                                        .on_hover_text(share_tooltip.as_str())
-                                        .clicked()
-                                    {
-                                        settings.gumps_ec_sharing = sharing;
-                                    }
-                                }
-                            });
+                            }
                         });
                     });
                 });
-                let (share_note, share_colour) = gumps_ec_share_note(&share);
-                draw_gump_note(ui, &share_note, share_colour);
-                if self.settings.gumps_ec_bc7 && !self.settings.upscale_gumps_ec_single.keeps_palette() {
-                    draw_gump_note(
-                        ui,
-                        &format!(
-                            "{:?} blends colours, so the upscaled gumps leave the Classic colour space: BC7, not BC1.",
-                            self.settings.upscale_gumps_ec_single
-                        ),
-                        NOTICE_COLOUR,
-                    );
-                }
-                draw_gump_note(ui, &gumps_lossless_note("the Enhanced client hues"), egui::Color32::GRAY);
             });
+            let (share_note, share_colour) = gumps_ec_share_note(&share);
+            draw_gump_note(ui, &share_note, share_colour);
+            if self.settings.gumps_ec_bc7 && !self.settings.upscale_gumps_ec_single.keeps_palette() {
+                draw_gump_note(
+                    ui,
+                    &format!(
+                        "{:?} blends colours, so the upscaled gumps leave the Classic colour space: BC7, not BC1.",
+                        self.settings.upscale_gumps_ec_single
+                    ),
+                    NOTICE_COLOUR,
+                );
+            }
+            draw_gump_note(ui, &gumps_lossless_note("the Enhanced client hues"), egui::Color32::GRAY);
         });
         if clicked { self.convert_gumps_ec(); }
         if stop_clicked { self.request_cancel_conversion(); }
@@ -675,6 +700,10 @@ draws the same (the Classic gumps Interface.uop repeats) and list it for Dynamap
 gumps. With upscaling, the Classic and Enhanced single gump passes must match, or no gump draws the same and nothing is \
 shared.\n\nPack standalone: keep every gump, so the package needs no gumps_cc.";
 
+/// The width of an asset card's progress bar.
+const CARD_PROGRESS_BAR_WIDTH: f32 = 200.0;
+/// The size of a running job's Stop button, and so the height of a card's title row.
+const STOP_BUTTON_SIZE: [f32; 2] = [90.0, 30.0];
 const HUE_RAMP_CELL_WIDTH: f32 = 110.0;
 const PACKAGE_COMPRESSION_CELL_WIDTH: f32 = 110.0;
 const PACKAGE_ZSTD_CELL_WIDTH: f32 = 140.0;
@@ -1031,12 +1060,7 @@ fn draw_assets_overview(ui: &mut egui::Ui, app: &mut UddConvApp) {
 
 fn draw_section_header(ui: &mut egui::Ui, title: &str, subtitle: &str) {
     ui.horizontal(|ui| {
-        ui.label(
-            egui::RichText::new(title)
-                .strong()
-                .size(16.0)
-                .color(egui::Color32::from_rgb(230, 230, 230)),
-        );
+        ui.label(section_heading(title));
         ui.label(egui::RichText::new(subtitle).weak());
     });
 }
@@ -1061,178 +1085,174 @@ fn draw_asset_card(
     let mut stop_clicked = false;
     let mut preview_req = None;
 
-    asset_card_frame(ui)
-        .show(ui, |ui| {
-            ui.set_min_width(ui.available_width());
-            ui.vertical(|ui| {
-                ui.spacing_mut().item_spacing = egui::vec2(6.0, 8.0);
+    ui.vertical(|ui| {
+        ui.spacing_mut().item_spacing = egui::vec2(6.0, 8.0);
 
-                (clicked, stop_clicked) = draw_asset_card_header(ui, title, desc, source_note, progress, can_start);
+        (clicked, stop_clicked) = draw_asset_card_header(ui, title, desc, source_note, progress, can_start);
 
-                if opt.is_some()
-                    || texture_zstd_level.is_some()
-                    || zstd_only_level.is_some()
-                    || bc7_rdo.is_some()
-                    || upscale_single.is_some()
-                    || !upscale_configs.is_empty()
-                {
-                    ui.add_space(2.0);
-                    ui.separator();
-                    ui.add_space(2.0);
+        if opt.is_some()
+            || texture_zstd_level.is_some()
+            || zstd_only_level.is_some()
+            || bc7_rdo.is_some()
+            || upscale_single.is_some()
+            || !upscale_configs.is_empty()
+        {
+            ui.add_space(2.0);
+            ui.separator();
+            ui.add_space(2.0);
 
-                    ui.add_enabled_ui(can_start, |ui| {
-                        ui.horizontal_wrapped(|ui| {
-                            ui.spacing_mut().item_spacing = egui::vec2(12.0, 8.0);
+            ui.add_enabled_ui(can_start, |ui| {
+                ui.horizontal_wrapped(|ui| {
+                    ui.spacing_mut().item_spacing = egui::vec2(12.0, 8.0);
 
-                            if let Some(opt_val) = opt {
-                                let show_bc7_settings = matches!(opt_val, TextureOptimization::Bc7Zstd);
-                                draw_control_cell(ui, "Output Format", 210.0, |ui| {
-                                    let current_fmt = match opt_val {
-                                        TextureOptimization::None => "Raw+zstd",
-                                        TextureOptimization::Bc7 => "BC7",
-                                        TextureOptimization::Bc7Zstd => "Supercompressed BC7+zstd",
-                                    };
+                    if let Some(opt_val) = opt {
+                        let show_bc7_settings = matches!(opt_val, TextureOptimization::Bc7Zstd);
+                        draw_control_cell(ui, "Output Format", 210.0, |ui| {
+                            let current_fmt = match opt_val {
+                                TextureOptimization::None => "Raw+zstd",
+                                TextureOptimization::Bc7 => "BC7",
+                                TextureOptimization::Bc7Zstd => "Supercompressed BC7+zstd",
+                            };
 
-                                    egui::ComboBox::from_id_salt(format!("{}_fmt", title))
-                                        .selected_text(current_fmt)
-                                        .width(ui.available_width())
-                                        .show_ui(ui, |ui| {
-                                            if ui
-                                                .selectable_label(
-                                                    current_fmt == "Raw+zstd",
-                                                    "Raw+zstd",
-                                                )
-                                                .clicked()
-                                            {
-                                                *opt_val = TextureOptimization::None;
-                                            }
-                                            if ui
-                                                .add_enabled(
-                                                    lossy_refusal.is_none(),
-                                                    egui::Button::selectable(current_fmt == "BC7", "BC7"),
-                                                )
-                                                .on_disabled_hover_text(lossy_refusal.unwrap_or_default())
-                                                .clicked()
-                                            {
-                                                *opt_val = TextureOptimization::Bc7;
-                                            }
-                                            if ui
-                                                .add_enabled(
-                                                    lossy_refusal.is_none(),
-                                                    egui::Button::selectable(
-                                                        current_fmt == "Supercompressed BC7+zstd",
-                                                        "Supercompressed BC7+zstd",
-                                                    ),
-                                                )
-                                                .on_disabled_hover_text(lossy_refusal.unwrap_or_default())
-                                                .clicked()
-                                            {
-                                                *opt_val = TextureOptimization::Bc7Zstd;
-                                            }
-                                        });
-                                });
-
-                                if show_bc7_settings {
-                                    if let Some((enabled, lambda, lookback_blocks)) = bc7_rdo {
-                                        *lookback_blocks =
-                                            udd_conv::bc7::normalize_bc7_rdo_lookback_blocks(
-                                                *lookback_blocks,
-                                            );
-                                        draw_control_cell(ui, "BC7 RDO", 230.0, |ui| {
-                                            ui.horizontal(|ui| {
-                                                ui.checkbox(enabled, "On")
-                                                    .on_hover_text("Disable to skip the BC7 RDO pass.");
-                                                ui.add_enabled(
-                                                    *enabled,
-                                                    egui::DragValue::new(lambda)
-                                                        .speed(0.01)
-                                                        .range(0.0..=1.0),
-                                                )
-                                                    .on_hover_text("Higher lambda values usually improve BC7+zstd disk ratio but can be much slower and may add more loss.");
-                                                ui.add_enabled_ui(*enabled, |ui| {
-                                                    egui::ComboBox::from_id_salt(format!("{title}_bc7_rdo_lookback"))
-                                                        .selected_text(format!("{} blocks", *lookback_blocks))
-                                                        .width(82.0)
-                                                        .show_ui(ui, |ui| {
-                                                            for blocks in udd_conv::bc7::BC7_RDO_LOOKBACK_BLOCK_PRESETS {
-                                                                ui.selectable_value(
-                                                                    lookback_blocks,
-                                                                    blocks,
-                                                                    format!("{blocks} blocks"),
-                                                                );
-                                                            }
-                                                        });
-                                                })
-                                                    .response
-                                                    .on_hover_text("Limits how many previous BC7 blocks RDO searches.");
-                                            });
-                                        });
+                            egui::ComboBox::from_id_salt(format!("{}_fmt", title))
+                                .selected_text(current_fmt)
+                                .width(ui.available_width())
+                                .show_ui(ui, |ui| {
+                                    if ui
+                                        .selectable_label(
+                                            current_fmt == "Raw+zstd",
+                                            "Raw+zstd",
+                                        )
+                                        .clicked()
+                                    {
+                                        *opt_val = TextureOptimization::None;
                                     }
-                                }
-
-                                if let Some(zstd_level) = texture_zstd_level {
-                                    match *opt_val {
-                                        TextureOptimization::None | TextureOptimization::Bc7Zstd => {
-                                            draw_zstd_level_cell(ui, zstd_level);
-                                        }
-                                        TextureOptimization::Bc7 => {}
+                                    if ui
+                                        .add_enabled(
+                                            lossy_refusal.is_none(),
+                                            egui::Button::selectable(current_fmt == "BC7", "BC7"),
+                                        )
+                                        .on_disabled_hover_text(lossy_refusal.unwrap_or_default())
+                                        .clicked()
+                                    {
+                                        *opt_val = TextureOptimization::Bc7;
                                     }
-                                }
-                            } else if let Some(zstd_level) = zstd_only_level {
-                                draw_zstd_level_cell(ui, zstd_level);
-                            }
-
-                            if let Some((up_val, target)) = upscale_single {
-                                draw_control_cell(ui, "Upscale Filter", 206.0, |ui| {
-                                    ui.horizontal(|ui| {
-                                        ui.set_width(ui.available_width());
-                                        let combo_width = if target.is_some() {
-                                            (ui.available_width() - 34.0).max(120.0)
-                                        } else {
-                                            ui.available_width().max(120.0)
-                                        };
-                                        ui.scope(|ui| {
-                                            ui.set_width(combo_width);
-                                            draw_upscale_filter(ui, format!("{}_upscale", title), up_val);
-                                        });
-                                        if let Some(target) = target {
-                                            if ui.button("🔍").on_hover_text("Preview").clicked() {
-                                                preview_req = Some((target, *up_val));
-                                            }
-                                        }
-                                    });
+                                    if ui
+                                        .add_enabled(
+                                            lossy_refusal.is_none(),
+                                            egui::Button::selectable(
+                                                current_fmt == "Supercompressed BC7+zstd",
+                                                "Supercompressed BC7+zstd",
+                                            ),
+                                        )
+                                        .on_disabled_hover_text(lossy_refusal.unwrap_or_default())
+                                        .clicked()
+                                    {
+                                        *opt_val = TextureOptimization::Bc7Zstd;
+                                    }
                                 });
-                            }
                         });
 
-                        if !upscale_configs.is_empty() {
-                            ui.horizontal_wrapped(|ui| {
-                                ui.spacing_mut().item_spacing = egui::vec2(12.0, 8.0);
-                                for (label, config, target) in upscale_configs.iter_mut() {
-                                    draw_control_cell(ui, &format!("Upscale {}", label), 190.0, |ui| {
-                                        ui.horizontal(|ui| {
-                                            ui.set_width(ui.available_width());
-                                            let combo_width = (ui.available_width() - 34.0).max(120.0);
-                                            ui.scope(|ui| {
-                                                ui.set_width(combo_width);
-                                                draw_upscale_filter(
-                                                    ui,
-                                                    format!("{}_upscale_{}", title, label),
-                                                    &mut config.filter,
-                                                );
-                                            });
-                                            if ui.button("🔍").on_hover_text("Preview").clicked() {
-                                                preview_req = Some((*target, config.filter));
-                                            }
-                                        });
+                        if show_bc7_settings {
+                            if let Some((enabled, lambda, lookback_blocks)) = bc7_rdo {
+                                *lookback_blocks =
+                                    udd_conv::bc7::normalize_bc7_rdo_lookback_blocks(
+                                        *lookback_blocks,
+                                    );
+                                draw_control_cell(ui, "BC7 RDO", 230.0, |ui| {
+                                    ui.horizontal(|ui| {
+                                        ui.checkbox(enabled, "On")
+                                            .on_hover_text("Disable to skip the BC7 RDO pass.");
+                                        ui.add_enabled(
+                                            *enabled,
+                                            egui::DragValue::new(lambda)
+                                                .speed(0.01)
+                                                .range(0.0..=1.0),
+                                        )
+                                            .on_hover_text("Higher lambda values usually improve BC7+zstd disk ratio but can be much slower and may add more loss.");
+                                        ui.add_enabled_ui(*enabled, |ui| {
+                                            egui::ComboBox::from_id_salt(format!("{title}_bc7_rdo_lookback"))
+                                                .selected_text(format!("{} blocks", *lookback_blocks))
+                                                .width(82.0)
+                                                .show_ui(ui, |ui| {
+                                                    for blocks in udd_conv::bc7::BC7_RDO_LOOKBACK_BLOCK_PRESETS {
+                                                        ui.selectable_value(
+                                                            lookback_blocks,
+                                                            blocks,
+                                                            format!("{blocks} blocks"),
+                                                        );
+                                                    }
+                                                });
+                                        })
+                                            .response
+                                            .on_hover_text("Limits how many previous BC7 blocks RDO searches.");
                                     });
+                                });
+                            }
+                        }
+
+                        if let Some(zstd_level) = texture_zstd_level {
+                            match *opt_val {
+                                TextureOptimization::None | TextureOptimization::Bc7Zstd => {
+                                    draw_zstd_level_cell(ui, zstd_level);
                                 }
+                                TextureOptimization::Bc7 => {}
+                            }
+                        }
+                    } else if let Some(zstd_level) = zstd_only_level {
+                        draw_zstd_level_cell(ui, zstd_level);
+                    }
+
+                    if let Some((up_val, target)) = upscale_single {
+                        draw_control_cell(ui, "Upscale Filter", 206.0, |ui| {
+                            ui.horizontal(|ui| {
+                                ui.set_width(ui.available_width());
+                                let combo_width = if target.is_some() {
+                                    (ui.available_width() - 34.0).max(120.0)
+                                } else {
+                                    ui.available_width().max(120.0)
+                                };
+                                ui.scope(|ui| {
+                                    ui.set_width(combo_width);
+                                    draw_upscale_filter(ui, format!("{}_upscale", title), up_val);
+                                });
+                                if let Some(target) = target {
+                                    if ui.button("🔍").on_hover_text("Preview").clicked() {
+                                        preview_req = Some((target, *up_val));
+                                    }
+                                }
+                            });
+                        });
+                    }
+                });
+
+                if !upscale_configs.is_empty() {
+                    ui.horizontal_wrapped(|ui| {
+                        ui.spacing_mut().item_spacing = egui::vec2(12.0, 8.0);
+                        for (label, config, target) in upscale_configs.iter_mut() {
+                            draw_control_cell(ui, &format!("Upscale {}", label), 190.0, |ui| {
+                                ui.horizontal(|ui| {
+                                    ui.set_width(ui.available_width());
+                                    let combo_width = (ui.available_width() - 34.0).max(120.0);
+                                    ui.scope(|ui| {
+                                        ui.set_width(combo_width);
+                                        draw_upscale_filter(
+                                            ui,
+                                            format!("{}_upscale_{}", title, label),
+                                            &mut config.filter,
+                                        );
+                                    });
+                                    if ui.button("🔍").on_hover_text("Preview").clicked() {
+                                        preview_req = Some((*target, config.filter));
+                                    }
+                                });
                             });
                         }
                     });
                 }
             });
-        });
+        }
+    });
 
     (clicked, stop_clicked, preview_req)
 }
@@ -1245,8 +1265,14 @@ fn asset_card_frame(ui: &egui::Ui) -> egui::Frame {
         .inner_margin(egui::Margin::same(10))
 }
 
-/// The top row of an asset card: its title, description and source, its progress bar, and its Pack Asset or Stop
-/// button. Returns whether Pack Asset and Stop were clicked.
+/// Lays out a section's asset cards, each in an asset card frame: two per row when the width allows.
+fn draw_asset_cards(ui: &mut egui::Ui, id_salt: &str, add_cards: impl FnOnce(&mut CardGrid<'_>)) {
+    let frame = asset_card_frame(ui);
+    draw_card_grid(ui, id_salt, frame, add_cards);
+}
+
+/// The top of an asset card: its title and its Pack Asset or Stop button, its progress, then its description and
+/// source. Returns whether Pack Asset and Stop were clicked.
 fn draw_asset_card_header(
     ui: &mut egui::Ui,
     title: &str,
@@ -1260,34 +1286,15 @@ fn draw_asset_card_header(
     let is_running = progress.state == AssetPackProgressState::Running;
 
     ui.horizontal(|ui| {
-        ui.vertical(|ui| {
-            ui.set_width(ui.available_width().min(420.0).max(180.0));
-            ui.label(
-                egui::RichText::new(title)
-                    .strong()
-                    .size(18.0)
-                    .color(egui::Color32::WHITE),
-            );
-            ui.label(egui::RichText::new(desc).size(12.5).weak());
-            if let Some(source_note) = source_note {
-                ui.label(
-                    egui::RichText::new(source_note)
-                        .size(12.5)
-                        .color(SOURCE_NOTE_COLOUR),
-                );
-            }
-        });
-
-        ui.vertical(|ui| {
-            ui.set_width((ui.available_width() - 132.0).max(180.0));
-            draw_asset_progress(ui, progress);
-        });
+        // As tall as the Stop button, so the card doesn't move when its job starts.
+        ui.set_min_height(STOP_BUTTON_SIZE[1]);
+        ui.label(card_title(title));
 
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
             if is_running {
                 if ui
                     .add_sized(
-                        [90.0, 30.0],
+                        STOP_BUTTON_SIZE,
                         egui::Button::new(egui::RichText::new("Stop").strong()),
                     )
                     .on_hover_text("Request conversion stop")
@@ -1307,10 +1314,20 @@ fn draw_asset_card_header(
             }
         });
     });
+    draw_asset_progress(ui, progress);
+    ui.label(egui::RichText::new(desc).size(12.5).weak());
+    if let Some(source_note) = source_note {
+        ui.label(
+            egui::RichText::new(source_note)
+                .size(12.5)
+                .color(SOURCE_NOTE_COLOUR),
+        );
+    }
 
     (clicked, stop_clicked)
 }
 
+/// A job's progress: a compact bar, with the percentage while the job runs, and the job's stage beside it.
 fn draw_asset_progress(ui: &mut egui::Ui, progress: &AssetPackProgress) {
     let text = match progress.state {
         AssetPackProgressState::Idle => egui::RichText::new(&progress.text).weak(),
@@ -1327,19 +1344,28 @@ fn draw_asset_progress(ui: &mut egui::Ui, progress: &AssetPackProgress) {
             egui::RichText::new(&progress.text).color(egui::Color32::from_rgb(255, 120, 120))
         }
     };
-    ui.add(
-        egui::ProgressBar::new(progress.fraction)
-            .animate(progress.state == AssetPackProgressState::Running)
-            .text(text),
-    );
+    let is_running = progress.state == AssetPackProgressState::Running;
+    ui.horizontal(|ui| {
+        let bar = egui::ProgressBar::new(progress.fraction)
+            .desired_width(CARD_PROGRESS_BAR_WIDTH)
+            .animate(is_running);
+        ui.add(if is_running { bar.show_percentage() } else { bar });
+        ui.label(text);
+    });
 }
 
+/// A labelled control of an option row. In a wrapping row, a cell that doesn't fit the rest of the row starts the next
+/// one: `horizontal_wrapped` wraps plain widgets by their size, but not child uis like this one.
 fn draw_control_cell<R>(
     ui: &mut egui::Ui,
     label: &str,
     width: f32,
     add_contents: impl FnOnce(&mut egui::Ui) -> R,
 ) -> R {
+    let starts_row = ui.cursor().min.x <= ui.max_rect().left();
+    if ui.layout().main_wrap() && !starts_row && ui.available_size_before_wrap().x < width {
+        ui.end_row();
+    }
     ui.vertical(|ui| {
         ui.set_width(width);
         ui.label(egui::RichText::new(label).size(12.0).weak());
@@ -1447,4 +1473,45 @@ fn draw_upscale_filter(ui: &mut egui::Ui, id: String, up_val: &mut UpscaleFilter
                 }
             }
         });
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The width of each test cell.
+    const TEST_CELL_WIDTH: f32 = 200.0;
+    /// The cells in the test row.
+    const TEST_CELLS: usize = 3;
+    /// A window wide enough for two test cells and the spacing between them, but not for three.
+    const TEST_WINDOW_WIDTH: f32 = 500.0;
+    /// The height of the test window.
+    const TEST_WINDOW_HEIGHT: f32 = 600.0;
+
+    #[test]
+    fn option_cells_that_do_not_fit_their_row_start_the_next_one() {
+        let input = egui::RawInput {
+            screen_rect: Some(egui::Rect::from_min_size(
+                egui::Pos2::ZERO,
+                egui::vec2(TEST_WINDOW_WIDTH, TEST_WINDOW_HEIGHT),
+            )),
+            ..Default::default()
+        };
+        let mut cells = Vec::new();
+        let mut row_left = f32::NAN;
+        let _ = egui::Context::default().run_ui(input, |ui| {
+            ui.horizontal_wrapped(|ui| {
+                row_left = ui.max_rect().left();
+                for cell in 0..TEST_CELLS {
+                    cells.push(draw_control_cell(ui, &format!("Cell {cell}"), TEST_CELL_WIDTH, |ui| ui.min_rect()));
+                }
+            });
+        });
+
+        assert_eq!(cells.len(), TEST_CELLS);
+        assert_eq!(cells[0].top(), cells[1].top(), "the first two cells share a row");
+        assert!(cells[1].left() > cells[0].right(), "the second cell follows the first");
+        assert_eq!(cells[2].left(), row_left, "the third cell starts the next row");
+        assert!(cells[2].top() > cells[0].bottom(), "below the first row");
+    }
 }

@@ -3,6 +3,7 @@ pub mod assets;
 pub mod world;
 pub mod tools;
 pub mod preview;
+pub mod layout;
 
 /// The tooltip of Validate packages after packing, on the Assets and World tabs.
 pub(crate) const VALIDATE_AFTER_PACKING_TOOLTIP: &str = "Once a packing job succeeds, read back every package it just \
