@@ -1,6 +1,7 @@
 pub mod cache;
 pub mod texture_array;
 pub mod coverage;
+pub(crate) mod aux_layers;
 #[cfg(test)]
 mod liquid_sampling_tests;
 
@@ -73,7 +74,8 @@ const TILEMETA_FLAG_WET: u64 = 0x80;
 /// GPU images for the `tex_aux_ec` two-base blend path.
 ///
 /// `aux_atlas`: a `texture_2d_array<f32>` where layer 0 is a transparent sentinel
-/// (absent) and layers 1..N each hold the RGBA pixels of one aux slot.
+/// (absent) and layers 1..N each hold the RGBA pixels of one aux slot, or its BC7
+/// blocks when every texture of the package is BC7 (`aux_layers::AuxLayerFormat`).
 /// All layers share the same `AUX_ATLAS_TILE_SIZE` × `AUX_ATLAS_TILE_SIZE` extent;
 /// images smaller than that are placed in the top-left corner.
 ///
@@ -215,7 +217,7 @@ fn assign_aux_layer(
     package: &TexAuxEcPackage,
     texture_id: u32,
     assigned: &mut std::collections::HashMap<u32, u32>,
-    layers: &mut Vec<Vec<u8>>,
+    layers: &mut aux_layers::AuxLayers,
 ) -> Option<(u32, UVec2)> {
     let slot = package.slot_for_texture_id(texture_id)?;
     let extent = UVec2::new(slot.width.into(), slot.height.into());
@@ -225,16 +227,12 @@ fn assign_aux_layer(
         log::warn!("EC auxiliary source {texture_id} exceeds atlas cell extent: {extent:?}");
         return None;
     }
-    let rgba = match package.load_rgba(payload_id) {
-        Ok(Some(rgba)) => rgba,
-        result => { log::warn!("EC auxiliary source {texture_id} could not be read: {result:?}"); return None; }
+    let image = match aux_layers::AuxImage::load(package, payload_id, extent, layers.format()) {
+        Ok(Some(image)) => image,
+        Ok(None) => { log::warn!("EC auxiliary source {texture_id} has no payload"); return None; }
+        Err(error) => { log::warn!("EC auxiliary source {texture_id} could not be read: {error:#}"); return None; }
     };
-    if rgba.len() != (extent.x * extent.y * 4) as usize {
-        log::warn!("EC auxiliary source {texture_id} has an invalid RGBA byte count");
-        return None;
-    }
-    let layer = layers.len() as u32;
-    layers.push(pad_aux_rgba(&rgba, extent.x, extent.y, AUX_ATLAS_TILE_SIZE, AUX_ATLAS_TILE_SIZE));
+    let layer = layers.push_image(&image);
     assigned.insert(payload_id, layer);
     Some((layer, extent))
 }
@@ -265,12 +263,8 @@ fn create_aux_atlas_images(
     let mut texture_id_to_layer: std::collections::HashMap<u32, u32> =
         std::collections::HashMap::new();
     // Layer 0 is the sentinel. Collect the distinct texture_ids needed.
-    let mut layers_rgba: Vec<Vec<u8>> = Vec::new();
-    // Sentinel layer.
-    layers_rgba.push(vec![
-        0u8;
-        (AUX_ATLAS_TILE_SIZE * AUX_ATLAS_TILE_SIZE * 4) as usize
-    ]);
+    // The layers keep the package's BC7 blocks when every texture is BC7, and decode to RGBA8 otherwise.
+    let mut layers = aux_layers::AuxLayers::new(aux_layers::AuxLayerFormat::for_package(tex_aux_ec));
 
     let lookup_height = (AUX_LOOKUP_TILE_CAPACITY + AUX_LOOKUP_WIDTH - 1) / AUX_LOOKUP_WIDTH;
     let mut lookup_bytes = vec![0u8; (AUX_LOOKUP_WIDTH * lookup_height * 16) as usize];
@@ -294,7 +288,7 @@ fn create_aux_atlas_images(
             }
 
             let mut assign_layer = |texture_id: u32| -> u32 {
-                assign_aux_layer(tex_aux_ec, texture_id, &mut texture_id_to_layer, &mut layers_rgba)
+                assign_aux_layer(tex_aux_ec, texture_id, &mut texture_id_to_layer, &mut layers)
                     .map_or(0, |(layer, _)| layer)
             };
 
@@ -363,26 +357,30 @@ fn create_aux_atlas_images(
             log::warn!("EC item liquid source {} has a different packed family; rebuild tex_aux_ec", source.texture_id);
             return None;
         }
-        assign_aux_layer(tex_aux_ec, source.texture_id, &mut texture_id_to_layer, &mut layers_rgba)
+        assign_aux_layer(tex_aux_ec, source.texture_id, &mut texture_id_to_layer, &mut layers)
     });
     let surface_lookup = super::ec_item_surface::create_lookup(images, tilemeta, tex_art_ec, Some(tex_aux_ec), |source| {
         let slot = tex_aux_ec.slot_for_texture_id(source.texture_id)?;
         if slot.logical_family != source.texture_type { return None; }
-        assign_aux_layer(tex_aux_ec, source.texture_id, &mut texture_id_to_layer, &mut layers_rgba)
+        assign_aux_layer(tex_aux_ec, source.texture_id, &mut texture_id_to_layer, &mut layers)
     });
 
     if let (Some(meta), Some(art)) = (tilemeta, tex_art_ec) {
         super::ec_item_surface::append_sprite_hues(&mut images.get_mut(&surface_lookup).expect("new item lookup"),
-            meta, art, tex_aux_ec, &mut layers_rgba);
+            meta, art, tex_aux_ec, &mut layers);
     }
 
-    let layer_count = layers_rgba.len().max(1) as u32;
-    let mut atlas_bytes: Vec<u8> = Vec::with_capacity(
-        (AUX_ATLAS_TILE_SIZE * AUX_ATLAS_TILE_SIZE * 4 * layer_count) as usize,
+    let layer_count = layers.len().max(1) as u32;
+    let texture_format = layers.format().texture_format();
+    let atlas_bytes = layers.into_bytes();
+    console_logger::one(
+        LogSev::Info,
+        LogAbout::RenderWorldLand,
+        &format!(
+            "EC auxiliary array: {layer_count} layers of {AUX_ATLAS_TILE_SIZE}x{AUX_ATLAS_TILE_SIZE} {texture_format:?}, {} bytes",
+            atlas_bytes.len(),
+        ),
     );
-    for layer_data in &layers_rgba {
-        atlas_bytes.extend_from_slice(layer_data);
-    }
 
     let mut aux_atlas = Image::new(
         Extent3d {
@@ -392,7 +390,7 @@ fn create_aux_atlas_images(
         },
         TextureDimension::D2,
         atlas_bytes,
-        TextureFormat::Rgba8Unorm,
+        texture_format,
         bevy::asset::RenderAssetUsages::RENDER_WORLD,
     );
     aux_atlas.texture_descriptor.usage |= TextureUsages::TEXTURE_BINDING;
@@ -698,10 +696,14 @@ fn create_classic_land_art_images(
         dimension: Some(TextureViewDimension::D2Array),
         ..Default::default()
     });
-    log::info!(
-        "Classic land art array: {layer_count} layers of {atlas_width}x{atlas_height} {:?}, {} bytes",
-        atlas.texture_descriptor.format,
-        layer_byte_len * layer_count as usize,
+    console_logger::one(
+        LogSev::Info,
+        LogAbout::RenderWorldLand,
+        &format!(
+            "Classic land art array: {layer_count} layers of {atlas_width}x{atlas_height} {:?}, {} bytes",
+            atlas.texture_descriptor.format,
+            layer_byte_len * layer_count as usize,
+        ),
     );
 
     let mut lookup = Image::new(
@@ -1876,19 +1878,19 @@ mod tests {
             .expect("set DYNAMAPPER_TEST_PACKAGES to the matching current package directory"));
         let package = TexAuxEcPackage::load(root.join("tex_aux_ec.uddp")).unwrap();
         let mut assigned = std::collections::HashMap::new();
-        let mut layers = Vec::new();
+        let mut layers = aux_layers::AuxLayers::new(aux_layers::AuxLayerFormat::Rgba8);
         let mut aliases = 0;
         for slot in package.slots().iter().filter(|slot| slot.is_missing_source()) {
             assert_eq!(assign_aux_layer(&package, slot.texture_id, &mut assigned, &mut layers),
-                Some((0, UVec2::new(256, 256))));
+                Some((1, UVec2::new(256, 256))));
             aliases += 1;
         }
         assert!(aliases > 1, "inventory did not exercise shared missing-source aliases");
         assert_eq!(assigned.len(), 1);
-        assert_eq!(layers.len(), 1);
+        assert_eq!(layers.len(), 2);
         let original = package.load_rgba(udd_assets::tex_aux_ec::TEX_AUX_EC_MISSING_TEXTURE_ID)
             .unwrap().unwrap();
-        assert_eq!(layers[0], pad_aux_rgba(&original, 256, 256,
+        assert_eq!(layers.layer(1), pad_aux_rgba(&original, 256, 256,
             AUX_ATLAS_TILE_SIZE, AUX_ATLAS_TILE_SIZE));
     }
 

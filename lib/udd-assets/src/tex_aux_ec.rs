@@ -26,9 +26,10 @@ use bytemuck::{Pod, Zeroable};
 use color_eyre::eyre::{self, WrapErr};
 use std::path::Path;
 use udd_container::{xxh64_virtual_path, UddpReader};
-use udd_image_codecs::bc7::{decode_from_vram, RawImageFormat, VramTextureData};
+use udd_image_codecs::bc7::{decode_from_vram, RawImageFormat, VramTextureData, VramTextureFormat};
 
 use crate::common::read_pod_vec;
+use crate::tex_art_cc::PagePixelFormat;
 
 pub const TEX_AUX_EC_SLOT_MANIFEST_ENTRY_PATH: &str = "metadata/slots.bin";
 /// Native (pre-upscale) dimensions of block-0 water primary images. The shader
@@ -86,6 +87,11 @@ impl TexAuxEcSlotRecord {
     /// The id whose `textures/{id:08x}` payload holds this slot's pixels.
     pub fn payload_texture_id(&self) -> u32 {
         if self.is_missing_source() { TEX_AUX_EC_MISSING_TEXTURE_ID } else { self.texture_id }
+    }
+
+    /// The payload holds BC7 blocks ([`TexAuxEcPackage::load_bc7`] reads them as stored).
+    pub fn is_bc7(&self) -> bool {
+        self.pixel_format == PagePixelFormat::Bc7 as u8
     }
 }
 
@@ -185,6 +191,32 @@ impl TexAuxEcPackage {
     /// missing-texture image. Transparently decodes BC7-encoded entries so callers always receive
     /// RGBA8888.
     pub fn load_rgba(&self, texture_id: u32) -> eyre::Result<Option<Vec<u8>>> {
+        let Some((bc7, bytes)) = self.read_payload(texture_id)? else { return Ok(None) };
+        if bc7 {
+            let vram = Self::bc7_container(texture_id, &bytes)?;
+            let rgba = decode_from_vram(&vram, RawImageFormat::Rgba8888)
+                .map_err(|e| eyre::eyre!("decode BC7 for tex_aux_ec texture {texture_id}: {e}"))?;
+            Ok(Some(rgba))
+        } else {
+            Ok(Some(bytes))
+        }
+    }
+
+    /// Load the BC7 blocks for the given `texture_id` as stored, without decoding them, for an upload that keeps them.
+    ///
+    /// Returns `None` when the id is not present in the package; a missing-source alias returns the missing-texture
+    /// image. An RGBA8888 entry is an error: [`Self::load_rgba`] reads every entry.
+    pub fn load_bc7(&self, texture_id: u32) -> eyre::Result<Option<VramTextureData>> {
+        let Some((bc7, bytes)) = self.read_payload(texture_id)? else { return Ok(None) };
+        eyre::ensure!(bc7, "tex_aux_ec texture {texture_id} is RGBA8888, not BC7");
+        let vram = Self::bc7_container(texture_id, &bytes)?;
+        eyre::ensure!(vram.format() == VramTextureFormat::Bc7RgbaUnormSrgb,
+            "tex_aux_ec texture {texture_id} container holds {:?}, not BC7", vram.format());
+        Ok(Some(vram))
+    }
+
+    /// Whether the id's slot is BC7, and its payload's stored bytes; `None` when the package has no payload for it.
+    fn read_payload(&self, texture_id: u32) -> eyre::Result<Option<(bool, Vec<u8>)>> {
         let slot_pos = self
             .slots
             .binary_search_by_key(&texture_id, |s| s.texture_id)
@@ -193,21 +225,15 @@ impl TexAuxEcPackage {
         let path = texture_entry_path(payload_texture_id);
         let hash = xxh64_virtual_path(&path);
         match self.package.read_file_by_path_hash(hash) {
-            Ok(bytes) => {
-                let pixel_format = slot_pos.map(|pos| self.slots[pos].pixel_format).unwrap_or(0);
-                if pixel_format == 1 {
-                    let vram = VramTextureData::from_container_bytes(&bytes)
-                        .map_err(|e| eyre::eyre!("parse BC7 container for tex_aux_ec texture {texture_id}: {e}"))?;
-                    let rgba = decode_from_vram(&vram, RawImageFormat::Rgba8888)
-                        .map_err(|e| eyre::eyre!("decode BC7 for tex_aux_ec texture {texture_id}: {e}"))?;
-                    Ok(Some(rgba))
-                } else {
-                    Ok(Some(bytes))
-                }
-            }
+            Ok(bytes) => Ok(Some((slot_pos.is_some_and(|pos| self.slots[pos].is_bc7()), bytes))),
             Err(udd_container::uddp::FormatError::FileNotFound) => Ok(None),
             Err(e) => Err(eyre::eyre!("load tex_aux_ec texture {texture_id}: {e}")),
         }
+    }
+
+    fn bc7_container(texture_id: u32, bytes: &[u8]) -> eyre::Result<VramTextureData> {
+        VramTextureData::from_container_bytes(bytes)
+            .map_err(|e| eyre::eyre!("parse BC7 container for tex_aux_ec texture {texture_id}: {e}"))
     }
 
     pub fn slots(&self) -> &[TexAuxEcSlotRecord] {
@@ -283,6 +309,36 @@ mod tests {
         assert!(package.missing_texture_slot().is_some_and(|slot| !slot.is_missing_source()));
         assert_eq!(package.water_primary_extent(4651), Some([64, 32]));
         assert_eq!(package.water_primary_extent(7379), None);
+        Ok(())
+    }
+
+    /// A BC7 slot's blocks come back as stored and decode through `load_rgba`; an RGBA slot is no BC7 source.
+    #[test]
+    fn bc7_entries_load_as_their_blocks() -> eyre::Result<()> {
+        const BC7_ID: u32 = 20_002_473;
+        // Any 16 bytes are one decodable BC7 block; distinct ones show a reordered copy.
+        const BLOCK: [u8; udd_image_codecs::bc7::BC7_BLOCK_BYTES] = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16];
+        let extent = udd_image_codecs::bc7::ImageExtent::new(IMAGE_SIDE.into(), IMAGE_SIDE.into())?;
+        let rgba = PACKED_PIXEL.repeat(usize::from(IMAGE_SIDE) * usize::from(IMAGE_SIDE));
+        let blocks = VramTextureData::new(extent, VramTextureFormat::Bc7RgbaUnormSrgb, BLOCK.to_vec().into())?;
+        let bc7_slot = TexAuxEcSlotRecord { pixel_format: PagePixelFormat::Bc7 as u8, ..slot(BC7_ID, WORLD_ART) };
+        let mut builder = UddpBuilder::new(LookupMode::VirtualPathHash);
+        let slots = [slot(PACKED_ID, WORLD_ART), bc7_slot];
+        for (path, data) in [(TEX_AUX_EC_SLOT_MANIFEST_ENTRY_PATH, bytemuck::cast_slice(&slots).to_vec()),
+            (TEX_AUX_EC_WATER_EXTENTS_ENTRY_PATH, bytemuck::cast_slice(&[[4651u32, 64, 32]]).to_vec()),
+            (&texture_entry_path(PACKED_ID), rgba.clone()), (&texture_entry_path(BC7_ID), blocks.to_container_bytes())] {
+            builder.add_file(AddFileRequest {
+                data_type: DataType::Metadata as u8, compression: CompressionFlag::None, width: 0, height: 0,
+                virtual_path: Some(path), path_hash64: None, id: None, data: &data,
+            })?;
+        }
+        let package = TexAuxEcPackage::from_uddp_package(UddpReader::open(builder.build()?)?)?;
+        assert!(package.slots()[1].is_bc7() && !package.slots()[0].is_bc7());
+        let loaded = package.load_bc7(BC7_ID)?.expect("BC7 blocks");
+        assert_eq!((loaded.bytes(), loaded.extent()), (blocks.bytes(), extent));
+        assert_eq!(package.load_rgba(BC7_ID)?, Some(decode_from_vram(&blocks, RawImageFormat::Rgba8888)?));
+        assert!(package.load_bc7(PACKED_ID).is_err());
+        assert!(package.load_bc7(UNLISTED_ID)?.is_none());
         Ok(())
     }
 
