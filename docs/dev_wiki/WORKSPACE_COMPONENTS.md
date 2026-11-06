@@ -55,6 +55,20 @@ Responsibilities:
 
 Shared terminal logging backend for tools. It installs a `log` crate backend that formats records with `paris`, so libraries continue to emit hookable `log::*` records while command-line tools get a consistent colored style.
 
+### `lib/support/uot-kdl/`
+
+KDL parsing for the workspace, with knuffel's grammar compiled once instead of in every crate that parses KDL. Used by the
+converters, `uocf`, the client tools and Dynamapper.
+
+### `lib/support/uot-texture-codecs/`
+
+Texture block codecs: BC1 and BC7 encoding and decoding, VRAM layout helpers, premultiplied colour conversion, and KTX2
+handling behind the `ktx2` feature.
+
+### `lib/support/uot-gui/`
+
+Helpers shared by the egui tools: app startup, file dialogs and the common zoom and scroll handling.
+
 ### `lib/udd-conv/`
 
 Shared conversion and packaging logic for UODynamapper runtime assets.
@@ -65,10 +79,6 @@ Responsibilities:
 - land/art classification
 - tile metadata packaging
 - `.uddp` package generation logic used by CLI and GUI frontends
-
-### `lib/udd-conv-ktx2/`
-
-KTX2 texture handling used by the conversion pipeline.
 
 ### `lib/support/uot-image-postprocess/`
 
@@ -81,6 +91,10 @@ Reader and writer for Gamebryo NIF files (version 20.0.0.4), with block types ge
 ### `lib/ec-effects/particle-sim/`
 
 CPU simulation and preview rendering of the Enhanced Client particle effects: the Chaos `.ems` engine, the NIF effect runtime, hued effects, a software rasterizer, the `effects_ec.uddp` description codec and texture mip rules. Known differences from the client are listed in its README.
+
+### `lib/ec-effects/effect-gltf/`
+
+glTF 2.0 binary (`.glb`) export of the Enhanced Client effects: Gamebryo NIF scenes and whole particle effects.
 
 ## Distributed Binaries
 
