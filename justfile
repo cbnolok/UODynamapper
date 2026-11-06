@@ -63,8 +63,8 @@ lld_llvm_major := if has_lld != "" {
 # RUSTC_WRAPPER logic (needed for sccache)
 wrapper_path := "scripts/build/common/rustc_wrapper.sh"
 
-# Determine if sccache should be used: on CI by default. The Windows CI jobs pin sccache 0.16, since later releases
-#   expand cargo's @argfile past Windows' command line limit (see release.yml).
+# Determine if sccache should be used: on CI by default. The native Windows CI jobs pin sccache 0.16, since later releases
+#   expand cargo's @argfile past Windows' command line limit; the MinGW job runs without it (see release.yml).
 sccache_requested := if sccache == "true" { "true" } else { is_ci }
 sccache_available := if has_sccache != "" { "true" } else { "false" }
 sccache_effective := if sccache_requested == "true" { sccache_available } else { "false" }

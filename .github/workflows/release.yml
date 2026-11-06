@@ -341,14 +341,12 @@ jobs:
           targets: x86_64-pc-windows-gnu
           components: rust-src
 
-      # Pinned: sccache 0.17+ expands cargo's @argfile and spawns rustc with every argument, which passes Windows'
-      # 32767-character command line limit (os error 206). 0.16 forwards an oversized argfile to rustc and leaves
-      # just that call uncached. Remove once https://github.com/mozilla/sccache/issues/2397 is fixed in a release.
-      - name: Run sccache-cache
-        uses: mozilla-actions/sccache-action@v0.0.11
-        with:
-          version: "v0.16.0"
-
+      # No sccache here, so the justfile runs cargo without a wrapper. This job cross-compiles: the nightly's per-crate
+      # build directories give rustc one `-L` per host and per target dependency, under the longer
+      # target\x86_64-pc-windows-gnu\ path, so many commands come close to Windows' 32767-character limit. sccache
+      # rewrites a command it caches (`--emit=x` split in two, quoted feature cfgs), so one cargo left just under the
+      # limit came out over it (os error 206, bevy_winit on 2026-11-06). Without the wrapper, cargo's own @argfile
+      # fallback covers every length. rust-cache below still keeps the compiled dependencies.
       - name: Install Just
         uses: extractions/setup-just@v2
 
@@ -356,7 +354,7 @@ jobs:
         uses: Swatinem/rust-cache@v2
         with:
           workspaces: "."
-          key: "windows-x86_64-clang-nightly-sccache"
+          key: "windows-x86_64-clang-nightly"
 
       - name: Build release binary
         env:
