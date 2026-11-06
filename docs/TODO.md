@@ -125,7 +125,6 @@ Done. The main-texture selector is role first with explicit reasons (`choose_mai
 - Implement the alpha-mask plus depth-write shader path for clean overlap.
 - Keep draw submission batched by material and atlas page or layer set rather than by object.
 - Art packages of different page formats: the shared Enhanced/KR-like sprite atlas is then RGBA8 and every BC7 page is decoded on the CPU at upload (one startup warning names the repack). A second atlas array per page format would keep both packages as stored.
-- `extract_slot_rgba` (`art.rs`) is reached only from `ArtTextureLoader::load_texture`/`load_selected_texture`, which nothing calls; on a BC7 slot off the 4x4 grid it would hit `extract_bc7_subrect`'s alignment asserts. Remove it with its callers, or crop through the covering blocks.
 
 ### Static Depth, Transparency, And Building Occlusion Follow-Up
 

@@ -4,10 +4,9 @@ use std::ops::{Deref, DerefMut};
 use std::sync::Arc;
 
 use bevy::prelude::*;
-use color_eyre::eyre::{self, WrapErr};
+use color_eyre::eyre;
 
 use crate::{
-    configs::settings::ClientTextureSource,
     core::{
         system_sets::StartupSysSet,
         uo_files_loader::{TexArtCcPackageRes, TexArtEcPackageRes, TileMetaPackageRes},
@@ -29,20 +28,6 @@ use bevy::render::renderer::RenderQueue;
 use bevy::render::texture::GpuImage;
 use bevy::render::Extract;
 
-
-#[derive(Debug, Clone)]
-pub struct LoadedArtTexture {
-    pub art_id: u32,
-    pub source: ClientTextureSource,
-    pub texture_id: u32,
-    pub sample_start_x: i16,
-    pub sample_start_y: i16,
-    pub offset_x: i16,
-    pub offset_y: i16,
-    pub width: u16,
-    pub height: u16,
-    pub rgba8: Vec<u8>,
-}
 
 #[derive(Clone, Copy, Debug)]
 pub struct ResolvedArtSprite {
@@ -714,187 +699,6 @@ pub struct ArtTextureLoader {
     tex_art_cc: Option<Arc<TexArtCcPackage>>,
     tex_art_ec: Option<Arc<TexArtEcPackage>>,
     tilemeta: Option<Arc<TileMetaPackage>>,
-}
-
-impl ArtTextureLoader {
-    pub fn source_available(&self, source: ClientTextureSource) -> bool {
-        match source {
-            ClientTextureSource::Cc => self.tex_art_cc.is_some(),
-            ClientTextureSource::Ec => self.tex_art_ec.is_some() && self.tilemeta.is_some(),
-        }
-    }
-
-    pub fn resolve_effective_source(
-        &self,
-        requested_source: ClientTextureSource,
-    ) -> Option<ClientTextureSource> {
-        if self.source_available(requested_source) {
-            return Some(requested_source);
-        }
-
-        ClientTextureSource::ALL.into_iter().find(|candidate| {
-            *candidate != requested_source && self.source_available(*candidate)
-        })
-    }
-
-    pub fn load_selected_texture(
-        &self,
-        art_id: u32,
-        settings: &crate::configs::settings::SectGraphics,
-    ) -> eyre::Result<Option<LoadedArtTexture>> {
-        let Some(source) = self.resolve_effective_source(settings.art_texture_source) else {
-            return Ok(None);
-        };
-
-        self.load_texture(art_id, source)
-    }
-
-    pub fn load_texture(
-        &self,
-        art_id: u32,
-        source: ClientTextureSource,
-    ) -> eyre::Result<Option<LoadedArtTexture>> {
-        match source {
-            ClientTextureSource::Cc => self.load_cc_texture(art_id),
-            ClientTextureSource::Ec => self.load_ec_texture(art_id),
-        }
-    }
-
-    fn load_cc_texture(&self, art_id: u32) -> eyre::Result<Option<LoadedArtTexture>> {
-        let Some(package) = &self.tex_art_cc else {
-            return Ok(None);
-        };
-        let Some(slot) = package.present_slot(art_id) else {
-            return Ok(None);
-        };
-        let page_data = package
-            .read_page_bytes(slot.page_index)
-            .wrap_err_with(|| format!("read tex_art_cc page {}", slot.page_index))?;
-        let page_meta = package
-            .pages()
-            .get(slot.page_index as usize)
-            .ok_or_else(|| eyre::eyre!("tex_art_cc missing page metadata for {}", slot.page_index))?;
-        let rgba8 = extract_slot_rgba(
-            &page_data,
-            package.atlas_width(),
-            package.atlas_height(),
-            page_meta.used_width,
-            page_meta.used_height,
-            page_meta.pixel_format,
-            slot.x,
-            slot.y,
-            slot.width,
-            slot.height,
-        )?;
-
-        let metadata = self
-            .tilemeta
-            .as_ref()
-            .and_then(|tilemeta| tilemeta.item_tile(art_id));
-        let texture_id = metadata
-            .and_then(|item| (item.cc_texture_id != 0 || art_id == 0).then_some(item.cc_texture_id))
-            .unwrap_or(art_id);
-        Ok(Some(LoadedArtTexture {
-            art_id,
-            source: ClientTextureSource::Cc,
-            texture_id,
-            sample_start_x: metadata.map(|item| item.cc_start_x).unwrap_or(0),
-            sample_start_y: metadata.map(|item| item.cc_start_y).unwrap_or(0),
-            offset_x: slot.draw_offset_x,
-            offset_y: slot.draw_offset_y,
-            width: slot.width,
-            height: slot.height,
-            rgba8,
-        }))
-    }
-
-    fn load_ec_texture(&self, art_id: u32) -> eyre::Result<Option<LoadedArtTexture>> {
-        let Some(tilemeta) = &self.tilemeta else {
-            return Ok(None);
-        };
-        let Some(package) = &self.tex_art_ec else {
-            return Ok(None);
-        };
-        let Some(metadata) = tilemeta.item_tile(art_id) else {
-            return Ok(None);
-        };
-        let Some(slot) = package.present_slot(art_id) else {
-            return Ok(None);
-        };
-        let page_data = package
-            .read_page_bytes(slot.page_index)
-            .wrap_err_with(|| format!("read tex_art_ec page {}", slot.page_index))?;
-        let page_meta = package
-            .pages()
-            .get(slot.page_index as usize)
-            .ok_or_else(|| eyre::eyre!("tex_art_ec missing page metadata for {}", slot.page_index))?;
-        let rgba8 = extract_slot_rgba(
-            &page_data,
-            package.atlas_width(),
-            package.atlas_height(),
-            page_meta.used_width,
-            page_meta.used_height,
-            page_meta.pixel_format,
-            slot.x,
-            slot.y,
-            slot.width,
-            slot.height,
-        )?;
-
-        Ok(Some(LoadedArtTexture {
-            art_id,
-            source: ClientTextureSource::Ec,
-            texture_id: metadata.ec_texture_id,
-            sample_start_x: metadata.ec_start_x,
-            sample_start_y: metadata.ec_start_y,
-            offset_x: slot.draw_offset_x,
-            offset_y: slot.draw_offset_y,
-            width: slot.width,
-            height: slot.height,
-            rgba8,
-        }))
-    }
-}
-
-fn extract_slot_rgba(
-    page_data: &[u8],
-    atlas_width: u32,
-    atlas_height: u32,
-    used_width: u32,
-    _used_height: u32,
-    pixel_format: PagePixelFormat,
-    x: u16,
-    y: u16,
-    width: u16,
-    height: u16,
-) -> eyre::Result<Vec<u8>> {
-    if width == 0 || height == 0 {
-        return Ok(Vec::new());
-    }
-
-    match pixel_format {
-        PagePixelFormat::Rgba8888 => Ok(bc7::extract_rgba8888_subrect_arc(
-            page_data,
-            used_width,
-            x as u32,
-            y as u32,
-            width as u32,
-            height as u32,
-        )
-        .to_vec()),
-        PagePixelFormat::Bc7 => {
-            let page_extent = ImageExtent::new(atlas_width, atlas_height).map_err(|error| {
-                eyre::eyre!("invalid atlas page extent {atlas_width}x{atlas_height}: {error}")
-            })?;
-            let slot_extent = ImageExtent::new(width as u32, height as u32).map_err(|error| {
-                eyre::eyre!("invalid slot extent {}x{}: {error}", width, height)
-            })?;
-            let blocks =
-                bc7::extract_bc7_subrect(page_data, page_extent, x as u32, y as u32, slot_extent);
-            bc7::decode_bc7_to_rgba8888(&blocks, slot_extent)
-                .map_err(|error| eyre::eyre!("decode art BC7 subrect: {error}"))
-        }
-    }
 }
 
 pub struct ArtTextureLoaderPlugin {
