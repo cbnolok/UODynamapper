@@ -16,6 +16,24 @@ static INIT_BEVY_LOGGING: Once = Once::new();
 /// events need no cap, since [`bevy_log_targets`] lets nothing past INFO through.
 const LOG_CRATE_MAX_LEVEL: log::LevelFilter = log::LevelFilter::Warn;
 
+/// Target prefixes of this workspace's crates (`uocf` has its own category). Their records keep their level; other
+/// crates' uncategorized records drop to debug-verbose, so a dependency's warning doesn't reach the console.
+const WORKSPACE_LOG_TARGET_PREFIXES: [&str; 7] = [
+    "dynamapper",
+    "udd_",
+    "uot_",
+    "gamebryo_nif",
+    "particle_sim",
+    "effect_gltf",
+    "image_postprocess",
+];
+
+fn is_workspace_target(target: &str, module_path: &str) -> bool {
+    WORKSPACE_LOG_TARGET_PREFIXES
+        .iter()
+        .any(|prefix| target.starts_with(prefix) || module_path.starts_with(prefix))
+}
+
 fn strip_meta_prefix<'a>(value: &'a str) -> &'a str {
     let mut out = value;
     while let Some(rest) = out
@@ -223,9 +241,14 @@ where
                 vis.fields.message
             };
             let msg = normalize_output_message(LogAbout::General, &msg);
+            let sev = if is_workspace_target(target, &vis.fields.module_path) {
+                sev
+            } else {
+                LogSev::DebugVerbose
+            };
             console_logger::one_with_location_override(
                 Some(&location),
-                LogSev::DebugVerbose,
+                sev,
                 LogAbout::General,
                 &msg,
             );
@@ -249,5 +272,20 @@ where
             about,
             &msg,
         );
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Records of the workspace's crates keep their level; a dependency's uncategorized records don't.
+    #[test]
+    fn workspace_targets_keep_their_level() {
+        assert!(is_workspace_target("dynamapper::core::texture_cache::land", ""));
+        assert!(is_workspace_target("udd_assets::tex_aux_ec", ""));
+        assert!(is_workspace_target("log", "particle_sim::emitter"));
+        assert!(!is_workspace_target("symphonia_core::probe", "symphonia_core::probe"));
+        assert!(!is_workspace_target("kdl::parser", ""));
     }
 }

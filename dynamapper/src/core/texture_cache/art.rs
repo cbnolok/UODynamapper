@@ -926,7 +926,6 @@ fn sys_setup_art_texture_loader(
         tex_art_cc_r.as_ref().map(|r| r.0.pages().first().map_or(PagePixelFormat::Rgba8888, |page| page.pixel_format)),
         tex_art_ec_r.as_ref().map(|r| r.0.pages().first().map_or(PagePixelFormat::Rgba8888, |page| page.pixel_format)),
     ) {
-        // Dynamapper's own `log` records reach the console only at debug-verbose level.
         console_logger::one(LogSev::Warn, LogAbout::RenderWorldArt, &warning);
     }
     commands.insert_resource(ArtTextureLoader {

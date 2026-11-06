@@ -27,7 +27,6 @@ impl AuxLayerFormat {
     pub(crate) fn for_package(package: &TexAuxEcPackage) -> Self {
         let (format, warning) = Self::for_slots(package.slots());
         if let Some(warning) = warning {
-            // Dynamapper's own `log` records reach the console only at debug-verbose level.
             console_logger::one(LogSev::Warn, LogAbout::RenderWorldLand, &warning);
         }
         format
