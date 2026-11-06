@@ -229,6 +229,9 @@ struct PaperdollProfileKdl {
     label: Option<String>,
     #[knuffel(property(name = "equipment_offset"))]
     equipment_offset: u32,
+    /// The server body, whose frame Dynamapper's 3D paperdoll draws; the gump paperdoll here does not read it.
+    #[knuffel(property(name = "body"))]
+    _body: u32,
     #[knuffel(property(name = "canvas_width"))]
     canvas_width: Option<u32>,
     #[knuffel(property(name = "canvas_height"))]
@@ -972,6 +975,7 @@ const PAPERDOLL_PROFILES_SCHEMA: &[uot_kdl::strict::NodeSchema] = &[uot_kdl::str
     &[
         "label",
         "equipment_offset",
+        "body",
         "canvas_width",
         "canvas_height",
         "body_x",

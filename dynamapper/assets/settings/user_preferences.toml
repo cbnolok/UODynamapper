@@ -12,6 +12,9 @@ free_camera = false
 perspective_camera = false
 # Behind the gump and paperdoll images: "viewer_default" (the window) or { color = [red, green, blue] }.
 gump_background = "viewer_default"
+# What the Enhanced and KR-like presets draw for a paperdoll: "frames" (the client's 3D paperdoll, from
+# paperdoll_ec.uddp) or "gumps" (the old-style gump paperdoll). The Classic preset always draws gumps.
+enhanced_paperdoll = "frames"
 
 [debug]
 map_render_wireframe = false

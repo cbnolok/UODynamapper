@@ -1,6 +1,7 @@
 use crate::console_logger::{self, LogAbout, LogSev};
 use crate::core::export_job::ExportJob;
 use crate::core::render::dialogs::image_background::ImageBackground;
+use crate::core::render::dialogs::paperdoll_ec::EnhancedPaperdoll;
 use crate::core::render::scene::camera::RenderZoom;
 use crate::core::render::scene::player::Player;
 use crate::prelude::*;
@@ -107,6 +108,9 @@ pub struct SectWindow {
     pub perspective_camera: bool,
     /// What the gump and paperdoll windows draw behind their image; set in the Open Gump dialog.
     pub gump_background: ImageBackground,
+    /// What the Enhanced and KR-like presets draw for a paperdoll: the client's 3D frames or the old-style gumps; set in
+    /// the Open Gump dialog.
+    pub enhanced_paperdoll: EnhancedPaperdoll,
 }
 
 #[derive(Clone, Deserialize, Serialize, PartialEq)]
@@ -1159,6 +1163,32 @@ mod tests {
         let load = parse_app_state("user_preferences.toml", &written, &bundled).expect("lenient load");
         assert!(load.warnings.is_empty(), "{:?}", load.warnings);
         assert_eq!(load.value.window.gump_background, picked.window.gump_background);
+    }
+
+    /// The bundled settings draw the 3D paperdoll under the Enhanced presets; a cache file from before the setting
+    /// takes it, and the gump paperdoll, once picked, is written and read back.
+    #[test]
+    fn the_enhanced_paperdoll_is_filled_from_the_bundled_file_and_a_pick_round_trips() {
+        let bundled: SectApp = parse_strict(USER_PREFERENCES_CONFIG_FILE, BUNDLED_USER_PREFERENCES).expect("bundled");
+        assert_eq!(bundled.window.enhanced_paperdoll, EnhancedPaperdoll::Frames);
+        let older = BUNDLED_USER_PREFERENCES
+            .lines()
+            .filter(|line| !line.starts_with("enhanced_paperdoll"))
+            .collect::<Vec<_>>()
+            .join("\n");
+        let load = parse_app_state("user_preferences.toml", &older, &bundled).expect("lenient load");
+        assert_eq!(load.value.window.enhanced_paperdoll, EnhancedPaperdoll::Frames);
+        assert_eq!(
+            load.warnings,
+            ["user_preferences.toml: missing key `window.enhanced_paperdoll` filled from the default"]
+        );
+
+        let mut picked = bundled.clone();
+        picked.window.enhanced_paperdoll = EnhancedPaperdoll::Gumps;
+        let written = toml::to_string_pretty(&picked).expect("serialize");
+        let load = parse_app_state("user_preferences.toml", &written, &bundled).expect("lenient load");
+        assert!(load.warnings.is_empty(), "{:?}", load.warnings);
+        assert_eq!(load.value.window.enhanced_paperdoll, EnhancedPaperdoll::Gumps);
     }
 
     #[test]

@@ -1150,4 +1150,32 @@ mod tests {
         let order = WearableRules::decode("draworder \"north\"\n").unwrap_err();
         assert!(format!("{order:#}").contains("no draworder \"paperdoll\""), "{order:#}");
     }
+
+    fn rules_error(content: &str) -> String {
+        format!("{:#}", WearableRules::decode(content).unwrap_err())
+    }
+
+    /// The schema refuses what the file must not hold, saying where it is.
+    #[test]
+    fn wearable_rules_reject_unknown_nodes_and_properties_with_their_position() {
+        assert_eq!(
+            rules_error("draworder \"paperdoll\" {\n    slot \"cape\" priority=500\n}\nwearables \"neck\" items=\"any\"\n"),
+            "WearableRules.kdl: line 4, column 1: unknown node `wearables` at the top level: expected `draworder` or \
+             `wearable`"
+        );
+        assert_eq!(
+            rules_error("wearable \"neck\" items=\"any\" {\n    override priority=1 gender=\"male\"\n}\n"),
+            "WearableRules.kdl: line 2, column 25: unknown property `gender` of `override`: expected one of \
+             `priority`, `race`, `direction`"
+        );
+        assert_eq!(
+            rules_error("wearable \"neck\" items=\"any\" {\n    override priority=1 {\n        unless \"chest\"\n    }\n}\n"),
+            "WearableRules.kdl: line 3, column 9: unknown node `unless` in `override`: expected `when`"
+        );
+        let missing_items = rules_error("draworder \"paperdoll\"\nwearable \"neck\"\n");
+        assert!(missing_items.contains("items"), "{missing_items}");
+        let missing_priority =
+            rules_error("draworder \"paperdoll\"\nwearable \"neck\" items=\"any\" {\n    override race=\"elf\"\n}\n");
+        assert!(missing_priority.contains("priority"), "{missing_priority}");
+    }
 }

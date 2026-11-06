@@ -58,8 +58,14 @@ pub struct TexAuxEcPackageRes(pub Arc<udd_assets::tex_aux_ec::TexAuxEcPackage>);
 #[derive(Resource)]
 pub struct WorldLightsPackageRes(pub Arc<udd_assets::world_lights::WorldLightsPackage>);
 
+/// Optional frames of the Enhanced client's 3D paperdoll, which the Enhanced and KR-like presets draw. Without it they
+/// draw the gump paperdoll.
+#[derive(Resource)]
+pub struct PaperdollEcPackageRes(pub Arc<udd_assets::PaperdollEcPackage>);
+
 const GUMPS_CC_FILE_NAME: &str = "gumps_cc.uddp";
 const GUMPS_EC_FILE_NAME: &str = "gumps_ec.uddp";
+const PAPERDOLL_EC_FILE_NAME: &str = "paperdoll_ec.uddp";
 const CLASSIC_CLIENT_GUMPS_LABEL: &str = "the Classic client gump files";
 /// `UniformState.effects.shading_mode` of the Classic preset. Enhanced is 1 and KR-like 2.
 const CLASSIC_SHADING_MODE: u32 = 0;
@@ -775,6 +781,27 @@ pub fn sys_setup_uo_data(mut commands: Commands, settings: Res<Settings>) {
         None
     };
 
+    let paperdoll_ec_package = match resolve_optional_uddp_path(&udd_path, PAPERDOLL_EC_FILE_NAME) {
+        Some(path) => {
+            log_source_choice(&lg, "Enhanced paperdoll", SourceContainerKind::Uddp, std::slice::from_ref(&path));
+            udd_assets::PaperdollEcPackage::load(&path)
+                .map_err(|error| {
+                    lg_err(&format!(
+                        "Failed to load {}: {error:#}. The Enhanced and KR-like presets draw the gump paperdoll.",
+                        path.display()
+                    ))
+                })
+                .ok()
+        }
+        None => {
+            lg(&format!(
+                "No Enhanced paperdoll package selected: {PAPERDOLL_EC_FILE_NAME} not found in udd_path. The Enhanced \
+                 and KR-like presets draw the gump paperdoll."
+            ));
+            None
+        }
+    };
+
     lg("Done loading UO Data.");
 
     // The CC-EC land routing table (TerrainTranscode.kdl) and the terrain overrides (EcTerrainOverrides.kdl) are
@@ -808,6 +835,9 @@ pub fn sys_setup_uo_data(mut commands: Commands, settings: Res<Settings>) {
     }
     if let Some(hues_package) = hues_package {
         commands.insert_resource(HuesPackageRes(Arc::new(hues_package)));
+    }
+    if let Some(paperdoll_ec_package) = paperdoll_ec_package {
+        commands.insert_resource(PaperdollEcPackageRes(Arc::new(paperdoll_ec_package)));
     }
     if let Some(multis) = multi_definitions {
         commands.insert_resource(multis);

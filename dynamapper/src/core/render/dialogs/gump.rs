@@ -1,8 +1,10 @@
 use crate::core::controls::input_actions::{ActionCloseActiveDialog, ActionToggleGumpDialog};
 use crate::core::render::dialogs::image_background::{image_background_control, ImageBackground};
+use crate::core::render::dialogs::paperdoll_ec::{paperdoll_frames, EnhancedPaperdoll, PaperdollCanvas, PaperdollItem};
 use crate::core::render::scene::camera::UiCameraResource;
 use crate::configs::shader_presets::UniformState;
-use crate::core::uo_files_loader::{GumpClient, GumpMapRes, HuesPackageRes, TileMetaPackageRes};
+use crate::core::uo_files_loader::{GumpClient, GumpMapRes, HuesPackageRes, PaperdollEcPackageRes, TileMetaPackageRes};
+use udd_assets::tilemeta::{TileMetaItemDefinitions, TileMetaItemTile};
 use crate::ingame_sysmessage_logger;
 use crate::{
     core::constants,
@@ -12,7 +14,9 @@ use crate::{
 use bevy::prelude::*;
 use bevy_egui::{egui, EguiContexts, EguiPrimaryContextPass, EguiTextureHandle};
 use knuffel::Decode;
-use std::{collections::HashMap, path::Path};
+use std::{collections::HashSet, path::Path};
+use uocf::enhanced::paperdoll::{item_layer, WearableRules, Wearer, LAYER_COUNT, SLOT_NAMES, WEARABLE_RULES_FILE_NAME};
+use uocf::enhanced::tileart::TaeFlag;
 
 #[derive(Resource)]
 pub struct GumpDialogState {
@@ -24,17 +28,19 @@ pub struct GumpDialogState {
     pub paperdoll_body_id: String,
     pub paperdoll_body_hue: String,
     paperdoll_equipment: Vec<PaperdollEquipmentRow>,
+    /// The worn items whose missing Enhanced paperdoll frame has been logged: each is logged once.
+    enhanced_paperdoll_misses_logged: HashSet<u32>,
 }
 
 struct OpenGump {
     title: String,
-    width: u16,
-    height: u16,
+    /// The image's size in the window, in points.
+    size: egui::Vec2,
     image: Handle<Image>,
     texture_id: egui::TextureId,
     content: OpenGumpContent,
-    /// The preset's gump client `image` was drawn for; a preset change redraws it.
-    client: GumpClient,
+    /// How `image` was drawn; a preset or setting change that draws it otherwise redraws it.
+    drawn_as: DrawnAs,
     /// Why the active preset has no image for this window, shown in place of the image.
     error: Option<String>,
 }
@@ -42,10 +48,42 @@ struct OpenGump {
 /// What an open gump window draws, kept so a preset change can redraw it from the other package.
 enum OpenGumpContent {
     Gump(u32),
-    Paperdoll {
-        profile: PaperdollProfile,
-        layers: Vec<PaperdollLayer>,
-    },
+    /// A paperdoll as asked for: each drawing finds its layers or frames.
+    Paperdoll(PaperdollRequest),
+}
+
+/// A paperdoll as the dialog asks for it.
+struct PaperdollRequest {
+    profile: PaperdollProfile,
+    /// The body gump of the gump paperdoll; the 3D paperdoll draws the profile's body.
+    body_gump: Option<u32>,
+    body_hue: u16,
+    items: Vec<PaperdollItem>,
+}
+
+/// How an open window's image is drawn: from the gumps of the package the preset reads, or, for a paperdoll under the
+/// Enhanced and KR-like presets, from the 3D frames of paperdoll_ec.uddp.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum DrawnAs {
+    Gumps(GumpClient),
+    EnhancedFrames,
+}
+
+impl DrawnAs {
+    /// How `content` is drawn under the preset drawing `client`: a paperdoll under the Enhanced presets takes the 3D
+    /// frames when the setting asks for them and paperdoll_ec.uddp is loaded, else the gumps.
+    fn for_content(
+        content: &OpenGumpContent,
+        client: GumpClient,
+        enhanced_paperdoll: EnhancedPaperdoll,
+        frames_loaded: bool,
+    ) -> Self {
+        let frames = matches!(content, OpenGumpContent::Paperdoll(_))
+            && client == GumpClient::Enhanced
+            && enhanced_paperdoll == EnhancedPaperdoll::Frames
+            && frames_loaded;
+        if frames { Self::EnhancedFrames } else { Self::Gumps(client) }
+    }
 }
 
 enum GumpOpenRequest {
@@ -79,6 +117,7 @@ impl Default for GumpDialogState {
             paperdoll_body_id: String::new(),
             paperdoll_body_hue: "0".to_string(),
             paperdoll_equipment: vec![PaperdollEquipmentRow::default(); 6],
+            enhanced_paperdoll_misses_logged: HashSet::new(),
         }
     }
 }
@@ -88,51 +127,22 @@ struct PaperdollProfilesRes {
     profiles: Vec<PaperdollProfile>,
 }
 
+/// The paperdoll draw order of `WearableRules.kdl`, shared with the uocf editor: both paperdolls draw the worn layers
+/// in it.
 #[derive(Resource, Default, Clone)]
-struct PaperdollWearableRulesRes {
-    rules: Option<PaperdollWearableRules>,
-}
-
-#[derive(Clone, Default)]
-struct PaperdollWearableRules {
-    paperdoll_draw_order: HashMap<String, u16>,
-    wearable_rules: Vec<WearableRule>,
-}
+struct PaperdollWearableRulesRes(WearableRules);
 
 const PAPERDOLL_SPECS_DIR: &str = "runtime_specs/paperdoll";
-const WEARABLE_RULES_FILE_NAME: &str = "WearableRules.kdl";
 const PAPERDOLL_PROFILES_FILE_NAME: &str = "PaperdollProfiles.kdl";
-/// The draw-order table this dialog reads.
-const PAPERDOLL_DIRECTION: &str = "paperdoll";
-const WEARABLE_ITEMS_PROPERTY: &str = "items";
-const WEARABLE_PRIORITY_PROPERTY: &str = "priority";
 
-/// `draworder "<direction>" { slot "<slot>" priority=N }`, and
-/// `wearable "<slot>" items="..." { override priority=N [race=] [direction=] { when "<slot>" items="..." } }`.
-const WEARABLE_RULES_SCHEMA: &[uot_kdl::strict::NodeSchema] = &[
-    uot_kdl::strict::NodeSchema {
-        name: "draworder",
-        properties: &[],
-        children: &[uot_kdl::strict::NodeSchema::leaf("slot", &[WEARABLE_PRIORITY_PROPERTY])],
-    },
-    uot_kdl::strict::NodeSchema {
-        name: "wearable",
-        properties: &[WEARABLE_ITEMS_PROPERTY],
-        children: &[uot_kdl::strict::NodeSchema {
-            name: "override",
-            properties: &[WEARABLE_PRIORITY_PROPERTY, "race", "direction"],
-            children: &[uot_kdl::strict::NodeSchema::leaf("when", &[WEARABLE_ITEMS_PROPERTY])],
-        }],
-    },
-];
-
-/// `profile "<id>" equipment_offset=N [label=] [canvas_width=] [canvas_height=] [body_x=] [body_y=] [equipment_x=]
-/// [equipment_y=]`, decoded by `PaperdollProfilesKdl`.
+/// `profile "<id>" equipment_offset=N body=N [label=] [canvas_width=] [canvas_height=] [body_x=] [body_y=]
+/// [equipment_x=] [equipment_y=]`, decoded by `PaperdollProfilesKdl`.
 pub(crate) const PAPERDOLL_PROFILES_SCHEMA: &[uot_kdl::strict::NodeSchema] = &[uot_kdl::strict::NodeSchema::leaf(
     "profile",
     &[
         "label",
         "equipment_offset",
+        "body",
         "canvas_width",
         "canvas_height",
         "body_x",
@@ -142,192 +152,133 @@ pub(crate) const PAPERDOLL_PROFILES_SCHEMA: &[uot_kdl::strict::NodeSchema] = &[u
     ],
 )];
 
-impl PaperdollWearableRules {
-    fn load_from_path(path: &Path) -> color_eyre::eyre::Result<Self> {
-        let content = std::fs::read_to_string(path)
-            .map_err(|error| color_eyre::eyre::eyre!("{}: cannot read: {error}", path.display()))?;
-        Self::load_from_str(&path.display().to_string(), &content)
-    }
-
-    fn load_from_str(source_name: &str, content: &str) -> color_eyre::eyre::Result<Self> {
-        Self::parse(content).map_err(|error| uot_kdl::strict::in_file(source_name, error))
-    }
-
-    fn parse(content: &str) -> color_eyre::eyre::Result<Self> {
-        use color_eyre::eyre;
-        use uot_kdl::ast::{Node, Value};
-        use uot_kdl::span::LineSpan;
-        use uot_kdl::strict::{arguments, error_at, property, required_property, value_string, value_u16};
-
-        fn argument_string(node: &Node<LineSpan>, field: &str) -> eyre::Result<String> {
-            let [value] = arguments::<1>(node)?;
-            value_string(value, field)
-        }
-
-        fn items(value: &Value<LineSpan>) -> eyre::Result<WearableItemMatcher> {
-            let text = value_string(value, WEARABLE_ITEMS_PROPERTY)?;
-            parse_wearable_items(&text).map_err(|error| error_at(value.literal.span(), error))
-        }
-
-        fn parse_when(node: &Node<LineSpan>) -> eyre::Result<WearableCondition> {
-            Ok(WearableCondition {
-                slot: argument_string(node, "when slot")?,
-                items: items(required_property(node, WEARABLE_ITEMS_PROPERTY)?)?,
-            })
-        }
-
-        fn parse_override(node: &Node<LineSpan>) -> eyre::Result<WearableOverrideRule> {
-            arguments::<0>(node)?;
-            let optional_string = |name: &str| property(node, name).map(|value| value_string(value, name)).transpose();
-            Ok(WearableOverrideRule {
-                draw_order_priority: value_u16(required_property(node, WEARABLE_PRIORITY_PROPERTY)?, "priority")?,
-                race: optional_string("race")?.map(|race| race.to_ascii_lowercase()),
-                direction: optional_string("direction")?.map(|direction| direction.to_ascii_lowercase()),
-                conditions: node.children().map(|child| parse_when(child)).collect::<eyre::Result<_>>()?,
-            })
-        }
-
-        fn parse_wearable(node: &Node<LineSpan>) -> eyre::Result<WearableRule> {
-            Ok(WearableRule {
-                target_slot: argument_string(node, "wearable slot")?,
-                target_items: items(required_property(node, WEARABLE_ITEMS_PROPERTY)?)?,
-                overrides: node.children().map(|child| parse_override(child)).collect::<eyre::Result<_>>()?,
-            })
-        }
-
-        fn parse_draworder(node: &Node<LineSpan>, paperdoll_draw_order: &mut HashMap<String, u16>) -> eyre::Result<()> {
-            // Only the paperdoll direction is drawn here; other directions' tables are valid but unused.
-            let is_paperdoll = argument_string(node, "draworder direction")? == PAPERDOLL_DIRECTION;
-            for child in node.children() {
-                let slot = argument_string(child, "draworder slot")?;
-                let priority = value_u16(required_property(child, WEARABLE_PRIORITY_PROPERTY)?, "priority")?;
-                if is_paperdoll {
-                    paperdoll_draw_order.insert(slot, priority);
-                }
-            }
-            Ok(())
-        }
-
-        let document = uot_kdl::parse_ast_line_span(WEARABLE_RULES_FILE_NAME, content)
-            .map_err(|error| uot_kdl::strict::describe_error(content, &error))?;
-        uot_kdl::strict::check_document(&document, WEARABLE_RULES_SCHEMA)?;
-        let mut paperdoll_draw_order = HashMap::new();
-        let mut wearable_rules = Vec::new();
-        for node in document.nodes.iter() {
-            match &**node.node_name {
-                "draworder" => parse_draworder(node, &mut paperdoll_draw_order)?,
-                "wearable" => wearable_rules.push(parse_wearable(node)?),
-                _ => unreachable!("the schema check admits only draworder and wearable"),
-            }
-        }
-
-        Ok(Self {
-            paperdoll_draw_order,
-            wearable_rules,
-        })
-    }
-
-    fn base_priority(&self, slot: &str, fallback: u16) -> u16 {
-        self.paperdoll_draw_order
-            .get(slot)
-            .copied()
-            .unwrap_or(fallback)
-    }
-
-    fn priority_for(
-        &self,
-        target_slot: &str,
-        target_item_id: u32,
-        equipped: &[PaperdollEquippedItem],
-        race: &str,
-        fallback: u16,
-    ) -> u16 {
-        let mut priority = self.base_priority(target_slot, fallback);
-        for rule in &self.wearable_rules {
-            if rule.target_slot != target_slot || !rule.target_items.matches(target_item_id) {
-                continue;
-            }
-
-            for override_rule in &rule.overrides {
-                if override_rule
-                    .direction
-                    .as_ref()
-                    .is_some_and(|direction| direction != "paperdoll")
-                {
-                    continue;
-                }
-                if override_rule
-                    .race
-                    .as_ref()
-                    .is_some_and(|required_race| required_race != race)
-                {
-                    continue;
-                }
-                if override_rule.matches_equipped(equipped) {
-                    priority = override_rule.draw_order_priority;
-                }
-            }
-        }
-
-        priority
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    #[test]
-    fn bundled_paperdoll_specs_parse() {
-        let profiles = PaperdollProfilesRes::load_from_str(
+    /// The server body of each bundled profile.
+    const PROFILE_BODIES: [(&str, u32); 6] = [
+        ("human_male", 400),
+        ("human_female", 401),
+        ("elf_male", 605),
+        ("elf_female", 606),
+        ("gargoyle_male", 666),
+        ("gargoyle_female", 667),
+    ];
+
+    fn bundled_profiles() -> PaperdollProfilesRes {
+        PaperdollProfilesRes::load_from_str(
             "PaperdollProfiles.kdl",
             include_str!("../../../../assets/runtime_specs/paperdoll/PaperdollProfiles.kdl"),
         )
-        .unwrap_or_else(|error| panic!("profiles parse: {error}"));
-        assert!(!profiles.profiles.is_empty());
+        .unwrap_or_else(|error| panic!("profiles parse: {error}"))
+    }
 
-        let rules = PaperdollWearableRules::load_from_str(
-            "WearableRules.kdl",
-            include_str!("../../../../assets/runtime_specs/paperdoll/WearableRules.kdl"),
-        )
-        .unwrap_or_else(|error| panic!("wearable rules parse: {error:?}"));
-        assert_eq!(rules.base_priority("cape", 0), 500);
+    fn bundled_rules() -> WearableRules {
+        WearableRules::decode(include_str!("../../../../assets/runtime_specs/paperdoll/WearableRules.kdl"))
+            .unwrap_or_else(|error| panic!("wearable rules parse: {error:?}"))
     }
 
     #[test]
-    fn wearable_rules_apply_paperdoll_override_priority() {
-        let rules = PaperdollWearableRules::load_from_str(
-            "WearableRules.kdl",
-            include_str!("../../../../assets/runtime_specs/paperdoll/WearableRules.kdl"),
-        )
-        .unwrap_or_else(|error| panic!("wearable rules parse: {error:?}"));
-        let equipped = vec![
-            PaperdollEquippedItem {
-                item_id: 4232,
-                slot: "neck".to_string(),
-                gump_id: 0,
-                hue_id: 0,
-                partial_hue: false,
-                fallback_priority: 10,
-            },
-            PaperdollEquippedItem {
-                item_id: 5000,
-                slot: "chest".to_string(),
-                gump_id: 0,
-                hue_id: 0,
-                partial_hue: false,
-                fallback_priority: 20,
-            },
-        ];
-
-        assert_eq!(
-            rules.priority_for("neck", 4232, &equipped, "human", 10),
-            18100
-        );
+    fn bundled_paperdoll_specs_parse() {
+        let profiles = bundled_profiles();
+        for (id, body) in PROFILE_BODIES {
+            let profile = profiles.profile(id).unwrap_or_else(|| panic!("no profile {id}"));
+            assert_eq!(profile.body, body, "{id}");
+        }
+        const CAPE_PRIORITY: i32 = 500;
+        let cape = uocf::enhanced::paperdoll::slot_layer("cape").unwrap();
+        assert_eq!(bundled_rules().base_priority(cape), CAPE_PRIORITY);
     }
 
-    fn rules_error(content: &str) -> String {
-        PaperdollWearableRules::load_from_str("WearableRules.kdl", content).err().expect("rules error").to_string()
+    const BODY_GUMP: u32 = 12;
+    const SHIRT: u32 = 5399;
+    const PLATE_CHEST: u32 = 5141;
+    /// A necklace whose rule draws it over a chest piece.
+    const NECKLACE: u32 = 4232;
+    const LONG_HAIR: u32 = 8252;
+    /// One of the beards whose tiledata layer is hair (11) and whose `tileart.uop` layer is facial hair (16).
+    const BEARD: u32 = 17069;
+    const TORSO_LAYER: u8 = 5;
+    const NECK_LAYER: u8 = 10;
+    const HAIR_LAYER: u8 = 11;
+    const CHEST_LAYER: u8 = 13;
+    const FACIAL_HAIR_LAYER: u32 = 16;
+
+    /// The tiledata record of a worn item: its layer, its paperdoll gump (`anim_id`) and whether it hues only greys.
+    fn worn_tile(tile_id: u32, layer: u8, anim_id: u16, partial_hue: bool) -> TileMetaItemTile {
+        TileMetaItemTile {
+            tile_id,
+            quality: layer,
+            anim_id,
+            flags: if partial_hue { TaeFlag::PartialHue.bits() } else { 0 },
+            ..bytemuck::Zeroable::zeroed()
+        }
+    }
+
+    fn worn_tiles() -> Vec<TileMetaItemTile> {
+        vec![
+            worn_tile(SHIRT, TORSO_LAYER, 1, false),
+            worn_tile(PLATE_CHEST, CHEST_LAYER, 2, true),
+            worn_tile(NECKLACE, NECK_LAYER, 3, false),
+            worn_tile(LONG_HAIR, HAIR_LAYER, 4, false),
+            worn_tile(BEARD, HAIR_LAYER, 5, false),
+        ]
+    }
+
+    /// The beard's `tileart.uop` record, which wears it on the facial hair layer.
+    fn beard_definition() -> TileMetaItemDefinitions {
+        use uocf::enhanced::tileart::{PropertyKey, TaeProp, TileArtEntry};
+        let beard = TileArtEntry {
+            tile_id: BEARD,
+            prop_vector1: vec![TaeProp { id: PropertyKey::Layer as u8, val: FACIAL_HAIR_LAYER }],
+            ..TileArtEntry::default()
+        };
+        TileMetaItemDefinitions::from_tileart([(BEARD, &beard)]).unwrap()
+    }
+
+    fn request(items: &[u32]) -> PaperdollRequest {
+        PaperdollRequest {
+            profile: bundled_profiles().profile("human_male").unwrap().clone(),
+            body_gump: Some(BODY_GUMP),
+            body_hue: 0,
+            items: items.iter().map(|&item_id| PaperdollItem { item_id, hue: 0 }).collect(),
+        }
+    }
+
+    fn layer_gumps(
+        request: &PaperdollRequest,
+        client: GumpClient,
+    ) -> color_eyre::eyre::Result<Vec<(u32, bool)>> {
+        let tiles = worn_tiles();
+        let tile = |item_id: u32| tiles.iter().find(|tile| tile.tile_id == item_id).copied();
+        let layers = gump_paperdoll_layers(request, client, tile, &beard_definition(), &bundled_rules())?;
+        Ok(layers.iter().map(|layer| (layer.gump_id, layer.partial_hue)).collect())
+    }
+
+    /// The gump paperdoll draws the body, then the worn items in the shared draw order: tiledata layer 13 is the chest
+    /// (a chest piece hides the shirt, and the necklace goes over it), and only the Enhanced presets wear the beard on
+    /// its `tileart.uop` layer, next to the hair.
+    #[test]
+    fn gump_paperdoll_draws_the_worn_layers_in_the_shared_order() {
+        let offset = bundled_profiles().profile("human_male").unwrap().equipment_offset;
+        let gump = |anim_id: u32| offset + anim_id;
+        let classic = layer_gumps(&request(&[SHIRT, PLATE_CHEST, NECKLACE, LONG_HAIR]), GumpClient::Classic).unwrap();
+        assert_eq!(classic, vec![(BODY_GUMP, true), (gump(2), true), (gump(3), false), (gump(4), false)]);
+
+        let bearded = request(&[SHIRT, PLATE_CHEST, NECKLACE, LONG_HAIR, BEARD]);
+        let enhanced = layer_gumps(&bearded, GumpClient::Enhanced).unwrap();
+        assert_eq!(
+            enhanced,
+            vec![(BODY_GUMP, true), (gump(2), true), (gump(3), false), (gump(4), false), (gump(5), false)]
+        );
+        let error = layer_gumps(&bearded, GumpClient::Classic).unwrap_err().to_string();
+        assert_eq!(error, format!("Equipment items {LONG_HAIR} and {BEARD} are both worn on layer 11 (hair)."));
+
+        let mut bodiless = request(&[SHIRT]);
+        bodiless.body_gump = None;
+        let error = layer_gumps(&bodiless, GumpClient::Classic).unwrap_err().to_string();
+        assert_eq!(error, "The gump paperdoll needs a body gump ID.");
     }
 
     fn profiles_error(content: &str) -> String {
@@ -335,51 +286,12 @@ mod tests {
     }
 
     #[test]
-    fn wearable_rules_reject_unknown_nodes_and_properties_with_their_position() {
-        assert_eq!(
-            rules_error("draworder \"paperdoll\" {\n    slot \"cape\" priority=500\n}\nwearables \"neck\" items=\"any\"\n"),
-            "WearableRules.kdl: line 4, column 1: unknown node `wearables` at the top level: expected `draworder` or \
-             `wearable`"
-        );
-        assert_eq!(
-            rules_error("wearable \"neck\" items=\"any\" {\n    override priority=1 gender=\"male\"\n}\n"),
-            "WearableRules.kdl: line 2, column 25: unknown property `gender` of `override`: expected one of \
-             `priority`, `race`, `direction`"
-        );
-        assert_eq!(
-            rules_error("wearable \"neck\" items=\"any\" {\n    override priority=1 {\n        unless \"chest\"\n    }\n}\n"),
-            "WearableRules.kdl: line 3, column 9: unknown node `unless` in `override`: expected `when`"
-        );
-    }
-
-    #[test]
-    fn wearable_rules_reject_missing_and_invalid_values() {
-        assert_eq!(
-            rules_error("wearable \"neck\"\n"),
-            "WearableRules.kdl: line 1, column 1: `wearable`: missing items="
-        );
-        assert_eq!(
-            rules_error("wearable \"neck\" items=\"any\" {\n    override race=\"elf\"\n}\n"),
-            "WearableRules.kdl: line 2, column 5: `override`: missing priority="
-        );
-        assert_eq!(
-            rules_error("wearable \"neck\" items=\"4232,abc\"\n"),
-            "WearableRules.kdl: line 1, column 23: items: `abc` is not an item id; expected `any` or ids like \
-             0x1F03,7939"
-        );
-        assert_eq!(
-            rules_error("draworder \"paperdoll\" {\n    slot priority=500\n}\n"),
-            "WearableRules.kdl: line 2, column 5: `slot` takes 1 arguments, found 0"
-        );
-    }
-
-    #[test]
     fn paperdoll_profiles_reject_unknown_properties_and_missing_values() {
         assert_eq!(
             profiles_error("profile \"human_male\" equipment_offset=50000 canvas_w=260\n"),
             "PaperdollProfiles.kdl: line 1, column 45: unknown property `canvas_w` of `profile`: expected one of \
-             `label`, `equipment_offset`, `canvas_width`, `canvas_height`, `body_x`, `body_y`, `equipment_x`, \
-             `equipment_y`"
+             `label`, `equipment_offset`, `body`, `canvas_width`, `canvas_height`, `body_x`, `body_y`, \
+             `equipment_x`, `equipment_y`"
         );
         assert_eq!(
             profiles_error("profiles \"human_male\" equipment_offset=50000\n"),
@@ -388,6 +300,8 @@ mod tests {
         let missing = profiles_error("profile \"human_male\" label=\"Human Male\"\n");
         assert!(missing.starts_with("PaperdollProfiles.kdl: invalid KDL: line 1, column 1:"), "{missing}");
         assert!(missing.contains("equipment_offset"), "{missing}");
+        let bodiless = profiles_error("profile \"human_male\" equipment_offset=50000\n");
+        assert!(bodiless.contains("body"), "{bodiless}");
     }
 
     /// The paperdoll goes up to egui as composed: half-transparent white over the empty canvas is premultiplied, as
@@ -581,62 +495,6 @@ mod tests {
     }
 }
 
-#[derive(Clone)]
-struct WearableRule {
-    target_slot: String,
-    target_items: WearableItemMatcher,
-    overrides: Vec<WearableOverrideRule>,
-}
-
-#[derive(Clone)]
-struct WearableOverrideRule {
-    draw_order_priority: u16,
-    race: Option<String>,
-    direction: Option<String>,
-    conditions: Vec<WearableCondition>,
-}
-
-impl WearableOverrideRule {
-    fn matches_equipped(&self, equipped: &[PaperdollEquippedItem]) -> bool {
-        self.conditions.iter().all(|condition| {
-            equipped.iter().any(|item| {
-                item.slot == condition.slot && condition.items.matches(item.item_id)
-            })
-        })
-    }
-}
-
-#[derive(Clone)]
-struct WearableCondition {
-    slot: String,
-    items: WearableItemMatcher,
-}
-
-#[derive(Clone)]
-enum WearableItemMatcher {
-    Any,
-    Ids(Vec<u32>),
-}
-
-impl WearableItemMatcher {
-    fn matches(&self, item_id: u32) -> bool {
-        match self {
-            Self::Any => true,
-            Self::Ids(ids) => ids.contains(&item_id),
-        }
-    }
-}
-
-#[derive(Clone)]
-struct PaperdollEquippedItem {
-    item_id: u32,
-    slot: String,
-    gump_id: u32,
-    hue_id: u16,
-    partial_hue: bool,
-    fallback_priority: u16,
-}
-
 impl PaperdollProfilesRes {
     /// The bundled profiles are required: a missing or invalid file stops the app.
     fn load() -> Self {
@@ -679,6 +537,8 @@ struct PaperdollProfile {
     id: String,
     label: String,
     equipment_offset: u32,
+    /// The server body: the 3D paperdoll draws its frame, and its race picks the overrides of the draw order.
+    body: u32,
     canvas_width: u32,
     canvas_height: u32,
     body_x: i32,
@@ -701,6 +561,8 @@ struct PaperdollProfileKdl {
     label: Option<String>,
     #[knuffel(property(name = "equipment_offset"))]
     equipment_offset: u32,
+    #[knuffel(property)]
+    body: u32,
     #[knuffel(property(name = "canvas_width"))]
     canvas_width: Option<u32>,
     #[knuffel(property(name = "canvas_height"))]
@@ -721,6 +583,7 @@ impl From<PaperdollProfileKdl> for PaperdollProfile {
             label: value.label.unwrap_or_else(|| value.id.clone()),
             id: value.id,
             equipment_offset: value.equipment_offset,
+            body: value.body,
             canvas_width: value.canvas_width.unwrap_or(0),
             canvas_height: value.canvas_height.unwrap_or(0),
             body_x: value.body_x.unwrap_or(0),
@@ -728,61 +591,6 @@ impl From<PaperdollProfileKdl> for PaperdollProfile {
             equipment_x: value.equipment_x.unwrap_or(0),
             equipment_y: value.equipment_y.unwrap_or(0),
         }
-    }
-}
-
-/// `any`, or a comma-separated list of item ids (decimal or `0x` hex).
-fn parse_wearable_items(value: &str) -> Result<WearableItemMatcher, String> {
-    if value.trim().eq_ignore_ascii_case("any") {
-        return Ok(WearableItemMatcher::Any);
-    }
-
-    let ids = value
-        .split(',')
-        .map(|part| {
-            parse_u32_field(part.trim())
-                .map_err(|_| format!("items: `{}` is not an item id; expected `any` or ids like 0x1F03,7939", part.trim()))
-        })
-        .collect::<Result<Vec<_>, _>>()?;
-    Ok(WearableItemMatcher::Ids(ids))
-}
-
-fn paperdoll_slot_from_tiledata_layer(layer: u8) -> &'static str {
-    match layer {
-        1 => "righthand",
-        2 => "lefthand",
-        3 => "feet",
-        4 => "legs",
-        5 => "chest",
-        6 => "head",
-        7 => "hands",
-        8 => "finger1",
-        10 => "neck",
-        11 => "hair",
-        12 => "waist",
-        13 => "torso",
-        14 => "lwrist",
-        16 => "facialhair",
-        17 => "abovechest",
-        18 => "ears",
-        19 => "arms",
-        20 => "cape",
-        22 => "skirt",
-        23 => "legs",
-        24 => "riding",
-        25 => "drag",
-        26 => "backpack",
-        _ => "drag",
-    }
-}
-
-fn race_from_profile_id(profile_id: &str) -> &'static str {
-    if profile_id.contains("elf") {
-        "elf"
-    } else if profile_id.contains("gargoyle") {
-        "gargoyle"
-    } else {
-        "human"
     }
 }
 
@@ -812,11 +620,13 @@ fn sys_load_paperdoll_wearable_rules(
     mut rules_res: ResMut<PaperdollWearableRulesRes>,
 ) {
     let path = constants::valid_asset_dir().join(PAPERDOLL_SPECS_DIR).join(WEARABLE_RULES_FILE_NAME);
-
-    match PaperdollWearableRules::load_from_path(&path) {
+    let rules = std::fs::read_to_string(&path)
+        .map_err(|error| color_eyre::eyre::eyre!("{}: cannot read: {error}", path.display()))
+        .and_then(|content| WearableRules::decode(&content));
+    match rules {
         Ok(rules) => {
             log::info!("Loaded paperdoll wearable rules from {}", path.display());
-            rules_res.rules = Some(rules);
+            rules_res.0 = rules;
         }
         Err(error) => crate::configs::settings::exit_on_startup_config_error(&error),
     }
@@ -855,6 +665,7 @@ fn sys_render_gump_dialog(
     gump_map: Option<Res<GumpMapRes>>,
     tilemeta: Option<Res<TileMetaPackageRes>>,
     hues_package: Option<Res<HuesPackageRes>>,
+    paperdoll_ec: Option<Res<PaperdollEcPackageRes>>,
     paperdoll_profiles: Res<PaperdollProfilesRes>,
     wearable_rules: Res<PaperdollWearableRulesRes>,
     uniform_state: Res<UniformState>,
@@ -866,12 +677,18 @@ fn sys_render_gump_dialog(
     }
 
     let client = GumpClient::from_shading_mode(uniform_state.effects.shading_mode);
-    if let Some(gump_map) = gump_map.as_deref() {
-        redraw_open_gumps_for_client(&mut state, client, gump_map, hues_package.as_deref(), &mut images);
-    }
+    let sources = GumpSources {
+        gump_map: gump_map.as_deref(),
+        tilemeta: tilemeta.as_deref(),
+        hues_package: hues_package.as_deref(),
+        paperdoll_ec: paperdoll_ec.as_deref(),
+        rules: &wearable_rules.0,
+    };
+    redraw_open_gumps(&mut state, client, settings.app.window.enhanced_paperdoll, &sources, &mut images);
 
     let mut closed_images = Vec::new();
     let mut gump_background = settings.app.window.gump_background;
+    let mut enhanced_paperdoll = settings.app.window.enhanced_paperdoll;
     let open_request = {
         let Some(ctx) =
             dialogs::get_egui_context_ready_mut(&mut egui_contexts, &egui_ui_camera) else {
@@ -879,7 +696,7 @@ fn sys_render_gump_dialog(
         };
 
         let open_request = if state.open {
-            render_open_gump_dialog(ctx, &mut state, &paperdoll_profiles, &mut gump_background)
+            render_open_gump_dialog(ctx, &mut state, &paperdoll_profiles, &mut gump_background, &mut enhanced_paperdoll)
         } else {
             None
         };
@@ -887,7 +704,6 @@ fn sys_render_gump_dialog(
         for open_gump in &state.open_gumps {
             let mut open = true;
             let mut right_clicked = false;
-            let image_size = egui::vec2(open_gump.width as f32, open_gump.height as f32);
             egui::Window::new(open_gump.title.as_str())
                 .default_pos([
                     120.0 + (state.open_gumps.len() as f32 * 12.0),
@@ -901,7 +717,8 @@ fn sys_render_gump_dialog(
                         ui.label(error.as_str());
                         return;
                     }
-                    let response = ui.add(gump_background.under(egui::Image::new((open_gump.texture_id, image_size))));
+                    let response =
+                        ui.add(gump_background.under(egui::Image::new((open_gump.texture_id, open_gump.size))));
                     if response.secondary_clicked() {
                         right_clicked = true;
                     }
@@ -917,6 +734,9 @@ fn sys_render_gump_dialog(
     // Written only when picked: other systems watch the settings for changes.
     if gump_background != settings.app.window.gump_background {
         settings.app.window.gump_background = gump_background;
+    }
+    if enhanced_paperdoll != settings.app.window.enhanced_paperdoll {
+        settings.app.window.enhanced_paperdoll = enhanced_paperdoll;
     }
 
     state.open_gumps.retain(|open_gump| {
@@ -935,18 +755,16 @@ fn sys_render_gump_dialog(
         Some(GumpOpenRequest::GumpById) => open_gump_by_id(
             &mut state,
             client,
-            gump_map.as_deref(),
+            &sources,
             &mut images,
             &mut egui_contexts,
         ),
         Some(GumpOpenRequest::Paperdoll) => open_paperdoll(
             &mut state,
             client,
-            gump_map.as_deref(),
-            tilemeta.as_deref(),
-            hues_package.as_deref(),
+            enhanced_paperdoll,
+            &sources,
             &paperdoll_profiles,
-            &wearable_rules,
             &mut images,
             &mut egui_contexts,
         ),
@@ -954,54 +772,120 @@ fn sys_render_gump_dialog(
     }
 }
 
-/// After a preset change, every open gump window is redrawn from the package the new preset reads, into its own image
-/// (the egui texture id stays valid). No image is cached by gump id, so none can keep the other package's pixels.
-fn redraw_open_gumps_for_client(
-    state: &mut GumpDialogState,
-    client: GumpClient,
-    gump_map: &GumpMapRes,
-    hues_package: Option<&HuesPackageRes>,
-    images: &mut Assets<Image>,
-) {
-    for open_gump in state.open_gumps.iter_mut().filter(|open_gump| open_gump.client != client) {
-        open_gump.client = client;
-        open_gump.error = match draw_open_gump_content(&open_gump.content, client, gump_map, hues_package) {
-            Ok(gump) => {
-                (open_gump.width, open_gump.height) = logical_window_size(&gump);
-                images
-                    .insert(open_gump.image.id(), image_from_gump(&gump))
-                    .err()
-                    .map(|error| format!("Could not replace the gump image: {error}"))
-            }
-            Err(error) => Some(format!("No image under this preset: {error}")),
-        };
+/// What drawing a gump or paperdoll window reads.
+struct GumpSources<'a> {
+    gump_map: Option<&'a GumpMapRes>,
+    tilemeta: Option<&'a TileMetaPackageRes>,
+    hues_package: Option<&'a HuesPackageRes>,
+    paperdoll_ec: Option<&'a PaperdollEcPackageRes>,
+    rules: &'a WearableRules,
+}
+
+impl<'a> GumpSources<'a> {
+    fn gump_map(&self) -> color_eyre::eyre::Result<&'a GumpMapRes> {
+        self.gump_map.ok_or_else(|| color_eyre::eyre::eyre!("No gump source is loaded."))
+    }
+
+    fn tilemeta(&self) -> color_eyre::eyre::Result<&'a TileMetaPackageRes> {
+        self.tilemeta.ok_or_else(|| color_eyre::eyre::eyre!("Tile metadata is not loaded."))
     }
 }
 
-/// Decodes a single gump, or composes a paperdoll, for the preset drawing `client`, whole and premultiplied as egui
-/// blends it.
+/// After a preset or setting change, every open window that is drawn otherwise is redrawn from what the new preset
+/// reads, into its own image (the egui texture id stays valid). No image is cached by gump id, so none can keep the
+/// other package's pixels.
+fn redraw_open_gumps(
+    state: &mut GumpDialogState,
+    client: GumpClient,
+    enhanced_paperdoll: EnhancedPaperdoll,
+    sources: &GumpSources,
+    images: &mut Assets<Image>,
+) {
+    let GumpDialogState { open_gumps, enhanced_paperdoll_misses_logged, .. } = state;
+    for open_gump in open_gumps.iter_mut() {
+        let drawn_as =
+            DrawnAs::for_content(&open_gump.content, client, enhanced_paperdoll, sources.paperdoll_ec.is_some());
+        if drawn_as == open_gump.drawn_as {
+            continue;
+        }
+        open_gump.drawn_as = drawn_as;
+        open_gump.error =
+            match draw_open_gump_content(&open_gump.content, drawn_as, sources, enhanced_paperdoll_misses_logged) {
+                Ok(drawn) => {
+                    open_gump.size = drawn.size;
+                    images
+                        .insert(open_gump.image.id(), drawn.image)
+                        .err()
+                        .map(|error| format!("Could not replace the gump image: {error}"))
+                }
+                Err(error) => Some(format!("No image under this preset: {error}")),
+            };
+    }
+}
+
+/// An open window's image and its size in the window, in points.
+struct DrawnImage {
+    image: Image,
+    size: egui::Vec2,
+}
+
+/// Decodes a single gump, or composes a paperdoll, as `drawn_as` says, whole and premultiplied as egui blends it.
+/// `logged_misses` holds the worn items whose missing 3D frame has been logged.
 fn draw_open_gump_content(
     content: &OpenGumpContent,
-    client: GumpClient,
-    gump_map: &GumpMapRes,
-    hues_package: Option<&HuesPackageRes>,
-) -> color_eyre::eyre::Result<udd_assets::gumps::GumpImage> {
-    match content {
+    drawn_as: DrawnAs,
+    sources: &GumpSources,
+    logged_misses: &mut HashSet<u32>,
+) -> color_eyre::eyre::Result<DrawnImage> {
+    let client = match drawn_as {
+        DrawnAs::Gumps(client) => client,
+        DrawnAs::EnhancedFrames => GumpClient::Enhanced,
+    };
+    let gump = match content {
         OpenGumpContent::Gump(id) => {
             // A paperdoll gump is stored trimmed to its drawn texels: shown on its own, it gets its whole canvas back,
             // transparent around them.
-            let mut gump = gump_map.decode_gump(client, *id, &mut Vec::new())?.into_whole();
+            let mut gump = sources.gump_map()?.decode_gump(client, *id, &mut Vec::new())?.into_whole();
             // bevy_egui blends user textures as premultiplied colour (`BlendState::PREMULTIPLIED_ALPHA_BLENDING`, and its
             // shader doesn't multiply by alpha), so the gump's straight colour goes up premultiplied: a transparent texel then
             // adds nothing, whatever colour it keeps, as in the clients.
             udd_assets::premultiplied::premultiply_rgba8888(&mut gump.stored_rgba);
-            Ok(gump)
+            gump
+        }
+        // The 3D paperdoll: the profile's body and the items, on the canvas every Enhanced paperdoll shares, shown at the
+        // client window's scale. Premultiplied already, as the gump paperdoll.
+        OpenGumpContent::Paperdoll(request) if drawn_as == DrawnAs::EnhancedFrames => {
+            let package = sources
+                .paperdoll_ec
+                .ok_or_else(|| color_eyre::eyre::eyre!("paperdoll_ec.uddp is not loaded."))?;
+            let tilemeta = &sources.tilemeta()?.0;
+            let frames = paperdoll_frames(
+                &package.0,
+                tilemeta,
+                sources.rules,
+                request.profile.body,
+                request.body_hue,
+                &request.items,
+                logged_misses,
+            )?;
+            let canvas = PaperdollCanvas::for_sets(package.0.sets());
+            let (width, height) = canvas.display_size();
+            return Ok(DrawnImage { image: canvas.image(&canvas.compose(&frames)), size: egui::vec2(width, height) });
         }
         // Premultiplied already, as bevy_egui blends it: `alpha_blend_at` composes the layers over a transparent canvas.
-        OpenGumpContent::Paperdoll { profile, layers } => {
-            compose_paperdoll(gump_map, client, hues_package, profile, layers)
+        OpenGumpContent::Paperdoll(request) => {
+            let tilemeta = &sources.tilemeta()?.0;
+            let layers = gump_paperdoll_layers(
+                request,
+                client,
+                |item_id| tilemeta.item_tile(item_id).copied(),
+                tilemeta.item_definitions(),
+                sources.rules,
+            )?;
+            compose_paperdoll(sources.gump_map()?, client, sources.hues_package, &request.profile, &layers)?
         }
-    }
+    };
+    Ok(DrawnImage { size: logical_window_size(&gump), image: image_from_gump(&gump) })
 }
 
 /// The image of a drawn gump or paperdoll (`draw_open_gump_content`). The window shows it at its logical size, so an
@@ -1069,46 +953,49 @@ fn with_mip_levels(width: u32, height: u32, rgba: &[u8]) -> (Vec<u8>, u32) {
     (data, level_count)
 }
 
-fn logical_window_size(gump: &udd_assets::gumps::GumpImage) -> (u16, u16) {
-    (
-        gump.logical_width.min(u16::MAX as u32) as u16,
-        gump.logical_height.min(u16::MAX as u32) as u16,
-    )
+/// A gump window shows its image at the logical size.
+fn logical_window_size(gump: &udd_assets::gumps::GumpImage) -> egui::Vec2 {
+    egui::vec2(gump.logical_width as f32, gump.logical_height as f32)
 }
 
-/// Draws `content` for the preset drawing `client` and opens a window showing it.
+/// Draws `content` as `drawn_as` says and opens a window showing it.
 fn open_gump_window(
     state: &mut GumpDialogState,
     title: String,
     content: OpenGumpContent,
-    client: GumpClient,
-    gump_map: &GumpMapRes,
-    hues_package: Option<&HuesPackageRes>,
+    drawn_as: DrawnAs,
+    sources: &GumpSources,
     images: &mut Assets<Image>,
     egui_contexts: &mut EguiContexts,
 ) -> color_eyre::eyre::Result<()> {
-    let gump = draw_open_gump_content(&content, client, gump_map, hues_package)?;
-    let image = images.add(image_from_gump(&gump));
+    let drawn = draw_open_gump_content(&content, drawn_as, sources, &mut state.enhanced_paperdoll_misses_logged)?;
+    let image = images.add(drawn.image);
     let texture_id = egui_contexts.add_image(EguiTextureHandle::Strong(image.clone()));
-    let (width, height) = logical_window_size(&gump);
     state.open_gumps.push(OpenGump {
         title,
-        width,
-        height,
+        size: drawn.size,
         image,
         texture_id,
         content,
-        client,
+        drawn_as,
         error: None,
     });
     Ok(())
 }
+
+/// Hover texts of the Enhanced paperdoll choice.
+const ENHANCED_PAPERDOLL_FRAMES_HOVER: &str = "Under the Enhanced and KR-like presets, the paperdoll is the Enhanced \
+    client's 3D one, from paperdoll_ec.uddp (the gump one without that package).";
+const ENHANCED_PAPERDOLL_GUMPS_HOVER: &str =
+    "Under the Enhanced and KR-like presets, the paperdoll is the old-style one of gumps, from gumps_ec.uddp.";
+const BODY_GUMP_HOVER: &str = "The body gump of the gump paperdoll. The 3D paperdoll draws the profile's body.";
 
 fn render_open_gump_dialog(
     ctx: &mut egui::Context,
     state: &mut GumpDialogState,
     paperdoll_profiles: &PaperdollProfilesRes,
     gump_background: &mut ImageBackground,
+    enhanced_paperdoll: &mut EnhancedPaperdoll,
 ) -> Option<GumpOpenRequest> {
     let mut window_open = state.open;
     let mut open_request = None;
@@ -1139,6 +1026,14 @@ fn render_open_gump_dialog(
             ui.separator();
             ui.checkbox(&mut state.paperdoll_open, "Paperdoll");
             if state.paperdoll_open {
+                // Kept in the user settings; the Classic preset always draws the gump paperdoll.
+                ui.horizontal(|ui| {
+                    ui.label("Enhanced presets:");
+                    ui.radio_value(enhanced_paperdoll, EnhancedPaperdoll::Frames, "3D")
+                        .on_hover_text(ENHANCED_PAPERDOLL_FRAMES_HOVER);
+                    ui.radio_value(enhanced_paperdoll, EnhancedPaperdoll::Gumps, "Gumps")
+                        .on_hover_text(ENHANCED_PAPERDOLL_GUMPS_HOVER);
+                });
                 egui::ComboBox::from_label("Profile")
                     .selected_text(
                         paperdoll_profiles
@@ -1157,7 +1052,7 @@ fn render_open_gump_dialog(
                         }
                 });
                 ui.horizontal(|ui| {
-                    ui.label("Body:");
+                    ui.label("Body gump:").on_hover_text(BODY_GUMP_HOVER);
                     ui.text_edit_singleline(&mut state.paperdoll_body_id);
                     ui.label("Hue:");
                     ui.text_edit_singleline(&mut state.paperdoll_body_hue);
@@ -1196,14 +1091,14 @@ fn render_open_gump_dialog(
 fn open_gump_by_id(
     state: &mut GumpDialogState,
     client: GumpClient,
-    gump_map: Option<&GumpMapRes>,
+    sources: &GumpSources,
     images: &mut Assets<Image>,
     egui_contexts: &mut EguiContexts,
 ) {
-    let Some(gump_map) = gump_map else {
+    if sources.gump_map.is_none() {
         ingame_sysmessage_logger::error("No gump source is loaded.".to_string());
         return;
-    };
+    }
 
     let Ok(id) = state.id.trim().parse::<u32>() else {
         ingame_sysmessage_logger::error(format!("Invalid gump ID: {}", state.id));
@@ -1214,9 +1109,8 @@ fn open_gump_by_id(
         state,
         format!("Gump {id}"),
         OpenGumpContent::Gump(id),
-        client,
-        gump_map,
-        None,
+        DrawnAs::Gumps(client),
+        sources,
         images,
         egui_contexts,
     ) {
@@ -1228,56 +1122,40 @@ struct PaperdollLayer {
     gump_id: u32,
     hue_id: u16,
     partial_hue: bool,
-    sort_key: u16,
     x: i32,
     y: i32,
 }
 
+/// Opens the paperdoll the dialog describes, drawn as the preset and the Enhanced paperdoll setting say.
 fn open_paperdoll(
     state: &mut GumpDialogState,
     client: GumpClient,
-    gump_map: Option<&GumpMapRes>,
-    tilemeta: Option<&TileMetaPackageRes>,
-    hues_package: Option<&HuesPackageRes>,
+    enhanced_paperdoll: EnhancedPaperdoll,
+    sources: &GumpSources,
     paperdoll_profiles: &PaperdollProfilesRes,
-    wearable_rules: &PaperdollWearableRulesRes,
     images: &mut Assets<Image>,
     egui_contexts: &mut EguiContexts,
 ) {
-    let Some(gump_map) = gump_map else {
-        ingame_sysmessage_logger::error("No gump source is loaded.".to_string());
-        return;
-    };
-    let Some(tilemeta) = tilemeta else {
-        ingame_sysmessage_logger::error("Tile metadata is not loaded.".to_string());
-        return;
-    };
-
-    let Ok(body_id) = parse_u32_field(&state.paperdoll_body_id) else {
-        ingame_sysmessage_logger::error(format!(
-            "Invalid paperdoll body gump ID: {}",
-            state.paperdoll_body_id
-        ));
-        return;
+    // Only the gump paperdoll draws a body gump: left empty, the 3D paperdoll still opens, with the profile's body.
+    let body_gump = if state.paperdoll_body_id.trim().is_empty() {
+        None
+    } else {
+        let Ok(body_gump) = parse_u32_field(&state.paperdoll_body_id) else {
+            ingame_sysmessage_logger::error(format!(
+                "Invalid paperdoll body gump ID: {}",
+                state.paperdoll_body_id
+            ));
+            return;
+        };
+        Some(body_gump)
     };
     let body_hue = parse_optional_hue(&state.paperdoll_body_hue);
     let profile = paperdoll_profiles
         .profile(&state.paperdoll_profile_id)
-        .unwrap_or_else(|| paperdoll_profiles.default_profile());
+        .unwrap_or_else(|| paperdoll_profiles.default_profile())
+        .clone();
 
-    // The clients hue the body's greys only. Enhanced: `UOPaperdoll::BuildImage` 0x0050c790 draws it with partial hue
-    // set. Classic: `DrawPaperdollGumpLayers` 0x0051a4a0 draws the bodies of its table with `BlitGumpRowPartialHue`
-    // 0x005d8430, and only a body it knows by race alone with full hue; the dialog takes the gump, not the body.
-    let mut layers = vec![PaperdollLayer {
-        gump_id: body_id,
-        hue_id: body_hue,
-        partial_hue: true,
-        sort_key: 0,
-        x: profile.body_x,
-        y: profile.body_y,
-    }];
-
-    let mut equipped = Vec::new();
+    let mut items = Vec::new();
     for row in &state.paperdoll_equipment {
         if row.item_id.trim().is_empty() {
             continue;
@@ -1287,70 +1165,79 @@ fn open_paperdoll(
             ingame_sysmessage_logger::error(format!("Invalid equipment item ID: {}", row.item_id));
             return;
         };
-        let Some(item) = tilemeta.0.item_tile(item_id) else {
-            ingame_sysmessage_logger::error(format!("Unknown equipment item ID: {item_id}"));
-            return;
-        };
-        if item.anim_id == 0 {
-            ingame_sysmessage_logger::error(format!(
-                "Equipment item {item_id} has no paperdoll anim_id."
-            ));
-            return;
-        }
-
-        let slot = paperdoll_slot_from_tiledata_layer(item.quality).to_string();
-        equipped.push(PaperdollEquippedItem {
-            item_id,
-            slot,
-            gump_id: item.anim_id as u32 + profile.equipment_offset,
-            hue_id: parse_optional_hue(&row.hue),
-            partial_hue: (item.flags & 0x40000) != 0,
-            fallback_priority: u16::from(item.quality),
-        });
+        items.push(PaperdollItem { item_id, hue: parse_optional_hue(&row.hue) });
     }
 
-    let race = race_from_profile_id(&profile.id);
-    for item in &equipped {
-        let sort_key = wearable_rules
-            .rules
-            .as_ref()
-            .map(|rules| {
-                rules.priority_for(
-                    &item.slot,
-                    item.item_id,
-                    &equipped,
-                    race,
-                    item.fallback_priority,
-                )
-            })
-            .unwrap_or(item.fallback_priority);
+    let title = format!("Paperdoll ({})", profile.label);
+    let content = OpenGumpContent::Paperdoll(PaperdollRequest { profile, body_gump, body_hue, items });
+    let drawn_as = DrawnAs::for_content(&content, client, enhanced_paperdoll, sources.paperdoll_ec.is_some());
+    if let Err(error) = open_gump_window(state, title, content, drawn_as, sources, images, egui_contexts) {
+        ingame_sysmessage_logger::error(format!("Could not compose paperdoll: {error}"));
+    }
+}
 
-        if sort_key == 0 {
-            continue;
+/// The layers of the gump paperdoll, bottom first: the body gump, then the gump of each worn item in the paperdoll draw
+/// order of `WearableRules.kdl` (`WearableRules::paperdoll_order`), which hides some layers under others. The Classic
+/// preset finds an item's layer in tiledata; the Enhanced presets, as the 3D paperdoll does, in the item's
+/// `tileart.uop` record first. The overrides of the draw order follow the race of the profile's body. `item_tile` gives
+/// an item's tiledata record; `definitions` are the `tileart.uop` records of tilemeta.uddp.
+fn gump_paperdoll_layers(
+    request: &PaperdollRequest,
+    client: GumpClient,
+    item_tile: impl Fn(u32) -> Option<TileMetaItemTile>,
+    definitions: &TileMetaItemDefinitions,
+    rules: &WearableRules,
+) -> color_eyre::eyre::Result<Vec<PaperdollLayer>> {
+    let PaperdollRequest { profile, body_gump, body_hue, items } = request;
+    let body_gump =
+        body_gump.ok_or_else(|| color_eyre::eyre::eyre!("The gump paperdoll needs a body gump ID."))?;
+    // The clients hue the body's greys only. Enhanced: `UOPaperdoll::BuildImage` 0x0050c790 draws it with partial hue
+    // set. Classic: `DrawPaperdollGumpLayers` 0x0051a4a0 draws the bodies of its table with `BlitGumpRowPartialHue`
+    // 0x005d8430, and only a body it knows by race alone with full hue; the dialog takes the gump, not the body.
+    let mut layers = vec![PaperdollLayer {
+        gump_id: body_gump,
+        hue_id: *body_hue,
+        partial_hue: true,
+        x: profile.body_x,
+        y: profile.body_y,
+    }];
+
+    let mut worn = [None; LAYER_COUNT];
+    let mut worn_layers: [Option<PaperdollLayer>; LAYER_COUNT] = std::array::from_fn(|_| None);
+    for item in items {
+        let Some(tile) = item_tile(item.item_id) else {
+            color_eyre::eyre::bail!("Unknown equipment item ID: {}", item.item_id);
+        };
+        if tile.anim_id == 0 {
+            color_eyre::eyre::bail!("Equipment item {} has no paperdoll anim_id.", item.item_id);
         }
-
-        layers.push(PaperdollLayer {
-            gump_id: item.gump_id,
-            hue_id: item.hue_id,
-            partial_hue: item.partial_hue,
-            sort_key,
+        // A tiledata layer of 0 is no layer.
+        let tiledata_layer = Some(tile.quality).filter(|&layer| layer != 0);
+        let layer = match client {
+            GumpClient::Classic => tiledata_layer.map(usize::from).filter(|&layer| layer < LAYER_COUNT),
+            GumpClient::Enhanced => item_layer(definitions, item.item_id, tiledata_layer),
+        }
+        .ok_or_else(|| color_eyre::eyre::eyre!("Equipment item {} has no layer.", item.item_id))?;
+        if let Some(other) = worn[layer] {
+            color_eyre::eyre::bail!(
+                "Equipment items {other} and {} are both worn on layer {layer} ({}).",
+                item.item_id,
+                SLOT_NAMES[layer]
+            );
+        }
+        worn[layer] = Some(item.item_id);
+        worn_layers[layer] = Some(PaperdollLayer {
+            gump_id: u32::from(tile.anim_id) + profile.equipment_offset,
+            hue_id: item.hue,
+            partial_hue: tile.flags & TaeFlag::PartialHue.bits() != 0,
             x: profile.equipment_x,
             y: profile.equipment_y,
         });
     }
 
-    layers[1..].sort_by_key(|layer| layer.sort_key);
-
-    let title = format!("Paperdoll ({})", profile.label);
-    let content = OpenGumpContent::Paperdoll {
-        profile: profile.clone(),
-        layers,
-    };
-    if let Err(error) =
-        open_gump_window(state, title, content, client, gump_map, hues_package, images, egui_contexts)
-    {
-        ingame_sysmessage_logger::error(format!("Could not compose paperdoll: {error}"));
-    }
+    let race = Wearer::new(definitions, profile.body).race;
+    layers.extend(rules.paperdoll_order(&worn, race).into_iter().filter_map(|layer| worn_layers[layer].take()));
+    Ok(layers)
 }
 
 fn parse_u32_field(text: &str) -> Result<u32, std::num::ParseIntError> {
