@@ -309,79 +309,77 @@ jobs:
           path: artifact/dynamapper-windows-x86_64-tools/*
           retention-days: ${{ github.ref_name == 'prereleases' && 7 || 90 }}
 
-  # The MinGW (x86_64-pc-windows-gnu) build is disabled: the vendored libjxl build script (jpegxl-src, 0.12.0 too)
-  # forces the MSVC ClangCL toolset on any Windows host, so CMake can't configure it for windows-gnu. Re-enable this
-  # job, and add it back to the publish job's needs, once jpegxl-src supports windows-gnu.
-#  build-windows-clang:
-#    name: Build (Windows x86_64 clang MinGW)
-#    runs-on: windows-latest
-#    steps:
-#      - name: Checkout repository
-#        uses: actions/checkout@v6
-#        with:
-#          fetch-depth: 0
-#
-#      - name: Setup MSYS2 MinGW clang toolchain
-#        id: msys2
-#        uses: msys2/setup-msys2@v2
-#        with:
-#          msystem: MINGW64
-#          update: true
-#          install: >-
-#            mingw-w64-x86_64-clang
-#            mingw-w64-x86_64-lld
-#            mingw-w64-x86_64-pkgconf
-#
-#      - name: Install Rust nightly
-#        uses: dtolnay/rust-toolchain@nightly
-#        with:
-#          targets: x86_64-pc-windows-gnu
-#          components: rust-src
-#
-#      # Pinned: sccache 0.17+ expands cargo's @argfile and spawns rustc with every argument, which passes Windows'
-#      # 32767-character command line limit (os error 206). 0.16 forwards an oversized argfile to rustc and leaves
-#      # just that call uncached. Remove once https://github.com/mozilla/sccache/issues/2397 is fixed in a release.
-#      - name: Run sccache-cache
-#        uses: mozilla-actions/sccache-action@v0.0.11
-#        with:
-#          version: "v0.16.0"
-#
-#      - name: Install Just
-#        uses: extractions/setup-just@v2
-#
-#      - name: Cache Cargo registry and build artifacts
-#        uses: Swatinem/rust-cache@v2
-#        with:
-#          workspaces: "."
-#          key: "windows-x86_64-clang-nightly-sccache"
-#
-#      - name: Build release binary
-#        env:
-#          CC: "clang"
-#          CXX: "clang++"
-#          AR: "llvm-ar"
-#          CARGO_TARGET_X86_64_PC_WINDOWS_GNU_LINKER: "clang"
-#        run: |
-#          $mingwBin = Join-Path '${{ steps.msys2.outputs.msys2-location }}' 'mingw64\bin'
-#          $env:PATH = "$mingwBin;$env:PATH"
-#          just build-ci-workspace --target x86_64-pc-windows-gnu
-#
-#      - name: Package binary and assets
-#        run: just package-release dynamapper-windows-x86_64-clang x86_64-pc-windows-gnu
-#
-#      - name: Upload artifact
-#        uses: actions/upload-artifact@v6
-#        with:
-#          name: dynamapper-windows-x86_64-clang
-#          path: artifact/dynamapper-windows-x86_64-clang/*
-#          retention-days: ${{ github.ref_name == 'prereleases' && 7 || 90 }}
-#
-#      - name: Upload tools artifact
-#        uses: actions/upload-artifact@v6
-#        with:
-#          name: dynamapper-windows-x86_64-clang-tools
-#          path: artifact/dynamapper-windows-x86_64-clang-tools/*
-#          retention-days: ${{ github.ref_name == 'prereleases' && 7 || 90 }}
+  build-windows-clang:
+    name: Build (Windows x86_64 clang MinGW)
+    runs-on: windows-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: Setup MSYS2 MinGW clang toolchain
+        id: msys2
+        uses: msys2/setup-msys2@v2
+        with:
+          msystem: MINGW64
+          update: true
+          install: >-
+            mingw-w64-x86_64-clang
+            mingw-w64-x86_64-lld
+            mingw-w64-x86_64-pkgconf
+
+      - name: Install Rust nightly
+        uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: ${{ env.RUST_NIGHTLY_TOOLCHAIN }}
+          targets: x86_64-pc-windows-gnu
+          components: rust-src
+
+      # Pinned: sccache 0.17+ expands cargo's @argfile and spawns rustc with every argument, which passes Windows'
+      # 32767-character command line limit (os error 206). 0.16 forwards an oversized argfile to rustc and leaves
+      # just that call uncached. Remove once https://github.com/mozilla/sccache/issues/2397 is fixed in a release.
+      - name: Run sccache-cache
+        uses: mozilla-actions/sccache-action@v0.0.11
+        with:
+          version: "v0.16.0"
+
+      - name: Install Just
+        uses: extractions/setup-just@v2
+
+      - name: Cache Cargo registry and build artifacts
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: "."
+          key: "windows-x86_64-clang-nightly-sccache"
+
+      - name: Build release binary
+        env:
+          CC: "clang"
+          CXX: "clang++"
+          AR: "llvm-ar"
+          CARGO_TARGET_X86_64_PC_WINDOWS_GNU_LINKER: "clang"
+        run: |
+          $mingwBin = Join-Path '${{ steps.msys2.outputs.msys2-location }}' 'mingw64\bin'
+          $env:PATH = "$mingwBin;$env:PATH"
+          just build-ci-workspace --target x86_64-pc-windows-gnu
+
+      - name: Package binary and assets
+        run: just package-release dynamapper-windows-x86_64-clang x86_64-pc-windows-gnu
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v6
+        with:
+          name: dynamapper-windows-x86_64-clang
+          path: artifact/dynamapper-windows-x86_64-clang/*
+          retention-days: ${{ github.ref_name == 'prereleases' && 7 || 90 }}
+
+      - name: Upload tools artifact
+        uses: actions/upload-artifact@v6
+        with:
+          name: dynamapper-windows-x86_64-clang-tools
+          path: artifact/dynamapper-windows-x86_64-clang-tools/*
+          retention-days: ${{ github.ref_name == 'prereleases' && 7 || 90 }}
 
   build-windows-arm64:
     name: Build (Windows ARM64)
@@ -540,7 +538,7 @@ jobs:
 
   publish:
     name: Publish Release
-    needs: [build-linux, build-linux-arm64, build-linux-musl-x86_64, build-linux-musl-arm64, build-windows, build-windows-arm64, build-macos-x86_64, build-macos-arm64]
+    needs: [build-linux, build-linux-arm64, build-linux-musl-x86_64, build-linux-musl-arm64, build-windows, build-windows-clang, build-windows-arm64, build-macos-x86_64, build-macos-arm64]
     runs-on: ubuntu-24.04
     if: github.event_name == 'workflow_dispatch' || github.ref_type == 'tag' || github.ref_name == 'main'
     permissions:

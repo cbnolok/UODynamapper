@@ -55,7 +55,7 @@ impl UddConvApp {
                 Some(&tex_art_cc_metadata_source),
                 &tex_art_cc_progress,
                 !is_busy,
-                Some((&mut self.settings.zstd_tex_art_cc, &mut self.settings.jxl_tex_art_cc)),
+                Some(&mut self.settings.zstd_tex_art_cc),
                 None,
                 Some(&mut self.settings.opt_tex_art_cc),
                 None,
@@ -79,7 +79,7 @@ impl UddConvApp {
                 None,
                 &tex_land_cc_progress,
                 !is_busy,
-                Some((&mut self.settings.zstd_tex_land_cc, &mut self.settings.jxl_tex_land_cc)),
+                Some(&mut self.settings.zstd_tex_land_cc),
                 None,
                 Some(&mut self.settings.opt_tex_land_cc),
                 Some(CLASSIC_LAND_LOSSY_REFUSAL),
@@ -102,7 +102,7 @@ impl UddConvApp {
                 None,
                 &mobile_anim_cc_progress,
                 !is_busy,
-                Some((&mut self.settings.zstd_mobile_anim_cc, &mut self.settings.jxl_mobile_anim_cc)),
+                Some(&mut self.settings.zstd_mobile_anim_cc),
                 None,
                 Some(&mut self.settings.opt_mobile_anim_cc),
                 None,
@@ -127,7 +127,7 @@ impl UddConvApp {
                 None,
                 &tex_art_ec_progress,
                 !is_busy,
-                Some((&mut self.settings.zstd_tex_art_ec, &mut self.settings.jxl_tex_art_ec)),
+                Some(&mut self.settings.zstd_tex_art_ec),
                 None,
                 Some(&mut self.settings.opt_tex_art_ec),
                 None,
@@ -151,7 +151,7 @@ impl UddConvApp {
                 None,
                 &tex_land_ec_progress,
                 !is_busy,
-                Some((&mut self.settings.zstd_tex_land_ec, &mut self.settings.jxl_tex_land_ec)),
+                Some(&mut self.settings.zstd_tex_land_ec),
                 None,
                 Some(&mut self.settings.opt_tex_land_ec),
                 None,
@@ -177,7 +177,7 @@ impl UddConvApp {
                 None,
                 &tex_aux_ec_progress,
                 !is_busy,
-                Some((&mut self.settings.zstd_tex_aux_ec, &mut self.settings.jxl_tex_aux_ec)),
+                Some(&mut self.settings.zstd_tex_aux_ec),
                 None,
                 Some(&mut self.settings.opt_tex_aux_ec),
                 None,
@@ -200,7 +200,7 @@ impl UddConvApp {
                 None,
                 &mobile_anim_ec_progress,
                 !is_busy,
-                Some((&mut self.settings.zstd_mobile_anim_ec, &mut self.settings.jxl_mobile_anim_ec)),
+                Some(&mut self.settings.zstd_mobile_anim_ec),
                 None,
                 Some(&mut self.settings.opt_mobile_anim_ec),
                 None,
@@ -304,7 +304,7 @@ fn draw_assets_overview(ui: &mut egui::Ui, app: &mut UddConvApp) {
                             .strong()
                             .color(egui::Color32::from_rgb(100, 200, 255)),
                     );
-                    ui.label(egui::RichText::new("BC7 saves VRAM. BC7+zstd saves disk. Raw+zstd and Jpeg XL are lossless; Raw+zstd decodes many times faster.").weak());
+                    ui.label(egui::RichText::new("BC7 saves VRAM. BC7+zstd saves disk. Raw+zstd is lossless.").weak());
                     ui.label(egui::RichText::new("BC7 outputs use automatic 4x4-aligned atlas placement.").weak());
                     ui.label(egui::RichText::new("Land textures always include filtering-aware gutters.").weak());
                 });
@@ -331,7 +331,7 @@ fn draw_asset_card(
     source_note: Option<&str>,
     progress: &AssetPackProgress,
     can_start: bool,
-    texture_levels: Option<(&mut i32, &mut u8)>,
+    texture_zstd_level: Option<&mut i32>,
     zstd_only_level: Option<&mut i32>,
     opt: Option<&mut TextureOptimization>,
     // When set, the block formats are greyed out with this reason in their tooltip.
@@ -404,7 +404,7 @@ fn draw_asset_card(
                 });
 
                 if opt.is_some()
-                    || texture_levels.is_some()
+                    || texture_zstd_level.is_some()
                     || zstd_only_level.is_some()
                     || bc7_rdo.is_some()
                     || upscale_single.is_some()
@@ -425,7 +425,6 @@ fn draw_asset_card(
                                         TextureOptimization::None => "Raw+zstd",
                                         TextureOptimization::Bc7 => "BC7",
                                         TextureOptimization::Bc7Zstd => "Supercompressed BC7+zstd",
-                                        TextureOptimization::JpegXl => "Jpeg XL",
                                     };
 
                                     egui::ComboBox::from_id_salt(format!("{}_fmt", title))
@@ -463,12 +462,6 @@ fn draw_asset_card(
                                                 .clicked()
                                             {
                                                 *opt_val = TextureOptimization::Bc7Zstd;
-                                            }
-                                            if ui
-                                                .selectable_label(current_fmt == "Jpeg XL", "Jpeg XL")
-                                                .clicked()
-                                            {
-                                                *opt_val = TextureOptimization::JpegXl;
                                             }
                                         });
                                 });
@@ -511,13 +504,10 @@ fn draw_asset_card(
                                     }
                                 }
 
-                                if let Some((zstd_level, jxl_level)) = texture_levels {
+                                if let Some(zstd_level) = texture_zstd_level {
                                     match *opt_val {
                                         TextureOptimization::None | TextureOptimization::Bc7Zstd => {
                                             draw_zstd_level_cell(ui, zstd_level);
-                                        }
-                                        TextureOptimization::JpegXl => {
-                                            draw_jxl_level_cell(ui, jxl_level);
                                         }
                                         TextureOptimization::Bc7 => {}
                                     }
@@ -625,18 +615,7 @@ fn draw_zstd_level_cell(ui: &mut egui::Ui, level: &mut i32) {
                 .speed(1)
                 .range(1..=22),
         )
-            .on_hover_text("Lower levels pack faster and larger; 19-22 can pack much slower for smaller packages. Land textures default to 19, the rest to 7.");
-    });
-}
-
-fn draw_jxl_level_cell(ui: &mut egui::Ui, level: &mut u8) {
-    draw_control_cell(ui, "JPEG XL Level", 116.0, |ui| {
-        ui.add(
-            egui::DragValue::new(level)
-                .speed(1)
-                .range(1..=10),
-        )
-            .on_hover_text("Lower levels are faster and larger. Level 6 is the balanced default; 9-10 can be much slower for smaller packages.");
+            .on_hover_text("Lower levels pack faster and larger; 19-22 can pack much slower for smaller packages. Land, art and auxiliary textures default to 19, the rest to 7.");
     });
 }
 

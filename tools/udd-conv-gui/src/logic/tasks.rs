@@ -213,13 +213,11 @@ fn ensure_output_parent(output: &Path) -> eyre::Result<()> {
 fn texture_compression(
     optimization: TextureOptimization,
     zstd_level: i32,
-    jxl_level: u8,
 ) -> CompressionFlag {
     match optimization {
         TextureOptimization::None => CompressionFlag::ZstdNoDictLevel(zstd_level),
         TextureOptimization::Bc7 => CompressionFlag::None,
         TextureOptimization::Bc7Zstd => CompressionFlag::ZstdNoDictLevel(zstd_level),
-        TextureOptimization::JpegXl => CompressionFlag::JpegXlLevel(jxl_level),
     }
 }
 
@@ -395,7 +393,6 @@ impl UddConvApp {
             let compression = texture_compression(
                 settings.opt_tex_art_cc,
                 settings.zstd_tex_art_cc,
-                settings.jxl_tex_art_cc,
             );
             let upscale_profile = load_upscale_profile(&settings)?;
             let extract_label = if upscale_filter_active(settings.upscale_tex_art_cc)
@@ -446,7 +443,6 @@ impl UddConvApp {
             let compression = texture_compression(
                 settings.opt_tex_land_cc,
                 settings.zstd_tex_land_cc,
-                settings.jxl_tex_land_cc,
             );
             let upscale_profile = load_upscale_profile(&settings)?;
             let extract_label = if upscale_config_active(settings.upscale_tex_land_cc_64)
@@ -493,7 +489,6 @@ impl UddConvApp {
             let compression = texture_compression(
                 settings.opt_tex_art_ec,
                 settings.zstd_tex_art_ec,
-                settings.jxl_tex_art_ec,
             );
             let upscale_profile = load_upscale_profile(&settings)?;
             let extract_label = if upscale_filter_active(settings.upscale_tex_art_ec)
@@ -541,7 +536,6 @@ impl UddConvApp {
             let compression = texture_compression(
                 settings.opt_tex_land_ec,
                 settings.zstd_tex_land_ec,
-                settings.jxl_tex_land_ec,
             );
             let upscale_profile = load_upscale_profile(&settings)?;
             let extract_label = if upscale_config_active(settings.upscale_tex_land_ec_64)
@@ -637,7 +631,6 @@ impl UddConvApp {
             let compression = texture_compression(
                 settings.opt_mobile_anim_cc,
                 settings.zstd_mobile_anim_cc,
-                settings.jxl_mobile_anim_cc,
             );
             let upscale_profile = load_upscale_profile(&settings)?;
             let extract_label = if upscale_filter_active(settings.upscale_mobile_anim_cc)
@@ -695,7 +688,6 @@ impl UddConvApp {
             let compression = texture_compression(
                 settings.opt_mobile_anim_ec,
                 settings.zstd_mobile_anim_ec,
-                settings.jxl_mobile_anim_ec,
             );
             let upscale_profile = load_upscale_profile(&settings)?;
             let extract_label = if upscale_filter_active(settings.upscale_mobile_anim_ec)
@@ -755,7 +747,6 @@ impl UddConvApp {
             let compression = texture_compression(
                 settings.opt_tex_aux_ec,
                 settings.zstd_tex_aux_ec,
-                settings.jxl_tex_aux_ec,
             );
             progress.set(AssetPackProgressState::Running, 0.1, "Packing auxiliary EC textures");
             let summary = pack_tex_aux_ec(

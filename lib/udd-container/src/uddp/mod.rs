@@ -157,10 +157,12 @@ pub enum Codec {
 
     /// Zstd with dictionary resolved implicitly from the file type.
     ZstdTypeDict = 2,
-
-    /// Jpeg XL lossless.
-    JpegXl = 3,
 }
+
+/// Codec id 3 was lossless JPEG XL until 2026-11-06, when it was removed (Zstd 19 pages were smaller and decoded many
+/// times faster). The id stays reserved and is never reused: a package that still stores it fails to open with
+/// [`FormatError::RemovedJpegXlCodec`] and has to be repacked.
+pub const REMOVED_JPEG_XL_CODEC_ID: u8 = 3;
 
 impl Codec {
     pub fn from_u8(v: u8) -> Result<Self, FormatError> {
@@ -168,7 +170,7 @@ impl Codec {
             0 => Ok(Self::None),
             1 => Ok(Self::ZstdNoDict),
             2 => Ok(Self::ZstdTypeDict),
-            3 => Ok(Self::JpegXl),
+            REMOVED_JPEG_XL_CODEC_ID => Err(FormatError::RemovedJpegXlCodec { package: None }),
             _ => Err(FormatError::InvalidCodec(v)),
         }
     }
@@ -191,21 +193,6 @@ pub enum CompressionFlag {
 
     /// Force Zstd compression with the implicit type dictionary.
     ZstdDict,
-
-    /// Force Jpeg XL lossless.
-    JpegXl,
-
-    /// Force Jpeg XL lossless at an explicit encoder level.
-    JpegXlLevel(u8),
-
-    /// Force Jpeg XL lossless, then Zstd-compress the encoded JXL payload.
-    JpegXlZstd,
-
-    /// Force Jpeg XL lossless, then Zstd-compress the encoded JXL payload at an explicit level.
-    JpegXlZstdLevel(i32),
-
-    /// Force Jpeg XL lossless at an explicit encoder level, then Zstd-compress it at an explicit level.
-    JpegXlZstdLevels { jxl_level: u8, zstd_level: i32 },
 }
 
 /// Convenience starter type ids.

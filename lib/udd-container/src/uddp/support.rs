@@ -20,8 +20,6 @@ use zstd::dict::DecoderDictionary;
 use super::*;
 
 const ZSTD_LEVEL: i32 = 7;
-const JXL_LEVEL: jpegxl_rs::encode::EncoderSpeed = jpegxl_rs::encode::EncoderSpeed::Wombat;
-const JXL_ZSTD_PREFIX: &[u8; 4] = b"JXZ1";
 
 
 /// Pack the public metadata word stored in every file locator.
@@ -38,9 +36,16 @@ pub fn unpack_type(meta32: Meta32) -> u8 {
     (meta32 & 0x3F) as u8
 }
 
-/// Extract the 2-bit codec from a packed metadata word.
+/// Extract the raw 2-bit codec id from a packed metadata word, which may be a removed codec's id.
+#[inline(always)]
+pub(crate) fn unpack_codec_id(meta32: Meta32) -> u8 {
+    ((meta32 >> 6) & 0x03) as u8
+}
+
+/// Extract the 2-bit codec from a packed metadata word of an opened package. The reader refuses a package with a
+/// removed codec's id when it opens it, so every locator it hands out has a current codec.
 pub fn unpack_codec(meta32: Meta32) -> Codec {
-    Codec::from_u8(((meta32 >> 6) & 0x03) as u8).expect("2-bit codec")
+    Codec::from_u8(unpack_codec_id(meta32)).expect("the reader refuses removed codec ids at open")
 }
 
 /// Extract the high 8 bits of the 32-bit compression delta.
@@ -78,9 +83,7 @@ pub fn unpack_delta32(meta32: Meta32, pos64: Pos64) -> u32 {
 pub fn reconstruct_stored_size(raw_size: u32, meta32: Meta32, pos64: Pos64) -> u32 {
     match unpack_codec(meta32) {
         Codec::None => raw_size,
-        Codec::ZstdNoDict | Codec::ZstdTypeDict | Codec::JpegXl => {
-            raw_size - unpack_delta32(meta32, pos64)
-        }
+        Codec::ZstdNoDict | Codec::ZstdTypeDict => raw_size - unpack_delta32(meta32, pos64),
     }
 }
 
@@ -162,221 +165,6 @@ fn zstd_worker_count() -> u32 {
     std::thread::available_parallelism()
         .map(|threads| threads.get().saturating_sub(1).max(1) as u32)
         .unwrap_or(1)
-}
-
-/// Jxl compression helper.
-pub(crate) fn jxl_compress(data: &[u8], width: u32, height: u32) -> Result<Vec<u8>, String> {
-    jxl_compress_level(data, width, height, JXL_LEVEL)
-}
-
-/// Jxl compression helper with an explicit encoder level.
-pub(crate) fn jxl_compress_level(
-    data: &[u8],
-    width: u32,
-    height: u32,
-    level: jpegxl_rs::encode::EncoderSpeed,
-) -> Result<Vec<u8>, String> {
-    use jpegxl_rs::encoder_builder;
-    use jpegxl_rs::encode::EncoderFrame;
-
-    let mut encoder = encoder_builder()
-        .has_alpha(true)
-        .lossless(true)
-        .uses_original_profile(true)
-        .speed(level)
-        .parallel_runner(&RayonJxlRunner)
-        .build()
-        .map_err(|e| e.to_string())?;
-
-    let frame = EncoderFrame::new(data).num_channels(4);
-    let encoded = encoder.encode_frame::<u8, u8>(&frame, width, height)
-        .map_err(|e| e.to_string())?;
-
-    let mut final_payload = Vec::with_capacity(encoded.len() + 8);
-    final_payload.extend_from_slice(&width.to_le_bytes());
-    final_payload.extend_from_slice(&height.to_le_bytes());
-    final_payload.extend_from_slice(&encoded);
-    Ok(final_payload)
-}
-
-pub(crate) fn jxl_compress_numeric_level(
-    data: &[u8],
-    width: u32,
-    height: u32,
-    level: u8,
-) -> Result<Vec<u8>, String> {
-    jxl_compress_level(data, width, height, jxl_encoder_speed(level)?)
-}
-
-/// Jxl compression helper with a final Zstd pass over the encoded JXL payload.
-pub(crate) fn jxl_zstd_compress(data: &[u8], width: u32, height: u32) -> Result<Vec<u8>, String> {
-    jxl_zstd_compress_level(data, width, height, ZSTD_LEVEL)
-}
-
-/// Jxl compression helper with a final explicit-level Zstd pass over the encoded JXL payload.
-pub(crate) fn jxl_zstd_compress_level(
-    data: &[u8],
-    width: u32,
-    height: u32,
-    level: i32,
-) -> Result<Vec<u8>, String> {
-    let jxl_payload = jxl_compress(data, width, height)?;
-    let zstd_payload = zstd_compress_level(&jxl_payload, level).map_err(|e| e.to_string())?;
-    let mut final_payload = Vec::with_capacity(JXL_ZSTD_PREFIX.len() + zstd_payload.len());
-    final_payload.extend_from_slice(JXL_ZSTD_PREFIX);
-    final_payload.extend_from_slice(&zstd_payload);
-    Ok(final_payload)
-}
-
-pub(crate) fn jxl_zstd_compress_levels(
-    data: &[u8],
-    width: u32,
-    height: u32,
-    jxl_level: u8,
-    zstd_level: i32,
-) -> Result<Vec<u8>, String> {
-    let jxl_payload = jxl_compress_numeric_level(data, width, height, jxl_level)?;
-    let zstd_payload = zstd_compress_level(&jxl_payload, zstd_level).map_err(|e| e.to_string())?;
-    let mut final_payload = Vec::with_capacity(JXL_ZSTD_PREFIX.len() + zstd_payload.len());
-    final_payload.extend_from_slice(JXL_ZSTD_PREFIX);
-    final_payload.extend_from_slice(&zstd_payload);
-    Ok(final_payload)
-}
-
-fn jxl_encoder_speed(level: u8) -> Result<jpegxl_rs::encode::EncoderSpeed, String> {
-    match level {
-        1 => Ok(jpegxl_rs::encode::EncoderSpeed::Lightning),
-        2 => Ok(jpegxl_rs::encode::EncoderSpeed::Thunder),
-        3 => Ok(jpegxl_rs::encode::EncoderSpeed::Falcon),
-        4 => Ok(jpegxl_rs::encode::EncoderSpeed::Cheetah),
-        5 => Ok(jpegxl_rs::encode::EncoderSpeed::Hare),
-        6 => Ok(jpegxl_rs::encode::EncoderSpeed::Wombat),
-        7 => Ok(jpegxl_rs::encode::EncoderSpeed::Squirrel),
-        8 => Ok(jpegxl_rs::encode::EncoderSpeed::Kitten),
-        9 => Ok(jpegxl_rs::encode::EncoderSpeed::Tortoise),
-        10 => Ok(jpegxl_rs::encode::EncoderSpeed::Glacier),
-        _ => Err(format!("JPEG XL level must be in 1..=10, got {level}")),
-    }
-}
-
-/// Jxl decompression helper.
-pub(crate) fn jxl_decompress(data: &[u8]) -> Result<Vec<u8>, String> {
-    if data.starts_with(JXL_ZSTD_PREFIX) {
-        let jxl_payload =
-            zstd::stream::decode_all(std::io::Cursor::new(&data[JXL_ZSTD_PREFIX.len()..]))
-                .map_err(|e| e.to_string())?;
-        return jxl_decompress_payload(&jxl_payload);
-    }
-
-    jxl_decompress_payload(data)
-}
-
-/// libjxl's `JXL_PARALLEL_RET_SUCCESS`: the runner or its init callback finished without error.
-const JXL_PARALLEL_RET_SUCCESS: jpegxl_rs::parallel::JxlParallelRetCode = 0;
-/// libjxl's `JXL_PARALLEL_RET_RUNNER_ERROR`: the runner itself failed, which fails the decode.
-const JXL_PARALLEL_RET_RUNNER_ERROR: jpegxl_rs::parallel::JxlParallelRetCode = -1;
-
-/// libjxl's `JxlParallelRunner` callback type, which jpegxl-rs doesn't re-export.
-type JxlRunnerFn = unsafe extern "C-unwind" fn(
-    *mut std::ffi::c_void,
-    *mut std::ffi::c_void,
-    jpegxl_rs::parallel::JxlParallelRunInit,
-    jpegxl_rs::parallel::JxlParallelRunFunction,
-    u32,
-    u32,
-) -> jpegxl_rs::parallel::JxlParallelRetCode;
-
-/// Hands libjxl's parallel decode and encode work (a frame's 256x256 groups, among others) to the
-/// rayon pool of the calling thread, so a decode or an encode starts no threads of its own. A caller
-/// that already decodes entries on rayon workers gets work stealing instead of a second pool
-/// competing for the cores, and a caller outside rayon (Bevy's task pools, the main thread) blocks
-/// while the global pool does the work. libjxl's own thread runner can't be shared that way: it runs one
-/// job at a time.
-struct RayonJxlRunner;
-
-/// libjxl's opaque decode or encode state, handed to the workers that run its callback.
-#[derive(Clone, Copy)]
-struct JxlOpaque(*mut std::ffi::c_void);
-
-// SAFETY: libjxl's run callback is made to be called from several threads at once with the same
-// opaque pointer, each call with a distinct thread id.
-unsafe impl Send for JxlOpaque {}
-unsafe impl Sync for JxlOpaque {}
-
-impl JxlOpaque {
-    /// Taking `self` makes closures capture the whole wrapper, not its raw pointer field.
-    fn get(self) -> *mut std::ffi::c_void {
-        self.0
-    }
-}
-
-/// Runs `func` for every value in `start_range..end_range` on the current rayon pool. libjxl sizes
-/// its per-thread state from the count given to `init` and indexes it by thread id, so the pool's
-/// worker index is the id. `rayon::scope` runs its body on a worker of the caller's pool (the global
-/// pool for a caller outside rayon), so every item runs on one of that pool's workers, even an item
-/// rayon doesn't split off, and a worker runs one item at a time. A panic becomes a runner error
-/// rather than unwinding into libjxl.
-unsafe extern "C-unwind" fn run_jxl_on_rayon(
-    _runner_opaque: *mut std::ffi::c_void,
-    jpegxl_opaque: *mut std::ffi::c_void,
-    init: jpegxl_rs::parallel::JxlParallelRunInit,
-    func: jpegxl_rs::parallel::JxlParallelRunFunction,
-    start_range: u32,
-    end_range: u32,
-) -> jpegxl_rs::parallel::JxlParallelRetCode {
-    use rayon::prelude::*;
-
-    let opaque = JxlOpaque(jpegxl_opaque);
-    let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-        rayon::scope(|_| {
-            let init_status = unsafe { init(opaque.get(), rayon::current_num_threads()) };
-            if init_status != JXL_PARALLEL_RET_SUCCESS {
-                return init_status;
-            }
-            (start_range..end_range).into_par_iter().for_each(|value| {
-                let thread_id = rayon::current_thread_index().expect("a rayon scope runs on a pool worker");
-                unsafe { func(opaque.get(), value, thread_id) };
-            });
-            JXL_PARALLEL_RET_SUCCESS
-        })
-    }));
-    outcome.unwrap_or(JXL_PARALLEL_RET_RUNNER_ERROR)
-}
-
-impl jpegxl_rs::parallel::ParallelRunner for RayonJxlRunner {
-    fn runner(&self) -> JxlRunnerFn {
-        run_jxl_on_rayon
-    }
-
-    fn as_opaque_ptr(&self) -> *mut std::ffi::c_void {
-        std::ptr::null_mut()
-    }
-}
-
-fn jxl_decompress_payload(data: &[u8]) -> Result<Vec<u8>, String> {
-    use jpegxl_rs::decoder_builder;
-    use jpegxl_rs::decode::Pixels;
-
-    if data.len() < 8 {
-        return Err("JXL payload too small for header".to_string());
-    }
-
-    // Header is ignored by decoder, it needs the raw stream
-    let encoded = &data[8..];
-
-    let decoder = decoder_builder()
-        .parallel_runner(&RayonJxlRunner)
-        .build()
-        .map_err(|e| e.to_string())?;
-
-    let (_, pixels) = decoder.decode(encoded)
-        .map_err(|e| e.to_string())?;
-
-    // We expect RGBA8 (8-bit per channel)
-    match pixels {
-        Pixels::Uint8(v) => Ok(v),
-        _ => Err("Unexpected JXL pixel format (expected 8-bit)".to_string()),
-    }
 }
 
 thread_local! {
@@ -523,6 +311,9 @@ pub enum FormatError {
     InvalidLookupMode(u8),
     InvalidType(u8),
     InvalidCodec(u8),
+    /// The package stores payloads with the removed JPEG XL codec ([`REMOVED_JPEG_XL_CODEC_ID`]). `package` is its path
+    /// when the reader opened a file.
+    RemovedJpegXlCodec { package: Option<std::path::PathBuf> },
     MissingDictionary(u8),
     FileNotFound,
     WrongLookupMode,
@@ -543,6 +334,14 @@ impl fmt::Display for FormatError {
             Self::InvalidLookupMode(v) => write!(f, "invalid lookup mode: {v}"),
             Self::InvalidType(v) => write!(f, "invalid type {v}"),
             Self::InvalidCodec(v) => write!(f, "invalid codec: {v}"),
+            Self::RemovedJpegXlCodec { package } => {
+                let package = package.as_ref().map_or_else(|| "the package".to_string(), |path| path.display().to_string());
+                write!(
+                    f,
+                    "{package} stores payloads in JPEG XL (codec {REMOVED_JPEG_XL_CODEC_ID}), which was removed on \
+                     2026-11-06; repack it with the current udd-cli"
+                )
+            }
             Self::MissingDictionary(t) => write!(f, "missing dictionary for type {t}"),
             Self::FileNotFound => write!(f, "file not found"),
             Self::WrongLookupMode => write!(f, "wrong lookup mode for requested operation"),
@@ -555,6 +354,16 @@ impl fmt::Display for FormatError {
 }
 
 impl std::error::Error for FormatError {}
+
+impl FormatError {
+    /// Names the package file in an error that is about the whole package.
+    pub fn in_package(self, path: &Path) -> Self {
+        match self {
+            Self::RemovedJpegXlCodec { package: None } => Self::RemovedJpegXlCodec { package: Some(path.to_path_buf()) },
+            other => other,
+        }
+    }
+}
 
 /// Errors produced while building runtime or patch packages.
 #[derive(Debug)]

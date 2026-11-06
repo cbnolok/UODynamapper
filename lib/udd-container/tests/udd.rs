@@ -275,141 +275,57 @@ fn decoded_entry_cache_reads_repeated_compressed_entry() {
     );
 }
 
-#[test]
-fn path_hash_package_roundtrip_reads_jpegxl_rgba_entry() {
-    let width = 32u32;
-    let height = 32u32;
-    let mut rgba = Vec::with_capacity((width * height * 4) as usize);
-    for y in 0..height {
-        for x in 0..width {
-            rgba.extend_from_slice(&[(x * 3) as u8, (y * 5) as u8, 128, 255]);
-        }
-    }
+/// Where a path-hash index entry keeps its locator's `meta32`: after the u64 path hash and the u32 raw size.
+const PATH_ENTRY_META32_OFFSET: usize = 8 + 4;
+/// The 2-bit codec field of `meta32`.
+const META32_CODEC_SHIFT: u32 = 6;
+const META32_CODEC_MASK: u32 = 0x03;
 
+/// A package written before JPEG XL was removed: one entry's codec is the reserved id.
+fn package_with_removed_jpeg_xl_codec() -> Vec<u8> {
     let mut builder = UddpBuilder::new(LookupMode::VirtualPathHash);
     builder
         .add_file(AddFileRequest {
             data_type: DataType::Texture as u8,
-            compression: CompressionFlag::JpegXl,
-            width,
-            height,
+            compression: CompressionFlag::ZstdNoDict,
+            width: 0,
+            height: 0,
             virtual_path: Some("pages/0000.rgba8888"),
             path_hash64: None,
             id: None,
-            data: &rgba,
+            data: &[0x11; 4096],
         })
-        .expect("add jxl texture file");
-
-    let reader = UddpReader::open(builder.build().expect("build package")).expect("open package");
-    assert_eq!(
-        reader
-            .read_file_by_path_hash(xxh64_virtual_path("pages/0000.rgba8888"))
-            .expect("read jxl texture"),
-        rgba
-    );
+        .expect("add page");
+    let mut bytes = builder.build().expect("build package");
+    let index_offset = UddpReader::open(bytes.clone()).expect("open package").header().index_offset as usize;
+    let meta32_at = index_offset + PATH_ENTRY_META32_OFFSET;
+    let meta32 = u32::from_le_bytes(bytes[meta32_at..meta32_at + 4].try_into().expect("meta32 bytes"));
+    let meta32 = (meta32 & !(META32_CODEC_MASK << META32_CODEC_SHIFT))
+        | (u32::from(udd_container::uddp::REMOVED_JPEG_XL_CODEC_ID) << META32_CODEC_SHIFT);
+    bytes[meta32_at..meta32_at + 4].copy_from_slice(&meta32.to_le_bytes());
+    bytes
 }
 
 #[test]
-fn path_hash_package_roundtrip_reads_jpegxl_zstd_rgba_entry() {
-    let width = 32u32;
-    let height = 32u32;
-    let mut rgba = Vec::with_capacity((width * height * 4) as usize);
-    for y in 0..height {
-        for x in 0..width {
-            rgba.extend_from_slice(&[(x * 3) as u8, (y * 5) as u8, 128, 255]);
-        }
+fn a_package_with_the_removed_jpeg_xl_codec_fails_to_open_and_asks_for_a_repack() {
+    let bytes = package_with_removed_jpeg_xl_codec();
+
+    let error = UddpReader::open(bytes.clone()).err().expect("the removed codec is refused");
+    assert!(matches!(error, udd_container::uddp::FormatError::RemovedJpegXlCodec { package: None }), "{error:?}");
+    assert!(error.to_string().contains("repack it with the current udd-cli"), "{error}");
+
+    let dir = streaming_test_dir("removed-jpeg-xl-codec");
+    let path = dir.join("tex_art_cc.uddp");
+    std::fs::write(&path, &bytes).expect("write package");
+    for error in [
+        UddpReader::load(&path).err().expect("the removed codec is refused when mapped"),
+        UddpReader::load_in_memory(&path).err().expect("the removed codec is refused when read"),
+    ] {
+        let message = error.to_string();
+        assert!(message.starts_with(&path.display().to_string()), "{message}");
+        assert!(message.contains("JPEG XL") && message.contains("repack it with the current udd-cli"), "{message}");
     }
-
-    let mut builder = UddpBuilder::new(LookupMode::VirtualPathHash);
-    builder
-        .add_file(AddFileRequest {
-            data_type: DataType::Texture as u8,
-            compression: CompressionFlag::JpegXlZstd,
-            width,
-            height,
-            virtual_path: Some("pages/0000.rgba8888"),
-            path_hash64: None,
-            id: None,
-            data: &rgba,
-        })
-        .expect("add jxl zstd texture file");
-
-    let reader = UddpReader::open(builder.build().expect("build package")).expect("open package");
-    assert_eq!(
-        reader
-            .read_file_by_path_hash(xxh64_virtual_path("pages/0000.rgba8888"))
-            .expect("read jxl zstd texture"),
-        rgba
-    );
-}
-
-/// Sides of a JPEG XL test page that spans several of libjxl's 256-pixel groups, so the decoder has
-/// parallel work for its runner, with partial groups on the right and bottom edges.
-const MULTI_GROUP_JXL_WIDTH: u32 = 600;
-const MULTI_GROUP_JXL_HEIGHT: u32 = 520;
-const MULTI_GROUP_JXL_PAGES: u32 = 3;
-/// Every this many columns and rows a block of the page is fully transparent, as atlas gaps are.
-const MULTI_GROUP_JXL_HOLE_PERIOD: u32 = 37;
-const MULTI_GROUP_JXL_HOLE_SIDE: u32 = 11;
-
-fn multi_group_jxl_page(page: u32) -> Vec<u8> {
-    let mut rgba = Vec::with_capacity((MULTI_GROUP_JXL_WIDTH * MULTI_GROUP_JXL_HEIGHT * 4) as usize);
-    for y in 0..MULTI_GROUP_JXL_HEIGHT {
-        for x in 0..MULTI_GROUP_JXL_WIDTH {
-            let hole = x % MULTI_GROUP_JXL_HOLE_PERIOD < MULTI_GROUP_JXL_HOLE_SIDE
-                && y % MULTI_GROUP_JXL_HOLE_PERIOD < MULTI_GROUP_JXL_HOLE_SIDE;
-            if hole {
-                rgba.extend_from_slice(&[0, 0, 0, 0]);
-            } else {
-                let noise = (x ^ y).wrapping_mul(2_654_435_761).rotate_left(page + 7);
-                rgba.extend_from_slice(&[(x + page * 40) as u8, (y * 3) as u8, noise as u8, 255 - (noise >> 24) as u8 % 2]);
-            }
-        }
-    }
-    rgba
-}
-
-#[test]
-fn multi_group_jpegxl_pages_decode_identically_on_the_rayon_runner_from_parallel_callers() {
-    use rayon::prelude::*;
-
-    let pages: Vec<Vec<u8>> = (0..MULTI_GROUP_JXL_PAGES).map(multi_group_jxl_page).collect();
-    let mut builder = UddpBuilder::new(LookupMode::SparseId);
-    for (id, rgba) in pages.iter().enumerate() {
-        builder
-            .add_file(AddFileRequest {
-                data_type: DataType::Texture as u8,
-                compression: CompressionFlag::JpegXl,
-                width: MULTI_GROUP_JXL_WIDTH,
-                height: MULTI_GROUP_JXL_HEIGHT,
-                virtual_path: None,
-                path_hash64: None,
-                id: Some(id as u32),
-                data: rgba,
-            })
-            .expect("add multi-group jxl page");
-    }
-    let reader = UddpReader::open(builder.build().expect("build package")).expect("open package");
-
-    // One caller at a time: libjxl's groups run on the global rayon pool.
-    for (id, rgba) in pages.iter().enumerate() {
-        assert!(reader.read_file_by_sparse_id(id as u32).expect("read jxl page") == *rgba, "page {id} differs");
-    }
-
-    // Callers that are rayon workers themselves: the group jobs nest into their pool.
-    (0..MULTI_GROUP_JXL_PAGES as usize).into_par_iter().for_each(|id| {
-        assert!(reader.read_file_by_sparse_id(id as u32).expect("read jxl page") == pages[id], "page {id} differs");
-    });
-
-    // Callers outside rayon, as Bevy's task pools are, decoding at the same time.
-    std::thread::scope(|scope| {
-        for (id, rgba) in pages.iter().enumerate() {
-            let reader = &reader;
-            scope.spawn(move || {
-                assert!(reader.read_file_by_sparse_id(id as u32).expect("read jxl page") == *rgba, "page {id} differs");
-            });
-        }
-    });
+    std::fs::remove_dir_all(&dir).expect("remove test dir");
 }
 
 #[test]
@@ -618,7 +534,6 @@ fn uddf_roundtrip_preserves_flags_and_payload() {
 /// Payload large enough to take the builder's multithreaded Zstd path.
 const STREAMING_TEST_LARGE_PAYLOAD_BYTES: usize = 12 * 1024 * 1024;
 const STREAMING_TEST_SMALL_FILE_COUNT: usize = 64;
-const STREAMING_TEST_JXL_SIDE: u32 = 4;
 const STREAMING_TEST_ZSTD_LEVEL: i32 = 9;
 
 fn streaming_test_dir(test_name: &str) -> std::path::PathBuf {
@@ -628,8 +543,8 @@ fn streaming_test_dir(test_name: &str) -> std::path::PathBuf {
     dir
 }
 
-/// Mixed synthetic files: raw, Zstd at default and explicit level, JPEG XL, a
-/// payload Zstd cannot shrink, and one large enough for multithreaded Zstd.
+/// Mixed synthetic files: raw, Zstd at default and explicit level, a payload
+/// Zstd cannot shrink, and one large enough for multithreaded Zstd.
 fn streaming_test_files() -> Vec<AddOwnedFileRequest> {
     let mut files = Vec::new();
     for index in 0..STREAMING_TEST_SMALL_FILE_COUNT {
@@ -649,19 +564,6 @@ fn streaming_test_files() -> Vec<AddOwnedFileRequest> {
             data: format!("payload {index} ").repeat(index + 1).into_bytes(),
         });
     }
-    let jxl_pixels = (0..STREAMING_TEST_JXL_SIDE * STREAMING_TEST_JXL_SIDE)
-        .flat_map(|pixel| [pixel as u8, 0x40, 0x80, 0xFF])
-        .collect::<Vec<_>>();
-    files.push(AddOwnedFileRequest {
-        data_type: DataType::Texture as u8,
-        compression: CompressionFlag::JpegXl,
-        width: STREAMING_TEST_JXL_SIDE,
-        height: STREAMING_TEST_JXL_SIDE,
-        virtual_path: Some("pages/jxl.rgba".to_string()),
-        path_hash64: None,
-        id: None,
-        data: jxl_pixels,
-    });
     files.push(AddOwnedFileRequest {
         data_type: DataType::Texture as u8,
         compression: CompressionFlag::ZstdNoDict,
@@ -762,7 +664,7 @@ fn streaming_builder_matches_in_memory_builder() {
     assert_eq!(assembled_steps.first(), Some(&0));
     assert_eq!(
         assembled_steps.last().copied(),
-        Some(2 + STREAMING_TEST_SMALL_FILE_COUNT + 3)
+        Some(2 + STREAMING_TEST_SMALL_FILE_COUNT + 2)
     );
 
     let written = std::fs::read(&output).expect("read streamed package");

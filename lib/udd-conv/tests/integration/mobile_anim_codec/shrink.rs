@@ -9,8 +9,8 @@
 //! - `b`: the stream candidates ([`candidates`]) on a sample: Zstd levels, palette orders, predictors and a static
 //!   rANS proof of concept with 2D contexts, stream units, coverage coders; `MOBILE_ANIM_CODEC_SHRINK_ONLY` filters
 //!   them by name (comma-separated substrings);
-//! - `c`: general-purpose bounds: xz, brotli (their command-line tools, as they are bounds only), WebP lossless and
-//!   JPEG XL modular lossless per frame and per direction strip;
+//! - `c`: general-purpose bounds: xz, brotli (their command-line tools, as they are bounds only), WebP lossless per
+//!   frame and per direction strip;
 //! - `d`: the lossy coverage bound (16 levels reduced to 8 and 4); `e`: the lossy near-lossless index tier;
 //! - `f`: the winners on upscaled content, and the cost of upscaling when an action is loaded instead;
 //! - `g`: the 20 largest bodies, the stream units and whole-body decode with worker threads.
@@ -27,8 +27,6 @@
 
 use super::*;
 
-use jpegxl_rs::encode::{EncoderFrame, EncoderSpeed};
-use jpegxl_rs::{decoder_builder, encoder_builder};
 use libwebp_sys as webp;
 use std::io::{Read, Write};
 use std::process::{Command, Stdio};
@@ -117,9 +115,7 @@ const LARGEST_BODIES: usize = 20;
 const WEBP_MAX_SIDE: usize = 16_383;
 const WEBP_METHOD: i32 = 6;
 const WEBP_QUALITY: f32 = 100.0;
-const JXL_EFFORTS: [(EncoderSpeed, &str); 2] = [(EncoderSpeed::Squirrel, "effort 7"), (EncoderSpeed::Tortoise, "effort 9")];
 const BOUND_SAMPLE_PER_CLIENT: usize = 25;
-const JXL_EFFORT9_SAMPLE_PER_CLIENT: usize = 12;
 const DICTIONARY_BYTES: [usize; 2] = [112 * 1024, 1024 * 1024];
 /// Samples given to the dictionary trainer per body.
 const DICTIONARY_SAMPLES_PER_BODY: usize = 64;
@@ -2115,24 +2111,6 @@ fn direction_strips(planes: &Planes, max_height: usize) -> Vec<(Strip, Vec<usize
     strips
 }
 
-fn jxl_encode(pixels: &[u8], w: usize, h: usize, channels: u32, speed: EncoderSpeed) -> Vec<u8> {
-    let mut encoder = encoder_builder()
-        .has_alpha(channels == RGBA_CHANNELS as u32)
-        .lossless(true)
-        .uses_original_profile(true)
-        .speed(speed)
-        .color_encoding(if channels == 1 { jpegxl_rs::encode::ColorEncoding::SrgbLuma } else { jpegxl_rs::encode::ColorEncoding::Srgb })
-        .build()
-        .expect("JPEG XL encoder");
-    let frame = EncoderFrame::new(pixels).num_channels(channels);
-    encoder.encode_frame::<u8, u8>(&frame, w as u32, h as u32).expect("JPEG XL encode").data
-}
-
-fn jxl_decode(data: &[u8]) -> Vec<u8> {
-    let decoder = decoder_builder().build().expect("JPEG XL decoder");
-    decoder.decode_with::<u8>(data).expect("JPEG XL decode").1
-}
-
 /// WebP lossless of RGBA, `exact`: pixels under alpha 0 are kept.
 fn webp_encode(rgba: &[u8], w: usize, h: usize) -> Vec<u8> {
     let mut config = webp::WebPConfig::new().expect("libwebp config");
@@ -2263,15 +2241,6 @@ fn bound_tool(name: &str, sample: &[&Planes], command: &str, encode_args: &[Stri
     }
 }
 
-fn by_size<'a>(planes: &[&'a Planes], count: usize) -> Vec<&'a Planes> {
-    let mut out = Vec::new();
-    for client in [Client::Cc, Client::Ec] {
-        let of: Vec<&Planes> = planes.iter().copied().filter(|p| p.client == client).collect();
-        out.extend(spread(&of, count, |p| p.index.len() as u64).into_iter().copied());
-    }
-    out
-}
-
 fn part_c(sample: &[Planes], order: Order) {
     println!("\n### General-purpose bounds on the index plane; CPU {}; load average {}\n", cpu_state(), load_average());
     println!("| client | coder | bodies | MB | bits per opaque px | x zstd 19 per body | decode MB/s, one thread | encode time |");
@@ -2292,29 +2261,6 @@ fn part_c(sample: &[Planes], order: Order) {
             bound_images(&format!("WebP lossless m6, {name}, {unit}"), planes, strips, WEBP_MAX_SIDE, &webp_encode_index, &webp_decode_index, &single);
         }
     }
-    for (speed, effort) in JXL_EFFORTS {
-        let limit = if matches!(speed, EncoderSpeed::Tortoise) { JXL_EFFORT9_SAMPLE_PER_CLIENT } else { BOUND_SAMPLE_PER_CLIENT };
-        jxl_rows(&original, &sorted_refs, speed, effort, limit, &single);
-    }
-}
-
-fn jxl_rows(original: &[&Planes], sorted: &[&Planes], speed: EncoderSpeed, effort: &str, limit: usize, single: &rayon::ThreadPool) {
-    let encode = move |image: &Strip| jxl_encode(&image.pixels, image.w, image.h, 1, speed);
-    let decode = |data: &[u8], _: &Strip| jxl_decode(data);
-    for (name, planes) in [("original", original), ("sorted", sorted)] {
-        let chosen = by_size(planes, limit);
-        for (strips, unit) in [(false, "per frame"), (true, "per direction strip")] {
-            bound_images(&format!("JPEG XL lossless {effort}, {name}, {unit}, {limit} bodies"), &chosen, strips, usize::MAX, &encode, &decode, single);
-        }
-    }
-}
-
-/// JPEG XL effort 7 on the bodies of the effort 9 rows, so the two compare directly.
-fn part_c7(sample: &[Planes], order: Order) {
-    let single = rayon::ThreadPoolBuilder::new().num_threads(1).build().expect("one-thread pool");
-    let sorted: Vec<Planes> = sample.par_iter().map(|p| reordered(p, order)).collect();
-    let (original, sorted_refs): (Vec<&Planes>, Vec<&Planes>) = (sample.iter().collect(), sorted.iter().collect());
-    jxl_rows(&original, &sorted_refs, JXL_EFFORTS[0].0, JXL_EFFORTS[0].1, JXL_EFFORT9_SAMPLE_PER_CLIENT, &single);
 }
 
 // ---------------------------------------------------------------------------------------------------------------
@@ -2808,7 +2754,6 @@ fn part_f(sources: &Sources, bodies: &[BodySource], present: &[(Client, u64, usi
         let mut mmpx_unmapped = 0u64;
         let mut webp_frame = UpscaleTally::default();
         let mut webp_strip = UpscaleTally::default();
-        let mut jxl_frame = UpscaleTally::default();
         // Parallel over bodies when only sizes are wanted; one body at a time when timing, as timing needs a quiet machine.
         let measure = |&i: &usize| {
             let body = load_body(sources, &bodies[i]);
@@ -2832,28 +2777,23 @@ fn part_f(sources: &Sources, bodies: &[BodySource], present: &[(Client, u64, usi
             drop(decoded);
             let colour_bytes: u64 = stream.tables.iter().chain(&stream.streams).map(|s| s.len() as u64).sum();
             let colour_seconds = if time { single.install(|| fastest(|| decode_colour(&stream, &sizes).len())).as_secs_f64() } else { 0.0 };
-            // WebP and JPEG XL lossless, frame by frame; WebP also as one strip per direction.
+            // WebP lossless, frame by frame and as one strip per direction.
             let webps: Vec<Vec<u8>> = frames.par_iter().map(|(w, h, data)| webp_encode(data, *w as usize, *h as usize)).collect();
             let webp_seconds = if time { single.install(|| fastest(|| webps.iter().map(|d| webp_decode(d).len()).sum::<usize>())).as_secs_f64() } else { 0.0 };
             assert!(webps.iter().zip(&frames).all(|(d, f)| webp_decode(d) == f.2), "{}: WebP does not round-trip", body.label);
             let webp_bytes: u64 = webps.iter().map(|d| d.len() as u64).sum();
             drop(webps);
-            let jxls: Vec<Vec<u8>> = frames.par_iter().map(|(w, h, data)| jxl_encode(data, *w as usize, *h as usize, RGBA_CHANNELS as u32, EncoderSpeed::Squirrel)).collect();
-            let jxl_seconds = if time { single.install(|| fastest(|| jxls.iter().map(|d| jxl_decode(d).len()).sum::<usize>())).as_secs_f64() } else { 0.0 };
-            assert!(jxls.iter().zip(&frames).all(|(d, f)| jxl_decode(d) == f.2), "{}: JPEG XL does not round-trip", body.label);
-            let jxl_bytes: u64 = jxls.iter().map(|d| d.len() as u64).sum();
-            drop(jxls);
             let strip = rgba_strips(&frames);
             let strips: Vec<Vec<u8>> = strip.par_iter().map(|(w, h, data)| webp_encode(data, *w as usize, *h as usize)).collect();
             assert!(strips.iter().zip(&strip).all(|(d, f)| webp_decode(d) == f.2), "{}: WebP strip does not round-trip", body.label);
             let strip_seconds = if time { single.install(|| fastest(|| strips.iter().map(|d| webp_decode(d).len()).sum::<usize>())).as_secs_f64() } else { 0.0 };
             let strip_bytes: u64 = strips.iter().map(|d| d.len() as u64).sum();
             println!("  {} done: {:.1} Mpx upscaled", body.label, raw as f64 / RGBA_CHANNELS as f64 / PIXELS_PER_MEGAPIXEL);
-            (bc7, unmapped, mmpx_rows, mmpx_output, xbrz_rows, xbrz_output, raw, colour_bytes, colour_seconds, webp_bytes, webp_seconds, jxl_bytes, jxl_seconds, strip_bytes, strip_seconds)
+            (bc7, unmapped, mmpx_rows, mmpx_output, xbrz_rows, xbrz_output, raw, colour_bytes, colour_seconds, webp_bytes, webp_seconds, strip_bytes, strip_seconds)
         };
         let rows: Vec<_> = if time { sample.iter().map(measure).collect() } else { sample.par_iter().map(measure).collect() };
         for row in rows {
-            let (b, unmapped, mmpx_rows, mmpx_output, xbrz_rows, xbrz_output, raw, colour_bytes, colour_seconds, webp_bytes, webp_seconds, jxl_bytes, jxl_seconds, strip_bytes, strip_seconds) = row;
+            let (b, unmapped, mmpx_rows, mmpx_output, xbrz_rows, xbrz_output, raw, colour_bytes, colour_seconds, webp_bytes, webp_seconds, strip_bytes, strip_seconds) = row;
             bc7 += b;
             mmpx_unmapped += unmapped;
             raw_rgba += raw;
@@ -2866,7 +2806,6 @@ fn part_f(sources: &Sources, bodies: &[BodySource], present: &[(Client, u64, usi
             colour.add(colour_bytes, raw, colour_seconds);
             webp_frame.add(webp_bytes, raw, webp_seconds);
             webp_strip.add(strip_bytes, raw, strip_seconds);
-            jxl_frame.add(jxl_bytes, raw, jxl_seconds);
         }
         println!("\n#### {} upscale sample: {} bodies, {:.0} Mpx at {UPSCALE}x; xBRZ BC7 + zstd 7 {:.1} MB; MMPX pixels without a source colour {mmpx_unmapped}\n", client.label(), sample.len(), raw_rgba as f64 / RGBA_CHANNELS as f64 / PIXELS_PER_MEGAPIXEL, mb(bc7));
         println!("| content and coder | MB | x BC7 at {UPSCALE}x | decode MB/s, one thread | lossless |");
@@ -2884,7 +2823,6 @@ fn part_f(sources: &Sources, bodies: &[BodySource], present: &[(Client, u64, usi
         row("xBRZ RGBA8, YCoCg-R + alpha, MED, rANS".to_string(), &colour, "yes");
         row("xBRZ RGBA8, WebP lossless m6, per frame".to_string(), &webp_frame, "yes");
         row("xBRZ RGBA8, WebP lossless m6, per direction strip".to_string(), &webp_strip, "yes");
-        row("xBRZ RGBA8, JPEG XL lossless effort 7, per frame".to_string(), &jxl_frame, "yes");
     }
     part_f13(sources, bodies, present);
 }
@@ -3112,7 +3050,7 @@ pub(super) fn run(sources: &Sources, bodies: &[BodySource], present: &[(Client, 
             sample_of(present, client, count)
         })
         .collect();
-    if ["b", "c", "c7", "d", "e"].iter().any(|part| runs(part)) {
+    if ["b", "c", "d", "e"].iter().any(|part| runs(part)) {
         let started = Instant::now();
         let measure_bc7 = runs("b");
         let sample: Vec<Planes> = sample_indices.par_iter().map(|&i| load_planes(sources, &bodies[i], measure_bc7)).collect();
@@ -3131,9 +3069,6 @@ pub(super) fn run(sources: &Sources, bodies: &[BodySource], present: &[(Client, 
         };
         if runs("c") {
             part_c(&bound_sample(), Order::Path);
-        }
-        if runs("c7") {
-            part_c7(&bound_sample(), Order::Path);
         }
         if runs("d") {
             part_d(&bound_sample());

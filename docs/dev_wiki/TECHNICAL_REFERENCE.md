@@ -186,7 +186,7 @@ Use these rules when changing packers or samplers:
 - Linear-sampled terrain/material surfaces require edge-extruded gutters.
 - Mobile animation atlases require edge-extruded gutters because inspector views and animation preview paths can sample or display the page as an atlas texture.
 - Nearest-sampled masked static sprites may reserve unextruded gutters for block separation without making the gutter part of the visual contract.
-- Do not expect the renderer to undo BC7 RDO. Zstd/JXL supercompression is decoded before upload, but BC7 RDO has already changed the GPU blocks.
+- Do not expect the renderer to undo BC7 RDO. Zstd supercompression is decoded before upload, but BC7 RDO has already changed the GPU blocks.
 
 Dynamapper currently sets Bevy's default image sampler to nearest for ordinary images. Land texture arrays override this with linear sampling, so land package gutters must stay filter-ready. Any future change that makes world art linear-sampled must either add static-art edge extrusion at package time or clamp/sample inside the sprite content rectangle in the shader.
 

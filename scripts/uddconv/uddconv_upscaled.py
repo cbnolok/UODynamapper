@@ -42,7 +42,7 @@ def add_format_args(parser: argparse.ArgumentParser, *, prefix: str = "") -> Non
         f"--{prefix}format",
         default=None,
         metavar="FORMAT",
-        help="Texture output format: raw, rgba8888, jxl, bc7, bc7-rdo, or bc7-rdo-lambda=VALUE.",
+        help="Texture output format: raw, rgba8888, bc7, bc7-rdo, or bc7-rdo-lambda=VALUE.",
     )
 
 
@@ -97,8 +97,6 @@ def format_args_from_namespace(
         return []
     if selected in ("raw", "rgba8888"):
         return [f"--{cli_prefix}raw"]
-    if selected == "jxl":
-        return [f"--{cli_prefix}jxl"]
     if selected == "bc7":
         return [f"--{cli_prefix}bc7"]
     if selected == "bc7-rdo":
@@ -111,7 +109,7 @@ def format_args_from_namespace(
         return [f"--{cli_prefix}bc7-rdo", "--bc7-rdo-lambda", value]
     print(
         f"invalid --{prefix}format: {selected} "
-        "(expected raw, rgba8888, jxl, bc7, bc7-rdo, or bc7-rdo-lambda=VALUE)",
+        "(expected raw, rgba8888, bc7, bc7-rdo, or bc7-rdo-lambda=VALUE)",
         file=sys.stderr,
     )
     raise SystemExit(2)
@@ -158,7 +156,7 @@ def format_and_zstd_args(
         result.extend(prefixed_zstd)
     elif global_zstd:
         result.extend(global_zstd)
-    elif default_zstd and requested_format != "jxl":
+    elif default_zstd:
         result.extend([f"--{cli_prefix}zstd"])
     return result
 

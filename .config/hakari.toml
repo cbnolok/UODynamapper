@@ -36,8 +36,7 @@ platforms = [
 # exact-versions = true
 
 # Hakari also simulates every member built with all features. That would force opt-in features on every build:
-# dynamapper's tracy and GPU profiling, uocf's profiling, and the vendored libjxl of the musl builds. These
-# crates stay out of the hack. Bevy is used by dynamapper alone, so its features never differ between builds.
+# dynamapper's tracy and GPU profiling, and uocf's profiling. These crates stay out of the hack. Bevy is used by dynamapper alone, so its features never differ between builds.
 [final-excludes]
 third-party = [
     { name = "bevy" },
@@ -57,8 +56,6 @@ third-party = [
     { name = "bevy_render" },
     { name = "bevy_transform" },
     { name = "bevy_winit" },
-    { name = "jpegxl-rs" },
-    { name = "jpegxl-sys" },
     { name = "profiling" },
     { name = "tracing-tracy" },
     { name = "tracy-client" },

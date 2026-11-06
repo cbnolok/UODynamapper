@@ -149,23 +149,11 @@ linker_optimized_flags_nightly := if is_linux == "true" {
 
 # Features to enable on Linux by default (ensures Wayland/X11 support when using --no-default-features)
 linux_features := if is_linux == "true" { "linux_wayland,linux_x11" } else { "" }
-# Set VENDORED_JXL=true to build libjxl from source (required on systems without libjxl-dev installed).
-# Defaults to true on CI where libjxl-dev is not installed.
-jxl_vendored      := env_var_or_default("VENDORED_JXL", is_ci)
-jxl_vendored_feat := if jxl_vendored == "true" { "udd-container/vendored-jpegxl" } else { "" }
-# Combined features for --no-default-features builds (release, profiling, run)
-# NOTE: just (1.51) conditions support only a single comparison — no && / || chaining,
-# even parenthesized — so this joins the two feature lists via nested ifs.
-build_features := \
-    if linux_features != "" { \
-        if jxl_vendored_feat != "" { linux_features + "," + jxl_vendored_feat } \
-        else { linux_features } \
-    } else { jxl_vendored_feat }
-# Musl targets always require vendored libjxl (no system package available)
-musl_features := "udd-container/vendored-jpegxl"
+# Features for --no-default-features builds (release, profiling, run)
+build_features := linux_features
 # Avoids passing --features "" on platforms where build_features is empty (Windows PowerShell can't handle empty quoted args)
 features_args  := if build_features != "" { "--features " + build_features } else { "" }
-# Added -Clink-arg=-lgcc to musl RUSTFLAGS to satisfy compiler builtins like __popcountdi2 emitted by vendored libjxl C++ objects
+# -Clink-arg=-lgcc in the musl RUSTFLAGS satisfies compiler builtins like __popcountdi2 that the C dependencies may emit
 linux_musl_rustflags := " -Ctarget-feature=+crt-static -Clink-self-contained=yes -Clink-arg=-lgcc"
 rustflags_release_stable_musl := ""
 rustflags_release_nightly_musl := ""
@@ -288,8 +276,7 @@ build-linux-musl-release target *args:
     @echo "Using features: {{build_features}}"
     @echo "Adding musl RUSTFLAGS: {{linux_musl_rustflags}} {{rustflags_release_stable_musl}}"
     RUSTFLAGS="{{RUSTFLAGS_RELEASE_STABLE}}{{linux_musl_rustflags}}{{rustflags_release_stable_musl}}" \
-        cargo build --target "{{target}}" --release --locked {{cli_packages}} --bins --no-default-features --features \
-        "{{musl_features}}" {{args}}
+        cargo build --target "{{target}}" --release --locked {{cli_packages}} --bins --no-default-features {{args}}
 
 # Build the CLI tools for a Linux musl release target with the nightly toolchain (see cli_packages).
 build-linux-musl-release-nightly target *args:
@@ -299,8 +286,8 @@ build-linux-musl-release-nightly target *args:
     @echo 'Adding cargo flags: {{CARGO_FLAGS_NIGHTLY}}'
     @echo "Adding musl RUSTFLAGS: {{linux_musl_rustflags}} {{rustflags_release_nightly_musl}}"
     RUSTFLAGS="{{RUSTFLAGS_RELEASE_NIGHTLY}}{{linux_musl_rustflags}}{{rustflags_release_nightly_musl}}" \
-        cargo +{{nightly_toolchain}} build --target "{{target}}" --release --locked {{cli_packages}} --bins --no-default-features --features \
-        "{{musl_features}}" {{CARGO_FLAGS_NIGHTLY}} {{args}}
+        cargo +{{nightly_toolchain}} build --target "{{target}}" --release --locked {{cli_packages}} --bins --no-default-features \
+        {{CARGO_FLAGS_NIGHTLY}} {{args}}
 
 # Build the full workspace with the same nightly release settings used by CI.
 build-ci-workspace *args:
@@ -346,7 +333,7 @@ build-linux-musl-profile target *args:
     @echo "Adding musl RUSTFLAGS: {{linux_musl_rustflags}} {{rustflags_profile_stable_musl}}"
     RUSTFLAGS="{{RUSTFLAGS_PROFILE_STABLE}}{{linux_musl_rustflags}}{{rustflags_profile_stable_musl}}" \
         cargo build --target "{{target}}" --profile profiling --locked {{cli_packages}} --bins --no-default-features --features \
-        "uocf/profiling,{{musl_features}}" {{args}}
+        "uocf/profiling" {{args}}
 
 # Build the full workspace in profiling mode with nightly build-std optimizations.
 build-local-workspace-profile-nightly *args:
@@ -365,7 +352,7 @@ build-linux-musl-profile-nightly target *args:
     @echo "Adding musl RUSTFLAGS: {{linux_musl_rustflags}} {{rustflags_profile_nightly_musl}}"
     RUSTFLAGS="{{RUSTFLAGS_PROFILE_NIGHTLY}}{{linux_musl_rustflags}}{{rustflags_profile_nightly_musl}}" \
         cargo +{{nightly_toolchain}} build --target "{{target}}" --profile profiling --locked {{cli_packages}} --bins --no-default-features --features \
-        "uocf/profiling,{{musl_features}}" {{CARGO_FLAGS_NIGHTLY}} {{args}}
+        "uocf/profiling" {{CARGO_FLAGS_NIGHTLY}} {{args}}
 
 # Generate a Dynamapper SVG flamegraph with cargo-flamegraph and nightly profiling settings.
 profile-dynamapper-flamegraph *args:

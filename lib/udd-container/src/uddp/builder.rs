@@ -16,10 +16,8 @@ use rayon::prelude::*;
 use xxhash_rust::xxh64::Xxh64;
 
 use super::support::{
-    jxl_compress, jxl_compress_numeric_level, jxl_zstd_compress, jxl_zstd_compress_level,
-    jxl_zstd_compress_levels, patch_header_package_hash64, zstd_compress, zstd_compress_level,
-    zstd_compress_level_parallel, zstd_compress_parallel, zstd_compress_with_dict,
-    zstd_compress_with_dict_parallel,
+    patch_header_package_hash64, zstd_compress, zstd_compress_level, zstd_compress_level_parallel,
+    zstd_compress_parallel, zstd_compress_with_dict, zstd_compress_with_dict_parallel,
 };
 use super::*;
 
@@ -155,7 +153,6 @@ pub struct CompressionSummary {
     pub raw: usize,
     pub zstd_no_dict: usize,
     pub zstd_dict: usize,
-    pub jpeg_xl: usize,
     pub auto: usize,
 }
 
@@ -168,17 +165,6 @@ impl CompressionSummary {
                 self.zstd_no_dict += 1
             }
             CompressionFlag::ZstdDict => self.zstd_dict += 1,
-            CompressionFlag::JpegXl | CompressionFlag::JpegXlLevel(_) => {
-                self.jpeg_xl += 1
-            }
-            CompressionFlag::JpegXlZstd | CompressionFlag::JpegXlZstdLevel(_) => {
-                self.jpeg_xl += 1;
-                self.zstd_no_dict += 1;
-            }
-            CompressionFlag::JpegXlZstdLevels { .. } => {
-                self.jpeg_xl += 1;
-                self.zstd_no_dict += 1;
-            }
             CompressionFlag::Auto => self.auto += 1,
         }
     }
@@ -698,7 +684,6 @@ pub(crate) fn codec_to_compression_flag(codec: Codec) -> CompressionFlag {
         Codec::None => CompressionFlag::None,
         Codec::ZstdNoDict => CompressionFlag::ZstdNoDict,
         Codec::ZstdTypeDict => CompressionFlag::ZstdDict,
-        Codec::JpegXl => CompressionFlag::JpegXl,
     }
 }
 
@@ -832,13 +817,6 @@ where
         &mut completed,
         &mut progress,
     )?;
-    compress_files_serial_with_progress(
-        files,
-        dicts_by_type,
-        &mut compressed_files,
-        &mut completed,
-        &mut progress,
-    )?;
 
     compressed_files
         .into_iter()
@@ -866,13 +844,10 @@ where
     let mut compressed_files = vec![None; file_count];
     let mut parallel_files = Vec::new();
     let mut large_zstd_files = Vec::new();
-    let mut serial_files = Vec::new();
 
     for (index, file) in files.into_iter().enumerate() {
         if uses_parallel_zstd_compression(&file) {
             large_zstd_files.push((index, file));
-        } else if uses_internal_parallel_compression(&file) {
-            serial_files.push((index, file));
         } else {
             parallel_files.push((index, file));
         }
@@ -920,26 +895,6 @@ where
         &mut progress,
     )?;
 
-    for (index, file) in serial_files {
-        progress(CompressionProgress {
-            completed,
-            active_file: Some(BuildProgressFile {
-                index,
-                total: file_count,
-                compression: file.compression,
-                raw_size: file.raw_data.len(),
-                width: file.width,
-                height: file.height,
-            }),
-        });
-        compressed_files[index] = Some(compress_file_owned(file, dicts_by_type)?);
-        completed += 1;
-        progress(CompressionProgress {
-            completed,
-            active_file: None,
-        });
-    }
-
     compressed_files
         .into_iter()
         .map(|file| {
@@ -963,7 +918,7 @@ where
     let parallel_files = files
         .iter()
         .enumerate()
-        .filter(|(_, file)| !uses_internal_parallel_compression(file))
+        .filter(|(_, file)| !uses_parallel_zstd_compression(file))
         .collect::<Vec<_>>();
     if parallel_files.is_empty() {
         return Ok(());
@@ -1104,56 +1059,6 @@ fn progress_file(index: usize, total: usize, file: &PendingFile) -> BuildProgres
     }
 }
 
-fn compress_files_serial_with_progress<F>(
-    files: &[PendingFile],
-    dicts_by_type: &HashMap<u8, Vec<u8>>,
-    compressed_files: &mut [Option<BuiltFile>],
-    completed: &mut usize,
-    progress: &mut F,
-) -> Result<(), BuildError>
-where
-    F: FnMut(CompressionProgress),
-{
-    for (index, file) in files.iter().enumerate() {
-        if !uses_jxl_compression(file) {
-            continue;
-        }
-        progress(CompressionProgress {
-            completed: *completed,
-            active_file: Some(BuildProgressFile {
-                index,
-                total: files.len(),
-                compression: file.compression,
-                raw_size: file.raw_data.len(),
-                width: file.width,
-                height: file.height,
-            }),
-        });
-        compressed_files[index] = Some(compress_file(file, dicts_by_type)?);
-        *completed += 1;
-        progress(CompressionProgress {
-            completed: *completed,
-            active_file: None,
-        });
-    }
-    Ok(())
-}
-
-fn uses_internal_parallel_compression(file: &PendingFile) -> bool {
-    uses_jxl_compression(file) || uses_parallel_zstd_compression(file)
-}
-
-fn uses_jxl_compression(file: &PendingFile) -> bool {
-    matches!(
-        file.compression,
-        CompressionFlag::JpegXl
-            | CompressionFlag::JpegXlLevel(_)
-            | CompressionFlag::JpegXlZstd
-            | CompressionFlag::JpegXlZstdLevel(_)
-            | CompressionFlag::JpegXlZstdLevels { .. }
-    )
-}
-
 fn uses_parallel_zstd_compression(file: &PendingFile) -> bool {
     file.raw_data.len() >= PARALLEL_ZSTD_MIN_BYTES
         && matches!(
@@ -1200,46 +1105,6 @@ fn compress_file(
                 zstd_compress_with_dict(data_to_compress, dict).map_err(BuildError::Io)?
             };
             (Codec::ZstdTypeDict, encoded)
-        }
-        CompressionFlag::JpegXl => {
-            let encoded = jxl_compress(data_to_compress, file.width, file.height)
-                .map_err(BuildError::CodecError)?;
-            (Codec::JpegXl, encoded)
-        }
-        CompressionFlag::JpegXlLevel(level) => {
-            let encoded = jxl_compress_numeric_level(
-                data_to_compress,
-                file.width,
-                file.height,
-                level,
-            )
-            .map_err(BuildError::CodecError)?;
-            (Codec::JpegXl, encoded)
-        }
-        CompressionFlag::JpegXlZstd => {
-            let encoded = jxl_zstd_compress(data_to_compress, file.width, file.height)
-                .map_err(BuildError::CodecError)?;
-            (Codec::JpegXl, encoded)
-        }
-        CompressionFlag::JpegXlZstdLevel(level) => {
-            let encoded =
-                jxl_zstd_compress_level(data_to_compress, file.width, file.height, level)
-                    .map_err(BuildError::CodecError)?;
-            (Codec::JpegXl, encoded)
-        }
-        CompressionFlag::JpegXlZstdLevels {
-            jxl_level,
-            zstd_level,
-        } => {
-            let encoded = jxl_zstd_compress_levels(
-                data_to_compress,
-                file.width,
-                file.height,
-                jxl_level,
-                zstd_level,
-            )
-            .map_err(BuildError::CodecError)?;
-            (Codec::JpegXl, encoded)
         }
         CompressionFlag::Auto => {
             choose_auto_compression(file, dicts_by_type.get(&file.data_type))?
@@ -1317,46 +1182,6 @@ fn compress_file_owned(
                 zstd_compress_with_dict(data_to_compress, dict).map_err(BuildError::Io)?
             };
             (Codec::ZstdTypeDict, encoded)
-        }
-        CompressionFlag::JpegXl => {
-            let encoded = jxl_compress(data_to_compress, file.width, file.height)
-                .map_err(BuildError::CodecError)?;
-            (Codec::JpegXl, encoded)
-        }
-        CompressionFlag::JpegXlLevel(level) => {
-            let encoded = jxl_compress_numeric_level(
-                data_to_compress,
-                file.width,
-                file.height,
-                level,
-            )
-            .map_err(BuildError::CodecError)?;
-            (Codec::JpegXl, encoded)
-        }
-        CompressionFlag::JpegXlZstd => {
-            let encoded = jxl_zstd_compress(data_to_compress, file.width, file.height)
-                .map_err(BuildError::CodecError)?;
-            (Codec::JpegXl, encoded)
-        }
-        CompressionFlag::JpegXlZstdLevel(level) => {
-            let encoded =
-                jxl_zstd_compress_level(data_to_compress, file.width, file.height, level)
-                    .map_err(BuildError::CodecError)?;
-            (Codec::JpegXl, encoded)
-        }
-        CompressionFlag::JpegXlZstdLevels {
-            jxl_level,
-            zstd_level,
-        } => {
-            let encoded = jxl_zstd_compress_levels(
-                data_to_compress,
-                file.width,
-                file.height,
-                jxl_level,
-                zstd_level,
-            )
-            .map_err(BuildError::CodecError)?;
-            (Codec::JpegXl, encoded)
         }
     };
 
@@ -1652,53 +1477,6 @@ mod tests {
         assert!(!phases.contains(&BuildProgressPhase::TrainingDictionaries));
         assert!(phases.contains(&BuildProgressPhase::CompressingFiles));
         assert!(phases.contains(&BuildProgressPhase::Assembling));
-    }
-
-    #[test]
-    fn jpegxl_build_reports_active_compression_file() {
-        let mut builder = UddpBuilder::new(LookupMode::DenseId);
-        builder
-            .add_owned_file(AddOwnedFileRequest {
-                data_type: DataType::Texture as u8,
-                compression: CompressionFlag::JpegXl,
-                width: 2,
-                height: 2,
-                virtual_path: None,
-                path_hash64: None,
-                id: Some(0),
-                data: vec![
-                    255, 0, 0, 255,
-                    0, 255, 0, 255,
-                    0, 0, 255, 255,
-                    255, 255, 255, 255,
-                ],
-            })
-            .expect("add jxl texture");
-
-        let mut compression_events = Vec::new();
-        builder
-            .build_with_progress(|progress| {
-                if progress.phase == BuildProgressPhase::CompressingFiles {
-                    compression_events.push(progress);
-                }
-            })
-            .expect("build package");
-
-        assert!(compression_events.iter().any(|progress| {
-            progress.completed == 0
-                && progress.active_file
-                    == Some(BuildProgressFile {
-                        index: 0,
-                        total: 1,
-                        compression: CompressionFlag::JpegXl,
-                        raw_size: 16,
-                        width: 2,
-                        height: 2,
-                    })
-        }));
-        assert!(compression_events.iter().any(|progress| {
-            progress.completed == 1 && progress.active_file.is_none()
-        }));
     }
 
     #[test]

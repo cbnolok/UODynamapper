@@ -174,7 +174,7 @@ the conversion pipeline. Covers:
 ### Custom support libraries
 
 - [`udd-container`](lib/udd-container/README.md): low-level `.uddp` / `.uddf` container I/O, compression
-  (zstd, JPEG XL), and xxHash-64 path addressing.
+  (zstd), and xxHash-64 path addressing.
 - [`udd-assets`](lib/udd-assets/README.md): typed runtime readers for converted `.uddp` packages; used by
   `dynamapper` at runtime and by tools for inspection and validation.
 - [`udd-conv`](lib/udd-conv/README.md): conversion and atlas-packing logic shared by `udd-conv-cli` and

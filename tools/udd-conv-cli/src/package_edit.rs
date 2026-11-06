@@ -112,7 +112,6 @@ fn codec_to_compression_flag_local(codec: Codec) -> CompressionFlag {
     match codec {
         Codec::None => CompressionFlag::None,
         Codec::ZstdNoDict => CompressionFlag::ZstdNoDict,
-        Codec::JpegXl => CompressionFlag::JpegXl,
         Codec::ZstdTypeDict => CompressionFlag::Auto,
     }
 }

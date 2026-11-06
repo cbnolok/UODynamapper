@@ -11,7 +11,6 @@ pub enum TextureOptimization {
     None,
     Bc7,
     Bc7Zstd,
-    JpegXl,
 }
 
 /// The GUI writes this file itself (on every change and on exit), so it is read leniently: keys missing from an
@@ -45,13 +44,6 @@ pub struct AppSettings {
     pub zstd_mobile_anim_cc: i32,
     pub zstd_mobile_anim_ec: i32,
     pub zstd_tex_aux_ec: i32,
-    pub jxl_tex_art_cc: u8,
-    pub jxl_tex_land_cc: u8,
-    pub jxl_tex_art_ec: u8,
-    pub jxl_tex_land_ec: u8,
-    pub jxl_mobile_anim_cc: u8,
-    pub jxl_mobile_anim_ec: u8,
-    pub jxl_tex_aux_ec: u8,
     pub bc7_rdo_lambda: f32,
     pub bc7_rdo_lookback_blocks: usize,
     pub bc7_rdo_enabled: bool,
@@ -103,13 +95,6 @@ impl Default for AppSettings {
             zstd_mobile_anim_cc: default_zstd_level(),
             zstd_mobile_anim_ec: default_zstd_level(),
             zstd_tex_aux_ec: LOSSLESS_PAGE_ZSTD_LEVEL,
-            jxl_tex_art_cc: default_jxl_level(),
-            jxl_tex_land_cc: default_jxl_level(),
-            jxl_tex_art_ec: default_jxl_level(),
-            jxl_tex_land_ec: default_jxl_level(),
-            jxl_mobile_anim_cc: default_jxl_level(),
-            jxl_mobile_anim_ec: default_jxl_level(),
-            jxl_tex_aux_ec: default_jxl_level(),
             bc7_rdo_lambda: default_bc7_rdo_lambda(),
             bc7_rdo_lookback_blocks: default_bc7_rdo_lookback_blocks(),
             bc7_rdo_enabled: default_bc7_rdo_enabled(),
@@ -150,10 +135,6 @@ fn default_bc7_rdo_enabled() -> bool {
 
 fn default_zstd_level() -> i32 {
     7
-}
-
-fn default_jxl_level() -> u8 {
-    6
 }
 
 fn default_mobile_anim_optimization() -> TextureOptimization {

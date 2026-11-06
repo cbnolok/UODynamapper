@@ -297,7 +297,7 @@ Done or superseded. Blend inputs (`SecondaryBase`, `BlendAlpha`, `CoverageAlpha`
 
 ### Export And Tooling
 
-- Implement the 1:1 tiled world export pipeline (approved 2026-11-01: WebP method 4 q85 sharp YUV, no JPEG XL set; offscreen export mode after a control-channel pilot; Britannia first; 512 px tiles; Leaflet 1.9.4 vendored; z = 0 readout; sRGB box downsampling). [Web map export proposal](agent_notes/proposals/2026-11-01-web-map-export.md#decisions-2026-11-01).
+- Implement the 1:1 tiled world export pipeline (approved 2026-11-01: WebP method 4 q85 sharp YUV only; offscreen export mode after a control-channel pilot; Britannia first; 512 px tiles; Leaflet 1.9.4 vendored; z = 0 readout; sRGB box downsampling). [Web map export proposal](agent_notes/proposals/2026-11-01-web-map-export.md#decisions-2026-11-01).
   - Done: `tools/webmap-export-cli` (`plan`, `run`, `pyramid`, `viewer`, `pilot`): the frame plan, the spool consumer of the renderer contract, the lossless level-6 intermediate and the pyramid built from it, atomic writes and frame-level resume, the libwebp wrapper with `--quality`/`--method`/`--sharp-yuv` (covers the WebP profile item; lossless tiles are not needed).
   - Renderer session: the export mode (`DYNAMAPPER_EXPORT_JOB`), per the [contract](agent_notes/proposals/2026-11-01-web-map-export.md#contract-for-the-renderer-session); requested in agents_comm.txt.
   - Renderer session: the 2 x 2 control-channel pilot with `webmap-export-cli pilot`; requested in agents_comm.txt.

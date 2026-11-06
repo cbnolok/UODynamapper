@@ -9,8 +9,11 @@ container layout.
 - **Package reading**: `UddpReader` and `UddpReaderOptions` for memory-mapped
   package access and entry enumeration.
 - **Package writing**: package image assembly and atomic rewrite.
-- **Compression**: per-entry codec dispatch. Supported codecs: zstd,
-  JPEG XL (for applicable texture data), and raw (uncompressed).
+- **Compression**: per-entry codec dispatch. Supported codecs: zstd (plain or
+  with a per-type dictionary) and raw (uncompressed). Codec id 3, lossless
+  JPEG XL until its removal on 2026-11-06, stays reserved: a package that still
+  uses it fails to open, naming the package, and has to be repacked with the
+  current `udd-cli`.
 - **Hashing**: `xxh64_virtual_path` for path-addressed entry lookup
   (xxHash-64 over the virtual path string).
 - **Metadata helpers**: `unpack_codec`, `unpack_offset40`, `unpack_type`,
@@ -25,7 +28,5 @@ The `.uddp` container format is documented in
 ## Notes
 
 - `memmap2` is used for large package reads.
-- `jpegxl-rs` links the system libjxl, or builds it from source with the `vendored-jpegxl` feature. libjxl's
-  parallel decode and encode work runs on the caller's rayon pool, never on threads of its own.
 - This crate has no dependency on `uocf` or any UO-specific logic; it is a
   pure container layer.

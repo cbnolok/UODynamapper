@@ -134,9 +134,6 @@ fn compression_message(summary: CompressionSummary) -> String {
     if zstd > 0 {
         parts.push(format!("Zstd payload pass: {zstd} files"));
     }
-    if summary.jpeg_xl > 0 {
-        parts.push(format!("JPEG XL payload pass: {} files", summary.jpeg_xl));
-    }
     if summary.auto > 0 {
         parts.push(format!("auto compression evaluation: {} files", summary.auto));
     }
@@ -160,10 +157,6 @@ fn phase_message(phase: BuildProgressPhase, compression_summary: CompressionSumm
 
 fn active_file_message(file: BuildProgressFile) -> String {
     let compression = match file.compression {
-        CompressionFlag::JpegXl | CompressionFlag::JpegXlLevel(_) => "JPEG XL",
-        CompressionFlag::JpegXlZstd
-        | CompressionFlag::JpegXlZstdLevel(_)
-        | CompressionFlag::JpegXlZstdLevels { .. } => "JPEG XL plus Zstd",
         CompressionFlag::ZstdNoDict | CompressionFlag::ZstdNoDictLevel(_) => "Zstd",
         CompressionFlag::ZstdDict => "Zstd dictionary",
         CompressionFlag::Auto => "auto",
@@ -212,14 +205,6 @@ pub fn atlas_payload_progress_message(
         }
     } else {
         match compression {
-            CompressionFlag::JpegXl | CompressionFlag::JpegXlLevel(_) => {
-                format!("registering {subject} for JPEG XL package compression")
-            }
-            CompressionFlag::JpegXlZstd
-            | CompressionFlag::JpegXlZstdLevel(_)
-            | CompressionFlag::JpegXlZstdLevels { .. } => {
-                format!("registering {subject} for JPEG XL plus Zstd package compression")
-            }
             CompressionFlag::None => format!("registering uncompressed {subject}"),
             CompressionFlag::ZstdNoDict
             | CompressionFlag::ZstdNoDictLevel(_)
@@ -243,14 +228,6 @@ pub fn atlas_payload_finish_message(
         }
     } else {
         match compression {
-            CompressionFlag::JpegXl | CompressionFlag::JpegXlLevel(_) => {
-                format!("{subject} registered for JPEG XL package compression")
-            }
-            CompressionFlag::JpegXlZstd
-            | CompressionFlag::JpegXlZstdLevel(_)
-            | CompressionFlag::JpegXlZstdLevels { .. } => {
-                format!("{subject} registered for JPEG XL plus Zstd package compression")
-            }
             CompressionFlag::None => format!("{subject} registered uncompressed"),
             CompressionFlag::ZstdNoDict
             | CompressionFlag::ZstdNoDictLevel(_)

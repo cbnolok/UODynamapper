@@ -853,7 +853,8 @@ the same day ([`bc7_alpha_plane_search.md`](bc7_alpha_plane_search.md)). The use
 
 - **Lossless gumps and land pages use zstd 19** (2026-11-06). The atlas pages of `gumps_cc`, `gumps_ec`, `tex_land_cc` and
   `tex_land_ec` are RGBA8888 with plain zstd 19 (`LOSSLESS_PAGE_ZSTD_LEVEL` in `lib/udd-conv/src/page_compression.rs`) instead of
-  lossless JPEG XL at effort 6, which stays an explicit choice (`--jxl`, the converter GUI's Jpeg XL format). Measured on the
+  lossless JPEG XL at effort 6, which stayed an explicit choice (`--jxl`, the converter GUI's Jpeg XL format) until its removal
+  (below). Measured on the
   repacked packages, every record decoding to the same bytes as before:
   - pages on disk: `gumps_cc` 2.02 MB against 1.65, `gumps_ec` 2.87 against 2.16 (the packages grow 0.8 %, to 45.6 and 84.2 MB),
     `tex_land_cc` 11.17 against 11.07, `tex_land_ec` 17.16 against 17.73;
@@ -863,10 +864,10 @@ the same day ([`bc7_alpha_plane_search.md`](bc7_alpha_plane_search.md)). The use
   - **The packages still on JPEG XL, against zstd 19** (measured 2026-11-06; the same day the user approved the switch, "Yes
     switch to zstd 19", and `pack-art`, `pack-ec-textures` and `pack-ec-tex-aux` now default to lossless zstd 19 pages).
     Every page of the installed `tex_art_cc`, `tex_art_ec` and `tex_aux_ec`, decoded with the package readers and stored again
-    at zstd 19 through the
-    builder, decodes to the same pixels (0 pages differ; `udd_assets` reads every image the same). Decode is every page once,
-    the best of 5 per page, summed; encode is the whole package through the builder, the best of 5. Unpinned at nice 10 with CPU
-    boost off, beside other agents' builds that kept 0.4–6.9 CPUs busy (3–6.5 through the `tex_art_cc` timings):
+    at zstd 19 through the builder, decodes to the same pixels (0 pages differ; `udd_assets` reads every image the same). Decode
+    is every page once, the best of 5 per page, summed; encode is the whole package through the builder, the best of 5. Unpinned
+    at nice 10 with CPU boost off, beside other agents' builds that kept 0.4–6.9 CPUs busy (3–6.5 through the `tex_art_cc`
+    timings):
 
     | Package | Pages | JPEG XL | zstd 19 | Change | Decode, all pages: JPEG XL 20 / 4 threads, zstd 1 | Page median (p95): JPEG XL 20 / 4 threads, zstd | Encode: zstd 19 / JPEG XL |
     |---|---|---|---|---|---|---|---|
@@ -883,6 +884,10 @@ the same day ([`bc7_alpha_plane_search.md`](bc7_alpha_plane_search.md)). The use
     - zstd 22 with a 2^27 long window, `tex_art_ec` only: 55.12 MB of pages (2.72 MB under zstd 19), decode 637 ms against 602,
       encode 26–33 s of one thread per page (one run).
     - Mobile animation packages: no current package exists, so none was measured.
+  - **JPEG XL removed** (2026-11-06). The user asked "is there even a single reason to keep jxl as a supported format?" and
+    approved its removal ("proposal approved"): zstd 19 is smaller and decodes faster on every package measured above, and
+    libjxl blocked the MinGW Windows build and needed a vendored C++ build on CI and musl. Codec id 3 stays reserved: a package
+    that still stores it fails to open, naming the package, and has to be repacked with the current `udd-cli`.
 
 **Open:**
 

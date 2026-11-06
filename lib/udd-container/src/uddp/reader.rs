@@ -10,7 +10,7 @@ use std::collections::HashMap;
 
 use std::sync::{Arc, RwLock};
 
-use super::support::{checked_region, zstd_decompress, jxl_decompress, Cursor};
+use super::support::{checked_region, unpack_codec_id, zstd_decompress, Cursor};
 use zstd::dict::DecoderDictionary;
 use memmap2::Mmap;
 use super::*;
@@ -153,9 +153,10 @@ impl UddpReader {
         path: impl AsRef<std::path::Path>,
         options: UddpReaderOptions,
     ) -> Result<Self, FormatError> {
+        let path = path.as_ref();
         let file = std::fs::File::open(path).map_err(FormatError::Io)?;
         let mmap = unsafe { Mmap::map(&file).map_err(FormatError::Io)? };
-        Self::open_data(UddpData::Mmap(mmap), options)
+        Self::open_data(UddpData::Mmap(mmap), options).map_err(|error| error.in_package(path))
     }
 
     /// Open and fully parse a package from its complete in-memory byte image.
@@ -182,8 +183,9 @@ impl UddpReader {
         path: impl AsRef<std::path::Path>,
         options: UddpReaderOptions,
     ) -> Result<Self, FormatError> {
+        let path = path.as_ref();
         let bytes = std::fs::read(path).map_err(FormatError::Io)?;
-        Self::open_with_options(bytes, options)
+        Self::open_with_options(bytes, options).map_err(|error| error.in_package(path))
     }
 
     fn open_data(data: UddpData, options: UddpReaderOptions) -> Result<Self, FormatError> {
@@ -436,6 +438,7 @@ impl UddpReader {
                 for _ in 0..count {
                     entries.push(UddpLocator::read_from(&mut cur)?);
                 }
+                check_locator_codecs(entries.iter())?;
                 self.dense_index = Some(entries);
             }
             LookupMode::VirtualPathHash => {
@@ -445,6 +448,7 @@ impl UddpReader {
                 for _ in 0..count {
                     entries.push(UddpPathEntry::read_from(&mut cur)?);
                 }
+                check_locator_codecs(entries.iter().map(|entry| &entry.locator))?;
                 self.path_index = Some(entries);
             }
             LookupMode::SparseId => {
@@ -454,6 +458,7 @@ impl UddpReader {
                 for _ in 0..count {
                     entries.push(UddpSparseIdEntry::read_from(&mut cur)?);
                 }
+                check_locator_codecs(entries.iter().map(|entry| &entry.locator))?;
                 self.sparse_index = Some(entries);
             }
         }
@@ -471,9 +476,7 @@ impl UddpReader {
     fn decode_locator_cow(&self, locator: &UddpLocator) -> Result<Cow<'_, [u8]>, FormatError> {
         match unpack_codec(locator.meta32) {
             Codec::None => Ok(Cow::Borrowed(self.locator_payload(locator)?)),
-            Codec::ZstdNoDict | Codec::ZstdTypeDict | Codec::JpegXl => {
-                self.decode_locator(locator).map(Cow::Owned)
-            }
+            Codec::ZstdNoDict | Codec::ZstdTypeDict => self.decode_locator(locator).map(Cow::Owned),
         }
     }
 
@@ -493,14 +496,18 @@ impl UddpReader {
                         .ok_or(FormatError::MissingDictionary(data_type))?;
                     zstd_decompress(data, locator.raw_size as usize, Some(dict)).map_err(FormatError::Io)?
                 }
-                Codec::JpegXl => {
-                    jxl_decompress(data)
-                        .map_err(std::io::Error::other)
-                        .map_err(FormatError::Io)?
-                }
             };
 
             Ok(decoded)
         })
     }
+}
+
+/// Refuses a package whose index names a removed codec ([`REMOVED_JPEG_XL_CODEC_ID`]), so the decoders and
+/// [`unpack_codec`] only ever meet current codecs.
+fn check_locator_codecs<'a>(locators: impl Iterator<Item = &'a UddpLocator>) -> Result<(), FormatError> {
+    for locator in locators {
+        Codec::from_u8(unpack_codec_id(locator.meta32))?;
+    }
+    Ok(())
 }

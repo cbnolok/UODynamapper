@@ -39,7 +39,6 @@ pub fn compression_to_str(codec: Codec) -> &'static str {
         Codec::None => "none",
         Codec::ZstdNoDict => "zstd",
         Codec::ZstdTypeDict => "zstd type dict",
-        Codec::JpegXl => "jpegxl",
     }
 }
 

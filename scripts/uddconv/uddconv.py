@@ -11,6 +11,9 @@ DEFAULT_ZSTD_VALUE = ""
 DEFAULT_ZSTD_ARGS = ["--zstd"]
 # No format flag: the packer's default, lossless Zstd 19 atlas pages.
 DEFAULT_GUMP_ARGS: list[str] = []
+# Mobile animation pages without a format flag: lossless RGBA8888 with Zstd 19, as the art, land and gump pages.
+LOSSLESS_ANIM_FORMAT = "raw"
+LOSSLESS_ZSTD_LEVEL = "19"
 DEFAULT_TABLES_DIR = str(Path(__file__).resolve().parents[2] / "dynamapper/assets/cc_ec_convtables")
 
 
@@ -30,7 +33,7 @@ def add_format_args(parser: argparse.ArgumentParser, *, prefix: str = "") -> Non
         f"--{prefix}format",
         default=None,
         metavar="FORMAT",
-        help="Texture output format: raw, rgba8888, jxl, bc7, bc7-rdo, or bc7-rdo-lambda=VALUE.",
+        help="Texture output format: raw, rgba8888, bc7, bc7-rdo, or bc7-rdo-lambda=VALUE.",
     )
 
 
@@ -58,8 +61,6 @@ def format_args_from_namespace(
         return []
     if selected in ("raw", "rgba8888"):
         return [f"--{cli_prefix}raw"]
-    if selected == "jxl":
-        return [f"--{cli_prefix}jxl"]
     if selected == "bc7":
         return [f"--{cli_prefix}bc7"]
     if selected == "bc7-rdo":
@@ -72,7 +73,7 @@ def format_args_from_namespace(
         return [f"--{cli_prefix}bc7-rdo", "--bc7-rdo-lambda", value]
     print(
         f"invalid --{prefix}format: {selected} "
-        "(expected raw, rgba8888, jxl, bc7, bc7-rdo, or bc7-rdo-lambda=VALUE)",
+        "(expected raw, rgba8888, bc7, bc7-rdo, or bc7-rdo-lambda=VALUE)",
         file=sys.stderr,
     )
     raise SystemExit(2)
@@ -104,7 +105,7 @@ def format_and_zstd_args(
     prefix: str = "",
     cli_prefix: str = "",
     default_format: str | None = None,
-    default_zstd: bool = False,
+    default_zstd_level: str | None = None,
     global_zstd: list[str] | None = None,
 ) -> list[str]:
     requested_format = selected_format(args, prefix=prefix, default=default_format)
@@ -119,8 +120,8 @@ def format_and_zstd_args(
         result.extend(prefixed_zstd)
     elif global_zstd:
         result.extend(global_zstd)
-    elif default_zstd and requested_format != "jxl":
-        result.extend([f"--{cli_prefix}zstd"])
+    elif default_zstd_level is not None:
+        result.append(f"--{cli_prefix}zstd={default_zstd_level}")
     return result
 
 
@@ -348,8 +349,20 @@ def main() -> int:
             # No format flag: the packers' default, lossless Zstd 19 art pages.
             format_and_zstd_args(args, prefix="cc-art-", global_zstd=global_zstd),
             format_and_zstd_args(args, prefix="cc-land-", global_zstd=global_zstd),
-            format_and_zstd_args(args, prefix="cc-anim-", default_format="jxl", global_zstd=global_zstd),
-            format_and_zstd_args(args, prefix="ec-anim-", default_format="jxl", global_zstd=global_zstd),
+            format_and_zstd_args(
+                args,
+                prefix="cc-anim-",
+                default_format=LOSSLESS_ANIM_FORMAT,
+                default_zstd_level=LOSSLESS_ZSTD_LEVEL,
+                global_zstd=global_zstd,
+            ),
+            format_and_zstd_args(
+                args,
+                prefix="ec-anim-",
+                default_format=LOSSLESS_ANIM_FORMAT,
+                default_zstd_level=LOSSLESS_ZSTD_LEVEL,
+                global_zstd=global_zstd,
+            ),
             format_and_zstd_args(args, prefix="art-", cli_prefix="art-", global_zstd=global_zstd),
             format_and_zstd_args(args, prefix="land-", cli_prefix="land-", global_zstd=global_zstd),
             args.tables,
@@ -363,8 +376,20 @@ def main() -> int:
             args.ccdir,
             args.ecdir,
             args.output_dir,
-            format_and_zstd_args(args, prefix="cc-", default_format="jxl", global_zstd=global_zstd),
-            format_and_zstd_args(args, prefix="ec-", default_format="jxl", global_zstd=global_zstd),
+            format_and_zstd_args(
+                args,
+                prefix="cc-",
+                default_format=LOSSLESS_ANIM_FORMAT,
+                default_zstd_level=LOSSLESS_ZSTD_LEVEL,
+                global_zstd=global_zstd,
+            ),
+            format_and_zstd_args(
+                args,
+                prefix="ec-",
+                default_format=LOSSLESS_ANIM_FORMAT,
+                default_zstd_level=LOSSLESS_ZSTD_LEVEL,
+                global_zstd=global_zstd,
+            ),
             args.tables,
         )
     elif args.command == "gumps":

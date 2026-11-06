@@ -32,7 +32,6 @@ flate2 = { version = "1", features = ["zlib-ng"] }
 foldhash = { version = "0.2", default-features = false, features = ["std"] }
 font-types = { version = "0.12", default-features = false, features = ["bytemuck", "serde", "std"] }
 glam = { version = "0.33", default-features = false, features = ["approx", "bytemuck", "encase", "float-types", "glam-assert", "integer-types", "nostd-libm", "rand", "serde", "std"] }
-half = { version = "2", features = ["bytemuck", "num-traits", "serde"] }
 hashbrown-9067fe90e8c1f593 = { package = "hashbrown", version = "0.17", default-features = false, features = ["default-hasher", "inline-more", "raw-entry"] }
 image = { version = "0.25", default-features = false, features = ["bmp", "dds", "jpeg", "png", "tga", "webp"] }
 indexmap = { version = "2", features = ["serde"] }
@@ -83,7 +82,7 @@ quote = { version = "1" }
 regex-automata = { version = "0.4" }
 regex-syntax = { version = "0.8" }
 serde_core = { version = "1", features = ["alloc", "rc"] }
-syn-7b89eefb6aaa9bf3 = { package = "syn", version = "3", features = ["extra-traits", "full", "visit", "visit-mut"] }
+syn-7b89eefb6aaa9bf3 = { package = "syn", version = "3", features = ["extra-traits", "full"] }
 syn-f595c2ba2a3f28df = { package = "syn", version = "2", features = ["extra-traits", "fold", "full", "visit", "visit-mut"] }
 toml_datetime = { version = "1", features = ["serde"] }
 toml_parser = { version = "1" }
@@ -93,6 +92,7 @@ winnow = { version = "1" }
 ahash = { version = "0.8" }
 arboard = { version = "3" }
 getrandom = { version = "0.4", default-features = false, features = ["std", "sys_rng"] }
+half = { version = "2", features = ["bytemuck", "num-traits", "serde"] }
 hashbrown-986da7b5efc2b80e = { package = "hashbrown", version = "0.16", features = ["serde"] }
 libc = { version = "0.2", features = ["extra_traits"] }
 miniz_oxide = { version = "0.8", features = ["simd"] }
@@ -117,6 +117,7 @@ log = { version = "0.4", default-features = false, features = ["std"] }
 ahash = { version = "0.8" }
 arboard = { version = "3" }
 getrandom = { version = "0.4", default-features = false, features = ["std", "sys_rng"] }
+half = { version = "2", features = ["bytemuck", "num-traits", "serde"] }
 hashbrown-986da7b5efc2b80e = { package = "hashbrown", version = "0.16", features = ["serde"] }
 libc = { version = "0.2", features = ["extra_traits"] }
 miniz_oxide = { version = "0.8", features = ["simd"] }
@@ -141,6 +142,7 @@ log = { version = "0.4", default-features = false, features = ["std"] }
 ahash = { version = "0.8" }
 arboard = { version = "3" }
 getrandom = { version = "0.4", default-features = false, features = ["std", "sys_rng"] }
+half = { version = "2", features = ["bytemuck", "num-traits", "serde"] }
 hashbrown-986da7b5efc2b80e = { package = "hashbrown", version = "0.16", features = ["serde"] }
 libc = { version = "0.2", features = ["extra_traits"] }
 miniz_oxide = { version = "0.8", features = ["simd"] }
@@ -165,6 +167,7 @@ log = { version = "0.4", default-features = false, features = ["std"] }
 ahash = { version = "0.8" }
 arboard = { version = "3" }
 getrandom = { version = "0.4", default-features = false, features = ["std", "sys_rng"] }
+half = { version = "2", features = ["bytemuck", "num-traits", "serde"] }
 hashbrown-986da7b5efc2b80e = { package = "hashbrown", version = "0.16", features = ["serde"] }
 libc = { version = "0.2", features = ["extra_traits"] }
 miniz_oxide = { version = "0.8", features = ["simd"] }
@@ -188,6 +191,7 @@ log = { version = "0.4", default-features = false, features = ["std"] }
 [target.x86_64-pc-windows-msvc.dependencies]
 arboard = { version = "3" }
 getrandom = { version = "0.4", default-features = false, features = ["std", "sys_rng"] }
+half = { version = "2", features = ["bytemuck", "num-traits", "serde"] }
 hashbrown-986da7b5efc2b80e = { package = "hashbrown", version = "0.16", features = ["serde"] }
 naga = { version = "30", features = ["glsl-out", "hlsl-out", "spv-out", "wgsl-in"] }
 smol_str = { version = "0.2", features = ["serde"] }
@@ -210,6 +214,7 @@ log = { version = "0.4", default-features = false, features = ["std"] }
 [target.aarch64-pc-windows-msvc.dependencies]
 arboard = { version = "3" }
 getrandom = { version = "0.4", default-features = false, features = ["std", "sys_rng"] }
+half = { version = "2", features = ["bytemuck", "num-traits", "serde"] }
 hashbrown-986da7b5efc2b80e = { package = "hashbrown", version = "0.16", features = ["serde"] }
 naga = { version = "30", features = ["glsl-out", "hlsl-out", "spv-out", "wgsl-in"] }
 smol_str = { version = "0.2", features = ["serde"] }
@@ -233,6 +238,7 @@ log = { version = "0.4", default-features = false, features = ["std"] }
 arboard = { version = "3" }
 core-foundation-sys = { version = "0.8" }
 getrandom = { version = "0.4", default-features = false, features = ["std", "sys_rng"] }
+half = { version = "2", features = ["bytemuck", "num-traits", "serde"] }
 image = { version = "0.25", default-features = false, features = ["tiff"] }
 libc = { version = "0.2", features = ["extra_traits"] }
 miniz_oxide = { version = "0.8", features = ["simd"] }
@@ -253,6 +259,7 @@ libc = { version = "0.2", features = ["extra_traits"] }
 arboard = { version = "3" }
 core-foundation-sys = { version = "0.8" }
 getrandom = { version = "0.4", default-features = false, features = ["std", "sys_rng"] }
+half = { version = "2", features = ["bytemuck", "num-traits", "serde"] }
 image = { version = "0.25", default-features = false, features = ["tiff"] }
 libc = { version = "0.2", features = ["extra_traits"] }
 miniz_oxide = { version = "0.8", features = ["simd"] }

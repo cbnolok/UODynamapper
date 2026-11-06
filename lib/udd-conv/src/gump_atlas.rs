@@ -577,7 +577,7 @@ mod tests {
     }
 
     #[test]
-    fn gump_atlas_with_image_compression_reads_back() {
+    fn gump_atlas_with_another_page_compression_reads_back() {
         const GUMP_ID: u32 = PAPERDOLL_EQUIPMENT_GUMP_ID_START;
         const WIDTH: u16 = 2;
         const HEIGHT: u16 = 1;
@@ -593,7 +593,7 @@ mod tests {
                 rgba: rgba.clone(),
             }],
             &GumpAtlasOptions {
-                compression: CompressionFlag::JpegXl,
+                compression: CompressionFlag::ZstdNoDict,
                 ..GumpAtlasOptions::default()
             },
         )
