@@ -12,7 +12,7 @@ use uocf::classic::art::{static_art_id_for_source, ArtMap, STATIC_TILE_ID_BASE};
 use uocf::classic::art_write::{ArtColors, ArtKind};
 use uocf::classic::hues::HueEntry;
 use uocf::enhanced::textures::{ECImageFormat, TextureFile, TextureItem as RawTextureItem};
-use uocf::image_export::id_file_stem;
+use uocf::image_export::art_file_stem;
 use super::image_export::{
     classic_hued, export_menu, hue_rgba, save_image, save_status, start_bulk, BulkEntry, BulkExport, ExportClicked,
     ExportImage, ExportMenu,
@@ -26,8 +26,6 @@ const ART_KR_UOP_FILE: &str = "Texture.uop";
 const ART_CARRIED_KR_UOP_FILE: &str = "Texture.uop (the Kingdom Reborn art the Enhanced Client carries)";
 const ART_EC_UOP_NAME: &str = "LegacyTexture.uop";
 const ART_EC_UOP_FILE: &str = "LegacyTexture.uop (the classic-style art the Enhanced Client draws by default)";
-/// Exported art files are named by the art id the tab shows (a static's item id plus 0x4000): `art_0x4E75`.
-const ART_FILE_PREFIX: &str = "art";
 const DDS_MAGIC: &[u8] = b"DDS ";
 const NO_HUE_SELECTED: &str = "Hue 0: the view draws the colours as stored.";
 
@@ -210,9 +208,9 @@ fn ui_art_export(app: &mut UocfEditorApp, ui: &mut egui::Ui, id: u32, shown: &[u
         bulk: vec![BulkEntry {
             label: format!("Export all shown ({})...", shown.len()),
             hover: format!(
-                "Every art id the list shows, each as {}.<format>, into a folder you pick (files of the same name \
-                 are replaced).",
-                id_file_stem(ART_FILE_PREFIX, id)
+                "Every art id the list shows, each as {}.<format> (land tiles as land_0x<land id>, items as \
+                 item_0x<item id>), into a folder you pick (files of the same name are replaced).",
+                art_file_stem(id)
             ),
         }],
     };
@@ -229,7 +227,7 @@ fn ui_art_export(app: &mut UocfEditorApp, ui: &mut egui::Ui, id: u32, shown: &[u
             let result = art_export_image(&art, id, source, hue.as_ref())
                 .map_err(|error| format!("{error:#}"))
                 .and_then(|image| image.ok_or_else(|| "the source has no such art".to_string()))
-                .and_then(|image| save_image(&id_file_stem(ART_FILE_PREFIX, id), &image, settings.format));
+                .and_then(|image| save_image(&art_file_stem(id), &image, settings.format));
             if let Some(status) = save_status(&format!("art {id:#06x}"), result) {
                 app.status_message = status;
             }
@@ -239,7 +237,7 @@ fn ui_art_export(app: &mut UocfEditorApp, ui: &mut egui::Ui, id: u32, shown: &[u
             start_bulk(app, |folder| {
                 BulkExport::start(format!("Export {} art", ids.len()), folder, settings.format, ids, move |id| {
                     let image = art_export_image(&art, id, source, hue.as_ref())?;
-                    Ok(image.map(|image| vec![(id_file_stem(ART_FILE_PREFIX, id), image)]).unwrap_or_default())
+                    Ok(image.map(|image| vec![(art_file_stem(id), image)]).unwrap_or_default())
                 })
             });
         }

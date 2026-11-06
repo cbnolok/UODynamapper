@@ -151,7 +151,13 @@ fn ui_panel(app: &mut UocfEditorApp, ctx: &egui::Context, ui: &mut egui::Ui, sta
         {
             let what = format!("{} {id:#x}", files.kind.label());
             app.status_message = match files.read_export(id) {
-                Ok(Some(image)) => save_status(&what, save_image(&format!("{}_{id:#x}", files.kind.label()), &image, format)).unwrap_or_default(),
+                Ok(Some(image)) => {
+                    let stem = match files.kind {
+                        ClassicImageKind::Art => uocf::image_export::art_file_stem(id),
+                        ClassicImageKind::Gump => uocf::image_export::gump_file_stem(id),
+                    };
+                    save_status(&what, save_image(&stem, &image, format)).unwrap_or_default()
+                }
                 Ok(None) => format!("{what} holds no image in {}.", files.container.label()),
                 Err(error) => format!("Export failed: {error:#}"),
             };

@@ -15,7 +15,7 @@ use uocf::uop_container::hash::hash_file_name_single;
 use uocf::uop_container::package::{LoadMode, UopPackage};
 use uocf::classic::gump::GumpMap;
 use uocf::classic::gump_write::GumpColors;
-use uocf::image_export::id_file_stem;
+use uocf::image_export::gump_file_stem;
 use crate::logic::uop_cache::LoadedUop;
 use crate::ui::image_export::{
     export_menu, save_image, save_status, start_bulk, BulkEntry, BulkExport, ExportClicked, ExportImage, ExportMenu,
@@ -40,7 +40,6 @@ const GUMP_SOURCES: [GumpSource; 3] = [GumpSource::Mul, GumpSource::CcUop, GumpS
 const INTERFACE_UOP_NAME: &str = "interface.uop";
 const INTERFACE_UOP_FILE: &str = "Interface.uop";
 /// Exported gump files are named `gump_0x0FA0`.
-const GUMP_FILE_PREFIX: &str = "gump";
 const GUMP_NOT_HUED: &str = "The gump preview draws the colours as stored (only the paperdoll is hued).";
 /// Image preview keys of the rendered paperdolls, or-ed with the body id.
 const PAPERDOLL_PREVIEW_KEY: u64 = 0x7000000000000000;
@@ -555,7 +554,7 @@ fn ui_gump_export(app: &mut UocfEditorApp, ui: &mut egui::Ui, gump_id: u32, show
             hover: format!(
                 "Every gump the list shows, each as {}.<format>, into a folder you pick (files of the same name are \
                  replaced).",
-                id_file_stem(GUMP_FILE_PREFIX, gump_id)
+                gump_file_stem(gump_id)
             ),
         }],
     };
@@ -569,7 +568,7 @@ fn ui_gump_export(app: &mut UocfEditorApp, ui: &mut egui::Ui, gump_id: u32, show
         ExportClicked::Shown => {
             let result = gump_export_image(gumps.as_deref(), interface.as_deref(), source, gump_id)
                 .map_err(|error| format!("{error:#}"))
-                .and_then(|image| save_image(&id_file_stem(GUMP_FILE_PREFIX, gump_id), &image, format));
+                .and_then(|image| save_image(&gump_file_stem(gump_id), &image, format));
             if let Some(status) = save_status(&format!("gump {gump_id:#06x}"), result) {
                 app.status_message = status;
             }
@@ -579,7 +578,7 @@ fn ui_gump_export(app: &mut UocfEditorApp, ui: &mut egui::Ui, gump_id: u32, show
             start_bulk(app, |folder| {
                 BulkExport::start(format!("Export {} gumps", ids.len()), folder, format, ids, move |gump_id| {
                     let image = gump_export_image(gumps.as_deref(), interface.as_deref(), source, gump_id)?;
-                    Ok(vec![(id_file_stem(GUMP_FILE_PREFIX, gump_id), image)])
+                    Ok(vec![(gump_file_stem(gump_id), image)])
                 })
             });
         }

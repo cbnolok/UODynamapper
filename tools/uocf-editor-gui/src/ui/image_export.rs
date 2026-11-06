@@ -342,8 +342,8 @@ mod tests {
             Ok(match id {
                 EMPTY_ITEM => Vec::new(),
                 // A stem with separators stays a file name in the folder.
-                0 => vec![("../escape/../art_0x0000".to_string(), one_pixel(id))],
-                _ => vec![(uocf::image_export::id_file_stem("art", id), one_pixel(id))],
+                0 => vec![("../escape/../land_0x0000".to_string(), one_pixel(id))],
+                _ => vec![(uocf::image_export::art_file_stem(id), one_pixel(id))],
             })
         };
         let outcome = write_bulk(&folder, ImageFileFormat::Png, (0..ITEMS).collect(), produce, &done, &cancel);
@@ -351,8 +351,8 @@ mod tests {
         assert_eq!(done.load(Ordering::Relaxed), ITEMS as usize);
         let mut names: Vec<_> = std::fs::read_dir(&folder).unwrap().map(|entry| entry.unwrap().file_name()).collect();
         names.sort();
-        assert_eq!(names, ["art_0x0001.png", "art_0x0003.png", "escapeart_0x0000.png"]);
-        let decoded = image::open(folder.join("art_0x0003.png")).unwrap().into_rgba8();
+        assert_eq!(names, ["escapeland_0x0000.png", "land_0x0001.png", "land_0x0003.png"]);
+        let decoded = image::open(folder.join("land_0x0003.png")).unwrap().into_rgba8();
         assert_eq!(decoded.into_raw(), [3, 0, 0, u8::MAX]);
 
         cancel.store(true, Ordering::Relaxed);

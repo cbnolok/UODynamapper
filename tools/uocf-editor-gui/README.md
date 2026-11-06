@@ -58,9 +58,9 @@ Enhanced art, animation frames), and is greyed where the view draws no hue.
 The bulk exports write every image into a folder you pick, on a worker thread
 with a progress bar and `Cancel`: `Export all shown` on the Art and Gumps lists, and
 `Export action` and `Export body` on Animations. Files are named by id, such
-as `art_0x4E75` (the art id the tab shows: a static's item id plus `0x4000`),
-`gump_0x0064` and `anim_400_a0_d3_f01` (body, action, direction, frame), and a
-file of the same name in the folder is replaced.
+as `land_0x0003` (a land tile, by its land id), `item_0x0E75` (an item, by
+its item id), `gump_0x0064` and `anim_400_a0_d3_f01` (body, action, direction,
+frame), and a file of the same name in the folder is replaced.
 
 ## Binary
 

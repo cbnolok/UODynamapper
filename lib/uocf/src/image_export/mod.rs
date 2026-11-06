@@ -19,7 +19,7 @@ use image::{ExtendedColorType, ImageEncoder, RgbaImage};
 
 use crate::classic::anim_frames::{ClassicFrame, ClassicPalette};
 use crate::classic::art::{LAND_DIMENSION, RGBA_BYTES_PER_PIXEL};
-use crate::classic::art_write::{land_rows, ArtColors};
+use crate::classic::art_write::{land_rows, ArtColors, ArtKind, STATIC_ART_ID_BASE};
 use crate::classic::gump_write::{GumpColors, OPAQUE_BLACK};
 use crate::classic::texmap_write::TexmapRecord;
 use crate::utils::output_file::write_through_temp;
@@ -46,8 +46,13 @@ const CLEAR_PIXEL: [u8; RGBA_BYTES_PER_PIXEL] = [0; RGBA_BYTES_PER_PIXEL];
 pub const TRANSPARENT_INDEX: u8 = 0;
 /// The PNG `tRNS` chunk of a frame: index 0 transparent, the indices past it opaque.
 const FRAME_PNG_TRANSPARENCY: [u8; 1] = [0];
-/// Hex digits of an id in a file name (`art_0x0E75`).
+/// Hex digits of an id in a file name (`item_0x0E75`).
 const ID_HEX_DIGITS: usize = 4;
+/// The file name prefixes of art: a land tile by its land id, an item (a static) by its item id, so a land tile and
+/// an item of the same number are two files.
+const LAND_FILE_PREFIX: &str = "land";
+const ITEM_FILE_PREFIX: &str = "item";
+const GUMP_FILE_PREFIX: &str = "gump";
 /// Digits of a frame number in a file name (`anim_400_a0_d3_f01`).
 const FRAME_NUMBER_DIGITS: usize = 2;
 
@@ -338,9 +343,23 @@ pub fn classic_import_rgba(bytes: &[u8], land_tile: bool) -> eyre::Result<RgbaIm
     Ok(image)
 }
 
-/// `art_0x0E75`: the file stem of `id` of the kind `prefix` names.
+/// `texmap_0x0003`: the file stem of `id` of the kind `prefix` names.
 pub fn id_file_stem(prefix: &str, id: u32) -> String {
     format!("{prefix}_0x{id:0digits$X}", digits = ID_HEX_DIGITS)
+}
+
+/// The file stem of art `art_id` (statics from [`STATIC_ART_ID_BASE`]): `land_0x0003` for a land tile, `item_0x0E75`
+/// for the item of art id `0x4E75`.
+pub fn art_file_stem(art_id: u32) -> String {
+    match ArtKind::of_id(art_id) {
+        ArtKind::Land => id_file_stem(LAND_FILE_PREFIX, art_id),
+        ArtKind::Static => id_file_stem(ITEM_FILE_PREFIX, art_id - STATIC_ART_ID_BASE),
+    }
+}
+
+/// `gump_0x0064`: the file stem of gump `gump_id`.
+pub fn gump_file_stem(gump_id: u32) -> String {
+    id_file_stem(GUMP_FILE_PREFIX, gump_id)
 }
 
 /// `anim_400_a0_d3_f01`: the file stem of a frame of `body`, `action` and `direction`, numbered from 1.
@@ -551,7 +570,11 @@ mod tests {
 
     #[test]
     fn file_stems_name_the_id_and_the_frame() {
-        assert_eq!(id_file_stem("art", 0x0E75), "art_0x0E75");
+        assert_eq!(id_file_stem("texmap", 0x3), "texmap_0x0003");
+        assert_eq!(art_file_stem(0x0E75), "land_0x0E75");
+        assert_eq!(art_file_stem(STATIC_ART_ID_BASE + 0x0E75), "item_0x0E75", "an item by its item id");
+        assert_eq!(art_file_stem(STATIC_ART_ID_BASE), "item_0x0000");
+        assert_eq!(gump_file_stem(0x64), "gump_0x0064");
         assert_eq!(animation_frame_stem(400, 0, 3, 1), "anim_400_a0_d3_f01");
         assert_eq!(sanitize_file_stem("body 400/action:2", "frame"), "body_400action2");
         assert_eq!(sanitize_file_stem("///", "frame"), "frame");
