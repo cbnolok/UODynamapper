@@ -1,16 +1,17 @@
 use eframe::egui;
 use crate::app::UddConvApp;
+use crate::ui::layout::page_heading;
 use std::path::{Path, PathBuf};
 
 impl UddConvApp {
     pub fn ui_sources(&mut self, ui: &mut egui::Ui) {
         ui.vertical(|ui| {
+            ui.label(page_heading("Source Directories"));
+            ui.label("Configure where your Ultima Online client files are located.");
+            ui.add_space(10.0);
+
             ui.group(|ui| {
                 ui.set_width(ui.available_width());
-                ui.heading("Source Directories");
-                ui.label("Configure where your Ultima Online client files are located.");
-                ui.add_space(10.0);
-
                 egui::Grid::new("source_grid")
                     .num_columns(3)
                     .spacing([10.0, 10.0])

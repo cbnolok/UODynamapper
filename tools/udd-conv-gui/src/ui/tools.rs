@@ -1,5 +1,6 @@
 use eframe::egui;
 use crate::app::UddConvApp;
+use crate::ui::layout::{card_title, page_heading};
 use std::path::PathBuf;
 
 /// The files the Validate Packages tool's file dialog offers: packages and the terrain metadata.
@@ -21,7 +22,7 @@ fn add_validate_paths(listed: &mut Vec<PathBuf>, paths: impl IntoIterator<Item =
 impl UddConvApp {
     pub fn ui_tools(&mut self, ui: &mut egui::Ui) {
         ui.vertical(|ui| {
-            ui.heading("Package Tools");
+            ui.label(page_heading("Package Tools"));
             ui.label("Inspect, validate, extract and compare UDDP packages.");
             ui.add_space(15.0);
 
@@ -29,7 +30,7 @@ impl UddConvApp {
 
             ui.group(|ui| {
                 ui.set_width(ui.available_width());
-                ui.heading("Inspect & Extract");
+                ui.label(card_title("Inspect & Extract"));
                 ui.add_space(5.0);
 
                 // File selector for Tool 1
@@ -79,7 +80,7 @@ impl UddConvApp {
 
             ui.group(|ui| {
                 ui.set_width(ui.available_width());
-                ui.heading("Virtual Path Hash");
+                ui.label(card_title("Virtual Path Hash"));
                 ui.add_space(5.0);
 
                 ui.horizontal(|ui| {
@@ -98,7 +99,7 @@ impl UddConvApp {
 
             ui.group(|ui| {
                 ui.set_width(ui.available_width());
-                ui.heading("Compare Packages (Diff)");
+                ui.label(card_title("Compare Packages (Diff)"));
                 ui.add_space(5.0);
 
                 // Grid for selecting two files for comparison
@@ -146,7 +147,7 @@ impl UddConvApp {
     fn ui_validate_packages(&mut self, ui: &mut egui::Ui, is_busy: bool) {
         ui.group(|ui| {
             ui.set_width(ui.available_width());
-            ui.heading("Validate Packages");
+            ui.label(card_title("Validate Packages"));
             ui.label(egui::RichText::new(VALIDATE_HINT).weak());
             ui.add_space(5.0);
 
