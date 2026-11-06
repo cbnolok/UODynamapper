@@ -143,6 +143,11 @@ The key's texel 0 (item 16) is the gump's top-left texel: every gumpart TGA of `
 it (2.6 `NiTGAReader.cpp`, `m_bFlipVert`). Dynamapper's Enhanced and KR-like paperdoll follow items 15..18
 (`dynamapper/src/core/render/dialogs/gump.rs`, `compose_decoded_layers`).
 
+Dynamapper now bakes items 15 and 16 at packing time (`pack-ec-gumps`, `bake_enhanced_paperdoll_rule` in
+`lib/udd-conv/src/ec_gumps.rs`, 2026-11-06): each drawn texel of a paperdoll gump is stored opaque and every other
+texel transparent, so its paperdoll blends by alpha. It drops the unused glow of gumps 50322 and 60322, and leaves
+a drawn pure black texel transparent over the layers under it rather than clearing them.
+
 ## For a writer
 
 - The entries are ordinary AMOU files: `AmouFile` and the frame encoder write them back byte for byte

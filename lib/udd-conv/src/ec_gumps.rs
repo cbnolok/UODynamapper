@@ -485,7 +485,7 @@ fn is_enhanced_paperdoll_gump_id(gump_id: u32) -> bool {
 /// (`scripts/dev-helpers/ec-research/ghidra-paperdoll/results/uosa_paperdoll.md`, items 15 and 16).
 ///
 /// A drawn texel, one off the key that isn't pure black, is stored opaque with its colour whatever alpha the art gave
-/// it: the client draws the clear scythe handle of 50669 and the clear trident of 60675, and body 665's soft texels
+/// it: the client draws the clear handle of gump 50669 and the clear trident of 60675, and body 665's soft texels
 /// opaque. Every other texel is stored transparent black. Two departures from the client: a pure black texel leaves the
 /// layers under it showing, where the client's canvas pass clears them too; and a glow region ([`glow_texels`]), which
 /// the client draws as a dark patch, is left out. A 256x256 gump, which `BuildImage` skips, is left as it is.
