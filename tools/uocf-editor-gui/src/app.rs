@@ -1871,6 +1871,10 @@ pub struct UocfEditorApp {
     pub classic_image_import: crate::ui::classic_image_import::ClassicImageImport,
     pub image_preview_sources: HashMap<u64, InspectorImagePreview>,
     pub current_image_preview_key: Option<u64>,
+    /// The format and hue choice of the export menus.
+    pub image_export: crate::ui::image_export::ImageExportSettings,
+    /// The bulk export running or just finished, with its window.
+    pub bulk_export: Option<crate::ui::image_export::BulkExport>,
     pub show_upscale_preview: bool,
     pub upscale_preview_passes: Vec<UpscalePreviewPass>,
     pub upscale_preview_zoom: f32,
@@ -2075,6 +2079,8 @@ impl UocfEditorApp {
             classic_image_import: Default::default(),
             image_preview_sources: HashMap::new(),
             current_image_preview_key: None,
+            image_export: Default::default(),
+            bulk_export: None,
             show_upscale_preview: false,
             upscale_preview_passes: vec![UpscalePreviewPass::default()],
             upscale_preview_zoom: 1.0,
@@ -4328,7 +4334,7 @@ fn ec_hue_color_index(
     }
 }
 
-fn cc_hue_should_apply_to_art(art_id: u32, source: ArtSource) -> bool {
+pub(crate) fn cc_hue_should_apply_to_art(art_id: u32, source: ArtSource) -> bool {
     art_id >= uocf::classic::art::STATIC_TILE_ID_BASE || source.is_ec_uop()
 }
 
@@ -4648,6 +4654,8 @@ pub(crate) mod tests {
             classic_image_import: Default::default(),
             image_preview_sources: HashMap::new(),
             current_image_preview_key: None,
+            image_export: Default::default(),
+            bulk_export: None,
             show_upscale_preview: false,
             upscale_preview_passes: vec![UpscalePreviewPass::default()],
             upscale_preview_zoom: 1.0,

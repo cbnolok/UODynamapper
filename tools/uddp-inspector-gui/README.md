@@ -20,6 +20,10 @@ visualization, metadata inspection, and mobile animation playback.
 - **Mobile animation playback**: load `mobile_anim_cc.uddp` or
   `mobile_anim_ec.uddp` and play back mobile animation sequences with
   configurable speed and looping.
+- **Image export**: the `Export` menu beside a previewed image (an entry or the
+  full atlas page) saves it decoded, as shown, to a 32-bit BMP with alpha or a
+  lossless PNG or WebP. A BC-coded texture is saved as its decoded, lossy
+  pixels; `💾 Extract` saves the stored bytes.
 
 ## Binary
 

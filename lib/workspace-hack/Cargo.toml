@@ -34,7 +34,7 @@ font-types = { version = "0.12", default-features = false, features = ["bytemuck
 glam = { version = "0.33", default-features = false, features = ["approx", "bytemuck", "encase", "float-types", "glam-assert", "integer-types", "nostd-libm", "rand", "serde", "std"] }
 half = { version = "2", features = ["bytemuck", "num-traits", "serde"] }
 hashbrown-9067fe90e8c1f593 = { package = "hashbrown", version = "0.17", default-features = false, features = ["default-hasher", "inline-more", "raw-entry"] }
-image = { version = "0.25", default-features = false, features = ["bmp", "dds", "jpeg", "png", "tga"] }
+image = { version = "0.25", default-features = false, features = ["bmp", "dds", "jpeg", "png", "tga", "webp"] }
 indexmap = { version = "2", features = ["serde"] }
 log = { version = "0.4", default-features = false, features = ["std"] }
 memchr = { version = "2" }

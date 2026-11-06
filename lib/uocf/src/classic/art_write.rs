@@ -89,7 +89,7 @@ pub enum ArtColors {
 }
 
 /// The `(x, y, width)` of each land diamond row, in record order.
-fn land_rows() -> impl Iterator<Item = (usize, usize, usize)> {
+pub(crate) fn land_rows() -> impl Iterator<Item = (usize, usize, usize)> {
     let growing = (0..LAND_HALF_ROWS).map(|row| (LAND_HALF_ROWS - 1 - row, row, LAND_ROW_STEP * (row + 1)));
     let shrinking = (0..LAND_HALF_ROWS).map(|row| (row, LAND_HALF_ROWS + row, LAND_DIMENSION - LAND_ROW_STEP * row));
     growing.chain(shrinking)

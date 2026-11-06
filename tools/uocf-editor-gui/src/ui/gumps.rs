@@ -13,6 +13,13 @@ use uocf::enhanced::hues::{EcHueTables, HUES_UOP_NAME};
 use uocf::enhanced::textures::{ECImageFormat, TextureFile, TextureItem as RawTextureItem};
 use uocf::uop_container::hash::hash_file_name_single;
 use uocf::uop_container::package::{LoadMode, UopPackage};
+use uocf::classic::gump::GumpMap;
+use uocf::classic::gump_write::GumpColors;
+use uocf::image_export::id_file_stem;
+use crate::logic::uop_cache::LoadedUop;
+use crate::ui::image_export::{
+    export_menu, save_image, save_status, start_bulk, BulkEntry, BulkExport, ExportClicked, ExportImage, ExportMenu,
+};
 
 const HUE_SWATCH_COUNT: usize = 32;
 const PAPERDOLL_SPRITE_ID_START: u32 = 50_000;
@@ -32,6 +39,9 @@ const EC_GUMP_PREVIEW_KEY: u64 = 0x6E00000000000000;
 const GUMP_SOURCES: [GumpSource; 3] = [GumpSource::Mul, GumpSource::CcUop, GumpSource::EcUop];
 const INTERFACE_UOP_NAME: &str = "interface.uop";
 const INTERFACE_UOP_FILE: &str = "Interface.uop";
+/// Exported gump files are named `gump_0x0FA0`.
+const GUMP_FILE_PREFIX: &str = "gump";
+const GUMP_NOT_HUED: &str = "The gump preview draws the colours as stored (only the paperdoll is hued).";
 /// Image preview keys of the rendered paperdolls, or-ed with the body id.
 const PAPERDOLL_PREVIEW_KEY: u64 = 0x7000000000000000;
 const EC_PAPERDOLL_PREVIEW_KEY: u64 = 0x7100000000000000;
@@ -394,7 +404,7 @@ fn ui_standard_gumps(app: &mut UocfEditorApp, ctx: &egui::Context, ui: &mut egui
         },
         |right| {
             right.heading("Gump");
-            ui_gump_preview_controls(app, ctx, right);
+            ui_gump_preview_controls(app, ctx, right, &gump_ids);
         },
     );
     if let Some(gump_id) = selected_gump_id {
@@ -470,7 +480,8 @@ fn ui_gump_split(
     ui.data_mut(|data| data.insert_temp(id, ratio));
 }
 
-fn ui_gump_preview_controls(app: &mut UocfEditorApp, ctx: &egui::Context, ui: &mut egui::Ui) {
+/// The preview of the selected gump; `shown` the ids the list beside it shows.
+fn ui_gump_preview_controls(app: &mut UocfEditorApp, ctx: &egui::Context, ui: &mut egui::Ui, shown: &[u32]) {
     ui.horizontal(|ui| {
         ui.label("ID:");
         ui.text_edit_singleline(&mut app.selected_gump_id);
@@ -497,7 +508,10 @@ fn ui_gump_preview_controls(app: &mut UocfEditorApp, ctx: &egui::Context, ui: &m
                 }
             });
             if let Some(handle) = get_panel_gump_texture(app, ctx, app.selected_gump_source, gump_id) {
-                ui.label(format!("{}x{}", handle.size()[0], handle.size()[1]));
+                ui.horizontal(|ui| {
+                    ui.label(format!("{}x{}", handle.size()[0], handle.size()[1]));
+                    ui_gump_export(app, ui, gump_id, shown);
+                });
                 egui::ScrollArea::both()
                     .id_salt("gump_preview_scroll")
                     .max_height(320.0)
@@ -527,6 +541,80 @@ fn ui_gump_preview_controls(app: &mut UocfEditorApp, ctx: &egui::Context, ui: &m
             ui.label("Invalid gump ID.");
         }
         Err(_) => {}
+    }
+}
+
+/// The export menu of gump `gump_id`, and the bulk export of the `shown` ids.
+fn ui_gump_export(app: &mut UocfEditorApp, ui: &mut egui::Ui, gump_id: u32, shown: &[u32]) {
+    let source = app.selected_gump_source;
+    let menu = ExportMenu {
+        hue: Err(GUMP_NOT_HUED),
+        frame: false,
+        bulk: vec![BulkEntry {
+            label: format!("Export all shown ({})...", shown.len()),
+            hover: format!(
+                "Every gump the list shows, each as {}.<format>, into a folder you pick (files of the same name are \
+                 replaced).",
+                id_file_stem(GUMP_FILE_PREFIX, gump_id)
+            ),
+        }],
+    };
+    let Some(clicked) = export_menu(ui, &mut app.image_export, &menu) else {
+        return;
+    };
+    let format = app.image_export.format;
+    let gumps = app.cc_gumps.clone();
+    let interface = interface_uop(app);
+    match clicked {
+        ExportClicked::Shown => {
+            let result = gump_export_image(gumps.as_deref(), interface.as_deref(), source, gump_id)
+                .map_err(|error| format!("{error:#}"))
+                .and_then(|image| save_image(&id_file_stem(GUMP_FILE_PREFIX, gump_id), &image, format));
+            if let Some(status) = save_status(&format!("gump {gump_id:#06x}"), result) {
+                app.status_message = status;
+            }
+        }
+        ExportClicked::Bulk(_) => {
+            let ids = shown.to_vec();
+            start_bulk(app, |folder| {
+                BulkExport::start(format!("Export {} gumps", ids.len()), folder, format, ids, move |gump_id| {
+                    let image = gump_export_image(gumps.as_deref(), interface.as_deref(), source, gump_id)?;
+                    Ok(vec![(id_file_stem(GUMP_FILE_PREFIX, gump_id), image)])
+                })
+            });
+        }
+    }
+}
+
+/// The loaded interface.uop, which holds the Enhanced gumps.
+fn interface_uop(app: &UocfEditorApp) -> Option<Arc<LoadedUop>> {
+    app.uop_cache
+        .loaded_uops
+        .iter()
+        .find(|loaded| loaded.path.file_name().and_then(|name| name.to_str()).is_some_and(|name| name.eq_ignore_ascii_case(INTERFACE_UOP_NAME)))
+        .cloned()
+}
+
+/// Gump `gump_id` of `source` to export: a Classic gump as stored (16-bit), an Enhanced gump decoded to RGBA.
+fn gump_export_image(
+    gumps: Option<&GumpMap>,
+    interface: Option<&LoadedUop>,
+    source: GumpSource,
+    gump_id: u32,
+) -> color_eyre::eyre::Result<ExportImage> {
+    match classic_container(source) {
+        Some(container) => {
+            let gumps = gumps.ok_or_else(|| color_eyre::eyre::eyre!("CC gump source is not loaded."))?;
+            let mut raw = Vec::new();
+            let dimensions = gumps.get_raw_gump_data_in(Some(container), gump_id, &mut raw)?;
+            Ok(ExportImage::gump(&GumpColors::decode_rows(&raw, dimensions.width, dimensions.height)?))
+        }
+        None => {
+            let interface = interface.ok_or_else(|| color_eyre::eyre::eyre!("{INTERFACE_UOP_NAME} is not loaded."))?;
+            let (width, height, rgba) = ec_gump_rgba_in(&interface.package, gump_id)?
+                .ok_or_else(|| color_eyre::eyre::eyre!("EC gump {gump_id} was not found in interface.uop."))?;
+            Ok(ExportImage::Rgba { width, height, rgba })
+        }
     }
 }
 
@@ -577,7 +665,7 @@ fn ui_paperdoll(
         },
         |right| {
         right.heading("Selected Sprite");
-        ui_gump_preview_controls(app, ctx, right);
+        ui_gump_preview_controls(app, ctx, right, &gump_ids);
 
         right.separator();
         right.heading("Paperdoll");
@@ -1428,28 +1516,36 @@ fn decode_ec_gump_rgba(
             continue;
         }
 
-        for (path, format) in ec_gump_candidates(gump_id) {
-            let hash = hash_file_name_single(&path);
-            if loaded.package.get_file_by_hash(hash).is_some() {
-                let data: Arc<[u8]> = loaded.package.unpack_file_by_hash(hash)?
-                    .ok_or_else(|| color_eyre::eyre::eyre!("EC gump entry disappeared from interface.uop."))?
-                    .into();
-                let tex_file = TextureFile {
-                    metadata: RawTextureItem::absent(),
-                    is_ec: true,
-                    format,
-                    props: None,
-                    raw_data: data,
-                    image_data_offset: 0,
-                };
-                let image = tex_file.decode_to_rgba()?;
-                let rgba = image.to_rgba8();
-                return Ok((rgba.width(), rgba.height(), rgba.into_raw()));
-            }
+        if let Some(image) = ec_gump_rgba_in(&loaded.package, gump_id)? {
+            return Ok(image);
         }
     }
 
     color_eyre::eyre::bail!("EC gump {gump_id} was not found in interface.uop.");
+}
+
+/// The RGBA of EC gump `gump_id` in `package` (an interface.uop); `None` when it has none.
+fn ec_gump_rgba_in(package: &UopPackage, gump_id: u32) -> color_eyre::eyre::Result<Option<(u32, u32, Vec<u8>)>> {
+    for (path, format) in ec_gump_candidates(gump_id) {
+        let hash = hash_file_name_single(&path);
+        if package.get_file_by_hash(hash).is_some() {
+            let data: Arc<[u8]> = package.unpack_file_by_hash(hash)?
+                .ok_or_else(|| color_eyre::eyre::eyre!("EC gump entry disappeared from interface.uop."))?
+                .into();
+            let tex_file = TextureFile {
+                metadata: RawTextureItem::absent(),
+                is_ec: true,
+                format,
+                props: None,
+                raw_data: data,
+                image_data_offset: 0,
+            };
+            let image = tex_file.decode_to_rgba()?;
+            let rgba = image.to_rgba8();
+            return Ok(Some((rgba.width(), rgba.height(), rgba.into_raw())));
+        }
+    }
+    Ok(None)
 }
 
 fn apply_hue(

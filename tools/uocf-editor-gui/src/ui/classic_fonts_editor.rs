@@ -17,7 +17,7 @@ use uocf::utils::path::find_file_ignoring_case;
 use super::classic_fonts::{FontChoice, FOREGROUND};
 use crate::app::{UocfEditorApp, ViewMode};
 use crate::ui::editor_bar::{editor_bar, pick_output, report_saved, BarAction, MUL_FILTER};
-use crate::ui::image_export::export_rgba_png;
+use crate::ui::image_export::{export_menu, save_rgba, ExportClicked, ExportMenu, ImageExportSettings, NOT_HUED};
 use crate::ui::tiledata_editor::same_file;
 use crate::ui::unsaved_changes::TabEditor;
 
@@ -93,6 +93,8 @@ pub struct FontsEditor {
     selected: u32,
     /// The colour an `fonts.mul` glyph is drawn with.
     paint: [u8; 3],
+    /// The format of the glyph export.
+    export_settings: ImageExportSettings,
     /// Grows with every change, for the tab to redraw its glyphs.
     generation: u64,
     error: Option<String>,
@@ -280,9 +282,9 @@ impl FontsEditor {
                     Err(error) => self.error = Some(error),
                 }
             }
-            if ui.button("Export PNG...").clicked() {
+            if export_menu(ui, &mut self.export_settings, &ExportMenu::unhued(NOT_HUED)) == Some(ExportClicked::Shown) {
                 let image = glyph.to_transparent_rgba8();
-                self.export(format!("font_{font}_char_{code}.png"), image.width, image.height, &image.rgba);
+                self.export(&format!("font_{font}_char_{code}"), image.width, image.height, &image.rgba);
             }
             ui.weak(DRAW_HELP);
         });
@@ -343,9 +345,9 @@ impl FontsEditor {
                     Err(error) => self.error = Some(error),
                 }
             }
-            if ui.button("Export PNG...").clicked() {
+            if export_menu(ui, &mut self.export_settings, &ExportMenu::unhued(NOT_HUED)) == Some(ExportClicked::Shown) {
                 match glyph.to_rgba8(FOREGROUND, None) {
-                    Ok(image) => self.export(format!("unifont_{font}_{code:04X}.png"), image.width, image.height, &image.rgba),
+                    Ok(image) => self.export(&format!("unifont_{font}_{code:04X}"), image.width, image.height, &image.rgba),
                     Err(error) => self.error = Some(format!("{error:#}")),
                 }
             }
@@ -363,12 +365,12 @@ impl FontsEditor {
         }
     }
 
-    fn export(&mut self, name: String, width: u32, height: u32, rgba: &[u8]) {
+    fn export(&mut self, stem: &str, width: u32, height: u32, rgba: &[u8]) {
         if rgba.is_empty() {
             self.error = Some("This glyph has no pixels to export.".to_owned());
             return;
         }
-        if let Err(error) = export_rgba_png(name, width, height, rgba) {
+        if let Err(error) = save_rgba(stem, width, height, rgba, self.export_settings.format) {
             self.error = Some(error);
         }
     }

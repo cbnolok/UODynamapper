@@ -27,7 +27,9 @@ color-eyre = { workspace = true, features = ["track-caller"] }
 dds = { version = "0.2", default-features = false }
 derive-new = { version = "0.7", default-features = false }
 getset = { version = "0.1", default-features = false }
-image = { workspace = true, features = ["bmp", "jpeg", "png", "tga"] }
+image = { workspace = true, features = ["bmp", "jpeg", "png", "tga", "webp"] }
+# Paletted PNG (8-bit with a tRNS chunk) of Classic animation frames, which the `image` encoder does not write.
+png = "0.18"
 ddsfile.workspace = true
 wide = { version = "1", default-features = false, features = ["std"] }
 bytemuck.workspace = true

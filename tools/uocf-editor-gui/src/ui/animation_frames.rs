@@ -2,8 +2,8 @@
 //! a column per frame.
 
 use crate::app::UocfEditorApp;
-use crate::ui::animation_hue::{apply_frame_hue, FrameHue};
-use crate::ui::image_export::{export_rgba_png, sanitize_file_stem};
+use crate::ui::animation_hue::{apply_frame_hue, classic_hued_colour, FrameHue};
+use crate::ui::image_export::{export_menu, save_image, save_status, ExportClicked, ExportImage, ExportMenu};
 use eframe::egui;
 use std::collections::HashMap;
 use std::hash::{Hash, Hasher};
@@ -15,6 +15,8 @@ use uocf::animation_sequence::{
     STORED_DIRECTION_COUNT,
 };
 use uocf::classic::anim::AnimFrame;
+use uocf::classic::anim_frames::ClassicPalette;
+use uocf::image_export::animation_frame_stem;
 
 /// World directions, numbered as the clients number them (0 is north, clockwise).
 const COMPASS: [&str; DIRECTION_COUNT] = ["N", "NE", "E", "SE", "S", "SW", "W", "NW"];
@@ -45,10 +47,12 @@ pub(super) struct FrameImage {
     pub hue_mask: Option<Vec<u8>>,
     /// Enhanced frames: the 1-based local frame number.
     pub number: Option<u16>,
+    /// Classic frames: the palette of their entry, which the paletted exports write.
+    pub palette: Option<Arc<ClassicPalette>>,
 }
 
 impl FrameImage {
-    fn from_classic(frame: AnimFrame) -> Self {
+    fn from_classic(frame: AnimFrame, palette: Option<Arc<ClassicPalette>>) -> Self {
         Self {
             width: frame.width,
             height: frame.height,
@@ -57,7 +61,33 @@ impl FrameImage {
             rgba: frame.data,
             hue_mask: None,
             number: None,
+            palette,
         }
+    }
+
+    fn has_pixels(&self) -> bool {
+        self.width > 0 && self.height > 0
+    }
+
+    /// The frame to export: a Classic frame on its palette (RGBA when a colour is not there past index 0), an
+    /// Enhanced frame as RGBA; under `hue` when given (a Classic hue recolours the palette).
+    pub(super) fn export_image(&self, hue: Option<&FrameHue>) -> ExportImage {
+        let (width, height) = (u32::from(self.width), u32::from(self.height));
+        let mut image = match &self.palette {
+            Some(palette) => ExportImage::classic_frame_rgba(width, height, &self.rgba, palette),
+            None => ExportImage::Rgba { width, height, rgba: self.rgba.clone() },
+        };
+        let Some(hue) = hue else {
+            return image;
+        };
+        match (&mut image, hue) {
+            (ExportImage::Paletted { .. }, FrameHue::Classic { table, partial }) => {
+                image.hue_classic_colors(|colour| classic_hued_colour(colour, table, *partial));
+            }
+            (ExportImage::Rgba { rgba, .. }, hue) => apply_frame_hue(rgba, self.hue_mask.as_deref(), hue),
+            _ => {}
+        }
+        image
     }
 
     fn size(&self) -> egui::Vec2 {
@@ -93,18 +123,21 @@ impl ActionFrames {
         Self { error: Some(error), ..Self::default() }
     }
 
-    /// The Classic frames of the stored directions, decoded per direction by `decode`.
-    pub(super) fn classic(decode: impl Fn(u8) -> Option<color_eyre::eyre::Result<Vec<AnimFrame>>>, split: String) -> Self {
+    /// The Classic frames of the stored directions, decoded per direction by `decode` with their palette.
+    pub(super) fn classic(
+        decode: impl Fn(u8) -> Option<color_eyre::eyre::Result<(Vec<AnimFrame>, Option<Arc<ClassicPalette>>)>>,
+        split: String,
+    ) -> Self {
         let mut action = Self { split, ..Self::default() };
         for direction in 0..STORED_DIRECTION_COUNT as u8 {
             let mut row = DirectionRow { direction, frames: Vec::new(), error: None };
             match decode(direction) {
                 None => row.error = Some("no entry".to_string()),
                 Some(Err(error)) => row.error = Some(format!("{error:#}")),
-                Some(Ok(frames)) => {
+                Some(Ok((frames, palette))) => {
                     for frame in frames {
                         row.frames.push(Some(action.images.len()));
-                        action.images.push(FrameImage::from_classic(frame));
+                        action.images.push(FrameImage::from_classic(frame, palette.clone()));
                     }
                 }
             }
@@ -131,6 +164,7 @@ impl ActionFrames {
                         rgba: decoded.data,
                         hue_mask: Some(decoded.hue_mask),
                         number: Some(entry.frame_number),
+                        palette: None,
                     });
                 }
                 Err(error) => {
@@ -398,7 +432,24 @@ fn advance_playback(app: &mut UocfEditorApp, ctx: &egui::Context, frame_count: u
     }
 }
 
-/// The selected direction's frames, one at a time, at the player zoom; `name` names exported files.
+/// The frames of every direction as `(stem, image)` files (`anim_400_a0_d3_f01`, frames numbered from 1), under
+/// `hue` when given.
+pub(super) fn action_files(frames: &ActionFrames, body: u32, action: u16, hue: Option<&FrameHue>) -> Vec<(String, ExportImage)> {
+    let mut files = Vec::new();
+    for row in &frames.rows {
+        for (column, index) in row.frames.iter().enumerate() {
+            let Some(image) = index.map(|index| &frames.images[index]).filter(|image| image.has_pixels()) else {
+                continue;
+            };
+            let stem = animation_frame_stem(body, action, row.direction, column + DISPLAYED_FIRST_FRAME);
+            files.push((stem, image.export_image(hue)));
+        }
+    }
+    files
+}
+
+/// The selected direction's frames, one at a time, at the player zoom; `name` labels the preview, `ids` (body,
+/// action) name exported files. Returns the bulk entry of `menu` clicked.
 pub(super) fn show_player(
     app: &mut UocfEditorApp,
     ctx: &egui::Context,
@@ -406,18 +457,21 @@ pub(super) fn show_player(
     frames: &ActionFrames,
     hue: &DrawnHue,
     name: &str,
-) {
+    ids: (u32, u16),
+    menu: &ExportMenu,
+) -> Option<usize> {
     let Some((row_index, mirrored)) = row_of_direction(frames.is_ec, app.selected_direction).filter(|(row, _)| *row < frames.rows.len()) else {
         ui.label(format!("Direction {} is not one of this source's directions.", app.selected_direction));
-        return;
+        return None;
     };
     let row = &frames.rows[row_index];
     advance_playback(app, ctx, row.frames.len());
     let frame_count = row.frames.len();
     if frame_count == 0 {
         ui.label(format!("Direction {}: {}", direction_label(frames.is_ec, row.direction), row.error.as_deref().unwrap_or("no frames")));
-        return;
+        return None;
     }
+    let mut bulk = None;
     let frame_index = app.current_frame_idx.min(frame_count - 1);
     let image_index = row.frames[frame_index];
     let mirror_note = if mirrored { format!(" (drawn mirrored as {})", app.selected_direction) } else { String::new() };
@@ -432,13 +486,18 @@ pub(super) fn show_player(
             if let Some(number) = image.number {
                 ui.label(format!("· frame number {number}"));
             }
-            if image.width > 0 && image.height > 0 && ui.button("Export PNG").clicked() {
-                let stem = sanitize_file_stem(&format!("{name}_dir_{}_frame_{frame_index}", row.direction), "animation_frame");
-                let rgba = drawn_rgba(image, hue);
-                match export_rgba_png(format!("{stem}.png"), u32::from(image.width), u32::from(image.height), &rgba) {
-                    Ok(Some(path)) => app.status_message = format!("Exported animation frame to {path}."),
-                    Ok(None) => {}
-                    Err(error) => app.status_message = format!("Failed to export animation frame: {error}"),
+            if image.has_pixels() {
+                match export_menu(ui, &mut app.image_export, menu) {
+                    Some(ExportClicked::Shown) => {
+                        let stem = animation_frame_stem(ids.0, ids.1, row.direction, frame_index + DISPLAYED_FIRST_FRAME);
+                        let hue = app.image_export.takes_hue(menu).then_some(&hue.0);
+                        let saved = save_image(&stem, &image.export_image(hue), app.image_export.format);
+                        if let Some(status) = save_status("the animation frame", saved) {
+                            app.status_message = status;
+                        }
+                    }
+                    Some(ExportClicked::Bulk(index)) => bulk = Some(index),
+                    None => {}
                 }
             }
         }
@@ -480,6 +539,7 @@ pub(super) fn show_player(
             app.animations_view.frames.previewed = Some(preview_key);
         }
     }
+    bulk
 }
 
 /// Every stored direction as a row of frame thumbnails; a click shows that frame in the player.

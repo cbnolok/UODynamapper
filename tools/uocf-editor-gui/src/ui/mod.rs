@@ -971,6 +971,7 @@ pub fn draw_ui(app: &mut UocfEditorApp, ctx: &egui::Context, ui: &mut egui::Ui) 
             });
         app.show_search_paths = show_search_paths;
     }
+    image_export::show_bulk_export(app, ctx);
 
     if app.view_mode == crate::app::ViewMode::UopExplorer
         && app.selected_uop_idx.is_none()

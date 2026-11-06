@@ -81,6 +81,11 @@ pub struct InspectorApp {
     pub preview_text: Option<String>,
     pub preview_texture: Option<egui::TextureHandle>,
     pub preview_texture_size: Option<[usize; 2]>,
+    /// The decoded RGBA of `preview_texture` (its id), which the export writes: the image shown, a BC-coded
+    /// texture's lossy pixels included.
+    pub preview_rgba: Option<(egui::TextureId, Arc<[u8]>)>,
+    /// The file format of the image export.
+    pub export_format: uocf::image_export::ImageFileFormat,
     pub atlas_texture: Option<egui::TextureHandle>,
     pub atlas_texture_size: Option<[usize; 2]>,
     pub atlas_text: Option<String>,
@@ -134,6 +139,8 @@ impl InspectorApp {
             preview_text: None,
             preview_texture: None,
             preview_texture_size: None,
+            preview_rgba: None,
+            export_format: Default::default(),
             atlas_texture: None,
             atlas_texture_size: None,
             atlas_text: None,
@@ -153,6 +160,7 @@ impl InspectorApp {
         self.preview_text = None;
         self.preview_texture = None;
         self.preview_texture_size = None;
+        self.preview_rgba = None;
         self.atlas_texture = None;
         self.atlas_texture_size = None;
         self.atlas_text = None;
@@ -186,10 +194,27 @@ impl InspectorApp {
         }
 
         let color_image = egui::ColorImage::from_rgba_unmultiplied(size, pixels);
-        self.preview_texture =
-            Some(ctx.load_texture(texture_name, color_image, egui::TextureOptions::NEAREST));
+        let texture = ctx.load_texture(texture_name, color_image, egui::TextureOptions::NEAREST);
+        self.preview_rgba = Some((texture.id(), Arc::from(pixels)));
+        self.preview_texture = Some(texture);
         self.preview_texture_size = Some(size);
         self.preview_text = Some(label);
+    }
+
+    /// The decoded RGBA of the image shown (the entry or the full atlas page): width, height, pixels.
+    pub fn active_preview_rgba(&self) -> Option<(u32, u32, &[u8])> {
+        match self.preview_mode {
+            PreviewModeKind::Entry => {
+                let (texture, size) = self.preview_texture.as_ref().zip(self.preview_texture_size)?;
+                let (_, rgba) = self.preview_rgba.as_ref().filter(|(id, _)| *id == texture.id())?;
+                Some((u32::try_from(size[0]).ok()?, u32::try_from(size[1]).ok()?, rgba))
+            }
+            PreviewModeKind::Atlas => {
+                self.atlas_texture.as_ref()?;
+                let page = self.decoded_atlas_page.as_ref()?;
+                Some((page.width, page.height, &page.rgba))
+            }
+        }
     }
 
     /*
@@ -297,6 +322,7 @@ impl InspectorApp {
         self.preview_text = None;
         self.preview_texture = None;
         self.preview_texture_size = None;
+        self.preview_rgba = None;
         self.preview_mode = PreviewModeKind::Entry;
         self.image_window_mode = PreviewModeKind::Entry;
         self.texture_zoom = 1.0;
@@ -1790,6 +1816,8 @@ mod tests {
             preview_text: None,
             preview_texture: None,
             preview_texture_size: None,
+            preview_rgba: None,
+            export_format: Default::default(),
             atlas_texture: None,
             atlas_texture_size: None,
             atlas_text: None,
@@ -2141,6 +2169,8 @@ mod tests {
             preview_text: Some("hello".to_string()),
             preview_texture: None,
             preview_texture_size: Some([10, 10]),
+            preview_rgba: None,
+            export_format: Default::default(),
             atlas_texture: None,
             atlas_texture_size: Some([20, 20]),
             atlas_text: Some("world".to_string()),
@@ -2170,6 +2200,25 @@ mod tests {
         assert_eq!(app.preview_mode, PreviewModeKind::Entry);
         assert_eq!(app.image_window_mode, PreviewModeKind::Entry);
         assert_eq!(app.texture_zoom, 1.0);
+    }
+
+    /// The export writes the decoded pixels of the texture shown, and none once another texture replaced it
+    /// without them; the Full Atlas view exports the decoded page.
+    #[test]
+    fn the_export_takes_the_decoded_pixels_of_the_image_shown() {
+        const PIXELS: [u8; 8] = [1, 2, 3, 4, 5, 6, 7, 8];
+        let ctx = egui::Context::default();
+        let mut app = empty_test_app(ViewMode::Package);
+        app.set_preview_image(&ctx, "entry", [2, 1], &PIXELS, "Entry".to_owned());
+        assert_eq!(app.active_preview_rgba(), Some((2, 1, &PIXELS[..])));
+        app.preview_texture = Some(ctx.load_texture("other", egui::ColorImage::filled([1, 1], egui::Color32::RED), Default::default()));
+        assert_eq!(app.active_preview_rgba(), None);
+
+        app.preview_mode = PreviewModeKind::Atlas;
+        app.decoded_atlas_page = Some(DecodedAtlasPage { rgba: PIXELS[..4].to_vec(), width: 1, height: 1 });
+        assert_eq!(app.active_preview_rgba(), None, "no page shown yet");
+        app.atlas_texture = app.preview_texture.clone();
+        assert_eq!(app.active_preview_rgba(), Some((1, 1, &PIXELS[..4])));
     }
 
     #[test]
@@ -2237,6 +2286,8 @@ mod tests {
             preview_text: None,
             preview_texture: None,
             preview_texture_size: None,
+            preview_rgba: None,
+            export_format: Default::default(),
             atlas_texture: None,
             atlas_texture_size: None,
             atlas_text: None,
@@ -2366,6 +2417,8 @@ mod tests {
             preview_text: None,
             preview_texture: None,
             preview_texture_size: None,
+            preview_rgba: None,
+            export_format: Default::default(),
             atlas_texture: None,
             atlas_texture_size: None,
             atlas_text: None,
@@ -2583,6 +2636,8 @@ mod tests {
             preview_text: None,
             preview_texture: None,
             preview_texture_size: None,
+            preview_rgba: None,
+            export_format: Default::default(),
             atlas_texture: None,
             atlas_texture_size: None,
             atlas_text: None,

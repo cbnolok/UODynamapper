@@ -24,7 +24,7 @@ UO asset data during development and research.
 | Audio | Classic Client `sound.mul` / `soundidx.mul` or `soundLegacyMUL.uop` audio entries, Enhanced Client `Audio.uop`, Classic music (`Music/Digital/Config.txt`, its MP3 files, and any MIDI files of the `Music` folder). A Classic slot can be replaced, renamed or added, and an `Audio.uop` entry replaced or added, each into a copy of the loaded files. |
 | Fonts | Classic `fonts.mul` and `unifont*.mul` glyphs. `Edit` draws a glyph pixel by pixel, sets its size and fields, imports or exports it as an image, adds or removes a Unicode glyph, and saves a copy of each changed file. |
 | Def files | The Classic remap `.def` files, `bodyconv.def`, `Equipconv.def`, `Sound.def`, `Music.def`, `speech.mul`, `skills.mul` and `skillgrp.mul` as tables. `Edit` changes, adds or removes a row and saves a copy of each changed file; lines not edited keep their bytes. |
-| Multimap | The loaded `Multimap.rle`, and multimaps generated from a DDS, a KTX2 or a client's radar. `Edit` replaces the loaded image with a BMP or PNG and saves a copy; `Save RLE...` and `Save PNG...` save the selected image. |
+| Multimap | The loaded `Multimap.rle`, and multimaps generated from a DDS, a KTX2 or a client's radar. `Edit` replaces the loaded image with a BMP or PNG and saves a copy; `Save RLE...` and `Export` save the selected image. |
 | Maps | A Classic facet drawn in radar colours, with the land and statics of a tile. `Convert and save a facet` writes a whole facet from a Classic folder or a facet package to Classic MUL, Classic UOP, an Enhanced Client facet or a Kingdom Reborn facet, at the size of a target client's table or a size you give, with the world map image and the radar image where they apply, into a folder other than the source's and the target client's. There is no tile painter. |
 
 Most views support switching between Classic Client and Enhanced Client sources
@@ -37,6 +37,30 @@ no Kingdom Reborn folder is set. The tabs show one of the two Enhanced-format
 clients at a time, since their files name entries of each other; choosing the
 other one's button reloads every tab from its folder (unsaved edits hold it
 back). Multimap reads each client's `facetNN.dds` from its own folder.
+
+## Image export
+
+Every tab that shows a sprite or a texture (Art, Gumps and the interface images,
+Animations, Fonts, Multimap, the Classic image import window) has the same
+`Export` menu: a format (BMP, PNG or WebP) and `Save image as ...`. The formats
+keep the stored pixels:
+
+| Image | BMP | PNG | WebP |
+| ----- | --- | --- | ---- |
+| Classic art, gumps (16-bit colours) | 16-bit X1R5G5B5, the stored words bit for bit | RGBA; each 5-bit channel widened as `(c << 3) \| (c >> 2)`, colour 0 transparent (a land tile: only outside the diamond) | lossless, the PNG's pixels |
+| Classic animation frames (a 256-colour palette) | 8-bit with the palette | 8-bit paletted, index 0 transparent | lossless RGBA (the encoder has no palette mode) |
+| Enhanced and decoded textures | 32-bit with alpha | lossless RGBA | lossless RGBA |
+
+An exported Classic art or gump file imports back through `Import` to the same
+record. The image is saved as stored; `As shown (hued)` applies the hue the view draws with (art statics,
+Enhanced art, animation frames), and is greyed where the view draws no hue.
+
+The bulk exports write every image into a folder you pick, on a worker thread
+with a progress bar and `Cancel`: `Export all shown` on the Art and Gumps lists, and
+`Export action` and `Export body` on Animations. Files are named by id, such
+as `art_0x4E75` (the art id the tab shows: a static's item id plus `0x4000`),
+`gump_0x0064` and `anim_400_a0_d3_f01` (body, action, direction, frame), and a
+file of the same name in the folder is replaced.
 
 ## Binary
 

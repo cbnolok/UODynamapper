@@ -5,11 +5,12 @@
 use std::path::{Path, PathBuf};
 
 use eframe::egui;
+use uocf::classic::art_write::ArtKind;
 use uocf::classic::image_files::{ClassicImageContainer, ClassicImageFiles, ClassicImageKind, ImageWrite, PreparedImage};
 use uocf::enhanced::dds_writer::SizeChange;
 
 use crate::app::UocfEditorApp;
-use crate::ui::image_export::export_rgba_png;
+use crate::ui::image_export::{save_image, save_status};
 use crate::ui::{source_choice, ClientSource, SourceAvailability};
 
 /// Height of the stored-image preview; it scrolls beyond.
@@ -60,9 +61,12 @@ impl ClassicImageImport {
     fn prepare(&mut self, ctx: &egui::Context, id: u32) {
         let (Some(files), Some(path)) = (self.found.get(self.selected), &self.image_path) else { return };
         let size_change = if self.allow_resize { SizeChange::Allow } else { SizeChange::Refuse };
-        let result = image::open(path)
+        // A land tile's 16-bit BMP draws black inside its diamond; the other images' colour 0 is transparent.
+        let land_tile = files.kind == ClassicImageKind::Art && ArtKind::of_id(id) == ArtKind::Land;
+        let result = std::fs::read(path)
             .map_err(|error| format!("{}: {error}", path.display()))
-            .and_then(|image| files.prepare(id, &image.into_rgba8(), size_change).map_err(|error| format!("{error:#}")));
+            .and_then(|bytes| uocf::image_export::classic_import_rgba(&bytes, land_tile).map_err(|error| format!("{}: {error:#}", path.display())))
+            .and_then(|image| files.prepare(id, &image, size_change).map_err(|error| format!("{error:#}")));
         self.preview = result.as_ref().ok().and_then(|prepared| {
             let size = [prepared.width as usize, prepared.height as usize];
             let name = format!("classic_image_import_{}_{id}", files.kind.label());
@@ -139,19 +143,21 @@ fn ui_panel(app: &mut UocfEditorApp, ctx: &egui::Context, ui: &mut egui::Ui, sta
     ui.label(files.kind.rules(id));
 
     ui.horizontal(|ui| {
-        if ui.button("Export PNG...").clicked() {
-            app.status_message = match files.read(id) {
-                Ok(Some(image)) => match export_rgba_png(format!("{}_{id:#x}.png", files.kind.label()), image.width, image.height, &image.rgba) {
-                    Ok(Some(path)) => format!("Exported {} {id:#x} to {path}.", files.kind.label()),
-                    Ok(None) => String::new(),
-                    Err(error) => format!("Export failed: {error}"),
-                },
-                Ok(None) => format!("{} {id:#x} holds no image in {}.", files.kind.label(), files.container.label()),
+        let format = app.image_export.format;
+        if ui
+            .button(format!("Export {}...", format.label()))
+            .on_hover_text("The stored image in the file chosen above, in the format of the Export menu.")
+            .clicked()
+        {
+            let what = format!("{} {id:#x}", files.kind.label());
+            app.status_message = match files.read_export(id) {
+                Ok(Some(image)) => save_status(&what, save_image(&format!("{}_{id:#x}", files.kind.label()), &image, format)).unwrap_or_default(),
+                Ok(None) => format!("{what} holds no image in {}.", files.container.label()),
                 Err(error) => format!("Export failed: {error:#}"),
             };
         }
         if ui.button("Import image...").clicked() {
-            if let Some(path) = crate::dialog::file_dialog().add_filter("Image", &["png", "bmp", "tga", "jpg", "jpeg"]).pick_file() {
+            if let Some(path) = crate::dialog::file_dialog().add_filter("Image", &["png", "bmp", "webp", "tga", "jpg", "jpeg"]).pick_file() {
                 state.image_path = Some(path);
                 state.prepare(ctx, id);
             }

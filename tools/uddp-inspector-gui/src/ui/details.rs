@@ -4,6 +4,7 @@ use udd_container::{FileKey, xxh64_virtual_path};
 use crate::app::{InspectorApp, MAX_INLINE_PREVIEW_WIDTH, MAX_INLINE_PREVIEW_HEIGHT};
 use crate::logic::discovery::upscale_algorithm_name;
 use crate::models::{PreviewModeKind, ViewMode, VirtualEntryData};
+use uocf::image_export::{sanitize_file_stem, ExportImage, ImageFileFormat};
 use crate::ui::{metadata_grid, metadata_label};
 use crate::utils::{
     atlas_page_paths,
@@ -16,8 +17,49 @@ use crate::utils::{
 const DETAILS_SECTION_SPACING_SMALL: f32 = 5.0;
 const DETAILS_SECTION_SPACING_LARGE: f32 = 10.0;
 const DETAILS_TEXT_PREVIEW_BOTTOM_PADDING: f32 = 20.0;
+const EXPORT_FALLBACK_STEM: &str = "texture";
+const EXPORT_FORMAT_HOVER: &str = "The decoded image, as shown (a BC-coded texture's lossy pixels): BMP is 32-bit with \
+    alpha, PNG and WebP are lossless RGBA.";
 
 impl InspectorApp {
+    /// The export of the image shown, decoded (a BC-coded texture as its lossy pixels), in the chosen format.
+    fn ui_export_menu(&mut self, ui: &mut egui::Ui, label: &str) {
+        let config = egui::containers::menu::MenuConfig::new().close_behavior(egui::PopupCloseBehavior::CloseOnClickOutside);
+        let (_, inner) = egui::containers::menu::MenuButton::new("Export ⏷").config(config).ui(ui, |ui| {
+            ui.horizontal(|ui| {
+                ui.label("Format:");
+                for format in ImageFileFormat::ALL {
+                    if ui.add(egui::Button::selectable(self.export_format == format, format.label())).on_hover_text(EXPORT_FORMAT_HOVER).clicked() {
+                        self.export_format = format;
+                    }
+                }
+            });
+            let clicked = ui.button(format!("Save image as {}...", self.export_format.label())).clicked();
+            if clicked {
+                ui.close();
+            }
+            clicked
+        });
+        if !inner.is_some_and(|inner| inner.inner) {
+            return;
+        }
+        let Some((width, height, rgba)) = self.active_preview_rgba() else {
+            log::warn!("The image shown has no decoded pixels to export.");
+            return;
+        };
+        let image = ExportImage::Rgba { width, height, rgba: rgba.to_vec() };
+        let format = self.export_format;
+        let first_line = label.lines().next().unwrap_or_default();
+        let name = format!("{}.{}", sanitize_file_stem(first_line, EXPORT_FALLBACK_STEM), format.extension());
+        let Some(path) = gui_shared::file_dialog().add_filter(format!("{} image", format.label()), &[format.extension()]).set_file_name(name).save_file() else {
+            return;
+        };
+        match image.write(&path, format) {
+            Ok(()) => log::info!("Exported {}.", path.display()),
+            Err(error) => log::error!("Export to {} failed: {error:#}", path.display()),
+        }
+    }
+
     pub fn ui_details(&mut self, ctx: &egui::Context, ui: &mut egui::Ui, idx: usize) {
         ui.horizontal(|ui| {
             ui.heading("Entry Details");
@@ -49,7 +91,11 @@ impl InspectorApp {
 
         // Image/Text preview section
         if let Some((texture, size, label)) = self.active_preview_image() {
-            ui.label(label);
+            let (texture, label) = (texture.clone(), label.to_owned());
+            ui.horizontal(|ui| {
+                ui.label(&label);
+                self.ui_export_menu(ui, &label);
+            });
             if size[0] > MAX_INLINE_PREVIEW_WIDTH || size[1] > MAX_INLINE_PREVIEW_HEIGHT {
                 ui.label(format!(
                     "Image is {}x{}, which is too large for the side panel. Open it in the separate window.",
@@ -62,7 +108,7 @@ impl InspectorApp {
             } else {
                 egui::ScrollArea::both().show(ui, |ui| {
                     ui.add(
-                        egui::Image::new(texture)
+                        egui::Image::new(&texture)
                             .texture_options(egui::TextureOptions::NEAREST),
                     );
                 });

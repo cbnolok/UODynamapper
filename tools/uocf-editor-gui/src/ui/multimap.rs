@@ -397,18 +397,13 @@ fn preview_actions(app: &mut UocfEditorApp, ui: &mut egui::Ui) {
             }
         }
 
-        if ui.button("Save PNG...").clicked() {
+        let menu = super::image_export::ExportMenu::unhued(super::image_export::NOT_HUED);
+        if super::image_export::export_menu(ui, &mut app.image_export, &menu) == Some(super::image_export::ExportClicked::Shown) {
             if let Some((name, image)) = selected_image(app) {
                 let rgba = image.to_rgba8();
-                match super::image_export::export_rgba_png(
-                    format!("{name}.png"),
-                    image.width,
-                    image.height,
-                    &rgba,
-                ) {
-                    Ok(Some(path)) => app.status_message = format!("Saved {path}"),
-                    Ok(None) => {}
-                    Err(error) => app.status_message = format!("Failed to save PNG: {error}"),
+                let saved = super::image_export::save_rgba(&name, image.width, image.height, &rgba, app.image_export.format);
+                if let Some(status) = super::image_export::save_status(&name, saved) {
+                    app.status_message = status;
                 }
             }
         }

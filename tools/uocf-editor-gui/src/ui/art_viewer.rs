@@ -8,7 +8,15 @@ use super::{
 use super::classic_image_import::{ui_classic_image_panel, PreferredContainer};
 use uocf::classic::image_files::ClassicImageKind;
 use std::sync::Arc;
-use uocf::classic::art::{static_art_id_for_source, STATIC_TILE_ID_BASE};
+use uocf::classic::art::{static_art_id_for_source, ArtMap, STATIC_TILE_ID_BASE};
+use uocf::classic::art_write::{ArtColors, ArtKind};
+use uocf::classic::hues::HueEntry;
+use uocf::enhanced::textures::{ECImageFormat, TextureFile, TextureItem as RawTextureItem};
+use uocf::image_export::id_file_stem;
+use super::image_export::{
+    classic_hued, export_menu, hue_rgba, save_image, save_status, start_bulk, BulkEntry, BulkExport, ExportClicked,
+    ExportImage, ExportMenu,
+};
 
 const ART_VIEWER_LIST_PANEL_WIDTH: f32 = 300.0;
 const ART_MUL_FILES: &str = "art.mul and artidx.mul";
@@ -18,9 +26,14 @@ const ART_KR_UOP_FILE: &str = "Texture.uop";
 const ART_CARRIED_KR_UOP_FILE: &str = "Texture.uop (the Kingdom Reborn art the Enhanced Client carries)";
 const ART_EC_UOP_NAME: &str = "LegacyTexture.uop";
 const ART_EC_UOP_FILE: &str = "LegacyTexture.uop (the classic-style art the Enhanced Client draws by default)";
+/// Exported art files are named by the art id the tab shows (a static's item id plus 0x4000): `art_0x4E75`.
+const ART_FILE_PREFIX: &str = "art";
+const DDS_MAGIC: &[u8] = b"DDS ";
+const NO_HUE_SELECTED: &str = "Hue 0: the view draws the colours as stored.";
 
 pub fn ui_art_viewer(app: &mut UocfEditorApp, ctx: &egui::Context, ui: &mut egui::Ui) {
     app.selected_legacy_source = concrete_art_tile_source(app.selected_legacy_source);
+    let mut shown_ids = Vec::new();
 
     egui::Panel::left("tex_art_cc_list")
         .resizable(true)
@@ -93,6 +106,7 @@ pub fn ui_art_viewer(app: &mut UocfEditorApp, ctx: &egui::Context, ui: &mut egui
                     false
                 };
 
+                shown_ids = visible_ids;
                 egui::ScrollArea::vertical().show(ui, |ui| {
                     ui_art_group_rows(app, ui, &rows, &filtered_indices, "Land Tiles", keyboard_moved);
                     ui_art_group_rows(app, ui, &rows, &filtered_indices, "Static Tiles", keyboard_moved);
@@ -115,7 +129,10 @@ pub fn ui_art_viewer(app: &mut UocfEditorApp, ctx: &egui::Context, ui: &mut egui
                 ui.vertical(|ui| {
                     ui.heading(format!("Art ID: {}", id));
                     if let Some(handle) = app.get_tex_art_cc_texture(ctx, id) {
-                        ui.label(format!("Dimensions: {}x{}", handle.size()[0], handle.size()[1]));
+                        ui.horizontal(|ui| {
+                            ui.label(format!("Dimensions: {}x{}", handle.size()[0], handle.size()[1]));
+                            ui_art_export(app, ui, id, &shown_ids);
+                        });
                         ui.image(&handle);
                     } else {
                         ui.colored_label(egui::Color32::RED, "Art data not found");
@@ -178,6 +195,89 @@ pub fn ui_art_viewer(app: &mut UocfEditorApp, ctx: &egui::Context, ui: &mut egui
             ui.centered_and_justified(|ui| { ui.label("Select a tile from the sidebar to inspect"); });
         }
     });
+}
+
+/// The export menu of art `id`, and the bulk export of the `shown` ids.
+fn ui_art_export(app: &mut UocfEditorApp, ui: &mut egui::Ui, id: u32, shown: &[u32]) {
+    let Some(client) = &app.client_data else {
+        return;
+    };
+    let (art, hues) = (Arc::clone(&client.art), client.hues.clone());
+    let source = concrete_art_tile_source(app.selected_legacy_source);
+    let menu = ExportMenu {
+        hue: if app.selected_hue_id > 0 { Ok(()) } else { Err(NO_HUE_SELECTED) },
+        frame: false,
+        bulk: vec![BulkEntry {
+            label: format!("Export all shown ({})...", shown.len()),
+            hover: format!(
+                "Every art id the list shows, each as {}.<format>, into a folder you pick (files of the same name \
+                 are replaced).",
+                id_file_stem(ART_FILE_PREFIX, id)
+            ),
+        }],
+    };
+    let Some(clicked) = export_menu(ui, &mut app.image_export, &menu) else {
+        return;
+    };
+    let settings = app.image_export;
+    let hue = settings
+        .takes_hue(&menu)
+        .then(|| hues.and_then(|hues| hues.get(usize::from(app.selected_hue_id).checked_sub(1)?).copied()))
+        .flatten();
+    match clicked {
+        ExportClicked::Shown => {
+            let result = art_export_image(&art, id, source, hue.as_ref())
+                .map_err(|error| format!("{error:#}"))
+                .and_then(|image| image.ok_or_else(|| "the source has no such art".to_string()))
+                .and_then(|image| save_image(&id_file_stem(ART_FILE_PREFIX, id), &image, settings.format));
+            if let Some(status) = save_status(&format!("art {id:#06x}"), result) {
+                app.status_message = status;
+            }
+        }
+        ExportClicked::Bulk(_) => {
+            let ids = shown.to_vec();
+            start_bulk(app, |folder| {
+                BulkExport::start(format!("Export {} art", ids.len()), folder, settings.format, ids, move |id| {
+                    let image = art_export_image(&art, id, source, hue.as_ref())?;
+                    Ok(image.map(|image| vec![(id_file_stem(ART_FILE_PREFIX, id), image)]).unwrap_or_default())
+                })
+            });
+        }
+    }
+}
+
+/// Art `art_id` of `source` to export: Classic art as stored (16-bit), Enhanced art decoded to RGBA; `hue` where the
+/// view hues it (statics, and Enhanced art). `None` when the source has no such art.
+fn art_export_image(art: &ArtMap, art_id: u32, source: ArtSource, hue: Option<&HueEntry>) -> color_eyre::eyre::Result<Option<ExportImage>> {
+    if !art.has_id_from_source(art_id, source) {
+        return Ok(None);
+    }
+    let mut raw = Vec::new();
+    art.get_raw_art_data_from_source(art_id, source, &mut raw)?;
+    let hue = hue.filter(|_| crate::app::cc_hue_should_apply_to_art(art_id, source));
+    if source.is_ec_uop() || raw.starts_with(DDS_MAGIC) {
+        let format = if raw.starts_with(DDS_MAGIC) { ECImageFormat::DDS } else { ECImageFormat::TGA };
+        let texture = TextureFile {
+            metadata: RawTextureItem::absent(),
+            is_ec: source.is_ec_uop(),
+            format,
+            props: None,
+            raw_data: Arc::from(raw),
+            image_data_offset: 0,
+        };
+        let rgba = texture.decode_to_rgba()?.to_rgba8();
+        let (width, height) = rgba.dimensions();
+        let mut rgba = rgba.into_raw();
+        if let Some(hue) = hue {
+            hue_rgba(hue, &mut rgba);
+        }
+        return Ok(Some(ExportImage::Rgba { width, height, rgba }));
+    }
+    let mut image = ExportImage::art(&ArtColors::decode(ArtKind::of_id(art_id), &raw)?);
+    if let Some(hue) = hue {
+        image.hue_classic_colors(|color| classic_hued(hue, color));
+    }
+    Ok(Some(image))
 }
 
 fn art_row_should_show(source: ArtSource, has_art: bool, has_metadata: bool) -> bool {

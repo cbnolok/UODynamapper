@@ -150,6 +150,11 @@ impl AnimMap {
         self.read_animation_payload(file_idx, anim_id, |data| decode_animation_payload(data, 0))
     }
 
+    /// The stored entry [`Self::decode_animation`] decodes (a verdata patch applied), as bytes.
+    pub fn animation_payload(&self, file_idx: u8, anim_id: u32) -> eyre::Result<Vec<u8>> {
+        self.read_animation_payload(file_idx, anim_id, |data| Ok(data.to_vec()))
+    }
+
     pub fn decode_animation_metadata(&self, file_idx: u8, anim_id: u32) -> eyre::Result<Vec<AnimFrameInfo>> {
         self.read_animation_payload(file_idx, anim_id, |data| decode_animation_payload_metadata(data, 0))
     }

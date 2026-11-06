@@ -367,7 +367,18 @@ impl GumpMap {
         gump_id: u32,
         scratch_buffer: &mut Vec<u8>,
     ) -> eyre::Result<GumpDimensions> {
-        match self.resolve_raw_gump_data(None, gump_id, scratch_buffer)? {
+        self.get_raw_gump_data_in(None, gump_id, scratch_buffer)
+    }
+
+    /// [`Self::get_raw_gump_data`] reading `only` (every container the map reads for `None`): the rows of the gump
+    /// in `scratch_buffer`, without the width/height header of a UOP entry.
+    pub fn get_raw_gump_data_in(
+        &self,
+        only: Option<GumpContainer>,
+        gump_id: u32,
+        scratch_buffer: &mut Vec<u8>,
+    ) -> eyre::Result<GumpDimensions> {
+        match self.resolve_raw_gump_data(only, gump_id, scratch_buffer)? {
             RawGumpData::Borrowed(dimensions, data) => {
                 scratch_buffer.extend_from_slice(data);
                 Ok(dimensions)

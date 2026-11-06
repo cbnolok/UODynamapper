@@ -258,6 +258,22 @@ impl ClassicImageFiles {
         decode_record(self.kind, id, &record).map(|image| image.filter(|image| image.width > 0 && image.height > 0))
     }
 
+    /// The stored image of `id` to export, its colours as stored (see `crate::image_export`); `None` when the
+    /// record holds none.
+    pub fn read_export(&self, id: u32) -> eyre::Result<Option<crate::image_export::ExportImage>> {
+        use crate::image_export::ExportImage;
+        self.check_id(id)?;
+        let Some((record, _)) = self.record(id)? else {
+            return Ok(None);
+        };
+        let image = match self.kind {
+            ClassicImageKind::Art => ExportImage::art(&ArtColors::decode(ArtKind::of_id(id), &record).wrap_err_with(|| format!("art {id:#x} does not decode"))?),
+            ClassicImageKind::Gump if record == PLACEHOLDER_GUMP => return Ok(None),
+            ClassicImageKind::Gump => ExportImage::gump(&GumpColors::decode_uop(&record).wrap_err_with(|| format!("gump {id} does not decode"))?),
+        };
+        Ok(Some(image).filter(|image| image.width() > 0 && image.height() > 0))
+    }
+
     /// Encodes `image` for `id` as the shipped records are, checked by the encoders' rules (see
     /// [`ClassicImageKind::rules`]); an image of another size than the record is refused unless `size_change`
     /// allows it. Nothing is written.

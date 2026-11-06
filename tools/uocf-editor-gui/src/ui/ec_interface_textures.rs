@@ -13,7 +13,7 @@ use uocf::enhanced::tga_writer::TgaConvention;
 use crate::app::{guess_uop_image_format_from_payload, UocfEditorApp};
 use crate::logic::dictionary::Dictionary;
 use crate::logic::uop_cache::LoadedUop;
-use crate::ui::image_export::{export_rgba_png, sanitize_file_stem};
+use crate::ui::image_export::{export_menu, sanitize_file_stem, save_rgba, save_status, ExportClicked, ExportMenu, NOT_HUED};
 use crate::ui::{arrow_delta, move_selection, uop_browser, UOP_PATCHER_NOTE};
 
 const INTERFACE_UOP_NAME: &str = "interface.uop";
@@ -272,8 +272,8 @@ fn ui_details(app: &mut UocfEditorApp, ctx: &egui::Context, ui: &mut egui::Ui, u
             ui.label(format!("{:.2}x", zoom_log2.exp2()));
         }
         ui.separator();
-        if ui.add_enabled(texture.is_some(), egui::Button::new("Export PNG...")).clicked() {
-            export_png(app, hash, &entry.file_name());
+        if texture.is_some() && export_menu(ui, &mut app.image_export, &ExportMenu::unhued(NOT_HUED)) == Some(ExportClicked::Shown) {
+            export_image(app, hash, &entry.file_name());
         }
         if ui.button("Open raw entry").clicked() {
             app.select_raw_uop_entry_at_path(&loaded.path, hash);
@@ -322,17 +322,16 @@ fn ui_details(app: &mut UocfEditorApp, ctx: &egui::Context, ui: &mut egui::Ui, u
     }
 }
 
-fn export_png(app: &mut UocfEditorApp, hash: u64, file_name: &str) {
+/// The decoded texture shown, RGBA as stored, in the export menu's format.
+fn export_image(app: &mut UocfEditorApp, hash: u64, file_name: &str) {
     let Some(preview) = app.current_image_preview().filter(|preview| preview.key == hash) else {
         return;
     };
     let (width, height, rgba) = (preview.width, preview.height, Arc::clone(&preview.rgba));
     let stem = file_name.rsplit_once('.').map_or(file_name, |(stem, _)| stem);
-    let default_name = format!("{}.png", sanitize_file_stem(stem, EXPORT_FALLBACK_NAME));
-    match export_rgba_png(default_name, width, height, &rgba) {
-        Ok(Some(path)) => app.status_message = format!("Exported {path}."),
-        Ok(None) => {}
-        Err(error) => app.status_message = format!("Failed to export: {error}"),
+    let stem = sanitize_file_stem(stem, EXPORT_FALLBACK_NAME);
+    if let Some(status) = save_status(&stem, save_rgba(&stem, width, height, &rgba, app.image_export.format)) {
+        app.status_message = status;
     }
 }
 

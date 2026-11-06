@@ -13,7 +13,13 @@ use eframe::egui;
 use std::hash::{Hash, Hasher};
 use std::path::{Path, PathBuf};
 use uocf::animation_sequence::{AnimationSequence, DIRECTION_COUNT};
+use uocf::classic::anim::AnimMap;
+use uocf::classic::anim_frames::mul::ClassicMulEntry;
+use uocf::classic::anim_frames::uop::ClassicUopEntry;
+use uocf::classic::anim_frames::ClassicPalette;
 use uocf::classic::animationframe_cc::AnimationFrameCc;
+use crate::ui::image_export::{start_bulk, BulkEntry, BulkExport, ExportMenu};
+use std::sync::Arc;
 use uocf::classic::michelangelo_uop_codec::{
     export_anim_blocks_from_mul, MichelangeloPatch, MichelangeloPatchEntry,
 };
@@ -38,6 +44,10 @@ const ANIMATION_CONTROLS_PANEL_WIDTH: f32 = 280.0;
 const ANIMATION_ACTIONS_PANEL_WIDTH: f32 = 260.0;
 /// Client default of the `flying_animations` setting, used to resolve sequence actions.
 const FLYING_ANIMATIONS_ENABLED: bool = true;
+const NO_FRAME_HUE: &str = "No hue is chosen: the frames are drawn as stored.";
+/// The bulk entries of the frame export menu.
+const EXPORT_ACTION_ENTRY: usize = 0;
+const EXPORT_BODY_ENTRY: usize = 1;
 /// The anim file index of a source without MUL files: anim.mul, or the first AnimationFrame package.
 const DEFAULT_ANIM_FILE_INDEX: u8 = 0;
 const ANIM_MUL_FILES: &str = "anim*.mul and anim*.idx";
@@ -227,7 +237,14 @@ pub fn ui_animations(app: &mut UocfEditorApp, ctx: &egui::Context, ui: &mut egui
         ui.separator();
         let name = format!("{}_body_{}_action_{}", animation_source_label(app.selected_legacy_source), key.body, key.action);
         let hue = animation_hue::frame_hue(app, is_ec);
-        animation_frames::show_player(app, ctx, ui, &frames, &hue, &name);
+        let menu = frame_export_menu(key, matches!(hue.0, animation_hue::FrameHue::None), is_ec);
+        let bulk = animation_frames::show_player(app, ctx, ui, &frames, &hue, &name, (key.body, key.action), &menu);
+        let export_hue = app.image_export.takes_hue(&menu).then(|| hue.0.clone());
+        match bulk {
+            Some(EXPORT_ACTION_ENTRY) => export_action(app, &frames, key, export_hue),
+            Some(EXPORT_BODY_ENTRY) => export_body(app, key, sequence, export_hue),
+            _ => {}
+        }
         ui.separator();
         animation_frames::show_grid(app, ctx, ui, &frames, &hue);
     });
@@ -400,39 +417,127 @@ fn action_decode_key(app: &UocfEditorApp, key: ActionKey, sequence: Option<u32>)
 
 /// The frames of every stored direction of `key`'s action.
 fn decode_action(app: &mut UocfEditorApp, key: ActionKey, sequence: Option<u32>) -> ActionFrames {
+    match action_input(app, key, sequence) {
+        Ok(input) => input.decode(),
+        Err(error) => ActionFrames::from_error(error),
+    }
+}
+
+/// What the frames of an action decode from, read on the UI thread; [`Self::decode`] runs anywhere.
+enum ActionInput {
+    Mul { anim_map: Arc<AnimMap>, file_index: u8, body: u16, action: u16 },
+    Uop { payload: Vec<u8>, is_ec: bool, sequence: Option<AnimationSequence>, action: u16 },
+}
+
+fn action_input(app: &mut UocfEditorApp, key: ActionKey, sequence: Option<u32>) -> Result<ActionInput, String> {
     match key.source {
         ActionSource::Mul { file_index, .. } => {
-            let Some(anim_map) = app.client_data.as_ref().and_then(|client| client.anim_map.clone()) else {
-                return ActionFrames::from_error("Classic animation MUL sources are not loaded".to_string());
-            };
-            let Ok(body) = u16::try_from(key.body) else {
-                return ActionFrames::from_error(format!("Body {} is outside the classic MUL animation layout", key.body));
-            };
-            let split = format!("one {} entry per direction", animation_list::mul_file_name(file_index));
-            ActionFrames::classic(
-                |direction| {
-                    let index = uocf::classic::anim::classic_animation_source_index_from_identity(file_index, body, key.action, direction)?;
-                    anim_map.has_anim(file_index, index).then(|| anim_map.decode_animation_index(file_index, index))
-                },
-                split,
-            )
+            let anim_map = app
+                .client_data
+                .as_ref()
+                .and_then(|client| client.anim_map.clone())
+                .ok_or_else(|| "Classic animation MUL sources are not loaded".to_string())?;
+            let body = u16::try_from(key.body).map_err(|_| format!("Body {} is outside the classic MUL animation layout", key.body))?;
+            Ok(ActionInput::Mul { anim_map, file_index, body, action: key.action })
         }
         ActionSource::Uop { package_index, file_hash, .. } => {
             let payload = listed_uop_entry(app, package_index, file_hash)
                 .ok_or_else(|| eyre::eyre!("AnimationFrame entry {file_hash:#018x} is no longer listed"))
-                .and_then(|entry| animationframe_payload(app, &entry));
-            let payload = match payload {
-                Ok(payload) => payload,
-                Err(error) => return ActionFrames::from_error(format!("{error:#}")),
-            };
-            if !is_ec_source(app.selected_legacy_source) {
-                let split = "one AnimationFrame entry holding every direction".to_string();
-                return ActionFrames::classic(|direction| Some(AnimationFrameCc::decode_direction(&payload, direction)), split);
-            }
-            let sequence = app.selected_anim_sequence.as_ref().filter(|(id, _)| Some(*id) == sequence).map(|(_, sequence)| sequence);
-            ActionFrames::enhanced(&payload, sequence, key.action).unwrap_or_else(|error| ActionFrames::from_error(format!("{error:#}")))
+                .and_then(|entry| animationframe_payload(app, &entry))
+                .map_err(|error| format!("{error:#}"))?;
+            let sequence = app.selected_anim_sequence.as_ref().filter(|(id, _)| Some(*id) == sequence).map(|(_, sequence)| sequence.clone());
+            Ok(ActionInput::Uop { payload, is_ec: is_ec_source(app.selected_legacy_source), sequence, action: key.action })
         }
     }
+}
+
+impl ActionInput {
+    fn decode(&self) -> ActionFrames {
+        match self {
+            Self::Mul { anim_map, file_index, body, action } => {
+                let (file_index, body, action) = (*file_index, *body, *action);
+                let split = format!("one {} entry per direction", animation_list::mul_file_name(file_index));
+                ActionFrames::classic(
+                    |direction| {
+                        let index = uocf::classic::anim::classic_animation_source_index_from_identity(file_index, body, action, direction)?;
+                        anim_map.has_anim(file_index, index).then(|| {
+                            let frames = anim_map.decode_animation_index(file_index, index)?;
+                            let palette = anim_map.animation_payload(file_index, index).and_then(|payload| ClassicMulEntry::parse(&payload));
+                            Ok((frames, palette_of(palette.map(|entry| entry.palette))))
+                        })
+                    },
+                    split,
+                )
+            }
+            Self::Uop { payload, is_ec: false, .. } => {
+                let split = "one AnimationFrame entry holding every direction".to_string();
+                let palette = palette_of(ClassicUopEntry::parse(payload).map(|entry| entry.palette));
+                ActionFrames::classic(
+                    |direction| Some(AnimationFrameCc::decode_direction(payload, direction).map(|frames| (frames, palette.clone()))),
+                    split,
+                )
+            }
+            Self::Uop { payload, is_ec: true, sequence, action } => ActionFrames::enhanced(payload, sequence.as_ref(), *action)
+                .unwrap_or_else(|error| ActionFrames::from_error(format!("{error:#}"))),
+        }
+    }
+}
+
+/// A Classic entry's palette for the paletted exports; without one they write RGBA.
+fn palette_of(palette: eyre::Result<ClassicPalette>) -> Option<Arc<ClassicPalette>> {
+    palette.inspect_err(|error| log::warn!("animation palette: {error:#}")).ok().map(Arc::new)
+}
+
+/// The export menu of the frame shown, with the action and body bulk exports.
+fn frame_export_menu(key: ActionKey, unhued: bool, is_ec: bool) -> ExportMenu {
+    let example = uocf::image_export::animation_frame_stem(key.body, key.action, 0, 1);
+    let names = format!("each frame as {example}.<format> (a{{action}}_d{{direction}}_f{{frame}})");
+    ExportMenu {
+        hue: if unhued { Err(NO_FRAME_HUE) } else { Ok(()) },
+        frame: !is_ec,
+        bulk: vec![
+            BulkEntry {
+                label: "Export action...".to_string(),
+                hover: format!("Every direction of action {}, {names}, into a folder you pick.", key.action),
+            },
+            BulkEntry {
+                label: "Export body...".to_string(),
+                hover: format!("Every action of body {} in this file, {names}, into a folder you pick.", key.body),
+            },
+        ],
+    }
+}
+
+/// Every frame of the action shown into a folder.
+fn export_action(app: &mut UocfEditorApp, frames: &ActionFrames, key: ActionKey, hue: Option<animation_hue::FrameHue>) {
+    let files = animation_frames::action_files(frames, key.body, key.action, hue.as_ref());
+    let format = app.image_export.format;
+    let title = format!("Export body {} action {}", key.body, key.action);
+    start_bulk(app, |folder| BulkExport::start(title, folder, format, files, |file| Ok(vec![file])));
+}
+
+/// Every action of `key`'s body in its file into a folder, decoded on the export thread.
+fn export_body(app: &mut UocfEditorApp, key: ActionKey, sequence: Option<u32>, hue: Option<animation_hue::FrameHue>) {
+    let Some(keys) = animation_list::action_keys(app, app.selected_legacy_source) else {
+        return;
+    };
+    let actions: Vec<_> = keys
+        .iter()
+        .filter(|other| other.body == key.body && other.group() == key.group())
+        .map(|&other| (other.action, action_input(app, other, sequence)))
+        .collect();
+    let format = app.image_export.format;
+    let title = format!("Export body {} ({} actions)", key.body, actions.len());
+    let body = key.body;
+    start_bulk(app, |folder| {
+        BulkExport::start(title, folder, format, actions, move |(action, input)| {
+            let frames = input.map_err(|error| eyre::eyre!("action {action}: {error}"))?.decode();
+            if let Some(error) = frames.error {
+                eyre::bail!("action {action}: {error}");
+            }
+            Ok(animation_frames::action_files(&frames, body, action, hue.as_ref()))
+        })
+    });
 }
 
 /// The scanned AnimationFrame UOP entry of a listed action.
