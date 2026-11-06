@@ -398,7 +398,8 @@ def main() -> int:
             args.output_dir,
             args.maps,
             format_and_zstd_args(args, prefix="cc-art-", default_format="bc7", default_zstd=True, global_zstd=global_zstd),
-            format_and_zstd_args(args, prefix="cc-land-", default_format="bc7", default_zstd=True, global_zstd=global_zstd),
+            # Classic land stays lossless: pack-texmaps refuses BC7.
+            format_and_zstd_args(args, prefix="cc-land-", default_format=None, default_zstd=True, global_zstd=global_zstd),
             format_and_zstd_args(args, prefix="cc-anim-", default_format="bc7", default_zstd=True, global_zstd=global_zstd),
             format_and_zstd_args(args, prefix="ec-anim-", default_format="bc7", default_zstd=True, global_zstd=global_zstd),
             format_and_zstd_args(args, prefix="art-", cli_prefix="art-", default_format="bc7", default_zstd=True, global_zstd=global_zstd),

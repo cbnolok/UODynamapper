@@ -28,7 +28,9 @@ use udd_conv::{
     cc_map::convert_map_mul_to_uddp_from_sources_with_patches,
     chunk_compression::ChunkCompression,
     cc_statics::convert_statics_mul_to_uddp_from_sources_with_patches,
-    tex_land_cc::{TexLandCcAtlasOptions, convert_texmaps_mul_to_tex_land_cc_uddp_with_patches_and_progress},
+    tex_land_cc::{
+        CLASSIC_LAND_LOSSY_REFUSAL, TexLandCcAtlasOptions, convert_texmaps_mul_to_tex_land_cc_uddp_with_patches_and_progress,
+    },
     cc_radar::{build_facet_radar_dds, RadarFormat, RadarBuildOptions},
     source_paths::gather_source_dirs,
     upscale::{UpscaleConfig, UpscaleFilter, UpscalePass},
@@ -221,11 +223,14 @@ fn texture_compression(
     }
 }
 
+/// The BC7 RDO lambda that turns RDO off.
+const NO_BC7_RDO_LAMBDA: f32 = 0.0;
+
 fn bc7_rdo_lambda(settings: &AppSettings, optimization: TextureOptimization) -> f32 {
     if settings.bc7_rdo_enabled && matches!(optimization, TextureOptimization::Bc7Zstd) {
         settings.bc7_rdo_lambda
     } else {
-        0.0
+        NO_BC7_RDO_LAMBDA
     }
 }
 
@@ -431,6 +436,9 @@ impl UddConvApp {
         let settings = self.settings.clone();
         let output = self.get_output_path("tex_land_cc.uddp");
         self.spawn_asset_task(AssetPackTask::TexLandCc, "CC Texmaps Packing".to_string(), move |progress| {
+            if matches!(settings.opt_tex_land_cc, TextureOptimization::Bc7 | TextureOptimization::Bc7Zstd) {
+                eyre::bail!("{CLASSIC_LAND_LOSSY_REFUSAL}");
+            }
             let sources = gather_cc_source_dirs(settings.cc_dir.as_ref());
             if sources.is_empty() { eyre::bail!("No source dirs"); }
             ensure_output_parent(&output)?;
@@ -462,11 +470,8 @@ impl UddConvApp {
                     upscale_64_passes: Vec::new(),
                     upscale_128_passes: Vec::new(),
                     upscale_profile,
-                    pixel_format: match settings.opt_tex_land_cc {
-                        TextureOptimization::Bc7 | TextureOptimization::Bc7Zstd => PagePixelFormat::Bc7,
-                        _ => PagePixelFormat::Rgba8888,
-                    },
-                    bc7_rdo_lambda: bc7_rdo_lambda(&settings, settings.opt_tex_land_cc),
+                    pixel_format: PagePixelFormat::Rgba8888,
+                    bc7_rdo_lambda: NO_BC7_RDO_LAMBDA,
                     bc7_rdo_lookback_blocks: bc7_rdo_lookback_blocks(&settings),
                 },
                 &classic_patch_options(&settings),
@@ -570,7 +575,8 @@ impl UddConvApp {
                         TextureOptimization::Bc7 | TextureOptimization::Bc7Zstd => PagePixelFormat::Bc7,
                         _ => PagePixelFormat::Rgba8888,
                     },
-                    bc7_rdo_lambda: bc7_rdo_lambda(&settings, settings.opt_tex_land_ec),
+                    // The lossy Enhanced land is BC7 without RDO.
+                    bc7_rdo_lambda: NO_BC7_RDO_LAMBDA,
                     bc7_rdo_lookback_blocks: bc7_rdo_lookback_blocks(&settings),
                     transcode_kdl_path: Some(transcode_kdl),
                     terrain_overrides_kdl_path: Some(terrain_overrides_kdl),

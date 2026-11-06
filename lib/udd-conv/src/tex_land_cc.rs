@@ -60,6 +60,12 @@ pub const DEFAULT_ATLAS_PAGE_WIDTH: u32 = 2048;
 pub const DEFAULT_ATLAS_PAGE_HEIGHT: u32 = 2048;
 pub const DEFAULT_ATLAS_GUTTER: u16 = 1;
 
+/// Why the packers refuse BC7 for Classic land (decided 2026-11-05, `docs/agent_notes/uddp_anim_format_requirements.md`
+/// section 8): the CLI's error and the converter GUI's tooltip.
+pub const CLASSIC_LAND_LOSSY_REFUSAL: &str = "Classic land stays lossless: BC7 would be 12.6 MB on disk against 11.2 MB \
+    lossless, at a median SSIMULACRA2 of 75.5 with 29 % of the textures at 80 or more, and would save only VRAM (59 MB \
+    down to 15).";
+
 pub struct TexLandCcAtlasOptions {
     pub atlas_width: u32,
     pub atlas_height: u32,

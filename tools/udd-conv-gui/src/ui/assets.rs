@@ -3,6 +3,7 @@ use crate::models::{AssetPackProgress, AssetPackProgressState, AssetPackTask, Te
 use eframe::egui;
 use udd_conv::source_paths::gather_source_dirs;
 use udd_conv::tex_art_cc::select_tex_art_cc_metadata_source;
+use udd_conv::tex_land_cc::CLASSIC_LAND_LOSSY_REFUSAL;
 use udd_conv::upscale::UpscaleFilter;
 
 impl UddConvApp {
@@ -35,6 +36,7 @@ impl UddConvApp {
                 None,
                 None,
                 None,
+                None,
                 vec![],
             );
             if clicked {
@@ -56,6 +58,7 @@ impl UddConvApp {
                 Some((&mut self.settings.zstd_tex_art_cc, &mut self.settings.jxl_tex_art_cc)),
                 None,
                 Some(&mut self.settings.opt_tex_art_cc),
+                None,
                 Some((
                     &mut self.settings.bc7_rdo_enabled,
                     &mut self.settings.bc7_rdo_lambda,
@@ -79,11 +82,8 @@ impl UddConvApp {
                 Some((&mut self.settings.zstd_tex_land_cc, &mut self.settings.jxl_tex_land_cc)),
                 None,
                 Some(&mut self.settings.opt_tex_land_cc),
-                Some((
-                    &mut self.settings.bc7_rdo_enabled,
-                    &mut self.settings.bc7_rdo_lambda,
-                    &mut self.settings.bc7_rdo_lookback_blocks,
-                )),
+                Some(CLASSIC_LAND_LOSSY_REFUSAL),
+                None,
                 None,
                 vec![
                     ("64x64", &mut self.settings.upscale_tex_land_cc_64, crate::models::UpscalePreviewTarget::TexLandCc64),
@@ -105,6 +105,7 @@ impl UddConvApp {
                 Some((&mut self.settings.zstd_mobile_anim_cc, &mut self.settings.jxl_mobile_anim_cc)),
                 None,
                 Some(&mut self.settings.opt_mobile_anim_cc),
+                None,
                 Some((
                     &mut self.settings.bc7_rdo_enabled,
                     &mut self.settings.bc7_rdo_lambda,
@@ -129,6 +130,7 @@ impl UddConvApp {
                 Some((&mut self.settings.zstd_tex_art_ec, &mut self.settings.jxl_tex_art_ec)),
                 None,
                 Some(&mut self.settings.opt_tex_art_ec),
+                None,
                 Some((
                     &mut self.settings.bc7_rdo_enabled,
                     &mut self.settings.bc7_rdo_lambda,
@@ -152,11 +154,9 @@ impl UddConvApp {
                 Some((&mut self.settings.zstd_tex_land_ec, &mut self.settings.jxl_tex_land_ec)),
                 None,
                 Some(&mut self.settings.opt_tex_land_ec),
-                Some((
-                    &mut self.settings.bc7_rdo_enabled,
-                    &mut self.settings.bc7_rdo_lambda,
-                    &mut self.settings.bc7_rdo_lookback_blocks,
-                )),
+                None,
+                // The lossy Enhanced land is BC7 without RDO.
+                None,
                 None,
                 vec![
                     ("64x64", &mut self.settings.upscale_tex_land_ec_64, crate::models::UpscalePreviewTarget::TexLandEc64),
@@ -180,6 +180,7 @@ impl UddConvApp {
                 Some((&mut self.settings.zstd_tex_aux_ec, &mut self.settings.jxl_tex_aux_ec)),
                 None,
                 Some(&mut self.settings.opt_tex_aux_ec),
+                None,
                 Some((
                     &mut self.settings.bc7_rdo_enabled,
                     &mut self.settings.bc7_rdo_lambda,
@@ -202,6 +203,7 @@ impl UddConvApp {
                 Some((&mut self.settings.zstd_mobile_anim_ec, &mut self.settings.jxl_mobile_anim_ec)),
                 None,
                 Some(&mut self.settings.opt_mobile_anim_ec),
+                None,
                 Some((
                     &mut self.settings.bc7_rdo_enabled,
                     &mut self.settings.bc7_rdo_lambda,
@@ -332,6 +334,8 @@ fn draw_asset_card(
     texture_levels: Option<(&mut i32, &mut u8)>,
     zstd_only_level: Option<&mut i32>,
     opt: Option<&mut TextureOptimization>,
+    // When set, the block formats are greyed out with this reason in their tooltip.
+    lossy_refusal: Option<&str>,
     bc7_rdo: Option<(&mut bool, &mut f32, &mut usize)>,
     upscale_single: Option<(&mut UpscaleFilter, Option<crate::models::UpscalePreviewTarget>)>,
     mut upscale_configs: Vec<(&str, &mut udd_conv::upscale::UpscaleConfig, crate::models::UpscalePreviewTarget)>,
@@ -438,16 +442,24 @@ fn draw_asset_card(
                                                 *opt_val = TextureOptimization::None;
                                             }
                                             if ui
-                                                .selectable_label(current_fmt == "BC7", "BC7")
+                                                .add_enabled(
+                                                    lossy_refusal.is_none(),
+                                                    egui::Button::selectable(current_fmt == "BC7", "BC7"),
+                                                )
+                                                .on_disabled_hover_text(lossy_refusal.unwrap_or_default())
                                                 .clicked()
                                             {
                                                 *opt_val = TextureOptimization::Bc7;
                                             }
                                             if ui
-                                                .selectable_label(
-                                                    current_fmt == "Supercompressed BC7+zstd",
-                                                    "Supercompressed BC7+zstd",
+                                                .add_enabled(
+                                                    lossy_refusal.is_none(),
+                                                    egui::Button::selectable(
+                                                        current_fmt == "Supercompressed BC7+zstd",
+                                                        "Supercompressed BC7+zstd",
+                                                    ),
                                                 )
+                                                .on_disabled_hover_text(lossy_refusal.unwrap_or_default())
                                                 .clicked()
                                             {
                                                 *opt_val = TextureOptimization::Bc7Zstd;

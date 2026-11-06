@@ -151,6 +151,17 @@ struct TerrainIgnoreMetadata {
 use crate::upscale::{apply_upscale_passes, UpscaleConfig, UpscaleFilter, UpscalePass};
 use crate::upscale_profile::{UpscaleImageType, UpscaleProfile, UpscaleTarget};
 
+/// The Zstd level of BC7 land blocks unless the packer is asked for another: the lossy Enhanced land (BC7 with fix C,
+/// no RDO, straight colour; decided 2026-11-05, `docs/agent_notes/uddp_anim_format_requirements.md` section 8).
+pub const BC7_LAND_PAGE_ZSTD_LEVEL: i32 = 19;
+
+/// The land tile ids the runtime resolves to render layers: dynamapper's land page lookup capacity.
+const LAND_TILE_ID_COUNT: u32 = 0x4000;
+
+/// The render roles of [`udd_assets::tex_land_ec::TexLandEcPackage::resolve_material_render_layers`] whose alpha is
+/// logged for BC7, in its order; the fifth, the animated liquid, is left out.
+const ALPHA_LOGGED_RENDER_ROLES: [&str; 4] = ["base", "detail", "mask", "normal"];
+
 pub struct TexLandEcAtlasOptions {
     pub atlas_width: u32,
     pub atlas_height: u32,
@@ -767,6 +778,9 @@ pub fn convert_tex_land_ec_uop_to_tex_land_ec_uddp_from_loaded_sources_with_prog
     });
 
     build_and_write_package_with_progress(package, out_file, &mut package_progress)?;
+    if use_bc7 {
+        log_translucent_texels_per_render_role(out_file, &pages)?;
+    }
 
     Ok(TexLandEcBuildSummary {
         terrain_entry_count,
@@ -784,6 +798,89 @@ pub fn convert_tex_land_ec_uop_to_tex_land_ec_uddp_from_loaded_sources_with_prog
         atlas_width: options.atlas_width,
         atlas_height: options.atlas_height,
     })
+}
+
+/// Texels with alpha below 255 in the lossless pages, over the distinct textures of one render role.
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+struct TranslucentTexelTally {
+    texture_count: u32,
+    translucent_texture_count: u32,
+    texel_count: u64,
+    translucent_texel_count: u64,
+}
+
+/// Counts the texels whose alpha is below 255 in one `width` x `height` rect of an RGBA page `page_width` texels wide.
+fn tally_translucent_texels(
+    tally: &mut TranslucentTexelTally,
+    rgba: &[u8],
+    page_width: usize,
+    (x, y, width, height): (usize, usize, usize, usize),
+) {
+    const RGBA_CHANNELS: usize = 4;
+    const ALPHA_CHANNEL: usize = 3;
+    let translucent = (y..y + height)
+        .map(|row| {
+            let start = (row * page_width + x) * RGBA_CHANNELS;
+            rgba[start..start + width * RGBA_CHANNELS]
+                .chunks_exact(RGBA_CHANNELS)
+                .filter(|texel| texel[ALPHA_CHANNEL] < u8::MAX)
+                .count() as u64
+        })
+        .sum::<u64>();
+    tally.texture_count += 1;
+    tally.translucent_texture_count += u32::from(translucent > 0);
+    tally.texel_count += (width * height) as u64;
+    tally.translucent_texel_count += translucent;
+}
+
+/// Logs, per render role, the texels whose alpha is below 255 in the lossless pages: BC7 keeps straight colour and codes
+/// alpha with it, so this is where its alpha error can show. The roles come from the written package, read as the
+/// runtime reads them: a tile without a base layer binds its effective slot as the base.
+fn log_translucent_texels_per_render_role(out_file: &Path, pages: &[BuiltPage]) -> eyre::Result<()> {
+    let package = udd_assets::tex_land_ec::TexLandEcPackage::load(out_file)
+        .wrap_err_with(|| format!("reopen {} to count alpha per render role", out_file.display()))?;
+    let mut slots_by_role: [BTreeSet<u32>; ALPHA_LOGGED_RENDER_ROLES.len()] = Default::default();
+    for tile_id in 0..LAND_TILE_ID_COUNT {
+        let layers = package.resolve_material_render_layers(tile_id);
+        if layers[0].as_ref().and_then(|layer| layer.runtime_slot_id).is_some() {
+            for (slots, layer) in slots_by_role.iter_mut().zip(&layers) {
+                slots.extend(layer.as_ref().and_then(|layer| layer.runtime_slot_id));
+            }
+        } else {
+            slots_by_role[0].extend(package.resolve_effective_runtime_slot_id(tile_id));
+        }
+    }
+    let pages_by_index = pages.iter().map(|page| (page.record.page_index, page)).collect::<HashMap<_, _>>();
+    let page_width = package.atlas_width() as usize;
+    for (role, slots) in ALPHA_LOGGED_RENDER_ROLES.iter().zip(&slots_by_role) {
+        // Aliased slots share one packed texture: count each rect once.
+        let rects = slots
+            .iter()
+            .filter_map(|&slot_id| package.slots().get(slot_id as usize))
+            .filter(|slot| slot.is_present())
+            .map(|slot| (slot.page_index, slot.x, slot.y, slot.width, slot.height))
+            .collect::<BTreeSet<_>>();
+        let mut tally = TranslucentTexelTally::default();
+        for (page_index, x, y, width, height) in rects {
+            let page = pages_by_index
+                .get(&page_index)
+                .ok_or_else(|| eyre::eyre!("EC land slot on missing page {page_index}"))?;
+            tally_translucent_texels(
+                &mut tally,
+                &page.pixels,
+                page_width,
+                (usize::from(x), usize::from(y), usize::from(width), usize::from(height)),
+            );
+        }
+        info!(
+            "EC land BC7, {role} role: {} of {} texels ({} of {} textures) have alpha below 255",
+            tally.translucent_texel_count,
+            tally.texel_count,
+            tally.translucent_texture_count,
+            tally.texture_count
+        );
+    }
+    Ok(())
 }
 
 fn validate_options(options: &TexLandEcAtlasOptions) -> eyre::Result<()> {
@@ -1749,6 +1846,27 @@ mod tests {
             height,
             rgba: vec![255; width as usize * height as usize * 4],
         }
+    }
+
+    /// Only texels below full alpha count, inside the rect; a texture counts as translucent once.
+    #[test]
+    fn translucent_texels_are_counted_inside_their_rect() {
+        const PAGE_WIDTH: usize = 4;
+        const PAGE_HEIGHT: usize = 3;
+        const OPAQUE: [u8; 4] = [10, 20, 30, 255];
+        const TRANSLUCENT: [u8; 4] = [10, 20, 30, 254];
+        let mut rgba = OPAQUE.repeat(PAGE_WIDTH * PAGE_HEIGHT);
+        for (x, y) in [(1, 1), (2, 1), (3, 2)] {
+            let start = (y * PAGE_WIDTH + x) * TRANSLUCENT.len();
+            rgba[start..start + TRANSLUCENT.len()].copy_from_slice(&TRANSLUCENT);
+        }
+        let mut tally = TranslucentTexelTally::default();
+        tally_translucent_texels(&mut tally, &rgba, PAGE_WIDTH, (1, 1, 2, 2));
+        tally_translucent_texels(&mut tally, &rgba, PAGE_WIDTH, (0, 0, 1, 1));
+        assert_eq!(
+            tally,
+            TranslucentTexelTally { texture_count: 2, translucent_texture_count: 1, texel_count: 5, translucent_texel_count: 2 }
+        );
     }
 
     #[test]

@@ -70,13 +70,13 @@ use udd_conv::{
         DEFAULT_ATLAS_PAGE_WIDTH as EC_ART_DEFAULT_ATLAS_PAGE_WIDTH,
     },
     tex_land_cc::{
-        convert_texmaps_mul_to_tex_land_cc_uddp_with_patches, TexLandCcAtlasOptions,
+        convert_texmaps_mul_to_tex_land_cc_uddp_with_patches, TexLandCcAtlasOptions, CLASSIC_LAND_LOSSY_REFUSAL,
         DEFAULT_ATLAS_GUTTER as CC_TEXMAPS_DEFAULT_ATLAS_GUTTER,
         DEFAULT_ATLAS_PAGE_HEIGHT as CC_TEXMAPS_DEFAULT_ATLAS_PAGE_HEIGHT,
         DEFAULT_ATLAS_PAGE_WIDTH as CC_TEXMAPS_DEFAULT_ATLAS_PAGE_WIDTH,
     },
     tex_land_ec::{
-        convert_tex_land_ec_uop_to_tex_land_ec_uddp_from_loaded_sources, TexLandEcAtlasOptions,
+        convert_tex_land_ec_uop_to_tex_land_ec_uddp_from_loaded_sources, TexLandEcAtlasOptions, BC7_LAND_PAGE_ZSTD_LEVEL,
         DEFAULT_ATLAS_GUTTER as EC_LAND_DEFAULT_ATLAS_GUTTER,
         DEFAULT_ATLAS_PAGE_HEIGHT as EC_LAND_DEFAULT_ATLAS_PAGE_HEIGHT,
         DEFAULT_ATLAS_PAGE_WIDTH as EC_LAND_DEFAULT_ATLAS_PAGE_WIDTH,
@@ -94,10 +94,13 @@ use udd_conv::{
 /// The level of a bare `--zstd` where it adds a pass over another encoding (JPEG XL, BC7, raw texture pages).
 const DEFAULT_ZSTD_LEVEL: i32 = 7;
 const DEFAULT_ZSTD_LEVEL_VALUE: &str = "7";
+/// The BC7 RDO lambda that turns RDO off.
+const NO_BC7_RDO_LAMBDA: f32 = 0.0;
 const CHUNK_ZSTD_HELP: &str = "Zstd level of the chunks (--zstd=LEVEL). Chunks are compressed with plain Zstd unless --stored; without a level (or without the flag) map chunks use level 19 and statics chunks level 7.";
 const CHUNK_STORED_HELP: &str = "Store the chunks uncompressed: the fastest runtime read, for a package about 6.6x (map) or 2.8x (statics) larger.";
 const DEFAULT_JXL_LEVEL: u8 = 6;
-const LAND_ZSTD_HELP: &str = "Zstd level of the land pages (--zstd=LEVEL), which without a format flag are lossless RGBA8888 with Zstd 19; with --raw, --jxl, --bc7 or --bc7-rdo, a file-level Zstd pass after that encoding. A bare --zstd keeps level 19.";
+const LAND_ZSTD_HELP: &str = "Zstd level of the land pages (--zstd=LEVEL), which without a format flag are lossless RGBA8888 with Zstd 19; with --raw or --jxl, a file-level Zstd pass after that encoding. A bare --zstd keeps level 19.";
+const CLASSIC_LAND_BC7_HELP: &str = "Refused, with the reason: Classic land stays lossless.";
 const GUMP_ZSTD_HELP: &str = "Zstd level of the single gumps and, unless --jxl, of the atlas pages (--zstd=LEVEL). Without it single gumps use level 7 (19 with --bc1) and atlas pages, lossless RGBA8888, level 19; with --jxl a Zstd pass over the JPEG XL pages. A bare --zstd keeps these levels, and gives the JPEG XL pages a level 7 pass.";
 const GUMP_RAW_HELP: &str = "Store the single gumps as lossless RGBA8888: the default.";
 const GUMP_BC1_HELP: &str = "Store every single (non-paperdoll) gump as BC1: lossy, with one bit of alpha (Classic's colour 0 is its transparent texel; Enhanced alpha below one half becomes transparent), and Zstd 19 unless --zstd=LEVEL. Paperdoll gumps (50000-69999) stay lossless on their atlas pages.";
@@ -339,13 +342,21 @@ fn land_zstd_level(zstd: Option<Option<i32>>) -> Option<i32> {
 }
 
 /// The land pages of `pack-texmaps` and `pack-ec-textures`: without a format flag, lossless RGBA8888 with Zstd at
-/// `--zstd=LEVEL` or [`LOSSLESS_PAGE_ZSTD_LEVEL`]; a format flag resolves as for any other texture.
+/// `--zstd=LEVEL` or [`LOSSLESS_PAGE_ZSTD_LEVEL`]; BC7 blocks with Zstd at `--zstd=LEVEL` or [`BC7_LAND_PAGE_ZSTD_LEVEL`];
+/// `--raw` and `--jxl` resolve as for any other texture.
 fn resolve_land_output_format(
     args: TextureOutputFormatArgs,
     bc7_rdo_lambda: f32,
     bc7_rdo_lookback_blocks: usize,
 ) -> eyre::Result<TextureOutputFormat> {
-    if args.raw || args.jxl || args.bc7 || args.bc7_rdo {
+    if args.bc7 || args.bc7_rdo {
+        return resolve_texture_output_format_args(
+            TextureOutputFormatArgs { zstd: Some(args.zstd.unwrap_or(BC7_LAND_PAGE_ZSTD_LEVEL)), ..args },
+            bc7_rdo_lambda,
+            bc7_rdo_lookback_blocks,
+        );
+    }
+    if args.raw || args.jxl {
         return resolve_texture_output_format_args(args, bc7_rdo_lambda, bc7_rdo_lookback_blocks);
     }
     Ok(TextureOutputFormat {
@@ -355,6 +366,14 @@ fn resolve_land_output_format(
         bc7_rdo_lookback_blocks,
         label: "RGBA8888 Zstd",
     })
+}
+
+/// `pack-texmaps` refuses BC7, with the reason.
+fn refuse_classic_land_bc7(bc7: bool, bc7_rdo: bool) -> eyre::Result<()> {
+    if bc7 || bc7_rdo {
+        eyre::bail!("pack-texmaps: {CLASSIC_LAND_LOSSY_REFUSAL}");
+    }
+    Ok(())
 }
 
 /// The gump atlas pages: lossless RGBA8888 with Zstd at `--zstd=LEVEL` or [`LOSSLESS_PAGE_ZSTD_LEVEL`] (a bare `--zstd`
@@ -930,14 +949,10 @@ enum Commands {
         jxl_level: Option<u8>,
         #[arg(long, num_args = 0..=1, require_equals = true, help = LAND_ZSTD_HELP)]
         zstd: Option<Option<i32>>,
-        #[arg(long, help = "Write BC7 atlas pages without BC7 RDO.")]
+        #[arg(long, help = CLASSIC_LAND_BC7_HELP)]
         bc7: bool,
-        #[arg(long = "bc7-rdo", help = "Write BC7 atlas pages with BC7 RDO.")]
+        #[arg(long = "bc7-rdo", help = CLASSIC_LAND_BC7_HELP)]
         bc7_rdo: bool,
-        #[arg(long, default_value_t = udd_conv::bc7::DEFAULT_BC7_RDO_LAMBDA, help = "BC7 RDO lambda. Use 0 to disable RDO.")]
-        bc7_rdo_lambda: f32,
-        #[arg(long, value_parser = parse_bc7_rdo_lookback_blocks, default_value_t = udd_conv::bc7::DEFAULT_BC7_RDO_LOOKBACK_BLOCKS, help = "BC7 RDO lookback preset in previous BC7 blocks.")]
-        bc7_rdo_lookback_blocks: usize,
         #[arg(long, value_enum, default_value_t = CliUpscaleFilter::None)]
         upscale: CliUpscaleFilter,
         #[arg(long = "upscale-64-pass", value_enum, help = "Add a 64x64 texmap upscale pass. Repeat to chain filters.")]
@@ -1020,7 +1035,7 @@ enum Commands {
         upscale_profile: Option<PathBuf>,
     },
     /// Packs EC art and land in one shared source pass into tex_art_ec.uddp and tex_land_ec.uddp. Without a format flag
-    /// art pages are lossless JPEG XL and land pages lossless RGBA8888 with Zstd 19.
+    /// art pages are lossless JPEG XL and land pages lossless RGBA8888 with Zstd 19; BC7 land blocks take Zstd 19 too.
     #[command(group(ArgGroup::new("output_format").args(["raw", "jxl", "bc7", "bc7_rdo"])))]
     #[command(group(ArgGroup::new("art_output_format").args(["art_raw", "art_jxl", "art_bc7", "art_bc7_rdo"])))]
     #[command(group(ArgGroup::new("land_output_format").args(["land_raw", "land_jxl", "land_bc7", "land_bc7_rdo"])))]
@@ -1059,7 +1074,7 @@ enum Commands {
         jxl: bool,
         #[arg(long = "jxl-level", value_parser = clap::value_parser!(u8).range(1..=10), help = "JPEG XL encoder level for shared EC output, 1 fastest through 10 strongest. Default 6.")]
         jxl_level: Option<u8>,
-        #[arg(long, num_args = 0..=1, require_equals = true, help = "Apply a file-level Zstd compression pass to EC art and land after the selected output encoding; for land pages without a format flag, the level of their Zstd. Optionally pass --zstd=LEVEL; a bare --zstd is level 7 for art and keeps level 19 for land.")]
+        #[arg(long, num_args = 0..=1, require_equals = true, help = "Apply a file-level Zstd compression pass to EC art and land after the selected output encoding; for land pages without a format flag or in BC7, the level of their Zstd. Optionally pass --zstd=LEVEL; a bare --zstd is level 7 for art and keeps level 19 for land.")]
         zstd: Option<Option<i32>>,
         #[arg(long, help = "Write EC BC7 atlas pages without BC7 RDO.")]
         bc7: bool,
@@ -1083,9 +1098,9 @@ enum Commands {
         land_jxl: bool,
         #[arg(long = "land-jxl-level", value_parser = clap::value_parser!(u8).range(1..=10), help = "JPEG XL encoder level for EC land output. Default 6.")]
         land_jxl_level: Option<u8>,
-        #[arg(long, num_args = 0..=1, require_equals = true, help = "Apply a file-level Zstd compression pass to EC land after the selected land output encoding; without a land format flag, the level of the land pages' Zstd (default 19). Optionally pass --land-zstd=LEVEL; a bare --land-zstd keeps level 19.")]
+        #[arg(long, num_args = 0..=1, require_equals = true, help = "Apply a file-level Zstd compression pass to EC land after the selected land output encoding; without a land format flag or in BC7, the level of the land pages' Zstd (default 19). Optionally pass --land-zstd=LEVEL; a bare --land-zstd keeps level 19.")]
         land_zstd: Option<Option<i32>>,
-        #[arg(long, help = "Write EC land atlas pages as BC7 without BC7 RDO, overriding the shared format flags.")]
+        #[arg(long, help = "Write EC land atlas pages as BC7 without BC7 RDO, overriding the shared format flags: the lossy Enhanced land, with Zstd 19 on the blocks unless --land-zstd=LEVEL.")]
         land_bc7: bool,
         #[arg(long = "land-bc7-rdo", help = "Write EC land atlas pages as BC7 with BC7 RDO, overriding the shared format flags.")]
         land_bc7_rdo: bool,
@@ -1582,19 +1597,18 @@ where
             zstd,
             bc7,
             bc7_rdo,
-            bc7_rdo_lambda,
-            bc7_rdo_lookback_blocks,
             upscale,
             upscale_64_passes,
             upscale_128_passes,
             upscale_profile,
         } => {
+            refuse_classic_land_bc7(bc7, bc7_rdo)?;
             let paths = collect_source_dirs(&source_dir_args)?;
             let out_file = resolve_output_path(&output);
             let output_format = resolve_land_output_format(
-                TextureOutputFormatArgs { raw, jxl, jxl_level, zstd: land_zstd_level(zstd), bc7, bc7_rdo },
-                bc7_rdo_lambda,
-                bc7_rdo_lookback_blocks,
+                TextureOutputFormatArgs { raw, jxl, jxl_level, zstd: land_zstd_level(zstd), ..Default::default() },
+                NO_BC7_RDO_LAMBDA,
+                udd_conv::bc7::DEFAULT_BC7_RDO_LOOKBACK_BLOCKS,
             )?;
             let upscale_profile = load_optional_upscale_profile(upscale_profile)?;
             let summary = convert_texmaps_mul_to_tex_land_cc_uddp_with_patches(
@@ -2950,14 +2964,13 @@ mod tests {
                 zstd,
                 bc7,
                 bc7_rdo,
-                bc7_rdo_lambda,
-                bc7_rdo_lookback_blocks,
                 ..
             } => {
+                refuse_classic_land_bc7(bc7, bc7_rdo).unwrap();
                 let output_format = resolve_land_output_format(
                     TextureOutputFormatArgs { raw, jxl, jxl_level, zstd: land_zstd_level(zstd), bc7, bc7_rdo },
-                    bc7_rdo_lambda,
-                    bc7_rdo_lookback_blocks,
+                    NO_BC7_RDO_LAMBDA,
+                    udd_conv::bc7::DEFAULT_BC7_RDO_LOOKBACK_BLOCKS,
                 )
                 .unwrap();
                 assert_eq!(output_format.pixel_format, PagePixelFormat::Rgba8888);
@@ -2968,6 +2981,41 @@ mod tests {
             }
             _ => panic!("unexpected command parsed"),
         }
+    }
+
+    /// `pack-texmaps` refuses BC7 with the reason, and still parses the flags to say so.
+    #[test]
+    fn pack_texmaps_refuses_bc7_with_the_reason() {
+        for flag in ["--bc7", "--bc7-rdo"] {
+            let cli = Cli::try_parse_from(["uddpack", "pack-texmaps", "--ccdir", "/cc", flag]).expect("parse BC7 flag");
+            let Commands::PackTexmaps { bc7, bc7_rdo, .. } = cli.command else {
+                panic!("unexpected command parsed");
+            };
+            let error = refuse_classic_land_bc7(bc7, bc7_rdo).unwrap_err().to_string();
+            assert!(error.contains(CLASSIC_LAND_LOSSY_REFUSAL), "{flag}: {error}");
+        }
+    }
+
+    /// BC7 land blocks take Zstd 19 unless a level is given, and `--land-bc7` has no RDO.
+    #[test]
+    fn bc7_land_blocks_take_zstd_19_without_rdo() {
+        const EXPLICIT_ZSTD_LEVEL: i32 = 5;
+        let format = |args: TextureOutputFormatArgs| {
+            resolve_land_output_format(args, udd_conv::bc7::DEFAULT_BC7_RDO_LAMBDA, udd_conv::bc7::DEFAULT_BC7_RDO_LOOKBACK_BLOCKS)
+                .unwrap()
+        };
+        let bc7 = format(TextureOutputFormatArgs { bc7: true, ..Default::default() });
+        assert_eq!(bc7.pixel_format, PagePixelFormat::Bc7);
+        assert_eq!(bc7.compression, CompressionFlag::ZstdNoDictLevel(BC7_LAND_PAGE_ZSTD_LEVEL));
+        assert_eq!(bc7.bc7_rdo_lambda, NO_BC7_RDO_LAMBDA);
+        assert_eq!(
+            format(TextureOutputFormatArgs { bc7: true, zstd: Some(EXPLICIT_ZSTD_LEVEL), ..Default::default() }).compression,
+            CompressionFlag::ZstdNoDictLevel(EXPLICIT_ZSTD_LEVEL)
+        );
+        assert_eq!(
+            format(TextureOutputFormatArgs { bc7_rdo: true, ..Default::default() }).compression,
+            CompressionFlag::ZstdNoDictLevel(BC7_LAND_PAGE_ZSTD_LEVEL)
+        );
     }
 
     #[test]
