@@ -1153,7 +1153,11 @@ fn apply_hue(
             continue;
         }
 
-        let intensity = ((pixel[0] as u16 + pixel[1] as u16 + pixel[2] as u16) / 3) as u8;
+        // Both clients index the hue by the red channel, not a luminance: the Enhanced client by the red byte
+        // (`UOPaperdoll::DrawGumpLayer` 0x00509b30, at 0x00509d9e), Classic by the 5-bit red, `colour >> 10`
+        // (`BlitGumpRowPartialHue` 0x005d8430, `BlitGumpRowFullHue` 0x005d83d0). Classic red expands to `red << 3`
+        // and the hue strip holds hues.mul entry i at x = 8i, so the red byte reaches the same entry in both.
+        let intensity = pixel[0];
         let color = sample_hue_lookup(hue_texture_bytes, hue_id, intensity)
             .ok_or_else(|| color_eyre::eyre::eyre!("Hue {hue_id} lookup is outside hues.uddp."))?;
         pixel[0] = color[0];
