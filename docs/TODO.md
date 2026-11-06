@@ -293,6 +293,13 @@ Done or superseded. Blend inputs (`SecondaryBase`, `BlendAlpha`, `CoverageAlpha`
   26 instead of 21, and `priority_for` applies every matching rule where the client takes the item's own rule, else "any".
   The traced rule is in `scripts/dev-helpers/ec-research/ghidra-paperdoll/results/uosa_paperdoll.md`, and
   `tools/uocf-editor-gui/src/ui/ec_paperdoll.rs` follows it. Found 2026-11-05.
+- Light-source items glow on the paperdoll, a feature neither client has (the user liked the idea, 2026-11-06). An item
+  with tiledata's light-source flag (0x00800000) stores its light id in the quality byte; draw that light's texture from
+  `world_lights.uddp` over the worn item, as a translucent layer that shows on any window background, with one strength
+  setting in the app and no per-item numbers. Open: where on the item the light sits (the centre of its drawn area, or
+  its brightest part). The lit lanterns use gump 50500 and the unlit ones 50503, and so do the coloured lanterns
+  0x40FE..0x4101, which are light sources: they would glow too. The only paperdoll gumps with a glow painted in, 50322
+  and 60322, are used by no item, and the client draws that glow as an opaque dark disc.
 
 ### Export And Tooling
 
