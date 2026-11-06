@@ -5,11 +5,12 @@ use clap::Parser;
 use color_eyre::eyre::{self, WrapErr};
 use udd_assets::{
     tex_art_ec::TexArtEcPackage,
-    tex_land_ec::{TexLandEcPackage, MISSING_SLOT_ID},
+    tex_land_ec::{TexLandEcPackage, MISSING_SLOT_ID, UDDP_TERRAIN_LAYERS_ENTRY_VPATH},
     tilemeta::{TileMetaItemTextureRef, TileMetaItemTile, TileMetaPackage},
 };
 use udd_conv::tex_art_ec::{is_base_eligible, primary_texture_stable_role};
 use udd_conv::terrain_meta::TerrainMetaPackage;
+use udd_container::xxh64_virtual_path;
 use uocf::enhanced::string_dictionary::UoStringDictionary;
 use uocf::enhanced::tile_database::ArtDefinition;
 use uocf::enhanced::tileart::TileArtEntry;
@@ -23,10 +24,8 @@ struct Args {
     tilemeta: Option<PathBuf>,
     #[arg(long = "ec-art")]
     tex_art_ec: Option<PathBuf>,
-    #[arg(long = "ec-land")]
+    #[arg(long = "ec-land", help = "Optional tex_land_ec.uddp; its terrain layer table also shows each tile's layer graph.")]
     tex_land_ec: Option<PathBuf>,
-    #[arg(long = "terrain-meta", help = "Optional terrain-layer sidecar binary (terrain_meta.bin) for layer graph display.")]
-    terrain_meta: Option<PathBuf>,
     #[arg(required = true)]
     art_ids: Vec<u16>,
 }
@@ -62,12 +61,18 @@ fn main() -> eyre::Result<()> {
         .map(TexLandEcPackage::load)
         .transpose()
         .wrap_err("load tex_land_ec package")?;
-    let terrain_meta = args
-        .terrain_meta
+    // Every field of the table, through the converter's reader: the runtime's keeps only what the renderer reads.
+    let terrain_meta = tex_land_ec
         .as_ref()
-        .map(TerrainMetaPackage::load)
+        .map(|package| {
+            let bytes = package
+                .package()
+                .read_file_by_path_hash(xxh64_virtual_path(UDDP_TERRAIN_LAYERS_ENTRY_VPATH))
+                .map_err(|error| eyre::eyre!("read {UDDP_TERRAIN_LAYERS_ENTRY_VPATH}: {error}"))?;
+            TerrainMetaPackage::from_bytes(&bytes)
+        })
         .transpose()
-        .wrap_err("load terrain_meta sidecar")?;
+        .wrap_err("load the terrain layer table of tex_land_ec")?;
 
     for art_id in args.art_ids {
         println!("art_id={art_id}");

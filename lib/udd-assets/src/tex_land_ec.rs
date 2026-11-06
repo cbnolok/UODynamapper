@@ -12,13 +12,17 @@ use crate::common::{
     AtlasCacheOptions, AtlasPageCache, decode_atlas_page_rgba, ensure_manifest_version, read_path_entry, read_path_entry_cow,
 };
 use crate::ec_terrain_overrides::EcTerrainOverrides;
+use crate::terrain_meta::TerrainMetaPackage;
 use crate::tex_art_cc::{AtlasPackingMode, PagePixelFormat};
 use uocf::enhanced::terrain_definition::{TerrainLayerClass, TerrainLayerRole};
 
 const PAGE_MANIFEST_MAGIC: [u8; 4] = *b"ELPG";
 const SLOT_MANIFEST_MAGIC: [u8; 4] = *b"ELSL";
 const TERRAIN_PROVENANCE_MAGIC: [u8; 4] = *b"ELTP";
-const TEX_LAND_EC_METADATA_VERSION: u32 = 3;
+/// The version of the page and slot manifests, which stands for the package's metadata as a whole.
+/// 4: the terrain layer table ([`UDDP_TERRAIN_LAYERS_ENTRY_VPATH`]) moves into the package from the loose
+/// `terrain_meta.bin`.
+pub const TEX_LAND_EC_METADATA_VERSION: u32 = 4;
 /// 4: the terrain layer class and the selected item's role by position replace the primary-selection
 /// heuristic reason and flags.
 pub const TEX_LAND_EC_TERRAIN_PROVENANCE_VERSION: u32 = 4;
@@ -30,6 +34,9 @@ pub const UDDP_TERRAIN_OVERRIDES_ENTRY_VPATH: &str = "metadata/terrain_overrides
 pub const UDDP_TRANSCODE_ENTRY_VPATH: &str = "metadata/transcode.bin";
 pub const UDDP_LEGACY_TERRAIN_MAP_ENTRY_VPATH: &str = "metadata/legacy_terrain_map.csv";
 pub const UDDP_SOURCE_MATERIALS_ENTRY_VPATH: &str = "metadata/source_materials.json";
+/// The terrain layer table (magic `TMLY`, [`crate::terrain_meta`]): every terrain tile's TerrainDefinition items with
+/// their layer class and role.
+pub const UDDP_TERRAIN_LAYERS_ENTRY_VPATH: &str = "metadata/terrain_layers.bin";
 /// `schema` and `schema_version` of the terrain overrides JSON entry.
 pub const TERRAIN_OVERRIDES_SCHEMA: &str = "tex_land_ec_terrain_overrides";
 pub const TERRAIN_OVERRIDES_SCHEMA_VERSION: u32 = 1;
@@ -286,6 +293,7 @@ pub struct TexLandEcPackage {
     terrain_override_texture_refs: HashMap<u32, Vec<TexLandEcTerrainOverrideTextureRef>>,
     source_terrain_map: Option<uocf::enhanced::legacy_terrain_map::LegacyTerrainMap>,
     source_materials: HashMap<u32, uocf::enhanced::terrain_definition::TerrainDefinitionEntry>,
+    terrain_layers: TerrainMetaPackage,
     pub transcode: HashMap<u32, u32>,
     page_cache: AtlasPageCache,
 }
@@ -368,6 +376,10 @@ impl TexLandEcPackage {
             terrain_override_details,
             terrain_override_texture_refs,
         ) = read_terrain_overrides_metadata_maps_from_package(&package)?;
+        let terrain_layers_bytes = read_path_entry_cow(&package, UDDP_TERRAIN_LAYERS_ENTRY_VPATH)
+            .context("tex_land_ec.uddp missing metadata/terrain_layers.bin; repack with the current udd-cli")?;
+        let terrain_layers = TerrainMetaPackage::from_bytes(&terrain_layers_bytes)
+            .wrap_err_with(|| format!("parse {UDDP_TERRAIN_LAYERS_ENTRY_VPATH}"))?;
         Ok(Self {
             package,
             atlas_width: page_width,
@@ -382,6 +394,7 @@ impl TexLandEcPackage {
             terrain_override_texture_refs,
             source_terrain_map,
             source_materials,
+            terrain_layers,
             transcode,
             page_cache: AtlasPageCache::new(options),
         })
@@ -398,6 +411,12 @@ impl TexLandEcPackage {
 
     pub fn source_material(&self, material_id: u32) -> Option<&uocf::enhanced::terrain_definition::TerrainDefinitionEntry> {
         self.source_materials.get(&material_id)
+    }
+
+    /// The terrain layer table: each terrain tile's layer graph, read by the secondary base, blend alpha and ripple
+    /// lookups.
+    pub fn terrain_layers(&self) -> &TerrainMetaPackage {
+        &self.terrain_layers
     }
 
     /// Find a land lookup payload for an item sharing an original liquid graph.
@@ -1612,6 +1631,39 @@ mod tests {
         bytes
     }
 
+    /// The terrain tile of [`terrain_layers_bytes`] and its two default-class items, colour A then colour B.
+    const LAYERED_TERRAIN_TILE_ID: u32 = 77;
+    const LAYERED_TERRAIN_ITEMS: [(u32, TerrainLayerRole); 2] =
+        [(2000520, TerrainLayerRole::ColourA), (2000510, TerrainLayerRole::ColourB)];
+    const LAYERED_TERRAIN_STRETCH: f32 = 5.0;
+
+    /// A terrain layer table with one tile, [`LAYERED_TERRAIN_TILE_ID`], and its [`LAYERED_TERRAIN_ITEMS`].
+    fn terrain_layers_bytes() -> Vec<u8> {
+        const SPAN_COUNT: u32 = 1;
+        const FIRST_LAYER: u32 = 0;
+        /// The source kind, sampler index and UV set of each item, which the runtime doesn't read.
+        const SOURCE_KIND_SAMPLER_UV_SET: [u32; 3] = [0; 3];
+        let mut bytes = crate::terrain_meta::TERRAIN_META_MAGIC.to_vec();
+        bytes.write_u32::<LittleEndian>(crate::terrain_meta::TERRAIN_META_VERSION).unwrap();
+        bytes.write_u32::<LittleEndian>(SPAN_COUNT).unwrap();
+        bytes.write_u32::<LittleEndian>(LAYERED_TERRAIN_TILE_ID).unwrap();
+        bytes.write_u32::<LittleEndian>(FIRST_LAYER).unwrap();
+        bytes.write_u16::<LittleEndian>(LAYERED_TERRAIN_ITEMS.len() as u16).unwrap();
+        bytes.write_u16::<LittleEndian>(0).unwrap();
+        bytes.write_u32::<LittleEndian>(LAYERED_TERRAIN_ITEMS.len() as u32).unwrap();
+        for (texture_id, role) in LAYERED_TERRAIN_ITEMS {
+            bytes.write_u32::<LittleEndian>(texture_id).unwrap();
+            bytes.write_f32::<LittleEndian>(LAYERED_TERRAIN_STRETCH).unwrap();
+            bytes.write_u8(TerrainLayerClass::Default as u8).unwrap();
+            bytes.write_u8(role as u8).unwrap();
+            bytes.write_u16::<LittleEndian>(0).unwrap();
+            for field in SOURCE_KIND_SAMPLER_UV_SET {
+                bytes.write_u32::<LittleEndian>(field).unwrap();
+            }
+        }
+        bytes
+    }
+
     fn terrain_overrides_json() -> Vec<u8> {
         br#"{
   "schema": "tex_land_ec_terrain_overrides",
@@ -1647,6 +1699,7 @@ mod tests {
             UDDP_TERRAIN_OVERRIDES_ENTRY_VPATH,
             &terrain_overrides_json(),
         );
+        add_metadata_file(&mut builder, UDDP_TERRAIN_LAYERS_ENTRY_VPATH, &terrain_layers_bytes());
         if let Some(bytes) = source_csv {
             add_metadata_file(&mut builder, UDDP_LEGACY_TERRAIN_MAP_ENTRY_VPATH, bytes);
             add_metadata_file(&mut builder, UDDP_TRANSCODE_ENTRY_VPATH, b"t 52 203\n");
@@ -1696,6 +1749,49 @@ mod tests {
         let reader = UddpReader::open(builder.build().expect("build test package")).expect("open package");
         let error = TexLandEcPackage::from_uddp_package(reader).err().expect("a package without the overrides").to_string();
         assert!(error.contains(UDDP_TERRAIN_OVERRIDES_ENTRY_VPATH) && error.contains("repack"), "{error}");
+    }
+
+    #[test]
+    fn a_package_without_the_terrain_layer_table_asks_for_a_repack() {
+        let mut builder = UddpBuilder::new(LookupMode::VirtualPathHash);
+        add_metadata_file(&mut builder, UDDP_PAGE_MANIFEST_ENTRY_VPATH, &page_manifest_bytes());
+        add_metadata_file(&mut builder, UDDP_SLOT_MANIFEST_ENTRY_VPATH, &slot_manifest_bytes());
+        add_metadata_file(&mut builder, UDDP_TERRAIN_PROVENANCE_ENTRY_VPATH, &terrain_provenance_bytes());
+        add_metadata_file(&mut builder, UDDP_TERRAIN_OVERRIDES_ENTRY_VPATH, &terrain_overrides_json());
+        add_metadata_file(&mut builder, UDDP_TRANSCODE_ENTRY_VPATH, EMPTY_TRANSCODE_KDL);
+        add_metadata_file(&mut builder, UDDP_SOURCE_MATERIALS_ENTRY_VPATH, EMPTY_SOURCE_MATERIALS_JSON);
+        let reader = UddpReader::open(builder.build().expect("build test package")).expect("open package");
+        let error = format!("{:#}", TexLandEcPackage::from_uddp_package(reader).err().expect("a package without the table"));
+        assert!(error.contains(UDDP_TERRAIN_LAYERS_ENTRY_VPATH) && error.contains("repack"), "{error}");
+    }
+
+    /// A version 3 package, from before the terrain layer table moved in, is refused with a repack hint.
+    #[test]
+    fn a_package_of_the_previous_metadata_version_asks_for_a_repack() {
+        const PREVIOUS_METADATA_VERSION: u32 = TEX_LAND_EC_METADATA_VERSION - 1;
+        const VERSION_OFFSET: usize = PAGE_MANIFEST_MAGIC.len();
+        let mut page_manifest = page_manifest_bytes();
+        page_manifest[VERSION_OFFSET..VERSION_OFFSET + size_of::<u32>()]
+            .copy_from_slice(&PREVIOUS_METADATA_VERSION.to_le_bytes());
+
+        let error = parse_page_manifest(&page_manifest).unwrap_err().to_string();
+
+        assert!(error.contains(&format!("version {PREVIOUS_METADATA_VERSION}")) && error.contains("repack"), "{error}");
+    }
+
+    #[test]
+    fn the_terrain_layer_table_is_read_from_the_package() {
+        let package = test_package();
+        let layers = package.terrain_layers().layers_for_tile(LAYERED_TERRAIN_TILE_ID);
+
+        assert_eq!(package.terrain_layers().tile_count(), 1);
+        assert_eq!(
+            layers.iter().map(|layer| (layer.texture_id, layer.role)).collect::<Vec<_>>(),
+            LAYERED_TERRAIN_ITEMS
+        );
+        assert!(layers.iter().all(|layer| layer.layer_class == TerrainLayerClass::Default
+            && layer.texture_repetition == LAYERED_TERRAIN_STRETCH));
+        assert!(package.terrain_layers().layers_for_tile(LAYERED_TERRAIN_TILE_ID + 1).is_empty());
     }
 
     #[test]

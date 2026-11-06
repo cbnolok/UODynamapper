@@ -1,15 +1,16 @@
-//! Terrain-layer sidecar tables for `TerrainDefinition.uop`.
+//! Terrain-layer tables for `TerrainDefinition.uop`.
 //!
 //! Each `TerrainMetaLayerRef` captures one layer from a `TerrainDefinitionTexture`,
 //! preserving the full layer graph with each item's class and role (by position, as the client binds them;
 //! `uocf::enhanced::terrain_definition::TerrainLayerClass`) so later phases need not re-parse the original UOP.
 //!
-//! Package layout (flat binary, not a UDDP):
+//! Entry layout (flat binary, after the `TMLY` magic and the u32 version):
 //! - `[u32: span_count]` followed by `span_count` × `TerrainMetaLayerSpan` records
 //! - `[u32: layer_count]` followed by `layer_count` × `TerrainMetaLayerRef` records
 //!
 //! This is intentionally kept as a simple flat binary so it can be embedded into
-//! any UDDP package as a metadata entry, or written standalone for inspection.
+//! a UDDP package as a metadata entry: the Enhanced land packer (`crate::tex_land_ec`) writes it as
+//! `metadata/terrain_layers.bin` of `tex_land_ec.uddp`.
 
 use bytemuck::{Pod, Zeroable};
 use byteorder::{LittleEndian, ReadBytesExt, WriteBytesExt};
@@ -61,21 +62,14 @@ pub struct TerrainMetaLayerSpan {
     pub _pad: u16,
 }
 
-/// Runtime-loaded terrain-layer sidecar.
+/// A terrain-layer table read back with every field, for the tools and tests.
 pub struct TerrainMetaPackage {
     spans: Vec<TerrainMetaLayerSpan>,
     layers: Vec<TerrainMetaLayerRef>,
 }
 
 impl TerrainMetaPackage {
-    /// Load from the flat binary format written by [`write_terrain_meta`].
-    pub fn load(path: impl AsRef<Path>) -> eyre::Result<Self> {
-        let bytes = std::fs::read(path.as_ref())
-            .wrap_err_with(|| format!("read {}", path.as_ref().display()))?;
-        Self::from_bytes(&bytes)
-    }
-
-    /// Deserialise from a byte slice (the same layout as written by [`write_terrain_meta`]).
+    /// Deserialise from a byte slice (the same layout as written by [`serialize_terrain_meta`]).
     pub fn from_bytes(bytes: &[u8]) -> eyre::Result<Self> {
         let mut reader = Cursor::new(bytes);
 
@@ -187,7 +181,7 @@ pub struct TerrainMetaTables {
     pub layers: Vec<TerrainMetaLayerRef>,
 }
 
-/// Build terrain-layer sidecar tables from a loaded `TerrainDefinitionPackage`.
+/// Build terrain-layer tables from a loaded `TerrainDefinitionPackage`.
 ///
 /// Emits one span per terrain tile id (one `TerrainDefinitionEntry` may expand
 /// to multiple tile ids via its runtime alias list). Each span points into a flat
@@ -288,7 +282,10 @@ pub fn serialize_terrain_meta(tables: &TerrainMetaTables) -> eyre::Result<Vec<u8
     Ok(bytes)
 }
 
-/// Build and write a terrain-layer sidecar binary from a `TerrainDefinitionPackage`.
+/// Build and write a terrain-layer table as a loose file from a `TerrainDefinitionPackage`.
+///
+/// Kept only for udd-conv-gui's Terrain Metadata job until that job is removed: nothing reads the loose file any
+/// more, since `tex_land_ec.uddp` carries the table.
 pub fn write_terrain_meta(
     terrain_definition: &TerrainDefinitionPackage,
     out_file: &Path,

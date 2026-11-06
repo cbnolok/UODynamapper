@@ -596,7 +596,7 @@ fn terrain_meta_and_tilemeta_readers_survive_damaged_shipped_packages() {
     let definition = TerrainDefinitionPackage::load(&enhanced.join("TerrainDefinition.uop")).expect("terrain definition");
     let terrain_meta =
         serialize_terrain_meta(&build_terrain_meta_tables(&definition).expect("terrain meta tables")).expect("serialize");
-    assert_no_panics("terrain meta", &[Sample::new("client terrain_meta.bin", terrain_meta)], &decode_terrain_meta);
+    assert_no_panics("terrain meta", &[Sample::new("client terrain layer table", terrain_meta)], &decode_terrain_meta);
 
     let dir = std::env::temp_dir().join(format!("uddconv_decoder_robustness_{}", std::process::id()));
     std::fs::create_dir_all(&dir).expect("scratch dir");

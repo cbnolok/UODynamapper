@@ -1,25 +1,25 @@
-//! Runtime reader for the terrain-layer sidecar binary produced by `udd-conv`.
+//! Runtime reader for the terrain-layer table produced by `udd-conv`, the `metadata/terrain_layers.bin`
+//! entry of `tex_land_ec.uddp` ([`crate::tex_land_ec::UDDP_TERRAIN_LAYERS_ENTRY_VPATH`]).
 //!
 //! This module exposes only the deserialization path. The binary format is
 //! defined and written by `udd-conv::terrain_meta`; here we read it at runtime
 //! without pulling in any build-tool dependencies.
 //!
-//! Package layout (flat binary, **not** a UDDP):
+//! Entry layout (flat binary):
 //! - 4-byte magic `b"TMLY"`
 //! - u32 version (must be 2: per-layer class and role by position)
 //! - `[u32: span_count]` followed by `span_count` × [`TerrainMetaLayerSpan`] records
 //! - `[u32: layer_count]` followed by `layer_count` × [`TerrainMetaLayerRef`] records
 
-use color_eyre::eyre::{self, WrapErr};
+use color_eyre::eyre;
 use std::io::{Cursor, Read};
-use std::path::Path;
 use byteorder::{LittleEndian, ReadBytesExt};
 
 use crate::common::ensure_manifest_version;
 use uocf::enhanced::terrain_definition::{TerrainLayerClass, TerrainLayerRole};
 
-const TERRAIN_META_MAGIC: [u8; 4] = *b"TMLY";
-const TERRAIN_META_VERSION: u32 = 2;
+pub const TERRAIN_META_MAGIC: [u8; 4] = *b"TMLY";
+pub const TERRAIN_META_VERSION: u32 = 2;
 /// Stored bytes of a span (tile id, start, length, padding) and of a layer (texture id, repetition, class, role,
 /// padding, source kind, sampler, UV set).
 const SPAN_RECORD_BYTES: usize = 12;
@@ -47,21 +47,14 @@ pub struct TerrainMetaLayerSpan {
     pub len: u16,
 }
 
-/// Runtime-loaded terrain-layer sidecar.
+/// The terrain-layer table of a loaded `tex_land_ec.uddp`.
 pub struct TerrainMetaPackage {
     spans: Vec<TerrainMetaLayerSpan>,
     layers: Vec<TerrainMetaLayerRef>,
 }
 
 impl TerrainMetaPackage {
-    /// Load from the flat binary format written by `udd-conv::terrain_meta::write_terrain_meta`.
-    pub fn load(path: impl AsRef<Path>) -> eyre::Result<Self> {
-        let bytes = std::fs::read(path.as_ref())
-            .wrap_err_with(|| format!("read {}", path.as_ref().display()))?;
-        Self::from_bytes(&bytes)
-    }
-
-    /// Deserialise from a byte slice.
+    /// Deserialise from a byte slice: the entry `udd-conv::terrain_meta::serialize_terrain_meta` writes.
     pub fn from_bytes(bytes: &[u8]) -> eyre::Result<Self> {
         let mut reader = Cursor::new(bytes);
 
@@ -134,6 +127,11 @@ impl TerrainMetaPackage {
             return &self.layers[0..0];
         }
         &self.layers[start..end]
+    }
+
+    /// The terrain tile ids the table has a span for.
+    pub fn tile_count(&self) -> usize {
+        self.spans.len()
     }
 }
 

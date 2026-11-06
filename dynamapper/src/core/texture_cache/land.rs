@@ -238,9 +238,9 @@ fn assign_aux_layer(
 }
 
 /// Build the `tex_aux_ec` atlas and per-tile lookup texture from the auxiliary
-/// texture package and terrain-layer sidecar.
+/// texture package and the terrain layer table of `tex_land_ec`.
 ///
-/// Item water shares these image layers even without the optional terrain sidecar.
+/// Item water shares these image layers even without the optional `tex_land_ec` and its terrain layer table.
 /// Missing auxiliary pixels leave the existing base path intact.
 fn create_aux_atlas_images(
     images: &mut Assets<Image>,
@@ -1410,7 +1410,6 @@ pub fn sys_setup_terrain_cache(
     tex_art_ec_r: Option<Res<crate::core::uo_files_loader::TexArtEcPackageRes>>,
     tex_land_ec_r: Option<Res<crate::core::uo_files_loader::TexLandEcPackageRes>>,
     tex_aux_ec_r: Option<Res<crate::core::uo_files_loader::TexAuxEcPackageRes>>,
-    terrain_meta_r: Option<Res<crate::core::uo_files_loader::TerrainMetaPackageRes>>,
     map_planes: Res<crate::core::uo_files_loader::MapPlanesRes>,
 ) {
     log_system_add_startup::<LandTextureCachePlugin>(StartupSysSet::SetupSceneStage1, fname!());
@@ -1501,7 +1500,7 @@ pub fn sys_setup_terrain_cache(
     let aux_images = create_aux_atlas_images(
         &mut images,
         tex_aux_ec_r.as_deref().map(|r| r.0.as_ref()),
-        terrain_meta_r.as_deref().map(|r| r.0.as_ref()),
+        tex_land_ec_package.as_deref().map(TexLandEcPackage::terrain_layers),
         tex_land_ec_package.as_deref(),
         tilemeta_r.as_deref().map(|r| r.0.as_ref()),
         land_texture_cache.tex_art_ec.as_deref(),

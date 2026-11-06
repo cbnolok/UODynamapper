@@ -17,7 +17,7 @@ packages consumed by Dynamapper and the other tools at runtime.
 | `pack-texmaps` | `tex_land_cc.uddp` | Classic `texmaps.mul` |
 | `pack-mobile-anims` | `mobile_anim_cc.uddp` | Classic `anim*.mul` / `anim*.idx` |
 | `pack-ec-mobile-anims` | `mobile_anim_ec.uddp` | EC `AnimationFrame*.uop` |
-| `pack-ec-textures` | `tex_art_ec.uddp`, `tex_land_ec.uddp` | EC art and land in one pass |
+| `pack-ec-textures` | `tex_art_ec.uddp`, `tex_land_ec.uddp` | EC art and land in one pass; the land package also carries the terrain layer table from `TerrainDefinition.uop` |
 | `pack-ec-tex-aux` | `tex_aux_ec.uddp` | EC auxiliary textures named by `tilemeta.uddp` |
 | `pack-ec-effects` | `effects_ec.uddp` | EC particle effects: definitions, Chaos and NIF systems, textures |
 | `pack-tilemeta` | `tilemeta.uddp` | CC tiledata + EC tileart |
@@ -29,7 +29,6 @@ packages consumed by Dynamapper and the other tools at runtime.
 | `pack-gumps` | `gumps_cc.uddp` | Classic `gumpart.mul` / `gumpidx.mul`, or `gumpartLegacyMUL.uop` |
 | `pack-ec-gumps` | `gumps_ec.uddp` | EC `interface.uop` gumpart; `--share-with <gumps_cc.uddp>` leaves out the single gumps that package draws the same, so the package then needs it |
 | `pack-radar` | `facet0X.dds` | Classic map and statics radar image |
-| `pack-terrain-meta` | terrain-layer sidecar | EC `TerrainDefinition.uop` |
 
 Without a format flag, the art, land and auxiliary texture packers write lossless RGBA8888
 pages with Zstd 19 per page; `--zstd=LEVEL` picks another level.

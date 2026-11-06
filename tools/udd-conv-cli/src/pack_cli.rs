@@ -81,7 +81,6 @@ use udd_conv::{
         DEFAULT_ATLAS_PAGE_HEIGHT as EC_LAND_DEFAULT_ATLAS_PAGE_HEIGHT,
         DEFAULT_ATLAS_PAGE_WIDTH as EC_LAND_DEFAULT_ATLAS_PAGE_WIDTH,
     },
-    terrain_meta::write_terrain_meta,
     tilemeta::{
         build_tilemeta_uddp_from_sources, build_tilemeta_uddp_from_split_sources,
         build_tilemeta_uddp_from_split_sources_with_loaded_ec_sources, TileMetaBuildOptions,
@@ -1160,14 +1159,6 @@ enum Commands {
         #[arg(long, default_value = "ec_surface_redirection.json")]
         output: PathBuf,
     },
-    /// Builds terrain-layer sidecar binary from TerrainDefinition.uop.
-    #[command(name = "pack-terrain-meta")]
-    PackTerrainMeta {
-        #[command(flatten)]
-        source_dirs: SourceDirArgs,
-        #[arg(long, default_value = "terrain_meta.bin")]
-        output: PathBuf,
-    },
     /// Writes a JSON manifest of all EffectTexture.uop resources with direct owner references.
     #[command(name = "write-ec-effect-meta-manifest")]
     WriteEcEffectMetaManifest {
@@ -2027,22 +2018,6 @@ where
                 Some(&surface_overrides),
                 &out_file,
             )?;
-        }
-        Commands::PackTerrainMeta {
-            source_dirs: source_dir_args,
-            output,
-        } => {
-            let paths = collect_ec_source_dirs(&source_dir_args)?;
-            let out_file = resolve_output_path(&output);
-            let terrain_definition_path =
-                udd_conv::source_paths::find_first_existing_file(&paths, &["TerrainDefinition.uop"])
-                    .ok_or_else(|| eyre::eyre!("missing required file: TerrainDefinition.uop"))?;
-            let terrain_definition =
-                uocf::enhanced::terrain_definition::TerrainDefinitionPackage::load(
-                    &terrain_definition_path,
-                )
-                .map_err(|e| eyre::eyre!("load TerrainDefinition.uop: {e}"))?;
-            write_terrain_meta(&terrain_definition, &out_file)?;
         }
         Commands::WriteEcEffectMetaManifest {
             source_dirs: source_dir_args,

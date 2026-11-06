@@ -1856,7 +1856,7 @@ mod tests {
     fn ec_land_page_manifest_bytes() -> Vec<u8> {
         let mut bytes = Vec::new();
         bytes.extend_from_slice(b"ELPG");
-        bytes.write_u32::<LittleEndian>(3).unwrap();
+        bytes.write_u32::<LittleEndian>(udd_assets::tex_land_ec::TEX_LAND_EC_METADATA_VERSION).unwrap();
         bytes.write_u32::<LittleEndian>(64).unwrap();
         bytes.write_u32::<LittleEndian>(64).unwrap();
         bytes.write_u32::<LittleEndian>(1).unwrap();
@@ -1873,7 +1873,7 @@ mod tests {
     fn ec_land_slot_manifest_bytes() -> Vec<u8> {
         let mut bytes = Vec::new();
         bytes.extend_from_slice(b"ELSL");
-        bytes.write_u32::<LittleEndian>(3).unwrap();
+        bytes.write_u32::<LittleEndian>(udd_assets::tex_land_ec::TEX_LAND_EC_METADATA_VERSION).unwrap();
         bytes.write_u32::<LittleEndian>(64).unwrap();
         bytes.write_u32::<LittleEndian>(64).unwrap();
         bytes.write_u32::<LittleEndian>(1).unwrap();
@@ -1938,6 +1938,13 @@ mod tests {
             bytes.write_u8(udd_assets::tex_land_ec::TERRAIN_LAYER_ROLE_NONE).unwrap();
         }
         bytes
+    }
+
+    /// A terrain layer table without terrain tiles.
+    fn ec_land_terrain_layers_bytes() -> Vec<u8> {
+        use udd_conv::terrain_meta::{build_terrain_meta_tables, serialize_terrain_meta};
+        let definition = uocf::enhanced::terrain_definition::TerrainDefinitionPackage::default();
+        serialize_terrain_meta(&build_terrain_meta_tables(&definition).unwrap()).unwrap()
     }
 
     fn ec_land_terrain_overrides_json() -> Vec<u8> {
@@ -2133,6 +2140,11 @@ mod tests {
             &ec_land_terrain_overrides_json(),
         );
         add_metadata_file(&mut builder, udd_assets::tex_land_ec::UDDP_SOURCE_MATERIALS_ENTRY_VPATH, b"[]");
+        add_metadata_file(
+            &mut builder,
+            udd_assets::tex_land_ec::UDDP_TERRAIN_LAYERS_ENTRY_VPATH,
+            &ec_land_terrain_layers_bytes(),
+        );
         // A routing table without rows.
         add_metadata_file(&mut builder, udd_assets::tex_land_ec::UDDP_TRANSCODE_ENTRY_VPATH, b"");
         let bytes = builder.build().expect("build test package");

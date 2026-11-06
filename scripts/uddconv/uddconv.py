@@ -305,7 +305,6 @@ def run_all(
             "--output",
             f"{output_dir}/tex_aux_ec.uddp",
         )
-        run_pack("pack-terrain-meta", *source_args, "--output", f"{output_dir}/terrain_meta.bin")
         run_pack("pack-ec-effects", *non_texture_zstd, *source_args, "--output", f"{output_dir}/effects_ec.uddp")
 
 

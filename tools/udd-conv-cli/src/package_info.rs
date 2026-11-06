@@ -278,6 +278,7 @@ fn print_known_package_summary(package: &UddpReader) -> eyre::Result<bool> {
             populated_slots
         );
         info!("Terrain provenance rows: {}", package.terrain_provenance().len());
+        info!("Terrain layer table: tiles={}", package.terrain_layers().tile_count());
         info!(
             "Terrain override metadata: entries={}, ignores={}, texture_refs={} (resolved={}), effective_slot_changes={}",
             override_entries,

@@ -11,7 +11,7 @@
 //! `gumps_cc.uddp` beside it: every shared gump's hash against that package's image. Without one beside it, the report
 //! notes that the package depends on it.
 //!
-//! The kind comes from the file name (`tex_land_ec.uddp`, `map0.uddp`, `terrain_meta.bin`).
+//! The kind comes from the file name (`tex_land_ec.uddp`, `map0.uddp`).
 //! A file with an unknown name is offered to every reader, and the first one that accepts it
 //! names the kind.
 
@@ -25,7 +25,6 @@ use log::info;
 use rayon::prelude::*;
 use udd_assets::gumps::gump_image_hash;
 use udd_assets::map_metadata::decode_map_package_metadata;
-use udd_assets::terrain_meta::TerrainMetaPackage;
 use udd_assets::tex_aux_ec::TexAuxEcPackage;
 use udd_assets::{
     EffectsEcPackage, GumpsPackage, HuesPackage, MobileAnimCcPackage, MobileAnimEcPackage,
@@ -40,8 +39,6 @@ use uocf::classic::statics::StaticTile;
 
 /// File extension of UDDP packages.
 const UDDP_EXTENSION: &str = "uddp";
-/// The terrain-layer sidecar, a flat binary file read by its own reader.
-const TERRAIN_META_FILE_NAME: &str = "terrain_meta.bin";
 /// Side of one packed map chunk, in tiles.
 const MAP_CHUNK_TILE_DIM: usize = 32;
 /// One packed map texel: tile id (u16) plus height and flags (u16).
@@ -71,7 +68,6 @@ pub enum PackageKind {
     Gumps,
     Map(u32),
     Statics(u32),
-    TerrainMeta,
 }
 
 /// UDDP kinds offered, in order, to a package whose file name names no kind.
@@ -94,9 +90,6 @@ impl PackageKind {
     /// The kind named by a file name; a suffix after the first dot is ignored
     /// (`tex_land_ec.rebuilt.uddp` is a `tex_land_ec` package).
     pub fn from_file_name(file_name: &str) -> Option<Self> {
-        if file_name == TERRAIN_META_FILE_NAME {
-            return Some(Self::TerrainMeta);
-        }
         let base = file_name.split('.').next().unwrap_or(file_name);
         let kind = match base {
             "tex_art_cc" => Self::TexArtCc,
@@ -140,7 +133,6 @@ impl PackageKind {
             Self::Gumps => "gumps".into(),
             Self::Map(map_id) => format!("map{map_id}"),
             Self::Statics(map_id) => format!("statics{map_id}"),
-            Self::TerrainMeta => "terrain_meta".into(),
         }
     }
 }
@@ -233,7 +225,7 @@ pub fn validate_inputs(
     mut on_report: impl FnMut(&PackageReport),
 ) -> eyre::Result<ValidateCounts> {
     let paths = collect_package_paths(inputs)?;
-    eyre::ensure!(!paths.is_empty(), "no packages found (looked for *.{UDDP_EXTENSION} and {TERRAIN_META_FILE_NAME})");
+    eyre::ensure!(!paths.is_empty(), "no packages found (looked for *.{UDDP_EXTENSION})");
 
     let mut failed = 0usize;
     for path in &paths {
@@ -330,9 +322,7 @@ fn collect_directory_packages(directory: &Path, paths: &mut Vec<PathBuf>) -> eyr
 }
 
 fn is_package_file(path: &Path) -> bool {
-    let is_uddp = path.extension().and_then(|ext| ext.to_str()) == Some(UDDP_EXTENSION);
-    let is_terrain_meta = path.file_name().and_then(|name| name.to_str()) == Some(TERRAIN_META_FILE_NAME);
-    is_uddp || is_terrain_meta
+    path.extension().and_then(|ext| ext.to_str()) == Some(UDDP_EXTENSION)
 }
 
 /// Validate one package; every problem is recorded in the report, never returned.
@@ -345,14 +335,6 @@ pub fn validate_package(path: &Path) -> PackageReport {
             .and_then(PackageKind::from_file_name),
         ..PackageReport::default()
     };
-
-    if report.kind == Some(PackageKind::TerrainMeta) {
-        match TerrainMetaPackage::load(path) {
-            Ok(_) => report.reader_summary = Some("terrain_meta ok".into()),
-            Err(error) => report.failures.push(format!("terrain_meta reader: {error:#}")),
-        }
-        return report;
-    }
 
     let package = match UddpReader::load(path) {
         Ok(package) => package,
@@ -574,10 +556,11 @@ fn run_package_reader(kind: PackageKind, package: &UddpReader) -> eyre::Result<S
         PackageKind::TexLandEc => {
             let reader = TexLandEcPackage::from_uddp_package(package.clone())?;
             format!(
-                "slots={}, pages={}, terrain_provenance={}",
+                "slots={}, pages={}, terrain_provenance={}, terrain_layer_tiles={}",
                 reader.slots().len(),
                 reader.pages().len(),
-                reader.terrain_provenance().len()
+                reader.terrain_provenance().len(),
+                reader.terrain_layers().tile_count()
             )
         }
         PackageKind::TexAuxEc => {
@@ -628,7 +611,6 @@ fn run_package_reader(kind: PackageKind, package: &UddpReader) -> eyre::Result<S
         }
         PackageKind::Map(map_id) => check_map_package(package, map_id)?,
         PackageKind::Statics(_) => check_statics_package(package)?,
-        PackageKind::TerrainMeta => eyre::bail!("terrain_meta is not a UDDP package"),
     };
     Ok(summary)
 }
@@ -694,7 +676,6 @@ mod tests {
         assert_eq!(PackageKind::from_file_name("gumps_cc.uddp"), Some(PackageKind::Gumps));
         assert_eq!(PackageKind::from_file_name("map5.uddp"), Some(PackageKind::Map(5)));
         assert_eq!(PackageKind::from_file_name("statics0.uddp"), Some(PackageKind::Statics(0)));
-        assert_eq!(PackageKind::from_file_name(TERRAIN_META_FILE_NAME), Some(PackageKind::TerrainMeta));
         assert_eq!(PackageKind::from_file_name("mapx.uddp"), None);
         assert_eq!(PackageKind::from_file_name("facet00.dds"), None);
     }
@@ -808,12 +789,11 @@ mod tests {
         let nested = dir.join("nested");
         fs::create_dir_all(&nested).expect("create nested dir");
         fs::write(dir.join("facet00.dds"), b"").expect("write dds");
-        fs::write(dir.join(TERRAIN_META_FILE_NAME), b"").expect("write terrain meta");
         fs::write(nested.join("hues.uddp"), b"").expect("write hues");
 
         let paths = collect_package_paths(&[dir.clone()]).expect("collect");
 
-        assert_eq!(paths, vec![nested.join("hues.uddp"), dir.join(TERRAIN_META_FILE_NAME)]);
+        assert_eq!(paths, vec![nested.join("hues.uddp")]);
         fs::remove_dir_all(&dir).ok();
     }
 
