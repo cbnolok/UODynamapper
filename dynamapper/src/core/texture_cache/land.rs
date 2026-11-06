@@ -895,6 +895,10 @@ fn create_land_shader_images(
                         }
                     }
                 } else if let Some(slot_id) = package.resolve_effective_runtime_slot_id(tile_id) {
+                    // A tile without a base layer draws its runtime slot alone. In the shipped data these are the
+                    // tiles with a slot of their own and no material (103, 109-112, 128, 16380-16383), which no
+                    // facet places; with no material layer the stretch stays 0 and the shader sizes the slot by its
+                    // extent (`ec_tile_stretch`).
                     let texture_repetition = package
                         .resolve_material_decision(tile_id)
                         .primary_layer_index

@@ -1067,52 +1067,50 @@ fn build_terrain_provenance_records(
             } else {
                 alias.legacy_land_id
             };
-            let mut selected_layers = entry
-                .texture
-                .as_ref()
-                .map(|texture| {
-                    texture
-                        .layers
-                        .iter()
-                        .enumerate()
-                        .filter_map(|(layer_index, layer)| {
-                            layer.texture_id.map(|texture_id| {
-                                (
-                                    texture_id,
-                                    TerrainLayerProvenance {
-                                        layer_index: layer_index as u32,
-                                        texture_repetition: layer.texture_repetition,
-                                        role: Some(texture.layer_role(layer_index)),
-                                    },
-                                )
-                            })
-                        })
-                        .collect::<BTreeMap<_, _>>()
-                })
-                .unwrap_or_default();
+            // Every source item gets its own record: when a material repeats a texture (item 0 and item 1 the same,
+            // for example), each item keeps its layer index and stretch, so item 0 still resolves.
+            let mut selected_layers = BTreeMap::<u32, Vec<TerrainLayerProvenance>>::new();
+            if let Some(texture) = entry.texture.as_ref() {
+                for (layer_index, layer) in texture.layers.iter().enumerate() {
+                    if let Some(texture_id) = layer.texture_id {
+                        selected_layers.entry(texture_id).or_default().push(TerrainLayerProvenance {
+                            layer_index: layer_index as u32,
+                            texture_repetition: layer.texture_repetition,
+                            role: Some(texture.layer_role(layer_index)),
+                        });
+                    }
+                }
+            }
             if let Some(selected_texture_id) = selected_texture_by_slot.get(&provenance_slot_id).copied() {
-                selected_layers.entry(selected_texture_id).or_insert(TerrainLayerProvenance {
+                selected_layers.entry(selected_texture_id).or_insert_with(|| vec![TerrainLayerProvenance {
                     layer_index: MISSING_TERRAIN_LAYER_INDEX,
                     texture_repetition: 1.0,
                     role: None,
-                });
+                }]);
             }
             if let Some(override_layers) = override_layers_by_material.get(&entry.id) {
-                selected_layers.extend(override_layers.iter().map(|(texture_id, layer)| (*texture_id, *layer)));
+                // An override layer replaces every source record of its texture.
+                selected_layers.extend(override_layers.iter().map(|(texture_id, layer)| (*texture_id, vec![*layer])));
             }
 
             if selected_layers.is_empty() {
                 selected_layers.insert(
                     MISSING_TEXTURE_ID,
-                    TerrainLayerProvenance {
+                    vec![TerrainLayerProvenance {
                         layer_index: MISSING_TERRAIN_LAYER_INDEX,
                         texture_repetition: 0.0,
                         role: None,
-                    },
+                    }],
                 );
             }
 
-            for (selected_texture_id, selected_layer) in selected_layers {
+            // The records of a repeated texture go last item first: the surface-like statics take the stretch of a
+            // texture's first record, and the last item's is the one that matches them (CoolLava repeats 2000103 at
+            // 6 then 4, and the lava items' own tileart draws it at 4).
+            for (selected_texture_id, selected_layer) in selected_layers
+                .into_iter()
+                .flat_map(|(texture_id, layers)| layers.into_iter().rev().map(move |layer| (texture_id, layer)))
+            {
                 let canonical_slot_id = texture_slot_by_texture_id
                     .get(&selected_texture_id)
                     .copied()
@@ -1136,6 +1134,7 @@ fn build_terrain_provenance_records(
         }
     }
 
+    // A stable sort: the records of a repeated texture keep the order above.
     records.sort_by_key(|record| {
         (
             record.alias_slot_id,
@@ -1990,6 +1989,71 @@ mod tests {
         assert_eq!(role_of(2000130), Some(Some(TerrainLayerRole::ColourA)));
         assert_eq!(role_of(2000131), Some(Some(TerrainLayerRole::ColourB)));
         assert_eq!(role_of(2000132), Some(None));
+    }
+
+    /// A texture that several items repeat gets one record per item, last item first, each with its own layer
+    /// index, stretch and role; an override of that texture replaces them all.
+    #[test]
+    fn terrain_provenance_keeps_every_item_of_a_repeated_texture() {
+        const MATERIAL: u32 = 156;
+        const ALIAS_SLOT: u32 = 10156;
+        const REPEATED: u32 = 2000101;
+        const MASK: u32 = 1000003;
+        const REPEATED_SLOT: u32 = 9001;
+        const MASK_SLOT: u32 = 9002;
+        const UNUSED_POSITION: usize = 3;
+        const OVERRIDDEN_MATERIAL: u32 = 157;
+        const OVERRIDE_LAYER: u32 = 1;
+        const OVERRIDE_STRETCH: f32 = 2.0;
+        // Items [REPEATED @ 4, REPEATED @ 4, MASK @ 16, REPEATED @ 1], as the shipped "Light Sandstone corners".
+        const ITEMS: [(u32, f32); 4] = [(REPEATED, 4.0), (REPEATED, 4.0), (MASK, 16.0), (REPEATED, 1.0)];
+        let entry = |id: u32| TerrainDefinitionEntry {
+            id,
+            aliases: vec![TerrainDefinitionTileAlias { subtype: 0, legacy_land_id: ALIAS_SLOT, tile_flags: 0 }],
+            texture: Some(TerrainDefinitionTexture {
+                layers: ITEMS
+                    .iter()
+                    .map(|&(texture_id, texture_repetition)| TerrainDefinitionTextureLayer {
+                        texture_id: Some(texture_id),
+                        texture_repetition,
+                        ..Default::default()
+                    })
+                    .collect(),
+                ..Default::default()
+            }),
+            ..Default::default()
+        };
+        let terrain_definition = TerrainDefinitionPackage { entries: vec![entry(MATERIAL), entry(OVERRIDDEN_MATERIAL)] };
+        let texture_slot_by_texture_id = HashMap::from([(REPEATED, REPEATED_SLOT), (MASK, MASK_SLOT)]);
+        let overrides = HashMap::from([(
+            OVERRIDDEN_MATERIAL,
+            BTreeMap::from([(
+                REPEATED,
+                TerrainLayerProvenance { layer_index: OVERRIDE_LAYER, texture_repetition: OVERRIDE_STRETCH, role: None },
+            )]),
+        )]);
+
+        let records = build_terrain_provenance_records(&terrain_definition, &[], &texture_slot_by_texture_id, &overrides);
+
+        let repeated = |material_id: u32| {
+            records
+                .iter()
+                .filter(|record| record.material_id == material_id && record.selected_texture_id == REPEATED)
+                .map(|record| (record.selected_layer_index, record.selected_texture_repetition, record.selected_layer_role))
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(
+            repeated(MATERIAL),
+            vec![
+                (UNUSED_POSITION as u32, 1.0, Some(TerrainLayerClass::Default.role(UNUSED_POSITION))),
+                (1, 4.0, Some(TerrainLayerRole::ColourB)),
+                (0, 4.0, Some(TerrainLayerRole::ColourA)),
+            ]
+        );
+        assert_eq!(repeated(OVERRIDDEN_MATERIAL), vec![(OVERRIDE_LAYER, OVERRIDE_STRETCH, None)]);
+        assert!(records
+            .iter()
+            .all(|record| record.selected_texture_id != REPEATED || record.canonical_slot_id == REPEATED_SLOT));
     }
 
     #[test]

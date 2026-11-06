@@ -37,7 +37,10 @@ land pages. See [the terrain guide](LAND_TEXTURES_AND_TRANSITIONS.md),
 `texture_stretch` when available. Its fallback is image width divided by 44.
 That fallback is engine behavior, not evidence that the client derives stretch
 from pixel width. Preserve authored repetition separately from native image
-extent and optional upscaling.
+extent and optional upscaling. Since 2026-11-06 every solid Enhanced land tile
+carries its material's item 0 stretch, so the fallback serves only the 10
+direct-slot tiles without a material (103, 109-112, 128, 16380-16383), which no
+shipped facet places.
 
 The renderer reads terrain roles from the role-specific land pages only. The
 [table usage audit](../../agent_notes/terrain_layer_table_usage.md) found no

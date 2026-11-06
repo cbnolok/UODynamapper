@@ -268,3 +268,63 @@ Data: high confidence. Visual effect: not rendered or measured, and how often
 these tiles occur on the maps was not counted. Possible fixes: have the packer
 record layer 0 when item 0 repeats item 1, or take the fallback stretch from the
 material's item 0 in `source_materials.json`. Not changed here.
+
+## Outcome (2026-11-06)
+
+The recommendation was carried out on 2026-11-06, and the repeat was fixed at its
+source.
+
+- **Blend and ripple removed** (8e7f424d): the two-base blend, the ripple, the aux
+  lookup (binding 114), the table loop, the role functions and the `terrain_meta`
+  parameter. Binding 113, `ec_aux_atlas`, stays for the item liquid and surface
+  images; the bindings were not renumbered. Against the previous build on the same
+  package, the four Enhanced views above, two Classic views and two KR-like views
+  rendered 0 changed pixels (1280x800 each). With the stock KR-like preset 2022 and
+  1601 pixels differ by 1 level, from its fog, which drifts between frames; 0 and 1
+  of them lie outside the drifting pixels.
+- **Table dropped** (d01a07a8): `metadata/terrain_layers.bin`, both
+  `terrain_meta.rs` and `terrain_layers()` with every reader; `tex_land_ec`
+  metadata version 5. `source_materials.json` keeps the items for the tools.
+- **Repeat fixed in the packer**: `build_terrain_provenance_records` kept one
+  record per texture of a material, the last item that named it, so item 0 had
+  no record wherever item 1 repeated it. It now writes a record per item. The
+  records of a repeated texture go last item first, because the surface-like
+  statics take the stretch of a texture's first record. Of the 1689 item
+  tiles that resolve a surface-like EC texture, 0 changed (CoolLava's 2000103 stays at
+  4, the lava items' own tileart stretch; item order would have moved 111 of them
+  to 6). The repacked `tex_land_ec.uddp` has 933 provenance rows against 883: 50
+  added, none removed or changed, the old order kept. The other added rows are
+  water materials' repeated items (10, 49, 53, 168, 169, 195), which change
+  nothing drawn.
+- **Census on the repacked package**: all 2539 solid Enhanced tiles have BASE at
+  their material's item 0 slot and stretch (before: 2456, with the 83 above at
+  stretch 0). The land lookup changes on exactly those 83 tiles: BASE (item 0's
+  stretch: 1, 4, 5 or 6 instead of `extent / 44`), DETAIL and MASK (now written,
+  item 1 and item 2). NORMAL, ANIMATED and the liquid and coverage parameters
+  are unchanged on every tile.
+- **Fallback branch**: it now serves only the 10 direct-slot tiles without a
+  material (103, 109-112, 128, 16380-16383). None has a route in
+  `legacyterrainmap.csv`, and the client draws material 0 for an unrouted id
+  (`BuildChunkFromSector` 0x005e2f00 when `LegacyTerrainMap_Lookup` 0x00403410
+  returns null): items 2000000 at 8, 2000001 at 6 and the mask 1000003 at 32.
+  Dynamapper draws their own slot at `extent / 44`. No facet places them (0
+  cells on maps 0-5), so this was left as it is.
+- **Where the 83 tiles are**: duplicate-item cells per facet are 5,046,769
+  (map 0), 5,093,865 (1), 1,502,330 (2), 796,274 (3), 62 (4) and 2,611,129 (5).
+  Most are material 170 "Black" (430, 580), a flat black texture whose stretch
+  cannot show. Without it: 834,266, 819,052, 38,644, 4,063, 62 and 172,231,
+  nearly all material 52 (76-102, tiledata "NoName", impassable) in Britannia and
+  Ilshenar, and the Eodon clouds (198, 199) and rock holes (154) in Ter Mur.
+- **What it changes on screen**: the captures of material 52's densest chunks show
+  only sea water, unchanged, and Black and the rock holes at the
+  views tried showed no change. The visible change is the cave walls (material 15,
+  a 512-px texture: 11.6 cells per repeat before, 5 now, so the rock pattern is
+  about twice as fine) and the Eodon clouds (5.82 cells before, 6 now). At
+  1280x800: the Britannia dungeon walls at (5264, 1648) and (5200, 1456) change
+  12.9% and 9.5% of the pixels in Enhanced and KR-like; a Ter Mur wall at
+  (452, 3143), 3.8%; the cloud field at (464, 2096), 95%. Classic is unchanged
+  everywhere. The new build on a version 5 package packed without the fix renders
+  the same pixels as the build before these changes on the version 4 package
+  (Enhanced and KR-like without fog, three Britannia views), so the removal and the
+  format change alone change nothing. Mixing item 1 into item 0 changes
+  nothing by itself where the two are the same texture at the same stretch.
