@@ -130,6 +130,8 @@ const BC7_PROGRESS_BLOCK_BATCH: usize = 256;
 pub enum VramTextureEncoding {
     Rgba8UnormSrgb,
     Bc7(Bc7EncoderBackend),
+    /// BC1 through the `dds` crate ([`crate::bc1`]), with one bit of alpha.
+    Bc1,
 }
 
 impl VramTextureEncoding {
@@ -137,6 +139,7 @@ impl VramTextureEncoding {
         match self {
             Self::Rgba8UnormSrgb => VramTextureFormat::Rgba8UnormSrgb,
             Self::Bc7(_) => VramTextureFormat::Bc7RgbaUnormSrgb,
+            Self::Bc1 => VramTextureFormat::Bc1RgbaUnormSrgb,
         }
     }
 }
@@ -146,6 +149,7 @@ impl VramTextureEncoding {
 pub enum VramTextureFormat {
     Rgba8UnormSrgb = 1,
     Bc7RgbaUnormSrgb = 2,
+    Bc1RgbaUnormSrgb = 3,
 }
 
 impl VramTextureFormat {
@@ -153,6 +157,7 @@ impl VramTextureFormat {
         match value {
             1 => Some(Self::Rgba8UnormSrgb),
             2 => Some(Self::Bc7RgbaUnormSrgb),
+            3 => Some(Self::Bc1RgbaUnormSrgb),
             _ => None,
         }
     }
@@ -161,6 +166,7 @@ impl VramTextureFormat {
         match self {
             Self::Rgba8UnormSrgb => TextureFormat::Rgba8UnormSrgb,
             Self::Bc7RgbaUnormSrgb => TextureFormat::Bc7RgbaUnormSrgb,
+            Self::Bc1RgbaUnormSrgb => TextureFormat::Bc1RgbaUnormSrgb,
         }
     }
 
@@ -168,6 +174,7 @@ impl VramTextureFormat {
         match self {
             Self::Rgba8UnormSrgb => extent.byte_len(RawImageFormat::Rgba8888),
             Self::Bc7RgbaUnormSrgb => expected_bc7_byte_len(extent),
+            Self::Bc1RgbaUnormSrgb => crate::bc1::expected_bc1_byte_len(extent),
         }
     }
 
@@ -180,6 +187,11 @@ impl VramTextureFormat {
             },
             Self::Bc7RgbaUnormSrgb => TextureUploadLayout {
                 bytes_per_row: extent.blocks_wide() * 16,
+                rows_per_image: extent.blocks_high(),
+                format: self.texture_format(),
+            },
+            Self::Bc1RgbaUnormSrgb => TextureUploadLayout {
+                bytes_per_row: extent.blocks_wide() * crate::bc1::BC1_BLOCK_BYTES as u32,
                 rows_per_image: extent.blocks_high(),
                 format: self.texture_format(),
             },
@@ -384,6 +396,7 @@ pub enum TextureError {
     ZeroExtent { width: u32, height: u32 },
     InvalidInputLength { expected: usize, actual: usize, format: RawImageFormat },
     InvalidBc7Length { expected: usize, actual: usize },
+    InvalidBc1Length { expected: usize, actual: usize },
     InvalidTexturePayloadLength {
         expected: usize,
         actual: usize,
@@ -426,6 +439,10 @@ impl fmt::Display for TextureError {
                 f,
                 "invalid BC7 block payload length: expected {expected}, got {actual}"
             ),
+            Self::InvalidBc1Length { expected, actual } => write!(
+                f,
+                "invalid BC1 block payload length: expected {expected}, got {actual}"
+            ),
             Self::InvalidTexturePayloadLength {
                 expected,
                 actual,
@@ -457,7 +474,7 @@ impl fmt::Display for TextureError {
                 message,
             } => write!(
                 f,
-                "BC7 backend {backend} failed during {operation}: {message}"
+                "texture backend {backend} failed during {operation}: {message}"
             ),
             Self::RectOutOfBounds { rect, width, height } => write!(
                 f,
@@ -604,6 +621,13 @@ pub fn decode_from_vram(
         },
         VramTextureFormat::Bc7RgbaUnormSrgb => {
             decode_bc7(texture.bytes(), texture.extent(), output_format)
+        }
+        VramTextureFormat::Bc1RgbaUnormSrgb => {
+            let rgba = crate::bc1::decode_bc1_to_rgba8888(texture.bytes(), texture.extent())?;
+            Ok(match output_format {
+                RawImageFormat::Rgba8888 => rgba,
+                RawImageFormat::Rgb888 => rgba8888_to_rgb888(&rgba),
+            })
         }
     }
 }
@@ -982,7 +1006,20 @@ pub fn encode_for_vram_with_bc7_rdo_options(
                 bc7_rdo_options,
             )?.into())
         }
+        VramTextureEncoding::Bc1 => encode_bc1_for_vram(pixels, extent, input_format),
     }
+}
+
+#[cfg(feature = "bc7-encode")]
+fn encode_bc1_for_vram(
+    pixels: &[u8],
+    extent: ImageExtent,
+    input_format: RawImageFormat,
+) -> Result<VramTextureData, TextureError> {
+    validate_input_len(pixels, extent, input_format)?;
+    let rgba_pixels = normalize_to_rgba8888(pixels, input_format, extent);
+    let blocks = crate::bc1::encode_bc1(&rgba_pixels, extent)?;
+    VramTextureData::new(extent, VramTextureFormat::Bc1RgbaUnormSrgb, Arc::from(blocks))
 }
 
 #[cfg(feature = "bc7-encode")]
@@ -1109,6 +1146,9 @@ where
                 progress,
             )?;
             Ok((texture.into(), timings))
+        }
+        VramTextureEncoding::Bc1 => {
+            Ok((encode_bc1_for_vram(pixels, extent, input_format)?, Bc7StageTimings::default()))
         }
     }
 }

@@ -92,6 +92,7 @@ pub fn terrain_texarray_format() -> TextureFormat {
     match terrain_texture_vram_format() {
         VramTextureFormat::Rgba8UnormSrgb => TextureFormat::Rgba8UnormSrgb,
         VramTextureFormat::Bc7RgbaUnormSrgb => TextureFormat::Bc7RgbaUnormSrgb,
+        VramTextureFormat::Bc1RgbaUnormSrgb => TextureFormat::Bc1RgbaUnormSrgb,
     }
 }
 

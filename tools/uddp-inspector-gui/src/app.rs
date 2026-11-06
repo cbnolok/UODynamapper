@@ -1721,6 +1721,7 @@ fn vram_texture_format_name(format: udd_conv::bc7::VramTextureFormat) -> &'stati
     match format {
         udd_conv::bc7::VramTextureFormat::Rgba8UnormSrgb => "rgba8888",
         udd_conv::bc7::VramTextureFormat::Bc7RgbaUnormSrgb => "bc7",
+        udd_conv::bc7::VramTextureFormat::Bc1RgbaUnormSrgb => "bc1",
     }
 }
 
