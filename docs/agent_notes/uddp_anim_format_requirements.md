@@ -755,6 +755,10 @@ the same day ([`bc7_alpha_plane_search.md`](bc7_alpha_plane_search.md)). The use
       (Enhanced `SelectPaperdollBodyGumpForBody` 0x0050d1c0, Classic 7.0.103.0 `DrawPaperdollGumpLayers` 0x0051a4a0): six
       single gumps, 12-15, 665 and 666, and 51253 on an atlas page. They add 12.9 KB to `gumps_ec` BC7 (40.507 MB) and
       13.9 KB to `gumps_cc` BC1 (20.850 MB), and keep every exact grey and red byte.
+    - Dynamapper's paperdoll does as the clients do (2026-11-06): the hue index is the red channel, not the (R+G+B)/3
+      average, and the body takes partial hue. On lossless packages, in all three presets, body 12's loincloth (its only
+      texels that aren't grey) keeps its colour, and a fully hued kimono (item 10190, hue 38) takes the red channel's
+      entries (p99 38, max 88, over 5.4 % of the window). A paperdoll whose hued texels are all exact greys draws the same.
   - Superseded for Enhanced on 2026-11-06; its measurements stand. **Gumps take BC1 in both clients.** Classic gumps treat black as transparent, which is BC1's one-bit alpha, so BC1 beats BC3 there:
     zstd 19 19.6 MB and 74 MB of VRAM at a median of 83.0, against BC3's 21.3 MB, 148 MB and 82.3, and BC7 with fix C's 37.1 MB,
     148 MB and 85.5. Enhanced is alike (BC1 83.1, BC7 85.8), though BC1's worst gump scores 20.1 against BC3's 24.3, probably one with
@@ -820,7 +824,8 @@ the same day ([`bc7_alpha_plane_search.md`](bc7_alpha_plane_search.md)). The use
       - Dynamapper's gump dialog gives egui straight colour, which bevy_egui 0.43 blends as premultiplied. So BC7's
         un-premultiplied faint texels show as specks: 126 gumps, 1838 texels, among them 1909's earrings. The same blend
         shows the coloured transparent texels of 1510 lossless Enhanced gumps as a fill: 1414 draws pink, BC7 clears it.
-        Premultiplying before the upload would fix both; not done.
+        Premultiplying before the upload fixes both (2026-11-06): 1414 draws clear and 1909's earrings lose the specks,
+        in the Enhanced and KR-like presets.
     - Land textures with alpha below 255: base 3 of 97 (262,089 texels), detail 3 of 78 (180,849), mask 2 of 2 (105,505),
       normal 1 of 5 (65,536); alpha errors reach 19 levels. At zoom 1 the Enhanced and KR-like presets show the Britain
       cobblestones with visibly less green moss, in block-sized patches; the per-texture colour score doesn't see it.
