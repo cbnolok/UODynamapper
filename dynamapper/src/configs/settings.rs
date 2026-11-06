@@ -1,5 +1,6 @@
 use crate::console_logger::{self, LogAbout, LogSev};
 use crate::core::export_job::ExportJob;
+use crate::core::render::dialogs::image_background::ImageBackground;
 use crate::core::render::scene::camera::RenderZoom;
 use crate::core::render::scene::player::Player;
 use crate::prelude::*;
@@ -104,6 +105,8 @@ pub struct SectWindow {
     pub cursor_position_scale: f32,
     pub free_camera: bool,
     pub perspective_camera: bool,
+    /// What the gump and paperdoll windows draw behind their image; set in the Open Gump dialog.
+    pub gump_background: ImageBackground,
 }
 
 #[derive(Clone, Deserialize, Serialize, PartialEq)]
@@ -1132,6 +1135,30 @@ mod tests {
         let rewritten = toml::to_string_pretty(&load.value).expect("serialize");
         let reread: SectApp = parse_strict(USER_PREFERENCES_CONFIG_FILE, &rewritten).expect("rewritten file is complete");
         assert!(reread == load.value);
+    }
+
+    /// A cache file from before the gump background takes the bundled one, the window's own; a picked colour is
+    /// written and read back.
+    #[test]
+    fn the_gump_background_is_filled_from_the_bundled_file_and_a_picked_colour_round_trips() {
+        let bundled: SectApp = parse_strict(USER_PREFERENCES_CONFIG_FILE, BUNDLED_USER_PREFERENCES).expect("bundled");
+        assert_eq!(bundled.window.gump_background, ImageBackground::ViewerDefault);
+        let older = BUNDLED_USER_PREFERENCES
+            .lines()
+            .filter(|line| !line.starts_with("gump_background"))
+            .collect::<Vec<_>>()
+            .join("\n");
+        let load = parse_app_state("user_preferences.toml", &older, &bundled).expect("lenient load");
+        assert_eq!(load.value.window.gump_background, ImageBackground::ViewerDefault);
+        assert_eq!(load.warnings, ["user_preferences.toml: missing key `window.gump_background` filled from the default"]);
+
+        let mut picked = bundled.clone();
+        picked.window.gump_background =
+            ImageBackground::Color(crate::core::render::dialogs::image_background::MAGENTA_BACKGROUND);
+        let written = toml::to_string_pretty(&picked).expect("serialize");
+        let load = parse_app_state("user_preferences.toml", &written, &bundled).expect("lenient load");
+        assert!(load.warnings.is_empty(), "{:?}", load.warnings);
+        assert_eq!(load.value.window.gump_background, picked.window.gump_background);
     }
 
     #[test]

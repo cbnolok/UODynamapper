@@ -1,4 +1,5 @@
 use crate::core::controls::input_actions::{ActionCloseActiveDialog, ActionToggleGumpDialog};
+use crate::core::render::dialogs::image_background::{image_background_control, ImageBackground};
 use crate::core::render::scene::camera::UiCameraResource;
 use crate::configs::shader_presets::UniformState;
 use crate::core::uo_files_loader::{GumpClient, GumpMapRes, HuesPackageRes, TileMetaPackageRes};
@@ -794,6 +795,7 @@ fn sys_render_gump_dialog(
     paperdoll_profiles: Res<PaperdollProfilesRes>,
     wearable_rules: Res<PaperdollWearableRulesRes>,
     uniform_state: Res<UniformState>,
+    mut settings: ResMut<Settings>,
     mut images: ResMut<Assets<Image>>,
 ) {
     if !state.open && state.open_gumps.is_empty() {
@@ -806,6 +808,7 @@ fn sys_render_gump_dialog(
     }
 
     let mut closed_images = Vec::new();
+    let mut gump_background = settings.app.window.gump_background;
     let open_request = {
         let Some(ctx) =
             dialogs::get_egui_context_ready_mut(&mut egui_contexts, &egui_ui_camera) else {
@@ -813,7 +816,7 @@ fn sys_render_gump_dialog(
         };
 
         let open_request = if state.open {
-            render_open_gump_dialog(ctx, &mut state, &paperdoll_profiles)
+            render_open_gump_dialog(ctx, &mut state, &paperdoll_profiles, &mut gump_background)
         } else {
             None
         };
@@ -835,7 +838,7 @@ fn sys_render_gump_dialog(
                         ui.label(error.as_str());
                         return;
                     }
-                    let response = ui.add(egui::Image::new((open_gump.texture_id, image_size)));
+                    let response = ui.add(gump_background.under(egui::Image::new((open_gump.texture_id, image_size))));
                     if response.secondary_clicked() {
                         right_clicked = true;
                     }
@@ -848,6 +851,10 @@ fn sys_render_gump_dialog(
 
         open_request
     };
+    // Written only when picked: other systems watch the settings for changes.
+    if gump_background != settings.app.window.gump_background {
+        settings.app.window.gump_background = gump_background;
+    }
 
     state.open_gumps.retain(|open_gump| {
         let close = closed_images.contains(&open_gump.image.id());
@@ -981,6 +988,7 @@ fn render_open_gump_dialog(
     ctx: &mut egui::Context,
     state: &mut GumpDialogState,
     paperdoll_profiles: &PaperdollProfilesRes,
+    gump_background: &mut ImageBackground,
 ) -> Option<GumpOpenRequest> {
     let mut window_open = state.open;
     let mut open_request = None;
@@ -1000,6 +1008,13 @@ fn render_open_gump_dialog(
             if submit {
                 open_request = Some(GumpOpenRequest::GumpById);
             }
+
+            ui.separator();
+            // Behind the image of every gump and paperdoll window.
+            ui.horizontal_wrapped(|ui| {
+                let window_fill = ui.visuals().window_fill;
+                image_background_control(ui, gump_background, window_fill);
+            });
 
             ui.separator();
             ui.checkbox(&mut state.paperdoll_open, "Paperdoll");

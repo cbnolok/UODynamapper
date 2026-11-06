@@ -1,5 +1,6 @@
 pub mod keybindings_help;
 pub mod gump;
+pub mod image_background;
 pub mod preferences;
 pub mod teleport;
 pub mod land_shader;

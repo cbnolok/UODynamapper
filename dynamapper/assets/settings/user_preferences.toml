@@ -10,6 +10,8 @@ performance_overlay_scale = 1.0
 cursor_position_scale = 1.0
 free_camera = false
 perspective_camera = false
+# Behind the gump and paperdoll images: "viewer_default" (the window) or { color = [red, green, blue] }.
+gump_background = "viewer_default"
 
 [debug]
 map_render_wireframe = false
