@@ -1,6 +1,5 @@
 use crate::logic::{ClientData, Dictionary, UopCache};
-use crate::ui::ClientSource;
-use uocf::enhanced::client_dialect::ClientDialect;
+use crate::ui::{ClientSource, EnhancedFolders, ENHANCED_SOURCES};
 use eframe::egui;
 use image_postprocess::palette::{
     palette_safe_upscale, DitherPolicy, PaletteModel, PaletteUpscaleConfig, RgbaFilterScaler, SnapMode,
@@ -38,6 +37,8 @@ use uocf::uop_container::package::{LoadMode, UopPackage};
 use serde::{Deserialize, Serialize};
 
 const TERRAIN_TEXTURE_GUESS_MAX_ID: u32 = 4096;
+/// The key of [`AppSettings`] in the app's storage.
+const SETTINGS_KEY: &str = "uocf_editor_settings";
 const TERRAIN_TEXTURE_GUESS_EXTENSIONS: [&str; 2] = ["dds", "tga"];
 
 #[derive(PartialEq, Eq, Clone, Copy, Debug, Serialize, Deserialize)]
@@ -201,6 +202,8 @@ pub enum MultimapRadarSource {
     Mul,
     /// `mapNLegacyMUL.uop` and its statics, coloured from `radarcol.mul`.
     CcUop,
+    /// The Kingdom Reborn client's own radar image of the facet, `facetNN.dds`.
+    KrUop,
     /// The Enhanced Client's own radar image of the facet, `facetNN.dds`.
     EcUop,
 }
@@ -1151,9 +1154,16 @@ impl SoundPlayer {
     }
 }
 
+/// The settings the app keeps in its storage. Lenient app state: a key a file from another version lacks takes its
+/// default, so an older file still loads.
 #[derive(Serialize, Deserialize, Clone, Default)]
+#[serde(default)]
 pub struct AppSettings {
     pub cc_path: Option<PathBuf>,
+    /// The Kingdom Reborn client folder, read as KR UOP.
+    pub kr_path: Option<PathBuf>,
+    /// The Enhanced Client folder, read as EC UOP (as KR UOP when it holds a Kingdom Reborn client and no Kingdom
+    /// Reborn folder is set).
     pub ec_path: Option<PathBuf>,
     pub dict_path: Option<PathBuf>,
     pub last_view_mode: Option<ViewMode>,
@@ -1590,18 +1600,16 @@ const UOP_EXTENSION: &str = "uop";
 /// The sources of `paths` as the selectors name them, for a log line: ` (CC UOP)`, ` (MUL, CC UOP)`; nothing for the
 /// files outside the client folders. A UOP package is the source of its folder's client; another file of the Classic
 /// folder is MUL.
-fn client_sources_tag(paths: &[&Path], cc_path: Option<&Path>, ec_path: Option<&Path>) -> String {
+fn client_sources_tag(paths: &[&Path], cc_path: Option<&Path>, enhanced: &EnhancedFolders) -> String {
     let mut sources = Vec::new();
     for path in paths {
         let extension = path.extension().and_then(|extension| extension.to_str()).unwrap_or_default();
         let is_uop = extension.eq_ignore_ascii_case(UOP_EXTENSION);
         let in_classic = cc_path.is_some_and(|folder| path.starts_with(folder));
-        let source = match ec_path.filter(|folder| path.starts_with(folder)) {
-            Some(folder) if is_uop => Some(if ClientDialect::of_client_dir(folder).is_kingdom_reborn() {
-                ClientSource::KrUop
-            } else {
-                ClientSource::EcUop
-            }),
+        let enhanced_source =
+            ENHANCED_SOURCES.into_iter().find(|&source| enhanced.folder(source).is_some_and(|folder| path.starts_with(folder)));
+        let source = match enhanced_source {
+            Some(source) if is_uop => Some(source),
             _ if in_classic && is_uop => Some(ClientSource::CcUop),
             _ if in_classic && !extension.eq_ignore_ascii_case(UDD_PACKAGE_EXTENSION) => Some(ClientSource::Mul),
             _ => None,
@@ -1614,6 +1622,17 @@ fn client_sources_tag(paths: &[&Path], cc_path: Option<&Path>, ec_path: Option<&
         String::new()
     } else {
         format!(" ({})", sources.iter().map(|source| source.label()).collect::<Vec<_>>().join(", "))
+    }
+}
+
+/// An art source once the tabs show the Enhanced-format client `shown`: an Enhanced art source names that client's
+/// art, `Texture.uop` for KR UOP and `LegacyTexture.uop` for EC UOP. While no Kingdom Reborn folder is set, the
+/// Enhanced Client's own `Texture.uop` (the Kingdom Reborn art it carries) stays the KR UOP art.
+fn enhanced_art_source(art: ArtSource, shown: Option<ClientSource>, kr_folder_set: bool) -> ArtSource {
+    match (art, shown) {
+        (ArtSource::EcUopKr, Some(ClientSource::EcUop)) if kr_folder_set => ArtSource::EcUopLegacy,
+        (ArtSource::EcUop | ArtSource::EcUopLegacy, Some(ClientSource::KrUop)) => ArtSource::EcUopKr,
+        (art, _) => art,
     }
 }
 
@@ -1709,7 +1728,7 @@ fn find_localized_strings_uop(base_path: &Path) -> Option<PathBuf> {
     find_client_file_case_insensitive(base_path, LOCALIZED_STRINGS_UOP_NAME)
 }
 
-const ANIMATIONFRAME_UOP_NAMES: [&str; 6] = [
+pub(crate) const ANIMATIONFRAME_UOP_NAMES: [&str; 6] = [
     "AnimationFrame1.uop",
     "AnimationFrame2.uop",
     "AnimationFrame3.uop",
@@ -1769,6 +1788,11 @@ pub struct UocfEditorApp {
     pub last_texture_problem: Option<String>,
     gpu_errors: crate::ui::textures::GpuErrors,
     pub show_search_paths: bool,
+    /// The folders of KR UOP and EC UOP, as the last reload found them in the settings.
+    pub(crate) enhanced_folders: EnhancedFolders,
+    /// The Enhanced-format client the tabs show, KR UOP or EC UOP, loaded by the last reload: one at a time, since
+    /// its files name entries of each other (tileart.uop and the effects name strings of string_dictionary.uop).
+    pub shown_enhanced: Option<ClientSource>,
 
     pub dictionary: Dictionary,
     pub uo_string_dictionary: Option<Arc<UoStringDictionary>>,
@@ -1940,7 +1964,7 @@ impl UocfEditorApp {
 
         let settings: AppSettings = cc
             .storage
-            .and_then(|s| eframe::get_value(s, "uocf_editor_settings"))
+            .and_then(|s| eframe::get_value(s, SETTINGS_KEY))
             .unwrap_or_default();
 
         let mut app = Self {
@@ -1952,6 +1976,8 @@ impl UocfEditorApp {
             last_texture_problem: None,
             gpu_errors: Default::default(),
             show_search_paths: false,
+            enhanced_folders: EnhancedFolders::default(),
+            shown_enhanced: None,
 
             dictionary: Dictionary::new(),
             uo_string_dictionary: None,
@@ -2138,7 +2164,7 @@ impl UocfEditorApp {
         for path in paths {
             log::debug!("Read {}", path.display());
         }
-        let sources = client_sources_tag(paths, self.settings.cc_path.as_deref(), self.settings.ec_path.as_deref());
+        let sources = client_sources_tag(paths, self.settings.cc_path.as_deref(), &self.enhanced_folders);
         self.log(format!("Loaded {}{sources}: {details}", client_files_label(paths)));
     }
 
@@ -2147,7 +2173,7 @@ impl UocfEditorApp {
         for path in paths {
             log::debug!("Could not read {}", path.display());
         }
-        let sources = client_sources_tag(paths, self.settings.cc_path.as_deref(), self.settings.ec_path.as_deref());
+        let sources = client_sources_tag(paths, self.settings.cc_path.as_deref(), &self.enhanced_folders);
         self.log_warning(format!("Failed to load {}{sources}: {reason}", client_files_label(paths)));
     }
 
@@ -2192,8 +2218,29 @@ impl UocfEditorApp {
         }
     }
 
+    /// The folder of the Enhanced-format client the tabs show.
+    pub fn shown_enhanced_folder(&self) -> Option<&Path> {
+        self.shown_enhanced.and_then(|source| self.enhanced_folders.folder(source))
+    }
+
+    /// Shows the files of `source`'s client, KR UOP or EC UOP, in every tab: a reload from its folder, when it is not
+    /// the one shown. The caller makes sure nothing is left unsaved (`ui::enhanced_files_availability`).
+    pub fn show_enhanced_client(&mut self, source: ClientSource) {
+        if self.shown_enhanced == Some(source) || self.enhanced_folders.folder(source).is_none() {
+            return;
+        }
+        self.shown_enhanced = Some(source);
+        self.trigger_reload();
+    }
+
     pub fn trigger_reload(&mut self) {
         self.log("Starting asset reload...");
+        self.enhanced_folders = EnhancedFolders::from_settings(self.settings.kr_path.as_deref(), self.settings.ec_path.as_deref());
+        self.shown_enhanced = self.enhanced_folders.shown_source(self.shown_enhanced);
+        let kr_folder_set = self.enhanced_folders.kr.is_some();
+        let art_source = |art| enhanced_art_source(art, self.shown_enhanced, kr_folder_set);
+        self.selected_legacy_source = art_source(self.selected_legacy_source);
+        self.selected_animdata_art_source = art_source(self.selected_animdata_art_source);
         self.ec_hues = None;
         self.uo_string_dictionary = None;
         self.string_dictionary_rows = None;
@@ -2522,9 +2569,9 @@ impl UocfEditorApp {
             }
         }
 
-        // 2. Try to load EC assets (string dictionary and legacy texture)
-        if let Some(ec_base_path) = self.settings.ec_path.clone() {
-            log::debug!("Loading the Enhanced client files from {}", ec_base_path.display());
+        // 2. Try to load EC assets (string dictionary and legacy texture), of the Enhanced-format client shown
+        if let Some(ec_base_path) = self.shown_enhanced_folder().map(Path::to_path_buf) {
+            log::debug!("Loading the Enhanced-format client files from {}", ec_base_path.display());
             match AudioPackage::load(&ec_base_path) {
                 Ok(Some(audio)) => {
                     self.ec_audio_entries = Some(Arc::new(collect_ec_audio_entries(&audio)));
@@ -4385,7 +4432,7 @@ impl eframe::App for UocfEditorApp {
 
     fn save(&mut self, storage: &mut dyn eframe::Storage) {
         self.settings.last_view_mode = Some(self.view_mode);
-        eframe::set_value(storage, "uocf_editor_settings", &self.settings);
+        eframe::set_value(storage, SETTINGS_KEY, &self.settings);
     }
 }
 
@@ -4393,12 +4440,113 @@ impl eframe::App for UocfEditorApp {
 pub(crate) mod tests {
     use super::*;
 
+    /// A storage holding the settings an older version wrote.
+    struct StoredSettings(String);
+
+    impl eframe::Storage for StoredSettings {
+        fn get_string(&self, key: &str) -> Option<String> {
+            (key == SETTINGS_KEY).then(|| self.0.clone())
+        }
+
+        fn set_string(&mut self, _key: &str, value: String) {
+            self.0 = value;
+        }
+
+        fn remove_string(&mut self, _key: &str) {
+            self.0.clear();
+        }
+
+        fn flush(&mut self) {}
+    }
+
+    #[test]
+    fn settings_without_a_kingdom_reborn_folder_load_with_none() {
+        let older = StoredSettings(r#"(cc_path:Some("/clients/classic"),ec_path:Some("/clients/enhanced"),dict_path:None,last_view_mode:Some(Gumps))"#.to_string());
+        let settings: AppSettings = eframe::get_value(&older, SETTINGS_KEY).expect("an older file loads");
+        assert_eq!(settings.cc_path.as_deref(), Some(Path::new("/clients/classic")));
+        assert_eq!(settings.ec_path.as_deref(), Some(Path::new("/clients/enhanced")));
+        assert_eq!(settings.kr_path, None);
+        assert_eq!(settings.last_view_mode, Some(ViewMode::Gumps));
+
+        let mut storage = StoredSettings(String::new());
+        let written = AppSettings { kr_path: Some(PathBuf::from("/clients/kingdom_reborn")), ..settings };
+        eframe::set_value(&mut storage, SETTINGS_KEY, &written);
+        let read: AppSettings = eframe::get_value(&storage, SETTINGS_KEY).unwrap();
+        assert_eq!(read.kr_path.as_deref(), Some(Path::new("/clients/kingdom_reborn")));
+    }
+
+    #[test]
+    fn an_enhanced_art_source_follows_the_client_shown() {
+        use ArtSource::{CcUop, EcUop, EcUopKr, EcUopLegacy, Mul};
+        let (kr, ec) = (Some(ClientSource::KrUop), Some(ClientSource::EcUop));
+        assert_eq!(enhanced_art_source(EcUopLegacy, kr, true), EcUopKr);
+        assert_eq!(enhanced_art_source(EcUop, kr, false), EcUopKr, "a Kingdom Reborn client in the Enhanced folder");
+        assert_eq!(enhanced_art_source(EcUopKr, ec, true), EcUopLegacy);
+        assert_eq!(enhanced_art_source(EcUopKr, ec, false), EcUopKr, "the Kingdom Reborn art the Enhanced Client carries");
+        assert_eq!(enhanced_art_source(EcUopLegacy, ec, true), EcUopLegacy);
+        for classic in [Mul, CcUop] {
+            assert_eq!(enhanced_art_source(classic, kr, true), classic);
+            assert_eq!(enhanced_art_source(classic, ec, true), classic);
+        }
+    }
+
+    #[test]
+    fn showing_the_other_enhanced_client_needs_its_folder() {
+        let mut app = test_app();
+        app.enhanced_folders = EnhancedFolders { ec: Some(PathBuf::from("/clients/enhanced")), ..Default::default() };
+        app.shown_enhanced = Some(ClientSource::EcUop);
+        app.show_enhanced_client(ClientSource::KrUop);
+        assert_eq!(app.shown_enhanced, Some(ClientSource::EcUop), "no Kingdom Reborn folder: nothing to show");
+        app.show_enhanced_client(ClientSource::EcUop);
+        assert_eq!(app.shown_enhanced, Some(ClientSource::EcUop));
+        assert_eq!(app.shown_enhanced_folder(), Some(Path::new("/clients/enhanced")));
+    }
+
+    /// The Enhanced-format packages loaded from `folder`.
+    fn loaded_enhanced_packages(app: &UocfEditorApp, folder: &Path) -> usize {
+        app.uop_cache.loaded_uops.iter().filter(|loaded| loaded.path.starts_with(folder)).count()
+    }
+
+    #[test]
+    #[ignore = "reads the real Classic, Kingdom Reborn and Enhanced clients"]
+    fn each_enhanced_source_reads_its_own_folder() {
+        use crate::ui::test_support::{client_roots, CLASSIC_CLIENT_ROOTS_ENV, EC_CLIENT_ROOTS_ENV, KR_CLIENT_DIR_ENV};
+        let kr = PathBuf::from(std::env::var_os(KR_CLIENT_DIR_ENV).expect("set UO_KR_CLIENT_DIR"));
+        let ec = client_roots(EC_CLIENT_ROOTS_ENV).into_iter().find(|root| *root != kr).expect("an Enhanced Client root");
+        let mut app = test_app();
+        app.settings.cc_path = client_roots(CLASSIC_CLIENT_ROOTS_ENV).into_iter().next();
+        app.settings.kr_path = Some(kr.clone());
+        app.settings.ec_path = Some(ec.clone());
+        app.trigger_reload();
+        assert_eq!(app.shown_enhanced, Some(ClientSource::EcUop), "the Enhanced Client is shown first");
+        assert!(loaded_enhanced_packages(&app, &ec) > 0);
+        assert_eq!(loaded_enhanced_packages(&app, &kr), 0);
+        assert!(app.ec_tileart_path.as_deref().is_some_and(|path| path.starts_with(&ec)));
+
+        app.show_enhanced_client(ClientSource::KrUop);
+        assert_eq!(app.shown_enhanced, Some(ClientSource::KrUop));
+        assert!(loaded_enhanced_packages(&app, &kr) > 0);
+        assert_eq!(loaded_enhanced_packages(&app, &ec), 0, "every tab reloads from the Kingdom Reborn folder");
+        assert!(app.ec_tileart_path.as_deref().is_some_and(|path| path.starts_with(&kr)));
+
+        // Without a Kingdom Reborn folder, a Kingdom Reborn client in the Enhanced folder is KR UOP.
+        app.settings.kr_path = None;
+        app.settings.ec_path = Some(kr.clone());
+        app.trigger_reload();
+        assert_eq!(app.shown_enhanced, Some(ClientSource::KrUop));
+        assert_eq!(app.enhanced_folders.ec, None);
+        assert!(loaded_enhanced_packages(&app, &kr) > 0);
+    }
+
     #[test]
     fn load_log_lines_name_the_source_and_count_entries() {
-        let (cc, ec) = (Path::new("/clients/classic"), Path::new("/clients/enhanced"));
-        let tag = |paths: &[&Path]| client_sources_tag(paths, Some(cc), Some(ec));
+        let (cc, kr, ec) = (Path::new("/clients/classic"), Path::new("/clients/kingdom_reborn"), Path::new("/clients/enhanced"));
+        let enhanced = EnhancedFolders { kr: Some(kr.to_path_buf()), ec: Some(ec.to_path_buf()), ..Default::default() };
+        let tag = |paths: &[&Path]| client_sources_tag(paths, Some(cc), &enhanced);
         assert_eq!(tag(&[cc.join("MultiCollection.uop").as_path()]), " (CC UOP)");
+        assert_eq!(tag(&[kr.join("MultiCollection.uop").as_path()]), " (KR UOP)");
         assert_eq!(tag(&[ec.join("MultiCollection.uop").as_path()]), " (EC UOP)");
+        assert_eq!(tag(&[Path::new("/clients/enhanced_copy/MultiCollection.uop")]), "", "a folder the settings do not name");
         assert_eq!(tag(&[cc.join("art.mul").as_path(), cc.join("artLegacyMUL.uop").as_path()]), " (MUL, CC UOP)");
         assert_eq!(tag(&[cc.join("Cliloc.enu").as_path()]), " (MUL)");
         assert_eq!(tag(&[cc.join("gumps_cc.uddp").as_path()]), "");
@@ -4428,6 +4576,8 @@ pub(crate) mod tests {
             last_texture_problem: None,
             gpu_errors: Default::default(),
             show_search_paths: false,
+            enhanced_folders: EnhancedFolders::default(),
+            shown_enhanced: None,
             dictionary: Dictionary::new(),
             uo_string_dictionary: None,
             string_dictionary_rows: None,

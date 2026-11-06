@@ -80,6 +80,11 @@ fn all_dirty_editors(app: &UocfEditorApp) -> Vec<&'static TabEditor> {
     TAB_EDITORS.iter().filter(|editor| (editor.is_dirty)(app)).collect()
 }
 
+/// What the first editor with unsaved changes edits, on any tab: a reload would lose them.
+pub(crate) fn first_dirty_editor(app: &UocfEditorApp) -> Option<&'static str> {
+    TAB_EDITORS.iter().find(|editor| (editor.is_dirty)(app)).map(|editor| editor.label)
+}
+
 /// The tab on screen; while a switch is being noticed, the one being left.
 pub(super) fn tab_on_screen(app: &UocfEditorApp) -> ViewMode {
     app.unsaved_changes.shown_tab.unwrap_or(app.view_mode)

@@ -1,9 +1,10 @@
 use eframe::egui;
 use crate::app::UocfEditorApp;
 use std::cmp::Ordering;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use uocf::client_config::login_servers::KINGDOM_REBORN_EXE;
 use uocf::enhanced::client_dialect::ClientDialect;
+use uocf::utils::path::find_file_ignoring_case;
 
 pub mod animation_definitions;
 pub mod animations;
@@ -59,6 +60,7 @@ pub(crate) mod test_support {
     use std::path::PathBuf;
 
     pub(crate) const EC_CLIENT_ROOTS_ENV: &str = "UO_EC_CLIENT_ROOTS";
+    pub(crate) const KR_CLIENT_DIR_ENV: &str = "UO_KR_CLIENT_DIR";
     pub(crate) const CLASSIC_CLIENT_ROOTS_ENV: &str = "UO_CLASSIC_CLIENT_ROOTS";
 
     /// The client folders the variable lists.
@@ -94,6 +96,20 @@ pub(crate) const UOP_PATCHER_NOTE: &str = "The official patcher re-downloads edi
 /// A "(?)" next to something, whose tooltip explains it.
 pub(crate) fn help_mark(ui: &mut egui::Ui, text: &str) -> egui::Response {
     ui.weak(HELP_MARK).on_hover_cursor(egui::CursorIcon::Help).on_hover_text(text)
+}
+
+/// The Search Paths row under a folder's: what the folder is read as, a warning in the warning colour.
+fn folder_status_row(ui: &mut egui::Ui, status: Option<(String, bool)>) {
+    let Some((text, warning)) = status else {
+        return;
+    };
+    ui.label("");
+    if warning {
+        ui.colored_label(ui.visuals().warn_fg_color, text);
+    } else {
+        ui.weak(text);
+    }
+    ui.end_row();
 }
 
 /// Whether the window `id` can be drawn in this frame. eframe draws a minimized window outside the event loop, where it
@@ -341,8 +357,12 @@ pub(crate) enum SourceAvailability {
 
 /// The client folder the settings name for the Classic files.
 pub(crate) const CLASSIC_FOLDER: &str = "Classic client";
-/// The client folder the settings name for the Enhanced Client or Kingdom Reborn files.
-pub(crate) const ENHANCED_FOLDER: &str = "Enhanced Client or Kingdom Reborn";
+/// The client folder the settings name for the Enhanced Client files.
+pub(crate) const ENHANCED_FOLDER: &str = "Enhanced Client";
+/// The client folder the settings name for the Kingdom Reborn files.
+pub(crate) const KINGDOM_REBORN_FOLDER: &str = "Kingdom Reborn client";
+/// The two sources read from an Enhanced-format folder, in selector order.
+pub(crate) const ENHANCED_SOURCES: [ClientSource; 2] = [ClientSource::KrUop, ClientSource::EcUop];
 
 /// `files` of a client folder: found when `loaded`, else missing from `folder`, or no folder set.
 pub(crate) fn folder_files_availability(folder: Option<&Path>, folder_kind: &str, files: &str, loaded: bool) -> SourceAvailability {
@@ -353,36 +373,142 @@ pub(crate) fn folder_files_availability(folder: Option<&Path>, folder_kind: &str
     }
 }
 
-/// The source of the Enhanced folder's own packages: KR UOP when it holds a Kingdom Reborn client (`UOKR.exe`), else
-/// EC UOP. Cached per folder in the egui memory, since the check lists the folder.
-pub(crate) fn enhanced_folder_source(ctx: &egui::Context, folder: &Path) -> ClientSource {
-    let id = egui::Id::new(("uocf_enhanced_folder_source", folder));
-    if let Some(source) = ctx.data(|data| data.get_temp::<ClientSource>(id)) {
-        return source;
-    }
-    let source = if ClientDialect::of_client_dir(folder).is_kingdom_reborn() { ClientSource::KrUop } else { ClientSource::EcUop };
-    ctx.data_mut(|data| data.insert_temp(id, source));
-    source
+/// The folders the two Enhanced-format sources read, from the settings: KR UOP the Kingdom Reborn client folder, EC
+/// UOP the Enhanced Client folder. An Enhanced Client folder that holds a Kingdom Reborn client (`UOKR.exe`) is read
+/// as KR UOP while no Kingdom Reborn folder is set, as before that setting existed, and not at all once one is.
+#[derive(Clone, Default, PartialEq, Eq, Debug)]
+pub(crate) struct EnhancedFolders {
+    /// The folder of KR UOP.
+    pub kr: Option<PathBuf>,
+    /// The folder of EC UOP.
+    pub ec: Option<PathBuf>,
+    /// The Enhanced Client folder of the settings, when it holds a Kingdom Reborn client.
+    pub enhanced_kr_client: Option<PathBuf>,
+    /// The Kingdom Reborn folder of the settings holds no `UOKR.exe`.
+    pub kr_without_exe: bool,
 }
 
-/// `files` of the Enhanced folder shown as `source` (KR UOP or EC UOP), by the client the folder holds: missing when it
-/// holds the other one.
-pub(crate) fn enhanced_files_availability(
-    ctx: &egui::Context,
-    folder: Option<&Path>,
-    source: ClientSource,
-    files: &str,
-    loaded: bool,
-) -> SourceAvailability {
-    if let Some(folder) = folder {
-        if enhanced_folder_source(ctx, folder) != source {
-            return SourceAvailability::Missing(match source {
-                ClientSource::KrUop => format!("No Kingdom Reborn client: {} holds no {KINGDOM_REBORN_EXE}.", folder.display()),
-                _ => format!("No Enhanced Client: {} is a Kingdom Reborn client ({KINGDOM_REBORN_EXE}).", folder.display()),
-            });
+impl EnhancedFolders {
+    /// The folders of the settings' Kingdom Reborn folder `kr` and Enhanced Client folder `ec`. Lists them, to tell
+    /// their clients apart.
+    pub(crate) fn from_settings(kr: Option<&Path>, ec: Option<&Path>) -> Self {
+        let holds_kr = |folder: &Path| ClientDialect::of_client_dir(folder).is_kingdom_reborn();
+        let enhanced_kr_client = ec.filter(|folder| holds_kr(folder)).map(Path::to_path_buf);
+        Self {
+            kr: kr.map(Path::to_path_buf).or_else(|| enhanced_kr_client.clone()),
+            ec: ec.filter(|_| enhanced_kr_client.is_none()).map(Path::to_path_buf),
+            kr_without_exe: kr.is_some_and(|folder| !holds_kr(folder)),
+            enhanced_kr_client,
         }
     }
-    folder_files_availability(folder, ENHANCED_FOLDER, files, loaded)
+
+    /// The folder of `source`, KR UOP or EC UOP; `None` for the Classic sources.
+    pub(crate) fn folder(&self, source: ClientSource) -> Option<&Path> {
+        match source {
+            ClientSource::KrUop => self.kr.as_deref(),
+            ClientSource::EcUop => self.ec.as_deref(),
+            ClientSource::Mul | ClientSource::CcUop => None,
+        }
+    }
+
+    /// The Enhanced-format source a reload loads: `preferred` when its folder is set, else EC UOP, else KR UOP.
+    pub(crate) fn shown_source(&self, preferred: Option<ClientSource>) -> Option<ClientSource> {
+        preferred.into_iter().chain([ClientSource::EcUop, ClientSource::KrUop]).find(|&source| self.folder(source).is_some())
+    }
+
+    /// KR UOP reads the Enhanced Client folder, which holds a Kingdom Reborn client.
+    fn kr_is_enhanced_folder(&self) -> bool {
+        self.kr.is_some() && self.kr == self.enhanced_kr_client
+    }
+
+    /// The folder of `source` for a tooltip: its path and which setting it is.
+    pub(crate) fn folder_text(&self, source: ClientSource, folder: &Path) -> String {
+        match source {
+            ClientSource::KrUop if self.kr_is_enhanced_folder() => format!(
+                "{} (the {ENHANCED_FOLDER} folder, which holds a Kingdom Reborn client: {KINGDOM_REBORN_EXE})",
+                folder.display(),
+            ),
+            ClientSource::KrUop => format!("{} (the {KINGDOM_REBORN_FOLDER} folder)", folder.display()),
+            _ => format!("{} (the {ENHANCED_FOLDER} folder)", folder.display()),
+        }
+    }
+
+    /// Why `source` has no folder.
+    pub(crate) fn no_folder_text(&self, source: ClientSource, files: &str) -> String {
+        match (source, &self.enhanced_kr_client) {
+            (ClientSource::EcUop, Some(folder)) => {
+                format!("No Enhanced Client: {} holds a Kingdom Reborn client ({KINGDOM_REBORN_EXE}).", folder.display())
+            }
+            (ClientSource::KrUop, _) => format!("{files}: no {KINGDOM_REBORN_FOLDER} folder is set."),
+            _ => format!("{files}: no {ENHANCED_FOLDER} folder is set."),
+        }
+    }
+
+    /// The status line of the settings' Kingdom Reborn folder, and whether it is a warning.
+    pub(crate) fn kr_status(&self) -> Option<(String, bool)> {
+        match &self.kr {
+            Some(_) if self.kr_is_enhanced_folder() => None,
+            Some(_) if self.kr_without_exe => Some((
+                format!("Read as KR UOP, but it holds no {KINGDOM_REBORN_EXE}: is it a Kingdom Reborn client?"),
+                true,
+            )),
+            Some(_) => Some(("Read as KR UOP.".to_string(), false)),
+            None => None,
+        }
+    }
+
+    /// The status line of the settings' Enhanced Client folder, and whether it is a warning.
+    pub(crate) fn ec_status(&self) -> Option<(String, bool)> {
+        match (&self.ec, &self.enhanced_kr_client) {
+            (Some(_), _) => Some(("Read as EC UOP.".to_string(), false)),
+            (None, Some(_)) if self.kr_is_enhanced_folder() => {
+                Some((format!("It holds a Kingdom Reborn client ({KINGDOM_REBORN_EXE}): read as KR UOP."), false))
+            }
+            (None, Some(_)) => Some((
+                format!(
+                    "It holds a Kingdom Reborn client ({KINGDOM_REBORN_EXE}), and the {KINGDOM_REBORN_FOLDER} folder is \
+                     set: not read."
+                ),
+                true,
+            )),
+            (None, None) => None,
+        }
+    }
+}
+
+/// `files` of an Enhanced-format folder, shown as `source` (KR UOP or EC UOP). The tabs show one such client at a time
+/// ([`UocfEditorApp::show_enhanced_client`]): its files are found when `loaded`. The other client's are found when its
+/// folder holds one of `file_names`; choosing them reloads every tab from that folder, so unsaved changes hold them
+/// back.
+pub(crate) fn enhanced_files_availability(
+    app: &UocfEditorApp,
+    source: ClientSource,
+    files: &str,
+    file_names: &[&str],
+    loaded: bool,
+) -> SourceAvailability {
+    let folders = &app.enhanced_folders;
+    let Some(folder) = folders.folder(source) else {
+        return SourceAvailability::Missing(folders.no_folder_text(source, files));
+    };
+    let from = folders.folder_text(source, folder);
+    if app.shown_enhanced == Some(source) {
+        return if loaded {
+            SourceAvailability::Found(format!("{files} from {from}"))
+        } else {
+            SourceAvailability::Missing(format!("No {files} loaded from {from} (see the log)."))
+        };
+    }
+    if !file_names.iter().any(|name| find_file_ignoring_case(folder, name).is_some()) {
+        return SourceAvailability::Missing(format!("No {files} in {from}."));
+    }
+    match unsaved_changes::first_dirty_editor(app) {
+        Some(label) => SourceAvailability::Missing(format!(
+            "Save or discard the unsaved changes to {label} first: showing {} reloads every tab.",
+            source.label(),
+        )),
+        None => SourceAvailability::Found(format!("{files} from {from}. Choosing it reloads every tab from that folder.")),
+    }
 }
 
 /// One row of toggle buttons, one per source in [`ClientSource::ALL`] order, `selected` (if any) pressed. A missing
@@ -532,6 +658,107 @@ mod tests {
             chosen = source_choice(ui, selected, |source| availability[index(source)].clone());
         });
         assert_eq!(chosen, Some(ClientSource::EcUop), "the public selector returns the click");
+    }
+
+    /// A folder under `TMPDIR` holding the empty `files`, removed when dropped.
+    struct TempFolder(PathBuf);
+
+    impl TempFolder {
+        fn new(name: &str, files: &[&str]) -> Self {
+            let path = test_support::output_path(name);
+            std::fs::create_dir_all(&path).unwrap();
+            for file in files {
+                std::fs::write(path.join(file), []).unwrap();
+            }
+            Self(path)
+        }
+
+        fn path(&self) -> Option<&Path> {
+            Some(&self.0)
+        }
+    }
+
+    impl Drop for TempFolder {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(&self.0);
+        }
+    }
+
+    #[test]
+    fn each_enhanced_source_has_its_own_folder() {
+        let kr = TempFolder::new("kr", &[KINGDOM_REBORN_EXE]);
+        let ec = TempFolder::new("ec", &[]);
+        let ec_holding_kr = TempFolder::new("ec-holding-kr", &["uokr.EXE"]);
+        let kr_without_exe = TempFolder::new("kr-without-exe", &[]);
+        let (kr_uop, ec_uop) = (ClientSource::KrUop, ClientSource::EcUop);
+
+        let both = EnhancedFolders::from_settings(kr.path(), ec.path());
+        assert_eq!((both.folder(kr_uop), both.folder(ec_uop)), (kr.path(), ec.path()));
+        assert_eq!(both.folder(ClientSource::Mul), None);
+        assert_eq!(both.shown_source(None), Some(ec_uop), "the Enhanced Client first");
+        assert_eq!(both.shown_source(Some(kr_uop)), Some(kr_uop));
+        assert_eq!(both.kr_status(), Some(("Read as KR UOP.".to_string(), false)));
+        assert_eq!(both.ec_status(), Some(("Read as EC UOP.".to_string(), false)));
+
+        let enhanced_only = EnhancedFolders::from_settings(None, ec.path());
+        assert_eq!(enhanced_only.shown_source(Some(kr_uop)), Some(ec_uop), "no Kingdom Reborn folder to show");
+        assert_eq!(enhanced_only.kr_status(), None);
+        assert!(enhanced_only.no_folder_text(kr_uop, "hues.uop").contains("no Kingdom Reborn client folder is set"));
+
+        // A Kingdom Reborn client in the Enhanced folder is still KR UOP, and the tooltips say so.
+        let enhanced_kr = EnhancedFolders::from_settings(None, ec_holding_kr.path());
+        assert_eq!((enhanced_kr.folder(kr_uop), enhanced_kr.folder(ec_uop)), (ec_holding_kr.path(), None));
+        assert_eq!(enhanced_kr.shown_source(None), Some(kr_uop));
+        assert_eq!(enhanced_kr.kr_status(), None);
+        let (status, warning) = enhanced_kr.ec_status().unwrap();
+        assert!(status.contains("read as KR UOP") && !warning, "{status}");
+        assert!(enhanced_kr.folder_text(kr_uop, &ec_holding_kr.0).contains("Enhanced Client folder, which holds a Kingdom Reborn client"));
+        assert!(enhanced_kr.no_folder_text(ec_uop, "hues.uop").starts_with("No Enhanced Client:"));
+
+        // With a Kingdom Reborn folder set too, the Enhanced folder's Kingdom Reborn client is not read.
+        let both_kr = EnhancedFolders::from_settings(kr.path(), ec_holding_kr.path());
+        assert_eq!((both_kr.folder(kr_uop), both_kr.folder(ec_uop)), (kr.path(), None));
+        let (status, warning) = both_kr.ec_status().unwrap();
+        assert!(status.contains("not read") && warning, "{status}");
+
+        let (status, warning) = EnhancedFolders::from_settings(kr_without_exe.path(), None).kr_status().unwrap();
+        assert!(status.contains("holds no UOKR.exe") && warning, "{status}");
+        assert_eq!(EnhancedFolders::from_settings(None, None).shown_source(Some(ec_uop)), None);
+    }
+
+    #[test]
+    fn enhanced_sources_name_their_folder_and_wait_for_unsaved_changes() {
+        const FILES: &str = "hues.uop";
+        let kr = TempFolder::new("kr-hues", &[KINGDOM_REBORN_EXE, "Hues.uop"]);
+        let ec = TempFolder::new("ec-hues", &[]);
+        let mut app = crate::app::tests::test_app();
+        app.enhanced_folders = EnhancedFolders::from_settings(kr.path(), ec.path());
+        app.shown_enhanced = Some(ClientSource::EcUop);
+        let availability = |app: &UocfEditorApp, source, loaded| enhanced_files_availability(app, source, FILES, &[FILES], loaded);
+        let text = |availability: SourceAvailability| match availability {
+            SourceAvailability::Found(text) => (true, text),
+            SourceAvailability::Missing(text) => (false, text),
+            SourceAvailability::NotApplicable => panic!("an Enhanced source applies"),
+        };
+
+        let (found, shown) = text(availability(&app, ClientSource::EcUop, true));
+        assert!(found && shown.contains(&ec.0.display().to_string()) && shown.contains("Enhanced Client folder"), "{shown}");
+        let (found, failed) = text(availability(&app, ClientSource::EcUop, false));
+        assert!(!found && failed.starts_with("No hues.uop loaded from"), "{failed}");
+
+        let (found, other) = text(availability(&app, ClientSource::KrUop, false));
+        assert!(found && other.contains("Kingdom Reborn client folder") && other.contains("reloads every tab"), "{other}");
+        app.shown_enhanced = Some(ClientSource::KrUop);
+        let (found, absent) = text(availability(&app, ClientSource::EcUop, true));
+        assert!(!found && absent.starts_with("No hues.uop in"), "{absent}");
+        app.shown_enhanced = Some(ClientSource::EcUop);
+
+        let edit = app.entry_text_edits.open(Path::new("/packages/GameData.uop"), 1, b"text\n").unwrap();
+        edit.buffer.push('!');
+        let (found, held) = text(availability(&app, ClientSource::KrUop, false));
+        assert!(!found && held.starts_with("Save or discard the unsaved changes"), "{held}");
+        let (found, _) = text(availability(&app, ClientSource::EcUop, true));
+        assert!(found, "the client shown is not reloaded");
     }
 
     #[test]
@@ -688,6 +915,23 @@ pub fn draw_ui(app: &mut UocfEditorApp, ctx: &egui::Context, ui: &mut egui::Ui) 
                     });
                     ui.end_row();
 
+                    ui.label("KR Path:");
+                    ui.horizontal(|ui| {
+                        if let Some(path) = &app.settings.kr_path {
+                            ui.label(path.display().to_string());
+                        } else {
+                            ui.label("None");
+                        }
+                        if ui.button("Select...").clicked() {
+                            if let Some(path) = crate::dialog::pick_folder() {
+                                app.settings.kr_path = Some(path);
+                                app.trigger_reload();
+                            }
+                        }
+                    });
+                    ui.end_row();
+                    folder_status_row(ui, app.enhanced_folders.kr_status());
+
                     ui.label("EC Path:");
                     ui.horizontal(|ui| {
                         if let Some(path) = &app.settings.ec_path {
@@ -703,6 +947,7 @@ pub fn draw_ui(app: &mut UocfEditorApp, ctx: &egui::Context, ui: &mut egui::Ui) 
                         }
                     });
                     ui.end_row();
+                    folder_status_row(ui, app.enhanced_folders.ec_status());
 
                     ui.label("Dictionary (.dic):");
                     ui.horizontal(|ui| {

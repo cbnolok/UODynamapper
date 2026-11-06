@@ -2,7 +2,7 @@ use crate::app::{
     ArtSource, HousingIndex, MultiCollectionSource, MultiPartFilters, MultisSource, UocfEditorApp, ViewMode,
 };
 use crate::ui::{
-    arrow_delta, enhanced_files_availability, enhanced_folder_source, folder_files_availability, list_sort_controls,
+    arrow_delta, enhanced_files_availability, folder_files_availability, list_sort_controls,
     move_selection, multi_editor, sorted_indices_by, source_choice, ClientSource, SourceAvailability, CLASSIC_FOLDER,
 };
 
@@ -201,7 +201,8 @@ pub fn ui_multis(app: &mut UocfEditorApp, ctx: &egui::Context, ui: &mut egui::Ui
             multis_source_selector(app, ui, has_classic);
             ui.separator();
             ui.label("Art:");
-            if let Some(source) = super::art_viewer::art_source_choice(app, ui, app.selected_legacy_source) {
+            let current = app.selected_legacy_source;
+            if let Some(source) = super::art_viewer::art_source_choice(app, ui, current) {
                 app.selected_legacy_source = source;
             }
         });
@@ -220,16 +221,15 @@ fn source_available(source: MultisSource, has_classic: bool, has_uop: bool) -> b
     }
 }
 
-/// multi.mul is MUL; MultiCollection.uop is CC UOP, KR UOP or EC UOP by the folder it was loaded from. Each folder's
-/// collection loads; the tabs show and edit one at a time, the Enhanced folder's first.
+/// multi.mul is MUL; MultiCollection.uop is CC UOP, KR UOP or EC UOP by the folder it was loaded from. The Classic
+/// folder's collection and the shown Enhanced-format client's load; the tabs show and edit one at a time, the
+/// Enhanced-format client's first.
 fn multis_source_selector(app: &mut UocfEditorApp, ui: &mut egui::Ui, has_classic: bool) {
-    let ctx = ui.ctx().clone();
     let cc_path = app.settings.cc_path.as_deref();
-    let ec_path = app.settings.ec_path.as_deref();
     let shown = app.multi_collection.as_ref().and(app.multi_collection_source);
     let collection_source = match shown {
         Some(MultiCollectionSource::ClassicClient) => Some(ClientSource::CcUop),
-        Some(MultiCollectionSource::EnhancedClient) => ec_path.map(|folder| enhanced_folder_source(&ctx, folder)),
+        Some(MultiCollectionSource::EnhancedClient) => app.shown_enhanced,
         None => None,
     };
     let selected = match app.multis_source {
@@ -260,10 +260,10 @@ fn multis_source_selector(app: &mut UocfEditorApp, ui: &mut egui::Ui, has_classi
         ClientSource::KrUop | ClientSource::EcUop => collection_availability(
             MultiCollectionSource::EnhancedClient,
             enhanced_files_availability(
-                &ctx,
-                ec_path,
+                app,
                 source,
                 MULTI_COLLECTION_FILE,
+                &[MULTI_COLLECTION_FILE],
                 app.has_multi_collection(MultiCollectionSource::EnhancedClient),
             ),
         ),
@@ -274,8 +274,9 @@ fn multis_source_selector(app: &mut UocfEditorApp, ui: &mut egui::Ui, has_classi
             app.multis_source = MultisSource::Uop;
             app.show_multi_collection(MultiCollectionSource::ClassicClient);
         }
-        Some(ClientSource::KrUop | ClientSource::EcUop) => {
+        Some(source @ (ClientSource::KrUop | ClientSource::EcUop)) => {
             app.multis_source = MultisSource::Uop;
+            app.show_enhanced_client(source);
             app.show_multi_collection(MultiCollectionSource::EnhancedClient);
         }
         None => {}
@@ -296,6 +297,7 @@ fn multi_collection_switch_blocker(app: &UocfEditorApp) -> Option<String> {
 fn multi_collection_source_label(app: &UocfEditorApp) -> &'static str {
     match app.multi_collection_source {
         Some(MultiCollectionSource::ClassicClient) => "CC",
+        Some(MultiCollectionSource::EnhancedClient) if app.shown_enhanced == Some(ClientSource::KrUop) => "KR",
         Some(MultiCollectionSource::EnhancedClient) => "EC",
         None => "Loaded",
     }

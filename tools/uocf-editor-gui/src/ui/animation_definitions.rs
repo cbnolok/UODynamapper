@@ -178,9 +178,9 @@ pub fn ui_animation_definitions(app: &mut UocfEditorApp, ctx: &egui::Context, ui
     pending_open_window(app, ctx);
 }
 
-/// `AnimationDefinition.uop` of the Enhanced Client folder of the search paths.
+/// `AnimationDefinition.uop` of the Enhanced-format client shown.
 pub(super) fn client_package(app: &UocfEditorApp) -> Option<PathBuf> {
-    find_file_ignoring_case(app.settings.ec_path.as_deref()?, ANIMATION_DEFINITION_UOP_NAME)
+    find_file_ignoring_case(app.shown_enhanced_folder()?, ANIMATION_DEFINITION_UOP_NAME)
 }
 
 /// The package open in the editor, and whether it is in the Kingdom Reborn dialect.

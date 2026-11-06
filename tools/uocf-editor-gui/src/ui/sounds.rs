@@ -12,7 +12,7 @@ use uocf::enhanced::audio_edit::{AudioImportOptions, AudioPackageEditor, AudioPu
 
 use crate::app::{SoundPlayer, SoundSource, UocfEditorApp};
 use crate::ui::{
-    classic_music, enhanced_files_availability, enhanced_folder_source, folder_files_availability, go_to_field,
+    classic_music, enhanced_files_availability, folder_files_availability, go_to_field,
     list_sort_controls, sorted_indices_by, source_choice, ClientSource, SourceAvailability, CLASSIC_FOLDER,
 };
 
@@ -71,14 +71,11 @@ fn classic_sounds_source(app: &UocfEditorApp) -> Option<ClientSource> {
 
 /// The audio sources, then the Classic music view: it is another view of the Classic folder, not a source of sounds.
 pub(super) fn source_selector(app: &mut UocfEditorApp, ui: &mut egui::Ui) {
-    let ctx = ui.ctx().clone();
     let classic = classic_sounds_source(app);
     let cc_path = app.settings.cc_path.clone();
-    let ec_path = app.settings.ec_path.clone();
-    let enhanced = ec_path.as_deref().map(|folder| enhanced_folder_source(&ctx, folder));
     let selected = match app.sound_source {
         SoundSource::Classic => classic,
-        SoundSource::Enhanced => enhanced,
+        SoundSource::Enhanced => app.shown_enhanced,
         SoundSource::ClassicMusic => None,
     };
     let has_audio = app.ec_audio.is_some();
@@ -94,12 +91,15 @@ pub(super) fn source_selector(app: &mut UocfEditorApp, ui: &mut egui::Ui) {
             ClientSource::Mul => classic_file(source, SOUND_MUL_FILE_NAME),
             ClientSource::CcUop => classic_file(source, SOUND_UOP_FILE_NAME),
             ClientSource::KrUop | ClientSource::EcUop => {
-                enhanced_files_availability(&ctx, ec_path.as_deref(), source, AUDIO_UOP_FILE_NAME, has_audio)
+                enhanced_files_availability(app, source, AUDIO_UOP_FILE_NAME, &[AUDIO_UOP_FILE_NAME], has_audio)
             }
         });
         match clicked {
             Some(ClientSource::Mul | ClientSource::CcUop) => app.sound_source = SoundSource::Classic,
-            Some(ClientSource::KrUop | ClientSource::EcUop) => app.sound_source = SoundSource::Enhanced,
+            Some(source @ (ClientSource::KrUop | ClientSource::EcUop)) => {
+                app.sound_source = SoundSource::Enhanced;
+                app.show_enhanced_client(source);
+            }
             None => {}
         }
         ui.separator();

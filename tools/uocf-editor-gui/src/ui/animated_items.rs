@@ -6,8 +6,8 @@ use eframe::egui;
 
 use crate::app::{ArtSource, EcHueingMode, UocfEditorApp, ViewMode};
 use crate::ui::{
-    animation_definitions, animdata, art_viewer, enhanced_files_availability, enhanced_folder_source,
-    folder_files_availability, gumps, source_choice, ClientSource, SourceAvailability, CLASSIC_FOLDER,
+    animation_definitions, animdata, art_viewer, enhanced_files_availability, folder_files_availability, gumps,
+    source_choice, ClientSource, SourceAvailability, CLASSIC_FOLDER,
 };
 
 const ANIMDATA_FILE: &str = "animdata.mul";
@@ -16,18 +16,15 @@ const ANIMATION_DEFINITION_FILE: &str = "AnimationDefinition.uop";
 /// The switch between the two files, on top of both views: animdata.mul is MUL, AnimationDefinition.uop KR UOP or EC
 /// UOP by its client. The Classic client keeps no animated items in a UOP package: no CC UOP.
 pub(super) fn source_switch(app: &mut UocfEditorApp, ui: &mut egui::Ui) {
-    let ctx = ui.ctx().clone();
     let cc_path = app.settings.cc_path.clone();
-    let ec_path = app.settings.ec_path.clone();
     let has_animdata = app.client_data.as_ref().is_some_and(|client| client.animdata.is_some());
     let client_package = animation_definitions::client_package(app);
     // A package opened from elsewhere counts as its client's.
     let opened = animation_definitions::opened_package(app);
     let opened_source = opened.as_ref().map(|(_, kingdom_reborn)| kr_or_ec(*kingdom_reborn));
-    let folder_source = ec_path.as_deref().map(|folder| enhanced_folder_source(&ctx, folder));
     let selected = match app.view_mode {
         ViewMode::AnimData => Some(ClientSource::Mul),
-        _ => opened_source.or(folder_source).or(Some(ClientSource::EcUop)),
+        _ => opened_source.or(app.shown_enhanced).or(Some(ClientSource::EcUop)),
     };
     egui::Panel::top("animated_items_source").show(ui, |ui| {
         ui.horizontal(|ui| {
@@ -40,12 +37,21 @@ pub(super) fn source_switch(app: &mut UocfEditorApp, ui: &mut egui::Ui) {
                     Some((path, _)) if opened_source == Some(source) && client_package.as_ref() != Some(path) => {
                         SourceAvailability::Found(format!("{ANIMATION_DEFINITION_FILE} opened from {}", path.display()))
                     }
-                    _ => enhanced_files_availability(&ctx, ec_path.as_deref(), source, ANIMATION_DEFINITION_FILE, client_package.is_some()),
+                    _ => enhanced_files_availability(
+                        app,
+                        source,
+                        ANIMATION_DEFINITION_FILE,
+                        &[ANIMATION_DEFINITION_FILE],
+                        client_package.is_some(),
+                    ),
                 },
             });
             match clicked {
                 Some(ClientSource::Mul) => app.view_mode = ViewMode::AnimData,
-                Some(_) => app.view_mode = ViewMode::AnimationDefinitions,
+                Some(source) => {
+                    app.view_mode = ViewMode::AnimationDefinitions;
+                    app.show_enhanced_client(source);
+                }
                 None => {}
             }
         });
@@ -60,7 +66,8 @@ fn kr_or_ec(kingdom_reborn: bool) -> ClientSource {
 pub(super) fn art_source_controls(app: &mut UocfEditorApp, ui: &mut egui::Ui) {
     ui.horizontal_wrapped(|ui| {
         ui.label("Art source:");
-        if let Some(source) = art_viewer::art_source_choice(app, ui, app.selected_animdata_art_source) {
+        let current = app.selected_animdata_art_source;
+        if let Some(source) = art_viewer::art_source_choice(app, ui, current) {
             app.selected_animdata_art_source = source;
         }
     });

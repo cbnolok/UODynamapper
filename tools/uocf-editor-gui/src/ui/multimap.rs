@@ -2,8 +2,8 @@
 //!
 //! The radar image comes from the client files: the Classic map and statics coloured by `radarcol.mul`
 //! ([`uocf::classic::radar`], as the Maps tab draws them) from `mapN.mul` (MUL) or `mapNLegacyMUL.uop` (CC UOP), or
-//! the Enhanced Client's own radar image `facetNN.dds` (EC UOP; the folder's `facetN.uop` maps carry no land
-//! colours). There is no KR UOP source: the Enhanced files hold one radar image per facet.
+//! an Enhanced-format client's own radar image `facetNN.dds`: the Kingdom Reborn folder's (KR UOP) or the Enhanced
+//! Client folder's (EC UOP). The folders' `facetN.uop` maps carry no land colours.
 
 use crate::app::{
     GeneratedMultimapPreview, MultimapConversionOutput, MultimapConverterState,
@@ -27,7 +27,7 @@ use uocf::map_edition::MapEdition;
 use uocf::utils::path::find_file_ignoring_case;
 
 use super::classic_maps::{classic_map_found, map_found_text, map_not_found_text};
-use super::{tab_source_choice, ClientSource, SourceAvailability};
+use super::{tab_source_choice, ClientSource, EnhancedFolders, SourceAvailability};
 
 const GENERATED_PLAIN_KEY: u64 = 0x6F00000000000001;
 const GENERATED_ARTISTIC_KEY: u64 = 0x6F00000000000002;
@@ -41,13 +41,13 @@ const FULL_SIZE_LEVEL: u32 = 0;
 const RGB_CHANNELS: usize = 3;
 const OPAQUE: u8 = u8::MAX;
 /// The radar sources with the sources their buttons stand for, in the order every tab shows them.
-const RADAR_SOURCES: [(MultimapRadarSource, ClientSource); 3] = [
+const RADAR_SOURCES: [(MultimapRadarSource, ClientSource); 4] = [
     (MultimapRadarSource::Mul, ClientSource::Mul),
     (MultimapRadarSource::CcUop, ClientSource::CcUop),
+    (MultimapRadarSource::KrUop, ClientSource::KrUop),
     (MultimapRadarSource::EcUop, ClientSource::EcUop),
 ];
 const NO_CC_FOLDER: &str = "No Classic Client folder is set (File > Search Paths).";
-const NO_EC_FOLDER: &str = "No Enhanced Client folder is set (File > Search Paths).";
 const PATCHES_CLASSIC_ONLY: &str = "The patches apply to the Classic map files; the Enhanced Client's radar image is read as shipped.";
 
 struct GenerateRequest {
@@ -79,64 +79,78 @@ enum GenerateInput {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct FoundRadarSources {
     cc_path: Option<PathBuf>,
-    ec_path: Option<PathBuf>,
+    enhanced: EnhancedFolders,
     map_id: u32,
     present: [bool; RADAR_SOURCES.len()],
 }
 
-/// The Classic map container of a source; `None` for the Enhanced radar image.
+/// The Classic map container of a source; `None` for an Enhanced-format radar image.
 fn classic_format(source: MultimapRadarSource) -> Option<ClassicMapFormat> {
     match source {
         MultimapRadarSource::Mul => Some(ClassicMapFormat::Mul),
         MultimapRadarSource::CcUop => Some(ClassicMapFormat::Uop),
-        MultimapRadarSource::EcUop => None,
+        MultimapRadarSource::KrUop | MultimapRadarSource::EcUop => None,
     }
 }
 
-/// `facetNN.dds` of map `map_id` in the Enhanced Client folder `ec_path`, if it is there.
-fn enhanced_radar_path(ec_path: &Path, map_id: u32) -> Option<PathBuf> {
-    let facet = u8::try_from(map_id).ok()?;
-    find_file_ignoring_case(ec_path, &radar_dds_file_name(facet))
+/// The source button `source` stands for.
+fn client_source(source: MultimapRadarSource) -> ClientSource {
+    RADAR_SOURCES.iter().find(|&&(candidate, _)| candidate == source).map_or(ClientSource::EcUop, |&(_, client)| client)
 }
 
-fn source_present(source: MultimapRadarSource, cc_path: Option<&Path>, ec_path: Option<&Path>, map_id: u32) -> bool {
+/// `facetNN.dds` of map `map_id` in the Enhanced-format client folder `folder`, if it is there.
+fn enhanced_radar_path(folder: &Path, map_id: u32) -> Option<PathBuf> {
+    let facet = u8::try_from(map_id).ok()?;
+    find_file_ignoring_case(folder, &radar_dds_file_name(facet))
+}
+
+/// The radar image of map `map_id` an Enhanced-format source names, for a tooltip.
+fn enhanced_radar_name(map_id: u32) -> String {
+    match u8::try_from(map_id) {
+        Ok(facet) => radar_dds_file_name(facet),
+        Err(_) => format!("The radar image of map {map_id}"),
+    }
+}
+
+fn source_present(source: MultimapRadarSource, cc_path: Option<&Path>, enhanced: &EnhancedFolders, map_id: u32) -> bool {
     match classic_format(source) {
         Some(format) => cc_path.is_some_and(|cc_path| classic_map_found(cc_path, map_id, format)),
-        None => ec_path.is_some_and(|ec_path| enhanced_radar_path(ec_path, map_id).is_some()),
+        None => enhanced.folder(client_source(source)).is_some_and(|folder| enhanced_radar_path(folder, map_id).is_some()),
     }
 }
 
 /// The tooltip of a source the folders hold.
-fn source_found_text(source: MultimapRadarSource, map_id: u32) -> String {
-    match (classic_format(source), u8::try_from(map_id)) {
+fn source_found_text(source: MultimapRadarSource, enhanced: &EnhancedFolders, map_id: u32) -> String {
+    let client = client_source(source);
+    match (classic_format(source), enhanced.folder(client)) {
         (Some(format), _) => map_found_text(map_id, format),
-        (None, Ok(facet)) => format!("{} in the Enhanced Client folder.", radar_dds_file_name(facet)),
-        (None, Err(_)) => format!("The Enhanced Client radar image of map {map_id}."),
+        (None, Some(folder)) => format!("{} from {}.", enhanced_radar_name(map_id), enhanced.folder_text(client, folder)),
+        (None, None) => enhanced.no_folder_text(client, &enhanced_radar_name(map_id)),
     }
 }
 
 /// The tooltip of a source the folders do not hold.
-fn source_missing_text(source: MultimapRadarSource, cc_path: Option<&Path>, ec_path: Option<&Path>, map_id: u32) -> String {
-    match (classic_format(source), cc_path, ec_path) {
+fn source_missing_text(source: MultimapRadarSource, cc_path: Option<&Path>, enhanced: &EnhancedFolders, map_id: u32) -> String {
+    let client = client_source(source);
+    match (classic_format(source), cc_path, enhanced.folder(client)) {
         (Some(_), None, _) => NO_CC_FOLDER.to_string(),
         (Some(format), Some(_), _) => map_not_found_text(map_id, format),
-        (None, _, None) => NO_EC_FOLDER.to_string(),
-        (None, _, Some(_)) => match u8::try_from(map_id) {
-            Ok(facet) => format!("{} was not found in the Enhanced Client folder.", radar_dds_file_name(facet)),
-            Err(_) => format!("The Enhanced Client has no radar image for map {map_id}."),
-        },
+        (None, _, None) => enhanced.no_folder_text(client, &enhanced_radar_name(map_id)),
+        (None, _, Some(folder)) => {
+            format!("{} was not found in {}.", enhanced_radar_name(map_id), enhanced.folder_text(client, folder))
+        }
     }
 }
 
 /// Which sources the folders hold for the map, looked for again only when the folders or the map changed. When
 /// they changed and the chosen source is not there, the first source found is chosen.
-fn refresh_found_sources(state: &mut MultimapConverterState, cc_path: Option<&Path>, ec_path: Option<&Path>) -> [bool; RADAR_SOURCES.len()] {
+fn refresh_found_sources(state: &mut MultimapConverterState, cc_path: Option<&Path>, enhanced: &EnhancedFolders) -> [bool; RADAR_SOURCES.len()] {
     if let Some(found) = &state.found {
-        if found.cc_path.as_deref() == cc_path && found.ec_path.as_deref() == ec_path && found.map_id == state.map_id {
+        if found.cc_path.as_deref() == cc_path && found.enhanced == *enhanced && found.map_id == state.map_id {
             return found.present;
         }
     }
-    let present = RADAR_SOURCES.map(|(source, _)| source_present(source, cc_path, ec_path, state.map_id));
+    let present = RADAR_SOURCES.map(|(source, _)| source_present(source, cc_path, enhanced, state.map_id));
     let chosen = RADAR_SOURCES.iter().position(|&(source, _)| source == state.source);
     if !chosen.is_some_and(|index| present[index]) {
         if let Some(index) = present.iter().position(|&present| present) {
@@ -145,7 +159,7 @@ fn refresh_found_sources(state: &mut MultimapConverterState, cc_path: Option<&Pa
     }
     state.found = Some(FoundRadarSources {
         cc_path: cc_path.map(Path::to_path_buf),
-        ec_path: ec_path.map(Path::to_path_buf),
+        enhanced: enhanced.clone(),
         map_id: state.map_id,
         present,
     });
@@ -238,20 +252,20 @@ fn converter_controls(app: &mut UocfEditorApp, ui: &mut egui::Ui) {
     }
 }
 
-/// The map, the MUL / CC UOP / EC UOP buttons (a source not found greyed, with a tooltip) and the patches of a
-/// Classic map.
+/// The map, the MUL / CC UOP / KR UOP / EC UOP buttons (a source not found greyed, with a tooltip) and the patches of a
+/// Classic map. The radar image of KR UOP and EC UOP is read from its own folder, whichever client the other tabs show.
 fn radar_source_controls(app: &mut UocfEditorApp, ui: &mut egui::Ui) {
-    let (cc_path, ec_path) = (app.settings.cc_path.clone(), app.settings.ec_path.clone());
+    let (cc_path, enhanced) = (app.settings.cc_path.clone(), app.enhanced_folders.clone());
     let state = &mut app.multimap_converter;
     ui.horizontal(|ui| {
         ui.label("Map");
         ui.add(egui::DragValue::new(&mut state.map_id).range(0..=u32::from(u8::MAX)));
     });
-    let present = refresh_found_sources(state, cc_path.as_deref(), ec_path.as_deref());
+    let present = refresh_found_sources(state, cc_path.as_deref(), &enhanced);
     let map_id = state.map_id;
     let availability = |source: MultimapRadarSource| match RADAR_SOURCES.iter().position(|&(candidate, _)| candidate == source) {
-        Some(index) if present[index] => SourceAvailability::Found(source_found_text(source, map_id)),
-        _ => SourceAvailability::Missing(source_missing_text(source, cc_path.as_deref(), ec_path.as_deref(), map_id)),
+        Some(index) if present[index] => SourceAvailability::Found(source_found_text(source, &enhanced, map_id)),
+        _ => SourceAvailability::Missing(source_missing_text(source, cc_path.as_deref(), &enhanced, map_id)),
     };
     if let Some(source) = tab_source_choice(ui, &RADAR_SOURCES, state.source, availability) {
         state.source = source;
@@ -263,7 +277,13 @@ fn radar_source_controls(app: &mut UocfEditorApp, ui: &mut egui::Ui) {
         ui.add_enabled(classic, egui::Checkbox::new(&mut state.include_static_difs, "static difs")).on_disabled_hover_text(PATCHES_CLASSIC_ONLY);
     });
 
-    let folder = if classic { cc_path.map(|path| format!("CC {}", path.display())) } else { ec_path.map(|path| format!("EC {}", path.display())) };
+    let folder = match classic_format(state.source) {
+        Some(_) => cc_path.map(|path| format!("CC {}", path.display())),
+        None => {
+            let client = client_source(state.source);
+            enhanced.folder(client).map(|path| format!("{} {}", client.label(), path.display()))
+        }
+    };
     if let Some(folder) = folder {
         ui.monospace(folder);
     }
@@ -554,7 +574,7 @@ fn preview_available(
 
 fn build_generate_request(app: &UocfEditorApp) -> Result<GenerateRequest, String> {
     let state = &app.multimap_converter;
-    let (cc_path, ec_path) = (app.settings.cc_path.as_deref(), app.settings.ec_path.as_deref());
+    let (cc_path, enhanced) = (app.settings.cc_path.as_deref(), &app.enhanced_folders);
     let input = match classic_format(state.source) {
         Some(format) => GenerateInput::ClassicRadar {
             cc_path: cc_path.ok_or_else(|| NO_CC_FOLDER.to_string())?.to_path_buf(),
@@ -564,9 +584,10 @@ fn build_generate_request(app: &UocfEditorApp) -> Result<GenerateRequest, String
             include_verdata: state.include_verdata,
         },
         None => {
-            let path = ec_path
-                .and_then(|ec_path| enhanced_radar_path(ec_path, state.map_id))
-                .ok_or_else(|| source_missing_text(state.source, cc_path, ec_path, state.map_id))?;
+            let path = enhanced
+                .folder(client_source(state.source))
+                .and_then(|folder| enhanced_radar_path(folder, state.map_id))
+                .ok_or_else(|| source_missing_text(state.source, cc_path, enhanced, state.map_id))?;
             GenerateInput::EnhancedRadar(path)
         }
     };
@@ -721,4 +742,46 @@ fn enhanced_radar_rgba(path: &Path) -> eyre::Result<(DecodedRgba, String)> {
     }
     let decoded = DecodedRgba::new(dds.width(), dds.height(), rgba).wrap_err_with(|| path.display().to_string())?;
     Ok((decoded, path.display().to_string()))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::ui::test_support::output_path;
+    use uocf::client_config::login_servers::KINGDOM_REBORN_EXE;
+
+    /// Facets whose radar image only one of the folders holds.
+    const KR_ONLY_FACET: u8 = 0;
+    const EC_ONLY_FACET: u8 = 5;
+
+    #[test]
+    fn each_enhanced_radar_source_reads_its_own_folder() {
+        let (kr, ec) = (output_path("multimap-kr"), output_path("multimap-ec"));
+        std::fs::create_dir_all(&kr).unwrap();
+        std::fs::create_dir_all(&ec).unwrap();
+        std::fs::write(kr.join(KINGDOM_REBORN_EXE), []).unwrap();
+        std::fs::write(kr.join(radar_dds_file_name(KR_ONLY_FACET)), []).unwrap();
+        std::fs::write(ec.join(radar_dds_file_name(EC_ONLY_FACET)), []).unwrap();
+        let (kr_map, ec_map) = (u32::from(KR_ONLY_FACET), u32::from(EC_ONLY_FACET));
+        let enhanced = EnhancedFolders::from_settings(Some(&kr), Some(&ec));
+        let present = |source, map_id| source_present(source, None, &enhanced, map_id);
+        assert!(present(MultimapRadarSource::KrUop, kr_map) && !present(MultimapRadarSource::EcUop, kr_map));
+        assert!(!present(MultimapRadarSource::KrUop, ec_map) && present(MultimapRadarSource::EcUop, ec_map));
+
+        let found = source_found_text(MultimapRadarSource::KrUop, &enhanced, kr_map);
+        assert!(found.contains(&kr.display().to_string()) && found.contains("Kingdom Reborn client folder"), "{found}");
+        let missing = source_missing_text(MultimapRadarSource::EcUop, None, &enhanced, kr_map);
+        assert!(missing.starts_with("facet00.dds was not found in") && missing.contains(&ec.display().to_string()), "{missing}");
+        let no_kr = EnhancedFolders::from_settings(None, Some(&ec));
+        let missing = source_missing_text(MultimapRadarSource::KrUop, None, &no_kr, kr_map);
+        assert!(missing.contains("no Kingdom Reborn client folder is set"), "{missing}");
+
+        let mut state = MultimapConverterState { map_id: kr_map, ..Default::default() };
+        assert_eq!(refresh_found_sources(&mut state, None, &enhanced), [false, false, true, false]);
+        assert_eq!(state.source, MultimapRadarSource::KrUop, "the first source found is chosen");
+
+        for folder in [kr, ec] {
+            let _ = std::fs::remove_dir_all(folder);
+        }
+    }
 }

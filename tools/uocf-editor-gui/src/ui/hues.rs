@@ -1,7 +1,7 @@
 use crate::app::{concrete_art_tile_source, EcHueingMode, HuesSource, UocfEditorApp};
 use eframe::egui;
 use super::{
-    arrow_delta, enhanced_files_availability, enhanced_folder_source, folder_files_availability, go_to_field,
+    arrow_delta, enhanced_files_availability, folder_files_availability, go_to_field,
     list_sort_controls, move_selection, sorted_indices_by, source_choice, ClientSource, SourceAvailability,
     CLASSIC_FOLDER,
 };
@@ -46,26 +46,26 @@ pub fn ui_hues(app: &mut UocfEditorApp, ctx: &egui::Context, ui: &mut egui::Ui) 
     }
 }
 
-/// hues.mul is MUL, hues.uop KR UOP or EC UOP by the Enhanced folder's client. The Classic client keeps its hues in
+/// hues.mul is MUL, hues.uop KR UOP or EC UOP by the folder it is read from. The Classic client keeps its hues in
 /// hues.mul only: no CC UOP.
 fn hues_source_selector(app: &mut UocfEditorApp, ui: &mut egui::Ui, has_cc_hues: bool, has_ec_hues: bool) {
-    let ctx = ui.ctx().clone();
-    let cc_path = app.settings.cc_path.as_deref();
-    let ec_path = app.settings.ec_path.as_deref();
     let selected = match app.hues_source {
         HuesSource::CcMul => Some(ClientSource::Mul),
-        HuesSource::EcUop => ec_path.map(|folder| enhanced_folder_source(&ctx, folder)),
+        HuesSource::EcUop => app.shown_enhanced,
     };
     let clicked = source_choice(ui, selected, |source| match source {
-        ClientSource::Mul => folder_files_availability(cc_path, CLASSIC_FOLDER, HUES_MUL_NAME, has_cc_hues),
+        ClientSource::Mul => folder_files_availability(app.settings.cc_path.as_deref(), CLASSIC_FOLDER, HUES_MUL_NAME, has_cc_hues),
         ClientSource::CcUop => SourceAvailability::NotApplicable,
         ClientSource::KrUop | ClientSource::EcUop => {
-            enhanced_files_availability(&ctx, ec_path, source, HUES_UOP_NAME, has_ec_hues)
+            enhanced_files_availability(app, source, HUES_UOP_NAME, &[HUES_UOP_NAME], has_ec_hues)
         }
     });
     match clicked {
         Some(ClientSource::Mul) => app.hues_source = HuesSource::CcMul,
-        Some(_) => app.hues_source = HuesSource::EcUop,
+        Some(source) => {
+            app.hues_source = HuesSource::EcUop;
+            app.show_enhanced_client(source);
+        }
         None => {}
     }
 }
@@ -212,7 +212,8 @@ fn ui_hue_preview_item_picker(app: &mut UocfEditorApp, ui: &mut egui::Ui) -> u32
 
     ui.horizontal_wrapped(|ui| {
         ui.label("Item source:");
-        if let Some(source) = super::art_viewer::art_source_choice(app, ui, app.selected_legacy_source) {
+        let current = app.selected_legacy_source;
+        if let Some(source) = super::art_viewer::art_source_choice(app, ui, current) {
             app.selected_legacy_source = source;
         }
     });

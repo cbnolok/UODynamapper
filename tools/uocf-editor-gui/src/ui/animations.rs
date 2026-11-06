@@ -1,11 +1,11 @@
 use crate::app::{
-    AnimationFrameUopEntry, AnimationFrameUopScanResult, ArtSource, UocfEditorApp,
+    AnimationFrameUopEntry, AnimationFrameUopScanResult, ArtSource, UocfEditorApp, ANIMATIONFRAME_UOP_NAMES,
 };
 use crate::ui::animation_frames::{self, ActionFrames, FramesViewState};
 use crate::ui::animation_hue::{self, AnimationHueState};
 use crate::ui::animation_list::{self, ActionKey, ActionSource, AnimationListState};
 use crate::ui::{
-    enhanced_files_availability, enhanced_folder_source, folder_files_availability, source_choice, ClientSource,
+    enhanced_files_availability, folder_files_availability, source_choice, ClientSource,
     CLASSIC_FOLDER,
 };
 use color_eyre::eyre;
@@ -936,7 +936,7 @@ pub(super) fn animationframe_uop_entries(
     }
 
     let cc_path = app.settings.cc_path.clone();
-    let ec_path = app.settings.ec_path.clone();
+    let ec_path = app.shown_enhanced_folder().map(Path::to_path_buf);
     let is_ec = matches!(source, ArtSource::EcUop | ArtSource::EcUopLegacy | ArtSource::EcUopKr);
     let is_cc = source == ArtSource::CcUop;
     let sequence_package = if is_ec {
@@ -1372,32 +1372,30 @@ fn has_animationframe_packages(app: &UocfEditorApp, folder: Option<&Path>) -> bo
     })
 }
 
-/// The source buttons. Every Enhanced Client source reads the same AnimationFrame packages, so the one of the
-/// Enhanced folder's client is pressed; a click on it keeps its art source in step: Texture.uop for KR UOP.
+/// The source buttons. Every Enhanced-format source of a folder reads its AnimationFrame packages, so the button of the
+/// client shown is pressed; a click on it keeps its art source in step: Texture.uop for KR UOP.
 fn animation_source_selector(app: &mut UocfEditorApp, ui: &mut egui::Ui) {
-    let ctx = ui.ctx().clone();
     let cc_path = app.settings.cc_path.clone();
-    let ec_path = app.settings.ec_path.clone();
-    let enhanced = ec_path.as_deref().map(|folder| enhanced_folder_source(&ctx, folder));
     let selected = match app.selected_legacy_source {
         ArtSource::Mul => Some(ClientSource::Mul),
         ArtSource::CcUop => Some(ClientSource::CcUop),
-        ArtSource::EcUop | ArtSource::EcUopLegacy | ArtSource::EcUopKr => enhanced,
+        ArtSource::EcUop | ArtSource::EcUopLegacy | ArtSource::EcUopKr => app.shown_enhanced,
         ArtSource::Any => None,
     };
     let has_mul = app.client_data.as_ref().is_some_and(|client| client.anim_map.is_some());
     let has_cc_uop = has_animationframe_packages(app, cc_path.as_deref());
-    let has_ec_uop = has_animationframe_packages(app, ec_path.as_deref());
+    let has_ec_uop = has_animationframe_packages(app, app.shown_enhanced_folder());
     let clicked = source_choice(ui, selected, |source| match source {
         ClientSource::Mul => folder_files_availability(cc_path.as_deref(), CLASSIC_FOLDER, ANIM_MUL_FILES, has_mul),
         ClientSource::CcUop => {
             folder_files_availability(cc_path.as_deref(), CLASSIC_FOLDER, ANIMATION_FRAME_UOP_FILES, has_cc_uop)
         }
         ClientSource::KrUop | ClientSource::EcUop => {
-            enhanced_files_availability(&ctx, ec_path.as_deref(), source, ANIMATION_FRAME_UOP_FILES, has_ec_uop)
+            enhanced_files_availability(app, source, ANIMATION_FRAME_UOP_FILES, &ANIMATIONFRAME_UOP_NAMES, has_ec_uop)
         }
     });
     if let Some(source) = clicked {
+        app.show_enhanced_client(source);
         app.selected_legacy_source = match source {
             ClientSource::Mul => ArtSource::Mul,
             ClientSource::CcUop => ArtSource::CcUop,

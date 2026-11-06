@@ -30,6 +30,14 @@ UO asset data during development and research.
 Most views support switching between Classic Client and Enhanced Client sources
 where both exist.
 
+`File > Search Paths` names three client folders: Classic (`MUL` and `CC UOP`),
+Kingdom Reborn (`KR UOP`) and Enhanced Client (`EC UOP`). An Enhanced Client
+folder that holds a Kingdom Reborn client (`UOKR.exe`) is read as `KR UOP` while
+no Kingdom Reborn folder is set. The tabs show one of the two Enhanced-format
+clients at a time, since their files name entries of each other; choosing the
+other one's button reloads every tab from its folder (unsaved edits hold it
+back). Multimap reads each client's `facetNN.dds` from its own folder.
+
 ## Binary
 
 ```

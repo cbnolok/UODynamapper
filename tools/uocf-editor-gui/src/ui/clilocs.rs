@@ -4,7 +4,7 @@ use std::path::{Path, PathBuf};
 use crate::app::{LocalizedStringDisplayRow, LocalizedStringsSource, UocfEditorApp, ViewMode};
 use crate::ui::unsaved_changes::TabEditor;
 use crate::ui::{
-    arrow_delta, centered_row_offset, enhanced_files_availability, enhanced_folder_source, folder_files_availability,
+    arrow_delta, centered_row_offset, enhanced_files_availability, folder_files_availability,
     go_to_field, list_sort_controls, move_selection, sorted_indices_by, source_choice, ClientSource,
     SourceAvailability, CLASSIC_FOLDER, UOP_PATCHER_NOTE,
 };
@@ -84,25 +84,25 @@ pub fn ui_clilocs(app: &mut UocfEditorApp, ctx: &egui::Context, ui: &mut egui::U
     }
 
     // The Classic Cliloc.* files are not UOP packages: MUL. The Classic client has no strings in a UOP package: no CC
-    // UOP. LocalizedStrings.uop is KR UOP or EC UOP by the Enhanced folder's client.
+    // UOP. LocalizedStrings.uop is KR UOP or EC UOP by the folder it is read from.
     egui::Panel::top("cliloc_source_tabs").show(ui, |ui| {
-        let ctx = ui.ctx().clone();
-        let cc_path = app.settings.cc_path.as_deref();
-        let ec_path = app.settings.ec_path.as_deref();
         let selected = match app.localized_strings_source {
             LocalizedStringsSource::Cliloc => Some(ClientSource::Mul),
-            LocalizedStringsSource::LocalizedStringsUop => ec_path.map(|folder| enhanced_folder_source(&ctx, folder)),
+            LocalizedStringsSource::LocalizedStringsUop => app.shown_enhanced,
         };
         let clicked = source_choice(ui, selected, |source| match source {
-            ClientSource::Mul => folder_files_availability(cc_path, CLASSIC_FOLDER, &cliloc_files, has_cliloc),
+            ClientSource::Mul => folder_files_availability(app.settings.cc_path.as_deref(), CLASSIC_FOLDER, &cliloc_files, has_cliloc),
             ClientSource::CcUop => SourceAvailability::NotApplicable,
             ClientSource::KrUop | ClientSource::EcUop => {
-                enhanced_files_availability(&ctx, ec_path, source, LOCALIZED_STRINGS_FILE, has_localized)
+                enhanced_files_availability(app, source, LOCALIZED_STRINGS_FILE, &[LOCALIZED_STRINGS_FILE], has_localized)
             }
         });
         match clicked {
             Some(ClientSource::Mul) => app.localized_strings_source = LocalizedStringsSource::Cliloc,
-            Some(_) => app.localized_strings_source = LocalizedStringsSource::LocalizedStringsUop,
+            Some(source) => {
+                app.localized_strings_source = LocalizedStringsSource::LocalizedStringsUop;
+                app.show_enhanced_client(source);
+            }
             None => {}
         }
     });

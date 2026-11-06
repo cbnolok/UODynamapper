@@ -2,8 +2,8 @@ use eframe::egui;
 use crate::app::{classic_tile_flags_summary, concrete_art_tile_source, ArtSource, ArtViewerRow, UocfEditorApp, ViewMode};
 use crate::logic::ClientData;
 use super::{
-    arrow_delta, folder_files_availability, go_to_field, list_sort_controls, move_selection, sorted_indices_by,
-    source_choice, ClientSource, CLASSIC_FOLDER, ENHANCED_FOLDER,
+    arrow_delta, enhanced_files_availability, folder_files_availability, go_to_field, list_sort_controls,
+    move_selection, sorted_indices_by, source_choice, ClientSource, CLASSIC_FOLDER, ENHANCED_FOLDER,
 };
 use super::classic_image_import::{ui_classic_image_panel, PreferredContainer};
 use uocf::classic::image_files::ClassicImageKind;
@@ -13,7 +13,10 @@ use uocf::classic::art::{static_art_id_for_source, STATIC_TILE_ID_BASE};
 const ART_VIEWER_LIST_PANEL_WIDTH: f32 = 300.0;
 const ART_MUL_FILES: &str = "art.mul and artidx.mul";
 const ART_CC_UOP_FILE: &str = "artLegacyMUL.uop";
-const ART_KR_UOP_FILE: &str = "Texture.uop (the Kingdom Reborn art the Enhanced Client carries)";
+const ART_KR_UOP_FILE: &str = "Texture.uop";
+/// KR UOP while no Kingdom Reborn folder is set.
+const ART_CARRIED_KR_UOP_FILE: &str = "Texture.uop (the Kingdom Reborn art the Enhanced Client carries)";
+const ART_EC_UOP_NAME: &str = "LegacyTexture.uop";
 const ART_EC_UOP_FILE: &str = "LegacyTexture.uop (the classic-style art the Enhanced Client draws by default)";
 
 pub fn ui_art_viewer(app: &mut UocfEditorApp, ctx: &egui::Context, ui: &mut egui::Ui) {
@@ -27,7 +30,8 @@ pub fn ui_art_viewer(app: &mut UocfEditorApp, ctx: &egui::Context, ui: &mut egui
 
             ui.horizontal(|ui| {
                 ui.label("Source:");
-                if let Some(source) = art_source_choice(app, ui, app.selected_legacy_source) {
+                let current = app.selected_legacy_source;
+                if let Some(source) = art_source_choice(app, ui, current) {
                     app.selected_legacy_source = source;
                 }
             });
@@ -313,17 +317,26 @@ fn art_source_of(source: ClientSource) -> ArtSource {
     }
 }
 
-/// The art source buttons, `current` pressed; returns the art source clicked.
-pub(super) fn art_source_choice(app: &UocfEditorApp, ui: &mut egui::Ui, current: ArtSource) -> Option<ArtSource> {
+/// The art source buttons, `current` pressed; returns the art source clicked, after showing its client's files when it
+/// is the Enhanced-format client not shown ([`UocfEditorApp::show_enhanced_client`]).
+pub(super) fn art_source_choice(app: &mut UocfEditorApp, ui: &mut egui::Ui, current: ArtSource) -> Option<ArtSource> {
     let art = app.client_data.as_ref().map(|client| Arc::clone(&client.art));
     let has = |source: ClientSource| art.as_ref().is_some_and(|art| art.max_id_for_source(art_source_of(source)) > 0);
-    let (cc_path, ec_path) = (app.settings.cc_path.as_deref(), app.settings.ec_path.as_deref());
+    let cc_path = app.settings.cc_path.as_deref();
+    // While no Kingdom Reborn folder is set, KR UOP is the Kingdom Reborn art the Enhanced Client carries.
+    let carried_kr_art = app.enhanced_folders.kr.is_none() && app.shown_enhanced == Some(ClientSource::EcUop);
     let clicked = source_choice(ui, Some(art_client_source(current)), |source| match source {
         ClientSource::Mul => folder_files_availability(cc_path, CLASSIC_FOLDER, ART_MUL_FILES, has(source)),
         ClientSource::CcUop => folder_files_availability(cc_path, CLASSIC_FOLDER, ART_CC_UOP_FILE, has(source)),
-        ClientSource::KrUop => folder_files_availability(ec_path, ENHANCED_FOLDER, ART_KR_UOP_FILE, has(source)),
-        ClientSource::EcUop => folder_files_availability(ec_path, ENHANCED_FOLDER, ART_EC_UOP_FILE, has(source)),
+        ClientSource::KrUop if carried_kr_art => {
+            folder_files_availability(app.shown_enhanced_folder(), ENHANCED_FOLDER, ART_CARRIED_KR_UOP_FILE, has(source))
+        }
+        ClientSource::KrUop => enhanced_files_availability(app, source, ART_KR_UOP_FILE, &[ART_KR_UOP_FILE], has(source)),
+        ClientSource::EcUop => enhanced_files_availability(app, source, ART_EC_UOP_FILE, &[ART_EC_UOP_NAME], has(source)),
     });
+    if let Some(source) = clicked {
+        app.show_enhanced_client(source);
+    }
     clicked.map(art_source_of)
 }
 

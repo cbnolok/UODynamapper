@@ -399,7 +399,7 @@ fn lookups(app: &UocfEditorApp) -> Lookups {
         tileart: app.ec_tileart_entries.clone(),
         tileart_revision: app.tileart_editor.edits.revision(),
         files: app.effects_panel.files.clone(),
-        client_dir: app.settings.ec_path.clone(),
+        client_dir: app.shown_enhanced_folder().map(Path::to_path_buf),
     }
 }
 
@@ -446,7 +446,7 @@ pub fn ui_effects(app: &mut UocfEditorApp, ctx: &egui::Context, ui: &mut egui::U
 
 /// Opens the effects of the loaded client once, when nothing else is open.
 fn auto_load(app: &mut UocfEditorApp) {
-    let Some(dir) = app.settings.ec_path.clone() else {
+    let Some(dir) = app.shown_enhanced_folder().map(Path::to_path_buf) else {
         return;
     };
     let state = &app.effects_panel;
@@ -568,7 +568,7 @@ fn poll_files_load(app: &mut UocfEditorApp, ctx: &egui::Context) {
 
 fn perform_open(app: &mut UocfEditorApp, request: OpenRequest) {
     let strings = app.uo_string_dictionary.clone();
-    let client_collection = app.settings.ec_path.as_ref().map(|dir| dir.join(EFFECT_DEFINITION_COLLECTION_UOP_NAME));
+    let client_collection = app.shown_enhanced_folder().map(|dir| dir.join(EFFECT_DEFINITION_COLLECTION_UOP_NAME));
     let mut errors = Vec::new();
     let mut opened = Vec::new();
     let (collection_path, files_path, kdl_path) = match &request {

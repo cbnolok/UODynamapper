@@ -2,9 +2,10 @@ use crate::app::{GumpSource, GumpViewerTab, PaperdollEquipmentInput, UocfEditorA
 use crate::ui::ec_interface_textures;
 use crate::ui::ec_paperdoll::{self, Definitions, FrameSets, WearableRules, WornItem, PAPERDOLL_UOP_NAME};
 use crate::ui::{arrow_delta, centered_row_offset, go_to_field, list_sort_controls, move_selection, sorted_indices_by};
-use crate::ui::{tab_source_choice, ClientSource, SourceAvailability};
+use crate::ui::{enhanced_files_availability, source_choice, ClientSource, SourceAvailability};
 use eframe::egui;
 use knuffel::Decode;
+use std::path::Path;
 use std::sync::Arc;
 use std::sync::OnceLock;
 use uocf::classic::gump::GumpContainer;
@@ -26,11 +27,11 @@ const PAPERDOLL_PROFILE_KDL: &str =
 const MUL_GUMP_PREVIEW_KEY: u64 = 0x6D00000000000000;
 const CC_UOP_GUMP_PREVIEW_KEY: u64 = 0x6C00000000000000;
 const EC_GUMP_PREVIEW_KEY: u64 = 0x6E00000000000000;
-/// The gump sources with the sources their buttons stand for, in the order every tab shows them. There is no KR UOP:
-/// the Enhanced Client's files hold one set of gump images, in `Interface.uop`.
-const GUMP_SOURCES: [(GumpSource, ClientSource); 3] =
-    [(GumpSource::Mul, ClientSource::Mul), (GumpSource::CcUop, ClientSource::CcUop), (GumpSource::EcUop, ClientSource::EcUop)];
+/// The gump sources, in the order every tab shows them. An Enhanced-format client's files hold one set of gump images,
+/// in `Interface.uop`: [`GumpSource::EcUop`] is the KR UOP or EC UOP button by the client shown.
+const GUMP_SOURCES: [GumpSource; 3] = [GumpSource::Mul, GumpSource::CcUop, GumpSource::EcUop];
 const INTERFACE_UOP_NAME: &str = "interface.uop";
+const INTERFACE_UOP_FILE: &str = "Interface.uop";
 /// Image preview keys of the rendered paperdolls, or-ed with the body id.
 const PAPERDOLL_PREVIEW_KEY: u64 = 0x7000000000000000;
 const EC_PAPERDOLL_PREVIEW_KEY: u64 = 0x7100000000000000;
@@ -257,8 +258,17 @@ fn classic_container(source: GumpSource) -> Option<GumpContainer> {
     }
 }
 
-fn source_label(source: GumpSource) -> &'static str {
-    GUMP_SOURCES.iter().find(|(candidate, _)| *candidate == source).map_or("", |(_, client)| client.label())
+/// The source button `source` stands for: the Enhanced-format client shown for [`GumpSource::EcUop`].
+fn client_source(app: &UocfEditorApp, source: GumpSource) -> Option<ClientSource> {
+    match source {
+        GumpSource::Mul => Some(ClientSource::Mul),
+        GumpSource::CcUop => Some(ClientSource::CcUop),
+        GumpSource::EcUop => app.shown_enhanced,
+    }
+}
+
+fn source_label(app: &UocfEditorApp, source: GumpSource) -> &'static str {
+    client_source(app, source).map_or("", ClientSource::label)
 }
 
 /// Whether the loaded client files hold `source`.
@@ -271,21 +281,21 @@ fn source_present(app: &UocfEditorApp, source: GumpSource) -> bool {
     }
 }
 
-/// The tooltip of a source the loaded files hold.
+/// The tooltip of a Classic source the loaded files hold.
 fn source_found_text(source: GumpSource) -> &'static str {
     match source {
         GumpSource::Mul => "gumpidx.mul and gumpart.mul in the Classic Client folder.",
         GumpSource::CcUop => "gumpartLegacyMUL.uop in the Classic Client folder.",
-        GumpSource::EcUop => "Interface.uop in the Enhanced Client folder.",
+        GumpSource::EcUop => "",
     }
 }
 
-/// The tooltip of a source the loaded files do not hold.
+/// The tooltip of a Classic source the loaded files do not hold.
 fn source_missing_text(source: GumpSource) -> &'static str {
     match source {
         GumpSource::Mul => "gumpidx.mul and gumpart.mul were not found in the Classic Client folder.",
         GumpSource::CcUop => "gumpartLegacyMUL.uop was not found in the Classic Client folder.",
-        GumpSource::EcUop => "Interface.uop was not found in the Enhanced Client folder.",
+        GumpSource::EcUop => "",
     }
 }
 
@@ -293,7 +303,7 @@ pub fn ui_gumps(app: &mut UocfEditorApp, ctx: &egui::Context, ui: &mut egui::Ui)
     egui::CentralPanel::default().show(ui, |ui| {
         let profiles = paperdoll_profiles();
         if !source_present(app, app.selected_gump_source) {
-            if let Some(&(source, _)) = GUMP_SOURCES.iter().find(|&&(source, _)| source_present(app, source)) {
+            if let Some(&source) = GUMP_SOURCES.iter().find(|&&source| source_present(app, source)) {
                 app.selected_gump_source = source;
             }
         }
@@ -304,15 +314,33 @@ pub fn ui_gumps(app: &mut UocfEditorApp, ctx: &egui::Context, ui: &mut egui::Ui)
         }
 
         ui.horizontal(|ui| {
-            let availability = |source| {
+            let classic_availability = |source| {
                 if source_present(app, source) {
                     SourceAvailability::Found(source_found_text(source).to_string())
                 } else {
                     SourceAvailability::Missing(source_missing_text(source).to_string())
                 }
             };
-            if let Some(source) = tab_source_choice(ui, &GUMP_SOURCES, app.selected_gump_source, availability) {
-                app.selected_gump_source = source;
+            let selected = client_source(app, app.selected_gump_source);
+            let clicked = source_choice(ui, selected, |source| match source {
+                ClientSource::Mul => classic_availability(GumpSource::Mul),
+                ClientSource::CcUop => classic_availability(GumpSource::CcUop),
+                ClientSource::KrUop | ClientSource::EcUop => enhanced_files_availability(
+                    app,
+                    source,
+                    INTERFACE_UOP_FILE,
+                    &[INTERFACE_UOP_FILE],
+                    source_present(app, GumpSource::EcUop),
+                ),
+            });
+            match clicked {
+                Some(ClientSource::Mul) => app.selected_gump_source = GumpSource::Mul,
+                Some(ClientSource::CcUop) => app.selected_gump_source = GumpSource::CcUop,
+                Some(source) => {
+                    app.selected_gump_source = GumpSource::EcUop;
+                    app.show_enhanced_client(source);
+                }
+                None => {}
             }
             ui.separator();
             ui.selectable_value(
@@ -519,7 +547,7 @@ fn get_panel_gump_texture(
     }
 
     let (width, height, pixels) = decode_gump_rgba(app, source, gump_id).ok()?;
-    let label = format!("{} gump {gump_id}", source_label(source));
+    let label = format!("{} gump {gump_id}", source_label(app, source));
     let handle = app.checked_texture(ctx, label.clone(), [width as usize, height as usize], &pixels, Default::default())?;
     app.texture_previews.insert(key, handle.clone());
     app.register_current_image_preview(key, label, width, height, &pixels);
@@ -1025,7 +1053,7 @@ fn select_or_load_ec_gump_entry(app: &mut UocfEditorApp, gump_id: u32) -> bool {
         }
     }
 
-    let Some(ec_path) = app.settings.ec_path.clone() else {
+    let Some(ec_path) = app.shown_enhanced_folder().map(Path::to_path_buf) else {
         return false;
     };
     let Some(uop_path) = ["interface.uop", "Interface.uop"]
@@ -1160,22 +1188,20 @@ fn tiledata_layer(tiledata: Option<&uocf::classic::tiledata::TileData>, item_id:
     (item.quality != 0).then_some(item.quality)
 }
 
-/// The `Paperdoll.uop` frame sets of the Enhanced Client folder, if they have been read.
+/// The `Paperdoll.uop` frame sets of the Enhanced-format client shown, if they have been read.
 fn cached_ec_paperdoll_frame_sets(app: &UocfEditorApp, ctx: &egui::Context) -> Option<Arc<FrameSets>> {
-    let ec_path = app.settings.ec_path.as_ref()?;
+    let ec_path = app.shown_enhanced_folder()?;
     ctx.data(|data| data.get_temp::<Arc<FrameSets>>(egui::Id::new((EC_PAPERDOLL_FRAME_SETS_ID, ec_path))))
 }
 
-/// The `Paperdoll.uop` frame sets of the Enhanced Client folder, read on first use.
+/// The `Paperdoll.uop` frame sets of the Enhanced-format client shown, read on first use.
 fn ec_paperdoll_frame_sets(app: &UocfEditorApp, ctx: &egui::Context) -> color_eyre::eyre::Result<Arc<FrameSets>> {
     if let Some(sets) = cached_ec_paperdoll_frame_sets(app, ctx) {
         return Ok(sets);
     }
     let ec_path = app
-        .settings
-        .ec_path
-        .as_ref()
-        .ok_or_else(|| color_eyre::eyre::eyre!("No Enhanced Client folder is set."))?;
+        .shown_enhanced_folder()
+        .ok_or_else(|| color_eyre::eyre::eyre!("No Enhanced Client or Kingdom Reborn folder is set."))?;
     let path = crate::app::find_client_file_case_insensitive(ec_path, PAPERDOLL_UOP_NAME)
         .ok_or_else(|| color_eyre::eyre::eyre!("No {PAPERDOLL_UOP_NAME} in {}.", ec_path.display()))?;
     let sets = Arc::new(FrameSets::load(&path)?);
@@ -1183,7 +1209,7 @@ fn ec_paperdoll_frame_sets(app: &UocfEditorApp, ctx: &egui::Context) -> color_ey
     Ok(sets)
 }
 
-/// The tables of the given hues, from the cached `hues.uop` or the one of the Enhanced Client folder.
+/// The tables of the given hues, from the cached `hues.uop` or the one of the Enhanced-format client shown.
 fn ec_paperdoll_hue_tables(app: &UocfEditorApp, hues: Vec<u16>) -> color_eyre::eyre::Result<EcHueTables> {
     if hues.iter().all(|&hue| hue == 0) {
         return Ok(EcHueTables::default());
@@ -1199,11 +1225,9 @@ fn ec_paperdoll_hue_tables(app: &UocfEditorApp, hues: Vec<u16>) -> color_eyre::e
         return ec_paperdoll::hue_tables(&loaded.package, hues);
     }
     let path = app
-        .settings
-        .ec_path
-        .as_ref()
+        .shown_enhanced_folder()
         .and_then(|ec_path| crate::app::find_client_file_case_insensitive(ec_path, HUES_UOP_NAME))
-        .ok_or_else(|| color_eyre::eyre::eyre!("No {HUES_UOP_NAME} in the Enhanced Client folder to hue with."))?;
+        .ok_or_else(|| color_eyre::eyre::eyre!("No {HUES_UOP_NAME} in the Enhanced-format client folder to hue with."))?;
     ec_paperdoll::hue_tables(&UopPackage::load_with_mode(&path, LoadMode::Lazy)?, hues)
 }
 

@@ -8,7 +8,7 @@ use uocf::classic::tiledata::TileData;
 use uocf::enhanced::tileart::{tileart_entry_hash, PropertyKey, TileArtEntry};
 
 use super::{
-    arrow_delta, enhanced_files_availability, enhanced_folder_source, folder_files_availability, list_sort_controls,
+    arrow_delta, enhanced_files_availability, folder_files_availability, list_sort_controls,
     move_selection, sorted_indices_by, source_choice, tile_preview, tileart_editor, tiledata_editor, ClientSource,
     SourceAvailability, CLASSIC_FOLDER,
 };
@@ -87,28 +87,28 @@ pub fn ui_tile_metadata(app: &mut UocfEditorApp, ctx: &egui::Context, ui: &mut e
     });
 }
 
-/// tiledata.mul is MUL, tileart.uop KR UOP or EC UOP by the Enhanced folder's client. The Classic client keeps its
-/// tile metadata in tiledata.mul only: no CC UOP.
+/// tiledata.mul is MUL, tileart.uop KR UOP or EC UOP by the folder it is read from. The Classic client keeps its tile
+/// metadata in tiledata.mul only: no CC UOP.
 fn source_selector(app: &mut UocfEditorApp, ui: &mut egui::Ui) {
-    let ctx = ui.ctx().clone();
-    let cc_path = app.settings.cc_path.as_deref();
-    let ec_path = app.settings.ec_path.as_deref();
     let has_tiledata = app.cc_tiledata.is_some();
     let has_tileart = app.ec_tileart_entries.is_some();
     let selected = match app.tile_metadata_source {
         TileMetadataSource::CcTileData => Some(ClientSource::Mul),
-        TileMetadataSource::EcTileArt => ec_path.map(|folder| enhanced_folder_source(&ctx, folder)),
+        TileMetadataSource::EcTileArt => app.shown_enhanced,
     };
     let clicked = source_choice(ui, selected, |source| match source {
-        ClientSource::Mul => folder_files_availability(cc_path, CLASSIC_FOLDER, TILEDATA_FILE, has_tiledata),
+        ClientSource::Mul => folder_files_availability(app.settings.cc_path.as_deref(), CLASSIC_FOLDER, TILEDATA_FILE, has_tiledata),
         ClientSource::CcUop => SourceAvailability::NotApplicable,
         ClientSource::KrUop | ClientSource::EcUop => {
-            enhanced_files_availability(&ctx, ec_path, source, TILEART_FILE, has_tileart)
+            enhanced_files_availability(app, source, TILEART_FILE, &[TILEART_FILE], has_tileart)
         }
     });
     match clicked {
         Some(ClientSource::Mul) => app.tile_metadata_source = TileMetadataSource::CcTileData,
-        Some(_) => app.tile_metadata_source = TileMetadataSource::EcTileArt,
+        Some(source) => {
+            app.tile_metadata_source = TileMetadataSource::EcTileArt;
+            app.show_enhanced_client(source);
+        }
         None => {}
     }
 }
