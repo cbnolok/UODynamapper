@@ -10,7 +10,7 @@ using the command line.
 - Configure source client paths (Classic Client or Enhanced Client installation
   directories) via a file picker.
 - Select the currently supported GUI pack jobs for tile metadata, art, land
-  textures, mobile animations, maps, statics, and radar output.
+  textures, mobile animations, gumps, maps, statics, and radar output.
 - Use an optional upscale profile file for the existing image pack jobs. See
   [`../udd-conv-cli/UPSCALE_PROFILES.md`](../udd-conv-cli/UPSCALE_PROFILES.md).
 - Run conversion jobs in the background with live progress reporting.
@@ -23,52 +23,72 @@ replacement for every `udd-cli pack` and `udd-cli tool` command. Use the GUI for
 interactive conversion and inspection workflows. Use the CLI for batch scripts,
 advanced mutation, and pack jobs not yet exposed in the GUI.
 
-### Packing Support
+Every GUI job calls the same `udd-conv` functions as its CLI command. The GUI
+reads the sources from the Sources tab, writes into its output folder under the
+CLI's default file names, and reads `tilemeta.uddp` from its input folder.
+Yes means the GUI offers every option of the command, apart from the image job
+gaps below. Partial lists the other flags the GUI does not offer.
 
-| Package/job | GUI | CLI |
-| ----------- | --- | --- |
-| Tile metadata | Yes | Yes |
-| Classic art | Yes | Yes |
-| Classic texmaps / land textures | Yes | Yes |
-| Classic mobile animations | Yes | Yes |
-| Enhanced art | Yes | Yes |
-| Enhanced land textures | Yes | Yes |
-| Enhanced mobile animations | Yes | Yes |
-| Maps | Yes | Yes |
-| Statics | Yes | Yes |
-| Radar DDS | Yes | Yes |
-| World lights | CLI only | Yes |
-| Hues | CLI only | Yes |
-| Classic gumps | CLI only | Yes |
-| Enhanced gumps | CLI only | Yes |
-| Combined map+statics command | CLI only | Yes |
+Two gaps apply to the image jobs, and the rows below leave them out:
 
-### Advanced Packing Controls
+- The GUI sets one upscale filter per slot, where the CLI chains repeated
+  `--upscale-pass` style flags. An upscale profile can still chain passes.
+- The GUI has no uncompressed RGBA8888 output (`--raw` without `--zstd`) for
+  the atlas and texture jobs. Its lossless choice is RGBA8888 with Zstd.
 
-| Control | GUI | CLI |
-| ------- | --- | --- |
-| Basic output format and compression settings | Yes | Yes |
-| Single upscale filter controls | Yes, for existing image packers | Yes |
-| Upscale profile file | Yes, for existing image packers | Yes |
-| Arbitrary inline ordered pass chains | CLI only | Yes |
-| Per-command audit/report tools | CLI only | Yes |
+### `udd-cli pack`
+
+| Command | GUI | Not in the GUI |
+| ------- | --- | -------------- |
+| `pack-tilemeta` | Partial: Assets, Tile Metadata | `--use-ec-radarcol` |
+| `pack-art` | Partial: Assets, Classic Art | `--mul` (the GUI reads `artLegacyMUL.uop` first), `--atlas-width`, `--atlas-height`, `--gutter` |
+| `pack-texmaps` | Partial: Assets, Classic Texmaps | `--atlas-width`, `--atlas-height`, `--gutter` |
+| `pack-mobile-anims` | Partial: Assets, Classic Mobile Animations | `--atlas-width`, `--atlas-height`, `--gutter` |
+| `pack-ec-textures` | Partial: Assets, Enhanced Art and Enhanced Land, as two jobs | `--tilemeta-output`, `--tilemeta-use-ec-radarcol`, `--land-transcode-kdl` and `--land-terrain-overrides-kdl` (the GUI reads them from the routing folder, else the bundled copies), the art and land atlas sizes and gutters |
+| `pack-ec-mobile-anims` | Partial: Assets, Enhanced Mobile Animations | `--tables` and `--ec-mobile-animations-kdl` (routing folder or bundled copy only), `--atlas-width`, `--atlas-height`, `--gutter` |
+| `pack-ec-tex-aux` | Partial: Assets, Enhanced Auxiliary Textures | `--tilemeta` (always the input folder's `tilemeta.uddp`) |
+| `pack-gumps` | Yes: Assets, Classic Gumps | |
+| `pack-ec-gumps` | Yes: Assets, Enhanced Gumps (`--share-with` is the output folder's `gumps_cc.uddp`) | |
+| `pack-map` | Partial: World, Map | `--zstd`, `--stored`; `--uop` only in the settings file (`map_preferences`) |
+| `pack-statics` | Partial: World, Statics | `--zstd`, `--stored` |
+| `pack-map-statics` | Partial: World, ALL, which also builds the radar | `--map-output`, `--statics-output`, `--zstd`, `--stored`; `--uop` only in the settings file |
+| `pack-radar` | Partial: World, RadarMap | `--zstd-level` and `--uop` only in the settings file (`radar_zstd`, `map_preferences`); `--output` |
+| `pack-lights` | CLI only | |
+| `pack-hues` | CLI only | |
+| `pack-ec-effects` | CLI only | |
+| `pack-terrain-meta` | CLI only | |
+| `audit-ec-material-refs` | CLI only | |
+| `inventory-ec-support-textures` | CLI only | |
+| `report-ec-material-baseline` | CLI only | |
+| `audit-ec-terrain-primary-selection` | CLI only | |
+| `report-ec-terrain-practical-review` | CLI only | |
+| `audit-ec-terrain-overrides` | CLI only | |
+| `audit-land-routing-kdl` | CLI only | |
+| `audit-ec-surface-redirection` | CLI only | |
+| `write-ec-effect-meta-manifest` | CLI only | |
+| `write-ec-abnormality-report` | CLI only | |
+| `write-tileart-owner-audit` | CLI only | |
+| `write-terrain-definition-owner-audit` | CLI only | |
+| `write-terrain-definition-review` | CLI only | |
+| `write-tileart-liquid-surface-report` | CLI only | |
 
 When an upscale profile is selected in the GUI, it is loaded at conversion start
 and used only for image targets that match the profile. Existing GUI upscale
 filter controls remain the fallback for unmatched targets.
 
-### Package Tools
+### `udd-cli tool`
 
-| Tool action | GUI | CLI |
-| ----------- | --- | --- |
-| Package info | Yes | Yes |
-| Extract package | Yes | Yes |
-| Diff packages or metadata | Yes | Yes |
-| Hash virtual path | Yes | Yes |
-| Replace package entry | CLI only | Yes |
-| Rebuild package | CLI only | Yes |
-| Export CSV metadata | Yes | Yes |
-| Import CSV metadata | CLI only | Yes |
+| Command | GUI | Not in the GUI |
+| ------- | --- | -------------- |
+| `info` | Yes: Tools | |
+| `extract` | Partial: Tools | `--output` (the GUI extracts next to the package) |
+| `hash-path` | Yes: Tools | |
+| `replace` | CLI only | |
+| `rebuild` | CLI only | |
+| `export-csv` | Partial: Tools | `--kind` (always `auto`), `--output` |
+| `import-csv` | CLI only | |
+| `validate` | CLI only | |
+| `diff` | Partial: Tools | `--kind` (always `auto`) |
 
 ## Binary
 
