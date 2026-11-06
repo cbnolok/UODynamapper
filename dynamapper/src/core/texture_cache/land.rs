@@ -14,8 +14,9 @@ use bevy::prelude::*;
 use bevy::time::common_conditions::on_timer;
 use color_eyre::eyre;
 use std::time::{Duration, Instant};
+use udd_assets::bc7::{expected_bc7_byte_len, ImageExtent, BC7_BLOCK_BYTES};
 use udd_assets::{
-    tex_art_cc::TexArtCcPackage,
+    tex_art_cc::{PagePixelFormat, TexArtCcPackage},
     tex_land_cc::TexLandCcPackage,
     tex_land_ec::TexLandEcPackage,
     tex_aux_ec::TexAuxEcPackage,
@@ -740,6 +741,60 @@ fn decode_tex_land_ec_page_rgba(package: &TexLandEcPackage, page_index: u32) -> 
     )
 }
 
+/// The format the Enhanced land pages share, read once from the package: BC7 pages reach the GPU as their blocks.
+fn tex_land_ec_page_format(package: &TexLandEcPackage) -> PagePixelFormat {
+    package.pages().first().map_or(PagePixelFormat::Rgba8888, |page| page.pixel_format)
+}
+
+/// One Enhanced land page's BC7 blocks laid over the whole atlas extent, as its array layer takes them. The packer writes
+/// the whole extent; a page of only its used extent has its block rows placed and the rest left zero, which BC7
+/// decodes as transparent black like the RGBA path's padding.
+fn tex_land_ec_page_bc7_layer(
+    page_bytes: &[u8],
+    atlas_width: u32,
+    atlas_height: u32,
+    used_width: u32,
+    used_height: u32,
+) -> eyre::Result<Vec<u8>> {
+    let atlas_extent = ImageExtent::new(atlas_width, atlas_height).map_err(|error| eyre::eyre!("land atlas: {error}"))?;
+    let atlas_len = expected_bc7_byte_len(atlas_extent);
+    if page_bytes.len() == atlas_len {
+        return Ok(page_bytes.to_vec());
+    }
+    let used_extent = ImageExtent::new(used_width, used_height).map_err(|error| eyre::eyre!("land page: {error}"))?;
+    let used_len = expected_bc7_byte_len(used_extent);
+    if page_bytes.len() != used_len || used_extent.blocks_wide() > atlas_extent.blocks_wide()
+        || used_extent.blocks_high() > atlas_extent.blocks_high()
+    {
+        eyre::bail!(
+            "BC7 land page of {} bytes is neither the atlas extent {atlas_width}x{atlas_height} ({atlas_len} bytes) nor \
+             its used extent {used_width}x{used_height} ({used_len} bytes)",
+            page_bytes.len()
+        );
+    }
+    let used_row = used_extent.blocks_wide() as usize * BC7_BLOCK_BYTES;
+    let atlas_row = atlas_extent.blocks_wide() as usize * BC7_BLOCK_BYTES;
+    let mut layer = vec![0u8; atlas_len];
+    for (source, target) in page_bytes.chunks_exact(used_row).zip(layer.chunks_exact_mut(atlas_row)) {
+        target[..used_row].copy_from_slice(source);
+    }
+    Ok(layer)
+}
+
+fn read_tex_land_ec_page_bc7_layer(package: &TexLandEcPackage, page_index: u32) -> eyre::Result<Vec<u8>> {
+    let page = package
+        .pages()
+        .get(page_index as usize)
+        .ok_or_else(|| eyre::eyre!("missing tex_land_ec page metadata for {page_index}"))?;
+    tex_land_ec_page_bc7_layer(
+        &package.read_page_bytes(page_index)?,
+        package.atlas_width(),
+        package.atlas_height(),
+        page.used_width,
+        page.used_height,
+    )
+}
+
 fn packed_page_and_stretch(page_index: u32, texture_repetition: f32) -> u32 {
     let stretch_q8 = if texture_repetition.is_finite() && texture_repetition > 0.0 {
         (texture_repetition * 256.0).round().clamp(0.0, u16::MAX as f32) as u32
@@ -809,14 +864,17 @@ fn create_land_shader_images(
         ),
     };
 
-    let mut atlas_bytes =
-        Vec::with_capacity((atlas_width * atlas_height * 4 * page_count) as usize);
+    // Enhanced BC7 pages are uploaded as their blocks (linear, like the Enhanced RGBA pages); the rest as RGBA8888.
+    let bc7_pages = matches!(source, LandShaderAtlasSource::Ec(package)
+        if tex_land_ec_page_format(package) == PagePixelFormat::Bc7);
+    let mut atlas_bytes = Vec::new();
     for page_index in 0..page_count {
-        let rgba = match source {
+        let layer = match source {
             LandShaderAtlasSource::Cc(package) => decode_tex_land_cc_page_rgba(package, page_index)?,
+            LandShaderAtlasSource::Ec(package) if bc7_pages => read_tex_land_ec_page_bc7_layer(package, page_index)?,
             LandShaderAtlasSource::Ec(package) => decode_tex_land_ec_page_rgba(package, page_index)?,
         };
-        atlas_bytes.extend_from_slice(&rgba);
+        atlas_bytes.extend_from_slice(&layer);
     }
 
     let mut atlas = Image::new(
@@ -828,6 +886,7 @@ fn create_land_shader_images(
         TextureDimension::D2,
         atlas_bytes,
         match source {
+            LandShaderAtlasSource::Ec(_) if bc7_pages => TextureFormat::Bc7RgbaUnorm,
             LandShaderAtlasSource::Ec(_) => TextureFormat::Rgba8Unorm,
             LandShaderAtlasSource::Cc(_) => TextureFormat::Rgba8UnormSrgb,
         },
@@ -1661,6 +1720,33 @@ fn sys_apply_tile_atlas_expansion(
 mod tests {
     use super::*;
     use bevy::asset::{uuid::Uuid, AssetId};
+
+    /// A BC7 land layer is the atlas extent's block bytes: whole-extent pages pass through, used-extent pages have their
+    /// block rows placed, and any other length is an error.
+    #[test]
+    fn bc7_land_layers_take_the_atlas_extent_byte_length() {
+        const ATLAS_EDGE: u32 = 16;
+        const USED_WIDTH: u32 = 8;
+        const USED_HEIGHT: u32 = 6;
+        const BLOCK_FILL: u8 = 7;
+        let atlas_len = expected_bc7_byte_len(ImageExtent::new(ATLAS_EDGE, ATLAS_EDGE).unwrap());
+        let whole = vec![BLOCK_FILL; atlas_len];
+        assert_eq!(tex_land_ec_page_bc7_layer(&whole, ATLAS_EDGE, ATLAS_EDGE, USED_WIDTH, USED_HEIGHT).unwrap(), whole);
+
+        let used_extent = ImageExtent::new(USED_WIDTH, USED_HEIGHT).unwrap();
+        let used = vec![BLOCK_FILL; expected_bc7_byte_len(used_extent)];
+        let layer = tex_land_ec_page_bc7_layer(&used, ATLAS_EDGE, ATLAS_EDGE, USED_WIDTH, USED_HEIGHT).unwrap();
+        assert_eq!(layer.len(), atlas_len);
+        let atlas_row = ImageExtent::new(ATLAS_EDGE, ATLAS_EDGE).unwrap().blocks_wide() as usize * BC7_BLOCK_BYTES;
+        let used_row = used_extent.blocks_wide() as usize * BC7_BLOCK_BYTES;
+        for (row, bytes) in layer.chunks_exact(atlas_row).enumerate() {
+            let inside = row < used_extent.blocks_high() as usize;
+            assert!(bytes[..used_row].iter().all(|&byte| byte == if inside { BLOCK_FILL } else { 0 }), "row {row}");
+            assert!(bytes[used_row..].iter().all(|&byte| byte == 0), "row {row}");
+        }
+
+        assert!(tex_land_ec_page_bc7_layer(&whole[1..], ATLAS_EDGE, ATLAS_EDGE, USED_WIDTH, USED_HEIGHT).is_err());
+    }
     use bevy::shader::{
         Shader, ShaderCache, ShaderCacheError, ShaderCacheSource, ValidateShader,
     };
