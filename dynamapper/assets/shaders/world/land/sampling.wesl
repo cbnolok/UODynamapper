@@ -139,10 +139,12 @@ fn sample_ec_lookup_slot(uv: vec2<f32>, slot: LandLookupSlot, world: LandGradien
   return texture_color_rgb(sample_ec_lookup_slot_rgba(uv, slot, world).rgb);
 }
 
+// The blend factor is the mask texel's alpha alone, as in the client's SetupFourStages (0x005974f0):
+// stage 1 selects D3DTA_TEXTURE alpha (no modifier) of item 2, and stage 2's BLENDCURRENTALPHA weights
+// item 0 by it. The mask's RGB is never read (the shipped masks hold placeholder art there), and a
+// mask without an alpha channel samples as alpha 1, item 0 alone, as Direct3D does.
 fn ec_material_mask_value(mask_sample: vec4<f32>) -> f32 {
-  let rgb_luma = dot(mask_sample.rgb, vec3<f32>(0.2126, 0.7152, 0.0722));
-  let alpha_has_signal = abs(mask_sample.a - 1.0) > 0.001;
-  return clamp(select(rgb_luma, mask_sample.a, alpha_has_signal), 0.0, 1.0);
+  return mask_sample.a;
 }
 
 // ============================================================================
