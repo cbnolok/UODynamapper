@@ -11,6 +11,12 @@ DEFAULT_ZSTD_VALUE = ""
 DEFAULT_ZSTD_ARGS = ["--zstd"]
 # No format flag: the packer's default, lossless Zstd 19 atlas pages.
 DEFAULT_GUMP_ARGS: list[str] = []
+# The Classic gump package, which gumps_ec.uddp shares the Classic gumps with unless --no-gump-sharing.
+GUMPS_CC_FILE_NAME = "gumps_cc.uddp"
+NO_GUMP_SHARING_HELP = (
+    "pack gumps_ec.uddp standalone, keeping the Classic gumps it repeats, instead of leaving them out for the "
+    "gumps_cc.uddp in the output folder to draw"
+)
 # Mobile animation pages without a format flag: lossless RGBA8888 with Zstd 19, as the art, land and gump pages.
 LOSSLESS_ANIM_FORMAT = "raw"
 LOSSLESS_ZSTD_LEVEL = "19"
@@ -182,13 +188,30 @@ def run_animations(ccdir: str, ecdir: str, output_dir: str, cc_format: list[str]
 def run_gumps(ccdir: str, output_dir: str, format_args: list[str] | None = None) -> None:
     require_value(ccdir, "usage: just uddconv-gumps <ccdir> [output_dir]")
     ensure_output_dir(output_dir)
-    run_pack("pack-gumps", *(format_args or DEFAULT_GUMP_ARGS), "--ccdir", ccdir, "--output", f"{output_dir}/gumps_cc.uddp")
+    run_pack("pack-gumps", *(format_args or DEFAULT_GUMP_ARGS), "--ccdir", ccdir, "--output", f"{output_dir}/{GUMPS_CC_FILE_NAME}")
 
 
-def run_ec_gumps(ecdir: str, output_dir: str, format_args: list[str] | None = None) -> None:
+def run_ec_gumps(ecdir: str, output_dir: str, format_args: list[str] | None = None, share: bool = True) -> None:
+    """Packs gumps_ec.uddp. With `share`, the default, it leaves out the Classic gumps the gumps_cc.uddp in the output
+    folder draws the same (pack-ec-gumps --share-with), so it needs that package; without one there it packs standalone.
+    """
     require_value(ecdir, "usage: just uddconv-ec-gumps <ecdir> [output_dir]")
     ensure_output_dir(output_dir)
-    run_pack("pack-ec-gumps", *(format_args or DEFAULT_GUMP_ARGS), "--ecdir", ecdir, "--output", f"{output_dir}/gumps_ec.uddp")
+    share_args: list[str] = []
+    classic_gumps = Path(output_dir) / GUMPS_CC_FILE_NAME
+    if share and classic_gumps.is_file():
+        share_args = ["--share-with", str(classic_gumps)]
+    elif share:
+        print(f"No {classic_gumps} to share the Classic gumps with: packing gumps_ec.uddp standalone.")
+    run_pack(
+        "pack-ec-gumps",
+        *(format_args or DEFAULT_GUMP_ARGS),
+        *share_args,
+        "--ecdir",
+        ecdir,
+        "--output",
+        f"{output_dir}/gumps_ec.uddp",
+    )
 
 
 def run_maps_statics(ccdir: str, output_dir: str, maps: str, non_texture_zstd: list[str]) -> None:
@@ -224,6 +247,7 @@ def run_all(
     non_texture_zstd: list[str],
     gump_args: list[str],
     include_animations: bool = True,
+    share_gumps: bool = True,
 ) -> None:
     ccdir = require_value(ccdir, "usage: just uddconv-all <ccdir> [ecdir] [output_dir] [maps]")
     ensure_output_dir(output_dir)
@@ -268,9 +292,10 @@ def run_all(
         )
     if include_animations:
         run_animations(ccdir, ecdir, output_dir, cc_anim_format, ec_anim_format, tables)
+    # gumps_cc.uddp first: gumps_ec.uddp shares the Classic gumps with it.
     run_gumps(ccdir, output_dir, gump_args)
     if ecdir:
-        run_ec_gumps(ecdir, output_dir, gump_args)
+        run_ec_gumps(ecdir, output_dir, gump_args, share=share_gumps)
         run_pack(
             "pack-ec-tex-aux",
             *non_texture_zstd,
@@ -295,6 +320,7 @@ def main() -> int:
     all_parser.add_argument("--maps", default="0,1,2,3,4,5")
     all_parser.add_argument("--tables", default=DEFAULT_TABLES_DIR)
     all_parser.add_argument("--no-animations", action="store_true", help="leave out the mobile animation packages")
+    all_parser.add_argument("--no-gump-sharing", action="store_true", help=NO_GUMP_SHARING_HELP)
     add_zstd_arg(all_parser)
     add_format_args(all_parser, prefix="cc-art-")
     add_zstd_arg(all_parser, prefix="cc-art-")
@@ -328,6 +354,7 @@ def main() -> int:
     ec_gumps_parser = subparsers.add_parser("ec-gumps")
     ec_gumps_parser.add_argument("--ecdir", default="")
     ec_gumps_parser.add_argument("--output-dir", default="target/uddp")
+    ec_gumps_parser.add_argument("--no-gump-sharing", action="store_true", help=NO_GUMP_SHARING_HELP)
     add_zstd_arg(ec_gumps_parser)
 
     maps_statics_parser = subparsers.add_parser("maps-statics")
@@ -369,6 +396,7 @@ def main() -> int:
             non_texture_zstd,
             gump_args,
             include_animations=not args.no_animations,
+            share_gumps=not args.no_gump_sharing,
         )
     elif args.command == "animations":
         global_zstd = zstd_args_from_namespace(args)
@@ -395,7 +423,12 @@ def main() -> int:
     elif args.command == "gumps":
         run_gumps(args.ccdir, args.output_dir, default_or_requested_gump_args(args))
     elif args.command == "ec-gumps":
-        run_ec_gumps(args.ecdir, args.output_dir, default_or_requested_gump_args(args))
+        run_ec_gumps(
+            args.ecdir,
+            args.output_dir,
+            default_or_requested_gump_args(args),
+            share=not args.no_gump_sharing,
+        )
     else:
         run_maps_statics(args.ccdir, args.output_dir, args.maps, default_or_requested_zstd(args))
     return 0
