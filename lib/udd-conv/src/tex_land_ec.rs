@@ -112,6 +112,7 @@ pub const DEFAULT_ATLAS_GUTTER: u16 = 1;
 struct TerrainOverridesMetadata {
     schema: &'static str,
     schema_version: u32,
+    /// The table's file name only, so the same table packs to the same bytes from any checkout.
     source_path: String,
     override_count: u32,
     active_action_count: u32,
@@ -853,7 +854,10 @@ fn serialize_terrain_overrides_metadata_from_overrides(
     let metadata = TerrainOverridesMetadata {
         schema: TERRAIN_OVERRIDES_SCHEMA,
         schema_version: TERRAIN_OVERRIDES_SCHEMA_VERSION,
-        source_path: path.display().to_string(),
+        source_path: path
+            .file_name()
+            .map(|name| name.to_string_lossy().into_owned())
+            .unwrap_or_else(|| path.display().to_string()),
         override_count: entries.len() as u32,
         active_action_count,
         entries,
@@ -1895,6 +1899,26 @@ terrain 52 {
         assert!(json.contains("\"material_id\": 52"));
         assert!(json.contains("\"code\": \"reviewed_layer_texture\""));
         assert!(json.contains("\"texture_id\": 2000510"));
+    }
+
+    /// The record names the table by file name, so two checkouts pack the same table to the same bytes.
+    #[test]
+    fn terrain_overrides_metadata_is_the_same_from_any_checkout() {
+        let shipped = EC_TERRAIN_OVERRIDES_KDL.checkout_dir().join(EC_TERRAIN_OVERRIDES_KDL.relative_path());
+        let root = std::env::temp_dir().join(format!("ec_terrain_overrides_checkouts_{}", std::process::id()));
+        let copies = ["checkout_a", "checkout_b"].map(|checkout| {
+            let dir = root.join(checkout).join("assets");
+            std::fs::create_dir_all(&dir).unwrap();
+            let copy = dir.join(shipped.file_name().unwrap());
+            std::fs::copy(&shipped, &copy).unwrap();
+            copy
+        });
+
+        let [first, second] = copies.map(|copy| serialize_terrain_overrides_metadata(&copy).unwrap().bytes);
+        let _ = std::fs::remove_dir_all(&root);
+        assert_eq!(first, second);
+        let json: serde_json::Value = serde_json::from_slice(&first).unwrap();
+        assert_eq!(json["source_path"], "EcTerrainOverrides.kdl");
     }
 
     /// No table given: the shipped one. A given table must exist and read strictly.
