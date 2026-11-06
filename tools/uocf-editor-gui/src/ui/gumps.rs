@@ -639,7 +639,7 @@ fn get_panel_gump_texture(
 
     let (width, height, pixels) = decode_gump_rgba(app, source, gump_id).ok()?;
     let label = format!("{} gump {gump_id}", source_label(app, source));
-    let handle = app.checked_texture(ctx, label.clone(), [width as usize, height as usize], &pixels, Default::default())?;
+    let handle = app.checked_texture(ctx, label.clone(), [width as usize, height as usize], &pixels, uot_gui::PIXEL_ART_TEXTURE_OPTIONS)?;
     app.texture_previews.insert(key, handle.clone());
     app.register_current_image_preview(key, label, width, height, &pixels);
     Some(handle)
@@ -1357,7 +1357,7 @@ fn render_ec_paperdoll(
         format!("paperdoll_{:?}_{body_id}", app.selected_gump_source),
         [width as usize, height as usize],
         &pixels,
-        Default::default(),
+        uot_gui::PIXEL_ART_TEXTURE_OPTIONS,
     )
     .map_err(|problem| color_eyre::eyre::eyre!("Cannot show the paperdoll: {problem}."))?;
     app.register_current_image_preview(
@@ -1428,7 +1428,7 @@ fn render_paperdoll(
         format!("paperdoll_{:?}_{}", app.selected_gump_source, app.selected_paperdoll_profile),
         [width as usize, height as usize],
         &pixels,
-        Default::default(),
+        uot_gui::PIXEL_ART_TEXTURE_OPTIONS,
     )
     .map_err(|problem| color_eyre::eyre::eyre!("Cannot show the paperdoll: {problem}."))?;
     let key = PAPERDOLL_PREVIEW_KEY | u64::from(body_id);

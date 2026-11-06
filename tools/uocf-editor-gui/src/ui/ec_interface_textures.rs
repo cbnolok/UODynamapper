@@ -158,7 +158,7 @@ fn thumbnail(app: &mut UocfEditorApp, ctx: &egui::Context, loaded: &LoadedUop, e
     let image = loaded.package.unpack_file_by_hash(entry.hash).ok().flatten().and_then(|payload| decode_thumbnail(&payload, &entry.full_name()));
     // An image that cannot be a texture has no thumbnail; the details say why.
     let handle = image.and_then(|image| {
-        crate::ui::textures::load_color_image(ctx, format!("interface_thumbnail_{:016x}", entry.hash), image, egui::TextureOptions::NEAREST).ok()
+        crate::ui::textures::load_color_image(ctx, format!("interface_thumbnail_{:016x}", entry.hash), image, uot_gui::PIXEL_ART_TEXTURE_OPTIONS).ok()
     });
     app.ec_interface_textures.thumbnails.insert(entry.hash, handle.clone());
     handle
@@ -315,7 +315,7 @@ fn ui_details(app: &mut UocfEditorApp, ctx: &egui::Context, ui: &mut egui::Ui, u
     let zoom_log2 = &mut app.ec_interface_textures.zoom_log2;
     let output = egui::ScrollArea::both().id_salt("ec_interface_texture_preview").auto_shrink([false, false]).show(ui, |ui| {
         let size = texture.size_vec2() * zoom_log2.exp2();
-        let image = egui::Image::new(&texture).fit_to_exact_size(size).texture_options(egui::TextureOptions::NEAREST);
+        let image = egui::Image::new(&texture).fit_to_exact_size(size).texture_options(uot_gui::PIXEL_ART_TEXTURE_OPTIONS);
         ui.add(background.under(image));
     });
     let factor = super::hovered_zoom_factor(ui, output.inner_rect);

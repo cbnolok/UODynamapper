@@ -17,6 +17,16 @@ const HORIZONTAL_SCROLL_MODIFIERS: egui::Modifiers = egui::Modifiers::ALT;
 /// No modifier forces vertical scrolling: egui's default is Alt, and with Alt on both axes neither would apply.
 const VERTICAL_SCROLL_MODIFIERS: egui::Modifiers = egui::Modifiers::NONE;
 
+/// How an image viewer samples pixel art, a gump or any image preview: nearest where a texel covers a pixel or more,
+/// so 1:1 stays exact and zoomed-in art stays sharp, and linear where the image is shrunk, so a large or upscaled image
+/// shown smaller doesn't alias. A backend that builds mip levels smooths a strong shrink further: egui_glow does,
+/// egui-wgpu ignores `mipmap_mode` (its linear minification averages the 2x2 texels of a 2x shrink).
+pub const PIXEL_ART_TEXTURE_OPTIONS: egui::TextureOptions = egui::TextureOptions {
+    minification: egui::TextureFilter::Linear,
+    mipmap_mode: Some(egui::TextureFilter::Linear),
+    ..egui::TextureOptions::NEAREST
+};
+
 #[derive(Clone, Copy, Debug)]
 pub struct NativeWindow {
     pub title: &'static str,

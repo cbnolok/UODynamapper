@@ -3054,7 +3054,7 @@ impl UocfEditorApp {
                 format!("uocf_upscale_original_{:016X}", source.key),
                 [source.width as usize, source.height as usize],
                 &source.rgba,
-                egui::TextureOptions::NEAREST,
+                uot_gui::PIXEL_ART_TEXTURE_OPTIONS,
             );
             self.upscale_original_texture_key = Some(source.key);
         }
@@ -3127,7 +3127,7 @@ impl UocfEditorApp {
                 format!("uocf_upscale_preview_{:016X}_{:?}", result.source_key, result.passes),
                 [result.width as usize, result.height as usize],
                 &result.rgba,
-                egui::TextureOptions::NEAREST,
+                uot_gui::PIXEL_ART_TEXTURE_OPTIONS,
             );
             self.upscale_preview_texture_key = Some(texture_key);
             self.upscale_preview_size = [result.width, result.height];
@@ -3171,7 +3171,7 @@ impl UocfEditorApp {
         match decode_uop_image(name, data) {
             Ok((width, height, pixels)) => {
                 let size = [width as usize, height as usize];
-                let handle = self.checked_texture(ctx, name, size, &pixels, Default::default())?;
+                let handle = self.checked_texture(ctx, name, size, &pixels, uot_gui::PIXEL_ART_TEXTURE_OPTIONS)?;
                 self.texture_previews.insert(hash, handle.clone());
                 self.register_current_image_preview(hash, name, width, height, &pixels);
                 Some(handle)
@@ -3433,7 +3433,7 @@ impl UocfEditorApp {
             format!("uop_art_image_{}_{:?}_h{}", art_id, source, self.selected_hue_id),
             [rgba.width() as usize, rgba.height() as usize],
             rgba.as_raw(),
-            Default::default(),
+            uot_gui::PIXEL_ART_TEXTURE_OPTIONS,
         )?;
         self.texture_previews.insert(key, handle.clone());
         self.register_current_image_preview(
@@ -3488,7 +3488,7 @@ impl UocfEditorApp {
                             format!("cc_land_{}_{:?}_h{}", art_id, source, hue_id),
                             [44, 44],
                             &pixels[..],
-                            Default::default(),
+                            uot_gui::PIXEL_ART_TEXTURE_OPTIONS,
                         )?;
                         self.texture_previews.insert(key, handle.clone());
                         self.register_current_image_preview(
@@ -3540,7 +3540,7 @@ impl UocfEditorApp {
                         format!("cc_static_{}_{:?}_h{}", art_id, source, hue_id),
                         [w as usize, h as usize],
                         &pixels[..],
-                        Default::default(),
+                        uot_gui::PIXEL_ART_TEXTURE_OPTIONS,
                     )?;
                     self.texture_previews.insert(key, handle.clone());
                     self.register_current_image_preview(
@@ -3633,7 +3633,7 @@ impl UocfEditorApp {
             ),
             [width as usize, height as usize],
             &pixels,
-            Default::default(),
+            uot_gui::PIXEL_ART_TEXTURE_OPTIONS,
         )?;
         self.texture_previews.insert(key, handle.clone());
         self.register_current_image_preview(
@@ -3770,7 +3770,7 @@ impl UocfEditorApp {
             format!("ec_hued_art_{}_{:?}_h{}", art_id, source, hue_id),
             [width as usize, height as usize],
             &pixels,
-            egui::TextureOptions::NEAREST,
+            uot_gui::PIXEL_ART_TEXTURE_OPTIONS,
         )?;
         self.texture_previews.insert(key, handle.clone());
         self.register_current_image_preview(
@@ -4144,7 +4144,7 @@ impl UocfEditorApp {
                             name,
                             [width as usize, height as usize],
                             &pixels,
-                            egui::TextureOptions::NEAREST,
+                            uot_gui::PIXEL_ART_TEXTURE_OPTIONS,
                         )?;
                         self.texture_previews.insert(preview_key, handle.clone());
                         self.register_current_image_preview(preview_key, name, width, height, &pixels);
@@ -4172,7 +4172,7 @@ impl UocfEditorApp {
                         let size = [img.width() as usize, img.height() as usize];
                         let pixels = img.to_rgba8();
                         let handle =
-                            self.checked_texture(ctx, name, size, pixels.as_raw(), egui::TextureOptions::NEAREST)?;
+                            self.checked_texture(ctx, name, size, pixels.as_raw(), uot_gui::PIXEL_ART_TEXTURE_OPTIONS)?;
                         self.texture_previews.insert(preview_key, handle.clone());
                         self.register_current_image_preview(
                             preview_key,

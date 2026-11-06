@@ -243,7 +243,7 @@ impl ArtTexmaps {
                         let image = ExportImage::texmap(&record);
                         let size = [image.width() as usize, image.height() as usize];
                         let name = format!("texmap_preview_{texture_id}");
-                        super::textures::load_rgba(ctx, name, size, &image.to_rgba(), Default::default()).map(|handle| (image, handle))
+                        super::textures::load_rgba(ctx, name, size, &image.to_rgba(), uot_gui::PIXEL_ART_TEXTURE_OPTIONS).map(|handle| (image, handle))
                     })
                     .transpose()
             });
