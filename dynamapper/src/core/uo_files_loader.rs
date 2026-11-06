@@ -227,14 +227,7 @@ impl ClassicGumpSource {
             Self::ClientFiles(classic) => classic,
         };
         let (width, height, pixels) = classic.decode_gump(gump_id, scratch)?;
-        Ok(udd_assets::gumps::GumpImage {
-            physical_width: u32::from(width),
-            physical_height: u32::from(height),
-            logical_width: u32::from(width),
-            logical_height: u32::from(height),
-            upscale_factor: 1,
-            rgba: pixels,
-        })
+        Ok(udd_assets::gumps::GumpImage::whole(u32::from(width), u32::from(height), 1, pixels))
     }
 }
 
@@ -1054,14 +1047,8 @@ mod tests {
         const SIDE: u32 = 2;
         const RGBA_CHANNELS: usize = 4;
         const OPAQUE_GREY: u8 = 128;
-        let served = udd_assets::gumps::GumpImage {
-            physical_width: SIDE,
-            physical_height: SIDE,
-            logical_width: SIDE,
-            logical_height: SIDE,
-            upscale_factor: 1,
-            rgba: vec![OPAQUE_GREY; (SIDE * SIDE) as usize * RGBA_CHANNELS],
-        };
+        let served =
+            udd_assets::gumps::GumpImage::whole(SIDE, SIDE, 1, vec![OPAQUE_GREY; (SIDE * SIDE) as usize * RGBA_CHANNELS]);
         let served_hash = udd_assets::gumps::gump_image_hash(&served);
         let other_hash = served_hash.wrapping_add(1);
         let check = SharedGumpCheck::default();

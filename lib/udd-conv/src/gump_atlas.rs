@@ -6,6 +6,7 @@ use udd_container::{AddFileRequest, AddOwnedFileRequest, CompressionFlag, DataTy
 
 use crate::package_progress::{AssetTaskProgress, AssetTaskProgressStage};
 use crate::page_compression::LOSSLESS_PAGE_COMPRESSION;
+use crate::rgba_bounds::nonzero_alpha_bounds;
 use crate::tex_art_cc::crop_rgba_page;
 use crate::{merge_unplaced_tiles, resolve_packing_axis, AtlasPackingMode};
 
@@ -15,7 +16,19 @@ pub const GUMP_ATLAS_PAGE_ID_BASE: u32 = 0xF000_0000;
 pub const GUMP_ATLAS_PAGE_MANIFEST_MAGIC: [u8; 4] = *b"GAPG";
 pub const GUMP_ATLAS_SLOT_MANIFEST_MAGIC: [u8; 4] = *b"GASL";
 /// 3: single gumps carry a pixel format byte, and every package carries these manifests (`udd_assets::gumps`).
-pub const GUMP_ATLAS_METADATA_VERSION: u32 = 3;
+/// 4: atlas gumps are trimmed to their drawn texels; each slot record adds the logical offset of the stored texels in
+/// the original canvas and the canvas's logical size, and a `gumps_ec` bakes the Enhanced paperdoll rule into alpha
+/// (`crate::ec_gumps`).
+pub const GUMP_ATLAS_METADATA_VERSION: u32 = 4;
+/// `magic, u32 version, u32 atlas width, u32 atlas height, u32 gutter, u32 count` before a manifest's records.
+const GUMP_ATLAS_MANIFEST_HEADER_BYTES: usize = GUMP_ATLAS_PAGE_MANIFEST_MAGIC.len() + 5 * size_of::<u32>();
+/// `u32 page index, u32 gump count, u32 used width, u32 used height`.
+const GUMP_ATLAS_PAGE_RECORD_BYTES: usize = 4 * size_of::<u32>();
+/// `u32 gump id, u32 page index`, then `u16 page gump index, x, y, width, height, upscale factor, offset x, offset y,
+/// canvas width, canvas height`.
+const GUMP_ATLAS_SLOT_RECORD_BYTES: usize = 2 * size_of::<u32>() + 10 * size_of::<u16>();
+/// The bytes of one RGBA8888 texel.
+const RGBA_BYTES: usize = 4;
 
 pub const DEFAULT_GUMP_ATLAS_WIDTH: u32 = 2048;
 pub const DEFAULT_GUMP_ATLAS_HEIGHT: u32 = 2048;
@@ -45,6 +58,7 @@ impl Default for GumpAtlasOptions {
     }
 }
 
+/// A whole gump: `width` x `height` physical texels, `upscale_factor` times its logical size.
 #[derive(Debug, Clone)]
 pub struct DecodedGump {
     pub gump_id: u32,
@@ -52,6 +66,23 @@ pub struct DecodedGump {
     pub height: u16,
     pub upscale_factor: u16,
     pub rgba: Vec<u8>,
+}
+
+/// A paperdoll gump trimmed to its drawn texels ([`trim_to_drawn_texels`]), as an atlas page stores it.
+#[derive(Debug, Clone)]
+struct TrimmedGump {
+    gump_id: u32,
+    /// The stored texels, in physical texels.
+    width: u16,
+    height: u16,
+    upscale_factor: u16,
+    /// Where the stored texels start in the original canvas, in logical texels.
+    offset_x: u16,
+    offset_y: u16,
+    /// The original canvas, in logical texels.
+    canvas_width: u16,
+    canvas_height: u16,
+    rgba: Vec<u8>,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -62,16 +93,25 @@ pub struct GumpAtlasPageRecord {
     pub used_height: u32,
 }
 
+/// Where a paperdoll gump's stored texels sit on an atlas page, and where they go back in its original canvas
+/// (`udd_assets::gumps::GumpAtlasSlotRecord`).
 #[derive(Debug, Clone, Copy)]
 pub struct GumpAtlasSlotRecord {
     pub gump_id: u32,
     pub page_index: u32,
     pub page_gump_index: u16,
+    /// The stored texels on the page, in physical texels.
     pub x: u16,
     pub y: u16,
     pub width: u16,
     pub height: u16,
     pub upscale_factor: u16,
+    /// Where the stored texels start in the original canvas, in logical texels.
+    pub offset_x: u16,
+    pub offset_y: u16,
+    /// The original canvas, in logical texels.
+    pub canvas_width: u16,
+    pub canvas_height: u16,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -83,6 +123,10 @@ struct PlacedGump {
     width: u16,
     height: u16,
     upscale_factor: u16,
+    offset_x: u16,
+    offset_y: u16,
+    canvas_width: u16,
+    canvas_height: u16,
 }
 
 #[derive(Debug, Clone)]
@@ -97,7 +141,8 @@ pub fn is_paperdoll_equipment_gump_id(gump_id: u32) -> bool {
 }
 
 /// Adds the paperdoll gumps' atlas pages and the page and slot manifests, which every gump package carries even with
-/// no paperdoll gump: their version covers the single gumps' payload too.
+/// no paperdoll gump: their version covers the single gumps' payload too. Each gump is stored trimmed to its drawn
+/// texels ([`trim_to_drawn_texels`]), its slot record saying where they go back in its original canvas.
 pub fn add_gump_atlas_files(
     builder: &mut UddpBuilder,
     gumps: Vec<DecodedGump>,
@@ -171,6 +216,64 @@ fn validate_options(options: &GumpAtlasOptions) -> eyre::Result<()> {
     Ok(())
 }
 
+/// Trims a gump to the rectangle around its drawn (alpha > 0) texels, widened to whole logical texels so its offset in
+/// the canvas is a whole number of logical texels (the user, 2026-11-06). Texels outside the rectangle are dropped, so
+/// the canvas comes back with them transparent black (`udd_assets::gumps::GumpImage::canvas_rgba`). A gump with no
+/// drawn texel keeps one transparent logical texel at the canvas origin, and a 0x0 gump none.
+fn trim_to_drawn_texels(gump: DecodedGump) -> eyre::Result<TrimmedGump> {
+    let factor = gump.upscale_factor.max(1);
+    let logical = usize::from(factor);
+    let (width, height) = (usize::from(gump.width), usize::from(gump.height));
+    eyre::ensure!(
+        width % logical == 0 && height % logical == 0,
+        "paperdoll gump {} ({}x{}) is not a whole number of logical texels at upscale {factor}",
+        gump.gump_id,
+        gump.width,
+        gump.height
+    );
+    eyre::ensure!(
+        gump.rgba.len() == width * height * RGBA_BYTES,
+        "paperdoll gump {} ({}x{}) has {} RGBA bytes",
+        gump.gump_id,
+        gump.width,
+        gump.height,
+        gump.rgba.len()
+    );
+    let align_down = |value: usize| value / logical * logical;
+    let align_up = |value: usize| value.div_ceil(logical) * logical;
+    let (left, top, right, bottom, drawn) = match nonzero_alpha_bounds(&gump.rgba, width, height) {
+        Some(bounds) => {
+            (align_down(bounds.left), align_down(bounds.top), align_up(bounds.right), align_up(bounds.bottom), true)
+        }
+        None if width == 0 || height == 0 => (0, 0, 0, 0, false),
+        None => (0, 0, logical, logical, false),
+    };
+    let stored_width = right - left;
+    let stored_height = bottom - top;
+    let rgba = if !drawn {
+        vec![0u8; stored_width * stored_height * RGBA_BYTES]
+    } else if (left, top, stored_width, stored_height) == (0, 0, width, height) {
+        gump.rgba
+    } else {
+        let mut rgba = Vec::with_capacity(stored_width * stored_height * RGBA_BYTES);
+        for row in gump.rgba.chunks_exact(width * RGBA_BYTES).skip(top).take(stored_height) {
+            rgba.extend_from_slice(&row[left * RGBA_BYTES..right * RGBA_BYTES]);
+        }
+        rgba
+    };
+    Ok(TrimmedGump {
+        gump_id: gump.gump_id,
+        width: stored_width as u16,
+        height: stored_height as u16,
+        upscale_factor: factor,
+        offset_x: (left / logical) as u16,
+        offset_y: (top / logical) as u16,
+        canvas_width: gump.width / factor,
+        canvas_height: gump.height / factor,
+        rgba,
+    })
+}
+
 fn pack_gumps_into_pages(
     gumps: Vec<DecodedGump>,
     options: &GumpAtlasOptions,
@@ -178,7 +281,7 @@ fn pack_gumps_into_pages(
 ) -> eyre::Result<(Vec<BuiltGumpAtlasPage>, Vec<GumpAtlasSlotRecord>)> {
     let mut pages = Vec::new();
     let mut slots = Vec::new();
-    let mut remaining = gumps;
+    let mut remaining = gumps.into_iter().map(trim_to_drawn_texels).collect::<eyre::Result<Vec<_>>>()?;
     let total_gumps = remaining.len() as u64;
     remaining.sort_by_key(|gump| gump.gump_id);
     let mut page_index = 0u32;
@@ -216,6 +319,10 @@ fn pack_gumps_into_pages(
             width: placed.width,
             height: placed.height,
             upscale_factor: placed.upscale_factor,
+            offset_x: placed.offset_x,
+            offset_y: placed.offset_y,
+            canvas_width: placed.canvas_width,
+            canvas_height: placed.canvas_height,
         }));
 
         pb.inc(page.placed_gumps.len() as u64);
@@ -238,9 +345,9 @@ fn pack_gumps_into_pages(
 }
 
 fn take_page_gump_prefix(
-    gumps: Vec<DecodedGump>,
+    gumps: Vec<TrimmedGump>,
     options: &GumpAtlasOptions,
-) -> eyre::Result<(Vec<DecodedGump>, Vec<DecodedGump>)> {
+) -> eyre::Result<(Vec<TrimmedGump>, Vec<TrimmedGump>)> {
     let prefix_len = max_fitting_page_prefix_len(&gumps, options)?;
     if prefix_len == 0 {
         eyre::bail!(
@@ -255,7 +362,7 @@ fn take_page_gump_prefix(
     Ok((selected, leftovers))
 }
 
-fn max_fitting_page_prefix_len(gumps: &[DecodedGump], options: &GumpAtlasOptions) -> eyre::Result<usize> {
+fn max_fitting_page_prefix_len(gumps: &[TrimmedGump], options: &GumpAtlasOptions) -> eyre::Result<usize> {
     let mut low = 1usize;
     let mut high = gumps.len();
     let mut best = 0usize;
@@ -273,7 +380,7 @@ fn max_fitting_page_prefix_len(gumps: &[DecodedGump], options: &GumpAtlasOptions
     Ok(best)
 }
 
-fn page_prefix_fits(gumps: &[DecodedGump], options: &GumpAtlasOptions) -> eyre::Result<bool> {
+fn page_prefix_fits(gumps: &[TrimmedGump], options: &GumpAtlasOptions) -> eyre::Result<bool> {
     let mut to_pack = gumps.to_vec();
     sort_gumps_within_page(&mut to_pack);
     let mut allocator = AtlasAllocator::new(size2(
@@ -321,9 +428,9 @@ fn page_prefix_fits(gumps: &[DecodedGump], options: &GumpAtlasOptions) -> eyre::
 
 fn build_page(
     page_index: u32,
-    mut gumps: Vec<DecodedGump>,
+    mut gumps: Vec<TrimmedGump>,
     options: &GumpAtlasOptions,
-) -> eyre::Result<(BuiltGumpAtlasPage, Vec<DecodedGump>)> {
+) -> eyre::Result<(BuiltGumpAtlasPage, Vec<TrimmedGump>)> {
     let mut allocator = AtlasAllocator::new(size2(
         options.atlas_width as i32,
         options.atlas_height as i32,
@@ -388,6 +495,10 @@ fn build_page(
                 width: gump.width,
                 height: gump.height,
                 upscale_factor: gump.upscale_factor,
+                offset_x: gump.offset_x,
+                offset_y: gump.offset_y,
+                canvas_width: gump.canvas_width,
+                canvas_height: gump.canvas_height,
             });
         } else {
             leftovers.push(gump);
@@ -409,7 +520,7 @@ fn build_page(
     ))
 }
 
-fn sort_gumps_within_page(gumps: &mut [DecodedGump]) {
+fn sort_gumps_within_page(gumps: &mut [TrimmedGump]) {
     gumps.sort_by(|left, right| {
         let left_area = left.width as u32 * left.height as u32;
         let right_area = right.width as u32 * right.height as u32;
@@ -455,7 +566,7 @@ fn serialize_page_manifest(
     options: &GumpAtlasOptions,
     pages: &[BuiltGumpAtlasPage],
 ) -> eyre::Result<Vec<u8>> {
-    let mut bytes = Vec::with_capacity(24 + pages.len() * 16);
+    let mut bytes = Vec::with_capacity(GUMP_ATLAS_MANIFEST_HEADER_BYTES + pages.len() * GUMP_ATLAS_PAGE_RECORD_BYTES);
     bytes.extend_from_slice(&GUMP_ATLAS_PAGE_MANIFEST_MAGIC);
     bytes.write_u32::<LittleEndian>(GUMP_ATLAS_METADATA_VERSION)?;
     bytes.write_u32::<LittleEndian>(options.atlas_width)?;
@@ -475,7 +586,7 @@ fn serialize_slot_manifest(
     options: &GumpAtlasOptions,
     slots: &[GumpAtlasSlotRecord],
 ) -> eyre::Result<Vec<u8>> {
-    let mut bytes = Vec::with_capacity(24 + slots.len() * 20);
+    let mut bytes = Vec::with_capacity(GUMP_ATLAS_MANIFEST_HEADER_BYTES + slots.len() * GUMP_ATLAS_SLOT_RECORD_BYTES);
     bytes.extend_from_slice(&GUMP_ATLAS_SLOT_MANIFEST_MAGIC);
     bytes.write_u32::<LittleEndian>(GUMP_ATLAS_METADATA_VERSION)?;
     bytes.write_u32::<LittleEndian>(options.atlas_width)?;
@@ -491,6 +602,10 @@ fn serialize_slot_manifest(
         bytes.write_u16::<LittleEndian>(slot.width)?;
         bytes.write_u16::<LittleEndian>(slot.height)?;
         bytes.write_u16::<LittleEndian>(slot.upscale_factor.max(1))?;
+        bytes.write_u16::<LittleEndian>(slot.offset_x)?;
+        bytes.write_u16::<LittleEndian>(slot.offset_y)?;
+        bytes.write_u16::<LittleEndian>(slot.canvas_width)?;
+        bytes.write_u16::<LittleEndian>(slot.canvas_height)?;
     }
     Ok(bytes)
 }
@@ -629,6 +744,56 @@ mod tests {
         let package = udd_assets::gumps::GumpsPackage::from_uddp_package(reader).unwrap();
 
         assert_eq!(package.read_gump_rgba(GUMP_ID).unwrap(), (u32::from(WIDTH), u32::from(HEIGHT), rgba));
+    }
+
+    /// Each gump is stored trimmed to its drawn texels, widened to whole logical texels, and reads back with that
+    /// rectangle and its canvas: padded, the canvas it was packed from. At 1x, at 2x upscale (the drawn texels at
+    /// physical 3,2 and 4,3 widen to 2,2..6,4), and with no drawn texel (one transparent logical texel kept).
+    #[test]
+    fn trimmed_gumps_read_back_their_whole_canvas() {
+        use udd_assets::gumps::GumpRect;
+        const DRAWN: [u8; 4] = [10, 20, 30, 255];
+        const SOFT: [u8; 4] = [40, 50, 60, 128];
+        let cases = [
+            (50_001, 5, 4, 1, vec![(1, 1), (3, 2)], GumpRect { x: 1, y: 1, width: 3, height: 2 }),
+            (50_002, 8, 6, 2, vec![(3, 2), (4, 3)], GumpRect { x: 2, y: 2, width: 4, height: 2 }),
+            (50_003, 4, 4, 2, vec![], GumpRect { x: 0, y: 0, width: 2, height: 2 }),
+        ];
+        let gumps = cases
+            .iter()
+            .map(|(gump_id, width, height, upscale_factor, drawn, _)| {
+                let mut rgba = vec![0u8; usize::from(*width) * usize::from(*height) * RGBA_BYTES];
+                for (&(x, y), texel) in drawn.iter().zip([DRAWN, SOFT]) {
+                    let start = (y * usize::from(*width) + x) * RGBA_BYTES;
+                    rgba[start..start + RGBA_BYTES].copy_from_slice(&texel);
+                }
+                DecodedGump { gump_id: *gump_id, width: *width, height: *height, upscale_factor: *upscale_factor, rgba }
+            })
+            .collect::<Vec<_>>();
+        let mut builder = UddpBuilder::new(LookupMode::SparseId);
+        add_gump_atlas_files(&mut builder, gumps.clone(), &GumpAtlasOptions::default()).unwrap();
+        let package =
+            udd_assets::gumps::GumpsPackage::from_uddp_package(UddpReader::open(builder.build().unwrap()).unwrap())
+                .unwrap();
+
+        for ((gump_id, width, height, upscale_factor, _, stored_rect), gump) in cases.iter().zip(&gumps) {
+            let image = package.read_gump_image(*gump_id).unwrap();
+            assert_eq!((image.physical_width, image.physical_height), (u32::from(*width), u32::from(*height)));
+            let factor = u32::from(*upscale_factor);
+            assert_eq!((image.logical_width, image.logical_height), (u32::from(*width) / factor, u32::from(*height) / factor));
+            assert_eq!(image.upscale_factor, *upscale_factor);
+            assert_eq!(image.stored_rect, *stored_rect, "gump {gump_id}");
+            assert_eq!(image.canvas_rgba().as_ref(), gump.rgba.as_slice(), "gump {gump_id}");
+            assert_eq!(package.read_gump_rgba(*gump_id).unwrap(), (u32::from(*width), u32::from(*height), gump.rgba.clone()));
+        }
+    }
+
+    /// A gump that isn't a whole number of logical texels can't be trimmed to whole logical texels.
+    #[test]
+    fn a_gump_of_part_logical_texels_is_refused() {
+        let gump = DecodedGump { gump_id: 50_001, width: 3, height: 2, upscale_factor: 2, rgba: vec![255; 3 * 2 * RGBA_BYTES] };
+        let error = trim_to_drawn_texels(gump).unwrap_err();
+        assert!(error.to_string().contains("not a whole number of logical texels"), "{error}");
     }
 
     /// A package without paperdoll gumps still carries the manifests, at the version the reader expects.

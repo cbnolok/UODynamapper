@@ -201,11 +201,17 @@ pub enum GumpSourceInfo {
     AtlasSlot {
         page_index: u32,
         page_gump_index: u16,
+        /// The stored texels on the page, in physical texels: the gump trimmed to its drawn texels.
         x: u16,
         y: u16,
         width: u16,
         height: u16,
         upscale_factor: u16,
+        /// Where the stored texels start in the gump's canvas, and the canvas, in logical texels.
+        offset_x: u16,
+        offset_y: u16,
+        canvas_width: u16,
+        canvas_height: u16,
     },
 }
 

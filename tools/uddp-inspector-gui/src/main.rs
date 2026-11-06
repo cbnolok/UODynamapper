@@ -309,7 +309,7 @@ impl InspectorApp {
                             ui.add(self.settings.preview_background.under(
                                 egui::Image::new(texture)
                                     .maintain_aspect_ratio(true)
-                                    .texture_options(egui::TextureOptions::NEAREST)
+                                    .texture_options(uot_gui::PIXEL_ART_TEXTURE_OPTIONS)
                                     .fit_to_exact_size(new_size),
                             ));
                         });

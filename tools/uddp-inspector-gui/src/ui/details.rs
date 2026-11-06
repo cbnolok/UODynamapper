@@ -114,7 +114,7 @@ impl InspectorApp {
                 egui::ScrollArea::both().show(ui, |ui| {
                     ui.add(background.under(
                         egui::Image::new(&texture)
-                            .texture_options(egui::TextureOptions::NEAREST),
+                            .texture_options(uot_gui::PIXEL_ART_TEXTURE_OPTIONS),
                     ));
                 });
             }
@@ -473,6 +473,10 @@ impl InspectorApp {
                             width,
                             height,
                             upscale_factor,
+                            offset_x,
+                            offset_y,
+                            canvas_width,
+                            canvas_height,
                         } => {
                             metadata_label(ui, "Source:");
                             ui.label("atlas slot");
@@ -487,10 +491,15 @@ impl InspectorApp {
                             ui.label(format!("{},{} - {}x{}", x, y, width, height));
                             ui.end_row();
                             metadata_label(ui, "Logical Size:");
+                            ui.label(format!("{}x{}", canvas_width, canvas_height));
+                            ui.end_row();
+                            metadata_label(ui, "Stored At:");
                             ui.label(format!(
-                                "{}x{}",
-                                (u32::from(*width) / u32::from((*upscale_factor).max(1))).max(1),
-                                (u32::from(*height) / u32::from((*upscale_factor).max(1))).max(1)
+                                "{},{} - {}x{} logical",
+                                offset_x,
+                                offset_y,
+                                u32::from(*width) / u32::from((*upscale_factor).max(1)),
+                                u32::from(*height) / u32::from((*upscale_factor).max(1))
                             ));
                             ui.end_row();
                             metadata_label(ui, "Upscale:");

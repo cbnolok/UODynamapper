@@ -91,19 +91,23 @@ pub struct GumpPixels<'a> {
 }
 
 impl<'a> GumpPixels<'a> {
+    /// The pixels of a single gump, which stores its whole canvas (only atlas gumps are trimmed).
     pub fn of(image: &'a GumpImage) -> Self {
+        debug_assert!(!image.is_trimmed(), "a single gump stores its whole canvas");
         Self {
             width: image.physical_width,
             height: image.physical_height,
             upscale_factor: image.upscale_factor,
-            rgba: &image.rgba,
+            rgba: &image.stored_rgba,
         }
     }
 }
 
 /// Whether two images of gump `gump_id` draw the same: the same size and upscale factor, and the same RGBA except the
 /// red, green and blue under texels whose alpha is 0 in both. The paperdoll body gumps ([`is_paperdoll_body_gump_id`])
-/// must match exactly, since the Enhanced paperdoll keys each layer on its first texel's colour whatever its alpha.
+/// must match exactly. The Enhanced paperdoll keyed each layer on its first texel's colour whatever its alpha; a
+/// `gumps_ec` now bakes that rule into its body gumps' alpha at packing time (`crate::ec_gumps`), leaving their clear
+/// texels transparent black as the Classic decoder's, so the exact match still holds for a twin.
 pub fn gump_images_draw_the_same(gump_id: u32, a: GumpPixels, b: GumpPixels) -> bool {
     if (a.width, a.height, a.upscale_factor) != (b.width, b.height, b.upscale_factor) || a.rgba.len() != b.rgba.len() {
         return false;

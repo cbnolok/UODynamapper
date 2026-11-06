@@ -199,7 +199,7 @@ impl InspectorApp {
         }
 
         let color_image = egui::ColorImage::from_rgba_unmultiplied(size, pixels);
-        let texture = ctx.load_texture(texture_name, color_image, egui::TextureOptions::NEAREST);
+        let texture = ctx.load_texture(texture_name, color_image, uot_gui::PIXEL_ART_TEXTURE_OPTIONS);
         self.preview_rgba = Some((texture.id(), Arc::from(pixels)));
         self.preview_texture = Some(texture);
         self.preview_texture_size = Some(size);
@@ -295,7 +295,7 @@ impl InspectorApp {
             return;
         }
         let atlas_image = egui::ColorImage::from_rgba_unmultiplied(atlas_size, &page.rgba);
-        self.atlas_texture = Some(ctx.load_texture("full_atlas", atlas_image, egui::TextureOptions::NEAREST));
+        self.atlas_texture = Some(ctx.load_texture("full_atlas", atlas_image, uot_gui::PIXEL_ART_TEXTURE_OPTIONS));
         self.atlas_texture_size = Some(atlas_size);
         self.atlas_text = Some(format!(
             "Full Atlas Page {} (format: {})",
@@ -1044,22 +1044,20 @@ impl InspectorApp {
             .map(|gump_id| {
                 if let Some(slot) = package.atlas_slot(gump_id) {
                     let upscale_factor = slot.upscale_factor.max(1);
-                    let logical_width =
-                        (u32::from(slot.width) / u32::from(upscale_factor)).max(1);
-                    let logical_height =
-                        (u32::from(slot.height) / u32::from(upscale_factor)).max(1);
                     VirtualEntry {
                         id: gump_id,
                         _data_type: udd_container::DataType::Gump as u8,
                         kind: "Gump".to_string(),
                         summary: format!(
-                            "atlas {}x{} at {},{}; logical {}x{}; upscale {}x",
+                            "atlas {}x{} at {},{}; logical {}x{}, stored from {},{}; upscale {}x",
                             slot.width,
                             slot.height,
                             slot.x,
                             slot.y,
-                            logical_width,
-                            logical_height,
+                            slot.canvas_width,
+                            slot.canvas_height,
+                            slot.offset_x,
+                            slot.offset_y,
                             upscale_factor
                         ),
                         location: format!("page {}", slot.page_index),
@@ -1072,6 +1070,10 @@ impl InspectorApp {
                                 width: slot.width,
                                 height: slot.height,
                                 upscale_factor,
+                                offset_x: slot.offset_x,
+                                offset_y: slot.offset_y,
+                                canvas_width: slot.canvas_width,
+                                canvas_height: slot.canvas_height,
                             },
                         }),
                     }
@@ -1382,7 +1384,8 @@ impl InspectorApp {
                             return;
                         };
 
-                        match package.read_gump_image(ventry.id) {
+                        // An atlas gump is stored trimmed to its drawn texels: the preview shows its whole canvas.
+                        match package.read_gump_image(ventry.id).map(udd_assets::gumps::GumpImage::into_whole) {
                             Ok(image) => {
                                 let source = match info.source {
                                     GumpSourceInfo::SingleFile { .. } => "single payload".to_string(),
@@ -1397,7 +1400,7 @@ impl InspectorApp {
                                         image.physical_width as usize,
                                         image.physical_height as usize,
                                     ],
-                                    &image.rgba,
+                                    &image.stored_rgba,
                                     format!(
                                         "Gump {} ({}x{} physical, {}x{} logical, {}, upscale {}x)",
                                         ventry.id,
@@ -1494,7 +1497,7 @@ impl InspectorApp {
 
         if entry.data_type == udd_container::DataType::Gump as u8 {
             if let (FileKey::Id(gump_id), Some(package)) = (entry.key, self.gumps_package.clone()) {
-                if let Ok(image) = package.read_gump_image(gump_id) {
+                if let Ok(image) = package.read_gump_image(gump_id).map(udd_assets::gumps::GumpImage::into_whole) {
                     self.set_preview_image(
                         ctx,
                         &format!("gump_{}", gump_id),
@@ -1502,7 +1505,7 @@ impl InspectorApp {
                             image.physical_width as usize,
                             image.physical_height as usize,
                         ],
-                        &image.rgba,
+                        &image.stored_rgba,
                         format!(
                             "Gump {} ({}x{} physical, {}x{} logical, single payload, upscale {}x)",
                             gump_id,
@@ -2021,11 +2024,10 @@ mod tests {
         bytes.write_u32::<LittleEndian>(50_001).unwrap();
         bytes.write_u32::<LittleEndian>(0).unwrap();
         bytes.write_u16::<LittleEndian>(0).unwrap();
-        bytes.write_u16::<LittleEndian>(1).unwrap();
-        bytes.write_u16::<LittleEndian>(0).unwrap();
-        bytes.write_u16::<LittleEndian>(2).unwrap();
-        bytes.write_u16::<LittleEndian>(1).unwrap();
-        bytes.write_u16::<LittleEndian>(2).unwrap();
+        // 2x2 physical texels at 1,0 on the page, upscaled 2x: one logical texel at 1,0 of a 2x1 canvas.
+        for value in [1, 0, 2, 2, 2, 1, 0, 2, 1] {
+            bytes.write_u16::<LittleEndian>(value).unwrap();
+        }
         bytes
     }
 
@@ -2049,7 +2051,7 @@ mod tests {
         let slot_manifest = gump_slot_manifest_bytes();
         let page_pixels = vec![
             0, 0, 0, 0, 9, 10, 11, 12, 13, 14, 15, 16,
-            0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+            0, 0, 0, 0, 17, 18, 19, 20, 21, 22, 23, 24,
         ];
         for (id, data_type, data, width, height) in [
             (0xE000_0000, DataType::Metadata as u8, page_manifest.as_slice(), 0, 0),
@@ -2554,7 +2556,7 @@ mod tests {
         assert_eq!(*raw_size as usize, udd_assets::gumps::SINGLE_GUMP_HEADER_BYTES + SINGLE_GUMP_RGBA_BYTES);
 
         assert_eq!(entries[1].id, 50_001);
-        assert!(entries[1].summary.contains("logical 1x1"));
+        assert!(entries[1].summary.contains("logical 2x1, stored from 1,0"), "{}", entries[1].summary);
         assert_eq!(entries[1].location, "page 0");
         let VirtualEntryData::Gump(atlas_info) = &entries[1].data else {
             panic!("expected atlas gump entry");
@@ -2567,13 +2569,26 @@ mod tests {
             width,
             height,
             upscale_factor,
+            offset_x,
+            offset_y,
+            canvas_width,
+            canvas_height,
         } = &atlas_info.source else {
             panic!("expected atlas source");
         };
         assert_eq!(*page_index, 0);
         assert_eq!(*page_gump_index, 0);
-        assert_eq!((*x, *y, *width, *height), (1, 0, 2, 1));
+        assert_eq!((*x, *y, *width, *height), (1, 0, 2, 2));
         assert_eq!(*upscale_factor, 2);
+        assert_eq!((*offset_x, *offset_y, *canvas_width, *canvas_height), (1, 0, 2, 1));
+
+        // The preview gets the whole canvas back: the stored texels at 2,0, transparent left of them.
+        let image = package.read_gump_image(50_001).unwrap().into_whole();
+        assert_eq!((image.physical_width, image.physical_height), (4, 2));
+        assert_eq!(
+            image.stored_rgba,
+            [[0; 8].as_slice(), &[9, 10, 11, 12, 13, 14, 15, 16], &[0; 8], &[17, 18, 19, 20, 21, 22, 23, 24]].concat()
+        );
     }
 
     /// eframe storage holding one settings string.
