@@ -19,7 +19,7 @@ use uocf::uop_container::hash_dictionary::HashDictionary;
 use uocf::uop_container::package::UopPackage;
 
 const CLIENT_DIR_ENVS: [&str; 2] = ["UO_EC_CLIENT_DIR", "UO_KR_CLIENT_DIR"];
-const DICTIONARY: &str = "../../tools/_shared_assets/Dictionary.dic";
+const DICTIONARY: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/assets/Dictionary.dic");
 const LUA_EXTENSION: &str = "lua";
 const XML_EXTENSION: &str = "xml";
 /// The shipped document the client drops ([`KNOWN_DROPPED_ERROR`]).

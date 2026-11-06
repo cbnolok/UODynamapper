@@ -170,7 +170,7 @@ Measured on the 78 EC and 63 KR text entries of `GameData.uop` (the reader: `enh
   `legacyterrainmap`, `mobart`, `skilldata`, `weaponability`, with "ID exceeds limit range" messages); the
   Interface Lua reads others (`itemprop`, `tipoftheday`). That the C++ tables go through the audio tables' CSV
   reader (Ghidra-confirmed there) is probable, not traced.
-- Names found by hash and added to `tools/_shared_assets/Dictionary.dic`: `femalegargoylepants`,
+- Names found by hash and added to `lib/uocf/assets/Dictionary.dic`: `femalegargoylepants`,
   `femalegargoyleshirts`, `malegargoylepants`, `malegargoyleshirts`, `tipoftheday` (the dictionary had a wrong
   `da` for it), `itemprop`. Still unnamed: 7 house customization tables (`06049F5F9520EEC6`, `180B76710FCCF153`,
   `2103671F4F662B94`, `341EC3C28A7BCB26`, `629EA7108E6459EF`, `92C3AA51CEABDC49`, `E010A4D243ABA65F`) and the OLE

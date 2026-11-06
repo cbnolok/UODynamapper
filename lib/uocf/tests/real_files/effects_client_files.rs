@@ -27,8 +27,8 @@ use uocf::uop_container::package::UopPackage;
 const EXPECTED_CHAOS_SCRIPTS: usize = 61;
 /// Size of the client's timestamp data block header (`u16 3`, `u16 8`, `u64` FILETIME).
 const CLIENT_TIMESTAMP_HEADER_SIZE: u32 = 12;
-/// The repo's UOP name dictionary, relative to this crate.
-const REPO_HASH_DICTIONARY: &str = "../../tools/_shared_assets/Dictionary.dic";
+/// The repo's UOP name dictionary in this crate's assets folder.
+const REPO_HASH_DICTIONARY: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/assets/Dictionary.dic");
 /// File name of the string dictionary package.
 const STRING_DICTIONARY_UOP_NAME: &str = "string_dictionary.uop";
 /// Entries of `EffectDefinitionCollection.uop` in the reference release, and how many hash to no id.

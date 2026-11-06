@@ -390,11 +390,12 @@ mod tests {
     #[ignore = "needs real clients: set UO_EC_CLIENT_ROOTS to folders with an Interface.uop and run with --ignored"]
     fn every_listed_image_of_a_shipped_interface_decodes() {
         const CLIENT_ROOTS_ENV: &str = "UO_EC_CLIENT_ROOTS";
-        const DICTIONARY: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/../_shared_assets/Dictionary.dic");
+        let dictionary_asset = uocf::utils::bundled_files::HASH_DICTIONARY;
+        let dictionary_path = dictionary_asset.checkout_dir().join(dictionary_asset.relative_path());
         const TGA_HEADER_BYTES: usize = 18;
         let roots = std::env::var_os(CLIENT_ROOTS_ENV).unwrap_or_else(|| panic!("set {CLIENT_ROOTS_ENV}"));
         let mut dictionary = Dictionary::new();
-        dictionary.load_dic(std::path::Path::new(DICTIONARY)).unwrap();
+        dictionary.load_dic(&dictionary_path).unwrap();
         for root in std::env::split_paths(&roots) {
             let Some(path) = uocf::utils::path::find_file_ignoring_case(&root, "Interface.uop") else {
                 println!("{}: no Interface.uop", root.display());

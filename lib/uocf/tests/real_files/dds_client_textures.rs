@@ -48,8 +48,8 @@ const BC_MAX_ERROR_BOUND: u8 = 64;
 const REPLACED_PACKAGES: [&str; 2] = ["TerrainTexture.uop", "EffectTexture.uop"];
 /// The mean channel error allowed for the replaced mip 0 against the new image.
 const REPLACED_MEAN_ERROR_BOUND: f64 = 2.0;
-/// The hash dictionary of the repository, relative to the crate.
-const DICTIONARY: &str = "../../tools/_shared_assets/Dictionary.dic";
+/// The hash dictionary in this crate's assets folder.
+const DICTIONARY: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/assets/Dictionary.dic");
 const STRING_DICTIONARY_FILE: &str = "string_dictionary.uop";
 /// Entries per content format in the EC, EC fp, KR and three Classic installs of `ENHANCED_CLIENT_FILES.md`
 /// ("Images in client packages"), and the named entries whose extension disagrees with their content: the

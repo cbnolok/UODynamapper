@@ -41,5 +41,5 @@ uop-dict-populator-gui
 
 - For CLI-based dictionary population, use `uop-dict-populator-cli` from
   [`uocf-cli`](../uocf-cli/README.md).
-- The shared `tools/_shared_assets/Dictionary.dic` is a pre-built community
+- The shared `lib/uocf/assets/Dictionary.dic` is a pre-built community
   dictionary. Load it as a starting point and expand from there.

@@ -26,7 +26,7 @@ const CLIENT_DIR_ENVS: [(&str, FormatPolicy); 3] = [
     ("UO_KR_CLIENT_DIR", KR_AUDIO_POLICY),
     ("UO_CC_CLIENT_DIR", CC_AUDIO_POLICY),
 ];
-const DICTIONARY: &str = "../../tools/_shared_assets/Dictionary.dic";
+const DICTIONARY: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/assets/Dictionary.dic");
 const STRING_DICTIONARY_FILE: &str = "string_dictionary.uop";
 const GAME_DATA_FILE: &str = "GameData.uop";
 /// Every shipped Enhanced Client file is one its decoder (Miles 7.2c) is verified to play.

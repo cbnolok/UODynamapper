@@ -146,7 +146,7 @@ a background hash-expansion search. Saves results as a `.dic` file compatible
 with MPE (Mythic Package Editor) and `uocf-editor-gui`.
 
 The shared starting-point dictionary lives at
-`tools/_shared_assets/Dictionary.dic`. `uop-tool merge-dic` can merge multiple
+`lib/uocf/assets/Dictionary.dic`. `uop-tool merge-dic` can merge multiple
 `.dic` files.
 
 ### uocf library

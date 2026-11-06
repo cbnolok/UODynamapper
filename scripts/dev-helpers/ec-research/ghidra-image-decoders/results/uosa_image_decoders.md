@@ -4,7 +4,7 @@ Program: `UOSA.exe`, SHA-256 `5a5e9dc536c836d1bf10b6f86bb88f61a6ae078f519d4060d3
 Sources compared: Gamebryo 2.6 `CoreLibs/NiMain` (`NiDevImageConverter.cpp`, `NiTGAReader.cpp`,
 `NiBMPReader.cpp`, `NiDDSReader.cpp`, `NiTexture.cpp`, `NiPixelData.cpp`) and `CoreLibs/NiDX9Renderer`
 (`NiDX9SourceTextureData.cpp`). Data: the `_Ultima Online Enhanced` install, the `ec_kr_extract`
-copies of `MainMisc.uop` (`data/assetmap.xml` of EC, KR and Classic) and `tools/_shared_assets/Dictionary.dic`.
+copies of `MainMisc.uop` (`data/assetmap.xml` of EC, KR and Classic) and `lib/uocf/assets/Dictionary.dic`.
 
 Confidence: **confirmed** (read in code and checked on data), **high** (read in code, no counter-evidence),
 **probable** (partial reading), **unknown**.

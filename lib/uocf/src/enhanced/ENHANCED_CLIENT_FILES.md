@@ -621,7 +621,7 @@ Facet sizes in the executable (`client_exe::facet_dimensions`,
   - optionally from a hash dictionary.
 
   Without a hash dictionary, 704 of the 829 names resolve. With
-  `tools/_shared_assets/Dictionary.dic`, 721 resolve.
+  `lib/uocf/assets/Dictionary.dic`, 721 resolve.
 - Reading and editing:
   - `read` reads an entry by file name;
   - `put` replaces an entry or adds one, filling an empty slot first;
@@ -1511,10 +1511,10 @@ Known weak signals:
 
 Census of every entry of every UOP of the EC, EC fp, KR and three Classic
 installs (168 packages, 734,299 entries, 614,960 of them named by
-`tools/_shared_assets/Dictionary.dic` and the six `string_dictionary.uop`),
+`lib/uocf/assets/Dictionary.dic` and the six `string_dictionary.uop`),
 classified by its decompressed content alone, never by its name
 (`image_census.rs`). Rerun with `uocf-cli image census <dirs> --dictionary
-tools/_shared_assets/Dictionary.dic --string-dictionary
+lib/uocf/assets/Dictionary.dic --string-dictionary
 <install>/string_dictionary.uop ...`; `--records <tsv>` dumps every DDS header,
 `--contents <tsv>` every entry that is not plain binary with its name, content
 and TGA verdict.

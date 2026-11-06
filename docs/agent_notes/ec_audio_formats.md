@@ -19,7 +19,7 @@ Rerun:
 C=/mnt/dati/_proj_local/_uo_clients
 uocf-cli audio census --client "$C/_Ultima Online Enhanced" --client "$C/_Ultima Online Classic" \
   --client "$C/UO - Old KR" --client "$C/Ultima Online Gold" \
-  --dictionary tools/_shared_assets/Dictionary.dic --output census.md --tsv census.tsv
+  --dictionary lib/uocf/assets/Dictionary.dic --output census.md --tsv census.tsv
 ```
 
 Every MP3, WAV and Classic slot of the four clients decodes (symphonia for MP3, own code for PCM) to exactly the
@@ -85,8 +85,19 @@ frame). No decode failures.
   `B7D9D1C334E536A7` `.../pirates_water_roar_01.mp3`. No row names them either (the rows say `pirates_*` without
   `_01`).
 
-The labels of `tools/_shared_assets/manual_mappings_from_ec_super_viewer_todo/AudioCollection.xml` are display
-labels, not hash preimages; the table paths and Classic slot names do not cover these entries.
+The retired EC Super Viewer `AudioCollection.xml` contained display labels, not
+hash preimages. Of its 1,685 rows, 1,682 hashes already have names in the bundled
+dictionary. The three remaining labels are retained here as unverified research
+hints, not dictionary entries:
+
+| Hash | Super Viewer display label |
+|---|---|
+| `8E7736F30EEE5E3B` | `sounds/highseas/guardian01.mp3` |
+| `814E39778A04107C` | `sounds/treasure/m_mob_mine.mp3` |
+| `DBDCE27B2628F5B6` | `legacy/(1664) guardian01.wav` |
+
+The table paths and Classic slot names do not resolve these hashes. The original
+XML remains in git history; no runtime or conversion code consumed it.
 
 ## Kingdom Reborn `Audio.uop` (1,553 entries)
 

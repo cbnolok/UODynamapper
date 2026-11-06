@@ -16,7 +16,7 @@ use std::path::{Component, Path, PathBuf};
 /// The release folder holding the data files, beside the `bin/` folder of the executables.
 pub const RELEASE_SHARED_DIR: &str = "shared";
 /// The assets shared by the tools in the source checkout, relative to this crate's folder.
-const TOOLS_SHARED_ASSETS_FROM_CRATE: &str = "../../tools/_shared_assets";
+const HASH_DICTIONARY_ASSETS_FROM_CRATE: &str = "assets";
 
 /// A data file the tools ship with.
 #[derive(Clone, Copy, Debug)]
@@ -64,7 +64,7 @@ pub const HASH_DICTIONARY: BundledFile = BundledFile {
     name: "Dictionary.dic",
     subdir: "",
     crate_dir: env!("CARGO_MANIFEST_DIR"),
-    checkout_dir_from_crate: TOOLS_SHARED_ASSETS_FROM_CRATE,
+    checkout_dir_from_crate: HASH_DICTIONARY_ASSETS_FROM_CRATE,
 };
 
 /// The path of `file`: `given` when set (it must exist), else the first existing default location. The error names

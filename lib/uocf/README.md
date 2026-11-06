@@ -5,6 +5,16 @@ library for the workspace. It provides readers, writers, and data structures for
 Classic Client, Kingdom Reborn, and Enhanced Client asset files, as well as the
 `.uop` package infrastructure used across all tools.
 
+## Bundled data
+
+`assets/Dictionary.dic` is the shared UOP hash-to-path dictionary, maintained by
+this crate alongside its readers. Tools find it through
+`uocf::utils::bundled_files::HASH_DICTIONARY`; use that descriptor instead of
+hardcoding another crate's source path. Release packaging copies it to
+`shared/Dictionary.dic` beside the tools' `bin/` folder. Development builds fall
+back to this crate's `assets/` folder. This hash dictionary is distinct from the
+original client's `string_dictionary.uop` string table.
+
 ## Module overview
 
 ### `uop_container`

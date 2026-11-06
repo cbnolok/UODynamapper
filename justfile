@@ -218,7 +218,7 @@ tool_bins := "udd-cli udd-conv-gui uddp-inspector-gui uo-client-patcher-gui uocf
 tool_packages := "-p udd-conv-cli -p uocf-cli -p udd-conv-gui -p uddp-inspector-gui -p uo-client-patcher-gui -p uocf-editor-gui -p uop-dict-populator-gui -p uoppackage-cli -p webmap-export-cli"
 # The data files the tools read, each copied into the tools package's shared/ folder (a folder keeps its name), where
 # uocf::utils::bundled_files finds them from bin/. The CLI-only package ships them too: udd-cli reads the tables.
-tool_shared := "tools/_shared_assets/Dictionary.dic dynamapper/assets/cc_ec_convtables"
+tool_shared := "lib/uocf/assets/Dictionary.dic dynamapper/assets/cc_ec_convtables"
 # The static musl builds ship only these. A static musl binary can't load shared libraries (dlopen fails with "Dynamic
 # loading not supported"), and dynamapper and the GUI tools load their windowing, GPU and audio libraries that way.
 cli_bins := "udd-cli uocf-cli uoppackage-cli webmap-export-cli"
