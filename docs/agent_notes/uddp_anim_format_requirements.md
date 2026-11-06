@@ -748,6 +748,25 @@ the same day ([`bc7_alpha_plane_search.md`](bc7_alpha_plane_search.md)). The use
     too, which points at the encoder (re-measure pending).
   - **Classic land stays lossless in both paths.** BC7 is 12.6 MB on disk against 11.07 MB for the lossless JPEG XL package
     (11.20 MB with zstd 19), with a median of 75.5 and 29 % of textures at 80 or more; it would save only VRAM, 59 MB down to 15.
+  - **Built** (2026-11-06): `--bc1` on both gump packers (single gumps only, manifests version 3), `--land-bc7` at zstd 19
+    with no RDO, and Classic land refusing BC7 in the CLI and the GUI. Dynamapper uploads BC7 land pages as blocks; gumps keep
+    the CPU decode, since a BC1 egui texture would need block-padded sizes and a UV crop for a one-gump debug dialog. Measured
+    on the plain clients, SSIMULACRA2 per gump or texture over grey 128 (not the bench's mosaics), against v3 lossless repacks
+    that decode to the same pixels as the installed packages:
+
+    | Package | Lossy | Lossless | Median | Worst | At 80 or more |
+    |---|---|---|---|---|---|
+    | `gumps_cc` (3403 single) | 20.84 MB | 45.61 MB | 79.4 (82.8 at 4096 px or more) | 24.3 | 48 % |
+    | `gumps_ec` (3403 single) | 21.66 MB | 84.15 MB | 79.6 | 19.9 linear light, -26.3 sRGB blend | 49 % |
+    | `tex_land_ec` (207 textures) | 9.04 MB | 17.20 MB | 93.6 | 78.0 (opaque: 89.1) | - |
+
+    - Per-gump medians sit 3.5 points under the bench's 83.0 with the same encoder settings; small gumps pull them down
+      (74.2 under 4096 px). The bench's worst Enhanced gump, 20.1, matches the linear-light figure.
+    - 171 Enhanced single gumps have soft alpha (none in Classic). BC1 rounds it, so the eight worst gumps, 1900-1911
+      (322x294 soft shadows), lose the shadow entirely. Keeping those 171 lossless would cost 5.9 MB against their 1.0 MB in BC1.
+    - Land textures with alpha below 255: base 3 of 97 (262,089 texels), detail 3 of 78 (180,849), mask 2 of 2 (105,505),
+      normal 1 of 5 (65,536); alpha errors reach 19 levels. At zoom 1 the Enhanced and KR-like presets show the Britain
+      cobblestones with visibly less green moss, in block-sized patches; the per-texture colour score doesn't see it.
 
 - **Lossless gumps and land pages use zstd 19** (2026-11-06). The atlas pages of `gumps_cc`, `gumps_ec`, `tex_land_cc` and
   `tex_land_ec` are RGBA8888 with plain zstd 19 (`LOSSLESS_PAGE_ZSTD_LEVEL` in `lib/udd-conv/src/page_compression.rs`) instead of

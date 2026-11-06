@@ -11,7 +11,8 @@ validation).
   `MobileAnimEcPackage`, `EffectsEcPackage`, `GumpsPackage`, `AtlasCacheOptions`, and the tilemeta
   readers (`TileMetaLandTile`, `TileMetaItemTile`).
 - Lazy/cached atlas page decoding with configurable cache options.
-- BC7-aware texture decoding for atlas pages (via `udd-image-codecs`).
+- BC7-aware texture decoding for atlas pages (via `udd-image-codecs`), and BC1 decoding for single
+  gumps (`GumpPixelFormat`; layout in `docs/dev_wiki/UDDP_FORMATS.md` section 2.3).
 - KDL-based runtime asset configuration reading (`knuffel`).
 - Helpers for locating and opening named entries by virtual path hash.
 

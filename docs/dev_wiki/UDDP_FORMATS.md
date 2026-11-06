@@ -195,6 +195,19 @@ Current package policy:
 
 `gumps_cc.uddp` and `gumps_ec.uddp` can store paperdoll equipment gumps in atlas pages. Their atlas slot records also carry a per-slot `upscale_factor`. The stored page rectangle remains physical pixels; UI and paperdoll placement use logical dimensions derived by dividing physical width/height by the factor. Single-gump payloads without atlas slot metadata are treated as `upscale_factor = 1`.
 
+The page and slot manifests are version 3 (`GUMP_ATLAS_METADATA_VERSION`) and every gump package carries them, even one without atlas pages. A reader refuses an older or missing manifest with a message to repack with the current `udd-cli`: version 2 single gumps have no pixel format byte.
+
+A single gump (data type `Gump`, sparse id = gump id) is:
+
+| Offset | Type | Field | Notes |
+|---|---|---|---|
+| 0x00 | `u32` | `width` | |
+| 0x04 | `u32` | `height` | |
+| 0x08 | `u8` | `pixel_format` | 0 = RGBA8888, 1 = BC1 (`GumpPixelFormat`); any other value is an error. |
+| 0x09 | bytes | pixels | RGBA8888 rows, or BC1 blocks of `ceil(w/4) * ceil(h/4) * 8` bytes. A 0x0 gump has no pixel bytes. |
+
+Pixel formats can mix in one package; `pack-gumps --bc1` and `pack-ec-gumps --bc1` write BC1 for every single gump, while paperdoll atlas pages stay lossless RGBA8888 (the exact-greys rule for partial hues). BC1 is straight colour with punch-through alpha at 0.5, so soft alpha is rounded to 0 or 255; the packer logs how many gumps had it. Readers decode BC1 to RGBA8888 on the CPU.
+
 ### 2.4 Texture Compression Strategies (BC1 vs BC7 and Supercompression)
 
 The `tex_land_ec.uddp` pipeline commonly utilizes **BC7** block compression. The original EC `Texture.uop` generally contains textures encoded in **DXT1 (BC1)** (4 bits per pixel), with some relying on **DXT5 (BC3)** (8 bits per pixel) for alpha transparency.
@@ -208,6 +221,10 @@ Storing the converted textures as BC7 within the UDDP package creates a file tha
 To mitigate the inherent size increase of the 8bpp BC7 format, UODynamapper uses a **Supercompression** pass (applying `ZstdNoDict` compression on top of the BC7 payload). Even though BC7 is a fixed-rate GPU format, Zstd is highly effective at compressing the repeating, identical BC7 16-byte blocks that are generated for transparent or flat-color "empty space" regions within the atlas pages.
 
 Packages built with `--bc7` before 2026-11-05 keep blocks from an older encoder until rebuilt: see [`bc7_alpha_plane_search.md`](../agent_notes/bc7_alpha_plane_search.md).
+
+The lossy Enhanced land build (`pack-ec-textures --land-bc7`) is BC7 with the alpha-plane search, no RDO and straight colour, with page Zstd at level 19 (`BC7_LAND_PAGE_ZSTD_LEVEL`) unless `--zstd` names a level. The converter GUI's BC7 + Zstd takes the level of its Zstd setting, and its plain BC7 stores pages uncompressed. Pages are stored at the full atlas extent. The packer logs, per render role (base, detail, mask, normal), how many texels of the referenced textures have alpha below 255. Dynamapper uploads BC7 land pages as their blocks (`Bc7RgbaUnorm`, linear like the RGBA Enhanced pages) instead of decoding them; the format is read once from the first page record.
+
+Classic land (`tex_land_cc.uddp`) stays lossless: `pack-texmaps` and the converter GUI refuse BC7 with the measured reason (`CLASSIC_LAND_LOSSY_REFUSAL`).
 
 ### 2.5 `tex_aux_ec.uddp`
 

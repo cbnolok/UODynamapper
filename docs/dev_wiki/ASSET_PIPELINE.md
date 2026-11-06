@@ -115,7 +115,13 @@ EC land materials are role-based, not single-texture records. The runtime lookup
 
 The source item behind each role depends on the material's layer class, which comes from its shader name (`TerrainLayerClass`; `UOWaterTerrainLayer`/`UOWaterShader` water, `UOBumpMapTerrainLayer` bump, anything else default). Positions are the client's (`scripts/dev-helpers/ec-research/ghidra-terrain-layers/results/uosa_terrain_layers.md`); names and stretch never pick a layer, and stretch is only a UV divisor. Default and bump colour is `item0 * a + item1 * (1 - a)` with `a` from item 2; item 3 of a default material is never read, and item 4 of the bump material (environment map) is not drawn yet. Edge softness is the material's `coverage_exponent` (0: hard edge, point filtering; larger: soft, bilinear), not a KDL policy.
 
+The default build is lossless (RGBA8888 pages, Zstd 19). The lossy build, `--land-bc7`, is BC7 at Zstd 19 (9.0 MB against 17.2 MB) and reaches the GPU as BC7 blocks; Classic land has no lossy build. Format details are in [UDDP_FORMATS.md](UDDP_FORMATS.md) section 2.4.
+
 Normal maps are stored in the same UDDP page-atlas infrastructure as visible EC land textures, either as RGBA8888 pages or BC7/BC7-RDO GPU payloads depending on the package build. Do not assume a separate normal-map atlas exists at runtime. Original-client DDS files are source evidence only: for example, `01000013.dds` from a KR unpack is `256x256` DXT1, which shows the source normal map is RGB tangent-space data rather than BC5/ATI2 two-channel data. The renderer samples the repacked UDDP atlas and decodes its RGB channels as the normal.
+
+### `gumps_cc.uddp` and `gumps_ec.uddp`
+
+Paperdoll equipment gumps go to lossless atlas pages; every other gump is a single payload, RGBA8888 by default or BC1 with `--bc1` (about 21 MB against 46 MB Classic and 84 MB Enhanced). BC1 rounds soft alpha to 0 or 255, which loses the soft shadows of a few Enhanced gumps. Layout: [UDDP_FORMATS.md](UDDP_FORMATS.md) section 2.3.
 
 ### `tex_aux_ec.uddp`
 
