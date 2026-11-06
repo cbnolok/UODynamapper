@@ -1,11 +1,28 @@
 use eframe::egui;
 use crate::app::UddConvApp;
+use std::path::PathBuf;
+
+/// The files the Validate Packages tool's file dialog offers: packages and the terrain metadata.
+const VALIDATE_EXTENSIONS: [&str; 2] = ["uddp", "bin"];
+const VALIDATE_HINT: &str = "Checks each package as udd-cli tool validate does: the container, every entry decoded, \
+and the reader of its kind. A folder is searched for *.uddp and terrain_meta.bin.";
+const VALIDATE_TOOLTIP: &str = "Validate every package listed, and those in the folders listed; the results go to the \
+log.";
+
+/// Adds the paths not listed yet, in order.
+fn add_validate_paths(listed: &mut Vec<PathBuf>, paths: impl IntoIterator<Item = PathBuf>) {
+    for path in paths {
+        if !listed.contains(&path) {
+            listed.push(path);
+        }
+    }
+}
 
 impl UddConvApp {
     pub fn ui_tools(&mut self, ui: &mut egui::Ui) {
         ui.vertical(|ui| {
             ui.heading("Package Tools");
-            ui.label("Inspect, extract and compare UDDP packages.");
+            ui.label("Inspect, validate, extract and compare UDDP packages.");
             ui.add_space(15.0);
 
             let is_busy = self.is_busy();
@@ -53,6 +70,10 @@ impl UddConvApp {
                     });
                 });
             });
+
+            ui.add_space(15.0);
+
+            self.ui_validate_packages(ui, is_busy);
 
             ui.add_space(15.0);
 
@@ -120,5 +141,81 @@ impl UddConvApp {
                 });
             });
         });
+    }
+
+    fn ui_validate_packages(&mut self, ui: &mut egui::Ui, is_busy: bool) {
+        ui.group(|ui| {
+            ui.set_width(ui.available_width());
+            ui.heading("Validate Packages");
+            ui.label(egui::RichText::new(VALIDATE_HINT).weak());
+            ui.add_space(5.0);
+
+            ui.horizontal(|ui| {
+                if ui.button("📁 Add Packages...").clicked() {
+                    if let Some(paths) = uot_gui::file_dialog()
+                        .set_title("Select Packages to Validate")
+                        .add_filter("Packages", &VALIDATE_EXTENSIONS)
+                        .pick_files()
+                    {
+                        add_validate_paths(&mut self.tool_validate_paths, paths);
+                    }
+                }
+                if ui.button("📁 Add Folder...").clicked() {
+                    if let Some(dir) = uot_gui::pick_folder() {
+                        add_validate_paths(&mut self.tool_validate_paths, [dir]);
+                    }
+                }
+                if ui.add_enabled(!self.tool_validate_paths.is_empty(), egui::Button::new("Clear")).clicked() {
+                    self.tool_validate_paths.clear();
+                }
+            });
+
+            let mut removed = None;
+            for (index, path) in self.tool_validate_paths.iter().enumerate() {
+                ui.horizontal(|ui| {
+                    if ui.small_button("❌").on_hover_text("Remove from the list").clicked() {
+                        removed = Some(index);
+                    }
+                    ui.label(path.display().to_string());
+                    let kind = if path.is_dir() { "folder" } else { "package" };
+                    ui.label(egui::RichText::new(kind).weak());
+                });
+            }
+            if let Some(index) = removed {
+                self.tool_validate_paths.remove(index);
+            }
+
+            ui.add_space(5.0);
+            let can_validate = !is_busy && !self.tool_validate_paths.is_empty();
+            let refusal = if is_busy { "Another task is running" } else { "Add packages or folders first" };
+            if ui
+                .add_enabled(can_validate, egui::Button::new("✔ Validate"))
+                .on_hover_text(VALIDATE_TOOLTIP)
+                .on_disabled_hover_text(refusal)
+                .clicked()
+            {
+                self.tool_validate();
+            }
+        });
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn validate_paths_are_listed_once_in_the_order_added() {
+        let mut listed = vec![PathBuf::from("/out/hues.uddp")];
+
+        add_validate_paths(
+            &mut listed,
+            [PathBuf::from("/out"), PathBuf::from("/out/hues.uddp"), PathBuf::from("/out/terrain_meta.bin")],
+        );
+
+        assert_eq!(
+            listed,
+            [PathBuf::from("/out/hues.uddp"), PathBuf::from("/out"), PathBuf::from("/out/terrain_meta.bin")]
+        );
     }
 }

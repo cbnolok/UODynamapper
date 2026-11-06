@@ -18,6 +18,8 @@ pub struct UddConvApp {
     pub tool_file_1: Option<PathBuf>,
     pub tool_file_2: Option<PathBuf>,
     pub tool_hash_value: String,
+    /// The packages and folders the Validate Packages tool checks, as `tool validate <PATHS>...` takes them.
+    pub tool_validate_paths: Vec<PathBuf>,
     pub preview_path: Option<PathBuf>,
     pub preview_texture: Option<egui::TextureHandle>,
     pub upscale_preview: Option<crate::models::UpscalePreviewState>,
@@ -56,6 +58,7 @@ impl UddConvApp {
             tool_file_1: None,
             tool_file_2: None,
             tool_hash_value: String::new(),
+            tool_validate_paths: Vec::new(),
             preview_path: None,
             preview_texture: None,
             upscale_preview: None,

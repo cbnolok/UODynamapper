@@ -48,6 +48,12 @@ upscale_gumps_ec_paperdoll = "None"
 upscale_gumps_ec_single = "None"
 gumps_ec_max_id = 99999
 gumps_ec_sharing = "ShareWithGumpsCc"
+hues_ramp = "Linear"
+hues_no_compression = false
+lights_no_compression = false
+effects_ec_bc7 = false
+effects_ec_strict = false
+validate_after_packing = false
 
 [upscale_tex_land_cc_64]
 target_size = 0

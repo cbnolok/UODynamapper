@@ -3,6 +3,7 @@ use serde::{Deserialize, Serialize};
 use udd_conv::classic_sources::SourceFormatPreference;
 use udd_conv::cc_radar::RadarFormat;
 use udd_conv::ec_gumps::EC_GUMP_DEFAULT_MAX_ID;
+use udd_conv::hues::HueRampMode;
 use udd_conv::page_compression::LOSSLESS_PAGE_ZSTD_LEVEL;
 use udd_conv::upscale::UpscaleFilter;
 use uocf::map_edition::MapEdition;
@@ -23,6 +24,27 @@ pub enum GumpsEcSharing {
     /// Keep every gump, so the package needs no gumps_cc.uddp.
     Standalone,
 }
+
+/// How the hues job spreads the 32 Classic `hues.mul` colours over a palette row (`pack-hues --hue-ramp`).
+#[derive(Deserialize, Serialize, Clone, Copy, PartialEq, Eq, Debug)]
+pub enum HueRamp {
+    /// Colour i at x = 8i, ramping linearly to colour i + 1, as EA's Hues.uop does.
+    Linear,
+    /// Each colour repeated over 8 texels.
+    Flat,
+}
+
+impl From<HueRamp> for HueRampMode {
+    fn from(ramp: HueRamp) -> Self {
+        match ramp {
+            HueRamp::Linear => HueRampMode::Linear,
+            HueRamp::Flat => HueRampMode::Flat,
+        }
+    }
+}
+
+/// The Zstd level of `--zstd` without a level, and of the packers' default Zstd (`CompressionFlag::ZstdNoDict`).
+pub const DEFAULT_ZSTD_LEVEL: i32 = 7;
 
 /// The GUI writes this file itself (on every change and on exit), so it is read leniently: keys missing from an
 /// older file take their `Default` value and unknown keys are dropped, each with a warning
@@ -99,6 +121,28 @@ pub struct AppSettings {
     /// An extracted gumpart folder the Enhanced gumps are read from instead of the Enhanced client folder.
     pub gumps_ec_gumpart_dir: Option<PathBuf>,
     pub gumps_ec_sharing: GumpsEcSharing,
+    /// How hues.mul colours fill a palette row (`pack-hues --hue-ramp`); an Enhanced Hues.uop is copied as it is.
+    pub hues_ramp: HueRamp,
+    /// The hues package stored raw (`pack-hues --no-compression`).
+    pub hues_no_compression: bool,
+    /// The Zstd level of the hues package (`pack-hues --zstd=LEVEL`); `None` keeps the packer's level.
+    pub zstd_hues: Option<i32>,
+    /// The world lights package stored raw (`pack-lights --no-compression`).
+    pub lights_no_compression: bool,
+    /// The Zstd level of the world lights package (`pack-lights --zstd=LEVEL`); `None` keeps the packer's level.
+    pub zstd_lights: Option<i32>,
+    /// The uncompressed Enhanced effect textures whose sides are multiples of 4 as BC7 (`pack-ec-effects --bc7`), else
+    /// RGBA8.
+    pub effects_ec_bc7: bool,
+    /// The Zstd level of the Enhanced effects' manifests and textures (`pack-ec-effects --zstd=LEVEL`); `None` keeps
+    /// the packer's level.
+    pub zstd_effects_ec: Option<i32>,
+    /// Fail on error findings instead of writing flagged records (`pack-ec-effects --strict`).
+    pub effects_ec_strict: bool,
+    /// The file the Enhanced effects packer writes its findings to (`pack-ec-effects --report`).
+    pub effects_ec_report: Option<PathBuf>,
+    /// Validate each package a packing job writes, as `tool validate` does, once the job succeeds.
+    pub validate_after_packing: bool,
 }
 
 impl Default for AppSettings {
@@ -161,6 +205,16 @@ impl Default for AppSettings {
             gumps_ec_max_id: EC_GUMP_DEFAULT_MAX_ID,
             gumps_ec_gumpart_dir: None,
             gumps_ec_sharing: GumpsEcSharing::ShareWithGumpsCc,
+            hues_ramp: HueRamp::Linear,
+            hues_no_compression: false,
+            zstd_hues: None,
+            lights_no_compression: false,
+            zstd_lights: None,
+            effects_ec_bc7: false,
+            zstd_effects_ec: None,
+            effects_ec_strict: false,
+            effects_ec_report: None,
+            validate_after_packing: false,
         }
     }
 }
@@ -178,7 +232,7 @@ fn default_bc7_rdo_enabled() -> bool {
 }
 
 fn default_zstd_level() -> i32 {
-    7
+    DEFAULT_ZSTD_LEVEL
 }
 
 fn default_mobile_anim_optimization() -> TextureOptimization {
@@ -203,6 +257,10 @@ pub enum AssetPackTask {
     TileMeta,
     GumpsCc,
     GumpsEc,
+    Hues,
+    WorldLights,
+    TerrainMeta,
+    EffectsEc,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -231,7 +289,7 @@ impl AssetPackProgress {
     }
 }
 
-#[derive(PartialEq, Clone, Copy)]
+#[derive(Debug, PartialEq, Clone, Copy)]
 pub enum LogLevel {
     Info,
     Success,
@@ -331,6 +389,51 @@ mod tests {
         assert_eq!(settings.gumps_ec_max_id, EC_GUMP_DEFAULT_MAX_ID);
         assert_eq!(settings.gumps_ec_gumpart_dir, None);
         assert_eq!(settings.gumps_ec_sharing, GumpsEcSharing::ShareWithGumpsCc);
+    }
+
+    /// The hues, world lights, terrain metadata and Enhanced effects jobs default to the CLI without flags, and no
+    /// job validates what it writes until asked.
+    #[test]
+    fn app_settings_default_packs_hues_lights_and_effects_as_the_cli_does() {
+        let settings = AppSettings::default();
+
+        assert_eq!(settings.hues_ramp, HueRamp::Linear);
+        assert!(!settings.hues_no_compression);
+        assert_eq!(settings.zstd_hues, None);
+        assert!(!settings.lights_no_compression);
+        assert_eq!(settings.zstd_lights, None);
+        assert!(!settings.effects_ec_bc7);
+        assert_eq!(settings.zstd_effects_ec, None);
+        assert!(!settings.effects_ec_strict);
+        assert_eq!(settings.effects_ec_report, None);
+        assert!(!settings.validate_after_packing);
+    }
+
+    #[test]
+    fn hue_ramps_map_to_the_packer_modes() {
+        assert_eq!(HueRampMode::from(HueRamp::Linear), HueRampMode::Linear);
+        assert_eq!(HueRampMode::from(HueRamp::Flat), HueRampMode::Flat);
+    }
+
+    #[test]
+    fn app_settings_roundtrips_hues_lights_effects_and_validate_fields() {
+        const ZSTD_LEVEL: i32 = 15;
+        let mut settings = AppSettings::default();
+        settings.hues_ramp = HueRamp::Flat;
+        settings.hues_no_compression = true;
+        settings.zstd_hues = Some(ZSTD_LEVEL);
+        settings.lights_no_compression = true;
+        settings.zstd_lights = Some(ZSTD_LEVEL);
+        settings.effects_ec_bc7 = true;
+        settings.zstd_effects_ec = Some(ZSTD_LEVEL);
+        settings.effects_ec_strict = true;
+        settings.effects_ec_report = Some(PathBuf::from("reports/effects_ec.txt"));
+        settings.validate_after_packing = true;
+
+        let serialized = toml::to_string(&settings).expect("serialize settings");
+        let restored: AppSettings = toml::from_str(&serialized).expect("deserialize settings");
+
+        assert!(restored == settings);
     }
 
     #[test]

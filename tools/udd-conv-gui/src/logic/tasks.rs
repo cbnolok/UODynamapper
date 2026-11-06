@@ -38,19 +38,28 @@ use udd_conv::{
     PagePixelFormat,
 };
 use udd_conv::cc_gumps::{
-    convert_gumps_to_uddp_from_sources_with_patches_and_options, CcGumpsBuildSummary, CcGumpsOptions,
+    convert_gumps_to_uddp_from_sources_with_patches_options_and_progress, CcGumpsBuildSummary, CcGumpsOptions,
     CC_LOSSY_SINGLE_GUMP_FORMAT, GUMPS_CC_DEFAULT_OUTPUT,
 };
 use udd_conv::ec_gumps::{
-    convert_ec_gumps_to_uddp_from_sources, EcGumpsBuildSummary, EcGumpsOptions,
+    convert_ec_gumps_to_uddp_from_sources_with_progress, EcGumpsBuildSummary, EcGumpsOptions,
     EC_CLASSIC_COLOUR_SPACE_SINGLE_GUMP_FORMAT, EC_LOSSY_SINGLE_GUMP_FORMAT, GUMPS_EC_DEFAULT_OUTPUT,
 };
+use udd_conv::effects_ec::{pack_effects_ec, EffectsEcPackOptions};
+use udd_conv::hues::{convert_hues_to_hues_uddp_from_sources, HuesOptions};
+use udd_conv::source_paths::find_first_existing_file;
+use udd_conv::terrain_meta::write_terrain_meta;
+use udd_conv::world_lights::{convert_client_lights_to_world_lights_uddp, WorldLightsOptions};
+use uocf::enhanced::effect_texture::EFFECT_TEXTURE_UOP_NAME;
+use uocf::enhanced::hues::HUES_UOP_NAME;
+use uocf::enhanced::terrain_definition::{TerrainDefinitionPackage, TERRAIN_DEFINITION_UOP_NAME};
 use udd_conv::page_compression::LOSSLESS_PAGE_ZSTD_LEVEL;
 use udd_conv::single_gumps::{default_single_gump_compression, GumpPixelFormat};
 use udd_conv::upscale_profile::UpscaleProfile;
 use udd_conv::package_progress::{AssetTaskProgress, AssetTaskProgressStage};
 use udd_conv_cli::{
     package_info::get_package_info_string,
+    package_validate::{report_lines, validate_inputs, ReportLineKind, ValidateCounts},
     extract::extract_package,
     tool_cli::{diff_paths_report, export_csv_auto_report, hash_path_report, DiffKind},
     upscale_profile_config::load_upscale_profile as load_upscale_profile_config,
@@ -159,7 +168,11 @@ impl AssetProgressReporter {
     }
 
     fn build_progress(&self, progress: BuildProgress) {
-        self.panic_if_cancelled();
+        // The package file is created as assembling starts: a stop honoured then would leave a partial package, so
+        // the job finishes instead.
+        if progress.phase != BuildProgressPhase::Assembling {
+            self.panic_if_cancelled();
+        }
         let phase_fraction = if progress.total == 0 {
             0.0
         } else {
@@ -295,8 +308,16 @@ fn upscale_filter_passes(filter: UpscaleFilter) -> Vec<UpscalePass> {
     }
 }
 
-/// The gump packers report no progress, so their bar shows this much while they run.
-const GUMPS_PACKING_PROGRESS: f32 = 0.1;
+/// The hues, world lights, terrain metadata and Enhanced effects packers report no progress, so their bar shows this
+/// much while they run.
+const UNREPORTED_PACKING_PROGRESS: f32 = 0.1;
+/// Where the bar of a packing job stands while the packages it wrote are validated.
+const VALIDATING_PROGRESS: f32 = 0.99;
+
+/// The extraction label of a job whose images an upscale filter or the upscale profile changes.
+fn extract_label(upscaling: bool, settings: &AppSettings) -> &'static str {
+    if upscaling || upscale_profile_active(settings) { "Extracting and upscaling" } else { "Extracting" }
+}
 
 /// The single gumps' pixel format, as `pack-gumps --bc1` and `pack-ec-gumps --bc7` pick it: the package's lossy format,
 /// else lossless RGBA8888.
@@ -392,17 +413,27 @@ pub(crate) fn ec_gumps_share(sharing: GumpsEcSharing, gumps_cc: &Path, gumps_cc_
     }
 }
 
-/// Packs the Classic gumps as `pack-gumps` does.
-fn pack_gumps_cc(settings: &AppSettings, output: &Path) -> eyre::Result<CcGumpsBuildSummary> {
+/// Packs the Classic gumps as `pack-gumps` does, reporting to `progress`.
+fn pack_gumps_cc(
+    settings: &AppSettings,
+    output: &Path,
+    progress: &AssetProgressReporter,
+) -> eyre::Result<CcGumpsBuildSummary> {
     let sources = cc_gumps_source_dirs(settings);
     if sources.is_empty() { eyre::bail!("No Classic or Enhanced source dir configured"); }
     ensure_output_parent(output)?;
     let options = cc_gumps_options(settings, load_upscale_profile(settings)?);
-    convert_gumps_to_uddp_from_sources_with_patches_and_options(
+    let label = extract_label(
+        upscale_filter_active(settings.upscale_gumps_cc_paperdoll) || upscale_filter_active(settings.upscale_gumps_cc_single),
+        settings,
+    );
+    convert_gumps_to_uddp_from_sources_with_patches_options_and_progress(
         &sources,
         output,
         &classic_patch_options(settings),
         &options,
+        |task_progress| progress.task_progress_with_extract_label(task_progress, label),
+        |build_progress| progress.build_progress(build_progress),
     )
 }
 
@@ -419,8 +450,13 @@ fn describe_gumps_cc(settings: &AppSettings, output: &Path, summary: &CcGumpsBui
     )
 }
 
-/// Packs the Enhanced gumps as `pack-ec-gumps` does, sharing as `share` says.
-fn pack_gumps_ec(settings: &AppSettings, output: &Path, share: &EcGumpsShare) -> eyre::Result<EcGumpsBuildSummary> {
+/// Packs the Enhanced gumps as `pack-ec-gumps` does, sharing as `share` says and reporting to `progress`.
+fn pack_gumps_ec(
+    settings: &AppSettings,
+    output: &Path,
+    share: &EcGumpsShare,
+    progress: &AssetProgressReporter,
+) -> eyre::Result<EcGumpsBuildSummary> {
     let sources = ec_gumps_source_dirs(settings);
     if sources.is_empty() { eyre::bail!("No Enhanced source dir or extracted gumpart folder configured"); }
     ensure_output_parent(output)?;
@@ -432,7 +468,17 @@ fn pack_gumps_ec(settings: &AppSettings, output: &Path, share: &EcGumpsShare) ->
         );
     }
     let options = ec_gumps_options(settings, load_upscale_profile(settings)?, share.share_with());
-    convert_ec_gumps_to_uddp_from_sources(&sources, output, &options)
+    let label = extract_label(
+        upscale_filter_active(settings.upscale_gumps_ec_paperdoll) || upscale_filter_active(settings.upscale_gumps_ec_single),
+        settings,
+    );
+    convert_ec_gumps_to_uddp_from_sources_with_progress(
+        &sources,
+        output,
+        &options,
+        |task_progress| progress.task_progress_with_extract_label(task_progress, label),
+        |build_progress| progress.build_progress(build_progress),
+    )
 }
 
 fn describe_gumps_ec(settings: &AppSettings, output: &Path, summary: &EcGumpsBuildSummary) -> String {
@@ -469,22 +515,215 @@ fn pack_gumps_cc_and_ec(
 ) -> eyre::Result<(CcGumpsBuildSummary, EcGumpsBuildSummary)> {
     let cc_progress = progress.for_task(AssetPackTask::GumpsCc);
     progress.set(AssetPackProgressState::Running, 0.0, "Waiting for the Classic gumps");
-    cc_progress.set(AssetPackProgressState::Running, GUMPS_PACKING_PROGRESS, "Packing Classic gumps");
-    let cc_summary = match pack_gumps_cc(settings, cc_output) {
-        Ok(summary) => {
+    cc_progress.start();
+    let cc_summary = match panic::catch_unwind(AssertUnwindSafe(|| pack_gumps_cc(settings, cc_output, &cc_progress))) {
+        Ok(Ok(summary)) => {
             cc_progress.finish();
             summary
         }
-        Err(error) => {
+        Ok(Err(error)) => {
             cc_progress.fail();
             return Err(error.wrap_err("pack the Classic gumps"));
         }
+        // A stop while the Classic gumps pack ends both cards.
+        Err(payload) => {
+            if payload.is::<ConversionCancelled>() {
+                cc_progress.cancelled();
+            } else {
+                cc_progress.fail();
+            }
+            panic::resume_unwind(payload);
+        }
     };
     progress.panic_if_cancelled();
-    progress.set(AssetPackProgressState::Running, GUMPS_PACKING_PROGRESS, "Packing Enhanced gumps");
     let share = ec_gumps_share(settings.gumps_ec_sharing, cc_output, true);
-    let ec_summary = pack_gumps_ec(settings, ec_output, &share)?;
+    let ec_summary = pack_gumps_ec(settings, ec_output, &share, progress)?;
     Ok((cc_summary, ec_summary))
+}
+
+/// What `pack-hues`, `pack-lights`, `pack-terrain-meta` and `pack-ec-effects` write without `--output`.
+pub(crate) const HUES_OUTPUT: &str = "hues.uddp";
+pub(crate) const WORLD_LIGHTS_OUTPUT: &str = "world_lights.uddp";
+pub(crate) const TERRAIN_META_OUTPUT: &str = "terrain_meta.bin";
+pub(crate) const EFFECTS_EC_OUTPUT: &str = "effects_ec.uddp";
+/// The Classic hues file the hues job reads first.
+const HUES_MUL_NAME: &str = "hues.mul";
+/// The other spelling of the Enhanced hues file `pack-hues` looks for.
+const HUES_UOP_CAPITALIZED_NAME: &str = "Hues.uop";
+
+/// The package codec of the hues and world lights jobs, as `pack-hues` and `pack-lights` map `--no-compression` and
+/// `--zstd[=LEVEL]`: raw, else Zstd at the chosen level, else Zstd at the packer's level.
+fn package_compression(no_compression: bool, zstd_level: Option<i32>) -> CompressionFlag {
+    if no_compression {
+        CompressionFlag::None
+    } else {
+        zstd_level.map(CompressionFlag::ZstdNoDictLevel).unwrap_or(CompressionFlag::ZstdNoDict)
+    }
+}
+
+/// The folders the hues job reads, as `pack-hues --ccdir --ecdir` does: the Classic one first.
+pub(crate) fn hues_source_dirs(settings: &AppSettings) -> Vec<PathBuf> {
+    gather_source_dirs(settings.cc_dir.as_ref(), settings.ec_dir.as_ref())
+}
+
+/// The file the hues job reads, as `convert_hues_to_hues_uddp_from_sources` picks it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum HuesSource {
+    NoFolder,
+    /// A Classic hues.mul, from any source folder: read first, and spread over the palette rows by the hue ramp.
+    Mul(PathBuf),
+    /// The Enhanced Hues.uop, read when no folder holds a hues.mul: copied as it is.
+    Uop(PathBuf),
+    Missing,
+}
+
+pub(crate) fn hues_source(settings: &AppSettings) -> HuesSource {
+    let sources = hues_source_dirs(settings);
+    if sources.is_empty() {
+        HuesSource::NoFolder
+    } else if let Some(mul) = find_first_existing_file(&sources, &[HUES_MUL_NAME]) {
+        HuesSource::Mul(mul)
+    } else if let Some(uop) = find_first_existing_file(&sources, &[HUES_UOP_NAME, HUES_UOP_CAPITALIZED_NAME]) {
+        HuesSource::Uop(uop)
+    } else {
+        HuesSource::Missing
+    }
+}
+
+/// The hues job's options, mapped from the settings as `pack-hues` maps its flags.
+fn hues_options(settings: &AppSettings) -> HuesOptions {
+    HuesOptions {
+        compression: package_compression(settings.hues_no_compression, settings.zstd_hues),
+        ramp: settings.hues_ramp.into(),
+    }
+}
+
+/// Packs the hues as `pack-hues` does.
+fn pack_hues(settings: &AppSettings, output: &Path) -> eyre::Result<String> {
+    let sources = hues_source_dirs(settings);
+    if sources.is_empty() { eyre::bail!("No Classic or Enhanced source dir configured"); }
+    ensure_output_parent(output)?;
+    convert_hues_to_hues_uddp_from_sources(&sources, output, &hues_options(settings))?;
+    Ok(format!("Wrote {HUES_OUTPUT} to {}", output.display()))
+}
+
+/// The world lights job's options, mapped from the settings as `pack-lights` maps its flags; of the Classic patch
+/// files only verdata.mul patches the lights.
+fn world_lights_options(settings: &AppSettings) -> WorldLightsOptions {
+    WorldLightsOptions {
+        compression: package_compression(settings.lights_no_compression, settings.zstd_lights),
+        classic_patches: classic_patch_options(settings),
+    }
+}
+
+/// Packs the world lights as `pack-lights` does: the Classic light.mul and the Enhanced TerrainTexture.uop lights.
+fn pack_world_lights(settings: &AppSettings, output: &Path) -> eyre::Result<String> {
+    if settings.cc_dir.is_none() && settings.ec_dir.is_none() {
+        eyre::bail!("No Classic or Enhanced source dir configured");
+    }
+    ensure_output_parent(output)?;
+    convert_client_lights_to_world_lights_uddp(
+        settings.cc_dir.as_deref(),
+        settings.ec_dir.as_deref(),
+        output,
+        &world_lights_options(settings),
+    )?;
+    Ok(format!("Wrote {WORLD_LIGHTS_OUTPUT} to {}", output.display()))
+}
+
+/// The TerrainDefinition.uop the terrain metadata job reads, as `pack-terrain-meta --ecdir` finds it.
+pub(crate) fn terrain_definition_source(settings: &AppSettings) -> Option<PathBuf> {
+    find_first_existing_file(&gather_ec_source_dirs(settings.ec_dir.as_ref()), &[TERRAIN_DEFINITION_UOP_NAME])
+}
+
+/// Writes the terrain metadata as `pack-terrain-meta` does.
+fn pack_terrain_meta(settings: &AppSettings, output: &Path) -> eyre::Result<String> {
+    if settings.ec_dir.is_none() { eyre::bail!("No Enhanced source dir configured"); }
+    let terrain_definition_path = terrain_definition_source(settings)
+        .ok_or_else(|| eyre::eyre!("missing required file: {TERRAIN_DEFINITION_UOP_NAME}"))?;
+    let terrain_definition = TerrainDefinitionPackage::load(&terrain_definition_path)
+        .map_err(|error| eyre::eyre!("load {TERRAIN_DEFINITION_UOP_NAME}: {error}"))?;
+    ensure_output_parent(output)?;
+    write_terrain_meta(&terrain_definition, output)?;
+    Ok(format!("Wrote {TERRAIN_META_OUTPUT} to {}", output.display()))
+}
+
+/// The EffectTexture.uop the Enhanced effects job reads, as `pack-ec-effects --ecdir` finds it.
+pub(crate) fn effects_ec_source(settings: &AppSettings) -> Option<PathBuf> {
+    find_first_existing_file(&gather_ec_source_dirs(settings.ec_dir.as_ref()), &[EFFECT_TEXTURE_UOP_NAME])
+}
+
+/// The Enhanced effects job's options, mapped from the settings as `pack-ec-effects` maps its flags.
+fn effects_ec_options(settings: &AppSettings) -> EffectsEcPackOptions {
+    EffectsEcPackOptions {
+        bc7: settings.effects_ec_bc7,
+        compression: settings
+            .zstd_effects_ec
+            .map(CompressionFlag::ZstdNoDictLevel)
+            .unwrap_or(CompressionFlag::ZstdNoDict),
+        strict: settings.effects_ec_strict,
+        report: settings.effects_ec_report.clone(),
+    }
+}
+
+/// Packs the Enhanced effects as `pack-ec-effects` does.
+fn pack_effects_ec_job(settings: &AppSettings, output: &Path) -> eyre::Result<String> {
+    let sources = gather_ec_source_dirs(settings.ec_dir.as_ref());
+    if sources.is_empty() { eyre::bail!("No Enhanced source dir configured"); }
+    ensure_output_parent(output)?;
+    let options = effects_ec_options(settings);
+    if let Some(report) = &options.report {
+        ensure_output_parent(report)?;
+    }
+    let summary = pack_effects_ec(&sources, output, &options)?;
+    Ok(format!("effects_ec: {summary}; wrote {}", output.display()))
+}
+
+/// The panel's colour of a `tool validate` report line.
+pub(crate) fn report_line_level(kind: ReportLineKind) -> LogLevel {
+    match kind {
+        ReportLineKind::Passed => LogLevel::Success,
+        ReportLineKind::Failed | ReportLineKind::Error => LogLevel::Error,
+        ReportLineKind::Detail | ReportLineKind::Note => LogLevel::Info,
+    }
+}
+
+fn push_panel_log(logs: &Arc<Mutex<Vec<LogMessage>>>, text: String, level: LogLevel) {
+    if let Ok(mut logs) = logs.lock() {
+        logs.push(LogMessage { text, level });
+    }
+}
+
+/// Validates the packages `inputs` names or holds as `tool validate` does, logging each package's lines and the
+/// summary to the panel. Fails when a package fails, or when there is none.
+fn validate_packages_to_panel(
+    inputs: &[PathBuf],
+    logs: &Arc<Mutex<Vec<LogMessage>>>,
+) -> eyre::Result<ValidateCounts> {
+    let counts = validate_inputs(inputs, |report| {
+        for (kind, line) in report_lines(report) {
+            push_panel_log(logs, line, report_line_level(kind));
+        }
+    })?;
+    let level = if counts.failed == 0 { LogLevel::Success } else { LogLevel::Error };
+    push_panel_log(logs, counts.summary_line(), level);
+    counts.ensure_passed()?;
+    Ok(counts)
+}
+
+/// A packing job's message once the packages it wrote are validated: `message` with the validation's count, or the
+/// validation's error.
+fn validate_written_packages(
+    message: String,
+    packages: &[PathBuf],
+    logs: &Arc<Mutex<Vec<LogMessage>>>,
+) -> eyre::Result<String> {
+    let counts = validate_packages_to_panel(packages, logs).wrap_err("validate the packages written")?;
+    Ok(format!("{message}; {} validated", plural_packages(counts.packages)))
+}
+
+fn plural_packages(count: usize) -> String {
+    if count == 1 { "1 package".to_string() } else { format!("{count} packages") }
 }
 
 impl UddConvApp {
@@ -556,7 +795,26 @@ impl UddConvApp {
         });
     }
 
-    fn spawn_asset_task<F>(&self, task_id: AssetPackTask, name: String, task: F)
+    /// [`Self::spawn_task`] for a packing job that writes `packages`, which it validates once it succeeds when
+    /// Validate packages after packing is on.
+    fn spawn_packing_task<F>(&self, name: String, packages: Vec<PathBuf>, task: F)
+    where
+        F: FnOnce() -> eyre::Result<String> + Send + 'static,
+    {
+        let validate = self.settings.validate_after_packing.then_some(packages);
+        let logs = self.logs.clone();
+        self.spawn_task(name, move || {
+            let message = task()?;
+            match &validate {
+                Some(packages) => validate_written_packages(message, packages, &logs),
+                None => Ok(message),
+            }
+        });
+    }
+
+    /// Runs an asset packing job on its card, which writes `packages` and validates them once it succeeds when
+    /// Validate packages after packing is on.
+    fn spawn_asset_task<F>(&self, task_id: AssetPackTask, name: String, packages: Vec<PathBuf>, task: F)
     where
         F: FnOnce(AssetProgressReporter) -> eyre::Result<String> + Send + 'static,
     {
@@ -574,6 +832,8 @@ impl UddConvApp {
             cancel: self.cancel_conversion.clone(),
         };
         let reporter_for_task = reporter.clone();
+        let validate = self.settings.validate_after_packing.then_some(packages);
+        let logs = self.logs.clone();
         reporter.start();
         self.spawn_task(name, move || {
             let result = match panic::catch_unwind(AssertUnwindSafe(|| {
@@ -585,6 +845,13 @@ impl UddConvApp {
                 }
                 Err(payload) => panic::resume_unwind(payload),
             };
+            let result = result.and_then(|message| match &validate {
+                Some(packages) => {
+                    reporter_for_task.set(AssetPackProgressState::Running, VALIDATING_PROGRESS, "Validating");
+                    validate_written_packages(message, packages, &logs)
+                }
+                None => Ok(message),
+            });
             match &result {
                 Ok(_) => reporter_for_task.finish(),
                 Err(_) if reporter_for_task.cancel_requested() => reporter_for_task.cancelled(),
@@ -597,7 +864,7 @@ impl UddConvApp {
     pub fn convert_tex_art_cc(&self) {
         let settings = self.settings.clone();
         let output = self.get_output_path("tex_art_cc.uddp");
-        self.spawn_asset_task(AssetPackTask::TexArtCc, "CC Art Packing".to_string(), move |progress| {
+        self.spawn_asset_task(AssetPackTask::TexArtCc, "CC Art Packing".to_string(), vec![output.clone()], move |progress| {
             let sources = gather_source_dirs(settings.cc_dir.as_ref(), settings.ec_dir.as_ref());
             if sources.is_empty() { eyre::bail!("No source dirs"); }
             ensure_output_parent(&output)?;
@@ -644,7 +911,7 @@ impl UddConvApp {
     pub fn convert_tex_land_cc(&self) {
         let settings = self.settings.clone();
         let output = self.get_output_path("tex_land_cc.uddp");
-        self.spawn_asset_task(AssetPackTask::TexLandCc, "CC Texmaps Packing".to_string(), move |progress| {
+        self.spawn_asset_task(AssetPackTask::TexLandCc, "CC Texmaps Packing".to_string(), vec![output.clone()], move |progress| {
             if matches!(settings.opt_tex_land_cc, TextureOptimization::Bc7 | TextureOptimization::Bc7Zstd) {
                 eyre::bail!("{CLASSIC_LAND_LOSSY_REFUSAL}");
             }
@@ -693,7 +960,7 @@ impl UddConvApp {
     pub fn convert_tex_art_ec(&self) {
         let settings = self.settings.clone();
         let output = self.get_output_path("tex_art_ec.uddp");
-        self.spawn_asset_task(AssetPackTask::TexArtEc, "EC Art Packing".to_string(), move |progress| {
+        self.spawn_asset_task(AssetPackTask::TexArtEc, "EC Art Packing".to_string(), vec![output.clone()], move |progress| {
             let sources = gather_ec_source_dirs(settings.ec_dir.as_ref());
             if sources.is_empty() { eyre::bail!("No source dirs"); }
             ensure_output_parent(&output)?;
@@ -738,7 +1005,7 @@ impl UddConvApp {
     pub fn convert_tex_land_ec(&self) {
         let settings = self.settings.clone();
         let output = self.get_output_path("tex_land_ec.uddp");
-        self.spawn_asset_task(AssetPackTask::TexLandEc, "EC Land Packing".to_string(), move |progress| {
+        self.spawn_asset_task(AssetPackTask::TexLandEc, "EC Land Packing".to_string(), vec![output.clone()], move |progress| {
             let sources = gather_ec_source_dirs(settings.ec_dir.as_ref());
             if sources.is_empty() { eyre::bail!("No source dirs"); }
             ensure_output_parent(&output)?;
@@ -797,7 +1064,7 @@ impl UddConvApp {
     pub fn convert_tilemeta(&self) {
         let settings = self.settings.clone();
         let output = self.get_output_path("tilemeta.uddp");
-        self.spawn_asset_task(AssetPackTask::TileMeta, "Tilemeta Packing".to_string(), move |progress| {
+        self.spawn_asset_task(AssetPackTask::TileMeta, "Tilemeta Packing".to_string(), vec![output.clone()], move |progress| {
             ensure_output_parent(&output)?;
             match (settings.cc_dir.as_ref(), settings.ec_dir.as_ref()) {
                 (Some(cc_dir), Some(ec_dir)) => {
@@ -835,7 +1102,7 @@ impl UddConvApp {
     pub fn convert_mobile_anim_cc(&self) {
         let settings = self.settings.clone();
         let output = self.get_output_path("mobile_anim_cc.uddp");
-        self.spawn_asset_task(AssetPackTask::MobileAnimCc, "CC Mobile Animation Packing".to_string(), move |progress| {
+        self.spawn_asset_task(AssetPackTask::MobileAnimCc, "CC Mobile Animation Packing".to_string(), vec![output.clone()], move |progress| {
             let sources = gather_source_dirs(settings.cc_dir.as_ref(), settings.ec_dir.as_ref());
             if sources.is_empty() { eyre::bail!("No source dirs"); }
             ensure_output_parent(&output)?;
@@ -886,7 +1153,7 @@ impl UddConvApp {
     pub fn convert_mobile_anim_ec(&self) {
         let settings = self.settings.clone();
         let output = self.get_output_path("mobile_anim_ec.uddp");
-        self.spawn_asset_task(AssetPackTask::MobileAnimEc, "EC Mobile Animation Packing".to_string(), move |progress| {
+        self.spawn_asset_task(AssetPackTask::MobileAnimEc, "EC Mobile Animation Packing".to_string(), vec![output.clone()], move |progress| {
             let sources = gather_ec_source_dirs(settings.ec_dir.as_ref());
             if sources.is_empty() { eyre::bail!("No source dirs"); }
             ensure_output_parent(&output)?;
@@ -949,7 +1216,7 @@ impl UddConvApp {
         let settings = self.settings.clone();
         let tilemeta_path = self.get_input_uddp_path("tilemeta.uddp");
         let output = self.get_output_path("tex_aux_ec.uddp");
-        self.spawn_asset_task(AssetPackTask::TexAuxEc, "EC Auxiliary Textures Packing".to_string(), move |progress| {
+        self.spawn_asset_task(AssetPackTask::TexAuxEc, "EC Auxiliary Textures Packing".to_string(), vec![output.clone()], move |progress| {
             let sources = gather_ec_source_dirs(settings.ec_dir.as_ref());
             if sources.is_empty() { eyre::bail!("No EC source dir configured"); }
             if !tilemeta_path.exists() {
@@ -994,9 +1261,8 @@ impl UddConvApp {
     pub fn convert_gumps_cc(&self) {
         let settings = self.settings.clone();
         let output = self.gumps_cc_output();
-        self.spawn_asset_task(AssetPackTask::GumpsCc, "Classic Gumps Packing".to_string(), move |progress| {
-            progress.set(AssetPackProgressState::Running, GUMPS_PACKING_PROGRESS, "Packing Classic gumps");
-            let summary = pack_gumps_cc(&settings, &output)?;
+        self.spawn_asset_task(AssetPackTask::GumpsCc, "Classic Gumps Packing".to_string(), vec![output.clone()], move |progress| {
+            let summary = pack_gumps_cc(&settings, &output, &progress)?;
             Ok(describe_gumps_cc(&settings, &output, &summary))
         });
     }
@@ -1005,10 +1271,9 @@ impl UddConvApp {
         let settings = self.settings.clone();
         let output = self.get_output_path(GUMPS_EC_DEFAULT_OUTPUT);
         let gumps_cc = self.gumps_cc_output();
-        self.spawn_asset_task(AssetPackTask::GumpsEc, "Enhanced Gumps Packing".to_string(), move |progress| {
+        self.spawn_asset_task(AssetPackTask::GumpsEc, "Enhanced Gumps Packing".to_string(), vec![output.clone()], move |progress| {
             let share = ec_gumps_share(settings.gumps_ec_sharing, &gumps_cc, gumps_cc.is_file());
-            progress.set(AssetPackProgressState::Running, GUMPS_PACKING_PROGRESS, "Packing Enhanced gumps");
-            let summary = pack_gumps_ec(&settings, &output, &share)?;
+            let summary = pack_gumps_ec(&settings, &output, &share, &progress)?;
             Ok(describe_gumps_ec(&settings, &output, &summary))
         });
     }
@@ -1021,6 +1286,7 @@ impl UddConvApp {
         self.spawn_asset_task(
             AssetPackTask::GumpsEc,
             "Classic + Enhanced Gumps Packing".to_string(),
+            vec![cc_output.clone(), ec_output.clone()],
             move |progress| {
                 let (cc_summary, ec_summary) = pack_gumps_cc_and_ec(&settings, &cc_output, &ec_output, &progress)?;
                 Ok(format!(
@@ -1032,10 +1298,61 @@ impl UddConvApp {
         );
     }
 
+    pub fn convert_hues(&self) {
+        let settings = self.settings.clone();
+        let output = self.get_output_path(HUES_OUTPUT);
+        self.spawn_asset_task(AssetPackTask::Hues, "Hues Packing".to_string(), vec![output.clone()], move |progress| {
+            progress.set(AssetPackProgressState::Running, UNREPORTED_PACKING_PROGRESS, "Packing hues");
+            pack_hues(&settings, &output)
+        });
+    }
+
+    pub fn convert_world_lights(&self) {
+        let settings = self.settings.clone();
+        let output = self.get_output_path(WORLD_LIGHTS_OUTPUT);
+        self.spawn_asset_task(
+            AssetPackTask::WorldLights,
+            "World Lights Packing".to_string(),
+            vec![output.clone()],
+            move |progress| {
+                progress.set(AssetPackProgressState::Running, UNREPORTED_PACKING_PROGRESS, "Packing world lights");
+                pack_world_lights(&settings, &output)
+            },
+        );
+    }
+
+    pub fn convert_terrain_meta(&self) {
+        let settings = self.settings.clone();
+        let output = self.get_output_path(TERRAIN_META_OUTPUT);
+        self.spawn_asset_task(
+            AssetPackTask::TerrainMeta,
+            "Terrain Metadata Writing".to_string(),
+            vec![output.clone()],
+            move |progress| {
+                progress.set(AssetPackProgressState::Running, UNREPORTED_PACKING_PROGRESS, "Writing terrain metadata");
+                pack_terrain_meta(&settings, &output)
+            },
+        );
+    }
+
+    pub fn convert_effects_ec(&self) {
+        let settings = self.settings.clone();
+        let output = self.get_output_path(EFFECTS_EC_OUTPUT);
+        self.spawn_asset_task(
+            AssetPackTask::EffectsEc,
+            "Enhanced Effects Packing".to_string(),
+            vec![output.clone()],
+            move |progress| {
+                progress.set(AssetPackProgressState::Running, UNREPORTED_PACKING_PROGRESS, "Packing Enhanced effects");
+                pack_effects_ec_job(&settings, &output)
+            },
+        );
+    }
+
     pub fn convert_map(&self, map_id: u32) {
         let settings = self.settings.clone();
         let output = self.get_output_path(&format!("map{}.uddp", map_id));
-        self.spawn_task(format!("Map {} Packing", map_id), move || {
+        self.spawn_packing_task(format!("Map {} Packing", map_id), vec![output.clone()], move || {
             let sources = gather_cc_source_dirs(settings.cc_dir.as_ref());
             if sources.is_empty() { eyre::bail!("No source dirs"); }
             ensure_output_parent(&output)?;
@@ -1054,7 +1371,7 @@ impl UddConvApp {
     pub fn convert_statics(&self, map_id: u32) {
         let settings = self.settings.clone();
         let output = self.get_output_path(&format!("statics{}.uddp", map_id));
-        self.spawn_task(format!("Statics {} Packing", map_id), move || {
+        self.spawn_packing_task(format!("Statics {} Packing", map_id), vec![output.clone()], move || {
             let sources = gather_cc_source_dirs(settings.cc_dir.as_ref());
             if sources.is_empty() { eyre::bail!("No source dirs"); }
             ensure_output_parent(&output)?;
@@ -1119,14 +1436,17 @@ impl UddConvApp {
     pub fn convert_all(&self, map_id: u32) {
         let settings = self.settings.clone();
         let tilemeta_path = self.get_input_uddp_path("tilemeta.uddp");
+        let map_output = self.get_output_path(&format!("map{}.uddp", map_id));
+        let statics_output = self.get_output_path(&format!("statics{}.uddp", map_id));
+        // The radar texture is no package, so only the map and statics are validated.
+        let packages = vec![map_output.clone(), statics_output.clone()];
 
-        self.spawn_task(format!("Full Map {} Batch", map_id), move || {
+        self.spawn_packing_task(format!("Full Map {} Batch", map_id), packages, move || {
             let sources = gather_cc_source_dirs(settings.cc_dir.as_ref());
             if sources.is_empty() { eyre::bail!("No source dirs"); }
             std::fs::create_dir_all(&settings.output_uddp_dir)?;
 
             // 1. Map
-            let map_output = settings.output_uddp_dir.join(format!("map{}.uddp", map_id));
             convert_map_mul_to_uddp_from_sources_with_patches(
                 &sources,
                 &map_output,
@@ -1137,9 +1457,6 @@ impl UddConvApp {
             )?;
 
             // 2. Statics
-            let statics_output = settings
-                .output_uddp_dir
-                .join(format!("statics{}.uddp", map_id));
             convert_statics_mul_to_uddp_from_sources_with_patches(
                 &sources,
                 &statics_output,
@@ -1233,6 +1550,20 @@ impl UddConvApp {
             .unwrap_or_else(|| file.display().to_string());
         self.spawn_task(format!("Export CSV: {}", file_name), move || {
             export_csv_auto_report(&file, None)
+        });
+    }
+
+    /// Validates the chosen packages and folders as `tool validate <PATHS>...` does, logging each package's result.
+    pub fn tool_validate(&self) {
+        if self.tool_validate_paths.is_empty() {
+            self.push_log("Add packages or folders before validating.", LogLevel::Error);
+            return;
+        }
+        let paths = self.tool_validate_paths.clone();
+        let logs = self.logs.clone();
+        self.spawn_task("Validate Packages".to_string(), move || {
+            let counts = validate_packages_to_panel(&paths, &logs)?;
+            Ok(format!("{} passed", plural_packages(counts.packages)))
         });
     }
 
@@ -1406,6 +1737,176 @@ mod tests {
         assert_eq!(ec.share_with, Some(gumps_cc));
     }
 
+    const CHOSEN_PACKAGE_ZSTD_LEVEL: i32 = 15;
+
+    #[test]
+    fn default_hues_lights_and_effects_options_match_the_cli_without_flags() {
+        let settings = AppSettings::default();
+
+        let hues = hues_options(&settings);
+        assert_eq!(hues.compression, CompressionFlag::ZstdNoDict);
+        assert_eq!(hues.ramp, udd_conv::hues::HueRampMode::Linear);
+
+        let lights = world_lights_options(&settings);
+        assert_eq!(lights.compression, CompressionFlag::ZstdNoDict);
+        assert!(!lights.classic_patches.verdata);
+
+        let effects = effects_ec_options(&settings);
+        assert!(!effects.bc7, "the Enhanced effects default to RGBA8, as pack-ec-effects without --bc7");
+        assert_eq!(effects.compression, CompressionFlag::ZstdNoDict);
+        assert!(!effects.strict);
+        assert_eq!(effects.report, None);
+    }
+
+    #[test]
+    fn chosen_hues_lights_and_effects_options_map_to_the_cli_flags() {
+        let mut settings = AppSettings::default();
+        settings.hues_ramp = crate::models::HueRamp::Flat;
+        settings.zstd_hues = Some(CHOSEN_PACKAGE_ZSTD_LEVEL);
+        settings.zstd_lights = Some(CHOSEN_PACKAGE_ZSTD_LEVEL);
+        settings.include_verdata = true;
+        settings.effects_ec_bc7 = true;
+        settings.zstd_effects_ec = Some(CHOSEN_PACKAGE_ZSTD_LEVEL);
+        settings.effects_ec_strict = true;
+        settings.effects_ec_report = Some(PathBuf::from("/out/effects_ec_findings.txt"));
+        let chosen = CompressionFlag::ZstdNoDictLevel(CHOSEN_PACKAGE_ZSTD_LEVEL);
+
+        let hues = hues_options(&settings);
+        assert_eq!((hues.compression, hues.ramp), (chosen, udd_conv::hues::HueRampMode::Flat));
+        let lights = world_lights_options(&settings);
+        assert_eq!(lights.compression, chosen);
+        assert!(lights.classic_patches.verdata, "--use-verdata");
+        let effects = effects_ec_options(&settings);
+        assert!(effects.bc7 && effects.strict);
+        assert_eq!(effects.compression, chosen);
+        assert_eq!(effects.report, Some(PathBuf::from("/out/effects_ec_findings.txt")));
+    }
+
+    /// `--no-compression` wins over `--zstd=LEVEL`, as in `pack-hues` and `pack-lights`.
+    #[test]
+    fn no_compression_stores_hues_and_lights_raw_whatever_the_level() {
+        let mut settings = AppSettings::default();
+        settings.hues_no_compression = true;
+        settings.lights_no_compression = true;
+        settings.zstd_hues = Some(CHOSEN_PACKAGE_ZSTD_LEVEL);
+
+        assert_eq!(hues_options(&settings).compression, CompressionFlag::None);
+        assert_eq!(world_lights_options(&settings).compression, CompressionFlag::None);
+    }
+
+    fn scratch_dir(name: &str) -> PathBuf {
+        let dir = std::env::temp_dir().join(format!("udd_conv_gui_{name}_{}", std::process::id()));
+        std::fs::create_dir_all(&dir).expect("create scratch dir");
+        dir
+    }
+
+    /// The hues job reads a hues.mul from either folder first, else the Enhanced Hues.uop.
+    #[test]
+    fn hues_read_a_hues_mul_first_then_the_enhanced_hues_uop() {
+        let root = scratch_dir("hues_source");
+        let (classic, enhanced) = (root.join("classic"), root.join("enhanced"));
+        std::fs::create_dir_all(&classic).expect("create classic dir");
+        std::fs::create_dir_all(&enhanced).expect("create enhanced dir");
+        let mut settings = AppSettings::default();
+        assert_eq!(hues_source(&settings), HuesSource::NoFolder);
+
+        settings.cc_dir = Some(classic.clone());
+        settings.ec_dir = Some(enhanced.clone());
+        assert_eq!(hues_source(&settings), HuesSource::Missing);
+        std::fs::write(enhanced.join(HUES_UOP_CAPITALIZED_NAME), b"").expect("write Hues.uop");
+        assert_eq!(hues_source(&settings), HuesSource::Uop(enhanced.join(HUES_UOP_CAPITALIZED_NAME)));
+        std::fs::write(classic.join(HUES_MUL_NAME), b"").expect("write hues.mul");
+        assert_eq!(hues_source(&settings), HuesSource::Mul(classic.join(HUES_MUL_NAME)));
+        std::fs::remove_dir_all(&root).ok();
+    }
+
+    #[test]
+    fn report_lines_take_the_panel_colours() {
+        assert_eq!(report_line_level(ReportLineKind::Passed), LogLevel::Success);
+        assert_eq!(report_line_level(ReportLineKind::Failed), LogLevel::Error);
+        assert_eq!(report_line_level(ReportLineKind::Error), LogLevel::Error);
+        assert_eq!(report_line_level(ReportLineKind::Detail), LogLevel::Info);
+        assert_eq!(report_line_level(ReportLineKind::Note), LogLevel::Info);
+    }
+
+    /// A broken package logs a FAIL line and the summary in red and fails the validation; a folder with no package
+    /// fails too.
+    #[test]
+    fn validation_logs_each_package_and_fails_on_a_broken_one() {
+        const BROKEN_PACKAGE_BYTES: &[u8] = b"not a package";
+        let dir = scratch_dir("validate");
+        let broken = dir.join(HUES_OUTPUT);
+        std::fs::write(&broken, BROKEN_PACKAGE_BYTES).expect("write broken package");
+        let logs = Arc::new(Mutex::new(Vec::new()));
+
+        let error = validate_written_packages("Wrote it".to_string(), &[broken.clone()], &logs)
+            .expect_err("a broken package fails");
+
+        assert!(format!("{error:#}").contains("1 of 1 packages failed validation"), "{error:#}");
+        let logs = logs.lock().expect("logs");
+        let first = logs.first().expect("a status line");
+        assert!(first.text.starts_with("FAIL") && first.text.contains(&broken.display().to_string()), "{}", first.text);
+        assert_eq!(first.level, LogLevel::Error);
+        let last = logs.last().expect("a summary line");
+        assert_eq!(last.text, "Validated 1 packages: 0 passed, 1 failed");
+        assert_eq!(last.level, LogLevel::Error);
+        drop(logs);
+
+        let empty = dir.join("empty");
+        std::fs::create_dir_all(&empty).expect("create empty dir");
+        assert!(validate_packages_to_panel(&[empty], &Arc::new(Mutex::new(Vec::new()))).is_err());
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    fn test_reporter(task: AssetPackTask) -> AssetProgressReporter {
+        AssetProgressReporter {
+            task,
+            progress: Arc::new(Mutex::new(HashMap::new())),
+            cancel: Arc::new(AtomicBool::new(false)),
+        }
+    }
+
+    fn build_progress_at(phase: BuildProgressPhase) -> BuildProgress {
+        BuildProgress { phase, completed: 0, total: 1, active_file: None }
+    }
+
+    /// A stop unwinds from the gump packers' callbacks while they extract, pack and compress, but not once the
+    /// package file is being written.
+    #[test]
+    fn a_stop_unwinds_from_the_progress_callbacks_until_the_package_is_written() {
+        let progress = test_reporter(AssetPackTask::GumpsEc);
+        progress.cancel.store(true, Ordering::Relaxed);
+        let unwinds = |callback: &dyn Fn()| {
+            panic::catch_unwind(AssertUnwindSafe(callback)).err().is_some_and(|payload| payload.is::<ConversionCancelled>())
+        };
+
+        assert!(unwinds(&|| progress.task_progress_with_extract_label(
+            AssetTaskProgress { stage: AssetTaskProgressStage::Extracting, completed: 1, total: 2 },
+            "Extracting",
+        )));
+        for phase in [BuildProgressPhase::TrainingDictionaries, BuildProgressPhase::CompressingFiles] {
+            assert!(unwinds(&|| progress.build_progress(build_progress_at(phase))), "{phase:?}");
+        }
+        assert!(!unwinds(&|| progress.build_progress(build_progress_at(BuildProgressPhase::Assembling))));
+    }
+
+    /// The gump extraction moves the bar.
+    #[test]
+    fn gump_extraction_moves_the_bar() {
+        const HALF_EXTRACTED: f32 = 0.10;
+        let progress = test_reporter(AssetPackTask::GumpsEc);
+
+        progress.task_progress_with_extract_label(
+            AssetTaskProgress { stage: AssetTaskProgressStage::Extracting, completed: 1, total: 2 },
+            "Extracting",
+        );
+
+        let state = progress.progress.lock().expect("progress map")[&AssetPackTask::GumpsEc].clone();
+        assert_eq!(state.state, AssetPackProgressState::Running);
+        assert!((state.fraction - HALF_EXTRACTED).abs() < f32::EPSILON, "{}", state.fraction);
+        assert_eq!(state.text, "Extracting 1/2");
+    }
+
     const CC_CLIENT_DIR_ENV: &str = "UO_CC_CLIENT_DIR";
     const EC_CLIENT_DIR_ENV: &str = "UO_EC_CLIENT_DIR";
     /// The absolute folder the real-data gump test writes gumps_cc.uddp and gumps_ec.uddp to, outside the clients.
@@ -1433,11 +1934,7 @@ mod tests {
         settings.output_uddp_dir = output_dir.clone();
         let cc_output = output_dir.join(GUMPS_CC_DEFAULT_OUTPUT);
         let ec_output = output_dir.join(GUMPS_EC_DEFAULT_OUTPUT);
-        let progress = AssetProgressReporter {
-            task: AssetPackTask::GumpsEc,
-            progress: Arc::new(Mutex::new(HashMap::new())),
-            cancel: Arc::new(AtomicBool::new(false)),
-        };
+        let progress = test_reporter(AssetPackTask::GumpsEc);
 
         let (cc_summary, ec_summary) =
             pack_gumps_cc_and_ec(&settings, &cc_output, &ec_output, &progress).expect("pack the gumps");
@@ -1447,5 +1944,138 @@ mod tests {
         assert!(ec_summary.single_shared_classic_count > 0, "the Enhanced gumps shared nothing");
         let states = progress.progress.lock().expect("progress map");
         assert_eq!(states[&AssetPackTask::GumpsCc].state, AssetPackProgressState::Succeeded);
+    }
+
+    /// The absolute folder the real-data hues, world lights, terrain metadata and Enhanced effects test writes to: the
+    /// jobs' defaults in it, and the chosen options in its `options` folder.
+    const PACKAGES_OUTPUT_DIR_ENV: &str = "UDD_CONV_GUI_PACKAGES_OUTPUT_DIR";
+    /// The folder of the chosen options' packages, inside the output folder.
+    const CHOSEN_OPTIONS_DIR: &str = "options";
+    /// The Enhanced effects findings file the chosen options write, inside the chosen options' folder.
+    const EFFECTS_EC_REPORT_NAME: &str = "effects_ec_findings.txt";
+
+    fn real_output_dir(env: &str, client_dirs: &[&PathBuf]) -> PathBuf {
+        let output_dir = env_dir(env);
+        assert!(output_dir.is_absolute(), "{env} must be absolute: {}", output_dir.display());
+        for client_dir in client_dirs {
+            assert!(!output_dir.starts_with(client_dir), "the output folder is inside {}", client_dir.display());
+        }
+        output_dir
+    }
+
+    /// The hues, world lights, terrain metadata and Enhanced effects jobs on the real clients, with the defaults and
+    /// with chosen options, each through the GUI's job code; then every package validated.
+    #[test]
+    #[ignore = "needs UO_CC_CLIENT_DIR, UO_EC_CLIENT_DIR and UDD_CONV_GUI_PACKAGES_OUTPUT_DIR"]
+    fn packs_real_hues_lights_terrain_meta_and_effects() {
+        // Shows the jobs' messages with --nocapture; another test may have installed it already.
+        let _ = uot_logging::install_paris_logger();
+        let cc_dir = env_dir(CC_CLIENT_DIR_ENV);
+        let ec_dir = env_dir(EC_CLIENT_DIR_ENV);
+        let output_dir = real_output_dir(PACKAGES_OUTPUT_DIR_ENV, &[&cc_dir, &ec_dir]);
+        let mut settings = AppSettings::default();
+        settings.cc_dir = Some(cc_dir);
+        settings.ec_dir = Some(ec_dir);
+
+        let chosen_dir = output_dir.join(CHOSEN_OPTIONS_DIR);
+        let mut chosen = settings.clone();
+        chosen.hues_ramp = crate::models::HueRamp::Flat;
+        chosen.zstd_hues = Some(CHOSEN_PACKAGE_ZSTD_LEVEL);
+        chosen.lights_no_compression = true;
+        chosen.include_verdata = true;
+        chosen.effects_ec_bc7 = true;
+        chosen.zstd_effects_ec = Some(CHOSEN_PACKAGE_ZSTD_LEVEL);
+        chosen.effects_ec_report = Some(chosen_dir.join(EFFECTS_EC_REPORT_NAME));
+
+        for (settings, dir) in [(&settings, &output_dir), (&chosen, &chosen_dir)] {
+            for message in [
+                pack_hues(settings, &dir.join(HUES_OUTPUT)),
+                pack_world_lights(settings, &dir.join(WORLD_LIGHTS_OUTPUT)),
+                pack_terrain_meta(settings, &dir.join(TERRAIN_META_OUTPUT)),
+                pack_effects_ec_job(settings, &dir.join(EFFECTS_EC_OUTPUT)),
+            ] {
+                log::info!("{}", message.expect("pack"));
+            }
+            let logs = Arc::new(Mutex::new(Vec::new()));
+            let counts = validate_packages_to_panel(&[dir.clone()], &logs).expect("validate");
+            assert!(counts.packages >= 4, "{counts:?}");
+        }
+        assert!(chosen_dir.join(EFFECTS_EC_REPORT_NAME).is_file());
+    }
+
+    /// The bar of a reporter's card.
+    fn card_state(progress: &AssetProgressReporter) -> Option<AssetPackProgress> {
+        progress.progress.lock().expect("progress map").get(&progress.task).cloned()
+    }
+
+    /// Stop pressed while the real Enhanced gumps are extracted: a thread watching the bar, as the Stop button does,
+    /// requests it; the job ends with the bar moved and no package written.
+    #[test]
+    #[ignore = "needs UO_EC_CLIENT_DIR and UDD_CONV_GUI_GUMPS_OUTPUT_DIR"]
+    fn a_stop_ends_the_real_enhanced_gumps_job_without_a_package() {
+        // Shows the jobs' messages with --nocapture; another test may have installed it already.
+        let _ = uot_logging::install_paris_logger();
+        /// Where the bar stands when the watcher presses Stop: halfway through the extraction.
+        const STOP_AT_FRACTION: f32 = 0.10;
+        const POLL_INTERVAL: std::time::Duration = std::time::Duration::from_millis(5);
+        let ec_dir = env_dir(EC_CLIENT_DIR_ENV);
+        let output_dir = real_output_dir(GUMPS_OUTPUT_DIR_ENV, &[&ec_dir]);
+        let mut settings = AppSettings::default();
+        settings.ec_dir = Some(ec_dir);
+        let output = output_dir.join(GUMPS_EC_DEFAULT_OUTPUT);
+        assert!(!output.exists(), "{} is there before the job", output.display());
+
+        let progress = test_reporter(AssetPackTask::GumpsEc);
+        let done = Arc::new(AtomicBool::new(false));
+        let watcher = {
+            let (progress, done) = (progress.clone(), done.clone());
+            std::thread::spawn(move || {
+                while !done.load(Ordering::Relaxed) {
+                    if let Some(state) = card_state(&progress).filter(|state| state.fraction >= STOP_AT_FRACTION) {
+                        progress.cancel.store(true, Ordering::Relaxed);
+                        return Some(state);
+                    }
+                    std::thread::sleep(POLL_INTERVAL);
+                }
+                None
+            })
+        };
+
+        let result = panic::catch_unwind(AssertUnwindSafe(|| {
+            pack_gumps_ec(&settings, &output, &EcGumpsShare::Standalone, &progress)
+        }));
+        done.store(true, Ordering::Relaxed);
+
+        let stopped_at = watcher.join().expect("watcher").expect("the bar reached the stop point");
+        log::info!("Stop pressed at {:.3}: {}", stopped_at.fraction, stopped_at.text);
+        assert!(result.err().is_some_and(|payload| payload.is::<ConversionCancelled>()), "the job did not stop");
+        assert!(!output.exists(), "a stopped job left {}", output.display());
+
+        // The package's compression reports in a burst at its end, too fast for a watcher: the build callback requests
+        // the stop once half the package is compressed, before the reporter sees it.
+        let progress = test_reporter(AssetPackTask::GumpsEc);
+        let options = ec_gumps_options(&settings, None, None);
+        let result = panic::catch_unwind(AssertUnwindSafe(|| {
+            convert_ec_gumps_to_uddp_from_sources_with_progress(
+                &ec_gumps_source_dirs(&settings),
+                &output,
+                &options,
+                |task_progress| progress.task_progress_with_extract_label(task_progress, "Extracting"),
+                |build_progress| {
+                    if build_progress.phase == BuildProgressPhase::CompressingFiles
+                        && build_progress.completed * 2 >= build_progress.total
+                    {
+                        progress.cancel.store(true, Ordering::Relaxed);
+                    }
+                    progress.build_progress(build_progress)
+                },
+            )
+        }));
+
+        let stopped_at = card_state(&progress).expect("the bar moved");
+        log::info!("Stop requested mid-compression; the bar stands at {:.3}: {}", stopped_at.fraction, stopped_at.text);
+        assert!(result.err().is_some_and(|payload| payload.is::<ConversionCancelled>()), "the job did not stop");
+        assert!(stopped_at.text.starts_with("Compressing package"), "{}", stopped_at.text);
+        assert!(!output.exists(), "a stopped job left {}", output.display());
     }
 }

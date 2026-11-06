@@ -1,4 +1,5 @@
 use crate::app::UddConvApp;
+use crate::ui::VALIDATE_AFTER_PACKING_TOOLTIP;
 use crate::logic::dif_check::{exe_line, status_detail, status_line, DifCheckRequest, CLASSIC_CLIENT_EXE_NAME};
 use eframe::egui;
 use udd_conv::cc_radar::RadarFormat;
@@ -59,6 +60,8 @@ impl UddConvApp {
                             .on_hover_text(MAP_EDITION_HINT);
                     }
                 });
+                ui.checkbox(&mut self.settings.validate_after_packing, "Validate packages after packing")
+                    .on_hover_text(VALIDATE_AFTER_PACKING_TOOLTIP);
             });
 
             self.ui_dif_check(ui);

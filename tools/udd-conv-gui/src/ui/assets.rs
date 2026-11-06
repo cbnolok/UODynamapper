@@ -1,10 +1,13 @@
 use crate::app::UddConvApp;
 use crate::logic::tasks::{
-    cc_gumps_source_dirs, ec_gumps_share, ec_gumps_source_dirs, single_gump_pixel_format, EcGumpsShare,
+    cc_gumps_source_dirs, ec_gumps_share, ec_gumps_source_dirs, effects_ec_source, hues_source,
+    single_gump_pixel_format, terrain_definition_source, EcGumpsShare, HuesSource,
 };
 use crate::models::{
-    AppSettings, AssetPackProgress, AssetPackProgressState, AssetPackTask, GumpsEcSharing, TextureOptimization,
+    AppSettings, AssetPackProgress, AssetPackProgressState, AssetPackTask, GumpsEcSharing, HueRamp,
+    TextureOptimization, DEFAULT_ZSTD_LEVEL,
 };
+use crate::ui::VALIDATE_AFTER_PACKING_TOOLTIP;
 use eframe::egui;
 use udd_conv::cc_gumps::CC_LOSSY_SINGLE_GUMP_FORMAT;
 use udd_conv::classic_sources::{resolve_classic_gump_source, SourceFormatPreference};
@@ -18,6 +21,8 @@ use udd_conv::source_paths::gather_source_dirs;
 use udd_conv::tex_art_cc::select_tex_art_cc_metadata_source;
 use udd_conv::tex_land_cc::CLASSIC_LAND_LOSSY_REFUSAL;
 use udd_conv::upscale::UpscaleFilter;
+use uocf::enhanced::effect_texture::EFFECT_TEXTURE_UOP_NAME;
+use uocf::enhanced::terrain_definition::TERRAIN_DEFINITION_UOP_NAME;
 
 impl UddConvApp {
     pub fn ui_assets(&mut self, ui: &mut egui::Ui) {
@@ -56,6 +61,11 @@ impl UddConvApp {
                 self.convert_tilemeta();
             }
             if stop_clicked { self.request_cancel_conversion(); }
+
+            ui.add_space(4.0);
+            draw_section_header(ui, "Hues and Lights", "Read from both clients: hues.uddp and world_lights.uddp");
+            self.ui_hues(ui, is_busy);
+            self.ui_world_lights(ui, is_busy);
 
             ui.add_space(4.0);
             draw_section_header(ui, "Classic Client", "Assets read from the Classic Client directory");
@@ -228,10 +238,202 @@ impl UddConvApp {
             if clicked { self.convert_mobile_anim_ec(); }
             if stop_clicked { self.request_cancel_conversion(); }
 
+            self.ui_effects_ec(ui, is_busy);
+            self.ui_terrain_meta(ui, is_busy);
+
             ui.add_space(4.0);
             draw_section_header(ui, "Gumps", "Interface gumps of both clients: gumps_cc.uddp and gumps_ec.uddp");
             self.ui_gumps(ui, is_busy);
         });
+    }
+
+    fn ui_hues(&mut self, ui: &mut egui::Ui, is_busy: bool) {
+        let source = hues_source(&self.settings);
+        let progress = self.asset_pack_progress(AssetPackTask::Hues);
+        let mut clicked = false;
+        let mut stop_clicked = false;
+        asset_card_frame(ui).show(ui, |ui| {
+            ui.set_min_width(ui.available_width());
+            ui.vertical(|ui| {
+                ui.spacing_mut().item_spacing = egui::vec2(6.0, 8.0);
+                (clicked, stop_clicked) = draw_asset_card_header(
+                    ui,
+                    "Hues",
+                    "Hue palettes from hues.mul or Hues.uop",
+                    Some(&hues_source_label(&source)),
+                    &progress,
+                    !is_busy,
+                );
+                ui.separator();
+                let settings = &mut self.settings;
+                ui.add_enabled_ui(!is_busy, |ui| {
+                    ui.horizontal_wrapped(|ui| {
+                        ui.spacing_mut().item_spacing = egui::vec2(12.0, 8.0);
+                        // The ramp spreads hues.mul colours; a Hues.uop is copied as it is.
+                        let ramp_applies = !matches!(source, HuesSource::Uop(_));
+                        draw_control_cell(ui, "Hue Ramp", HUE_RAMP_CELL_WIDTH, |ui| {
+                            ui.horizontal(|ui| {
+                                for (ramp, label, tooltip) in [
+                                    (HueRamp::Linear, "Linear", HUE_RAMP_LINEAR_TOOLTIP),
+                                    (HueRamp::Flat, "Flat", HUE_RAMP_FLAT_TOOLTIP),
+                                ] {
+                                    if ui
+                                        .add_enabled(
+                                            ramp_applies,
+                                            egui::Button::selectable(settings.hues_ramp == ramp, label),
+                                        )
+                                        .on_hover_text(tooltip)
+                                        .on_disabled_hover_text(HUE_RAMP_REFUSAL)
+                                        .clicked()
+                                    {
+                                        settings.hues_ramp = ramp;
+                                    }
+                                }
+                            });
+                        });
+                        draw_package_compression_cells(ui, &mut settings.hues_no_compression, &mut settings.zstd_hues);
+                    });
+                });
+            });
+        });
+        if clicked { self.convert_hues(); }
+        if stop_clicked { self.request_cancel_conversion(); }
+    }
+
+    fn ui_world_lights(&mut self, ui: &mut egui::Ui, is_busy: bool) {
+        let source = world_lights_source_label(&self.settings);
+        let progress = self.asset_pack_progress(AssetPackTask::WorldLights);
+        let mut clicked = false;
+        let mut stop_clicked = false;
+        asset_card_frame(ui).show(ui, |ui| {
+            ui.set_min_width(ui.available_width());
+            ui.vertical(|ui| {
+                ui.spacing_mut().item_spacing = egui::vec2(6.0, 8.0);
+                (clicked, stop_clicked) = draw_asset_card_header(
+                    ui,
+                    "World Lights",
+                    "Light textures from light.mul and TerrainTexture.uop",
+                    Some(&source),
+                    &progress,
+                    !is_busy,
+                );
+                ui.separator();
+                let settings = &mut self.settings;
+                ui.add_enabled_ui(!is_busy, |ui| {
+                    ui.horizontal_wrapped(|ui| {
+                        ui.spacing_mut().item_spacing = egui::vec2(12.0, 8.0);
+                        draw_package_compression_cells(
+                            ui,
+                            &mut settings.lights_no_compression,
+                            &mut settings.zstd_lights,
+                        );
+                    });
+                });
+                draw_gump_note(ui, WORLD_LIGHTS_PATCH_NOTE, egui::Color32::GRAY);
+            });
+        });
+        if clicked { self.convert_world_lights(); }
+        if stop_clicked { self.request_cancel_conversion(); }
+    }
+
+    fn ui_effects_ec(&mut self, ui: &mut egui::Ui, is_busy: bool) {
+        let source = effects_ec_source_label(&self.settings);
+        let progress = self.asset_pack_progress(AssetPackTask::EffectsEc);
+        let mut clicked = false;
+        let mut stop_clicked = false;
+        asset_card_frame(ui).show(ui, |ui| {
+            ui.set_min_width(ui.available_width());
+            ui.vertical(|ui| {
+                ui.spacing_mut().item_spacing = egui::vec2(6.0, 8.0);
+                (clicked, stop_clicked) = draw_asset_card_header(
+                    ui,
+                    "Enhanced Effects",
+                    "Effect definitions, particle systems and their textures",
+                    Some(&source),
+                    &progress,
+                    !is_busy,
+                );
+                ui.separator();
+                let settings = &mut self.settings;
+                ui.add_enabled_ui(!is_busy, |ui| {
+                    ui.horizontal_wrapped(|ui| {
+                        ui.spacing_mut().item_spacing = egui::vec2(12.0, 8.0);
+                        draw_control_cell(ui, "Textures", EFFECTS_FORMAT_CELL_WIDTH, |ui| {
+                            ui.horizontal(|ui| {
+                                for (bc7, label, tooltip) in [
+                                    (false, "RGBA8", EFFECTS_EC_RGBA_TOOLTIP),
+                                    (true, "BC7", EFFECTS_EC_BC7_TOOLTIP),
+                                ] {
+                                    if ui
+                                        .add(egui::Button::selectable(settings.effects_ec_bc7 == bc7, label))
+                                        .on_hover_text(tooltip)
+                                        .clicked()
+                                    {
+                                        settings.effects_ec_bc7 = bc7;
+                                    }
+                                }
+                            });
+                        });
+                        draw_package_zstd_cell(ui, &mut settings.zstd_effects_ec, true, EFFECTS_EC_ZSTD_TOOLTIP);
+                        draw_control_cell(ui, "Error Findings", EFFECTS_STRICT_CELL_WIDTH, |ui| {
+                            ui.checkbox(&mut settings.effects_ec_strict, "Strict")
+                                .on_hover_text(EFFECTS_EC_STRICT_TOOLTIP);
+                        });
+                        draw_control_cell(ui, "Findings Report", EFFECTS_REPORT_CELL_WIDTH, |ui| {
+                            ui.horizontal(|ui| {
+                                if ui.button("Select...").on_hover_text(EFFECTS_EC_REPORT_TOOLTIP).clicked() {
+                                    if let Some(path) = uot_gui::save_file_dialog(EFFECTS_EC_REPORT_DEFAULT_NAME) {
+                                        settings.effects_ec_report = Some(path);
+                                    }
+                                }
+                                if ui
+                                    .add_enabled(settings.effects_ec_report.is_some(), egui::Button::new("Clear"))
+                                    .on_hover_text("Write no findings file")
+                                    .clicked()
+                                {
+                                    settings.effects_ec_report = None;
+                                }
+                            });
+                            let report = match &settings.effects_ec_report {
+                                Some(path) => path.display().to_string(),
+                                None => "None: the summary counts the findings".to_string(),
+                            };
+                            ui.label(egui::RichText::new(report).weak());
+                        });
+                    });
+                });
+            });
+        });
+        if clicked { self.convert_effects_ec(); }
+        if stop_clicked { self.request_cancel_conversion(); }
+    }
+
+    fn ui_terrain_meta(&mut self, ui: &mut egui::Ui, is_busy: bool) {
+        let source = match terrain_definition_source(&self.settings) {
+            _ if self.settings.ec_dir.is_none() => "Source: select an Enhanced source directory".to_string(),
+            Some(path) => format!("Source: {}", path.display()),
+            None => format!("Source: missing {TERRAIN_DEFINITION_UOP_NAME}"),
+        };
+        let progress = self.asset_pack_progress(AssetPackTask::TerrainMeta);
+        let mut clicked = false;
+        let mut stop_clicked = false;
+        asset_card_frame(ui).show(ui, |ui| {
+            ui.set_min_width(ui.available_width());
+            ui.vertical(|ui| {
+                ui.spacing_mut().item_spacing = egui::vec2(6.0, 8.0);
+                (clicked, stop_clicked) = draw_asset_card_header(
+                    ui,
+                    "Terrain Metadata",
+                    "Terrain blending tables from TerrainDefinition.uop: terrain_meta.bin",
+                    Some(&source),
+                    &progress,
+                    !is_busy,
+                );
+                draw_gump_note(ui, TERRAIN_META_NOTE, egui::Color32::GRAY);
+            });
+        });
+        if clicked { self.convert_terrain_meta(); }
+        if stop_clicked { self.request_cancel_conversion(); }
     }
 
     fn ui_gumps(&mut self, ui: &mut egui::Ui, is_busy: bool) {
@@ -473,6 +675,101 @@ draws the same (the Classic gumps Interface.uop repeats) and list it for Dynamap
 gumps. With upscaling, the Classic and Enhanced single gump passes must match, or no gump draws the same and nothing is \
 shared.\n\nPack standalone: keep every gump, so the package needs no gumps_cc.";
 
+const HUE_RAMP_CELL_WIDTH: f32 = 110.0;
+const PACKAGE_COMPRESSION_CELL_WIDTH: f32 = 110.0;
+const PACKAGE_ZSTD_CELL_WIDTH: f32 = 140.0;
+const EFFECTS_FORMAT_CELL_WIDTH: f32 = 110.0;
+const EFFECTS_STRICT_CELL_WIDTH: f32 = 100.0;
+const EFFECTS_REPORT_CELL_WIDTH: f32 = 250.0;
+/// The file name the findings report dialog offers.
+const EFFECTS_EC_REPORT_DEFAULT_NAME: &str = "effects_ec_findings.txt";
+
+const HUE_RAMP_LINEAR_TOOLTIP: &str = "Each hues.mul colour at every 8th texel, ramping linearly to the next, as EA's \
+Hues.uop does (pack-hues --hue-ramp linear): the default.";
+const HUE_RAMP_FLAT_TOOLTIP: &str = "Each hues.mul colour repeated over 8 texels (pack-hues --hue-ramp flat).";
+const HUE_RAMP_REFUSAL: &str = "No folder holds a hues.mul, so the Enhanced Hues.uop is read and copied as it is: the \
+ramp applies only to hues.mul colours.";
+const PACKAGE_RAW_TOOLTIP: &str = "Store the package's entries raw, without Zstd (--no-compression).";
+const PACKAGE_ZSTD_TOOLTIP: &str = "Zstd level of the package's entries (--zstd=LEVEL). Default: the packer's level, 7.";
+const PACKAGE_ZSTD_REFUSAL: &str = "The package is stored raw: nothing is compressed.";
+const WORLD_LIGHTS_PATCH_NOTE: &str = "verdata.mul (Classic patch files, above) patches the Classic lights; the dif \
+options don't apply to them.";
+const EFFECTS_EC_RGBA_TOOLTIP: &str = "Uncompressed source textures stay RGBA8: the default. DXT1/DXT5 sources stay \
+BC1/BC3.";
+const EFFECTS_EC_BC7_TOOLTIP: &str = "Encode uncompressed textures whose size is a multiple of 4 to BC7 (pack-ec-effects \
+--bc7); the others stay RGBA8. DXT1/DXT5 sources stay BC1/BC3.";
+const EFFECTS_EC_ZSTD_TOOLTIP: &str = "Zstd level of the manifests and textures (pack-ec-effects --zstd=LEVEL). Default: \
+the packer's level, 7. The particle system blobs always use the package's type dictionary.";
+const EFFECTS_EC_STRICT_TOOLTIP: &str = "Fail on error findings instead of writing flagged records (pack-ec-effects \
+--strict); particle files missing from the client are warnings.";
+const EFFECTS_EC_REPORT_TOOLTIP: &str = "Write every finding of the packer to this file, one line each \
+(pack-ec-effects --report), before the strict check.";
+const TERRAIN_META_NOTE: &str = "No options: pack-terrain-meta takes only its source and output.";
+
+fn hues_source_label(source: &HuesSource) -> String {
+    match source {
+        HuesSource::NoFolder => "Source: select a Classic or Enhanced source directory".to_string(),
+        HuesSource::Mul(path) => format!("Source (MUL): {}", path.display()),
+        HuesSource::Uop(path) => format!("Source (UOP, copied as it is): {}", path.display()),
+        HuesSource::Missing => "Source: missing hues.mul or Hues.uop".to_string(),
+    }
+}
+
+fn world_lights_source_label(settings: &AppSettings) -> String {
+    let folders: Vec<String> = [
+        settings.cc_dir.as_ref().map(|dir| format!("light.mul from {}", dir.display())),
+        settings.ec_dir.as_ref().map(|dir| format!("TerrainTexture.uop from {}", dir.display())),
+    ]
+    .into_iter()
+    .flatten()
+    .collect();
+    if folders.is_empty() {
+        "Source: select a Classic or Enhanced source directory".to_string()
+    } else {
+        format!("Source: {}", folders.join("; "))
+    }
+}
+
+fn effects_ec_source_label(settings: &AppSettings) -> String {
+    if settings.ec_dir.is_none() {
+        return "Source: select an Enhanced source directory".to_string();
+    }
+    match effects_ec_source(settings) {
+        Some(path) => format!("Source: {}, with the Enhanced effect definitions", path.display()),
+        None => format!("Source: missing {EFFECT_TEXTURE_UOP_NAME}"),
+    }
+}
+
+/// The package codec as `--no-compression` and `--zstd[=LEVEL]` set it: raw, or Zstd at the packer's or a chosen level.
+fn draw_package_compression_cells(ui: &mut egui::Ui, no_compression: &mut bool, zstd_level: &mut Option<i32>) {
+    draw_control_cell(ui, "Compression", PACKAGE_COMPRESSION_CELL_WIDTH, |ui| {
+        ui.checkbox(no_compression, "Stored raw").on_hover_text(PACKAGE_RAW_TOOLTIP);
+    });
+    draw_package_zstd_cell(ui, zstd_level, !*no_compression, PACKAGE_ZSTD_TOOLTIP);
+}
+
+/// A package's Zstd level: the packer's by default, or a chosen one; greyed out when the package is stored raw.
+fn draw_package_zstd_cell(ui: &mut egui::Ui, level: &mut Option<i32>, compressed: bool, tooltip: &str) {
+    draw_control_cell(ui, "Zstd Level", PACKAGE_ZSTD_CELL_WIDTH, |ui| {
+        ui.horizontal(|ui| {
+            let mut packer_level = level.is_none();
+            if ui
+                .add_enabled(compressed, egui::Checkbox::new(&mut packer_level, "Default"))
+                .on_hover_text(tooltip)
+                .on_disabled_hover_text(PACKAGE_ZSTD_REFUSAL)
+                .changed()
+            {
+                *level = (!packer_level).then_some(DEFAULT_ZSTD_LEVEL);
+            }
+            if let Some(level) = level {
+                ui.add_enabled(compressed, egui::DragValue::new(level).speed(1).range(ZSTD_LEVEL_RANGE))
+                    .on_hover_text(tooltip)
+                    .on_disabled_hover_text(PACKAGE_ZSTD_REFUSAL);
+            }
+        });
+    });
+}
+
 /// Where the Enhanced gumps job reads, as `convert_ec_gumps_to_uddp_from_sources` picks it.
 enum EcGumpSource {
     NoFolder,
@@ -711,6 +1008,22 @@ fn draw_assets_overview(ui: &mut egui::Ui, app: &mut UddConvApp) {
                     ui.label(egui::RichText::new("BC7 saves VRAM. BC7+zstd saves disk. Raw+zstd is lossless.").weak());
                     ui.label(egui::RichText::new("BC7 outputs use automatic 4x4-aligned atlas placement.").weak());
                     ui.label(egui::RichText::new("Land textures always include filtering-aware gutters.").weak());
+                });
+
+                ui.separator();
+
+                ui.vertical(|ui| {
+                    ui.label(
+                        egui::RichText::new("Validation")
+                            .strong()
+                            .color(egui::Color32::from_rgb(190, 170, 255)),
+                    );
+                    ui.add_enabled(
+                        !app.is_busy(),
+                        egui::Checkbox::new(&mut app.settings.validate_after_packing, "Validate packages after packing"),
+                    )
+                    .on_hover_text(VALIDATE_AFTER_PACKING_TOOLTIP)
+                    .on_disabled_hover_text("Another task is running");
                 });
             });
         });
