@@ -5,6 +5,9 @@
 //! The payload layout is [`udd_assets::gumps::encode_single_gump_payload`]'s. BC1 keeps Classic's colour 0 as its
 //! punch-through transparent black, and turns alpha below one half transparent, so the writer counts the gumps whose
 //! alpha isn't binary, which BC1 makes hard-edged. BC7 stores premultiplied colour and keeps soft alpha.
+//!
+//! The paperdoll's body gumps stay RGBA8888 in a lossy pack: both clients hue them on exact greys only, which a block
+//! codec doesn't keep (the user: "we can't lose exact grays").
 
 use color_eyre::eyre;
 use rayon::prelude::*;
@@ -21,6 +24,39 @@ pub const BC7_SINGLE_GUMP_ZSTD_LEVEL: i32 = 19;
 /// How many single gumps wait to be encoded side by side: enough to keep the cores busy on BC1 or BC7, few enough that
 /// only a slice of the decoded pixels is held twice.
 const SINGLE_GUMP_ENCODE_BATCH: usize = 512;
+
+/// The paperdoll's body gump of each mobile body, as both clients pick it; they agree. Enhanced:
+/// `SelectPaperdollBodyGumpForBody` (UOSA.exe 0x0050d1c0, called by `UOPaperdoll::BuildImage` 0x0050c790). Classic:
+/// `DrawPaperdollGumpLayers` (client.exe 7.0.103.0 0x0051a4a0). Body 987 takes 13 for a woman; any other body takes
+/// 12 or 13 by gender (Enhanced) or 12/13, 14/15, 666/665 by race (Classic), all listed. Gump 51253 is in the
+/// paperdoll equipment range, so it is on an atlas page, lossless already.
+///
+/// The Enhanced client always draws the body with partial hue (`UOPaperdoll::DrawGumpLayer` 0x00509b30); Classic draws
+/// these bodies with partial hue (`BlitGumpRowPartialHue` 0x005d8430) and other bodies, through the race fallback, with
+/// full hue. Both hue exact greys only, indexed by the red channel.
+pub const PAPERDOLL_BODY_GUMP_BY_BODY: [(u16, u32); 16] = [
+    (400, 12),
+    (401, 13),
+    (402, 12),
+    (403, 13),
+    (605, 14),
+    (606, 15),
+    (607, 14),
+    (608, 15),
+    (666, 666),
+    (667, 665),
+    (694, 666),
+    (695, 665),
+    (744, 12),
+    (745, 13),
+    (987, 12),
+    (1253, 51_253),
+];
+
+/// Whether the paperdoll draws `gump_id` as a body, with partial hue: see [`PAPERDOLL_BODY_GUMP_BY_BODY`].
+pub fn is_paperdoll_body_gump_id(gump_id: u32) -> bool {
+    PAPERDOLL_BODY_GUMP_BY_BODY.iter().any(|&(_, body_gump)| body_gump == gump_id)
+}
 
 /// The builder codec of single gumps in `format` unless the packer is asked for another.
 pub const fn default_single_gump_compression(format: GumpPixelFormat) -> CompressionFlag {
@@ -53,6 +89,8 @@ pub struct SingleGumpSummary {
     pub count: u32,
     /// Gumps with a texel whose alpha is neither 0 nor 255: BC1 rounds it to one or the other, BC7 keeps it.
     pub soft_alpha_count: u32,
+    /// Paperdoll body gumps kept RGBA8888 in a lossy pack.
+    pub lossless_body_count: u32,
 }
 
 struct PendingSingleGump {
@@ -95,9 +133,18 @@ impl SingleGumpWriter {
         Ok(())
     }
 
-    /// Writes the gumps still waiting, and logs how many have soft alpha when they went to BC1.
+    /// Writes the gumps still waiting, and logs how many have soft alpha when they went to BC1, and how many body gumps
+    /// stayed lossless.
     pub fn finish(mut self, builder: &mut UddpBuilder) -> eyre::Result<SingleGumpSummary> {
         self.flush(builder)?;
+        if self.format != GumpPixelFormat::Rgba8888 {
+            log::info!(
+                "{} paperdoll body gumps stay RGBA8888 among {} {} single gumps: both clients hue them on exact greys",
+                self.summary.lossless_body_count,
+                self.summary.count,
+                self.format.label()
+            );
+        }
         if self.format == GumpPixelFormat::Bc1 && self.summary.soft_alpha_count > 0 {
             log::info!(
                 "{} of {} single gumps have alpha between 0 and 255, which BC1 makes transparent below half and opaque above",
@@ -114,12 +161,14 @@ impl SingleGumpWriter {
             .into_par_iter()
             .map(|gump| {
                 let soft_alpha = has_soft_alpha(&gump.rgba);
-                encode_single_gump_payload(gump.width, gump.height, &gump.rgba, format)
-                    .map(|payload| (gump.gump_id, gump.width, gump.height, soft_alpha, payload))
+                let lossless_body = format != GumpPixelFormat::Rgba8888 && is_paperdoll_body_gump_id(gump.gump_id);
+                let gump_format = if lossless_body { GumpPixelFormat::Rgba8888 } else { format };
+                encode_single_gump_payload(gump.width, gump.height, &gump.rgba, gump_format)
+                    .map(|payload| (gump.gump_id, gump.width, gump.height, soft_alpha, lossless_body, payload))
                     .map_err(|error| error.wrap_err(format!("encode single gump {}", gump.gump_id)))
             })
             .collect::<eyre::Result<Vec<_>>>()?;
-        for (gump_id, width, height, soft_alpha, payload) in encoded {
+        for (gump_id, width, height, soft_alpha, lossless_body, payload) in encoded {
             builder.add_owned_file(AddOwnedFileRequest {
                 data_type: DataType::Gump as u8,
                 compression: self.compression,
@@ -132,6 +181,7 @@ impl SingleGumpWriter {
             })?;
             self.summary.count += 1;
             self.summary.soft_alpha_count += u32::from(soft_alpha);
+            self.summary.lossless_body_count += u32::from(lossless_body);
         }
         Ok(())
     }
@@ -168,8 +218,21 @@ mod tests {
         assert_eq!(EC_LOSSY_SINGLE_GUMP_FORMAT, GumpPixelFormat::Bc7);
     }
 
+    /// The clients' body gumps: six single gumps, and one in the paperdoll equipment range, on an atlas page.
+    #[test]
+    fn paperdoll_body_gumps_are_six_single_gumps_and_one_atlas_gump() {
+        const SINGLE_BODY_GUMPS: [u32; 6] = [12, 13, 14, 15, 665, 666];
+        let mut gumps = PAPERDOLL_BODY_GUMP_BY_BODY.map(|(_, gump)| gump).to_vec();
+        gumps.sort_unstable();
+        gumps.dedup();
+        let (atlas, single): (Vec<u32>, Vec<u32>) =
+            gumps.into_iter().partition(|&gump| crate::gump_atlas::is_paperdoll_equipment_gump_id(gump));
+        assert_eq!(single, SINGLE_BODY_GUMPS);
+        assert_eq!(atlas.len(), 1);
+    }
+
     /// More gumps than one batch, in every format: each reads back at its id, in its format, with soft alpha counted;
-    /// BC7 keeps the soft texel within a few levels.
+    /// BC7 keeps the soft texel within a few levels, and the paperdoll body gumps among them stay RGBA8888.
     #[test]
     fn single_gumps_read_back_in_their_format() {
         const GUMP_COUNT: u32 = SINGLE_GUMP_ENCODE_BATCH as u32 + 3;
@@ -187,6 +250,8 @@ mod tests {
             }
             rgba
         };
+        let body_count = (0..GUMP_COUNT).filter(|&gump_id| is_paperdoll_body_gump_id(gump_id)).count() as u32;
+        assert!(body_count > 0);
 
         for format in [GumpPixelFormat::Rgba8888, GumpPixelFormat::Bc1, GumpPixelFormat::Bc7] {
             let mut builder = UddpBuilder::new(LookupMode::SparseId);
@@ -195,11 +260,13 @@ mod tests {
                 writer.push(&mut builder, gump_id, WIDTH, HEIGHT, rgba_of(gump_id)).unwrap();
             }
             let summary = writer.finish(&mut builder).unwrap();
-            assert_eq!(summary, SingleGumpSummary { count: GUMP_COUNT, soft_alpha_count: 1 });
+            let lossless_body_count = if format == GumpPixelFormat::Rgba8888 { 0 } else { body_count };
+            assert_eq!(summary, SingleGumpSummary { count: GUMP_COUNT, soft_alpha_count: 1, lossless_body_count });
             crate::gump_atlas::add_gump_atlas_files(&mut builder, Vec::new(), &Default::default()).unwrap();
 
             let package = GumpsPackage::from_uddp_package(UddpReader::open(builder.build().unwrap()).unwrap()).unwrap();
             for gump_id in 0..GUMP_COUNT {
+                let format = if is_paperdoll_body_gump_id(gump_id) { GumpPixelFormat::Rgba8888 } else { format };
                 assert_eq!(package.single_gump_pixel_format(gump_id).unwrap(), Some(format));
                 let (width, height, rgba) = package.read_gump_rgba(gump_id).unwrap();
                 assert_eq!((width, height), (WIDTH, HEIGHT));

@@ -103,8 +103,8 @@ const LAND_ZSTD_HELP: &str = "Zstd level of the land pages (--zstd=LEVEL), which
 const CLASSIC_LAND_BC7_HELP: &str = "Refused, with the reason: Classic land stays lossless.";
 const GUMP_ZSTD_HELP: &str = "Zstd level of the single gumps and, unless --jxl, of the atlas pages (--zstd=LEVEL). Without it single gumps use level 7 (19 with --bc1 or --bc7) and atlas pages, lossless RGBA8888, level 19; with --jxl a Zstd pass over the JPEG XL pages. A bare --zstd keeps these levels, and gives the JPEG XL pages a level 7 pass.";
 const GUMP_RAW_HELP: &str = "Store the single gumps as lossless RGBA8888: the default.";
-const GUMP_BC1_HELP: &str = "Store every single (non-paperdoll) Classic gump as BC1: lossy, with one bit of alpha (colour 0 is its transparent texel), and Zstd 19 unless --zstd=LEVEL. Paperdoll gumps (50001-69999) stay lossless on their atlas pages: Classic partial hue needs exact greys.";
-const GUMP_BC7_HELP: &str = "Store every single (non-paperdoll) Enhanced gump as BC7 of premultiplied colour: lossy, soft alpha kept, and Zstd 19 unless --zstd=LEVEL. Paperdoll gumps (50001-69999) stay lossless on their atlas pages: the Enhanced client hues exact greys only.";
+const GUMP_BC1_HELP: &str = "Store every single (non-paperdoll) Classic gump as BC1: lossy, with one bit of alpha (colour 0 is its transparent texel), and Zstd 19 unless --zstd=LEVEL. Paperdoll gumps (50001-69999) stay lossless on their atlas pages, and the paperdoll body gumps (12-15, 665, 666) stay RGBA8888: Classic partial hue needs exact greys.";
+const GUMP_BC7_HELP: &str = "Store every single (non-paperdoll) Enhanced gump as BC7 of premultiplied colour: lossy, soft alpha kept, and Zstd 19 unless --zstd=LEVEL. Paperdoll gumps (50001-69999) stay lossless on their atlas pages, and the paperdoll body gumps (12-15, 665, 666) stay RGBA8888: the Enhanced client hues exact greys only.";
 const OUTPUT_PATH_HELP: &str = "Output paths (--output, --art-output, --land-output, ...) and their default \
 file names resolve against the current working directory; absolute paths are used as given. \
 Nothing is written into --ccdir or --ecdir unless an output path points there.";

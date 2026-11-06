@@ -749,6 +749,12 @@ the same day ([`bc7_alpha_plane_search.md`](bc7_alpha_plane_search.md)). The use
     - Enhanced paperdoll pages stay lossless for now: the Enhanced client hues exact greys only, with the red byte as the
       hue index (`UOPaperdoll::DrawGumpLayer` 0x00509b30, compares at 0x00509d64 and 0x00509d6c,
       [traced](../../scripts/dev-helpers/ec-research/ghidra-paperdoll/results/uosa_paperdoll.md)). Open below.
+    - The paperdoll body gumps stay RGBA8888 in both lossy packs, by the user's rule "we can't lose exact grays"
+      (2026-11-06). Both clients draw the body with partial hue on exact greys, indexed by red. The ids come from
+      `PAPERDOLL_BODY_GUMP_BY_BODY` in `lib/udd-conv/src/single_gumps.rs`, the body-to-gump table both clients share
+      (Enhanced `SelectPaperdollBodyGumpForBody` 0x0050d1c0, Classic 7.0.103.0 `DrawPaperdollGumpLayers` 0x0051a4a0): six
+      single gumps, 12-15, 665 and 666, and 51253 on an atlas page. They add 12.9 KB to `gumps_ec` BC7 (40.507 MB) and
+      13.9 KB to `gumps_cc` BC1 (20.850 MB), and keep every exact grey and red byte.
   - Superseded for Enhanced on 2026-11-06; its measurements stand. **Gumps take BC1 in both clients.** Classic gumps treat black as transparent, which is BC1's one-bit alpha, so BC1 beats BC3 there:
     zstd 19 19.6 MB and 74 MB of VRAM at a median of 83.0, against BC3's 21.3 MB, 148 MB and 82.3, and BC7 with fix C's 37.1 MB,
     148 MB and 85.5. Enhanced is alike (BC1 83.1, BC7 85.8), though BC1's worst gump scores 20.1 against BC3's 24.3, probably one with
@@ -785,8 +791,9 @@ the same day ([`bc7_alpha_plane_search.md`](bc7_alpha_plane_search.md)). The use
       - The ten worst are all small (64x23 or less): 2007 26.1, 2115 26.9, 30011 27.5, 246 27.6, 245 27.9, 30055 28.8,
         30013 29.1, 39892 29.2, 39864 30.0 (soft), 24037 30.7 (soft).
       - Alpha moves on 891 gumps (132,426 texels), which BC1 keeps exact on hard-edged gumps.
-      - The body gumps (12-15, 666) are single gumps, so they go BC7: they keep 92.2-97.5 % of their exact greys (BC1
-        14.2-18.0 %), but the red byte on only 20.7-25.7 %, off by up to 14. The Enhanced client hues the body on greys only.
+      - The body gumps (12-15, 666) are single gumps, so they went BC7: they kept 92.2-97.5 % of their exact greys (BC1
+        14.2-18.0 %), but the red byte on only 20.7-25.7 %, off by up to 14. The Enhanced client hues the body on greys only,
+        so they now stay RGBA8888 (above).
       - Against `gumps_cc`, 760 Enhanced single gumps have the same pixels, 1456 the same visible pixels, 1187 differ
         (the 171 soft-alpha ones among them) and 34 have no Classic gump.
       - **The "cc style ec fallbacks" options**, sizes only, for the user to decide (measured 2026-11-06, before the body
@@ -874,7 +881,7 @@ the same day ([`bc7_alpha_plane_search.md`](bc7_alpha_plane_search.md)). The use
 
 | Question | Recommendation | Depends on |
 |---|---|---|
-| Enhanced paperdoll gumps in BC7, which the user asked for (2026-11-06) | Keep the pages lossless. The client hues exact greys only and indexes the hue by the red byte, so BC7 would move the hue on most grey texels and drop it on a few; Dynamapper's partial-hue test would need a tolerance the client lacks. The body gumps, single gumps, already go BC7 | The user |
+| Enhanced paperdoll gumps in BC7, which the user asked for (2026-11-06) | Keep the pages lossless. The client hues exact greys only and indexes the hue by the red byte, so BC7 would move the hue on most grey texels and drop it on a few; Dynamapper's partial-hue test would need a tolerance the client lacks. The body gumps, single gumps, stay RGBA8888 in lossy packs | The user |
 | Whether "cc style ec fallbacks" means the Enhanced gumps that repeat a Classic gump, to take BC1 inside `gumps_ec` | Built as BC7 for every Enhanced single gump (A). 2216 of 3437 show the same visible pixels as the Classic gump of their id; B (BC1 inside `gumps_ec`) saves 6.16 MB of the lossy package, C (drawn from `gumps_cc`) 12.67 MB but needs `gumps_cc` installed and a two-package lookup (sizes above) | The user |
 | Lossy rows on the PC preset (animations; gumps and land are decided above) | The user's proposal: Enhanced BC1 for equipment and BC3 for other animations, BC7 for land textures or gumps, Classic BC1 on creatures only, converging on one or two lossy formats if the mix needs too many branches or pipelines. Against LZ4 HC's lossless size, BC3 and BC7 with fix C both save disk as well as VRAM on Enhanced, so BC7 is no longer ruled out by size | Fractional zoom, upscaled sprites and the cost of alternating formats in painter order, being measured |
 | Load unit | One stream per (action, direction), faced direction first | The user |
