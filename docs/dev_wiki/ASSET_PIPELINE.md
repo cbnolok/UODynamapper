@@ -6,9 +6,9 @@ The runtime renderer consumes converted `.uddp` packages. Source Ultima Online c
 
 ## Main Tools
 
-### `udd-pack`
+### `udd-cli pack`
 
-`udd-pack` builds runtime packages from source assets. It is produced by the `udd-conv-cli` crate.
+`udd-cli pack` builds runtime packages from source assets. It is produced by the `udd-conv-cli` crate.
 
 Common commands:
 
@@ -28,14 +28,14 @@ passed as `--ccdir` / `--ecdir` unless an output path points there.
 Typical Enhanced Client texture and metadata workflow:
 
 ```text
-udd-pack pack-ec-textures --ecdir /path/to/ec --art-output tex_art_ec.uddp --land-output tex_land_ec.uddp
-udd-pack pack-tilemeta --ccdir /path/to/cc --ecdir /path/to/ec --output tilemeta.uddp
+udd-cli pack pack-ec-textures --ecdir /path/to/ec --art-output tex_art_ec.uddp --land-output tex_land_ec.uddp
+udd-cli pack pack-tilemeta --ccdir /path/to/cc --ecdir /path/to/ec --output tilemeta.uddp
 ```
 
 Then build the auxiliary images from that tilemeta, with the same EC directory (it also reads `SystemTextures.uop`):
 
 ```text
-udd-pack pack-ec-tex-aux --ecdir /path/to/ec --tilemeta tilemeta.uddp --output tex_aux_ec.uddp
+udd-cli pack pack-ec-tex-aux --ecdir /path/to/ec --tilemeta tilemeta.uddp --output tex_aux_ec.uddp
 ```
 
 When building all EC texture outputs plus `tilemeta.uddp`, prefer the grouped form so
@@ -43,18 +43,18 @@ When building all EC texture outputs plus `tilemeta.uddp`, prefer the grouped fo
 once for the shared EC classification pass:
 
 ```text
-udd-pack pack-ec-textures --ccdir /path/to/cc --ecdir /path/to/ec --art-output tex_art_ec.uddp --land-output tex_land_ec.uddp --tilemeta-output tilemeta.uddp
+udd-cli pack pack-ec-textures --ccdir /path/to/cc --ecdir /path/to/ec --art-output tex_art_ec.uddp --land-output tex_land_ec.uddp --tilemeta-output tilemeta.uddp
 ```
 
 For Classic facet packages that need both map and statics data, prefer:
 
 ```text
-udd-pack pack-map-statics --ccdir /path/to/cc --map-id 0 --map-output map0.uddp --statics-output statics0.uddp
+udd-cli pack pack-map-statics --ccdir /path/to/cc --map-id 0 --map-output map0.uddp --statics-output statics0.uddp
 ```
 
-### `udd-tool`
+### `udd-cli tool`
 
-`udd-tool` inspects and edits already-built packages. It is produced by the `udd-conv-cli` crate.
+`udd-cli tool` inspects and edits already-built packages. It is produced by the `udd-conv-cli` crate.
 
 Common commands:
 
@@ -71,8 +71,8 @@ Common commands:
 Typical inspection commands:
 
 ```text
-udd-tool info tilemeta.uddp
-udd-tool extract tex_art_ec.uddp --output tex_art_ec.extract
+udd-cli tool info tilemeta.uddp
+udd-cli tool extract tex_art_ec.uddp --output tex_art_ec.extract
 ```
 
 ### `uop-tool`

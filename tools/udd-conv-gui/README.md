@@ -1,7 +1,7 @@
 # udd-conv-gui
 
 `udd-conv-gui` is a graphical frontend for building UODynamapper runtime
-packages. It wraps the `udd-conv-cli` packing logic (`udd-pack` commands) in an
+packages. It wraps the `udd-conv-cli` packing logic (`udd-cli pack` commands) in an
 egui/eframe interface and lets users configure and run conversion jobs without
 using the command line.
 
@@ -19,7 +19,7 @@ using the command line.
 ## GUI / CLI Surface
 
 `udd-conv-gui` is a curated frontend over the conversion libraries, not a full
-replacement for every `udd-pack` and `udd-tool` command. Use the GUI for common
+replacement for every `udd-cli pack` and `udd-cli tool` command. Use the GUI for common
 interactive conversion and inspection workflows. Use the CLI for batch scripts,
 advanced mutation, and pack jobs not yet exposed in the GUI.
 
@@ -82,5 +82,5 @@ udd-conv-gui
 - Produced `.uddp` packages should be placed in, or linked into, the Dynamapper
   `assets/` tree as described in
   [docs/dev_wiki/ASSET_PIPELINE.md](../../docs/dev_wiki/ASSET_PIPELINE.md).
-- For scripted or automated builds, prefer `udd-pack` from
+- For scripted or automated builds, prefer `udd-cli pack` from
   [`udd-conv-cli`](../udd-conv-cli/README.md) directly.

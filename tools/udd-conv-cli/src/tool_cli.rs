@@ -36,7 +36,7 @@ use crate::package_validate;
 
 /// Inspect and edit UODynamapper package files.
 #[derive(Parser)]
-#[command(author, version, about, long_about = None)]
+#[command(author, version, about, long_about = None, bin_name = "udd-cli tool")]
 struct Cli {
     #[command(subcommand)]
     command: Commands,

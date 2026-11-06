@@ -112,7 +112,7 @@ Nothing is written into --ccdir or --ecdir unless an output path points there.";
 
 /// Pack UODynamapper runtime packages from Classic and Enhanced Client assets.
 #[derive(Parser)]
-#[command(author, version, about, long_about = None, after_help = OUTPUT_PATH_HELP)]
+#[command(author, version, about, long_about = None, after_help = OUTPUT_PATH_HELP, bin_name = "udd-cli pack")]
 struct Cli {
     #[command(subcommand)]
     command: Commands,

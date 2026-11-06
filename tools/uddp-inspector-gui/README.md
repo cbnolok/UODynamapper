@@ -37,7 +37,7 @@ uddp-inspector-gui
 - See [docs/dev_wiki/UDDP_FORMATS.md](../../docs/dev_wiki/UDDP_FORMATS.md) for
   package format details.
 - For CLI-based extraction and metadata editing, use
-  [`udd-tool`](../udd-conv-cli/README.md) from `udd-conv-cli`.
+  [`udd-cli tool`](../udd-conv-cli/README.md) from `udd-conv-cli`.
 
 ## Screenshots
 

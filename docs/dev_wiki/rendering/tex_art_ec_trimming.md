@@ -39,6 +39,6 @@ The trims are recorded per art id, so an art id whose pixels are shared with ano
 ## CLI Status
 
 - The standalone cropped EC-art command has been removed.
-- EC package creation goes through the shared `udd-pack pack-ec-textures` pass, which always trims.
+- EC package creation goes through the shared `udd-cli pack pack-ec-textures` pass, which always trims.
 - When `pack-ec-textures` also writes `--tilemeta-output`, tilemeta takes the trims the atlas pass recorded; nothing is decoded twice.
-- A separate `udd-pack pack-tilemeta` recomputes the same trims from the EC sources, so it gives the same `ec_start` values. It therefore needs the sources the art packer needs: `tileart.uop`, `string_dictionary.uop`, `TerrainDefinition.uop` and `Texture.uop` or `LegacyTexture.uop`.
+- A separate `udd-cli pack pack-tilemeta` recomputes the same trims from the EC sources, so it gives the same `ec_start` values. It therefore needs the sources the art packer needs: `tileart.uop`, `string_dictionary.uop`, `TerrainDefinition.uop` and `Texture.uop` or `LegacyTexture.uop`.

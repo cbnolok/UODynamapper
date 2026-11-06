@@ -74,7 +74,7 @@ Interactive map renderer. The main application described throughout this README.
 ### udd-conv-gui
 
 [`udd-conv-gui`](tools/udd-conv-gui/README.md) — graphical frontend for building UODynamapper runtime `.uddp` packages from
-Classic Client or Enhanced Client source installations. Wraps the `udd-pack`
+Classic Client or Enhanced Client source installations. Wraps the `udd-cli pack`
 conversion commands in an egui interface with path pickers, job selection, and
 live progress reporting.
 
@@ -82,11 +82,11 @@ live progress reporting.
 
 [`udd-conv-cli`](tools/udd-conv-cli/README.md) — CLI crate that provides two binaries:
 
-- `udd-pack`: converts Classic Client and Enhanced Client source assets into
+- `udd-cli pack`: converts Classic Client and Enhanced Client source assets into
   `.uddp` runtime packages (land textures, art textures, maps, statics,
   tilemeta, hues, gumps, animations, and more). Also includes EC material audit
   and validation commands used during development.
-- `udd-tool`: inspects, extracts, hashes, replaces, rebuilds, diffs, and
+- `udd-cli tool`: inspects, extracts, hashes, replaces, rebuilds, diffs, and
   exports/imports CSV metadata for `.uddp` and `.uddpi` package files.
 
 ### uddp-inspector-gui

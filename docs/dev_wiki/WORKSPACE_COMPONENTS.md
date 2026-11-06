@@ -108,8 +108,8 @@ Release packages are expected to ship `dynamapper` and each tool as separate bin
 
 - `udd-conv-gui`: graphical frontend for building UODynamapper runtime packages.
 - `udd-conv-cli`: CLI crate that builds:
-  - `udd-pack`: package builder for `.uddp` runtime assets.
-  - `udd-tool`: package inspector/editor for existing `.uddp` files.
+  - `udd-cli pack`: package builder for `.uddp` runtime assets.
+  - `udd-cli tool`: package inspector/editor for existing `.uddp` files.
 - `uddp-inspector-gui`: graphical inspector for `.uddp` package contents, atlas pages, and metadata slots.
 
 ### UOCF Command-Line Tools
@@ -139,8 +139,8 @@ Command-line tooling for UODynamapper package workflows.
 
 Primary binaries:
 
-- `udd-pack`: builds runtime packages from source client assets.
-- `udd-tool`: inspects, extracts, diffs, edits, and rebuilds existing `.uddp` packages.
+- `udd-cli pack`: builds runtime packages from source client assets.
+- `udd-cli tool`: inspects, extracts, diffs, edits, and rebuilds existing `.uddp` packages.
 
 See [ASSET_PIPELINE.md](ASSET_PIPELINE.md) for commands and package notes.
 

@@ -248,11 +248,11 @@ build-local-tools-debug *args:
     @echo "Packages: {{tool_packages}}"
     cargo build {{tool_packages}} --bins {{args}}
 
-# Build the udd-pack CLI binary in debug mode.
-build-local-udd-pack-debug *args:
-    @echo "Building udd-pack debug binary on {{os}}..."
+# Build the udd-cli binary (its `pack` and `tool` commands) in debug mode.
+build-local-udd-cli-debug *args:
+    @echo "Building udd-cli debug binary on {{os}}..."
     @echo "Using RUSTFLAGS: {{RUSTFLAGS}}"
-    cargo build -p udd-conv-cli --bin udd-pack {{args}}
+    cargo build -p udd-conv-cli --bin udd-cli {{args}}
 
 # Build the full workspace in release mode with the stable toolchain.
 build-local-workspace-release *args:

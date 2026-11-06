@@ -1,6 +1,6 @@
 # Upscale Profiles
 
-Upscale profiles let `udd-pack` choose different ordered upscale/filter pass
+Upscale profiles let `udd-cli pack` choose different ordered upscale/filter pass
 chains for different asset classes during repacking. They are intended for cases
 where one global `--upscale` or `--upscale-pass` chain is too coarse: art items,
 land art, gumps, mobile frames, and land textures often need different
@@ -206,7 +206,7 @@ palette. Because they are not numeric filters, do not attach fields such as
 Profile filter names use the same value names as `--upscale-pass`. Use:
 
 ```text
-udd-pack <command> --help
+udd-cli pack <command> --help
 ```
 
 to see the complete accepted list for the current binary. The most relevant

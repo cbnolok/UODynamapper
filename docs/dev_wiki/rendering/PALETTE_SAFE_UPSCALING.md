@@ -102,12 +102,12 @@ palette snap pass is also valid and uses the current image dimensions unchanged.
 ## CLI Usage
 
 The same pass names are accepted by the UOCF editor preview copy action and
-by `udd-pack` converter commands.
+by `udd-cli pack` converter commands.
 
 Classic art:
 
 ```bash
-udd-pack pack-art \
+udd-cli pack pack-art \
   --ccdir /path/to/classic \
   --upscale-pass bilinear2x \
   --upscale-pass palette-snap-strict
@@ -116,7 +116,7 @@ udd-pack pack-art \
 Classic terrain texmaps:
 
 ```bash
-udd-pack pack-texmaps \
+udd-cli pack pack-texmaps \
   --ccdir /path/to/classic \
   --upscale-64-pass xbr2x \
   --upscale-64-pass palette-snap-ramp-aware \
@@ -127,7 +127,7 @@ udd-pack pack-texmaps \
 EC art and land:
 
 ```bash
-udd-pack pack-ec-textures \
+udd-cli pack pack-ec-textures \
   --ecdir /path/to/ec \
   --art-upscale-pass bilinear2x \
   --art-upscale-pass palette-snap-strict \
@@ -138,7 +138,7 @@ udd-pack pack-ec-textures \
 Gumps:
 
 ```bash
-udd-pack pack-gumps \
+udd-cli pack pack-gumps \
   --ccdir /path/to/classic \
   --paperdoll-upscale-pass xbr2x \
   --paperdoll-upscale-pass palette-snap-ramp-aware \
@@ -149,7 +149,7 @@ udd-pack pack-gumps \
 Mobile animations:
 
 ```bash
-udd-pack pack-mobile-anims \
+udd-cli pack pack-mobile-anims \
   --ccdir /path/to/classic \
   --upscale-pass xbr2x \
   --upscale-pass palette-snap-ramp-aware
@@ -288,4 +288,4 @@ Useful invariants:
 - Transparent pixels should not introduce hidden RGB into opaque borders.
 - A standalone palette snap pass should have scale factor 1.
 - Repeating a strict snap pass should be idempotent for already-snapped output.
-- CLI pass names copied from the inspector should parse in `udd-pack`.
+- CLI pass names copied from the inspector should parse in `udd-cli pack`.
