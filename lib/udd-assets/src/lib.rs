@@ -1,23 +1,19 @@
+// Category modules own the source files; re-exports preserve existing import paths.
+pub mod animation;
+pub mod metadata;
+pub mod overrides;
+pub mod textures;
+
+pub use animation::{mobile_anim_cc, mobile_anim_ec};
+pub use metadata::{hues, map_metadata, terrain_meta, tilemeta, world_lights};
+pub use overrides::{ec_surface_overrides, ec_terrain_overrides, eckr_terrain_kdl};
+pub use textures::{tex_art_cc, tex_art_ec, tex_aux_ec, tex_land_cc, tex_land_ec};
+
 pub mod common;
 pub use uot_texture_codecs::bc7;
 pub use uot_texture_codecs::premultiplied;
-pub mod tex_art_cc;
-pub mod tex_land_cc;
-pub mod tex_art_ec;
-pub mod tex_land_ec;
-pub mod eckr_terrain_kdl;
-pub mod ec_surface_overrides;
-pub mod ec_terrain_overrides;
-pub mod tex_aux_ec;
-pub mod terrain_meta;
-pub mod tilemeta;
-pub mod world_lights;
-pub mod hues;
-pub mod mobile_anim_cc;
-pub mod mobile_anim_ec;
 pub mod effects_ec;
 pub mod gumps;
-pub mod map_metadata;
 
 pub use common::AtlasCacheOptions;
 pub use tex_art_cc::TexArtCcPackage;

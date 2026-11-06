@@ -87,7 +87,7 @@ Also needed, derived from the above and from how the art works:
 
 Shard and mod makers add or replace animations with MUL tools. The converter must keep what they added.
 
-What the converter does today (`lib/udd-conv/src/mobile_anim_cc.rs`):
+What the converter does today (`lib/udd-conv/src/animation/mobile_anim_cc.rs`):
 
 - It walks every idx slot of `anim.mul` to `anim6.mul` with data, whether or not a def file reaches it, so an added
   entry is collected.
@@ -751,7 +751,7 @@ the same day ([`bc7_alpha_plane_search.md`](bc7_alpha_plane_search.md)). The use
       and the rest as BC7, "provided it doesn't need much shader code"). It needs none: Dynamapper decodes gumps on the
       CPU and gives egui RGBA images, and each single gump already carries its pixel format byte. This is option B of the
       table under "BC7 for `gumps_ec`" below.
-      - The rule, `is_in_classic_colour_space` in `lib/udd-conv/src/single_gumps.rs`: alpha is only 0 or 255, and every
+      - The rule, `is_in_classic_colour_space` in `lib/udd-conv/src/gumps/single_gumps.rs`: alpha is only 0 or 255, and every
         opaque texel's R, G and B have their low 3 bits clear. The Classic decoder widens 5-bit channels as `c << 3`
         (0, 8, ..., 248; `lib/uocf/src/utils/color.rs`) and gives alpha 0 or 255 only. The colour under a clear texel
         doesn't count, and a gump with no opaque texel passes. It reads no Classic file, so `gumps_ec` stays
@@ -770,14 +770,14 @@ the same day ([`bc7_alpha_plane_search.md`](bc7_alpha_plane_search.md)). The use
         pixel bytes. 1185 BC7, 6 body gumps RGBA8888. Every gump decodes, and `udd-cli tool validate` passes.
       - All 2212 non-empty BC1 payloads are byte for byte the `pack-gumps --bc1` payload of the same id. The BC1 encoder
         (`dds` 0.2) leaves transparent texels out of the endpoint fit, so the colour under them changes nothing.
-      - `gumps_ec` reads only Interface.uop (`find_interface_uop` in `lib/udd-conv/src/ec_gumps.rs`), not the EC client's
+      - `gumps_ec` reads only Interface.uop (`find_interface_uop` in `lib/udd-conv/src/gumps/ec_gumps.rs`), not the EC client's
         `gumpartLegacyMUL.uop` (set aside, section 9).
     - Enhanced paperdoll pages stay lossless for now: the Enhanced client hues exact greys only, with the red byte as the
       hue index (`UOPaperdoll::DrawGumpLayer` 0x00509b30, compares at 0x00509d64 and 0x00509d6c,
       [traced](../../scripts/dev-helpers/ec-research/ghidra-paperdoll/results/uosa_paperdoll.md)). Open below.
     - The paperdoll body gumps stay RGBA8888 in both lossy packs, by the user's rule "we can't lose exact grays"
       (2026-11-06). Both clients draw the body with partial hue on exact greys, indexed by red. The ids come from
-      `PAPERDOLL_BODY_GUMP_BY_BODY` in `lib/udd-conv/src/single_gumps.rs`, the body-to-gump table both clients share
+      `PAPERDOLL_BODY_GUMP_BY_BODY` in `lib/udd-conv/src/gumps/single_gumps.rs`, the body-to-gump table both clients share
       (Enhanced `SelectPaperdollBodyGumpForBody` 0x0050d1c0, Classic 7.0.103.0 `DrawPaperdollGumpLayers` 0x0051a4a0): six
       single gumps, 12-15, 665 and 666, and 51253 on an atlas page. They add 12.9 KB to `gumps_ec` BC7 (40.507 MB) and
       13.9 KB to `gumps_cc` BC1 (20.850 MB), and keep every exact grey and red byte.
@@ -886,7 +886,7 @@ the same day ([`bc7_alpha_plane_search.md`](bc7_alpha_plane_search.md)). The use
       twice the VRAM (+42.2 MB).
 
 - **Lossless gumps and land pages use zstd 19** (2026-11-06). The atlas pages of `gumps_cc`, `gumps_ec`, `tex_land_cc` and
-  `tex_land_ec` are RGBA8888 with plain zstd 19 (`LOSSLESS_PAGE_ZSTD_LEVEL` in `lib/udd-conv/src/page_compression.rs`) instead of
+  `tex_land_ec` are RGBA8888 with plain zstd 19 (`LOSSLESS_PAGE_ZSTD_LEVEL` in `lib/udd-conv/src/atlas/page_compression.rs`) instead of
   lossless JPEG XL at effort 6, which stayed an explicit choice (`--jxl`, the converter GUI's Jpeg XL format) until its removal
   (below). Measured on the
   repacked packages, every record decoding to the same bytes as before:

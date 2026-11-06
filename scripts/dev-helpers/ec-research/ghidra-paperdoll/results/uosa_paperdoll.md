@@ -144,7 +144,7 @@ it (2.6 `NiTGAReader.cpp`, `m_bFlipVert`). Dynamapper's Enhanced and KR-like pap
 (`dynamapper/src/core/render/dialogs/gump.rs`, `compose_decoded_layers`).
 
 Dynamapper now bakes items 15 and 16 at packing time (`pack-ec-gumps`, `bake_enhanced_paperdoll_rule` in
-`lib/udd-conv/src/ec_gumps.rs`, 2026-11-06): each drawn texel of a paperdoll gump is stored opaque and every other
+`lib/udd-conv/src/gumps/ec_gumps.rs`, 2026-11-06): each drawn texel of a paperdoll gump is stored opaque and every other
 texel transparent, so its paperdoll blends by alpha. It drops the unused glow of gumps 50322 and 60322, and leaves
 a drawn pure black texel transparent over the layers under it rather than clearing them.
 

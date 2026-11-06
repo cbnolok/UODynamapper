@@ -28,17 +28,17 @@ recommendation is to remove them (last section).
 
 ## The table and its key
 
-`udd-conv` builds the table (`lib/udd-conv/src/terrain_meta.rs:188-248`)
+`udd-conv` builds the table (`lib/udd-conv/src/metadata/terrain_meta.rs:188-248`)
 keyed by `TerrainDefinitionEntry::runtime_slot_ids()`
 (`lib/uocf/src/enhanced/land/terrain_definition.rs:516-529`): each alias's nonzero
 `legacy_land_id`, or the material id when every alias has 0. The reader's
-`layers_for_tile` returns the first span for a key (`lib/udd-assets/src/terrain_meta.rs`).
+`layers_for_tile` returns the first span for a key (`lib/udd-assets/src/metadata/terrain_meta.rs`).
 
 The client never reads `legacy_land_id`
 (`scripts/dev-helpers/ec-research/ghidra-terrain/results/uosa_terrain.md:86-88`,
 high confidence for "unused"). It routes a classic land id through
 `legacyterrainmap.csv` to `(material, subtype)`. Dynamapper's runtime does the same
-(`TexLandEcPackage::resolve_material_decision`, `lib/udd-assets/src/tex_land_ec.rs:812`).
+(`TexLandEcPackage::resolve_material_decision`, `lib/udd-assets/src/textures/tex_land_ec.rs:812`).
 So the table can name a different material from the one the client draws:
 
 - 239 keys have layers (245 spans; 6 keys are owned by more than one entry).

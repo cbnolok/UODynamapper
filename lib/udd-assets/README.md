@@ -5,6 +5,19 @@
 read already-converted packages (e.g. `uddp-inspector-gui`, `udd-conv` during
 validation).
 
+## Source layout
+
+| Folder | Responsibility |
+| --- | --- |
+| `src/animation/` | Classic and Enhanced mobile animation package readers |
+| `src/metadata/` | Tile, terrain, map, world-light and hue metadata |
+| `src/overrides/` | Strict KDL conversion tables and explicit overrides |
+| `src/textures/` | Classic/Enhanced art, land and auxiliary texture readers |
+
+Shared reader utilities, gumps and effects remain at the crate root. Existing
+imports such as `udd_assets::tex_art_ec` and the root package type exports remain
+available; category paths such as `udd_assets::textures::tex_art_ec` also work.
+
 ## Responsibilities
 
 - Typed package wrappers for each runtime asset type: `MobileAnimCcPackage`,

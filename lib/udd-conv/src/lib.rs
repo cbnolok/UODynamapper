@@ -1,38 +1,28 @@
 #![allow(unused)]
-pub mod bc7;
-pub mod tex_art_cc;
-pub mod cc_map;
-pub mod chunk_compression;
-pub mod page_compression;
-pub mod cc_gumps;
-pub mod ec_gumps;
-/// The paperdoll atlas pages and the manifests every gump package carries; public so tests elsewhere can build whole
-/// gump packages.
-pub mod gump_atlas;
-pub mod single_gumps;
-pub mod cc_radar;
-pub mod cc_statics;
-pub mod classic_sources;
-pub mod classic_patches;
+// Category modules own the source files; re-exports preserve existing import paths.
+pub mod animation;
+pub mod atlas;
+pub mod gumps;
+pub mod maps;
+pub mod metadata;
+pub mod textures;
+pub mod upscaling;
+
+pub use animation::{mobile_anim_cc, mobile_anim_ec};
+use atlas::prefix_search;
+use atlas::rgba_bounds;
+pub use atlas::{bc7, page_compression};
+pub use gumps::{cc_gumps, ec_gumps, gump_atlas, single_gumps};
+pub use maps::{cc_map, cc_radar, cc_statics, chunk_compression, classic_patches, classic_sources};
+pub use metadata::{hues, terrain_meta, tilemeta, world_lights};
+pub use textures::{tex_art_cc, tex_art_ec, tex_aux_ec, tex_land_cc, tex_land_ec};
+pub use upscaling::{upscale_pipeline, upscale_profile};
+
 pub mod conversion_tables;
-pub mod tex_land_cc;
-pub mod tex_art_ec;
-pub mod tex_land_ec;
 pub mod package_progress;
 mod progress;
 pub mod source_paths;
-pub mod tilemeta;
-pub mod tex_aux_ec;
-pub mod terrain_meta;
-pub mod upscale_pipeline;
-pub mod upscale_profile;
-pub mod world_lights;
-pub mod hues;
-pub mod mobile_anim_cc;
-pub mod mobile_anim_ec;
 pub mod effects_ec;
-mod prefix_search;
-mod rgba_bounds;
 pub mod upscale {
 	pub use crate::upscale_pipeline::{
 		apply_upscale_passes, apply_upscale_passes_owned, UpscalePass,

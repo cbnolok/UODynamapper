@@ -4,7 +4,7 @@ Program: `UOSA.exe`, SHA-256 `5a5e9dc536c836d1bf10b6f86bb88f61a6ae078f519d4060d3
 
 Question: does the Enhanced Client infer a tileart texture's role from its file name or path? Or does it
 bind each texture item to a shader input by data (block, shader name, item position, flags)? The repo rule
-under test is `stable_role_from_tileart_texture_path` (`lib/udd-conv/src/tilemeta.rs`). It checks the
+under test is `stable_role_from_tileart_texture_path` (`lib/udd-conv/src/metadata/tilemeta.rs`). It checks the
 lowercased file stem in this order: "normal" or "_n" -> NormalLike, "alpha" -> AlphaMask, "mask" ->
 GenericMask, "noise" -> Noise, "detail" -> Detail, "light" or "glow" -> Overlay.
 

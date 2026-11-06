@@ -244,7 +244,7 @@ t 5 168 // trailing note
     #[test]
     fn bundled_routing_file_parses() {
         const NAME: &str = "TerrainTranscode.kdl";
-        let content = include_str!("../../../dynamapper/assets/cc_ec_convtables/TerrainTranscode.kdl");
+        let content = include_str!("../../../../dynamapper/assets/cc_ec_convtables/TerrainTranscode.kdl");
         let parsed = EckrTerrainRouting::from_str(NAME, content).unwrap_or_else(|error| panic!("{error}"));
         assert!(!parsed.entries.is_empty(), "{NAME}");
     }

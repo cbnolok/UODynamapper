@@ -14,7 +14,7 @@ Related draw and asset paths:
 dynamapper/src/core/render/scene/world/art/statics_draw.rs
 dynamapper/src/core/render/scene/world/art/static_lights.rs
 dynamapper/src/core/texture_cache/art.rs
-lib/udd-assets/src/hues.rs
+lib/udd-assets/src/metadata/hues.rs
 ```
 
 ## Pitfalls Found

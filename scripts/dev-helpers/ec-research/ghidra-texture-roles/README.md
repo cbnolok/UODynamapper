@@ -2,7 +2,7 @@
 
 Does `UOSA.exe` (Enhanced Client) ever infer a texture's role from its file name or path? Or does it bind
 each tileart texture item to a shader input by data alone? The question comes from the converter rule
-`stable_role_from_tileart_texture_path` in `lib/udd-conv/src/tilemeta.rs`, which assigns roles from
+`stable_role_from_tileart_texture_path` in `lib/udd-conv/src/metadata/tilemeta.rs`, which assigns roles from
 substrings of the file stem ("normal"/"_n", "alpha", "mask", "noise", "detail", "light"/"glow").
 
 Findings: [results/uosa_texture_roles.md](results/uosa_texture_roles.md) has the binding chain with

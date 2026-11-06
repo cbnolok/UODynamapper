@@ -25,7 +25,7 @@ terrain surface (UOStaticTerrainShader samplers 1-3) and the sprite hue mask (UO
 sampler 2). All of them read block-0 WorldArt refs from `Texture.uop` and check
 `slot.logical_family == 1`.
 
-## PRIMARY_SELECTED (lib/udd-conv/src/tilemeta.rs)
+## PRIMARY_SELECTED (lib/udd-conv/src/metadata/tilemeta.rs)
 
 The aux packer skips `PRIMARY_SELECTED` refs (their image is in `tex_art_ec`), so a support ref
 must never carry the flag. Since tilemeta format 2 the role does not depend on the flag: it comes

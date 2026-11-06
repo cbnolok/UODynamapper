@@ -887,7 +887,7 @@ chains, displacement scans), `ProbeHouseSupport02.java` (call graph of the house
   - Data (repo parser, scratch tool): `source_kind` 0 on all 198182 items. `sampler_index` equals the item
     position except in block 1: position 1 holds 2 on 249 records and 0 on 1; position 2 holds 0 on 917
     and 1 on 1; position 3 holds 2 on 1; block 0 position 0 holds 1 on 1 record. Repo code that matches
-    items by `sampler_index` (`udd-assets/src/tex_land_ec.rs`, water lookup on block 0) works on current
+    items by `sampler_index` (`udd-assets/src/textures/tex_land_ec.rs`, water lookup on block 0) works on current
     data, but the client order is the item position.
 
 Ghidra names added this round (`NameTileartCode.java`, tag `UO_TILEART`): `UOHouseCustomization::`
@@ -924,7 +924,7 @@ Not applied; for `lib/uocf/src/enhanced/metadata/tileart.rs` and `effect_definit
    - `sampler_index` doc: "Not read by the client, which binds item i to shader map i; usually equal to
      the item position."
    - `uv_set` doc: "Texture coordinate set index (low byte of the Gamebryo texture map flags); 0 or 1."
-   - Repo users matching on `sampler_index` (`udd-assets/src/tex_land_ec.rs`) could use the item position
+   - Repo users matching on `sampler_index` (`udd-assets/src/textures/tex_land_ec.rs`) could use the item position
      instead; same result on current data.
 4. `TaeSittingAnimation::field_10`/`field_14`: keep "Not read by the client." (now high).
 5. `effect_definition.rs`: see `../ghidra-effects/results/uosa_effects.md` section "Proposed Rust changes":

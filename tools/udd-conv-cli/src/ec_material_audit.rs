@@ -890,7 +890,7 @@ selection changes. It is a developer review artifact, not runtime pack data.
 
 ### Item main EC texture chooser
 
-Source: `lib/udd-assets/src/tilemeta.rs`.
+Source: `lib/udd-assets/src/metadata/tilemeta.rs`.
 
 Current order:
 1. non-aux WorldArt ref matching the tile id
@@ -918,7 +918,7 @@ not preserve a role graph for later authored blend or liquid paths.
 
 ### `tex_art_ec` inclusion
 
-Source: `lib/udd-conv/src/tex_art_ec.rs`.
+Source: `lib/udd-conv/src/textures/tex_art_ec.rs`.
 
 Current behavior: `TileType::Liquid` is excluded wholesale.
 

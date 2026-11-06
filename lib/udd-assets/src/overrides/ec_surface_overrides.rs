@@ -229,7 +229,7 @@ ignore 39805 code="not_ported"
     fn bundled_surface_overrides_parse() {
         EcSurfaceOverrides::parse(
             "EcSurfaceOverrides.kdl",
-            include_str!("../../../dynamapper/assets/cc_ec_convtables/EcSurfaceOverrides.kdl"),
+            include_str!("../../../../dynamapper/assets/cc_ec_convtables/EcSurfaceOverrides.kdl"),
         )
         .unwrap_or_else(|error| panic!("{error}"));
     }

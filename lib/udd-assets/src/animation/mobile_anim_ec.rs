@@ -819,7 +819,7 @@ mod tests {
     fn parses_ec_mobile_animations_kdl_asset() {
         let metadata = EcMobileAnimationsKdl::parse(
             "EcMobileAnimations.kdl",
-            include_str!("../../../dynamapper/assets/cc_ec_convtables/EcMobileAnimations.kdl"),
+            include_str!("../../../../dynamapper/assets/cc_ec_convtables/EcMobileAnimations.kdl"),
         )
         .unwrap();
 

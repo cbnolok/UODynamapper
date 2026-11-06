@@ -698,7 +698,7 @@ copied into run-time globals in the packet registration function 0x005bc540:
 | Purpose | body redirect table `u32 version, u32 count, count x (u32 from, u32 to)` | item animation frame sets keyed by item id | wrong |
 | `resolve(body)` | redirects bodies | no body redirect exists in this file; body redirects come from the sequence stored id and action aliases | wrong |
 
-### `lib/udd-conv/src/mobile_anim_ec.rs`
+### `lib/udd-conv/src/animation/mobile_anim_ec.rs`
 
 | Item | Repo | Client | Severity |
 |---|---|---|---|
@@ -776,7 +776,7 @@ Neither file is described. Missing.
 9. Body mapping (new, from `tileart.uop`, no hardcoded table): for each placeholder `10000000 + body`,
    `sequence_id = body_type` (+0x20), `frames_body = props1[8]` (else body; minus 10000000 when above), and
    body 0 when no frames exist for it. In the packer (`mobile_anim_ec.rs`) and the package
-   (`lib/udd-assets/src/mobile_anim_ec.rs`):
+   (`lib/udd-assets/src/animation/mobile_anim_ec.rs`):
    - emit one animation per server body: the frames of `frames_body` with the actions, fps, aliases and
      offsets of `sequence_id`;
    - stop dropping frame-only bodies (557 become drawable);

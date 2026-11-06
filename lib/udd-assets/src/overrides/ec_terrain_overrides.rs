@@ -155,7 +155,7 @@ terrain 201 {
     fn bundled_terrain_overrides_parse() {
         EcTerrainOverrides::parse(
             "EcTerrainOverrides.kdl",
-            include_str!("../../../dynamapper/assets/cc_ec_convtables/EcTerrainOverrides.kdl"),
+            include_str!("../../../../dynamapper/assets/cc_ec_convtables/EcTerrainOverrides.kdl"),
         )
         .unwrap_or_else(|error| panic!("{error}"));
     }

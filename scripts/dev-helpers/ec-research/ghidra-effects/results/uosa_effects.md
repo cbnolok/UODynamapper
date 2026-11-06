@@ -708,7 +708,7 @@ for all 3000. `huenames.csv` is hand-edited (lines without a comma, names one by
 20-byte field allows). The KR `Hues.uop` (2016) has the same entries, order, atlas layout and swatch grid.
 
 Repo note: `lib/uocf/src/enhanced/graphics/hues_mul_uop.rs` converts `hues.mul` to and from `Hues.uop` with these
-rules, and `lib/udd-conv/src/hues.rs` builds the Classic atlas with them (`HueRampMode::Linear` by default;
+rules, and `lib/udd-conv/src/metadata/hues.rs` builds the Classic atlas with them (`HueRampMode::Linear` by default;
 `Flat` keeps the old 8-texel blocks). The EC path copies the bitmaps' row 0, which is exact.
 
 ## Effect camera and lighting
