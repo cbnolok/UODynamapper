@@ -1,7 +1,7 @@
 use crate::app::UddConvApp;
 use crate::logic::tasks::{
     cc_gumps_source_dirs, ec_gumps_share, ec_gumps_source_dirs, effects_ec_source, hues_source,
-    single_gump_pixel_format, terrain_definition_source, EcGumpsShare, HuesSource,
+    single_gump_pixel_format, EcGumpsShare, HuesSource,
 };
 use crate::models::{
     AppSettings, AssetPackProgress, AssetPackProgressState, AssetPackTask, GumpsEcSharing, HueRamp,
@@ -23,7 +23,6 @@ use udd_conv::tex_art_cc::select_tex_art_cc_metadata_source;
 use udd_conv::tex_land_cc::CLASSIC_LAND_LOSSY_REFUSAL;
 use udd_conv::upscale::UpscaleFilter;
 use uocf::enhanced::effect_texture::EFFECT_TEXTURE_UOP_NAME;
-use uocf::enhanced::terrain_definition::TERRAIN_DEFINITION_UOP_NAME;
 
 impl UddConvApp {
     pub fn ui_assets(&mut self, ui: &mut egui::Ui) {
@@ -69,7 +68,6 @@ impl UddConvApp {
                 cards.card(|ui| self.ui_tex_aux_ec(ui, is_busy));
                 cards.card(|ui| self.ui_mobile_anim_ec(ui, is_busy));
                 cards.card(|ui| self.ui_effects_ec(ui, is_busy));
-                cards.card(|ui| self.ui_terrain_meta(ui, is_busy));
             });
 
             ui.add_space(4.0);
@@ -209,7 +207,7 @@ impl UddConvApp {
         let (clicked, stop_clicked, preview) = draw_asset_card(
             ui,
             "Enhanced Land",
-            "High-resolution terrain textures",
+            "High-resolution terrain textures and the terrain-layer table",
             None,
             &tex_land_ec_progress,
             !is_busy,
@@ -431,31 +429,6 @@ impl UddConvApp {
             });
         });
         if clicked { self.convert_effects_ec(); }
-        if stop_clicked { self.request_cancel_conversion(); }
-    }
-
-    fn ui_terrain_meta(&mut self, ui: &mut egui::Ui, is_busy: bool) {
-        let source = match terrain_definition_source(&self.settings) {
-            _ if self.settings.ec_dir.is_none() => "Source: select an Enhanced source directory".to_string(),
-            Some(path) => format!("Source: {}", path.display()),
-            None => format!("Source: missing {TERRAIN_DEFINITION_UOP_NAME}"),
-        };
-        let progress = self.asset_pack_progress(AssetPackTask::TerrainMeta);
-        let mut clicked = false;
-        let mut stop_clicked = false;
-        ui.vertical(|ui| {
-            ui.spacing_mut().item_spacing = egui::vec2(6.0, 8.0);
-            (clicked, stop_clicked) = draw_asset_card_header(
-                ui,
-                "Terrain Metadata",
-                "Terrain blending tables from TerrainDefinition.uop: terrain_meta.bin",
-                Some(&source),
-                &progress,
-                !is_busy,
-            );
-            draw_gump_note(ui, TERRAIN_META_NOTE, egui::Color32::GRAY);
-        });
-        if clicked { self.convert_terrain_meta(); }
         if stop_clicked { self.request_cancel_conversion(); }
     }
 
@@ -733,7 +706,6 @@ const EFFECTS_EC_STRICT_TOOLTIP: &str = "Fail on error findings instead of writi
 --strict); particle files missing from the client are warnings.";
 const EFFECTS_EC_REPORT_TOOLTIP: &str = "Write every finding of the packer to this file, one line each \
 (pack-ec-effects --report), before the strict check.";
-const TERRAIN_META_NOTE: &str = "No options: pack-terrain-meta takes only its source and output.";
 
 fn hues_source_label(source: &HuesSource) -> String {
     match source {

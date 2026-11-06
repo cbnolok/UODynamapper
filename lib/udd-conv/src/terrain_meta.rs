@@ -14,9 +14,8 @@
 
 use bytemuck::{Pod, Zeroable};
 use byteorder::{LittleEndian, ReadBytesExt, WriteBytesExt};
-use color_eyre::eyre::{self, WrapErr};
+use color_eyre::eyre;
 use std::io::{Cursor, Read};
-use std::path::Path;
 use uocf::enhanced::terrain_definition::TerrainDefinitionPackage;
 
 // Magic and version constants.
@@ -280,21 +279,6 @@ pub fn serialize_terrain_meta(tables: &TerrainMetaTables) -> eyre::Result<Vec<u8
     }
 
     Ok(bytes)
-}
-
-/// Build and write a terrain-layer table as a loose file from a `TerrainDefinitionPackage`.
-///
-/// Kept only for udd-conv-gui's Terrain Metadata job until that job is removed: nothing reads the loose file any
-/// more, since `tex_land_ec.uddp` carries the table.
-pub fn write_terrain_meta(
-    terrain_definition: &TerrainDefinitionPackage,
-    out_file: &Path,
-) -> eyre::Result<()> {
-    let tables = build_terrain_meta_tables(terrain_definition)?;
-    let bytes = serialize_terrain_meta(&tables)?;
-    std::fs::write(out_file, &bytes)
-        .wrap_err_with(|| format!("write {}", out_file.display()))?;
-    Ok(())
 }
 
 #[cfg(test)]

@@ -259,7 +259,6 @@ pub enum AssetPackTask {
     GumpsEc,
     Hues,
     WorldLights,
-    TerrainMeta,
     EffectsEc,
 }
 
@@ -391,8 +390,8 @@ mod tests {
         assert_eq!(settings.gumps_ec_sharing, GumpsEcSharing::ShareWithGumpsCc);
     }
 
-    /// The hues, world lights, terrain metadata and Enhanced effects jobs default to the CLI without flags, and no
-    /// job validates what it writes until asked.
+    /// The hues, world lights and Enhanced effects jobs default to the CLI without flags, and no job validates what
+    /// it writes until asked.
     #[test]
     fn app_settings_default_packs_hues_lights_and_effects_as_the_cli_does() {
         let settings = AppSettings::default();

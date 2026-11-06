@@ -3,10 +3,10 @@ use crate::app::UddConvApp;
 use crate::ui::layout::{card_title, page_heading};
 use std::path::PathBuf;
 
-/// The files the Validate Packages tool's file dialog offers: packages and the terrain metadata.
-const VALIDATE_EXTENSIONS: [&str; 2] = ["uddp", "bin"];
+/// The files the Validate Packages tool's file dialog offers: packages.
+const VALIDATE_EXTENSIONS: [&str; 1] = ["uddp"];
 const VALIDATE_HINT: &str = "Checks each package as udd-cli tool validate does: the container, every entry decoded, \
-and the reader of its kind. A folder is searched for *.uddp and terrain_meta.bin.";
+and the reader of its kind. A folder is searched for *.uddp.";
 const VALIDATE_TOOLTIP: &str = "Validate every package listed, and those in the folders listed; the results go to the \
 log.";
 
@@ -211,12 +211,12 @@ mod tests {
 
         add_validate_paths(
             &mut listed,
-            [PathBuf::from("/out"), PathBuf::from("/out/hues.uddp"), PathBuf::from("/out/terrain_meta.bin")],
+            [PathBuf::from("/out"), PathBuf::from("/out/hues.uddp"), PathBuf::from("/out/map0.uddp")],
         );
 
         assert_eq!(
             listed,
-            [PathBuf::from("/out/hues.uddp"), PathBuf::from("/out"), PathBuf::from("/out/terrain_meta.bin")]
+            [PathBuf::from("/out/hues.uddp"), PathBuf::from("/out"), PathBuf::from("/out/map0.uddp")]
         );
     }
 }

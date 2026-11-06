@@ -48,11 +48,9 @@ use udd_conv::ec_gumps::{
 use udd_conv::effects_ec::{pack_effects_ec, EffectsEcPackOptions};
 use udd_conv::hues::{convert_hues_to_hues_uddp_from_sources, HuesOptions};
 use udd_conv::source_paths::find_first_existing_file;
-use udd_conv::terrain_meta::write_terrain_meta;
 use udd_conv::world_lights::{convert_client_lights_to_world_lights_uddp, WorldLightsOptions};
 use uocf::enhanced::effect_texture::EFFECT_TEXTURE_UOP_NAME;
 use uocf::enhanced::hues::HUES_UOP_NAME;
-use uocf::enhanced::terrain_definition::{TerrainDefinitionPackage, TERRAIN_DEFINITION_UOP_NAME};
 use udd_conv::page_compression::LOSSLESS_PAGE_ZSTD_LEVEL;
 use udd_conv::single_gumps::{default_single_gump_compression, GumpPixelFormat};
 use udd_conv::upscale_profile::UpscaleProfile;
@@ -308,8 +306,8 @@ fn upscale_filter_passes(filter: UpscaleFilter) -> Vec<UpscalePass> {
     }
 }
 
-/// The hues, world lights, terrain metadata and Enhanced effects packers report no progress, so their bar shows this
-/// much while they run.
+/// The hues, world lights and Enhanced effects packers report no progress, so their bar shows this much while they
+/// run.
 const UNREPORTED_PACKING_PROGRESS: f32 = 0.1;
 /// Where the bar of a packing job stands while the packages it wrote are validated.
 const VALIDATING_PROGRESS: f32 = 0.99;
@@ -541,10 +539,9 @@ fn pack_gumps_cc_and_ec(
     Ok((cc_summary, ec_summary))
 }
 
-/// What `pack-hues`, `pack-lights`, `pack-terrain-meta` and `pack-ec-effects` write without `--output`.
+/// What `pack-hues`, `pack-lights` and `pack-ec-effects` write without `--output`.
 pub(crate) const HUES_OUTPUT: &str = "hues.uddp";
 pub(crate) const WORLD_LIGHTS_OUTPUT: &str = "world_lights.uddp";
-pub(crate) const TERRAIN_META_OUTPUT: &str = "terrain_meta.bin";
 pub(crate) const EFFECTS_EC_OUTPUT: &str = "effects_ec.uddp";
 /// The Classic hues file the hues job reads first.
 const HUES_MUL_NAME: &str = "hues.mul";
@@ -629,23 +626,6 @@ fn pack_world_lights(settings: &AppSettings, output: &Path) -> eyre::Result<Stri
         &world_lights_options(settings),
     )?;
     Ok(format!("Wrote {WORLD_LIGHTS_OUTPUT} to {}", output.display()))
-}
-
-/// The TerrainDefinition.uop the terrain metadata job reads, as `pack-terrain-meta --ecdir` finds it.
-pub(crate) fn terrain_definition_source(settings: &AppSettings) -> Option<PathBuf> {
-    find_first_existing_file(&gather_ec_source_dirs(settings.ec_dir.as_ref()), &[TERRAIN_DEFINITION_UOP_NAME])
-}
-
-/// Writes the terrain metadata as `pack-terrain-meta` does.
-fn pack_terrain_meta(settings: &AppSettings, output: &Path) -> eyre::Result<String> {
-    if settings.ec_dir.is_none() { eyre::bail!("No Enhanced source dir configured"); }
-    let terrain_definition_path = terrain_definition_source(settings)
-        .ok_or_else(|| eyre::eyre!("missing required file: {TERRAIN_DEFINITION_UOP_NAME}"))?;
-    let terrain_definition = TerrainDefinitionPackage::load(&terrain_definition_path)
-        .map_err(|error| eyre::eyre!("load {TERRAIN_DEFINITION_UOP_NAME}: {error}"))?;
-    ensure_output_parent(output)?;
-    write_terrain_meta(&terrain_definition, output)?;
-    Ok(format!("Wrote {TERRAIN_META_OUTPUT} to {}", output.display()))
 }
 
 /// The EffectTexture.uop the Enhanced effects job reads, as `pack-ec-effects --ecdir` finds it.
@@ -1321,20 +1301,6 @@ impl UddConvApp {
         );
     }
 
-    pub fn convert_terrain_meta(&self) {
-        let settings = self.settings.clone();
-        let output = self.get_output_path(TERRAIN_META_OUTPUT);
-        self.spawn_asset_task(
-            AssetPackTask::TerrainMeta,
-            "Terrain Metadata Writing".to_string(),
-            vec![output.clone()],
-            move |progress| {
-                progress.set(AssetPackProgressState::Running, UNREPORTED_PACKING_PROGRESS, "Writing terrain metadata");
-                pack_terrain_meta(&settings, &output)
-            },
-        );
-    }
-
     pub fn convert_effects_ec(&self) {
         let settings = self.settings.clone();
         let output = self.get_output_path(EFFECTS_EC_OUTPUT);
@@ -1946,13 +1912,15 @@ mod tests {
         assert_eq!(states[&AssetPackTask::GumpsCc].state, AssetPackProgressState::Succeeded);
     }
 
-    /// The absolute folder the real-data hues, world lights, terrain metadata and Enhanced effects test writes to: the
-    /// jobs' defaults in it, and the chosen options in its `options` folder.
+    /// The absolute folder the real-data hues, world lights and Enhanced effects test writes to: the jobs' defaults
+    /// in it, and the chosen options in its `options` folder.
     const PACKAGES_OUTPUT_DIR_ENV: &str = "UDD_CONV_GUI_PACKAGES_OUTPUT_DIR";
     /// The folder of the chosen options' packages, inside the output folder.
     const CHOSEN_OPTIONS_DIR: &str = "options";
     /// The Enhanced effects findings file the chosen options write, inside the chosen options' folder.
     const EFFECTS_EC_REPORT_NAME: &str = "effects_ec_findings.txt";
+    /// The packages the real-data hues, world lights and Enhanced effects test writes to each folder.
+    const PACKAGES_PER_FOLDER: usize = 3;
 
     fn real_output_dir(env: &str, client_dirs: &[&PathBuf]) -> PathBuf {
         let output_dir = env_dir(env);
@@ -1963,11 +1931,11 @@ mod tests {
         output_dir
     }
 
-    /// The hues, world lights, terrain metadata and Enhanced effects jobs on the real clients, with the defaults and
-    /// with chosen options, each through the GUI's job code; then every package validated.
+    /// The hues, world lights and Enhanced effects jobs on the real clients, with the defaults and with chosen
+    /// options, each through the GUI's job code; then every package validated.
     #[test]
     #[ignore = "needs UO_CC_CLIENT_DIR, UO_EC_CLIENT_DIR and UDD_CONV_GUI_PACKAGES_OUTPUT_DIR"]
-    fn packs_real_hues_lights_terrain_meta_and_effects() {
+    fn packs_real_hues_lights_and_effects() {
         // Shows the jobs' messages with --nocapture; another test may have installed it already.
         let _ = uot_logging::install_paris_logger();
         let cc_dir = env_dir(CC_CLIENT_DIR_ENV);
@@ -1991,14 +1959,13 @@ mod tests {
             for message in [
                 pack_hues(settings, &dir.join(HUES_OUTPUT)),
                 pack_world_lights(settings, &dir.join(WORLD_LIGHTS_OUTPUT)),
-                pack_terrain_meta(settings, &dir.join(TERRAIN_META_OUTPUT)),
                 pack_effects_ec_job(settings, &dir.join(EFFECTS_EC_OUTPUT)),
             ] {
                 log::info!("{}", message.expect("pack"));
             }
             let logs = Arc::new(Mutex::new(Vec::new()));
             let counts = validate_packages_to_panel(&[dir.clone()], &logs).expect("validate");
-            assert!(counts.packages >= 4, "{counts:?}");
+            assert!(counts.packages >= PACKAGES_PER_FOLDER, "{counts:?}");
         }
         assert!(chosen_dir.join(EFFECTS_EC_REPORT_NAME).is_file());
     }
