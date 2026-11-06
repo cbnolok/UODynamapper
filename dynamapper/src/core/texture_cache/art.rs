@@ -1,7 +1,6 @@
 #![allow(dead_code)]
 
 use std::ops::{Deref, DerefMut};
-use std::sync::Arc;
 
 use bevy::prelude::*;
 use color_eyre::eyre;
@@ -9,7 +8,7 @@ use color_eyre::eyre;
 use crate::{
     core::{
         system_sets::StartupSysSet,
-        uo_files_loader::{TexArtCcPackageRes, TexArtEcPackageRes, TileMetaPackageRes},
+        uo_files_loader::{TexArtCcPackageRes, TexArtEcPackageRes},
     },
     prelude::*,
 };
@@ -19,7 +18,6 @@ use udd_assets::{
     tex_art_ec::TexArtEcPackage,
     tex_aux_ec::TexAuxEcPackage,
     tex_land_ec::TexLandEcPackage,
-    tilemeta::TileMetaPackage,
 };
 use std::collections::HashMap;
 use bevy::render::extract_resource::ExtractResource;
@@ -694,35 +692,27 @@ impl DerefMut for GroundArtPageAtlas {
     }
 }
 
-#[derive(Resource, Default, Clone)]
-pub struct ArtTextureLoader {
-    tex_art_cc: Option<Arc<TexArtCcPackage>>,
-    tex_art_ec: Option<Arc<TexArtEcPackage>>,
-    tilemeta: Option<Arc<TileMetaPackage>>,
-}
-
-pub struct ArtTextureLoaderPlugin {
+/// Checks at startup that both art packages share a page format (see [`art_page_format_mismatch_warning`]).
+pub struct ArtPageFormatCheckPlugin {
     pub registered_by: &'static str,
 }
-impl_tracked_plugin!(ArtTextureLoaderPlugin);
+impl_tracked_plugin!(ArtPageFormatCheckPlugin);
 
-impl Plugin for ArtTextureLoaderPlugin {
+impl Plugin for ArtPageFormatCheckPlugin {
     fn build(&self, app: &mut App) {
         log_plugin_build(self);
         app.add_systems(
             Startup,
-            sys_setup_art_texture_loader
+            sys_warn_art_page_format_mismatch
                 .in_set(StartupSysSet::SetupSceneStage1)
                 .after(StartupSysSet::LoadStartupUOFiles),
         );
     }
 }
 
-fn sys_setup_art_texture_loader(
-    mut commands: Commands,
+fn sys_warn_art_page_format_mismatch(
     tex_art_cc_r: Option<Res<TexArtCcPackageRes>>,
     tex_art_ec_r: Option<Res<TexArtEcPackageRes>>,
-    tilemeta_r: Option<Res<TileMetaPackageRes>>,
 ) {
     // A startup system, so the warning comes once per run however many pages convert later. A package's format is its
     // first page's, RGBA8888 without pages, as `sprite_atlas_spec` reads it.
@@ -732,11 +722,6 @@ fn sys_setup_art_texture_loader(
     ) {
         console_logger::one(LogSev::Warn, LogAbout::RenderWorldArt, &warning);
     }
-    commands.insert_resource(ArtTextureLoader {
-        tex_art_cc: tex_art_cc_r.map(|r| r.0.clone()),
-        tex_art_ec: tex_art_ec_r.map(|r| r.0.clone()),
-        tilemeta: tilemeta_r.map(|r| r.0.clone()),
-    });
 }
 
 #[derive(Resource, Default)]

@@ -28,7 +28,7 @@ impl Plugin for TextureCachePlugin
     /// Allocate GPU texture array and Tile Caches.
     fn build(&self, app: &mut App) {
         log_plugin_build(self);
-        app.add_plugins(art::ArtTextureLoaderPlugin { registered_by: "TextureCachePlugin" });
+        app.add_plugins(art::ArtPageFormatCheckPlugin { registered_by: "TextureCachePlugin" });
         app.add_plugins(land::LandTextureCachePlugin { registered_by: "TextureCachePlugin" });
     }
 }
