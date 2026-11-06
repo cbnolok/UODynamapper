@@ -36,7 +36,7 @@ const IMAGE_ENTRY_EXTENSIONS: [&str; 3] = [".dds", ".tga", ".bmp"];
 
 pub(super) const REPLACE_FILE_HOVER: &str = "Write a copy of the package with this entry replaced by a file of the same kind \
 (by content: the kind its extension or the current entry has) that parses where uocf has a reader for the entry. \
-A PNG, BMP or JPEG for a DDS, TGA, Classic gump or Classic art entry (land or static by its id) can be converted to the entry's format (a TGA keeps its type, \
+A PNG, BMP, JPEG or still lossless WebP for a DDS, TGA, Classic gump or Classic art entry (land or static by its id) can be converted to the entry's format (a TGA keeps its type, \
 depth, RLE packing and footer, a DDS its pixel format, header and mip rule). The entry keeps its compression flag; the other entries are untouched.";
 
 /// Asks whether to convert `image` to the entry's `format`: `None` cancels, `Some(None)` stores the file as it is.

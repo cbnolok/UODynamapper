@@ -173,12 +173,44 @@ pub fn save_entry_copy(source: &Path, target: &EntryTarget, bytes: &[u8], output
 }
 
 /// The formats "Replace file..." offers to convert to an image entry's format (a TGA or DDS file is stored as it is).
-const CONVERTED_IMAGE_FORMATS: [ImageFormat; 3] = [ImageFormat::Png, ImageFormat::Bmp, ImageFormat::Jpeg];
+/// A WebP only when it is a still lossless one, like the WebP the image exports write.
+const CONVERTED_IMAGE_FORMATS: [ImageFormat; 4] = [ImageFormat::Png, ImageFormat::Bmp, ImageFormat::Jpeg, ImageFormat::WebP];
+/// A WebP file is a RIFF file (`RIFF`, its size, `WEBP`) of chunks: a FourCC, a little-endian size and the payload,
+/// padded to an even length.
+const RIFF_HEADER_LEN: usize = 12;
+const RIFF_FOURCC_LEN: usize = 4;
+const RIFF_CHUNK_HEADER_LEN: usize = 8;
+const RIFF_CHUNK_ALIGNMENT: usize = 2;
+/// The chunk of a lossy WebP image, and the one an animation starts with.
+const WEBP_LOSSY_CHUNK: &[u8; RIFF_FOURCC_LEN] = b"VP8 ";
+const WEBP_ANIMATION_CHUNK: &[u8; RIFF_FOURCC_LEN] = b"ANIM";
 
-/// The image a picked file holds when it is one to convert (PNG, BMP, JPEG), as RGBA.
+/// Why the WebP `file` is not one to convert: lossy or animated (by its top-level chunks).
+fn webp_refusal(file: &[u8]) -> Option<&'static str> {
+    let mut offset = RIFF_HEADER_LEN;
+    while let Some(header) = file.get(offset..offset + RIFF_CHUNK_HEADER_LEN) {
+        let (fourcc, size) = header.split_at(RIFF_FOURCC_LEN);
+        if fourcc == WEBP_LOSSY_CHUNK {
+            return Some("a lossy WebP");
+        }
+        if fourcc == WEBP_ANIMATION_CHUNK {
+            return Some("an animated WebP");
+        }
+        let size = u32::from_le_bytes(size.try_into().expect("a chunk size is 4 bytes")) as usize;
+        offset = offset.saturating_add(RIFF_CHUNK_HEADER_LEN).saturating_add(size.next_multiple_of(RIFF_CHUNK_ALIGNMENT));
+    }
+    None
+}
+
+/// The image a picked file holds when it is one to convert (PNG, BMP, JPEG, still lossless WebP), as RGBA.
 pub fn image_to_convert(file: &[u8]) -> eyre::Result<Option<RgbaImage>> {
     match image::guess_format(file) {
         Ok(format) if CONVERTED_IMAGE_FORMATS.contains(&format) => {
+            if format == ImageFormat::WebP
+                && let Some(refusal) = webp_refusal(file)
+            {
+                eyre::bail!("{refusal}: only a still lossless WebP is converted, so the entry keeps the pixels exported");
+            }
             Ok(Some(image::load_from_memory_with_format(file, format).map_err(|error| eyre::eyre!("not a readable {format:?}: {error}"))?.into_rgba8()))
         }
         _ => Ok(None),
@@ -211,6 +243,27 @@ pub fn check_summary(check: &EntryCheck) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn converts_a_still_lossless_webp_only() {
+        use image::ImageEncoder;
+        const WIDTH: u32 = 3;
+        const HEIGHT: u32 = 2;
+        const ALPHA: u8 = 200;
+        let image = RgbaImage::from_fn(WIDTH, HEIGHT, |x, y| image::Rgba([x as u8, y as u8, u8::MAX, ALPHA]));
+        let mut webp = Vec::new();
+        image::codecs::webp::WebPEncoder::new_lossless(&mut webp)
+            .write_image(image.as_raw(), WIDTH, HEIGHT, image::ExtendedColorType::Rgba8)
+            .unwrap();
+        assert_eq!(image_to_convert(&webp).unwrap(), Some(image));
+        for (chunk, refusal) in [(WEBP_LOSSY_CHUNK, "lossy"), (WEBP_ANIMATION_CHUNK, "animated")] {
+            let mut file = webp[..RIFF_HEADER_LEN].to_vec();
+            file.extend_from_slice(chunk);
+            file.extend_from_slice(&0u32.to_le_bytes());
+            let error = image_to_convert(&file).unwrap_err().to_string();
+            assert!(error.contains(refusal), "{error}");
+        }
+    }
 
     #[test]
     fn keeps_edits_per_entry_and_encodes_like_the_entry() {
