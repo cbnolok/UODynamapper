@@ -21,11 +21,10 @@ use udd_assets::{
     tex_land_cc::TexLandCcPackage,
     tex_land_ec::TexLandEcPackage,
     tex_aux_ec::TexAuxEcPackage,
-    terrain_meta::TerrainMetaPackage,
     tilemeta::{TileMetaLandTile, TileMetaPackage},
 };
 use uocf::classic::land_texture::LandTextureSize;
-use uocf::enhanced::terrain_definition::{TerrainLayerClass, TerrainLayerRole};
+use uocf::enhanced::terrain_definition::TerrainLayerClass;
 use uocf::classic::map::MapBlockRelPos;
 
 pub struct LandTextureCachePlugin {
@@ -71,30 +70,23 @@ const CLASSIC_LAND_ART_LOOKUP_WIDTH: u32 = 256;
 const CLASSIC_LAND_ART_TILE_CAPACITY: u32 = 16_384;
 const TILEMETA_FLAG_WET: u64 = 0x80;
 
-/// GPU images for the `tex_aux_ec` two-base blend path.
+/// GPU images of the `tex_aux_ec` textures that item liquids and item surfaces sample.
 ///
 /// `aux_atlas`: a `texture_2d_array<f32>` where layer 0 is a transparent sentinel
 /// (absent) and layers 1..N each hold the RGBA pixels of one aux slot, or its BC7
 /// blocks when every texture of the package is BC7 (`aux_layers::AuxLayerFormat`).
 /// All layers share the same `AUX_ATLAS_TILE_SIZE` × `AUX_ATLAS_TILE_SIZE` extent;
 /// images smaller than that are placed in the top-left corner.
-///
-/// `aux_lookup`: a `Rgba32Uint` 2D image of width `LAND_PAGE_LOOKUP_WIDTH`.
-/// Each texel holds `[secondary_layer, secondary_repetition_q8, mask_layer, 0]`
-/// for the tile at that index (0 = absent).
 struct LandAuxAtlasImages {
     aux_atlas: Handle<Image>,
-    aux_lookup: Handle<Image>,
     item_lookup: Handle<Image>,
     surface_lookup: Handle<Image>,
 }
 
 /// Side length (in pixels) of each layer in the aux atlas.
-/// Aux textures (secondary base, alpha mask) are typically 64–256 px;
+/// Aux textures (item liquid and surface masks) are typically 64–256 px;
 /// we normalise them all to this common size so the array is homogeneous.
 const AUX_ATLAS_TILE_SIZE: u32 = 256;
-const AUX_LOOKUP_WIDTH: u32 = 256;
-const AUX_LOOKUP_TILE_CAPACITY: u32 = 16_384;
 
 enum LandShaderAtlasSource<'a> {
     Cc(&'a TexLandCcPackage),
@@ -113,35 +105,6 @@ const LAND_PAGE_LOOKUP_ROLE_LIQUID_PARAMS: u32 = 5;
 const LAND_PAGE_LOOKUP_ROLE_COVERAGE_PARAMS: u32 = 6;
 /// `w` of a liquid-params entry: the scroll comes from the source water tweaks.
 const LIQUID_PARAMS_FROM_SOURCE: u32 = 1;
-
-/// The texture and stretch of the item that has `role` in a terrain tile's layer graph (roles are by
-/// position per layer class, as the client binds them).
-fn terrain_layer_texture_with_role(
-    tile_id: u32,
-    terrain_meta: &TerrainMetaPackage,
-    role: TerrainLayerRole,
-) -> Option<(u32, f32)> {
-    terrain_meta
-        .layers_for_tile(tile_id)
-        .iter()
-        .find(|layer| layer.role == role && layer.texture_id != 0)
-        .map(|layer| (layer.texture_id, layer.texture_repetition))
-}
-
-/// The secondary base: colour B of a default or bump layer (item 1), weighted by 1 − blend alpha.
-fn secondary_base_texture_id(tile_id: u32, terrain_meta: &TerrainMetaPackage) -> Option<(u32, f32)> {
-    terrain_layer_texture_with_role(tile_id, terrain_meta, TerrainLayerRole::ColourB)
-}
-
-/// The alpha mask: the blend-alpha item of a default or bump layer (item 2).
-fn alpha_mask_texture_id(tile_id: u32, terrain_meta: &TerrainMetaPackage) -> Option<(u32, f32)> {
-    terrain_layer_texture_with_role(tile_id, terrain_meta, TerrainLayerRole::BlendAlpha)
-}
-
-/// The ripple/perturbation: the du/dv distortion item of a water layer (item 0).
-fn ripple_texture_id(tile_id: u32, terrain_meta: &TerrainMetaPackage) -> Option<(u32, f32)> {
-    terrain_layer_texture_with_role(tile_id, terrain_meta, TerrainLayerRole::Distortion)
-}
 
 /// Copy native RGBA texels into the top-left of a zeroed atlas layer.
 /// This pads (or crops) the image; it never rescales its texel coordinates.
@@ -191,23 +154,8 @@ fn create_blank_aux_atlas_images(images: &mut Assets<Image>) -> LandAuxAtlasImag
         ..Default::default()
     });
 
-    let lookup_height = (AUX_LOOKUP_TILE_CAPACITY + AUX_LOOKUP_WIDTH - 1) / AUX_LOOKUP_WIDTH;
-    let mut aux_lookup = Image::new(
-        Extent3d {
-            width: AUX_LOOKUP_WIDTH,
-            height: lookup_height,
-            depth_or_array_layers: 1,
-        },
-        TextureDimension::D2,
-        vec![0u8; (AUX_LOOKUP_WIDTH * lookup_height * 16) as usize],
-        TextureFormat::Rgba32Uint,
-        bevy::asset::RenderAssetUsages::RENDER_WORLD,
-    );
-    aux_lookup.texture_descriptor.usage |= TextureUsages::TEXTURE_BINDING;
-
     LandAuxAtlasImages {
         aux_atlas: images.add(aux_atlas),
-        aux_lookup: images.add(aux_lookup),
         item_lookup: super::ec_item_liquid::create_lookup(images, None, |_| None),
         surface_lookup: super::ec_item_surface::create_lookup(images, None, None, None, |_| None),
     }
@@ -237,22 +185,18 @@ fn assign_aux_layer(
     Some((layer, extent))
 }
 
-/// Build the `tex_aux_ec` atlas and per-tile lookup texture from the auxiliary
-/// texture package and the terrain layer table of `tex_land_ec`.
+/// Build the `tex_aux_ec` atlas and the item liquid and item surface lookups from the auxiliary
+/// texture package: the atlas holds only the textures those lookups reference.
 ///
-/// Item water shares these image layers even without the optional `tex_land_ec` and its terrain layer table.
 /// Missing auxiliary pixels leave the existing base path intact.
 fn create_aux_atlas_images(
     images: &mut Assets<Image>,
     tex_aux_ec: Option<&TexAuxEcPackage>,
-    terrain_meta: Option<&TerrainMetaPackage>,
-    tex_land_ec: Option<&TexLandEcPackage>,
     tilemeta: Option<&TileMetaPackage>,
     tex_art_ec: Option<&udd_assets::tex_art_ec::TexArtEcPackage>,
 ) -> LandAuxAtlasImages {
     use bevy::render::render_resource::{
-        Extent3d, TextureDimension, TextureFormat, TextureUsages, TextureViewDescriptor,
-        TextureViewDimension,
+        Extent3d, TextureDimension, TextureUsages, TextureViewDescriptor, TextureViewDimension,
     };
 
     let Some(tex_aux_ec) = tex_aux_ec else {
@@ -266,89 +210,6 @@ fn create_aux_atlas_images(
     // The layers keep the package's BC7 blocks when every texture is BC7, and decode to RGBA8 otherwise.
     let mut layers = aux_layers::AuxLayers::new(aux_layers::AuxLayerFormat::for_package(tex_aux_ec));
 
-    let lookup_height = (AUX_LOOKUP_TILE_CAPACITY + AUX_LOOKUP_WIDTH - 1) / AUX_LOOKUP_WIDTH;
-    let mut lookup_bytes = vec![0u8; (AUX_LOOKUP_WIDTH * lookup_height * 16) as usize];
-
-    if let (Some(terrain_meta), Some(tex_land_ec)) = (terrain_meta, tex_land_ec) {
-        for tile_id in 0..AUX_LOOKUP_TILE_CAPACITY {
-            let sec_base = secondary_base_texture_id(tile_id, terrain_meta);
-            let alpha_mask = alpha_mask_texture_id(tile_id, terrain_meta);
-            let ripple = ripple_texture_id(tile_id, terrain_meta);
-
-            // Liquid terrain: the material is the water layer class (UOWaterTerrainLayer).
-            let is_liquid: u32 = u32::from(
-                tex_land_ec.resolve_material_decision(tile_id).material_id
-                    .and_then(|mid| tex_land_ec.source_material(mid))
-                    .and_then(|entry| entry.texture.as_ref())
-                    .is_some_and(|texture| texture.layer_class() == TerrainLayerClass::Water),
-            );
-
-            if sec_base.is_none() && alpha_mask.is_none() && ripple.is_none() && is_liquid == 0 {
-                continue;
-            }
-
-            let mut assign_layer = |texture_id: u32| -> u32 {
-                assign_aux_layer(tex_aux_ec, texture_id, &mut texture_id_to_layer, &mut layers)
-                    .map_or(0, |(layer, _)| layer)
-            };
-
-            let (sec_layer, sec_rep_q8) = if let Some((tid, rep)) = sec_base {
-                let layer = assign_layer(tid);
-                let rep_q8 = if rep.is_finite() && rep > 0.0 {
-                    (rep * 256.0).round().clamp(0.0, u16::MAX as f32) as u32
-                } else {
-                    0
-                };
-                (layer, rep_q8)
-            } else {
-                (0u32, 0u32)
-            };
-
-            let (mask_layer, _mask_rep_q8) = if let Some((tid, rep)) = alpha_mask {
-                let layer = assign_layer(tid);
-                let rep_q8 = if rep.is_finite() && rep > 0.0 {
-                    (rep * 256.0).round().clamp(0.0, u16::MAX as f32) as u32
-                } else {
-                    0
-                };
-                (layer, rep_q8)
-            } else {
-                (0u32, 0u32)
-            };
-
-            let (ripple_layer, ripple_rep_q8) = if let Some((tid, rep)) = ripple {
-                let layer = assign_layer(tid);
-                let rep_q8 = if rep.is_finite() && rep > 0.0 {
-                    (rep * 256.0).round().clamp(0.0, u16::MAX as f32) as u32
-                } else {
-                    0
-                };
-                (layer, rep_q8)
-            } else {
-                (0u32, 0u32)
-            };
-
-            if sec_layer == 0 && mask_layer == 0 && ripple_layer == 0 && is_liquid == 0 {
-                continue;
-            }
-
-            // Write lookup entry:
-            //   x: secondary_layer | (secondary_rep_q8 << 16)
-            //   y: mask_layer
-            //   z: ripple_layer | (ripple_rep_q8 << 16)
-            //   w: is_liquid (1 = liquid terrain material, 0 = solid)
-            let lookup_index = tile_id as usize;
-            let texel_offset = lookup_index * 16;
-            lookup_bytes[texel_offset..texel_offset + 4]
-                .copy_from_slice(&((sec_layer & 0xFFFF) | (sec_rep_q8 << 16)).to_le_bytes());
-            lookup_bytes[texel_offset + 4..texel_offset + 8]
-                .copy_from_slice(&mask_layer.to_le_bytes());
-            lookup_bytes[texel_offset + 8..texel_offset + 12]
-                .copy_from_slice(&((ripple_layer & 0xFFFF) | (ripple_rep_q8 << 16)).to_le_bytes());
-            lookup_bytes[texel_offset + 12..texel_offset + 16]
-                .copy_from_slice(&is_liquid.to_le_bytes());
-        }
-    }
     let item_lookup = super::ec_item_liquid::create_lookup(images, tilemeta, |source| {
         let slot = tex_aux_ec.slot_for_texture_id(source.texture_id)?;
         // The package is keyed by numeric ID; a legacy/sprite family collision
@@ -400,22 +261,8 @@ fn create_aux_atlas_images(
         ..Default::default()
     });
 
-    let mut aux_lookup = Image::new(
-        Extent3d {
-            width: AUX_LOOKUP_WIDTH,
-            height: lookup_height,
-            depth_or_array_layers: 1,
-        },
-        TextureDimension::D2,
-        lookup_bytes,
-        TextureFormat::Rgba32Uint,
-        bevy::asset::RenderAssetUsages::RENDER_WORLD,
-    );
-    aux_lookup.texture_descriptor.usage |= TextureUsages::TEXTURE_BINDING;
-
     LandAuxAtlasImages {
         aux_atlas: images.add(aux_atlas),
-        aux_lookup: images.add(aux_lookup),
         item_lookup,
         surface_lookup,
     }
@@ -1500,8 +1347,6 @@ pub fn sys_setup_terrain_cache(
     let aux_images = create_aux_atlas_images(
         &mut images,
         tex_aux_ec_r.as_deref().map(|r| r.0.as_ref()),
-        tex_land_ec_package.as_deref().map(TexLandEcPackage::terrain_layers),
-        tex_land_ec_package.as_deref(),
         tilemeta_r.as_deref().map(|r| r.0.as_ref()),
         land_texture_cache.tex_art_ec.as_deref(),
     );
@@ -1603,8 +1448,6 @@ pub fn sys_setup_terrain_cache(
                 land_lighting_uniform: Default::default(),
                 static_light_uniform: Default::default(),
                 visual_grunge_texture,
-                ec_aux_atlas: aux_images.aux_atlas,
-                ec_aux_lookup: aux_images.aux_lookup,
                 classic_land_art_atlas: classic_land_art_images.atlas,
                 classic_land_art_lookup: classic_land_art_images.lookup,
                 ec_terrain_bases,
@@ -2035,9 +1878,9 @@ import package::shaders::world::ec_item_surface::apply_ec_item_surface;
 import package::shaders::world::land::coverage::{ec_terrain_cache, ec_cache_layer, ec_layer_tile};
 import package::shaders::world::land::liquid_bank::{ec_liquid_bank, ec_bank_vertex};
 import package::shaders::world::land::sampling::{
-    LandGradients, apply_ec_aux_two_base_blend, apply_sharpening, blurred_albedo, classic_land_art_is_present,
+    LandGradients, apply_sharpening, blurred_albedo, classic_land_art_is_present,
     sample_classic_land_art, sample_ec_material_albedo,
-    sample_ec_material_normal_world, sample_ec_ripple_normal, sample_tile_albedo,
+    sample_ec_material_normal_world, sample_tile_albedo,
 };
 
 @fragment
@@ -2050,17 +1893,15 @@ fn fragment() -> @location(0) vec4<f32> {
     let gradients = LandGradients(vec2<f32>(0.01, 0.0), vec2<f32>(0.0, 0.01));
     let uv = vec2<f32>(0.0);
     var color = sample_tile_albedo(uv, tile, gradients) + sample_ec_material_albedo(uv, uv, tile, gradients);
-    color = apply_ec_aux_two_base_blend(color, uv, tile);
     color = apply_sharpening(color, uv, tile, 0.0, gradients) + blurred_albedo(uv, tile, 0.0, uv, gradients);
     if (classic_land_art_is_present(0u)) {
         color += sample_classic_land_art(uv, 0u);
     }
     let normal = sample_ec_material_normal_world(uv, tile, gradients);
-    let ripple = sample_ec_ripple_normal(uv, 0u, 0.0, 0.0);
     let reflection_uv = ec_liquid_reflection_uv(vec3<f32>(0.0, 0.0, -1.0));
     color += sample_ec_liquid(land_page_atlas, land_page_lookup, tex_small_sampler,
         0u, uv, ec_liquid_world_uv(uv), reflection_uv, 0.0, true, true).rgb;
-    let liquid = apply_ec_item_liquid(vec4<f32>(color, normal.w + ripple.x),
+    let liquid = apply_ec_item_liquid(vec4<f32>(color, normal.w),
         land_page_atlas, land_page_lookup, tex_small_sampler, 6038u,
         uv, uv, 0.0, true, true);
     return apply_ec_item_surface(liquid, land_page_atlas, land_page_lookup, tex_small_sampler,

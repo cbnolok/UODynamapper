@@ -108,7 +108,7 @@ art_ids  = [1169, 1170, 1171, 1172, 1173, 1174, 1175, 1176, 1179, 1180]
 [[family]]
 name = "grass_to_sand_transitions"
 notes = """
-Terrain transition tiles with AlphaMask-role refs (Phase 10D blend target).
+Terrain transition tiles with AlphaMask-role refs (blended through the packed detail and mask roles).
 IDs to be filled from a targeted terrain census once the TerrainDefinition
 blend-layer audit is complete. Placeholder IDs are approximate; correct
 values depend on a map-coordinate cross-reference with visual screenshots.

@@ -83,10 +83,7 @@ struct LandStaticLightUniform {
 @group(3) @binding(108) var<uniform> land_light:   LandLightingUniforms;
 @group(3) @binding(111) var<uniform> static_lights: LandStaticLightUniform;
 @group(3) @binding(112) var visual_grunge_texture: texture_2d<f32>;
-// Optional ec_tex_aux two-base blend atlas (layer 0 = absent sentinel).
-@group(3) @binding(113) var ec_aux_atlas: texture_2d_array<f32>;
-// Per-tile aux lookup: Rgba32Uint texel = [secondary_layer|(rep_q8<<16), mask_layer, 0, 0].
-@group(3) @binding(114) var ec_aux_lookup: texture_2d<u32>;
+// Bindings 113 and 114 are free: they held the removed table-driven two-base blend and ripple inputs.
 // Compact Classic art.mul land diamonds for flat wet terrain (layer 0 = absent).
 @group(3) @binding(115) var classic_land_art_atlas: texture_2d_array<f32>;
 // Rgba32Uint texel = [atlas layer, physical width, physical height, upscale factor].

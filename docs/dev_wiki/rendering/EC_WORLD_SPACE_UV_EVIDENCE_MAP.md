@@ -39,11 +39,10 @@ That fallback is engine behavior, not evidence that the client derives stretch
 from pixel width. Preserve authored repetition separately from native image
 extent and optional upscaling.
 
-The embedded `metadata/terrain_layers.bin` table and the role-specific land pages
-are different paths. The [table usage audit](../../agent_notes/terrain_layer_table_usage.md)
-finds no tiles reaching the table-driven secondary-base/ripple shader paths in
-its recorded canonical-package census. Table presence alone proves neither
-shader reachability nor correct rendering.
+The renderer reads terrain roles from the role-specific land pages only. The
+[table usage audit](../../agent_notes/terrain_layer_table_usage.md) found no
+tiles reaching the table-driven secondary-base/ripple shader paths in its
+canonical-package census, and those paths were removed on 2026-11-06.
 
 For item surfaces, [source geometry](../../agent_notes/ec_sprite_descriptor_geometry.md)
 and [direct item-water acceptance](../../reviews/2026-11-01-item-water-materials.md)

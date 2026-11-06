@@ -46,12 +46,11 @@ pub struct TexArtCcPackageRes(pub Arc<udd_assets::tex_art_cc::TexArtCcPackage>);
 #[derive(Resource)]
 pub struct TexArtEcPackageRes(pub Arc<udd_assets::tex_art_ec::TexArtEcPackage>);
 
-/// Optional prepacked atlas package for EC land art. It also carries the terrain layer table, which identifies the
-/// secondary-base, alpha-mask and ripple layers.
+/// Optional prepacked atlas package for EC land art.
 #[derive(Resource)]
 pub struct TexLandEcPackageRes(pub Arc<udd_assets::tex_land_ec::TexLandEcPackage>);
 
-/// Optional auxiliary texture package for EC non-base terrain slots (secondary base, alpha mask, noise).
+/// Optional auxiliary texture package: the non-primary tileart textures that item liquids and item surfaces sample.
 #[derive(Resource)]
 pub struct TexAuxEcPackageRes(pub Arc<udd_assets::tex_aux_ec::TexAuxEcPackage>);
 

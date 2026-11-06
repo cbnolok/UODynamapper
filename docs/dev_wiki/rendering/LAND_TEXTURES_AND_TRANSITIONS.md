@@ -61,7 +61,7 @@ Current practical state (`dynamapper/src/core/render/scene/world/land/draw_mesh.
 - Classic land mode (`land_texture_source = cc`) draws every land cell as a textured quad from `tex_land_cc.uddp` (`texmaps.mul`): the tile's tiledata texture id, or the tile id when that is 0. A cell without a packaged texmap is drawn as missing. Without the package, texmaps stream from the client's `texmaps.mul` (the same images).
 - Classic land art from `art.mul` (`tex_art_cc.uddp`) is drawn in one case only, through `classic_land_art_atlas`: a **flat wet** cell (IsWet tiledata flag, all four corners at the same height) whose texture id is 0 or its own tile id (`classic_land_art_payload_id`, `land.rs`; `use_classic_flat_wet_land_art`, `main.wesl`). Shoreline statics and the water under them then share the same source pixels. Sloped wet cells keep the texmap. The array holds those slots as RGBA8, or as their BC7 blocks when `tex_art_cc` is BC7.
 - **Dry transition land art is not drawn.** Dry cells always use their texmap. The optional Classic smoothing (`cc_terrain_transitions`, off by default; `cc_transitions.wesl`) blends neighbouring dry texmaps procedurally across cell edges. It is not the authored transition art.
-- Enhanced land mode (`land_texture_source = ec`) draws terrain from `tex_land_ec.uddp` (TerrainDefinition materials and their layers) with base/detail/mask roles in its land pages. Auxiliary item inputs come from `tex_aux_ec.uddp`; the separate terrain-layer-table path is not evidence of live two-base composition (see the usage audit below). An unresolved EC route stays explicitly missing; it never falls back to texmaps or art.
+- Enhanced land mode (`land_texture_source = ec`) draws terrain from `tex_land_ec.uddp` (TerrainDefinition materials and their layers): a material's colour A, colour B and blend alpha are the base, detail and mask roles of its land pages. `tex_aux_ec.uddp` is not read for land: only item liquids and item surfaces sample it. An unresolved EC route stays explicitly missing; it never falls back to texmaps or art.
 - Wetness: in Classic mode a land cell is wet from the IsWet tiledata flag. In Enhanced mode it is wet when its TerrainDefinition material is the water layer class (`UOWaterTerrainLayer`, `TERRAIN_SHADER_FLAG_REVIEWED_LIQUID`); the tiledata flag is not used there. On the shipped clients every IsWet land tile is also a water-layer tile (67 of 146).
 
 Consequences:
@@ -109,7 +109,7 @@ Use the focused contracts for implementation details:
 
 - [EC evidence map](EC_WORLD_SPACE_UV_EVIDENCE_MAP.md): executable findings and proof limits.
 - [Source routing](../../agent_notes/ec_source_terrain_routing.md): GameData routing, overlays and active material paths.
-- [Terrain layer table usage](../../agent_notes/terrain_layer_table_usage.md): why table presence does not establish shader reachability.
+- [Terrain layer table usage](../../agent_notes/terrain_layer_table_usage.md): the census of the table-driven paths, and their removal.
 - [UDDP formats](../UDDP_FORMATS.md): current package schemas and role tables.
 - [EC sprite geometry](../../agent_notes/ec_sprite_descriptor_geometry.md) and
   [art trimming](tex_art_ec_trimming.md): source selection, windows, scale and placement.

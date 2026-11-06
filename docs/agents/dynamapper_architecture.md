@@ -54,6 +54,7 @@ The preset also picks the gump package (`GumpMapRes::decode_gump` in `core/uo_fi
 
 - WGSL variable names **cannot end with a digit** (naga-oil constraint; Bevy 0.20 replaced naga-oil with WESL, whose mangler accepts such names, so this rule is a candidate for removal).
 - `#[uniform(10X)]` in Rust must exactly match `@binding(10X)` in WGSL. See `mesh_material.rs` and `land_bindings.wesl`.
+- Land bindings 113 and 114 are free since the table-driven two-base blend and ripple were removed (2026-11-06); the other bindings kept their numbers.
 - **Adding a new uniform** (follow this exact order):
   1. Add field to struct in `mesh_material.rs`
   2. Populate value in `draw_mesh.rs` inside `create_land_chunk_material`
