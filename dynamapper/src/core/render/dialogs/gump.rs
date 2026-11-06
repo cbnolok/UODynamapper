@@ -373,6 +373,19 @@ mod tests {
         assert!(missing.starts_with("PaperdollProfiles.kdl: invalid KDL: line 1, column 1:"), "{missing}");
         assert!(missing.contains("equipment_offset"), "{missing}");
     }
+
+    /// The paperdoll goes up to egui as composed: half-transparent white over the empty canvas is premultiplied, as
+    /// bevy_egui blends it, and a transparent texel adds nothing, whatever its colour.
+    #[test]
+    fn paperdoll_composite_is_premultiplied() {
+        const HALF_WHITE: [u8; 4] = [255, 255, 255, 128];
+        const PREMULTIPLIED_HALF_WHITE: [u8; 4] = [128, 128, 128, 128];
+        const TRANSPARENT_PINK: [u8; 4] = [255, 0, 255, 0];
+        let mut canvas = vec![0u8; 8];
+        let layer = [HALF_WHITE, TRANSPARENT_PINK].concat();
+        alpha_blend_at(&mut canvas, 2, 0, 0, 2, 1, &layer);
+        assert_eq!(canvas, [PREMULTIPLIED_HALF_WHITE, [0; 4]].concat());
+    }
 }
 
 #[derive(Clone)]
@@ -828,13 +841,17 @@ fn open_gump_by_id(
     };
 
     let mut scratch = Vec::new();
-    let gump = match gump_map.decode_gump(id, &mut scratch) {
+    let mut gump = match gump_map.decode_gump(id, &mut scratch) {
         Ok(gump) => gump,
         Err(error) => {
             ingame_sysmessage_logger::error(format!("Could not open gump {id}: {error}"));
             return;
         }
     };
+    // bevy_egui blends user textures as premultiplied colour (`BlendState::PREMULTIPLIED_ALPHA_BLENDING`, and its
+    // shader doesn't multiply by alpha), so the gump's straight colour goes up premultiplied: a transparent texel then
+    // adds nothing, whatever colour it keeps, as in the clients.
+    udd_assets::premultiplied::premultiply_rgba8888(&mut gump.rgba);
 
     let mut image = crate::util_lib::image::image_from_rgba8(
         gump.physical_width,
@@ -974,6 +991,7 @@ fn open_paperdoll(
         }
     };
 
+    // Premultiplied already, as bevy_egui blends it: `alpha_blend_at` composes the layers over a transparent canvas.
     let mut image = crate::util_lib::image::image_from_rgba8(
         gump.physical_width,
         gump.physical_height,
