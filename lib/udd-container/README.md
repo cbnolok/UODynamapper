@@ -25,6 +25,7 @@ The `.uddp` container format is documented in
 ## Notes
 
 - `memmap2` is used for large package reads.
-- The `jpegxl-rs` dependency is vendored and built with the `threads` feature.
+- `jpegxl-rs` links the system libjxl, or builds it from source with the `vendored-jpegxl` feature. libjxl's
+  parallel decode and encode work runs on the caller's rayon pool, never on threads of its own.
 - This crate has no dependency on `uocf` or any UO-specific logic; it is a
   pure container layer.

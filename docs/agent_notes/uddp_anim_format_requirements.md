@@ -743,10 +743,21 @@ the same day ([`bc7_alpha_plane_search.md`](bc7_alpha_plane_search.md)). The use
     zstd 19 19.6 MB and 74 MB of VRAM at a median of 83.0, against BC3's 21.3 MB, 148 MB and 82.3, and BC7 with fix C's 37.1 MB,
     148 MB and 85.5. Enhanced is alike (BC1 83.1, BC7 85.8), though BC1's worst gump scores 20.1 against BC3's 24.3, probably one with
     soft alpha edges (not checked). Paperdoll gumps of PartialHue items stay lossless, by the exact-greys rule above.
-  - **Enhanced land takes BC7** (fix C): 9.2 MB against 17.73 MB lossless today, a median of 93.7 and a worst of 88.8. BC3 has the higher
-    median, 98.8 at 6.5 MB, but the lower worst, 86.1; BC7 should beat it on median too, which points at the encoder (re-measure pending).
-  - **Classic land stays lossless in both paths.** BC7 is 12.6 MB on disk against 11.07 MB for today's lossless JPEG XL package, with a
-    median of 75.5 and 29 % of textures at 80 or more; it would save only VRAM, 59 MB down to 15.
+  - **Enhanced land takes BC7** (fix C): 9.2 MB against 17.73 MB lossless JPEG XL (17.20 MB with zstd 19, below), a median of
+    93.7 and a worst of 88.8. BC3 has the higher median, 98.8 at 6.5 MB, but the lower worst, 86.1; BC7 should beat it on median
+    too, which points at the encoder (re-measure pending).
+  - **Classic land stays lossless in both paths.** BC7 is 12.6 MB on disk against 11.07 MB for the lossless JPEG XL package
+    (11.20 MB with zstd 19), with a median of 75.5 and 29 % of textures at 80 or more; it would save only VRAM, 59 MB down to 15.
+
+- **Lossless gumps and land pages use zstd 19** (2026-11-06). The atlas pages of `gumps_cc`, `gumps_ec`, `tex_land_cc` and
+  `tex_land_ec` are RGBA8888 with plain zstd 19 (`LOSSLESS_PAGE_ZSTD_LEVEL` in `lib/udd-conv/src/page_compression.rs`) instead of
+  lossless JPEG XL at effort 6, which stays an explicit choice (`--jxl`, the converter GUI's Jpeg XL format). Measured on the
+  repacked packages, every record decoding to the same bytes as before:
+  - pages on disk: `gumps_cc` 2.02 MB against 1.65, `gumps_ec` 2.87 against 2.16 (the packages grow 0.8 %, to 45.6 and 84.2 MB),
+    `tex_land_cc` 11.17 against 11.07, `tex_land_ec` 17.16 against 17.73;
+  - decoding every page once, zstd on one thread against JPEG XL on 20 threads with the rayon runner: `gumps_cc` 33 ms against 581,
+    `gumps_ec` 32 against 711, `tex_land_cc` 64 against 459, `tex_land_ec` 142 against 593, so 4–22× faster (a gump page about
+    1.5 ms against 31 ms).
 
 **Open:**
 
