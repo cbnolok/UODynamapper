@@ -1943,13 +1943,6 @@ mod tests {
         bytes
     }
 
-    /// A terrain layer table without terrain tiles.
-    fn ec_land_terrain_layers_bytes() -> Vec<u8> {
-        use udd_conv::terrain_meta::{build_terrain_meta_tables, serialize_terrain_meta};
-        let definition = uocf::enhanced::terrain_definition::TerrainDefinitionPackage::default();
-        serialize_terrain_meta(&build_terrain_meta_tables(&definition).unwrap()).unwrap()
-    }
-
     fn ec_land_terrain_overrides_json() -> Vec<u8> {
         br#"{
   "schema": "tex_land_ec_terrain_overrides",
@@ -2142,11 +2135,6 @@ mod tests {
             &ec_land_terrain_overrides_json(),
         );
         add_metadata_file(&mut builder, udd_assets::tex_land_ec::UDDP_SOURCE_MATERIALS_ENTRY_VPATH, b"[]");
-        add_metadata_file(
-            &mut builder,
-            udd_assets::tex_land_ec::UDDP_TERRAIN_LAYERS_ENTRY_VPATH,
-            &ec_land_terrain_layers_bytes(),
-        );
         // A routing table without rows.
         add_metadata_file(&mut builder, udd_assets::tex_land_ec::UDDP_TRANSCODE_ENTRY_VPATH, b"");
         let bytes = builder.build().expect("build test package");

@@ -5,12 +5,10 @@ use clap::Parser;
 use color_eyre::eyre::{self, WrapErr};
 use udd_assets::{
     tex_art_ec::TexArtEcPackage,
-    tex_land_ec::{TexLandEcPackage, MISSING_SLOT_ID, UDDP_TERRAIN_LAYERS_ENTRY_VPATH},
+    tex_land_ec::{TexLandEcPackage, MISSING_SLOT_ID},
     tilemeta::{TileMetaItemTextureRef, TileMetaItemTile, TileMetaPackage},
 };
 use udd_conv::tex_art_ec::{is_base_eligible, primary_texture_stable_role};
-use udd_conv::terrain_meta::TerrainMetaPackage;
-use udd_container::xxh64_virtual_path;
 use uocf::enhanced::string_dictionary::UoStringDictionary;
 use uocf::enhanced::tile_database::ArtDefinition;
 use uocf::enhanced::tileart::TileArtEntry;
@@ -24,7 +22,7 @@ struct Args {
     tilemeta: Option<PathBuf>,
     #[arg(long = "ec-art")]
     tex_art_ec: Option<PathBuf>,
-    #[arg(long = "ec-land", help = "Optional tex_land_ec.uddp; its terrain layer table also shows each tile's layer graph.")]
+    #[arg(long = "ec-land", help = "Optional tex_land_ec.uddp; its source materials also show each tile's layer graph.")]
     tex_land_ec: Option<PathBuf>,
     #[arg(required = true)]
     art_ids: Vec<u16>,
@@ -61,18 +59,6 @@ fn main() -> eyre::Result<()> {
         .map(TexLandEcPackage::load)
         .transpose()
         .wrap_err("load tex_land_ec package")?;
-    // Every field of the table, through the converter's reader: the runtime's keeps only what the renderer reads.
-    let terrain_meta = tex_land_ec
-        .as_ref()
-        .map(|package| {
-            let bytes = package
-                .package()
-                .read_file_by_path_hash(xxh64_virtual_path(UDDP_TERRAIN_LAYERS_ENTRY_VPATH))
-                .map_err(|error| eyre::eyre!("read {UDDP_TERRAIN_LAYERS_ENTRY_VPATH}: {error}"))?;
-            TerrainMetaPackage::from_bytes(&bytes)
-        })
-        .transpose()
-        .wrap_err("load the terrain layer table of tex_land_ec")?;
 
     for art_id in args.art_ids {
         println!("art_id={art_id}");
@@ -174,8 +160,8 @@ fn main() -> eyre::Result<()> {
             );
         }
 
-        if let Some(terrain_meta) = terrain_meta.as_ref() {
-            print_terrain_meta_layers(terrain_meta, art_id as u32);
+        if let Some(tex_land_ec) = tex_land_ec.as_ref() {
+            print_source_material_layers(tex_land_ec, art_id as u32);
         }
 
         println!();
@@ -407,20 +393,27 @@ fn slot_summary(slot: Option<(u32, u16, u16, u16, u16)>) -> String {
     }
 }
 
-fn print_terrain_meta_layers(terrain_meta: &TerrainMetaPackage, terrain_tile_id: u32) {
-    let layers = terrain_meta.layers_for_tile(terrain_tile_id);
-    if layers.is_empty() {
-        println!("  terrain_meta.layers=none");
+/// The TerrainDefinition items of the material the tile routes to, from the package's source materials.
+fn print_source_material_layers(tex_land_ec: &TexLandEcPackage, terrain_tile_id: u32) {
+    let Some(material_id) = tex_land_ec.resolve_material_decision(terrain_tile_id).material_id else {
+        println!("  source_material=none");
         return;
-    }
-    println!("  terrain_meta.layers.count={}", layers.len());
-    for (index, layer) in layers.iter().enumerate() {
+    };
+    let Some(texture) = tex_land_ec.source_material(material_id).and_then(|entry| entry.texture.as_ref()) else {
+        println!("  source_material={material_id} layers=none");
+        return;
+    };
+    println!(
+        "  source_material={material_id} class={:?} layers.count={}",
+        texture.layer_class(),
+        texture.layers.len()
+    );
+    for (index, layer) in texture.layers.iter().enumerate() {
         println!(
-            "    layer[{index}] texture_id={} repetition={} class={} role={} source_kind={} sampler_index={} uv_set={}",
+            "    layer[{index}] texture_id={:?} repetition={} role={:?} source_kind={} sampler_index={} uv_set={}",
             layer.texture_id,
             layer.texture_repetition,
-            layer.layer_class,
-            layer.role,
+            texture.layer_role(index),
             layer.source_kind,
             layer.sampler_index,
             layer.uv_set,

@@ -17,7 +17,7 @@ packages consumed by Dynamapper and the other tools at runtime.
 | `pack-texmaps` | `tex_land_cc.uddp` | Classic `texmaps.mul` |
 | `pack-mobile-anims` | `mobile_anim_cc.uddp` | Classic `anim*.mul` / `anim*.idx` |
 | `pack-ec-mobile-anims` | `mobile_anim_ec.uddp` | EC `AnimationFrame*.uop` |
-| `pack-ec-textures` | `tex_art_ec.uddp`, `tex_land_ec.uddp` | EC art and land in one pass; the land package also carries the terrain layer table from `TerrainDefinition.uop` |
+| `pack-ec-textures` | `tex_art_ec.uddp`, `tex_land_ec.uddp` | EC art and land in one pass |
 | `pack-ec-tex-aux` | `tex_aux_ec.uddp` | EC auxiliary textures named by `tilemeta.uddp` |
 | `pack-ec-effects` | `effects_ec.uddp` | EC particle effects: definitions, Chaos and NIF systems, textures |
 | `pack-tilemeta` | `tilemeta.uddp` | CC tiledata + EC tileart |

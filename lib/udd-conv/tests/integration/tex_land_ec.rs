@@ -10,7 +10,7 @@ use udd_assets::{
         TERRAIN_OVERRIDES_SCHEMA, TERRAIN_OVERRIDES_SCHEMA_VERSION,
         UDDP_PAGE_MANIFEST_ENTRY_VPATH, UDDP_SLOT_MANIFEST_ENTRY_VPATH,
         UDDP_SOURCE_MATERIALS_ENTRY_VPATH, UDDP_TERRAIN_OVERRIDES_ENTRY_VPATH, UDDP_TERRAIN_PROVENANCE_ENTRY_VPATH,
-        UDDP_TRANSCODE_ENTRY_VPATH, UDDP_TERRAIN_LAYERS_ENTRY_VPATH,
+        UDDP_TRANSCODE_ENTRY_VPATH,
     },
     tex_art_cc::{MISSING_PAGE_INDEX, page_entry_path, PagePixelFormat},
     TexLandEcPackage,
@@ -25,13 +25,6 @@ const EMPTY_TRANSCODE_KDL: &[u8] = b"";
 /// A land id only the shipped TerrainTranscode.kdl routes (its row `t 0 435 436 437`), and its material.
 const SHIPPED_TABLE_ADDED_LAND_ID: u32 = 435;
 const SHIPPED_TABLE_ADDED_LAND_MATERIAL: u32 = 0;
-
-/// A terrain layer table without terrain tiles.
-fn empty_terrain_layers() -> Vec<u8> {
-    use udd_conv::terrain_meta::{build_terrain_meta_tables, serialize_terrain_meta};
-    use uocf::enhanced::terrain_definition::TerrainDefinitionPackage;
-    serialize_terrain_meta(&build_terrain_meta_tables(&TerrainDefinitionPackage::default()).unwrap()).unwrap()
-}
 
 /// Terrain overrides without entries: every material draws its source items.
 fn empty_terrain_overrides_json() -> Vec<u8> {
@@ -72,61 +65,6 @@ fn conversion_embeds_original_game_data_routes_and_subtypes() {
     assert_eq!(source_map.routes[&15853].subtype, 1);
     assert_eq!(source_map.source_csv, bytes);
     assert_eq!(package.source_material(999).unwrap().name.as_deref(), Some("source material evidence"));
-    std::fs::remove_dir_all(root).unwrap();
-}
-
-/// The packer embeds the terrain layer table: every alias tile of a material gets the material's items, with the
-/// layer class of its shader and the role of each position.
-#[test]
-fn conversion_embeds_the_terrain_layer_table() {
-    use uocf::enhanced::terrain_definition::{
-        TerrainDefinitionEntry, TerrainDefinitionPackage, TerrainDefinitionTexture, TerrainDefinitionTextureLayer,
-        TerrainDefinitionTileAlias, TerrainLayerClass, TerrainLayerRole,
-    };
-    const WATER_MATERIAL_ID: u32 = 42;
-    const WATER_ALIAS_TILE_IDS: [u32; 2] = [168, 169];
-    /// Distortion, fallback colour and main colour: the water class's items by position.
-    const WATER_ITEMS: [(u32, TerrainLayerRole); 3] = [
-        (1_000_013, TerrainLayerRole::Distortion),
-        (2_000_051, TerrainLayerRole::FallbackColour),
-        (2_000_052, TerrainLayerRole::MainColour),
-    ];
-    let stamp = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos();
-    let root = std::env::temp_dir().join(format!("ec_terrain_layers_{stamp}"));
-    std::fs::create_dir_all(&root).unwrap();
-    let output = root.join("tex_land_ec.uddp");
-    let definition = TerrainDefinitionPackage {
-        entries: vec![TerrainDefinitionEntry {
-            id: WATER_MATERIAL_ID,
-            aliases: WATER_ALIAS_TILE_IDS
-                .map(|legacy_land_id| TerrainDefinitionTileAlias { legacy_land_id, ..Default::default() })
-                .to_vec(),
-            texture: Some(TerrainDefinitionTexture {
-                shader_name: Some("UOWaterTerrainLayer".to_owned()),
-                layers: WATER_ITEMS
-                    .map(|(texture_id, _)| TerrainDefinitionTextureLayer {
-                        texture_id: Some(texture_id),
-                        ..Default::default()
-                    })
-                    .to_vec(),
-                ..Default::default()
-            }),
-            ..Default::default()
-        }],
-    };
-    convert_tex_land_ec_uop_to_tex_land_ec_uddp_from_loaded_sources(
-        &[root.clone()], &root.join("TerrainDefinition.uop"), None, &definition, None,
-        &output, &TexLandEcAtlasOptions::default(),
-    ).unwrap();
-
-    let package = TexLandEcPackage::load(&output).unwrap();
-    assert_eq!(package.terrain_layers().tile_count(), WATER_ALIAS_TILE_IDS.len());
-    for tile_id in WATER_ALIAS_TILE_IDS {
-        let layers = package.terrain_layers().layers_for_tile(tile_id);
-        assert_eq!(layers.iter().map(|layer| (layer.texture_id, layer.role)).collect::<Vec<_>>(), WATER_ITEMS);
-        assert!(layers.iter().all(|layer| layer.layer_class == TerrainLayerClass::Water));
-    }
-    assert!(package.terrain_layers().layers_for_tile(WATER_MATERIAL_ID).is_empty(), "an aliased material's own id");
     std::fs::remove_dir_all(root).unwrap();
 }
 
@@ -316,17 +254,6 @@ fn runtime_reader_can_unpack_page_and_slot_metadata() {
             path_hash64: None,
             id: None,
             data: &empty_terrain_overrides_json(),
-        })
-        .unwrap();
-    package
-        .add_file(AddFileRequest {
-            data_type: DataType::Metadata as u8,
-            compression: CompressionFlag::ZstdNoDict,
-            width: 0, height: 0,
-            virtual_path: Some(UDDP_TERRAIN_LAYERS_ENTRY_VPATH),
-            path_hash64: None,
-            id: None,
-            data: &empty_terrain_layers(),
         })
         .unwrap();
     let page_path = page_entry_path(0, PagePixelFormat::Rgba8888);
@@ -630,17 +557,6 @@ fn runtime_slot_resolution_uses_direct_slots_before_provenance_fallback() {
             path_hash64: None,
             id: None,
             data: &empty_terrain_overrides_json(),
-        })
-        .unwrap();
-    package
-        .add_file(AddFileRequest {
-            data_type: DataType::Metadata as u8,
-            compression: CompressionFlag::ZstdNoDict,
-            width: 0, height: 0,
-            virtual_path: Some(UDDP_TERRAIN_LAYERS_ENTRY_VPATH),
-            path_hash64: None,
-            id: None,
-            data: &empty_terrain_layers(),
         })
         .unwrap();
 

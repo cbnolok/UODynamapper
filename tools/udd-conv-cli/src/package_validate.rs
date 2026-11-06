@@ -556,11 +556,10 @@ fn run_package_reader(kind: PackageKind, package: &UddpReader) -> eyre::Result<S
         PackageKind::TexLandEc => {
             let reader = TexLandEcPackage::from_uddp_package(package.clone())?;
             format!(
-                "slots={}, pages={}, terrain_provenance={}, terrain_layer_tiles={}",
+                "slots={}, pages={}, terrain_provenance={}",
                 reader.slots().len(),
                 reader.pages().len(),
-                reader.terrain_provenance().len(),
-                reader.terrain_layers().tile_count()
+                reader.terrain_provenance().len()
             )
         }
         PackageKind::TexAuxEc => {

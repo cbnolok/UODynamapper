@@ -207,7 +207,7 @@ impl UddConvApp {
         let (clicked, stop_clicked, preview) = draw_asset_card(
             ui,
             "Enhanced Land",
-            "High-resolution terrain textures and the terrain-layer table",
+            "High-resolution terrain textures",
             None,
             &tex_land_ec_progress,
             !is_busy,

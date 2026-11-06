@@ -3,8 +3,8 @@
 //! of byte changes from a fixed-seed xorshift generator, and must return `Ok` or `Err`. When it returns `Ok`, the
 //! accessors the renderer calls run on the result too.
 //!
-//! The synthetic samples run always. The shipped samples (Classic art, gump and animation RLE, AMOU, TGA, DDS,
-//! `tilemeta` and `terrain_meta`) are ignored tests. The roots come from `UO_CLIENT_ROOTS` (a path list,
+//! The synthetic samples run always. The shipped samples (Classic art, gump and animation RLE, AMOU, TGA, DDS and
+//! `tilemeta`) are ignored tests. The roots come from `UO_CLIENT_ROOTS` (a path list,
 //! `:`-separated on Unix); the installs are the folders named [`CLASSIC_FOLDER`] and [`ENHANCED_FOLDER`] in one of
 //! them. The clients are only read; the packages built go to `std::env::temp_dir()`. Run with `--ignored --release`.
 //! A failure names the decoder, the sample and the change, so it can be replayed.
@@ -238,23 +238,6 @@ fn decode_tga(bytes: &[u8]) {
     let _ = uocf::enhanced::textures::decode_tga_rgba8(bytes);
 }
 
-/// Both `terrain_meta` readers (the renderer's and the converter's), and their accessors.
-fn decode_terrain_meta(bytes: &[u8]) {
-    if let Ok(package) = udd_assets::terrain_meta::TerrainMetaPackage::from_bytes(bytes) {
-        for tile_id in 0..TERRAIN_TILE_IDS_PROBED {
-            let _ = package.layers_for_tile(tile_id);
-        }
-    }
-    if let Ok(package) = udd_conv::terrain_meta::TerrainMetaPackage::from_bytes(bytes) {
-        let tile_ids: Vec<u32> = package.iter_tile_layers().map(|(tile_id, _)| tile_id).collect();
-        for tile_id in tile_ids {
-            let _ = package.layers_for_tile(tile_id);
-        }
-    }
-}
-/// Terrain tile ids whose layers are read from a decoded package.
-const TERRAIN_TILE_IDS_PROBED: u32 = 0x400;
-
 /// The entries of a `tilemeta.uddp`, one of which is replaced by the damaged bytes.
 struct TileMetaEntries {
     entries: Vec<(u64, u8, Vec<u8>)>,
@@ -390,28 +373,6 @@ fn synthetic_classic_mul_animation() -> Vec<u8> {
         .expect("encode the synthetic animation")
 }
 
-fn synthetic_terrain_meta() -> Vec<u8> {
-    use udd_conv::terrain_meta::{serialize_terrain_meta, TerrainMetaLayerRef, TerrainMetaLayerSpan, TerrainMetaTables};
-    use uocf::enhanced::terrain_definition::TerrainLayerClass;
-    let class = TerrainLayerClass::for_shader(None);
-    let layer = |texture_id: u32, position: usize| TerrainMetaLayerRef {
-        texture_id,
-        texture_repetition: 1.5,
-        layer_class: class as u8,
-        role: class.role(position) as u8,
-        _pad: [0; 2],
-        source_kind: 0,
-        sampler_index: position as u32,
-        uv_set: 0,
-    };
-    let span = |terrain_tile_id: u32, start: u32, len: u16| TerrainMetaLayerSpan { terrain_tile_id, start, len, _pad: 0 };
-    let tables = TerrainMetaTables {
-        spans: vec![span(3, 0, 2), span(4, 2, 1), span(9, 3, 0)],
-        layers: vec![layer(100, 0), layer(101, 1), layer(102, 0)],
-    };
-    serialize_terrain_meta(&tables).expect("serialize the synthetic terrain meta")
-}
-
 #[test]
 fn the_xorshift_generator_repeats_from_its_seed() {
     let first: Vec<u64> = std::iter::repeat_with({
@@ -439,7 +400,6 @@ fn decoders_survive_damaged_synthetic_samples() {
         &[Sample::new("synthetic", synthetic_classic_mul_animation())],
         &decode_classic_mul_animation,
     );
-    assert_no_panics("terrain meta", &[Sample::new("synthetic", synthetic_terrain_meta())], &decode_terrain_meta);
 }
 
 // --- Shipped samples ------------------------------------------------------------------------------------------
@@ -584,19 +544,12 @@ fn tga_decoder_survives_damaged_shipped_entries() {
 
 #[test]
 #[ignore = "needs real clients: set UO_CLIENT_ROOTS and run with --ignored --release"]
-fn terrain_meta_and_tilemeta_readers_survive_damaged_shipped_packages() {
-    use uocf::enhanced::terrain_definition::TerrainDefinitionPackage;
-    use udd_conv::terrain_meta::{build_terrain_meta_tables, serialize_terrain_meta};
+fn tilemeta_reader_survives_damaged_shipped_packages() {
     use udd_conv::tilemeta::{build_tilemeta_uddp_from_split_sources, TileMetaBuildOptions};
     /// Bytes of each tilemeta entry damaged: its head and the first records.
     const TILEMETA_ENTRY_SAMPLE_BYTES: usize = 4096;
     let classic = install(CLASSIC_FOLDER);
     let enhanced = install(ENHANCED_FOLDER);
-
-    let definition = TerrainDefinitionPackage::load(&enhanced.join("TerrainDefinition.uop")).expect("terrain definition");
-    let terrain_meta =
-        serialize_terrain_meta(&build_terrain_meta_tables(&definition).expect("terrain meta tables")).expect("serialize");
-    assert_no_panics("terrain meta", &[Sample::new("client terrain layer table", terrain_meta)], &decode_terrain_meta);
 
     let dir = std::env::temp_dir().join(format!("uddconv_decoder_robustness_{}", std::process::id()));
     std::fs::create_dir_all(&dir).expect("scratch dir");

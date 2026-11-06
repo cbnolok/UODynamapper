@@ -239,9 +239,10 @@ It covers the 16-bit item space independently of the 14-bit land lookup.
 
 The fourth images already exist in `tex_aux_ec`: the installed 64×64 RGBA pixels
 for 6038 and 2100014 match decoded original DDSs byte for byte. There was no
-conversion repair to make for these fixtures. The shared auxiliary atlas now
-collects item sources even without `terrain_meta.bin`; the art ground material
-binds those same GPU image layers rather than allocating a duplicate atlas.
+conversion repair to make for these fixtures. The shared auxiliary atlas
+collects the item sources (the terrain layer table, dropped on 2026-11-06, no
+longer adds to it); the art ground material binds those same GPU image layers
+rather than allocating a duplicate atlas.
 Only block-0 `UOWaterShader`, sampler 3, WorldArt/Texture references qualify.
 Packed family mismatches are rejected instead of accepting a colliding sprite ID.
 

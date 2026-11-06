@@ -9,8 +9,6 @@
 //! - `metadata/slots.bin`: sparse slot table with one record per land art_id.
 //! - `metadata/terrain_provenance.bin`: required terrain-material provenance for each
 //!   alias slot, preserving how `TerrainDefinition.uop` collapsed into packed land slots.
-//! - `metadata/terrain_layers.bin`: the terrain layer table (`crate::terrain_meta`), every terrain tile's
-//!   TerrainDefinition items with their layer class and role, read for the secondary base, blend alpha and ripple.
 //!
 //! This package is intentionally richer than a plain atlas:
 //! - the slot table is the runtime lookup surface used by the renderer.
@@ -50,7 +48,6 @@ use crate::package_progress::{
 use crate::conversion_tables::{EC_TERRAIN_OVERRIDES_KDL, TERRAIN_TRANSCODE_KDL};
 use crate::page_compression::LOSSLESS_PAGE_COMPRESSION;
 use crate::source_paths::{find_first_existing_file, source_path_label_from_dirs};
-use crate::terrain_meta::{build_terrain_meta_tables, serialize_terrain_meta};
 use udd_assets::tex_art_cc::{page_entry_path, PagePixelFormat};
 use uocf::utils::bundled_files;
 use udd_assets::tex_land_ec::{
@@ -61,7 +58,6 @@ use udd_assets::tex_land_ec::{
     UDDP_PAGE_MANIFEST_ENTRY_VPATH, UDDP_SLOT_MANIFEST_ENTRY_VPATH,
     UDDP_TERRAIN_OVERRIDES_ENTRY_VPATH, UDDP_TERRAIN_PROVENANCE_ENTRY_VPATH,
     UDDP_TRANSCODE_ENTRY_VPATH, UDDP_LEGACY_TERRAIN_MAP_ENTRY_VPATH, UDDP_SOURCE_MATERIALS_ENTRY_VPATH,
-    UDDP_TERRAIN_LAYERS_ENTRY_VPATH,
 };
 use udd_assets::ec_terrain_overrides::{
     EcTerrainOverrideEntry, EcTerrainOverrides, TerrainIgnoreOverride, TerrainLayerOverride,
@@ -100,8 +96,8 @@ const PAGE_MANIFEST_MAGIC: [u8; 4] = *b"ELPG";
 const SLOT_MANIFEST_MAGIC: [u8; 4] = *b"ELSL";
 const TERRAIN_PROVENANCE_MAGIC: [u8; 4] = *b"ELTP";
 /// Bump version when the binary layout of either manifest changes.
-/// 4: the terrain layer table (`metadata/terrain_layers.bin`) moves into the package from the loose `terrain_meta.bin`.
-const TEX_LAND_EC_METADATA_VERSION: u32 = 4;
+/// 5: the terrain layer table (`metadata/terrain_layers.bin`) is dropped; nothing read it any more.
+const TEX_LAND_EC_METADATA_VERSION: u32 = 5;
 /// 4: layer class and selected-item role replace the primary-selection heuristic reason and flags.
 const TEX_LAND_EC_TERRAIN_PROVENANCE_VERSION: u32 = 4;
 /// Magic, version and record count.
@@ -580,23 +576,6 @@ pub fn convert_tex_land_ec_uop_to_tex_land_ec_uddp_from_loaded_sources_with_prog
         path_hash64: None,
         id: None,
         data: &source_materials,
-    })?;
-
-    let terrain_layer_tables = build_terrain_meta_tables(terrain_definition)?;
-    info!(
-        "Embedding the terrain layer table: {} terrain tiles, {} layers",
-        terrain_layer_tables.spans.len(),
-        terrain_layer_tables.layers.len()
-    );
-    package.add_file(AddFileRequest {
-        data_type: DataType::Metadata as u8,
-        compression: CompressionFlag::ZstdNoDict,
-        width: 0,
-        height: 0,
-        virtual_path: Some(UDDP_TERRAIN_LAYERS_ENTRY_VPATH),
-        path_hash64: None,
-        id: None,
-        data: &serialize_terrain_meta(&terrain_layer_tables)?,
     })?;
 
     // Determine the final pixel format and encoding for atlas pages.

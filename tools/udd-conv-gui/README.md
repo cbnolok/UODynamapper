@@ -10,8 +10,7 @@ using the command line.
 - Configure source client paths (Classic Client or Enhanced Client installation
   directories) via a file picker.
 - Select the currently supported GUI pack jobs for tile metadata, hues, world
-  lights, art, land textures (the Enhanced land package also carries the
-  terrain-layer table), mobile animations, Enhanced effects, gumps, maps,
+  lights, art, land textures, mobile animations, Enhanced effects, gumps, maps,
   statics, and radar output.
 - Use an optional upscale profile file for the existing image pack jobs. See
   [`../udd-conv-cli/UPSCALE_PROFILES.md`](../udd-conv-cli/UPSCALE_PROFILES.md).
