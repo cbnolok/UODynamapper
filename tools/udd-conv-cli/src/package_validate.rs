@@ -7,6 +7,10 @@
 //! - the package's own reader: the `udd-assets` reader for its kind parses its manifests,
 //!   which also checks the manifest format versions.
 //!
+//! A gumps package that shares gumps with `gumps_cc` (`pack-ec-gumps --share-with`) is also checked against the
+//! `gumps_cc.uddp` beside it: every shared gump's hash against that package's image. Without one beside it, the report
+//! notes that the package depends on it.
+//!
 //! The kind comes from the file name (`tex_land_ec.uddp`, `map0.uddp`, `terrain_meta.bin`).
 //! A file with an unknown name is offered to every reader, and the first one that accepts it
 //! names the kind.
@@ -19,6 +23,7 @@ use std::path::{Path, PathBuf};
 use color_eyre::eyre::{self, WrapErr};
 use log::info;
 use rayon::prelude::*;
+use udd_assets::gumps::gump_image_hash;
 use udd_assets::map_metadata::decode_map_package_metadata;
 use udd_assets::terrain_meta::TerrainMetaPackage;
 use udd_assets::tex_aux_ec::TexAuxEcPackage;
@@ -46,6 +51,8 @@ const MAP_CHUNK_BYTES: usize = MAP_CHUNK_TILE_DIM * MAP_CHUNK_TILE_DIM * MAP_PAC
 /// Entry failures listed per package; the rest are only counted.
 const MAX_LISTED_ENTRY_FAILURES: usize = 16;
 const BYTES_PER_MIB: f64 = 1024.0 * 1024.0;
+/// The package a gumps package that shares gumps draws them from, looked for beside it.
+const SHARED_CLASSIC_GUMPS_FILE_NAME: &str = "gumps_cc.uddp";
 
 /// Package kinds, each read by its own reader.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -159,6 +166,8 @@ pub struct PackageReport {
     pub codec_counts: BTreeMap<&'static str, usize>,
     pub dictionary_count: usize,
     pub reader_summary: Option<String>,
+    /// What the package depends on or was checked against, which isn't a failure.
+    pub notes: Vec<String>,
     pub failures: Vec<String>,
 }
 
@@ -225,6 +234,9 @@ fn log_report(report: &PackageReport) {
     }
     if let Some(summary) = &report.reader_summary {
         info!("     reader: {summary}");
+    }
+    for note in &report.notes {
+        info!("     note: {note}");
     }
     for failure in &report.failures {
         info!("     error: {failure}");
@@ -306,7 +318,12 @@ pub fn validate_package(path: &Path) -> PackageReport {
     }
     match report.kind {
         Some(kind) => match run_package_reader(kind, &package) {
-            Ok(summary) => report.reader_summary = Some(summary),
+            Ok(summary) => {
+                report.reader_summary = Some(summary);
+                if kind == PackageKind::Gumps {
+                    check_shared_classic_gumps(path, &package, &mut report);
+                }
+            }
             Err(error) => report.failures.push(format!("{} reader: {error:#}", kind.name())),
         },
         None => report
@@ -314,6 +331,61 @@ pub fn validate_package(path: &Path) -> PackageReport {
             .push("no reader in this build accepts the package, and its file name names no kind".into()),
     }
     report
+}
+
+/// A gumps package that shares gumps with `gumps_cc`: each shared gump's listed hash against the image of the
+/// `gumps_cc.uddp` beside it, or a note that the package depends on one when none is there.
+fn check_shared_classic_gumps(path: &Path, package: &UddpReader, report: &mut PackageReport) {
+    let gumps = match GumpsPackage::from_uddp_package(package.clone()) {
+        Ok(gumps) => gumps,
+        Err(error) => return report.failures.push(format!("gumps reader: {error:#}")),
+    };
+    let shared_count = gumps.shared_classic_gump_count();
+    if shared_count == 0 {
+        return;
+    }
+    let classic_path = path.with_file_name(SHARED_CLASSIC_GUMPS_FILE_NAME);
+    if path.file_name() == classic_path.file_name() {
+        return report.failures.push(format!(
+            "{SHARED_CLASSIC_GUMPS_FILE_NAME} shares {shared_count} gumps with {SHARED_CLASSIC_GUMPS_FILE_NAME}: only a \
+             gumps_ec may share, and a gumps_cc must be standalone"
+        ));
+    }
+    if !classic_path.is_file() {
+        return report.notes.push(format!(
+            "shares {shared_count} gumps with {SHARED_CLASSIC_GUMPS_FILE_NAME}, and none is beside it: it depends on \
+             one (or the Classic client files) to draw them"
+        ));
+    }
+    let classic = match GumpsPackage::load(&classic_path) {
+        Ok(classic) => classic,
+        Err(error) => {
+            return report.failures.push(format!("shared gumps: {}: {error:#}", classic_path.display()));
+        }
+    };
+    let shared = gumps.shared_classic_gumps().collect::<Vec<_>>();
+    let differing = shared
+        .par_iter()
+        .filter_map(|shared| {
+            let problem = match classic.read_single_gump_image(shared.gump_id) {
+                Ok(Some((_, image))) if gump_image_hash(&image) == shared.image_hash => return None,
+                Ok(Some(_)) => "draws it differently".to_string(),
+                Ok(None) => "has no single gump with its id".to_string(),
+                Err(error) => format!("does not decode it: {error:#}"),
+            };
+            Some(format!("shared gump {}: {SHARED_CLASSIC_GUMPS_FILE_NAME} {problem}", shared.gump_id))
+        })
+        .collect::<Vec<_>>();
+    if differing.is_empty() {
+        return report.notes.push(format!("{shared_count} shared gumps match {}", classic_path.display()));
+    }
+    let differing_count = differing.len();
+    report.failures.extend(differing.into_iter().take(MAX_LISTED_ENTRY_FAILURES));
+    report.failures.push(format!(
+        "{differing_count} of {shared_count} shared gumps differ: {} is not the {SHARED_CLASSIC_GUMPS_FILE_NAME} this \
+         package was packed against",
+        classic_path.display()
+    ));
 }
 
 /// Container checks: package hash, dictionary table, and every entry decoded through its key.
@@ -688,6 +760,71 @@ mod tests {
         let paths = collect_package_paths(&[dir.clone()]).expect("collect");
 
         assert_eq!(paths, vec![nested.join("hues.uddp"), dir.join(TERRAIN_META_FILE_NAME)]);
+        fs::remove_dir_all(&dir).ok();
+    }
+
+    /// Writes a lossless gumps package of `gumps` (id, one RGBA texel), sharing with `share_with` when given.
+    fn write_gumps_package(path: &Path, gumps: &[(u32, [u8; 4])], share_with: Option<&Path>) {
+        use udd_conv::single_gumps::{default_single_gump_compression, GumpPixelFormat, SingleGumpWriter};
+        const SIDE: u32 = 1;
+        let format = GumpPixelFormat::Rgba8888;
+        let mut writer = SingleGumpWriter::new(format, default_single_gump_compression(format));
+        if let Some(share_with) = share_with {
+            let classic = GumpsPackage::load(share_with).expect("load the gumps_cc to share with");
+            writer = writer.with_shared_classic_gumps(std::sync::Arc::new(classic));
+        }
+        let mut builder = UddpBuilder::new(LookupMode::SparseId);
+        for (gump_id, rgba) in gumps {
+            writer.push(&mut builder, *gump_id, SIDE, SIDE, rgba.to_vec()).expect("push gump");
+        }
+        writer.finish(&mut builder).expect("finish single gumps");
+        udd_conv::gump_atlas::add_gump_atlas_files(&mut builder, Vec::new(), &Default::default())
+            .expect("add the atlas manifests");
+        fs::write(path, builder.build().expect("build package")).expect("write package");
+    }
+
+    /// A gumps_ec that shares gumps passes against the gumps_cc.uddp it was packed against, passes with a note when
+    /// none is beside it, and fails, naming each differing gump, against another one.
+    #[test]
+    fn shared_gumps_are_checked_against_the_gumps_cc_beside_them() {
+        const TWIN: u32 = 1000;
+        const OTHER_TWIN: u32 = 1001;
+        const ENHANCED_ONLY: u32 = 1002;
+        const ORANGE: [u8; 4] = [248, 128, 8, 255];
+        const GREEN: [u8; 4] = [8, 248, 128, 255];
+        let dir = scratch_dir("shared_gumps");
+        let classic_path = dir.join(SHARED_CLASSIC_GUMPS_FILE_NAME);
+        let enhanced_path = dir.join("gumps_ec.uddp");
+        write_gumps_package(&classic_path, &[(TWIN, ORANGE), (OTHER_TWIN, ORANGE)], None);
+        write_gumps_package(
+            &enhanced_path,
+            &[(TWIN, ORANGE), (OTHER_TWIN, ORANGE), (ENHANCED_ONLY, GREEN)],
+            Some(&classic_path),
+        );
+
+        let report = validate_package(&enhanced_path);
+        assert!(report.passed(), "{:?}", report.failures);
+        assert!(report.notes.iter().any(|note| note.starts_with("2 shared gumps match")), "{:?}", report.notes);
+        let standalone = validate_package(&classic_path);
+        assert!(standalone.passed() && standalone.notes.is_empty(), "{standalone:?}");
+
+        fs::remove_file(&classic_path).expect("remove gumps_cc");
+        let report = validate_package(&enhanced_path);
+        assert!(report.passed(), "{:?}", report.failures);
+        assert!(report.notes.iter().any(|note| note.contains("it depends on one")), "{:?}", report.notes);
+
+        write_gumps_package(&classic_path, &[(TWIN, GREEN), (OTHER_TWIN, ORANGE)], None);
+        let report = validate_package(&enhanced_path);
+        assert_eq!(
+            report.failures,
+            [
+                format!("shared gump {TWIN}: gumps_cc.uddp draws it differently"),
+                format!(
+                    "1 of 2 shared gumps differ: {} is not the gumps_cc.uddp this package was packed against",
+                    classic_path.display()
+                ),
+            ]
+        );
         fs::remove_dir_all(&dir).ok();
     }
 }
