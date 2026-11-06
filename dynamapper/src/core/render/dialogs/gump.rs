@@ -910,10 +910,13 @@ fn open_paperdoll(
         .profile(&state.paperdoll_profile_id)
         .unwrap_or_else(|| paperdoll_profiles.default_profile());
 
+    // The clients hue the body's greys only. Enhanced: `UOPaperdoll::BuildImage` 0x0050c790 draws it with partial hue
+    // set. Classic: `DrawPaperdollGumpLayers` 0x0051a4a0 draws the bodies of its table with `BlitGumpRowPartialHue`
+    // 0x005d8430, and only a body it knows by race alone with full hue; the dialog takes the gump, not the body.
     let mut layers = vec![PaperdollLayer {
         gump_id: body_id,
         hue_id: body_hue,
-        partial_hue: false,
+        partial_hue: true,
         sort_key: 0,
         x: profile.body_x,
         y: profile.body_y,
