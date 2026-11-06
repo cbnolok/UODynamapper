@@ -1,8 +1,8 @@
-use image_postprocess::palette::{
+use uot_image_postprocess::palette::{
     palette_safe_upscale, DitherPolicy, PaletteModel, PaletteUpscaleConfig, RgbaFilterScaler, SnapMode,
     TransparencyPolicy,
 };
-use image_postprocess::upscaling::{
+use uot_image_postprocess::upscaling::{
     EnhancementFilter, UpscaleFilter, UpscalePass as FilterUpscalePass,
 };
 

@@ -835,7 +835,7 @@ impl UddConvApp {
                     settings.map_preferences[map_id as usize],
                     &classic_patch_options(&settings),
                 )?;
-                udd_image_codecs::ktx2::write_ktx2_bc7_zstd(
+                uot_texture_codecs::ktx2::write_ktx2_bc7_zstd(
                     bc7_data,
                     &output,
                     settings.radar_zstd,
@@ -908,7 +908,7 @@ impl UddConvApp {
                     settings.map_preferences[map_id as usize],
                     &classic_patch_options(&settings),
                 )?;
-                udd_image_codecs::ktx2::write_ktx2_bc7_zstd(
+                uot_texture_codecs::ktx2::write_ktx2_bc7_zstd(
                     bc7_data,
                     &radar_output,
                     settings.radar_zstd,

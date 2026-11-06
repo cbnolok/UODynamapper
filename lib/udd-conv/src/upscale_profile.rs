@@ -129,7 +129,7 @@ mod tests {
         UpscaleImageType, UpscaleProfile, UpscaleProfileOverride, UpscaleTarget,
     };
     use crate::upscale_pipeline::UpscalePass;
-    use image_postprocess::upscaling::UpscaleFilter;
+    use uot_image_postprocess::upscaling::UpscaleFilter;
 
     #[test]
     fn image_types_parse_only_their_canonical_names() {

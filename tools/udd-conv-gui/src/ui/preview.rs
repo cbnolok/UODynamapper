@@ -174,7 +174,7 @@ impl UddConvApp {
 
                 // Handle zoom shortcuts and mouse wheel
                 if ui.ui_contains_pointer() || ui.is_enabled() {
-                    // Shift+wheel, Ctrl+wheel or a pinch (gui_shared's input options); the plain wheel scrolls.
+                    // Shift+wheel, Ctrl+wheel or a pinch (uot_gui's input options); the plain wheel scrolls.
                     zoom = (zoom * ui.input(|i| i.zoom_delta())).clamp(0.1, 20.0);
                     if ui.input(|i| i.key_pressed(egui::Key::Plus)) {
                          zoom = (zoom * 1.2).min(20.0);

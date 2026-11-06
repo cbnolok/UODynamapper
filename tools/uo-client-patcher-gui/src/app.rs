@@ -223,7 +223,7 @@ impl PatcherApp {
 
     pub fn open_dialog(&mut self) {
         let initial = self.settings.last_exe_dir.clone();
-        if let Some(path) = gui_shared::open_filtered_file_dialog(initial.as_deref(), "Client executables", &["exe", "EXE"])
+        if let Some(path) = uot_gui::open_filtered_file_dialog(initial.as_deref(), "Client executables", &["exe", "EXE"])
         {
             self.open(&path, None);
         }
@@ -234,7 +234,7 @@ impl PatcherApp {
         let Some(session) = &self.session else {
             return;
         };
-        let mut dialog = gui_shared::file_dialog().set_file_name(session.opened.file_name());
+        let mut dialog = uot_gui::file_dialog().set_file_name(session.opened.file_name());
         if let Some(dir) = self.settings.last_output_dir.as_deref().filter(|dir| dir.is_dir()) {
             dialog = dialog.set_directory(dir);
         }
@@ -280,7 +280,7 @@ impl PatcherApp {
         let LoginFolder::Classic(login) = &mut session.login_folder else {
             return;
         };
-        let mut dialog = gui_shared::file_dialog().set_file_name(login.file_name());
+        let mut dialog = uot_gui::file_dialog().set_file_name(login.file_name());
         if let Some(dir) = self.settings.last_login_cfg_dir.as_deref().filter(|dir| dir.is_dir()) {
             dialog = dialog.set_directory(dir);
         }

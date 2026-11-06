@@ -21,9 +21,9 @@ use std::path::Path;
 
 use byteorder::{LittleEndian, ReadBytesExt, WriteBytesExt};
 use color_eyre::eyre::{self, WrapErr};
-use udd_kdl::ast::Node;
-use udd_kdl::span::LineSpan;
-use udd_kdl::strict::{
+use uot_kdl::ast::Node;
+use uot_kdl::span::LineSpan;
+use uot_kdl::strict::{
     arguments, check_document, describe_error, error_at, in_file, property, reject_children, value_string,
     value_u16, value_u32, NodeSchema,
 };
@@ -352,7 +352,7 @@ impl LocalizedStringTable {
     }
 
     fn read_kdl(text: &str) -> eyre::Result<Self> {
-        let document = udd_kdl::parse_ast_line_span(KDL_SOURCE_NAME, text).map_err(|error| describe_error(text, &error))?;
+        let document = uot_kdl::parse_ast_line_span(KDL_SOURCE_NAME, text).map_err(|error| describe_error(text, &error))?;
         check_document(&document, KDL_SCHEMA)?;
         let mut header: Option<(u32, u16)> = None;
         let mut entries = Vec::new();
@@ -411,7 +411,7 @@ impl Default for LocalizedStringTable {
     }
 }
 
-fn required<'a>(node: &'a Node<LineSpan>, name: &str) -> eyre::Result<&'a udd_kdl::ast::Value<LineSpan>> {
+fn required<'a>(node: &'a Node<LineSpan>, name: &str) -> eyre::Result<&'a uot_kdl::ast::Value<LineSpan>> {
     property(node, name).ok_or_else(|| error_at(node.node_name.span(), format!("`{}`: missing {name}=", &**node.node_name)))
 }
 

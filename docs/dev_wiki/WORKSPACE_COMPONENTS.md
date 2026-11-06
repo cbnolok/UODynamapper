@@ -51,7 +51,7 @@ Responsibilities:
 - exposing slot tables, terrain provenance, tile metadata, and texture/package lookup helpers
 - keeping runtime-facing access separate from conversion-time parsing
 
-### `lib/udd-logging/`
+### `lib/support/uot-logging/`
 
 Shared terminal logging backend for tools. It installs a `log` crate backend that formats records with `paris`, so libraries continue to emit hookable `log::*` records while command-line tools get a consistent colored style.
 
@@ -70,7 +70,7 @@ Responsibilities:
 
 KTX2 texture handling used by the conversion pipeline.
 
-### `lib/image-postprocess/`
+### `lib/support/uot-image-postprocess/`
 
 Image processing support code used by texture packaging work, including BC7-related paths.
 

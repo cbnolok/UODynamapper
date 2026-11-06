@@ -962,7 +962,7 @@ fn paperdoll_profiles() -> &'static [PaperdollProfile] {
 }
 
 /// The `profile` nodes and their properties, for error messages that name them.
-const PAPERDOLL_PROFILES_SCHEMA: &[udd_kdl::strict::NodeSchema] = &[udd_kdl::strict::NodeSchema::leaf(
+const PAPERDOLL_PROFILES_SCHEMA: &[uot_kdl::strict::NodeSchema] = &[uot_kdl::strict::NodeSchema::leaf(
     "profile",
     &[
         "label",
@@ -978,7 +978,7 @@ const PAPERDOLL_PROFILES_SCHEMA: &[udd_kdl::strict::NodeSchema] = &[udd_kdl::str
 
 fn decode_paperdoll_profiles(text: &str) -> color_eyre::eyre::Result<Vec<PaperdollProfile>> {
     let decoded: PaperdollProfilesKdl =
-        udd_kdl::strict::decode("PaperdollProfiles.kdl", text, PAPERDOLL_PROFILES_SCHEMA)?;
+        uot_kdl::strict::decode("PaperdollProfiles.kdl", text, PAPERDOLL_PROFILES_SCHEMA)?;
     let profiles: Vec<_> = decoded.profiles.into_iter().map(PaperdollProfile::from).collect();
     if profiles.is_empty() {
         color_eyre::eyre::bail!("PaperdollProfiles.kdl: contains no profile nodes");

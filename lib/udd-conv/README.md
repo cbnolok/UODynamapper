@@ -28,8 +28,8 @@ packing, texture preparation, source decoding, and `.uddp` package assembly.
 - `uocf`: source format parsing.
 - `udd-container`: `.uddp` package writing.
 - `udd-assets`: package reading helpers used during conversion validation.
-- `udd-image-codecs`: BC7 encoding for GPU-ready textures.
-- `image-postprocess`: pre-encoding image filtering.
+- `uot-texture-codecs`: BC7 encoding for GPU-ready textures.
+- `uot-image-postprocess`: pre-encoding image filtering.
 - `guillotiere`: rectangle bin-packing for atlas assembly.
 
 ## Notes
@@ -37,5 +37,5 @@ packing, texture preparation, source decoding, and `.uddp` package assembly.
 - Terminal conversion progress is represented as `tracing` spans and rendered
   by CLI frontends through `tracing-indicatif`; conversion logs continue to use
   the `log` facade.
-- The `bc7-encode` feature of `udd-image-codecs` is always enabled in this
+- The `bc7-encode` feature of `uot-texture-codecs` is always enabled in this
   crate's dependency.

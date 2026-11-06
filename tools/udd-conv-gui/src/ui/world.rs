@@ -144,7 +144,7 @@ impl UddConvApp {
                     }
                 });
             if ui.button("Browse...").clicked() {
-                if let Some(path) = gui_shared::open_filtered_file_dialog(
+                if let Some(path) = uot_gui::open_filtered_file_dialog(
                     self.settings.cc_dir.as_deref(),
                     "Executable",
                     &["exe"],

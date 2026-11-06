@@ -3,7 +3,7 @@ use std::path::Path;
 
 use color_eyre::eyre::{self, WrapErr};
 use knuffel::Decode;
-use udd_kdl::strict::NodeSchema;
+use uot_kdl::strict::NodeSchema;
 
 #[derive(Decode, Debug, Clone)]
 pub struct EcSurfaceOverrides {
@@ -26,7 +26,7 @@ impl EcSurfaceOverrides {
     }
 
     pub fn parse(name: &str, content: &str) -> eyre::Result<Self> {
-        udd_kdl::strict::decode(name, content, EC_SURFACE_OVERRIDES_SCHEMA)
+        uot_kdl::strict::decode(name, content, EC_SURFACE_OVERRIDES_SCHEMA)
     }
 
     pub fn to_map(&self) -> HashMap<u32, EcSurfaceOverrideEntry> {

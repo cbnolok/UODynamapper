@@ -106,7 +106,7 @@ Multi-tile structure data (`MultiCollection.uop`) is decoded directly from its b
 ## Notes
 
 - Configure client paths in the application settings panel.
-- Upscale preview is available for art tiles using the image-postprocess
+- Upscale preview is available for art tiles using the uot-image-postprocess
   upscaling algorithms, including color-only vibrance, saturation, selective
   hue boosts, and local-contrast clarity passes.
 - Audio playback is supported in the Audio view. MIDI files are listed with what they declare, and are not played.

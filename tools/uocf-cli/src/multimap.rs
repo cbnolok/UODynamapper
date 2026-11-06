@@ -329,7 +329,7 @@ fn load_dds_rgba(path: &Path) -> eyre::Result<DecodedRgba> {
 }
 
 fn load_ktx2_rgba(path: &Path) -> eyre::Result<DecodedRgba> {
-    let (width, height, rgba) = udd_image_codecs::ktx2::decode_ktx2_bc7_zstd_to_rgba8888(path)?;
+    let (width, height, rgba) = uot_texture_codecs::ktx2::decode_ktx2_bc7_zstd_to_rgba8888(path)?;
     DecodedRgba::new(width, height, rgba)
 }
 

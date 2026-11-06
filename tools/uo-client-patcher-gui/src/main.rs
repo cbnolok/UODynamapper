@@ -3,7 +3,7 @@
 
 use color_eyre::eyre;
 use eframe::egui;
-use gui_shared::{run_native_with_setup, NativeWindow};
+use uot_gui::{run_native_with_setup, NativeWindow};
 
 mod app;
 mod logic;

@@ -262,7 +262,7 @@ fn draw_assets_overview(ui: &mut egui::Ui, app: &mut UddConvApp) {
                     );
                     ui.horizontal_wrapped(|ui| {
                         if ui.button("Select File...").clicked() {
-                            let mut dialog = gui_shared::file_dialog()
+                            let mut dialog = uot_gui::file_dialog()
                                 .set_title("Select Upscale Profile")
                                 .add_filter("Upscale profile", &["toml", "kdl"]);
                             if let Some(path) = app

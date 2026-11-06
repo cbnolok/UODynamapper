@@ -18,14 +18,13 @@ const LOG_CRATE_MAX_LEVEL: log::LevelFilter = log::LevelFilter::Warn;
 
 /// Target prefixes of this workspace's crates (`uocf` has its own category). Their records keep their level; other
 /// crates' uncategorized records drop to debug-verbose, so a dependency's warning doesn't reach the console.
-const WORKSPACE_LOG_TARGET_PREFIXES: [&str; 7] = [
+const WORKSPACE_LOG_TARGET_PREFIXES: [&str; 6] = [
     "dynamapper",
     "udd_",
     "uot_",
     "gamebryo_nif",
     "particle_sim",
     "effect_gltf",
-    "image_postprocess",
 ];
 
 fn is_workspace_target(target: &str, module_path: &str) -> bool {
@@ -284,6 +283,7 @@ mod tests {
     fn workspace_targets_keep_their_level() {
         assert!(is_workspace_target("dynamapper::core::texture_cache::land", ""));
         assert!(is_workspace_target("udd_assets::tex_aux_ec", ""));
+        assert!(is_workspace_target("uot_image_postprocess::palette", ""));
         assert!(is_workspace_target("log", "particle_sim::emitter"));
         assert!(!is_workspace_target("symphonia_core::probe", "symphonia_core::probe"));
         assert!(!is_workspace_target("kdl::parser", ""));

@@ -26,7 +26,7 @@ use bytemuck::{Pod, Zeroable};
 use color_eyre::eyre::{self, WrapErr};
 use std::path::Path;
 use udd_container::{xxh64_virtual_path, UddpReader};
-use udd_image_codecs::bc7::{decode_from_vram, RawImageFormat, VramTextureData, VramTextureFormat};
+use uot_texture_codecs::bc7::{decode_from_vram, RawImageFormat, VramTextureData, VramTextureFormat};
 
 use crate::common::read_pod_vec;
 use crate::tex_art_cc::PagePixelFormat;
@@ -317,8 +317,8 @@ mod tests {
     fn bc7_entries_load_as_their_blocks() -> eyre::Result<()> {
         const BC7_ID: u32 = 20_002_473;
         // Any 16 bytes are one decodable BC7 block; distinct ones show a reordered copy.
-        const BLOCK: [u8; udd_image_codecs::bc7::BC7_BLOCK_BYTES] = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16];
-        let extent = udd_image_codecs::bc7::ImageExtent::new(IMAGE_SIDE.into(), IMAGE_SIDE.into())?;
+        const BLOCK: [u8; uot_texture_codecs::bc7::BC7_BLOCK_BYTES] = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16];
+        let extent = uot_texture_codecs::bc7::ImageExtent::new(IMAGE_SIDE.into(), IMAGE_SIDE.into())?;
         let rgba = PACKED_PIXEL.repeat(usize::from(IMAGE_SIDE) * usize::from(IMAGE_SIDE));
         let blocks = VramTextureData::new(extent, VramTextureFormat::Bc7RgbaUnormSrgb, BLOCK.to_vec().into())?;
         let bc7_slot = TexAuxEcSlotRecord { pixel_format: PagePixelFormat::Bc7 as u8, ..slot(BC7_ID, WORLD_ART) };

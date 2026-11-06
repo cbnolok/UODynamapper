@@ -52,19 +52,19 @@ const PRIORITY_PROPERTY: &str = "priority";
 const ITEMS_PROPERTY: &str = "items";
 /// `draworder "<direction>" { slot "<slot>" priority=N }` and
 /// `wearable "<slot>" items="..." { override priority=N [race=] [direction=] { when "<slot>" items="..." } }`.
-const WEARABLE_RULES_SCHEMA: &[udd_kdl::strict::NodeSchema] = &[
-    udd_kdl::strict::NodeSchema {
+const WEARABLE_RULES_SCHEMA: &[uot_kdl::strict::NodeSchema] = &[
+    uot_kdl::strict::NodeSchema {
         name: "draworder",
         properties: &[],
-        children: &[udd_kdl::strict::NodeSchema::leaf("slot", &[PRIORITY_PROPERTY])],
+        children: &[uot_kdl::strict::NodeSchema::leaf("slot", &[PRIORITY_PROPERTY])],
     },
-    udd_kdl::strict::NodeSchema {
+    uot_kdl::strict::NodeSchema {
         name: "wearable",
         properties: &[ITEMS_PROPERTY],
-        children: &[udd_kdl::strict::NodeSchema {
+        children: &[uot_kdl::strict::NodeSchema {
             name: "override",
             properties: &[PRIORITY_PROPERTY, "race", "direction"],
-            children: &[udd_kdl::strict::NodeSchema::leaf("when", &[ITEMS_PROPERTY])],
+            children: &[uot_kdl::strict::NodeSchema::leaf("when", &[ITEMS_PROPERTY])],
         }],
     },
 ];
@@ -526,7 +526,7 @@ impl WearableRules {
     }
 
     pub(crate) fn decode(text: &str) -> eyre::Result<Self> {
-        let decoded: WearableRulesKdl = udd_kdl::strict::decode(WEARABLE_RULES_FILE_NAME, text, WEARABLE_RULES_SCHEMA)?;
+        let decoded: WearableRulesKdl = uot_kdl::strict::decode(WEARABLE_RULES_FILE_NAME, text, WEARABLE_RULES_SCHEMA)?;
         let mut rules = Self::default();
         let draw_order = decoded
             .draw_orders

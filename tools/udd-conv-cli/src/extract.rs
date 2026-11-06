@@ -6,7 +6,7 @@ use log::info;
 use color_eyre::eyre::{self, WrapErr};
 use image::{ColorType, ImageFormat};
 use rayon::prelude::*;
-use udd_logging::progress::{ProgressBar, ProgressStyle};
+use uot_logging::progress::{ProgressBar, ProgressStyle};
 use udd_assets::{TexArtCcPackage, TexArtEcPackage, TexLandEcPackage, TileMetaPackage};
 use udd_assets::tex_land_ec::{
     MISSING_SLOT_ID, MISSING_TERRAIN_LAYER_INDEX, MISSING_TEXTURE_ID,

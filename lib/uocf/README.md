@@ -76,6 +76,6 @@ Shared animation sequence metadata helper.
 ## Notes
 
 - This crate emits log events via the `log` facade; the application provides
-  the backend (`udd-logging` in tools and the Bevy logger in `dynamapper`).
+  the backend (`uot-logging` in tools and the Bevy logger in `dynamapper`).
 - All public error types use `color-eyre`.
 - `memmap2` is used for large file reads.

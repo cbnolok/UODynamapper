@@ -93,26 +93,26 @@ const WEARABLE_PRIORITY_PROPERTY: &str = "priority";
 
 /// `draworder "<direction>" { slot "<slot>" priority=N }`, and
 /// `wearable "<slot>" items="..." { override priority=N [race=] [direction=] { when "<slot>" items="..." } }`.
-const WEARABLE_RULES_SCHEMA: &[udd_kdl::strict::NodeSchema] = &[
-    udd_kdl::strict::NodeSchema {
+const WEARABLE_RULES_SCHEMA: &[uot_kdl::strict::NodeSchema] = &[
+    uot_kdl::strict::NodeSchema {
         name: "draworder",
         properties: &[],
-        children: &[udd_kdl::strict::NodeSchema::leaf("slot", &[WEARABLE_PRIORITY_PROPERTY])],
+        children: &[uot_kdl::strict::NodeSchema::leaf("slot", &[WEARABLE_PRIORITY_PROPERTY])],
     },
-    udd_kdl::strict::NodeSchema {
+    uot_kdl::strict::NodeSchema {
         name: "wearable",
         properties: &[WEARABLE_ITEMS_PROPERTY],
-        children: &[udd_kdl::strict::NodeSchema {
+        children: &[uot_kdl::strict::NodeSchema {
             name: "override",
             properties: &[WEARABLE_PRIORITY_PROPERTY, "race", "direction"],
-            children: &[udd_kdl::strict::NodeSchema::leaf("when", &[WEARABLE_ITEMS_PROPERTY])],
+            children: &[uot_kdl::strict::NodeSchema::leaf("when", &[WEARABLE_ITEMS_PROPERTY])],
         }],
     },
 ];
 
 /// `profile "<id>" equipment_offset=N [label=] [canvas_width=] [canvas_height=] [body_x=] [body_y=] [equipment_x=]
 /// [equipment_y=]`, decoded by `PaperdollProfilesKdl`.
-pub(crate) const PAPERDOLL_PROFILES_SCHEMA: &[udd_kdl::strict::NodeSchema] = &[udd_kdl::strict::NodeSchema::leaf(
+pub(crate) const PAPERDOLL_PROFILES_SCHEMA: &[uot_kdl::strict::NodeSchema] = &[uot_kdl::strict::NodeSchema::leaf(
     "profile",
     &[
         "label",
@@ -134,14 +134,14 @@ impl PaperdollWearableRules {
     }
 
     fn load_from_str(source_name: &str, content: &str) -> color_eyre::eyre::Result<Self> {
-        Self::parse(content).map_err(|error| udd_kdl::strict::in_file(source_name, error))
+        Self::parse(content).map_err(|error| uot_kdl::strict::in_file(source_name, error))
     }
 
     fn parse(content: &str) -> color_eyre::eyre::Result<Self> {
         use color_eyre::eyre;
-        use udd_kdl::ast::{Node, Value};
-        use udd_kdl::span::LineSpan;
-        use udd_kdl::strict::{arguments, error_at, property, required_property, value_string, value_u16};
+        use uot_kdl::ast::{Node, Value};
+        use uot_kdl::span::LineSpan;
+        use uot_kdl::strict::{arguments, error_at, property, required_property, value_string, value_u16};
 
         fn argument_string(node: &Node<LineSpan>, field: &str) -> eyre::Result<String> {
             let [value] = arguments::<1>(node)?;
@@ -192,9 +192,9 @@ impl PaperdollWearableRules {
             Ok(())
         }
 
-        let document = udd_kdl::parse_ast_line_span(WEARABLE_RULES_FILE_NAME, content)
-            .map_err(|error| udd_kdl::strict::describe_error(content, &error))?;
-        udd_kdl::strict::check_document(&document, WEARABLE_RULES_SCHEMA)?;
+        let document = uot_kdl::parse_ast_line_span(WEARABLE_RULES_FILE_NAME, content)
+            .map_err(|error| uot_kdl::strict::describe_error(content, &error))?;
+        uot_kdl::strict::check_document(&document, WEARABLE_RULES_SCHEMA)?;
         let mut paperdoll_draw_order = HashMap::new();
         let mut wearable_rules = Vec::new();
         for node in document.nodes.iter() {
@@ -459,7 +459,7 @@ impl PaperdollProfilesRes {
     }
 
     fn load_from_str(source_name: &str, content: &str) -> color_eyre::eyre::Result<Self> {
-        let decoded: PaperdollProfilesKdl = udd_kdl::strict::decode(source_name, content, PAPERDOLL_PROFILES_SCHEMA)?;
+        let decoded: PaperdollProfilesKdl = uot_kdl::strict::decode(source_name, content, PAPERDOLL_PROFILES_SCHEMA)?;
         let profiles = decoded
             .profiles
             .into_iter()

@@ -1,6 +1,6 @@
 pub mod common;
-pub use udd_image_codecs::bc7;
-pub use udd_image_codecs::premultiplied;
+pub use uot_texture_codecs::bc7;
+pub use uot_texture_codecs::premultiplied;
 pub mod tex_art_cc;
 pub mod tex_land_cc;
 pub mod tex_art_ec;

@@ -1,11 +1,11 @@
 use crate::logic::{ClientData, Dictionary, UopCache};
 use crate::ui::{ClientSource, EnhancedFolders, ENHANCED_SOURCES};
 use eframe::egui;
-use image_postprocess::palette::{
+use uot_image_postprocess::palette::{
     palette_safe_upscale, DitherPolicy, PaletteModel, PaletteUpscaleConfig, RgbaFilterScaler, SnapMode,
     TransparencyPolicy,
 };
-use image_postprocess::upscaling::{EnhancementFilter, UpscaleFilter};
+use uot_image_postprocess::upscaling::{EnhancementFilter, UpscaleFilter};
 use std::num::NonZero;
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};

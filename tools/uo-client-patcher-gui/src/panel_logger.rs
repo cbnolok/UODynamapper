@@ -39,7 +39,7 @@ impl Logs {
             LogLevel::Warning => Level::Warn,
             LogLevel::Error => Level::Error,
         };
-        eprintln!("{}", udd_logging::format_message(log_level, &text));
+        eprintln!("{}", uot_logging::format_message(log_level, &text));
         self.append(LogMessage { text, level });
     }
 
@@ -83,7 +83,7 @@ impl Log for PanelLogger {
         if !self.enabled(record.metadata()) {
             return;
         }
-        eprintln!("{}", udd_logging::format_record(record));
+        eprintln!("{}", uot_logging::format_record(record));
         let level = match record.level() {
             Level::Error => LogLevel::Error,
             Level::Warn => LogLevel::Warning,

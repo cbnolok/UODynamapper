@@ -1,1 +1,1 @@
-pub use udd_image_codecs::bc7::*;
+pub use uot_texture_codecs::bc7::*;

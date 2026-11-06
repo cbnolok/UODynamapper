@@ -1,6 +1,6 @@
-# image-postprocess
+# uot-image-postprocess
 
-`image-postprocess` provides image scaling and filtering algorithms used before
+`uot-image-postprocess` provides image scaling and filtering algorithms used before
 textures are encoded and packed into `.uddp` packages. It is consumed by
 `udd-conv` during the conversion pipeline.
 

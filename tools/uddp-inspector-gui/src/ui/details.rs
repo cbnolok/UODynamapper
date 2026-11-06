@@ -51,7 +51,7 @@ impl InspectorApp {
         let format = self.export_format;
         let first_line = label.lines().next().unwrap_or_default();
         let name = format!("{}.{}", sanitize_file_stem(first_line, EXPORT_FALLBACK_STEM), format.extension());
-        let Some(path) = gui_shared::file_dialog().add_filter(format!("{} image", format.label()), &[format.extension()]).set_file_name(name).save_file() else {
+        let Some(path) = uot_gui::file_dialog().add_filter(format!("{} image", format.label()), &[format.extension()]).set_file_name(name).save_file() else {
             return;
         };
         match image.write(&path, format) {

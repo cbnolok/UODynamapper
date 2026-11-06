@@ -16,7 +16,7 @@ too_many_arguments = "allow"
 uocf = { path = "../../lib/uocf" }
 # The NIF reader of the entry editor's NIF check.
 gamebryo-nif = { path = "../../lib/ec-effects/gamebryo-nif" }
-udd-logging = { path = "../../lib/udd-logging" }
+uot-logging = { path = "../../lib/support/uot-logging" }
 log.workspace = true
 clap = { workspace = true, features = ["derive", "unicode"] }
 color-eyre.workspace = true
@@ -25,7 +25,7 @@ dds.workspace = true
 #ddsfile.workspace = true
 flate2.workspace = true
 image = { workspace = true, features = ["bmp", "png"] }
-udd-image-codecs = { path = "../../lib/udd-image-codecs", features = ["ktx2"] }
+uot-texture-codecs = { path = "../../lib/support/uot-texture-codecs", features = ["ktx2"] }
 workspace-hack.workspace = true
 
 [[bin]]

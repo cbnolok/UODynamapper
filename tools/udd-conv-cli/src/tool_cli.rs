@@ -182,7 +182,7 @@ struct AtlasPageBounds {
 
 pub fn run() -> eyre::Result<()> {
     color_eyre::install()?;
-    let _ = udd_logging::install_tracing_indicatif_logger();
+    let _ = uot_logging::install_tracing_indicatif_logger();
     run_with_args(std::env::args_os())
 }
 

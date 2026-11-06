@@ -179,10 +179,10 @@ the conversion pipeline. Covers:
   `dynamapper` at runtime and by tools for inspection and validation.
 - [`udd-conv`](lib/udd-conv/README.md): conversion and atlas-packing logic shared by `udd-conv-cli` and
   `udd-conv-gui`.
-- [`udd-image-codecs`](lib/udd-image-codecs/README.md): GPU texture codec support — BC7 SIMD-assisted analytical
+- [`uot-texture-codecs`](lib/support/uot-texture-codecs/README.md): GPU texture codec support — BC7 SIMD-assisted analytical
   encoder/decoder (inspired by basis-universal), BC7 RDO pass for improved
   outer compression, and KTX2 container writing for supercompressed BC7 + zstd textures.
-- [`image-postprocess`](lib/image-postprocess/README.md): image scaling and filtering used before packaging.
+- [`uot-image-postprocess`](lib/support/uot-image-postprocess/README.md): image scaling and filtering used before packaging.
   Supported upscalers: Nearest, Bilinear, CatmullRom, Lanczos3, xBRZ, lqx,
   hqx, epx, 2xSaI, Super2xSaI, SuperEagle, MMPX, Super-xBR, ScaleFX,
   OmniScale, Jinc2, CUT1/CUT2/CUT3, Kopf-Lischinski depixelizer, NEDI, AMD FSR
@@ -194,7 +194,8 @@ The repository is a Cargo workspace. The important top-level groups are:
 
 - `dynamapper/`: the Bevy application and renderer.
 - `lib/uocf/`: parsers for Ultima Online source formats.
-- `lib/udd-container/`, `lib/udd-assets/`, `lib/udd-conv/`, `lib/udd-image-codecs/`, `lib/image-postprocess/`: package infrastructure, runtime readers, conversion logic, GPU texture codecs, and image postprocessing.
+- `lib/udd-container/`, `lib/udd-assets/`, `lib/udd-conv/`: package infrastructure, runtime readers, and conversion logic.
+- `lib/support/`: shared `uot-*` tooling plumbing: GPU texture codecs, image postprocessing, strict KDL decoding, tool logging, and GUI helpers.
 - `tools/`: CLI and GUI tools for conversion, inspection, package editing, and UOP-related workflows.
 
 Detailed crate and tool responsibilities live in [docs/dev_wiki/WORKSPACE_COMPONENTS.md](docs/dev_wiki/WORKSPACE_COMPONENTS.md).

@@ -1,6 +1,6 @@
 # egui / eframe 0.37 upgrade notes (GUI tools)
 
-Applies to the eframe-based tools (`lib/gui-shared`, `tools/*-gui`), not to `dynamapper`,
+Applies to the eframe-based tools (`lib/support/uot-gui`, `tools/*-gui`), not to `dynamapper`,
 which uses its own egui through `bevy_egui` (a second egui version in the graph is expected).
 
 ## Silent feature regression: clipboard and links

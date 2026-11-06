@@ -88,7 +88,7 @@ pub fn load_upscale_profile(path: &Path) -> eyre::Result<UpscaleProfile> {
             path.display()
         ),
     };
-    profile.map_err(|error| udd_kdl::strict::in_file(&path.display().to_string(), error))
+    profile.map_err(|error| uot_kdl::strict::in_file(&path.display().to_string(), error))
 }
 
 fn parse_toml_profile(_path: &Path, content: &str) -> eyre::Result<UpscaleProfile> {
@@ -141,9 +141,9 @@ const KDL_OVERRIDE_NODE: &str = "override";
 const KDL_OVERRIDE_PROPERTIES: [&str; 3] = ["type", "family", "id"];
 
 fn parse_kdl_profile(path: &Path, content: &str) -> eyre::Result<UpscaleProfile> {
-    use udd_kdl::ast::Node;
-    use udd_kdl::span::LineSpan;
-    use udd_kdl::strict::{check_properties, error_at, property, required_property, value_f32, value_string, value_u32};
+    use uot_kdl::ast::Node;
+    use uot_kdl::span::LineSpan;
+    use uot_kdl::strict::{check_properties, error_at, property, required_property, value_f32, value_string, value_u32};
 
     fn pass_properties() -> Vec<&'static str> {
         std::iter::once(PASS_FILTER_KEY).chain(PASS_PARAMETERS).collect()
@@ -151,7 +151,7 @@ fn parse_kdl_profile(path: &Path, content: &str) -> eyre::Result<UpscaleProfile>
 
     fn parse_pass_node(node: &Node<LineSpan>) -> eyre::Result<UpscalePass> {
         check_properties(node, &pass_properties())?;
-        udd_kdl::strict::reject_children(node)?;
+        uot_kdl::strict::reject_children(node)?;
         let filter = match (property(node, PASS_FILTER_KEY), node.arguments.as_slice()) {
             (Some(filter), []) => value_string(filter, PASS_FILTER_KEY)?,
             (None, [filter]) => value_string(filter, "pass filter")?,
@@ -186,19 +186,19 @@ fn parse_kdl_profile(path: &Path, content: &str) -> eyre::Result<UpscaleProfile>
             .children()
             .map(|node| match &**node.node_name {
                 KDL_PASS_NODE => parse_pass_node(node),
-                _ => Err(udd_kdl::strict::unknown_node(node, Some(&**parent.node_name), &[KDL_PASS_NODE])),
+                _ => Err(uot_kdl::strict::unknown_node(node, Some(&**parent.node_name), &[KDL_PASS_NODE])),
             })
             .collect()
     }
 
-    let document = udd_kdl::parse_ast_line_span(&path.display().to_string(), content)
-        .map_err(|error| udd_kdl::strict::describe_error(content, &error))?;
+    let document = uot_kdl::parse_ast_line_span(&path.display().to_string(), content)
+        .map_err(|error| uot_kdl::strict::describe_error(content, &error))?;
     let mut profile = UpscaleProfile::new();
     for node in &document.nodes {
         let name: &str = &node.node_name;
         if name == KDL_OVERRIDE_NODE {
             check_properties(node, &KDL_OVERRIDE_PROPERTIES)?;
-            udd_kdl::strict::arguments::<0>(node)?;
+            uot_kdl::strict::arguments::<0>(node)?;
             let image_type_value = required_property(node, "type")?;
             let image_type = parse_image_type(&value_string(image_type_value, "type")?)
                 .map_err(|error| error_at(image_type_value.literal.span(), error))?;
@@ -214,10 +214,10 @@ fn parse_kdl_profile(path: &Path, content: &str) -> eyre::Result<UpscaleProfile>
                 .map(|image_type| image_type.as_str())
                 .chain([KDL_OVERRIDE_NODE])
                 .collect();
-            return Err(udd_kdl::strict::unknown_node(node, None, &allowed));
+            return Err(uot_kdl::strict::unknown_node(node, None, &allowed));
         };
         check_properties(node, &[])?;
-        udd_kdl::strict::arguments::<0>(node)?;
+        uot_kdl::strict::arguments::<0>(node)?;
         profile.set_default(image_type, pass_nodes(node)?);
     }
     Ok(profile)

@@ -59,7 +59,7 @@ impl Bc7EncoderBackendExt for Bc7EncoderBackend {
         if self.is_available() {
             None
         } else {
-            Some("udd-image-codecs was built without the bc7-encode feature")
+            Some("uot-texture-codecs was built without the bc7-encode feature")
         }
     }
 }

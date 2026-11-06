@@ -254,7 +254,7 @@ Heavily dithered assets:
 
 The main implementation points are:
 
-- `image-postprocess::palette` owns palette modeling, transparency policy, and
+- `uot-image-postprocess::palette` owns palette modeling, transparency policy, and
   snapping.
 - `udd-conv::upscale_pipeline::UpscalePass` wraps raw `UpscaleFilter` values
   plus palette snap passes.
@@ -274,7 +274,7 @@ For changes to this feature, keep the checks narrow unless the touched surface i
 bigger:
 
 ```bash
-cargo test -p image-postprocess palette::
+cargo test -p uot-image-postprocess palette::
 cargo test -p udd-conv upscale_pipeline
 cargo test -p udd-conv-cli palette_snap
 cargo test -p udd-conv-cli upscale_profile_config

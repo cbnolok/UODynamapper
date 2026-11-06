@@ -1,6 +1,6 @@
-# udd-image-codecs
+# uot-texture-codecs
 
-`udd-image-codecs` provides GPU texture codec support for the UODynamapper
+`uot-texture-codecs` provides GPU texture codec support for the UODynamapper
 conversion pipeline. It is feature-gated so that callers only compile what they
 need.
 

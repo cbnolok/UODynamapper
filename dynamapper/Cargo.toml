@@ -21,7 +21,7 @@ type_complexity = "allow"
 udd-assets = { path = "../lib/udd-assets", features = ["bc7-encode"] }
 udd-container = { path = "../lib/udd-container" }
 uocf = { path = "../lib/uocf" }
-udd-kdl = { path = "../lib/udd-kdl" }
+uot-kdl = { path = "../lib/support/uot-kdl" }
 bevy_egui = { version = "0.43" } #, features = ["immutable_ctx"] }
 bytemuck = { version = "1.*", default-features = false, features = ["derive", "aarch64_simd", "avx512_simd"] }
 chrono = { version = "0.4", default-features = false, features = [
@@ -31,7 +31,7 @@ chrono = { version = "0.4", default-features = false, features = [
 color-eyre = { workspace = true, features = ["track-caller"] }
 #lru = "0.16"
 indexmap = "2.14.2"
-# Only for the Decode derives: their code names the knuffel crate. Parse through udd-kdl.
+# Only for the Decode derives: their code names the knuffel crate. Parse through uot-kdl.
 knuffel.workspace = true
 # No compile-time level caps here: in a workspace build those features would cap every tool's logging too.
 # The level is set at runtime (core/bevy_log_filter.rs).

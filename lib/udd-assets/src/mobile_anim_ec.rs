@@ -286,15 +286,15 @@ impl EcMobileAnimationsKdl {
     }
 
     pub fn parse(name: &str, content: &str) -> eyre::Result<Self> {
-        udd_kdl::strict::decode(name, content, EC_MOBILE_ANIMATIONS_SCHEMA)
+        uot_kdl::strict::decode(name, content, EC_MOBILE_ANIMATIONS_SCHEMA)
     }
 }
 
 /// The nodes and properties the decoders below accept, for error messages that name them.
-const EC_MOBILE_ANIMATIONS_SCHEMA: &[udd_kdl::strict::NodeSchema] = &[udd_kdl::strict::NodeSchema {
+const EC_MOBILE_ANIMATIONS_SCHEMA: &[uot_kdl::strict::NodeSchema] = &[uot_kdl::strict::NodeSchema {
     name: "item",
     properties: &["name", "type", "layer", "male", "female", "gargoyle"],
-    children: &[udd_kdl::strict::NodeSchema::leaf("anim", &["uop", "block", "file"])],
+    children: &[uot_kdl::strict::NodeSchema::leaf("anim", &["uop", "block", "file"])],
 }];
 
 #[derive(Decode, Debug, Clone)]

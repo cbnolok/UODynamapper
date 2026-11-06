@@ -2487,7 +2487,7 @@ Share of the scope's MB in R8 or RG8, then in BC1 (padding shifts it slightly). 
 
 ## 12. The repo's BC7 encoder
 
-**The BC7 rows in this document used a buggy encoder, and so does every package built with `--bc7`.** The repo's encoder can pack a block that decodes differently from what its own search scored. The trace below names the cause, and it runs on a verbatim scratch copy (`bc7-trace`, `lib/udd-image-codecs/src/bc7/{analytical,tables,rdo}.rs` copied unchanged). The copy reproduces the repo's real call byte for byte on the named sample: `cmp` on the decoded output of `lossy.rs`'s `Coder::Bc7` and `Coder::Bleed` rows against the copy's rows, on both clients. **The repo's encoder is unchanged.** The fixes below are a proposal for the user, because they change every package built with BC7.
+**The BC7 rows in this document used a buggy encoder, and so does every package built with `--bc7`.** The repo's encoder can pack a block that decodes differently from what its own search scored. The trace below names the cause, and it runs on a verbatim scratch copy (`bc7-trace`, `lib/support/uot-texture-codecs/src/bc7/{analytical,tables,rdo}.rs` copied unchanged). The copy reproduces the repo's real call byte for byte on the named sample: `cmp` on the decoded output of `lossy.rs`'s `Coder::Bc7` and `Coder::Bleed` rows against the copy's rows, on both clients. **The repo's encoder is unchanged.** The fixes below are a proposal for the user, because they change every package built with BC7.
 
 **What it changes on animation,** SSIMULACRA2 median on the named sample, with zstd 19 scaled to the whole set:
 
@@ -2522,7 +2522,7 @@ Share of the scope's MB in R8 or RG8, then in BC1 (padding shifts it slightly). 
 **Bug A: `encode_mode4` with index flag 0 swaps its weight fields.** This is a real bug, and the converter's flags reach it. BC7 mode 4 stores a 2-bit weight plane and a 3-bit plane in fixed places, and the index flag only says which plane is colour. The code packs the 3-bit plane into the 2-bit field when the flag is 0. The candidate's predicted error uses the intended weights, so it wins the search and then decodes wrong. `pack_mode4_or_5` also runs for opaque blocks with a decorrelated colour channel, so opaque art, land and the radar reach it, not only sprites. The one existing test, `mode4_fused_error_bounds`, calls it with index flag 1 only.
 
 ```diff
---- a/lib/udd-image-codecs/src/bc7/analytical.rs (encode_mode4)
+--- a/lib/support/uot-texture-codecs/src/bc7/analytical.rs (encode_mode4)
 -    let (p2, p3) = if index_flag == 1 {
 -        (&w1, &w0)
 -    } else {
@@ -2863,7 +2863,7 @@ By class: MB, then SSIMULACRA2 median / min, bodies at 80 or better, RGB PSNR dB
 2. **Fix C, landed on 2026-11-05 with a regression test,** the lines below. On top of fix A it costs about 2 % of animation disk on Classic and saves 1 % on Enhanced against the repo's row, and encode goes from 0.05 to 0.14 worker seconds a Mpx. It leaves pixels alone, so nothing can come to depend on it.
 
    ```diff
-   --- a/lib/udd-image-codecs/src/bc7/analytical.rs (end of pack_bc7_rgba)
+   --- a/lib/support/uot-texture-codecs/src/bc7/analytical.rs (end of pack_bc7_rgba)
         *block = best_block;
    +
    +    // Alpha's own plane can win on blocks the correlation test above doesn't offer it to, and `pack_mode4_or_5` only
@@ -2883,12 +2883,12 @@ By class: MB, then SSIMULACRA2 median / min, bodies at 80 or better, RGB PSNR dB
    +    let bits = u128::from_le_bytes(*block);
    +    super::rdo::decode_bc7_error_bounded::<false>(bits, pixels, 0, false, u64::MAX, None).expect("the encoder writes valid modes")
    +}
-   --- a/lib/udd-image-codecs/src/bc7/rdo.rs (line 1420)
+   --- a/lib/support/uot-texture-codecs/src/bc7/rdo.rs (line 1420)
    -fn decode_bc7_error_bounded<const COLLECT_STATS: bool>(
    +pub(super) fn decode_bc7_error_bounded<const COLLECT_STATS: bool>(
    ```
 
-3. **Colour under transparent pixels,** only if the tail is worth about 5.5 % of disk. After `normalize_to_rgba8888` in the two BC7 entry points of `lib/udd-image-codecs/src/bc7.rs` (lines 707 and 861; 969 and 1094 are the uncompressed RGBA8 path and stay as they are), so the encoder and RDO's target see the same pixels:
+3. **Colour under transparent pixels,** only if the tail is worth about 5.5 % of disk. After `normalize_to_rgba8888` in the two BC7 entry points of `lib/support/uot-texture-codecs/src/bc7.rs` (lines 707 and 861; 969 and 1094 are the uncompressed RGBA8 path and stay as they are), so the encoder and RDO's target see the same pixels:
 
    ```diff
    -    let rgba_pixels = normalize_to_rgba8888(pixels, input_format, extent);
@@ -4587,7 +4587,7 @@ So a per-format shader only pays when one pipeline's sprites can be grouped and 
 The earlier sections use samples. This one runs the final candidates on **every body in the set,** so these totals replace the estimates. Nothing here is timed.
 
 - **Lossless (`wl`):** each layout coded on every stream and **decoded back and compared,** on all 1022 Classic and 926 Enhanced bodies. Totals include the palette table.
-- **BC7 (`qw`):** every stream encoded with one encoder, then scored. "Repo" is a byte-identical scratch copy of the encoder in `lib/udd-image-codecs/src/bc7`. The fixed rows are that copy with the lines in section 12. **The repo encoder was unchanged during these runs.**
+- **BC7 (`qw`):** every stream encoded with one encoder, then scored. "Repo" is a byte-identical scratch copy of the encoder in `lib/support/uot-texture-codecs/src/bc7`. The fixed rows are that copy with the lines in section 12. **The repo encoder was unchanged during these runs.**
 - **BC3 and BC1 (`qw`):** the same streams through `dds` 0.2.0 at `CompressionQuality::High`, labelled by that encoder. The last subsection compares them with the BC7 rows.
 - **What "score" covers:** SSIMULACRA2 runs per body on a mosaic of up to 64 frames (`SSIM_FRAMES_PER_BODY`), so a body's score samples its frames. Hue, coverage and PSNR cover every pixel.
 - **RDO runs in the encoder's segments:** above 2048 blocks a stream is split for parallel work, so the longest streams search a little less than they could.

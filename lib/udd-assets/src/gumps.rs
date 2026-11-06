@@ -15,9 +15,9 @@ use std::io::{Cursor, Read};
 use std::path::Path;
 use std::sync::{Arc, Mutex};
 use udd_container::{DataType, FileKey, UddpReader};
-use udd_image_codecs::bc1::{decode_bc1_to_rgba8888, encode_bc1, expected_bc1_byte_len};
-use udd_image_codecs::bc7::{decode_bc7_to_rgba8888, expected_bc7_byte_len, ImageExtent, RawImageFormat};
-use udd_image_codecs::premultiplied::unpremultiply_rgba8888;
+use uot_texture_codecs::bc1::{decode_bc1_to_rgba8888, encode_bc1, expected_bc1_byte_len};
+use uot_texture_codecs::bc7::{decode_bc7_to_rgba8888, expected_bc7_byte_len, ImageExtent, RawImageFormat};
+use uot_texture_codecs::premultiplied::unpremultiply_rgba8888;
 
 use crate::common::ensure_manifest_version;
 
@@ -112,10 +112,10 @@ pub fn encode_single_gump_payload(
 /// as the lossy measurements of 2026-11-06.
 #[cfg(any(feature = "bc7-encode", test))]
 fn encode_premultiplied_bc7(rgba: &[u8], extent: ImageExtent) -> eyre::Result<Vec<u8>> {
-    use udd_image_codecs::bc7::{encode_to_bc7, preferred_bc7_encoder_backend};
+    use uot_texture_codecs::bc7::{encode_to_bc7, preferred_bc7_encoder_backend};
 
     let mut premultiplied = rgba.to_vec();
-    udd_image_codecs::premultiplied::premultiply_rgba8888(&mut premultiplied);
+    uot_texture_codecs::premultiplied::premultiply_rgba8888(&mut premultiplied);
     let blocks = encode_to_bc7(&premultiplied, extent, RawImageFormat::Rgba8888, preferred_bc7_encoder_backend())
         .map_err(|error| eyre::eyre!("BC7: {error}"))?;
     Ok(blocks.into_blocks())

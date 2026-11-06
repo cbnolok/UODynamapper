@@ -2,7 +2,7 @@ use std::ffi::OsString;
 
 fn main() -> color_eyre::eyre::Result<()> {
     let args: Vec<OsString> = std::env::args_os().collect();
-    let _ = udd_logging::install_paris_logger();
+    let _ = uot_logging::install_paris_logger();
     match args.get(1).and_then(|s| s.to_str()) {
         Some("tool") => {
             let forwarded: Vec<OsString> = std::iter::once(args[0].clone())

@@ -19,13 +19,17 @@ UODynamapper is a 2D client/dynamic map renderer for Ultima Online, emulating Cl
 - `dynamapper/` — Main Bevy application (rendering, UI, controls)
 - `lib/uocf/` — Ultima Online client file readers
 - `lib/udd-assets/`, `lib/udd-container/` — UODynamapper asset packaging and runtime readers
-- `lib/udd-image-codecs/` — KTX2 / image codec handling
+- `lib/support/` — shared tooling plumbing: `uot-texture-codecs` (BC1/BC7 and KTX2 texture codecs), `uot-image-postprocess` (upscalers and filters), `uot-kdl` (strict KDL decoding), `uot-logging` (terminal logging for the tools), `uot-gui` (eframe helpers for the GUI tools)
 - `tools/udd-conv-cli/` — CLI for building/inspecting converted packages (binary: `udd-cli tool|pack`)
 - `tools/uoppackage-cli/` — Content-agnostic UOP package operations (binary: `uoppackage-cli`)
 - `tools/uocf-cli/` — UO client file content operations: anim-patch, sound, multimap, MUL↔UOP (binary: `uocf-cli`)
 - `tools/webmap-export-cli/` — Static web map export: tile plan, spool consumer, WebP pyramid and Leaflet viewer (binary: `webmap-export-cli`)
 - `tools/uocf-devtools-cli/` — Research/diagnostic tools (feature flag: `dev-tool-tests`)
 - `tools/uddp-inspector-gui/`, `tools/udd-conv-gui/`, `tools/uocf-editor-gui/` — GUI tools
+
+Crate name prefixes (2026-11-06): `uocf` is the UO client files (`lib/uocf` and the tools that work on client files),
+`udd` is UO Dynamapper data (the converted packages, their conversion and their readers), and `uot` is shared tooling
+plumbing with no tie to either, under `lib/support/`. Client-file tools don't depend on `udd*` crates.
 
 ---
 
@@ -72,7 +76,7 @@ Do not leave behind debug prints, scratch functions, commented-out experiments, 
 Use the narrowest meaningful check: `cargo check -p <crate>`, a targeted test, or a type check. After any change, verify: does it implement the intended behavior? Is it minimal and consistent with the repository? Did it introduce unnecessary complexity?
 
 ### Configuration files
-Every TOML or KDL file a user or developer writes by hand (bundled settings, shader presets, conversion tables, profiles, tool configs) is read strictly: an unknown key, node or property is an error, and so is a missing required key. Use `#[serde(deny_unknown_fields)]` without `#[serde(default)]` (unless the format makes a key optional by design, then prefer `Option<T>` and say why), read TOML through `uocf::utils::config_toml::parse_strict`, and decode KDL through `udd_kdl::strict` (a `NodeSchema` names the allowed nodes and properties for the error message). Errors name the file, the line and column, the offending name and the allowed names; apps print them and exit with a non-zero code instead of panicking.
+Every TOML or KDL file a user or developer writes by hand (bundled settings, shader presets, conversion tables, profiles, tool configs) is read strictly: an unknown key, node or property is an error, and so is a missing required key. Use `#[serde(deny_unknown_fields)]` without `#[serde(default)]` (unless the format makes a key optional by design, then prefer `Option<T>` and say why), read TOML through `uocf::utils::config_toml::parse_strict`, and decode KDL through `uot_kdl::strict` (a `NodeSchema` names the allowed nodes and properties for the error message). Errors name the file, the line and column, the offending name and the allowed names; apps print them and exit with a non-zero code instead of panicking.
 
 Only files an app writes itself and nobody edits (dynamapper's cache `settings/*.toml`, the udd-conv-gui config) are lenient, through `config_toml::parse_app_state`: a missing key is filled from the defaults and an unknown key is dropped, each with a logged warning, and the app rewrites the file complete on its next save, so a file from another version still loads.
 

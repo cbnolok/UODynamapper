@@ -1,6 +1,6 @@
 use eframe::egui;
 use color_eyre::eyre;
-use gui_shared::{run_native_with_setup, NativeWindow};
+use uot_gui::{run_native_with_setup, NativeWindow};
 
 mod app;
 mod models;

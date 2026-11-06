@@ -2,7 +2,7 @@ use crate::app::{
     upscale_pass_cli_value, UocfEditorApp, UpscalePreviewAlgorithm, UpscalePreviewPass,
 };
 use eframe::egui;
-use image_postprocess::upscaling::UpscaleFilter;
+use uot_image_postprocess::upscaling::UpscaleFilter;
 
 const UPSCALE_PREVIEW_WINDOW_WIDTH: f32 = 760.0;
 const UPSCALE_PREVIEW_WINDOW_HEIGHT: f32 = 320.0;

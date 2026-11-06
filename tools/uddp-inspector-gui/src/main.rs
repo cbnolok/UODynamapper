@@ -1,6 +1,6 @@
 use color_eyre::eyre;
 use eframe::egui;
-use gui_shared::{run_native_with_setup, NativeWindow};
+use uot_gui::{run_native_with_setup, NativeWindow};
 
 mod app;
 mod models;
@@ -291,7 +291,7 @@ impl InspectorApp {
                     ui.separator();
 
                     // Handle mouse wheel zoom if hovering over the central panel and holding Command/Ctrl
-                    // (or Shift, or a pinch: gui_shared's input options); the plain wheel scrolls.
+                    // (or Shift, or a pinch: uot_gui's input options); the plain wheel scrolls.
                     self.texture_zoom =
                         (self.texture_zoom * ui.input(|i| i.zoom_delta())).clamp(0.1, 50.0);
                     if ui.input(|i| i.key_pressed(egui::Key::Plus)) {

@@ -22,9 +22,9 @@ color-eyre.workspace = true
 libc.workspace = true
 log.workspace = true
 udd-conv = { path = "../../lib/udd-conv" }
-udd-image-codecs = { path = "../../lib/udd-image-codecs", features = ["ktx2"] }
-udd-logging = { path = "../../lib/udd-logging" }
-gui-shared = { path = "../../lib/gui-shared" }
+uot-texture-codecs = { path = "../../lib/support/uot-texture-codecs", features = ["ktx2"] }
+uot-logging = { path = "../../lib/support/uot-logging" }
+uot-gui = { path = "../../lib/support/uot-gui" }
 uocf = { path = "../../lib/uocf" }
 udd-conv-cli = { path = "../udd-conv-cli" }
 serde.workspace = true

@@ -51,7 +51,7 @@ memmap2 = "0.9"
 # File identity (device and inode, or the Windows file index): an output that is a source, or a link to one, is refused.
 same-file = "1.0.6"
 symphonia.workspace = true
-udd-kdl = { path = "../udd-kdl" }
+uot-kdl = { path = "../support/uot-kdl" }
 # Diagnostic trait of knuffel's parse errors, read for their line and column.
 miette = { version = "5", default-features = false }
 # Syntax checks of replaced entries (`enhanced/syntax_check.rs`): the client's Lua (5.1 with `continue` and the

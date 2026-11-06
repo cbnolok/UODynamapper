@@ -26,8 +26,8 @@ use std::fmt::Write as _;
 use std::path::Path;
 
 use color_eyre::eyre::{self, WrapErr};
-use udd_kdl::ast::{Literal, Node, SpannedNode, Value};
-use udd_kdl::span::LineSpan;
+use uot_kdl::ast::{Literal, Node, SpannedNode, Value};
+use uot_kdl::span::LineSpan;
 
 use super::{housing_tile_type_name, HousingPiece, HousingPieces, HousingSlot, HousingSlotList, HousingTileType};
 
@@ -78,7 +78,7 @@ impl HousingPieces {
     /// Parses the KDL text form (schema in the module docs).
     pub fn from_kdl_str(text: &str) -> eyre::Result<Self> {
         let document =
-            udd_kdl::parse_ast_line_span(KDL_SOURCE_NAME, text).map_err(|error| syntax_error(text, &error))?;
+            uot_kdl::parse_ast_line_span(KDL_SOURCE_NAME, text).map_err(|error| syntax_error(text, &error))?;
         let tile_types = document
             .nodes
             .iter()
@@ -270,7 +270,7 @@ fn error_at(span: &LineSpan, message: impl std::fmt::Display) -> eyre::Report {
 }
 
 /// The KDL syntax errors with their 1-based line and column.
-fn syntax_error(text: &str, error: &udd_kdl::Error) -> eyre::Report {
+fn syntax_error(text: &str, error: &uot_kdl::Error) -> eyre::Report {
     use miette::Diagnostic;
 
     let mut messages = Vec::new();

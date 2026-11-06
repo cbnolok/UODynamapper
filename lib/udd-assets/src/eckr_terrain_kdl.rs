@@ -2,7 +2,7 @@ use std::collections::HashMap;
 use std::path::Path;
 use knuffel::Decode;
 use color_eyre::eyre::{self, Context};
-use udd_kdl::strict::NodeSchema;
+use uot_kdl::strict::NodeSchema;
 
 #[derive(Decode, Debug, Clone)]
 pub struct EckrTerrainRouteEntry {
@@ -29,7 +29,7 @@ impl EckrTerrainRouting {
         let content = strip_c_style_block_comments(content);
         let content = strip_cpp_style_line_comments(&content);
         parse_eckr_terrain_routing_kdl(source_name, &content)
-            .map_err(|error| udd_kdl::strict::in_file(source_name, error))
+            .map_err(|error| uot_kdl::strict::in_file(source_name, error))
     }
 
     pub fn to_map(&self) -> HashMap<u32, u32> {
@@ -91,13 +91,13 @@ const ROUTING_SCHEMA: &[NodeSchema] = &[
 ];
 
 fn parse_eckr_terrain_routing_kdl(source_name: &str, content: &str) -> eyre::Result<EckrTerrainRouting> {
-    use udd_kdl::ast::SpannedNode;
-    use udd_kdl::span::LineSpan;
-    use udd_kdl::strict::{error_at, property, value_u32};
+    use uot_kdl::ast::SpannedNode;
+    use uot_kdl::span::LineSpan;
+    use uot_kdl::strict::{error_at, property, value_u32};
 
     fn route_row(node: &SpannedNode<LineSpan>) -> eyre::Result<EckrTerrainRouteEntry> {
         if let Some(source) = property(node, ROUTE_ROW_SOURCE_PROPERTY) {
-            udd_kdl::strict::arguments::<0>(node)?;
+            uot_kdl::strict::arguments::<0>(node)?;
             let mut targets = ROUTE_ROW_TARGET_PROPERTIES
                 .iter()
                 .filter_map(|&name| property(node, name).map(|value| (name, value)));
@@ -120,7 +120,7 @@ fn parse_eckr_terrain_routing_kdl(source_name: &str, content: &str) -> eyre::Res
             });
         }
 
-        udd_kdl::strict::check_properties(node, &[])?;
+        uot_kdl::strict::check_properties(node, &[])?;
         let Some((new_id, old_ids)) = node.arguments.split_first() else {
             return Err(error_at(node.node_name.span(), format!("`{ROUTE_ROW_NODE}`: missing target id")));
         };
@@ -132,9 +132,9 @@ fn parse_eckr_terrain_routing_kdl(source_name: &str, content: &str) -> eyre::Res
         Ok(EckrTerrainRouteEntry { new_id, old_ids })
     }
 
-    let document = udd_kdl::parse_ast_line_span(source_name, content)
-        .map_err(|error| udd_kdl::strict::describe_error(content, &error))?;
-    udd_kdl::strict::check_document(&document, ROUTING_SCHEMA)?;
+    let document = uot_kdl::parse_ast_line_span(source_name, content)
+        .map_err(|error| uot_kdl::strict::describe_error(content, &error))?;
+    uot_kdl::strict::check_document(&document, ROUTING_SCHEMA)?;
     let mut entries = Vec::new();
     for node in &document.nodes {
         match &**node.node_name {

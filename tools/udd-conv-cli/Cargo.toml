@@ -27,9 +27,9 @@ toml.workspace = true
 udd-assets = { path = "../../lib/udd-assets" }
 udd-container = { path = "../../lib/udd-container" }
 udd-conv = { path = "../../lib/udd-conv" }
-udd-kdl = { path = "../../lib/udd-kdl" }
-udd-image-codecs = { path = "../../lib/udd-image-codecs", features = ["ktx2"] }
-udd-logging = { path = "../../lib/udd-logging" }
+uot-kdl = { path = "../../lib/support/uot-kdl" }
+uot-texture-codecs = { path = "../../lib/support/uot-texture-codecs", features = ["ktx2"] }
+uot-logging = { path = "../../lib/support/uot-logging" }
 uocf = { path = "../../lib/uocf" }
 workspace-hack.workspace = true
 

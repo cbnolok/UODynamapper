@@ -365,7 +365,7 @@ fn map_view(state: &mut ClassicMapsState, ui: &mut egui::Ui) {
 
     let pointer = ui.input(|input| input.pointer.hover_pos()).filter(|_| ui.rect_contains_pointer(output.inner_rect));
     if pointer.is_some() {
-        // Shift+wheel, Ctrl+wheel and a pinch; the plain wheel scrolls the area above (gui_shared's input options).
+        // Shift+wheel, Ctrl+wheel and a pinch; the plain wheel scrolls the area above (uot_gui's input options).
         zoom *= ui.input(|input| input.zoom_delta());
     }
     let zoom = zoom.clamp(MIN_ZOOM, MAX_ZOOM);

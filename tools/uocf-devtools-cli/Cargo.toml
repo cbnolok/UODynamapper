@@ -17,7 +17,7 @@ dev-tool-tests = []
 
 [dependencies]
 uocf = { path = "../../lib/uocf" }
-udd-logging = { path = "../../lib/udd-logging" }
+uot-logging = { path = "../../lib/support/uot-logging" }
 clap = { workspace = true, features = ["derive", "unicode"] }
 color-eyre.workspace = true
 byteorder.workspace = true

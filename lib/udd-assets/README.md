@@ -11,19 +11,19 @@ validation).
   `MobileAnimEcPackage`, `EffectsEcPackage`, `GumpsPackage`, `AtlasCacheOptions`, and the tilemeta
   readers (`TileMetaLandTile`, `TileMetaItemTile`).
 - Lazy/cached atlas page decoding with configurable cache options.
-- BC7-aware texture decoding for atlas pages (via `udd-image-codecs`), and BC1 decoding for single
+- BC7-aware texture decoding for atlas pages (via `uot-texture-codecs`), and BC1 decoding for single
   gumps (`GumpPixelFormat`; layout in `docs/dev_wiki/UDDP_FORMATS.md` section 2.3).
 - KDL-based runtime asset configuration reading (`knuffel`).
 - Helpers for locating and opening named entries by virtual path hash.
 
 ## Features
 
-- `bc7-encode`: re-exports `udd-image-codecs/bc7-encode`. Needed only if the
+- `bc7-encode`: re-exports `uot-texture-codecs/bc7-encode`. Needed only if the
   caller encodes BC7 data at runtime (uncommon).
 
 ## Notes
 
-- This crate depends on `udd-container` for package I/O, `udd-image-codecs` for
+- This crate depends on `udd-container` for package I/O, `uot-texture-codecs` for
   decoding, and `uocf` for tile metadata types shared with the source parsers.
 - `dynamapper` is the primary consumer at runtime. Tools use it mainly for
   inspection and validation.

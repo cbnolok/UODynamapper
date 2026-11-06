@@ -1,6 +1,6 @@
-# udd-logging
+# uot-logging
 
-`udd-logging` is a thin logging setup helper used by the CLI and GUI tools in
+`uot-logging` is a thin logging setup helper used by the CLI and GUI tools in
 the workspace. It initializes the `log` facade backend with a colored, formatted
 console output.
 

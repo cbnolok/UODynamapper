@@ -35,9 +35,9 @@ use std::fmt::Write as _;
 use std::path::Path;
 
 use color_eyre::eyre::{self, WrapErr};
-use udd_kdl::ast::{Node, SpannedNode, Value};
-use udd_kdl::span::LineSpan;
-use udd_kdl::strict::{
+use uot_kdl::ast::{Node, SpannedNode, Value};
+use uot_kdl::span::LineSpan;
+use uot_kdl::strict::{
     arguments, check_properties, describe_error, error_at, in_file, property, reject_children, required_property,
     unknown_node, value_u32,
 };
@@ -100,7 +100,7 @@ pub fn animation_definitions_from_kdl(
     strings: Option<&UoStringDictionary>,
 ) -> eyre::Result<Vec<(u32, AnimationDefinition)>> {
     let document =
-        udd_kdl::parse_ast_line_span(KDL_SOURCE_NAME, text).map_err(|error| describe_error(text, &error))?;
+        uot_kdl::parse_ast_line_span(KDL_SOURCE_NAME, text).map_err(|error| describe_error(text, &error))?;
     let mut seen = BTreeMap::new();
     let mut entries = Vec::with_capacity(document.nodes.len());
     for node in &document.nodes {

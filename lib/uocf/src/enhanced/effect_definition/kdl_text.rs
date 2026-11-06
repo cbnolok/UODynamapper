@@ -43,8 +43,8 @@ use std::fmt::Write as _;
 use std::path::Path;
 
 use color_eyre::eyre::{self, WrapErr};
-use udd_kdl::ast::{Literal, Node, SpannedNode, Value};
-use udd_kdl::span::LineSpan;
+use uot_kdl::ast::{Literal, Node, SpannedNode, Value};
+use uot_kdl::span::LineSpan;
 
 use super::collection::{EffectCollectionEntry, EffectDefinitionCollection, EffectEntryKey};
 use super::{
@@ -168,7 +168,7 @@ impl EffectDefinitionCollection {
     /// resolves particles given by name only.
     pub fn from_kdl_str(text: &str, strings: Option<&UoStringDictionary>) -> eyre::Result<Self> {
         let document =
-            udd_kdl::parse_ast_line_span(KDL_SOURCE_NAME, text).map_err(|error| syntax_error(text, &error))?;
+            uot_kdl::parse_ast_line_span(KDL_SOURCE_NAME, text).map_err(|error| syntax_error(text, &error))?;
         let mut reader = Reader { strings, indices: None };
         let entries = document
             .nodes
@@ -208,7 +208,7 @@ pub fn effect_definitions_from_kdl(
     text: &str,
     strings: Option<&UoStringDictionary>,
 ) -> eyre::Result<Vec<EffectDefinition>> {
-    let document = udd_kdl::parse_ast_line_span(KDL_SOURCE_NAME, text).map_err(|error| syntax_error(text, &error))?;
+    let document = uot_kdl::parse_ast_line_span(KDL_SOURCE_NAME, text).map_err(|error| syntax_error(text, &error))?;
     let mut reader = Reader { strings, indices: None };
     document.nodes.iter().map(|node| reader.definition(node, 0)).collect()
 }
@@ -747,8 +747,8 @@ fn literal<'a>(value: &'a Value<LineSpan>) -> eyre::Result<&'a Literal> {
 
 fn value_int<T>(value: &Value<LineSpan>, field: &str) -> eyre::Result<T>
 where
-    T: for<'i> TryFrom<&'i udd_kdl::ast::Integer>,
-    for<'i> <T as TryFrom<&'i udd_kdl::ast::Integer>>::Error: std::fmt::Display,
+    T: for<'i> TryFrom<&'i uot_kdl::ast::Integer>,
+    for<'i> <T as TryFrom<&'i uot_kdl::ast::Integer>>::Error: std::fmt::Display,
 {
     match literal(value)? {
         Literal::Int(integer) => T::try_from(integer).map_err(|error| {
@@ -779,7 +779,7 @@ fn value_float<F, B>(
     value: &Value<LineSpan>,
     field: &str,
     from_bits: fn(B) -> F,
-    from_decimal: fn(&udd_kdl::ast::Decimal) -> Result<F, std::num::ParseFloatError>,
+    from_decimal: fn(&uot_kdl::ast::Decimal) -> Result<F, std::num::ParseFloatError>,
     from_integer: fn(i64) -> F,
     nan: F,
     infinity: F,
@@ -814,7 +814,7 @@ fn error_at(span: &LineSpan, message: impl std::fmt::Display) -> eyre::Report {
 }
 
 /// The KDL syntax errors with their 1-based line and column.
-fn syntax_error(text: &str, error: &udd_kdl::Error) -> eyre::Report {
+fn syntax_error(text: &str, error: &uot_kdl::Error) -> eyre::Report {
     use miette::Diagnostic;
 
     let mut messages = Vec::new();

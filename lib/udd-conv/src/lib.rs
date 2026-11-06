@@ -35,7 +35,7 @@ pub mod upscale {
 	pub use crate::upscale_pipeline::{
 		apply_upscale_passes, apply_upscale_passes_owned, UpscalePass,
 	};
-	pub use image_postprocess::upscaling::{
+	pub use uot_image_postprocess::upscaling::{
 		apply_filter_passes, apply_filter_passes_owned, EnhancementFilter, UpscaleConfig,
 		UpscaleFilter, UpscalePass as FilterUpscalePass,
 	};

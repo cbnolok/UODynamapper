@@ -7,13 +7,13 @@ members = [
     "lib/ec-effects/particle-sim",
     "lib/ec-effects/effect-gltf",
     "lib/udd-conv",
-    "lib/udd-image-codecs",
+    "lib/support/uot-texture-codecs",
     "lib/udd-container",
     "lib/udd-assets",
-    "lib/udd-kdl",
-    "lib/udd-logging",
-    "lib/gui-shared",
-    "lib/image-postprocess",
+    "lib/support/uot-kdl",
+    "lib/support/uot-logging",
+    "lib/support/uot-gui",
+    "lib/support/uot-image-postprocess",
     "lib/workspace-hack",
     "tools/udd-conv-cli",
     "tools/uocf-cli",
@@ -101,7 +101,7 @@ debug-assertions = false
 #overflow-checks = false
 strip = true        # Strip debug info and symbols
 
-#[profile.release.package.image-postprocess]
+#[profile.release.package.uot-image-postprocess]
 #opt-level = 3
 
 # Target the "loggers" and infrastructure: no reasonable difference, < 1 mb.
@@ -127,12 +127,12 @@ debug = "line-tables-only"
 lto = false
 strip = false # "debuginfo"
 
-#[profile.profiling.package.image-postprocess]
+#[profile.profiling.package.uot-image-postprocess]
 #opt-level = 3
 
-# knuffel's KDL grammar, compiled only in udd-kdl: its generic type names run to about a megabyte each, so even
+# knuffel's KDL grammar, compiled only in uot-kdl: its generic type names run to about a megabyte each, so even
 # line tables for it would dwarf the rest of the debug info.
-[profile.profiling.package.udd-kdl]
+[profile.profiling.package.uot-kdl]
 debug = false
 
 # for those we don't tipically need debug info for profiling
@@ -143,7 +143,7 @@ debug = false
 #[profile.profiling.package.udd-conv-cli]
 #[profile.profiling.package.udd-conv-gui]
 #[profile.profiling.package.uddp-inspector-gui]
-#[profile.profiling.package.udd-image-codecs]
+#[profile.profiling.package.uot-texture-codecs]
 #[profile.profiling.package.uocf-cli]
 #[profile.profiling.package.uocf-editor-gui]
 #[profile.profiling.package.uop-dict-populator-gui]
@@ -196,7 +196,7 @@ debug-assertions = true
 strip = false
 
 # Specifically optimize data processing libraries for performance
-[profile.dev.package.image-postprocess]
+[profile.dev.package.uot-image-postprocess]
 opt-level = 3
 #codegen-units = 1 # makes compilation much slower, and we are in a debug build
 debug = "line-tables-only"
@@ -222,20 +222,20 @@ debug = "line-tables-only"
 debug-assertions = true
 #strip = "debuginfo"
 
-[profile.dev.package.udd-image-codecs]
+[profile.dev.package.uot-texture-codecs]
 opt-level = 3
 #codegen-units = 1
 debug = "line-tables-only"
 debug-assertions = false
 #strip = "debuginfo"
 
-# knuffel's KDL grammar, compiled only in udd-kdl: its generic type names run to about a megabyte each, so even
+# knuffel's KDL grammar, compiled only in uot-kdl: its generic type names run to about a megabyte each, so even
 # line tables for it would dwarf the rest of the debug info. Optimized, since every KDL file goes through it.
-[profile.dev.package.udd-kdl]
+[profile.dev.package.uot-kdl]
 opt-level = 3
 debug = false
 
-[profile.dev.package.udd-logging]
+[profile.dev.package.uot-logging]
 opt-level = 1
 #codegen-units = 1
 debug = "line-tables-only"

@@ -19,8 +19,8 @@ uocf = { path = "../../lib/uocf" }
 rfd.workspace = true
 serde.workspace = true
 toml.workspace = true
-udd-logging = { path = "../../lib/udd-logging" }
-gui-shared = { path = "../../lib/gui-shared" }
+uot-logging = { path = "../../lib/support/uot-logging" }
+uot-gui = { path = "../../lib/support/uot-gui" }
 color-eyre.workspace = true
 crossbeam-channel.workspace = true
 workspace-hack.workspace = true

@@ -34,7 +34,7 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::{Duration, Instant};
 
-use image_postprocess::upscaling::{epx::apply_epx, hqx::apply_hqx, mmpx::apply_mmpx, xbrz::apply_xbrz};
+use uot_image_postprocess::upscaling::{epx::apply_epx, hqx::apply_hqx, mmpx::apply_mmpx, xbrz::apply_xbrz};
 use rayon::prelude::*;
 use ssimulacra2::{compute_frame_ssimulacra2, ColorPrimaries, Rgb, TransferCharacteristic};
 use udd_conv::bc7::{encode_to_bc7, Bc7EncoderBackend, ImageExtent, RawImageFormat};

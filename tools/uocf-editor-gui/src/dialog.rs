@@ -1,9 +1,9 @@
 pub fn file_dialog() -> rfd::FileDialog {
-    gui_shared::file_dialog()
+    uot_gui::file_dialog()
 }
 
 pub fn pick_folder() -> Option<std::path::PathBuf> {
-    gui_shared::pick_folder()
+    uot_gui::pick_folder()
 }
 
 pub fn message_dialog() -> rfd::MessageDialog {

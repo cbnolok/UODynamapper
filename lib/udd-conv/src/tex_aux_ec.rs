@@ -48,7 +48,7 @@ use crate::package_progress::build_and_write_package_with_progress;
 use crate::page_compression::LOSSLESS_PAGE_COMPRESSION;
 use crate::source_paths::find_first_existing_file;
 use crate::upscale_pipeline::{apply_upscale_passes_owned, UpscalePass};
-use image_postprocess::upscaling::UpscaleFilter;
+use uot_image_postprocess::upscaling::UpscaleFilter;
 
 /// Logical families a runtime consumer reads from `tex_aux_ec` (dynapper's EC item liquid, static
 /// terrain surface and sprite hue mask all take block-0 WorldArt refs). Refs of other families are

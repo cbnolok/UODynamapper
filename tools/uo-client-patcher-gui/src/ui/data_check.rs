@@ -25,7 +25,7 @@ pub fn ui_data_check(ui: &mut egui::Ui, session: &mut Session, last_data_dir: &m
         ui.label("Client data folder:");
         ui.label(egui::RichText::new(session.data_dir.to_string_lossy()).monospace());
         if ui.button("Choose…").clicked()
-            && let Some(dir) = gui_shared::file_dialog().set_directory(&session.data_dir).pick_folder()
+            && let Some(dir) = uot_gui::file_dialog().set_directory(&session.data_dir).pick_folder()
         {
             *last_data_dir = Some(dir.clone());
             session.data_dir = dir;

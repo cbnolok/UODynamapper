@@ -20,19 +20,19 @@ eframe.workspace = true
 egui.workspace = true
 egui_extras.workspace = true
 image = { workspace = true, features = ["png"] }
-image-postprocess = { path = "../../lib/image-postprocess" }
-udd-kdl = { path = "../../lib/udd-kdl" }
+uot-image-postprocess = { path = "../../lib/support/uot-image-postprocess" }
+uot-kdl = { path = "../../lib/support/uot-kdl" }
 uocf = { path = "../../lib/uocf" }
 particle-sim = { path = "../../lib/ec-effects/particle-sim" }
 effect-gltf = { path = "../../lib/ec-effects/effect-gltf" }
 gamebryo-nif = { path = "../../lib/ec-effects/gamebryo-nif" }
 rfd.workspace = true
-udd-logging = { path = "../../lib/udd-logging" }
-gui-shared = { path = "../../lib/gui-shared" }
+uot-logging = { path = "../../lib/support/uot-logging" }
+uot-gui = { path = "../../lib/support/uot-gui" }
 rodio.workspace = true
 serde.workspace = true
 color-eyre.workspace = true
-# Only for the Decode derives: their code names the knuffel crate. Parse through udd-kdl.
+# Only for the Decode derives: their code names the knuffel crate. Parse through uot-kdl.
 knuffel.workspace = true
 log.workspace = true
 workspace-hack.workspace = true

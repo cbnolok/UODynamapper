@@ -1433,7 +1433,7 @@ enum Commands {
 
 pub fn run() -> eyre::Result<()> {
     color_eyre::install()?;
-    let _ = udd_logging::install_tracing_indicatif_logger();
+    let _ = uot_logging::install_tracing_indicatif_logger();
     run_with_args(std::env::args_os())
 }
 
@@ -2341,7 +2341,7 @@ where
                     map_source_preference,
                     &facet_patch_options(classic_patches, map_edition),
                 )?;
-                udd_image_codecs::ktx2::write_ktx2_bc7_zstd(bc7_data, &out_file, zstd_level)?;
+                uot_texture_codecs::ktx2::write_ktx2_bc7_zstd(bc7_data, &out_file, zstd_level)?;
                 info!("Successfully created facet0{}.ktx2 (BC7 + Zstd)", map_id);
             } else {
                 udd_conv::cc_radar::build_facet_radar_dds(

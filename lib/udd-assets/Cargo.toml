@@ -16,14 +16,14 @@ type_complexity = "allow"
 
 [dependencies]
 udd-container = { path = "../udd-container" }
-udd-image-codecs = { path = "../udd-image-codecs" }
+uot-texture-codecs = { path = "../support/uot-texture-codecs" }
 uocf = { path = "../uocf" }
-udd-kdl = { path = "../udd-kdl" }
+uot-kdl = { path = "../support/uot-kdl" }
 particle-sim = { path = "../ec-effects/particle-sim", default-features = false }
 bytemuck.workspace = true
 color-eyre.workspace = true
 byteorder.workspace = true
-# Only for the Decode derives: their code names the knuffel crate. Parse through udd-kdl.
+# Only for the Decode derives: their code names the knuffel crate. Parse through uot-kdl.
 knuffel.workspace = true
 serde_json.workspace = true
 serde.workspace = true
@@ -32,11 +32,11 @@ workspace-hack.workspace = true
 
 [dev-dependencies]
 # The tests write BC7 single gumps, which only the encode feature can.
-udd-image-codecs = { path = "../udd-image-codecs", features = ["bc7-encode"] }
+uot-texture-codecs = { path = "../support/uot-texture-codecs", features = ["bc7-encode"] }
 
 [features]
 default = []
-bc7-encode = ["udd-image-codecs/bc7-encode"]
+bc7-encode = ["uot-texture-codecs/bc7-encode"]
 
 #[lib]
 #crate-type = ["dylib", "rlib"]

@@ -17,8 +17,8 @@ too_many_arguments = "allow"
 eframe.workspace = true
 egui.workspace = true
 rfd.workspace = true
-gui-shared = { path = "../../lib/gui-shared" }
-udd-logging = { path = "../../lib/udd-logging" }
+uot-gui = { path = "../../lib/support/uot-gui" }
+uot-logging = { path = "../../lib/support/uot-logging" }
 uocf = { path = "../../lib/uocf" }
 color-eyre.workspace = true
 log.workspace = true

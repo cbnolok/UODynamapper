@@ -10,9 +10,9 @@ use std::fmt::Write as _;
 use std::path::Path;
 
 use color_eyre::eyre::{self, WrapErr};
-use udd_kdl::ast::SpannedNode;
-use udd_kdl::span::LineSpan;
-use udd_kdl::strict::{
+use uot_kdl::ast::SpannedNode;
+use uot_kdl::span::LineSpan;
+use uot_kdl::strict::{
     arguments, check_properties, describe_error, error_at, in_file, property, reject_children, required_property,
     unknown_node, value_string, value_u16, value_u32,
 };
@@ -367,7 +367,7 @@ pub fn sidecar_to_kdl(sidecar: &ClassicFolderSidecar) -> String {
 /// Parses a sidecar (strict).
 pub fn sidecar_from_kdl(text: &str) -> eyre::Result<ClassicFolderSidecar> {
     let document =
-        udd_kdl::parse_ast_line_span(KDL_SOURCE_NAME, text).map_err(|error| describe_error(text, &error))?;
+        uot_kdl::parse_ast_line_span(KDL_SOURCE_NAME, text).map_err(|error| describe_error(text, &error))?;
     let root = document
         .nodes
         .iter()

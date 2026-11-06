@@ -1,5 +1,5 @@
 [package]
-name = "udd-kdl"
+name = "uot-gui"
 version = "0.1.0"
 edition = "2024"
 
@@ -13,8 +13,10 @@ nonminimal_bool = "allow"
 too_many_arguments = "allow"
 
 [dependencies]
-knuffel.workspace = true
-color-eyre.workspace = true
-# Diagnostic trait of knuffel's errors, read for their line and column.
-miette = { version = "5", default-features = false }
+eframe.workspace = true
+egui_extras.workspace = true
+rfd.workspace = true
 workspace-hack.workspace = true
+
+#[lib]
+#crate-type = ["dylib", "rlib"]

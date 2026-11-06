@@ -2884,8 +2884,8 @@ dependencies = [
  "tracing-subscriber",
  "udd-assets",
  "udd-container",
- "udd-kdl",
  "uocf",
+ "uot-kdl",
  "wgpu",
  "wgpu-profiler",
  "windows",
@@ -3755,16 +3755,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "gui-shared"
-version = "0.1.0"
-dependencies = [
- "eframe",
- "egui_extras",
- "rfd",
- "workspace-hack",
-]
-
-[[package]]
 name = "guillotiere"
 version = "0.7.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4094,18 +4084,6 @@ dependencies = [
  "tiff",
  "zune-core",
  "zune-jpeg",
-]
-
-[[package]]
-name = "image-postprocess"
-version = "0.1.0"
-dependencies = [
- "hqx",
- "image",
- "serde",
- "wide",
- "workspace-hack",
- "xbrz-rs",
 ]
 
 [[package]]
@@ -7123,9 +7101,9 @@ dependencies = [
  "serde",
  "serde_json",
  "udd-container",
- "udd-image-codecs",
- "udd-kdl",
  "uocf",
+ "uot-kdl",
+ "uot-texture-codecs",
  "workspace-hack",
 ]
 
@@ -7153,7 +7131,6 @@ dependencies = [
  "flate2",
  "gamebryo-nif",
  "guillotiere",
- "image-postprocess",
  "knuffel",
  "libc",
  "libwebp-sys",
@@ -7169,9 +7146,10 @@ dependencies = [
  "tracing-indicatif",
  "udd-assets",
  "udd-container",
- "udd-image-codecs",
- "udd-kdl",
  "uocf",
+ "uot-image-postprocess",
+ "uot-kdl",
+ "uot-texture-codecs",
  "wgpu-types",
  "workspace-hack",
  "zstd",
@@ -7193,10 +7171,10 @@ dependencies = [
  "udd-assets",
  "udd-container",
  "udd-conv",
- "udd-image-codecs",
- "udd-kdl",
- "udd-logging",
  "uocf",
+ "uot-kdl",
+ "uot-logging",
+ "uot-texture-codecs",
  "workspace-hack",
 ]
 
@@ -7207,7 +7185,6 @@ dependencies = [
  "color-eyre",
  "eframe",
  "egui",
- "gui-shared",
  "image",
  "ktx2",
  "libc",
@@ -7216,49 +7193,12 @@ dependencies = [
  "toml",
  "udd-conv",
  "udd-conv-cli",
- "udd-image-codecs",
- "udd-logging",
  "uocf",
+ "uot-gui",
+ "uot-logging",
+ "uot-texture-codecs",
  "workspace-hack",
  "zstd",
-]
-
-[[package]]
-name = "udd-image-codecs"
-version = "0.1.0"
-dependencies = [
- "color-eyre",
- "dds",
- "ktx2",
- "rayon",
- "wgpu-types",
- "wide",
- "workspace-hack",
- "zstd",
-]
-
-[[package]]
-name = "udd-kdl"
-version = "0.1.0"
-dependencies = [
- "color-eyre",
- "knuffel",
- "miette",
- "workspace-hack",
-]
-
-[[package]]
-name = "udd-logging"
-version = "0.1.0"
-dependencies = [
- "env_filter",
- "log",
- "paris",
- "tracing",
- "tracing-indicatif",
- "tracing-log",
- "tracing-subscriber",
- "workspace-hack",
 ]
 
 [[package]]
@@ -7272,7 +7212,6 @@ dependencies = [
  "eframe",
  "egui",
  "egui_extras",
- "gui-shared",
  "image",
  "ktx2",
  "log",
@@ -7282,6 +7221,7 @@ dependencies = [
  "udd-container",
  "udd-conv",
  "uocf",
+ "uot-gui",
  "workspace-hack",
  "zstd",
 ]
@@ -7352,12 +7292,12 @@ dependencies = [
  "color-eyre",
  "eframe",
  "egui",
- "gui-shared",
  "log",
  "rfd",
  "serde",
- "udd-logging",
  "uocf",
+ "uot-gui",
+ "uot-logging",
  "workspace-hack",
 ]
 
@@ -7393,7 +7333,7 @@ dependencies = [
  "serde_json",
  "symphonia",
  "toml",
- "udd-kdl",
+ "uot-kdl",
  "wide",
  "workspace-hack",
 ]
@@ -7410,9 +7350,9 @@ dependencies = [
  "gamebryo-nif",
  "image",
  "log",
- "udd-image-codecs",
- "udd-logging",
  "uocf",
+ "uot-logging",
+ "uot-texture-codecs",
  "workspace-hack",
 ]
 
@@ -7427,8 +7367,8 @@ dependencies = [
  "dds",
  "ddsfile",
  "log",
- "udd-logging",
  "uocf",
+ "uot-logging",
  "walkdir",
  "workspace-hack",
 ]
@@ -7443,18 +7383,18 @@ dependencies = [
  "egui",
  "egui_extras",
  "gamebryo-nif",
- "gui-shared",
  "image",
- "image-postprocess",
  "knuffel",
  "log",
  "particle-sim",
  "rfd",
  "rodio",
  "serde",
- "udd-kdl",
- "udd-logging",
  "uocf",
+ "uot-gui",
+ "uot-image-postprocess",
+ "uot-kdl",
+ "uot-logging",
  "workspace-hack",
 ]
 
@@ -7466,12 +7406,12 @@ dependencies = [
  "crossbeam-channel",
  "eframe",
  "egui",
- "gui-shared",
  "rfd",
  "serde",
  "toml",
- "udd-logging",
  "uocf",
+ "uot-gui",
+ "uot-logging",
  "workspace-hack",
 ]
 
@@ -7485,9 +7425,69 @@ dependencies = [
  "log",
  "serde",
  "toml",
- "udd-logging",
  "uocf",
+ "uot-logging",
  "workspace-hack",
+]
+
+[[package]]
+name = "uot-gui"
+version = "0.1.0"
+dependencies = [
+ "eframe",
+ "egui_extras",
+ "rfd",
+ "workspace-hack",
+]
+
+[[package]]
+name = "uot-image-postprocess"
+version = "0.1.0"
+dependencies = [
+ "hqx",
+ "image",
+ "serde",
+ "wide",
+ "workspace-hack",
+ "xbrz-rs",
+]
+
+[[package]]
+name = "uot-kdl"
+version = "0.1.0"
+dependencies = [
+ "color-eyre",
+ "knuffel",
+ "miette",
+ "workspace-hack",
+]
+
+[[package]]
+name = "uot-logging"
+version = "0.1.0"
+dependencies = [
+ "env_filter",
+ "log",
+ "paris",
+ "tracing",
+ "tracing-indicatif",
+ "tracing-log",
+ "tracing-subscriber",
+ "workspace-hack",
+]
+
+[[package]]
+name = "uot-texture-codecs"
+version = "0.1.0"
+dependencies = [
+ "color-eyre",
+ "dds",
+ "ktx2",
+ "rayon",
+ "wgpu-types",
+ "wide",
+ "workspace-hack",
+ "zstd",
 ]
 
 [[package]]

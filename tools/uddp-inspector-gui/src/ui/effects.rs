@@ -944,12 +944,12 @@ impl EffectsViewer {
             };
             let dir = self.path.parent();
             if ui.small_button("hues.uddp...").clicked() {
-                if let Some(path) = gui_shared::open_filtered_file_dialog(dir, "Hues package", &["uddp"]) {
+                if let Some(path) = uot_gui::open_filtered_file_dialog(dir, "Hues package", &["uddp"]) {
                     atlas_change = Some(load_hues_package(&path));
                 }
             }
             if ui.small_button(format!("{HUES_UOP_NAME}...")).clicked() {
-                if let Some(path) = gui_shared::open_filtered_file_dialog(dir, "Hues.uop", &["uop"]) {
+                if let Some(path) = uot_gui::open_filtered_file_dialog(dir, "Hues.uop", &["uop"]) {
                     atlas_change = Some(load_hues_uop(&path));
                 }
             }

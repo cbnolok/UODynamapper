@@ -15,7 +15,7 @@ use uocf::uop_container::hash_bruteforce;
 use uocf::uop_container::hash_dictionary::HashDictionary;
 use uocf::uop_container::package::{SaveLayout, UopPackage};
 use uocf::uop_container::template::UopTemplate;
-use udd_logging::progress::{ProgressBar, ProgressStyle};
+use uot_logging::progress::{ProgressBar, ProgressStyle};
 
 use uoppackage_cli::parse_hex_u64;
 
@@ -147,7 +147,7 @@ struct PackageConfig {
 
 fn main() -> eyre::Result<()> {
     color_eyre::install()?;
-    let _ = udd_logging::install_tracing_indicatif_logger();
+    let _ = uot_logging::install_tracing_indicatif_logger();
     let cli = Cli::parse();
 
     match &cli.subcommand {

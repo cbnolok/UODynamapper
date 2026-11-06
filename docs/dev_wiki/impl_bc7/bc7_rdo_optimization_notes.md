@@ -795,9 +795,9 @@ Practical guidance:
 ## Benchmark Context
 
 Commands used for these decisions:
-- `cargo check --target-dir target/codex-test -p udd-image-codecs --features bc7-encode`
-- `cargo test --target-dir target/codex-test -p udd-image-codecs rdo --features bc7-encode -- --nocapture`
-- `cargo bench -p udd-image-codecs --features bc7-encode --bench bc7_encode -- --quick --rdo-case=rdo_default --rdo-stats`
-- `cargo bench -p udd-image-codecs --features bc7-encode --bench bc7_encode -- --rdo-case=rdo_default --rdo-stats`
+- `cargo check --target-dir target/codex-test -p uot-texture-codecs --features bc7-encode`
+- `cargo test --target-dir target/codex-test -p uot-texture-codecs rdo --features bc7-encode -- --nocapture`
+- `cargo bench -p uot-texture-codecs --features bc7-encode --bench bc7_encode -- --quick --rdo-case=rdo_default --rdo-stats`
+- `cargo bench -p uot-texture-codecs --features bc7-encode --bench bc7_encode -- --rdo-case=rdo_default --rdo-stats`
 
 The release benchmark target may use a configured target directory outside the normal workspace sandbox.
