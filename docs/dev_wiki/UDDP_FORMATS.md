@@ -208,6 +208,21 @@ A single gump (data type `Gump`, sparse id = gump id) is:
 
 Pixel formats can mix in one package, and each gump decodes by its own format byte. The lossy packs (the user, 2026-11-06): `pack-gumps --bc1` writes BC1 for every single Classic gump, and `pack-ec-gumps --bc7` writes BC7 for the single Enhanced gumps except those in the Classic colour space, which take BC1 as in `gumps_cc` (on the shipped clients, byte for byte the same payloads). A gump is in the Classic colour space when its alpha is only 0 or 255 and every opaque texel's R, G and B have their low 3 bits clear, as the Classic decoder's `c << 3` makes them (`is_in_classic_colour_space` in `lib/udd-conv/src/single_gumps.rs`); on the shipped client that is exactly the 2216 Classic gumps Interface.uop repeats, so a lossy `gumps_ec` mixes BC1, BC7 and RGBA8888 with no Classic file read. The test runs on the final pixels, so an interpolating upscale pass sends a gump to BC7. Each packer refuses the other's flag and lossy format. Paperdoll atlas pages stay lossless RGBA8888 in both, since both clients hue exact greys only, and so do the paperdoll body gumps, single gumps 12-15, 665 and 666 (`PAPERDOLL_BODY_GUMP_BY_BODY` in `lib/udd-conv/src/single_gumps.rs`, the clients' body-to-gump table); the packers log how many stayed RGBA8888. BC1 is straight colour with punch-through alpha at 0.5 (Classic gumps have no soft alpha). BC7 holds premultiplied colour, so soft alpha is kept. Readers decode either to straight RGBA8888 on the CPU, un-premultiplying BC7.
 
+#### Shared Classic gump table
+
+A `gumps_ec` can be packed standalone or sharing the Classic gumps with a `gumps_cc` (the user, 2026-11-06: "i'd keep the ability to both share cc gumps and pack them into ec gumps file"). `pack-ec-gumps --share-with <gumps_cc.uddp>` decodes, for each single Enhanced gump, the `gumps_cc` single gump of the same id and leaves the Enhanced gump out when the `gumps_cc` image draws the same as either the image this package would store (encoded and decoded) or the exact source, both after the same upscale passes. Drawing the same means the same width, height and upscale factor, the same alpha everywhere, and the same R, G and B wherever alpha is not 0; the paperdoll body gumps (12-15, 665, 666) must match byte for byte, since the Enhanced paperdoll keys each layer on its first texel's colour whatever its alpha (`gump_images_draw_the_same` in `lib/udd-conv/src/single_gumps.rs`). On the shipped clients that leaves out 2212 gumps: the 2216 Interface.uop repeats of Classic gumps but body gumps 12-15, whose colour under clear texels differs.
+
+The left-out gumps are listed in one metadata entry, sparse id `0xE000_0002` (`SHARED_CLASSIC_GUMP_TABLE_ID`), which only a sharing `gumps_ec` carries:
+
+| Offset | Type | Field | Notes |
+|---|---|---|---|
+| 0x00 | `[u8; 4]` | magic | `GSHC` |
+| 0x04 | `u32` | `version` | 1 (`SHARED_CLASSIC_GUMP_TABLE_VERSION`); another version is refused with the message to repack. |
+| 0x08 | `u32` | `count` | |
+| 0x0C | `count` x 12 bytes | records | `u32 gump_id`, `u64 image_hash`, sorted by id with no repeats. |
+
+`image_hash` is xxh64 with seed 0 (`gump_image_hash` in `lib/udd-assets/src/gumps.rs`) over the `gumps_cc` image the gump was checked against, decoded to straight RGBA8888: `u32 physical_width`, `u32 physical_height`, `u16 upscale_factor`, little endian, then every RGBA byte, colour under clear texels included. The reader reads a listed id as absent, and refuses a package that both stores a gump (single or atlas) and lists it, or whose table is out of order or doesn't match its count. Dynamapper draws the listed gumps from the Classic source under the Enhanced and KR-like presets and checks each one's hash the first time it serves it; `udd-cli tool validate` checks every hash against the `gumps_cc.uddp` beside the package.
+
 ### 2.4 Texture Compression Strategies (BC1 vs BC7 and Supercompression)
 
 The `tex_land_ec.uddp` pipeline commonly utilizes **BC7** block compression. The original EC `Texture.uop` generally contains textures encoded in **DXT1 (BC1)** (4 bits per pixel), with some relying on **DXT5 (BC3)** (8 bits per pixel) for alpha transparency.

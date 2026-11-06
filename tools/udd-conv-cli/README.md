@@ -27,7 +27,7 @@ packages consumed by Dynamapper and the other tools at runtime.
 | `pack-lights` | `world_lights.uddp` | CC and EC lighting textures |
 | `pack-hues` | `hues.uddp` | Classic `hues.mul` (`--hue-ramp linear`, the default, or `flat`) or EC `hues.uop` |
 | `pack-gumps` | `gumps_cc.uddp` | Classic `gumpart.mul` / `gumpidx.mul`, or `gumpartLegacyMUL.uop` |
-| `pack-ec-gumps` | `gumps_ec.uddp` | EC `interface.uop` gumpart |
+| `pack-ec-gumps` | `gumps_ec.uddp` | EC `interface.uop` gumpart; `--share-with <gumps_cc.uddp>` leaves out the single gumps that package draws the same, so the package then needs it |
 | `pack-radar` | `facet0X.dds` | Classic map and statics radar image |
 | `pack-terrain-meta` | terrain-layer sidecar | EC `TerrainDefinition.uop` |
 
@@ -120,7 +120,7 @@ Inspects, extracts, and edits `.uddp` and `.uddpi` package files.
 | `export-csv` | Export editable CSV metadata from supported packages. |
 | `import-csv` | Import edited CSV metadata into a rebuilt package. |
 | `diff` | Compare two packages or two metadata CSV files. |
-| `validate` | Check that packages (or directories of them) open with this build's readers: container, package hash, every entry decoded with its codec and dictionary, and the package's own reader. Exits non-zero when any fails. |
+| `validate` | Check that packages (or directories of them) open with this build's readers: container, package hash, every entry decoded with its codec and dictionary, and the package's own reader. A `gumps_ec` packed with `--share-with` is also checked, gump by gump, against the `gumps_cc.uddp` in its folder, or noted as depending on one when there is none. Exits non-zero when any fails. |
 
 ## Current Production Status
 

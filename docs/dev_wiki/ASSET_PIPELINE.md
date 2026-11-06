@@ -127,12 +127,21 @@ Normal maps are stored in the same UDDP page-atlas infrastructure as visible EC 
 
 Paperdoll equipment gumps go to lossless atlas pages; every other gump is a single payload, RGBA8888 by default. The lossy build is BC1 for Classic (`pack-gumps --bc1`, 20.8 MB against 45.6 MB) and BC7 for Enhanced (`pack-ec-gumps --bc7`, 34.4 MB against 84.2 MB), which keeps the soft shadows of the Enhanced gumps that BC1 would round away. The Enhanced gumps in the Classic colour space, the 2216 Classic gumps Interface.uop repeats, take BC1 there too (2026-11-06; all BC7 was 40.5 MB). `pack-ec-gumps` reads only Interface.uop, not the EC client's `gumpartLegacyMUL.uop`, and needs no Classic files. Layout: [UDDP_FORMATS.md](UDDP_FORMATS.md) section 2.3.
 
+`gumps_ec.uddp` comes in two modes, both supported (the user, 2026-11-06: "i'd keep the ability to both share cc gumps and pack them into ec gumps file"):
+
+- **Standalone**, the `pack-ec-gumps` default: it stores the Classic gumps Interface.uop repeats, and needs no other package.
+- **Shared**, `pack-ec-gumps --share-with <gumps_cc.uddp>`: it leaves out each single gump that `gumps_cc.uddp` draws the same (colour under fully clear texels aside, except on the paperdoll body gumps) and lists it with a hash of the `gumps_cc` image. On the shipped clients that is 2212 gumps: 69.7 MB against 84.2 MB lossless, and 27.8 MB against 34.4 MB for `--bc7` sharing with a `--bc1` `gumps_cc`. The packer logs how many it shared, how many it kept, and how many of those it kept because the `gumps_cc` copy is the same gump through a lossier format (a lossless `gumps_ec` sharing with a lossy `gumps_cc` keeps nearly all of them). A shared `gumps_ec.uddp` needs that `gumps_cc.uddp`, or the Classic client gump files, beside it to show those gumps; `udd-cli tool validate` checks them against the `gumps_cc.uddp` in the same folder, or notes the dependency when there is none.
+
+`scripts/uddconv/uddconv.py` (`all` and `ec-gumps`, and the `uddconv_*.sh` wrappers, which pass their arguments on) packs shared by default with the `gumps_cc.uddp` in its output folder, which `all` builds first, and standalone when there is none; `--no-gump-sharing` packs standalone. `uddconv_upscaled.py` packs standalone: its Classic and Enhanced gumps take different upscale passes, so none would draw the same. The converter GUI has no gump jobs.
+
 Dynamapper loads both packages when `load_gumps` is on and picks one by rendering preset (the user, 2026-11-06), for single gumps and paperdoll layers alike:
 
 - **Classic** shows `gumps_cc.uddp` only. When that package is missing or fails to load, the Classic client's own gump files under `udd_path` (`gumpidx.mul`/`gumpart.mul` or `gumpartLegacyMUL.uop`) stand in for it. With neither, the Classic preset shows no gumps.
 - **Enhanced and KR-like** show `gumps_ec.uddp`, and fall back to the Classic source above only for ids `gumps_ec.uddp` lacks. A gump that `gumps_ec.uddp` has but cannot decode is logged as an error, with no fallback. Without `gumps_ec.uddp`, the Classic source serves every preset.
 
 The preset can change at runtime, and open gump and paperdoll windows redraw from the new preset's package. The startup log names the package that serves each preset.
+
+A shared `gumps_ec.uddp`'s left-out gumps are among the ids it lacks, so the Classic source draws them. The first time it serves one under the Enhanced or KR-like preset, Dynamapper checks the image's hash against the one `gumps_ec.uddp` lists. A mismatch still draws the gump; the first is logged as a warning naming the gump and saying the Classic source is not the `gumps_cc.uddp` that `gumps_ec.uddp` was packed against, later ones at debug level with a count. When no Classic source is loaded, a startup warning gives the number of shared gumps that won't show.
 
 `gumps_ec.uddp` is packed from the Enhanced client's `Interface.uop` only. That client's `gumpartLegacyMUL.uop` is not used: every id in it is also in `Interface.uop`.
 

@@ -836,8 +836,15 @@ the same day ([`bc7_alpha_plane_search.md`](bc7_alpha_plane_search.md)). The use
         |---|---|---|---|
         | A: every Enhanced single gump BC7, as built | 84.15 MB | 40.49 MB | not needed |
         | B: the twins BC1 inside `gumps_ec`, the rest BC7 (chosen, 2026-11-06; built 34.35 MB) | 84.15 MB | 34.33 MB | not needed |
-        | C: the twins left out of `gumps_ec`, drawn from `gumps_cc` | 69.70 MB | 27.82 MB | needed: 115.31 MB lossless, 48.66 MB lossy |
+        | C: the twins left out of `gumps_ec`, drawn from `gumps_cc` (supported beside B, 2026-11-06; built 69.69 / 27.82 MB) | 69.70 MB | 27.82 MB | needed: 115.31 MB lossless, 48.66 MB lossy |
 
+        - B and C are both supported (the user, 2026-11-06: "i'd keep the ability to both share cc gumps and pack them
+          into ec gumps file"). `pack-ec-gumps` packs B by default, and C with `--share-with <gumps_cc.uddp>`; the
+          `uddconv.py` pipeline packs C with the `gumps_cc` it builds, unless `--no-gump-sharing`. C leaves out 2212
+          gumps, not 2216: the body gumps 12-15 must match byte for byte, since the Enhanced paperdoll keys each layer
+          on its first texel's colour whatever its alpha, and their transparent texels differ. Built: 69,692,538 bytes
+          lossless against 84,153,880, and 27,821,930 lossy (`--bc7` with a `--bc1` `gumps_cc`) against 34,350,421; the
+          gumps kept are byte for byte those of B. Format: [UDDP_FORMATS.md](../dev_wiki/UDDP_FORMATS.md) section 2.3.
         - C's sizes leave the 2216 index records (about 0.07 MB) in.
         - Dynamapper has no per-gump fallback: it loads one gump package for every preset, `gumps_cc.uddp` before
           `gumps_ec.uddp` (`dynamapper/src/core/uo_files_loader.rs:490`). So the Enhanced preset doesn't need `gumps_cc`
@@ -957,7 +964,7 @@ are from [the codec proposal](proposals/2026-11-01-mobile-anim-codec.md), on eve
 | Halved frames | See section 4 | All frames are kept (2026-11-04) |
 | Runtime BC7 | See section 4 | Off for now; possibly later for upscaled animations |
 | Every lossy Enhanced single gump BC7 (gump option A) | `gumps_ec` 40.507 MB, about 6 MB more than the Classic twins in BC1 (34.35 MB) | No runtime gain: gumps decode on the CPU to RGBA for egui, so VRAM is the same, and BC1 decodes faster (211 ms against 308 for every Enhanced single gump, section 8). The twins have no soft alpha for BC7 to keep (2026-11-06) |
-| The Classic twins left out of `gumps_ec`, drawn from `gumps_cc` (gump option C) | `gumps_ec` 27.82 MB lossy, 48.66 MB with `gumps_cc` | `gumps_ec` would need `gumps_cc`, which the user rejected (2026-11-06) |
+| The Classic twins left out of `gumps_ec`, drawn from `gumps_cc` (gump option C) | `gumps_ec` 27.82 MB lossy, 48.66 MB with `gumps_cc` | No longer set aside: first rejected because `gumps_ec` would need `gumps_cc`, then kept as an option beside the standalone pack (the user, 2026-11-06: "i'd keep the ability to both share cc gumps and pack them into ec gumps file"). Both modes are supported: `pack-ec-gumps --share-with`, section 8 |
 | Gumps from the EC client's `gumpartLegacyMUL.uop` | 3353 single gumps, every id also in Interface.uop (2214 the same image); 3345 identical to the Classic client's | Discarded by the user (2026-11-06): Interface.uop has every id. `gumps_ec` reads only Interface.uop (`find_interface_uop`) |
 
 **Set aside by the measurements, with nobody asking for them:**
