@@ -2,8 +2,8 @@
 
 Names the Classic Client code that reads the def files `art.def`, `body.def`, `bodyconv.def` and `Equipconv.def`,
 and the Enhanced Client code that loads an Interface XML document, and records the grammar the uocf def readers
-(`lib/uocf/src/classic/def_files.rs`) follow and why the EC drops `startmenu.xml`
-(`lib/uocf/src/enhanced/syntax_check.rs`). `gump.def`, `anim1-4.def`, `texterr.def` and `corpse.def` go through
+(`lib/uocf/src/classic/tables/def_files.rs`) follow and why the EC drops `startmenu.xml`
+(`lib/uocf/src/enhanced/packages/syntax_check.rs`). `gump.def`, `anim1-4.def`, `texterr.def` and `corpse.def` go through
 `UOClassicDefs::DefTable_Load` and `DefTable_ParseLine`, named by `ghidra-audio`.
 
 Findings: [results/classic_defs.md](results/classic_defs.md). Every result is marked **confirmed** (read in the

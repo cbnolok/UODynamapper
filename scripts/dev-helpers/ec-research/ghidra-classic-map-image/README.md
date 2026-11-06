@@ -2,7 +2,7 @@
 
 This folder names the code that draws `facet00.mul`-`facet05.mul`, the Classic client's world map images, in the
 2024 client. It also names UO Gold's course gump, which has no such image. It records the format that the uocf
-reader follows (`lib/uocf/src/classic/facet_image.rs`).
+reader follows (`lib/uocf/src/classic/maps/facet_image.rs`).
 
 Each result below is marked **confirmed** (read in the code) or **probable** (inferred from the code and the
 shipped files).

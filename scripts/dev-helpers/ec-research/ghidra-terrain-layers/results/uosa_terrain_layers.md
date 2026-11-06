@@ -163,7 +163,7 @@ by technique 0, item 3 = unused.
 The "role by position" rule holds for water even where the name says otherwise: `Stars_C`, `Swamp_Water_D` and
 `Stars_B` are du/dv maps in position 0.
 
-## 3. Verdicts on the name / repetition heuristics (`lib/uocf/src/enhanced/terrain_definition.rs`)
+## 3. Verdicts on the name / repetition heuristics (`lib/uocf/src/enhanced/land/terrain_definition.rs`)
 
 No terrain code reads a texture path except to build its file location: the factory compares only the shader
 name (0x004616e0), `LoadTerrainLayer` 0x00461800 and `LoadTerrainLayerTexture` 0x004613b0 /

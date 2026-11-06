@@ -2,7 +2,7 @@
 
 Names the code of the Classic Client that reads and draws the mobile animation frames, from `anim*.mul` and
 from the `AnimationFrame*.uop` entries `build/animationlegacyframe/%06d/%02d.bin`, and records the frame format
-the uocf writer (`lib/uocf/src/classic/anim_frames.rs`) follows:
+the uocf writer (`lib/uocf/src/classic/animation/anim_frames.rs`) follows:
 
 - both sources hold the same frames: a 256-word RGB555 palette, then per frame an `i16` anchor x / y, `u16`
   width / height and runs (`u32` header: bits 0..11 length, 12..21 signed y, 22..31 signed x), ended by

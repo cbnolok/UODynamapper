@@ -44,7 +44,7 @@ legacy flag (verified). That a flag change needs a cache flush is inference.
 
 ## 3. Where the scales come from (census of the plain EC `tileart.uop`)
 
-Fields as named in `lib/uocf/src/enhanced/tileart.rs`: `world_art_scale` (record +0x0c, f32),
+Fields as named in `lib/uocf/src/enhanced/metadata/tileart.rs`: `world_art_scale` (record +0x0c, f32),
 `legacy_art_scale` (+0x10, f32), `ec_img_offset` (enhanced window, +0x4d, six i32) and `cc_img_offset`
 (legacy window, +0x65, six i32: `x_start, y_start, x_end, y_end, x_off, y_off`), all in source pixels of the
 block image. Static namespace (36611 records):

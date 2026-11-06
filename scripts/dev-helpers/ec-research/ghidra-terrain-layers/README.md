@@ -3,7 +3,7 @@
 How does `UOSA.exe` (Enhanced Client) bind the texture items of a `TerrainDefinition.uop` record to its
 terrain texture stages? Does any role, "primary" layer, repetition rule or "smooth" flag come from the data
 or from file names, and what happens to a material with no definition? The repo's
-`lib/uocf/src/enhanced/terrain_definition.rs` guessed layer roles from path substrings and a 4..8 stretch
+`lib/uocf/src/enhanced/land/terrain_definition.rs` guessed layer roles from path substrings and a 4..8 stretch
 range; this folder replaces those guesses with the client's rules.
 
 Findings: [results/uosa_terrain_layers.md](results/uosa_terrain_layers.md) has the layer factory, the

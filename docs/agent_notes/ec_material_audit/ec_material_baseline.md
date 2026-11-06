@@ -34,7 +34,7 @@ roles, role confidence, or explicit rejection reasons.
 
 ### TerrainDefinition primary layer chooser
 
-Source: `lib/uocf/src/enhanced/terrain_definition.rs`.
+Source: `lib/uocf/src/enhanced/land/terrain_definition.rs`.
 
 Current order ranks layers by:
 1. support-layer name heuristic

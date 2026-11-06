@@ -3,7 +3,7 @@
 Names the 2024 Classic client code that reads and writes `entitled.def`, the desktop (`desktop.nwb`,
 `desktop.uos`), `credits.dat`, `helpindx.dat`, `Data/assetmap.xml` and the chat filter lists (`uobscene.lst`,
 `ignore.lst`, `conf_ignore.lst`). It also records the grammar the uocf readers follow
-(`lib/uocf/src/classic/credits.rs`, `help_index.rs`, `asset_map.rs`, `filter_lists.rs`), and which of these files
+(`lib/uocf/src/classic/ui/credits.rs`, `help_index.rs`, `asset_map.rs`, `filter_lists.rs`), and which of these files
 are only written by the client.
 
 Findings: [results/classic_ui_files.md](results/classic_ui_files.md). Every result is marked **confirmed**

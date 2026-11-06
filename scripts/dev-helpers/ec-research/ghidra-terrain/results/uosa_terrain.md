@@ -92,7 +92,7 @@ Texture items:
 
 ## Flag bits (alias `flags`, u64)
 
-The bit positions follow the tiledata / `TaeFlag` layout (`lib/uocf/src/enhanced/tileart.rs`).
+The bit positions follow the tiledata / `TaeFlag` layout (`lib/uocf/src/enhanced/metadata/tileart.rs`).
 
 | Bit | Mask | `TaeFlag` | Aliases | Client reader | Conf. |
 |---|---|---|---|---|---|
@@ -120,7 +120,7 @@ records. The values are still worth keeping exactly, as tiledata-style metadata.
 
 ## Recipe for the repo (model, encoder, invariants)
 
-Model (rename the `lib/uocf/src/enhanced/terrain_definition.rs` fields; keep serde aliases if they are
+Model (rename the `lib/uocf/src/enhanced/land/terrain_definition.rs` fields; keep serde aliases if they are
 serialized):
 
 ```text

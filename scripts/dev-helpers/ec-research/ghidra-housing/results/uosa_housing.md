@@ -233,7 +233,7 @@ The classic client reads the same data from `stairs.txt`, `roof.txt`, `doors.txt
 - The tooltip clilocs were resolved with the classic `Cliloc.enu`; the EC `LocalizedStrings.uop` was not
   read. The texts match the window labels.
 
-## 8. Mismatches with `lib/uocf/src/enhanced/multis.rs`
+## 8. Mismatches with `lib/uocf/src/enhanced/multistructures/multis.rs`
 
 | Item | Repo | Client | Kind |
 |---|---|---|---|

@@ -14,9 +14,9 @@ use std::path::{Path, PathBuf};
 use color_eyre::eyre::{self, WrapErr};
 
 use super::effect_definition::PARTICLE_RESOURCE_DIR;
-use super::string_dictionary::UoStringDictionary;
-use super::uop_entries;
-pub use super::uop_entries::EntryPut;
+use crate::enhanced::string_dictionary::UoStringDictionary;
+use crate::enhanced::uop_entries;
+pub use crate::enhanced::uop_entries::EntryPut;
 use crate::uop_container::file::CompressionFlag;
 use crate::uop_container::hash::hash_file_name_single;
 use crate::uop_container::hash_dictionary::HashDictionary;

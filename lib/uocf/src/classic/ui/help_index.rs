@@ -19,8 +19,8 @@
 crate::eyre_imports!();
 use std::path::Path;
 
-use super::def_files::DefSyntaxError;
-use super::text_mode_lines::TextLines;
+use crate::classic::def_files::DefSyntaxError;
+use crate::classic::text_mode_lines::TextLines;
 use crate::utils::output_file::write_through_temp;
 
 pub const HELP_INDEX_FILE: &str = "helpindx.dat";
@@ -175,7 +175,7 @@ impl HelpIndexFile {
     /// Checks `line` as line `index` would read and returns its bytes.
     fn checked(line: &HelpIndexLine, index: usize) -> eyre::Result<Vec<u8>> {
         let bytes = line.to_line();
-        super::text_mode_lines::check_line(&bytes, index + 1, MAX_HELP_LINE_BYTES, &too_long())
+        crate::classic::text_mode_lines::check_line(&bytes, index + 1, MAX_HELP_LINE_BYTES, &too_long())
             .and_then(|()| HelpIndexLine::parse(&bytes, index + 1))
             .and_then(|read| {
                 (read == *line).then_some(()).ok_or_else(|| DefSyntaxError {

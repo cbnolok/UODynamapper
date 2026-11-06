@@ -394,7 +394,7 @@ word = a << 24 | r << 16 | g << 8 | b   // B, G, R, A in memory
   the client computes in f32 (**probable**). It matters: over the 31877 shipped palettes (7,441,059
   colours), f32 and f64 evaluation give different alphas for 361,221 colours in 26,613 palettes (max
   difference 16). The main cause is the luminance of a pure grey g, which truncates to g in f32 and to g - 1
-  in f64. `lib/uocf/src/enhanced/hues.rs` evaluates in f32 in the client's operation order.
+  in f64. `lib/uocf/src/enhanced/graphics/hues.rs` evaluates in f32 in the client's operation order.
 - What selects 0x4001: `UOMobileStatus::OnBondedStatus` 0x00630ba0, the 0xBF sub-command 0x19 callback
   (bonded pet status), stores the packet's flag byte at byte +0x6d of the mobile status (component 5) and,
   when it is set, calls `SetHue(0x4001)` (object vtable +0x54). `UOObjectManager::ApplyGraphicAndHue`
@@ -691,7 +691,7 @@ copied into run-time globals in the packet registration function 0x005bc540:
 | alias, fps, offsets, frame effects, skipped frames, groups | ignored | see Layout | missing |
 | `ec_action_count` | first u32 = action count | first u32 = stored id | wrong |
 
-### `lib/uocf/src/classic/anim.rs` `AnimationDefinition`
+### `lib/uocf/src/classic/animation/anim.rs` `AnimationDefinition`
 
 | Item | Repo | Client | Severity |
 |---|---|---|---|
@@ -707,7 +707,7 @@ copied into run-time globals in the packet registration function 0x005bc540:
 | Frame identity | `source_frame_index` = entry position in the frame file | the entry's second u16 (1-based number) gives direction and frame; gaps exist | wrong (10 files) |
 | Records | one record per parsed "direction", or one action 0 / direction 0 record with all frames | 5 stored directions per action, directions 0..2 mirrored, alias actions share frames, fps per action | missing |
 
-### `lib/uocf/src/enhanced/animationframe.rs`
+### `lib/uocf/src/enhanced/animation/animationframe.rs`
 
 | Item | Repo | Client | Severity |
 |---|---|---|---|
@@ -751,7 +751,7 @@ Neither file is described. Missing.
    `FrameSet { next: Option<u32>, frame_interval: f32, frames: Vec<(u32 tile_id, Vec<EffectDefinition>)> }`,
    keyed by item id. Remove `resolve`; nothing in the EC data maps bodies through this file.
 6. Document both files in `ENHANCED_CLIENT_FILES.md` and link this note.
-7. `AnimationFrame::decode_frame` (`lib/uocf/src/enhanced/animationframe.rs`), with named constants
+7. `AnimationFrame::decode_frame` (`lib/uocf/src/enhanced/animation/animationframe.rs`), with named constants
    `RLE_RUN_FLAG = 0x80`, `EDGE_FACTOR_BITS = 4`, `EDGE_FACTOR_MASK = 0x0f`, `EDGE_FACTOR_ONE = 16`,
    `OPAQUE_ALPHA = 0xff`, `PALETTE_KEEP_COLOUR_BYTE = 3`:
    - palette word = `[b0, b1, b2, OPAQUE_ALPHA]` (RGBA8888 bytes). Never use byte 3 as alpha;
@@ -767,7 +767,7 @@ Neither file is described. Missing.
      (pixel x -> `-1 - x`), so the mirrored `center_x = x1`;
    - rename the header fields: +0x0c `animation_id` (unused by the client), +0x10..+0x17 `bounds`
      (unused; contains every frame box).
-8. Hue support (new, e.g. `lib/uocf/src/enhanced/hues.rs`): read `Hues.uop`
+8. Hue support (new, e.g. `lib/uocf/src/enhanced/graphics/hues.rs`): read `Hues.uop`
    (`data/definitions/hues/huenames.csv`, `hue%04d.bmp`, 32 bpp, 256 x 2, second stored row,
    B,G,R,A per entry). `hue_table(hue)` follows `GetHueTable`: 0 -> none; 0x4001 -> shadow; mask 0x3fff
    when 0x8000 is set; 0x4000 alone -> none; table of `hue{H:04}.bmp`. Hued colour of a hueable pixel =

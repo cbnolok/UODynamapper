@@ -2,11 +2,11 @@
 
 What the shipped clients' audio holds, as `uocf-cli audio census` measured it (2026-10-31) on the reference
 clients: the 2024 Enhanced Client, the current Classic Client, the old Kingdom Reborn client and UO Gold. Code:
-`lib/uocf/src/audio/` (probe, decode, census), `lib/uocf/src/enhanced/audio.rs` (`Audio.uop`),
-`lib/uocf/src/classic/sound.rs` (`sound.mul`, `soundLegacyMUL.uop`), `lib/uocf/src/classic/audio_def.rs`
-(`Sound.def`, `Music.def`), `lib/uocf/src/classic/music.rs` (`Music/Digital/Config.txt`),
-`lib/uocf/src/enhanced/kr_audio.rs` (Kingdom Reborn's `audio_sounds.csv` and `audio_effects.csv`). Writers:
-`lib/uocf/src/enhanced/audio_edit.rs`, `lib/uocf/src/classic/sound_edit.rs`, `lib/uocf/src/audio/validate.rs`,
+`lib/uocf/src/audio/` (probe, decode, census), `lib/uocf/src/enhanced/sound/audio.rs` (`Audio.uop`),
+`lib/uocf/src/classic/audio/sound.rs` (`sound.mul`, `soundLegacyMUL.uop`), `lib/uocf/src/classic/audio/audio_def.rs`
+(`Sound.def`, `Music.def`), `lib/uocf/src/classic/audio/music.rs` (`Music/Digital/Config.txt`),
+`lib/uocf/src/enhanced/sound/kr_audio.rs` (Kingdom Reborn's `audio_sounds.csv` and `audio_effects.csv`). Writers:
+`lib/uocf/src/enhanced/sound/audio_edit.rs`, `lib/uocf/src/classic/audio/sound_edit.rs`, `lib/uocf/src/audio/validate.rs`,
 `lib/uocf/src/audio/convert.rs` ([Writing](#writing)). Real-file tests:
 `lib/uocf/tests/real_files/audio_client_files.rs`, `lib/uocf/tests/real_files/audio_writers.rs`. How the clients
 read and play all this was traced in Ghidra (commit 7906ae18): `scripts/dev-helpers/ec-research/ghidra-audio/results/`
@@ -111,7 +111,7 @@ frame are the same in 7.0x (`miles_playback_reference.md`), and all 1,544 MP3s p
 `--allow-unverified-format`, the 13 cut ones with a note. The rest of the tag skip and frame walk was not compared
 with 7.0x beyond that; the WAV walk was not read there, and Kingdom Reborn ships no WAV.
 
-### Tables (`lib/uocf/src/enhanced/kr_audio.rs`)
+### Tables (`lib/uocf/src/enhanced/sound/kr_audio.rs`)
 
 Read the way UOKR.exe reads them (`uokr_audio.md`), with the same CSV reader as the Enhanced Client, and written
 back byte for byte (every field as read, quotes included, each line's own line end).
@@ -154,7 +154,7 @@ back byte for byte (every field as read, quotes included, each line's own line e
 
 ## `Sound.def` and `Music.def`
 
-Grammar and the client's reading in `lib/uocf/src/classic/audio_def.rs` (`classic_audio.md` Q4, the same in UO
+Grammar and the client's reading in `lib/uocf/src/classic/audio/audio_def.rs` (`classic_audio.md` Q4, the same in UO
 Gold and 7.0.103). One `id {targets} extra` per line; 685 ids in UO Gold, 787 in the current client; every group
 has one target and every `extra` is 0.
 
@@ -171,7 +171,7 @@ has one target and every `extra` is 0.
 
 ## `Music/Digital/Config.txt` and the music files
 
-Grammar and the client's reading in `lib/uocf/src/classic/music.rs` (`classic_audio.md` Q5): `fgets` of 0x200
+Grammar and the client's reading in `lib/uocf/src/classic/audio/music.rs` (`classic_audio.md` Q5): `fgets` of 0x200
 bytes, trailing characters below `!` trimmed, blank and `#` lines skipped, `strtok(" ")` (spaces only; the last
 token wins), the value split at the first `,` into name and flag, `.mp3` appended when the last 4 characters hold
 no `.`, any extension but `mp3` plays nothing, and it loops when the flag is exactly `loop` or `lop`

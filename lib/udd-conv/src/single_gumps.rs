@@ -73,7 +73,7 @@ pub fn is_paperdoll_body_gump_id(gump_id: u32) -> bool {
 /// How far the Classic gump decoder shifts each 5-bit colour channel left to make it 8 bits (`c << 3`, so 0, 8, ...,
 /// 248), which leaves the low 3 bits clear. uocf names no constant for it: the expansion is `rgba8888_word_from_bgra5551`
 /// and `bulk_convert_bgra5551_to_rgba8888` in `lib/uocf/src/utils/color.rs`, the colour table of
-/// `lib/uocf/src/classic/gump.rs`.
+/// `lib/uocf/src/classic/ui/gump.rs`.
 pub const CLASSIC_COLOUR_CHANNEL_SHIFT: u32 = 3;
 /// The low bits of an 8-bit channel that the Classic expansion leaves clear.
 const CLASSIC_COLOUR_LOW_BITS: u8 = (1 << CLASSIC_COLOUR_CHANNEL_SHIFT) - 1;

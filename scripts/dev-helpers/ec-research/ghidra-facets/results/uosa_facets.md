@@ -396,9 +396,9 @@ It reads the classic map as `TileMatrix(6144, 4096)` (`Form1.cs`) and writes loo
 
 ## Repo code against these findings
 
-- `lib/uocf/src/enhanced/facet_decoder.rs` skips a delimiter with direction > 7 and reads on. The client
+- `lib/uocf/src/enhanced/maps/facet_decoder.rs` skips a delimiter with direction > 7 and reads on. The client
   rejects the whole sector instead.
-- `lib/uocf/src/enhanced/facet_encoder.rs`:
+- `lib/uocf/src/enhanced/maps/facet_encoder.rs`:
   - Sector ids are numbered row-major (`chunk_y` outer, `file_id += 1`). The client is column-major, so
     every sector except 0 lands in the wrong place, unless the facet has a single row or column.
   - The DDS is written as `facet{N}.dds`, but the client opens `facet%02d.dds`.

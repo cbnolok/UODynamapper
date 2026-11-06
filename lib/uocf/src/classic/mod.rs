@@ -1,61 +1,31 @@
-pub mod light;
-pub mod land_texture;
-pub mod map;
-pub mod map_write;
-pub mod tiledata;
-pub mod art;
-pub mod art_write;
-pub mod hues;
-pub mod radarcol;
-pub mod statics;
-pub mod statics_write;
+// Category modules own the source files; re-exports preserve existing import paths.
+pub mod animation;
+pub mod audio;
+pub mod formats;
+pub mod graphics;
+pub mod maps;
+pub mod multis;
+pub mod tables;
 pub mod target_client;
-pub mod world;
-pub mod anim;
-pub mod anim_frames;
-pub mod animdata;
-pub mod animationframe_cc;
-pub mod body_def;
-pub mod bodyconv_def;
-pub mod cliloc;
-pub mod multi;
-pub mod multi_write;
-pub mod indexed_mul;
-pub mod light_write;
-pub mod texmap_write;
-pub mod multimap_rle;
-pub mod multimap_render;
-pub mod generic_def;
-pub mod def_files;
-pub mod skills;
-pub mod speech;
-pub mod iff;
-pub mod localized_text;
-pub mod generic_index;
-pub mod fonts;
-pub mod gump;
-pub mod gump_write;
-pub mod image_files;
-pub mod map_statics_diff;
-pub mod dif_files;
-pub mod facet_sources;
-pub mod sound;
-pub mod sound_edit;
-pub mod audio_def;
-pub mod music;
-pub mod vd_codec;
-pub mod michelangelo_uop_codec;
-pub mod verdata;
-pub mod house_tables;
-pub mod professions;
-pub mod key_names;
-pub mod legacy_tables;
-pub mod small_binaries;
-pub mod filter_lists;
-pub(crate) mod text_mode_lines;
-pub mod credits;
-pub mod help_index;
-pub mod asset_map;
-pub mod facet_image;
-pub mod facet_image_render;
-pub mod radar;
+pub mod tiledata;
+pub mod ui;
+
+pub use animation::{anim, anim_frames, animationframe_cc, animdata, body_def, bodyconv_def};
+pub use audio::{audio_def, music, sound, sound_edit};
+pub use graphics::{
+    art, art_write, hues, image_files, land_texture, light, light_write, texmap_write,
+};
+pub use maps::{
+    dif_files, facet_image, facet_image_render, facet_sources, map, map_statics_diff,
+    map_write, multimap_render, multimap_rle, radar, radarcol, statics, statics_write, world,
+};
+pub use multis::{multi, multi_write};
+pub use formats::{
+    generic_index, iff, indexed_mul, michelangelo_uop_codec, small_binaries, vd_codec, verdata,
+};
+pub(crate) use tables::text_mode_lines;
+pub use tables::{
+    asset_map, cliloc, def_files, filter_lists, generic_def, house_tables, key_names,
+    legacy_tables, localized_text, professions, skills, speech,
+};
+pub use ui::{credits, fonts, gump, gump_write, help_index};

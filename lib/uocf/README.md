@@ -32,36 +32,42 @@ Low-level `.uop` (Mythic Package) support:
 
 Classic Client (`.mul` / `.idx`) parsers:
 
-- `map.rs`, `statics.rs`, `map_statics_diff.rs`: world map tiles and static objects, DIF patches.
-- `art.rs`, `land_texture.rs`: art and land texture bitmaps.
-- `tiledata.rs`: land and item tile metadata tables.
-- `anim.rs`, `animdata.rs`, `animationframe_cc.rs`: mobile animation frames and sequence tables.
-- `gump.rs`, `fonts.rs`: UI gumps and bitmap fonts.
-- `hues.rs`: hue palette tables.
-- `sound.rs`: audio entries.
-- `multi.rs`, `multimap_rle.rs`: multi-tile structures and radar map RLE.
-- `light.rs`, `radarcol.rs`, `verdata.rs`: lights, radar colors, and verdata patches.
-- `cliloc.rs`: localized string tables.
-- `body_def.rs`, `bodyconv_def.rs`, `generic_def.rs`: body/animation definition files.
-- `vd_codec.rs`: `.vd` (animation patch stream) codec.
-- `michelangelo_uop_codec.rs`: Michelangelo-style animation UOP codec.
+| Source folder | Responsibility |
+| --- | --- |
+| `classic/animation/` | Mobile animation frames, tile animation and body definitions |
+| `classic/audio/` | Sound entries, music and audio definition tables |
+| `classic/formats/` | Shared binary layouts, indices, animation codecs and verdata patches |
+| `classic/graphics/` | Art, land textures, lights, palettes and image editing |
+| `classic/maps/` | Maps, statics, DIF patches, facet sources and radar images |
+| `classic/multis/` | Multi-tile structures and their writers |
+| `classic/tables/` | Text, localization, definition files and client tables |
+| `classic/ui/` | Gumps, fonts, credits and help files |
+
+`tiledata.rs` and the shared target-client description remain at the `classic/` root.
 
 ### `enhanced`
 
 Enhanced Client and Kingdom Reborn parsers:
 
-- `facet_decoder.rs`, `facet_encoder.rs`: KR/EC facet sector decode and encode.
-- `terrain_definition.rs`: `TerrainDefinition.uop` material entries, texture
-  references, shader hints, and manual override fields.
-- `tileart.rs`: `tileart.uop` item/static records, art windows, flags, and
-  surface-like/liquid-like classification evidence.
-- `textures.rs`: EC texture package access.
-- `animationframe.rs`: EC `AnimationFrame*.uop` mobile animation frames.
-- `hues.rs`: EC `hues.uop`.
-- `multis.rs`: EC multi-tile structures.
-- `localized_strings.rs`, `string_dictionary.rs`, `cliloc.rs`: EC string data.
-- `terrain.rs`, `terrain_config.rs`: land configuration helpers.
-- `tile_database.rs`, `waypoints.rs`, `classic_tile_mapper.rs`: supporting EC data.
+| Source folder | Responsibility |
+| --- | --- |
+| `enhanced/animation/` | Animation definitions, frames and mobile body mappings |
+| `enhanced/effects/` | Chaos scripts, effect definitions and effect resources |
+| `enhanced/graphics/` | Textures, DDS/TGA writers and hue tables/conversion |
+| `enhanced/land/` | Terrain definitions, original source routing and land configuration |
+| `enhanced/maps/` | Facet sectors, package editing, conversion, radar and waypoints |
+| `enhanced/metadata/` | Tileart records, tile properties and game-data tables |
+| `enhanced/packages/` | Entry editing, image census and replacement validation |
+| `enhanced/sound/` | EC audio and KR audio tables |
+| `enhanced/strings/` | Localized strings and the client string dictionary |
+| `enhanced/structures/` | Multis and customizable housing |
+
+Client dialect detection and the internal shared entry-writing helper remain at the
+`enhanced/` root. Nested implementation files stay beside their owning module.
+
+Category modules own the source files. Existing public imports such as
+`uocf::classic::map` and `uocf::enhanced::terrain_definition` remain available through
+explicit re-exports; the category paths also work.
 
 ### `kr`
 

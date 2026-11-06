@@ -127,7 +127,7 @@ whose draw path was not traced this round.
 
 ## 6. Where the repo's other texture-ref fields come from
 
-- `is_auxiliary` (`lib/uocf/src/enhanced/tileart.rs` `is_auxiliary_texture_path`): inferred from the file
+- `is_auxiliary` (`lib/uocf/src/enhanced/metadata/tileart.rs` `is_auxiliary_texture_path`): inferred from the file
   stem ("noise", "normal", a `_`/`-` segment n/nm/nrm/norm). The client has no such flag; the closest
   client fact is "position > 0".
 - `texture_type` / `ec_logical_family` (`EcLogicalFamily::infer_from_path`): the folder name (`data\worldart\`,

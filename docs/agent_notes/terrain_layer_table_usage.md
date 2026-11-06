@@ -30,7 +30,7 @@ recommendation is to remove them (last section).
 
 `udd-conv` builds the table (`lib/udd-conv/src/terrain_meta.rs:188-248`)
 keyed by `TerrainDefinitionEntry::runtime_slot_ids()`
-(`lib/uocf/src/enhanced/terrain_definition.rs:516-529`): each alias's nonzero
+(`lib/uocf/src/enhanced/land/terrain_definition.rs:516-529`): each alias's nonzero
 `legacy_land_id`, or the material id when every alias has 0. The reader's
 `layers_for_tile` returns the first span for a key (`lib/udd-assets/src/terrain_meta.rs`).
 

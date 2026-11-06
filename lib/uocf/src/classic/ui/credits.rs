@@ -18,8 +18,8 @@
 crate::eyre_imports!();
 use std::path::Path;
 
-use super::def_files::DefSyntaxError;
-use super::text_mode_lines::{TextLines, check_line};
+use crate::classic::def_files::DefSyntaxError;
+use crate::classic::text_mode_lines::{TextLines, check_line};
 use crate::utils::output_file::write_through_temp;
 
 pub const CREDITS_FILE: &str = "credits.dat";

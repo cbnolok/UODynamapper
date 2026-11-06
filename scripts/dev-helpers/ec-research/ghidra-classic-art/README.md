@@ -1,7 +1,7 @@
 # ghidra-classic-art
 
 Names the code of the Classic Client that reads the art records of `art.mul` and of the `artLegacyMUL.uop` entries
-`build/artlegacymul/%08i.tga`, and records the rule the uocf art writer (`lib/uocf/src/classic/art_write.rs`)
+`build/artlegacymul/%08i.tga`, and records the rule the uocf art writer (`lib/uocf/src/classic/graphics/art_write.rs`)
 follows: the art id says what a record holds, below 0x4000 a land tile, any other id a static (item id + 0x4000).
 The record bytes carry no kind.
 

@@ -16,7 +16,7 @@ Findings: [results/uosa_housing.md](results/uosa_housing.md) has:
 - what each field does at run time: tile types, categories, groups, slots, feature masks, tooltips and
   entitlement clilocs, the Solid / Window / Multi lists, the two multi part flags and the part strings;
 - the data verification and the comparison with the classic customization text files;
-- the mismatches with `lib/uocf/src/enhanced/multis.rs` and the proposed Rust changes.
+- the mismatches with `lib/uocf/src/enhanced/multistructures/multis.rs` and the proposed Rust changes.
 
 ## NameHousingCode.java
 

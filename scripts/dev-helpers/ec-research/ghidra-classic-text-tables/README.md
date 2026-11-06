@@ -2,7 +2,7 @@
 
 Names the 2024 Classic client code that reads the custom-house tables (`walls.txt`, `floors.txt`, `doors.txt`,
 `misc.txt`, `stairs.txt`, `teleprts.txt`, `roof.txt`), `suppinfo.txt`, `prof.txt`, `keynames.txt`, `palette.mul`
-and `animinfo.mul`, and records the grammar the uocf readers follow (`lib/uocf/src/classic/house_tables.rs`,
+and `animinfo.mul`, and records the grammar the uocf readers follow (`lib/uocf/src/classic/tables/house_tables.rs`,
 `professions.rs`, `key_names.rs`, `legacy_tables.rs`) and which shipped files the client never opens.
 
 Findings: [results/classic_data_files.md](results/classic_data_files.md). Every result is marked **confirmed**

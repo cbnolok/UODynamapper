@@ -901,7 +901,7 @@ plate comments when the evidence text changed (26 refreshed, e.g. the old `GetFi
 
 ### 8.11 Proposed Rust changes (round 3)
 
-Not applied; for `lib/uocf/src/enhanced/tileart.rs` and `effect_definition.rs`.
+Not applied; for `lib/uocf/src/enhanced/metadata/tileart.rs` and `effect_definition.rs`.
 
 1. House join constants:
    - `HOUSE_JOIN_NEEDS_SUPPORT` -> `HOUSE_JOIN_RESTS_ON_FLOOR: u32 = 1 << 5`, doc: "House placement: the

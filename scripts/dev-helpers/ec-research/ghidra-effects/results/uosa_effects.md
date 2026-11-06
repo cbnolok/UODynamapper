@@ -633,7 +633,7 @@ mode was.
 Quirks (derived from the confirmed numbers and map flags, not observed in a frame capture):
 
 - The atlas column stride is 255 texels, not the 256-texel strips of `hues.dds` (`atlas_coord_for_hue` in
-  `lib/uocf/src/enhanced/hues.rs`). The shipped atlas is 1024 texels wide (see "Hue atlas" below), so
+  `lib/uocf/src/enhanced/graphics/hues.rs`). The shipped atlas is 1024 texels wide (see "Hue atlas" below), so
   hues >= 1024 sample `column` texels to the left of their strip; at low luminance they reach the
   previous strip.
 - With bilinear filtering, u and v fall on texel edges: each sample is a 50/50 blend of rows `row - 1` and
@@ -684,7 +684,7 @@ The texture (all **confirmed** on the shipped data and the binary unless marked)
   255-pixel columns".
 
 Conclusion (**confirmed**): the atlas is 1024 × 1024, and `HUES_ATLAS_WIDTH = 1024` in
-`lib/uocf/src/enhanced/hues.rs` and the constants of `lib/ec-effects/particle-sim/src/hued.rs`
+`lib/uocf/src/enhanced/graphics/hues.rs` and the constants of `lib/ec-effects/particle-sim/src/hued.rs`
 (`HUE_ATLAS_ROWS` 1024, `HUE_ATLAS_UV_SCALE` 1/1024, `HUE_ATLAS_COLUMN_STRIDE` 255,
 `HUE_ATLAS_STRIP_WIDTH` 256) match the client. No code change is needed.
 
@@ -707,7 +707,7 @@ V5 header) and colours off the `c << 3` grid, although `v >> 3` at x = 8·i stil
 for all 3000. `huenames.csv` is hand-edited (lines without a comma, names one byte longer than the Classic
 20-byte field allows). The KR `Hues.uop` (2016) has the same entries, order, atlas layout and swatch grid.
 
-Repo note: `lib/uocf/src/enhanced/hues_mul_uop.rs` converts `hues.mul` to and from `Hues.uop` with these
+Repo note: `lib/uocf/src/enhanced/graphics/hues_mul_uop.rs` converts `hues.mul` to and from `Hues.uop` with these
 rules, and `lib/udd-conv/src/hues.rs` builds the Classic atlas with them (`HueRampMode::Linear` by default;
 `Flat` keeps the old 8-texel blocks). The EC path copies the bitmaps' row 0, which is exact.
 
@@ -1191,7 +1191,7 @@ anisotropy").
 
 ## Proposed Rust changes
 
-Not applied. The changes are for `lib/uocf/src/enhanced/effect_definition.rs` as of 914634cf, plus one
+Not applied. The changes are for `lib/uocf/src/enhanced/effects/effect_definition.rs` as of 914634cf, plus one
 line in `ENHANCED_CLIENT_FILES.md`. The earlier items (attach_mode, field_3c, value_08) are already in.
 
 1. **Effect id constants** (module level, documented as client behaviour):

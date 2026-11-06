@@ -785,7 +785,7 @@ Definition fields on the Chaos path:
 
 ## Proposed Rust design
 
-The parser (`lib/uocf/src/enhanced/chaos_script.rs`, in progress elsewhere) should reproduce the lexer and
+The parser (`lib/uocf/src/enhanced/effects/chaos_script.rs`, in progress elsewhere) should reproduce the lexer and
 classifier quirks above. It should yield the compiled form, not the raw syntax tree.
 
 ```rust

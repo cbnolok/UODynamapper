@@ -185,11 +185,11 @@ facets to MUL and back, and between clients with smaller maps. Option B is imple
 
 What was built:
 
-- uocf: `classic/map_write.rs` (`ClassicMapBlocks`: MUL and UOP, the trailing block rule, a template package for
-  the shipped layout; `bake_map_difs`), `classic/statics_write.rs` (`ClassicStaticsBlocks`, `bake_static_difs`),
-  `classic/world.rs` (`ClassicWorld`: load with difs, resize with fill or crop, ids beyond a tiledata),
+- uocf: `classic/maps/map_write.rs` (`ClassicMapBlocks`: MUL and UOP, the trailing block rule, a template package for
+  the shipped layout; `bake_map_difs`), `classic/maps/statics_write.rs` (`ClassicStaticsBlocks`, `bake_static_difs`),
+  `classic/maps/world.rs` (`ClassicWorld`: load with difs, resize with fill or crop, ids beyond a tiledata),
   `classic/target_client.rs` (size table, Trammel-reads-map0, dif usage, container and tiledata of a client folder),
-  `enhanced/facet_to_classic.rs` (EC or KR facet to Classic, with the losses), and the EC and KR facet builders
+  `enhanced/maps/facet_to_classic.rs` (EC or KR facet to Classic, with the losses), and the EC and KR facet builders
   taking a `ClassicWorld`.
 - uocf-cli: `facet convert` (Classic MUL / Classic UOP / EC facet / KR facet, any direction; `--target-client` or
   `--size`; `--crop`; `--fill-land`/`--fill-z`; `--allow-lossy`), `facet patch-classic`, and `mul-convert` maps
@@ -227,7 +227,7 @@ read it without bounds checks, tile (x, y) at column x of row y (`ghidra-classic
 resized or edited while its image is not draws the wrong tiles, or stale ones. Both map tools now write the
 image with the map:
 
-- **The rule.** `classic/facet_image_render.rs` renders a tile from the radarcol colour of its highest static
+- **The rule.** `classic/maps/facet_image_render.rs` renders a tile from the radarcol colour of its highest static
   (else its land), with every channel shifted by the land slope `z(x+1, y) - z(x, y+1)`: -1, +3 at 3 or more,
   -4 at -3 or less. It is an approximation, not the shipped bytes: 84-95% of a facet's pixels exact, 94-99%
   within one 5-bit step.
