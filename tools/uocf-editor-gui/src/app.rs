@@ -1202,6 +1202,8 @@ pub struct AppSettings {
     pub ec_path: Option<PathBuf>,
     pub dict_path: Option<PathBuf>,
     pub last_view_mode: Option<ViewMode>,
+    /// The background of the Gumps view's images: the gump, the paperdoll, the EC interface image and a gump import.
+    pub gump_background: uot_gui::ImageBackground,
 }
 
 fn collect_sound_entries(sounds: &SoundMap) -> Vec<SoundListEntry> {
@@ -4466,6 +4468,20 @@ pub(crate) mod tests {
         eframe::set_value(&mut storage, SETTINGS_KEY, &written);
         let read: AppSettings = eframe::get_value(&storage, SETTINGS_KEY).unwrap();
         assert_eq!(read.kr_path.as_deref(), Some(Path::new("/clients/kingdom_reborn")));
+    }
+
+    /// Settings from before the gump background load with the viewers' own; a picked colour is kept.
+    #[test]
+    fn the_gump_background_defaults_to_the_viewers_own_and_is_kept() {
+        let older = StoredSettings(r#"(cc_path:None,ec_path:None,dict_path:None,last_view_mode:Some(Gumps))"#.to_string());
+        let settings: AppSettings = eframe::get_value(&older, SETTINGS_KEY).expect("an older file loads");
+        assert_eq!(settings.gump_background, uot_gui::ImageBackground::ViewerDefault);
+
+        let mut storage = StoredSettings(String::new());
+        let picked = uot_gui::ImageBackground::Color(uot_gui::image_background::MAGENTA_BACKGROUND);
+        eframe::set_value(&mut storage, SETTINGS_KEY, &AppSettings { gump_background: picked, ..settings });
+        let read: AppSettings = eframe::get_value(&storage, SETTINGS_KEY).unwrap();
+        assert_eq!(read.gump_background, picked);
     }
 
     #[test]

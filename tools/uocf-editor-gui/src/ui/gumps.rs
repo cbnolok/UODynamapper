@@ -371,6 +371,9 @@ pub fn ui_gumps(app: &mut UocfEditorApp, ctx: &egui::Context, ui: &mut egui::Ui)
             if ui.button("Refresh Lists").clicked() {
                 refresh_gump_lists(app, profiles);
             }
+            ui.separator();
+            let panel_fill = ui.visuals().panel_fill;
+            uot_gui::image_background_control(ui, &mut app.settings.gump_background, panel_fill);
         });
         if !app.gump_list_status.is_empty() {
             ui.monospace(app.gump_list_status.as_str());
@@ -511,11 +514,12 @@ fn ui_gump_preview_controls(app: &mut UocfEditorApp, ctx: &egui::Context, ui: &m
                     ui.label(format!("{}x{}", handle.size()[0], handle.size()[1]));
                     ui_gump_export(app, ui, gump_id, shown);
                 });
+                let background = app.settings.gump_background;
                 egui::ScrollArea::both()
                     .id_salt("gump_preview_scroll")
                     .max_height(320.0)
                     .show(ui, |ui| {
-                        ui.image(&handle);
+                        ui.add(background.under(egui::Image::new(&handle)));
                     });
             } else if !app.selected_gump_id.trim().is_empty() {
                 ui.label("Gump not found in the selected source.");
@@ -814,7 +818,7 @@ fn ui_paperdoll(
             egui::ScrollArea::both()
                 .id_salt("paperdoll_preview_scroll")
                 .show(right, |ui| {
-                    ui.image(handle);
+                    ui.add(app.settings.gump_background.under(egui::Image::new(handle)));
                 });
         }
         },

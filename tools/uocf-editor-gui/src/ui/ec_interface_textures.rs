@@ -311,10 +311,12 @@ fn ui_details(app: &mut UocfEditorApp, ctx: &egui::Context, ui: &mut egui::Ui, u
         return;
     };
     ui.weak("Shift+wheel, Ctrl+wheel or a pinch over the image zooms it.");
+    let background = app.settings.gump_background;
     let zoom_log2 = &mut app.ec_interface_textures.zoom_log2;
     let output = egui::ScrollArea::both().id_salt("ec_interface_texture_preview").auto_shrink([false, false]).show(ui, |ui| {
         let size = texture.size_vec2() * zoom_log2.exp2();
-        ui.add(egui::Image::new(&texture).fit_to_exact_size(size).texture_options(egui::TextureOptions::NEAREST));
+        let image = egui::Image::new(&texture).fit_to_exact_size(size).texture_options(egui::TextureOptions::NEAREST);
+        ui.add(background.under(image));
     });
     let factor = super::hovered_zoom_factor(ui, output.inner_rect);
     if factor != super::NO_ZOOM {

@@ -96,6 +96,10 @@ impl InspectorApp {
                 ui.label(&label);
                 self.ui_export_menu(ui, &label);
             });
+            ui.horizontal(|ui| {
+                let panel_fill = ui.visuals().panel_fill;
+                uot_gui::image_background_control(ui, &mut self.settings.preview_background, panel_fill);
+            });
             if size[0] > MAX_INLINE_PREVIEW_WIDTH || size[1] > MAX_INLINE_PREVIEW_HEIGHT {
                 ui.label(format!(
                     "Image is {}x{}, which is too large for the side panel. Open it in the separate window.",
@@ -106,11 +110,12 @@ impl InspectorApp {
                     self.image_window_open = true;
                 }
             } else {
+                let background = self.settings.preview_background;
                 egui::ScrollArea::both().show(ui, |ui| {
-                    ui.add(
+                    ui.add(background.under(
                         egui::Image::new(&texture)
                             .texture_options(egui::TextureOptions::NEAREST),
-                    );
+                    ));
                 });
             }
         } else if let Some(text) = &self.preview_text {

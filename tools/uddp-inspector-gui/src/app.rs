@@ -31,9 +31,14 @@ pub const DATA_TYPE_STATIC: u8 = 14;
 const MISSING_TEXTURE_ID: u32 = u32::MAX;
 pub const SETTINGS_KEY: &str = "uddp_inspector_settings";
 
+/// The settings the app keeps in its storage. Lenient app state: a key a file from another version lacks takes its
+/// default, so an older file still loads.
 #[derive(Serialize, Deserialize, Clone, Default)]
+#[serde(default)]
 pub struct AppSettings {
     pub last_package_dir: Option<PathBuf>,
+    /// The background of the Content Preview image (a gump, art, a texture or an atlas) and of the image window.
+    pub preview_background: uot_gui::ImageBackground,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -2557,6 +2562,40 @@ mod tests {
         assert_eq!(*page_gump_index, 0);
         assert_eq!((*x, *y, *width, *height), (1, 0, 2, 1));
         assert_eq!(*upscale_factor, 2);
+    }
+
+    /// eframe storage holding one settings string.
+    struct StoredSettings(String);
+
+    impl eframe::Storage for StoredSettings {
+        fn get_string(&self, key: &str) -> Option<String> {
+            (key == SETTINGS_KEY).then(|| self.0.clone())
+        }
+
+        fn set_string(&mut self, _key: &str, value: String) {
+            self.0 = value;
+        }
+
+        fn remove_string(&mut self, _key: &str) {
+            self.0.clear();
+        }
+
+        fn flush(&mut self) {}
+    }
+
+    /// Settings from before the preview background load with the viewer's own; a picked colour is kept.
+    #[test]
+    fn the_preview_background_defaults_to_the_viewers_own_and_is_kept() {
+        let older = StoredSettings(r#"(last_package_dir:Some("/packages"))"#.to_string());
+        let settings: AppSettings = eframe::get_value(&older, SETTINGS_KEY).expect("an older file loads");
+        assert_eq!(settings.last_package_dir.as_deref(), Some(std::path::Path::new("/packages")));
+        assert_eq!(settings.preview_background, uot_gui::ImageBackground::ViewerDefault);
+
+        let mut storage = StoredSettings(String::new());
+        let picked = uot_gui::ImageBackground::Color(uot_gui::image_background::WHITE_BACKGROUND);
+        eframe::set_value(&mut storage, SETTINGS_KEY, &AppSettings { preview_background: picked, ..settings });
+        let read: AppSettings = eframe::get_value(&storage, SETTINGS_KEY).unwrap();
+        assert_eq!(read.preview_background, picked);
     }
 
     #[test]

@@ -3,6 +3,10 @@ use std::sync::Arc;
 
 use eframe::egui;
 
+pub mod image_background;
+
+pub use image_background::{image_background_control, ImageBackground};
+
 pub type AppCreatorResult =
     Result<Box<dyn eframe::App>, Box<dyn std::error::Error + Send + Sync>>;
 

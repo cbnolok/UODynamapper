@@ -7438,6 +7438,7 @@ dependencies = [
  "eframe",
  "egui_extras",
  "rfd",
+ "serde",
  "workspace-hack",
 ]
 

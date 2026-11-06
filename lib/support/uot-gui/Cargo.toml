@@ -16,6 +16,7 @@ too_many_arguments = "allow"
 eframe.workspace = true
 egui_extras.workspace = true
 rfd.workspace = true
+serde.workspace = true
 workspace-hack.workspace = true
 
 #[lib]

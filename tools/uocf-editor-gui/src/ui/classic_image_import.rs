@@ -195,8 +195,13 @@ fn ui_panel(app: &mut UocfEditorApp, ctx: &egui::Context, ui: &mut egui::Ui, sta
             }
             if let Some(preview) = &state.preview {
                 ui.label("As stored:");
+                // A gump takes the Gumps view's background; the Art view has none to offer.
+                let background = match files.kind {
+                    ClassicImageKind::Gump => app.settings.gump_background,
+                    ClassicImageKind::Art => uot_gui::ImageBackground::ViewerDefault,
+                };
                 egui::ScrollArea::both().id_salt("classic_image_import_preview").max_height(PREVIEW_MAX_HEIGHT).show(ui, |ui| {
-                    ui.image(preview);
+                    ui.add(background.under(egui::Image::new(preview)));
                 });
             }
             if ui.button("Save copy...").clicked() {

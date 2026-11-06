@@ -306,12 +306,12 @@ impl InspectorApp {
                         .show(ui, |ui| {
                             let zoom = self.texture_zoom;
                             let new_size = egui::vec2(size[0] as f32 * zoom, size[1] as f32 * zoom);
-                            ui.add(
+                            ui.add(self.settings.preview_background.under(
                                 egui::Image::new(texture)
                                     .maintain_aspect_ratio(true)
                                     .texture_options(egui::TextureOptions::NEAREST)
                                     .fit_to_exact_size(new_size),
-                            );
+                            ));
                         });
                 });
             },
