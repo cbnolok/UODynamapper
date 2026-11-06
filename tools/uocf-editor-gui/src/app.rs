@@ -690,6 +690,41 @@ fn should_show_uop_entry(file: &uocf::uop_container::file::UopFile, hide_empty_e
     !hide_empty_entries || file.has_size()
 }
 
+/// Decodes the UOP image entry `data` named `name` to straight-alpha RGBA (width, height, pixels): a hue `.bmp`, a
+/// Classic UOP entry, or a texture (DDS or TGA by the name, else by the bytes).
+pub fn decode_uop_image(name: &str, data: &[u8]) -> Result<(u32, u32, Vec<u8>), String> {
+    let lower_name = name.to_lowercase();
+    if lower_name.ends_with(".bmp") {
+        return uocf::enhanced::hues::decode_hue_image_to_rgba(data).map_err(|error| format!("{error:#}"));
+    }
+
+    if let Some(decoded) = crate::ui::textures::decode_classic_uop_entry(&lower_name, data) {
+        return decoded;
+    }
+
+    let format = if lower_name.ends_with(".dds") {
+        ECImageFormat::DDS
+    } else if lower_name.ends_with(".tga") {
+        ECImageFormat::TGA
+    } else if let Some((_, format)) = guess_uop_image_format_from_payload(data) {
+        format
+    } else {
+        ECImageFormat::Unknown
+    };
+
+    let tex_file = TextureFile {
+        metadata: RawTextureItem::absent(),
+        is_ec: true,
+        format,
+        props: None,
+        raw_data: data.into(),
+        image_data_offset: 0,
+    };
+
+    let pixels = tex_file.decode_to_rgba().map_err(|error| format!("{error:#}"))?.to_rgba8();
+    Ok((pixels.width(), pixels.height(), pixels.into_raw()))
+}
+
 pub fn guess_uop_image_format_from_payload(data: &[u8]) -> Option<(&'static str, ECImageFormat)> {
     if data.starts_with(b"DDS ") {
         return Some(("dds", ECImageFormat::DDS));
@@ -1875,6 +1910,8 @@ pub struct UocfEditorApp {
     pub image_export: crate::ui::image_export::ImageExportSettings,
     /// The bulk export running or just finished, with its window.
     pub bulk_export: Option<crate::ui::image_export::BulkExport>,
+    /// The texmaps the Art view shows for land tiles.
+    pub art_texmaps: crate::ui::art_viewer::ArtTexmaps,
     pub show_upscale_preview: bool,
     pub upscale_preview_passes: Vec<UpscalePreviewPass>,
     pub upscale_preview_zoom: f32,
@@ -2081,6 +2118,7 @@ impl UocfEditorApp {
             current_image_preview_key: None,
             image_export: Default::default(),
             bulk_export: None,
+            art_texmaps: Default::default(),
             show_upscale_preview: false,
             upscale_preview_passes: vec![UpscalePreviewPass::default()],
             upscale_preview_zoom: 1.0,
@@ -3128,67 +3166,16 @@ impl UocfEditorApp {
             return Some(handle);
         }
 
-        let lower_name = name.to_lowercase();
-        if lower_name.ends_with(".bmp") {
-            let (width, height, pixels) = uocf::enhanced::hues::decode_hue_image_to_rgba(data).ok()?;
-            let handle = self.checked_texture(ctx, name, [width as usize, height as usize], &pixels, Default::default())?;
-            self.texture_previews.insert(hash, handle.clone());
-            self.register_current_image_preview(hash, name, width, height, &pixels);
-            return Some(handle);
-        }
-
-        if let Some(decoded) = crate::ui::textures::decode_classic_uop_entry(&lower_name, data) {
-            return match decoded {
-                Ok((width, height, pixels)) => {
-                    let size = [width as usize, height as usize];
-                    let handle = self.checked_texture(ctx, name, size, &pixels, Default::default())?;
-                    self.texture_previews.insert(hash, handle.clone());
-                    self.register_current_image_preview(hash, name, width, height, &pixels);
-                    Some(handle)
-                }
-                Err(problem) => {
-                    self.last_texture_problem = Some(format!("{name}: {problem}"));
-                    None
-                }
-            };
-        }
-
-        let format = if lower_name.ends_with(".dds") {
-            ECImageFormat::DDS
-        } else if lower_name.ends_with(".tga") {
-            ECImageFormat::TGA
-        } else if let Some((_, format)) = guess_uop_image_format_from_payload(data) {
-            format
-        } else {
-            ECImageFormat::Unknown
-        };
-
-        let tex_file = TextureFile {
-            metadata: RawTextureItem::absent(),
-            is_ec: true,
-            format,
-            props: None,
-            raw_data: data.into(),
-            image_data_offset: 0,
-        };
-
-        match tex_file.decode_to_rgba() {
-            Ok(img) => {
-                let size = [img.width() as usize, img.height() as usize];
-                let pixels = img.to_rgba8();
-                let handle = self.checked_texture(ctx, name, size, pixels.as_raw(), Default::default())?;
+        match decode_uop_image(name, data) {
+            Ok((width, height, pixels)) => {
+                let size = [width as usize, height as usize];
+                let handle = self.checked_texture(ctx, name, size, &pixels, Default::default())?;
                 self.texture_previews.insert(hash, handle.clone());
-                self.register_current_image_preview(
-                    hash,
-                    name,
-                    size[0] as u32,
-                    size[1] as u32,
-                    pixels.as_raw(),
-                );
+                self.register_current_image_preview(hash, name, width, height, &pixels);
                 Some(handle)
             }
-            Err(error) => {
-                self.last_texture_problem = Some(format!("{name}: {error:#}"));
+            Err(problem) => {
+                self.last_texture_problem = Some(format!("{name}: {problem}"));
                 None
             }
         }
@@ -4656,6 +4643,7 @@ pub(crate) mod tests {
             current_image_preview_key: None,
             image_export: Default::default(),
             bulk_export: None,
+            art_texmaps: Default::default(),
             show_upscale_preview: false,
             upscale_preview_passes: vec![UpscalePreviewPass::default()],
             upscale_preview_zoom: 1.0,

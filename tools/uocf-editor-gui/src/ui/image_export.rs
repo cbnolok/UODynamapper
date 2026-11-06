@@ -69,8 +69,9 @@ pub enum ExportClicked {
 fn format_hover(format: ImageFileFormat, frame: bool) -> String {
     let text = match format {
         ImageFileFormat::Bmp => {
-            "Classic art, gumps and land tiles: 16-bit X1R5G5B5, the stored colours bit for bit (transparent is colour 0, \
-             black). Classic animation frames: 8-bit with the frame's palette. Enhanced images: 32-bit with alpha."
+            "Classic art, gumps, land tiles and texmaps: 16-bit X1R5G5B5, the stored colours bit for bit (in art and \
+             gumps, transparent is colour 0, black). Classic animation frames: 8-bit with the frame's palette. Enhanced \
+             images: 32-bit with alpha."
         }
         ImageFileFormat::Png => {
             "Lossless RGBA, transparent where the image is; Classic channels widened as (c << 3) | (c >> 2), which \
@@ -126,6 +127,13 @@ pub fn export_menu(ui: &mut egui::Ui, settings: &mut ImageExportSettings, menu: 
         clicked
     });
     inner.and_then(|inner| inner.inner)
+}
+
+/// The file stem of an entry or file named by its path (`build/worldart/00001234.dds`): every path separator and
+/// dot an underscore (`build_worldart_00001234_dds`), so entries of one name in two folders, or with two
+/// extensions, stay two files.
+pub fn path_file_stem(path: &str) -> String {
+    path.chars().map(|ch| if matches!(ch, '/' | '\\' | '.') { '_' } else { ch }).collect()
 }
 
 /// Saves `image` in `format` through a save dialog named `stem`; the path written, `None` when cancelled.
@@ -359,6 +367,14 @@ mod tests {
         let outcome = write_bulk(&folder, ImageFileFormat::Bmp, (0..ITEMS).collect(), produce, &done, &cancel);
         assert!(outcome.cancelled && outcome.written == 0);
         std::fs::remove_dir_all(&folder).unwrap();
+    }
+
+    #[test]
+    fn a_path_names_its_file_with_separators_and_dots_as_underscores() {
+        assert_eq!(path_file_stem("build/worldart/00001234.dds"), "build_worldart_00001234_dds");
+        assert_eq!(path_file_stem(r"data\effects\fizzle.tga"), "data_effects_fizzle_tga");
+        assert_ne!(path_file_stem("fizzle.dds"), path_file_stem("fizzle.tga"), "two extensions are two files");
+        assert_eq!(sanitize_file_stem(&path_file_stem("../up.dds"), FALLBACK_STEM), "___up_dds");
     }
 
     #[test]

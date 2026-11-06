@@ -41,6 +41,10 @@ use crate::logic::effects_editor::{
     ChildList, CollectionSource, DefinitionFilter, DefinitionKind, EffectsDocument, EffectsEditKey, EffectsSelection,
     FileOverride, FileUser, NameIndex, PacketRoute, ParticleKindFilter, PathStep, PACKET_UNREACHABLE_NOTE,
 };
+use crate::ui::image_export::{
+    export_menu, path_file_stem, save_rgba, start_bulk, BulkEntry, BulkExport, ExportClicked, ExportImage, ExportMenu,
+    NOT_HUED,
+};
 use crate::ui::unsaved_changes::TabEditor;
 use crate::ui::{arrow_delta, move_selection, UOP_PATCHER_NOTE};
 
@@ -2294,7 +2298,10 @@ fn file_details(app: &mut UocfEditorApp, lookups: &Lookups, ctx: &egui::Context,
     };
     match row.kind {
         FileKind::Chaos => script_editor(state, lookups, ui, hash, row.label(), &payload),
-        FileKind::Tga | FileKind::Dds => texture_view(state, ctx, ui, hash, &payload),
+        FileKind::Tga | FileKind::Dds => {
+            texture_export(app, ui, &files, &row);
+            texture_view(&mut app.effects_panel, ctx, ui, hash, &payload);
+        }
         FileKind::Nif => {
             let outcome = super::effects_nif::nif_editor(
                 ui,
@@ -2443,6 +2450,63 @@ fn script_editor(state: &mut EffectsPanelState, lookups: &Lookups, ui: &mut egui
     }
     if let Some(hash) = open {
         select(state, Some(EffectsSelection::File { hash }), true);
+    }
+}
+
+/// A TGA or DDS file the bulk export writes: shown in the list and not removed.
+fn is_exported_texture(row: &FileRow) -> bool {
+    matches!(row.kind, FileKind::Tga | FileKind::Dds) && row.status != FileStatus::Removed
+}
+
+/// The export menu of the texture file `row` of `files`, decoded, and the bulk export of the texture files the list
+/// shows.
+fn texture_export(app: &mut UocfEditorApp, ui: &mut egui::Ui, files: &Arc<EffectFiles>, row: &FileRow) {
+    let (rows, visible) = file_rows(&mut app.effects_panel);
+    let shown_textures = || visible.iter().map(|&index| &rows[index]).filter(|file| is_exported_texture(file));
+    let menu = ExportMenu {
+        hue: Err(NOT_HUED),
+        frame: false,
+        bulk: vec![BulkEntry {
+            label: format!("Export all shown textures ({})...", shown_textures().count()),
+            hover: format!(
+                "Every TGA and DDS file the list shows, decoded, each as {}.<format> (its name with dots as _), into a \
+                 folder you pick (files of the same name are replaced).",
+                path_file_stem(&row.label())
+            ),
+        }],
+    };
+    let Some(clicked) = export_menu(ui, &mut app.image_export, &menu) else {
+        return;
+    };
+    let format = app.image_export.format;
+    let overrides = app.effects_panel.document.files().clone();
+    match clicked {
+        ExportClicked::Shown => {
+            let result = files
+                .payload(&overrides, row.hash)
+                .ok_or_else(|| "the file has no payload".to_string())
+                .and_then(|payload| decode_texture(&payload))
+                .and_then(|image| save_rgba(&path_file_stem(&row.label()), image.width(), image.height(), image.as_raw(), format));
+            match result {
+                Ok(Some(path)) => report_saved(app, format!("Exported {} to {}.", row.label(), path.display())),
+                Ok(None) => {}
+                Err(error) => app.effects_panel.error = Some(format!("Export failed: {}: {error}", row.label())),
+            }
+        }
+        ExportClicked::Bulk(_) => {
+            let textures: Vec<(u64, String)> = shown_textures().map(|file| (file.hash, file.label())).collect();
+            let files = Arc::clone(files);
+            start_bulk(app, |folder| {
+                BulkExport::start(format!("Export {} effect textures", textures.len()), folder, format, textures, move |(hash, label)| {
+                    let Some(payload) = files.payload(&overrides, hash) else {
+                        return Ok(Vec::new());
+                    };
+                    let image = decode_texture(&payload).map_err(|error| color_eyre::eyre::eyre!("{label}: {error}"))?;
+                    let (width, height) = image.dimensions();
+                    Ok(vec![(path_file_stem(&label), ExportImage::Rgba { width, height, rgba: image.into_raw() })])
+                })
+            });
+        }
     }
 }
 

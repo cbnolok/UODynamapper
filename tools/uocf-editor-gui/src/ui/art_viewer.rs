@@ -12,10 +12,13 @@ use uocf::classic::art::{static_art_id_for_source, ArtMap, STATIC_TILE_ID_BASE};
 use uocf::classic::art_write::{ArtColors, ArtKind};
 use uocf::classic::hues::HueEntry;
 use uocf::enhanced::textures::{ECImageFormat, TextureFile, TextureItem as RawTextureItem};
-use uocf::image_export::art_file_stem;
+use uocf::classic::texmap_write::{TexmapMulFile, TEXMAP_DATA_FILE, TEXMAP_INDEX_FILE};
+use uocf::image_export::{art_file_stem, id_file_stem};
+use std::collections::BTreeSet;
+use std::path::{Path, PathBuf};
 use super::image_export::{
     classic_hued, export_menu, hue_rgba, save_image, save_status, start_bulk, BulkEntry, BulkExport, ExportClicked,
-    ExportImage, ExportMenu,
+    ExportImage, ExportMenu, NOT_HUED,
 };
 
 const ART_VIEWER_LIST_PANEL_WIDTH: f32 = 300.0;
@@ -28,6 +31,8 @@ const ART_EC_UOP_NAME: &str = "LegacyTexture.uop";
 const ART_EC_UOP_FILE: &str = "LegacyTexture.uop (the classic-style art the Enhanced Client draws by default)";
 const DDS_MAGIC: &[u8] = b"DDS ";
 const NO_HUE_SELECTED: &str = "Hue 0: the view draws the colours as stored.";
+/// Exported texmaps are named by texture id: `texmap_0x0003`.
+const TEXMAP_FILE_PREFIX: &str = "texmap";
 
 pub fn ui_art_viewer(app: &mut UocfEditorApp, ctx: &egui::Context, ui: &mut egui::Ui) {
     app.selected_legacy_source = concrete_art_tile_source(app.selected_legacy_source);
@@ -151,6 +156,7 @@ pub fn ui_art_viewer(app: &mut UocfEditorApp, ctx: &egui::Context, ui: &mut egui
 
                 ui.vertical(|ui| {
                     ui.heading("TileData Properties");
+                    let mut texmap = None;
                     if let Some(client) = &app.client_data {
                         let source = concrete_art_tile_source(app.selected_legacy_source);
                         if id < STATIC_TILE_ID_BASE && !source.is_ec_uop() {
@@ -163,6 +169,7 @@ pub fn ui_art_viewer(app: &mut UocfEditorApp, ctx: &egui::Context, ui: &mut egui
                                 ui.separator();
                                 ui.label("Flags Breakdown:");
                                 ui.label(classic_tile_flags_summary(tile.flags));
+                                texmap = Some((client.path.clone(), tile.texture_id, shown_land_textures(client, &shown_ids)));
                             }
                         } else {
                             let item_id = if source.is_ec_uop() {
@@ -187,12 +194,133 @@ pub fn ui_art_viewer(app: &mut UocfEditorApp, ctx: &egui::Context, ui: &mut egui
                             }
                         }
                     }
+                    if let Some((folder, texture_id, shown_textures)) = texmap {
+                        ui.separator();
+                        ui_texmap(app, ctx, ui, &folder, texture_id, shown_textures);
+                    }
                 });
             });
         } else {
             ui.centered_and_justified(|ui| { ui.label("Select a tile from the sidebar to inspect"); });
         }
     });
+}
+
+/// The texmaps (texmaps.mul) of the Classic folder of the art, read when a land tile first shows its texture.
+#[derive(Default)]
+pub struct ArtTexmaps {
+    /// The folder read, with its texmaps or why they could not be read.
+    file: Option<(PathBuf, Result<Arc<TexmapMulFile>, String>)>,
+    /// The texture id shown, with its image and preview (`None` when texmaps.mul has no such texture) or why it has
+    /// none.
+    shown: Option<(u16, Result<Option<(ExportImage, egui::TextureHandle)>, String>)>,
+}
+
+impl ArtTexmaps {
+    fn file(&mut self, folder: &Path) -> Result<Arc<TexmapMulFile>, String> {
+        if self.file.as_ref().is_none_or(|(read, _)| read != folder) {
+            let file = TexmapMulFile::load(folder).map(Arc::new).map_err(|error| format!("{error:#}"));
+            if let Err(error) = &file {
+                log::warn!("texmaps of {}: {error}", folder.display());
+            }
+            self.file = Some((folder.to_path_buf(), file));
+            self.shown = None;
+        }
+        self.file.as_ref().expect("read above").1.clone()
+    }
+
+    fn shown(
+        &mut self,
+        ctx: &egui::Context,
+        texmaps: &TexmapMulFile,
+        texture_id: u16,
+    ) -> &Result<Option<(ExportImage, egui::TextureHandle)>, String> {
+        if self.shown.as_ref().is_none_or(|(shown, _)| *shown != texture_id) {
+            let decoded = texmaps.texture(usize::from(texture_id)).map_err(|error| format!("{error:#}")).and_then(|record| {
+                record
+                    .map(|record| {
+                        let image = ExportImage::texmap(&record);
+                        let size = [image.width() as usize, image.height() as usize];
+                        let name = format!("texmap_preview_{texture_id}");
+                        super::textures::load_rgba(ctx, name, size, &image.to_rgba(), Default::default()).map(|handle| (image, handle))
+                    })
+                    .transpose()
+            });
+            self.shown = Some((texture_id, decoded));
+        }
+        &self.shown.as_ref().expect("decoded above").1
+    }
+}
+
+/// The texture ids of the land tiles among the `shown` art ids, each once.
+fn shown_land_textures(client: &ClientData, shown: &[u32]) -> Vec<u16> {
+    let land = client.tiledata.land_tiles();
+    let textures: BTreeSet<u16> = shown
+        .iter()
+        .filter(|&&id| id < STATIC_TILE_ID_BASE)
+        .filter_map(|&id| land.get(id as usize).map(|tile| tile.texture_id))
+        .collect();
+    textures.into_iter().collect()
+}
+
+/// The texmap of a land tile (its texture id in texmaps.mul, from `folder`): the image with its export menu (Classic
+/// 16-bit colours, no transparency), and the bulk export of the `shown` texture ids.
+fn ui_texmap(app: &mut UocfEditorApp, ctx: &egui::Context, ui: &mut egui::Ui, folder: &Path, texture_id: u16, shown: Vec<u16>) {
+    ui.heading("Texmap");
+    let texmaps = match app.art_texmaps.file(folder) {
+        Ok(texmaps) => texmaps,
+        Err(error) => {
+            ui.colored_label(ui.visuals().warn_fg_color, format!("No {TEXMAP_DATA_FILE} and {TEXMAP_INDEX_FILE}: {error}"));
+            return;
+        }
+    };
+    let (image, handle) = match app.art_texmaps.shown(ctx, &texmaps, texture_id) {
+        Ok(Some((image, handle))) => (image, handle),
+        Ok(None) => {
+            ui.weak(format!("{TEXMAP_DATA_FILE} has no texture {texture_id}."));
+            return;
+        }
+        Err(error) => {
+            ui.colored_label(ui.visuals().warn_fg_color, format!("Texture {texture_id}: {error}"));
+            return;
+        }
+    };
+    let stem = id_file_stem(TEXMAP_FILE_PREFIX, u32::from(texture_id));
+    let menu = ExportMenu {
+        hue: Err(NOT_HUED),
+        frame: false,
+        bulk: vec![BulkEntry {
+            label: format!("Export the texmaps of the shown land tiles ({})...", shown.len()),
+            hover: format!(
+                "The texmap of every land tile the list shows, each texture once as {stem}.<format> (by texture id), \
+                 into a folder you pick (files of the same name are replaced)."
+            ),
+        }],
+    };
+    let mut clicked = None;
+    ui.horizontal(|ui| {
+        ui.label(format!("Texture {texture_id}: {}x{}", image.width(), image.height()));
+        clicked = export_menu(ui, &mut app.image_export, &menu);
+    });
+    ui.image(handle);
+    let format = app.image_export.format;
+    match clicked {
+        None => {}
+        Some(ExportClicked::Shown) => {
+            if let Some(status) = save_status(&format!("texmap {texture_id}"), save_image(&stem, image, format)) {
+                app.status_message = status;
+            }
+        }
+        Some(ExportClicked::Bulk(_)) => {
+            start_bulk(app, |folder| {
+                BulkExport::start(format!("Export {} texmaps", shown.len()), folder, format, shown, move |texture_id: u16| {
+                    let record = texmaps.texture(usize::from(texture_id))?;
+                    let stem = id_file_stem(TEXMAP_FILE_PREFIX, u32::from(texture_id));
+                    Ok(record.map(|record| vec![(stem, ExportImage::texmap(&record))]).unwrap_or_default())
+                })
+            });
+        }
+    }
 }
 
 /// The export menu of art `id`, and the bulk export of the `shown` ids.

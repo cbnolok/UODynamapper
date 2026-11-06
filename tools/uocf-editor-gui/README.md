@@ -40,14 +40,15 @@ back). Multimap reads each client's `facetNN.dds` from its own folder.
 
 ## Image export
 
-Every tab that shows a sprite or a texture (Art, Gumps and the interface images,
-Animations, Fonts, Multimap, the Classic image import window) has the same
-`Export` menu: a format (BMP, PNG or WebP) and `Save image as ...`. The formats
-keep the stored pixels:
+Every tab that shows a sprite or a texture (Art, with the texmap of a land
+tile, Gumps and the interface images, Animations, Fonts, Multimap, the image
+entries of the UOP Explorer, the texture files of Effects, the Classic image
+import window) has the same `Export` menu: a format (BMP, PNG or WebP) and
+`Save image as ...`. The formats keep the stored pixels:
 
 | Image | BMP | PNG | WebP |
 | ----- | --- | --- | ---- |
-| Classic art, gumps (16-bit colours) | 16-bit X1R5G5B5, the stored words bit for bit | RGBA; each 5-bit channel widened as `(c << 3) \| (c >> 2)`, colour 0 transparent (a land tile: only outside the diamond) | lossless, the PNG's pixels |
+| Classic art, gumps, texmaps (16-bit colours) | 16-bit X1R5G5B5, the stored words bit for bit | RGBA; each 5-bit channel widened as `(c << 3) \| (c >> 2)`, colour 0 transparent in art and gumps (a land tile: only outside the diamond), opaque black in a texmap | lossless, the PNG's pixels |
 | Classic animation frames (a 256-colour palette) | 8-bit with the palette | 8-bit paletted, index 0 transparent | lossless RGBA (the encoder has no palette mode) |
 | Enhanced and decoded textures | 32-bit with alpha | lossless RGBA | lossless RGBA |
 
@@ -56,11 +57,15 @@ record. The image is saved as stored; `As shown (hued)` applies the hue the view
 Enhanced art, animation frames), and is greyed where the view draws no hue.
 
 The bulk exports write every image into a folder you pick, on a worker thread
-with a progress bar and `Cancel`: `Export all shown` on the Art and Gumps lists, and
-`Export action` and `Export body` on Animations. Files are named by id, such
-as `land_0x0003` (a land tile, by its land id), `item_0x0E75` (an item, by
-its item id), `gump_0x0064` and `anim_400_a0_d3_f01` (body, action, direction,
-frame), and a file of the same name in the folder is replaced.
+with a progress bar and `Cancel`: `Export all shown` on the Art and Gumps lists,
+the UOP Explorer's entries and the Effects files (their images and textures,
+decoded), the texmaps of the land tiles the Art list shows, and `Export action`
+and `Export body` on Animations. Files are named by id, such as `land_0x0003`
+(a land tile, by its land id), `item_0x0E75` (an item, by its item id),
+`gump_0x0064`, `texmap_0x0003` (by texture id) and `anim_400_a0_d3_f01` (body,
+action, direction, frame), or by path with separators and dots as `_`
+(`build_worldart_00001234_dds`, `fizzle_tga`), and a file of the same name in
+the folder is replaced.
 
 ## Binary
 

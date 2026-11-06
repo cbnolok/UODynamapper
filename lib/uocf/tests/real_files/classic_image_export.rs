@@ -1,6 +1,7 @@
 //! Exporting Classic art and gumps on real clients (`uocf::image_export`), in each container found and each file
 //! format: every file imports back (`classic_import_rgba`, then [`ClassicImageFiles::prepare`]) to the stored
-//! pixels without a colour rounded, and to the same record bytes as the stored pixels import to.
+//! pixels without a colour rounded, and to the same record bytes as the stored pixels import to. Texmaps import
+//! back ([`TexmapRecord::from_rgba`]) to the stored colours.
 //!
 //! `UO_CLASSIC_CLIENT_ROOTS` lists the client directories (separated like `PATH`). Nothing is written. Run with
 //! `--ignored --release`.
@@ -8,7 +9,8 @@
 use uocf::classic::art_write::{ArtKind, STATIC_ART_ID_BASE};
 use uocf::classic::image_files::{ClassicImageFiles, ClassicImageKind};
 use uocf::enhanced::dds_writer::SizeChange;
-use uocf::image_export::{classic_import_rgba, ImageFileFormat};
+use uocf::classic::texmap_write::{TexmapMulFile, TexmapRecord};
+use uocf::image_export::{classic_import_rgba, ExportImage, ImageFileFormat};
 
 const CLIENT_ROOTS_ENV: &str = "UO_CLASSIC_CLIENT_ROOTS";
 /// Records sampled per kind (land, statics, gumps): the first ones present from each start id.
@@ -54,5 +56,37 @@ fn exported_art_and_gumps_import_back_in_every_format() {
                 println!("{label}: {sampled} records import back from BMP, PNG and WebP to the stored pixels and record");
             }
         }
+    }
+}
+
+#[test]
+#[ignore]
+fn exported_texmaps_import_back_in_every_format() {
+    let roots = std::env::var_os(CLIENT_ROOTS_ENV).unwrap_or_else(|| panic!("set {CLIENT_ROOTS_ENV}"));
+    for root in std::env::split_paths(&roots).filter(|root| !root.as_os_str().is_empty()) {
+        let texmaps = match TexmapMulFile::load(&root) {
+            Ok(texmaps) => texmaps,
+            Err(error) => {
+                println!("{}: no texmaps ({error:#})", root.display());
+                continue;
+            }
+        };
+        let mut sampled = 0;
+        for id in 0..texmaps.len() {
+            if sampled == SAMPLED {
+                break;
+            }
+            let Some(texmap) = texmaps.texture(id).unwrap() else { continue };
+            let export = ExportImage::texmap(&texmap);
+            for format in ImageFileFormat::ALL {
+                let bytes = export.encode(format).unwrap_or_else(|error| panic!("texture {id} {format:?}: {error:#}"));
+                let rgba = image::load_from_memory(&bytes).unwrap().into_rgba8();
+                let imported = TexmapRecord::from_rgba(rgba.width(), rgba.height(), rgba.as_raw()).unwrap();
+                assert_eq!(imported, texmap, "{} texture {id} {format:?}: the colours differ", root.display());
+            }
+            sampled += 1;
+        }
+        assert!(sampled > 0, "{}: no texture", root.display());
+        println!("{}: {sampled} texmaps import back from BMP, PNG and WebP to the stored colours", root.display());
     }
 }

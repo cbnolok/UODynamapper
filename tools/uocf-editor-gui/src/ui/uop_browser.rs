@@ -1,5 +1,10 @@
 use eframe::egui;
-use crate::app::{guess_uop_image_format_from_payload, UocfEditorApp, ViewMode};
+use std::sync::Arc;
+use crate::app::{decode_uop_image, guess_uop_image_format_from_payload, UocfEditorApp, ViewMode};
+use super::image_export::{
+    export_menu, path_file_stem, save_rgba, save_status, start_bulk, BulkEntry, BulkExport, ExportClicked, ExportImage,
+    ExportMenu, NOT_HUED,
+};
 use super::{arrow_delta, list_sort_controls, move_selection, sorted_indices_by};
 use uocf::enhanced::client_dialect::ClientDialect;
 use uocf::enhanced::dds_writer::SizeChange;
@@ -26,6 +31,8 @@ const WAYPOINT_ERROR_COLOR: egui::Color32 = egui::Color32::from_rgb(230, 90, 90)
 const SYNTAX_ERROR_COLOR: egui::Color32 = WAYPOINT_ERROR_COLOR;
 const WAYPOINT_WARNING_COLOR: egui::Color32 = egui::Color32::from_rgb(230, 180, 60);
 const UOP_FILTER: (&str, &[&str]) = ("UOP package", &["uop"]);
+/// The entry names the preview decodes as images (lowercase).
+const IMAGE_ENTRY_EXTENSIONS: [&str; 3] = [".dds", ".tga", ".bmp"];
 
 pub(super) const REPLACE_FILE_HOVER: &str = "Write a copy of the package with this entry replaced by a file of the same kind \
 (by content: the kind its extension or the current entry has) that parses where uocf has a reader for the entry. \
@@ -662,20 +669,13 @@ fn ui_generic_preview(
 ) {
     if let Some(data) = app.get_uop_entry_payload(uop_idx, hash) {
         let data = data.as_ref();
-        let lower_name = name.to_lowercase();
-        let guessed_image_name = app
-            .guess_terrain_texture_file_format
-            .then(|| guess_uop_image_format_from_payload(data).map(|(extension, _)| format!("{hash:016X}.{extension}")))
-            .flatten();
-        if lower_name.ends_with(".dds")
-            || lower_name.ends_with(".tga")
-            || lower_name.ends_with(".bmp")
-            || guessed_image_name.is_some()
-        {
-            let texture_name = guessed_image_name.as_deref().unwrap_or(name);
+        if let Some(texture_name) = image_entry_name(name, hash, data, app.guess_terrain_texture_file_format) {
             app.last_texture_problem = None;
-            if let Some(handle) = app.get_uop_texture(ctx, hash, data, texture_name) {
-                ui.label(format!("Image: {}x{}", handle.size()[0], handle.size()[1]));
+            if let Some(handle) = app.get_uop_texture(ctx, hash, data, &texture_name) {
+                ui.horizontal(|ui| {
+                    ui.label(format!("Image: {}x{}", handle.size()[0], handle.size()[1]));
+                    ui_image_entry_export(app, ui, uop_idx, hash, name);
+                });
                 egui::ScrollArea::both().show(ui, |ui| {
                     ui.image(&handle);
                 });
@@ -695,6 +695,78 @@ fn ui_generic_preview(
                     hex_text.push_str(&format!("{:02X} ", byte));
                 }
                 ui.monospace(hex_text);
+            });
+        }
+    }
+}
+
+fn has_image_extension(lower_name: &str) -> bool {
+    IMAGE_ENTRY_EXTENSIONS.iter().any(|extension| lower_name.ends_with(extension))
+}
+
+/// The name to decode entry `hash` (named `name`, holding `data`) as an image by: `<hash>.<format>` when `guess` is
+/// on and the bytes tell the format, else its own name when that is an image's; `None` when it is no image.
+fn image_entry_name(name: &str, hash: u64, data: &[u8], guess: bool) -> Option<String> {
+    let guessed = guess.then(|| guess_uop_image_format_from_payload(data).map(|(extension, _)| format!("{hash:016X}.{extension}")));
+    guessed.flatten().or_else(|| has_image_extension(&name.to_lowercase()).then(|| name.to_string()))
+}
+
+/// The export menu of the image entry shown (`hash`, named `name`), decoded, and the bulk export of the image entries
+/// the list shows.
+fn ui_image_entry_export(app: &mut UocfEditorApp, ui: &mut egui::Ui, uop_idx: usize, hash: u64, name: &str) {
+    let guess = app.guess_terrain_texture_file_format;
+    let query = app.searches.uop_browser.to_lowercase();
+    let labels = app.get_uop_entry_labels(uop_idx);
+    // Guessing reads the bytes of every entry the list shows; the names tell the images otherwise.
+    let shown_images = || {
+        labels
+            .iter()
+            .filter(|file| query.is_empty() || file.search_name.contains(&query))
+            .filter(|file| guess || has_image_extension(&file.search_name))
+    };
+    let guessed = if guess { ", and the entries whose bytes are a DDS or TGA" } else { "" };
+    let menu = ExportMenu {
+        hue: Err(NOT_HUED),
+        frame: false,
+        bulk: vec![BulkEntry {
+            label: format!("Export all shown ({})...", shown_images().count()),
+            hover: format!(
+                "Every image entry the list shows (DDS, TGA, hue BMP, Classic UOP art and gumps{guessed}), decoded, each \
+                 as {}.<format> (its name with separators and dots as _), into a folder you pick (files of the same \
+                 name are replaced).",
+                path_file_stem(name)
+            ),
+        }],
+    };
+    let Some(clicked) = export_menu(ui, &mut app.image_export, &menu) else {
+        return;
+    };
+    let format = app.image_export.format;
+    match clicked {
+        ExportClicked::Shown => {
+            let result = match app.current_image_preview().filter(|preview| preview.key == hash) {
+                Some(preview) => save_rgba(&path_file_stem(name), preview.width, preview.height, &preview.rgba, format),
+                None => Err("the entry has no decoded image".to_string()),
+            };
+            if let Some(status) = save_status(name, result) {
+                app.status_message = status;
+            }
+        }
+        ExportClicked::Bulk(_) => {
+            let entries: Vec<(u64, String)> = shown_images().map(|file| (file.hash, file.display_name.clone())).collect();
+            let loaded = Arc::clone(&app.uop_cache.loaded_uops[uop_idx]);
+            start_bulk(app, |folder| {
+                BulkExport::start(format!("Export {} entries", entries.len()), folder, format, entries, move |(hash, name)| {
+                    let Some(data) = loaded.package.unpack_file_arc_by_hash(hash)? else {
+                        return Ok(Vec::new());
+                    };
+                    let Some(texture_name) = image_entry_name(&name, hash, &data, guess) else {
+                        return Ok(Vec::new());
+                    };
+                    let (width, height, rgba) =
+                        decode_uop_image(&texture_name, &data).map_err(|error| color_eyre::eyre::eyre!("{name}: {error}"))?;
+                    Ok(vec![(path_file_stem(&name), ExportImage::Rgba { width, height, rgba })])
+                })
             });
         }
     }
@@ -850,5 +922,31 @@ fn ui_integrated_terrain_view(app: &mut UocfEditorApp, ctx: &egui::Context, ui: 
                  }
              });
         });
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const HASH: u64 = 0xAB;
+    const WIDTH: u32 = 3;
+    const HEIGHT: u32 = 2;
+
+    #[test]
+    fn an_entry_is_an_image_by_its_name_or_by_the_format_its_bytes_tell() {
+        let dds = b"DDS \0\0\0\0";
+        assert_eq!(image_entry_name("build/a.TGA", HASH, b"text", false).as_deref(), Some("build/a.TGA"));
+        assert_eq!(image_entry_name("data/a.csv", HASH, dds, false), None, "no guess when guessing is off");
+        assert_eq!(image_entry_name("data/a.csv", HASH, dds, true).as_deref(), Some("00000000000000AB.dds"));
+        assert_eq!(image_entry_name("hues.bmp", HASH, b"text", true).as_deref(), Some("hues.bmp"), "the name when no guess");
+    }
+
+    #[test]
+    fn a_tga_entry_decodes_to_its_pixels() {
+        let image = image::RgbaImage::from_fn(WIDTH, HEIGHT, |x, y| image::Rgba([x as u8, y as u8, u8::MAX, u8::MAX]));
+        let mut tga = Vec::new();
+        image.write_to(&mut std::io::Cursor::new(&mut tga), image::ImageFormat::Tga).unwrap();
+        assert_eq!(decode_uop_image("build/a.tga", &tga), Ok((WIDTH, HEIGHT, image.into_raw())));
     }
 }
