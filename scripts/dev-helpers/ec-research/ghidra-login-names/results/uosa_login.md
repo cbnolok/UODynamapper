@@ -24,11 +24,12 @@ The login UI scripts are not in `UserInterface/Default`; they are most probably 
 `Interface.uop`.
 
 `UOLua::SetLoginServer` and `UOLua::GetLoginServers` work on `g_LoginConfig` (0x00e37338).
-That object is loaded from `LoginServersDefault.xml` / `LoginServersUser.xml` by
-`LoginConfig::LoadLoginServers` (0x006052a0). `LoginConfig::SetInfoForLogin` (0x006054b0)
-resolves the selected server and stores the IP at +0x9c and the port at +0xa0. The
-global stays null when the XML files are missing; there are none in the tested client
-folder.
+The dormant `LoginConfig::LoadLoginServers` (0x006052a0) contains loaders for
+`LoginServersDefault.xml` / `LoginServersUser.xml`, but has no incoming references in
+the examined build. The only write to the global is cleanup at 0x004aab6d, which clears
+it (`FUN_004aa830`). It stays null; placing XML files in the client folder does not
+activate it. `LoginConfig::SetInfoForLogin` (0x006054b0) resolves a selected server and
+stores the IP at +0x9c and the port at +0xa0 only if that dormant configuration is used.
 
 ### Login address choice (`LoginManager::LoginAccount`)
 
@@ -155,10 +156,11 @@ All patterns still match exactly where ECLO expects them in this build:
 | ENC2 `30 10 83 46 18 01 8B 45 0C ...` | 0x0063becb in `UOGameCipher_S2C_Decrypt::Transform` | NOP the XOR | matches once; not applied |
 | ENC3 `30 08 8B 4E 04 8B 46 08 ...` | 0x0063c7da in `UOLoginCipher_C2S_Encrypt::Transform` | NOP the XOR | matches once; not applied |
 
-Two cases make the address patches irrelevant:
+Limits of the address and encryption patches:
 
-- When `LoginServersDefault.xml` / `LoginServersUser.xml` exist, `g_LoginConfig` is set
-  and its server replaces the patched constants.
+- The config branch would bypass the built-in address if `g_LoginConfig` were populated,
+  but the examined build never populates it. The earlier inference that XML file
+  presence alone bypassed the patches was incorrect.
 - The encryption NOPs would not cover the 0xE3/0xE4 Crypto++ path, if a server uses it.
 
 ## Uncertain points

@@ -1,6 +1,6 @@
-//! Client configuration files a client folder holds next to its executable: the login server lists
-//! ([`login_servers`]: Classic `login.cfg` and `uo.cfg`, Enhanced Client and Kingdom Reborn `LoginServers*.xml`).
-//! Files are only read; writers take an explicit output path. Where each client family reads its login server from,
-//! with the evidence: `LOGIN_SERVER.md` next to this module.
+//! Login-server configuration inspection and file editing ([`login_servers`]). Classic reads `uo.cfg` and its
+//! login file. In the traced Enhanced Client and Kingdom Reborn builds, `LoginServers*.xml` has no effect:
+//! inspection reports the executable's built-in addresses and lists XML entries as unused.
+//! Writers take an explicit output path. See `LOGIN_SERVER.md` next to this module for the evidence.
 
 pub mod login_servers;

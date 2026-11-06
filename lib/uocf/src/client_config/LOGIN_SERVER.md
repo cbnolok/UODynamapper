@@ -39,6 +39,12 @@ Every attribute is optional (null-checked); `title` keys a map; `port` is `strto
 loads after `LoginServersDefault.xml`; KR also looks in `client\`. `LoginServersXml` edits values in place and appends
 new entries before `</LoginConfig>`, keeping all other text.
 
+In the examined UOSA.exe, `LoginConfig::LoadLoginServers` at `0x006052a0` has no incoming references. The only write
+to `g_LoginConfig` (`0x00e37338`) is the cleanup function at `0x004aa830`, which clears it at `0x004aab6d`.
+`LoginManager::LoginAccount` (`0x00613510`) therefore follows its built-in-address branch in that build.
+The earlier inference that simply adding XML files enables this config was wrong; the dormant parser's presence
+does not make it active. See the [login research](../../../../scripts/dev-helpers/ec-research/ghidra-login-names/results/uosa_login.md).
+
 What the client connects to is in its code (`LoginAccount`):
 
 - **Fixed store** `C7 44 24 d imm32` (the IPv4 address as a host-order u32, so 172.16.17.41 is stored `29 11 10 ac`)
