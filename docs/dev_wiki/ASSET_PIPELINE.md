@@ -16,6 +16,7 @@ Common commands:
 - `pack-ec-textures`: pack Enhanced Client static-art and terrain textures into `tex_art_ec.uddp` and `tex_land_ec.uddp`.
 - `pack-tilemeta`: pack Classic Client tiledata and Enhanced Client tileart metadata into `tilemeta.uddp`.
 - `pack-ec-tex-aux`: pack the EC support images that runtime consumers read (WorldArt hue masks, terrain-surface masks, liquid inputs) from a `tilemeta.uddp`'s texture refs into `tex_aux_ec.uddp`. The package also holds the client's missing-texture fallback; see below.
+- `pack-ec-paperdoll`: pack the Enhanced Client's 3D paperdoll frames (`Paperdoll.uop`), lossless, and the hue tables of `Hues.uop` into `paperdoll_ec.uddp`.
 - `pack-radar`: generate a radar map such as `facet0X.dds` from Classic Client map and statics data.
 - `pack-map`: pack Classic Client map data into a block-based `.uddp` package.
 - `pack-statics`: pack Classic Client statics data into a block-based `.uddp` package.
@@ -162,6 +163,14 @@ Stores dense land/item metadata tables used by the runtime to merge Classic Clie
 
 Each EC texture ref carries the shader input it feeds (`stable_role`), taken from the block's shader name and the item position, as the client binds them; file names are not read. Packages from before this rule (tilemeta format 1) are rejected; repack them.
 
+### `paperdoll_ec.uddp`
+
+Stores the frames the Enhanced Client's paperdoll draws (`ECPaperdollTexture::Build`): the male and female sets of `Paperdoll.uop`, decoded losslessly with their partial alpha, plus what hueing them needs (hue masks, palette shadow statistics and the 3,000 tables of `Hues.uop`). It holds frames only; which frame an item draws, and in which order, comes from the item definitions in `tilemeta.uddp` (`metadata/item_definitions.bin`, tileart records by entry name) and the shared lookup `uocf::enhanced::paperdoll`, which the uocf editor runs on the client files. Lossless Zstd 19 by default: 8.2 MiB for EC 2024. Layout in [UDDP_FORMATS.md](UDDP_FORMATS.md) section 5.
+
+```text
+udd-cli pack pack-ec-paperdoll --ecdir /path/to/ec --output paperdoll_ec.uddp
+```
+
 ## Enhanced Client Source Inputs
 
 Enhanced Client source packages are not a single asset stream. The current packers read and classify content from a mixed set of UOP inputs.
@@ -179,6 +188,7 @@ Shared or support texture pools:
 - `SystemTextures.uop`: client system images; `missing.tga` is packed into `tex_aux_ec` as the missing-texture fallback.
 - `TerrainTexture.uop`: land support-resource pool. Package origin alone does not prove land ownership.
 - `EffectTexture.uop`: mixed effect-resource pool containing image and non-image resources.
+- `Paperdoll.uop`: the 3D paperdoll frames, two AMOU sets (`build/paperdoll/000001/00.bin` male, `01.bin` female), packed into `paperdoll_ec.uddp`.
 
 Important rule:
 

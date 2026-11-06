@@ -427,31 +427,41 @@ mod tests {
         assert_eq!(read.definition(RENAMED_STORED_ID).unwrap().entry_id(), RENAMED_STORED_ID);
     }
 
-    /// A packed `tilemeta.uddp` finds, for a man and a woman, the layer and frame `tileart.uop` finds for every item
-    /// with a drawn layer, and the same body frames.
+    /// Packed `tilemeta.uddp` and `paperdoll_ec.uddp` find, for a man and a woman, the layer and frame `tileart.uop`
+    /// and `Paperdoll.uop` find for every item with a drawn layer, and the same body frames.
     #[test]
-    #[ignore = "needs a packed tilemeta.uddp and its Enhanced Client: set UDD_TILEMETA and UO_EC_CLIENT_DIR, and run \
-                with --ignored"]
+    #[ignore = "needs packed tilemeta.uddp and paperdoll_ec.uddp and their Enhanced Client: set UDD_TILEMETA, \
+                UDD_PAPERDOLL_EC and UO_EC_CLIENT_DIR, and run with --ignored"]
     fn a_packed_tilemeta_finds_what_tileart_finds() {
         use uocf::enhanced::paperdoll::{
-            body_frame, item_frame, item_layer, FrameSets, NamedTileArt, Wearer, ENTRY_ID_SPAN, PAPERDOLL_UOP_NAME,
-            SKIPPED_LAYERS,
+            body_frame, item_frame, item_layer, FrameRef, FrameSets, NamedTileArt, Wearer, ENTRY_ID_SPAN,
+            PAPERDOLL_UOP_NAME, SKIPPED_LAYERS,
         };
         use uocf::enhanced::tileart::TILEART_UOP_NAME;
         use uocf::uop_container::package::UopPackage;
         use uocf::utils::path::find_file_ignoring_case;
         const TILEMETA_ENV: &str = "UDD_TILEMETA";
+        const PAPERDOLL_EC_ENV: &str = "UDD_PAPERDOLL_EC";
         const EC_CLIENT_DIR_ENV: &str = "UO_EC_CLIENT_DIR";
         const HUMAN_FEMALE: u32 = 401;
         let tilemeta = crate::TileMetaPackage::load(std::env::var_os(TILEMETA_ENV).expect("set UDD_TILEMETA")).unwrap();
         let dir = std::path::PathBuf::from(std::env::var_os(EC_CLIENT_DIR_ENV).expect("set UO_EC_CLIENT_DIR"));
         let named = NamedTileArt::read(&UopPackage::load(find_file_ignoring_case(&dir, TILEART_UOP_NAME).unwrap()).unwrap());
         let sets = FrameSets::load(&find_file_ignoring_case(&dir, PAPERDOLL_UOP_NAME).unwrap()).unwrap();
+        let frames =
+            crate::PaperdollEcPackage::load(std::env::var_os(PAPERDOLL_EC_ENV).expect("set UDD_PAPERDOLL_EC")).unwrap();
         let packed = tilemeta.item_definitions();
+        // The frames compared by set and number, as the two sides keep different frame records.
+        let client_key = |frame: FrameRef| (frame.set, frame.entry.frame_number);
+        let package_key = |frame: FrameRef<crate::paperdoll_ec::PaperdollEcFrameRecord>| (frame.set, frame.entry.frame_number);
         let mut pairs = 0usize;
         for body in [HUMAN_MALE, HUMAN_FEMALE] {
             let (from_tileart, from_package) = (Wearer::new(&named, body), Wearer::new(packed, body));
-            assert_eq!(body_frame(&sets, &from_tileart), body_frame(&sets, &from_package), "body {body}");
+            assert_eq!(
+                body_frame(&sets, &from_tileart).map(|(frame, fell_back)| (client_key(frame), fell_back)),
+                body_frame(&frames, &from_package).map(|(frame, fell_back)| (package_key(frame), fell_back)),
+                "body {body}"
+            );
             for item_id in 0..ENTRY_ID_SPAN {
                 let fallback = tilemeta.item_tile(item_id).map(|tile| tile.quality).filter(|&quality| quality != 0);
                 let layer = item_layer(&named, item_id, fallback);
@@ -461,8 +471,8 @@ mod tests {
                 }
                 pairs += 1;
                 assert_eq!(
-                    item_frame(&sets, &named, &from_tileart, item_id),
-                    item_frame(&sets, packed, &from_package, item_id),
+                    item_frame(&sets, &named, &from_tileart, item_id).map(client_key),
+                    item_frame(&frames, packed, &from_package, item_id).map(package_key),
                     "body {body} item {item_id}"
                 );
             }

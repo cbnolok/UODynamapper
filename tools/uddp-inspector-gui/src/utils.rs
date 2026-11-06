@@ -30,6 +30,7 @@ pub fn data_type_to_str(t: u8) -> &'static str {
         11 => "Metadata",
         14 => "Static",
         15 => "Effect",
+        paperdoll if paperdoll == udd_container::DataType::Paperdoll as u8 => "Paperdoll",
         _ => "Other",
     }
 }

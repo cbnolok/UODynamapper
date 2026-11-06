@@ -622,7 +622,14 @@ impl InspectorApp {
                 } else if self
                     .virtual_entries
                     .iter()
-                    .any(|entry| matches!(entry.data, VirtualEntryData::Gump(_) | VirtualEntryData::WorldLight(_)))
+                    .any(|entry| {
+                        matches!(
+                            entry.data,
+                            VirtualEntryData::Gump(_)
+                                | VirtualEntryData::WorldLight(_)
+                                | VirtualEntryData::PaperdollFrame(_)
+                        )
+                    })
                 {
                     ViewMode::Virtual
                 } else {
@@ -674,6 +681,11 @@ impl InspectorApp {
                 self.virtual_entries = world_light_entries;
                 return;
             }
+        }
+
+        if let Ok(package) = udd_assets::PaperdollEcPackage::from_uddp_package(reader.clone()) {
+            self.virtual_entries = detect_paperdoll_frame_virtual_entries(&package);
+            return;
         }
 
         let tilemeta_entries = self.detect_tilemeta_virtual_entries(reader, package_path);
@@ -1234,6 +1246,9 @@ impl InspectorApp {
                         VirtualEntryData::WorldLight(info) => {
                             Some((ventry, self.read_file_by_path(u_reader, &info.path), None))
                         }
+                        VirtualEntryData::PaperdollFrame(info) => {
+                            Some((ventry, self.read_file_by_path(u_reader, &info.path), None))
+                        }
                         /*
                         VirtualEntryData::DirectPayload { offset, size } => {
                             let mut data = vec![0u8; *size as usize];
@@ -1462,6 +1477,31 @@ impl InspectorApp {
                                 info.height
                             ),
                         );
+                    }
+                    VirtualEntryData::PaperdollFrame(info) => {
+                        let record = info.record;
+                        let size = [usize::from(record.width), usize::from(record.height)];
+                        match page_data_opt {
+                            Some(rgba) if record.pixel_count() > 0 && rgba.len() == record.pixel_count() * 4 => {
+                                self.set_preview_image(
+                                    ctx,
+                                    &format!("paperdoll_frame_{}_{}", record.set, record.frame_number),
+                                    size,
+                                    &rgba,
+                                    format!(
+                                        "Paperdoll frame {} of set {} ({}x{} at {}, {} from the anchor, unhued)",
+                                        record.frame_number, record.set, record.width, record.height, record.x, record.y
+                                    ),
+                                );
+                            }
+                            _ => {
+                                self.preview_texture = None;
+                                self.preview_text = Some(format!(
+                                    "Paperdoll frame {} of set {} has no {}x{} rgba8888 payload at {}.",
+                                    record.frame_number, record.set, record.width, record.height, info.path
+                                ));
+                            }
+                        }
                     }
                     VirtualEntryData::MapBlock { source_entry_idx } => {
                         self.preview_texture = None;

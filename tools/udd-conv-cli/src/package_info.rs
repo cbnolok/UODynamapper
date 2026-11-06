@@ -13,7 +13,7 @@ use udd_assets::mobile_anim_ec::{
 /// Manifests of `mobile_anim_ec.uddp`: pages, animations, frames, items, source hints, bodies.
 const MOBILE_ANIM_EC_METADATA_ENTRY_COUNT: usize = 6;
 use udd_assets::{
-    HuesPackage, MobileAnimCcPackage, MobileAnimEcPackage, TexArtCcPackage, TexArtEcPackage,
+    HuesPackage, MobileAnimCcPackage, MobileAnimEcPackage, PaperdollEcPackage, TexArtCcPackage, TexArtEcPackage,
     TexLandEcPackage, TileMetaPackage,
 };
 use udd_container::{
@@ -55,6 +55,7 @@ fn data_type_name(data_type: u8) -> &'static str {
         13 => "Tile",
         14 => "Static",
         15 => "Effect",
+        paperdoll if paperdoll == udd_container::DataType::Paperdoll as u8 => "Paperdoll",
         _ => "Custom",
     }
 }
@@ -312,9 +313,10 @@ fn print_known_package_summary(package: &UddpReader) -> eyre::Result<bool> {
         info!("Recognized package: tilemeta");
         info!("Known logical files: metadata=2");
         info!(
-            "Tilemeta: land_tiles={}, item_tiles={}",
+            "Tilemeta: land_tiles={}, item_tiles={}, item_definitions={}",
             package.land_tiles().len(),
-            package.item_tiles().len()
+            package.item_tiles().len(),
+            package.item_definitions().entry_ids().count()
         );
         return Ok(true);
     }
@@ -335,6 +337,25 @@ fn print_known_package_summary(package: &UddpReader) -> eyre::Result<bool> {
             udd_assets::hues::HUES_TEXTURE_WIDTH,
             udd_assets::hues::HUES_TEXTURE_HEIGHT
         );
+        return Ok(true);
+    }
+
+    if let Ok(package) = PaperdollEcPackage::from_uddp_package(package.clone()) {
+        let masked = package.frames().iter().filter(|frame| frame.hue_mode == FRAME_HUE_MASKED).count();
+        info!("Recognized package: paperdoll_ec");
+        info!("Known logical files: metadata=2, frames={}, hue_masks={masked}", package.frames().len());
+        for (set, header) in package.sets().iter().enumerate() {
+            let frames = package.frames().iter().filter(|frame| usize::from(frame.set) == set);
+            info!(
+                "Set {set}: frames={}, header box=({}, {})..({}, {})",
+                frames.count(),
+                header.bounds.x0,
+                header.bounds.y0,
+                header.bounds.x1,
+                header.bounds.y1
+            );
+        }
+        info!("Hue tables: {}", package.hue_tables().tables.len());
         return Ok(true);
     }
 

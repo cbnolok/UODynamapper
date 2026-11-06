@@ -141,6 +141,9 @@ pub struct AppSettings {
     pub effects_ec_strict: bool,
     /// The file the Enhanced effects packer writes its findings to (`pack-ec-effects --report`).
     pub effects_ec_report: Option<PathBuf>,
+    /// The Zstd level of the Enhanced paperdoll frames and manifests (`pack-ec-paperdoll --zstd=LEVEL`); `None` keeps
+    /// the packer's level.
+    pub zstd_paperdoll_ec: Option<i32>,
     /// Validate each package a packing job writes, as `tool validate` does, once the job succeeds.
     pub validate_after_packing: bool,
 }
@@ -214,6 +217,7 @@ impl Default for AppSettings {
             zstd_effects_ec: None,
             effects_ec_strict: false,
             effects_ec_report: None,
+            zstd_paperdoll_ec: None,
             validate_after_packing: false,
         }
     }
@@ -260,6 +264,7 @@ pub enum AssetPackTask {
     Hues,
     WorldLights,
     EffectsEc,
+    PaperdollEc,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -405,6 +410,7 @@ mod tests {
         assert_eq!(settings.zstd_effects_ec, None);
         assert!(!settings.effects_ec_strict);
         assert_eq!(settings.effects_ec_report, None);
+        assert_eq!(settings.zstd_paperdoll_ec, None);
         assert!(!settings.validate_after_packing);
     }
 
@@ -427,6 +433,7 @@ mod tests {
         settings.zstd_effects_ec = Some(ZSTD_LEVEL);
         settings.effects_ec_strict = true;
         settings.effects_ec_report = Some(PathBuf::from("reports/effects_ec.txt"));
+        settings.zstd_paperdoll_ec = Some(ZSTD_LEVEL);
         settings.validate_after_packing = true;
 
         let serialized = toml::to_string(&settings).expect("serialize settings");

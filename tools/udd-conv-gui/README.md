@@ -10,7 +10,8 @@ using the command line.
 - Configure source client paths (Classic Client or Enhanced Client installation
   directories) via a file picker.
 - Select the currently supported GUI pack jobs for tile metadata, hues, world
-  lights, art, land textures, mobile animations, Enhanced effects, gumps, maps,
+  lights, art, land textures, mobile animations, Enhanced effects, the Enhanced
+  paperdoll, gumps, maps,
   statics, and radar output.
 - Use an optional upscale profile file for the existing image pack jobs. See
   [`../udd-conv-cli/UPSCALE_PROFILES.md`](../udd-conv-cli/UPSCALE_PROFILES.md).
@@ -60,6 +61,7 @@ Two gaps apply to the image jobs, and the rows below leave them out:
 | `pack-lights` | Yes: Assets, World Lights (`--use-verdata` is the overview's verdata.mul) | |
 | `pack-hues` | Yes: Assets, Hues (the hue ramp is greyed out when the source is an Enhanced `Hues.uop`, which is copied as it is) | |
 | `pack-ec-effects` | Yes: Assets, Enhanced Effects | |
+| `pack-ec-paperdoll` | Yes: Assets, Enhanced Paperdoll | |
 | `audit-ec-material-refs` | CLI only | |
 | `inventory-ec-support-textures` | CLI only | |
 | `report-ec-material-baseline` | CLI only | |

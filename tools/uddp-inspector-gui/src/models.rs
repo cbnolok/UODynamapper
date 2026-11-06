@@ -62,6 +62,7 @@ pub enum VirtualEntryData {
     TileMetaItem(TileMetaItemInfo),
     Gump(GumpInfo),
     WorldLight(WorldLightInfo),
+    PaperdollFrame(PaperdollFrameInfo),
     MapBlock {
         source_entry_idx: usize,
     },
@@ -220,6 +221,14 @@ pub struct WorldLightInfo {
     pub width: u16,
     pub height: u16,
     pub flags: u16,
+    pub path: String,
+}
+
+/// A frame of `paperdoll_ec.uddp`.
+#[derive(Debug, Clone)]
+pub struct PaperdollFrameInfo {
+    pub record: udd_assets::paperdoll_ec::PaperdollEcFrameRecord,
+    /// The frame's RGBA entry.
     pub path: String,
 }
 

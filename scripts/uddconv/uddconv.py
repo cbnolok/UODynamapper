@@ -248,6 +248,7 @@ def run_all(
     gump_args: list[str],
     include_animations: bool = True,
     share_gumps: bool = True,
+    paperdoll_zstd: list[str] | None = None,
 ) -> None:
     ccdir = require_value(ccdir, "usage: just uddconv-all <ccdir> [ecdir] [output_dir] [maps]")
     ensure_output_dir(output_dir)
@@ -306,6 +307,15 @@ def run_all(
             f"{output_dir}/tex_aux_ec.uddp",
         )
         run_pack("pack-ec-effects", *non_texture_zstd, *source_args, "--output", f"{output_dir}/effects_ec.uddp")
+        # Without a requested level, the packer's lossless Zstd 19 frames.
+        run_pack(
+            "pack-ec-paperdoll",
+            *(paperdoll_zstd or []),
+            "--ecdir",
+            ecdir,
+            "--output",
+            f"{output_dir}/paperdoll_ec.uddp",
+        )
 
 
 def main() -> int:
@@ -396,6 +406,7 @@ def main() -> int:
             gump_args,
             include_animations=not args.no_animations,
             share_gumps=not args.no_gump_sharing,
+            paperdoll_zstd=global_zstd,
         )
     elif args.command == "animations":
         global_zstd = zstd_args_from_namespace(args)

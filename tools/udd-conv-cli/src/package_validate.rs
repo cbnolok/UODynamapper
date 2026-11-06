@@ -28,7 +28,7 @@ use udd_assets::map_metadata::decode_map_package_metadata;
 use udd_assets::tex_aux_ec::TexAuxEcPackage;
 use udd_assets::{
     EffectsEcPackage, GumpsPackage, HuesPackage, MobileAnimCcPackage, MobileAnimEcPackage,
-    TexArtCcPackage, TexArtEcPackage, TexLandCcPackage, TexLandEcPackage, TileMetaPackage,
+    PaperdollEcPackage, TexArtCcPackage, TexArtEcPackage, TexLandCcPackage, TexLandEcPackage, TileMetaPackage,
     WorldLightsPackage,
 };
 use udd_container::{
@@ -65,13 +65,14 @@ pub enum PackageKind {
     MobileAnimCc,
     MobileAnimEc,
     EffectsEc,
+    PaperdollEc,
     Gumps,
     Map(u32),
     Statics(u32),
 }
 
 /// UDDP kinds offered, in order, to a package whose file name names no kind.
-const SNIFFED_KINDS: [PackageKind; 12] = [
+const SNIFFED_KINDS: [PackageKind; 13] = [
     PackageKind::TileMeta,
     PackageKind::Hues,
     PackageKind::WorldLights,
@@ -83,6 +84,7 @@ const SNIFFED_KINDS: [PackageKind; 12] = [
     PackageKind::MobileAnimCc,
     PackageKind::MobileAnimEc,
     PackageKind::EffectsEc,
+    PackageKind::PaperdollEc,
     PackageKind::Gumps,
 ];
 
@@ -102,6 +104,7 @@ impl PackageKind {
             "world_lights" => Self::WorldLights,
             "mobile_anim_cc" => Self::MobileAnimCc,
             "mobile_anim_ec" => Self::MobileAnimEc,
+            "paperdoll_ec" => Self::PaperdollEc,
             _ if base == "effects_ec" || base.starts_with("effects_ec_") => Self::EffectsEc,
             _ if base == "gumps" || base.starts_with("gumps_") => Self::Gumps,
             _ => {
@@ -130,6 +133,7 @@ impl PackageKind {
             Self::MobileAnimCc => "mobile_anim_cc".into(),
             Self::MobileAnimEc => "mobile_anim_ec".into(),
             Self::EffectsEc => "effects_ec".into(),
+            Self::PaperdollEc => "paperdoll_ec".into(),
             Self::Gumps => "gumps".into(),
             Self::Map(map_id) => format!("map{map_id}"),
             Self::Statics(map_id) => format!("statics{map_id}"),
@@ -569,9 +573,10 @@ fn run_package_reader(kind: PackageKind, package: &UddpReader) -> eyre::Result<S
         PackageKind::TileMeta => {
             let reader = TileMetaPackage::from_uddp_package(package.clone())?;
             format!(
-                "land_tiles={}, item_tiles={}",
+                "land_tiles={}, item_tiles={}, item_definitions={}",
                 reader.land_tiles().len(),
-                reader.item_tiles().len()
+                reader.item_tiles().len(),
+                reader.item_definitions().entry_ids().count()
             )
         }
         PackageKind::Hues => {
@@ -604,6 +609,7 @@ fn run_package_reader(kind: PackageKind, package: &UddpReader) -> eyre::Result<S
             let reader = EffectsEcPackage::from_reader(package.clone())?;
             format!("textures={}", reader.textures().len())
         }
+        PackageKind::PaperdollEc => check_paperdoll_ec_package(package)?,
         PackageKind::Gumps => {
             GumpsPackage::from_uddp_package(package.clone())?;
             "gumps ok".into()
@@ -612,6 +618,23 @@ fn run_package_reader(kind: PackageKind, package: &UddpReader) -> eyre::Result<S
         PackageKind::Statics(_) => check_statics_package(package)?,
     };
     Ok(summary)
+}
+
+/// Reads every frame and hue mask of a `paperdoll_ec` package, which checks their sizes against the manifest.
+fn check_paperdoll_ec_package(package: &UddpReader) -> eyre::Result<String> {
+    let reader = PaperdollEcPackage::from_uddp_package(package.clone())?;
+    let mut set_frames = vec![0usize; reader.sets().len()];
+    let mut masked = 0;
+    for frame in reader.frames() {
+        let rgba = reader.read_frame_rgba(frame)?;
+        reader.read_frame_hue_mask(frame, &rgba)?;
+        set_frames[usize::from(frame.set)] += 1;
+        masked += usize::from(frame.hue_mode == udd_assets::paperdoll_ec::FRAME_HUE_MASKED);
+    }
+    Ok(format!(
+        "frames per set={set_frames:?}, hue_masks={masked}, hue_tables={}",
+        reader.hue_tables().tables.len()
+    ))
 }
 
 /// The checks `dynamapper` makes when it opens a map package, plus the chunk sizes.
@@ -673,6 +696,7 @@ mod tests {
         assert_eq!(PackageKind::from_file_name("tex_land_ec.rebuilt.uddp"), Some(PackageKind::TexLandEc));
         assert_eq!(PackageKind::from_file_name("effects_ec_bc7.uddp"), Some(PackageKind::EffectsEc));
         assert_eq!(PackageKind::from_file_name("gumps_cc.uddp"), Some(PackageKind::Gumps));
+        assert_eq!(PackageKind::from_file_name("paperdoll_ec.uddp"), Some(PackageKind::PaperdollEc));
         assert_eq!(PackageKind::from_file_name("map5.uddp"), Some(PackageKind::Map(5)));
         assert_eq!(PackageKind::from_file_name("statics0.uddp"), Some(PackageKind::Statics(0)));
         assert_eq!(PackageKind::from_file_name("mapx.uddp"), None);

@@ -39,6 +39,7 @@ use udd_conv::{
         convert_statics_mul_to_uddp_from_sources_with_patches,
     },
     effects_ec::{pack_effects_ec, EffectsEcPackOptions},
+    paperdoll_ec::{pack_paperdoll_ec, PaperdollEcPackOptions},
     ec_gumps::{
         convert_ec_gumps_to_uddp_from_sources, EcGumpsOptions, EC_CLASSIC_COLOUR_SPACE_SINGLE_GUMP_FORMAT,
         EC_GUMP_DEFAULT_MAX_ID, EC_LOSSY_SINGLE_GUMP_FORMAT, GUMPS_EC_DEFAULT_OUTPUT,
@@ -1255,6 +1256,16 @@ enum Commands {
         #[arg(long, help = "Fail on error findings instead of writing flagged records (particle files missing from the client are warnings).")]
         strict: bool,
     },
+    /// Packs the EC paperdoll frames (Paperdoll.uop) and the hue tables of Hues.uop into paperdoll_ec.uddp.
+    #[command(name = "pack-ec-paperdoll")]
+    PackEcPaperdoll {
+        #[command(flatten)]
+        source_dirs: SourceDirArgs,
+        #[arg(long, default_value = "paperdoll_ec.uddp")]
+        output: PathBuf,
+        #[arg(long, num_args = 0..=1, require_equals = true, default_missing_value = DEFAULT_ZSTD_LEVEL_VALUE, help = "Zstd level of the frames and manifests (lossless either way); level 19 without the flag. Optionally pass --zstd=LEVEL.")]
+        zstd: Option<i32>,
+    },
     /// Packs CC tiledata and EC tileart into tilemeta.uddp.
     #[command(name = "pack-tilemeta")]
     PackTilemeta {
@@ -2126,6 +2137,16 @@ where
                 },
             )?;
             info!("effects_ec: {summary}; wrote '{}'.", out_file.display());
+        }
+        Commands::PackEcPaperdoll { source_dirs: source_dir_args, output, zstd } => {
+            let paths = collect_ec_source_dirs(&source_dir_args)?;
+            let out_file = resolve_output_path(&output);
+            let options = match zstd {
+                Some(level) => PaperdollEcPackOptions { compression: zstd_compression(level) },
+                None => PaperdollEcPackOptions::default(),
+            };
+            let summary = pack_paperdoll_ec(&paths, &out_file, &options)?;
+            info!("paperdoll_ec: {summary}; wrote '{}'.", out_file.display());
         }
         Commands::PackTilemeta {
             source_dirs: source_dir_args,
@@ -3630,6 +3651,21 @@ mod tests {
                 assert!(bc7 && strict);
                 assert_eq!(zstd, Some(12));
                 assert_eq!(report, Some(PathBuf::from("/out/effects_report.txt")));
+            }
+            _ => panic!("unexpected command parsed"),
+        }
+    }
+
+    #[test]
+    fn cli_parses_pack_ec_paperdoll() {
+        let cli = Cli::try_parse_from(["uddpack", "pack-ec-paperdoll", "--ecdir", "/ec", "--zstd=12"])
+            .expect("parse pack-ec-paperdoll");
+
+        match cli.command {
+            Commands::PackEcPaperdoll { source_dirs, output, zstd } => {
+                assert_eq!(source_dirs.ecdir, Some(PathBuf::from("/ec")));
+                assert_eq!(output, PathBuf::from("paperdoll_ec.uddp"));
+                assert_eq!(zstd, Some(12));
             }
             _ => panic!("unexpected command parsed"),
         }

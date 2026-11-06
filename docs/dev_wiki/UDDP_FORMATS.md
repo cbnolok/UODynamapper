@@ -329,3 +329,29 @@ This package stores decoded light masks from Classic `light.mul`/`lightidx.mul` 
 | 0x04 | `u16` | `flags` | Bit 0 means the light payload is present. |
 | 0x06 | `u16` | `width` | Light mask width in pixels. |
 | 0x08 | `u16` | `height` | Light mask height in pixels. |
+
+---
+
+## 5. `paperdoll_ec.uddp`
+
+The frames of the Enhanced Client's 3D paperdoll: the male (`build/paperdoll/000001/00.bin`) and female (`01.bin`) AMOU sets of `Paperdoll.uop`, decoded losslessly, with the hue tables of `Hues.uop`. `udd-cli pack pack-ec-paperdoll --ecdir <EC>` writes it (lossless Zstd 19 by default; `--zstd=LEVEL` picks another level). Reader: `udd_assets::PaperdollEcPackage`, which implements `uocf::enhanced::paperdoll::PaperdollFrames`, so the shared paperdoll lookup (`plan`) runs on it as on the client files, and `decode(frame, hue)` gives the pixels `FrameSets::decode` gives from `Paperdoll.uop` and `Hues.uop` (tested on every frame of the 2024 client under table, partial and shadow hues).
+
+Only frames the paperdoll can find are stored: those whose action is their set's index (`UOAnimations::FindFrameEntry`), the first of a repeated number. EC 2024: 578 male and 577 female frames, 432 with a hue mask, 3,000 hue tables; 110 MiB raw, 8.2 MiB stored (the sources are 6.3 MB and 2.6 MB).
+
+**Virtual Files:**
+
+- `metadata/frames.bin`: magic `PDFR`, `u32` version (1), `u32` set count (2); per set the header box of its AMOU file (`i16` x0, y0, x1, y1) and the shadow statistics of its palette (`u8` minimum, mean and maximum inverse luminance, `u8` reserved 0), which `SHADOW_HUE` normalizes against; `u32` frame count; then one 12-byte record per frame, ascending by (set, number):
+
+  | Offset | Type | Name | Description |
+  |--------|------|------|-------------|
+  | 0x00 | `u8` | `set` | 0 male, 1 female. |
+  | 0x01 | `u8` | `hue_mode` | `FRAME_HUE_NONE` (0): no pixel takes a hue; `FRAME_HUE_ALL` (1): every coded pixel does; `FRAME_HUE_MASKED` (2): the `.r8` mask marks them. As in `mobile_anim_ec.uddp`. |
+  | 0x02 | `u16` | `frame_number` | The number the paperdoll looks up (body, `Paperdoll` or `Appearance` value). |
+  | 0x04 | `i16` | `x` | Where pixel (0, 0) goes from the paperdoll anchor: `x0` of the frame box. |
+  | 0x06 | `i16` | `y` | `y0` of the frame box. |
+  | 0x08 | `u16` | `width` | Frame width. |
+  | 0x0A | `u16` | `height` | Frame height. |
+
+- `frames/SS/NNNNN.rgba8888` (`DataType::Paperdoll`, 16): the straight-alpha RGBA of frame `NNNNN` of set `SS` as `AnimationFrame::decode_frame` gives it, edge pixels carrying their coverage in alpha (the lit lantern 0xA15 is 375x306 with 85,894 partly transparent texels).
+- `frames/SS/NNNNN.r8` (`DataType::Paperdoll`): the hue mask of a `FRAME_HUE_MASKED` frame, one byte per pixel, `HUE_MASK_HUEABLE` where the palette colour takes the hue, else 0.
+- `metadata/hue_tables.bin`: magic `PDHT`, `u32` version (1), `u32` count, then per table a `u16` bitmap number and its 256 RGBA entries (`EcHueTable`, the top row of `hue%04d.bmp`). The `hues.uddp` package can be built from Classic `hues.mul`, which has no such tables, so the paperdoll carries its own.

@@ -1,7 +1,7 @@
 use crate::app::UddConvApp;
 use crate::logic::tasks::{
     cc_gumps_source_dirs, ec_gumps_share, ec_gumps_source_dirs, effects_ec_source, hues_source,
-    single_gump_pixel_format, EcGumpsShare, HuesSource,
+    paperdoll_ec_sources, single_gump_pixel_format, EcGumpsShare, HuesSource,
 };
 use crate::models::{
     AppSettings, AssetPackProgress, AssetPackProgressState, AssetPackTask, GumpsEcSharing, HueRamp,
@@ -23,6 +23,8 @@ use udd_conv::tex_art_cc::select_tex_art_cc_metadata_source;
 use udd_conv::tex_land_cc::CLASSIC_LAND_LOSSY_REFUSAL;
 use udd_conv::upscale::UpscaleFilter;
 use uocf::enhanced::effect_texture::EFFECT_TEXTURE_UOP_NAME;
+use uocf::enhanced::hues::HUES_UOP_NAME;
+use uocf::enhanced::paperdoll::PAPERDOLL_UOP_NAME;
 
 impl UddConvApp {
     pub fn ui_assets(&mut self, ui: &mut egui::Ui) {
@@ -68,6 +70,7 @@ impl UddConvApp {
                 cards.card(|ui| self.ui_tex_aux_ec(ui, is_busy));
                 cards.card(|ui| self.ui_mobile_anim_ec(ui, is_busy));
                 cards.card(|ui| self.ui_effects_ec(ui, is_busy));
+                cards.card(|ui| self.ui_paperdoll_ec(ui, is_busy));
             });
 
             ui.add_space(4.0);
@@ -432,6 +435,34 @@ impl UddConvApp {
         if stop_clicked { self.request_cancel_conversion(); }
     }
 
+    fn ui_paperdoll_ec(&mut self, ui: &mut egui::Ui, is_busy: bool) {
+        let source = paperdoll_ec_source_label(&self.settings);
+        let progress = self.asset_pack_progress(AssetPackTask::PaperdollEc);
+        let mut clicked = false;
+        let mut stop_clicked = false;
+        ui.vertical(|ui| {
+            ui.spacing_mut().item_spacing = egui::vec2(6.0, 8.0);
+            (clicked, stop_clicked) = draw_asset_card_header(
+                ui,
+                "Enhanced Paperdoll",
+                "3D paperdoll frames, lossless, with the hue tables they take",
+                Some(&source),
+                &progress,
+                !is_busy,
+            );
+            ui.separator();
+            let settings = &mut self.settings;
+            ui.add_enabled_ui(!is_busy, |ui| {
+                ui.horizontal_wrapped(|ui| {
+                    ui.spacing_mut().item_spacing = egui::vec2(12.0, 8.0);
+                    draw_package_zstd_cell(ui, &mut settings.zstd_paperdoll_ec, true, PAPERDOLL_EC_ZSTD_TOOLTIP);
+                });
+            });
+        });
+        if clicked { self.convert_paperdoll_ec(); }
+        if stop_clicked { self.request_cancel_conversion(); }
+    }
+
     fn ui_gumps(&mut self, ui: &mut egui::Ui, is_busy: bool) {
         ui.horizontal(|ui| {
             if ui
@@ -706,6 +737,8 @@ const EFFECTS_EC_STRICT_TOOLTIP: &str = "Fail on error findings instead of writi
 --strict); particle files missing from the client are warnings.";
 const EFFECTS_EC_REPORT_TOOLTIP: &str = "Write every finding of the packer to this file, one line each \
 (pack-ec-effects --report), before the strict check.";
+const PAPERDOLL_EC_ZSTD_TOOLTIP: &str = "Zstd level of the frames and manifests (pack-ec-paperdoll --zstd=LEVEL). \
+Default: the packer's level, 19. The frames are lossless at every level.";
 
 fn hues_source_label(source: &HuesSource) -> String {
     match source {
@@ -738,6 +771,17 @@ fn effects_ec_source_label(settings: &AppSettings) -> String {
     match effects_ec_source(settings) {
         Some(path) => format!("Source: {}, with the Enhanced effect definitions", path.display()),
         None => format!("Source: missing {EFFECT_TEXTURE_UOP_NAME}"),
+    }
+}
+
+fn paperdoll_ec_source_label(settings: &AppSettings) -> String {
+    if settings.ec_dir.is_none() {
+        return "Source: select an Enhanced source directory".to_string();
+    }
+    match paperdoll_ec_sources(settings) {
+        (Some(frames), Some(hues)) => format!("Source: {} and {}", frames.display(), hues.display()),
+        (None, _) => format!("Source: missing {PAPERDOLL_UOP_NAME}"),
+        (_, None) => format!("Source: missing {HUES_UOP_NAME}"),
     }
 }
 

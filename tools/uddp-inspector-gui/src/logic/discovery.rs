@@ -4,7 +4,7 @@ use udd_assets::tex_art_cc::{MISSING_PAGE_INDEX, PagePixelFormat, SLOT_MANIFEST_
 use udd_assets::{TexArtCcPackage, TexArtEcPackage, TexLandCcPackage, TexLandEcPackage};
 use udd_container::{DataType, UddpReader, xxh64_virtual_path};
 
-use crate::models::{AtlasPageInfo, AtlasPixelFormat, VirtualEntry, VirtualEntryData};
+use crate::models::{AtlasPageInfo, AtlasPixelFormat, PaperdollFrameInfo, VirtualEntry, VirtualEntryData};
 
 const KIND_CC_ART: &str = "CC Art";
 const KIND_EC_ART: &str = "EC Art";
@@ -233,6 +233,41 @@ fn atlas_virtual_entry(kind: &str, data_type: DataType, slot: AtlasSlot) -> Virt
     }
 }
 
+/// Which pixels of a `paperdoll_ec.uddp` frame take a hue (`FRAME_HUE_*`).
+pub fn paperdoll_hue_mode_name(hue_mode: u8) -> &'static str {
+    use udd_assets::paperdoll_ec::{FRAME_HUE_ALL, FRAME_HUE_MASKED};
+    match hue_mode {
+        FRAME_HUE_MASKED => "partly hued",
+        FRAME_HUE_ALL => "hued",
+        _ => "not hued",
+    }
+}
+
+/// The frames of a `paperdoll_ec.uddp`, male set first, each previewed unhued.
+pub fn detect_paperdoll_frame_virtual_entries(package: &udd_assets::PaperdollEcPackage) -> Vec<VirtualEntry> {
+    use udd_assets::paperdoll_ec::frame_entry_path;
+    use uocf::enhanced::paperdoll::MALE_SET;
+    package
+        .frames()
+        .iter()
+        .map(|record| {
+            let set = if usize::from(record.set) == MALE_SET { "male" } else { "female" };
+            let hue = paperdoll_hue_mode_name(record.hue_mode);
+            VirtualEntry {
+                id: u32::from(record.frame_number),
+                _data_type: DataType::Paperdoll as u8,
+                kind: format!("Paperdoll Frame ({set})"),
+                summary: format!("{}x{} rgba8888 | {hue}", record.width, record.height),
+                location: frame_entry_path(record.set, record.frame_number),
+                data: VirtualEntryData::PaperdollFrame(PaperdollFrameInfo {
+                    record: *record,
+                    path: frame_entry_path(record.set, record.frame_number),
+                }),
+            }
+        })
+        .collect()
+}
+
 pub(crate) fn upscale_algorithm_name(code: u16) -> &'static str {
     match code {
         0 => "None",
@@ -325,5 +360,72 @@ mod tests {
 
         assert!(entry.summary.contains("logical 16.5x22.0"));
         assert!(entry.summary.contains("upscale FsrEasu 2x"));
+    }
+
+    /// A `paperdoll_ec.uddp` lists one entry per frame, which previews from its RGBA entry.
+    #[test]
+    fn paperdoll_frames_are_listed_with_their_entries() {
+        use udd_assets::paperdoll_ec::{
+            encode_frames_manifest, encode_hue_tables, frame_entry_path, PaperdollEcFrameRecord, PaperdollEcSet,
+            FRAMES_ENTRY_PATH, FRAME_HUE_MASKED, HUE_TABLES_ENTRY_PATH,
+        };
+        use udd_container::{AddFileRequest, CompressionFlag, LookupMode, UddpBuilder};
+        use uocf::enhanced::hues::EcHueTables;
+        use uocf::enhanced::paperdoll::GENDER_SET_COUNT;
+        const FEMALE_SET: u8 = 1;
+        const FRAME_NUMBER: u16 = 401;
+        const RGBA_CHANNELS: usize = 4;
+        let record = PaperdollEcFrameRecord {
+            set: FEMALE_SET,
+            hue_mode: FRAME_HUE_MASKED,
+            frame_number: FRAME_NUMBER,
+            x: -10,
+            y: -20,
+            width: 2,
+            height: 3,
+        };
+        let sets = vec![PaperdollEcSet { bounds: Default::default(), shadow: Default::default() }; GENDER_SET_COUNT];
+        let manifest = encode_frames_manifest(&sets, &[record]).unwrap();
+        let hues = encode_hue_tables(&EcHueTables::default()).unwrap();
+        let rgba = vec![u8::MAX; record.pixel_count() * RGBA_CHANNELS];
+        let frame_path = frame_entry_path(record.set, record.frame_number);
+        let mut builder = UddpBuilder::new(LookupMode::VirtualPathHash);
+        for (path, data, data_type) in [
+            (FRAMES_ENTRY_PATH, manifest.as_slice(), DataType::Metadata),
+            (HUE_TABLES_ENTRY_PATH, hues.as_slice(), DataType::Metadata),
+            (frame_path.as_str(), rgba.as_slice(), DataType::Paperdoll),
+        ] {
+            builder
+                .add_file(AddFileRequest {
+                    data_type: data_type as u8,
+                    compression: CompressionFlag::None,
+                    width: 0,
+                    height: 0,
+                    virtual_path: Some(path),
+                    path_hash64: None,
+                    id: None,
+                    data,
+                })
+                .unwrap();
+        }
+        let package =
+            udd_assets::PaperdollEcPackage::from_uddp_package(UddpReader::open(builder.build().unwrap()).unwrap())
+                .unwrap();
+
+        let entries = detect_paperdoll_frame_virtual_entries(&package);
+
+        assert_eq!(entries.len(), 1);
+        let entry = &entries[0];
+        assert_eq!(entry.id, u32::from(FRAME_NUMBER));
+        assert_eq!(entry.kind, "Paperdoll Frame (female)");
+        assert_eq!(entry.summary, "2x3 rgba8888 | partly hued");
+        match &entry.data {
+            VirtualEntryData::PaperdollFrame(info) => {
+                assert_eq!(info.record, record);
+                assert_eq!(package.read_frame_rgba(&info.record).unwrap(), rgba);
+                assert_eq!(info.path, frame_path);
+            }
+            other => panic!("expected a paperdoll frame, got {other:?}"),
+        }
     }
 }

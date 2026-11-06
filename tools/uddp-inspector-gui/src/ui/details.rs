@@ -525,6 +525,24 @@ impl InspectorApp {
                     ui.label(&info.path);
                     ui.end_row();
                 }
+                VirtualEntryData::PaperdollFrame(info) => {
+                    let record = &info.record;
+                    metadata_label(ui, "Frame:");
+                    ui.label(format!("{} of set {}", record.frame_number, record.set));
+                    ui.end_row();
+                    metadata_label(ui, "Size:");
+                    ui.label(format!("{}x{}", record.width, record.height));
+                    ui.end_row();
+                    metadata_label(ui, "Origin:");
+                    ui.label(format!("{}, {} from the anchor", record.x, record.y));
+                    ui.end_row();
+                    metadata_label(ui, "Hue Mode:");
+                    ui.label(crate::logic::discovery::paperdoll_hue_mode_name(record.hue_mode));
+                    ui.end_row();
+                    metadata_label(ui, "Path:");
+                    ui.label(&info.path);
+                    ui.end_row();
+                }
                 VirtualEntryData::MapBlock { .. } | VirtualEntryData::StaticBlock { .. } => {
                     metadata_label(ui, "Block ID:");
                     ui.label(ventry.id.to_string());

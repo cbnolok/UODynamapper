@@ -218,6 +218,8 @@ pub enum DataType {
     Static = 14,
     /// Compiled particle effect systems (`effects_ec.uddp` system blobs).
     Effect = 15,
+    /// Enhanced paperdoll frames and their hue masks (`paperdoll_ec.uddp`).
+    Paperdoll = 16,
 }
 
 // =============================================================================

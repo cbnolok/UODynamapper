@@ -46,11 +46,13 @@ use udd_conv::ec_gumps::{
     EC_CLASSIC_COLOUR_SPACE_SINGLE_GUMP_FORMAT, EC_LOSSY_SINGLE_GUMP_FORMAT, GUMPS_EC_DEFAULT_OUTPUT,
 };
 use udd_conv::effects_ec::{pack_effects_ec, EffectsEcPackOptions};
+use udd_conv::paperdoll_ec::{pack_paperdoll_ec, PaperdollEcPackOptions};
 use udd_conv::hues::{convert_hues_to_hues_uddp_from_sources, HuesOptions};
 use udd_conv::source_paths::find_first_existing_file;
 use udd_conv::world_lights::{convert_client_lights_to_world_lights_uddp, WorldLightsOptions};
 use uocf::enhanced::effect_texture::EFFECT_TEXTURE_UOP_NAME;
 use uocf::enhanced::hues::HUES_UOP_NAME;
+use uocf::enhanced::paperdoll::PAPERDOLL_UOP_NAME;
 use udd_conv::page_compression::LOSSLESS_PAGE_ZSTD_LEVEL;
 use udd_conv::single_gumps::{default_single_gump_compression, GumpPixelFormat};
 use udd_conv::upscale_profile::UpscaleProfile;
@@ -539,10 +541,11 @@ fn pack_gumps_cc_and_ec(
     Ok((cc_summary, ec_summary))
 }
 
-/// What `pack-hues`, `pack-lights` and `pack-ec-effects` write without `--output`.
+/// What `pack-hues`, `pack-lights`, `pack-ec-effects` and `pack-ec-paperdoll` write without `--output`.
 pub(crate) const HUES_OUTPUT: &str = "hues.uddp";
 pub(crate) const WORLD_LIGHTS_OUTPUT: &str = "world_lights.uddp";
 pub(crate) const EFFECTS_EC_OUTPUT: &str = "effects_ec.uddp";
+pub(crate) const PAPERDOLL_EC_OUTPUT: &str = "paperdoll_ec.uddp";
 /// The Classic hues file the hues job reads first.
 const HUES_MUL_NAME: &str = "hues.mul";
 /// The other spelling of the Enhanced hues file `pack-hues` looks for.
@@ -657,6 +660,32 @@ fn pack_effects_ec_job(settings: &AppSettings, output: &Path) -> eyre::Result<St
     }
     let summary = pack_effects_ec(&sources, output, &options)?;
     Ok(format!("effects_ec: {summary}; wrote {}", output.display()))
+}
+
+/// The Paperdoll.uop and Hues.uop the Enhanced paperdoll job reads, as `pack-ec-paperdoll --ecdir` finds them.
+pub(crate) fn paperdoll_ec_sources(settings: &AppSettings) -> (Option<PathBuf>, Option<PathBuf>) {
+    let sources = gather_ec_source_dirs(settings.ec_dir.as_ref());
+    (
+        find_first_existing_file(&sources, &[PAPERDOLL_UOP_NAME]),
+        find_first_existing_file(&sources, &[HUES_UOP_NAME]),
+    )
+}
+
+/// The Enhanced paperdoll job's options, mapped from the settings as `pack-ec-paperdoll` maps `--zstd=LEVEL`.
+fn paperdoll_ec_options(settings: &AppSettings) -> PaperdollEcPackOptions {
+    match settings.zstd_paperdoll_ec {
+        Some(level) => PaperdollEcPackOptions { compression: CompressionFlag::ZstdNoDictLevel(level) },
+        None => PaperdollEcPackOptions::default(),
+    }
+}
+
+/// Packs the Enhanced paperdoll frames as `pack-ec-paperdoll` does.
+fn pack_paperdoll_ec_job(settings: &AppSettings, output: &Path) -> eyre::Result<String> {
+    let sources = gather_ec_source_dirs(settings.ec_dir.as_ref());
+    if sources.is_empty() { eyre::bail!("No Enhanced source dir configured"); }
+    ensure_output_parent(output)?;
+    let summary = pack_paperdoll_ec(&sources, output, &paperdoll_ec_options(settings))?;
+    Ok(format!("paperdoll_ec: {summary}; wrote {}", output.display()))
 }
 
 /// The panel's colour of a `tool validate` report line.
@@ -1315,6 +1344,20 @@ impl UddConvApp {
         );
     }
 
+    pub fn convert_paperdoll_ec(&self) {
+        let settings = self.settings.clone();
+        let output = self.get_output_path(PAPERDOLL_EC_OUTPUT);
+        self.spawn_asset_task(
+            AssetPackTask::PaperdollEc,
+            "Enhanced Paperdoll Packing".to_string(),
+            vec![output.clone()],
+            move |progress| {
+                progress.set(AssetPackProgressState::Running, UNREPORTED_PACKING_PROGRESS, "Packing Enhanced paperdoll");
+                pack_paperdoll_ec_job(&settings, &output)
+            },
+        );
+    }
+
     pub fn convert_map(&self, map_id: u32) {
         let settings = self.settings.clone();
         let output = self.get_output_path(&format!("map{}.uddp", map_id));
@@ -1722,6 +1765,8 @@ mod tests {
         assert_eq!(effects.compression, CompressionFlag::ZstdNoDict);
         assert!(!effects.strict);
         assert_eq!(effects.report, None);
+
+        assert_eq!(paperdoll_ec_options(&settings).compression, PaperdollEcPackOptions::default().compression);
     }
 
     #[test]
@@ -1746,6 +1791,9 @@ mod tests {
         assert!(effects.bc7 && effects.strict);
         assert_eq!(effects.compression, chosen);
         assert_eq!(effects.report, Some(PathBuf::from("/out/effects_ec_findings.txt")));
+
+        settings.zstd_paperdoll_ec = Some(CHOSEN_PACKAGE_ZSTD_LEVEL);
+        assert_eq!(paperdoll_ec_options(&settings).compression, chosen);
     }
 
     /// `--no-compression` wins over `--zstd=LEVEL`, as in `pack-hues` and `pack-lights`.
@@ -1912,15 +1960,16 @@ mod tests {
         assert_eq!(states[&AssetPackTask::GumpsCc].state, AssetPackProgressState::Succeeded);
     }
 
-    /// The absolute folder the real-data hues, world lights and Enhanced effects test writes to: the jobs' defaults
-    /// in it, and the chosen options in its `options` folder.
+    /// The absolute folder the real-data hues, world lights, Enhanced effects and Enhanced paperdoll test writes to:
+    /// the jobs' defaults in it, and the chosen options in its `options` folder.
     const PACKAGES_OUTPUT_DIR_ENV: &str = "UDD_CONV_GUI_PACKAGES_OUTPUT_DIR";
     /// The folder of the chosen options' packages, inside the output folder.
     const CHOSEN_OPTIONS_DIR: &str = "options";
     /// The Enhanced effects findings file the chosen options write, inside the chosen options' folder.
     const EFFECTS_EC_REPORT_NAME: &str = "effects_ec_findings.txt";
-    /// The packages the real-data hues, world lights and Enhanced effects test writes to each folder.
-    const PACKAGES_PER_FOLDER: usize = 3;
+    /// The packages the real-data hues, world lights, Enhanced effects and Enhanced paperdoll test writes to each
+    /// folder.
+    const PACKAGES_PER_FOLDER: usize = 4;
 
     fn real_output_dir(env: &str, client_dirs: &[&PathBuf]) -> PathBuf {
         let output_dir = env_dir(env);
@@ -1931,8 +1980,8 @@ mod tests {
         output_dir
     }
 
-    /// The hues, world lights and Enhanced effects jobs on the real clients, with the defaults and with chosen
-    /// options, each through the GUI's job code; then every package validated.
+    /// The hues, world lights, Enhanced effects and Enhanced paperdoll jobs on the real clients, with the defaults and
+    /// with chosen options, each through the GUI's job code; then every package validated.
     #[test]
     #[ignore = "needs UO_CC_CLIENT_DIR, UO_EC_CLIENT_DIR and UDD_CONV_GUI_PACKAGES_OUTPUT_DIR"]
     fn packs_real_hues_lights_and_effects() {
@@ -1954,12 +2003,14 @@ mod tests {
         chosen.effects_ec_bc7 = true;
         chosen.zstd_effects_ec = Some(CHOSEN_PACKAGE_ZSTD_LEVEL);
         chosen.effects_ec_report = Some(chosen_dir.join(EFFECTS_EC_REPORT_NAME));
+        chosen.zstd_paperdoll_ec = Some(CHOSEN_PACKAGE_ZSTD_LEVEL);
 
         for (settings, dir) in [(&settings, &output_dir), (&chosen, &chosen_dir)] {
             for message in [
                 pack_hues(settings, &dir.join(HUES_OUTPUT)),
                 pack_world_lights(settings, &dir.join(WORLD_LIGHTS_OUTPUT)),
                 pack_effects_ec_job(settings, &dir.join(EFFECTS_EC_OUTPUT)),
+                pack_paperdoll_ec_job(settings, &dir.join(PAPERDOLL_EC_OUTPUT)),
             ] {
                 log::info!("{}", message.expect("pack"));
             }

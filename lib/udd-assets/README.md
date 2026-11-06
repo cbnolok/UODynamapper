@@ -9,7 +9,7 @@ validation).
 
 | Folder | Responsibility |
 | --- | --- |
-| `src/animation/` | Classic and Enhanced mobile animation package readers |
+| `src/animation/` | Classic and Enhanced mobile animation package readers, and the Enhanced paperdoll frames (`paperdoll_ec`) |
 | `src/metadata/` | Tile, terrain, map, world-light and hue metadata |
 | `src/overrides/` | Strict KDL conversion tables and explicit overrides |
 | `src/textures/` | Classic/Enhanced art, land and auxiliary texture readers |
@@ -21,8 +21,11 @@ available; category paths such as `udd_assets::textures::tex_art_ec` also work.
 ## Responsibilities
 
 - Typed package wrappers for each runtime asset type: `MobileAnimCcPackage`,
-  `MobileAnimEcPackage`, `EffectsEcPackage`, `GumpsPackage`, `AtlasCacheOptions`, and the tilemeta
-  readers (`TileMetaLandTile`, `TileMetaItemTile`).
+  `MobileAnimEcPackage`, `PaperdollEcPackage`, `EffectsEcPackage`, `GumpsPackage`, `AtlasCacheOptions`, and the
+  tilemeta readers (`TileMetaLandTile`, `TileMetaItemTile`, `TileMetaItemDefinitions`).
+- `PaperdollEcPackage` (`paperdoll_ec.uddp`, layout in `docs/dev_wiki/UDDP_FORMATS.md` section 5) implements
+  `uocf::enhanced::paperdoll::PaperdollFrames`; its `build` runs the shared paperdoll lookup over the item
+  definitions of `tilemeta.uddp` and decodes the frames as the client files decode.
 - Lazy/cached atlas page decoding with configurable cache options.
 - BC7-aware texture decoding for atlas pages (via `uot-texture-codecs`), and BC1 decoding for single
   gumps (`GumpPixelFormat`; layout in `docs/dev_wiki/UDDP_FORMATS.md` section 2.3).
