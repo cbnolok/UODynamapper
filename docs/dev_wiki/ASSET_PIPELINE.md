@@ -92,6 +92,10 @@ Common uses:
 
 Stores Classic Client land/static atlas pages plus a sparse slot table keyed by classic `art_id`.
 
+Pages are lossless by default, or BC7 with `pack-art --bc7`. BC7 pages reach the GPU as their blocks: in the sprite atlas, and in the flat wet land art array (`classic_land_art_atlas`, `Bc7RgbaUnormSrgb`), which copies each land slot's blocks and refuses a slot off the 4x4 grid with a message to repack.
+
+The Enhanced and KR-like views draw Classic and Enhanced art from one sprite atlas of one page format, so `tex_art_cc` and `tex_art_ec` should match: both lossless (`pack-art --jxl` and `pack-ec-textures --art-jxl`) or both BC7 (`pack-art --bc7` and `pack-ec-textures --art-bc7`); in udd-conv-gui, the same compression for Classic Art and Enhanced Art. When they differ, that atlas is RGBA8 and every BC7 page is decoded on the CPU as it uploads (`prepare_compatible_page_upload`, `art.rs`), and a startup warning names both packages, their formats and the repack.
+
 ### `tex_art_ec.uddp`
 
 Stores Enhanced Client static/art textures from the shared EC texture classification pass: the block-0 `WorldArt` image of each item (`Texture.uop`), which is the KR art.
@@ -130,6 +134,7 @@ Stores the non-base support images that tileart refs name and that a runtime con
 - **No legacy-art images.** TileArtLegacy and TileArtEnhanced refs are not packed. They are the EC's legacy-art mode, which the project does not convert; Classic art comes from the Classic Client files (`tex_art_cc.uddp`).
 - **The client's fallback image.** When a texture request returns no data, the client draws `Data\SystemTextures\missing.tga` instead. The package carries that image once under a reserved id, and each referenced id that `Texture.uop` lacks is an alias slot of it.
 - **Lookup.** `TexAuxEcPackage::slot_for_texture_id` and `load_rgba` return the magenta image for an absent id, as the client does. Layout details are in [UDDP_FORMATS.md](UDDP_FORMATS.md) section 2.5.
+- **GPU upload.** A package whose every texture is BC7 (`pack-ec-tex-aux --bc7`) reaches the auxiliary array as its blocks, `Bc7RgbaUnorm`: linear, as the RGBA8 array is, 25 MiB against 100 MiB for the 400 layers of the shipped data. A package that mixes formats is decoded to RGBA8 with one warning naming it. Sprite hue-mask crops keep their source blocks: a crop's shelf rect covers the blocks around it and its lookup record points at the crop inside them. A crop tile at least 254 texels wide that starts off the 4x4 grid would not fit a layer that way and is re-encoded at load; the shipped data has none.
 
 ### `tilemeta.uddp`
 

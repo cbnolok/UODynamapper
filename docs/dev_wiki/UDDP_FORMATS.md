@@ -265,6 +265,7 @@ Tilemeta refs keep their true source ids; nothing is substituted at build time.
 
 - A normal lookup resolves a ref as the client does. `TexAuxEcPackage::slot_for_texture_id(id)` returns the packed slot or, for an absent source, its alias (`SlotInfo::is_missing_source`, `SlotInfo::payload_texture_id` = the reserved id, for caching). `load_rgba(id)` returns the alias's magenta pixels.
 - `TexAuxEcPackage::missing_texture_slot()` returns the reserved slot itself, e.g. for art with no image in any package.
+- `TexAuxEcPackage::load_bc7(id)` returns a BC7 slot's stored container (`Bc7RgbaUnormSrgb` blocks) without decoding, for a direct GPU upload; it refuses an RGBA slot. `TexAuxEcSlotRecord::is_bc7` tells the two apart.
 - Packages built before the aliases existed have none (some carry an unread `metadata/absent_sources.bin`); absent ids then have no slot.
 
 ---
