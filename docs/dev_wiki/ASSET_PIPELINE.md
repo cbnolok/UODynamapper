@@ -105,7 +105,7 @@ Stores Enhanced Client static/art textures from the shared EC texture classifica
 
 ### `tex_land_ec.uddp`
 
-Stores representative terrain images and required terrain provenance metadata. The package preserves how `TerrainDefinition` material entries, aliases, selected texture ids, and canonical packed slots relate to each other.
+Stores representative terrain images and required terrain provenance metadata. The package preserves how `TerrainDefinition` material entries, aliases, selected texture ids, and canonical packed slots relate to each other. It also carries the terrain layer table (`metadata/terrain_layers.bin`, `docs/dev_wiki/UDDP_FORMATS.md`): each terrain tile's items with their layer class and role, which the renderer reads for the secondary base, the blend alpha and the water ripple.
 
 EC land materials are role-based, not single-texture records. The runtime lookup table currently uses these material roles:
 
