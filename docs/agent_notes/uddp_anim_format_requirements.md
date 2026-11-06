@@ -789,6 +789,25 @@ the same day ([`bc7_alpha_plane_search.md`](bc7_alpha_plane_search.md)). The use
         14.2-18.0 %), but the red byte on only 20.7-25.7 %, off by up to 14. The Enhanced client hues the body on greys only.
       - Against `gumps_cc`, 760 Enhanced single gumps have the same pixels, 1456 the same visible pixels, 1187 differ
         (the 171 soft-alpha ones among them) and 34 have no Classic gump.
+      - **The "cc style ec fallbacks" options**, sizes only, for the user to decide (measured 2026-11-06, before the body
+        gumps were kept lossless). The 2216 twins are the 760 identical gumps and the 1456 that differ only in the colour of
+        transparent texels; none has soft alpha, and the body gumps 12-15 are among them. They store 14.45 MB lossless,
+        12.68 MB in BC7 and 6.51 MB in BC1 inside `gumps_ec`, and 14.44 MB lossless and 6.51 MB in BC1 inside `gumps_cc`.
+
+        | Option | `gumps_ec` lossless | `gumps_ec` lossy | With `gumps_cc` (45.61 / 20.84 MB) |
+        |---|---|---|---|
+        | A: every Enhanced single gump BC7, as built | 84.15 MB | 40.49 MB | not needed |
+        | B: the twins BC1 inside `gumps_ec`, the rest BC7 | 84.15 MB | 34.33 MB | not needed |
+        | C: the twins left out of `gumps_ec`, drawn from `gumps_cc` | 69.70 MB | 27.82 MB | needed: 115.31 MB lossless, 48.66 MB lossy |
+
+        - C's sizes leave the 2216 index records (about 0.07 MB) in.
+        - Dynamapper has no per-gump fallback: it loads one gump package for every preset, `gumps_cc.uddp` before
+          `gumps_ec.uddp` (`dynamapper/src/core/uo_files_loader.rs:490`). So the Enhanced preset doesn't need `gumps_cc`
+          today, and with both installed it never reads `gumps_ec`; C needs a lookup across both packages.
+        - Through `gumps_cc` a twin draws the same: the same alpha, by definition, and the same hue, since both clients hue
+          greys by the red channel. The coloured transparent texels exist only in `gumps_ec`, and showed only through
+          the egui blend below. A `gumps_cc` packed with single-gump upscale passes would draw its twins larger, since single
+          gumps record no logical size.
       - On Desktop 4, in the Enhanced and KR-like presets, gumps 2820 and 2200 and a hued paperdoll look the same as
         lossless, and 1909 keeps its shadow. Classic draws the same pixels as before.
       - Dynamapper's gump dialog gives egui straight colour, which bevy_egui 0.43 blends as premultiplied. So BC7's
@@ -856,7 +875,7 @@ the same day ([`bc7_alpha_plane_search.md`](bc7_alpha_plane_search.md)). The use
 | Question | Recommendation | Depends on |
 |---|---|---|
 | Enhanced paperdoll gumps in BC7, which the user asked for (2026-11-06) | Keep the pages lossless. The client hues exact greys only and indexes the hue by the red byte, so BC7 would move the hue on most grey texels and drop it on a few; Dynamapper's partial-hue test would need a tolerance the client lacks. The body gumps, single gumps, already go BC7 | The user |
-| Whether "cc style ec fallbacks" means the Enhanced gumps that repeat a Classic gump, to take BC1 inside `gumps_ec` | Built as BC7 for every Enhanced single gump. 2216 of 3437 show the same visible pixels as the Classic gump of their id | The user |
+| Whether "cc style ec fallbacks" means the Enhanced gumps that repeat a Classic gump, to take BC1 inside `gumps_ec` | Built as BC7 for every Enhanced single gump (A). 2216 of 3437 show the same visible pixels as the Classic gump of their id; B (BC1 inside `gumps_ec`) saves 6.16 MB of the lossy package, C (drawn from `gumps_cc`) 12.67 MB but needs `gumps_cc` installed and a two-package lookup (sizes above) | The user |
 | Lossy rows on the PC preset (animations; gumps and land are decided above) | The user's proposal: Enhanced BC1 for equipment and BC3 for other animations, BC7 for land textures or gumps, Classic BC1 on creatures only, converging on one or two lossy formats if the mix needs too many branches or pipelines. Against LZ4 HC's lossless size, BC3 and BC7 with fix C both save disk as well as VRAM on Enhanced, so BC7 is no longer ruled out by size | Fractional zoom, upscaled sprites and the cost of alternating formats in painter order, being measured |
 | Load unit | One stream per (action, direction), faced direction first | The user |
 | Where the low-end tier's quality floor sits, and which RDO level it uses | 80 as a floor, no RDO unless a target needs it | The user's eye: `blocks-preview/` crops, including BC3 against BC7 |
