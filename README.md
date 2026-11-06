@@ -55,6 +55,7 @@ Runtime packages are produced with the conversion tools and then placed in, or l
 - `tex_art_ec.uddp` (optional)
 - `tex_land_cc.uddp`
 - `tex_land_ec.uddp` (optional)
+- `gumps_cc.uddp` and `gumps_ec.uddp` (optional, read when `load_gumps` is on). The Classic preset shows `gumps_cc.uddp`; Enhanced and KR-like show `gumps_ec.uddp` and fall back to `gumps_cc.uddp` for ids it lacks. The Enhanced client's `gumpartLegacyMUL.uop` is not used, since every id in it is also in `Interface.uop`.
 - map and statics packages for the facets you want to inspect (i.e.: `map0.uddp`, `statics0.uddp`).
 
 For conversion commands and package details, see [docs/dev_wiki/ASSET_PIPELINE.md](docs/dev_wiki/ASSET_PIPELINE.md).

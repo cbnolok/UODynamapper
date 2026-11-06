@@ -11,6 +11,7 @@ use parking_lot::Mutex;
 use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use udd_assets::AtlasCacheOptions;
 use udd_assets::tilemeta::TileMetaPackage;
 use udd_container::{UddpReader, UddpReaderOptions};
@@ -60,41 +61,116 @@ pub struct TerrainMetaPackageRes(pub Arc<udd_assets::terrain_meta::TerrainMetaPa
 #[derive(Resource)]
 pub struct WorldLightsPackageRes(pub Arc<udd_assets::world_lights::WorldLightsPackage>);
 
-/// Optional gump art source. UDDP packages are preferred, legacy Classic sources are fallback.
-#[derive(Resource)]
-pub struct GumpMapRes {
-    package: Option<Arc<udd_assets::GumpsPackage>>,
-    classic: Option<Arc<uocf::classic::gump::GumpMap>>,
+const GUMPS_CC_FILE_NAME: &str = "gumps_cc.uddp";
+const GUMPS_EC_FILE_NAME: &str = "gumps_ec.uddp";
+const CLASSIC_CLIENT_GUMPS_LABEL: &str = "the Classic client gump files";
+/// `UniformState.effects.shading_mode` of the Classic preset. Enhanced is 1 and KR-like 2.
+const CLASSIC_SHADING_MODE: u32 = 0;
+
+/// Which client's gumps a rendering preset draws (the user, 2026-11-06): the Classic preset the Classic client's, and
+/// the Enhanced and KR-like presets, which render from Enhanced data, the Enhanced client's.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum GumpClient {
+    Classic,
+    Enhanced,
 }
 
-impl GumpMapRes {
-    pub fn from_package(package: udd_assets::GumpsPackage) -> Self {
-        Self {
-            package: Some(Arc::new(package)),
-            classic: None,
+impl GumpClient {
+    /// The preset is `UniformState.effects.shading_mode`, which the shader dialog changes at runtime.
+    pub const fn from_shading_mode(shading_mode: u32) -> Self {
+        if shading_mode == CLASSIC_SHADING_MODE {
+            Self::Classic
+        } else {
+            Self::Enhanced
+        }
+    }
+}
+
+/// Which loaded source `pick_gump_source` read a gump from.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum GumpSourceKind {
+    Enhanced,
+    Classic,
+}
+
+/// What `pick_gump_source` gives for one gump.
+#[derive(Debug)]
+enum GumpPick<T> {
+    Found(GumpSourceKind, T),
+    /// The source the rule picked has the gump but cannot decode it. No other source is tried.
+    Failed(GumpSourceKind, color_eyre::eyre::Report),
+    /// The Classic preset with no Classic source loaded: it shows no gumps.
+    NoClassicSource,
+    /// The Enhanced or KR-like preset, gumps_ec.uddp lacks the gump and no Classic source is loaded.
+    Missing,
+}
+
+/// The source of one gump for the preset drawing `client` (the user, 2026-11-06). The Classic preset reads the Classic
+/// source only, never gumps_ec.uddp. Enhanced and KR-like read gumps_ec.uddp when it has the gump, else the Classic
+/// source; a gumps_ec.uddp entry that fails to decode is an error, not a reason to fall back.
+///
+/// `enhanced` is set when gumps_ec.uddp is loaded and looks the gump up there: `None` when the package lacks it, else
+/// its decode. `classic` is set when a Classic source is loaded and decodes the gump from it.
+fn pick_gump_source<T>(
+    client: GumpClient,
+    enhanced: Option<impl FnOnce() -> Option<color_eyre::eyre::Result<T>>>,
+    classic: Option<impl FnOnce() -> color_eyre::eyre::Result<T>>,
+) -> GumpPick<T> {
+    if client == GumpClient::Enhanced {
+        if let Some(decoded) = enhanced.and_then(|lookup| lookup()) {
+            return match decoded {
+                Ok(gump) => GumpPick::Found(GumpSourceKind::Enhanced, gump),
+                Err(error) => GumpPick::Failed(GumpSourceKind::Enhanced, error),
+            };
         }
     }
 
-    pub fn from_classic(classic: uocf::classic::gump::GumpMap) -> Self {
-        Self {
-            package: None,
-            classic: Some(Arc::new(classic)),
+    match (classic, client) {
+        (Some(decode), _) => match decode() {
+            Ok(gump) => GumpPick::Found(GumpSourceKind::Classic, gump),
+            Err(error) => GumpPick::Failed(GumpSourceKind::Classic, error),
+        },
+        (None, GumpClient::Classic) => GumpPick::NoClassicSource,
+        (None, GumpClient::Enhanced) => GumpPick::Missing,
+    }
+}
+
+/// The startup line naming the source each preset draws its gumps from.
+fn gump_sources_summary(classic_label: Option<&str>, enhanced_loaded: bool) -> String {
+    let classic_preset = classic_label.unwrap_or("none, so it shows no gumps");
+    let enhanced_presets = match (enhanced_loaded, classic_label) {
+        (true, Some(classic_label)) => format!("{GUMPS_EC_FILE_NAME}, then {classic_label} for ids it lacks"),
+        (true, None) => GUMPS_EC_FILE_NAME.to_string(),
+        (false, Some(classic_label)) => format!("{classic_label} ({GUMPS_EC_FILE_NAME} is not loaded)"),
+        (false, None) => "none".to_string(),
+    };
+    format!("gumps: Classic preset {classic_preset}; Enhanced and KR-like {enhanced_presets}")
+}
+
+/// The Classic gump source: gumps_cc.uddp, or the Classic client's gump files when that package is absent or fails to
+/// load.
+pub enum ClassicGumpSource {
+    Package(udd_assets::GumpsPackage),
+    ClientFiles(uocf::classic::gump::GumpMap),
+}
+
+impl ClassicGumpSource {
+    fn label(&self) -> &'static str {
+        match self {
+            Self::Package(_) => GUMPS_CC_FILE_NAME,
+            Self::ClientFiles(_) => CLASSIC_CLIENT_GUMPS_LABEL,
         }
     }
 
-    pub fn decode_gump(
+    fn decode(
         &self,
         gump_id: u32,
         scratch: &mut Vec<u8>,
     ) -> color_eyre::eyre::Result<udd_assets::gumps::GumpImage> {
-        if let Some(package) = &self.package {
-            return package.read_gump_image(gump_id);
-        }
-
-        let classic = self
-            .classic
-            .as_ref()
-            .ok_or_else(|| color_eyre::eyre::eyre!("gump source is not loaded"))?;
+        let classic = match self {
+            Self::Package(package) => return package.read_gump_image(gump_id),
+            Self::ClientFiles(classic) => classic,
+        };
         let (width, height, pixels) = classic.decode_gump(gump_id, scratch)?;
         Ok(udd_assets::gumps::GumpImage {
             physical_width: u32::from(width),
@@ -104,6 +180,92 @@ impl GumpMapRes {
             upscale_factor: 1,
             rgba: pixels,
         })
+    }
+}
+
+/// gumps_ec.uddp with its gump ids, sorted, so a lookup knows when the Enhanced presets fall back.
+struct EnhancedGumps {
+    package: udd_assets::GumpsPackage,
+    gump_ids: Vec<u32>,
+}
+
+impl EnhancedGumps {
+    fn new(package: udd_assets::GumpsPackage) -> Self {
+        let gump_ids = package.available_gump_ids();
+        Self { package, gump_ids }
+    }
+
+    fn lookup(&self, gump_id: u32) -> Option<color_eyre::eyre::Result<udd_assets::gumps::GumpImage>> {
+        self.gump_ids
+            .binary_search(&gump_id)
+            .is_ok()
+            .then(|| self.package.read_gump_image(gump_id))
+    }
+}
+
+/// Optional gump art source. UDDP packages are preferred, legacy Classic sources are fallback.
+/// The active preset picks which source serves a gump (`GumpClient`, `pick_gump_source`).
+#[derive(Resource)]
+pub struct GumpMapRes {
+    classic: Option<Arc<ClassicGumpSource>>,
+    enhanced: Option<Arc<EnhancedGumps>>,
+    /// Set once the Classic preset asked for a gump with no Classic source loaded, which is logged once.
+    classic_missing_logged: AtomicBool,
+}
+
+impl GumpMapRes {
+    /// `None` when neither source is loaded.
+    pub fn new(classic: Option<ClassicGumpSource>, enhanced: Option<udd_assets::GumpsPackage>) -> Option<Self> {
+        if classic.is_none() && enhanced.is_none() {
+            return None;
+        }
+        Some(Self {
+            classic: classic.map(Arc::new),
+            enhanced: enhanced.map(|package| Arc::new(EnhancedGumps::new(package))),
+            classic_missing_logged: AtomicBool::new(false),
+        })
+    }
+
+    fn sources_summary(&self) -> String {
+        gump_sources_summary(self.classic.as_deref().map(ClassicGumpSource::label), self.enhanced.is_some())
+    }
+
+    pub fn decode_gump(
+        &self,
+        client: GumpClient,
+        gump_id: u32,
+        scratch: &mut Vec<u8>,
+    ) -> color_eyre::eyre::Result<udd_assets::gumps::GumpImage> {
+        let enhanced = self.enhanced.as_deref().map(|enhanced| move || enhanced.lookup(gump_id));
+        let classic = self.classic.as_deref().map(|classic| move || classic.decode(gump_id, scratch));
+        match pick_gump_source(client, enhanced, classic) {
+            GumpPick::Found(_, gump) => Ok(gump),
+            GumpPick::Failed(GumpSourceKind::Enhanced, error) => {
+                let error = error.wrap_err(format!("{GUMPS_EC_FILE_NAME} gump {gump_id} does not decode"));
+                console_logger::one(
+                    console_logger::LogSev::Error,
+                    console_logger::LogAbout::UoFiles,
+                    &format!("{error:#}"),
+                );
+                Err(error)
+            }
+            GumpPick::Failed(GumpSourceKind::Classic, error) => Err(error),
+            GumpPick::NoClassicSource => {
+                if !self.classic_missing_logged.swap(true, Ordering::Relaxed) {
+                    console_logger::one(
+                        console_logger::LogSev::Warn,
+                        console_logger::LogAbout::UoFiles,
+                        &format!(
+                            "The Classic preset shows no gumps: neither {GUMPS_CC_FILE_NAME} nor {CLASSIC_CLIENT_GUMPS_LABEL} are loaded."
+                        ),
+                    );
+                }
+                Err(color_eyre::eyre::eyre!("the Classic preset has no gump source loaded"))
+            }
+            GumpPick::Missing => Err(color_eyre::eyre::eyre!(
+                "gump {gump_id} is not in {GUMPS_EC_FILE_NAME} and no Classic gump source is loaded"
+            )),
+        }
     }
 }
 
@@ -472,7 +634,7 @@ pub fn sys_setup_uo_data(mut commands: Commands, settings: Res<Settings>) {
     let load_classic_gumps = || match uocf::classic::gump::GumpMap::load(&udd_path) {
         Ok(gump_map) => {
             lg("Loaded Classic Client gump art source.");
-            Some(GumpMapRes::from_classic(gump_map))
+            Some(ClassicGumpSource::ClientFiles(gump_map))
         }
         Err(error) => {
             lg_err(&format!(
@@ -482,32 +644,27 @@ pub fn sys_setup_uo_data(mut commands: Commands, settings: Res<Settings>) {
             None
         }
     };
+    let load_gump_package = |file_name: &str, logical_name: &str| {
+        let path = resolve_optional_uddp_path(&udd_path, file_name)?;
+        log_source_choice(&lg, logical_name, SourceContainerKind::Uddp, std::slice::from_ref(&path));
+        udd_assets::GumpsPackage::load(&path)
+            .map_err(|error| lg_err(&format!("Failed to load gump package {}: {error}", path.display())))
+            .ok()
+    };
     let gump_map = if !settings.runtime_assets.load_gumps {
         lg("Gump art loading is disabled by runtime_assets.load_gumps.");
         None
     } else {
-        let gump_package_path =
-            resolve_optional_uddp_paths(&udd_path, &["gumps_cc.uddp", "gumps_ec.uddp"]);
-        if let Some(gump_package_path) = gump_package_path {
-            log_source_choice(
-                &lg,
-                "gumps",
-                SourceContainerKind::Uddp,
-                std::slice::from_ref(&gump_package_path),
-            );
-            match udd_assets::GumpsPackage::load(&gump_package_path) {
-                Ok(package) => Some(GumpMapRes::from_package(package)),
-                Err(error) => {
-                    lg_err(&format!(
-                        "Failed to load gump package {}: {error}",
-                        gump_package_path.display()
-                    ));
-                    load_classic_gumps()
-                }
-            }
-        } else {
-            load_classic_gumps()
+        // The Classic client's gump files stand in only for a missing or unreadable gumps_cc.uddp.
+        let classic = load_gump_package(GUMPS_CC_FILE_NAME, "Classic gumps")
+            .map(ClassicGumpSource::Package)
+            .or_else(load_classic_gumps);
+        let enhanced = load_gump_package(GUMPS_EC_FILE_NAME, "Enhanced gumps");
+        let gump_map = GumpMapRes::new(classic, enhanced);
+        if let Some(gump_map) = &gump_map {
+            lg(&gump_map.sources_summary());
         }
+        gump_map
     };
 
     let classic_fonts = match uocf::classic::fonts::ClassicFonts::load(&udd_path) {
@@ -650,8 +807,151 @@ fn load_multi_definitions(
 
 #[cfg(test)]
 mod tests {
+    use super::{
+        gump_sources_summary, pick_gump_source, GumpClient, GumpPick, GumpSourceKind, GUMPS_CC_FILE_NAME,
+    };
     use std::collections::BTreeMap;
     use std::path::PathBuf;
+
+    const CLASSIC_PRESET: u32 = 0;
+    const ENHANCED_PRESET: u32 = 1;
+    const KR_LIKE_PRESET: u32 = 2;
+    const ENHANCED_IMAGE: &str = "gumps_ec image";
+    const CLASSIC_IMAGE: &str = "Classic image";
+
+    /// gumps_ec.uddp's state for the looked-up gump.
+    #[derive(Clone, Copy, Debug)]
+    enum Enhanced {
+        NotLoaded,
+        LacksGump,
+        HasGump,
+        DecodeError,
+    }
+
+    /// What `pick_gump_source` should give, without the error text.
+    #[derive(Debug, PartialEq, Eq)]
+    enum Expected {
+        Found(GumpSourceKind, &'static str),
+        Failed(GumpSourceKind),
+        NoClassicSource,
+        Missing,
+    }
+
+    /// What `pick` saw: the result, and whether each loaded source was asked.
+    struct Picked {
+        result: Expected,
+        enhanced_asked: bool,
+        classic_asked: bool,
+    }
+
+    /// Runs the rule with stand-in sources.
+    fn pick(shading_mode: u32, enhanced: Enhanced, classic_loaded: bool, classic_decodes: bool) -> Picked {
+        let mut enhanced_asked = false;
+        let mut classic_asked = false;
+        let enhanced_flag = &mut enhanced_asked;
+        let enhanced_lookup = match enhanced {
+            Enhanced::NotLoaded => None,
+            loaded => Some(move || {
+                *enhanced_flag = true;
+                match loaded {
+                    Enhanced::HasGump => Some(Ok(ENHANCED_IMAGE)),
+                    Enhanced::DecodeError => Some(Err(color_eyre::eyre::eyre!("bad gumps_ec entry"))),
+                    _ => None,
+                }
+            }),
+        };
+        let classic = classic_loaded.then_some(|| {
+            classic_asked = true;
+            if classic_decodes {
+                Ok(CLASSIC_IMAGE)
+            } else {
+                Err(color_eyre::eyre::eyre!("bad Classic entry"))
+            }
+        });
+        let result = match pick_gump_source(GumpClient::from_shading_mode(shading_mode), enhanced_lookup, classic) {
+            GumpPick::Found(kind, image) => Expected::Found(kind, image),
+            GumpPick::Failed(kind, _) => Expected::Failed(kind),
+            GumpPick::NoClassicSource => Expected::NoClassicSource,
+            GumpPick::Missing => Expected::Missing,
+        };
+        Picked { result, enhanced_asked, classic_asked }
+    }
+
+    #[test]
+    fn presets_map_to_their_gump_client() {
+        assert_eq!(GumpClient::from_shading_mode(CLASSIC_PRESET), GumpClient::Classic);
+        assert_eq!(GumpClient::from_shading_mode(ENHANCED_PRESET), GumpClient::Enhanced);
+        assert_eq!(GumpClient::from_shading_mode(KR_LIKE_PRESET), GumpClient::Enhanced);
+    }
+
+    /// Every preset against which packages are loaded, whether gumps_ec.uddp has the gump, and its decode error.
+    #[test]
+    fn gump_source_follows_the_preset() {
+        use Enhanced::{DecodeError, HasGump, LacksGump, NotLoaded};
+        use Expected::{Failed, Found, Missing, NoClassicSource};
+        use GumpSourceKind::{Classic, Enhanced as Ec};
+        let classic_cases = [
+            (NotLoaded, true, Found(Classic, CLASSIC_IMAGE)),
+            (LacksGump, true, Found(Classic, CLASSIC_IMAGE)),
+            (HasGump, true, Found(Classic, CLASSIC_IMAGE)),
+            (DecodeError, true, Found(Classic, CLASSIC_IMAGE)),
+            (NotLoaded, false, NoClassicSource),
+            (LacksGump, false, NoClassicSource),
+            (HasGump, false, NoClassicSource),
+            (DecodeError, false, NoClassicSource),
+        ];
+        for (enhanced, classic_loaded, expected) in classic_cases {
+            let picked = pick(CLASSIC_PRESET, enhanced, classic_loaded, true);
+            let case = format!("Classic preset, gumps_ec {enhanced:?}, Classic source {classic_loaded}");
+            assert_eq!(picked.result, expected, "{case}");
+            assert!(!picked.enhanced_asked, "{case}: the Classic preset never reads gumps_ec");
+        }
+
+        let enhanced_cases = [
+            (NotLoaded, true, Found(Classic, CLASSIC_IMAGE)),
+            (LacksGump, true, Found(Classic, CLASSIC_IMAGE)),
+            (HasGump, true, Found(Ec, ENHANCED_IMAGE)),
+            (DecodeError, true, Failed(Ec)),
+            (NotLoaded, false, Missing),
+            (LacksGump, false, Missing),
+            (HasGump, false, Found(Ec, ENHANCED_IMAGE)),
+            (DecodeError, false, Failed(Ec)),
+        ];
+        for shading_mode in [ENHANCED_PRESET, KR_LIKE_PRESET] {
+            for (enhanced, classic_loaded, expected) in &enhanced_cases {
+                let picked = pick(shading_mode, *enhanced, *classic_loaded, true);
+                let case = format!("preset {shading_mode}, gumps_ec {enhanced:?}, Classic source {classic_loaded}");
+                assert_eq!(&picked.result, expected, "{case}");
+                // The Classic source is asked only when gumps_ec lacks the gump, never after a decode error.
+                let falls_back = matches!(picked.result, Found(Classic, _));
+                assert_eq!(picked.classic_asked, falls_back, "{case}");
+            }
+        }
+    }
+
+    #[test]
+    fn classic_gump_decode_error_is_reported_from_the_classic_source() {
+        for shading_mode in [CLASSIC_PRESET, ENHANCED_PRESET, KR_LIKE_PRESET] {
+            let picked = pick(shading_mode, Enhanced::LacksGump, true, false);
+            assert_eq!(picked.result, Expected::Failed(GumpSourceKind::Classic), "preset {shading_mode}");
+        }
+    }
+
+    #[test]
+    fn gump_startup_summary_names_each_preset_source() {
+        assert_eq!(
+            gump_sources_summary(Some(GUMPS_CC_FILE_NAME), true),
+            "gumps: Classic preset gumps_cc.uddp; Enhanced and KR-like gumps_ec.uddp, then gumps_cc.uddp for ids it lacks"
+        );
+        assert_eq!(
+            gump_sources_summary(None, true),
+            "gumps: Classic preset none, so it shows no gumps; Enhanced and KR-like gumps_ec.uddp"
+        );
+        assert_eq!(
+            gump_sources_summary(Some(GUMPS_CC_FILE_NAME), false),
+            "gumps: Classic preset gumps_cc.uddp; Enhanced and KR-like gumps_cc.uddp (gumps_ec.uddp is not loaded)"
+        );
+    }
 
     #[test]
     #[ignore = "requires current canonical packages in DYNAMAPPER_TEST_PACKAGES"]

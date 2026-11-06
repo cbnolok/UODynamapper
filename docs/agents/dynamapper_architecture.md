@@ -32,6 +32,8 @@ Shaders: `dynamapper/assets/shaders/world/` — `.wesl` modules using WESL `impo
 
 Three modes: **Classic 2D (0)**, **Enhanced Classic (1)**, **KR-like (2)**. Always test visual changes across all three. Use the **F3 UI** for real-time shader/uniform testing without recompiling.
 
+The preset also picks the gump package (`GumpMapRes::decode_gump` in `core/uo_files_loader.rs`, keyed by `UniformState.effects.shading_mode`). Classic shows `gumps_cc.uddp`, or the Classic client's gump files when that package is missing or unreadable, and never `gumps_ec.uddp`. Enhanced and KR-like show `gumps_ec.uddp` and fall back to the Classic source only for ids it lacks; a decode error there is logged, not covered by the fallback. Open gump and paperdoll windows redraw in place when the preset changes. The Enhanced client's `gumpartLegacyMUL.uop` is not used: every id in it is also in `Interface.uop`, which `gumps_ec.uddp` is packed from.
+
 ---
 
 ## Architecture Rules

@@ -127,6 +127,15 @@ Normal maps are stored in the same UDDP page-atlas infrastructure as visible EC 
 
 Paperdoll equipment gumps go to lossless atlas pages; every other gump is a single payload, RGBA8888 by default. The lossy build is BC1 for Classic (`pack-gumps --bc1`, 20.8 MB against 45.6 MB) and BC7 for Enhanced (`pack-ec-gumps --bc7`, 34.4 MB against 84.2 MB), which keeps the soft shadows of the Enhanced gumps that BC1 would round away. The Enhanced gumps in the Classic colour space, the 2216 Classic gumps Interface.uop repeats, take BC1 there too (2026-11-06; all BC7 was 40.5 MB). `pack-ec-gumps` reads only Interface.uop, not the EC client's `gumpartLegacyMUL.uop`, and needs no Classic files. Layout: [UDDP_FORMATS.md](UDDP_FORMATS.md) section 2.3.
 
+Dynamapper loads both packages when `load_gumps` is on and picks one by rendering preset (the user, 2026-11-06), for single gumps and paperdoll layers alike:
+
+- **Classic** shows `gumps_cc.uddp` only. When that package is missing or fails to load, the Classic client's own gump files under `udd_path` (`gumpidx.mul`/`gumpart.mul` or `gumpartLegacyMUL.uop`) stand in for it. With neither, the Classic preset shows no gumps.
+- **Enhanced and KR-like** show `gumps_ec.uddp`, and fall back to the Classic source above only for ids `gumps_ec.uddp` lacks. A gump that `gumps_ec.uddp` has but cannot decode is logged as an error, with no fallback. Without `gumps_ec.uddp`, the Classic source serves every preset.
+
+The preset can change at runtime, and open gump and paperdoll windows redraw from the new preset's package. The startup log names the package that serves each preset.
+
+`gumps_ec.uddp` is packed from the Enhanced client's `Interface.uop` only. That client's `gumpartLegacyMUL.uop` is not used: every id in it is also in `Interface.uop`.
+
 ### `tex_aux_ec.uddp`
 
 Stores the non-base support images that tileart refs name and that a runtime consumer reads: sprite hue masks, static terrain-surface masks and EC item liquid inputs. All of them are WorldArt images from `Texture.uop`, keyed by texture id. The default build is lossless: RGBA8888 textures, Zstd 19 each (since 2026-11-06).

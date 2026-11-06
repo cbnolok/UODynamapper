@@ -1,6 +1,7 @@
 use crate::core::controls::input_actions::{ActionCloseActiveDialog, ActionToggleGumpDialog};
 use crate::core::render::scene::camera::UiCameraResource;
-use crate::core::uo_files_loader::{GumpMapRes, HuesPackageRes, TileMetaPackageRes};
+use crate::configs::shader_presets::UniformState;
+use crate::core::uo_files_loader::{GumpClient, GumpMapRes, HuesPackageRes, TileMetaPackageRes};
 use crate::ingame_sysmessage_logger;
 use crate::{
     core::constants,
@@ -30,6 +31,20 @@ struct OpenGump {
     height: u16,
     image: Handle<Image>,
     texture_id: egui::TextureId,
+    content: OpenGumpContent,
+    /// The preset's gump client `image` was drawn for; a preset change redraws it.
+    client: GumpClient,
+    /// Why the active preset has no image for this window, shown in place of the image.
+    error: Option<String>,
+}
+
+/// What an open gump window draws, kept so a preset change can redraw it from the other package.
+enum OpenGumpContent {
+    Gump(u32),
+    Paperdoll {
+        profile: PaperdollProfile,
+        layers: Vec<PaperdollLayer>,
+    },
 }
 
 enum GumpOpenRequest {
@@ -664,10 +679,16 @@ fn sys_render_gump_dialog(
     hues_package: Option<Res<HuesPackageRes>>,
     paperdoll_profiles: Res<PaperdollProfilesRes>,
     wearable_rules: Res<PaperdollWearableRulesRes>,
+    uniform_state: Res<UniformState>,
     mut images: ResMut<Assets<Image>>,
 ) {
     if !state.open && state.open_gumps.is_empty() {
         return;
+    }
+
+    let client = GumpClient::from_shading_mode(uniform_state.effects.shading_mode);
+    if let Some(gump_map) = gump_map.as_deref() {
+        redraw_open_gumps_for_client(&mut state, client, gump_map, hues_package.as_deref(), &mut images);
     }
 
     let mut closed_images = Vec::new();
@@ -696,6 +717,10 @@ fn sys_render_gump_dialog(
                 .resizable(false)
                 .open(&mut open)
                 .show(ctx, |ui| {
+                    if let Some(error) = &open_gump.error {
+                        ui.label(error.as_str());
+                        return;
+                    }
                     let response = ui.add(egui::Image::new((open_gump.texture_id, image_size)));
                     if response.secondary_clicked() {
                         right_clicked = true;
@@ -725,12 +750,14 @@ fn sys_render_gump_dialog(
     match open_request {
         Some(GumpOpenRequest::GumpById) => open_gump_by_id(
             &mut state,
+            client,
             gump_map.as_deref(),
             &mut images,
             &mut egui_contexts,
         ),
         Some(GumpOpenRequest::Paperdoll) => open_paperdoll(
             &mut state,
+            client,
             gump_map.as_deref(),
             tilemeta.as_deref(),
             hues_package.as_deref(),
@@ -741,6 +768,98 @@ fn sys_render_gump_dialog(
         ),
         None => {}
     }
+}
+
+/// After a preset change, every open gump window is redrawn from the package the new preset reads, into its own image
+/// (the egui texture id stays valid). No image is cached by gump id, so none can keep the other package's pixels.
+fn redraw_open_gumps_for_client(
+    state: &mut GumpDialogState,
+    client: GumpClient,
+    gump_map: &GumpMapRes,
+    hues_package: Option<&HuesPackageRes>,
+    images: &mut Assets<Image>,
+) {
+    for open_gump in state.open_gumps.iter_mut().filter(|open_gump| open_gump.client != client) {
+        open_gump.client = client;
+        open_gump.error = match draw_open_gump_content(&open_gump.content, client, gump_map, hues_package) {
+            Ok(gump) => {
+                (open_gump.width, open_gump.height) = logical_window_size(&gump);
+                images
+                    .insert(open_gump.image.id(), image_from_gump(&gump))
+                    .err()
+                    .map(|error| format!("Could not replace the gump image: {error}"))
+            }
+            Err(error) => Some(format!("No image under this preset: {error}")),
+        };
+    }
+}
+
+/// Decodes a single gump, or composes a paperdoll, for the preset drawing `client`, premultiplied as egui blends it.
+fn draw_open_gump_content(
+    content: &OpenGumpContent,
+    client: GumpClient,
+    gump_map: &GumpMapRes,
+    hues_package: Option<&HuesPackageRes>,
+) -> color_eyre::eyre::Result<udd_assets::gumps::GumpImage> {
+    match content {
+        OpenGumpContent::Gump(id) => {
+            let mut gump = gump_map.decode_gump(client, *id, &mut Vec::new())?;
+            // bevy_egui blends user textures as premultiplied colour (`BlendState::PREMULTIPLIED_ALPHA_BLENDING`, and its
+            // shader doesn't multiply by alpha), so the gump's straight colour goes up premultiplied: a transparent texel then
+            // adds nothing, whatever colour it keeps, as in the clients.
+            udd_assets::premultiplied::premultiply_rgba8888(&mut gump.rgba);
+            Ok(gump)
+        }
+        // Premultiplied already, as bevy_egui blends it: `alpha_blend_at` composes the layers over a transparent canvas.
+        OpenGumpContent::Paperdoll { profile, layers } => {
+            compose_paperdoll(gump_map, client, hues_package, profile, layers)
+        }
+    }
+}
+
+fn image_from_gump(gump: &udd_assets::gumps::GumpImage) -> Image {
+    let mut image = crate::util_lib::image::image_from_rgba8(
+        gump.physical_width,
+        gump.physical_height,
+        &gump.rgba,
+    );
+    image.sampler = bevy::image::ImageSampler::nearest();
+    image
+}
+
+fn logical_window_size(gump: &udd_assets::gumps::GumpImage) -> (u16, u16) {
+    (
+        gump.logical_width.min(u16::MAX as u32) as u16,
+        gump.logical_height.min(u16::MAX as u32) as u16,
+    )
+}
+
+/// Draws `content` for the preset drawing `client` and opens a window showing it.
+fn open_gump_window(
+    state: &mut GumpDialogState,
+    title: String,
+    content: OpenGumpContent,
+    client: GumpClient,
+    gump_map: &GumpMapRes,
+    hues_package: Option<&HuesPackageRes>,
+    images: &mut Assets<Image>,
+    egui_contexts: &mut EguiContexts,
+) -> color_eyre::eyre::Result<()> {
+    let gump = draw_open_gump_content(&content, client, gump_map, hues_package)?;
+    let image = images.add(image_from_gump(&gump));
+    let texture_id = egui_contexts.add_image(EguiTextureHandle::Strong(image.clone()));
+    let (width, height) = logical_window_size(&gump);
+    state.open_gumps.push(OpenGump {
+        title,
+        width,
+        height,
+        image,
+        texture_id,
+        content,
+        client,
+        error: None,
+    });
+    Ok(())
 }
 
 fn render_open_gump_dialog(
@@ -826,12 +945,13 @@ fn render_open_gump_dialog(
 
 fn open_gump_by_id(
     state: &mut GumpDialogState,
+    client: GumpClient,
     gump_map: Option<&GumpMapRes>,
     images: &mut Assets<Image>,
     egui_contexts: &mut EguiContexts,
 ) {
     let Some(gump_map) = gump_map else {
-        ingame_sysmessage_logger::error("Classic gump source is not loaded.".to_string());
+        ingame_sysmessage_logger::error("No gump source is loaded.".to_string());
         return;
     };
 
@@ -840,34 +960,18 @@ fn open_gump_by_id(
         return;
     };
 
-    let mut scratch = Vec::new();
-    let mut gump = match gump_map.decode_gump(id, &mut scratch) {
-        Ok(gump) => gump,
-        Err(error) => {
-            ingame_sysmessage_logger::error(format!("Could not open gump {id}: {error}"));
-            return;
-        }
-    };
-    // bevy_egui blends user textures as premultiplied colour (`BlendState::PREMULTIPLIED_ALPHA_BLENDING`, and its
-    // shader doesn't multiply by alpha), so the gump's straight colour goes up premultiplied: a transparent texel then
-    // adds nothing, whatever colour it keeps, as in the clients.
-    udd_assets::premultiplied::premultiply_rgba8888(&mut gump.rgba);
-
-    let mut image = crate::util_lib::image::image_from_rgba8(
-        gump.physical_width,
-        gump.physical_height,
-        &gump.rgba,
-    );
-    image.sampler = bevy::image::ImageSampler::nearest();
-    let image = images.add(image);
-    let texture_id = egui_contexts.add_image(EguiTextureHandle::Strong(image.clone()));
-    state.open_gumps.push(OpenGump {
-        title: format!("Gump {id}"),
-        width: gump.logical_width.min(u16::MAX as u32) as u16,
-        height: gump.logical_height.min(u16::MAX as u32) as u16,
-        image,
-        texture_id,
-    });
+    if let Err(error) = open_gump_window(
+        state,
+        format!("Gump {id}"),
+        OpenGumpContent::Gump(id),
+        client,
+        gump_map,
+        None,
+        images,
+        egui_contexts,
+    ) {
+        ingame_sysmessage_logger::error(format!("Could not open gump {id}: {error}"));
+    }
 }
 
 struct PaperdollLayer {
@@ -881,6 +985,7 @@ struct PaperdollLayer {
 
 fn open_paperdoll(
     state: &mut GumpDialogState,
+    client: GumpClient,
     gump_map: Option<&GumpMapRes>,
     tilemeta: Option<&TileMetaPackageRes>,
     hues_package: Option<&HuesPackageRes>,
@@ -890,7 +995,7 @@ fn open_paperdoll(
     egui_contexts: &mut EguiContexts,
 ) {
     let Some(gump_map) = gump_map else {
-        ingame_sysmessage_logger::error("Classic gump source is not loaded.".to_string());
+        ingame_sysmessage_logger::error("No gump source is loaded.".to_string());
         return;
     };
     let Some(tilemeta) = tilemeta else {
@@ -986,30 +1091,16 @@ fn open_paperdoll(
 
     layers[1..].sort_by_key(|layer| layer.sort_key);
 
-    let gump = match compose_paperdoll(gump_map, hues_package, profile, &layers) {
-        Ok(composed) => composed,
-        Err(error) => {
-            ingame_sysmessage_logger::error(format!("Could not compose paperdoll: {error}"));
-            return;
-        }
+    let title = format!("Paperdoll ({})", profile.label);
+    let content = OpenGumpContent::Paperdoll {
+        profile: profile.clone(),
+        layers,
     };
-
-    // Premultiplied already, as bevy_egui blends it: `alpha_blend_at` composes the layers over a transparent canvas.
-    let mut image = crate::util_lib::image::image_from_rgba8(
-        gump.physical_width,
-        gump.physical_height,
-        &gump.rgba,
-    );
-    image.sampler = bevy::image::ImageSampler::nearest();
-    let image = images.add(image);
-    let texture_id = egui_contexts.add_image(EguiTextureHandle::Strong(image.clone()));
-    state.open_gumps.push(OpenGump {
-        title: format!("Paperdoll ({})", profile.label),
-        width: gump.logical_width.min(u16::MAX as u32) as u16,
-        height: gump.logical_height.min(u16::MAX as u32) as u16,
-        image,
-        texture_id,
-    });
+    if let Err(error) =
+        open_gump_window(state, title, content, client, gump_map, hues_package, images, egui_contexts)
+    {
+        ingame_sysmessage_logger::error(format!("Could not compose paperdoll: {error}"));
+    }
 }
 
 fn parse_u32_field(text: &str) -> Result<u32, std::num::ParseIntError> {
@@ -1025,8 +1116,10 @@ fn parse_optional_hue(text: &str) -> u16 {
     parse_u32_field(text).unwrap_or(0).min(u16::MAX as u32) as u16
 }
 
+/// Each layer's gump comes from the package the preset drawing `client` reads; the hues follow that client's drawing.
 fn compose_paperdoll(
     gump_map: &GumpMapRes,
+    client: GumpClient,
     hues_package: Option<&HuesPackageRes>,
     profile: &PaperdollProfile,
     layers: &[PaperdollLayer],
@@ -1046,7 +1139,7 @@ fn compose_paperdoll(
     let mut max_y = profile.canvas_height as i32;
 
     for layer in layers {
-        let mut gump = gump_map.decode_gump(layer.gump_id, &mut scratch)?;
+        let mut gump = gump_map.decode_gump(client, layer.gump_id, &mut scratch)?;
         if layer.hue_id > 0 {
             apply_hue(
                 &mut gump.rgba,
