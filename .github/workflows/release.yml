@@ -13,6 +13,11 @@ on:
         description: "Tag to use for the auto-generated prerelease (e.g. 'nightly')"
         required: false
         default: "nightly"
+      publish:
+        description: "Publish the prerelease; false builds every target without publishing (a build check)"
+        type: boolean
+        required: false
+        default: true
 
 env:
   CARGO_TERM_COLOR: always
@@ -435,8 +440,8 @@ jobs:
           retention-days: ${{ github.ref_name == 'prereleases' && 7 || 90 }}
 
   # Apple Silicon is the macOS target CI focuses on. x86_64 stays supported: it builds only when a release is published
-  # (the same condition as the publish job, which would otherwise be skipped with it), and a failure doesn't block that
-  # release. macos-15-intel is reported to be the last Intel runner, retiring around fall 2027 (not confirmed by GitHub);
+  # (the same condition as the publish job, which would otherwise be skipped with it) and on a manual build check (a
+  # manual run with publish off), and a failure doesn't block that release. macos-15-intel is reported to be the last Intel runner, retiring around fall 2027 (not confirmed by GitHub);
   # after that, cross-compile this target on the ARM runner.
   build-macos-x86_64:
     name: Build (macOS x86_64)
@@ -540,7 +545,7 @@ jobs:
     name: Publish Release
     needs: [build-linux, build-linux-arm64, build-linux-musl-x86_64, build-linux-musl-arm64, build-windows, build-windows-clang, build-windows-arm64, build-macos-x86_64, build-macos-arm64]
     runs-on: ubuntu-24.04
-    if: github.event_name == 'workflow_dispatch' || github.ref_type == 'tag' || github.ref_name == 'main'
+    if: (github.event_name == 'workflow_dispatch' && inputs.publish) || github.ref_type == 'tag' || github.ref_name == 'main'
     permissions:
       contents: write
     steps:
