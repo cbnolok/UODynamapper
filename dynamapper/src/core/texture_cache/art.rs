@@ -512,8 +512,8 @@ fn art_page_format_mismatch_warning(
     (classic != enhanced).then(|| format!(
         "tex_art_cc.uddp pages are {} but tex_art_ec.uddp pages are {}. The Enhanced and KR-like views draw both from \
          one sprite atlas, so it falls back to RGBA8 and every BC7 page is decoded on the CPU as it uploads, at four \
-         times the VRAM of BC7. Repack both packages in one format: lossless with `udd-cli pack pack-art --jxl` and \
-         `udd-cli pack pack-ec-textures --art-jxl`, or BC7 with `pack-art --bc7` and `pack-ec-textures --art-bc7` \
+         times the VRAM of BC7. Repack both packages in one format: lossless with `udd-cli pack pack-art` and \
+         `udd-cli pack pack-ec-textures` (their default), or BC7 with `pack-art --bc7` and `pack-ec-textures --art-bc7` \
          (in udd-conv-gui, the same compression for Classic Art and Enhanced Art).",
         name(classic),
         name(enhanced),
@@ -598,7 +598,7 @@ mod tests {
         ] {
             let warning = art_page_format_mismatch_warning(Some(classic), Some(enhanced)).expect("mismatch warning");
             assert!(warning.starts_with(opening), "{warning:?}");
-            for repack in ["pack-art --jxl", "pack-ec-textures --art-jxl", "pack-art --bc7", "pack-ec-textures --art-bc7"] {
+            for repack in ["`udd-cli pack pack-art`", "`udd-cli pack pack-ec-textures`", "pack-art --bc7", "pack-ec-textures --art-bc7"] {
                 assert!(warning.contains(repack), "{repack:?} missing from {warning:?}");
             }
         }
