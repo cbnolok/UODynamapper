@@ -140,16 +140,6 @@ pub fn ui_art_viewer(app: &mut UocfEditorApp, ctx: &egui::Context, ui: &mut egui
                     } else {
                         ui.colored_label(egui::Color32::RED, "Art data not found");
                     }
-                    // The Classic sources: art ids as the Classic files number them.
-                    let preferred = match concrete_art_tile_source(app.selected_legacy_source) {
-                        ArtSource::Mul => Some(PreferredContainer::Mul),
-                        ArtSource::CcUop => Some(PreferredContainer::Uop),
-                        _ => None,
-                    };
-                    if let Some(preferred) = preferred {
-                        ui.separator();
-                        ui_classic_image_panel(app, ctx, ui, ClassicImageKind::Art, id, preferred);
-                    }
                 });
 
                 ui.separator();
@@ -200,6 +190,17 @@ pub fn ui_art_viewer(app: &mut UocfEditorApp, ctx: &egui::Context, ui: &mut egui
                     }
                 });
             });
+            // The Classic sources: art ids as the Classic files number them. Below both columns: the panel takes the
+            // whole width.
+            let preferred = match concrete_art_tile_source(app.selected_legacy_source) {
+                ArtSource::Mul => Some(PreferredContainer::Mul),
+                ArtSource::CcUop => Some(PreferredContainer::Uop),
+                _ => None,
+            };
+            if let Some(preferred) = preferred {
+                ui.separator();
+                ui_classic_image_panel(app, ctx, ui, ClassicImageKind::Art, id, preferred);
+            }
         } else {
             ui.centered_and_justified(|ui| { ui.label("Select a tile from the sidebar to inspect"); });
         }
