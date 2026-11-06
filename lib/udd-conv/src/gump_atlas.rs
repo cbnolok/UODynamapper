@@ -4,6 +4,7 @@ use guillotiere::{size2, AtlasAllocator};
 use crate::progress::{ProgressBar, ProgressStyle};
 use udd_container::{AddFileRequest, AddOwnedFileRequest, CompressionFlag, DataType, UddpBuilder};
 
+use crate::package_progress::{AssetTaskProgress, AssetTaskProgressStage};
 use crate::page_compression::LOSSLESS_PAGE_COMPRESSION;
 use crate::tex_art_cc::crop_rgba_page;
 use crate::{merge_unplaced_tiles, resolve_packing_axis, AtlasPackingMode};
@@ -102,8 +103,18 @@ pub fn add_gump_atlas_files(
     gumps: Vec<DecodedGump>,
     options: &GumpAtlasOptions,
 ) -> eyre::Result<u32> {
+    add_gump_atlas_files_with_progress(builder, gumps, options, &|_| {})
+}
+
+/// [`add_gump_atlas_files`], reporting the gumps placed on atlas pages as [`AssetTaskProgressStage::PackingAtlas`].
+pub fn add_gump_atlas_files_with_progress(
+    builder: &mut UddpBuilder,
+    gumps: Vec<DecodedGump>,
+    options: &GumpAtlasOptions,
+    task_progress: &(impl Fn(AssetTaskProgress) + Sync),
+) -> eyre::Result<u32> {
     validate_options(options)?;
-    let (pages, slots) = pack_gumps_into_pages(gumps, options)?;
+    let (pages, slots) = pack_gumps_into_pages(gumps, options, task_progress)?;
     let page_manifest = serialize_page_manifest(options, &pages)?;
     let slot_manifest = serialize_slot_manifest(options, &slots)?;
 
@@ -163,6 +174,7 @@ fn validate_options(options: &GumpAtlasOptions) -> eyre::Result<()> {
 fn pack_gumps_into_pages(
     gumps: Vec<DecodedGump>,
     options: &GumpAtlasOptions,
+    task_progress: &(impl Fn(AssetTaskProgress) + Sync),
 ) -> eyre::Result<(Vec<BuiltGumpAtlasPage>, Vec<GumpAtlasSlotRecord>)> {
     let mut pages = Vec::new();
     let mut slots = Vec::new();
@@ -176,6 +188,12 @@ fn pack_gumps_into_pages(
         .unwrap()
         .progress_chars("#>-"));
     pb.set_message("creating gump atlas pages");
+    task_progress(AssetTaskProgress {
+        stage: AssetTaskProgressStage::PackingAtlas,
+        completed: 0,
+        total: total_gumps,
+    });
+    let mut packed_gumps = 0u64;
 
     while !remaining.is_empty() {
         pb.set_message(format!("creating gump atlas page {page_index}"));
@@ -201,6 +219,14 @@ fn pack_gumps_into_pages(
         }));
 
         pb.inc(page.placed_gumps.len() as u64);
+        packed_gumps = packed_gumps
+            .saturating_add(page.placed_gumps.len() as u64)
+            .min(total_gumps);
+        task_progress(AssetTaskProgress {
+            stage: AssetTaskProgressStage::PackingAtlas,
+            completed: packed_gumps,
+            total: total_gumps,
+        });
         pages.push(page);
         remaining = merge_unplaced_tiles(leftovers, unplaced, |gump| gump.gump_id);
         page_index += 1;
@@ -510,7 +536,7 @@ mod tests {
             compression: CompressionFlag::None,
         };
 
-        let (pages, slots) = pack_gumps_into_pages(gumps, &options).unwrap();
+        let (pages, slots) = pack_gumps_into_pages(gumps, &options, &|_| {}).unwrap();
         let page_manifest = serialize_page_manifest(&options, &pages).unwrap();
         let slot_manifest = serialize_slot_manifest(&options, &slots).unwrap();
 
@@ -630,9 +656,11 @@ mod tests {
             compression: CompressionFlag::None,
         };
 
+        let reported = std::sync::Mutex::new(Vec::new());
         let (pages, slots) = pack_gumps_into_pages(
             vec![solid_gump(50_001, 3, 3), solid_gump(50_002, 3, 3)],
             &options,
+            &|progress| reported.lock().unwrap().push(progress),
         )
         .expect("pack gumps");
 
@@ -640,6 +668,21 @@ mod tests {
         assert_eq!(slots.len(), 2);
         assert_eq!(slots[0].page_index, 0);
         assert_eq!(slots[1].page_index, 1);
+        // One report before the first page and one per page, each counting the gumps placed so far.
+        let completed: Vec<(AssetTaskProgressStage, u64, u64)> = reported
+            .into_inner()
+            .unwrap()
+            .into_iter()
+            .map(|progress| (progress.stage, progress.completed, progress.total))
+            .collect();
+        assert_eq!(
+            completed,
+            vec![
+                (AssetTaskProgressStage::PackingAtlas, 0, 2),
+                (AssetTaskProgressStage::PackingAtlas, 1, 2),
+                (AssetTaskProgressStage::PackingAtlas, 2, 2),
+            ]
+        );
     }
 
     #[test]
@@ -651,7 +694,7 @@ mod tests {
             compression: CompressionFlag::None,
         };
 
-        let error = pack_gumps_into_pages(vec![solid_gump(50_001, 5, 4)], &options)
+        let error = pack_gumps_into_pages(vec![solid_gump(50_001, 5, 4)], &options, &|_| {})
             .expect_err("oversized gump should not fit");
 
         assert!(error.to_string().contains("does not fit into atlas page"));

@@ -10,9 +10,11 @@ use udd_container::{CompressionFlag, LookupMode, UddpBuilder};
 use crate::classic_patches::{load_verdata_if_enabled, ClassicPatchOptions};
 use crate::classic_sources::{resolve_classic_gump_source, SourceFormat, SourceFormatPreference};
 use crate::gump_atlas::{
-    add_gump_atlas_files, is_paperdoll_equipment_gump_id, DecodedGump, GumpAtlasOptions,
+    add_gump_atlas_files_with_progress, is_paperdoll_equipment_gump_id, DecodedGump, GumpAtlasOptions,
 };
-use crate::package_progress::build_and_write_package;
+use crate::package_progress::{
+    build_and_write_package_with_progress, AssetProgressReporter, AssetTaskProgress, AssetTaskProgressStage,
+};
 use crate::page_compression::LOSSLESS_PAGE_COMPRESSION;
 use crate::single_gumps::{
     default_single_gump_compression, ensure_single_gump_format_for_package, GumpPixelFormat, SingleGumpWriter,
@@ -93,6 +95,28 @@ pub fn convert_gumps_to_uddp_from_sources_with_patches_and_options(
     patch_options: &ClassicPatchOptions,
     options: &CcGumpsOptions,
 ) -> eyre::Result<CcGumpsBuildSummary> {
+    convert_gumps_to_uddp_from_sources_with_patches_options_and_progress(
+        source_dirs,
+        output_path,
+        patch_options,
+        options,
+        |_| {},
+        |_| {},
+    )
+}
+
+/// [`convert_gumps_to_uddp_from_sources_with_patches_and_options`], reporting the gump extraction, the paperdoll
+/// atlas packing and the package build.
+pub fn convert_gumps_to_uddp_from_sources_with_patches_options_and_progress(
+    source_dirs: &[PathBuf],
+    output_path: &Path,
+    patch_options: &ClassicPatchOptions,
+    options: &CcGumpsOptions,
+    payload_progress: impl Fn(AssetTaskProgress) + Sync,
+    package_progress: impl FnMut(udd_container::BuildProgress),
+) -> eyre::Result<CcGumpsBuildSummary> {
+    let payload_progress_reporter = AssetProgressReporter::new(payload_progress);
+    let payload_progress = |progress| payload_progress_reporter.report(progress);
     ensure_single_gump_format_for_package(options.single_pixel_format, CC_LOSSY_SINGLE_GUMP_FORMAT, "gumps_cc")?;
     let gump_source = resolve_classic_gump_source(source_dirs, options.source_preference)?;
     println!(
@@ -121,6 +145,12 @@ pub fn convert_gumps_to_uddp_from_sources_with_patches_and_options(
             .progress_chars("#>-"),
     );
     pb.set_message("extracting CC gumps");
+    let gump_id_count = u64::from(max_id) + 1;
+    payload_progress(AssetTaskProgress {
+        stage: AssetTaskProgressStage::Extracting,
+        completed: 0,
+        total: gump_id_count,
+    });
 
     let mut builder = UddpBuilder::new(LookupMode::SparseId);
     let mut scratch = Vec::new();
@@ -130,6 +160,11 @@ pub fn convert_gumps_to_uddp_from_sources_with_patches_and_options(
 
     for gump_id in 0..=max_id {
         pb.inc(1);
+        payload_progress(AssetTaskProgress {
+            stage: AssetTaskProgressStage::Extracting,
+            completed: u64::from(gump_id) + 1,
+            total: gump_id_count,
+        });
         if !gumps.has_id(gump_id) {
             continue;
         }
@@ -181,16 +216,17 @@ pub fn convert_gumps_to_uddp_from_sources_with_patches_and_options(
     }
 
     let single_summary = single_gumps.finish(&mut builder)?;
-    let atlas_gump_count = add_gump_atlas_files(
+    let atlas_gump_count = add_gump_atlas_files_with_progress(
         &mut builder,
         atlas_gumps,
         &GumpAtlasOptions {
             compression: options.atlas_compression,
             ..GumpAtlasOptions::default()
         },
+        &payload_progress,
     )?;
     pb.finish_with_message("CC gumps extracted");
-    build_and_write_package(builder, output_path)?;
+    build_and_write_package_with_progress(builder, output_path, package_progress)?;
 
     Ok(CcGumpsBuildSummary {
         gump_count,

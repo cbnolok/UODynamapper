@@ -12,9 +12,11 @@ use uocf::enhanced::textures::{ECImageFormat, TextureFile, TextureItem};
 use uocf::uop_container::package::{LoadMode, UopPackage};
 
 use crate::gump_atlas::{
-    add_gump_atlas_files, is_paperdoll_equipment_gump_id, DecodedGump, GumpAtlasOptions,
+    add_gump_atlas_files_with_progress, is_paperdoll_equipment_gump_id, DecodedGump, GumpAtlasOptions,
 };
-use crate::package_progress::build_and_write_package;
+use crate::package_progress::{
+    build_and_write_package_with_progress, AssetProgressReporter, AssetTaskProgress, AssetTaskProgressStage,
+};
 use crate::page_compression::LOSSLESS_PAGE_COMPRESSION;
 use crate::single_gumps::{
     default_single_gump_compression, ensure_single_gump_format_for_package, GumpPixelFormat, SingleGumpWriter,
@@ -140,6 +142,20 @@ pub fn convert_ec_gumps_to_uddp_from_sources(
     output_path: &Path,
     options: &EcGumpsOptions,
 ) -> eyre::Result<EcGumpsBuildSummary> {
+    convert_ec_gumps_to_uddp_from_sources_with_progress(source_dirs, output_path, options, |_| {}, |_| {})
+}
+
+/// [`convert_ec_gumps_to_uddp_from_sources`], reporting the gump extraction, the paperdoll atlas packing and the
+/// package build.
+pub fn convert_ec_gumps_to_uddp_from_sources_with_progress(
+    source_dirs: &[PathBuf],
+    output_path: &Path,
+    options: &EcGumpsOptions,
+    payload_progress: impl Fn(AssetTaskProgress) + Sync,
+    package_progress: impl FnMut(udd_container::BuildProgress),
+) -> eyre::Result<EcGumpsBuildSummary> {
+    let payload_progress_reporter = AssetProgressReporter::new(payload_progress);
+    let payload_progress = |progress| payload_progress_reporter.report(progress);
     ensure_single_gump_format_for_package(options.single_pixel_format, EC_LOSSY_SINGLE_GUMP_FORMAT, "gumps_ec")?;
     let shared_with = options
         .share_with
@@ -154,13 +170,27 @@ pub fn convert_ec_gumps_to_uddp_from_sources(
             "Using EC gump source file (UOP): {}",
             source_path_label_from_dirs(source_dirs, &interface_uop)
         );
-        convert_ec_gumps_from_interface_uop(&interface_uop, output_path, options, shared_with.as_ref())
+        convert_ec_gumps_from_interface_uop(
+            &interface_uop,
+            output_path,
+            options,
+            shared_with.as_ref(),
+            &payload_progress,
+            package_progress,
+        )
     } else if let Some(gumpart_dir) = find_ec_gumpart_dir(source_dirs) {
         println!(
             "Using EC gump extracted source directory: {}",
             source_path_label_from_dirs(source_dirs, &gumpart_dir)
         );
-        convert_ec_gumps_from_extracted_dir(&gumpart_dir, output_path, options, shared_with.as_ref())
+        convert_ec_gumps_from_extracted_dir(
+            &gumpart_dir,
+            output_path,
+            options,
+            shared_with.as_ref(),
+            &payload_progress,
+            package_progress,
+        )
     } else {
         eyre::bail!(
             "missing EC gump source: expected Interface.uop/interface.uop, or an extracted data/interface/default/textures/gumpart directory"
@@ -196,6 +226,8 @@ fn convert_ec_gumps_from_interface_uop(
     output_path: &Path,
     options: &EcGumpsOptions,
     shared_with: Option<&Arc<GumpsPackage>>,
+    task_progress: &(impl Fn(AssetTaskProgress) + Sync),
+    package_progress: impl FnMut(udd_container::BuildProgress),
 ) -> eyre::Result<EcGumpsBuildSummary> {
     let package = UopPackage::load_with_mode(interface_uop, LoadMode::Lazy)
         .wrap_err_with(|| format!("load {}", interface_uop.display()))?;
@@ -213,9 +245,20 @@ fn convert_ec_gumps_from_interface_uop(
             .progress_chars("#>-"),
     );
     pb.set_message("extracting EC gumps from Interface.uop");
+    let gump_id_count = u64::from(options.max_id) + 1;
+    task_progress(AssetTaskProgress {
+        stage: AssetTaskProgressStage::Extracting,
+        completed: 0,
+        total: gump_id_count,
+    });
 
     for gump_id in 0..=options.max_id {
         pb.inc(1);
+        task_progress(AssetTaskProgress {
+            stage: AssetTaskProgressStage::Extracting,
+            completed: u64::from(gump_id) + 1,
+            total: gump_id_count,
+        });
         let Some((format, payload)) = unpack_ec_gump_payload(&package, gump_id)? else {
             continue;
         };
@@ -256,16 +299,17 @@ fn convert_ec_gumps_from_interface_uop(
     }
 
     let single_summary = single_gumps.finish(&mut builder)?;
-    let atlas_gump_count = add_gump_atlas_files(
+    let atlas_gump_count = add_gump_atlas_files_with_progress(
         &mut builder,
         atlas_gumps,
         &GumpAtlasOptions {
             compression: options.atlas_compression,
             ..GumpAtlasOptions::default()
         },
+        task_progress,
     )?;
     pb.finish_with_message("EC gumps extracted from Interface.uop");
-    build_and_write_package(builder, output_path)?;
+    build_and_write_package_with_progress(builder, output_path, package_progress)?;
 
     Ok(EcGumpsBuildSummary {
         // A shared gump is left out of the package.
@@ -285,6 +329,8 @@ fn convert_ec_gumps_from_extracted_dir(
     output_path: &Path,
     options: &EcGumpsOptions,
     shared_with: Option<&Arc<GumpsPackage>>,
+    task_progress: &(impl Fn(AssetTaskProgress) + Sync),
+    package_progress: impl FnMut(udd_container::BuildProgress),
 ) -> eyre::Result<EcGumpsBuildSummary> {
     let sources = collect_extracted_gumps(gumpart_dir)?;
     let mut builder = UddpBuilder::new(LookupMode::SparseId);
@@ -301,9 +347,20 @@ fn convert_ec_gumps_from_extracted_dir(
             .progress_chars("#>-"),
     );
     pb.set_message("extracting EC gumps from extracted files");
+    let source_count = sources.len() as u64;
+    task_progress(AssetTaskProgress {
+        stage: AssetTaskProgressStage::Extracting,
+        completed: 0,
+        total: source_count,
+    });
 
-    for (gump_id, source) in sources {
+    for (source_index, (gump_id, source)) in sources.into_iter().enumerate() {
         pb.inc(1);
+        task_progress(AssetTaskProgress {
+            stage: AssetTaskProgressStage::Extracting,
+            completed: source_index as u64 + 1,
+            total: source_count,
+        });
         let payload = match fs::read(&source.path) {
             Ok(payload) => payload,
             Err(error) => {
@@ -350,16 +407,17 @@ fn convert_ec_gumps_from_extracted_dir(
     }
 
     let single_summary = single_gumps.finish(&mut builder)?;
-    let atlas_gump_count = add_gump_atlas_files(
+    let atlas_gump_count = add_gump_atlas_files_with_progress(
         &mut builder,
         atlas_gumps,
         &GumpAtlasOptions {
             compression: options.atlas_compression,
             ..GumpAtlasOptions::default()
         },
+        task_progress,
     )?;
     pb.finish_with_message("EC gumps extracted from extracted files");
-    build_and_write_package(builder, output_path)?;
+    build_and_write_package_with_progress(builder, output_path, package_progress)?;
 
     Ok(EcGumpsBuildSummary {
         // A shared gump is left out of the package.
@@ -618,12 +676,109 @@ mod tests {
                 writer.push(&mut builder, gump_id, SIDE, SIDE, pixel.repeat((SIDE * SIDE) as usize)).unwrap();
             }
             writer.finish(&mut builder).unwrap();
-            add_gump_atlas_files(&mut builder, Vec::new(), &GumpAtlasOptions::default()).unwrap();
+            crate::gump_atlas::add_gump_atlas_files(&mut builder, Vec::new(), &GumpAtlasOptions::default()).unwrap();
 
             let package = GumpsPackage::from_uddp_package(UddpReader::open(builder.build().unwrap()).unwrap()).unwrap();
             assert_eq!(package.single_gump_pixel_format(CLASSIC_GUMP_ID).unwrap(), Some(classic_format));
             assert_eq!(package.single_gump_pixel_format(ENHANCED_GUMP_ID).unwrap(), Some(enhanced_format));
         }
+    }
+
+    /// Side of the square synthetic gumps the progress tests pack.
+    const SYNTHETIC_GUMP_SIDE: u16 = 2;
+    /// Gump ids of the synthetic extracted gumpart folder.
+    const SYNTHETIC_GUMP_IDS: [u32; 3] = [1000, 1001, 1002];
+    const TGA_HEADER_LEN: usize = 18;
+    const TGA_IMAGE_TYPE_OFFSET: usize = 2;
+    const TGA_UNCOMPRESSED_TRUE_COLOUR: u8 = 2;
+    const TGA_WIDTH_OFFSET: usize = 12;
+    const TGA_HEIGHT_OFFSET: usize = 14;
+    const TGA_BITS_PER_PIXEL_OFFSET: usize = 16;
+    const TGA_BITS_PER_PIXEL: u8 = 32;
+    const TGA_DESCRIPTOR_OFFSET: usize = 17;
+    /// Eight alpha bits, rows stored top to bottom.
+    const TGA_DESCRIPTOR_TOP_LEFT_ALPHA8: u8 = 0x28;
+    const OPAQUE_BGRA: [u8; 4] = [10, 20, 30, 255];
+
+    /// An uncompressed 32-bit TGA of `side` x `side` opaque pixels.
+    fn solid_tga(side: u16) -> Vec<u8> {
+        let mut tga = vec![0u8; TGA_HEADER_LEN];
+        tga[TGA_IMAGE_TYPE_OFFSET] = TGA_UNCOMPRESSED_TRUE_COLOUR;
+        tga[TGA_WIDTH_OFFSET..TGA_WIDTH_OFFSET + 2].copy_from_slice(&side.to_le_bytes());
+        tga[TGA_HEIGHT_OFFSET..TGA_HEIGHT_OFFSET + 2].copy_from_slice(&side.to_le_bytes());
+        tga[TGA_BITS_PER_PIXEL_OFFSET] = TGA_BITS_PER_PIXEL;
+        tga[TGA_DESCRIPTOR_OFFSET] = TGA_DESCRIPTOR_TOP_LEFT_ALPHA8;
+        tga.extend(OPAQUE_BGRA.repeat(usize::from(side) * usize::from(side)));
+        tga
+    }
+
+    /// A temporary folder of extracted gumpart TGAs, one per [`SYNTHETIC_GUMP_IDS`].
+    fn synthetic_gumpart_dir(label: &str) -> PathBuf {
+        let dir = unique_temp_dir(label);
+        fs::create_dir_all(&dir).expect("create gumpart dir");
+        for gump_id in SYNTHETIC_GUMP_IDS {
+            fs::write(dir.join(format!("{gump_id:08}.tga")), solid_tga(SYNTHETIC_GUMP_SIDE)).expect("write tga");
+        }
+        dir
+    }
+
+    /// The payload the progress callback panics with to cancel the job.
+    struct Cancelled;
+
+    #[test]
+    fn progress_reports_every_extracted_gump_then_the_package_build() {
+        let dir = synthetic_gumpart_dir("udd-conv-ec-gumps-progress");
+        let output = dir.join(GUMPS_EC_DEFAULT_OUTPUT);
+        let payload = std::sync::Mutex::new(Vec::new());
+        let mut phases = Vec::new();
+
+        let summary = convert_ec_gumps_to_uddp_from_sources_with_progress(
+            &[dir.clone()],
+            &output,
+            &EcGumpsOptions::default(),
+            |progress| payload.lock().unwrap().push(progress),
+            |progress: udd_container::BuildProgress| phases.push(progress.phase),
+        )
+        .expect("pack synthetic gumps");
+
+        let total = SYNTHETIC_GUMP_IDS.len() as u64;
+        let payload = payload.into_inner().unwrap();
+        assert_eq!(summary.gump_count, SYNTHETIC_GUMP_IDS.len() as u32);
+        assert_eq!(
+            payload.iter().filter(|progress| progress.stage == AssetTaskProgressStage::Extracting).last(),
+            Some(&AssetTaskProgress { stage: AssetTaskProgressStage::Extracting, completed: total, total })
+        );
+        assert!(payload.iter().any(|progress| progress.stage == AssetTaskProgressStage::PackingAtlas));
+        assert!(phases.contains(&udd_container::BuildProgressPhase::Assembling));
+        assert!(output.is_file());
+        fs::remove_dir_all(&dir).expect("remove gumpart dir");
+    }
+
+    /// A job cancelled from its progress callback mid-extraction unwinds before the package file is created.
+    #[test]
+    fn cancelling_from_the_progress_callback_leaves_no_package() {
+        const CANCEL_AFTER_GUMPS: u64 = 2;
+        let dir = synthetic_gumpart_dir("udd-conv-ec-gumps-cancel");
+        let output = dir.join(GUMPS_EC_DEFAULT_OUTPUT);
+
+        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            convert_ec_gumps_to_uddp_from_sources_with_progress(
+                &[dir.clone()],
+                &output,
+                &EcGumpsOptions::default(),
+                |progress| {
+                    if progress.stage == AssetTaskProgressStage::Extracting && progress.completed >= CANCEL_AFTER_GUMPS {
+                        std::panic::panic_any(Cancelled);
+                    }
+                },
+                |_| {},
+            )
+        }));
+
+        let payload = result.err().expect("the job unwinds");
+        assert!(payload.is::<Cancelled>());
+        assert!(!output.exists());
+        fs::remove_dir_all(&dir).expect("remove gumpart dir");
     }
 
     fn unique_temp_dir(label: &str) -> PathBuf {
