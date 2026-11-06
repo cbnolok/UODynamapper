@@ -2,6 +2,7 @@ use std::path::PathBuf;
 use serde::{Deserialize, Serialize};
 use udd_conv::classic_sources::SourceFormatPreference;
 use udd_conv::cc_radar::RadarFormat;
+use udd_conv::ec_gumps::EC_GUMP_DEFAULT_MAX_ID;
 use udd_conv::page_compression::LOSSLESS_PAGE_ZSTD_LEVEL;
 use udd_conv::upscale::UpscaleFilter;
 use uocf::map_edition::MapEdition;
@@ -11,6 +12,16 @@ pub enum TextureOptimization {
     None,
     Bc7,
     Bc7Zstd,
+}
+
+/// What the Enhanced gumps job does with the Classic gumps Interface.uop repeats.
+#[derive(Deserialize, Serialize, Clone, Copy, PartialEq, Eq, Debug)]
+pub enum GumpsEcSharing {
+    /// Leave out each single gump the gumps_cc.uddp of the output folder draws the same (`pack-ec-gumps
+    /// --share-with`), packing standalone when there is none.
+    ShareWithGumpsCc,
+    /// Keep every gump, so the package needs no gumps_cc.uddp.
+    Standalone,
 }
 
 /// The GUI writes this file itself (on every change and on exit), so it is read leniently: keys missing from an
@@ -67,6 +78,27 @@ pub struct AppSettings {
     /// The edition of the Classic facet files the map, statics and radar conversions read.
     pub map_edition: MapEdition,
     pub ec_mobile_anim_allow_missing_kdl: bool,
+    /// The Classic single gumps as BC1 (`pack-gumps --bc1`), else lossless RGBA8888.
+    pub gumps_cc_bc1: bool,
+    /// The Zstd level of the Classic single gumps and atlas pages (`pack-gumps --zstd=LEVEL`); `None` keeps the
+    /// package's levels.
+    pub zstd_gumps_cc: Option<i32>,
+    pub upscale_gumps_cc_paperdoll: UpscaleFilter,
+    pub upscale_gumps_cc_single: UpscaleFilter,
+    /// The Classic gump files read first (`pack-gumps --uop` for UOP); the other format is the fallback.
+    pub gumps_cc_source: SourceFormatPreference,
+    /// The Enhanced single gumps lossy (`pack-ec-gumps --bc7`): BC7, the ones in the Classic colour space BC1.
+    pub gumps_ec_bc7: bool,
+    /// The Zstd level of the Enhanced single gumps and atlas pages (`pack-ec-gumps --zstd=LEVEL`); `None` keeps the
+    /// package's levels.
+    pub zstd_gumps_ec: Option<i32>,
+    pub upscale_gumps_ec_paperdoll: UpscaleFilter,
+    pub upscale_gumps_ec_single: UpscaleFilter,
+    /// The highest gump id read from Interface.uop (`pack-ec-gumps --max-id`).
+    pub gumps_ec_max_id: u32,
+    /// An extracted gumpart folder the Enhanced gumps are read from instead of the Enhanced client folder.
+    pub gumps_ec_gumpart_dir: Option<PathBuf>,
+    pub gumps_ec_sharing: GumpsEcSharing,
 }
 
 impl Default for AppSettings {
@@ -117,6 +149,18 @@ impl Default for AppSettings {
             include_static_difs: false,
             map_edition: MapEdition::Standard,
             ec_mobile_anim_allow_missing_kdl: false,
+            gumps_cc_bc1: false,
+            zstd_gumps_cc: None,
+            upscale_gumps_cc_paperdoll: UpscaleFilter::None,
+            upscale_gumps_cc_single: UpscaleFilter::None,
+            gumps_cc_source: SourceFormatPreference::Mul,
+            gumps_ec_bc7: false,
+            zstd_gumps_ec: None,
+            upscale_gumps_ec_paperdoll: UpscaleFilter::None,
+            upscale_gumps_ec_single: UpscaleFilter::None,
+            gumps_ec_max_id: EC_GUMP_DEFAULT_MAX_ID,
+            gumps_ec_gumpart_dir: None,
+            gumps_ec_sharing: GumpsEcSharing::ShareWithGumpsCc,
         }
     }
 }
@@ -157,6 +201,8 @@ pub enum AssetPackTask {
     MobileAnimCc,
     MobileAnimEc,
     TileMeta,
+    GumpsCc,
+    GumpsEc,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -271,6 +317,42 @@ mod tests {
         assert_eq!(settings.zstd_tex_art_cc, LOSSLESS_PAGE_ZSTD_LEVEL);
         assert_eq!(settings.zstd_tex_art_ec, LOSSLESS_PAGE_ZSTD_LEVEL);
         assert_eq!(settings.zstd_tex_aux_ec, LOSSLESS_PAGE_ZSTD_LEVEL);
+    }
+
+    #[test]
+    fn app_settings_default_packs_gumps_lossless_and_shares_the_classic_twins() {
+        let settings = AppSettings::default();
+
+        assert!(!settings.gumps_cc_bc1);
+        assert!(!settings.gumps_ec_bc7);
+        assert_eq!(settings.zstd_gumps_cc, None);
+        assert_eq!(settings.zstd_gumps_ec, None);
+        assert_eq!(settings.gumps_cc_source, SourceFormatPreference::Mul);
+        assert_eq!(settings.gumps_ec_max_id, EC_GUMP_DEFAULT_MAX_ID);
+        assert_eq!(settings.gumps_ec_gumpart_dir, None);
+        assert_eq!(settings.gumps_ec_sharing, GumpsEcSharing::ShareWithGumpsCc);
+    }
+
+    #[test]
+    fn app_settings_roundtrips_gump_fields() {
+        const ZSTD_LEVEL: i32 = 12;
+        const MAX_ID: u32 = 70_000;
+        let mut settings = AppSettings::default();
+        settings.gumps_cc_bc1 = true;
+        settings.gumps_ec_bc7 = true;
+        settings.zstd_gumps_cc = Some(ZSTD_LEVEL);
+        settings.zstd_gumps_ec = Some(ZSTD_LEVEL);
+        settings.upscale_gumps_cc_single = UpscaleFilter::Nearest2x;
+        settings.upscale_gumps_ec_paperdoll = UpscaleFilter::Xbrz2x;
+        settings.gumps_cc_source = SourceFormatPreference::Uop;
+        settings.gumps_ec_max_id = MAX_ID;
+        settings.gumps_ec_gumpart_dir = Some(PathBuf::from("extracted/gumpart"));
+        settings.gumps_ec_sharing = GumpsEcSharing::Standalone;
+
+        let serialized = toml::to_string(&settings).expect("serialize settings");
+        let restored: AppSettings = toml::from_str(&serialized).expect("deserialize settings");
+
+        assert!(restored == settings);
     }
 
     #[test]

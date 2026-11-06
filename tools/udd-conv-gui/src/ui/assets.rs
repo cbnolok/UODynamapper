@@ -1,6 +1,19 @@
 use crate::app::UddConvApp;
-use crate::models::{AssetPackProgress, AssetPackProgressState, AssetPackTask, TextureOptimization};
+use crate::logic::tasks::{
+    cc_gumps_source_dirs, ec_gumps_share, ec_gumps_source_dirs, single_gump_pixel_format, EcGumpsShare,
+};
+use crate::models::{
+    AppSettings, AssetPackProgress, AssetPackProgressState, AssetPackTask, GumpsEcSharing, TextureOptimization,
+};
 use eframe::egui;
+use udd_conv::cc_gumps::CC_LOSSY_SINGLE_GUMP_FORMAT;
+use udd_conv::classic_sources::{resolve_classic_gump_source, SourceFormatPreference};
+use udd_conv::ec_gumps::{find_ec_gumpart_dir, find_interface_uop, EC_LOSSY_SINGLE_GUMP_FORMAT};
+use udd_conv::gump_atlas::{
+    is_paperdoll_equipment_gump_id, PAPERDOLL_EQUIPMENT_GUMP_ID_END, PAPERDOLL_EQUIPMENT_GUMP_ID_START,
+};
+use udd_conv::page_compression::LOSSLESS_PAGE_ZSTD_LEVEL;
+use udd_conv::single_gumps::{GumpPixelFormat, PAPERDOLL_BODY_GUMP_BY_BODY};
 use udd_conv::source_paths::gather_source_dirs;
 use udd_conv::tex_art_cc::select_tex_art_cc_metadata_source;
 use udd_conv::tex_land_cc::CLASSIC_LAND_LOSSY_REFUSAL;
@@ -214,8 +227,399 @@ impl UddConvApp {
             );
             if clicked { self.convert_mobile_anim_ec(); }
             if stop_clicked { self.request_cancel_conversion(); }
+
+            ui.add_space(4.0);
+            draw_section_header(ui, "Gumps", "Interface gumps of both clients: gumps_cc.uddp and gumps_ec.uddp");
+            self.ui_gumps(ui, is_busy);
         });
     }
+
+    fn ui_gumps(&mut self, ui: &mut egui::Ui, is_busy: bool) {
+        ui.horizontal(|ui| {
+            if ui
+                .add_enabled(!is_busy, egui::Button::new(egui::RichText::new("Pack Classic + Enhanced").strong()))
+                .on_hover_text(GUMPS_COMBINED_TOOLTIP)
+                .on_disabled_hover_text("Another task is running")
+                .clicked()
+            {
+                self.convert_gumps_cc_and_ec();
+            }
+            ui.label(egui::RichText::new("Classic first, so the Enhanced gumps can share with it").weak());
+        });
+
+        let gumps_cc_source = gumps_cc_source_label(self);
+        let gumps_cc_progress = self.asset_pack_progress(AssetPackTask::GumpsCc);
+        let mut clicked = false;
+        let mut stop_clicked = false;
+        asset_card_frame(ui).show(ui, |ui| {
+            ui.set_min_width(ui.available_width());
+            ui.vertical(|ui| {
+                ui.spacing_mut().item_spacing = egui::vec2(6.0, 8.0);
+                (clicked, stop_clicked) = draw_asset_card_header(
+                    ui,
+                    "Classic Gumps",
+                    "Gumps from gumpart.mul/gumpidx.mul or gumpartLegacyMUL.uop",
+                    Some(&gumps_cc_source),
+                    &gumps_cc_progress,
+                    !is_busy,
+                );
+                ui.separator();
+                let settings = &mut self.settings;
+                ui.add_enabled_ui(!is_busy, |ui| {
+                    ui.horizontal_wrapped(|ui| {
+                        ui.spacing_mut().item_spacing = egui::vec2(12.0, 8.0);
+                        draw_control_cell(ui, "Read First", GUMP_SOURCE_CELL_WIDTH, |ui| {
+                            ui.horizontal(|ui| {
+                                for preference in [SourceFormatPreference::Mul, SourceFormatPreference::Uop] {
+                                    let label = preference.preferred_first()[0].label();
+                                    if ui
+                                        .add(egui::Button::selectable(settings.gumps_cc_source == preference, label))
+                                        .on_hover_text(GUMPS_CC_SOURCE_TOOLTIP)
+                                        .clicked()
+                                    {
+                                        settings.gumps_cc_source = preference;
+                                    }
+                                }
+                            });
+                        });
+                        draw_gump_format_cell(
+                            ui,
+                            &mut settings.gumps_cc_bc1,
+                            CC_LOSSY_SINGLE_GUMP_FORMAT,
+                            GUMPS_CC_BC1_TOOLTIP,
+                            EC_LOSSY_SINGLE_GUMP_FORMAT,
+                            GUMPS_CC_BC7_REFUSAL,
+                        );
+                        draw_gump_zstd_cell(ui, &mut settings.zstd_gumps_cc);
+                        draw_gump_upscale_cell(
+                            ui,
+                            "Paperdoll Upscale",
+                            "gumps_cc_paperdoll_upscale",
+                            &mut settings.upscale_gumps_cc_paperdoll,
+                            GUMPS_PAPERDOLL_UPSCALE_TOOLTIP,
+                        );
+                        draw_gump_upscale_cell(
+                            ui,
+                            "Single Gump Upscale",
+                            "gumps_cc_single_upscale",
+                            &mut settings.upscale_gumps_cc_single,
+                            GUMPS_SINGLE_UPSCALE_TOOLTIP,
+                        );
+                    });
+                });
+                draw_gump_note(ui, &gumps_lossless_note("Classic partial hue needs"), egui::Color32::GRAY);
+            });
+        });
+        if clicked { self.convert_gumps_cc(); }
+        if stop_clicked { self.request_cancel_conversion(); }
+
+        let ec_source = EcGumpSource::of(&self.settings);
+        let gumps_cc = self.gumps_cc_output();
+        let share = ec_gumps_share(self.settings.gumps_ec_sharing, &gumps_cc, gumps_cc.is_file());
+        let gumps_ec_progress = self.asset_pack_progress(AssetPackTask::GumpsEc);
+        let mut clicked = false;
+        let mut stop_clicked = false;
+        asset_card_frame(ui).show(ui, |ui| {
+            ui.set_min_width(ui.available_width());
+            ui.vertical(|ui| {
+                ui.spacing_mut().item_spacing = egui::vec2(6.0, 8.0);
+                (clicked, stop_clicked) = draw_asset_card_header(
+                    ui,
+                    "Enhanced Gumps",
+                    "Gumps from Interface.uop or an extracted gumpart folder",
+                    Some(&ec_source.label()),
+                    &gumps_ec_progress,
+                    !is_busy,
+                );
+                ui.separator();
+                let settings = &mut self.settings;
+                ui.add_enabled_ui(!is_busy, |ui| {
+                    ui.horizontal_wrapped(|ui| {
+                        ui.spacing_mut().item_spacing = egui::vec2(12.0, 8.0);
+                        draw_control_cell(ui, "Extracted Gumpart Folder", GUMP_GUMPART_CELL_WIDTH, |ui| {
+                            ui.horizontal(|ui| {
+                                if ui.button("Select...").on_hover_text(GUMPS_EC_GUMPART_TOOLTIP).clicked() {
+                                    if let Some(dir) = uot_gui::pick_folder() {
+                                        settings.gumps_ec_gumpart_dir = Some(dir);
+                                    }
+                                }
+                                if ui
+                                    .add_enabled(settings.gumps_ec_gumpart_dir.is_some(), egui::Button::new("Clear"))
+                                    .on_hover_text("Read the Enhanced client folder")
+                                    .clicked()
+                                {
+                                    settings.gumps_ec_gumpart_dir = None;
+                                }
+                            });
+                            let folder = match &settings.gumps_ec_gumpart_dir {
+                                Some(dir) => dir.display().to_string(),
+                                None => "None: the Enhanced client folder".to_string(),
+                            };
+                            ui.label(egui::RichText::new(folder).weak());
+                        });
+                        draw_control_cell(ui, "Max Gump Id", GUMP_MAX_ID_CELL_WIDTH, |ui| {
+                            ui.add_enabled(
+                                !matches!(ec_source, EcGumpSource::Extracted(_)),
+                                egui::DragValue::new(&mut settings.gumps_ec_max_id).speed(GUMP_MAX_ID_DRAG_SPEED),
+                            )
+                            .on_hover_text(GUMPS_EC_MAX_ID_TOOLTIP)
+                            .on_disabled_hover_text(GUMPS_EC_MAX_ID_REFUSAL);
+                        });
+                        draw_gump_format_cell(
+                            ui,
+                            &mut settings.gumps_ec_bc7,
+                            EC_LOSSY_SINGLE_GUMP_FORMAT,
+                            GUMPS_EC_BC7_TOOLTIP,
+                            CC_LOSSY_SINGLE_GUMP_FORMAT,
+                            GUMPS_EC_BC1_REFUSAL,
+                        );
+                        draw_gump_zstd_cell(ui, &mut settings.zstd_gumps_ec);
+                        draw_gump_upscale_cell(
+                            ui,
+                            "Paperdoll Upscale",
+                            "gumps_ec_paperdoll_upscale",
+                            &mut settings.upscale_gumps_ec_paperdoll,
+                            GUMPS_PAPERDOLL_UPSCALE_TOOLTIP,
+                        );
+                        draw_gump_upscale_cell(
+                            ui,
+                            "Single Gump Upscale",
+                            "gumps_ec_single_upscale",
+                            &mut settings.upscale_gumps_ec_single,
+                            GUMPS_SINGLE_UPSCALE_TOOLTIP,
+                        );
+                        let share_tooltip = gumps_ec_share_tooltip(settings);
+                        draw_control_cell(ui, "Classic Twins", GUMP_SHARING_CELL_WIDTH, |ui| {
+                            ui.horizontal(|ui| {
+                                for (sharing, label) in [
+                                    (GumpsEcSharing::ShareWithGumpsCc, "Share with gumps_cc"),
+                                    (GumpsEcSharing::Standalone, "Pack standalone"),
+                                ] {
+                                    if ui
+                                        .add(egui::Button::selectable(settings.gumps_ec_sharing == sharing, label))
+                                        .on_hover_text(share_tooltip.as_str())
+                                        .clicked()
+                                    {
+                                        settings.gumps_ec_sharing = sharing;
+                                    }
+                                }
+                            });
+                        });
+                    });
+                });
+                let (share_note, share_colour) = gumps_ec_share_note(&share);
+                draw_gump_note(ui, &share_note, share_colour);
+                if self.settings.gumps_ec_bc7 && !self.settings.upscale_gumps_ec_single.keeps_palette() {
+                    draw_gump_note(
+                        ui,
+                        &format!(
+                            "{:?} blends colours, so the upscaled gumps leave the Classic colour space: BC7, not BC1.",
+                            self.settings.upscale_gumps_ec_single
+                        ),
+                        NOTICE_COLOUR,
+                    );
+                }
+                draw_gump_note(ui, &gumps_lossless_note("the Enhanced client hues"), egui::Color32::GRAY);
+            });
+        });
+        if clicked { self.convert_gumps_ec(); }
+        if stop_clicked { self.request_cancel_conversion(); }
+    }
+}
+
+const GUMP_SOURCE_CELL_WIDTH: f32 = 100.0;
+const GUMP_FORMAT_CELL_WIDTH: f32 = 190.0;
+const GUMP_ZSTD_CELL_WIDTH: f32 = 140.0;
+const GUMP_UPSCALE_CELL_WIDTH: f32 = 190.0;
+const GUMP_GUMPART_CELL_WIDTH: f32 = 250.0;
+const GUMP_MAX_ID_CELL_WIDTH: f32 = 96.0;
+const GUMP_SHARING_CELL_WIDTH: f32 = 250.0;
+const GUMP_MAX_ID_DRAG_SPEED: f64 = 10.0;
+/// The Zstd levels a level field accepts.
+const ZSTD_LEVEL_RANGE: std::ops::RangeInclusive<i32> = 1..=22;
+/// The colour of a note that a choice changes what the job writes.
+const NOTICE_COLOUR: egui::Color32 = egui::Color32::from_rgb(255, 190, 110);
+/// The colour of a note on where the job reads or shares from.
+const SOURCE_NOTE_COLOUR: egui::Color32 = egui::Color32::from_rgb(100, 200, 255);
+
+const GUMPS_COMBINED_TOOLTIP: &str = "Packs gumps_cc.uddp, then gumps_ec.uddp, which shares with the new gumps_cc when \
+Share with gumps_cc is chosen.";
+const GUMPS_RGBA_TOOLTIP: &str = "Lossless RGBA8888: the default.";
+const GUMPS_CC_SOURCE_TOOLTIP: &str = "The Classic gump files read first: gumpart.mul/gumpidx.mul (MUL) or \
+gumpartLegacyMUL.uop (UOP, pack-gumps --uop). The other one is the fallback. verdata.mul patches the MUL files only.";
+const GUMPS_CC_BC1_TOOLTIP: &str = "Every single (non-paperdoll) Classic gump as BC1 (pack-gumps --bc1): lossy, with \
+one bit of alpha, and Zstd 19 unless a level is set.";
+const GUMPS_CC_BC7_REFUSAL: &str = "gumps_cc packs lossy as BC1 only (pack-gumps --bc1): Classic gumps have one bit \
+of alpha, which BC1 holds in half the size of BC7.";
+const GUMPS_EC_BC7_TOOLTIP: &str = "The single (non-paperdoll) Enhanced gumps lossy (pack-ec-gumps --bc7), with Zstd 19 \
+unless a level is set: the gumps in the Classic colour space (alpha 0 or 255, colours on Classic's steps of 8, as the \
+Classic gumps Interface.uop repeats) as BC1, the others as BC7, soft alpha kept. The test runs after any upscale pass, \
+the upscale profile's too, so an interpolating upscaler sends a gump to BC7.";
+const GUMPS_EC_BC1_REFUSAL: &str = "Enhanced gumps pack lossy as BC7, which keeps soft alpha; with BC7 chosen, the \
+gumps in the Classic colour space become BC1 by themselves.";
+const GUMPS_ZSTD_TOOLTIP: &str = "Zstd level of the single gumps and the paperdoll atlas pages (--zstd=LEVEL). By \
+default the single gumps use 7 (19 when lossy) and the atlas pages, lossless, 19.";
+const GUMPS_PAPERDOLL_UPSCALE_TOOLTIP: &str = "Upscales the paperdoll equipment gumps on their atlas pages \
+(--paperdoll-upscale-pass). An upscale profile can set other passes per image type and gump id.";
+const GUMPS_SINGLE_UPSCALE_TOOLTIP: &str = "Upscales the other gumps (--single-upscale-pass). An upscale profile can \
+set other passes per image type and gump id.";
+const GUMPS_EC_GUMPART_TOOLTIP: &str = "An extracted gumpart folder to read instead of the Enhanced client's \
+Interface.uop: a folder holding data/interface/default/textures/gumpart, or a folder of Enhanced gump images.";
+const GUMPS_EC_MAX_ID_TOOLTIP: &str = "The highest gump id read from Interface.uop (pack-ec-gumps --max-id).";
+const GUMPS_EC_MAX_ID_REFUSAL: &str = "An extracted gumpart folder is read whole; only Interface.uop is read by id.";
+const GUMPS_EC_SHARE_TOOLTIP: &str = "Share with gumps_cc: leave out each single gump the output folder's gumps_cc.uddp \
+draws the same (the Classic gumps Interface.uop repeats) and list it for Dynamapper to draw from the Classic source \
+(pack-ec-gumps --share-with). The package then needs that gumps_cc.uddp, or the Classic client files, to show those \
+gumps. With upscaling, the Classic and Enhanced single gump passes must match, or no gump draws the same and nothing is \
+shared.\n\nPack standalone: keep every gump, so the package needs no gumps_cc.";
+
+/// Where the Enhanced gumps job reads, as `convert_ec_gumps_to_uddp_from_sources` picks it.
+enum EcGumpSource {
+    NoFolder,
+    InterfaceUop(std::path::PathBuf),
+    Extracted(std::path::PathBuf),
+    Missing,
+}
+
+impl EcGumpSource {
+    fn of(settings: &AppSettings) -> Self {
+        let sources = ec_gumps_source_dirs(settings);
+        if sources.is_empty() {
+            Self::NoFolder
+        } else if let Some(interface_uop) = find_interface_uop(&sources) {
+            Self::InterfaceUop(interface_uop)
+        } else if let Some(gumpart_dir) = find_ec_gumpart_dir(&sources) {
+            Self::Extracted(gumpart_dir)
+        } else {
+            Self::Missing
+        }
+    }
+
+    fn label(&self) -> String {
+        match self {
+            Self::NoFolder => "Source: select an Enhanced source directory or a gumpart folder".to_string(),
+            Self::InterfaceUop(path) => format!("Source (UOP): {}", path.display()),
+            Self::Extracted(path) => format!("Source (extracted gumpart): {}", path.display()),
+            Self::Missing => "Source: missing Interface.uop or an extracted gumpart folder".to_string(),
+        }
+    }
+}
+
+fn gumps_cc_source_label(app: &UddConvApp) -> String {
+    let sources = cc_gumps_source_dirs(&app.settings);
+    if sources.is_empty() {
+        return "Source: select a Classic or Enhanced source directory".to_string();
+    }
+    match resolve_classic_gump_source(&sources, app.settings.gumps_cc_source) {
+        Ok(source) => format!("Source ({}): {}", source.format.label(), source.primary_path.display()),
+        Err(_) => "Source: missing gumpart.mul/gumpidx.mul or gumpartLegacyMUL.uop".to_string(),
+    }
+}
+
+/// The share choice's tooltip, which also says when the single gump upscale filters differ.
+fn gumps_ec_share_tooltip(settings: &AppSettings) -> String {
+    if settings.upscale_gumps_cc_single == settings.upscale_gumps_ec_single {
+        GUMPS_EC_SHARE_TOOLTIP.to_string()
+    } else {
+        format!(
+            "{GUMPS_EC_SHARE_TOOLTIP}\n\nThe single gump upscale filters differ now ({:?} for Classic, {:?} for \
+             Enhanced), so nothing would be shared.",
+            settings.upscale_gumps_cc_single, settings.upscale_gumps_ec_single
+        )
+    }
+}
+
+fn gumps_ec_share_note(share: &EcGumpsShare) -> (String, egui::Color32) {
+    match share {
+        EcGumpsShare::With(gumps_cc) => (
+            format!("Shares the Classic twins with {}", gumps_cc.display()),
+            SOURCE_NOTE_COLOUR,
+        ),
+        EcGumpsShare::MissingGumpsCc(gumps_cc) => (
+            format!(
+                "No {} yet: Pack Asset packs standalone; Pack Classic + Enhanced builds it first and shares with it.",
+                gumps_cc.display()
+            ),
+            NOTICE_COLOUR,
+        ),
+        EcGumpsShare::Standalone => (
+            "Packs standalone: every gump kept.".to_string(),
+            egui::Color32::GRAY,
+        ),
+    }
+}
+
+/// The gumps every format leaves RGBA8888, built from the id ranges the packers use.
+fn gumps_lossless_note(hue: &str) -> String {
+    let mut body_gumps: Vec<u32> = PAPERDOLL_BODY_GUMP_BY_BODY
+        .iter()
+        .map(|&(_, body_gump)| body_gump)
+        .filter(|&body_gump| !is_paperdoll_equipment_gump_id(body_gump))
+        .collect();
+    body_gumps.sort_unstable();
+    body_gumps.dedup();
+    let body_gumps: Vec<String> = body_gumps.iter().map(u32::to_string).collect();
+    format!(
+        "Always RGBA8888: the paperdoll gumps ({PAPERDOLL_EQUIPMENT_GUMP_ID_START}-{PAPERDOLL_EQUIPMENT_GUMP_ID_END}) on \
+         their lossless atlas pages, and the paperdoll body gumps ({}): {hue} exact greys.",
+        body_gumps.join(", ")
+    )
+}
+
+fn draw_gump_note(ui: &mut egui::Ui, text: &str, colour: egui::Color32) {
+    ui.label(egui::RichText::new(text).size(12.5).color(colour));
+}
+
+/// The single gump formats as toggles: lossless RGBA8888, the package's lossy format, and the other lossy format greyed
+/// out with `refusal` as the reason.
+fn draw_gump_format_cell(
+    ui: &mut egui::Ui,
+    lossy: &mut bool,
+    lossy_format: GumpPixelFormat,
+    lossy_tooltip: &str,
+    refused_format: GumpPixelFormat,
+    refusal: &str,
+) {
+    draw_control_cell(ui, "Single Gumps", GUMP_FORMAT_CELL_WIDTH, |ui| {
+        ui.horizontal(|ui| {
+            let current = single_gump_pixel_format(*lossy, lossy_format);
+            for format in [GumpPixelFormat::Rgba8888, GumpPixelFormat::Bc1, GumpPixelFormat::Bc7] {
+                let button = egui::Button::selectable(current == format, format.label());
+                if format == refused_format {
+                    ui.add_enabled(false, button).on_disabled_hover_text(refusal);
+                    continue;
+                }
+                let tooltip = if format == lossy_format { lossy_tooltip } else { GUMPS_RGBA_TOOLTIP };
+                if ui.add(button).on_hover_text(tooltip).clicked() {
+                    *lossy = format == lossy_format;
+                }
+            }
+        });
+    });
+}
+
+/// The gump Zstd level: the package's levels by default, or one level for the single gumps and atlas pages.
+fn draw_gump_zstd_cell(ui: &mut egui::Ui, level: &mut Option<i32>) {
+    draw_control_cell(ui, "Zstd Level", GUMP_ZSTD_CELL_WIDTH, |ui| {
+        ui.horizontal(|ui| {
+            let mut package_levels = level.is_none();
+            if ui.checkbox(&mut package_levels, "Default").on_hover_text(GUMPS_ZSTD_TOOLTIP).changed() {
+                *level = (!package_levels).then_some(LOSSLESS_PAGE_ZSTD_LEVEL);
+            }
+            if let Some(level) = level {
+                ui.add(egui::DragValue::new(level).speed(1).range(ZSTD_LEVEL_RANGE))
+                    .on_hover_text(GUMPS_ZSTD_TOOLTIP);
+            }
+        });
+    });
+}
+
+fn draw_gump_upscale_cell(ui: &mut egui::Ui, label: &str, id: &str, filter: &mut UpscaleFilter, tooltip: &str) {
+    draw_control_cell(ui, label, GUMP_UPSCALE_CELL_WIDTH, |ui| {
+        ui.scope(|ui| draw_upscale_filter(ui, id.to_string(), filter))
+            .response
+            .on_hover_text(tooltip);
+    });
 }
 
 fn tex_art_cc_metadata_source_label(app: &UddConvApp) -> String {
@@ -343,65 +747,14 @@ fn draw_asset_card(
     let mut clicked = false;
     let mut stop_clicked = false;
     let mut preview_req = None;
-    let is_running = progress.state == AssetPackProgressState::Running;
 
-    egui::Frame::group(ui.style())
-        .fill(ui.visuals().widgets.noninteractive.bg_fill)
-        .corner_radius(8.0)
-        .inner_margin(egui::Margin::same(10))
+    asset_card_frame(ui)
         .show(ui, |ui| {
             ui.set_min_width(ui.available_width());
             ui.vertical(|ui| {
                 ui.spacing_mut().item_spacing = egui::vec2(6.0, 8.0);
 
-                ui.horizontal(|ui| {
-                    ui.vertical(|ui| {
-                        ui.set_width(ui.available_width().min(420.0).max(180.0));
-                        ui.label(
-                            egui::RichText::new(title)
-                                .strong()
-                                .size(18.0)
-                                .color(egui::Color32::WHITE),
-                        );
-                        ui.label(egui::RichText::new(desc).size(12.5).weak());
-                        if let Some(source_note) = source_note {
-                            ui.label(
-                                egui::RichText::new(source_note)
-                                    .size(12.5)
-                                    .color(egui::Color32::from_rgb(100, 200, 255)),
-                            );
-                        }
-                    });
-
-                    ui.vertical(|ui| {
-                        ui.set_width((ui.available_width() - 132.0).max(180.0));
-                        draw_asset_progress(ui, progress);
-                    });
-
-                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                        if is_running {
-                            if ui
-                                .add_sized(
-                                    [90.0, 30.0],
-                                    egui::Button::new(egui::RichText::new("Stop").strong()),
-                                )
-                                .on_hover_text("Request conversion stop")
-                                .clicked()
-                            {
-                                stop_clicked = true;
-                            }
-                        } else if ui
-                            .add_enabled(
-                                can_start,
-                                egui::Button::new(egui::RichText::new("Pack Asset").strong()),
-                            )
-                            .on_hover_text(if can_start { "Pack this asset" } else { "Another task is running" })
-                            .clicked()
-                        {
-                            clicked = true;
-                        }
-                    });
-                });
+                (clicked, stop_clicked) = draw_asset_card_header(ui, title, desc, source_note, progress, can_start);
 
                 if opt.is_some()
                     || texture_zstd_level.is_some()
@@ -571,6 +924,80 @@ fn draw_asset_card(
     (clicked, stop_clicked, preview_req)
 }
 
+/// The frame of an asset card.
+fn asset_card_frame(ui: &egui::Ui) -> egui::Frame {
+    egui::Frame::group(ui.style())
+        .fill(ui.visuals().widgets.noninteractive.bg_fill)
+        .corner_radius(8.0)
+        .inner_margin(egui::Margin::same(10))
+}
+
+/// The top row of an asset card: its title, description and source, its progress bar, and its Pack Asset or Stop
+/// button. Returns whether Pack Asset and Stop were clicked.
+fn draw_asset_card_header(
+    ui: &mut egui::Ui,
+    title: &str,
+    desc: &str,
+    source_note: Option<&str>,
+    progress: &AssetPackProgress,
+    can_start: bool,
+) -> (bool, bool) {
+    let mut clicked = false;
+    let mut stop_clicked = false;
+    let is_running = progress.state == AssetPackProgressState::Running;
+
+    ui.horizontal(|ui| {
+        ui.vertical(|ui| {
+            ui.set_width(ui.available_width().min(420.0).max(180.0));
+            ui.label(
+                egui::RichText::new(title)
+                    .strong()
+                    .size(18.0)
+                    .color(egui::Color32::WHITE),
+            );
+            ui.label(egui::RichText::new(desc).size(12.5).weak());
+            if let Some(source_note) = source_note {
+                ui.label(
+                    egui::RichText::new(source_note)
+                        .size(12.5)
+                        .color(SOURCE_NOTE_COLOUR),
+                );
+            }
+        });
+
+        ui.vertical(|ui| {
+            ui.set_width((ui.available_width() - 132.0).max(180.0));
+            draw_asset_progress(ui, progress);
+        });
+
+        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+            if is_running {
+                if ui
+                    .add_sized(
+                        [90.0, 30.0],
+                        egui::Button::new(egui::RichText::new("Stop").strong()),
+                    )
+                    .on_hover_text("Request conversion stop")
+                    .clicked()
+                {
+                    stop_clicked = true;
+                }
+            } else if ui
+                .add_enabled(
+                    can_start,
+                    egui::Button::new(egui::RichText::new("Pack Asset").strong()),
+                )
+                .on_hover_text(if can_start { "Pack this asset" } else { "Another task is running" })
+                .clicked()
+            {
+                clicked = true;
+            }
+        });
+    });
+
+    (clicked, stop_clicked)
+}
+
 fn draw_asset_progress(ui: &mut egui::Ui, progress: &AssetPackProgress) {
     let text = match progress.state {
         AssetPackProgressState::Idle => egui::RichText::new(&progress.text).weak(),
@@ -613,7 +1040,7 @@ fn draw_zstd_level_cell(ui: &mut egui::Ui, level: &mut i32) {
         ui.add(
             egui::DragValue::new(level)
                 .speed(1)
-                .range(1..=22),
+                .range(ZSTD_LEVEL_RANGE),
         )
             .on_hover_text("Lower levels pack faster and larger; 19-22 can pack much slower for smaller packages. Land, art and auxiliary textures default to 19, the rest to 7.");
     });

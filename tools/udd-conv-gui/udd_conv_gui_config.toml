@@ -39,6 +39,15 @@ include_map_difs = false
 include_static_difs = false
 map_edition = "Standard"
 ec_mobile_anim_allow_missing_kdl = false
+gumps_cc_bc1 = false
+upscale_gumps_cc_paperdoll = "None"
+upscale_gumps_cc_single = "None"
+gumps_cc_source = "Mul"
+gumps_ec_bc7 = false
+upscale_gumps_ec_paperdoll = "None"
+upscale_gumps_ec_single = "None"
+gumps_ec_max_id = 99999
+gumps_ec_sharing = "ShareWithGumpsCc"
 
 [upscale_tex_land_cc_64]
 target_size = 0

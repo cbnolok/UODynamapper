@@ -37,6 +37,17 @@ use udd_conv::{
     BuildProgress, BuildProgressPhase, CompressionFlag,
     PagePixelFormat,
 };
+use udd_conv::cc_gumps::{
+    convert_gumps_to_uddp_from_sources_with_patches_and_options, CcGumpsBuildSummary, CcGumpsOptions,
+    CC_LOSSY_SINGLE_GUMP_FORMAT, GUMPS_CC_DEFAULT_OUTPUT,
+};
+use udd_conv::ec_gumps::{
+    convert_ec_gumps_to_uddp_from_sources, EcGumpsBuildSummary, EcGumpsOptions,
+    EC_CLASSIC_COLOUR_SPACE_SINGLE_GUMP_FORMAT, EC_LOSSY_SINGLE_GUMP_FORMAT, GUMPS_EC_DEFAULT_OUTPUT,
+};
+use udd_conv::page_compression::LOSSLESS_PAGE_ZSTD_LEVEL;
+use udd_conv::single_gumps::{default_single_gump_compression, GumpPixelFormat};
+use udd_conv::upscale_profile::UpscaleProfile;
 use udd_conv::package_progress::{AssetTaskProgress, AssetTaskProgressStage};
 use udd_conv_cli::{
     package_info::get_package_info_string,
@@ -48,7 +59,7 @@ use udd_conv::conversion_tables::{EC_MOBILE_ANIMATIONS_KDL, EC_TERRAIN_OVERRIDES
 use uocf::utils::bundled_files::{self, BundledFile};
 use crate::app::UddConvApp;
 use crate::models::{
-    AppSettings, AssetPackProgress, AssetPackProgressState, AssetPackTask, LogLevel, LogMessage,
+    AppSettings, AssetPackProgress, AssetPackProgressState, AssetPackTask, GumpsEcSharing, LogLevel, LogMessage,
     TextureOptimization,
 };
 
@@ -84,6 +95,15 @@ impl AssetProgressReporter {
                 fraction,
                 text: text.into(),
             });
+        }
+    }
+
+    /// A reporter of another task that shares this one's progress map and cancel flag, for a job that runs two tasks.
+    fn for_task(&self, task: AssetPackTask) -> Self {
+        Self {
+            task,
+            progress: self.progress.clone(),
+            cancel: self.cancel.clone(),
         }
     }
 
@@ -273,6 +293,198 @@ fn upscale_filter_passes(filter: UpscaleFilter) -> Vec<UpscalePass> {
     } else {
         Vec::new()
     }
+}
+
+/// The gump packers report no progress, so their bar shows this much while they run.
+const GUMPS_PACKING_PROGRESS: f32 = 0.1;
+
+/// The single gumps' pixel format, as `pack-gumps --bc1` and `pack-ec-gumps --bc7` pick it: the package's lossy format,
+/// else lossless RGBA8888.
+pub(crate) fn single_gump_pixel_format(lossy: bool, lossy_format: GumpPixelFormat) -> GumpPixelFormat {
+    if lossy { lossy_format } else { GumpPixelFormat::Rgba8888 }
+}
+
+/// The single gumps' codec, as the gump packers' `--zstd=LEVEL` sets it: Zstd at the chosen level, else the package's
+/// level for their pixel format.
+fn single_gump_compression(zstd_level: Option<i32>, format: GumpPixelFormat) -> CompressionFlag {
+    zstd_level
+        .map(CompressionFlag::ZstdNoDictLevel)
+        .unwrap_or_else(|| default_single_gump_compression(format))
+}
+
+/// The paperdoll atlas pages' codec, as the gump packers' `--zstd=LEVEL` sets it: the pages are lossless RGBA8888, with
+/// Zstd at the chosen level, else at the lossless pages' level.
+fn gump_atlas_compression(zstd_level: Option<i32>) -> CompressionFlag {
+    CompressionFlag::ZstdNoDictLevel(zstd_level.unwrap_or(LOSSLESS_PAGE_ZSTD_LEVEL))
+}
+
+/// The folders the Classic gumps job reads, as `pack-gumps --ccdir --ecdir` does: the Classic one first.
+pub(crate) fn cc_gumps_source_dirs(settings: &AppSettings) -> Vec<PathBuf> {
+    gather_source_dirs(settings.cc_dir.as_ref(), settings.ec_dir.as_ref())
+}
+
+/// The folder the Enhanced gumps job reads, as `pack-ec-gumps --ecdir` does: the extracted gumpart folder when one is
+/// set, else the Enhanced client folder.
+pub(crate) fn ec_gumps_source_dirs(settings: &AppSettings) -> Vec<PathBuf> {
+    gather_single_source_dir(settings.gumps_ec_gumpart_dir.as_ref().or(settings.ec_dir.as_ref()))
+}
+
+/// The Classic gumps job's options, mapped from the settings as `pack-gumps` maps its flags.
+fn cc_gumps_options(settings: &AppSettings, upscale_profile: Option<Arc<UpscaleProfile>>) -> CcGumpsOptions {
+    let single_pixel_format = single_gump_pixel_format(settings.gumps_cc_bc1, CC_LOSSY_SINGLE_GUMP_FORMAT);
+    CcGumpsOptions {
+        single_pixel_format,
+        compression: single_gump_compression(settings.zstd_gumps_cc, single_pixel_format),
+        atlas_compression: gump_atlas_compression(settings.zstd_gumps_cc),
+        paperdoll_upscale_passes: upscale_filter_passes(settings.upscale_gumps_cc_paperdoll),
+        single_upscale_passes: upscale_filter_passes(settings.upscale_gumps_cc_single),
+        upscale_profile,
+        source_preference: settings.gumps_cc_source,
+    }
+}
+
+/// The Enhanced gumps job's options, mapped from the settings as `pack-ec-gumps` maps its flags.
+fn ec_gumps_options(
+    settings: &AppSettings,
+    upscale_profile: Option<Arc<UpscaleProfile>>,
+    share_with: Option<PathBuf>,
+) -> EcGumpsOptions {
+    let single_pixel_format = single_gump_pixel_format(settings.gumps_ec_bc7, EC_LOSSY_SINGLE_GUMP_FORMAT);
+    EcGumpsOptions {
+        max_id: settings.gumps_ec_max_id,
+        single_pixel_format,
+        compression: single_gump_compression(settings.zstd_gumps_ec, single_pixel_format),
+        atlas_compression: gump_atlas_compression(settings.zstd_gumps_ec),
+        paperdoll_upscale_passes: upscale_filter_passes(settings.upscale_gumps_ec_paperdoll),
+        single_upscale_passes: upscale_filter_passes(settings.upscale_gumps_ec_single),
+        upscale_profile,
+        share_with,
+    }
+}
+
+/// What the Enhanced gumps job shares the Classic twins with.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum EcGumpsShare {
+    /// This gumps_cc.uddp (`pack-ec-gumps --share-with`).
+    With(PathBuf),
+    /// Nothing: packing standalone was chosen.
+    Standalone,
+    /// Nothing although sharing was chosen, since this gumps_cc.uddp isn't there: the package is standalone.
+    MissingGumpsCc(PathBuf),
+}
+
+impl EcGumpsShare {
+    fn share_with(&self) -> Option<PathBuf> {
+        match self {
+            Self::With(gumps_cc) => Some(gumps_cc.clone()),
+            Self::Standalone | Self::MissingGumpsCc(_) => None,
+        }
+    }
+}
+
+/// What the Enhanced gumps share, decided as `uddconv.py` does: with sharing chosen, the output folder's gumps_cc.uddp
+/// when it is there or the same job builds it first, else nothing.
+pub(crate) fn ec_gumps_share(sharing: GumpsEcSharing, gumps_cc: &Path, gumps_cc_available: bool) -> EcGumpsShare {
+    match sharing {
+        GumpsEcSharing::Standalone => EcGumpsShare::Standalone,
+        GumpsEcSharing::ShareWithGumpsCc if gumps_cc_available => EcGumpsShare::With(gumps_cc.to_path_buf()),
+        GumpsEcSharing::ShareWithGumpsCc => EcGumpsShare::MissingGumpsCc(gumps_cc.to_path_buf()),
+    }
+}
+
+/// Packs the Classic gumps as `pack-gumps` does.
+fn pack_gumps_cc(settings: &AppSettings, output: &Path) -> eyre::Result<CcGumpsBuildSummary> {
+    let sources = cc_gumps_source_dirs(settings);
+    if sources.is_empty() { eyre::bail!("No Classic or Enhanced source dir configured"); }
+    ensure_output_parent(output)?;
+    let options = cc_gumps_options(settings, load_upscale_profile(settings)?);
+    convert_gumps_to_uddp_from_sources_with_patches_and_options(
+        &sources,
+        output,
+        &classic_patch_options(settings),
+        &options,
+    )
+}
+
+fn describe_gumps_cc(settings: &AppSettings, output: &Path, summary: &CcGumpsBuildSummary) -> String {
+    let single_pixel_format = single_gump_pixel_format(settings.gumps_cc_bc1, CC_LOSSY_SINGLE_GUMP_FORMAT);
+    format!(
+        "Wrote {} Classic gumps to {} ({} single in {}, {} with soft alpha; {} atlas)",
+        summary.gump_count,
+        output.display(),
+        summary.single_gump_count,
+        single_pixel_format.label(),
+        summary.single_soft_alpha_count,
+        summary.atlas_gump_count
+    )
+}
+
+/// Packs the Enhanced gumps as `pack-ec-gumps` does, sharing as `share` says.
+fn pack_gumps_ec(settings: &AppSettings, output: &Path, share: &EcGumpsShare) -> eyre::Result<EcGumpsBuildSummary> {
+    let sources = ec_gumps_source_dirs(settings);
+    if sources.is_empty() { eyre::bail!("No Enhanced source dir or extracted gumpart folder configured"); }
+    ensure_output_parent(output)?;
+    if let EcGumpsShare::MissingGumpsCc(gumps_cc) = share {
+        log::warn!(
+            "No {} to share the Classic gumps with: packing {} standalone.",
+            gumps_cc.display(),
+            output.display()
+        );
+    }
+    let options = ec_gumps_options(settings, load_upscale_profile(settings)?, share.share_with());
+    convert_ec_gumps_to_uddp_from_sources(&sources, output, &options)
+}
+
+fn describe_gumps_ec(settings: &AppSettings, output: &Path, summary: &EcGumpsBuildSummary) -> String {
+    let single_pixel_format = single_gump_pixel_format(settings.gumps_ec_bc7, EC_LOSSY_SINGLE_GUMP_FORMAT);
+    let single_formats = match summary.single_classic_colour_space_count {
+        0 => single_pixel_format.label().to_string(),
+        classic_count => format!(
+            "{}, {classic_count} of them in the Classic colour space as {}",
+            single_pixel_format.label(),
+            EC_CLASSIC_COLOUR_SPACE_SINGLE_GUMP_FORMAT.label()
+        ),
+    };
+    format!(
+        "Wrote {} Enhanced gumps to {} ({} single in {}, {} with soft alpha; {} shared with gumps_cc; {} atlas; {} \
+         skipped)",
+        summary.gump_count,
+        output.display(),
+        summary.single_gump_count,
+        single_formats,
+        summary.single_soft_alpha_count,
+        summary.single_shared_classic_count,
+        summary.atlas_gump_count,
+        summary.skipped_count
+    )
+}
+
+/// Packs the Classic gumps, then the Enhanced gumps, sharing with the new gumps_cc when sharing is chosen. `progress`
+/// reports the Enhanced gumps; the Classic gumps report on their own card.
+fn pack_gumps_cc_and_ec(
+    settings: &AppSettings,
+    cc_output: &Path,
+    ec_output: &Path,
+    progress: &AssetProgressReporter,
+) -> eyre::Result<(CcGumpsBuildSummary, EcGumpsBuildSummary)> {
+    let cc_progress = progress.for_task(AssetPackTask::GumpsCc);
+    progress.set(AssetPackProgressState::Running, 0.0, "Waiting for the Classic gumps");
+    cc_progress.set(AssetPackProgressState::Running, GUMPS_PACKING_PROGRESS, "Packing Classic gumps");
+    let cc_summary = match pack_gumps_cc(settings, cc_output) {
+        Ok(summary) => {
+            cc_progress.finish();
+            summary
+        }
+        Err(error) => {
+            cc_progress.fail();
+            return Err(error.wrap_err("pack the Classic gumps"));
+        }
+    };
+    progress.panic_if_cancelled();
+    progress.set(AssetPackProgressState::Running, GUMPS_PACKING_PROGRESS, "Packing Enhanced gumps");
+    let share = ec_gumps_share(settings.gumps_ec_sharing, cc_output, true);
+    let ec_summary = pack_gumps_ec(settings, ec_output, &share)?;
+    Ok((cc_summary, ec_summary))
 }
 
 impl UddConvApp {
@@ -774,6 +986,52 @@ impl UddConvApp {
         });
     }
 
+    /// The gumps_cc.uddp of the output folder: what the Classic gumps job writes and the Enhanced one shares with.
+    pub fn gumps_cc_output(&self) -> PathBuf {
+        self.get_output_path(GUMPS_CC_DEFAULT_OUTPUT)
+    }
+
+    pub fn convert_gumps_cc(&self) {
+        let settings = self.settings.clone();
+        let output = self.gumps_cc_output();
+        self.spawn_asset_task(AssetPackTask::GumpsCc, "Classic Gumps Packing".to_string(), move |progress| {
+            progress.set(AssetPackProgressState::Running, GUMPS_PACKING_PROGRESS, "Packing Classic gumps");
+            let summary = pack_gumps_cc(&settings, &output)?;
+            Ok(describe_gumps_cc(&settings, &output, &summary))
+        });
+    }
+
+    pub fn convert_gumps_ec(&self) {
+        let settings = self.settings.clone();
+        let output = self.get_output_path(GUMPS_EC_DEFAULT_OUTPUT);
+        let gumps_cc = self.gumps_cc_output();
+        self.spawn_asset_task(AssetPackTask::GumpsEc, "Enhanced Gumps Packing".to_string(), move |progress| {
+            let share = ec_gumps_share(settings.gumps_ec_sharing, &gumps_cc, gumps_cc.is_file());
+            progress.set(AssetPackProgressState::Running, GUMPS_PACKING_PROGRESS, "Packing Enhanced gumps");
+            let summary = pack_gumps_ec(&settings, &output, &share)?;
+            Ok(describe_gumps_ec(&settings, &output, &summary))
+        });
+    }
+
+    /// Packs the Classic gumps, then the Enhanced gumps, which share with the new gumps_cc when sharing is chosen.
+    pub fn convert_gumps_cc_and_ec(&self) {
+        let settings = self.settings.clone();
+        let cc_output = self.gumps_cc_output();
+        let ec_output = self.get_output_path(GUMPS_EC_DEFAULT_OUTPUT);
+        self.spawn_asset_task(
+            AssetPackTask::GumpsEc,
+            "Classic + Enhanced Gumps Packing".to_string(),
+            move |progress| {
+                let (cc_summary, ec_summary) = pack_gumps_cc_and_ec(&settings, &cc_output, &ec_output, &progress)?;
+                Ok(format!(
+                    "{}. {}",
+                    describe_gumps_cc(&settings, &cc_output, &cc_summary),
+                    describe_gumps_ec(&settings, &ec_output, &ec_summary)
+                ))
+            },
+        );
+    }
+
     pub fn convert_map(&self, map_id: u32) {
         let settings = self.settings.clone();
         let output = self.get_output_path(&format!("map{}.uddp", map_id));
@@ -1023,5 +1281,171 @@ mod tests {
         settings.bc7_rdo_lambda = 0.6;
 
         assert_eq!(bc7_rdo_lambda(&settings, TextureOptimization::Bc7Zstd), 0.0);
+    }
+
+    /// The level `pack-gumps` and `pack-ec-gumps` give lossless single gumps without `--zstd=LEVEL`.
+    const LOSSLESS_SINGLE_GUMP_ZSTD: CompressionFlag = CompressionFlag::ZstdNoDict;
+    /// The level they give lossy single gumps and the atlas pages without `--zstd=LEVEL`.
+    const DEFAULT_LOSSY_AND_ATLAS_GUMP_ZSTD: CompressionFlag = CompressionFlag::ZstdNoDictLevel(19);
+    const CHOSEN_GUMP_ZSTD_LEVEL: i32 = 12;
+
+    #[test]
+    fn default_gump_options_match_the_cli_without_flags() {
+        let settings = AppSettings::default();
+
+        let cc = cc_gumps_options(&settings, None);
+        assert_eq!(cc.single_pixel_format, GumpPixelFormat::Rgba8888);
+        assert_eq!(cc.compression, LOSSLESS_SINGLE_GUMP_ZSTD);
+        assert_eq!(cc.atlas_compression, DEFAULT_LOSSY_AND_ATLAS_GUMP_ZSTD);
+        assert!(cc.paperdoll_upscale_passes.is_empty());
+        assert!(cc.single_upscale_passes.is_empty());
+        assert!(cc.upscale_profile.is_none());
+        assert_eq!(cc.source_preference, udd_conv::classic_sources::SourceFormatPreference::Mul);
+
+        let ec = ec_gumps_options(&settings, None, None);
+        assert_eq!(ec.max_id, udd_conv::ec_gumps::EC_GUMP_DEFAULT_MAX_ID);
+        assert_eq!(ec.single_pixel_format, GumpPixelFormat::Rgba8888);
+        assert_eq!(ec.compression, LOSSLESS_SINGLE_GUMP_ZSTD);
+        assert_eq!(ec.atlas_compression, DEFAULT_LOSSY_AND_ATLAS_GUMP_ZSTD);
+        assert!(ec.paperdoll_upscale_passes.is_empty());
+        assert!(ec.single_upscale_passes.is_empty());
+        assert_eq!(ec.share_with, None);
+    }
+
+    #[test]
+    fn lossy_gumps_take_each_package_lossy_format_at_level_19() {
+        let mut settings = AppSettings::default();
+        settings.gumps_cc_bc1 = true;
+        settings.gumps_ec_bc7 = true;
+
+        let cc = cc_gumps_options(&settings, None);
+        assert_eq!(cc.single_pixel_format, GumpPixelFormat::Bc1);
+        assert_eq!(cc.compression, DEFAULT_LOSSY_AND_ATLAS_GUMP_ZSTD);
+        assert_eq!(cc.atlas_compression, DEFAULT_LOSSY_AND_ATLAS_GUMP_ZSTD);
+
+        let ec = ec_gumps_options(&settings, None, None);
+        assert_eq!(ec.single_pixel_format, GumpPixelFormat::Bc7);
+        assert_eq!(ec.compression, DEFAULT_LOSSY_AND_ATLAS_GUMP_ZSTD);
+        assert_eq!(ec.atlas_compression, DEFAULT_LOSSY_AND_ATLAS_GUMP_ZSTD);
+    }
+
+    #[test]
+    fn a_chosen_gump_zstd_level_sets_single_gumps_and_atlas_pages() {
+        let mut settings = AppSettings::default();
+        settings.zstd_gumps_cc = Some(CHOSEN_GUMP_ZSTD_LEVEL);
+        settings.zstd_gumps_ec = Some(CHOSEN_GUMP_ZSTD_LEVEL);
+        settings.gumps_ec_bc7 = true;
+        let chosen = CompressionFlag::ZstdNoDictLevel(CHOSEN_GUMP_ZSTD_LEVEL);
+
+        let cc = cc_gumps_options(&settings, None);
+        assert_eq!((cc.compression, cc.atlas_compression), (chosen, chosen));
+        let ec = ec_gumps_options(&settings, None, None);
+        assert_eq!((ec.compression, ec.atlas_compression), (chosen, chosen));
+    }
+
+    #[test]
+    fn gump_upscale_filters_source_and_max_id_map_to_the_cli_options() {
+        const MAX_ID: u32 = 70_000;
+        let mut settings = AppSettings::default();
+        settings.upscale_gumps_cc_paperdoll = UpscaleFilter::Xbrz2x;
+        settings.upscale_gumps_cc_single = UpscaleFilter::Nearest2x;
+        settings.upscale_gumps_ec_paperdoll = UpscaleFilter::Hq2xTrue;
+        settings.upscale_gumps_ec_single = UpscaleFilter::Mmpx2x;
+        settings.gumps_cc_source = udd_conv::classic_sources::SourceFormatPreference::Uop;
+        settings.gumps_ec_max_id = MAX_ID;
+
+        let cc = cc_gumps_options(&settings, None);
+        assert_eq!(cc.paperdoll_upscale_passes, vec![UpscalePass::from(UpscaleFilter::Xbrz2x)]);
+        assert_eq!(cc.single_upscale_passes, vec![UpscalePass::from(UpscaleFilter::Nearest2x)]);
+        assert_eq!(cc.source_preference, udd_conv::classic_sources::SourceFormatPreference::Uop);
+
+        let ec = ec_gumps_options(&settings, None, None);
+        assert_eq!(ec.paperdoll_upscale_passes, vec![UpscalePass::from(UpscaleFilter::Hq2xTrue)]);
+        assert_eq!(ec.single_upscale_passes, vec![UpscalePass::from(UpscaleFilter::Mmpx2x)]);
+        assert_eq!(ec.max_id, MAX_ID);
+    }
+
+    #[test]
+    fn enhanced_gumps_read_the_gumpart_folder_over_the_enhanced_client() {
+        let mut settings = AppSettings::default();
+        settings.cc_dir = Some(PathBuf::from("/uo/classic"));
+        settings.ec_dir = Some(PathBuf::from("/uo/enhanced"));
+
+        assert_eq!(cc_gumps_source_dirs(&settings), vec![PathBuf::from("/uo/classic"), PathBuf::from("/uo/enhanced")]);
+        assert_eq!(ec_gumps_source_dirs(&settings), vec![PathBuf::from("/uo/enhanced")]);
+
+        settings.gumps_ec_gumpart_dir = Some(PathBuf::from("/extracted/gumpart"));
+        assert_eq!(ec_gumps_source_dirs(&settings), vec![PathBuf::from("/extracted/gumpart")]);
+    }
+
+    #[test]
+    fn enhanced_gumps_share_only_when_chosen_and_a_gumps_cc_is_there() {
+        let gumps_cc = Path::new("/out/gumps_cc.uddp");
+
+        let shared = ec_gumps_share(GumpsEcSharing::ShareWithGumpsCc, gumps_cc, true);
+        assert_eq!(shared, EcGumpsShare::With(gumps_cc.to_path_buf()));
+        assert_eq!(shared.share_with(), Some(gumps_cc.to_path_buf()));
+
+        let missing = ec_gumps_share(GumpsEcSharing::ShareWithGumpsCc, gumps_cc, false);
+        assert_eq!(missing, EcGumpsShare::MissingGumpsCc(gumps_cc.to_path_buf()));
+        assert_eq!(missing.share_with(), None);
+
+        for available in [false, true] {
+            let standalone = ec_gumps_share(GumpsEcSharing::Standalone, gumps_cc, available);
+            assert_eq!(standalone, EcGumpsShare::Standalone);
+            assert_eq!(standalone.share_with(), None);
+        }
+    }
+
+    #[test]
+    fn the_share_choice_reaches_the_enhanced_options() {
+        let settings = AppSettings::default();
+        let gumps_cc = PathBuf::from("/out/gumps_cc.uddp");
+
+        let ec = ec_gumps_options(&settings, None, Some(gumps_cc.clone()));
+        assert_eq!(ec.share_with, Some(gumps_cc));
+    }
+
+    const CC_CLIENT_DIR_ENV: &str = "UO_CC_CLIENT_DIR";
+    const EC_CLIENT_DIR_ENV: &str = "UO_EC_CLIENT_DIR";
+    /// The absolute folder the real-data gump test writes gumps_cc.uddp and gumps_ec.uddp to, outside the clients.
+    const GUMPS_OUTPUT_DIR_ENV: &str = "UDD_CONV_GUI_GUMPS_OUTPUT_DIR";
+
+    fn env_dir(name: &str) -> PathBuf {
+        PathBuf::from(std::env::var_os(name).unwrap_or_else(|| panic!("{name} is not set")))
+    }
+
+    /// The combined gumps job on the real clients, lossless and sharing: the Classic gumps, then the Enhanced gumps
+    /// leaving out the Classic twins.
+    #[test]
+    #[ignore = "needs UO_CC_CLIENT_DIR, UO_EC_CLIENT_DIR and UDD_CONV_GUI_GUMPS_OUTPUT_DIR"]
+    fn packs_real_classic_then_enhanced_gumps_sharing_the_classic_twins() {
+        let cc_dir = env_dir(CC_CLIENT_DIR_ENV);
+        let ec_dir = env_dir(EC_CLIENT_DIR_ENV);
+        let output_dir = env_dir(GUMPS_OUTPUT_DIR_ENV);
+        assert!(output_dir.is_absolute(), "{GUMPS_OUTPUT_DIR_ENV} must be absolute: {}", output_dir.display());
+        for client_dir in [&cc_dir, &ec_dir] {
+            assert!(!output_dir.starts_with(client_dir), "the output folder is inside {}", client_dir.display());
+        }
+        let mut settings = AppSettings::default();
+        settings.cc_dir = Some(cc_dir);
+        settings.ec_dir = Some(ec_dir);
+        settings.output_uddp_dir = output_dir.clone();
+        let cc_output = output_dir.join(GUMPS_CC_DEFAULT_OUTPUT);
+        let ec_output = output_dir.join(GUMPS_EC_DEFAULT_OUTPUT);
+        let progress = AssetProgressReporter {
+            task: AssetPackTask::GumpsEc,
+            progress: Arc::new(Mutex::new(HashMap::new())),
+            cancel: Arc::new(AtomicBool::new(false)),
+        };
+
+        let (cc_summary, ec_summary) =
+            pack_gumps_cc_and_ec(&settings, &cc_output, &ec_output, &progress).expect("pack the gumps");
+
+        assert!(cc_summary.single_gump_count > 0);
+        assert!(ec_summary.single_gump_count > 0);
+        assert!(ec_summary.single_shared_classic_count > 0, "the Enhanced gumps shared nothing");
+        let states = progress.progress.lock().expect("progress map");
+        assert_eq!(states[&AssetPackTask::GumpsCc].state, AssetPackProgressState::Succeeded);
     }
 }

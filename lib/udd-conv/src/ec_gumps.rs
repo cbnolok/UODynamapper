@@ -168,7 +168,8 @@ pub fn convert_ec_gumps_to_uddp_from_sources(
     }
 }
 
-fn find_interface_uop(source_dirs: &[PathBuf]) -> Option<PathBuf> {
+/// The Interface.uop of the first source folder that holds one, in any casing: the Enhanced gump source read first.
+pub fn find_interface_uop(source_dirs: &[PathBuf]) -> Option<PathBuf> {
     source_dirs.iter().find_map(|dir| {
         ["Interface.uop", "interface.uop", "INTERFACE.UOP"]
             .iter()
@@ -434,7 +435,9 @@ fn decode_ec_gump_payload(
     })
 }
 
-fn find_ec_gumpart_dir(source_dirs: &[PathBuf]) -> Option<PathBuf> {
+/// The extracted gumpart folder the Enhanced gumps are read from when no source folder holds an Interface.uop: a
+/// source folder's `data/interface/default/textures/gumpart`, or the source folder itself when it holds Enhanced gumps.
+pub fn find_ec_gumpart_dir(source_dirs: &[PathBuf]) -> Option<PathBuf> {
     source_dirs.iter().find_map(|dir| {
         let nested = dir.join("data/interface/default/textures/gumpart");
         if nested.is_dir() {
