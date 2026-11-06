@@ -12,9 +12,9 @@ use crate::core::texture_cache::{
 use crate::prelude::*;
 use bevy::prelude::*;
 use bevy::time::common_conditions::on_timer;
-use color_eyre::eyre;
+use color_eyre::eyre::{self, WrapErr};
 use std::time::{Duration, Instant};
-use udd_assets::bc7::{expected_bc7_byte_len, ImageExtent, BC7_BLOCK_BYTES};
+use udd_assets::bc7::{expected_bc7_byte_len, extract_bc7_subrect, ImageExtent, BC7_BLOCK_BYTES, BC7_BLOCK_EDGE};
 use udd_assets::{
     tex_art_cc::{PagePixelFormat, TexArtCcPackage},
     tex_land_cc::TexLandCcPackage,
@@ -576,7 +576,16 @@ fn create_classic_land_art_images(
         .unwrap_or(1)
         .max(1);
     let layer_count = candidates.len() as u32 + 1; // layer 0 is the absent sentinel
-    let layer_byte_len = (atlas_width * atlas_height * 4) as usize;
+    // BC7 pages keep their blocks: each slot's blocks are copied into its layer and no page is decoded. The array then
+    // takes the art pages' sRGB BC7 format, as the RGBA path takes their sRGB texels.
+    let bc7_pages = candidates.iter().all(|(_, slot)| tex_art_cc.pages().get(slot.page_index as usize)
+        .is_some_and(|page| page.pixel_format == PagePixelFormat::Bc7));
+    let layer_byte_len = if bc7_pages {
+        expected_bc7_byte_len(ImageExtent::new(atlas_width, atlas_height)
+            .map_err(|error| eyre::eyre!("Classic land art layer: {error}"))?)
+    } else {
+        (atlas_width * atlas_height * 4) as usize
+    };
     let mut atlas_bytes = vec![0u8; layer_byte_len * layer_count as usize];
 
     let lookup_height =
@@ -586,7 +595,8 @@ fn create_classic_land_art_images(
         vec![0u8; (CLASSIC_LAND_ART_LOOKUP_WIDTH * lookup_height * 16) as usize];
 
     let mut decoded_page_index = u32::MAX;
-    let mut decoded_page_rgba = Vec::new();
+    // The page's decoded RGBA texels, or its BC7 blocks.
+    let mut decoded_page_bytes = Vec::new();
     let mut decoded_page_width = 0u32;
     let mut decoded_page_height = 0u32;
 
@@ -601,7 +611,11 @@ fn create_classic_land_art_images(
                         slot.page_index
                     )
                 })?;
-            decoded_page_rgba = tex_art_cc.read_page_rgba(slot.page_index)?;
+            decoded_page_bytes = if bc7_pages {
+                tex_art_cc.read_page_bytes(slot.page_index)?
+            } else {
+                tex_art_cc.read_page_rgba(slot.page_index)?
+            };
             decoded_page_index = slot.page_index;
             decoded_page_width = page.used_width;
             decoded_page_height = page.used_height;
@@ -624,20 +638,33 @@ fn create_classic_land_art_images(
 
         let layer = candidate_index as u32 + 1;
         let layer_start = layer as usize * layer_byte_len;
-        let copy_row_bytes = slot_width as usize * 4;
-        for row in 0..slot_height {
-            let source_start = ((slot_y + row) * decoded_page_width + slot_x) as usize * 4;
-            let source_end = source_start + copy_row_bytes;
-            let target_start = layer_start + row as usize * atlas_width as usize * 4;
-            let target_end = target_start + copy_row_bytes;
-            if source_end > decoded_page_rgba.len() {
-                eyre::bail!(
-                    "Classic land art {art_id} source pixels exceed decoded page {}",
-                    slot.page_index,
-                );
+        if bc7_pages {
+            let blocks = classic_land_art_bc7_layer(
+                &decoded_page_bytes,
+                UVec2::new(tex_art_cc.atlas_width(), tex_art_cc.atlas_height()),
+                UVec2::new(decoded_page_width, decoded_page_height),
+                UVec2::new(slot_x, slot_y),
+                UVec2::new(slot_width, slot_height),
+                UVec2::new(atlas_width, atlas_height),
+            )
+            .wrap_err_with(|| format!("Classic land art {art_id} on BC7 tex_art_cc page {}", slot.page_index))?;
+            atlas_bytes[layer_start..layer_start + layer_byte_len].copy_from_slice(&blocks);
+        } else {
+            let copy_row_bytes = slot_width as usize * 4;
+            for row in 0..slot_height {
+                let source_start = ((slot_y + row) * decoded_page_width + slot_x) as usize * 4;
+                let source_end = source_start + copy_row_bytes;
+                let target_start = layer_start + row as usize * atlas_width as usize * 4;
+                let target_end = target_start + copy_row_bytes;
+                if source_end > decoded_page_bytes.len() {
+                    eyre::bail!(
+                        "Classic land art {art_id} source pixels exceed decoded page {}",
+                        slot.page_index,
+                    );
+                }
+                atlas_bytes[target_start..target_end]
+                    .copy_from_slice(&decoded_page_bytes[source_start..source_end]);
             }
-            atlas_bytes[target_start..target_end]
-                .copy_from_slice(&decoded_page_rgba[source_start..source_end]);
         }
 
         let lookup_offset = art_id as usize * 16;
@@ -663,7 +690,7 @@ fn create_classic_land_art_images(
         },
         TextureDimension::D2,
         atlas_bytes,
-        TextureFormat::Rgba8UnormSrgb,
+        if bc7_pages { TextureFormat::Bc7RgbaUnormSrgb } else { TextureFormat::Rgba8UnormSrgb },
         bevy::asset::RenderAssetUsages::RENDER_WORLD,
     );
     atlas.texture_descriptor.usage |= TextureUsages::TEXTURE_BINDING;
@@ -671,6 +698,11 @@ fn create_classic_land_art_images(
         dimension: Some(TextureViewDimension::D2Array),
         ..Default::default()
     });
+    log::info!(
+        "Classic land art array: {layer_count} layers of {atlas_width}x{atlas_height} {:?}, {} bytes",
+        atlas.texture_descriptor.format,
+        layer_byte_len * layer_count as usize,
+    );
 
     let mut lookup = Image::new(
         Extent3d {
@@ -689,6 +721,54 @@ fn create_classic_land_art_images(
         atlas: images.add(atlas),
         lookup: images.add(lookup),
     })
+}
+
+/// One Classic land-art slot's BC7 blocks in the top-left of a `layer`-sized array layer, copied from its page without a
+/// decode. Blocks move whole, so the slot rect and the layer must lie on the 4×4 block grid (the BC7 packer places slots
+/// on it, and 44 and its upscales are multiples of 4). The page payload covers the atlas or the page's used extent.
+fn classic_land_art_bc7_layer(
+    page_bytes: &[u8],
+    atlas: UVec2,
+    used: UVec2,
+    origin: UVec2,
+    size: UVec2,
+    layer: UVec2,
+) -> eyre::Result<Vec<u8>> {
+    let extent = |size: UVec2| ImageExtent::new(size.x, size.y).map_err(|error| eyre::eyre!("{error}"));
+    if [origin, size, layer].iter().any(|value| value.x % BC7_BLOCK_EDGE != 0 || value.y % BC7_BLOCK_EDGE != 0) {
+        eyre::bail!(
+            "rect {}x{} at {},{} in a {}x{} layer is off the {BC7_BLOCK_EDGE}x{BC7_BLOCK_EDGE} BC7 block grid; repack \
+             tex_art_cc with the current packer",
+            size.x, size.y, origin.x, origin.y, layer.x, layer.y,
+        );
+    }
+    if size.x > layer.x || size.y > layer.y || (origin + size).x > used.x || (origin + size).y > used.y {
+        eyre::bail!(
+            "rect {}x{} at {},{} exceeds the page's used extent {}x{} or the {}x{} layer",
+            size.x, size.y, origin.x, origin.y, used.x, used.y, layer.x, layer.y,
+        );
+    }
+    let (atlas_extent, used_extent) = (extent(atlas)?, extent(used)?);
+    let page_extent = if page_bytes.len() == expected_bc7_byte_len(atlas_extent) {
+        atlas_extent
+    } else if page_bytes.len() == expected_bc7_byte_len(used_extent) {
+        used_extent
+    } else {
+        eyre::bail!(
+            "BC7 page of {} bytes is neither the atlas extent {}x{} nor its used extent {}x{}",
+            page_bytes.len(), atlas.x, atlas.y, used.x, used.y,
+        );
+    };
+    let slot_extent = extent(size)?;
+    let layer_extent = extent(layer)?;
+    let blocks = extract_bc7_subrect(page_bytes, page_extent, origin.x, origin.y, slot_extent);
+    let slot_row = slot_extent.blocks_wide() as usize * BC7_BLOCK_BYTES;
+    let layer_row = layer_extent.blocks_wide() as usize * BC7_BLOCK_BYTES;
+    let mut layer_bytes = vec![0u8; expected_bc7_byte_len(layer_extent)];
+    for (source, target) in blocks.chunks_exact(slot_row).zip(layer_bytes.chunks_exact_mut(layer_row)) {
+        target[..slot_row].copy_from_slice(source);
+    }
+    Ok(layer_bytes)
 }
 
 fn copy_land_page_into_full_atlas_rgba(
@@ -1746,6 +1826,43 @@ mod tests {
         }
 
         assert!(tex_land_ec_page_bc7_layer(&whole[1..], ATLAS_EDGE, ATLAS_EDGE, USED_WIDTH, USED_HEIGHT).is_err());
+    }
+
+    /// A Classic land-art BC7 layer is `extract_bc7_subrect` of the slot's page blocks in its top-left and zero blocks
+    /// elsewhere, at the BC7 byte length of the layer, for pages of either payload extent; a rect off the block grid or a
+    /// payload of another length is refused.
+    #[test]
+    fn classic_land_art_bc7_layers_copy_the_slot_blocks() {
+        const ATLAS_EDGE: u32 = 32;
+        const USED_WIDTH: u32 = 24;
+        const USED_HEIGHT: u32 = 20;
+        const SLOT_ORIGIN: UVec2 = UVec2::new(8, 4);
+        const SLOT_SIZE: UVec2 = UVec2::new(12, 16);
+        const LAYER: UVec2 = UVec2::new(16, 16);
+        const OFF_GRID: UVec2 = UVec2::new(2, 0);
+        // Distinct non-zero bytes, so a misplaced block or a missing copy shows.
+        const BYTE_CYCLE: usize = 251;
+        let atlas = UVec2::splat(ATLAS_EDGE);
+        let used = UVec2::new(USED_WIDTH, USED_HEIGHT);
+        let slot_extent = ImageExtent::new(SLOT_SIZE.x, SLOT_SIZE.y).unwrap();
+        let layer_extent = ImageExtent::new(LAYER.x, LAYER.y).unwrap();
+        let slot_row = slot_extent.blocks_wide() as usize * BC7_BLOCK_BYTES;
+        let layer_row = layer_extent.blocks_wide() as usize * BC7_BLOCK_BYTES;
+        for payload in [atlas, used] {
+            let page_extent = ImageExtent::new(payload.x, payload.y).unwrap();
+            let page: Vec<u8> = (0..expected_bc7_byte_len(page_extent)).map(|i| (i % BYTE_CYCLE) as u8 + 1).collect();
+            let layer = classic_land_art_bc7_layer(&page, atlas, used, SLOT_ORIGIN, SLOT_SIZE, LAYER).unwrap();
+            assert_eq!(layer.len(), expected_bc7_byte_len(layer_extent));
+            let blocks = extract_bc7_subrect(&page, page_extent, SLOT_ORIGIN.x, SLOT_ORIGIN.y, slot_extent);
+            for (row, bytes) in layer.chunks_exact(layer_row).enumerate() {
+                let source = blocks.chunks_exact(slot_row).nth(row);
+                assert_eq!(&bytes[..slot_row], source.unwrap_or(&vec![0; slot_row][..]), "row {row}");
+                assert!(bytes[slot_row..].iter().all(|&byte| byte == 0), "row {row}");
+            }
+            assert!(classic_land_art_bc7_layer(&page, atlas, used, SLOT_ORIGIN + OFF_GRID, SLOT_SIZE, LAYER).is_err());
+            assert!(classic_land_art_bc7_layer(&page, atlas, used, SLOT_ORIGIN, SLOT_SIZE + OFF_GRID, LAYER).is_err());
+            assert!(classic_land_art_bc7_layer(&page[1..], atlas, used, SLOT_ORIGIN, SLOT_SIZE, LAYER).is_err());
+        }
     }
     use bevy::shader::{
         Shader, ShaderCache, ShaderCacheError, ShaderCacheSource, ValidateShader,
