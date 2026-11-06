@@ -47,7 +47,7 @@ Results of the 2026-11-01 runs:
 
 | Program | Functions named and tagged |
 |---|---|
-| UOSA.exe | 8 |
+| UOSA.exe | 8 (9 since 2026-11-06: `UOPaperdoll::DrawGumpLayer`, the partial hue of the gump paperdoll) |
 | UOKR.exe | 1 |
 
 No mismatches, kept names or conflicts. The second `--apply` reported `changes: none` on both programs, and both

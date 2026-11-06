@@ -1,6 +1,7 @@
 // Name the code of the Enhanced Client (UOSA.exe) and Kingdom Reborn (UOKR.exe) that reads Paperdoll.uop: the
 // loader of its two AMOU frame sets (assets 0x40 and 0x41 of type 0x12, PaperdollFrameSet), the frame lookup by
-// gender and id, and the two paperdoll texture builders that use them.
+// gender and id, the two paperdoll texture builders that use them, and the CPU draw of one gump layer of the
+// gump paperdoll (UOPaperdoll::BuildImage), which applies the partial hue.
 // Address-based: one entry set per tested file, selected by SHA-256; any other program is refused. Every
 // address is verified with the stated checks first; a failed check is reported, not named.
 // Findings: results/*.md.
@@ -43,6 +44,7 @@ public class NamePaperdollCode extends GhidraScript {
     private static final String PAPERDOLL = "PaperdollTextures";
     private static final String EC_TEXTURE = "ECPaperdollTexture";
     private static final String CC_TEXTURE = "CCPaperdollTexture";
+    private static final String GUMP_PAPERDOLL = "UOPaperdoll";
 
     // Checks: "calls:ADDR" (the function references ADDR: call, pointer, jump or data),
     // "calledby:ADDR" (the function at ADDR references this one), "ref:ADDR" (the data or code at ADDR
@@ -84,6 +86,13 @@ public class NamePaperdollCode extends GhidraScript {
             "ref:00ca92d0", "calls:0050b850", "calls:0042b270"),
         new Entry("0050a240", PAPERDOLL, "ReleasePaperdollFrameSets", true, "clears the paperdoll texture cache"
             + " and both frame set pointers 0x00e33d3c and 0x00e33d44", "calls:0040c5f0"),
+        new Entry("00509b30", GUMP_PAPERDOLL, "DrawGumpLayer", false, "(gump id, target NiPixelData, layer map,"
+            + " layer, hue, partial, key r, g, b): CPU copy of one Interface.uop gump (%08d.tga) into the paperdoll"
+            + " image; skips a 256x256 gump; the key colour defaults to the gump's first texel and texels whose"
+            + " RGB equals it are skipped (alpha is not read); with a hue, a texel is hued when partial is false or"
+            + " its bytes are exact greys (R == G and R == B, 0x00509d64 and 0x00509d6c), through"
+            + " UOHues::GetHueTable(hue)[R], blended over the target by the entry's alpha byte when below 255",
+            "calls:0051af10", "calls:00427ad0", "calledby:0050c790"),
     };
 
     private static final Entry[] ENTRIES_UOKR = {

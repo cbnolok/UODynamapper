@@ -16,6 +16,7 @@ Programs `UOSA.exe` (SHA-256 `5a5e9dc536c836d1bf10b6f86bb88f61a6ae078f519d4060d3
 | UOSA | 0x0050ba30 | `ECPaperdollTexture::GetLayerFrame` | probable name: vtable 0x00ca9298 slot 6 |
 | UOSA | 0x0050c550 | `CCPaperdollTexture::GetLayerFrame` | probable name: vtable 0x00ca92b8 slot 6 |
 | UOSA | 0x0050a240 | `PaperdollTextures::ReleasePaperdollFrameSets` | probable |
+| UOSA | 0x00509b30 | `UOPaperdoll::DrawGumpLayer` | CPU draw of one gump layer, partial hue (section below) |
 | UOSA | 0x0050b690 | (not renamed) | probable `ECPaperdollTexture::GetLayers`: vtable 0x00ca9298 slot 5 |
 | UOSA | 0x00430f60 | `UOAnimations::FindFrameEntry` | (action, number), 32-bit compare |
 | UOSA | 0x00842bb2 | `UOObjectDefinitionBase::GetAppearance` | the +0xbc of `FindLayerFrame` |
@@ -113,6 +114,29 @@ Globals (not renamed): UOSA 0x00e33d3c male set (asset 0x40), 0x00e33d44 female 
 The inspector's Gumps > Paperdoll tab with the EC source follows items 4..13
 (`tools/uocf-inspector-gui/src/ui/ec_paperdoll.rs`). Not followed: the face layer's +0x68 value (item 9), and
 the walk order of the `draworder` records (item 11; the inspector takes the `paperdoll` one).
+
+## Partial hue on the gump paperdoll
+
+`UOPaperdoll::BuildImage` (0x0050c790) composes the gump paperdoll on the CPU, one layer at a time, through
+`UOPaperdoll::DrawGumpLayer` (0x00509b30; named 2026-11-06). Its arguments are (gump id, target `NiPixelData`,
+layer map, layer byte, hue, partial, key r, g, b). **confirmed** (decompiler and assembly).
+
+15. **Source.** The gump is `Data/Interface/Default/Textures/GumpArt/%08d.tga` of `Interface.uop`
+    (`MakeGumpTextureLocation` 0x00519700, through 0x0051af10), read as the texture's source `NiPixelData`
+    (+0x3c): uncompressed bytes, the first three of each texel taken as R, G, B. A 256x256 gump is skipped.
+16. **Transparency.** `BuildImage` passes the sentinel key 0x00e32c80..88, so the key becomes the gump's first
+    texel (0x00509c4d..0x00509c7e). A texel whose R, G, B equal the key is not drawn; the alpha byte is not read.
+    After every layer, `BuildImage` sets each target texel's alpha to 255 when any of R, G, B is non-zero, else 0.
+17. **The hue test.** With a hue, a texel is hued when partial is false, or when its bytes are exact greys:
+    `CMP AL,DL` (R, G) at 0x00509d64 and `CMP AL,CL` (R, B) at 0x00509d6c, each jumping past the hue on
+    inequality. No tolerance and no separate mask. The colour is `UOHues::GetHueTable(hue)[R]` (0x00427ad0,
+    0x00509d9e: the red byte is the index); an entry alpha below 255 blends it over the target texel
+    (0x00509ded..0x00509e51).
+18. **Partial.** The body gump is drawn with partial true (skin hue on greys only); each worn layer passes
+    `HasFlags2(0x40000, 0)` (PartialHue, tileart flags2 bit 18) of its appearance definition.
+
+So a block-coded Enhanced paperdoll gump changes what the client hues: any texel that was an exact grey and is
+no longer one loses the hue, and a coloured texel that rounds to a grey gains it.
 
 ## For a writer
 
