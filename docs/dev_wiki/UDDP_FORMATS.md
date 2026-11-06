@@ -226,6 +226,8 @@ The lossy Enhanced land build (`pack-ec-textures --land-bc7`) is BC7 with the al
 
 Classic land (`tex_land_cc.uddp`) stays lossless: `pack-texmaps` and the converter GUI refuse BC7 with the measured reason (`CLASSIC_LAND_LOSSY_REFUSAL`).
 
+Lossless pages are RGBA8888 with plain Zstd 19 per payload (`LOSSLESS_PAGE_COMPRESSION`) unless the packer is given another level (`--zstd=LEVEL`): the land and gump paperdoll atlas pages, the `tex_art_cc` and `tex_art_ec` pages and the `tex_aux_ec` textures. Gumps and land took it on 2026-11-06, art and auxiliary textures the same day (the user: "Yes switch to zstd 19"); the measurements are in [`uddp_anim_format_requirements.md`](../agent_notes/uddp_anim_format_requirements.md). The builder compresses payloads of 10 MiB or more side by side, one zstd job each.
+
 ### 2.5 `tex_aux_ec.uddp`
 
 Holds the non-base support images (hue masks, terrain-surface masks, liquid inputs) that runtime consumers read through tilemeta texture refs. These are images that are not atlased. Each image is keyed by its source texture id, with one image per id; the first ref seen wins.

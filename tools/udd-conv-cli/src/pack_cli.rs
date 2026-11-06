@@ -102,6 +102,8 @@ const DEFAULT_JXL_LEVEL: u8 = 6;
 const LAND_ZSTD_HELP: &str = "Zstd level of the land pages (--zstd=LEVEL), which without a format flag are lossless RGBA8888 with Zstd 19; with --raw or --jxl, a file-level Zstd pass after that encoding. A bare --zstd keeps level 19.";
 const CLASSIC_LAND_BC7_HELP: &str = "Refused, with the reason: Classic land stays lossless.";
 const GUMP_ZSTD_HELP: &str = "Zstd level of the single gumps and, unless --jxl, of the atlas pages (--zstd=LEVEL). Without it single gumps use level 7 (19 with --bc1 or --bc7) and atlas pages, lossless RGBA8888, level 19; with --jxl a Zstd pass over the JPEG XL pages. A bare --zstd keeps these levels, and gives the JPEG XL pages a level 7 pass.";
+const ART_ZSTD_HELP: &str = "Zstd level of the atlas pages (--zstd=LEVEL), which without a format flag are lossless RGBA8888 with Zstd 19; with --raw, --jxl, --bc7 or --bc7-rdo, a file-level Zstd pass after that encoding. A bare --zstd keeps level 19 without a format flag, and is a level 7 pass after one.";
+const TEX_AUX_ZSTD_HELP: &str = "Zstd level of the textures (--zstd=LEVEL), which without a format flag are lossless RGBA8888 with Zstd 19; with --raw, --jxl, --bc7 or --bc7-rdo, a file-level Zstd pass after that encoding. A bare --zstd keeps level 19 without a format flag, and is a level 7 pass after one.";
 const GUMP_RAW_HELP: &str = "Store the single gumps as lossless RGBA8888: the default.";
 const GUMP_BC1_HELP: &str = "Store every single (non-paperdoll) Classic gump as BC1: lossy, with one bit of alpha (colour 0 is its transparent texel), and Zstd 19 unless --zstd=LEVEL. Paperdoll gumps (50001-69999) stay lossless on their atlas pages, and the paperdoll body gumps (12-15, 665, 666) stay RGBA8888: Classic partial hue needs exact greys.";
 const GUMP_BC7_HELP: &str = "Store every single (non-paperdoll) Enhanced gump as BC7 of premultiplied colour: lossy, soft alpha kept, and Zstd 19 unless --zstd=LEVEL. Paperdoll gumps (50001-69999) stay lossless on their atlas pages, and the paperdoll body gumps (12-15, 665, 666) stay RGBA8888: the Enhanced client hues exact greys only.";
@@ -249,19 +251,11 @@ fn resolve_texture_output_format(
 ) -> eyre::Result<TextureOutputFormat> {
     match (raw, jxl, bc7, bc7_rdo) {
         (false, false, false, false) => Ok(TextureOutputFormat {
-            compression: if let Some(level) = zstd {
-                jxl_zstd_compression_levels(jxl_level, level)
-            } else {
-                jxl_compression_level(jxl_level)
-            },
+            compression: zstd_compression(zstd.unwrap_or(LOSSLESS_PAGE_ZSTD_LEVEL)),
             pixel_format: PagePixelFormat::Rgba8888,
             bc7_rdo_lambda: 0.0,
             bc7_rdo_lookback_blocks,
-            label: if zstd.is_some() {
-                "RGBA8888 JXL + Zstd"
-            } else {
-                "RGBA8888 JXL"
-            },
+            label: "RGBA8888 Zstd",
         }),
         (true, false, false, false) => Ok(TextureOutputFormat {
             compression: if let Some(level) = zstd {
@@ -335,6 +329,24 @@ fn resolve_texture_output_format_args(
 /// A `--zstd` that adds a pass over another encoding: a bare one is [`DEFAULT_ZSTD_LEVEL`].
 fn pass_zstd_level(zstd: Option<Option<i32>>) -> Option<i32> {
     zstd.map(|level| level.unwrap_or(DEFAULT_ZSTD_LEVEL))
+}
+
+/// The art and auxiliary texture pages of `pack-art`, `pack-ec-textures` and `pack-ec-tex-aux`: without a format flag,
+/// lossless RGBA8888 with Zstd at `--zstd=LEVEL` or [`LOSSLESS_PAGE_ZSTD_LEVEL`] (a bare `--zstd` too), as for gump atlas
+/// pages; after `--raw`, `--jxl`, `--bc7` or `--bc7-rdo` a bare `--zstd` is a [`DEFAULT_ZSTD_LEVEL`] pass over that
+/// encoding.
+fn resolve_art_output_format(
+    raw: bool,
+    jxl: bool,
+    jxl_level: Option<u8>,
+    zstd: Option<Option<i32>>,
+    bc7: bool,
+    bc7_rdo: bool,
+    bc7_rdo_lambda: f32,
+    bc7_rdo_lookback_blocks: usize,
+) -> eyre::Result<TextureOutputFormat> {
+    let zstd = if raw || jxl || bc7 || bc7_rdo { pass_zstd_level(zstd) } else { zstd.flatten() };
+    resolve_texture_output_format(raw, jxl, jxl_level, zstd, bc7, bc7_rdo, bc7_rdo_lambda, bc7_rdo_lookback_blocks)
 }
 
 /// A land `--zstd`: a bare one keeps the land pages' own [`LOSSLESS_PAGE_ZSTD_LEVEL`], as for map chunks.
@@ -876,7 +888,7 @@ fn load_optional_upscale_profile(path: Option<PathBuf>) -> eyre::Result<Option<A
 
 #[derive(Subcommand)]
 enum Commands {
-    /// Packs classic art.mul/artidx.mul into tex_art_cc.uddp atlas pages.
+    /// Packs classic art.mul/artidx.mul into tex_art_cc.uddp atlas pages, lossless RGBA8888 with Zstd 19 unless a format is given.
     #[command(group(ArgGroup::new("output_format").args(["raw", "jxl", "bc7", "bc7_rdo"])))]
     PackArt {
         #[command(flatten)]
@@ -893,12 +905,12 @@ enum Commands {
         gutter: u16,
         #[arg(long, help = "Write uncompressed RGBA8888 atlas pages.")]
         raw: bool,
-        #[arg(long, help = "Write RGBA8888 atlas pages with lossless JPEG XL payload compression.")]
+        #[arg(long, help = "Write RGBA8888 atlas pages with lossless JPEG XL payload compression instead of the default Zstd 19: a few percent larger, and many times slower to decode.")]
         jxl: bool,
-        #[arg(long = "jxl-level", value_parser = clap::value_parser!(u8).range(1..=10), help = "JPEG XL encoder level, 1 fastest through 10 strongest. Default 6. Applies only with --jxl or default JXL output.")]
+        #[arg(long = "jxl-level", value_parser = clap::value_parser!(u8).range(1..=10), help = "JPEG XL encoder level, 1 fastest through 10 strongest. Default 6. Applies only with --jxl.")]
         jxl_level: Option<u8>,
-        #[arg(long, num_args = 0..=1, require_equals = true, default_missing_value = DEFAULT_ZSTD_LEVEL_VALUE, help = "Apply a file-level Zstd compression pass after the selected output encoding. Optionally pass --zstd=LEVEL.")]
-        zstd: Option<i32>,
+        #[arg(long, num_args = 0..=1, require_equals = true, help = ART_ZSTD_HELP)]
+        zstd: Option<Option<i32>>,
         #[arg(long, help = "Write BC7 atlas pages without BC7 RDO.")]
         bc7: bool,
         #[arg(long = "bc7-rdo", help = "Write BC7 atlas pages with BC7 RDO.")]
@@ -1037,7 +1049,7 @@ enum Commands {
         upscale_profile: Option<PathBuf>,
     },
     /// Packs EC art and land in one shared source pass into tex_art_ec.uddp and tex_land_ec.uddp. Without a format flag
-    /// art pages are lossless JPEG XL and land pages lossless RGBA8888 with Zstd 19; BC7 land blocks take Zstd 19 too.
+    /// art and land pages are lossless RGBA8888 with Zstd 19; BC7 land blocks take Zstd 19 too.
     #[command(group(ArgGroup::new("output_format").args(["raw", "jxl", "bc7", "bc7_rdo"])))]
     #[command(group(ArgGroup::new("art_output_format").args(["art_raw", "art_jxl", "art_bc7", "art_bc7_rdo"])))]
     #[command(group(ArgGroup::new("land_output_format").args(["land_raw", "land_jxl", "land_bc7", "land_bc7_rdo"])))]
@@ -1072,11 +1084,11 @@ enum Commands {
         land_gutter: u16,
         #[arg(long, help = "Write uncompressed EC RGBA8888 atlas pages.")]
         raw: bool,
-        #[arg(long, help = "Write EC RGBA8888 atlas pages with lossless JPEG XL payload compression.")]
+        #[arg(long, help = "Write EC RGBA8888 atlas pages with lossless JPEG XL payload compression instead of the default Zstd 19.")]
         jxl: bool,
         #[arg(long = "jxl-level", value_parser = clap::value_parser!(u8).range(1..=10), help = "JPEG XL encoder level for shared EC output, 1 fastest through 10 strongest. Default 6.")]
         jxl_level: Option<u8>,
-        #[arg(long, num_args = 0..=1, require_equals = true, help = "Apply a file-level Zstd compression pass to EC art and land after the selected output encoding; for land pages without a format flag or in BC7, the level of their Zstd. Optionally pass --zstd=LEVEL; a bare --zstd is level 7 for art and keeps level 19 for land.")]
+        #[arg(long, num_args = 0..=1, require_equals = true, help = "Zstd level of the EC art and land pages (--zstd=LEVEL), which without a format flag are lossless RGBA8888 with Zstd 19, as are BC7 land blocks; with another format, a file-level Zstd pass after that encoding. A bare --zstd keeps level 19, except as a pass over another art format, where it is level 7.")]
         zstd: Option<Option<i32>>,
         #[arg(long, help = "Write EC BC7 atlas pages without BC7 RDO.")]
         bc7: bool,
@@ -1088,8 +1100,8 @@ enum Commands {
         art_jxl: bool,
         #[arg(long = "art-jxl-level", value_parser = clap::value_parser!(u8).range(1..=10), help = "JPEG XL encoder level for EC art output. Default 6.")]
         art_jxl_level: Option<u8>,
-        #[arg(long, num_args = 0..=1, require_equals = true, default_missing_value = DEFAULT_ZSTD_LEVEL_VALUE, help = "Apply a file-level Zstd compression pass to EC art after the selected art output encoding. Optionally pass --art-zstd=LEVEL.")]
-        art_zstd: Option<i32>,
+        #[arg(long, num_args = 0..=1, require_equals = true, help = "Zstd level of the EC art pages, overriding --zstd: without an art format flag, the level of their lossless RGBA8888 pages' Zstd (default 19); with one, a file-level Zstd pass after that encoding. Optionally pass --art-zstd=LEVEL; a bare --art-zstd keeps level 19, and is a level 7 pass after a format flag.")]
+        art_zstd: Option<Option<i32>>,
         #[arg(long, help = "Write EC art atlas pages as BC7 without BC7 RDO, overriding the shared format flags.")]
         art_bc7: bool,
         #[arg(long = "art-bc7-rdo", help = "Write EC art atlas pages as BC7 with BC7 RDO, overriding the shared format flags.")]
@@ -1283,7 +1295,8 @@ enum Commands {
         output: PathBuf,
     },
     /// Packs non-base WorldArt auxiliary EC texture refs from tilemeta.uddp into tex_aux_ec.uddp, plus the
-    /// client's missing-texture fallback (SystemTextures.uop), aliased by every absent source id.
+    /// client's missing-texture fallback (SystemTextures.uop), aliased by every absent source id. Textures are lossless
+    /// RGBA8888 with Zstd 19 unless a format is given.
     #[command(name = "pack-ec-tex-aux")]
     #[command(group(ArgGroup::new("output_format").args(["raw", "jxl", "bc7", "bc7_rdo"])))]
     PackEcTexAux {
@@ -1295,12 +1308,12 @@ enum Commands {
         output: PathBuf,
         #[arg(long, help = "Write uncompressed RGBA8888 textures.")]
         raw: bool,
-        #[arg(long, help = "Write RGBA8888 textures with lossless JPEG XL payload compression.")]
+        #[arg(long, help = "Write RGBA8888 textures with lossless JPEG XL payload compression instead of the default Zstd 19: a few percent larger, and many times slower to decode.")]
         jxl: bool,
-        #[arg(long = "jxl-level", value_parser = clap::value_parser!(u8).range(1..=10))]
+        #[arg(long = "jxl-level", value_parser = clap::value_parser!(u8).range(1..=10), help = "JPEG XL encoder level, 1 fastest through 10 strongest. Default 6. Applies only with --jxl.")]
         jxl_level: Option<u8>,
-        #[arg(long, num_args = 0..=1, require_equals = true, default_missing_value = DEFAULT_ZSTD_LEVEL_VALUE)]
-        zstd: Option<i32>,
+        #[arg(long, num_args = 0..=1, require_equals = true, help = TEX_AUX_ZSTD_HELP)]
+        zstd: Option<Option<i32>>,
         #[arg(long, help = "Write BC7 textures without BC7 RDO.")]
         bc7: bool,
         #[arg(long = "bc7-rdo", help = "Write BC7 textures with BC7 RDO.")]
@@ -1544,7 +1557,7 @@ where
         } => {
             let paths = collect_source_dirs(&source_dir_args)?;
             let out_file = resolve_output_path(&output);
-            let output_format = resolve_texture_output_format(
+            let output_format = resolve_art_output_format(
                 raw,
                 jxl,
                 jxl_level,
@@ -1891,19 +1904,17 @@ where
                 raw,
                 jxl,
                 jxl_level,
-                zstd: pass_zstd_level(zstd),
                 bc7,
                 bc7_rdo,
+                ..Default::default()
             };
-            let art_output_format = resolve_texture_output_format_args(
-                TextureOutputFormatArgs {
-                    raw: art_raw || shared_output_format.raw,
-                    jxl: art_jxl || shared_output_format.jxl,
-                    jxl_level: art_jxl_level.or(shared_output_format.jxl_level),
-                    zstd: art_zstd.or(shared_output_format.zstd),
-                    bc7: art_bc7 || shared_output_format.bc7,
-                    bc7_rdo: art_bc7_rdo || shared_output_format.bc7_rdo,
-                },
+            let art_output_format = resolve_art_output_format(
+                art_raw || shared_output_format.raw,
+                art_jxl || shared_output_format.jxl,
+                art_jxl_level.or(shared_output_format.jxl_level),
+                art_zstd.or(zstd),
+                art_bc7 || shared_output_format.bc7,
+                art_bc7_rdo || shared_output_format.bc7_rdo,
                 bc7_rdo_lambda,
                 bc7_rdo_lookback_blocks,
             )?;
@@ -2208,7 +2219,7 @@ where
         } => {
             let paths = collect_ec_source_dirs(&source_dir_args)?;
             let out_file = resolve_output_path(&output);
-            let output_format = resolve_texture_output_format(
+            let output_format = resolve_art_output_format(
                 raw, jxl, jxl_level, zstd, bc7, bc7_rdo, bc7_rdo_lambda, bc7_rdo_lookback_blocks,
             )?;
             let summary = pack_tex_aux_ec(
@@ -2862,50 +2873,90 @@ mod tests {
         }
     }
 
-    #[test]
-    fn cli_defaults_texture_output_format_to_jxl() {
-        let cli = Cli::try_parse_from([
-            "uddpack",
-            "pack-art",
-            "--ccdir",
-            "/cc",
-            "--output",
-            "tex_art_cc.uddp",
-        ])
-        .expect("texture pack commands default to JXL output");
-
-        match cli.command {
-            Commands::PackArt {
+    /// The art format `pack-art`, `pack-ec-textures` and `pack-ec-tex-aux` resolve, as their command arms do.
+    fn parsed_art_output_format(args: &[&str]) -> TextureOutputFormat {
+        let format = match Cli::try_parse_from(args).expect("parse art args").command {
+            Commands::PackArt { raw, jxl, jxl_level, zstd, bc7, bc7_rdo, .. }
+            | Commands::PackEcTexAux { raw, jxl, jxl_level, zstd, bc7, bc7_rdo, .. } => resolve_art_output_format(
                 raw,
                 jxl,
+                jxl_level,
                 zstd,
                 bc7,
                 bc7_rdo,
+                NO_BC7_RDO_LAMBDA,
+                udd_conv::bc7::DEFAULT_BC7_RDO_LOOKBACK_BLOCKS,
+            ),
+            Commands::PackEcTextures {
+                raw,
+                jxl,
+                jxl_level,
+                zstd,
+                bc7,
+                bc7_rdo,
+                art_raw,
+                art_jxl,
+                art_jxl_level,
+                art_zstd,
+                art_bc7,
+                art_bc7_rdo,
                 ..
-            } => {
-                assert!(!raw);
-                assert!(!jxl);
-                assert!(zstd.is_none());
-                assert!(!bc7);
-                assert!(!bc7_rdo);
-                let output_format = resolve_texture_output_format(
-                    raw,
-                    jxl,
-                    None,
-                    zstd,
-                    bc7,
-                    bc7_rdo,
-                    1.0,
-                    udd_conv::bc7::DEFAULT_BC7_RDO_LOOKBACK_BLOCKS,
-                )
-                .unwrap();
-                assert_eq!(output_format.pixel_format, PagePixelFormat::Rgba8888);
-                assert_eq!(
-                    output_format.compression,
-                    CompressionFlag::JpegXlLevel(DEFAULT_JXL_LEVEL)
-                );
-            }
+            } => resolve_art_output_format(
+                art_raw || raw,
+                art_jxl || jxl,
+                art_jxl_level.or(jxl_level),
+                art_zstd.or(zstd),
+                art_bc7 || bc7,
+                art_bc7_rdo || bc7_rdo,
+                NO_BC7_RDO_LAMBDA,
+                udd_conv::bc7::DEFAULT_BC7_RDO_LOOKBACK_BLOCKS,
+            ),
             _ => panic!("unexpected command parsed"),
+        };
+        format.expect("resolve art output format")
+    }
+
+    /// Without a format flag the art and auxiliary texture pages are lossless RGBA8888 with Zstd 19 (the user,
+    /// 2026-11-06), and a bare `--zstd` keeps that level; `--jxl` still writes JPEG XL, with a level 7 pass (`JXZ1`) under
+    /// a bare `--zstd`.
+    #[test]
+    fn art_and_aux_pages_default_to_lossless_zstd_19() {
+        const EXPLICIT_ZSTD_LEVEL: i32 = 5;
+        const EXPLICIT_JXL_LEVEL: u8 = 4;
+        let lossless_zstd = CompressionFlag::ZstdNoDictLevel(LOSSLESS_PAGE_ZSTD_LEVEL);
+        for (command, flag_prefix) in [
+            (["uddpack", "pack-art", "--ccdir", "/cc"].as_slice(), ""),
+            (["uddpack", "pack-ec-tex-aux", "--ecdir", "/ec", "--tilemeta", "tilemeta.uddp"].as_slice(), ""),
+            (["uddpack", "pack-ec-textures", "--ecdir", "/ec"].as_slice(), ""),
+            (["uddpack", "pack-ec-textures", "--ecdir", "/ec"].as_slice(), "art-"),
+        ] {
+            let format = |flags: &[&str]| {
+                let flags = flags.iter().map(|flag| format!("--{flag_prefix}{flag}")).collect::<Vec<_>>();
+                let args = command.iter().copied().chain(flags.iter().map(String::as_str)).collect::<Vec<_>>();
+                parsed_art_output_format(&args)
+            };
+            let default = format(&[]);
+            assert_eq!(default.pixel_format, PagePixelFormat::Rgba8888, "{command:?} {flag_prefix}");
+            assert_eq!(default.compression, lossless_zstd, "{command:?} {flag_prefix}");
+            assert_eq!(format(&["zstd"]).compression, lossless_zstd, "{command:?} {flag_prefix}");
+            assert_eq!(
+                format(&["zstd=5"]).compression,
+                CompressionFlag::ZstdNoDictLevel(EXPLICIT_ZSTD_LEVEL),
+                "{command:?} {flag_prefix}"
+            );
+            let jxl = format(&["jxl"]);
+            assert_eq!(jxl.pixel_format, PagePixelFormat::Rgba8888, "{command:?} {flag_prefix}");
+            assert_eq!(jxl.compression, CompressionFlag::JpegXlLevel(DEFAULT_JXL_LEVEL), "{command:?} {flag_prefix}");
+            assert_eq!(
+                format(&["jxl", "jxl-level=4"]).compression,
+                CompressionFlag::JpegXlLevel(EXPLICIT_JXL_LEVEL),
+                "{command:?} {flag_prefix}"
+            );
+            assert_eq!(
+                format(&["jxl", "zstd"]).compression,
+                CompressionFlag::JpegXlZstdLevels { jxl_level: DEFAULT_JXL_LEVEL, zstd_level: DEFAULT_ZSTD_LEVEL },
+                "{command:?} {flag_prefix}"
+            );
         }
     }
 
@@ -3355,7 +3406,7 @@ mod tests {
                 assert!(zstd.is_none());
                 assert!(!bc7);
                 assert!(!bc7_rdo);
-                let output_format = resolve_texture_output_format(
+                let output_format = resolve_art_output_format(
                     raw,
                     jxl,
                     None,
@@ -3400,7 +3451,7 @@ mod tests {
                 assert!(zstd.is_none());
                 assert!(!bc7);
                 assert!(!bc7_rdo);
-                let output_format = resolve_texture_output_format(
+                let output_format = resolve_art_output_format(
                     raw,
                     jxl,
                     None,
@@ -3452,7 +3503,7 @@ mod tests {
                 assert!(zstd.is_none());
                 assert!(!bc7);
                 assert!(!bc7_rdo);
-                let output_format = resolve_texture_output_format(
+                let output_format = resolve_art_output_format(
                     raw,
                     jxl,
                     jxl_level,
@@ -3495,10 +3546,10 @@ mod tests {
             } => {
                 assert!(raw);
                 assert!(!jxl);
-                assert_eq!(zstd, Some(DEFAULT_ZSTD_LEVEL));
+                assert_eq!(zstd, Some(None));
                 assert!(!bc7);
                 assert!(!bc7_rdo);
-                let output_format = resolve_texture_output_format(
+                let output_format = resolve_art_output_format(
                     raw,
                     jxl,
                     None,
@@ -3544,10 +3595,10 @@ mod tests {
             } => {
                 assert!(!raw);
                 assert!(jxl);
-                assert_eq!(zstd, Some(DEFAULT_ZSTD_LEVEL));
+                assert_eq!(zstd, Some(None));
                 assert!(!bc7);
                 assert!(!bc7_rdo);
-                let output_format = resolve_texture_output_format(
+                let output_format = resolve_art_output_format(
                     raw,
                     jxl,
                     None,
@@ -3596,10 +3647,10 @@ mod tests {
             } => {
                 assert!(raw);
                 assert!(!jxl);
-                assert_eq!(zstd, Some(5));
+                assert_eq!(zstd, Some(Some(5)));
                 assert!(!bc7);
                 assert!(!bc7_rdo);
-                let output_format = resolve_texture_output_format(
+                let output_format = resolve_art_output_format(
                     raw,
                     jxl,
                     None,
@@ -3648,10 +3699,10 @@ mod tests {
             } => {
                 assert!(!raw);
                 assert!(!jxl);
-                assert_eq!(zstd, Some(DEFAULT_ZSTD_LEVEL));
+                assert_eq!(zstd, Some(None));
                 assert!(!bc7);
                 assert!(bc7_rdo);
-                let output_format = resolve_texture_output_format(
+                let output_format = resolve_art_output_format(
                     raw,
                     jxl,
                     None,

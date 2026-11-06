@@ -860,8 +860,10 @@ the same day ([`bc7_alpha_plane_search.md`](bc7_alpha_plane_search.md)). The use
   - decoding every page once, zstd on one thread against JPEG XL on 20 threads with the rayon runner: `gumps_cc` 33 ms against 581,
     `gumps_ec` 32 against 711, `tex_land_cc` 64 against 459, `tex_land_ec` 142 against 593, so 4–22× faster (a gump page about
     1.5 ms against 31 ms).
-  - **The packages still on JPEG XL, against zstd 19** (measured 2026-11-06, defaults unchanged). Every page of the installed
-    `tex_art_cc`, `tex_art_ec` and `tex_aux_ec`, decoded with the package readers and stored again at zstd 19 through the
+  - **The packages still on JPEG XL, against zstd 19** (measured 2026-11-06; the same day the user approved the switch, "Yes
+    switch to zstd 19", and `pack-art`, `pack-ec-textures` and `pack-ec-tex-aux` now default to lossless zstd 19 pages).
+    Every page of the installed `tex_art_cc`, `tex_art_ec` and `tex_aux_ec`, decoded with the package readers and stored again
+    at zstd 19 through the
     builder, decodes to the same pixels (0 pages differ; `udd_assets` reads every image the same). Decode is every page once,
     the best of 5 per page, summed; encode is the whole package through the builder, the best of 5. Unpinned at nice 10 with CPU
     boost off, beside other agents' builds that kept 0.4–6.9 CPUs busy (3–6.5 through the `tex_art_cc` timings):

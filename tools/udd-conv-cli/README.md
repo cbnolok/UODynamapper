@@ -12,11 +12,12 @@ packages consumed by Dynamapper and the other tools at runtime.
 
 | Command | Output package | Source |
 | ------- | -------------- | ------ |
-| `pack-tex-art-cc` | `tex_art_cc.uddp` | Classic `art.mul` / `artidx.mul` |
+| `pack-art` | `tex_art_cc.uddp` | Classic `art.mul` / `artidx.mul` |
 | `pack-tex-land-cc` | `tex_land_cc.uddp` | Classic `texmaps.mul` |
 | `pack-mobile-anims` | `mobile_anim_cc.uddp` | Classic `anim*.mul` / `anim*.idx` |
 | `pack-ec-mobile-anims` | `mobile_anim_ec.uddp` | EC `AnimationFrame*.uop` |
-| `pack-tex-art-ec` | `tex_art_ec.uddp`, `tex_land_ec.uddp` | EC art and land in one pass |
+| `pack-ec-textures` | `tex_art_ec.uddp`, `tex_land_ec.uddp` | EC art and land in one pass |
+| `pack-ec-tex-aux` | `tex_aux_ec.uddp` | EC auxiliary textures named by `tilemeta.uddp` |
 | `pack-tilemeta` | `tilemeta.uddp` | CC tiledata + EC tileart |
 | `pack-map` | `mapX.uddp` | Classic `mapX.mul` |
 | `pack-statics` | `staticsX.uddp` | Classic `staticsX.mul` |
@@ -26,6 +27,9 @@ packages consumed by Dynamapper and the other tools at runtime.
 | `pack-gumps-cc` | `gumps_cc.uddp` | Classic `gumpart.mul` / `gumpidx.mul` |
 | `pack-gumps-ec` | `gumps_ec.uddp` | EC `interface.uop` gumpart |
 | `pack-radar` | `facet0X.dds` | Classic map and statics radar image |
+
+Without a format flag, the art, land and auxiliary texture packers write lossless RGBA8888
+pages with Zstd 19 per page; `--zstd=LEVEL` picks another level.
 
 Output paths (`--output`, `--art-output`, `--land-output`, `--map-output`, ...) and the
 default file names above resolve against the current working directory, like any

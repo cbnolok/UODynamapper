@@ -95,14 +95,14 @@ impl Default for AppSettings {
             opt_mobile_anim_cc: default_mobile_anim_optimization(),
             opt_mobile_anim_ec: default_mobile_anim_optimization(),
             opt_tex_aux_ec: TextureOptimization::None,
-            zstd_tex_art_cc: default_zstd_level(),
+            zstd_tex_art_cc: LOSSLESS_PAGE_ZSTD_LEVEL,
             zstd_tex_land_cc: LOSSLESS_PAGE_ZSTD_LEVEL,
-            zstd_tex_art_ec: default_zstd_level(),
+            zstd_tex_art_ec: LOSSLESS_PAGE_ZSTD_LEVEL,
             zstd_tex_land_ec: LOSSLESS_PAGE_ZSTD_LEVEL,
             zstd_tilemeta: default_zstd_level(),
             zstd_mobile_anim_cc: default_zstd_level(),
             zstd_mobile_anim_ec: default_zstd_level(),
-            zstd_tex_aux_ec: default_zstd_level(),
+            zstd_tex_aux_ec: LOSSLESS_PAGE_ZSTD_LEVEL,
             jxl_tex_art_cc: default_jxl_level(),
             jxl_tex_land_cc: default_jxl_level(),
             jxl_tex_art_ec: default_jxl_level(),
@@ -278,6 +278,18 @@ mod tests {
         assert_eq!(settings.opt_tex_land_ec, TextureOptimization::None);
         assert_eq!(settings.zstd_tex_land_cc, LOSSLESS_PAGE_ZSTD_LEVEL);
         assert_eq!(settings.zstd_tex_land_ec, LOSSLESS_PAGE_ZSTD_LEVEL);
+    }
+
+    #[test]
+    fn app_settings_default_packs_art_and_aux_as_lossless_zstd() {
+        let settings = AppSettings::default();
+
+        assert_eq!(settings.opt_tex_art_cc, TextureOptimization::None);
+        assert_eq!(settings.opt_tex_art_ec, TextureOptimization::None);
+        assert_eq!(settings.opt_tex_aux_ec, TextureOptimization::None);
+        assert_eq!(settings.zstd_tex_art_cc, LOSSLESS_PAGE_ZSTD_LEVEL);
+        assert_eq!(settings.zstd_tex_art_ec, LOSSLESS_PAGE_ZSTD_LEVEL);
+        assert_eq!(settings.zstd_tex_aux_ec, LOSSLESS_PAGE_ZSTD_LEVEL);
     }
 
     #[test]

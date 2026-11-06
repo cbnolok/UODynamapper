@@ -50,6 +50,7 @@ use crate::package_progress::{
     AssetProgressReporter, AssetTaskProgressStage,
     build_and_write_package_with_progress,
 };
+use crate::page_compression::LOSSLESS_PAGE_COMPRESSION;
 use crate::rgba_bounds::nonzero_alpha_bounds_in_rect;
 use crate::source_paths::{find_first_existing_file, source_path_label};
 use udd_assets::tex_art_cc::{page_entry_path, PagePixelFormat};
@@ -102,7 +103,7 @@ impl Default for TexArtEcAtlasOptions {
             atlas_width: DEFAULT_ATLAS_PAGE_WIDTH,
             atlas_height: DEFAULT_ATLAS_PAGE_HEIGHT,
             gutter: DEFAULT_ATLAS_GUTTER,
-            compression: CompressionFlag::JpegXl,
+            compression: LOSSLESS_PAGE_COMPRESSION,
             upscale: UpscaleFilter::default(),
             upscale_passes: Vec::new(),
             upscale_profile: None,

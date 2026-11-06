@@ -35,7 +35,7 @@ udd-pack pack-tilemeta --ccdir /path/to/cc --ecdir /path/to/ec --output tilemeta
 Then build the auxiliary images from that tilemeta, with the same EC directory (it also reads `SystemTextures.uop`):
 
 ```text
-udd-pack pack-ec-tex-aux --ecdir /path/to/ec --tilemeta tilemeta.uddp --zstd --output tex_aux_ec.uddp
+udd-pack pack-ec-tex-aux --ecdir /path/to/ec --tilemeta tilemeta.uddp --output tex_aux_ec.uddp
 ```
 
 When building all EC texture outputs plus `tilemeta.uddp`, prefer the grouped form so
@@ -90,7 +90,7 @@ Common uses:
 
 ### `tex_art_cc.uddp`
 
-Stores Classic Client land/static atlas pages plus a sparse slot table keyed by classic `art_id`.
+Stores Classic Client land/static atlas pages plus a sparse slot table keyed by classic `art_id`. The default build is lossless: RGBA8888 pages, Zstd 19 per page (since 2026-11-06).
 
 Pages are lossless by default, or BC7 with `pack-art --bc7`. BC7 pages reach the GPU as their blocks: in the sprite atlas, and in the flat wet land art array (`classic_land_art_atlas`, `Bc7RgbaUnormSrgb`), which copies each land slot's blocks and refuses a slot off the 4x4 grid with a message to repack.
 
@@ -98,7 +98,7 @@ The Enhanced and KR-like views draw Classic and Enhanced art from one sprite atl
 
 ### `tex_art_ec.uddp`
 
-Stores Enhanced Client static/art textures from the shared EC texture classification pass: the block-0 `WorldArt` image of each item (`Texture.uop`), which is the KR art.
+Stores Enhanced Client static/art textures from the shared EC texture classification pass: the block-0 `WorldArt` image of each item (`Texture.uop`), which is the KR art. The default build is lossless: RGBA8888 pages, Zstd 19 per page (since 2026-11-06).
 
 - **KR art only.** The official EC draws an item's KR art only when its tileart record sets `UseNewArt` (795 items; `TileMetaPackage::uses_new_art`), otherwise classic-style art. The renderer deliberately ignores that flag: it is off for almost every item, even where the client packs KR art, so the client disabled that art on purpose. Enhanced mode draws the KR art wherever a `tex_art_ec` slot exists, then the Classic art, then magenta. The project does not use the EC's legacy-art set (`LegacyTexture.uop`): Classic art comes from `tex_art_cc.uddp`. On the plain clients 13,311 statics have a KR slot (all of them also have Classic art) and 23,216 have Classic art only.
 - **Renderer fallback in Enhanced mode:** KR slot, then the `tex_art_cc` art at classic scale, then the client's magenta `missing.tga` (the reserved slot of `tex_aux_ec`).
@@ -129,7 +129,7 @@ Paperdoll equipment gumps go to lossless atlas pages; every other gump is a sing
 
 ### `tex_aux_ec.uddp`
 
-Stores the non-base support images that tileart refs name and that a runtime consumer reads: sprite hue masks, static terrain-surface masks and EC item liquid inputs. All of them are WorldArt images from `Texture.uop`, keyed by texture id.
+Stores the non-base support images that tileart refs name and that a runtime consumer reads: sprite hue masks, static terrain-surface masks and EC item liquid inputs. All of them are WorldArt images from `Texture.uop`, keyed by texture id. The default build is lossless: RGBA8888 textures, Zstd 19 each (since 2026-11-06).
 
 - **No legacy-art images.** TileArtLegacy and TileArtEnhanced refs are not packed. They are the EC's legacy-art mode, which the project does not convert; Classic art comes from the Classic Client files (`tex_art_cc.uddp`).
 - **The client's fallback image.** When a texture request returns no data, the client draws `Data\SystemTextures\missing.tga` instead. The package carries that image once under a reserved id, and each referenced id that `Texture.uop` lacks is an alias slot of it.
