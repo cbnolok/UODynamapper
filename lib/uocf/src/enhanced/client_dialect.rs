@@ -8,7 +8,7 @@
 
 use std::path::Path;
 
-use crate::client_config::login_servers::KINGDOM_REBORN_EXE;
+use crate::client::login_servers::KINGDOM_REBORN_EXE;
 use crate::utils::path::find_file_ignoring_case;
 
 /// Which client's form of a shared file layout to read or write.

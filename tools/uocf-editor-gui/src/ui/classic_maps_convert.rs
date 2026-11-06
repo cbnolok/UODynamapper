@@ -11,7 +11,7 @@ use uocf::classic::facet_image_render::FacetImageMode;
 use uocf::classic::facet_sources::CLASSIC_FACET_NAMES;
 use uocf::classic::map::{MapSizeCells, FELUCCA_HEIGHT, ML_FELUCCA_WIDTH, PRE_ML_FELUCCA_WIDTH};
 use uocf::classic::world::{LandFill, VOID_LAND_ID, VOID_LAND_Z};
-use uocf::client_exe::facet_dimensions::{FACET_SIDE_ALIGNMENT, MAX_FACET_SIDE};
+use uocf::client::facet_dimensions::{FACET_SIDE_ALIGNMENT, MAX_FACET_SIDE};
 use uocf::map_edition::MapEdition;
 
 use crate::logic::facet_convert::{convert_facet, package_name_facet, ConvertRequest, DifChoice, FacetSource, FacetTarget};

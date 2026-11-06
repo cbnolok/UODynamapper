@@ -1,5 +1,5 @@
 //! The login server section: where each family reads its login server from (see
-//! `lib/uocf/src/client_config/LOGIN_SERVER.md`), the executable's per-site host and port edit ([`LoginEdit`], one
+//! `lib/uocf/src/client/LOGIN_SERVER.md`), the executable's per-site host and port edit ([`LoginEdit`], one
 //! more edit of the patch [`super::edits::EditState::build_patch`] builds) and the Classic `login.cfg` editor
 //! ([`ClassicLogin`]), saved as a copy apart from the patch.
 //!
@@ -11,18 +11,17 @@
 use std::path::{Path, PathBuf};
 
 use color_eyre::eyre::{self, WrapErr};
-use uocf::client_config::login_servers::{
+use uocf::client::login_servers::{
     read_login_servers, validate_login_host, validate_login_port, write_login_cfg, CfgServerKind, HostKind, LoginCfg,
-    LoginFileRole, LoginServerAddress, LoginServerEntry, LoginServersReport, LoginServersXml, XmlLoginServer,
-    KR_CONFIG_SUBFOLDER, LOGIN_CFG_FILE, LOGIN_SERVERS_DEFAULT_XML, LOGIN_SERVERS_USER_XML, MIN_LOGIN_PORT,
+    LoginFileRole, LoginServerAddress, LoginServerEntry, LoginServersReport,
+    LOGIN_CFG_FILE, MIN_LOGIN_PORT,
 };
-use uocf::client_exe::facet_dimensions::{ClientExeInspection, ClientFamily};
-use uocf::client_exe::login::{
+use uocf::client::facet_dimensions::{ClientExeInspection, ClientFamily};
+use uocf::client::login::{
     LoginHost, LoginServerEdit, LoginSites, LoginValues, STOCK_INTERNAL_LOGIN_ADDRESSES, STOCK_KR_LOGIN_ADDRESS,
     STOCK_LOGIN_HOSTS, STOCK_LOGIN_PORTS,
 };
-use uocf::client_exe::patch::{ExeEdit, ExeManifest};
-use uocf::utils::path::find_file_ignoring_case;
+use uocf::client::patch::{ExeEdit, ExeManifest};
 
 use super::edits::Validation;
 
@@ -383,34 +382,6 @@ impl LoginEdit {
     }
 }
 
-/// A `LoginServersDefault.xml` / `LoginServersUser.xml` found in a client folder (Enhanced Client, Kingdom Reborn).
-/// The client never reads it.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct XmlLoginFile {
-    pub path: PathBuf,
-    pub servers: Result<Vec<XmlLoginServer>, String>,
-}
-
-/// The `LoginServers*.xml` files of `dir` (and, Kingdom Reborn, of its `client` subfolder), names compared ignoring
-/// case. Only reads.
-pub fn xml_login_files(dir: &Path, family: ClientFamily) -> Vec<XmlLoginFile> {
-    let mut dirs = vec![dir.to_path_buf()];
-    if family == ClientFamily::KingdomReborn {
-        dirs.push(dir.join(KR_CONFIG_SUBFOLDER));
-    }
-    let mut files = Vec::new();
-    for dir in dirs {
-        for name in [LOGIN_SERVERS_DEFAULT_XML, LOGIN_SERVERS_USER_XML] {
-            let Some(path) = find_file_ignoring_case(&dir, name) else {
-                continue;
-            };
-            let servers = LoginServersXml::read(&path).and_then(|xml| xml.servers()).map_err(|error| format!("{error:#}"));
-            files.push(XmlLoginFile { path, servers });
-        }
-    }
-    files
-}
-
 /// A row of the Classic editor: `host:port`.
 pub fn check_server_row(text: &str) -> Result<LoginServerAddress, String> {
     LoginServerAddress::parse(text).map_err(|error| format!("{error:#}"))
@@ -593,8 +564,8 @@ impl ClassicLogin {
 /// The login files of the client folder the section reads (the data check's folder).
 #[derive(Debug, Clone)]
 pub enum LoginFolder {
-    /// Enhanced Client, Kingdom Reborn: the `LoginServers*.xml` found, which the client ignores.
-    Xml { dir: PathBuf, files: Vec<XmlLoginFile> },
+    /// Enhanced Client and Kingdom Reborn use only their executable.
+    Executable { dir: PathBuf },
     Classic(Box<ClassicLogin>),
 }
 
@@ -604,14 +575,14 @@ impl LoginFolder {
         match family {
             ClientFamily::Classic => Self::Classic(Box::new(ClassicLogin::load(dir))),
             ClientFamily::Enhanced | ClientFamily::KingdomReborn => {
-                Self::Xml { dir: dir.to_path_buf(), files: xml_login_files(dir, family) }
+                Self::Executable { dir: dir.to_path_buf() }
             }
         }
     }
 
     pub fn dir(&self) -> &Path {
         match self {
-            Self::Xml { dir, .. } => dir,
+            Self::Executable { dir } => dir,
             Self::Classic(login) => &login.dir,
         }
     }

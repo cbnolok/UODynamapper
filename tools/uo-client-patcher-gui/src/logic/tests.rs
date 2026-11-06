@@ -1,11 +1,11 @@
 use std::path::{Path, PathBuf};
 use std::time::Instant;
 
-use uocf::client_config::login_servers::{CfgServerKind, LoginCfg};
-use uocf::client_exe::facet_data::FacetDataStatus;
-use uocf::client_exe::facet_dimensions::{ClientExeInspection, ClientFamily, DISABLED_SPLIT_X, STOCK_SPLIT_X};
-use uocf::client_exe::login::{LoginHost, LoginServerEdit, LOGIN_HOST_SLOT_SIZE, MAX_LOGIN_HOST_LENGTH};
-use uocf::client_exe::patch::{patch_client_exe, ChangeCause, ExeEdit, ExePatch, SplitEdit};
+use uocf::client::login_servers::{CfgServerKind, LoginCfg};
+use uocf::client::facet_data::FacetDataStatus;
+use uocf::client::facet_dimensions::{ClientExeInspection, ClientFamily, DISABLED_SPLIT_X, STOCK_SPLIT_X};
+use uocf::client::login::{LoginHost, LoginServerEdit, LOGIN_HOST_SLOT_SIZE, MAX_LOGIN_HOST_LENGTH};
+use uocf::client::patch::{patch_client_exe, ChangeCause, ExeEdit, ExePatch, SplitEdit};
 use uocf::enhanced::facet_sector::{FacetGeometry, CLIENT_FACET_DIMENSIONS};
 
 use super::edits::{EditState, SeamChoice};

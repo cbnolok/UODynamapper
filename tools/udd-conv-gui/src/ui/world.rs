@@ -4,7 +4,7 @@ use crate::ui::layout::{card_title, draw_card_grid, page_heading};
 use crate::logic::dif_check::{exe_line, status_detail, status_line, DifCheckRequest, CLASSIC_CLIENT_EXE_NAME};
 use eframe::egui;
 use udd_conv::cc_radar::RadarFormat;
-use uocf::client_exe::classic_difs::DifKind;
+use uocf::client::classic_difs::DifKind;
 use uocf::map_edition::MapEdition;
 
 const MAP_EDITION_HINT: &str = "Standard: mapN, staidxN, staticsN. Variant: the x files (mapNx, staidxNx, staticsNx) \

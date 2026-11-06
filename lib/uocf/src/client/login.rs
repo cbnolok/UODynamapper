@@ -1,5 +1,5 @@
 //! The login server address built into Enhanced Client and Kingdom Reborn executables, located by instruction
-//! structure ([`locate_login_sites`]); see `client_config/LOGIN_SERVER.md` for the traced code.
+//! structure ([`locate_login_sites`]); see `client/LOGIN_SERVER.md` for the traced code.
 //!
 //! `LoginManager::LoginAccount` fills a `{u32 ip (host order), u16 port}` pair on the stack at `[ESP+D]`:
 //!
@@ -15,7 +15,7 @@
 //!   The port immediates are little-endian u16, as every x86 immediate; the pair keeps the port in host order and
 //!   swaps it when connecting.
 //!
-//! A patch ([`crate::client_exe::patch::ExeEdit::LoginServer`], a [`LoginServerEdit`]) writes one host per site
+//! A patch ([`crate::client::patch::ExeEdit::LoginServer`], a [`LoginServerEdit`]) writes one host per site
 //! and one port per site: in the Enhanced Client every public host slot (zero filled, each host within its own
 //! slot) and every port immediate, the internal test address left alone; in Kingdom Reborn the fixed address's
 //! imm32 (an IPv4 address only: no string is resolved there) and imm16. [`LoginServerEdit::uniform`] gives every
@@ -24,9 +24,9 @@
 crate::eyre_imports!();
 use std::net::Ipv4Addr;
 
-use crate::client_config::login_servers::validate_login_host;
-use crate::client_exe::facet_dimensions::{code_section, ClientFamily};
-use crate::client_exe::pe::PeImage;
+use crate::client::login_servers::validate_login_host;
+use crate::client::facet_dimensions::{code_section, ClientFamily};
+use crate::client::pe::PeImage;
 
 /// The largest host slot: ECLO's 16-byte buffer and the spacing of the Time of Legends host strings. A slot is the
 /// string, its NUL and the zero padding after it, up to this size.
@@ -446,8 +446,8 @@ pub fn locate_login_sites(bytes: &[u8], pe: &PeImage, family: ClientFamily) -> e
 #[cfg(test)]
 pub(crate) mod tests {
     use super::*;
-    use crate::client_exe::facet_dimensions::tests::{synthetic_image_with, synthetic_rdata_va};
-    use crate::client_exe::facet_dimensions::ClientExeInspection;
+    use crate::client::facet_dimensions::tests::{synthetic_image_with, synthetic_rdata_va};
+    use crate::client::facet_dimensions::ClientExeInspection;
 
     /// The Time of Legends hosts of UOSA 4.0.102.3, 16 bytes apart, then 4 zero bytes and other data.
     pub const TOL_HOSTS: [&str; 2] = ["107.23.85.115", "107.23.176.74"];

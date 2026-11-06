@@ -2,11 +2,11 @@
 //! seam and for the login server, its live validation (the library's validate functions) and the [`ExePatch`] it
 //! builds. Every section that edits the executable contributes its edits to [`EditState::build_patch`].
 
-use uocf::client_exe::classic_facets::{classic_map_blocks, validate_classic_size, validate_classic_wrap};
-use uocf::client_exe::facet_dimensions::{
+use uocf::client::classic_facets::{classic_map_blocks, validate_classic_size, validate_classic_wrap};
+use uocf::client::facet_dimensions::{
     validate_facet_size, ClientExeInspection, ClientFamily, DISABLED_SPLIT_X, SPLIT_FACETS,
 };
-use uocf::client_exe::patch::{stock_facets, ExeEdit, ExeManifest, ExePatch, SplitEdit};
+use uocf::client::patch::{stock_facets, ExeEdit, ExeManifest, ExePatch, SplitEdit};
 use uocf::enhanced::facet_sector::FacetGeometry;
 
 use super::login::LoginEdit;
@@ -87,7 +87,7 @@ pub struct EditState {
 }
 
 /// The wrap a Classic facet gets from a new size without a wrap edit: a wrap side equal to the old side follows the
-/// new side (as [`uocf::client_exe::patch::plan_patch`] does).
+/// new side (as [`uocf::client::patch::plan_patch`] does).
 pub fn followed_wrap(wrap: FacetGeometry, old: FacetGeometry, new: FacetGeometry) -> FacetGeometry {
     let side = |wrap: u32, old: u32, new: u32| if wrap == old { new } else { wrap };
     FacetGeometry::new(side(wrap.width, old.width, new.width), side(wrap.height, old.height, new.height))

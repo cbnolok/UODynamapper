@@ -5,10 +5,7 @@
 use std::path::PathBuf;
 
 use eframe::egui;
-use uocf::client_config::login_servers::{
-    LoginEntrySource, LoginFileRole, LOGIN_SERVERS_DEFAULT_XML, LOGIN_SERVERS_USER_XML,
-};
-use uocf::client_exe::facet_dimensions::ClientFamily;
+use uocf::client::login_servers::{LoginEntrySource, LoginFileRole};
 
 use super::{error_label, info_grid, muted_label, warning_label, ITEM_SPACING, SUCCESS_COLOR};
 use crate::app::Session;
@@ -63,7 +60,6 @@ pub fn ui_login(ui: &mut egui::Ui, session: &mut Session) -> Option<LoginAction>
                     family.label()
                 ),
             );
-            ui_xml_files(ui, &session.login_folder, family);
         }
     }
     None
@@ -72,7 +68,6 @@ pub fn ui_login(ui: &mut egui::Ui, session: &mut Session) -> Option<LoginAction>
 /// The login sites of the executable (Enhanced Client, Kingdom Reborn) and their editor.
 fn ui_executable_sites(ui: &mut egui::Ui, session: &mut Session) {
     let inspection = &session.opened.inspection;
-    let family = inspection.family;
     let Some(sites) = &inspection.login else {
         return;
     };
@@ -136,7 +131,6 @@ fn ui_executable_sites(ui: &mut egui::Ui, session: &mut Session) {
         }
         None => {}
     }
-    ui_xml_files(ui, &session.login_folder, family);
 }
 
 /// One row per host site (with its slot's capacity) and per port site; an empty field keeps the file's value.
@@ -185,46 +179,10 @@ fn ui_login_fields(ui: &mut egui::Ui, login: &mut LoginEdit) {
     }
 }
 
-/// The note on the Enhanced Client / Kingdom Reborn XML files, and the ones found.
-fn ui_xml_files(ui: &mut egui::Ui, folder: &LoginFolder, family: ClientFamily) {
-    let LoginFolder::Xml { dir, files } = folder else {
-        return;
-    };
-    ui.add_space(ITEM_SPACING);
-    muted_label(
-        ui,
-        format!(
-            "{LOGIN_SERVERS_DEFAULT_XML} and {LOGIN_SERVERS_USER_XML} are ignored by the {}: in every traced build their \
-             loader has no callers, so editing them changes nothing.",
-            family.label()
-        ),
-    );
-    if files.is_empty() {
-        muted_label(ui, format!("None in {}.", dir.display()));
-    }
-    for file in files {
-        warning_label(ui, format!("{}: ignored by the client.", file.path.display()));
-        match &file.servers {
-            Ok(servers) => {
-                for server in servers {
-                    let address = match server.address() {
-                        Ok(address) => address.to_string(),
-                        Err(error) => format!("{error:#}"),
-                    };
-                    let title = server.title.as_deref().unwrap_or("(no title)");
-                    muted_label(ui, format!("    {title}: {address}"));
-                }
-            }
-            Err(error) => error_label(ui, format!("    {error}")),
-        }
-    }
-}
-
 fn file_role(role: LoginFileRole) -> &'static str {
     match role {
         LoginFileRole::UoCfg => "uo.cfg",
         LoginFileRole::LoginCfg => "login file",
-        LoginFileRole::LoginServersXml => "LoginServers XML",
         LoginFileRole::Executable => "executable",
     }
 }
@@ -358,7 +316,7 @@ fn ui_classic(ui: &mut egui::Ui, session: &mut Session) -> Option<LoginAction> {
 }
 
 /// The editor of one list: a `host:port` row per server, remove and add.
-fn ui_server_list(ui: &mut egui::Ui, login: &mut ClassicLogin, kind: uocf::client_config::login_servers::CfgServerKind) {
+fn ui_server_list(ui: &mut egui::Ui, login: &mut ClassicLogin, kind: uocf::client::login_servers::CfgServerKind) {
     ui.label(egui::RichText::new(format!("{} servers ({}=host,port)", capitalized(kind_label(kind)), kind.key())).strong());
     let list = login.list_mut(kind);
     let mut remove = None;

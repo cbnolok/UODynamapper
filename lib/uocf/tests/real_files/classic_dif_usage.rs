@@ -8,8 +8,8 @@ use std::collections::HashSet;
 
 use crate::client_exe_facet_dimensions::{client_exes, exe_kind, ExeKind};
 
-use uocf::client_exe::classic_difs::{inspect_classic_difs, ClassicDifUsage, DifKind, DifStatus};
-use uocf::client_exe::facet_dimensions::{ClientExeInspection, ClientFamily};
+use uocf::client::classic_difs::{inspect_classic_difs, ClassicDifUsage, DifKind, DifStatus};
+use uocf::client::facet_dimensions::{ClientExeInspection, ClientFamily};
 
 /// A build of the table: its SHA-256, its label and whether its lookups are called.
 struct Expected {

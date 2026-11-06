@@ -74,6 +74,14 @@ explicit re-exports; the category paths also work.
 Kingdom Reborn facet format support (format shared with EC, with minor
 differences). Parsed via the `enhanced` facet decoder/encoder.
 
+### `client`
+
+Classic login configuration and client executable inspection/patching share this module.
+`login_servers.rs` reads and edits Classic `uo.cfg`/`login.cfg` and reports built-in EC/KR
+addresses. `login.rs` locates executable login sites; the remaining modules handle PE
+inspection, versions, facet dimensions and patches. Dormant `LoginServers*.xml` files
+are ignored. See [LOGIN_SERVER.md](src/client/LOGIN_SERVER.md).
+
 ### `facet_convert.rs`
 
 One facet between Classic, Enhanced Client and Kingdom Reborn files, with the checks

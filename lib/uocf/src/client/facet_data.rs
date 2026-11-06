@@ -10,8 +10,8 @@ use std::path::Path;
 use crate::classic::facet_sources::{map_file_names, ClassicMapFormat};
 use crate::classic::generic_index::{IndexElement, IndexFile};
 use crate::classic::map::{uop_map_data_size, MapBlock, UOP_MAP_TRAILING_BLOCKS};
-use crate::client_exe::classic_facets::{classic_map_blocks, ClassicFileRole};
-use crate::client_exe::facet_dimensions::{ClientExeInspection, ClientFamily};
+use crate::client::classic_facets::{classic_map_blocks, ClassicFileRole};
+use crate::client::facet_dimensions::{ClientExeInspection, ClientFamily};
 use crate::uop_container::package::LoadMode;
 use crate::utils::path::find_file_ignoring_case;
 

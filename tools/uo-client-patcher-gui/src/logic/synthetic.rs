@@ -1,26 +1,26 @@
 //! Synthetic client executables for the tests, built like the uocf `client_exe` tests build theirs (their helpers
 //! are private to that crate): a PE32 image with `.text`, `.rdata` and `.data`; an Enhanced Client-like table with
 //! the UOSA split sequence, a Kingdom Reborn-like one, and a two-copy Classic table with its file name table, startup
-//! globals and wrap seam. The login variants add `LoginAccount`'s address code as the uocf `client_exe::login` tests
+//! globals and wrap seam. The login variants add `LoginAccount`'s address code as the uocf `client::login` tests
 //! build it: the fixed store, then (Enhanced Client) the public host pushes and port stores, the hosts in `.rdata`.
 
 use std::net::Ipv4Addr;
 
 use uocf::classic::map::CLASSIC_FACET_HEIGHTS;
-use uocf::client_exe::classic_facets::{
+use uocf::client::classic_facets::{
     ClassicFileRole, CLASSIC_FACET_RECORD_SIZE, CLASSIC_FILE_ID_COUNT, CLASSIC_RECORD_FILE_IDS_OFFSET,
     CLASSIC_RECORD_FLAG_OFFSET, CLASSIC_RECORD_WRAP_HEIGHT_OFFSET, CLASSIC_RECORD_WRAP_WIDTH_OFFSET,
     CLASSIC_STOCK_WIDTHS, CLASSIC_STOCK_WRAP,
 };
-use uocf::client_exe::classic_difs::{LAND_LIST_FORMAT, STATICS_LIST_FORMAT};
-use uocf::client_exe::facet_dimensions::{
+use uocf::client::classic_difs::{LAND_LIST_FORMAT, STATICS_LIST_FORMAT};
+use uocf::client::facet_dimensions::{
     ENHANCED_CLIENT_MARKER, FACET_RECORD_HEIGHT_OFFSET, FACET_RECORD_WIDTH_OFFSET, SPLIT_IMMEDIATE_COUNT,
     STOCK_FACET_COUNT, STOCK_SPLIT_X,
 };
-use uocf::client_exe::login::{
+use uocf::client::login::{
     LOGIN_HOST_SLOT_SIZE, STOCK_INTERNAL_LOGIN_ADDRESSES, STOCK_KR_LOGIN_ADDRESS, STOCK_LOGIN_PORTS,
 };
-use uocf::client_exe::pe::{
+use uocf::client::pe::{
     pe_checksum, PeImage, MACHINE_I386, OPTIONAL_CHECKSUM_OFFSET, SECTION_CODE, SECTION_EXECUTE,
     SECTION_INITIALIZED_DATA, SECTION_READ, SECTION_WRITE,
 };

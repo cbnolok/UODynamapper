@@ -19,26 +19,26 @@
 //! - [`ExeEdit::ClassicWrap`]: the facet's wrap in every table copy (and the startup globals for facet 0).
 //! - [`ExeEdit::LoginServer`] ([`LoginServerEdit`]: one host per host site, one port per port site). Enhanced
 //!   Client: each public login host slot, zero filled (each host within its own slot), and each public port imm16
-//!   ([`crate::client_exe::login`]); the internal test address is left alone. Kingdom Reborn: the fixed address's
+//!   ([`crate::client::login`]); the internal test address is left alone. Kingdom Reborn: the fixed address's
 //!   ip imm32 (dotted IPv4 only: the code holds a number, not a string the client resolves) and port imm16.
-//!   Classic is refused: it reads `login.cfg` ([`crate::client_config::login_servers`]).
+//!   Classic is refused: it reads `login.cfg` ([`crate::client::login_servers`]).
 
 crate::eyre_imports!();
 use std::path::{Path, PathBuf};
 
-use crate::client_exe::classic_facets::{
+use crate::client::classic_facets::{
     classic_split_widths, classic_stock_facet, validate_classic_size, validate_classic_wrap,
     CLASSIC_OLD_FELUCCA_WIDTH, CLASSIC_RECORD_WRAP_HEIGHT_OFFSET, CLASSIC_RECORD_WRAP_WIDTH_OFFSET,
     CLASSIC_STOCK_WIDTHS,
 };
-use crate::client_exe::facet_dimensions::{
+use crate::client::facet_dimensions::{
     validate_facet_size, ClientExeInspection, ClientFamily, ExeValues, FacetValues, CLASSIC_GOLD_SHA256, DISABLED_SPLIT_X,
     FACET_RECORD_HEIGHT_OFFSET, FACET_RECORD_WIDTH_OFFSET, SPLIT_FACETS, STOCK_SPLIT_X,
 };
-use crate::client_exe::login::{LoginHost, LoginServerEdit, LoginSites, LoginValues};
-use crate::client_exe::pe::pe_checksum;
-use crate::client_exe::version::ExeVersion;
-use crate::client_config::login_servers::{validate_login_port, HostKind, validate_login_host};
+use crate::client::login::{LoginHost, LoginServerEdit, LoginSites, LoginValues};
+use crate::client::pe::pe_checksum;
+use crate::client::version::ExeVersion;
+use crate::client::login_servers::{validate_login_port, HostKind, validate_login_host};
 use crate::enhanced::facet_sector::{FacetGeometry, CLIENT_FACET_DIMENSIONS};
 
 /// The manifest of a patched copy: `<copy>` plus this suffix.
@@ -877,13 +877,13 @@ pub fn write_patched_client_exe(input: &Path, output: &Path, patch: &ExePatch) -
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::client_exe::classic_facets::tests::{seam_imm_offsets, stock_size, synthetic_classic};
-    use crate::client_exe::facet_dimensions::tests::{synthetic_client, synthetic_kr_client, NEW_SPLIT};
-    use crate::client_exe::facet_dimensions::{FACET_SIDE_ALIGNMENT, MAX_FACET_SIDE, STOCK_FACET_COUNT};
-    use crate::client_exe::login::tests::{synthetic_kr_login_client, synthetic_login_client};
-    use crate::client_exe::login::LOGIN_HOST_SLOT_SIZE;
-    use crate::client_exe::classic_facets::CLASSIC_STOCK_WRAP;
-    use crate::client_exe::sha256::sha256_hex;
+    use crate::client::classic_facets::tests::{seam_imm_offsets, stock_size, synthetic_classic};
+    use crate::client::facet_dimensions::tests::{synthetic_client, synthetic_kr_client, NEW_SPLIT};
+    use crate::client::facet_dimensions::{FACET_SIDE_ALIGNMENT, MAX_FACET_SIDE, STOCK_FACET_COUNT};
+    use crate::client::login::tests::{synthetic_kr_login_client, synthetic_login_client};
+    use crate::client::login::LOGIN_HOST_SLOT_SIZE;
+    use crate::client::classic_facets::CLASSIC_STOCK_WRAP;
+    use crate::client::sha256::sha256_hex;
 
     const NEW_WIDTH: u32 = 8192;
     const NEW_HEIGHT: u32 = 4160;

@@ -2,9 +2,9 @@
 
 use std::path::{Path, PathBuf};
 
-use uocf::client_exe::facet_data::{check_client_facet_data_with_sizes, FacetDataReport, FacetDataStatus};
-use uocf::client_exe::facet_dimensions::ClientExeInspection;
-use uocf::client_exe::patch::{ByteChange, ChangeCause, ExePatch, PatchPlan, PatchWarning, PatchWarningKind};
+use uocf::client::facet_data::{check_client_facet_data_with_sizes, FacetDataReport, FacetDataStatus};
+use uocf::client::facet_dimensions::ClientExeInspection;
+use uocf::client::patch::{ByteChange, ChangeCause, ExePatch, PatchPlan, PatchWarning, PatchWarningKind};
 use uocf::enhanced::facet_sector::FacetGeometry;
 
 use super::edits::EditState;

@@ -1,7 +1,7 @@
 //! Section 5: the dry run of every edit as one patch, then "Save as".
 
 use eframe::egui;
-use uocf::client_exe::patch::ExePatch;
+use uocf::client::patch::ExePatch;
 
 use super::{error_label, muted_label, warning_label, ITEM_SPACING, SUCCESS_COLOR};
 use crate::app::{Session, WriteOutcome};

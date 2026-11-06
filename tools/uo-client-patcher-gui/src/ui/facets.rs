@@ -1,7 +1,7 @@
 //! Section 2: one row per facet, edited and validated live.
 
 use eframe::egui;
-use uocf::client_exe::facet_dimensions::{ClientFamily, FACET_SIDE_ALIGNMENT};
+use uocf::client::facet_dimensions::{ClientFamily, FACET_SIDE_ALIGNMENT};
 use uocf::enhanced::facet_sector::{FacetGeometry, SECTOR_SIDE};
 
 use super::{cell, error_label, muted_label, warning_label, ERROR_COLOR, ITEM_SPACING, SUCCESS_COLOR, WARNING_COLOR};

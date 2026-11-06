@@ -24,7 +24,7 @@ use crate::classic::facet_sources::{
 use crate::classic::map::MapSizeCells;
 use crate::classic::target_client::{tiledata_counts, ClassicContainer, TargetClient};
 use crate::classic::world::{ClassicWorld, LandFill};
-use crate::client_exe::facet_dimensions::ClientFamily;
+use crate::client::facet_dimensions::ClientFamily;
 use crate::enhanced::facet_encoder::build_facet_from_world;
 use crate::enhanced::facet_package::{detect_facet_dialect, EcFacetPackage};
 use crate::enhanced::facet_radar::{edition_radar_dds_file_name, RadarPalette};
@@ -784,9 +784,9 @@ mod tests {
     use super::*;
     use crate::classic::facet_sources::statics_file_names;
     use crate::classic::target_client::CLASSIC_EXE;
-    use crate::client_config::login_servers::ENHANCED_EXE;
-    use crate::client_exe::classic_facets::tests::{synthetic_classic, CLASSIC_NAMES};
-    use crate::client_exe::facet_dimensions::tests::synthetic_client;
+    use crate::client::login_servers::ENHANCED_EXE;
+    use crate::client::classic_facets::tests::{synthetic_classic, CLASSIC_NAMES};
+    use crate::client::facet_dimensions::tests::synthetic_client;
     use crate::utils::output_file::block_temp_file;
 
     const FACET: u8 = 4;

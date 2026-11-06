@@ -24,8 +24,8 @@
 use std::collections::HashMap;
 use std::ops::{Range, RangeInclusive};
 
-use crate::client_exe::facet_dimensions::code_section;
-use crate::client_exe::pe::PeImage;
+use crate::client::facet_dimensions::code_section;
+use crate::client::pe::PeImage;
 
 /// The list file name formats each loader passes to sprintf.
 pub const LAND_LIST_FORMAT: &str = "mapdifl%d.mul";
@@ -644,7 +644,7 @@ pub fn inspect_classic_difs(bytes: &[u8], pe: &PeImage) -> ClassicDifUsage {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::client_exe::pe::tests::{synthetic_pe, TEST_IMAGE_BASE, TEST_SECTION_ALIGNMENT};
+    use crate::client::pe::tests::{synthetic_pe, TEST_IMAGE_BASE, TEST_SECTION_ALIGNMENT};
 
     const MAP_SIZE: u8 = 12;
     const MAP_COUNT: u8 = 5;
@@ -876,8 +876,8 @@ mod tests {
 
     #[test]
     fn the_inspection_of_a_classic_client_carries_its_usage() {
-        use crate::client_exe::classic_facets::tests::synthetic_classic;
-        use crate::client_exe::facet_dimensions::ClientExeInspection;
+        use crate::client::classic_facets::tests::synthetic_classic;
+        use crate::client::facet_dimensions::ClientExeInspection;
         let difs = ClientExeInspection::inspect(&synthetic_classic(5, 1)).unwrap().difs.unwrap();
         assert_eq!((&difs.land, &difs.statics), (&DifStatus::Absent, &DifStatus::Absent));
     }

@@ -6,7 +6,7 @@
 //! its first language entry → the data entry (RVA, size) → `VS_VERSIONINFO`: `wLength`, `wValueLength`, `wType`, the
 //! UTF-16 key `VS_VERSION_INFO` and its NUL, padding to 32 bits, then the `VS_FIXEDFILEINFO` value.
 
-use crate::client_exe::pe::PeImage;
+use crate::client::pe::PeImage;
 
 /// `RT_VERSION`.
 const RT_VERSION: u32 = 16;
@@ -164,8 +164,8 @@ pub fn read_exe_version(bytes: &[u8], pe: &PeImage) -> Option<ExeVersion> {
 #[cfg(test)]
 pub(crate) mod tests {
     use super::*;
-    use crate::client_exe::pe::tests::{synthetic_pe, test_directory_entry, TEST_SECTION_ALIGNMENT};
-    use crate::client_exe::pe::RESOURCE_DIRECTORY;
+    use crate::client::pe::tests::{synthetic_pe, test_directory_entry, TEST_SECTION_ALIGNMENT};
+    use crate::client::pe::RESOURCE_DIRECTORY;
 
     const FILE_VERSION: VersionNumber = VersionNumber([4, 0, 102, 3]);
     const PRODUCT_VERSION: VersionNumber = VersionNumber([4, 0, 102, 0]);

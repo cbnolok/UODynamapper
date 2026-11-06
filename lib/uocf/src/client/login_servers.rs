@@ -5,9 +5,8 @@
 //!   the same key table, so `LoginServer=host,port` and `BackupLoginServer=host,port` lines count in either.
 //!   [`LoginCfg`] reads and edits such a file, keeping comments, unknown lines and line endings.
 //! - Enhanced Client and Kingdom Reborn: the executable's built-in address
-//!   ([`crate::client_exe::login::LoginSites`]). Both builds carry a loader of `LoginServersDefault.xml` and
-//!   `LoginServersUser.xml` ([`LoginServersXml`]), but in every traced build nothing calls it and the global it would
-//!   fill is only ever cleared: the files have no effect there.
+//!   ([`crate::client::login::LoginSites`]). The traced builds never call their XML loader;
+//!   login XML files are not inspected or edited here.
 //!
 //! [`read_login_servers`] reports which files a client folder has and the servers the client would use.
 
@@ -15,8 +14,8 @@ crate::eyre_imports!();
 use std::net::Ipv4Addr;
 use std::path::{Path, PathBuf};
 
-use crate::client_exe::facet_dimensions::{ClientExeInspection, ClientFamily};
-use crate::client_exe::login::LoginSites;
+use crate::client::facet_dimensions::{ClientExeInspection, ClientFamily};
+use crate::client::login::LoginSites;
 use crate::utils::path::find_file_ignoring_case;
 
 /// The Classic main configuration file, read first.
@@ -27,12 +26,6 @@ pub const LOGIN_CFG_FILE: &str = "login.cfg";
 pub const LOGIN_SERVER_FILE_KEY: &str = "LoginServerFile";
 pub const LOGIN_SERVER_KEY: &str = "LoginServer";
 pub const BACKUP_LOGIN_SERVER_KEY: &str = "BackupLoginServer";
-/// The Enhanced Client and Kingdom Reborn XML files the dead loader names: the default list, then the user's,
-/// which replaces entries of the same title.
-pub const LOGIN_SERVERS_DEFAULT_XML: &str = "LoginServersDefault.xml";
-pub const LOGIN_SERVERS_USER_XML: &str = "LoginServersUser.xml";
-/// Kingdom Reborn's loader also takes the XML files from this subfolder.
-pub const KR_CONFIG_SUBFOLDER: &str = "client";
 pub const ENHANCED_EXE: &str = "UOSA.exe";
 pub const KINGDOM_REBORN_EXE: &str = "UOKR.exe";
 
@@ -46,18 +39,8 @@ const LF: &str = "\n";
 pub const MAX_HOST_NAME_LENGTH: usize = 253;
 const MAX_DNS_LABEL_LENGTH: usize = 63;
 const IPV4_OCTET_COUNT: usize = 4;
-/// The client's port field is 16 bits; 0 is not a port (the XML entry check refuses it too).
+/// The client's port field is 16 bits; 0 is not a port.
 pub const MIN_LOGIN_PORT: u16 = 1;
-
-const XML_CONFIG_ELEMENT: &str = "LoginConfig";
-const XML_SERVER_ELEMENT: &str = "LoginServer";
-const XML_TITLE: &str = "title";
-/// The host attribute is `name` (the title is the entry's name).
-const XML_HOST: &str = "name";
-const XML_PORT: &str = "port";
-const XML_STANDALONE: &str = "standalone";
-const XML_DECLARATION: &str = "<?xml version=\"1.0\" encoding=\"utf-8\"?>";
-const XML_DEFAULT_INDENT: &str = "  ";
 
 /// What a host string is.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -299,317 +282,6 @@ impl LoginCfg {
 }
 
 // ---------------------------------------------------------------------------------------------------------------
-// Enhanced Client / Kingdom Reborn LoginServers*.xml
-
-/// An attribute of a start tag: its name, its raw value and the byte range of the value inside the quotes.
-#[derive(Debug, Clone)]
-struct XmlAttribute {
-    name: String,
-    raw: String,
-    value_range: std::ops::Range<usize>,
-}
-
-/// A start tag (with its end tag, when not self-closing).
-#[derive(Debug, Clone)]
-struct XmlElement {
-    name: String,
-    /// The `/>` or `>` that ends the start tag: its start.
-    tag_close: usize,
-    self_closing: bool,
-    attributes: Vec<XmlAttribute>,
-    parent: Option<usize>,
-    /// Start of the `</name>` end tag.
-    end_tag: Option<usize>,
-}
-
-impl XmlElement {
-    fn attribute(&self, name: &str) -> Option<&XmlAttribute> {
-        self.attributes.iter().find(|attribute| attribute.name == name)
-    }
-}
-
-fn xml_decode(raw: &str) -> eyre::Result<String> {
-    let mut out = String::with_capacity(raw.len());
-    let mut rest = raw;
-    while let Some(at) = rest.find('&') {
-        out.push_str(&rest[..at]);
-        let end = rest[at..].find(';').ok_or_else(|| eyre!("unterminated entity in `{raw}`"))? + at;
-        let entity = &rest[at + 1..end];
-        let decoded = match entity {
-            "amp" => '&',
-            "lt" => '<',
-            "gt" => '>',
-            "quot" => '"',
-            "apos" => '\'',
-            _ => {
-                let code = if let Some(hex) = entity.strip_prefix("#x").or_else(|| entity.strip_prefix("#X")) {
-                    u32::from_str_radix(hex, 16).ok()
-                } else {
-                    entity.strip_prefix('#').and_then(|decimal| decimal.parse().ok())
-                };
-                code.and_then(char::from_u32).ok_or_else(|| eyre!("unknown entity `&{entity};`"))?
-            }
-        };
-        out.push(decoded);
-        rest = &rest[end + 1..];
-    }
-    out.push_str(rest);
-    Ok(out)
-}
-
-fn xml_escape(value: &str) -> String {
-    value.replace('&', "&amp;").replace('<', "&lt;").replace('>', "&gt;").replace('"', "&quot;").replace('\'', "&apos;")
-}
-
-fn is_name_char(c: u8) -> bool {
-    !c.is_ascii_whitespace() && !matches!(c, b'/' | b'>' | b'=' | b'<' | b'"' | b'\'')
-}
-
-/// The elements of `text`, in document order. Declarations, comments, CDATA and text are skipped.
-fn scan_xml(text: &str) -> eyre::Result<Vec<XmlElement>> {
-    let bytes = text.as_bytes();
-    let mut elements: Vec<XmlElement> = Vec::new();
-    let mut open: Vec<usize> = Vec::new();
-    let mut at = 0;
-    let skip_to = |from: usize, end: &str| -> eyre::Result<usize> {
-        text[from..].find(end).map(|found| from + found + end.len()).ok_or_else(|| eyre!("unterminated markup at byte {from}"))
-    };
-    while let Some(found) = text[at..].find('<') {
-        let start = at + found;
-        let rest = &text[start..];
-        if rest.starts_with("<?") {
-            at = skip_to(start, "?>")?;
-        } else if rest.starts_with("<!--") {
-            at = skip_to(start, "-->")?;
-        } else if rest.starts_with("<![CDATA[") {
-            at = skip_to(start, "]]>")?;
-        } else if rest.starts_with("<!") {
-            at = skip_to(start, ">")?;
-        } else if rest.starts_with("</") {
-            let close = skip_to(start, ">")?;
-            let name = text[start + 2..close - 1].trim();
-            let index = open.pop().ok_or_else(|| eyre!("end tag </{name}> without a start tag"))?;
-            eyre::ensure!(elements[index].name == name, "end tag </{name}> closes <{}>", elements[index].name);
-            elements[index].end_tag = Some(start);
-            at = close;
-        } else {
-            let mut cursor = start + 1;
-            while cursor < bytes.len() && is_name_char(bytes[cursor]) {
-                cursor += 1;
-            }
-            let name = text[start + 1..cursor].to_owned();
-            eyre::ensure!(!name.is_empty(), "a tag without a name at byte {start}");
-            let mut attributes = Vec::new();
-            let (tag_close, self_closing) = loop {
-                while cursor < bytes.len() && bytes[cursor].is_ascii_whitespace() {
-                    cursor += 1;
-                }
-                match bytes.get(cursor) {
-                    None => eyre::bail!("unterminated tag <{name}>"),
-                    Some(b'>') => break (cursor, false),
-                    Some(b'/') if bytes.get(cursor + 1) == Some(&b'>') => break (cursor, true),
-                    _ => {}
-                }
-                let name_start = cursor;
-                while cursor < bytes.len() && is_name_char(bytes[cursor]) {
-                    cursor += 1;
-                }
-                let attribute = text[name_start..cursor].to_owned();
-                eyre::ensure!(!attribute.is_empty(), "a malformed attribute in <{name}> at byte {cursor}");
-                while cursor < bytes.len() && bytes[cursor].is_ascii_whitespace() {
-                    cursor += 1;
-                }
-                eyre::ensure!(bytes.get(cursor) == Some(&b'='), "attribute `{attribute}` of <{name}> has no value");
-                cursor += 1;
-                while cursor < bytes.len() && bytes[cursor].is_ascii_whitespace() {
-                    cursor += 1;
-                }
-                let quote = *bytes.get(cursor).ok_or_else(|| eyre!("unterminated tag <{name}>"))?;
-                eyre::ensure!(quote == b'"' || quote == b'\'', "attribute `{attribute}` of <{name}> is not quoted");
-                let value_start = cursor + 1;
-                let value_end = text[value_start..]
-                    .find(quote as char)
-                    .map(|end| value_start + end)
-                    .ok_or_else(|| eyre!("unterminated value of `{attribute}` in <{name}>"))?;
-                attributes.push(XmlAttribute {
-                    name: attribute,
-                    raw: text[value_start..value_end].to_owned(),
-                    value_range: value_start..value_end,
-                });
-                cursor = value_end + 1;
-            };
-            elements.push(XmlElement { name, tag_close, self_closing, attributes, parent: open.last().copied(), end_tag: None });
-            if !self_closing {
-                open.push(elements.len() - 1);
-            }
-            at = tag_close + if self_closing { 2 } else { 1 };
-        }
-    }
-    if let Some(index) = open.last() {
-        eyre::bail!("<{}> is not closed", elements[*index].name);
-    }
-    Ok(elements)
-}
-
-/// One `<LoginServer title=".." name="host" port=".." standalone=".."/>` entry, its attributes decoded.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct XmlLoginServer {
-    /// The entry's name: the key of the client's map (the user file replaces an entry of the same title).
-    pub title: Option<String>,
-    /// The `name` attribute: the host, a dotted IPv4 address or a name the client resolves.
-    pub host: Option<String>,
-    pub port: Option<String>,
-    pub standalone: Option<String>,
-}
-
-impl XmlLoginServer {
-    /// The host and port, validated.
-    pub fn address(&self) -> eyre::Result<LoginServerAddress> {
-        let host = self.host.as_deref().ok_or_else(|| eyre!("no `{XML_HOST}` (host) attribute"))?;
-        let port = self.port.as_deref().ok_or_else(|| eyre!("no `{XML_PORT}` attribute"))?;
-        LoginServerAddress::new(host, parse_port(port)?)
-    }
-}
-
-/// A `LoginServersDefault.xml` / `LoginServersUser.xml` document: the `LoginConfig` element (the root, or a child of
-/// the root) with `LoginServer`, `LoginCredential` and `Login` children. Edits rewrite only the attribute values they
-/// change and insert new entries before `</LoginConfig>`; everything else is kept byte for byte.
-#[derive(Debug, Clone)]
-pub struct LoginServersXml {
-    text: String,
-    elements: Vec<XmlElement>,
-    config: usize,
-}
-
-impl LoginServersXml {
-    pub fn parse(text: &str) -> eyre::Result<Self> {
-        let elements = scan_xml(text)?;
-        let is_config = |element: &XmlElement| {
-            element.name == XML_CONFIG_ELEMENT
-                && match element.parent {
-                    None => true,
-                    Some(parent) => elements[parent].parent.is_none(),
-                }
-        };
-        let config = elements
-            .iter()
-            .position(is_config)
-            .ok_or_else(|| eyre!("no <{XML_CONFIG_ELEMENT}> element as the root or a child of the root"))?;
-        Ok(Self { text: text.to_owned(), elements, config })
-    }
-
-    pub fn read(path: &Path) -> eyre::Result<Self> {
-        let text = std::fs::read_to_string(path).wrap_err_with(|| format!("read {}", path.display()))?;
-        Self::parse(&text).wrap_err_with(|| format!("parse {}", path.display()))
-    }
-
-    /// A new document with an empty `LoginConfig`.
-    pub fn new_document() -> Self {
-        Self::parse(&format!("{XML_DECLARATION}{CRLF}<{XML_CONFIG_ELEMENT}>{CRLF}</{XML_CONFIG_ELEMENT}>{CRLF}"))
-            .expect("the new document parses")
-    }
-
-    pub fn to_text(&self) -> &str {
-        &self.text
-    }
-
-    fn server_indices(&self) -> impl Iterator<Item = usize> + '_ {
-        (0..self.elements.len())
-            .filter(|&index| self.elements[index].name == XML_SERVER_ELEMENT && self.elements[index].parent == Some(self.config))
-    }
-
-    /// The `LoginServer` entries, in document order. Fails on an attribute with a malformed entity.
-    pub fn servers(&self) -> eyre::Result<Vec<XmlLoginServer>> {
-        self.server_indices()
-            .map(|index| {
-                let element = &self.elements[index];
-                let value = |name: &str| element.attribute(name).map(|attribute| xml_decode(&attribute.raw)).transpose();
-                Ok(XmlLoginServer {
-                    title: value(XML_TITLE)?,
-                    host: value(XML_HOST)?,
-                    port: value(XML_PORT)?,
-                    standalone: value(XML_STANDALONE)?,
-                })
-            })
-            .collect()
-    }
-
-    fn newline(&self) -> &'static str {
-        if self.text.contains(CRLF) || !self.text.contains(LF) { CRLF } else { LF }
-    }
-
-    /// Sets the host and port of every `LoginServer` titled `title`, or adds one before `</LoginConfig>`. Other
-    /// attributes (`standalone`, unknown ones) and entries stay.
-    pub fn set_server(&mut self, title: &str, address: &LoginServerAddress) -> eyre::Result<()> {
-        eyre::ensure!(!title.trim().is_empty(), "a LoginServer entry needs a title");
-        let port = address.port.to_string();
-        let mut edits: Vec<(std::ops::Range<usize>, String)> = Vec::new();
-        let matching: Vec<usize> = self
-            .server_indices()
-            .filter(|&index| {
-                self.elements[index].attribute(XML_TITLE).is_some_and(|attribute| xml_decode(&attribute.raw).ok().as_deref() == Some(title))
-            })
-            .collect();
-        for index in &matching {
-            let element = &self.elements[*index];
-            for (name, value) in [(XML_HOST, address.host.as_str()), (XML_PORT, port.as_str())] {
-                match element.attribute(name) {
-                    Some(attribute) => edits.push((attribute.value_range.clone(), xml_escape(value))),
-                    None => edits.push((element.tag_close..element.tag_close, format!(" {name}=\"{}\"", xml_escape(value)))),
-                }
-            }
-        }
-        if matching.is_empty() {
-            edits.push(self.new_server_edit(title, address));
-        }
-        edits.sort_by_key(|(range, _)| std::cmp::Reverse(range.start));
-        let mut text = self.text.clone();
-        for (range, replacement) in edits {
-            text.replace_range(range, &replacement);
-        }
-        *self = Self::parse(&text)?;
-        Ok(())
-    }
-
-    /// The insertion of a new `LoginServer` element at the end of `LoginConfig`.
-    fn new_server_edit(&self, title: &str, address: &LoginServerAddress) -> (std::ops::Range<usize>, String) {
-        let newline = self.newline();
-        let line_start = |at: usize| self.text[..at].rfind('\n').map_or(0, |found| found + 1);
-        let indent_of = |at: usize| {
-            let start = line_start(at);
-            let line = &self.text[start..];
-            line[..line.len() - line.trim_start_matches([' ', '\t']).len()].to_owned()
-        };
-        let config = &self.elements[self.config];
-        let config_start = self.text[..config.tag_close].rfind('<').unwrap_or_default();
-        let indent = match self.server_indices().last() {
-            Some(last) => indent_of(self.text[..self.elements[last].tag_close].rfind('<').unwrap_or_default()),
-            None => format!("{}{XML_DEFAULT_INDENT}", indent_of(config_start)),
-        };
-        let element = format!(
-            "<{XML_SERVER_ELEMENT} {XML_TITLE}=\"{}\" {XML_HOST}=\"{}\" {XML_PORT}=\"{}\"/>",
-            xml_escape(title),
-            xml_escape(&address.host),
-            address.port
-        );
-        match config.end_tag {
-            Some(end_tag) => {
-                let start = line_start(end_tag);
-                if self.text[start..end_tag].trim().is_empty() {
-                    (start..start, format!("{indent}{element}{newline}"))
-                } else {
-                    (end_tag..end_tag, format!("{newline}{indent}{element}{newline}"))
-                }
-            }
-            None => (
-                config.tag_close..config.tag_close + 2,
-                format!(">{newline}{indent}{element}{newline}{}</{XML_CONFIG_ELEMENT}>", indent_of(config_start)),
-            ),
-        }
-    }
-}
-
-// ---------------------------------------------------------------------------------------------------------------
 // What a client folder uses
 
 /// What a checked file is to the client.
@@ -619,8 +291,6 @@ pub enum LoginFileRole {
     UoCfg,
     /// Classic `login.cfg`, or the file `uo.cfg`'s `LoginServerFile` names.
     LoginCfg,
-    /// `LoginServersDefault.xml` / `LoginServersUser.xml`.
-    LoginServersXml,
     /// The executable whose built-in address the client uses.
     Executable,
 }
@@ -640,8 +310,6 @@ pub struct LoginConfigFile {
 pub enum LoginEntrySource {
     /// A `.cfg` `LoginServer` or `BackupLoginServer` line.
     Cfg(CfgServerKind),
-    /// A `LoginServer` element of a `LoginServers*.xml`.
-    Xml,
     /// A public address built into the executable (Enhanced Client: one of the hosts and ports the client draws at
     /// random; Kingdom Reborn: its only address).
     BuiltIn,
@@ -656,7 +324,7 @@ pub struct LoginServerEntry {
     pub file: PathBuf,
     /// 1-based line (`.cfg` files only).
     pub line: Option<usize>,
-    /// The XML title, or a label for built-in addresses.
+    /// A label for built-in addresses.
     pub name: Option<String>,
     /// The address, or why the entry does not parse.
     pub address: Result<LoginServerAddress, String>,
@@ -671,8 +339,6 @@ pub struct LoginServersReport {
     pub files: Vec<LoginConfigFile>,
     /// The servers the client uses, in file order.
     pub entries: Vec<LoginServerEntry>,
-    /// Entries of files the client does not read (the Enhanced Client and Kingdom Reborn XML files).
-    pub unused_entries: Vec<LoginServerEntry>,
     pub notes: Vec<String>,
 }
 
@@ -741,7 +407,7 @@ pub fn built_in_entries(exe: &Path, family: ClientFamily, sites: &LoginSites) ->
 /// Where the client of `client_dir` reads its login server from: the files it looks for (found or not) and the
 /// entries it would use. Classic: `uo.cfg`, then the `LoginServerFile` it names or `login.cfg` (file names compare
 /// ignoring case). Enhanced Client and Kingdom Reborn: the built-in address of `UOSA.exe` / `UOKR.exe`; the
-/// `LoginServers*.xml` files are listed and read, but as unused entries. Only reads.
+/// dormant XML login files are ignored. Only reads.
 pub fn read_login_servers(client_dir: &Path, family: ClientFamily) -> eyre::Result<LoginServersReport> {
     eyre::ensure!(client_dir.is_dir(), "{} is not a folder", client_dir.display());
     let mut report = LoginServersReport {
@@ -749,7 +415,6 @@ pub fn read_login_servers(client_dir: &Path, family: ClientFamily) -> eyre::Resu
         client_dir: client_dir.to_path_buf(),
         files: Vec::new(),
         entries: Vec::new(),
-        unused_entries: Vec::new(),
         notes: Vec::new(),
     };
     match family {
@@ -782,30 +447,6 @@ pub fn read_login_servers(client_dir: &Path, family: ClientFamily) -> eyre::Resu
         }
         ClientFamily::Enhanced | ClientFamily::KingdomReborn => {
             let exe_name = if family == ClientFamily::Enhanced { ENHANCED_EXE } else { KINGDOM_REBORN_EXE };
-            let mut xml_dirs = vec![client_dir.to_path_buf()];
-            if family == ClientFamily::KingdomReborn {
-                xml_dirs.push(client_dir.join(KR_CONFIG_SUBFOLDER));
-            }
-            for dir in &xml_dirs {
-                for name in [LOGIN_SERVERS_DEFAULT_XML, LOGIN_SERVERS_USER_XML] {
-                    let (path, found) = locate(dir, name);
-                    report.files.push(LoginConfigFile { role: LoginFileRole::LoginServersXml, path: path.clone(), found, read_by_client: false });
-                    if !found {
-                        continue;
-                    }
-                    let servers = LoginServersXml::read(&path).and_then(|xml| xml.servers());
-                    match servers {
-                        Ok(servers) => report.unused_entries.extend(servers.into_iter().map(|server| LoginServerEntry {
-                            source: LoginEntrySource::Xml,
-                            file: path.clone(),
-                            line: None,
-                            name: server.title.clone(),
-                            address: server.address().map_err(|error| error.to_string()),
-                        })),
-                        Err(error) => report.notes.push(format!("{}: {error:#}", path.display())),
-                    }
-                }
-            }
             report.notes.push(format!(
                 "the {} builds traced never call their LoginServers*.xml loader: the client connects to the address \
                  built into {exe_name}",
@@ -838,12 +479,6 @@ fn check_config_output(output: &Path, overwrite: bool) -> eyre::Result<()> {
 pub fn write_login_cfg(output: &Path, cfg: &LoginCfg, overwrite: bool) -> eyre::Result<()> {
     check_config_output(output, overwrite)?;
     std::fs::write(output, cfg.to_text()).wrap_err_with(|| format!("write {}", output.display()))
-}
-
-/// Writes `xml` to `output` (a new file, or an existing one when `overwrite`).
-pub fn write_login_servers_xml(output: &Path, xml: &LoginServersXml, overwrite: bool) -> eyre::Result<()> {
-    check_config_output(output, overwrite)?;
-    std::fs::write(output, xml.to_text()).wrap_err_with(|| format!("write {}", output.display()))
 }
 
 #[cfg(test)]
@@ -916,53 +551,6 @@ mod tests {
         assert!(bad.servers().iter().all(|server| server.address.is_err()));
     }
 
-    const USER_XML: &str = "<?xml version=\"1.0\"?>\n<!-- my servers -->\n<LoginConfig>\n\t<LoginServer title=\"Shard\" \
-        name=\"old.example.com\" port='7775' standalone=\"false\" extra=\"kept\"/>\n\t<LoginCredential title=\"me\" \
-        server=\"Shard\" account=\"a\" password=\"p\"/>\n\t<Login title=\"auto\" credential=\"me\" character=\"x\"/>\n\
-        </LoginConfig>\n";
-
-    #[test]
-    fn login_servers_xml_edits_keep_everything_else() {
-        let mut xml = LoginServersXml::parse(USER_XML).unwrap();
-        let servers = xml.servers().unwrap();
-        assert_eq!(servers.len(), 1);
-        assert_eq!(servers[0].title.as_deref(), Some("Shard"));
-        assert_eq!(servers[0].standalone.as_deref(), Some("false"));
-        assert_eq!(servers[0].address().unwrap(), address("old.example.com:7775"));
-
-        xml.set_server("Shard", &address("127.0.0.1:2593")).unwrap();
-        assert_eq!(xml.to_text(), USER_XML.replace("old.example.com", "127.0.0.1").replace("'7775'", "'2593'"));
-        xml.set_server("New & Co", &address("new.example.com:2594")).unwrap();
-        let servers = xml.servers().unwrap();
-        assert_eq!(servers[1].title.as_deref(), Some("New & Co"));
-        assert_eq!(servers[1].address().unwrap(), address("new.example.com:2594"));
-        assert!(xml.to_text().contains(
-            "\t<LoginServer title=\"New &amp; Co\" name=\"new.example.com\" port=\"2594\"/>\n</LoginConfig>\n"
-        ));
-        assert!(xml.to_text().contains("extra=\"kept\"") && xml.to_text().contains("<!-- my servers -->"));
-        let reparsed = LoginServersXml::parse(xml.to_text()).unwrap();
-        assert_eq!(reparsed.servers().unwrap(), servers);
-
-        // A missing attribute is added; a nested root and a self-closing LoginConfig take entries too.
-        let mut sparse = LoginServersXml::parse("<Root><LoginConfig><LoginServer title=\"A\"/></LoginConfig></Root>").unwrap();
-        sparse.set_server("A", &address("1.2.3.4:5")).unwrap();
-        assert_eq!(sparse.servers().unwrap()[0].address().unwrap(), address("1.2.3.4:5"));
-        let mut closed = LoginServersXml::parse("<LoginConfig/>").unwrap();
-        closed.set_server("B", &address("1.2.3.4:5")).unwrap();
-        assert_eq!(closed.servers().unwrap().len(), 1);
-        let mut fresh = LoginServersXml::new_document();
-        fresh.set_server("Local", &address("127.0.0.1:2593")).unwrap();
-        assert_eq!(
-            fresh.to_text(),
-            "<?xml version=\"1.0\" encoding=\"utf-8\"?>\r\n<LoginConfig>\r\n  <LoginServer title=\"Local\" \
-             name=\"127.0.0.1\" port=\"2593\"/>\r\n</LoginConfig>\r\n"
-        );
-        for bad in ["<Other/>", "<LoginConfig>", "<LoginConfig></Other>", "<LoginConfig a=b/>", "<A><B><LoginConfig/></B></A>"] {
-            assert!(LoginServersXml::parse(bad).is_err(), "{bad}");
-        }
-        assert!(fresh.set_server(" ", &address("1.2.3.4:5")).is_err());
-    }
-
     #[test]
     fn a_classic_folder_reads_uo_cfg_then_its_login_server_file() {
         let dir = std::env::temp_dir().join(format!("uocf_login_servers_{}", std::process::id()));
@@ -982,11 +570,12 @@ mod tests {
         assert_eq!(report.files[1].path, dir.join("cfg").join("shard.cfg"));
         assert_eq!(report.entries[0].address.as_ref().unwrap(), &address("shard.example.org:2593"));
 
-        // An Enhanced Client folder without UOSA.exe: the XML is listed as unused.
-        std::fs::write(dir.join(LOGIN_SERVERS_USER_XML), USER_XML).unwrap();
+        // Dormant XML files, including malformed ones, are never inspected.
+        std::fs::write(dir.join("LoginServersUser.xml"), "<invalid").unwrap();
         let report = read_login_servers(&dir, ClientFamily::Enhanced).unwrap();
         assert!(report.entries.is_empty());
-        assert_eq!(report.unused_entries.len(), 1);
+        assert_eq!(report.files.len(), 1);
+        assert_eq!(report.files[0].role, LoginFileRole::Executable);
         assert!(report.files.iter().all(|file| !file.read_by_client));
         let _ = std::fs::remove_dir_all(&dir);
     }

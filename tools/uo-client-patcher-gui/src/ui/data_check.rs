@@ -3,8 +3,8 @@
 use std::path::PathBuf;
 
 use eframe::egui;
-use uocf::client_exe::facet_data::FacetDataStatus;
-use uocf::client_exe::facet_dimensions::ClientFamily;
+use uocf::client::facet_data::FacetDataStatus;
+use uocf::client::facet_dimensions::ClientFamily;
 
 use super::{error_label, muted_label, warning_label, ERROR_COLOR, ITEM_SPACING, MUTED_COLOR, SUCCESS_COLOR};
 use crate::app::Session;

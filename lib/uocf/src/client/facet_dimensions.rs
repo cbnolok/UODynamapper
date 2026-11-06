@@ -28,16 +28,16 @@
 
 crate::eyre_imports!();
 
-use crate::client_exe::classic_facets::{
+use crate::client::classic_facets::{
     classic_copies_agree, is_classic_stock, locate_classic_facet_tables, locate_classic_file_names,
     locate_classic_seam, locate_classic_startup_facet, ClassicLayout, ClassicRecord, MAX_CLASSIC_TABLE_COPIES,
     UNLOCATED_FILE_ID_LIMIT,
 };
-use crate::client_exe::classic_difs::{inspect_classic_difs, ClassicDifUsage};
-use crate::client_exe::login::{locate_login_sites, LoginSites, LoginValues};
-use crate::client_exe::version::{read_exe_version, ExeVersion};
-use crate::client_exe::pe::{pe_checksum, read_u32, PeImage, PeSection, MACHINE_I386};
-use crate::client_exe::sha256::sha256_hex;
+use crate::client::classic_difs::{inspect_classic_difs, ClassicDifUsage};
+use crate::client::login::{locate_login_sites, LoginSites, LoginValues};
+use crate::client::version::{read_exe_version, ExeVersion};
+use crate::client::pe::{pe_checksum, read_u32, PeImage, PeSection, MACHINE_I386};
+use crate::client::sha256::sha256_hex;
 use crate::enhanced::facet_sector::{FacetGeometry, CLIENT_FACET_DIMENSIONS, SECTOR_SIDE};
 
 /// Records of the shipped tables (Enhanced Client and Kingdom Reborn); every reader there rejects a facet >= 7.
@@ -758,7 +758,7 @@ pub fn validate_facet_size(width: u32, height: u32) -> eyre::Result<Vec<String>>
 #[cfg(test)]
 pub(crate) mod tests {
     use super::*;
-    use crate::client_exe::pe::tests::{synthetic_pe, TEST_IMAGE_BASE, TEST_SECTION_ALIGNMENT};
+    use crate::client::pe::tests::{synthetic_pe, TEST_IMAGE_BASE, TEST_SECTION_ALIGNMENT};
 
     /// Offset of the table inside the synthetic `.data`.
     pub const TABLE_DATA_OFFSET: usize = 16;

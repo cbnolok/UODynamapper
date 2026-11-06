@@ -6,7 +6,7 @@ use std::sync::mpsc::{self, Receiver, TryRecvError};
 
 use eframe::egui;
 use serde::{Deserialize, Serialize};
-use uocf::client_exe::patch::{manifest_path, ExePatch};
+use uocf::client::patch::{manifest_path, ExePatch};
 
 use crate::logic::edits::EditState;
 use crate::logic::login::{check_outside_client_folders, LoginFolder};

@@ -2,15 +2,15 @@ use std::path::{Path, PathBuf};
 
 use clap::Subcommand;
 use color_eyre::eyre::{self, eyre, WrapErr};
-use uocf::client_exe::classic_difs::DifKind;
-use uocf::client_exe::classic_facets::{ClassicFileRole, CLASSIC_FACET_RECORD_SIZE};
-use uocf::client_exe::facet_data::{check_client_facet_data, FacetDataStatus};
-use uocf::client_config::login_servers::LoginServerAddress;
-use uocf::client_exe::facet_dimensions::{
+use uocf::client::classic_difs::DifKind;
+use uocf::client::classic_facets::{ClassicFileRole, CLASSIC_FACET_RECORD_SIZE};
+use uocf::client::facet_data::{check_client_facet_data, FacetDataStatus};
+use uocf::client::login_servers::LoginServerAddress;
+use uocf::client::facet_dimensions::{
     ClientExeInspection, ClientFamily, FacetTable, DISABLED_SPLIT_X, FACET_RECORD_SIZE, STOCK_SPLIT_X,
 };
-use uocf::client_exe::login::{LoginHost, LoginServerEdit, LoginSites};
-use uocf::client_exe::patch::{
+use uocf::client::login::{LoginHost, LoginServerEdit, LoginSites};
+use uocf::client::patch::{
     dry_run_client_exe, manifest_path, read_manifest, write_patched_client_exe, ByteChange, ChangeCause, ExeEdit,
     ExePatch, SplitEdit,
 };

@@ -1,7 +1,7 @@
 //! Section 1: what the inspection found.
 
 use eframe::egui;
-use uocf::client_exe::patch::manifest_path;
+use uocf::client::patch::manifest_path;
 
 use super::{error_label, info_grid, muted_label, warning_label, ITEM_SPACING, SUCCESS_COLOR};
 use crate::app::Session;

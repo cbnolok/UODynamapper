@@ -743,7 +743,7 @@ fn enhanced_radar_rgba(path: &Path) -> eyre::Result<(DecodedRgba, String)> {
 mod tests {
     use super::*;
     use crate::ui::test_support::output_path;
-    use uocf::client_config::login_servers::KINGDOM_REBORN_EXE;
+    use uocf::client::login_servers::KINGDOM_REBORN_EXE;
 
     /// Facets whose radar image only one of the folders holds.
     const KR_ONLY_FACET: u8 = 0;

@@ -1,7 +1,7 @@
 # Login server
 
 Where each client family reads its login server address from, and how `uocf` reads and changes it
-(`client_config::login_servers`, `client_exe::login`, `ExeEdit::LoginServer`). Address and port only; the login
+(`client::login_servers`, `client::login`, `ExeEdit::LoginServer`). Address and port only; the login
 encryption is out of scope here.
 
 ## Classic (`client.exe`)
@@ -24,20 +24,7 @@ address to patch.
 ## Enhanced Client (`UOSA.exe`) and Kingdom Reborn (`UOKR.exe`)
 
 **The `LoginServers*.xml` files are not read.** In every traced EC and KR build the XML loader (`LoadLoginServers`)
-has no callers, and its global config is only ever cleared. The schema the dead loader parses, for writing files
-anyway:
-
-```xml
-<LoginConfig>                                            (the root, or a child of the root)
-  <LoginServer title="My Shard" name="host" port="2593" standalone="..."/>
-  <LoginCredential title="..." server="..." account="..." password="..."/>
-  <Login title="..." credential="..." character="..."/>
-</LoginConfig>
-```
-
-Every attribute is optional (null-checked); `title` keys a map; `port` is `strtol` base 10; `LoginServersUser.xml`
-loads after `LoginServersDefault.xml`; KR also looks in `client\`. `LoginServersXml` edits values in place and appends
-new entries before `</LoginConfig>`, keeping all other text.
+has no callers, and its global config is only ever cleared. XML parsing, editing and file enumeration are not supported.
 
 In the examined UOSA.exe, `LoginConfig::LoadLoginServers` at `0x006052a0` has no incoming references. The only write
 to `g_LoginConfig` (`0x00e37338`) is the cleanup function at `0x004aa830`, which clears it at `0x004aab6d`.
@@ -83,7 +70,7 @@ also rewrote the internal port; it did not update the PE checksum); it inspects 
 again (with a warning, since no manifest records its stock values). In 4.0.115.0 the second slot holds at most 11
 characters: ECLO's fixed 16-byte write would run into the next string.
 
-The survey's versions come from each exe's version resource (`VS_FIXEDFILEINFO`, `client_exe::version`), which
+The survey's versions come from each exe's version resource (`VS_FIXEDFILEINFO`, `client::version`), which
 `exe show`, the inspection and the manifest (`exe_version`) report; nothing is decided from them.
 
 ## Tools
@@ -92,4 +79,4 @@ The survey's versions come from each exe's version resource (`VS_FIXEDFILEINFO`,
 - `uocf-cli exe patch <exe> --output <copy> [--dry-run]` with `--login-server HOST:PORT` (every site),
   `--login-host N=HOST` (one host slot; overrides `--login-server`'s host) and `--login-port [N=]PORT` (one port site,
   or every site without `N`). Without `--login-server` every site needs its own value. EC and KR (KR: IPv4 only).
-- `uocf-cli login show <client_dir>` / `login set <client_dir|file> --output <path> --server [NAME=]HOST:PORT ...`.
+- `uocf-cli login show <client_dir>` / `login set <client_dir|file> --output <path> --server HOST:PORT ...`.

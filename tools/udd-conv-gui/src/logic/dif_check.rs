@@ -8,8 +8,8 @@ use std::path::{Path, PathBuf};
 use std::sync::mpsc::{self, Receiver, TryRecvError};
 use std::sync::{Arc, Mutex};
 use std::time::SystemTime;
-use uocf::client_exe::classic_difs::{inspect_classic_difs, ClassicDifUsage, DifKind, DifStatus};
-use uocf::client_exe::pe::PeImage;
+use uocf::client::classic_difs::{inspect_classic_difs, ClassicDifUsage, DifKind, DifStatus};
+use uocf::client::pe::PeImage;
 
 /// The executable looked for in the Classic client folder (any case).
 pub const CLASSIC_CLIENT_EXE_NAME: &str = "client.exe";

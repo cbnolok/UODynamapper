@@ -2,17 +2,14 @@ use std::path::{Path, PathBuf};
 
 use clap::{Subcommand, ValueEnum};
 use color_eyre::eyre::{self, eyre};
-use uocf::client_config::login_servers::{
-    read_login_servers, write_login_cfg, write_login_servers_xml, CfgServerKind, LoginCfg, LoginEntrySource,
-    LoginFileRole, LoginServerAddress, LoginServerEntry, LoginServersXml, ENHANCED_EXE, KINGDOM_REBORN_EXE,
-    LOGIN_CFG_FILE, LOGIN_SERVERS_USER_XML, UO_CFG_FILE,
+use uocf::client::login_servers::{
+    read_login_servers, write_login_cfg, CfgServerKind, LoginCfg, LoginEntrySource,
+    LoginFileRole, LoginServerAddress, LoginServerEntry, ENHANCED_EXE, KINGDOM_REBORN_EXE,
+    LOGIN_CFG_FILE, UO_CFG_FILE,
 };
-use uocf::client_exe::facet_dimensions::ClientFamily;
+use uocf::client::facet_dimensions::ClientFamily;
 use uocf::utils::path::find_file_ignoring_case;
 
-/// `name=host:port`: an XML entry title and its address.
-const NAME_SEPARATOR: char = '=';
-const XML_EXTENSION: &str = "xml";
 const CLASSIC_EXE: &str = "client.exe";
 
 #[derive(Clone, Copy, Debug, ValueEnum)]
@@ -36,8 +33,7 @@ impl From<FamilyArg> for ClientFamily {
 pub enum LoginCmd {
     /// Print where a client folder's client reads its login server from: the files looked for (found or not) and the
     /// servers. Classic: uo.cfg, then its LoginServerFile or login.cfg. Enhanced Client and Kingdom Reborn: the
-    /// address built into UOSA.exe / UOKR.exe (their LoginServers*.xml loader is never called; the files are listed
-    /// as unused). Only reads.
+    /// address built into UOSA.exe / UOKR.exe. Only reads.
     Show {
         client_dir: PathBuf,
         /// The client family; by default told by the executable in the folder (UOSA.exe, UOKR.exe, client.exe).
@@ -45,16 +41,14 @@ pub enum LoginCmd {
         family: Option<FamilyArg>,
     },
     /// Write a login server file with new servers, keeping the input's comments, unknown lines and other entries.
-    /// The input is a client folder (Classic: the login.cfg or LoginServerFile it reads; Enhanced Client / Kingdom
-    /// Reborn: LoginServersUser.xml, or a new one) or a file (`.xml`: LoginServers XML, else a .cfg). Only `--output`
-    /// is written.
+    /// The input is a Classic client folder (the login.cfg or LoginServerFile it reads) or a .cfg file.
+    /// Enhanced Client and Kingdom Reborn addresses are changed with `exe patch`. Only `--output` is written.
     Set {
         input: PathBuf,
         #[arg(long)]
         output: PathBuf,
-        /// A server, `host:port` (.cfg) or `name=host:port` (XML: the entry title). Repeat for more. In a .cfg file
-        /// the servers replace the LoginServer lines.
-        #[arg(long = "server", value_name = "[NAME=]HOST:PORT", required = true)]
+        /// A server, `host:port`. Repeat for more; replaces the LoginServer lines.
+        #[arg(long = "server", value_name = "HOST:PORT", required = true)]
         servers: Vec<String>,
         /// A .cfg BackupLoginServer, `host:port`; replaces the backup lines. Repeatable.
         #[arg(long = "backup-server", value_name = "HOST:PORT")]
@@ -101,7 +95,6 @@ fn source_label(source: LoginEntrySource) -> &'static str {
     match source {
         LoginEntrySource::Cfg(CfgServerKind::Primary) => "LoginServer",
         LoginEntrySource::Cfg(CfgServerKind::Backup) => "BackupLoginServer",
-        LoginEntrySource::Xml => "LoginServer (XML)",
         LoginEntrySource::BuiltIn => "built-in",
         LoginEntrySource::BuiltInInternal => "built-in internal",
     }
@@ -128,7 +121,6 @@ fn show(client_dir: &Path, family: Option<FamilyArg>) -> eyre::Result<()> {
         let role = match file.role {
             LoginFileRole::UoCfg => "uo.cfg",
             LoginFileRole::LoginCfg => "login file",
-            LoginFileRole::LoginServersXml => "xml",
             LoginFileRole::Executable => "exe",
         };
         let state = match (file.found, file.read_by_client) {
@@ -140,29 +132,24 @@ fn show(client_dir: &Path, family: Option<FamilyArg>) -> eyre::Result<()> {
     }
     println!("servers   {} used by the client:", report.entries.len());
     report.entries.iter().for_each(print_entry);
-    if !report.unused_entries.is_empty() {
-        println!("unused    {} entries of files the client does not read:", report.unused_entries.len());
-        report.unused_entries.iter().for_each(print_entry);
-    }
     for note in &report.notes {
         println!("note      {note}");
     }
     Ok(())
 }
 
-/// Parses `[name=]host:port`.
-fn parse_named(text: &str) -> eyre::Result<(Option<String>, LoginServerAddress)> {
-    match text.split_once(NAME_SEPARATOR) {
-        Some((name, address)) => Ok((Some(name.trim().to_owned()), LoginServerAddress::parse(address)?)),
-        None => Ok((None, LoginServerAddress::parse(text)?)),
-    }
-}
-
-/// The file `set` edits for the input, and whether it is XML.
-fn input_file(input: &Path, family: Option<FamilyArg>) -> eyre::Result<(Option<PathBuf>, bool)> {
+/// The Classic configuration file `set` edits for the input.
+fn input_file(input: &Path, family: Option<FamilyArg>) -> eyre::Result<Option<PathBuf>> {
+    eyre::ensure!(
+        !input.extension().is_some_and(|extension| extension.eq_ignore_ascii_case("xml")),
+        "LoginServers XML is unsupported: use `uocf-cli exe patch --login-server` for Enhanced Client or Kingdom Reborn"
+    );
+    eyre::ensure!(
+        family.is_none_or(|family| matches!(family, FamilyArg::Classic)),
+        "login set edits Classic configuration only: use `uocf-cli exe patch --login-server` for this client"
+    );
     if input.is_file() {
-        let xml = input.extension().is_some_and(|extension| extension.eq_ignore_ascii_case(XML_EXTENSION));
-        return Ok((Some(input.to_path_buf()), xml));
+        return Ok(Some(input.to_path_buf()));
     }
     eyre::ensure!(input.is_dir(), "{}: not a file or folder", input.display());
     let family = detect_family(input, family)?;
@@ -170,10 +157,10 @@ fn input_file(input: &Path, family: Option<FamilyArg>) -> eyre::Result<(Option<P
         ClientFamily::Classic => {
             let report = read_login_servers(input, family)?;
             let login = report.files.iter().find(|file| file.role == LoginFileRole::LoginCfg).filter(|file| file.found);
-            Ok((login.map(|file| file.path.clone()), false))
+            Ok(login.map(|file| file.path.clone()))
         }
         ClientFamily::Enhanced | ClientFamily::KingdomReborn => {
-            Ok((find_file_ignoring_case(input, LOGIN_SERVERS_USER_XML), true))
+            eyre::bail!("login set edits Classic configuration only: use `uocf-cli exe patch --login-server` for this client")
         }
     }
 }
@@ -186,48 +173,58 @@ fn set(
     family: Option<FamilyArg>,
     overwrite: bool,
 ) -> eyre::Result<()> {
-    let (file, xml) = input_file(input, family)?;
-    let servers = servers.iter().map(|server| parse_named(server)).collect::<eyre::Result<Vec<_>>>()?;
+    let file = input_file(input, family)?;
+    eyre::ensure!(
+        !output.extension().is_some_and(|extension| extension.eq_ignore_ascii_case("xml")),
+        "login set writes Classic configuration files; choose a .cfg output"
+    );
+    let servers = servers.iter().map(|server| LoginServerAddress::parse(server)).collect::<eyre::Result<Vec<_>>>()?;
     match file.as_deref() {
         Some(path) => println!("input     {}", path.display()),
         None => println!("input     none found: a new file"),
     }
-    if xml {
-        eyre::ensure!(backup_servers.is_empty(), "--backup-server is a .cfg key; LoginServers XML has no backup list");
-        let mut document = match &file {
-            Some(path) => LoginServersXml::read(path)?,
-            None => LoginServersXml::new_document(),
-        };
-        for (name, address) in &servers {
-            let name = name.as_deref().ok_or_else(|| eyre!("`{address}`: an XML entry needs a title, name=host:port"))?;
-            document.set_server(name, address)?;
-        }
-        write_login_servers_xml(output, &document, overwrite)?;
-        println!("wrote     {} ({} LoginServer entries)", output.display(), document.servers()?.len());
-        println!(
-            "note      the traced Enhanced Client and Kingdom Reborn builds never load LoginServers*.xml: to change the \
-             server, patch a copy of UOSA.exe or UOKR.exe (`uocf-cli exe patch --login-server`)"
-        );
-    } else {
-        let mut cfg = match &file {
-            Some(path) => LoginCfg::read(path)?,
-            None => LoginCfg::default(),
-        };
-        if let Some((Some(name), _)) = servers.iter().find(|(name, _)| name.is_some()) {
-            eyre::bail!("`{name}=`: login.cfg entries have no names; give host:port");
-        }
-        let primary: Vec<LoginServerAddress> = servers.into_iter().map(|(_, address)| address).collect();
-        cfg.set_servers(CfgServerKind::Primary, &primary)?;
-        if !backup_servers.is_empty() {
-            let backup = backup_servers.iter().map(|text| LoginServerAddress::parse(text)).collect::<eyre::Result<Vec<_>>>()?;
-            cfg.set_servers(CfgServerKind::Backup, &backup)?;
-        }
-        write_login_cfg(output, &cfg, overwrite)?;
-        println!("wrote     {}", output.display());
-        for server in cfg.servers() {
-            let address = server.address.map(|address| address.to_string()).unwrap_or_else(|error| format!("INVALID: {error}"));
-            println!("  line {:<4} {:<18} {address}", server.line, server.kind.key());
-        }
+    let mut cfg = match &file {
+        Some(path) => LoginCfg::read(path)?,
+        None => LoginCfg::default(),
+    };
+    cfg.set_servers(CfgServerKind::Primary, &servers)?;
+    if !backup_servers.is_empty() {
+        let backup = backup_servers.iter().map(|text| LoginServerAddress::parse(text)).collect::<eyre::Result<Vec<_>>>()?;
+        cfg.set_servers(CfgServerKind::Backup, &backup)?;
+    }
+    write_login_cfg(output, &cfg, overwrite)?;
+    println!("wrote     {}", output.display());
+    for server in cfg.servers() {
+        let address = server.address.map(|address| address.to_string()).unwrap_or_else(|error| format!("INVALID: {error}"));
+        println!("  line {:<4} {:<18} {address}", server.line, server.kind.key());
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn set_edits_classic_files_and_refuses_xml_and_executable_clients() {
+        let nonce = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos();
+        let dir = std::env::temp_dir().join(format!("uocf_cli_login_{nonce}"));
+        std::fs::create_dir_all(&dir).unwrap();
+        let input = dir.join("login.cfg");
+        let output = dir.join("edited.cfg");
+        let servers = ["shard.example:2593".to_owned()];
+        std::fs::write(&input, ";keep\r\nUnknown=1\r\nLoginServer=old.example,7775\r\n").unwrap();
+        set(&input, &output, &servers, &[], None, false).unwrap();
+        assert_eq!(std::fs::read_to_string(&output).unwrap(), ";keep\r\nUnknown=1\r\nLoginServer=shard.example,2593\r\n");
+
+        let xml = dir.join("LoginServersUser.xml");
+        std::fs::write(&xml, "<invalid").unwrap();
+        let refused = dir.join("refused.cfg");
+        assert!(set(&xml, &refused, &servers, &[], None, false).unwrap_err().to_string().contains("XML"));
+        for family in [FamilyArg::Enhanced, FamilyArg::KingdomReborn] {
+            assert!(set(&dir, &refused, &servers, &[], Some(family), false).unwrap_err().to_string().contains("exe patch"));
+        }
+        assert!(!refused.exists());
+        std::fs::remove_dir_all(dir).unwrap();
+    }
 }

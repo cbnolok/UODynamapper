@@ -126,7 +126,7 @@ tiledata, maps, statics, multis, hues, radarcol, art, gumps, texmaps, anims, ani
 | `Music/Digital/Config.txt` + MP3s | typed, strict | entries (`MusicConfig::set`, `remove`) | writer (`MusicConfig::to_text`: every line as read, comments, spacing and CRLF too), RT on every era plus an edit changing only its line (`classic_difs_fonts_and_music::classic_music_config_writes_back_byte_for_byte`) | `audio` | `classic/audio/music.rs` 16bddb09 |
 | `Body.def`, `Bodyconv.def` | typed; strict as the client reads them (`def_files.rs`) | records (add, edit, remove) | writer, RT on every era plus an edit read back by `BodyDef`/`BodyConvDef` (`classic_def_files::classic_def_files_read_strictly_and_write_back_byte_for_byte`) | via the mobile packer (udd-conv); Def files view (edit, save) | `classic/animation/body_def.rs`, `bodyconv_def.rs` a0d6cfd9, `def_files.rs` |
 | `Anim1-4.def`, `Corpse.def`, `Equipconv.def`, `art.def`, `gump.def`, `TexTerr.def` | typed, strict as the client reads them, line and column errors | records | writer, RT on every era (same test) | Def files view (which line the client uses; edit, save) | `classic/tables/def_files.rs` |
-| `Login.cfg`, `Uo.cfg` | typed, keeps comments, unknown lines and endings | editor (login servers) | writer; folder census `client_login_servers::every_client_folder_tells_where_its_login_server_comes_from`, edits synthetic | `login`; patcher | `client_config/login_servers.rs` 41021f71 |
+| `Login.cfg`, `Uo.cfg` | typed, keeps comments, unknown lines and endings | editor (login servers) | writer; folder census `client_login_servers::every_client_folder_tells_where_its_login_server_comes_from`, edits synthetic | `login`; patcher | `client/login_servers.rs` 41021f71 |
 | `mobtypes.txt` | typed (udd-conv only) | no | no | mobile packer | `udd-conv/src/animation/mobile_anim_cc.rs` |
 | `Multimap.rle` | typed | editor (bitmap or PNG import) | writer, RT on every era (`classic_mul_writers::classic_tile_radar_animdata_and_multimap_files_write_back_byte_for_byte`) | `multimap`; Multimap view (edit, save, export) | `classic/maps/multimap_rle.rs` 9d3d7dd7 |
 | `stitchin.def` | **no**: read only by the discontinued 3D client, `uotd.exe` (Gold and ML; the 2024 `uotd.exe` is a stub saying the 3D client is no longer supported). Its rules, for the renderer, are [below](#stitchindef-what-the-rules-mean) | | | | |
@@ -150,7 +150,7 @@ tiledata, maps, statics, multis, hues, radarcol, art, gumps, texmaps, anims, ani
 | `*.myp` | **no**: the patchers' manifests (`UO.exe`, the EC `uopatch.exe`: `mft`, `patch.myp`), not read by any client | | | | |
 | `UO.bin` | **no**: a copy of `UO.exe` (the launcher and patcher), byte for byte | | | | |
 
-The executables are read for facet sizes and login sites (`client_exe`, `uocf-cli exe`), not listed here.
+The executables are read for facet sizes and login sites (`client`, `uocf-cli exe`), not listed here.
 
 ### `stitchin.def`: what the rules mean
 

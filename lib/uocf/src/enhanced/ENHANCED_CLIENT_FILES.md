@@ -209,8 +209,8 @@ Editing `.uop` packages (`uop_container::package`):
   verbatim and re-encodes all 7 records byte for byte. Facet 2 region 5 ships an
   inverted rect.
 
-Facet sizes in the executable (`client_exe::facet_dimensions`,
-`client_exe::classic_facets`, `client_exe::patch`, `uocf-cli exe`):
+Facet sizes in the executable (`client::facet_dimensions`,
+`client::classic_facets`, `client::patch`, `uocf-cli exe`):
 
 - The client sizes each facet from `UOFacet::g_FacetDimensions`, 7 records
   `{char* name, u32 width, u32 height}` in `.data` (EC `UOSA.exe` file

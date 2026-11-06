@@ -1,7 +1,7 @@
 //! Section 3: the Enhanced Client split of facets 0 and 1, the Classic wrap seam, or Kingdom Reborn's note.
 
 use eframe::egui;
-use uocf::client_exe::facet_dimensions::{ClientFamily, DISABLED_SPLIT_X, STOCK_SPLIT_X};
+use uocf::client::facet_dimensions::{ClientFamily, DISABLED_SPLIT_X, STOCK_SPLIT_X};
 
 use super::{error_label, muted_label, warning_label, ITEM_SPACING};
 use crate::app::Session;

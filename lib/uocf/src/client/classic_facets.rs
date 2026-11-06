@@ -28,12 +28,12 @@
 
 crate::eyre_imports!();
 
-use crate::client_exe::facet_dimensions::{
+use crate::client::facet_dimensions::{
     code_section, decode_cmp_imm32, decode_modrm, facet_name_at, locate_record_runs, plausible_side, FacetSplit,
     FacetTable, FacetTableRecord, Operand, FACET_RECORD_HEIGHT_OFFSET, FACET_RECORD_WIDTH_OFFSET, FACET_SIDE_ALIGNMENT,
     MAX_FACET_SIDE, MOD_REGISTER, OPCODE_TWO_BYTE, STOCK_SPLIT_X,
 };
-use crate::client_exe::pe::{read_u32, PeImage, PeSection};
+use crate::client::pe::{read_u32, PeImage, PeSection};
 use crate::classic::map::{MapBlock, CLASSIC_FACET_HEIGHTS};
 use crate::enhanced::facet_sector::FacetGeometry;
 
@@ -493,9 +493,9 @@ pub fn classic_map_bytes(size: FacetGeometry) -> u64 {
 #[cfg(test)]
 pub(crate) mod tests {
     use super::*;
-    use crate::client_exe::facet_dimensions::tests::fix_checksum;
-    use crate::client_exe::facet_dimensions::{ClientExeInspection, ClientFamily};
-    use crate::client_exe::pe::tests::{synthetic_pe, TEST_IMAGE_BASE, TEST_SECTION_ALIGNMENT};
+    use crate::client::facet_dimensions::tests::fix_checksum;
+    use crate::client::facet_dimensions::{ClientExeInspection, ClientFamily};
+    use crate::client::pe::tests::{synthetic_pe, TEST_IMAGE_BASE, TEST_SECTION_ALIGNMENT};
 
     pub const CLASSIC_NAMES: [&str; 6] = ["Felucca", "Trammel", "Ilshenar", "Malas", "Tokuno", "TerMur"];
     /// The synthetic file name table: `<role><facet>.mul`, then the `x` variants of facets 0 and 1.

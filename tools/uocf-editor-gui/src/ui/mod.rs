@@ -2,7 +2,7 @@ use eframe::egui;
 use crate::app::UocfEditorApp;
 use std::cmp::Ordering;
 use std::path::{Path, PathBuf};
-use uocf::client_config::login_servers::KINGDOM_REBORN_EXE;
+use uocf::client::login_servers::KINGDOM_REBORN_EXE;
 use uocf::enhanced::client_dialect::ClientDialect;
 use uocf::utils::path::find_file_ignoring_case;
 

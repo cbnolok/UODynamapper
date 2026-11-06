@@ -216,7 +216,7 @@ tables 0x006a2338 / 0x006a2488 (0x006f820c, stride 60).
 
 These are not implemented; `lib/**` is owned by another agent.
 
-Implemented since: the facet size patcher (`lib/uocf/src/client_exe/classic_facets.rs`, `uocf-cli exe
+Implemented since: the facet size patcher (`lib/uocf/src/client/classic_facets.rs`, `uocf-cli exe
 show|patch|check-data`) locates the table copies, the file name table, the startup copy of facet 0 (the
 `.data` `{wrap_width, wrap_height, width, height}` block `SetFacet` fills, initial values = Felucca) and the
 two x = 5120 wrap seam compares by structure, and patches sizes and wraps in both copies. See
@@ -253,7 +253,7 @@ two x = 5120 wrap seam compares by structure, and patches sizes and wraps in bot
 
 ## Dif usage checker
 
-`lib/uocf/src/client_exe/classic_difs.rs` (`inspect_classic_difs`, part of `ClientExeInspection::difs`,
+`lib/uocf/src/client/classic_difs.rs` (`inspect_classic_difs`, part of `ClientExeInspection::difs`,
 printed by `uocf-cli exe show` and the patcher GUI) answers, per kind, whether a Classic `client.exe`
 applies the mapdif / stadif patches. It reads the bytes only; it never runs the client.
 

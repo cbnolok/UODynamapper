@@ -33,7 +33,7 @@ use std::path::Path;
 use image::RgbaImage;
 
 use crate::classic::map::CLASSIC_FACET_HEIGHTS;
-use crate::client_exe::classic_facets::CLASSIC_STOCK_WIDTHS;
+use crate::client::classic_facets::CLASSIC_STOCK_WIDTHS;
 use crate::utils::output_file::write_through_temp;
 
 /// Bytes of the width and height header.

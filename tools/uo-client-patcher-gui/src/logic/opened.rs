@@ -4,13 +4,13 @@
 use std::path::{Path, PathBuf};
 
 use color_eyre::eyre::{self, WrapErr};
-use uocf::client_exe::classic_difs::DifKind;
-use uocf::client_exe::classic_facets::{ClassicFileRole, CLASSIC_FACET_RECORD_SIZE};
-use uocf::client_exe::version::ExeVersion;
-use uocf::client_exe::facet_dimensions::{
+use uocf::client::classic_difs::DifKind;
+use uocf::client::classic_facets::{ClassicFileRole, CLASSIC_FACET_RECORD_SIZE};
+use uocf::client::version::ExeVersion;
+use uocf::client::facet_dimensions::{
     ClientExeInspection, ClientFamily, FacetTable, DISABLED_SPLIT_X, FACET_RECORD_SIZE, STOCK_SPLIT_X,
 };
-use uocf::client_exe::patch::{
+use uocf::client::patch::{
     plan_patch_inspected, read_manifest, write_patched_client_exe, ExeEdit, ExeManifest, ExePatch, PatchPlan, PatchedClientExe,
 };
 

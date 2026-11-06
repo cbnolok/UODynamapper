@@ -8,10 +8,10 @@ use std::path::{Path, PathBuf};
 use crate::classic::facet_image::{facet_image_file_name, FACET_IMAGE_COUNT};
 use crate::classic::map::MapSizeCells;
 use crate::classic::tiledata::TileData;
-use crate::client_config::login_servers::{ENHANCED_EXE, KINGDOM_REBORN_EXE};
-use crate::client_exe::classic_difs::ClassicDifUsage;
-use crate::client_exe::classic_facets::classic_trammel_reads_map0;
-use crate::client_exe::facet_dimensions::{ClientExeInspection, ClientFamily};
+use crate::client::login_servers::{ENHANCED_EXE, KINGDOM_REBORN_EXE};
+use crate::client::classic_difs::ClassicDifUsage;
+use crate::client::classic_facets::classic_trammel_reads_map0;
+use crate::client::facet_dimensions::{ClientExeInspection, ClientFamily};
 use crate::utils::path::find_file_ignoring_case;
 
 crate::eyre_imports!();

@@ -14,18 +14,18 @@ use crate::common;
 use std::ops::Range;
 use std::path::{Path, PathBuf};
 
-use uocf::client_exe::classic_facets::{
+use uocf::client::classic_facets::{
     locate_classic_facet_tables, CLASSIC_RECORD_WRAP_HEIGHT_OFFSET, CLASSIC_RECORD_WRAP_WIDTH_OFFSET,
     UNLOCATED_FILE_ID_LIMIT,
 };
-use uocf::client_exe::facet_data::{check_client_facet_data, check_facet_data, FacetDataStatus};
-use uocf::client_exe::facet_dimensions::*;
-use uocf::client_exe::patch::{
+use uocf::client::facet_data::{check_client_facet_data, check_facet_data, FacetDataStatus};
+use uocf::client::facet_dimensions::*;
+use uocf::client::patch::{
     dry_run_client_exe, read_manifest, write_patched_client_exe, ExeEdit, ExePatch, SplitEdit,
 };
-use uocf::client_exe::pe::PeImage;
-use uocf::client_exe::sha256::sha256_hex;
-use uocf::client_exe::version::read_exe_version;
+use uocf::client::pe::PeImage;
+use uocf::client::sha256::sha256_hex;
+use uocf::client::version::read_exe_version;
 use uocf::enhanced::facet_sector::{facet_package_file_name, FacetGeometry, CLIENT_FACET_DIMENSIONS};
 use uocf::utils::path::find_file_ignoring_case;
 

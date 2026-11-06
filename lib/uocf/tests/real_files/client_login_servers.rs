@@ -1,6 +1,5 @@
 //! The login server of every client under the client roots: each client folder's configuration is read (Classic
-//! uo.cfg and its login file; Enhanced Client and Kingdom Reborn: the built-in address, the XML files listed as
-//! unused), the login sites of every Enhanced Client build are located (each pattern once, one host slot per random
+//! uo.cfg and its login file; Enhanced Client and Kingdom Reborn: the built-in address), the login sites of every Enhanced Client build are located (each pattern once, one host slot per random
 //! draw), Kingdom Reborn has its single built-in address, a login-patched copy (Enhanced Client: a different host
 //! and port per site; Kingdom Reborn: its IPv4 address) differs from its executable only at the login sites and
 //! the PE checksum, and `UOSA_eclo.exe` decodes to the ECLO-patched address. The survey prints each build's
@@ -14,13 +13,13 @@ use crate::common;
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
-use uocf::client_config::login_servers::{read_login_servers, LoginEntrySource, LoginFileRole};
-use uocf::client_exe::facet_dimensions::{ClientExeInspection, ClientFamily};
-use uocf::client_exe::login::{
+use uocf::client::login_servers::{read_login_servers, LoginEntrySource, LoginFileRole};
+use uocf::client::facet_dimensions::{ClientExeInspection, ClientFamily};
+use uocf::client::login::{
     LoginHost, LoginServerEdit, LoginSites, LOGIN_HOST_SLOT_SIZE, MAX_LOGIN_HOST_LENGTH, STOCK_KR_LOGIN_ADDRESS,
     STOCK_LOGIN_HOSTS,
 };
-use uocf::client_exe::patch::{
+use uocf::client::patch::{
     dry_run_client_exe, plan_patch, write_patched_client_exe, ExeEdit, ExePatch, PatchWarningKind,
 };
 
@@ -81,22 +80,19 @@ fn every_client_folder_tells_where_its_login_server_comes_from() {
         for entry in &report.entries {
             println!("  {:?} {:?} {:?}", entry.source, entry.name, entry.address);
         }
-        for entry in &report.unused_entries {
-            println!("  unused {:?} {:?} {:?}", entry.source, entry.name, entry.address);
-        }
         match family {
             ClientFamily::Classic => {
                 let login = report.files.iter().find(|file| file.role == LoginFileRole::LoginCfg).unwrap();
                 if login.found {
                     assert!(report.entries.iter().any(|entry| entry.source == LoginEntrySource::Cfg(
-                        uocf::client_config::login_servers::CfgServerKind::Primary
+                        uocf::client::login_servers::CfgServerKind::Primary
                     )), "{}: a login file without a LoginServer line", dir.display());
                     assert!(report.entries.iter().all(|entry| entry.address.is_ok()), "{}", dir.display());
                 }
             }
             ClientFamily::Enhanced | ClientFamily::KingdomReborn => {
-                assert!(report.files.iter().filter(|file| file.role == LoginFileRole::LoginServersXml).all(|file| !file.read_by_client));
-                assert!(report.unused_entries.iter().all(|entry| entry.source == LoginEntrySource::Xml));
+                assert_eq!(report.files.len(), 1);
+                assert_eq!(report.files[0].role, LoginFileRole::Executable);
             }
         }
     }
