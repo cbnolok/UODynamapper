@@ -497,6 +497,29 @@ fn prepare_page_upload_bytes(
     Some((page_data.to_vec(), format.upload_layout(extent)))
 }
 
+/// The Enhanced and KR-like views draw Classic and Enhanced art from one sprite atlas of one page format. When the
+/// packages' formats differ, the atlas falls back to RGBA8 and `prepare_compatible_page_upload` decodes every BC7 page
+/// on the CPU as it uploads; this names both packages, their formats and how to repack them to match.
+fn art_page_format_mismatch_warning(
+    classic: Option<PagePixelFormat>,
+    enhanced: Option<PagePixelFormat>,
+) -> Option<String> {
+    let (Some(classic), Some(enhanced)) = (classic, enhanced) else { return None };
+    let name = |format| match format {
+        PagePixelFormat::Rgba8888 => "lossless RGBA8888",
+        PagePixelFormat::Bc7 => "BC7",
+    };
+    (classic != enhanced).then(|| format!(
+        "tex_art_cc.uddp pages are {} but tex_art_ec.uddp pages are {}. The Enhanced and KR-like views draw both from \
+         one sprite atlas, so it falls back to RGBA8 and every BC7 page is decoded on the CPU as it uploads, at four \
+         times the VRAM of BC7. Repack both packages in one format: lossless with `udd-cli pack pack-art --jxl` and \
+         `udd-cli pack pack-ec-textures --art-jxl`, or BC7 with `pack-art --bc7` and `pack-ec-textures --art-bc7` \
+         (in udd-conv-gui, the same compression for Classic Art and Enhanced Art).",
+        name(classic),
+        name(enhanced),
+    ))
+}
+
 fn prepare_compatible_page_upload(data: &[u8], atlas_width: u32, atlas_height: u32,
     used_width: u32, used_height: u32, source: PagePixelFormat, target: PagePixelFormat,
 ) -> Option<(Vec<u8>, TextureUploadLayout, u32, u32)> {
@@ -562,6 +585,27 @@ mod tests {
             8, 8, 8, 8, PagePixelFormat::Rgba8888, PagePixelFormat::Bc7).unwrap();
         assert_eq!(missing, encoded.bytes());
         assert_eq!(layout.format, wgpu::TextureFormat::Bc7RgbaUnormSrgb);
+    }
+
+    /// Art packages of different page formats get one warning naming both, their formats and the repack flags; packages
+    /// that match, or a missing one, get none.
+    #[test]
+    fn art_page_format_mismatch_names_both_packages_and_the_repack() {
+        use PagePixelFormat::{Bc7, Rgba8888};
+        for (classic, enhanced, opening) in [
+            (Rgba8888, Bc7, "tex_art_cc.uddp pages are lossless RGBA8888 but tex_art_ec.uddp pages are BC7."),
+            (Bc7, Rgba8888, "tex_art_cc.uddp pages are BC7 but tex_art_ec.uddp pages are lossless RGBA8888."),
+        ] {
+            let warning = art_page_format_mismatch_warning(Some(classic), Some(enhanced)).expect("mismatch warning");
+            assert!(warning.starts_with(opening), "{warning:?}");
+            for repack in ["pack-art --jxl", "pack-ec-textures --art-jxl", "pack-art --bc7", "pack-ec-textures --art-bc7"] {
+                assert!(warning.contains(repack), "{repack:?} missing from {warning:?}");
+            }
+        }
+        for (classic, enhanced) in [(Some(Bc7), Some(Bc7)), (Some(Rgba8888), Some(Rgba8888)), (Some(Bc7), None),
+            (None, Some(Rgba8888)), (None, None)] {
+            assert_eq!(art_page_format_mismatch_warning(classic, enhanced), None);
+        }
     }
 
     #[test]
@@ -876,6 +920,15 @@ fn sys_setup_art_texture_loader(
     tex_art_ec_r: Option<Res<TexArtEcPackageRes>>,
     tilemeta_r: Option<Res<TileMetaPackageRes>>,
 ) {
+    // A startup system, so the warning comes once per run however many pages convert later. A package's format is its
+    // first page's, RGBA8888 without pages, as `sprite_atlas_spec` reads it.
+    if let Some(warning) = art_page_format_mismatch_warning(
+        tex_art_cc_r.as_ref().map(|r| r.0.pages().first().map_or(PagePixelFormat::Rgba8888, |page| page.pixel_format)),
+        tex_art_ec_r.as_ref().map(|r| r.0.pages().first().map_or(PagePixelFormat::Rgba8888, |page| page.pixel_format)),
+    ) {
+        // Dynamapper's own `log` records reach the console only at debug-verbose level.
+        console_logger::one(LogSev::Warn, LogAbout::RenderWorldArt, &warning);
+    }
     commands.insert_resource(ArtTextureLoader {
         tex_art_cc: tex_art_cc_r.map(|r| r.0.clone()),
         tex_art_ec: tex_art_ec_r.map(|r| r.0.clone()),
