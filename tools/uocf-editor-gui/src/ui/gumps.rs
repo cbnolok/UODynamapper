@@ -1,6 +1,6 @@
 use crate::app::{GumpSource, GumpViewerTab, PaperdollEquipmentInput, UocfEditorApp};
 use crate::ui::ec_interface_textures;
-use crate::ui::ec_paperdoll::{self, Definitions, FrameSets, WearableRules, WornItem, PAPERDOLL_UOP_NAME};
+use crate::ui::ec_paperdoll::{self, Definitions, FrameSets, WornItem, PAPERDOLL_UOP_NAME};
 use crate::ui::{arrow_delta, centered_row_offset, go_to_field, list_sort_controls, move_selection, sorted_indices_by};
 use crate::ui::{enhanced_files_availability, source_choice, ClientSource, SourceAvailability};
 use eframe::egui;
@@ -9,6 +9,7 @@ use std::path::Path;
 use std::sync::Arc;
 use std::sync::OnceLock;
 use uocf::classic::gump::GumpContainer;
+use uocf::enhanced::paperdoll::alpha_blend_at;
 use uocf::enhanced::hues::{EcHueTables, HUES_UOP_NAME};
 use uocf::enhanced::textures::{ECImageFormat, TextureFile, TextureItem as RawTextureItem};
 use uocf::uop_container::hash::hash_file_name_single;
@@ -1349,7 +1350,7 @@ fn render_ec_paperdoll(
     }
     let body_hue = parse_optional_hue(&app.paperdoll_body_hue);
     let hues = ec_paperdoll_hue_tables(app, items.iter().map(|item| item.hue).chain([body_hue]).collect())?;
-    let rules = WearableRules::embedded().map_err(|error| color_eyre::eyre::eyre!("{error}"))?;
+    let rules = ec_paperdoll::embedded_rules().map_err(|error| color_eyre::eyre::eyre!("{error}"))?;
     let paperdoll = ec_paperdoll::build(&sets, Definitions(&tileart), rules, &hues, body_id, body_hue, &items)?;
     let (width, height, pixels) = ec_paperdoll::compose(&paperdoll.frames);
     let handle = super::textures::load_rgba(
@@ -1581,51 +1582,6 @@ fn apply_hue(
     }
 
     Ok(())
-}
-
-pub(super) fn alpha_blend_at(
-    canvas: &mut [u8],
-    canvas_width: u32,
-    dst_x: i32,
-    dst_y: i32,
-    layer_width: u32,
-    layer_height: u32,
-    layer: &[u8],
-) {
-    for y in 0..layer_height as usize {
-        for x in 0..layer_width as usize {
-            let canvas_x = x as i32 + dst_x;
-            let canvas_y = y as i32 + dst_y;
-            if canvas_x < 0 || canvas_y < 0 {
-                continue;
-            }
-
-            let src_i = (y * layer_width as usize + x) * 4;
-            let src_a = layer[src_i + 3] as u16;
-            if src_a == 0 {
-                continue;
-            }
-
-            let dst_i = (canvas_y as usize * canvas_width as usize + canvas_x as usize) * 4;
-            if dst_i + 4 > canvas.len() {
-                continue;
-            }
-
-            if src_a == 255 {
-                canvas[dst_i..dst_i + 4].copy_from_slice(&layer[src_i..src_i + 4]);
-                continue;
-            }
-
-            let inv_a = 255 - src_a;
-            canvas[dst_i] =
-                ((layer[src_i] as u16 * src_a + canvas[dst_i] as u16 * inv_a) / 255) as u8;
-            canvas[dst_i + 1] =
-                ((layer[src_i + 1] as u16 * src_a + canvas[dst_i + 1] as u16 * inv_a) / 255) as u8;
-            canvas[dst_i + 2] =
-                ((layer[src_i + 2] as u16 * src_a + canvas[dst_i + 2] as u16 * inv_a) / 255) as u8;
-            canvas[dst_i + 3] = (src_a + (canvas[dst_i + 3] as u16 * inv_a) / 255) as u8;
-        }
-    }
 }
 
 fn parse_u32_field(text: &str) -> Result<u32, std::num::ParseIntError> {

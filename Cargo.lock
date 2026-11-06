@@ -7340,6 +7340,7 @@ dependencies = [
  "getset",
  "image",
  "indexmap 2.14.2",
+ "knuffel",
  "libz-sys",
  "log",
  "memmap2",

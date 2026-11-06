@@ -52,6 +52,8 @@ memmap2 = "0.9"
 same-file = "1.0.6"
 symphonia.workspace = true
 uot-kdl = { path = "../support/uot-kdl" }
+# Only for the Decode derives: their code names the knuffel crate. Parse through uot-kdl.
+knuffel.workspace = true
 # Diagnostic trait of knuffel's parse errors, read for their line and column.
 miette = { version = "5", default-features = false }
 # Syntax checks of replaced entries (`enhanced/packages/syntax_check.rs`): the client's Lua (5.1 with `continue` and the

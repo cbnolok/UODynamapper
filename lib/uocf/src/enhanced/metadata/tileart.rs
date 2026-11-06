@@ -1048,6 +1048,16 @@ impl TileArtEntry {
             .map(|prop| prop.val)
     }
 
+    /// Value of `key` in `prop_vector2` only: the old-style gump paperdoll (`UOPaperdoll::BuildImage` 0x0050c790)
+    /// reads keys 11 and 8 there before `prop_vector1`.
+    pub fn property2(&self, key: PropertyKey) -> Option<u32> {
+        let key_id = key as u8;
+        self.prop_vector2
+            .iter()
+            .find(|prop| prop.id == key_id)
+            .map(|prop| prop.val)
+    }
+
     fn get_property(&self, key: PropertyKey) -> Option<u32> {
         let key_id = key as u8;
         for prop in &self.prop_vector1 {

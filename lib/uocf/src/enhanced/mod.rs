@@ -17,7 +17,7 @@ pub mod sound;
 pub mod strings;
 pub mod structures;
 
-pub use animation::{animation_definition, animationframe, mobile_body};
+pub use animation::{animation_definition, animationframe, mobile_body, paperdoll};
 pub use sound::{audio, audio_edit, kr_audio};
 pub use effects::{chaos_script, effect_definition, effect_texture};
 pub use graphics::{dds_writer, hues, hues_mul_uop, textures, tga_writer};
