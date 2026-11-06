@@ -1,10 +1,14 @@
 # Camera-relative world projection — 2026-11-01
 
-The [web-map control pilot](2026-11-01-webmap-control-pilot.md) found that translated captures
+The initial web-map control pilot found that translated captures
 of the same scene differ on terrain alone. This phase removes the main cause. Land, static sprites
 and ground-art quads now project through one shared camera-relative function. The full scene is
 now pixel-identical under translation at Britain in Classic and Enhanced. Small residual
 differences remain at x≈7000 in all presets, and at Britain in KR-like; see below.
+
+The later [export acceptance](2026-11-01-webmap-export-renderer.md#remaining-limits)
+identifies and fixes the remaining Classic flat-quad overlap in its tested pair.
+The measurements below describe this earlier projection checkpoint.
 
 ## Cause and change
 

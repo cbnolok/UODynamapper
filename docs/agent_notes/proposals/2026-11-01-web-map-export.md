@@ -1,14 +1,10 @@
 # Web map export: design proposal (2026-11-01)
 
-Status: **approved 2026-11-01, tool built**; the renderer's export mode is the renderer session's work (see
-[Decisions](#decisions-2026-11-01)). The questions the user answered are kept in
-[Questions for the user](#questions-for-the-user).
-
-The [renderer control pilot](../../reviews/2026-11-01-webmap-control-pilot.md)
-is complete: placement is correct, but translated overlaps are not pixel-identical.
-The differences reproduce on terrain alone and survive full settling; repeated
-captures at the same location agree exactly. Export acceptance still needs stable
-terrain sampling and the offscreen job implementation.
+Status: **approved and implemented**. The renderer's offscreen export mode and
+full Classic facet-0 run are recorded in [the export acceptance report](../../reviews/2026-11-01-webmap-export-renderer.md).
+Classic translated overlap was subsequently made exact in the tested pair;
+EC camera-focused reflections and the other report limits remain separate.
+The design decisions below are retained as rationale, not pending implementation.
 
 The user's decisions so far, from proposal (b) of the
 [data-track proposals](2026-11-01-data-track-open-items.md#b-world-export):

@@ -2,7 +2,8 @@
 
 This is the renderer side of the [web map export](../agent_notes/proposals/2026-11-01-web-map-export.md).
 `webmap-export-cli run --renderer <dynamapper>` now produces a tile pyramid end to end. The Classic
-2×2-frame pilot over Britain has no visible seams. Overlaps are not yet bit-identical everywhere; see
+2×2-frame pilot over Britain has no visible seams. The later flat-quad correction makes the tested
+Classic overlap exact; EC reflection differences and broader coverage limits remain. See
 [Remaining limits](#remaining-limits).
 
 ## What the renderer does

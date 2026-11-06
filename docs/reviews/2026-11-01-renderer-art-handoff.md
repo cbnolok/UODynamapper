@@ -1,7 +1,7 @@
 # Renderer artwork and package handoff — 2026-11-01
 
-Phase 1 of [the ordered renderer plan](2026-10-31-renderer-next-work-plan.md)
-implements the KR-only artwork contract and installs a coherent asset set.
+This acceptance report records the KR-only artwork contract and installation
+of the matching asset set on 2026-11-01.
 Performance work remains deferred to the profiling workstation.
 
 ## Behavior and cause
@@ -36,9 +36,9 @@ independently checked against the original Classic UOP: decoded RGBA, native
 extent and static anchor match, with zero mismatches. This is a source-validated
 replacement; it is not a claim that every old Classic pixel is preserved.
 
-## Current assets
+## Assets accepted on 2026-11-01
 
-Six files are installed together under `/home/claudio/test/uddp`:
+At this acceptance checkpoint, six files were installed together under `/home/claudio/test/uddp`:
 
 | File | Accepted source |
 | --- | --- |
@@ -47,7 +47,8 @@ Six files are installed together under `/home/claudio/test/uddp`:
 | `terrain_meta.bin` | `terrain-layers-by-class-20261031` candidate |
 | `tex_art_cc.uddp` | Complete native Classic UOP rebuild, 2048px pages, RGBA/Zstd |
 
-The readers require current formats: tilemeta 3, terrain provenance 4. The
+The readers at this checkpoint required tilemeta 3 and terrain provenance 4.
+These are recorded acceptance versions, not current format requirements. The
 terrain sidecar was absent from the destination before installation; the five
 existing packages have checksum-verified backups. The installation report
 records all source/destination/backup hashes. The earlier fp/plain auxiliary
@@ -109,8 +110,8 @@ once those queues settle. See [the control workflow](../../scripts/dev-helpers/r
 ## Scope and remaining work
 
 This completes artwork-source integration, not every renderer fidelity issue.
-Material surfaces still use geometric picking rather than composed coverage;
-terrain occlusion and final visible-fragment priority remain phase 2. Some
+The subsequent [visible static picking acceptance](2026-11-01-visible-static-picking.md)
+adds composed coverage, terrain occlusion and visible-fragment priority. Some
 individual anchors, rare overlaps, arbitrary camera directions, animation,
 liquid/reflection/filtering parity, effects and optional lighting remain in
 later phases. The carpet placement used here is roof-occluded and is not

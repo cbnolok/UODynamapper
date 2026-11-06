@@ -88,9 +88,9 @@ item.
 
 This selects visible statics for inspection/highlighting. It does not implement
 walking, collision, persistent gameplay selection or a terrain-surface query.
-The separate legacy cursor-cell label and click-teleport helper still intersect
-the Y=0 plane; their terrain coordinates can differ from the visible surface on
-slopes. Correcting that diagnostic/query is the next terrain-coordinate task.
+The subsequent [terrain cursor acceptance](2026-11-01-terrain-cursor.md) replaces
+the separate Y=0 cursor/click-teleport query with admitted terrain triangles
+and preserves the selected cell's original signed Z.
 Logical world data must remain authoritative for gameplay.
 
 Queries use the render pixel center, before fullscreen fog, blur, FXAA/SMAA and
@@ -108,5 +108,5 @@ this phase does not repair that existing visual defect.
 
 Original-client depth parity, individual sprite/window geometry, static
 animation, effects and reflection/filtering fidelity remain later work in
-[the ordered plan](2026-10-31-renderer-next-work-plan.md). This GPU implementation
+[the roadmap](../TODO.md). This GPU implementation
 is a modern visibility query, not a recovered UOSA rendering algorithm.
