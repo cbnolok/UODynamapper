@@ -75,9 +75,9 @@ udd-cli tool info tilemeta.uddp
 udd-cli tool extract tex_art_ec.uddp --output tex_art_ec.extract
 ```
 
-### `uop-tool`
+### `uoppackage-cli`
 
-`uop-tool` works with modern `.uop` package files. It is produced by the `uocf-cli` crate.
+`uoppackage-cli` works with modern `.uop` package files. It is produced by the `uoppackage-cli` crate.
 
 Common uses:
 
@@ -94,7 +94,7 @@ Stores Classic Client land/static atlas pages plus a sparse slot table keyed by 
 
 Pages are lossless by default, or BC7 with `pack-art --bc7`. BC7 pages reach the GPU as their blocks: in the sprite atlas, and in the flat wet land art array (`classic_land_art_atlas`, `Bc7RgbaUnormSrgb`), which copies each land slot's blocks and refuses a slot off the 4x4 grid with a message to repack.
 
-The Enhanced and KR-like views draw Classic and Enhanced art from one sprite atlas of one page format, so `tex_art_cc` and `tex_art_ec` should match: both lossless (`pack-art --jxl` and `pack-ec-textures --art-jxl`) or both BC7 (`pack-art --bc7` and `pack-ec-textures --art-bc7`); in udd-conv-gui, the same compression for Classic Art and Enhanced Art. When they differ, that atlas is RGBA8 and every BC7 page is decoded on the CPU as it uploads (`prepare_compatible_page_upload`, `art.rs`), and a startup warning names both packages, their formats and the repack.
+The Enhanced and KR-like views draw Classic and Enhanced art from one sprite atlas of one page format, so `tex_art_cc` and `tex_art_ec` should match: both lossless (the default for `pack-art` and `pack-ec-textures`) or both BC7 (`pack-art --bc7` and `pack-ec-textures --art-bc7`); in udd-conv-gui, the same compression for Classic Art and Enhanced Art. When they differ, that atlas is RGBA8 and every BC7 page is decoded on the CPU as it uploads (`prepare_compatible_page_upload`, `art.rs`), and a startup warning names both packages, their formats and the repack.
 
 ### `tex_art_ec.uddp`
 
@@ -105,7 +105,7 @@ Stores Enhanced Client static/art textures from the shared EC texture classifica
 
 ### `tex_land_ec.uddp`
 
-Stores representative terrain images and required terrain provenance metadata. The package preserves how `TerrainDefinition` material entries, aliases, selected texture ids, and canonical packed slots relate to each other. It also carries the terrain layer table (`metadata/terrain_layers.bin`, `docs/dev_wiki/UDDP_FORMATS.md`): each terrain tile's items with their layer class and role, which the renderer reads for the secondary base, the blend alpha and the water ripple.
+Stores representative terrain images and required terrain provenance metadata. The package preserves how `TerrainDefinition` material entries, aliases, selected texture ids, and canonical packed slots relate to each other. It also carries the terrain layer table (`metadata/terrain_layers.bin`, `docs/dev_wiki/UDDP_FORMATS.md`): each terrain tile's items with their layer class and role. This table is separate from the active land-page role lookup; the [usage audit](../agent_notes/terrain_layer_table_usage.md) found no tiles reaching its secondary-base/blend/ripple shader paths.
 
 EC land materials are role-based, not single-texture records. The runtime lookup table currently uses these material roles:
 
@@ -186,11 +186,8 @@ Important rule:
 
 ## Current EC Classification Notes
 
-- The `Rotated` flag (formerly `Unused1`) on EC tileart entries is currently treated as the strongest primary land hint when building the semantic translation table for EC land classification.
 - `TerrainTranscode.kdl` maps Classic Client land ids to EC material ids, over the client's own `legacyterrainmap.csv` routes. It lives in `tex_land_ec.uddp`: the packer always embeds it as `metadata/transcode.bin` (the copy shipped with the tools, or the one given with `--land-transcode-kdl`), and the runtime reads only that copy. Dynamapper reads no loose copy, so an edit takes effect after a repack, and a package without the table fails to load with a message to repack it.
 - EC terrain materials come from `TerrainDefinition.uop`. Reviewed layer-texture substitutions it does not carry live in `EcTerrainOverrides.kdl` (currently none: the file has no entries). Like the routing table, it lives in `tex_land_ec.uddp`: the packer always embeds it as `metadata/terrain_overrides.json` (the copy shipped with the tools, or the one given with `--land-terrain-overrides-kdl`), Dynamapper reads no loose copy, and a package without it fails to load with a message to repack it. Liquid motion and edge softness come from the UOP (tweaks, `coverage_exponent`), so the file has no liquid or policy nodes. The hand-written `TerrainDefinition.kdl` from before the UOP was parsed, and its audit commands, were removed.
-- The current target architecture for EC textures is a three-way split built from one classification pass: `ec_textures_land.uddp`, `ec_textures_art.uddp`, and `ec_textures_layers.uddp`.
-- The long-term direction is to keep shared source textures intact and let runtime sampling windows and semantic lookup tables choose the correct sub-rect or layer at render time.
 - `TerrainTranscode.kdl` began as a KDL transcription of `TerrainTranscode.json` from a third-party client (stefanomerotta's UOClient `FileConverter/Content/`). That JSON is not in this repo; a reference copy sits in the git-ignored `old/compare_impl/`.
 
 ## CSV Editing Notes
@@ -209,4 +206,4 @@ CSV import is intentionally strict. It rejects edits that would break package in
 - introducing out-of-bounds rectangles
 - producing inconsistent `tex_land_ec` canonical terrain mappings
 
-Use [LAND_TEXTURES_AND_TRANSITIONS.md](LAND_TEXTURES_AND_TRANSITIONS.md) together with [UDDP_FORMATS.md](UDDP_FORMATS.md) for the current EC land/art classification direction. The first document explains the semantic ownership split; the second documents package schemas.
+Use [LAND_TEXTURES_AND_TRANSITIONS.md](rendering/LAND_TEXTURES_AND_TRANSITIONS.md) together with [UDDP_FORMATS.md](UDDP_FORMATS.md) for the current EC land/art classification direction. The first document explains the semantic ownership split; the second documents package schemas.

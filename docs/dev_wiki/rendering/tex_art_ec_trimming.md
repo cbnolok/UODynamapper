@@ -2,12 +2,12 @@
 
 This note documents how the Enhanced Client static-art packer trims each art entry, and where the trim is recorded so that placement and source sampling stay right.
 
-EC art atlases are always alpha-trimmed; there is no untrimmed mode. The active design direction is to keep the original large source texture intact and apply sampling windows at runtime, so this document should be treated as the description of current behavior, not the final target.
+EC art atlases are always alpha-trimmed; there is no untrimmed mode.
 
 The EC source package split matters here:
-- `Texture.uop` and `LegacyTexture.uop` are the shared decode pools.
+- `Texture.uop` supplies the KR WorldArt packed into `tex_art_ec.uddp`; Classic fallback comes from `tex_art_cc.uddp`.
 - `tileart.uop` owns the per-entry art semantics and the sampling window boundaries used by this packer.
-- `TerrainDefinition.uop` is the reason some source textures must be excluded from static art even when they look visually similar.
+- Shared images may have both terrain and item owners; terrain ownership does not exclude an item's own source window.
 
 ## Rules
 
@@ -16,8 +16,6 @@ The EC source package split matters here:
   1. apply the tileart sampling window from `start_x/start_y/end_x/end_y`
   2. alpha-trim inside that window
 - Two art ids may share the same `texture_id` while sampling different windows from it, so trimming one window must not rewrite or constrain another window.
-- That shared-source rule is why the current crop path exists, but it is also why the future full-source packing approach is attractive: it avoids scattering one large source across multiple atlas pages.
-- In the current architecture, the crop path is a transitional way to preserve item ownership while still respecting shared raw EC texture pools; the target architecture is to keep those source textures intact and classify them once for all EC outputs.
 
 ## Why Data Is Not Lost
 
@@ -41,4 +39,4 @@ The trims are recorded per art id, so an art id whose pixels are shared with ano
 - The standalone cropped EC-art command has been removed.
 - EC package creation goes through the shared `udd-cli pack pack-ec-textures` pass, which always trims.
 - When `pack-ec-textures` also writes `--tilemeta-output`, tilemeta takes the trims the atlas pass recorded; nothing is decoded twice.
-- A separate `udd-cli pack pack-tilemeta` recomputes the same trims from the EC sources, so it gives the same `ec_start` values. It therefore needs the sources the art packer needs: `tileart.uop`, `string_dictionary.uop`, `TerrainDefinition.uop` and `Texture.uop` or `LegacyTexture.uop`.
+- A separate `udd-cli pack pack-tilemeta` recomputes the same trims from the EC sources, so it gives the same `ec_start` values. It therefore needs the sources the art packer needs: `tileart.uop`, `string_dictionary.uop`, `TerrainDefinition.uop` and `Texture.uop`.

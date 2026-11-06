@@ -111,8 +111,8 @@ modes" describe what the art packers already do.
 ### What it means today
 
 Nothing exists beyond the control channel's `capture`. That command writes one window-sized PNG
-through Bevy's screenshot path, and only to an absolute `.png` path. `docs/dev_wiki/TECHNICAL_REFERENCE.md`
-mentions full-map 1:1 offline export as the reason for the LOD meshes.
+through Bevy's screenshot path, and only to an absolute `.png` path. The retired technical overview
+mentioned full-map 1:1 offline export as the reason for the LOD meshes.
 
 At the client scale of 44 px per tile, Britannia (7168×4096 tiles) has these sizes:
 

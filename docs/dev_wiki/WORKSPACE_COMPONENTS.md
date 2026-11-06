@@ -187,7 +187,7 @@ GUI for building and expanding UOP hash dictionaries.
 
 ## Related Documentation
 
-- [PROJECT_OVERVIEW.md](PROJECT_OVERVIEW.md): high-level project status.
-- [CODE_OVERVIEW.md](CODE_OVERVIEW.md): runtime flow and system interactions.
-- [TECHNICAL_REFERENCE.md](TECHNICAL_REFERENCE.md): technical rules, formats, and constants.
-- [ASSET_PIPELINE.md](ASSET_PIPELINE.md): conversion commands and package workflow notes.
+- [Engineering guide](../../ENGINEERING.md): workspace conventions and build commands.
+- [Dynamapper architecture](../agents/dynamapper_architecture.md): runtime structure and renderer rules.
+- [UDDP formats](UDDP_FORMATS.md): package schemas.
+- [Asset pipeline](ASSET_PIPELINE.md): conversion commands and package workflow notes.

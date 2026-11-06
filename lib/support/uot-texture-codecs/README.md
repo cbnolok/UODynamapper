@@ -36,5 +36,5 @@ paths that need GPU-ready KTX2 output.
   with no optional dependencies.
 - The BC7 decoder is always available (no feature gate) for reading DDS/BC7
   blocks during inspection and conversion.
-- See [docs/dev_wiki/impl_bc7/](../../docs/dev_wiki/impl_bc7/) for detailed
-  technical analysis of the BC7 and RDO implementation.
+- See [the RDO optimization notes](../../../docs/dev_wiki/impl_bc7/bc7_rdo_optimization_notes.md)
+  for measured attempts that were reverted and their validation constraints.

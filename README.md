@@ -205,21 +205,19 @@ Detailed crate and tool responsibilities live in [docs/dev_wiki/WORKSPACE_COMPON
 
 | Document | Purpose |
 | -------- | ------- |
-| [docs/dev_wiki/PROJECT_OVERVIEW.md](docs/dev_wiki/PROJECT_OVERVIEW.md) | Contributor-oriented project summary and current status |
+| [ENGINEERING.md](ENGINEERING.md) | Engineering conventions, workspace layout and build commands |
+| [docs/agents/dynamapper_architecture.md](docs/agents/dynamapper_architecture.md) | Renderer architecture and implementation rules |
 | [docs/dev_wiki/WORKSPACE_COMPONENTS.md](docs/dev_wiki/WORKSPACE_COMPONENTS.md) | Workspace crates, tools, and responsibilities |
 | [docs/dev_wiki/ASSET_PIPELINE.md](docs/dev_wiki/ASSET_PIPELINE.md) | Conversion commands, package notes, and CSV editing rules |
-| [docs/dev_wiki/CODE_OVERVIEW.md](docs/dev_wiki/CODE_OVERVIEW.md) | Runtime code flow and system interactions |
-| [docs/dev_wiki/TECHNICAL_REFERENCE.md](docs/dev_wiki/TECHNICAL_REFERENCE.md) | Data formats, rendering constants, and technical rules |
 | [docs/dev_wiki/UDDP_FORMATS.md](docs/dev_wiki/UDDP_FORMATS.md) | `.uddp` and `.uddf` package formats |
 | [docs/dev_wiki/rendering/LAND_TEXTURES_AND_TRANSITIONS.md](docs/dev_wiki/rendering/LAND_TEXTURES_AND_TRANSITIONS.md) | EC land/art classification and transition work |
-| [docs/dev_wiki/CONTRIBUTORS_GUIDE.md](docs/dev_wiki/CONTRIBUTORS_GUIDE.md) | Quick file reference and contributor workflows |
 
 Recommended reading:
 
 1. Start with this README to understand the project shape.
-2. Read [docs/dev_wiki/PROJECT_OVERVIEW.md](docs/dev_wiki/PROJECT_OVERVIEW.md) for current implementation status.
+2. Read [ENGINEERING.md](ENGINEERING.md) for workspace conventions and [the architecture guide](docs/agents/dynamapper_architecture.md) for renderer work.
 3. Use [docs/dev_wiki/ASSET_PIPELINE.md](docs/dev_wiki/ASSET_PIPELINE.md) when building packages.
-4. Use [docs/dev_wiki/CODE_OVERVIEW.md](docs/dev_wiki/CODE_OVERVIEW.md) and [docs/dev_wiki/TECHNICAL_REFERENCE.md](docs/dev_wiki/TECHNICAL_REFERENCE.md) when changing runtime behavior.
+4. Use [UDDP formats](docs/dev_wiki/UDDP_FORMATS.md) and [the EC evidence map](docs/dev_wiki/rendering/EC_WORLD_SPACE_UV_EVIDENCE_MAP.md) when changing packages or EC rendering.
 
 ## License, credits and references
 
