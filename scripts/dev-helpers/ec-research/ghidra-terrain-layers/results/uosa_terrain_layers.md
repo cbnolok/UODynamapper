@@ -90,6 +90,30 @@ Item 3 is never fetched (`GetMap` stops at 3). 48 default records have a 4th ite
 Roles: item 0 = base colour A (weight = mask alpha), item 1 = base colour B (weight = 1 − mask alpha),
 item 2 = blend mask (only its alpha is used), item 3 = unused.
 
+#### Blend factor (verified 2026-11-06)
+
+The stage object's state block (`stage +0xc`) caches D3D texture stage states at `+0xbc + 4 · D3DTSS_*`
+(COLOROP `+0xc0`, COLORARG1 `+0xc4`, COLORARG2 `+0xc8`, ALPHAOP `+0xcc`, ALPHAARG1 `+0xd0`, RESULTARG
+`+0x12c`), with "set" flags at `+0x140 + index`. Read in the disassembly of `SetupFourStages` 0x005974f0
+(arguments: pass, map0..3, stage0..3, `RET 0x24`):
+
+- stage 1 binds map 3 (item 2) at 0x00597610; COLOROP SELECTARG1 / COLORARG1 CURRENT (0x00597624..0x005976a2),
+  **ALPHAOP SELECTARG1 (2) at 0x005976ba, ALPHAARG1 = 2 = D3DTA_TEXTURE at 0x00597705**: no D3DTA_ALPHAREPLICATE
+  (0x20) or D3DTA_COMPLEMENT (0x10) modifier, no luminance op, no texture factor or shader constant;
+- stage 2 binds map 1 (item 0) at 0x00597751; **COLOROP 0x10 = BLENDCURRENTALPHA at 0x00597765**, COLORARG1
+  TEXTURE (0x005977b9), COLORARG2 TEMP (0x00597804; stage 0 wrote item 1 there, RESULTARG 5 at 0x0059751d).
+
+So `a` is the sampled alpha of item 2 and nothing else; its RGB never enters the blend. `Draw` 0x00597210 first
+disables COLOROP/ALPHAOP on stages 0..7 and then picks `SetupFourStages` or `SetupTwoStages` from the pass's stage
+counts only (+0x98, +0x94 > 3): no code looks at the mask's format. A mask without an alpha channel would sample
+as alpha 1 (Direct3D's rule for such formats) and draw item 0 alone.
+
+Data (`Texture.uop`, `build/worldart/%08d.dds`): every default and bump record uses `01000003_noise_alpha.tga`
+(id 1000003) as item 2, except material 9, which uses id 1000004. Both are 256×256 DXT5 with one level. Their RGB
+is placeholder art (a red smiley face; red "SHARP NOISE" lettering), unrelated to the alpha (correlation of
+luma with alpha −0.24 and 0.00). Alpha of 1000003: 15..255, mean 142, 1.9 % of texels at 255. Alpha of
+1000004: mostly 0 (43.4 %) or 255 (37.1 %).
+
 ### UOBumpMapTerrainLayer (`Draw` 0x00597f00, verified)
 
 `GetMap(0..5)`; maps 0..3 go to the same `SetupFourStages` / `SetupTwoStages` (vftable slots +0x40/+0x44 are

@@ -1117,9 +1117,9 @@ alpha). Roles by class and position (`TerrainLayerClass::role`):
 | water | `Distortion` (du/dv) | `FallbackColour` (primary) | `MainColour` | `Unused` | `Unused` |
 
 - Default and bump colour = `item0 * a + item1 * (1 - a)`, with `a` the alpha of
-  item 2 (`SetupFourStages`). With fewer than four stages the client draws
-  item 0 alone. Item 3 of a default material is never fetched (48 records have
-  one).
+  item 2 (`SetupFourStages`); the RGB of item 2 is never read. With fewer than
+  four stages the client draws item 0 alone. Item 3 of a default material is
+  never fetched (48 records have one).
 - Water scrolls item 0 by tweaks 0/1 and perturbs item 2 with it; item 1 is the
   fallback colour. `UOWaterTerrainLayer::SetMaterialId` (0x004601e0) stores
   material × 1000, so water layers sort after the others.
