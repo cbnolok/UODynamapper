@@ -1,163 +1,83 @@
-# EC Pipeline Validation Strategy
+# EC pipeline validation
 
-**Phase 13 artifact.** Describes how the EC material pipeline and renderer are validated
-across the four complementary layers: parser tests, packer/sidecar tests, inspection
-output, and screenshot-family regression fixtures.  Future agents must use all four layers
-rather than relying on any one style alone.
+Validate changes at the parser, package, inspection and rendered-image levels
+that they affect. Original UOP records, executable consumers and original shader
+text establish client contracts; current engine behavior and third-party
+reconstructions cannot establish those contracts by themselves.
 
----
+## Parser and package checks
 
-## Why four layers
+Use targeted existing tests for the changed reader or packer. Preserve shader
+class, item position, source kind, sampler index, UV set, authored stretch,
+image windows, native extents and logical gameplay metadata through conversion.
+Roles come from shader and position, not image names. Tilemeta has no
+`speculative_role` or `implementation_readiness` field.
 
-| Validation style | What it catches | What it misses |
-|------------------|-----------------|----------------|
-| Parser unit tests | Classification bugs, path inference errors, field loss during parsing | Visual drift, runtime routing errors |
-| Packer/sidecar tests | Binary format regressions, round-trip data loss, liquid-base exclusion bugs | Visual correctness, shader behaviour |
-| Inspection output | Runtime routing decisions, role/readiness classification for live tiles | Systematic regressions across whole content families |
-| Screenshot-family fixtures | Visual drift for whole content categories | Root cause of structural problems |
+Useful focused checks include:
 
-Content-family validation matches the real visual goals better than only tile-by-tile
-micro-tests.  A unit test cannot detect that water looks wrong across an entire scene.
-A screenshot check cannot pinpoint which parser or packer step caused the wrong texture
-to be selected.  Both are required.
-
----
-
-## Layer 1 — Parser and metadata classification tests
-
-**Location:** `lib/uocf/tests/synthetic/tileart_ref_preservation.rs`, `lib/uocf/tests/synthetic/ec_material_axes.rs`
-
-**What is checked:**
-- Textures-style path (e.g. `build/terraintexture/`) produces `EcLogicalFamily::Textures`, not `Unknown` or `WorldArt`
-- WorldArt paths continue to produce `EcLogicalFamily::WorldArt` (regression guard)
-- Raw path and normalized path are both preserved and differ for mixed-case backslash inputs
-- `texture_stretch` survives from raw binary item to `TextureItem` field
-- `EcPhysicalPackage::infer_from_path` correctly classifies known package families
-
-**How to run:**
-```
+```sh
 cargo test -p uocf tileart_ref_preservation
-cargo test -p uocf ec_material_axes
-```
-
-**When to update:** When a new path keyword or package family is added to the inference logic.
-
----
-
-## Layer 2 — Packer and sidecar integrity tests
-
-**Location:** `lib/udd-conv/tests/integration/tilemeta.rs`, `lib/udd-conv/tests/integration/tex_art_ec.rs`, inline tests in `lib/udd-conv/src/tex_art_ec.rs`
-
-**What is checked:**
-- `TileMetaItemTextureRef` records with populated `stable_role`, `speculative_role`,
-  `physical_package`, `logical_family`, and `texture_stretch` survive a UDDP write/read
-  round-trip without data loss (`tilemeta_texture_refs_roundtrip_preserves_role_fields`)
-- `implementation_readiness()` is correctly derived from the loaded round-tripped roles
-- Liquid tiles with a `Base` or `SecondaryBase` stable role are NOT excluded from art
-  packing (`liquid_with_base_role_is_included`, `liquid_with_secondary_base_role_is_included`)
-- Liquid tiles with no base image, `EffectOnlyMetadata` role, or `UnknownSupport`-only role
-  are correctly excluded
-
-**How to run:**
-```
-cargo test -p udd-conv tilemeta
-cargo test -p udd-conv tex_art_ec
 cargo test -p udd-assets tilemeta
 ```
 
-**When to update:** When binary format fields change, when liquid inclusion rules change, or
-when a new sidecar entry is added.
+For other changes select the relevant test in `udd-conv` or `udd-container`;
+check affected consumers when an interface changes. A package layout change
+must update [UDDP formats](../UDDP_FORMATS.md), require a repack where needed,
+and verify reader rejection of unsupported versions. `udd-cli tool validate`
+checks actual package integrity; compilation alone cannot validate installed data.
 
----
+## Inspect the actual source and package set
 
-## Layer 3 — Inspection output
+The inspection example prints source records, decoded image windows, texture
+families/packages, stable roles, block/item positions, selection reasons,
+stretch, source kind, sampler index and UV set:
 
-**Location:** `tools/udd-conv-cli/examples/inspect_ec_tile_surface_signals.rs`
-
-**What is exposed per queried art ID:**
-- Raw tileart parser fields: `ec_logical_family`, `ec_physical_package`, `texture_stretch`,
-  `raw_path`, `normalized_path`
-- Processed classification: `tile_type`, `flags`, `ec_texture`, `cc_texture`
-- Liquid eligibility: `liquid_base_eligible`, `liquid_exclusion_reason`
-- Tilemeta chooser: `main_ec_texture_id` (legacy reason), `role_aware_reason`, `low_confidence`
-- Per-ref graph: one summary line per `TileMetaItemTextureRef` containing `id`, `family`,
-  `package`, `stable_role`, `speculative_role`, `readiness`, `block`, `item`, `aux`,
-  `primary`, `stretch`, raw unknown fields
-- Per-ref detail lines: `physical_package`, `logical_family`, `stable_role`,
-  `speculative_role`, `implementation_readiness`, raw/normalized path TODO markers
-- Package routing: `tex_art_ec` slot presence, `tex_land_ec` slot presence and routing outcome
-
-**How to run (requires packed data files):**
-```
-cargo run --example inspect_ec_tile_surface_signals -- \
-    --ecdir <path-to-ec-data> \
-    --tilemeta <tilemeta.uddp> \
-    --ec-art <tex_art_ec.uddp> \
-    --ec-land <tex_land_ec.uddp> \
-    4651 11070 1080
+```sh
+cargo run -p udd-conv-cli --example inspect_ec_tile_surface_signals -- \
+  --ecdir /path/to/enhanced-client \
+  --tilemeta /path/to/tilemeta.uddp \
+  --ec-art /path/to/tex_art_ec.uddp \
+  --ec-land /path/to/tex_land_ec.uddp \
+  4651 11070 1080
 ```
 
-**When to update:** When a new metadata axis is added to `TileMetaItemTextureRef`, or when
-a new routing decision point is added.  The inspection output must remain sufficient to
-explain any visual anomaly without re-reading the full codebase.
+Its `renderer_decision` and runtime-slot output use a separate historical
+surface-like resolver, not the renderer's current source selection. Do not
+accept that output as proof of the live draw route. Likewise, its raw record
+catalog indexes stored IDs, whereas the corrected art loader resolves named
+assets; use the [geometry audit](../../agent_notes/ec_sprite_descriptor_geometry.md)
+for owner identity and windows. Packed per-ref path lines remain placeholders;
+source paths printed from the original client are a separate output.
 
----
+Use one matching client/package manifest. Plain and FP Enhanced installations
+can differ at the same numeric IDs. Record source identity, package versions
+and hashes, effective cached settings, selected image source and native extents.
+See [auxiliary coverage](../../agent_notes/tex_aux_ec_coverage.md) and
+[terrain routing](../../agent_notes/ec_source_terrain_routing.md).
 
-## Layer 4 — Screenshot-family regression fixtures
+The old `ec_material_audit` CSVs and
+`dynamapper/assets/regression_fixtures/ec_content_families.toml` are historical
+census candidates based partly on path guesses. They are not current role,
+readiness or routing specifications, nor proof that a material ID is a Classic
+land ID. Reconfirm representative owners and coordinates from current sources.
 
-**Location:** `dynamapper/assets/regression_fixtures/ec_content_families.toml`
+## Rendered-image checks
 
-**What is defined:**
+Use [the renderer controls](../../../scripts/dev-helpers/renderer/README.md)
+with isolated settings and settled streaming. Check affected sources and all
+three styles for visual changes. Keep clocks, projection, source selection,
+camera and effective presets explicit. Shader composition and GPU validation
+are separate from a Rust build.
 
-| Family | Land IDs | Art IDs | Primary risk |
-|--------|----------|---------|--------------|
-| `marsh_and_swamp_water` | 5, 8, 70 | 4651 | Liquid routing, ripple UV |
-| `lava_fields` | 10, 49, 168–169, 193–194 | 10980–10987, 11070–11080 | LavaBubbleSupport extra-pass, NormalLike |
-| `snow_and_waterfall` | 8, 61–67 | 10092, 13550–13576 | WaterfallSupport ExtraPassOnly |
-| `marble_and_polished_floors` | — | 1080–1089 | BaseSafe routing, SurfaceLike |
-| `cave_floors_and_stone` | — | 1035–1054, 1169–1172 | SurfaceLike classification, routing |
-| `blood_stains` | — | 3616, 4651, 11702, 16503, 22306–22344 | Liquid base retention |
-| `roads_and_plazas` | — | 1169–1180 | Stretch/repetition, world-space UV |
-| `grass_to_sand_transitions` | TBD | TBD | AlphaMask blend path (Phase 10D) |
+Existing bounded controls include road `(2518,561)`, bridge `(2834,987)`, town
+`(1647,1682)`, coast `(1445,1790)`, lava `(5744,2928)`, swamp `(1872,2416)` and
+hued chairs `(6404,2600)` on map 0. Their dated acceptance reports record the
+package and capture limits. Use matched original-client references to assess
+parity; old engine captures alone establish regression behavior.
 
-**How to use:**
-1. Run `inspect_ec_tile_surface_signals` over the family's art_ids and confirm the
-   expected role/readiness classification for each representative.
-2. Render the map at a known coordinate that contains the family and take a screenshot.
-3. Compare the screenshot against the visual targets documented in the plan
-   (`plan_ec_textures.md` "Visual Target Families" section).
-4. File a regression note in `docs/agent_notes/` if a visual family drifts materially.
-
-**When to update:** When new representative IDs are confirmed by visual cross-check, when
-the terrain-blend audit produces grass-to-sand land IDs, or when a new content family
-becomes a test target.
-
----
-
-## What is still manually reviewed
-
-The following areas require human visual judgment and are not yet automated:
-
-- Correct world-space UV repetition scale for any specific material (requires screenshot
-  comparison against EC screenshots; see `EC_WORLD_SPACE_UV_EVIDENCE_MAP.md`)
-- Alpha-mask blend quality for grass-to-sand transitions (Phase 10D)
-- Liquid ripple animation timing and amplitude
-- Extra-pass effects (Phase 10G) — not yet implemented
-
----
-
-## Validation checklist for pipeline changes
-
-Before committing a change that touches parser, packer, shader, or metadata code:
-
-1. Run `cargo test -p uocf tileart_ref_preservation` — parser classification
-2. Run `cargo test -p udd-conv` — packer and sidecar integrity
-3. Run `cargo test -p udd-assets tilemeta` — chooser and readiness derivation
-4. Run `cargo check --workspace` — cross-crate interface integrity
-5. For renderer changes: run `inspect_ec_tile_surface_signals` on at least one
-   representative from each visually-affected family
-6. For shader changes: take screenshots for affected families and compare against
-   known-good references
-
-This checklist is not exhaustive — content-family visual checks are always the final
-arbiter of correctness for visual pipeline work.
+Follow [the UV evidence map](EC_WORLD_SPACE_UV_EVIDENCE_MAP.md) for repetition
+and material-stage contracts. Distinguish correct source selection, geometry,
+coverage, filtering, lighting and animation when diagnosing a difference. Keep
+historical repaired fixtures as controls and reproduce failures before reopening
+them. Remaining work belongs in [the canonical TODO](../../TODO.md), rather
+than a second phase checklist.

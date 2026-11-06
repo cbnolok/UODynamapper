@@ -1,5 +1,17 @@
 # EC Support Texture Inventory Summary
 
+Historical inventory from before the executable-derived role rework. Counts and
+image-decoding results describe that audit's source and decoder, not guaranteed
+current coverage. The sibling CSVs retain provisional filename-based role labels;
+none of those labels establish client shader roles or current package ownership.
+Use [current auxiliary coverage](../tex_aux_ec_coverage.md),
+[source routing](../ec_source_terrain_routing.md) and the
+[format contracts](../../dev_wiki/UDDP_FORMATS.md) for implementation.
+Regenerate with `udd-cli pack audit-ec-material-refs` and
+`udd-cli pack inventory-ec-support-textures` against an explicitly identified
+client when a fresh census is needed; do not overwrite the historical snapshot
+as if the source and semantics were unchanged.
+
 Source: `EC client`
 
 ## TerrainTexture.uop

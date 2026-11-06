@@ -1,6 +1,12 @@
 # UOClient-stefanomerotta: Rendering Paths & Techniques — Reproduction Guide
 
 > How this C# EC client renders terrain and statics, from CC tile ID to final pixel, and how to reproduce each technique in another engine.
+>
+> Third-party reconstruction reference, not the original EC client or its format
+> contract. The executable-derived renderer/UDDP rework supersedes using these
+> techniques as implementation requirements. Start with
+> [the EC evidence map](EC_WORLD_SPACE_UV_EVIDENCE_MAP.md) for original-client
+> contracts and current runtime behavior.
 
 ---
 

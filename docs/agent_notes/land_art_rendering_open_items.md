@@ -20,32 +20,26 @@ All user-verified in game and committed on `prereleases`:
 - F: shader dialog layout and categories (`8b32930`, `032557a`).
 - Art projected shadows made visible (`528237d`).
 
-## Still open (none blocking)
+## Superseded investigation directions
 
-- **Issue B, land height scale (`0.1`).** The geometric derivation found it plausible, not
-  wrong. This is a design decision between classic-faithful and exaggerated relief. The user
-  wanted to set direction from screenshots first.
-- **Grunge.** Source/profile/strength-specific native checks now show the
-  control working; see `effect_visibility_validation.md` for receivers,
-  dependencies and remaining original support-texture provenance. Explicit
-  non-KR art-normal activation was reviewed later on stone/timber fixtures; see
-  `art_fake_normal_validation.md` for the result and its limits.
-- **EC `lib/uocf/src/enhanced/tileart.rs` offsets.** The parser produced garbage offsets on
-  the real EC client. Optional, low priority: its motivating CC caveat was closed as
-  by-design (comment above `apply_slot_aliases` in `lib/udd-conv/src/tex_art_cc.rs`).
-- **CC billboard anchor.** Targets the near vertex `(1.0, 1.0)`. If walls look aligned
-  sideways but pushed slightly forward off their tile, try the centre `(0.5, 0.5)`.
-- **`try_load_cc_land_tile`** (`dynamapper/src/core/texture_cache/land/cache.rs`). Implemented
-  but deliberately not wired in; a future switch enables it. The assumptions its author must
-  revisit are documented at the function.
+The July height, offset and anchor hypotheses are not current open tasks:
 
-## Gotchas worth keeping
+- Raw Z now renders at `4/44` world Y per unit; see
+  [the executable-derived calibration and native checks](static_height_calibration.md).
+- EC windows, descriptor scales and offsets have decoded contracts; see
+  [source geometry](ec_sprite_descriptor_geometry.md). Do not treat the old
+  garbage-offset observation as the current parser's behavior.
+- Classic sprites retain their south-vertex anchor. Do not move all sprites to
+  the cell center to compensate for an individual artwork or depth mismatch.
+- Grunge and optional normals have receiver-specific reachability checks in
+  [effect visibility](effect_visibility_validation.md) and
+  [art normal validation](art_fake_normal_validation.md).
 
-- "Render Style" drives **land** shading only; art has a separate shading path.
-- Land normal maps only apply to EC atlas land (`texture_size == 2`). They are a structural
-  no-op on CC sources. The dialog can't grey them out because it has no global "source is
-  EC" signal (source is per tile), so EC-only controls carry a static label.
-- `just` 1.51 conditions accept a single comparison only: no `&&` / `||`, even in
-  parentheses. Use nested `if`s.
-- Ground conclusions in code, git history and real client data under
-  `/mnt/dati/_proj_local/_uo_clients/`. Visual acceptance comes from the user.
+Current work is tracked in [the canonical TODO](../TODO.md). The old session
+hypotheses remain available in git history, not as implementation instructions.
+
+## Remaining implementation caveat
+
+`try_load_cc_land_tile` in `dynamapper/src/core/texture_cache/land/cache.rs`
+is deliberately unwired. Revisit its documented assumptions before enabling it;
+this is separate from the EC geometry and height repairs.

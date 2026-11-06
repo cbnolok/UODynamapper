@@ -104,6 +104,15 @@ Only record repo-level facts. Do not write session context, task-specific notes,
 
 Files in `docs/agent_notes/` are lower-confidence than `docs/dev_wiki/`. A human reviewer may promote, correct, or remove entries at any time.
 
+For EC renderer/UDDP work, start with `docs/dev_wiki/UDDP_FORMATS.md`,
+`docs/dev_wiki/rendering/LAND_TEXTURES_AND_TRANSITIONS.md` and the executable
+research linked from `docs/dev_wiki/rendering/EC_WORLD_SPACE_UV_EVIDENCE_MAP.md`.
+The former root `plan_ec_textures.md` and the old lighting/land-shader overview
+were retired after the executable-derived rework; retrieve them from git only
+for history. Dated reviews and `docs/agent_notes/ec_material_audit/` inventories
+record their original package revisions and hypotheses, not current contracts.
+Do not restore filename-based roles or reopen completed work from those records.
+
 ---
 
 ## Further Reference
