@@ -9,11 +9,20 @@ mod ui;
 
 use app::UddConvApp;
 use models::{LogLevel, Tab};
+use ui::layout::section_heading;
 
 const APP_VIEWPORT_WIDTH: f32 = 1100.0;
 const APP_VIEWPORT_HEIGHT: f32 = 800.0;
 const APP_MIN_VIEWPORT_WIDTH: f32 = 900.0;
 const APP_MIN_VIEWPORT_HEIGHT: f32 = 700.0;
+/// The least height the log panel keeps below a long tab; below a shorter one it takes the rest of the window.
+const LOG_PANEL_MIN_HEIGHT: f32 = 200.0;
+/// The least height of a tab's content, however short the window.
+const MIN_CONTENT_HEIGHT: f32 = 160.0;
+/// The space above and below the separator between a tab's content and the log panel.
+const LOG_SEPARATOR_SPACE: f32 = 8.0;
+/// The height the separator line between a tab's content and the log panel takes.
+const LOG_SEPARATOR_LINE_SPACE: f32 = 6.0;
 
 fn main() -> eyre::Result<()> {
     color_eyre::install()?;
@@ -62,9 +71,16 @@ impl eframe::App for UddConvApp {
                 ui.separator();
                 ui.add_space(15.0);
 
-                let available_height = ui.available_height();
-                let log_panel_height = 200.0;
-                let content_height = (available_height - log_panel_height - 10.0).max(160.0);
+                // The tab takes the height its content needs, up to what leaves the log panel its least height; the log
+                // panel takes the rest, down to the bottom of the window.
+                let item_spacing = ui.spacing().item_spacing.y;
+                let separator_height = item_spacing
+                    + LOG_SEPARATOR_SPACE
+                    + LOG_SEPARATOR_LINE_SPACE
+                    + item_spacing
+                    + LOG_SEPARATOR_SPACE;
+                let content_height =
+                    (ui.available_height() - separator_height - LOG_PANEL_MIN_HEIGHT).max(MIN_CONTENT_HEIGHT);
 
                 ui.allocate_ui_with_layout(
                     egui::vec2(ui.available_width(), content_height),
@@ -81,16 +97,16 @@ impl eframe::App for UddConvApp {
                     },
                 );
 
-                ui.add_space(8.0);
-                ui.separator();
-                ui.add_space(8.0);
+                ui.add_space(LOG_SEPARATOR_SPACE);
+                ui.add(egui::Separator::default().spacing(LOG_SEPARATOR_LINE_SPACE));
+                ui.add_space(LOG_SEPARATOR_SPACE);
 
                 ui.allocate_ui_with_layout(
-                    egui::vec2(ui.available_width(), log_panel_height),
+                    egui::vec2(ui.available_width(), ui.available_height()),
                     egui::Layout::top_down(egui::Align::Min),
                     |ui| {
                         ui.horizontal(|ui| {
-                            ui.heading("Logs");
+                            ui.label(section_heading("Logs"));
                             if ui.button("Clear").clicked() {
                                 if let Ok(mut logs) = self.logs.lock() {
                                     logs.clear();
