@@ -767,6 +767,27 @@ the same day ([`bc7_alpha_plane_search.md`](bc7_alpha_plane_search.md)). The use
     - Land textures with alpha below 255: base 3 of 97 (262,089 texels), detail 3 of 78 (180,849), mask 2 of 2 (105,505),
       normal 1 of 5 (65,536); alpha errors reach 19 levels. At zoom 1 the Enhanced and KR-like presets show the Britain
       cobblestones with visibly less green moss, in block-sized patches; the per-texture colour score doesn't see it.
+  - **BC1 against BC7 with fix C, Enhanced single gumps** (measured 2026-11-06). The same 3403 non-empty gumps (of 3437), RDO
+    lambda 0, each gump its own zstd 19 frame (stored raw where zstd doesn't shrink it), VRAM padded to 4x4 blocks. Encode is
+    every gump on 20 threads, CPU decode is zstd plus block decode to RGBA on one thread, each the best of 5, with other agents'
+    builds keeping 1.3–7.5 CPUs busy and CPU boost off. Scores as above, linear light over grey 128 (sRGB blend in brackets
+    where it differs):
+
+    | Variant | Single gumps on disk | VRAM | Median | p10 | Worst | At 80 or more | 171 soft-alpha gumps: median, p10, worst | Encode | CPU decode |
+    |---|---|---|---|---|---|---|---|---|---|
+    | Lossless RGBA8888 | 74.77 MB | 334.0 MB | - | - | - | - | - | 7.9 s | 415 ms |
+    | a: all BC1, as built | 18.70 MB | 42.2 MB | 79.6 | 51.1 | 19.9 (-26.3) | 49 % | 78.3 (77.3), 39.6, 19.9 (-26.3) | 4.3 s | 211 ms |
+    | c: all BC7 fix C | 37.56 MB | 84.4 MB | 81.7 | 53.2 | 26.2 | 54 % | 88.0, 48.2, 29.9 | 1.5 s | 308 ms |
+
+    - BC1's stored bytes match the built `--bc1` package gump for gump (3437 of 3437); paperdoll and the rest bring it to 21.66 MB.
+    - BC1's ten worst: 1900 and 1905–1911 (322x294 soft shadows) at 19.9–20.5 (sRGB -26.3 to -25.3), 5595 (383x383, soft)
+      23.1, 2115 (56x22) 24.3. BC7 keeps the shadows at 94.5–97.2 and 5595 at 85.6.
+    - BC7's ten worst are small: 2007 (64x21) 26.2, 2115 (56x22) 26.7, 246 (63x23) 27.2, 30011, 30055, 30013, 39892, 39864 (soft),
+      24037 (soft; all 28x28) 27.5–30.7, 2126 (55x21) 30.9. BC7 scores below BC1 on 787 gumps; under 4096 px the medians tie
+      (74.8 against 74.6), at 4096 px or more BC7 leads 86.7 to 82.8.
+    - Encode CPU: BC1 71.6 s of block coding and 11.5 s of zstd, BC7 7.6 s and 20.8 s.
+    - On desktop GPUs BC7 costs nothing in features (the same BC texture support as BC1); it costs twice the disk (+18.9 MB) and
+      twice the VRAM (+42.2 MB).
 
 - **Lossless gumps and land pages use zstd 19** (2026-11-06). The atlas pages of `gumps_cc`, `gumps_ec`, `tex_land_cc` and
   `tex_land_ec` are RGBA8888 with plain zstd 19 (`LOSSLESS_PAGE_ZSTD_LEVEL` in `lib/udd-conv/src/page_compression.rs`) instead of
@@ -777,6 +798,27 @@ the same day ([`bc7_alpha_plane_search.md`](bc7_alpha_plane_search.md)). The use
   - decoding every page once, zstd on one thread against JPEG XL on 20 threads with the rayon runner: `gumps_cc` 33 ms against 581,
     `gumps_ec` 32 against 711, `tex_land_cc` 64 against 459, `tex_land_ec` 142 against 593, so 4–22× faster (a gump page about
     1.5 ms against 31 ms).
+  - **The packages still on JPEG XL, against zstd 19** (measured 2026-11-06, defaults unchanged). Every page of the installed
+    `tex_art_cc`, `tex_art_ec` and `tex_aux_ec`, decoded with the package readers and stored again at zstd 19 through the
+    builder, decodes to the same pixels (0 pages differ; `udd_assets` reads every image the same). Decode is every page once,
+    the best of 5 per page, summed; encode is the whole package through the builder, the best of 5. Unpinned at nice 10 with CPU
+    boost off, beside other agents' builds that kept 0.4–6.9 CPUs busy (3–6.5 through the `tex_art_cc` timings):
+
+    | Package | Pages | JPEG XL | zstd 19 | Change | Decode, all pages: JPEG XL 20 / 4 threads, zstd 1 | Page median (p95): JPEG XL 20 / 4 threads, zstd | Encode: zstd 19 / JPEG XL |
+    |---|---|---|---|---|---|---|---|
+    | `tex_art_cc` | 46 | 50.32 MB | 48.66 MB | -1.66 MB, -3.3 % | 4249 / 10150 / 380 ms | 92.4 (159.7) / 236.2 (349.9) / 7.7 (11.1) ms | 24.0 / 13.0 s |
+    | `tex_art_ec` | 9 | 69.20 MB | 58.19 MB | -11.01 MB, -15.9 % | 2595 / 7938 / 602 ms | 288.7 (369.0) / 934.1 (964.2) / 72.6 (81.2) ms | 20.8 / 9.5 s |
+    | `tex_aux_ec` | 651 | 5.19 MB | 4.61 MB | -0.57 MB, -11.1 % | 2365 / 2318 / 39 ms | 1.55 (14.9) / 1.51 (11.3) / 0.02 (0.35) ms | 0.8 / 11.1 s |
+
+    - The whole difference is in the pages: 49.98 against 48.31 MB, 68.85 against 57.84 and 5.17 against 4.59. zstd 19 is the
+      larger on 28 of 46 `tex_art_cc` pages (2.27 MB in all) and 175 of 651 `tex_aux_ec` pages (0.13 MB), on no `tex_art_ec` page.
+    - JPEG XL at effort 6 rebuilds the installed pages byte for byte (46, 9 and 651 of them); `tex_aux_ec` has a zstd 7 pass over
+      its JPEG XL (`JXZ1`).
+    - zstd 19 packs the art packages about twice as slowly, since a 16–32 MB page is one zstd job while JPEG XL spreads a page
+      over 20 threads; the small `tex_aux_ec` pages pack 14× faster.
+    - zstd 22 with a 2^27 long window, `tex_art_ec` only: 55.12 MB of pages (2.72 MB under zstd 19), decode 637 ms against 602,
+      encode 26–33 s of one thread per page (one run).
+    - Mobile animation packages: no current package exists, so none was measured.
 
 **Open:**
 
