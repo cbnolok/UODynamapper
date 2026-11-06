@@ -90,14 +90,14 @@ use udd_conv::{
     CompressionFlag, PagePixelFormat,
 };
 
-#[cfg(test)]
+/// The level of a bare `--zstd` where it adds a pass over another encoding (JPEG XL, BC7, raw texture pages).
 const DEFAULT_ZSTD_LEVEL: i32 = 7;
 const DEFAULT_ZSTD_LEVEL_VALUE: &str = "7";
 const CHUNK_ZSTD_HELP: &str = "Zstd level of the chunks (--zstd=LEVEL). Chunks are compressed with plain Zstd unless --stored; without a level (or without the flag) map chunks use level 19 and statics chunks level 7.";
 const CHUNK_STORED_HELP: &str = "Store the chunks uncompressed: the fastest runtime read, for a package about 6.6x (map) or 2.8x (statics) larger.";
 const DEFAULT_JXL_LEVEL: u8 = 6;
-const LAND_ZSTD_HELP: &str = "Zstd level of the land pages (--zstd=LEVEL), which without a format flag are lossless RGBA8888 with Zstd 19; with --raw, --jxl, --bc7 or --bc7-rdo, a file-level Zstd pass after that encoding. A bare --zstd is level 7.";
-const GUMP_ZSTD_HELP: &str = "Zstd level of the single gumps and, unless --jxl, of the atlas pages (--zstd=LEVEL). Without it single gumps use level 7 and atlas pages, lossless RGBA8888, level 19; with --jxl a Zstd pass over the JPEG XL pages. A bare --zstd is level 7.";
+const LAND_ZSTD_HELP: &str = "Zstd level of the land pages (--zstd=LEVEL), which without a format flag are lossless RGBA8888 with Zstd 19; with --raw, --jxl, --bc7 or --bc7-rdo, a file-level Zstd pass after that encoding. A bare --zstd keeps level 19.";
+const GUMP_ZSTD_HELP: &str = "Zstd level of the single gumps and, unless --jxl, of the atlas pages (--zstd=LEVEL). Without it single gumps use level 7 and atlas pages, lossless RGBA8888, level 19; with --jxl a Zstd pass over the JPEG XL pages. A bare --zstd keeps these levels, and gives the JPEG XL pages a level 7 pass.";
 const OUTPUT_PATH_HELP: &str = "Output paths (--output, --art-output, --land-output, ...) and their default \
 file names resolve against the current working directory; absolute paths are used as given. \
 Nothing is written into --ccdir or --ecdir unless an output path points there.";
@@ -325,6 +325,16 @@ fn resolve_texture_output_format_args(
     )
 }
 
+/// A `--zstd` that adds a pass over another encoding: a bare one is [`DEFAULT_ZSTD_LEVEL`].
+fn pass_zstd_level(zstd: Option<Option<i32>>) -> Option<i32> {
+    zstd.map(|level| level.unwrap_or(DEFAULT_ZSTD_LEVEL))
+}
+
+/// A land `--zstd`: a bare one keeps the land pages' own [`LOSSLESS_PAGE_ZSTD_LEVEL`], as for map chunks.
+fn land_zstd_level(zstd: Option<Option<i32>>) -> Option<i32> {
+    zstd.map(|level| level.unwrap_or(LOSSLESS_PAGE_ZSTD_LEVEL))
+}
+
 /// The land pages of `pack-texmaps` and `pack-ec-textures`: without a format flag, lossless RGBA8888 with Zstd at
 /// `--zstd=LEVEL` or [`LOSSLESS_PAGE_ZSTD_LEVEL`]; a format flag resolves as for any other texture.
 fn resolve_land_output_format(
@@ -344,15 +354,21 @@ fn resolve_land_output_format(
     })
 }
 
-/// The gump atlas pages: lossless RGBA8888 with Zstd at `--zstd=LEVEL` or [`LOSSLESS_PAGE_ZSTD_LEVEL`], or JPEG XL with
-/// `--jxl`, followed by a Zstd pass when `--zstd` is given as well.
-fn gump_atlas_compression(jxl: bool, jxl_level: Option<u8>, zstd: Option<i32>) -> CompressionFlag {
+/// The gump atlas pages: lossless RGBA8888 with Zstd at `--zstd=LEVEL` or [`LOSSLESS_PAGE_ZSTD_LEVEL`] (a bare `--zstd`
+/// too), or JPEG XL with `--jxl`, followed by a Zstd pass when `--zstd` is given as well.
+fn gump_atlas_compression(jxl: bool, jxl_level: Option<u8>, zstd: Option<Option<i32>>) -> CompressionFlag {
     if jxl {
-        zstd.map(|level| jxl_zstd_compression_levels(jxl_level, level))
+        pass_zstd_level(zstd)
+            .map(|level| jxl_zstd_compression_levels(jxl_level, level))
             .unwrap_or_else(|| jxl_compression_level(jxl_level))
     } else {
-        zstd_compression(zstd.unwrap_or(LOSSLESS_PAGE_ZSTD_LEVEL))
+        zstd_compression(zstd.flatten().unwrap_or(LOSSLESS_PAGE_ZSTD_LEVEL))
     }
+}
+
+/// The single gumps: Zstd at `--zstd=LEVEL`, or the package's default level (a bare `--zstd` too).
+fn single_gump_compression(zstd: Option<Option<i32>>) -> CompressionFlag {
+    zstd.flatten().map(zstd_compression).unwrap_or(CompressionFlag::ZstdNoDict)
 }
 
 fn resolve_mobile_anim_output_format(
@@ -904,8 +920,8 @@ enum Commands {
         jxl: bool,
         #[arg(long = "jxl-level", value_parser = clap::value_parser!(u8).range(1..=10), help = "JPEG XL encoder level, 1 fastest through 10 strongest. Default 6. Applies only with --jxl.")]
         jxl_level: Option<u8>,
-        #[arg(long, num_args = 0..=1, require_equals = true, default_missing_value = DEFAULT_ZSTD_LEVEL_VALUE, help = LAND_ZSTD_HELP)]
-        zstd: Option<i32>,
+        #[arg(long, num_args = 0..=1, require_equals = true, help = LAND_ZSTD_HELP)]
+        zstd: Option<Option<i32>>,
         #[arg(long, help = "Write BC7 atlas pages without BC7 RDO.")]
         bc7: bool,
         #[arg(long = "bc7-rdo", help = "Write BC7 atlas pages with BC7 RDO.")]
@@ -1035,8 +1051,8 @@ enum Commands {
         jxl: bool,
         #[arg(long = "jxl-level", value_parser = clap::value_parser!(u8).range(1..=10), help = "JPEG XL encoder level for shared EC output, 1 fastest through 10 strongest. Default 6.")]
         jxl_level: Option<u8>,
-        #[arg(long, num_args = 0..=1, require_equals = true, default_missing_value = DEFAULT_ZSTD_LEVEL_VALUE, help = "Apply a file-level Zstd compression pass to EC art and land after the selected output encoding; for land pages without a format flag, the level of their Zstd. Optionally pass --zstd=LEVEL.")]
-        zstd: Option<i32>,
+        #[arg(long, num_args = 0..=1, require_equals = true, help = "Apply a file-level Zstd compression pass to EC art and land after the selected output encoding; for land pages without a format flag, the level of their Zstd. Optionally pass --zstd=LEVEL; a bare --zstd is level 7 for art and keeps level 19 for land.")]
+        zstd: Option<Option<i32>>,
         #[arg(long, help = "Write EC BC7 atlas pages without BC7 RDO.")]
         bc7: bool,
         #[arg(long = "bc7-rdo", help = "Write EC BC7 atlas pages with BC7 RDO.")]
@@ -1059,8 +1075,8 @@ enum Commands {
         land_jxl: bool,
         #[arg(long = "land-jxl-level", value_parser = clap::value_parser!(u8).range(1..=10), help = "JPEG XL encoder level for EC land output. Default 6.")]
         land_jxl_level: Option<u8>,
-        #[arg(long, num_args = 0..=1, require_equals = true, default_missing_value = DEFAULT_ZSTD_LEVEL_VALUE, help = "Apply a file-level Zstd compression pass to EC land after the selected land output encoding; without a land format flag, the level of the land pages' Zstd (default 19). Optionally pass --land-zstd=LEVEL.")]
-        land_zstd: Option<i32>,
+        #[arg(long, num_args = 0..=1, require_equals = true, help = "Apply a file-level Zstd compression pass to EC land after the selected land output encoding; without a land format flag, the level of the land pages' Zstd (default 19). Optionally pass --land-zstd=LEVEL; a bare --land-zstd keeps level 19.")]
+        land_zstd: Option<Option<i32>>,
         #[arg(long, help = "Write EC land atlas pages as BC7 without BC7 RDO, overriding the shared format flags.")]
         land_bc7: bool,
         #[arg(long = "land-bc7-rdo", help = "Write EC land atlas pages as BC7 with BC7 RDO, overriding the shared format flags.")]
@@ -1423,8 +1439,8 @@ enum Commands {
         jxl: bool,
         #[arg(long = "jxl-level", value_parser = clap::value_parser!(u8).range(1..=10), help = "JPEG XL encoder level for gump atlas pages. Default 6.")]
         jxl_level: Option<u8>,
-        #[arg(long, num_args = 0..=1, require_equals = true, default_missing_value = DEFAULT_ZSTD_LEVEL_VALUE, help = GUMP_ZSTD_HELP)]
-        zstd: Option<i32>,
+        #[arg(long, num_args = 0..=1, require_equals = true, help = GUMP_ZSTD_HELP)]
+        zstd: Option<Option<i32>>,
         #[arg(long, default_value_t = false)]
         uop: bool,
         #[arg(long = "paperdoll-upscale-pass", value_enum, help = "Add a paperdoll equipment gump upscale pass. Repeat to chain filters.")]
@@ -1448,8 +1464,8 @@ enum Commands {
         jxl: bool,
         #[arg(long = "jxl-level", value_parser = clap::value_parser!(u8).range(1..=10), help = "JPEG XL encoder level for gump atlas pages. Default 6.")]
         jxl_level: Option<u8>,
-        #[arg(long, num_args = 0..=1, require_equals = true, default_missing_value = DEFAULT_ZSTD_LEVEL_VALUE, help = GUMP_ZSTD_HELP)]
-        zstd: Option<i32>,
+        #[arg(long, num_args = 0..=1, require_equals = true, help = GUMP_ZSTD_HELP)]
+        zstd: Option<Option<i32>>,
         #[arg(long = "paperdoll-upscale-pass", value_enum, help = "Add a paperdoll equipment gump upscale pass. Repeat to chain filters.")]
         paperdoll_upscale_passes: Vec<CliUpscaleFilter>,
         #[arg(long = "single-upscale-pass", value_enum, help = "Add a non-paperdoll gump upscale pass. Repeat to chain filters.")]
@@ -1564,7 +1580,7 @@ where
             let paths = collect_source_dirs(&source_dir_args)?;
             let out_file = resolve_output_path(&output);
             let output_format = resolve_land_output_format(
-                TextureOutputFormatArgs { raw, jxl, jxl_level, zstd, bc7, bc7_rdo },
+                TextureOutputFormatArgs { raw, jxl, jxl_level, zstd: land_zstd_level(zstd), bc7, bc7_rdo },
                 bc7_rdo_lambda,
                 bc7_rdo_lookback_blocks,
             )?;
@@ -1847,7 +1863,7 @@ where
                 raw,
                 jxl,
                 jxl_level,
-                zstd,
+                zstd: pass_zstd_level(zstd),
                 bc7,
                 bc7_rdo,
             };
@@ -1868,7 +1884,7 @@ where
                     raw: land_raw || shared_output_format.raw,
                     jxl: land_jxl || shared_output_format.jxl,
                     jxl_level: land_jxl_level.or(shared_output_format.jxl_level),
-                    zstd: land_zstd.or(shared_output_format.zstd),
+                    zstd: land_zstd_level(land_zstd.or(zstd)),
                     bc7: land_bc7 || shared_output_format.bc7,
                     bc7_rdo: land_bc7_rdo || shared_output_format.bc7_rdo,
                 },
@@ -2489,7 +2505,7 @@ where
                 &classic_patches.into(),
                 &CcGumpsOptions {
                     // Single gumps carry a size header, so they can't go through the image codec.
-                    compression: zstd.map(zstd_compression).unwrap_or(CompressionFlag::ZstdNoDict),
+                    compression: single_gump_compression(zstd),
                     atlas_compression: gump_atlas_compression(jxl, jxl_level, zstd),
                     paperdoll_upscale_passes: convert_upscale_passes(paperdoll_upscale_passes),
                     single_upscale_passes: convert_upscale_passes(single_upscale_passes),
@@ -2530,7 +2546,7 @@ where
                 &EcGumpsOptions {
                     max_id,
                     // Single gumps carry a size header, so they can't go through the image codec.
-                    compression: zstd.map(zstd_compression).unwrap_or(CompressionFlag::ZstdNoDict),
+                    compression: single_gump_compression(zstd),
                     atlas_compression: gump_atlas_compression(jxl, jxl_level, zstd),
                     paperdoll_upscale_passes: convert_upscale_passes(paperdoll_upscale_passes),
                     single_upscale_passes: convert_upscale_passes(single_upscale_passes),
@@ -2917,7 +2933,7 @@ mod tests {
                 ..
             } => {
                 let output_format = resolve_land_output_format(
-                    TextureOutputFormatArgs { raw, jxl, jxl_level, zstd, bc7, bc7_rdo },
+                    TextureOutputFormatArgs { raw, jxl, jxl_level, zstd: land_zstd_level(zstd), bc7, bc7_rdo },
                     bc7_rdo_lambda,
                     bc7_rdo_lookback_blocks,
                 )
@@ -2964,12 +2980,51 @@ mod tests {
             CompressionFlag::ZstdNoDictLevel(LOSSLESS_PAGE_ZSTD_LEVEL)
         );
         assert_eq!(
-            gump_atlas_compression(false, None, Some(EXPLICIT_ZSTD_LEVEL)),
+            gump_atlas_compression(false, None, Some(Some(EXPLICIT_ZSTD_LEVEL))),
             CompressionFlag::ZstdNoDictLevel(EXPLICIT_ZSTD_LEVEL)
         );
         assert_eq!(
             gump_atlas_compression(true, None, None),
             CompressionFlag::JpegXlLevel(DEFAULT_JXL_LEVEL)
+        );
+    }
+
+    /// A bare `--zstd` keeps each package's own levels, as for map chunks: gump atlas pages and land pages 19, single
+    /// gumps the package default; only a pass over JPEG XL pages takes the plain default.
+    #[test]
+    fn bare_zstd_keeps_the_gump_and_land_page_levels() {
+        const EXPLICIT_ZSTD_LEVEL: i32 = 5;
+        let gump_zstd = |args: &[&str]| match Cli::try_parse_from(args).expect("parse gump args").command {
+            Commands::PackGumps { zstd, .. } | Commands::PackEcGumps { zstd, .. } => zstd,
+            _ => panic!("unexpected command parsed"),
+        };
+        for command in ["pack-gumps", "pack-ec-gumps"] {
+            let zstd = gump_zstd(&["uddpack", command, "--zstd"]);
+            assert_eq!(zstd, Some(None));
+            assert_eq!(
+                gump_atlas_compression(false, None, zstd),
+                CompressionFlag::ZstdNoDictLevel(LOSSLESS_PAGE_ZSTD_LEVEL)
+            );
+            assert_eq!(single_gump_compression(zstd), single_gump_compression(None));
+            assert_eq!(
+                gump_atlas_compression(true, None, zstd),
+                CompressionFlag::JpegXlZstdLevels { jxl_level: DEFAULT_JXL_LEVEL, zstd_level: DEFAULT_ZSTD_LEVEL }
+            );
+        }
+
+        let land_zstd = |args: &[&str]| -> Option<i32> {
+            match Cli::try_parse_from(args).expect("parse land args").command {
+                Commands::PackTexmaps { zstd, .. } => land_zstd_level(zstd),
+                Commands::PackEcTextures { zstd, land_zstd, .. } => land_zstd_level(land_zstd.or(zstd)),
+                _ => panic!("unexpected command parsed"),
+            }
+        };
+        assert_eq!(land_zstd(&["uddpack", "pack-texmaps", "--zstd"]), Some(LOSSLESS_PAGE_ZSTD_LEVEL));
+        assert_eq!(land_zstd(&["uddpack", "pack-ec-textures", "--zstd"]), Some(LOSSLESS_PAGE_ZSTD_LEVEL));
+        assert_eq!(land_zstd(&["uddpack", "pack-ec-textures", "--land-zstd"]), Some(LOSSLESS_PAGE_ZSTD_LEVEL));
+        assert_eq!(
+            land_zstd(&["uddpack", "pack-ec-textures", "--zstd", "--land-zstd=5"]),
+            Some(EXPLICIT_ZSTD_LEVEL)
         );
     }
 
