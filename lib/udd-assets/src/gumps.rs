@@ -9,6 +9,10 @@
 //! space take BC1 too, so a lossy `gumps_ec` mixes BC1, BC7 and its RGBA8888 paperdoll body gumps. BC7 blocks hold
 //! premultiplied colour, the rule for block formats; the reader gives every gump back in straight colour, by its own
 //! format byte.
+//!
+//! A `gumps_ec` packed with `--share-with` leaves out the single gumps that `gumps_cc` draws the same (the user,
+//! 2026-11-06) and lists each in the shared Classic gump table, with the [`gump_image_hash`] of the `gumps_cc` image it
+//! was checked against. A listed id reads as absent here: the caller draws it from the Classic source.
 
 use byteorder::{LittleEndian, ReadBytesExt, WriteBytesExt};
 use color_eyre::eyre::{self, Context, ContextCompat};
@@ -32,6 +36,95 @@ const GUMP_ATLAS_SLOT_MANIFEST_MAGIC: [u8; 4] = *b"GASL";
 pub const GUMP_ATLAS_METADATA_VERSION: u32 = 3;
 /// `u32 width, u32 height, u8 pixel format` before a single gump's pixels.
 pub const SINGLE_GUMP_HEADER_BYTES: usize = 2 * size_of::<u32>() + size_of::<u8>();
+
+/// The shared Classic gump table: the single gumps a `gumps_ec` leaves out because `gumps_cc` draws them the same. Only a
+/// `gumps_ec` packed with `--share-with` carries it.
+pub const SHARED_CLASSIC_GUMP_TABLE_ID: u32 = 0xE000_0002;
+const SHARED_CLASSIC_GUMP_TABLE_MAGIC: [u8; 4] = *b"GSHC";
+/// 1: `u32 count`, then per gump `u32 gump id, u64 image hash`, sorted by id with no repeats.
+pub const SHARED_CLASSIC_GUMP_TABLE_VERSION: u32 = 1;
+/// `magic, u32 version, u32 count` before the records.
+const SHARED_CLASSIC_GUMP_TABLE_HEADER_BYTES: usize = SHARED_CLASSIC_GUMP_TABLE_MAGIC.len() + 2 * size_of::<u32>();
+/// `u32 gump id, u64 image hash`.
+const SHARED_CLASSIC_GUMP_RECORD_BYTES: usize = size_of::<u32>() + size_of::<u64>();
+/// The xxh64 seed of [`gump_image_hash`].
+pub const GUMP_IMAGE_HASH_SEED: u64 = 0;
+
+/// The hash a `gumps_ec` records for a gump it shares with `gumps_cc`: xxh64, seed [`GUMP_IMAGE_HASH_SEED`], over
+/// `u32 physical width, u32 physical height, u16 upscale factor` (little endian) and then the exact straight RGBA8888
+/// bytes, colour under clear texels included.
+pub fn gump_image_hash(image: &GumpImage) -> u64 {
+    let mut hasher = xxhash_rust::xxh64::Xxh64::new(GUMP_IMAGE_HASH_SEED);
+    hasher.update(&image.physical_width.to_le_bytes());
+    hasher.update(&image.physical_height.to_le_bytes());
+    hasher.update(&image.upscale_factor.to_le_bytes());
+    hasher.update(&image.rgba);
+    hasher.digest()
+}
+
+/// A gump a `gumps_ec` leaves out because `gumps_cc` draws it the same.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct SharedClassicGump {
+    pub gump_id: u32,
+    /// The [`gump_image_hash`] of the `gumps_cc` image the packer checked it against.
+    pub image_hash: u64,
+}
+
+/// The shared Classic gump table's payload; `gumps` must be sorted by id, with no repeats.
+pub fn encode_shared_classic_gump_table(gumps: &[SharedClassicGump]) -> eyre::Result<Vec<u8>> {
+    ensure_shared_gump_ids_ascend(gumps)?;
+    let count = u32::try_from(gumps.len()).context("shared Classic gump table: too many gumps")?;
+    let mut bytes =
+        Vec::with_capacity(SHARED_CLASSIC_GUMP_TABLE_HEADER_BYTES + gumps.len() * SHARED_CLASSIC_GUMP_RECORD_BYTES);
+    bytes.extend_from_slice(&SHARED_CLASSIC_GUMP_TABLE_MAGIC);
+    bytes.write_u32::<LittleEndian>(SHARED_CLASSIC_GUMP_TABLE_VERSION)?;
+    bytes.write_u32::<LittleEndian>(count)?;
+    for gump in gumps {
+        bytes.write_u32::<LittleEndian>(gump.gump_id)?;
+        bytes.write_u64::<LittleEndian>(gump.image_hash)?;
+    }
+    Ok(bytes)
+}
+
+fn ensure_shared_gump_ids_ascend(gumps: &[SharedClassicGump]) -> eyre::Result<()> {
+    if let Some(pair) = gumps.windows(2).find(|pair| pair[0].gump_id >= pair[1].gump_id) {
+        eyre::bail!(
+            "shared Classic gump table: gump {} follows gump {}; the ids must ascend with no repeats",
+            pair[1].gump_id,
+            pair[0].gump_id
+        );
+    }
+    Ok(())
+}
+
+fn parse_shared_classic_gump_table(bytes: &[u8]) -> eyre::Result<Vec<SharedClassicGump>> {
+    let mut cursor = Cursor::new(bytes);
+    let mut magic = [0u8; 4];
+    cursor.read_exact(&mut magic).context("shared Classic gump table: shorter than its header")?;
+    if magic != SHARED_CLASSIC_GUMP_TABLE_MAGIC {
+        eyre::bail!("invalid shared Classic gump table magic");
+    }
+    let version = cursor.read_u32::<LittleEndian>()?;
+    ensure_manifest_version("shared Classic gump table", version, SHARED_CLASSIC_GUMP_TABLE_VERSION)?;
+    let count = cursor.read_u32::<LittleEndian>()? as usize;
+    let expected_len = count
+        .checked_mul(SHARED_CLASSIC_GUMP_RECORD_BYTES)
+        .and_then(|records| records.checked_add(SHARED_CLASSIC_GUMP_TABLE_HEADER_BYTES));
+    eyre::ensure!(
+        expected_len == Some(bytes.len()),
+        "shared Classic gump table: the entry's {} bytes don't match the {count} gumps it declares",
+        bytes.len()
+    );
+    let mut gumps = Vec::with_capacity(count);
+    for _ in 0..count {
+        gumps.push(SharedClassicGump {
+            gump_id: cursor.read_u32::<LittleEndian>()?,
+            image_hash: cursor.read_u64::<LittleEndian>()?,
+        });
+    }
+    ensure_shared_gump_ids_ascend(&gumps)?;
+    Ok(gumps)
+}
 
 /// How a single gump's pixels are stored.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -168,6 +261,8 @@ pub struct GumpsPackage {
     atlas_pages: Vec<GumpAtlasPageRecord>,
     atlas_slots: Vec<GumpAtlasSlotRecord>,
     atlas_page_cache: Mutex<HashMap<u32, Arc<[u8]>>>,
+    /// The gumps left out for `gumps_cc` to draw, sorted by id; empty unless packed with `--share-with`.
+    shared_classic_gumps: Vec<SharedClassicGump>,
 }
 
 impl GumpsPackage {
@@ -215,7 +310,16 @@ impl GumpsPackage {
                 ),
             };
 
-        Ok(Self {
+        let shared_classic_gumps = match package.find_by_sparse_id(SHARED_CLASSIC_GUMP_TABLE_ID) {
+            Some(_) => parse_shared_classic_gump_table(
+                &package
+                    .read_file_by_sparse_id_cow(SHARED_CLASSIC_GUMP_TABLE_ID)
+                    .context("gumps package shared Classic gump table could not be read")?,
+            )?,
+            None => Vec::new(),
+        };
+
+        let gumps = Self {
             package,
             atlas_width,
             atlas_height,
@@ -223,7 +327,45 @@ impl GumpsPackage {
             atlas_pages,
             atlas_slots,
             atlas_page_cache: Mutex::new(HashMap::new()),
-        })
+            shared_classic_gumps,
+        };
+        gumps.ensure_shared_gumps_are_left_out()?;
+        Ok(gumps)
+    }
+
+    /// Refuses a package that both stores a gump and lists it as shared with `gumps_cc`: the two would disagree on which
+    /// image the Enhanced presets draw.
+    fn ensure_shared_gumps_are_left_out(&self) -> eyre::Result<()> {
+        let stored = self.shared_classic_gumps.iter().find(|shared| {
+            self.package.find_by_sparse_id(shared.gump_id).is_some() || self.atlas_slot(shared.gump_id).is_some()
+        });
+        if let Some(shared) = stored {
+            eyre::bail!(
+                "gumps package stores gump {} and also lists it as shared with gumps_cc, so it is inconsistent; \
+                 repack with the current udd-cli",
+                shared.gump_id
+            );
+        }
+        Ok(())
+    }
+
+    /// The [`gump_image_hash`] of the `gumps_cc` image a gump left out for `gumps_cc` was packed against, or `None` when
+    /// the package doesn't share `gump_id`.
+    pub fn shared_classic_gump_hash(&self, gump_id: u32) -> Option<u64> {
+        self.shared_classic_gumps
+            .binary_search_by_key(&gump_id, |shared| shared.gump_id)
+            .ok()
+            .map(|index| self.shared_classic_gumps[index].image_hash)
+    }
+
+    /// How many gumps the package leaves out for `gumps_cc` to draw.
+    pub fn shared_classic_gump_count(&self) -> usize {
+        self.shared_classic_gumps.len()
+    }
+
+    /// The gumps left out for `gumps_cc` to draw, by ascending id.
+    pub fn shared_classic_gumps(&self) -> impl ExactSizeIterator<Item = SharedClassicGump> + '_ {
+        self.shared_classic_gumps.iter().copied()
     }
 
     pub fn package(&self) -> &UddpReader {
@@ -299,6 +441,20 @@ impl GumpsPackage {
             .get(SINGLE_GUMP_HEADER_BYTES - size_of::<u8>())
             .context("single gump payload is shorter than its header")?;
         Ok(Some(single_gump_pixel_format(format_byte)?))
+    }
+
+    /// A single gump's pixel format and image, or `None` for a gump on an atlas page or none.
+    pub fn read_single_gump_image(&self, gump_id: u32) -> eyre::Result<Option<(GumpPixelFormat, GumpImage)>> {
+        match self.package.find_by_sparse_id(gump_id) {
+            Some(file) if file.data_type == DataType::Gump as u8 => {
+                let payload = self.package.read_file_by_sparse_id_cow(gump_id)?;
+                let format_byte = *payload
+                    .get(SINGLE_GUMP_HEADER_BYTES - size_of::<u8>())
+                    .context("single gump payload is shorter than its header")?;
+                Ok(Some((single_gump_pixel_format(format_byte)?, decode_single_gump_payload(&payload)?)))
+            }
+            _ => Ok(None),
+        }
     }
 
     pub fn read_gump_rgba(&self, gump_id: u32) -> eyre::Result<(u32, u32, Vec<u8>)> {
@@ -387,7 +543,8 @@ fn single_gump_pixel_format(format_byte: u8) -> eyre::Result<GumpPixelFormat> {
         .ok_or_else(|| eyre::eyre!("invalid single gump pixel format {format_byte}"))
 }
 
-fn decode_single_gump_payload(payload: &[u8]) -> eyre::Result<GumpImage> {
+/// A single gump's payload ([`encode_single_gump_payload`]) decoded to straight RGBA8888.
+pub fn decode_single_gump_payload(payload: &[u8]) -> eyre::Result<GumpImage> {
     let mut cursor = Cursor::new(payload);
     let width = cursor.read_u32::<LittleEndian>()?;
     let height = cursor.read_u32::<LittleEndian>()?;
@@ -703,6 +860,148 @@ mod tests {
         assert_eq!(package.cached_atlas_page_count(), 1);
     }
 
+    /// A `gumps_ec` that shares gumps: the listed ids read as absent, and each keeps the hash it was packed with.
+    #[test]
+    fn shared_classic_gumps_read_as_absent_with_their_hashes() {
+        const STORED_GUMP_ID: u32 = 42;
+        const SHARED: [SharedClassicGump; 2] = [
+            SharedClassicGump { gump_id: 7, image_hash: 0x0123_4567_89AB_CDEF },
+            SharedClassicGump { gump_id: 2000, image_hash: u64::MAX },
+        ];
+        const UNLISTED_GUMP_ID: u32 = 8;
+        let package = GumpsPackage::from_uddp_package(build_package_with_shared_table(
+            &[(STORED_GUMP_ID, single_payload(2, 1, &[1, 2, 3, 4, 5, 6, 7, 8]))],
+            &encode_shared_classic_gump_table(&SHARED).unwrap(),
+        ))
+        .unwrap();
+
+        assert_eq!(package.shared_classic_gump_count(), SHARED.len());
+        assert_eq!(package.shared_classic_gumps().collect::<Vec<_>>(), SHARED);
+        for shared in SHARED {
+            assert_eq!(package.shared_classic_gump_hash(shared.gump_id), Some(shared.image_hash));
+            assert!(package.read_gump_image(shared.gump_id).is_err(), "gump {}", shared.gump_id);
+            assert_eq!(package.read_single_gump_image(shared.gump_id).unwrap(), None);
+        }
+        assert_eq!(package.shared_classic_gump_hash(UNLISTED_GUMP_ID), None);
+        assert_eq!(package.shared_classic_gump_hash(STORED_GUMP_ID), None);
+        assert_eq!(package.available_gump_ids(), vec![STORED_GUMP_ID]);
+
+        let standalone = GumpsPackage::from_uddp_package(build_test_package(false)).unwrap();
+        assert_eq!(standalone.shared_classic_gump_count(), 0);
+        assert_eq!(standalone.shared_classic_gump_hash(STORED_GUMP_ID), None);
+    }
+
+    /// A package that stores a gump and also lists it as shared is refused, whether the gump is single or on an atlas
+    /// page.
+    #[test]
+    fn a_gump_both_stored_and_shared_is_refused() {
+        const SINGLE_GUMP_ID: u32 = 42;
+        const ATLAS_GUMP_ID: u32 = 50_001;
+        const HASH: u64 = 1;
+        for gump_id in [SINGLE_GUMP_ID, ATLAS_GUMP_ID] {
+            let table = encode_shared_classic_gump_table(&[SharedClassicGump { gump_id, image_hash: HASH }]).unwrap();
+            let mut builder = atlas_test_package_builder();
+            add_metadata(&mut builder, SHARED_CLASSIC_GUMP_TABLE_ID, &table);
+            let package = UddpReader::open(builder.build().unwrap()).unwrap();
+
+            let error = GumpsPackage::from_uddp_package(package).err().expect("an inconsistent package is refused");
+            let message = format!("{error:#}");
+            assert!(message.contains(&format!("stores gump {gump_id} and also lists it as shared")), "{message}");
+        }
+    }
+
+    /// A table out of order, repeating an id, at another version or with a length that doesn't match its count is
+    /// refused when the package opens.
+    #[test]
+    fn a_malformed_shared_table_is_refused() {
+        const OTHER_VERSION: u32 = SHARED_CLASSIC_GUMP_TABLE_VERSION + 1;
+        const VERSION_OFFSET: usize = SHARED_CLASSIC_GUMP_TABLE_MAGIC.len();
+        let gump = |gump_id| SharedClassicGump { gump_id, image_hash: u64::from(gump_id) };
+        let descending = [gump(9), gump(8)];
+        let repeated = [gump(8), gump(8)];
+        for gumps in [&descending, &repeated] {
+            let error = encode_shared_classic_gump_table(gumps).unwrap_err();
+            assert!(error.to_string().contains("must ascend"), "{error}");
+        }
+
+        let valid = encode_shared_classic_gump_table(&[gump(8), gump(9)]).unwrap();
+        let mut reversed = valid.clone();
+        let records = SHARED_CLASSIC_GUMP_TABLE_HEADER_BYTES;
+        reversed[records..].rotate_left(SHARED_CLASSIC_GUMP_RECORD_BYTES);
+        let mut other_version = valid.clone();
+        other_version[VERSION_OFFSET..VERSION_OFFSET + size_of::<u32>()].copy_from_slice(&OTHER_VERSION.to_le_bytes());
+        let truncated = valid[..valid.len() - 1].to_vec();
+        for (table, expected) in [
+            (reversed, "must ascend"),
+            (other_version, "repack with the current udd-cli"),
+            (truncated, "don't match the 2 gumps it declares"),
+        ] {
+            let error = GumpsPackage::from_uddp_package(build_package_with_shared_table(&[], &table))
+                .err()
+                .expect("a malformed table is refused");
+            assert!(format!("{error:#}").contains(expected), "{error:#}");
+        }
+    }
+
+    /// The hash covers the size, the upscale factor and every RGBA byte, colour under a clear texel too, as xxh64 seed 0
+    /// over their little-endian bytes.
+    #[test]
+    fn gump_image_hash_covers_size_factor_and_every_byte() {
+        const CLEAR_RED: [u8; 4] = [255, 0, 0, 0];
+        const CLEAR_GREEN: [u8; 4] = [0, 255, 0, 0];
+        let image = GumpImage {
+            physical_width: 2,
+            physical_height: 1,
+            logical_width: 2,
+            logical_height: 1,
+            upscale_factor: 1,
+            rgba: [CLEAR_RED, [1, 2, 3, 255]].concat(),
+        };
+        let mut bytes = Vec::new();
+        bytes.extend_from_slice(&image.physical_width.to_le_bytes());
+        bytes.extend_from_slice(&image.physical_height.to_le_bytes());
+        bytes.extend_from_slice(&image.upscale_factor.to_le_bytes());
+        bytes.extend_from_slice(&image.rgba);
+        assert_eq!(gump_image_hash(&image), xxhash_rust::xxh64::xxh64(&bytes, GUMP_IMAGE_HASH_SEED));
+
+        let transposed = GumpImage { physical_width: 1, physical_height: 2, ..image.clone() };
+        let upscaled = GumpImage { upscale_factor: 2, ..image.clone() };
+        let mut recoloured_clear = image.clone();
+        recoloured_clear.rgba[..CLEAR_GREEN.len()].copy_from_slice(&CLEAR_GREEN);
+        for other in [transposed, upscaled, recoloured_clear] {
+            assert_ne!(gump_image_hash(&other), gump_image_hash(&image), "{other:?}");
+        }
+    }
+
+    fn add_metadata(builder: &mut UddpBuilder, id: u32, data: &[u8]) {
+        builder
+            .add_file(AddFileRequest {
+                data_type: DataType::Metadata as u8,
+                compression: CompressionFlag::None,
+                width: 0,
+                height: 0,
+                virtual_path: None,
+                path_hash64: None,
+                id: Some(id),
+                data,
+            })
+            .unwrap();
+    }
+
+    fn build_package_with_shared_table(singles: &[(u32, Vec<u8>)], table: &[u8]) -> UddpReader {
+        let mut builder = UddpBuilder::new(LookupMode::SparseId);
+        for (gump_id, payload) in singles {
+            add_single(&mut builder, *gump_id, payload);
+        }
+        add_manifests(
+            &mut builder,
+            &common_manifest_header(&GUMP_ATLAS_PAGE_MANIFEST_MAGIC, 3, 2, 1, 0),
+            &common_manifest_header(&GUMP_ATLAS_SLOT_MANIFEST_MAGIC, 3, 2, 1, 0),
+        );
+        add_metadata(&mut builder, SHARED_CLASSIC_GUMP_TABLE_ID, table);
+        UddpReader::open(builder.build().unwrap()).unwrap()
+    }
+
     fn add_single(builder: &mut UddpBuilder, gump_id: u32, payload: &[u8]) {
         builder
             .add_file(AddFileRequest {
@@ -759,6 +1058,11 @@ mod tests {
         if !include_atlas {
             return build_package_with_singles(&[(42, single_payload(2, 1, &[1, 2, 3, 4, 5, 6, 7, 8]))]);
         }
+        UddpReader::open(atlas_test_package_builder().build().unwrap()).unwrap()
+    }
+
+    /// Single gump 42 and paperdoll gump 50001 on an atlas page.
+    fn atlas_test_package_builder() -> UddpBuilder {
         let mut builder = UddpBuilder::new(LookupMode::SparseId);
         add_single(&mut builder, 42, &single_payload(2, 1, &[1, 2, 3, 4, 5, 6, 7, 8]));
 
@@ -787,7 +1091,7 @@ mod tests {
                 .unwrap();
         }
 
-        UddpReader::open(builder.build().unwrap()).unwrap()
+        builder
     }
 
     fn single_payload(width: u32, height: u32, rgba: &[u8]) -> Vec<u8> {

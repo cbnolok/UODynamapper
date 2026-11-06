@@ -6,6 +6,7 @@ use std::collections::BTreeMap;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
+use udd_assets::gumps::GumpsPackage;
 use udd_container::{CompressionFlag, LookupMode, UddpBuilder};
 use uocf::enhanced::textures::{ECImageFormat, TextureFile, TextureItem};
 use uocf::uop_container::package::{LoadMode, UopPackage};
@@ -44,6 +45,10 @@ pub struct EcGumpsOptions {
     pub paperdoll_upscale_passes: Vec<UpscalePass>,
     pub single_upscale_passes: Vec<UpscalePass>,
     pub upscale_profile: Option<Arc<UpscaleProfile>>,
+    /// The `gumps_cc.uddp` to share the Classic twins with (`--share-with`): each single gump it draws the same is left
+    /// out and listed in the shared Classic gump table, for Dynamapper to draw from the Classic source. `None` packs
+    /// standalone.
+    pub share_with: Option<PathBuf>,
 }
 
 impl Default for EcGumpsOptions {
@@ -56,6 +61,7 @@ impl Default for EcGumpsOptions {
             paperdoll_upscale_passes: Vec::new(),
             single_upscale_passes: Vec::new(),
             upscale_profile: None,
+            share_with: None,
         }
     }
 }
@@ -79,13 +85,33 @@ fn gump_upscale_passes_for(
 /// colour space, sends a gump to BC7. That is intended: blending makes new colours and soft alpha edges, which BC7 keeps
 /// and BC1 would round. An upscaler that only copies texels, such as nearest neighbour, keeps a gump in the Classic
 /// colour space.
-fn single_gump_writer(options: &EcGumpsOptions) -> SingleGumpWriter {
+fn single_gump_writer(options: &EcGumpsOptions, shared_with: Option<&Arc<GumpsPackage>>) -> SingleGumpWriter {
     let writer = SingleGumpWriter::new(options.single_pixel_format, options.compression);
-    if options.single_pixel_format == EC_LOSSY_SINGLE_GUMP_FORMAT {
+    let writer = if options.single_pixel_format == EC_LOSSY_SINGLE_GUMP_FORMAT {
         writer.with_classic_colour_space_format(EC_CLASSIC_COLOUR_SPACE_SINGLE_GUMP_FORMAT)
     } else {
         writer
+    };
+    match shared_with {
+        Some(classic) => writer.with_shared_classic_gumps(classic.clone()),
+        None => writer,
     }
+}
+
+/// Opens the `--share-with` package, refusing the output package itself and a `gumps_ec` that shares gumps.
+fn load_share_source(share_with: &Path, output_path: &Path) -> eyre::Result<Arc<GumpsPackage>> {
+    if let (Ok(source), Ok(output)) = (fs::canonicalize(share_with), fs::canonicalize(output_path)) {
+        eyre::ensure!(source != output, "--share-with names the output package {}", output_path.display());
+    }
+    let classic = GumpsPackage::load(share_with)
+        .wrap_err_with(|| format!("load the gumps_cc package to share with, {}", share_with.display()))?;
+    eyre::ensure!(
+        classic.shared_classic_gump_count() == 0,
+        "{} leaves {} gumps out for another package to draw, so it is a shared gumps_ec, not a gumps_cc",
+        share_with.display(),
+        classic.shared_classic_gump_count()
+    );
+    Ok(Arc::new(classic))
 }
 
 pub struct EcGumpsBuildSummary {
@@ -95,6 +121,10 @@ pub struct EcGumpsBuildSummary {
     pub single_soft_alpha_count: u32,
     /// Single gumps in the Classic colour space stored as [`EC_CLASSIC_COLOUR_SPACE_SINGLE_GUMP_FORMAT`] in a lossy pack.
     pub single_classic_colour_space_count: u32,
+    /// Single gumps left out because the `--share-with` package draws them the same; `single_gump_count` leaves them out.
+    pub single_shared_classic_count: u32,
+    /// Single gumps stored although the `--share-with` package holds them, because its copy is lossier.
+    pub single_kept_classic_lossier_count: u32,
     pub atlas_gump_count: u32,
     pub skipped_count: u32,
 }
@@ -111,18 +141,26 @@ pub fn convert_ec_gumps_to_uddp_from_sources(
     options: &EcGumpsOptions,
 ) -> eyre::Result<EcGumpsBuildSummary> {
     ensure_single_gump_format_for_package(options.single_pixel_format, EC_LOSSY_SINGLE_GUMP_FORMAT, "gumps_ec")?;
+    let shared_with = options
+        .share_with
+        .as_deref()
+        .map(|share_with| load_share_source(share_with, output_path))
+        .transpose()?;
+    if let Some(share_with) = &options.share_with {
+        log::info!("Leaving out the single gumps this gumps_cc draws the same: {}", share_with.display());
+    }
     if let Some(interface_uop) = find_interface_uop(source_dirs) {
         println!(
             "Using EC gump source file (UOP): {}",
             source_path_label_from_dirs(source_dirs, &interface_uop)
         );
-        convert_ec_gumps_from_interface_uop(&interface_uop, output_path, options)
+        convert_ec_gumps_from_interface_uop(&interface_uop, output_path, options, shared_with.as_ref())
     } else if let Some(gumpart_dir) = find_ec_gumpart_dir(source_dirs) {
         println!(
             "Using EC gump extracted source directory: {}",
             source_path_label_from_dirs(source_dirs, &gumpart_dir)
         );
-        convert_ec_gumps_from_extracted_dir(&gumpart_dir, output_path, options)
+        convert_ec_gumps_from_extracted_dir(&gumpart_dir, output_path, options, shared_with.as_ref())
     } else {
         eyre::bail!(
             "missing EC gump source: expected Interface.uop/interface.uop, or an extracted data/interface/default/textures/gumpart directory"
@@ -156,12 +194,13 @@ fn convert_ec_gumps_from_interface_uop(
     interface_uop: &Path,
     output_path: &Path,
     options: &EcGumpsOptions,
+    shared_with: Option<&Arc<GumpsPackage>>,
 ) -> eyre::Result<EcGumpsBuildSummary> {
     let package = UopPackage::load_with_mode(interface_uop, LoadMode::Lazy)
         .wrap_err_with(|| format!("load {}", interface_uop.display()))?;
     let mut builder = UddpBuilder::new(LookupMode::SparseId);
     let mut gump_count = 0u32;
-    let mut single_gumps = single_gump_writer(options);
+    let mut single_gumps = single_gump_writer(options, shared_with);
     let mut atlas_gumps = Vec::new();
     let mut skipped_count = 0u32;
 
@@ -228,10 +267,13 @@ fn convert_ec_gumps_from_interface_uop(
     build_and_write_package(builder, output_path)?;
 
     Ok(EcGumpsBuildSummary {
-        gump_count,
+        // A shared gump is left out of the package.
+        gump_count: gump_count - single_summary.shared_classic_count,
         single_gump_count: single_summary.count,
         single_soft_alpha_count: single_summary.soft_alpha_count,
         single_classic_colour_space_count: single_summary.classic_colour_space_count,
+        single_shared_classic_count: single_summary.shared_classic_count,
+        single_kept_classic_lossier_count: single_summary.kept_classic_lossier_count,
         atlas_gump_count,
         skipped_count,
     })
@@ -241,11 +283,12 @@ fn convert_ec_gumps_from_extracted_dir(
     gumpart_dir: &Path,
     output_path: &Path,
     options: &EcGumpsOptions,
+    shared_with: Option<&Arc<GumpsPackage>>,
 ) -> eyre::Result<EcGumpsBuildSummary> {
     let sources = collect_extracted_gumps(gumpart_dir)?;
     let mut builder = UddpBuilder::new(LookupMode::SparseId);
     let mut gump_count = 0u32;
-    let mut single_gumps = single_gump_writer(options);
+    let mut single_gumps = single_gump_writer(options, shared_with);
     let mut atlas_gumps = Vec::new();
     let mut skipped_count = 0u32;
 
@@ -318,10 +361,13 @@ fn convert_ec_gumps_from_extracted_dir(
     build_and_write_package(builder, output_path)?;
 
     Ok(EcGumpsBuildSummary {
-        gump_count,
+        // A shared gump is left out of the package.
+        gump_count: gump_count - single_summary.shared_classic_count,
         single_gump_count: single_summary.count,
         single_soft_alpha_count: single_summary.soft_alpha_count,
         single_classic_colour_space_count: single_summary.classic_colour_space_count,
+        single_shared_classic_count: single_summary.shared_classic_count,
+        single_kept_classic_lossier_count: single_summary.kept_classic_lossier_count,
         atlas_gump_count,
         skipped_count,
     })
@@ -564,7 +610,7 @@ mod tests {
             (&EcGumpsOptions::default(), GumpPixelFormat::Rgba8888, GumpPixelFormat::Rgba8888),
         ] {
             let mut builder = UddpBuilder::new(LookupMode::SparseId);
-            let mut writer = single_gump_writer(options);
+            let mut writer = single_gump_writer(options, None);
             for (gump_id, pixel) in gumps {
                 writer.push(&mut builder, gump_id, SIDE, SIDE, pixel.repeat((SIDE * SIDE) as usize)).unwrap();
             }

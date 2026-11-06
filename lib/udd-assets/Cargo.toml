@@ -28,6 +28,8 @@ knuffel.workspace = true
 serde_json.workspace = true
 serde.workspace = true
 dds.workspace = true
+# The gump image hash of the Classic gumps a gumps_ec package shares with gumps_cc.
+xxhash-rust = { version = "0.8", default-features = false, features = ["xxh64"] }
 workspace-hack.workspace = true
 
 [dev-dependencies]

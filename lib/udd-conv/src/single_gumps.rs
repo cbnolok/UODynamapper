@@ -10,13 +10,21 @@
 //!
 //! The paperdoll's body gumps stay RGBA8888 in a lossy pack: both clients hue them on exact greys only, which a block
 //! codec doesn't keep (the user: "we can't lose exact grays").
+//!
+//! A writer given a `gumps_cc` to share with ([`SingleGumpWriter::with_shared_classic_gumps`]) leaves out each gump that
+//! `gumps_cc` draws the same and lists it in the shared Classic gump table instead (the user, 2026-11-06: "i'd keep the
+//! ability to both share cc gumps and pack them into ec gumps file").
 
-use color_eyre::eyre;
+use color_eyre::eyre::{self, WrapErr};
 use rayon::prelude::*;
-use udd_container::{AddOwnedFileRequest, CompressionFlag, DataType, UddpBuilder};
+use std::sync::Arc;
+use udd_container::{AddFileRequest, AddOwnedFileRequest, CompressionFlag, DataType, UddpBuilder};
 
 pub use udd_assets::gumps::GumpPixelFormat;
-use udd_assets::gumps::encode_single_gump_payload;
+use udd_assets::gumps::{
+    decode_single_gump_payload, encode_shared_classic_gump_table, encode_single_gump_payload, gump_image_hash,
+    GumpImage, GumpsPackage, SharedClassicGump, SHARED_CLASSIC_GUMP_TABLE_ID,
+};
 
 /// The Zstd level of BC1 single gumps unless the packer is asked for another: the level of the measurements.
 pub const BC1_SINGLE_GUMP_ZSTD_LEVEL: i32 = 19;
@@ -26,6 +34,8 @@ pub const BC7_SINGLE_GUMP_ZSTD_LEVEL: i32 = 19;
 /// How many single gumps wait to be encoded side by side: enough to keep the cores busy on BC1 or BC7, few enough that
 /// only a slice of the decoded pixels is held twice.
 const SINGLE_GUMP_ENCODE_BATCH: usize = 512;
+/// The shared Classic gump table holds ids and hashes, not pixels, so it never takes an image codec.
+const SHARED_CLASSIC_GUMP_TABLE_COMPRESSION: CompressionFlag = CompressionFlag::ZstdNoDict;
 
 /// The paperdoll's body gump of each mobile body, as both clients pick it; they agree. Enhanced:
 /// `SelectPaperdollBodyGumpForBody` (UOSA.exe 0x0050d1c0, called by `UOPaperdoll::BuildImage` 0x0050c790). Classic:
@@ -70,6 +80,41 @@ const CLASSIC_COLOUR_LOW_BITS: u8 = (1 << CLASSIC_COLOUR_CHANNEL_SHIFT) - 1;
 
 const RGBA_CHANNELS: usize = 4;
 const ALPHA_CHANNEL: usize = 3;
+
+/// A gump image to compare: its size, upscale factor and straight RGBA8888 pixels.
+#[derive(Debug, Clone, Copy)]
+pub struct GumpPixels<'a> {
+    pub width: u32,
+    pub height: u32,
+    pub upscale_factor: u16,
+    pub rgba: &'a [u8],
+}
+
+impl<'a> GumpPixels<'a> {
+    pub fn of(image: &'a GumpImage) -> Self {
+        Self {
+            width: image.physical_width,
+            height: image.physical_height,
+            upscale_factor: image.upscale_factor,
+            rgba: &image.rgba,
+        }
+    }
+}
+
+/// Whether two images of gump `gump_id` draw the same: the same size and upscale factor, and the same RGBA except the
+/// red, green and blue under texels whose alpha is 0 in both. The paperdoll body gumps ([`is_paperdoll_body_gump_id`])
+/// must match exactly, since the Enhanced paperdoll keys each layer on its first texel's colour whatever its alpha.
+pub fn gump_images_draw_the_same(gump_id: u32, a: GumpPixels, b: GumpPixels) -> bool {
+    if (a.width, a.height, a.upscale_factor) != (b.width, b.height, b.upscale_factor) || a.rgba.len() != b.rgba.len() {
+        return false;
+    }
+    if is_paperdoll_body_gump_id(gump_id) {
+        return a.rgba == b.rgba;
+    }
+    a.rgba.chunks_exact(RGBA_CHANNELS).zip(b.rgba.chunks_exact(RGBA_CHANNELS)).all(|(a, b)| {
+        a[ALPHA_CHANNEL] == b[ALPHA_CHANNEL] && (a[ALPHA_CHANNEL] == u8::MIN || a[..ALPHA_CHANNEL] == b[..ALPHA_CHANNEL])
+    })
+}
 
 /// Whether straight RGBA8888 pixels are in the Classic gump decoder's colour space: alpha only 0 or 255, and every
 /// opaque texel's red, green and blue with the low [`CLASSIC_COLOUR_CHANNEL_SHIFT`] bits clear. The colour under a fully
@@ -121,6 +166,63 @@ pub struct SingleGumpSummary {
     pub lossless_body_count: u32,
     /// Gumps stored in the writer's Classic colour space format, when it has one: BC1 in a lossy `gumps_ec`.
     pub classic_colour_space_count: u32,
+    /// Gumps left out because the `gumps_cc` shared with draws them the same; `count` and the counts above leave them out.
+    pub shared_classic_count: u32,
+    /// Gumps stored although `gumps_cc` holds them too, because its copy is the same gump in a lossier format.
+    pub kept_classic_lossier_count: u32,
+}
+
+/// How a single gump compares with the `gumps_cc` the writer shares with.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ClassicShare {
+    /// The writer shares with no `gumps_cc`.
+    Standalone,
+    /// `gumps_cc` draws it the same: left out, with the [`gump_image_hash`] of the `gumps_cc` image.
+    Shared(u64),
+    /// Stored: `gumps_cc` has no single gump with its id, or draws it differently.
+    Kept,
+    /// Stored: `gumps_cc`'s copy is this gump through a lossier format.
+    KeptClassicLossier,
+}
+
+/// How a gump compares with `gumps_cc`'s single gump of the same id, if any. It is shared when `gumps_cc`'s image draws
+/// the same ([`gump_images_draw_the_same`]) as the one this package would store, `payload` decoded, or as the exact
+/// source: with both packages lossless or both lossy the stored copies are equal, and a lossless `gumps_cc` gives a lossy
+/// package the exact image. A lossy `gumps_cc` copy that a lossless package's gump doesn't match is "lossier" when it is
+/// the source through `gumps_cc`'s format.
+fn compare_with_classic(
+    classic: &GumpsPackage,
+    gump: &PendingSingleGump,
+    format: GumpPixelFormat,
+    payload: &[u8],
+) -> eyre::Result<ClassicShare> {
+    let Some((classic_format, classic_image)) = classic
+        .read_single_gump_image(gump.gump_id)
+        .wrap_err_with(|| format!("read gump {} from the gumps_cc package shared with", gump.gump_id))?
+    else {
+        return Ok(ClassicShare::Kept);
+    };
+    let classic_pixels = GumpPixels::of(&classic_image);
+    let stored = decode_single_gump_payload(payload)?;
+    let source =
+        GumpPixels { width: gump.width, height: gump.height, upscale_factor: stored.upscale_factor, rgba: &gump.rgba };
+    if gump_images_draw_the_same(gump.gump_id, classic_pixels, GumpPixels::of(&stored))
+        || gump_images_draw_the_same(gump.gump_id, classic_pixels, source)
+    {
+        return Ok(ClassicShare::Shared(gump_image_hash(&classic_image)));
+    }
+    if classic_format != GumpPixelFormat::Rgba8888 && classic_format != format {
+        let through_classic_format = decode_single_gump_payload(&encode_single_gump_payload(
+            gump.width,
+            gump.height,
+            &gump.rgba,
+            classic_format,
+        )?)?;
+        if gump_images_draw_the_same(gump.gump_id, classic_pixels, GumpPixels::of(&through_classic_format)) {
+            return Ok(ClassicShare::KeptClassicLossier);
+        }
+    }
+    Ok(ClassicShare::Kept)
 }
 
 struct PendingSingleGump {
@@ -138,6 +240,9 @@ pub struct SingleGumpWriter {
     compression: CompressionFlag,
     pending: Vec<PendingSingleGump>,
     summary: SingleGumpSummary,
+    /// The `gumps_cc` whose gumps that draw the same are left out.
+    shared_with: Option<Arc<GumpsPackage>>,
+    shared: Vec<SharedClassicGump>,
 }
 
 impl SingleGumpWriter {
@@ -148,7 +253,16 @@ impl SingleGumpWriter {
             compression,
             pending: Vec::with_capacity(SINGLE_GUMP_ENCODE_BATCH),
             summary: SingleGumpSummary::default(),
+            shared_with: None,
+            shared: Vec::new(),
         }
+    }
+
+    /// Leaves out each gump that `classic`, a `gumps_cc`, draws the same, and lists it in the shared Classic gump table
+    /// that [`Self::finish`] writes.
+    pub fn with_shared_classic_gumps(mut self, classic: Arc<GumpsPackage>) -> Self {
+        self.shared_with = Some(classic);
+        self
     }
 
     /// Stores the gumps in the Classic colour space ([`is_in_classic_colour_space`]) as `format`, and the others as the
@@ -174,10 +288,34 @@ impl SingleGumpWriter {
         Ok(())
     }
 
-    /// Writes the gumps still waiting, and logs how many have soft alpha when they went to BC1, how many body gumps
-    /// stayed lossless, and how many took the Classic colour space format.
+    /// Writes the gumps still waiting and, when gumps were left out, the shared Classic gump table, and logs how many have
+    /// soft alpha when they went to BC1, how many body gumps stayed lossless, how many took the Classic colour space
+    /// format, and how many were shared.
     pub fn finish(mut self, builder: &mut UddpBuilder) -> eyre::Result<SingleGumpSummary> {
         self.flush(builder)?;
+        if self.shared_with.is_some() {
+            log::info!(
+                "{} single gumps shared with gumps_cc, left out to be drawn from it; {} kept, {} of them because \
+                 gumps_cc's copy is lossier",
+                self.summary.shared_classic_count,
+                self.summary.count,
+                self.summary.kept_classic_lossier_count
+            );
+        }
+        if !self.shared.is_empty() {
+            self.shared.sort_unstable_by_key(|shared| shared.gump_id);
+            let table = encode_shared_classic_gump_table(&self.shared)?;
+            builder.add_file(AddFileRequest {
+                data_type: DataType::Metadata as u8,
+                compression: SHARED_CLASSIC_GUMP_TABLE_COMPRESSION,
+                width: 0,
+                height: 0,
+                virtual_path: None,
+                path_hash64: None,
+                id: Some(SHARED_CLASSIC_GUMP_TABLE_ID),
+                data: &table,
+            })?;
+        }
         if let Some(classic_colour_space_format) = self.classic_colour_space_format {
             log::info!(
                 "{} single gumps in the Classic colour space as {}, {} as {}, {} paperdoll body gumps RGBA8888: both \
@@ -209,6 +347,7 @@ impl SingleGumpWriter {
     fn flush(&mut self, builder: &mut UddpBuilder) -> eyre::Result<()> {
         let format = self.format;
         let classic_colour_space_format = self.classic_colour_space_format;
+        let shared_with = self.shared_with.as_deref();
         let encoded = std::mem::take(&mut self.pending)
             .into_par_iter()
             .map(|gump| {
@@ -222,14 +361,26 @@ impl SingleGumpWriter {
                     (false, None) => format,
                 };
                 let classic_colour_space = classic_format.is_some();
-                encode_single_gump_payload(gump.width, gump.height, &gump.rgba, gump_format)
-                    .map(|payload| {
-                        (gump.gump_id, gump.width, gump.height, soft_alpha, lossless_body, classic_colour_space, payload)
-                    })
-                    .map_err(|error| error.wrap_err(format!("encode single gump {}", gump.gump_id)))
+                let payload = encode_single_gump_payload(gump.width, gump.height, &gump.rgba, gump_format)
+                    .map_err(|error| error.wrap_err(format!("encode single gump {}", gump.gump_id)))?;
+                let share = match shared_with {
+                    Some(classic) => compare_with_classic(classic, &gump, gump_format, &payload)
+                        .wrap_err_with(|| format!("compare single gump {} with gumps_cc", gump.gump_id))?,
+                    None => ClassicShare::Standalone,
+                };
+                Ok((gump.gump_id, gump.width, gump.height, soft_alpha, lossless_body, classic_colour_space, payload, share))
             })
             .collect::<eyre::Result<Vec<_>>>()?;
-        for (gump_id, width, height, soft_alpha, lossless_body, classic_colour_space, payload) in encoded {
+        for (gump_id, width, height, soft_alpha, lossless_body, classic_colour_space, payload, share) in encoded {
+            match share {
+                ClassicShare::Shared(image_hash) => {
+                    self.shared.push(SharedClassicGump { gump_id, image_hash });
+                    self.summary.shared_classic_count += 1;
+                    continue;
+                }
+                ClassicShare::KeptClassicLossier => self.summary.kept_classic_lossier_count += 1,
+                ClassicShare::Standalone | ClassicShare::Kept => {}
+            }
             builder.add_owned_file(AddOwnedFileRequest {
                 data_type: DataType::Gump as u8,
                 compression: self.compression,
@@ -323,7 +474,13 @@ mod tests {
             let lossless_body_count = if format == GumpPixelFormat::Rgba8888 { 0 } else { body_count };
             assert_eq!(
                 summary,
-                SingleGumpSummary { count: GUMP_COUNT, soft_alpha_count: 1, lossless_body_count, classic_colour_space_count: 0 }
+                SingleGumpSummary {
+                    count: GUMP_COUNT,
+                    soft_alpha_count: 1,
+                    lossless_body_count,
+                    classic_colour_space_count: 0,
+                    ..SingleGumpSummary::default()
+                }
             );
             crate::gump_atlas::add_gump_atlas_files(&mut builder, Vec::new(), &Default::default()).unwrap();
 
@@ -420,6 +577,7 @@ mod tests {
                 soft_alpha_count: 1,
                 lossless_body_count: 1,
                 classic_colour_space_count: 1,
+                ..SingleGumpSummary::default()
             }
         );
         crate::gump_atlas::add_gump_atlas_files(&mut builder, Vec::new(), &Default::default()).unwrap();
@@ -430,5 +588,130 @@ mod tests {
             let stored = package.package().read_file_by_sparse_id(*gump_id).unwrap();
             assert_eq!(stored, encode_single_gump_payload(WIDTH, HEIGHT, rgba, *format).unwrap(), "gump {gump_id}");
         }
+    }
+
+    /// Equality for sharing ignores the colour under texels clear in both, but not alpha, size or upscale factor, and a
+    /// paperdoll body gump must match exactly.
+    #[test]
+    fn gumps_draw_the_same_whatever_colour_their_clear_texels_hold() {
+        const GUMP_ID: u32 = 1000;
+        const BODY_GUMP_ID: u32 = 12;
+        const OPAQUE: [u8; 4] = [248, 128, 8, 255];
+        const CLEAR_BLACK: [u8; 4] = [0, 0, 0, 0];
+        const COLOURED_CLEAR: [u8; 4] = [255, 7, 93, 0];
+        const ALMOST_CLEAR: [u8; 4] = [0, 0, 0, 1];
+        const TEXELS: usize = 2;
+        fn pixels(rgba: &[u8]) -> GumpPixels<'_> {
+            GumpPixels { width: TEXELS as u32, height: 1, upscale_factor: 1, rgba }
+        }
+        let plain = [OPAQUE, CLEAR_BLACK].concat();
+        let coloured = [OPAQUE, COLOURED_CLEAR].concat();
+        let almost = [OPAQUE, ALMOST_CLEAR].concat();
+        assert!(is_paperdoll_body_gump_id(BODY_GUMP_ID));
+
+        assert!(gump_images_draw_the_same(GUMP_ID, pixels(&plain), pixels(&coloured)));
+        assert!(!gump_images_draw_the_same(GUMP_ID, pixels(&plain), pixels(&almost)));
+        assert!(!gump_images_draw_the_same(BODY_GUMP_ID, pixels(&plain), pixels(&coloured)));
+        assert!(gump_images_draw_the_same(BODY_GUMP_ID, pixels(&plain), pixels(&plain)));
+        let upscaled = GumpPixels { upscale_factor: 2, ..pixels(&plain) };
+        let transposed = GumpPixels { width: 1, height: TEXELS as u32, ..pixels(&plain) };
+        for other in [upscaled, transposed] {
+            assert!(!gump_images_draw_the_same(GUMP_ID, pixels(&plain), other), "{other:?}");
+        }
+    }
+
+    /// One `gumps_ec` writer against one `gumps_cc` per pairing of lossless and lossy: which gumps it leaves out, which
+    /// it keeps as lossier in `gumps_cc`, and the table it writes, with each shared gump's `gumps_cc` image hash.
+    #[test]
+    fn a_shared_writer_leaves_out_what_gumps_cc_draws_the_same() {
+        const WIDTH: u32 = 5;
+        const HEIGHT: u32 = 3;
+        const IDENTICAL: u32 = 1000;
+        const CLEAR_COLOUR: u32 = 1001;
+        const DIFFERENT: u32 = 1002;
+        const RESIZED: u32 = 1003;
+        const ENHANCED_ONLY: u32 = 1004;
+        const BODY_IDENTICAL: u32 = 13;
+        const BODY_CLEAR_COLOUR: u32 = 12;
+        const CLASSIC_OPAQUE: [u8; 4] = [248, 128, 8, 255];
+        const OTHER_OPAQUE: [u8; 4] = [8, 248, 128, 255];
+        const CLEAR_BLACK: [u8; 4] = [0, 0, 0, 0];
+        const COLOURED_CLEAR: [u8; 4] = [255, 7, 93, 0];
+        let with_clear = |pixel: [u8; 4], clear: [u8; 4]| {
+            let mut rgba = pixel.repeat((WIDTH * HEIGHT) as usize);
+            rgba[..clear.len()].copy_from_slice(&clear);
+            (WIDTH, HEIGHT, rgba)
+        };
+        let classic_gumps = [
+            (IDENTICAL, with_clear(CLASSIC_OPAQUE, CLEAR_BLACK)),
+            (CLEAR_COLOUR, with_clear(CLASSIC_OPAQUE, CLEAR_BLACK)),
+            (DIFFERENT, with_clear(OTHER_OPAQUE, CLEAR_BLACK)),
+            (RESIZED, (HEIGHT, WIDTH, with_clear(CLASSIC_OPAQUE, CLEAR_BLACK).2)),
+            (BODY_IDENTICAL, with_clear(CLASSIC_OPAQUE, CLEAR_BLACK)),
+            (BODY_CLEAR_COLOUR, with_clear(CLASSIC_OPAQUE, CLEAR_BLACK)),
+        ];
+        let enhanced_gumps = [
+            (IDENTICAL, with_clear(CLASSIC_OPAQUE, CLEAR_BLACK)),
+            (CLEAR_COLOUR, with_clear(CLASSIC_OPAQUE, COLOURED_CLEAR)),
+            (DIFFERENT, with_clear(CLASSIC_OPAQUE, CLEAR_BLACK)),
+            (RESIZED, with_clear(CLASSIC_OPAQUE, CLEAR_BLACK)),
+            (ENHANCED_ONLY, with_clear(CLASSIC_OPAQUE, CLEAR_BLACK)),
+            (BODY_IDENTICAL, with_clear(CLASSIC_OPAQUE, CLEAR_BLACK)),
+            (BODY_CLEAR_COLOUR, with_clear(CLASSIC_OPAQUE, COLOURED_CLEAR)),
+        ];
+        let writer = |format| SingleGumpWriter::new(format, default_single_gump_compression(format));
+        let lossless = || writer(GumpPixelFormat::Rgba8888);
+        let classic_lossy = || writer(GumpPixelFormat::Bc1);
+        let enhanced_lossy = || writer(GumpPixelFormat::Bc7).with_classic_colour_space_format(GumpPixelFormat::Bc1);
+        let write = |writer: SingleGumpWriter, gumps: &[(u32, (u32, u32, Vec<u8>))]| {
+            let mut builder = UddpBuilder::new(LookupMode::SparseId);
+            let mut writer = writer;
+            for (gump_id, (width, height, rgba)) in gumps {
+                writer.push(&mut builder, *gump_id, *width, *height, rgba.clone()).unwrap();
+            }
+            let summary = writer.finish(&mut builder).unwrap();
+            crate::gump_atlas::add_gump_atlas_files(&mut builder, Vec::new(), &Default::default()).unwrap();
+            (summary, GumpsPackage::from_uddp_package(UddpReader::open(builder.build().unwrap()).unwrap()).unwrap())
+        };
+
+        // In ascending id order, as the table holds them.
+        let both_lossless_shared = vec![BODY_IDENTICAL, IDENTICAL, CLEAR_COLOUR];
+        let cases = [
+            ("both lossless", lossless(), lossless(), both_lossless_shared.clone(), Vec::new()),
+            ("both lossy", classic_lossy(), enhanced_lossy(), both_lossless_shared.clone(), Vec::new()),
+            ("lossy gumps_ec, lossless gumps_cc", lossless(), enhanced_lossy(), both_lossless_shared, Vec::new()),
+            (
+                "lossless gumps_ec, lossy gumps_cc",
+                classic_lossy(),
+                lossless(),
+                vec![BODY_IDENTICAL],
+                vec![IDENTICAL, CLEAR_COLOUR],
+            ),
+        ];
+        for (case, classic_writer, enhanced_writer, expected_shared, expected_lossier) in cases {
+            let (_, classic) = write(classic_writer, &classic_gumps);
+            let classic = Arc::new(classic);
+            let (summary, enhanced) = write(enhanced_writer.with_shared_classic_gumps(classic.clone()), &enhanced_gumps);
+
+            let expected_table = expected_shared
+                .iter()
+                .map(|&gump_id| SharedClassicGump {
+                    gump_id,
+                    image_hash: gump_image_hash(&classic.read_gump_image(gump_id).unwrap()),
+                })
+                .collect::<Vec<_>>();
+            assert_eq!(enhanced.shared_classic_gumps().collect::<Vec<_>>(), expected_table, "{case}");
+            assert_eq!(summary.shared_classic_count, expected_shared.len() as u32, "{case}");
+            assert_eq!(summary.kept_classic_lossier_count, expected_lossier.len() as u32, "{case}");
+            assert_eq!(summary.count as usize, enhanced_gumps.len() - expected_shared.len(), "{case}");
+            for (gump_id, _) in &enhanced_gumps {
+                let stored = enhanced.read_single_gump_image(*gump_id).unwrap().is_some();
+                assert_eq!(stored, !expected_shared.contains(gump_id), "{case}: gump {gump_id}");
+            }
+        }
+
+        let (summary, standalone) = write(lossless(), &enhanced_gumps);
+        assert_eq!((summary.shared_classic_count, standalone.shared_classic_gump_count()), (0, 0));
+        assert!(standalone.package().find_by_sparse_id(SHARED_CLASSIC_GUMP_TABLE_ID).is_none());
     }
 }

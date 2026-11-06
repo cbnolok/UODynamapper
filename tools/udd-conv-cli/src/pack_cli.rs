@@ -106,6 +106,7 @@ const TEX_AUX_ZSTD_HELP: &str = "Zstd level of the textures (--zstd=LEVEL), whic
 const GUMP_RAW_HELP: &str = "Store the single gumps as lossless RGBA8888: the default.";
 const GUMP_BC1_HELP: &str = "Store every single (non-paperdoll) Classic gump as BC1: lossy, with one bit of alpha (colour 0 is its transparent texel), and Zstd 19 unless --zstd=LEVEL. Paperdoll gumps (50001-69999) stay lossless on their atlas pages, and the paperdoll body gumps (12-15, 665, 666) stay RGBA8888: Classic partial hue needs exact greys.";
 const GUMP_BC7_HELP: &str = "Store the single (non-paperdoll) Enhanced gumps lossy, with Zstd 19 unless --zstd=LEVEL: the gumps in the Classic colour space (alpha 0 or 255, opaque channels on Classic's steps of 8: the Classic gumps Interface.uop repeats) as BC1, the others as BC7 of premultiplied colour, soft alpha kept. The test runs after any upscale pass, so an interpolating upscaler sends a gump to BC7. Paperdoll gumps (50001-69999) stay lossless on their atlas pages, and the paperdoll body gumps (12-15, 665, 666) stay RGBA8888: the Enhanced client hues exact greys only.";
+const GUMP_SHARE_WITH_HELP: &str = "Share with this gumps_cc.uddp: leave out each single gump it draws the same (the Classic gumps Interface.uop repeats; colour under fully clear texels aside, except on the paperdoll body gumps) and list it, with a hash of the gumps_cc image, for Dynamapper to draw from the Classic source. The package then needs that gumps_cc.uddp, or the Classic client files, to show those gumps under Enhanced. Without it the package is standalone.";
 const OUTPUT_PATH_HELP: &str = "Output paths (--output, --art-output, --land-output, ...) and their default \
 file names resolve against the current working directory; absolute paths are used as given. \
 Nothing is written into --ccdir or --ecdir unless an output path points there.";
@@ -1420,6 +1421,8 @@ enum Commands {
         raw: bool,
         #[arg(long, help = GUMP_BC7_HELP)]
         bc7: bool,
+        #[arg(long = "share-with", value_name = "GUMPS_CC", help = GUMP_SHARE_WITH_HELP)]
+        share_with: Option<PathBuf>,
         #[arg(long, num_args = 0..=1, require_equals = true, help = GUMP_ZSTD_HELP)]
         zstd: Option<Option<i32>>,
         #[arg(long = "paperdoll-upscale-pass", value_enum, help = "Add a paperdoll equipment gump upscale pass. Repeat to chain filters.")]
@@ -2459,6 +2462,7 @@ where
             max_id,
             raw: _,
             bc7,
+            share_with,
             zstd,
             paperdoll_upscale_passes,
             single_upscale_passes,
@@ -2480,6 +2484,7 @@ where
                     paperdoll_upscale_passes: convert_upscale_passes(paperdoll_upscale_passes),
                     single_upscale_passes: convert_upscale_passes(single_upscale_passes),
                     upscale_profile,
+                    share_with: share_with.as_deref().map(resolve_output_path),
                 },
             )?;
             let single_formats = match summary.single_classic_colour_space_count {
@@ -2491,12 +2496,14 @@ where
                 ),
             };
             info!(
-                "Wrote {} EC gumps to '{}' ({} single in {}, {} with soft alpha; {} atlas; {} skipped).",
+                "Wrote {} EC gumps to '{}' ({} single in {}, {} with soft alpha; {} shared with gumps_cc; {} atlas; {} \
+                 skipped).",
                 summary.gump_count,
                 out_file.display(),
                 summary.single_gump_count,
                 single_formats,
                 summary.single_soft_alpha_count,
+                summary.single_shared_classic_count,
                 summary.atlas_gump_count,
                 summary.skipped_count
             );
@@ -3559,14 +3566,41 @@ mod tests {
                 source_dirs,
                 output,
                 max_id,
+                share_with,
                 ..
             } => {
                 assert_eq!(source_dirs.ecdir, Some(PathBuf::from("/ec")));
                 assert_eq!(output, PathBuf::from("gumps_ec.uddp"));
                 assert_eq!(max_id, 12345);
+                assert_eq!(share_with, None, "pack-ec-gumps packs standalone by default");
             }
             _ => panic!("unexpected command parsed"),
         }
+    }
+
+    /// `--share-with` names the gumps_cc to share the Classic twins with, beside either single gump format.
+    #[test]
+    fn cli_parses_pack_ec_gumps_share_with() {
+        for format_flag in ["--raw", "--bc7"] {
+            let cli = Cli::try_parse_from([
+                "uddpack",
+                "pack-ec-gumps",
+                format_flag,
+                "--share-with",
+                "/udd/gumps_cc.uddp",
+            ])
+            .expect("parse ec gump share args");
+            match cli.command {
+                Commands::PackEcGumps { share_with, .. } => {
+                    assert_eq!(share_with, Some(PathBuf::from("/udd/gumps_cc.uddp")), "{format_flag}");
+                }
+                _ => panic!("unexpected command parsed"),
+            }
+        }
+        assert!(
+            Cli::try_parse_from(["uddpack", "pack-gumps", "--share-with", "/udd/gumps_cc.uddp"]).is_err(),
+            "only gumps_ec shares"
+        );
     }
 
     #[test]
