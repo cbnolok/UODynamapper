@@ -8,10 +8,11 @@ use crate::core::system_sets::StartupSysSet;
 use crate::prelude::*;
 use bevy::prelude::*;
 use parking_lot::Mutex;
+use std::collections::HashSet;
 use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use udd_assets::AtlasCacheOptions;
 use udd_assets::tilemeta::TileMetaPackage;
 use udd_container::{UddpReader, UddpReaderOptions};
@@ -147,6 +148,63 @@ fn gump_sources_summary(classic_label: Option<&str>, enhanced_loaded: bool) -> S
     format!("gumps: Classic preset {classic_preset}; Enhanced and KR-like {enhanced_presets}")
 }
 
+/// The startup warning for a gumps_ec.uddp that leaves `shared_count` gumps for gumps_cc.uddp to draw, when no Classic
+/// source is loaded to draw them.
+fn shared_gumps_without_classic_warning(shared_count: usize, classic_loaded: bool) -> Option<String> {
+    (shared_count > 0 && !classic_loaded).then(|| {
+        format!(
+            "{GUMPS_EC_FILE_NAME} shares {shared_count} gumps with {GUMPS_CC_FILE_NAME}, and neither that package nor \
+             {CLASSIC_CLIENT_GUMPS_LABEL} are loaded: those gumps won't show under the Enhanced and KR-like presets."
+        )
+    })
+}
+
+/// What [`SharedGumpCheck::check`] found for one gump the Classic source served under the Enhanced presets.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum SharedGumpVerdict {
+    /// gumps_ec.uddp doesn't share the gump: it lacks it.
+    NotShared,
+    /// The gump was checked before.
+    AlreadyChecked,
+    Matches,
+    /// The first shared gump the Classic source draws differently.
+    FirstMismatch,
+    /// A later one, `count` with the first.
+    Mismatch { count: u32 },
+}
+
+/// Checks each gump gumps_ec.uddp shares with gumps_cc.uddp the first time the Classic source serves it under the
+/// Enhanced presets: the image hash gumps_ec.uddp lists against the served image's. Each gump is hashed once.
+#[derive(Default)]
+struct SharedGumpCheck {
+    checked: Mutex<HashSet<u32>>,
+    mismatch_count: AtomicU32,
+}
+
+impl SharedGumpCheck {
+    /// `listed_hash` is gumps_ec.uddp's hash of the gump, `None` when it doesn't share it.
+    fn check(
+        &self,
+        gump_id: u32,
+        listed_hash: Option<u64>,
+        served: &udd_assets::gumps::GumpImage,
+    ) -> SharedGumpVerdict {
+        let Some(listed_hash) = listed_hash else {
+            return SharedGumpVerdict::NotShared;
+        };
+        if !self.checked.lock().insert(gump_id) {
+            return SharedGumpVerdict::AlreadyChecked;
+        }
+        if udd_assets::gumps::gump_image_hash(served) == listed_hash {
+            return SharedGumpVerdict::Matches;
+        }
+        match self.mismatch_count.fetch_add(1, Ordering::Relaxed) + 1 {
+            1 => SharedGumpVerdict::FirstMismatch,
+            count => SharedGumpVerdict::Mismatch { count },
+        }
+    }
+}
+
 /// The Classic gump source: gumps_cc.uddp, or the Classic client's gump files when that package is absent or fails to
 /// load.
 pub enum ClassicGumpSource {
@@ -211,6 +269,7 @@ pub struct GumpMapRes {
     enhanced: Option<Arc<EnhancedGumps>>,
     /// Set once the Classic preset asked for a gump with no Classic source loaded, which is logged once.
     classic_missing_logged: AtomicBool,
+    shared_check: SharedGumpCheck,
 }
 
 impl GumpMapRes {
@@ -223,11 +282,47 @@ impl GumpMapRes {
             classic: classic.map(Arc::new),
             enhanced: enhanced.map(|package| Arc::new(EnhancedGumps::new(package))),
             classic_missing_logged: AtomicBool::new(false),
+            shared_check: SharedGumpCheck::default(),
         })
     }
 
     fn sources_summary(&self) -> String {
         gump_sources_summary(self.classic.as_deref().map(ClassicGumpSource::label), self.enhanced.is_some())
+    }
+
+    fn is_shared_gump(&self, gump_id: u32) -> bool {
+        self.enhanced.as_ref().is_some_and(|enhanced| enhanced.package.shared_classic_gump_hash(gump_id).is_some())
+    }
+
+    fn shared_gumps_warning(&self) -> Option<String> {
+        let shared_count = self.enhanced.as_ref().map_or(0, |enhanced| enhanced.package.shared_classic_gump_count());
+        shared_gumps_without_classic_warning(shared_count, self.classic.is_some())
+    }
+
+    /// Checks a gump the Classic source served under the Enhanced presets against the hash gumps_ec.uddp lists when it
+    /// shares the gump. A mismatch still draws the gump.
+    fn check_shared_gump(&self, gump_id: u32, served: &udd_assets::gumps::GumpImage) {
+        let (Some(enhanced), Some(classic)) = (self.enhanced.as_deref(), self.classic.as_deref()) else {
+            return;
+        };
+        let listed_hash = enhanced.package.shared_classic_gump_hash(gump_id);
+        match self.shared_check.check(gump_id, listed_hash, served) {
+            SharedGumpVerdict::NotShared | SharedGumpVerdict::AlreadyChecked | SharedGumpVerdict::Matches => {}
+            SharedGumpVerdict::FirstMismatch => console_logger::one(
+                console_logger::LogSev::Warn,
+                console_logger::LogAbout::UoFiles,
+                &format!(
+                    "Gump {gump_id}, which {GUMPS_EC_FILE_NAME} shares, differs in {}: it is not the \
+                     {GUMPS_CC_FILE_NAME} that {GUMPS_EC_FILE_NAME} was packed against. The gump is drawn anyway; \
+                     repack {GUMPS_EC_FILE_NAME} against this {GUMPS_CC_FILE_NAME}, or standalone.",
+                    classic.label()
+                ),
+            ),
+            SharedGumpVerdict::Mismatch { count } => debug!(
+                "Gump {gump_id}, which {GUMPS_EC_FILE_NAME} shares, differs in {}: {count} shared gumps differ so far.",
+                classic.label()
+            ),
+        }
     }
 
     pub fn decode_gump(
@@ -239,6 +334,10 @@ impl GumpMapRes {
         let enhanced = self.enhanced.as_deref().map(|enhanced| move || enhanced.lookup(gump_id));
         let classic = self.classic.as_deref().map(|classic| move || classic.decode(gump_id, scratch));
         match pick_gump_source(client, enhanced, classic) {
+            GumpPick::Found(GumpSourceKind::Classic, gump) if client == GumpClient::Enhanced => {
+                self.check_shared_gump(gump_id, &gump);
+                Ok(gump)
+            }
             GumpPick::Found(_, gump) => Ok(gump),
             GumpPick::Failed(GumpSourceKind::Enhanced, error) => {
                 let error = error.wrap_err(format!("{GUMPS_EC_FILE_NAME} gump {gump_id} does not decode"));
@@ -262,6 +361,10 @@ impl GumpMapRes {
                 }
                 Err(color_eyre::eyre::eyre!("the Classic preset has no gump source loaded"))
             }
+            GumpPick::Missing if self.is_shared_gump(gump_id) => Err(color_eyre::eyre::eyre!(
+                "gump {gump_id} is one {GUMPS_EC_FILE_NAME} shares with {GUMPS_CC_FILE_NAME}, and no Classic gump \
+                 source is loaded"
+            )),
             GumpPick::Missing => Err(color_eyre::eyre::eyre!(
                 "gump {gump_id} is not in {GUMPS_EC_FILE_NAME} and no Classic gump source is loaded"
             )),
@@ -663,6 +766,9 @@ pub fn sys_setup_uo_data(mut commands: Commands, settings: Res<Settings>) {
         let gump_map = GumpMapRes::new(classic, enhanced);
         if let Some(gump_map) = &gump_map {
             lg(&gump_map.sources_summary());
+            if let Some(warning) = gump_map.shared_gumps_warning() {
+                console_logger::one(console_logger::LogSev::Warn, console_logger::LogAbout::UoFiles, &warning);
+            }
         }
         gump_map
     };
@@ -808,7 +914,8 @@ fn load_multi_definitions(
 #[cfg(test)]
 mod tests {
     use super::{
-        gump_sources_summary, pick_gump_source, GumpClient, GumpPick, GumpSourceKind, GUMPS_CC_FILE_NAME,
+        gump_sources_summary, pick_gump_source, shared_gumps_without_classic_warning, GumpClient, GumpPick,
+        GumpSourceKind, SharedGumpCheck, SharedGumpVerdict, GUMPS_CC_FILE_NAME,
     };
     use std::collections::BTreeMap;
     use std::path::PathBuf;
@@ -951,6 +1058,52 @@ mod tests {
             gump_sources_summary(Some(GUMPS_CC_FILE_NAME), false),
             "gumps: Classic preset gumps_cc.uddp; Enhanced and KR-like gumps_cc.uddp (gumps_ec.uddp is not loaded)"
         );
+    }
+
+    /// The startup warning comes only for a shared gumps_ec.uddp without a Classic source to draw what it shares.
+    #[test]
+    fn shared_gumps_without_a_classic_source_are_warned_of_once_at_startup() {
+        const SHARED_COUNT: usize = 2216;
+        assert_eq!(shared_gumps_without_classic_warning(0, false), None);
+        assert_eq!(shared_gumps_without_classic_warning(SHARED_COUNT, true), None);
+        let warning = shared_gumps_without_classic_warning(SHARED_COUNT, false).expect("a warning");
+        assert!(warning.contains("2216 gumps with gumps_cc.uddp"), "{warning}");
+        assert!(warning.contains("won't show under the Enhanced and KR-like presets"), "{warning}");
+    }
+
+    /// A shared gump is hashed the first time it is served and never again; the first mismatch is told apart from the
+    /// later ones, which carry the count; a gump gumps_ec.uddp doesn't share is never checked.
+    #[test]
+    fn shared_gumps_are_hashed_once_and_mismatches_counted() {
+        const MATCHING: u32 = 100;
+        const FIRST_DIFFERING: u32 = 101;
+        const SECOND_DIFFERING: u32 = 102;
+        const NOT_SHARED: u32 = 103;
+        const SIDE: u32 = 2;
+        const RGBA_CHANNELS: usize = 4;
+        const OPAQUE_GREY: u8 = 128;
+        let served = udd_assets::gumps::GumpImage {
+            physical_width: SIDE,
+            physical_height: SIDE,
+            logical_width: SIDE,
+            logical_height: SIDE,
+            upscale_factor: 1,
+            rgba: vec![OPAQUE_GREY; (SIDE * SIDE) as usize * RGBA_CHANNELS],
+        };
+        let served_hash = udd_assets::gumps::gump_image_hash(&served);
+        let other_hash = served_hash.wrapping_add(1);
+        let check = SharedGumpCheck::default();
+
+        assert_eq!(check.check(NOT_SHARED, None, &served), SharedGumpVerdict::NotShared);
+        assert_eq!(check.check(MATCHING, Some(served_hash), &served), SharedGumpVerdict::Matches);
+        assert_eq!(check.check(MATCHING, Some(served_hash), &served), SharedGumpVerdict::AlreadyChecked);
+        assert_eq!(check.check(FIRST_DIFFERING, Some(other_hash), &served), SharedGumpVerdict::FirstMismatch);
+        assert_eq!(check.check(FIRST_DIFFERING, Some(other_hash), &served), SharedGumpVerdict::AlreadyChecked);
+        assert_eq!(
+            check.check(SECOND_DIFFERING, Some(other_hash), &served),
+            SharedGumpVerdict::Mismatch { count: 2 }
+        );
+        assert_eq!(check.check(NOT_SHARED, None, &served), SharedGumpVerdict::NotShared);
     }
 
     #[test]
