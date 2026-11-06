@@ -40,8 +40,8 @@ use udd_conv::{
     },
     effects_ec::{pack_effects_ec, EffectsEcPackOptions},
     ec_gumps::{
-        convert_ec_gumps_to_uddp_from_sources, EcGumpsOptions, EC_GUMP_DEFAULT_MAX_ID,
-        EC_LOSSY_SINGLE_GUMP_FORMAT, GUMPS_EC_DEFAULT_OUTPUT,
+        convert_ec_gumps_to_uddp_from_sources, EcGumpsOptions, EC_CLASSIC_COLOUR_SPACE_SINGLE_GUMP_FORMAT,
+        EC_GUMP_DEFAULT_MAX_ID, EC_LOSSY_SINGLE_GUMP_FORMAT, GUMPS_EC_DEFAULT_OUTPUT,
     },
     hues::{convert_hues_to_hues_uddp_from_sources, HueRampMode, HuesOptions},
     mobile_anim_cc::{
@@ -105,7 +105,7 @@ const ART_ZSTD_HELP: &str = "Zstd level of the atlas pages (--zstd=LEVEL), which
 const TEX_AUX_ZSTD_HELP: &str = "Zstd level of the textures (--zstd=LEVEL), which without a format flag are lossless RGBA8888 with Zstd 19; with --raw, --bc7 or --bc7-rdo, a file-level Zstd pass after that encoding. A bare --zstd keeps level 19 without a format flag, and is a level 7 pass after one.";
 const GUMP_RAW_HELP: &str = "Store the single gumps as lossless RGBA8888: the default.";
 const GUMP_BC1_HELP: &str = "Store every single (non-paperdoll) Classic gump as BC1: lossy, with one bit of alpha (colour 0 is its transparent texel), and Zstd 19 unless --zstd=LEVEL. Paperdoll gumps (50001-69999) stay lossless on their atlas pages, and the paperdoll body gumps (12-15, 665, 666) stay RGBA8888: Classic partial hue needs exact greys.";
-const GUMP_BC7_HELP: &str = "Store every single (non-paperdoll) Enhanced gump as BC7 of premultiplied colour: lossy, soft alpha kept, and Zstd 19 unless --zstd=LEVEL. Paperdoll gumps (50001-69999) stay lossless on their atlas pages, and the paperdoll body gumps (12-15, 665, 666) stay RGBA8888: the Enhanced client hues exact greys only.";
+const GUMP_BC7_HELP: &str = "Store the single (non-paperdoll) Enhanced gumps lossy, with Zstd 19 unless --zstd=LEVEL: the gumps in the Classic colour space (alpha 0 or 255, opaque channels on Classic's steps of 8: the Classic gumps Interface.uop repeats) as BC1, the others as BC7 of premultiplied colour, soft alpha kept. The test runs after any upscale pass, so an interpolating upscaler sends a gump to BC7. Paperdoll gumps (50001-69999) stay lossless on their atlas pages, and the paperdoll body gumps (12-15, 665, 666) stay RGBA8888: the Enhanced client hues exact greys only.";
 const OUTPUT_PATH_HELP: &str = "Output paths (--output, --art-output, --land-output, ...) and their default \
 file names resolve against the current working directory; absolute paths are used as given. \
 Nothing is written into --ccdir or --ecdir unless an output path points there.";
@@ -2482,12 +2482,20 @@ where
                     upscale_profile,
                 },
             )?;
+            let single_formats = match summary.single_classic_colour_space_count {
+                0 => single_pixel_format.label().to_string(),
+                classic_count => format!(
+                    "{}, {classic_count} of them in the Classic colour space as {}",
+                    single_pixel_format.label(),
+                    EC_CLASSIC_COLOUR_SPACE_SINGLE_GUMP_FORMAT.label()
+                ),
+            };
             info!(
                 "Wrote {} EC gumps to '{}' ({} single in {}, {} with soft alpha; {} atlas; {} skipped).",
                 summary.gump_count,
                 out_file.display(),
                 summary.single_gump_count,
-                single_pixel_format.label(),
+                single_formats,
                 summary.single_soft_alpha_count,
                 summary.atlas_gump_count,
                 summary.skipped_count
@@ -2955,7 +2963,8 @@ mod tests {
 
     /// A bare `--zstd` keeps each package's own levels, as for map chunks: gump atlas pages and land pages 19, single
     /// gumps the package default.
-    /// `--bc1` stores Classic single gumps as BC1 and `--bc7` Enhanced ones as BC7, each with Zstd 19 unless a level is
+    /// `--bc1` stores Classic single gumps as BC1 and `--bc7` Enhanced ones as BC7 (those in the Classic colour space as
+    /// BC1, by the writer), each with Zstd 19 unless a level is
     /// given; `--raw` is the lossless default, and neither command takes the other's lossy flag.
     #[test]
     fn lossy_flags_select_each_package_lossy_single_gumps() {

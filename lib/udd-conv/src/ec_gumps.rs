@@ -27,11 +27,16 @@ pub const EC_GUMP_DEFAULT_MAX_ID: u32 = 99_999;
 
 /// The lossy format of Enhanced single gumps (the user, 2026-11-06): BC7, which keeps soft alpha.
 pub const EC_LOSSY_SINGLE_GUMP_FORMAT: GumpPixelFormat = GumpPixelFormat::Bc7;
+/// The lossy format of the Enhanced single gumps in the Classic colour space
+/// ([`crate::single_gumps::is_in_classic_colour_space`]), the Classic gumps Interface.uop repeats (the user,
+/// 2026-11-06): BC1, as `gumps_cc` stores them, since they have no soft alpha for BC7 to keep.
+pub const EC_CLASSIC_COLOUR_SPACE_SINGLE_GUMP_FORMAT: GumpPixelFormat = GumpPixelFormat::Bc1;
 
 pub struct EcGumpsOptions {
     pub max_id: u32,
-    /// How single gumps are stored: lossless RGBA8888, or BC7 when packing lossy. Paperdoll gumps stay lossless: the
-    /// Enhanced client hues exact greys only (`UOPaperdoll::DrawGumpLayer`).
+    /// How single gumps are stored: lossless RGBA8888, or BC7 when packing lossy, with the gumps in the Classic colour
+    /// space as BC1. Paperdoll gumps stay lossless: the Enhanced client hues exact greys only
+    /// (`UOPaperdoll::DrawGumpLayer`).
     pub single_pixel_format: GumpPixelFormat,
     /// The builder codec of single gumps.
     pub compression: CompressionFlag,
@@ -68,11 +73,28 @@ fn gump_upscale_passes_for(
         .unwrap_or_else(|| fallback.to_vec())
 }
 
+/// The single gump writer of `options`. Packing lossy, the gumps in the Classic colour space go
+/// [`EC_CLASSIC_COLOUR_SPACE_SINGLE_GUMP_FORMAT`] and the rest [`EC_LOSSY_SINGLE_GUMP_FORMAT`]. The writer tests the
+/// pixels it is given, after the upscale passes, so an interpolating upscaler, whose blended texels leave the Classic
+/// colour space, sends a gump to BC7. That is intended: blending makes new colours and soft alpha edges, which BC7 keeps
+/// and BC1 would round. An upscaler that only copies texels, such as nearest neighbour, keeps a gump in the Classic
+/// colour space.
+fn single_gump_writer(options: &EcGumpsOptions) -> SingleGumpWriter {
+    let writer = SingleGumpWriter::new(options.single_pixel_format, options.compression);
+    if options.single_pixel_format == EC_LOSSY_SINGLE_GUMP_FORMAT {
+        writer.with_classic_colour_space_format(EC_CLASSIC_COLOUR_SPACE_SINGLE_GUMP_FORMAT)
+    } else {
+        writer
+    }
+}
+
 pub struct EcGumpsBuildSummary {
     pub gump_count: u32,
     pub single_gump_count: u32,
     /// Single gumps with alpha neither 0 nor 255, which BC7 keeps.
     pub single_soft_alpha_count: u32,
+    /// Single gumps in the Classic colour space stored as [`EC_CLASSIC_COLOUR_SPACE_SINGLE_GUMP_FORMAT`] in a lossy pack.
+    pub single_classic_colour_space_count: u32,
     pub atlas_gump_count: u32,
     pub skipped_count: u32,
 }
@@ -139,7 +161,7 @@ fn convert_ec_gumps_from_interface_uop(
         .wrap_err_with(|| format!("load {}", interface_uop.display()))?;
     let mut builder = UddpBuilder::new(LookupMode::SparseId);
     let mut gump_count = 0u32;
-    let mut single_gumps = SingleGumpWriter::new(options.single_pixel_format, options.compression);
+    let mut single_gumps = single_gump_writer(options);
     let mut atlas_gumps = Vec::new();
     let mut skipped_count = 0u32;
 
@@ -209,6 +231,7 @@ fn convert_ec_gumps_from_interface_uop(
         gump_count,
         single_gump_count: single_summary.count,
         single_soft_alpha_count: single_summary.soft_alpha_count,
+        single_classic_colour_space_count: single_summary.classic_colour_space_count,
         atlas_gump_count,
         skipped_count,
     })
@@ -222,7 +245,7 @@ fn convert_ec_gumps_from_extracted_dir(
     let sources = collect_extracted_gumps(gumpart_dir)?;
     let mut builder = UddpBuilder::new(LookupMode::SparseId);
     let mut gump_count = 0u32;
-    let mut single_gumps = SingleGumpWriter::new(options.single_pixel_format, options.compression);
+    let mut single_gumps = single_gump_writer(options);
     let mut atlas_gumps = Vec::new();
     let mut skipped_count = 0u32;
 
@@ -298,6 +321,7 @@ fn convert_ec_gumps_from_extracted_dir(
         gump_count,
         single_gump_count: single_summary.count,
         single_soft_alpha_count: single_summary.soft_alpha_count,
+        single_classic_colour_space_count: single_summary.classic_colour_space_count,
         atlas_gump_count,
         skipped_count,
     })
@@ -515,6 +539,42 @@ mod tests {
 
         assert_eq!(found.file_name().and_then(|name| name.to_str()), Some("Interface.uop"));
         fs::remove_dir_all(root).ok();
+    }
+
+    /// Packing lossy, a gump in the Classic colour space goes BC1 and another BC7; lossless, both stay RGBA8888.
+    #[test]
+    fn lossy_pack_stores_classic_colour_space_gumps_as_bc1() {
+        use crate::single_gumps::default_single_gump_compression;
+        use udd_assets::gumps::GumpsPackage;
+        use udd_container::UddpReader;
+        const SIDE: u32 = 4;
+        const CLASSIC_GUMP_ID: u32 = 2000;
+        const ENHANCED_GUMP_ID: u32 = 2001;
+        const CLASSIC_OPAQUE: [u8; 4] = [248, 0, 120, 255];
+        const ENHANCED_OPAQUE: [u8; 4] = [247, 0, 120, 255];
+        let gumps = [(CLASSIC_GUMP_ID, CLASSIC_OPAQUE), (ENHANCED_GUMP_ID, ENHANCED_OPAQUE)];
+        let lossy = EcGumpsOptions {
+            single_pixel_format: EC_LOSSY_SINGLE_GUMP_FORMAT,
+            compression: default_single_gump_compression(EC_LOSSY_SINGLE_GUMP_FORMAT),
+            ..EcGumpsOptions::default()
+        };
+
+        for (options, classic_format, enhanced_format) in [
+            (&lossy, EC_CLASSIC_COLOUR_SPACE_SINGLE_GUMP_FORMAT, EC_LOSSY_SINGLE_GUMP_FORMAT),
+            (&EcGumpsOptions::default(), GumpPixelFormat::Rgba8888, GumpPixelFormat::Rgba8888),
+        ] {
+            let mut builder = UddpBuilder::new(LookupMode::SparseId);
+            let mut writer = single_gump_writer(options);
+            for (gump_id, pixel) in gumps {
+                writer.push(&mut builder, gump_id, SIDE, SIDE, pixel.repeat((SIDE * SIDE) as usize)).unwrap();
+            }
+            writer.finish(&mut builder).unwrap();
+            add_gump_atlas_files(&mut builder, Vec::new(), &GumpAtlasOptions::default()).unwrap();
+
+            let package = GumpsPackage::from_uddp_package(UddpReader::open(builder.build().unwrap()).unwrap()).unwrap();
+            assert_eq!(package.single_gump_pixel_format(CLASSIC_GUMP_ID).unwrap(), Some(classic_format));
+            assert_eq!(package.single_gump_pixel_format(ENHANCED_GUMP_ID).unwrap(), Some(enhanced_format));
+        }
     }
 
     fn unique_temp_dir(label: &str) -> PathBuf {

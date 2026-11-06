@@ -125,7 +125,7 @@ Normal maps are stored in the same UDDP page-atlas infrastructure as visible EC 
 
 ### `gumps_cc.uddp` and `gumps_ec.uddp`
 
-Paperdoll equipment gumps go to lossless atlas pages; every other gump is a single payload, RGBA8888 by default. The lossy build is BC1 for Classic (`pack-gumps --bc1`, 20.8 MB against 45.6 MB) and BC7 for Enhanced (`pack-ec-gumps --bc7`, 40.5 MB against 84.2 MB), which keeps the soft shadows of the Enhanced gumps that BC1 would round away. Layout: [UDDP_FORMATS.md](UDDP_FORMATS.md) section 2.3.
+Paperdoll equipment gumps go to lossless atlas pages; every other gump is a single payload, RGBA8888 by default. The lossy build is BC1 for Classic (`pack-gumps --bc1`, 20.8 MB against 45.6 MB) and BC7 for Enhanced (`pack-ec-gumps --bc7`, 34.4 MB against 84.2 MB), which keeps the soft shadows of the Enhanced gumps that BC1 would round away. The Enhanced gumps in the Classic colour space, the 2216 Classic gumps Interface.uop repeats, take BC1 there too (2026-11-06; all BC7 was 40.5 MB). `pack-ec-gumps` reads only Interface.uop, not the EC client's `gumpartLegacyMUL.uop`, and needs no Classic files. Layout: [UDDP_FORMATS.md](UDDP_FORMATS.md) section 2.3.
 
 ### `tex_aux_ec.uddp`
 

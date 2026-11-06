@@ -745,7 +745,33 @@ the same day ([`bc7_alpha_plane_search.md`](bc7_alpha_plane_search.md)). The use
     because from my understanding we are mostly already using bc7 and i wouldn't keep a bc3 shader path just for few
     selected cases that do not give us substantial benefit."
     - `gumps_cc` packs lossy as BC1 (`pack-gumps --bc1`) and `gumps_ec` as BC7 with fix C, premultiplied, no RDO, zstd 19
-      (`pack-ec-gumps --bc7`); each packer refuses the other format. No BC3, and no list of soft-alpha gumps.
+      (`pack-ec-gumps --bc7`), its gumps in the Classic colour space as BC1 (below); each packer refuses the other's flag
+      and format. No BC3, and no list of soft-alpha gumps.
+    - **The Classic gumps that Interface.uop repeats take BC1 inside `gumps_ec`** (the user, 2026-11-06: the twins as BC1
+      and the rest as BC7, "provided it doesn't need much shader code"). It needs none: Dynamapper decodes gumps on the
+      CPU and gives egui RGBA images, and each single gump already carries its pixel format byte. This is option B of the
+      table under "BC7 for `gumps_ec`" below.
+      - The rule, `is_in_classic_colour_space` in `lib/udd-conv/src/single_gumps.rs`: alpha is only 0 or 255, and every
+        opaque texel's R, G and B have their low 3 bits clear. The Classic decoder widens 5-bit channels as `c << 3`
+        (0, 8, ..., 248; `lib/uocf/src/utils/color.rs`) and gives alpha 0 or 255 only. The colour under a clear texel
+        doesn't count, and a gump with no opaque texel passes. It reads no Classic file, so `gumps_ec` stays
+        self-contained: the user doesn't want `gumps_ec` to need `gumps_cc`.
+      - Measured (2026-11-06): Interface.uop and the Classic client have 3403 single gumps each, with the same ids. 2216
+        Interface.uop gumps are Classic twins, their opaque pixels identical to the Classic decode with on/off alpha: 760
+        fully identical, 1456 different only in the colour under fully transparent texels. The rule picks exactly those
+        2216 among Interface.uop's gumps, none missed and none extra.
+      - `pack-ec-gumps --bc7` stores a gump that passes as BC1, encoded as `pack-gumps --bc1` encodes, and the others as BC7
+        fix C premultiplied; the paperdoll body gumps stay RGBA8888 and the paperdoll pages lossless. The rule sees the
+        final pixels, after any upscale pass, so an interpolating upscaler sends a gump to BC7, as intended. Lossless stays
+        the default. The packer logs "N single gumps in the Classic colour space as BC1, M as BC7, K paperdoll body gumps
+        RGBA8888".
+      - Built on the plain client: 34.35 MB (all BC7: 40.507 MB; option B's estimate: 34.33 MB). 2246 single gumps BC1:
+        the 2216 twins less the body gumps 12-15 among them, plus the 34 empty 0x0 gumps, which have no opaque texel and no
+        pixel bytes. 1185 BC7, 6 body gumps RGBA8888. Every gump decodes, and `udd-cli tool validate` passes.
+      - All 2212 non-empty BC1 payloads are byte for byte the `pack-gumps --bc1` payload of the same id. The BC1 encoder
+        (`dds` 0.2) leaves transparent texels out of the endpoint fit, so the colour under them changes nothing.
+      - `gumps_ec` reads only Interface.uop (`find_interface_uop` in `lib/udd-conv/src/ec_gumps.rs`), not the EC client's
+        `gumpartLegacyMUL.uop` (set aside, section 9).
     - Enhanced paperdoll pages stay lossless for now: the Enhanced client hues exact greys only, with the red byte as the
       hue index (`UOPaperdoll::DrawGumpLayer` 0x00509b30, compares at 0x00509d64 and 0x00509d6c,
       [traced](../../scripts/dev-helpers/ec-research/ghidra-paperdoll/results/uosa_paperdoll.md)). Open below.
@@ -785,7 +811,8 @@ the same day ([`bc7_alpha_plane_search.md`](bc7_alpha_plane_search.md)). The use
       (74.2 under 4096 px). The bench's worst Enhanced gump, 20.1, matches the linear-light figure.
     - 171 Enhanced single gumps have soft alpha (none in Classic). BC1 rounds it, so the eight worst gumps, 1900-1911
       (322x294 soft shadows), lose the shadow entirely. Keeping those 171 lossless would cost 5.9 MB against their 1.0 MB in BC1.
-    - **BC7 for `gumps_ec`** (2026-11-06, `pack-ec-gumps --bc7`, same method): 40.49 MB, 19.6 s to pack against 13.4 s
+    - **BC7 for `gumps_ec`** (2026-11-06, `pack-ec-gumps --bc7` before its Classic twins went BC1 the same day, above; the
+      measurements stand, same method): 40.49 MB, 19.6 s to pack against 13.4 s
       lossless. As blocks the single gumps would take 84.4 MB of VRAM against BC1's 42.2 and RGBA8888's 334.0; Dynamapper
       decodes them on the CPU, so only an open gump reaches the GPU, as RGBA8888.
       - Median 82.1 against BC1's 79.6, p10 52.1 against 51.1, worst 26.1 against 19.9 (sRGB blend: 26.1 against
@@ -808,7 +835,7 @@ the same day ([`bc7_alpha_plane_search.md`](bc7_alpha_plane_search.md)). The use
         | Option | `gumps_ec` lossless | `gumps_ec` lossy | With `gumps_cc` (45.61 / 20.84 MB) |
         |---|---|---|---|
         | A: every Enhanced single gump BC7, as built | 84.15 MB | 40.49 MB | not needed |
-        | B: the twins BC1 inside `gumps_ec`, the rest BC7 | 84.15 MB | 34.33 MB | not needed |
+        | B: the twins BC1 inside `gumps_ec`, the rest BC7 (chosen, 2026-11-06; built 34.35 MB) | 84.15 MB | 34.33 MB | not needed |
         | C: the twins left out of `gumps_ec`, drawn from `gumps_cc` | 69.70 MB | 27.82 MB | needed: 115.31 MB lossless, 48.66 MB lossy |
 
         - C's sizes leave the 2216 index records (about 0.07 MB) in.
@@ -929,6 +956,9 @@ are from [the codec proposal](proposals/2026-11-01-mobile-anim-codec.md), on eve
 | Classic BC1 with masks for partial hue | One-bit masks 279.2 MB, with BC1 1537.9 MB of VRAM against 2419.0 MB for R8 | Not chosen: the user keeps this data lossless (2026-11-05). A mask would keep which pixels take the hue, but BC1 still moves their grey level, which picks the hue's colour |
 | Halved frames | See section 4 | All frames are kept (2026-11-04) |
 | Runtime BC7 | See section 4 | Off for now; possibly later for upscaled animations |
+| Every lossy Enhanced single gump BC7 (gump option A) | `gumps_ec` 40.507 MB, about 6 MB more than the Classic twins in BC1 (34.35 MB) | No runtime gain: gumps decode on the CPU to RGBA for egui, so VRAM is the same, and BC1 decodes faster (211 ms against 308 for every Enhanced single gump, section 8). The twins have no soft alpha for BC7 to keep (2026-11-06) |
+| The Classic twins left out of `gumps_ec`, drawn from `gumps_cc` (gump option C) | `gumps_ec` 27.82 MB lossy, 48.66 MB with `gumps_cc` | `gumps_ec` would need `gumps_cc`, which the user rejected (2026-11-06) |
+| Gumps from the EC client's `gumpartLegacyMUL.uop` | 3353 single gumps, every id also in Interface.uop (2214 the same image); 3345 identical to the Classic client's | Discarded by the user (2026-11-06): Interface.uop has every id. `gumps_ec` reads only Interface.uop (`find_interface_uop`) |
 
 **Set aside by the measurements, with nobody asking for them:**
 

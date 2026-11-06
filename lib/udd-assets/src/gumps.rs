@@ -5,8 +5,10 @@
 //! BC1 or BC7 blocks covering the size rounded up to 4. The payload carries no version, so every package carries the
 //! atlas manifests, whose version covers both layouts, even with no paperdoll gump in it.
 //!
-//! Lossy packs are BC1 for `gumps_cc` and BC7 for `gumps_ec` (the user, 2026-11-06). BC7 blocks hold premultiplied
-//! colour, the rule for block formats; the reader gives every gump back in straight colour.
+//! Lossy packs are BC1 for `gumps_cc` and BC7 for `gumps_ec` (the user, 2026-11-06), whose gumps in the Classic colour
+//! space take BC1 too, so a lossy `gumps_ec` mixes BC1, BC7 and its RGBA8888 paperdoll body gumps. BC7 blocks hold
+//! premultiplied colour, the rule for block formats; the reader gives every gump back in straight colour, by its own
+//! format byte.
 
 use byteorder::{LittleEndian, ReadBytesExt, WriteBytesExt};
 use color_eyre::eyre::{self, Context, ContextCompat};
@@ -38,6 +40,7 @@ pub enum GumpPixelFormat {
     /// Lossless RGBA8888 rows.
     Rgba8888 = 0,
     /// BC1 blocks with one bit of alpha: Classic's colour 0 and any texel under half alpha decode to transparent black.
+    /// The lossy Classic gumps, and the lossy Enhanced gumps in the Classic colour space.
     Bc1 = 1,
     /// BC7 blocks of premultiplied colour, soft alpha kept: the lossy Enhanced gumps.
     Bc7 = 2,
@@ -573,6 +576,62 @@ mod tests {
 
         let error = package.read_gump_image(GUMP_ID).unwrap_err();
         assert!(error.to_string().contains("BC7 payload length"), "{error}");
+    }
+
+    /// A lossy `gumps_ec` mixes formats: each single gump decodes by its own format byte. BC1 reads back straight, its
+    /// clear texels transparent black whatever colour they held; only BC7 is un-premultiplied, so an RGBA8888 gump's soft
+    /// texel comes back exactly as written.
+    #[test]
+    fn mixed_format_package_decodes_each_gump_by_its_format() {
+        const WIDTH: u32 = 5;
+        const HEIGHT: u32 = 3;
+        const RGBA_GUMP_ID: u32 = 12;
+        const BC1_GUMP_ID: u32 = 1000;
+        const BC7_GUMP_ID: u32 = 1001;
+        const CLASSIC_OPAQUE: [u8; 4] = [248, 128, 8, 255];
+        const COLOURED_CLEAR: [u8; 4] = [255, 7, 93, 0];
+        const SOFT_GREY: [u8; 4] = [180, 180, 180, 128];
+        const CLEAR: [u8; 4] = [0, 0, 0, 0];
+        const OPAQUE: u8 = u8::MAX;
+        const ALPHA_CHANNEL: usize = 3;
+        let extent = ImageExtent::new(WIDTH, HEIGHT).unwrap();
+        let mut classic = CLASSIC_OPAQUE.repeat((WIDTH * HEIGHT) as usize);
+        classic[..COLOURED_CLEAR.len()].copy_from_slice(&COLOURED_CLEAR);
+        let mut soft = CLASSIC_OPAQUE.repeat((WIDTH * HEIGHT) as usize);
+        soft[..SOFT_GREY.len()].copy_from_slice(&SOFT_GREY);
+        let gumps = [
+            (RGBA_GUMP_ID, GumpPixelFormat::Rgba8888, &soft),
+            (BC1_GUMP_ID, GumpPixelFormat::Bc1, &classic),
+            (BC7_GUMP_ID, GumpPixelFormat::Bc7, &soft),
+        ];
+        let singles = gumps
+            .iter()
+            .map(|&(gump_id, format, rgba)| (gump_id, encode_single_gump_payload(WIDTH, HEIGHT, rgba, format).unwrap()))
+            .collect::<Vec<_>>();
+        let package = GumpsPackage::from_uddp_package(build_package_with_singles(&singles)).unwrap();
+
+        for (&(gump_id, format, _), (_, payload)) in gumps.iter().zip(&singles) {
+            assert_eq!(package.single_gump_pixel_format(gump_id).unwrap(), Some(format), "gump {gump_id}");
+            let blocks = &payload[SINGLE_GUMP_HEADER_BYTES..];
+            let expected = match format {
+                GumpPixelFormat::Rgba8888 => soft.clone(),
+                GumpPixelFormat::Bc1 => decode_bc1_to_rgba8888(blocks, extent).unwrap(),
+                GumpPixelFormat::Bc7 => {
+                    let mut straight = decode_bc7_to_rgba8888(blocks, extent).unwrap();
+                    unpremultiply_rgba8888(&mut straight);
+                    straight
+                }
+            };
+            assert_eq!(package.read_gump_image(gump_id).unwrap().rgba, expected, "gump {gump_id}");
+        }
+
+        let bc1 = package.read_gump_image(BC1_GUMP_ID).unwrap().rgba;
+        assert_eq!(bc1[..CLEAR.len()], CLEAR);
+        assert!(bc1[CLEAR.len()..].chunks_exact(CLEAR.len()).all(|texel| texel[ALPHA_CHANNEL] == OPAQUE));
+        let (_, bc7_payload) = singles.iter().find(|(gump_id, _)| *gump_id == BC7_GUMP_ID).unwrap();
+        let bc7_stored = decode_bc7_to_rgba8888(&bc7_payload[SINGLE_GUMP_HEADER_BYTES..], extent).unwrap();
+        let bc7 = package.read_gump_image(BC7_GUMP_ID).unwrap().rgba;
+        assert_ne!(bc7[..SOFT_GREY.len()], bc7_stored[..SOFT_GREY.len()], "BC7's soft texel is un-premultiplied");
     }
 
     /// The clients hold a few 0x0 gumps: they keep a payload with no pixels, in any format.
