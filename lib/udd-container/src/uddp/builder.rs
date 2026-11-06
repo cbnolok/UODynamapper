@@ -6,6 +6,7 @@
 //! compressed with plain Zstd, or compressed with a trained dictionary remains
 //! next to the code that serializes the final package image.
 
+use std::borrow::Borrow;
 use std::collections::{HashMap, HashSet};
 use std::fs::File;
 use std::io::{BufWriter, Seek, SeekFrom, Write};
@@ -819,6 +820,18 @@ where
         &mut completed,
         &mut progress,
     )?;
+    compress_large_zstd_files_with_progress(
+        files
+            .iter()
+            .enumerate()
+            .filter(|(_, file)| uses_parallel_zstd_compression(file))
+            .collect(),
+        files.len(),
+        |file| compress_file(file, dicts_by_type),
+        &mut compressed_files,
+        &mut completed,
+        &mut progress,
+    )?;
     compress_files_serial_with_progress(
         files,
         dicts_by_type,
@@ -852,10 +865,13 @@ where
     let file_count = files.len();
     let mut compressed_files = vec![None; file_count];
     let mut parallel_files = Vec::new();
+    let mut large_zstd_files = Vec::new();
     let mut serial_files = Vec::new();
 
     for (index, file) in files.into_iter().enumerate() {
-        if uses_internal_parallel_compression(&file) {
+        if uses_parallel_zstd_compression(&file) {
+            large_zstd_files.push((index, file));
+        } else if uses_internal_parallel_compression(&file) {
             serial_files.push((index, file));
         } else {
             parallel_files.push((index, file));
@@ -894,6 +910,15 @@ where
             return Err(error);
         }
     }
+
+    compress_large_zstd_files_with_progress(
+        large_zstd_files,
+        file_count,
+        |file| compress_file_owned(file, dicts_by_type),
+        &mut compressed_files,
+        &mut completed,
+        &mut progress,
+    )?;
 
     for (index, file) in serial_files {
         progress(CompressionProgress {
@@ -989,6 +1014,96 @@ pub(super) struct CompressionProgress {
     active_file: Option<BuildProgressFile>,
 }
 
+/// What a worker compressing a large Zstd payload reports: the payload it starts, then its result.
+enum LargeZstdEvent {
+    Started(BuildProgressFile),
+    Finished(usize, Result<BuiltFile, BuildError>),
+}
+
+/// Compresses the large Zstd payloads at once, one per rayon worker. Each still goes through Zstd's own
+/// workers, so its bytes don't change; but at level 19 a 16 MB page is a single Zstd job, so one page at
+/// a time left the other cores idle (tex_land_cc's 4 pages took 45 s). The active file reported is the
+/// last one started that is still running.
+fn compress_large_zstd_files_with_progress<T, C, F>(
+    files: Vec<(usize, T)>,
+    total: usize,
+    compress: C,
+    compressed_files: &mut [Option<BuiltFile>],
+    completed: &mut usize,
+    progress: &mut F,
+) -> Result<(), BuildError>
+where
+    T: Borrow<PendingFile> + Send,
+    C: Fn(T) -> Result<BuiltFile, BuildError> + Sync + Send,
+    F: FnMut(CompressionProgress),
+{
+    if files.is_empty() {
+        return Ok(());
+    }
+
+    let (sender, receiver) = std::sync::mpsc::channel();
+    std::thread::scope(|scope| {
+        scope.spawn(move || {
+            files
+                .into_par_iter()
+                .for_each_with(sender, |sender, (index, file)| {
+                    let _ = sender.send(LargeZstdEvent::Started(progress_file(index, total, file.borrow())));
+                    let result = compress(file);
+                    let _ = sender.send(LargeZstdEvent::Finished(index, result));
+                });
+        });
+
+        let mut running: Vec<BuildProgressFile> = Vec::new();
+        let mut first_error = None;
+        for event in receiver {
+            match event {
+                LargeZstdEvent::Started(file) => {
+                    running.push(file);
+                    progress(CompressionProgress {
+                        completed: *completed,
+                        active_file: Some(file),
+                    });
+                }
+                LargeZstdEvent::Finished(index, result) => {
+                    running.retain(|file| file.index != index);
+                    *completed += 1;
+                    progress(CompressionProgress {
+                        completed: *completed,
+                        active_file: running.last().copied(),
+                    });
+                    match result {
+                        Ok(built_file) => {
+                            compressed_files[index] = Some(built_file);
+                        }
+                        Err(error) => {
+                            if first_error.is_none() {
+                                first_error = Some(error);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        if let Some(error) = first_error {
+            return Err(error);
+        }
+
+        Ok(())
+    })
+}
+
+fn progress_file(index: usize, total: usize, file: &PendingFile) -> BuildProgressFile {
+    BuildProgressFile {
+        index,
+        total,
+        compression: file.compression,
+        raw_size: file.raw_data.len(),
+        width: file.width,
+        height: file.height,
+    }
+}
+
 fn compress_files_serial_with_progress<F>(
     files: &[PendingFile],
     dicts_by_type: &HashMap<u8, Vec<u8>>,
@@ -1000,7 +1115,7 @@ where
     F: FnMut(CompressionProgress),
 {
     for (index, file) in files.iter().enumerate() {
-        if !uses_internal_parallel_compression(file) {
+        if !uses_jxl_compression(file) {
             continue;
         }
         progress(CompressionProgress {
@@ -1025,6 +1140,10 @@ where
 }
 
 fn uses_internal_parallel_compression(file: &PendingFile) -> bool {
+    uses_jxl_compression(file) || uses_parallel_zstd_compression(file)
+}
+
+fn uses_jxl_compression(file: &PendingFile) -> bool {
     matches!(
         file.compression,
         CompressionFlag::JpegXl
@@ -1032,7 +1151,7 @@ fn uses_internal_parallel_compression(file: &PendingFile) -> bool {
             | CompressionFlag::JpegXlZstd
             | CompressionFlag::JpegXlZstdLevel(_)
             | CompressionFlag::JpegXlZstdLevels { .. }
-    ) || uses_parallel_zstd_compression(file)
+    )
 }
 
 fn uses_parallel_zstd_compression(file: &PendingFile) -> bool {
@@ -1622,5 +1741,54 @@ mod tests {
         assert!(compression_events.iter().any(|progress| {
             progress.completed == 1 && progress.active_file.is_none()
         }));
+    }
+
+    /// Large Zstd payloads compress side by side, each to the bytes it had alone, in both build paths.
+    #[test]
+    fn large_zstd_payloads_compress_together_to_their_own_bytes() {
+        const LEVEL: i32 = 19;
+        const PAYLOAD_IDS: [u32; 2] = [0, 1];
+        let payload = |id: u32| -> Vec<u8> {
+            (0..PARALLEL_ZSTD_MIN_BYTES).map(|index| (index as u32 / (id + 2)) as u8).collect()
+        };
+        let mut builder = UddpBuilder::new(LookupMode::DenseId);
+        for id in PAYLOAD_IDS {
+            builder
+                .add_owned_file(AddOwnedFileRequest {
+                    data_type: DataType::Texture as u8,
+                    compression: CompressionFlag::ZstdNoDictLevel(LEVEL),
+                    width: 0,
+                    height: 0,
+                    virtual_path: None,
+                    path_hash64: None,
+                    id: Some(id),
+                    data: payload(id),
+                })
+                .expect("add large zstd payload");
+        }
+
+        let mut started = 0usize;
+        let mut last_completed = 0usize;
+        let borrowed = builder
+            .build_with_progress(|progress| {
+                if progress.phase == BuildProgressPhase::CompressingFiles {
+                    started += usize::from(progress.active_file.is_some() && progress.completed == last_completed);
+                    last_completed = progress.completed;
+                }
+            })
+            .expect("build package");
+        let owned = builder.into_bytes().expect("build package by value");
+
+        assert!(started >= 1);
+        assert_eq!(last_completed, PAYLOAD_IDS.len());
+        assert_eq!(borrowed, owned);
+        let package = UddpReader::open(owned).expect("open package");
+        for id in PAYLOAD_IDS {
+            let file = package.find_by_dense_id(id).expect("payload record");
+            let mut stored = vec![0u8; file.stored_size as usize];
+            package.read_entry(file.payload_offset, &mut stored).expect("read stored payload");
+            assert_eq!(stored, zstd_compress_level_parallel(&payload(id), LEVEL).unwrap());
+            assert_eq!(package.read_file_by_dense_id(id).expect("read payload"), payload(id));
+        }
     }
 }
