@@ -32,7 +32,7 @@ uocf = { path = "../uocf" }
 udd-kdl = { path = "../udd-kdl" }
 particle-sim = { path = "../ec-effects/particle-sim" }
 gamebryo-nif = { path = "../ec-effects/gamebryo-nif" }
-udd-assets = { path = "../udd-assets" }
+udd-assets = { path = "../udd-assets", features = ["bc7-encode"] }
 udd-container = { path = "../udd-container" }
 udd-image-codecs = { path = "../udd-image-codecs", features = ["bc7-encode"] }
 wgpu-types.workspace = true

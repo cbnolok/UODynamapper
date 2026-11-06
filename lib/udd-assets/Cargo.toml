@@ -30,6 +30,10 @@ serde.workspace = true
 dds.workspace = true
 workspace-hack.workspace = true
 
+[dev-dependencies]
+# The tests write BC7 single gumps, which only the encode feature can.
+udd-image-codecs = { path = "../udd-image-codecs", features = ["bc7-encode"] }
+
 [features]
 default = []
 bc7-encode = ["udd-image-codecs/bc7-encode"]

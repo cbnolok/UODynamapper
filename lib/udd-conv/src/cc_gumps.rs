@@ -14,7 +14,9 @@ use crate::gump_atlas::{
 };
 use crate::package_progress::build_and_write_package;
 use crate::page_compression::LOSSLESS_PAGE_COMPRESSION;
-use crate::single_gumps::{default_single_gump_compression, GumpPixelFormat, SingleGumpWriter};
+use crate::single_gumps::{
+    default_single_gump_compression, ensure_single_gump_format_for_package, GumpPixelFormat, SingleGumpWriter,
+};
 use crate::source_paths::source_path_label;
 use crate::upscale::{apply_upscale_passes, UpscalePass};
 use crate::upscale_profile::{UpscaleImageType, UpscaleProfile, UpscaleTarget};
@@ -29,8 +31,12 @@ pub struct CcGumpsBuildSummary {
     pub atlas_gump_count: u32,
 }
 
+/// The lossy format of Classic single gumps: Classic draws colour 0 as transparent, which is BC1's one bit of alpha.
+pub const CC_LOSSY_SINGLE_GUMP_FORMAT: GumpPixelFormat = GumpPixelFormat::Bc1;
+
 pub struct CcGumpsOptions {
-    /// How single gumps are stored: lossless RGBA8888, or BC1 when packing lossy. Paperdoll gumps stay lossless.
+    /// How single gumps are stored: lossless RGBA8888, or BC1 when packing lossy. Paperdoll gumps stay lossless: Classic
+    /// partial hue needs exact greys.
     pub single_pixel_format: GumpPixelFormat,
     /// The builder codec of single gumps.
     pub compression: CompressionFlag,
@@ -87,6 +93,7 @@ pub fn convert_gumps_to_uddp_from_sources_with_patches_and_options(
     patch_options: &ClassicPatchOptions,
     options: &CcGumpsOptions,
 ) -> eyre::Result<CcGumpsBuildSummary> {
+    ensure_single_gump_format_for_package(options.single_pixel_format, CC_LOSSY_SINGLE_GUMP_FORMAT, "gumps_cc")?;
     let gump_source = resolve_classic_gump_source(source_dirs, options.source_preference)?;
     println!(
         "Using CC gump source file ({}): {}",

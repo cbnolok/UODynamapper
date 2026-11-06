@@ -1,9 +1,12 @@
 //! `gumps_cc.uddp` and `gumps_ec.uddp`: paperdoll gumps on lossless RGBA8888 atlas pages, every other gump in an entry
 //! of its own (a single gump).
 //!
-//! A single gump's payload is `u32 width, u32 height, u8 pixel format` ([`GumpPixelFormat`]), then RGBA8888 rows or
-//! BC1 blocks covering the size rounded up to 4. The payload carries no version, so every package carries the atlas
-//! manifests, whose version covers both layouts, even with no paperdoll gump in it.
+//! A single gump's payload is `u32 width, u32 height, u8 pixel format` ([`GumpPixelFormat`]), then RGBA8888 rows, or
+//! BC1 or BC7 blocks covering the size rounded up to 4. The payload carries no version, so every package carries the
+//! atlas manifests, whose version covers both layouts, even with no paperdoll gump in it.
+//!
+//! Lossy packs are BC1 for `gumps_cc` and BC7 for `gumps_ec` (the user, 2026-11-06). BC7 blocks hold premultiplied
+//! colour, the rule for block formats; the reader gives every gump back in straight colour.
 
 use byteorder::{LittleEndian, ReadBytesExt, WriteBytesExt};
 use color_eyre::eyre::{self, Context, ContextCompat};
@@ -13,7 +16,8 @@ use std::path::Path;
 use std::sync::{Arc, Mutex};
 use udd_container::{DataType, FileKey, UddpReader};
 use udd_image_codecs::bc1::{decode_bc1_to_rgba8888, encode_bc1, expected_bc1_byte_len};
-use udd_image_codecs::bc7::{ImageExtent, RawImageFormat};
+use udd_image_codecs::bc7::{decode_bc7_to_rgba8888, expected_bc7_byte_len, ImageExtent, RawImageFormat};
+use udd_image_codecs::premultiplied::unpremultiply_rgba8888;
 
 use crate::common::ensure_manifest_version;
 
@@ -35,6 +39,8 @@ pub enum GumpPixelFormat {
     Rgba8888 = 0,
     /// BC1 blocks with one bit of alpha: Classic's colour 0 and any texel under half alpha decode to transparent black.
     Bc1 = 1,
+    /// BC7 blocks of premultiplied colour, soft alpha kept: the lossy Enhanced gumps.
+    Bc7 = 2,
 }
 
 impl GumpPixelFormat {
@@ -42,6 +48,7 @@ impl GumpPixelFormat {
         match value {
             0 => Some(Self::Rgba8888),
             1 => Some(Self::Bc1),
+            2 => Some(Self::Bc7),
             _ => None,
         }
     }
@@ -50,6 +57,7 @@ impl GumpPixelFormat {
         match self {
             Self::Rgba8888 => "RGBA8888",
             Self::Bc1 => "BC1",
+            Self::Bc7 => "BC7",
         }
     }
 
@@ -59,6 +67,7 @@ impl GumpPixelFormat {
             (_, None) => 0,
             (Self::Rgba8888, Some(extent)) => extent.byte_len(RawImageFormat::Rgba8888),
             (Self::Bc1, Some(extent)) => expected_bc1_byte_len(extent),
+            (Self::Bc7, Some(extent)) => expected_bc7_byte_len(extent),
         }
     }
 }
@@ -68,7 +77,7 @@ fn gump_extent(width: u32, height: u32) -> Option<ImageExtent> {
     ImageExtent::new(width, height).ok()
 }
 
-/// A single gump's payload from its RGBA8888 pixels, in `format`.
+/// A single gump's payload from its RGBA8888 pixels (straight colour), in `format`.
 pub fn encode_single_gump_payload(
     width: u32,
     height: u32,
@@ -91,8 +100,30 @@ pub fn encode_single_gump_payload(
         (GumpPixelFormat::Bc1, Some(extent)) => payload.extend_from_slice(
             &encode_bc1(rgba, extent).map_err(|error| eyre::eyre!("single gump {width}x{height}: {error}"))?,
         ),
+        (GumpPixelFormat::Bc7, Some(extent)) => payload.extend_from_slice(
+            &encode_premultiplied_bc7(rgba, extent)
+                .map_err(|error| error.wrap_err(format!("single gump {width}x{height}")))?,
+        ),
     }
     Ok(payload)
+}
+
+/// BC7 blocks of `rgba` premultiplied, through the analytical encoder with the alpha plane search ("fix C") and no RDO,
+/// as the lossy measurements of 2026-11-06.
+#[cfg(any(feature = "bc7-encode", test))]
+fn encode_premultiplied_bc7(rgba: &[u8], extent: ImageExtent) -> eyre::Result<Vec<u8>> {
+    use udd_image_codecs::bc7::{encode_to_bc7, preferred_bc7_encoder_backend};
+
+    let mut premultiplied = rgba.to_vec();
+    udd_image_codecs::premultiplied::premultiply_rgba8888(&mut premultiplied);
+    let blocks = encode_to_bc7(&premultiplied, extent, RawImageFormat::Rgba8888, preferred_bc7_encoder_backend())
+        .map_err(|error| eyre::eyre!("BC7: {error}"))?;
+    Ok(blocks.into_blocks())
+}
+
+#[cfg(not(any(feature = "bc7-encode", test)))]
+fn encode_premultiplied_bc7(_rgba: &[u8], _extent: ImageExtent) -> eyre::Result<Vec<u8>> {
+    eyre::bail!("BC7 gumps need udd-assets built with the bc7-encode feature")
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -115,6 +146,7 @@ pub struct GumpAtlasSlotRecord {
     pub upscale_factor: u16,
 }
 
+/// A decoded gump: `rgba` is straight (not premultiplied) RGBA8888 whatever the payload's format.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct GumpImage {
     pub physical_width: u32,
@@ -372,6 +404,12 @@ fn decode_single_gump_payload(payload: &[u8]) -> eyre::Result<GumpImage> {
         (GumpPixelFormat::Bc1, Some(extent)) => {
             decode_bc1_to_rgba8888(pixels, extent).map_err(|error| eyre::eyre!("single gump {width}x{height}: {error}"))?
         }
+        (GumpPixelFormat::Bc7, Some(extent)) => {
+            let mut rgba = decode_bc7_to_rgba8888(pixels, extent)
+                .map_err(|error| eyre::eyre!("single gump {width}x{height}: {error}"))?;
+            unpremultiply_rgba8888(&mut rgba);
+            rgba
+        }
     };
     Ok(GumpImage {
         physical_width: width,
@@ -482,11 +520,66 @@ mod tests {
         assert_eq!(package.single_gump_pixel_format(GUMP_ID).unwrap(), Some(GumpPixelFormat::Bc1));
     }
 
-    /// The clients hold a few 0x0 gumps: they keep a payload with no pixels, in either format.
+    /// A BC7 single gump keeps its true size (odd here) over whole blocks and stores premultiplied colour; it reads
+    /// back as those blocks in straight colour, with its soft alpha and transparent texels kept.
+    #[test]
+    fn package_reads_bc7_single_gump_payload() {
+        const GUMP_ID: u32 = 9;
+        const WIDTH: u32 = 5;
+        const HEIGHT: u32 = 3;
+        const SOFT_GREY: [u8; 4] = [180, 180, 180, 128];
+        const CLEAR: [u8; 4] = [0, 0, 0, 0];
+        const PREMULTIPLIED_SOFT_GREY: [u8; 4] = [90, 90, 90, 128];
+        /// What BC7 may move a channel of this flat gump by.
+        const BC7_TOLERANCE: u8 = 2;
+        let mut rgba = SOFT_GREY.repeat((WIDTH * HEIGHT) as usize);
+        let clear_texel = rgba.len() - CLEAR.len();
+        rgba[clear_texel..].copy_from_slice(&CLEAR);
+        let extent = ImageExtent::new(WIDTH, HEIGHT).unwrap();
+        let payload = encode_single_gump_payload(WIDTH, HEIGHT, &rgba, GumpPixelFormat::Bc7).unwrap();
+        assert_eq!(payload.len(), SINGLE_GUMP_HEADER_BYTES + expected_bc7_byte_len(extent));
+        let stored = decode_bc7_to_rgba8888(&payload[SINGLE_GUMP_HEADER_BYTES..], extent).unwrap();
+        for (channel, premultiplied) in stored.iter().zip(PREMULTIPLIED_SOFT_GREY) {
+            assert!(channel.abs_diff(premultiplied) <= BC7_TOLERANCE, "stored {channel}, expected {premultiplied}");
+        }
+        let empty = encode_single_gump_payload(0, 0, &[], GumpPixelFormat::Bc7).unwrap();
+        assert_eq!(empty.len(), SINGLE_GUMP_HEADER_BYTES);
+        let package = GumpsPackage::from_uddp_package(build_package_with_singles(&[(GUMP_ID, payload)])).unwrap();
+
+        let image = package.read_gump_image(GUMP_ID).unwrap();
+
+        assert_eq!((image.physical_width, image.physical_height), (WIDTH, HEIGHT));
+        let mut straight = stored;
+        unpremultiply_rgba8888(&mut straight);
+        assert_eq!(image.rgba, straight);
+        let is_grey = |texel: &[u8]| texel[0] == texel[1] && texel[1] == texel[2];
+        assert!(image.rgba.chunks_exact(CLEAR.len()).all(is_grey), "greys stay greys");
+        assert_eq!(image.rgba[clear_texel..], CLEAR);
+        assert_eq!(package.single_gump_pixel_format(GUMP_ID).unwrap(), Some(GumpPixelFormat::Bc7));
+    }
+
+    /// A BC7 payload whose blocks don't cover its size is an error, not a crop.
+    #[test]
+    fn short_bc7_single_gump_payload_is_an_error() {
+        const GUMP_ID: u32 = 9;
+        const WIDTH: u32 = 5;
+        const HEIGHT: u32 = 3;
+        const OPAQUE: [u8; 4] = [10, 20, 30, 255];
+        let mut payload =
+            encode_single_gump_payload(WIDTH, HEIGHT, &OPAQUE.repeat((WIDTH * HEIGHT) as usize), GumpPixelFormat::Bc7)
+                .unwrap();
+        payload.truncate(payload.len() - 1);
+        let package = GumpsPackage::from_uddp_package(build_package_with_singles(&[(GUMP_ID, payload)])).unwrap();
+
+        let error = package.read_gump_image(GUMP_ID).unwrap_err();
+        assert!(error.to_string().contains("BC7 payload length"), "{error}");
+    }
+
+    /// The clients hold a few 0x0 gumps: they keep a payload with no pixels, in any format.
     #[test]
     fn empty_single_gumps_read_back_empty() {
-        const GUMP_IDS: [u32; 2] = [128, 129];
-        let singles = [GumpPixelFormat::Rgba8888, GumpPixelFormat::Bc1]
+        const GUMP_IDS: [u32; 3] = [128, 129, 130];
+        let singles = [GumpPixelFormat::Rgba8888, GumpPixelFormat::Bc1, GumpPixelFormat::Bc7]
             .into_iter()
             .zip(GUMP_IDS)
             .map(|(format, gump_id)| (gump_id, encode_single_gump_payload(0, 0, &[], format).unwrap()))

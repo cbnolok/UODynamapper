@@ -15,7 +15,9 @@ use crate::gump_atlas::{
 };
 use crate::package_progress::build_and_write_package;
 use crate::page_compression::LOSSLESS_PAGE_COMPRESSION;
-use crate::single_gumps::{default_single_gump_compression, GumpPixelFormat, SingleGumpWriter};
+use crate::single_gumps::{
+    default_single_gump_compression, ensure_single_gump_format_for_package, GumpPixelFormat, SingleGumpWriter,
+};
 use crate::source_paths::source_path_label_from_dirs;
 use crate::upscale::{apply_upscale_passes, UpscalePass};
 use crate::upscale_profile::{UpscaleImageType, UpscaleProfile, UpscaleTarget};
@@ -23,9 +25,13 @@ use crate::upscale_profile::{UpscaleImageType, UpscaleProfile, UpscaleTarget};
 pub const GUMPS_EC_DEFAULT_OUTPUT: &str = "gumps_ec.uddp";
 pub const EC_GUMP_DEFAULT_MAX_ID: u32 = 99_999;
 
+/// The lossy format of Enhanced single gumps (the user, 2026-11-06): BC7, which keeps soft alpha.
+pub const EC_LOSSY_SINGLE_GUMP_FORMAT: GumpPixelFormat = GumpPixelFormat::Bc7;
+
 pub struct EcGumpsOptions {
     pub max_id: u32,
-    /// How single gumps are stored: lossless RGBA8888, or BC1 when packing lossy. Paperdoll gumps stay lossless.
+    /// How single gumps are stored: lossless RGBA8888, or BC7 when packing lossy. Paperdoll gumps stay lossless: the
+    /// Enhanced client hues exact greys only (`UOPaperdoll::DrawGumpLayer`).
     pub single_pixel_format: GumpPixelFormat,
     /// The builder codec of single gumps.
     pub compression: CompressionFlag,
@@ -65,7 +71,7 @@ fn gump_upscale_passes_for(
 pub struct EcGumpsBuildSummary {
     pub gump_count: u32,
     pub single_gump_count: u32,
-    /// Single gumps with alpha neither 0 nor 255, which BC1 rounds.
+    /// Single gumps with alpha neither 0 nor 255, which BC7 keeps.
     pub single_soft_alpha_count: u32,
     pub atlas_gump_count: u32,
     pub skipped_count: u32,
@@ -82,6 +88,7 @@ pub fn convert_ec_gumps_to_uddp_from_sources(
     output_path: &Path,
     options: &EcGumpsOptions,
 ) -> eyre::Result<EcGumpsBuildSummary> {
+    ensure_single_gump_format_for_package(options.single_pixel_format, EC_LOSSY_SINGLE_GUMP_FORMAT, "gumps_ec")?;
     if let Some(interface_uop) = find_interface_uop(source_dirs) {
         println!(
             "Using EC gump source file (UOP): {}",

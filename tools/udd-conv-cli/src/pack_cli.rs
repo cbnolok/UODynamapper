@@ -28,7 +28,7 @@ use udd_conv::{
     classic_sources::SourceFormatPreference,
     cc_gumps::{
         convert_gumps_to_uddp_from_sources_with_patches_and_options, CcGumpsOptions,
-        GUMPS_CC_DEFAULT_OUTPUT,
+        CC_LOSSY_SINGLE_GUMP_FORMAT, GUMPS_CC_DEFAULT_OUTPUT,
     },
     cc_map::convert_map_mul_to_uddp_from_sources_with_patches,
     chunk_compression::ChunkCompression,
@@ -41,7 +41,7 @@ use udd_conv::{
     effects_ec::{pack_effects_ec, EffectsEcPackOptions},
     ec_gumps::{
         convert_ec_gumps_to_uddp_from_sources, EcGumpsOptions, EC_GUMP_DEFAULT_MAX_ID,
-        GUMPS_EC_DEFAULT_OUTPUT,
+        EC_LOSSY_SINGLE_GUMP_FORMAT, GUMPS_EC_DEFAULT_OUTPUT,
     },
     hues::{convert_hues_to_hues_uddp_from_sources, HueRampMode, HuesOptions},
     mobile_anim_cc::{
@@ -101,9 +101,10 @@ const CHUNK_STORED_HELP: &str = "Store the chunks uncompressed: the fastest runt
 const DEFAULT_JXL_LEVEL: u8 = 6;
 const LAND_ZSTD_HELP: &str = "Zstd level of the land pages (--zstd=LEVEL), which without a format flag are lossless RGBA8888 with Zstd 19; with --raw or --jxl, a file-level Zstd pass after that encoding. A bare --zstd keeps level 19.";
 const CLASSIC_LAND_BC7_HELP: &str = "Refused, with the reason: Classic land stays lossless.";
-const GUMP_ZSTD_HELP: &str = "Zstd level of the single gumps and, unless --jxl, of the atlas pages (--zstd=LEVEL). Without it single gumps use level 7 (19 with --bc1) and atlas pages, lossless RGBA8888, level 19; with --jxl a Zstd pass over the JPEG XL pages. A bare --zstd keeps these levels, and gives the JPEG XL pages a level 7 pass.";
+const GUMP_ZSTD_HELP: &str = "Zstd level of the single gumps and, unless --jxl, of the atlas pages (--zstd=LEVEL). Without it single gumps use level 7 (19 with --bc1 or --bc7) and atlas pages, lossless RGBA8888, level 19; with --jxl a Zstd pass over the JPEG XL pages. A bare --zstd keeps these levels, and gives the JPEG XL pages a level 7 pass.";
 const GUMP_RAW_HELP: &str = "Store the single gumps as lossless RGBA8888: the default.";
-const GUMP_BC1_HELP: &str = "Store every single (non-paperdoll) gump as BC1: lossy, with one bit of alpha (Classic's colour 0 is its transparent texel; Enhanced alpha below one half becomes transparent), and Zstd 19 unless --zstd=LEVEL. Paperdoll gumps (50000-69999) stay lossless on their atlas pages.";
+const GUMP_BC1_HELP: &str = "Store every single (non-paperdoll) Classic gump as BC1: lossy, with one bit of alpha (colour 0 is its transparent texel), and Zstd 19 unless --zstd=LEVEL. Paperdoll gumps (50001-69999) stay lossless on their atlas pages: Classic partial hue needs exact greys.";
+const GUMP_BC7_HELP: &str = "Store every single (non-paperdoll) Enhanced gump as BC7 of premultiplied colour: lossy, soft alpha kept, and Zstd 19 unless --zstd=LEVEL. Paperdoll gumps (50001-69999) stay lossless on their atlas pages: the Enhanced client hues exact greys only.";
 const OUTPUT_PATH_HELP: &str = "Output paths (--output, --art-output, --land-output, ...) and their default \
 file names resolve against the current working directory; absolute paths are used as given. \
 Nothing is written into --ccdir or --ecdir unless an output path points there.";
@@ -388,9 +389,10 @@ fn gump_atlas_compression(jxl: bool, jxl_level: Option<u8>, zstd: Option<Option<
     }
 }
 
-/// The single gumps' pixel format: BC1 with `--bc1`, lossless RGBA8888 otherwise.
-fn single_gump_pixel_format(bc1: bool) -> GumpPixelFormat {
-    if bc1 { GumpPixelFormat::Bc1 } else { GumpPixelFormat::Rgba8888 }
+/// The single gumps' pixel format: the package's lossy format with `--bc1` (Classic) or `--bc7` (Enhanced), lossless
+/// RGBA8888 otherwise.
+fn single_gump_pixel_format(lossy: bool, lossy_format: GumpPixelFormat) -> GumpPixelFormat {
+    if lossy { lossy_format } else { GumpPixelFormat::Rgba8888 }
 }
 
 /// The single gumps: Zstd at `--zstd=LEVEL`, or the package's default level for their format (a bare `--zstd` too).
@@ -1483,10 +1485,10 @@ enum Commands {
         output: PathBuf,
         #[arg(long, default_value_t = EC_GUMP_DEFAULT_MAX_ID, help = "Highest numeric gump id to probe when reading interface.uop.")]
         max_id: u32,
-        #[arg(long, conflicts_with = "bc1", help = GUMP_RAW_HELP)]
+        #[arg(long, conflicts_with = "bc7", help = GUMP_RAW_HELP)]
         raw: bool,
-        #[arg(long, help = GUMP_BC1_HELP)]
-        bc1: bool,
+        #[arg(long, help = GUMP_BC7_HELP)]
+        bc7: bool,
         #[arg(long, help = "Write paperdoll equipment gump atlas pages with lossless JPEG XL payload compression instead of Zstd 19: pages about a fifth smaller, but many times slower to decode. Single gumps aren't affected.")]
         jxl: bool,
         #[arg(long = "jxl-level", value_parser = clap::value_parser!(u8).range(1..=10), help = "JPEG XL encoder level for gump atlas pages. Default 6.")]
@@ -2526,7 +2528,7 @@ where
             let paths = collect_source_dirs(&source_dir_args)?;
             let out_file = resolve_output_path(&output);
             let upscale_profile = load_optional_upscale_profile(upscale_profile)?;
-            let single_pixel_format = single_gump_pixel_format(bc1);
+            let single_pixel_format = single_gump_pixel_format(bc1, CC_LOSSY_SINGLE_GUMP_FORMAT);
             let summary = convert_gumps_to_uddp_from_sources_with_patches_and_options(
                 &paths,
                 &out_file,
@@ -2561,7 +2563,7 @@ where
             output,
             max_id,
             raw: _,
-            bc1,
+            bc7,
             jxl,
             jxl_level,
             zstd,
@@ -2572,7 +2574,7 @@ where
             let paths = collect_ec_source_dirs(&source_dir_args)?;
             let out_file = resolve_output_path(&output);
             let upscale_profile = load_optional_upscale_profile(upscale_profile)?;
-            let single_pixel_format = single_gump_pixel_format(bc1);
+            let single_pixel_format = single_gump_pixel_format(bc7, EC_LOSSY_SINGLE_GUMP_FORMAT);
             let summary = convert_ec_gumps_to_uddp_from_sources(
                 &paths,
                 &out_file,
@@ -3061,35 +3063,42 @@ mod tests {
 
     /// A bare `--zstd` keeps each package's own levels, as for map chunks: gump atlas pages and land pages 19, single
     /// gumps the package default; only a pass over JPEG XL pages takes the plain default.
-    /// `--bc1` stores single gumps as BC1 with Zstd 19 unless a level is given; `--raw` is the lossless default.
+    /// `--bc1` stores Classic single gumps as BC1 and `--bc7` Enhanced ones as BC7, each with Zstd 19 unless a level is
+    /// given; `--raw` is the lossless default, and neither command takes the other's lossy flag.
     #[test]
-    fn bc1_selects_lossy_single_gumps() {
+    fn lossy_flags_select_each_package_lossy_single_gumps() {
+        use udd_conv::single_gumps::{BC1_SINGLE_GUMP_ZSTD_LEVEL, BC7_SINGLE_GUMP_ZSTD_LEVEL};
         const EXPLICIT_ZSTD_LEVEL: i32 = 5;
         let parse = |args: &[&str]| match Cli::try_parse_from(args).expect("parse gump args").command {
-            Commands::PackGumps { bc1, zstd, .. } | Commands::PackEcGumps { bc1, zstd, .. } => {
-                let format = single_gump_pixel_format(bc1);
+            Commands::PackGumps { bc1, zstd, .. } => {
+                let format = single_gump_pixel_format(bc1, CC_LOSSY_SINGLE_GUMP_FORMAT);
+                (format, single_gump_compression(zstd, format))
+            }
+            Commands::PackEcGumps { bc7, zstd, .. } => {
+                let format = single_gump_pixel_format(bc7, EC_LOSSY_SINGLE_GUMP_FORMAT);
                 (format, single_gump_compression(zstd, format))
             }
             _ => panic!("unexpected command parsed"),
         };
-        for command in ["pack-gumps", "pack-ec-gumps"] {
+        for (command, flag, other_flag, format, level) in [
+            ("pack-gumps", "--bc1", "--bc7", GumpPixelFormat::Bc1, BC1_SINGLE_GUMP_ZSTD_LEVEL),
+            ("pack-ec-gumps", "--bc7", "--bc1", GumpPixelFormat::Bc7, BC7_SINGLE_GUMP_ZSTD_LEVEL),
+        ] {
             assert_eq!(
                 parse(&["uddpack", command]),
                 (GumpPixelFormat::Rgba8888, CompressionFlag::ZstdNoDict)
             );
+            assert_eq!(parse(&["uddpack", command, flag]), (format, CompressionFlag::ZstdNoDictLevel(level)));
             assert_eq!(
-                parse(&["uddpack", command, "--bc1"]),
-                (GumpPixelFormat::Bc1, CompressionFlag::ZstdNoDictLevel(udd_conv::single_gumps::BC1_SINGLE_GUMP_ZSTD_LEVEL))
+                parse(&["uddpack", command, flag, "--zstd"]),
+                parse(&["uddpack", command, flag])
             );
             assert_eq!(
-                parse(&["uddpack", command, "--bc1", "--zstd"]),
-                parse(&["uddpack", command, "--bc1"])
+                parse(&["uddpack", command, flag, "--zstd=5"]),
+                (format, CompressionFlag::ZstdNoDictLevel(EXPLICIT_ZSTD_LEVEL))
             );
-            assert_eq!(
-                parse(&["uddpack", command, "--bc1", "--zstd=5"]),
-                (GumpPixelFormat::Bc1, CompressionFlag::ZstdNoDictLevel(EXPLICIT_ZSTD_LEVEL))
-            );
-            assert!(Cli::try_parse_from(["uddpack", command, "--bc1", "--raw"]).is_err());
+            assert!(Cli::try_parse_from(["uddpack", command, flag, "--raw"]).is_err());
+            assert!(Cli::try_parse_from(["uddpack", command, other_flag]).is_err());
         }
     }
 

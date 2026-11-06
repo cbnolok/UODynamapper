@@ -203,10 +203,10 @@ A single gump (data type `Gump`, sparse id = gump id) is:
 |---|---|---|---|
 | 0x00 | `u32` | `width` | |
 | 0x04 | `u32` | `height` | |
-| 0x08 | `u8` | `pixel_format` | 0 = RGBA8888, 1 = BC1 (`GumpPixelFormat`); any other value is an error. |
-| 0x09 | bytes | pixels | RGBA8888 rows, or BC1 blocks of `ceil(w/4) * ceil(h/4) * 8` bytes. A 0x0 gump has no pixel bytes. |
+| 0x08 | `u8` | `pixel_format` | 0 = RGBA8888, 1 = BC1, 2 = BC7 (`GumpPixelFormat`); any other value is an error. |
+| 0x09 | bytes | pixels | RGBA8888 rows, BC1 blocks of `ceil(w/4) * ceil(h/4) * 8` bytes, or BC7 blocks of `ceil(w/4) * ceil(h/4) * 16` bytes. A 0x0 gump has no pixel bytes. |
 
-Pixel formats can mix in one package; `pack-gumps --bc1` and `pack-ec-gumps --bc1` write BC1 for every single gump, while paperdoll atlas pages stay lossless RGBA8888 (the exact-greys rule for partial hues). BC1 is straight colour with punch-through alpha at 0.5, so soft alpha is rounded to 0 or 255; the packer logs how many gumps had it. Readers decode BC1 to RGBA8888 on the CPU.
+Pixel formats can mix in one package. Each package has one lossy format (the user, 2026-11-06): `pack-gumps --bc1` writes BC1 for every single Classic gump and `pack-ec-gumps --bc7` BC7 for every single Enhanced gump; the packers refuse the other format. Paperdoll atlas pages stay lossless RGBA8888 in both, since both clients hue exact greys only. BC1 is straight colour with punch-through alpha at 0.5 (Classic gumps have no soft alpha). BC7 holds premultiplied colour, so soft alpha is kept. Readers decode either to straight RGBA8888 on the CPU, un-premultiplying BC7.
 
 ### 2.4 Texture Compression Strategies (BC1 vs BC7 and Supercompression)
 
