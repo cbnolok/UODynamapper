@@ -297,8 +297,8 @@ Done or superseded. Blend inputs (`SecondaryBase`, `BlendAlpha`, `CoverageAlpha`
   with tiledata's light-source flag (0x00800000) stores its light id in the quality byte; draw that light's texture from
   `world_lights.uddp` over the worn item, as a translucent layer that shows on any window background, with one strength
   setting in the app and no per-item numbers. Open: where on the item the light sits (the centre of its drawn area, or
-  its brightest part). The lit lanterns use gump 50500 and the unlit ones 50503, and so do the coloured lanterns
-  0x40FE..0x4101, which are light sources: they would glow too. The only paperdoll gumps with a glow painted in, 50322
+  its brightest part). The lit lanterns use gump 50500 and the unlit ones 50503; the coloured lanterns 0x40FE..0x4101
+  are light sources but use the unlit gump 50503, so the light would make them glow too. The only paperdoll gumps with a glow painted in, 50322
   and 60322, are used by no item, and the client draws that glow as an opaque dark disc.
 
 ### Export And Tooling
