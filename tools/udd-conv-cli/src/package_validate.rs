@@ -196,26 +196,76 @@ fn codec_name(codec: Codec) -> &'static str {
 /// Validate each package (directories are searched recursively), log a per-package summary
 /// and fail when any package fails.
 pub fn run_validate(inputs: &[PathBuf]) -> eyre::Result<()> {
+    let counts = validate_inputs(inputs, log_report)?;
+    info!("{}", counts.summary_line());
+    counts.ensure_passed()
+}
+
+/// How many packages one `validate` run checked, and how many of them failed.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ValidateCounts {
+    pub packages: usize,
+    pub failed: usize,
+}
+
+impl ValidateCounts {
+    /// The line `validate` ends with.
+    pub fn summary_line(&self) -> String {
+        format!(
+            "Validated {} packages: {} passed, {} failed",
+            self.packages,
+            self.packages - self.failed,
+            self.failed
+        )
+    }
+
+    /// Fails when any package failed.
+    pub fn ensure_passed(&self) -> eyre::Result<()> {
+        eyre::ensure!(self.failed == 0, "{} of {} packages failed validation", self.failed, self.packages);
+        Ok(())
+    }
+}
+
+/// Validate each package `inputs` names or holds (directories are searched recursively), handing each report to
+/// `on_report` as soon as it is made. Fails when no package is found.
+pub fn validate_inputs(
+    inputs: &[PathBuf],
+    mut on_report: impl FnMut(&PackageReport),
+) -> eyre::Result<ValidateCounts> {
     let paths = collect_package_paths(inputs)?;
     eyre::ensure!(!paths.is_empty(), "no packages found (looked for *.{UDDP_EXTENSION} and {TERRAIN_META_FILE_NAME})");
 
     let mut failed = 0usize;
     for path in &paths {
         let report = validate_package(path);
-        log_report(&report);
+        on_report(&report);
         if !report.passed() {
             failed += 1;
         }
     }
-
-    info!("Validated {} packages: {} passed, {} failed", paths.len(), paths.len() - failed, failed);
-    eyre::ensure!(failed == 0, "{failed} of {} packages failed validation", paths.len());
-    Ok(())
+    Ok(ValidateCounts { packages: paths.len(), failed })
 }
 
-fn log_report(report: &PackageReport) {
-    let status = if report.passed() { "OK  " } else { "FAIL" };
-    info!("{status} {} [{}]", report.path.display(), report.kind_name());
+/// What a line of a package report says, for a caller that shows each kind its own way.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ReportLineKind {
+    /// The status line of a package that passed.
+    Passed,
+    /// The status line of a package that failed.
+    Failed,
+    /// Entry counts, sizes, codecs and the reader's summary.
+    Detail,
+    /// What the package depends on or was checked against.
+    Note,
+    /// A failure.
+    Error,
+}
+
+/// The lines `validate` logs for one package: its status line, then its entry, reader, note and error lines.
+pub fn report_lines(report: &PackageReport) -> Vec<(ReportLineKind, String)> {
+    let (status_kind, status) =
+        if report.passed() { (ReportLineKind::Passed, "OK  ") } else { (ReportLineKind::Failed, "FAIL") };
+    let mut lines = vec![(status_kind, format!("{status} {} [{}]", report.path.display(), report.kind_name()))];
     if report.entry_count > 0 {
         let codecs = report
             .codec_counts
@@ -223,28 +273,32 @@ fn log_report(report: &PackageReport) {
             .map(|(name, count)| format!("{name}={count}"))
             .collect::<Vec<_>>()
             .join(", ");
-        info!(
-            "     entries={}, raw={:.1} MiB, stored={:.1} MiB, codecs: {}, dictionaries={}",
-            report.entry_count,
-            report.raw_bytes as f64 / BYTES_PER_MIB,
-            report.stored_bytes as f64 / BYTES_PER_MIB,
-            codecs,
-            report.dictionary_count
-        );
+        lines.push((
+            ReportLineKind::Detail,
+            format!(
+                "     entries={}, raw={:.1} MiB, stored={:.1} MiB, codecs: {}, dictionaries={}",
+                report.entry_count,
+                report.raw_bytes as f64 / BYTES_PER_MIB,
+                report.stored_bytes as f64 / BYTES_PER_MIB,
+                codecs,
+                report.dictionary_count
+            ),
+        ));
     }
     if let Some(summary) = &report.reader_summary {
-        info!("     reader: {summary}");
+        lines.push((ReportLineKind::Detail, format!("     reader: {summary}")));
     }
-    for note in &report.notes {
-        info!("     note: {note}");
-    }
-    for failure in &report.failures {
-        info!("     error: {failure}");
+    lines.extend(report.notes.iter().map(|note| (ReportLineKind::Note, format!("     note: {note}"))));
+    lines.extend(report.failures.iter().map(|failure| (ReportLineKind::Error, format!("     error: {failure}"))));
+    lines
+}
+
+fn log_report(report: &PackageReport) {
+    for (_, line) in report_lines(report) {
+        info!("{line}");
     }
 }
 
-/// Packages named by the inputs: files as given, directories searched recursively for
-/// `*.uddp` and `terrain_meta.bin`, in path order.
 pub fn collect_package_paths(inputs: &[PathBuf]) -> eyre::Result<Vec<PathBuf>> {
     let mut paths = Vec::new();
     for input in inputs {
@@ -760,6 +814,57 @@ mod tests {
         let paths = collect_package_paths(&[dir.clone()]).expect("collect");
 
         assert_eq!(paths, vec![nested.join("hues.uddp"), dir.join(TERRAIN_META_FILE_NAME)]);
+        fs::remove_dir_all(&dir).ok();
+    }
+
+    /// The report lines carry the status, entry, reader, note and error lines `validate` logs, in that order.
+    #[test]
+    fn report_lines_mark_each_line_with_its_kind() {
+        let dir = scratch_dir("report_lines");
+        let path = dir.join("statics0.uddp");
+        let tile = [0u8; std::mem::size_of::<StaticTile>()];
+        write_statics_package(&path, &[&tile]);
+        let mut report = validate_package(&path);
+        report.notes.push("a note".into());
+        report.failures.push("a failure".into());
+
+        let kinds: Vec<ReportLineKind> = report_lines(&report).into_iter().map(|(kind, _)| kind).collect();
+
+        assert_eq!(
+            kinds,
+            [
+                ReportLineKind::Failed,
+                ReportLineKind::Detail,
+                ReportLineKind::Detail,
+                ReportLineKind::Note,
+                ReportLineKind::Error,
+            ]
+        );
+        let lines = report_lines(&report);
+        assert_eq!(lines[0].1, format!("FAIL {} [statics0]", path.display()));
+        assert_eq!(lines[3].1, "     note: a note");
+        assert_eq!(lines[4].1, "     error: a failure");
+        fs::remove_dir_all(&dir).ok();
+    }
+
+    /// `validate_inputs` hands over a report per package and counts the failures; an input without packages fails.
+    #[test]
+    fn validate_inputs_counts_passed_and_failed_packages() {
+        let dir = scratch_dir("inputs");
+        let tile = [0u8; std::mem::size_of::<StaticTile>()];
+        write_statics_package(&dir.join("statics0.uddp"), &[&tile]);
+        write_statics_package(&dir.join("statics1.uddp"), &[&[0u8; 3]]);
+        let mut statuses = Vec::new();
+
+        let counts = validate_inputs(&[dir.clone()], |report| statuses.push(report.passed())).expect("validate");
+
+        assert_eq!(counts, ValidateCounts { packages: 2, failed: 1 });
+        assert_eq!(statuses, [true, false]);
+        assert_eq!(counts.summary_line(), "Validated 2 packages: 1 passed, 1 failed");
+        assert!(counts.ensure_passed().is_err());
+        let empty = dir.join("empty");
+        fs::create_dir_all(&empty).expect("create empty dir");
+        assert!(validate_inputs(&[empty], |_| {}).is_err());
         fs::remove_dir_all(&dir).ok();
     }
 
