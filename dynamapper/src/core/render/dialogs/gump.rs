@@ -401,6 +401,120 @@ mod tests {
         alpha_blend_at(&mut canvas, 2, 0, 0, 2, 1, &layer);
         assert_eq!(canvas, [PREMULTIPLIED_HALF_WHITE, [0; 4]].concat());
     }
+
+    const TRANSPARENT_BLACK: [u8; 4] = [0, 0, 0, 0];
+    const OPAQUE_BLACK: [u8; 4] = [0, 0, 0, 255];
+
+    fn test_gump(width: u32, height: u32, texels: &[[u8; 4]]) -> udd_assets::gumps::GumpImage {
+        udd_assets::gumps::GumpImage {
+            physical_width: width,
+            physical_height: height,
+            logical_width: width,
+            logical_height: height,
+            upscale_factor: 1,
+            rgba: texels.concat(),
+        }
+    }
+
+    fn test_layer(gump: udd_assets::gumps::GumpImage, hue: Option<LayerHue>) -> DecodedPaperdollLayer {
+        DecodedPaperdollLayer { x: 0, y: 0, gump, hue }
+    }
+
+    /// The key is the layer's first texel, compared on R, G, B only: a transparent texel of another colour is drawn,
+    /// opaque, and a soft one too.
+    #[test]
+    fn enhanced_layer_keys_its_first_texel_and_ignores_alpha() {
+        const KEY: [u8; 4] = [10, 20, 30, 255];
+        const KEY_COLOUR_TRANSPARENT: [u8; 4] = [10, 20, 30, 0];
+        const TRANSPARENT_RED: [u8; 4] = [200, 0, 0, 0];
+        const SOFT_GREEN: [u8; 4] = [0, 150, 0, 128];
+        const UNDER: [u8; 4] = [5, 5, 5, 255];
+        let mut canvas = [UNDER; 4].concat();
+        let layer = [KEY, KEY_COLOUR_TRANSPARENT, TRANSPARENT_RED, SOFT_GREEN].concat();
+        draw_enhanced_gump_layer(&mut canvas, 4, 0, 0, 4, 1, &layer, None);
+        set_enhanced_canvas_alpha(&mut canvas);
+        assert_eq!(canvas, [UNDER, UNDER, [200, 0, 0, 255], [0, 150, 0, 255]].concat());
+    }
+
+    #[test]
+    fn enhanced_canvas_alpha_follows_the_colour() {
+        let mut canvas = [OPAQUE_BLACK, [1, 0, 0, 0], TRANSPARENT_BLACK, [0, 0, 9, 17]].concat();
+        set_enhanced_canvas_alpha(&mut canvas);
+        assert_eq!(canvas, [TRANSPARENT_BLACK, [1, 0, 0, 255], TRANSPARENT_BLACK, [0, 0, 9, 255]].concat());
+    }
+
+    /// Enhanced draws no 256x256 gump, which then neither covers nor grows the canvas; Classic draws it.
+    #[test]
+    fn enhanced_compose_skips_256x256_gumps() {
+        const RED: [u8; 4] = [200, 0, 0, 255];
+        const WHITE: [u8; 4] = [255, 255, 255, 255];
+        const SIZE: u32 = ENHANCED_SKIPPED_GUMP_SIZE;
+        let small = || test_gump(2, 1, &[TRANSPARENT_BLACK, RED]);
+        let square = || {
+            let mut texels = vec![WHITE; (SIZE * SIZE) as usize];
+            texels[0] = TRANSPARENT_BLACK;
+            test_gump(SIZE, SIZE, &texels)
+        };
+        let layers = || vec![test_layer(small(), None), test_layer(square(), None)];
+
+        let enhanced = compose_decoded_layers(GumpClient::Enhanced, 2, 1, layers());
+        assert_eq!((enhanced.logical_width, enhanced.logical_height), (2, 1));
+        assert_eq!(enhanced.rgba, [TRANSPARENT_BLACK, RED].concat());
+
+        let classic = compose_decoded_layers(GumpClient::Classic, 2, 1, layers());
+        assert_eq!((classic.logical_width, classic.logical_height), (SIZE, SIZE));
+        assert_eq!(classic.rgba[4..8], WHITE);
+
+        let wide = test_gump(SIZE, 1, &vec![WHITE; SIZE as usize]);
+        let drawn = compose_decoded_layers(GumpClient::Enhanced, 2, 1, vec![test_layer(wide, None)]);
+        assert_eq!((drawn.logical_width, drawn.logical_height), (SIZE, 1));
+    }
+
+    /// Both clients hue by the red byte, and a partial hue only exact greys. Enhanced draws the hued texel whatever its
+    /// alpha; Classic leaves a transparent texel as it is.
+    #[test]
+    fn hue_follows_the_red_byte_on_exact_greys() {
+        const GREY_TRANSPARENT: [u8; 4] = [100, 100, 100, 0];
+        const NOT_GREY: [u8; 4] = [100, 101, 100, 255];
+        let table: HueTable = std::array::from_fn(|red| [red as u8, 1, u8::MAX - red as u8]);
+        let hued = [100, 1, 155, 255];
+        let layer = [TRANSPARENT_BLACK, GREY_TRANSPARENT, NOT_GREY].concat();
+        for (partial, expected) in [(true, [TRANSPARENT_BLACK, hued, NOT_GREY]), (false, [TRANSPARENT_BLACK, hued, hued])] {
+            let mut canvas = vec![0; layer.len()];
+            draw_enhanced_gump_layer(&mut canvas, 3, 0, 0, 3, 1, &layer, Some(&LayerHue { table, partial }));
+            set_enhanced_canvas_alpha(&mut canvas);
+            assert_eq!(canvas, expected.concat(), "Enhanced, partial {partial}");
+        }
+
+        for (partial, expected) in [(true, NOT_GREY), (false, hued)] {
+            let mut pixels = layer.clone();
+            apply_hue(&mut pixels, &table, partial);
+            assert_eq!(pixels, [TRANSPARENT_BLACK, GREY_TRANSPARENT, expected].concat(), "Classic, partial {partial}");
+        }
+    }
+
+    /// A 24-bit gump of `Interface.uop` (no alpha, a black background, as gump 51064) over a body whose first texel is
+    /// transparent black, as a Classic gump's: Enhanced keys both backgrounds, so no opaque black is left and the body
+    /// shows through; Classic blends by alpha and covers the body with the black rectangle.
+    #[test]
+    fn enhanced_compose_keys_a_24_bit_black_background() {
+        const BODY: [u8; 4] = [90, 60, 40, 255];
+        const ITEM: [u8; 4] = [30, 120, 200, 255];
+        const NEAR_BLACK: [u8; 4] = [1, 1, 1, 255];
+        let layers = || {
+            vec![
+                test_layer(test_gump(4, 1, &[TRANSPARENT_BLACK, BODY, BODY, BODY]), None),
+                test_layer(test_gump(4, 1, &[OPAQUE_BLACK, OPAQUE_BLACK, ITEM, NEAR_BLACK]), None),
+            ]
+        };
+
+        let enhanced = compose_decoded_layers(GumpClient::Enhanced, 4, 1, layers());
+        assert_eq!(enhanced.rgba, [TRANSPARENT_BLACK, BODY, ITEM, NEAR_BLACK].concat());
+        assert!(enhanced.rgba.chunks_exact(RGBA_BYTES).all(|texel| texel != OPAQUE_BLACK));
+
+        let classic = compose_decoded_layers(GumpClient::Classic, 4, 1, layers());
+        assert_eq!(classic.rgba, [OPAQUE_BLACK, OPAQUE_BLACK, ITEM, NEAR_BLACK].concat());
+    }
 }
 
 #[derive(Clone)]
@@ -811,6 +925,7 @@ fn draw_open_gump_content(
             Ok(gump)
         }
         // Premultiplied already, as bevy_egui blends it: `alpha_blend_at` composes the layers over a transparent canvas.
+        // The Enhanced compose leaves only black transparent (`set_enhanced_canvas_alpha`).
         OpenGumpContent::Paperdoll { profile, layers } => {
             compose_paperdoll(gump_map, client, hues_package, profile, layers)
         }
@@ -1116,6 +1231,18 @@ fn parse_optional_hue(text: &str) -> u16 {
     parse_u32_field(text).unwrap_or(0).min(u16::MAX as u32) as u16
 }
 
+/// The bytes of an RGBA texel.
+const RGBA_BYTES: usize = 4;
+/// Its R, G and B bytes, all `UOPaperdoll::DrawGumpLayer` reads of a texel.
+const RGB_BYTES: usize = 3;
+const ALPHA_BYTE: usize = 3;
+/// `UOPaperdoll::BuildImage` (UOSA 0x0050c790) skips a gump of this width and height.
+const ENHANCED_SKIPPED_GUMP_SIZE: u32 = 256;
+/// A hue table has an entry for each red byte.
+const HUE_TABLE_ENTRIES: usize = u8::MAX as usize + 1;
+
+type HueTable = [[u8; RGB_BYTES]; HUE_TABLE_ENTRIES];
+
 /// Each layer's gump comes from the package the preset drawing `client` reads; the hues follow that client's drawing.
 fn compose_paperdoll(
     gump_map: &GumpMapRes,
@@ -1133,40 +1260,80 @@ fn compose_paperdoll(
     };
     let mut decoded_layers = Vec::with_capacity(layers.len());
     let mut scratch = Vec::new();
-    let mut min_x = 0i32;
-    let mut min_y = 0i32;
-    let mut max_x = profile.canvas_width as i32;
-    let mut max_y = profile.canvas_height as i32;
 
     for layer in layers {
-        let mut gump = gump_map.decode_gump(client, layer.gump_id, &mut scratch)?;
-        if layer.hue_id > 0 {
-            apply_hue(
-                &mut gump.rgba,
-                hues_package,
-                hue_texture_bytes,
-                layer.hue_id,
-                layer.partial_hue,
-            )?;
-        }
+        let gump = gump_map.decode_gump(client, layer.gump_id, &mut scratch)?;
+        let hue = if layer.hue_id > 0 {
+            Some(LayerHue {
+                table: hue_table(hues_package, hue_texture_bytes, layer.hue_id)?,
+                partial: layer.partial_hue,
+            })
+        } else {
+            None
+        };
+        decoded_layers.push(DecodedPaperdollLayer { x: layer.x, y: layer.y, gump, hue });
+    }
+
+    Ok(compose_decoded_layers(client, profile.canvas_width, profile.canvas_height, decoded_layers))
+}
+
+/// A paperdoll layer's gump at its logical position, with the hue it is drawn with.
+struct DecodedPaperdollLayer {
+    x: i32,
+    y: i32,
+    gump: udd_assets::gumps::GumpImage,
+    hue: Option<LayerHue>,
+}
+
+struct LayerHue {
+    table: HueTable,
+    partial: bool,
+}
+
+/// Composes `layers` in order on a canvas covering at least `canvas_width` x `canvas_height` logical texels, as
+/// `client` draws them. Classic hues each gump and blends it by its alpha. Enhanced follows `UOPaperdoll::BuildImage`
+/// (UOSA 0x0050c790): it skips a 256x256 gump, draws each layer through `draw_enhanced_gump_layer`, and sets the
+/// canvas alpha from its colour after every layer. A layer that came from the Classic source, for an id gumps_ec.uddp
+/// lacks, is drawn by the same Enhanced rule.
+fn compose_decoded_layers(
+    client: GumpClient,
+    canvas_width: u32,
+    canvas_height: u32,
+    mut layers: Vec<DecodedPaperdollLayer>,
+) -> udd_assets::gumps::GumpImage {
+    if client == GumpClient::Enhanced {
+        layers.retain(|layer| {
+            layer.gump.logical_width != ENHANCED_SKIPPED_GUMP_SIZE
+                || layer.gump.logical_height != ENHANCED_SKIPPED_GUMP_SIZE
+        });
+    }
+    let mut min_x = 0i32;
+    let mut min_y = 0i32;
+    let mut max_x = canvas_width as i32;
+    let mut max_y = canvas_height as i32;
+    for layer in &layers {
         min_x = min_x.min(layer.x);
         min_y = min_y.min(layer.y);
-        max_x = max_x.max(layer.x + gump.logical_width as i32);
-        max_y = max_y.max(layer.y + gump.logical_height as i32);
-        decoded_layers.push((layer.x, layer.y, gump));
+        max_x = max_x.max(layer.x + layer.gump.logical_width as i32);
+        max_y = max_y.max(layer.y + layer.gump.logical_height as i32);
     }
 
     let logical_width = (max_x - min_x).max(1) as u32;
     let logical_height = (max_y - min_y).max(1) as u32;
-    let output_scale = decoded_layers
+    let output_scale = layers
         .iter()
-        .map(|(_, _, gump)| u32::from(gump.upscale_factor.max(1)))
+        .map(|layer| u32::from(layer.gump.upscale_factor.max(1)))
         .max()
         .unwrap_or(1);
     let width = logical_width * output_scale;
     let height = logical_height * output_scale;
     let mut canvas = vec![0u8; width as usize * height as usize * 4];
-    for (x, y, gump) in decoded_layers {
+    for DecodedPaperdollLayer { x, y, mut gump, hue } in layers {
+        if client == GumpClient::Classic {
+            if let Some(hue) = &hue {
+                apply_hue(&mut gump.rgba, &hue.table, hue.partial);
+            }
+        }
         let layer_width = gump.logical_width * output_scale;
         let layer_height = gump.logical_height * output_scale;
         let pixels = if gump.physical_width == layer_width && gump.physical_height == layer_height {
@@ -1180,25 +1347,96 @@ fn compose_paperdoll(
                 layer_height,
             )
         };
-        alpha_blend_at(
-            &mut canvas,
-            width,
-            (x - min_x) * output_scale as i32,
-            (y - min_y) * output_scale as i32,
-            layer_width,
-            layer_height,
-            &pixels,
-        );
+        let dst_x = (x - min_x) * output_scale as i32;
+        let dst_y = (y - min_y) * output_scale as i32;
+        match client {
+            GumpClient::Classic => {
+                alpha_blend_at(&mut canvas, width, dst_x, dst_y, layer_width, layer_height, &pixels);
+            }
+            GumpClient::Enhanced => {
+                draw_enhanced_gump_layer(
+                    &mut canvas,
+                    width,
+                    dst_x,
+                    dst_y,
+                    layer_width,
+                    layer_height,
+                    &pixels,
+                    hue.as_ref(),
+                );
+                set_enhanced_canvas_alpha(&mut canvas);
+            }
+        }
     }
 
-    Ok(udd_assets::gumps::GumpImage {
+    udd_assets::gumps::GumpImage {
         physical_width: width,
         physical_height: height,
         logical_width,
         logical_height,
         upscale_factor: output_scale.min(u16::MAX as u32) as u16,
         rgba: canvas,
-    })
+    }
+}
+
+/// Draws one layer as `UOPaperdoll::DrawGumpLayer` (UOSA 0x00509b30) does: a texel whose R, G, B equal the layer's
+/// key is not drawn, every other texel's colour replaces the canvas colour, and the alpha byte is never read.
+///
+/// The key is the layer's texel 0, the first row's first texel. The client keys on texel 0 of the gump's
+/// `NiPixelData`, which Gamebryo's `NiTGAReader` fills top row first: a bottom-up TGA (image descriptor bit 0x20
+/// clear, as every gump TGA of `Interface.uop` is) is flipped as it is read (2.6 `NiTGAReader.cpp`, `m_bFlipVert`;
+/// the 3.2 header keeps the member), so texel 0 is the gump's top-left texel. Our decoders give top-down rows as well
+/// (the `image` crate flips bottom-up TGAs, the packages keep those rows, and a nearest resize keeps texel 0), so the
+/// same texel is texel 0 here. A Classic gump's top-left texel is normally transparent black, so it keys black.
+///
+/// With a hue, a texel is hued when the hue is full or the texel is an exact grey, by the entry of its red byte
+/// (`apply_hue` gives the addresses). The client blends an entry whose alpha is below 255 over the canvas; every
+/// client table is opaque (`uocf::enhanced::hues`), so the entry is written as it is.
+fn draw_enhanced_gump_layer(
+    canvas: &mut [u8],
+    canvas_width: u32,
+    dst_x: i32,
+    dst_y: i32,
+    layer_width: u32,
+    layer_height: u32,
+    layer: &[u8],
+    hue: Option<&LayerHue>,
+) {
+    let Some(key) = layer.get(..RGB_BYTES) else {
+        return;
+    };
+    for y in 0..layer_height as usize {
+        for x in 0..layer_width as usize {
+            let canvas_x = x as i32 + dst_x;
+            let canvas_y = y as i32 + dst_y;
+            if canvas_x < 0 || canvas_y < 0 || canvas_x as u32 >= canvas_width {
+                continue;
+            }
+
+            let src_i = (y * layer_width as usize + x) * RGBA_BYTES;
+            let texel = &layer[src_i..src_i + RGB_BYTES];
+            if texel == key {
+                continue;
+            }
+
+            let dst_i = (canvas_y as usize * canvas_width as usize + canvas_x as usize) * RGBA_BYTES;
+            let Some(target) = canvas.get_mut(dst_i..dst_i + RGB_BYTES) else {
+                continue;
+            };
+            match hue {
+                Some(hue) if is_hued(texel, hue.partial) => target.copy_from_slice(&hue.table[usize::from(texel[0])]),
+                _ => target.copy_from_slice(texel),
+            }
+        }
+    }
+}
+
+/// `UOPaperdoll::BuildImage` (UOSA 0x0050c790) after every layer: a texel's alpha is 255 when any of its R, G, B is
+/// non-zero, else 0. A transparent texel is then black, so the composite is premultiplied as egui blends it.
+fn set_enhanced_canvas_alpha(canvas: &mut [u8]) {
+    for texel in canvas.chunks_exact_mut(RGBA_BYTES) {
+        texel[ALPHA_BYTE] = if texel[..RGB_BYTES].iter().any(|&channel| channel != 0) { u8::MAX } else { 0 };
+    }
 }
 
 fn resize_rgba_nearest(
@@ -1225,13 +1463,12 @@ fn resize_rgba_nearest(
     dst
 }
 
-fn apply_hue(
-    pixels: &mut [u8],
+/// The colour of a hue for each red byte (`apply_hue`): `UOHues::GetHueTable` of the Enhanced client.
+fn hue_table(
     hues_package: Option<&HuesPackageRes>,
     hue_texture_bytes: Option<&[u8]>,
     hue_id: u16,
-    partial_hue: bool,
-) -> color_eyre::eyre::Result<()> {
+) -> color_eyre::eyre::Result<HueTable> {
     let package = hues_package
         .ok_or_else(|| color_eyre::eyre::eyre!("hues.uddp is not loaded."))?;
     package
@@ -1241,11 +1478,28 @@ fn apply_hue(
     let hue_texture_bytes = hue_texture_bytes
         .ok_or_else(|| color_eyre::eyre::eyre!("hues.uddp texture is not loaded."))?;
 
+    let mut table = [[0; RGB_BYTES]; HUE_TABLE_ENTRIES];
+    for (intensity, entry) in table.iter_mut().enumerate() {
+        let color = sample_hue_lookup(hue_texture_bytes, hue_id, intensity as u8)
+            .ok_or_else(|| color_eyre::eyre::eyre!("Hue {hue_id} lookup is outside hues.uddp."))?;
+        entry.copy_from_slice(&color[..RGB_BYTES]);
+    }
+    Ok(table)
+}
+
+/// Whether a texel takes the hue: every texel under a full hue, only an exact grey under a partial one (in the
+/// Enhanced client the `CMP`s of `UOPaperdoll::DrawGumpLayer` at 0x00509d64 and 0x00509d6c).
+fn is_hued(rgb: &[u8], partial_hue: bool) -> bool {
+    !partial_hue || (rgb[0] == rgb[1] && rgb[0] == rgb[2])
+}
+
+/// The Classic hue: the texels that are not transparent and take the hue (`is_hued`) become the entry of their red.
+fn apply_hue(pixels: &mut [u8], hue_table: &HueTable, partial_hue: bool) {
     for pixel in pixels.chunks_exact_mut(4) {
         if pixel[3] == 0 {
             continue;
         }
-        if partial_hue && (pixel[0] != pixel[1] || pixel[0] != pixel[2]) {
+        if !is_hued(pixel, partial_hue) {
             continue;
         }
 
@@ -1254,14 +1508,8 @@ fn apply_hue(
         // (`BlitGumpRowPartialHue` 0x005d8430, `BlitGumpRowFullHue` 0x005d83d0). Classic red expands to `red << 3`
         // and the hue strip holds hues.mul entry i at x = 8i, so the red byte reaches the same entry in both.
         let intensity = pixel[0];
-        let color = sample_hue_lookup(hue_texture_bytes, hue_id, intensity)
-            .ok_or_else(|| color_eyre::eyre::eyre!("Hue {hue_id} lookup is outside hues.uddp."))?;
-        pixel[0] = color[0];
-        pixel[1] = color[1];
-        pixel[2] = color[2];
+        pixel[..RGB_BYTES].copy_from_slice(&hue_table[usize::from(intensity)]);
     }
-
-    Ok(())
 }
 
 fn sample_hue_lookup(texture_bytes: &[u8], hue_id: u16, intensity: u8) -> Option<[u8; 4]> {

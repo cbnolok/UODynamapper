@@ -138,6 +138,11 @@ layer map, layer byte, hue, partial, key r, g, b). **confirmed** (decompiler and
 So a block-coded Enhanced paperdoll gump changes what the client hues: any texel that was an exact grey and is
 no longer one loses the hue, and a coloured texel that rounds to a grey gains it.
 
+The key's texel 0 (item 16) is the gump's top-left texel: every gumpart TGA of `Interface.uop` is stored bottom-up
+(image descriptor bit 0x20 clear, bit 0x10 clear), and Gamebryo's `NiTGAReader` flips a bottom-up file as it reads
+it (2.6 `NiTGAReader.cpp`, `m_bFlipVert`). Dynamapper's Enhanced and KR-like paperdoll follow items 15..18
+(`dynamapper/src/core/render/dialogs/gump.rs`, `compose_decoded_layers`).
+
 ## For a writer
 
 - The entries are ordinary AMOU files: `AmouFile` and the frame encoder write them back byte for byte
