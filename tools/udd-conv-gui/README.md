@@ -9,11 +9,15 @@ using the command line.
 
 - Configure source client paths (Classic Client or Enhanced Client installation
   directories) via a file picker.
-- Select the currently supported GUI pack jobs for tile metadata, art, land
-  textures, mobile animations, gumps, maps, statics, and radar output.
+- Select the currently supported GUI pack jobs for tile metadata, hues, world
+  lights, art, land textures, mobile animations, Enhanced effects, terrain
+  metadata, gumps, maps, statics, and radar output.
 - Use an optional upscale profile file for the existing image pack jobs. See
   [`../udd-conv-cli/UPSCALE_PROFILES.md`](../udd-conv-cli/UPSCALE_PROFILES.md).
-- Run conversion jobs in the background with live progress reporting.
+- Run conversion jobs in the background with live progress reporting and a
+  Stop button. A stopped job leaves no package file behind.
+- Validate packages as `udd-cli tool validate` does, from the Tools tab or after
+  each packing job (Validate packages after packing, off by default).
 - Persist settings across sessions (eframe persistence).
 
 ## GUI / CLI Surface
@@ -53,10 +57,10 @@ Two gaps apply to the image jobs, and the rows below leave them out:
 | `pack-statics` | Partial: World, Statics | `--zstd`, `--stored` |
 | `pack-map-statics` | Partial: World, ALL, which also builds the radar | `--map-output`, `--statics-output`, `--zstd`, `--stored`; `--uop` only in the settings file |
 | `pack-radar` | Partial: World, RadarMap | `--zstd-level` and `--uop` only in the settings file (`radar_zstd`, `map_preferences`); `--output` |
-| `pack-lights` | CLI only | |
-| `pack-hues` | CLI only | |
-| `pack-ec-effects` | CLI only | |
-| `pack-terrain-meta` | CLI only | |
+| `pack-lights` | Yes: Assets, World Lights (`--use-verdata` is the overview's verdata.mul) | |
+| `pack-hues` | Yes: Assets, Hues (the hue ramp is greyed out when the source is an Enhanced `Hues.uop`, which is copied as it is) | |
+| `pack-ec-effects` | Yes: Assets, Enhanced Effects | |
+| `pack-terrain-meta` | Yes: Assets, Terrain Metadata | |
 | `audit-ec-material-refs` | CLI only | |
 | `inventory-ec-support-textures` | CLI only | |
 | `report-ec-material-baseline` | CLI only | |
@@ -87,7 +91,7 @@ filter controls remain the fallback for unmatched targets.
 | `rebuild` | CLI only | |
 | `export-csv` | Partial: Tools | `--kind` (always `auto`), `--output` |
 | `import-csv` | CLI only | |
-| `validate` | CLI only | |
+| `validate` | Yes: Tools, Validate Packages; also Validate packages after packing (Assets and World) | |
 | `diff` | Partial: Tools | `--kind` (always `auto`) |
 
 ## Binary
@@ -102,5 +106,8 @@ udd-conv-gui
 - Produced `.uddp` packages should be placed in, or linked into, the Dynamapper
   `assets/` tree as described in
   [docs/dev_wiki/ASSET_PIPELINE.md](../../docs/dev_wiki/ASSET_PIPELINE.md).
+- Stop ends a job from its progress callbacks, before its package file is
+  created. A stop asked once the package is being assembled lets the job finish,
+  so no partial package is left.
 - For scripted or automated builds, prefer `udd-cli pack` from
   [`udd-conv-cli`](../udd-conv-cli/README.md) directly.
