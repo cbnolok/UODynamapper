@@ -245,8 +245,10 @@ fn parse_page_manifest(bytes: &[u8]) -> eyre::Result<(u32, u32, u16, AtlasPackin
     let w = cursor.read_u32::<LittleEndian>()?;
     let h = cursor.read_u32::<LittleEndian>()?;
     let g = cursor.read_u32::<LittleEndian>()? as u16;
-    let pf = PagePixelFormat::from_repr(cursor.read_u8()?).unwrap();
-    let packing_mode = AtlasPackingMode::from_repr(cursor.read_u8()?).unwrap();
+    let pf = PagePixelFormat::from_repr(cursor.read_u8()?)
+        .ok_or_else(|| eyre::eyre!("invalid tex_land_cc page pixel format"))?;
+    let packing_mode = AtlasPackingMode::from_repr(cursor.read_u8()?)
+        .ok_or_else(|| eyre::eyre!("invalid tex_land_cc atlas packing mode"))?;
     let count = cursor.read_u32::<LittleEndian>()? as usize;
     let mut pages = Vec::with_capacity(count);
     for _ in 0..count {
@@ -271,7 +273,8 @@ fn parse_slot_manifest(bytes: &[u8]) -> eyre::Result<(u32, u32, u16, AtlasPackin
     let w = cursor.read_u32::<LittleEndian>()?;
     let h = cursor.read_u32::<LittleEndian>()?;
     let g = cursor.read_u32::<LittleEndian>()? as u16;
-    let packing_mode = AtlasPackingMode::from_repr(cursor.read_u8()?).unwrap();
+    let packing_mode = AtlasPackingMode::from_repr(cursor.read_u8()?)
+        .ok_or_else(|| eyre::eyre!("invalid tex_land_cc atlas packing mode"))?;
     let count = cursor.read_u32::<LittleEndian>()? as usize;
     let mut slots = Vec::with_capacity(count);
     for _ in 0..count {
@@ -291,4 +294,27 @@ fn parse_slot_manifest(bytes: &[u8]) -> eyre::Result<(u32, u32, u16, AtlasPackin
 
 pub fn page_entry_path(page_index: u32, fmt: PagePixelFormat) -> String {
     format!("pages/{page_index:05}.{}", fmt.extension())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A pixel format byte this reader doesn't know is an error, not a panic.
+    #[test]
+    fn unknown_page_pixel_format_is_an_error() {
+        const UNKNOWN_PIXEL_FORMAT: u8 = u8::MAX;
+        const NO_PAGES: u32 = 0;
+        let mut bytes = PAGE_MANIFEST_MAGIC.to_vec();
+        bytes.extend_from_slice(&TEX_LAND_CC_METADATA_VERSION.to_le_bytes());
+        for width_height_gutter in [0u32; 3] {
+            bytes.extend_from_slice(&width_height_gutter.to_le_bytes());
+        }
+        bytes.push(UNKNOWN_PIXEL_FORMAT);
+        bytes.push(AtlasPackingMode::MaximumPacking as u8);
+        bytes.extend_from_slice(&NO_PAGES.to_le_bytes());
+
+        let error = parse_page_manifest(&bytes).unwrap_err();
+        assert!(error.to_string().contains("pixel format"), "{error}");
+    }
 }
