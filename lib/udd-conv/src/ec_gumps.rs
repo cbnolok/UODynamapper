@@ -1,13 +1,12 @@
 //! Build-time support for `gumps_ec.uddp`.
 
-use byteorder::{LittleEndian, WriteBytesExt};
 use color_eyre::eyre::{self, WrapErr};
 use crate::progress::{ProgressBar, ProgressStyle};
 use std::collections::BTreeMap;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
-use udd_container::{AddFileRequest, CompressionFlag, DataType, LookupMode, UddpBuilder};
+use udd_container::{CompressionFlag, LookupMode, UddpBuilder};
 use uocf::enhanced::textures::{ECImageFormat, TextureFile, TextureItem};
 use uocf::uop_container::package::{LoadMode, UopPackage};
 
@@ -16,6 +15,7 @@ use crate::gump_atlas::{
 };
 use crate::package_progress::build_and_write_package;
 use crate::page_compression::LOSSLESS_PAGE_COMPRESSION;
+use crate::single_gumps::{default_single_gump_compression, GumpPixelFormat, SingleGumpWriter};
 use crate::source_paths::source_path_label_from_dirs;
 use crate::upscale::{apply_upscale_passes, UpscalePass};
 use crate::upscale_profile::{UpscaleImageType, UpscaleProfile, UpscaleTarget};
@@ -25,6 +25,9 @@ pub const EC_GUMP_DEFAULT_MAX_ID: u32 = 99_999;
 
 pub struct EcGumpsOptions {
     pub max_id: u32,
+    /// How single gumps are stored: lossless RGBA8888, or BC1 when packing lossy. Paperdoll gumps stay lossless.
+    pub single_pixel_format: GumpPixelFormat,
+    /// The builder codec of single gumps.
     pub compression: CompressionFlag,
     pub atlas_compression: CompressionFlag,
     pub paperdoll_upscale_passes: Vec<UpscalePass>,
@@ -36,7 +39,8 @@ impl Default for EcGumpsOptions {
     fn default() -> Self {
         Self {
             max_id: EC_GUMP_DEFAULT_MAX_ID,
-            compression: CompressionFlag::ZstdNoDict,
+            single_pixel_format: GumpPixelFormat::Rgba8888,
+            compression: default_single_gump_compression(GumpPixelFormat::Rgba8888),
             atlas_compression: LOSSLESS_PAGE_COMPRESSION,
             paperdoll_upscale_passes: Vec::new(),
             single_upscale_passes: Vec::new(),
@@ -61,6 +65,8 @@ fn gump_upscale_passes_for(
 pub struct EcGumpsBuildSummary {
     pub gump_count: u32,
     pub single_gump_count: u32,
+    /// Single gumps with alpha neither 0 nor 255, which BC1 rounds.
+    pub single_soft_alpha_count: u32,
     pub atlas_gump_count: u32,
     pub skipped_count: u32,
 }
@@ -126,7 +132,7 @@ fn convert_ec_gumps_from_interface_uop(
         .wrap_err_with(|| format!("load {}", interface_uop.display()))?;
     let mut builder = UddpBuilder::new(LookupMode::SparseId);
     let mut gump_count = 0u32;
-    let mut single_gump_count = 0u32;
+    let mut single_gumps = SingleGumpWriter::new(options.single_pixel_format, options.compression);
     let mut atlas_gumps = Vec::new();
     let mut skipped_count = 0u32;
 
@@ -163,8 +169,13 @@ fn convert_ec_gumps_from_interface_uop(
                         &options.single_upscale_passes,
                     );
                     let decoded = upscale_decoded_gump(decoded, &passes);
-                    add_single_decoded_ec_gump(&mut builder, &decoded, options.compression)?;
-                    single_gump_count += 1;
+                    single_gumps.push(
+                        &mut builder,
+                        decoded.gump_id,
+                        u32::from(decoded.width),
+                        u32::from(decoded.height),
+                        decoded.rgba,
+                    )?;
                 }
                 gump_count += 1;
             }
@@ -175,6 +186,7 @@ fn convert_ec_gumps_from_interface_uop(
         }
     }
 
+    let single_summary = single_gumps.finish(&mut builder)?;
     let atlas_gump_count = add_gump_atlas_files(
         &mut builder,
         atlas_gumps,
@@ -188,7 +200,8 @@ fn convert_ec_gumps_from_interface_uop(
 
     Ok(EcGumpsBuildSummary {
         gump_count,
-        single_gump_count,
+        single_gump_count: single_summary.count,
+        single_soft_alpha_count: single_summary.soft_alpha_count,
         atlas_gump_count,
         skipped_count,
     })
@@ -202,7 +215,7 @@ fn convert_ec_gumps_from_extracted_dir(
     let sources = collect_extracted_gumps(gumpart_dir)?;
     let mut builder = UddpBuilder::new(LookupMode::SparseId);
     let mut gump_count = 0u32;
-    let mut single_gump_count = 0u32;
+    let mut single_gumps = SingleGumpWriter::new(options.single_pixel_format, options.compression);
     let mut atlas_gumps = Vec::new();
     let mut skipped_count = 0u32;
 
@@ -245,8 +258,13 @@ fn convert_ec_gumps_from_extracted_dir(
                         &options.single_upscale_passes,
                     );
                     let decoded = upscale_decoded_gump(decoded, &passes);
-                    add_single_decoded_ec_gump(&mut builder, &decoded, options.compression)?;
-                    single_gump_count += 1;
+                    single_gumps.push(
+                        &mut builder,
+                        decoded.gump_id,
+                        u32::from(decoded.width),
+                        u32::from(decoded.height),
+                        decoded.rgba,
+                    )?;
                 }
                 gump_count += 1;
             }
@@ -257,6 +275,7 @@ fn convert_ec_gumps_from_extracted_dir(
         }
     }
 
+    let single_summary = single_gumps.finish(&mut builder)?;
     let atlas_gump_count = add_gump_atlas_files(
         &mut builder,
         atlas_gumps,
@@ -270,7 +289,8 @@ fn convert_ec_gumps_from_extracted_dir(
 
     Ok(EcGumpsBuildSummary {
         gump_count,
-        single_gump_count,
+        single_gump_count: single_summary.count,
+        single_soft_alpha_count: single_summary.soft_alpha_count,
         atlas_gump_count,
         skipped_count,
     })
@@ -293,29 +313,6 @@ fn unpack_ec_gump_payload(
         return Ok(Some((infer_ec_image_format(&payload, format), payload)));
     }
     Ok(None)
-}
-
-fn add_single_decoded_ec_gump(
-    builder: &mut UddpBuilder,
-    decoded: &DecodedGump,
-    compression: CompressionFlag,
-) -> eyre::Result<()> {
-    let mut payload = Vec::with_capacity(8 + decoded.rgba.len());
-    payload.write_u32::<LittleEndian>(u32::from(decoded.width))?;
-    payload.write_u32::<LittleEndian>(u32::from(decoded.height))?;
-    payload.extend_from_slice(&decoded.rgba);
-
-    builder.add_file(AddFileRequest {
-        data_type: DataType::Gump as u8,
-        compression,
-        width: u32::from(decoded.width),
-        height: u32::from(decoded.height),
-        virtual_path: None,
-        path_hash64: None,
-        id: Some(decoded.gump_id),
-        data: &payload,
-    })?;
-    Ok(())
 }
 
 fn upscale_decoded_gump(mut decoded: DecodedGump, passes: &[UpscalePass]) -> DecodedGump {

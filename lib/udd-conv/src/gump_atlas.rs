@@ -13,7 +13,8 @@ pub const GUMP_ATLAS_SLOT_MANIFEST_ID: u32 = 0xE000_0001;
 pub const GUMP_ATLAS_PAGE_ID_BASE: u32 = 0xF000_0000;
 pub const GUMP_ATLAS_PAGE_MANIFEST_MAGIC: [u8; 4] = *b"GAPG";
 pub const GUMP_ATLAS_SLOT_MANIFEST_MAGIC: [u8; 4] = *b"GASL";
-pub const GUMP_ATLAS_METADATA_VERSION: u32 = 2;
+/// 3: single gumps carry a pixel format byte, and every package carries these manifests (`udd_assets::gumps`).
+pub const GUMP_ATLAS_METADATA_VERSION: u32 = 3;
 
 pub const DEFAULT_GUMP_ATLAS_WIDTH: u32 = 2048;
 pub const DEFAULT_GUMP_ATLAS_HEIGHT: u32 = 2048;
@@ -94,15 +95,13 @@ pub fn is_paperdoll_equipment_gump_id(gump_id: u32) -> bool {
     (PAPERDOLL_EQUIPMENT_GUMP_ID_START..=PAPERDOLL_EQUIPMENT_GUMP_ID_END).contains(&gump_id)
 }
 
+/// Adds the paperdoll gumps' atlas pages and the page and slot manifests, which every gump package carries even with
+/// no paperdoll gump: their version covers the single gumps' payload too.
 pub fn add_gump_atlas_files(
     builder: &mut UddpBuilder,
     gumps: Vec<DecodedGump>,
     options: &GumpAtlasOptions,
 ) -> eyre::Result<u32> {
-    if gumps.is_empty() {
-        return Ok(0);
-    }
-
     validate_options(options)?;
     let (pages, slots) = pack_gumps_into_pages(gumps, options)?;
     let page_manifest = serialize_page_manifest(options, &pages)?;
@@ -604,6 +603,22 @@ mod tests {
         let package = udd_assets::gumps::GumpsPackage::from_uddp_package(reader).unwrap();
 
         assert_eq!(package.read_gump_rgba(GUMP_ID).unwrap(), (u32::from(WIDTH), u32::from(HEIGHT), rgba));
+    }
+
+    /// A package without paperdoll gumps still carries the manifests, at the version the reader expects.
+    #[test]
+    fn gump_atlas_manifests_are_written_without_paperdoll_gumps() {
+        let mut builder = UddpBuilder::new(LookupMode::SparseId);
+        assert_eq!(add_gump_atlas_files(&mut builder, Vec::new(), &GumpAtlasOptions::default()).unwrap(), 0);
+        let package = UddpReader::open(builder.build().unwrap()).unwrap();
+
+        let page_manifest = package.read_file_by_sparse_id(GUMP_ATLAS_PAGE_MANIFEST_ID).expect("read page manifest");
+        let slot_manifest = package.read_file_by_sparse_id(GUMP_ATLAS_SLOT_MANIFEST_ID).expect("read slot manifest");
+        let empty = (DEFAULT_GUMP_ATLAS_WIDTH, DEFAULT_GUMP_ATLAS_HEIGHT, u32::from(DEFAULT_GUMP_ATLAS_GUTTER), 0);
+        assert_eq!(page_manifest_header(&page_manifest), empty);
+        assert_eq!(slot_manifest_header(&slot_manifest), empty);
+        assert_eq!(GUMP_ATLAS_METADATA_VERSION, udd_assets::gumps::GUMP_ATLAS_METADATA_VERSION);
+        assert!(udd_assets::gumps::GumpsPackage::from_uddp_package(package).is_ok());
     }
 
     #[test]

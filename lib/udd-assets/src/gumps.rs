@@ -1,10 +1,19 @@
-use byteorder::{LittleEndian, ReadBytesExt};
+//! `gumps_cc.uddp` and `gumps_ec.uddp`: paperdoll gumps on lossless RGBA8888 atlas pages, every other gump in an entry
+//! of its own (a single gump).
+//!
+//! A single gump's payload is `u32 width, u32 height, u8 pixel format` ([`GumpPixelFormat`]), then RGBA8888 rows or
+//! BC1 blocks covering the size rounded up to 4. The payload carries no version, so every package carries the atlas
+//! manifests, whose version covers both layouts, even with no paperdoll gump in it.
+
+use byteorder::{LittleEndian, ReadBytesExt, WriteBytesExt};
 use color_eyre::eyre::{self, Context, ContextCompat};
 use std::collections::HashMap;
 use std::io::{Cursor, Read};
 use std::path::Path;
 use std::sync::{Arc, Mutex};
 use udd_container::{DataType, FileKey, UddpReader};
+use udd_image_codecs::bc1::{decode_bc1_to_rgba8888, encode_bc1, expected_bc1_byte_len};
+use udd_image_codecs::bc7::{ImageExtent, RawImageFormat};
 
 use crate::common::ensure_manifest_version;
 
@@ -13,7 +22,78 @@ const GUMP_ATLAS_SLOT_MANIFEST_ID: u32 = 0xE000_0001;
 const GUMP_ATLAS_PAGE_ID_BASE: u32 = 0xF000_0000;
 const GUMP_ATLAS_PAGE_MANIFEST_MAGIC: [u8; 4] = *b"GAPG";
 const GUMP_ATLAS_SLOT_MANIFEST_MAGIC: [u8; 4] = *b"GASL";
-const GUMP_ATLAS_METADATA_VERSION: u32 = 2;
+/// 3: single gumps carry a pixel format byte, and every package carries the atlas manifests.
+pub const GUMP_ATLAS_METADATA_VERSION: u32 = 3;
+/// `u32 width, u32 height, u8 pixel format` before a single gump's pixels.
+pub const SINGLE_GUMP_HEADER_BYTES: usize = 2 * size_of::<u32>() + size_of::<u8>();
+
+/// How a single gump's pixels are stored.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[repr(u8)]
+pub enum GumpPixelFormat {
+    /// Lossless RGBA8888 rows.
+    Rgba8888 = 0,
+    /// BC1 blocks with one bit of alpha: Classic's colour 0 and any texel under half alpha decode to transparent black.
+    Bc1 = 1,
+}
+
+impl GumpPixelFormat {
+    pub const fn from_repr(value: u8) -> Option<Self> {
+        match value {
+            0 => Some(Self::Rgba8888),
+            1 => Some(Self::Bc1),
+            _ => None,
+        }
+    }
+
+    pub const fn label(self) -> &'static str {
+        match self {
+            Self::Rgba8888 => "RGBA8888",
+            Self::Bc1 => "BC1",
+        }
+    }
+
+    /// The bytes of a `width` x `height` gump's pixels in this format: none for an empty gump.
+    pub fn pixel_byte_len(self, width: u32, height: u32) -> usize {
+        match (self, gump_extent(width, height)) {
+            (_, None) => 0,
+            (Self::Rgba8888, Some(extent)) => extent.byte_len(RawImageFormat::Rgba8888),
+            (Self::Bc1, Some(extent)) => expected_bc1_byte_len(extent),
+        }
+    }
+}
+
+/// A gump's extent, or `None` for an empty one: the clients hold a few 0x0 gumps, which keep a payload with no pixels.
+fn gump_extent(width: u32, height: u32) -> Option<ImageExtent> {
+    ImageExtent::new(width, height).ok()
+}
+
+/// A single gump's payload from its RGBA8888 pixels, in `format`.
+pub fn encode_single_gump_payload(
+    width: u32,
+    height: u32,
+    rgba: &[u8],
+    format: GumpPixelFormat,
+) -> eyre::Result<Vec<u8>> {
+    let expected_rgba_len = GumpPixelFormat::Rgba8888.pixel_byte_len(width, height);
+    eyre::ensure!(
+        rgba.len() == expected_rgba_len,
+        "single gump {width}x{height}: expected {expected_rgba_len} RGBA bytes, got {}",
+        rgba.len()
+    );
+    let mut payload = Vec::with_capacity(SINGLE_GUMP_HEADER_BYTES + format.pixel_byte_len(width, height));
+    payload.write_u32::<LittleEndian>(width)?;
+    payload.write_u32::<LittleEndian>(height)?;
+    payload.write_u8(format as u8)?;
+    match (format, gump_extent(width, height)) {
+        (_, None) => {}
+        (GumpPixelFormat::Rgba8888, Some(_)) => payload.extend_from_slice(rgba),
+        (GumpPixelFormat::Bc1, Some(extent)) => payload.extend_from_slice(
+            &encode_bc1(rgba, extent).map_err(|error| eyre::eyre!("single gump {width}x{height}: {error}"))?,
+        ),
+    }
+    Ok(payload)
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct GumpAtlasPageRecord {
@@ -94,7 +174,10 @@ impl GumpsPackage {
                     }
                     (page_width, page_height, page_gutter, pages, slots)
                 }
-                _ => (0, 0, 0, Vec::new(), Vec::new()),
+                _ => eyre::bail!(
+                    "gump atlas manifest: missing, so the package predates version {GUMP_ATLAS_METADATA_VERSION}; \
+                     repack with the current udd-cli"
+                ),
             };
 
         Ok(Self {
@@ -166,6 +249,21 @@ impl GumpsPackage {
             .lock()
             .map(|cache| cache.len())
             .unwrap_or(0)
+    }
+
+    /// The pixel format of a single gump's payload, or `None` for a gump on an atlas page (always RGBA8888) or none.
+    pub fn single_gump_pixel_format(&self, gump_id: u32) -> eyre::Result<Option<GumpPixelFormat>> {
+        let Some(file) = self.package.find_by_sparse_id(gump_id) else {
+            return Ok(None);
+        };
+        if file.data_type != DataType::Gump as u8 {
+            return Ok(None);
+        }
+        let payload = self.package.read_file_by_sparse_id_cow(gump_id)?;
+        let format_byte = *payload
+            .get(SINGLE_GUMP_HEADER_BYTES - size_of::<u8>())
+            .context("single gump payload is shorter than its header")?;
+        Ok(Some(single_gump_pixel_format(format_byte)?))
     }
 
     pub fn read_gump_rgba(&self, gump_id: u32) -> eyre::Result<(u32, u32, Vec<u8>)> {
@@ -249,19 +347,32 @@ impl GumpsPackage {
     }
 }
 
+fn single_gump_pixel_format(format_byte: u8) -> eyre::Result<GumpPixelFormat> {
+    GumpPixelFormat::from_repr(format_byte)
+        .ok_or_else(|| eyre::eyre!("invalid single gump pixel format {format_byte}"))
+}
+
 fn decode_single_gump_payload(payload: &[u8]) -> eyre::Result<GumpImage> {
     let mut cursor = Cursor::new(payload);
     let width = cursor.read_u32::<LittleEndian>()?;
     let height = cursor.read_u32::<LittleEndian>()?;
-    let expected_len = width as usize * height as usize * 4;
-    let mut rgba = Vec::new();
-    cursor.read_to_end(&mut rgba)?;
-    if rgba.len() != expected_len {
+    let format = single_gump_pixel_format(cursor.read_u8()?)?;
+    let expected_len = format.pixel_byte_len(width, height);
+    let pixels = &payload[SINGLE_GUMP_HEADER_BYTES..];
+    if pixels.len() != expected_len {
         eyre::bail!(
-            "invalid gump RGBA payload length for {width}x{height}: expected {expected_len}, got {}",
-            rgba.len()
+            "invalid gump {} payload length for {width}x{height}: expected {expected_len}, got {}",
+            format.label(),
+            pixels.len()
         );
     }
+    let rgba = match (format, gump_extent(width, height)) {
+        (_, None) => Vec::new(),
+        (GumpPixelFormat::Rgba8888, Some(_)) => pixels.to_vec(),
+        (GumpPixelFormat::Bc1, Some(extent)) => {
+            decode_bc1_to_rgba8888(pixels, extent).map_err(|error| eyre::eyre!("single gump {width}x{height}: {error}"))?
+        }
+    };
     Ok(GumpImage {
         physical_width: width,
         physical_height: height,
@@ -342,6 +453,83 @@ mod tests {
 
         assert_eq!((width, height), (2, 1));
         assert_eq!(rgba, vec![1, 2, 3, 4, 5, 6, 7, 8]);
+        assert_eq!(package.single_gump_pixel_format(42).unwrap(), Some(GumpPixelFormat::Rgba8888));
+    }
+
+    /// A BC1 single gump keeps its true size over whole blocks, and its transparent texels decode to transparent black.
+    #[test]
+    fn package_reads_bc1_single_gump_payload() {
+        const GUMP_ID: u32 = 7;
+        const WIDTH: u32 = 5;
+        const HEIGHT: u32 = 3;
+        const PAINTED: [u8; 4] = [255, 255, 255, 255];
+        const CLEAR: [u8; 4] = [0, 0, 0, 0];
+        let mut rgba = PAINTED.repeat((WIDTH * HEIGHT) as usize);
+        rgba[..CLEAR.len()].copy_from_slice(&CLEAR);
+        let payload = encode_single_gump_payload(WIDTH, HEIGHT, &rgba, GumpPixelFormat::Bc1).unwrap();
+        assert_eq!(
+            payload.len(),
+            SINGLE_GUMP_HEADER_BYTES + expected_bc1_byte_len(ImageExtent::new(WIDTH, HEIGHT).unwrap())
+        );
+        let empty = encode_single_gump_payload(0, 0, &[], GumpPixelFormat::Bc1).unwrap();
+        assert_eq!(empty.len(), SINGLE_GUMP_HEADER_BYTES);
+        let package = GumpsPackage::from_uddp_package(build_package_with_singles(&[(GUMP_ID, payload)])).unwrap();
+
+        let image = package.read_gump_image(GUMP_ID).unwrap();
+
+        assert_eq!((image.physical_width, image.physical_height), (WIDTH, HEIGHT));
+        assert_eq!(image.rgba, rgba);
+        assert_eq!(package.single_gump_pixel_format(GUMP_ID).unwrap(), Some(GumpPixelFormat::Bc1));
+    }
+
+    /// The clients hold a few 0x0 gumps: they keep a payload with no pixels, in either format.
+    #[test]
+    fn empty_single_gumps_read_back_empty() {
+        const GUMP_IDS: [u32; 2] = [128, 129];
+        let singles = [GumpPixelFormat::Rgba8888, GumpPixelFormat::Bc1]
+            .into_iter()
+            .zip(GUMP_IDS)
+            .map(|(format, gump_id)| (gump_id, encode_single_gump_payload(0, 0, &[], format).unwrap()))
+            .collect::<Vec<_>>();
+        let package = GumpsPackage::from_uddp_package(build_package_with_singles(&singles)).unwrap();
+
+        for gump_id in GUMP_IDS {
+            assert_eq!(package.read_gump_rgba(gump_id).unwrap(), (0, 0, Vec::new()));
+        }
+    }
+
+    #[test]
+    fn unknown_single_gump_pixel_format_is_an_error() {
+        const GUMP_ID: u32 = 7;
+        const UNKNOWN_PIXEL_FORMAT: u8 = u8::MAX;
+        let mut payload = single_payload(2, 1, &[1, 2, 3, 4, 5, 6, 7, 8]);
+        payload[SINGLE_GUMP_HEADER_BYTES - size_of::<u8>()] = UNKNOWN_PIXEL_FORMAT;
+        let package = GumpsPackage::from_uddp_package(build_package_with_singles(&[(GUMP_ID, payload)])).unwrap();
+
+        let error = package.read_gump_image(GUMP_ID).unwrap_err();
+        assert!(error.to_string().contains("pixel format"), "{error}");
+        assert!(package.single_gump_pixel_format(GUMP_ID).is_err());
+    }
+
+    /// A package from before version 3 fails to load with the repack message, whether its manifests are at version 2
+    /// or, with no paperdoll gump in it, missing.
+    #[test]
+    fn packages_before_version_3_must_be_repacked() {
+        const OLD_VERSION: u32 = 2;
+        let old_manifests = build_package_with_manifests(
+            common_manifest_header_at(&GUMP_ATLAS_PAGE_MANIFEST_MAGIC, OLD_VERSION, 3, 2, 1, 0),
+            common_manifest_header_at(&GUMP_ATLAS_SLOT_MANIFEST_MAGIC, OLD_VERSION, 3, 2, 1, 0),
+        );
+        let no_manifests = {
+            let mut builder = UddpBuilder::new(LookupMode::SparseId);
+            add_single(&mut builder, 42, &single_payload(2, 1, &[1, 2, 3, 4, 5, 6, 7, 8]));
+            UddpReader::open(builder.build().unwrap()).unwrap()
+        };
+
+        for package in [old_manifests, no_manifests] {
+            let error = GumpsPackage::from_uddp_package(package).err().expect("an old package is rejected");
+            assert!(format!("{error:#}").contains("repack with the current udd-cli"), "{error:#}");
+        }
     }
 
     #[test]
@@ -363,58 +551,95 @@ mod tests {
         assert_eq!(package.cached_atlas_page_count(), 1);
     }
 
-    fn build_test_package(include_atlas: bool) -> UddpReader {
-        let mut builder = UddpBuilder::new(LookupMode::SparseId);
-        let single = single_payload(2, 1, &[1, 2, 3, 4, 5, 6, 7, 8]);
+    fn add_single(builder: &mut UddpBuilder, gump_id: u32, payload: &[u8]) {
         builder
             .add_file(AddFileRequest {
                 data_type: DataType::Gump as u8,
                 compression: CompressionFlag::None,
-                width: 2,
-                height: 1,
+                width: 0,
+                height: 0,
                 virtual_path: None,
                 path_hash64: None,
-                id: Some(42),
-                data: &single,
+                id: Some(gump_id),
+                data: payload,
             })
             .unwrap();
+    }
 
-        if include_atlas {
-            let page_manifest = page_manifest();
-            let slot_manifest = slot_manifest();
-            let page_pixels = vec![
-                0, 0, 0, 0, 9, 10, 11, 12, 13, 14, 15, 16,
-                0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-            ];
-            for (id, data_type, data, width, height) in [
-                (GUMP_ATLAS_PAGE_MANIFEST_ID, DataType::Metadata as u8, page_manifest.as_slice(), 0, 0),
-                (GUMP_ATLAS_SLOT_MANIFEST_ID, DataType::Metadata as u8, slot_manifest.as_slice(), 0, 0),
-                (GUMP_ATLAS_PAGE_ID_BASE, DataType::Texture as u8, page_pixels.as_slice(), 3, 2),
-            ] {
-                builder
-                    .add_file(AddFileRequest {
-                        data_type,
-                        compression: CompressionFlag::None,
-                        width,
-                        height,
-                        virtual_path: None,
-                        path_hash64: None,
-                        id: Some(id),
-                        data,
-                    })
-                    .unwrap();
-            }
+    fn add_manifests(builder: &mut UddpBuilder, page_manifest: &[u8], slot_manifest: &[u8]) {
+        for (id, data) in [(GUMP_ATLAS_PAGE_MANIFEST_ID, page_manifest), (GUMP_ATLAS_SLOT_MANIFEST_ID, slot_manifest)] {
+            builder
+                .add_file(AddFileRequest {
+                    data_type: DataType::Metadata as u8,
+                    compression: CompressionFlag::None,
+                    width: 0,
+                    height: 0,
+                    virtual_path: None,
+                    path_hash64: None,
+                    id: Some(id),
+                    data,
+                })
+                .unwrap();
+        }
+    }
+
+    /// Single gumps and the empty atlas manifests every current package carries.
+    fn build_package_with_singles(singles: &[(u32, Vec<u8>)]) -> UddpReader {
+        let mut builder = UddpBuilder::new(LookupMode::SparseId);
+        for (gump_id, payload) in singles {
+            add_single(&mut builder, *gump_id, payload);
+        }
+        add_manifests(
+            &mut builder,
+            &common_manifest_header(&GUMP_ATLAS_PAGE_MANIFEST_MAGIC, 3, 2, 1, 0),
+            &common_manifest_header(&GUMP_ATLAS_SLOT_MANIFEST_MAGIC, 3, 2, 1, 0),
+        );
+        UddpReader::open(builder.build().unwrap()).unwrap()
+    }
+
+    fn build_package_with_manifests(page_manifest: Vec<u8>, slot_manifest: Vec<u8>) -> UddpReader {
+        let mut builder = UddpBuilder::new(LookupMode::SparseId);
+        add_manifests(&mut builder, &page_manifest, &slot_manifest);
+        UddpReader::open(builder.build().unwrap()).unwrap()
+    }
+
+    fn build_test_package(include_atlas: bool) -> UddpReader {
+        if !include_atlas {
+            return build_package_with_singles(&[(42, single_payload(2, 1, &[1, 2, 3, 4, 5, 6, 7, 8]))]);
+        }
+        let mut builder = UddpBuilder::new(LookupMode::SparseId);
+        add_single(&mut builder, 42, &single_payload(2, 1, &[1, 2, 3, 4, 5, 6, 7, 8]));
+
+        let page_manifest = page_manifest();
+        let slot_manifest = slot_manifest();
+        let page_pixels = vec![
+            0, 0, 0, 0, 9, 10, 11, 12, 13, 14, 15, 16,
+            0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+        ];
+        for (id, data_type, data, width, height) in [
+            (GUMP_ATLAS_PAGE_MANIFEST_ID, DataType::Metadata as u8, page_manifest.as_slice(), 0, 0),
+            (GUMP_ATLAS_SLOT_MANIFEST_ID, DataType::Metadata as u8, slot_manifest.as_slice(), 0, 0),
+            (GUMP_ATLAS_PAGE_ID_BASE, DataType::Texture as u8, page_pixels.as_slice(), 3, 2),
+        ] {
+            builder
+                .add_file(AddFileRequest {
+                    data_type,
+                    compression: CompressionFlag::None,
+                    width,
+                    height,
+                    virtual_path: None,
+                    path_hash64: None,
+                    id: Some(id),
+                    data,
+                })
+                .unwrap();
         }
 
         UddpReader::open(builder.build().unwrap()).unwrap()
     }
 
     fn single_payload(width: u32, height: u32, rgba: &[u8]) -> Vec<u8> {
-        let mut payload = Vec::new();
-        payload.write_u32::<LittleEndian>(width).unwrap();
-        payload.write_u32::<LittleEndian>(height).unwrap();
-        payload.extend_from_slice(rgba);
-        payload
+        encode_single_gump_payload(width, height, rgba, GumpPixelFormat::Rgba8888).unwrap()
     }
 
     fn page_manifest() -> Vec<u8> {
@@ -446,9 +671,20 @@ mod tests {
         gutter: u32,
         count: u32,
     ) -> Vec<u8> {
+        common_manifest_header_at(magic, GUMP_ATLAS_METADATA_VERSION, width, height, gutter, count)
+    }
+
+    fn common_manifest_header_at(
+        magic: &[u8; 4],
+        version: u32,
+        width: u32,
+        height: u32,
+        gutter: u32,
+        count: u32,
+    ) -> Vec<u8> {
         let mut bytes = Vec::new();
         bytes.extend_from_slice(magic);
-        bytes.write_u32::<LittleEndian>(GUMP_ATLAS_METADATA_VERSION).unwrap();
+        bytes.write_u32::<LittleEndian>(version).unwrap();
         bytes.write_u32::<LittleEndian>(width).unwrap();
         bytes.write_u32::<LittleEndian>(height).unwrap();
         bytes.write_u32::<LittleEndian>(gutter).unwrap();

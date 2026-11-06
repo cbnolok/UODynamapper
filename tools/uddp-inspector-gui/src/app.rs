@@ -1951,17 +1951,14 @@ mod tests {
     }
 
     fn gump_single_payload(width: u32, height: u32, rgba: &[u8]) -> Vec<u8> {
-        let mut bytes = Vec::new();
-        bytes.write_u32::<LittleEndian>(width).unwrap();
-        bytes.write_u32::<LittleEndian>(height).unwrap();
-        bytes.extend_from_slice(rgba);
-        bytes
+        udd_assets::gumps::encode_single_gump_payload(width, height, rgba, udd_assets::gumps::GumpPixelFormat::Rgba8888)
+            .unwrap()
     }
 
     fn gump_page_manifest_bytes() -> Vec<u8> {
         let mut bytes = Vec::new();
         bytes.extend_from_slice(b"GAPG");
-        bytes.write_u32::<LittleEndian>(2).unwrap();
+        bytes.write_u32::<LittleEndian>(udd_assets::gumps::GUMP_ATLAS_METADATA_VERSION).unwrap();
         bytes.write_u32::<LittleEndian>(3).unwrap();
         bytes.write_u32::<LittleEndian>(2).unwrap();
         bytes.write_u32::<LittleEndian>(1).unwrap();
@@ -1976,7 +1973,7 @@ mod tests {
     fn gump_slot_manifest_bytes() -> Vec<u8> {
         let mut bytes = Vec::new();
         bytes.extend_from_slice(b"GASL");
-        bytes.write_u32::<LittleEndian>(2).unwrap();
+        bytes.write_u32::<LittleEndian>(udd_assets::gumps::GUMP_ATLAS_METADATA_VERSION).unwrap();
         bytes.write_u32::<LittleEndian>(3).unwrap();
         bytes.write_u32::<LittleEndian>(2).unwrap();
         bytes.write_u32::<LittleEndian>(1).unwrap();
@@ -2483,7 +2480,8 @@ mod tests {
             panic!("expected single file source");
         };
         assert_eq!(*source_entry_idx, Some(0));
-        assert_eq!(*raw_size, 16);
+        const SINGLE_GUMP_RGBA_BYTES: usize = 8;
+        assert_eq!(*raw_size as usize, udd_assets::gumps::SINGLE_GUMP_HEADER_BYTES + SINGLE_GUMP_RGBA_BYTES);
 
         assert_eq!(entries[1].id, 50_001);
         assert!(entries[1].summary.contains("logical 1x1"));

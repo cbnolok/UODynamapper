@@ -1,12 +1,11 @@
 //! Build-time support for `gumps_cc.uddp`.
 
-use byteorder::{LittleEndian, WriteBytesExt};
 use color_eyre::eyre::{self, WrapErr};
 use crate::progress::{ProgressBar, ProgressStyle};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use uocf::classic::gump::GumpMap;
-use udd_container::{AddFileRequest, CompressionFlag, DataType, LookupMode, UddpBuilder};
+use udd_container::{CompressionFlag, LookupMode, UddpBuilder};
 
 use crate::classic_patches::{load_verdata_if_enabled, ClassicPatchOptions};
 use crate::classic_sources::{resolve_classic_gump_source, SourceFormat, SourceFormatPreference};
@@ -15,6 +14,7 @@ use crate::gump_atlas::{
 };
 use crate::package_progress::build_and_write_package;
 use crate::page_compression::LOSSLESS_PAGE_COMPRESSION;
+use crate::single_gumps::{default_single_gump_compression, GumpPixelFormat, SingleGumpWriter};
 use crate::source_paths::source_path_label;
 use crate::upscale::{apply_upscale_passes, UpscalePass};
 use crate::upscale_profile::{UpscaleImageType, UpscaleProfile, UpscaleTarget};
@@ -24,10 +24,15 @@ pub const GUMPS_CC_DEFAULT_OUTPUT: &str = "gumps_cc.uddp";
 pub struct CcGumpsBuildSummary {
     pub gump_count: u32,
     pub single_gump_count: u32,
+    /// Single gumps with alpha neither 0 nor 255, which BC1 rounds.
+    pub single_soft_alpha_count: u32,
     pub atlas_gump_count: u32,
 }
 
 pub struct CcGumpsOptions {
+    /// How single gumps are stored: lossless RGBA8888, or BC1 when packing lossy. Paperdoll gumps stay lossless.
+    pub single_pixel_format: GumpPixelFormat,
+    /// The builder codec of single gumps.
     pub compression: CompressionFlag,
     pub atlas_compression: CompressionFlag,
     pub paperdoll_upscale_passes: Vec<UpscalePass>,
@@ -39,7 +44,8 @@ pub struct CcGumpsOptions {
 impl Default for CcGumpsOptions {
     fn default() -> Self {
         Self {
-            compression: CompressionFlag::ZstdNoDict,
+            single_pixel_format: GumpPixelFormat::Rgba8888,
+            compression: default_single_gump_compression(GumpPixelFormat::Rgba8888),
             atlas_compression: LOSSLESS_PAGE_COMPRESSION,
             paperdoll_upscale_passes: Vec::new(),
             single_upscale_passes: Vec::new(),
@@ -112,7 +118,7 @@ pub fn convert_gumps_to_uddp_from_sources_with_patches_and_options(
     let mut builder = UddpBuilder::new(LookupMode::SparseId);
     let mut scratch = Vec::new();
     let mut gump_count = 0u32;
-    let mut single_gump_count = 0u32;
+    let mut single_gumps = SingleGumpWriter::new(options.single_pixel_format, options.compression);
     let mut atlas_gumps = Vec::new();
 
     for gump_id in 0..=max_id {
@@ -162,19 +168,12 @@ pub fn convert_gumps_to_uddp_from_sources_with_patches_and_options(
                 &rgba,
                 &passes,
             );
-            add_single_gump(
-                &mut builder,
-                gump_id,
-                width,
-                height,
-                &rgba,
-                options.compression,
-            )?;
-            single_gump_count += 1;
+            single_gumps.push(&mut builder, gump_id, width, height, rgba)?;
         }
         gump_count += 1;
     }
 
+    let single_summary = single_gumps.finish(&mut builder)?;
     let atlas_gump_count = add_gump_atlas_files(
         &mut builder,
         atlas_gumps,
@@ -188,33 +187,8 @@ pub fn convert_gumps_to_uddp_from_sources_with_patches_and_options(
 
     Ok(CcGumpsBuildSummary {
         gump_count,
-        single_gump_count,
+        single_gump_count: single_summary.count,
+        single_soft_alpha_count: single_summary.soft_alpha_count,
         atlas_gump_count,
     })
-}
-
-fn add_single_gump(
-    builder: &mut UddpBuilder,
-    gump_id: u32,
-    width: u32,
-    height: u32,
-    rgba: &[u8],
-    compression: CompressionFlag,
-) -> eyre::Result<()> {
-    let mut payload = Vec::with_capacity(8 + rgba.len());
-    payload.write_u32::<LittleEndian>(width)?;
-    payload.write_u32::<LittleEndian>(height)?;
-    payload.extend_from_slice(rgba);
-
-    builder.add_file(AddFileRequest {
-        data_type: DataType::Gump as u8,
-        compression,
-        width,
-        height,
-        virtual_path: None,
-        path_hash64: None,
-        id: Some(gump_id),
-        data: &payload,
-    })?;
-    Ok(())
 }

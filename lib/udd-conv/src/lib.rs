@@ -7,6 +7,7 @@ pub mod page_compression;
 pub mod cc_gumps;
 pub mod ec_gumps;
 mod gump_atlas;
+pub mod single_gumps;
 pub mod cc_radar;
 pub mod cc_statics;
 pub mod classic_sources;
