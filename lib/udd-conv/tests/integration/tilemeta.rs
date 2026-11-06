@@ -11,9 +11,9 @@ use bytemuck::Zeroable;
 use udd_assets::{
     tilemeta::{
         EcMaterialLogicalFamily, EcMaterialPhysicalPackage,
-        EcMaterialStableRole, TileMetaItemTextureRef,
+        EcMaterialStableRole, TileMetaItemDefinitions, TileMetaItemTextureRef,
         TileMetaItemTextureRefSpan, TileMetaItemTile, TileMetaItemVisualKind, TileMetaLandTile,
-        TILEMETA_ITEM_ENTRY_PATH, TILEMETA_ITEM_TEXTURE_REF_ENTRY_PATH, TILEMETA_ITEM_MATERIAL_ENTRY_PATH,
+        TILEMETA_ITEM_DEFINITION_ENTRY_PATH, TILEMETA_ITEM_ENTRY_PATH, TILEMETA_ITEM_TEXTURE_REF_ENTRY_PATH, TILEMETA_ITEM_MATERIAL_ENTRY_PATH,
         TILEMETA_ITEM_TEXTURE_REF_INDEX_ENTRY_PATH, TILEMETA_LAND_ENTRY_PATH,
     },
     tex_art_ec::TexArtEcCropAdjustment,
@@ -21,6 +21,23 @@ use udd_assets::{
 };
 use udd_conv::tilemeta::*;
 use udd_container::CompressionFlag;
+
+/// The item definitions entry every tilemeta package holds, with no records.
+fn add_empty_item_definitions(package: &mut UddpBuilder) {
+    let definitions = TileMetaItemDefinitions::default().to_bytes().expect("encode item definitions");
+    package
+        .add_file(AddFileRequest {
+            data_type: DataType::Metadata as u8,
+            compression: CompressionFlag::ZstdNoDict,
+            width: 0,
+            height: 0,
+            virtual_path: Some(TILEMETA_ITEM_DEFINITION_ENTRY_PATH),
+            path_hash64: None,
+            id: None,
+            data: &definitions,
+        })
+        .expect("add item definitions");
+}
 
 fn temp_dir(test_name: &str) -> PathBuf {
     let timestamp = SystemTime::now()
@@ -128,6 +145,7 @@ fn tilemeta_package_roundtrip_preserves_metadata_records() {
             })
             .expect("add empty item texture refs");
     }
+    add_empty_item_definitions(&mut package);
 
     let package = TileMetaPackage::from_uddp_package(
         UddpReader::open(package.build().expect("build package")).expect("open package"),
@@ -318,6 +336,7 @@ fn tilemeta_texture_refs_roundtrip_preserves_role_fields() {
             data: bytemuck::cast_slice(&refs),
         })
         .expect("add texture refs");
+    add_empty_item_definitions(&mut package);
 
     let reader = UddpReader::open(package.build().expect("build")).expect("open");
     let tilemeta = TileMetaPackage::from_uddp_package(reader).expect("load tilemeta");

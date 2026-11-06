@@ -1338,10 +1338,15 @@ Runtime:
 - `metadata/items.bin`: dense `TileMetaItemTile` table from classic item
   metadata plus EC tileart facts.
 - `metadata/item_texture_refs_index.bin`: per-item span table into refs.
-- `metadata/item_texture_refs.v3.bin`: all EC tileart texture refs. The path
+- `metadata/item_texture_refs.v4.bin`: all EC tileart texture refs. The path
   names the format (`TILEMETA_FORMAT_VERSION`); a package of format 1
-  (`metadata/item_texture_refs.bin`, file-name roles) or 2 (`.v2`, no
-  `ec_art_flags`) is rejected with a repack message.
+  (`metadata/item_texture_refs.bin`, file-name roles), 2 (`.v2`, no
+  `ec_art_flags`) or 3 (`.v3`, no item definitions) is rejected with a repack
+  message.
+- `metadata/item_definitions.bin` (format 4): the tileart records the Enhanced
+  paperdoll reads, keyed by entry name, with props1 Layer, Appearance, Race,
+  Gender and Paperdoll, props2 Appearance and Paperdoll, and the appearance
+  filters but animation ones (layout in `docs/dev_wiki/UDDP_FORMATS.md`).
 - Item records store EC and CC texture ids, crop starts, offsets, radar color,
   flags, height, visual kind, names, and `ec_art_flags` (bit 0: tileart
   `flags2` `UseNewArt`; informational, the renderer ignores it).

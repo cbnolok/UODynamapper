@@ -162,7 +162,7 @@ pub enum TileType {
 ///
 /// Each enum variant represents a specific property slot (0-11) as defined in the
 /// `tileart.uop` format. These values are used byte-per-byte from the source.
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PropertyKey {
     /// The client tests `weight > 90`; the consumer of that test was not traced.
     Weight = 0,

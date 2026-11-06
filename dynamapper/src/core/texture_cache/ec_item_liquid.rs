@@ -98,6 +98,7 @@ mod tests {
             item_index: FOURTH_SOURCE_POSITION, texture_stretch: 1.0, ..Default::default()
         });
         let source = br#"{"17000":[{"block_index":0,"shader_name":"UOWaterShader","technique":[0,1],"tweaks":[0,0,-0.02,0.001],"field_04":0}],"17001":[{"block_index":0,"shader_name":"UOWaterShader","technique":[0,2],"tweaks":[0,0,0,0],"field_04":0}]}"#;
+        let definitions = TileMetaItemDefinitions::default().to_bytes().unwrap();
         let mut builder = UddpBuilder::new(LookupMode::VirtualPathHash);
         for (path, data) in [
             (TILEMETA_LAND_ENTRY_PATH, b"".as_slice()),
@@ -105,6 +106,7 @@ mod tests {
             (TILEMETA_ITEM_TEXTURE_REF_INDEX_ENTRY_PATH, bytemuck::cast_slice(&spans)),
             (TILEMETA_ITEM_TEXTURE_REF_ENTRY_PATH, bytemuck::cast_slice(&refs)),
             (TILEMETA_ITEM_MATERIAL_ENTRY_PATH, source.as_slice()),
+            (TILEMETA_ITEM_DEFINITION_ENTRY_PATH, definitions.as_slice()),
         ] {
             builder.add_file(AddFileRequest {
                 data_type: DataType::Metadata as u8, compression: CompressionFlag::ZstdNoDict,

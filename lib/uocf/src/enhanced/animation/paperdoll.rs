@@ -15,7 +15,7 @@ use knuffel::Decode;
 use crate::enhanced::animationframe::{AnimationFrame, FrameEntry};
 use crate::enhanced::hues::{hue_bitmap_hash, EcHueLookup, EcHueTable, EcHueTables, ShadowPaletteStats};
 use crate::enhanced::mobile_body::{DEFAULT_GENDER, DEFAULT_RACE, MOBILE_DEFINITION_BASE};
-use crate::enhanced::tileart::{PropertyKey, TaeAppearanceFilter, TaeBodyAppearance, TileArtEntry};
+use crate::enhanced::tileart::{tileart_entry_hash, PropertyKey, TaeAppearanceFilter, TaeBodyAppearance, TileArtEntry};
 use crate::uop_container::hash::hash_file_name_single;
 use crate::uop_container::package::{LoadMode, UopPackage};
 
@@ -138,7 +138,8 @@ pub trait PaperdollDefinitions<'a>: Copy {
     }
 }
 
-/// `tileart.uop` records sorted by tile id.
+/// `tileart.uop` records sorted by their stored tile id, found by it: records built in tests, which store their
+/// entry name's id. A client file is read with [`NamedTileArt`].
 #[derive(Clone, Copy)]
 pub struct SortedTileArt<'a>(pub &'a [TileArtEntry]);
 
@@ -148,6 +149,62 @@ impl<'a> PaperdollDefinitions<'a> for SortedTileArt<'a> {
     fn get(self, tile_id: u32) -> Option<&'a TileArtEntry> {
         let index = self.0.binary_search_by_key(&tile_id, |entry| entry.tile_id).ok()?;
         Some(&self.0[index])
+    }
+}
+
+/// The entry ids the paperdoll looks up: a 16-bit item id, or 10,000,000 plus a 16-bit body or property value.
+pub const ENTRY_ID_SPAN: u32 = 1 << u16::BITS;
+
+/// The records of a `tileart.uop`, found by the id of their entry name (`build/tileart/%08d.bin`) as the client
+/// finds them. The tile id stored in a record is only copied (`GetTileId`), and a few client records store another
+/// id than their name's (43957..=43963 store 43956, 42091 stores 41516).
+#[derive(Debug, Default)]
+pub struct NamedTileArt {
+    /// (entry id, record), ascending by entry id.
+    pub records: Vec<(u32, TileArtEntry)>,
+    /// Records that could not be parsed.
+    pub unreadable: usize,
+    /// Records named outside the ids the paperdoll looks up.
+    pub unnamed: usize,
+    /// (entry id, stored tile id) of the records that store another id than their name's, ascending.
+    pub renamed: Vec<(u32, u32)>,
+}
+
+impl NamedTileArt {
+    pub fn read(package: &UopPackage) -> Self {
+        let names: HashMap<u64, u32> = (0..ENTRY_ID_SPAN)
+            .chain(MOBILE_DEFINITION_BASE..MOBILE_DEFINITION_BASE + ENTRY_ID_SPAN)
+            .map(|id| (tileart_entry_hash(id), id))
+            .collect();
+        let mut named = Self::default();
+        for file in package.iter_files() {
+            let Ok(record) = TileArtEntry::parse_raw(file) else {
+                named.unreadable += 1;
+                continue;
+            };
+            let entry_id = if tileart_entry_hash(record.tile_id) == file.filename_hash() {
+                record.tile_id
+            } else if let Some(&entry_id) = names.get(&file.filename_hash()) {
+                named.renamed.push((entry_id, record.tile_id));
+                entry_id
+            } else {
+                named.unnamed += 1;
+                continue;
+            };
+            named.records.push((entry_id, record));
+        }
+        named.records.sort_unstable_by_key(|&(entry_id, _)| entry_id);
+        named.renamed.sort_unstable();
+        named
+    }
+}
+
+impl<'a> PaperdollDefinitions<'a> for &'a NamedTileArt {
+    type Definition = &'a TileArtEntry;
+
+    fn get(self, entry_id: u32) -> Option<&'a TileArtEntry> {
+        let index = self.records.binary_search_by_key(&entry_id, |&(id, _)| id).ok()?;
+        Some(&self.records[index].1)
     }
 }
 
@@ -982,21 +1039,34 @@ mod tests {
             .path()
     }
 
-    fn real_client() -> (std::path::PathBuf, Vec<TileArtEntry>, FrameSets) {
+    fn real_client() -> (std::path::PathBuf, NamedTileArt, FrameSets) {
         let dir = std::path::PathBuf::from(std::env::var_os(EC_CLIENT_DIR_ENV).expect("set UO_EC_CLIENT_DIR"));
         let package = UopPackage::load(client_file(&dir, TILEART_UOP_NAME)).unwrap();
-        let mut files: Vec<TileArtEntry> =
-            package.iter_files().filter_map(|file| TileArtEntry::parse_raw(file).ok()).collect();
-        files.sort_by_key(|file| file.tile_id);
+        let named = NamedTileArt::read(&package);
         let sets = FrameSets::load(&client_file(&dir, PAPERDOLL_UOP_NAME)).unwrap();
-        (dir, files, sets)
+        (dir, named, sets)
+    }
+
+    /// Every record of a shipped `tileart.uop` is named after an id the paperdoll looks up, and the records that
+    /// store another id are found by their name.
+    #[test]
+    #[ignore = "needs a real Enhanced Client: set UO_EC_CLIENT_DIR and run with --ignored"]
+    fn shipped_records_are_found_by_their_entry_name() {
+        // EC 2024: entry 42091 stores the tile id 41516, which entry 41516 stores too.
+        const RENAMED_ENTRY: u32 = 42091;
+        const RENAMED_STORED_ID: u32 = 41516;
+        let (_, named, _) = real_client();
+        assert_eq!((named.unreadable, named.unnamed), (0, 0), "{:?}", named.renamed);
+        assert!(named.renamed.contains(&(RENAMED_ENTRY, RENAMED_STORED_ID)), "{:?}", named.renamed);
+        assert_eq!((&named).get(RENAMED_ENTRY).map(|record| record.tile_id), Some(RENAMED_STORED_ID));
+        assert_eq!((&named).get(RENAMED_STORED_ID).map(|record| record.tile_id), Some(RENAMED_STORED_ID));
     }
 
     #[test]
     #[ignore = "needs a real Enhanced Client: set UO_EC_CLIENT_DIR and run with --ignored"]
     fn shipped_bodies_and_wearables_find_their_frames() {
-        let (_, files, sets) = real_client();
-        let definitions = SortedTileArt(&files);
+        let (_, named, sets) = real_client();
+        let definitions = &named;
         let male = Wearer::new(definitions, HUMAN_MALE);
         let female = Wearer::new(definitions, HUMAN_FEMALE);
         assert_eq!((male.gender, female.gender), (DEFAULT_GENDER, FEMALE));
@@ -1006,11 +1076,12 @@ mod tests {
         assert_eq!(body(&male), Some((MALE_SET, HUMAN_MALE as u16, false)));
         assert_eq!(body(&female), Some((FEMALE_SET, HUMAN_FEMALE as u16, false)));
 
-        let wearables: Vec<u32> = files
+        let wearables: Vec<u32> = named
+            .records
             .iter()
-            .filter(|file| file.tile_id < MOBILE_DEFINITION_BASE)
-            .filter(|file| item_layer(definitions, file.tile_id, None).is_some_and(|layer| !SKIPPED_LAYERS.contains(&layer)))
-            .map(|file| file.tile_id)
+            .map(|&(entry_id, _)| entry_id)
+            .filter(|&entry_id| entry_id < MOBILE_DEFINITION_BASE)
+            .filter(|&entry_id| item_layer(definitions, entry_id, None).is_some_and(|layer| !SKIPPED_LAYERS.contains(&layer)))
             .collect();
         // EC 2024: 983 of 1125 for a man, 1054 for a woman. About 70 items have a frame in neither set (9801..9892,
         // the talismans 12120..12123 among them); a man misses the female-only pieces besides (7168..7181, and the
@@ -1042,8 +1113,8 @@ mod tests {
     #[test]
     #[ignore = "needs a real Enhanced Client: set UO_EC_CLIENT_DIR and TMPDIR, and run with --ignored"]
     fn a_shipped_outfit_composes_over_the_body() {
-        let (dir, files, sets) = real_client();
-        let definitions = SortedTileArt(&files);
+        let (dir, named, sets) = real_client();
+        let definitions = &named;
         let hues_path = client_file(&dir, crate::enhanced::hues::HUES_UOP_NAME);
         let hues = hue_tables(&UopPackage::load_with_mode(&hues_path, LoadMode::Lazy).unwrap(), [SKIN_HUE, DYED_HUE]).unwrap();
         assert_eq!(hues.tables.len(), 2);

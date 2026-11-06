@@ -4,16 +4,24 @@ use color_eyre::eyre::{self, WrapErr};
 use std::path::Path;
 use udd_container::UddpReader;
 
+pub mod item_definitions;
+pub use item_definitions::{TileMetaItemDefinition, TileMetaItemDefinitions};
+
 pub const TILEMETA_LAND_ENTRY_PATH: &str = "metadata/land.bin";
 pub const TILEMETA_ITEM_ENTRY_PATH: &str = "metadata/items.bin";
 pub const TILEMETA_ITEM_TEXTURE_REF_INDEX_ENTRY_PATH: &str = "metadata/item_texture_refs_index.bin";
 /// Carries `TILEMETA_FORMAT_VERSION`: a package of another format has no entry at this path.
-pub const TILEMETA_ITEM_TEXTURE_REF_ENTRY_PATH: &str = "metadata/item_texture_refs.v3.bin";
+pub const TILEMETA_ITEM_TEXTURE_REF_ENTRY_PATH: &str = "metadata/item_texture_refs.v4.bin";
 /// Texture-ref paths of older formats, each rejected with a repack message: format 1 (roles from
-/// file names) and format 2 (no `TileMetaItemTile::ec_art_flags`).
-const TILEMETA_OLDER_FORMAT_ITEM_TEXTURE_REF_ENTRY_PATHS: [(u32, &str); 2] =
-    [(1, "metadata/item_texture_refs.bin"), (2, "metadata/item_texture_refs.v2.bin")];
+/// file names), format 2 (no `TileMetaItemTile::ec_art_flags`) and format 3 (no item definitions).
+const TILEMETA_OLDER_FORMAT_ITEM_TEXTURE_REF_ENTRY_PATHS: [(u32, &str); 3] = [
+    (1, "metadata/item_texture_refs.bin"),
+    (2, "metadata/item_texture_refs.v2.bin"),
+    (3, "metadata/item_texture_refs.v3.bin"),
+];
 pub const TILEMETA_ITEM_MATERIAL_ENTRY_PATH: &str = "metadata/item_materials.json";
+/// The `tileart.uop` records the Enhanced paperdoll reads ([`TileMetaItemDefinitions`]), since format 4.
+pub const TILEMETA_ITEM_DEFINITION_ENTRY_PATH: &str = "metadata/item_definitions.bin";
 
 /// The item is not at its block's primary position (`uocf::enhanced::tileart::primary_texture_position`).
 pub const TILEMETA_ITEM_TEXTURE_FLAG_AUXILIARY: u8 = 1 << 0;
@@ -82,8 +90,9 @@ impl EcMaterialLogicalFamily {
 /// 2: `stable_role` comes from (block, shader name, item position) and `AUXILIARY` from the position;
 /// the file-name roles and the speculative role byte are gone.
 /// 3: `TileMetaItemTile::ec_art_flags` (formerly padding) carries the tileart `flags2` `UseNewArt` bit.
+/// 4: `TILEMETA_ITEM_DEFINITION_ENTRY_PATH`, the records and properties the Enhanced paperdoll reads.
 /// Older packages are rejected.
-pub const TILEMETA_FORMAT_VERSION: u32 = 3;
+pub const TILEMETA_FORMAT_VERSION: u32 = 4;
 
 /// `TileMetaItemTile::ec_art_flags`: the tileart record sets `UseNewArt` in `flags2` (bit 19), so the
 /// official Enhanced Client draws its block-0 KR art; without it the client draws classic-style art.
@@ -457,6 +466,7 @@ pub struct TileMetaPackage {
     item_texture_ref_spans: Vec<TileMetaItemTextureRefSpan>,
     item_texture_refs: Vec<TileMetaItemTextureRef>,
     item_materials: std::collections::BTreeMap<u32, Vec<uocf::enhanced::tileart::ArtMaterial>>,
+    item_definitions: TileMetaItemDefinitions,
 }
 
 impl TileMetaPackage {
@@ -492,6 +502,9 @@ impl TileMetaPackage {
             .wrap_err("tilemeta missing source item materials; repack with the current udd-cli")?;
         let item_materials = serde_json::from_slice(material_bytes.as_ref())
             .wrap_err("parse source item material metadata")?;
+        let definition_bytes = read_path_entry_cow(&package, TILEMETA_ITEM_DEFINITION_ENTRY_PATH)?;
+        let item_definitions =
+            TileMetaItemDefinitions::from_bytes(definition_bytes.as_ref(), TILEMETA_ITEM_DEFINITION_ENTRY_PATH)?;
 
         Ok(Self {
             package,
@@ -500,7 +513,14 @@ impl TileMetaPackage {
             item_texture_ref_spans,
             item_texture_refs,
             item_materials,
+            item_definitions,
         })
+    }
+
+    /// The `tileart.uop` records the Enhanced paperdoll reads: the lookup of `uocf::enhanced::paperdoll` runs on
+    /// `&TileMetaItemDefinitions`.
+    pub fn item_definitions(&self) -> &TileMetaItemDefinitions {
+        &self.item_definitions
     }
 
     pub fn land_tiles(&self) -> &[TileMetaLandTile] {
@@ -880,6 +900,9 @@ fn choose_main_ec_texture_id_role_aware(
 mod tests {
     use super::*;
 
+    /// An `item_definitions.bin` of no record: its count, 0.
+    const EMPTY_DEFINITIONS: [u8; 4] = [0; 4];
+
     #[test]
     fn source_item_material_metadata_is_required_and_validated() {
         for source in [None, Some(b"invalid JSON".as_slice())] {
@@ -890,6 +913,7 @@ mod tests {
                 (TILEMETA_ITEM_TEXTURE_REF_INDEX_ENTRY_PATH, Some(b"".as_slice())),
                 (TILEMETA_ITEM_TEXTURE_REF_ENTRY_PATH, Some(b"".as_slice())),
                 (TILEMETA_ITEM_MATERIAL_ENTRY_PATH, source),
+                (TILEMETA_ITEM_DEFINITION_ENTRY_PATH, Some(EMPTY_DEFINITIONS.as_slice())),
             ];
             for (path, data) in entries {
                 if let Some(data) = data {
@@ -917,6 +941,7 @@ mod tests {
             (TILEMETA_ITEM_TEXTURE_REF_INDEX_ENTRY_PATH, b"".as_slice()),
             (refs_path, b"".as_slice()),
             (TILEMETA_ITEM_MATERIAL_ENTRY_PATH, b"{}".as_slice()),
+            (TILEMETA_ITEM_DEFINITION_ENTRY_PATH, EMPTY_DEFINITIONS.as_slice()),
         ];
         for (path, data) in entries {
             builder.add_file(udd_container::AddFileRequest {

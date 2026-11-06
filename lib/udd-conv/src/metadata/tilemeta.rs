@@ -14,7 +14,9 @@
 //! - `metadata/land.bin`: dense table for `TileMetaLandTile` entries.
 //! - `metadata/items.bin`: dense table for `TileMetaItemTile` entries.
 //! - `metadata/item_materials.json`: original per-item shader block parameters.
-//! - `metadata/item_texture_refs.v2.bin`: the texture refs; the path names `TILEMETA_FORMAT_VERSION`.
+//! - `metadata/item_texture_refs.v4.bin`: the texture refs; the path names `TILEMETA_FORMAT_VERSION`.
+//! - `metadata/item_definitions.bin`: the `tileart.uop` records the Enhanced paperdoll reads
+//!   (`TileMetaItemDefinitions`), above 10,000,000 included.
 //!
 //! Texture ref roles come from the block shader and the item position
 //! (`EcMaterialStableRole::for_texture_position`); no rule reads the file name.
@@ -32,10 +34,11 @@ use crate::tex_art_ec::{
     compute_tex_art_ec_crop_adjustments_from_loaded_sources, load_tex_art_ec_sources, TexArtEcLoadedSources,
 };
 use udd_assets::tex_art_ec::TexArtEcCropAdjustment;
+use udd_assets::tilemeta::item_definitions::{PropertyList, STORED_PROPERTIES};
 use udd_assets::tilemeta::{
     EcMaterialLogicalFamily, EcMaterialPhysicalPackage,
-    EcMaterialStableRole, TileMetaItemTextureRef, TileMetaItemTextureRefSpan, TileMetaItemTile,
-    TileMetaItemVisualKind, TileMetaLandTile, TILEMETA_ITEM_ENTRY_PATH,
+    EcMaterialStableRole, TileMetaItemDefinitions, TileMetaItemTextureRef, TileMetaItemTextureRefSpan, TileMetaItemTile,
+    TileMetaItemVisualKind, TileMetaLandTile, TILEMETA_ITEM_DEFINITION_ENTRY_PATH, TILEMETA_ITEM_ENTRY_PATH,
     TILEMETA_ITEM_EC_ART_FLAG_USE_NEW_ART, TILEMETA_ITEM_TEXTURE_FLAG_AUXILIARY,
     TILEMETA_ITEM_TEXTURE_FLAG_PRIMARY_SELECTED, TILEMETA_ITEM_TEXTURE_REF_ENTRY_PATH, TILEMETA_ITEM_TEXTURE_REF_INDEX_ENTRY_PATH,
     TILEMETA_LAND_ENTRY_PATH, TILEMETA_ITEM_MATERIAL_ENTRY_PATH,
@@ -48,7 +51,12 @@ use uocf::classic::tiledata::{
     TileData, TILE_FLAG_ALPHA_BLEND, TILE_FLAG_MULTI_MOVABLE, TILE_FLAG_NO_DRAW, TILE_FLAG_NO_HOUSE,
     TILE_FLAG_NO_SHADOW, TILE_FLAG_PIXEL_BLEED, TILE_FLAG_PLAY_ANIM_ONCE, TILE_FLAG_ROTATED,
 };
-use uocf::enhanced::tileart::{primary_texture_position, ArtData, TaeFlag, TextureItem};
+use uocf::enhanced::mobile_body::MOBILE_DEFINITION_BASE;
+use uocf::enhanced::paperdoll::NamedTileArt;
+use uocf::enhanced::tileart::{
+    primary_texture_position, ArtData, PropertyKey, TaeAppearanceFilter, TaeFlag, TextureItem, TileArtEntry,
+};
+use uocf::uop_container::package::UopPackage;
 
 pub struct TileMetaBuildOptions {
     /// When `true`, use radar colors from `tileart.uop` (EC data).
@@ -74,7 +82,119 @@ struct BuiltTileMetaTables {
     item_texture_ref_spans: Vec<TileMetaItemTextureRefSpan>,
     item_texture_refs: Vec<TileMetaItemTextureRef>,
     item_materials: std::collections::BTreeMap<u32, Vec<uocf::enhanced::tileart::ArtMaterial>>,
+    item_definitions: TileMetaItemDefinitions,
     package_compression: CompressionFlag,
+}
+
+/// The tiledata layer of an item: its quality, when not 0, as the Enhanced paperdoll falls back to it.
+fn tiledata_layer(tiledata: &TileData, tile_id: u32) -> Option<u8> {
+    let item = tiledata.item_tiles().get(usize::try_from(tile_id).ok()?)?;
+    (item.quality != 0).then_some(item.quality)
+}
+
+/// Whether the Enhanced paperdoll can read the `tileart.uop` record of entry `entry_id`: every record from
+/// 10,000,000 (bodies, and the targets of Appearance and Paperdoll values), and an item record with a stored
+/// property, an appearance filter it reads, or a tiledata layer (its layer when the record has no Layer).
+fn paperdoll_reads(entry_id: u32, entry: &TileArtEntry, tiledata_layer: Option<u8>) -> bool {
+    entry_id >= MOBILE_DEFINITION_BASE
+        || tiledata_layer.is_some()
+        || STORED_PROPERTIES.iter().any(|&(list, key)| match list {
+            PropertyList::First => entry.property1(key).is_some(),
+            PropertyList::Second => entry.property2(key).is_some(),
+        })
+        || entry
+            .appearance_vector
+            .iter()
+            .any(|filter| !matches!(filter, TaeAppearanceFilter::AnimationByOwnerBodyType(_)))
+}
+
+/// How the tileart Layer (props1 key 6) of the items compares with their tiledata layer (quality).
+#[derive(Debug, Default, Clone, PartialEq, Eq)]
+pub struct LayerAgreement {
+    /// Both are set and equal.
+    pub agree: usize,
+    /// Both are set and differ: the Enhanced paperdoll takes the tileart Layer.
+    pub disagree: usize,
+    /// Of `disagree`, the items tiledata flags wearable.
+    pub disagree_wearable: usize,
+    /// Only the tileart Layer is set.
+    pub tileart_only: usize,
+    /// Only the tiledata layer is set: the paperdoll falls back to it.
+    pub tiledata_only: usize,
+    /// Of `tiledata_only`, the items tiledata flags wearable.
+    pub tiledata_only_wearable: usize,
+    /// The first disagreements: (item, tileart Layer, tiledata layer).
+    pub examples: Vec<(u32, u32, u8)>,
+}
+
+/// Disagreements listed in the log.
+const LAYER_DISAGREEMENT_EXAMPLES: usize = 20;
+
+impl LayerAgreement {
+    fn count(&mut self, entry_id: u32, entry: &TileArtEntry, tiledata: &TileData) {
+        if entry_id >= MOBILE_DEFINITION_BASE {
+            return;
+        }
+        let wearable = usize::try_from(entry_id)
+            .ok()
+            .and_then(|index| tiledata.item_tiles().get(index))
+            .is_some_and(|item| item.flags.wearable());
+        match (entry.property1(PropertyKey::Layer), tiledata_layer(tiledata, entry_id)) {
+            (Some(tileart), Some(tiledata)) if tileart == u32::from(tiledata) => self.agree += 1,
+            (Some(tileart), Some(tiledata)) => {
+                self.disagree += 1;
+                self.disagree_wearable += usize::from(wearable);
+                if self.examples.len() < LAYER_DISAGREEMENT_EXAMPLES {
+                    self.examples.push((entry_id, tileart, tiledata));
+                }
+            }
+            (Some(_), None) => self.tileart_only += 1,
+            (None, Some(_)) => {
+                self.tiledata_only += 1;
+                self.tiledata_only_wearable += usize::from(wearable);
+            }
+            (None, None) => {}
+        }
+    }
+}
+
+/// The records of `tileart_path` the Enhanced paperdoll reads, and how their Layer compares with tiledata's.
+pub fn build_item_definitions(
+    tileart_path: &Path,
+    tiledata: &TileData,
+) -> eyre::Result<(TileMetaItemDefinitions, LayerAgreement)> {
+    let package =
+        UopPackage::load(tileart_path).wrap_err_with(|| format!("cannot open {}", tileart_path.display()))?;
+    // The client finds a record by its entry name; a few records store another tile id than their name's.
+    let named = NamedTileArt::read(&package);
+    if named.unreadable > 0 {
+        log::warn!(
+            "tilemeta: {} tileart.uop records could not be read; the paperdoll will not find them",
+            named.unreadable
+        );
+    }
+    if named.unnamed > 0 {
+        info!("tilemeta: {} tileart.uop records are named outside the ids the paperdoll looks up", named.unnamed);
+    }
+    if !named.renamed.is_empty() {
+        info!(
+            "tilemeta: {} tileart.uop entries store another tile id (entry, stored): {:?}",
+            named.renamed.len(),
+            named.renamed
+        );
+    }
+    let mut agreement = LayerAgreement::default();
+    for (entry_id, entry) in &named.records {
+        agreement.count(*entry_id, entry, tiledata);
+    }
+    let definitions = TileMetaItemDefinitions::from_tileart(
+        named
+            .records
+            .iter()
+            .filter(|(entry_id, entry)| paperdoll_reads(*entry_id, entry, tiledata_layer(tiledata, *entry_id)))
+            .map(|(entry_id, entry)| (*entry_id, entry)),
+    )?;
+    Ok((definitions, agreement))
 }
 
 pub fn classify_item_visual_kind(
@@ -139,12 +259,51 @@ mod tests {
             land_tiles: Vec::new(), item_tiles: Vec::new(),
             item_texture_ref_spans: Vec::new(), item_texture_refs: Vec::new(),
             item_materials: [(6038, vec![material.clone()])].into_iter().collect(),
+            item_definitions: TileMetaItemDefinitions::default(),
             package_compression: CompressionFlag::ZstdNoDict,
         }).expect("write source material metadata");
         let package = udd_assets::tilemeta::TileMetaPackage::load(&path).expect("read source material metadata");
         assert_eq!(package.item_material(6038, 0), Some(&material));
         assert!(package.item_material(6038, 1).is_none());
         assert!(package.item_material(6057, 0).is_none());
+        drop(package);
+        std::fs::remove_file(path).expect("remove test package");
+    }
+
+    /// The definitions the converter writes are the ones the package reads, and only the records the paperdoll can
+    /// reach are kept.
+    #[test]
+    fn item_definitions_survive_converter_package_roundtrip() {
+        use uocf::enhanced::paperdoll::{PaperdollDefinition, PaperdollDefinitions};
+        use uocf::enhanced::tileart::TaeProp;
+        const ROBE: u32 = 7939;
+        const ROBE_LAYER: u32 = 22;
+        const UNWORN: u32 = 2;
+        const BODY_DEFINITION: u32 = MOBILE_DEFINITION_BASE + 1;
+        let robe = TileArtEntry {
+            tile_id: ROBE,
+            prop_vector1: vec![TaeProp { id: PropertyKey::Layer as u8, val: ROBE_LAYER }],
+            ..TileArtEntry::default()
+        };
+        let unworn = TileArtEntry { tile_id: UNWORN, ..TileArtEntry::default() };
+        let body = TileArtEntry { tile_id: BODY_DEFINITION, ..TileArtEntry::default() };
+        assert!(paperdoll_reads(ROBE, &robe, None) && paperdoll_reads(BODY_DEFINITION, &body, None));
+        assert!(!paperdoll_reads(UNWORN, &unworn, None) && paperdoll_reads(UNWORN, &unworn, Some(1)));
+
+        let path = std::env::temp_dir().join(format!("tilemeta_definitions_{}.uddp", std::process::id()));
+        write_tilemeta_uddp(&path, BuiltTileMetaTables {
+            land_tiles: Vec::new(), item_tiles: Vec::new(),
+            item_texture_ref_spans: Vec::new(), item_texture_refs: Vec::new(),
+            item_materials: std::collections::BTreeMap::new(),
+            item_definitions: TileMetaItemDefinitions::from_tileart([(ROBE, &robe), (BODY_DEFINITION, &body)])
+                .expect("definitions"),
+            package_compression: CompressionFlag::ZstdNoDict,
+        }).expect("write item definitions");
+        let package = udd_assets::tilemeta::TileMetaPackage::load(&path).expect("read item definitions");
+        let definitions = package.item_definitions();
+        assert_eq!(definitions.entry_ids().collect::<Vec<_>>(), [ROBE, BODY_DEFINITION]);
+        assert_eq!(definitions.get(ROBE).and_then(|robe| robe.property(PropertyKey::Layer)), Some(ROBE_LAYER));
+        assert!(definitions.get(UNWORN).is_none());
         drop(package);
         std::fs::remove_file(path).expect("remove test package");
     }
@@ -308,6 +467,7 @@ fn write_tilemeta_uddp_with_progress(
     let item_texture_ref_span_bytes = bytemuck::cast_slice(&built.item_texture_ref_spans);
     let item_texture_ref_bytes = bytemuck::cast_slice(&built.item_texture_refs);
     let item_material_bytes = serde_json::to_vec(&built.item_materials)?;
+    let item_definition_bytes = built.item_definitions.to_bytes()?;
 
     let mut package = UddpBuilder::new(LookupMode::VirtualPathHash);
     package.add_file(AddFileRequest {
@@ -359,6 +519,16 @@ fn write_tilemeta_uddp_with_progress(
         path_hash64: None,
         id: None,
         data: item_texture_ref_bytes,
+    })?;
+    package.add_file(AddFileRequest {
+        data_type: DataType::Metadata as u8,
+        compression: built.package_compression,
+        width: 0,
+        height: 0,
+        virtual_path: Some(TILEMETA_ITEM_DEFINITION_ENTRY_PATH),
+        path_hash64: None,
+        id: None,
+        data: &item_definition_bytes,
     })?;
     build_and_write_package_with_progress(package, out_file, &mut package_progress)?;
 
@@ -609,6 +779,21 @@ fn build_tilemeta_tables_with_ec_sources(
     for (shader_name, refs) in &unknown_shader_refs {
         log::warn!("tilemeta: {refs} texture refs in blocks with unknown shader {shader_name:?} get the Unknown role");
     }
+    let (item_definitions, layers) = build_item_definitions(&ec_sources.tileart_path, &cc_tiledata)?;
+    info!(
+        "tilemeta: {} tileart records for the Enhanced paperdoll; item layers: {} agree, {} disagree ({} wearable \
+         in tiledata; the paperdoll takes tileart's), {} only in tileart, {} only in tiledata ({} wearable)",
+        item_definitions.len(),
+        layers.agree,
+        layers.disagree,
+        layers.disagree_wearable,
+        layers.tileart_only,
+        layers.tiledata_only,
+        layers.tiledata_only_wearable,
+    );
+    if !layers.examples.is_empty() {
+        info!("tilemeta: first layer disagreements (item, tileart Layer, tiledata layer): {:?}", layers.examples);
+    }
 
     Ok(BuiltTileMetaTables {
         land_tiles: tilemeta_land,
@@ -616,6 +801,7 @@ fn build_tilemeta_tables_with_ec_sources(
         item_texture_ref_spans,
         item_texture_refs,
         item_materials,
+        item_definitions,
         package_compression: options.package_compression,
     })
 }

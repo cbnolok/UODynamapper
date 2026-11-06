@@ -5,7 +5,7 @@
 
 use uocf::enhanced::paperdoll::{item_frame, item_layer, PaperdollDefinitions, Wearer, MALE_SET, SLOT_NAMES};
 pub(crate) use uocf::enhanced::paperdoll::{build, compose, hue_tables, FrameSets, WearableRules, WornItem, PAPERDOLL_UOP_NAME};
-use uocf::enhanced::tileart::TileArtEntry;
+use uocf::enhanced::tileart::{tileart_entry_hash, TileArtEntry};
 
 use crate::app::TileArtFileEntry;
 
@@ -13,17 +13,24 @@ use crate::app::TileArtFileEntry;
 const WEARABLE_RULES_KDL: &str =
     include_str!("../../../../dynamapper/assets/runtime_specs/paperdoll/WearableRules.kdl");
 
-/// `tileart.uop` records by tile id: `UOTileArt::GetObjectDefinition`.
+/// `tileart.uop` records by the id of their entry name: `UOTileArt::GetObjectDefinition`.
 #[derive(Clone, Copy)]
 pub(crate) struct Definitions<'a>(pub &'a [TileArtFileEntry]);
 
 impl<'a> PaperdollDefinitions<'a> for Definitions<'a> {
     type Definition = &'a TileArtEntry;
 
-    /// The record of `tile_id`; the entries are sorted by tile id.
-    fn get(self, tile_id: u32) -> Option<&'a TileArtEntry> {
-        let index = self.0.binary_search_by_key(&tile_id, |file| file.entry.tile_id).ok()?;
-        Some(&self.0[index].entry)
+    /// The record of entry `build/tileart/<entry_id>.bin`; the entries are sorted by their stored tile id, which is
+    /// their name's but in a few client records (43957..=43963 store 43956, 42091 stores 41516).
+    fn get(self, entry_id: u32) -> Option<&'a TileArtEntry> {
+        let hash = tileart_entry_hash(entry_id);
+        let start = self.0.partition_point(|file| file.entry.tile_id < entry_id);
+        let found = self.0[start..]
+            .iter()
+            .take_while(|file| file.entry.tile_id == entry_id)
+            .find(|file| file.filename_hash == hash);
+        // A record that stores another id than its name's is only found by looking through all of them.
+        found.or_else(|| self.0.iter().find(|file| file.filename_hash == hash)).map(|file| &file.entry)
     }
 }
 
@@ -68,6 +75,10 @@ mod tests {
 
     const LAYERED_ITEM: u32 = 5399;
     const TORSO_LAYER: u32 = 5;
+    /// Entries that store another tile id than their name's, as `build/tileart/00042091.bin` stores 41516.
+    const RENAMED_ENTRY: u32 = 42091;
+    const RENAMED_STORED_ID: u32 = 41516;
+    const STORED_ID_LAYER: u32 = 2;
 
     /// The rules embedded from dynamapper decode; their order is tested in `uocf::enhanced::paperdoll`.
     #[test]
@@ -82,7 +93,7 @@ mod tests {
         let mut files: Vec<TileArtFileEntry> = [MOBILE_DEFINITION_BASE + 400, LAYERED_ITEM]
             .into_iter()
             .map(|tile_id| TileArtFileEntry {
-                filename_hash: 0,
+                filename_hash: tileart_entry_hash(tile_id),
                 entry: TileArtEntry {
                     tile_id,
                     prop_vector1: if tile_id == LAYERED_ITEM {
@@ -99,5 +110,54 @@ mod tests {
         assert_eq!(definitions.get_named(400).map(|entry| entry.tile_id), Some(MOBILE_DEFINITION_BASE + 400));
         assert_eq!(item_detail(None, definitions, 400, LAYERED_ITEM, None), "layer=5 torso (Render to find the frame)");
         assert_eq!(item_detail(None, definitions, 400, 1, Some(3)), "layer=3 feet (Render to find the frame)");
+    }
+
+    /// A record is found by its entry name, not by the tile id it stores.
+    #[test]
+    fn records_are_found_by_their_entry_name() {
+        let record = |entry_id: u32, layer: u32| TileArtFileEntry {
+            filename_hash: tileart_entry_hash(entry_id),
+            entry: TileArtEntry {
+                tile_id: RENAMED_STORED_ID,
+                prop_vector1: vec![TaeProp { id: PropertyKey::Layer as u8, val: layer }],
+                ..TileArtEntry::default()
+            },
+        };
+        // Sorted by stored tile id, the renamed record first.
+        let files = [record(RENAMED_ENTRY, TORSO_LAYER), record(RENAMED_STORED_ID, STORED_ID_LAYER)];
+        let definitions = Definitions(&files);
+        let layer = |entry_id| definitions.get(entry_id).and_then(|entry| entry.property1(PropertyKey::Layer));
+        assert_eq!(layer(RENAMED_ENTRY), Some(TORSO_LAYER));
+        assert_eq!(layer(RENAMED_STORED_ID), Some(STORED_ID_LAYER));
+        assert!(definitions.get(LAYERED_ITEM).is_none());
+    }
+
+    /// The editor's records, sorted for display by stored tile id, find for every id the record `NamedTileArt` finds,
+    /// which is how `tilemeta.uddp` keys its item definitions.
+    #[test]
+    #[ignore = "needs real Enhanced clients: set UO_EC_CLIENT_ROOTS and run with --ignored"]
+    fn shipped_records_are_found_as_named_tileart_finds_them() {
+        use crate::ui::test_support::{client_roots, EC_CLIENT_ROOTS_ENV};
+        use uocf::enhanced::paperdoll::{NamedTileArt, ENTRY_ID_SPAN};
+        use uocf::enhanced::tileart::TILEART_UOP_NAME;
+        use uocf::uop_container::package::UopPackage;
+        use uocf::utils::path::find_file_ignoring_case;
+        for root in client_roots(EC_CLIENT_ROOTS_ENV) {
+            let package = UopPackage::load(find_file_ignoring_case(&root, TILEART_UOP_NAME).unwrap()).unwrap();
+            let mut files: Vec<TileArtFileEntry> = package
+                .iter_files()
+                .filter_map(|file| {
+                    let entry = TileArtEntry::parse_raw(file).ok()?;
+                    Some(TileArtFileEntry { filename_hash: file.filename_hash(), entry })
+                })
+                .collect();
+            files.sort_by_key(|file| file.entry.tile_id);
+            let named = NamedTileArt::read(&package);
+            assert!(!named.renamed.is_empty(), "{}", root.display());
+            let editor = Definitions(&files);
+            for id in (0..ENTRY_ID_SPAN).chain(MOBILE_DEFINITION_BASE..MOBILE_DEFINITION_BASE + ENTRY_ID_SPAN) {
+                assert!(editor.get(id) == (&named).get(id), "{}: entry {id}", root.display());
+            }
+        }
     }
 }
