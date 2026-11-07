@@ -25,11 +25,12 @@ import package::shaders::world::land::land_bindings::{
   tex_small_sampler, tex_small, tex_big, tile_meta_atlas,
   land_page_atlas, land_page_lookup,
   visual_grunge_texture,
-  ATLAS, scene, effects, global_light, land_light
+  ATLAS, scene, effects, global_light, land_light,
+  TERRAIN_SHADING_CLIENT_PER_VERTEX
 };
 import package::shaders::world::land::atlas::{atlas_read_meta, atlas_read_height, chunk_edge_blend_factor};
 import package::shaders::world::land::noise::{hash, fbm_billow, domain_warp};
-import package::shaders::world::land::normals::{get_geometric_normal_local, get_bicubic_normal, get_bent_normal};
+import package::shaders::world::land::normals::{get_geometric_normal_local, get_bicubic_normal, get_bent_normal, client_vertex_terrain_shade};
 import package::shaders::postprocess::color_grading::{grade_color_vibrant};
 import package::shaders::postprocess::global_lighting::{apply_global_lighting_rgb};
 import package::shaders::postprocess::grunge::{apply_texture_shadow_aware_land_grunge, apply_texture_visual_grunge, visual_grunge_uv};
@@ -458,7 +459,16 @@ fn land_surface_normal(in: VertexOutput) -> vec3<f32> {
   return Nw;
 }
 
-fn shade_land(in: VertexOutput, tile: TileUniform, ordered_coverage: bool, world_gradients: LandGradients, surface_normal: vec3<f32>, grime_mask: u32) -> vec3<f32> {
+// The clients' per-vertex terrain grey, computed once per fragment for every
+// material layer. 1 when the per-pixel model or Classic shades the land.
+fn land_client_shade(in: VertexOutput) -> f32 {
+  if (effects.shading_mode == 0u || land_light.terrain_shading_model != TERRAIN_SHADING_CLIENT_PER_VERTEX) {
+    return 1.0;
+  }
+  return client_vertex_terrain_shade(in.world_position.xyz, scene.light_direction);
+}
+
+fn shade_land(in: VertexOutput, tile: TileUniform, ordered_coverage: bool, world_gradients: LandGradients, surface_normal: vec3<f32>, client_shade: f32, grime_mask: u32) -> vec3<f32> {
   let shading_mode   = effects.shading_mode;
   let visual_profile = effects.post_process_profile;
 
@@ -713,6 +723,10 @@ fn shade_land(in: VertexOutput, tile: TileUniform, ordered_coverage: bool, world
       tile.is_wet == 1u || reviewed_liquid,
     );
     hdr_rgb = shade_mode0_classic_vertex(base_albedo, classic_lambert, ambient_strength, diffuse_strength);
+  } else if (land_light.terrain_shading_model == TERRAIN_SHADING_CLIENT_PER_VERTEX) {
+    // The KR and Enhanced clients' terrain: the material times the per-vertex
+    // half-Lambert grey, with no ambient, fill, rim, specular or relief terms.
+    hdr_rgb = base_albedo * client_shade;
   } else if (shading_mode == 1u) {
     hdr_rgb = shade_mode1_enhanced_fragment(
       base_albedo, in.world_position.xyz, Nw, V, L,
@@ -811,7 +825,7 @@ fn ec_composition_grime_mask(cache: EcTerrainCache, material: vec4<u32>, cached:
   return 256u;
 }
 
-fn compose_ec_terrain(in: VertexOutput, tile: TileUniform, world_gradients: LandGradients, surface_normal: vec3<f32>,
+fn compose_ec_terrain(in: VertexOutput, tile: TileUniform, world_gradients: LandGradients, surface_normal: vec3<f32>, client_shade: f32,
     cache: EcTerrainCache, fallback: EcTerrainStack, cached: bool) -> vec3<f32> {
   var stack = fallback;
   let count = select(stack.count, cache.count, cached);
@@ -852,22 +866,22 @@ fn compose_ec_terrain(in: VertexOutput, tile: TileUniform, world_gradients: Land
   if (first == 0u && bank_weight > 0.0 && ec_composition_layer(cache, &stack, cached, 0u).material.x == liquid_material) {
     // An all-liquid chunk can meet a bank across its edge without having
     // a local solid base pass. Only that case needs the neighboring material.
-    hdr_rgb = shade_land(in, atlas_read_meta(bank_cell.x, bank_cell.y), true, world_gradients, surface_normal, 256u);
+    hdr_rgb = shade_land(in, atlas_read_meta(bank_cell.x, bank_cell.y), true, world_gradients, surface_normal, client_shade, 256u);
     if (bank_weight < 1.0) {
       let layer = ec_composition_layer(cache, &stack, cached, 0u);
-      hdr_rgb = mix(hdr_rgb, shade_land(in, ec_layer_tile(layer.material, tile.tile_height), true, world_gradients, surface_normal,
+      hdr_rgb = mix(hdr_rgb, shade_land(in, ec_layer_tile(layer.material, tile.tile_height), true, world_gradients, surface_normal, client_shade,
         ec_composition_grime_mask(cache, layer.material, cached)), 1.0 - bank_weight);
     }
   } else {
     let layer = ec_composition_layer(cache, &stack, cached, first);
-    hdr_rgb = shade_land(in, ec_layer_tile(layer.material, tile.tile_height), true, world_gradients, surface_normal,
+    hdr_rgb = shade_land(in, ec_layer_tile(layer.material, tile.tile_height), true, world_gradients, surface_normal, client_shade,
       ec_composition_grime_mask(cache, layer.material, cached));
   }
   for (var index = first + 1u; index < count; index++) {
     let layer = ec_composition_layer(cache, &stack, cached, index);
     let alpha = layer.alpha * select(1.0, 1.0 - bank_weight, layer.material.x == liquid_material);
     if (alpha > 0.0) {
-      let layer_color = shade_land(in, ec_layer_tile(layer.material, tile.tile_height), true, world_gradients, surface_normal,
+      let layer_color = shade_land(in, ec_layer_tile(layer.material, tile.tile_height), true, world_gradients, surface_normal, client_shade,
         ec_composition_grime_mask(cache, layer.material, cached));
       hdr_rgb = mix(hdr_rgb, layer_color, alpha);
     }
@@ -885,6 +899,7 @@ fn fragment(in: VertexOutput) -> @location(0) vec4<f32> {
   // Material-specific repetition scales it without differentiating another pass's UVs.
   let world_gradients = LandGradients(dpdx(in.world_position.xz), dpdy(in.world_position.xz));
   let surface_normal = land_surface_normal(in);
+  let client_shade = land_client_shade(in);
   let cell = vec2<i32>(floor(in.world_position.xz));
   let tile = atlas_read_meta(cell.x, cell.y);
   var hdr_rgb: vec3<f32>;
@@ -893,25 +908,25 @@ fn fragment(in: VertexOutput) -> @location(0) vec4<f32> {
   if (ec_transitions && tile.texture_size == 2u && ec_coverage_params(tile.texture_payload).w != 0u) {
     let cache = ec_terrain_cache(in.world_position.xz);
     if (cache.count > 0u) {
-      hdr_rgb = compose_ec_terrain(in, tile, world_gradients, surface_normal, cache, EcTerrainStack(), true);
+      hdr_rgb = compose_ec_terrain(in, tile, world_gradients, surface_normal, client_shade, cache, EcTerrainStack(), true);
       composed = true;
     } else {
       let stack = ec_terrain_stack_uncached(in.world_position.xz);
       if (stack.count > 0u) {
-        hdr_rgb = compose_ec_terrain(in, tile, world_gradients, surface_normal, cache, stack, false);
+        hdr_rgb = compose_ec_terrain(in, tile, world_gradients, surface_normal, client_shade, cache, stack, false);
         composed = true;
       }
     }
   }
   if (!composed) {
-    hdr_rgb = shade_land(in, tile, false, world_gradients, surface_normal, 256u);
+    hdr_rgb = shade_land(in, tile, false, world_gradients, surface_normal, client_shade, 256u);
     if (!ec_transitions && tile.texture_size == 2u && (tile.is_wet == 1u || (tile.terrain_flags & 4u) != 0u)) {
       // Disabling neighbor smoothing must not put level lava back onto raised
       // mountain quads. Keep the height/shore guard, using one dry bank material.
       let bank = ec_liquid_bank(in.world_position.xyz, tile, ec_coverage_params(tile.texture_payload).x, 1.0);
       if (bank.weight > 0.0) {
         let bank_tile = atlas_read_meta(bank.cell.x, bank.cell.y);
-        let bank_color = shade_land(in, bank_tile, true, world_gradients, surface_normal, 256u);
+        let bank_color = shade_land(in, bank_tile, true, world_gradients, surface_normal, client_shade, 256u);
         hdr_rgb = mix(hdr_rgb, bank_color, bank.weight);
       }
     }

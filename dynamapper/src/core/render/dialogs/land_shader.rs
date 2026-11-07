@@ -127,6 +127,12 @@ const TONE_CURVE_OPTIONS: [(&str, u32, &str); 2] = [
     ("Identity", TONE_CURVE_IDENTITY, "No curve, as the clients draw: exposure is plain brightness."),
 ];
 
+/// Terrain "Land Shading" choices for the fragment styles: `(label, terrain_shading_model, tooltip)`.
+const TERRAIN_SHADING_OPTIONS: [(&str, u32, &str); 2] = [
+    ("Smooth per-pixel", TERRAIN_SHADING_SMOOTH_PER_PIXEL, "Lighting per pixel from a smooth normal, with every land lighting control."),
+    ("Client per-vertex", TERRAIN_SHADING_CLIENT_PER_VERTEX, "As the KR and Enhanced clients: a half-Lambert grey per cell corner, blended over two triangles."),
+];
+
 const PRESET_PERIOD_BUTTONS: [(&str, ShaderPresetPeriod); 4] = [
     ("Morning", ShaderPresetPeriod::Morning),
     ("Afternoon", ShaderPresetPeriod::Afternoon),
@@ -984,28 +990,41 @@ fn whole_scene_controls(ui: &mut egui::Ui, u: &mut UniformState, gates: RenderSt
 fn terrain_controls(ui: &mut egui::Ui, u: &mut UniformState, gates: RenderStyleGates) -> bool {
     section_header(ui, "Terrain and water", "Land tiles. Water also covers static water surfaces.");
     let mut changed = toggle_u32(ui, "Water Animation", &mut u.effects.enable_water_animation);
+    ui.horizontal_wrapped(|ui| {
+        ui.add_enabled(gates.is_fragment, egui::Label::new("Land Shading:"));
+        for (label, model, tip) in TERRAIN_SHADING_OPTIONS {
+            let selected = u.land_lighting.terrain_shading_model == model;
+            if ui.add_enabled(gates.is_fragment, egui::Button::selectable(selected, label)).on_hover_text(tip).clicked() && !selected {
+                u.land_lighting.terrain_shading_model = model;
+                changed = true;
+            }
+        }
+    });
+    // The client per-vertex model shades land with its grey alone; these controls only reach the per-pixel model.
+    let per_pixel = gates.is_fragment && u.land_lighting.terrain_shading_model == TERRAIN_SHADING_SMOOTH_PER_PIXEL;
     changed |= slider_en(ui, gates.is_fragment, "Sun Strength", &mut u.land_lighting.diffuse_strength, 0.0..=2.0);
     changed |= slider_s(ui, "Terrain Ambient Light", &mut u.lighting.ambient_strength, 0.0..=1.5);
 
     let mut land_relief = land_relief_control_value(u);
-    if slider_en(ui, gates.is_fragment, "Land Relief", &mut land_relief, 0.0..=1.0) {
+    if slider_en(ui, per_pixel, "Land Relief", &mut land_relief, 0.0..=1.0) {
         apply_land_relief_control(u, land_relief);
         changed = true;
     }
     let mut soft_lighting = soft_lighting_control_value(u);
-    if slider_en(ui, gates.is_fragment, "Soft Lighting", &mut soft_lighting, 0.0..=1.0) {
+    if slider_en(ui, per_pixel, "Soft Lighting", &mut soft_lighting, 0.0..=1.0) {
         apply_soft_lighting_control(u, soft_lighting);
         changed = true;
     }
     let mut highlights = highlights_control_value(u);
-    if slider_en(ui, gates.is_fragment, "Highlights", &mut highlights, 0.0..=1.0) {
+    if slider_en(ui, per_pixel, "Highlights", &mut highlights, 0.0..=1.0) {
         apply_highlights_control(u, highlights);
         changed = true;
     }
 
-    changed |= slider_en(ui, gates.is_kr_shading, "KR Land Temperature", &mut u.effects.kr_land_temperature_strength, 0.0..=1.5);
-    changed |= slider_en(ui, gates.is_kr_shading, "KR Land Relief Shadow", &mut u.effects.kr_land_relief_shadow_strength, 0.0..=1.5);
-    changed |= slider_en(ui, gates.is_kr_shading, "KR Land Shadow Mottle", &mut u.effects.kr_land_shadow_mottle_strength, 0.0..=1.5);
+    let kr_per_pixel = gates.is_kr_shading && per_pixel;
+    changed |= slider_en(ui, kr_per_pixel, "KR Land Temperature", &mut u.effects.kr_land_temperature_strength, 0.0..=1.5);
+    changed |= slider_en(ui, kr_per_pixel, "KR Land Relief Shadow", &mut u.effects.kr_land_relief_shadow_strength, 0.0..=1.5);
+    changed |= slider_en(ui, kr_per_pixel, "KR Land Shadow Mottle", &mut u.effects.kr_land_shadow_mottle_strength, 0.0..=1.5);
     changed |= slider_en(ui, gates.is_kr_profile, "KR Material Contrast", &mut u.effects.kr_land_material_contrast_strength, 0.0..=1.5);
     changed |= toggle_slider(ui, gates.is_kr_profile, "KR Transition Grime", &mut u.effects.enable_kr_transition_grime, &mut u.effects.kr_transition_grime_strength, 0.0..=1.0);
 

@@ -39,7 +39,8 @@ struct AtlasParams {
 struct LandLightingUniforms {
     // Toggle
     enable_bent:    u32,
-    _pad0_:         u32,
+    // TERRAIN_SHADING_SMOOTH_PER_PIXEL or TERRAIN_SHADING_CLIENT_PER_VERTEX; the former _pad0_ slot.
+    terrain_shading_model: u32,
     _pad1_:         u32,
     _pad2_:         u32,
 
@@ -59,6 +60,10 @@ struct LandLightingUniforms {
     fill_ground_color: vec4<f32>,
     rim_color: vec4<f32>,
 };
+
+// land_light.terrain_shading_model values (mirrors mesh_material.rs).
+const TERRAIN_SHADING_SMOOTH_PER_PIXEL: u32 = 0u;
+const TERRAIN_SHADING_CLIENT_PER_VERTEX: u32 = 1u;
 
 struct LandStaticLightUniform {
     lights: array<vec4<f32>, 16>,

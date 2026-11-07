@@ -14,12 +14,18 @@
 import package::shaders::world::land::land_bindings::{TileUniform, AtlasParams, ATLAS, tile_meta_atlas, land_page_lookup, CHUNK_TILE_NUM_DIM};
 import package::shaders::world::uo_coords::UO_Z_TO_WORLD_SCALE;
 
-// Query world-space (x,z) tile coordinates and map them, through the LRU
-// page table, to the physical GPU atlas layer.  Returns a zero'd TileUniform
-// when the requested tile falls outside the paged region.
-fn atlas_read_meta(world_x: i32, world_z: i32) -> TileUniform {
+// A layer index no atlas has: the tile falls outside the paged region.
+const ATLAS_NO_LAYER: u32 = 0xFFFFFFFFu;
+// G channel low byte: the raw signed height biased by +128.
+const TILE_HEIGHT_BYTE_MASK: u32 = 0xFFu;
+const TILE_HEIGHT_BIAS: i32 = 128;
+
+// Map world-space (x,z) tile coordinates, through the LRU page table, to the
+// texel in the physical GPU atlas: xy = texel within the page, z = layer.
+// z is ATLAS_NO_LAYER when the tile falls outside the paged region.
+fn atlas_tile_texel(world_x: i32, world_z: i32) -> vec3<u32> {
   if (world_x < 0 || world_z < 0) {
-    return TileUniform(0.0, 0u, 0u, 0u, vec2<u32>(0u, 0u), vec2<u32>(0u, 0u), 0u, 0u, 0u, 0.0);
+    return vec3<u32>(0u, 0u, ATLAS_NO_LAYER);
   }
 
   let wx = u32(world_x);
@@ -35,12 +41,23 @@ fn atlas_read_meta(world_x: i32, world_z: i32) -> TileUniform {
   let off_y = wz % ph;
 
   let page_index = page_y * ATLAS.world_pages_x + page_x;
-  var layer: u32 = 0xFFFFFFFFu;
+  var layer: u32 = ATLAS_NO_LAYER;
   if (page_index < 256u) {
     let arr_idx = page_index / 4u;
     let comp = page_index % 4u;
     layer = ATLAS.page_to_layer[arr_idx][comp];
   }
+  return vec3<u32>(off_x, off_y, layer);
+}
+
+// Query world-space (x,z) tile coordinates and map them, through the LRU
+// page table, to the physical GPU atlas layer.  Returns a zero'd TileUniform
+// when the requested tile falls outside the paged region.
+fn atlas_read_meta(world_x: i32, world_z: i32) -> TileUniform {
+  let texel = atlas_tile_texel(world_x, world_z);
+  let off_x = texel.x;
+  let off_y = texel.y;
+  let layer = texel.z;
 
   if (layer >= ATLAS.max_layers) {
     return TileUniform(0.0, 0u, 0u, 0u, vec2<u32>(0u, 0u), vec2<u32>(0u, 0u), 0u, 0u, 0u, 0.0);
@@ -105,6 +122,17 @@ fn atlas_read_meta(world_x: i32, world_z: i32) -> TileUniform {
 // Convenience wrapper: just return the world-space Y height for a tile.
 fn atlas_read_height(world_x: i32, world_z: i32) -> f32 {
   return atlas_read_meta(world_x, world_z).tile_height;
+}
+
+// The signed UO z of a tile, 0 outside the paged region like atlas_read_meta,
+// without the texture lookups atlas_read_meta also does.
+fn atlas_read_z(world_x: i32, world_z: i32) -> i32 {
+  let texel = atlas_tile_texel(world_x, world_z);
+  if (texel.z >= ATLAS.max_layers) {
+    return 0;
+  }
+  let packed = textureLoad(tile_meta_atlas, vec2<i32>(texel.xy), i32(texel.z), 0);
+  return i32(packed.y & TILE_HEIGHT_BYTE_MASK) - TILE_HEIGHT_BIAS;
 }
 
 // Near the chunk edge, blend normals toward the original to hide seams.

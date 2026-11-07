@@ -323,6 +323,13 @@ pub const TONE_CURVE_PROFILE: u32 = 0;
 /// 8-bit target. Matches `TONE_CURVE_IDENTITY` in `postprocess/tonemapping.wesl`.
 pub const TONE_CURVE_IDENTITY: u32 = 1;
 
+/// `terrain_shading_model`: the fragment shading paths (`shading_mode` 1 and 2) with a per-pixel normal.
+pub const TERRAIN_SHADING_SMOOTH_PER_PIXEL: u32 = 0;
+/// `terrain_shading_model`: the KR and Enhanced clients' terrain shade. One half-Lambert grey per cell corner from
+/// the client's vertex normal, interpolated over the client's two triangles per cell, times the material colour.
+/// Matches `TERRAIN_SHADING_CLIENT_PER_VERTEX` in `world/land/land_bindings.wesl`.
+pub const TERRAIN_SHADING_CLIENT_PER_VERTEX: u32 = 1;
+
 /// Land-specific lighting: parameters that require a 3D mesh with surface normals
 /// and a view vector, so they only apply to the terrain (not to flat art tiles).
 #[repr(C, align(16))]
@@ -332,8 +339,9 @@ pub const TONE_CURVE_IDENTITY: u32 = 1;
 pub struct LandLightingUniforms {
     // --- Toggle ---
     pub enable_bent: u32,
-    #[serde(skip)]
-    pub _pad0_: u32,
+    /// How the fragment paths shade land: `TERRAIN_SHADING_SMOOTH_PER_PIXEL` or
+    /// `TERRAIN_SHADING_CLIENT_PER_VERTEX`. Classic (`shading_mode` 0) ignores it. Takes the former `_pad0_` slot.
+    pub terrain_shading_model: u32,
     #[serde(skip)]
     pub _pad1_: u32,
     #[serde(skip)]

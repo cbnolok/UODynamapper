@@ -6,10 +6,11 @@
 //   1 = Bicubic    — smooth analytic normal via Catmull-Rom interpolation
 //                    over a 4×4 height neighborhood.
 //  Optional bent normal bent against local occlusion proxy (enable_bent).
+//  The clients' per-vertex terrain shade (terrain_shading_model) is at the end.
 // ============================================================================
 
 
-import package::shaders::world::land::atlas::{atlas_read_height};
+import package::shaders::world::land::atlas::{atlas_read_height, atlas_read_z};
 
 // ============================================================================
 // Cubic interpolation helpers (value + derivative) for heightfield normals
@@ -136,4 +137,68 @@ fn get_bent_normal(world_pos: vec3<f32>, base_normal_world: vec3<f32>) -> vec3<f
   let mix_factor = k * 0.45;             // conservative bend to avoid "melting"
 
   return normalize(mix(base_normal_world, vec3<f32>(0.0, 1.0, 0.0), mix_factor));
+}
+
+// ---------------------- Client per-vertex terrain shade ----------------------
+/*
+ The KR and Enhanced clients bake one grey per terrain vertex, g = (N . L + 1) / 2, and Gouraud-interpolate it over
+ two triangles per cell split on the (x + 1, z)-(x, z + 1) diagonal (UOKR UOTerrain::BuildTerrainMesh 0x0044b7f0).
+ N is UOTerrain::ComputeVertexNormal (UOKR 0x004488a0, UOSA 0x00460c70). It reads the vertex and its north (z - 1),
+ west (x - 1) and north-west neighbours, takes the plane normal (-dh/dx, 1, -dh/dz) of each of the three triangles
+ they form, normalizes the first and folds the others in as normalize(previous + next). Heights are in the
+ client's units, where a cell edge is 1.
+
+ Our mesh splits cells on the other diagonal and merges flat cells into LOD quads, so the fragment rebuilds the
+ four corner greys of its cell from the 3 x 3 heights around it and interpolates them over the client's triangles.
+*/
+
+// One UO z unit in the client's terrain space, where a cell edge is 1 (UOKR 0x00b86f38: 4 * sqrt(2) / 44).
+const CLIENT_TERRAIN_Z_UNIT: f32 = 0.12856454;
+
+fn client_height(world_x: i32, world_z: i32) -> f32 {
+  return f32(atlas_read_z(world_x, world_z)) * CLIENT_TERRAIN_Z_UNIT;
+}
+
+// The client's normal at a vertex of height c with north neighbour n, west neighbour w and north-west neighbour nw.
+fn client_vertex_normal(c: f32, n: f32, w: f32, nw: f32) -> vec3<f32> {
+  // Triangle vertex, north, west.
+  var normal = normalize(vec3<f32>(w - c, 1.0, n - c));
+  // Triangle vertex, north, north-west.
+  normal = normalize(normal + vec3<f32>(nw - n, 1.0, n - c));
+  // Triangle vertex, north-west, west.
+  return normalize(normal + vec3<f32>(w - c, 1.0, nw - w));
+}
+
+// Half-Lambert: N . L from [-1, 1] to [0, 1].
+fn client_vertex_grey(c: f32, n: f32, w: f32, nw: f32, L: vec3<f32>) -> f32 {
+  return (dot(client_vertex_normal(c, n, w, nw), L) + 1.0) * 0.5;
+}
+
+// The client's terrain grey at a world position, for a light direction L (pointing towards the light).
+fn client_vertex_terrain_shade(world_pos: vec3<f32>, L: vec3<f32>) -> f32 {
+  let cell = floor(world_pos.xz);
+  let f = world_pos.xz - cell;
+  let x = i32(cell.x);
+  let z = i32(cell.y);
+  // h_<x offset><z offset>, m = -1, 0, p = +1.
+  let h_mm = client_height(x - 1, z - 1);
+  let h_0m = client_height(x, z - 1);
+  let h_pm = client_height(x + 1, z - 1);
+  let h_m0 = client_height(x - 1, z);
+  let h_00 = client_height(x, z);
+  let h_p0 = client_height(x + 1, z);
+  let h_mp = client_height(x - 1, z + 1);
+  let h_0p = client_height(x, z + 1);
+  let h_pp = client_height(x + 1, z + 1);
+  // Corner greys: g_<x corner><z corner>.
+  let g_00 = client_vertex_grey(h_00, h_0m, h_m0, h_mm, L);
+  let g_10 = client_vertex_grey(h_p0, h_pm, h_00, h_0m, L);
+  let g_01 = client_vertex_grey(h_0p, h_00, h_mp, h_m0, L);
+  let g_11 = client_vertex_grey(h_pp, h_p0, h_0p, h_00, L);
+  if (f.x + f.y <= 1.0) {
+    // Triangle (x, z), (x, z + 1), (x + 1, z).
+    return g_00 + f.x * (g_10 - g_00) + f.y * (g_01 - g_00);
+  }
+  // Triangle (x + 1, z), (x, z + 1), (x + 1, z + 1).
+  return g_11 + (1.0 - f.x) * (g_01 - g_11) + (1.0 - f.y) * (g_10 - g_11);
 }

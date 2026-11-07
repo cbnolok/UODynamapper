@@ -13,6 +13,9 @@ default_preset = "classic.morning"
 #                    KR-like and UOD-Painterly both use 2 and the KR content; the preset group tells them apart.
 # normal_mode:       How surface normals are calculated. 0: Geometric (faceted), 1: Bicubic (smooth).
 # enable_bent:       If 1, uses pre-calculated bent normals to simulate ambient occlusion. 0: off.
+# terrain_shading_model: How shading_mode 1 and 2 shade land. 0: smooth per-pixel lighting.
+#                    1: the KR and Enhanced clients' per-vertex half-Lambert grey, interpolated over their two
+#                    triangles per cell, times the material colour; no other lighting terms.
 # enable_fog:        If 1, enables procedural, height-based fog. 0: off.
 # enable_gloom:      If 1, enables a screen-space darkening effect (KR-style only). 0: off.
 # enable_tonemap:    If 1, applies tonemapping to the final color. 0: off.
@@ -124,6 +127,7 @@ kr_tonemap_params = [0.9, 0.0, 0.0, 0.0]
 
 [classic.morning.land_lighting]
 enable_bent = 1
+terrain_shading_model = 0
 diffuse_strength = 1.0
 specular_strength = 0.0 # Disabled in Classic mode
 rim_strength = 0.0      # Disabled in Classic mode
@@ -198,6 +202,7 @@ kr_tonemap_params = [0.9, 0.0, 0.0, 0.0]
 
 [classic.afternoon.land_lighting]
 enable_bent = 1
+terrain_shading_model = 0
 diffuse_strength = 1.0
 specular_strength = 0.0 # Disabled in Classic mode
 rim_strength = 0.0      # Disabled in Classic mode
@@ -272,6 +277,7 @@ kr_tonemap_params = [0.9, 0.0, 0.0, 0.0]
 
 [classic.night.land_lighting]
 enable_bent = 1
+terrain_shading_model = 0
 diffuse_strength = 0.7
 specular_strength = 0.0 # Disabled in Classic mode
 rim_strength = 0.0      # Disabled in Classic mode
@@ -346,6 +352,7 @@ kr_tonemap_params = [0.9, 0.0, 0.0, 0.0]
 
 [classic.cave.land_lighting]
 enable_bent = 1
+terrain_shading_model = 0
 diffuse_strength = 0.85
 specular_strength = 0.0 # Disabled in Classic mode
 rim_strength = 0.0      # Disabled in Classic mode
@@ -425,6 +432,7 @@ kr_tonemap_params = [0.9, 0.0, 0.0, 0.0]
 
 [enhanced.morning.land_lighting]
 enable_bent = 1
+terrain_shading_model = 0
 diffuse_strength = 1.05
 specular_strength = 0.03
 rim_strength = 0.06
@@ -498,6 +506,7 @@ kr_tonemap_params = [0.9, 0.0, 0.0, 0.0]
 
 [enhanced.afternoon.land_lighting]
 enable_bent = 1
+terrain_shading_model = 0
 diffuse_strength = 1.05
 specular_strength = 0.03
 rim_strength = 0.06
@@ -571,6 +580,7 @@ kr_tonemap_params = [0.9, 0.0, 0.0, 0.0]
 
 [enhanced.night.land_lighting]
 enable_bent = 1
+terrain_shading_model = 0
 diffuse_strength = 0.45
 specular_strength = 0.03
 rim_strength = 0.22
@@ -644,6 +654,7 @@ kr_tonemap_params = [0.9, 0.0, 0.0, 0.0]
 
 [enhanced.cave.land_lighting]
 enable_bent = 1
+terrain_shading_model = 0
 diffuse_strength = 0.50
 specular_strength = 0.02
 rim_strength = 0.14
@@ -663,7 +674,8 @@ rim_color = [0.55, 0.75, 1.05, 2.8]
 # Every term the KR client lacks is off: tone curve (identity), grading, gloom, fog (available, off), ambient,
 # fill, rim, specular, bent normals, the warm light colour, land and art temperature, fake normals, highlights,
 # depth tint, relief shadows, mottle, grunge, transition grime, colour wash and the light decals. exposure
-# and global_lighting stay as brightness. The land diffuse is the client's half-Lambert: wrap 0.5 gives
+# and global_lighting stay as brightness. Land shades per vertex like the client (terrain_shading_model 1).
+# Switched to per-pixel, the land diffuse is still the client's half-Lambert: wrap 0.5 gives
 # (N.L + 1) / 2, white, strength 1. The sprite shadow settings (shadow shape, contact and projected shadows)
 # keep their earlier values until the client's static shadow is reproduced.
 # The full-featured painterly rendering with all effects enabled is UOD-Painterly, below.
@@ -730,6 +742,7 @@ kr_tonemap_params = [0.9, 0.0, 0.0, 0.0]
 
 [kr.morning.land_lighting]
 enable_bent = 0
+terrain_shading_model = 1
 diffuse_strength = 1.0
 specular_strength = 0.0
 rim_strength = 0.0
@@ -803,6 +816,7 @@ kr_tonemap_params = [0.9, 0.0, 0.0, 0.0]
 
 [kr.afternoon.land_lighting]
 enable_bent = 0
+terrain_shading_model = 1
 diffuse_strength = 1.0
 specular_strength = 0.0
 rim_strength = 0.0
@@ -876,6 +890,7 @@ kr_tonemap_params = [0.9, 0.0, 0.0, 0.0]
 
 [kr.night.land_lighting]
 enable_bent = 0
+terrain_shading_model = 1
 diffuse_strength = 1.0
 specular_strength = 0.0
 rim_strength = 0.0
@@ -949,6 +964,7 @@ kr_tonemap_params = [0.9, 0.0, 0.0, 0.0]
 
 [kr.cave.land_lighting]
 enable_bent = 0
+terrain_shading_model = 1
 diffuse_strength = 1.0
 specular_strength = 0.0
 rim_strength = 0.0
@@ -1028,6 +1044,7 @@ kr_tonemap_params = [0.9, 0.0, 0.0, 0.0]
 
 [painterly.morning.land_lighting]
 enable_bent = 1
+terrain_shading_model = 0
 diffuse_strength = 1.28
 specular_strength = 0.035
 rim_strength = 0.13
@@ -1101,6 +1118,7 @@ kr_tonemap_params = [0.9, 0.0, 0.0, 0.0]
 
 [painterly.afternoon.land_lighting]
 enable_bent = 1
+terrain_shading_model = 0
 diffuse_strength = 1.35
 specular_strength = 0.04
 rim_strength = 0.15
@@ -1174,6 +1192,7 @@ kr_tonemap_params = [0.9, 0.0, 0.0, 0.0]
 
 [painterly.night.land_lighting]
 enable_bent = 1
+terrain_shading_model = 0
 diffuse_strength = 0.62
 specular_strength = 0.025
 rim_strength = 0.16
@@ -1247,6 +1266,7 @@ kr_tonemap_params = [0.9, 0.0, 0.0, 0.0]
 
 [painterly.cave.land_lighting]
 enable_bent = 1
+terrain_shading_model = 0
 diffuse_strength = 0.54
 specular_strength = 0.02
 rim_strength = 0.11
