@@ -1,7 +1,7 @@
 use crate::app::UddConvApp;
 use crate::logic::tasks::{
     cc_gumps_source_dirs, ec_gumps_share, ec_gumps_source_dirs, effects_ec_source, hues_source,
-    paperdoll_ec_sources, single_gump_pixel_format, EcGumpsShare, HuesSource,
+    paperdoll_ec_sources, single_gump_pixel_format, EcGumpsShare, HuesSource, PAPERDOLL_EC_SOURCE_NAMES,
 };
 use crate::models::{
     AppSettings, AssetPackProgress, AssetPackProgressState, AssetPackTask, GumpsEcSharing, HueRamp,
@@ -23,8 +23,6 @@ use udd_conv::tex_art_cc::select_tex_art_cc_metadata_source;
 use udd_conv::tex_land_cc::CLASSIC_LAND_LOSSY_REFUSAL;
 use udd_conv::upscale::UpscaleFilter;
 use uocf::enhanced::effect_texture::EFFECT_TEXTURE_UOP_NAME;
-use uocf::enhanced::hues::HUES_UOP_NAME;
-use uocf::enhanced::paperdoll::PAPERDOLL_UOP_NAME;
 
 impl UddConvApp {
     pub fn ui_assets(&mut self, ui: &mut egui::Ui) {
@@ -407,27 +405,13 @@ impl UddConvApp {
                         ui.checkbox(&mut settings.effects_ec_strict, "Strict")
                             .on_hover_text(EFFECTS_EC_STRICT_TOOLTIP);
                     });
-                    draw_control_cell(ui, "Findings Report", EFFECTS_REPORT_CELL_WIDTH, |ui| {
-                        ui.horizontal(|ui| {
-                            if ui.button("Select...").on_hover_text(EFFECTS_EC_REPORT_TOOLTIP).clicked() {
-                                if let Some(path) = uot_gui::save_file_dialog(EFFECTS_EC_REPORT_DEFAULT_NAME) {
-                                    settings.effects_ec_report = Some(path);
-                                }
-                            }
-                            if ui
-                                .add_enabled(settings.effects_ec_report.is_some(), egui::Button::new("Clear"))
-                                .on_hover_text("Write no findings file")
-                                .clicked()
-                            {
-                                settings.effects_ec_report = None;
-                            }
-                        });
-                        let report = match &settings.effects_ec_report {
-                            Some(path) => path.display().to_string(),
-                            None => "None: the summary counts the findings".to_string(),
-                        };
-                        ui.label(egui::RichText::new(report).weak());
-                    });
+                    draw_findings_report_cell(
+                        ui,
+                        &mut settings.effects_ec_report,
+                        EFFECTS_EC_REPORT_DEFAULT_NAME,
+                        EFFECTS_EC_REPORT_TOOLTIP,
+                        "None: the summary counts the findings",
+                    );
                 });
             });
         });
@@ -445,7 +429,7 @@ impl UddConvApp {
             (clicked, stop_clicked) = draw_asset_card_header(
                 ui,
                 "Enhanced Paperdoll",
-                "3D paperdoll frames, lossless, with the hue tables they take",
+                "3D paperdoll frames, lossless, with the hue tables they take and what each robe hides",
                 Some(&source),
                 &progress,
                 !is_busy,
@@ -456,6 +440,13 @@ impl UddConvApp {
                 ui.horizontal_wrapped(|ui| {
                     ui.spacing_mut().item_spacing = egui::vec2(12.0, 8.0);
                     draw_package_zstd_cell(ui, &mut settings.zstd_paperdoll_ec, true, PAPERDOLL_EC_ZSTD_TOOLTIP);
+                    draw_findings_report_cell(
+                        ui,
+                        &mut settings.paperdoll_ec_report,
+                        PAPERDOLL_EC_REPORT_DEFAULT_NAME,
+                        PAPERDOLL_EC_REPORT_TOOLTIP,
+                        "None: the log lists each decision",
+                    );
                 });
             });
         });
@@ -713,9 +704,10 @@ const PACKAGE_COMPRESSION_CELL_WIDTH: f32 = 110.0;
 const PACKAGE_ZSTD_CELL_WIDTH: f32 = 140.0;
 const EFFECTS_FORMAT_CELL_WIDTH: f32 = 110.0;
 const EFFECTS_STRICT_CELL_WIDTH: f32 = 100.0;
-const EFFECTS_REPORT_CELL_WIDTH: f32 = 250.0;
-/// The file name the findings report dialog offers.
+const FINDINGS_REPORT_CELL_WIDTH: f32 = 250.0;
+/// The file names the findings report dialogs offer.
 const EFFECTS_EC_REPORT_DEFAULT_NAME: &str = "effects_ec_findings.txt";
+const PAPERDOLL_EC_REPORT_DEFAULT_NAME: &str = "paperdoll_ec_findings.txt";
 
 const HUE_RAMP_LINEAR_TOOLTIP: &str = "Each hues.mul colour at every 8th texel, ramping linearly to the next, as EA's \
 Hues.uop does (pack-hues --hue-ramp linear): the default.";
@@ -739,6 +731,9 @@ const EFFECTS_EC_REPORT_TOOLTIP: &str = "Write every finding of the packer to th
 (pack-ec-effects --report), before the strict check.";
 const PAPERDOLL_EC_ZSTD_TOOLTIP: &str = "Zstd level of the frames and manifests (pack-ec-paperdoll --zstd=LEVEL). \
 Default: the packer's level, 19. The frames are lossless at every level.";
+const PAPERDOLL_EC_REPORT_TOOLTIP: &str = "Write every finding of the dress-layer measurement to this file, one line \
+each (pack-ec-paperdoll --report): the largest garment of each slot and body, each robe's decision and the texels each \
+measured slot loses. The log lists the decisions either way.";
 
 fn hues_source_label(source: &HuesSource) -> String {
     match source {
@@ -779,10 +774,50 @@ fn paperdoll_ec_source_label(settings: &AppSettings) -> String {
         return "Source: select an Enhanced source directory".to_string();
     }
     match paperdoll_ec_sources(settings) {
-        (Some(frames), Some(hues)) => format!("Source: {} and {}", frames.display(), hues.display()),
-        (None, _) => format!("Source: missing {PAPERDOLL_UOP_NAME}"),
-        (_, None) => format!("Source: missing {HUES_UOP_NAME}"),
+        [Some(frames), Some(hues), Some(tileart), Some(_)] => {
+            format!("Source: {}, {} and {}", frames.display(), hues.display(), tileart.display())
+        }
+        sources => {
+            let missing: Vec<&str> = PAPERDOLL_EC_SOURCE_NAMES
+                .iter()
+                .zip(&sources)
+                .filter(|(_, found)| found.is_none())
+                .map(|(&name, _)| name)
+                .collect();
+            format!("Source: missing {}", missing.join(", "))
+        }
     }
+}
+
+/// A packer's findings file: chosen with a save dialog, cleared, and shown below; `none` says what happens without it.
+fn draw_findings_report_cell(
+    ui: &mut egui::Ui,
+    report: &mut Option<std::path::PathBuf>,
+    default_name: &str,
+    tooltip: &str,
+    none: &str,
+) {
+    draw_control_cell(ui, "Findings Report", FINDINGS_REPORT_CELL_WIDTH, |ui| {
+        ui.horizontal(|ui| {
+            if ui.button("Select...").on_hover_text(tooltip).clicked() {
+                if let Some(path) = uot_gui::save_file_dialog(default_name) {
+                    *report = Some(path);
+                }
+            }
+            if ui
+                .add_enabled(report.is_some(), egui::Button::new("Clear"))
+                .on_hover_text("Write no findings file")
+                .clicked()
+            {
+                *report = None;
+            }
+        });
+        let shown = match report {
+            Some(path) => path.display().to_string(),
+            None => none.to_string(),
+        };
+        ui.label(egui::RichText::new(shown).weak());
+    });
 }
 
 /// The package codec as `--no-compression` and `--zstd[=LEVEL]` set it: raw, or Zstd at the packer's or a chosen level.

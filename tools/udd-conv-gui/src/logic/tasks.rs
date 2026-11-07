@@ -53,6 +53,7 @@ use udd_conv::world_lights::{convert_client_lights_to_world_lights_uddp, WorldLi
 use uocf::enhanced::effect_texture::EFFECT_TEXTURE_UOP_NAME;
 use uocf::enhanced::hues::HUES_UOP_NAME;
 use uocf::enhanced::paperdoll::PAPERDOLL_UOP_NAME;
+use uocf::enhanced::tileart::TILEART_UOP_NAME;
 use udd_conv::page_compression::LOSSLESS_PAGE_ZSTD_LEVEL;
 use udd_conv::single_gumps::{default_single_gump_compression, GumpPixelFormat};
 use udd_conv::upscale_profile::UpscaleProfile;
@@ -662,29 +663,40 @@ fn pack_effects_ec_job(settings: &AppSettings, output: &Path) -> eyre::Result<St
     Ok(format!("effects_ec: {summary}; wrote {}", output.display()))
 }
 
-/// The Paperdoll.uop and Hues.uop the Enhanced paperdoll job reads, as `pack-ec-paperdoll --ecdir` finds them.
-pub(crate) fn paperdoll_ec_sources(settings: &AppSettings) -> (Option<PathBuf>, Option<PathBuf>) {
+/// The string dictionary the Enhanced paperdoll job names the dress-layer items from.
+const STRING_DICTIONARY_UOP_NAME: &str = "string_dictionary.uop";
+/// The files the Enhanced paperdoll job reads, in the order [`paperdoll_ec_sources`] gives them.
+pub(crate) const PAPERDOLL_EC_SOURCE_NAMES: [&str; 4] =
+    [PAPERDOLL_UOP_NAME, HUES_UOP_NAME, TILEART_UOP_NAME, STRING_DICTIONARY_UOP_NAME];
+
+/// The Paperdoll.uop, Hues.uop, tileart.uop and string_dictionary.uop the Enhanced paperdoll job reads, as
+/// `pack-ec-paperdoll --ecdir` finds them.
+pub(crate) fn paperdoll_ec_sources(settings: &AppSettings) -> [Option<PathBuf>; 4] {
     let sources = gather_ec_source_dirs(settings.ec_dir.as_ref());
-    (
-        find_first_existing_file(&sources, &[PAPERDOLL_UOP_NAME]),
-        find_first_existing_file(&sources, &[HUES_UOP_NAME]),
-    )
+    PAPERDOLL_EC_SOURCE_NAMES.map(|name| find_first_existing_file(&sources, &[name]))
 }
 
-/// The Enhanced paperdoll job's options, mapped from the settings as `pack-ec-paperdoll` maps `--zstd=LEVEL`.
+/// The Enhanced paperdoll job's options, mapped from the settings as `pack-ec-paperdoll` maps `--zstd=LEVEL` and
+/// `--report`.
 fn paperdoll_ec_options(settings: &AppSettings) -> PaperdollEcPackOptions {
-    match settings.zstd_paperdoll_ec {
-        Some(level) => PaperdollEcPackOptions { compression: CompressionFlag::ZstdNoDictLevel(level) },
-        None => PaperdollEcPackOptions::default(),
+    let defaults = PaperdollEcPackOptions::default();
+    PaperdollEcPackOptions {
+        compression: settings.zstd_paperdoll_ec.map(CompressionFlag::ZstdNoDictLevel).unwrap_or(defaults.compression),
+        report: settings.paperdoll_ec_report.clone(),
     }
 }
 
-/// Packs the Enhanced paperdoll frames as `pack-ec-paperdoll` does.
+/// Packs the Enhanced paperdoll frames as `pack-ec-paperdoll` does; its log lines (one per dress-layer item and
+/// body) reach the log panel.
 fn pack_paperdoll_ec_job(settings: &AppSettings, output: &Path) -> eyre::Result<String> {
     let sources = gather_ec_source_dirs(settings.ec_dir.as_ref());
     if sources.is_empty() { eyre::bail!("No Enhanced source dir configured"); }
     ensure_output_parent(output)?;
-    let summary = pack_paperdoll_ec(&sources, output, &paperdoll_ec_options(settings))?;
+    let options = paperdoll_ec_options(settings);
+    if let Some(report) = &options.report {
+        ensure_output_parent(report)?;
+    }
+    let summary = pack_paperdoll_ec(&sources, output, &options)?;
     Ok(format!("paperdoll_ec: {summary}; wrote {}", output.display()))
 }
 
@@ -1766,7 +1778,9 @@ mod tests {
         assert!(!effects.strict);
         assert_eq!(effects.report, None);
 
-        assert_eq!(paperdoll_ec_options(&settings).compression, PaperdollEcPackOptions::default().compression);
+        let paperdoll = paperdoll_ec_options(&settings);
+        assert_eq!(paperdoll.compression, PaperdollEcPackOptions::default().compression);
+        assert_eq!(paperdoll.report, None);
     }
 
     #[test]
@@ -1793,7 +1807,10 @@ mod tests {
         assert_eq!(effects.report, Some(PathBuf::from("/out/effects_ec_findings.txt")));
 
         settings.zstd_paperdoll_ec = Some(CHOSEN_PACKAGE_ZSTD_LEVEL);
-        assert_eq!(paperdoll_ec_options(&settings).compression, chosen);
+        settings.paperdoll_ec_report = Some(PathBuf::from("/out/paperdoll_ec_findings.txt"));
+        let paperdoll = paperdoll_ec_options(&settings);
+        assert_eq!(paperdoll.compression, chosen);
+        assert_eq!(paperdoll.report, Some(PathBuf::from("/out/paperdoll_ec_findings.txt")));
     }
 
     /// `--no-compression` wins over `--zstd=LEVEL`, as in `pack-hues` and `pack-lights`.
@@ -1967,6 +1984,8 @@ mod tests {
     const CHOSEN_OPTIONS_DIR: &str = "options";
     /// The Enhanced effects findings file the chosen options write, inside the chosen options' folder.
     const EFFECTS_EC_REPORT_NAME: &str = "effects_ec_findings.txt";
+    /// The Enhanced paperdoll findings file the chosen options write, inside the chosen options' folder.
+    const PAPERDOLL_EC_REPORT_NAME: &str = "paperdoll_ec_findings.txt";
     /// The packages the real-data hues, world lights, Enhanced effects and Enhanced paperdoll test writes to each
     /// folder.
     const PACKAGES_PER_FOLDER: usize = 4;
@@ -2004,6 +2023,7 @@ mod tests {
         chosen.zstd_effects_ec = Some(CHOSEN_PACKAGE_ZSTD_LEVEL);
         chosen.effects_ec_report = Some(chosen_dir.join(EFFECTS_EC_REPORT_NAME));
         chosen.zstd_paperdoll_ec = Some(CHOSEN_PACKAGE_ZSTD_LEVEL);
+        chosen.paperdoll_ec_report = Some(chosen_dir.join(PAPERDOLL_EC_REPORT_NAME));
 
         for (settings, dir) in [(&settings, &output_dir), (&chosen, &chosen_dir)] {
             for message in [
@@ -2019,6 +2039,7 @@ mod tests {
             assert!(counts.packages >= PACKAGES_PER_FOLDER, "{counts:?}");
         }
         assert!(chosen_dir.join(EFFECTS_EC_REPORT_NAME).is_file());
+        assert!(chosen_dir.join(PAPERDOLL_EC_REPORT_NAME).is_file());
     }
 
     /// The bar of a reporter's card.

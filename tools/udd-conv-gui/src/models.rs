@@ -144,6 +144,8 @@ pub struct AppSettings {
     /// The Zstd level of the Enhanced paperdoll frames and manifests (`pack-ec-paperdoll --zstd=LEVEL`); `None` keeps
     /// the packer's level.
     pub zstd_paperdoll_ec: Option<i32>,
+    /// The file the Enhanced paperdoll packer writes its dress-layer findings to (`pack-ec-paperdoll --report`).
+    pub paperdoll_ec_report: Option<PathBuf>,
     /// Validate each package a packing job writes, as `tool validate` does, once the job succeeds.
     pub validate_after_packing: bool,
 }
@@ -218,6 +220,7 @@ impl Default for AppSettings {
             effects_ec_strict: false,
             effects_ec_report: None,
             zstd_paperdoll_ec: None,
+            paperdoll_ec_report: None,
             validate_after_packing: false,
         }
     }
@@ -411,6 +414,7 @@ mod tests {
         assert!(!settings.effects_ec_strict);
         assert_eq!(settings.effects_ec_report, None);
         assert_eq!(settings.zstd_paperdoll_ec, None);
+        assert_eq!(settings.paperdoll_ec_report, None);
         assert!(!settings.validate_after_packing);
     }
 
@@ -434,6 +438,7 @@ mod tests {
         settings.effects_ec_strict = true;
         settings.effects_ec_report = Some(PathBuf::from("reports/effects_ec.txt"));
         settings.zstd_paperdoll_ec = Some(ZSTD_LEVEL);
+        settings.paperdoll_ec_report = Some(PathBuf::from("reports/paperdoll_ec.txt"));
         settings.validate_after_packing = true;
 
         let serialized = toml::to_string(&settings).expect("serialize settings");

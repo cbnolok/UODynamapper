@@ -13,6 +13,10 @@
 //!   on the pixels whose palette colour takes the hue, else 0.
 //! - `metadata/hue_tables.bin`: magic `PDHT`, `u32` version, `u32` count, then per table a `u16` bitmap number and
 //!   256 RGBA entries: the tables of `Hues.uop` (`EcHueTables`).
+//! - `metadata/dress_hides.bin`: magic `PDDH`, `u32` version, `u32` count, then per record, ascending by (item id,
+//!   body): `u32` item id, `u16` body, `u32` hidden layers (bit n: layer n of `uocf::enhanced::paperdoll`). What
+//!   the packer measured each dress-layer item to hide on each wearer body ([`PaperdollEcDressHides`]); not client
+//!   data.
 //!
 //! Only frames the paperdoll can find are stored: those whose action is their set's index
 //! (`UOAnimations::FindFrameEntry`), the first of a repeated number.
@@ -27,7 +31,7 @@ use uocf::enhanced::animationframe::{AnimationBounds, HUE_MASK_HUEABLE};
 use uocf::enhanced::hues::{EcHueTable, EcHueTables, ShadowPaletteStats, HUE_TABLE_ENTRIES};
 use uocf::enhanced::paperdoll::{
     plan, FrameRef, Paperdoll, PaperdollDefinitions, PaperdollFrames, PlacedFrame, WearableRules, WornItem,
-    GENDER_SET_COUNT,
+    GENDER_SET_COUNT, LAYER_COUNT,
 };
 
 use crate::common::{ensure_manifest_version, read_path_entry, read_path_entry_cow};
@@ -35,14 +39,18 @@ pub use crate::mobile_anim_ec::{FRAME_HUE_ALL, FRAME_HUE_MASKED, FRAME_HUE_NONE}
 
 pub const FRAMES_ENTRY_PATH: &str = "metadata/frames.bin";
 pub const HUE_TABLES_ENTRY_PATH: &str = "metadata/hue_tables.bin";
+pub const DRESS_HIDES_ENTRY_PATH: &str = "metadata/dress_hides.bin";
 pub const FRAMES_MAGIC: [u8; 4] = *b"PDFR";
 pub const HUE_TABLES_MAGIC: [u8; 4] = *b"PDHT";
-/// Version of both manifests, written by the converter.
-pub const PAPERDOLL_EC_METADATA_VERSION: u32 = 1;
+pub const DRESS_HIDES_MAGIC: [u8; 4] = *b"PDDH";
+/// Version of the three manifests, written by the converter. 2 adds `metadata/dress_hides.bin`.
+pub const PAPERDOLL_EC_METADATA_VERSION: u32 = 2;
 const RGBA_CHANNELS: usize = 4;
 const ALPHA_CHANNEL: usize = 3;
 /// Bytes of a table entry: its bitmap number, then its RGBA entries.
 const HUE_TABLE_RECORD_BYTES: usize = std::mem::size_of::<u16>() + HUE_TABLE_ENTRIES * RGBA_CHANNELS;
+/// Bytes of a dress record: item id, body and hidden layers.
+const DRESS_HIDES_RECORD_BYTES: usize = std::mem::size_of::<u32>() + std::mem::size_of::<u16>() + std::mem::size_of::<u32>();
 
 /// One frame of a set.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -71,6 +79,30 @@ pub struct PaperdollEcSet {
     pub bounds: AnimationBounds,
     /// What `SHADOW_HUE` normalizes against: the statistics of the set's palette.
     pub shadow: ShadowPaletteStats,
+}
+
+/// What a dress-layer item hides on one wearer body: the layers Dynamapper's 3D paperdoll takes off when the client
+/// draws them beneath the item, because only their edges would show past it. The packer measures it
+/// (`udd_conv::paperdoll_ec_dress`); the client has no such rule.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct PaperdollEcDressHides {
+    pub item_id: u32,
+    /// The wearer's body: the number of the body frame the paperdoll draws.
+    pub body: u16,
+    /// Bit n set: layer n (`uocf::enhanced::paperdoll::SLOT_NAMES`) is taken off.
+    pub hidden_layers: u32,
+}
+
+impl PaperdollEcDressHides {
+    /// Whether layer `layer` is taken off.
+    pub fn hides(&self, layer: usize) -> bool {
+        layer < LAYER_COUNT && self.hidden_layers & (1 << layer) != 0
+    }
+}
+
+/// The mask of `PaperdollEcDressHides::hidden_layers` with the given layers set.
+pub fn hidden_layer_mask(layers: impl IntoIterator<Item = usize>) -> u32 {
+    layers.into_iter().filter(|&layer| layer < LAYER_COUNT).fold(0, |mask, layer| mask | 1 << layer)
 }
 
 pub fn frame_entry_path(set: u8, frame_number: u16) -> String {
@@ -136,6 +168,20 @@ pub fn encode_hue_tables(tables: &EcHueTables) -> eyre::Result<Vec<u8>> {
         for entry in &table.entries {
             bytes.extend_from_slice(entry);
         }
+    }
+    Ok(bytes)
+}
+
+/// The bytes of `metadata/dress_hides.bin`; `records` ascending by (item id, body).
+pub fn encode_dress_hides(records: &[PaperdollEcDressHides]) -> eyre::Result<Vec<u8>> {
+    let mut bytes = Vec::with_capacity(records.len() * DRESS_HIDES_RECORD_BYTES);
+    bytes.extend_from_slice(&DRESS_HIDES_MAGIC);
+    bytes.extend_from_slice(&PAPERDOLL_EC_METADATA_VERSION.to_le_bytes());
+    bytes.extend_from_slice(&u32::try_from(records.len())?.to_le_bytes());
+    for record in records {
+        bytes.extend_from_slice(&record.item_id.to_le_bytes());
+        bytes.extend_from_slice(&record.body.to_le_bytes());
+        bytes.extend_from_slice(&record.hidden_layers.to_le_bytes());
     }
     Ok(bytes)
 }
@@ -226,11 +272,46 @@ fn parse_hue_tables(bytes: &[u8]) -> eyre::Result<EcHueTables> {
     Ok(tables)
 }
 
+fn parse_dress_hides(bytes: &[u8]) -> eyre::Result<Vec<PaperdollEcDressHides>> {
+    let mut cursor = Cursor::new(bytes);
+    read_magic(&mut cursor, DRESS_HIDES_MAGIC, DRESS_HIDES_ENTRY_PATH)?;
+    let count = cursor.read_u32::<LittleEndian>()? as usize;
+    let mut records: Vec<PaperdollEcDressHides> = Vec::with_capacity(count);
+    for _ in 0..count {
+        let record = PaperdollEcDressHides {
+            item_id: cursor.read_u32::<LittleEndian>()?,
+            body: cursor.read_u16::<LittleEndian>()?,
+            hidden_layers: cursor.read_u32::<LittleEndian>()?,
+        };
+        eyre::ensure!(
+            record.hidden_layers >> LAYER_COUNT == 0,
+            "{DRESS_HIDES_ENTRY_PATH}: item {} on body {} hides a layer past {LAYER_COUNT}: {:#x}",
+            record.item_id,
+            record.body,
+            record.hidden_layers
+        );
+        if let Some(last) = records.last() {
+            eyre::ensure!(
+                (last.item_id, last.body) < (record.item_id, record.body),
+                "{DRESS_HIDES_ENTRY_PATH}: item {} on body {} after item {} on body {}",
+                record.item_id,
+                record.body,
+                last.item_id,
+                last.body
+            );
+        }
+        records.push(record);
+    }
+    ensure_consumed(&cursor, DRESS_HIDES_ENTRY_PATH)?;
+    Ok(records)
+}
+
 pub struct PaperdollEcPackage {
     package: UddpReader,
     sets: Vec<PaperdollEcSet>,
     frames: Vec<PaperdollEcFrameRecord>,
     hues: EcHueTables,
+    dress_hides: Vec<PaperdollEcDressHides>,
 }
 
 impl PaperdollEcPackage {
@@ -249,7 +330,8 @@ impl PaperdollEcPackage {
     pub fn from_uddp_package(package: UddpReader) -> eyre::Result<Self> {
         let (sets, frames) = parse_frames_manifest(&read_path_entry_cow(&package, FRAMES_ENTRY_PATH)?)?;
         let hues = parse_hue_tables(&read_path_entry_cow(&package, HUE_TABLES_ENTRY_PATH)?)?;
-        Ok(Self { package, sets, frames, hues })
+        let dress_hides = parse_dress_hides(&read_path_entry_cow(&package, DRESS_HIDES_ENTRY_PATH)?)?;
+        Ok(Self { package, sets, frames, hues, dress_hides })
     }
 
     pub fn package(&self) -> &UddpReader {
@@ -267,6 +349,19 @@ impl PaperdollEcPackage {
 
     pub fn hue_tables(&self) -> &EcHueTables {
         &self.hues
+    }
+
+    /// Every dress record, ascending by (item id, body).
+    pub fn dress_hides(&self) -> &[PaperdollEcDressHides] {
+        &self.dress_hides
+    }
+
+    /// What dress-layer item `item_id` hides on `body` (the number of the body frame drawn); `None` when the packer
+    /// measured nothing for them.
+    pub fn dress_hides_on(&self, item_id: u32, body: u32) -> Option<&PaperdollEcDressHides> {
+        let body = u16::try_from(body).ok()?;
+        let index = self.dress_hides.binary_search_by_key(&(item_id, body), |record| (record.item_id, record.body)).ok()?;
+        Some(&self.dress_hides[index])
     }
 
     /// Frame `frame_number` of `set`.
@@ -433,6 +528,38 @@ mod tests {
         let mut tables = EcHueTables::default();
         tables.tables.insert(HUE_NUMBER, table);
         assert_eq!(parse_hue_tables(&encode_hue_tables(&tables).unwrap()).unwrap(), tables);
+    }
+
+    const ROBE: u32 = 7939;
+    const HUMAN_MALE: u16 = 400;
+    const HUMAN_FEMALE: u16 = 401;
+    const TORSO_LAYER: usize = 5;
+    const LEGS_LAYER: usize = 4;
+
+    fn dress(item_id: u32, body: u16, layers: &[usize]) -> PaperdollEcDressHides {
+        PaperdollEcDressHides { item_id, body, hidden_layers: hidden_layer_mask(layers.iter().copied()) }
+    }
+
+    #[test]
+    fn the_dress_records_round_trip_and_are_found_by_item_and_body() {
+        let records = [dress(ROBE, HUMAN_MALE, &[TORSO_LAYER, LEGS_LAYER]), dress(ROBE, HUMAN_FEMALE, &[])];
+        let parsed = parse_dress_hides(&encode_dress_hides(&records).unwrap()).unwrap();
+        assert_eq!(parsed, records);
+        assert!(parsed[0].hides(TORSO_LAYER) && parsed[0].hides(LEGS_LAYER));
+        assert!(!parsed[0].hides(LAYER_COUNT), "past the layers");
+        assert_eq!(parsed[1].hidden_layers, 0);
+    }
+
+    #[test]
+    fn unsorted_dress_records_masks_past_the_layers_and_an_older_version_are_refused() {
+        let unsorted = [dress(ROBE, HUMAN_FEMALE, &[]), dress(ROBE, HUMAN_MALE, &[])];
+        assert!(parse_dress_hides(&encode_dress_hides(&unsorted).unwrap()).is_err());
+        let past = [PaperdollEcDressHides { item_id: ROBE, body: HUMAN_MALE, hidden_layers: 1 << LAYER_COUNT }];
+        assert!(parse_dress_hides(&encode_dress_hides(&past).unwrap()).is_err());
+        let mut older = encode_dress_hides(&[dress(ROBE, HUMAN_MALE, &[TORSO_LAYER])]).unwrap();
+        older[VERSION_RANGE].copy_from_slice(&(PAPERDOLL_EC_METADATA_VERSION - 1).to_le_bytes());
+        let error = parse_dress_hides(&older).unwrap_err().to_string();
+        assert!(error.contains("repack"), "{error}");
     }
 
     #[test]

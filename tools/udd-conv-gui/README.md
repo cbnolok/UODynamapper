@@ -61,7 +61,7 @@ Two gaps apply to the image jobs, and the rows below leave them out:
 | `pack-lights` | Yes: Assets, World Lights (`--use-verdata` is the overview's verdata.mul) | |
 | `pack-hues` | Yes: Assets, Hues (the hue ramp is greyed out when the source is an Enhanced `Hues.uop`, which is copied as it is) | |
 | `pack-ec-effects` | Yes: Assets, Enhanced Effects | |
-| `pack-ec-paperdoll` | Yes: Assets, Enhanced Paperdoll | |
+| `pack-ec-paperdoll` | Yes: Assets, Enhanced Paperdoll (`--report` is the Findings Report cell; the log panel shows each dress-layer decision) | |
 | `audit-ec-material-refs` | CLI only | |
 | `inventory-ec-support-textures` | CLI only | |
 | `report-ec-material-baseline` | CLI only | |

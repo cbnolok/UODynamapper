@@ -343,7 +343,7 @@ fn print_known_package_summary(package: &UddpReader) -> eyre::Result<bool> {
     if let Ok(package) = PaperdollEcPackage::from_uddp_package(package.clone()) {
         let masked = package.frames().iter().filter(|frame| frame.hue_mode == FRAME_HUE_MASKED).count();
         info!("Recognized package: paperdoll_ec");
-        info!("Known logical files: metadata=2, frames={}, hue_masks={masked}", package.frames().len());
+        info!("Known logical files: metadata=3, frames={}, hue_masks={masked}", package.frames().len());
         for (set, header) in package.sets().iter().enumerate() {
             let frames = package.frames().iter().filter(|frame| usize::from(frame.set) == set);
             info!(
@@ -356,6 +356,13 @@ fn print_known_package_summary(package: &UddpReader) -> eyre::Result<bool> {
             );
         }
         info!("Hue tables: {}", package.hue_tables().tables.len());
+        let dress_items = package.dress_hides().iter().map(|record| record.item_id).collect::<std::collections::BTreeSet<_>>();
+        info!(
+            "Dress-layer decisions: {} over {} items, {} hiding a layer",
+            package.dress_hides().len(),
+            dress_items.len(),
+            package.dress_hides().iter().filter(|record| record.hidden_layers != 0).count()
+        );
         return Ok(true);
     }
 

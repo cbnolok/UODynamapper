@@ -1256,7 +1256,8 @@ enum Commands {
         #[arg(long, help = "Fail on error findings instead of writing flagged records (particle files missing from the client are warnings).")]
         strict: bool,
     },
-    /// Packs the EC paperdoll frames (Paperdoll.uop) and the hue tables of Hues.uop into paperdoll_ec.uddp.
+    /// Packs the EC paperdoll frames (Paperdoll.uop) and the hue tables of Hues.uop into paperdoll_ec.uddp, with what
+    /// each dress-layer item hides on each player body, measured from the frames and tileart.uop.
     #[command(name = "pack-ec-paperdoll")]
     PackEcPaperdoll {
         #[command(flatten)]
@@ -1265,6 +1266,8 @@ enum Commands {
         output: PathBuf,
         #[arg(long, num_args = 0..=1, require_equals = true, default_missing_value = DEFAULT_ZSTD_LEVEL_VALUE, help = "Zstd level of the frames and manifests (lossless either way); level 19 without the flag. Optionally pass --zstd=LEVEL.")]
         zstd: Option<i32>,
+        #[arg(long, help = "Write every finding of the dress-layer measurement to this file, one line each.")]
+        report: Option<PathBuf>,
     },
     /// Packs CC tiledata and EC tileart into tilemeta.uddp.
     #[command(name = "pack-tilemeta")]
@@ -2138,12 +2141,13 @@ where
             )?;
             info!("effects_ec: {summary}; wrote '{}'.", out_file.display());
         }
-        Commands::PackEcPaperdoll { source_dirs: source_dir_args, output, zstd } => {
+        Commands::PackEcPaperdoll { source_dirs: source_dir_args, output, zstd, report } => {
             let paths = collect_ec_source_dirs(&source_dir_args)?;
             let out_file = resolve_output_path(&output);
-            let options = match zstd {
-                Some(level) => PaperdollEcPackOptions { compression: zstd_compression(level) },
-                None => PaperdollEcPackOptions::default(),
+            let defaults = PaperdollEcPackOptions::default();
+            let options = PaperdollEcPackOptions {
+                compression: zstd.map(zstd_compression).unwrap_or(defaults.compression),
+                report,
             };
             let summary = pack_paperdoll_ec(&paths, &out_file, &options)?;
             info!("paperdoll_ec: {summary}; wrote '{}'.", out_file.display());
@@ -3658,14 +3662,23 @@ mod tests {
 
     #[test]
     fn cli_parses_pack_ec_paperdoll() {
-        let cli = Cli::try_parse_from(["uddpack", "pack-ec-paperdoll", "--ecdir", "/ec", "--zstd=12"])
-            .expect("parse pack-ec-paperdoll");
+        let cli = Cli::try_parse_from([
+            "uddpack",
+            "pack-ec-paperdoll",
+            "--ecdir",
+            "/ec",
+            "--zstd=12",
+            "--report",
+            "/out/paperdoll_report.txt",
+        ])
+        .expect("parse pack-ec-paperdoll");
 
         match cli.command {
-            Commands::PackEcPaperdoll { source_dirs, output, zstd } => {
+            Commands::PackEcPaperdoll { source_dirs, output, zstd, report } => {
                 assert_eq!(source_dirs.ecdir, Some(PathBuf::from("/ec")));
                 assert_eq!(output, PathBuf::from("paperdoll_ec.uddp"));
                 assert_eq!(zstd, Some(12));
+                assert_eq!(report, Some(PathBuf::from("/out/paperdoll_report.txt")));
             }
             _ => panic!("unexpected command parsed"),
         }

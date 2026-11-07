@@ -20,7 +20,7 @@ packages consumed by Dynamapper and the other tools at runtime.
 | `pack-ec-textures` | `tex_art_ec.uddp`, `tex_land_ec.uddp` | EC art and land in one pass |
 | `pack-ec-tex-aux` | `tex_aux_ec.uddp` | EC auxiliary textures named by `tilemeta.uddp` |
 | `pack-ec-effects` | `effects_ec.uddp` | EC particle effects: definitions, Chaos and NIF systems, textures |
-| `pack-ec-paperdoll` | `paperdoll_ec.uddp` | EC 3D paperdoll frames (`Paperdoll.uop`), lossless, and the hue tables of `Hues.uop` |
+| `pack-ec-paperdoll` | `paperdoll_ec.uddp` | EC 3D paperdoll frames (`Paperdoll.uop`), lossless, the hue tables of `Hues.uop`, and what each dress-layer item hides (see below) |
 | `pack-tilemeta` | `tilemeta.uddp` | CC tiledata + EC tileart |
 | `pack-map` | `mapX.uddp` | Classic `mapX.mul` |
 | `pack-statics` | `staticsX.uddp` | Classic `staticsX.mul` |
@@ -33,6 +33,29 @@ packages consumed by Dynamapper and the other tools at runtime.
 
 Without a format flag, the art, land and auxiliary texture packers write lossless RGBA8888
 pages with Zstd 19 per page; `--zstd=LEVEL` picks another level.
+
+### Enhanced paperdoll: what a robe hides
+
+`pack-ec-paperdoll` also reads `tileart.uop` and `string_dictionary.uop` and measures,
+for every dress-layer item (robes, dresses, tabards, epaulets...) on each player body
+(human, elf and gargoyle, male and female), which of the slots the client draws beneath
+it (torso, legs, skirt, arms, chest, abovechest) Dynamapper's 3D paperdoll takes off,
+because only their edges would show past the item. The decisions are stored in the
+package (`docs/dev_wiki/UDDP_FORMATS.md` section 5). The log gets one line per item
+and body, then a summary:
+
+```
+paperdoll_ec: 0x1F03 robe, human male: hides torso, legs, skirt, arms, chest, abovechest (left out by the client)
+paperdoll_ec: 0xA412 tabard, human male: hides nothing; keeps torso (4,857 texels beyond the edge), ...
+paperdoll_ec: 72 dress-layer items measured on 6 bodies: 294 decisions hide every slot, 48 some, 30 none; ...
+```
+
+`--report <file>` writes every finding to a text file, one `info:` or `warning:` line
+each, as `pack-ec-effects` does: the largest garment of each slot on each body, each
+decision, and for each slot measured the largest garment's texels near the edge and
+beyond it, with the garments of the slot that show beyond the edge. A `warning:` line
+is a slot taken off although one of its garments shows beyond the edge.
+`PaperdollOverrides.kdl` in Dynamapper's `runtime_specs/paperdoll` overrides a decision.
 
 Output paths (`--output`, `--art-output`, `--land-output`, `--map-output`, ...) and the
 default file names above resolve against the current working directory, like any

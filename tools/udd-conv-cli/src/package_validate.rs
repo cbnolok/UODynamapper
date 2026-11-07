@@ -632,8 +632,9 @@ fn check_paperdoll_ec_package(package: &UddpReader) -> eyre::Result<String> {
         masked += usize::from(frame.hue_mode == udd_assets::paperdoll_ec::FRAME_HUE_MASKED);
     }
     Ok(format!(
-        "frames per set={set_frames:?}, hue_masks={masked}, hue_tables={}",
-        reader.hue_tables().tables.len()
+        "frames per set={set_frames:?}, hue_masks={masked}, hue_tables={}, dress_decisions={}",
+        reader.hue_tables().tables.len(),
+        reader.dress_hides().len()
     ))
 }
 

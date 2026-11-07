@@ -8,7 +8,7 @@ pub mod metadata;
 pub mod textures;
 pub mod upscaling;
 
-pub use animation::{mobile_anim_cc, mobile_anim_ec, paperdoll_ec};
+pub use animation::{mobile_anim_cc, mobile_anim_ec, paperdoll_ec, paperdoll_ec_dress};
 use atlas::prefix_search;
 use atlas::rgba_bounds;
 pub use atlas::{bc7, page_compression};
