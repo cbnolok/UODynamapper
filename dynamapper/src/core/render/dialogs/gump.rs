@@ -416,6 +416,35 @@ mod tests {
         assert!(bodiless.contains("body"), "{bodiless}");
     }
 
+    /// The 3D paperdoll shows under every bundled preset but Classic's, by the preset's shading mode, while the setting
+    /// asks for it and paperdoll_ec.uddp is loaded; else the gump paperdoll of the preset's gumps.
+    #[test]
+    fn every_preset_but_classic_draws_the_3d_paperdoll() {
+        const CLASSIC_GROUP: &str = "classic";
+        let presets: toml::Table =
+            toml::from_str(include_str!("../../../../assets/defaults/shader_presets.toml")).unwrap();
+        let content = OpenGumpContent::Paperdoll(request(&[]));
+        let mut checked = 0;
+        for (group, group_presets) in &presets {
+            for (name, preset) in group_presets.as_table().into_iter().flatten() {
+                let shading_mode = preset.get("effects").and_then(|effects| effects.get("shading_mode"));
+                let Some(shading_mode) = shading_mode.and_then(toml::Value::as_integer) else {
+                    continue;
+                };
+                let client = GumpClient::from_shading_mode(u32::try_from(shading_mode).unwrap());
+                let expected =
+                    if group == CLASSIC_GROUP { DrawnAs::Gumps(GumpClient::Classic) } else { DrawnAs::EnhancedFrames };
+                let drawn_as = DrawnAs::for_content(&content, client, EnhancedPaperdoll::Frames, true);
+                assert_eq!(drawn_as, expected, "{group}.{name}");
+                checked += 1;
+            }
+        }
+        assert!(checked > 0, "no preset read");
+        let gumps = DrawnAs::Gumps(GumpClient::Enhanced);
+        assert_eq!(DrawnAs::for_content(&content, GumpClient::Enhanced, EnhancedPaperdoll::Gumps, true), gumps);
+        assert_eq!(DrawnAs::for_content(&content, GumpClient::Enhanced, EnhancedPaperdoll::Frames, false), gumps);
+    }
+
     /// The paperdoll goes up to egui as composed: half-transparent white over the empty canvas is premultiplied, as
     /// bevy_egui blends it, and a transparent texel adds nothing, whatever its colour.
     #[test]
