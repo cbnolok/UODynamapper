@@ -300,10 +300,12 @@ pub fn sys_update_shared_land_material(
     uniform_state: Res<crate::configs::shader_presets::UniformState>,
     static_lights: Option<Res<crate::core::render::scene::world::art::static_lights::RenderStaticLightInstances>>,
     player_q: Query<&Transform, With<crate::core::render::scene::player::Player>>,
+    camera_q: Query<&Projection, With<crate::core::render::scene::camera::PlayerCamera>>,
     mut last_atlas_params: Local<Option<tile_atlas::AtlasParams>>,
     mut last_global_lighting: Local<f32>,
     mut last_render_zoom: Local<f32>,
     mut last_static_light_signature: Local<u64>,
+    mut last_client_view_scale: Local<f32>,
 ) {
     let Some(shared_mat) = shared_mat else {
         return;
@@ -322,6 +324,10 @@ pub fn sys_update_shared_land_material(
     let lighting_meaningfully_changed =
         (current_global_lighting - *last_global_lighting).abs() > 0.01;
     let zoom_changed = (current_render_zoom - *last_render_zoom).abs() > 0.1;
+    let current_client_view_scale =
+        camera_q.iter().next().map_or(1.0, mesh_material::client_view_scale);
+    let client_view_scale_changed = (current_client_view_scale - *last_client_view_scale).abs()
+        > mesh_material::CLIENT_VIEW_SCALE_EPSILON;
     let static_light_focus_xz = player_q
         .iter()
         .next()
@@ -334,7 +340,12 @@ pub fn sys_update_shared_land_material(
     // ONLY call get_mut() when something actually changed.
     // This avoids triggering Bevy's asset change detection, which would force
     // re-extraction of the material bind group for all chunk entities.
-    if atlas_changed || lighting_meaningfully_changed || zoom_changed || static_lights_changed {
+    if atlas_changed
+        || lighting_meaningfully_changed
+        || zoom_changed
+        || static_lights_changed
+        || client_view_scale_changed
+    {
         if let Some(mut mat) = materials.get_mut(&shared_mat.0) {
             /*
             console_logger::one(
@@ -366,6 +377,10 @@ pub fn sys_update_shared_land_material(
             if static_lights_changed {
                 mat.extension.static_light_uniform = static_light_uniform;
                 *last_static_light_signature = static_light_signature;
+            }
+            if client_view_scale_changed {
+                mat.extension.scene_uniform.client_view_scale = current_client_view_scale;
+                *last_client_view_scale = current_client_view_scale;
             }
         }
     }

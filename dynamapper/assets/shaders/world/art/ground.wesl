@@ -16,6 +16,7 @@ import package::shaders::postprocess::grunge::{apply_texture_visual_grunge, visu
 import package::shaders::postprocess::kr_color_wash::apply_kr_color_wash;
 import package::shaders::postprocess::tonemapping::{tonemap_with_curve};
 import package::shaders::world::pixel_art_filters::{pixel_art_atlas_uv_iq};
+import package::shaders::world::client_filter::{client_filtered_atlas_rect, TEXTURE_FILTER_CLIENT_BILINEAR};
 
 import package::shaders::world::art::art_ground_bindings::{
     GroundTileInstance, SpriteParams, SceneUniform, LandEffectsUniform, GlobalLightingUniforms,
@@ -128,6 +129,9 @@ fn shade_fragment(in: GroundVertexOutput, sample_index: u32) -> GroundFragmentOu
     out.depth = in.position.z;
     let atlas_extent = max(inst.uv_max - inst.uv_min, vec2<f32>(0.000001));
     var uv_in_tile = (in.uv - inst.uv_min) / atlas_extent;
+    // The client filter's footprint: the quad's atlas uv per screen pixel, taken before any branch.
+    let ground_uv_dx = dpdx(in.uv);
+    let ground_uv_dy = dpdy(in.uv);
     let use_ec_water_material = (inst.material_flags & GROUND_FLAG_EC_WATER_MATERIAL) != 0u;
     var color: vec4<f32>;
     if (use_ec_water_material) {
@@ -150,8 +154,14 @@ fn shade_fragment(in: GroundVertexOutput, sample_index: u32) -> GroundFragmentOu
         }
         let uv = inst.uv_min + uv_in_tile * atlas_extent;
         let atlas_size = vec2<f32>(textureDimensions(art_atlas).xy);
-        let sample_uv = pixel_art_atlas_uv_iq(uv, inst.uv_min, inst.uv_max, atlas_size);
-        color = textureSample(art_atlas, art_atlas_sampler, sample_uv, i32(layer));
+        if (effects.texture_filter == TEXTURE_FILTER_CLIENT_BILINEAR) {
+            // A world-stretched texture repeats, so the client's taps wrap.
+            color = client_filtered_atlas_rect(art_atlas, i32(layer), uv, inst.uv_min, inst.uv_max,
+                inst.texture_stretch > 0.0, ground_uv_dx, ground_uv_dy, scene.client_view_scale);
+        } else {
+            let sample_uv = pixel_art_atlas_uv_iq(uv, inst.uv_min, inst.uv_max, atlas_size);
+            color = textureSample(art_atlas, art_atlas_sampler, sample_uv, i32(layer));
+        }
     }
     // Blend authored partial-alpha coverage instead of making half-opaque masks
     // solid. Other art keeps its existing sprite split.

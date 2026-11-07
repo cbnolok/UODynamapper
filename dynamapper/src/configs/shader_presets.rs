@@ -603,4 +603,24 @@ mod tests {
             }
         }
     }
+
+    #[test]
+    fn only_kr_like_takes_the_client_texture_filter() {
+        use crate::core::render::scene::world::land::mesh_material::{
+            TEXTURE_FILTER_CLIENT_BILINEAR, TEXTURE_FILTER_PIXEL_ART,
+        };
+        for text in [BUNDLED_FACTORY_PRESETS, BUNDLED_LAND_SETTINGS] {
+            let presets = parse(text).expect("bundled");
+            for (group, expected) in [
+                (&presets.classic, TEXTURE_FILTER_PIXEL_ART),
+                (&presets.enhanced, TEXTURE_FILTER_PIXEL_ART),
+                (&presets.kr, TEXTURE_FILTER_CLIENT_BILINEAR),
+                (&presets.painterly, TEXTURE_FILTER_PIXEL_ART),
+            ] {
+                for slot in [&group.morning, &group.afternoon, &group.night, &group.cave] {
+                    assert_eq!(slot.effects.texture_filter, expected);
+                }
+            }
+        }
+    }
 }

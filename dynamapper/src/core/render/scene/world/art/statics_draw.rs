@@ -1553,17 +1553,23 @@ pub fn sys_update_art_materials(
     render_zoom: Res<crate::core::render::scene::camera::RenderZoom>,
     player_q: Query<&Transform, With<crate::core::render::scene::player::Player>>,
     uniform_state: Res<crate::configs::shader_presets::UniformState>,
+    camera_q: Query<&Projection, With<crate::core::render::scene::camera::PlayerCamera>>,
     mut last_global_lighting: Local<f32>,
     mut last_render_zoom: Local<f32>,
     mut last_uniform_snapshot: Local<Option<UniformSnapshot>>,
+    mut last_client_view_scale: Local<f32>,
 ) {
     let current_global_lighting = uniform_state.global_lighting;
     let current_render_zoom = render_zoom.0;
     let current_uniform_snapshot = uniform_state.snapshot();
+    let current_client_view_scale =
+        camera_q.iter().next().map_or(1.0, world::land::mesh_material::client_view_scale);
 
     let lighting_meaningfully_changed =
         (current_global_lighting - *last_global_lighting).abs() > 0.01;
     let zoom_changed = (current_render_zoom - *last_render_zoom).abs() > 0.1;
+    let client_view_scale_changed = (current_client_view_scale - *last_client_view_scale).abs()
+        > world::land::mesh_material::CLIENT_VIEW_SCALE_EPSILON;
     let uniforms_changed = last_uniform_snapshot.is_none_or(|snapshot| {
         snapshot.effects != current_uniform_snapshot.effects
             || snapshot.lighting != current_uniform_snapshot.lighting
@@ -1587,7 +1593,7 @@ pub fn sys_update_art_materials(
         }
     }
 
-    if !uniforms_changed && !zoom_changed {
+    if !uniforms_changed && !zoom_changed && !client_view_scale_changed {
         return;
     }
 
@@ -1605,6 +1611,7 @@ pub fn sys_update_art_materials(
                 current_global_lighting,
                 current_render_zoom,
                 camera_pos,
+                current_client_view_scale,
             );
         }
         if let Some(mut mat) = materials.get_mut(&assets.transparent_material) {
@@ -1614,6 +1621,7 @@ pub fn sys_update_art_materials(
                 current_global_lighting,
                 current_render_zoom,
                 camera_pos,
+                current_client_view_scale,
             );
         }
         if let Some(mut mat) = materials.get_mut(&assets.shadow_material) {
@@ -1623,6 +1631,7 @@ pub fn sys_update_art_materials(
                 current_global_lighting,
                 current_render_zoom,
                 camera_pos,
+                current_client_view_scale,
             );
         }
     }
@@ -1635,6 +1644,7 @@ pub fn sys_update_art_materials(
                 current_global_lighting,
                 current_render_zoom,
                 camera_pos,
+                current_client_view_scale,
             );
         }
         if let Some(mut mat) = ground_materials.get_mut(&assets.transparent_material) {
@@ -1644,6 +1654,7 @@ pub fn sys_update_art_materials(
                 current_global_lighting,
                 current_render_zoom,
                 camera_pos,
+                current_client_view_scale,
             );
         }
     }
@@ -1657,6 +1668,7 @@ pub fn sys_update_art_materials(
     if uniforms_changed {
         *last_uniform_snapshot = Some(current_uniform_snapshot);
     }
+    *last_client_view_scale = current_client_view_scale;
 }
 
 fn update_art_material_uniforms(
@@ -1665,8 +1677,10 @@ fn update_art_material_uniforms(
     global_lighting: f32,
     render_zoom: f32,
     camera_pos: Vec3,
+    client_view_scale: f32,
 ) {
     mat.extension.scene_uniform.global_lighting = global_lighting;
+    mat.extension.scene_uniform.client_view_scale = client_view_scale;
     mat.extension.scene_uniform.render_zoom = render_zoom;
     mat.extension.scene_uniform.camera_position = camera_pos;
     mat.extension.scene_uniform.ec_reflection_camera_distance =
@@ -1686,8 +1700,10 @@ fn update_art_material_uniforms_ground(
     global_lighting: f32,
     render_zoom: f32,
     camera_pos: Vec3,
+    client_view_scale: f32,
 ) {
     mat.extension.scene_uniform.global_lighting = global_lighting;
+    mat.extension.scene_uniform.client_view_scale = client_view_scale;
     mat.extension.scene_uniform.render_zoom = render_zoom;
     mat.extension.scene_uniform.camera_position = camera_pos;
     mat.extension.scene_uniform.ec_reflection_camera_distance =

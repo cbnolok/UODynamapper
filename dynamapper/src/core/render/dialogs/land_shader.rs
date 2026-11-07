@@ -133,6 +133,12 @@ const TERRAIN_SHADING_OPTIONS: [(&str, u32, &str); 2] = [
     ("Client per-vertex", TERRAIN_SHADING_CLIENT_PER_VERTEX, "As the KR and Enhanced clients: a half-Lambert grey per cell corner, blended over two triangles."),
 ];
 
+/// Whole-scene "Texture Filter" choices for land and sprites: `(label, texture_filter, tooltip)`.
+const TEXTURE_FILTER_OPTIONS: [(&str, u32, &str); 2] = [
+    ("Pixel art", TEXTURE_FILTER_PIXEL_ART, "Nearest texels; Texture Smoothness softens only their seams."),
+    ("Client bilinear", TEXTURE_FILTER_CLIENT_BILINEAR, "As the KR client: plain bilinear on land and sprites. Mip-like averaging only when zoomed out past its 18.4-tile view."),
+];
+
 /// "Sun Azimuth" slider: a full compass turn in degrees, clockwise from north.
 const SUN_AZIMUTH_RANGE_DEGREES: std::ops::RangeInclusive<f32> = 0.0..=360.0;
 /// "Sun Elevation" slider: from the horizon to overhead, in degrees.
@@ -778,6 +784,7 @@ pub fn land_ui_system(
 
                 ui.strong("Whole scene");
                 changed |= toggle_u32(ui, "Linear Filtering", &mut u.effects.enable_linear_filtering);
+                changed |= texture_filter_row(ui, &mut u);
                 changed |= slider_s(ui, "Sharpening Amount", &mut u.effects.sharpening_amount, 0.0..=2.0);
                 changed |= toggle_u32(ui, "KR Color Wash", &mut u.effects.enable_kr_color_wash);
                 changed |= slider_s(ui, "KR Color Wash Strength", &mut u.effects.kr_color_wash_strength, 0.0..=1.5);
@@ -963,9 +970,15 @@ fn whole_scene_controls(ui: &mut egui::Ui, u: &mut UniformState, gates: RenderSt
              Advanced -> Color Grading (Vibrant). If colors look \
              oversaturated, lower Saturation / Vibrance there.",
         );
-        changed |= toggle_u32(ui, "Texture Smoothness", &mut u.effects.enable_linear_filtering);
+        changed |= toggle_tip(
+            ui,
+            "Texture Smoothness",
+            &mut u.effects.enable_linear_filtering,
+            "Softens texel seams in the pixel-art filter. Liquids and item surfaces follow it under either filter.",
+        );
         changed |= toggle_u32(ui, "Fog", &mut u.lighting.enable_fog);
     });
+    changed |= texture_filter_row(ui, u);
     ui.horizontal_wrapped(|ui| {
         let enabled = u.lighting.enable_tonemap != 0;
         ui.add_enabled(enabled, egui::Label::new("Tone Curve:"));
@@ -990,6 +1003,21 @@ fn whole_scene_controls(ui: &mut egui::Ui, u: &mut UniformState, gates: RenderSt
         changed |= toggle_slider(ui, true, "Grunge", &mut u.effects.enable_grunge, &mut u.effects.grunge_strength, 0.0..=1.0);
         changed |= toggle_slider(ui, gates.is_kr_profile, "KR Color Wash", &mut u.effects.enable_kr_color_wash, &mut u.effects.kr_color_wash_strength, 0.0..=1.5);
         changed |= slider_en(ui, gates.is_kr_profile, "KR Color Wash Scale", &mut u.effects.kr_color_wash_scale, 8.0..=160.0);
+    });
+    changed
+}
+
+fn texture_filter_row(ui: &mut egui::Ui, u: &mut UniformState) -> bool {
+    let mut changed = false;
+    ui.horizontal_wrapped(|ui| {
+        ui.label("Texture Filter:");
+        for (label, filter, tip) in TEXTURE_FILTER_OPTIONS {
+            let selected = u.effects.texture_filter == filter;
+            if ui.add(egui::Button::selectable(selected, label)).on_hover_text(tip).clicked() && !selected {
+                u.effects.texture_filter = filter;
+                changed = true;
+            }
+        }
     });
     changed
 }

@@ -41,6 +41,7 @@ import package::shaders::world::land::sampling::{
   ec_material_has_liquid_normal,
   sample_ec_material_normal_world,
   sample_tile_albedo,
+  sample_tile_albedo_filtered,
   sample_tile_albedo_grad,
   sample_ec_material_albedo,
   sample_ec_material_albedo_at_world,
@@ -48,6 +49,7 @@ import package::shaders::world::land::sampling::{
   classic_land_art_is_present,
   sample_classic_land_art,
 };
+import package::shaders::world::client_filter::TEXTURE_FILTER_CLIENT_BILINEAR;
 import package::shaders::world::land::shading::{
   shade_mode0_classic_vertex,
   shade_mode1_enhanced_fragment,
@@ -536,6 +538,11 @@ fn shade_land(in: VertexOutput, tile: TileUniform, ordered_coverage: bool, world
   if (tile.texture_size == 2u) { uv_gradients = ec_tile_gradients(world_gradients, tile); }
   let cc_transitions = cc_transition_dry_material(tile) && (effects.terrain_transition_flags & 1u) != 0u;
   if (cc_transitions) { uv_gradients = world_gradients; }
+  // The client filter sizes its emulated mips from the footprint of every texture; a per-tile uv is the
+  // fractional world position, so its derivatives are the world's.
+  if (effects.texture_filter == TEXTURE_FILTER_CLIENT_BILINEAR && tile.texture_size != 2u) {
+    uv_gradients = world_gradients;
+  }
   if (tile.texture_size == 2u) {
     // Compute world-space tiling UV.  We use the (possibly water-distorted)
     // uv_in_tile offset so water animation stays coherent with EC textures too.
@@ -607,7 +614,7 @@ fn shade_land(in: VertexOutput, tile: TileUniform, ordered_coverage: bool, world
       base_albedo = sample_tile_albedo_grad(sample_uv, tile, uv_gradients.dx, uv_gradients.dy);
       base_albedo = blend_cc_terrain_transitions(base_albedo, tile, world_tile, uv_in_tile, uv_gradients);
     } else {
-      base_albedo = sample_tile_albedo(sample_uv, tile, uv_gradients);
+      base_albedo = sample_tile_albedo_filtered(sample_uv, tile, uv_gradients);
     }
     if (enable_blur == 1u && blur_strength > 0.001 && blur_radius > 0.0) {
       let blurred = blurred_albedo(sample_uv, tile, blur_radius, vec2<f32>(in.world_position.x, in.world_position.z), uv_gradients);

@@ -13,6 +13,7 @@ import package::shaders::postprocess::kr_color_wash::apply_kr_color_wash;
 import package::shaders::postprocess::tonemapping::{tonemap_with_curve};
 import package::shaders::world::land::noise::noise_2d;
 import package::shaders::world::pixel_art_filters::pixel_art_atlas_uv_iq;
+import package::shaders::world::client_filter::{client_filtered_atlas_rect, TEXTURE_FILTER_CLIENT_BILINEAR};
 import package::shaders::world::ec_item_quad::ec_item_quad_world;
 import package::shaders::world::ec_item_surface::{apply_ec_item_surface, ec_item_surface_record};
 import package::shaders::world::ec_liquid::{ec_liquid_texture_uv, ec_liquid_world_uv};
@@ -196,6 +197,9 @@ fn shade_fragment(in: ArtVertexOutput, sample_index: u32) -> ArtFragmentOutput {
     let atlas_extent = max(inst.uv_max - inst.uv_min, vec2<f32>(0.000001));
     let uv_in_tile_for_shading = clamp((uv - inst.uv_min) / atlas_extent, vec2<f32>(0.0), vec2<f32>(1.0));
     let surface_footprint = max(fwidth(uv_in_tile_for_shading), vec2<f32>(0.00001));
+    // The client filter's footprint: the sprite's atlas uv per screen pixel, taken before any branch.
+    let sprite_uv_dx = dpdx(in.uv);
+    let sprite_uv_dy = dpdy(in.uv);
 
     if (sprite_params.pass_mode == PASS_MODE_SHADOW) {
         if (inst.flat_quad >= 2u) {
@@ -299,6 +303,8 @@ fn shade_fragment(in: ArtVertexOutput, sample_index: u32) -> ArtFragmentOutput {
     }
 
     var surface_header = vec4<u32>(0u);
+    // A repeated surface wraps the client filter's taps, as the client's wrap address mode does.
+    var surface_repeats = false;
     if (inst.flat_quad >= 2u) {
         surface_header = ec_item_surface_record(item_surface_lookup, inst.material_item_id);
         if (surface_header.x != 0u) {
@@ -308,8 +314,10 @@ fn shade_fragment(in: ArtVertexOutput, sample_index: u32) -> ArtFragmentOutput {
             let transformed = ec_liquid_texture_uv(coordinates, repetition, vec2<f32>(0.0));
             uv = inst.uv_min + select(clamp(transformed, vec2<f32>(0.0), vec2<f32>(1.0)),
                 fract(transformed), repetition != 1.0) * atlas_extent;
+            surface_repeats = repetition != 1.0;
         } else if (inst.texture_stretch > 0.0) {
             uv = inst.uv_min + fract(in.world_pos.xz / inst.texture_stretch) * atlas_extent;
+            surface_repeats = true;
         }
     }
     let use_ec_item_water = ec_item_is_water(surface_header);
@@ -328,7 +336,12 @@ fn shade_fragment(in: ArtVertexOutput, sample_index: u32) -> ArtFragmentOutput {
             in.reflection_uv, globals.time, effects.enable_water_animation == 1u,
             effects.enable_linear_filtering == 1u, energy);
     } else {
-        color = textureSample(art_atlas, art_atlas_sampler, sample_uv, i32(layer));
+        if (effects.texture_filter == TEXTURE_FILTER_CLIENT_BILINEAR) {
+            color = client_filtered_atlas_rect(art_atlas, i32(layer), uv, inst.uv_min, inst.uv_max,
+                surface_repeats, sprite_uv_dx, sprite_uv_dy, scene.client_view_scale);
+        } else {
+            color = textureSample(art_atlas, art_atlas_sampler, sample_uv, i32(layer));
+        }
         if (inst.flat_quad >= 2u) {
             color = apply_ec_item_surface(color, item_surface_atlas, item_surface_lookup,
                 item_surface_sampler, surface_header, uv_in_tile_for_shading, in.world_pos.xz,

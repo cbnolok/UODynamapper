@@ -29,8 +29,9 @@
 
 
 import package::shaders::world::common_bindings::{LandEffectsUniform};
-import package::shaders::world::land::land_bindings::{TileUniform, tex_small, tex_big, land_page_atlas, land_page_lookup, tex_small_sampler, effects, classic_land_art_atlas, classic_land_art_lookup};
+import package::shaders::world::land::land_bindings::{TileUniform, tex_small, tex_big, land_page_atlas, land_page_lookup, tex_small_sampler, effects, scene, classic_land_art_atlas, classic_land_art_lookup};
 import package::shaders::world::pixel_art_filters::{pixel_art_uv_iq, pixel_art_uv_iq_grad};
+import package::shaders::world::client_filter::{client_filtered_rect_sampled, TEXTURE_FILTER_CLIENT_BILINEAR};
 import package::shaders::world::texture_data::texture_color_rgb;
 
 // Width in pixels of one Classic Client isometric tile — the world-unit
@@ -118,6 +119,15 @@ fn sample_ec_lookup_slot_rgba(uv: vec2<f32>, slot: LandLookupSlot, world: LandGr
   let tile_dims = max(vec2<f32>(slot.texture_extent), vec2<f32>(1.0));
   let use_linear = effects.enable_linear_filtering == 1u;
 
+  if (effects.texture_filter == TEXTURE_FILTER_CLIENT_BILINEAR) {
+    // The page textures repeat across the world, so the client's taps wrap within the slot.
+    let tile_w = max(f32(slot.texture_extent.x), 1.0);
+    let stretch = select(tile_w / CC_TILE_PX, slot.texture_stretch, slot.texture_stretch > 0.0);
+    return client_filtered_rect_sampled(land_page_atlas, tex_small_sampler, layer, vec2<i32>(slot.texture_origin),
+      vec2<i32>(slot.texture_extent), uv * tile_dims, true,
+      (world.dx / stretch) * tile_dims, (world.dy / stretch) * tile_dims, scene.client_view_scale);
+  }
+
   if (use_linear) {
     let atlas_dims = vec2<f32>(textureDimensions(land_page_atlas));
     let tile_w = max(f32(slot.texture_extent.x), 1.0);
@@ -150,11 +160,13 @@ fn ec_material_mask_value(mask_sample: vec4<f32>) -> f32 {
 fn sample_ec_material_albedo(world_xz: vec2<f32>, base_uv: vec2<f32>, tile: TileUniform, world: LandGradients) -> vec3<f32> {
   let detail = read_ec_lookup_slot(tile.texture_payload, LAND_PAGE_LOOKUP_ROLE_DETAIL);
   let mask = read_ec_lookup_slot(tile.texture_payload, LAND_PAGE_LOOKUP_ROLE_MASK);
+  // One base sample serves both returns: every land sample inlines its filter, so fewer call sites compile
+  // faster.
+  let base = sample_ec_tile_albedo(base_uv, tile, ec_tile_gradients(world, tile));
   if (!detail.present || !mask.present) {
-    return sample_tile_albedo(base_uv, tile, ec_tile_gradients(world, tile));
+    return base;
   }
 
-  let base = sample_tile_albedo(base_uv, tile, ec_tile_gradients(world, tile));
   let detail_uv = ec_slot_world_uv(world_xz, detail);
   let mask_uv = ec_slot_world_uv(world_xz, mask);
   let detail_color = sample_ec_lookup_slot(detail_uv, detail, world);
@@ -313,6 +325,56 @@ fn sample_tile_albedo(uv: vec2<f32>, tile: TileUniform, gradients: LandGradients
       return textureLoad(tex_small, iuv, layer, 0).rgb;
     }
   }
+}
+
+// A tile's own texture under the selected texture filter (`effects.texture_filter`): the KR client's filter, or
+// the pixel-art sample_tile_albedo. Only the tile's own texture, the EC material layers and their transition
+// neighbours take the client filter. Blur and sharpening taps, the adaptive cheap path and the CC transitions
+// keep sample_tile_albedo: every land sample inlines its filter, and the client's on all of them made the land
+// shader twice as slow to compile.
+fn sample_tile_albedo_filtered(uv: vec2<f32>, tile: TileUniform, gradients: LandGradients) -> vec3<f32> {
+  if (tile.texture_size != 3u && effects.texture_filter == TEXTURE_FILTER_CLIENT_BILINEAR) {
+    return sample_tile_albedo_client(uv, tile, gradients);
+  }
+  return sample_tile_albedo(uv, tile, gradients);
+}
+
+// As sample_tile_albedo_filtered, for an EC material's base texture, which is always on the EC page atlas:
+// one client branch instead of three.
+fn sample_ec_tile_albedo(uv: vec2<f32>, tile: TileUniform, gradients: LandGradients) -> vec3<f32> {
+  if (effects.texture_filter == TEXTURE_FILTER_CLIENT_BILINEAR) {
+    return sample_page_tile_albedo_client(uv, tile, gradients);
+  }
+  return sample_tile_albedo(uv, tile, gradients);
+}
+
+// The KR client's filter (client_filter.wesl) on a page-atlas tile texture. EC page textures repeat across the
+// world, so their taps wrap; a CC atlas slot holds one tile's texture and its taps clamp to the slot.
+// `gradients` are the screen derivatives of `uv`.
+fn sample_page_tile_albedo_client(uv: vec2<f32>, tile: TileUniform, gradients: LandGradients) -> vec3<f32> {
+  let layer: i32 = i32(tile.texture_layer);
+  let tile_dims = max(vec2<f32>(tile.texture_extent), vec2<f32>(1.0));
+  let color = client_filtered_rect_sampled(land_page_atlas, tex_small_sampler, layer, vec2<i32>(tile.texture_origin),
+    vec2<i32>(tile.texture_extent), uv * tile_dims, tile.texture_size == 2u,
+    gradients.dx * tile_dims, gradients.dy * tile_dims, scene.client_view_scale).rgb;
+  return select(color, texture_color_rgb(color), tile.texture_size == 2u);
+}
+
+// The KR client's filter on any tile texture: the page atlases, or the texmap arrays, whose textures repeat
+// across the world. `gradients` are the screen derivatives of `uv`.
+fn sample_tile_albedo_client(uv: vec2<f32>, tile: TileUniform, gradients: LandGradients) -> vec3<f32> {
+  let layer: i32 = i32(tile.texture_layer);
+  if (tile.texture_size == 2u || tile.texture_size == 4u) {
+    return sample_page_tile_albedo_client(uv, tile, gradients);
+  }
+  if (tile.texture_size == 1u) {
+    let dims = vec2<i32>(textureDimensions(tex_big));
+    return client_filtered_rect_sampled(tex_big, tex_small_sampler, layer, vec2<i32>(0), dims, uv * vec2<f32>(dims), true,
+      gradients.dx * vec2<f32>(dims), gradients.dy * vec2<f32>(dims), scene.client_view_scale).rgb;
+  }
+  let dims = vec2<i32>(textureDimensions(tex_small));
+  return client_filtered_rect_sampled(tex_small, tex_small_sampler, layer, vec2<i32>(0), dims, uv * vec2<f32>(dims), true,
+    gradients.dx * vec2<f32>(dims), gradients.dy * vec2<f32>(dims), scene.client_view_scale).rgb;
 }
 
 // Gradient-stable tap: explicit dPdx/dPdy keep LOD consistent across multi-tap

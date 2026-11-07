@@ -23,6 +23,10 @@ default_preset = "classic.morning"
 #                    1: identity, exposure as plain brightness, clamped like the clients' 8-bit target.
 # enable_grading:    If 1, applies color grading. 0: off.
 # enable_blur:       If 1, applies a subtle blur to the base terrain texture. 0: off.
+# texture_filter:    How land and sprite textures are filtered. 0: pixel art, nearest, and with
+#                    enable_linear_filtering a bilinear that only softens the texel seams.
+#                    1: the KR client's plain bilinear from one level. Zoomed out past the client's 18.4-tile
+#                    view, a box of bilinear taps stands in for the mip levels its textures do not have.
 #
 # --- Intensities & Strengths ---
 # ambient_strength:  Base intensity of ambient light (0.0 to 1.0).
@@ -79,6 +83,7 @@ shading_mode = 0
 normal_mode = 1
 enable_blur = 0
 enable_linear_filtering = 0
+texture_filter = 0
 sharpening_amount = 0.0
 blur_strength = 0.15
 blur_radius = 0.0025
@@ -158,6 +163,7 @@ shading_mode = 0
 normal_mode = 1
 enable_blur = 0
 enable_linear_filtering = 0
+texture_filter = 0
 sharpening_amount = 0.0
 blur_strength = 0.15
 blur_radius = 0.0025
@@ -237,6 +243,7 @@ shading_mode = 0
 normal_mode = 1
 enable_blur = 0
 enable_linear_filtering = 0
+texture_filter = 0
 sharpening_amount = 0.0
 blur_strength = 0.15
 blur_radius = 0.0025
@@ -316,6 +323,7 @@ shading_mode = 0
 normal_mode = 1
 enable_blur = 0
 enable_linear_filtering = 0
+texture_filter = 0
 sharpening_amount = 0.0
 blur_strength = 0.15
 blur_radius = 0.0025
@@ -400,6 +408,7 @@ shading_mode = 1
 normal_mode = 1
 enable_blur = 0
 enable_linear_filtering = 0
+texture_filter = 0
 sharpening_amount = 0.0
 blur_strength = 0.15
 blur_radius = 0.0025
@@ -478,6 +487,7 @@ shading_mode = 1
 normal_mode = 1
 enable_blur = 0
 enable_linear_filtering = 0
+texture_filter = 0
 sharpening_amount = 0.0
 blur_strength = 0.15
 blur_radius = 0.0025
@@ -556,6 +566,7 @@ shading_mode = 1
 normal_mode = 1
 enable_blur = 0
 enable_linear_filtering = 0
+texture_filter = 0
 sharpening_amount = 0.0
 blur_strength = 0.15
 blur_radius = 0.0025
@@ -634,6 +645,7 @@ shading_mode = 1
 normal_mode = 1
 enable_blur = 0
 enable_linear_filtering = 0
+texture_filter = 0
 sharpening_amount = 0.0
 blur_strength = 0.15
 blur_radius = 0.0025
@@ -719,6 +731,7 @@ elevation_degrees = 60.50379
 # keep their earlier values until the client's static shadow is reproduced.
 # The sun is the client's terrain light, from the south at 45 degrees (azimuth 180, elevation 45); the
 # projected sprite shadows follow it.
+# Land and sprite textures take the client's plain bilinear (texture_filter 1): no pixel-art remap, no blur.
 # The full-featured painterly rendering with all effects enabled is UOD-Painterly, below.
 
 [kr.morning]
@@ -728,6 +741,7 @@ shading_mode = 2
 normal_mode = 0
 enable_blur = 0
 enable_linear_filtering = 1
+texture_filter = 1
 art_shadow_strength = 0.24
 sharpening_amount = 0.0
 blur_strength = 0.28
@@ -806,6 +820,7 @@ shading_mode = 2
 normal_mode = 0
 enable_blur = 0
 enable_linear_filtering = 1
+texture_filter = 1
 art_shadow_strength = 0.26
 sharpening_amount = 0.0
 blur_strength = 0.28
@@ -884,6 +899,7 @@ shading_mode = 2
 normal_mode = 0
 enable_blur = 0
 enable_linear_filtering = 1
+texture_filter = 1
 art_shadow_strength = 0.30
 sharpening_amount = 0.0
 blur_strength = 0.28
@@ -962,6 +978,7 @@ shading_mode = 2
 normal_mode = 0
 enable_blur = 0
 enable_linear_filtering = 1
+texture_filter = 1
 art_shadow_strength = 0.34
 sharpening_amount = 0.0
 blur_strength = 0.28
@@ -1046,6 +1063,7 @@ shading_mode = 2
 normal_mode = 1
 enable_blur = 1
 enable_linear_filtering = 1
+texture_filter = 0
 art_shadow_strength = 0.24
 sharpening_amount = 0.0
 blur_strength = 0.28
@@ -1124,6 +1142,7 @@ shading_mode = 2
 normal_mode = 1
 enable_blur = 1
 enable_linear_filtering = 1
+texture_filter = 0
 art_shadow_strength = 0.26
 sharpening_amount = 0.0
 blur_strength = 0.28
@@ -1202,6 +1221,7 @@ shading_mode = 2
 normal_mode = 1
 enable_blur = 1
 enable_linear_filtering = 1
+texture_filter = 0
 art_shadow_strength = 0.30
 sharpening_amount = 0.0
 blur_strength = 0.28
@@ -1280,6 +1300,7 @@ shading_mode = 2
 normal_mode = 1
 enable_blur = 1
 enable_linear_filtering = 1
+texture_filter = 0
 art_shadow_strength = 0.34
 sharpening_amount = 0.0
 blur_strength = 0.28

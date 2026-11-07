@@ -138,7 +138,9 @@ pub struct SceneUniform {
     pub render_zoom: f32,
     pub adaptive_zoom_simplification: f32,
     pub ec_reflection_camera_distance: f32,
-    pub _pad: f32,
+    /// How many times wider than the KR client's view the camera shows (`client_view_scale`); above 1 the client
+    /// texture filter emulates mip levels. Takes the former `_pad` slot.
+    pub client_view_scale: f32,
 }
 
 #[repr(C, align(16))]
@@ -239,6 +241,10 @@ pub struct LandEffectsUniform {
     pub kr_color_wash_strength: f32,
     /// World-tile wavelength for the broad KR color wash.
     pub kr_color_wash_scale: f32,
+
+    // --- Texture filter (vec4 slot 9) ---
+    /// `TEXTURE_FILTER_PIXEL_ART` or `TEXTURE_FILTER_CLIENT_BILINEAR`, for land and sprite textures.
+    pub texture_filter: u32,
 }
 
 /// Global lighting parameters shared across all shader types (land, art tiles, etc.).
@@ -329,6 +335,30 @@ pub const TERRAIN_SHADING_SMOOTH_PER_PIXEL: u32 = 0;
 /// the client's vertex normal, interpolated over the client's two triangles per cell, times the material colour.
 /// Matches `TERRAIN_SHADING_CLIENT_PER_VERTEX` in `world/land/land_bindings.wesl`.
 pub const TERRAIN_SHADING_CLIENT_PER_VERTEX: u32 = 1;
+
+/// `texture_filter`: pixel-art sampling, nearest, or with `enable_linear_filtering` a bilinear that only softens
+/// the texel seams.
+pub const TEXTURE_FILTER_PIXEL_ART: u32 = 0;
+/// `texture_filter`: the KR client's plain bilinear from a single level, on land and sprites. Zoomed out past the
+/// client's view, a box of bilinear taps stands in for the mip levels its textures do not have.
+/// Matches `TEXTURE_FILTER_CLIENT_BILINEAR` in `world/client_filter.wesl`.
+pub const TEXTURE_FILTER_CLIENT_BILINEAR: u32 = 1;
+
+/// The KR client's default view width in world units, where a cell edge is 1: `UOWorldViewer` +0x6c, the
+/// orthographic half-width, is 13, so the view is about 18.4 tiles across at any window size
+/// (results/uokr_atmosphere.md).
+pub const CLIENT_VIEW_WIDTH_WORLD_UNITS: f32 = 26.0;
+/// Smallest `client_view_scale` change worth re-uploading the material uniforms for.
+pub const CLIENT_VIEW_SCALE_EPSILON: f32 = 0.001;
+
+/// How many times wider than the KR client's view a camera shows: `SceneUniform::client_view_scale`.
+pub fn client_view_scale(projection: &Projection) -> f32 {
+    match projection {
+        Projection::Orthographic(ortho) => ortho.area.width() / CLIENT_VIEW_WIDTH_WORLD_UNITS,
+        // The perspective camera has no single view width; it samples one level everywhere.
+        _ => 1.0,
+    }
+}
 
 /// Land-specific lighting: parameters that require a 3D mesh with surface normals
 /// and a view vector, so they only apply to the terrain (not to flat art tiles).

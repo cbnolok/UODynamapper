@@ -1453,7 +1453,7 @@ pub fn sys_setup_terrain_cache(
                     adaptive_zoom_simplification: 0.0,
                     ec_reflection_camera_distance:
                         crate::core::render::scene::camera::PlayerCamera::BASE_OFFSET_FROM_PLAYER.length(),
-                    _pad: 0.0,
+                    client_view_scale: 1.0,
                 },
                 effects_uniform: Default::default(),
                 global_lighting_uniform: Default::default(),
@@ -1837,6 +1837,10 @@ mod tests {
             Shader::from_wesl(
                 include_str!("../../../assets/shaders/world/pixel_art_filters.wesl"),
                 "shaders/world/pixel_art_filters.wesl",
+            ),
+            Shader::from_wesl(
+                include_str!("../../../assets/shaders/world/client_filter.wesl"),
+                "shaders/world/client_filter.wesl",
             ),
             Shader::from_wesl(
                 include_str!("../../../assets/shaders/world/texture_data.wesl"),

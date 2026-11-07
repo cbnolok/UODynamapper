@@ -11,7 +11,8 @@ struct SceneUniform {
     render_zoom: f32,
     adaptive_zoom_simplification: f32,
     ec_reflection_camera_distance: f32,
-    _pad0_: f32,
+    // How many times wider than the KR client's 26-world-unit view the camera shows (client_filter.wesl).
+    client_view_scale: f32,
 }
 
 // Visual feature toggles and intensity parameters.
@@ -53,6 +54,8 @@ struct LandEffectsUniform {
     enable_kr_color_wash: u32,
     kr_color_wash_strength: f32,
     kr_color_wash_scale: f32,
+    // TEXTURE_FILTER_PIXEL_ART or TEXTURE_FILTER_CLIENT_BILINEAR (client_filter.wesl).
+    texture_filter: u32,
 }
 
 // Global lighting parameters shared across all shader types (land, art tiles, etc.).
