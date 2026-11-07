@@ -143,6 +143,7 @@ Inspects, extracts, and edits `.uddp` and `.uddpi` package files.
 | `replace` | Replace one logical path-addressed file and write a rebuilt package. |
 | `rebuild` | Rebuild a package image while preserving its logical files. |
 | `export-csv` | Export editable CSV metadata from supported packages. |
+| `export-kdl` | Write what a `paperdoll_ec.uddp` decides beneath each dress-layer item as `PaperdollOverrides.kdl` covers (`<stem>.PaperdollOverrides.kdl` beside it, or `--output`), one cover per item and set of bodies keeping the same garments, with the items' names as comments from the `tilemeta.uddp` beside it (or `--tilemeta`). Used as Dynamapper's `PaperdollOverrides.kdl`, it decides each garment of the decisions' slots as the package does; its slot rules also take off the garments the packer could not measure, which the stored decisions leave on. |
 | `import-csv` | Import edited CSV metadata into a rebuilt package. |
 | `diff` | Compare two packages or two metadata CSV files. |
 | `validate` | Check that packages (or directories of them) open with this build's readers: container, package hash, every entry decoded with its codec and dictionary, and the package's own reader. A `gumps_ec` packed with `--share-with` is also checked, gump by gump, against the `gumps_cc.uddp` in its folder, or noted as depending on one when there is none. Exits non-zero when any fails. |

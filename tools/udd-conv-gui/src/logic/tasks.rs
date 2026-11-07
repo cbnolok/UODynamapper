@@ -62,7 +62,7 @@ use udd_conv_cli::{
     package_info::get_package_info_string,
     package_validate::{report_lines, validate_inputs, ReportLineKind, ValidateCounts},
     extract::extract_package,
-    tool_cli::{diff_paths_report, export_csv_auto_report, hash_path_report, DiffKind},
+    tool_cli::{diff_paths_report, export_csv_auto_report, export_kdl_report, hash_path_report, DiffKind},
     upscale_profile_config::load_upscale_profile as load_upscale_profile_config,
 };
 use udd_conv::conversion_tables::{EC_MOBILE_ANIMATIONS_KDL, EC_TERRAIN_OVERRIDES_KDL, TERRAIN_TRANSCODE_KDL};
@@ -1571,6 +1571,22 @@ impl UddConvApp {
             .unwrap_or_else(|| file.display().to_string());
         self.spawn_task(format!("Export CSV: {}", file_name), move || {
             export_csv_auto_report(&file, None)
+        });
+    }
+
+    /// Writes the dress-layer decisions of the selected paperdoll_ec.uddp as PaperdollOverrides.kdl covers beside it,
+    /// as `tool export-kdl <FILE>` does, naming the items from the tilemeta.uddp beside it.
+    pub fn tool_export_kdl(&self) {
+        let Some(file) = self.tool_file_1.clone() else {
+            self.push_log("Select a paperdoll_ec.uddp before exporting its overrides.", LogLevel::Error);
+            return;
+        };
+        let file_name = file
+            .file_name()
+            .map(|name| name.to_string_lossy().into_owned())
+            .unwrap_or_else(|| file.display().to_string());
+        self.spawn_task(format!("Export Paperdoll Overrides: {}", file_name), move || {
+            export_kdl_report(&file, None, None)
         });
     }
 

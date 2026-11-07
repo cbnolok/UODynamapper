@@ -66,6 +66,7 @@ Common commands:
 - `rebuild`: rebuild a package image while preserving logical files.
 - `hash-path`: compute the `xxh64` hash used by path-addressed packages.
 - `export-csv`: export editable package metadata.
+- `export-kdl`: write the dress-layer decisions of `paperdoll_ec.uddp` as `PaperdollOverrides.kdl` covers, named from `tilemeta.uddp`.
 - `import-csv`: import controlled metadata edits after invariant checks.
 - `validate`: decode every entry and run each package's own reader; exits non-zero on any failure.
 

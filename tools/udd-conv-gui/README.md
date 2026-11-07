@@ -91,6 +91,7 @@ filter controls remain the fallback for unmatched targets.
 | `replace` | CLI only | |
 | `rebuild` | CLI only | |
 | `export-csv` | Partial: Tools | `--kind` (always `auto`), `--output` |
+| `export-kdl` | Partial: Tools, Export Paperdoll Overrides | `--tilemeta`, `--output` (the GUI names the items from the `tilemeta.uddp` beside the package and writes next to it) |
 | `import-csv` | CLI only | |
 | `validate` | Yes: Tools, Validate Packages; also Validate packages after packing (Assets and World) | |
 | `diff` | Partial: Tools | `--kind` (always `auto`) |

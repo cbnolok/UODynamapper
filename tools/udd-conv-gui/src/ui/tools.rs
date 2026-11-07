@@ -68,6 +68,16 @@ impl UddConvApp {
                         if ui.button("🧾 Export CSV Metadata").clicked() {
                             self.tool_export_csv();
                         }
+                        if ui
+                            .button("📝 Export Paperdoll Overrides")
+                            .on_hover_text(
+                                "Write what a paperdoll_ec.uddp takes off beneath each robe as PaperdollOverrides.kdl \
+                                 covers beside it, named from the tilemeta.uddp beside it.",
+                            )
+                            .clicked()
+                        {
+                            self.tool_export_kdl();
+                        }
                     });
                 });
             });

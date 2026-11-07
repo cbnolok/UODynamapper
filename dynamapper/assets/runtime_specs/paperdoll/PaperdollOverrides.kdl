@@ -33,7 +33,8 @@
 //   one in the file with a garment rule naming the garment decides it; else the last one with a slot rule (or none at
 //   all) decides; else the stored decision does. Item ids are decimal or 0x hex; slots are those of WearableRules.kdl.
 //   Unlike the stored decisions, a slot rule also takes off the garments the packer could not measure. A cover on
-//   another slot than "dress" adds a rule the package has none of.
+//   another slot than "dress" adds a rule the package has none of. `udd-cli tool export-kdl paperdoll_ec.uddp` (the
+//   converter GUI's Tools tab, Export Paperdoll Overrides) writes the decisions a package stores in this syntax.
 //
 // Examples:
 //

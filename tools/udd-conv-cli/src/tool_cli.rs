@@ -9,7 +9,8 @@ use log::info;
 use clap::{Parser, Subcommand, ValueEnum};
 use color_eyre::eyre::{self, WrapErr};
 use csv::{ReaderBuilder, StringRecord, Trim, WriterBuilder};
-use udd_assets::{TexArtCcPackage, TexArtEcPackage, TexLandEcPackage};
+use udd_assets::paperdoll_overrides::{export_dress_decisions, PAPERDOLL_OVERRIDES_FILE_NAME};
+use udd_assets::{PaperdollEcPackage, TexArtCcPackage, TexArtEcPackage, TexLandEcPackage, TileMetaPackage};
 use udd_assets::tex_art_cc::TexArtCcSlotRecord;
 use udd_assets::tex_art_ec::TexArtEcSlotRecord;
 use udd_assets::tex_land_ec::{TexLandEcSlotRecord, TexLandEcTerrainProvenanceRecord};
@@ -78,6 +79,19 @@ enum Commands {
         #[arg(long)]
         output: Option<PathBuf>,
     },
+    /// Write what a paperdoll_ec.uddp decides beneath each dress-layer item as PaperdollOverrides.kdl covers,
+    /// with the items' names as comments. Used as Dynamapper's PaperdollOverrides.kdl, the file decides each
+    /// garment of the decisions' slots as the package does.
+    ExportKdl {
+        file: PathBuf,
+        /// The tilemeta.uddp that names the items; by default the one beside the package. Without it the
+        /// covers name items by id alone.
+        #[arg(long)]
+        tilemeta: Option<PathBuf>,
+        /// By default `<package stem>.PaperdollOverrides.kdl` beside the package.
+        #[arg(long)]
+        output: Option<PathBuf>,
+    },
     /// Import edited CSV metadata into a rebuilt package.
     ImportCsv {
         file: PathBuf,
@@ -103,6 +117,9 @@ enum Commands {
         kind: DiffKind,
     },
 }
+
+/// The name the packers give tilemeta.uddp, looked for beside a package.
+const TILEMETA_PACKAGE_NAME: &str = "tilemeta.uddp";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum, Default)]
 enum CsvKind {
@@ -136,6 +153,47 @@ pub fn export_csv_auto_report(file: &Path, output: Option<&Path>) -> eyre::Resul
         file.display(),
         output_path.display()
     ))
+}
+
+/// Writes the dress-layer decisions of the paperdoll_ec.uddp `file` as `PaperdollOverrides.kdl` covers
+/// (`udd_assets::paperdoll_overrides::export_dress_decisions`) to `output`, by default
+/// `<stem>.PaperdollOverrides.kdl` beside it, naming the items from `tilemeta`, by default the tilemeta.uddp beside
+/// it: a default one that is missing or unreadable leaves the items unnamed, with a warning.
+pub fn export_kdl_report(file: &Path, tilemeta: Option<&Path>, output: Option<&Path>) -> eyre::Result<String> {
+    let package = PaperdollEcPackage::load(file).wrap_err_with(|| format!("read {}", file.display()))?;
+    let tilemeta_path = tilemeta.map_or_else(|| file.with_file_name(TILEMETA_PACKAGE_NAME), Path::to_path_buf);
+    let names = match TileMetaPackage::load(&tilemeta_path) {
+        Ok(names) => Some(names),
+        Err(error) if tilemeta.is_none() => {
+            log::warn!("No item names for the covers: {error:#}");
+            None
+        }
+        Err(error) => return Err(error.wrap_err(format!("read {}", tilemeta_path.display()))),
+    };
+    let name = |item_id: u32| {
+        let tile = names.as_ref()?.item_tile(item_id)?;
+        Some(tile.name_ascii().trim().to_string()).filter(|name| !name.is_empty())
+    };
+    let source = file.file_name().map_or_else(|| file.display().to_string(), |name| name.to_string_lossy().into_owned());
+    let decisions = package.dress_decisions();
+    let text = export_dress_decisions(decisions, &source, name);
+    let output_path = output.map_or_else(|| default_kdl_export_output(file), Path::to_path_buf);
+    fs::write(&output_path, text).wrap_err_with(|| format!("write {}", output_path.display()))?;
+    let named = match &names {
+        Some(_) => format!(", items named from '{}'", tilemeta_path.display()),
+        None => String::new(),
+    };
+    Ok(format!(
+        "Exported the {} dress-layer decisions of '{}' to '{}'{named}.",
+        decisions.decisions.len(),
+        file.display(),
+        output_path.display()
+    ))
+}
+
+fn default_kdl_export_output(file: &Path) -> PathBuf {
+    let stem = file.file_stem().and_then(|value| value.to_str()).unwrap_or("paperdoll_ec");
+    file.with_file_name(format!("{stem}.{PAPERDOLL_OVERRIDES_FILE_NAME}"))
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -224,6 +282,9 @@ where
             CsvKind::Slots => export_slots_csv_auto(&file, output.as_deref())?,
             CsvKind::TerrainProvenance => export_terrain_provenance_csv(&file, output.as_deref())?,
         },
+        Commands::ExportKdl { file, tilemeta, output } => {
+            info!("{}", export_kdl_report(&file, tilemeta.as_deref(), output.as_deref())?);
+        }
         Commands::ImportCsv {
             file,
             kind,
