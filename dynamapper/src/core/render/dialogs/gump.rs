@@ -1422,7 +1422,7 @@ fn gump_paperdoll_layers(
         let drawn: Vec<(usize, u32)> =
             drawn_layers.iter().filter_map(|&layer| worn[layer].map(|item_id| (layer, item_id))).collect();
         let taken = taken_off(&drawn, |covering, garment| {
-            order.takes_off(covering, garment, || stored.takes_off(covering.1, garment))
+            order.takes_off(covering, garment, stored.body_frame, || stored.takes_off(covering.1, garment))
         });
         if taken.is_empty() {
             layers.extend(drawn_layers.into_iter().filter_map(|layer| worn_layers[layer].take()));

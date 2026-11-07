@@ -3,154 +3,21 @@
 //! measured, for each dress-layer item on each player body, each garment of those slots the client draws beneath it,
 //! and stored the garments that show beyond its edges in paperdoll_ec.uddp
 //! (`udd_assets::paperdoll_ec::PaperdollEcDressDecisions`, measured by `udd_conv::paperdoll_ec_dress`): every other
-//! garment of those slots drawn beneath the item is taken off. `PaperdollOverrides.kdl` is the user's manual layer over
-//! those decisions: a cover replaces the stored decision for its items. Only what the client draws beneath the
+//! garment of those slots drawn beneath the item is taken off. `PaperdollOverrides.kdl`
+//! (`udd_assets::paperdoll_overrides`) is the user's manual layer over those decisions: a cover's garment rules beat
+//! its slot rules, which beat the stored decision for its items. Only what the client draws beneath the
 //! covering item is taken off; a taken-off item counts as not worn, so the client's rules it would set off, as plate
 //! legs hiding the shoes, do not apply. The gump paperdolls apply them too, on the frame the 3D paperdoll draws for the profile's body: the gump art
 //! shows the armour's edges past a robe as well, and the decisions take off no garment the gumps show in plain view
 //! (docs/agent_notes/ec_paperdoll_robe_override.md). The uocf editor keeps the client's rules.
 
 use color_eyre::eyre;
-use knuffel::Decode;
 use udd_assets::paperdoll_ec::PaperdollEcFrameRecord;
+pub use udd_assets::paperdoll_overrides::{PaperdollOverrides, PAPERDOLL_OVERRIDES_FILE_NAME};
 use uocf::enhanced::animationframe::FrameEntry;
 use uocf::enhanced::paperdoll::{
-    item_frame, item_layer, plan, slot_layer, PaperdollDefinitions, PaperdollFrames, PaperdollPlan, WearableRules,
-    Wearer, WornItem, LAYER_COUNT, SLOT_NAMES,
+    item_frame, item_layer, plan, PaperdollDefinitions, PaperdollFrames, PaperdollPlan, WearableRules, Wearer, WornItem,
 };
-
-pub const PAPERDOLL_OVERRIDES_FILE_NAME: &str = "PaperdollOverrides.kdl";
-const ITEMS_PROPERTY: &str = "items";
-const ANY_ITEM: &str = "any";
-
-/// `cover "<slot>" items="any"|"<ids>" { hide "<slot>"; except items="<ids>" }`, decoded by `OverridesKdl`.
-pub const PAPERDOLL_OVERRIDES_SCHEMA: &[uot_kdl::strict::NodeSchema] = &[uot_kdl::strict::NodeSchema {
-    name: "cover",
-    properties: &[ITEMS_PROPERTY],
-    children: &[uot_kdl::strict::NodeSchema::leaf("hide", &[]), uot_kdl::strict::NodeSchema::leaf("except", &[ITEMS_PROPERTY])],
-}];
-
-#[derive(Decode)]
-struct OverridesKdl {
-    #[knuffel(children(name = "cover"))]
-    covers: Vec<CoverKdl>,
-}
-
-#[derive(Decode)]
-struct CoverKdl {
-    #[knuffel(argument)]
-    slot: String,
-    #[knuffel(property)]
-    items: String,
-    #[knuffel(children(name = "hide"))]
-    hides: Vec<HideKdl>,
-    #[knuffel(children(name = "except"))]
-    excepts: Vec<ExceptKdl>,
-}
-
-#[derive(Decode)]
-struct HideKdl {
-    #[knuffel(argument)]
-    slot: String,
-}
-
-#[derive(Decode)]
-struct ExceptKdl {
-    #[knuffel(property)]
-    items: String,
-}
-
-/// While an item of `layer` among `items` is drawn, the `hidden` layers drawn beneath it are taken off.
-#[derive(Debug, Clone, PartialEq, Eq)]
-struct Cover {
-    layer: usize,
-    /// The covering items; `None` is any.
-    items: Option<Vec<u32>>,
-    /// Bit n set: layer n is taken off.
-    hidden: u32,
-    /// Covering items the cover leaves alone.
-    except: Vec<u32>,
-}
-
-impl Cover {
-    fn covers_with(&self, item_id: u32) -> bool {
-        self.items.as_ref().is_none_or(|items| items.contains(&item_id)) && !self.except.contains(&item_id)
-    }
-}
-
-/// The user's paperdoll overrides. The default has none: the stored decisions alone.
-#[derive(Debug, Default, Clone, PartialEq, Eq)]
-pub struct PaperdollOverrides {
-    covers: Vec<Cover>,
-}
-
-/// A decimal or `0x` hexadecimal item id.
-fn parse_item_id(text: &str) -> Option<u32> {
-    const HEX_RADIX: u32 = 16;
-    let text = text.trim();
-    match text.strip_prefix("0x").or_else(|| text.strip_prefix("0X")) {
-        Some(hex) => u32::from_str_radix(hex, HEX_RADIX).ok(),
-        None => text.parse().ok(),
-    }
-}
-
-/// A comma-separated list of item ids.
-fn parse_item_ids(source_name: &str, items: &str) -> eyre::Result<Vec<u32>> {
-    items
-        .split(',')
-        .map(|part| {
-            parse_item_id(part).ok_or_else(|| {
-                eyre::eyre!(
-                    "{source_name}: items: `{}` is not an item id; expected ids like 0x1F03,7939",
-                    part.trim()
-                )
-            })
-        })
-        .collect()
-}
-
-fn layer(source_name: &str, slot: &str) -> eyre::Result<usize> {
-    slot_layer(slot).map_err(|_| eyre::eyre!("{source_name}: unknown slot `{slot}`; expected one of {SLOT_NAMES:?}"))
-}
-
-/// The mask with bit n set for each layer n of `layers`.
-pub fn layer_mask(layers: impl IntoIterator<Item = usize>) -> u32 {
-    layers.into_iter().filter(|&layer| layer < LAYER_COUNT).fold(0, |mask, layer| mask | 1 << layer)
-}
-
-impl PaperdollOverrides {
-    pub fn decode(source_name: &str, text: &str) -> eyre::Result<Self> {
-        let decoded: OverridesKdl = uot_kdl::strict::decode(source_name, text, PAPERDOLL_OVERRIDES_SCHEMA)?;
-        let mut covers = Vec::with_capacity(decoded.covers.len());
-        for cover in decoded.covers {
-            let cover_layer = layer(source_name, &cover.slot)?;
-            let items = if cover.items.trim().eq_ignore_ascii_case(ANY_ITEM) {
-                None
-            } else {
-                Some(parse_item_ids(source_name, &cover.items)?)
-            };
-            let mut hidden = Vec::with_capacity(cover.hides.len());
-            for hide in &cover.hides {
-                let hidden_layer = layer(source_name, &hide.slot)?;
-                eyre::ensure!(hidden_layer != cover_layer, "{source_name}: `cover \"{}\"` hides its own slot", cover.slot);
-                hidden.push(hidden_layer);
-            }
-            let mut except = Vec::new();
-            for node in &cover.excepts {
-                except.extend(parse_item_ids(source_name, &node.items)?);
-            }
-            covers.push(Cover { layer: cover_layer, items, hidden: layer_mask(hidden), except });
-        }
-        Ok(Self { covers })
-    }
-
-    /// The layers item `item_id`, worn on `layer`, takes off beneath it by the last cover that applies to it (bit n:
-    /// layer n); `None` when none does, and the stored decision holds. An item a cover excepts falls back to the covers
-    /// before it, then to the stored decision; a cover that hides nothing keeps everything beneath its items.
-    pub fn hidden_layers(&self, layer: usize, item_id: u32) -> Option<u32> {
-        self.covers.iter().rev().find(|cover| cover.layer == layer && cover.covers_with(item_id)).map(|cover| cover.hidden)
-    }
-}
 
 /// The draw order of Dynamapper's paperdolls: the client's rules (`WearableRules.kdl`, shared with the uocf editor),
 /// then the user's overrides over the decisions paperdoll_ec.uddp stores.
@@ -161,11 +28,18 @@ pub struct PaperdollOrder {
 }
 
 impl PaperdollOrder {
-    /// Whether the drawn item `covering` takes off `garment`, drawn beneath it (each its layer and id): the overrides'
-    /// cover for it, else `stored`, the decision the package stores for it on the drawn body.
-    pub fn takes_off(&self, covering: (usize, u32), garment: (usize, u32), stored: impl FnOnce() -> bool) -> bool {
-        match self.overrides.hidden_layers(covering.0, covering.1) {
-            Some(hidden) => hidden & 1 << garment.0 != 0,
+    /// Whether the drawn item `covering` takes off `garment`, drawn beneath it (each its layer and id), on the body
+    /// frame `body_frame` (its number; `None` without one): the overrides' decision ([`PaperdollOverrides::decide`]),
+    /// else `stored`, the decision the package stores for it on the drawn body.
+    pub fn takes_off(
+        &self,
+        covering: (usize, u32),
+        garment: (usize, u32),
+        body_frame: Option<u32>,
+        stored: impl FnOnce() -> bool,
+    ) -> bool {
+        match self.overrides.decide(covering, body_frame, garment) {
+            Some(decision) => decision.takes_off,
             None => stored(),
         }
     }
@@ -252,7 +126,9 @@ where
             .map(|frame| u32::from(frame.frame.entry.frame_number()));
         let drawn: Vec<(usize, u32)> = planned.frames.iter().filter_map(|frame| frame.item).collect();
         let taken = taken_off(&drawn, |covering, garment| {
-            order.takes_off(covering, garment, || body_frame.is_some_and(|body| stored(body, covering.1, garment)))
+            order.takes_off(covering, garment, body_frame, || {
+                body_frame.is_some_and(|body| stored(body, covering.1, garment))
+            })
         });
         if taken.is_empty() {
             return Ok((planned, taken_in_all));
@@ -269,12 +145,11 @@ mod measure;
 #[cfg(test)]
 mod tests {
     use super::*;
-    use uocf::enhanced::paperdoll::{FrameSets, SortedTileArt, MALE_SET};
+    use uocf::enhanced::paperdoll::{slot_layer, FrameSets, SortedTileArt, MALE_SET};
     use uocf::enhanced::tileart::TileArtEntry;
 
     const BODY: u32 = 400;
     const ROBE: u32 = 0x1F03;
-    const EPAULETS: u32 = 39301;
     const SHIRT: u32 = 0x1517;
     const SASH: u32 = 5441;
     const PLATE_LEGS: u32 = 0x1411;
@@ -284,10 +159,6 @@ mod tests {
 
     fn overrides(content: &str) -> PaperdollOverrides {
         PaperdollOverrides::decode(PAPERDOLL_OVERRIDES_FILE_NAME, content).unwrap()
-    }
-
-    fn overrides_error(content: &str) -> String {
-        format!("{:#}", PaperdollOverrides::decode(PAPERDOLL_OVERRIDES_FILE_NAME, content).unwrap_err())
     }
 
     fn slot(name: &str) -> usize {
@@ -300,31 +171,29 @@ mod tests {
         assert_eq!(overrides(BUNDLED_OVERRIDES), PaperdollOverrides::default());
     }
 
-    /// Whether `order` takes `garment` off beneath `covering` on the dress layer, with `stored` the stored decision.
+    /// Whether `order` takes `garment` off beneath `covering` on the dress layer of body frame `BODY`, with `stored`
+    /// the stored decision.
     fn takes_off(order: &PaperdollOrder, covering: u32, garment: (&str, u32), stored: bool) -> bool {
-        order.takes_off((slot("dress"), covering), (slot(garment.0), garment.1), || stored)
+        order.takes_off((slot("dress"), covering), (slot(garment.0), garment.1), Some(BODY), || stored)
     }
 
-    /// The last cover that applies to an item replaces the stored decision; an exception falls back to the covers
-    /// before it, then to the stored decision; a cover without hides keeps everything.
+    /// The overrides decide before the stored decision, which holds where they decide nothing: a garment rule for the
+    /// garment, else a slot rule, of the covers that apply on the body drawn.
     #[test]
-    fn the_last_cover_that_applies_replaces_the_stored_decision() {
+    fn the_overrides_decide_before_the_stored_decision() {
         let order = PaperdollOrder {
             rules: WearableRules::default(),
             overrides: overrides(
-                "cover \"dress\" items=\"any\" {\n    hide \"torso\"\n    except items=\"39301\"\n}\n\
-                 cover \"dress\" items=\"0x1F03\" {\n    hide \"legs\"\n}\n\
-                 cover \"dress\" items=\"0x1F04\"\n",
+                "cover \"dress\" items=\"0x1F03\" {\n    hide \"legs\"\n    show items=\"0x1411\"\n}\n\
+                 cover \"dress\" items=\"5441\" bodies=\"401\" {\n    hide \"torso\"\n}\n",
             ),
         };
         let shirt = ("torso", SHIRT);
         let plate_legs = ("legs", PLATE_LEGS);
-        assert!(takes_off(&order, ROBE, plate_legs, false) && !takes_off(&order, ROBE, shirt, true));
-        assert!(!takes_off(&order, ROBE + 1, shirt, true), "a cover without hides");
-        assert!(takes_off(&order, SASH, shirt, false) && !takes_off(&order, SASH, plate_legs, true), "the first cover");
-        assert!(takes_off(&order, EPAULETS, shirt, true) && !takes_off(&order, EPAULETS, shirt, false), "an exception");
-        let cape = order.takes_off((slot("cape"), ROBE), (slot("torso"), SHIRT), || true);
-        assert!(cape, "another slot: the stored decision");
+        assert!(!takes_off(&order, ROBE, plate_legs, true), "a garment rule");
+        assert!(takes_off(&order, ROBE, ("legs", 0x1539), false), "a slot rule");
+        assert!(!takes_off(&order, ROBE, shirt, true), "a slot the cover keeps");
+        assert!(takes_off(&order, SASH, shirt, true) && !takes_off(&order, SASH, shirt, false), "another body");
         assert!(takes_off(&PaperdollOrder::default(), ROBE, shirt, true));
         assert!(!takes_off(&PaperdollOrder::default(), ROBE, shirt, false));
     }
@@ -425,27 +294,5 @@ mod tests {
         });
         sash.sort_by_key(|record| record.tile_id);
         assert!(!measured(&sash, SASH));
-    }
-
-    #[test]
-    fn overrides_reject_unknown_nodes_slots_and_items() {
-        assert_eq!(
-            overrides_error("covers \"dress\" items=\"any\"\n"),
-            "PaperdollOverrides.kdl: line 1, column 1: unknown node `covers` at the top level: expected `cover`"
-        );
-        assert_eq!(
-            overrides_error("cover \"dress\" items=\"any\" {\n    hide \"torso\" when=\"always\"\n}\n"),
-            "PaperdollOverrides.kdl: line 2, column 18: `hide` takes no properties, found `when`"
-        );
-        assert_eq!(
-            overrides_error("cover \"dress\" items=\"any\" {\n    show \"torso\"\n}\n"),
-            "PaperdollOverrides.kdl: line 2, column 5: unknown node `show` in `cover`: expected `hide` or `except`"
-        );
-        assert!(overrides_error("cover \"robe\" items=\"any\"\n").contains("unknown slot `robe`"));
-        assert!(overrides_error("cover \"dress\" items=\"any\" {\n    hide \"shirt\"\n}\n").contains("unknown slot `shirt`"));
-        assert!(overrides_error("cover \"dress\" items=\"any\" {\n    hide \"dress\"\n}\n").contains("hides its own slot"));
-        assert!(overrides_error("cover \"dress\" items=\"robes\"\n").contains("`robes` is not an item id"));
-        assert!(overrides_error("cover \"dress\" items=\"any\" {\n    except items=\"any\"\n}\n").contains("`any` is not an item id"));
-        assert!(overrides_error("cover \"dress\"\n").contains(ITEMS_PROPERTY));
     }
 }

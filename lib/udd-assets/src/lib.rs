@@ -6,7 +6,7 @@ pub mod textures;
 
 pub use animation::{mobile_anim_cc, mobile_anim_ec, paperdoll_ec};
 pub use metadata::{hues, map_metadata, tilemeta, world_lights};
-pub use overrides::{ec_surface_overrides, ec_terrain_overrides, eckr_terrain_kdl};
+pub use overrides::{ec_surface_overrides, ec_terrain_overrides, eckr_terrain_kdl, paperdoll_overrides};
 pub use textures::{tex_art_cc, tex_art_ec, tex_aux_ec, tex_land_cc, tex_land_ec};
 
 pub mod common;

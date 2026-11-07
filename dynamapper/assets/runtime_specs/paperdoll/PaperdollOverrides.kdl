@@ -15,20 +15,37 @@
 // shoes, do not apply. The gump paperdolls take the decision for the 3D body of their profile, and
 // only while paperdoll_ec.uddp is loaded; the gump art shows the edges of armour past a robe as well.
 //
-// This file ships empty. A cover replaces the stored decision for its items:
+// This file ships empty. A cover decides for its covering items, over the stored decisions:
 //
-// cover "<slot>" items="any"|"<ids>" { hide "<slot>"; except items="<ids>" }
-//   While an item of the covering slot among `items` is drawn, the hidden slots drawn beneath it are taken off, and
-//   only those. A cover with no `hide` keeps everything beneath its items, as the client draws it. When several covers
-//   apply to an item, the last one in the file decides. `except` lists covering items the cover leaves alone: they
-//   follow the covers before it, else the stored decision. Item ids are decimal or 0x hex; slots are those of
-//   WearableRules.kdl. A cover on another slot than "dress" adds a rule the package has none of.
+// cover "<slot>" items="any"|"<ids>" [bodies="<body frames>"] {
+//     hide "<slot>"; hide items="<ids>"; show items="<ids>"; except items="<ids>"
+// }
+//   While an item of the covering slot among `items` is drawn on one of `bodies` (the number of the 3D body frame
+//   drawn: 400 and 401 human, 605 and 606 elf, 666 and 667 gargoyle, male then female; every body without `bodies`),
+//   the cover decides what is taken off beneath it, and only among what the client draws there:
+//   - Garment rules: `show items=` keeps those garments, `hide items=` takes them off. One cover may not do both to a
+//     garment.
+//   - Slot rules: `hide "<slot>"` takes off the garments of that slot no garment rule names. A cover with no rule at
+//     all keeps everything beneath its items, as the client draws it; a cover with garment rules alone leaves the other
+//     garments to the covers before it and the stored decision.
+//   - `except` lists covering items the cover leaves alone.
+//   Precedence: garment rules beat slot rules, which beat the stored decision. Among the covers that apply, the last
+//   one in the file with a garment rule naming the garment decides it; else the last one with a slot rule (or none at
+//   all) decides; else the stored decision does. Item ids are decimal or 0x hex; slots are those of WearableRules.kdl.
+//   Unlike the stored decisions, a slot rule also takes off the garments the packer could not measure. A cover on
+//   another slot than "dress" adds a rule the package has none of.
 //
 // Examples:
 //
 // The tabard keeps most shirts beneath it (the stored decision: they show around it); take them off anyway:
 //   cover "dress" items="0xA412" {
 //       hide "torso"
+//   }
+//
+// Keep the fancy shirt beneath the plain robe on the human male, and take the doublet off there:
+//   cover "dress" items="0x1F03" bodies="400" {
+//       show items="0x1EFD"
+//       hide items="0x1F7B"
 //   }
 //
 // Draw every robe as the client draws it:

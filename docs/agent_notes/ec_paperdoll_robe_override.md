@@ -98,12 +98,21 @@ them.
 ## Dynamapper
 
 `core/render/dialogs/paperdoll_overrides.rs` applies the decisions to both of
-Dynamapper's paperdolls, under the user's `PaperdollOverrides.kdl` (strict
-schema; a cover replaces the stored decision for its items, the last cover that
-applies decides, the bundled file holds comments only). Only what the client
-draws beneath the item is taken off; a taken-off item counts as not worn and the
-client's order is taken again, so taking off plate legs brings the shoes back.
-The uocf editor keeps the client's rules.
+Dynamapper's paperdolls, under the user's `PaperdollOverrides.kdl`
+(`udd_assets::paperdoll_overrides`, strict schema; the bundled file holds
+comments only). A cover decides for its covering items, on its `bodies=` (body
+frame numbers; every body without it). Inside it, `show items=` keeps those
+garments and `hide items=` takes them off (garment rules); `hide "<slot>"`
+takes off the rest of that slot (slot rules); `except items=` leaves covering
+items alone. Precedence: garment rules beat slot rules, which beat the stored
+decision; among the covers that apply, the last with a garment rule naming the
+garment decides it, else the last with a slot rule (a cover with no rule keeps
+everything), else the stored decision. A cover with garment rules alone leaves
+the other garments to the covers before it. Slot rules are literal: they also
+take off the garments the packer could not measure, which the stored decisions
+leave on. Only what the client draws beneath the item is taken off; a taken-off
+item counts as not worn and the client's order is taken again, so taking off
+plate legs brings the shoes back. The uocf editor keeps the client's rules.
 
 The gump paperdolls take the decision for the frame the 3D paperdoll draws for
 the profile's body, and none without paperdoll_ec.uddp. The gump art shows the
