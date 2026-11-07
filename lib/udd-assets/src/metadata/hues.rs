@@ -8,6 +8,7 @@ use color_eyre::eyre::{self, Context};
 use udd_container::UddpReader;
 
 use crate::common::{read_path_entry, read_path_entry_cow};
+use uocf::enhanced::hues::{EcHueTable, EcHueTables, HUE_TABLE_ENTRIES};
 
 pub const HUES_METADATA_ENTRY_PATH: &str = "metadata/hues.csv";
 pub const HUES_TEXTURE_ENTRY_PATH: &str = "textures/hues.rgba8888";
@@ -18,6 +19,10 @@ pub const MAX_HUE_ID: u16 = uocf::enhanced::hues::MAX_EC_HUES;
 pub const HUE_STRIP_WIDTH: u32 = uocf::enhanced::hues::HUE_STRIP_WIDTH;
 pub const HUES_TEXTURE_WIDTH: u32 = 1024;
 pub const HUES_TEXTURE_HEIGHT: u32 = uocf::enhanced::hues::HUES_ATLAS_HEIGHT;
+/// Bytes of one RGBA8888 texel of `HUES_TEXTURE_ENTRY_PATH`.
+const TEXEL_BYTES: usize = 4;
+// A strip is a whole hue table: texel `x` of a hue's strip is the colour of red byte `x`.
+const _: () = assert!(HUE_STRIP_WIDTH as usize == HUE_TABLE_ENTRIES);
 
 const HUES_CSV_HEADER: [&str; 8] = [
     "hue_id",
@@ -168,6 +173,27 @@ impl HuesPackage {
 
     pub fn texture_bytes(&self) -> &[u8] {
         &self.texture_bytes
+    }
+
+    /// The table of a hue, its strip of the texture: entry `x` is the colour a hueable texel of red byte `x` takes
+    /// (`uocf::enhanced::hues::EcHueTable`). `None` for a hue the package does not hold.
+    pub fn hue_table(&self, hue_id: u16) -> Option<EcHueTable> {
+        let coord = self.texture_coord_for_hue(hue_id)?;
+        let start = (coord.y * HUES_TEXTURE_WIDTH + coord.x) as usize * TEXEL_BYTES;
+        let strip = self.texture_bytes.get(start..start + HUE_TABLE_ENTRIES * TEXEL_BYTES)?;
+        let mut entries = [[0u8; TEXEL_BYTES]; HUE_TABLE_ENTRIES];
+        for (entry, texel) in entries.iter_mut().zip(strip.chunks_exact(TEXEL_BYTES)) {
+            entry.copy_from_slice(texel);
+        }
+        Some(EcHueTable { entries })
+    }
+
+    /// The tables of every hue the package holds, keyed by hue number as `Hues.uop`'s bitmaps.
+    pub fn ec_hue_tables(&self) -> EcHueTables {
+        let tables = (1..=MAX_HUE_ID)
+            .filter_map(|hue_id| Some((hue_id, self.hue_table(hue_id)?)))
+            .collect();
+        EcHueTables { tables }
     }
 
     pub fn read_texture_bytes(&self) -> eyre::Result<Vec<u8>> {

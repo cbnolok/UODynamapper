@@ -27,6 +27,9 @@ pub struct HuesOptions {
 #[cfg(test)]
 #[path = "hues/source_conversion_tests.rs"]
 mod source_conversion_tests;
+#[cfg(test)]
+#[path = "hues/client_tables_tests.rs"]
+mod client_tables_tests;
 
 impl Default for HuesOptions {
     fn default() -> Self {
