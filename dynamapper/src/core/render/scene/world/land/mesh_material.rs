@@ -387,7 +387,10 @@ pub enum LandShaderMode {
 pub struct LandShaderModePresets {
     pub classic: LandRenderStylePresetsPerMode,
     pub enhanced: LandRenderStylePresetsPerMode,
+    /// The faithful KR client look (KR content, shading_mode 2, post_process_profile 2).
     pub kr: LandRenderStylePresetsPerMode,
+    /// Dynamapper's painterly look on the same KR content and shader paths as `kr`; only the values differ.
+    pub painterly: LandRenderStylePresetsPerMode,
     pub default_preset: String,
 }
 

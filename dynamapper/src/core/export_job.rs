@@ -5,7 +5,7 @@
 //! RGBA8 pixels first, then the sidecar, each written as `*.tmp` and renamed. The contract is
 //! `docs/agent_notes/proposals/2026-11-01-web-map-export.md`; the tool's side is `tools/webmap-export-cli`.
 //! No interactive state is touched: settings are overridden in memory only and never saved.
-use crate::configs::shader_presets::UniformState;
+use crate::configs::shader_presets::{UniformState, CLASSIC_PRESET_GROUP, PAINTERLY_PRESET_GROUP};
 use crate::console_logger::{self, LogAbout, LogSev};
 use crate::core::app_states::AppState;
 use crate::core::controls::teleport::teleport_player;
@@ -185,9 +185,10 @@ impl ExportJob {
     }
 
     fn lighting_preset_key(&self) -> String {
+        // EC exports keep the painterly look they had before KR-like became the faithful client look.
         let style = match self.texture_source {
-            ClientTextureSource::Cc => "classic",
-            ClientTextureSource::Ec => "kr",
+            ClientTextureSource::Cc => CLASSIC_PRESET_GROUP,
+            ClientTextureSource::Ec => PAINTERLY_PRESET_GROUP,
         };
         format!("{style}.{EXPORT_LIGHTING_PERIOD}")
     }

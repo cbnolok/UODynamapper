@@ -5,13 +5,17 @@
 //      0 = Classic 2D (vertex/Gouraud; faithful to original)
 //      1 = Enhanced 2D (fragment; subtle improvements, still faithful)
 //      2 = KR-like     (fragment; painterly, vibrant, rim + gloom)
+// - Render styles pick a preset group: Classic, Enhanced, KR-like (the faithful KR client
+//   look) and UOD-Painterly (the painterly KR look). KR-like and UOD-Painterly both use
+//   shading mode 2 and the KR content; only their preset values differ.
 
 use super::super::scene::world::land::mesh_material::*;
 use crate::core::controls::input_actions::ActionToggleShaderSettings;
 use crate::{
     configs::shader_presets::{
-        build_save_presets, reset_preset_to_factory, save_shader_settings,
-        store_active_preset, FactoryShaderPresets, UniformState,
+        build_save_presets, get_preset_slot, reset_preset_to_factory, save_shader_settings,
+        store_active_preset, FactoryShaderPresets, UniformState, CLASSIC_PRESET_GROUP,
+        ENHANCED_PRESET_GROUP, KR_PRESET_GROUP, PAINTERLY_PRESET_GROUP,
     },
     core::render::{dialogs, scene::camera::UiCameraResource},
     impl_tracked_plugin,
@@ -54,16 +58,68 @@ fn sys_shader_ui_toggle(
     state.open = !state.open;
 }
 
-/// Basic-Controls "Render Style" presets: `(label, shading_mode, post_process_profile, tooltip)`.
+/// One Basic-Controls "Render Style": the preset group it loads, its land shading mode and
+/// post-process visual profile, and its tooltip.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct RenderStylePreset {
+    label: &'static str,
+    preset_group: &'static str,
+    shading_mode: u32,
+    post_process_profile: u32,
+    tooltip: &'static str,
+}
+
+/// Basic-Controls "Render Style" presets.
 /// Each style couples the land shading mode with the matching post-process visual
 /// profile so a single pick activates the whole look — notably, KR's grime / color-wash
 /// effects are gated behind `post_process_profile == KR` and would otherwise stay inert.
 /// The Advanced "Visual Profile" selector can still override the profile afterward.
-const RENDER_STYLE_PRESETS: [(&str, u32, u32, &str); 3] = [
-    ("Classic", 0, 0, "Vertex shading. Aims for original fidelity."),  // vertex/Gouraud land shading + Neutral profile
-    ("Enhanced", 1, 1, "Fragment shading. Subtle improvements."), // fragment land shading + EC profile
-    ("KR", 2, 2, "Fragment shading. Vibrant and painterly."),       // fragment land shading + KR profile
+/// KR-like and UOD-Painterly share the KR mode, profile and content; their preset groups differ.
+const RENDER_STYLE_PRESETS: [RenderStylePreset; 4] = [
+    // vertex/Gouraud land shading + Neutral profile
+    RenderStylePreset {
+        label: "Classic",
+        preset_group: CLASSIC_PRESET_GROUP,
+        shading_mode: 0,
+        post_process_profile: 0,
+        tooltip: "Vertex shading. Aims for original fidelity.",
+    },
+    // fragment land shading + EC profile
+    RenderStylePreset {
+        label: "Enhanced",
+        preset_group: ENHANCED_PRESET_GROUP,
+        shading_mode: 1,
+        post_process_profile: 1,
+        tooltip: "Fragment shading. Subtle improvements.",
+    },
+    // fragment land shading + KR profile, client terms only
+    RenderStylePreset {
+        label: "KR-like",
+        preset_group: KR_PRESET_GROUP,
+        shading_mode: 2,
+        post_process_profile: 2,
+        tooltip: "KR content drawn the way the KR client draws it.",
+    },
+    // fragment land shading + KR profile, every effect
+    RenderStylePreset {
+        label: "UOD-Painterly",
+        preset_group: PAINTERLY_PRESET_GROUP,
+        shading_mode: 2,
+        post_process_profile: 2,
+        tooltip: "KR content, fragment shading. Vibrant and painterly.",
+    },
 ];
+
+/// The render style whose preset group the active preset key names. A key from no known
+/// group falls back to the first style with the live shading mode.
+fn active_render_style(u: &UniformState) -> RenderStylePreset {
+    let group = u.active_preset.split_once('.').map_or(u.active_preset.as_str(), |(group, _)| group);
+    RENDER_STYLE_PRESETS
+        .into_iter()
+        .find(|style| style.preset_group == group)
+        .or_else(|| RENDER_STYLE_PRESETS.into_iter().find(|style| style.shading_mode == u.effects.shading_mode))
+        .unwrap_or(RENDER_STYLE_PRESETS[0])
+}
 
 const PRESET_PERIOD_BUTTONS: [(&str, ShaderPresetPeriod); 4] = [
     ("Morning", ShaderPresetPeriod::Morning),
@@ -99,47 +155,33 @@ impl ShaderPresetPeriod {
         }
     }
 
-    fn key(self, mode: u32) -> String {
-        let mode = match mode {
-            0 => "classic",
-            1 => "enhanced",
-            _ => "kr",
-        };
+    fn key(self, preset_group: &str) -> String {
         let period = match self {
             Self::Morning => "morning",
             Self::Afternoon => "afternoon",
             Self::Night => "night",
             Self::Cave => "cave",
         };
-        format!("{mode}.{period}")
+        format!("{preset_group}.{period}")
     }
 }
 
 fn preset_for_style(
     presets: &LandShaderModePresets,
-    mode: u32,
+    style: RenderStylePreset,
     period: ShaderPresetPeriod,
 ) -> &LandMaterialUniformsPresets {
-    let style = match mode {
-        0 => &presets.classic,
-        1 => &presets.enhanced,
-        _ => &presets.kr,
-    };
-    match period {
-        ShaderPresetPeriod::Morning => &style.morning,
-        ShaderPresetPeriod::Afternoon => &style.afternoon,
-        ShaderPresetPeriod::Night => &style.night,
-        ShaderPresetPeriod::Cave => &style.cave,
-    }
+    // Every RENDER_STYLE_PRESETS group is a field of LandShaderModePresets (unit-tested).
+    get_preset_slot(presets, &period.key(style.preset_group)).unwrap_or(&presets.classic.morning)
 }
 
 fn apply_render_preset(
     u: &mut UniformState,
     preset: &LandMaterialUniformsPresets,
-    mode: u32,
-    profile: u32,
+    style: RenderStylePreset,
     period: ShaderPresetPeriod,
 ) {
+    let (mode, profile) = (style.shading_mode, style.post_process_profile);
     // Animation is an interactive playback preference, not part of the visual
     // time/style preset. Keep the user's current choice when changing either.
     let enable_water_animation = u.effects.enable_water_animation;
@@ -152,20 +194,19 @@ fn apply_render_preset(
     u.lighting = preset.lighting;
     u.land_lighting = preset.land_lighting;
     u.global_lighting = preset.global_lighting;
-    u.active_preset = period.key(mode);
+    u.active_preset = period.key(style.preset_group);
     u.dirty = true;
 }
 
 fn store_active_and_apply_render_preset(
     u: &mut UniformState,
     presets: &mut LandShaderModePresets,
-    mode: u32,
-    profile: u32,
+    style: RenderStylePreset,
     period: ShaderPresetPeriod,
 ) {
     store_active_preset(presets, u);
-    let preset = preset_for_style(presets, mode, period);
-    apply_render_preset(u, preset, mode, profile, period);
+    let preset = preset_for_style(presets, style, period);
+    apply_render_preset(u, preset, style, period);
 }
 
 /// Default screen position of the detached "Advanced Raw Shader Knobs" window.
@@ -223,15 +264,14 @@ pub fn land_ui_system(
                 // post-process visual profile (see RENDER_STYLE_PRESETS) so one pick
                 // activates the whole look, including the KR-gated effects.
                 ui.strong("Render Style:");
-                let cur_mode = u.effects.shading_mode;
+                let cur_style = active_render_style(&u);
                 let cur_period = ShaderPresetPeriod::from_active_key(&u.active_preset);
-                for (label, mode, profile, tooltip) in RENDER_STYLE_PRESETS {
-                    if ui.selectable_label(cur_mode == mode, label).on_hover_text(tooltip).clicked() {
+                for style in RENDER_STYLE_PRESETS {
+                    if ui.selectable_label(cur_style == style, style.label).on_hover_text(style.tooltip).clicked() {
                         store_active_and_apply_render_preset(
                             &mut u,
                             &mut shader_presets,
-                            mode,
-                            profile,
+                            style,
                             cur_period,
                         );
                     }
@@ -241,15 +281,12 @@ pub fn land_ui_system(
 
                 // ------------------------ Presets -------------------------
                 ui.strong("Time of Day:");
-                let mode = u.effects.shading_mode.min(2);
-                let profile = mode;
                 for (label, period) in PRESET_PERIOD_BUTTONS {
                     if ui.selectable_label(cur_period == period, label).clicked() {
                         store_active_and_apply_render_preset(
                             &mut u,
                             &mut shader_presets,
-                            mode,
-                            profile,
+                            cur_style,
                             period,
                         );
                     }
@@ -305,16 +342,16 @@ pub fn land_ui_system(
             ui.checkbox(&mut advanced_open, "Show advanced raw shader knobs (opens a side panel on the right)");
 
             if ui.button("Reset Current Preset to Factory Defaults").clicked() {
-                let mode = u.effects.shading_mode.min(2);
+                let style = active_render_style(&u);
                 let period = ShaderPresetPeriod::from_active_key(&u.active_preset);
-                let key = period.key(mode);
+                let key = period.key(style.preset_group);
                 reset_preset_to_factory(
                     &mut shader_presets,
                     &factory_shader_presets.0,
                     &key,
                 );
-                let preset = preset_for_style(&shader_presets, mode, period);
-                apply_render_preset(&mut u, preset, mode, mode, period);
+                let preset = preset_for_style(&shader_presets, style, period);
+                apply_render_preset(&mut u, preset, style, period);
             }
 
             // Undo button: restore the last saved values.
@@ -1196,8 +1233,7 @@ mod tests {
         apply_render_preset(
             &mut u,
             &preset,
-            0,
-            0,
+            RENDER_STYLE_PRESETS[0],
             ShaderPresetPeriod::Morning,
         );
 
@@ -1217,31 +1253,59 @@ mod tests {
         let period = ShaderPresetPeriod::from_active_key("kr.cave");
 
         assert_eq!(period, ShaderPresetPeriod::Cave);
-        assert_eq!(period.key(0), "classic.cave");
-        assert_eq!(period.key(1), "enhanced.cave");
+        assert_eq!(period.key(CLASSIC_PRESET_GROUP), "classic.cave");
+        assert_eq!(period.key(ENHANCED_PRESET_GROUP), "enhanced.cave");
+        assert_eq!(period.key(PAINTERLY_PRESET_GROUP), "painterly.cave");
+    }
+
+    fn mode_presets() -> LandShaderModePresets {
+        LandShaderModePresets {
+            classic: mode(1.0),
+            enhanced: mode(5.0),
+            kr: mode(9.0),
+            painterly: mode(13.0),
+            default_preset: "classic.morning".to_string(),
+        }
     }
 
     #[test]
     fn changing_presets_captures_live_values_before_loading_the_target() {
         let mut u = uniform_state();
-        let mut presets = LandShaderModePresets {
-            classic: mode(1.0),
-            enhanced: mode(5.0),
-            kr: mode(9.0),
-            default_preset: "classic.morning".to_string(),
-        };
+        let mut presets = mode_presets();
         u.global_lighting = 0.42;
 
         store_active_and_apply_render_preset(
             &mut u,
             &mut presets,
-            1,
-            1,
+            RENDER_STYLE_PRESETS[1],
             ShaderPresetPeriod::Afternoon,
         );
 
         assert_eq!(presets.classic.morning.global_lighting, 0.42);
         assert_eq!(u.active_preset, "enhanced.afternoon");
         assert_eq!(u.global_lighting, 6.0);
+    }
+
+    #[test]
+    fn kr_like_and_painterly_share_the_kr_paths_but_load_their_own_presets() {
+        let presets = mode_presets();
+        let mut seen_groups = Vec::new();
+        for style in RENDER_STYLE_PRESETS {
+            let key = ShaderPresetPeriod::Night.key(style.preset_group);
+            assert!(get_preset_slot(&presets, &key).is_some(), "{key}");
+            seen_groups.push(style.preset_group);
+
+            let mut u = uniform_state();
+            apply_render_preset(&mut u, preset_for_style(&presets, style, ShaderPresetPeriod::Night), style, ShaderPresetPeriod::Night);
+            assert_eq!(active_render_style(&u), style);
+        }
+        seen_groups.dedup();
+        assert_eq!(seen_groups.len(), RENDER_STYLE_PRESETS.len());
+
+        let [_, _, kr_like, painterly] = RENDER_STYLE_PRESETS;
+        assert_eq!((kr_like.shading_mode, kr_like.post_process_profile), (2, 2));
+        assert_eq!((painterly.shading_mode, painterly.post_process_profile), (2, 2));
+        assert_eq!(preset_for_style(&presets, kr_like, ShaderPresetPeriod::Night).global_lighting, 11.0);
+        assert_eq!(preset_for_style(&presets, painterly, ShaderPresetPeriod::Night).global_lighting, 15.0);
     }
 }

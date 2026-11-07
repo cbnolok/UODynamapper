@@ -14,6 +14,12 @@ use color_eyre::eyre;
 const SHADER_PRESETS_FILE_NAME: &str = "defaults/shader_presets.toml";
 const SHADER_SETTINGS_FILE_NAME: &str = "settings/shaders/land.toml";
 
+/// Preset groups, the first part of a preset key such as "kr.morning". One group per render style.
+pub const CLASSIC_PRESET_GROUP: &str = "classic";
+pub const ENHANCED_PRESET_GROUP: &str = "enhanced";
+pub const KR_PRESET_GROUP: &str = "kr";
+pub const PAINTERLY_PRESET_GROUP: &str = "painterly";
+
 // Holds current values, a dirty flag, a saved snapshot for undo, and the active
 // preset name (e.g. "kr.morning") so we know which mode × time to save into.
 #[derive(Resource, Clone)]
@@ -127,6 +133,20 @@ pub fn load_shader_settings(
         return Ok(bundled);
     };
     let defaults = bundled.as_ref().unwrap_or(factory_presets);
+    let contents = match migrate_cached_kr_to_painterly(&contents) {
+        Some(migrated) => {
+            console_logger::one(
+                LogSev::Warn,
+                LogAbout::Settings,
+                &format!(
+                    "{}: the saved KR-like presets are the UOD-Painterly presets now; KR-like takes its new defaults",
+                    cache_path.display()
+                ),
+            );
+            migrated
+        }
+        None => contents,
+    };
     match uocf::utils::config_toml::parse_app_state(&cache_path.display().to_string(), &contents, defaults) {
         Ok(load) => {
             for warning in &load.warnings {
@@ -146,6 +166,22 @@ pub fn load_shader_settings(
             Ok(Some(clone_presets(defaults)))
         }
     }
+}
+
+/// A cached land.toml written before UOD-Painterly existed holds the painterly look under `kr`, which is the faithful
+/// KR-like look now. Move that group, with the user's edits, to `painterly`; `kr` is then missing and the lenient load
+/// fills it from the defaults. `default_preset` is kept, so a saved KR-like selection stays KR-like.
+///
+/// Returns the migrated text, or `None` when the file already has `painterly`, has no `kr`, or is not valid TOML (the
+/// lenient load reports that).
+fn migrate_cached_kr_to_painterly(contents: &str) -> Option<String> {
+    let mut table: toml::Table = toml::from_str(contents).ok()?;
+    if table.contains_key(PAINTERLY_PRESET_GROUP) {
+        return None;
+    }
+    let kr = table.remove(KR_PRESET_GROUP)?;
+    table.insert(PAINTERLY_PRESET_GROUP.to_string(), kr);
+    toml::to_string(&table).ok()
 }
 
 /// Save the active shader settings to the cache dir's `settings/shaders/land.toml`
@@ -216,9 +252,10 @@ fn get_preset_slot_mut<'a>(
         return None;
     }
     let mode_group = match parts[0] {
-        "classic" => &mut presets.classic,
-        "enhanced" => &mut presets.enhanced,
-        "kr" => &mut presets.kr,
+        CLASSIC_PRESET_GROUP => &mut presets.classic,
+        ENHANCED_PRESET_GROUP => &mut presets.enhanced,
+        KR_PRESET_GROUP => &mut presets.kr,
+        PAINTERLY_PRESET_GROUP => &mut presets.painterly,
         _ => return None,
     };
     match parts[1] {
@@ -231,7 +268,7 @@ fn get_preset_slot_mut<'a>(
 }
 
 /// Get an immutable reference to a particular mode×time slot by key.
-fn get_preset_slot<'a>(
+pub fn get_preset_slot<'a>(
     presets: &'a LandShaderModePresets,
     key: &str,
 ) -> Option<&'a LandMaterialUniformsPresets> {
@@ -240,9 +277,10 @@ fn get_preset_slot<'a>(
         return None;
     }
     let mode_group = match parts[0] {
-        "classic" => &presets.classic,
-        "enhanced" => &presets.enhanced,
-        "kr" => &presets.kr,
+        CLASSIC_PRESET_GROUP => &presets.classic,
+        ENHANCED_PRESET_GROUP => &presets.enhanced,
+        KR_PRESET_GROUP => &presets.kr,
+        PAINTERLY_PRESET_GROUP => &presets.painterly,
         _ => return None,
     };
     match parts[1] {
@@ -276,6 +314,7 @@ fn clone_presets(p: &LandShaderModePresets) -> LandShaderModePresets {
         classic: clone_mode(&p.classic),
         enhanced: clone_mode(&p.enhanced),
         kr: clone_mode(&p.kr),
+        painterly: clone_mode(&p.painterly),
         default_preset: p.default_preset.clone(),
     }
 }
@@ -368,6 +407,7 @@ mod tests {
             classic: mode(0, 1.0),
             enhanced: mode(1, 2.0),
             kr: mode(2, 3.0),
+            painterly: mode(2, 4.0),
             default_preset: "kr.afternoon".to_string(),
         }
     }
@@ -398,6 +438,20 @@ mod tests {
         assert_eq!(saved.kr.afternoon.global_lighting, 3.1);
         assert_eq!(saved.kr.afternoon.lighting.exposure, 1.1);
         assert_eq!(saved.default_preset, "classic.morning");
+    }
+
+    #[test]
+    fn painterly_presets_are_their_own_slots() {
+        let mut effective = presets();
+        let mut state = uniform_state_from_presets(&effective);
+        state.active_preset = "painterly.night".to_string();
+        state.global_lighting = 9.0;
+
+        store_active_preset(&mut effective, &state);
+
+        assert_eq!(effective.painterly.night.global_lighting, 9.0);
+        assert_eq!(effective.kr.night.global_lighting, 3.2);
+        assert_eq!(effective.default_preset, "painterly.night");
     }
 
     #[test]
@@ -483,5 +537,24 @@ mod tests {
         );
         let rewritten = toml::to_string_pretty(&load.value).expect("serialize");
         parse(&rewritten).expect("rewritten file is complete");
+    }
+
+    #[test]
+    fn cached_kr_like_presets_from_before_painterly_become_painterly() {
+        let bundled = parse(BUNDLED_LAND_SETTINGS).expect("bundled");
+        let painterly_start = BUNDLED_LAND_SETTINGS.find("[painterly.morning]\n").expect("painterly group");
+        assert!(!BUNDLED_LAND_SETTINGS[painterly_start..].contains("\n[kr."), "painterly is the last group");
+        let old_cache = BUNDLED_LAND_SETTINGS[..painterly_start]
+            .replacen("default_preset = \"classic.morning\"", "default_preset = \"kr.night\"", 1)
+            .replacen("[kr.night]\nglobal_lighting = ", "[kr.night]\nglobal_lighting = 0.125\n# ", 1);
+
+        let migrated = migrate_cached_kr_to_painterly(&old_cache).expect("migrated");
+        let load = uocf::utils::config_toml::parse_app_state("land.toml", &migrated, &bundled).expect("lenient load");
+
+        assert_eq!(load.warnings, ["land.toml: missing key `kr` filled from the default"]);
+        assert_eq!(load.value.painterly.night.global_lighting, 0.125);
+        assert_eq!(load.value.kr.night.global_lighting, bundled.kr.night.global_lighting);
+        assert_eq!(load.value.default_preset, "kr.night");
+        assert!(migrate_cached_kr_to_painterly(BUNDLED_LAND_SETTINGS).is_none());
     }
 }

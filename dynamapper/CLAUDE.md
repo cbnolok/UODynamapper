@@ -6,5 +6,5 @@ Extends the root [`../CLAUDE.md`](../CLAUDE.md). Read that first, along with [`.
 
 ## dynamapper-Specific Notes
 
-- After visual changes, test all three rendering presets (Classic, Enhanced, KR-like) before reporting done.
+- After visual changes, test all four rendering presets (Classic, Enhanced, KR-like, UOD-Painterly) before reporting done.
 - When touching Bevy plugin or system code, run `just bevy-lint`.
