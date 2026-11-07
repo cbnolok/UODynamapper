@@ -67,6 +67,8 @@ public class NameAtmosphereCode extends GhidraScript {
     private static final String STENCIL = "UOStencilEffect";
     private static final String FIGLEAF = "figleaf";
     private static final String SHADER_LIBRARY = "UOShaderLibrary";
+    private static final String FADE = "UOFadePostProcessEffect";
+    private static final String LIGHT_MATERIAL = "UOShaderFilenameLight";
 
     // Checks: "calls:ADDR" (the function references ADDR: call, pointer, jump or data),
     // "calledby:ADDR" (the function at ADDR references this one), "ref:ADDR" (the data or code at ADDR
@@ -234,6 +236,10 @@ public class NameAtmosphereCode extends GhidraScript {
             + " sprite (UOShaderFilenameLight, LightingTextureFileLocation)", "ref:00b5222c", "calls:004422b0"),
         new Entry("00438ee0", LIGHT_COMPONENT, "BuildLightBatch", false, "builds the light sprite batch with"
             + " z test and z write off; attached to render group 0x00c931b4", "calls:004454c0"),
+        // Third pass: the light sprite's material.
+        new Entry("004387d0", LIGHT_MATERIAL, "Constructor", false, "the light sprite material (vtable"
+            + " 0x00b522d4): one map, the light texture name; shader UOSpriteShader; no grunge map",
+            "const:b522d4", "calledby:00438a80"),
 
         // Weather and the circle of transparency. None of them changes the light level.
         new Entry("00418420", RAIN, "LoadParticles", true, "vtable 0x00b50bd0 slot 12: 00070006_Rain.nif"
@@ -270,6 +276,30 @@ public class NameAtmosphereCode extends GhidraScript {
         new Entry("00c0d610", SHADER_LIBRARY, "RegisterShaders", true, "static table of the UO shaders:"
             + " UOSpriteShader is registered twice, UOSpriteShaderHLSL (needs ps_2_0 / vs_1_1) before"
             + " UOSpriteShaderFFP", "string:UOSpriteShaderMob"),
+
+        // Third pass: the shadow effect, its defaults and the EC-only fade.
+        new Entry("00429070", ATMOSPHERE, "InitPostProcessEffects", false, "as UOKR 0x0041ecd0: light level 0.75"
+            + " (0x00e13e88), shadow intensity 0.25 (0x00e13e90), showShadows from 0x00e33588 (0x00e13e84), gamma"
+            + " 0.5 (0x00e13e94)", "calls:004561d0"),
+        new Entry("00456060", SHADOW, "Constructor", false, "as UOKR 0x0043f740: vtable 0x00ca0434, intensity"
+            + " +0x21c = 0.4 (0x00c9b2bc)", "const:ca0434", "calls:00c9b2bc"),
+        new Entry("004561d0", SHADOW, "SetIntensity", false, "as UOKR 0x0043f870: clamps to 0..1, stores +0x21c",
+            "calledby:00429070"),
+        new Entry("00456880", SHADOW, "Render", false, "as UOKR 0x0043fe10, vtable slot 48: clears the shadow"
+            + " buffer to white, draws the shadow sprites, then the composite quad", "ref:00ca04f4",
+            "calls:00456350"),
+        new Entry("00456350", SHADOW, "BuildCompositeQuad", false, "as UOKR 0x0043f9f0: diffuse 1 - intensity,"
+            + " UOShadowShader", "calledby:00456880"),
+        new Entry("005921b0", SHADOW_SHADER, "SetupTextureStages", false, "as UOKR 0x00545e40: ADD(texture,"
+            + " diffuse), then MODULATE(current, texture)", "ref:00cb3ebc"),
+        new Entry("005937e0", SPRITE_SHADOW_SHADER, "SetupTextureStages", false, "as UOKR 0x00546e30:"
+            + " MODULATE(texture, diffuse) for colour and alpha", "ref:00cb4254"),
+        new Entry("00493c20", SETTINGS, "SetVideoDefaults", true, "showShadows (0x00e33588) = 1, then 0 when"
+            + " video memory < 128 MB or the shader major version (0x00e31e20) < 2", "calls:00e33588"),
+        new Entry("00424a20", FADE, "Constructor", false, "EC only: vtable 0x00c9ea4c; made by the UOFadeEffect"
+            + " factory 0x00425800 for the event-driven screen fade", "const:c9ea4c", "calledby:00425800"),
+        new Entry("004250d0", FADE, "Render", true, "EC only: draws the fade quad with UOFadeShader",
+            "string:UOFadeShader"),
     };
 
     private static final Build[] BUILDS = {

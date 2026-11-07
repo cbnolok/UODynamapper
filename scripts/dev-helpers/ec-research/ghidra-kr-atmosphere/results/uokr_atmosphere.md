@@ -13,10 +13,15 @@ Every finding has a label:
 Function names are the ones `NameAtmosphereCode.java` applied (see [the UOKR names](uokr_atmosphere_names.md) and
 [the UOSA names](uosa_atmosphere_names.md)).
 
-The research had two passes. The first pass covered the lighting post-process, the shadows and the terrain shade.
-The second pass covered sprites, filtering, terrain data, other darkening, normals, the reference images and
-side-by-side captures. It also corrected the first pass in five places; each one is marked **Corrected in the
-second pass**.
+The research had three passes:
+
+- The first pass covered the lighting post-process, the shadows and the terrain shade.
+- The second pass covered sprites, filtering, terrain data, other darkening, normals, the reference images and
+  side-by-side captures. It also corrected the first pass in five places; each one is marked **Corrected in the
+  second pass**.
+- The third pass ([Third pass](#third-pass)) compared the Enhanced Client with KR, traced the data sources for the
+  packages, the light sprites and the exact sprite shadow geometry. Its corrections are marked **Corrected in the
+  third pass**.
 
 ## Summary
 
@@ -28,7 +33,8 @@ from what is drawn into the scene and how it is sampled:
    For example, the KR grass base `Grass_A` has a mean of (57, 79, 45).
 2. **A world grunge on statics and items.** Every sprite whose tileart entry has shader map 1 is multiplied by
    the noise texture `01000045_noise` (mean 0.84, range 0.55 to 1.0). The noise is world-anchored, with one repeat
-   every 16 tiles. This covers 75 % of the KR art, 99.5 % of the legacy art and all light sprites. It never brightens.
+   every 16 tiles. This covers 75 % of the KR art and 99.5 % of the legacy art. It never brightens. **Corrected
+   in the third pass:** light sprites are not grunged.
 3. **Blotchy terrain.** Each material blends two base textures through a large coverage-noise mask (one repeat
    every 24 tiles for grass). The two bases differ in brightness and hue.
 4. **A baked half-Lambert terrain shade** from one fixed light, per vertex with Gouraud interpolation. Flat
@@ -36,12 +42,15 @@ from what is drawn into the scene and how it is sampled:
 5. **Plain bilinear filtering without mip levels**, at about 1.2 texels per pixel at 1024 px. The low-resolution
    grunge and mask textures are magnified 2.5 to 3.7 times. Together these give the soft, smeared, "painterly"
    texture.
-6. **Projected sprite shadows** multiply the scene by 0.75.
-7. **At night** the light level fades the scene towards a dark-blue, world-anchored **night map**. Light sprites,
-   themselves grunged, brighten it again only where the night has darkened the scene.
+6. **Sprite drop shadows.** Every static, item and foliage sprite casts a black copy of itself, leaning right by
+   11.25 degrees from its ground point. The scene under it is multiplied by 0.75. Mobiles cast a 50 % black copy
+   of their frame. See [P3.4](#p34-sprite-shadow-geometry).
+7. **At night** the light level fades the scene towards a dark-blue, world-anchored **night map**. Light sprites
+   (not grunged) brighten it again only where the night has darkened the scene.
 
 The Enhanced Client runs the same composite and the same terrain shade. Its programmable sprite shader never
-applies the grunge (confirmed), and it draws Classic art by default.
+applies the grunge (confirmed), it draws Classic art by default, and only its mobiles cast shadows (see
+[P3.1](#p31-the-enhanced-client-against-kr)).
 
 ## What makes the KR look (revised)
 
@@ -51,11 +60,11 @@ They were not measured in the client.
 | Ingredient | Effect | Share | Status |
 |---|---|---|---|
 | KR art palette (statics, terrain textures) | dark olive mid tones; lighting baked into the pre-rendered art | about 35 % | confirmed data |
-| World grunge on statics, items and light sprites | ×0.55-1.0 blotches, 16-tile period, the same pattern across neighbouring objects: "dirty", uneven | about 15 % | confirmed |
+| World grunge on statics and items | ×0.55-1.0 blotches, 16-tile period, the same pattern across neighbouring objects: "dirty", uneven | about 15 % | confirmed |
 | Terrain two-base blend through coverage noise | large light and dark patches on the ground | about 15 % | confirmed |
 | Terrain half-Lambert, per vertex, Gouraud | flat 0.854; triangle-faceted shading on hills; dark cliffs facing away | about 10 % (more in hills) | confirmed |
 | Bilinear, no mips; planar terrain UV | soft, smeared texture; streaks on steep cliffs | about 10 % | confirmed |
-| Projected sprite shadows ×0.75 | dark sprite-shaped pools under trees and walls | about 5 % | confirmed |
+| Sprite drop shadows: statics, items and foliage ×0.75 (overlaps do not stack), mobiles ×0.5 | dark sprite-shaped pools leaning right behind trees and walls | about 5 % | confirmed |
 | Light level, night map, light sprites | none by day; dominant at night | 0 % by day | confirmed |
 | Screenshot compression and downscaling | extra muddiness in the reference images only; not a client term | about 10 % of the impression the references give | probable |
 
@@ -65,22 +74,26 @@ They were not measured in the client.
    group +0x240):
    - **terrain**: the layer blend times the baked vertex grey; EMBM environment layers on the bump layers (snow).
      See [§4](#4-terrain-shade-baked-half-lambert-one-fixed-light) and [P2.3](#p23-terrain-kr-ec-and-dynamapper).
-   - **statics, items and light sprites**: `UOSpriteShaderHLSL` (`UOSprite.vsh` / `UOSprite.psh` from
-     `Shaders.uop`). It computes texture × hue lookup × grunge map. Vertex RGB is unused; vertex alpha scales
-     alpha. **Corrected in the second pass:** the first pass assumed the fixed-function `MODULATE(texture,
-     diffuse)`. See [P2.1](#p21-sprites).
-   - **mobiles**: fixed-function, unlit white, no grunge (*probable*).
+   - **statics and items**: `UOSpriteShaderHLSL` (`UOSprite.vsh` / `UOSprite.psh` from `Shaders.uop`). It
+     computes texture × hue lookup × grunge map. Vertex RGB is unused; vertex alpha scales alpha. **Corrected in
+     the second pass:** the first pass assumed the fixed-function `MODULATE(texture, diffuse)`. See
+     [P2.1](#p21-sprites).
+   - **mobiles**: fixed-function, unlit white, no grunge (*confirmed* in the third pass). With `showShadows` on,
+     each mobile also draws a 50 % black copy of its frame into the scene (see
+     [P3.4](#p34-sprite-shadow-geometry)).
    - **particle effects**: rain, snow and spell effects.
 
    No lights, materials or fog take part. *Confirmed* for the terrain stages, the sprite shader and the absence of
    lights and fog.
 2. `UOShadowPostProcessEffect::Render` (0x0043fe10):
-   - it clears the shadow buffer S to white;
-   - it draws the shadow sprites into S with `UOSpriteShaderShadow` (MODULATE(texture, diffuse), 0x00546e30);
+   - it clears the screen-sized shadow buffer S to white;
+   - it draws the static, item and foliage shadow sprites into S with `UOSpriteShaderShadow`
+     (MODULATE(texture, diffuse), 0x00546e30), depth-tested against the scene;
    - it composites `scene * clamp(S + 1 - s)` (0x0043f9f0, `UOShadowShader` 0x00545e40).
 
-   This runs only while `showShadows` is on (0x00c4a014). *Confirmed* for the formula. The order of this step
-   against step 3 is *probable* (the shadow effect is appended first).
+   This runs only while `showShadows` is on (0x00c4a014). *Confirmed* for the formula. **Third pass:** the
+   shadow effect is appended before the lighting effect (*confirmed*); that the effects run in that order is
+   *probable*.
 3. `UOLightingPostProcessEffect::Render` (0x0041fe50):
    - it draws the night map (or the night-sight map) into the light buffer B (+0x24c);
    - it draws the light sprites of the list +0x134 over B;
@@ -196,17 +209,17 @@ Night sight brings the scene back to about daylight with a cyan tint (slightly a
     The batch goes to render group 0x00c931b4.
   - Second pass, data: the tileart light sources (source block 3, 599 entries: 462 `*_light_generic`, 39
     `*_light_window`, then crystals, mushrooms, candles, sconces and others) all carry the grunge map as
-    shader map 1, under `UOSpriteShader`.
+    shader map 1, under `UOSpriteShader`. **Corrected in the third pass:** the light material exposes only map 0,
+    so that grunge is never bound (see [P3.3](#p33-light-sprites)).
 - **The textures** (*confirmed* data):
-  - the light decals are `TerrainTexture.uop` entries 1-17 (DXT5; entry 16 is `circle_of_trans`, used by the
+  - the light textures are `TerrainTexture.uop` entries 1-17 (DXT5; entry 16 is `circle_of_trans`, used by the
     circle of transparency, not by lights: see [P2.4](#p24-other-darkening-and-tint));
-  - the tileart light textures are tileart block 3 `*_light_window.tga`, with light scale 2.0 on windows
-    (see `ghidra-tileart`).
-- **Probable:**
-  - the light sprites lerp over the night map (the batch's SRCALPHA / INVSRCALPHA alpha property 0x00c933ec)
-    rather than add;
-  - they go through the same sprite shader, so the grunge mottles the light pools at night like the statics.
-- **Unknown:** their colour scale.
+  - tileart block 3, map 0 names them (`Data\Textures\000000NN_<name>.tga`): `light_generic` on 462 items,
+    `light_window` on 39, with light scale 2.0 on windows (see `ghidra-tileart`).
+- **Probable:** the light sprites lerp over the night map (the batch's SRCALPHA / INVSRCALPHA alpha property
+  0x00c933ec) rather than add.
+- **Third pass** (*confirmed*): no grunge and no hue; the colour is the texture's own RGBA, and the size is the
+  texture times the tileart light scale. See [P3.3](#p33-light-sprites).
 
 ### 3. Projected sprite shadows
 
@@ -219,7 +232,9 @@ sprites. The intensity s comes from three places:
 
 **Contribution.** Full shadow is ×0.75. It is the same at every time of day and is multiplied again by the light
 composite at night. The shadow shape is the sprite's own alpha, through `UOSpriteShaderShadow`: no blur pass and
-no length or softness parameters. The `showShadows` setting toggles it; its default is *unknown*.
+no length or softness parameters. The `showShadows` setting toggles it. **Third pass:** its default is on (KR
+turns it off with less than 32 MB of video memory). The exact geometry, the casters and the separate 50 % mobile
+shadow are in [P3.4](#p34-sprite-shadow-geometry).
 
 ### 4. Terrain shade: baked half-Lambert, one fixed light
 
@@ -263,9 +278,10 @@ the screen.
 
 - **Unlit** (*confirmed* for KR): no NiDirectionalLight, NiAmbientLight, NiFogProperty or NiMaterialProperty
   is linked. The RTTI scan found only a NiPointLight type descriptor, with no vtable.
-- Statics, items and light sprites use `UOSpriteShaderHLSL`: texture, hue lookup, then `rgb *= grunge` when the
-  tileart entry has shader map 1. Vertex RGB is not used (*confirmed*).
-- Mobiles use the fixed-function path without grunge, with a white diffuse (*probable*).
+- Statics and items use `UOSpriteShaderHLSL`: texture, hue lookup, then `rgb *= grunge` when the tileart entry
+  has shader map 1. Vertex RGB is not used (*confirmed*). Light sprites use the same shader with one map only:
+  no hue and no grunge (third pass).
+- Mobiles use the fixed-function path without grunge, with a white diffuse (*confirmed* in the third pass).
 - `LightingShader` (vtable 0x00b692bc) exists for the Mythic library's own 3D lights; no UO world path was
   found that uses it.
 
@@ -301,10 +317,10 @@ the screen.
 | night sight | 0 | exe; server (0x0056e940) |
 | gamma | 0.5 (slider 0..1) | exe defaults 0x0047b660; user settings `SystemData.Settings.Resolution.gamma` |
 | shadow intensity | 0.25 | exe 0x0041ecd0 (debug keys change it) |
-| shadows on | user setting `showShadows` | settings file; default *unknown* |
+| shadows on | on (off with less than 32 MB of video memory); user setting `showShadows` | exe video defaults 0x0047bac0 (third pass) |
 | night map, night-sight map, day map | `TerrainTexture.uop` 21, 22, 20 | UOP data |
 | terrain light D | (0, -0.7071, -0.7071) | exe constant 0x00c0f3b8 |
-| light decals | `TerrainTexture.uop` 1-17; tileart light textures | UOP data |
+| light textures | `TerrainTexture.uop` 1-17, named by tileart block 3 map 0, scaled by the tileart light scale | UOP data |
 | grunge map | `01000045_noise.tga`, repetition 16, UV set 1, shader map 1 | tileart data; `UOSprite.psh` |
 | sprite filter | bilinear, no mip levels (nearest when the tileart flag +0x38 bit 2 is set; probably nearest for the hue map) | exe 0x004454c0; DDS data |
 | view width | 26 world units (frustum half-width 13), about 18.4 tiles across | exe 0x00459360, 0x0045b510 |
@@ -322,8 +338,9 @@ and the shadow checkbox.
 | object layout | light +0x214, gamma +0x21c | light +0x21c, gamma +0x224 | EC adds 8 bytes before |
 | sprite shader | `UOSpriteShaderHLSL::BindSamplers` 0x005477d0 binds shader map 1 to GrungeSampler and sets HAS_GRUNGE_TEX | `UOSpriteShaderHLSL::BindSamplers` 0x005940e0 never reads shader map 1 and sets only HAS_HUE_TEX and HAS_HUEMASK_TEX | **KR grunges statics, EC does not**, *confirmed* |
 | sprite shader choice | library table at 0x00c18f60: UOSpriteShader listed first with ps_2_0 / vs_1_1, then without a requirement | `UOShaderLibrary::RegisterShaders` 0x00c0d610: UOSpriteShaderHLSL (ps_2_0 / vs_1_1), then UOSpriteShaderFFP | same rule; the HLSL path on any card with ps_2_0, *probable* |
-| terrain materials | 100 material names | 107 names (adds `coollava`, `eodon clouds`, `rock hole blend`, two moss pavers, `void`, `void_destruction`) | nearly identical; grass differs (see [P2.3](#p23-terrain-kr-ec-and-dynamapper)), *confirmed* data |
+| terrain materials | 100 material names | 107 names (adds `coollava`, `eodon clouds`, `rock hole blend`, two moss pavers, `void`, `void_destruction`) | the same records except grass and forest; 32 of the textures KR references hold other images in EC (see [P3.2](#p32-data-sources)), *confirmed* data |
 | art | KR art (tileart block 0) | Classic art unless `UseNewArt` | see the memory note on EC art |
+| sprite shadows (third pass) | statics, items, foliage and mobiles | mobiles only; the item placement 0x00457bf0 is unreferenced | **differs**, see [P3.1](#p31-the-enhanced-client-against-kr) |
 
 **Probable:** the EC's brighter, cleaner look does not come from a different post-process. It comes from its art
 (Classic by default) and from the missing grunge. Server light levels apply to both.
@@ -370,7 +387,7 @@ and the shadow checkbox.
   |---|---|---|
   | 0, KR art | 12402 | 9256 (75 %) |
   | 1, legacy art | 16384 | 16298 |
-  | 3, light sprites | 599 | 599 |
+  | 3, light sprites | 599 | 599 (never bound: see [P3.3](#p33-light-sprites)) |
 
   In block 0, 289 more entries reference the white 4x4 `20000000_empty_grunge`. The 2857 without a grunge map
   are mostly tree bark and branches, `blank`, banners, cave entrances and some roofs.
@@ -392,7 +409,8 @@ and the shadow checkbox.
 
 **KR mobiles** (*probable*): the mobile shape builder 0x004278b0 (referenced from two vtables, 0x00b51d04 and
 0x00b627cc) uses fixed-function texturing with a white colour (1, 1, 1, 1 at 0x00bf85b8) and no shader map 1. So
-mobiles are unlit and have no grunge.
+mobiles are unlit and have no grunge. **Confirmed in the third pass**, in both clients (see
+[P3.1](#p31-the-enhanced-client-against-kr)).
 
 **Shaders.uop vs fixed function:**
 
@@ -468,7 +486,9 @@ magnified noise and grunge, and the planar terrain UV on slopes (see P2.3). Ther
   with the same names at the same indices. EC adds `coollava`, `eodon clouds`, `rock hole blend`, two moss
   pavers, `void` and `void_destruction`.
 - Of the 191 shared entries only two differ in their sources: grass (entry 1) uses different texture files and
-  repetitions, and forest (entry 4) different repetitions:
+  repetitions, and forest (entry 4) different repetitions. **Corrected in the third pass:** the records match
+  otherwise, but 32 of the texture ids they reference hold different images in the two clients (see
+  [P3.2](#p32-data-sources)).
 
   | Material | KR | EC |
   |---|---|---|
@@ -634,6 +654,331 @@ Variant c matches b to within one level everywhere (forest p50 73 against 74).
 6. The KR terrain and art data (`Grass_A`, the 24-tile mask, KR art), if the packages carry EC data.
 7. The night composite and light-sprite weighting (not in play for the afternoon views).
 
+## Third pass
+
+The third pass compared the Enhanced Client with KR, traced the data sources for the packages, the light-sprite
+path and the sprite shadow geometry. It used Ghidra and the client data only, with no captures.
+
+- The GUI's MCP bridge stopped answering during the pass. The rest of the code was read with headless Ghidra on
+  a read-only copy of the project (`KrShadowHeadlessDecompile20261107.java`) and with `objdump`.
+- The data comparisons are `kr_ec_data_compare.py` over scratch extractions of both clients.
+
+### P3.1 The Enhanced Client against KR
+
+| Piece | UOKR.exe | UOSA.exe | Status |
+|---|---|---|---|
+| shadow post-process | ctor 0x0043f740 (0.4), init 0x0041ecd0 sets 0.25, Render 0x0043fe10, `UOShadowShader` 0x00545e40 | ctor 0x00456060 (0.4 at 0x00c9b2bc), init 0x00429070 sets 0.25 (0x00e13e90), `SetIntensity` 0x004561d0 (clamp 0..1), Render 0x00456880, composite 0x00456350, `UOShadowShader` 0x005921b0 | identical, *confirmed* |
+| shadow composite | stage 0 `ADD(TEXTURE S, DIFFUSE 1 - s)`, alpha `SELECTARG1 TEXTURE`; stage 1 `MODULATE(CURRENT, scene)`: `scene * clamp(S + 1 - s)`, no blur | the same | identical, *confirmed* |
+| `showShadows` default | **on**: the video defaults 0x0047bac0 set 0x00c93b30 = 1, off with less than 32 MB of video memory; init copies it to 0x00c4a014 | **on**: `UOSettings::SetVideoDefaults` 0x00493c20 sets 0x00e33588 = 1, off with less than 128 MB or a pixel shader major version (0x00e31e20) below 2; init copies it to 0x00e13e84 | both on, *confirmed* |
+| static, item and foliage shadows | placed by 0x00440e50 from the sprite and foliage components (see [P3.4](#p34-sprite-shadow-geometry)) | the same placement exists at 0x00457bf0 with the same constants, but nothing references it (no call, jump or pointer). The EC sprite and foliage components (vtables 0x00c9fc6c and 0x00c9fce4; updates 0x00445060, 0x004460e0, 0x00446c10) never read 0x00e13e84 | **KR only**: *confirmed* that the EC placement is unreferenced; *probable* that nothing else fills S, so the EC shadow buffer stays white |
+| mobile shadows | builder 0x004278b0 (gate 0x00427db4), update 0x00425220 | builder 0x00435140 (gate 0x00435a19), update 0x00432110, the same constants | identical, *confirmed* |
+| mobiles | `MobAnimTriShape`, vertex colour white (0x00bf85b8), `UOSpriteShaderMob` with the fixed-function stages 0x005465c0 (`MODULATE(texture, diffuse)`), no shader map 1, render group 0x00c931b8 | the same; white at 0x00dde130, stages `UOSpriteShaderFFP::SetupTextureStages` 0x00592a00, render group 0x00e32e40 | identical, *confirmed* (pass 2 had *probable*) |
+| sprite shader (statics, items) | `UOSprite.psh`: hue index = average of RGB, hue mask threshold 0.5, grunge | `uosprite.psh`: no grunge; hue index = red channel; the hue mask **lerps** by its alpha; a vertex-colour tint: when the vertex RGB is not white, `rgb = colour.rgb * lerp(0.1, 0.9, texture red)` | differs, *confirmed* (shader sources). The tint is off with the usual white vertex colour; its caller was not read |
+| EC-only post-process | none | `UOFadePostProcessEffect` (ctor 0x00424a20, Render 0x004250d0 with `UOFadeShader`, factory 0x00425800): the event-driven screen fade (effect type 4) | not a steady tint, *probable* |
+| EC-only shaders | none | `uoeffects.psh/.vsh` (effects) and `uodeath.psh` (monochrome by luminance 0.2125, 0.7154, 0.0721); two unnamed entries with vertex-colour and texture permutations (`Shaders.uop` hashes 0x0530e223fe06a3a1 and 0x3574e0b3a13aef7f) | KR's death effect is the fixed-function `UODeathShader`; *confirmed* data |
+| `postprocess.psh/.vsh` | library effects, unreached | byte-identical, unreached | identical, *confirmed* |
+| lighting composite, terrain shade, night maps | | | identical (see [KR and the Enhanced Client](#kr-and-the-enhanced-client)), *confirmed* |
+| light sprites | `PlaceLightSprite` 0x00438a80 | not read in UOSA; the composite that consumes them is identical | |
+
+**What differs between a faithful KR preset and a faithful EC preset:**
+
+1. **Art:** KR art (tileart block 0) against Classic art by default.
+2. **Grunge:** KR multiplies statics and items by its noise map; EC never does.
+3. **Static, item and foliage shadows:** KR only. Both draw the 50 % mobile shadow.
+4. **Terrain data:** KR's grass and forest records and 32 texture ids with different images (see
+   [P3.2](#p32-data-sources)).
+5. **Hue maths:** for hued items only (average RGB and a hard mask in KR; red channel and a soft mask in EC).
+6. **Light data:** light texture 17 and the offsets of 18 light items differ; EC has 1040 light items against KR's 599.
+7. **EC only:** the vertex-colour tint mode, the fade effect and the shader-based death effect. These are event
+   effects, not part of the steady look.
+
+Everything else that shapes the steady look is the same: the lighting composite, the night and night-sight maps,
+the terrain half-Lambert and its light direction, the shadow composite, and the mobile draw path and shadow.
+
+### P3.2 Data sources
+
+`KR` is `UO - Old KR/`, `EC` is `_Ultima Online Enhanced/`. All comparisons are byte comparisons of the UOP entries
+(SHA-256), plus a luma correlation for the images that differ.
+
+**(a) The grunge noise** (*confirmed*). EC's `Texture.uop` ships `build/worldart/01000045.dds`, but it is **not
+KR's image**:
+
+- EC: mean 0.898; KR: mean 0.840;
+- luma correlation 0.213, so it is a different pattern, not a re-encoding;
+- `tex_aux_ec.uddp` therefore holds EC's version. Pack KR's.
+
+**(b) The per-item grunge reference** (*confirmed* data). Items whose block carries `01000045` as shader map 1:
+
+| Tileart block | KR | EC (same ids) | Both | EC only | KR only | EC, all items |
+|---|---|---|---|---|---|---|
+| 0, KR art | 9257 | 9265 | 9222 | 43 | 35 | 11211 |
+| 1, legacy art | 16298 | 16298 | 16298 | 0 | 0 | 36254 |
+| 2, TileArtEnhanced | none (EC only) | 16384 | | | | 36589 |
+| 3, light | 599 | 601 | 597 | 4 (2188, 3511, 11520, 11696) | 2 (7575, 7576) | 1040 |
+
+- For block 0 the two clients agree on 16306 of the 16384 item ids (99.5 %); 16240 ids have identical block-0
+  references.
+- **Decoder:** `lib/uocf/src/enhanced/metadata/tileart.rs` keeps every reference:
+  `TileArtEntry.texture_vector[block].texture_items[i]` (`TaeTexture` / `TaeTextureImage`, about lines 413-438).
+  The item's texture name comes through `name_string_off`; `texture_stretch` holds the repetition (16) and
+  `uv_set` the UV set (1).
+- **Tilemeta:** `lib/udd-assets/src/metadata/tilemeta.rs` stores each reference as a `TileMetaItemTextureRef`
+  (lines 397-417) in `metadata/item_texture_refs.v4.bin`, with `texture_id` 1000045, `block_index`,
+  `item_index` 1, `texture_stretch` 16, `uv_set` and `stable_role` `Noise` (5, from `SPRITE_ROLES`).
+- So the flag is already in the packages and needs **no format change**: an item is grunged when its art block has
+  a ref with `item_index` 1 and `texture_id` 1000045. Block 3 refs are tagged `Noise` too (`LIGHT_ROLES`), but the
+  client never binds them (see [P3.3](#p33-light-sprites)), so a renderer must ignore them.
+- Packages built from EC tileart are 99.5 % right for KR. For an exact KR set, build them from KR's tileart.
+
+**(c) The light buffers and light textures** (*confirmed*). `TerrainTexture.uop` `build/terraintexture/%08d.dds`:
+
+| Entries | KR against EC |
+|---|---|
+| 1-15 (light textures) | byte-identical |
+| 16 (`circle_of_trans`) | differs |
+| 17 (`GoldGlow_Treasure`, a light texture) | differs |
+| 20, 21, 22 (day, night, night-sight map) | byte-identical |
+| 23-35, 37-40 | EC only |
+
+So the night, night-sight and day maps can come from either client.
+
+**(d) The KR terrain materials** (*confirmed* data).
+
+- The records are in `TerrainDefinition.uop`, with names from `string_dictionary.uop`:
+  - grass (entry 1): `Grass_A` 2000010 repetition 10, `Grass_B` 2000011 repetition 5, mask `noise_alpha` 1000003
+    repetition 24;
+  - forest (entry 4): `Forest_A` / `Forest_B` 2000040 / 2000041, repetition 5.
+- The textures are in `Texture.uop` as `build/worldart/<id>.dds`.
+- **EC does not ship KR's `Grass_A`.** EC's 2000010 is `Grass_C` (luma correlation 0.008), and no EC entry holds
+  KR's `Grass_A` bytes.
+- **Corrected in the third pass:** the two records are not the only terrain difference. Of the texture ids that
+  KR's TerrainDefinition references, 32 hold a different image in EC under the same id, mostly with the same file
+  name. The full comparison (`terrain-textures`) gives:
+  - identical: 166;
+  - EC only: 8;
+  - the same picture, re-encoded or re-graded: 13 (one of them, 2000103, is referenced by EC only);
+  - a different picture: 20.
+
+  | KR ids that differ | Where KR's bytes exist in EC |
+  |---|---|
+  | `Forest_A/B` 2000040/41, `Rock_A/B` 2000060/61, `Sand_A/B` 2000070/71, `Cave_Floor_A/B` 2000130/31, `Stone_Tan_Light_A/B` 2000280/81, `Stone_Tan_Dark_A/B` 2000290/91, `Dirt_Cliff_EW_A/B` 2000580/81, `Dirt_Rocks_A/B` 2001540/41, `Road` 2001900 (17) | byte-identical at id + 1000000 (3000040 and so on) |
+  | `noise_alpha` 1000003 (correlation 1.000), `UO_dirt_02_256` 1000006, `cube3` 1000017, `Grass_A/B` 2000010/11, `Dirt_A/B` 2000020/21, `Jungle_A/B` 2000030/31, `Cobblestone_A/B` 2000090/91, `Dirt_Cliff_NWtoSE_A/B` 2000590/91, `Dirt_Cliff_NS_A/B` 2000600/01 (15) | KR only |
+
+- Some differences are large: KR's `Dirt_A` has luma 70.5 against EC's 55.2, and the KR dirt cliffs are about 20
+  levels brighter (55.8 against 35.8) with the same picture.
+
+**What to pack from where:**
+
+| Package item | Source | Status |
+|---|---|---|
+| grunge texture | KR `Texture.uop` `build/worldart/01000045.dds` (EC's differs) | confirmed |
+| per-item grunge flag | already in tilemeta (`item_texture_refs.v4.bin`, ref `item_index` 1, `texture_id` 1000045); EC tileart agrees on 99.5 % of the items, KR tileart is exact | confirmed |
+| night, night-sight, day maps | `TerrainTexture.uop` 21, 22, 20, either client | confirmed |
+| light textures | `TerrainTexture.uop` 1-15 from either client; 17 from KR | confirmed |
+| light scale and offsets | tileart (`light_scale`, `light_offset_x/y`; KR and EC agree on 585 of 603 light items); no package stores them today | confirmed data |
+| KR terrain | KR `TerrainDefinition.uop`, plus KR `Texture.uop` for the 32 differing ids: 17 are also in EC at id + 1000000, 15 exist only in KR | confirmed data |
+
+### P3.3 Light sprites
+
+**Placement** (*confirmed*, `UOObjectComponentLighting::PlaceLightSprite` 0x00438a80):
+
+- The texture comes from `LightingTextureFileLocation` 0x00438680: an object override (vtable +0x38) or the
+  definition (vtable +0x60). That is tileart block 3, map 0, named `Data\Textures\000000NN_<name>.tga`; these names
+  are the `TerrainTexture.uop` entries NN (*probable*: the name match was checked, the lookup was not traced).
+- The material is a `UOShaderFilenameLight` (ctor 0x004387d0, vtable 0x00b522d4) with the shader name
+  `UOSpriteShader` (0x00438930). Its map count (0x004388e0) is **1** and its map (0x004388f0) is the texture with
+  repetition 1.0.
+- `UOSprite::BuildSpriteBatch` 0x004454c0 binds maps 1 and up only to the material's count. **So the light sprites
+  get no grunge**, although all 599 KR light items list the noise as map 1 (*confirmed*). This corrects the first
+  pass ("probable: grunged").
+- **Colour:** the descriptor defaults (0x00441890) are white (1, 1, 1, 1) with hue 0, and 0x00442890 writes no
+  colour. The light colour is the texture's own RGBA (*confirmed*).
+- **Size:** descriptor +0x3c is the definition's +0x6c, the tileart `light_scale`; +8 / +0xc are the texture's
+  width and height. The quad is the texture's pixels times the scale, built by `UOSprite::BuildSpriteQuad`
+  0x00442430 like a static.
+- **Anchor:** descriptor +0x10 = 22 - width / 2 and +0x14 = 0, in pixels: centred on the 44-pixel tile (*probable*
+  reading of the anchor fields).
+- **Mode:** descriptor +0x38 = 3.
+- **Position:** `UOSprite::PlaceSprite` 0x004422b0 at the object's position, plus the camera transform (0x0083aab0)
+  of the two tileart light offsets, added to +0x60..+0x68.
+  - Which offset is up and which is right, and whether they are scaled, was not resolved.
+  - KR values are mostly 0 to -5. For example 2576 has (x -5, y -4) in KR and (0, -4.5) in EC.
+
+**Batch** (*confirmed*): `BuildLightBatch` 0x00438ee0 turns z test and z write off and sends the batch to render
+group 0x00c931b4, which `UOLightingPostProcessEffect::Render` draws into B. The blend is the shared alpha property
+0x00c933ec (SRCALPHA / INVSRCALPHA), so the lights *probably* lerp over the night map.
+
+**Data** (*confirmed*):
+
+| Id (`TerrainTexture.uop`) | Name | KR items | Alpha-weighted mean RGB | Size |
+|---|---|---|---|---|
+| 1 | `light_generic` | 462 | (192, 162, 93); alpha at most 115 | 256x256 |
+| 2 | `light_post` | 3 | (192, 162, 93); alpha at most 255 | 256x256 |
+| 3, 4 | `light_window` | 19, 20 | (192, 162, 93); alpha at most 147 | 256x256 |
+| 6 | `MushroomA` | 16 | (255, 31, 31) | 256x256 |
+| 7 | `CandleA` | 14 | (209, 206, 153) | 256x256 |
+| 8, 9 | `SconceA`, `SconceB` | 13, 8 | (157, 147, 57) | 256x256 |
+| 11, 12, 13 | `crystal` | 10, 9, 4 | (81, 160, 113) | 128x128 |
+| 14 | `blob` | 1 | (74, 203, 101) | 128x128 |
+| 15 | `rune` | 5 | (106, 225, 238) | 128x128 |
+| 17 | `GoldGlow_Treasure` | 15 | white, alpha mean 2.8, at most 56 | |
+
+- KR light scales: 2.0 on 454 items, 1.0 on 72, 1.5 on 39, 1.6 on 24, 0.75 on 5, 5.0 on 4, 1.25 on 1. On the
+  same ids, EC has six fewer at 1.5 and eight more at 2.0.
+- The light fields follow `body_type` in the raw tileart record, at offset 0x23 (KR, version 3) or 0x25 (EC,
+  version 4), as `<fIff` (scale, unused field +0x70, offset x, offset y).
+- KR and EC agree on fields and texture for 585 of the 603 items that have a light in either client.
+- In this repository only the decoder (`tileart.rs`, `light_scale`, `light_offset_x`, `light_offset_y`) and the
+  tileart editor GUI read these fields; no package stores them. `world_lights.uddp` holds the Classic `light.mul`
+  shapes (light id, flags, width, height), not the TerrainTexture lights.
+
+### P3.4 Sprite shadow geometry
+
+**Who casts** (*confirmed*, KR):
+
+- The shadow placement 0x00440e50 (`obj`, `mode`; not named in Ghidra) is called from three places, each gated on
+  `showShadows` (0x00c4a014):
+
+  | Caller | Component | Vtable slot | Gate | Call |
+  |---|---|---|---|---|
+  | 0x00435120 | `UOObjectComponentSprite` (vtable 0x00b5203c): statics and items (multi parts *probable*) | +0x20 | 0x004353b2 | 0x004353cd |
+  | 0x00435630 | shared by both components | +0x50 | 0x00435693 | 0x00435749 |
+  | 0x00436320 | `UOObjectComponentFoliage` (vtable 0x00b520b4) | +0x20 | 0x0043661e | 0x00436638 |
+
+- `mode` is the component's +0x24, 1 by default (ctors 0x00434de0 and 0x00436160). Mode 0 casts nothing. What
+  writes other values is *unknown*.
+- No shadow when the tileart flags (`obj` +0x34) have any of 0x10004200:
+  - Surface 0x200;
+  - Roof 0x10000000;
+  - bit 14, 0x4000. Our decoder calls it `ArticleA`, but in KR's 32-bit flags it is EC's `Rotated` (bit 34): 1593
+    of the 1604 KR bit-14 items are EC `Rotated` items, and UOSA's (unreferenced) placement tests bit 34 where KR
+    tests bit 14. So rotated flat art casts no shadow.
+- EC's version adds `NoShadow` (bit 36); KR has no such flag.
+- There is no size limit.
+- Mobiles cast a separate quad (below).
+
+**The shadow sprite** (*confirmed*):
+
+- It is a 0xfc-byte sprite descriptor (defaults 0x00441890), copied from the caster's own descriptor by 0x00441b80:
+  the same texture, UVs, pixel rectangle, anchor and scale.
+- +0xf8 = 1 marks it as a shadow. `UOSprite::BuildSpriteBatch` reads that at 0x00445658 and binds
+  `UOSpriteShaderShadow` (0x00b51740) at 0x00445f23.
+- Colour (+0x20..+0x2c) is (0, 0, 0, 1); +0x38 = 0x41 (its z-buffer bits 0x30 are clear, so the default z
+  property applies).
+
+**Geometry** (*confirmed* from the decompile and the assembly). The quad lies in the camera plane, like every
+sprite. Camera space is Gamebryo's: X is the view direction (depth), Y up, Z right; that +Z is screen right is
+*probable*.
+
+```
+desc       the caster's descriptor: pixel rectangle (x0, y0, x1, y1) at +0x00..+0x0c, anchor offsets (ax, ay) at
+           +0x10 / +0x14, scale s at +0x3c, position P at +0x54..+0x5c
+K  = 0.021427422   0x00b87024, world units per art pixel
+Zu = 0.12856454    0x00b86f38 (= 6 K), world units per UO z unit
+θ  = 0.19634375    0x00b87170 (= π / 16, 11.25 degrees)
+ε  = 1e-4          0x00b42f48
+Cam                the camera rotation matrix, [[0x00c9dc70] + 0x68] + 0x2c
+
+h  = obj.z (+0x4c) - G          G = 0x00587770(map 0x00c9dc7c, position, z): the land z (capped at z) or the top of a
+                                surface or bridge object in the cell whose top is at most z + 4, whichever is higher
+W  = ceil((|x1 - x0| + 1) * s) * K            ceil is 0x004405f0
+H  = ceil((|y1 - y0| + 1) * s) * K
+r0 = ax * s * K
+u0 = -ay * s * K + h * Zu
+u1 = u0 + H
+P' = P - Cam * (0, h * Zu, 0)                 the pivot: the caster's anchor lowered to the ground
+
+Rot(r, u) = (r cos θ + u sin θ,  u cos θ - r sin θ)       0x0083a770 builds R, 0x0083ab10 applies R^T
+C(r, u)   = P' + Cam * (ε, u, r)                          ε puts the quad just behind the caster
+
+TL = C(Rot(r0, u1))
+TR = TL + Cam * (0, 0, W)                     rotated top-left, then W along the unrotated right axis
+if h == 0 and mode != 4:                      0x00839e50 resets R to the identity after the top corners
+    BL = C(r0, u0),          BR = C(r0 + W, u0)
+else:
+    BL = C(Rot(r0, u0)),     BR = C(Rot(r0 + W, u0))
+```
+
+- The top edge stays horizontal and moves right by `u1 sin θ + r0 (cos θ - 1)` and down by
+  `u1 (1 - cos θ) + r0 sin θ`. The quad is a parallelogram leaning **right**, with the caster's full height and
+  width: the length is the sprite's height and the scale is the sprite's own.
+- The direction is **fixed**. It does not depend on the terrain light D, the time of day or the light level.
+- **Wall branch:** for modes 1-4 with the Wall flag (+0x34 & 0x10), or mode 3:
+  - u0 and u1 are both lowered by 1.05 (0x00b8716c) before the corners;
+  - after the camera transform, every corner gets world x -1.0 and world z +1.0 (0x00b4e8bc);
+  - with the terrain's axes (x = UO x, z = UO y), that is one tile west and one tile south, one tile width to the
+    screen left (*probable*).
+- Modes outside 1-4 take the default branch; modes 1, 2 and 4 the same without the wall shift. Mode 4 keeps the
+  bottom rotated at h = 0.
+
+**Drawing into S** (*confirmed* stages, *probable* blend):
+
+- `UOSpriteShaderShadow::SetupTextureStages` 0x00546e30: colour `MODULATE(TEXTURE, DIFFUSE)` = black, alpha
+  `MODULATE(TEXTURE, DIFFUSE)` = the sprite's alpha; the blend comes from the batch's alpha property; fog off.
+- With a black source and an INVSRCALPHA destination, every shadow does `S = S * (1 - a)`.
+- The composite `scene * clamp(S + 1 - s)` with s = 0.25 floors at 0.75: **overlapping shadows do not darken
+  further.**
+
+**The shadow buffer** (*confirmed* unless noted):
+
+- 0x0043f940 creates the effect's targets at the back buffer's size (+0xf0 / +0xf4, from 0x006f02e0), retrying at
+  1/2, 1/3 and so on if that fails. S (+0x264) is therefore **screen-sized**.
+- 0x006f0560 attaches the back buffer's depth-stencil (+0xfc) to every post-process target group, so the shadow
+  quads are depth-tested against the scene drawn before them (*probable* that the shadow batch tests z). The
+  caster hides its own shadow (the quad is ε behind it), and the shadow lands only on what lies behind the
+  caster's plane.
+- `Render` 0x0043fe10 clears S to (1, 1, 1, 1), draws the list +0x134 (count +0x13a) through 0x00856600 into
+  +0x264, then composites with `UOShadowShader`. That the item shadows reach list +0x134 is *probable*.
+- **Order:** `InitPostProcessEffects` 0x0041ecd0 appends the shadow effect (0x00c4a02c, ctor at 0x0041edd3) before
+  the lighting effect (0x00c4a010, ctor at 0x0041ee8e). The append order is *confirmed*; that the effects run in
+  array order is *probable*. So the shadow composite comes **before** the lighting composite.
+
+**Mobile shadow** (*confirmed*, KR and EC alike):
+
+- Built by 0x004278b0 when `showShadows` is on (0x00427db4):
+  - a `MobAnimTriShapeShadow` (vtable 0x00b51e6c) with 4 vertices, colour (0, 0, 0, 0.5) (0x00b4e048) and
+    indices 0, 2, 1, 1, 2, 3;
+  - `NiAlphaProperty` flags 0x12e1: blend on, source ONE, destination INVSRCALPHA, alpha test GREATER 10;
+  - `NiZBufferProperty` test on, write off; `NiVertexColorProperty`; `UOSpriteShaderShadow`.
+- It is attached to the mobile render group 0x00c931b8, which the main scene pass 0x00459e00 draws. **The mobile
+  shadow goes into the scene, not into S:** `scene * (1 - 0.5 a)` with a the frame's alpha, independent of the
+  shadow intensity.
+- Update 0x00425220 (vtable +0x88), per frame:
+
+  ```
+  (left, top, right, bottom) = UOAnimations::GetLayerBounds, pixels;   sK = mobile scale (+0x98) * K
+  r_l = 0.71 + left * sK     r_r = 0.71 + right * sK               0.71 = 0x00b871bc
+  u_t = 0.71 - top * sK      u_b = 0.71 - bottom * sK
+  R   = rotation by -θ (0x00b871c0) applied as R v: the same lean right as Rot above
+  TL  = Cam * Rot(r_l, u_t)      TR = Cam * Rot(r_r, u_t)          only the top corners are rotated
+  BL  = Cam * (0, u_b, r_l)      BR = Cam * (0, u_b, r_r)
+  every corner += position (+0x8c..+0x94) + ε * V - Cam * (0, (z - ground z (+0xac)) * Zu * Zu, 0)
+  V   = the vector at [0x00c9dc70] + 0xc (probably the view direction)
+  UV  = (0, 0) to ((right - left) / texture width, (bottom - top) / texture height) of the frame atlas
+  ```
+
+  - The height factor is squared (`Zu * Zu`) in the assembly, probably a client slip.
+  - The ground z comes from 0x00427180.
+  - The top edge tilts, unlike the item shadow, whose top edge stays horizontal.
+- EC: builder 0x00435140 (gate 0x00435a19), vtable 0x00c9fa54, 0.5 at 0x00c95604, the same flags, update
+  0x00432110 with 0.71 (0x00d053c8), -θ (0x00d053cc) and the same squared factor.
+
+**EC item shadows:** none (see [P3.1](#p31-the-enhanced-client-against-kr)). The unreferenced placement
+0x00457bf0 uses the same constants (K 0x00d051d8, 6K 0x00d050a0, θ 0x00d05368, 1.05 0x00d05364, ε 0x00c981d0,
+1.0 0x00c981c8, ground 0x005dcad0), a 0x120-byte descriptor with the shadow flag at +0x100 and +0x40 = 0x41.
+
+### P3.5 Decoder notes
+
+- **Bit 14 of KR tileart flags.** `TileArtEntry::flags1` reads a KR (version 3) record's 32-bit flags in the EC
+  bit layout. KR's bit 14 comes out as `ArticleA`, but it is EC's `Rotated` (bit 34), as shown in P3.4.
+  - `get_tile_type` tests `Rotated`, so KR data loses it.
+  - EC bits 32 and up (`NoHouse`, `NoDraw`, `Rotated`, `AlphaBlend`, `NoShadow` and the rest) cannot appear in a
+    KR record.
+  - *Probable*: the data and the code agree.
+- **The KR test record.** `kingdom_reborn_record()` in `tileart.rs` writes
+  `(TaeFlag::Rotated | TaeFlag::AlphaBlend).bits() as u32`. Both flags are above bit 31, so the value truncates
+  to 0 and the test never exercises KR flags.
+
 ## Comparison with Dynamapper's KR-like preset (revised)
 
 Dynamapper sources:
@@ -647,7 +992,7 @@ Dynamapper sources:
 - `src/core/constants.rs` (`BAKED_GLOBAL_LIGHT`).
 
 Values are given as morning / afternoon / night / cave where they differ. Rows marked **(new)** or **(revised)**
-come from the second pass.
+come from the second or third pass.
 
 | Item | KR client | Dynamapper KR-like | Gap |
 |---|---|---|---|
@@ -661,12 +1006,12 @@ come from the second pass.
 | Colour grading **(revised)** | none; captures of the references give B/R 0.60-0.89, chroma 21-40 | saturation 1.12-1.14 (night/cave 1.02), vibrance 0.38-0.45, contrast 1.10-1.12, split tone 0.65-0.80, strength 0.9-1.1, plus land and art temperature 0.75 and a warm `light_color`; measured afternoon B/R 0.12-0.82, chroma 19-79 | Dynamapper only; it causes a strong yellow cast |
 | Gloom / desaturation | none (death effect only) | gloom 0.16 / 0.14 / 0.24 / 0.30 with desaturation 0.12 / 0.10 / 0.22 / 0.28, faded out 0.005-0.01 world units above y = 0 | Dynamapper only |
 | Fog / vignette | none (the `figleaf` sky and fog code is never called) | screen-space radial fog, colour about (0.02-0.04, 0.03-0.05, 0.03-0.07), cap 0.28-0.36 | Dynamapper only |
-| Sprite shadows | sprite-shaped, hard, ×0.75, every time of day | projected strength 0.22 / 0.24 / 0.18 / 0.16, length 0.28-0.44, softness 0.62-0.74; a 0.25 / 0.05 stand-in barely shows in captures | client constant and stronger |
+| Sprite shadows **(revised)** | a black copy of each static, item and foliage sprite, leaning right 11.25 degrees from its ground point, depth-tested; hard, ×0.75 with no stacking, every time of day; mobiles ×0.5 (see [P3.4](#p34-sprite-shadow-geometry)) | projected strength 0.22 / 0.24 / 0.18 / 0.16, length 0.28-0.44, softness 0.62-0.74; a 0.25 / 0.05 stand-in barely shows in captures | client constant and stronger |
 | Extra shadows | none | contact 0.30-0.42, relief/crease 0.58-0.70, cliff bank, shadow mottle 0.48-0.60 | Dynamapper only |
-| Local lights | light sprites in the light buffer, probably lerped, grunged, weight `4 (1 - level)`, none by day | additive decals `albedo × colour × 0.32 × 1.35` at all times; static visibility 0.55 | client lights only at night, multiplicative |
-| Statics grunge **(revised)** | `01000045_noise` × on 75 % of KR art, 99.5 % of legacy art and all light sprites; world-anchored, 16-tile period, ×0.55-1.0 (mean 0.84); never on terrain or mobiles; never in the EC HLSL path | procedural grunge 0.58-0.65 × gain 1.35 on art and land: about 40-tile period, ×0.48-1.16 | same idea on statics; wrong texture, scale and range; land grunge is Dynamapper only |
+| Local lights **(revised)** | light sprites in the light buffer, probably lerped, not grunged, coloured by their texture, sized by the tileart light scale, weight `4 (1 - level)`, none by day | additive decals `albedo × colour × 0.32 × 1.35` at all times; static visibility 0.55 | client lights only at night, multiplicative |
+| Statics grunge **(revised)** | KR's `01000045_noise` (EC's differs) × on 75 % of KR art and 99.5 % of legacy art, not on light sprites; world-anchored, 16-tile period, ×0.55-1.0 (mean 0.84); never on terrain or mobiles; never in the EC HLSL path | procedural grunge 0.58-0.65 × gain 1.35 on art and land: about 40-tile period, ×0.48-1.16 | same idea on statics; wrong texture, scale and range; land grunge is Dynamapper only |
 | Transition grime, colour wash **(revised)** | none; the ground's unevenness is the two-base blend through the coverage noise | transition grime 0.58-0.65, colour wash 0.55-0.74, on top of the same two-base blend | Dynamapper only |
-| Terrain data **(new)** | KR TerrainDefinition: `Grass_A` (dark green), 24-tile grass mask | the packages' data, probably EC: `Grass_C`, 32-tile mask | grass differs; other materials match |
+| Terrain data **(revised)** | KR TerrainDefinition: `Grass_A` (dark green), 24-tile grass mask, forest repetition 5; KR textures for 32 ids | the packages' data, probably EC: `Grass_C`, 32-tile mask | grass and forest records differ, and 32 referenced textures hold other images (see [P3.2](#p32-data-sources)) |
 | Texture filtering **(new)** | plain bilinear, no mip levels, about 1.2 texels per pixel at 1024 px; low-resolution grunge and masks magnified 2.5-3.7 times | pixel-art UV remap before the sampler (land and art), `enable_linear_filtering` 1; blur 0.27 in the preset | Dynamapper crisper at texel edges |
 | Terrain shading evaluation **(new)** | per-vertex half-Lambert, Gouraud over the (x+1, y)-(x, y+1) split | per-pixel normals (bicubic and bent in the preset) | Dynamapper smoother; no facets |
 | Sprite lighting **(revised)** | none: texture × hue × grunge; vertex RGB unused | fake normals, highlight 0.24-0.42, depth tint 0.20-0.34, temperature 0.65-0.75, mottle | Dynamapper only |
@@ -695,17 +1040,19 @@ first proposal needs only settings. The rest need code or data.
    - Measured effect: blue comes back (forest B/R 0.12 → 0.47, slopes 0.33 → 0.66; references 0.58-0.89).
      Chroma falls from 66-79 to 36-49 (references 21-40). Brightness barely changes.
 2. **Statics: the client's grunge instead of the procedural one** (code):
-   - multiply the sprite RGB by the client's grunge texture (`01000045_noise`, from the packages or the client
-     data);
+   - multiply the sprite RGB by the client's grunge texture (`01000045_noise`, KR's version: EC's file is a
+     different image, see [P3.2](#p32-data-sources));
    - sample it at the world position divided by 16 tiles, at full strength;
-   - apply it only to art whose tileart entry has shader map 1 (75 % of KR art, nearly all legacy art, light sprites);
-   - never apply it to land or mobiles, and never brighten;
+   - apply it only to art whose tileart entry has shader map 1 (75 % of KR art, nearly all legacy art); the tilemeta
+     refs already carry this;
+   - never apply it to land, mobiles or light sprites, and never brighten;
    - for an EC-faithful mode, skip it altogether.
 
    This is the main missing "dirty, uneven" ingredient.
-3. **Terrain data for KR: the KR TerrainDefinition and textures** (data): `Grass_A`, the 24-tile grass mask and
-   the KR forest repetitions. The blend code already matches the client. This gives the dark olive, blotchy
-   ground of the references.
+3. **Terrain data for KR: the KR TerrainDefinition and textures** (data): `Grass_A`, the 24-tile grass mask, the
+   KR forest repetitions, and KR's images for the 32 texture ids that differ (15 of them exist only in KR's
+   `Texture.uop`; see [P3.2](#p32-data-sources)). The blend code already matches the client. This gives the dark
+   olive, blotchy ground of the references.
 4. **Filtering: plain bilinear for KR** (code):
    - no pixel-art remap and no extra blur;
    - single-level sampling, or a positive LOD bias to keep the client's softness;
@@ -725,24 +1072,37 @@ first proposal needs only settings. The rest need code or data.
    Suggested levels: morning and afternoon 1.0 (L 0); night 0.677 (L 10); cave 0.161 (L 26). This is the
    biggest difference at night and none by day.
 7. **Sprite shadows: hard, sprite-shaped, constant ×0.75** at every time of day (code). The current projected
-   shadows at the stand-in values barely show.
+   shadows at the stand-in values barely show. Use the geometry of [P3.4](#p34-sprite-shadow-geometry):
+   - a black copy of each static, item and foliage sprite (not Surface, Roof or rotated flat art), leaning right
+     by π/16 about its ground point;
+   - drawn into a screen-sized buffer with the scene's depth, then `scene * clamp(S + 0.75)`, before the night
+     composite;
+   - mobiles: a 50 % black copy of the frame drawn straight into the scene.
+
+   An EC-faithful mode keeps only the mobile shadows.
 8. **Local lights: inside the composite** (code):
    - weight them by `4 (1 - level)`;
-   - lerp them over the night map, grunged;
+   - lerp them over the night map, not grunged and not hued;
    - give no light at full daylight;
-   - use the light decal textures and the tileart light textures.
+   - use the `TerrainTexture.uop` light textures that tileart block 3 names, scaled by the tileart light scale and
+     moved by its light offsets (see [P3.3](#p33-light-sprites)).
 9. **Brightness: expose the client's gamma** (×0.6..1.4 at full light, default ×1) as the one control, in place
    of `exposure` and `global_lighting`.
 
 ## Open points
 
 - The light-sprite blend: the batch alpha property points to a lerp; the D3D state was not read in a running
-  client. Their colour scale is also unread.
-- The default of `showShadows`.
+  client.
 - The meaning of the tileart field +0x38 bits 2 (nearest filter) and 3 (wrap), and of the second terrain field
   (3 in KR, 1 in EC).
 - Whether the installed packages carry EC or KR terrain data and art (this decides proposal 3).
 - The death effect's TFACTOR.
 - The zoom limits of the view half-width (probably 6 and 26).
-- The order of the shadow and lighting effects (probably shadow first; both are multiplies, so the order only
-  matters through the clamp).
+- Whether the post-process effects run in the order they were appended (shadow first). Both are multiplies, so
+  the order only matters through the clamp.
+- Third pass:
+  - the shadow modes other than 0 and 1 (component +0x24) and what sets them;
+  - whether the shadow batch tests z (the depth buffer is shared);
+  - the units and the axis order of the tileart light offsets;
+  - the light sprite's quad anchor in `BuildSpriteQuad`;
+  - UOSA's light sprite placement (not read).
