@@ -623,4 +623,50 @@ mod tests {
             }
         }
     }
+
+    /// The clients' half-Lambert, (N.L + 1) / 2: the land shader's wrap gives N.L * (1 - wrap) + wrap.
+    const CLIENT_HALF_LAMBERT_WRAP: f32 = 0.5;
+    const CLIENT_DIFFUSE_STRENGTH: f32 = 1.0;
+
+    #[test]
+    fn enhanced_leaves_off_the_terms_and_static_shadows_the_client_lacks() {
+        use crate::core::render::scene::world::land::mesh_material::{
+            TERRAIN_SHADING_SMOOTH_PER_PIXEL, TONE_CURVE_IDENTITY,
+        };
+        for text in [BUNDLED_FACTORY_PRESETS, BUNDLED_LAND_SETTINGS] {
+            let presets = parse(text).expect("bundled");
+            let group = &presets.enhanced;
+            for slot in [&group.morning, &group.afternoon, &group.night, &group.cave] {
+                let effects = &slot.effects;
+                assert_eq!(effects.enable_grunge, 0);
+                assert_eq!(effects.light_decal_intensity, 0.0);
+                assert_eq!(effects.static_light_decal_visibility, 0.0);
+                assert_eq!(effects.art_highlight_strength, 0.0);
+                assert_eq!(effects.art_depth_tint_strength, 0.0);
+                // The Enhanced client draws no shadow for statics, items or foliage; only mobiles get one.
+                assert_eq!(effects.art_shadow_strength, 0.0);
+                assert_eq!(effects.art_contact_shadow_strength, 0.0);
+                assert_eq!(effects.enable_art_projected_shadows, 0);
+                assert_eq!(effects.art_projected_shadow_strength, 0.0);
+
+                let lighting = &slot.lighting;
+                assert_eq!(lighting.enable_grading, 0);
+                assert_eq!(lighting.enable_gloom, 0);
+                assert_eq!(lighting.enable_fog, 0);
+                assert_eq!(lighting.tone_curve, TONE_CURVE_IDENTITY);
+                assert_eq!(lighting.light_color, Vec3::ONE);
+                assert_eq!(lighting.ambient_strength, 0.0);
+
+                let land = &slot.land_lighting;
+                assert_eq!(land.terrain_shading_model, TERRAIN_SHADING_SMOOTH_PER_PIXEL);
+                assert_eq!(land.enable_bent, 0);
+                assert_eq!(land.specular_strength, 0.0);
+                assert_eq!(land.rim_strength, 0.0);
+                assert_eq!(land.fill_strength, 0.0);
+                assert_eq!(land.sharpness_mix, 0.0);
+                assert_eq!(land.diffuse_wrap, CLIENT_HALF_LAMBERT_WRAP);
+                assert_eq!(land.diffuse_strength, CLIENT_DIFFUSE_STRENGTH);
+            }
+        }
+    }
 }
