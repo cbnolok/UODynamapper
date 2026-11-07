@@ -662,9 +662,10 @@ rim_color = [0.55, 0.75, 1.05, 2.8]
 # KR-like: the Kingdom Reborn client's look on KR content.
 # Every term the KR client lacks is off: tone curve (identity), grading, gloom, fog (available, off), ambient,
 # fill, rim, specular, bent normals, the warm light colour, land and art temperature, fake normals, highlights,
-# depth tint, contact, relief and sprite shadows, mottle, grunge, transition grime, colour wash and the
-# light decals. exposure and global_lighting stay as brightness. The land diffuse is the client's
-# half-Lambert: wrap 0.5 gives (N.L + 1) / 2, white, strength 1.
+# depth tint, relief shadows, mottle, grunge, transition grime, colour wash and the light decals. exposure
+# and global_lighting stay as brightness. The land diffuse is the client's half-Lambert: wrap 0.5 gives
+# (N.L + 1) / 2, white, strength 1. The sprite shadow settings (shadow shape, contact and projected shadows)
+# keep their earlier values until the client's static shadow is reproduced.
 # The full-featured painterly rendering with all effects enabled is UOD-Painterly, below.
 
 [kr.morning]
@@ -674,7 +675,7 @@ shading_mode = 2
 normal_mode = 0
 enable_blur = 0
 enable_linear_filtering = 1
-art_shadow_strength = 0.0
+art_shadow_strength = 0.24
 sharpening_amount = 0.0
 blur_strength = 0.28
 blur_radius = 0.005
@@ -693,14 +694,14 @@ art_highlight_strength = 0.0
 art_depth_tint_strength = 0.0
 enable_normal_maps = 0
 enable_art_fake_normals = 0
-art_contact_shadow_strength = 0.0
+art_contact_shadow_strength = 0.30
 kr_land_temperature_strength = 0.0
 kr_land_relief_shadow_strength = 0.0
 kr_land_shadow_mottle_strength = 0.0
 kr_land_material_contrast_strength = 0.0
 kr_art_temperature_strength = 0.0
 land_normal_map_strength = 0.45
-enable_art_projected_shadows = 0
+enable_art_projected_shadows = 1
 art_projected_shadow_strength = 0.22
 art_projected_shadow_length = 0.42
 art_projected_shadow_softness = 0.62
@@ -747,7 +748,7 @@ shading_mode = 2
 normal_mode = 0
 enable_blur = 0
 enable_linear_filtering = 1
-art_shadow_strength = 0.0
+art_shadow_strength = 0.26
 sharpening_amount = 0.0
 blur_strength = 0.28
 blur_radius = 0.005
@@ -766,14 +767,14 @@ art_highlight_strength = 0.0
 art_depth_tint_strength = 0.0
 enable_normal_maps = 0
 enable_art_fake_normals = 0
-art_contact_shadow_strength = 0.0
+art_contact_shadow_strength = 0.34
 kr_land_temperature_strength = 0.0
 kr_land_relief_shadow_strength = 0.0
 kr_land_shadow_mottle_strength = 0.0
 kr_land_material_contrast_strength = 0.0
 kr_art_temperature_strength = 0.0
 land_normal_map_strength = 0.45
-enable_art_projected_shadows = 0
+enable_art_projected_shadows = 1
 art_projected_shadow_strength = 0.24
 art_projected_shadow_length = 0.44
 art_projected_shadow_softness = 0.62
@@ -820,7 +821,7 @@ shading_mode = 2
 normal_mode = 0
 enable_blur = 0
 enable_linear_filtering = 1
-art_shadow_strength = 0.0
+art_shadow_strength = 0.30
 sharpening_amount = 0.0
 blur_strength = 0.28
 blur_radius = 0.005
@@ -839,14 +840,14 @@ art_highlight_strength = 0.0
 art_depth_tint_strength = 0.0
 enable_normal_maps = 0
 enable_art_fake_normals = 0
-art_contact_shadow_strength = 0.0
+art_contact_shadow_strength = 0.38
 kr_land_temperature_strength = 0.0
 kr_land_relief_shadow_strength = 0.0
 kr_land_shadow_mottle_strength = 0.0
 kr_land_material_contrast_strength = 0.0
 kr_art_temperature_strength = 0.0
 land_normal_map_strength = 0.45
-enable_art_projected_shadows = 0
+enable_art_projected_shadows = 1
 art_projected_shadow_strength = 0.18
 art_projected_shadow_length = 0.36
 art_projected_shadow_softness = 0.68
@@ -893,7 +894,7 @@ shading_mode = 2
 normal_mode = 0
 enable_blur = 0
 enable_linear_filtering = 1
-art_shadow_strength = 0.0
+art_shadow_strength = 0.34
 sharpening_amount = 0.0
 blur_strength = 0.28
 blur_radius = 0.005
@@ -912,14 +913,14 @@ art_highlight_strength = 0.0
 art_depth_tint_strength = 0.0
 enable_normal_maps = 0
 enable_art_fake_normals = 0
-art_contact_shadow_strength = 0.0
+art_contact_shadow_strength = 0.42
 kr_land_temperature_strength = 0.0
 kr_land_relief_shadow_strength = 0.0
 kr_land_shadow_mottle_strength = 0.0
 kr_land_material_contrast_strength = 0.0
 kr_art_temperature_strength = 0.0
 land_normal_map_strength = 0.45
-enable_art_projected_shadows = 0
+enable_art_projected_shadows = 1
 art_projected_shadow_strength = 0.16
 art_projected_shadow_length = 0.28
 art_projected_shadow_softness = 0.74
