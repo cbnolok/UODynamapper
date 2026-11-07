@@ -10,7 +10,7 @@ therefore runs one way only:
 - **Encoding (Classic -> KR) needs `classic -> (material, subtype)`.** `facet_encoder` takes it from a
   `kr_land_map::KrLandMap`.
 
-## Conversion coverage and planned binary mapping
+## Conversion coverage and generated binary mapping
 
 CC (Classic), EC (Enhanced) and KR facet conversion does not require the removed
 dictionary files. CC <-> EC needs no KR mapping, and KR -> CC/EC reads the stored
@@ -20,7 +20,7 @@ Conversion through CC or EC cannot always recover the original KR material and
 subtype, because several authored pairs can share one Classic land id. The
 converter reports these losses and requires explicit permission for lossy conversion.
 
-The planned replacement for the compiled mapping is a generated `mappings.bin`.
+The generated [mappings.bin](../../../assets/kr/mappings.bin) is a candidate replacement for the compiled mapping.
 **Generate it from every shipped KR facet available in the source bundle (0-4
 in the audited client), not only map0.** Aggregate the on-map squares across all
 those facets, excluding sector padding, before deriving the Classic-id routes.
@@ -32,8 +32,9 @@ each Classic id, breaking ties with the smaller value.
 Record the source bundle and facet coverage, and retain evidence of ambiguous
 routes. Unobserved ids need an explicitly reviewed override or an explicit
 fallback; the unverified supplement must not become verified merely by being
-written into the binary. This is a future format and generation workflow, not
-an implemented loader or a restoration of the old .NET dictionary blobs.
+written into the binary. The [format and regeneration command](../../../assets/kr/README.md)
+are documented with the artifact and its evidence. Generation is implemented;
+the converter still uses the compiled tables and has no binary loader yet.
 
 ## `kr_land_map.rs`
 

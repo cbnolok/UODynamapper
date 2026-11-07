@@ -14,6 +14,7 @@ struct Cli {
 enum Command {
     FacetEvidence(cmd::facet_evidence::Args),
     KrEcTerrainDiff(cmd::kr_ec_terrain_diff::Args),
+    KrLandMap(cmd::kr_land_map::Args),
     TextureScanner(cmd::texture_scanner::Args),
 }
 
@@ -24,6 +25,7 @@ fn main() -> eyre::Result<()> {
     match cli.command {
         Command::FacetEvidence(args) => cmd::facet_evidence::run(args),
         Command::KrEcTerrainDiff(args) => cmd::kr_ec_terrain_diff::run(args),
+        Command::KrLandMap(args) => cmd::kr_land_map::run(args),
         Command::TextureScanner(args) => cmd::texture_scanner::run(args),
     }
 }
