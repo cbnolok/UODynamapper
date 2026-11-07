@@ -19,7 +19,7 @@ therefore runs one way only:
   (`lib/uocf/tests/real_files/kr_facet_client_files.rs`) derives the table again with `KrLandCounter` and fails when it differs.
 - `BUILDER_KR_LAND_MAP_SUPPLEMENT`: the 1133 Classic ids the KR facets never use, taken from `get_tile_map` in
   `tile_mappings_builder.rs` (Manawydan's KR converter table). Unverified. The builder table agrees with the
-  facets on most shipped ids, but disagrees on 36 and lacks 19, so the generated table wins where both have an id.
+  facets on most shipped ids, but disagrees on 37 and lacks 19, so the generated table wins where both have an id.
 - `KrLandMap::shipped()` is both tables; `shipped_verified()` the first only. A Classic id outside the map fails
   the build, unless `with_fallback` names the land to store (the Classic clients after KR add land ids the map
   lacks).
@@ -36,3 +36,47 @@ static "whitelist" would only drop valid statics (the sectors use graphics 3674 
 
 The converter's hardcoded tables: `get_tile_map` (Classic -> `(material, subtype)`, source of the supplement
 above) and `get_statics_table` (the static whitelist, unused).
+
+## Can the original client replace these tables?
+
+An executable and asset audit on 2026-11-07 confirmed the following for the
+original KR bundle described in the [KR facet research](../../../../../scripts/dev-helpers/ec-research/ghidra-facets/results/uokr_facets.md)
+(`UOKR.exe` SHA-256 `1b802e5c00f3bf89a771778b9c6c57406be0703808eeb4cd983e2f5baa348a43`).
+
+- `Sector_ReadSquare` (`0x007b6994`) reads material, subtype and Classic land id
+  from each sector record. `BuildChunkFromSector` (`0x0058d890`) uses the stored
+  material and subtype to select a TerrainDefinition alias. This path does not
+  reconstruct the material from the Classic id.
+- `TerrainDefinition_Read` (`0x007bf15a`, alias reader `0x007bf2db`) reads aliases
+  from an external stream. Its aliases are source data, not a compiled mapping.
+- The many data references to the string `LegacyTerrainDefinition` are copies
+  of resource-type name arrays, not a land translation table.
+- A search of initialized executable memory for nine 16-row fingerprints of
+  `get_tile_map` found no matches: rows starting at positions 0, 100 and 500,
+  each encoded as packed 5-byte triples, padded 8-byte triples and three u32s.
+  This rules out those representations of those sequences, not every possible
+  representation of a table elsewhere in the executable.
+
+The original assets provide useful but different sources:
+
+| Source | Coverage and limits |
+| --- | --- |
+| KR facets 0-4 | Regenerate all 1,556 verified rows exactly. Over 69,746,240 on-map squares, the table matches 69,745,894 materials and 69,723,228 subtypes. A single Classic id can have multiple authored results, so this is a canonical conversion choice, not an exact inverse of every square. |
+| KR `GameData.uop` | All 64 entries checked; no `legacyterrainmap.csv` entry or equivalent land-route table was found. The non-text workbook holds housing authoring sheets. |
+| KR `TerrainDefinition.uop` | 191 definitions, 227 aliases, 217 distinct nonzero Classic ids. Among the verified table's ids, 182 occur as alias ids and 179 agree; 139, 2444 and 2446 differ. It cannot replace the full conversion map. |
+| EC `legacyterrainmap.csv` | The standard EC table overlaps 1,533 verified KR ids but conflicts on 250. It overlaps 416 supplemental ids but conflicts on 329. Using EC routes for KR would change authored material choices. |
+
+The existing ignored test
+`kr_facet_client_files::kr_facet_sectors_reencode_identically_and_follow_the_rules`
+reconstructs the verified rows with `KrLandCounter` and compares them with the
+compiled table. A future data-driven converter can use the same derivation from
+its target KR bundle. No original source was established for the 1,133
+supplemental routes; they must remain explicitly unverified unless replaced by
+source evidence or reviewed overrides.
+
+The 13,053-id static whitelist is not required by the decoder. `Sector_ReadStatic`
+(`0x007b6ba6`) passes every stored graphic, z and hue to the instance constructor
+(`0x007c0120`) without consulting such a list. The whitelist excludes graphics
+3674 and 6345 present in four facet records, and 195, 196 and 643 present in three
+`StaticChunk.uop` records. All observed facet static graphics have tileart records.
+It must not filter a conversion. This audit changes no runtime or conversion policy.
