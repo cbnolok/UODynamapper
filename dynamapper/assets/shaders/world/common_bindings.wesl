@@ -62,7 +62,8 @@ struct GlobalLightingUniforms {
     enable_grading:  u32,
     enable_gloom:    u32,
     light_color: vec3<f32>,
-    _pad0_: f32,
+    // TONE_CURVE_PROFILE or TONE_CURVE_IDENTITY (postprocess/tonemapping.wesl); the former _pad0_ slot.
+    tone_curve: u32,
     atmosphere_tint: vec3<f32>,
     _pad1_: f32,
     exposure: f32,

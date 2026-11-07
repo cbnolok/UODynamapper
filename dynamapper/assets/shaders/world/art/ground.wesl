@@ -14,7 +14,7 @@ import package::shaders::postprocess::color_grading::{grade_color_vibrant};
 import package::shaders::postprocess::global_lighting::{apply_global_lighting_rgb};
 import package::shaders::postprocess::grunge::{apply_texture_visual_grunge, visual_grunge_uv};
 import package::shaders::postprocess::kr_color_wash::apply_kr_color_wash;
-import package::shaders::postprocess::tonemapping::{tonemap_ec_kr_profile};
+import package::shaders::postprocess::tonemapping::{tonemap_with_curve};
 import package::shaders::world::pixel_art_filters::{pixel_art_atlas_uv_iq};
 
 import package::shaders::world::art::art_ground_bindings::{
@@ -237,7 +237,7 @@ fn shade_fragment(in: GroundVertexOutput, sample_index: u32) -> GroundFragmentOu
         final_rgb = grade_color_vibrant(final_rgb, global_light);
     }
     if (global_light.enable_tonemap == 1u) {
-        final_rgb = tonemap_ec_kr_profile(max(final_rgb, vec3<f32>(0.0)), global_light.exposure, effects.post_process_profile, global_light.kr_tonemap_params.x);
+        final_rgb = tonemap_with_curve(max(final_rgb, vec3<f32>(0.0)), global_light.exposure, effects.post_process_profile, global_light.kr_tonemap_params.x, global_light.tone_curve);
     }
 
     out.color = vec4<f32>(max(final_rgb, vec3<f32>(0.0)), shaded.a);

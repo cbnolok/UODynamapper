@@ -121,6 +121,12 @@ fn active_render_style(u: &UniformState) -> RenderStylePreset {
         .unwrap_or(RENDER_STYLE_PRESETS[0])
 }
 
+/// Whole-scene "Tone Curve" choices under the Tonemap toggle: `(label, tone_curve, tooltip)`.
+const TONE_CURVE_OPTIONS: [(&str, u32, &str); 2] = [
+    ("Profile", TONE_CURVE_PROFILE, "The visual profile's curve (Reinhard, EC or KR filmic), exposure inside it."),
+    ("Identity", TONE_CURVE_IDENTITY, "No curve, as the clients draw: exposure is plain brightness."),
+];
+
 const PRESET_PERIOD_BUTTONS: [(&str, ShaderPresetPeriod); 4] = [
     ("Morning", ShaderPresetPeriod::Morning),
     ("Afternoon", ShaderPresetPeriod::Afternoon),
@@ -946,6 +952,17 @@ fn whole_scene_controls(ui: &mut egui::Ui, u: &mut UniformState, gates: RenderSt
         );
         changed |= toggle_u32(ui, "Texture Smoothness", &mut u.effects.enable_linear_filtering);
         changed |= toggle_u32(ui, "Fog", &mut u.lighting.enable_fog);
+    });
+    ui.horizontal_wrapped(|ui| {
+        let enabled = u.lighting.enable_tonemap != 0;
+        ui.add_enabled(enabled, egui::Label::new("Tone Curve:"));
+        for (label, curve, tip) in TONE_CURVE_OPTIONS {
+            let selected = u.lighting.tone_curve == curve;
+            if ui.add_enabled(enabled, egui::Button::selectable(selected, label)).on_hover_text(tip).clicked() && !selected {
+                u.lighting.tone_curve = curve;
+                changed = true;
+            }
+        }
     });
     ui.columns(2, |columns| {
         let ui = &mut columns[0];

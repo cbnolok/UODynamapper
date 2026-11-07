@@ -258,8 +258,9 @@ pub struct GlobalLightingUniforms {
 
     // --- Colors ---
     pub light_color: Vec3,
-    #[serde(skip)]
-    pub _pad0_: f32,
+    /// The tone stage `enable_tonemap` switches on: `TONE_CURVE_PROFILE` or `TONE_CURVE_IDENTITY`.
+    /// Takes the former `_pad0_` slot after `light_color`.
+    pub tone_curve: u32,
     pub atmosphere_tint: Vec3,
     #[serde(skip)]
     pub _pad1_: f32,
@@ -315,6 +316,12 @@ pub struct GlobalLightingUniforms {
 /// Defaulted near EC's own pre-scale (~1.0) so KR presets are legible out of the
 /// box; the "KR Tonemap Brightness" knob can still lower it for a moodier look.
 pub const DEFAULT_KR_TONEMAP_GAIN: f32 = 0.9;
+
+/// `tone_curve`: the visual profile's curve (Reinhard, EC filmic or KR filmic), with `exposure` inside it.
+pub const TONE_CURVE_PROFILE: u32 = 0;
+/// `tone_curve`: no curve. `exposure` scales the color as plain brightness, clamped to [0, 1] like the clients'
+/// 8-bit target. Matches `TONE_CURVE_IDENTITY` in `postprocess/tonemapping.wesl`.
+pub const TONE_CURVE_IDENTITY: u32 = 1;
 
 /// Land-specific lighting: parameters that require a 3D mesh with surface normals
 /// and a view vector, so they only apply to the terrain (not to flat art tiles).
