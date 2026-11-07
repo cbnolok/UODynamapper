@@ -40,7 +40,10 @@ per item and body in `metadata/dress_decisions.v3.bin` of paperdoll_ec.uddp
 garments each keeps. At run time every garment of those slots drawn beneath the
 item is taken off unless kept; a garment drawn beneath it only in another outfit
 (its draw order changed by the other items) was never measured and is taken off
-too. The packing log has one line per item and body, naming the garments kept
+too. A garment the packer cannot measure on the body stays: one without a
+`tileart.uop` Layer (worn on its tiledata layer) or without a 3D frame for the
+body (`paperdoll_overrides::measured_garment`); the gump paperdolls draw many of
+those, such as the chainmail tunic 0x13BD and the leather leggings 0x13C9. The packing log has one line per item and body, naming the garments kept
 (the first 8, the most in view first); `--report` writes one line per garment.
 
 The band and threshold come from the reviewed hand-written rule. The raw count
@@ -111,10 +114,14 @@ test `gump::robe_edges::what_the_gump_paperdolls_show_beneath_a_robe` (gumps_cc,
 gumps_ec, paperdoll_ec, tilemeta) measures every garment under every dress on
 the six profiles: of 17,166 Classic pairs drawn beneath, nothing shows on 1,464
 and only edges (within 11 logical texels, the 3D band at the window's 0.7) on
-10,749. The stored decisions take off 8,616 of those edge-only pairs and none in
-plain view (784 texels beyond, the 3D threshold at 0.7 across and down); with
-gumps_ec.uddp, 6 in plain view: the do-maru 0x2671 under the plain and fancy
-dresses on male bodies, about 800 texels.
+10,749. The stored decisions take off 7,560 of those edge-only pairs and 3 in
+plain view (784 texels beyond, the 3D threshold at 0.7 across and down): the
+short tiger pants 0x7825 under the kimono 0x2681 on male bodies, 1,201 texels
+(416 on the 3D frame); with gumps_ec.uddp, 12: those and the do-maru 0x2671
+under the plain, fancy and wedding dresses, about 800 to 900 texels. With the
+slot rule of version 2 they took off 8,616 edge-only pairs and 0 (gumps_ec: 6)
+in plain view. Taking off the garments the packer did not measure (no Layer of
+their own, or no 3D frame for the body) took off 302 more in plain view.
 
 The ignored test `paperdoll_overrides::measure::the_stored_decisions_take_away_little_outside_the_dress`
 (`UDD_PAPERDOLL_EC`, `UDD_TILEMETA`, `TMPDIR`; `UDD_PAPERDOLL_OVERRIDES` measures

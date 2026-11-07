@@ -2,7 +2,7 @@ use crate::core::controls::input_actions::{ActionCloseActiveDialog, ActionToggle
 use crate::core::render::dialogs::image_background::{image_background_control, ImageBackground};
 use crate::core::render::dialogs::paperdoll_ec::{paperdoll_frames, EnhancedPaperdoll, PaperdollCanvas, PaperdollItem};
 use crate::core::render::dialogs::paperdoll_overrides::{
-    taken_off, PaperdollOrder, PaperdollOverrides, PAPERDOLL_OVERRIDES_FILE_NAME,
+    measured_garment, taken_off, PaperdollOrder, PaperdollOverrides, PAPERDOLL_OVERRIDES_FILE_NAME,
 };
 use crate::core::render::scene::camera::UiCameraResource;
 use crate::configs::shader_presets::UniformState;
@@ -329,7 +329,8 @@ mod tests {
             slots: layer_mask([usize::from(TORSO_LAYER), usize::from(CHEST_LAYER)]),
             decisions: vec![PaperdollEcDressDecision { item_id: ROBE, body: BODY_FRAME, kept }],
         };
-        let stored = |decisions| StoredDressDecisions { decisions: Some(decisions), body_frame: Some(u32::from(BODY_FRAME)) };
+        let stored =
+            |decisions| StoredDressDecisions { decisions: Some(decisions), body_frame: Some(u32::from(BODY_FRAME)), frames: None };
         let takes_all = decisions(Vec::new());
         assert_eq!(gumps(&stored(&takes_all)), [BODY_GUMP, gump(6), gump(3)]);
         let keeps_plate = decisions(vec![PaperdollEcKeptGarment { item_id: PLATE_CHEST, beyond_edge: PLATE_CHEST_BEYOND }]);
@@ -1293,31 +1294,38 @@ fn open_paperdoll(
 
 /// What the gump paperdolls take off beneath a dress-layer item: the decisions paperdoll_ec.uddp stores, on the frame
 /// the 3D paperdoll draws for the profile's body. The gump art shows the garments' edges past a robe as the 3D frames
-/// do, and the decisions measured on the frames take off no garment the gumps show in plain view
+/// do, and the decisions measured on the frames take off few garments the gumps show in plain view, 3 of 17,166
 /// (docs/agent_notes/ec_paperdoll_robe_override.md). Without the package, none.
 #[derive(Clone, Copy)]
 struct StoredDressDecisions<'a> {
     decisions: Option<&'a udd_assets::paperdoll_ec::PaperdollEcDressDecisions>,
     /// The number of the body frame the decisions are looked up on; `None` without the package or a frame.
     body_frame: Option<u32>,
+    /// The package, the `tileart.uop` records and the profile's body, to tell the garments the packer measured; `None`
+    /// in tests, where it measured every garment.
+    frames: Option<(&'a udd_assets::PaperdollEcPackage, &'a TileMetaItemDefinitions, u32)>,
 }
 
 impl<'a> StoredDressDecisions<'a> {
     fn new(
         package: Option<&'a udd_assets::PaperdollEcPackage>,
-        definitions: &TileMetaItemDefinitions,
+        definitions: &'a TileMetaItemDefinitions,
         body: u32,
     ) -> Self {
         let body_frame = package
             .and_then(|package| body_frame(package, &Wearer::new(definitions, body)))
             .map(|(frame, _)| u32::from(frame.entry.frame_number));
-        Self { decisions: package.map(|package| package.dress_decisions()), body_frame }
+        Self {
+            decisions: package.map(|package| package.dress_decisions()),
+            body_frame,
+            frames: package.map(|package| (package, definitions, body)),
+        }
     }
 
     /// No decisions: the client's draw order, under the overrides alone.
     #[cfg(test)]
     fn none() -> Self {
-        Self { decisions: None, body_frame: None }
+        Self { decisions: None, body_frame: None, frames: None }
     }
 
     /// The decision stored for the dress-layer item `covering`.
@@ -1326,10 +1334,16 @@ impl<'a> StoredDressDecisions<'a> {
         self.decisions?.on(covering, self.body_frame?)
     }
 
-    /// Whether the dress-layer item `covering` takes off `garment` (its layer and id) drawn beneath it.
+    /// Whether the dress-layer item `covering` takes off `garment` (its layer and id) drawn beneath it: a garment the
+    /// packer did not measure on the body ([`measured_garment`]) stays.
     fn takes_off(&self, covering: u32, (layer, garment): (usize, u32)) -> bool {
         match (self.decisions, self.body_frame) {
-            (Some(decisions), Some(body)) => decisions.takes_off(covering, body, layer, garment),
+            (Some(decisions), Some(body_frame)) => {
+                decisions.takes_off(covering, body_frame, layer, garment)
+                    && self.frames.is_none_or(|(package, definitions, body)| {
+                        measured_garment(package, definitions, body, garment)
+                    })
+            }
             _ => false,
         }
     }

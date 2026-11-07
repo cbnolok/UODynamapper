@@ -10,8 +10,9 @@
 // garment is taken off under that item on that body; otherwise it is in plain view and stays. The package stores the
 // garments each item keeps on each body; the packing log lists them, one line per item and body, and
 // `pack-ec-paperdoll --report <file>` (the GUI's Findings Report) writes every measurement. Only what the client draws
-// beneath the item is taken off; a taken-off item counts as not worn, so the client's rules it would set off, as plate
-// legs hiding the shoes, do not apply. The gump paperdolls take the decision for the 3D body of their profile, and
+// beneath the item is taken off, and only the garments the packer could measure (with a tileart Layer and a 3D frame
+// for the body); a taken-off item counts as not worn, so the client's rules it would set off, as plate legs hiding the
+// shoes, do not apply. The gump paperdolls take the decision for the 3D body of their profile, and
 // only while paperdoll_ec.uddp is loaded; the gump art shows the edges of armour past a robe as well.
 //
 // This file ships empty. A cover replaces the stored decision for its items:

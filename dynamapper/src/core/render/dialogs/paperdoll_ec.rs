@@ -18,7 +18,7 @@ use udd_assets::tilemeta::TileMetaPackage;
 use udd_assets::PaperdollEcPackage;
 use uocf::enhanced::paperdoll::{compose_on, PlacedFrame, WornItem, SLOT_NAMES};
 
-use super::paperdoll_overrides::{plan_taking_off, PaperdollOrder};
+use super::paperdoll_overrides::{measured_garment, plan_taking_off, PaperdollOrder};
 
 /// What the Enhanced and KR-like presets draw for a paperdoll. Kept in the user settings as
 /// `window.enhanced_paperdoll`; the Classic preset always draws the gump paperdoll.
@@ -101,9 +101,9 @@ pub struct PaperdollItem {
 }
 
 /// What the client draws for `body` wearing `items` (`uocf::enhanced::paperdoll::plan` with `order`'s rules), without
-/// what a robe covers ([`plan_taking_off`], with the decisions the package stores for the body frame drawn), decoded
-/// from paperdoll_ec.uddp: the frames, bottom first, hued with the package's hue tables. A body without a frame takes
-/// the male 400, as in the client. A worn item without a frame draws nothing, as in the client, and is logged once per
+/// what a robe covers ([`plan_taking_off`], with the decisions the package stores for the body frame drawn, on the
+/// garments the packer measured: [`measured_garment`]), decoded from paperdoll_ec.uddp: the frames, bottom first, hued
+/// with the package's hue tables. A body without a frame takes the male 400, as in the client. A worn item without a frame draws nothing, as in the client, and is logged once per
 /// item id: `logged_misses` holds the ids logged so far.
 pub fn paperdoll_frames(
     package: &PaperdollEcPackage,
@@ -124,10 +124,12 @@ pub fn paperdoll_frames(
         })
         .collect();
     let decisions = package.dress_decisions();
+    let definitions = tilemeta.item_definitions();
     let stored = |body_frame: u32, covering: u32, (layer, garment): (usize, u32)| {
         decisions.takes_off(covering, body_frame, layer, garment)
+            && measured_garment(package, definitions, body, garment)
     };
-    let (plan, _) = plan_taking_off(package, tilemeta.item_definitions(), order, body, body_hue, &worn, stored)?;
+    let (plan, _) = plan_taking_off(package, definitions, order, body, body_hue, &worn, stored)?;
     for miss in &plan.misses {
         if logged_misses.insert(miss.item_id) {
             log::warn!(

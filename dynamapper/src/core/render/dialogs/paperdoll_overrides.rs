@@ -15,8 +15,8 @@ use knuffel::Decode;
 use udd_assets::paperdoll_ec::PaperdollEcFrameRecord;
 use uocf::enhanced::animationframe::FrameEntry;
 use uocf::enhanced::paperdoll::{
-    plan, slot_layer, PaperdollDefinitions, PaperdollFrames, PaperdollPlan, WearableRules, WornItem, LAYER_COUNT,
-    SLOT_NAMES,
+    item_frame, item_layer, plan, slot_layer, PaperdollDefinitions, PaperdollFrames, PaperdollPlan, WearableRules,
+    Wearer, WornItem, LAYER_COUNT, SLOT_NAMES,
 };
 
 pub const PAPERDOLL_OVERRIDES_FILE_NAME: &str = "PaperdollOverrides.kdl";
@@ -209,6 +209,19 @@ impl FrameNumber for PaperdollEcFrameRecord {
     }
 }
 
+/// Whether the packer measures `garment` beneath the dress-layer items on `body` (`udd_conv::paperdoll_ec_dress`): it
+/// has a `tileart.uop` Layer and a 3D frame for the body. A stored decision speaks for those garments alone; the
+/// paperdolls leave the others on, as the client draws them (an item worn on its tiledata layer, or whose gump has no
+/// 3D frame for the body).
+pub fn measured_garment<'a, S, T>(sets: &S, definitions: T, body: u32, garment: u32) -> bool
+where
+    S: PaperdollFrames,
+    T: PaperdollDefinitions<'a>,
+{
+    item_layer(definitions, garment, None).is_some()
+        && item_frame(sets, definitions, &Wearer::new(definitions, body), garment).is_ok()
+}
+
 /// What the client draws for `body` wearing `items` ([`plan`] with `order`'s rules), without what is taken off: the
 /// items [`taken_off`] by [`PaperdollOrder::takes_off`], where `stored` gives the package's decision for the body frame
 /// drawn (its number), a covering item and a garment beneath it (its layer and id), are left out and the rest planned
@@ -389,6 +402,29 @@ mod tests {
         assert_eq!(planned(&order), (vec![(feet, SHOES), (dress, ROBE)], vec![taken((torso, SHIRT)), taken((legs, PLATE_LEGS))]));
         let keep = PaperdollOrder { overrides: overrides("cover \"dress\" items=\"0x1F03\"\n"), ..order };
         assert_eq!(planned(&keep), (vec![(torso, SHIRT), (legs, PLATE_LEGS), (dress, ROBE)], vec![]));
+    }
+
+    /// The packer measures a garment with a `tileart.uop` Layer and a frame for the body; the stored decisions speak
+    /// for those alone.
+    #[test]
+    fn a_garment_is_measured_with_a_layer_and_a_frame() {
+        use uocf::enhanced::tileart::{PropertyKey, TaeProp};
+        let (sets, records) = robe_outfit();
+        let measured = |records: &[TileArtEntry], garment| measured_garment(&sets, SortedTileArt(records), BODY, garment);
+        assert!(measured(&records, SHIRT));
+        // The shirt worn on its tiledata layer: its record has no Layer.
+        let mut no_layer = records.clone();
+        no_layer.iter_mut().filter(|record| record.tile_id == SHIRT).for_each(|record| record.prop_vector1.clear());
+        assert!(!measured(&no_layer, SHIRT));
+        // A sash with a Layer and no frame.
+        let mut sash = records.clone();
+        sash.push(TileArtEntry {
+            tile_id: SASH,
+            prop_vector1: vec![TaeProp { id: PropertyKey::Layer as u8, val: slot("abovechest") as u32 }],
+            ..TileArtEntry::default()
+        });
+        sash.sort_by_key(|record| record.tile_id);
+        assert!(!measured(&sash, SASH));
     }
 
     #[test]
