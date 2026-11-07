@@ -10,6 +10,31 @@ therefore runs one way only:
 - **Encoding (Classic -> KR) needs `classic -> (material, subtype)`.** `facet_encoder` takes it from a
   `kr_land_map::KrLandMap`.
 
+## Conversion coverage and planned binary mapping
+
+CC (Classic), EC (Enhanced) and KR facet conversion does not require the removed
+dictionary files. CC <-> EC needs no KR mapping, and KR -> CC/EC reads the stored
+Classic land ids directly. CC/EC -> KR still needs a mapping to choose material
+and subtype; today that comes from the compiled `KrLandMap` tables below.
+Conversion through CC or EC cannot always recover the original KR material and
+subtype, because several authored pairs can share one Classic land id. The
+converter reports these losses and requires explicit permission for lossy conversion.
+
+The planned replacement for the compiled mapping is a generated `mappings.bin`.
+**Generate it from every shipped KR facet available in the source bundle (0-4
+in the audited client), not only map0.** Aggregate the on-map squares across all
+those facets, excluding sector padding, before deriving the Classic-id routes.
+The existing `KrLandCounter` and ignored regeneration test already use facets
+0-4 to reproduce the 1,556 verified rows. Preserve the current deterministic
+selection policy: choose the most frequent material and subtype separately for
+each Classic id, breaking ties with the smaller value.
+
+Record the source bundle and facet coverage, and retain evidence of ambiguous
+routes. Unobserved ids need an explicitly reviewed override or an explicit
+fallback; the unverified supplement must not become verified merely by being
+written into the binary. This is a future format and generation workflow, not
+an implemented loader or a restoration of the old .NET dictionary blobs.
+
 ## `kr_land_map.rs`
 
 - `SHIPPED_KR_LAND_MAP`: generated from the shipped KR facets 0-4 (69,746,240 on-map squares, 1556 Classic ids):
