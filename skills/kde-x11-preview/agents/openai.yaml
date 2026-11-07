@@ -1,0 +1,4 @@
+interface:
+  display_name: "KDE X11 Preview"
+  short_description: "Preview a GUI app on a named KDE desktop"
+  default_prompt: "Use $kde-x11-preview to run this GUI preview on the desktop I specify."

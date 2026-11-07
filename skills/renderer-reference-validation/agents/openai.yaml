@@ -1,0 +1,4 @@
+interface:
+  display_name: "Renderer Reference Validation"
+  short_description: "Compare renderer captures with original references"
+  default_prompt: "Use $renderer-reference-validation to capture this renderer and compare it with the supplied reference images."
