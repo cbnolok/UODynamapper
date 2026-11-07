@@ -131,6 +131,18 @@ The core driver of the overall mood in both clients is the screen-space post-pro
 *   **KR Approach (The Gloom):** KR forcefully drives the Reinhard exposure curve down using static, aggressive constants (`Luminance = 2.0`, `MiddleGray = 0.18`). This crushes ambient light by ~90%, forcing the scene into deep shadows and leaving only bright spots to survive the clipping shoulder (`WhiteCutoff = 0.8`).
 *   **EC Approach (The Brightness):** While EC uses the exact same shader binary (`F6`), the engine either disables the tonemap pass entirely or overrides the `Luminance` uniform at runtime to a much lower value (e.g., `0.2`), mapping the HDR colors 1:1 to the monitor without crushing them.
 
+> **Client trace (2026-11-07):** the Ghidra trace of `UOKR.exe` and `UOSA.exe` does not support this section.
+> - Neither client reaches the Bloom, HDRBloom or Color post-process effects. Their factory is called only from an
+>   unreferenced helper.
+> - With LDR input, the BrightPass constants above give no bloom.
+> - The gloom comes from three things:
+>   - the lighting composite `scene × clamp(4 (c·level + nightmap·(1 − level)))`, which is the identity at full
+>     daylight;
+>   - a baked half-Lambert terrain shade (0.854 on flat ground);
+>   - sprite shadows (×0.75) and the KR art itself.
+>
+> See [`ghidra-kr-atmosphere/results/uokr_atmosphere.md`](../../../scripts/dev-helpers/ec-research/ghidra-kr-atmosphere/results/uokr_atmosphere.md).
+
 ### Implementation Steps (UODynamapper)
 1.  **DONE (material path):** Add shared EC/KR-aware tonemapping helpers in `postprocess/tonemapping.wgsl`.
 2.  **DONE (material path):** Expose `post_process_profile` through the shared effects uniform and presets.
