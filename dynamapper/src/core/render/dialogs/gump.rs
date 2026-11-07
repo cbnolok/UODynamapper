@@ -1,6 +1,9 @@
 use crate::core::controls::input_actions::{ActionCloseActiveDialog, ActionToggleGumpDialog};
 use crate::core::render::dialogs::image_background::{image_background_control, ImageBackground};
 use crate::core::render::dialogs::paperdoll_ec::{paperdoll_frames, EnhancedPaperdoll, PaperdollCanvas, PaperdollItem};
+use crate::core::render::dialogs::paperdoll_overrides::{
+    taken_off, PaperdollOrder, PaperdollOverrides, PAPERDOLL_OVERRIDES_FILE_NAME,
+};
 use crate::core::render::scene::camera::UiCameraResource;
 use crate::configs::shader_presets::UniformState;
 use crate::core::uo_files_loader::{GumpClient, GumpMapRes, HuesPackageRes, PaperdollEcPackageRes, TileMetaPackageRes};
@@ -15,7 +18,9 @@ use bevy::prelude::*;
 use bevy_egui::{egui, EguiContexts, EguiPrimaryContextPass, EguiTextureHandle};
 use knuffel::Decode;
 use std::{collections::HashSet, path::Path};
-use uocf::enhanced::paperdoll::{item_layer, WearableRules, Wearer, LAYER_COUNT, SLOT_NAMES, WEARABLE_RULES_FILE_NAME};
+use uocf::enhanced::paperdoll::{
+    body_frame, item_layer, WearableRules, Wearer, LAYER_COUNT, SLOT_NAMES, WEARABLE_RULES_FILE_NAME,
+};
 use uocf::enhanced::tileart::TaeFlag;
 
 #[derive(Resource)]
@@ -128,9 +133,10 @@ struct PaperdollProfilesRes {
 }
 
 /// The paperdoll draw order of `WearableRules.kdl`, shared with the uocf editor: both paperdolls draw the worn layers
-/// in it.
+/// in it, then take off what a robe covers, by the decisions paperdoll_ec.uddp stores under the user's
+/// `PaperdollOverrides.kdl`.
 #[derive(Resource, Default, Clone)]
-struct PaperdollWearableRulesRes(WearableRules);
+struct PaperdollOrderRes(PaperdollOrder);
 
 const PAPERDOLL_SPECS_DIR: &str = "runtime_specs/paperdoll";
 const PAPERDOLL_PROFILES_FILE_NAME: &str = "PaperdollProfiles.kdl";
@@ -152,6 +158,9 @@ pub(crate) const PAPERDOLL_PROFILES_SCHEMA: &[uot_kdl::strict::NodeSchema] = &[u
         "equipment_y",
     ],
 )];
+
+#[cfg(test)]
+mod robe_edges;
 
 #[cfg(test)]
 mod tests {
@@ -180,6 +189,16 @@ mod tests {
             .unwrap_or_else(|error| panic!("wearable rules parse: {error:?}"))
     }
 
+    /// The bundled rules and overrides.
+    fn bundled_order() -> PaperdollOrder {
+        let overrides = PaperdollOverrides::decode(
+            PAPERDOLL_OVERRIDES_FILE_NAME,
+            include_str!("../../../../assets/runtime_specs/paperdoll/PaperdollOverrides.kdl"),
+        )
+        .unwrap();
+        PaperdollOrder { rules: bundled_rules(), overrides }
+    }
+
     #[test]
     fn bundled_paperdoll_specs_parse() {
         let profiles = bundled_profiles();
@@ -200,11 +219,13 @@ mod tests {
     const LONG_HAIR: u32 = 8252;
     /// One of the beards whose tiledata layer is hair (11) and whose `tileart.uop` layer is facial hair (16).
     const BEARD: u32 = 17069;
+    const ROBE: u32 = 7939;
     const TORSO_LAYER: u8 = 5;
     const NECK_LAYER: u8 = 10;
     const HAIR_LAYER: u8 = 11;
     const CHEST_LAYER: u8 = 13;
     const FACIAL_HAIR_LAYER: u32 = 16;
+    const DRESS_LAYER: u8 = 22;
 
     /// The tiledata record of a worn item: its layer, its paperdoll gump (`anim_id`) and whether it hues only greys.
     fn worn_tile(tile_id: u32, layer: u8, anim_id: u16, partial_hue: bool) -> TileMetaItemTile {
@@ -224,6 +245,7 @@ mod tests {
             worn_tile(NECKLACE, NECK_LAYER, 3, false),
             worn_tile(LONG_HAIR, HAIR_LAYER, 4, false),
             worn_tile(BEARD, HAIR_LAYER, 5, false),
+            worn_tile(ROBE, DRESS_LAYER, 6, false),
         ]
     }
 
@@ -253,7 +275,7 @@ mod tests {
     ) -> color_eyre::eyre::Result<Vec<(u32, bool)>> {
         let tiles = worn_tiles();
         let tile = |item_id: u32| tiles.iter().find(|tile| tile.tile_id == item_id).copied();
-        let layers = gump_paperdoll_layers(request, client, tile, &beard_definition(), &bundled_rules())?;
+        let layers = gump_paperdoll_layers(request, client, tile, &beard_definition(), &bundled_order(), |_| None)?;
         Ok(layers.iter().map(|layer| (layer.gump_id, layer.partial_hue)).collect())
     }
 
@@ -282,6 +304,29 @@ mod tests {
         assert_eq!(error, "The gump paperdoll needs a body gump ID.");
     }
 
+    /// A robe takes off what its stored decision says: the plate chest, then the shirt the plate chest hid, which the
+    /// client's rules draw again once the plate chest is off; the necklace, drawn over the robe, stays. With no
+    /// decision, the client's rules alone: the plate chest hides the shirt.
+    #[test]
+    fn gump_paperdoll_takes_off_what_a_robe_covers() {
+        let offset = bundled_profiles().profile("human_male").unwrap().equipment_offset;
+        let gump = |anim_id: u32| offset + anim_id;
+        let tiles = worn_tiles();
+        let tile = |item_id: u32| tiles.iter().find(|tile| tile.tile_id == item_id).copied();
+        let dressed = request(&[SHIRT, PLATE_CHEST, NECKLACE, ROBE]);
+        let gumps = |stored: &dyn Fn(u32) -> Option<u32>| -> Vec<u32> {
+            gump_paperdoll_layers(&dressed, GumpClient::Classic, tile, &beard_definition(), &bundled_order(), stored)
+                .unwrap()
+                .iter()
+                .map(|layer| layer.gump_id)
+                .collect()
+        };
+        let torso_and_chest = 1 << TORSO_LAYER | 1 << CHEST_LAYER;
+        let robe_decision = |item_id: u32| (item_id == ROBE).then_some(torso_and_chest);
+        assert_eq!(gumps(&robe_decision), [BODY_GUMP, gump(6), gump(3)]);
+        assert_eq!(gumps(&|_| None), [BODY_GUMP, gump(2), gump(6), gump(3)]);
+    }
+
     /// A female profile's item falls back to its male gump when its own is missing; a gump missing after that leaves
     /// out only its layer, while the body is never left out.
     #[test]
@@ -297,7 +342,8 @@ mod tests {
         let tiles = worn_tiles();
         let tile = |item_id: u32| tiles.iter().find(|tile| tile.tile_id == item_id).copied();
         let layers =
-            gump_paperdoll_layers(&dressed, GumpClient::Classic, tile, &beard_definition(), &bundled_rules()).unwrap();
+            gump_paperdoll_layers(&dressed, GumpClient::Classic, tile, &beard_definition(), &bundled_order(), |_| None)
+                .unwrap();
         let (shirt, necklace) = (&layers[1], &layers[2]);
         assert_eq!((shirt.gump_id, shirt.fallback_gump_id), (female.equipment_offset + 1, Some(male.equipment_offset + 1)));
         assert_eq!(layers[0].fallback_gump_id, None, "the body gump has no fallback");
@@ -640,11 +686,11 @@ impl Plugin for GumpDialogPlugin {
     fn build(&self, app: &mut App) {
         log_plugin_build(self);
         app.insert_resource(PaperdollProfilesRes::load())
-            .init_resource::<PaperdollWearableRulesRes>()
+            .init_resource::<PaperdollOrderRes>()
             .init_resource::<GumpDialogState>()
             .add_observer(sys_gump_toggle)
             .add_observer(sys_gump_close)
-            .add_systems(Startup, sys_load_paperdoll_wearable_rules)
+            .add_systems(Startup, sys_load_paperdoll_order)
             .add_systems(
                 EguiPrimaryContextPass,
                 sys_render_gump_dialog.run_if(in_state(AppState::InGame)),
@@ -652,18 +698,29 @@ impl Plugin for GumpDialogPlugin {
     }
 }
 
-/// The bundled wearable rules are required: a missing or invalid file stops the app.
-fn sys_load_paperdoll_wearable_rules(
-    mut rules_res: ResMut<PaperdollWearableRulesRes>,
+/// The bundled wearable rules and paperdoll overrides are required: a missing or invalid file stops the app.
+fn sys_load_paperdoll_order(
+    mut order_res: ResMut<PaperdollOrderRes>,
 ) {
-    let path = constants::valid_asset_dir().join(PAPERDOLL_SPECS_DIR).join(WEARABLE_RULES_FILE_NAME);
-    let rules = std::fs::read_to_string(&path)
-        .map_err(|error| color_eyre::eyre::eyre!("{}: cannot read: {error}", path.display()))
-        .and_then(|content| WearableRules::decode(&content));
-    match rules {
-        Ok(rules) => {
-            log::info!("Loaded paperdoll wearable rules from {}", path.display());
-            rules_res.0 = rules;
+    let specs_dir = constants::valid_asset_dir().join(PAPERDOLL_SPECS_DIR);
+    let read = |path: &std::path::Path| {
+        std::fs::read_to_string(path)
+            .map_err(|error| color_eyre::eyre::eyre!("{}: cannot read: {error}", path.display()))
+    };
+    let rules_path = specs_dir.join(WEARABLE_RULES_FILE_NAME);
+    let overrides_path = specs_dir.join(PAPERDOLL_OVERRIDES_FILE_NAME);
+    let order = read(&rules_path).and_then(|content| WearableRules::decode(&content)).and_then(|rules| {
+        let overrides = PaperdollOverrides::decode(&overrides_path.display().to_string(), &read(&overrides_path)?)?;
+        Ok(PaperdollOrder { rules, overrides })
+    });
+    match order {
+        Ok(order) => {
+            log::info!(
+                "Loaded paperdoll wearable rules from {} and overrides from {}",
+                rules_path.display(),
+                overrides_path.display()
+            );
+            order_res.0 = order;
         }
         Err(error) => crate::configs::settings::exit_on_startup_config_error(&error),
     }
@@ -704,7 +761,7 @@ fn sys_render_gump_dialog(
     hues_package: Option<Res<HuesPackageRes>>,
     paperdoll_ec: Option<Res<PaperdollEcPackageRes>>,
     paperdoll_profiles: Res<PaperdollProfilesRes>,
-    wearable_rules: Res<PaperdollWearableRulesRes>,
+    paperdoll_order: Res<PaperdollOrderRes>,
     uniform_state: Res<UniformState>,
     mut settings: ResMut<Settings>,
     mut images: ResMut<Assets<Image>>,
@@ -719,7 +776,7 @@ fn sys_render_gump_dialog(
         tilemeta: tilemeta.as_deref(),
         hues_package: hues_package.as_deref(),
         paperdoll_ec: paperdoll_ec.as_deref(),
-        rules: &wearable_rules.0,
+        order: &paperdoll_order.0,
     };
     redraw_open_gumps(&mut state, client, settings.app.window.enhanced_paperdoll, &sources, &mut images);
 
@@ -815,7 +872,7 @@ struct GumpSources<'a> {
     tilemeta: Option<&'a TileMetaPackageRes>,
     hues_package: Option<&'a HuesPackageRes>,
     paperdoll_ec: Option<&'a PaperdollEcPackageRes>,
-    rules: &'a WearableRules,
+    order: &'a PaperdollOrder,
 }
 
 impl<'a> GumpSources<'a> {
@@ -899,7 +956,7 @@ fn draw_open_gump_content(
             let frames = paperdoll_frames(
                 &package.0,
                 tilemeta,
-                sources.rules,
+                sources.order,
                 request.profile.body,
                 request.body_hue,
                 &request.items,
@@ -912,12 +969,18 @@ fn draw_open_gump_content(
         // Premultiplied already, as bevy_egui blends it: `alpha_blend_at` composes the layers over a transparent canvas.
         OpenGumpContent::Paperdoll(request) => {
             let tilemeta = &sources.tilemeta()?.0;
+            let stored = stored_dress_hides(
+                sources.paperdoll_ec.map(|package| package.0.as_ref()),
+                tilemeta.item_definitions(),
+                request.profile.body,
+            );
             let layers = gump_paperdoll_layers(
                 request,
                 client,
                 |item_id| tilemeta.item_tile(item_id).copied(),
                 tilemeta.item_definitions(),
-                sources.rules,
+                sources.order,
+                stored,
             )?;
             compose_paperdoll(sources.gump_map()?, client, sources.hues_package, &request.profile, &layers)?
         }
@@ -1217,17 +1280,35 @@ fn open_paperdoll(
     }
 }
 
+/// What the gump paperdolls take off beneath a dress-layer item: the decision paperdoll_ec.uddp stores for it on the
+/// frame the 3D paperdoll draws for `body` (bit n: layer n). The gump art shows the garments' edges past a robe as the
+/// 3D frames do, and the decisions measured on the frames take off no garment the gumps show in plain view
+/// (docs/agent_notes/ec_paperdoll_robe_override.md). Without the package, none.
+fn stored_dress_hides<'a>(
+    package: Option<&'a udd_assets::PaperdollEcPackage>,
+    definitions: &TileMetaItemDefinitions,
+    body: u32,
+) -> impl Fn(u32) -> Option<u32> + 'a {
+    let body_frame = package
+        .and_then(|package| body_frame(package, &Wearer::new(definitions, body)))
+        .map(|(frame, _)| u32::from(frame.entry.frame_number));
+    move |item_id| Some(package?.dress_hides_on(item_id, body_frame?)?.hidden_layers)
+}
+
 /// The layers of the gump paperdoll, bottom first: the body gump, then the gump of each worn item in the paperdoll draw
-/// order of `WearableRules.kdl` (`WearableRules::paperdoll_order`), which hides some layers under others. The Classic
-/// preset finds an item's layer in tiledata; the Enhanced presets, as the 3D paperdoll does, in the item's
-/// `tileart.uop` record first. The overrides of the draw order follow the race of the profile's body. `item_tile` gives
-/// an item's tiledata record; `definitions` are the `tileart.uop` records of tilemeta.uddp.
+/// order of `WearableRules.kdl` (`WearableRules::paperdoll_order`), which hides some layers under others, without what
+/// a robe covers, as on the 3D paperdoll: `order`'s overrides, else `stored` (`stored_dress_hides`), give the layers an
+/// item takes off beneath it (`paperdoll_overrides::taken_off`); a taken-off item counts as not worn and the order is
+/// taken again. The Classic preset finds an item's layer in tiledata; the Enhanced presets, as the 3D paperdoll does, in
+/// the item's `tileart.uop` record first. The overrides of the draw order follow the race of the profile's body.
+/// `item_tile` gives an item's tiledata record; `definitions` are the `tileart.uop` records of tilemeta.uddp.
 fn gump_paperdoll_layers(
     request: &PaperdollRequest,
     client: GumpClient,
     item_tile: impl Fn(u32) -> Option<TileMetaItemTile>,
     definitions: &TileMetaItemDefinitions,
-    rules: &WearableRules,
+    order: &PaperdollOrder,
+    stored: impl Fn(u32) -> Option<u32>,
 ) -> color_eyre::eyre::Result<Vec<PaperdollLayer>> {
     let PaperdollRequest { profile, body_gump, body_hue, items } = request;
     let body_gump =
@@ -1281,8 +1362,23 @@ fn gump_paperdoll_layers(
     }
 
     let race = Wearer::new(definitions, profile.body).race;
-    layers.extend(rules.paperdoll_order(&worn, race).into_iter().filter_map(|layer| worn_layers[layer].take()));
-    Ok(layers)
+    loop {
+        let drawn_layers = order.rules.paperdoll_order(&worn, race);
+        let drawn: Vec<(usize, u32)> =
+            drawn_layers.iter().filter_map(|&layer| worn[layer].map(|item_id| (layer, item_id))).collect();
+        let taken = taken_off(&drawn, |layer, item_id| order.hidden_layers(layer, item_id, || stored(item_id)));
+        if taken.is_empty() {
+            layers.extend(drawn_layers.into_iter().filter_map(|layer| worn_layers[layer].take()));
+            return Ok(layers);
+        }
+        // Each pass leaves out one item at least, so the loop ends.
+        for (item, layer) in worn.iter_mut().zip(worn_layers.iter_mut()) {
+            if item.is_some_and(|item_id| taken.contains(&item_id)) {
+                *item = None;
+                *layer = None;
+            }
+        }
+    }
 }
 
 fn parse_u32_field(text: &str) -> Result<u32, std::num::ParseIntError> {

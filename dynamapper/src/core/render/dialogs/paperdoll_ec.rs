@@ -2,6 +2,8 @@
 //! presets draw from paperdoll_ec.uddp: the body's frame, then the frames of the worn items in the paperdoll draw order
 //! of `WearableRules.kdl`, blended by alpha, each hued as the client hues it. The lookup is `uocf::enhanced::paperdoll`,
 //! which the uocf editor runs on the client files; the item definitions are the `tileart.uop` records of tilemeta.uddp.
+//! What a robe covers is then taken off: the decisions paperdoll_ec.uddp stores, under the user's
+//! `PaperdollOverrides.kdl` ([`super::paperdoll_overrides`]).
 //!
 //! Every paperdoll is drawn on the same canvas ([`PaperdollCanvas`]): the client's paperdoll window around the frames'
 //! anchor, widened to the frame box of both sets, so its size does not change with what is worn and no frame (the lit
@@ -14,7 +16,9 @@ use std::collections::HashSet;
 use udd_assets::paperdoll_ec::PaperdollEcSet;
 use udd_assets::tilemeta::TileMetaPackage;
 use udd_assets::PaperdollEcPackage;
-use uocf::enhanced::paperdoll::{compose_on, plan, PlacedFrame, WearableRules, WornItem, SLOT_NAMES};
+use uocf::enhanced::paperdoll::{compose_on, PlacedFrame, WornItem, SLOT_NAMES};
+
+use super::paperdoll_overrides::{plan_taking_off, PaperdollOrder};
 
 /// What the Enhanced and KR-like presets draw for a paperdoll. Kept in the user settings as
 /// `window.enhanced_paperdoll`; the Classic preset always draws the gump paperdoll.
@@ -96,14 +100,15 @@ pub struct PaperdollItem {
     pub hue: u16,
 }
 
-/// What the client draws for `body` wearing `items` ([`plan`]), decoded from paperdoll_ec.uddp: the frames, bottom
-/// first, hued with the package's hue tables. A body without a frame takes the male 400, as in the client. A worn item
-/// without a frame draws nothing, as in the client, and is logged once per item id: `logged_misses` holds the ids
-/// logged so far.
+/// What the client draws for `body` wearing `items` (`uocf::enhanced::paperdoll::plan` with `order`'s rules), without
+/// what a robe covers ([`plan_taking_off`], with the decisions the package stores for the body frame drawn), decoded
+/// from paperdoll_ec.uddp: the frames, bottom first, hued with the package's hue tables. A body without a frame takes
+/// the male 400, as in the client. A worn item without a frame draws nothing, as in the client, and is logged once per
+/// item id: `logged_misses` holds the ids logged so far.
 pub fn paperdoll_frames(
     package: &PaperdollEcPackage,
     tilemeta: &TileMetaPackage,
-    rules: &WearableRules,
+    order: &PaperdollOrder,
     body: u32,
     body_hue: u16,
     items: &[PaperdollItem],
@@ -118,7 +123,10 @@ pub fn paperdoll_frames(
             tiledata_layer: tilemeta.item_tile(item.item_id).map(|tile| tile.quality).filter(|&layer| layer != 0),
         })
         .collect();
-    let plan = plan(package, tilemeta.item_definitions(), rules, body, body_hue, &worn)?;
+    let stored = |body_frame: &udd_assets::paperdoll_ec::PaperdollEcFrameRecord, item_id: u32| {
+        package.dress_hides_on(item_id, u32::from(body_frame.frame_number)).map(|record| record.hidden_layers)
+    };
+    let plan = plan_taking_off(package, tilemeta.item_definitions(), order, body, body_hue, &worn, stored)?;
     for miss in &plan.misses {
         if logged_misses.insert(miss.item_id) {
             log::warn!(
@@ -228,10 +236,12 @@ mod tests {
         std::path::PathBuf::from(std::env::var_os(name).unwrap_or_else(|| panic!("set {name}")))
     }
 
-    /// The Enhanced presets draw what the uocf editor composes from the client files (`build` and `compose` on
-    /// `Paperdoll.uop`, `tileart.uop` and `hues.uop`): the same frames at the same places, and the editor's composite
-    /// lands on the canvas at the anchor texel for texel, nothing cut. Both sides take the item's tiledata layer from
-    /// tilemeta.uddp. Writes each canvas as a PNG (premultiplied, as egui gets it) and a summary to the temp dir.
+    /// With the client's rules alone (an override that keeps everything beneath any robe), the Enhanced presets draw
+    /// what the uocf editor composes from the client files (`build` and `compose` on `Paperdoll.uop`, `tileart.uop`
+    /// and `hues.uop`): the same frames at the same places, and the editor's composite lands on the canvas at the
+    /// anchor texel for texel, nothing cut. Both sides take the item's tiledata layer from tilemeta.uddp. With the
+    /// decisions the package stores, the robe takes off the shirt beneath it. Writes each canvas as a PNG
+    /// (premultiplied, as egui gets it) and a summary to the temp dir.
     #[test]
     #[ignore = "needs packages and a real Enhanced Client: set UDD_PAPERDOLL_EC, UDD_TILEMETA, UO_EC_CLIENT_DIR and \
                 TMPDIR, and run with --ignored"]
@@ -258,8 +268,19 @@ mod tests {
         let named = NamedTileArt::read(&UopPackage::load(client_file(&client, TILEART_UOP_NAME)).unwrap());
         let sets = FrameSets::load(&client_file(&client, PAPERDOLL_UOP_NAME)).unwrap();
         let hues_package = UopPackage::load_with_mode(client_file(&client, HUES_UOP_NAME), LoadMode::Lazy).unwrap();
+        use super::super::paperdoll_overrides::{PaperdollOverrides, PAPERDOLL_OVERRIDES_FILE_NAME};
+        use uocf::enhanced::paperdoll::WearableRules;
+        /// Keeps everything beneath any robe: the client's rules.
+        const CLIENT_RULES_OVERRIDES: &str = "cover \"dress\" items=\"any\"\n";
+        const ROBE_OUTFIT: &str = "human_male_robe_lantern";
+        const SHIRT: u32 = 0x1517;
         let rules = WearableRules::decode(include_str!("../../../../assets/runtime_specs/paperdoll/WearableRules.kdl"))
             .unwrap();
+        let stored_order = PaperdollOrder { rules: rules.clone(), overrides: PaperdollOverrides::default() };
+        let client_order = PaperdollOrder {
+            rules: rules.clone(),
+            overrides: PaperdollOverrides::decode(PAPERDOLL_OVERRIDES_FILE_NAME, CLIENT_RULES_OVERRIDES).unwrap(),
+        };
         let canvas = PaperdollCanvas::for_sets(package.sets());
         let out_dir = std::env::temp_dir();
         assert!(out_dir.is_absolute(), "{}", out_dir.display());
@@ -276,8 +297,17 @@ mod tests {
             let items: Vec<PaperdollItem> =
                 outfit.items.iter().map(|&(item_id, hue)| PaperdollItem { item_id, hue }).collect();
             let mut misses = HashSet::new();
-            let ours = paperdoll_frames(&package, &tilemeta, &rules, outfit.body, SKIN_HUE, &items, &mut misses)
+            let ours = paperdoll_frames(&package, &tilemeta, &client_order, outfit.body, SKIN_HUE, &items, &mut misses)
                 .unwrap_or_else(|error| panic!("{}: {error:#}", outfit.name));
+            let stored = paperdoll_frames(&package, &tilemeta, &stored_order, outfit.body, SKIN_HUE, &items, &mut misses)
+                .unwrap_or_else(|error| panic!("{}: {error:#}", outfit.name));
+            if outfit.name == ROBE_OUTFIT {
+                assert!(outfit.items.iter().any(|&(item_id, _)| item_id == SHIRT));
+                assert_eq!(stored.len() + 1, ours.len(), "the robe takes off the shirt");
+            }
+            let drawn_stored = canvas.compose(&stored);
+            let path = out_dir.join(format!("paperdoll_ec-{}-stored.png", outfit.name));
+            canvas.image(&drawn_stored).try_into_dynamic().unwrap().save(&path).unwrap();
             let worn: Vec<WornItem> = items
                 .iter()
                 .map(|item| WornItem {
@@ -333,11 +363,12 @@ mod tests {
             let mut missed: Vec<u32> = misses.into_iter().collect();
             missed.sort_unstable();
             summary += &format!(
-                "{}: body {} frames {} texels drawn {} differing {} (max channel difference {}) frame texels differing \
-                 {} cut {} items without a frame {:x?} notes {:?}\n",
+                "{}: body {} frames {} ({} with the stored decisions) texels drawn {} differing {} (max channel \
+                 difference {}) frame texels differing {} cut {} items without a frame {:x?} notes {:?}\n",
                 outfit.name,
                 outfit.body,
                 ours.len(),
+                stored.len(),
                 shown,
                 differing.len(),
                 differing.iter().max().copied().unwrap_or(0),

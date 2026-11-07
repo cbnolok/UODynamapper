@@ -1,0 +1,34 @@
+// Your overrides of what Dynamapper's paperdolls take off beneath a robe: the 3D paperdoll of the Enhanced and KR-like
+// presets, and the gump paperdolls (the Classic preset, and the old-style paperdoll setting). The uocf editor keeps the
+// client's rules (WearableRules.kdl).
+//
+// The client draws the shirt, trousers, skirt, sleeves and chest pieces beneath a robe or dress, and their 3D frames do
+// not line up with the robe's: their edges show past it. When paperdoll_ec.uddp is packed, udd-cli (or the converter
+// GUI) measures every dress-layer item on each player body (human, elf and gargoyle, male and female): for each of
+// the slots torso, legs, skirt, arms, chest and abovechest, it draws the largest garment of the slot the client puts
+// beneath the item, with and without it. When what vanishes lies within 16 texels of the item's edges (fewer than
+// 1,600 texels beyond), the slot is taken off under that item on that body; otherwise the garment is in plain view and
+// the slot stays. The package stores those decisions; the packing log lists them, one line per item and body, and
+// `pack-ec-paperdoll --report <file>` (the GUI's Findings Report) writes every measurement. Only what the client draws
+// beneath the item is taken off; a taken-off item counts as not worn, so the client's rules it would set off, as plate
+// legs hiding the shoes, do not apply. The gump paperdolls take the decision for the 3D body of their profile, and
+// only while paperdoll_ec.uddp is loaded; the gump art shows the edges of armour past a robe as well.
+//
+// This file ships empty. A cover replaces the stored decision for its items:
+//
+// cover "<slot>" items="any"|"<ids>" { hide "<slot>"; except items="<ids>" }
+//   While an item of the covering slot among `items` is drawn, the hidden slots drawn beneath it are taken off, and
+//   only those. A cover with no `hide` keeps everything beneath its items, as the client draws it. When several covers
+//   apply to an item, the last one in the file decides. `except` lists covering items the cover leaves alone: they
+//   follow the covers before it, else the stored decision. Item ids are decimal or 0x hex; slots are those of
+//   WearableRules.kdl. A cover on another slot than "dress" adds a rule the package has none of.
+//
+// Examples:
+//
+// The tabard keeps the shirt beneath it (the stored decision: most shirts show around it); take it off anyway:
+//   cover "dress" items="0xA412" {
+//       hide "torso"
+//   }
+//
+// Draw every robe as the client draws it:
+//   cover "dress" items="any"
