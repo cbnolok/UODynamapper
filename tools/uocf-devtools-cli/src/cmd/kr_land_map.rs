@@ -19,7 +19,7 @@ pub struct Args {
     client_dir: PathBuf,
     #[arg(long)]
     output_dir: PathBuf,
-    /// Require the generated routes to match the existing verified reference table.
+    /// Require the generated routes to match the bundled verified binary.
     #[arg(long)]
     verify_shipped: bool,
 }
@@ -64,19 +64,9 @@ pub fn run(args: Args) -> eyre::Result<()> {
     let map = counter.to_map();
     let rows = map.rows();
     if args.verify_shipped {
-        eyre::ensure!(rows == KrLandMap::shipped_verified().rows(), "generated routes differ from the verified reference");
+        eyre::ensure!(rows == KrLandMap::shipped_verified().rows(), "generated routes differ from the bundled verified binary");
     }
-    // KRLM v1: 12-byte header, then sorted packed (u16 Classic, u16 material, u8 subtype) rows.
-    let mut binary = Vec::with_capacity(12 + rows.len() * 5);
-    binary.extend_from_slice(b"KRLM");
-    binary.extend_from_slice(&1u16.to_le_bytes());
-    binary.extend_from_slice(&5u16.to_le_bytes());
-    binary.extend_from_slice(&u32::try_from(rows.len())?.to_le_bytes());
-    for (classic, material, subtype) in rows {
-        binary.extend_from_slice(&classic.to_le_bytes());
-        binary.extend_from_slice(&material.to_le_bytes());
-        binary.push(subtype);
-    }
+    let binary = map.to_binary();
     let mut evidence = String::from("classic_land,material,subtype,squares\n");
     for ((classic, material, subtype), count) in observations {
         evidence.push_str(&format!("{classic},{material},{subtype},{count}\n"));

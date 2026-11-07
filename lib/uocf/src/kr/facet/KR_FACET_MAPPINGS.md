@@ -15,12 +15,14 @@ therefore runs one way only:
 CC (Classic), EC (Enhanced) and KR facet conversion does not require the removed
 dictionary files. CC <-> EC needs no KR mapping, and KR -> CC/EC reads the stored
 Classic land ids directly. CC/EC -> KR still needs a mapping to choose material
-and subtype; today that comes from the compiled `KrLandMap` tables below.
+and subtype; `KrLandMap` reads the bundled verified binary and retains a
+separate, explicitly unverified supplement for existing conversion coverage.
 Conversion through CC or EC cannot always recover the original KR material and
 subtype, because several authored pairs can share one Classic land id. The
 converter reports these losses and requires explicit permission for lossy conversion.
 
-The generated [mappings.bin](../../../assets/kr/mappings.bin) is a candidate replacement for the compiled mapping.
+The generated [mappings.bin](../../../assets/kr/mappings.bin) replaces the former
+1,556-row verified Rust array and is embedded into the library.
 **Generate it from every shipped KR facet available in the source bundle (0-4
 in the audited client), not only map0.** Aggregate the on-map squares across all
 those facets, excluding sector padding, before deriving the Classic-id routes.
@@ -33,12 +35,13 @@ Record the source bundle and facet coverage, and retain evidence of ambiguous
 routes. Unobserved ids need an explicitly reviewed override or an explicit
 fallback; the unverified supplement must not become verified merely by being
 written into the binary. The [format and regeneration command](../../../assets/kr/README.md)
-are documented with the artifact and its evidence. Generation is implemented;
-the converter still uses the compiled tables and has no binary loader yet.
+are documented with the artifact and its evidence. `KrLandMap::from_binary`
+validates KRLM data, and `to_binary` is shared with the generation command.
+The original facets remain the source of truth for this generated artifact.
 
 ## `kr_land_map.rs`
 
-- `SHIPPED_KR_LAND_MAP`: generated from the shipped KR facets 0-4 (69,746,240 on-map squares, 1556 Classic ids):
+- `assets/kr/mappings.bin`: generated from the shipped KR facets 0-4 (69,746,240 on-map squares, 1556 Classic ids):
   the most frequent `material` and `subtype` of each Classic id. `material` is a function of the Classic id
   except for 2444 (KR 58 or 46) and 2446 (KR 60 or 47): exact on 99.9995% of the squares. `subtype` takes more
   than one value for 64 ids: exact on 99.967%. The ignored test `kr_facet_sectors_reencode_identically_and_follow_the_rules`
@@ -46,7 +49,8 @@ the converter still uses the compiled tables and has no binary loader yet.
 - `BUILDER_KR_LAND_MAP_SUPPLEMENT`: the 1133 Classic ids the KR facets never use, taken from `get_tile_map` in
   `tile_mappings_builder.rs` (Manawydan's KR converter table). Unverified. The builder table agrees with the
   facets on most shipped ids, but disagrees on 37 and lacks 19, so the generated table wins where both have an id.
-- `KrLandMap::shipped()` is both tables; `shipped_verified()` the first only. A Classic id outside the map fails
+- `KrLandMap::shipped()` combines the binary and supplement; `shipped_verified()` reads the binary only.
+  The verified routes take precedence over the supplement. A Classic id outside the map fails
   the build, unless `with_fallback` names the land to store (the Classic clients after KR add land ids the map
   lacks).
 
@@ -95,8 +99,8 @@ The original assets provide useful but different sources:
 The existing ignored test
 `kr_facet_client_files::kr_facet_sectors_reencode_identically_and_follow_the_rules`
 reconstructs the verified rows with `KrLandCounter` and compares them with the
-compiled table. A future data-driven converter can use the same derivation from
-its target KR bundle. No original source was established for the 1,133
+bundled binary. The generation command uses the same derivation from
+its source KR bundle. No original source was established for the 1,133
 supplemental routes; they must remain explicitly unverified unless replaced by
 source evidence or reviewed overrides.
 
@@ -105,4 +109,5 @@ The 13,053-id static whitelist is not required by the decoder. `Sector_ReadStati
 (`0x007c0120`) without consulting such a list. The whitelist excludes graphics
 3674 and 6345 present in four facet records, and 195, 196 and 643 present in three
 `StaticChunk.uop` records. All observed facet static graphics have tileart records.
-It must not filter a conversion. This audit changes no runtime or conversion policy.
+It must not filter a conversion. Loading the verified routes from the binary
+preserves the existing mapping choices and conversion coverage.

@@ -144,7 +144,7 @@ fn kr_facet_sectors_reencode_identically_and_follow_the_rules() {
 
     let derived = counter.to_map();
     let shipped = KrLandMap::shipped_verified();
-    assert_eq!(derived.rows(), shipped.rows(), "SHIPPED_KR_LAND_MAP differs from the facets: regenerate it");
+    assert_eq!(derived.rows(), shipped.rows(), "bundled mappings.bin differs from the facets: regenerate it");
     let (total, material_ok, subtype_ok) = counter.agreement(&shipped);
     println!(
         "land map: {} Classic ids; material exact on {material_ok}/{total} squares, subtype on {subtype_ok}/{total}",
