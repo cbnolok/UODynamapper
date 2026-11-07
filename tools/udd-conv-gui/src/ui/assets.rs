@@ -236,7 +236,7 @@ impl UddConvApp {
         let (clicked, stop_clicked, _) = draw_asset_card(
             ui,
             "Enhanced Auxiliary Textures",
-            "Non-base auxiliary texture refs (support, alpha mask, noise) from tilemeta",
+            "Non-base auxiliary texture refs (support, alpha mask, noise) from tilemeta, plus the night maps",
             None,
             &tex_aux_ec_progress,
             !is_busy,

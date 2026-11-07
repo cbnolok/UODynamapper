@@ -18,6 +18,10 @@
 //!   the magenta image for an absent id.
 //! - `metadata/water_primary_extents.bin`: sorted native `u32 [id, width, height]`
 //!   rows for water map-1 images, including primaries not stored in this package.
+//! - The client's atmosphere maps (`TerrainTexture.uop` entries 20 to 22: day, night and night-sight
+//!   maps), lossless RGBA8888 at their native size, under the reserved keys
+//!   [`tex_aux_ec_terrain_texture_key`]; read them with [`TexAuxEcPackage::load_terrain_texture_rgba`].
+//!   Packages built before them lack these slots.
 //!
 //! Packages built before the aliases existed lack them (and may carry an unread
 //! `metadata/absent_sources.bin`); absent ids then have no slot.
@@ -46,6 +50,36 @@ pub const TEX_AUX_EC_SLOT_FLAG_MISSING_SOURCE: u8 = 1 << 0;
 /// signed `%08d` (`Build/WorldArt/%08d.dds`), so the reachable ids stop at `i32::MAX`; `u32::MAX`
 /// would print as `-0000001`, which names no client file.
 pub const TEX_AUX_EC_MISSING_TEXTURE_ID: u32 = u32::MAX;
+
+/// Base of the reserved keys holding the client's atmosphere maps from `TerrainTexture.uop`
+/// (`build/terraintexture/%08d.dds`): a key is this bit with the entry number in the low bits
+/// ([`tex_aux_ec_terrain_texture_key`]). Like [`TEX_AUX_EC_MISSING_TEXTURE_ID`], no tile texture can
+/// reach these keys, whose ids stop at `i32::MAX`; they sort below the missing-texture key.
+pub const TEX_AUX_EC_TERRAIN_TEXTURE_KEY_BASE: u32 = 1 << 31;
+/// `TerrainTexture.uop` entry of the day map (`00000020_daymap`). Both clients load it and never sample it.
+pub const EC_DAY_MAP_TERRAIN_TEXTURE_ENTRY: u32 = 20;
+/// `TerrainTexture.uop` entry of the night map (`00000021_nightmap`): the light buffer the night
+/// composite starts from before the light sprites are drawn over it.
+pub const EC_NIGHT_MAP_TERRAIN_TEXTURE_ENTRY: u32 = 21;
+/// `TerrainTexture.uop` entry of the night-sight map (`00000022_nightsightmap`), drawn in place of the
+/// night map under night sight.
+pub const EC_NIGHT_SIGHT_MAP_TERRAIN_TEXTURE_ENTRY: u32 = 22;
+/// The atmosphere maps the packer stores. The three are byte-identical in the KR and Enhanced clients.
+pub const EC_ATMOSPHERE_MAP_TERRAIN_TEXTURE_ENTRIES: [u32; 3] = [
+    EC_DAY_MAP_TERRAIN_TEXTURE_ENTRY,
+    EC_NIGHT_MAP_TERRAIN_TEXTURE_ENTRY,
+    EC_NIGHT_SIGHT_MAP_TERRAIN_TEXTURE_ENTRY,
+];
+
+/// Reserved key of `TerrainTexture.uop` entry `entry` in this package.
+pub const fn tex_aux_ec_terrain_texture_key(entry: u32) -> u32 {
+    TEX_AUX_EC_TERRAIN_TEXTURE_KEY_BASE | entry
+}
+
+/// Whether `texture_id` is one of the package's reserved keys rather than a tile texture id.
+pub const fn is_tex_aux_ec_reserved_key(texture_id: u32) -> bool {
+    texture_id >= TEX_AUX_EC_TERRAIN_TEXTURE_KEY_BASE
+}
 
 /// Virtual path template for a packed auxiliary texture image.
 pub fn texture_entry_path(texture_id: u32) -> String {
@@ -183,6 +217,16 @@ impl TexAuxEcPackage {
     /// The client's missing-texture image, when the package carries it.
     pub fn missing_texture_slot(&self) -> Option<SlotInfo> {
         self.slot_for_texture_id(TEX_AUX_EC_MISSING_TEXTURE_ID)
+    }
+
+    /// The RGBA8888 pixels and extent of `TerrainTexture.uop` entry `entry`
+    /// ([`EC_ATMOSPHERE_MAP_TERRAIN_TEXTURE_ENTRIES`]), or `None` for a package built before the
+    /// atmosphere maps were packed.
+    pub fn load_terrain_texture_rgba(&self, entry: u32) -> eyre::Result<Option<(u16, u16, Vec<u8>)>> {
+        let key = tex_aux_ec_terrain_texture_key(entry);
+        let Some(slot) = self.slot_for_texture_id(key) else { return Ok(None) };
+        let rgba = self.load_rgba(key)?.ok_or_else(|| eyre::eyre!("tex_aux_ec slot {key:#x} has no payload"))?;
+        Ok(Some((slot.width, slot.height, rgba)))
     }
 
     /// Load the RGBA8888 pixels for the given `texture_id`.
@@ -339,6 +383,23 @@ mod tests {
         assert_eq!(package.load_rgba(BC7_ID)?, Some(decode_from_vram(&blocks, RawImageFormat::Rgba8888)?));
         assert!(package.load_bc7(PACKED_ID).is_err());
         assert!(package.load_bc7(UNLISTED_ID)?.is_none());
+        Ok(())
+    }
+
+    #[test]
+    fn atmosphere_maps_sit_on_reserved_keys_between_tile_ids_and_the_missing_texture() -> eyre::Result<()> {
+        const TEXTURES: u8 = crate::tilemeta::EcMaterialLogicalFamily::Textures as u8;
+        let night = tex_aux_ec_terrain_texture_key(EC_NIGHT_MAP_TERRAIN_TEXTURE_ENTRY);
+        assert!(EC_ATMOSPHERE_MAP_TERRAIN_TEXTURE_ENTRIES.into_iter()
+            .map(tex_aux_ec_terrain_texture_key)
+            .all(|key| key > i32::MAX as u32 && key < TEX_AUX_EC_MISSING_TEXTURE_ID && is_tex_aux_ec_reserved_key(key)));
+        assert!(!is_tex_aux_ec_reserved_key(i32::MAX as u32));
+        let package = package(&[slot(PACKED_ID, WORLD_ART), slot(night, TEXTURES),
+            slot(TEX_AUX_EC_MISSING_TEXTURE_ID, SYSTEM_TEXTURES)])?;
+        let (width, height, rgba) = package.load_terrain_texture_rgba(EC_NIGHT_MAP_TERRAIN_TEXTURE_ENTRY)?
+            .expect("night map");
+        assert_eq!((width, height, &rgba[..RGBA_CHANNELS]), (IMAGE_SIDE, IMAGE_SIDE, &PACKED_PIXEL[..]));
+        assert!(package.load_terrain_texture_rgba(EC_NIGHT_SIGHT_MAP_TERRAIN_TEXTURE_ENTRY)?.is_none());
         Ok(())
     }
 

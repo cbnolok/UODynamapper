@@ -1214,8 +1214,9 @@ enum Commands {
         output: PathBuf,
     },
     /// Packs non-base WorldArt auxiliary EC texture refs from tilemeta.uddp into tex_aux_ec.uddp, plus the
-    /// client's missing-texture fallback (SystemTextures.uop), aliased by every absent source id. Textures are lossless
-    /// RGBA8888 with Zstd 19 unless a format is given.
+    /// client's missing-texture fallback (SystemTextures.uop), aliased by every absent source id, and its day, night and
+    /// night-sight maps (TerrainTexture.uop, always lossless RGBA8888). Textures are lossless RGBA8888 with Zstd 19
+    /// unless a format is given.
     #[command(name = "pack-ec-tex-aux")]
     #[command(group(ArgGroup::new("output_format").args(["raw", "bc7", "bc7_rdo"])))]
     PackEcTexAux {
@@ -2115,7 +2116,7 @@ where
                 },
             )?;
             info!(
-                "tex_aux_ec: packed {} auxiliary textures plus the missing-texture fallback ({} refs considered, {} primary excluded, {} unread-family (legacy) excluded, {} no-path excluded, {} source-absent ids aliased to the missing texture, {} decode errors, {} duplicates) to '{}'.",
+                "tex_aux_ec: packed {} auxiliary textures plus the missing-texture fallback and the atmosphere maps ({} refs considered, {} primary excluded, {} unread-family (legacy) excluded, {} no-path excluded, {} source-absent ids aliased to the missing texture, {} decode errors, {} duplicates) to '{}'.",
                 summary.included,
                 summary.refs_considered,
                 summary.excluded_primary,

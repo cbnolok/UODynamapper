@@ -18,7 +18,7 @@ Common commands:
 - `pack-texmaps`: pack Classic Client land textures into `tex_land_cc.uddp`.
 - `pack-ec-textures`: pack Enhanced Client static-art and terrain textures into `tex_art_ec.uddp` and `tex_land_ec.uddp`.
 - `pack-tilemeta`: pack Classic Client tiledata and Enhanced Client tileart metadata into `tilemeta.uddp`.
-- `pack-ec-tex-aux`: pack the EC support images that runtime consumers read (WorldArt hue masks, terrain-surface masks, liquid inputs) from a `tilemeta.uddp`'s texture refs into `tex_aux_ec.uddp`. The package also holds the client's missing-texture fallback; see below.
+- `pack-ec-tex-aux`: pack the EC support images that runtime consumers read (WorldArt hue masks, terrain-surface masks, liquid inputs) from a `tilemeta.uddp`'s texture refs into `tex_aux_ec.uddp`. The package also holds the client's missing-texture fallback and its day, night and night-sight maps (`TerrainTexture.uop`); see below.
 - `pack-ec-paperdoll`: pack the Enhanced Client's 3D paperdoll frames (`Paperdoll.uop`), lossless, into `paperdoll_ec.uddp`, with what each dress-layer item takes off; Dynamapper hues them with `hues.uddp`.
 - `pack-radar`: generate a radar map such as `facet0X.dds` from Classic Client map and statics data.
 - `pack-map`: pack Classic Client map data into a block-based `.uddp` package.
@@ -36,7 +36,7 @@ udd-cli pack pack-ec-textures --ecdir /path/to/ec --art-output tex_art_ec.uddp -
 udd-cli pack pack-tilemeta --ccdir /path/to/cc --ecdir /path/to/ec --output tilemeta.uddp
 ```
 
-Then build the auxiliary images from that tilemeta, with the same EC directory (it also reads `SystemTextures.uop`):
+Then build the auxiliary images from that tilemeta, with the same EC directory (it also reads `SystemTextures.uop` and `TerrainTexture.uop`):
 
 ```text
 udd-cli pack pack-ec-tex-aux --ecdir /path/to/ec --tilemeta tilemeta.uddp --output tex_aux_ec.uddp

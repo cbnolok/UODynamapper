@@ -273,10 +273,15 @@ Contents:
 - **The client's missing-texture image.** When a texture request returns no data, the client substitutes `Data\SystemTextures\missing.tga` (`SystemTextures.uop`, a 256x256 TGA decoded by its extension). The package stores that image as a normal slot and payload under the reserved id `TEX_AUX_EC_MISSING_TEXTURE_ID` = `u32::MAX` (`0xFFFFFFFF`).
   - No real texture can take that id: the client formats tile texture paths with a signed `%08d`, so reachable ids stop at `i32::MAX`.
   - The slot has family `SystemTextures` (6) and role `Unknown` (0).
+- **The client's atmosphere maps** (`TerrainTexture.uop`, `build/terraintexture/%08d.dds`): the day map (entry 20, loaded and never sampled by the clients), the night map (21) and the night-sight map (22), 256x256. The KR and Enhanced clients carry byte-identical copies; the packer reads the Enhanced one. Dynamapper's night composite starts its light buffer from the night map.
+  - Each sits under the reserved key `TEX_AUX_EC_TERRAIN_TEXTURE_KEY_BASE | entry` = `0x80000000 | entry` (`tex_aux_ec_terrain_texture_key`), above every reachable tile id (`i32::MAX`) and below the missing-texture key.
+  - The slots have family `Textures` (4) and role `Unknown` (0), and are always lossless RGBA8888 at native size, whatever format and upscale passes the package's other textures take: the composite samples the client's own texels.
+  - Packages built before 2026-11-07 lack them; `TexAuxEcPackage::load_terrain_texture_rgba(entry)` then returns `None`.
+  - The packer rejects a tilemeta ref on any reserved key (`is_tex_aux_ec_reserved_key`: ids from `0x80000000`).
 
 **Virtual Files:**
 
-- `metadata/slots.bin`: array of `TexAuxEcSlotRecord`, sorted by `texture_id` (the reserved entry sorts last). It has no version header.
+- `metadata/slots.bin`: array of `TexAuxEcSlotRecord`, sorted by `texture_id` (the atmosphere maps follow the tile ids and the missing-texture entry sorts last). It has no version header.
 - `textures/{texture_id:08x}`: raw pixels for one slot, RGBA8888 or a BC7 container according to the slot's `pixel_format`.
 - Missing-source aliases: each distinct referenced id of a packed family whose image the EC archive does not contain gets a slot record with `TEX_AUX_EC_SLOT_FLAG_MISSING_SOURCE`, and no payload of its own. Its pixels are the reserved missing-texture payload, stored once.
   - The alias keeps the ref's id, family and role, and copies the missing image's `width`, `height` and `pixel_format`.
@@ -287,10 +292,10 @@ Contents:
 
 | Offset | Type | Name | Description |
 |--------|------|------|-------------|
-| 0x00 | `u32` | `texture_id` | Source texture id, or the reserved missing-texture id. |
+| 0x00 | `u32` | `texture_id` | Source texture id, or a reserved key (atmosphere map, missing texture). |
 | 0x04 | `u16` | `width` | Image width in pixels. |
 | 0x06 | `u16` | `height` | Image height in pixels. |
-| 0x08 | `u8` | `logical_family` | `EcMaterialLogicalFamily`: 1 = WorldArt; 6 = SystemTextures (reserved entry only). |
+| 0x08 | `u8` | `logical_family` | `EcMaterialLogicalFamily`: 1 = WorldArt; 4 = Textures (atmosphere maps only); 6 = SystemTextures (missing-texture entry only). |
 | 0x09 | `u8` | `stable_role` | `EcMaterialStableRole` of the first ref that named the id (from the block shader and the item position). |
 | 0x0A | `u8` | `pixel_format` | 0 = RGBA8888, 1 = BC7. |
 | 0x0B | `u8` | `flags` | `TEX_AUX_EC_SLOT_FLAG_*`. Bit 0 (`MISSING_SOURCE`): alias of the reserved missing-texture slot; read the payload `textures/ffffffff`. |
@@ -301,6 +306,7 @@ Tilemeta refs keep their true source ids; nothing is substituted at build time.
 
 - A normal lookup resolves a ref as the client does. `TexAuxEcPackage::slot_for_texture_id(id)` returns the packed slot or, for an absent source, its alias (`SlotInfo::is_missing_source`, `SlotInfo::payload_texture_id` = the reserved id, for caching). `load_rgba(id)` returns the alias's magenta pixels.
 - `TexAuxEcPackage::missing_texture_slot()` returns the reserved slot itself, e.g. for art with no image in any package.
+- `TexAuxEcPackage::load_terrain_texture_rgba(entry)` returns an atmosphere map's extent and RGBA8888 pixels (`EC_NIGHT_MAP_TERRAIN_TEXTURE_ENTRY` and its siblings).
 - `TexAuxEcPackage::load_bc7(id)` returns a BC7 slot's stored container (`Bc7RgbaUnormSrgb` blocks) without decoding, for a direct GPU upload; it refuses an RGBA slot. `TexAuxEcSlotRecord::is_bc7` tells the two apart.
 - Packages built before the aliases existed have none (some carry an unread `metadata/absent_sources.bin`); absent ids then have no slot.
 

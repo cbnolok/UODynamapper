@@ -17,6 +17,8 @@
 //!   EC archive lacks, which the client replaces with `missing.tga`.
 //! - `metadata/water_primary_extents.bin`: full native dimensions for water UV windows,
 //!   independent of trimmed primary art and optional auxiliary upscaling.
+//! - the client's atmosphere maps (`TerrainTexture.uop` entries 20 to 22: day, night and night-sight
+//!   maps) under reserved keys above the tile ids, always lossless RGBA8888 at native size.
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
@@ -28,7 +30,8 @@ use rayon::prelude::*;
 
 use udd_assets::tex_art_cc::PagePixelFormat;
 use udd_assets::tex_aux_ec::{
-    texture_entry_path, TexAuxEcSlotRecord, TEX_AUX_EC_MISSING_TEXTURE_ID, TEX_AUX_EC_SLOT_FLAG_MISSING_SOURCE,
+    is_tex_aux_ec_reserved_key, tex_aux_ec_terrain_texture_key, texture_entry_path, TexAuxEcSlotRecord,
+    EC_ATMOSPHERE_MAP_TERRAIN_TEXTURE_ENTRIES, TEX_AUX_EC_MISSING_TEXTURE_ID, TEX_AUX_EC_SLOT_FLAG_MISSING_SOURCE,
     TEX_AUX_EC_SLOT_MANIFEST_ENTRY_PATH,
     TEX_AUX_EC_WATER_EXTENTS_ENTRY_PATH,
 };
@@ -60,6 +63,13 @@ const SYSTEM_TEXTURES_UOP: &str = "SystemTextures.uop";
 /// UOP entry of the image the client loads when a texture request returns no data
 /// (`Data\SystemTextures\missing.tga`). The `.tga` extension selects the decoder, as in the client.
 pub const EC_MISSING_TEXTURE_UOP_ENTRY: &str = "data/systemtextures/missing.tga";
+/// Archive holding the client's light, light-buffer and terrain support textures.
+const TERRAIN_TEXTURE_UOP: &str = "TerrainTexture.uop";
+
+/// The UOP entry name of `TerrainTexture.uop` entry `entry`, as the client builds it.
+fn terrain_texture_uop_entry(entry: u32) -> String {
+    format!("build/terraintexture/{entry:08}.dds")
+}
 
 /// Options controlling texture format and upscaling for `pack_tex_aux_ec`.
 pub struct TexAuxEcPackOptions {
@@ -150,6 +160,7 @@ pub fn pack_tex_aux_ec(
         .map(|p| Textures::new(p, None, None).wrap_err_with(|| format!("load {}", p.display())))
         .transpose()?;
     let missing_texture = load_missing_texture(source_dirs)?;
+    let atmosphere_maps = load_atmosphere_maps(source_dirs)?;
     // Water map 1 is not sampled on capable hardware, so its pixels still belong
     // only to tex_art_ec. Retain its native dimensions for the item's local UVs;
     // a trimmed art slot or an upscaled support map cannot supply those dimensions.
@@ -244,6 +255,19 @@ pub fn pack_tex_aux_ec(
         )
         .ok_or_else(|| eyre::eyre!("encode {EC_MISSING_TEXTURE_UOP_ENTRY}"))?,
     );
+    // The atmosphere maps, stored as decoded: the composite must sample the client's own texels, so
+    // neither BC7 nor an upscale pass may touch them. Not counted in `included`.
+    for (entry, image) in atmosphere_maps {
+        push_entry(DecodedEntry {
+            texture_id: tex_aux_ec_terrain_texture_key(entry),
+            logical_family: EcMaterialLogicalFamily::Textures as u8,
+            stable_role: EcMaterialStableRole::Unknown as u8,
+            width: image.width,
+            height: image.height,
+            pixel_format: PagePixelFormat::Rgba8888,
+            data: image.rgba,
+        });
+    }
     let mut alias_records = Vec::new();
     for decoded in decoded {
         match decoded {
@@ -391,8 +415,8 @@ fn select_qualifying_refs<'a>(
             continue;
         }
         eyre::ensure!(
-            texture_id != TEX_AUX_EC_MISSING_TEXTURE_ID,
-            "texture id {texture_id} collides with the reserved missing-texture key"
+            !is_tex_aux_ec_reserved_key(texture_id),
+            "texture id {texture_id} collides with the reserved keys (missing texture, atmosphere maps)"
         );
         if seen_ids.insert(texture_id, ()).is_some() {
             summary.excluded_duplicate_id += 1;
@@ -418,6 +442,26 @@ fn load_missing_texture(source_dirs: &[PathBuf]) -> eyre::Result<RawRgba> {
         .ok_or_else(|| eyre::eyre!("{} has no {EC_MISSING_TEXTURE_UOP_ENTRY}", path.display()))
         .and_then(|file| decode_raw_rgba(&file))
         .wrap_err_with(|| format!("decode {EC_MISSING_TEXTURE_UOP_ENTRY}"))
+}
+
+/// Decodes the client's atmosphere maps ([`EC_ATMOSPHERE_MAP_TERRAIN_TEXTURE_ENTRIES`]) from
+/// `TerrainTexture.uop`, as `(entry, image)`.
+fn load_atmosphere_maps(source_dirs: &[PathBuf]) -> eyre::Result<Vec<(u32, RawRgba)>> {
+    let path = find_first_existing_file(source_dirs, &[TERRAIN_TEXTURE_UOP])
+        .ok_or_else(|| eyre::eyre!("{TERRAIN_TEXTURE_UOP} not found in the EC source dirs; it holds the night maps"))?;
+    let textures = Textures::new(&path, None, None).wrap_err_with(|| format!("load {}", path.display()))?;
+    EC_ATMOSPHERE_MAP_TERRAIN_TEXTURE_ENTRIES
+        .into_iter()
+        .map(|entry| {
+            let name = terrain_texture_uop_entry(entry);
+            textures
+                .get_from_name(&name)?
+                .ok_or_else(|| eyre::eyre!("{} has no {name}", path.display()))
+                .and_then(|file| decode_raw_rgba(&file))
+                .map(|image| (entry, image))
+                .wrap_err_with(|| format!("decode {name}"))
+        })
+        .collect()
 }
 
 /// A decoded RGBA8888 image: width, height and row-major pixel bytes.
@@ -542,8 +586,17 @@ mod tests {
 
     #[test]
     fn a_ref_on_the_reserved_key_is_rejected() {
-        let refs = [texture_ref(TEX_AUX_EC_MISSING_TEXTURE_ID, EcMaterialLogicalFamily::WorldArt,
-            EcMaterialPhysicalPackage::Texture, EcMaterialStableRole::HueMask)];
-        assert!(select_qualifying_refs(&refs, &mut TexAuxEcPackSummary::default()).is_err());
+        let night_map = tex_aux_ec_terrain_texture_key(udd_assets::tex_aux_ec::EC_NIGHT_MAP_TERRAIN_TEXTURE_ENTRY);
+        for reserved in [TEX_AUX_EC_MISSING_TEXTURE_ID, night_map] {
+            let refs = [texture_ref(reserved, EcMaterialLogicalFamily::WorldArt,
+                EcMaterialPhysicalPackage::Texture, EcMaterialStableRole::HueMask)];
+            assert!(select_qualifying_refs(&refs, &mut TexAuxEcPackSummary::default()).is_err());
+        }
+    }
+
+    #[test]
+    fn atmosphere_map_entries_name_the_client_files() {
+        assert_eq!(terrain_texture_uop_entry(udd_assets::tex_aux_ec::EC_NIGHT_MAP_TERRAIN_TEXTURE_ENTRY),
+            "build/terraintexture/00000021.dds");
     }
 }
