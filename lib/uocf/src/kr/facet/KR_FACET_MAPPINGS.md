@@ -15,8 +15,8 @@ therefore runs one way only:
 CC (Classic), EC (Enhanced) and KR facet conversion does not require the removed
 dictionary files. CC <-> EC needs no KR mapping, and KR -> CC/EC reads the stored
 Classic land ids directly. CC/EC -> KR still needs a mapping to choose material
-and subtype; `KrLandMap` reads the bundled verified binary and retains a
-separate, explicitly unverified supplement for existing conversion coverage.
+and subtype; `KrLandMap` reads the bundled verified binary and a separate
+`mappings_unverified.bin` supplement for existing conversion coverage.
 Conversion through CC or EC cannot always recover the original KR material and
 subtype, because several authored pairs can share one Classic land id. The
 converter reports these losses and requires explicit permission for lossy conversion.
@@ -46,10 +46,11 @@ The original facets remain the source of truth for this generated artifact.
   except for 2444 (KR 58 or 46) and 2446 (KR 60 or 47): exact on 99.9995% of the squares. `subtype` takes more
   than one value for 64 ids: exact on 99.967%. The ignored test `kr_facet_sectors_reencode_identically_and_follow_the_rules`
   (`lib/uocf/tests/real_files/kr_facet_client_files.rs`) derives the table again with `KrLandCounter` and fails when it differs.
-- `BUILDER_KR_LAND_MAP_SUPPLEMENT`: the 1133 Classic ids the KR facets never use, taken from `get_tile_map` in
+- `assets/kr/mappings_unverified.bin`: the 1133 Classic ids the KR facets never use, taken from `get_tile_map` in
   `tile_mappings_builder.rs` (Manawydan's KR converter table). Unverified. The builder table agrees with the
   facets on most shipped ids, but disagrees on 37 and lacks 19, so the generated table wins where both have an id.
-- `KrLandMap::shipped()` combines the binary and supplement; `shipped_verified()` reads the binary only.
+  The supplemental binary preserves the former `BUILDER_KR_LAND_MAP_SUPPLEMENT` rows exactly.
+- `KrLandMap::shipped()` combines both binaries; `shipped_verified()` reads only trusted `mappings.bin`.
   The verified routes take precedence over the supplement. A Classic id outside the map fails
   the build, unless `with_fallback` names the land to store (the Classic clients after KR add land ids the map
   lacks).
