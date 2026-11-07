@@ -424,4 +424,39 @@ pub struct LandMaterialUniformsPresets {
     pub effects: LandEffectsUniform,
     pub lighting: GlobalLightingUniforms,
     pub land_lighting: LandLightingUniforms,
+    pub sun: SunAngles,
+}
+
+/// A preset's sun: one static light direction for land, art and the sprite shadows, as compass angles.
+///
+/// The world axes are x = UO x (east), z = UO y (south) and y up, so azimuth 0 is north (-z) and 90 east (+x).
+#[derive(Clone, Copy, Debug, PartialEq, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct SunAngles {
+    /// Compass bearing of the sun in degrees, clockwise from north: 90 east, 180 south, 270 west.
+    pub azimuth_degrees: f32,
+    /// Height of the sun above the horizon in degrees: 0 on the horizon, 90 overhead.
+    pub elevation_degrees: f32,
+}
+
+impl SunAngles {
+    /// The unit vector towards the sun: the shaders' `scene.light_direction`.
+    ///
+    /// The trigonometry runs in f64, so the default sun gives `BAKED_GLOBAL_LIGHT.normalize()` bit for bit.
+    pub fn light_direction(self) -> Vec3 {
+        let azimuth = f64::from(self.azimuth_degrees).to_radians();
+        let elevation = f64::from(self.elevation_degrees).to_radians();
+        let horizontal = elevation.cos();
+        bevy::math::DVec3::new(horizontal * azimuth.sin(), elevation.sin(), -horizontal * azimuth.cos()).as_vec3()
+    }
+}
+
+impl Default for SunAngles {
+    /// `BAKED_GLOBAL_LIGHT`, the light of every preset before the sun was a setting.
+    fn default() -> Self {
+        Self {
+            azimuth_degrees: crate::core::constants::BAKED_SUN_AZIMUTH_DEGREES,
+            elevation_degrees: crate::core::constants::BAKED_SUN_ELEVATION_DEGREES,
+        }
+    }
 }

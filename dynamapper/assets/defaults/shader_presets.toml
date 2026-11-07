@@ -58,6 +58,13 @@ default_preset = "classic.morning"
 #                    At blend=0: fog_color as-is. At blend=1: fully replaced (e.g. deep blue night).
 # diffuse_wrap:      Half-Lambert wrap factor. 0.0 = standard Lambert, 0.3-0.5 = soft shadow terminator.
 #
+# === [Sun] ===
+# One static light direction for land, art and the sprite shadows.
+# azimuth_degrees:   Compass bearing of the sun, clockwise from north (decreasing UO y): 90 east, 180 south.
+# elevation_degrees: Height of the sun above the horizon: 0 on the horizon, 90 overhead.
+#                    Classic, Enhanced and UOD-Painterly keep the former fixed light (-1, 2.5, -1), which is
+#                    azimuth 315 and elevation atan2(2.5, sqrt(2)) = 60.50379.
+#
 # ------------------
 # --- CLASSIC PRESETS ---
 # ------------------
@@ -139,6 +146,10 @@ fill_sky_color = [0.5, 0.7, 1.0, 0.7]
 fill_ground_color = [0.28, 0.19, 0.12, 0.35]
 rim_color = [0.7, 0.85, 1.0, 2.5]
 
+[classic.morning.sun]
+azimuth_degrees = 315.0
+elevation_degrees = 60.50379
+
 [classic.afternoon]
 global_lighting = 1.08
 # Afternoon: brighter sun, rich colors.
@@ -213,6 +224,10 @@ diffuse_wrap = 0.0
 fill_sky_color = [0.48, 0.68, 1.0, 0.75]
 fill_ground_color = [0.3, 0.2, 0.12, 0.35]
 rim_color = [0.95, 0.95, 0.85, 2.7]
+
+[classic.afternoon.sun]
+azimuth_degrees = 315.0
+elevation_degrees = 60.50379
 
 [classic.night]
 global_lighting = 0.82
@@ -289,6 +304,10 @@ fill_sky_color = [0.4, 0.6, 1.0, 0.7]
 fill_ground_color = [0.2, 0.16, 0.14, 0.3]
 rim_color = [0.65, 0.85, 1.1, 3.0]
 
+[classic.night.sun]
+azimuth_degrees = 315.0
+elevation_degrees = 60.50379
+
 [classic.cave]
 global_lighting = 0.60
 # Cave: very low ambient, cool tones.
@@ -363,6 +382,10 @@ diffuse_wrap = 0.0
 fill_sky_color = [0.38, 0.6, 1.0, 0.65]
 fill_ground_color = [0.18, 0.14, 0.12, 0.28]
 rim_color = [0.55, 0.75, 1.05, 2.8]
+
+[classic.cave.sun]
+azimuth_degrees = 315.0
+elevation_degrees = 60.50379
 
 
 # ------------------
@@ -444,6 +467,10 @@ fill_sky_color = [0.5, 0.7, 1.0, 0.7]
 fill_ground_color = [0.28, 0.19, 0.12, 0.35]
 rim_color = [0.7, 0.85, 1.0, 2.5]
 
+[enhanced.morning.sun]
+azimuth_degrees = 315.0
+elevation_degrees = 60.50379
+
 [enhanced.afternoon]
 global_lighting = 1.14
 [enhanced.afternoon.effects]
@@ -517,6 +544,10 @@ diffuse_wrap = 0.0
 fill_sky_color = [0.48, 0.68, 1.0, 0.75]
 fill_ground_color = [0.3, 0.2, 0.12, 0.35]
 rim_color = [0.95, 0.95, 0.85, 2.7]
+
+[enhanced.afternoon.sun]
+azimuth_degrees = 315.0
+elevation_degrees = 60.50379
 
 [enhanced.night]
 global_lighting = 0.72
@@ -592,6 +623,10 @@ fill_sky_color = [0.4, 0.6, 1.0, 0.7]
 fill_ground_color = [0.2, 0.16, 0.14, 0.3]
 rim_color = [0.65, 0.85, 1.1, 3.0]
 
+[enhanced.night.sun]
+azimuth_degrees = 315.0
+elevation_degrees = 60.50379
+
 [enhanced.cave]
 global_lighting = 0.50
 [enhanced.cave.effects]
@@ -666,6 +701,10 @@ fill_sky_color = [0.38, 0.6, 1.0, 0.65]
 fill_ground_color = [0.18, 0.14, 0.12, 0.28]
 rim_color = [0.55, 0.75, 1.05, 2.8]
 
+[enhanced.cave.sun]
+azimuth_degrees = 315.0
+elevation_degrees = 60.50379
+
 
 # ------------------
 # --- KR PRESETS ---
@@ -678,6 +717,8 @@ rim_color = [0.55, 0.75, 1.05, 2.8]
 # Switched to per-pixel, the land diffuse is still the client's half-Lambert: wrap 0.5 gives
 # (N.L + 1) / 2, white, strength 1. The sprite shadow settings (shadow shape, contact and projected shadows)
 # keep their earlier values until the client's static shadow is reproduced.
+# The sun is the client's terrain light, from the south at 45 degrees (azimuth 180, elevation 45); the
+# projected sprite shadows follow it.
 # The full-featured painterly rendering with all effects enabled is UOD-Painterly, below.
 
 [kr.morning]
@@ -754,6 +795,10 @@ fill_sky_color = [0.5, 0.7, 1.0, 0.7]
 fill_ground_color = [0.28, 0.19, 0.12, 0.35]
 rim_color = [0.7, 0.85, 1.0, 2.5]
 
+[kr.morning.sun]
+azimuth_degrees = 180.0
+elevation_degrees = 45.0
+
 [kr.afternoon]
 global_lighting = 1.08
 [kr.afternoon.effects]
@@ -827,6 +872,10 @@ diffuse_wrap = 0.5
 fill_sky_color = [0.48, 0.68, 1.0, 0.75]
 fill_ground_color = [0.3, 0.2, 0.12, 0.35]
 rim_color = [0.95, 0.95, 0.85, 2.7]
+
+[kr.afternoon.sun]
+azimuth_degrees = 180.0
+elevation_degrees = 45.0
 
 [kr.night]
 global_lighting = 0.76
@@ -902,6 +951,10 @@ fill_sky_color = [0.4, 0.6, 1.0, 0.7]
 fill_ground_color = [0.2, 0.16, 0.14, 0.3]
 rim_color = [0.65, 0.85, 1.1, 3.0]
 
+[kr.night.sun]
+azimuth_degrees = 180.0
+elevation_degrees = 45.0
+
 [kr.cave]
 global_lighting = 0.56
 [kr.cave.effects]
@@ -975,6 +1028,10 @@ diffuse_wrap = 0.5
 fill_sky_color = [0.38, 0.6, 1.0, 0.65]
 fill_ground_color = [0.18, 0.14, 0.12, 0.28]
 rim_color = [0.55, 0.75, 1.05, 2.8]
+
+[kr.cave.sun]
+azimuth_degrees = 180.0
+elevation_degrees = 45.0
 
 # ------------------
 # --- UOD-PAINTERLY PRESETS ---
@@ -1056,6 +1113,10 @@ fill_sky_color = [0.5, 0.7, 1.0, 0.7]
 fill_ground_color = [0.28, 0.19, 0.12, 0.35]
 rim_color = [0.7, 0.85, 1.0, 2.5]
 
+[painterly.morning.sun]
+azimuth_degrees = 315.0
+elevation_degrees = 60.50379
+
 [painterly.afternoon]
 global_lighting = 1.08
 [painterly.afternoon.effects]
@@ -1129,6 +1190,10 @@ diffuse_wrap = 0.35
 fill_sky_color = [0.48, 0.68, 1.0, 0.75]
 fill_ground_color = [0.3, 0.2, 0.12, 0.35]
 rim_color = [0.95, 0.95, 0.85, 2.7]
+
+[painterly.afternoon.sun]
+azimuth_degrees = 315.0
+elevation_degrees = 60.50379
 
 [painterly.night]
 global_lighting = 0.76
@@ -1204,6 +1269,10 @@ fill_sky_color = [0.4, 0.6, 1.0, 0.7]
 fill_ground_color = [0.2, 0.16, 0.14, 0.3]
 rim_color = [0.65, 0.85, 1.1, 3.0]
 
+[painterly.night.sun]
+azimuth_degrees = 315.0
+elevation_degrees = 60.50379
+
 [painterly.cave]
 global_lighting = 0.56
 [painterly.cave.effects]
@@ -1277,3 +1346,7 @@ diffuse_wrap = 0.15
 fill_sky_color = [0.38, 0.6, 1.0, 0.65]
 fill_ground_color = [0.18, 0.14, 0.12, 0.28]
 rim_color = [0.55, 0.75, 1.05, 2.8]
+
+[painterly.cave.sun]
+azimuth_degrees = 315.0
+elevation_degrees = 60.50379

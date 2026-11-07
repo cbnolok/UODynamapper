@@ -143,6 +143,10 @@ rim_color = [
     2.5,
 ]
 
+[classic.morning.sun]
+azimuth_degrees = 315.0
+elevation_degrees = 60.50379
+
 [classic.afternoon]
 global_lighting = 1.08
 
@@ -285,6 +289,10 @@ rim_color = [
     0.85,
     2.7,
 ]
+
+[classic.afternoon.sun]
+azimuth_degrees = 315.0
+elevation_degrees = 60.50379
 
 [classic.night]
 global_lighting = 0.65
@@ -429,6 +437,10 @@ rim_color = [
     3.0,
 ]
 
+[classic.night.sun]
+azimuth_degrees = 315.0
+elevation_degrees = 60.50379
+
 [classic.cave]
 global_lighting = 0.6
 
@@ -571,6 +583,10 @@ rim_color = [
     1.05,
     2.8,
 ]
+
+[classic.cave.sun]
+azimuth_degrees = 315.0
+elevation_degrees = 60.50379
 
 [enhanced.morning]
 global_lighting = 1.08
@@ -715,6 +731,10 @@ rim_color = [
     2.5,
 ]
 
+[enhanced.morning.sun]
+azimuth_degrees = 315.0
+elevation_degrees = 60.50379
+
 [enhanced.afternoon]
 global_lighting = 1.14
 
@@ -857,6 +877,10 @@ rim_color = [
     0.85,
     2.7,
 ]
+
+[enhanced.afternoon.sun]
+azimuth_degrees = 315.0
+elevation_degrees = 60.50379
 
 [enhanced.night]
 global_lighting = 0.72
@@ -1001,6 +1025,10 @@ rim_color = [
     3.0,
 ]
 
+[enhanced.night.sun]
+azimuth_degrees = 315.0
+elevation_degrees = 60.50379
+
 [enhanced.cave]
 global_lighting = 0.5
 
@@ -1143,6 +1171,10 @@ rim_color = [
     1.05,
     2.8,
 ]
+
+[enhanced.cave.sun]
+azimuth_degrees = 315.0
+elevation_degrees = 60.50379
 
 [kr.morning]
 global_lighting = 1.04
@@ -1287,6 +1319,10 @@ rim_color = [
     2.5,
 ]
 
+[kr.morning.sun]
+azimuth_degrees = 180.0
+elevation_degrees = 45.0
+
 [kr.afternoon]
 global_lighting = 1.08
 
@@ -1429,6 +1465,10 @@ rim_color = [
     0.85,
     2.7,
 ]
+
+[kr.afternoon.sun]
+azimuth_degrees = 180.0
+elevation_degrees = 45.0
 
 [kr.night]
 global_lighting = 0.76
@@ -1573,6 +1613,10 @@ rim_color = [
     3.0,
 ]
 
+[kr.night.sun]
+azimuth_degrees = 180.0
+elevation_degrees = 45.0
+
 [kr.cave]
 global_lighting = 0.56
 
@@ -1715,6 +1759,10 @@ rim_color = [
     1.05,
     2.8,
 ]
+
+[kr.cave.sun]
+azimuth_degrees = 180.0
+elevation_degrees = 45.0
 
 [painterly.morning]
 global_lighting = 1.04
@@ -1859,6 +1907,10 @@ rim_color = [
     2.5,
 ]
 
+[painterly.morning.sun]
+azimuth_degrees = 315.0
+elevation_degrees = 60.50379
+
 [painterly.afternoon]
 global_lighting = 1.08
 
@@ -2001,6 +2053,10 @@ rim_color = [
     0.85,
     2.7,
 ]
+
+[painterly.afternoon.sun]
+azimuth_degrees = 315.0
+elevation_degrees = 60.50379
 
 [painterly.night]
 global_lighting = 0.76
@@ -2145,6 +2201,10 @@ rim_color = [
     3.0,
 ]
 
+[painterly.night.sun]
+azimuth_degrees = 315.0
+elevation_degrees = 60.50379
+
 [painterly.cave]
 global_lighting = 0.56
 
@@ -2287,3 +2347,7 @@ rim_color = [
     1.05,
     2.8,
 ]
+
+[painterly.cave.sun]
+azimuth_degrees = 315.0
+elevation_degrees = 60.50379

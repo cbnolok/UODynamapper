@@ -1262,6 +1262,7 @@ pub fn sys_setup_terrain_cache(
     tex_land_ec_r: Option<Res<crate::core::uo_files_loader::TexLandEcPackageRes>>,
     tex_aux_ec_r: Option<Res<crate::core::uo_files_loader::TexAuxEcPackageRes>>,
     map_planes: Res<crate::core::uo_files_loader::MapPlanesRes>,
+    shader_presets: Res<crate::core::render::scene::world::land::mesh_material::LandShaderModePresets>,
 ) {
     log_system_add_startup::<LandTextureCachePlugin>(StartupSysSet::SetupSceneStage1, fname!());
 
@@ -1439,7 +1440,14 @@ pub fn sys_setup_terrain_cache(
                     camera_position:
                         crate::core::render::scene::camera::PlayerCamera::BASE_OFFSET_FROM_PLAYER,
                     _pad_cam: 0.0,
-                    light_direction: crate::core::constants::BAKED_GLOBAL_LIGHT.normalize(),
+                    // The active preset's sun; the shader panel pushes the live one whenever it changes.
+                    light_direction: crate::configs::shader_presets::get_preset_slot(
+                        &shader_presets,
+                        &shader_presets.default_preset,
+                    )
+                    .map(|slot| slot.sun)
+                    .unwrap_or_default()
+                    .light_direction(),
                     global_lighting: 1.0,
                     render_zoom: 1.0,
                     adaptive_zoom_simplification: 0.0,

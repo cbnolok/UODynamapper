@@ -1567,6 +1567,7 @@ pub fn sys_update_art_materials(
     let uniforms_changed = last_uniform_snapshot.is_none_or(|snapshot| {
         snapshot.effects != current_uniform_snapshot.effects
             || snapshot.lighting != current_uniform_snapshot.lighting
+            || snapshot.sun != current_uniform_snapshot.sun
             || (snapshot.global_lighting - current_uniform_snapshot.global_lighting).abs()
                 > f32::EPSILON
     });
@@ -1670,8 +1671,7 @@ fn update_art_material_uniforms(
     mat.extension.scene_uniform.camera_position = camera_pos;
     mat.extension.scene_uniform.ec_reflection_camera_distance =
         crate::core::render::scene::camera::PlayerCamera::BASE_OFFSET_FROM_PLAYER.length();
-    mat.extension.scene_uniform.light_direction =
-        crate::core::constants::BAKED_GLOBAL_LIGHT.normalize();
+    mat.extension.scene_uniform.light_direction = uniform_state.sun.light_direction();
     mat.extension.effects_uniform = uniform_state.effects;
     mat.extension.global_lighting_uniform = uniform_state.lighting;
     // Flat-quad CC water shades itself with a flat ambient+diffuse response (see art
@@ -1692,8 +1692,7 @@ fn update_art_material_uniforms_ground(
     mat.extension.scene_uniform.camera_position = camera_pos;
     mat.extension.scene_uniform.ec_reflection_camera_distance =
         crate::core::render::scene::camera::PlayerCamera::BASE_OFFSET_FROM_PLAYER.length();
-    mat.extension.scene_uniform.light_direction =
-        crate::core::constants::BAKED_GLOBAL_LIGHT.normalize();
+    mat.extension.scene_uniform.light_direction = uniform_state.sun.light_direction();
     mat.extension.effects_uniform = uniform_state.effects;
     mat.extension.global_lighting_uniform = uniform_state.lighting;
     // See update_art_material_uniforms: keep the flat-quad water diffuse in sync.

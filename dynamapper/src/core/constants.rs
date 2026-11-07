@@ -1,4 +1,3 @@
-use bevy::prelude::Vec3;
 use std::path::PathBuf;
 
 /// Determines the default directory for assets.
@@ -69,4 +68,11 @@ pub const ASSET_FOLDER: &str = "assets/";
 //pub struct LightDir(pub Vec3);
 
 // Hardcoded light direction vector.
-pub const BAKED_GLOBAL_LIGHT: Vec3 = Vec3::new(-1.0, 2.5, -1.0);
+// The presets' sun (`SunAngles` in render/scene/world/land/mesh_material.rs) replaced it; it stays as the
+// reference the default sun reproduces.
+#[cfg(test)]
+pub const BAKED_GLOBAL_LIGHT: bevy::prelude::Vec3 = bevy::prelude::Vec3::new(-1.0, 2.5, -1.0);
+/// `BAKED_GLOBAL_LIGHT` as the compass bearing of a preset's sun: north-west.
+pub const BAKED_SUN_AZIMUTH_DEGREES: f32 = 315.0;
+/// `BAKED_GLOBAL_LIGHT` as the height of a preset's sun: atan2(2.5, sqrt(2)) = 60.5038 degrees.
+pub const BAKED_SUN_ELEVATION_DEGREES: f32 = 60.50379;

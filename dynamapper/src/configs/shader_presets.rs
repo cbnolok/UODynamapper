@@ -1,7 +1,7 @@
 use crate::{
     core::render::scene::world::land::mesh_material::{
         GlobalLightingUniforms, LandEffectsUniform, LandLightingUniforms,
-        LandMaterialUniformsPresets, LandRenderStylePresetsPerMode, LandShaderModePresets,
+        LandMaterialUniformsPresets, LandRenderStylePresetsPerMode, LandShaderModePresets, SunAngles,
     },
     core::system_sets::StartupSysSet,
     prelude::*,
@@ -28,6 +28,7 @@ pub struct UniformState {
     pub lighting: GlobalLightingUniforms, // global: grading, fog, gloom, tonemap, colors
     pub land_lighting: LandLightingUniforms, // land-specific: fill, rim, bent, diffuse intensities
     pub global_lighting: f32,        // scene-wide brightness scaler (maps to scene.global_lighting)
+    pub sun: SunAngles,              // static light direction (maps to scene.light_direction)
     pub dirty: bool,                 // when true, push to GPU materials this frame
     /// Snapshot of the last values saved to disk (for undo). `None` until first save.
     pub saved_snapshot: Option<UniformSnapshot>,
@@ -36,13 +37,14 @@ pub struct UniformState {
     pub active_preset: String,
 }
 
-/// A lightweight snapshot of the four values we persist (no dirty flag needed).
+/// A lightweight snapshot of the values we persist (no dirty flag needed).
 #[derive(Clone, Copy)]
 pub struct UniformSnapshot {
     pub effects: LandEffectsUniform,
     pub lighting: GlobalLightingUniforms,
     pub land_lighting: LandLightingUniforms,
     pub global_lighting: f32,
+    pub sun: SunAngles,
 }
 
 /// Immutable factory presets loaded from `assets/defaults/shader_presets.toml`.
@@ -60,6 +62,7 @@ impl UniformState {
             lighting: self.lighting,
             land_lighting: self.land_lighting,
             global_lighting: self.global_lighting,
+            sun: self.sun,
         }
     }
 
@@ -69,6 +72,7 @@ impl UniformState {
         self.lighting = snap.lighting;
         self.land_lighting = snap.land_lighting;
         self.global_lighting = snap.global_lighting;
+        self.sun = snap.sun;
         self.dirty = true;
     }
 }
@@ -237,6 +241,7 @@ pub fn store_active_preset(presets: &mut LandShaderModePresets, u: &UniformState
         slot.lighting = u.lighting;
         slot.land_lighting = u.land_lighting;
         slot.global_lighting = u.global_lighting;
+        slot.sun = u.sun;
     }
 
     presets.default_preset = u.active_preset.clone();
@@ -334,6 +339,7 @@ fn clone_slot(s: &LandMaterialUniformsPresets) -> LandMaterialUniformsPresets {
         effects: s.effects,
         lighting: s.lighting,
         land_lighting: s.land_lighting,
+        sun: s.sun,
     }
 }
 
@@ -363,12 +369,14 @@ fn uniform_state_from_presets(source: &LandShaderModePresets) -> UniformState {
         lighting: preset.lighting,
         land_lighting: preset.land_lighting,
         global_lighting: preset.global_lighting,
+        sun: preset.sun,
         dirty: true,
         saved_snapshot: Some(UniformSnapshot {
             effects: preset.effects,
             lighting: preset.lighting,
             land_lighting: preset.land_lighting,
             global_lighting: preset.global_lighting,
+            sun: preset.sun,
         }),
         active_preset: preset_key,
     }
@@ -390,6 +398,7 @@ mod tests {
                 ..Default::default()
             },
             land_lighting: LandLightingUniforms::default(),
+            sun: SunAngles::default(),
         }
     }
 
@@ -556,5 +565,42 @@ mod tests {
         assert_eq!(load.value.kr.night.global_lighting, bundled.kr.night.global_lighting);
         assert_eq!(load.value.default_preset, "kr.night");
         assert!(migrate_cached_kr_to_painterly(BUNDLED_LAND_SETTINGS).is_none());
+    }
+
+    /// The KR and Enhanced clients' terrain light. Their D = (0, -0.7071, -0.7071) points from the light to the
+    /// ground; towards the light that is (0, 0.7071, 0.7071) in our axes: from the south (+z) at 45 degrees.
+    const CLIENT_SUN: SunAngles = SunAngles { azimuth_degrees: 180.0, elevation_degrees: 45.0 };
+    const SUN_DIRECTION_TOLERANCE: f32 = 1e-6;
+
+    #[test]
+    fn default_sun_is_the_former_baked_light() {
+        assert_eq!(
+            SunAngles::default().light_direction(),
+            crate::core::constants::BAKED_GLOBAL_LIGHT.normalize()
+        );
+    }
+
+    #[test]
+    fn client_sun_shines_from_the_south_at_45_degrees() {
+        let towards_light = Vec3::new(0.0, std::f32::consts::FRAC_1_SQRT_2, std::f32::consts::FRAC_1_SQRT_2);
+        let direction = CLIENT_SUN.light_direction();
+        assert!(direction.abs_diff_eq(towards_light, SUN_DIRECTION_TOLERANCE), "{direction}");
+    }
+
+    #[test]
+    fn bundled_presets_keep_the_baked_sun_but_kr_like_takes_the_client_sun() {
+        for text in [BUNDLED_FACTORY_PRESETS, BUNDLED_LAND_SETTINGS] {
+            let presets = parse(text).expect("bundled");
+            for (group, expected) in [
+                (&presets.classic, SunAngles::default()),
+                (&presets.enhanced, SunAngles::default()),
+                (&presets.kr, CLIENT_SUN),
+                (&presets.painterly, SunAngles::default()),
+            ] {
+                for slot in [&group.morning, &group.afternoon, &group.night, &group.cave] {
+                    assert_eq!(slot.sun, expected);
+                }
+            }
+        }
     }
 }

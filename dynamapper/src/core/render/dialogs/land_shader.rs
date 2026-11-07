@@ -133,6 +133,11 @@ const TERRAIN_SHADING_OPTIONS: [(&str, u32, &str); 2] = [
     ("Client per-vertex", TERRAIN_SHADING_CLIENT_PER_VERTEX, "As the KR and Enhanced clients: a half-Lambert grey per cell corner, blended over two triangles."),
 ];
 
+/// "Sun Azimuth" slider: a full compass turn in degrees, clockwise from north.
+const SUN_AZIMUTH_RANGE_DEGREES: std::ops::RangeInclusive<f32> = 0.0..=360.0;
+/// "Sun Elevation" slider: from the horizon to overhead, in degrees.
+const SUN_ELEVATION_RANGE_DEGREES: std::ops::RangeInclusive<f32> = 0.0..=90.0;
+
 const PRESET_PERIOD_BUTTONS: [(&str, ShaderPresetPeriod); 4] = [
     ("Morning", ShaderPresetPeriod::Morning),
     ("Afternoon", ShaderPresetPeriod::Afternoon),
@@ -206,6 +211,7 @@ fn apply_render_preset(
     u.lighting = preset.lighting;
     u.land_lighting = preset.land_lighting;
     u.global_lighting = preset.global_lighting;
+    u.sun = preset.sun;
     u.active_preset = period.key(style.preset_group);
     u.dirty = true;
 }
@@ -910,6 +916,7 @@ fn push_uniforms_if_dirty(
         mat.extension.effects_uniform = u.effects;
         mat.extension.global_lighting_uniform = u.lighting;
         mat.extension.land_lighting_uniform = u.land_lighting;
+        mat.extension.scene_uniform.light_direction = u.sun.light_direction();
 
         // NEW: write global lighting into the land uniform so shader sees it
         // NOTE: adjust the path if your extension uses a different name for the land UBO.
@@ -1003,6 +1010,10 @@ fn terrain_controls(ui: &mut egui::Ui, u: &mut UniformState, gates: RenderStyleG
     // The client per-vertex model shades land with its grey alone; these controls only reach the per-pixel model.
     let per_pixel = gates.is_fragment && u.land_lighting.terrain_shading_model == TERRAIN_SHADING_SMOOTH_PER_PIXEL;
     changed |= slider_en(ui, gates.is_fragment, "Sun Strength", &mut u.land_lighting.diffuse_strength, 0.0..=2.0);
+    changed |= slider_tip(ui, "Sun Azimuth", &mut u.sun.azimuth_degrees, SUN_AZIMUTH_RANGE_DEGREES,
+        "Compass bearing of the sun in degrees, clockwise from north (180 = south). Lights land and art and turns the sprite shadows.");
+    changed |= slider_tip(ui, "Sun Elevation", &mut u.sun.elevation_degrees, SUN_ELEVATION_RANGE_DEGREES,
+        "Height of the sun above the horizon in degrees (90 = overhead).");
     changed |= slider_s(ui, "Terrain Ambient Light", &mut u.lighting.ambient_strength, 0.0..=1.5);
 
     let mut land_relief = land_relief_control_value(u);
@@ -1101,6 +1112,17 @@ fn slider_en(
 ) -> bool {
     ui.add_enabled(enabled, egui::Slider::new(val, range).text(label))
         .changed()
+}
+
+// Like `slider_s`, but shows an explanatory tooltip on hover.
+fn slider_tip(
+    ui: &mut egui::Ui,
+    label: &str,
+    val: &mut f32,
+    range: std::ops::RangeInclusive<f32>,
+    tip: &str,
+) -> bool {
+    ui.add(egui::Slider::new(val, range).text(label)).on_hover_text(tip).changed()
 }
 
 // Like `toggle_u32`, but shows an explanatory tooltip on hover.
@@ -1205,6 +1227,7 @@ mod tests {
             lighting: GlobalLightingUniforms::default(),
             land_lighting: LandLightingUniforms::default(),
             global_lighting: 1.0,
+            sun: SunAngles::default(),
             dirty: false,
             saved_snapshot: None,
             active_preset: "classic.morning".to_string(),
@@ -1217,6 +1240,7 @@ mod tests {
             effects: LandEffectsUniform::default(),
             lighting: GlobalLightingUniforms::default(),
             land_lighting: LandLightingUniforms::default(),
+            sun: SunAngles::default(),
         }
     }
 
@@ -1264,6 +1288,7 @@ mod tests {
                 diffuse_strength: 0.8,
                 ..Default::default()
             },
+            sun: SunAngles { azimuth_degrees: 180.0, elevation_degrees: 45.0 },
         };
 
         apply_render_preset(
@@ -1281,6 +1306,7 @@ mod tests {
         assert_eq!(u.global_lighting, 0.75);
         assert_eq!(u.lighting.exposure, 1.25);
         assert_eq!(u.land_lighting.diffuse_strength, 0.8);
+        assert_eq!(u.sun, preset.sun);
         assert!(u.dirty);
     }
 

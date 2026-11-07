@@ -271,6 +271,7 @@ fn sys_apply_land_shader_simplification_override(
         mat.extension.global_lighting_uniform = uniform_state.lighting;
         mat.extension.land_lighting_uniform = uniform_state.land_lighting;
         mat.extension.scene_uniform.global_lighting = uniform_state.global_lighting;
+        mat.extension.scene_uniform.light_direction = uniform_state.sun.light_direction();
         mat.extension.scene_uniform.adaptive_zoom_simplification = 0.0;
 
         if force_changed {
