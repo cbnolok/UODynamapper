@@ -7,6 +7,7 @@
 //! (docs/agent_notes/ec_paperdoll_robe_override.md).
 
 use super::*;
+use crate::core::render::dialogs::paperdoll_overrides::PaperdollOverrides;
 use crate::core::uo_files_loader::ClassicGumpSource;
 use std::collections::HashSet;
 use std::path::PathBuf;

@@ -20,7 +20,8 @@ use udd_assets::{HuesPackage, PaperdollEcPackage};
 use uocf::enhanced::hues::{EcHueLookup, EcHueTables};
 use uocf::enhanced::paperdoll::{compose_on, PlacedFrame, WornItem, SLOT_NAMES};
 
-use super::paperdoll_overrides::{measured_garment, plan_taking_off, PaperdollOrder};
+use super::paperdoll_menu::{PaperdollDrawn, PickLayer};
+use super::paperdoll_overrides::{measured_garment, plan_taking_off, FrameNumber, PaperdollOrder, TakenOff};
 
 /// What the Enhanced and KR-like presets draw for a paperdoll. Kept in the user settings as
 /// `window.enhanced_paperdoll`; the Classic preset always draws the gump paperdoll.
@@ -102,13 +103,48 @@ pub struct PaperdollItem {
     pub hue: u16,
 }
 
+/// A 3D paperdoll as drawn ([`paperdoll_drawing`]).
+pub struct PaperdollDrawing {
+    /// The frames, bottom first.
+    pub frames: Vec<PlacedFrame>,
+    /// The worn item each frame draws, its layer and id; `None` for the body.
+    pub items: Vec<Option<(usize, u32)>>,
+    /// What was taken off beneath a covering item.
+    pub taken: Vec<TakenOff>,
+    /// The number of the body frame drawn, which the stored decisions and the overrides' `bodies=` name.
+    pub body_frame: Option<u32>,
+}
+
+impl PaperdollDrawing {
+    /// What the paperdoll window shows of it on `canvas`, for its menu: the alpha of each item's frame.
+    pub fn drawn(&self, canvas: &PaperdollCanvas) -> PaperdollDrawn {
+        let layers = self
+            .frames
+            .iter()
+            .zip(&self.items)
+            .filter_map(|(frame, item)| {
+                let (x, y) = (frame.x + canvas.anchor_x, frame.y + canvas.anchor_y);
+                item.map(|item| PickLayer::from_rgba(item, x, y, frame.width, frame.height, &frame.rgba))
+            })
+            .collect();
+        PaperdollDrawn {
+            width: canvas.width,
+            height: canvas.height,
+            layers,
+            drawn: self.items.iter().flatten().copied().collect(),
+            taken: self.taken.clone(),
+            body_frame: self.body_frame,
+        }
+    }
+}
+
 /// What the client draws for `body` wearing `items` (`uocf::enhanced::paperdoll::plan` with `order`'s rules), without
 /// what a robe covers ([`plan_taking_off`], with the decisions the package stores for the body frame drawn, on the
 /// garments the packer measured: [`measured_garment`]), decoded from paperdoll_ec.uddp: the frames, bottom first, hued
 /// with the tables of `hues` (hues.uddp, the single hue source; an error if a frame's hue needs a table and it is not
 /// loaded). A body without a frame takes the male 400, as in the client. A worn item without a frame draws nothing, as
 /// in the client, and is logged once per item id: `logged_misses` holds the ids logged so far.
-pub fn paperdoll_frames(
+pub fn paperdoll_drawing(
     package: &PaperdollEcPackage,
     tilemeta: &TileMetaPackage,
     hues: Option<&HuesPackage>,
@@ -117,7 +153,7 @@ pub fn paperdoll_frames(
     body_hue: u16,
     items: &[PaperdollItem],
     logged_misses: &mut HashSet<u32>,
-) -> eyre::Result<Vec<PlacedFrame>> {
+) -> eyre::Result<PaperdollDrawing> {
     let worn: Vec<WornItem> = items
         .iter()
         .map(|item| WornItem {
@@ -133,7 +169,7 @@ pub fn paperdoll_frames(
         decisions.takes_off(covering, body_frame, layer, garment)
             && measured_garment(package, definitions, body, garment)
     };
-    let (plan, _) = plan_taking_off(package, definitions, order, body, body_hue, &worn, stored)?;
+    let (plan, taken) = plan_taking_off(package, definitions, order, body, body_hue, &worn, stored)?;
     for miss in &plan.misses {
         if logged_misses.insert(miss.item_id) {
             log::warn!(
@@ -156,7 +192,18 @@ pub fn paperdoll_frames(
             EcHueTables::default()
         }
     };
-    plan.frames.iter().map(|planned| package.decode(planned.frame, planned.hue, &tables)).collect()
+    let frames = plan
+        .frames
+        .iter()
+        .map(|planned| package.decode(planned.frame, planned.hue, &tables))
+        .collect::<eyre::Result<_>>()?;
+    // The body's frame comes first.
+    let body_frame = plan
+        .frames
+        .first()
+        .filter(|planned| planned.item.is_none())
+        .map(|planned| u32::from(planned.frame.entry.frame_number()));
+    Ok(PaperdollDrawing { frames, items: plan.frames.iter().map(|planned| planned.item).collect(), taken, body_frame })
 }
 
 #[cfg(test)]
@@ -207,6 +254,31 @@ mod tests {
         assert_eq!(texel(x - 1, y), [0; 4]);
         let drawn = rgba.chunks_exact(4).filter(|texel| *texel == RED).count();
         assert_eq!(drawn, (width * height) as usize, "the whole halo is on the canvas");
+    }
+
+    /// The paperdoll menu picks on the canvas: an item's frame where the compose draws it, from the anchor; the body
+    /// is no item.
+    #[test]
+    fn the_drawing_picks_each_item_where_its_frame_is_drawn() {
+        const OPAQUE: [u8; 4] = [200, 0, 0, 255];
+        const ROBE: (usize, u32) = (22, 0x1F03);
+        const BODY_FRAME: u32 = 1;
+        let canvas = SHIPPED_CANVAS;
+        let frame = |x, y| PlacedFrame { x, y, width: 2, height: 1, rgba: OPAQUE.repeat(2) };
+        let drawing = PaperdollDrawing {
+            frames: vec![frame(-1, 0), frame(0, 0)],
+            items: vec![None, Some(ROBE)],
+            taken: Vec::new(),
+            body_frame: Some(BODY_FRAME),
+        };
+        let drawn = drawing.drawn(&canvas);
+        assert_eq!((drawn.drawn.as_slice(), drawn.body_frame), (&[ROBE][..], Some(BODY_FRAME)));
+        let at = |x: i32| {
+            let u = (x + canvas.anchor_x) as f32 + 0.5;
+            let v = canvas.anchor_y as f32 + 0.5;
+            drawn.item_at(u / canvas.width as f32, v / canvas.height as f32)
+        };
+        assert_eq!([at(-1), at(0), at(1), at(2)], [None, Some(ROBE), Some(ROBE), None]);
     }
 
     /// A body and what it wears, each item with its hue.
@@ -316,8 +388,9 @@ mod tests {
                 outfit.items.iter().map(|&(item_id, hue)| PaperdollItem { item_id, hue }).collect();
             let mut misses = HashSet::new();
             let draw = |order: &PaperdollOrder, misses: &mut HashSet<u32>| {
-                paperdoll_frames(&package, &tilemeta, Some(&packed_hues), order, outfit.body, SKIN_HUE, &items, misses)
+                paperdoll_drawing(&package, &tilemeta, Some(&packed_hues), order, outfit.body, SKIN_HUE, &items, misses)
                     .unwrap_or_else(|error| panic!("{}: {error:#}", outfit.name))
+                    .frames
             };
             let ours = draw(&client_order, &mut misses);
             let stored = draw(&stored_order, &mut misses);

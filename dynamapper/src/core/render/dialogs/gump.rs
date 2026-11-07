@@ -1,8 +1,12 @@
 use crate::core::controls::input_actions::{ActionCloseActiveDialog, ActionToggleGumpDialog};
 use crate::core::render::dialogs::image_background::{image_background_control, ImageBackground};
-use crate::core::render::dialogs::paperdoll_ec::{paperdoll_frames, EnhancedPaperdoll, PaperdollCanvas, PaperdollItem};
+use crate::core::render::dialogs::paperdoll_ec::{paperdoll_drawing, EnhancedPaperdoll, PaperdollCanvas, PaperdollItem};
+use crate::core::render::dialogs::paperdoll_menu::{
+    load_overrides, menu_ui, user_overrides_path, write_choice, ChosenRule, MenuAction, PaperdollDrawn, PaperdollMenu,
+    PickLayer,
+};
 use crate::core::render::dialogs::paperdoll_overrides::{
-    measured_garment, taken_off, PaperdollOrder, PaperdollOverrides, PAPERDOLL_OVERRIDES_FILE_NAME,
+    measured_garment, taken_off, PaperdollOrder, TakenOff, PAPERDOLL_OVERRIDES_FILE_NAME,
 };
 use crate::core::render::scene::camera::UiCameraResource;
 use crate::configs::shader_presets::UniformState;
@@ -35,6 +39,8 @@ pub struct GumpDialogState {
     paperdoll_equipment: Vec<PaperdollEquipmentRow>,
     /// The worn items whose missing Enhanced paperdoll frame has been logged: each is logged once.
     enhanced_paperdoll_misses_logged: HashSet<u32>,
+    /// The paperdoll overrides changed: every open paperdoll is drawn again.
+    paperdolls_stale: bool,
 }
 
 struct OpenGump {
@@ -48,6 +54,10 @@ struct OpenGump {
     drawn_as: DrawnAs,
     /// Why the active preset has no image for this window, shown in place of the image.
     error: Option<String>,
+    /// What a paperdoll window draws, for its right-click menu; `None` for a gump.
+    paperdoll: Option<PaperdollDrawn>,
+    /// The menu of the last right-click on the paperdoll.
+    menu: Option<PaperdollMenu>,
 }
 
 /// What an open gump window draws, kept so a preset change can redraw it from the other package.
@@ -123,6 +133,7 @@ impl Default for GumpDialogState {
             paperdoll_body_hue: "0".to_string(),
             paperdoll_equipment: vec![PaperdollEquipmentRow::default(); 6],
             enhanced_paperdoll_misses_logged: HashSet::new(),
+            paperdolls_stale: false,
         }
     }
 }
@@ -137,6 +148,17 @@ struct PaperdollProfilesRes {
 /// `PaperdollOverrides.kdl`.
 #[derive(Resource, Default, Clone)]
 struct PaperdollOrderRes(PaperdollOrder);
+
+/// Where the paperdoll overrides come from and where the paperdoll windows write the user's choices.
+#[derive(Resource, Default)]
+struct PaperdollOverridesFilesRes {
+    /// The bundled `PaperdollOverrides.kdl`, which the first choice starts the user's copy from.
+    bundled: std::path::PathBuf,
+    /// The user's copy (`paperdoll_menu::user_overrides_path`), read before the bundled file when it exists.
+    user: std::path::PathBuf,
+    /// Why the user's copy did not read at startup, shown in the paperdoll menu until a choice writes it.
+    user_error: Option<String>,
+}
 
 const PAPERDOLL_SPECS_DIR: &str = "runtime_specs/paperdoll";
 const PAPERDOLL_PROFILES_FILE_NAME: &str = "PaperdollProfiles.kdl";
@@ -165,6 +187,7 @@ mod robe_edges;
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::core::render::dialogs::paperdoll_overrides::PaperdollOverrides;
 
     /// The server body of each bundled profile.
     const PROFILE_BODIES: [(&str, u32); 6] = [
@@ -414,7 +437,7 @@ mod tests {
     }
 
     fn test_layer(gump: udd_assets::gumps::GumpImage, hue: Option<LayerHue>) -> DecodedPaperdollLayer {
-        DecodedPaperdollLayer { x: 0, y: 0, gump, hue }
+        DecodedPaperdollLayer { x: 0, y: 0, item: None, gump, hue }
     }
 
     /// `gump` stored as an atlas page stores it: only the texels of `logical_rect`, as the packer trims it.
@@ -495,6 +518,42 @@ mod tests {
             assert_eq!(texel(2, 2), ITEM, "{client:?}");
             assert_eq!(texel(2, 3), BODY, "the body under the item's clear texel, {client:?}");
         }
+    }
+
+    /// The paperdoll menu picks on the composed image: each worn item's texels where the compose draws them, a
+    /// trimmed and upscaled one at its offset and scale too; the body is no item.
+    #[test]
+    fn the_gump_paperdoll_picks_the_item_drawn_on_top() {
+        use crate::core::render::dialogs::paperdoll_menu::PaperdollDrawn;
+        use udd_assets::gumps::GumpRect;
+        const BODY: [u8; 4] = [90, 60, 40, 255];
+        const SHIRT_TEXEL: [u8; 4] = [30, 120, 200, 255];
+        const ROBE_TEXEL: [u8; 4] = [200, 120, 30, 255];
+        const SHIRT: (usize, u32) = (5, 0x1517);
+        const ROBE: (usize, u32) = (22, 0x1F03);
+        const ROBE_FACTOR: u16 = 2;
+        let body = test_gump(3, 1, &[BODY; 3]);
+        let shirt = test_gump(3, 1, &[TRANSPARENT_BLACK, SHIRT_TEXEL, SHIRT_TEXEL]);
+        // The robe's logical texel 2, 2x upscaled, trimmed to it.
+        let robe_width = 3 * u32::from(ROBE_FACTOR);
+        let mut robe_texels = vec![TRANSPARENT_BLACK; (robe_width * u32::from(ROBE_FACTOR)) as usize];
+        for row in 0..usize::from(ROBE_FACTOR) {
+            robe_texels[row * robe_width as usize + 4..][..2].copy_from_slice(&[ROBE_TEXEL; 2]);
+        }
+        let robe_height = u32::from(ROBE_FACTOR);
+        let robe = udd_assets::gumps::GumpImage::whole(robe_width, robe_height, ROBE_FACTOR, robe_texels.concat());
+        let robe = trimmed(&robe, GumpRect { x: 2, y: 0, width: 1, height: 1 });
+        let layers = vec![
+            test_layer(body, None),
+            DecodedPaperdollLayer { item: Some(SHIRT), ..test_layer(shirt, None) },
+            DecodedPaperdollLayer { item: Some(ROBE), ..test_layer(robe, None) },
+        ];
+        let (gump, picks) = compose_decoded_layers_picked(GumpClient::Classic, 3, 1, layers);
+        assert_eq!((gump.physical_width, gump.physical_height), (6, 2));
+        let (width, height) = (gump.physical_width, gump.physical_height);
+        let drawn = PaperdollDrawn { width, height, layers: picks, ..Default::default() };
+        let at = |x: f32| drawn.item_at(x / 3.0, 0.5);
+        assert_eq!([at(0.5), at(1.5), at(2.5)], [None, Some(SHIRT), Some(ROBE)]);
     }
 
     /// Enhanced draws no 256x256 gump, which then neither covers nor grows the canvas; Classic draws it.
@@ -699,6 +758,7 @@ impl Plugin for GumpDialogPlugin {
         log_plugin_build(self);
         app.insert_resource(PaperdollProfilesRes::load())
             .init_resource::<PaperdollOrderRes>()
+            .init_resource::<PaperdollOverridesFilesRes>()
             .init_resource::<GumpDialogState>()
             .add_observer(sys_gump_toggle)
             .add_observer(sys_gump_close)
@@ -710,9 +770,13 @@ impl Plugin for GumpDialogPlugin {
     }
 }
 
-/// The bundled wearable rules and paperdoll overrides are required: a missing or invalid file stops the app.
+/// The bundled wearable rules and paperdoll overrides are required: a missing or invalid file stops the app. The
+/// user's copy of the overrides, which the paperdoll windows write (`paperdoll_menu`), is read before the bundled one;
+/// when it does not read, the bundled overrides apply, with a warning, and the windows write nothing to it until it
+/// is fixed.
 fn sys_load_paperdoll_order(
     mut order_res: ResMut<PaperdollOrderRes>,
+    mut files_res: ResMut<PaperdollOverridesFilesRes>,
 ) {
     let specs_dir = constants::valid_asset_dir().join(PAPERDOLL_SPECS_DIR);
     let read = |path: &std::path::Path| {
@@ -720,19 +784,30 @@ fn sys_load_paperdoll_order(
             .map_err(|error| color_eyre::eyre::eyre!("{}: cannot read: {error}", path.display()))
     };
     let rules_path = specs_dir.join(WEARABLE_RULES_FILE_NAME);
-    let overrides_path = specs_dir.join(PAPERDOLL_OVERRIDES_FILE_NAME);
+    let bundled_path = specs_dir.join(PAPERDOLL_OVERRIDES_FILE_NAME);
+    let user_path = user_overrides_path();
     let order = read(&rules_path).and_then(|content| WearableRules::decode(&content)).and_then(|rules| {
-        let overrides = PaperdollOverrides::decode(&overrides_path.display().to_string(), &read(&overrides_path)?)?;
-        Ok(PaperdollOrder { rules, overrides })
+        let loaded = load_overrides(&bundled_path, &user_path)?;
+        Ok((PaperdollOrder { rules, overrides: loaded.overrides }, loaded.path, loaded.user_error))
     });
     match order {
-        Ok(order) => {
+        Ok((order, overrides_path, user_error)) => {
             log::info!(
                 "Loaded paperdoll wearable rules from {} and overrides from {}",
                 rules_path.display(),
                 overrides_path.display()
             );
+            if let Some(error) = &user_error {
+                let message = format!("{error:#}: the bundled paperdoll overrides apply until it is fixed.");
+                log::warn!("{message}");
+                ingame_sysmessage_logger::warning(message);
+            }
             order_res.0 = order;
+            *files_res = PaperdollOverridesFilesRes {
+                bundled: bundled_path,
+                user: user_path,
+                user_error: user_error.map(|error| format!("{error:#}")),
+            };
         }
         Err(error) => crate::configs::settings::exit_on_startup_config_error(&error),
     }
@@ -773,7 +848,8 @@ fn sys_render_gump_dialog(
     hues_package: Option<Res<HuesPackageRes>>,
     paperdoll_ec: Option<Res<PaperdollEcPackageRes>>,
     paperdoll_profiles: Res<PaperdollProfilesRes>,
-    paperdoll_order: Res<PaperdollOrderRes>,
+    mut paperdoll_order: ResMut<PaperdollOrderRes>,
+    mut overrides_files: ResMut<PaperdollOverridesFilesRes>,
     uniform_state: Res<UniformState>,
     mut settings: ResMut<Settings>,
     mut images: ResMut<Assets<Image>>,
@@ -791,8 +867,14 @@ fn sys_render_gump_dialog(
         order: &paperdoll_order.0,
     };
     redraw_open_gumps(&mut state, client, settings.app.window.enhanced_paperdoll, &sources, &mut images);
+    // How the paperdoll menu names an item: its tiledata name, else its id alone.
+    let item_name = |item_id: u32| {
+        let tile = tilemeta.as_deref()?.0.item_tile(item_id)?;
+        Some(tile.name_ascii().trim().to_string()).filter(|name| !name.is_empty())
+    };
 
     let mut closed_images = Vec::new();
+    let mut chosen_rule: Option<ChosenRule> = None;
     let mut gump_background = settings.app.window.gump_background;
     let mut enhanced_paperdoll = settings.app.window.enhanced_paperdoll;
     let open_request = {
@@ -807,13 +889,14 @@ fn sys_render_gump_dialog(
             None
         };
 
-        for open_gump in &state.open_gumps {
+        let open_gump_count = state.open_gumps.len();
+        for open_gump in state.open_gumps.iter_mut() {
             let mut open = true;
             let mut right_clicked = false;
             egui::Window::new(open_gump.title.as_str())
                 .default_pos([
-                    120.0 + (state.open_gumps.len() as f32 * 12.0),
-                    120.0 + (state.open_gumps.len() as f32 * 12.0),
+                    120.0 + (open_gump_count as f32 * 12.0),
+                    120.0 + (open_gump_count as f32 * 12.0),
                 ])
                 .collapsible(false)
                 .resizable(false)
@@ -823,11 +906,35 @@ fn sys_render_gump_dialog(
                         ui.label(error.as_str());
                         return;
                     }
-                    let response =
-                        ui.add(gump_background.under(egui::Image::new((open_gump.texture_id, open_gump.size))));
+                    let image = gump_background.under(egui::Image::new((open_gump.texture_id, open_gump.size)));
+                    let Some(drawn) = &open_gump.paperdoll else {
+                        let response = ui.add(image);
+                        if response.secondary_clicked() {
+                            right_clicked = true;
+                        }
+                        return;
+                    };
+                    // A paperdoll: a right-click opens its menu for the item under the pointer, inside this window.
+                    let response = ui.add(image.sense(egui::Sense::click()));
                     if response.secondary_clicked() {
-                        right_clicked = true;
+                        let rect = response.rect;
+                        open_gump.menu = response.interact_pointer_pos().map(|pointer| {
+                            let u = (pointer.x - rect.min.x) / rect.width();
+                            let v = (pointer.y - rect.min.y) / rect.height();
+                            drawn.menu_at(u, v, item_name)
+                        });
                     }
+                    response.context_menu(|ui| {
+                        let Some(menu) = &open_gump.menu else {
+                            return;
+                        };
+                        let notice = overrides_files.user_error.as_deref();
+                        match menu_ui(ui, menu, &sources.order.overrides, notice) {
+                            Some(MenuAction::Choose(chosen)) => chosen_rule = Some(chosen),
+                            Some(MenuAction::CloseWindow) => right_clicked = true,
+                            None => {}
+                        }
+                    });
                 });
 
             if !open || right_clicked {
@@ -876,6 +983,25 @@ fn sys_render_gump_dialog(
         ),
         None => {}
     }
+
+    // A choice in a paperdoll menu: into the user's copy of the overrides, then every paperdoll is drawn again.
+    if let Some(chosen) = chosen_rule {
+        let user = overrides_files.user.clone();
+        match write_choice(&overrides_files.bundled, &user, &chosen.edit()) {
+            Ok(overrides) => {
+                paperdoll_order.0.overrides = overrides;
+                overrides_files.user_error = None;
+                state.paperdolls_stale = true;
+                log::info!("Paperdoll overrides: {}, written to {}.", chosen.describe(), user.display());
+                ingame_sysmessage_logger::normal(format!("{}.", chosen.describe()));
+            }
+            Err(error) => {
+                let message = format!("The paperdoll choice was not written: {error:#}");
+                log::error!("{message}");
+                ingame_sysmessage_logger::error(message);
+            }
+        }
+    }
 }
 
 /// What drawing a gump or paperdoll window reads.
@@ -899,7 +1025,7 @@ impl<'a> GumpSources<'a> {
 
 /// After a preset or setting change, every open window that is drawn otherwise is redrawn from what the new preset
 /// reads, into its own image (the egui texture id stays valid). No image is cached by gump id, so none can keep the
-/// other package's pixels.
+/// other package's pixels. After the paperdoll overrides change, every open paperdoll is redrawn.
 fn redraw_open_gumps(
     state: &mut GumpDialogState,
     client: GumpClient,
@@ -907,18 +1033,22 @@ fn redraw_open_gumps(
     sources: &GumpSources,
     images: &mut Assets<Image>,
 ) {
-    let GumpDialogState { open_gumps, enhanced_paperdoll_misses_logged, .. } = state;
+    let GumpDialogState { open_gumps, enhanced_paperdoll_misses_logged, paperdolls_stale, .. } = state;
+    let paperdolls_stale = std::mem::take(paperdolls_stale);
     for open_gump in open_gumps.iter_mut() {
         let drawn_as =
             DrawnAs::for_content(&open_gump.content, client, enhanced_paperdoll, sources.paperdoll_ec.is_some());
-        if drawn_as == open_gump.drawn_as {
+        let stale = paperdolls_stale && matches!(open_gump.content, OpenGumpContent::Paperdoll(_));
+        if drawn_as == open_gump.drawn_as && !stale {
             continue;
         }
         open_gump.drawn_as = drawn_as;
+        open_gump.paperdoll = None;
         open_gump.error =
             match draw_open_gump_content(&open_gump.content, drawn_as, sources, enhanced_paperdoll_misses_logged) {
                 Ok(drawn) => {
                     open_gump.size = drawn.size;
+                    open_gump.paperdoll = drawn.paperdoll;
                     images
                         .insert(open_gump.image.id(), drawn.image)
                         .err()
@@ -929,10 +1059,11 @@ fn redraw_open_gumps(
     }
 }
 
-/// An open window's image and its size in the window, in points.
+/// An open window's image and its size in the window, in points; for a paperdoll, what it draws.
 struct DrawnImage {
     image: Image,
     size: egui::Vec2,
+    paperdoll: Option<PaperdollDrawn>,
 }
 
 /// Decodes a single gump, or composes a paperdoll, as `drawn_as` says, whole and premultiplied as egui blends it.
@@ -965,7 +1096,7 @@ fn draw_open_gump_content(
                 .paperdoll_ec
                 .ok_or_else(|| color_eyre::eyre::eyre!("paperdoll_ec.uddp is not loaded."))?;
             let tilemeta = &sources.tilemeta()?.0;
-            let frames = paperdoll_frames(
+            let drawing = paperdoll_drawing(
                 &package.0,
                 tilemeta,
                 sources.hues_package.map(|hues| hues.0.as_ref()),
@@ -977,7 +1108,11 @@ fn draw_open_gump_content(
             )?;
             let canvas = PaperdollCanvas::for_sets(package.0.sets());
             let (width, height) = canvas.display_size();
-            return Ok(DrawnImage { image: canvas.image(&canvas.compose(&frames)), size: egui::vec2(width, height) });
+            return Ok(DrawnImage {
+                image: canvas.image(&canvas.compose(&drawing.frames)),
+                size: egui::vec2(width, height),
+                paperdoll: Some(drawing.drawn(&canvas)),
+            });
         }
         // Premultiplied already, as bevy_egui blends it: `alpha_blend_at` composes the layers over a transparent canvas.
         OpenGumpContent::Paperdoll(request) => {
@@ -987,7 +1122,7 @@ fn draw_open_gump_content(
                 tilemeta.item_definitions(),
                 request.profile.body,
             );
-            let layers = gump_paperdoll_layers(
+            let (layers, taken) = gump_paperdoll_layers_taking_off(
                 request,
                 client,
                 |item_id| tilemeta.item_tile(item_id).copied(),
@@ -995,10 +1130,21 @@ fn draw_open_gump_content(
                 sources.order,
                 &stored,
             )?;
-            compose_paperdoll(sources.gump_map()?, client, sources.hues_package, &request.profile, &layers)?
+            let (gump, picks) =
+                compose_paperdoll_picked(sources.gump_map()?, client, sources.hues_package, &request.profile, &layers)?;
+            let drawn = PaperdollDrawn {
+                width: gump.physical_width,
+                height: gump.physical_height,
+                layers: picks,
+                drawn: layers.iter().filter_map(|layer| layer.item).collect(),
+                taken,
+                body_frame: stored.body_frame,
+            };
+            let image = image_from_gump(&gump);
+            return Ok(DrawnImage { size: logical_window_size(&gump), image, paperdoll: Some(drawn) });
         }
     };
-    Ok(DrawnImage { size: logical_window_size(&gump), image: image_from_gump(&gump) })
+    Ok(DrawnImage { size: logical_window_size(&gump), image: image_from_gump(&gump), paperdoll: None })
 }
 
 /// The image of a drawn gump or paperdoll (`draw_open_gump_content`). The window shows it at its logical size, so an
@@ -1092,6 +1238,8 @@ fn open_gump_window(
         content,
         drawn_as,
         error: None,
+        paperdoll: drawn.paperdoll,
+        menu: None,
     });
     Ok(())
 }
@@ -1357,6 +1505,7 @@ impl<'a> StoredDressDecisions<'a> {
 /// preset finds an item's layer in tiledata; the Enhanced presets, as the 3D paperdoll does, in the item's `tileart.uop`
 /// record first. The overrides of the draw order follow the race of the profile's body.
 /// `item_tile` gives an item's tiledata record; `definitions` are the `tileart.uop` records of tilemeta.uddp.
+#[cfg(test)]
 fn gump_paperdoll_layers(
     request: &PaperdollRequest,
     client: GumpClient,
@@ -1365,6 +1514,18 @@ fn gump_paperdoll_layers(
     order: &PaperdollOrder,
     stored: &StoredDressDecisions,
 ) -> color_eyre::eyre::Result<Vec<PaperdollLayer>> {
+    gump_paperdoll_layers_taking_off(request, client, item_tile, definitions, order, stored).map(|(layers, _)| layers)
+}
+
+/// [`gump_paperdoll_layers`], and every item taken off, in the order taken.
+fn gump_paperdoll_layers_taking_off(
+    request: &PaperdollRequest,
+    client: GumpClient,
+    item_tile: impl Fn(u32) -> Option<TileMetaItemTile>,
+    definitions: &TileMetaItemDefinitions,
+    order: &PaperdollOrder,
+    stored: &StoredDressDecisions,
+) -> color_eyre::eyre::Result<(Vec<PaperdollLayer>, Vec<TakenOff>)> {
     let PaperdollRequest { profile, body_gump, body_hue, items } = request;
     let body_gump =
         body_gump.ok_or_else(|| color_eyre::eyre::eyre!("The gump paperdoll needs a body gump ID."))?;
@@ -1417,6 +1578,7 @@ fn gump_paperdoll_layers(
     }
 
     let race = Wearer::new(definitions, profile.body).race;
+    let mut taken_in_all = Vec::new();
     loop {
         let drawn_layers = order.rules.paperdoll_order(&worn, race);
         let drawn: Vec<(usize, u32)> =
@@ -1426,13 +1588,14 @@ fn gump_paperdoll_layers(
         });
         if taken.is_empty() {
             layers.extend(drawn_layers.into_iter().filter_map(|layer| worn_layers[layer].take()));
-            return Ok(layers);
+            return Ok((layers, taken_in_all));
         }
         // Each pass leaves out one item at least, so the loop ends.
         for taken in &taken {
             worn[taken.garment.0] = None;
             worn_layers[taken.garment.0] = None;
         }
+        taken_in_all.extend(taken);
     }
 }
 
@@ -1483,6 +1646,7 @@ fn describe_item((slot, item_id): (usize, u32)) -> String {
 /// A worn item whose gump is missing, and its fallback too, is left out with a log line; the rest are drawn. The body
 /// is not left out: a missing body gump, or no gump source for the preset, fails the paperdoll with `decode_gump`'s
 /// error.
+#[cfg(test)]
 fn compose_paperdoll(
     gump_map: &GumpMapRes,
     client: GumpClient,
@@ -1490,6 +1654,17 @@ fn compose_paperdoll(
     profile: &PaperdollProfile,
     layers: &[PaperdollLayer],
 ) -> color_eyre::eyre::Result<udd_assets::gumps::GumpImage> {
+    compose_paperdoll_picked(gump_map, client, hues_package, profile, layers).map(|(gump, _)| gump)
+}
+
+/// [`compose_paperdoll`], and the texels each worn item draws, for the paperdoll menu.
+fn compose_paperdoll_picked(
+    gump_map: &GumpMapRes,
+    client: GumpClient,
+    hues_package: Option<&HuesPackageRes>,
+    profile: &PaperdollProfile,
+    layers: &[PaperdollLayer],
+) -> color_eyre::eyre::Result<(udd_assets::gumps::GumpImage, Vec<PickLayer>)> {
     let hue_texture_bytes = if layers.iter().any(|layer| layer.hue_id > 0) {
         let package = hues_package
             .ok_or_else(|| color_eyre::eyre::eyre!("hues.uddp is not loaded."))?;
@@ -1528,16 +1703,18 @@ fn compose_paperdoll(
         } else {
             None
         };
-        decoded_layers.push(DecodedPaperdollLayer { x: layer.x, y: layer.y, gump, hue });
+        decoded_layers.push(DecodedPaperdollLayer { x: layer.x, y: layer.y, item: layer.item, gump, hue });
     }
 
-    Ok(compose_decoded_layers(client, profile.canvas_width, profile.canvas_height, decoded_layers))
+    Ok(compose_decoded_layers_picked(client, profile.canvas_width, profile.canvas_height, decoded_layers))
 }
 
 /// A paperdoll layer's gump with its canvas at a logical position, and the hue it is drawn with.
 struct DecodedPaperdollLayer {
     x: i32,
     y: i32,
+    /// The worn item's layer and id; `None` for the body.
+    item: Option<(usize, u32)>,
     gump: udd_assets::gumps::GumpImage,
     hue: Option<LayerHue>,
 }
@@ -1554,12 +1731,23 @@ struct LayerHue {
 /// which texels `UOPaperdoll::DrawGumpLayer` draws, is baked into gumps_ec.uddp's alpha at packing time
 /// (`udd_conv::ec_gumps::bake_enhanced_paperdoll_rule`), so both clients blend by alpha. A layer that came from the
 /// Classic source, for an id gumps_ec.uddp lacks, draws by its alpha too: its colour 0 is transparent.
+#[cfg(test)]
 fn compose_decoded_layers(
     client: GumpClient,
     canvas_width: u32,
     canvas_height: u32,
-    mut layers: Vec<DecodedPaperdollLayer>,
+    layers: Vec<DecodedPaperdollLayer>,
 ) -> udd_assets::gumps::GumpImage {
+    compose_decoded_layers_picked(client, canvas_width, canvas_height, layers).0
+}
+
+/// [`compose_decoded_layers`], and the texels each worn item draws on the canvas, for the paperdoll menu.
+fn compose_decoded_layers_picked(
+    client: GumpClient,
+    canvas_width: u32,
+    canvas_height: u32,
+    mut layers: Vec<DecodedPaperdollLayer>,
+) -> (udd_assets::gumps::GumpImage, Vec<PickLayer>) {
     if client == GumpClient::Enhanced {
         layers.retain(|layer| {
             layer.gump.logical_width != ENHANCED_SKIPPED_GUMP_SIZE
@@ -1587,7 +1775,8 @@ fn compose_decoded_layers(
     let width = logical_width * output_scale;
     let height = logical_height * output_scale;
     let mut canvas = vec![0u8; width as usize * height as usize * RGBA_BYTES];
-    for DecodedPaperdollLayer { x, y, mut gump, hue } in layers {
+    let mut picks = Vec::new();
+    for DecodedPaperdollLayer { x, y, item, mut gump, hue } in layers {
         if let Some(hue) = &hue {
             apply_hue(&mut gump.stored_rgba, hue, client);
         }
@@ -1608,9 +1797,13 @@ fn compose_decoded_layers(
         let dst_x = (x + stored.x as i32 - min_x) * output_scale as i32;
         let dst_y = (y + stored.y as i32 - min_y) * output_scale as i32;
         alpha_blend_at(&mut canvas, width, dst_x, dst_y, layer_width, layer_height, &pixels);
+        if let Some(item) = item {
+            picks.push(PickLayer::from_rgba(item, dst_x, dst_y, layer_width, layer_height, &pixels));
+        }
     }
 
-    udd_assets::gumps::GumpImage::whole(width, height, output_scale.min(u32::from(u16::MAX)) as u16, canvas)
+    let gump = udd_assets::gumps::GumpImage::whole(width, height, output_scale.min(u32::from(u16::MAX)) as u16, canvas);
+    (gump, picks)
 }
 
 fn resize_rgba_nearest(

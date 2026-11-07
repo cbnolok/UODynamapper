@@ -7,7 +7,7 @@
 //! beneath each dress the same way (`udd_conv::paperdoll_ec_dress`); these outfits check the result as it is drawn.
 
 use super::*;
-use crate::core::render::dialogs::paperdoll_ec::{paperdoll_frames, PaperdollCanvas, PaperdollItem};
+use crate::core::render::dialogs::paperdoll_ec::{paperdoll_drawing, PaperdollCanvas, PaperdollItem};
 use std::collections::{HashMap, HashSet};
 use std::hash::{Hash, Hasher};
 use std::path::{Path, PathBuf};
@@ -94,8 +94,9 @@ impl Sources {
     /// The canvas `order` draws for `body` wearing `items`, and its frames.
     fn draw(&self, order: &PaperdollOrder, body: u32, items: &[PaperdollItem]) -> (Vec<u8>, Vec<PlacedFrame>) {
         let frames =
-            paperdoll_frames(&self.package, &self.tilemeta, Some(&self.hues), order, body, SKIN_HUE, items, &mut HashSet::new())
-                .unwrap_or_else(|error| panic!("body {body} wearing {items:x?}: {error:#}"));
+            paperdoll_drawing(&self.package, &self.tilemeta, Some(&self.hues), order, body, SKIN_HUE, items, &mut HashSet::new())
+                .unwrap_or_else(|error| panic!("body {body} wearing {items:x?}: {error:#}"))
+                .frames;
         (self.canvas.compose(&frames), frames)
     }
 }

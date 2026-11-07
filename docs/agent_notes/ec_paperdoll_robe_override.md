@@ -114,6 +114,25 @@ leave on. Only what the client draws beneath the item is taken off; a taken-off
 item counts as not worn and the client's order is taken again, so taking off
 plate legs brings the shoes back. The uocf editor keeps the client's rules.
 
+The paperdoll windows (3D and gumps) take a right-click
+(`core/render/dialogs/paperdoll_menu.rs`, a context menu inside the window, no
+viewport of its own): the item picked is the topmost drawn whose texel under the
+pointer is at least half opaque (else the topmost drawn there at all). For a
+garment drawn beneath the drawn dress-layer item the menu offers "Show under
+this robe", "Hide under this robe" and "Back to measured", the current choice
+checked; it lists the garments taken off beneath the robe, each a submenu with
+the same choices. A choice is for that robe on the body frame drawn (none
+without paperdoll_ec.uddp) and goes to the user's copy,
+`cache/settings/PaperdollOverrides.kdl` (`paperdoll_menu::user_overrides_path`):
+the runtime specs have no user copy, and the app writes what the user sets in
+`cache/settings/`. `udd_assets::paperdoll_overrides::set_garment_rule` edits the
+KDL text by its spans, keeping comments and other covers, in a cover per robe
+and body headed "chosen in the paperdoll window"; the file is written through a
+temporary file renamed over it and every open paperdoll is drawn again. A copy
+that does not decode at startup is neither read nor written (a warning, the
+bundled file applies); a choice re-reads the copy from disk first, so one fixed
+meanwhile is taken up.
+
 The gump paperdolls take the decision for the frame the 3D paperdoll draws for
 the profile's body, and none without paperdoll_ec.uddp. The gump art shows the
 same artifact with armour: the cloth lines up (a shirt shows at most at a robe's

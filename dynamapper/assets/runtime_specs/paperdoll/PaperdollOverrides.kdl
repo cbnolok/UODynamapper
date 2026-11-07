@@ -15,7 +15,16 @@
 // shoes, do not apply. The gump paperdolls take the decision for the 3D body of their profile, and
 // only while paperdoll_ec.uddp is loaded; the gump art shows the edges of armour past a robe as well.
 //
-// This file ships empty. A cover decides for its covering items, over the stored decisions:
+// This file ships empty. Dynamapper reads your copy, cache/settings/PaperdollOverrides.kdl beside the assets folder,
+// in its place when it exists. The paperdoll windows write that copy: right-click a garment drawn beneath a robe or
+// dress for "Show under this robe", "Hide under this robe" or "Back to measured"; the same menu lists the garments
+// taken off beneath the robe, each to be brought back. A choice is for that robe on that body: it edits the cover
+// `cover "dress" items="<robe>" bodies="<body>"` headed "chosen in the paperdoll window" (added at the end when
+// there is none), keeping your comments and other covers as written; "Back to measured" also takes the garment out
+// of your other covers that apply to that robe and body. The first choice starts the copy from this file. A copy
+// that does not read is neither read nor written, with a warning, and this file applies until it is fixed.
+//
+// A cover decides for its covering items, over the stored decisions:
 //
 // cover "<slot>" items="any"|"<ids>" [bodies="<body frames>"] {
 //     hide "<slot>"; hide items="<ids>"; show items="<ids>"; except items="<ids>"
