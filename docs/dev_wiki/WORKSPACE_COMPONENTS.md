@@ -167,6 +167,13 @@ Included tools:
 
 - `uocf-asset-cli`: export Classic MUL, Classic Client AnimationFrame UOP, and Enhanced Client AnimationFrame UOP payloads as `.vd` or Michelangelo/UOAnimTool `.uop` animation patch streams.
 
+### `tools/udd-devtools-cli/`
+
+Development-only converted-asset diagnostics: package and gump equality checks,
+gump quality scores, archived paperdoll migration checks and optional GPU/codec
+experiments. See [the tool README](../../tools/udd-devtools-cli/README.md) for
+feature flags, required external fixtures and measurement limits.
+
 ## GUI Tools
 
 ### `tools/udd-conv-gui/`

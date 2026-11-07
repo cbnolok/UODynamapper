@@ -7203,6 +7203,26 @@ dependencies = [
 ]
 
 [[package]]
+name = "udd-devtools-cli"
+version = "0.1.0"
+dependencies = [
+ "bytemuck",
+ "clap",
+ "color-eyre",
+ "dds",
+ "image",
+ "libwebp-sys",
+ "pollster 0.4.0",
+ "rayon",
+ "ssimulacra2",
+ "udd-assets",
+ "udd-container",
+ "wesl",
+ "wgpu",
+ "workspace-hack",
+]
+
+[[package]]
 name = "uddp-inspector-gui"
 version = "0.1.0"
 dependencies = [
@@ -8647,6 +8667,7 @@ name = "workspace-hack"
 version = "0.1.0"
 dependencies = [
  "ahash",
+ "aho-corasick",
  "arboard",
  "arrayvec",
  "bitflags 2.13.1",
@@ -8657,6 +8678,8 @@ dependencies = [
  "core-foundation-sys",
  "crossbeam-channel",
  "dds",
+ "derive_more 2.1.1",
+ "derive_more-impl 2.1.1",
  "ecolor",
  "egui",
  "either",
@@ -8667,6 +8690,7 @@ dependencies = [
  "font-types",
  "getrandom 0.4.3",
  "glam 0.33.12",
+ "gpu-allocator",
  "half",
  "hashbrown 0.16.1",
  "hashbrown 0.17.1",
@@ -8713,14 +8737,22 @@ dependencies = [
  "uuid",
  "wayland-backend",
  "wayland-sys",
+ "wesl",
  "wgpu",
  "wgpu-core",
  "wgpu-core-deps-windows-linux-android",
  "wgpu-hal",
  "wgpu-types",
+ "wgsl-parse",
+ "wgsl-types",
  "wide",
  "windows",
+ "windows-collections",
  "windows-core",
+ "windows-future",
+ "windows-numerics",
+ "windows-result",
+ "windows-strings",
  "windows-sys 0.52.0",
  "windows-sys 0.60.2",
  "windows-sys 0.61.2",

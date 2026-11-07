@@ -16,6 +16,7 @@ publish = false
 ### BEGIN HAKARI SECTION
 [dependencies]
 ahash = { version = "0.8", default-features = false, features = ["no-rng", "serde", "std"] }
+aho-corasick = { version = "1", default-features = false, features = ["perf-literal", "std"] }
 arrayvec = { version = "0.7" }
 bitflags = { version = "2", default-features = false, features = ["bytemuck", "serde", "std"] }
 bytemuck = { version = "1", default-features = false, features = ["aarch64_simd", "avx512_simd", "derive", "extern_crate_alloc", "min_const_generics", "must_cast", "wasm_simd"] }
@@ -23,6 +24,7 @@ clap = { version = "4", features = ["derive", "unicode"] }
 clap_builder = { version = "4", default-features = false, features = ["color", "help", "std", "suggestions", "unicode", "usage"] }
 crossbeam-channel = { version = "0.5" }
 dds = { version = "0.2" }
+derive_more = { version = "2", features = ["as_ref", "constructor", "deref", "deref_mut", "display", "from", "into", "is_variant", "try_unwrap", "unwrap"] }
 ecolor = { version = "0.36", default-features = false, features = ["bytemuck", "serde"] }
 egui = { version = "0.36", features = ["bytemuck", "persistence"] }
 either = { version = "1", default-features = false, features = ["use_std"] }
@@ -32,6 +34,7 @@ flate2 = { version = "1", features = ["zlib-ng"] }
 foldhash = { version = "0.2", default-features = false, features = ["std"] }
 font-types = { version = "0.12", default-features = false, features = ["bytemuck", "serde", "std"] }
 glam = { version = "0.33", default-features = false, features = ["approx", "bytemuck", "encase", "float-types", "glam-assert", "integer-types", "nostd-libm", "rand", "serde", "std"] }
+half = { version = "2", features = ["bytemuck", "num-traits", "serde"] }
 hashbrown-9067fe90e8c1f593 = { package = "hashbrown", version = "0.17", default-features = false, features = ["default-hasher", "inline-more", "raw-entry"] }
 image = { version = "0.25", default-features = false, features = ["bmp", "dds", "jpeg", "png", "tga", "webp"] }
 indexmap = { version = "2", features = ["serde"] }
@@ -60,7 +63,11 @@ tracing = { version = "0.1" }
 tracing-log = { version = "0.2" }
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 uuid = { version = "1", features = ["serde", "v4"] }
+wesl = { version = "0.6", default-features = false, features = ["naga-ext"] }
+wgpu = { version = "30", default-features = false, features = ["dx12", "fragile-send-sync-non-atomic-wasm", "metal", "vulkan", "wgsl"] }
 wgpu-types = { version = "30", features = ["fragile-send-sync-non-atomic-wasm", "serde"] }
+wgsl-parse = { version = "0.6", features = ["naga-ext", "wesl"] }
+wgsl-types = { version = "0.6", default-features = false, features = ["naga-ext"] }
 wide = { version = "1" }
 winit = { version = "0.30", default-features = false, features = ["rwh_06", "wayland", "wayland-csd-adwaita", "x11"] }
 winnow = { version = "1" }
@@ -70,7 +77,9 @@ zstd-safe = { version = "7", default-features = false, features = ["arrays", "le
 zstd-sys = { version = "2", default-features = false, features = ["legacy", "std", "zdict_builder", "zstdmt"] }
 
 [build-dependencies]
+aho-corasick = { version = "1", default-features = false, features = ["perf-literal", "std"] }
 cc = { version = "1", default-features = false, features = ["parallel"] }
+derive_more-impl = { version = "2", features = ["as_ref", "constructor", "deref", "deref_mut", "display", "from", "into", "is_variant", "try_unwrap", "unwrap"] }
 either = { version = "1", default-features = false, features = ["use_std"] }
 foldhash = { version = "0.2", default-features = false, features = ["std"] }
 hashbrown-9067fe90e8c1f593 = { package = "hashbrown", version = "0.17", default-features = false, features = ["default-hasher", "inline-more", "raw-entry"] }
@@ -92,7 +101,7 @@ winnow = { version = "1" }
 ahash = { version = "0.8" }
 arboard = { version = "3" }
 getrandom = { version = "0.4", default-features = false, features = ["std", "sys_rng"] }
-half = { version = "2", features = ["bytemuck", "num-traits", "serde"] }
+gpu-allocator = { version = "0.28", default-features = false, features = ["d3d12", "hashbrown", "vulkan"] }
 hashbrown-986da7b5efc2b80e = { package = "hashbrown", version = "0.16", features = ["serde"] }
 libc = { version = "0.2", features = ["extra_traits"] }
 miniz_oxide = { version = "0.8", features = ["simd"] }
@@ -103,7 +112,7 @@ tracing = { version = "0.1", default-features = false, features = ["log"] }
 tracing-core = { version = "0.1" }
 wayland-backend = { version = "0.3", default-features = false, features = ["client_system", "dlopen"] }
 wayland-sys = { version = "0.31", default-features = false, features = ["dlopen", "egl"] }
-wgpu = { version = "30", features = ["fragile-send-sync-non-atomic-wasm", "webgl"] }
+wgpu = { version = "30", features = ["webgl"] }
 wgpu-core = { version = "30", features = ["dx12", "fragile-send-sync-non-atomic-wasm", "gles", "metal", "portable-atomic", "renderdoc", "vulkan", "webgl", "wgsl"] }
 wgpu-core-deps-windows-linux-android = { version = "30", default-features = false, features = ["dx12", "gles", "renderdoc", "vulkan"] }
 wgpu-hal = { version = "30", default-features = false, features = ["dx12", "fragile-send-sync-non-atomic-wasm", "gles", "portable-atomic", "renderdoc", "vulkan"] }
@@ -117,7 +126,7 @@ log = { version = "0.4", default-features = false, features = ["std"] }
 ahash = { version = "0.8" }
 arboard = { version = "3" }
 getrandom = { version = "0.4", default-features = false, features = ["std", "sys_rng"] }
-half = { version = "2", features = ["bytemuck", "num-traits", "serde"] }
+gpu-allocator = { version = "0.28", default-features = false, features = ["d3d12", "hashbrown", "vulkan"] }
 hashbrown-986da7b5efc2b80e = { package = "hashbrown", version = "0.16", features = ["serde"] }
 libc = { version = "0.2", features = ["extra_traits"] }
 miniz_oxide = { version = "0.8", features = ["simd"] }
@@ -128,7 +137,7 @@ tracing = { version = "0.1", default-features = false, features = ["log"] }
 tracing-core = { version = "0.1" }
 wayland-backend = { version = "0.3", default-features = false, features = ["client_system", "dlopen"] }
 wayland-sys = { version = "0.31", default-features = false, features = ["dlopen", "egl"] }
-wgpu = { version = "30", features = ["fragile-send-sync-non-atomic-wasm", "webgl"] }
+wgpu = { version = "30", features = ["webgl"] }
 wgpu-core = { version = "30", features = ["dx12", "fragile-send-sync-non-atomic-wasm", "gles", "metal", "portable-atomic", "renderdoc", "vulkan", "webgl", "wgsl"] }
 wgpu-core-deps-windows-linux-android = { version = "30", default-features = false, features = ["dx12", "gles", "renderdoc", "vulkan"] }
 wgpu-hal = { version = "30", default-features = false, features = ["dx12", "fragile-send-sync-non-atomic-wasm", "gles", "portable-atomic", "renderdoc", "vulkan"] }
@@ -142,7 +151,7 @@ log = { version = "0.4", default-features = false, features = ["std"] }
 ahash = { version = "0.8" }
 arboard = { version = "3" }
 getrandom = { version = "0.4", default-features = false, features = ["std", "sys_rng"] }
-half = { version = "2", features = ["bytemuck", "num-traits", "serde"] }
+gpu-allocator = { version = "0.28", default-features = false, features = ["d3d12", "hashbrown", "vulkan"] }
 hashbrown-986da7b5efc2b80e = { package = "hashbrown", version = "0.16", features = ["serde"] }
 libc = { version = "0.2", features = ["extra_traits"] }
 miniz_oxide = { version = "0.8", features = ["simd"] }
@@ -153,7 +162,7 @@ tracing = { version = "0.1", default-features = false, features = ["log"] }
 tracing-core = { version = "0.1" }
 wayland-backend = { version = "0.3", default-features = false, features = ["client_system", "dlopen"] }
 wayland-sys = { version = "0.31", default-features = false, features = ["dlopen", "egl"] }
-wgpu = { version = "30", features = ["fragile-send-sync-non-atomic-wasm", "webgl"] }
+wgpu = { version = "30", features = ["webgl"] }
 wgpu-core = { version = "30", features = ["dx12", "fragile-send-sync-non-atomic-wasm", "gles", "metal", "portable-atomic", "renderdoc", "vulkan", "webgl", "wgsl"] }
 wgpu-core-deps-windows-linux-android = { version = "30", default-features = false, features = ["dx12", "gles", "renderdoc", "vulkan"] }
 wgpu-hal = { version = "30", default-features = false, features = ["dx12", "fragile-send-sync-non-atomic-wasm", "gles", "portable-atomic", "renderdoc", "vulkan"] }
@@ -167,7 +176,7 @@ log = { version = "0.4", default-features = false, features = ["std"] }
 ahash = { version = "0.8" }
 arboard = { version = "3" }
 getrandom = { version = "0.4", default-features = false, features = ["std", "sys_rng"] }
-half = { version = "2", features = ["bytemuck", "num-traits", "serde"] }
+gpu-allocator = { version = "0.28", default-features = false, features = ["d3d12", "hashbrown", "vulkan"] }
 hashbrown-986da7b5efc2b80e = { package = "hashbrown", version = "0.16", features = ["serde"] }
 libc = { version = "0.2", features = ["extra_traits"] }
 miniz_oxide = { version = "0.8", features = ["simd"] }
@@ -178,7 +187,7 @@ tracing = { version = "0.1", default-features = false, features = ["log"] }
 tracing-core = { version = "0.1" }
 wayland-backend = { version = "0.3", default-features = false, features = ["client_system", "dlopen"] }
 wayland-sys = { version = "0.31", default-features = false, features = ["dlopen", "egl"] }
-wgpu = { version = "30", features = ["fragile-send-sync-non-atomic-wasm", "webgl"] }
+wgpu = { version = "30", features = ["webgl"] }
 wgpu-core = { version = "30", features = ["dx12", "fragile-send-sync-non-atomic-wasm", "gles", "metal", "portable-atomic", "renderdoc", "vulkan", "webgl", "wgsl"] }
 wgpu-core-deps-windows-linux-android = { version = "30", default-features = false, features = ["dx12", "gles", "renderdoc", "vulkan"] }
 wgpu-hal = { version = "30", default-features = false, features = ["dx12", "fragile-send-sync-non-atomic-wasm", "gles", "portable-atomic", "renderdoc", "vulkan"] }
@@ -191,18 +200,23 @@ log = { version = "0.4", default-features = false, features = ["std"] }
 [target.x86_64-pc-windows-msvc.dependencies]
 arboard = { version = "3" }
 getrandom = { version = "0.4", default-features = false, features = ["std", "sys_rng"] }
-half = { version = "2", features = ["bytemuck", "num-traits", "serde"] }
+gpu-allocator = { version = "0.28", default-features = false, features = ["d3d12", "hashbrown", "vulkan"] }
 hashbrown-986da7b5efc2b80e = { package = "hashbrown", version = "0.16", features = ["serde"] }
 naga = { version = "30", features = ["glsl-out", "hlsl-out", "spv-out", "wgsl-in"] }
 smol_str = { version = "0.2", features = ["serde"] }
 tracing-core = { version = "0.1" }
-wgpu = { version = "30", features = ["fragile-send-sync-non-atomic-wasm", "webgl"] }
+wgpu = { version = "30", features = ["webgl"] }
 wgpu-core = { version = "30", features = ["dx12", "fragile-send-sync-non-atomic-wasm", "gles", "metal", "portable-atomic", "renderdoc", "vulkan", "webgl", "wgsl"] }
 wgpu-core-deps-windows-linux-android = { version = "30", default-features = false, features = ["dx12", "gles", "renderdoc", "vulkan"] }
 wgpu-hal = { version = "30", default-features = false, features = ["dx12", "fragile-send-sync-non-atomic-wasm", "gles", "portable-atomic", "renderdoc", "vulkan"] }
 wgpu-types = { version = "30", default-features = false, features = ["web"] }
 windows = { version = "0.62", features = ["Wdk_System_SystemInformation", "Wdk_System_SystemServices", "Wdk_System_Threading", "Win32_Devices_DeviceAndDriverInstallation", "Win32_Devices_Display", "Win32_Devices_Properties", "Win32_Globalization", "Win32_Graphics_Direct3D12", "Win32_Graphics_Direct3D_Dxc", "Win32_Graphics_Direct3D_Fxc", "Win32_Graphics_DirectComposition", "Win32_Graphics_Dxgi_Common", "Win32_Graphics_Gdi", "Win32_Graphics_OpenGL", "Win32_Media_Audio", "Win32_Media_KernelStreaming", "Win32_Media_Multimedia", "Win32_Security_Authorization", "Win32_System_Com_StructuredStorage", "Win32_System_Diagnostics_Debug", "Win32_System_Diagnostics_ToolHelp", "Win32_System_Kernel", "Win32_System_LibraryLoader", "Win32_System_Memory", "Win32_System_Ole", "Win32_System_Performance", "Win32_System_Power", "Win32_System_ProcessStatus", "Win32_System_Registry", "Win32_System_RemoteDesktop", "Win32_System_SystemInformation", "Win32_System_SystemServices", "Win32_System_Threading", "Win32_System_Variant", "Win32_UI_Accessibility", "Win32_UI_Input_KeyboardAndMouse", "Win32_UI_Shell_PropertiesSystem", "Win32_UI_WindowsAndMessaging"] }
+windows-collections = { version = "0.3", default-features = false, features = ["std"] }
 windows-core = { version = "0.62" }
+windows-future = { version = "0.3", default-features = false, features = ["std"] }
+windows-numerics = { version = "0.3", default-features = false, features = ["std"] }
+windows-result = { version = "0.4", default-features = false, features = ["std"] }
+windows-strings = { version = "0.5", default-features = false, features = ["std"] }
 windows-sys-4db8c43aad08e7ae = { package = "windows-sys", version = "0.60", features = ["Win32_Graphics_Gdi", "Win32_Security", "Win32_Storage_FileSystem", "Win32_System_DataExchange", "Win32_System_IO", "Win32_System_Memory", "Win32_System_Ole", "Win32_System_Threading", "Win32_System_WindowsProgramming", "Win32_UI_Shell"] }
 windows-sys-b21d60becc0929df = { package = "windows-sys", version = "0.52", features = ["Win32_Devices_HumanInterfaceDevice", "Win32_Foundation", "Win32_Globalization", "Win32_Graphics_Dwm", "Win32_Graphics_Gdi", "Win32_Graphics_OpenGL", "Win32_Media", "Win32_Security", "Win32_System_Com_StructuredStorage", "Win32_System_LibraryLoader", "Win32_System_Ole", "Win32_System_SystemInformation", "Win32_System_SystemServices", "Win32_System_Threading", "Win32_System_WindowsProgramming", "Win32_UI_Accessibility", "Win32_UI_Controls", "Win32_UI_HiDpi", "Win32_UI_Input_Ime", "Win32_UI_Input_KeyboardAndMouse", "Win32_UI_Input_Pointer", "Win32_UI_Input_Touch", "Win32_UI_Shell", "Win32_UI_TextServices", "Win32_UI_WindowsAndMessaging"] }
 windows-sys-d4189bed749088b6 = { package = "windows-sys", version = "0.61", features = ["Wdk_Foundation", "Wdk_Storage_FileSystem", "Win32_Globalization", "Win32_Media", "Win32_Networking_WinSock", "Win32_Security", "Win32_Storage_FileSystem", "Win32_System_Com", "Win32_System_Console", "Win32_System_Diagnostics_Debug", "Win32_System_IO", "Win32_System_LibraryLoader", "Win32_System_SystemInformation", "Win32_System_Threading", "Win32_System_WindowsProgramming", "Win32_UI_Input_KeyboardAndMouse", "Win32_UI_Shell_Common", "Win32_UI_WindowsAndMessaging"] }
@@ -214,18 +228,23 @@ log = { version = "0.4", default-features = false, features = ["std"] }
 [target.aarch64-pc-windows-msvc.dependencies]
 arboard = { version = "3" }
 getrandom = { version = "0.4", default-features = false, features = ["std", "sys_rng"] }
-half = { version = "2", features = ["bytemuck", "num-traits", "serde"] }
+gpu-allocator = { version = "0.28", default-features = false, features = ["d3d12", "hashbrown", "vulkan"] }
 hashbrown-986da7b5efc2b80e = { package = "hashbrown", version = "0.16", features = ["serde"] }
 naga = { version = "30", features = ["glsl-out", "hlsl-out", "spv-out", "wgsl-in"] }
 smol_str = { version = "0.2", features = ["serde"] }
 tracing-core = { version = "0.1" }
-wgpu = { version = "30", features = ["fragile-send-sync-non-atomic-wasm", "webgl"] }
+wgpu = { version = "30", features = ["webgl"] }
 wgpu-core = { version = "30", features = ["dx12", "fragile-send-sync-non-atomic-wasm", "gles", "metal", "portable-atomic", "renderdoc", "vulkan", "webgl", "wgsl"] }
 wgpu-core-deps-windows-linux-android = { version = "30", default-features = false, features = ["dx12", "gles", "renderdoc", "vulkan"] }
 wgpu-hal = { version = "30", default-features = false, features = ["dx12", "fragile-send-sync-non-atomic-wasm", "gles", "portable-atomic", "renderdoc", "vulkan"] }
 wgpu-types = { version = "30", default-features = false, features = ["web"] }
 windows = { version = "0.62", features = ["Wdk_System_SystemInformation", "Wdk_System_SystemServices", "Wdk_System_Threading", "Win32_Devices_DeviceAndDriverInstallation", "Win32_Devices_Display", "Win32_Devices_Properties", "Win32_Globalization", "Win32_Graphics_Direct3D12", "Win32_Graphics_Direct3D_Dxc", "Win32_Graphics_Direct3D_Fxc", "Win32_Graphics_DirectComposition", "Win32_Graphics_Dxgi_Common", "Win32_Graphics_Gdi", "Win32_Graphics_OpenGL", "Win32_Media_Audio", "Win32_Media_KernelStreaming", "Win32_Media_Multimedia", "Win32_Security_Authorization", "Win32_System_Com_StructuredStorage", "Win32_System_Diagnostics_Debug", "Win32_System_Diagnostics_ToolHelp", "Win32_System_Kernel", "Win32_System_LibraryLoader", "Win32_System_Memory", "Win32_System_Ole", "Win32_System_Performance", "Win32_System_Power", "Win32_System_ProcessStatus", "Win32_System_Registry", "Win32_System_RemoteDesktop", "Win32_System_SystemInformation", "Win32_System_SystemServices", "Win32_System_Threading", "Win32_System_Variant", "Win32_UI_Accessibility", "Win32_UI_Input_KeyboardAndMouse", "Win32_UI_Shell_PropertiesSystem", "Win32_UI_WindowsAndMessaging"] }
+windows-collections = { version = "0.3", default-features = false, features = ["std"] }
 windows-core = { version = "0.62" }
+windows-future = { version = "0.3", default-features = false, features = ["std"] }
+windows-numerics = { version = "0.3", default-features = false, features = ["std"] }
+windows-result = { version = "0.4", default-features = false, features = ["std"] }
+windows-strings = { version = "0.5", default-features = false, features = ["std"] }
 windows-sys-4db8c43aad08e7ae = { package = "windows-sys", version = "0.60", features = ["Win32_Graphics_Gdi", "Win32_Security", "Win32_Storage_FileSystem", "Win32_System_DataExchange", "Win32_System_IO", "Win32_System_Memory", "Win32_System_Ole", "Win32_System_Threading", "Win32_System_WindowsProgramming", "Win32_UI_Shell"] }
 windows-sys-b21d60becc0929df = { package = "windows-sys", version = "0.52", features = ["Win32_Devices_HumanInterfaceDevice", "Win32_Foundation", "Win32_Globalization", "Win32_Graphics_Dwm", "Win32_Graphics_Gdi", "Win32_Graphics_OpenGL", "Win32_Media", "Win32_Security", "Win32_System_Com_StructuredStorage", "Win32_System_LibraryLoader", "Win32_System_Ole", "Win32_System_SystemInformation", "Win32_System_SystemServices", "Win32_System_Threading", "Win32_System_WindowsProgramming", "Win32_UI_Accessibility", "Win32_UI_Controls", "Win32_UI_HiDpi", "Win32_UI_Input_Ime", "Win32_UI_Input_KeyboardAndMouse", "Win32_UI_Input_Pointer", "Win32_UI_Input_Touch", "Win32_UI_Shell", "Win32_UI_TextServices", "Win32_UI_WindowsAndMessaging"] }
 windows-sys-d4189bed749088b6 = { package = "windows-sys", version = "0.61", features = ["Wdk_Foundation", "Wdk_Storage_FileSystem", "Win32_Globalization", "Win32_Media", "Win32_Networking_WinSock", "Win32_Security", "Win32_Storage_FileSystem", "Win32_System_Com", "Win32_System_Console", "Win32_System_Diagnostics_Debug", "Win32_System_IO", "Win32_System_LibraryLoader", "Win32_System_SystemInformation", "Win32_System_Threading", "Win32_System_WindowsProgramming", "Win32_UI_Input_KeyboardAndMouse", "Win32_UI_Shell_Common", "Win32_UI_WindowsAndMessaging"] }
@@ -238,18 +257,19 @@ log = { version = "0.4", default-features = false, features = ["std"] }
 arboard = { version = "3" }
 core-foundation-sys = { version = "0.8" }
 getrandom = { version = "0.4", default-features = false, features = ["std", "sys_rng"] }
-half = { version = "2", features = ["bytemuck", "num-traits", "serde"] }
 image = { version = "0.25", default-features = false, features = ["tiff"] }
 libc = { version = "0.2", features = ["extra_traits"] }
 miniz_oxide = { version = "0.8", features = ["simd"] }
+naga = { version = "30", features = ["msl-out", "wgsl-in"] }
 objc2-app-kit-468e82937335b1c9 = { package = "objc2-app-kit", version = "0.3", default-features = false, features = ["NSAlert", "NSApplication", "NSBitmapImageRep", "NSButton", "NSControl", "NSGraphics", "NSImage", "NSImageRep", "NSMenu", "NSMenuItem", "NSOpenGL", "NSOpenGLView", "NSOpenPanel", "NSPanel", "NSPasteboard", "NSPasteboardItem", "NSResponder", "NSRunningApplication", "NSSavePanel", "NSView", "NSWindow", "NSWorkspace", "block2", "objc2-core-foundation", "objc2-core-graphics", "std"] }
 objc2-app-kit-6f8ce4dd05d13bba = { package = "objc2-app-kit", version = "0.2", features = ["NSAccessibility", "NSAccessibilityConstants", "NSAccessibilityElement", "NSAccessibilityProtocols", "NSAppearance", "NSApplication", "NSBitmapImageRep", "NSButton", "NSColor", "NSControl", "NSCursor", "NSDragging", "NSEvent", "NSGraphics", "NSGraphicsContext", "NSImage", "NSImageRep", "NSMenu", "NSMenuItem", "NSOpenGLView", "NSPasteboard", "NSResponder", "NSRunningApplication", "NSScreen", "NSText", "NSTextInputClient", "NSTextInputContext", "NSView", "NSWindow", "NSWindowScripting", "NSWindowTabGroup"] }
 objc2-core-foundation = { version = "0.3", features = ["CFBase"] }
 objc2-foundation = { version = "0.3" }
 smol_str = { version = "0.2", features = ["serde"] }
 tracing-core = { version = "0.1" }
-wgpu = { version = "30", features = ["fragile-send-sync-non-atomic-wasm", "webgl"] }
+wgpu = { version = "30", features = ["webgl"] }
 wgpu-core = { version = "30", features = ["dx12", "fragile-send-sync-non-atomic-wasm", "gles", "metal", "portable-atomic", "renderdoc", "vulkan", "webgl", "wgsl"] }
+wgpu-hal = { version = "30", default-features = false, features = ["fragile-send-sync-non-atomic-wasm", "metal", "portable-atomic"] }
 wgpu-types = { version = "30", default-features = false, features = ["web"] }
 
 [target.x86_64-apple-darwin.build-dependencies]
@@ -259,18 +279,19 @@ libc = { version = "0.2", features = ["extra_traits"] }
 arboard = { version = "3" }
 core-foundation-sys = { version = "0.8" }
 getrandom = { version = "0.4", default-features = false, features = ["std", "sys_rng"] }
-half = { version = "2", features = ["bytemuck", "num-traits", "serde"] }
 image = { version = "0.25", default-features = false, features = ["tiff"] }
 libc = { version = "0.2", features = ["extra_traits"] }
 miniz_oxide = { version = "0.8", features = ["simd"] }
+naga = { version = "30", features = ["msl-out", "wgsl-in"] }
 objc2-app-kit-468e82937335b1c9 = { package = "objc2-app-kit", version = "0.3", default-features = false, features = ["NSAlert", "NSApplication", "NSBitmapImageRep", "NSButton", "NSControl", "NSGraphics", "NSImage", "NSImageRep", "NSMenu", "NSMenuItem", "NSOpenGL", "NSOpenGLView", "NSOpenPanel", "NSPanel", "NSPasteboard", "NSPasteboardItem", "NSResponder", "NSRunningApplication", "NSSavePanel", "NSView", "NSWindow", "NSWorkspace", "block2", "objc2-core-foundation", "objc2-core-graphics", "std"] }
 objc2-app-kit-6f8ce4dd05d13bba = { package = "objc2-app-kit", version = "0.2", features = ["NSAccessibility", "NSAccessibilityConstants", "NSAccessibilityElement", "NSAccessibilityProtocols", "NSAppearance", "NSApplication", "NSBitmapImageRep", "NSButton", "NSColor", "NSControl", "NSCursor", "NSDragging", "NSEvent", "NSGraphics", "NSGraphicsContext", "NSImage", "NSImageRep", "NSMenu", "NSMenuItem", "NSOpenGLView", "NSPasteboard", "NSResponder", "NSRunningApplication", "NSScreen", "NSText", "NSTextInputClient", "NSTextInputContext", "NSView", "NSWindow", "NSWindowScripting", "NSWindowTabGroup"] }
 objc2-core-foundation = { version = "0.3", features = ["CFBase"] }
 objc2-foundation = { version = "0.3" }
 smol_str = { version = "0.2", features = ["serde"] }
 tracing-core = { version = "0.1" }
-wgpu = { version = "30", features = ["fragile-send-sync-non-atomic-wasm", "webgl"] }
+wgpu = { version = "30", features = ["webgl"] }
 wgpu-core = { version = "30", features = ["dx12", "fragile-send-sync-non-atomic-wasm", "gles", "metal", "portable-atomic", "renderdoc", "vulkan", "webgl", "wgsl"] }
+wgpu-hal = { version = "30", default-features = false, features = ["fragile-send-sync-non-atomic-wasm", "metal", "portable-atomic"] }
 wgpu-types = { version = "30", default-features = false, features = ["web"] }
 
 [target.aarch64-apple-darwin.build-dependencies]

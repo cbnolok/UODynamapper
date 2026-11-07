@@ -4,6 +4,9 @@ These are reusable diagnostics and research tools. Keep generated dumps,
 captures, logs and Ghidra projects outside the repository; the committed result
 notes record evidence and its limits, not current implementation requirements.
 
+Rust package comparisons, gump scoring and optional GPU/codec experiments are
+workspace members under [tools/udd-devtools-cli](../../tools/udd-devtools-cli/README.md).
+
 - [EC research](ec-research/README.md): PE inspection, Ghidra scripts, recovered
   client formats and consumers, terrain-coverage checks and mask comparisons.
   The scripts and result notes make the executable-derived renderer/UDDP
@@ -25,5 +28,6 @@ python3 -B -m unittest discover -s scripts/dev-helpers/ec-research -p 'test_*.py
 python3 -B -m unittest discover -s scripts/dev-helpers/renderer -p 'test_*.py'
 ```
 
-`compare_mask_edges.py` additionally requires Pillow and NumPy. Ghidra helpers
+`compare_mask_edges.py` and the renderer frame/seam helpers require Pillow and NumPy;
+the frame-comparison unit tests use these dependencies too. Ghidra helpers
 require the locally installed Ghidra tooling; follow each research README.

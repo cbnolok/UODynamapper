@@ -1,0 +1,42 @@
+[package]
+name = "udd-devtools-cli"
+version = "0.1.0"
+edition = "2024"
+publish = false
+autobins = false
+
+[features]
+dev-tool-tests = []
+gpu-bench = ["dep:wgpu", "dep:pollster", "dep:bytemuck", "dep:wesl", "dep:dds"]
+web-codecs = ["dep:libwebp-sys", "dep:image"]
+
+[dependencies]
+udd-assets = { path = "../../lib/udd-assets" }
+udd-container = { path = "../../lib/udd-container" }
+clap = { workspace = true, features = ["derive"] }
+color-eyre.workspace = true
+rayon.workspace = true
+ssimulacra2 = { version = "0.5.1", default-features = false }
+workspace-hack.workspace = true
+wgpu = { workspace = true, optional = true }
+pollster = { version = "0.4", optional = true }
+bytemuck = { workspace = true, optional = true }
+wesl = { version = "0.6", optional = true }
+dds = { workspace = true, optional = true }
+libwebp-sys = { version = "0.14.4", optional = true }
+image = { workspace = true, features = ["png"], optional = true }
+
+[[bin]]
+name = "udd-devtools-cli"
+path = "src/main.rs"
+required-features = ["dev-tool-tests"]
+
+[[bin]]
+name = "udd-gpu-cost"
+path = "src/bin/gpu_cost.rs"
+required-features = ["dev-tool-tests", "gpu-bench"]
+
+[[bin]]
+name = "udd-webmap-codecs"
+path = "src/bin/webmap_codecs.rs"
+required-features = ["dev-tool-tests", "web-codecs"]

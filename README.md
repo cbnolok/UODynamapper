@@ -118,6 +118,12 @@ research and pipeline maintenance rather than common user workflows):
 - `facet-evidence-tool`: extract EC/KR facet land evidence into KDL.
 - `kr-ec-terrain-diff-tool`: compare KR land routing against EC evidence.
 
+### udd-devtools-cli
+
+[`udd-devtools-cli`](tools/udd-devtools-cli/README.md) contains development-only package comparisons,
+gump scoring and paperdoll migration checks, plus optional GPU and codec experiments. Enable
+`dev-tool-tests` to build it. Renderer frame and seam helpers remain in `scripts/dev-helpers/renderer/`.
+
 ### uocf-asset-cli
 
 [`uocf-asset-cli`](tools/uocf-asset-cli/README.md) — CLI crate for asset-level tooling built on top of `uocf`. Binary:

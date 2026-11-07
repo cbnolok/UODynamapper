@@ -18,6 +18,7 @@ members = [
     "tools/udd-conv-cli",
     "tools/uocf-cli",
     "tools/uocf-devtools-cli",
+    "tools/udd-devtools-cli",
     "tools/uoppackage-cli",
     "tools/udd-conv-gui",
     "tools/uddp-inspector-gui",

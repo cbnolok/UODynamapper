@@ -1,5 +1,23 @@
 # Renderer preview control
 
+`compare_frames.py` checks repeat frames or an overlap at a known pixel offset.
+It accepts PNGs or raw RGBA with `--size WIDTH HEIGHT`, supports `--guard`, and
+fails on differences or insufficient nonblack content. Repeat frames must have
+equal dimensions; nonzero offsets or `--overlap` explicitly select a partial
+comparison. For example:
+
+```sh
+python3 scripts/dev-helpers/renderer/compare_frames.py a.rgba b.rgba \
+  --size 4160 4160 --offset-x 3584 --guard 32
+```
+
+`seam_stats.py TILE_LEVEL --frame-tiles 8` compares discontinuities at exported
+frame boundaries and ordinary tile boundaries. It reports statistics, not a
+pass/fail verdict; scene edges can also create outliers. Both helpers require
+Pillow and NumPy, and perform no capture. Verify readiness and shader logs in
+the capture driver separately. Rust package/GPU/codec diagnostics live in
+[udd-devtools-cli](../../../tools/udd-devtools-cli/README.md).
+
 On Unix, set `DYNAMAPPER_CONTROL_SOCKET` to a fresh absolute socket path when
 launching Dynamapper. The opt-in socket is owner-only, nonblocking, and processes
 at most eight JSON datagrams per frame. The normal app creates no endpoint or

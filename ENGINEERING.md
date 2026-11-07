@@ -25,6 +25,7 @@ UODynamapper is a 2D client/dynamic map renderer for Ultima Online, emulating Cl
 - `tools/uocf-cli/` — UO client file content operations: anim-patch, sound, multimap, MUL↔UOP (binary: `uocf-cli`)
 - `tools/webmap-export-cli/` — Static web map export: tile plan, spool consumer, WebP pyramid and Leaflet viewer (binary: `webmap-export-cli`)
 - `tools/uocf-devtools-cli/` — Research/diagnostic tools (feature flag: `dev-tool-tests`)
+- `tools/udd-devtools-cli/` — Converted-package comparisons, gump scoring, paperdoll migration checks and optional GPU/codec experiments
 - `tools/uddp-inspector-gui/`, `tools/udd-conv-gui/`, `tools/uocf-editor-gui/` — GUI tools
 
 Crate name prefixes (2026-11-06): `uocf` is the UO client files (`lib/uocf` and the tools that work on client files),
