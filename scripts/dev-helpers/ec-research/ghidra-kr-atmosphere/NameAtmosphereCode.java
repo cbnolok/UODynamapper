@@ -2,7 +2,9 @@
 // way it does: the lighting post-process (night map, light sprites, gamma and the light level from the server),
 // the projected sprite shadow post-process, the death post-process, their fixed-function shaders, the baked
 // half-Lambert vertex shade of the terrain mesh and the Mythic factory of the unused Bloom / HDRBloom / Color
-// effects.
+// effects. Second pass: the sprite path (HLSL sprite shader with the world grunge map, the sprite batch, quad,
+// hue and alpha properties), the camera frustum, the terrain layer stages, the light component, the weather and
+// circle-of-transparency effects and the unused figleaf sky parser.
 // Address-based: one entry set per tested file, selected by SHA-256; any other program is refused. Every
 // address is verified with the stated checks first; a failed check is reported, not named.
 // Findings: results/uokr_atmosphere.md.
@@ -54,6 +56,17 @@ public class NameAtmosphereCode extends GhidraScript {
     private static final String TERRAIN = "UOTerrain";
     private static final String SETTINGS = "UOSettings";
     private static final String EFFECTS_MANAGER = "PostProcessEffectsManager";
+    private static final String SPRITE = "UOSprite";
+    private static final String SPRITE_HLSL = "UOSpriteShaderHLSL";
+    private static final String DEFAULT_TERRAIN_LAYER = "UODefaultTerrainLayer";
+    private static final String STATIC_TERRAIN_SHADER = "UOStaticTerrainShader";
+    private static final String WORLD_VIEWER = "UOWorldViewer";
+    private static final String LIGHT_COMPONENT = "UOObjectComponentLighting";
+    private static final String RAIN = "UORainEffect";
+    private static final String SNOW = "UOSnowEffect";
+    private static final String STENCIL = "UOStencilEffect";
+    private static final String FIGLEAF = "figleaf";
+    private static final String SHADER_LIBRARY = "UOShaderLibrary";
 
     // Checks: "calls:ADDR" (the function references ADDR: call, pointer, jump or data),
     // "calledby:ADDR" (the function at ADDR references this one), "ref:ADDR" (the data or code at ADDR
@@ -102,7 +115,8 @@ public class NameAtmosphereCode extends GhidraScript {
         new Entry("0041f4f0", LIGHTING, "GetInputTexture", true, "vtable slot 47: returns +0x220, the scene"
             + " input texture", "ref:00b51328"),
         new Entry("0041fe50", LIGHTING, "Render", false, "vtable slot 48: draws the night map (or the"
-            + " night-sight map) into the light buffer +0x24c, adds the light sprites of the list +0x134, then"
+            + " night-sight map) into the light buffer +0x24c, draws the light sprites of the list +0x134 over it"
+            + " (through the generic dispatch 0x00856600; blend probably the batch's SRCALPHA / INVSRCALPHA), then"
             + " draws the composite quad into +0x100", "ref:00b5132c", "calls:0041f5c0", "calls:0041fab0"),
         new Entry("0041fe10", LIGHTING, "CreateRenderTargets", true, "vtable slot 57", "ref:00b51350"),
         new Entry("004205b0", LIGHTING, "DrawDebugOverlay", true, "vtable slot 59", "ref:00b51358"),
@@ -164,6 +178,80 @@ public class NameAtmosphereCode extends GhidraScript {
         new Entry("00700b20", EFFECTS_MANAGER, "CreateEffectByType", true, "type 3 -> Bloom, 4 -> HDRBloom, 5 ->"
             + " Color; reached only through the helper 0x006f1300, which has no code or data reference",
             "calls:007130a0", "calls:0070f3d0"),
+
+        // Second pass. Camera: UOWorldViewer, the object at 0x00c9dc70.
+        new Entry("00459360", WORLD_VIEWER, WORLD_VIEWER, false, "constructor: frustum half-width +0x6c = 13"
+            + " (0x00b4f2e4), the f the night-map transform reads", "calls:00b4f2e4"),
+        new Entry("0045b510", WORLD_VIEWER, "SetDefaultFrustum", true, "+0x6c = 13; orthographic frustum"
+            + " (-13, 13, 9.75, -9.75): 26 world units, about 18.4 tiles, across at any resolution",
+            "calls:00b4f2e4", "calls:00b86ebc"),
+
+        // Sprites: one textured quad per static, item or light, batched with shared properties.
+        new Entry("004454c0", SPRITE, "BuildSpriteBatch", false, "builds the batch geometry and properties:"
+            + " texturing property with shader map 1 = the grunge noise 01000045 (UV = ground projection of the"
+            + " quad corners plus the object x / z, times 1 / 16), alpha property, vertex colour property",
+            "calls:00440910", "calls:004408a0", "calledby:00438ee0"),
+        new Entry("00442430", SPRITE, "BuildSpriteQuad", false, "writes the four billboard corners and their"
+            + " texture coordinates", "calledby:00442890"),
+        new Entry("004422b0", SPRITE, "PlaceSprite", true, "positions a sprite (statics, items, light sprites)",
+            "calledby:00438a80"),
+        new Entry("00441ce0", SPRITE, "SetSpriteHueColour", true, "writes the hue coordinate; the vertex RGB"
+            + " stays unused by the pixel shader", "calledby:00436320"),
+        new Entry("00440910", SPRITE, "GetSpriteAlphaProperty", false, "shared NiAlphaProperty:"
+            + " 0x00c933ec blend SRCALPHA / INVSRCALPHA with alpha test GREATER, or 0x00c9340c alpha test only",
+            "calledby:004454c0"),
+        new Entry("004408a0", SPRITE, "GetVertexColourProperty", false, "shared NiVertexColorProperty for the"
+            + " batch", "calledby:004454c0"),
+
+        // UOSpriteShaderHLSL, vtable 0x00b61264: listed first in the shader library with the requirement
+        // ps_2_0 / vs_1_1 (0xffff0200 / 0xfffe0101); the fixed-function UOSpriteShaderFFP is the fallback.
+        new Entry("00546fa0", SPRITE_HLSL, "LoadVertexShader", false, "UOSprite.vsh (Shaders.uop): sprite UV,"
+            + " grunge UV through grungeTransform, hue UV", "string:UOSprite.vsh", "calledby:005476c0"),
+        new Entry("00547010", SPRITE_HLSL, "LoadPixelShader", false, "UOSprite.psh (Shaders.uop): texture,"
+            + " optional hue lookup, rgb *= grunge when HAS_GRUNGE_TEX, alpha *= diffuse alpha",
+            "string:UOSprite.psh", "calledby:005476c0"),
+        new Entry("005476c0", SPRITE_HLSL, "Initialize", true, "vtable slot 4: loads the pixel and vertex"
+            + " shaders and declares the five sampler stages", "ref:00b61274", "calls:00547010", "calls:00546fa0"),
+        new Entry("005477d0", SPRITE_HLSL, "BindSamplers", false, "vtable slot 7: shader map 0 ->"
+            + " SpriteSampler (+0x11c), base map -> HueSampler (+0x13c, HAS_HUE_TEX +0x19c), shader map 2 ->"
+            + " HueMaskSampler (+0x15c, HAS_HUEMASK_TEX +0x1bc), shader map 1 (the grunge map) -> GrungeSampler"
+            + " (+0x17c, HAS_GRUNGE_TEX +0x1dc). The UOSA counterpart 0x005940e0 never reads shader map 1",
+            "ref:00b61280"),
+
+        // Terrain layers.
+        new Entry("005499e0", DEFAULT_TERRAIN_LAYER, "Draw", true, "vtable 0x00b61674 slot 1", "ref:00b61678"),
+        new Entry("00549c30", DEFAULT_TERRAIN_LAYER, "SetupFourStages", false, "vtable slot 16: two base"
+            + " textures blended by the coverage mask alpha, times the vertex diffuse", "ref:00b616b4"),
+        new Entry("00549d90", DEFAULT_TERRAIN_LAYER, "SetupTwoStages", false, "vtable slot 17: one base"
+            + " texture times the vertex diffuse", "ref:00b616b8"),
+        new Entry("0044b180", TERRAIN, "LoadTerrainLayerTexture", true, "loads one TerrainDefinition source"
+            + " texture; bilinear, no mip levels", "calledby:0044b530"),
+        new Entry("00548d10", STATIC_TERRAIN_SHADER, "SetupTextureStages", false, "vtable 0x00b61474 slot 40",
+            "ref:00b61514"),
+
+        // Local lights: UOObjectComponentLighting, vtable 0x00b52228.
+        new Entry("00438a80", LIGHT_COMPONENT, "PlaceLightSprite", false, "vtable slot 1: places the light"
+            + " sprite (UOShaderFilenameLight, LightingTextureFileLocation)", "ref:00b5222c", "calls:004422b0"),
+        new Entry("00438ee0", LIGHT_COMPONENT, "BuildLightBatch", false, "builds the light sprite batch with"
+            + " z test and z write off; attached to render group 0x00c931b4", "calls:004454c0"),
+
+        // Weather and the circle of transparency. None of them changes the light level.
+        new Entry("00418420", RAIN, "LoadParticles", true, "vtable 0x00b50bd0 slot 12: 00070006_Rain.nif"
+            + " and 00070002_HvyRainPuddles.nif particles", "ref:00b50c00", "string:00070006_Rain.nif"),
+        new Entry("00418cd0", SNOW, "AttachToRenderGroup", true, "vtable 0x00b617d0 slot 6:"
+            + " 00070000_Snow.nif particles", "ref:00b617e8"),
+        new Entry("00417de0", STENCIL, "Update", true, "vtable 0x00b50b98 slot 12: places the circle of"
+            + " transparency at the camera focus and rebuilds its two shapes", "ref:00b50bc8", "calls:00416db0",
+            "calls:00417480"),
+        new Entry("00416db0", STENCIL, "BuildFirstCircleShape", true, "Data\\Textures\\00000016_circle_of_trans.tga,"
+            + " alpha 0x12ec, stencil 0x4180", "string:Data\\Textures\\00000016_circle_of_trans"),
+        new Entry("00417480", STENCIL, "BuildSecondCircleShape", true, "the same texture, second shape",
+            "string:Data\\Textures\\00000016_circle_of_trans"),
+
+        // Library code that is never reached.
+        new Entry("0073025b", FIGLEAF, "ParseSkyDefinition", true, "parses worldLighting, cloudLighting, fog,"
+            + " cloud layers; its only caller 0x00730fde has no reference, so no sky, cloud shadow or fog runs",
+            "calledby:00730fde"),
     };
 
     private static final Entry[] ENTRIES_UOSA = {
@@ -179,6 +267,9 @@ public class NameAtmosphereCode extends GhidraScript {
         new Entry("00460c70", TERRAIN, "ComputeVertexNormal", false, "as UOKR 0x004488a0; BuildTerrainMesh"
             + " shades each vertex grey (N . D + 1) * 0.5 with D = (0, -0.7071, -0.7071) at 0x00dc18b8",
             "calledby:00461ae0"),
+        new Entry("00c0d610", SHADER_LIBRARY, "RegisterShaders", true, "static table of the UO shaders:"
+            + " UOSpriteShader is registered twice, UOSpriteShaderHLSL (needs ps_2_0 / vs_1_1) before"
+            + " UOSpriteShaderFFP", "string:UOSpriteShaderMob"),
     };
 
     private static final Build[] BUILDS = {

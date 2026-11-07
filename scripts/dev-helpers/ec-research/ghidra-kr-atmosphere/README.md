@@ -1,6 +1,8 @@
 # ghidra-kr-atmosphere
 
-Traces how Kingdom Reborn (`UOKR.exe`) produces its dark, gloomy scene. The research covers:
+Traces how Kingdom Reborn (`UOKR.exe`) produces its dark, gloomy scene. The research had two passes.
+
+The first pass covered:
 
 - the light level from the server, the night and night-sight maps, the light sprites and the gamma option (the
   lighting post-process);
@@ -9,13 +11,24 @@ Traces how Kingdom Reborn (`UOKR.exe`) produces its dark, gloomy scene. The rese
 - what the client does **not** have: sun and ambient lights, fog, tonemapping, bloom, colour grading and
   vignette.
 
+The second pass covered what makes KR look painterly, muddy and unevenly lit by day:
+
+- the sprite shader (`UOSprite.vsh` / `UOSprite.psh`) and its world-anchored grunge map;
+- texture filtering, mip levels and scale;
+- the KR and EC terrain materials against Dynamapper's land shaders;
+- weather, the circle of transparency, the sky library and the light-sprite batch;
+- where either client uses normals;
+- the reference screenshots, and side-by-side Dynamapper captures.
+
 The same pieces are checked in the Enhanced Client (`UOSA.exe`).
 
 Findings: [results/uokr_atmosphere.md](results/uokr_atmosphere.md). It has:
 
+- the summary and a list of what makes the KR look, with an estimated share for each ingredient;
 - the frame order;
 - the formula, defaults and contribution of each ingredient;
 - KR against EC;
+- one section per second-pass item (P2.1 to P2.7), with the corrections to the first pass marked;
 - an item-by-item comparison with Dynamapper's KR-like preset;
 - proposed changes ranked by visual impact.
 
@@ -33,7 +46,8 @@ were named with `--apply` and saved.
 | `/UOSA.exe` | `_Ultima Online Enhanced/UOSA.exe` | `5a5e9dc536c836d1bf10b6f86bb88f61a6ae078f519d4060d3bc47aecbebad50` |
 
 - The client folders are under `/mnt/dati/_proj_local/_uo_clients/`.
-- Do not commit the binaries or anything extracted from them (UOP entries, decoded textures, UI files).
+- Do not commit the binaries or anything extracted from them (UOP entries, decoded textures, UI files, shader
+  sources).
 - Ghidra projects stay outside the repository.
 
 ## NameAtmosphereCode.java
@@ -62,20 +76,25 @@ run_ghidra_script(program="UOKR.exe", script_name="<abs path>/NameAtmosphereCode
   - renames DEFAULT functions (source ANALYSIS) into `UOAtmosphere`, `UOSettings`,
     `UOLightingPostProcessEffect`, `UOShadowPostProcessEffect`, `UODeathPostProcessEffect`, the
     `UO*Shader` classes, `UOTerrain` and `PostProcessEffectsManager`;
+  - second pass: also into `UOWorldViewer`, `UOSprite`, `UOSpriteShaderHLSL`, `UODefaultTerrainLayer`,
+    `UOStaticTerrainShader`, `UOObjectComponentLighting`, `UORainEffect`, `UOSnowEffect`, `UOStencilEffect`,
+    `figleaf` and (UOSA) `UOShaderLibrary`;
   - adds the tag `UO_ATMOSPHERE`;
-  - sets a plate comment `NameAtmosphereCode: UO_ATMOSPHERE <name> [(probable)]: <evidence>`.
+  - sets a plate comment `NameAtmosphereCode: UO_ATMOSPHERE <name> [(probable)]: <evidence>`, and refreshes it
+    when the evidence text changes.
 
-  Names of another source are kept.
+  Names of another source are kept, except where an entry renames its own earlier name.
 
 Results of the 2026-11-07 runs ([UOKR](results/uokr_atmosphere_names.md), [UOSA](results/uosa_atmosphere_names.md)):
 
 | Program | Functions named and tagged |
 |---|---|
-| UOKR.exe | 37 |
-| UOSA.exe | 4 (the composite, its resource loader, the lighting shader stages and the terrain normal) |
+| UOKR.exe | 62: 37 in the first pass, 25 in the second |
+| UOSA.exe | 5: the composite, its resource loader, the lighting shader stages and the terrain normal; second pass, the shader library registration |
 
-There were no mismatches, kept names or conflicts. The second `--apply` reported `changes: none` on both
-programs, and both were saved.
+There were no mismatches or conflicts. In the second pass, `0x005477d0` was renamed from the script's own
+`SelectPermutation` to `BindSamplers`, the name UOSA already used. The last `--apply` reported `changes: none` on
+both programs, and both were saved.
 
 ## Probes
 
@@ -88,25 +107,51 @@ are in `~/ghidra_scripts/`.
 | `KrAtmoFloats20261107.java` | `OUTPUT_FILE ADDRESS...` | prints 32-bit values as hex, float and int (the composite constants, the terrain light vector, the defaults) |
 | `KrAtmoDecompile20261107.java` | `OUTPUT_FILE ENTRY...` | decompiles the functions at the given entries into a file; an address without a function is reported, never created |
 
-The rest of the research used the GhidraMCP decompiler, disassembly, cross-references and byte search.
+The rest of the research used the GhidraMCP decompiler, disassembly, cross-references, memory reads and byte
+search.
 
-## kr_composite_table.py
+## Helper scripts
 
-```
-python3 -I kr_composite_table.py NIGHTMAP_PNG NIGHTSIGHTMAP_PNG
-```
+All are read only, print to standard output and write nothing, except `capture-rig/sheet.py`, which writes the
+sheet into the scratch folder. Run Python that reads client data with `python3 -I`.
 
-- The inputs are previews of `TerrainTexture.uop` entries 21 and 22, decoded outside the repository.
-- It prints Markdown tables:
-  - light-buffer statistics;
-  - the scene multiplier per server light level;
-  - the gamma slider;
-  - the baked terrain shade per slope;
-  - Dynamapper's KR tonemap against the client's identity.
-- It writes nothing.
-- Its output is the source of the numeric tables in the results document.
+| Script | Usage | Use |
+|---|---|---|
+| `kr_composite_table.py` | `NIGHTMAP_PNG NIGHTSIGHTMAP_PNG` | the light-buffer statistics, the scene multiplier per server light level, the gamma slider, the baked terrain shade per slope, and Dynamapper's KR tonemap against the client's identity |
+| `kr_reference_stats.py` | `docs/images/kr_reference` | colour statistics of the reference screenshots (mean, luma percentiles, blue/red ratio, chroma) |
+| `kr_tileart_grunge_census.py` | `ITEMS_DUMP.txt` | counts which tileart sprites carry the grunge map (shader map 1), by block, shader and texture |
+| `dds_info.py` | `FILE.dds|FILE.png ...` | DDS header facts (size, mip count, FourCC) and PNG luminance statistics |
+
+- The inputs of `kr_composite_table.py` are previews of `TerrainTexture.uop` entries 21 and 22, decoded outside
+  the repository. Its output is the source of the numeric tables in the results document.
+- The items dump is the output of `cargo run -p uocf-devtools-cli --example ec_research -- --client <KR client>
+  items`, written to the scratch folder. The `materials` command of the same example gave the KR and EC
+  TerrainDefinition dumps.
+
+## capture-rig
+
+Dynamapper preview captures for the second pass, following the `renderer-reference-validation` and
+`kde-x11-preview` rules.
+
+| File | Use |
+|---|---|
+| `rig.py` | one isolated run: a private working directory with copies of `assets/` and `cache/`, the packages in `/home/claudio/test/uddp/`, the KR-like `kr.afternoon` preset overridden only in the run's cache copy of `land.toml`; variants `a` (as shipped), `b` (`CLIENT_TERMS_OFF`) and `c` (`CLIENT_SHADOW_STANDIN`) |
+| `views.py` | `RUN VARIANT VIEW_SET`: starts a run, discards the first capture, teleports through the views and captures each one |
+| `sheet.py` | the side-by-side sheet (rows are views, columns the variants) and per-capture colour statistics |
+
+- Each run goes through `~/.codex/skills/kde-x11-preview`, which starts the binary on Desktop 4, verifies the
+  exact PID and the desktop, and cleans up. The control commands go through `DYNAMAPPER_CONTROL_SOCKET`.
+- Run every capture under the shared preview lock and at low priority:
+
+  ```
+  flock /home/claudio/rust-target/uodynamapper-scratch/preview.lock \
+      /home/claudio/rust-target/uodynamapper-scratch/lowprio.sh python3 views.py sheet-a a sheet
+  ```
+- The binary is a copy of a debug build of this repository, placed by hand in the rig's `bin/` folder in the
+  scratch folder. The user's saved settings are never read or written.
 
 ## Scratch
 
-Run outputs, decompiles, extracted UI files and texture previews are under
-`/home/claudio/rust-target/uodynamapper-scratch/kr-atmosphere/`. No captures were taken.
+Run outputs, decompiles, extracted UI and shader files, texture previews, the tileart and material dumps, the
+capture runs and the captures are under `/home/claudio/rust-target/uodynamapper-scratch/kr-atmosphere/`. The
+sheet is `caps/kr_atmosphere_sheet.png` there. It is not committed because it shows game art.
