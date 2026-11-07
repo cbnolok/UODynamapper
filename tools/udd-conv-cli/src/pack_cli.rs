@@ -1256,8 +1256,9 @@ enum Commands {
         #[arg(long, help = "Fail on error findings instead of writing flagged records (particle files missing from the client are warnings).")]
         strict: bool,
     },
-    /// Packs the EC paperdoll frames (Paperdoll.uop) and the hue tables of Hues.uop into paperdoll_ec.uddp, with what
-    /// each dress-layer item takes off on each player body, measured garment by garment from the frames and tileart.uop.
+    /// Packs the EC paperdoll frames (Paperdoll.uop) into paperdoll_ec.uddp, with what each dress-layer item takes off
+    /// on each player body, measured garment by garment from the frames and tileart.uop. Dynamapper hues the frames
+    /// with hues.uddp.
     #[command(name = "pack-ec-paperdoll")]
     PackEcPaperdoll {
         #[command(flatten)]

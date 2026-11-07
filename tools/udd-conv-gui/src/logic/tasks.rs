@@ -666,12 +666,12 @@ fn pack_effects_ec_job(settings: &AppSettings, output: &Path) -> eyre::Result<St
 /// The string dictionary the Enhanced paperdoll job names the dress-layer items from.
 const STRING_DICTIONARY_UOP_NAME: &str = "string_dictionary.uop";
 /// The files the Enhanced paperdoll job reads, in the order [`paperdoll_ec_sources`] gives them.
-pub(crate) const PAPERDOLL_EC_SOURCE_NAMES: [&str; 4] =
-    [PAPERDOLL_UOP_NAME, HUES_UOP_NAME, TILEART_UOP_NAME, STRING_DICTIONARY_UOP_NAME];
+pub(crate) const PAPERDOLL_EC_SOURCE_NAMES: [&str; 3] =
+    [PAPERDOLL_UOP_NAME, TILEART_UOP_NAME, STRING_DICTIONARY_UOP_NAME];
 
-/// The Paperdoll.uop, Hues.uop, tileart.uop and string_dictionary.uop the Enhanced paperdoll job reads, as
+/// The Paperdoll.uop, tileart.uop and string_dictionary.uop the Enhanced paperdoll job reads, as
 /// `pack-ec-paperdoll --ecdir` finds them.
-pub(crate) fn paperdoll_ec_sources(settings: &AppSettings) -> [Option<PathBuf>; 4] {
+pub(crate) fn paperdoll_ec_sources(settings: &AppSettings) -> [Option<PathBuf>; 3] {
     let sources = gather_ec_source_dirs(settings.ec_dir.as_ref());
     PAPERDOLL_EC_SOURCE_NAMES.map(|name| find_first_existing_file(&sources, &[name]))
 }

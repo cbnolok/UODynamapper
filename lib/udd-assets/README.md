@@ -25,7 +25,8 @@ available; category paths such as `udd_assets::textures::tex_art_ec` also work.
   tilemeta readers (`TileMetaLandTile`, `TileMetaItemTile`, `TileMetaItemDefinitions`).
 - `PaperdollEcPackage` (`paperdoll_ec.uddp`, layout in `docs/dev_wiki/UDDP_FORMATS.md` section 5) implements
   `uocf::enhanced::paperdoll::PaperdollFrames`; its `build` runs the shared paperdoll lookup over the item
-  definitions of `tilemeta.uddp` and decodes the frames as the client files decode. `dress_decisions()`
+  definitions of `tilemeta.uddp` and decodes the frames as the client files decode, with the hue tables
+  `HuesPackage::ec_hue_tables_of` gives from `hues.uddp`. `dress_decisions()`
   gives what the packer measured each dress-layer item to take off on each player body: the garments it keeps.
 - Lazy/cached atlas page decoding with configurable cache options.
 - BC7-aware texture decoding for atlas pages (via `uot-texture-codecs`), and BC1 decoding for single

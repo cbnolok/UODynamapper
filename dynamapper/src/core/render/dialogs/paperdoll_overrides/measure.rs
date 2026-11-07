@@ -12,7 +12,7 @@ use std::collections::{HashMap, HashSet};
 use std::hash::{Hash, Hasher};
 use std::path::{Path, PathBuf};
 use udd_assets::tilemeta::TileMetaPackage;
-use udd_assets::PaperdollEcPackage;
+use udd_assets::{HuesPackage, PaperdollEcPackage};
 use uocf::enhanced::paperdoll::{item_layer, PlacedFrame};
 
 /// How far from the dress, in texels across or down, a texel taken away still counts as an edge showing past it, as
@@ -84,6 +84,7 @@ fn env_path(name: &str) -> PathBuf {
 struct Sources {
     package: PaperdollEcPackage,
     tilemeta: TileMetaPackage,
+    hues: HuesPackage,
     canvas: PaperdollCanvas,
     client: PaperdollOrder,
     dynamapper: PaperdollOrder,
@@ -92,8 +93,9 @@ struct Sources {
 impl Sources {
     /// The canvas `order` draws for `body` wearing `items`, and its frames.
     fn draw(&self, order: &PaperdollOrder, body: u32, items: &[PaperdollItem]) -> (Vec<u8>, Vec<PlacedFrame>) {
-        let frames = paperdoll_frames(&self.package, &self.tilemeta, order, body, SKIN_HUE, items, &mut HashSet::new())
-            .unwrap_or_else(|error| panic!("body {body} wearing {items:x?}: {error:#}"));
+        let frames =
+            paperdoll_frames(&self.package, &self.tilemeta, Some(&self.hues), order, body, SKIN_HUE, items, &mut HashSet::new())
+                .unwrap_or_else(|error| panic!("body {body} wearing {items:x?}: {error:#}"));
         (self.canvas.compose(&frames), frames)
     }
 }
@@ -181,10 +183,11 @@ fn dresses(tilemeta: &TileMetaPackage) -> Vec<u32> {
 /// `$TMPDIR/robe-override`; then fails if any case is flagged. Two dresses of one frame share a group, so an override
 /// that sets them apart is measured on the group's first item.
 #[test]
-#[ignore = "needs packages: set UDD_PAPERDOLL_EC, UDD_TILEMETA and TMPDIR, and run with --ignored"]
+#[ignore = "needs packages: set UDD_PAPERDOLL_EC, UDD_TILEMETA, UDD_HUES and TMPDIR, and run with --ignored"]
 fn the_stored_decisions_take_away_little_outside_the_dress() {
     let package = PaperdollEcPackage::load(env_path("UDD_PAPERDOLL_EC")).unwrap();
     let tilemeta = TileMetaPackage::load(env_path("UDD_TILEMETA")).unwrap();
+    let hues = HuesPackage::load(env_path("UDD_HUES")).unwrap();
     let rules = WearableRules::decode(include_str!("../../../../../assets/runtime_specs/paperdoll/WearableRules.kdl"))
         .unwrap();
     let overrides_text = match std::env::var_os("UDD_PAPERDOLL_OVERRIDES") {
@@ -196,6 +199,7 @@ fn the_stored_decisions_take_away_little_outside_the_dress() {
     let sources = Sources {
         package,
         tilemeta,
+        hues,
         canvas,
         client: PaperdollOrder {
             rules: rules.clone(),

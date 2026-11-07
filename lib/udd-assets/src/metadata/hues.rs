@@ -8,7 +8,7 @@ use color_eyre::eyre::{self, Context};
 use udd_container::UddpReader;
 
 use crate::common::{read_path_entry, read_path_entry_cow};
-use uocf::enhanced::hues::{EcHueTable, EcHueTables, HUE_TABLE_ENTRIES};
+use uocf::enhanced::hues::{EcHueLookup, EcHueTable, EcHueTables, HUE_TABLE_ENTRIES};
 
 pub const HUES_METADATA_ENTRY_PATH: &str = "metadata/hues.csv";
 pub const HUES_TEXTURE_ENTRY_PATH: &str = "textures/hues.rgba8888";
@@ -186,6 +186,19 @@ impl HuesPackage {
             entry.copy_from_slice(texel);
         }
         Some(EcHueTable { entries })
+    }
+
+    /// The tables the server hues `hues` take (`EcHueLookup::from_hue`), keyed by hue number as `Hues.uop`'s bitmaps:
+    /// what `EcHueTables::apply` needs for them. A hue without a table, or that the package does not hold, adds none.
+    pub fn ec_hue_tables_of(&self, hues: impl IntoIterator<Item = u16>) -> EcHueTables {
+        let tables = hues
+            .into_iter()
+            .filter_map(|hue| match EcHueLookup::from_hue(hue) {
+                EcHueLookup::Bitmap(number) => Some((number, self.hue_table(number)?)),
+                EcHueLookup::None | EcHueLookup::Shadow => None,
+            })
+            .collect();
+        EcHueTables { tables }
     }
 
     /// The tables of every hue the package holds, keyed by hue number as `Hues.uop`'s bitmaps.
@@ -466,6 +479,33 @@ mod tests {
             package.texture_coord_for_hue(2048).expect("hue 2048").x,
             HUE_STRIP_WIDTH * 2
         );
+    }
+
+    /// The tables of server hues go by the client's lookup: a partial hue takes its number's table; no hue, the shadow
+    /// and a hue the package does not hold take none.
+    #[test]
+    fn server_hues_take_the_tables_of_their_numbers() {
+        use uocf::enhanced::hues::{HUE_PARTIAL_FLAG, SHADOW_HUE};
+        const DYE: u16 = 38;
+        const MISSING: u16 = 77;
+        let records = vec![record(DYE, "dye", 0, u32::from(DYE))];
+        let slots = parse_hues_csv(&encode_hues_csv(&records).expect("encode csv")).expect("parse csv");
+        let mut texture_bytes = vec![0; HUES_TEXTURE_WIDTH as usize * HUES_TEXTURE_HEIGHT as usize * TEXEL_BYTES];
+        let start = usize::from(DYE) * HUES_TEXTURE_WIDTH as usize * TEXEL_BYTES;
+        for (index, texel) in texture_bytes[start..].chunks_exact_mut(TEXEL_BYTES).take(HUE_TABLE_ENTRIES).enumerate() {
+            let key = index as u8;
+            texel.copy_from_slice(&[key, u8::MAX - key, key / 2, u8::MAX]);
+        }
+        let package = HuesPackage {
+            package: UddpReader::open(UddpBuilder::new(LookupMode::VirtualPathHash).build().expect("empty package"))
+                .expect("open empty package"),
+            slots,
+            texture_bytes,
+        };
+        let tables = package.ec_hue_tables_of([0, DYE, DYE | HUE_PARTIAL_FLAG, SHADOW_HUE, MISSING]);
+        assert_eq!(tables.tables.keys().copied().collect::<Vec<_>>(), [DYE]);
+        assert_eq!(tables.tables.get(&DYE).cloned(), package.hue_table(DYE));
+        assert_eq!(tables.tables[&DYE].entries[usize::from(DYE)], [DYE as u8, u8::MAX - DYE as u8, DYE as u8 / 2, u8::MAX]);
     }
 
     #[test]

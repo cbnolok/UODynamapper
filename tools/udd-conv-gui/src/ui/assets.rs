@@ -429,7 +429,7 @@ impl UddConvApp {
             (clicked, stop_clicked) = draw_asset_card_header(
                 ui,
                 "Enhanced Paperdoll",
-                "3D paperdoll frames, lossless, with the hue tables they take and what each robe takes off",
+                "3D paperdoll frames, lossless, with what each robe takes off (hued with hues.uddp)",
                 Some(&source),
                 &progress,
                 !is_busy,
@@ -774,8 +774,8 @@ fn paperdoll_ec_source_label(settings: &AppSettings) -> String {
         return "Source: select an Enhanced source directory".to_string();
     }
     match paperdoll_ec_sources(settings) {
-        [Some(frames), Some(hues), Some(tileart), Some(_)] => {
-            format!("Source: {}, {} and {}", frames.display(), hues.display(), tileart.display())
+        [Some(frames), Some(tileart), Some(_)] => {
+            format!("Source: {} and {}", frames.display(), tileart.display())
         }
         sources => {
             let missing: Vec<&str> = PAPERDOLL_EC_SOURCE_NAMES

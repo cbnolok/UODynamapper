@@ -1,7 +1,8 @@
 //! The Enhanced client's 3D paperdoll (`ECPaperdollTexture::Build`, UOSA 0x0050b340), which the Enhanced and KR-like
 //! presets draw from paperdoll_ec.uddp: the body's frame, then the frames of the worn items in the paperdoll draw order
-//! of `WearableRules.kdl`, blended by alpha, each hued as the client hues it. The lookup is `uocf::enhanced::paperdoll`,
-//! which the uocf editor runs on the client files; the item definitions are the `tileart.uop` records of tilemeta.uddp.
+//! of `WearableRules.kdl`, blended by alpha, each hued as the client hues it with the tables of hues.uddp. The lookup is
+//! `uocf::enhanced::paperdoll`, which the uocf editor runs on the client files; the item definitions are the
+//! `tileart.uop` records of tilemeta.uddp.
 //! What a robe covers is then taken off: the decisions paperdoll_ec.uddp stores, under the user's
 //! `PaperdollOverrides.kdl` ([`super::paperdoll_overrides`]).
 //!
@@ -15,7 +16,8 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
 use udd_assets::paperdoll_ec::PaperdollEcSet;
 use udd_assets::tilemeta::TileMetaPackage;
-use udd_assets::PaperdollEcPackage;
+use udd_assets::{HuesPackage, PaperdollEcPackage};
+use uocf::enhanced::hues::{EcHueLookup, EcHueTables};
 use uocf::enhanced::paperdoll::{compose_on, PlacedFrame, WornItem, SLOT_NAMES};
 
 use super::paperdoll_overrides::{measured_garment, plan_taking_off, PaperdollOrder};
@@ -103,11 +105,13 @@ pub struct PaperdollItem {
 /// What the client draws for `body` wearing `items` (`uocf::enhanced::paperdoll::plan` with `order`'s rules), without
 /// what a robe covers ([`plan_taking_off`], with the decisions the package stores for the body frame drawn, on the
 /// garments the packer measured: [`measured_garment`]), decoded from paperdoll_ec.uddp: the frames, bottom first, hued
-/// with the package's hue tables. A body without a frame takes the male 400, as in the client. A worn item without a frame draws nothing, as in the client, and is logged once per
-/// item id: `logged_misses` holds the ids logged so far.
+/// with the tables of `hues` (hues.uddp, the single hue source; an error if a frame's hue needs a table and it is not
+/// loaded). A body without a frame takes the male 400, as in the client. A worn item without a frame draws nothing, as
+/// in the client, and is logged once per item id: `logged_misses` holds the ids logged so far.
 pub fn paperdoll_frames(
     package: &PaperdollEcPackage,
     tilemeta: &TileMetaPackage,
+    hues: Option<&HuesPackage>,
     order: &PaperdollOrder,
     body: u32,
     body_hue: u16,
@@ -143,7 +147,16 @@ pub fn paperdoll_frames(
     for note in &plan.notes {
         log::debug!("Enhanced paperdoll of body {body}: {note}");
     }
-    plan.frames.iter().map(|planned| package.decode(planned.frame, planned.hue)).collect()
+    let frame_hues = plan.frames.iter().map(|planned| planned.hue);
+    let tables = match hues {
+        Some(hues) => hues.ec_hue_tables_of(frame_hues),
+        None => {
+            let needs_table = |hue: u16| matches!(EcHueLookup::from_hue(hue), EcHueLookup::Bitmap(_));
+            eyre::ensure!(!frame_hues.into_iter().any(needs_table), "hues.uddp is not loaded.");
+            EcHueTables::default()
+        }
+    };
+    plan.frames.iter().map(|planned| package.decode(planned.frame, planned.hue, &tables)).collect()
 }
 
 #[cfg(test)]
@@ -242,12 +255,13 @@ mod tests {
     /// With the client's rules alone (an override that keeps everything beneath any robe), the Enhanced presets draw
     /// what the uocf editor composes from the client files (`build` and `compose` on `Paperdoll.uop`, `tileart.uop`
     /// and `hues.uop`): the same frames at the same places, and the editor's composite lands on the canvas at the
-    /// anchor texel for texel, nothing cut. Both sides take the item's tiledata layer from tilemeta.uddp. With the
-    /// decisions the package stores, the robe takes off the shirt beneath it. Writes each canvas as a PNG
-    /// (premultiplied, as egui gets it) and a summary to the temp dir.
+    /// anchor texel for texel, nothing cut. Dynamapper hues with `UDD_HUES`, a hues.uddp packed from the client's
+    /// `Hues.uop` (a hues.uddp packed from Classic hues.mul spreads its ramps and differs). Both sides take the item's
+    /// tiledata layer from tilemeta.uddp. With the decisions the package stores, the robe takes off the shirt beneath
+    /// it. Writes each canvas as a PNG (premultiplied, as egui gets it) and a summary to the temp dir.
     #[test]
-    #[ignore = "needs packages and a real Enhanced Client: set UDD_PAPERDOLL_EC, UDD_TILEMETA, UO_EC_CLIENT_DIR and \
-                TMPDIR, and run with --ignored"]
+    #[ignore = "needs packages and a real Enhanced Client: set UDD_PAPERDOLL_EC, UDD_TILEMETA, UDD_HUES (packed from \
+                the client's Hues.uop), UO_EC_CLIENT_DIR and TMPDIR, and run with --ignored"]
     fn the_packed_paperdoll_draws_what_the_editor_composes() {
         use uocf::enhanced::hues::HUES_UOP_NAME;
         use uocf::enhanced::paperdoll::{build, compose, hue_tables, FrameSets, NamedTileArt, PAPERDOLL_UOP_NAME};
@@ -257,6 +271,7 @@ mod tests {
 
         let package = PaperdollEcPackage::load(env_path("UDD_PAPERDOLL_EC")).unwrap();
         let tilemeta = TileMetaPackage::load(env_path("UDD_TILEMETA")).unwrap();
+        let packed_hues = HuesPackage::load(env_path("UDD_HUES")).unwrap();
         // tilemeta carries the default record an item without a record takes.
         assert!(
             uocf::enhanced::paperdoll::PaperdollDefinitions::get(
@@ -300,10 +315,12 @@ mod tests {
             let items: Vec<PaperdollItem> =
                 outfit.items.iter().map(|&(item_id, hue)| PaperdollItem { item_id, hue }).collect();
             let mut misses = HashSet::new();
-            let ours = paperdoll_frames(&package, &tilemeta, &client_order, outfit.body, SKIN_HUE, &items, &mut misses)
-                .unwrap_or_else(|error| panic!("{}: {error:#}", outfit.name));
-            let stored = paperdoll_frames(&package, &tilemeta, &stored_order, outfit.body, SKIN_HUE, &items, &mut misses)
-                .unwrap_or_else(|error| panic!("{}: {error:#}", outfit.name));
+            let draw = |order: &PaperdollOrder, misses: &mut HashSet<u32>| {
+                paperdoll_frames(&package, &tilemeta, Some(&packed_hues), order, outfit.body, SKIN_HUE, &items, misses)
+                    .unwrap_or_else(|error| panic!("{}: {error:#}", outfit.name))
+            };
+            let ours = draw(&client_order, &mut misses);
+            let stored = draw(&stored_order, &mut misses);
             if outfit.name == ROBE_OUTFIT {
                 assert!(outfit.items.iter().any(|&(item_id, _)| item_id == SHIRT));
                 assert_eq!(stored.len() + 1, ours.len(), "the robe takes off the shirt");

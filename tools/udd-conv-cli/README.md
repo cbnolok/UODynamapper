@@ -20,7 +20,7 @@ packages consumed by Dynamapper and the other tools at runtime.
 | `pack-ec-textures` | `tex_art_ec.uddp`, `tex_land_ec.uddp` | EC art and land in one pass |
 | `pack-ec-tex-aux` | `tex_aux_ec.uddp` | EC auxiliary textures named by `tilemeta.uddp` |
 | `pack-ec-effects` | `effects_ec.uddp` | EC particle effects: definitions, Chaos and NIF systems, textures |
-| `pack-ec-paperdoll` | `paperdoll_ec.uddp` | EC 3D paperdoll frames (`Paperdoll.uop`), lossless, the hue tables of `Hues.uop`, and what each dress-layer item takes off (see below) |
+| `pack-ec-paperdoll` | `paperdoll_ec.uddp` | EC 3D paperdoll frames (`Paperdoll.uop`), lossless, and what each dress-layer item takes off (see below); hued with `hues.uddp` |
 | `pack-tilemeta` | `tilemeta.uddp` | CC tiledata + EC tileart |
 | `pack-map` | `mapX.uddp` | Classic `mapX.mul` |
 | `pack-statics` | `staticsX.uddp` | Classic `staticsX.mul` |

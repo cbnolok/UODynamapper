@@ -1,6 +1,6 @@
-//! Packs the Enhanced Client's paperdoll frames (`Paperdoll.uop`) and the hue tables of `Hues.uop` into
-//! `paperdoll_ec.uddp` (layout in `udd_assets::paperdoll_ec`), with what each dress-layer item takes off, measured
-//! from the frames, `tileart.uop` and the bundled wearable rules ([`crate::paperdoll_ec_dress`]).
+//! Packs the Enhanced Client's paperdoll frames (`Paperdoll.uop`) into `paperdoll_ec.uddp` (layout in
+//! `udd_assets::paperdoll_ec`), with what each dress-layer item takes off, measured from the frames, `tileart.uop` and
+//! the bundled wearable rules ([`crate::paperdoll_ec_dress`]). The hue tables are `hues.uddp`'s.
 
 use std::fmt;
 use std::path::{Path, PathBuf};
@@ -8,12 +8,11 @@ use std::path::{Path, PathBuf};
 use color_eyre::eyre::{self, WrapErr};
 use log::info;
 use udd_assets::paperdoll_ec::{
-    encode_dress_decisions, encode_frames_manifest, encode_hue_tables, frame_entry_path, frame_hue_mask_entry_path,
-    frame_hue_mode, PaperdollEcFrameRecord, PaperdollEcSet, DRESS_DECISIONS_ENTRY_PATH, FRAMES_ENTRY_PATH,
-    FRAME_HUE_MASKED, HUE_TABLES_ENTRY_PATH,
+    encode_dress_decisions, encode_frames_manifest, frame_entry_path, frame_hue_mask_entry_path, frame_hue_mode,
+    PaperdollEcFrameRecord, PaperdollEcSet, DRESS_DECISIONS_ENTRY_PATH, FRAMES_ENTRY_PATH, FRAME_HUE_MASKED,
 };
 use udd_container::{AddFileRequest, AddOwnedFileRequest, CompressionFlag, DataType, LookupMode, UddpBuilder};
-use uocf::enhanced::hues::{EcHueTables, ShadowPaletteStats, HUES_UOP_NAME};
+use uocf::enhanced::hues::ShadowPaletteStats;
 use uocf::enhanced::paperdoll::{
     FrameSets, NamedTileArt, WearableRules, ENTRY_ID_SPAN, GENDER_SET_COUNT, PAPERDOLL_UOP_NAME,
 };
@@ -54,7 +53,6 @@ pub struct PaperdollEcPackSummary {
     pub empty: usize,
     /// Frame table entries the paperdoll cannot find: another action than their set's, or a repeated number.
     pub skipped: usize,
-    pub hue_tables: usize,
     /// Bytes of the frame and mask entries before compression.
     pub pixel_bytes: usize,
     /// Dress-layer items measured, and their decisions over the bodies measured.
@@ -66,15 +64,14 @@ impl fmt::Display for PaperdollEcPackSummary {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(
             f,
-            "{} male and {} female frames ({} with a hue mask, {} empty, {} unreachable skipped), {} hue tables, {} \
-             pixel bytes before compression; {} dress-layer items: of the {} garments drawn beneath them, {} kept and \
-             {} taken off ({} decisions keep none, {} some, {} all, {} measure none)",
+            "{} male and {} female frames ({} with a hue mask, {} empty, {} unreachable skipped), {} pixel bytes \
+             before compression; {} dress-layer items: of the {} garments drawn beneath them, {} kept and {} taken \
+             off ({} decisions keep none, {} some, {} all, {} measure none)",
             self.frames[0],
             self.frames[1],
             self.masked,
             self.empty,
             self.skipped,
-            self.hue_tables,
             self.pixel_bytes,
             self.dress_items,
             self.dress.garments_measured,
@@ -88,7 +85,7 @@ impl fmt::Display for PaperdollEcPackSummary {
     }
 }
 
-/// Packs `Paperdoll.uop` and `Hues.uop` with what each dress-layer item takes off, measured with `tileart.uop` (names
+/// Packs `Paperdoll.uop` with what each dress-layer item takes off, measured with `tileart.uop` (names
 /// from `string_dictionary.uop`), each found in the first of `source_dirs` that has it. Logs one line per
 /// dress-layer item and body, and a summary.
 pub fn pack_paperdoll_ec(
@@ -99,24 +96,17 @@ pub fn pack_paperdoll_ec(
     let find =
         |name: &str| find_first_existing_file(source_dirs, &[name]).ok_or_else(|| eyre::eyre!("missing {name}"));
     let paperdoll_path = find(PAPERDOLL_UOP_NAME)?;
-    let hues_path = find(HUES_UOP_NAME)?;
     let tileart_path = find(TILEART_UOP_NAME)?;
     let strings_path = find(STRING_DICTIONARY_UOP_NAME)?;
-    info!(
-        "paperdoll_ec: frames from '{}', hue tables from '{}', items from '{}'.",
-        paperdoll_path.display(),
-        hues_path.display(),
-        tileart_path.display()
-    );
+    info!("paperdoll_ec: frames from '{}', items from '{}'.", paperdoll_path.display(), tileart_path.display());
     let sets = FrameSets::load(&paperdoll_path)?;
-    let hues = EcHueTables::load(&hues_path).wrap_err_with(|| format!("cannot read {}", hues_path.display()))?;
     let tileart = NamedTileArt::read(
         &UopPackage::load(&tileart_path).wrap_err_with(|| format!("cannot read {}", tileart_path.display()))?,
     );
     let strings = UoStringDictionary::load(&strings_path)
         .wrap_err_with(|| format!("cannot read {}", strings_path.display()))?;
     let measurement = measure_dress(&sets, &tileart, &strings, options)?;
-    let (builder, summary) = build_paperdoll_ec(&sets, &hues, &measurement, options)?;
+    let (builder, summary) = build_paperdoll_ec(&sets, &measurement, options)?;
     build_and_write_package(builder, out_file)?;
     Ok(summary)
 }
@@ -151,16 +141,14 @@ fn measure_dress(
     Ok(measurement)
 }
 
-/// The package of decoded frame sets, hue tables and the dress-layer decisions of `dress`.
+/// The package of decoded frame sets and the dress-layer decisions of `dress`.
 pub fn build_paperdoll_ec(
     sets: &FrameSets,
-    hues: &EcHueTables,
     dress: &DressMeasurement,
     options: &PaperdollEcPackOptions,
 ) -> eyre::Result<(UddpBuilder, PaperdollEcPackSummary)> {
     let mut builder = UddpBuilder::new(LookupMode::VirtualPathHash);
     let mut summary = PaperdollEcPackSummary {
-        hue_tables: hues.tables.len(),
         dress_items: dress.dress_items.len(),
         dress: dress.counts(),
         ..Default::default()
@@ -215,7 +203,6 @@ pub fn build_paperdoll_ec(
     frames.sort_by_key(|frame| (frame.set, frame.frame_number));
     for (path, bytes) in [
         (FRAMES_ENTRY_PATH, encode_frames_manifest(&set_records, &frames)?),
-        (HUE_TABLES_ENTRY_PATH, encode_hue_tables(hues)?),
         (DRESS_DECISIONS_ENTRY_PATH, encode_dress_decisions(&dress_decisions)?),
     ] {
         builder
@@ -261,7 +248,7 @@ mod tests {
     use udd_assets::paperdoll_ec::{PaperdollEcPackage, FRAME_HUE_ALL, FRAME_HUE_NONE};
     use udd_container::UddpReader;
     use uocf::enhanced::animationframe::{AmouFile, AnimationFrame, IndexedFrame, COVERAGE_SOLID, COVERAGE_TRANSPARENT};
-    use uocf::enhanced::hues::{EcHueTable, HUE_PARTIAL_FLAG, HUE_TABLE_ENTRIES, SHADOW_HUE};
+    use uocf::enhanced::hues::{EcHueTable, EcHueTables, HUES_UOP_NAME, HUE_PARTIAL_FLAG, HUE_TABLE_ENTRIES, SHADOW_HUE};
     use uocf::enhanced::paperdoll::{PaperdollFrames, FEMALE_SET, MALE_SET};
 
     const BODY_FRAME: u16 = 400;
@@ -334,22 +321,18 @@ mod tests {
         tables
     }
 
-    fn pack(sets: &FrameSets, hues: &EcHueTables) -> (PaperdollEcPackage, PaperdollEcPackSummary) {
-        pack_with(sets, hues, &DressMeasurement::default())
+    fn pack(sets: &FrameSets) -> (PaperdollEcPackage, PaperdollEcPackSummary) {
+        pack_with(sets, &DressMeasurement::default())
     }
 
-    fn pack_with(
-        sets: &FrameSets,
-        hues: &EcHueTables,
-        dress: &DressMeasurement,
-    ) -> (PaperdollEcPackage, PaperdollEcPackSummary) {
-        let (mut builder, summary) = build_paperdoll_ec(sets, hues, dress, &PaperdollEcPackOptions::default()).unwrap();
+    fn pack_with(sets: &FrameSets, dress: &DressMeasurement) -> (PaperdollEcPackage, PaperdollEcPackSummary) {
+        let (mut builder, summary) = build_paperdoll_ec(sets, dress, &PaperdollEcPackOptions::default()).unwrap();
         let package = PaperdollEcPackage::from_uddp_package(UddpReader::open(builder.build().unwrap()).unwrap()).unwrap();
         (package, summary)
     }
 
     /// Every frame the paperdoll finds in `sets` is found in `package`, at the same place, with the same pixels under
-    /// every hue in `hues`; the count of frames compared.
+    /// every hue in `hue_list` and the tables `hues`; the count of frames compared.
     fn assert_same_frames(sets: &FrameSets, package: &PaperdollEcPackage, hues: &EcHueTables, hue_list: &[u16]) -> usize {
         let mut compared = 0;
         for set in [MALE_SET, FEMALE_SET] {
@@ -361,7 +344,8 @@ mod tests {
                 for &hue in hue_list {
                     let expected =
                         sets.decode(uocf::enhanced::paperdoll::FrameRef { set, entry: source }, hue, hues).unwrap();
-                    let found = package.decode(uocf::enhanced::paperdoll::FrameRef { set, entry: packed }, hue).unwrap();
+                    let found =
+                        package.decode(uocf::enhanced::paperdoll::FrameRef { set, entry: packed }, hue, hues).unwrap();
                     assert!(expected == found, "set {set} frame {} hue {hue:#x}", entry.frame_number);
                 }
                 compared += 1;
@@ -374,18 +358,16 @@ mod tests {
     fn packed_frames_decode_as_the_client_files_do() {
         let sets = frame_sets();
         let hues = hue_tables();
-        let (package, summary) = pack(&sets, &hues);
+        let (package, summary) = pack(&sets);
         assert_eq!(assert_same_frames(&sets, &package, &hues, &HUES), 5);
         assert_eq!(summary.frames, [3, 2]);
         assert_eq!(summary.skipped, 1);
         assert_eq!(summary.masked, 2);
-        assert_eq!(summary.hue_tables, 1);
         assert!(package.find_in_set(MALE_SET, OTHER_ACTION_FRAME).is_none());
         let mode = |set, number| package.find_in_set(set, number).unwrap().hue_mode;
         assert_eq!(mode(MALE_SET, BODY_FRAME), FRAME_HUE_MASKED);
         assert_eq!(mode(MALE_SET, HUED_FRAME), FRAME_HUE_ALL);
         assert_eq!(mode(MALE_SET, KEPT_FRAME), FRAME_HUE_NONE);
-        assert_eq!(package.hue_tables(), &hues);
         assert_eq!(package.sets()[MALE_SET].bounds, sets.set(MALE_SET).bounds);
     }
 
@@ -421,7 +403,7 @@ mod tests {
             ],
             ..Default::default()
         };
-        let (package, summary) = pack_with(&frame_sets(), &hue_tables(), &dress);
+        let (package, summary) = pack_with(&frame_sets(), &dress);
         let stored = package.dress_decisions();
         assert_eq!(stored.decisions.len(), 2);
         assert!(stored.covers(torso) && stored.covers(legs));
@@ -434,7 +416,7 @@ mod tests {
     }
 
     /// A real `Paperdoll.uop` packs losslessly: every frame the paperdoll finds decodes to the same pixels under the
-    /// listed hues, with the tables of the real `Hues.uop`.
+    /// listed hues, with the tables of the real `Hues.uop` on both sides.
     #[test]
     #[ignore = "needs a real Enhanced Client: set UO_EC_CLIENT_DIR and run with --ignored"]
     fn a_real_client_packs_losslessly() {
@@ -446,7 +428,7 @@ mod tests {
         let hues_path = find_first_existing_file(&source_dirs, &[HUES_UOP_NAME]).unwrap();
         let sets = FrameSets::load(&paperdoll).unwrap();
         let hues = EcHueTables::load(&hues_path).unwrap();
-        let (package, summary) = pack(&sets, &hues);
+        let (package, summary) = pack(&sets);
         let compared = assert_same_frames(&sets, &package, &hues, &REAL_HUES);
         assert_eq!(compared, summary.frames.iter().sum::<usize>());
         log::info!("{summary}; {compared} frames compared");

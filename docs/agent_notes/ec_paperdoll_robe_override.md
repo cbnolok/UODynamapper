@@ -123,8 +123,20 @@ slot rule of version 2 they took off 8,616 edge-only pairs and 0 (gumps_ec: 6)
 in plain view. Taking off the garments the packer did not measure (no Layer of
 their own, or no 3D frame for the body) took off 302 more in plain view.
 
+The 3D paperdoll is hued from hues.uddp, the single hue source; paperdoll_ec.uddp
+no longer carries the tables of `Hues.uop` (format 3). The ignored tests in
+`udd_conv::hues::client_tables_tests` prove what hues.uddp holds, table by table:
+packed from the Enhanced `Hues.uop`, all 3,000 tables exactly (the top row of each
+`hue%04d.bmp`); packed from Classic `hues.mul`, all 3,000 equal the ramp of its 32
+colours, which matches the Enhanced table for 2,635 hues with the linear ramp and
+599 with the flat one. The pixel test
+`paperdoll_ec::tests::the_packed_paperdoll_draws_what_the_editor_composes` takes
+`UDD_HUES`, a hues.uddp packed from the client's `Hues.uop`, and draws 0 texels
+apart from the editor; a hues.uddp packed from `hues.mul` colours the 365 (linear)
+hues whose ramp differs as the Classic client does.
+
 The ignored test `paperdoll_overrides::measure::the_stored_decisions_take_away_little_outside_the_dress`
-(`UDD_PAPERDOLL_EC`, `UDD_TILEMETA`, `TMPDIR`; `UDD_PAPERDOLL_OVERRIDES` measures
+(`UDD_PAPERDOLL_EC`, `UDD_TILEMETA`, `UDD_HUES`, `TMPDIR`; `UDD_PAPERDOLL_OVERRIDES` measures
 another file) draws every dress over cloth and armour outfits and over each
 garment alone, and writes the ranked list and contact sheets' data. With the
 stored decisions nothing is flagged. The most taken away beyond the band was 911

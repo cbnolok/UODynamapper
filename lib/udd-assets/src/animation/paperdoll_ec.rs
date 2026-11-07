@@ -1,6 +1,7 @@
 //! `paperdoll_ec.uddp`: the frames of the Enhanced Client's paperdoll (the male and female sets of `Paperdoll.uop`),
-//! decoded losslessly, with what hueing them needs, so `uocf::enhanced::paperdoll` draws a paperdoll from the
-//! package with the colours it draws from the client files (`FrameSets::decode`).
+//! decoded losslessly, with the hue masks and palette statistics hueing them needs, so `uocf::enhanced::paperdoll`
+//! draws a paperdoll from the package with the colours it draws from the client files (`FrameSets::decode`). The hue
+//! tables come from `hues.uddp`, the single hue source (`HuesPackage::ec_hue_tables_of`).
 //!
 //! Path-addressed entries:
 //! - `metadata/frames.bin`: magic `PDFR`, `u32` version, `u32` set count; per set its header box (`i16` x0, y0, x1,
@@ -11,8 +12,6 @@
 //!   `AnimationFrame::decode_frame` gives it; absent for an empty frame.
 //! - `frames/SS/NNNNN.r8` (`DataType::Paperdoll`): the hue mask of a `FRAME_HUE_MASKED` frame, `HUE_MASK_HUEABLE`
 //!   on the pixels whose palette colour takes the hue, else 0.
-//! - `metadata/hue_tables.bin`: magic `PDHT`, `u32` version, `u32` count, then per table a `u16` bitmap number and
-//!   256 RGBA entries: the tables of `Hues.uop` (`EcHueTables`).
 //! - `metadata/dress_decisions.v3.bin`: magic `PDDD`, `u32` version, `u32` slots (bit n: layer n of
 //!   `uocf::enhanced::paperdoll`, the layers the decisions take garments off), `u32` count, then per decision,
 //!   ascending by (item id, body): `u32` item id, `u16` body, `u16` kept count, then per kept garment, ascending by
@@ -29,7 +28,7 @@ use byteorder::{LittleEndian, ReadBytesExt};
 use color_eyre::eyre::{self, WrapErr};
 use udd_container::UddpReader;
 use uocf::enhanced::animationframe::{AnimationBounds, HUE_MASK_HUEABLE};
-use uocf::enhanced::hues::{EcHueTable, EcHueTables, ShadowPaletteStats, HUE_TABLE_ENTRIES};
+use uocf::enhanced::hues::{EcHueTables, ShadowPaletteStats};
 use uocf::enhanced::paperdoll::{
     plan, FrameRef, Paperdoll, PaperdollDefinitions, PaperdollFrames, PlacedFrame, WearableRules, WornItem,
     GENDER_SET_COUNT, LAYER_COUNT,
@@ -39,20 +38,17 @@ use crate::common::{ensure_manifest_version, read_path_entry, read_path_entry_co
 pub use crate::mobile_anim_ec::{FRAME_HUE_ALL, FRAME_HUE_MASKED, FRAME_HUE_NONE};
 
 pub const FRAMES_ENTRY_PATH: &str = "metadata/frames.bin";
-pub const HUE_TABLES_ENTRY_PATH: &str = "metadata/hue_tables.bin";
 /// The dress-layer decisions, per garment since format 3 (format 2 stored a mask of slots at
 /// `metadata/dress_hides.bin`).
 pub const DRESS_DECISIONS_ENTRY_PATH: &str = "metadata/dress_decisions.v3.bin";
 pub const FRAMES_MAGIC: [u8; 4] = *b"PDFR";
-pub const HUE_TABLES_MAGIC: [u8; 4] = *b"PDHT";
 pub const DRESS_DECISIONS_MAGIC: [u8; 4] = *b"PDDD";
 /// Version of the manifests, written by the converter. 2 added the dress-layer decisions; 3 decides them per garment
-/// (`DRESS_DECISIONS_ENTRY_PATH`).
+/// (`DRESS_DECISIONS_ENTRY_PATH`) and leaves the hue tables to `hues.uddp` (format 2 carried those of `Hues.uop` at
+/// `metadata/hue_tables.bin`).
 pub const PAPERDOLL_EC_METADATA_VERSION: u32 = 3;
 const RGBA_CHANNELS: usize = 4;
 const ALPHA_CHANNEL: usize = 3;
-/// Bytes of a table entry: its bitmap number, then its RGBA entries.
-const HUE_TABLE_RECORD_BYTES: usize = std::mem::size_of::<u16>() + HUE_TABLE_ENTRIES * RGBA_CHANNELS;
 /// Bytes of a dress decision before its kept garments: item id, body and kept count.
 const DRESS_DECISION_HEADER_BYTES: usize =
     std::mem::size_of::<u32>() + std::mem::size_of::<u16>() + std::mem::size_of::<u16>();
@@ -204,21 +200,6 @@ pub fn encode_frames_manifest(sets: &[PaperdollEcSet], frames: &[PaperdollEcFram
     Ok(bytes)
 }
 
-/// The bytes of `metadata/hue_tables.bin`.
-pub fn encode_hue_tables(tables: &EcHueTables) -> eyre::Result<Vec<u8>> {
-    let mut bytes = Vec::with_capacity(tables.tables.len() * HUE_TABLE_RECORD_BYTES);
-    bytes.extend_from_slice(&HUE_TABLES_MAGIC);
-    bytes.extend_from_slice(&PAPERDOLL_EC_METADATA_VERSION.to_le_bytes());
-    bytes.extend_from_slice(&u32::try_from(tables.tables.len())?.to_le_bytes());
-    for (number, table) in &tables.tables {
-        bytes.extend_from_slice(&number.to_le_bytes());
-        for entry in &table.entries {
-            bytes.extend_from_slice(entry);
-        }
-    }
-    Ok(bytes)
-}
-
 /// The bytes of `DRESS_DECISIONS_ENTRY_PATH`; the decisions ascending by (item id, body), their kept garments by id.
 pub fn encode_dress_decisions(decisions: &PaperdollEcDressDecisions) -> eyre::Result<Vec<u8>> {
     let kept: usize = decisions.decisions.iter().map(|decision| decision.kept.len()).sum();
@@ -306,26 +287,6 @@ fn parse_frames_manifest(bytes: &[u8]) -> eyre::Result<(Vec<PaperdollEcSet>, Vec
     Ok((sets, frames))
 }
 
-fn parse_hue_tables(bytes: &[u8]) -> eyre::Result<EcHueTables> {
-    let mut cursor = Cursor::new(bytes);
-    read_magic(&mut cursor, HUE_TABLES_MAGIC, HUE_TABLES_ENTRY_PATH)?;
-    let count = cursor.read_u32::<LittleEndian>()? as usize;
-    let mut tables = EcHueTables::default();
-    for _ in 0..count {
-        let number = cursor.read_u16::<LittleEndian>()?;
-        let mut table = EcHueTable { entries: [[0; RGBA_CHANNELS]; HUE_TABLE_ENTRIES] };
-        for entry in &mut table.entries {
-            cursor.read_exact(entry).wrap_err_with(|| format!("{HUE_TABLES_ENTRY_PATH}: truncated in table {number}"))?;
-        }
-        eyre::ensure!(
-            tables.tables.insert(number, table).is_none(),
-            "{HUE_TABLES_ENTRY_PATH}: table {number} repeats"
-        );
-    }
-    ensure_consumed(&cursor, HUE_TABLES_ENTRY_PATH)?;
-    Ok(tables)
-}
-
 fn parse_dress_decisions(bytes: &[u8]) -> eyre::Result<PaperdollEcDressDecisions> {
     let mut cursor = Cursor::new(bytes);
     read_magic(&mut cursor, DRESS_DECISIONS_MAGIC, DRESS_DECISIONS_ENTRY_PATH)?;
@@ -372,7 +333,6 @@ pub struct PaperdollEcPackage {
     package: UddpReader,
     sets: Vec<PaperdollEcSet>,
     frames: Vec<PaperdollEcFrameRecord>,
-    hues: EcHueTables,
     dress: PaperdollEcDressDecisions,
 }
 
@@ -391,9 +351,8 @@ impl PaperdollEcPackage {
 
     pub fn from_uddp_package(package: UddpReader) -> eyre::Result<Self> {
         let (sets, frames) = parse_frames_manifest(&read_path_entry_cow(&package, FRAMES_ENTRY_PATH)?)?;
-        let hues = parse_hue_tables(&read_path_entry_cow(&package, HUE_TABLES_ENTRY_PATH)?)?;
         let dress = parse_dress_decisions(&read_path_entry_cow(&package, DRESS_DECISIONS_ENTRY_PATH)?)?;
-        Ok(Self { package, sets, frames, hues, dress })
+        Ok(Self { package, sets, frames, dress })
     }
 
     pub fn package(&self) -> &UddpReader {
@@ -407,10 +366,6 @@ impl PaperdollEcPackage {
     /// Every frame, ascending by (set, number).
     pub fn frames(&self) -> &[PaperdollEcFrameRecord] {
         &self.frames
-    }
-
-    pub fn hue_tables(&self) -> &EcHueTables {
-        &self.hues
     }
 
     /// What each dress-layer item takes off on each body measured.
@@ -466,13 +421,19 @@ impl PaperdollEcPackage {
         }
     }
 
-    /// A frame decoded and hued, placed from the anchor: `FrameSets::decode` of the client files.
-    pub fn decode(&self, frame: FrameRef<PaperdollEcFrameRecord>, hue: u16) -> eyre::Result<PlacedFrame> {
+    /// A frame decoded and hued with `hues` (the tables of `hues.uddp`: `HuesPackage::ec_hue_tables_of`), placed from
+    /// the anchor: `FrameSets::decode` of the client files.
+    pub fn decode(
+        &self,
+        frame: FrameRef<PaperdollEcFrameRecord>,
+        hue: u16,
+        hues: &EcHueTables,
+    ) -> eyre::Result<PlacedFrame> {
         let record = frame.entry;
         let mut rgba = self.read_frame_rgba(&record)?;
         let mask = self.read_frame_hue_mask(&record, &rgba)?;
         let set = self.sets.get(frame.set).ok_or_else(|| eyre::eyre!("no frame set {}", frame.set))?;
-        self.hues.apply(hue, &mut rgba, &mask, &set.shadow);
+        hues.apply(hue, &mut rgba, &mask, &set.shadow);
         Ok(PlacedFrame {
             x: i32::from(record.x),
             y: i32::from(record.y),
@@ -482,18 +443,23 @@ impl PaperdollEcPackage {
         })
     }
 
-    /// What the client draws for a body wearing `items`: `uocf::enhanced::paperdoll::build` over the package.
+    /// What the client draws for a body wearing `items`, hued with `hues`: `uocf::enhanced::paperdoll::build` over the
+    /// package.
     pub fn build<'a, T: PaperdollDefinitions<'a>>(
         &self,
         definitions: T,
         rules: &WearableRules,
+        hues: &EcHueTables,
         body: u32,
         body_hue: u16,
         items: &[WornItem],
     ) -> eyre::Result<Paperdoll> {
         let plan = plan(self, definitions, rules, body, body_hue, items)?;
-        let frames =
-            plan.frames.iter().map(|planned| self.decode(planned.frame, planned.hue)).collect::<eyre::Result<_>>()?;
+        let frames = plan
+            .frames
+            .iter()
+            .map(|planned| self.decode(planned.frame, planned.hue, hues))
+            .collect::<eyre::Result<_>>()?;
         Ok(Paperdoll { frames, notes: plan.notes })
     }
 }
@@ -510,7 +476,6 @@ impl PaperdollFrames for PaperdollEcPackage {
 mod tests {
     use super::*;
 
-    const HUE_NUMBER: u16 = 38;
     const SET_X0: i16 = -256;
     const SET_Y0: i16 = -306;
     const SET_X1: i16 = 256;
@@ -570,18 +535,6 @@ mod tests {
         let mut truncated = encode_frames_manifest(&sets(), &[frame(0, BODY_FRAME, FRAME_HUE_ALL)]).unwrap();
         truncated.pop();
         assert!(parse_frames_manifest(&truncated).is_err());
-    }
-
-    #[test]
-    fn the_hue_tables_round_trip() {
-        let mut table = EcHueTable { entries: [[0; RGBA_CHANNELS]; HUE_TABLE_ENTRIES] };
-        for (index, entry) in table.entries.iter_mut().enumerate() {
-            let key = index as u8;
-            *entry = [key, u8::MAX - key, key / 2, u8::MAX];
-        }
-        let mut tables = EcHueTables::default();
-        tables.tables.insert(HUE_NUMBER, table);
-        assert_eq!(parse_hue_tables(&encode_hue_tables(&tables).unwrap()).unwrap(), tables);
     }
 
     const ROBE: u32 = 7939;

@@ -968,6 +968,7 @@ fn draw_open_gump_content(
             let frames = paperdoll_frames(
                 &package.0,
                 tilemeta,
+                sources.hues_package.map(|hues| hues.0.as_ref()),
                 sources.order,
                 request.profile.body,
                 request.body_hue,
