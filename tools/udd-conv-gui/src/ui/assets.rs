@@ -429,7 +429,7 @@ impl UddConvApp {
             (clicked, stop_clicked) = draw_asset_card_header(
                 ui,
                 "Enhanced Paperdoll",
-                "3D paperdoll frames, lossless, with the hue tables they take and what each robe hides",
+                "3D paperdoll frames, lossless, with the hue tables they take and what each robe takes off",
                 Some(&source),
                 &progress,
                 !is_busy,
@@ -733,7 +733,7 @@ const PAPERDOLL_EC_ZSTD_TOOLTIP: &str = "Zstd level of the frames and manifests 
 Default: the packer's level, 19. The frames are lossless at every level.";
 const PAPERDOLL_EC_REPORT_TOOLTIP: &str = "Write every finding of the dress-layer measurement to this file, one line \
 each (pack-ec-paperdoll --report): the largest garment of each slot and body, each robe's decision and the texels each \
-measured slot loses. The log lists the decisions either way.";
+garment drawn beneath it loses. The log lists the decisions either way.";
 
 fn hues_source_label(source: &HuesSource) -> String {
     match source {

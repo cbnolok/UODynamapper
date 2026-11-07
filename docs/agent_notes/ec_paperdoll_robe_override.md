@@ -30,14 +30,18 @@ male bodies).
 ## The packed decisions
 
 `pack-ec-paperdoll` measures every dress-layer item with a frame on each player
-body (human, elf, gargoyle; male, female), slot by slot (torso, legs, skirt,
-arms, chest, abovechest; `udd_conv::paperdoll_ec_dress`). Every garment of the
-slot the client draws beneath the item is drawn with and without it; the slot is
-taken off when the largest of them (the most opaque texels in its frame for the
-body) loses fewer than 1,600 texels more than 16 texels from the item's edges.
-The decisions are stored per item and body in `metadata/dress_hides.bin` of
-paperdoll_ec.uddp (metadata version 2; docs/dev_wiki/UDDP_FORMATS.md). The
-packing log has one line per item and body; `--report` writes every measurement.
+body (human, elf, gargoyle; male, female), garment by garment
+(`udd_conv::paperdoll_ec_dress`). Every garment of the slots torso, legs, skirt,
+arms, chest and abovechest the client draws beneath the item is drawn with and
+without it; the garment is kept when it loses 1,600 texels or more beyond 16
+texels from the item's edges, and taken off otherwise. The decisions are stored
+per item and body in `metadata/dress_decisions.v3.bin` of paperdoll_ec.uddp
+(metadata version 3; docs/dev_wiki/UDDP_FORMATS.md): the slots they cover and the
+garments each keeps. At run time every garment of those slots drawn beneath the
+item is taken off unless kept; a garment drawn beneath it only in another outfit
+(its draw order changed by the other items) was never measured and is taken off
+too. The packing log has one line per item and body, naming the garments kept
+(the first 8, the most in view first); `--report` writes one line per garment.
 
 The band and threshold come from the reviewed hand-written rule. The raw count
 of texels taken away does not separate the cases: a robe over plate armour loses
@@ -45,7 +49,8 @@ up to ~11k texels at a slit, collar and cuffs, all near the dress. Beyond the
 band, on cloth and armour outfits over every dress, robes lost at most 911
 texels, and items left in view at least 3,033.
 
-Why the largest garment, from the census of EC 2024 (61,120 garment measures):
+Metadata version 2 decided a slot at a time, and the census of EC 2024 (61,120
+garment measures) chose the largest garment to decide it:
 
 | rule                         | in view taken off | edges kept | drawn differences from the review |
 |------------------------------|------------------:|-----------:|----------------------------------:|
@@ -71,8 +76,21 @@ Against the reviewed hand-written file, the stored decisions differ on:
 - Gargish fancy robe 0x4002, 0x4003 on female bodies: hides legs and skirt (no
   garment shows beyond; the review decided per item from the male bodies).
 
-Per-garment exceptions stored next to the slot mask would settle the amazon
-armour and the tabard's plain shirt; they are not stored.
+Deciding each garment (version 3) fixes all of the slot rule's cases: the 458
+garments in plain view are kept and the 2,287 edge-only ones taken off (the
+report marks each). EC 2024: 372 decisions, 113 keeping nothing beneath the
+item, 259 some; 9,770 garments kept, 51,350 taken off.
+
+The threshold now meets the grey zone between 911 and 3,033 texels that the
+slot rule hid behind the largest garment: 1,118 garments are taken off with 912
+to 1,599 texels beyond the band, under every kind of dress-layer item (the red
+dress 0x781E 127, the wedding dress 0x7821 122, hakama-shita 64, epaulets 53,
+robes too: up to 1,328 under the death shroud). Some are in view on the sheets:
+the shirt 0x1517 under the strapless wedding dress loses its collar and sleeves
+(1,531 beyond), the bone legs 0x1452, 0x1457 under the red dress (1,595), the
+body sash 0x1541 under the parrot epaulets (1,551). No threshold separates
+them from the robes' edges; overrides (or the paperdoll's right-click menu) keep
+them.
 
 ## Dynamapper
 
@@ -102,5 +120,7 @@ The ignored test `paperdoll_overrides::measure::the_stored_decisions_take_away_l
 (`UDD_PAPERDOLL_EC`, `UDD_TILEMETA`, `TMPDIR`; `UDD_PAPERDOLL_OVERRIDES` measures
 another file) draws every dress over cloth and armour outfits and over each
 garment alone, and writes the ranked list and contact sheets' data. With the
-stored decisions nothing is flagged; the most taken away beyond the band is 911
-texels, as with the reviewed file.
+stored decisions nothing is flagged. The most taken away beyond the band was 911
+texels with the slot rule, as with the reviewed file; deciding each garment it is
+1,551 (the body sash under the parrot epaulets), and 104 of the 1,800 cases
+change, all under dresses that leave some garments of a slot in view.

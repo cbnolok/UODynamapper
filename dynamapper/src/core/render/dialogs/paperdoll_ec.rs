@@ -123,10 +123,11 @@ pub fn paperdoll_frames(
             tiledata_layer: tilemeta.item_tile(item.item_id).map(|tile| tile.quality).filter(|&layer| layer != 0),
         })
         .collect();
-    let stored = |body_frame: &udd_assets::paperdoll_ec::PaperdollEcFrameRecord, item_id: u32| {
-        package.dress_hides_on(item_id, u32::from(body_frame.frame_number)).map(|record| record.hidden_layers)
+    let decisions = package.dress_decisions();
+    let stored = |body_frame: u32, covering: u32, (layer, garment): (usize, u32)| {
+        decisions.takes_off(covering, body_frame, layer, garment)
     };
-    let plan = plan_taking_off(package, tilemeta.item_definitions(), order, body, body_hue, &worn, stored)?;
+    let (plan, _) = plan_taking_off(package, tilemeta.item_definitions(), order, body, body_hue, &worn, stored)?;
     for miss in &plan.misses {
         if logged_misses.insert(miss.item_id) {
             log::warn!(

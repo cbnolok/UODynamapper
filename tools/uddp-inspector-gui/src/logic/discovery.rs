@@ -366,8 +366,9 @@ mod tests {
     #[test]
     fn paperdoll_frames_are_listed_with_their_entries() {
         use udd_assets::paperdoll_ec::{
-            encode_dress_hides, encode_frames_manifest, encode_hue_tables, frame_entry_path, PaperdollEcFrameRecord,
-            PaperdollEcSet, DRESS_HIDES_ENTRY_PATH, FRAMES_ENTRY_PATH, FRAME_HUE_MASKED, HUE_TABLES_ENTRY_PATH,
+            encode_dress_decisions, encode_frames_manifest, encode_hue_tables, frame_entry_path,
+            PaperdollEcDressDecisions, PaperdollEcFrameRecord, PaperdollEcSet, DRESS_DECISIONS_ENTRY_PATH,
+            FRAMES_ENTRY_PATH, FRAME_HUE_MASKED, HUE_TABLES_ENTRY_PATH,
         };
         use udd_container::{AddFileRequest, CompressionFlag, LookupMode, UddpBuilder};
         use uocf::enhanced::hues::EcHueTables;
@@ -387,14 +388,14 @@ mod tests {
         let sets = vec![PaperdollEcSet { bounds: Default::default(), shadow: Default::default() }; GENDER_SET_COUNT];
         let manifest = encode_frames_manifest(&sets, &[record]).unwrap();
         let hues = encode_hue_tables(&EcHueTables::default()).unwrap();
-        let dress_hides = encode_dress_hides(&[]).unwrap();
+        let dress_decisions = encode_dress_decisions(&PaperdollEcDressDecisions::default()).unwrap();
         let rgba = vec![u8::MAX; record.pixel_count() * RGBA_CHANNELS];
         let frame_path = frame_entry_path(record.set, record.frame_number);
         let mut builder = UddpBuilder::new(LookupMode::VirtualPathHash);
         for (path, data, data_type) in [
             (FRAMES_ENTRY_PATH, manifest.as_slice(), DataType::Metadata),
             (HUE_TABLES_ENTRY_PATH, hues.as_slice(), DataType::Metadata),
-            (DRESS_HIDES_ENTRY_PATH, dress_hides.as_slice(), DataType::Metadata),
+            (DRESS_DECISIONS_ENTRY_PATH, dress_decisions.as_slice(), DataType::Metadata),
             (frame_path.as_str(), rgba.as_slice(), DataType::Paperdoll),
         ] {
             builder

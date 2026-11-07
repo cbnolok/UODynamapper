@@ -1,16 +1,19 @@
 //! What Dynamapper's paperdolls take off beneath a robe. The client draws the shirt, trousers, skirt, sleeves and chest
 //! pieces beneath a robe, and their 3D frames do not line up with the robe's: their edges show past it. The packer
-//! measured, for each dress-layer item on each player body, the slots whose garments show only at its edges, and
-//! stored them in paperdoll_ec.uddp (`udd_assets::paperdoll_ec::PaperdollEcDressHides`, measured by
-//! `udd_conv::paperdoll_ec_dress`). `PaperdollOverrides.kdl` is the user's manual layer over those decisions: a cover
-//! replaces the stored decision for its items. Only what the client draws beneath the covering item is taken off; a
-//! taken-off item counts as not worn, so the client's rules it would set off, as plate legs hiding the shoes, do not
-//! apply. The gump paperdolls apply them too, on the frame the 3D paperdoll draws for the profile's body: the gump art
+//! measured, for each dress-layer item on each player body, each garment of those slots the client draws beneath it,
+//! and stored the garments that show beyond its edges in paperdoll_ec.uddp
+//! (`udd_assets::paperdoll_ec::PaperdollEcDressDecisions`, measured by `udd_conv::paperdoll_ec_dress`): every other
+//! garment of those slots drawn beneath the item is taken off. `PaperdollOverrides.kdl` is the user's manual layer over
+//! those decisions: a cover replaces the stored decision for its items. Only what the client draws beneath the
+//! covering item is taken off; a taken-off item counts as not worn, so the client's rules it would set off, as plate
+//! legs hiding the shoes, do not apply. The gump paperdolls apply them too, on the frame the 3D paperdoll draws for the profile's body: the gump art
 //! shows the armour's edges past a robe as well, and the decisions take off no garment the gumps show in plain view
 //! (docs/agent_notes/ec_paperdoll_robe_override.md). The uocf editor keeps the client's rules.
 
 use color_eyre::eyre;
 use knuffel::Decode;
+use udd_assets::paperdoll_ec::PaperdollEcFrameRecord;
+use uocf::enhanced::animationframe::FrameEntry;
 use uocf::enhanced::paperdoll::{
     plan, slot_layer, PaperdollDefinitions, PaperdollFrames, PaperdollPlan, WearableRules, WornItem, LAYER_COUNT,
     SLOT_NAMES,
@@ -158,57 +161,92 @@ pub struct PaperdollOrder {
 }
 
 impl PaperdollOrder {
-    /// The layers the drawn item `item_id` of `layer` takes off beneath it: the overrides' cover, else `stored`, the
-    /// decision the package stores for it on the drawn body (bit n: layer n).
-    pub fn hidden_layers(&self, layer: usize, item_id: u32, stored: impl FnOnce() -> Option<u32>) -> u32 {
-        self.overrides.hidden_layers(layer, item_id).or_else(stored).unwrap_or(0)
+    /// Whether the drawn item `covering` takes off `garment`, drawn beneath it (each its layer and id): the overrides'
+    /// cover for it, else `stored`, the decision the package stores for it on the drawn body.
+    pub fn takes_off(&self, covering: (usize, u32), garment: (usize, u32), stored: impl FnOnce() -> bool) -> bool {
+        match self.overrides.hidden_layers(covering.0, covering.1) {
+            Some(hidden) => hidden & 1 << garment.0 != 0,
+            None => stored(),
+        }
     }
 }
 
+/// A garment taken off beneath a covering item: each its layer and id.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct TakenOff {
+    pub garment: (usize, u32),
+    pub covering: (usize, u32),
+}
+
 /// The items taken off of `drawn`, the (layer, item id) pairs the client draws, bottom first: each item drawn beneath
-/// one whose `hides` (its layer and id) has the bit of its layer.
-pub fn taken_off(drawn: &[(usize, u32)], hides: impl Fn(usize, u32) -> u32) -> Vec<u32> {
-    let mut taken = Vec::new();
-    for (position, &(layer, item_id)) in drawn.iter().enumerate() {
-        let hidden = hides(layer, item_id);
-        if hidden == 0 {
-            continue;
-        }
-        for &(beneath, beneath_item) in &drawn[..position] {
-            if hidden & 1 << beneath != 0 && !taken.contains(&beneath_item) {
-                taken.push(beneath_item);
+/// one that `takes_off` it (the covering item, then the item beneath), once, with the first item over it that does.
+pub fn taken_off(drawn: &[(usize, u32)], takes_off: impl Fn((usize, u32), (usize, u32)) -> bool) -> Vec<TakenOff> {
+    let mut taken: Vec<TakenOff> = Vec::new();
+    for (position, &covering) in drawn.iter().enumerate() {
+        for &garment in &drawn[..position] {
+            if !taken.iter().any(|taken| taken.garment == garment) && takes_off(covering, garment) {
+                taken.push(TakenOff { garment, covering });
             }
         }
     }
     taken
 }
 
+/// The number of a paperdoll frame: the stored decisions name a body by the number of the frame drawn for it.
+pub trait FrameNumber {
+    fn frame_number(&self) -> u16;
+}
+
+impl FrameNumber for FrameEntry {
+    fn frame_number(&self) -> u16 {
+        self.frame_number
+    }
+}
+
+impl FrameNumber for PaperdollEcFrameRecord {
+    fn frame_number(&self) -> u16 {
+        self.frame_number
+    }
+}
+
 /// What the client draws for `body` wearing `items` ([`plan`] with `order`'s rules), without what is taken off: the
-/// items [`taken_off`] by [`PaperdollOrder::hidden_layers`], where `stored` gives the package's decision for the body
-/// frame drawn and an item, are left out and the rest planned again, until none is.
-pub fn plan_taking_off<'a, S: PaperdollFrames, T: PaperdollDefinitions<'a>>(
+/// items [`taken_off`] by [`PaperdollOrder::takes_off`], where `stored` gives the package's decision for the body frame
+/// drawn (its number), a covering item and a garment beneath it (its layer and id), are left out and the rest planned
+/// again, until none is. Returns the plan and every item taken off, in the order taken.
+pub fn plan_taking_off<'a, S, T>(
     sets: &S,
     definitions: T,
     order: &PaperdollOrder,
     body: u32,
     body_hue: u16,
     items: &[WornItem],
-    stored: impl Fn(&S::Frame, u32) -> Option<u32>,
-) -> eyre::Result<PaperdollPlan<S::Frame>> {
+    stored: impl Fn(u32, u32, (usize, u32)) -> bool,
+) -> eyre::Result<(PaperdollPlan<S::Frame>, Vec<TakenOff>)>
+where
+    S: PaperdollFrames,
+    S::Frame: FrameNumber,
+    T: PaperdollDefinitions<'a>,
+{
     let mut worn = items.to_vec();
+    let mut taken_in_all = Vec::new();
     loop {
         let planned = plan(sets, definitions, &order.rules, body, body_hue, &worn)?;
         // The body's frame comes first.
-        let body_frame = planned.frames.first().filter(|frame| frame.item.is_none()).map(|frame| frame.frame.entry);
+        let body_frame = planned
+            .frames
+            .first()
+            .filter(|frame| frame.item.is_none())
+            .map(|frame| u32::from(frame.frame.entry.frame_number()));
         let drawn: Vec<(usize, u32)> = planned.frames.iter().filter_map(|frame| frame.item).collect();
-        let taken = taken_off(&drawn, |layer, item_id| {
-            order.hidden_layers(layer, item_id, || body_frame.as_ref().and_then(|frame| stored(frame, item_id)))
+        let taken = taken_off(&drawn, |covering, garment| {
+            order.takes_off(covering, garment, || body_frame.is_some_and(|body| stored(body, covering.1, garment)))
         });
         if taken.is_empty() {
-            return Ok(planned);
+            return Ok((planned, taken_in_all));
         }
         // Each pass leaves out one item at least, so the loop ends.
-        worn.retain(|item| !taken.contains(&item.item_id));
+        worn.retain(|item| !taken.iter().any(|taken| taken.garment.1 == item.item_id));
+        taken_in_all.extend(taken);
     }
 }
 
@@ -218,7 +256,6 @@ mod measure;
 #[cfg(test)]
 mod tests {
     use super::*;
-    use uocf::enhanced::animationframe::FrameEntry;
     use uocf::enhanced::paperdoll::{FrameSets, SortedTileArt, MALE_SET};
     use uocf::enhanced::tileart::TileArtEntry;
 
@@ -244,14 +281,15 @@ mod tests {
         slot_layer(name).unwrap()
     }
 
-    fn mask(slots: &[&str]) -> u32 {
-        layer_mask(slots.iter().map(|name| slot(name)))
-    }
-
     /// The bundled file holds comments only: the stored decisions apply as measured.
     #[test]
     fn the_bundled_overrides_leave_the_stored_decisions() {
         assert_eq!(overrides(BUNDLED_OVERRIDES), PaperdollOverrides::default());
+    }
+
+    /// Whether `order` takes `garment` off beneath `covering` on the dress layer, with `stored` the stored decision.
+    fn takes_off(order: &PaperdollOrder, covering: u32, garment: (&str, u32), stored: bool) -> bool {
+        order.takes_off((slot("dress"), covering), (slot(garment.0), garment.1), || stored)
     }
 
     /// The last cover that applies to an item replaces the stored decision; an exception falls back to the covers
@@ -266,28 +304,30 @@ mod tests {
                  cover \"dress\" items=\"0x1F04\"\n",
             ),
         };
-        let dress = slot("dress");
-        let stored = || Some(mask(&["torso", "legs", "arms"]));
-        assert_eq!(order.hidden_layers(dress, ROBE, stored), mask(&["legs"]));
-        assert_eq!(order.hidden_layers(dress, ROBE + 1, stored), 0, "a cover without hides");
-        assert_eq!(order.hidden_layers(dress, SASH, stored), mask(&["torso"]), "the first cover");
-        assert_eq!(order.hidden_layers(dress, EPAULETS, stored), mask(&["torso", "legs", "arms"]), "an exception");
-        assert_eq!(order.hidden_layers(dress, EPAULETS, || None), 0, "nothing stored");
-        assert_eq!(order.hidden_layers(slot("cape"), ROBE, stored), mask(&["torso", "legs", "arms"]), "another slot");
-        assert_eq!(PaperdollOrder::default().hidden_layers(dress, ROBE, stored), mask(&["torso", "legs", "arms"]));
+        let shirt = ("torso", SHIRT);
+        let plate_legs = ("legs", PLATE_LEGS);
+        assert!(takes_off(&order, ROBE, plate_legs, false) && !takes_off(&order, ROBE, shirt, true));
+        assert!(!takes_off(&order, ROBE + 1, shirt, true), "a cover without hides");
+        assert!(takes_off(&order, SASH, shirt, false) && !takes_off(&order, SASH, plate_legs, true), "the first cover");
+        assert!(takes_off(&order, EPAULETS, shirt, true) && !takes_off(&order, EPAULETS, shirt, false), "an exception");
+        let cape = order.takes_off((slot("cape"), ROBE), (slot("torso"), SHIRT), || true);
+        assert!(cape, "another slot: the stored decision");
+        assert!(takes_off(&PaperdollOrder::default(), ROBE, shirt, true));
+        assert!(!takes_off(&PaperdollOrder::default(), ROBE, shirt, false));
     }
 
-    /// Only what is drawn beneath the covering item is taken off, once.
+    /// Only what is drawn beneath the covering item is taken off, once, by the first item over it that takes it off.
     #[test]
     fn only_what_is_drawn_beneath_is_taken_off() {
         const PANTS: u32 = 0x1539;
         let [torso, legs, dress, abovechest] = ["torso", "legs", "dress", "abovechest"].map(slot);
-        let hides = |layer: usize, _item| if layer == dress { mask(&["torso", "legs", "abovechest"]) } else { 0 };
+        let robe = |covering: (usize, u32), garment: (usize, u32)| covering.0 == dress && garment.1 != PANTS;
         let drawn = [(legs, PANTS), (torso, SHIRT), (dress, ROBE), (abovechest, SASH)];
-        assert_eq!(taken_off(&drawn, hides), [PANTS, SHIRT], "the sash is drawn over the robe");
-        assert_eq!(taken_off(&drawn[..2], hides), Vec::<u32>::new(), "no robe");
-        let both = |layer: usize, _item| if layer == torso || layer == dress { mask(&["legs"]) } else { 0 };
-        assert_eq!(taken_off(&drawn, both), [PANTS]);
+        let taken = |garment, covering| TakenOff { garment, covering };
+        assert_eq!(taken_off(&drawn, robe), [taken((torso, SHIRT), (dress, ROBE))], "the sash is drawn over the robe");
+        assert_eq!(taken_off(&drawn[..2], robe), [], "no robe");
+        let both = |covering: (usize, u32), garment: (usize, u32)| covering.0 != legs && garment.0 == legs;
+        assert_eq!(taken_off(&drawn, both), [taken((legs, PANTS), (torso, SHIRT))]);
     }
 
     /// A body, a robe, a shirt, plate legs and shoes, each a small frame numbered as its item, and their tileart
@@ -324,8 +364,8 @@ mod tests {
     }
 
     /// Under a robe the client draws the shirt and plate legs, and hides the shoes under the plate legs. Taken off by
-    /// the robe's stored decision, the plate legs no longer hide the shoes, which show under the robe. A cover with no
-    /// hides keeps what the client draws.
+    /// the robe's stored decision on the body drawn, the plate legs no longer hide the shoes, which show under the robe.
+    /// A cover with no hides keeps what the client draws.
     #[test]
     fn what_a_robe_takes_off_no_longer_hides_the_shoes() {
         let (sets, records) = robe_outfit();
@@ -334,22 +374,21 @@ mod tests {
             .iter()
             .map(|&item_id| WornItem { item_id, hue: 0, tiledata_layer: None })
             .collect();
-        let stored = |frame: &FrameEntry, item_id: u32| {
-            (u32::from(frame.frame_number) == BODY && item_id == ROBE).then(|| mask(&["torso", "legs"]))
-        };
-        let drawn = |order: &PaperdollOrder| -> Vec<(usize, u32)> {
-            plan_taking_off(&sets, SortedTileArt(&records), order, BODY, 0, &items, stored)
-                .unwrap()
-                .frames
-                .iter()
-                .filter_map(|frame| frame.item)
-                .collect()
-        };
         let [torso, legs, feet, dress] = ["torso", "legs", "feet", "dress"].map(slot);
+        // The robe's decision on the body: its slots are the torso and legs, and it keeps nothing.
+        let stored = |body: u32, covering: u32, (layer, _): (usize, u32)| {
+            body == BODY && covering == ROBE && (layer == torso || layer == legs)
+        };
+        let planned = |order: &PaperdollOrder| {
+            let (plan, taken) = plan_taking_off(&sets, SortedTileArt(&records), order, BODY, 0, &items, stored).unwrap();
+            let drawn: Vec<(usize, u32)> = plan.frames.iter().filter_map(|frame| frame.item).collect();
+            (drawn, taken)
+        };
         let order = PaperdollOrder { rules, overrides: PaperdollOverrides::default() };
-        assert_eq!(drawn(&order), [(feet, SHOES), (dress, ROBE)]);
+        let taken = |garment| TakenOff { garment, covering: (dress, ROBE) };
+        assert_eq!(planned(&order), (vec![(feet, SHOES), (dress, ROBE)], vec![taken((torso, SHIRT)), taken((legs, PLATE_LEGS))]));
         let keep = PaperdollOrder { overrides: overrides("cover \"dress\" items=\"0x1F03\"\n"), ..order };
-        assert_eq!(drawn(&keep), [(torso, SHIRT), (legs, PLATE_LEGS), (dress, ROBE)]);
+        assert_eq!(planned(&keep), (vec![(torso, SHIRT), (legs, PLATE_LEGS), (dress, ROBE)], vec![]));
     }
 
     #[test]

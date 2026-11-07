@@ -1,32 +1,30 @@
-//! What each dress-layer item hides in Dynamapper's 3D paperdoll, measured when `paperdoll_ec.uddp` is packed and
-//! stored in it (`udd_assets::paperdoll_ec::PaperdollEcDressHides`). The client has no such rule.
+//! What each dress-layer item takes off in Dynamapper's paperdolls, measured when `paperdoll_ec.uddp` is packed and
+//! stored in it (`udd_assets::paperdoll_ec::PaperdollEcDressDecisions`). The client has no such rule.
 //!
 //! The Enhanced Client draws the shirt, trousers, skirt, sleeves and chest pieces beneath a robe, and their 3D frames do
 //! not line up with the robe's: their edges show past it, at the collar, down the sides and at the hem. Taking them off
 //! fits a robe, not a dress-layer item that leaves them in view, as epaulets, a tabard or a jacket do. So for each
-//! dress-layer item, on each wearer body it has a frame for, and for each slot that may be taken off
-//! ([`HIDEABLE_SLOTS`]), the packer draws the body wearing a garment of the slot and the item, in the client's draw
-//! order, then without the garment, and counts the texels that vanish where the item is not opaque. Within
-//! [`EDGE_BAND_TEXELS`] of the item they are the edges showing past it; beyond, the garment was in plain view. The slot
-//! is taken off when what vanishes beyond the band stays under [`LARGE_REMOVED_AREA_TEXELS`], and kept otherwise.
+//! dress-layer item, on each wearer body it has a frame for, and for each garment of the slots that may be taken off
+//! ([`HIDEABLE_SLOTS`]) the client draws beneath the item, the packer draws the body wearing the garment and the item,
+//! in the client's draw order, then without the garment, and counts the texels that vanish where the item is not
+//! opaque. Within [`EDGE_BAND_TEXELS`] of the item they are the edges showing past it; beyond, the garment was in plain
+//! view. The garment is kept when what vanishes beyond the band reaches [`LARGE_REMOVED_AREA_TEXELS`]; the decision
+//! stores the garments kept, and Dynamapper takes off every other garment of those slots the client draws beneath the
+//! item.
 //!
-//! Every garment of the slot the client draws beneath the item is measured, and the decision follows one of them,
-//! chosen from the data with no item id named: the largest (the most opaque texels in its frame for the body). The
-//! client's own rules already settle the garments it leaves out under the item, so they say nothing about it; of those
-//! it draws beneath, the largest is the one most likely to reach past it, so measuring against it errs toward keeping
-//! the slot, the safe side, since a kept slot is drawn as the client draws it. On the EC 2024 data, of the 61,120
-//! garments drawn beneath the dress-layer items, it takes off 458 in plain view (mostly the amazon armour's shoulders)
-//! and keeps 2,287 whose edges alone show. Keeping a slot whenever one garment shows keeps 7,477 such edges, most of
-//! them under robes; following most of the garments takes off 797 in view, the plate legs under a dress among them. A
-//! slot decides for all its garments, so some are always drawn otherwise than alone they would be: the report names
-//! them. When the client draws no garment of the slot beneath the item, the slot is taken off if it leaves one out
-//! (harmless: Dynamapper takes off only what is drawn beneath the item) and kept if it draws them all over it.
+//! Format 2 decided a slot at a time, after its largest garment (the most opaque texels in its frame for the body), so
+//! some garments were drawn otherwise than alone they would be: on the EC 2024 data, of the 61,120 garments drawn
+//! beneath the dress-layer items, it took off 458 in plain view (mostly the amazon armour's shoulders) and kept 2,287
+//! whose edges alone show. Deciding each garment draws every one of them as measured; the summary still counts what the
+//! slot rule would do, and the report names each garment it would draw otherwise. The client's own rules settle the
+//! garments it leaves out under the item or draws over it, so they are not measured; a garment drawn beneath the item
+//! only in another outfit, with its draw order changed by the other items, is taken off too.
 
 use std::collections::HashMap;
 
 use color_eyre::eyre::{self, WrapErr};
 use rayon::prelude::*;
-use udd_assets::paperdoll_ec::{hidden_layer_mask, PaperdollEcDressHides};
+use udd_assets::paperdoll_ec::{layer_mask, PaperdollEcDressDecision, PaperdollEcDressDecisions, PaperdollEcKeptGarment};
 use uocf::enhanced::animationframe::FrameEntry;
 use uocf::enhanced::hues::EcHueTables;
 use uocf::enhanced::paperdoll::{
@@ -70,6 +68,8 @@ const ALPHA_BYTE: usize = 3;
 const OPAQUE: u8 = u8::MAX;
 /// Digits between the separators of a logged count.
 const DIGIT_GROUP: usize = 3;
+/// Kept garments a decision's log line names; it counts the rest.
+const LOGGED_KEPT_GARMENTS: usize = 8;
 
 /// The name of a `tileart.uop` record in `string_dictionary.uop`.
 pub fn tileart_name(record: &TileArtEntry, strings: &UoStringDictionary) -> Option<String> {
@@ -77,7 +77,7 @@ pub fn tileart_name(record: &TileArtEntry, strings: &UoStringDictionary) -> Opti
     strings.get_string(index).filter(|name| !name.is_empty()).map(str::to_string)
 }
 
-/// The largest garment of a slot on one body.
+/// The largest garment of a slot on one body: the one format 2 decided the slot after.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct LargestGarment {
     pub body: u32,
@@ -99,7 +99,7 @@ pub struct GarmentMeasure {
 }
 
 impl GarmentMeasure {
-    /// Whether the garment is in plain view beyond the item's edges.
+    /// Whether the garment is in plain view beyond the item's edges: the item keeps it.
     pub fn shows(&self) -> bool {
         self.beyond_edge >= LARGE_REMOVED_AREA_TEXELS
     }
@@ -119,26 +119,31 @@ pub enum SlotMeasure {
 }
 
 impl SlotMeasure {
-    /// Whether the slot is taken off.
-    pub fn hidden(&self) -> bool {
+    /// The garments measured: none unless [`Self::Measured`].
+    pub fn garments(&self) -> &[GarmentMeasure] {
+        match self {
+            Self::Measured(garments) => garments,
+            _ => &[],
+        }
+    }
+
+    /// The garments that show beyond the edge band: those the item keeps.
+    pub fn shown(&self) -> impl Iterator<Item = &GarmentMeasure> {
+        self.garments().iter().filter(|garment| garment.shows())
+    }
+
+    /// Whether format 2's slot rule takes the slot off: its largest garment does not show beyond the edge band, or the
+    /// client leaves its garments out beneath the item.
+    pub fn slot_rule_hides(&self) -> bool {
         match self {
             Self::NoGarment | Self::NotBeneath => false,
             Self::HiddenByClient => true,
             Self::Measured(garments) => garments.first().is_none_or(|largest| !largest.shows()),
         }
     }
-
-    /// The garments that show beyond the edge band.
-    pub fn shown(&self) -> impl Iterator<Item = &GarmentMeasure> {
-        let garments = match self {
-            Self::Measured(garments) => garments.as_slice(),
-            _ => &[],
-        };
-        garments.iter().filter(|garment| garment.shows())
-    }
 }
 
-/// What one dress-layer item hides on one body, and why.
+/// What one dress-layer item takes off on one body, and why.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DressDecision {
     pub item_id: u32,
@@ -150,50 +155,65 @@ pub struct DressDecision {
 }
 
 impl DressDecision {
-    pub fn record(&self) -> eyre::Result<PaperdollEcDressHides> {
-        Ok(PaperdollEcDressHides {
+    /// The decision to store: the garments kept, ascending by id.
+    pub fn record(&self) -> eyre::Result<PaperdollEcDressDecision> {
+        let mut kept = self
+            .kept()
+            .map(|garment| {
+                let beyond_edge = u32::try_from(garment.beyond_edge)
+                    .wrap_err_with(|| format!("garment {} beyond the edge", garment.item_id))?;
+                Ok(PaperdollEcKeptGarment { item_id: garment.item_id, beyond_edge })
+            })
+            .collect::<eyre::Result<Vec<_>>>()?;
+        kept.sort_by_key(|garment| garment.item_id);
+        Ok(PaperdollEcDressDecision {
             item_id: self.item_id,
             body: u16::try_from(self.body).wrap_err_with(|| format!("body {}", self.body))?,
-            hidden_layers: hidden_layer_mask(self.hidden_layers()),
+            kept,
         })
     }
 
-    pub fn hidden_layers(&self) -> impl Iterator<Item = usize> + '_ {
-        self.slots.iter().filter(|(_, measure)| measure.hidden()).map(|&(layer, _)| layer)
+    /// Every garment measured beneath the item.
+    pub fn measured(&self) -> impl Iterator<Item = &GarmentMeasure> + '_ {
+        self.slots.iter().flat_map(|(_, measure)| measure.garments())
     }
 
-    /// The decision in one line: `0x279C Hakama-Shita, human male: hides torso, arms, chest, abovechest; keeps legs
-    /// (20,104 texels beyond the edge), skirt (...)`.
-    pub fn describe(&self) -> String {
-        let mut hidden = Vec::new();
-        let mut kept = Vec::new();
-        let mut absent = Vec::new();
-        for (layer, measure) in &self.slots {
-            let slot = SLOT_NAMES[*layer];
-            match measure {
-                SlotMeasure::HiddenByClient => hidden.push(format!("{slot} (left out by the client)")),
-                SlotMeasure::Measured(_) if measure.hidden() => hidden.push(slot.to_string()),
-                SlotMeasure::Measured(garments) => {
-                    let beyond = garments.first().map_or(0, |largest| largest.beyond_edge);
-                    kept.push(format!("{slot} ({} texels beyond the edge)", grouped(beyond)));
-                }
-                SlotMeasure::NotBeneath => kept.push(format!("{slot} (drawn over it)")),
-                SlotMeasure::NoGarment => absent.push(slot),
-            }
+    /// The garments the item keeps: those that show beyond the edge band.
+    pub fn kept(&self) -> impl Iterator<Item = &GarmentMeasure> + '_ {
+        self.slots.iter().flat_map(|(_, measure)| measure.shown())
+    }
+
+    /// The decision in one line: `0x279C Hakama-Shita, human male: takes off 31 of the 33 garments drawn beneath it;
+    /// keeps 0x1539 Long Pants (20,104 texels beyond the edge), ...`, naming the first [`LOGGED_KEPT_GARMENTS`] kept,
+    /// the most in view first, and counting the rest. `name` names a garment.
+    pub fn describe(&self, name: impl Fn(u32) -> Option<String>) -> String {
+        let measured = self.measured().count();
+        let mut kept: Vec<&GarmentMeasure> = self.kept().collect();
+        kept.sort_by_key(|garment| (std::cmp::Reverse(garment.beyond_edge), garment.item_id));
+        let noun = if measured == 1 { "garment" } else { "garments" };
+        let mut line = format!(
+            "{}, {}: takes off {} of the {measured} {noun} drawn beneath it",
+            item_label(self.item_id, self.name.as_deref()),
+            self.body_name,
+            measured - kept.len()
+        );
+        if kept.is_empty() {
+            line.push_str("; keeps none");
+            return line;
         }
-        let mut parts = Vec::new();
-        if hidden.is_empty() {
-            parts.push("hides nothing".to_string());
-        } else {
-            parts.push(format!("hides {}", hidden.join(", ")));
+        let named: Vec<String> = kept
+            .iter()
+            .take(LOGGED_KEPT_GARMENTS)
+            .map(|garment| {
+                let label = item_label(garment.item_id, name(garment.item_id).as_deref());
+                format!("{label} ({} texels beyond the edge)", grouped(garment.beyond_edge))
+            })
+            .collect();
+        line = format!("{line}; keeps {}", named.join(", "));
+        if kept.len() > LOGGED_KEPT_GARMENTS {
+            line = format!("{line} and {} more", kept.len() - LOGGED_KEPT_GARMENTS);
         }
-        if !kept.is_empty() {
-            parts.push(format!("keeps {}", kept.join(", ")));
-        }
-        if !absent.is_empty() {
-            parts.push(format!("no {} garment has a frame for this body", absent.join(", ")));
-        }
-        format!("{}, {}: {}", item_label(self.item_id, self.name.as_deref()), self.body_name, parts.join("; "))
+        line
     }
 }
 
@@ -225,7 +245,7 @@ pub struct DressMeasurement {
     pub dress_items: Vec<u32>,
     /// One per dress-layer item and body it has a frame for, ascending by (item, body order of [`WEARER_BODIES`]).
     pub decisions: Vec<DressDecision>,
-    /// Per body measured and slot, the largest garment.
+    /// Per body measured and slot, the largest garment: what format 2's slot rule followed.
     pub largest: Vec<LargestGarment>,
     /// (item, body name) of the dress-layer items with no frame for a body.
     pub without_frame: Vec<(u32, &'static str)>,
@@ -236,70 +256,81 @@ pub struct DressMeasurement {
 /// Counts of [`DressMeasurement::decisions`].
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct DressCounts {
-    /// Decisions taking off every slot that has a garment.
-    pub hide_all: usize,
-    pub hide_some: usize,
-    pub hide_none: usize,
+    /// Decisions keeping none of the garments measured beneath the item, some, and all of them.
+    pub keep_none: usize,
+    pub keep_some: usize,
+    pub keep_all: usize,
+    /// Decisions with no garment measured: the client draws none beneath the item.
+    pub nothing_measured: usize,
     /// Garments measured beneath the items, one per item, body and garment.
     pub garments_measured: usize,
-    /// Of those, the garments in plain view beyond the edge band that a decision takes off with their slot.
-    pub taken_off_in_view: usize,
-    /// Of those, the garments whose edges alone show that a decision keeps with their slot.
-    pub kept_edges_only: usize,
+    /// Of those, the garments kept: in plain view beyond the edge band. The others are taken off.
+    pub kept: usize,
+    /// Of those, the garments in plain view that format 2's slot rule takes off with their slot.
+    pub slot_rule_taken_off_in_view: usize,
+    /// Of those, the garments whose edges alone show that format 2's slot rule keeps with their slot.
+    pub slot_rule_kept_edges_only: usize,
 }
 
 impl DressMeasurement {
-    /// The records to store, ascending by (item id, body).
-    pub fn records(&self) -> eyre::Result<Vec<PaperdollEcDressHides>> {
-        let mut records = self.decisions.iter().map(DressDecision::record).collect::<eyre::Result<Vec<_>>>()?;
-        records.sort_by_key(|record| (record.item_id, record.body));
-        Ok(records)
+    /// The decisions to store: the slots they take garments off and the decisions ascending by (item id, body).
+    pub fn records(&self) -> eyre::Result<PaperdollEcDressDecisions> {
+        let slots = HIDEABLE_SLOTS.iter().map(|slot| slot_layer(slot)).collect::<eyre::Result<Vec<_>>>()?;
+        let mut decisions = self.decisions.iter().map(DressDecision::record).collect::<eyre::Result<Vec<_>>>()?;
+        decisions.sort_by_key(|decision| (decision.item_id, decision.body));
+        Ok(PaperdollEcDressDecisions { slots: layer_mask(slots), decisions })
     }
 
     pub fn counts(&self) -> DressCounts {
         let mut counts = DressCounts::default();
         for decision in &self.decisions {
-            let hidden = decision.hidden_layers().count();
-            let present = decision.slots.iter().filter(|(_, measure)| *measure != SlotMeasure::NoGarment).count();
-            match hidden {
-                0 => counts.hide_none += 1,
-                count if count == present => counts.hide_all += 1,
-                _ => counts.hide_some += 1,
+            let measured = decision.measured().count();
+            let kept = decision.kept().count();
+            match (measured, kept) {
+                (0, _) => counts.nothing_measured += 1,
+                (_, 0) => counts.keep_none += 1,
+                _ if kept == measured => counts.keep_all += 1,
+                _ => counts.keep_some += 1,
             }
+            counts.garments_measured += measured;
+            counts.kept += kept;
             for (_, measure) in &decision.slots {
-                let SlotMeasure::Measured(garments) = measure else { continue };
                 let shown = measure.shown().count();
-                counts.garments_measured += garments.len();
-                if measure.hidden() {
-                    counts.taken_off_in_view += shown;
+                if measure.slot_rule_hides() {
+                    counts.slot_rule_taken_off_in_view += shown;
                 } else {
-                    counts.kept_edges_only += garments.len() - shown;
+                    counts.slot_rule_kept_edges_only += measure.garments().len() - shown;
                 }
             }
         }
         counts
     }
 
-    /// The summary line: items, bodies and decisions.
+    /// The summary line: items, bodies, decisions and garments, and what format 2's slot rule would do.
     pub fn summary(&self) -> String {
         let counts = self.counts();
         format!(
-            "{} dress-layer items measured on {} bodies: {} decisions hide every slot, {} some, {} none; {} item and \
-             body pairs without a frame; of the {} garments drawn beneath them, {} in plain view go with their slot \
-             and {} whose edges alone show stay with it",
+            "{} dress-layer items measured on {} bodies: {} decisions keep none of the garments drawn beneath the \
+             item, {} some, {} all, {} measure none; {} item and body pairs without a frame; of the {} garments drawn \
+             beneath them, {} show beyond the edge and are kept, {} are taken off; the slot rule of format 2 (the \
+             largest garment decides its slot) would take off {} in plain view and keep {} whose edges alone show",
             self.dress_items.len(),
             WEARER_BODIES.len() - self.skipped_bodies.len(),
-            counts.hide_all,
-            counts.hide_some,
-            counts.hide_none,
+            counts.keep_none,
+            counts.keep_some,
+            counts.keep_all,
+            counts.nothing_measured,
             self.without_frame.len(),
             grouped(counts.garments_measured),
-            grouped(counts.taken_off_in_view),
-            grouped(counts.kept_edges_only)
+            grouped(counts.kept),
+            grouped(counts.garments_measured - counts.kept),
+            grouped(counts.slot_rule_taken_off_in_view),
+            grouped(counts.slot_rule_kept_edges_only)
         )
     }
 
-    /// Every finding, one line each, `info: ...` or `warning: ...` as the Enhanced effects report.
+    /// Every finding, one line each, `info: ...` or `warning: ...` as the Enhanced effects report: the summary, each
+    /// decision, each slot not measured and each garment measured.
     pub fn report_lines(&self, name: impl Fn(u32) -> Option<String>) -> Vec<String> {
         let label = |item_id: u32| item_label(item_id, name(item_id).as_deref());
         let body_name =
@@ -317,30 +348,40 @@ impl DressMeasurement {
             ));
         }
         for decision in &self.decisions {
-            lines.push(format!("info: {}", decision.describe()));
+            lines.push(format!("info: {}", decision.describe(&name)));
+            let pair = format!("{}, {}", item_label(decision.item_id, decision.name.as_deref()), decision.body_name);
             for (layer, measure) in &decision.slots {
-                let SlotMeasure::Measured(garments) = measure else { continue };
-                let Some(largest) = garments.first() else { continue };
-                let shown: Vec<String> = measure
-                    .shown()
-                    .map(|garment| format!("{} ({})", label(garment.item_id), grouped(garment.beyond_edge)))
-                    .collect();
-                let noun = if garments.len() == 1 { "garment" } else { "garments" };
-                let mut census = format!("{} of the {} {noun} drawn beneath show beyond the edge", shown.len(), garments.len());
-                if !shown.is_empty() {
-                    census = format!("{census}: {}", shown.join(", "));
+                let slot = SLOT_NAMES[*layer];
+                let garments = match measure {
+                    SlotMeasure::NoGarment => {
+                        lines.push(format!("info: {pair}, {slot}: no garment has a frame for this body"));
+                        continue;
+                    }
+                    SlotMeasure::HiddenByClient => {
+                        lines.push(format!("info: {pair}, {slot}: the client leaves its garments out beneath it"));
+                        continue;
+                    }
+                    SlotMeasure::NotBeneath => {
+                        lines.push(format!("info: {pair}, {slot}: the client draws its garments over it"));
+                        continue;
+                    }
+                    SlotMeasure::Measured(garments) => garments,
+                };
+                for garment in garments {
+                    let verdict = if garment.shows() { "kept" } else { "taken off" };
+                    // Format 2 decided the slot after its largest garment, and drew this one otherwise.
+                    let slot_rule = match (garment.shows(), measure.slot_rule_hides()) {
+                        (true, true) => "; the slot rule took it off, in plain view",
+                        (false, false) => "; the slot rule kept it, its edges alone showing",
+                        _ => "",
+                    };
+                    lines.push(format!(
+                        "info: {pair}, {slot}: {}: {verdict}: {} texels vanish near the edge, {} beyond{slot_rule}",
+                        label(garment.item_id),
+                        grouped(garment.near_edge),
+                        grouped(garment.beyond_edge)
+                    ));
                 }
-                // A garment in plain view taken off with its slot is drawn otherwise than the client draws it.
-                let level = if measure.hidden() && !shown.is_empty() { "warning" } else { "info" };
-                lines.push(format!(
-                    "{level}: {}, {}, {}: largest {}: {} texels vanish near the edge, {} beyond; {census}",
-                    item_label(decision.item_id, decision.name.as_deref()),
-                    decision.body_name,
-                    SLOT_NAMES[*layer],
-                    label(largest.item_id),
-                    grouped(largest.near_edge),
-                    grouped(largest.beyond_edge)
-                ));
             }
         }
         for &(item_id, body) in &self.without_frame {
@@ -492,10 +533,10 @@ struct MeasuredBody<D> {
     garments: Vec<(usize, Vec<Garment>)>,
 }
 
-/// Measures what each dress-layer item among `item_ids` hides on each of [`WEARER_BODIES`] it has a frame for. An
+/// Measures what each dress-layer item among `item_ids` takes off on each of [`WEARER_BODIES`] it has a frame for. An
 /// item's slot is its `tileart.uop` Layer property: every dress-layer item of the client has one. `name` names an
 /// item in the decisions.
-pub fn measure_dress_hides<'a, T>(
+pub fn measure_dress_decisions<'a, T>(
     sets: &FrameSets,
     definitions: T,
     rules: &WearableRules,
@@ -706,6 +747,10 @@ mod tests {
     const SHIRT: u16 = 5399;
     /// A shirt smaller than [`SHIRT`], all of it under the item: measured after it.
     const SMALL_SHIRT: u16 = 5397;
+    /// A torso garment smaller than [`SMALL_SHIRT`], all of it below the edge band: in plain view, so kept, where the
+    /// slot rule of format 2 took it off with [`SHIRT`].
+    const LOW_TUNIC: u16 = 5401;
+    const LOW_TUNIC_HEIGHT: u16 = 45;
     const PANTS: u16 = 5433;
     /// Worn above the chest: the client leaves it out under a dress-layer item no rule names.
     const MANTLE: u16 = 7933;
@@ -744,6 +789,7 @@ mod tests {
                 (action, DRESS, solid(DRESS_WIDTH, DRESS_HEIGHT, 0, 0)),
                 (action, SHIRT, solid(shirt_width, SHIRT_HEIGHT, -(SHIRT_MARGIN as i16), 0)),
                 (action, SMALL_SHIRT, solid(DRESS_WIDTH, SHIRT_HEIGHT, 0, 0)),
+                (action, LOW_TUNIC, solid(DRESS_WIDTH, LOW_TUNIC_HEIGHT, 0, (DRESS_HEIGHT as usize + EDGE_BAND_TEXELS) as i16)),
                 (action, PANTS, solid(DRESS_WIDTH, DRESS_HEIGHT + PANTS_BELOW, 0, 0)),
                 (action, MANTLE, solid(DRESS_WIDTH, DRESS_HEIGHT + PANTS_BELOW, 0, 0)),
             ],
@@ -764,6 +810,7 @@ mod tests {
             worn(DRESS, DRESS_SLOT),
             worn(SHIRT, "torso"),
             worn(SMALL_SHIRT, "torso"),
+            worn(LOW_TUNIC, "torso"),
             worn(PANTS, "legs"),
             worn(MANTLE, "abovechest"),
         ];
@@ -775,66 +822,126 @@ mod tests {
         WearableRules::decode(BUNDLED_WEARABLE_RULES).unwrap()
     }
 
-    /// The item takes off the shirt, whose edges show only beside it, and the mantle, which the client leaves out
-    /// under it; it keeps the trousers, which reach far below it. Every shirt is measured, the largest first, and the
-    /// bodies without a frame of their own are left out.
+    /// The item takes off the shirts, whose edges show only beside it, and keeps the trousers, which reach far below
+    /// it, and the low tunic, which the slot rule of format 2 took off with the shirts. Every garment drawn beneath
+    /// the item is measured, the largest of its slot first; the mantle, which the client leaves out under the item,
+    /// is not; the bodies without a frame of their own are left out.
     #[test]
-    fn a_dress_takes_off_what_shows_only_at_its_edges() {
+    fn a_dress_takes_off_each_garment_that_shows_only_at_its_edges() {
         let sets = frame_sets();
         let records = records();
         let ids: Vec<u32> = records.iter().map(|record| record.tile_id).collect();
         let name = |item: u32| (item == u32::from(DRESS)).then(|| "robe".to_string());
-        let measurement = measure_dress_hides(&sets, SortedTileArt(&records), &rules(), &ids, name).unwrap();
+        let measurement = measure_dress_decisions(&sets, SortedTileArt(&records), &rules(), &ids, name).unwrap();
         assert_eq!(measurement.dress_items, [u32::from(DRESS)]);
         assert_eq!(measurement.skipped_bodies.len(), WEARER_BODIES.len() - 1, "{:?}", measurement.skipped_bodies);
         let torso = slot_layer("torso").unwrap();
         let legs = slot_layer("legs").unwrap();
         let abovechest = slot_layer("abovechest").unwrap();
         let largest = |layer| measurement.largest.iter().find(|largest| largest.layer == layer).unwrap();
-        assert_eq!((largest(torso).item_id, largest(torso).garments), (u32::from(SHIRT), 2));
+        assert_eq!((largest(torso).item_id, largest(torso).garments), (u32::from(SHIRT), 3));
         assert_eq!(largest(legs).item_id, u32::from(PANTS));
 
         let [decision] = measurement.decisions.as_slice() else { panic!("{:?}", measurement.decisions) };
         let measure = |layer| &decision.slots.iter().find(|&&(slot, _)| slot == layer).unwrap().1;
         let shirt_edges = 2 * usize::from(SHIRT_MARGIN) * usize::from(SHIRT_HEIGHT);
+        let low_tunic = usize::from(DRESS_WIDTH) * usize::from(LOW_TUNIC_HEIGHT);
         let garment = |item: u16, near_edge, beyond_edge| GarmentMeasure { item_id: u32::from(item), near_edge, beyond_edge };
         assert_eq!(
             measure(torso),
-            &SlotMeasure::Measured(vec![garment(SHIRT, shirt_edges, 0), garment(SMALL_SHIRT, 0, 0)])
+            &SlotMeasure::Measured(vec![
+                garment(SHIRT, shirt_edges, 0),
+                garment(SMALL_SHIRT, 0, 0),
+                garment(LOW_TUNIC, 0, low_tunic)
+            ])
         );
         let below_band = (usize::from(PANTS_BELOW) - EDGE_BAND_TEXELS) * usize::from(DRESS_WIDTH);
         assert_eq!(
             measure(legs),
             &SlotMeasure::Measured(vec![garment(PANTS, EDGE_BAND_TEXELS * usize::from(DRESS_WIDTH), below_band)])
         );
-        assert_eq!(measure(legs).shown().map(|shown| shown.item_id).collect::<Vec<_>>(), [u32::from(PANTS)]);
         assert_eq!(measure(abovechest), &SlotMeasure::HiddenByClient);
         assert_eq!(measure(slot_layer("skirt").unwrap()), &SlotMeasure::NoGarment);
+        assert!(measure(torso).slot_rule_hides() && !measure(legs).slot_rule_hides());
 
         let record = decision.record().unwrap();
-        assert!(record.hides(torso) && record.hides(abovechest) && !record.hides(legs));
+        let kept = |item: u16, beyond_edge: usize| PaperdollEcKeptGarment {
+            item_id: u32::from(item),
+            beyond_edge: beyond_edge as u32,
+        };
+        assert_eq!(record.kept, [kept(LOW_TUNIC, low_tunic), kept(PANTS, below_band)]);
+        let stored = measurement.records().unwrap();
+        assert_eq!(stored.decisions, [record]);
+        let body = u32::from(BODY);
+        assert!(stored.takes_off(u32::from(DRESS), body, torso, u32::from(SHIRT)));
+        assert!(!stored.takes_off(u32::from(DRESS), body, torso, u32::from(LOW_TUNIC)));
+        assert!(!stored.takes_off(u32::from(DRESS), body, legs, u32::from(PANTS)));
+        assert!(stored.takes_off(u32::from(DRESS), body, abovechest, u32::from(MANTLE)));
         assert_eq!(
-            decision.describe(),
+            decision.describe(name),
             format!(
-                "0x1F04 robe, human male: hides torso, abovechest (left out by the client); keeps legs ({} texels \
-                 beyond the edge); no skirt, arms, chest garment has a frame for this body",
-                grouped(below_band)
+                "0x1F04 robe, human male: takes off 2 of the 4 garments drawn beneath it; keeps 0x1539 ({} texels \
+                 beyond the edge), 0x1519 ({} texels beyond the edge)",
+                grouped(below_band),
+                grouped(low_tunic)
             )
         );
         assert_eq!(
             measurement.counts(),
-            DressCounts { hide_all: 0, hide_some: 1, hide_none: 0, garments_measured: 3, taken_off_in_view: 0, kept_edges_only: 0 }
+            DressCounts {
+                keep_none: 0,
+                keep_some: 1,
+                keep_all: 0,
+                nothing_measured: 0,
+                garments_measured: 4,
+                kept: 2,
+                slot_rule_taken_off_in_view: 1,
+                slot_rule_kept_edges_only: 0
+            }
         );
         let report = measurement.report_lines(name);
-        assert!(report.iter().any(|line| line == &format!("info: {}", decision.describe())), "{report:#?}");
-        let legs_line = format!(
-            "info: 0x1F04 robe, human male, legs: largest 0x1539: {} texels vanish near the edge, {} beyond; 1 of the 1 \
-             garment drawn beneath show beyond the edge: 0x1539 ({})",
-            grouped(EDGE_BAND_TEXELS * usize::from(DRESS_WIDTH)),
-            grouped(below_band),
-            grouped(below_band)
-        );
-        assert!(report.contains(&legs_line), "{report:#?}");
+        assert!(report.iter().any(|line| line == &format!("info: {}", decision.describe(name))), "{report:#?}");
+        for line in [
+            format!(
+                "info: 0x1F04 robe, human male, torso: 0x1517: taken off: {} texels vanish near the edge, 0 beyond",
+                grouped(shirt_edges)
+            ),
+            format!(
+                "info: 0x1F04 robe, human male, torso: 0x1519: kept: 0 texels vanish near the edge, {} beyond; the \
+                 slot rule took it off, in plain view",
+                grouped(low_tunic)
+            ),
+            "info: 0x1F04 robe, human male, abovechest: the client leaves its garments out beneath it".to_string(),
+        ] {
+            assert!(report.contains(&line), "{line}\n{report:#?}");
+        }
+    }
+
+    /// A decision's log line names the garments kept most in view first, up to [`LOGGED_KEPT_GARMENTS`], and counts
+    /// the rest.
+    #[test]
+    fn a_long_list_of_kept_garments_is_cut_short() {
+        const MORE: usize = 2;
+        const FIRST_GARMENT: u32 = 0x1000;
+        let kept = LOGGED_KEPT_GARMENTS + MORE;
+        let garments = (0..kept)
+            .map(|index| GarmentMeasure {
+                item_id: FIRST_GARMENT + index as u32,
+                near_edge: 0,
+                beyond_edge: LARGE_REMOVED_AREA_TEXELS + index,
+            })
+            .collect();
+        let decision = DressDecision {
+            item_id: u32::from(DRESS),
+            name: None,
+            body_name: WEARER_BODIES[0].0,
+            body: WEARER_BODIES[0].1,
+            slots: vec![(slot_layer("torso").unwrap(), SlotMeasure::Measured(garments))],
+        };
+        let line = decision.describe(|_| None);
+        assert!(line.starts_with(&format!("0x1F04, human male: takes off 0 of the {kept} garments drawn beneath it; keeps 0x{:04X} (", FIRST_GARMENT + kept as u32 - 1)), "{line}");
+        assert!(line.ends_with(&format!(" and {MORE} more")), "{line}");
+        assert_eq!(line.matches("texels beyond the edge").count(), LOGGED_KEPT_GARMENTS, "{line}");
     }
 
     #[test]

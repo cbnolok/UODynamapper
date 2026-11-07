@@ -356,12 +356,14 @@ fn print_known_package_summary(package: &UddpReader) -> eyre::Result<bool> {
             );
         }
         info!("Hue tables: {}", package.hue_tables().tables.len());
-        let dress_items = package.dress_hides().iter().map(|record| record.item_id).collect::<std::collections::BTreeSet<_>>();
+        let dress = package.dress_decisions();
+        let dress_items = dress.decisions.iter().map(|decision| decision.item_id).collect::<std::collections::BTreeSet<_>>();
         info!(
-            "Dress-layer decisions: {} over {} items, {} hiding a layer",
-            package.dress_hides().len(),
+            "Dress-layer decisions: {} over {} items, {} keeping a garment ({} garments kept in all)",
+            dress.decisions.len(),
             dress_items.len(),
-            package.dress_hides().iter().filter(|record| record.hidden_layers != 0).count()
+            dress.decisions.iter().filter(|decision| !decision.kept.is_empty()).count(),
+            dress.decisions.iter().map(|decision| decision.kept.len()).sum::<usize>()
         );
         return Ok(true);
     }

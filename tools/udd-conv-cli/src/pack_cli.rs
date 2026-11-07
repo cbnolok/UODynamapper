@@ -1257,7 +1257,7 @@ enum Commands {
         strict: bool,
     },
     /// Packs the EC paperdoll frames (Paperdoll.uop) and the hue tables of Hues.uop into paperdoll_ec.uddp, with what
-    /// each dress-layer item hides on each player body, measured from the frames and tileart.uop.
+    /// each dress-layer item takes off on each player body, measured garment by garment from the frames and tileart.uop.
     #[command(name = "pack-ec-paperdoll")]
     PackEcPaperdoll {
         #[command(flatten)]

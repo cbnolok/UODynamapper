@@ -1,6 +1,6 @@
 //! Packs the Enhanced Client's paperdoll frames (`Paperdoll.uop`) and the hue tables of `Hues.uop` into
-//! `paperdoll_ec.uddp` (layout in `udd_assets::paperdoll_ec`), with what each dress-layer item hides, measured from
-//! the frames, `tileart.uop` and the bundled wearable rules ([`crate::paperdoll_ec_dress`]).
+//! `paperdoll_ec.uddp` (layout in `udd_assets::paperdoll_ec`), with what each dress-layer item takes off, measured
+//! from the frames, `tileart.uop` and the bundled wearable rules ([`crate::paperdoll_ec_dress`]).
 
 use std::fmt;
 use std::path::{Path, PathBuf};
@@ -8,9 +8,9 @@ use std::path::{Path, PathBuf};
 use color_eyre::eyre::{self, WrapErr};
 use log::info;
 use udd_assets::paperdoll_ec::{
-    encode_dress_hides, encode_frames_manifest, encode_hue_tables, frame_entry_path, frame_hue_mask_entry_path,
-    frame_hue_mode, PaperdollEcDressHides, PaperdollEcFrameRecord, PaperdollEcSet, DRESS_HIDES_ENTRY_PATH,
-    FRAMES_ENTRY_PATH, FRAME_HUE_MASKED, HUE_TABLES_ENTRY_PATH,
+    encode_dress_decisions, encode_frames_manifest, encode_hue_tables, frame_entry_path, frame_hue_mask_entry_path,
+    frame_hue_mode, PaperdollEcFrameRecord, PaperdollEcSet, DRESS_DECISIONS_ENTRY_PATH, FRAMES_ENTRY_PATH,
+    FRAME_HUE_MASKED, HUE_TABLES_ENTRY_PATH,
 };
 use udd_container::{AddFileRequest, AddOwnedFileRequest, CompressionFlag, DataType, LookupMode, UddpBuilder};
 use uocf::enhanced::hues::{EcHueTables, ShadowPaletteStats, HUES_UOP_NAME};
@@ -23,7 +23,7 @@ use uocf::uop_container::package::UopPackage;
 
 use crate::package_progress::build_and_write_package;
 use crate::paperdoll_ec_dress::{
-    measure_dress_hides, tileart_name, DressCounts, DressMeasurement, BUNDLED_WEARABLE_RULES,
+    measure_dress_decisions, tileart_name, DressCounts, DressMeasurement, BUNDLED_WEARABLE_RULES,
 };
 use crate::page_compression::LOSSLESS_PAGE_ZSTD_LEVEL;
 use crate::source_paths::find_first_existing_file;
@@ -67,7 +67,8 @@ impl fmt::Display for PaperdollEcPackSummary {
         write!(
             f,
             "{} male and {} female frames ({} with a hue mask, {} empty, {} unreachable skipped), {} hue tables, {} \
-             pixel bytes before compression; {} dress-layer items: {} decisions hide every slot, {} some, {} none",
+             pixel bytes before compression; {} dress-layer items: of the {} garments drawn beneath them, {} kept and \
+             {} taken off ({} decisions keep none, {} some, {} all, {} measure none)",
             self.frames[0],
             self.frames[1],
             self.masked,
@@ -76,14 +77,18 @@ impl fmt::Display for PaperdollEcPackSummary {
             self.hue_tables,
             self.pixel_bytes,
             self.dress_items,
-            self.dress.hide_all,
-            self.dress.hide_some,
-            self.dress.hide_none
+            self.dress.garments_measured,
+            self.dress.kept,
+            self.dress.garments_measured - self.dress.kept,
+            self.dress.keep_none,
+            self.dress.keep_some,
+            self.dress.keep_all,
+            self.dress.nothing_measured
         )
     }
 }
 
-/// Packs `Paperdoll.uop` and `Hues.uop` with what each dress-layer item hides, measured with `tileart.uop` (names
+/// Packs `Paperdoll.uop` and `Hues.uop` with what each dress-layer item takes off, measured with `tileart.uop` (names
 /// from `string_dictionary.uop`), each found in the first of `source_dirs` that has it. Logs one line per
 /// dress-layer item and body, and a summary.
 pub fn pack_paperdoll_ec(
@@ -116,7 +121,8 @@ pub fn pack_paperdoll_ec(
     Ok(summary)
 }
 
-/// Measures what each dress-layer item of `tileart` hides, logs each decision and the summary, and writes the report.
+/// Measures what each dress-layer item of `tileart` takes off, logs each decision and the summary, and writes the
+/// report.
 fn measure_dress(
     sets: &FrameSets,
     tileart: &NamedTileArt,
@@ -129,12 +135,12 @@ fn measure_dress(
         let index = tileart.records.binary_search_by_key(&item_id, |&(id, _)| id).ok()?;
         tileart_name(&tileart.records[index].1, strings)
     };
-    let measurement = measure_dress_hides(sets, tileart, &rules, &item_ids, name)?;
+    let measurement = measure_dress_decisions(sets, tileart, &rules, &item_ids, name)?;
     for skipped in &measurement.skipped_bodies {
         log::warn!("paperdoll_ec: body {skipped} is not measured.");
     }
     for decision in &measurement.decisions {
-        info!("paperdoll_ec: {}", decision.describe());
+        info!("paperdoll_ec: {}.", decision.describe(name));
     }
     info!("paperdoll_ec: {}.", measurement.summary());
     if let Some(path) = &options.report {
@@ -159,7 +165,7 @@ pub fn build_paperdoll_ec(
         dress: dress.counts(),
         ..Default::default()
     };
-    let dress_hides: Vec<PaperdollEcDressHides> = dress.records()?;
+    let dress_decisions = dress.records()?;
     let mut set_records = Vec::with_capacity(GENDER_SET_COUNT);
     let mut frames = Vec::new();
     for set_index in 0..GENDER_SET_COUNT {
@@ -210,7 +216,7 @@ pub fn build_paperdoll_ec(
     for (path, bytes) in [
         (FRAMES_ENTRY_PATH, encode_frames_manifest(&set_records, &frames)?),
         (HUE_TABLES_ENTRY_PATH, encode_hue_tables(hues)?),
-        (DRESS_HIDES_ENTRY_PATH, encode_dress_hides(&dress_hides)?),
+        (DRESS_DECISIONS_ENTRY_PATH, encode_dress_decisions(&dress_decisions)?),
     ] {
         builder
             .add_file(AddFileRequest {
@@ -383,14 +389,16 @@ mod tests {
         assert_eq!(package.sets()[MALE_SET].bounds, sets.set(MALE_SET).bounds);
     }
 
-    /// The dress-layer decisions are stored per item and body, and found by them.
+    /// The dress-layer decisions are stored per item and body, with the garments each keeps, and found by them.
     #[test]
     fn dress_decisions_are_stored_per_item_and_body() {
-        use crate::paperdoll_ec_dress::{DressDecision, GarmentMeasure, SlotMeasure};
+        use crate::paperdoll_ec_dress::{DressDecision, GarmentMeasure, SlotMeasure, LARGE_REMOVED_AREA_TEXELS};
         use uocf::enhanced::paperdoll::slot_layer;
         const ROBE: u32 = 7939;
         const HUMAN_MALE: u32 = 400;
         const ELF_FEMALE: u32 = 606;
+        const SHIRT: u32 = 0x1517;
+        const PANTS: u32 = 0x1539;
         let torso = slot_layer("torso").unwrap();
         let legs = slot_layer("legs").unwrap();
         let decision = |body, body_name, slots: Vec<(usize, SlotMeasure)>| DressDecision {
@@ -400,22 +408,29 @@ mod tests {
             body,
             slots,
         };
-        let kept = SlotMeasure::Measured(vec![GarmentMeasure { item_id: 0, near_edge: 0, beyond_edge: usize::MAX }]);
+        let measured = |item_id, beyond_edge| SlotMeasure::Measured(vec![GarmentMeasure { item_id, near_edge: 0, beyond_edge }]);
         let dress = DressMeasurement {
             dress_items: vec![ROBE],
             decisions: vec![
-                decision(ELF_FEMALE, "elf female", vec![(torso, kept.clone()), (legs, SlotMeasure::HiddenByClient)]),
-                decision(HUMAN_MALE, "human male", vec![(torso, SlotMeasure::HiddenByClient), (legs, kept)]),
+                decision(
+                    ELF_FEMALE,
+                    "elf female",
+                    vec![(torso, measured(SHIRT, LARGE_REMOVED_AREA_TEXELS)), (legs, SlotMeasure::HiddenByClient)],
+                ),
+                decision(HUMAN_MALE, "human male", vec![(torso, measured(SHIRT, 0)), (legs, measured(PANTS, 0))]),
             ],
             ..Default::default()
         };
         let (package, summary) = pack_with(&frame_sets(), &hue_tables(), &dress);
-        assert_eq!(package.dress_hides().len(), 2);
-        let hides = |body| package.dress_hides_on(ROBE, body).unwrap();
-        assert!(hides(HUMAN_MALE).hides(torso) && !hides(HUMAN_MALE).hides(legs));
-        assert!(!hides(ELF_FEMALE).hides(torso) && hides(ELF_FEMALE).hides(legs));
-        assert!(package.dress_hides_on(ROBE, u32::from(FEMALE_BODY_FRAME)).is_none());
-        assert_eq!((summary.dress_items, summary.dress.hide_some), (1, 2));
+        let stored = package.dress_decisions();
+        assert_eq!(stored.decisions.len(), 2);
+        assert!(stored.covers(torso) && stored.covers(legs));
+        assert!(stored.takes_off(ROBE, HUMAN_MALE, torso, SHIRT) && stored.takes_off(ROBE, HUMAN_MALE, legs, PANTS));
+        assert!(!stored.takes_off(ROBE, ELF_FEMALE, torso, SHIRT), "kept");
+        let kept = stored.on(ROBE, ELF_FEMALE).unwrap().kept_garment(SHIRT).unwrap();
+        assert_eq!(kept.beyond_edge as usize, LARGE_REMOVED_AREA_TEXELS);
+        assert!(stored.on(ROBE, u32::from(FEMALE_BODY_FRAME)).is_none());
+        assert_eq!((summary.dress_items, summary.dress.keep_none, summary.dress.keep_all), (1, 1, 1));
     }
 
     /// A real `Paperdoll.uop` packs losslessly: every frame the paperdoll finds decodes to the same pixels under the

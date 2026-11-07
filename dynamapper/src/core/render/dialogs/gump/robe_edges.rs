@@ -225,7 +225,7 @@ fn what_the_gump_paperdolls_show_beneath_a_robe() {
         for (profile_id, body_gump) in PROFILE_BODY_GUMPS {
             let profile = profiles.profile(profile_id).unwrap();
             let (width, height) = (profile.canvas_width as usize, profile.canvas_height as usize);
-            let stored = stored_dress_hides(Some(&package), tilemeta.item_definitions(), profile.body);
+            let stored = StoredDressDecisions::new(Some(&package), tilemeta.item_definitions(), profile.body);
             let request = |items: &[u32]| PaperdollRequest {
                 profile: profile.clone(),
                 body_gump: Some(body_gump),
@@ -233,9 +233,8 @@ fn what_the_gump_paperdolls_show_beneath_a_robe() {
                 items: items.iter().map(|&item_id| PaperdollItem { item_id, hue: 0 }).collect(),
             };
             let layers = |items: &[u32]| {
-                gump_paperdoll_layers(&request(items), client, item_tile, tilemeta.item_definitions(), &client_order, |_| {
-                    None
-                })
+                let none = StoredDressDecisions::none();
+                gump_paperdoll_layers(&request(items), client, item_tile, tilemeta.item_definitions(), &client_order, &none)
             };
             // Each candidate's gump on this profile's canvas: the garments as the texels they touch.
             let mut dresses = Vec::new();
@@ -268,7 +267,7 @@ fn what_the_gump_paperdolls_show_beneath_a_robe() {
             for (dress, most, least) in &dresses {
                 let touched: Vec<bool> = most.iter().map(|&alpha| alpha != 0).collect();
                 let near = near(&touched, width, height, GUMP_EDGE_BAND_TEXELS);
-                let hidden = stored(dress.item_id);
+                let decision = stored.decision(dress.item_id);
                 for (garment, texels) in &garments {
                     let Ok(drawn) = layers(&[garment.item_id, dress.item_id]) else {
                         continue;
@@ -292,7 +291,7 @@ fn what_the_gump_paperdolls_show_beneath_a_robe() {
                             _ => showing.soft += 1,
                         }
                     }
-                    let taken = hidden.is_some_and(|hidden| hidden & 1 << garment.layer != 0);
+                    let taken = stored.takes_off(dress.item_id, (garment.layer, garment.item_id));
                     tally.add(showing, taken);
                     let row = format!(
                         "{preset}\t{profile_id}\t0x{:04X}\t{}\t0x{:04X}\t{}\t{}\t{}\t{}\t{}\t{}\n",
@@ -304,7 +303,7 @@ fn what_the_gump_paperdolls_show_beneath_a_robe() {
                         showing.soft,
                         showing.bare_near,
                         showing.bare_beyond,
-                        match hidden {
+                        match decision {
                             None => "no decision",
                             Some(_) if taken => "taken off",
                             Some(_) => "kept",
@@ -357,9 +356,9 @@ fn what_the_gump_paperdolls_show_beneath_a_robe() {
                 body_hue: 0,
                 items: items.iter().map(|&item_id| PaperdollItem { item_id, hue: 0 }).collect(),
             };
-            let stored = stored_dress_hides(Some(&package), tilemeta.item_definitions(), profile.body);
+            let stored = StoredDressDecisions::new(Some(&package), tilemeta.item_definitions(), profile.body);
             let mut layers =
-                gump_paperdoll_layers(&request, client, item_tile, tilemeta.item_definitions(), order, stored).unwrap();
+                gump_paperdoll_layers(&request, client, item_tile, tilemeta.item_definitions(), order, &stored).unwrap();
             // A body the preset has no gump for is left out: the garments are what is looked at.
             layers.retain(|layer| layer.item.is_some() || gump_map.has_gump(client, layer.gump_id));
             let gump = compose_paperdoll(&gump_map, client, None, profile, &layers).unwrap();

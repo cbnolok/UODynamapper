@@ -4,11 +4,11 @@
 //
 // The client draws the shirt, trousers, skirt, sleeves and chest pieces beneath a robe or dress, and their 3D frames do
 // not line up with the robe's: their edges show past it. When paperdoll_ec.uddp is packed, udd-cli (or the converter
-// GUI) measures every dress-layer item on each player body (human, elf and gargoyle, male and female): for each of
-// the slots torso, legs, skirt, arms, chest and abovechest, it draws the largest garment of the slot the client puts
-// beneath the item, with and without it. When what vanishes lies within 16 texels of the item's edges (fewer than
-// 1,600 texels beyond), the slot is taken off under that item on that body; otherwise the garment is in plain view and
-// the slot stays. The package stores those decisions; the packing log lists them, one line per item and body, and
+// GUI) measures every dress-layer item on each player body (human, elf and gargoyle, male and female): it draws each
+// garment of the slots torso, legs, skirt, arms, chest and abovechest the client puts beneath the item, with and
+// without it. When what vanishes lies within 16 texels of the item's edges (fewer than 1,600 texels beyond), the
+// garment is taken off under that item on that body; otherwise it is in plain view and stays. The package stores the
+// garments each item keeps on each body; the packing log lists them, one line per item and body, and
 // `pack-ec-paperdoll --report <file>` (the GUI's Findings Report) writes every measurement. Only what the client draws
 // beneath the item is taken off; a taken-off item counts as not worn, so the client's rules it would set off, as plate
 // legs hiding the shoes, do not apply. The gump paperdolls take the decision for the 3D body of their profile, and
@@ -25,7 +25,7 @@
 //
 // Examples:
 //
-// The tabard keeps the shirt beneath it (the stored decision: most shirts show around it); take it off anyway:
+// The tabard keeps most shirts beneath it (the stored decision: they show around it); take them off anyway:
 //   cover "dress" items="0xA412" {
 //       hide "torso"
 //   }

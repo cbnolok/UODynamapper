@@ -275,7 +275,8 @@ mod tests {
     ) -> color_eyre::eyre::Result<Vec<(u32, bool)>> {
         let tiles = worn_tiles();
         let tile = |item_id: u32| tiles.iter().find(|tile| tile.tile_id == item_id).copied();
-        let layers = gump_paperdoll_layers(request, client, tile, &beard_definition(), &bundled_order(), |_| None)?;
+        let none = StoredDressDecisions::none();
+        let layers = gump_paperdoll_layers(request, client, tile, &beard_definition(), &bundled_order(), &none)?;
         Ok(layers.iter().map(|layer| (layer.gump_id, layer.partial_hue)).collect())
     }
 
@@ -305,26 +306,35 @@ mod tests {
     }
 
     /// A robe takes off what its stored decision says: the plate chest, then the shirt the plate chest hid, which the
-    /// client's rules draw again once the plate chest is off; the necklace, drawn over the robe, stays. With no
-    /// decision, the client's rules alone: the plate chest hides the shirt.
+    /// client's rules draw again once the plate chest is off; the necklace, drawn over the robe, stays. A garment the
+    /// decision keeps stays; with no decision, the client's rules alone: the plate chest hides the shirt.
     #[test]
     fn gump_paperdoll_takes_off_what_a_robe_covers() {
+        use udd_assets::paperdoll_ec::{layer_mask, PaperdollEcDressDecision, PaperdollEcDressDecisions, PaperdollEcKeptGarment};
+        const BODY_FRAME: u16 = 400;
+        const PLATE_CHEST_BEYOND: u32 = 5210;
         let offset = bundled_profiles().profile("human_male").unwrap().equipment_offset;
         let gump = |anim_id: u32| offset + anim_id;
         let tiles = worn_tiles();
         let tile = |item_id: u32| tiles.iter().find(|tile| tile.tile_id == item_id).copied();
         let dressed = request(&[SHIRT, PLATE_CHEST, NECKLACE, ROBE]);
-        let gumps = |stored: &dyn Fn(u32) -> Option<u32>| -> Vec<u32> {
+        let gumps = |stored: &StoredDressDecisions| -> Vec<u32> {
             gump_paperdoll_layers(&dressed, GumpClient::Classic, tile, &beard_definition(), &bundled_order(), stored)
                 .unwrap()
                 .iter()
                 .map(|layer| layer.gump_id)
                 .collect()
         };
-        let torso_and_chest = 1 << TORSO_LAYER | 1 << CHEST_LAYER;
-        let robe_decision = |item_id: u32| (item_id == ROBE).then_some(torso_and_chest);
-        assert_eq!(gumps(&robe_decision), [BODY_GUMP, gump(6), gump(3)]);
-        assert_eq!(gumps(&|_| None), [BODY_GUMP, gump(2), gump(6), gump(3)]);
+        let decisions = |kept: Vec<PaperdollEcKeptGarment>| PaperdollEcDressDecisions {
+            slots: layer_mask([usize::from(TORSO_LAYER), usize::from(CHEST_LAYER)]),
+            decisions: vec![PaperdollEcDressDecision { item_id: ROBE, body: BODY_FRAME, kept }],
+        };
+        let stored = |decisions| StoredDressDecisions { decisions: Some(decisions), body_frame: Some(u32::from(BODY_FRAME)) };
+        let takes_all = decisions(Vec::new());
+        assert_eq!(gumps(&stored(&takes_all)), [BODY_GUMP, gump(6), gump(3)]);
+        let keeps_plate = decisions(vec![PaperdollEcKeptGarment { item_id: PLATE_CHEST, beyond_edge: PLATE_CHEST_BEYOND }]);
+        assert_eq!(gumps(&stored(&keeps_plate)), [BODY_GUMP, gump(2), gump(6), gump(3)]);
+        assert_eq!(gumps(&StoredDressDecisions::none()), [BODY_GUMP, gump(2), gump(6), gump(3)]);
     }
 
     /// A female profile's item falls back to its male gump when its own is missing; a gump missing after that leaves
@@ -341,8 +351,9 @@ mod tests {
         dressed.profile = female.clone();
         let tiles = worn_tiles();
         let tile = |item_id: u32| tiles.iter().find(|tile| tile.tile_id == item_id).copied();
+        let none = StoredDressDecisions::none();
         let layers =
-            gump_paperdoll_layers(&dressed, GumpClient::Classic, tile, &beard_definition(), &bundled_order(), |_| None)
+            gump_paperdoll_layers(&dressed, GumpClient::Classic, tile, &beard_definition(), &bundled_order(), &none)
                 .unwrap();
         let (shirt, necklace) = (&layers[1], &layers[2]);
         assert_eq!((shirt.gump_id, shirt.fallback_gump_id), (female.equipment_offset + 1, Some(male.equipment_offset + 1)));
@@ -969,7 +980,7 @@ fn draw_open_gump_content(
         // Premultiplied already, as bevy_egui blends it: `alpha_blend_at` composes the layers over a transparent canvas.
         OpenGumpContent::Paperdoll(request) => {
             let tilemeta = &sources.tilemeta()?.0;
-            let stored = stored_dress_hides(
+            let stored = StoredDressDecisions::new(
                 sources.paperdoll_ec.map(|package| package.0.as_ref()),
                 tilemeta.item_definitions(),
                 request.profile.body,
@@ -980,7 +991,7 @@ fn draw_open_gump_content(
                 |item_id| tilemeta.item_tile(item_id).copied(),
                 tilemeta.item_definitions(),
                 sources.order,
-                stored,
+                &stored,
             )?;
             compose_paperdoll(sources.gump_map()?, client, sources.hues_package, &request.profile, &layers)?
         }
@@ -1280,27 +1291,56 @@ fn open_paperdoll(
     }
 }
 
-/// What the gump paperdolls take off beneath a dress-layer item: the decision paperdoll_ec.uddp stores for it on the
-/// frame the 3D paperdoll draws for `body` (bit n: layer n). The gump art shows the garments' edges past a robe as the
-/// 3D frames do, and the decisions measured on the frames take off no garment the gumps show in plain view
+/// What the gump paperdolls take off beneath a dress-layer item: the decisions paperdoll_ec.uddp stores, on the frame
+/// the 3D paperdoll draws for the profile's body. The gump art shows the garments' edges past a robe as the 3D frames
+/// do, and the decisions measured on the frames take off no garment the gumps show in plain view
 /// (docs/agent_notes/ec_paperdoll_robe_override.md). Without the package, none.
-fn stored_dress_hides<'a>(
-    package: Option<&'a udd_assets::PaperdollEcPackage>,
-    definitions: &TileMetaItemDefinitions,
-    body: u32,
-) -> impl Fn(u32) -> Option<u32> + 'a {
-    let body_frame = package
-        .and_then(|package| body_frame(package, &Wearer::new(definitions, body)))
-        .map(|(frame, _)| u32::from(frame.entry.frame_number));
-    move |item_id| Some(package?.dress_hides_on(item_id, body_frame?)?.hidden_layers)
+#[derive(Clone, Copy)]
+struct StoredDressDecisions<'a> {
+    decisions: Option<&'a udd_assets::paperdoll_ec::PaperdollEcDressDecisions>,
+    /// The number of the body frame the decisions are looked up on; `None` without the package or a frame.
+    body_frame: Option<u32>,
+}
+
+impl<'a> StoredDressDecisions<'a> {
+    fn new(
+        package: Option<&'a udd_assets::PaperdollEcPackage>,
+        definitions: &TileMetaItemDefinitions,
+        body: u32,
+    ) -> Self {
+        let body_frame = package
+            .and_then(|package| body_frame(package, &Wearer::new(definitions, body)))
+            .map(|(frame, _)| u32::from(frame.entry.frame_number));
+        Self { decisions: package.map(|package| package.dress_decisions()), body_frame }
+    }
+
+    /// No decisions: the client's draw order, under the overrides alone.
+    #[cfg(test)]
+    fn none() -> Self {
+        Self { decisions: None, body_frame: None }
+    }
+
+    /// The decision stored for the dress-layer item `covering`.
+    #[cfg(test)]
+    fn decision(&self, covering: u32) -> Option<&'a udd_assets::paperdoll_ec::PaperdollEcDressDecision> {
+        self.decisions?.on(covering, self.body_frame?)
+    }
+
+    /// Whether the dress-layer item `covering` takes off `garment` (its layer and id) drawn beneath it.
+    fn takes_off(&self, covering: u32, (layer, garment): (usize, u32)) -> bool {
+        match (self.decisions, self.body_frame) {
+            (Some(decisions), Some(body)) => decisions.takes_off(covering, body, layer, garment),
+            _ => false,
+        }
+    }
 }
 
 /// The layers of the gump paperdoll, bottom first: the body gump, then the gump of each worn item in the paperdoll draw
 /// order of `WearableRules.kdl` (`WearableRules::paperdoll_order`), which hides some layers under others, without what
-/// a robe covers, as on the 3D paperdoll: `order`'s overrides, else `stored` (`stored_dress_hides`), give the layers an
-/// item takes off beneath it (`paperdoll_overrides::taken_off`); a taken-off item counts as not worn and the order is
-/// taken again. The Classic preset finds an item's layer in tiledata; the Enhanced presets, as the 3D paperdoll does, in
-/// the item's `tileart.uop` record first. The overrides of the draw order follow the race of the profile's body.
+/// a robe covers, as on the 3D paperdoll: `order`'s overrides, else `stored`, decide what an item takes off beneath it
+/// (`paperdoll_overrides::taken_off`); a taken-off item counts as not worn and the order is taken again. The Classic
+/// preset finds an item's layer in tiledata; the Enhanced presets, as the 3D paperdoll does, in the item's `tileart.uop`
+/// record first. The overrides of the draw order follow the race of the profile's body.
 /// `item_tile` gives an item's tiledata record; `definitions` are the `tileart.uop` records of tilemeta.uddp.
 fn gump_paperdoll_layers(
     request: &PaperdollRequest,
@@ -1308,7 +1348,7 @@ fn gump_paperdoll_layers(
     item_tile: impl Fn(u32) -> Option<TileMetaItemTile>,
     definitions: &TileMetaItemDefinitions,
     order: &PaperdollOrder,
-    stored: impl Fn(u32) -> Option<u32>,
+    stored: &StoredDressDecisions,
 ) -> color_eyre::eyre::Result<Vec<PaperdollLayer>> {
     let PaperdollRequest { profile, body_gump, body_hue, items } = request;
     let body_gump =
@@ -1366,17 +1406,17 @@ fn gump_paperdoll_layers(
         let drawn_layers = order.rules.paperdoll_order(&worn, race);
         let drawn: Vec<(usize, u32)> =
             drawn_layers.iter().filter_map(|&layer| worn[layer].map(|item_id| (layer, item_id))).collect();
-        let taken = taken_off(&drawn, |layer, item_id| order.hidden_layers(layer, item_id, || stored(item_id)));
+        let taken = taken_off(&drawn, |covering, garment| {
+            order.takes_off(covering, garment, || stored.takes_off(covering.1, garment))
+        });
         if taken.is_empty() {
             layers.extend(drawn_layers.into_iter().filter_map(|layer| worn_layers[layer].take()));
             return Ok(layers);
         }
         // Each pass leaves out one item at least, so the loop ends.
-        for (item, layer) in worn.iter_mut().zip(worn_layers.iter_mut()) {
-            if item.is_some_and(|item_id| taken.contains(&item_id)) {
-                *item = None;
-                *layer = None;
-            }
+        for taken in &taken {
+            worn[taken.garment.0] = None;
+            worn_layers[taken.garment.0] = None;
         }
     }
 }

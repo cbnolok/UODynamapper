@@ -13,10 +13,11 @@
 //!   on the pixels whose palette colour takes the hue, else 0.
 //! - `metadata/hue_tables.bin`: magic `PDHT`, `u32` version, `u32` count, then per table a `u16` bitmap number and
 //!   256 RGBA entries: the tables of `Hues.uop` (`EcHueTables`).
-//! - `metadata/dress_hides.bin`: magic `PDDH`, `u32` version, `u32` count, then per record, ascending by (item id,
-//!   body): `u32` item id, `u16` body, `u32` hidden layers (bit n: layer n of `uocf::enhanced::paperdoll`). What
-//!   the packer measured each dress-layer item to hide on each wearer body ([`PaperdollEcDressHides`]); not client
-//!   data.
+//! - `metadata/dress_decisions.v3.bin`: magic `PDDD`, `u32` version, `u32` slots (bit n: layer n of
+//!   `uocf::enhanced::paperdoll`, the layers the decisions take garments off), `u32` count, then per decision,
+//!   ascending by (item id, body): `u32` item id, `u16` body, `u16` kept count, then per kept garment, ascending by
+//!   id, `u32` item id and `u32` texels beyond the edge. What the packer measured each dress-layer item to take off
+//!   on each wearer body ([`PaperdollEcDressDecisions`]); not client data.
 //!
 //! Only frames the paperdoll can find are stored: those whose action is their set's index
 //! (`UOAnimations::FindFrameEntry`), the first of a repeated number.
@@ -39,18 +40,24 @@ pub use crate::mobile_anim_ec::{FRAME_HUE_ALL, FRAME_HUE_MASKED, FRAME_HUE_NONE}
 
 pub const FRAMES_ENTRY_PATH: &str = "metadata/frames.bin";
 pub const HUE_TABLES_ENTRY_PATH: &str = "metadata/hue_tables.bin";
-pub const DRESS_HIDES_ENTRY_PATH: &str = "metadata/dress_hides.bin";
+/// The dress-layer decisions, per garment since format 3 (format 2 stored a mask of slots at
+/// `metadata/dress_hides.bin`).
+pub const DRESS_DECISIONS_ENTRY_PATH: &str = "metadata/dress_decisions.v3.bin";
 pub const FRAMES_MAGIC: [u8; 4] = *b"PDFR";
 pub const HUE_TABLES_MAGIC: [u8; 4] = *b"PDHT";
-pub const DRESS_HIDES_MAGIC: [u8; 4] = *b"PDDH";
-/// Version of the three manifests, written by the converter. 2 adds `metadata/dress_hides.bin`.
-pub const PAPERDOLL_EC_METADATA_VERSION: u32 = 2;
+pub const DRESS_DECISIONS_MAGIC: [u8; 4] = *b"PDDD";
+/// Version of the manifests, written by the converter. 2 added the dress-layer decisions; 3 decides them per garment
+/// (`DRESS_DECISIONS_ENTRY_PATH`).
+pub const PAPERDOLL_EC_METADATA_VERSION: u32 = 3;
 const RGBA_CHANNELS: usize = 4;
 const ALPHA_CHANNEL: usize = 3;
 /// Bytes of a table entry: its bitmap number, then its RGBA entries.
 const HUE_TABLE_RECORD_BYTES: usize = std::mem::size_of::<u16>() + HUE_TABLE_ENTRIES * RGBA_CHANNELS;
-/// Bytes of a dress record: item id, body and hidden layers.
-const DRESS_HIDES_RECORD_BYTES: usize = std::mem::size_of::<u32>() + std::mem::size_of::<u16>() + std::mem::size_of::<u32>();
+/// Bytes of a dress decision before its kept garments: item id, body and kept count.
+const DRESS_DECISION_HEADER_BYTES: usize =
+    std::mem::size_of::<u32>() + std::mem::size_of::<u16>() + std::mem::size_of::<u16>();
+/// Bytes of a kept garment: item id and texels beyond the edge.
+const KEPT_GARMENT_BYTES: usize = std::mem::size_of::<u32>() + std::mem::size_of::<u32>();
 
 /// One frame of a set.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -81,27 +88,67 @@ pub struct PaperdollEcSet {
     pub shadow: ShadowPaletteStats,
 }
 
-/// What a dress-layer item hides on one wearer body: the layers Dynamapper's 3D paperdoll takes off when the client
-/// draws them beneath the item, because only their edges would show past it. The packer measures it
-/// (`udd_conv::paperdoll_ec_dress`); the client has no such rule.
+/// A garment a dress-layer item keeps beneath it: it shows beyond the item's edges.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct PaperdollEcDressHides {
+pub struct PaperdollEcKeptGarment {
+    pub item_id: u32,
+    /// Texels of the garment that vanish without it beyond the edge band of the item: what of it is in plain view.
+    pub beyond_edge: u32,
+}
+
+/// What a dress-layer item takes off on one wearer body: every garment of the decisions' slots the client draws
+/// beneath it, except the garments it keeps, which show beyond its edges; the others would show only their edges past
+/// it. The packer measures it (`udd_conv::paperdoll_ec_dress`); the client has no such rule.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PaperdollEcDressDecision {
     pub item_id: u32,
     /// The wearer's body: the number of the body frame the paperdoll draws.
     pub body: u16,
-    /// Bit n set: layer n (`uocf::enhanced::paperdoll::SLOT_NAMES`) is taken off.
-    pub hidden_layers: u32,
+    /// Ascending by item id.
+    pub kept: Vec<PaperdollEcKeptGarment>,
 }
 
-impl PaperdollEcDressHides {
-    /// Whether layer `layer` is taken off.
-    pub fn hides(&self, layer: usize) -> bool {
-        layer < LAYER_COUNT && self.hidden_layers & (1 << layer) != 0
+impl PaperdollEcDressDecision {
+    /// The kept garment `item_id`, if kept.
+    pub fn kept_garment(&self, item_id: u32) -> Option<&PaperdollEcKeptGarment> {
+        let index = self.kept.binary_search_by_key(&item_id, |garment| garment.item_id).ok()?;
+        Some(&self.kept[index])
     }
 }
 
-/// The mask of `PaperdollEcDressHides::hidden_layers` with the given layers set.
-pub fn hidden_layer_mask(layers: impl IntoIterator<Item = usize>) -> u32 {
+/// The dress-layer decisions of a package: the slots they take garments off and one decision per item and body.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct PaperdollEcDressDecisions {
+    /// Bit n set: layer n (`uocf::enhanced::paperdoll::SLOT_NAMES`) is one the decisions take garments off.
+    pub slots: u32,
+    /// Ascending by (item id, body).
+    pub decisions: Vec<PaperdollEcDressDecision>,
+}
+
+impl PaperdollEcDressDecisions {
+    /// Whether the decisions take garments of layer `layer` off.
+    pub fn covers(&self, layer: usize) -> bool {
+        layer < LAYER_COUNT && self.slots & (1 << layer) != 0
+    }
+
+    /// The decision for dress-layer item `item_id` on `body` (the number of the body frame drawn); `None` when the
+    /// packer measured nothing for them.
+    pub fn on(&self, item_id: u32, body: u32) -> Option<&PaperdollEcDressDecision> {
+        let body = u16::try_from(body).ok()?;
+        let index =
+            self.decisions.binary_search_by_key(&(item_id, body), |decision| (decision.item_id, decision.body)).ok()?;
+        Some(&self.decisions[index])
+    }
+
+    /// Whether dress-layer item `item_id` takes off garment `garment`, worn on `layer` and drawn beneath it, on `body`:
+    /// its decision there covers the layer and does not keep the garment. Without a decision, nothing is taken off.
+    pub fn takes_off(&self, item_id: u32, body: u32, layer: usize, garment: u32) -> bool {
+        self.covers(layer) && self.on(item_id, body).is_some_and(|decision| decision.kept_garment(garment).is_none())
+    }
+}
+
+/// The mask with bit n set for each layer n of `layers` below `LAYER_COUNT`.
+pub fn layer_mask(layers: impl IntoIterator<Item = usize>) -> u32 {
     layers.into_iter().filter(|&layer| layer < LAYER_COUNT).fold(0, |mask, layer| mask | 1 << layer)
 }
 
@@ -172,16 +219,23 @@ pub fn encode_hue_tables(tables: &EcHueTables) -> eyre::Result<Vec<u8>> {
     Ok(bytes)
 }
 
-/// The bytes of `metadata/dress_hides.bin`; `records` ascending by (item id, body).
-pub fn encode_dress_hides(records: &[PaperdollEcDressHides]) -> eyre::Result<Vec<u8>> {
-    let mut bytes = Vec::with_capacity(records.len() * DRESS_HIDES_RECORD_BYTES);
-    bytes.extend_from_slice(&DRESS_HIDES_MAGIC);
+/// The bytes of `DRESS_DECISIONS_ENTRY_PATH`; the decisions ascending by (item id, body), their kept garments by id.
+pub fn encode_dress_decisions(decisions: &PaperdollEcDressDecisions) -> eyre::Result<Vec<u8>> {
+    let kept: usize = decisions.decisions.iter().map(|decision| decision.kept.len()).sum();
+    let mut bytes =
+        Vec::with_capacity(decisions.decisions.len() * DRESS_DECISION_HEADER_BYTES + kept * KEPT_GARMENT_BYTES);
+    bytes.extend_from_slice(&DRESS_DECISIONS_MAGIC);
     bytes.extend_from_slice(&PAPERDOLL_EC_METADATA_VERSION.to_le_bytes());
-    bytes.extend_from_slice(&u32::try_from(records.len())?.to_le_bytes());
-    for record in records {
-        bytes.extend_from_slice(&record.item_id.to_le_bytes());
-        bytes.extend_from_slice(&record.body.to_le_bytes());
-        bytes.extend_from_slice(&record.hidden_layers.to_le_bytes());
+    bytes.extend_from_slice(&decisions.slots.to_le_bytes());
+    bytes.extend_from_slice(&u32::try_from(decisions.decisions.len())?.to_le_bytes());
+    for decision in &decisions.decisions {
+        bytes.extend_from_slice(&decision.item_id.to_le_bytes());
+        bytes.extend_from_slice(&decision.body.to_le_bytes());
+        bytes.extend_from_slice(&u16::try_from(decision.kept.len())?.to_le_bytes());
+        for garment in &decision.kept {
+            bytes.extend_from_slice(&garment.item_id.to_le_bytes());
+            bytes.extend_from_slice(&garment.beyond_edge.to_le_bytes());
+        }
     }
     Ok(bytes)
 }
@@ -272,38 +326,46 @@ fn parse_hue_tables(bytes: &[u8]) -> eyre::Result<EcHueTables> {
     Ok(tables)
 }
 
-fn parse_dress_hides(bytes: &[u8]) -> eyre::Result<Vec<PaperdollEcDressHides>> {
+fn parse_dress_decisions(bytes: &[u8]) -> eyre::Result<PaperdollEcDressDecisions> {
     let mut cursor = Cursor::new(bytes);
-    read_magic(&mut cursor, DRESS_HIDES_MAGIC, DRESS_HIDES_ENTRY_PATH)?;
+    read_magic(&mut cursor, DRESS_DECISIONS_MAGIC, DRESS_DECISIONS_ENTRY_PATH)?;
+    let slots = cursor.read_u32::<LittleEndian>()?;
+    eyre::ensure!(slots >> LAYER_COUNT == 0, "{DRESS_DECISIONS_ENTRY_PATH}: a slot past {LAYER_COUNT}: {slots:#x}");
     let count = cursor.read_u32::<LittleEndian>()? as usize;
-    let mut records: Vec<PaperdollEcDressHides> = Vec::with_capacity(count);
+    let mut decisions: Vec<PaperdollEcDressDecision> = Vec::with_capacity(count);
     for _ in 0..count {
-        let record = PaperdollEcDressHides {
-            item_id: cursor.read_u32::<LittleEndian>()?,
-            body: cursor.read_u16::<LittleEndian>()?,
-            hidden_layers: cursor.read_u32::<LittleEndian>()?,
-        };
-        eyre::ensure!(
-            record.hidden_layers >> LAYER_COUNT == 0,
-            "{DRESS_HIDES_ENTRY_PATH}: item {} on body {} hides a layer past {LAYER_COUNT}: {:#x}",
-            record.item_id,
-            record.body,
-            record.hidden_layers
-        );
-        if let Some(last) = records.last() {
+        let item_id = cursor.read_u32::<LittleEndian>()?;
+        let body = cursor.read_u16::<LittleEndian>()?;
+        let kept_count = cursor.read_u16::<LittleEndian>()?;
+        let truncated = || format!("{DRESS_DECISIONS_ENTRY_PATH}: truncated in item {item_id} on body {body}");
+        let mut kept: Vec<PaperdollEcKeptGarment> = Vec::with_capacity(usize::from(kept_count));
+        for _ in 0..kept_count {
+            let garment = PaperdollEcKeptGarment {
+                item_id: cursor.read_u32::<LittleEndian>().wrap_err_with(truncated)?,
+                beyond_edge: cursor.read_u32::<LittleEndian>().wrap_err_with(truncated)?,
+            };
+            if let Some(last) = kept.last() {
+                eyre::ensure!(
+                    last.item_id < garment.item_id,
+                    "{DRESS_DECISIONS_ENTRY_PATH}: item {item_id} on body {body} keeps garment {} after {}",
+                    garment.item_id,
+                    last.item_id
+                );
+            }
+            kept.push(garment);
+        }
+        if let Some(last) = decisions.last() {
             eyre::ensure!(
-                (last.item_id, last.body) < (record.item_id, record.body),
-                "{DRESS_HIDES_ENTRY_PATH}: item {} on body {} after item {} on body {}",
-                record.item_id,
-                record.body,
+                (last.item_id, last.body) < (item_id, body),
+                "{DRESS_DECISIONS_ENTRY_PATH}: item {item_id} on body {body} after item {} on body {}",
                 last.item_id,
                 last.body
             );
         }
-        records.push(record);
+        decisions.push(PaperdollEcDressDecision { item_id, body, kept });
     }
-    ensure_consumed(&cursor, DRESS_HIDES_ENTRY_PATH)?;
-    Ok(records)
+    ensure_consumed(&cursor, DRESS_DECISIONS_ENTRY_PATH)?;
+    Ok(PaperdollEcDressDecisions { slots, decisions })
 }
 
 pub struct PaperdollEcPackage {
@@ -311,7 +373,7 @@ pub struct PaperdollEcPackage {
     sets: Vec<PaperdollEcSet>,
     frames: Vec<PaperdollEcFrameRecord>,
     hues: EcHueTables,
-    dress_hides: Vec<PaperdollEcDressHides>,
+    dress: PaperdollEcDressDecisions,
 }
 
 impl PaperdollEcPackage {
@@ -330,8 +392,8 @@ impl PaperdollEcPackage {
     pub fn from_uddp_package(package: UddpReader) -> eyre::Result<Self> {
         let (sets, frames) = parse_frames_manifest(&read_path_entry_cow(&package, FRAMES_ENTRY_PATH)?)?;
         let hues = parse_hue_tables(&read_path_entry_cow(&package, HUE_TABLES_ENTRY_PATH)?)?;
-        let dress_hides = parse_dress_hides(&read_path_entry_cow(&package, DRESS_HIDES_ENTRY_PATH)?)?;
-        Ok(Self { package, sets, frames, hues, dress_hides })
+        let dress = parse_dress_decisions(&read_path_entry_cow(&package, DRESS_DECISIONS_ENTRY_PATH)?)?;
+        Ok(Self { package, sets, frames, hues, dress })
     }
 
     pub fn package(&self) -> &UddpReader {
@@ -351,17 +413,9 @@ impl PaperdollEcPackage {
         &self.hues
     }
 
-    /// Every dress record, ascending by (item id, body).
-    pub fn dress_hides(&self) -> &[PaperdollEcDressHides] {
-        &self.dress_hides
-    }
-
-    /// What dress-layer item `item_id` hides on `body` (the number of the body frame drawn); `None` when the packer
-    /// measured nothing for them.
-    pub fn dress_hides_on(&self, item_id: u32, body: u32) -> Option<&PaperdollEcDressHides> {
-        let body = u16::try_from(body).ok()?;
-        let index = self.dress_hides.binary_search_by_key(&(item_id, body), |record| (record.item_id, record.body)).ok()?;
-        Some(&self.dress_hides[index])
+    /// What each dress-layer item takes off on each body measured.
+    pub fn dress_decisions(&self) -> &PaperdollEcDressDecisions {
+        &self.dress
     }
 
     /// Frame `frame_number` of `set`.
@@ -536,29 +590,56 @@ mod tests {
     const TORSO_LAYER: usize = 5;
     const LEGS_LAYER: usize = 4;
 
-    fn dress(item_id: u32, body: u16, layers: &[usize]) -> PaperdollEcDressHides {
-        PaperdollEcDressHides { item_id, body, hidden_layers: hidden_layer_mask(layers.iter().copied()) }
+    const SHIRT: u32 = 0x1517;
+    const PLATE_TUNIC: u32 = 0x1415;
+    const PLATE_LEGS: u32 = 0x1411;
+    const WAIST_LAYER: usize = 12;
+    const PLATE_TUNIC_BEYOND: u32 = 5210;
+
+    fn decision(item_id: u32, body: u16, kept: &[(u32, u32)]) -> PaperdollEcDressDecision {
+        let kept = kept.iter().map(|&(item_id, beyond_edge)| PaperdollEcKeptGarment { item_id, beyond_edge }).collect();
+        PaperdollEcDressDecision { item_id, body, kept }
+    }
+
+    fn decisions(decisions: Vec<PaperdollEcDressDecision>) -> PaperdollEcDressDecisions {
+        PaperdollEcDressDecisions { slots: layer_mask([TORSO_LAYER, LEGS_LAYER]), decisions }
+    }
+
+    /// A robe keeps the plate tunic beneath it on the male body and takes off the shirt and the plate legs; it takes
+    /// off nothing of a slot the decisions do not cover, nor on a body it has no decision for.
+    #[test]
+    fn the_dress_decisions_round_trip_and_take_off_what_they_do_not_keep() {
+        let stored = decisions(vec![
+            decision(ROBE, HUMAN_MALE, &[(PLATE_TUNIC, PLATE_TUNIC_BEYOND)]),
+            decision(ROBE, HUMAN_FEMALE, &[]),
+        ]);
+        let parsed = parse_dress_decisions(&encode_dress_decisions(&stored).unwrap()).unwrap();
+        assert_eq!(parsed, stored);
+        let male = u32::from(HUMAN_MALE);
+        assert!(parsed.takes_off(ROBE, male, TORSO_LAYER, SHIRT));
+        assert!(parsed.takes_off(ROBE, male, LEGS_LAYER, PLATE_LEGS));
+        assert!(!parsed.takes_off(ROBE, male, TORSO_LAYER, PLATE_TUNIC), "kept");
+        assert_eq!(parsed.on(ROBE, male).unwrap().kept_garment(PLATE_TUNIC).unwrap().beyond_edge, PLATE_TUNIC_BEYOND);
+        assert!(!parsed.takes_off(ROBE, male, WAIST_LAYER, SHIRT), "a slot not covered");
+        assert!(!parsed.takes_off(ROBE + 1, male, TORSO_LAYER, SHIRT), "no decision");
+        assert!(!parsed.covers(LAYER_COUNT), "past the layers");
+        assert!(parsed.takes_off(ROBE, u32::from(HUMAN_FEMALE), TORSO_LAYER, PLATE_TUNIC));
     }
 
     #[test]
-    fn the_dress_records_round_trip_and_are_found_by_item_and_body() {
-        let records = [dress(ROBE, HUMAN_MALE, &[TORSO_LAYER, LEGS_LAYER]), dress(ROBE, HUMAN_FEMALE, &[])];
-        let parsed = parse_dress_hides(&encode_dress_hides(&records).unwrap()).unwrap();
-        assert_eq!(parsed, records);
-        assert!(parsed[0].hides(TORSO_LAYER) && parsed[0].hides(LEGS_LAYER));
-        assert!(!parsed[0].hides(LAYER_COUNT), "past the layers");
-        assert_eq!(parsed[1].hidden_layers, 0);
-    }
-
-    #[test]
-    fn unsorted_dress_records_masks_past_the_layers_and_an_older_version_are_refused() {
-        let unsorted = [dress(ROBE, HUMAN_FEMALE, &[]), dress(ROBE, HUMAN_MALE, &[])];
-        assert!(parse_dress_hides(&encode_dress_hides(&unsorted).unwrap()).is_err());
-        let past = [PaperdollEcDressHides { item_id: ROBE, body: HUMAN_MALE, hidden_layers: 1 << LAYER_COUNT }];
-        assert!(parse_dress_hides(&encode_dress_hides(&past).unwrap()).is_err());
-        let mut older = encode_dress_hides(&[dress(ROBE, HUMAN_MALE, &[TORSO_LAYER])]).unwrap();
+    fn unsorted_dress_decisions_slots_past_the_layers_and_an_older_version_are_refused() {
+        let unsorted = decisions(vec![decision(ROBE, HUMAN_FEMALE, &[]), decision(ROBE, HUMAN_MALE, &[])]);
+        assert!(parse_dress_decisions(&encode_dress_decisions(&unsorted).unwrap()).is_err());
+        let unsorted_kept = decisions(vec![decision(ROBE, HUMAN_MALE, &[(SHIRT, 0), (PLATE_TUNIC, 0)])]);
+        assert!(parse_dress_decisions(&encode_dress_decisions(&unsorted_kept).unwrap()).is_err());
+        let past = PaperdollEcDressDecisions { slots: 1 << LAYER_COUNT, decisions: Vec::new() };
+        assert!(parse_dress_decisions(&encode_dress_decisions(&past).unwrap()).is_err());
+        let mut truncated = encode_dress_decisions(&decisions(vec![decision(ROBE, HUMAN_MALE, &[(SHIRT, 0)])])).unwrap();
+        truncated.pop();
+        assert!(parse_dress_decisions(&truncated).is_err());
+        let mut older = encode_dress_decisions(&decisions(Vec::new())).unwrap();
         older[VERSION_RANGE].copy_from_slice(&(PAPERDOLL_EC_METADATA_VERSION - 1).to_le_bytes());
-        let error = parse_dress_hides(&older).unwrap_err().to_string();
+        let error = parse_dress_decisions(&older).unwrap_err().to_string();
         assert!(error.contains("repack"), "{error}");
     }
 

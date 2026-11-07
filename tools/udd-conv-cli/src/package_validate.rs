@@ -634,7 +634,7 @@ fn check_paperdoll_ec_package(package: &UddpReader) -> eyre::Result<String> {
     Ok(format!(
         "frames per set={set_frames:?}, hue_masks={masked}, hue_tables={}, dress_decisions={}",
         reader.hue_tables().tables.len(),
-        reader.dress_hides().len()
+        reader.dress_decisions().decisions.len()
     ))
 }
 
