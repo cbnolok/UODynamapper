@@ -20,6 +20,9 @@ Programs `UOSA.exe` (SHA-256 `5a5e9dc536c836d1bf10b6f86bb88f61a6ae078f519d4060d3
 | UOSA | 0x0050b690 | (not renamed) | probable `ECPaperdollTexture::GetLayers`: vtable 0x00ca9298 slot 5 |
 | UOSA | 0x00430f60 | `UOAnimations::FindFrameEntry` | (action, number), 32-bit compare |
 | UOSA | 0x00842bb2 | `UOObjectDefinitionBase::GetAppearance` | the +0xbc of `FindLayerFrame` |
+| UOSA | 0x00842d90 | `UOObjectDefinitionBase::GetGraphicForAmount` | sets the face item's display graphic (item 9) |
+| UOSA | 0x005bc130 | `UOObject::GetObjectDefinition` | a tile id without a record becomes 99999999 (item 9) |
+| UOSA | 0x005b3980 | (not renamed) | `UOObject` vtable +0x68: the display graphic +0x4c (item 9) |
 | UOSA | 0x0084b3c4 | `AppearanceFilterByOwnerBodyType::Apply` | |
 | UOSA | 0x0084b485 | `AppearanceFilterByOwnerGender::Apply` | |
 | UOSA | 0x00468810 | `UOAnimations::BuildEquipmentLayerOrder` | the walking order (+0xf8) and the paperdoll one (+0x160) |
@@ -77,8 +80,28 @@ Globals (not renamed): UOSA 0x00e33d3c male set (asset 0x40), 0x00e33d44 female 
    number past 65,535 finds no 16-bit frame. **confirmed**.
 9. **Which layers.** The layer list (0x0050b690, vtable slot 5) reads the 26 layer bytes of the mobile at +0x160,
    the paperdoll order, and skips layers 0, 0x15 (backpack) and 0x19 (mount). The face layer (0x0F) item takes
-   the value of item vtable +0x68 in place of its tile id when that is non-zero (in `GetLayerFrame`; what +0x68
-   holds was not traced). **confirmed** for the reads.
+   the value of item vtable +0x68 in place of its tile id when that is non-zero (in `GetLayerFrame`).
+   **confirmed** for the reads. Traced 2026-11-07: the items are `UOObject`s (RTTI vtable 0x00cb501c; there is no
+   item class). Slot +0x60 (0x005b3960) returns the tile id at +0x48; slot +0x68 (0x005b3980) returns +0x4c and
+   slot +0x64 (0x005b3990) sets it. `UOObject::InitFromDefinition` (0x005bdac0, at 0x005bdba3..0x005bdbcd) sets
+   +0x4c to `GetGraphicForAmount` (0x00842d90, definition vtable +0xc4) of the object's definition for the amount
+   (slot +0x80, 0x005b39d0: 1 unless flags1 bit 0x800 is set, then the u16 at +0x56): the last stack alias whose
+   amount is at most that, else the tile id the record stores (+0x20, not its entry name). The only other writer
+   is `UOLua::GumpManagerSetPlayerFaceType` (0x004f2e10, `FaceSelectionWindow.lua`), which sets it on the
+   player's face item to preview a face. **confirmed** (decompiler, assembly, probe
+   `~/ghidra_scripts/PdollFaceAltIdSitesA2fe.java`). So the face is drawn from the record of its display
+   graphic. In EC 2024 the 26 face records (15172..15191, 22137..22142) have no stack alias and store their own
+   id, and only 2 records of `tileart.uop` have stack aliases: the lookup by the item id finds the same record and
+   frame (1000..1025 in both sets), so the shared lookup does not model it. **confirmed** (data check, 2026-11-07).
+
+   The default record: `UOObject::GetObjectDefinition` (0x005bc130), which `InitFromDefinition` calls first,
+   replaces a tile id that has no record with 99999999 and uses that record, so the object's tile id (+0x48) and
+   display graphic (+0x4c) become 99999999 and `GetLayerFrame` finds that record. **confirmed** for the code;
+   **probable** that worn items are created through `InitFromDefinition` (its callers 0x005ae0d0 and
+   0x005ae540 were not read). The EC 2024 record 99999999 stores its own id and no property, filter or alias, so
+   such an item finds no frame (its number is past 16 bits) and is not drawn. `uocf::enhanced::paperdoll`
+   (`object_definition`, `DEFAULT_DEFINITION_ID`) takes it for an item; the wearer's own definition is not
+   defaulted there (the mobile's path to it was not traced).
 10. **Paperdoll order.** `UOAnimations::BuildEquipmentLayerOrder` (0x00468810) reads the wearer definition's race
     (`HasRace` +0xc8, `GetRace` +0xd0, 1 when absent) and gender (+0xcc, +0xd4, 0 when absent). The walking order
     (+0xf8) is keyed (race, gender, frameset, direction); the paperdoll one (+0x160) is keyed (race, gender, -1,
@@ -112,8 +135,9 @@ Globals (not renamed): UOSA 0x00e33d3c male set (asset 0x40), 0x00e33d44 female 
     tests `shipped_bodies_and_wearables_find_their_frames`, `a_shipped_outfit_composes_over_the_body`).
 
 The inspector's Gumps > Paperdoll tab with the EC source follows items 4..13
-(`tools/uocf-inspector-gui/src/ui/ec_paperdoll.rs`). Not followed: the face layer's +0x68 value (item 9), and
-the walk order of the `draworder` records (item 11; the inspector takes the `paperdoll` one).
+(`tools/uocf-inspector-gui/src/ui/ec_paperdoll.rs`). Not followed: the face layer's display graphic (item 9; it
+finds the same record in the shipped data), and the walk order of the `draworder` records (item 11; the inspector
+takes the `paperdoll` one).
 
 ## Partial hue on the gump paperdoll
 

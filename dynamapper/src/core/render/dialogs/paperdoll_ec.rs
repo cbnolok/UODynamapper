@@ -244,6 +244,16 @@ mod tests {
 
         let package = PaperdollEcPackage::load(env_path("UDD_PAPERDOLL_EC")).unwrap();
         let tilemeta = TileMetaPackage::load(env_path("UDD_TILEMETA")).unwrap();
+        // tilemeta carries the default record an item without a record takes.
+        assert!(
+            uocf::enhanced::paperdoll::PaperdollDefinitions::get(
+                tilemeta.item_definitions(),
+                uocf::enhanced::paperdoll::DEFAULT_DEFINITION_ID
+            )
+            .is_some(),
+            "tilemeta.uddp has no record {}",
+            uocf::enhanced::paperdoll::DEFAULT_DEFINITION_ID
+        );
         let client = env_path("UO_EC_CLIENT_DIR");
         let named = NamedTileArt::read(&UopPackage::load(client_file(&client, TILEART_UOP_NAME)).unwrap());
         let sets = FrameSets::load(&client_file(&client, PAPERDOLL_UOP_NAME)).unwrap();

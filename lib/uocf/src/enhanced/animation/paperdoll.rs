@@ -32,6 +32,10 @@ pub const FEMALE_SET: usize = 1;
 pub const FALLBACK_BODY_FRAME: u32 = 400;
 /// `FindLayerFrame` (0x0050b850) follows an `Appearance` chain this many levels deep.
 const MAX_APPEARANCE_DEPTH: u32 = 5;
+/// The record a world object takes when its tile id has none: `UOObject::GetObjectDefinition` (0x005bc130)
+/// replaces the id with this one. The shipped record (EC 2024) stores this id and nothing else, so an item that falls
+/// back to it finds no frame: its number is past the 16-bit frame numbers.
+pub const DEFAULT_DEFINITION_ID: u32 = 99_999_999;
 /// Equipment layers of a mobile.
 pub const LAYER_COUNT: usize = 26;
 /// The slot names of `wearables.xml`, indexed by layer: the string table at UOSA 0x00db9ba0.
@@ -320,8 +324,10 @@ pub fn find_layer_frame<'a, S: PaperdollFrames, T: PaperdollDefinitions<'a>>(
 /// Why a worn item has no frame.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum ItemMiss {
-    /// `tileart.uop` has no record of the item.
+    /// `tileart.uop` has neither a record of the item nor the default record.
     NoDefinition,
+    /// `tileart.uop` has no record of the item, and the default record it takes instead has no frame.
+    DefaultHasNoFrame,
     /// The item's Paperdoll property (11) names a record that does not exist.
     NoPaperdollDefinition(u32),
     /// Neither set has a frame for it.
@@ -331,7 +337,10 @@ pub enum ItemMiss {
 impl ItemMiss {
     pub fn describe(self) -> String {
         match self {
-            Self::NoDefinition => "no tileart.uop record".to_string(),
+            Self::NoDefinition => format!("no tileart.uop record, nor the default record {DEFAULT_DEFINITION_ID}"),
+            Self::DefaultHasNoFrame => format!(
+                "no tileart.uop record: the client takes the default record {DEFAULT_DEFINITION_ID}, which has no frame"
+            ),
             Self::NoPaperdollDefinition(value) => {
                 format!("its Paperdoll property names {}, which has no record", u64::from(value) + u64::from(MOBILE_DEFINITION_BASE))
             }
@@ -340,15 +349,30 @@ impl ItemMiss {
     }
 }
 
-/// `ECPaperdollTexture::GetLayerFrame` (0x0050ba30): the frame of a worn item. A Paperdoll property (11) on the
+/// `UOObject::GetObjectDefinition` (0x005bc130): the record of a world object's tile id, else the default record
+/// [`DEFAULT_DEFINITION_ID`]. The second value is whether the default was taken.
+pub fn object_definition<'a, T: PaperdollDefinitions<'a>>(definitions: T, tile_id: u32) -> Option<(T::Definition, bool)> {
+    match definitions.get(tile_id) {
+        Some(definition) => Some((definition, false)),
+        None => definitions.get(DEFAULT_DEFINITION_ID).map(|definition| (definition, true)),
+    }
+}
+
+/// `ECPaperdollTexture::GetLayerFrame` (0x0050ba30): the frame of a worn item. An item without a record has the
+/// default one: the client gave the item that record's id when it created it. A Paperdoll property (11) on the
 /// item's record swaps in the record it names; a miss in the female set is retried in the male one.
+///
+/// The face layer (0x0F) item is looked up by its display graphic (object +0x4c) instead of its tile id: the
+/// record's stack alias for the amount (1 for an item that does not stack), else the tile id the record stores. No
+/// shipped face record (EC 2024: 15172..=15191, 22137..=22142) has a stack alias or stores another id than its
+/// name's, so the lookup by item id finds the same record.
 pub fn item_frame<'a, S: PaperdollFrames, T: PaperdollDefinitions<'a>>(
     sets: &S,
     definitions: T,
     wearer: &Wearer<T::Definition>,
     item_id: u32,
 ) -> Result<FrameRef<S::Frame>, ItemMiss> {
-    let item = definitions.get(item_id).ok_or(ItemMiss::NoDefinition)?;
+    let (item, defaulted) = object_definition(definitions, item_id).ok_or(ItemMiss::NoDefinition)?;
     let definition = match item.property(PropertyKey::Paperdoll) {
         Some(value) => definitions.get_named(value).ok_or(ItemMiss::NoPaperdollDefinition(value))?,
         None => item,
@@ -356,10 +380,12 @@ pub fn item_frame<'a, S: PaperdollFrames, T: PaperdollDefinitions<'a>>(
     let set = gender_set(wearer.gender);
     find_layer_frame(sets, definitions, set, 0, definition, wearer.definition)
         .or_else(|| find_layer_frame(sets, definitions, MALE_SET, 0, definition, wearer.definition))
-        .ok_or(ItemMiss::NoFrame)
+        .ok_or(if defaulted { ItemMiss::DefaultHasNoFrame } else { ItemMiss::NoFrame })
 }
 
-/// The layer an item is worn on: its record's Layer property (6), else `fallback` (the tiledata layer).
+/// The layer an item is worn on: its record's Layer property (6), else `fallback` (the tiledata layer). The client
+/// takes the layer the server sends; an item without a record keeps its tiledata layer here, not the default
+/// record's.
 pub fn item_layer<'a, T: PaperdollDefinitions<'a>>(definitions: T, item_id: u32, fallback: Option<u8>) -> Option<usize> {
     let layer = definitions
         .get(item_id)
@@ -923,6 +949,30 @@ mod tests {
         assert_eq!(item_frame(&sets, definitions, &male, 1), Err(ItemMiss::NoDefinition));
     }
 
+    /// An item without a record takes the default record 99999999, as the client gives it that id.
+    #[test]
+    fn an_item_without_a_record_takes_the_default_record() {
+        const DEFAULT_APPEARANCE: u32 = 499;
+        const UNKNOWN_ITEM: u32 = 1;
+        let sets = FrameSets::from_sets([set(0, &[DEFAULT_APPEARANCE as u16]), set(1, &[])]);
+        let wearer_files = entries(vec![definition(MOBILE_DEFINITION_BASE + HUMAN_MALE, &[])]);
+        let no_default = SortedTileArt(&wearer_files);
+        let male = Wearer::new(no_default, HUMAN_MALE);
+        assert_eq!(item_frame(&sets, no_default, &male, UNKNOWN_ITEM), Err(ItemMiss::NoDefinition));
+        // The shipped default record stores its own id, past the 16-bit frame numbers: nothing is drawn.
+        let shipped_files =
+            entries(vec![definition(MOBILE_DEFINITION_BASE + HUMAN_MALE, &[]), definition(DEFAULT_DEFINITION_ID, &[])]);
+        let shipped = SortedTileArt(&shipped_files);
+        assert_eq!(item_frame(&sets, shipped, &male, UNKNOWN_ITEM), Err(ItemMiss::DefaultHasNoFrame));
+        // A default record that numbers a frame draws it.
+        let drawn_files = entries(vec![
+            definition(MOBILE_DEFINITION_BASE + HUMAN_MALE, &[]),
+            definition(DEFAULT_DEFINITION_ID, &[(PropertyKey::Appearance, DEFAULT_APPEARANCE)]),
+        ]);
+        let drawn = SortedTileArt(&drawn_files);
+        assert_eq!(found(item_frame(&sets, drawn, &male, UNKNOWN_ITEM)), Some((MALE_SET, DEFAULT_APPEARANCE as u16)));
+    }
+
     #[test]
     fn an_appearance_chain_stops_after_five_levels() {
         const LOOP: u32 = 5;
@@ -1057,6 +1107,10 @@ mod tests {
         const RENAMED_STORED_ID: u32 = 41516;
         let (_, named, _) = real_client();
         assert_eq!((named.unreadable, named.unnamed), (0, 0), "{:?}", named.renamed);
+        // The default record is named after the id it stores, and stores nothing the paperdoll reads.
+        let default = (&named).get(DEFAULT_DEFINITION_ID).expect("no default record");
+        assert_eq!(default.tile_id, DEFAULT_DEFINITION_ID);
+        assert!(default.prop_vector1.is_empty() && default.appearance_vector.is_empty());
         assert!(named.renamed.contains(&(RENAMED_ENTRY, RENAMED_STORED_ID)), "{:?}", named.renamed);
         assert_eq!((&named).get(RENAMED_ENTRY).map(|record| record.tile_id), Some(RENAMED_STORED_ID));
         assert_eq!((&named).get(RENAMED_STORED_ID).map(|record| record.tile_id), Some(RENAMED_STORED_ID));

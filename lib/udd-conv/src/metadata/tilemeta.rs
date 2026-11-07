@@ -93,8 +93,9 @@ fn tiledata_layer(tiledata: &TileData, tile_id: u32) -> Option<u8> {
 }
 
 /// Whether the Enhanced paperdoll can read the `tileart.uop` record of entry `entry_id`: every record from
-/// 10,000,000 (bodies, and the targets of Appearance and Paperdoll values), and an item record with a stored
-/// property, an appearance filter it reads, or a tiledata layer (its layer when the record has no Layer).
+/// 10,000,000 (bodies, the targets of Appearance and Paperdoll values, and the default record 99999999 an item
+/// without a record takes), and an item record with a stored property, an appearance filter it reads, or a tiledata
+/// layer (its layer when the record has no Layer).
 fn paperdoll_reads(entry_id: u32, entry: &TileArtEntry, tiledata_layer: Option<u8>) -> bool {
     entry_id >= MOBILE_DEFINITION_BASE
         || tiledata_layer.is_some()

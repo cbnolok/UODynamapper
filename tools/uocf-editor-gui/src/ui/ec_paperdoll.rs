@@ -133,12 +133,12 @@ mod tests {
     }
 
     /// The editor's records, sorted for display by stored tile id, find for every id the record `NamedTileArt` finds,
-    /// which is how `tilemeta.uddp` keys its item definitions.
+    /// which is how `tilemeta.uddp` keys its item definitions, the default record among them.
     #[test]
     #[ignore = "needs real Enhanced clients: set UO_EC_CLIENT_ROOTS and run with --ignored"]
     fn shipped_records_are_found_as_named_tileart_finds_them() {
         use crate::ui::test_support::{client_roots, EC_CLIENT_ROOTS_ENV};
-        use uocf::enhanced::paperdoll::{NamedTileArt, ENTRY_ID_SPAN};
+        use uocf::enhanced::paperdoll::{NamedTileArt, DEFAULT_DEFINITION_ID, ENTRY_ID_SPAN};
         use uocf::enhanced::tileart::TILEART_UOP_NAME;
         use uocf::uop_container::package::UopPackage;
         use uocf::utils::path::find_file_ignoring_case;
@@ -155,7 +155,8 @@ mod tests {
             let named = NamedTileArt::read(&package);
             assert!(!named.renamed.is_empty(), "{}", root.display());
             let editor = Definitions(&files);
-            for id in (0..ENTRY_ID_SPAN).chain(MOBILE_DEFINITION_BASE..MOBILE_DEFINITION_BASE + ENTRY_ID_SPAN) {
+            let ids = (0..ENTRY_ID_SPAN).chain(MOBILE_DEFINITION_BASE..MOBILE_DEFINITION_BASE + ENTRY_ID_SPAN);
+            for id in ids.chain([DEFAULT_DEFINITION_ID]) {
                 assert!(editor.get(id) == (&named).get(id), "{}: entry {id}", root.display());
             }
         }
