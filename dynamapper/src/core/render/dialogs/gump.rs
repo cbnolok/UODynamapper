@@ -135,13 +135,14 @@ struct PaperdollWearableRulesRes(WearableRules);
 const PAPERDOLL_SPECS_DIR: &str = "runtime_specs/paperdoll";
 const PAPERDOLL_PROFILES_FILE_NAME: &str = "PaperdollProfiles.kdl";
 
-/// `profile "<id>" equipment_offset=N body=N [label=] [canvas_width=] [canvas_height=] [body_x=] [body_y=]
-/// [equipment_x=] [equipment_y=]`, decoded by `PaperdollProfilesKdl`.
+/// `profile "<id>" equipment_offset=N body=N [label=] [fallback_equipment_offset=] [canvas_width=] [canvas_height=]
+/// [body_x=] [body_y=] [equipment_x=] [equipment_y=]`, decoded by `PaperdollProfilesKdl`.
 pub(crate) const PAPERDOLL_PROFILES_SCHEMA: &[uot_kdl::strict::NodeSchema] = &[uot_kdl::strict::NodeSchema::leaf(
     "profile",
     &[
         "label",
         "equipment_offset",
+        "fallback_equipment_offset",
         "body",
         "canvas_width",
         "canvas_height",
@@ -281,6 +282,36 @@ mod tests {
         assert_eq!(error, "The gump paperdoll needs a body gump ID.");
     }
 
+    /// A female profile's item falls back to its male gump when its own is missing; a gump missing after that leaves
+    /// out only its layer, while the body is never left out.
+    #[test]
+    fn a_missing_female_gump_falls_back_to_the_male_one() {
+        let profiles = bundled_profiles();
+        let male = profiles.profile("human_male").unwrap();
+        let female = profiles.profile("human_female").unwrap();
+        assert_eq!(male.fallback_equipment_offset, None);
+        assert_eq!(female.fallback_equipment_offset, Some(male.equipment_offset));
+
+        let mut dressed = request(&[SHIRT, NECKLACE]);
+        dressed.profile = female.clone();
+        let tiles = worn_tiles();
+        let tile = |item_id: u32| tiles.iter().find(|tile| tile.tile_id == item_id).copied();
+        let layers =
+            gump_paperdoll_layers(&dressed, GumpClient::Classic, tile, &beard_definition(), &bundled_rules()).unwrap();
+        let (shirt, necklace) = (&layers[1], &layers[2]);
+        assert_eq!((shirt.gump_id, shirt.fallback_gump_id), (female.equipment_offset + 1, Some(male.equipment_offset + 1)));
+        assert_eq!(layers[0].fallback_gump_id, None, "the body gump has no fallback");
+
+        // The shirt has only its male gump, the necklace has both, and the body gump is missing.
+        let present = [male.equipment_offset + 1, female.equipment_offset + 3, male.equipment_offset + 3];
+        let has_gump = |gump_id: u32| present.contains(&gump_id);
+        assert_eq!(layer_gump(shirt, has_gump), Some(male.equipment_offset + 1));
+        assert_eq!(layer_gump(necklace, has_gump), Some(female.equipment_offset + 3));
+        assert_eq!(layer_gump(&layers[0], has_gump), None);
+        assert_eq!(layers[0].item, None, "the body is never left out");
+        assert_eq!(describe_item(shirt.item.unwrap()), format!("item {SHIRT} (0x{SHIRT:04X}) on torso"));
+    }
+
     fn profiles_error(content: &str) -> String {
         PaperdollProfilesRes::load_from_str("PaperdollProfiles.kdl", content).err().expect("profiles error").to_string()
     }
@@ -290,8 +321,8 @@ mod tests {
         assert_eq!(
             profiles_error("profile \"human_male\" equipment_offset=50000 canvas_w=260\n"),
             "PaperdollProfiles.kdl: line 1, column 45: unknown property `canvas_w` of `profile`: expected one of \
-             `label`, `equipment_offset`, `body`, `canvas_width`, `canvas_height`, `body_x`, `body_y`, \
-             `equipment_x`, `equipment_y`"
+             `label`, `equipment_offset`, `fallback_equipment_offset`, `body`, `canvas_width`, `canvas_height`, \
+             `body_x`, `body_y`, `equipment_x`, `equipment_y`"
         );
         assert_eq!(
             profiles_error("profiles \"human_male\" equipment_offset=50000\n"),
@@ -537,6 +568,9 @@ struct PaperdollProfile {
     id: String,
     label: String,
     equipment_offset: u32,
+    /// The offset of the gump drawn when the one at `equipment_offset` is missing: the female profiles fall back to the
+    /// male gumps. `None`: no fallback.
+    fallback_equipment_offset: Option<u32>,
     /// The server body: the 3D paperdoll draws its frame, and its race picks the overrides of the draw order.
     body: u32,
     canvas_width: u32,
@@ -561,6 +595,8 @@ struct PaperdollProfileKdl {
     label: Option<String>,
     #[knuffel(property(name = "equipment_offset"))]
     equipment_offset: u32,
+    #[knuffel(property(name = "fallback_equipment_offset"))]
+    fallback_equipment_offset: Option<u32>,
     #[knuffel(property)]
     body: u32,
     #[knuffel(property(name = "canvas_width"))]
@@ -583,6 +619,7 @@ impl From<PaperdollProfileKdl> for PaperdollProfile {
             label: value.label.unwrap_or_else(|| value.id.clone()),
             id: value.id,
             equipment_offset: value.equipment_offset,
+            fallback_equipment_offset: value.fallback_equipment_offset,
             body: value.body,
             canvas_width: value.canvas_width.unwrap_or(0),
             canvas_height: value.canvas_height.unwrap_or(0),
@@ -1120,6 +1157,10 @@ fn open_gump_by_id(
 
 struct PaperdollLayer {
     gump_id: u32,
+    /// The gump drawn when `gump_id` is missing: an item's gump at the profile's `fallback_equipment_offset`.
+    fallback_gump_id: Option<u32>,
+    /// The worn item's layer and id; `None` for the body.
+    item: Option<(usize, u32)>,
     hue_id: u16,
     partial_hue: bool,
     x: i32,
@@ -1196,6 +1237,8 @@ fn gump_paperdoll_layers(
     // 0x005d8430, and only a body it knows by race alone with full hue; the dialog takes the gump, not the body.
     let mut layers = vec![PaperdollLayer {
         gump_id: body_gump,
+        fallback_gump_id: None,
+        item: None,
         hue_id: *body_hue,
         partial_hue: true,
         x: profile.body_x,
@@ -1228,6 +1271,8 @@ fn gump_paperdoll_layers(
         worn[layer] = Some(item.item_id);
         worn_layers[layer] = Some(PaperdollLayer {
             gump_id: u32::from(tile.anim_id) + profile.equipment_offset,
+            fallback_gump_id: profile.fallback_equipment_offset.map(|offset| u32::from(tile.anim_id) + offset),
+            item: Some((layer, item.item_id)),
             hue_id: item.hue,
             partial_hue: tile.flags & TaeFlag::PartialHue.bits() != 0,
             x: profile.equipment_x,
@@ -1268,7 +1313,25 @@ const MIP_BOX_TEXELS: u16 = 4;
 /// Each entry's R, G, B and alpha.
 type HueTable = [[u8; RGBA_BYTES]; HUE_TABLE_ENTRIES];
 
+/// The gump a layer draws: its own, else its fallback (a female profile's item falls back to the male gump, as
+/// ClassicUO's `GetAnimID` and the Enhanced client's `UOPaperdoll::BuildImage` do), else none. `has_gump` says whether
+/// the preset finds a gump.
+fn layer_gump(layer: &PaperdollLayer, has_gump: impl Fn(u32) -> bool) -> Option<u32> {
+    if has_gump(layer.gump_id) {
+        return Some(layer.gump_id);
+    }
+    layer.fallback_gump_id.filter(|&fallback| has_gump(fallback))
+}
+
+/// A worn item in a log line: its id and its slot.
+fn describe_item((slot, item_id): (usize, u32)) -> String {
+    format!("item {item_id} (0x{item_id:04X}) on {}", SLOT_NAMES[slot])
+}
+
 /// Each layer's gump comes from the package the preset drawing `client` reads; the hues follow that client's drawing.
+/// A worn item whose gump is missing, and its fallback too, is left out with a log line; the rest are drawn. The body
+/// is not left out: a missing body gump, or no gump source for the preset, fails the paperdoll with `decode_gump`'s
+/// error.
 fn compose_paperdoll(
     gump_map: &GumpMapRes,
     client: GumpClient,
@@ -1287,7 +1350,25 @@ fn compose_paperdoll(
     let mut scratch = Vec::new();
 
     for layer in layers {
-        let gump = gump_map.decode_gump(client, layer.gump_id, &mut scratch)?;
+        let gump_id = match layer.item {
+            None => layer.gump_id,
+            Some(item) => {
+                let Some(gump_id) = layer_gump(layer, |gump_id| gump_map.has_gump(client, gump_id)) else {
+                    let fallback = layer.fallback_gump_id.map(|fallback| format!(" nor {fallback}")).unwrap_or_default();
+                    log::warn!(
+                        "Paperdoll: no gump {}{fallback} for {}: that layer is not drawn.",
+                        layer.gump_id,
+                        describe_item(item)
+                    );
+                    continue;
+                };
+                if gump_id != layer.gump_id {
+                    log::debug!("Paperdoll: gump {} is missing for {}: drawing {gump_id}.", layer.gump_id, describe_item(item));
+                }
+                gump_id
+            }
+        };
+        let gump = gump_map.decode_gump(client, gump_id, &mut scratch)?;
         let hue = if layer.hue_id > 0 {
             Some(LayerHue {
                 table: hue_table(hues_package, hue_texture_bytes, layer.hue_id)?,

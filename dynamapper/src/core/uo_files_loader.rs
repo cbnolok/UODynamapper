@@ -222,6 +222,13 @@ impl ClassicGumpSource {
         }
     }
 
+    fn has_gump(&self, gump_id: u32) -> bool {
+        match self {
+            Self::Package(package) => package.has_gump(gump_id),
+            Self::ClientFiles(classic) => classic.has_id(gump_id),
+        }
+    }
+
     fn decode(
         &self,
         gump_id: u32,
@@ -248,11 +255,12 @@ impl EnhancedGumps {
         Self { package, gump_ids }
     }
 
+    fn has_gump(&self, gump_id: u32) -> bool {
+        self.gump_ids.binary_search(&gump_id).is_ok()
+    }
+
     fn lookup(&self, gump_id: u32) -> Option<color_eyre::eyre::Result<udd_assets::gumps::GumpImage>> {
-        self.gump_ids
-            .binary_search(&gump_id)
-            .is_ok()
-            .then(|| self.package.read_gump_image(gump_id))
+        self.has_gump(gump_id).then(|| self.package.read_gump_image(gump_id))
     }
 }
 
@@ -317,6 +325,17 @@ impl GumpMapRes {
                 "Gump {gump_id}, which {GUMPS_EC_FILE_NAME} shares, differs in {}: {count} shared gumps differ so far.",
                 classic.label()
             ),
+        }
+    }
+
+    /// Whether the preset drawing `client` finds gump `gump_id` in a loaded source (`pick_gump_source`): the Classic
+    /// preset in the Classic source, Enhanced and KR-like in gumps_ec.uddp or the Classic source.
+    pub fn has_gump(&self, client: GumpClient, gump_id: u32) -> bool {
+        let in_enhanced = || self.enhanced.as_deref().is_some_and(|enhanced| enhanced.has_gump(gump_id));
+        let in_classic = || self.classic.as_deref().is_some_and(|classic| classic.has_gump(gump_id));
+        match client {
+            GumpClient::Classic => in_classic(),
+            GumpClient::Enhanced => in_enhanced() || in_classic(),
         }
     }
 

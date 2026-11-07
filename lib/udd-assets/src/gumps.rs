@@ -565,6 +565,12 @@ impl GumpsPackage {
         Ok((image.physical_width, image.physical_height, image.stored_rgba))
     }
 
+    /// Whether the package has gump `gump_id`, stored on its own or in an atlas: what `read_gump_image` finds.
+    pub fn has_gump(&self, gump_id: u32) -> bool {
+        self.package.find_by_sparse_id(gump_id).is_some_and(|file| file.data_type == DataType::Gump as u8)
+            || self.atlas_slot(gump_id).is_some()
+    }
+
     pub fn read_gump_image(&self, gump_id: u32) -> eyre::Result<GumpImage> {
         if let Some(file) = self.package.find_by_sparse_id(gump_id) {
             if file.data_type == DataType::Gump as u8 {
@@ -778,6 +784,7 @@ mod tests {
 
         let (width, height, rgba) = package.read_gump_rgba(42).unwrap();
 
+        assert!(package.has_gump(42) && !package.has_gump(43));
         assert_eq!((width, height), (2, 1));
         assert_eq!(rgba, vec![1, 2, 3, 4, 5, 6, 7, 8]);
         assert_eq!(package.single_gump_pixel_format(42).unwrap(), Some(GumpPixelFormat::Rgba8888));
@@ -983,6 +990,7 @@ mod tests {
         let package = GumpsPackage::from_uddp_package(build_test_package(true)).unwrap();
 
         assert_eq!(package.cached_atlas_page_count(), 0);
+        assert!(package.has_gump(50_001));
         let image = package.read_gump_image(50_001).unwrap();
 
         assert_eq!((image.physical_width, image.physical_height), (6, 8));
@@ -1049,6 +1057,7 @@ mod tests {
         for shared in SHARED {
             assert_eq!(package.shared_classic_gump_hash(shared.gump_id), Some(shared.image_hash));
             assert!(package.read_gump_image(shared.gump_id).is_err(), "gump {}", shared.gump_id);
+            assert!(!package.has_gump(shared.gump_id), "gump {}", shared.gump_id);
             assert_eq!(package.read_single_gump_image(shared.gump_id).unwrap(), None);
         }
         assert_eq!(package.shared_classic_gump_hash(UNLISTED_GUMP_ID), None);
