@@ -261,6 +261,7 @@ These need a person at the GUI or in a running client; the code side is done.
 
 ### Export And Tooling
 
+- Audit the UOCF editor’s inspection-only views and add edit and save workflows for client files it can display where feasible. Reuse existing format writers and CLI capabilities where appropriate; map painting remains deferred below.
 - Finish remaining export acceptance and portability work (approved 2026-11-01: WebP method 4 q85 sharp YUV only; offscreen export mode after a control-channel pilot; Britannia first; 512 px tiles; Leaflet 1.9.4 vendored; z = 0 readout; sRGB box downsampling). [Web map export proposal](agent_notes/proposals/2026-11-01-web-map-export.md#decisions-2026-11-01).
   - Broader visual acceptance of the Classic Britannia export and CI builds on Windows, macOS and ARM64. See [export acceptance and remaining limits](reviews/2026-11-01-webmap-export-renderer.md).
   - Enhanced and KR exports (user decision 2026-11-02, renderer phase, after the format work): the export job can select the preset, with a choice between water reflections at a fixed reflection point and reflections off. Today the Enhanced preset cannot be chosen through an export job, and reflections differ between overlapping frames because they follow the camera.
