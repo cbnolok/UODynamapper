@@ -58,7 +58,8 @@ pub fn load(
 pub const TILEART_RECORD_VERSION: u16 = 4;
 /// Record version of the Kingdom Reborn client (`UOKR.exe` reader 0x007bdeb2): the v4 record without
 /// `uses_enhanced_tileart`, `alternate_animation`, sitting words 4 and 5, the radar colour and the TileArtEnhanced
-/// shader block, with u32 flags and the Kingdom Reborn effect grammar
+/// shader block, with u32 flags (`flags1` in another bit layout: [`kr_flags1_to_enhanced`]) and the Kingdom Reborn
+/// effect grammar
 /// (`scripts/dev-helpers/ec-research/ghidra-facets/results/uokr_facets.md`, answer 9).
 pub const TILEART_KR_RECORD_VERSION: u16 = 3;
 /// Client package holding one record per tile id.
@@ -328,6 +329,47 @@ bitflags! {
     }
 }
 
+/// The Kingdom Reborn `flags1` bits the Enhanced Client moved above bit 31, as (KR bit, EC flag); every other KR
+/// bit has its EC position. Measured over the 17,086 items both clients' `tileart.uop` define (KR 2.53.0.2 against
+/// the current EC): of the items setting KR bit 14, 1,593 of 1,604 are EC `Rotated`; bit 15, 448 of 449 `AlphaBlend`;
+/// bit 26, 85 of 85 `NoDraw` (also the KR terrain no-draw bit). KR's shadow test (bit 14 where UOSA tests bit 34)
+/// agrees, see `uokr_atmosphere.md` P3.4. The bits kept in place agree on 98.4-100 % of the items setting them,
+/// except bit 9 `Surface` (66 %: KR sets it on 865 more items, the EC data dropped it). Bits 19 and 25 are left
+/// unmapped, in place: no KR item sets 19 (the KR terrain definitions use it for `NoHouse`, unconfirmed), and the 3
+/// items with 25 have no matching flag in the EC data or Classic `tiledata.mul`. `flags2` needs no mapping: every
+/// KR bit agrees with the EC bit at its own position.
+const KR_FLAGS1_MOVED_BITS: [(u32, TaeFlag); 3] =
+    [(1 << 14, TaeFlag::Rotated), (1 << 15, TaeFlag::AlphaBlend), (1 << 26, TaeFlag::NoDraw)];
+
+/// The EC flags of a Kingdom Reborn record's `flags1` ([`KR_FLAGS1_MOVED_BITS`]).
+pub fn kr_flags1_to_enhanced(kr_bits: u32) -> TaeFlag {
+    let mut bits = u64::from(kr_bits);
+    for (kr_bit, flag) in KR_FLAGS1_MOVED_BITS {
+        if kr_bits & kr_bit != 0 {
+            bits = (bits & !u64::from(kr_bit)) | flag.bits();
+        }
+    }
+    TaeFlag::from_bits_retain(bits)
+}
+
+/// The Kingdom Reborn `flags1` of EC flags, the inverse of [`kr_flags1_to_enhanced`]; `None` when a flag has no
+/// Kingdom Reborn position: one above bit 31 other than the moved ones, or the EC bit at a position KR uses for a
+/// moved flag (`ArticleA`, `ArticleAn`, `ArtUsed`).
+pub fn enhanced_flags1_to_kr(flags: TaeFlag) -> Option<u32> {
+    let mut bits = flags.bits();
+    let mut kr_bits = 0u32;
+    for (kr_bit, flag) in KR_FLAGS1_MOVED_BITS {
+        if bits & u64::from(kr_bit) != 0 {
+            return None;
+        }
+        if bits & flag.bits() != 0 {
+            bits &= !flag.bits();
+            kr_bits |= kr_bit;
+        }
+    }
+    Some(kr_bits | u32::try_from(bits).ok()?)
+}
+
 /// Direct mapping of the 4-byte radar color data (typically BGRA) found in the file.
 #[derive(Debug, Default, Clone, PartialEq)]
 pub struct TaeRadarcol {
@@ -577,12 +619,13 @@ impl TileArtEntry {
         read_value!(entry.light_offset_x, read_f32, LittleEndian);
         read_value!(entry.light_offset_y, read_f32, LittleEndian);
         read_value!(entry.house_join_bits, read_u32, LittleEndian);
-        for flags in [&mut entry.flags1, &mut entry.flags2] {
-            let bits = match kr {
-                true => u64::from(reader.read_u32::<LittleEndian>()?),
-                false => reader.read_u64::<LittleEndian>()?,
-            };
-            *flags = TaeFlag::from_bits_retain(bits);
+        // Kingdom Reborn flags are u32; `flags1` moves to the EC layout ([`kr_flags1_to_enhanced`]), `flags2` has it.
+        if kr {
+            entry.flags1 = kr_flags1_to_enhanced(reader.read_u32::<LittleEndian>()?);
+            entry.flags2 = TaeFlag::from_bits_retain(u64::from(reader.read_u32::<LittleEndian>()?));
+        } else {
+            entry.flags1 = TaeFlag::from_bits_retain(reader.read_u64::<LittleEndian>()?);
+            entry.flags2 = TaeFlag::from_bits_retain(reader.read_u64::<LittleEndian>()?);
         }
         read_value!(entry.facing, read_i32, LittleEndian);
 
@@ -722,7 +765,8 @@ impl TileArtEntry {
     /// stored. Fails on another version than [`TILEART_RECORD_VERSION`] or [`TILEART_KR_RECORD_VERSION`], not
     /// exactly [`TILEART_SHADER_BLOCK_COUNT`] shader blocks, or a list longer than its count field. A Kingdom
     /// Reborn (v3) record is written in its own layout and fails on a value it cannot hold: `uses_enhanced_tileart`
-    /// or `alternate_animation` set, flags above 32 bits, sitting words 4 or 5, a radar colour, a present
+    /// or `alternate_animation` set, a flag without a Kingdom Reborn position ([`enhanced_flags1_to_kr`], `flags2`
+    /// above 32 bits), sitting words 4 or 5, a radar colour, a present
     /// TileArtEnhanced block, or an effect the Kingdom Reborn grammar lacks.
     pub fn to_bytes(&self) -> eyre::Result<Vec<u8>> {
         let dialect = record_dialect(self.version)
@@ -759,11 +803,13 @@ impl TileArtEntry {
         put_f32(&mut out, self.light_offset_x);
         put_f32(&mut out, self.light_offset_y);
         put_u32(&mut out, self.house_join_bits);
-        for flags in [self.flags1, self.flags2] {
-            match kr {
-                // `ensure_kingdom_reborn_fits` checked that the bits fit.
-                true => put_u32(&mut out, flags.bits() as u32),
-                false => out.extend_from_slice(&flags.bits().to_le_bytes()),
+        if kr {
+            // `ensure_kingdom_reborn_fits` checked that the bits fit.
+            put_u32(&mut out, enhanced_flags1_to_kr(self.flags1).unwrap_or_default());
+            put_u32(&mut out, self.flags2.bits() as u32);
+        } else {
+            for flags in [self.flags1, self.flags2] {
+                out.extend_from_slice(&flags.bits().to_le_bytes());
             }
         }
         out.extend_from_slice(&self.facing.to_le_bytes());
@@ -865,13 +911,16 @@ impl TileArtEntry {
         let id = self.tile_id;
         ensure!(!self.uses_enhanced_tileart, "tileart record {id}: Kingdom Reborn has no uses_enhanced_tileart");
         ensure!(!self.alternate_animation, "tileart record {id}: Kingdom Reborn has no alternate_animation");
-        for (flags, name) in [(self.flags1, "flags1"), (self.flags2, "flags2")] {
-            ensure!(
-                u32::try_from(flags.bits()).is_ok(),
-                "tileart record {id}: {name} {:#x} exceeds the Kingdom Reborn u32",
-                flags.bits()
-            );
-        }
+        ensure!(
+            enhanced_flags1_to_kr(self.flags1).is_some(),
+            "tileart record {id}: flags1 {:#x} has a flag without a position in the Kingdom Reborn u32",
+            self.flags1.bits()
+        );
+        ensure!(
+            u32::try_from(self.flags2.bits()).is_ok(),
+            "tileart record {id}: flags2 {:#x} exceeds the Kingdom Reborn u32",
+            self.flags2.bits()
+        );
         if let Some(sitting) = &self.sitting {
             ensure!(
                 sitting.field_10 == 0 && sitting.field_14 == 0,
@@ -1550,6 +1599,12 @@ mod tests {
         }
     }
 
+    /// `flags1` of [`kingdom_reborn_record`] in the KR layout: `Wall`, KR bit 14 (EC `Rotated`), KR bit 15 (EC
+    /// `AlphaBlend`) and KR bit 26 (EC `NoDraw`).
+    const KR_TEST_FLAGS1: u32 = 0x10 | 1 << 14 | 1 << 15 | 1 << 26;
+    /// `flags2` of [`kingdom_reborn_record`]: `ArticleA` (bit 14 keeps its position in `flags2`) and `UseNewArt`.
+    const KR_TEST_FLAGS2: u32 = 1 << 14 | 1 << 19;
+
     /// Builds a Kingdom Reborn (v3) record: one flag byte, no alternate animation byte, u32 flags, a 4-word
     /// sitting block, no radar colour, 3 shader blocks and a KR effect (position offset, KR key 6).
     fn kingdom_reborn_record() -> Vec<u8> {
@@ -1558,7 +1613,7 @@ mod tests {
         let mut writer = RecordWriter::default();
         writer.u16(TILEART_KR_RECORD_VERSION).u32(7).u32(1234).u8(1).f32(1.0).f32(1.5).u32(0).i32(1233)
             .f32(0.0).u32(400).f32(2.0).u32(0).f32(-5.0).f32(-4.0).u32(0x3FC0)
-            .u32((TaeFlag::Rotated | TaeFlag::AlphaBlend).bits() as u32).u32(TaeFlag::UseNewArt.bits() as u32).u32(1);
+            .u32(KR_TEST_FLAGS1).u32(KR_TEST_FLAGS2).u32(1);
         (1..=12).for_each(|value| { writer.i32(value); });
         writer.u8(0).u8(0).u32(0).u32(0);
         writer.u8(TILEART_SITTING_PRESENT).u32(SITTING_DIRECTION_WEST).i32(-3).i32(-20).i32(-4);
@@ -1575,7 +1630,11 @@ mod tests {
         assert_eq!(entry.dialect().unwrap(), ClientDialect::KingdomReborn);
         assert!(entry.has_world_art && !entry.uses_enhanced_tileart && !entry.alternate_animation);
         assert_eq!((entry.body_type, entry.light_scale, entry.house_join_bits), (400, 2.0, 0x3FC0));
-        assert_eq!(entry.flags2, TaeFlag::UseNewArt);
+        assert_eq!(entry.flags1, TaeFlag::Wall | TaeFlag::Rotated | TaeFlag::AlphaBlend | TaeFlag::NoDraw);
+        assert_eq!(entry.flags2, TaeFlag::ArticleA | TaeFlag::UseNewArt);
+        // KR bit 14 is `Rotated`: the sprite-shaded world art (shader string 2) is flat, solid art.
+        let shaders = dictionary_with_strings(&[WATER_SHADER_NAME, SPRITE_SHADER_NAME]);
+        assert_eq!(entry.get_tile_type(&entry.texture_vector[0], &shaders), TileType::Solid);
         assert_eq!(entry.sitting, Some(TaeSittingAnimation {
             direction_mask: SITTING_DIRECTION_WEST, seat_offset_x: -3, seat_offset_y: -20, window_shift: -4,
             field_10: 0, field_14: 0,
@@ -1591,7 +1650,9 @@ mod tests {
         for (edit, reason) in [
             (TileArtEntry { uses_enhanced_tileart: true, ..entry.clone() }, "uses_enhanced_tileart"),
             (TileArtEntry { alternate_animation: true, ..entry.clone() }, "alternate_animation"),
-            (TileArtEntry { flags1: TaeFlag::from_bits_retain(1 << u32::BITS), ..entry.clone() }, "u32"),
+            (TileArtEntry { flags1: entry.flags1 | TaeFlag::NoShadow, ..entry.clone() }, "position"),
+            (TileArtEntry { flags1: entry.flags1 | TaeFlag::ArticleA, ..entry.clone() }, "position"),
+            (TileArtEntry { flags2: TaeFlag::from_bits_retain(1 << u32::BITS), ..entry.clone() }, "u32"),
             (TileArtEntry { radarcol: TaeRadarcol { r: 1, ..TaeRadarcol::default() }, ..entry.clone() }, "radar"),
         ] {
             let error = edit.to_bytes().expect_err(reason);
@@ -1603,6 +1664,22 @@ mod tests {
         let mut sitting = entry;
         sitting.sitting.as_mut().unwrap().field_14 = 1;
         assert!(sitting.to_bytes().is_err());
+    }
+
+    #[test]
+    fn kingdom_reborn_flags1_moves_three_bits_and_keeps_the_others() {
+        for (kr_bit, flag) in KR_FLAGS1_MOVED_BITS {
+            assert_eq!(kr_flags1_to_enhanced(kr_bit), flag);
+            assert_eq!(enhanced_flags1_to_kr(flag), Some(kr_bit));
+        }
+        // Every 32-bit value maps back to itself, the unmapped bits 19 and 25 included.
+        for kr_bits in [0, u32::MAX, 1 << 19 | 1 << 25, KR_TEST_FLAGS1, 0x10004200] {
+            assert_eq!(enhanced_flags1_to_kr(kr_flags1_to_enhanced(kr_bits)), Some(kr_bits));
+        }
+        assert_eq!(kr_flags1_to_enhanced(0x10004200), TaeFlag::Surface | TaeFlag::Roof | TaeFlag::Rotated);
+        for flag in [TaeFlag::ArticleA, TaeFlag::ArticleAn, TaeFlag::ArtUsed, TaeFlag::NoHouse, TaeFlag::NoShadow] {
+            assert_eq!(enhanced_flags1_to_kr(flag), None, "{flag:?}");
+        }
     }
 
     #[test]
