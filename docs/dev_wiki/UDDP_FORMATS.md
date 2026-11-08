@@ -1,5 +1,7 @@
 # UODynamapper Package (UDDP) Custom Formats
 
+UDDP packages collect converted client assets in a container designed for compact storage and runtime streaming. They can hold textures in GPU-ready formats, including uncompressed images and block-compressed formats such as BC1 and BC7, alongside metadata needed to access them. This avoids parsing the original client files during normal map rendering.
+
 This document describes the structure of custom binary `.uddp` formats used by UODynamapper for fast parsing/ram/vram upload and fast rendering. All `.uddp` files are packaged using the core `UddpBuilder` and compressed (typically with `ZstdNoDict`), containing multiple virtual files (metadata tables and texture payloads).
 
 The container is laid out as the header, the dictionary table and the index, back to back, then the blob region: the dictionaries (by data type) and every payload in key order, with no padding, to the end of the file (`lib/udd-container/tests/uddp_layout.rs`). Payloads are not aligned, so a reader that needs aligned records copies them; the `*_cow` reads borrow uncompressed payloads at any offset. `udd-cli tool validate` decodes every entry and runs each package's own reader.

@@ -16,7 +16,7 @@ Responsibilities:
 - runtime package loading from `.uddp` files
 - renderer-facing settings under `dynamapper/assets/settings/`
 
-Runtime source assets and converted packages are expected under `dynamapper/assets/` or linked from there.
+Bundled shaders and settings live under `dynamapper/assets/`; the runtime package directory is configured separately.
 
 ## Libraries
 
@@ -28,7 +28,6 @@ Current scope includes:
 
 - map, statics, art, tiledata, and UOP-related parsing
 - Enhanced Client package metadata such as `tileart.uop` and `TerrainDefinition.uop`
-- custom project formats such as `.uddp` and `.uddf`
 - support for additional community/custom formats as they are needed
 
 ### `lib/udd-container/`
@@ -96,101 +95,21 @@ CPU simulation and preview rendering of the Enhanced Client particle effects: th
 
 glTF 2.0 binary (`.glb`) export of the Enhanced Client effects: Gamebryo NIF scenes and whole particle effects.
 
-## Distributed Binaries
+## Tools
 
-Release packages are expected to ship `dynamapper` and each tool as separate binaries. Some executable names differ from the Cargo crate names.
+Executable names sometimes differ from Cargo crate names. Command details are available through `--help`.
 
-### Standalone Renderer
-
-- `dynamapper`: interactive Bevy map renderer and viewer.
-
-### UDD Package Management
-
-- `udd-conv-gui`: graphical frontend for building UODynamapper runtime packages.
-- `udd-conv-cli`: CLI crate that builds:
-  - `udd-cli pack`: package builder for `.uddp` runtime assets.
-  - `udd-cli tool`: package inspector/editor for existing `.uddp` files.
-- `uddp-inspector-gui`: graphical inspector for `.uddp` package contents, atlas pages, and metadata slots.
-
-### UOCF Command-Line Tools
-
-Package-manager and legacy conversion tools built by the `uocf-cli` crate:
-
-- `uop-tool`: hash, inspect, replace, crack candidate paths for, and rebuild `.uop` packages.
-- `cc-uop-mul-converter`: convert between Classic Client `.mul`/`.idx` files and modern `.uop` packages.
-- `uop-dict-populator-cli`: populate UOP hash dictionaries from templates or brute force.
-- `texture-scanner`: identify and isolate land candidates from UO texture pools.
-- `sound-tool`: inspect or convert supported UO sound data.
-- `multimap-tool`: convert Classic Client `multimap.rle` to and from BMP or PNG.
-- `facet-evidence-tool`: gather facet evidence for EC/KR land and map analysis.
-- `kr-ec-terrain-diff-tool`: compare KR and EC land evidence.
-- `uocf-asset-cli`: asset-level exports that are not package file-manager operations, including `.vd` and Michelangelo/UOAnimTool `.uop` animation patch streams.
-
-### UOCF Graphical Frontends
-
-- `uocf-editor-gui`: inspector and editor for UOCF-supported source client formats.
-- `uop-dict-populator-gui`: GUI for building and expanding UOP hash dictionaries.
-
-## CLI Tools
-
-### `tools/udd-conv-cli/`
-
-Command-line tooling for UODynamapper package workflows.
-
-Primary binaries:
-
-- `udd-cli pack`: builds runtime packages from source client assets.
-- `udd-cli tool`: inspects, extracts, diffs, edits, and rebuilds existing `.uddp` packages.
-
-See [ASSET_PIPELINE.md](ASSET_PIPELINE.md) for commands and package notes.
-
-### `tools/uocf-cli/`
-
-General-purpose Ultima Online format tooling built around `uocf`.
-
-Included tools:
-
-- `uop-tool`: hash, inspect, replace, crack candidate paths for, and rebuild modern `.uop` packages.
-- `cc-uop-mul-converter`: convert between Classic Client `.mul`/`.idx` files and modern Classic Client `.uop` packages.
-- `texture-scanner`: identify and isolate land candidates from UO texture pools.
-- `uop-dict-populator-cli`: populate UOP hash dictionaries from templates or brute force.
-- `sound-tool`: inspect or convert supported UO sound data.
-- `multimap-tool`: convert Classic Client `multimap.rle` to and from BMP or PNG.
-- `facet-evidence-tool`: gather facet evidence for EC/KR land and map analysis.
-- `kr-ec-terrain-diff-tool`: compare KR and EC land evidence.
-
-### `tools/uocf-asset-cli/`
-
-Asset-level Ultima Online tooling built around `uocf`.
-
-Included tools:
-
-- `uocf-asset-cli`: export Classic MUL, Classic Client AnimationFrame UOP, and Enhanced Client AnimationFrame UOP payloads as `.vd` or Michelangelo/UOAnimTool `.uop` animation patch streams.
-
-### `tools/udd-devtools-cli/`
-
-Development-only converted-asset diagnostics: package and gump equality checks,
-gump quality scores, archived paperdoll migration checks and optional GPU/codec
-experiments. See [the tool README](../../tools/udd-devtools-cli/README.md) for
-feature flags, required external fixtures and measurement limits.
-
-## GUI Tools
-
-### `tools/udd-conv-gui/`
-
-GUI frontend for the UODynamapper conversion pipeline.
-
-### `tools/uddp-inspector-gui/`
-
-Inspector for converted `.uddp` packages, atlas layers, logical files, and metadata slots.
-
-### `tools/uocf-editor-gui/`
-
-Inspector and editor for UOCF-supported source client formats, including `.uop` packages, `tiledata.mul`, and Enhanced Client `tileart.uop` metadata.
-
-### `tools/uop-dict-populator-gui/`
-
-GUI for building and expanding UOP hash dictionaries.
+- `dynamapper`: interactive map renderer.
+- `udd-conv-gui`: graphical frontend for building runtime packages.
+- `udd-cli` (from `udd-conv-cli`): `pack` builds packages and `tool` inspects and edits them. See [Asset pipeline](ASSET_PIPELINE.md).
+- `uddp-inspector-gui`: inspector for converted packages and their contents.
+- `uocf-cli`: client-file operations including animation, image, sound, hue, and facet conversion. See [its README](../../tools/uocf-cli/README.md).
+- `uoppackage-cli`: content-agnostic UOP package operations.
+- `uocf-editor-gui`: inspector and editor for client formats.
+- `uop-dict-populator-gui`: UOP path dictionary builder.
+- `uo-client-patcher-gui`: supported client executable patches.
+- `webmap-export-cli`: static web map export using the renderer.
+- `uocf-devtools-cli` and `udd-devtools-cli`: research and diagnostics; their optional binaries use the `dev-tool-tests` feature. See the [UDD development tools README](../../tools/udd-devtools-cli/README.md).
 
 ## Related Documentation
 

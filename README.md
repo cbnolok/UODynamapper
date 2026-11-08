@@ -1,264 +1,47 @@
 # UODynamapper
 
-UODynamapper is a renderer for Ultima Online maps written in Rust and using the Bevy engine.
+UODynamapper is an interactive Ultima Online map renderer written in Rust with the Bevy engine. It uses locally converted client data to explore maps in Classic, Enhanced Client, Kingdom Reborn-inspired, and UOD-Painterly styles. The workspace also provides tools for working with client files and converted packages.
 
-The main application is `dynamapper`: an interactive map viewer that reads converted Ultima Online data, streams land and static-art assets, and renders the world with Classic, Enhanced Client, and Kingdom Reborn inspired visual modes. The broader workspace contains conversion tools, package readers, inspectors, and format libraries that support that renderer.
+## Features
 
-## What Dynamapper Does
+- Explore facets with camera movement, zoom, rotation, and navigation controls.
+- Render land and static art with selectable texture sources, visual presets, and adjustable shader settings.
+- Convert Classic and Enhanced Client assets into packages for streaming by the renderer.
+- Inspect and work with source client files and converted packages using the included tools.
+- Export rendered maps for a static web viewer.
 
-- Renders Ultima Online land from converted Classic Client map data (also KR and EC facets are supported).
-- Supports Classic 2D, Enhanced Classic, and Kingdom Reborn-like land shader modes.
-- Streams custom `.uddp` packages instead of using UO client file at runtime.
-- Handles multiple maps, camera-controlled exploration, click-based teleportation and go-to dialog.
+Some rendering and tooling work is still in progress; see [the roadmap](docs/TODO.md).
 
-## Why a new package format?
+## Requirements and setup
 
-`uddp` files are containers conceptually similar to `uop`, but with a slimmer per-file metadata structure and better compression algorithms. This helps noticeably reduce asset size on disk, even if the stored data kept the same file format.
-Moreover, `uddp` packs textures in GPU-ready formats (texture atlases when useful, otherwise single textures per virtual file) that make asset streaming fast and efficient. Textures can be uncompressed raw RGBA8888 files or BC7-compressed. BC7 is a high quality lossy GPU block-compression format that can be sampled directly by the GPU without a decompression prepass. It preserves far more quality than KR/EC DXT1/BC1 while using 1/4 of the VRAM required by uncompressed RGBA8888 assets.
+You need a local Ultima Online Classic or Enhanced Client installation containing the data you want to convert. Game assets are not included in this repository. Build runtime packages with `udd-conv-gui` or `udd-cli pack`; see the [asset pipeline guide](docs/dev_wiki/ASSET_PIPELINE.md) for examples and package details. A Rust toolchain is needed when building from source.
 
-The workspace includes an in-tree BC7 encoder and a BC7 RDO (rate-distortion optimization) pass. RDO deliberately allows tiny, bounded visual changes when they make neighboring BC7 blocks more compressible by the outer package compressor. In practice, this still keeps runtime textures GPU-ready while improving disk package size and streaming locality (but the same VRAM usage) compared with storing naive BC7 output.
+The bundled shaders, fonts, and settings are in [dynamapper/assets/](dynamapper/assets/). Configure the package directory in [runtime_assets.toml](dynamapper/assets/settings/runtime_assets.toml): the default `uddp/` path is relative to the working directory. Settings saved by the app override the bundled settings and are stored in a `cache/` directory alongside the resolved assets directory.
 
-## Current Scope
+The application looks for an `assets/` directory in the working directory, the Cargo crate directory, or next to the executable. The package directory can be elsewhere; it need not be inside the assets tree. The conversion guide and [package format reference](docs/dev_wiki/UDDP_FORMATS.md) describe the available packages.
 
-Noteworthy Dynamapper features implemented:
+Keybindings are configurable; see [the default keybindings](docs/keybindings.md).
 
-- Free camera movement, zoom, rotation, and teleport controls.
-- Advanced shading tunable settings and presets for Classic Client, Enhanced Client or Kingdom Reborn visual style.
-- Choose between usage of Classic or Enhanced/KR land textures, switch between Classic and KR art tile sets (still stored in the EC data files) seamlessly.
-- Experimental land-only perspective and isometric free camera modes (without statics, which are rendered via billboarding).
-- Modular TOML configuration under `dynamapper/assets/settings/`.
-- Shader hot reload for land work.
-- Conversion tooling for Classic and Enhanced Client source assets (see "Provided Tools" README section).
-- Viewers for Classic and Enhanced Client source assets (see "Provided Tools" README section).
-- `.uddp` package inspection, extraction, diffing, and controlled metadata editing (see "Provided Tools" README section).
+## Tools
 
-In progress: see [docs/TODO.md](docs/TODO.md).
+- `dynamapper` — interactive map renderer.
+- `udd-conv-gui` and `udd-cli` — build runtime packages; `udd-cli tool` also inspects and edits them.
+- `uddp-inspector-gui` — browse and preview converted packages.
+- `uocf-cli` and `uocf-editor-gui` — work with Ultima Online client formats.
+- `uoppackage-cli` and `uop-dict-populator-gui` — work with UOP packages and path dictionaries.
+- `uo-client-patcher-gui` — patch supported client executable settings.
+- `webmap-export-cli` — build a web map from renderer output.
 
-## Requirements
-
-- A valid Ultima Online Classic Client (both mul and uop formats are supported) or Enhanced Client installation for the client data you want to convert or render.
-- Converted `.uddp` packages for runtime use. These are built from local client files via the provided `udd-conv-gui` or `udd-conv-cli`; source game assets are not included in this repository.
-- Rust toolchain compatible with the workspace edition only if you are building from source.
-
-Most users are expected to use distributed binaries rather than compile the workspace themselves. Release packages are expected to include `dynamapper` and the individual tool binaries. Source builds are mainly for contributors, toolchain work, and renderer development.
-
-## Basic Setup
-
-The main app expects shared assets, shaders, fonts, settings under `assets/` (already provided).
-
-Configure the runtime UDDP package path in `assets/settings/runtime_assets.toml`. Its default, `uddp/`, is relative to the working directory. A path the app saves goes to `cache/settings/runtime_assets.toml`, which overrides that file.
-
-Runtime packages are produced with the conversion tools and then placed in, or linked into, the Dynamapper asset tree. A typical working set includes:
-
-- `tilemeta.uddp`
-- `tex_art_cc.uddp`
-- `tex_art_ec.uddp` (optional)
-- `tex_land_cc.uddp`
-- `tex_land_ec.uddp` (optional)
-- `gumps_cc.uddp` and `gumps_ec.uddp` (optional, read when `load_gumps` is on). The Classic preset shows `gumps_cc.uddp`; Enhanced and KR-like show `gumps_ec.uddp` and fall back to `gumps_cc.uddp` for ids it lacks. The Enhanced client's `gumpartLegacyMUL.uop` is not used, since every id in it is also in `Interface.uop`.
-- map and statics packages for the facets you want to inspect (i.e.: `map0.uddp`, `statics0.uddp`).
-
-For conversion commands and package details, see [docs/dev_wiki/ASSET_PIPELINE.md](docs/dev_wiki/ASSET_PIPELINE.md).
-
-## Controls
-
-Keybindings are configurable. See [docs/keybindings.md](docs/keybindings.md) for the full list of the default values.
-
-## Provided Tools
-
-Release builds expose these binaries as separate executables.
-
-### dynamapper
-
-Interactive map renderer. The main application described throughout this README.
-
-### udd-conv-gui
-
-[`udd-conv-gui`](tools/udd-conv-gui/README.md) — graphical frontend for building UODynamapper runtime `.uddp` packages from
-Classic Client or Enhanced Client source installations. Wraps the `udd-cli pack`
-conversion commands in an egui interface with path pickers, job selection, and
-live progress reporting.
-
-### udd-conv-cli
-
-[`udd-conv-cli`](tools/udd-conv-cli/README.md) — CLI crate that provides two binaries:
-
-- `udd-cli pack`: converts Classic Client and Enhanced Client source assets into
-  `.uddp` runtime packages (land textures, art textures, maps, statics,
-  tilemeta, hues, gumps, animations, and more). Also includes EC material audit
-  and validation commands used during development.
-- `udd-cli tool`: inspects, extracts, hashes, replaces, rebuilds, diffs, and
-  exports/imports CSV metadata for `.uddp` and `.uddpi` package files.
-
-### uddp-inspector-gui
-
-[`uddp-inspector-gui`](tools/uddp-inspector-gui/README.md) — graphical inspector for `.uddp` package contents. Browse raw
-entries and their compression metadata, inspect atlas pages, preview decoded
-textures, and play back mobile animation sequences from `mobile_anim_cc.uddp`
-or `mobile_anim_ec.uddp`.
-
-### uocf-cli
-
-[`uocf-cli`](tools/uocf-cli/README.md) — CLI crate for Ultima Online file tooling built on top of the `uocf`
-library. End-user binaries:
-
-- `uop-tool`: hash UOP virtual paths, brute-force unknown hashes, extract,
-  replace, and rebuild `.uop` packages, and merge `.dic` hash dictionaries.
-- `cc-uop-mul-converter`: convert supported Classic Client `.mul`/`.idx` files
-  to and from modern `.uop` packages.
-- `sound-tool`: inspect or export Classic Client sound entries.
-- `multimap-tool`: convert Classic Client `multimap.rle` to and from BMP or PNG.
-
-Discovery and development binaries (under `src/bin/dev-tools/`; support asset
-research and pipeline maintenance rather than common user workflows):
-
-- `uop-dict-populator-cli`: populate `.dic` hash dictionaries from TOML
-  templates without the GUI.
-- `texture-scanner`: scan unpacked DDS texture trees and write a CSV inventory.
-- `facet-evidence-tool`: extract EC/KR facet land evidence into KDL.
-- `kr-ec-terrain-diff-tool`: compare KR land routing against EC evidence.
-
-### udd-devtools-cli
-
-[`udd-devtools-cli`](tools/udd-devtools-cli/README.md) contains development-only package comparisons,
-gump scoring and paperdoll migration checks, plus optional GPU and codec experiments. Enable
-`dev-tool-tests` to build it. Renderer frame and seam helpers remain in `scripts/dev-helpers/renderer/`.
-
-### uocf-asset-cli
-
-[`uocf-asset-cli`](tools/uocf-asset-cli/README.md) — CLI crate for asset-level tooling built on top of `uocf`. Binary:
-
-- `export-anim-patch`: export animation payloads from Classic Client
-  `anim*.mul`/`anim*.idx`, CC `AnimationFrame*.uop`, or EC
-  `AnimationFrame*.uop` as single-entry `.vd` files or Michelangelo/UOAnimTool
-  `.uop` patch streams.
-
-### uocf-editor-gui
-
-[`uocf-editor-gui`](tools/uocf-editor-gui/README.md) — graphical inspector and editor for Ultima Online source formats. Reads
-directly from client installation files without requiring prior conversion.
-Views: UOP package explorer (with optional `.dic` dictionary resolution), CC
-art tiles, CC/EC tiledata and tileart metadata, CC and EC mobile animations,
-anim sequence tables, CC/EC gumps, multis, hues, clilocs, EC TerrainDefinition,
-EC string dictionary, and CC sounds. Most views support switching between
-Classic Client and Enhanced Client sources.
-
-### uop-dict-populator-gui
-
-[`uop-dict-populator-gui`](tools/uop-dict-populator-gui/README.md) — graphical tool for building and expanding UOP hash
-dictionaries (`.dic` files). Load an existing dictionary, point the tool at a
-directory of `.uop` packages, define candidate path templates in TOML, and run
-a background hash-expansion search. Saves results as a `.dic` file compatible
-with MPE (Mythic Package Editor) and `uocf-editor-gui`.
-
-The shared starting-point dictionary lives at
-`lib/uocf/assets/Dictionary.dic`. `uop-tool merge-dic` can merge multiple
-`.dic` files.
-
-### uocf library
-
-[`uocf`](lib/uocf/README.md) — the core Ultima Online client format parser library used by all tools and
-the conversion pipeline. Covers:
-
-- **`.uop` container**: reading, writing, compression dispatch (zlib/deflate,
-  zlib-bwt, raw), path hashing, brute-force hash cracking, and hash dictionary
-  management.
-- **Classic Client** (`.mul` / `.idx` and their `.uop` equivalents): map and
-  statics, art and land textures, tiledata, animations, gumps, fonts, hues,
-  sounds, multis, radar map RLE, lights, radar colors, verdata patches,
-  clilocs, body definition files, and DIF patch handling. Several CC file types
-  have been re-released or supplemented in `.uop` format (e.g.
-  `artLegacyMUL.uop`, `gumpartLegacyMUL.uop`, `soundLegacyMUL.uop`,
-  `AnimationFrame*.uop`); these wrap data with the same logical layout as their
-  `.mul` counterparts and are parsed by the same `classic` module.
-- **Kingdom Reborn / Enhanced Client**: facet encoder/decoder, EC
-  `TerrainDefinition.uop`, `tileart.uop`, texture packages, animation frames,
-  hues, multis, localized strings, string dictionary, land config, tile
-  database, waypoints, and CC-to-EC tile mapping helpers.
-- **Compatibility formats**: `.vd` animation patch stream codec,
-  Michelangelo-style animation `.uop` codec.
-
-### Custom support libraries
-
-- [`udd-container`](lib/udd-container/README.md): low-level `.uddp` / `.uddf` container I/O, compression
-  (zstd), and xxHash-64 path addressing.
-- [`udd-assets`](lib/udd-assets/README.md): typed runtime readers for converted `.uddp` packages; used by
-  `dynamapper` at runtime and by tools for inspection and validation.
-- [`udd-conv`](lib/udd-conv/README.md): conversion and atlas-packing logic shared by `udd-conv-cli` and
-  `udd-conv-gui`.
-- [`uot-texture-codecs`](lib/support/uot-texture-codecs/README.md): GPU texture codec support — BC7 SIMD-assisted analytical
-  encoder/decoder (inspired by basis-universal), BC7 RDO pass for improved
-  outer compression, and KTX2 container writing for supercompressed BC7 + zstd textures.
-- [`uot-image-postprocess`](lib/support/uot-image-postprocess/README.md): image scaling and filtering used before packaging.
-  Supported upscalers: Nearest, Bilinear, CatmullRom, Lanczos3, xBRZ, lqx,
-  hqx, epx, 2xSaI, Super2xSaI, SuperEagle, MMPX, Super-xBR, ScaleFX,
-  OmniScale, Jinc2, CUT1/CUT2/CUT3, Kopf-Lischinski depixelizer, NEDI, AMD FSR
-  (EASU or EASU+RCAS), and post-upscale crispening passes.
-
-## Workspace
-
-The repository is a Cargo workspace. The important top-level groups are:
-
-- `dynamapper/`: the Bevy application and renderer.
-- `lib/uocf/`: parsers for Ultima Online source formats.
-- `lib/udd-container/`, `lib/udd-assets/`, `lib/udd-conv/`: package infrastructure, runtime readers, and conversion logic.
-- `lib/support/`: shared `uot-*` tooling plumbing: GPU texture codecs, image postprocessing, strict KDL decoding, tool logging, and GUI helpers.
-- `tools/`: CLI and GUI tools for conversion, inspection, package editing, and UOP-related workflows.
-
-Detailed crate and tool responsibilities live in [docs/dev_wiki/WORKSPACE_COMPONENTS.md](docs/dev_wiki/WORKSPACE_COMPONENTS.md).
+Development tools are also included. See [workspace components](docs/dev_wiki/WORKSPACE_COMPONENTS.md) and each tool's `--help` for details. The packages use a project-specific format designed for compact storage and streaming; its rationale and layouts are described in [UDDP formats](docs/dev_wiki/UDDP_FORMATS.md).
 
 ## Documentation
 
-| Document | Purpose |
-| -------- | ------- |
-| [ENGINEERING.md](ENGINEERING.md) | Engineering conventions, workspace layout and build commands |
-| [docs/agents/dynamapper_architecture.md](docs/agents/dynamapper_architecture.md) | Renderer architecture and implementation rules |
-| [docs/dev_wiki/WORKSPACE_COMPONENTS.md](docs/dev_wiki/WORKSPACE_COMPONENTS.md) | Workspace crates, tools, and responsibilities |
-| [docs/dev_wiki/ASSET_PIPELINE.md](docs/dev_wiki/ASSET_PIPELINE.md) | Conversion commands, package notes, and CSV editing rules |
-| [docs/dev_wiki/UDDP_FORMATS.md](docs/dev_wiki/UDDP_FORMATS.md) | `.uddp` and `.uddf` package formats |
-| [docs/dev_wiki/rendering/LAND_TEXTURES_AND_TRANSITIONS.md](docs/dev_wiki/rendering/LAND_TEXTURES_AND_TRANSITIONS.md) | EC land/art classification and transition work |
+- [Asset pipeline](docs/dev_wiki/ASSET_PIPELINE.md) — conversion and package workflows.
+- [UDDP formats](docs/dev_wiki/UDDP_FORMATS.md) — package architecture and layouts.
+- [Workspace components](docs/dev_wiki/WORKSPACE_COMPONENTS.md) — libraries and tools.
+- [Engineering guide](ENGINEERING.md) and [renderer architecture](docs/agents/dynamapper_architecture.md) — contributor guidance.
+- [Land textures and transitions](docs/dev_wiki/rendering/LAND_TEXTURES_AND_TRANSITIONS.md) — terrain rendering notes.
 
-Recommended reading:
+## License and credits
 
-1. Start with this README to understand the project shape.
-2. Read [ENGINEERING.md](ENGINEERING.md) for workspace conventions and [the architecture guide](docs/agents/dynamapper_architecture.md) for renderer work.
-3. Use [docs/dev_wiki/ASSET_PIPELINE.md](docs/dev_wiki/ASSET_PIPELINE.md) when building packages.
-4. Use [UDDP formats](docs/dev_wiki/UDDP_FORMATS.md) and [the EC evidence map](docs/dev_wiki/rendering/EC_WORLD_SPACE_UV_EVIDENCE_MAP.md) when changing packages or EC rendering.
-
-## License, credits and references
-
-Released under the [Apache license](LICENSE.md)
-
-### UO Files
-
-- Good ol' [Heptazane wiki](https://uo.stratics.com/heptazane/fileformats.shtml#3.8)
-- Lots of C++ tools/libs i wrote in the years: uocf and uopp (mainly wrote to be used by Leviathan), UO ETE (Enhanced Tileart Editor), UO EMC (Enhanced Map Converter), huesmul2uop.
-- ClassicUO: "zlib_bwt" codec.  
-- KR facet format from ManawydanMapConverter.
-- Lots of EC file formats from [Kons' wiki](https://code.google.com/archive/p/kprojects/wikis).
-- Stefanomerotta's proof of concept [UO Client](https://github.com/stefanomerotta/UOClient/) for guidance on animated land textures shaders.
-- UO-EC-Super-Viewer: xml source data for AnimationsCollection, AudioCollection, MultiCollection.
-- UOFiddler: audio, fonts.
-
-### Algorithms
-
-Used as references or sources for Rust translation, which has been incrementally optimized further.
-
-- BC7 codec: [basis-universal implementation](https://github.com/BinomialLLC/basis_universal/tree/master/transcoder)
-- RDO implementation: [richgel999/bc7enc_rdo](https://github.com/richgel999/bc7enc_rdo) and [richgel999/bc7enc_rdo_devel](https://github.com/richgel999/bc7enc_rdo_devel/blob/master/bc7enc.cpp#L3711)
-- Upscalers:
-  - NEDI: [Python implementation](https://github.com/Kirstihly/Edge-Directed_Interpolation)
-  - Kopf-Lischinski Depixelizer: [Python implementation](https://github.com/vvanirudh/Pixel-Art/tree/master)
-  - AMD FidelityFX 1.1 (ESAU - - and RCAS - - passes): [Official C implementation](https://github.com/GPUOpen-Effects/FidelityFX-FSR).
-  - xBRZ: [Rust crate](https://docs.rs/xbrz-rs/latest/xbrz/)
-  - Super-xBR: [hansonw/super-xbr](https://github.com/hansonw/super-xbr)
-  - ScaleFX: [Themaister/slang-shaders ScaleFX](https://github.com/Themaister/slang-shaders/tree/master/scalefx)
-  - Deblur: [guest(r) `deblur.glsl`](https://github.com/libretro/glsl-shaders/blob/master/deblur/shaders/deblur.glsl)
-  - OmniScale: [Themaister/slang-shaders OmniScale](https://github.com/Themaister/slang-shaders/tree/master/omniscale)
-  - Jinc2: local Hyllian [GLSL passes](https://github.com/mrgriscom/emu/blob/master/configs/retroarch/shaders/shaders_glsl/windowed/shaders/) and [RiskyJumps revised Jinc2 shaders](https://forums.libretro.com/t/jinc-2-fixes/21146)
-  - Cheap Upscaling Triangulation (CUT): [Swordfish90/cheap-upscaling-triangulation](https://github.com/Swordfish90/cheap-upscaling-triangulation)
-  - lqx: [PixelScalerWin repo](https://github.com/daelsepara/PixelScalerWin) and [Libretro implementation](https://github.com/libretro/RetroArch/blob/master/gfx/video_filters/lq2x.c)
-  - hqx: [C++ implementation](https://github.com/brunexgeek/hqx)
-  - epx: [PixelScalerWin repo](https://github.com/daelsepara/PixelScalerWin) and [Libretro implementation](https://github.com/libretro/RetroArch/blob/master/gfx/video_filters/epx.c)
-  - 2xSaI, Super2xSaI, and SuperEagle (SAI variants): [PixelScalerWin repo](https://github.com/daelsepara/PixelScalerWin) and [Libretro implementations folder](https://github.com/libretro/RetroArch/blob/master/gfx/video_filters/)
-  - MMPX-style: [Rust crate](https://crates.io/crates/mmpx).
+Released under the [Apache license](LICENSE). See [credits and references](CREDITS.md) for UO file-format and algorithm sources.

@@ -1,6 +1,6 @@
-# uocf-asset-cli
+# uocf-cli
 
-`uocf-asset-cli` contains asset-level tooling built on top of `uocf`.
+`uocf-cli` contains asset-level tooling built on top of `uocf`.
 
 ## Commands
 
@@ -73,7 +73,7 @@ Supported animation sources:
 Example:
 
 ```sh
-uocf-asset-cli export-anim-patch \
+uocf-cli export-anim-patch \
   --source classic-mul \
   --idx anim.idx \
   --mul anim.mul \

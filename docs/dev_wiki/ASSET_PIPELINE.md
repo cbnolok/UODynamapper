@@ -4,6 +4,8 @@ This document collects the package, conversion, and inspection details that are 
 
 The runtime renderer consumes converted `.uddp` packages. Source Ultima Online client files are read by conversion tools, classified, packed, and then accessed by `dynamapper` through runtime package readers.
 
+A typical map setup includes `tilemeta.uddp`, `tex_art_cc.uddp`, `tex_land_cc.uddp`, and the `mapN.uddp` and `staticsN.uddp` packages for each facet. Enhanced textures and other assets such as gumps are built as needed. Set the package directory in `runtime_assets.toml`; see the [README](../../README.md#requirements-and-setup).
+
 ## Main Tools
 
 ### `udd-cli pack`
@@ -12,7 +14,8 @@ The runtime renderer consumes converted `.uddp` packages. Source Ultima Online c
 
 Common commands:
 
-- `pack-art`: pack Classic Client `art.mul` / `artidx.mul` into `tex_art_cc.uddp`.
+- `pack-art`: pack Classic Client art from MUL or UOP sources into `tex_art_cc.uddp`.
+- `pack-texmaps`: pack Classic Client land textures into `tex_land_cc.uddp`.
 - `pack-ec-textures`: pack Enhanced Client static-art and terrain textures into `tex_art_ec.uddp` and `tex_land_ec.uddp`.
 - `pack-tilemeta`: pack Classic Client tiledata and Enhanced Client tileart metadata into `tilemeta.uddp`.
 - `pack-ec-tex-aux`: pack the EC support images that runtime consumers read (WorldArt hue masks, terrain-surface masks, liquid inputs) from a `tilemeta.uddp`'s texture refs into `tex_aux_ec.uddp`. The package also holds the client's missing-texture fallback; see below.
@@ -136,7 +139,7 @@ Both packers trim each atlas gump to its drawn texels and record its offset in t
 - **Standalone**, the `pack-ec-gumps` default: it stores the Classic gumps Interface.uop repeats, and needs no other package.
 - **Shared**, `pack-ec-gumps --share-with <gumps_cc.uddp>`: it leaves out each single gump that `gumps_cc.uddp` draws the same (colour under fully clear texels aside, except on the paperdoll body gumps) and lists it with a hash of the `gumps_cc` image. On the shipped clients that is 2216 gumps: 69.0 MB against 83.5 MB lossless, and 27.1 MB against 33.7 MB for `--bc7` sharing with a `--bc1` `gumps_cc`. The packer logs how many it shared, how many it kept, and how many of those it kept because the `gumps_cc` copy is the same gump through a lossier format (a lossless `gumps_ec` sharing with a lossy `gumps_cc` keeps nearly all of them). A shared `gumps_ec.uddp` needs that `gumps_cc.uddp`, or the Classic client gump files, beside it to show those gumps; `udd-cli tool validate` checks them against the `gumps_cc.uddp` in the same folder, or notes the dependency when there is none.
 
-`scripts/uddconv/uddconv.py` (`all` and `ec-gumps`, and the `uddconv_*.sh` wrappers, which pass their arguments on) packs shared by default with the `gumps_cc.uddp` in its output folder, which `all` builds first, and standalone when there is none; `--no-gump-sharing` packs standalone. `uddconv_upscaled.py` packs standalone: its Classic and Enhanced gumps take different upscale passes, so none would draw the same. The converter GUI has no gump jobs.
+`scripts/uddconv/uddconv.py` (`all` and `ec-gumps`, and the `uddconv_*.sh` wrappers, which pass their arguments on) packs shared by default with the `gumps_cc.uddp` in its output folder, which `all` builds first, and standalone when there is none; `--no-gump-sharing` packs standalone. `uddconv_upscaled.py` packs standalone: its Classic and Enhanced gumps take different upscale passes, so none would draw the same. The converter GUI also provides Classic and Enhanced gump jobs, with sharing or standalone output options.
 
 Dynamapper loads both packages when `load_gumps` is on and picks one by rendering preset (the user, 2026-11-06), for single gumps and paperdoll layers alike:
 
