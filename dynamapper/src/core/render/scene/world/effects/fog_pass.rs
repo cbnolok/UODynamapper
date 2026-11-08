@@ -73,6 +73,10 @@ pub struct FogPostProcessUniform {
     pub _pad_time: f32,
 }
 
+/// The fog pass's place in `Core3d`, for passes that must run after it (the client night composite).
+#[derive(SystemSet, Debug, Clone, PartialEq, Eq, Hash)]
+pub struct FogPassSystems;
+
 impl FullscreenMaterial for FogPostProcessUniform {
     fn fragment_shader() -> ShaderRef {
         "shaders/world/effects/fog_pass.wesl".into()
@@ -81,7 +85,7 @@ impl FullscreenMaterial for FogPostProcessUniform {
     fn schedule_configs(system: ScheduleConfigs<BoxedSystem>) -> ScheduleConfigs<BoxedSystem> {
         // Run after tonemapping so fog is applied on the fully composed frame.
         // Upscaling (the final blit) runs after the whole `PostProcess` set.
-        system.in_set(Core3dSystems::PostProcess).after(tonemapping)
+        system.in_set(Core3dSystems::PostProcess).in_set(FogPassSystems).after(tonemapping)
     }
 }
 

@@ -13,11 +13,20 @@ use super::super::scene::world::land::mesh_material::*;
 use crate::core::controls::input_actions::ActionToggleShaderSettings;
 use crate::{
     configs::shader_presets::{
-        build_save_presets, get_preset_slot, reset_preset_to_factory, save_shader_settings,
-        store_active_preset, FactoryShaderPresets, UniformState, CLASSIC_PRESET_GROUP,
-        ENHANCED_PRESET_GROUP, KR_PRESET_GROUP, PAINTERLY_PRESET_GROUP,
+        build_save_presets, get_preset_slot, preset_scene_multiplier, reset_preset_to_factory,
+        save_shader_settings, store_active_preset, FactoryShaderPresets, UniformState,
+        CLASSIC_PRESET_GROUP, ENHANCED_PRESET_GROUP, KR_PRESET_GROUP, PAINTERLY_PRESET_GROUP,
     },
-    core::render::{dialogs, scene::camera::UiCameraResource},
+    core::render::{
+        dialogs,
+        scene::{
+            camera::UiCameraResource,
+            world::effects::client_night::{
+                MAX_CLIENT_LIGHT_LEVEL, MAX_NIGHT_OVERLAY_STRENGTH, MIN_NIGHT_OVERLAY_STRENGTH,
+                NIGHT_MAP_MEAN,
+            },
+        },
+    },
     impl_tracked_plugin,
     prelude::*,
     util_lib::tracked_plugin::*,
@@ -216,7 +225,8 @@ fn apply_render_preset(
     u.effects.terrain_transition_flags = terrain_transition_flags;
     u.lighting = preset.lighting;
     u.land_lighting = preset.land_lighting;
-    u.global_lighting = preset.global_lighting;
+    u.global_lighting = preset_scene_multiplier(preset);
+    u.client_lighting = preset.client_lighting;
     u.sun = preset.sun;
     u.active_preset = period.key(style.preset_group);
     u.dirty = true;
@@ -528,13 +538,16 @@ pub fn land_ui_system(
             ui.collapsing("Intensities", |ui| {
                 let mut changed = false;
 
-                // Global scene brightness, always shown
-                changed |= slider_s(
-                    ui,
-                    "Global Lighting (Scene Luminosity)",
-                    &mut u.global_lighting,
-                    0.0..=2.0,
-                );
+                // Global scene brightness, in the styles without the client night lighting (KR-like and Enhanced
+                // dim through its Light Level instead, under Whole scene).
+                if u.client_lighting.is_none() {
+                    changed |= slider_s(
+                        ui,
+                        "Global Lighting (Scene Luminosity)",
+                        &mut u.global_lighting,
+                        0.0..=2.0,
+                    );
+                }
 
                 // Ambient always shown
                 changed |= slider_s(ui, "Ambient", &mut u.lighting.ambient_strength, 0.0..=1.5);
@@ -795,7 +808,15 @@ pub fn land_ui_system(
                 ui.strong("Terrain");
                 changed |= toggle_u32(ui, "Texture Normal Maps", &mut u.effects.enable_normal_maps);
                 changed |= slider_s(ui, "Land Normal Maps", &mut u.effects.land_normal_map_strength, 0.0..=1.0);
-                changed |= slider_s(ui, "Static Light Decals", &mut u.effects.static_light_decal_visibility, 0.0..=2.0);
+                // KR-like and Enhanced draw the lights into the night composite's light buffer, not as decals.
+                let decals = u.client_lighting.is_none();
+                changed |= ui
+                    .add_enabled(
+                        decals,
+                        egui::Slider::new(&mut u.effects.static_light_decal_visibility, 0.0..=2.0).text("Static Light Decals"),
+                    )
+                    .on_disabled_hover_text("KR-like and Enhanced light the night through the client's light buffer instead.")
+                    .changed();
                 changed |= slider_s(ui, "KR Land Temperature", &mut u.effects.kr_land_temperature_strength, 0.0..=1.5);
                 changed |= slider_s(ui, "KR Land Relief Shadow", &mut u.effects.kr_land_relief_shadow_strength, 0.0..=1.5);
                 changed |= slider_s(ui, "KR Land Shadow Mottle", &mut u.effects.kr_land_shadow_mottle_strength, 0.0..=1.5);
@@ -992,7 +1013,12 @@ fn whole_scene_controls(ui: &mut egui::Ui, u: &mut UniformState, gates: RenderSt
     });
     ui.columns(2, |columns| {
         let ui = &mut columns[0];
-        changed |= slider_s(ui, "Brightness", &mut u.global_lighting, 0.0..=2.0);
+        // KR-like and Enhanced dim as their clients do, through the light level and the night map; the other
+        // styles through the Brightness multiplier.
+        match u.client_lighting.as_mut() {
+            Some(lighting) => changed |= client_night_controls(ui, lighting),
+            None => changed |= slider_s(ui, "Brightness", &mut u.global_lighting, 0.0..=2.0),
+        }
         // KR's filmic tonemap pre-scales the image darker than EC/Classic;
         // this exposes that pre-scale (higher = brighter). Only the KR profile
         // uses it, so it is grayed out in the other styles.
@@ -1003,6 +1029,48 @@ fn whole_scene_controls(ui: &mut egui::Ui, u: &mut UniformState, gates: RenderSt
         changed |= toggle_slider(ui, true, "Grunge", &mut u.effects.enable_grunge, &mut u.effects.grunge_strength, 0.0..=1.0);
         changed |= toggle_slider(ui, gates.is_kr_profile, "KR Color Wash", &mut u.effects.enable_kr_color_wash, &mut u.effects.kr_color_wash_strength, 0.0..=1.5);
         changed |= slider_en(ui, gates.is_kr_profile, "KR Color Wash Scale", &mut u.effects.kr_color_wash_scale, 8.0..=160.0);
+    });
+    changed
+}
+
+/// The client night lighting of KR-like and Enhanced: light level, night overlay strength and colour.
+fn client_night_controls(ui: &mut egui::Ui, lighting: &mut ClientNightLighting) -> bool {
+    let mut changed = ui
+        .add(egui::Slider::new(&mut lighting.light_level, 0..=MAX_CLIENT_LIGHT_LEVEL).text("Light Level"))
+        .on_hover_text("The server's light level: 0 is full day (no change), about 10 a night, 26 a dungeon.")
+        .changed();
+    changed |= slider_tip(
+        ui,
+        "Night Overlay Strength",
+        &mut lighting.overlay_strength,
+        MIN_NIGHT_OVERLAY_STRENGTH..=MAX_NIGHT_OVERLAY_STRENGTH,
+        "The night map's tint. 1 is the client; 0 darkens as much without the blue; above 1 tints more.",
+    );
+    changed |= night_overlay_color(ui, &mut lighting.overlay_color);
+    changed
+}
+
+/// The night overlay colour as 8-bit values, as the night map stores them, with a button back to the client's.
+fn night_overlay_color(ui: &mut egui::Ui, color: &mut Vec3) -> bool {
+    const OVERLAY_COLOR_TIP: &str =
+        "The night map's mean colour. The client's keeps its blue; another colour keeps its cloud pattern.";
+    let mut changed = false;
+    ui.horizontal(|ui| {
+        let mut bytes = color.to_array().map(|channel| (channel * f32::from(u8::MAX)).round() as u8);
+        if ui.color_edit_button_srgb(&mut bytes).on_hover_text(OVERLAY_COLOR_TIP).changed() {
+            *color = Vec3::from_array(bytes.map(|channel| f32::from(channel) / f32::from(u8::MAX)));
+            changed = true;
+        }
+        ui.label("Night Overlay Colour").on_hover_text(OVERLAY_COLOR_TIP);
+        let is_client = *color == NIGHT_MAP_MEAN;
+        if ui
+            .add_enabled(!is_client, egui::Button::new("Client"))
+            .on_hover_text("Back to the client's colour, the night map's exact mean.")
+            .clicked()
+        {
+            *color = NIGHT_MAP_MEAN;
+            changed = true;
+        }
     });
     changed
 }
@@ -1255,6 +1323,7 @@ mod tests {
             lighting: GlobalLightingUniforms::default(),
             land_lighting: LandLightingUniforms::default(),
             global_lighting: 1.0,
+            client_lighting: None,
             sun: SunAngles::default(),
             dirty: false,
             saved_snapshot: None,
@@ -1264,7 +1333,8 @@ mod tests {
 
     fn preset(global_lighting: f32) -> LandMaterialUniformsPresets {
         LandMaterialUniformsPresets {
-            global_lighting,
+            global_lighting: Some(global_lighting),
+            client_lighting: None,
             effects: LandEffectsUniform::default(),
             lighting: GlobalLightingUniforms::default(),
             land_lighting: LandLightingUniforms::default(),
@@ -1301,7 +1371,8 @@ mod tests {
         u.effects.enable_water_animation = 0;
         u.effects.terrain_transition_flags = 3;
         let preset = LandMaterialUniformsPresets {
-            global_lighting: 0.75,
+            global_lighting: Some(0.75),
+            client_lighting: None,
             effects: LandEffectsUniform {
                 shading_mode: 2,
                 post_process_profile: 2,
@@ -1371,7 +1442,7 @@ mod tests {
             ShaderPresetPeriod::Afternoon,
         );
 
-        assert_eq!(presets.classic.morning.global_lighting, 0.42);
+        assert_eq!(presets.classic.morning.global_lighting, Some(0.42));
         assert_eq!(u.active_preset, "enhanced.afternoon");
         assert_eq!(u.global_lighting, 6.0);
     }
@@ -1395,7 +1466,36 @@ mod tests {
         let [_, _, kr_like, painterly] = RENDER_STYLE_PRESETS;
         assert_eq!((kr_like.shading_mode, kr_like.post_process_profile), (2, 2));
         assert_eq!((painterly.shading_mode, painterly.post_process_profile), (2, 2));
-        assert_eq!(preset_for_style(&presets, kr_like, ShaderPresetPeriod::Night).global_lighting, 11.0);
-        assert_eq!(preset_for_style(&presets, painterly, ShaderPresetPeriod::Night).global_lighting, 15.0);
+        assert_eq!(preset_for_style(&presets, kr_like, ShaderPresetPeriod::Night).global_lighting, Some(11.0));
+        assert_eq!(preset_for_style(&presets, painterly, ShaderPresetPeriod::Night).global_lighting, Some(15.0));
+    }
+
+    #[test]
+    fn client_lit_presets_load_their_lighting_and_a_neutral_scene_multiplier() {
+        const NIGHT_LEVEL: u32 = 10;
+        const STRENGTH: f32 = 0.5;
+        let lighting =
+            ClientNightLighting { light_level: NIGHT_LEVEL, overlay_strength: STRENGTH, overlay_color: NIGHT_MAP_MEAN };
+        let mut presets = mode_presets();
+        presets.kr.night = LandMaterialUniformsPresets {
+            global_lighting: None,
+            client_lighting: Some(lighting),
+            ..preset(0.0)
+        };
+        let [classic, _, kr_like, _] = RENDER_STYLE_PRESETS;
+        let mut u = uniform_state();
+        u.global_lighting = 0.3;
+
+        store_active_and_apply_render_preset(&mut u, &mut presets, kr_like, ShaderPresetPeriod::Night);
+        assert_eq!(u.client_lighting, Some(lighting));
+        assert_eq!(u.global_lighting, crate::configs::shader_presets::CLIENT_LIT_SCENE_MULTIPLIER);
+
+        // Live edits go back to the client-lit slot without a global_lighting.
+        u.client_lighting.as_mut().unwrap().light_level = MAX_CLIENT_LIGHT_LEVEL;
+        store_active_and_apply_render_preset(&mut u, &mut presets, classic, ShaderPresetPeriod::Night);
+        assert_eq!(presets.kr.night.client_lighting.map(|lighting| lighting.light_level), Some(MAX_CLIENT_LIGHT_LEVEL));
+        assert_eq!(presets.kr.night.global_lighting, None);
+        assert_eq!(u.client_lighting, None);
+        assert_eq!(u.global_lighting, 3.0);
     }
 }

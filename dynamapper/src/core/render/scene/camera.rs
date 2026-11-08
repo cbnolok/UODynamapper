@@ -348,7 +348,7 @@ commands.spawn((
 */
 
 fn sys_update_camera_projection_to_view(
-    mut camera_q: Query<&mut Projection, With<Camera3d>>,
+    mut camera_q: Query<&mut Projection, With<PlayerCamera>>,
     windows: Query<&Window>,
     render_zoom: Res<RenderZoom>,
     mut chunk_recompute_writer: MessageWriter<RecomputeVisibleChunksEvent>,
@@ -423,8 +423,8 @@ fn sys_update_camera_projection_to_view(
 }
 
 fn sys_camera_follow_player(
-    mut camera_q: Query<&mut Transform, (With<Camera3d>, Without<Player>)>,
-    player_q: Query<&Transform, (With<Player>, Without<Camera3d>)>,
+    mut camera_q: Query<&mut Transform, (With<PlayerCamera>, Without<Player>)>,
+    player_q: Query<&Transform, (With<Player>, Without<PlayerCamera>)>,
     mut chunk_recompute_writer: MessageWriter<RecomputeVisibleChunksEvent>,
     mut last_camera_chunk: Local<Option<(i32, i32)>>,
     settings: Res<Settings>,
@@ -475,7 +475,7 @@ fn sys_camera_zoom(
     mut egui_contexts: EguiContexts,
     mut chunk_recompute_writer: MessageWriter<super::RecomputeVisibleChunksEvent>,
     settings: Res<Settings>,
-    mut camera_q: Query<&mut Transform, With<Camera3d>>,
+    mut camera_q: Query<&mut Transform, With<PlayerCamera>>,
     windows: Query<&Window>,
 ) {
     // If egui is using the mouse/keyboard, don't zoom
@@ -536,7 +536,7 @@ fn sys_camera_zoom(
 fn sys_free_camera_movement(
     time: Res<Time>,
     keyboard: Res<ButtonInput<KeyCode>>,
-    mut camera_q: Query<&mut Transform, With<Camera3d>>,
+    mut camera_q: Query<&mut Transform, With<PlayerCamera>>,
     mut egui_contexts: EguiContexts,
     mut chunk_recompute_writer: MessageWriter<RecomputeVisibleChunksEvent>,
 ) {

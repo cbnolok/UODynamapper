@@ -1,6 +1,9 @@
 use super::statics_collect::StaticChunkBatchKey;
 use crate::configs::{settings::Settings, shader_presets::UniformState};
 use crate::console_logger::{self, LogAbout, LogSev};
+use crate::core::render::scene::world::effects::client_night::{
+    CLIENT_GENERIC_LIGHT_COLOR, CLIENT_LIGHT_SPRITE_PEAK_ALPHA, LIGHT_BUFFER_LAYER,
+};
 use crate::core::render::scene::world::land::{
     CHUNK_STORAGE_BLOCKS_DIM, MAP_STORAGE_BLOCK_TILE_DIM,
 };
@@ -8,7 +11,7 @@ use crate::core::render::scene::SceneStateData;
 use crate::core::statics::StaticsStoreRes;
 use crate::core::uo_files_loader::{HuesPackageRes, TileMetaPackageRes, WorldLightsPackageRes};
 use crate::util_lib::uo_coords::scale_uo_z_to_bevy_units;
-use bevy::camera::visibility::NoFrustumCulling;
+use bevy::camera::visibility::{NoFrustumCulling, RenderLayers};
 use bevy::prelude::*;
 use bevy::render::render_resource::{Extent3d, PrimitiveTopology, TextureDimension, TextureFormat};
 use std::collections::{HashMap, HashSet};
@@ -19,6 +22,12 @@ const LIGHT_PIXELS_PER_WORLD_TILE: f32 = 44.0;
 const STATIC_LIGHT_Y_BIAS: f32 = 0.012;
 const STATIC_LIGHT_ALPHA: f32 = 0.65;
 const STATIC_LIGHT_DEPTH_BIAS: f32 = 128.0;
+/// The render layer of the scene decals: the world camera's, Bevy's default.
+const SCENE_DECAL_LAYER: usize = 0;
+/// The signature's material alpha in the light buffer, whose materials keep their texture's alpha: the decal
+/// visibility and the scene multiplier do not apply there.
+const LIGHT_BUFFER_MATERIAL_ALPHA: f32 = 1.0;
+const BYTE_MAX: f32 = 255.0;
 const STATIC_LIGHT_BILLBOARD_RIGHT: Vec3 = Vec3::new(-0.70710677, 0.0, 0.70710677);
 const STATIC_LIGHT_BILLBOARD_UP: Vec3 = Vec3::new(0.4082483, -0.8164966, 0.4082483);
 const STATIC_LIGHT_BILLBOARD_NORMAL: Vec3 = Vec3::new(0.57735026, 0.57735026, 0.57735026);
@@ -45,6 +54,33 @@ enum StaticLightRenderStyle {
     Kr,
 }
 
+/// Where the light quads draw. Classic and UOD-Painterly add them over the scene as decals, faded by the scene
+/// multiplier and the decal visibility. KR-like and Enhanced draw them into the client night composite's light
+/// buffer instead, where they lerp over the night map like the clients' light sprites: they show only through
+/// the composite, so only below full day, as in the clients.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+enum StaticLightTarget {
+    SceneDecal,
+    ClientLightBuffer,
+}
+
+impl StaticLightTarget {
+    fn for_uniform_state(uniform_state: &UniformState) -> Self {
+        if uniform_state.client_lighting.is_some() {
+            Self::ClientLightBuffer
+        } else {
+            Self::SceneDecal
+        }
+    }
+
+    fn render_layers(self) -> RenderLayers {
+        match self {
+            Self::SceneDecal => RenderLayers::layer(SCENE_DECAL_LAYER),
+            Self::ClientLightBuffer => RenderLayers::layer(LIGHT_BUFFER_LAYER),
+        }
+    }
+}
+
 #[derive(Clone, Copy)]
 struct StaticLightStyleProfile {
     max_alpha: f32,
@@ -63,6 +99,7 @@ struct StaticLightMaterialKey {
     hue_id: u16,
     hue_source: StaticLightHueSourceKind,
     style: StaticLightRenderStyle,
+    target: StaticLightTarget,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -126,6 +163,7 @@ pub struct StaticLightEntity;
 pub struct StaticLightSyncSignature {
     world_lights_loaded: bool,
     render_style: StaticLightRenderStyle,
+    target: StaticLightTarget,
     material_alpha_bits: u32,
     instance_count: usize,
     instance_hash: u64,
@@ -134,6 +172,7 @@ pub struct StaticLightSyncSignature {
 fn static_light_sync_signature(
     instances: &RenderStaticLightInstances,
     render_style: StaticLightRenderStyle,
+    target: StaticLightTarget,
     material_alpha: f32,
     world_lights_loaded: bool,
 ) -> StaticLightSyncSignature {
@@ -161,6 +200,7 @@ fn static_light_sync_signature(
     StaticLightSyncSignature {
         world_lights_loaded,
         render_style,
+        target,
         material_alpha_bits: material_alpha.to_bits(),
         instance_count: instances.0.len(),
         instance_hash: hash,
@@ -341,15 +381,20 @@ pub fn sys_sync_static_light_entities(
     existing_q: Query<(Entity, &StaticLightKey), With<StaticLightEntity>>,
 ) {
     let render_style = StaticLightRenderStyle::from_shading_mode(uniform_state.effects.shading_mode);
-    let material_alpha = static_light_decal_alpha(
-        uniform_state.global_lighting,
-        uniform_state.effects.static_light_decal_visibility,
-        render_style,
-    );
+    let target = StaticLightTarget::for_uniform_state(&uniform_state);
+    let material_alpha = match target {
+        StaticLightTarget::SceneDecal => static_light_decal_alpha(
+            uniform_state.global_lighting,
+            uniform_state.effects.static_light_decal_visibility,
+            render_style,
+        ),
+        StaticLightTarget::ClientLightBuffer => LIGHT_BUFFER_MATERIAL_ALPHA,
+    };
     let Some(world_lights) = world_lights_res else {
         let signature = static_light_sync_signature(
             &instances,
             render_style,
+            target,
             material_alpha,
             false,
         );
@@ -368,6 +413,7 @@ pub fn sys_sync_static_light_entities(
     let signature = static_light_sync_signature(
         &instances,
         render_style,
+        target,
         material_alpha,
         true,
     );
@@ -395,6 +441,7 @@ pub fn sys_sync_static_light_entities(
             instance.light_id,
             instance.hue_id,
             render_style,
+            target,
             material_alpha,
             &world_lights.0,
             hues_package_res.as_deref(),
@@ -413,12 +460,13 @@ pub fn sys_sync_static_light_entities(
         if let Some(entity) = existing_by_key.get(&instance.key) {
             let _ = commands
                 .entity(*entity)
-                .insert((transform, MeshMaterial3d(material_handle)));
+                .insert((transform, MeshMaterial3d(material_handle), target.render_layers()));
         } else {
             commands.spawn((
                 Mesh3d(mesh_handle.clone()),
                 MeshMaterial3d(material_handle),
                 transform,
+                target.render_layers(),
                 NoFrustumCulling,
                 instance.key,
                 StaticLightEntity,
@@ -426,8 +474,13 @@ pub fn sys_sync_static_light_entities(
         }
     }
 
-    if *last_alpha != Some(material_alpha) {
-        for handle in material_cache.materials_by_key.values() {
+    if target == StaticLightTarget::SceneDecal && *last_alpha != Some(material_alpha) {
+        let decal_materials = material_cache
+            .materials_by_key
+            .iter()
+            .filter(|(key, _)| key.target == StaticLightTarget::SceneDecal)
+            .map(|(_, handle)| handle);
+        for handle in decal_materials {
             if let Some(mut material) = materials.get_mut(handle) {
                 material.base_color = static_light_base_color(material_alpha);
             }
@@ -453,6 +506,7 @@ fn static_light_material(
     light_id: u32,
     hue_id: u16,
     render_style: StaticLightRenderStyle,
+    target: StaticLightTarget,
     material_alpha: f32,
     world_lights: &udd_assets::world_lights::WorldLightsPackage,
     hues_package: Option<&HuesPackageRes>,
@@ -471,6 +525,7 @@ fn static_light_material(
         hue_id: static_light_material_color_key(graphic, hue_id, hue_source_kind),
         hue_source: hue_source_kind,
         style: render_style,
+        target,
     };
     if let Some(handle) = material_cache.materials_by_key.get(&material_key) {
         return Some(handle.clone());
@@ -502,9 +557,22 @@ fn static_light_material(
             material_cache,
         );
         apply_static_light_hue(&mut rgba, hue_source);
-        apply_static_light_style(&mut rgba, slot.width as u32, slot.height as u32, render_style);
+        match target {
+            StaticLightTarget::SceneDecal => {
+                apply_static_light_style(&mut rgba, slot.width as u32, slot.height as u32, render_style)
+            }
+            StaticLightTarget::ClientLightBuffer => apply_client_light_sprite(&mut rgba, hue_source_kind),
+        }
     }
 
+    // The decals add sRGB colour over the scene. The light buffer keeps the 8-bit values as they are: its float
+    // target then blends them as the client blends its sprites, and the composite reads them back unchanged.
+    let (format, base_color, alpha_mode) = match target {
+        StaticLightTarget::SceneDecal => {
+            (TextureFormat::Rgba8UnormSrgb, static_light_base_color(material_alpha), AlphaMode::Add)
+        }
+        StaticLightTarget::ClientLightBuffer => (TextureFormat::Rgba8Unorm, Color::WHITE, AlphaMode::Blend),
+    };
     let mut image = Image::new(
         Extent3d {
             width: slot.width as u32,
@@ -513,15 +581,15 @@ fn static_light_material(
         },
         TextureDimension::D2,
         rgba,
-        TextureFormat::Rgba8UnormSrgb,
+        format,
         bevy::asset::RenderAssetUsages::default(),
     );
     image.sampler = bevy::image::ImageSampler::linear();
     let image_handle = images.add(image);
     let material_handle = materials.add(StandardMaterial {
-        base_color: static_light_base_color(material_alpha),
+        base_color,
         base_color_texture: Some(image_handle),
-        alpha_mode: AlphaMode::Add,
+        alpha_mode,
         cull_mode: None,
         unlit: true,
         fog_enabled: false,
@@ -877,6 +945,25 @@ fn apply_static_light_style(
     }
 }
 
+/// A light mask as one of the clients' light sprites, which lerp over the night map (SRCALPHA, INVSRCALPHA): the
+/// mask's brightness becomes the coverage, up to light_generic's peak alpha, and the colour is light_generic's for an
+/// unhued light, or the hue's at light_generic's brightness.
+fn apply_client_light_sprite(rgba: &mut [u8], hue_source: StaticLightHueSourceKind) {
+    let generic_peak = CLIENT_GENERIC_LIGHT_COLOR.into_iter().max().map_or(BYTE_MAX, f32::from);
+    for pixel in rgba.chunks_exact_mut(4) {
+        let brightness = pixel[0].max(pixel[1]).max(pixel[2]);
+        let coverage = f32::from(brightness) / BYTE_MAX * f32::from(pixel[3]) / BYTE_MAX * CLIENT_LIGHT_SPRITE_PEAK_ALPHA;
+        let color = if hue_source == StaticLightHueSourceKind::StoredRgb || brightness == 0 {
+            CLIENT_GENERIC_LIGHT_COLOR
+        } else {
+            [pixel[0], pixel[1], pixel[2]]
+                .map(|channel| (f32::from(channel) / f32::from(brightness) * generic_peak).round() as u8)
+        };
+        pixel[..3].copy_from_slice(&color);
+        pixel[3] = (coverage * BYTE_MAX).round() as u8;
+    }
+}
+
 fn static_light_mottle(x: u32, y: u32) -> f32 {
     let hash = x
         .wrapping_mul(0x8DA6_B343)
@@ -1100,6 +1187,7 @@ mod tests {
         let base = static_light_sync_signature(
             &instances,
             StaticLightRenderStyle::Classic,
+            StaticLightTarget::SceneDecal,
             0.5,
             true,
         );
@@ -1108,6 +1196,7 @@ mod tests {
             static_light_sync_signature(
                 &instances,
                 StaticLightRenderStyle::Classic,
+                StaticLightTarget::SceneDecal,
                 0.5,
                 true,
             )
@@ -1121,6 +1210,7 @@ mod tests {
             static_light_sync_signature(
                 &moved_instances,
                 StaticLightRenderStyle::Classic,
+                StaticLightTarget::SceneDecal,
                 0.5,
                 true,
             )
@@ -1130,6 +1220,7 @@ mod tests {
             static_light_sync_signature(
                 &instances,
                 StaticLightRenderStyle::Enhanced,
+                StaticLightTarget::SceneDecal,
                 0.5,
                 true,
             )
@@ -1139,6 +1230,7 @@ mod tests {
             static_light_sync_signature(
                 &instances,
                 StaticLightRenderStyle::Classic,
+                StaticLightTarget::SceneDecal,
                 0.25,
                 true,
             )
@@ -1148,10 +1240,37 @@ mod tests {
             static_light_sync_signature(
                 &instances,
                 StaticLightRenderStyle::Classic,
+                StaticLightTarget::SceneDecal,
                 0.5,
                 false,
             )
         );
+        assert_ne!(
+            base,
+            static_light_sync_signature(
+                &instances,
+                StaticLightRenderStyle::Classic,
+                StaticLightTarget::ClientLightBuffer,
+                0.5,
+                true,
+            )
+        );
+    }
+
+    #[test]
+    fn client_light_sprites_take_the_mask_as_coverage_and_the_generic_or_hue_colour() {
+        let full = (CLIENT_LIGHT_SPRITE_PEAK_ALPHA * BYTE_MAX).round() as u8;
+        let half_grey = 128;
+        let mut unhued = vec![255, 255, 255, 255, half_grey, half_grey, half_grey, 255, 0, 0, 0, 0];
+        apply_client_light_sprite(&mut unhued, StaticLightHueSourceKind::StoredRgb);
+        let [r, g, b] = CLIENT_GENERIC_LIGHT_COLOR;
+        let half = (f32::from(half_grey) / BYTE_MAX * CLIENT_LIGHT_SPRITE_PEAK_ALPHA * BYTE_MAX).round() as u8;
+        assert_eq!(unhued, [r, g, b, full, r, g, b, half, r, g, b, 0]);
+
+        // A red hue keeps its colour at light_generic's brightness, 192.
+        let mut hued = vec![200, 100, 0, 255];
+        apply_client_light_sprite(&mut hued, StaticLightHueSourceKind::Package);
+        assert_eq!(hued, [192, 96, 0, (200.0 / BYTE_MAX * CLIENT_LIGHT_SPRITE_PEAK_ALPHA * BYTE_MAX).round() as u8]);
     }
 
     #[test]

@@ -450,11 +450,34 @@ pub struct LandRenderStylePresetsPerMode {
 #[derive(Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct LandMaterialUniformsPresets {
-    pub global_lighting: f32,
+    /// Scene brightness multiplier, in Classic and UOD-Painterly only: KR-like and Enhanced dim through
+    /// `client_lighting` instead, as their clients do.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub global_lighting: Option<f32>,
+    /// The clients' night lighting composite, in KR-like and Enhanced only.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub client_lighting: Option<ClientNightLighting>,
     pub effects: LandEffectsUniform,
     pub lighting: GlobalLightingUniforms,
     pub land_lighting: LandLightingUniforms,
     pub sun: SunAngles,
+}
+
+/// The KR and Enhanced clients' night lighting: the server light level and Dynamapper's night overlay controls.
+///
+/// The composite and its formulas are in `world::effects::client_night`.
+#[derive(Clone, Copy, Debug, PartialEq, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct ClientNightLighting {
+    /// The light level a server sends, 0 (full day: the composite is the identity) to
+    /// `client_night::MAX_CLIENT_LIGHT_LEVEL` (darkest).
+    pub light_level: u32,
+    /// How strongly the night map tints the scene: 1 is the client, 0 dims by the same amount without the tint
+    /// (the map is replaced by its luminance), above 1 tints more.
+    pub overlay_strength: f32,
+    /// The night map's colour, in 8-bit (sRGB-encoded) values. The default, the map's mean
+    /// (`client_night::NIGHT_MAP_MEAN`), is the client; another colour keeps the map's cloud pattern.
+    pub overlay_color: Vec3,
 }
 
 /// A preset's sun: one static light direction for land, art and the sprite shadows, as compass angles.

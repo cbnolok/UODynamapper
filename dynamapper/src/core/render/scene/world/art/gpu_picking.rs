@@ -1,6 +1,7 @@
 //! On-demand one-pixel visibility queries. Reuses the drawing shaders, instance
 //! buffers and transparent batch bindings; never writes the main color/depth.
 use super::{statics_collect::{StaticPickTile, StaticChunkBatchKey}, transparent_order::StaticTransparentBatchOrder};
+use crate::core::render::scene::world::effects::client_night;
 use bevy::prelude::*;
 use bevy::core_pipeline::{Core3d, Core3dSystems, core_3d::Transparent3d};
 use bevy::render::{RenderApp, Render, RenderSystems, extract_resource::{ExtractResource, ExtractResourcePlugin},
@@ -232,7 +233,9 @@ fn query_pipeline(cache: &PipelineCache, state: &mut QueryGpuState,
     })
 }
 
-fn render_query(world: &World, view: ViewQuery<(&ExtractedView, &ViewDepthStencilTexture)>,
+// The light buffer camera's view holds no statics and its depth texture cannot be sampled.
+fn render_query(world: &World,
+    view: ViewQuery<(&ExtractedView, &ViewDepthStencilTexture), Without<client_night::LightBufferCamera>>,
     request: Res<PickRequest>, state: Res<QueryState>, cache: Res<PipelineCache>,
     device: Res<RenderDevice>,
     phases: Res<ViewSortedRenderPhases<Transparent3d>>,

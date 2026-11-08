@@ -69,6 +69,21 @@ default_preset = "classic.morning"
 #                    Classic, Enhanced and UOD-Painterly keep the former fixed light (-1, 2.5, -1), which is
 #                    azimuth 315 and elevation atan2(2.5, sqrt(2)) = 60.50379.
 #
+# === [Scene dimming] ===
+# Each group dims one way, required there and refused elsewhere:
+# global_lighting:   Classic and UOD-Painterly. A scene brightness multiplier (1.0 = unchanged).
+# [client_lighting]: KR-like and Enhanced. Both clients' night composite, per channel on the 8-bit values:
+#                    out = clamp(4 * (0.25 * level + B * (1 - level)) * scene), level = 1 - light_level / 31,
+#                    B = the night map (TerrainTexture.uop entry 21, in tex_aux_ec.uddp) with the lights lerped
+#                    over it. Light level 0 is the identity: lights and the night tint vanish by day.
+#   light_level:      The server light level, 0 (full day) to 30. ServUO gives about 0 by day, 9 to 10 at night
+#                     and 26 in dungeons.
+#   overlay_strength: The night map's tint, 0 to 2. 1 is the client; 0 replaces the map by its luminance (the
+#                     same darkening without the blue); above 1 pushes the tint further from that luminance.
+#   overlay_color:    The night map's mean colour as [R, G, B] 8-bit values. The default
+#                     [0.012604, 0.017285, 0.153818] is the map's exact mean, so the map is the client's; another
+#                     colour scales the map's channels by colour / mean, keeping its cloud pattern.
+#
 # ------------------
 # --- CLASSIC PRESETS ---
 # ------------------
@@ -403,13 +418,19 @@ elevation_degrees = 60.50379
 # Now the Enhanced client's look on EC content, through Enhanced's own art and terrain paths.
 # Every term the Enhanced client lacks is off: tone curve (identity), grading, gloom, fog, ambient, fill, rim,
 # specular, bent normals, sharpening, the warm light colour, highlights, depth tint, grunge and the light decals.
-# exposure and global_lighting stay as brightness. The land keeps the smooth per-pixel lighting
+# exposure stays as brightness. The night and caves dim as in the client, through the night composite
+# (client_lighting) in place of global_lighting: light level 0 by day (the client's identity; the former
+# global_lighting 1.08 and 1.14 are gone), 10 at night and 26 in caves, the levels ServUO sends, with the night
+# map at the client's strength and colour. The land keeps the smooth per-pixel lighting
 # (terrain_shading_model 0) with the client's half-Lambert diffuse: wrap 0.5 gives (N.L + 1) / 2, white,
 # strength 1. The client draws no shadow for statics, items or foliage (only mobiles get one), so the sprite
 # shadow shape and the contact and projected shadows are off. The sun stays the former fixed light.
 
 [enhanced.morning]
-global_lighting = 1.08
+[enhanced.morning.client_lighting]
+light_level = 0
+overlay_strength = 1.0
+overlay_color = [0.012604, 0.017285, 0.153818]
 [enhanced.morning.effects]
 shading_mode = 1
 normal_mode = 1
@@ -488,7 +509,10 @@ azimuth_degrees = 315.0
 elevation_degrees = 60.50379
 
 [enhanced.afternoon]
-global_lighting = 1.14
+[enhanced.afternoon.client_lighting]
+light_level = 0
+overlay_strength = 1.0
+overlay_color = [0.012604, 0.017285, 0.153818]
 [enhanced.afternoon.effects]
 shading_mode = 1
 normal_mode = 1
@@ -567,7 +591,10 @@ azimuth_degrees = 315.0
 elevation_degrees = 60.50379
 
 [enhanced.night]
-global_lighting = 0.72
+[enhanced.night.client_lighting]
+light_level = 10
+overlay_strength = 1.0
+overlay_color = [0.012604, 0.017285, 0.153818]
 [enhanced.night.effects]
 shading_mode = 1
 normal_mode = 1
@@ -646,7 +673,10 @@ azimuth_degrees = 315.0
 elevation_degrees = 60.50379
 
 [enhanced.cave]
-global_lighting = 0.50
+[enhanced.cave.client_lighting]
+light_level = 26
+overlay_strength = 1.0
+overlay_color = [0.012604, 0.017285, 0.153818]
 [enhanced.cave.effects]
 shading_mode = 1
 normal_mode = 1
@@ -732,7 +762,11 @@ elevation_degrees = 60.50379
 # Every term the KR client lacks is off: tone curve (identity), grading, gloom, fog (available, off), ambient,
 # fill, rim, specular, bent normals, the warm light colour, land and art temperature, fake normals, highlights,
 # depth tint, relief shadows, mottle, grunge, transition grime, colour wash and the light decals. exposure
-# and global_lighting stay as brightness. Land shades per vertex like the client (terrain_shading_model 1).
+# stays as brightness. The night and caves dim as in the client, through the night composite (client_lighting)
+# in place of global_lighting: light level 0 by day (the client's identity; the former global_lighting 1.04 and
+# 1.08 are gone), 10 at night and 26 in caves, the levels ServUO sends, with the night map at the client's
+# strength and colour. The light decals draw into the composite's light buffer, so they light only at night.
+# Land shades per vertex like the client (terrain_shading_model 1).
 # Switched to per-pixel, the land diffuse is still the client's half-Lambert: wrap 0.5 gives
 # (N.L + 1) / 2, white, strength 1. The sprite shadow settings (shadow shape, contact and projected shadows)
 # keep their earlier values until the client's static shadow is reproduced.
@@ -742,7 +776,10 @@ elevation_degrees = 60.50379
 # The full-featured painterly rendering with all effects enabled is UOD-Painterly, below.
 
 [kr.morning]
-global_lighting = 1.04
+[kr.morning.client_lighting]
+light_level = 0
+overlay_strength = 1.0
+overlay_color = [0.012604, 0.017285, 0.153818]
 [kr.morning.effects]
 shading_mode = 2
 normal_mode = 0
@@ -821,7 +858,10 @@ azimuth_degrees = 180.0
 elevation_degrees = 45.0
 
 [kr.afternoon]
-global_lighting = 1.08
+[kr.afternoon.client_lighting]
+light_level = 0
+overlay_strength = 1.0
+overlay_color = [0.012604, 0.017285, 0.153818]
 [kr.afternoon.effects]
 shading_mode = 2
 normal_mode = 0
@@ -900,7 +940,10 @@ azimuth_degrees = 180.0
 elevation_degrees = 45.0
 
 [kr.night]
-global_lighting = 0.76
+[kr.night.client_lighting]
+light_level = 10
+overlay_strength = 1.0
+overlay_color = [0.012604, 0.017285, 0.153818]
 [kr.night.effects]
 shading_mode = 2
 normal_mode = 0
@@ -979,7 +1022,10 @@ azimuth_degrees = 180.0
 elevation_degrees = 45.0
 
 [kr.cave]
-global_lighting = 0.56
+[kr.cave.client_lighting]
+light_level = 26
+overlay_strength = 1.0
+overlay_color = [0.012604, 0.017285, 0.153818]
 [kr.cave.effects]
 shading_mode = 2
 normal_mode = 0
