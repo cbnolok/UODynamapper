@@ -5,6 +5,14 @@ library for the workspace. It provides readers, writers, and data structures for
 Classic Client, Kingdom Reborn, and Enhanced Client asset files, as well as the
 `.uop` package infrastructure used across all tools.
 
+## Start here
+
+UOCF works with client files directly; it does not require UODynamapper runtime packages. It supports UOP containers and many Classic, Enhanced, and Kingdom Reborn assets, including maps and statics, art, animation, tile metadata, hues, audio, and strings. Reading, editing, and writing support varies by format.
+
+- Looking for an application? Start with the [tools guide](../../tools/README.md), [graphical editor](../../tools/uocf-editor-gui/README.md), or [client-file CLI](../../tools/uocf-cli/README.md).
+- Building with the library? Use the module overview below and generate the API reference with `cargo doc -p uocf --no-deps` from the workspace root.
+- Looking for format details or coverage? See the [Enhanced and KR format notes](src/enhanced/ENHANCED_CLIENT_FILES.md), [login configuration](src/client/LOGIN_SERVER.md), and the dated [Classic](../../docs/agent_notes/cc_file_coverage.md) and [Enhanced/KR](../../docs/agent_notes/ec_uop_coverage.md) coverage audits. The audits record what was checked at the time; consult current code and tests for later changes.
+
 ## Bundled data
 
 `assets/Dictionary.dic` is the shared UOP hash-to-path dictionary, maintained by
@@ -101,5 +109,5 @@ Shared animation sequence metadata helper.
 
 - This crate emits log events via the `log` facade; the application provides
   the backend (`uot-logging` in tools and the Bevy logger in `dynamapper`).
-- All public error types use `color-eyre`.
+- Many operations return `color-eyre` reports; some expose specific error types.
 - `memmap2` is used for large file reads.
