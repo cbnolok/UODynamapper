@@ -27,12 +27,35 @@ them. Do not treat this report as proof that unreviewed code is clean.
 | --- | --- | --- |
 | `ControlsPlugin` and its movement, window and development-control children | Reviewed | Findings C1–C7 below. |
 | `PlayerPlugin` | Reviewed | Findings P1–P3 below; overlaps C1 and C6. |
-| Remaining scene and camera plugins | Pending | Includes world, terrain, statics, lights and effects. |
+| `CameraPlugin` | Reviewed | Findings V1–V7 below. |
+| Remaining scene plugins | Pending | Includes world, terrain, statics, lights and effects. |
 | Dialog and overlay plugins | Pending | Includes input and player interactions already noted below. |
 | Settings and shader preset plugins | Pending | Includes configuration ownership and persistence. |
 | Texture caches, file loading and export | Pending | Trace runtime owners and conditional paths. |
 | Frame rate, frame limiter and diagnostics | Pending | Include registration and configuration. |
 | Application wiring, non-plugin modules, build, shaders and runtime assets | Pending | Account for files not owned by a reviewed plugin. |
+
+Plugin coverage is tracked individually so reviewing an orchestration plugin
+does not imply its children have been reviewed:
+
+- Reviewed: `ControlsPlugin`, `PlayerMovementPlugin`, `WindowControlsPlugin`,
+  Unix `DevControlPlugin`, `PlayerPlugin`, `CameraPlugin`.
+- Pending scene/rendering: `RenderPlugin`, `ScenePlugin`, `WorldPlugin`,
+  `PlayerDynamicLightPlugin`, `DrawLandChunkMeshPlugin`,
+  `DrawStaticSpritesPlugin`, `FogPostProcessPlugin`, feature-gated
+  `LandProfilingPlugin`.
+- Pending overlays/dialogs: `OverlaysPlugin`, `PerformanceOverlayPlugin`,
+  `PlayerPositionOverlayPlugin`, `CursorBehaviorOverlayPlugin`,
+  `SystemMessagesPlugin`, `DialogsPlugin`, `PreferencesDialogPlugin`,
+  `LandUiPlugin`, `KeybindingsHelpPlugin`, `GumpDialogPlugin`, `TeleportPlugin`.
+- Pending data/runtime: `ExternalDataPlugin`, `SettingsPlugin`,
+  `ShaderPresetsPlugin`, `TextureCachePlugin`, `ArtPageFormatCheckPlugin`,
+  `LandTextureCachePlugin`, `UOFilesPlugin`, `ExportJobPlugin`.
+- Pending frame/diagnostics: `FrameRatePlugin`, `FrameLimiterPlugin`,
+  `LogGpuPreprocessingModePlugin`.
+
+Also review direct system installers, conditional/platform-specific paths and
+third-party integration; plugin definitions alone do not cover the application.
 
 ## ControlsPlugin
 
@@ -249,3 +272,147 @@ logical player entity. Add focused startup and hide/show tests if changed.
 No tests specifically covering player spawn or marker visibility were found in
 the plugin. The `current_pos` optional-state question remains C6; it should not
 be resolved by deleting fallback code without reviewing the intended invariant.
+
+## CameraPlugin
+
+Reviewed camera construction, projection, graphics settings, player following,
+free-camera input, zoom, the perspective projection module and related scene
+streaming and export callers.
+
+### V1 — Chunk streaming does not follow the free camera's actual view
+
+**Classification:** cross-plugin contract mismatch; likely coverage defect.
+**Confidence:** inputs and data flow confirmed statically; visible effects not
+reproduced in this audit.
+
+[Free-camera movement](../../dynamapper/src/core/render/scene/camera.rs#L536)
+changes the camera transform and requests chunk recomputation. However,
+[scene chunk selection](../../dynamapper/src/core/render/scene.rs#L470) passes
+the player transform, window and zoom to a
+[fixed isometric orthographic footprint](../../dynamapper/src/core/render/scene.rs#L162),
+without the actual camera position, rotation or projection. Moving sufficiently
+far from the player can therefore leave the free view outside the selected
+coverage; arbitrary rotation and perspective are also approximated. The prior
+[perspective note](../agent_notes/isometric_perspective_projection.md) does not
+establish arbitrary free-camera or maximum-zoom coverage. Export intentionally
+uses a separate explicit footprint.
+
+**Follow-up:** review this jointly with `ScenePlugin` and define a current view
+or conservative footprint contract that accounts for camera pose, projection,
+viewport and elevation. Preserve export's explicit footprint and handle the
+documented one-frame latency of Bevy's computed camera matrices. Test free
+pan/rotation, follow and perspective views, zoom/resize and export separately.
+
+### V2 — Projection and view calculations have several owners
+
+**Classification:** scattered responsibility. **Confidence:** confirmed.
+
+Orthographic dimensions are independently calculated in
+[camera startup](../../dynamapper/src/core/render/scene/camera.rs#L128),
+[camera updates](../../dynamapper/src/core/render/scene/camera.rs#L350),
+[scene chunk selection](../../dynamapper/src/core/render/scene.rs#L186),
+[export camera setup](../../dynamapper/src/core/export_job.rs#L523) and the
+[position overlay](../../dynamapper/src/core/render/overlays/player_position.rs#L151).
+The calculations share constants but changes still require coordinated edits.
+The camera plugin itself also owns the world camera, UI camera and egui context,
+AA configuration, fog attachment, input and player following.
+
+**Follow-up:** extract a shared view/projection calculation where semantics are
+actually identical, and give world view, UI camera setup and input/follow clear
+owners. Preserve export's target-specific sizing and the active custom
+[`perspective`](../../dynamapper/src/core/render/scene/camera/perspective.rs)
+projection and its frustum/subview contract; do not mechanically unify
+orthographic approximations with actual perspective coverage.
+
+### V3 — Startup zoom application has no explicit ordering against camera setup
+
+**Classification:** schedule-dependent defect candidate. **Confidence:**
+missing ordering established; actual startup ordering and visible result have
+not been reproduced.
+
+[`SettingsPlugin`](../../dynamapper/src/configs/settings.rs#L685) schedules
+`sys_apply` in `Startup`, where it writes saved window resolution and zoom.
+[`CameraPlugin`](../../dynamapper/src/core/render/scene/camera.rs#L90) schedules
+camera setup in a startup set and reads both, without an explicit edge from
+`sys_apply`. Resource access forces serialization but does not express which
+system runs first. If setup reads default zoom first in free perspective mode,
+the follow system is disabled and later zoom dolly uses only the change from
+the already updated zoom, potentially leaving the initial distance inconsistent.
+
+**Follow-up:** test startup with a non-default saved zoom and free perspective,
+then make the settings-applied-before-camera contract explicit if needed.
+Check export's override separately. This is a hypothesis until that test runs.
+
+### V4 — UI camera dependency survives where the helper does not use it
+
+**Classification:** obsolete plumbing. **Confidence:** confirmed for helper
+parameter; the resource itself still has live callers.
+
+[`get_egui_context_ready_mut`](../../dynamapper/src/core/render/dialogs.rs#L75)
+ignores its `UiCameraResource` argument and gets the primary context directly,
+yet callers still acquire the resource to pass it through. Camera AA setup and
+player input do use the resource, so it cannot simply be removed globally.
+
+**Follow-up:** remove the unused helper argument and only those caller-side
+resource dependencies that have no other use. Review broader UI context
+ownership during the dialog/overlay audit.
+
+### V5 — Camera source retains disabled experiments and ambiguous controls
+
+**Classification:** inactive source clutter and control semantics.
+**Confidence:** commented code and key paths confirmed; desired interaction
+is undecided.
+
+[Camera setup](../../dynamapper/src/core/render/scene/camera.rs#L170) contains
+commented-out tonemapping, depth-prepass and UI-context experiments; a later
+[directional-light block](../../dynamapper/src/core/render/scene/camera.rs#L330)
+is also commented out. The preceding tonemapping comment reads as if the
+disabled component were active. Separately,
+[Shift+Up/Down](../../dynamapper/src/core/render/scene/camera.rs#L560) adds both
+horizontal movement and altitude, although help labels the shortcut as
+altitude. It may be intentional; its contract is not explicit.
+
+**Follow-up:** remove obsolete commented code and correct misleading comments
+after preserving any still-relevant rationale. Decide whether altitude keys also
+pan, then test and document the chosen interaction. Do not remove the active
+player marker or projection code as a consequence of removing comments.
+
+### V6 — Free-camera projection switching does not reconcile framing
+
+**Classification:** behavior candidate. **Confidence:** static calculation;
+the transition has not been reproduced in this audit.
+
+[Projection switching](../../dynamapper/src/core/render/scene/camera.rs#L373)
+replaces the projection without changing the camera transform. Follow mode
+subsequently computes an appropriate pose, but free mode retains its pose. At
+the normal initial orthographic offset, the camera is much closer to its focus
+than the [perspective orbit distance](../../dynamapper/src/core/render/scene/camera/perspective.rs#L23)
+for a typical window and zoom. Switching a free view can therefore change its
+framing substantially.
+
+**Follow-up:** establish the intended free-camera switching behavior and test
+both directions after pan and rotation. Any adjustment must respect the user's
+free pose; simply resetting it to the follow camera is not equivalent.
+
+### V7 — Camera graphics updates observe the entire settings resource
+
+**Classification:** unnecessary coupling; performance impact unverified.
+**Confidence:** broad change gate confirmed; update frequency is an inference.
+
+[Camera AA updates](../../dynamapper/src/core/render/scene/camera.rs#L96) run
+when any `Settings` field changes and issue component insert/remove commands.
+The [settings synchronization system](../../dynamapper/src/configs/settings.rs#L705)
+obtains mutable settings during fixed updates; whether that causes repeated
+component updates in normal operation should be measured or checked with a
+focused change-detection test before estimating a cost.
+
+**Follow-up:** if repeated or unrelated updates are confirmed, narrow the
+trigger to the effective AA mode and retain matching sample counts for both
+cameras. Review the cause together with `SettingsPlugin`.
+
+### Camera validation
+
+`cargo test -p dynamapper core::render::scene::camera::perspective::tests`
+passed: 2 tests for orbit scale and lens/frustum/subview consistency. They do
+not cover the streaming mismatch, startup order, focus or free-camera controls.
+No application behavior was changed and no visual comparison was performed.
