@@ -28,6 +28,7 @@ them. Do not treat this report as proof that unreviewed code is clean.
 | `ControlsPlugin` and its movement, window and development-control children | Reviewed | Findings C1–C7 below. |
 | `PlayerPlugin` | Reviewed | Findings P1–P3 below; overlaps C1 and C6. |
 | `CameraPlugin` | Reviewed | Findings V1–V7 below. |
+| `ScenePlugin` | Reviewed | Findings S1–S7 below; V1 covers free-camera streaming. |
 | Remaining scene plugins | Pending | Includes world, terrain, statics, lights and effects. |
 | Dialog and overlay plugins | Pending | Includes input and player interactions already noted below. |
 | Settings and shader preset plugins | Pending | Includes configuration ownership and persistence. |
@@ -39,8 +40,8 @@ Plugin coverage is tracked individually so reviewing an orchestration plugin
 does not imply its children have been reviewed:
 
 - Reviewed: `ControlsPlugin`, `PlayerMovementPlugin`, `WindowControlsPlugin`,
-  Unix `DevControlPlugin`, `PlayerPlugin`, `CameraPlugin`.
-- Pending scene/rendering: `RenderPlugin`, `ScenePlugin`, `WorldPlugin`,
+  Unix `DevControlPlugin`, `PlayerPlugin`, `CameraPlugin`, `ScenePlugin`.
+- Pending scene/rendering: `RenderPlugin`, `WorldPlugin`,
   `PlayerDynamicLightPlugin`, `DrawLandChunkMeshPlugin`,
   `DrawStaticSpritesPlugin`, `FogPostProcessPlugin`, feature-gated
   `LandProfilingPlugin`.
@@ -416,3 +417,131 @@ cameras. Review the cause together with `SettingsPlugin`.
 passed: 2 tests for orbit scale and lens/frustum/subview consistency. They do
 not cover the streaming mismatch, startup order, focus or free-camera controls.
 No application behavior was changed and no visual comparison was performed.
+
+## ScenePlugin
+
+Reviewed scene registration, viewport-to-chunk calculations, chunk lifecycle,
+scale handoffs, queues, diagnostics, and export's footprint and readiness
+callers. Child plugins are tracked separately in the coverage list.
+
+### S1 — Chunk selection omits partial chunks at facet edges
+
+**Classification:** likely rendering and export defect. **Confidence:**
+selection arithmetic confirmed; rendered impact not reproduced here.
+
+Both [interactive selection](../../dynamapper/src/core/render/scene.rs#L181)
+and [export selection](../../dynamapper/src/core/render/scene.rs#L262) floor
+map dimensions to base chunks and only emit super-chunks that fit completely.
+The base chunk side is [32 tiles](../../dynamapper/src/core/render/scene/world/land.rs#L23).
+For stock [Tokuno's 1448 × 1448 tiles](../../lib/uocf/src/enhanced/maps/facet_sector.rs#L71),
+the last eight tiles on each edge are therefore not selected even at scale 1.
+Larger super-chunks can omit wider strips; for example, a 1600-tile dimension
+at scale 4 leaves the final 64 tiles uncovered. Export readiness calls the
+same selection helper, so an empty or incomplete required set can appear ready.
+
+**Follow-up:** determine how the land mesh, metadata atlas and statics handle
+partial edge chunks, then support all in-bounds tiles without reading past the
+map. Test stock and custom dimensions at all supported scales, both interactive
+and export paths, and make readiness independently detect missing edge coverage.
+
+### S2 — An unread chunk-target resource is maintained at runtime
+
+**Classification:** confirmed unused state in this binary and repository.
+**Confidence:** repository-wide symbol search.
+
+[`VisibleLandChunkTargets`](../../dynamapper/src/core/render/scene.rs#L28) is
+initialized and [rebuilt](../../dynamapper/src/core/render/scene.rs#L786), but
+no reader was found anywhere in the repository. The public item does not make
+the binary crate a supported library API by itself.
+
+**Follow-up:** recheck current references and remove the resource, its record
+type and producer if no consumer has been added. Retain the distinct committed
+and transition lists needed by the streaming state machine and diagnostics.
+
+### S3 — A handoff retargeting branch is unreachable
+
+**Classification:** confirmed dead branch. **Confidence:** control-flow proof.
+
+Immediately before the [retarget branch](../../dynamapper/src/core/render/scene.rs#L586),
+a changed scale sets the target to `desired_scale`; an unchanged scale clears
+any existing target. Thus a present target cannot differ from `desired_scale`
+at that branch. Retargeting itself currently happens in the preceding assignment,
+which logs it as a handoff start.
+
+**Follow-up:** remove or restructure the unreachable branch without losing
+retarget behavior. If distinct start, cancel and retarget events are useful,
+compare against the previous target before overwriting it. Test rapid scale
+changes and reversal during an in-flight handoff.
+
+### S4 — Pending retirements are not reconciled with later targets
+
+**Classification:** conditional correctness risk. **Confidence:** static
+queue tracing; triggering conditions and visual effect not reproduced.
+
+The [retirement queue](../../dynamapper/src/core/render/scene.rs#L317) persists
+across frames and is drained in bounded batches. On recomputation,
+[currently needed chunks](../../dynamapper/src/core/render/scene.rs#L619) are
+counted as present, but an entity already queued for retirement is not removed
+from that queue if it becomes needed again. With a queue larger than one batch,
+a rapid target or scale change can therefore retire a newly required chunk
+after its presence prevented a replacement spawn.
+
+**Follow-up:** exercise a multi-frame retirement queue with a changed or
+reversed target and verify coverage settles without another input event. Cancel
+obsolete retirements or otherwise reconcile queue membership with the latest
+required set; preserve the bounded handoff and no-clear behavior.
+
+### S5 — Scene registration and chunk-streaming policy share one large system
+
+**Classification:** separation and testability. **Confidence:** confirmed.
+
+[`sys_update_worldmap_chunks_to_render`](../../dynamapper/src/core/render/scene.rs#L373)
+combines player/map tracking, footprint selection, scale transition state,
+queue planning, entity mutation, telemetry and export override. `ChunkScale`
+is defined in the land mesh module but updated here and consumed elsewhere.
+The diagnostic target count is also derived from the last logged target, tying
+telemetry to log-deduplication state. Resize is registered in `FixedUpdate`,
+whereas ordering between the similarly named scene sets is configured for
+`Update`; labels across schedules do not by themselves establish ordering.
+The resize handler also updates saved window dimensions, which the settings
+plugin separately [synchronizes from the window](../../dynamapper/src/configs/settings.rs#L705).
+
+**Follow-up:** give chunk streaming and its transitions an explicit owner, with
+testable footprint and queue-planning operations, and keep scene composition
+and diagnostics at their own boundaries. Preserve mesh-ready scale handoff,
+export footprint and the stronger export upload/readiness checks. Make the
+fixed/main schedule relationship explicit rather than relying on set names.
+
+### S6 — Chunk-size comments describe superseded geometry
+
+**Classification:** stale implementation guidance. **Confidence:** confirmed.
+
+[Scene comments](../../dynamapper/src/core/render/scene.rs#L228) and
+[land mesh comments](../../dynamapper/src/core/render/scene/world/land/draw_mesh.rs#L47)
+describe 8-tile base chunks, older mesh sizes and older zoom thresholds, while
+the current base chunk is 32 tiles and
+[`scale_from_zoom`](../../dynamapper/src/core/render/scene/world/land/draw_mesh.rs#L168)
+uses different thresholds. This makes the handoff harder to reason about.
+
+**Follow-up:** verify the actual mesh dimensions and update or remove the stale
+comments during the land plugin audit; do not infer that the current geometry
+itself should be changed from those comments.
+
+### S7 — Recompute requests are consumed one at a time
+
+**Classification:** redundant reconciliation candidate. **Confidence:**
+confirmed iterator behavior; frequency and performance cost unmeasured.
+
+[Chunk sync](../../dynamapper/src/core/render/scene.rs#L417) calls
+`event.read().next().is_some()`. Bevy's message iterator advances its cursor as
+items are read, so this consumes only one request from a burst. Multiple
+resize, zoom or movement requests can trigger reconciliation in subsequent
+frames even though the system calculates from the latest state each time.
+
+**Follow-up:** if these messages remain pure invalidation signals, consume
+and coalesce the full unread batch before calculating once. Add a focused test
+for multiple requests and preserve the pending queue's independent progress.
+
+No focused tests for the scene footprint, handoff and retirement helpers were
+found in `scene.rs`. The existing perspective and controls tests do not establish
+these streaming cases. No application code was changed or visually compared.
