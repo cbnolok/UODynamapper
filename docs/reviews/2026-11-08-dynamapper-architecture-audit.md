@@ -30,6 +30,7 @@ them. Do not treat this report as proof that unreviewed code is clean.
 | `CameraPlugin` | Reviewed | Findings V1–V7 below. |
 | `ScenePlugin` | Reviewed | Findings S1–S7 below; V1 covers free-camera streaming. |
 | `PlayerDynamicLightPlugin` | Reviewed | Findings L1–L2 below. |
+| `WorldPlugin` | Reviewed | Findings W1–W3 below; child plugins remain pending. |
 | Remaining scene plugins | Pending | Includes world, terrain, statics, lights and effects. |
 | Dialog and overlay plugins | Pending | Includes input and player interactions already noted below. |
 | Settings and shader preset plugins | Pending | Includes configuration ownership and persistence. |
@@ -42,8 +43,8 @@ does not imply its children have been reviewed:
 
 - Reviewed: `ControlsPlugin`, `PlayerMovementPlugin`, `WindowControlsPlugin`,
   Unix `DevControlPlugin`, `PlayerPlugin`, `CameraPlugin`, `ScenePlugin`,
-  `PlayerDynamicLightPlugin`.
-- Pending scene/rendering: `RenderPlugin`, `WorldPlugin`,
+  `PlayerDynamicLightPlugin`, `WorldPlugin`.
+- Pending scene/rendering: `RenderPlugin`,
   `DrawLandChunkMeshPlugin`,
   `DrawStaticSpritesPlugin`, `FogPostProcessPlugin`, feature-gated
   `LandProfilingPlugin`.
@@ -592,3 +593,68 @@ experiment and old query fragments.
 local and remove the unused component and inactive fragments after rechecking
 references. Do not remove the live light entity merely because its marker is
 unused. No focused tests for this plugin were found.
+
+## WorldPlugin
+
+Reviewed the plugin's composition and the construction and use of its map
+catalog. Its terrain and art children have not yet been audited as part of this
+section.
+
+### W1 — Shared map catalog is owned by the render scene and duplicates metadata
+
+**Classification:** cross-subsystem ownership. **Confidence:** confirmed.
+
+[`WorldGeoData`](../../dynamapper/src/core/render/scene/world.rs#L15) is a
+startup snapshot of map identities and dimensions derived from
+`MapPlanesRes`. Movement, teleportation, export and rendering all consume it,
+so it is broader than a render-scene concern. `MapPlane` already exposes
+[`size_cells`](../../dynamapper/src/core/maps.rs#L96); the catalog and other
+callers separately multiply block dimensions by eight.
+
+The [loader](../../dynamapper/src/core/uo_files_loader.rs#L544) currently opens
+only the session's starting facet; the catalog consequently contains only that
+loaded facet, and teleport rejects unloaded maps. This is an active limitation,
+not evidence that the catalog is unused. Population happens once at startup
+after loading; it is not a dynamic map-loading mechanism.
+
+**Follow-up:** establish a world-data owner for the facet catalog and loading
+lifecycle, with one authoritative definition of dimensions and clear sparse
+facet identity. Preserve existing startup ordering and loaded-map validation.
+Adding dynamic facet loading is a separate feature, not a prerequisite for
+moving the current catalog.
+
+### W2 — Map metadata repeats an unread identifier
+
+**Classification:** unused field and redundant resource marker candidate.
+**Confidence:** repository-wide search of current consumers.
+
+[`MapPlaneMetadata.id`](../../dynamapper/src/core/maps.rs#L15) is populated in
+the map catalog and one test, but no reader was found; the catalog key already
+contains the same map identifier. The type derives `Resource`, but no system
+was found that inserts or requests it as a standalone Bevy resource.
+
+**Follow-up:** recheck references when acting, then remove the unused field and
+standalone resource derive if they still have no consumer. Retain the catalog
+itself and its dimensions.
+
+### W3 — Missing startup map is treated as optional until scene use
+
+**Classification:** startup error-path gap. **Confidence:** static path traced;
+runtime ordering and error output have not been reproduced.
+
+The [loader](../../dynamapper/src/core/uo_files_loader.rs#L592) logs a missing
+selected map but still publishes the map-plane resource. World catalog setup
+then accepts an empty catalog, while
+[scene synchronization](../../dynamapper/src/core/render/scene.rs#L454) expects
+metadata for the selected map and panics if it is absent. Other required asset
+errors can occur earlier, so the exact observed error depends on the inputs.
+The loader iterates only its supported facet range; a saved facet outside that
+range selects no map and does not enter the missing-file branch.
+
+**Follow-up:** define the selected startup map as a required input and report a
+clear startup error at the loading boundary. Test missing and malformed selected
+maps and an out-of-range saved facet separately from intentionally absent,
+unloaded facets.
+
+No focused tests for the world catalog setup were found. No application code
+was changed or visually compared.
