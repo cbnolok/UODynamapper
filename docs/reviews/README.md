@@ -13,6 +13,7 @@ and [the roadmap](../TODO.md) for current contracts and outstanding work.
 - [Terrain projection](2026-11-01-terrain-stability.md): camera-relative projection and translated captures.
 - [Export acceptance](2026-11-01-webmap-export-renderer.md): later Classic overlap correction and full facet-0 export.
 - [Deferred performance handoff](2026-10-29-renderer-performance-handoff.md): measured hypotheses and workstation restart procedure.
+- [Dynamapper architecture audit](2026-11-08-dynamapper-architecture-audit.md): ongoing plugin-by-plugin review of ownership, scattered responsibilities and obsolete code.
 
 The superseded repository-health journal, visual checklist, renderer phase plan
 and initial export pilot remain available in git history. Their durable findings
