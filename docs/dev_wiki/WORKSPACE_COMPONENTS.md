@@ -114,6 +114,6 @@ Executable names sometimes differ from Cargo crate names. Command details are av
 ## Related Documentation
 
 - [Engineering guide](../../ENGINEERING.md): workspace conventions and build commands.
-- [Dynamapper architecture](../agents/dynamapper_architecture.md): runtime structure and renderer rules.
+- [Land textures and transitions](rendering/LAND_TEXTURES_AND_TRANSITIONS.md): terrain rendering guidance.
 - [UDDP formats](UDDP_FORMATS.md): package schemas.
 - [Asset pipeline](ASSET_PIPELINE.md): conversion commands and package workflow notes.

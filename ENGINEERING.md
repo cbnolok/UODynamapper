@@ -81,6 +81,19 @@ Every TOML or KDL file a user or developer writes by hand (bundled settings, sha
 
 Only files an app writes itself and nobody edits (dynamapper's cache `settings/*.toml`, the udd-conv-gui config) are lenient, through `config_toml::parse_app_state`: a missing key is filled from the defaults and an unknown key is dropped, each with a logged warning, and the app rewrites the file complete on its next save, so a file from another version still loads.
 
+### Dynamapper rendering and UI
+
+- Preserve logical map and object coordinates, raw height, tile heights and movement flags separately from visual offsets, relief and depth ordering. Rendering must not replace world data needed for future movement and surface selection.
+- Keep primary actions configurable through the keybindings settings rather than hardcoding keys.
+- Schedule egui drawing systems in `EguiPrimaryContextPass`. Internal Bevy plugins follow the `TrackedPlugin` and build-logging convention; register third-party plugins as such.
+- Avoid mutably accessing materials in hot paths just to read them: mutation triggers re-extraction and rebinding.
+- Keep Rust material uniform bindings and shader declarations in agreement. When changing a uniform, update its Rust definition, populated value and shader declaration together.
+- Use the logging facade for diagnostics rather than printing from the application.
+
+There are three shading modes and four render styles: Classic, Enhanced, KR-like and UOD-Painterly. KR-like and UOD-Painterly share a shading mode but have separate presets. Test visual changes across all four as required by `AGENTS.md`. The bundled shader preset comments and `docs/agent_notes/shader_settings_audit.md` provide additional context; check current settings and code when using the dated audit.
+
+For missing Enhanced terrain textures, retain the explicit missing-texture behavior rather than silently substituting Classic texmaps. See `docs/dev_wiki/rendering/LAND_TEXTURES_AND_TRANSITIONS.md` for the terrain and transition constraints.
+
 ### Shell scripts
 Standalone shell scripts are POSIX sh (`#!/bin/sh`, no bashisms: no `[[ ]]`, arrays, `BASH_SOURCE` or `pipefail`), so they behave the same whether run directly or as `sh`, `dash`, `bash` or `zsh` followed by the script path. Find the script's own folder with `$(dirname "$0")`, quote every expansion, and call `python3`, not `python`. `just check-shell` (run in CI) checks them with `shellcheck -s sh`. Justfile recipes are exempt: just runs them with bash.
 
@@ -118,7 +131,6 @@ Do not restore filename-based roles or reopen completed work from those records.
 
 ## Further Reference
 
-- `docs/agents/dynamapper_architecture.md` — dynamapper-specific architecture rules, source structure, rendering presets, debugging
 - `docs/dev_wiki/` — authoritative deeper technical notes
 - `docs/agent_notes/` — agent-discovered notes, lower confidence, periodically reviewed
 - `docs/TODO.md` — roadmap

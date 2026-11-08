@@ -169,6 +169,8 @@ Each EC texture ref carries the shader input it feeds (`stable_role`), taken fro
 
 ### `paperdoll_ec.uddp`
 
+Enhanced and KR-like styles use the Enhanced paperdoll frames when available. The `window.enhanced_paperdoll` setting can select the older gump paperdoll instead; it is also the fallback when the frames package is unavailable. Classic uses the gump paperdoll. For wearable ordering and per-user overrides, see [the paperdoll notes](../agent_notes/ec_paperdoll_robe_override.md).
+
 Stores the frames the Enhanced Client's paperdoll draws (`ECPaperdollTexture::Build`): the male and female sets of `Paperdoll.uop`, decoded losslessly with their partial alpha, plus what hueing them needs besides the hue tables (hue masks and palette shadow statistics); the tables are those of `hues.uddp`, the single hue source, which holds the `Hues.uop` tables exactly when packed from the Enhanced client. It holds frames only; which frame an item draws, and in which order, comes from the item definitions in `tilemeta.uddp` (`metadata/item_definitions.bin`, tileart records by entry name) and the shared lookup `uocf::enhanced::paperdoll`, which the uocf editor runs on the client files. Lossless Zstd 19 by default: 8.2 MiB for EC 2024. Layout in [UDDP_FORMATS.md](UDDP_FORMATS.md) section 5.
 
 ```text

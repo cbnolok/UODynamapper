@@ -52,7 +52,7 @@ Development tools are also included. See [workspace components](docs/dev_wiki/WO
 - [Asset pipeline](docs/dev_wiki/ASSET_PIPELINE.md) — conversion and package workflows.
 - [UDDP formats](docs/dev_wiki/UDDP_FORMATS.md) — package architecture and layouts.
 - [Workspace components](docs/dev_wiki/WORKSPACE_COMPONENTS.md) — libraries and tools.
-- [Engineering guide](ENGINEERING.md) and [renderer architecture](docs/agents/dynamapper_architecture.md) — contributor guidance.
+- [Engineering guide](ENGINEERING.md) — contributor guidance.
 
 ## License and credits
 
