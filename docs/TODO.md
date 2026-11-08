@@ -44,7 +44,7 @@ Current execution decisions:
 
 ## Canonical Milestones
 
-- [ ] Close remaining EC chosen-base, support-texture, and surface-like routing gaps.
+- [ ] Close remaining EC material parity and runtime cleanup gaps.
 - [ ] Finish the production static-art pipeline and explicit UO-style static depth follow-up.
 - [ ] Harden UDDP packaging, streaming, and validation.
 - [ ] Move from transitional terrain scaling toward clipmap-based terrain.
@@ -80,25 +80,11 @@ Older captures apply to their recorded package revisions.
 - Add cache diagnostics for LRU hit rate, eviction reason, hysteresis counters, and queue backlog depth.
 - Define golden benchmark scenes and reproducible camera paths.
 - Make metrics visible in the debug overlay and persist them in logs for A/B runs.
-- Mobile conversion timing: done. Both mobile packers log a per-stage summary at the end (`CC mobile animation stage timing` / `EC mobile animation stage timing`: load/metadata, plan, trim, upscale, bucket selection, source decode, page build/blit, BC7 input/encode/RDO/flatten, page registration, manifests, package write), and the UDDP builders log compression apart from assembly and write. Measured with the `profiling` profile on 2026-11-01 (CC fp, BC7 + Zstd: 51.1s to 32.2s; EC, BC7: 167.8s to 78.2s; package sha unchanged, peak RSS lower): the lazy, speculatively parallel page prefix search (`udd_conv::prefix_search`), parallel trim and per-page source decode, row-wise gutter extrusion and the parallel EC hue scan. Largest stages left: bucket selection (CC 8.7s, EC 11.5s; guillotiere fit tests), EC page build (14.7s), BC7 encode (CC 5.6s, EC 12.0s) and package write (CC zstd 5s; EC 10s, the payload spill copied into the package).
 - BC7 pre-RDO audit: solid blocks (the empty and gutter area of a page) already take the encoder's solid fast path in `pack_bc7_rgb`/`pack_bc7_rgba`; the remaining encode time is content blocks. Reusing repeated non-solid blocks is the open option.
-- BC7 RDO: closed 2026-11-01, kept as the opt-in `--bc7-rdo` (default λ 0.05; the mobile packers and `tex_aux_ec` default to λ 0). At λ 0.05 the packages get larger or barely smaller: `tex_land_cc` 10.92 -> 11.12 MB (+1.8 %, 0.3 s -> 13.3 s), `tex_art_cc` 38.71 -> 38.84 MB (+0.4 %, 1.2 s -> 22.6 s), `mobile_anim_ec` 1.988 -> 1.965 GB (-1.1 %, 81 s -> 1580 s). Bytes come back only at a λ that shows (λ 2.0: -13.8 % on `tex_land_cc`, 33..41 dB PSNR against plain BC7; λ 0.05 is 43..53 dB). Plain BC7 encode is 10.6 s of the 81 s EC mobile pack, so the encoder is not the bottleneck. [Proposal (d)](agent_notes/proposals/2026-11-01-data-track-open-items.md). These rows ran before the encoder's mode 4 fix ([section 12](agent_notes/proposals/2026-11-01-mobile-anim-codec.md#12-the-repos-bc7-encoder)) and its [alpha plane search](agent_notes/bc7_alpha_plane_search.md), and RDO partly heals wrong blocks by replacing them, so measure again before relying on them.
-
-### EC Material And Texture Ownership Pipeline
-
-Done; kept as a pointer. Owner-reference census, support-texture inventories and the baseline report are `udd-cli pack audit-ec-material-refs`, `inventory-ec-support-textures` and `report-ec-material-baseline` (c2e383fe); the metadata axes are on every tilemeta texture ref (`physical_package`, `logical_family()`, `stable_role` from the block shader and the item position since 55647354, `block_index`/`item_index`, and the selector's reason with `is_low_confidence`); `Textures`-family refs, raw/normalized paths and `texture_stretch` survive the tileart parser (`lib/uocf/tests/synthetic/tileart_ref_preservation.rs`); item refs are tilemeta `item_texture_refs`, land layers are `tex_land_ec` `source_materials.json` plus terrain provenance; non-image `EffectTexture.uop` resources have `write-ec-effect-meta-manifest` (33c88fb5). Tilemeta stores texture ids, not paths: a path follows from the id and its family.
-
-### EC Packaging Boundaries
-
-Done; kept as the rule. `tex_art_ec.uddp` holds the tileart-owned visible images, `tex_land_ec.uddp` the `TerrainDefinition`-owned ones, `tex_aux_ec.uddp` the image-bearing support refs that runtime consumers read (c61470d8, a8cf7d93), and non-image resources stay metadata manifests. Packages follow semantic ownership, not one flat texture-id atlas; `udd-cli tool info` shows each package's contents.
-
-### EC Base Selection And Visibility Rules
-
-Done. The main-texture selector is role first with explicit reasons (`choose_main_ec_texture_id_role_aware`, `MainEcTextureRoleReason`, `TileMetaMainEcTextureReason`), and the tex_art_ec packer takes the client's own primary (`ArtData.ec_texture`); roles come from the shader and the position, so no role-correction hook is needed. Liquid entries are kept whenever they have a base (`LiquidExclusionReason`; all 322 included), support-only stacks stay in tilemeta refs and `tex_aux_ec`, and `write-ec-abnormality-report` (d7319dc8) reports missing and low-confidence bases. The empty override hooks (`dynamapper/assets/ec_overrides/*.kdl`, `udd_conv::ec_overrides`) are removed: the base and the role are the client's.
+- Re-measure BC7 RDO before relying on the older results in [proposal (d)](agent_notes/proposals/2026-11-01-data-track-open-items.md): they predate the mode 4 and alpha-plane fixes.
 
 ### EC Runtime: Open Correctness Gaps
 
-- Finish runtime consumption of chosen-base metadata for land-owned, art-owned, and surface-like art paths.
 - Surface-like routing has no open failures (census 2026-11-01, installed packages: 9222 Enhanced surface-like items, none left without an image). An item with a `tex_art_ec` slot draws its own image (`EcSurface`/`EcRegular`), which wins over any `ec_land` match, and one without falls back to Classic art first, so `ec_land` decides only the 261 water-shader liquid payloads. The former samples `1345` (cave floor, `UOStaticTerrainShader`) and `1395..1399` (stone roof, `UOSpriteShader` with `1000034`) draw their own tileart textures, as the client does; their support maps are all in `tex_aux_ec`. The 61 unmatched `UOWaterShader` items now use direct authored stages and native primary extents; see [item-water acceptance](reviews/2026-11-01-item-water-materials.md). The dead `unresolved_surface_like` counter and unreached non-liquid `TexLandEc` branch remain separate cleanup work.
   - Remove the unreached paths (user decision 2026-11-02, renderer phase): everything in `resolve_surface_like_tex_land_ec_slot_id` after the liquid match (texture-ref and legacy `ec_texture_id` lookup, provenance canonical/alias search, wet-water fallback, `cc_texture_id` slot), the non-liquid `TexLandEc` branch of `resolve_ec_static_visual_kind`, and the tests that cover them. Items draw their own maps, as in the client; check that no installed-package item changes.
 - Keep the safe static runtime precedence:
@@ -115,7 +101,6 @@ Done. The main-texture selector is role first with explicit reasons (`choose_mai
 ### Static Art Pipeline And Residency
 
 - Finish the production-grade clustered static-art pipeline.
-- Implement atlas packing with `guillotiere` for static art.
 - Support two runtime storage modes for art atlas pages:
   - `RGBA8` as the lossless default for tiny and alpha-sensitive art
   - `BC7` as optional for larger pages after validation
@@ -145,7 +130,6 @@ Done. The main-texture selector is role first with explicit reasons (`choose_mai
 
 ### UDDP, UDDF, Streaming, And Upload Scheduling
 
-- Finalize UDDP on-disk layout with explicit sections for header, dictionary index, dictionary blobs, entry table, and data blocks.
 - Keep UDDF as the single-object wrapper for standalone resources and tooling.
 - Preserve the planned `u16` compression header layout:
   - bits `0..3`: base compression type
@@ -153,16 +137,11 @@ Done. The main-texture selector is role first with explicit reasons (`choose_mai
   - bits `7..15`: content type id
 - Implement async read and decode tasks through Bevy task pools.
 - Implement upload scheduling that merges writes and emits bounded GPU copy batches each frame.
-- Implement per-content dictionary handling for small payload classes.
+- Evaluate per-content dictionaries for small payload classes where measurements justify them; map chunks use plain Zstd after comparison.
 - Implement fallback decode paths per content type.
 - Keep predictive prefetch rings optional until telemetry proves they improve real movement behavior.
 - Keep live editing persistence and delta-merging deferred until editor and gameplay ownership is explicit.
-
-### EC Review, Audit, And Artifact Surfaces
-
-Abnormality reports and owner audits (`write-ec-abnormality-report`, `write-tileart-owner-audit`, `write-terrain-definition-owner-audit`, d7319dc8), source-controlled override tables (`dynamapper/assets/cc_ec_convtables/`, checked by `audit-ec-terrain-overrides` and `audit-land-routing-kdl`) and editable review artifacts (`write-terrain-definition-review`, `write-tileart-liquid-surface-report`, 4a9a87de) exist.
-
-- Done: `uddp-inspector-gui` shows each tilemeta item's texture refs (position, role, package, family, primary/aux, stretch, main-texture reason and confidence) and which of `tex_art_ec`, `tex_aux_ec` and `tex_land_ec` beside the tilemeta holds each image (`logic/tilemeta_refs.rs`).
+- Keep any EC extra-pass exploration behind explicit feature gates and diagnostics.
 
 ### EC Effects: Manual Checks
 
@@ -177,17 +156,6 @@ These need a person at the GUI or in a running client; the code side is done.
   - the pale halo on low-luminance edges of hued effects;
   - the effects whose unlit parts draw black (E_A_D materials without emissive or glow);
   - draw order where blended effects overlap (back-to-front by bound centre, unstable in the client).
-
-### EC Runtime Staging
-
-- World-space repetition and stretch precedence:
-  - make explicit metadata override texture-extent inference when warranted
-  - keep the rule inspectable
-- Single-land material mode for materials that are truly one-base by evidence.
-- Solid-land blend mode for materials with credible `Base`, `SecondaryBase`, `BlendAlpha`, and `CoverageAlpha` support.
-- Land-owned liquid mode with explicit uncertainty handling for ripple-like or normal-like support inputs.
-- Art-owned wet or liquid mode separate from terrain-liquid logic.
-- Extra-pass exploration only behind explicit feature gates and diagnostics.
 
 ### Camera Modes, Water, And Terrain Switching
 
@@ -251,10 +219,6 @@ These need a person at the GUI or in a running client; the code side is done.
 - Keep these effects modular and independently tunable in shader settings; each effect must be disableable for regression comparison.
 - Preserve original UO/KR stylistic intent: no heavy bloom, screen-space outlines, modern PBR material treatment, or procedural noise pasted uniformly over every surface.
 
-### Future-Readiness Preservation
-
-Done or superseded. Blend inputs (`SecondaryBase`, `BlendAlpha`, `CoverageAlpha`) and the water inputs (`WaterBump`, `WaterReflection`, `WaterFourthStage`) are distinct stable roles (55647354), so the role already says how a ref is used and no separate readiness field is needed. Waterfall, splash, foam, glow and similar effects come from the effect definitions (`effects_ec.uddp`), not from texture names.
-
 ## Later
 
 ### Terrain Architecture Beyond Current EC Work
@@ -269,8 +233,8 @@ Done or superseded. Blend inputs (`SecondaryBase`, `BlendAlpha`, `CoverageAlpha`
 
 ### Terrain Blending And Water Modes
 
-- Keep the original transition-tile path for classic fidelity.
-- Add automatic blend mode for custom maps that lack transition tiles.
+- Restore rendering of manually placed terrain-like static transition art for Classic fidelity. Classic and Enhanced share the same map tiles, even though their storage differs.
+- Finish the switch for dynamic terrain texture blending at transitions for both Classic and KR/Enhanced textures. Dynamic blending can reduce reliance on manually placed transition art.
 - Keep source logical tile ids immutable in both modes.
 - Treat stochastic or noise seam refinement as optional after the base auto-blend path works.
 - Keep depth-aware tinting for enhanced water bounded and benchmark-first.
@@ -300,27 +264,12 @@ Done or superseded. Blend inputs (`SecondaryBase`, `BlendAlpha`, `CoverageAlpha`
 ### Export And Tooling
 
 - Finish remaining export acceptance and portability work (approved 2026-11-01: WebP method 4 q85 sharp YUV only; offscreen export mode after a control-channel pilot; Britannia first; 512 px tiles; Leaflet 1.9.4 vendored; z = 0 readout; sRGB box downsampling). [Web map export proposal](agent_notes/proposals/2026-11-01-web-map-export.md#decisions-2026-11-01).
-  - Done: `tools/webmap-export-cli` (`plan`, `run`, `pyramid`, `viewer`, `pilot`): the frame plan, the spool consumer of the renderer contract, the lossless level-6 intermediate and the pyramid built from it, atomic writes and frame-level resume, the libwebp wrapper with `--quality`/`--method`/`--sharp-yuv` (covers the WebP profile item; lossless tiles are not needed).
-  - Done: renderer export mode (`DYNAMAPPER_EXPORT_JOB`) and the 2 x 2 control-channel pilot. The pilot exposed overlap differences; the subsequent hidden export path completed a full Classic facet-0 run. See [camera-relative projection evidence](reviews/2026-11-01-terrain-stability.md) and [export acceptance and remaining limits](reviews/2026-11-01-webmap-export-renderer.md).
+  - Broader visual acceptance of the Classic Britannia export and CI builds on Windows, macOS and ARM64. See [export acceptance and remaining limits](reviews/2026-11-01-webmap-export-renderer.md).
   - Enhanced and KR exports (user decision 2026-11-02, renderer phase, after the format work): the export job can select the preset, with a choice between water reflections at a fixed reflection point and reflections off. Today the Enhanced preset cannot be chosen through an export job, and reflections differ between overlapping frames because they follow the camera.
-  - Done: full Classic Britannia run and recorded seam checks. Remaining: broader visual acceptance and the CI build of the tool on Windows, macOS and ARM64.
-- Done: map and statics chunks are compressed with plain Zstd at the level that decodes fastest for its size (`udd_conv::chunk_compression`: map 19, 15.96 MB for Britannia at the same 3.4 us per warm chunk as level 7's 17.76 MB; statics 7, since higher levels decode 5..10 % slower); `--zstd=LEVEL` sets the level and `--stored` stores them (0.2 us per map chunk, 118 MB). No type dictionary: it made map chunks larger and 10 % slower. The UDDP reader reuses a per-thread Zstd context and the type dictionaries prepared at open (the installed dictionary map: 7.9 -> 3.9 us per chunk). LZ4 was measured for comparison only (map 58 MB at 2.2 us). Benchmark: `lib/udd-conv/tests/integration/map_statics_retrieval.rs`. [Proposal (a)](agent_notes/proposals/2026-11-01-data-track-open-items.md).
-- Done: `udd-cli tool validate <files or dirs>` decodes every entry through its key, checks the package hash, codecs and dictionaries, and runs the package's own reader, so a stale package fails before the app loads it.
-- Done: the `uddp-inspector-gui` tile and land-material previews decode only the BC7 blocks covering the rect (`uot_texture_codecs::bc7::decode_bc7_rect_to_rgba8888`, equal to the whole page cropped); the whole page is decoded when the Full Atlas view is shown. First selection on a 2048x2048 `tex_land_ec` BC7 page: 23.9 ms -> 0.14 ms CPU (the 4096x2048 RGBA `tex_art_ec` page: 24.4 ms -> 4 us), plus the full-page texture upload it no longer does.
 
 ## Validation
 
-### Immediate Regression Protection
-
-`udd-container` `uddp_layout` checks the blob layout (head, dictionaries, unpadded payloads in key order) and reads through the memory-mapped reader. The owner-reference census has unit tests for its archive and family guesses and an ignored real-file test (`udd-conv-cli` `ec_material_refs_client`: one row per tileart item and terrain layer, every tileart row equal to the packed tilemeta ref). The ignored real-file test `udd-conv` `tex_aux_ec_client` packs `tilemeta` and `tex_aux_ec` from the clients and checks that every block-0 support ref of a material item resolves in `tex_aux_ec` with readable pixels (15271 items, 13714 refs, 23 on the missing-texture image). Parser tests for `Textures`-family classification, stable roles and position roles exist (`lib/uocf/tests/synthetic/tileart_ref_preservation.rs`; tilemeta `roles_come_from_the_shader_and_the_item_position`, `roles_follow_the_block_shader_and_the_position_not_the_name`), as do liquid-base retention (`tex_art_ec` `liquid_with_*`), tilemeta material round trips and `meta32` packing.
- `udd-conv` `decoder_robustness` cuts and changes samples (fixed-seed xorshift) for the Classic art, gump and animation RLE, AMOU, DDS, TGA and `tilemeta` readers; none may panic (synthetic samples always, shipped ones ignored behind `UO_CLIENT_ROOTS`). It found the `terrain_meta` readers (removed with the terrain layer table on 2026-11-06) allocating a damaged record count, a span past the layer table panicking in `udd_conv` `iter_tile_layers`, and the DDS decoder allocating the RGBA of a damaged header's size; all three fail with an error now.
-
-### Priority Test Inventory
-
-- `test_metadata_packing_roundtrip`
-- `test_iso_depth_sorting`
-- `test_subtile_precision_bias`
-- `test_hue_lookup_logic`
+- Check remaining coverage for metadata packing, isometric depth ordering, subtile precision, and hue lookup; add behavioral regression tests where gaps remain.
 
 ### Screenshot-Family Regression Buckets
 
@@ -347,13 +296,6 @@ Done or superseded. Blend inputs (`SecondaryBase`, `BlendAlpha`, `CoverageAlpha`
 - Military mode maintains the target performance profile on the benchmark scene.
 - Perspective and advanced modes remain deterministic under runtime switching.
 - Multiple hue variants share the same base atlas allocation.
-
-## Documentation And Evidence Hygiene
-
-- Add one durable documentation artifact that explains how the third-party world-space UV proof-of-concept maps into the current data model.
-- Keep it explicit that the third-party renderer is reconstruction-only, not original EC source.
-- Preserve both decoded repetition values and texture extents as separate signals for future comparison.
-- Keep unresolved scaling questions explicit rather than flattening them into false certainty.
 
 ## Known Open Constraints And Rules
 
@@ -387,10 +329,8 @@ Done or superseded. Blend inputs (`SecondaryBase`, `BlendAlpha`, `CoverageAlpha`
 
 ## Suggested Execution Order
 
-1. Finish baseline instrumentation and EC evidence, metadata, and packaging cleanup.
-2. Close the remaining EC runtime routing and chosen-base correctness gaps.
-3. Finish the static art pipeline and bounded upload discipline.
-4. Lock in audit, override, and review surfaces.
-5. Continue runtime staging in narrow, falsifiable slices only.
-6. Harden regression coverage with parser, packer, inspector, and screenshot-family validation.
-7. Resume broader roadmap items such as clipmaps, streaming hardening, mobiles, export, and advanced camera modes once the EC material pipeline is stable.
+1. Continue visual fidelity checks and the specific EC material and routing cleanup above.
+2. Address static depth and art pipeline gaps in narrow, validated slices.
+3. Add instrumentation and harden streaming and bounded uploads.
+4. Extend regression coverage and complete export acceptance.
+5. Continue deferred and longer-term work as priorities and dependencies allow.
