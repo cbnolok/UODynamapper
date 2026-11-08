@@ -64,8 +64,8 @@ land ID. Reconfirm representative owners and coordinates from current sources.
 ## Rendered-image checks
 
 Use [the renderer controls](../../../scripts/dev-helpers/renderer/README.md)
-with isolated settings and settled streaming. Check affected sources and all
-three styles for visual changes. Keep clocks, projection, source selection,
+with isolated settings and settled streaming. Check affected sources and all four render styles for visual changes:
+Classic, Enhanced, KR-like and UOD-Painterly. Keep clocks, projection, source selection,
 camera and effective presets explicit. Shader composition and GPU validation
 are separate from a Rust build.
 

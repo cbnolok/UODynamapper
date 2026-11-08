@@ -43,6 +43,7 @@ The converter exposes palette restriction as upscale pass values:
 | `palette-snap-expanded-8` | Allow up to 8 deterministic derived colors in addition to the source palette. |
 | `palette-snap-expanded-16` | Allow up to 16 deterministic derived colors. |
 | `palette-snap-expanded-32` | Allow up to 32 deterministic derived colors. |
+| `palette-dither-reinsert-checkerboard` | Use strict snapping with checkerboard dither reinsertion. |
 
 No snap pass is the comparison/debug mode. It lets the scaler produce ordinary
 RGBA output and is useful for judging what the palette restriction is removing.
@@ -221,7 +222,10 @@ Profiles may also use supported parameterized filter fields for non-palette
 passes. Palette snap passes ignore filter parameter fields because their behavior
 is defined by the snap mode itself.
 
-## Recommended Defaults
+## Starting Points
+
+These are artistic starting points, not verified original-client fidelity or
+required defaults. Compare results for the intended asset and style.
 
 Tiny humanoid sprites:
 

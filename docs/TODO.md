@@ -101,9 +101,7 @@ Older captures apply to their recorded package revisions.
 ### Static Art Pipeline And Residency
 
 - Finish the production-grade clustered static-art pipeline.
-- Support two runtime storage modes for art atlas pages:
-  - `RGBA8` as the lossless default for tiny and alpha-sensitive art
-  - `BC7` as optional for larger pages after validation
+- Validate art atlas storage choices by content, alpha fidelity and device support. RGBA8 and BC7 are used for art pages; BC1 (DXT1) is also used in other packages. Evaluate ASTC and ETC2 for mobile devices later; see [the format research](agent_notes/uddp_anim_format_requirements.md).
 - Build metadata lookup per art id for atlas layer, UV rectangle, pivot or offset, and behavior flags.
 - Keep metadata lookup O(1) and exact, with partial writes only when atlas slot assignment changes.
 - Implement the alpha-mask plus depth-write shader path for clean overlap.
@@ -233,7 +231,7 @@ These need a person at the GUI or in a running client; the code side is done.
 
 ### Terrain Blending And Water Modes
 
-- Restore rendering of manually placed terrain-like static transition art for Classic fidelity. Classic and Enhanced share the same map tiles, even though their storage differs.
+- Validate and complete Classic fidelity for manually placed terrain-like static transition art. Classic and Enhanced share the same map tiles, even though their storage differs.
 - Finish the switch for dynamic terrain texture blending at transitions for both Classic and KR/Enhanced textures. Dynamic blending can reduce reliance on manually placed transition art.
 - Keep source logical tile ids immutable in both modes.
 - Treat stochastic or noise seam refinement as optional after the base auto-blend path works.

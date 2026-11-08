@@ -2,82 +2,32 @@
 
 This note captures the practical distinction between land textures and land art in Ultima Online, plus the consequences for UODynamapper's current renderer and future EC/CC asset interpretation.
 
-## 1. Classic Client Ground Rendering Model
+## Ground sources and transitions
 
-Classic UO splits ground visuals across two different asset families:
+Classic map data supplies logical land IDs and heights. Classic terrain texmaps
+supply repeatable ground textures, while art supplies images including manually
+placed terrain-like static transition tiles. Classic and Enhanced use the same
+map tiles, although their data is stored differently. Keep map land and placed
+static items distinct: their ownership, geometry and ordering are not interchangeable.
 
-- `map*.mul` stores the logical terrain grid. Each tile contributes:
-  - a 16-bit land tile id
-  - an 8-bit altitude for the tile's north-west corner
-- `texmaps.mul` stores repeatable terrain textures used when the ground is rendered as a textured quad
-- `art.mul` stores pre-rendered land artwork, including:
-  - flat "raw" land tiles
-  - land transition tiles
-  - other land-art overlays the original client could not synthesize at runtime
+The Classic client relies on authored transition artwork placed in the map.
+Enhanced and KR clients can blend terrain textures dynamically, so that artwork
+is not strictly required for transitions even though the shared map retains it.
+The exact Classic client choice between land art and textured ground, including
+its flat and sloped cases, needs source-backed verification; do not treat the
+older flat-versus-sloped explanation as a complete client contract.
 
-The map height model is corner-driven rather than tile-center-driven. For a tile at `(x, y)` the four rendered corner heights come from:
+Dynamapper renders land and static ground art through separate paths. Its
+optional Classic and Enhanced texture-transition controls follow the texture
+source, not the lighting preset. The controls and their current limitations are
+recorded in [terrain transition controls](../../agent_notes/terrain_transition_controls.md);
+static ground patches and their engine-side boundary fade are described in
+[static ground transitions](../../agent_notes/ec_static_ground_transitions.md).
+Those engine improvements are not by themselves proof of original-client parity.
+Dynamic blending remains unfinished and must not discard placed artwork or
+alter logical tile IDs.
 
-- north-west: `(x, y)`
-- north-east: `(x + 1, y)`
-- south-west: `(x, y + 1)`
-- south-east: `(x + 1, y + 1)`
-
-On wrapped map edges, the client samples the adjacent corners from the opposite side of the map.
-
-## 2. Flat Tiles Versus Textured Quads
-
-Classic ground rendering chooses between two fundamentally different visual paths:
-
-- If all four corner heights are equal, the client can draw a pre-rendered isometric land art tile from `art.mul`.
-- If the four corner heights differ, the client draws a textured ground quad using data from `texmaps.mul`.
-
-Useful historical details:
-
-- The pre-rendered "raw tile" footprint is `44x44` pixels in screen space.
-- The textured terrain quad is also `44` pixels wide in isometric projection.
-- Corner screen positions shift by roughly `4` pixels for each `+/-1` altitude delta.
-- The textured path uses `64x64` or `128x128` terrain textures from `texmaps.mul`.
-
-This explains why a land tile id is not enough to determine the final visual. The client chooses between art and textured geometry based on local height relationships.
-
-## 3. Why Transition Tiles Exist In `art.mul`
-
-The classic client could not fully synthesize visually pleasing transitions between land materials from the base tiled textures alone.
-
-As a result, `art.mul` contains land-art tiles for:
-
-- flat terrain renderings
-- terrain-to-terrain transitions
-- overlays used to hide abrupt seams between neighboring land materials
-
-These transition tiles were manually authored content. They were placed on top of the underlying textured ground to preserve the original game's intended appearance.
-
-This is why a renderer that uses only `texmaps.mul` can reproduce the base land material, but still miss fidelity-critical seam-hiding transition artwork.
-
-## 4. Implications For UODynamapper
-
-Current practical state (`dynamapper/src/core/render/scene/world/land/draw_mesh.rs`, `dynamapper/src/core/texture_cache/land.rs`, `dynamapper/assets/shaders/world/land/`):
-
-- Classic land mode (`land_texture_source = cc`) draws every land cell as a textured quad from `tex_land_cc.uddp` (`texmaps.mul`): the tile's tiledata texture id, or the tile id when that is 0. A cell without a packaged texmap is drawn as missing. Without the package, texmaps stream from the client's `texmaps.mul` (the same images).
-- Classic land art from `art.mul` (`tex_art_cc.uddp`) is drawn in one case only, through `classic_land_art_atlas`: a **flat wet** cell (IsWet tiledata flag, all four corners at the same height) whose texture id is 0 or its own tile id (`classic_land_art_payload_id`, `land.rs`; `use_classic_flat_wet_land_art`, `main.wesl`). Shoreline statics and the water under them then share the same source pixels. Sloped wet cells keep the texmap. The array holds those slots as RGBA8, or as their BC7 blocks when `tex_art_cc` is BC7.
-- **Dry transition land art is not drawn.** Dry cells always use their texmap. The optional Classic smoothing (`cc_terrain_transitions`, off by default; `cc_transitions.wesl`) blends neighbouring dry texmaps procedurally across cell edges. It is not the authored transition art.
-- Enhanced land mode (`land_texture_source = ec`) draws terrain from `tex_land_ec.uddp` (TerrainDefinition materials and their layers): a material's colour A, colour B and blend alpha are the base, detail and mask roles of its land pages. `tex_aux_ec.uddp` is not read for land: only item liquids and item surfaces sample it. An unresolved EC route stays explicitly missing; it never falls back to texmaps or art.
-- Wetness: in Classic mode a land cell is wet from the IsWet tiledata flag. In Enhanced mode it is wet when its TerrainDefinition material is the water layer class (`UOWaterTerrainLayer`, `TERRAIN_SHADER_FLAG_REVIEWED_LIQUID`); the tiledata flag is not used there. On the shipped clients every IsWet land tile is also a water-layer tile (67 of 146).
-
-Consequences:
-
-- Classic mode reproduces the base land materials and the flat wet art, but not the authored dry transition tiles, so Classic seams between dry materials differ from the original client.
-- Drawing those transitions would need the map-side choice the original client makes (art for flat cells, textured quads for sloped ones) applied to dry cells too, with the art from `tex_art_cc`.
-
-Architectural consequence:
-
-- "Land" is not a single asset source.
-- The runtime treats these as separate but cooperating inputs:
-  - logical land ids and corner heights from the map
-  - repeatable land textures from `texmaps.mul` (Classic) or TerrainDefinition materials (Enhanced)
-  - flat land art from `art.mul`, today only for flat wet cells
-
-## 5. EC ownership and routing
+## EC ownership and routing
 
 Logical ownership distinguishes map land from item art. A walkable floor, bridge,
 roof or shoreline item remains tileart-owned art even when it draws as a material

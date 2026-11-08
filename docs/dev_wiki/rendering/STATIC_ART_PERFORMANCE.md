@@ -1,6 +1,6 @@
 # Static Art Runtime Performance Notes
 
-This note records the performance pitfalls found while profiling static art rendering, what fixed them, and the rules to follow when adding new systems in the same area.
+This is a June 2026 profiling record of static art performance pitfalls and the fixes used at the time. Treat implementation names and paths as navigation aids, not a required architecture; recheck current behavior and measurements before applying a particular fix.
 
 The main affected runtime path is:
 
@@ -58,7 +58,7 @@ New static-art features should separate stable geometry/art data from dynamic pe
 
 ### Resolving EC Surface-Like Land Slots Per Tile Per Frame
 
-Surface-like EC statics can route through `tex_land_ec` instead of ordinary art. The original resolution path did repeated package/provenance work inside visible static loops.
+The historical surface-like resolution path did repeated package/provenance work inside visible static loops. This is a performance example, not the current source-selection rule; consult [EC routing and ownership](LAND_TEXTURES_AND_TRANSITIONS.md#ec-ownership-and-routing) and the [canonical TODO](../../TODO.md) for current routing and cleanup.
 
 The fix was `StaticSurfaceLikeResolutionCache`, keyed by art source and tile graphic, storing both hits and misses.
 
@@ -115,7 +115,7 @@ New optional systems should have both:
 
 ## Implementation Rules
 
-Use these rules when editing static-art runtime systems:
+Use these as profiling considerations when editing static-art runtime systems; validate them against the current implementation:
 
 1. Cache at chunk granularity before optimizing individual tiles.
 2. Keep output resources stable on unchanged frames.

@@ -19,7 +19,7 @@ The EC source package split matters here:
 
 ## Why Data Is Not Lost
 
-- Pixels outside an art entry's tileart sampling window were never reachable for that entry.
+- The packer crops to the entry's decoded tileart sampling window. The claim that pixels outside it are unreachable applies to that window contract; other client rendering paths require separate evidence.
 - After the window is applied, only fully transparent border rows and columns are trimmed.
 - No opaque pixel inside the effective art image is discarded.
 
