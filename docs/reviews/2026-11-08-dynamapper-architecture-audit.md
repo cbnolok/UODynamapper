@@ -29,6 +29,7 @@ them. Do not treat this report as proof that unreviewed code is clean.
 | `PlayerPlugin` | Reviewed | Findings P1–P3 below; overlaps C1 and C6. |
 | `CameraPlugin` | Reviewed | Findings V1–V7 below. |
 | `ScenePlugin` | Reviewed | Findings S1–S7 below; V1 covers free-camera streaming. |
+| `PlayerDynamicLightPlugin` | Reviewed | Findings L1–L2 below. |
 | Remaining scene plugins | Pending | Includes world, terrain, statics, lights and effects. |
 | Dialog and overlay plugins | Pending | Includes input and player interactions already noted below. |
 | Settings and shader preset plugins | Pending | Includes configuration ownership and persistence. |
@@ -40,9 +41,10 @@ Plugin coverage is tracked individually so reviewing an orchestration plugin
 does not imply its children have been reviewed:
 
 - Reviewed: `ControlsPlugin`, `PlayerMovementPlugin`, `WindowControlsPlugin`,
-  Unix `DevControlPlugin`, `PlayerPlugin`, `CameraPlugin`, `ScenePlugin`.
+  Unix `DevControlPlugin`, `PlayerPlugin`, `CameraPlugin`, `ScenePlugin`,
+  `PlayerDynamicLightPlugin`.
 - Pending scene/rendering: `RenderPlugin`, `WorldPlugin`,
-  `PlayerDynamicLightPlugin`, `DrawLandChunkMeshPlugin`,
+  `DrawLandChunkMeshPlugin`,
   `DrawStaticSpritesPlugin`, `FogPostProcessPlugin`, feature-gated
   `LandProfilingPlugin`.
 - Pending overlays/dialogs: `OverlaysPlugin`, `PerformanceOverlayPlugin`,
@@ -545,3 +547,48 @@ for multiple requests and preserve the pending queue's independent progress.
 No focused tests for the scene footprint, handoff and retirement helpers were
 found in `scene.rs`. The existing perspective and controls tests do not establish
 these streaming cases. No application code was changed or visually compared.
+
+## PlayerDynamicLightPlugin
+
+Reviewed registration, the spawned Bevy light and its component, and nearby
+material and lighting consumers. Other lighting plugins and shader paths remain
+to be reviewed separately.
+
+### L1 — A directional light is presented as a player-following dynamic light
+
+**Classification:** misleading ownership and naming; removal candidate
+requiring receiver review. **Confidence:** startup-only behavior confirmed;
+the light's full visual impact has not been measured.
+
+[`PlayerDynamicLightPlugin`](../../dynamapper/src/core/render/scene/dynamic_light.rs#L16)
+registers one startup system. It creates a Bevy `DirectionalLight` whose
+orientation is determined from the initial player position; no subsequent
+system follows the player, camera, time or lighting settings. A directional
+light's direction comes from orientation, rather than following its translation.
+The world terrain and art have their own custom lighting paths; for example,
+the [land material](../../dynamapper/src/core/texture_cache/land.rs#L1426)
+is unlit from Bevy's standard material perspective and receives explicit
+shader lighting. The optional green player marker uses a lit `StandardMaterial`,
+so the spawned light itself must not be declared dead solely from its name.
+
+**Follow-up:** inventory all lit Bevy material receivers and decide whether to
+retain this as an explicitly named scene or diagnostic light, scope it to a
+marker, or remove it together with the need for it. Preserve active custom
+terrain, sprite and static-light rendering. Validate appearance if changing
+the actual light; this audit did not visually compare it.
+
+### L2 — The attached light component has no reader
+
+**Classification:** confirmed unused component state and inactive source
+clutter. **Confidence:** repository-wide symbol search.
+
+[`PlayerDynamicLight`](../../dynamapper/src/core/render/scene/dynamic_light.rs#L6)
+stores a relative vector that is read locally to construct the initial light
+transform, then attached to the entity. No active system queries the component
+or its field afterwards. The file also contains a commented-out point-light
+experiment and old query fragments.
+
+**Follow-up:** if the directional light remains, keep any needed initial vector
+local and remove the unused component and inactive fragments after rechecking
+references. Do not remove the live light entity merely because its marker is
+unused. No focused tests for this plugin were found.
