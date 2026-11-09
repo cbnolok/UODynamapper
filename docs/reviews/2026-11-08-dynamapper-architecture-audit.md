@@ -35,7 +35,7 @@ them. Do not treat this report as proof that unreviewed code is clean.
 | `LandProfilingPlugin` | Reviewed | Findings GP1–GP4 below; feature-gated GPU execution was not run. |
 | `RenderPlugin` | Reviewed | Composition reviewed; child plugins remain separately tracked. |
 | `FogPostProcessPlugin` | Reviewed | Findings F1–F5 below; no visual validation. |
-| `LandTextureCachePlugin` | In progress | Findings LC1–LC7 below; remaining cache and source paths still need review. |
+| `LandTextureCachePlugin` | Reviewed | Findings LC1–LC11 below; runtime fault and device tests remain follow-up work. |
 | Remaining scene plugins | Pending | Includes world, terrain, statics, lights and effects. |
 | Dialog and overlay plugins | Pending | Includes input and player interactions already noted below. |
 | Settings and shader preset plugins | Pending | Includes configuration ownership and persistence. |
@@ -49,7 +49,8 @@ does not imply its children have been reviewed:
 - Reviewed: `ControlsPlugin`, `PlayerMovementPlugin`, `WindowControlsPlugin`,
   Unix `DevControlPlugin`, `PlayerPlugin`, `CameraPlugin`, `ScenePlugin`,
   `PlayerDynamicLightPlugin`, `WorldPlugin`, `DrawLandChunkMeshPlugin`,
-  feature-gated `LandProfilingPlugin`, `RenderPlugin`, `FogPostProcessPlugin`.
+  feature-gated `LandProfilingPlugin`, `RenderPlugin`, `FogPostProcessPlugin`,
+  `LandTextureCachePlugin`.
 - Pending scene/rendering: `DrawStaticSpritesPlugin`.
 - Pending overlays/dialogs: `OverlaysPlugin`, `PerformanceOverlayPlugin`,
   `PlayerPositionOverlayPlugin`, `CursorBehaviorOverlayPlugin`,
@@ -57,7 +58,7 @@ does not imply its children have been reviewed:
   `LandUiPlugin`, `KeybindingsHelpPlugin`, `GumpDialogPlugin`, `TeleportPlugin`.
 - Pending data/runtime: `ExternalDataPlugin`, `SettingsPlugin`,
   `ShaderPresetsPlugin`, `TextureCachePlugin`, `ArtPageFormatCheckPlugin`,
-  `LandTextureCachePlugin`, `UOFilesPlugin`, `ExportJobPlugin`.
+  `UOFilesPlugin`, `ExportJobPlugin`.
 - Pending frame/diagnostics: `FrameRatePlugin`, `FrameLimiterPlugin`,
   `LogGpuPreprocessingModePlugin`.
 
@@ -774,8 +775,8 @@ or another explicit invariant if needed. Preserve delayed LOD-aware picking.
 
 ### T7 — Missing EC package reaches a Classic fallback path
 
-**Classification:** policy discrepancy to verify. **Confidence:** static
-routing traced; actual rendered result not checked in this audit.
+**Classification:** policy discrepancy. **Confidence:** Classic source routing
+confirmed statically; actual rendered result not checked in this audit.
 
 The [land draw](../../dynamapper/src/core/render/scene/world/land/draw_mesh.rs#L755)
 uses the legacy texture-array path when the selected EC land package is absent.
@@ -1169,12 +1170,12 @@ performed. Static fog does not need a screen-size refresh for its current math:
 the shader uses that size only in the dynamic-noise branch, which the sync system
 already refreshes each frame.
 
-## LandTextureCachePlugin — partial review
+## LandTextureCachePlugin
 
-The setup, fixed-array cache, EC coverage and auxiliary ownership pass has begun.
-The plugin remains in progress: complete the remaining cache, source-switch,
-GPU upload and compressed-format capability paths before marking it reviewed.
-Findings T7, T8, T10–T14 also concern this plugin.
+Reviewed setup, fixed-array cache and upload, source switching, EC coverage and
+auxiliary ownership, and compressed-format selection. Findings T7, T8 and
+T10–T14 also concern this plugin. Fault-injection, GPU capability and visual
+behavior remain follow-up work, not conclusions from this static review.
 
 ### LC1 — Full-collection residency is unreachable in current app wiring
 
@@ -1278,3 +1279,67 @@ one installed-package test ignored. Eight EC coverage CPU tests and two aux
 layer tests also passed. These checks do not cover LC3–LC5 or establish GPU
 parity; the explicit Vulkan parity test was not run. No visual comparison was
 performed.
+
+### LC8 — Fixed-array cache entries become visible before upload completion
+
+The [cache miss path](../../dynamapper/src/core/texture_cache/land/cache.rs#L451)
+extracts a Classic package subrectangle synchronously before spawning the upload
+task; a cold page can be read and decoded on the Bevy thread. It then records
+the nonzero layer as resident before the task or GPU upload completes. The draw
+path considers only a zero fallback layer pending, so a failed or dropped upload
+can leave a nonzero layer treated as ready without a retry. This applies to the
+conditional fixed-array path, not necessarily the normal page-atlas route; no
+timing or fault-injection result was obtained.
+
+**Follow-up:** if retaining this path, separate allocation, loading, submitted
+and ready states and keep decoding off the draw thread. Test read errors, delayed
+and dropped uploads, retry and slot reuse, including LC3–LC4. Otherwise remove it
+only after the missing-source contract in T7 is resolved.
+
+### LC9 — Device format and auxiliary-array limits are not checked here
+
+The [EC land atlas](../../dynamapper/src/core/texture_cache/land.rs#L793) and
+[auxiliary array](../../dynamapper/src/core/texture_cache/land.rs#L206) choose
+their GPU format from package data; no device block-compression feature check
+was found in these construction paths. The auxiliary array also allocates one
+layer per distinct source or crop without checking the adapter's layer limit.
+Unsupported devices or unusually large packages may therefore lack a usable
+fallback or actionable error. Actual device failures and stock-package limits
+were not tested.
+
+**Follow-up:** define capability negotiation, fallback decoding and clear errors
+for supported formats and array limits, then test unsupported devices and large
+inputs. BC7 is one current format; DXT1/BC1 is used elsewhere and future mobile
+codecs require their own capability checks. Preserve per-source color space and
+item-mask semantics.
+
+### LC10 — Ownership-cache invalidation can be skipped when the view ray misses
+
+[`sys_prepare`](../../dynamapper/src/core/texture_cache/land/coverage/cache/runtime.rs#L121)
+returns for a missing viewport, near-horizontal ray or intersection behind the
+camera before checking the atlas revision and unpublishing nonresident slots.
+The shader's chunk/map/raw-owner guards do not independently validate every
+neighbor in the baked halo. A previously published slot can consequently remain
+published through those early returns while neighboring metadata changes; no
+visible defect has been reproduced.
+
+**Follow-up:** test a published cache entry with a center-ray miss and changed
+neighbor payload or liquid flags. Separate mandatory invalidation/publication
+from optional camera-centered baking if the test confirms the risk, retaining
+the documented halo, submitted-revision and uncached-fallback contracts.
+
+### LC11 — Source switching combines synchronous preparation and publication
+
+The [source-switch system](../../dynamapper/src/core/texture_cache/land.rs#L1174)
+selects source policy, rebuilds all page images and the lookup, updates the shared
+material and requests chunk rebakes in one Update system. The image builder reads
+or decodes every source page and rebuilds its lookup synchronously. Its observed
+latency has not been measured. Repository searches also found no callers of
+`residency_strategy`, `invalidate_all_cached_textures`, or
+`reupload_all_resident_textures` in the fixed-array cache; resize uses a separate
+active reupload method.
+
+**Follow-up:** give source preparation and publication explicit boundaries and
+measure switching before optimizing. Preserve atomic atlas/lookup pairing and
+rebake invalidation. Recheck and remove the unused methods without removing the
+active resize path.
