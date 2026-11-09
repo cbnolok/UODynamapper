@@ -32,6 +32,7 @@ them. Do not treat this report as proof that unreviewed code is clean.
 | `PlayerDynamicLightPlugin` | Reviewed | Findings L1–L2 below. |
 | `WorldPlugin` | Reviewed | Findings W1–W3 below; child plugins remain pending. |
 | `DrawLandChunkMeshPlugin` | Reviewed | Findings T1–T16; other texture-cache plugins and the independent shader/asset sweep remain pending. |
+| `LandProfilingPlugin` | Reviewed | Findings GP1–GP3 below; feature-gated GPU execution was not run. |
 | Remaining scene plugins | Pending | Includes world, terrain, statics, lights and effects. |
 | Dialog and overlay plugins | Pending | Includes input and player interactions already noted below. |
 | Settings and shader preset plugins | Pending | Includes configuration ownership and persistence. |
@@ -44,10 +45,10 @@ does not imply its children have been reviewed:
 
 - Reviewed: `ControlsPlugin`, `PlayerMovementPlugin`, `WindowControlsPlugin`,
   Unix `DevControlPlugin`, `PlayerPlugin`, `CameraPlugin`, `ScenePlugin`,
-  `PlayerDynamicLightPlugin`, `WorldPlugin`, `DrawLandChunkMeshPlugin`.
+  `PlayerDynamicLightPlugin`, `WorldPlugin`, `DrawLandChunkMeshPlugin`,
+  feature-gated `LandProfilingPlugin`.
 - Pending scene/rendering: `RenderPlugin`,
-  `DrawStaticSpritesPlugin`, `FogPostProcessPlugin`, feature-gated
-  `LandProfilingPlugin`.
+  `DrawStaticSpritesPlugin`, `FogPostProcessPlugin`.
 - Pending overlays/dialogs: `OverlaysPlugin`, `PerformanceOverlayPlugin`,
   `PlayerPositionOverlayPlugin`, `CursorBehaviorOverlayPlugin`,
   `SystemMessagesPlugin`, `DialogsPlugin`, `PreferencesDialogPlugin`,
@@ -970,3 +971,70 @@ Additional checks: the focused atlas staged-revision/image-generation test,
 `world_entry_points_discover_shader_dependencies` each passed. They do not
 exercise page reuse, the live pinning calculation, camera-view data or visual
 output. No visual comparison was performed.
+
+## LandProfilingPlugin
+
+Reviewed the `gpu-profiling` feature, registration, main/render-world request
+flow and Core3d instrumentation. This is an active opt-in diagnostics feature,
+not unused terrain code.
+
+### GP1 — One export request continually re-arms itself
+
+**Classification:** feature-gated behavior defect. **Confidence:** static
+cross-world trace; no GPU export was run.
+
+[F10 sets the main-world request](../../dynamapper/src/core/render/scene/world/land/profiling.rs#L112),
+and no writer clears it. Every extraction therefore sets the separate
+render-world request again; [finalization](../../dynamapper/src/core/render/scene/world/land/profiling.rs#L174)
+clears only the latter. Completed profiler frames can keep producing trace
+files after a single press. Names have one-second resolution and the profiler's
+writer creates/truncates its target, so repeated writes in the same second can
+replace the previous trace.
+
+**Follow-up:** implement a one-shot request or acknowledged request sequence
+across the two worlds, preserving requests until GPU results are ready. Test one
+and multiple presses, delayed results, write failure and filename collisions.
+
+### GP2 — Profiling scope is wider than land and narrower than a whole frame
+
+**Classification:** misleading ownership and measurement name. **Confidence:**
+registration and schedule placement confirmed; multi-view behavior not exercised.
+
+The plugin is under the terrain module but is registered by
+[`RenderPlugin`](../../dynamapper/src/core/render.rs#L15) and brackets Bevy's
+[`Core3dSystems::MainPass`](../../dynamapper/src/core/render/scene/world/land/profiling.rs#L63),
+not a land-only pass or the entire frame. The query is labeled `Total Frame`.
+Core3d runs per camera, and the begin/end systems do not filter to the player
+camera; comments claiming only the first view is timed are not supported by an
+explicit per-frame selection contract.
+
+**Follow-up:** place the tool under renderer diagnostics, name the measured
+span accurately and define whether to capture one view or all views. Add an
+explicit view identity/selection and multi-view test if multiple cameras are
+supported. Preserve the distinction from Bevy's separate hardware diagnostics.
+
+### GP3 — Unsupported-device behavior does not match the fallback message
+
+**Classification:** startup contract mismatch. **Confidence:** configuration
+and renderer initialization traced; no unsupported adapter was tested.
+
+With the feature enabled, [device settings](../../dynamapper/src/core.rs#L163)
+request both timestamp-query features as required features before the plugin's
+[`finish` check](../../dynamapper/src/core/render/scene/world/land/profiling.rs#L78)
+can warn and disable profiling. An adapter that cannot satisfy the device
+request may fail before that warning. The module also retains outdated API and
+render-graph terminology, and its F10 binding is outside the central input
+policy reviewed in C4. Its query writes on a command encoder, but initialization
+neither explicitly requests nor checks `TIMESTAMP_QUERY_INSIDE_ENCODERS`;
+whether Bevy enables it implicitly depends on adapter features and settings
+priority. The profiler can omit encoder timing if it is unavailable.
+
+**Follow-up:** choose whether a profiling build requires capable hardware or
+negotiates optional support, and align initialization and diagnostics with that
+choice. Correct outdated comments and include the shortcut in the shared input
+policy. Exercise supported, unsupported and differing device-priority paths
+where feasible, including whether the resulting trace contains GPU timestamps.
+
+`cargo check -p dynamapper --features gpu-profiling` passed. It proves the
+feature compiles, not that GPU timestamps or trace exports work. No focused
+profiler tests or runtime GPU export were found or run.
