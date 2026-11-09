@@ -31,6 +31,7 @@ them. Do not treat this report as proof that unreviewed code is clean.
 | `ScenePlugin` | Reviewed | Findings S1–S7 below; V1 covers free-camera streaming. |
 | `PlayerDynamicLightPlugin` | Reviewed | Findings L1–L2 below. |
 | `WorldPlugin` | Reviewed | Findings W1–W3 below; child plugins remain pending. |
+| `DrawLandChunkMeshPlugin` | In progress | Geometry and loading findings T1–T7; material, atlas and shader coverage remain incomplete. |
 | Remaining scene plugins | Pending | Includes world, terrain, statics, lights and effects. |
 | Dialog and overlay plugins | Pending | Includes input and player interactions already noted below. |
 | Settings and shader preset plugins | Pending | Includes configuration ownership and persistence. |
@@ -658,3 +659,136 @@ unloaded facets.
 
 No focused tests for the world catalog setup were found. No application code
 was changed or visually compared.
+
+## DrawLandChunkMeshPlugin — partial review
+
+The geometry and background-loading pass is recorded below. The plugin remains
+**in progress**: its complete material, atlas, picking and shader dependencies
+still need review, as do the separate land texture-cache and profiling plugins.
+Current source-transition controls are active, and dynamic blending remains
+unfinished; neither is a candidate for deletion just because this area has
+changed during development.
+
+### T1 — Chunk construction sorts camera and chunks in different units
+
+**Classification:** incorrect priority calculation. **Confidence:** units
+confirmed statically; effect on observed load order not measured.
+
+[Camera position](../../dynamapper/src/core/render/scene/world/land/draw_mesh.rs#L441)
+is divided by eight before it is passed to `sort_construction_targets`, but the
+target coordinates are `LCMesh.gx/gy` in the
+[32-tile base chunk grid](../../dynamapper/src/core/render/scene/world/land.rs#L23).
+[The sort](../../dynamapper/src/core/render/scene/world/land/draw_mesh.rs#L1191)
+compares those values directly. Away from the origin, the claimed nearest-camera
+ordering is centered at a different location.
+
+**Follow-up:** use an explicit shared conversion to the logical chunk grid and
+test priority at representative positive and negative camera positions and chunk
+scales. Measure load order if assessing a performance impact.
+
+### T2 — Background texture warming does not warm textures
+
+**Classification:** confirmed inert work and misleading diagnostics.
+**Confidence:** worker and request traced.
+
+The [loader request](../../dynamapper/src/core/render/scene/world/land/chunk_loader.rs#L36)
+carries a Classic land texture package and describes warming its cache. The
+worker instead [only counts distinct tile IDs](../../dynamapper/src/core/render/scene/world/land/chunk_loader.rs#L159);
+it never reads that package. Its performance log nevertheless calls the count
+textures warmed. This scan does not establish texture residency or loading.
+
+**Follow-up:** remove the unused request field, counting scan and false warming
+claim if current profiling confirms the count has no diagnostic purpose. Keep
+the active asynchronous map-block loader and the separate live texture cache
+work on the draw path.
+
+### T3 — Land draw retains unused prototype state
+
+**Classification:** confirmed unused or inert code. **Confidence:** symbol and
+control-flow searches.
+
+[`_Arrayable`](../../dynamapper/src/core/render/scene/world/land/draw_mesh.rs#L275)
+has no call site. `DrawMeshLocals.pending_blocks` is never used, and
+[`last_scale`](../../dynamapper/src/core/render/scene/world/land/draw_mesh.rs#L298)
+is only compared and assigned to itself; it does not perform the pin-clearing
+work its comment describes. The file has a broad `allow(unused)` that hides
+such findings. `PendingTextureBake` is active and must be retained.
+
+**Follow-up:** remove the proven inert items and obsolete comments, then narrow
+the unused-code allowance after reviewing remaining warnings. Preserve the
+separate live pin-reset system and rebake signaling.
+
+### T4 — Loader failure and completion have no explicit error contract
+
+**Classification:** stalled-streaming risk. **Confidence:** conditional static
+trace; fault cases not reproduced.
+
+The [worker](../../dynamapper/src/core/render/scene/world/land/chunk_loader.rs#L149)
+prints a map read error and returns an empty sub-batch as though completed. The
+[draw system](../../dynamapper/src/core/render/scene/world/land/draw_mesh.rs#L498)
+may then retain a matching loaded-version checkpoint and skip rechecking core
+blocks until another successful insertion changes that version. Separately,
+`send_request` discards a channel send failure while the caller unconditionally
+marks the request pending. A failed worker can consequently leave chunks waiting
+without a structured error or completion. No claim is made about frequency.
+
+**Follow-up:** make worker submission and results fallible, establish bounded
+retry or clear failure behavior, and cover failed reads and disconnected
+workers with targeted tests. Associate results with a request and facet before
+supporting asynchronous facet changes; today only the starting facet loads.
+
+### T5 — Low-detail LOD may be unreachable under normal scale scheduling
+
+**Classification:** dead-path candidate. **Confidence:** threshold and
+scheduling analysis; startup and transition cases require a focused test.
+
+[`lod_from_zoom`](../../dynamapper/src/core/render/scene/world/land/draw_mesh.rs#L133)
+selects `Low` at zoom 10 or greater, while `scale_from_zoom` selects a scale
+greater than 1 from zoom 5. The LOD update returns when the current chunk scale
+is not 1. Under normal synchronized scene updates this makes `Low` appear
+unreachable, although the handle is generated and the picking test exercises its
+topology. Startup, rapid zoom and handoff ordering could affect that conclusion.
+
+**Follow-up:** test actual system scheduling at thresholds and during handoffs
+before removing `Low`, its mesh or its picker entry. Retain the shared mesh-grid
+contract for every mesh that remains live.
+
+### T6 — LOD update and new mesh attachment lack an explicit ordering
+
+**Classification:** schedule-dependent defect candidate. **Confidence:**
+systems and data flow traced; Bevy scheduling and visual effect not reproduced.
+
+[The plugin](../../dynamapper/src/core/render/scene/world/land.rs#L573)
+registers the LOD updater and chunk draw in the same set without an ordering
+between them. Drawing reads the LOD resource and queues new mesh attachments;
+the updater changes the resource and updates existing mesh components. If draw
+observes the old LOD before the updater and its deferred attachment is not
+visible to the update query, a newly attached mesh could retain the old LOD
+after the updater considers the resource current.
+
+**Follow-up:** reproduce with a focused ECS test covering a new chunk at a LOD
+threshold and actual deferred-command application, then establish an ordering
+or another explicit invariant if needed. Preserve delayed LOD-aware picking.
+
+### T7 — Missing EC package reaches a Classic fallback path
+
+**Classification:** policy discrepancy to verify. **Confidence:** static
+routing traced; actual rendered result not checked in this audit.
+
+The [land draw](../../dynamapper/src/core/render/scene/world/land/draw_mesh.rs#L755)
+uses the legacy texture-array path when the selected EC land package is absent.
+The [source-switch warning](../../dynamapper/src/core/texture_cache/land.rs#L1190)
+also describes a fallback. This appears inconsistent with the current
+missing-Enhanced-texture policy in `ENGINEERING.md`; it differs from the case
+where an EC package is present but an individual slot is missing, which uses
+the explicit missing mode.
+
+**Follow-up:** trace startup and source switching in `LandTextureCachePlugin`,
+test both a wholly absent package and an absent slot, and settle the intended
+policy before removing any cache path. Do not silently replace missing EC
+textures with Classic texmaps or remove active Classic and EC atlas paths.
+
+`cargo test -p dynamapper core::render::scene::world::land::picking::tests`
+passed all 8 tests, including generated mesh-grid consistency. These tests do
+not cover T1–T7, worker failures, the scene edge issue S1 or transition
+scheduling. No visual comparison was performed.
