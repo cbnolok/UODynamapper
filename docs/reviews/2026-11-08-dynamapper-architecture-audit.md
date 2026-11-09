@@ -39,6 +39,7 @@ them. Do not treat this report as proof that unreviewed code is clean.
 | `TextureCachePlugin` | Reviewed | Composition reviewed; art child and direct installers remain separately tracked. |
 | `ArtPageFormatCheckPlugin` | Reviewed | Finding AP1 below; art atlas implementation remains separately tracked. |
 | `DrawStaticSpritesPlugin` | Reviewed | Findings A1–A16 below; independent shared-shader and asset sweep remains pending. |
+| Overlay plugins | Reviewed | Composition and findings O1–O8 below. |
 | Remaining scene plugins | Pending | Includes world, terrain, statics, lights and effects. |
 | Dialog and overlay plugins | Pending | Includes input and player interactions already noted below. |
 | Settings and shader preset plugins | Pending | Includes configuration ownership and persistence. |
@@ -53,11 +54,11 @@ does not imply its children have been reviewed:
   Unix `DevControlPlugin`, `PlayerPlugin`, `CameraPlugin`, `ScenePlugin`,
   `PlayerDynamicLightPlugin`, `WorldPlugin`, `DrawLandChunkMeshPlugin`,
   feature-gated `LandProfilingPlugin`, `RenderPlugin`, `FogPostProcessPlugin`,
-  `LandTextureCachePlugin`, `TextureCachePlugin`, `ArtPageFormatCheckPlugin`.
+  `LandTextureCachePlugin`, `TextureCachePlugin`, `ArtPageFormatCheckPlugin`,
+  `OverlaysPlugin`, `PerformanceOverlayPlugin`, `PlayerPositionOverlayPlugin`,
+  `CursorBehaviorOverlayPlugin`, `SystemMessagesPlugin`.
 - Reviewed scene/rendering child: `DrawStaticSpritesPlugin`.
-- Pending overlays/dialogs: `OverlaysPlugin`, `PerformanceOverlayPlugin`,
-  `PlayerPositionOverlayPlugin`, `CursorBehaviorOverlayPlugin`,
-  `SystemMessagesPlugin`, `DialogsPlugin`, `PreferencesDialogPlugin`,
+- Pending dialogs: `DialogsPlugin`, `PreferencesDialogPlugin`,
   `LandUiPlugin`, `KeybindingsHelpPlugin`, `GumpDialogPlugin`, `TeleportPlugin`.
 - Pending data/runtime: `ExternalDataPlugin`, `SettingsPlugin`,
   `ShaderPresetsPlugin`,
@@ -1652,3 +1653,121 @@ test zoom, map changes and transitions from empty to nonempty instances. The
 is active; at equal distance its optional art key also orders non-art items
 before art items. Assess mixed transparent ties before modifying this policy,
 and preserve agreement with picking. No visible ordering defect is asserted.
+
+## OverlaysPlugin and PerformanceOverlayPlugin
+
+The [parent plugin](../../dynamapper/src/core/render/overlays.rs#L18) composes
+four active overlay children; reviewing it does not imply its children are all
+covered. The performance child owns both native process telemetry and the UI
+that presents it.
+
+### O1 — Native VRAM telemetry is labeled as application-tracked memory
+
+The [refresh system](../../dynamapper/src/core/render/overlays/performance.rs#L337)
+calls OS-specific queries, but names and comments describe application-owned
+tracked allocations. It also maps unavailable telemetry to zero, making it
+indistinguishable from a genuine zero. The Linux `/proc` implementation is
+compiled for several BSD systems and macOS as well, where that Linux interface
+may be unavailable; unsupported platforms return no value.
+
+**Follow-up:** preserve availability and source in the metrics contract and
+display them accurately. Limit platform-specific probes to supported platforms
+and test absent counters without representing them as measured zero. Review
+driver and adapter semantics before claiming a complete process allocation total.
+
+### O2 — Texture estimates do not represent all textures
+
+The [estimate](../../dynamapper/src/core/render/overlays/performance.rs#L321)
+counts fixed small and big land arrays plus a separately reported tile metadata
+atlas. The [label](../../dynamapper/src/core/render/overlays/performance.rs#L396)
+does not make that limited scope clear and hardcodes `RGBA8`; it excludes art,
+other page arrays and other GPU allocations. This does not establish that all
+project texture formats are RGBA8 or that BC7 is the only compression format.
+
+**Follow-up:** label the specific estimated allocations, derive their formats
+from their actual owners, and keep the estimate distinct from OS measurements.
+
+### O3 — Hidden performance overlay still polls process metrics
+
+[Metrics polling](../../dynamapper/src/core/render/overlays/performance.rs#L215)
+runs four times per second in game even when the overlay is hidden; visibility
+only gates text updates. No other `ProcessMetrics` consumer was found. Native
+file polling and sysinfo refresh therefore continue for an unused display,
+although their cost was not measured.
+
+**Follow-up:** gate collection by visibility or establish a shared telemetry
+owner if another consumer needs it. Preserve CPU sampling warmup and refresh
+promptly when the display is enabled.
+
+### O4 — Non-Windows DXGI stub has no caller
+
+The [non-Windows stub](../../dynamapper/src/core/render/overlays/performance.rs#L172)
+is suppressed as dead code, and its only call is itself Windows-gated. The
+Windows implementation is active and must remain. A commented timer import is
+also obsolete.
+
+**Follow-up:** remove the unreachable stub and stale import; retain the active
+platform-specific query and cover platform configuration in the later build
+sweep. No platform runtime measurements were performed.
+
+## PlayerPositionOverlayPlugin and SystemMessagesPlugin
+
+### O5 — Viewport label assumes the fixed orthographic view
+
+The [position panel](../../dynamapper/src/core/render/overlays/player_position.rs#L151)
+derives a tile span from window size, zoom and fixed isometric constants, then
+labels it `Viewport`. The camera can use perspective or move and rotate freely;
+the label does not use its projection, transform or actual viewport, nor does
+its rebuild signature observe them. The displayed estimate is therefore not a
+general measurement of the active camera.
+
+**Follow-up:** derive the intended measure from the active camera and document
+its geometric meaning, or restrict and label the existing estimate to the view
+it describes. Test camera mode, orientation and viewport changes.
+
+### O6 — Message cache uses queue length as its change signature
+
+The [logger](../../dynamapper/src/ingame_sysmessage_logger.rs#L62) caps its
+queue at 100, dropping an old entry when a new one arrives. The
+[overlay](../../dynamapper/src/core/render/overlays/sysmessages.rs#L43) reloads
+on a length change or periodic cleanup, so once full a new message can wait
+until the next cleanup interval to appear. Length and snapshot are also read
+under separate locks. The queue is bounded; this is a freshness and ownership
+issue, not an unbounded retention claim.
+
+**Follow-up:** expose an atomic snapshot and mutation revision, or another
+explicit notification, and test replacement at capacity. The global logger is
+active and has multiple producers; if moved into Bevy ownership, preserve their
+delivery and the wall-clock expiration behavior.
+
+### O7 — Position and cursor panel scale updates omit layout properties
+
+Position-panel [padding](../../dynamapper/src/core/render/overlays/player_position.rs#L50)
+and cursor-panel [maximum width](../../dynamapper/src/core/render/overlays/cursor_behavior.rs#L146)
+are scaled at creation but not updated alongside their live font-scale changes.
+Changing either preference during a session can leave padding or wrapping width
+at its startup scale.
+
+**Follow-up:** update all scale-dependent layout properties together and cover
+live setting changes in a focused UI-system test. Both position and cursor
+panels spawn on entering the game without a discovered exit cleanup; duplicate
+panels would matter if re-entry becomes supported, but the current app path
+only showed initial entry, so this is a lifecycle constraint rather than a
+reproduced defect.
+
+## CursorBehaviorOverlayPlugin
+
+### O8 — Cursor interaction, inspection and presentation share an owner
+
+The [cursor plugin](../../dynamapper/src/core/render/overlays/cursor_behavior.rs#L103)
+combines mode controls, click teleport, terrain and static inspection,
+source-data formatting, and UI/highlight rendering. These are active: the
+terrain query supplies logical teleport destinations, while the GPU picker
+identifies rendered statics. Raw cell contents and the hovered rendered owner
+are distinct useful observations.
+
+**Follow-up:** separate interaction and inspection data from presentation around
+the shared terrain/static picking contracts. Preserve logical map coordinates,
+pointer and map guards, both inspection views and existing input bindings.
+Current tests cover formatting rather than system-level interaction or scaling;
+no visual comparison was performed.
