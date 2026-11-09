@@ -38,6 +38,7 @@ them. Do not treat this report as proof that unreviewed code is clean.
 | `LandTextureCachePlugin` | Reviewed | Findings LC1–LC11 below; runtime fault and device tests remain follow-up work. |
 | `TextureCachePlugin` | Reviewed | Composition reviewed; art child and direct installers remain separately tracked. |
 | `ArtPageFormatCheckPlugin` | Reviewed | Finding AP1 below; art atlas implementation remains separately tracked. |
+| `DrawStaticSpritesPlugin` | In progress | Findings A1–A6 below; collector, atlas, lights and shaders need further review. |
 | Remaining scene plugins | Pending | Includes world, terrain, statics, lights and effects. |
 | Dialog and overlay plugins | Pending | Includes input and player interactions already noted below. |
 | Settings and shader preset plugins | Pending | Includes configuration ownership and persistence. |
@@ -1389,3 +1390,96 @@ agreement and preserve active mixed-source conversion and source identity.
 `cargo test -p dynamapper art_page_format_mismatch_names_both_packages_and_the_repack`
 passed one test of the warning helper. It does not exercise plugin startup, GPU
 support or actual atlas uploads. The art-atlas implementation is still pending.
+
+## DrawStaticSpritesPlugin — partial review
+
+Reviewed plugin composition, parts of collection and material updates, and the
+GPU picking boundary. This plugin is still **in progress**: its full collector,
+atlas, static-light and shader paths require further review.
+
+### A1 — Art water can retain stale land diffuse strength
+
+The [art material change gate](../../dynamapper/src/core/render/scene/world/art/statics_draw.rs#L1573)
+compares effects, global lighting, sun and global intensity but omits the
+snapshot's `land_lighting`. The update copies
+[`land_lighting.diffuse_strength`](../../dynamapper/src/core/render/scene/world/art/statics_draw.rs#L1691)
+into the shared uniform lane consumed by art-water shading. Changing only that
+value therefore does not cause the art material to update until another tracked
+input changes. The data flow is confirmed statically; no UI or visual reproduction
+was performed.
+
+**Follow-up:** include the effective diffuse input in the material change
+signature and add a focused update test, preserving the shared Rust/shader ABI.
+
+### A2 — Art source selection is duplicated
+
+[Atlas setup](../../dynamapper/src/core/render/scene/world/art/statics_draw.rs#L298)
+and [static collection](../../dynamapper/src/core/render/scene/world/art/statics_collect.rs#L1609)
+contain separate copies of the effective source and availability policy. They
+currently agree but can drift, causing allocation and collection to select
+different sources.
+
+**Follow-up:** share a pure source-selection contract and test package
+combinations and source switches. Preserve per-owner fallback and source-qualified
+atlas keys; these are active compatibility behavior, not dead legacy code.
+
+### A3 — Resident chunk selection and static-art ownership are scattered
+
+[Collection](../../dynamapper/src/core/render/scene/world/art/statics_collect.rs#L1870)
+and [static lights](../../dynamapper/src/core/render/scene/world/art/static_lights.rs#L239)
+independently derive and sort the same map-filtered `LCMesh` keys. The 4,244-line
+collector also combines depth/geometry, source routing, cached chunk state,
+lighting and instance emission. The plugin additionally installs art atlas
+uploads, material systems and picking (see the texture-cache wrapper review).
+The collector's TODO saying it needs a way to obtain terrain chunks is stale:
+it already queries them; whether the current resident set is the desired
+visibility contract should still be assessed.
+
+**Follow-up:** give the resident render-chunk set and static-art policies clear
+owners and split cohesive responsibilities where useful. Do not substitute the
+scene's desired target set for actual resident chunks without examining scale
+handoffs, picking and lighting. Preserve current scheduling and sorting contracts.
+
+### A4 — Picking is active but its inputs and ownership span several modules
+
+The GPU picker is [installed by the sprite plugin](../../dynamapper/src/core/render/scene/world/art.rs#L36),
+uses production art shaders and collector owner snapshots, and is consumed by
+overlay and highlight geometry. It is not the retired CPU alpha picker. Its
+request contract spans those modules and asynchronous render-world readback.
+When water animation is enabled, the
+[query signature](../../dynamapper/src/core/render/scene/world/art/static_geometry.rs#L61)
+changes with time even for a stationary non-water hit; cost is unmeasured. The
+[render query](../../dynamapper/src/core/render/scene/world/art/gpu_picking.rs#L235)
+does not select a camera by identity, a conditional limitation if multiple 3D
+views are introduced rather than a demonstrated single-camera defect.
+
+**Follow-up:** establish an explicit shared picking boundary, retain production
+coverage, stale-reply rejection and separate terrain ownership, and measure
+animated-query cost before changing its cadence. Test multi-view behavior if it
+becomes supported. The focused picker test run passed 4 tests, with the Vulkan
+pixel/depth/MSAA test ignored; no visual comparison was performed.
+
+### A5 — A test-only visual resolver has diverged from production
+
+[`resolve_static_visual_kind`](../../dynamapper/src/core/render/scene/world/art/statics_collect.rs#L792)
+is compiled only for tests and has one Classic-only caller. Its unused EC
+branch differs from the production cached resolver, including the latter's
+Classic fallback when EC art is missing. Keeping a parallel implementation
+could make a future test exercise behavior the application does not use.
+
+**Follow-up:** migrate the Classic test to the production resolver or its shared
+pure policy, then remove the unused test-only branch and helper. Preserve the
+production source fallback and cursor-routing behavior.
+
+### A6 — Art writes a camera field with no discovered art-shader reader
+
+The [art material update](../../dynamapper/src/core/render/scene/world/art/statics_draw.rs#L1600)
+queries the player transform to populate `scene_uniform.camera_position` on art
+materials. No active art-shader read of that field was found; EC liquid
+reflection uses its own view-based path. The shared field is nevertheless read
+by land shading (T9), so it is not globally dead.
+
+**Follow-up:** recheck imported shader variants and feature combinations, then
+remove the art-only query and writes if still unused. Retain and correctly own
+the shared land field and reflection inputs. Four focused `statics_draw` tests
+passed; they do not cover A1, A2 or this candidate.
