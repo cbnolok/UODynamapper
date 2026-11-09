@@ -36,6 +36,7 @@ them. Do not treat this report as proof that unreviewed code is clean.
 | `RenderPlugin` | Reviewed | Composition reviewed; child plugins remain separately tracked. |
 | `FogPostProcessPlugin` | Reviewed | Findings F1–F5 below; no visual validation. |
 | `LandTextureCachePlugin` | Reviewed | Findings LC1–LC11 below; runtime fault and device tests remain follow-up work. |
+| `TextureCachePlugin` | Reviewed | Composition reviewed; art child and direct installers remain separately tracked. |
 | Remaining scene plugins | Pending | Includes world, terrain, statics, lights and effects. |
 | Dialog and overlay plugins | Pending | Includes input and player interactions already noted below. |
 | Settings and shader preset plugins | Pending | Includes configuration ownership and persistence. |
@@ -50,14 +51,14 @@ does not imply its children have been reviewed:
   Unix `DevControlPlugin`, `PlayerPlugin`, `CameraPlugin`, `ScenePlugin`,
   `PlayerDynamicLightPlugin`, `WorldPlugin`, `DrawLandChunkMeshPlugin`,
   feature-gated `LandProfilingPlugin`, `RenderPlugin`, `FogPostProcessPlugin`,
-  `LandTextureCachePlugin`.
+  `LandTextureCachePlugin`, `TextureCachePlugin`.
 - Pending scene/rendering: `DrawStaticSpritesPlugin`.
 - Pending overlays/dialogs: `OverlaysPlugin`, `PerformanceOverlayPlugin`,
   `PlayerPositionOverlayPlugin`, `CursorBehaviorOverlayPlugin`,
   `SystemMessagesPlugin`, `DialogsPlugin`, `PreferencesDialogPlugin`,
   `LandUiPlugin`, `KeybindingsHelpPlugin`, `GumpDialogPlugin`, `TeleportPlugin`.
 - Pending data/runtime: `ExternalDataPlugin`, `SettingsPlugin`,
-  `ShaderPresetsPlugin`, `TextureCachePlugin`, `ArtPageFormatCheckPlugin`,
+  `ShaderPresetsPlugin`, `ArtPageFormatCheckPlugin`,
   `UOFilesPlugin`, `ExportJobPlugin`.
 - Pending frame/diagnostics: `FrameRatePlugin`, `FrameLimiterPlugin`,
   `LogGpuPreprocessingModePlugin`.
@@ -1343,3 +1344,20 @@ active reupload method.
 measure switching before optimizing. Preserve atomic atlas/lookup pairing and
 rebake invalidation. Recheck and remove the unused methods without removing the
 active resize path.
+
+## TextureCachePlugin
+
+[`TextureCachePlugin`](../../dynamapper/src/core/texture_cache.rs#L21) is an
+active composition wrapper: it registers the art format-check and land-cache
+plugins once. No duplicate registration or demonstrated build-order defect was
+found in the wrapper. Its comment says it allocates texture and tile caches,
+but the art child only checks formats; actual art atlas setup and upload systems
+are installed by [DrawStaticSpritesPlugin](../../dynamapper/src/core/render/scene/world/art.rs#L42).
+This is a real ownership split, not evidence that either path is dead.
+
+The re-exported residency layer is described as shared, but current repository
+callers are terrain-specific and its preload path is unreachable in current
+setup (LC1). Review whether the abstraction earns its complexity after the art
+cache audit. Any reorganization must preserve atlas initialization, extraction
+and upload scheduling. Art and item submodules remain separate audit items;
+no runtime or visual validation was performed for this wrapper.
