@@ -32,7 +32,8 @@ them. Do not treat this report as proof that unreviewed code is clean.
 | `PlayerDynamicLightPlugin` | Reviewed | Findings L1–L2 below. |
 | `WorldPlugin` | Reviewed | Findings W1–W3 below; child plugins remain pending. |
 | `DrawLandChunkMeshPlugin` | Reviewed | Findings T1–T16; other texture-cache plugins and the independent shader/asset sweep remain pending. |
-| `LandProfilingPlugin` | Reviewed | Findings GP1–GP3 below; feature-gated GPU execution was not run. |
+| `LandProfilingPlugin` | Reviewed | Findings GP1–GP4 below; feature-gated GPU execution was not run. |
+| `RenderPlugin` | Reviewed | Composition reviewed; child plugins remain separately tracked. |
 | Remaining scene plugins | Pending | Includes world, terrain, statics, lights and effects. |
 | Dialog and overlay plugins | Pending | Includes input and player interactions already noted below. |
 | Settings and shader preset plugins | Pending | Includes configuration ownership and persistence. |
@@ -46,9 +47,8 @@ does not imply its children have been reviewed:
 - Reviewed: `ControlsPlugin`, `PlayerMovementPlugin`, `WindowControlsPlugin`,
   Unix `DevControlPlugin`, `PlayerPlugin`, `CameraPlugin`, `ScenePlugin`,
   `PlayerDynamicLightPlugin`, `WorldPlugin`, `DrawLandChunkMeshPlugin`,
-  feature-gated `LandProfilingPlugin`.
-- Pending scene/rendering: `RenderPlugin`,
-  `DrawStaticSpritesPlugin`, `FogPostProcessPlugin`.
+  feature-gated `LandProfilingPlugin`, `RenderPlugin`.
+- Pending scene/rendering: `DrawStaticSpritesPlugin`, `FogPostProcessPlugin`.
 - Pending overlays/dialogs: `OverlaysPlugin`, `PerformanceOverlayPlugin`,
   `PlayerPositionOverlayPlugin`, `CursorBehaviorOverlayPlugin`,
   `SystemMessagesPlugin`, `DialogsPlugin`, `PreferencesDialogPlugin`,
@@ -1035,6 +1035,36 @@ choice. Correct outdated comments and include the shortcut in the shared input
 policy. Exercise supported, unsupported and differing device-priority paths
 where feasible, including whether the resulting trace contains GPU timestamps.
 
+### GP4 — Query begin and end use separate system-local render contexts
+
+**Classification:** profiler API contract risk. **Confidence:** API and Bevy
+system parameters inspected; runtime consequence not reproduced.
+
+The [begin and end systems](../../dynamapper/src/core/render/scene/world/land/profiling.rs#L122)
+each receive their own `RenderContext` system parameter. In the installed Bevy
+version that parameter owns system-local deferred encoder state. The installed
+`wgpu-profiler` API documents that a query must be ended using the same command
+encoder or pass on which it began. Splitting the calls between systems therefore
+appears to violate that contract; this audit did not establish what timestamps
+or validation errors the current arrangement produces. Finalization also
+discards the `end_frame` result, which could hide profiler errors.
+
+**Follow-up:** use a profiler-supported way to bracket the intended pass and
+surface query/finalization errors. Test a real capture, including multiple views,
+before treating the resulting durations as trustworthy.
+
 `cargo check -p dynamapper --features gpu-profiling` passed. It proves the
 feature compiles, not that GPU timestamps or trace exports work. No focused
 profiler tests or runtime GPU export were found or run.
+
+## RenderPlugin
+
+[`RenderPlugin`](../../dynamapper/src/core/render.rs#L12) composes the scene,
+overlays, dialogs and fullscreen fog plugins, and registers profiling only with
+its feature enabled. Its registrations are active and occur once through the
+application bootstrap. No dead wrapper code or demonstrated registration-order
+defect was found. Profiling and fullscreen fog apply beyond land/world despite
+their current paths; GP2 and the pending fog review cover their ownership.
+The children are tracked individually rather than considered reviewed by this
+wrapper pass. The feature-enabled check recorded above covers compilation, not
+runtime initialization or rendered output.
