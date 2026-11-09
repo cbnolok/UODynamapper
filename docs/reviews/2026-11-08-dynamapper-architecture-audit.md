@@ -34,6 +34,7 @@ them. Do not treat this report as proof that unreviewed code is clean.
 | `DrawLandChunkMeshPlugin` | Reviewed | Findings T1–T16; other texture-cache plugins and the independent shader/asset sweep remain pending. |
 | `LandProfilingPlugin` | Reviewed | Findings GP1–GP4 below; feature-gated GPU execution was not run. |
 | `RenderPlugin` | Reviewed | Composition reviewed; child plugins remain separately tracked. |
+| `FogPostProcessPlugin` | Reviewed | Findings F1–F5 below; no visual validation. |
 | Remaining scene plugins | Pending | Includes world, terrain, statics, lights and effects. |
 | Dialog and overlay plugins | Pending | Includes input and player interactions already noted below. |
 | Settings and shader preset plugins | Pending | Includes configuration ownership and persistence. |
@@ -47,8 +48,8 @@ does not imply its children have been reviewed:
 - Reviewed: `ControlsPlugin`, `PlayerMovementPlugin`, `WindowControlsPlugin`,
   Unix `DevControlPlugin`, `PlayerPlugin`, `CameraPlugin`, `ScenePlugin`,
   `PlayerDynamicLightPlugin`, `WorldPlugin`, `DrawLandChunkMeshPlugin`,
-  feature-gated `LandProfilingPlugin`, `RenderPlugin`.
-- Pending scene/rendering: `DrawStaticSpritesPlugin`, `FogPostProcessPlugin`.
+  feature-gated `LandProfilingPlugin`, `RenderPlugin`, `FogPostProcessPlugin`.
+- Pending scene/rendering: `DrawStaticSpritesPlugin`.
 - Pending overlays/dialogs: `OverlaysPlugin`, `PerformanceOverlayPlugin`,
   `PlayerPositionOverlayPlugin`, `CursorBehaviorOverlayPlugin`,
   `SystemMessagesPlugin`, `DialogsPlugin`, `PreferencesDialogPlugin`,
@@ -1068,3 +1069,101 @@ their current paths; GP2 and the pending fog review cover their ownership.
 The children are tracked individually rather than considered reviewed by this
 wrapper pass. The feature-enabled check recorded above covers compilation, not
 runtime initialization or rendered output.
+
+## FogPostProcessPlugin
+
+Reviewed the fullscreen pass, its camera component and uniform sync, the fog
+shader and the surrounding land/art fog references. The active fog is a
+screen-space approximation applied after composition, not the old world-space
+helper; this audit makes no claim of original-client fidelity.
+
+### F1 — Disabled fog still schedules a fullscreen pass
+
+**Classification:** unnecessary work candidate. **Confidence:** Bevy pass and
+shader paths traced; cost not measured.
+
+The [camera always has the fog component](../../dynamapper/src/core/render/scene/camera.rs#L188),
+and the plugin installs a [fullscreen material](../../dynamapper/src/core/render/scene/world/effects/fog_pass.rs#L38).
+When fog is disabled, the [fragment shader](../../dynamapper/assets/shaders/world/effects/fog_pass.wesl#L124)
+returns the sampled input, but Bevy still performs the postprocess write and
+fullscreen draw once the pipeline is available. Export also disables fog in
+settings; it does not remove this pass.
+
+**Follow-up:** measure the cost, then consider a per-view run condition or
+component lifetime that skips the pass when disabled. Test rapid toggles,
+extraction, render-target ping-pong and export, while retaining pass order.
+The active fog effect must not be removed merely because some presets disable it.
+
+### F2 — Old fog shader and an exposed height-bias control are disconnected
+
+**Classification:** superseded asset and no-op UI control. **Confidence:**
+current shader references and UI binding traced.
+
+[`legacy/world/fog.wesl`](../../dynamapper/assets/shaders/legacy/world/fog.wesl)
+is explicitly unimported by active shaders and implements the older world-space
+fog path. The [shader dialog](../../dynamapper/src/core/render/dialogs/land_shader.rs#L755)
+still offers a Fog Height Bias that writes `gloom_params.w`; the legacy shader
+reads that lane, but the active fullscreen shader does not. The current effect
+uses screen-space radial and vertical terms instead. The existing
+[shader-settings audit](../agent_notes/shader_settings_audit.md) also records
+the unused control and the dependency of cloud noise on nonzero fog density.
+
+**Follow-up:** remove the superseded shader after checking asset-discovery
+workflows, and update live references. Decide whether to remove the no-op
+control or implement a meaningful replacement; do not imply it currently changes
+fog. Preserve existing preset and uniform layout semantics when changing fields.
+
+### F3 — Diagnostic land override does not control the fullscreen fog pass
+
+**Classification:** split ownership and unclear diagnostic contract.
+**Confidence:** fields and consumers traced; intended override is undecided.
+
+The [land simplification override](../../dynamapper/src/core/render/scene/world/land.rs#L244)
+sets the land material's copied `enable_fog` field to zero. Actual fullscreen
+fog [reads `UniformState.lighting` directly](../../dynamapper/src/core/render/scene/world/effects/fog_pass.rs#L90),
+so that material assignment cannot disable the fullscreen pass. The assignment
+may be a leftover from per-material fog or may reflect an incomplete diagnostic
+intent; it does not establish which behavior was intended.
+
+**Follow-up:** decide whether land-only simplification should leave global fog
+on or suppress it, and express that policy in the effective pass settings.
+Remove obsolete material writes only after tracing other users of the shared ABI.
+
+### F4 — Fog ownership is global but located under world geometry
+
+**Classification:** module location. **Confidence:** registration and scope
+confirmed.
+
+The [render root](../../dynamapper/src/core/render.rs#L19) registers fog; the
+fullscreen pass covers the world camera's composed land and art and runs after
+tonemapping. Its source lives under `scene/world/effects` and its component is
+attached by the camera module. A render postprocess owner would better express
+the scope while keeping the camera/view dependency explicit.
+
+**Follow-up:** review this placement together with other render effects, not as
+a mechanical rename. Preserve the camera component, preset synchronization,
+post-tonemap order and export's disabled-fog policy.
+
+### F5 — Fog controls and view-size assumptions need explicit boundaries
+
+**Classification:** UI contract and conditional view limitation. **Confidence:**
+shader and system inputs traced; alternate-target impact not reproduced.
+
+The [fog shader](../../dynamapper/assets/shaders/world/effects/fog_pass.wesl#L91)
+returns zero if both distance and height density are near zero, before applying
+cloud noise. Noise strength alone therefore does not produce a visible veil,
+despite a comment describing it as independent of distance. The effect uses
+the [first window's dimensions](../../dynamapper/src/core/render/scene/world/effects/fog_pass.rs#L105)
+for noise aspect, rather than the actual camera viewport or render target. The
+existing export disables fog, so this is not a demonstrated export defect.
+
+**Follow-up:** make the cloud-density dependency clear in the controls or
+deliberately revise the effect, and derive view dimensions from the target if
+fog is supported on cropped viewports or non-window targets. Test those cases
+before changing the current fullscreen appearance.
+
+No focused fog-system or fullscreen-pass tests were found. Prior shader and
+feature checks do not establish fog runtime behavior; no visual comparison was
+performed. Static fog does not need a screen-size refresh for its current math:
+the shader uses that size only in the dynamic-noise branch, which the sync system
+already refreshes each frame.
