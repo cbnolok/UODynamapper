@@ -38,7 +38,7 @@ them. Do not treat this report as proof that unreviewed code is clean.
 | `LandTextureCachePlugin` | Reviewed | Findings LC1–LC11 below; runtime fault and device tests remain follow-up work. |
 | `TextureCachePlugin` | Reviewed | Composition reviewed; art child and direct installers remain separately tracked. |
 | `ArtPageFormatCheckPlugin` | Reviewed | Finding AP1 below; art atlas implementation remains separately tracked. |
-| `DrawStaticSpritesPlugin` | In progress | Findings A1–A6 below; collector, atlas, lights and shaders need further review. |
+| `DrawStaticSpritesPlugin` | In progress | Findings A1–A12 below; remaining shader and plugin-wide coverage needs review. |
 | Remaining scene plugins | Pending | Includes world, terrain, statics, lights and effects. |
 | Dialog and overlay plugins | Pending | Includes input and player interactions already noted below. |
 | Settings and shader preset plugins | Pending | Includes configuration ownership and persistence. |
@@ -1389,13 +1389,13 @@ agreement and preserve active mixed-source conversion and source identity.
 
 `cargo test -p dynamapper art_page_format_mismatch_names_both_packages_and_the_repack`
 passed one test of the warning helper. It does not exercise plugin startup, GPU
-support or actual atlas uploads. The art-atlas implementation is still pending.
+support or actual atlas uploads. See A7–A8 for the subsequent atlas review.
 
 ## DrawStaticSpritesPlugin — partial review
 
-Reviewed plugin composition, parts of collection and material updates, and the
-GPU picking boundary. This plugin is still **in progress**: its full collector,
-atlas, static-light and shader paths require further review.
+Reviewed plugin composition, collection, atlas lifecycle, static lights, material
+updates and the GPU picking boundary. This plugin is still **in progress**:
+shader variants and plugin-wide coverage require further review.
 
 ### A1 — Art water can retain stale land diffuse strength
 
@@ -1483,3 +1483,101 @@ by land shading (T9), so it is not globally dead.
 remove the art-only query and writes if still unused. Retain and correctly own
 the shared land field and reflection inputs. Four focused `statics_draw` tests
 passed; they do not cover A1, A2 or this candidate.
+
+### A7 — Failed art-page preparation is recorded as residency
+
+The [upload enqueue](../../dynamapper/src/core/texture_cache/art.rs#L147)
+silently does nothing if reading or preparing a page fails. Nevertheless,
+[`resolve_slot`](../../dynamapper/src/core/texture_cache/art.rs#L414) installs
+the page-to-layer mapping. On a later request, no queued upload remains to block
+resolution, so the layer can be treated as available despite containing zero or
+previously used texels. The same enqueue path also serves atlas requeue after
+resize. The failure path is established by code inspection; the prevalence and
+visible result depend on package data and timing.
+
+**Follow-up:** make preparation success or failure explicit and keep failed pages
+out of the ready state; define diagnostics and retry behavior. Exercise a read
+failure followed by recovery and a failed requeue after atlas replacement.
+
+### A8 — Art uploads lack target generation and completion ownership
+
+[Staging](../../dynamapper/src/core/texture_cache/art.rs#L733) clears the
+main-world staging buffer on the next update, while the
+[render uploader](../../dynamapper/src/core/texture_cache/art.rs#L789) retains
+uploads when the GPU image is unavailable. `resolve_slot` checks only the
+main-world queues, so it can return a layer before the deferred write completes.
+The upload payload also has no target image or generation: a retained upload is
+submitted to the currently extracted handle, including after
+[source replacement](../../dynamapper/src/core/render/scene/world/art/statics_draw.rs#L648)
+or resize. Old uploads can consequently target a new image or layer; format and
+size differences can make this more serious. These are conditional lifecycle
+hazards, not a claim that a visible failure was reproduced.
+
+**Follow-up:** give uploads an image generation and a clear ready/acknowledgement
+contract; invalidate stale work when images or layer assignments change. Test
+delayed GPU preparation, source replacement, growth and layer reuse, including
+the two sprite and ground atlas paths.
+
+### A9 — Static records are interpreted as multis by numeric range alone
+
+[Collection](../../dynamapper/src/core/render/scene/world/art/statics_collect.rs#L244)
+maps every graphic at or above `0x4000` to a potential multi ID and replaces the
+source tile when a nonempty definition exists. The mapping has no separate
+record-type discriminator. Classic tiledata can also contain ordinary static
+IDs in that range, so a matching definition creates an ambiguity; actual input
+prevalence and the intended source-format contract still need investigation.
+Moreover, [`parts`](../../dynamapper/src/core/multis.rs#L93) returns `None` for
+an empty visible definition, making an all-hidden definition fall back to the
+original graphic.
+
+**Follow-up:** establish which records can encode multi instances and how they
+are distinguished from ordinary graphics before changing behavior. Add cases
+for high-ID ordinary art, matching definitions and all-hidden multis. If the
+source format does not distinguish them, keep static records and explicitly
+typed multi objects separate rather than guessing from their graphic alone.
+
+### A10 — Failed static-block reads become cached missing geometry
+
+The [chunk builder](../../dynamapper/src/core/render/scene/world/art/statics_collect.rs#L2050)
+continues silently on `block_tiles` errors. The store can report package-read
+errors and malformed chunk data; a skipped block contributes no atlas miss, so
+the resulting chunk can pass the [completeness check](../../dynamapper/src/core/render/scene/world/art/statics_collect.rs#L1888)
+and be reused without retry. The light collector independently skips the same
+kind of errors. Missing data from a persistent corrupt package and a transient
+read error both need an explicit policy.
+
+**Follow-up:** distinguish unavailable blocks from empty blocks, surface a
+bounded diagnostic and propagate incomplete/error state into chunk caching.
+Define retries and test failure followed by recovery for geometry and lights.
+
+### A11 — Static-light collection, response and rendering have mixed ownership
+
+[Static lights](../../dynamapper/src/core/render/scene/world/art/static_lights.rs#L208)
+combine resident-chunk scanning, color and hue response, material caching,
+entity synchronization and style shaping. Their collected data also feeds land
+and art lighting, so it is not merely a decal renderer or dead legacy code.
+Collection scans resident blocks on each update and a fallback can
+[read light bytes](../../dynamapper/src/core/render/scene/world/art/static_lights.rs#L623)
+for individual lights each time; the cost is unmeasured. The sync signature
+avoids some downstream work but not that scan.
+
+**Follow-up:** give shared light data and the rendering-specific presentation
+distinct owners, and profile before caching. Any cache must account for data and
+settings changes. Package-identity invalidation is a future reload concern:
+current loading appears startup-only, so no supported hot-reload defect is
+claimed. A3 covers the shared resident-chunk selection.
+
+### A12 — Static-light cache has an inert failure flag
+
+`StaticLightMaterialCache::hue_texture_failed` is initialized to false and
+[checked](../../dynamapper/src/core/render/scene/world/art/static_lights.rs#L792),
+but no assignment to it was found. The guarded texture copy is an active hue
+path; only this failure flag and condition appear dead. Several helpers and the
+sync signature are also public despite only local uses found.
+
+**Follow-up:** remove the inert flag and condition after confirming no external
+contract, and narrow helper visibility where appropriate. Keep hue handling and
+light response intact. The static-surface flags are also active: EC boundary
+coverage is consumed by art shaders, and its module's height helper is reused
+for Classic geometry. Make the Rust/shader flag contract explicit when those
+responsibilities are reorganized.
