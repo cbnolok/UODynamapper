@@ -38,7 +38,7 @@ them. Do not treat this report as proof that unreviewed code is clean.
 | `LandTextureCachePlugin` | Reviewed | Findings LC1–LC11 below; runtime fault and device tests remain follow-up work. |
 | `TextureCachePlugin` | Reviewed | Composition reviewed; art child and direct installers remain separately tracked. |
 | `ArtPageFormatCheckPlugin` | Reviewed | Finding AP1 below; art atlas implementation remains separately tracked. |
-| `DrawStaticSpritesPlugin` | In progress | Findings A1–A12 below; remaining shader and plugin-wide coverage needs review. |
+| `DrawStaticSpritesPlugin` | Reviewed | Findings A1–A16 below; independent shared-shader and asset sweep remains pending. |
 | Remaining scene plugins | Pending | Includes world, terrain, statics, lights and effects. |
 | Dialog and overlay plugins | Pending | Includes input and player interactions already noted below. |
 | Settings and shader preset plugins | Pending | Includes configuration ownership and persistence. |
@@ -54,7 +54,7 @@ does not imply its children have been reviewed:
   `PlayerDynamicLightPlugin`, `WorldPlugin`, `DrawLandChunkMeshPlugin`,
   feature-gated `LandProfilingPlugin`, `RenderPlugin`, `FogPostProcessPlugin`,
   `LandTextureCachePlugin`, `TextureCachePlugin`, `ArtPageFormatCheckPlugin`.
-- Pending scene/rendering: `DrawStaticSpritesPlugin`.
+- Reviewed scene/rendering child: `DrawStaticSpritesPlugin`.
 - Pending overlays/dialogs: `OverlaysPlugin`, `PerformanceOverlayPlugin`,
   `PlayerPositionOverlayPlugin`, `CursorBehaviorOverlayPlugin`,
   `SystemMessagesPlugin`, `DialogsPlugin`, `PreferencesDialogPlugin`,
@@ -1391,11 +1391,11 @@ agreement and preserve active mixed-source conversion and source identity.
 passed one test of the warning helper. It does not exercise plugin startup, GPU
 support or actual atlas uploads. See A7–A8 for the subsequent atlas review.
 
-## DrawStaticSpritesPlugin — partial review
+## DrawStaticSpritesPlugin
 
 Reviewed plugin composition, collection, atlas lifecycle, static lights, material
-updates and the GPU picking boundary. This plugin is still **in progress**:
-shader variants and plugin-wide coverage require further review.
+updates, art shaders and the GPU picking boundary. Shared shaders and assets are
+also subject to the separate whole-application sweep.
 
 ### A1 — Art water can retain stale land diffuse strength
 
@@ -1512,6 +1512,9 @@ submitted to the currently extracted handle, including after
 or resize. Old uploads can consequently target a new image or layer; format and
 size differences can make this more serious. These are conditional lifecycle
 hazards, not a claim that a visible failure was reproduced.
+The same main-world pending count is used by
+[export readiness](../../dynamapper/src/core/export_job.rs#L610), so that check
+does not itself prove that a deferred render-world upload has completed.
 
 **Follow-up:** give uploads an image generation and a clear ready/acknowledgement
 contract; invalidate stale work when images or layer assignments change. Test
@@ -1581,3 +1584,71 @@ light response intact. The static-surface flags are also active: EC boundary
 coverage is consumed by art shaders, and its module's height helper is reused
 for Classic geometry. Make the Rust/shader flag contract explicit when those
 responsibilities are reorganized.
+
+### A13 — Ground shader retains an unused priority-depth path
+
+The [ground vertex shader](../../dynamapper/assets/shaders/world/art/ground.wesl#L106)
+calculates a logical priority depth with a per-instance tie ordinal, but its
+fragment path never reads that varying: it uses horizontal-plane depth, or the
+pick position in the pick variant. The helper chain and associated constants
+are therefore unused by this ground output. CPU ground ordinals are assigned
+per chunk, unlike globally reassigned sprite ordinals, but this shader path does
+not establish a present visible ordering defect because the result is unread.
+The sprite priority-depth path remains active.
+
+The sprite bindings also contain an
+[unused second `GroundTileInstance`](../../dynamapper/assets/shaders/world/art/art_bindings.wesl#L39)
+that differs from the active ground binding definition. Keeping two definitions
+invites ABI confusion.
+
+**Follow-up:** remove the unused shader declaration and depth calculation after
+checking shader variants, preserving horizontal-plane and picking depth. Trace
+the CPU fields and their other consumers independently before changing the
+storage ABI or sorting policy; test cross-chunk ties if priority ordering is
+intended to return.
+
+### A14 — Art atlas suppresses dead-code diagnostics for the whole module
+
+The [art atlas module](../../dynamapper/src/core/texture_cache/art.rs#L1) has a
+blanket `allow(dead_code)`. For example, `ResolvedArtSprite.pixel_width` and
+`pixel_height` are populated but no reads were found in the application, while
+its logical dimensions and offsets are used for geometry. This blanket also
+makes later obsolete helpers less visible.
+
+**Follow-up:** check non-default configurations, remove the unread fields and
+other confirmed unused API, and narrow or remove the module-wide suppression.
+Keep the active physical-size inputs used to calculate UVs and upload layouts.
+
+### A15 — Batch draw setup retains unused state and duplicates reconciliation
+
+The [setup quad](../../dynamapper/src/core/render/scene/world/art/statics_draw.rs#L942)
+is stored in both render-asset resources but no reads of those mesh fields were
+found. Live drawing instead constructs per-batch meshes. Two transparent entity
+count fields are similarly only compared and assigned, with no diagnostic or
+other consumer. Five batch synchronization systems independently reconcile
+similar keys and build equivalent meshes for their respective sprite and ground
+passes, increasing the surface for drift.
+
+**Follow-up:** remove the confirmed unread setup mesh and count bookkeeping.
+Consider sharing batch reconciliation and equivalent mesh ownership while
+preserving all opaque, transparent and shadow passes and verifying Bevy asset
+lifetimes. The current signature shortcut assumes exclusive ownership of its
+entities; external despawn or mutation is a conditional limitation, not a
+demonstrated current use case.
+
+### A16 — Unchanged art parameters still mutably access every material
+
+On every in-game update with instances, the
+[sprite](../../dynamapper/src/core/render/scene/world/art/statics_draw.rs#L1411)
+and [ground](../../dynamapper/src/core/render/scene/world/art/statics_draw.rs#L1485)
+upload systems mutate all five material assets to write render parameters even
+when their values have not changed. The instance-buffer comparison occurs
+afterward. Material mutation can cause render-asset extraction and rebinding;
+the actual performance cost has not been measured.
+
+**Follow-up:** independently gate parameter changes and instance uploads, and
+test zoom, map changes and transitions from empty to nonempty instances. The
+[transparent phase sort](../../dynamapper/src/core/render/scene/world/art/transparent_order.rs#L21)
+is active; at equal distance its optional art key also orders non-art items
+before art items. Assess mixed transparent ties before modifying this policy,
+and preserve agreement with picking. No visible ordering defect is asserted.
