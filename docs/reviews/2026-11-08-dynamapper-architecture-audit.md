@@ -31,7 +31,7 @@ them. Do not treat this report as proof that unreviewed code is clean.
 | `ScenePlugin` | Reviewed | Findings S1–S7 below; V1 covers free-camera streaming. |
 | `PlayerDynamicLightPlugin` | Reviewed | Findings L1–L2 below. |
 | `WorldPlugin` | Reviewed | Findings W1–W3 below; child plugins remain pending. |
-| `DrawLandChunkMeshPlugin` | In progress | Geometry and loading findings T1–T7; material, atlas and shader coverage remain incomplete. |
+| `DrawLandChunkMeshPlugin` | Reviewed | Findings T1–T16; other texture-cache plugins and the independent shader/asset sweep remain pending. |
 | Remaining scene plugins | Pending | Includes world, terrain, statics, lights and effects. |
 | Dialog and overlay plugins | Pending | Includes input and player interactions already noted below. |
 | Settings and shader preset plugins | Pending | Includes configuration ownership and persistence. |
@@ -44,9 +44,8 @@ does not imply its children have been reviewed:
 
 - Reviewed: `ControlsPlugin`, `PlayerMovementPlugin`, `WindowControlsPlugin`,
   Unix `DevControlPlugin`, `PlayerPlugin`, `CameraPlugin`, `ScenePlugin`,
-  `PlayerDynamicLightPlugin`, `WorldPlugin`.
+  `PlayerDynamicLightPlugin`, `WorldPlugin`, `DrawLandChunkMeshPlugin`.
 - Pending scene/rendering: `RenderPlugin`,
-  `DrawLandChunkMeshPlugin`,
   `DrawStaticSpritesPlugin`, `FogPostProcessPlugin`, feature-gated
   `LandProfilingPlugin`.
 - Pending overlays/dialogs: `OverlaysPlugin`, `PerformanceOverlayPlugin`,
@@ -660,14 +659,14 @@ unloaded facets.
 No focused tests for the world catalog setup were found. No application code
 was changed or visually compared.
 
-## DrawLandChunkMeshPlugin — partial review
+## DrawLandChunkMeshPlugin
 
-The geometry and background-loading pass is recorded below. The plugin remains
-**in progress**: its complete material, atlas, picking and shader dependencies
-still need review, as do the separate land texture-cache and profiling plugins.
-Current source-transition controls are active, and dynamic blending remains
-unfinished; neither is a candidate for deletion just because this area has
-changed during development.
+Reviewed registration, geometry and background loading, material and uniform
+ownership, the metadata atlas and its upload path, terrain picking, and the land
+shader entry points and imports. The separate land texture-cache and profiling
+plugins and the independent shader/asset sweep remain pending. Current source
+transition controls are active, and dynamic blending remains unfinished; neither
+is a candidate for deletion because this area has changed during development.
 
 ### T1 — Chunk construction sorts camera and chunks in different units
 
@@ -792,3 +791,182 @@ textures with Classic texmaps or remove active Classic and EC atlas paths.
 passed all 8 tests, including generated mesh-grid consistency. These tests do
 not cover T1–T7, worker failures, the scene edge issue S1 or transition
 scheduling. No visual comparison was performed.
+
+### T8 — Reused and partially initialized atlas pages can expose old or zero cells
+
+**Classification:** metadata validity gap. **Confidence:** CPU page and
+mapping behavior confirmed by tracing; effects on a rendered frame or cursor
+have not been reproduced.
+
+When an LRU layer is [assigned to a different logical page](../../dynamapper/src/core/render/scene/world/land/tile_atlas.rs#L263),
+its existing CPU mirror and untouched GPU texels are not cleared or marked
+invalid. The draw caller ignores the returned evicted page. An unwritten cell
+on the new page can consequently retain the old page's data. Similarly,
+[a new partially written mirror](../../dynamapper/src/core/render/scene/world/land/tile_atlas.rs#L353)
+contains zeroes for all cells not yet written, and
+[`read_cell`](../../dynamapper/src/core/render/scene/world/land/tile_atlas.rs#L225)
+does not distinguish those cells from valid metadata. Terrain picking and
+static-ground decisions read this mirror.
+
+**Follow-up:** test first partial writes, LRU reuse and outstanding staged GPU
+uploads for the same physical layer, including neighboring cells and resize.
+Introduce a coherent CPU/GPU validity or clearing policy that preserves upload
+ordering and revision/readiness semantics; do not assume clearing only the CPU
+mirror fixes the rendered atlas.
+
+### T9 — Terrain view-dependent shading receives a fixed camera position
+
+**Classification:** cross-subsystem data flow; likely shading defect.
+**Confidence:** writes and shader reads traced; visible effect and desired
+orthographic behavior are unverified.
+
+The land `SceneUniform.camera_position` is
+[initialized](../../dynamapper/src/core/texture_cache/land.rs#L1439) to a fixed
+player-camera offset. No subsequent land-material write to that field was found;
+art-material writes target different materials. The land shader
+[subtracts each world position from it](../../dynamapper/assets/shaders/world/land/main.wesl#L658)
+to form a view vector used by applicable shading paths.
+
+**Follow-up:** determine the correct view vector for both perspective and
+orthographic projections and provide current camera/view data at an appropriate
+rendering boundary. Avoid per-frame material re-extraction solely for camera
+movement. Test movement, translation and projection changes before changing
+shading; the presence of a view-vector calculation alone does not establish a
+visible difference for every preset.
+
+### T10 — Terrain uniforms are owned partly by a dialog
+
+**Classification:** misplaced rendering responsibility and ordering risk.
+**Confidence:** ownership confirmed; the ordering-dependent behavior requires
+a focused test.
+
+Land material creation lives in the [texture cache](../../dynamapper/src/core/texture_cache/land.rs#L1426),
+some updates and simplification overrides in the
+[land plugin](../../dynamapper/src/core/render/scene/world/land.rs#L209), and
+the always-scheduled [dirty-uniform push](../../dynamapper/src/core/render/dialogs/land_shader.rs#L903)
+in the shader dialog. The latter and the simplification override write some of
+the same fields without an explicit ordering between them. The dialog push also
+requests a material-handle query it does not read.
+
+**Follow-up:** put effective material-uniform application under a rendering
+owner, with an explicit contract for preset updates and diagnostic overrides.
+Test their simultaneous changes, preserve transition flags and export behavior,
+and retain the guarded material mutation that avoids needless GPU re-extraction.
+Remove unused system parameters only after checking their scheduling effects.
+
+### T11 — Cache pinning uses logical chunk coordinates as native block coordinates
+
+**Classification:** incorrect unit conversion and cache-lifetime risk.
+**Confidence:** static code trace; user-visible impact not reproduced.
+
+The [active-texture pinning system](../../dynamapper/src/core/texture_cache/land.rs#L1021)
+uses `LCMesh.gx/gy` directly as `MapBlockRelPos`, and iterates only `scale`
+blocks per dimension. Those coordinates and scale describe 32-tile chunks,
+while map blocks are 8 tiles; the [land draw](../../dynamapper/src/core/render/scene/world/land/draw_mesh.rs#L488)
+correctly multiplies the origin and span by `CHUNK_STORAGE_BLOCKS_DIM`.
+The same pinning pass touches map blocks to refresh their idle time, while the
+cache later evicts idle blocks. Consequently the actual visible blocks may not
+be refreshed, and texture IDs can be pinned from unrelated positions.
+Terrain picking obtains source data through `block_no_update`, so its behavior
+after eviction also merits testing.
+
+**Follow-up:** share one conversion and range calculation for chunk-to-native
+blocks, including super-chunks and borders. Test pinned IDs and block lifetime
+at nonzero origins and multiple scales, plus terrain inspection after idle
+eviction. Review this again as part of `LandTextureCachePlugin`.
+
+### T12 — Atlas shrink measures historical mappings rather than live demand
+
+**Classification:** ineffective resource-lifecycle policy. **Confidence:**
+mapping lifecycle traced; memory and performance impact unmeasured.
+
+The [shrink heuristic](../../dynamapper/src/core/texture_cache/land.rs#L1145)
+uses the number of mapped pages divided by capacity. Atlas mappings grow on
+first use, are replaced one-for-one by LRU eviction at capacity, and otherwise
+clear on resize; they are not removed merely because the visible region shrinks.
+Thus a drop in view demand does not itself lower a previously high ratio.
+
+**Follow-up:** decide whether shrink should use current/recent page demand or
+whether the heuristic should be removed. Test a high-demand view followed by a
+small one, preserving resize generation and upload correctness.
+
+### T13 — Custom facet dimensions can alias the atlas page table
+
+**Classification:** size-contract gap. **Confidence:** indexing confirmed;
+supported custom-map limits and visual consequences need verification.
+
+The atlas uses [16 page columns of 2048 tiles](../../dynamapper/src/core/texture_cache/land/texture_array.rs#L43).
+Both [CPU lookup](../../dynamapper/src/core/render/scene/world/land/tile_atlas.rs#L225)
+and [shader lookup](../../dynamapper/assets/shaders/world/land/atlas.wesl#L23)
+flatten page coordinates without checking that `page_x` is below the stride.
+For example page `(16, 0)` has the same flattened index as `(0, 1)`; flattened
+indices beyond the 256-entry table are unavailable. The map reader's
+[dimension validation](../../dynamapper/src/core/maps.rs#L288) checks block
+alignment rather than that atlas limit. Stock facets fit the stated page grid.
+
+**Follow-up:** define and enforce supported custom facet dimensions or expand
+the addressing scheme. Test both axes at the boundaries with matching CPU and
+shader behavior. Do not assert full support for larger custom facets based only
+on successful map-package loading.
+
+### T14 — Material contracts and unused declarations are mixed with terrain
+
+**Classification:** shared ownership and confirmed unused declarations.
+**Confidence:** repository-wide symbol checks; uniform-layout changes require
+coordinated validation.
+
+[`mesh_material.rs`](../../dynamapper/src/core/render/scene/world/land/mesh_material.rs#L133)
+defines uniform structures also consumed by art materials and shader presets.
+The Rust field `GlobalLightingUniforms._pad2_.x` is populated with a live art
+water-diffuse value; it is not spare padding despite its name. Conversely,
+`LandShaderMode` and the Rust `DEFAULT_KR_TONEMAP_GAIN` have no active readers;
+presets supply the current gain. `AtlasParams.tiles_per_page` has no field read
+found in Rust or WESL, but is present in the live uniform layout on both sides.
+
+**Follow-up:** put shared material contracts under a shared rendering owner and
+name active lanes for their role. Remove truly unused declarations after a fresh
+search. Treat field removals and renames as Rust/WESL ABI changes, including
+serialization and binding tests; never delete or repurpose `_pad2_.x` as if it
+were unused. Comments claiming normal maps or light decals are only future
+fields should be corrected because those controls have active consumers.
+
+### T15 — Land shader keeps old grid assumptions and unused declarations
+
+**Classification:** obsolete shader constants and a live unit mismatch.
+**Confidence:** references confirmed; visual effect of the live mismatch is
+not established.
+
+[`DATA_GRID_BORDER`, `DATA_GRID_SIDE` and `MESH_GRID_SIDE`](../../dynamapper/assets/shaders/world/land/land_bindings.wesl#L104)
+have no readers found. The neighboring live constant and
+[`chunk_edge_blend_factor`](../../dynamapper/assets/shaders/world/land/atlas.wesl#L138)
+still use an eight-tile period, whereas the current logical chunk is 32 tiles
+and wider meshes have different spans. The helper affects normal blending, so
+the mismatch is not evidence that it can simply be deleted or changed.
+
+**Follow-up:** remove only confirmed unused declarations; investigate what
+the edge blend is meant to protect and test it across current mesh scales
+before changing its period. Land `main.wesl` also contains substantial EC
+composition and shading despite describing itself as entry points only; consider
+extracting cohesive logic while preserving derivative and shader-import rules.
+Both Classic and EC transition modules are active.
+
+### T16 — The GPU FSR shader has no discovered caller
+
+**Classification:** unused asset candidate. **Confidence:** repository-wide
+name and import search; external loose-asset consumers not ruled out.
+
+[`fsr_easu.wesl`](../../dynamapper/assets/shaders/postprocess/upscaling/fsr_easu.wesl)
+is not imported or loaded by any discovered runtime or test path. Its own
+comment describes a call from land sampling that no longer exists. The separate
+CPU FSR implementation in `uot-image-postprocess` has active consumers and is
+not part of this candidate.
+
+**Follow-up:** verify that no supported external asset workflow loads this
+loose shader, then remove it or explicitly document its intended future use.
+Review remaining standalone shader assets in the independent asset sweep.
+
+Additional checks: the focused atlas staged-revision/image-generation test,
+`land_sampling_shader_composes`, and
+`world_entry_points_discover_shader_dependencies` each passed. They do not
+exercise page reuse, the live pinning calculation, camera-view data or visual
+output. No visual comparison was performed.
