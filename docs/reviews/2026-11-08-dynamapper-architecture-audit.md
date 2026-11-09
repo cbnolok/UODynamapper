@@ -37,6 +37,7 @@ them. Do not treat this report as proof that unreviewed code is clean.
 | `FogPostProcessPlugin` | Reviewed | Findings F1–F5 below; no visual validation. |
 | `LandTextureCachePlugin` | Reviewed | Findings LC1–LC11 below; runtime fault and device tests remain follow-up work. |
 | `TextureCachePlugin` | Reviewed | Composition reviewed; art child and direct installers remain separately tracked. |
+| `ArtPageFormatCheckPlugin` | Reviewed | Finding AP1 below; art atlas implementation remains separately tracked. |
 | Remaining scene plugins | Pending | Includes world, terrain, statics, lights and effects. |
 | Dialog and overlay plugins | Pending | Includes input and player interactions already noted below. |
 | Settings and shader preset plugins | Pending | Includes configuration ownership and persistence. |
@@ -51,14 +52,14 @@ does not imply its children have been reviewed:
   Unix `DevControlPlugin`, `PlayerPlugin`, `CameraPlugin`, `ScenePlugin`,
   `PlayerDynamicLightPlugin`, `WorldPlugin`, `DrawLandChunkMeshPlugin`,
   feature-gated `LandProfilingPlugin`, `RenderPlugin`, `FogPostProcessPlugin`,
-  `LandTextureCachePlugin`, `TextureCachePlugin`.
+  `LandTextureCachePlugin`, `TextureCachePlugin`, `ArtPageFormatCheckPlugin`.
 - Pending scene/rendering: `DrawStaticSpritesPlugin`.
 - Pending overlays/dialogs: `OverlaysPlugin`, `PerformanceOverlayPlugin`,
   `PlayerPositionOverlayPlugin`, `CursorBehaviorOverlayPlugin`,
   `SystemMessagesPlugin`, `DialogsPlugin`, `PreferencesDialogPlugin`,
   `LandUiPlugin`, `KeybindingsHelpPlugin`, `GumpDialogPlugin`, `TeleportPlugin`.
 - Pending data/runtime: `ExternalDataPlugin`, `SettingsPlugin`,
-  `ShaderPresetsPlugin`, `ArtPageFormatCheckPlugin`,
+  `ShaderPresetsPlugin`,
   `UOFilesPlugin`, `ExportJobPlugin`.
 - Pending frame/diagnostics: `FrameRatePlugin`, `FrameLimiterPlugin`,
   `LogGpuPreprocessingModePlugin`.
@@ -1361,3 +1362,30 @@ setup (LC1). Review whether the abstraction earns its complexity after the art
 cache audit. Any reorganization must preserve atlas initialization, extraction
 and upload scheduling. Art and item submodules remain separate audit items;
 no runtime or visual validation was performed for this wrapper.
+
+## ArtPageFormatCheckPlugin
+
+This [startup plugin](../../dynamapper/src/core/texture_cache/art.rs#L695)
+checks the loaded Classic and Enhanced art package page formats and warns when
+they differ. It is active; no dead plugin registration or demonstrated format
+selection defect was found in this review.
+
+### AP1 — Art atlas format selection and its warning are separate policies
+
+The [warning](../../dynamapper/src/core/texture_cache/art.rs#L483) compares both
+packages at startup, while [sprite atlas selection](../../dynamapper/src/core/render/scene/world/art/statics_draw.rs#L362)
+independently chooses a common format based on the active source. This duplicates
+the policy and can warn about an EC/KR mixture even in a Classic-only session.
+Both paths currently treat an empty page list as RGBA. Current art package
+manifests use a single package-wide page format, so selecting the first page is
+not by itself evidence of mixed formats within a package. These package versions
+support RGBA and BC7; this does not describe all block formats used by the project.
+
+**Follow-up:** share or explicitly cross-test the actual atlas decision and its
+diagnostic, including missing/empty packages and runtime source changes. Decide
+when a warning is useful. Keep device-capability checks distinct from format
+agreement and preserve active mixed-source conversion and source identity.
+
+`cargo test -p dynamapper art_page_format_mismatch_names_both_packages_and_the_repack`
+passed one test of the warning helper. It does not exercise plugin startup, GPU
+support or actual atlas uploads. The art-atlas implementation is still pending.
