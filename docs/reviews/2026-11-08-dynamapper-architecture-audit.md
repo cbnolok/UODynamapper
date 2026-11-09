@@ -35,6 +35,7 @@ them. Do not treat this report as proof that unreviewed code is clean.
 | `LandProfilingPlugin` | Reviewed | Findings GP1–GP4 below; feature-gated GPU execution was not run. |
 | `RenderPlugin` | Reviewed | Composition reviewed; child plugins remain separately tracked. |
 | `FogPostProcessPlugin` | Reviewed | Findings F1–F5 below; no visual validation. |
+| `LandTextureCachePlugin` | In progress | Findings LC1–LC7 below; remaining cache and source paths still need review. |
 | Remaining scene plugins | Pending | Includes world, terrain, statics, lights and effects. |
 | Dialog and overlay plugins | Pending | Includes input and player interactions already noted below. |
 | Settings and shader preset plugins | Pending | Includes configuration ownership and persistence. |
@@ -1167,3 +1168,113 @@ feature checks do not establish fog runtime behavior; no visual comparison was
 performed. Static fog does not need a screen-size refresh for its current math:
 the shader uses that size only in the dynamic-noise branch, which the sync system
 already refreshes each frame.
+
+## LandTextureCachePlugin — partial review
+
+The setup, fixed-array cache, EC coverage and auxiliary ownership pass has begun.
+The plugin remains in progress: complete the remaining cache, source-switch,
+GPU upload and compressed-format capability paths before marking it reviewed.
+Findings T7, T8, T10–T14 also concern this plugin.
+
+### LC1 — Full-collection residency is unreachable in current app wiring
+
+[`sys_setup_terrain_cache`](../../dynamapper/src/core/texture_cache/land.rs#L1269)
+always selects `LruCache`. Repository search found no caller constructing the
+other strategy through `from_preload_enabled`; full-collection planning and
+upload branches cannot run through current application setup. The dormant
+[prewarm loop](../../dynamapper/src/core/texture_cache/land/cache.rs#L313)
+repeatedly reads page zero while ignoring each texture ID, so it would not warm
+the whole package if re-enabled. This is current-wiring reachability, not a
+language-level impossibility.
+
+**Follow-up:** remove the unused strategy and related scaffolding if full
+preloading is no longer intended, or connect and test a real policy and prewarm
+implementation. Preserve active LRU and page-atlas paths.
+
+### LC2 — Speculative land-art loader and cache dependencies are unused
+
+The [Classic art loader](../../dynamapper/src/core/texture_cache/land/cache.rs#L142)
+explicitly has no caller and contains unvalidated geometry assumptions. The live
+fixed-array loader ignores its preferred-source, Classic-art and EC-package
+arguments and reads Classic texmaps. Several cache fields and arguments merely
+pass these ignored values. The independently active Classic wet-land-art atlas
+is a different path. T7 records the missing-EC source-policy discrepancy.
+
+**Follow-up:** recheck callers, remove the speculative helper and unused cache
+plumbing, and resolve T7 before simplifying the remaining fallback path. Do not
+remove authored static transitions or the live wet-land-art path.
+
+### LC3 — Fixed-array uploads can be lost or read the wrong staging offset
+
+The [render uploader](../../dynamapper/src/core/texture_cache/land/cache.rs#L1039)
+clears queued uploads if neither GPU image is ready, and drains an upload without
+retry if its specific image is unavailable. It packs every upload into staging,
+but advances the copy offset only for uploads whose image exists. If a skipped
+upload precedes a ready one, the latter can copy the skipped upload's bytes.
+These are statically traced conditional paths; their runtime reachability and
+impact in the legacy/fallback array path are not established.
+
+**Follow-up:** use image-specific pending queues and correctly associate each
+copy with its packed offset. Test delayed preparation of both and either image,
+mixed upload order and retries; coordinate with T7 before prioritizing changes.
+
+### LC4 — Upload generation does not protect layer or image reuse
+
+[`upload_generation`](../../dynamapper/src/core/texture_cache/land/cache.rs#L100)
+is initialized to zero and compared when draining tasks, but no increment was
+found. Uploads carry a generation, size and layer, without texture or image
+identity. Layers can be reassigned and images replaced while tasks are pending,
+so delayed results can target a different assignment or image. This race is a
+static risk in the fixed-array path, not a reproduced corruption.
+
+**Follow-up:** test delayed tasks across eviction and resizing; establish image
+and per-slot identity/generations through both main and render worlds and reject
+stale work. Retain the independent metadata-atlas generation safeguards.
+
+### LC5 — Fixed-array eviction is not true least-recently-used ordering
+
+Cache hits [update `last_touch`](../../dynamapper/src/core/texture_cache/land/cache.rs#L430)
+but do not move the ID in the eviction queue. Pressure eviction removes from
+the front, so it follows insertion order among unpinned entries. Idle eviction
+leaves queue entries behind; an old entry for a subsequently reinserted ID can
+refer to its new live allocation. Runtime impact was not measured.
+
+**Follow-up:** choose and name the intended policy, and test cache hits, pinned
+entries, idle eviction and reinsertion. T11 separately covers incorrect pinning.
+
+### LC6 — Terrain owns shared item assets and unrelated map lifetime
+
+[Terrain cache setup](../../dynamapper/src/core/texture_cache/land.rs#L1352)
+also constructs the EC auxiliary atlas for item liquids, surfaces and hue masks.
+The same plugin's periodic pass combines texture eviction, map-block eviction
+and metadata-atlas shrink. These are active responsibilities, but their owners
+cross terrain, item rendering and world data. EC ownership-stack preparation is
+also split among the draw system, coverage cache and material updates.
+
+**Follow-up:** establish shared item-aux and world-map lifetime owners and an
+explicit EC ownership-cache publication contract. Preserve auxiliary deduplication,
+source flags, full-halo checks, cache fallback, staged revisions and the
+sentinel-image rebind described in [the cache note](../agent_notes/ec_terrain_stack_cache.md).
+CPU and shader stack-layout constants are mirrored; add contract checks before
+changing them. A conditional invalidation risk when the camera center ray misses
+the ground needs a focused test before being treated as a witnessed defect.
+
+### LC7 — Fallback assumptions and temporary diagnostics remain
+
+The fixed-array [missing-texture fallback](../../dynamapper/src/core/texture_cache/land/texture_array.rs#L168)
+assumes Classic texture `0x4c` exists and unwraps it; custom packages without it
+can panic if this path is reached. Source switching still emits a block marked
+[`TEMPORARY EC package diagnostic`](../../dynamapper/src/core/texture_cache/land.rs#L1232),
+and unused system parameters and commented-out eviction experiments remain.
+BC7 page selection also needs a device-capability review; DXT1/BC1 exists in
+other project paths, and future mobile formats must not be treated as BC7-only.
+
+**Follow-up:** test missing fallback slots and device capabilities, provide a
+defined missing-source result, and remove or convert temporary diagnostics to
+intentional logging. Do not silently substitute Classic for missing EC data.
+
+`cargo test -p dynamapper core::texture_cache::land::tests` passed 5 tests with
+one installed-package test ignored. Eight EC coverage CPU tests and two aux
+layer tests also passed. These checks do not cover LC3–LC5 or establish GPU
+parity; the explicit Vulkan parity test was not run. No visual comparison was
+performed.
