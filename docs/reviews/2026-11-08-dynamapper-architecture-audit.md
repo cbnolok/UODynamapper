@@ -45,9 +45,9 @@ them. Do not treat this report as proof that unreviewed code is clean.
 | `SettingsPlugin` and `ExternalDataPlugin` | Reviewed | Findings ST1–ST5 below; external-data plugin composes settings and presets. |
 | `UOFilesPlugin` | Reviewed | Findings U1–U3 below; W1/W3 cover map catalog and missing-map behavior. |
 | `ExportJobPlugin` | Reviewed | Findings E1–E3 below; art upload readiness is covered in A8. |
-| Remaining direct texture-cache installers | Pending | Trace runtime owners and conditional paths. |
+| Shared EC item and terrain-coverage cache support | Reviewed | Active paths and ownership summarized below; LC6 and LC9 cover main concerns. |
 | Frame rate, frame limiter and diagnostics | Reviewed | Findings R1–R4 below; D8–D10 cover preferences and limiter policy. |
-| Application wiring, non-plugin modules, build, shaders and runtime assets | Pending | Account for files not owned by a reviewed plugin. |
+| Application wiring, non-plugin modules, build, shaders and runtime assets | In progress | N1–N2 below; complete the remaining file and asset sweep. |
 
 Plugin coverage is tracked individually so reviewing an orchestration plugin
 does not imply its children have been reviewed:
@@ -1361,8 +1361,12 @@ The re-exported residency layer is described as shared, but current repository
 callers are terrain-specific and its preload path is unreachable in current
 setup (LC1). Review whether the abstraction earns its complexity after the art
 cache audit. Any reorganization must preserve atlas initialization, extraction
-and upload scheduling. Art and item submodules remain separate audit items;
-no runtime or visual validation was performed for this wrapper.
+and upload scheduling. The later item-cache review found the shared EC item
+surface, liquid, water and hue-mask paths active; terrain coverage and its
+runtime cache are active too. LC6 covers the art-to-terrain startup dependency,
+and LC9 covers the shared auxiliary array's device-limit risk. Test-only shader
+and package harnesses must not be treated as dead production paths. No runtime
+or visual validation was performed for this wrapper.
 
 ## ArtPageFormatCheckPlugin
 
@@ -2186,3 +2190,146 @@ A8 records that art readiness omits render-world deferred uploads.
 contract and test migration-needed input. Tie capture readiness to actual upload
 completion, then test stalled and delayed work rather than relying solely on
 identical images. No visual comparison was performed.
+
+## Non-plugin utilities — partial review
+
+### N1 — Unused utility and logging experiments remain in the binary crate
+
+The unreferenced [`_rect.rs`](../../dynamapper/src/util_lib/_rect.rs#L1) is not
+declared as a module. The active module tree contains unused packed-array and
+float-conversion helpers, an unused
+[`image_from_uddp_page`](../../dynamapper/src/util_lib/image.rs#L23), and
+commented-out utility code. The [console logger](../../dynamapper/src/console_logger.rs#L65)
+also contains three unused enum/regex experiments, including a validator that
+always returns true; their only discovered regex use is inside those helpers.
+By contrast, the `Between` trait, image conversion for gumps, grunge image and
+actual log filtering are used.
+
+**Follow-up:** remove confirmed unused code and commented experiments, and
+reassess the direct regex dependency after checking configured targets. Preserve
+the live utilities and run the dependency-management checks if a dependency is
+removed.
+
+### N2 — Debug log location truncation can split UTF-8
+
+The [debug formatter](../../dynamapper/src/console_logger.rs#L170) slices a
+long location string at a byte offset to fit a fixed width. If that offset lands
+inside a multibyte character in a file path or an overridden location, logging
+can panic in a debug build. The issue is conditional on the location text; no
+runtime reproduction was performed.
+
+**Follow-up:** truncate at a valid character boundary and add a focused test
+with a long non-ASCII location. Keep existing filtering and caller attribution.
+
+### N3 — Multi-part height addition can overflow before clamping
+
+[`expanded_multi_part_z`](../../dynamapper/src/core/multis.rs#L123) adds an
+`i8` base height to an `i16` part height in `i16`, then clamps to the `i8`
+range. For example, base 1 and part 32767 overflow before the clamp, producing
+a debug panic or wrapped result depending on overflow checks. The part height
+types permit these values; their prevalence in actual files is unknown. A9
+separately questions which records should be interpreted as multis.
+
+**Follow-up:** widen or saturate the addition before clamping and test both
+positive and negative extremes, independently of the multi-identification fix.
+
+### N4 — Static block cache retains every visited package chunk
+
+[`LazyStaticsStore`](../../dynamapper/src/core/statics.rs#L16) retains decoded
+blocks and marks package chunks loaded, with no discovered eviction or reset.
+Long traversal or full-facet export can retain the entire visited working set.
+This is a confirmed lifetime property, not a measured memory regression.
+A10 covers the separate handling of failed block reads.
+
+**Follow-up:** measure memory during traversal/export and consider bounded
+package-chunk eviction if warranted. Preserve the distinction between empty,
+unloaded and failed blocks.
+
+### N5 — Map batch loading repeats package-chunk reads
+
+[`load_blocks_from_package`](../../dynamapper/src/core/maps.rs#L217) reads the
+containing package chunk once for each requested native block, even for blocks
+in the same package chunk. The worker submits batches of such requests. Cost
+depends on package compression and locality and has not been measured.
+
+**Follow-up:** profile and, if justified, group requests by package chunk so a
+batch reads and decodes each once. Preserve requested block order and failure
+reporting; T4 covers worker failure handling.
+
+### N6 — Map cache membership does not validate coordinates
+
+[`is_block_cached`](../../dynamapper/src/core/maps.rs#L175) flattens coordinates
+without the individual bounds checks used by `block` and `block_no_update`.
+An out-of-range Y can alias another cached block, and very large coordinates can
+overflow. Current draw callers checked in this review validate bounds first, so
+this is an API hazard rather than a demonstrated current rendering defect.
+
+**Follow-up:** share the bounds contract and test invalid X/Y and overflow-edge
+inputs alongside valid membership checks.
+
+### N7 — Tracy spans have no identified exporter in the custom subscriber
+
+The [`trace_tracy` feature](../../dynamapper/Cargo.toml#L261) enables Bevy's
+Tracy features, and the application creates feature-gated tracing spans. Its
+[app wiring](../../dynamapper/src/core.rs#L310) disables Bevy's log plugin,
+however, while the replacement [subscriber](../../dynamapper/src/core/bevy_log_filter.rs#L103)
+installs a sink and an event interception layer. No Tracy subscriber layer was
+found in the application. This is a static wiring concern; a live Tracy capture
+was not performed.
+
+**Follow-up:** verify a feature-enabled capture and, if spans are absent,
+install the profiling layer through the custom subscriber or consolidate logging
+ownership. Retain event filtering and avoid enabling profiling by default.
+
+### N8 — Build and allocator comments describe older wiring
+
+The [build script](../../dynamapper/build.rs#L1) still says the app rewrites
+settings under assets, although it now writes cache copies. Its claim to
+override nightly location detail depends on an environment variable and emitted
+Cargo directive whose effect was not verified. The
+[feature comment](../../dynamapper/Cargo.toml#L263) says dynamic linking is
+enabled by default even though its feature line is commented out; allocator
+selection in `main.rs` nevertheless follows the development feature.
+Commented single-threaded scheduling and old log configuration remain as well.
+
+**Follow-up:** verify the nightly command line before relying on the claimed
+override, align allocator policy and comments with actual feature wiring, and
+remove superseded experiments. Do not change allocator behavior without an
+explicit build/performance decision.
+
+## Shared shaders and runtime assets — partial review
+
+### H1 — Unused shader helper variants coexist with active helpers
+
+No callers were found for the linear, smoothstep, Klems and fat-pixel variants
+in [pixel-art filters](../../dynamapper/assets/shaders/world/pixel_art_filters.wesl#L26).
+Similarly, `apply_shadow_aware_land_grunge` and its private-only
+`apply_visual_grunge` path have no discovered callers in
+[grunge](../../dynamapper/assets/shaders/postprocess/grunge.wesl#L33). The IQ
+filter helpers and other grunge/noise paths are active.
+
+**Follow-up:** recheck dynamic shader composition and configured variants, then
+remove only confirmed unused declarations. Preserve current texture-backed
+grunge and active filtering paths and validate shader composition after edits.
+
+### H2 — Research artifacts and converter data live under app assets
+
+The EC and KR shader-reference directories are research translations, excluded
+from application packaging; they are not proof the translated effects run and
+are not automatically disposable. The EC reference contains absolute paths to
+another checkout, while the
+[atmosphere plan](../../dynamapper/assets/shaders/visual_atmosphere_implementation_plan.md#L1)
+describes old `.wgsl` paths and earlier assumptions. The
+[EC content census](../../dynamapper/assets/regression_fixtures/ec_content_families.toml#L1)
+is also described by current documentation as historical.
+
+Four conversion KDL files under `assets/cc_ec_convtables` are actively consumed
+by converter tooling, although the renderer reads packaged results. Several
+bundled font files have no discovered filename consumers, while Fira Mono
+Medium and UO Classic Rough are active. These are inventory candidates, not
+proof that external deployment or tooling never uses the other fonts.
+
+**Follow-up:** relocate or clearly label historical research after preserving
+useful evidence and fixing links; consider a neutral home for converter data
+only with its resolvers, tests, packaging and docs updated together. Verify
+external font uses and retain applicable license notices before removing fonts.
