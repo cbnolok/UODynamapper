@@ -37,15 +37,15 @@ them. Do not treat this report as proof that unreviewed code is clean.
 | `FogPostProcessPlugin` | Reviewed | Findings F1–F5 below; no visual validation. |
 | `LandTextureCachePlugin` | Reviewed | Findings LC1–LC11 below; runtime fault and device tests remain follow-up work. |
 | `TextureCachePlugin` | Reviewed | Composition reviewed; art child and direct installers remain separately tracked. |
-| `ArtPageFormatCheckPlugin` | Reviewed | Finding AP1 below; art atlas implementation remains separately tracked. |
+| `ArtPageFormatCheckPlugin` | Reviewed | Finding AP1 below; art atlas lifecycle is covered in A7–A8. |
 | `DrawStaticSpritesPlugin` | Reviewed | Findings A1–A16 below; independent shared-shader and asset sweep remains pending. |
 | Overlay plugins | Reviewed | Composition and findings O1–O8 below. |
 | Dialog plugins and paperdoll support | Reviewed | Findings D1–D12 below. |
-| Remaining scene plugins | Pending | Includes world, terrain, statics, lights and effects. |
-| Dialog and overlay plugins | Pending | Includes input and player interactions already noted below. |
-| Settings and shader preset plugins | Pending | Includes configuration ownership and persistence. |
+| `ShaderPresetsPlugin` | Reviewed | Findings SP1–SP3 below; D4 covers undo and save reporting. |
+| `SettingsPlugin` and `ExternalDataPlugin` | Reviewed | Findings ST1–ST5 below; external-data plugin composes settings and presets. |
 | `UOFilesPlugin` | Reviewed | Findings U1–U3 below; W1/W3 cover map catalog and missing-map behavior. |
-| Texture caches and export | Pending | Trace remaining runtime owners and conditional paths. |
+| `ExportJobPlugin` | Reviewed | Findings E1–E3 below; art upload readiness is covered in A8. |
+| Remaining direct texture-cache installers | Pending | Trace runtime owners and conditional paths. |
 | Frame rate, frame limiter and diagnostics | Reviewed | Findings R1–R4 below; D8–D10 cover preferences and limiter policy. |
 | Application wiring, non-plugin modules, build, shaders and runtime assets | Pending | Account for files not owned by a reviewed plugin. |
 
@@ -61,10 +61,9 @@ does not imply its children have been reviewed:
   `CursorBehaviorOverlayPlugin`, `SystemMessagesPlugin`, `DialogsPlugin`,
   `KeybindingsHelpPlugin`, `TeleportPlugin`, `LandUiPlugin`, `GumpDialogPlugin`,
   `PreferencesDialogPlugin`, `UOFilesPlugin`, `FrameRatePlugin`,
-  `FrameLimiterPlugin`, `LogGpuPreprocessingModePlugin`.
+  `FrameLimiterPlugin`, `LogGpuPreprocessingModePlugin`, `ShaderPresetsPlugin`,
+  `SettingsPlugin`, `ExternalDataPlugin`, `ExportJobPlugin`.
 - Reviewed scene/rendering child: `DrawStaticSpritesPlugin`.
-- Pending data/runtime: `ExternalDataPlugin`, `SettingsPlugin`,
-  `ShaderPresetsPlugin`, `ExportJobPlugin`.
 
 Also review direct system installers, conditional/platform-specific paths and
 third-party integration; plugin definitions alone do not cover the application.
@@ -2047,3 +2046,143 @@ every optional package should be fatal or recoverable.
 **Follow-up:** define required, absent and corrupt behavior per package; retain
 the file path and error chain and test each policy. Do not silently substitute
 or treat a required startup map as optional.
+
+## ShaderPresetsPlugin
+
+### SP1 — Invalid active key survives its fallback
+
+[Startup](../../dynamapper/src/configs/shader_presets.rs#L356) falls back to
+`classic.morning` values when `default_preset` is invalid but keeps the invalid
+string as `active_preset`. [Saving](../../dynamapper/src/configs/shader_presets.rs#L238)
+then finds no matching slot while preserving that invalid default. Editing and
+closing before selecting another slot can therefore fail to save the edited
+values and repeat the invalid fallback on restart.
+
+**Follow-up:** validate and normalize the effective key and selected values
+together; test invalid defaults through edit, save and reload.
+
+### SP2 — Cache read errors are treated as absence
+
+The [cache loader](../../dynamapper/src/configs/shader_presets.rs#L134) treats
+every `read_to_string` error as a missing cached file and selects bundled or
+factory defaults. Permission and I/O failures are therefore silent and later
+save attempts can target the unread path. The factory, bundled and cached
+precedence itself is active and intentional.
+
+**Follow-up:** distinguish `NotFound` from other failures, surface the path and
+cause and avoid silently replacing unread user data. Coordinate successful-save
+reporting with D4. Test absence and a non-NotFound read failure separately.
+
+### SP3 — Public preset loading wrapper has no discovered caller
+
+[`load_from_file`](../../dynamapper/src/configs/shader_presets.rs#L101) wraps
+the same factory and effective loaders already called directly by plugin build;
+no other caller was found in the binary crate. It is not the active loader.
+
+**Follow-up:** remove the unused wrapper after checking configured targets and
+retain strict bundled parsing and app-state migration behavior.
+
+## SettingsPlugin and ExternalDataPlugin
+
+The external-data plugin composes the settings and shader-preset plugins. The
+settings plugin actively loads defaults and cached app state, synchronizes
+runtime state, debounces saves and flushes on exit; export suppresses those
+interactive saves. Strict bundled parsing and lenient cache migration are
+intentional and have existing tests.
+
+### ST1 — Failed settings writes are recorded as successful
+
+The [save functions](../../dynamapper/src/configs/settings.rs#L459) log errors
+but return no success result. The [debounce](../../dynamapper/src/configs/settings.rs#L975)
+then advances the saved snapshot and clears its pending work unconditionally.
+A transient failure followed by no further edit therefore receives no retry
+until the exit flush; that flush can also fail or not run on abnormal exit.
+
+**Follow-up:** return per-section results, update each saved snapshot only on
+success, and retry or clearly report failures. Test failure followed by recovery
+without requiring another user edit.
+
+### ST2 — One debounce can delay unrelated settings indefinitely
+
+The [runtime sync](../../dynamapper/src/configs/settings.rs#L754) updates player
+position in session state, while the [debounce](../../dynamapper/src/configs/settings.rs#L918)
+resets one timer whenever the combined snapshot changes. Continuous movement
+can thus postpone saving a stable preference until all sections stop changing.
+Graceful exit flushes them, but that does not cover abnormal termination.
+
+**Follow-up:** debounce independently by persistence section, or otherwise
+prevent session-state churn from blocking unrelated saves; test continuous
+position changes alongside a single preference edit.
+
+### ST3 — Cache read failures are silently treated as missing
+
+[`load_user_settings`](../../dynamapper/src/configs/settings.rs#L374) promises a
+warning for unreadable cached state but returns bundled settings on any read
+error without one. Permission and I/O errors are indistinguishable from a
+missing cache, and a later save may target the unread file. SP2 records the
+same issue for shader settings.
+
+**Follow-up:** distinguish absence from other errors, report path and cause,
+and protect unread user data from silent replacement. Test both cases.
+
+### ST4 — Settings are loaded twice during startup
+
+[Application construction](../../dynamapper/src/core.rs#L268) loads settings to
+choose window, renderer and limiter options; the [plugin](../../dynamapper/src/configs/settings.rs#L786)
+loads them again into the resource. A file change between reads could leave
+build-time choices and the effective resource inconsistent. This is an
+architectural race, not a reproduced normal-startup failure.
+
+**Follow-up:** inject one validated snapshot into both initialization and the
+settings resource, including export overrides and logging setup.
+
+### ST5 — Settings retain a retired asset loader and unused wireframe message
+
+Settings are read synchronously, but the [plugin setup](../../dynamapper/src/configs/settings.rs#L681)
+still registers an asset and retains commented-out loader setup and implementation.
+`ToggleWireframe` has a registered listener but no producer found in the binary;
+preferences currently synchronize wireframe separately.
+
+**Follow-up:** remove the obsolete commented loader and confirm asset/message
+usage across configured targets before removing registration and listener.
+Preserve live wireframe behavior and the tested settings contract.
+
+## ExportJobPlugin
+
+### E1 — Capture timeout is bypassed while changing frames keep arriving
+
+The [capture phase](../../dynamapper/src/core/export_job.rs#L476) checks its
+timeout only when no image is available. If images keep arriving but differ,
+it requests another capture and never checks elapsed time on that path. An
+unstable frame can therefore keep the export alive indefinitely despite the
+documented timeout.
+
+**Follow-up:** enforce the deadline throughout the capture phase and test a
+stream of continuously changing captures as well as delayed capture delivery.
+
+### E2 — Export resume provenance omits effective rendering inputs
+
+[Package revisions](../../dynamapper/src/core/export_job.rs#L747) cover selected
+UDDP files, but static expansion can also use separately loaded Classic multi
+files or `MultiCollection.uop`. The chosen shader preset slot also uses
+effective cached or bundled values; those values are not recorded in this
+package list. A resume after either input changes can accept frames made with
+different content. This follows from input and sidecar dataflow; a visible seam
+was not reproduced.
+
+**Follow-up:** freeze the relevant effective settings or include their identity
+and the chosen multi source in export provenance, then test resume mismatches.
+Keep source-selection and optional-resource semantics explicit.
+
+### E3 — Export isolation and readiness have conditional gaps
+
+Export suppresses regular settings writes, but shader presets load beforehand
+and can [rewrite a migrated cache](../../dynamapper/src/configs/shader_presets.rs#L147)
+when warnings occur. This makes the no-interactive-state-write guarantee
+conditional. Also, two identical captures can agree while work is stalled;
+A8 records that art readiness omits render-world deferred uploads.
+
+**Follow-up:** make shader loading read-only in export if isolation is the
+contract and test migration-needed input. Tie capture readiness to actual upload
+completion, then test stalled and delayed work rather than relying solely on
+identical images. No visual comparison was performed.
