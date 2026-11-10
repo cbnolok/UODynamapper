@@ -40,6 +40,7 @@ them. Do not treat this report as proof that unreviewed code is clean.
 | `ArtPageFormatCheckPlugin` | Reviewed | Finding AP1 below; art atlas implementation remains separately tracked. |
 | `DrawStaticSpritesPlugin` | Reviewed | Findings A1–A16 below; independent shared-shader and asset sweep remains pending. |
 | Overlay plugins | Reviewed | Composition and findings O1–O8 below. |
+| Dialog plugins | Reviewed | Findings D1–D10 below; supporting paperdoll modules remain separately tracked. |
 | Remaining scene plugins | Pending | Includes world, terrain, statics, lights and effects. |
 | Dialog and overlay plugins | Pending | Includes input and player interactions already noted below. |
 | Settings and shader preset plugins | Pending | Includes configuration ownership and persistence. |
@@ -56,10 +57,11 @@ does not imply its children have been reviewed:
   feature-gated `LandProfilingPlugin`, `RenderPlugin`, `FogPostProcessPlugin`,
   `LandTextureCachePlugin`, `TextureCachePlugin`, `ArtPageFormatCheckPlugin`,
   `OverlaysPlugin`, `PerformanceOverlayPlugin`, `PlayerPositionOverlayPlugin`,
-  `CursorBehaviorOverlayPlugin`, `SystemMessagesPlugin`.
+  `CursorBehaviorOverlayPlugin`, `SystemMessagesPlugin`, `DialogsPlugin`,
+  `KeybindingsHelpPlugin`, `TeleportPlugin`, `LandUiPlugin`, `GumpDialogPlugin`,
+  `PreferencesDialogPlugin`.
 - Reviewed scene/rendering child: `DrawStaticSpritesPlugin`.
-- Pending dialogs: `DialogsPlugin`, `PreferencesDialogPlugin`,
-  `LandUiPlugin`, `KeybindingsHelpPlugin`, `GumpDialogPlugin`, `TeleportPlugin`.
+- Pending dialog support: paperdoll and image-background modules.
 - Pending data/runtime: `ExternalDataPlugin`, `SettingsPlugin`,
   `ShaderPresetsPlugin`,
   `UOFilesPlugin`, `ExportJobPlugin`.
@@ -1771,3 +1773,149 @@ the shared terrain/static picking contracts. Preserve logical map coordinates,
 pointer and map guards, both inspection views and existing input bindings.
 Current tests cover formatting rather than system-level interaction or scaling;
 no visual comparison was performed.
+
+## Dialog composition, keybinding help and teleport
+
+### D1 — Shared egui context helper retains an unused camera dependency
+
+The [shared helper](../../dynamapper/src/core/render/dialogs.rs#L75) accepts a
+`UiCameraResource` but queries only the primary egui context. Dialog and overlay
+callers still acquire the camera just to pass it to that helper. Its earlier
+immutable variant remains commented out. The dialog parent also owns global
+egui scale synchronization even though overlays use that same context.
+
+**Follow-up:** remove the unused parameter and retired commented helper, and
+consider moving shared context/scale ownership to a common UI integration
+boundary. Keep real camera consumers and the current context selection. V4
+records the same dependency from the camera perspective.
+
+### D2 — Keybinding help names the wrong file
+
+The [help panel](../../dynamapper/src/core/render/dialogs/keybindings_help.rs#L165)
+points to `assets/keybindings.toml`; the loader actually uses
+`settings/keybindings.toml` under the resolved assets directory. It also implies
+all displayed bindings are configurable, although several are hardcoded. The
+same stale path appears in `docs/keybindings.md`.
+
+**Follow-up:** correct both references and distinguish configurable actions
+from fixed shortcuts; C4 covers the larger scattered binding ownership.
+
+### D3 — Teleport parsing failures receive no feedback
+
+The [teleport button](../../dynamapper/src/core/render/dialogs/teleport.rs#L95)
+does nothing when any coordinate fails integer parsing, including the initially
+empty inputs. Parsed coordinates rejected by the shared teleport validator do
+produce a message. The shared mutation helper and recompute on success are
+active and should remain.
+
+**Follow-up:** show actionable field-level parse errors and test malformed,
+out-of-range and valid input. Consider an explicit close control: global key
+dispatch is suppressed while egui captures keyboard input.
+
+## LandUiPlugin
+
+### D4 — Undo restores one global snapshot into whichever slot is active
+
+The [Undo button](../../dynamapper/src/core/render/dialogs/land_shader.rs#L382)
+restores `UniformState.saved_snapshot`, which is initialized from the startup
+slot and updated only when the panel closes. Switching style or time saves the
+slot being left and changes `active_preset`, but does not change that snapshot.
+Undo after a switch therefore loads the previous snapshot's values, including
+its shading mode, while retaining the new slot's key; closing can save those
+values into that new slot. Separately, the close handler updates the snapshot
+even when [`save_shader_settings`](../../dynamapper/src/configs/shader_presets.rs#L194)
+logged a write error, so `Last Saved` may not actually reflect disk.
+
+**Follow-up:** define undo against the last successfully saved value of the
+active style/time slot, preserve other slots, and report persistence errors to
+the caller. Test switching slots, undo, close/reopen and failed writes. Keep the
+existing deliberate preservation of the slot being left and scoped factory reset.
+
+### D5 — Shader panel owns renderer synchronization and retains old scaffolding
+
+The [panel plugin](../../dynamapper/src/core/render/dialogs/land_shader.rs#L43)
+also registers the runtime system that applies terrain material uniforms and
+transition settings even when the panel is closed. T10 covers the renderer
+ownership issue. That system's material-handle query is explicitly unused, and
+the [save handler](../../dynamapper/src/core/render/dialogs/land_shader.rs#L879)
+contains a commented-out old change check. Opening comments still name Bevy
+0.16 and WGSL-era behavior.
+
+**Follow-up:** move runtime synchronization to a render/settings owner, remove
+the unused query and obsolete commented block, and update comments against the
+current implementation. Preserve active preset, dirty-update and persistence
+semantics, including D4's correction.
+
+## GumpDialogPlugin
+
+### D6 — Multiple open gumps can share an egui window identity
+
+[`open_gump_window`](../../dynamapper/src/core/render/dialogs/gump.rs#L1250)
+always appends an open window, but the [egui window](../../dynamapper/src/core/render/dialogs/gump.rs#L924)
+uses only its title as identity. Opening the same gump or paperdoll profile
+more than once can therefore collide in egui's window state. This follows from
+the construction; independent interaction has not been reproduced in a GUI.
+
+**Follow-up:** assign each open instance a stable unique ID and test duplicate
+titles, independent close and texture cleanup. Source changes and the active
+paperdoll/image paths must remain supported.
+
+### D7 — Gump Enter shortcut is not scoped to its input
+
+While Open Gump is displayed, [its submit condition](../../dynamapper/src/core/render/dialogs/gump.rs#L1297)
+checks Enter across the egui context without checking the gump-ID field's focus.
+Enter in another field or dialog can submit the unrelated gump ID. The same
+file combines open-window state, source selection, paperdoll profile policy,
+compositing and drawing, while several paperdoll responsibilities already live
+in sibling modules.
+
+**Follow-up:** scope Enter submission to the intended input and retain the Open
+button; test another field and dialog taking focus. Separate window lifecycle,
+content rendering and profile policy at clear boundaries, preserving resource
+and texture cleanup. No GUI or visual comparisons were run.
+
+## PreferencesDialogPlugin
+
+### D8 — Selecting an FPS preset may not persist the change
+
+The [FPS combo](../../dynamapper/src/core/render/dialogs/preferences.rs#L340)
+changes its selected index in individual item responses but starts the settings
+debounce only when the outer combo response reports a change. In the installed
+egui implementation that response is the combo button response; the item
+responses are ignored here. The live limiter is set separately while the Graphics
+tab is rendered, whereas the `Settings` value is written by the debounce. An
+FPS-only selection can thus affect the live limiter without being saved, and a
+later settings-driven update can restore the old value. This is based on code
+and dependency inspection, not a GUI reproduction.
+
+**Follow-up:** detect the actual selected value change and apply it through a
+single settings contract. Test an FPS-only change, closing and reopening the
+dialog, and persistence without requiring another preference edit.
+
+### D9 — Custom FPS values fall back to 15 in the preferences draft
+
+[Draft initialization](../../dynamapper/src/core/render/dialogs/preferences.rs#L134)
+maps a target absent from the preset list to index zero, which is 15 FPS. The
+configuration value is an unrestricted `u32`. Opening the Graphics tab can
+apply that fallback to the live limiter, and any unrelated debounced edit can
+write it into settings. VSync or a disabled limiter can mask the immediate
+effect, but the unintended settings write remains possible.
+
+**Follow-up:** preserve custom targets in the draft or update the setting only
+after an explicit FPS edit. Test a custom value such as 90 FPS with an unrelated
+preference change, and with the limiter enabled and VSync disabled.
+
+### D10 — Preferences mixes draft, live application and broad writeback
+
+The [preferences state](../../dynamapper/src/core/render/dialogs/preferences.rs#L18)
+mirrors many settings, applies some values directly, writes many fields together
+after a timer, and independently writes frame-limiter state. Synchronization
+from settings is suspended while the dialog is open, so a later broad writeback
+can overwrite concurrent settings changes; whether this happens depends on
+other writers. Persistence itself is owned by `SettingsPlugin`, not the dialog.
+There is also an obsolete comment about a removed immediate-sync block.
+
+**Follow-up:** define one owner for the effective values and apply only fields
+actually edited, retaining intentional debounce and persistence behavior. Test
+external changes while a draft is open and remove the stale comment when acting
+on this review. No runtime or visual validation was performed.
