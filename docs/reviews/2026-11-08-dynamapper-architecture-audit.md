@@ -44,8 +44,9 @@ them. Do not treat this report as proof that unreviewed code is clean.
 | Remaining scene plugins | Pending | Includes world, terrain, statics, lights and effects. |
 | Dialog and overlay plugins | Pending | Includes input and player interactions already noted below. |
 | Settings and shader preset plugins | Pending | Includes configuration ownership and persistence. |
-| Texture caches, file loading and export | Pending | Trace runtime owners and conditional paths. |
-| Frame rate, frame limiter and diagnostics | Pending | Include registration and configuration. |
+| `UOFilesPlugin` | Reviewed | Findings U1–U3 below; W1/W3 cover map catalog and missing-map behavior. |
+| Texture caches and export | Pending | Trace remaining runtime owners and conditional paths. |
+| Frame rate, frame limiter and diagnostics | Reviewed | Findings R1–R4 below; D8–D10 cover preferences and limiter policy. |
 | Application wiring, non-plugin modules, build, shaders and runtime assets | Pending | Account for files not owned by a reviewed plugin. |
 
 Plugin coverage is tracked individually so reviewing an orchestration plugin
@@ -59,13 +60,11 @@ does not imply its children have been reviewed:
   `OverlaysPlugin`, `PerformanceOverlayPlugin`, `PlayerPositionOverlayPlugin`,
   `CursorBehaviorOverlayPlugin`, `SystemMessagesPlugin`, `DialogsPlugin`,
   `KeybindingsHelpPlugin`, `TeleportPlugin`, `LandUiPlugin`, `GumpDialogPlugin`,
-  `PreferencesDialogPlugin`.
+  `PreferencesDialogPlugin`, `UOFilesPlugin`, `FrameRatePlugin`,
+  `FrameLimiterPlugin`, `LogGpuPreprocessingModePlugin`.
 - Reviewed scene/rendering child: `DrawStaticSpritesPlugin`.
 - Pending data/runtime: `ExternalDataPlugin`, `SettingsPlugin`,
-  `ShaderPresetsPlugin`,
-  `UOFilesPlugin`, `ExportJobPlugin`.
-- Pending frame/diagnostics: `FrameRatePlugin`, `FrameLimiterPlugin`,
-  `LogGpuPreprocessingModePlugin`.
+  `ShaderPresetsPlugin`, `ExportJobPlugin`.
 
 Also review direct system installers, conditional/platform-specific paths and
 third-party integration; plugin definitions alone do not cover the application.
@@ -1951,3 +1950,100 @@ test roles and should not be classified as dead.
 without adding an unnecessary eframe dependency, and move persisted types to a
 domain/settings boundary if useful. Preserve each application's existing
 serialization, frame planning and pick behavior.
+
+## Frame rate, frame limiter and diagnostics
+
+The frame-rate counter, limiter and GPU-capability log are all registered and
+active. The counter samples the main-world `Last` schedule over a wall-clock
+window; its rate is not an independently measured GPU presentation rate. The
+limiter runs in a schedule after `Last`, resets its deadline on changes, and is
+covered by existing conversion tests and historical wall-clock measurements.
+D8–D10 describe its split settings ownership and preference defects.
+
+### R1 — GPU preprocessing capability is reported as the active mode
+
+The [one-shot logger](../../dynamapper/src/core/diagnostics.rs#L483) reads
+`max_supported_mode` but labels it `GpuPreprocessingMode`, and its documentation
+says it reports the active mode. Hardware support alone does not prove which
+mode a view or pipeline actually uses. Successful capability reporting also
+uses warning severity.
+
+**Follow-up:** label this as the maximum supported capability, or separately
+instrument actual use if needed; use appropriate severity and retain the
+unavailable-resource diagnostic.
+
+### R2 — Frame residual combines incompatible time samples
+
+The [diagnostic residual](../../dynamapper/src/core/diagnostics.rs#L642)
+subtracts the last samples of two individual systems from the mean frame time
+of the last closed frame-rate window and clamps the result to zero. These
+samples need not represent the same frame or interval; system and pipelined
+work may also overlap. It is not a measurement of untracked frame time.
+
+**Follow-up:** remove or explicitly qualify the estimate, or collect compatible
+wall-clock intervals and report their overlap and measurement window.
+
+### R3 — System-timing instrumentation runs when its output is disabled
+
+[Render schedule timers](../../dynamapper/src/core/diagnostics.rs#L379) are
+installed only when configured, but scoped main-world and cross-app timers in
+chunk and atlas systems run regardless. Cross-app samples take a shared mutex.
+Their displayed output is gated, and no performance impact was measured.
+The independent upload telemetry has other consumers and is not the same thing.
+
+**Follow-up:** consider a coherent low-overhead enablement policy for timers,
+keeping independently consumed telemetry available. The console dump system is
+installed based on startup configuration despite checking the setting live;
+no supported runtime toggle was found, so that is an interface asymmetry rather
+than a demonstrated toggle failure.
+
+### R4 — GPU elapsed totals have no stated nonoverlap contract
+
+The [console](../../dynamapper/src/core/diagnostics.rs#L508) sums matching
+render diagnostic spans and labels the result total GPU time. The performance
+overlay has a separate aggregation path. If reported spans overlap or nest,
+their sum can double-count; current span overlap has not been demonstrated.
+The two paths also need not use the same smoothing semantics.
+
+**Follow-up:** define a top-level measurement or label the sum of reported
+spans, and share aggregation semantics if the displays intend the same metric.
+Do not treat GPU timing as equivalent to the main-world FPS window.
+
+## UOFilesPlugin
+
+### U1 — Runtime gump provider is embedded in the startup loader
+
+The [loader module](../../dynamapper/src/core/uo_files_loader.rs#L73) owns
+gump source routing, image decoding and shared-hash policy used after startup,
+while its large startup system also discovers and opens maps, statics, textures,
+metadata, gumps and other packages. This makes runtime content ownership hard
+to find and couples it to loading orchestration.
+
+**Follow-up:** separate typed runtime providers from package discovery and
+resource publication while retaining real Classic fallback and shared-hash
+behavior. W1/W3 already cover map metadata and missing startup maps.
+
+### U2 — Loader suppresses unused diagnostics and retains unused state
+
+The [module-wide suppression](../../dynamapper/src/core/uo_files_loader.rs#L1)
+hides an apparently unread `UoFilesSettingsRes` created at startup, an unused
+`SourceContainerKind::Uop` variant, and an unused import. Actual UOP multi
+loading is a separate active path; its existence does not make the logging enum
+variant live.
+
+**Follow-up:** remove confirmed unread state and enum/import remnants after
+checking configurations, then narrow or remove the blanket suppression. Keep
+the configured source path in settings and active file fallbacks.
+
+### U3 — Package error handling loses causes and varies by source
+
+Several package initializers discard the underlying error when a present file
+fails, for example [statics](../../dynamapper/src/core/uo_files_loader.rs#L577)
+and [tile metadata](../../dynamapper/src/core/uo_files_loader.rs#L608). Optional
+packages have differing absent/corrupt behavior: some corrupt files panic while
+others log and continue. This is an inconsistent contract, not a conclusion that
+every optional package should be fatal or recoverable.
+
+**Follow-up:** define required, absent and corrupt behavior per package; retain
+the file path and error chain and test each policy. Do not silently substitute
+or treat a required startup map as optional.
