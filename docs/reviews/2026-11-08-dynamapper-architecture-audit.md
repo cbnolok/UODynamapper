@@ -30,8 +30,8 @@ them. Do not treat this report as proof that unreviewed code is clean.
 | `CameraPlugin` | Reviewed | Findings V1–V7 below. |
 | `ScenePlugin` | Reviewed | Findings S1–S7 below; V1 covers free-camera streaming. |
 | `PlayerDynamicLightPlugin` | Reviewed | Findings L1–L2 below. |
-| `WorldPlugin` | Reviewed | Findings W1–W3 below; child plugins remain pending. |
-| `DrawLandChunkMeshPlugin` | Reviewed | Findings T1–T16; other texture-cache plugins and the independent shader/asset sweep remain pending. |
+| `WorldPlugin` | Reviewed | Findings W1–W3 below; its child plugins are tracked separately. |
+| `DrawLandChunkMeshPlugin` | Reviewed | Findings T1–T17; other cache and asset paths are tracked separately. |
 | `LandProfilingPlugin` | Reviewed | Findings GP1–GP4 below; feature-gated GPU execution was not run. |
 | `RenderPlugin` | Reviewed | Composition reviewed; child plugins remain separately tracked. |
 | `FogPostProcessPlugin` | Reviewed | Findings F1–F5 below; no visual validation. |
@@ -40,14 +40,14 @@ them. Do not treat this report as proof that unreviewed code is clean.
 | `ArtPageFormatCheckPlugin` | Reviewed | Finding AP1 below; art atlas lifecycle is covered in A7–A8. |
 | `DrawStaticSpritesPlugin` | Reviewed | Findings A1–A16 below; independent shared-shader and asset sweep remains pending. |
 | Overlay plugins | Reviewed | Composition and findings O1–O8 below. |
-| Dialog plugins and paperdoll support | Reviewed | Findings D1–D12 below. |
+| Dialog plugins and paperdoll support | Reviewed | Findings D1–D13 below. |
 | `ShaderPresetsPlugin` | Reviewed | Findings SP1–SP3 below; D4 covers undo and save reporting. |
 | `SettingsPlugin` and `ExternalDataPlugin` | Reviewed | Findings ST1–ST5 below; external-data plugin composes settings and presets. |
 | `UOFilesPlugin` | Reviewed | Findings U1–U3 below; W1/W3 cover map catalog and missing-map behavior. |
 | `ExportJobPlugin` | Reviewed | Findings E1–E3 below; art upload readiness is covered in A8. |
 | Shared EC item and terrain-coverage cache support | Reviewed | Active paths and ownership summarized below; LC6 and LC9 cover main concerns. |
 | Frame rate, frame limiter and diagnostics | Reviewed | Findings R1–R4 below; D8–D10 cover preferences and limiter policy. |
-| Application wiring, non-plugin modules, build, shaders and runtime assets | In progress | N1–N2 below; complete the remaining file and asset sweep. |
+| Application wiring, non-plugin modules, build, shaders and runtime assets | In progress | N1–N13 and H1–H3 below; final coverage reconciliation remains. |
 
 Plugin coverage is tracked individually so reviewing an orchestration plugin
 does not imply its children have been reviewed:
@@ -671,7 +671,7 @@ was changed or visually compared.
 Reviewed registration, geometry and background loading, material and uniform
 ownership, the metadata atlas and its upload path, terrain picking, and the land
 shader entry points and imports. The separate land texture-cache and profiling
-plugins and the independent shader/asset sweep remain pending. Current source
+plugins are tracked separately. Current source
 transition controls are active, and dynamic blending remains unfinished; neither
 is a candidate for deletion because this area has changed during development.
 
@@ -977,6 +977,20 @@ Additional checks: the focused atlas staged-revision/image-generation test,
 `world_entry_points_discover_shader_dependencies` each passed. They do not
 exercise page reuse, the live pinning calculation, camera-view data or visual
 output. No visual comparison was performed.
+
+### T17 — Terrain mesh dimensions and comments have multiple authorities
+
+The base chunk dimension, [mesh creation](../../dynamapper/src/core/render/scene/world/land/setup_base_mesh.rs#L67)
+and [cursor topology lookup](../../dynamapper/src/core/render/scene/world/land/draw_mesh.rs#L114)
+maintain related spans separately. Existing tests compare the generated meshes
+with cursor descriptors, but they can agree while both drift from the base chunk
+size used for placement. This is a maintenance risk, not a demonstrated current
+mesh mismatch. Nearby comments still describe 8×8 geometry and older height
+scales; S6 records related stale scene comments.
+
+**Follow-up:** derive shared geometry descriptors from one contract and test the
+base span against chunk placement, then update old descriptions. Preserve all
+active LOD and wide-mesh variants and cursor use of the actually assigned mesh.
 
 ## LandProfilingPlugin
 
@@ -1954,6 +1968,20 @@ without adding an unnecessary eframe dependency, and move persisted types to a
 domain/settings boundary if useful. Preserve each application's existing
 serialization, frame planning and pick behavior.
 
+### D13 — Robe-edge evidence measures representative item IDs
+
+The ignored, package-backed [robe-edge measurement](../../dynamapper/src/core/render/dialogs/gump/robe_edges.rs#L182)
+is test-only research tooling, not runtime dead code. Its candidate collection
+keeps one item per layer and animation ID, although stored cover decisions can
+depend on the individual dress and garment IDs. The description's claim to
+measure every item therefore overstates decision coverage and its summary counts
+represent those selected representatives. The test writes diagnostic artifacts
+and has no acceptance threshold; passing it is not a regression gate.
+
+**Follow-up:** either describe the representative-only scope, or reuse images
+while evaluating each item-pair decision. Test aliases sharing animation/layer
+with different decisions; preserve the research utility and its provenance.
+
 ## Frame rate, frame limiter and diagnostics
 
 The frame-rate counter, limiter and GPU-capability log are all registered and
@@ -2297,6 +2325,73 @@ override, align allocator policy and comments with actual feature wiring, and
 remove superseded experiments. Do not change allocator behavior without an
 explicit build/performance decision.
 
+### N9 — Default logging rules cannot produce their stated filtering
+
+The [bundled rules](../../dynamapper/assets/settings/core.toml#L11) first allow
+all `Debug` messages, before later rules attempt to suppress Debug startup and
+performance messages. The [logger](../../dynamapper/src/console_logger.rs#L111)
+applies the minimum first and returns on the first matching rule, so those later
+suppression rules cannot match; the explicit `DebugVerbose` allow is also below
+the configured minimum. User cache overrides may choose different rules.
+The [Bevy interception layer](../../dynamapper/src/core/bevy_log_filter.rs#L258)
+also demotes backend messages to DebugVerbose regardless of original severity,
+so backend errors can be suppressed by the default minimum.
+
+**Follow-up:** decide intended precedence and backend severity policy, then test
+actual parsed defaults and representative backend errors. Keep configurable
+filters and avoid suppressing actionable device failures as routine chatter.
+
+### N10 — Update logging helper is deliberately inert
+
+[`log_system_add_update`](../../dynamapper/src/util_lib/tracked_plugin.rs#L258)
+does nothing but is still called from multiple active systems, suggesting those
+calls instrument updates when they do not. Startup and one-shot logging and
+the plugin registry have real consumers. An unused coordinate conversion and
+the never-transitioned `AppState::Stop` are smaller removal candidates.
+
+**Follow-up:** remove the no-op calls and helper, or give them explicit opt-in
+behavior; confirm configured and external consumers before removing the other
+candidates. Preserve active coordinate conversions and logging.
+
+### N11 — Terrain cursor signature omits target scale
+
+The [terrain cursor cache](../../dynamapper/src/core/render/scene/world/land/picking.rs#L26)
+keys on pointer, viewport, matrices, map, atlas state and visible grids, while
+its [ray calculation](../../dynamapper/src/core/render/scene/world/land/picking.rs#L100)
+also uses the camera target scale to choose a physical pixel center. A scale
+change with otherwise identical signature inputs can reuse an old hit. This is
+a conditional invalidation gap, not a reproduced DPI-change failure. Existing
+tests cover ray geometry at different scales, not a cached scale transition.
+
+**Follow-up:** include the scale or effective physical ray in the signature and
+test a scale change with unchanged viewport and other inputs. Preserve the
+separate logical map height and displayed terrain position. The injected input
+path validates pointer bounds, so a negative-pointer cast was not established
+as a current reachable defect.
+
+### N12 — Compute pool configuration always selects its minimum
+
+The [task-pool policy](../../dynamapper/src/core.rs#L82) sets the compute pool
+to minimum one, maximum three and zero percent. Bevy's current assignment
+algorithm clamps the zero allocation to the minimum, so it selects one compute
+worker even on machines with spare cores. Whether that limit is intentional and
+its performance impact are not established; other dedicated threads still run.
+
+**Follow-up:** document the intended policy and benchmark representative CPU
+counts before changing it. A configuration test can make the chosen pool size
+explicit.
+
+### N13 — Asset-path conversion can fail for non-UTF-8 paths
+
+The [asset plugin setup](../../dynamapper/src/core.rs#L330) unwraps a UTF-8
+conversion of the resolved asset path, while the custom source builder converts
+it lossily. A valid non-UTF-8 Unix path can therefore panic or be represented
+incorrectly. The current path is UTF-8 and no failure was reproduced.
+
+**Follow-up:** use a path-capable API where possible or return an actionable
+startup error, and cover a non-UTF-8 path on Unix. Keep the documented asset
+directory precedence.
+
 ## Shared shaders and runtime assets — partial review
 
 ### H1 — Unused shader helper variants coexist with active helpers
@@ -2333,3 +2428,16 @@ proof that external deployment or tooling never uses the other fonts.
 useful evidence and fixing links; consider a neutral home for converter data
 only with its resolvers, tests, packaging and docs updated together. Verify
 external font uses and retain applicable license notices before removing fonts.
+
+### H3 — Legacy fog keeps unused land noise in the shared shader module
+
+[`fbm_value`, `fbm_billow` and `domain_warp`](../../dynamapper/assets/shaders/world/land/noise.wesl#L31)
+are called by the old fog shader; the current land entry point imports two of
+them without using them. Current fullscreen fog has its own noise. The active
+`hash` and `noise_2d` functions are also consumed by art and postprocessing,
+so placing common noise under `land` obscures shared ownership. A few unused
+WESL selector constants have same-named, active Rust settings counterparts.
+
+**Follow-up:** verify composed shader variants and tests, then remove or move
+the legacy-only helpers with the obsolete fog path. Keep shared noise and Rust
+mode contracts, and validate shader composition after any changes.
