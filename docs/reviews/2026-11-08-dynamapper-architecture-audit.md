@@ -1,6 +1,6 @@
 # Dynamapper architecture and code audit
 
-**Status: in progress.** This report is an audit and follow-up plan, not an
+**Status: audit complete.** This report is an audit and follow-up plan, not an
 implementation plan that has already been approved. The review starts at commit
 `38c4bb34`; later sections should record their own checkpoint if the code changes.
 Paths and line numbers are evidence at the checkpoint and must be rechecked
@@ -38,7 +38,7 @@ them. Do not treat this report as proof that unreviewed code is clean.
 | `LandTextureCachePlugin` | Reviewed | Findings LC1–LC11 below; runtime fault and device tests remain follow-up work. |
 | `TextureCachePlugin` | Reviewed | Composition reviewed; art child and direct installers remain separately tracked. |
 | `ArtPageFormatCheckPlugin` | Reviewed | Finding AP1 below; art atlas lifecycle is covered in A7–A8. |
-| `DrawStaticSpritesPlugin` | Reviewed | Findings A1–A16 below; independent shared-shader and asset sweep remains pending. |
+| `DrawStaticSpritesPlugin` | Reviewed | Findings A1–A16 below; shared-shader and asset sweep is recorded separately. |
 | Overlay plugins | Reviewed | Composition and findings O1–O8 below. |
 | Dialog plugins and paperdoll support | Reviewed | Findings D1–D13 below. |
 | `ShaderPresetsPlugin` | Reviewed | Findings SP1–SP3 below; D4 covers undo and save reporting. |
@@ -47,7 +47,7 @@ them. Do not treat this report as proof that unreviewed code is clean.
 | `ExportJobPlugin` | Reviewed | Findings E1–E3 below; art upload readiness is covered in A8. |
 | Shared EC item and terrain-coverage cache support | Reviewed | Active paths and ownership summarized below; LC6 and LC9 cover main concerns. |
 | Frame rate, frame limiter and diagnostics | Reviewed | Findings R1–R4 below; D8–D10 cover preferences and limiter policy. |
-| Application wiring, non-plugin modules, build, shaders and runtime assets | In progress | N1–N13 and H1–H3 below; final coverage reconciliation remains. |
+| Application wiring, non-plugin modules, build, shaders and runtime assets | Reviewed | N1–N13 and H1–H3 below; platform and runtime limits remain as noted. |
 
 Plugin coverage is tracked individually so reviewing an orchestration plugin
 does not imply its children have been reviewed:
@@ -65,8 +65,36 @@ does not imply its children have been reviewed:
   `SettingsPlugin`, `ExternalDataPlugin`, `ExportJobPlugin`.
 - Reviewed scene/rendering child: `DrawStaticSpritesPlugin`.
 
-Also review direct system installers, conditional/platform-specific paths and
-third-party integration; plugin definitions alone do not cover the application.
+Direct system installers, conditional/platform-specific paths and third-party
+integration were included alongside plugin definitions. Final reconciliation
+compared the Rust file and shader/asset inventories with this coverage and
+independently checked the highest-impact claims. This is a static audit, not
+proof that every feature combination, platform, GPU path or runtime behavior was
+executed; the individual findings identify tests and reproduction still needed.
+
+## Suggested follow-up order
+
+1. Protect user state and exports: settings save/retry and debounce (ST1–ST3),
+   preset undo and invalid keys (D4, SP1–SP2), preference FPS handling (D8–D9),
+   and export timeout/provenance (E1–E3). Verify each reported failure path with
+   focused tests before changing persistence or resume contracts.
+2. Establish resource and readiness ownership: terrain and art upload
+   lifecycles (T8, LC3–LC4, LC8, A7–A8), source/error policy (T4, A10, U3),
+   and cache/device limits (LC9). Several hazards are conditional and their
+   active-path prevalence should be measured or fault-injected.
+3. Resolve correctness contracts requiring source evidence: multi identity and
+   height (A9, N3), cover-rule precedence (D11), cursor/cache behavior (V1, N11)
+   and terrain/source behavior (T7, T11, LC10). Do not turn hypotheses into
+   format rules without confirming the intended client and package semantics.
+4. Consolidate ownership and remove verified remnants after the contracts are
+   understood: scene and chunk streaming (S1–S7), art/light boundaries (A2–A6,
+   A11–A16), shared item assets (LC6), settings/dialog boundaries (D1, D5, D10,
+   ST4), and utilities/research assets (N1, H1–H3). Preserve active conditional
+   paths, test-only research and format-specific behavior identified below.
+
+This sequence groups related changes; it does not make every finding an
+immediate defect or prescribe a final folder tree. Each section records evidence
+and the limits of static analysis for its own finding.
 
 ## ControlsPlugin
 
@@ -2219,7 +2247,7 @@ contract and test migration-needed input. Tie capture readiness to actual upload
 completion, then test stalled and delayed work rather than relying solely on
 identical images. No visual comparison was performed.
 
-## Non-plugin utilities — partial review
+## Non-plugin utilities
 
 ### N1 — Unused utility and logging experiments remain in the binary crate
 
@@ -2392,7 +2420,7 @@ incorrectly. The current path is UTF-8 and no failure was reproduced.
 startup error, and cover a non-UTF-8 path on Unix. Keep the documented asset
 directory precedence.
 
-## Shared shaders and runtime assets — partial review
+## Shared shaders and runtime assets
 
 ### H1 — Unused shader helper variants coexist with active helpers
 
