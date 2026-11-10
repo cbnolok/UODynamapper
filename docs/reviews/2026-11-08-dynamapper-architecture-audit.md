@@ -40,7 +40,7 @@ them. Do not treat this report as proof that unreviewed code is clean.
 | `ArtPageFormatCheckPlugin` | Reviewed | Finding AP1 below; art atlas implementation remains separately tracked. |
 | `DrawStaticSpritesPlugin` | Reviewed | Findings A1–A16 below; independent shared-shader and asset sweep remains pending. |
 | Overlay plugins | Reviewed | Composition and findings O1–O8 below. |
-| Dialog plugins | Reviewed | Findings D1–D10 below; supporting paperdoll modules remain separately tracked. |
+| Dialog plugins and paperdoll support | Reviewed | Findings D1–D12 below. |
 | Remaining scene plugins | Pending | Includes world, terrain, statics, lights and effects. |
 | Dialog and overlay plugins | Pending | Includes input and player interactions already noted below. |
 | Settings and shader preset plugins | Pending | Includes configuration ownership and persistence. |
@@ -61,7 +61,6 @@ does not imply its children have been reviewed:
   `KeybindingsHelpPlugin`, `TeleportPlugin`, `LandUiPlugin`, `GumpDialogPlugin`,
   `PreferencesDialogPlugin`.
 - Reviewed scene/rendering child: `DrawStaticSpritesPlugin`.
-- Pending dialog support: paperdoll and image-background modules.
 - Pending data/runtime: `ExternalDataPlugin`, `SettingsPlugin`,
   `ShaderPresetsPlugin`,
   `UOFilesPlugin`, `ExportJobPlugin`.
@@ -1919,3 +1918,36 @@ There is also an obsolete comment about a removed immediate-sync block.
 actually edited, retaining intentional debounce and persistence behavior. Test
 external changes while a draft is open and remove the stale comment when acting
 on this review. No runtime or visual validation was performed.
+
+## Paperdoll and image-background support
+
+### D11 — Cover rules can act from an item removed in the same pass
+
+[`taken_off`](../../dynamapper/src/core/render/dialogs/paperdoll_overrides.rs#L57)
+collects all removals from the current draw list before replanning. For three
+items ordered A, B, C, if B removes A and C removes B, the pass removes both A
+and B even though B no longer survives to cover A. This conflicts with the
+module's stated rule that a taken-off item is not worn. The rule format permits
+user-defined overlapping covers; whether bundled rules encounter this case is
+not established. Both the 3D planner and the
+[gump planner](../../dynamapper/src/core/render/dialogs/gump.rs#L1609) use this
+policy in separately implemented remove/replan loops.
+
+**Follow-up:** define precedence for overlapping covers, then share the policy
+and add a three-layer regression for both representations. Preserve their
+different frame sources, stored decisions and user override semantics.
+
+### D12 — Shared image-background policy is copied across UI frameworks
+
+Dynamapper's [background control](../../dynamapper/src/core/render/dialogs/image_background.rs#L1)
+closely duplicates the active `uot-gui` implementation. The copy is deliberate:
+`uot-gui` brings in eframe whereas Dynamapper uses bevy_egui. Persisted
+`ImageBackground` and `EnhancedPaperdoll` types are also imported by settings
+from dialog-owned modules. The EC paperdoll adapter, alpha picking, override
+menus and test-only measurement code all have active consumers or explicit
+test roles and should not be classified as dead.
+
+**Follow-up:** consider shared framework-neutral policy or an egui-only control
+without adding an unnecessary eframe dependency, and move persisted types to a
+domain/settings boundary if useful. Preserve each application's existing
+serialization, frame planning and pick behavior.
