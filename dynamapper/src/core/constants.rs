@@ -45,16 +45,28 @@ pub fn valid_asset_dir() -> PathBuf {
 /// its own source/asset files (which used to trigger a rebuild+relink and keep
 /// `git status` dirty). `assets/` holds the defaults a cached value overrides.
 /// The directory is created on demand.
+///
+/// Tests get an empty directory of their own instead, one per test process, so they never read or rewrite (a
+/// migration rewrites at once) the settings the user saved.
 pub fn valid_cache_dir() -> PathBuf {
-    let asset_dir = valid_asset_dir();
-    let base = asset_dir
-        .parent()
-        .map(PathBuf::from)
-        .unwrap_or_else(|| PathBuf::from("."));
-    let cache = base.join("cache");
+    #[cfg(not(test))]
+    let cache = {
+        let asset_dir = valid_asset_dir();
+        let base = asset_dir
+            .parent()
+            .map(PathBuf::from)
+            .unwrap_or_else(|| PathBuf::from("."));
+        base.join("cache")
+    };
+    #[cfg(test)]
+    let cache = std::env::temp_dir().join(format!("{TEST_CACHE_DIR_PREFIX}{}", std::process::id()));
     let _ = std::fs::create_dir_all(&cache);
     cache
 }
+
+/// The tests' cache directory, `<temp dir>/<prefix><process id>`.
+#[cfg(test)]
+const TEST_CACHE_DIR_PREFIX: &str = "dynamapper-test-cache-";
 
 pub const ASSET_FOLDER: &str = "assets/";
 
