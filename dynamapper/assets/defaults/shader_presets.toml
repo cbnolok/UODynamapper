@@ -1148,10 +1148,13 @@ elevation_degrees = 45.0
 # --- UOD-PAINTERLY PRESETS ---
 # ------------------
 # Dynamapper's own painterly KR look: the KR content with every effect enabled. These were the KR-like
-# presets until KR-like became the faithful client look; the values are unchanged but specular_strength. Since
-# land shading follows the camera's view direction, the sun behind the scene mirrors into the camera from all flat
-# land, so the former 0.02..0.04 laid a grey sheen over it: each time of day now has the largest value that keeps
-# the sheen faint (under 1% of the pixels changed by more than 4 levels, with EC and CC land).
+# presets until KR-like became the faithful client look; the values are unchanged but specular_strength and the
+# morning and afternoon vibrance. Since land shading follows the camera's view direction, the sun behind the scene
+# mirrors into the camera from all flat land, so the former 0.02..0.04 laid a grey sheen over it: each time of day
+# now has the largest value that keeps the sheen faint (under 1% of the pixels changed by more than 4 levels, with EC
+# and CC land).
+# The vibrance (grade_extra's first value) of the morning and afternoon, once 0.38 and 0.45, turned the desert sand
+# orange: 0.21 and 0.25 bring its chroma down by about a quarter while grass and rock change little.
 
 [painterly.morning]
 global_lighting = 1.04
@@ -1208,7 +1211,7 @@ ambient_strength = 0.24
 grade_warm_color = [1.08, 0.98, 0.9]
 grade_cool_color = [0.82, 0.95, 1.05]
 grade_params = [0.9, 0.15, 0.35, 1.0]
-grade_extra = [0.38, 1.12, 1.10, 0.75]
+grade_extra = [0.21, 1.12, 1.10, 0.75]
 gloom_params = [0.16, 0.006, 0.52]
 fog_color = [0.035, 0.045, 0.060, 0.30]
 fog_params = [0.040, 0.012, 0.55, 0.16]
@@ -1288,7 +1291,7 @@ ambient_strength = 0.25
 grade_warm_color = [1.08, 0.98, 0.9]
 grade_cool_color = [0.82, 0.95, 1.05]
 grade_params = [1.0, 0.15, 0.4, 1.0]
-grade_extra = [0.45, 1.14, 1.12, 0.80]
+grade_extra = [0.25, 1.14, 1.12, 0.80]
 gloom_params = [0.14, 0.005, 0.50]
 fog_color = [0.040, 0.050, 0.065, 0.28]
 fog_params = [0.035, 0.010, 0.50, 0.14]
