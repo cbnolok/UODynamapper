@@ -1113,7 +1113,10 @@ elevation_degrees = 45.0
 # --- UOD-PAINTERLY PRESETS ---
 # ------------------
 # Dynamapper's own painterly KR look: the KR content with every effect enabled. These were the KR-like
-# presets until KR-like became the faithful client look; the values are unchanged.
+# presets until KR-like became the faithful client look; the values are unchanged but specular_strength. Since
+# land shading follows the camera's view direction, the sun behind the scene mirrors into the camera from all flat
+# land, so the former 0.02..0.04 laid a grey sheen over it: each time of day now has the largest value that keeps
+# the sheen faint (under 1% of the pixels changed by more than 4 levels, with EC and CC land).
 
 [painterly.morning]
 global_lighting = 1.04
@@ -1179,7 +1182,7 @@ fog_night_color = [0.010, 0.014, 0.024, 0.25]
 enable_bent = 1
 terrain_shading_model = 0
 diffuse_strength = 1.28
-specular_strength = 0.035
+specular_strength = 0.0015
 rim_strength = 0.13
 fill_strength = 0.32
 sharpness_factor = 2.0
@@ -1257,7 +1260,7 @@ fog_night_color = [0.012, 0.016, 0.026, 0.22]
 enable_bent = 1
 terrain_shading_model = 0
 diffuse_strength = 1.35
-specular_strength = 0.04
+specular_strength = 0.001
 rim_strength = 0.15
 fill_strength = 0.34
 sharpness_factor = 2.0
@@ -1335,7 +1338,7 @@ fog_night_color = [0.006, 0.008, 0.018, 0.55]
 enable_bent = 1
 terrain_shading_model = 0
 diffuse_strength = 0.62
-specular_strength = 0.025
+specular_strength = 0.0025
 rim_strength = 0.16
 fill_strength = 0.22
 sharpness_factor = 2.0
@@ -1413,7 +1416,7 @@ fog_night_color = [0.004, 0.006, 0.014, 0.60]
 enable_bent = 1
 terrain_shading_model = 0
 diffuse_strength = 0.54
-specular_strength = 0.02
+specular_strength = 0.003
 rim_strength = 0.11
 fill_strength = 0.18
 sharpness_factor = 2.0

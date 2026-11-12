@@ -158,6 +158,29 @@ fn kr_shadow_mottle_lit_reach(strength: f32) -> f32 {
   return smoothstep(KR_SHADOW_MOTTLE_KNEE, KR_SHADOW_MOTTLE_STRENGTH_MAX, strength) * KR_SHADOW_MOTTLE_LIT_REACH;
 }
 
+// KR land rim: a light on the slopes the camera sees at a grazing angle, those turned away from it. The grazing is
+// measured from flat ground, which the camera sees at a fixed slant (N·V 0.58 for the orthographic camera): 0 on
+// flat ground and on slopes facing the camera, 1 on land seen edge-on, raised to the rim power. In full shade (N·L 0)
+// the rim has full weight; with more sun it fades to KR_RIM_SUNLIT_WEIGHT, reached at N·L KR_RIM_SUN_FADE_END. Under
+// a sun behind the scene, as UOD-Painterly's, the slopes turned away from the camera face the sun, so a rim gated
+// to the shade alone would light almost no land.
+const KR_RIM_SUNLIT_WEIGHT: f32 = 0.2;
+const KR_RIM_SUN_FADE_END: f32 = 0.35;
+// Flat ground seen from at least this close to edge-on still counts as facing the camera, so a camera near the
+// horizon does not turn all land into rim.
+const KR_RIM_MIN_GROUND_FACING: f32 = 0.1;
+
+// How far land is turned away from the camera, from 0 (as flat ground or more toward it) to 1 (edge-on).
+fn kr_rim_grazing(N: vec3<f32>, V: vec3<f32>) -> f32 {
+  let ground_facing = max(V.y, KR_RIM_MIN_GROUND_FACING);
+  return clamp(1.0 - dot(normalize(N), V) / ground_facing, 0.0, 1.0);
+}
+
+// How much of the rim land gets for its sun exposure N·L.
+fn kr_rim_sun_weight(n_dot_l: f32) -> f32 {
+  return mix(1.0, KR_RIM_SUNLIT_WEIGHT, smoothstep(0.0, KR_RIM_SUN_FADE_END, n_dot_l));
+}
+
 // Stronger style: warm key tint, full rim with color, richer gloom.
 fn shade_mode2_kr_fragment(base_albedo_in: vec3<f32>,
                            world_pos: vec3<f32>, Nw: vec3<f32>, V: vec3<f32>, L: vec3<f32>,
@@ -224,9 +247,9 @@ fn shade_mode2_kr_fragment(base_albedo_in: vec3<f32>,
   // Rim (colored + neutral, headroom-gated)
   if (rim_strength > 0.001) {
     let rim_power = max(0.1, land_light.rim_color.a);
-    let rim_raw   = get_rim(Nw, V, rim_power);
+    let rim_raw   = pow(kr_rim_grazing(Nw, V), rim_power);
     let NdotL     = max(dot(normalize(Nw), normalize(L)), 0.0);
-    let rim_vis   = rim_raw * (1.0 - smoothstep(0.0, 0.35, NdotL));
+    let rim_vis   = rim_raw * kr_rim_sun_weight(NdotL);
     headroom = max(0.0, 1.0 - max(color.r, max(color.g, color.b)));
     let rim_neutral = min(headroom, rim_vis * rim_strength * 0.35);
     color += base_albedo_in * rim_neutral;
