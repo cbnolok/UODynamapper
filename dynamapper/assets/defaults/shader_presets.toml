@@ -84,6 +84,13 @@ default_preset = "classic.morning"
 #                     [0.012604, 0.017285, 0.153818] is the map's exact mean, so the map is the client's; another
 #                     colour scales the map's channels by colour / mean, keeping its cloud pattern.
 #
+# === [Client shadows] ===
+# client_shadows:    KR-like only, required there and refused elsewhere. true draws the KR client's static shadows
+#                    (its Show Shadows option): a black copy of each static, item and foliage sprite, leaning right
+#                    11.25 degrees from the ground below it, darkening what lies behind it by 0.25, at every time
+#                    of day and without stacking. It stands in for the shadow shape, contact and projected sprite
+#                    shadows, which KR-like keeps at 0.
+#
 # ------------------
 # --- CLASSIC PRESETS ---
 # ------------------
@@ -768,14 +775,14 @@ elevation_degrees = 60.50379
 # strength and colour. The light decals draw into the composite's light buffer, so they light only at night.
 # Land shades per vertex like the client (terrain_shading_model 1).
 # Switched to per-pixel, the land diffuse is still the client's half-Lambert: wrap 0.5 gives
-# (N.L + 1) / 2, white, strength 1. The sprite shadow settings (shadow shape, contact and projected shadows)
-# keep their earlier values until the client's static shadow is reproduced.
-# The sun is the client's terrain light, from the south at 45 degrees (azimuth 180, elevation 45); the
-# projected sprite shadows follow it.
+# (N.L + 1) / 2, white, strength 1. Statics, items and foliage cast the client's own shadow (client_shadows),
+# which does not follow the sun; the sprite shadow shape, contact and projected shadows are off.
+# The sun is the client's terrain light, from the south at 45 degrees (azimuth 180, elevation 45).
 # Land and sprite textures take the client's plain bilinear (texture_filter 1): no pixel-art remap, no blur.
 # The full-featured painterly rendering with all effects enabled is UOD-Painterly, below.
 
 [kr.morning]
+client_shadows = true
 [kr.morning.client_lighting]
 light_level = 0
 overlay_strength = 1.0
@@ -786,7 +793,7 @@ normal_mode = 0
 enable_blur = 0
 enable_linear_filtering = 1
 texture_filter = 1
-art_shadow_strength = 0.24
+art_shadow_strength = 0.0
 sharpening_amount = 0.0
 blur_strength = 0.28
 blur_radius = 0.005
@@ -805,15 +812,15 @@ art_highlight_strength = 0.0
 art_depth_tint_strength = 0.0
 enable_normal_maps = 0
 enable_art_fake_normals = 0
-art_contact_shadow_strength = 0.30
+art_contact_shadow_strength = 0.0
 kr_land_temperature_strength = 0.0
 kr_land_relief_shadow_strength = 0.0
 kr_land_shadow_mottle_strength = 0.0
 kr_land_material_contrast_strength = 0.0
 kr_art_temperature_strength = 0.0
 land_normal_map_strength = 0.45
-enable_art_projected_shadows = 1
-art_projected_shadow_strength = 0.22
+enable_art_projected_shadows = 0
+art_projected_shadow_strength = 0.0
 art_projected_shadow_length = 0.42
 art_projected_shadow_softness = 0.62
 art_mottle_strength = 0.0
@@ -858,6 +865,7 @@ azimuth_degrees = 180.0
 elevation_degrees = 45.0
 
 [kr.afternoon]
+client_shadows = true
 [kr.afternoon.client_lighting]
 light_level = 0
 overlay_strength = 1.0
@@ -868,7 +876,7 @@ normal_mode = 0
 enable_blur = 0
 enable_linear_filtering = 1
 texture_filter = 1
-art_shadow_strength = 0.26
+art_shadow_strength = 0.0
 sharpening_amount = 0.0
 blur_strength = 0.28
 blur_radius = 0.005
@@ -887,15 +895,15 @@ art_highlight_strength = 0.0
 art_depth_tint_strength = 0.0
 enable_normal_maps = 0
 enable_art_fake_normals = 0
-art_contact_shadow_strength = 0.34
+art_contact_shadow_strength = 0.0
 kr_land_temperature_strength = 0.0
 kr_land_relief_shadow_strength = 0.0
 kr_land_shadow_mottle_strength = 0.0
 kr_land_material_contrast_strength = 0.0
 kr_art_temperature_strength = 0.0
 land_normal_map_strength = 0.45
-enable_art_projected_shadows = 1
-art_projected_shadow_strength = 0.24
+enable_art_projected_shadows = 0
+art_projected_shadow_strength = 0.0
 art_projected_shadow_length = 0.44
 art_projected_shadow_softness = 0.62
 art_mottle_strength = 0.0
@@ -940,6 +948,7 @@ azimuth_degrees = 180.0
 elevation_degrees = 45.0
 
 [kr.night]
+client_shadows = true
 [kr.night.client_lighting]
 light_level = 10
 overlay_strength = 1.0
@@ -950,7 +959,7 @@ normal_mode = 0
 enable_blur = 0
 enable_linear_filtering = 1
 texture_filter = 1
-art_shadow_strength = 0.30
+art_shadow_strength = 0.0
 sharpening_amount = 0.0
 blur_strength = 0.28
 blur_radius = 0.005
@@ -969,15 +978,15 @@ art_highlight_strength = 0.0
 art_depth_tint_strength = 0.0
 enable_normal_maps = 0
 enable_art_fake_normals = 0
-art_contact_shadow_strength = 0.38
+art_contact_shadow_strength = 0.0
 kr_land_temperature_strength = 0.0
 kr_land_relief_shadow_strength = 0.0
 kr_land_shadow_mottle_strength = 0.0
 kr_land_material_contrast_strength = 0.0
 kr_art_temperature_strength = 0.0
 land_normal_map_strength = 0.45
-enable_art_projected_shadows = 1
-art_projected_shadow_strength = 0.18
+enable_art_projected_shadows = 0
+art_projected_shadow_strength = 0.0
 art_projected_shadow_length = 0.36
 art_projected_shadow_softness = 0.68
 art_mottle_strength = 0.0
@@ -1022,6 +1031,7 @@ azimuth_degrees = 180.0
 elevation_degrees = 45.0
 
 [kr.cave]
+client_shadows = true
 [kr.cave.client_lighting]
 light_level = 26
 overlay_strength = 1.0
@@ -1032,7 +1042,7 @@ normal_mode = 0
 enable_blur = 0
 enable_linear_filtering = 1
 texture_filter = 1
-art_shadow_strength = 0.34
+art_shadow_strength = 0.0
 sharpening_amount = 0.0
 blur_strength = 0.28
 blur_radius = 0.005
@@ -1051,15 +1061,15 @@ art_highlight_strength = 0.0
 art_depth_tint_strength = 0.0
 enable_normal_maps = 0
 enable_art_fake_normals = 0
-art_contact_shadow_strength = 0.42
+art_contact_shadow_strength = 0.0
 kr_land_temperature_strength = 0.0
 kr_land_relief_shadow_strength = 0.0
 kr_land_shadow_mottle_strength = 0.0
 kr_land_material_contrast_strength = 0.0
 kr_art_temperature_strength = 0.0
 land_normal_map_strength = 0.45
-enable_art_projected_shadows = 1
-art_projected_shadow_strength = 0.16
+enable_art_projected_shadows = 0
+art_projected_shadow_strength = 0.0
 art_projected_shadow_length = 0.28
 art_projected_shadow_softness = 0.74
 art_mottle_strength = 0.0

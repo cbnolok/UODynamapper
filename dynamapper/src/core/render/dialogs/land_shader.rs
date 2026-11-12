@@ -227,6 +227,7 @@ fn apply_render_preset(
     u.land_lighting = preset.land_lighting;
     u.global_lighting = preset_scene_multiplier(preset);
     u.client_lighting = preset.client_lighting;
+    u.client_shadows = preset.client_shadows;
     u.sun = preset.sun;
     u.active_preset = period.key(style.preset_group);
     u.dirty = true;
@@ -349,22 +350,22 @@ pub fn land_ui_system(
             if width >= THREE_COLUMN_MIN_WIDTH {
                 ui.columns(3, |columns| {
                     changed |= terrain_controls(&mut columns[0], &mut u, gates);
-                    changed |= standard_art_controls(&mut columns[1], &mut u.effects);
-                    changed |= stylized_art_controls(&mut columns[2], &mut u.effects);
+                    changed |= standard_art_controls(&mut columns[1], &mut u);
+                    changed |= stylized_art_controls(&mut columns[2], &mut u);
                 });
             } else if width >= TWO_COLUMN_MIN_WIDTH {
                 ui.columns(2, |columns| {
                     changed |= terrain_controls(&mut columns[0], &mut u, gates);
-                    changed |= standard_art_controls(&mut columns[1], &mut u.effects);
+                    changed |= standard_art_controls(&mut columns[1], &mut u);
                     columns[1].add_space(SECTION_SPACING);
-                    changed |= stylized_art_controls(&mut columns[1], &mut u.effects);
+                    changed |= stylized_art_controls(&mut columns[1], &mut u);
                 });
             } else {
                 changed |= terrain_controls(ui, &mut u, gates);
                 ui.add_space(SECTION_SPACING);
-                changed |= standard_art_controls(ui, &mut u.effects);
+                changed |= standard_art_controls(ui, &mut u);
                 ui.add_space(SECTION_SPACING);
-                changed |= stylized_art_controls(ui, &mut u.effects);
+                changed |= stylized_art_controls(ui, &mut u);
             }
 
             if changed {
@@ -1142,20 +1143,37 @@ fn terrain_controls(ui: &mut egui::Ui, u: &mut UniformState, gates: RenderStyleG
     changed
 }
 
-fn standard_art_controls(ui: &mut egui::Ui, effects: &mut LandEffectsUniform) -> bool {
+fn standard_art_controls(ui: &mut egui::Ui, u: &mut UniformState) -> bool {
     section_header(ui, "Standard art", "Static art sprites.");
-    let mut changed = slider_s(ui, "Shadow Shape", &mut effects.art_shadow_strength, 0.0..=1.0);
-    changed |= slider_s(ui, "Contact Shadows", &mut effects.art_contact_shadow_strength, 0.0..=1.0);
+    let mut changed = client_shadows_toggle(ui, &mut u.client_shadows);
+    // KR-like's client shadow replaces these sprite shadows.
+    let sprite_shadows = u.client_shadows.is_none();
+    let effects = &mut u.effects;
+    changed |= slider_en(ui, sprite_shadows, "Shadow Shape", &mut effects.art_shadow_strength, 0.0..=1.0);
+    changed |= slider_en(ui, sprite_shadows, "Contact Shadows", &mut effects.art_contact_shadow_strength, 0.0..=1.0);
     changed |= slider_s(ui, "Mottle", &mut effects.art_mottle_strength, 0.0..=1.5);
     changed |= slider_s(ui, "Light Catch", &mut effects.art_highlight_strength, 0.0..=1.0);
     changed |= slider_s(ui, "Atmosphere Tint", &mut effects.art_depth_tint_strength, 0.0..=1.0);
     changed
 }
 
-fn stylized_art_controls(ui: &mut egui::Ui, effects: &mut LandEffectsUniform) -> bool {
+/// KR-like's switch for the KR client's static shadows; nothing in the other styles.
+fn client_shadows_toggle(ui: &mut egui::Ui, client_shadows: &mut Option<bool>) -> bool {
+    let Some(enabled) = client_shadows.as_mut() else {
+        return false;
+    };
+    ui.checkbox(enabled, "Client Shadows")
+        .on_hover_text("The KR client's shadows of statics and items, leaning from their base (its Show Shadows option).")
+        .changed()
+}
+
+fn stylized_art_controls(ui: &mut egui::Ui, u: &mut UniformState) -> bool {
     section_header(ui, "KR-style art", "Static art sprites. Optional in every render style.");
+    // KR-like's client shadow replaces the projected shadows.
+    let sprite_shadows = u.client_shadows.is_none();
+    let effects = &mut u.effects;
     let mut changed = slider_s(ui, "Temperature", &mut effects.kr_art_temperature_strength, 0.0..=1.5);
-    changed |= toggle_slider(ui, true, "Projected Shadows", &mut effects.enable_art_projected_shadows, &mut effects.art_projected_shadow_strength, 0.0..=1.0);
+    changed |= toggle_slider(ui, sprite_shadows, "Projected Shadows", &mut effects.enable_art_projected_shadows, &mut effects.art_projected_shadow_strength, 0.0..=1.0);
     changed |= toggle_u32(ui, "Fake Normals", &mut effects.enable_art_fake_normals);
     changed
 }
@@ -1324,6 +1342,7 @@ mod tests {
             land_lighting: LandLightingUniforms::default(),
             global_lighting: 1.0,
             client_lighting: None,
+            client_shadows: None,
             sun: SunAngles::default(),
             dirty: false,
             saved_snapshot: None,
@@ -1335,6 +1354,7 @@ mod tests {
         LandMaterialUniformsPresets {
             global_lighting: Some(global_lighting),
             client_lighting: None,
+            client_shadows: None,
             effects: LandEffectsUniform::default(),
             lighting: GlobalLightingUniforms::default(),
             land_lighting: LandLightingUniforms::default(),
@@ -1373,6 +1393,7 @@ mod tests {
         let preset = LandMaterialUniformsPresets {
             global_lighting: Some(0.75),
             client_lighting: None,
+            client_shadows: None,
             effects: LandEffectsUniform {
                 shading_mode: 2,
                 post_process_profile: 2,

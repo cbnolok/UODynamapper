@@ -38,6 +38,12 @@ pub fn preset_group_uses_client_lighting(group: &str) -> bool {
     matches!(group, KR_PRESET_GROUP | ENHANCED_PRESET_GROUP)
 }
 
+/// KR-like draws the KR client's static shadows (`client_shadows`) in place of the projected and contact sprite
+/// shadows; the Enhanced client draws none for statics, and Classic and UOD-Painterly keep their own.
+pub fn preset_group_uses_client_shadows(group: &str) -> bool {
+    group == KR_PRESET_GROUP
+}
+
 // Holds current values, a dirty flag, a saved snapshot for undo, and the active
 // preset name (e.g. "kr.morning") so we know which mode × time to save into.
 #[derive(Resource, Clone)]
@@ -49,6 +55,8 @@ pub struct UniformState {
                                      // CLIENT_LIT_SCENE_MULTIPLIER while `client_lighting` is set
     /// The clients' night composite: `Some` in KR-like and Enhanced, which have no `global_lighting`.
     pub client_lighting: Option<ClientNightLighting>,
+    /// The KR client's static shadows on or off: `Some` in KR-like only.
+    pub client_shadows: Option<bool>,
     pub sun: SunAngles,              // static light direction (maps to scene.light_direction)
     pub dirty: bool,                 // when true, push to GPU materials this frame
     /// Snapshot of the last values saved to disk (for undo). `None` until first save.
@@ -66,6 +74,7 @@ pub struct UniformSnapshot {
     pub land_lighting: LandLightingUniforms,
     pub global_lighting: f32,
     pub client_lighting: Option<ClientNightLighting>,
+    pub client_shadows: Option<bool>,
     pub sun: SunAngles,
 }
 
@@ -85,6 +94,7 @@ impl UniformState {
             land_lighting: self.land_lighting,
             global_lighting: self.global_lighting,
             client_lighting: self.client_lighting,
+            client_shadows: self.client_shadows,
             sun: self.sun,
         }
     }
@@ -96,6 +106,7 @@ impl UniformState {
         self.land_lighting = snap.land_lighting;
         self.global_lighting = snap.global_lighting;
         self.client_lighting = snap.client_lighting;
+        self.client_shadows = snap.client_shadows;
         self.sun = snap.sun;
         self.dirty = true;
     }
@@ -187,7 +198,7 @@ fn clamp_client_lighting(lighting: ClientNightLighting) -> ClientNightLighting {
 }
 
 /// A hand-written preset file must give KR-like and Enhanced `client_lighting` and no `global_lighting`, and the
-/// other groups the reverse, with every value in range.
+/// other groups the reverse, with every value in range; and KR-like, alone, `client_shadows`.
 fn validate_preset_lighting(presets: &LandShaderModePresets) -> eyre::Result<()> {
     let mut problems = Vec::new();
     for (group, period, slot) in preset_slots(presets) {
@@ -212,6 +223,13 @@ fn validate_preset_lighting(presets: &LandShaderModePresets) -> eyre::Result<()>
                 problems.push(format!("missing `{key}.global_lighting`"));
             }
         }
+        match (preset_group_uses_client_shadows(group), slot.client_shadows) {
+            (true, None) => problems.push(format!("missing `{key}.client_shadows`")),
+            (false, Some(_)) => {
+                problems.push(format!("`{key}.client_shadows` is not a setting there: only KR-like has the KR client's shadows"))
+            }
+            _ => {}
+        }
     }
     if problems.is_empty() {
         Ok(())
@@ -221,7 +239,8 @@ fn validate_preset_lighting(presets: &LandShaderModePresets) -> eyre::Result<()>
 }
 
 /// Bring a leniently read land.toml in line with `validate_preset_lighting`: drop the dimming setting a group does not
-/// use, fill the one it lacks from `defaults` and clamp out-of-range values. Returns a warning per change.
+/// use, fill the one it lacks from `defaults` and clamp out-of-range values; likewise `client_shadows`. Returns a
+/// warning per change.
 ///
 /// A land.toml saved before the night composite keeps `global_lighting` in KR-like and Enhanced; it is dropped there.
 fn normalize_cached_preset_lighting(
@@ -264,6 +283,16 @@ fn normalize_cached_preset_lighting(
                 slot.global_lighting = default_slot.global_lighting;
                 warnings.push(format!("{file_name}: missing key `{key}.global_lighting` filled from the default"));
             }
+        }
+        if preset_group_uses_client_shadows(group) {
+            if slot.client_shadows.is_none() {
+                slot.client_shadows = default_slot.client_shadows;
+                warnings.push(format!("{file_name}: missing key `{key}.client_shadows` filled from the default"));
+            }
+        } else if slot.client_shadows.take().is_some() {
+            warnings.push(format!(
+                "{file_name}: `{key}.client_shadows` dropped: only KR-like has the KR client's shadows"
+            ));
         }
     }
     warnings
@@ -406,6 +435,7 @@ pub fn store_active_preset(presets: &mut LandShaderModePresets, u: &UniformState
         // A slot keeps the dimming setting its style uses: the light level, or the scene multiplier.
         slot.global_lighting = u.client_lighting.is_none().then_some(u.global_lighting);
         slot.client_lighting = u.client_lighting;
+        slot.client_shadows = u.client_shadows;
         slot.sun = u.sun;
     }
 
@@ -502,6 +532,7 @@ fn clone_slot(s: &LandMaterialUniformsPresets) -> LandMaterialUniformsPresets {
     LandMaterialUniformsPresets {
         global_lighting: s.global_lighting,
         client_lighting: s.client_lighting,
+        client_shadows: s.client_shadows,
         effects: s.effects,
         lighting: s.lighting,
         land_lighting: s.land_lighting,
@@ -537,6 +568,7 @@ fn uniform_state_from_presets(source: &LandShaderModePresets) -> UniformState {
         land_lighting: preset.land_lighting,
         global_lighting,
         client_lighting: preset.client_lighting,
+        client_shadows: preset.client_shadows,
         sun: preset.sun,
         dirty: true,
         saved_snapshot: Some(UniformSnapshot {
@@ -545,6 +577,7 @@ fn uniform_state_from_presets(source: &LandShaderModePresets) -> UniformState {
             land_lighting: preset.land_lighting,
             global_lighting,
             client_lighting: preset.client_lighting,
+            client_shadows: preset.client_shadows,
             sun: preset.sun,
         }),
         active_preset: preset_key,
@@ -565,6 +598,7 @@ mod tests {
         LandMaterialUniformsPresets {
             global_lighting: Some(global_lighting),
             client_lighting: None,
+            client_shadows: None,
             effects: LandEffectsUniform {
                 shading_mode: mode,
                 ..Default::default()
@@ -797,6 +831,54 @@ mod tests {
         presets.kr.cave.client_lighting.as_mut().unwrap().light_level = MAX_CLIENT_LIGHT_LEVEL + 1;
         let error = validate_preset_lighting(&presets).expect_err("out of range").to_string();
         assert!(error.contains("`kr.cave.client_lighting`: light_level 31 is above 30"), "{error}");
+    }
+
+    #[test]
+    fn only_kr_like_has_the_client_shadows_and_draws_them_alone() {
+        for (name, text) in [("shader_presets.toml", BUNDLED_FACTORY_PRESETS), ("land.toml", BUNDLED_LAND_SETTINGS)] {
+            let presets = parse(text).expect("bundled");
+            for (group, slots) in [
+                (CLASSIC_PRESET_GROUP, &presets.classic),
+                (ENHANCED_PRESET_GROUP, &presets.enhanced),
+                (KR_PRESET_GROUP, &presets.kr),
+                (PAINTERLY_PRESET_GROUP, &presets.painterly),
+            ] {
+                for slot in [&slots.morning, &slots.afternoon, &slots.night, &slots.cave] {
+                    let expected = preset_group_uses_client_shadows(group).then_some(true);
+                    assert_eq!(slot.client_shadows, expected, "{name} {group}");
+                }
+            }
+            // KR-like's client shadow replaces its sprite shadows.
+            for slot in [&presets.kr.morning, &presets.kr.afternoon, &presets.kr.night, &presets.kr.cave] {
+                let effects = &slot.effects;
+                assert_eq!(effects.art_shadow_strength, 0.0, "{name}");
+                assert_eq!(effects.art_contact_shadow_strength, 0.0, "{name}");
+                assert_eq!(effects.enable_art_projected_shadows, 0, "{name}");
+                assert_eq!(effects.art_projected_shadow_strength, 0.0, "{name}");
+            }
+        }
+
+        let mut presets = parse(BUNDLED_FACTORY_PRESETS).expect("bundled");
+        presets.kr.night.client_shadows = None;
+        presets.painterly.morning.client_shadows = Some(true);
+        let error = validate_preset_lighting(&presets).expect_err("misplaced client shadows").to_string();
+        assert!(error.contains("missing `kr.night.client_shadows`"), "{error}");
+        assert!(error.contains("`painterly.morning.client_shadows` is not a setting there"), "{error}");
+
+        let bundled = parse(BUNDLED_LAND_SETTINGS).expect("bundled");
+        let mut cached = clone_presets(&bundled);
+        cached.kr.cave.client_shadows = None;
+        cached.classic.night.client_shadows = Some(false);
+        let warnings = normalize_cached_preset_lighting(&mut cached, &bundled, "land.toml");
+        assert_eq!(
+            warnings,
+            [
+                "land.toml: `classic.night.client_shadows` dropped: only KR-like has the KR client's shadows",
+                "land.toml: missing key `kr.cave.client_shadows` filled from the default",
+            ]
+        );
+        assert_eq!(cached.kr.cave.client_shadows, Some(true));
+        assert_eq!(cached.classic.night.client_shadows, None);
     }
 
     #[test]

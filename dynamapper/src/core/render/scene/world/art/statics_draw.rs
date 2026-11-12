@@ -18,10 +18,14 @@ use crate::core::uo_files_loader::{
 };
 use crate::prelude::*;
 use bevy::camera::visibility::NoFrustumCulling;
-use bevy::pbr::{ExtendedMaterial, MaterialExtension};
+use bevy::mesh::MeshVertexBufferLayoutRef;
+use bevy::pbr::{ExtendedMaterial, MaterialExtension, MaterialExtensionKey, MaterialExtensionPipeline};
 use bevy::prelude::*;
 use bevy::render::render_resource::TextureFormat;
-use bevy::render::render_resource::{AsBindGroup, PrimitiveTopology, ShaderType};
+use bevy::render::render_resource::{
+    AsBindGroup, BlendComponent, BlendFactor, BlendOperation, BlendState, ColorWrites, DepthBiasState,
+    PrimitiveTopology, RenderPipelineDescriptor, ShaderType, SpecializedMeshPipelineError,
+};
 use bevy::render::storage::ShaderBuffer;
 use std::collections::HashMap;
 use udd_assets::tex_art_cc::PagePixelFormat;
@@ -41,12 +45,48 @@ pub struct SpriteParams {
 const PASS_MODE_OPAQUE: u32 = 0;
 const PASS_MODE_TRANSPARENT: u32 = 1;
 const PASS_MODE_SHADOW: u32 = 2;
+/// The KR client's static shadow (art/client_shadow.wesl), drawn by the shadow material in place of the projected
+/// shadow while `UniformState::client_shadows` is on.
+const PASS_MODE_CLIENT_SHADOW: u32 = 3;
 const ART_PROJECTED_SHADOW_DEPTH_BIAS: f32 = 64.0;
+/// The client's shadow buffer S starts at 1 and each shadow texel multiplies it by 1 - alpha
+/// (`UOSpriteShaderShadow` into a white target with multiplicative blending). Dynamapper keeps S in the main
+/// target's alpha, which the opaque and translucent art and the land leave at 1 (masked art at 0.5 or more, which the
+/// composite cannot tell from 1): `S = S * (1 - a)`, with the colour untouched. The client night composite then
+/// darkens by `clamp(S + 1 - s)` (`world::effects::client_night`).
+const CLIENT_SHADOW_BUFFER_BLEND: BlendState = BlendState {
+    color: BlendComponent::REPLACE,
+    alpha: BlendComponent {
+        src_factor: BlendFactor::Zero,
+        dst_factor: BlendFactor::OneMinusSrcAlpha,
+        operation: BlendOperation::Add,
+    },
+};
+
+/// The shadow material's pass for the active preset: the KR client's shadow where it is on, else the projected
+/// shadow (which the presets switch on and off through `enable_art_projected_shadows`).
+fn shadow_pass_mode(uniform_state: &UniformState) -> u32 {
+    if uniform_state.client_shadows == Some(true) { PASS_MODE_CLIENT_SHADOW } else { PASS_MODE_SHADOW }
+}
 
 pub type ArtSpriteMaterial = ExtendedMaterial<StandardMaterial, ArtSpriteMaterialExtension>;
 pub type ArtGroundMaterial = ExtendedMaterial<StandardMaterial, ArtGroundMaterialExtension>;
 
+/// The pipeline variant of an art sprite material: the client shadow pass writes only the shadow buffer.
+#[repr(C)]
+#[derive(Copy, Clone, PartialEq, Eq, Hash)]
+pub struct ArtSpriteMaterialKey {
+    client_shadow: bool,
+}
+
+impl From<&ArtSpriteMaterialExtension> for ArtSpriteMaterialKey {
+    fn from(material: &ArtSpriteMaterialExtension) -> Self {
+        Self { client_shadow: material.params.pass_mode == PASS_MODE_CLIENT_SHADOW }
+    }
+}
+
 #[derive(Asset, AsBindGroup, TypePath, Clone)]
+#[bind_group_data(ArtSpriteMaterialKey)]
 pub struct ArtSpriteMaterialExtension {
     #[texture(101, dimension = "2d_array", visibility(vertex, fragment))]
     #[sampler(100, visibility(vertex, fragment))]
@@ -186,6 +226,28 @@ impl MaterialExtension for ArtSpriteMaterialExtension {
     }
     fn fragment_shader() -> bevy::shader::ShaderRef {
         "shaders/world/art/main.wesl".into()
+    }
+
+    fn specialize(
+        _pipeline: &MaterialExtensionPipeline,
+        descriptor: &mut RenderPipelineDescriptor,
+        _layout: &MeshVertexBufferLayoutRef,
+        key: MaterialExtensionKey<Self>,
+    ) -> Result<(), SpecializedMeshPipelineError> {
+        if !key.bind_group_data.client_shadow {
+            return Ok(());
+        }
+        if let Some(fragment) = descriptor.fragment.as_mut() {
+            for target in fragment.targets.iter_mut().flatten() {
+                target.blend = Some(CLIENT_SHADOW_BUFFER_BLEND);
+                target.write_mask = ColorWrites::ALPHA;
+            }
+        }
+        // The fragment writes its own depth, the caster's (client_shadow.wesl); no projected-shadow bias.
+        if let Some(depth_stencil) = descriptor.depth_stencil.as_mut() {
+            depth_stencil.bias = DepthBiasState::default();
+        }
+        Ok(())
     }
 }
 
@@ -756,6 +818,9 @@ pub fn sys_setup_art_page_atlas(
         flat_quad: 0,
         texture_stretch: 0.0,
         material_item_id: 0,
+        client_shadow_flags: 0,
+        client_shadow_height: 0.0,
+        _pad_client_shadow: [0; 2],
         local_light_rgba: [0.0, 0.0, 0.0, 0.0],
         color_rgba: [0.0, 0.0, 0.0, 0.0],
     }]);
@@ -1593,6 +1658,18 @@ pub fn sys_update_art_materials(
         }
     }
 
+    if let Some(assets) = sprite_assets.as_ref() {
+        let pass_mode = shadow_pass_mode(&uniform_state);
+        let stale = materials
+            .get(&assets.shadow_material)
+            .is_some_and(|mat| mat.extension.params.pass_mode != pass_mode);
+        if stale {
+            if let Some(mut mat) = materials.get_mut(&assets.shadow_material) {
+                mat.extension.params.pass_mode = pass_mode;
+            }
+        }
+    }
+
     if !uniforms_changed && !zoom_changed && !client_view_scale_changed {
         return;
     }
@@ -1797,6 +1874,35 @@ mod tests {
         assert_eq!(hue_enabled, 0);
         assert_eq!(image.texture_descriptor.size.width, udd_assets::hues::HUES_TEXTURE_WIDTH);
         assert_eq!(image.texture_descriptor.size.height, udd_assets::hues::HUES_TEXTURE_HEIGHT);
+    }
+
+    #[test]
+    fn the_shadow_material_draws_the_client_shadow_only_where_it_is_on() {
+        let mut u = UniformState {
+            effects: world::land::mesh_material::LandEffectsUniform::default(),
+            lighting: world::land::mesh_material::GlobalLightingUniforms::default(),
+            land_lighting: world::land::mesh_material::LandLightingUniforms::default(),
+            global_lighting: 1.0,
+            client_lighting: None,
+            client_shadows: None,
+            sun: world::land::mesh_material::SunAngles::default(),
+            dirty: false,
+            saved_snapshot: None,
+            active_preset: String::new(),
+        };
+        assert_eq!(shadow_pass_mode(&u), PASS_MODE_SHADOW);
+        u.client_shadows = Some(false);
+        assert_eq!(shadow_pass_mode(&u), PASS_MODE_SHADOW);
+        u.client_shadows = Some(true);
+        assert_eq!(shadow_pass_mode(&u), PASS_MODE_CLIENT_SHADOW);
+    }
+
+    #[test]
+    fn the_client_shadow_multiplies_the_buffer_by_one_minus_the_texel_alpha() {
+        // S' = src.a * Zero + S * (1 - src.a); the colour passes through untouched (and is masked off anyway).
+        assert_eq!(CLIENT_SHADOW_BUFFER_BLEND.alpha.src_factor, BlendFactor::Zero);
+        assert_eq!(CLIENT_SHADOW_BUFFER_BLEND.alpha.dst_factor, BlendFactor::OneMinusSrcAlpha);
+        assert_eq!(CLIENT_SHADOW_BUFFER_BLEND.alpha.operation, BlendOperation::Add);
     }
 
     #[test]

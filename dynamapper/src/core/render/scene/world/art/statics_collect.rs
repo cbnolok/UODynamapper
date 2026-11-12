@@ -13,7 +13,7 @@ use crate::core::render::scene::SceneStateData;
 use crate::core::statics::{LazyStaticsStore, StaticsStoreRes};
 use crate::core::texture_cache::art::{GroundArtPageAtlas, ResolvedArtSprite, SpriteArtPageAtlas};
 use crate::core::uo_files_loader::{
-    TexArtCcPackageRes, TexArtEcPackageRes, TexLandEcPackageRes, TileMetaPackageRes, TexAuxEcPackageRes,
+    MapPlanesRes, TexArtCcPackageRes, TexArtEcPackageRes, TexLandEcPackageRes, TileMetaPackageRes, TexAuxEcPackageRes,
 };
 use crate::prelude::*;
 use bevy::prelude::*;
@@ -34,6 +34,19 @@ const STATIC_ART_Y_BIAS: f32 = 0.002;
 const GROUND_ART_Y_BIAS: f32 = STATIC_ART_Y_BIAS;
 // The original 0x45a080 geometry constructor tests this TileArt flag.
 const EC_CAMERA_QUAD_FLAG: u64 = uocf::enhanced::tileart::TaeFlag::Rotated.bits();
+
+// The KR client's static shadow (research P3.4; art/client_shadow.wesl). `SpriteInstance::client_shadow_flags` bits,
+// kept in sync with client_shadow.wesl.
+pub(crate) const CLIENT_SHADOW_FLAG_CASTS: u32 = 1;
+pub(crate) const CLIENT_SHADOW_FLAG_WALL: u32 = 1 << 1;
+/// Tileart flags that cast no shadow: the client tests 0x10004200 (Surface, Roof and its bit 14, which is EC's
+/// Rotated; our tilemeta keeps EC's 64-bit layout, where bit 14 is the classic ArticleA) and EC adds NoShadow.
+const CLIENT_SHADOW_EXCLUDED_FLAGS: u64 = uocf::enhanced::tileart::TaeFlag::Surface.bits()
+    | uocf::enhanced::tileart::TaeFlag::Roof.bits()
+    | uocf::enhanced::tileart::TaeFlag::Rotated.bits()
+    | uocf::enhanced::tileart::TaeFlag::NoShadow.bits();
+/// The client's ground under a caster (0x00587770) takes a Surface or Bridge top at most this far above the caster.
+const CLIENT_SHADOW_GROUND_REACH_Z: i32 = 4;
 const EC_STATIC_TILE_TRANSLATION_X: f32 = 0.5;
 const EC_STATIC_TILE_TRANSLATION_Z: f32 = 1.5;
 // CC billboard anchor: feet-center at the tile's near (south) vertex = cell corner (X+1, Z+1).
@@ -974,6 +987,11 @@ pub struct SpriteInstance {
     pub flat_quad: u32,
     pub texture_stretch: f32,
     pub material_item_id: u32,
+    /// The KR client's static shadow: `CLIENT_SHADOW_FLAG_*` bits (art/client_shadow.wesl).
+    pub client_shadow_flags: u32,
+    /// The caster's height in UO z units above the client's ground below it; 0 takes the shadow's h = 0 branch.
+    pub client_shadow_height: f32,
+    pub _pad_client_shadow: [u32; 2],
     pub local_light_rgba: [f32; 4],
     pub color_rgba: [f32; 4], // for dot mode
 }
@@ -1746,6 +1764,7 @@ struct StaticCollectResources<'a> {
     multis: Option<&'a MultiDefinitionsRes>,
     static_lights: &'a super::static_lights::RenderStaticLightInstances,
     tile_atlas: &'a TileAtlas,
+    map_planes: Option<&'a MapPlanesRes>,
 }
 
 impl<'a> StaticCollectResources<'a> {
@@ -1779,6 +1798,9 @@ struct StaticTileRenderInfo<'a> {
     depth_class: StaticDepthClass,
     is_wet_flags: u32,
     base_world_y: f32,
+    client_shadow_flags: u32,
+    /// The tile's height in UO z units above the client's ground below it (`client_shadow_ground_z`).
+    client_shadow_height: f32,
 }
 
 #[derive(Default)]
@@ -1833,6 +1855,7 @@ fn static_collect_resources<'a>(
     multis_res: &'a Option<Res<MultiDefinitionsRes>>,
     static_lights: &'a super::static_lights::RenderStaticLightInstances,
     tile_atlas: &'a TileAtlas,
+    map_planes: &'a Option<Res<MapPlanesRes>>,
 ) -> StaticCollectResources<'a> {
     StaticCollectResources {
         tex_art_cc: tex_art_cc_res.as_ref().map(|res| &**res),
@@ -1843,6 +1866,7 @@ fn static_collect_resources<'a>(
         multis: multis_res.as_ref().map(|res| &**res),
         static_lights,
         tile_atlas,
+        map_planes: map_planes.as_ref().map(|res| &**res),
     }
 }
 
@@ -2071,6 +2095,10 @@ fn rebuild_static_chunk(
             };
 
             build.stats.source_tiles += tiles.len();
+            let block_surface_tops = client_shadow_surface_tops(
+                tiles.iter().map(|tile| static_cell_tile(gx, gy, *tile)),
+                resources.tilemeta_package(),
+            );
 
             for tile in tiles {
                 collect_static_render_tiles(
@@ -2081,11 +2109,27 @@ fn rebuild_static_chunk(
                     frame.show_hidden_multi_parts,
                     &mut build.render_tiles,
                 );
+                // A multi's own parts are the surfaces under its parts; a plain static sits on the block's statics.
+                let multi_surface_tops = if multi_id_from_static_graphic(tile.graphic).is_some() {
+                    client_shadow_surface_tops(build.render_tiles.iter().copied(), resources.tilemeta_package())
+                } else {
+                    Vec::new()
+                };
 
                 for render_tile_index in 0..build.render_tiles.len() {
                     let render_tile = build.render_tiles[render_tile_index];
+                    let cell = (render_tile.world_x as i32, render_tile.world_z as i32);
+                    let surface_tops = block_surface_tops.iter().chain(&multi_surface_tops)
+                        .filter(|top| top.0 == cell)
+                        .map(|top| top.1);
+                    let ground_z = client_shadow_ground_z(
+                        render_tile.z,
+                        static_land_z(resources.map_planes, frame.map_id, cell),
+                        surface_tops,
+                    );
                     emit_static_render_tile(
                         render_tile,
+                        ground_z,
                         frame,
                         resources,
                         sprite_atlas,
@@ -2111,6 +2155,7 @@ fn rebuild_static_chunk(
 
 fn emit_static_render_tile(
     render_tile: StaticRenderTile,
+    ground_z: i32,
     frame: StaticCollectFrameConfig,
     resources: StaticCollectResources<'_>,
     sprite_atlas: &mut SpriteArtPageAtlas,
@@ -2142,6 +2187,8 @@ fn emit_static_render_tile(
         depth_class: resolve_static_depth_class(tilemeta, renders_wet),
         is_wet_flags: u32::from(renders_wet),
         base_world_y: (render_tile.z as f32) * frame.height_scale,
+        client_shadow_flags: client_shadow_flags(tilemeta),
+        client_shadow_height: (i32::from(render_tile.z) - ground_z) as f32,
     };
 
     if frame.is_dot_mode {
@@ -2171,6 +2218,72 @@ fn emit_static_render_tile(
             }
         }
     }
+}
+
+/// A packed static's cell as a render tile, for the ground lookup.
+fn static_cell_tile(block_x: u32, block_y: u32, tile: uocf::classic::statics::PackedStaticTile) -> StaticRenderTile {
+    StaticRenderTile {
+        graphic: tile.graphic,
+        world_x: (block_x * MAP_STORAGE_BLOCK_TILE_DIM + u32::from(tile.x_offset())) as f32,
+        world_z: (block_y * MAP_STORAGE_BLOCK_TILE_DIM + u32::from(tile.y_offset())) as f32,
+        z: tile.z,
+        hue: tile.hue,
+    }
+}
+
+/// The tops of the Surface and Bridge tiles among `tiles`, by cell.
+fn client_shadow_surface_tops(
+    tiles: impl Iterator<Item = StaticRenderTile>,
+    tilemeta: Option<&udd_assets::tilemeta::TileMetaPackage>,
+) -> Vec<((i32, i32), i32)> {
+    use uocf::enhanced::tileart::TaeFlag;
+    let Some(tilemeta) = tilemeta else {
+        return Vec::new();
+    };
+    let ground_flags = TaeFlag::Surface.bits() | TaeFlag::Bridge.bits();
+    tiles
+        .filter_map(|tile| {
+            let meta = tilemeta.item_tile(u32::from(tile.graphic))?;
+            (meta.flags & ground_flags != 0).then(|| {
+                ((tile.world_x as i32, tile.world_z as i32), i32::from(tile.z) + i32::from(meta.height))
+            })
+        })
+        .collect()
+}
+
+/// The land z of a cell, while its map block is loaded.
+fn static_land_z(map_planes: Option<&MapPlanesRes>, map_id: u32, cell: (i32, i32)) -> Option<i8> {
+    use uocf::classic::map::{MapCell, MapCellCoords};
+    let plane = map_planes?.0.get(usize::try_from(map_id).ok()?)?.as_ref()?;
+    let coords = MapCellCoords { x: u32::try_from(cell.0).ok()?, y: u32::try_from(cell.1).ok()? };
+    let rel = MapCell::coords_in_block(&coords);
+    let block = plane.block_no_update(MapCell::coords_of_parent_block(&coords))?;
+    Some(block.cell(rel.x, rel.y).ok()?.z)
+}
+
+/// The client's ground under a shadow caster at `z` (0x00587770): the land z capped at `z`, or the top of a Surface or
+/// Bridge in the cell at most `CLIENT_SHADOW_GROUND_REACH_Z` above `z`, whichever is higher. While the land's block is
+/// not loaded, the land counts as level with the caster (a caster on the ground, h = 0).
+fn client_shadow_ground_z(z: i8, land_z: Option<i8>, surface_tops: impl Iterator<Item = i32>) -> i32 {
+    let z = i32::from(z);
+    let land = land_z.map_or(z, |land| i32::from(land).min(z));
+    surface_tops
+        .filter(|top| *top <= z + CLIENT_SHADOW_GROUND_REACH_Z)
+        .fold(land, i32::max)
+}
+
+/// `SpriteInstance::client_shadow_flags` for a tile: whether the KR client casts its shadow, and through the wall
+/// branch.
+fn client_shadow_flags(tilemeta: Option<&udd_assets::tilemeta::TileMetaItemTile>) -> u32 {
+    use uocf::enhanced::tileart::TaeFlag;
+    let Some(meta) = tilemeta else {
+        return 0;
+    };
+    if meta.flags & CLIENT_SHADOW_EXCLUDED_FLAGS != 0 {
+        return 0;
+    }
+    let wall = if meta.flags & TaeFlag::Wall.bits() != 0 { CLIENT_SHADOW_FLAG_WALL } else { 0 };
+    CLIENT_SHADOW_FLAG_CASTS | wall
 }
 
 fn emit_dot_static_tile(
@@ -2219,6 +2332,9 @@ fn emit_dot_static_tile(
         flat_quad: 0,
         texture_stretch: 0.0,
         material_item_id: 0,
+        client_shadow_flags: 0,
+        client_shadow_height: 0.0,
+        _pad_client_shadow: [0; 2],
         local_light_rgba,
         color_rgba: [
             color[2] as f32 / 255.0,
@@ -2534,6 +2650,9 @@ fn emit_billboard_static_instance(
         flat_quad: if ec_surface { if ec_static_camera_quad(info.tilemeta) { 3 } else { 2 } } else { 0 },
         texture_stretch,
         material_item_id: info.tile.graphic as u32,
+        client_shadow_flags: info.client_shadow_flags,
+        client_shadow_height: info.client_shadow_height,
+        _pad_client_shadow: [0; 2],
         local_light_rgba,
         color_rgba: [1.0, 1.0, 1.0, static_sprite_opacity(info.tilemeta, resolved.legacy_art && !ec_surface)],
     });
@@ -2608,6 +2727,9 @@ fn emit_cc_surface_like_flat_static_instance(
         flat_quad: 1,
         texture_stretch: 0.0,
         material_item_id: 0,
+        client_shadow_flags: info.client_shadow_flags,
+        client_shadow_height: info.client_shadow_height,
+        _pad_client_shadow: [0; 2],
         local_light_rgba,
         color_rgba: [1.0, 1.0, 1.0, static_sprite_opacity(info.tilemeta, resolved.legacy_art)],
     });
@@ -2775,6 +2897,7 @@ pub fn sys_collect_visible_statics(
     scene_state: Res<SceneStateData>,
     zoom: Res<RenderZoom>,
     multis_res: Option<Res<MultiDefinitionsRes>>,
+    map_planes: Option<Res<MapPlanesRes>>,
     mut outputs: (
         ResMut<RenderStaticInstances>,
         ResMut<RenderStaticLandInstances>,
@@ -2835,6 +2958,7 @@ pub fn sys_collect_visible_statics(
         &multis_res,
         &static_lights,
         &tile_atlas,
+        &map_planes,
     );
     let cache_config =
         static_chunk_cache_config(frame, &sprite_atlas, &ground_atlas, &static_lights, &tile_atlas);
@@ -2914,6 +3038,37 @@ mod tests {
         tile.flags = flags;
         tile.set_visual_kind(visual_kind);
         tile
+    }
+
+    #[test]
+    fn the_client_shadow_ground_is_the_land_or_a_surface_within_reach() {
+        const CASTER_Z: i8 = 20;
+        // The land below: the caster is that far above it.
+        assert_eq!(client_shadow_ground_z(CASTER_Z, Some(5), std::iter::empty()), 5);
+        // Land above the caster is capped at the caster: h = 0.
+        assert_eq!(client_shadow_ground_z(CASTER_Z, Some(30), std::iter::empty()), 20);
+        // A surface top up to 4 above the caster counts; one higher does not.
+        assert_eq!(client_shadow_ground_z(CASTER_Z, Some(5), [24].into_iter()), 24);
+        assert_eq!(client_shadow_ground_z(CASTER_Z, Some(5), [25].into_iter()), 5);
+        assert_eq!(client_shadow_ground_z(CASTER_Z, Some(5), [10, 18, 2].into_iter()), 18);
+        // While the land block is not loaded the caster stands on the ground.
+        assert_eq!(client_shadow_ground_z(CASTER_Z, None, std::iter::empty()), 20);
+    }
+
+    #[test]
+    fn the_client_shadow_casters_follow_the_tileart_flags() {
+        use udd_assets::tilemeta::TileMetaItemVisualKind;
+        use uocf::enhanced::tileart::TaeFlag;
+        let casts = |flags: u64| client_shadow_flags(Some(&item_tile_with_flags(flags, TileMetaItemVisualKind::RegularArt)));
+        assert_eq!(casts(0), CLIENT_SHADOW_FLAG_CASTS);
+        assert_eq!(casts(TaeFlag::Foliage.bits()), CLIENT_SHADOW_FLAG_CASTS);
+        assert_eq!(casts(TaeFlag::Wall.bits()), CLIENT_SHADOW_FLAG_CASTS | CLIENT_SHADOW_FLAG_WALL);
+        for excluded in [TaeFlag::Surface, TaeFlag::Roof, TaeFlag::Rotated, TaeFlag::NoShadow] {
+            assert_eq!(casts(excluded.bits() | TaeFlag::Wall.bits()), 0);
+        }
+        // Bit 14 is the classic ArticleA in our tilemeta, not KR's Rotated: it still casts.
+        assert_eq!(casts(TaeFlag::ArticleA.bits()), CLIENT_SHADOW_FLAG_CASTS);
+        assert_eq!(client_shadow_flags(None), 0);
     }
 
     fn texture_ref_with_role(
@@ -3863,6 +4018,9 @@ mod tests {
             flat_quad: 0,
             texture_stretch: 0.0,
             material_item_id: 0,
+            client_shadow_flags: 0,
+            client_shadow_height: 0.0,
+            _pad_client_shadow: [0; 2],
             local_light_rgba: [0.0; 4],
             color_rgba: [1.0, 1.0, 1.0, 1.0],
         };
@@ -3913,7 +4071,7 @@ mod tests {
 
     #[test]
     fn sprite_instance_stride_stays_16_byte_aligned() {
-        assert_eq!(std::mem::size_of::<SpriteInstance>(), 128);
+        assert_eq!(std::mem::size_of::<SpriteInstance>(), 144);
     }
 
     #[test]

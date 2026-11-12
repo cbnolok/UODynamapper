@@ -25,8 +25,10 @@ import package::shaders::world::art::art_bindings::{
     item_surface_atlas, item_surface_lookup, item_surface_sampler,
     INV_SQRT_2, BILLBOARD_RIGHT_XZ, FLAT_QUAD_FORWARD_XZ, HEIGHT_SCALE, DEPTH_CLASS_REGULAR, DEPTH_CLASS_BACKGROUND,
     DEPTH_CLASS_FOLIAGE, DEPTH_CLASS_ROOF, DEPTH_CLASS_SURFACE_LIKE_FLOOR, PASS_MODE_OPAQUE,
-    PASS_MODE_TRANSPARENT, PASS_MODE_SHADOW, SURFACE_LIKE_DEPTH_CLASS_OFFSET
+    PASS_MODE_TRANSPARENT, PASS_MODE_SHADOW, PASS_MODE_CLIENT_SHADOW, SURFACE_LIKE_DEPTH_CLASS_OFFSET
 };
+import package::shaders::world::art::client_shadow::{client_shadow_casts, client_shadow_world_offset,
+    client_shadow_priority_depth};
 import package::shaders::world::art::hue::{apply_static_hue, apply_ec_sprite_hue, STATIC_HUE_FLAG_APPLY, STATIC_HUE_FLAG_EC_SPRITE};
 import package::shaders::world::art::shading::apply_art_surface_shading;
 import package::shaders::world::art::surface_blend::static_surface_coverage;
@@ -86,6 +88,20 @@ fn logical_depth_from_projected_priority(inst: SpriteInstance) -> f32 {
     return static_priority_depth(view_transformations::position_world_to_clip(logical_world_pos),
         view.clip_from_view, inst.sort_bias_ordinal);
 }
+
+// The client shadow's depth: its caster's priority point, half a tie-break step behind (client_shadow.wesl).
+fn client_shadow_logical_depth(inst: SpriteInstance) -> f32 {
+    let logical_world_pos = vec3<f32>(
+        inst.tile_x,
+        inst.priority_z_units * HEIGHT_SCALE + depth_class_logical_offset(inst.depth_class),
+        inst.tile_y,
+    );
+    return client_shadow_priority_depth(view_transformations::position_world_to_clip(logical_world_pos),
+        view.clip_from_view, inst.sort_bias_ordinal);
+}
+
+// Every corner of a non-caster lands on this one clip point: zero-area triangles draw nothing.
+const CLIENT_SHADOW_CULLED_POSITION: vec4<f32> = vec4<f32>(0.0, 0.0, 0.0, 1.0);
 
 @vertex
 fn vertex(vertex: Vertex) -> ArtVertexOutput {
@@ -156,13 +172,21 @@ fn vertex(vertex: Vertex) -> ArtVertexOutput {
         projected_local_pos = vec3<f32>(local_world_pos.x + shadow_offset.x,
             projected_world_pos.y - inst.world_y, local_world_pos.z + shadow_offset.y);
     }
+    if (sprite_params.pass_mode == PASS_MODE_CLIENT_SHADOW) {
+        projected_local_pos = client_shadow_world_offset(inst, corner);
+    }
     var out: ArtVertexOutput;
     out.position = camera_relative_world_to_clip(vec3<f32>(inst.world_x, inst.world_y, inst.world_z), projected_local_pos);
+    if (sprite_params.pass_mode == PASS_MODE_CLIENT_SHADOW && !client_shadow_casts(inst)) {
+        out.position = CLIENT_SHADOW_CULLED_POSITION;
+    }
     out.uv = mix(inst.uv_min, inst.uv_max, corner);
     out.uv_b = vec2<f32>(f32(inst.layer), 0.0);
     out.color = inst.color_rgba;
     if (sprite_params.pass_mode == PASS_MODE_SHADOW) {
         out.logical_depth = clip_depth_to_frag_depth(out.position);
+    } else if (sprite_params.pass_mode == PASS_MODE_CLIENT_SHADOW) {
+        out.logical_depth = client_shadow_logical_depth(inst);
     } else {
         out.logical_depth = logical_depth_from_projected_priority(inst);
     }
@@ -200,6 +224,17 @@ fn shade_fragment(in: ArtVertexOutput, sample_index: u32) -> ArtFragmentOutput {
     // The client filter's footprint: the sprite's atlas uv per screen pixel, taken before any branch.
     let sprite_uv_dx = dpdx(in.uv);
     let sprite_uv_dy = dpdy(in.uv);
+
+    if (sprite_params.pass_mode == PASS_MODE_CLIENT_SHADOW) {
+        // UOSpriteShaderShadow: black, with the caster texel's alpha. The pipeline writes only the target's alpha,
+        // S = S (1 - a), and the client night composite darkens by clamp(S + 1 - s).
+        let shadow_alpha = textureSample(art_atlas, art_atlas_sampler, uv, i32(layer)).a;
+        if (shadow_alpha <= 0.0) {
+            discard;
+        }
+        out.color = vec4<f32>(0.0, 0.0, 0.0, shadow_alpha);
+        return out;
+    }
 
     if (sprite_params.pass_mode == PASS_MODE_SHADOW) {
         if (inst.flat_quad >= 2u) {

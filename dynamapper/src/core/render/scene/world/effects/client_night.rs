@@ -36,9 +36,18 @@
 // leaves L, the lights lerped over black with L.a their coverage, so B = L.rgb + N' * (1 - L.a) is the client's
 // sequential lerp of the sprites over the night map.
 //
+// KR-like's static shadows (the KR client's shadow effect, research P3.4) composite in the same pass, first, as the
+// client runs its shadow effect before its lighting effect. The shadow quads of `art::client_shadow.wesl` leave the
+// shadow buffer S in the frame's alpha (1 outside shadows, times 1 - a per shadow texel), and per channel on the
+// 8-bit values:
+//
+//     scene' = scene * clamp(S + 1 - s, 0, 1),  s = CLIENT_SHADOW_INTENSITY = 0.25
+//
+// so a shadow darkens by at most 0.25 and overlapping shadows do not darken further. The pass writes alpha 1.
+//
 // The composite runs after the fog pass (and tonemapping) and before FXAA and SMAA, on the PlayerCamera only, and
-// only while the active preset has `client_lighting` (KR-like and Enhanced). Classic and UOD-Painterly keep
-// `global_lighting` and never run it.
+// only while the active preset has `client_lighting` (KR-like and Enhanced) and darkens the frame: a light level
+// above 0, or KR-like's client shadows. Classic and UOD-Painterly keep `global_lighting` and never run it.
 
 use crate::configs::shader_presets::UniformState;
 use crate::core::render::scene::camera::{PlayerCamera, RenderZoom, ORTHO_SIZE_FACTOR};
@@ -106,6 +115,13 @@ pub const NIGHT_MAP_WORLD_UNITS_PER_REPEAT: f64 = 26.0;
 pub const CLIENT_LIGHT_SPRITE_PEAK_ALPHA: f32 = 115.0 / 255.0;
 /// The colour of light_generic, the sprite of 462 of the client's 599 light sources.
 pub const CLIENT_GENERIC_LIGHT_COLOR: [u8; 3] = [192, 162, 93];
+/// The shadow composite's intensity s: `InitPostProcessEffects` stores 0.25 (0x00c4a024) over the constructor's 0.4
+/// (0x0043f740); only debug keys change it.
+pub const CLIENT_SHADOW_INTENSITY: f32 = 0.25;
+/// The shadow composite's s while KR-like's client shadows are off, and in the other styles: no shadow.
+pub const NO_CLIENT_SHADOW: f32 = 0.0;
+/// The shadow buffer outside every shadow (the client clears S to white).
+pub const CLIENT_SHADOW_BUFFER_CLEAR: f32 = 1.0;
 
 // ---- Dynamapper's controls ------------------------------------------------------
 
@@ -152,6 +168,11 @@ pub fn light_buffer_over_night(lights: Vec4, night: Vec3) -> Vec3 {
     lights.truncate() + night * (1.0 - lights.w)
 }
 
+/// The KR client's shadow composite's factor for a shadow buffer value: `clamp(S + 1 - s)`.
+pub fn client_shadow_factor(shadow_buffer: f32, intensity: f32) -> f32 {
+    (shadow_buffer + CLIENT_SHADOW_BUFFER_CLEAR - intensity).clamp(0.0, 1.0)
+}
+
 /// The client composite on 8-bit (sRGB-encoded) values.
 pub fn client_composite(scene: Vec3, light_buffer: Vec3, level: f32) -> Vec3 {
     let multiplier = CLIENT_COMPOSITE_GAIN * (Vec3::splat(CLIENT_AMBIENT_TERM * level) + light_buffer * (1.0 - level));
@@ -190,7 +211,8 @@ pub struct ClientNightCompositeUniform {
     pub overlay_strength: f32,
     /// 1 when the night map is bound, 0 when the package lacks it and `flat_night_color` stands in.
     pub night_map_present: u32,
-    pub _pad0: u32,
+    /// The shadow composite's s: `CLIENT_SHADOW_INTENSITY` while KR-like's client shadows are on, else 0.
+    pub shadow_intensity: f32,
     /// The overlay colour over `NIGHT_MAP_MEAN`, per channel (w unused).
     pub overlay_color_ratio: Vec4,
     /// `NIGHT_MAP_MEAN`, the night colour without a map (w unused).
@@ -200,12 +222,12 @@ pub struct ClientNightCompositeUniform {
 }
 
 impl ClientNightCompositeUniform {
-    pub fn new(lighting: &ClientNightLighting, night_map_present: bool, night_uv: Vec4) -> Self {
+    pub fn new(lighting: &ClientNightLighting, shadow_intensity: f32, night_map_present: bool, night_uv: Vec4) -> Self {
         Self {
             level: client_light_level_weight(lighting.light_level),
             overlay_strength: lighting.overlay_strength,
             night_map_present: u32::from(night_map_present),
-            _pad0: 0,
+            shadow_intensity,
             overlay_color_ratio: (lighting.overlay_color / NIGHT_MAP_MEAN).extend(0.0),
             flat_night_color: NIGHT_MAP_MEAN.extend(0.0),
             night_uv,
@@ -294,6 +316,20 @@ impl Plugin for ClientNightLightingPlugin {
 /// The active preset's client lighting when it darkens the frame (KR-like and Enhanced below full day).
 fn night_lighting(uniform_state: &UniformState) -> Option<ClientNightLighting> {
     uniform_state.client_lighting.filter(|lighting| lighting.light_level != CLIENT_DAY_LIGHT_LEVEL)
+}
+
+/// The shadow composite's s for the active preset: KR-like's client shadows on or off.
+fn client_shadow_intensity(uniform_state: &UniformState) -> f32 {
+    if uniform_state.client_shadows == Some(true) { CLIENT_SHADOW_INTENSITY } else { NO_CLIENT_SHADOW }
+}
+
+/// The active preset's client lighting and shadow intensity when the composite changes the frame: below full day,
+/// or with KR-like's client shadows.
+fn composite_settings(uniform_state: &UniformState) -> Option<(ClientNightLighting, f32)> {
+    let lighting = uniform_state.client_lighting?;
+    let shadow_intensity = client_shadow_intensity(uniform_state);
+    (lighting.light_level != CLIENT_DAY_LIGHT_LEVEL || shadow_intensity > NO_CLIENT_SHADOW)
+        .then_some((lighting, shadow_intensity))
 }
 
 /// The mean colour of RGBA8 pixels, as 0..1 values.
@@ -459,8 +495,8 @@ fn half_view_world(camera: &Camera, projection: &Projection, zoom: f32) -> Optio
     (physical.x > 0.0).then(|| Vec2::new(half_width, half_width * physical.y / physical.x))
 }
 
-/// Put the composite on the PlayerCamera while the active preset's client lighting darkens the frame, and keep it
-/// current.
+/// Put the composite on the PlayerCamera while the active preset's client lighting or shadows darken the frame, and
+/// keep it current.
 fn sys_sync_client_night_composite(
     mut commands: Commands,
     uniform_state: Res<UniformState>,
@@ -475,7 +511,8 @@ fn sys_sync_client_night_composite(
     let Ok((entity, camera, projection, transform, current)) = cameras.single_mut() else {
         return;
     };
-    let (Some(lighting), Some(night_map), Some(light_buffer)) = (night_lighting(&uniform_state), night_map, light_buffer)
+    let (Some((lighting, shadow_intensity)), Some(night_map), Some(light_buffer)) =
+        (composite_settings(&uniform_state), night_map, light_buffer)
     else {
         if current.is_some() {
             commands.entity(entity).remove::<(ClientNightCompositeUniform, ClientNightCompositeTextures)>();
@@ -486,8 +523,12 @@ fn sys_sync_client_night_composite(
         return;
     };
     let focus = DVec2::new(f64::from(transform.translation.x), f64::from(transform.translation.z));
-    let uniform =
-        ClientNightCompositeUniform::new(&lighting, night_map.from_package, night_map_placement(focus, half_view));
+    let uniform = ClientNightCompositeUniform::new(
+        &lighting,
+        shadow_intensity,
+        night_map.from_package,
+        night_map_placement(focus, half_view),
+    );
     match current {
         Some(mut current) => {
             if *current != uniform {
@@ -682,7 +723,7 @@ mod tests {
     /// The composite of a flat grey scene over a night map of uniform colour `night`, divided by the grey: the scene
     /// multiplier.
     fn flat_grey_multiplier(settings: &ClientNightLighting, night: Vec3) -> Vec3 {
-        let uniform = ClientNightCompositeUniform::new(settings, true, Vec4::ZERO);
+        let uniform = ClientNightCompositeUniform::new(settings, NO_CLIENT_SHADOW, true, Vec4::ZERO);
         let overlay = night_overlay(night, uniform.overlay_strength, uniform.overlay_color_ratio.truncate());
         let light_buffer = light_buffer_over_night(NO_LIGHTS, overlay);
         client_composite(Vec3::splat(FLAT_GREY), light_buffer, uniform.level) / FLAT_GREY
@@ -690,7 +731,7 @@ mod tests {
 
     #[test]
     fn full_day_is_the_identity() {
-        let uniform = ClientNightCompositeUniform::new(&client_settings(), true, Vec4::ZERO);
+        let uniform = ClientNightCompositeUniform::new(&client_settings(), NO_CLIENT_SHADOW, true, Vec4::ZERO);
         assert_eq!(uniform.level, CLIENT_FULL_DAY_LEVEL);
         for scene in [Vec3::ZERO, Vec3::new(0.1, 0.5, 0.9), Vec3::ONE] {
             let light_buffer = light_buffer_over_night(Vec4::new(0.3, 0.2, 0.1, 0.4), NIGHT_MAP_MEAN);
@@ -700,7 +741,7 @@ mod tests {
 
     #[test]
     fn default_overlay_is_the_night_map_unchanged() {
-        let uniform = ClientNightCompositeUniform::new(&client_settings(), true, Vec4::ZERO);
+        let uniform = ClientNightCompositeUniform::new(&client_settings(), NO_CLIENT_SHADOW, true, Vec4::ZERO);
         assert_eq!(uniform.overlay_color_ratio.truncate(), Vec3::ONE);
         for texel in [NIGHT_MAP_MEAN, Vec3::new(0.0, 0.03, 0.259), Vec3::new(0.02, 0.01, 0.086)] {
             assert_eq!(night_overlay(texel, uniform.overlay_strength, Vec3::ONE), texel);
@@ -750,6 +791,22 @@ mod tests {
         let lights = (colour * alpha).extend(alpha);
         let expected = night * (1.0 - alpha) + colour * alpha;
         assert!(light_buffer_over_night(lights, night).abs_diff_eq(expected, 1e-6));
+    }
+
+    #[test]
+    fn client_shadows_darken_by_a_quarter_and_do_not_stack() {
+        const HALF_COVERAGE: f32 = 0.5;
+        const SHADOW_BUFFER_FLOOR: f32 = 0.0;
+        let one_shadow = CLIENT_SHADOW_BUFFER_CLEAR * (1.0 - 1.0);
+        let two_shadows = one_shadow * (1.0 - 1.0);
+        assert_eq!(client_shadow_factor(CLIENT_SHADOW_BUFFER_CLEAR, CLIENT_SHADOW_INTENSITY), 1.0);
+        assert_eq!(client_shadow_factor(one_shadow, CLIENT_SHADOW_INTENSITY), 0.75);
+        assert_eq!(client_shadow_factor(two_shadows, CLIENT_SHADOW_INTENSITY), 0.75);
+        assert_eq!(client_shadow_factor(SHADOW_BUFFER_FLOOR, CLIENT_SHADOW_INTENSITY), 0.75);
+        // A texel of half coverage leaves S at 0.5, above the 0.25 the composite reaches: no shadow, as in the client.
+        assert_eq!(client_shadow_factor(CLIENT_SHADOW_BUFFER_CLEAR * (1.0 - HALF_COVERAGE), CLIENT_SHADOW_INTENSITY), 1.0);
+        // Off: the factor is 1 whatever the buffer holds.
+        assert_eq!(client_shadow_factor(SHADOW_BUFFER_FLOOR, NO_CLIENT_SHADOW), 1.0);
     }
 
     #[test]

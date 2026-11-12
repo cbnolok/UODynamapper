@@ -454,6 +454,9 @@ pub struct LandMaterialUniformsPresets {
     /// `client_lighting` instead, as their clients do.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub global_lighting: Option<f32>,
+    /// The KR client's static shadows (its showShadows option), in KR-like only: `world::art::client_shadow`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub client_shadows: Option<bool>,
     /// The clients' night lighting composite, in KR-like and Enhanced only.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub client_lighting: Option<ClientNightLighting>,

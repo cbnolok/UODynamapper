@@ -32,6 +32,11 @@ struct SpriteInstance {
     flat_quad: u32,
     texture_stretch: f32,
     material_item_id: u32,
+    // The KR client's static shadow (client_shadow.wesl): CLIENT_SHADOW_FLAG_* bits, and the caster's height in UO
+    // z units above the ground or surface below it.
+    client_shadow_flags: u32,
+    client_shadow_height: f32,
+    _pad_client_shadow: vec2<u32>,
     local_light_rgba: vec4<f32>,
     color_rgba: vec4<f32>,
 }
@@ -102,4 +107,6 @@ const DEPTH_CLASS_SURFACE_LIKE_FLOOR: u32 = 4u;
 const PASS_MODE_OPAQUE: u32 = 0u;
 const PASS_MODE_TRANSPARENT: u32 = 1u;
 const PASS_MODE_SHADOW: u32 = 2u;
+// The KR client's static shadow into the shadow buffer S, the main target's alpha (client_shadow.wesl).
+const PASS_MODE_CLIENT_SHADOW: u32 = 3u;
 const SURFACE_LIKE_DEPTH_CLASS_OFFSET: f32 = -4.0;
