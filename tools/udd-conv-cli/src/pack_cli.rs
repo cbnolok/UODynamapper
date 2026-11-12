@@ -82,6 +82,7 @@ use udd_conv::{
         DEFAULT_ATLAS_PAGE_HEIGHT as EC_LAND_DEFAULT_ATLAS_PAGE_HEIGHT,
         DEFAULT_ATLAS_PAGE_WIDTH as EC_LAND_DEFAULT_ATLAS_PAGE_WIDTH,
     },
+    tex_land_kr::{convert_kr_land_to_tex_land_kr_uddp, TexLandKrPackOptions, TEX_LAND_KR_FILE_NAME},
     tilemeta::{
         build_tilemeta_uddp_from_sources, build_tilemeta_uddp_from_split_sources,
         build_tilemeta_uddp_from_split_sources_with_loaded_ec_sources, TileMetaBuildOptions,
@@ -125,6 +126,42 @@ struct SourceDirArgs {
     ccdir: Option<PathBuf>,
     #[arg(long)]
     ecdir: Option<PathBuf>,
+}
+
+/// The size `pack-kr-land` upscales 64x64, 128x128 and 256x256 land textures to, as `pack-ec-textures` does.
+const LAND_UPSCALE_DEFAULT_TARGET_SIZE: u32 = 256;
+/// The size `pack-kr-land` upscales 512x512 land textures to, as `pack-ec-textures` does.
+const LAND_UPSCALE_512_DEFAULT_TARGET_SIZE: u32 = 512;
+
+/// The per-size land upscale options of `pack-kr-land`, with the defaults and names of `pack-ec-textures`.
+#[derive(Args, Clone, Debug)]
+struct LandUpscaleArgs {
+    #[arg(long, default_value_t = LAND_UPSCALE_DEFAULT_TARGET_SIZE)]
+    upscale_64_size: u32,
+    #[arg(long, value_enum, default_value_t = CliUpscaleFilter::FsrEasu2x)]
+    upscale_64_algo: CliUpscaleFilter,
+    #[arg(long, default_value_t = LAND_UPSCALE_DEFAULT_TARGET_SIZE)]
+    upscale_128_size: u32,
+    #[arg(long, value_enum, default_value_t = CliUpscaleFilter::FsrEasu2x)]
+    upscale_128_algo: CliUpscaleFilter,
+    #[arg(long, default_value_t = LAND_UPSCALE_DEFAULT_TARGET_SIZE)]
+    upscale_256_size: u32,
+    #[arg(long, value_enum, default_value_t = CliUpscaleFilter::None)]
+    upscale_256_algo: CliUpscaleFilter,
+    #[arg(long, default_value_t = LAND_UPSCALE_512_DEFAULT_TARGET_SIZE)]
+    upscale_512_size: u32,
+    #[arg(long, value_enum, default_value_t = CliUpscaleFilter::None)]
+    upscale_512_algo: CliUpscaleFilter,
+    #[arg(long = "upscale-64-pass", value_enum, help = "Add a 64x64 land upscale pass. Repeat to chain filters.")]
+    upscale_64_passes: Vec<CliUpscaleFilter>,
+    #[arg(long = "upscale-128-pass", value_enum, help = "Add a 128x128 land upscale pass. Repeat to chain filters.")]
+    upscale_128_passes: Vec<CliUpscaleFilter>,
+    #[arg(long = "upscale-256-pass", value_enum, help = "Add a 256x256 land upscale pass. Repeat to chain filters.")]
+    upscale_256_passes: Vec<CliUpscaleFilter>,
+    #[arg(long = "upscale-512-pass", value_enum, help = "Add a 512x512 land upscale pass. Repeat to chain filters.")]
+    upscale_512_passes: Vec<CliUpscaleFilter>,
+    #[arg(long = "upscale-profile", help = "TOML or KDL file with per-image-type upscale passes and per-id overrides.")]
+    upscale_profile: Option<PathBuf>,
 }
 
 const USE_VERDATA_HELP: &str = "Apply verdata.mul, the patch file only clients of that era ship. It patches only the \
@@ -1080,6 +1117,44 @@ enum Commands {
         #[arg(long = "upscale-profile", help = "TOML or KDL file with per-image-type upscale passes and per-id overrides.")]
         upscale_profile: Option<PathBuf>,
     },
+    /// Packs the Kingdom Reborn land into tex_land_kr.uddp, in the tex_land_ec.uddp layout: KR's TerrainDefinition.uop,
+    /// Texture.uop and facet land routes, with what KR lacks from the Enhanced Client, and KR's grunge texture. Without
+    /// a format flag the pages are lossless RGBA8888 with Zstd 19; BC7 blocks take Zstd 19 too.
+    #[command(group(ArgGroup::new("output_format").args(["raw", "bc7", "bc7_rdo"])))]
+    PackKrLand {
+        #[arg(long, help = "Kingdom Reborn client folder (TerrainDefinition.uop, Texture.uop).")]
+        krdir: PathBuf,
+        #[arg(long, help = "Enhanced Client folder, for what Kingdom Reborn lacks (TerrainDefinition.uop, Texture.uop, GameData.uop).")]
+        ecdir: PathBuf,
+        #[arg(long, default_value = TEX_LAND_KR_FILE_NAME)]
+        output: PathBuf,
+        #[arg(long, help = "Embed this TerrainTranscode.kdl (the terrain routing table), without the ids Kingdom Reborn routes. Default: the copy shipped with the tools.")]
+        land_transcode_kdl: Option<PathBuf>,
+        #[arg(long, help = "Embed this EcTerrainOverrides.kdl (the reviewed terrain layer substitutions). Default: the copy shipped with the tools.")]
+        land_terrain_overrides_kdl: Option<PathBuf>,
+        #[arg(long, default_value_t = EC_LAND_DEFAULT_ATLAS_PAGE_WIDTH)]
+        atlas_width: u32,
+        #[arg(long, default_value_t = EC_LAND_DEFAULT_ATLAS_PAGE_HEIGHT)]
+        atlas_height: u32,
+        #[arg(long, default_value_t = EC_LAND_DEFAULT_ATLAS_GUTTER)]
+        gutter: u16,
+        #[arg(long, help = "Write uncompressed RGBA8888 atlas pages.")]
+        raw: bool,
+        #[arg(long, num_args = 0..=1, require_equals = true, help = "Zstd level of the land pages (--zstd=LEVEL), which without a format flag are lossless RGBA8888 with Zstd 19, as are BC7 blocks; with --raw, a file-level Zstd pass after that encoding. A bare --zstd keeps level 19.")]
+        zstd: Option<Option<i32>>,
+        #[arg(long, help = "Write BC7 atlas pages without BC7 RDO, with Zstd 19 on the blocks unless --zstd=LEVEL.")]
+        bc7: bool,
+        #[arg(long = "bc7-rdo", help = "Write BC7 atlas pages with BC7 RDO.")]
+        bc7_rdo: bool,
+        #[arg(long, default_value_t = udd_conv::bc7::DEFAULT_BC7_RDO_LAMBDA, help = "BC7 RDO lambda. Use 0 to disable RDO.")]
+        bc7_rdo_lambda: f32,
+        #[arg(long, value_parser = parse_bc7_rdo_lookback_blocks, default_value_t = udd_conv::bc7::DEFAULT_BC7_RDO_LOOKBACK_BLOCKS, help = "BC7 RDO lookback preset in previous BC7 blocks.")]
+        bc7_rdo_lookback_blocks: usize,
+        #[command(flatten)]
+        upscale: LandUpscaleArgs,
+        #[arg(long, help = "Write which client every definition, texture and route came from to this file, one line each.")]
+        report: Option<PathBuf>,
+    },
     /// Audits direct EC material texture references from tileart.uop and TerrainDefinition.uop.
     AuditEcMaterialRefs {
         #[command(flatten)]
@@ -1938,6 +2013,73 @@ where
                 );
             }
         }
+        Commands::PackKrLand {
+            krdir,
+            ecdir,
+            output,
+            land_transcode_kdl,
+            land_terrain_overrides_kdl,
+            atlas_width,
+            atlas_height,
+            gutter,
+            raw,
+            zstd,
+            bc7,
+            bc7_rdo,
+            bc7_rdo_lambda,
+            bc7_rdo_lookback_blocks,
+            upscale,
+            report,
+        } => {
+            validate_source_dir(&krdir, "--krdir")?;
+            validate_source_dir(&ecdir, "--ecdir")?;
+            let out_file = resolve_output_path(&output);
+            let output_format = resolve_land_output_format(
+                TextureOutputFormatArgs { raw, zstd: land_zstd_level(zstd), bc7, bc7_rdo },
+                bc7_rdo_lambda,
+                bc7_rdo_lookback_blocks,
+            )?;
+            let upscale_config = |target_size, filter: CliUpscaleFilter| udd_conv::upscale::UpscaleConfig {
+                target_size,
+                filter: filter.into(),
+            };
+            let summary = convert_kr_land_to_tex_land_kr_uddp(
+                &krdir,
+                &ecdir,
+                &out_file,
+                &TexLandKrPackOptions {
+                    atlas: TexLandEcAtlasOptions {
+                        atlas_width,
+                        atlas_height,
+                        gutter,
+                        compression: output_format.compression,
+                        upscale_64: upscale_config(upscale.upscale_64_size, upscale.upscale_64_algo),
+                        upscale_128: upscale_config(upscale.upscale_128_size, upscale.upscale_128_algo),
+                        upscale_256: upscale_config(upscale.upscale_256_size, upscale.upscale_256_algo),
+                        upscale_512: upscale_config(upscale.upscale_512_size, upscale.upscale_512_algo),
+                        upscale_64_passes: convert_upscale_passes(upscale.upscale_64_passes),
+                        upscale_128_passes: convert_upscale_passes(upscale.upscale_128_passes),
+                        upscale_256_passes: convert_upscale_passes(upscale.upscale_256_passes),
+                        upscale_512_passes: convert_upscale_passes(upscale.upscale_512_passes),
+                        upscale_profile: load_optional_upscale_profile(upscale.upscale_profile)?,
+                        pixel_format: output_format.pixel_format,
+                        bc7_rdo_lambda: output_format.bc7_rdo_lambda,
+                        bc7_rdo_lookback_blocks: output_format.bc7_rdo_lookback_blocks,
+                        transcode_kdl_path: land_transcode_kdl,
+                        terrain_overrides_kdl_path: land_terrain_overrides_kdl,
+                    },
+                    report,
+                },
+            )?;
+            info!(
+                "Wrote {} pages ({}) for {} populated land slots out of {} total slots to '{}'.",
+                summary.package.page_count,
+                output_format.label,
+                summary.package.populated_slot_count,
+                summary.package.slot_count,
+                out_file.display()
+            );
+        }
         Commands::AuditEcMaterialRefs {
             source_dirs: source_dir_args,
             output,
@@ -2663,6 +2805,37 @@ mod tests {
             }
             _ => panic!("unexpected command parsed"),
         }
+    }
+
+    #[test]
+    fn cli_parses_pack_kr_land() {
+        let cli = Cli::try_parse_from([
+            "uddpack",
+            "pack-kr-land",
+            "--krdir",
+            "/kr",
+            "--ecdir",
+            "/ec",
+            "--report",
+            "/out/kr_land.txt",
+            "--upscale-64-algo",
+            "none",
+        ])
+        .expect("parse KR land args");
+
+        match cli.command {
+            Commands::PackKrLand { krdir, ecdir, output, report, bc7, raw, zstd, upscale, .. } => {
+                assert_eq!((krdir, ecdir), (PathBuf::from("/kr"), PathBuf::from("/ec")));
+                assert_eq!(output, PathBuf::from(TEX_LAND_KR_FILE_NAME));
+                assert_eq!(report, Some(PathBuf::from("/out/kr_land.txt")));
+                assert!(!bc7 && !raw && zstd.is_none());
+                assert!(matches!(upscale.upscale_64_algo, CliUpscaleFilter::None));
+                assert!(matches!(upscale.upscale_128_algo, CliUpscaleFilter::FsrEasu2x));
+                assert_eq!(upscale.upscale_128_size, LAND_UPSCALE_DEFAULT_TARGET_SIZE);
+            }
+            _ => panic!("unexpected command parsed"),
+        }
+        assert!(Cli::try_parse_from(["uddpack", "pack-kr-land", "--krdir", "/kr"]).is_err(), "--ecdir is required");
     }
 
     #[test]

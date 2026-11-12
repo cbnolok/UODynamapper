@@ -15,7 +15,7 @@ pub use atlas::{bc7, page_compression};
 pub use gumps::{cc_gumps, ec_gumps, gump_atlas, single_gumps};
 pub use maps::{cc_map, cc_radar, cc_statics, chunk_compression, classic_patches, classic_sources};
 pub use metadata::{hues, tilemeta, world_lights};
-pub use textures::{tex_art_cc, tex_art_ec, tex_aux_ec, tex_land_cc, tex_land_ec};
+pub use textures::{tex_art_cc, tex_art_ec, tex_aux_ec, tex_land_cc, tex_land_ec, tex_land_kr};
 pub use upscaling::{upscale_pipeline, upscale_profile};
 
 pub mod conversion_tables;

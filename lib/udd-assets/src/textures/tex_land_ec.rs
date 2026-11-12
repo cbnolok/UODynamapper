@@ -33,6 +33,9 @@ pub const UDDP_TERRAIN_OVERRIDES_ENTRY_VPATH: &str = "metadata/terrain_overrides
 pub const UDDP_TRANSCODE_ENTRY_VPATH: &str = "metadata/transcode.bin";
 pub const UDDP_LEGACY_TERRAIN_MAP_ENTRY_VPATH: &str = "metadata/legacy_terrain_map.csv";
 pub const UDDP_SOURCE_MATERIALS_ENTRY_VPATH: &str = "metadata/source_materials.json";
+/// Optional: the client's grunge texture as RGBA8888, the entry's width and height in its record. Only the Kingdom
+/// Reborn land (`tex_land_kr.uddp`) carries it, KR's `build/worldart/01000045.dds`; this reader does not read it.
+pub const UDDP_GRUNGE_ENTRY_VPATH: &str = "textures/grunge.rgba8888";
 /// `schema` and `schema_version` of the terrain overrides JSON entry.
 pub const TERRAIN_OVERRIDES_SCHEMA: &str = "tex_land_ec_terrain_overrides";
 pub const TERRAIN_OVERRIDES_SCHEMA_VERSION: u32 = 1;

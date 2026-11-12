@@ -11,7 +11,8 @@
 //! `gumps_cc.uddp` beside it: every shared gump's hash against that package's image. Without one beside it, the report
 //! notes that the package depends on it.
 //!
-//! The kind comes from the file name (`tex_land_ec.uddp`, `map0.uddp`).
+//! The kind comes from the file name (`tex_land_ec.uddp`, `map0.uddp`); `tex_land_kr.uddp`, the Kingdom Reborn land, is
+//! read by the `tex_land_ec` reader.
 //! A file with an unknown name is offered to every reader, and the first one that accepts it
 //! names the kind.
 
@@ -26,13 +27,14 @@ use rayon::prelude::*;
 use udd_assets::gumps::gump_image_hash;
 use udd_assets::map_metadata::decode_map_package_metadata;
 use udd_assets::tex_aux_ec::TexAuxEcPackage;
+use udd_assets::tex_land_ec::UDDP_GRUNGE_ENTRY_VPATH;
 use udd_assets::{
     EffectsEcPackage, GumpsPackage, HuesPackage, MobileAnimCcPackage, MobileAnimEcPackage,
     PaperdollEcPackage, TexArtCcPackage, TexArtEcPackage, TexLandCcPackage, TexLandEcPackage, TileMetaPackage,
     WorldLightsPackage,
 };
 use udd_container::{
-    reconstruct_stored_size, unpack_codec, unpack_offset40, unpack_type, Codec, DataType, FileKey,
+    reconstruct_stored_size, unpack_codec, unpack_offset40, unpack_type, xxh64_virtual_path, Codec, DataType, FileKey,
     FileRecord, LookupMode, UddpReader,
 };
 use uocf::classic::statics::StaticTile;
@@ -58,6 +60,8 @@ pub enum PackageKind {
     TexArtEc,
     TexLandCc,
     TexLandEc,
+    /// The Kingdom Reborn land: the `tex_land_ec` layout, read by its reader.
+    TexLandKr,
     TexAuxEc,
     TileMeta,
     Hues,
@@ -98,6 +102,7 @@ impl PackageKind {
             "tex_art_ec" => Self::TexArtEc,
             "tex_land_cc" => Self::TexLandCc,
             "tex_land_ec" => Self::TexLandEc,
+            "tex_land_kr" => Self::TexLandKr,
             "tex_aux_ec" => Self::TexAuxEc,
             "tilemeta" => Self::TileMeta,
             "hues" => Self::Hues,
@@ -126,6 +131,7 @@ impl PackageKind {
             Self::TexArtEc => "tex_art_ec".into(),
             Self::TexLandCc => "tex_land_cc".into(),
             Self::TexLandEc => "tex_land_ec".into(),
+            Self::TexLandKr => "tex_land_kr".into(),
             Self::TexAuxEc => "tex_aux_ec".into(),
             Self::TileMeta => "tilemeta".into(),
             Self::Hues => "hues".into(),
@@ -557,10 +563,11 @@ fn run_package_reader(kind: PackageKind, package: &UddpReader) -> eyre::Result<S
             let reader = TexLandCcPackage::from_uddp_package(package.clone())?;
             format!("slots={}, pages={}", reader.slots().len(), reader.pages().len())
         }
-        PackageKind::TexLandEc => {
+        PackageKind::TexLandEc | PackageKind::TexLandKr => {
             let reader = TexLandEcPackage::from_uddp_package(package.clone())?;
+            let grunge = package.find_by_path_hash(xxh64_virtual_path(UDDP_GRUNGE_ENTRY_VPATH)).is_some();
             format!(
-                "slots={}, pages={}, terrain_provenance={}",
+                "slots={}, pages={}, terrain_provenance={}, grunge={grunge}",
                 reader.slots().len(),
                 reader.pages().len(),
                 reader.terrain_provenance().len()
@@ -694,6 +701,7 @@ mod tests {
     fn kinds_come_from_file_names() {
         assert_eq!(PackageKind::from_file_name("tex_land_ec.uddp"), Some(PackageKind::TexLandEc));
         assert_eq!(PackageKind::from_file_name("tex_land_ec.rebuilt.uddp"), Some(PackageKind::TexLandEc));
+        assert_eq!(PackageKind::from_file_name("tex_land_kr.uddp"), Some(PackageKind::TexLandKr));
         assert_eq!(PackageKind::from_file_name("effects_ec_bc7.uddp"), Some(PackageKind::EffectsEc));
         assert_eq!(PackageKind::from_file_name("gumps_cc.uddp"), Some(PackageKind::Gumps));
         assert_eq!(PackageKind::from_file_name("paperdoll_ec.uddp"), Some(PackageKind::PaperdollEc));

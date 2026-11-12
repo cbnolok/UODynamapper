@@ -71,7 +71,7 @@ use uocf::enhanced::{
     terrain_definition::{
         TerrainDefinitionEntry, TerrainDefinitionPackage, TerrainLayerClass, TerrainLayerRole,
     },
-    textures::{ECImageFormat, Textures},
+    textures::{ECImageFormat, TextureFile, Textures},
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -410,12 +410,107 @@ pub fn convert_tex_land_ec_uop_to_tex_land_ec_uddp_from_loaded_sources_with_prog
     out_file: &Path,
     options: &TexLandEcAtlasOptions,
     payload_progress: impl Fn(AssetTaskProgress) + Sync,
-    mut package_progress: impl FnMut(udd_container::BuildProgress),
+    package_progress: impl FnMut(udd_container::BuildProgress),
 ) -> eyre::Result<TexLandEcBuildSummary> {
     validate_options(options)?;
     // Before the decode and the packing, so a missing or invalid table fails at once.
-    let (transcode_kdl_path, transcode_bytes) = read_transcode_kdl(options.transcode_kdl_path.as_deref())?;
+    let transcode = read_transcode_kdl(options.transcode_kdl_path.as_deref())?;
     let terrain_overrides = read_terrain_overrides_kdl(options.terrain_overrides_kdl_path.as_deref())?;
+    let legacy_terrain_map_csv = match find_first_existing_file(source_dirs, &["GameData.uop"]) {
+        Some(game_data_path) => {
+            let source_map = uocf::enhanced::legacy_terrain_map::LegacyTerrainMap::load(&game_data_path)
+                .wrap_err_with(|| format!("load original EC terrain routing from {}", game_data_path.display()))?;
+            info!("Preserving {} original EC terrain routes and their subtypes from GameData.uop", source_map.routes.len());
+            Some(source_map.source_csv)
+        }
+        None => None,
+    };
+
+    info!(
+        "Converting EC Land from TerrainDefinition.uop / Texture.uop to {}",
+        out_file.display()
+    );
+    println!(
+        "Using TerrainDefinition.uop: {}",
+        source_path_label_from_dirs(source_dirs, terrain_definition_path)
+    );
+    if let Some(path) = texture_uop_path {
+        println!("Using Texture.uop: {}", source_path_label_from_dirs(source_dirs, path));
+    }
+
+    build_land_package(
+        LandPackageInputs {
+            terrain_definition,
+            textures: LandTexturePool::Single(world_textures),
+            transcode,
+            legacy_terrain_map_csv,
+            terrain_overrides,
+            extra_entries: Vec::new(),
+        },
+        out_file,
+        options,
+        payload_progress,
+        package_progress,
+    )
+}
+
+/// The `Texture.uop` each land texture id is read from.
+pub(crate) enum LandTexturePool<'a> {
+    /// Every id from one client's textures (the Enhanced land), or from none.
+    Single(Option<&'a Textures>),
+    /// Each id from the client chosen for it (the Kingdom Reborn land); an id not listed is missing.
+    PerTexture(HashMap<u32, &'a Textures>),
+}
+
+impl<'a> LandTexturePool<'a> {
+    fn textures_for(&self, texture_id: u32) -> Option<&'a Textures> {
+        match self {
+            Self::Single(textures) => *textures,
+            Self::PerTexture(by_texture_id) => by_texture_id.get(&texture_id).copied(),
+        }
+    }
+}
+
+/// An entry a land package carries beside the Enhanced land layout's own (the Kingdom Reborn grunge texture).
+pub(crate) struct ExtraLandEntry {
+    pub virtual_path: &'static str,
+    pub data_type: DataType,
+    pub compression: CompressionFlag,
+    pub width: u32,
+    pub height: u32,
+    pub data: Vec<u8>,
+}
+
+/// What a land package is built from, beside the options.
+pub(crate) struct LandPackageInputs<'a> {
+    /// The definitions, alias flags in the Enhanced Client layout.
+    pub terrain_definition: &'a TerrainDefinitionPackage,
+    pub textures: LandTexturePool<'a>,
+    /// `metadata/transcode.bin`: the routing table's path (or label) and its KDL text.
+    pub transcode: (PathBuf, Vec<u8>),
+    /// `metadata/legacy_terrain_map.csv`, when there is one.
+    pub legacy_terrain_map_csv: Option<Vec<u8>>,
+    pub terrain_overrides: LoadedTerrainOverrides,
+    pub extra_entries: Vec<ExtraLandEntry>,
+}
+
+/// Builds a package in the `tex_land_ec.uddp` layout: the Enhanced land and the Kingdom Reborn land
+/// ([`crate::textures::tex_land_kr`]) share it, so they differ only in their inputs.
+pub(crate) fn build_land_package(
+    inputs: LandPackageInputs<'_>,
+    out_file: &Path,
+    options: &TexLandEcAtlasOptions,
+    payload_progress: impl Fn(AssetTaskProgress) + Sync,
+    mut package_progress: impl FnMut(udd_container::BuildProgress),
+) -> eyre::Result<TexLandEcBuildSummary> {
+    let LandPackageInputs {
+        terrain_definition,
+        textures,
+        transcode: (transcode_kdl_path, transcode_bytes),
+        legacy_terrain_map_csv,
+        terrain_overrides,
+        extra_entries,
+    } = inputs;
     let payload_progress_reporter = AssetProgressReporter::new(payload_progress);
     let payload_progress = |progress| payload_progress_reporter.report(progress);
 
@@ -449,7 +544,7 @@ pub fn convert_tex_land_ec_uop_to_tex_land_ec_uddp_from_loaded_sources_with_prog
     let unique_texture_selection_count = selections.len() as u32;
     let (decoded_tiles, aliases, texture_slot_by_texture_id, ignored_source_texture_ids) =
         decode_present_tiles(
-            world_textures,
+            &textures,
             terrain_definition,
             &terrain_override_texture_ids,
             options,
@@ -483,18 +578,6 @@ pub fn convert_tex_land_ec_uop_to_tex_land_ec_uddp_from_loaded_sources_with_prog
     let terrain_overrides_manifest =
         serialize_terrain_overrides_metadata_from_overrides(&terrain_overrides.path, &terrain_overrides.overrides)?;
     let terrain_override_entry_count = terrain_overrides_manifest.entry_count;
-
-    info!(
-        "Converting EC Land from TerrainDefinition.uop / Texture.uop to {}",
-        out_file.display()
-    );
-    println!(
-        "Using TerrainDefinition.uop: {}",
-        source_path_label_from_dirs(source_dirs, terrain_definition_path)
-    );
-    if let Some(path) = texture_uop_path {
-        println!("Using Texture.uop: {}", source_path_label_from_dirs(source_dirs, path));
-    }
 
     let mut package = UddpBuilder::new(LookupMode::VirtualPathHash);
     package.add_file(AddFileRequest {
@@ -550,10 +633,7 @@ pub fn convert_tex_land_ec_uop_to_tex_land_ec_uddp_from_loaded_sources_with_prog
         data: &transcode_bytes,
     })?;
 
-    if let Some(game_data_path) = find_first_existing_file(source_dirs, &["GameData.uop"]) {
-        let source_map = uocf::enhanced::legacy_terrain_map::LegacyTerrainMap::load(&game_data_path)
-            .wrap_err_with(|| format!("load original EC terrain routing from {}", game_data_path.display()))?;
-        info!("Preserving {} original EC terrain routes and their subtypes from GameData.uop", source_map.routes.len());
+    if let Some(legacy_terrain_map_csv) = legacy_terrain_map_csv.as_ref() {
         package.add_file(AddFileRequest {
             data_type: DataType::Metadata as u8,
             compression: CompressionFlag::ZstdNoDict,
@@ -562,7 +642,7 @@ pub fn convert_tex_land_ec_uop_to_tex_land_ec_uddp_from_loaded_sources_with_prog
             virtual_path: Some(UDDP_LEGACY_TERRAIN_MAP_ENTRY_VPATH),
             path_hash64: None,
             id: None,
-            data: &source_map.source_csv,
+            data: legacy_terrain_map_csv,
         })?;
     }
 
@@ -577,6 +657,18 @@ pub fn convert_tex_land_ec_uop_to_tex_land_ec_uddp_from_loaded_sources_with_prog
         id: None,
         data: &source_materials,
     })?;
+    for entry in extra_entries {
+        package.add_owned_file(AddOwnedFileRequest {
+            data_type: entry.data_type as u8,
+            compression: entry.compression,
+            width: entry.width,
+            height: entry.height,
+            virtual_path: Some(entry.virtual_path.to_owned()),
+            path_hash64: None,
+            id: None,
+            data: entry.data,
+        })?;
+    }
 
     // Determine the final pixel format and encoding for atlas pages.
     let use_bc7 = options.pixel_format == PagePixelFormat::Bc7;
@@ -884,7 +976,7 @@ fn log_translucent_texels_per_render_role(out_file: &Path, pages: &[BuiltPage]) 
     Ok(())
 }
 
-fn validate_options(options: &TexLandEcAtlasOptions) -> eyre::Result<()> {
+pub(crate) fn validate_options(options: &TexLandEcAtlasOptions) -> eyre::Result<()> {
     if options.atlas_width == 0 || options.atlas_height == 0 {
         eyre::bail!("atlas dimensions must be greater than zero");
     }
@@ -900,7 +992,7 @@ fn validate_options(options: &TexLandEcAtlasOptions) -> eyre::Result<()> {
 }
 
 /// The terrain routing table to embed, and its bytes: the one given, else the copy shipped with the tools.
-fn read_transcode_kdl(given: Option<&Path>) -> eyre::Result<(PathBuf, Vec<u8>)> {
+pub(crate) fn read_transcode_kdl(given: Option<&Path>) -> eyre::Result<(PathBuf, Vec<u8>)> {
     let path = bundled_files::resolve(given, TERRAIN_TRANSCODE_KDL)?;
     let bytes = fs::read(&path).wrap_err_with(|| format!("read {}", path.display()))?;
     // The runtime reads the embedded copy strictly; reject a file it would not read.
@@ -914,13 +1006,13 @@ struct SerializedTerrainOverridesMetadata {
     entry_count: u32,
 }
 
-struct LoadedTerrainOverrides {
+pub(crate) struct LoadedTerrainOverrides {
     path: PathBuf,
     overrides: EcTerrainOverrides,
 }
 
 /// The terrain overrides table to embed, read strictly: the one given, else the copy shipped with the tools.
-fn read_terrain_overrides_kdl(given: Option<&Path>) -> eyre::Result<LoadedTerrainOverrides> {
+pub(crate) fn read_terrain_overrides_kdl(given: Option<&Path>) -> eyre::Result<LoadedTerrainOverrides> {
     let path = bundled_files::resolve(given, EC_TERRAIN_OVERRIDES_KDL)?;
     let overrides = EcTerrainOverrides::load(&path)?;
     Ok(LoadedTerrainOverrides { path, overrides })
@@ -974,6 +1066,14 @@ struct TerrainLayerProvenance {
     texture_repetition: f32,
     /// The role of a source item by position; `None` for an override or missing layer.
     role: Option<TerrainLayerRole>,
+}
+
+/// The texture ids the terrain overrides table names, which the land packs beside the definitions' own.
+pub(crate) fn terrain_override_texture_ids(terrain_overrides: &LoadedTerrainOverrides) -> BTreeSet<u32> {
+    terrain_override_layers_by_material(&terrain_overrides.overrides)
+        .values()
+        .flat_map(|layers| layers.keys().copied())
+        .collect()
 }
 
 fn terrain_override_layers_by_material(
@@ -1167,7 +1267,7 @@ fn terrain_primary_provenance(entry: &TerrainDefinitionEntry) -> TerrainPrimaryP
 }
 
 fn decode_present_tiles(
-    world_textures: Option<&Textures>,
+    textures: &LandTexturePool<'_>,
     terrain_definition: &TerrainDefinitionPackage,
     override_texture_ids: &BTreeSet<u32>,
     options: &TexLandEcAtlasOptions,
@@ -1216,7 +1316,7 @@ fn decode_present_tiles(
         .map(
             |&texture_id| -> eyre::Result<(u32, Option<DecodedLayerTexture>)> {
                 let decoded =
-                    decode_layer_texture_rgba(texture_id, world_textures)?;
+                    decode_layer_texture_rgba(texture_id, textures.textures_for(texture_id))?;
                 texture_pb.inc(1);
                 let completed = texture_completed
                     .fetch_add(1, Ordering::Relaxed)
@@ -1369,26 +1469,9 @@ fn decode_layer_texture_rgba(
     texture_id: u32,
     world_textures: Option<&Textures>,
 ) -> eyre::Result<Option<DecodedLayerTexture>> {
-    let file = if let Some(wt) = world_textures {
-        let world_terrain_hash =
-            texture_path_hash("build/worldart/land/", texture_id, ".dds");
-        wt.get_from_hash(
-            world_terrain_hash,
-            None,
-            ECImageFormat::DDS,
-        )?
-    } else {
-        None
-    };
-
-    let file = if file.is_none() {
-        if let Some(wt) = world_textures {
-            wt.get_from_id(texture_id)?
-        } else {
-            None
-        }
-    } else {
-        file
+    let file = match world_textures {
+        Some(world_textures) => find_layer_texture_file(texture_id, world_textures)?,
+        None => None,
     };
 
     let decoded = if let Some(file) = file {
@@ -1403,6 +1486,15 @@ fn decode_layer_texture_rgba(
     };
 
     Ok(decoded)
+}
+
+/// The file of a terrain layer texture id in `world_textures`: its `build/worldart/land/` variant, else the id's own.
+pub(crate) fn find_layer_texture_file(texture_id: u32, world_textures: &Textures) -> eyre::Result<Option<TextureFile>> {
+    let world_terrain_hash = texture_path_hash("build/worldart/land/", texture_id, ".dds");
+    match world_textures.get_from_hash(world_terrain_hash, None, ECImageFormat::DDS)? {
+        Some(file) => Ok(Some(file)),
+        None => world_textures.get_from_id(texture_id),
+    }
 }
 
 fn texture_path_hash(prefix: &str, texture_id: u32, suffix: &str) -> u64 {
