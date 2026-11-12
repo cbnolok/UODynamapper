@@ -17,6 +17,7 @@ Common commands:
 - `pack-art`: pack Classic Client art from MUL or UOP sources into `tex_art_cc.uddp`.
 - `pack-texmaps`: pack Classic Client land textures into `tex_land_cc.uddp`.
 - `pack-ec-textures`: pack Enhanced Client static-art and terrain textures into `tex_art_ec.uddp` and `tex_land_ec.uddp`.
+- `pack-kr-land`: pack the Kingdom Reborn land into `tex_land_kr.uddp`, in the `tex_land_ec.uddp` layout (see below).
 - `pack-tilemeta`: pack Classic Client tiledata and Enhanced Client tileart metadata into `tilemeta.uddp`.
 - `pack-ec-tex-aux`: pack the EC support images that runtime consumers read (WorldArt hue masks, terrain-surface masks, liquid inputs) from a `tilemeta.uddp`'s texture refs into `tex_aux_ec.uddp`. The package also holds the client's missing-texture fallback and its day, night and night-sight maps (`TerrainTexture.uop`); see below.
 - `pack-ec-paperdoll`: pack the Enhanced Client's 3D paperdoll frames (`Paperdoll.uop`), lossless, into `paperdoll_ec.uddp`, with what each dress-layer item takes off; Dynamapper hues them with `hues.uddp`.
@@ -127,6 +128,17 @@ The source item behind each role depends on the material's layer class, which co
 The default build is lossless (RGBA8888 pages, Zstd 19). The lossy build, `--land-bc7`, is BC7 at Zstd 19 (9.0 MB against 17.2 MB) and reaches the GPU as BC7 blocks; Classic land has no lossy build. Format details are in [UDDP_FORMATS.md](UDDP_FORMATS.md) section 2.4.
 
 Normal maps are stored in the same UDDP page-atlas infrastructure as visible EC land textures, either as RGBA8888 pages or BC7/BC7-RDO GPU payloads depending on the package build. Do not assume a separate normal-map atlas exists at runtime. Original-client DDS files are source evidence only: for example, `01000013.dds` from a KR unpack is `256x256` DXT1, which shows the source normal map is RGB tangent-space data rather than BC5/ATI2 two-channel data. The renderer samples the repacked UDDP atlas and decodes its RGB channels as the normal.
+
+### `tex_land_kr.uddp`
+
+The Kingdom Reborn land: `udd-cli pack pack-kr-land --krdir /path/to/kr --ecdir /path/to/ec --output tex_land_kr.uddp` (the converter GUI's Kingdom Reborn Land job). It has the `tex_land_ec.uddp` layout and is built by the same packer with the same defaults (lossless, the same upscale passes), so Dynamapper draws it through the Enhanced terrain path. Each input comes from the Kingdom Reborn client (2.53.0.2) where it has one, and from the Enhanced Client where it does not:
+
+- definitions: KR's `TerrainDefinition.uop`, its alias flags moved to the Enhanced Client layout, then the Enhanced Client materials KR lacks. On the shipped clients: 191 KR definitions (140 differ from the Enhanced Client's, mostly in alias counts and coverage exponents) and 10 from the Enhanced Client.
+- textures: an id a KR definition uses comes from KR's `Texture.uop`, an id only Enhanced Client definitions use from the Enhanced Client's; an id missing there comes from the other client. On the shipped clients 198 come from KR and 9 from the Enhanced Client (none of them for a KR definition); texture 1000003 is used by both clients' definitions and KR's image is packed.
+- routes: KR has no `legacyterrainmap.csv`. Its Classic land routes are the ones measured on its facets (`lib/uocf/assets/kr/mappings.bin`, `KrLandMap::shipped_verified`, 1556 land ids). They replace the Enhanced Client's routes of those ids in `metadata/legacy_terrain_map.csv` and are dropped from the embedded `TerrainTranscode.kdl`, which the runtime reads over the csv (520 of its ids dropped, 149 kept). Other land ids keep the Enhanced Client's routes.
+- KR's grunge texture, as the optional `textures/grunge.rgba8888` entry ([UDDP_FORMATS.md](UDDP_FORMATS.md) section 2), for a later KR grunge shader option.
+
+The packer logs the client of every definition, texture and route and a summary line; `--report FILE` writes them to a file. Dynamapper draws it under the "Kingdom Reborn (tex_land_kr.uddp)" land source in Preferences (`land_texture_source = "kr"` in `graphics.toml`); the shader presets never choose a land source, and the art source stays Classic or Enhanced. Without the file, the Kingdom Reborn source falls back as a missing `tex_land_ec.uddp` does, and startup logs it.
 
 ### `gumps_cc.uddp` and `gumps_ec.uddp`
 
