@@ -33,10 +33,10 @@ SLOPES_DEGREES = (0.0, 22.5, 45.0, 67.5, 90.0)
 PERCENTILES = (10, 50, 90)
 BYTE_MAX = 255.0
 # Dynamapper for comparison: tonemap_ec_kr_profile (assets/shaders/postprocess/tonemapping.wesl, profile 2)
-# with kr_tonemap_params.x and the KR afternoon exposure of assets/defaults/shader_presets.toml.
-DYNAMAPPER_KR_GAIN = 0.9
+# with the UOD-Painterly afternoon exposure of assets/defaults/shader_presets.toml. The former separate KR gain
+# (kr_tonemap_params.x, 0.9) is folded into that exposure (1.06 * 0.9), so the curve is unchanged.
 DYNAMAPPER_KR_WHITE_CUTOFF = 0.8
-DYNAMAPPER_KR_EXPOSURE = 1.06
+DYNAMAPPER_KR_EXPOSURE = 0.954
 TONEMAP_INPUTS = (0.1, 0.25, 0.5, 0.75, 1.0)
 
 
@@ -112,7 +112,7 @@ def main():
 
 
 def dynamapper_kr_tonemap(x):
-    out = x * DYNAMAPPER_KR_EXPOSURE * DYNAMAPPER_KR_GAIN
+    out = x * DYNAMAPPER_KR_EXPOSURE
     out *= 1.0 + out / (DYNAMAPPER_KR_WHITE_CUTOFF * DYNAMAPPER_KR_WHITE_CUTOFF)
     return out / (1.0 + out)
 

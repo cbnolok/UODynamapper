@@ -57,7 +57,7 @@ fn get_hemisphere_fill(N: vec3<f32>) -> vec3<f32> {
 // ============================================================================
 
 // Gloom: general darkening, height-fading, optional shadow bias.
-// gloom_params: [amount, height_falloff_height, shadow_bias, fog_height_bias]
+// gloom_params: [amount, height_falloff_height, shadow_bias]
 fn apply_gloom(color_in: vec3<f32>, world_pos: vec3<f32>, N: vec3<f32>, L: vec3<f32>) -> vec3<f32> {
   let amount             = clamp(global_light.gloom_params.x, 0.0, 1.0);
   if (amount < 1e-4) { return color_in; }

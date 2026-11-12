@@ -278,16 +278,23 @@ pub struct GlobalLightingUniforms {
     pub _pad2_: Vec2,
 
     // --- Grading ---
-    pub grade_warm_color: Vec4,
-    pub grade_cool_color: Vec4,
+    //   The split-tone colours: highlights tint toward warm, shadows toward cool. RGB only.
+    pub grade_warm_color: Vec3,
+    #[serde(skip)]
+    pub _pad3_: f32,
+    pub grade_cool_color: Vec3,
+    #[serde(skip)]
+    pub _pad4_: f32,
     //   grade_params  = [strength, headroom_reserve, chroma_tint, headroom_on]
     pub grade_params: Vec4,
     //   grade_extra   = [vibrance, saturation, contrast, split_tone_strength]
     pub grade_extra: Vec4,
 
     // --- Gloom ---
-    //   gloom_params  = [amount, falloff_height, shadow_bias, fog_height_bias]
-    pub gloom_params: Vec4,
+    //   gloom_params  = [amount, falloff_height, shadow_bias]
+    pub gloom_params: Vec3,
+    #[serde(skip)]
+    pub _pad5_: f32,
 
     // --- Fog ---
     //   fog_color     = [r, g, b, max_mix]
@@ -304,17 +311,9 @@ pub struct GlobalLightingUniforms {
     //   Blends fog_color toward this darker tint. At blend=0: fog_color as-is.
     //   At blend=1: fully replaces fog_color with this (e.g. deep blue-black night fog).
     pub fog_night_color: Vec4,
-
-    // --- KR tonemap ---
-    //   kr_tonemap_params.x = pre-scale applied to the incoming color for the KR
-    //   post-process profile, before the filmic curve in `tonemap_ec_kr_profile`.
-    //   Exposed as a UI knob so KR brightness is tunable instead of hardcoded (the
-    //   old fixed value crushed KR ~11x darker than EC). y/z/w reserved.
-    //   A full vec4 slot is used (not a trailing scalar + vec3) to match the other
-    //   *_params blocks — naga-oil mis-composes this struct with a trailing vec3.
-    //   Appended as a new trailing slot. Hand-written preset files must set it; a cached
-    //   land.toml from an older build gets it from the bundled presets.
-    pub kr_tonemap_params: Vec4,
+    // The KR profile curve's former separate pre-scale, `kr_tonemap_params.x`, was the same multiplier as
+    // `exposure`; it is folded into the presets' exposure (see `migrate_cached_retired_lighting` in
+    // configs/shader_presets.rs for cached files). Its trailing vec4 slot is gone.
 }
 
 /// Default KR tonemap pre-scale. The old hardcoded value was ≈ 0.09

@@ -77,15 +77,19 @@ struct GlobalLightingUniforms {
     // former _pad2_ vec2 slot (matched by offset to the Rust `_pad2_: Vec2`).
     land_diffuse_strength: f32,
     _pad2_: f32,
-    grade_warm_color: vec4<f32>,
-    grade_cool_color: vec4<f32>,
+    // Split-tone colours, RGB only; each pads its 16-byte slot like the Rust `_pad3_` / `_pad4_`.
+    grade_warm_color: vec3<f32>,
+    _pad3_: f32,
+    grade_cool_color: vec3<f32>,
+    _pad4_: f32,
     grade_params: vec4<f32>,
     grade_extra: vec4<f32>,
-    gloom_params: vec4<f32>,
+    // [amount, falloff_height, shadow_bias]; padded like the Rust `_pad5_`.
+    gloom_params: vec3<f32>,
+    _pad5_: f32,
     fog_color: vec4<f32>,
     fog_params: vec4<f32>,
     gloom_color: vec4<f32>,
     fog_night_color: vec4<f32>,
-    // kr_tonemap_params.x = KR tonemap pre-scale (brightness); y/z/w reserved.
-    kr_tonemap_params: vec4<f32>,
+    // The former trailing kr_tonemap_params (.x = KR tonemap pre-scale) is folded into exposure.
 }

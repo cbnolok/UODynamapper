@@ -5,6 +5,7 @@ use crate::{
     core::render::scene::world::land::mesh_material::{
         ClientNightLighting, GlobalLightingUniforms, LandEffectsUniform, LandLightingUniforms,
         LandMaterialUniformsPresets, LandRenderStylePresetsPerMode, LandShaderModePresets, SunAngles,
+        TONE_CURVE_PROFILE,
     },
     core::system_sets::StartupSysSet,
     prelude::*,
@@ -22,6 +23,18 @@ pub const CLASSIC_PRESET_GROUP: &str = "classic";
 pub const ENHANCED_PRESET_GROUP: &str = "enhanced";
 pub const KR_PRESET_GROUP: &str = "kr";
 pub const PAINTERLY_PRESET_GROUP: &str = "painterly";
+/// Every preset group, in file order.
+const PRESET_GROUPS: [&str; 4] = [CLASSIC_PRESET_GROUP, ENHANCED_PRESET_GROUP, KR_PRESET_GROUP, PAINTERLY_PRESET_GROUP];
+/// The groups whose render style draws with the KR post-process profile (unit-tested against the render styles).
+pub const KR_PROFILE_PRESET_GROUPS: [&str; 2] = [KR_PRESET_GROUP, PAINTERLY_PRESET_GROUP];
+/// The KR profile curve's retired separate pre-scale, `lighting.kr_tonemap_params.x`, and the value the shader used
+/// when a file left it unset (<= 0). The old hardcoded value was ≈ 0.09 (middle_gray(0.18) / luminance(2.0)), which
+/// crushed KR ~11x darker than EC; this default sat near EC's own pre-scale (~1.0) so KR presets were legible.
+const RETIRED_KR_TONEMAP_KEY: &str = "kr_tonemap_params";
+const RETIRED_KR_TONEMAP_DEFAULT_GAIN: f64 = 0.9;
+/// Lighting colours and parameters whose fourth component was never read; they hold three now.
+const RETIRED_FOURTH_COMPONENT_KEYS: [&str; 3] = ["grade_warm_color", "grade_cool_color", "gloom_params"];
+const THREE_COMPONENTS: usize = 3;
 
 /// The scene multiplier while the clients' night composite does the dimming: the identity.
 pub const CLIENT_LIT_SCENE_MULTIPLIER: f32 = 1.0;
@@ -340,6 +353,23 @@ pub fn load_shader_settings(
         }
         None => contents,
     };
+    let retired = migrate_cached_retired_lighting(&contents, defaults);
+    let migrated_retired = retired.is_some();
+    let contents = match retired {
+        Some(migrated) => {
+            console_logger::one(
+                LogSev::Warn,
+                LogAbout::Settings,
+                &format!(
+                    "{}: KR Tonemap Brightness is folded into the exposure of the saved KR-profile presets; the unused \
+                     fourth value of the grade colours and gloom parameters is dropped",
+                    cache_path.display()
+                ),
+            );
+            migrated
+        }
+        None => contents,
+    };
     let file_name = cache_path.display().to_string();
     match uocf::utils::config_toml::parse_app_state(&file_name, &contents, defaults) {
         Ok(mut load) => {
@@ -348,7 +378,7 @@ pub fn load_shader_settings(
             for warning in &load.warnings {
                 console_logger::one(LogSev::Warn, LogAbout::Settings, warning);
             }
-            if !load.warnings.is_empty() {
+            if !load.warnings.is_empty() || migrated_retired {
                 save_shader_settings(&load.value);
             }
             Ok(Some(load.value))
@@ -378,6 +408,67 @@ fn migrate_cached_kr_to_painterly(contents: &str) -> Option<String> {
     let kr = table.remove(KR_PRESET_GROUP)?;
     table.insert(PAINTERLY_PRESET_GROUP.to_string(), kr);
     toml::to_string(&table).ok()
+}
+
+/// A cached land.toml written before the KR tonemap gain and the unused fourth components were removed:
+/// - drops `lighting.kr_tonemap_params`. Where its `.x` acted (a KR-profile group drawn with the profile tone curve)
+///   it multiplied exactly like `exposure`, so the slot's exposure takes it, and the slot looks the same;
+/// - keeps the first three values of `grade_warm_color`, `grade_cool_color` and `gloom_params`, which a three-value
+///   field would otherwise reject, failing the whole file.
+///
+/// A slot's tone curve missing from the file is the one the lenient load fills in from `defaults`.
+/// Returns the migrated text, or `None` when there is nothing to migrate or the text is not valid TOML (the lenient
+/// load reports that). A migrated file has no `kr_tonemap_params`, so the fold is never applied twice.
+fn migrate_cached_retired_lighting(contents: &str, defaults: &LandShaderModePresets) -> Option<String> {
+    let mut table: toml::Table = toml::from_str(contents).ok()?;
+    let mut migrated = false;
+    for group in PRESET_GROUPS {
+        for period in PRESET_PERIODS {
+            let Some(lighting) = table
+                .get_mut(group)
+                .and_then(|value| value.get_mut(period))
+                .and_then(|value| value.get_mut("lighting"))
+                .and_then(toml::Value::as_table_mut)
+            else {
+                continue;
+            };
+            for key in RETIRED_FOURTH_COMPONENT_KEYS {
+                if let Some(toml::Value::Array(values)) = lighting.get_mut(key) {
+                    if values.len() > THREE_COMPONENTS {
+                        values.truncate(THREE_COMPONENTS);
+                        migrated = true;
+                    }
+                }
+            }
+            let Some(kr_tonemap) = lighting.remove(RETIRED_KR_TONEMAP_KEY) else {
+                continue;
+            };
+            migrated = true;
+            let tone_curve = lighting
+                .get("tone_curve")
+                .and_then(toml::Value::as_integer)
+                .and_then(|curve| u32::try_from(curve).ok())
+                .or_else(|| get_preset_slot(defaults, &format!("{group}.{period}")).map(|slot| slot.lighting.tone_curve));
+            if !KR_PROFILE_PRESET_GROUPS.contains(&group) || tone_curve != Some(TONE_CURVE_PROFILE) {
+                continue;
+            }
+            let gain = kr_tonemap
+                .as_array()
+                .and_then(|values| values.first())
+                .and_then(toml_number)
+                .filter(|gain| *gain > 0.0)
+                .unwrap_or(RETIRED_KR_TONEMAP_DEFAULT_GAIN);
+            if let Some(exposure) = lighting.get("exposure").and_then(toml_number) {
+                lighting.insert("exposure".to_string(), toml::Value::Float(exposure * gain));
+            }
+        }
+    }
+    migrated.then(|| toml::to_string(&table).ok()).flatten()
+}
+
+/// A TOML float, or an integer written where a float is meant.
+fn toml_number(value: &toml::Value) -> Option<f64> {
+    value.as_float().or_else(|| value.as_integer().map(|integer| integer as f64))
 }
 
 /// Save the active shader settings to the cache dir's `settings/shaders/land.toml`
@@ -735,9 +826,9 @@ mod tests {
         let error = parse(&padded).err().expect("layout padding is not a setting").to_string();
         assert!(error.contains("unknown field `_pad0_`"), "{error}");
 
-        let missing = BUNDLED_FACTORY_PRESETS.replacen("kr_tonemap_params = ", "# kr_tonemap_params = ", 1);
+        let missing = BUNDLED_FACTORY_PRESETS.replacen("tone_curve = ", "# tone_curve = ", 1);
         let error = parse(&missing).err().expect("missing key").to_string();
-        assert!(error.contains("missing field `kr_tonemap_params`"), "{error}");
+        assert!(error.contains("missing field `tone_curve`"), "{error}");
     }
 
     #[test]
@@ -745,12 +836,12 @@ mod tests {
         let bundled = parse(BUNDLED_LAND_SETTINGS).expect("bundled");
         let cache = BUNDLED_LAND_SETTINGS
             .replacen("[classic.morning.effects]\n", "[classic.morning.effects]\n_pad_eff0 = 0.0\n", 1)
-            .replacen("kr_tonemap_params = [0.9, 0.0, 0.0, 0.0]\n", "", 1);
+            .replacen("tone_curve = 0\n", "", 1);
         let load = uocf::utils::config_toml::parse_app_state("land.toml", &cache, &bundled).expect("lenient load");
         assert_eq!(
             load.warnings,
             [
-                "land.toml: missing key `classic.morning.lighting.kr_tonemap_params` filled from the default",
+                "land.toml: missing key `classic.morning.lighting.tone_curve` filled from the default",
                 "land.toml: unknown key `classic.morning.effects._pad_eff0` dropped",
             ]
         );
@@ -911,6 +1002,72 @@ mod tests {
         validate_preset_lighting(&load.value).expect("normalized");
         let rewritten = toml::to_string_pretty(&load.value).expect("serialize");
         parse(&rewritten).expect("rewritten file is complete");
+    }
+
+    /// A cached file in the format before the KR tonemap gain was removed: every slot has `kr_tonemap_params` with
+    /// `gain`, except `painterly.night`, left unset, and four-value grade colours and gloom parameters.
+    fn cache_with_retired_lighting(gain: f64) -> toml::Table {
+        let mut table: toml::Table = toml::from_str(BUNDLED_LAND_SETTINGS).expect("bundled");
+        for group in PRESET_GROUPS {
+            for period in PRESET_PERIODS {
+                let lighting = table[group][period]["lighting"].as_table_mut().expect("lighting");
+                let unset = group == PAINTERLY_PRESET_GROUP && period == "night";
+                let x = if unset { 0.0 } else { gain };
+                lighting.insert(RETIRED_KR_TONEMAP_KEY.to_string(), toml::Value::try_from([x, 0.0, 0.0, 0.0]).unwrap());
+                for key in RETIRED_FOURTH_COMPONENT_KEYS {
+                    lighting[key].as_array_mut().expect("array").push(toml::Value::Float(0.0));
+                }
+            }
+        }
+        table
+    }
+
+    #[test]
+    fn cached_kr_tonemap_gain_folds_into_the_exposure_where_it_acted() {
+        const GAIN: f64 = 0.5;
+        let bundled = parse(BUNDLED_LAND_SETTINGS).expect("bundled");
+        let old = cache_with_retired_lighting(GAIN);
+        let migrated = migrate_cached_retired_lighting(&toml::to_string(&old).unwrap(), &bundled).expect("migrated");
+        let load = uocf::utils::config_toml::parse_app_state("land.toml", &migrated, &bundled).expect("lenient load");
+        assert!(load.warnings.is_empty(), "{:?}", load.warnings);
+        assert!(migrate_cached_retired_lighting(&migrated, &bundled).is_none(), "the fold applies once");
+        assert!(migrate_cached_retired_lighting(BUNDLED_LAND_SETTINGS, &bundled).is_none());
+        assert_eq!(bundled.painterly.morning.lighting.tone_curve, TONE_CURVE_PROFILE, "the fold is exercised");
+
+        for group in PRESET_GROUPS {
+            for period in PRESET_PERIODS {
+                let key = format!("{group}.{period}");
+                let before = get_preset_slot(&bundled, &key).unwrap();
+                let after = get_preset_slot(&load.value, &key).unwrap();
+                let acted = KR_PROFILE_PRESET_GROUPS.contains(&group) && before.lighting.tone_curve == TONE_CURVE_PROFILE;
+                let gain = match (acted, key.as_str()) {
+                    (false, _) => 1.0,
+                    (true, "painterly.night") => RETIRED_KR_TONEMAP_DEFAULT_GAIN,
+                    (true, _) => GAIN,
+                };
+                assert_eq!(after.lighting.exposure, (f64::from(before.lighting.exposure) * gain) as f32, "{key}");
+                assert_eq!(after.lighting.grade_warm_color, before.lighting.grade_warm_color, "{key}");
+                assert_eq!(after.lighting.grade_cool_color, before.lighting.grade_cool_color, "{key}");
+                assert_eq!(after.lighting.gloom_params, before.lighting.gloom_params, "{key}");
+            }
+        }
+    }
+
+    #[test]
+    fn cached_tone_curve_left_unset_takes_the_default_curve_for_the_fold() {
+        let bundled = parse(BUNDLED_LAND_SETTINGS).expect("bundled");
+        let mut old = cache_with_retired_lighting(RETIRED_KR_TONEMAP_DEFAULT_GAIN);
+        for group in KR_PROFILE_PRESET_GROUPS {
+            old[group]["morning"]["lighting"].as_table_mut().unwrap().remove("tone_curve");
+        }
+        let migrated = migrate_cached_retired_lighting(&toml::to_string(&old).unwrap(), &bundled).expect("migrated");
+        let migrated: toml::Table = toml::from_str(&migrated).unwrap();
+        let exposure = |table: &toml::Table, group: &str| table[group]["morning"]["lighting"]["exposure"].as_float().unwrap();
+        assert_eq!(
+            exposure(&migrated, PAINTERLY_PRESET_GROUP),
+            exposure(&old, PAINTERLY_PRESET_GROUP) * RETIRED_KR_TONEMAP_DEFAULT_GAIN
+        );
+        assert_eq!(exposure(&migrated, KR_PRESET_GROUP), exposure(&old, KR_PRESET_GROUP));
     }
 
     /// The KR and Enhanced clients' terrain light, grey = (N.D + 1) / 2 with D = (0, -0.7071, -0.7071) (KR

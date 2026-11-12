@@ -3,6 +3,12 @@
 > Status (2026-10-25): the root cause below was naga-oil composition, which Bevy 0.20
 > removed (shaders are now WESL, see `bevy_0_20_port_notes.md`, so `.wgsl` paths below are
 > now `.wesl`). Not re-tested under WESL; keep the `vec4` slot convention anyway.
+>
+> Status (2026-11-12): `kr_tonemap_params` is gone (its `.x` gain is folded into `exposure`), and
+> `grade_warm_color`, `grade_cool_color` and `gloom_params` are `vec3` each followed by an explicit
+> `f32` pad, the same `vec3 + scalar` pattern as `light_color` + `tone_curve`. That order (vec3 first)
+> is fine; validated at runtime with no `failed to create shader module`. The struct now ends with a
+> `vec4`, so the trailing `scalar + vec3` case below does not arise.
 
 Discovered 2026-07-08 while adding a `kr_tonemap_gain` field to
 `GlobalLightingUniforms` (task: expose the KR tonemap brightness knob).

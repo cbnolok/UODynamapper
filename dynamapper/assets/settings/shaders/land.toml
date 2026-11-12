@@ -63,13 +63,11 @@ grade_warm_color = [
     1.08,
     0.98,
     0.9,
-    0.0,
 ]
 grade_cool_color = [
     0.82,
     0.95,
     1.05,
-    0.0,
 ]
 grade_params = [
     0.9,
@@ -87,7 +85,6 @@ gloom_params = [
     0.0,
     0.008,
     0.45,
-    0.0,
 ]
 fog_color = [
     0.75,
@@ -113,7 +110,6 @@ fog_night_color = [
     0.0,
     0.0,
 ]
-kr_tonemap_params = [0.9, 0.0, 0.0, 0.0]
 
 [classic.morning.land_lighting]
 enable_bent = 0
@@ -211,13 +207,11 @@ grade_warm_color = [
     1.08,
     0.98,
     0.9,
-    0.0,
 ]
 grade_cool_color = [
     0.82,
     0.95,
     1.05,
-    0.0,
 ]
 grade_params = [
     1.0,
@@ -235,7 +229,6 @@ gloom_params = [
     0.15,
     0.007,
     0.35,
-    0.0,
 ]
 fog_color = [
     0.75,
@@ -261,7 +254,6 @@ fog_night_color = [
     0.0,
     0.0,
 ]
-kr_tonemap_params = [0.9, 0.0, 0.0, 0.0]
 
 [classic.afternoon.land_lighting]
 enable_bent = 1
@@ -359,13 +351,11 @@ grade_warm_color = [
     1.08,
     0.98,
     0.9,
-    0.0,
 ]
 grade_cool_color = [
     0.82,
     0.95,
     1.05,
-    0.0,
 ]
 grade_params = [
     1.1,
@@ -383,7 +373,6 @@ gloom_params = [
     0.4,
     0.01,
     0.65,
-    0.0,
 ]
 fog_color = [
     0.75,
@@ -409,7 +398,6 @@ fog_night_color = [
     0.0,
     0.0,
 ]
-kr_tonemap_params = [0.9, 0.0, 0.0, 0.0]
 
 [classic.night.land_lighting]
 enable_bent = 1
@@ -507,13 +495,11 @@ grade_warm_color = [
     1.08,
     0.98,
     0.9,
-    0.0,
 ]
 grade_cool_color = [
     0.82,
     0.95,
     1.05,
-    0.0,
 ]
 grade_params = [
     1.05,
@@ -531,7 +517,6 @@ gloom_params = [
     0.65,
     0.012,
     0.75,
-    0.0,
 ]
 fog_color = [
     0.75,
@@ -557,7 +542,6 @@ fog_night_color = [
     0.0,
     0.0,
 ]
-kr_tonemap_params = [0.9, 0.0, 0.0, 0.0]
 
 [classic.cave.land_lighting]
 enable_bent = 1
@@ -657,13 +641,11 @@ grade_warm_color = [
     1.08,
     0.98,
     0.9,
-    0.0,
 ]
 grade_cool_color = [
     0.82,
     0.95,
     1.05,
-    0.0,
 ]
 grade_params = [
     0.9,
@@ -681,7 +663,6 @@ gloom_params = [
     0.2,
     0.008,
     0.45,
-    0.0,
 ]
 fog_color = [
     0.75,
@@ -707,7 +688,6 @@ fog_night_color = [
     0.0,
     0.0,
 ]
-kr_tonemap_params = [0.9, 0.0, 0.0, 0.0]
 
 [enhanced.morning.land_lighting]
 enable_bent = 0
@@ -807,13 +787,11 @@ grade_warm_color = [
     1.08,
     0.98,
     0.9,
-    0.0,
 ]
 grade_cool_color = [
     0.82,
     0.95,
     1.05,
-    0.0,
 ]
 grade_params = [
     1.0,
@@ -831,7 +809,6 @@ gloom_params = [
     0.15,
     0.007,
     0.35,
-    0.0,
 ]
 fog_color = [
     0.75,
@@ -857,7 +834,6 @@ fog_night_color = [
     0.0,
     0.0,
 ]
-kr_tonemap_params = [0.9, 0.0, 0.0, 0.0]
 
 [enhanced.afternoon.land_lighting]
 enable_bent = 0
@@ -957,13 +933,11 @@ grade_warm_color = [
     1.08,
     0.98,
     0.9,
-    0.0,
 ]
 grade_cool_color = [
     0.82,
     0.95,
     1.05,
-    0.0,
 ]
 grade_params = [
     1.1,
@@ -981,7 +955,6 @@ gloom_params = [
     0.4,
     0.01,
     0.65,
-    0.0,
 ]
 fog_color = [
     0.75,
@@ -1007,7 +980,6 @@ fog_night_color = [
     0.0,
     0.0,
 ]
-kr_tonemap_params = [0.9, 0.0, 0.0, 0.0]
 
 [enhanced.night.land_lighting]
 enable_bent = 0
@@ -1107,13 +1079,11 @@ grade_warm_color = [
     1.08,
     0.98,
     0.9,
-    0.0,
 ]
 grade_cool_color = [
     0.82,
     0.95,
     1.05,
-    0.0,
 ]
 grade_params = [
     1.05,
@@ -1131,7 +1101,6 @@ gloom_params = [
     0.65,
     0.012,
     0.75,
-    0.0,
 ]
 fog_color = [
     0.75,
@@ -1157,7 +1126,6 @@ fog_night_color = [
     0.0,
     0.0,
 ]
-kr_tonemap_params = [0.9, 0.0, 0.0, 0.0]
 
 [enhanced.cave.land_lighting]
 enable_bent = 0
@@ -1260,13 +1228,11 @@ grade_warm_color = [
     1.08,
     0.98,
     0.9,
-    0.0,
 ]
 grade_cool_color = [
     0.82,
     0.95,
     1.05,
-    0.0,
 ]
 grade_params = [
     1.0,
@@ -1284,7 +1250,6 @@ gloom_params = [
     0.16,
     0.006,
     0.52,
-    0.0,
 ]
 fog_color = [
     0.035,
@@ -1310,7 +1275,6 @@ fog_night_color = [
     0.024,
     0.25,
 ]
-kr_tonemap_params = [0.9, 0.0, 0.0, 0.0]
 
 [kr.morning.land_lighting]
 enable_bent = 0
@@ -1413,13 +1377,11 @@ grade_warm_color = [
     1.08,
     0.98,
     0.9,
-    0.0,
 ]
 grade_cool_color = [
     0.82,
     0.95,
     1.05,
-    0.0,
 ]
 grade_params = [
     1.0,
@@ -1437,7 +1399,6 @@ gloom_params = [
     0.14,
     0.005,
     0.5,
-    0.0,
 ]
 fog_color = [
     0.04,
@@ -1463,7 +1424,6 @@ fog_night_color = [
     0.026,
     0.22,
 ]
-kr_tonemap_params = [0.9, 0.0, 0.0, 0.0]
 
 [kr.afternoon.land_lighting]
 enable_bent = 0
@@ -1566,13 +1526,11 @@ grade_warm_color = [
     1.08,
     0.98,
     0.9,
-    0.0,
 ]
 grade_cool_color = [
     0.82,
     0.95,
     1.05,
-    0.0,
 ]
 grade_params = [
     1.0,
@@ -1590,7 +1548,6 @@ gloom_params = [
     0.24,
     0.008,
     0.52,
-    0.0,
 ]
 fog_color = [
     0.02,
@@ -1616,7 +1573,6 @@ fog_night_color = [
     0.018,
     0.55,
 ]
-kr_tonemap_params = [0.9, 0.0, 0.0, 0.0]
 
 [kr.night.land_lighting]
 enable_bent = 0
@@ -1719,13 +1675,11 @@ grade_warm_color = [
     1.08,
     0.98,
     0.9,
-    0.0,
 ]
 grade_cool_color = [
     0.82,
     0.95,
     1.05,
-    0.0,
 ]
 grade_params = [
     1.0,
@@ -1743,7 +1697,6 @@ gloom_params = [
     0.3,
     0.01,
     0.58,
-    0.0,
 ]
 fog_color = [
     0.018,
@@ -1769,7 +1722,6 @@ fog_night_color = [
     0.014,
     0.6,
 ]
-kr_tonemap_params = [0.9, 0.0, 0.0, 0.0]
 
 [kr.cave.land_lighting]
 enable_bent = 0
@@ -1861,19 +1813,17 @@ atmosphere_tint = [
     0.22,
     0.29,
 ]
-exposure = 1.03
+exposure = 0.927
 ambient_strength = 0.24
 grade_warm_color = [
     1.08,
     0.98,
     0.9,
-    0.0,
 ]
 grade_cool_color = [
     0.82,
     0.95,
     1.05,
-    0.0,
 ]
 grade_params = [
     0.9,
@@ -1891,7 +1841,6 @@ gloom_params = [
     0.16,
     0.006,
     0.52,
-    0.0,
 ]
 fog_color = [
     0.035,
@@ -1917,7 +1866,6 @@ fog_night_color = [
     0.024,
     0.25,
 ]
-kr_tonemap_params = [0.9, 0.0, 0.0, 0.0]
 
 [painterly.morning.land_lighting]
 enable_bent = 1
@@ -2009,19 +1957,17 @@ atmosphere_tint = [
     0.22,
     0.28,
 ]
-exposure = 1.06
+exposure = 0.954
 ambient_strength = 0.25
 grade_warm_color = [
     1.08,
     0.98,
     0.9,
-    0.0,
 ]
 grade_cool_color = [
     0.82,
     0.95,
     1.05,
-    0.0,
 ]
 grade_params = [
     1.0,
@@ -2039,7 +1985,6 @@ gloom_params = [
     0.14,
     0.005,
     0.5,
-    0.0,
 ]
 fog_color = [
     0.04,
@@ -2065,7 +2010,6 @@ fog_night_color = [
     0.026,
     0.22,
 ]
-kr_tonemap_params = [0.9, 0.0, 0.0, 0.0]
 
 [painterly.afternoon.land_lighting]
 enable_bent = 1
@@ -2157,19 +2101,17 @@ atmosphere_tint = [
     0.16,
     0.24,
 ]
-exposure = 1.06
+exposure = 0.954
 ambient_strength = 0.12
 grade_warm_color = [
     1.08,
     0.98,
     0.9,
-    0.0,
 ]
 grade_cool_color = [
     0.82,
     0.95,
     1.05,
-    0.0,
 ]
 grade_params = [
     1.1,
@@ -2187,7 +2129,6 @@ gloom_params = [
     0.24,
     0.008,
     0.52,
-    0.0,
 ]
 fog_color = [
     0.02,
@@ -2213,7 +2154,6 @@ fog_night_color = [
     0.018,
     0.55,
 ]
-kr_tonemap_params = [0.9, 0.0, 0.0, 0.0]
 
 [painterly.night.land_lighting]
 enable_bent = 1
@@ -2305,19 +2245,17 @@ atmosphere_tint = [
     0.14,
     0.2,
 ]
-exposure = 0.92
+exposure = 0.828
 ambient_strength = 0.07
 grade_warm_color = [
     1.08,
     0.98,
     0.9,
-    0.0,
 ]
 grade_cool_color = [
     0.82,
     0.95,
     1.05,
-    0.0,
 ]
 grade_params = [
     1.05,
@@ -2335,7 +2273,6 @@ gloom_params = [
     0.3,
     0.01,
     0.58,
-    0.0,
 ]
 fog_color = [
     0.018,
@@ -2361,7 +2298,6 @@ fog_night_color = [
     0.014,
     0.6,
 ]
-kr_tonemap_params = [0.9, 0.0, 0.0, 0.0]
 
 [painterly.cave.land_lighting]
 enable_bent = 1

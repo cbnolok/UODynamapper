@@ -812,7 +812,7 @@ fn finish_land(hdr_rgb: vec3<f32>) -> vec4<f32> {
   }
   var final_rgb = post;
   if (enable_tonemap == 1u) {
-    final_rgb = tonemap_with_curve(max(post, vec3<f32>(0.0)), exposure, visual_profile, global_light.kr_tonemap_params.x, global_light.tone_curve);
+    final_rgb = tonemap_with_curve(max(post, vec3<f32>(0.0)), exposure, visual_profile, global_light.tone_curve);
   }
 
   final_rgb = max(final_rgb, vec3<f32>(0.0));

@@ -30,8 +30,9 @@ fn calculate_fog_factor(
     let dist_factor = smoothstep(fog_start, fog_end, d);
 
     // ---- 2. Height-based Fog (Exponential) ----
-    // Fog height bias: -1 valley, 0 neutral, +1 high-alt haze
-    let hBias = clamp(global_light.gloom_params.w, -1.0, 1.0);
+    // Fog height bias: -1 valley, 0 neutral, +1 high-alt haze. Its gloom_params.w source was
+    // removed (the active fog pass never read it), so this legacy helper stays neutral.
+    let hBias = 0.0;
     let high_w = max(hBias, 0.0);
     let low_w  = max(-hBias, 0.0);
 

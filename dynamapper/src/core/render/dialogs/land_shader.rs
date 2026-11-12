@@ -148,6 +148,10 @@ const TEXTURE_FILTER_OPTIONS: [(&str, u32, &str); 2] = [
     ("Client bilinear", TEXTURE_FILTER_CLIENT_BILINEAR, "As the KR client: plain bilinear on land and sprites. Mip-like averaging only when zoomed out past its 18.4-tile view."),
 ];
 
+/// "Exposure" slider. The floor is the lowest exposure x "KR Tonemap Brightness" product the two former sliders
+/// reached (0.5 x 0.02), so a cached KR setting folded into exposure stays on the slider.
+const EXPOSURE_RANGE: std::ops::RangeInclusive<f32> = 0.01..=2.0;
+
 /// "Sun Azimuth" slider: a full compass turn in degrees, clockwise from north.
 const SUN_AZIMUTH_RANGE_DEGREES: std::ops::RangeInclusive<f32> = 0.0..=360.0;
 /// "Sun Elevation" slider: from the horizon to overhead, in degrees.
@@ -569,7 +573,7 @@ pub fn land_ui_system(
                     ui,
                     "Exposure (Tonemap)",
                     &mut u.lighting.exposure,
-                    0.5..=2.0,
+                    EXPOSURE_RANGE,
                 );
 
                 ui.separator();
@@ -764,15 +768,6 @@ pub fn land_ui_system(
                         0.0..=200.0,
                     );
                     changed |= slider_s(ui, "Shadow Bias", &mut u.lighting.gloom_params[2], 0.0..=1.0);
-
-                    ui.add_space(4.0);
-                    ui.label("Fog Height Bias (continuous): -1 = valley/ground fog, 0 = neutral, +1 = high-alt haze");
-                    changed |= slider_s(
-                        ui,
-                        "Fog Height Bias (-1..+1)",
-                        &mut u.lighting.gloom_params[3],
-                        -1.0..=1.0,
-                    );
                 }
                 if changed {
                     u.dirty = true;
@@ -1020,10 +1015,8 @@ fn whole_scene_controls(ui: &mut egui::Ui, u: &mut UniformState, gates: RenderSt
             Some(lighting) => changed |= client_night_controls(ui, lighting),
             None => changed |= slider_s(ui, "Brightness", &mut u.global_lighting, 0.0..=2.0),
         }
-        // KR's filmic tonemap pre-scales the image darker than EC/Classic;
-        // this exposes that pre-scale (higher = brighter). Only the KR profile
-        // uses it, so it is grayed out in the other styles.
-        changed |= slider_en(ui, gates.is_kr_profile, "KR Tonemap Brightness", &mut u.lighting.kr_tonemap_params.x, 0.02..=1.0);
+        // KR's filmic tonemap had its own pre-scale here ("KR Tonemap Brightness"); it multiplied
+        // exactly like Exposure, so it is folded into Exposure (Advanced -> Intensities).
         changed |= slider_s(ui, "Light/Static Interaction", &mut u.effects.light_decal_intensity, 0.0..=2.0);
 
         let ui = &mut columns[1];
@@ -1518,5 +1511,17 @@ mod tests {
         assert_eq!(presets.kr.night.global_lighting, None);
         assert_eq!(u.client_lighting, None);
         assert_eq!(u.global_lighting, 3.0);
+    }
+
+    /// The cached land.toml migration folds the retired KR tonemap gain only into these groups.
+    #[test]
+    fn kr_profile_preset_groups_are_the_kr_profile_render_styles() {
+        const KR_PROFILE: u32 = 2;
+        let groups: Vec<&str> = RENDER_STYLE_PRESETS
+            .into_iter()
+            .filter(|style| style.post_process_profile == KR_PROFILE)
+            .map(|style| style.preset_group)
+            .collect();
+        assert_eq!(groups, crate::configs::shader_presets::KR_PROFILE_PRESET_GROUPS);
     }
 }
