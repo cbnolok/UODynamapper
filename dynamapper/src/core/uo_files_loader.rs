@@ -1,6 +1,6 @@
 #![allow(unused)]
 
-use crate::configs::settings::Settings;
+use crate::configs::settings::{GumpClient, Settings};
 use crate::core::maps::MapPlane;
 use crate::core::multis::MultiDefinitionsRes;
 use crate::core::statics::{LazyStaticsStore, StaticsStoreRes};
@@ -58,8 +58,8 @@ pub struct TexAuxEcPackageRes(pub Arc<udd_assets::tex_aux_ec::TexAuxEcPackage>);
 #[derive(Resource)]
 pub struct WorldLightsPackageRes(pub Arc<udd_assets::world_lights::WorldLightsPackage>);
 
-/// Optional frames of the Enhanced client's 3D paperdoll, which the Enhanced and KR-like presets draw. Without it they
-/// draw the gump paperdoll.
+/// Optional frames of the Enhanced client's 3D paperdoll, which the Enhanced "Gumps and paperdoll" preference draws.
+/// Without it, that preference draws the gump paperdoll.
 #[derive(Resource)]
 pub struct PaperdollEcPackageRes(pub Arc<udd_assets::PaperdollEcPackage>);
 
@@ -67,27 +67,6 @@ const GUMPS_CC_FILE_NAME: &str = "gumps_cc.uddp";
 const GUMPS_EC_FILE_NAME: &str = "gumps_ec.uddp";
 const PAPERDOLL_EC_FILE_NAME: &str = "paperdoll_ec.uddp";
 const CLASSIC_CLIENT_GUMPS_LABEL: &str = "the Classic client gump files";
-/// `UniformState.effects.shading_mode` of the Classic preset. Enhanced is 1 and KR-like 2.
-const CLASSIC_SHADING_MODE: u32 = 0;
-
-/// Which client's gumps a rendering preset draws (the user, 2026-11-06): the Classic preset the Classic client's, and
-/// the Enhanced and KR-like presets, which render from Enhanced data, the Enhanced client's.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum GumpClient {
-    Classic,
-    Enhanced,
-}
-
-impl GumpClient {
-    /// The preset is `UniformState.effects.shading_mode`, which the shader dialog changes at runtime.
-    pub const fn from_shading_mode(shading_mode: u32) -> Self {
-        if shading_mode == CLASSIC_SHADING_MODE {
-            Self::Classic
-        } else {
-            Self::Enhanced
-        }
-    }
-}
 
 /// Which loaded source `pick_gump_source` read a gump from.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -102,15 +81,15 @@ enum GumpPick<T> {
     Found(GumpSourceKind, T),
     /// The source the rule picked has the gump but cannot decode it. No other source is tried.
     Failed(GumpSourceKind, color_eyre::eyre::Report),
-    /// The Classic preset with no Classic source loaded: it shows no gumps.
+    /// Classic gumps with no Classic source loaded: none show.
     NoClassicSource,
-    /// The Enhanced or KR-like preset, gumps_ec.uddp lacks the gump and no Classic source is loaded.
+    /// Enhanced gumps, gumps_ec.uddp lacks the gump and no Classic source is loaded.
     Missing,
 }
 
-/// The source of one gump for the preset drawing `client` (the user, 2026-11-06). The Classic preset reads the Classic
-/// source only, never gumps_ec.uddp. Enhanced and KR-like read gumps_ec.uddp when it has the gump, else the Classic
-/// source; a gumps_ec.uddp entry that fails to decode is an error, not a reason to fall back.
+/// The source of one gump of `client`'s gumps (the user, 2026-11-06). Classic reads the Classic source only, never
+/// gumps_ec.uddp. Enhanced reads gumps_ec.uddp when it has the gump, else the Classic source; a gumps_ec.uddp entry
+/// that fails to decode is an error, not a reason to fall back.
 ///
 /// `enhanced` is set when gumps_ec.uddp is loaded and looks the gump up there: `None` when the package lacks it, else
 /// its decode. `classic` is set when a Classic source is loaded and decodes the gump from it.
@@ -138,16 +117,16 @@ fn pick_gump_source<T>(
     }
 }
 
-/// The startup line naming the source each preset draws its gumps from.
+/// The startup line naming the source each "Gumps and paperdoll" choice draws its gumps from.
 fn gump_sources_summary(classic_label: Option<&str>, enhanced_loaded: bool) -> String {
-    let classic_preset = classic_label.unwrap_or("none, so it shows no gumps");
-    let enhanced_presets = match (enhanced_loaded, classic_label) {
+    let classic_gumps = classic_label.unwrap_or("none, so none show");
+    let enhanced_gumps = match (enhanced_loaded, classic_label) {
         (true, Some(classic_label)) => format!("{GUMPS_EC_FILE_NAME}, then {classic_label} for ids it lacks"),
         (true, None) => GUMPS_EC_FILE_NAME.to_string(),
         (false, Some(classic_label)) => format!("{classic_label} ({GUMPS_EC_FILE_NAME} is not loaded)"),
         (false, None) => "none".to_string(),
     };
-    format!("gumps: Classic preset {classic_preset}; Enhanced and KR-like {enhanced_presets}")
+    format!("gumps: Classic {classic_gumps}; Enhanced {enhanced_gumps}")
 }
 
 /// The startup warning for a gumps_ec.uddp that leaves `shared_count` gumps for gumps_cc.uddp to draw, when no Classic
@@ -156,12 +135,12 @@ fn shared_gumps_without_classic_warning(shared_count: usize, classic_loaded: boo
     (shared_count > 0 && !classic_loaded).then(|| {
         format!(
             "{GUMPS_EC_FILE_NAME} shares {shared_count} gumps with {GUMPS_CC_FILE_NAME}, and neither that package nor \
-             {CLASSIC_CLIENT_GUMPS_LABEL} are loaded: those gumps won't show under the Enhanced and KR-like presets."
+             {CLASSIC_CLIENT_GUMPS_LABEL} are loaded: those gumps won't show as Enhanced gumps."
         )
     })
 }
 
-/// What [`SharedGumpCheck::check`] found for one gump the Classic source served under the Enhanced presets.
+/// What [`SharedGumpCheck::check`] found for one gump the Classic source served as an Enhanced gump.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum SharedGumpVerdict {
     /// gumps_ec.uddp doesn't share the gump: it lacks it.
@@ -175,8 +154,8 @@ enum SharedGumpVerdict {
     Mismatch { count: u32 },
 }
 
-/// Checks each gump gumps_ec.uddp shares with gumps_cc.uddp the first time the Classic source serves it under the
-/// Enhanced presets: the image hash gumps_ec.uddp lists against the served image's. Each gump is hashed once.
+/// Checks each gump gumps_ec.uddp shares with gumps_cc.uddp the first time the Classic source serves it as an
+/// Enhanced gump: the image hash gumps_ec.uddp lists against the served image's. Each gump is hashed once.
 #[derive(Default)]
 struct SharedGumpCheck {
     checked: Mutex<HashSet<u32>>,
@@ -243,7 +222,7 @@ impl ClassicGumpSource {
     }
 }
 
-/// gumps_ec.uddp with its gump ids, sorted, so a lookup knows when the Enhanced presets fall back.
+/// gumps_ec.uddp with its gump ids, sorted, so a lookup knows when Enhanced gumps fall back.
 struct EnhancedGumps {
     package: udd_assets::GumpsPackage,
     gump_ids: Vec<u32>,
@@ -265,12 +244,12 @@ impl EnhancedGumps {
 }
 
 /// Optional gump art source. UDDP packages are preferred, legacy Classic sources are fallback.
-/// The active preset picks which source serves a gump (`GumpClient`, `pick_gump_source`).
+/// The "Gumps and paperdoll" preference picks which source serves a gump (`GumpClient`, `pick_gump_source`).
 #[derive(Resource)]
 pub struct GumpMapRes {
     classic: Option<Arc<ClassicGumpSource>>,
     enhanced: Option<Arc<EnhancedGumps>>,
-    /// Set once the Classic preset asked for a gump with no Classic source loaded, which is logged once.
+    /// Set once Classic gumps were asked for with no Classic source loaded, which is logged once.
     classic_missing_logged: AtomicBool,
     shared_check: SharedGumpCheck,
 }
@@ -302,7 +281,7 @@ impl GumpMapRes {
         shared_gumps_without_classic_warning(shared_count, self.classic.is_some())
     }
 
-    /// Checks a gump the Classic source served under the Enhanced presets against the hash gumps_ec.uddp lists when it
+    /// Checks a gump the Classic source served as an Enhanced gump against the hash gumps_ec.uddp lists when it
     /// shares the gump. A mismatch still draws the gump.
     fn check_shared_gump(&self, gump_id: u32, served: &udd_assets::gumps::GumpImage) {
         let (Some(enhanced), Some(classic)) = (self.enhanced.as_deref(), self.classic.as_deref()) else {
@@ -328,8 +307,8 @@ impl GumpMapRes {
         }
     }
 
-    /// Whether the preset drawing `client` finds gump `gump_id` in a loaded source (`pick_gump_source`): the Classic
-    /// preset in the Classic source, Enhanced and KR-like in gumps_ec.uddp or the Classic source.
+    /// Whether `client`'s gumps find gump `gump_id` in a loaded source (`pick_gump_source`): Classic in the Classic
+    /// source, Enhanced in gumps_ec.uddp or the Classic source.
     pub fn has_gump(&self, client: GumpClient, gump_id: u32) -> bool {
         let in_enhanced = || self.enhanced.as_deref().is_some_and(|enhanced| enhanced.has_gump(gump_id));
         let in_classic = || self.classic.as_deref().is_some_and(|classic| classic.has_gump(gump_id));
@@ -369,11 +348,11 @@ impl GumpMapRes {
                         console_logger::LogSev::Warn,
                         console_logger::LogAbout::UoFiles,
                         &format!(
-                            "The Classic preset shows no gumps: neither {GUMPS_CC_FILE_NAME} nor {CLASSIC_CLIENT_GUMPS_LABEL} are loaded."
+                            "Classic gumps show none: neither {GUMPS_CC_FILE_NAME} nor {CLASSIC_CLIENT_GUMPS_LABEL} are loaded."
                         ),
                     );
                 }
-                Err(color_eyre::eyre::eyre!("the Classic preset has no gump source loaded"))
+                Err(color_eyre::eyre::eyre!("Classic gumps have no source loaded"))
             }
             GumpPick::Missing if self.is_shared_gump(gump_id) => Err(color_eyre::eyre::eyre!(
                 "gump {gump_id} is one {GUMPS_EC_FILE_NAME} shares with {GUMPS_CC_FILE_NAME}, and no Classic gump \
@@ -806,7 +785,7 @@ pub fn sys_setup_uo_data(mut commands: Commands, settings: Res<Settings>) {
             udd_assets::PaperdollEcPackage::load(&path)
                 .map_err(|error| {
                     lg_err(&format!(
-                        "Failed to load {}: {error:#}. The Enhanced and KR-like presets draw the gump paperdoll.",
+                        "Failed to load {}: {error:#}. Enhanced gumps and paperdoll draw the gump paperdoll.",
                         path.display()
                     ))
                 })
@@ -814,8 +793,8 @@ pub fn sys_setup_uo_data(mut commands: Commands, settings: Res<Settings>) {
         }
         None => {
             lg(&format!(
-                "No Enhanced paperdoll package selected: {PAPERDOLL_EC_FILE_NAME} not found in udd_path. The Enhanced \
-                 and KR-like presets draw the gump paperdoll."
+                "No Enhanced paperdoll package selected: {PAPERDOLL_EC_FILE_NAME} not found in udd_path. Enhanced \
+                 gumps and paperdoll draw the gump paperdoll."
             ));
             None
         }
@@ -933,9 +912,6 @@ mod tests {
     use std::collections::BTreeMap;
     use std::path::PathBuf;
 
-    const CLASSIC_PRESET: u32 = 0;
-    const ENHANCED_PRESET: u32 = 1;
-    const KR_LIKE_PRESET: u32 = 2;
     const ENHANCED_IMAGE: &str = "gumps_ec image";
     const CLASSIC_IMAGE: &str = "Classic image";
 
@@ -965,7 +941,7 @@ mod tests {
     }
 
     /// Runs the rule with stand-in sources.
-    fn pick(shading_mode: u32, enhanced: Enhanced, classic_loaded: bool, classic_decodes: bool) -> Picked {
+    fn pick(client: GumpClient, enhanced: Enhanced, classic_loaded: bool, classic_decodes: bool) -> Picked {
         let mut enhanced_asked = false;
         let mut classic_asked = false;
         let enhanced_flag = &mut enhanced_asked;
@@ -988,7 +964,7 @@ mod tests {
                 Err(color_eyre::eyre::eyre!("bad Classic entry"))
             }
         });
-        let result = match pick_gump_source(GumpClient::from_shading_mode(shading_mode), enhanced_lookup, classic) {
+        let result = match pick_gump_source(client, enhanced_lookup, classic) {
             GumpPick::Found(kind, image) => Expected::Found(kind, image),
             GumpPick::Failed(kind, _) => Expected::Failed(kind),
             GumpPick::NoClassicSource => Expected::NoClassicSource,
@@ -997,16 +973,10 @@ mod tests {
         Picked { result, enhanced_asked, classic_asked }
     }
 
+    /// Each "Gumps and paperdoll" choice against which packages are loaded, whether gumps_ec.uddp has the gump, and its
+    /// decode error.
     #[test]
-    fn presets_map_to_their_gump_client() {
-        assert_eq!(GumpClient::from_shading_mode(CLASSIC_PRESET), GumpClient::Classic);
-        assert_eq!(GumpClient::from_shading_mode(ENHANCED_PRESET), GumpClient::Enhanced);
-        assert_eq!(GumpClient::from_shading_mode(KR_LIKE_PRESET), GumpClient::Enhanced);
-    }
-
-    /// Every preset against which packages are loaded, whether gumps_ec.uddp has the gump, and its decode error.
-    #[test]
-    fn gump_source_follows_the_preset() {
+    fn gump_source_follows_the_gumps_and_paperdoll_preference() {
         use Enhanced::{DecodeError, HasGump, LacksGump, NotLoaded};
         use Expected::{Failed, Found, Missing, NoClassicSource};
         use GumpSourceKind::{Classic, Enhanced as Ec};
@@ -1021,10 +991,10 @@ mod tests {
             (DecodeError, false, NoClassicSource),
         ];
         for (enhanced, classic_loaded, expected) in classic_cases {
-            let picked = pick(CLASSIC_PRESET, enhanced, classic_loaded, true);
-            let case = format!("Classic preset, gumps_ec {enhanced:?}, Classic source {classic_loaded}");
+            let picked = pick(GumpClient::Classic, enhanced, classic_loaded, true);
+            let case = format!("Classic gumps, gumps_ec {enhanced:?}, Classic source {classic_loaded}");
             assert_eq!(picked.result, expected, "{case}");
-            assert!(!picked.enhanced_asked, "{case}: the Classic preset never reads gumps_ec");
+            assert!(!picked.enhanced_asked, "{case}: Classic gumps never read gumps_ec");
         }
 
         let enhanced_cases = [
@@ -1037,39 +1007,37 @@ mod tests {
             (HasGump, false, Found(Ec, ENHANCED_IMAGE)),
             (DecodeError, false, Failed(Ec)),
         ];
-        for shading_mode in [ENHANCED_PRESET, KR_LIKE_PRESET] {
-            for (enhanced, classic_loaded, expected) in &enhanced_cases {
-                let picked = pick(shading_mode, *enhanced, *classic_loaded, true);
-                let case = format!("preset {shading_mode}, gumps_ec {enhanced:?}, Classic source {classic_loaded}");
-                assert_eq!(&picked.result, expected, "{case}");
-                // The Classic source is asked only when gumps_ec lacks the gump, never after a decode error.
-                let falls_back = matches!(picked.result, Found(Classic, _));
-                assert_eq!(picked.classic_asked, falls_back, "{case}");
-            }
+        for (enhanced, classic_loaded, expected) in enhanced_cases {
+            let picked = pick(GumpClient::Enhanced, enhanced, classic_loaded, true);
+            let case = format!("Enhanced gumps, gumps_ec {enhanced:?}, Classic source {classic_loaded}");
+            assert_eq!(picked.result, expected, "{case}");
+            // The Classic source is asked only when gumps_ec lacks the gump, never after a decode error.
+            let falls_back = matches!(picked.result, Found(Classic, _));
+            assert_eq!(picked.classic_asked, falls_back, "{case}");
         }
     }
 
     #[test]
     fn classic_gump_decode_error_is_reported_from_the_classic_source() {
-        for shading_mode in [CLASSIC_PRESET, ENHANCED_PRESET, KR_LIKE_PRESET] {
-            let picked = pick(shading_mode, Enhanced::LacksGump, true, false);
-            assert_eq!(picked.result, Expected::Failed(GumpSourceKind::Classic), "preset {shading_mode}");
+        for client in GumpClient::ALL {
+            let picked = pick(client, Enhanced::LacksGump, true, false);
+            assert_eq!(picked.result, Expected::Failed(GumpSourceKind::Classic), "{client:?} gumps");
         }
     }
 
     #[test]
-    fn gump_startup_summary_names_each_preset_source() {
+    fn gump_startup_summary_names_each_choice_source() {
         assert_eq!(
             gump_sources_summary(Some(GUMPS_CC_FILE_NAME), true),
-            "gumps: Classic preset gumps_cc.uddp; Enhanced and KR-like gumps_ec.uddp, then gumps_cc.uddp for ids it lacks"
+            "gumps: Classic gumps_cc.uddp; Enhanced gumps_ec.uddp, then gumps_cc.uddp for ids it lacks"
         );
         assert_eq!(
             gump_sources_summary(None, true),
-            "gumps: Classic preset none, so it shows no gumps; Enhanced and KR-like gumps_ec.uddp"
+            "gumps: Classic none, so none show; Enhanced gumps_ec.uddp"
         );
         assert_eq!(
             gump_sources_summary(Some(GUMPS_CC_FILE_NAME), false),
-            "gumps: Classic preset gumps_cc.uddp; Enhanced and KR-like gumps_cc.uddp (gumps_ec.uddp is not loaded)"
+            "gumps: Classic gumps_cc.uddp; Enhanced gumps_cc.uddp (gumps_ec.uddp is not loaded)"
         );
     }
 
@@ -1081,7 +1049,7 @@ mod tests {
         assert_eq!(shared_gumps_without_classic_warning(SHARED_COUNT, true), None);
         let warning = shared_gumps_without_classic_warning(SHARED_COUNT, false).expect("a warning");
         assert!(warning.contains("2216 gumps with gumps_cc.uddp"), "{warning}");
-        assert!(warning.contains("won't show under the Enhanced and KR-like presets"), "{warning}");
+        assert!(warning.contains("won't show as Enhanced gumps"), "{warning}");
     }
 
     /// A shared gump is hashed the first time it is served and never again; the first mismatch is told apart from the

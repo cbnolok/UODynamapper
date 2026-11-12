@@ -1,7 +1,7 @@
 //! Whether the gump paperdolls show the garments beneath a robe at its edges, as the 3D paperdoll does
 //! (`paperdoll_overrides`), and what the decisions measured on the 3D frames take off there: every garment of the
 //! slots the 3D paperdoll takes off beneath a robe is drawn under every dress-layer item, on each bundled profile, from
-//! the gumps the Classic preset draws and from those the Enhanced presets draw with the old-style paperdoll, and the
+//! the Classic gumps and from the Enhanced gumps the old-style Enhanced paperdoll draws, and the
 //! garment texels left showing are counted. They do: the cloth lines up, a shirt showing at most at a robe's open
 //! collar, but armour is drawn wider than a robe and its dark outline shows around the shoulders and sleeves
 //! (docs/agent_notes/ec_paperdoll_robe_override.md).
@@ -39,7 +39,7 @@ const PROFILE_BODY_GUMPS: [(&str, u32); 6] = [
 const REFERENCE_ROBE: u32 = 0x1F03;
 const REFERENCE_OUTFITS: [&[u32]; 3] = [&[0x1517, 0x1539], &[0x1410, 0x1415, 0x1411], &[0x13BD]];
 const REFERENCE_PROFILES: [&str; 2] = ["human_male", "human_female"];
-/// The cases with the most bare texels near the dress whose paperdolls are saved, per preset.
+/// The cases with the most bare texels near the dress whose paperdolls are saved, per client's gumps.
 const SAVED_CASES: usize = 8;
 const OPAQUE: u8 = u8::MAX;
 
@@ -47,7 +47,7 @@ fn env_path(name: &str) -> PathBuf {
     PathBuf::from(std::env::var_os(name).unwrap_or_else(|| panic!("set {name}")))
 }
 
-/// An item worn in a candidate slot or on the dress layer, as the preset finds its layer.
+/// An item worn in a candidate slot or on the dress layer, as the client's gumps find its layer.
 struct Candidate {
     item_id: u32,
     layer: usize,
@@ -143,7 +143,7 @@ struct Showing {
     bare_beyond: usize,
 }
 
-/// The garment and dress pairs of a preset: what the client's rules leave showing, and what the stored decisions take
+/// The garment and dress pairs of a client's gumps: what the client's rules leave showing, and what the stored decisions take
 /// off.
 #[derive(Default)]
 struct Tally {
@@ -178,7 +178,7 @@ impl Tally {
     }
 }
 
-/// For each preset's gumps (gumps_cc.uddp for Classic, gumps_ec.uddp then gumps_cc.uddp for the old-style Enhanced
+/// For each client's gumps (gumps_cc.uddp for Classic, gumps_ec.uddp then gumps_cc.uddp for the old-style Enhanced
 /// paperdoll) and each bundled profile, every garment of the candidate slots drawn beneath every dress-layer item by
 /// the client's rules: the garment's texels the dress leaves showing, near it and beyond, and whether the decision
 /// paperdoll_ec.uddp stores for the dress takes the garment off. Writes the cases, the most bare texels near the dress
@@ -218,7 +218,7 @@ fn what_the_gump_paperdolls_show_beneath_a_robe() {
          {GUMP_PLAIN_VIEW_TEXELS} beyond\n"
     );
     for client in [GumpClient::Classic, GumpClient::Enhanced] {
-        let preset = format!("{client:?}");
+        let gumps = format!("{client:?}");
         let candidates = candidates(&tilemeta, client);
         let mut tally = Tally::default();
         let mut worst: Vec<(usize, String, u32, u32)> = Vec::new();
@@ -294,7 +294,7 @@ fn what_the_gump_paperdolls_show_beneath_a_robe() {
                     let taken = stored.takes_off(dress.item_id, (garment.layer, garment.item_id));
                     tally.add(showing, taken);
                     let row = format!(
-                        "{preset}\t{profile_id}\t0x{:04X}\t{}\t0x{:04X}\t{}\t{}\t{}\t{}\t{}\t{}\n",
+                        "{gumps}\t{profile_id}\t0x{:04X}\t{}\t0x{:04X}\t{}\t{}\t{}\t{}\t{}\t{}\n",
                         dress.item_id,
                         name(dress.item_id),
                         garment.item_id,
@@ -315,7 +315,7 @@ fn what_the_gump_paperdolls_show_beneath_a_robe() {
             }
         }
         summary += &format!(
-            "{preset}: {} garment and dress pairs measured ({} hidden by the client's rules, {} drawn over the dress): \
+            "{gumps}: {} garment and dress pairs measured ({} hidden by the client's rules, {} drawn over the dress): \
              nothing shows on {}, edges only on {}, {} show beyond the band, {} in plain view. The stored decisions take \
              off {} of those where nothing shows, {} edges only, {} beyond the band and {} in plain view\n",
             tally.measured,
@@ -359,11 +359,11 @@ fn what_the_gump_paperdolls_show_beneath_a_robe() {
             let stored = StoredDressDecisions::new(Some(&package), tilemeta.item_definitions(), profile.body);
             let mut layers =
                 gump_paperdoll_layers(&request, client, item_tile, tilemeta.item_definitions(), order, &stored).unwrap();
-            // A body the preset has no gump for is left out: the garments are what is looked at.
+            // A body the client's gumps lack is left out: the garments are what is looked at.
             layers.retain(|layer| layer.item.is_some() || gump_map.has_gump(client, layer.gump_id));
             let gump = compose_paperdoll(&gump_map, client, None, profile, &layers).unwrap();
             let stem = items.iter().map(|item| format!("{item:04X}")).collect::<Vec<_>>().join("-");
-            let path = out_dir.join(format!("{preset}-{profile_id}-{stem}-{side}.png"));
+            let path = out_dir.join(format!("{gumps}-{profile_id}-{stem}-{side}.png"));
             crate::util_lib::image::image_from_rgba8(gump.physical_width, gump.physical_height, &gump.canvas_rgba())
                 .try_into_dynamic()
                 .unwrap()
@@ -373,7 +373,7 @@ fn what_the_gump_paperdolls_show_beneath_a_robe() {
     }
     cases.sort_by(|a, b| b.0.cmp(&a.0));
     let table: String = std::iter::once(
-        "preset\tprofile\tdress\tdress name\tgarment\tslot\tgarment name\tsoft\tbare near\tbare beyond\tstored decision\n"
+        "gumps\tprofile\tdress\tdress name\tgarment\tslot\tgarment name\tsoft\tbare near\tbare beyond\tstored decision\n"
             .to_string(),
     )
     .chain(cases.into_iter().map(|(_, row)| row))

@@ -9,8 +9,8 @@ use crate::core::render::dialogs::paperdoll_overrides::{
 };
 use crate::configs::runtime_specs::SpecFiles;
 use crate::core::render::scene::camera::UiCameraResource;
-use crate::configs::shader_presets::UniformState;
-use crate::core::uo_files_loader::{GumpClient, GumpMapRes, HuesPackageRes, PaperdollEcPackageRes, TileMetaPackageRes};
+use crate::configs::settings::GumpClient;
+use crate::core::uo_files_loader::{GumpMapRes, HuesPackageRes, PaperdollEcPackageRes, TileMetaPackageRes};
 use udd_assets::tilemeta::{TileMetaItemDefinitions, TileMetaItemTile};
 use crate::ingame_sysmessage_logger;
 use crate::{
@@ -50,9 +50,9 @@ struct OpenGump {
     image: Handle<Image>,
     texture_id: egui::TextureId,
     content: OpenGumpContent,
-    /// How `image` was drawn; a preset or setting change that draws it otherwise redraws it.
+    /// How `image` was drawn; a setting change that draws it otherwise redraws it.
     drawn_as: DrawnAs,
-    /// Why the active preset has no image for this window, shown in place of the image.
+    /// Why the "Gumps and paperdoll" choice has no image for this window, shown in place of the image.
     error: Option<String>,
     /// What a paperdoll window draws, for its right-click menu; `None` for a gump.
     paperdoll: Option<PaperdollDrawn>,
@@ -60,7 +60,7 @@ struct OpenGump {
     menu: Option<PaperdollMenu>,
 }
 
-/// What an open gump window draws, kept so a preset change can redraw it from the other package.
+/// What an open gump window draws, kept so a "Gumps and paperdoll" change can redraw it from the other package.
 enum OpenGumpContent {
     Gump(u32),
     /// A paperdoll as asked for: each drawing finds its layers or frames.
@@ -76,8 +76,8 @@ struct PaperdollRequest {
     items: Vec<PaperdollItem>,
 }
 
-/// How an open window's image is drawn: from the gumps of the package the preset reads, or, for a paperdoll under the
-/// Enhanced and KR-like presets, from the 3D frames of paperdoll_ec.uddp.
+/// How an open window's image is drawn: from the gumps of the package the "Gumps and paperdoll" preference reads, or,
+/// for a paperdoll with Enhanced gumps and paperdoll, from the 3D frames of paperdoll_ec.uddp.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum DrawnAs {
     Gumps(GumpClient),
@@ -85,7 +85,7 @@ enum DrawnAs {
 }
 
 impl DrawnAs {
-    /// How `content` is drawn under the preset drawing `client`: a paperdoll under the Enhanced presets takes the 3D
+    /// How `content` is drawn with `client`'s gumps and paperdoll: an Enhanced paperdoll takes the 3D
     /// frames when the setting asks for them and paperdoll_ec.uddp is loaded, else the gumps.
     fn for_content(
         content: &OpenGumpContent,
@@ -332,7 +332,7 @@ mod tests {
     }
 
     /// The gump paperdoll draws the body, then the worn items in the shared draw order: tiledata layer 13 is the chest
-    /// (a chest piece hides the shirt, and the necklace goes over it), and only the Enhanced presets wear the beard on
+    /// (a chest piece hides the shirt, and the necklace goes over it), and only Enhanced gumps wear the beard on
     /// its `tileart.uop` layer, next to the hair.
     #[test]
     fn gump_paperdoll_draws_the_worn_layers_in_the_shared_order() {
@@ -444,30 +444,26 @@ mod tests {
         assert!(bodiless.contains("body"), "{bodiless}");
     }
 
-    /// The 3D paperdoll shows under every bundled preset but Classic's, by the preset's shading mode, while the setting
-    /// asks for it and paperdoll_ec.uddp is loaded; else the gump paperdoll of the preset's gumps.
+    /// The 3D paperdoll shows with Enhanced gumps and paperdoll while the setting asks for it and paperdoll_ec.uddp is
+    /// loaded; else the gump paperdoll of the chosen client's gumps. Classic always draws the gump paperdoll, and a
+    /// single gump is always drawn from the chosen client's gumps. The shader preset has no say.
     #[test]
-    fn every_preset_but_classic_draws_the_3d_paperdoll() {
-        const CLASSIC_GROUP: &str = "classic";
-        let presets: toml::Table =
-            toml::from_str(include_str!("../../../../assets/defaults/shader_presets.toml")).unwrap();
-        let content = OpenGumpContent::Paperdoll(request(&[]));
-        let mut checked = 0;
-        for (group, group_presets) in &presets {
-            for (name, preset) in group_presets.as_table().into_iter().flatten() {
-                let shading_mode = preset.get("effects").and_then(|effects| effects.get("shading_mode"));
-                let Some(shading_mode) = shading_mode.and_then(toml::Value::as_integer) else {
-                    continue;
-                };
-                let client = GumpClient::from_shading_mode(u32::try_from(shading_mode).unwrap());
-                let expected =
-                    if group == CLASSIC_GROUP { DrawnAs::Gumps(GumpClient::Classic) } else { DrawnAs::EnhancedFrames };
-                let drawn_as = DrawnAs::for_content(&content, client, EnhancedPaperdoll::Frames, true);
-                assert_eq!(drawn_as, expected, "{group}.{name}");
-                checked += 1;
+    fn the_gumps_and_paperdoll_preference_picks_the_3d_paperdoll() {
+        let paperdoll = OpenGumpContent::Paperdoll(request(&[]));
+        let gump = OpenGumpContent::Gump(0);
+        for enhanced_paperdoll in [EnhancedPaperdoll::Frames, EnhancedPaperdoll::Gumps] {
+            for frames_loaded in [false, true] {
+                let classic = DrawnAs::for_content(&paperdoll, GumpClient::Classic, enhanced_paperdoll, frames_loaded);
+                assert_eq!(classic, DrawnAs::Gumps(GumpClient::Classic), "{enhanced_paperdoll:?}, {frames_loaded}");
+                for client in GumpClient::ALL {
+                    let drawn_as = DrawnAs::for_content(&gump, client, enhanced_paperdoll, frames_loaded);
+                    assert_eq!(drawn_as, DrawnAs::Gumps(client), "{client:?}, {enhanced_paperdoll:?}, {frames_loaded}");
+                }
             }
         }
-        assert!(checked > 0, "no preset read");
+        let content = paperdoll;
+        let frames = DrawnAs::for_content(&content, GumpClient::Enhanced, EnhancedPaperdoll::Frames, true);
+        assert_eq!(frames, DrawnAs::EnhancedFrames);
         let gumps = DrawnAs::Gumps(GumpClient::Enhanced);
         assert_eq!(DrawnAs::for_content(&content, GumpClient::Enhanced, EnhancedPaperdoll::Gumps, true), gumps);
         assert_eq!(DrawnAs::for_content(&content, GumpClient::Enhanced, EnhancedPaperdoll::Frames, false), gumps);
@@ -821,7 +817,6 @@ fn sys_render_gump_dialog(
     paperdoll_profiles: Res<PaperdollProfilesRes>,
     mut paperdoll_order: ResMut<PaperdollOrderRes>,
     mut overrides_files: ResMut<PaperdollOverridesFilesRes>,
-    uniform_state: Res<UniformState>,
     mut settings: ResMut<Settings>,
     mut images: ResMut<Assets<Image>>,
 ) {
@@ -829,7 +824,8 @@ fn sys_render_gump_dialog(
         return;
     }
 
-    let client = GumpClient::from_shading_mode(uniform_state.effects.shading_mode);
+    // The "Gumps and paperdoll" preference, never the shader preset; a change redraws the open windows below.
+    let client = settings.graphics.gumps_and_paperdoll;
     let sources = GumpSources {
         gump_map: gump_map.as_deref(),
         tilemeta: tilemeta.as_deref(),
@@ -999,8 +995,8 @@ impl<'a> GumpSources<'a> {
     }
 }
 
-/// After a preset or setting change, every open window that is drawn otherwise is redrawn from what the new preset
-/// reads, into its own image (the egui texture id stays valid). No image is cached by gump id, so none can keep the
+/// After a "Gumps and paperdoll" or Enhanced paperdoll change, every open window that is drawn otherwise is redrawn from
+/// what the new choice reads, into its own image (the egui texture id stays valid). No image is cached by gump id, so none can keep the
 /// other package's pixels. After the paperdoll overrides change, every open paperdoll is redrawn.
 fn redraw_open_gumps(
     state: &mut GumpDialogState,
@@ -1030,7 +1026,7 @@ fn redraw_open_gumps(
                         .err()
                         .map(|error| format!("Could not replace the gump image: {error}"))
                 }
-                Err(error) => Some(format!("No image under this preset: {error}")),
+                Err(error) => Some(format!("No image with these gumps and paperdoll: {error}")),
             };
     }
 }
@@ -1221,10 +1217,10 @@ fn open_gump_window(
 }
 
 /// Hover texts of the Enhanced paperdoll choice.
-const ENHANCED_PAPERDOLL_FRAMES_HOVER: &str = "Under the Enhanced and KR-like presets, the paperdoll is the Enhanced \
-    client's 3D one, from paperdoll_ec.uddp (the gump one without that package).";
-const ENHANCED_PAPERDOLL_GUMPS_HOVER: &str =
-    "Under the Enhanced and KR-like presets, the paperdoll is the old-style one of gumps, from gumps_ec.uddp.";
+const ENHANCED_PAPERDOLL_FRAMES_HOVER: &str = "With Enhanced gumps and paperdoll (Preferences), the paperdoll is the \
+    Enhanced client's 3D one, from paperdoll_ec.uddp (the gump one without that package).";
+const ENHANCED_PAPERDOLL_GUMPS_HOVER: &str = "With Enhanced gumps and paperdoll (Preferences), the paperdoll is the \
+    old-style one of gumps, from gumps_ec.uddp.";
 const BODY_GUMP_HOVER: &str = "The body gump of the gump paperdoll. The 3D paperdoll draws the profile's body.";
 
 fn render_open_gump_dialog(
@@ -1263,9 +1259,9 @@ fn render_open_gump_dialog(
             ui.separator();
             ui.checkbox(&mut state.paperdoll_open, "Paperdoll");
             if state.paperdoll_open {
-                // Kept in the user settings; the Classic preset always draws the gump paperdoll.
+                // Kept in the user settings; Classic gumps and paperdoll always draw the gump paperdoll.
                 ui.horizontal(|ui| {
-                    ui.label("Enhanced presets:");
+                    ui.label("Enhanced paperdoll:");
                     ui.radio_value(enhanced_paperdoll, EnhancedPaperdoll::Frames, "3D")
                         .on_hover_text(ENHANCED_PAPERDOLL_FRAMES_HOVER);
                     ui.radio_value(enhanced_paperdoll, EnhancedPaperdoll::Gumps, "Gumps")
@@ -1367,7 +1363,8 @@ struct PaperdollLayer {
     y: i32,
 }
 
-/// Opens the paperdoll the dialog describes, drawn as the preset and the Enhanced paperdoll setting say.
+/// Opens the paperdoll the dialog describes, drawn as the "Gumps and paperdoll" preference and the Enhanced paperdoll
+/// setting say.
 fn open_paperdoll(
     state: &mut GumpDialogState,
     client: GumpClient,
@@ -1477,8 +1474,8 @@ impl<'a> StoredDressDecisions<'a> {
 /// The layers of the gump paperdoll, bottom first: the body gump, then the gump of each worn item in the paperdoll draw
 /// order of `WearableRules.kdl` (`WearableRules::paperdoll_order`), which hides some layers under others, without what
 /// a robe covers, as on the 3D paperdoll: `order`'s overrides, else `stored`, decide what an item takes off beneath it
-/// (`paperdoll_overrides::taken_off`); a taken-off item counts as not worn and the order is taken again. The Classic
-/// preset finds an item's layer in tiledata; the Enhanced presets, as the 3D paperdoll does, in the item's `tileart.uop`
+/// (`paperdoll_overrides::taken_off`); a taken-off item counts as not worn and the order is taken again. Classic gumps
+/// find an item's layer in tiledata; Enhanced gumps, as the 3D paperdoll does, in the item's `tileart.uop`
 /// record first. The overrides of the draw order follow the race of the profile's body.
 /// `item_tile` gives an item's tiledata record; `definitions` are the `tileart.uop` records of tilemeta.uddp.
 #[cfg(test)]
@@ -1606,7 +1603,7 @@ type HueTable = [[u8; RGBA_BYTES]; HUE_TABLE_ENTRIES];
 
 /// The gump a layer draws: its own, else its fallback (a female profile's item falls back to the male gump, as
 /// ClassicUO's `GetAnimID` and the Enhanced client's `UOPaperdoll::BuildImage` do), else none. `has_gump` says whether
-/// the preset finds a gump.
+/// the chosen client's gumps have a gump.
 fn layer_gump(layer: &PaperdollLayer, has_gump: impl Fn(u32) -> bool) -> Option<u32> {
     if has_gump(layer.gump_id) {
         return Some(layer.gump_id);
@@ -1619,9 +1616,9 @@ fn describe_item((slot, item_id): (usize, u32)) -> String {
     format!("item {item_id} (0x{item_id:04X}) on {}", SLOT_NAMES[slot])
 }
 
-/// Each layer's gump comes from the package the preset drawing `client` reads; the hues follow that client's drawing.
+/// Each layer's gump comes from the package `client`'s gumps read; the hues follow that client's drawing.
 /// A worn item whose gump is missing, and its fallback too, is left out with a log line; the rest are drawn. The body
-/// is not left out: a missing body gump, or no gump source for the preset, fails the paperdoll with `decode_gump`'s
+/// is not left out: a missing body gump, or no source for `client`'s gumps, fails the paperdoll with `decode_gump`'s
 /// error.
 #[cfg(test)]
 fn compose_paperdoll(

@@ -1,5 +1,5 @@
-//! The Enhanced client's 3D paperdoll (`ECPaperdollTexture::Build`, UOSA 0x0050b340), which the Enhanced and KR-like
-//! presets draw from paperdoll_ec.uddp: the body's frame, then the frames of the worn items in the paperdoll draw order
+//! The Enhanced client's 3D paperdoll (`ECPaperdollTexture::Build`, UOSA 0x0050b340), which Enhanced gumps and paperdoll
+//! draw from paperdoll_ec.uddp: the body's frame, then the frames of the worn items in the paperdoll draw order
 //! of `WearableRules.kdl`, blended by alpha, each hued as the client hues it with the tables of hues.uddp. The lookup is
 //! `uocf::enhanced::paperdoll`, which the uocf editor runs on the client files; the item definitions are the
 //! `tileart.uop` records of tilemeta.uddp.
@@ -23,8 +23,8 @@ use uocf::enhanced::paperdoll::{compose_on, PlacedFrame, WornItem, SLOT_NAMES};
 use super::paperdoll_menu::{PaperdollDrawn, PickLayer};
 use super::paperdoll_overrides::{measured_garment, plan_taking_off, FrameNumber, PaperdollOrder, TakenOff};
 
-/// What the Enhanced and KR-like presets draw for a paperdoll. Kept in the user settings as
-/// `window.enhanced_paperdoll`; the Classic preset always draws the gump paperdoll.
+/// What Enhanced gumps and paperdoll (`graphics.gumps_and_paperdoll`) draw for a paperdoll. Kept in the user settings
+/// as `window.enhanced_paperdoll`; Classic gumps and paperdoll always draw the gump paperdoll.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum EnhancedPaperdoll {
@@ -324,7 +324,7 @@ mod tests {
         std::path::PathBuf::from(std::env::var_os(name).unwrap_or_else(|| panic!("set {name}")))
     }
 
-    /// With the client's rules alone (an override that keeps everything beneath any robe), the Enhanced presets draw
+    /// With the client's rules alone (an override that keeps everything beneath any robe), the 3D paperdoll draws
     /// what the uocf editor composes from the client files (`build` and `compose` on `Paperdoll.uop`, `tileart.uop`
     /// and `hues.uop`): the same frames at the same places, and the editor's composite lands on the canvas at the
     /// anchor texel for texel, nothing cut. Dynamapper hues with `UDD_HUES`, a hues.uddp packed from the client's

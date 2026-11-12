@@ -1,6 +1,6 @@
 use crate::core::controls::input_actions::{ActionCloseActiveDialog, ActionTogglePreferences};
 use crate::{
-    configs::settings::{AntiAliasingMode, ClientTextureSource},
+    configs::settings::{AntiAliasingMode, ClientTextureSource, GumpClient},
     core::{
         frame_limiter::FrameLimiterSettings, frame_limiter_for_options, frame_limiter_for_settings,
         present_mode_for_vsync,
@@ -13,6 +13,9 @@ use bevy_egui::{egui, EguiContexts, EguiPrimaryContextPass};
 
 const FPS_PRESETS: &[u32] = &[15, 30, 60, 75, 120, 144, 165, 240];
 const DEFAULT_FPS_LIMIT: u32 = 60;
+/// Hover text of the "Gumps and paperdoll" choice.
+const GUMPS_AND_PAPERDOLL_HOVER: &str = "Which client's gumps and paperdoll the gump windows draw. Like the art and \
+    land sources, the shader preset doesn't change it.";
 
 #[derive(Resource)]
 pub struct PreferencesDialogState {
@@ -39,6 +42,7 @@ pub struct PreferencesDialogState {
     pub anti_aliasing: AntiAliasingMode,
     pub art_texture_source: ClientTextureSource,
     pub land_texture_source: ClientTextureSource,
+    pub gumps_and_paperdoll: GumpClient,
     pub cc_terrain_transitions: bool,
     pub ec_terrain_transitions: bool,
     pub perspective_camera: bool,
@@ -77,6 +81,7 @@ impl Default for PreferencesDialogState {
             anti_aliasing: AntiAliasingMode::default(),
             art_texture_source: ClientTextureSource::default(),
             land_texture_source: ClientTextureSource::default(),
+            gumps_and_paperdoll: GumpClient::default(),
             cc_terrain_transitions: false,
             ec_terrain_transitions: false,
             perspective_camera: false,
@@ -146,6 +151,7 @@ fn sys_sync_settings_to_state(
         state.anti_aliasing = settings.graphics.anti_aliasing;
         state.art_texture_source = settings.graphics.art_texture_source;
         state.land_texture_source = settings.graphics.land_texture_source;
+        state.gumps_and_paperdoll = settings.graphics.gumps_and_paperdoll;
         state.cc_terrain_transitions = settings.graphics.cc_terrain_transitions;
         state.ec_terrain_transitions = settings.graphics.ec_terrain_transitions;
         state.perspective_camera = settings.app.window.perspective_camera;
@@ -428,6 +434,21 @@ pub fn sys_render_preferences_dialog(
                         });
                     if settings.graphics.land_texture_source != state.land_texture_source {
                         settings.graphics.land_texture_source = state.land_texture_source;
+                    }
+
+                    // Open gump and paperdoll windows are redrawn in place from the new choice.
+                    egui::ComboBox::from_label("Gumps and paperdoll")
+                        .selected_text(state.gumps_and_paperdoll.label())
+                        .show_ui(ui, |ui| {
+                            for client in GumpClient::ALL {
+                                ui.selectable_value(&mut state.gumps_and_paperdoll, client, client.label())
+                                    .on_hover_text(client.hover_text());
+                            }
+                        })
+                        .response
+                        .on_hover_text(GUMPS_AND_PAPERDOLL_HOVER);
+                    if settings.graphics.gumps_and_paperdoll != state.gumps_and_paperdoll {
+                        settings.graphics.gumps_and_paperdoll = state.gumps_and_paperdoll;
                     }
 
                     ui.add_space(4.0);

@@ -4,6 +4,9 @@ vsync = false
 anti_aliasing = "off"
 art_texture_source = "ec"
 land_texture_source = "ec"
+# Which client's gumps and paperdoll the gump windows draw: "classic" (gumps_cc.uddp, the paperdoll of gumps) or
+# "enhanced" (gumps_ec.uddp, the 3D paperdoll from paperdoll_ec.uddp). The shader preset doesn't change it.
+gumps_and_paperdoll = "classic"
 cc_terrain_transitions = false
 ec_terrain_transitions = true
 sharpening_strength = 0.0

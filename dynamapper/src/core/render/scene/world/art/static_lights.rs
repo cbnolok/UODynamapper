@@ -603,6 +603,8 @@ fn static_light_material(
 }
 
 impl StaticLightRenderStyle {
+    /// A shader style, so the preset may pick it: every style draws the same light masks of world_lights.uddp, and the
+    /// style only changes their colour and alpha treatment (`static_light_style_profile`), never which asset is drawn.
     const fn from_shading_mode(shading_mode: u32) -> Self {
         match shading_mode {
             1 => Self::Enhanced,

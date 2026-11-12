@@ -108,8 +108,8 @@ pub struct SectWindow {
     pub perspective_camera: bool,
     /// What the gump and paperdoll windows draw behind their image; set in the Open Gump dialog.
     pub gump_background: ImageBackground,
-    /// What the Enhanced and KR-like presets draw for a paperdoll: the client's 3D frames or the old-style gumps; set in
-    /// the Open Gump dialog.
+    /// What Enhanced gumps and paperdoll (`graphics.gumps_and_paperdoll`) draw for a paperdoll: the client's 3D frames or
+    /// the old-style gumps; set in the Open Gump dialog.
     pub enhanced_paperdoll: EnhancedPaperdoll,
 }
 
@@ -227,6 +227,8 @@ pub struct SectGraphics {
     pub anti_aliasing: AntiAliasingMode,
     pub art_texture_source: ClientTextureSource,
     pub land_texture_source: ClientTextureSource,
+    /// Which client's gumps and paperdoll the gump windows draw; like the art and land sources, never the preset's.
+    pub gumps_and_paperdoll: GumpClient,
     pub cc_terrain_transitions: bool,
     pub ec_terrain_transitions: bool,
     pub sharpening_strength: f32, // 0.0 to 1.0
@@ -270,6 +272,44 @@ impl ClientTextureSource {
         match self {
             Self::Cc => "Classic (tex_land_cc.uddp)",
             Self::Ec => "Enhanced (tex_land_ec.uddp)",
+        }
+    }
+}
+
+/// Which client's gumps and paperdoll are drawn: the "Gumps and paperdoll" preference, `graphics.gumps_and_paperdoll`
+/// (the user, 2026-11-07). The shader preset never picks it: presets set shader settings only, never which assets are
+/// drawn. Classic draws the Classic client's gumps and the gump paperdoll; Enhanced the Enhanced client's gumps and,
+/// as `window.enhanced_paperdoll` asks, its 3D paperdoll.
+#[derive(Clone, Copy, Debug, Default, Deserialize, Serialize, PartialEq, Eq)]
+pub enum GumpClient {
+    #[default]
+    #[serde(rename = "classic")]
+    Classic,
+    #[serde(rename = "enhanced")]
+    Enhanced,
+}
+
+impl GumpClient {
+    pub const ALL: [Self; 2] = [Self::Classic, Self::Enhanced];
+
+    pub const fn label(self) -> &'static str {
+        match self {
+            Self::Classic => "Classic (gumps_cc.uddp)",
+            Self::Enhanced => "Enhanced (gumps_ec.uddp, paperdoll_ec.uddp)",
+        }
+    }
+
+    /// The hover text of each choice in Preferences.
+    pub const fn hover_text(self) -> &'static str {
+        match self {
+            Self::Classic => {
+                "The Classic client's gumps, from gumps_cc.uddp or else the Classic client's gump files, and its \
+                 paperdoll of gumps."
+            }
+            Self::Enhanced => {
+                "The Enhanced client's gumps, from gumps_ec.uddp (the Classic ones for ids it lacks), and its 3D \
+                 paperdoll from paperdoll_ec.uddp, or the paperdoll of gumps when the Open Gump dialog asks for it."
+            }
         }
     }
 }
@@ -1080,6 +1120,31 @@ mod tests {
         assert_eq!(settings.land_texture_source, ClientTextureSource::Ec);
     }
 
+    /// The bundled settings draw the Classic gumps and paperdoll, as the default Classic preset drew them before the
+    /// preference; a cache file from before the preference takes them, and Enhanced, once picked, is written and read
+    /// back.
+    #[test]
+    fn gumps_and_paperdoll_are_filled_from_the_bundled_file_and_a_pick_round_trips() {
+        let bundled = parse_graphics_settings(BUNDLED_GRAPHICS);
+        assert_eq!(bundled.gumps_and_paperdoll, GumpClient::Classic);
+        let bundled_file = GraphicsFile { graphics: bundled.clone() };
+        let older = BUNDLED_GRAPHICS
+            .lines()
+            .filter(|line| !line.starts_with("gumps_and_paperdoll"))
+            .collect::<Vec<_>>()
+            .join("\n");
+        let load = parse_app_state("graphics.toml", &older, &bundled_file).expect("lenient load");
+        assert_eq!(load.value.graphics.gumps_and_paperdoll, GumpClient::Classic);
+        assert_eq!(load.warnings, ["graphics.toml: missing key `graphics.gumps_and_paperdoll` filled from the default"]);
+
+        let mut picked = bundled;
+        picked.gumps_and_paperdoll = GumpClient::Enhanced;
+        let written = toml::to_string_pretty(&GraphicsFile { graphics: picked }).expect("serialize");
+        let load = parse_app_state("graphics.toml", &written, &bundled_file).expect("lenient load");
+        assert!(load.warnings.is_empty(), "{:?}", load.warnings);
+        assert_eq!(load.value.graphics.gumps_and_paperdoll, GumpClient::Enhanced);
+    }
+
     #[test]
     fn bundled_settings_reject_unknown_keys_with_their_position() {
         let graphics = BUNDLED_GRAPHICS.replace("vsync", "v_sync");
@@ -1165,8 +1230,8 @@ mod tests {
         assert_eq!(load.value.window.gump_background, picked.window.gump_background);
     }
 
-    /// The bundled settings draw the 3D paperdoll under the Enhanced presets; a cache file from before the setting
-    /// takes it, and the gump paperdoll, once picked, is written and read back.
+    /// The bundled settings draw the 3D paperdoll with Enhanced gumps and paperdoll; a cache file from before the
+    /// setting takes it, and the gump paperdoll, once picked, is written and read back.
     #[test]
     fn the_enhanced_paperdoll_is_filled_from_the_bundled_file_and_a_pick_round_trips() {
         let bundled: SectApp = parse_strict(USER_PREFERENCES_CONFIG_FILE, BUNDLED_USER_PREFERENCES).expect("bundled");

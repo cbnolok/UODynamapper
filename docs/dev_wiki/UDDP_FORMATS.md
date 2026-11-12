@@ -240,7 +240,7 @@ The left-out gumps are listed in one metadata entry, sparse id `0xE000_0002` (`S
 | 0x08 | `u32` | `count` | |
 | 0x0C | `count` x 12 bytes | records | `u32 gump_id`, `u64 image_hash`, sorted by id with no repeats. |
 
-`image_hash` is xxh64 with seed 0 (`gump_image_hash` in `lib/udd-assets/src/gumps.rs`) over the `gumps_cc` image the gump was checked against, decoded to straight RGBA8888: `u32 physical_width`, `u32 physical_height`, `u16 upscale_factor`, little endian, then every RGBA byte, colour under clear texels included. The reader reads a listed id as absent, and refuses a package that both stores a gump (single or atlas) and lists it, or whose table is out of order or doesn't match its count. Dynamapper draws the listed gumps from the Classic source under the Enhanced and KR-like presets and checks each one's hash the first time it serves it; `udd-cli tool validate` checks every hash against the `gumps_cc.uddp` beside the package.
+`image_hash` is xxh64 with seed 0 (`gump_image_hash` in `lib/udd-assets/src/gumps.rs`) over the `gumps_cc` image the gump was checked against, decoded to straight RGBA8888: `u32 physical_width`, `u32 physical_height`, `u16 upscale_factor`, little endian, then every RGBA byte, colour under clear texels included. The reader reads a listed id as absent, and refuses a package that both stores a gump (single or atlas) and lists it, or whose table is out of order or doesn't match its count. Dynamapper draws the listed gumps from the Classic source as Enhanced gumps and checks each one's hash the first time it serves it; `udd-cli tool validate` checks every hash against the `gumps_cc.uddp` beside the package.
 
 ### 2.4 Texture Compression Strategies (BC1 vs BC7 and Supercompression)
 
