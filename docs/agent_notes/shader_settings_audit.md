@@ -97,9 +97,9 @@ The audit itself changed nothing. These are the decisions taken on it and what t
   10. The composite sliders' tooltips name the settings they drive.
   11. Fixed: the Fog Noise controls are greyed out, with a tooltip, until a fog density reaches 0.001.
   12. As designed; the Water Animation tooltip says the value is kept across presets.
-- **Tooltips:** every control of both windows has one, also when greyed out. There are 88 texts in
+- **Tooltips:** every control of both windows has one, also when greyed out. There are 93 texts in
   `dynamapper/src/core/render/dialogs/land_shader/tips.rs`, one per setting, shared by both windows. They revise
-  the drafts below.
+  the drafts below, and cover the client night lighting and Client Shadows controls of KR-like and Enhanced.
 - **Shipped `land.toml`:** it now equals the factory presets, and a unit test keeps it so
   (`bundled_land_settings_match_the_factory_presets`). A user's cached copy is still read over it leniently, and
   is never replaced by it.
@@ -116,6 +116,9 @@ CC textures in the afternoon.
   style and texture set, named `<setting>--<style>--<ec|cc>.png`. Each sheet has a full view and a 2x crop per time
   of day, one column per value, and a change image.
 - **Noise:** the same values in two launches differ by 0.000 mean and p99 0.
+- **Build:** dev `1d78361a` with the removals above, before KR-like and Enhanced moved to the clients' night
+  composite, per-vertex land and (KR-like) client shadows. The KR-like rows were measured with the KR-like lighting
+  of that time; UOD-Painterly and Classic are unchanged since.
 
 Numbers are mean / p99 / share over 4 levels, in the view where the change is largest, against the setting off.
 
@@ -163,8 +166,9 @@ All six strong-value settings act with both texture sets.
 - **The land camera position is set once and never updated.** `SceneUniform.camera_position` for land is written
   when the material is built (`dynamapper/src/core/texture_cache/land.rs`, line 1440). The rim term then sees the
   view direction at N·V ≤ 0, so Rim Power has no effect, and the specular half vector is wrong.
-- **The Enhanced `diffuse_wrap` of 0.5 is inert:** Enhanced shading (mode 1) does not read it.
-- **The night and shadow controls being added on another branch have no tooltips yet.** They are not on dev.
+- **The Enhanced presets hold per-pixel values their land shading does not read.** Enhanced now draws land with
+  the clients' per-vertex model, which has no fill, rim, specular or relief term; and its `diffuse_wrap` of 0.5 is
+  not read by Enhanced shading (mode 1) even per pixel.
 
 ## Method
 

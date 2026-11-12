@@ -25,8 +25,9 @@ Subcommands:
   strong-sheets        one side-by-side sheet per setting, style and texture set (SCRATCH/sheets/)
 
 Typical session: plan, run, metrics, report, sheets. For strong values, in a scratch folder of its own:
-strong-plan, run, strong-metrics, strong-report, strong-sheets. `run` starts each launch as its own process under the shared
-preview lock and lowprio.sh, so other agents' GPU runs can interleave; every app start goes to KDE Desktop 4 only.
+strong-plan, run, strong-metrics, strong-report, strong-sheets. `run` starts each launch as its own process under
+the shared preview lock and lowprio.sh, so other agents' GPU runs can interleave; every app start goes to KDE
+Desktop 4 only.
 
 The binary is a copy of a build of this repository placed in SCRATCH/rig/bin by hand. The user's saved settings
 are never read or written: every launch gets a private working directory with copies of assets/ and cache/.
@@ -284,7 +285,14 @@ def wash_on(s):
 STATIC_LIGHT_STYLE = {0: (None, 0.0, 1.0), 1: (0.50, 0.03, 1.12), 2: (0.20, 0.0, 1.50)}
 
 
+def client_lit(s):
+    """KR-like and Enhanced dim through the clients' night composite: no global_lighting, no light decals."""
+    return 'global_lighting' not in s
+
+
 def static_light_mask_visible(s):
+    if client_lit(s):
+        return False
     _, daylight, gamma = STATIC_LIGHT_STYLE[shading(s)]
     darkness = min(max(1.0 - s['global_lighting'], 0.0), 1.0)
     return daylight + darkness ** gamma > 0
@@ -309,8 +317,10 @@ class Spec:
         self.name = key if comp is None else f'{key}.{"xyzw"[comp]}'
 
     def value(self, slot):
-        value = slot[self.key]
-        return value if self.comp is None else value[self.comp]
+        # A slot may lack a key its style has no use for (global_lighting in the client-lit styles); reach is then
+        # False, so the value is never rendered.
+        value = slot.get(self.key)
+        return value if self.comp is None or value is None else value[self.comp]
 
     def with_value(self, slot, value):
         out = dict(slot)
@@ -329,7 +339,7 @@ def const(value):
 
 ALWAYS = lambda s: True
 SPECS = [
-    Spec('global_lighting', const(1.0), ALWAYS, '1.0 (identity multiplier)'),
+    Spec('global_lighting', const(1.0), lambda s: not client_lit(s), '1.0 (identity multiplier)'),
     Spec('effects.normal_mode', const(0), ALWAYS, '0 (geometric normals)'),
     Spec('effects.enable_blur', const(0), blur_on, '0'),
     Spec('effects.blur_radius', const(0.5), blur_on, '0.5 (the shader floor of half a screen pixel)',
@@ -729,7 +739,8 @@ class Run:
         problems = []
         if render['preset'] != f'{mode}.{period}':
             problems.append(f'preset {render["preset"]}')
-        if abs(render['global_lighting'] - expected['global_lighting']) > VERIFY_TOLERANCE:
+        lit_by_scene = 'global_lighting' in expected
+        if lit_by_scene and abs(render['global_lighting'] - expected['global_lighting']) > VERIFY_TOLERANCE:
             problems.append(f'global_lighting {render["global_lighting"]}')
         for key, value in render['effects'].items():
             want = expected.get(f'effects.{key}')
@@ -1259,7 +1270,8 @@ def _fill_ground(s):
             (f'preset (alpha {alpha})', s),
             (f'2x (alpha {strong})', _with(s, FILL_GROUND, rgb + [strong])),
             ('max: hue at 1, alpha 1', _with(s, FILL_GROUND, _to_one(rgb) + [1.0])),
-            (f'beyond: {FILL_BEYOND_GAIN:g}x max', _with(s, FILL_GROUND, _gain(_to_one(rgb), FILL_BEYOND_GAIN) + [1.0]))], 1
+            (f'beyond: {FILL_BEYOND_GAIN:g}x max',
+             _with(s, FILL_GROUND, _gain(_to_one(rgb), FILL_BEYOND_GAIN) + [1.0]))], 1
 
 
 def _rim_color(s):
