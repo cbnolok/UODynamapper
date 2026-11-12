@@ -23,7 +23,7 @@ pub(super) const TONEMAP: &str =
 pub(super) const TONE_CURVE: &str =
     "Which tone curve Tonemap uses. Needs Tonemap on.";
 pub(super) const COLOR_GRADING: &str =
-    "Turns on the colour grading tuned under Advanced > Color Grading, in every render style; on in UOD-Painterly. If colours look oversaturated, lower Saturation or Vibrance there.";
+    "Turns on the colour grading tuned under Advanced > Color Grading, in every render style; on in UOD-Painterly, and in KR-like for a lower Saturation alone. If colours look oversaturated, lower Saturation or Vibrance there.";
 pub(super) const TEXTURE_SMOOTHNESS: &str =
     "Softens the seams between texture pixels under the Pixel art filter; liquids and item surfaces follow it under either filter. On in KR-like and UOD-Painterly.";
 pub(super) const TEXTURE_FILTER: &str =
@@ -61,13 +61,13 @@ pub(super) const WATER_ANIMATION: &str =
 pub(super) const LAND_SHADING: &str =
     "How Enhanced and KR styles light land: smoothly per pixel (UOD-Painterly), or the clients' per-corner grey (KR-like, Enhanced). Classic always uses its own per-corner light.";
 pub(super) const SUN_STRENGTH: &str =
-    "How strongly the sun lights land that faces it: the main light and shade on terrain in Classic and UOD-Painterly. With Client per-vertex land shading (KR-like, Enhanced) it lights only flat water; water drawn from Enhanced textures carries its own light and ignores it.";
+    "How strongly the sun lights land that faces it: the main light and shade on terrain in Classic and UOD-Painterly. With Client per-vertex land shading (KR-like, Enhanced) it lights only water: land water, flat-water statics and water drawn from Enhanced textures.";
 pub(super) const SUN_AZIMUTH: &str =
     "Compass bearing of the sun in degrees, clockwise from north (180 = south). Lights land and art and turns the sprite shadows.";
 pub(super) const SUN_ELEVATION: &str =
     "Height of the sun above the horizon in degrees (90 = overhead).";
 pub(super) const TERRAIN_AMBIENT: &str =
-    "Light that reaches every land tile, even in shade, in Classic and with per-pixel land shading; raise it to open up dark slopes, nights and caves. With Client per-vertex land shading it lights only flat water; water drawn from Enhanced textures ignores it.";
+    "Light that reaches every land tile, even in shade, in Classic and with per-pixel land shading; raise it to open up dark slopes, nights and caves. With Client per-vertex land shading it lights only water: land water, flat-water statics and water drawn from Enhanced textures; KR-like uses it to draw water unlit, as the client.";
 pub(super) const LAND_RELIEF: &str =
     "Brings out the shape of hills with smoother normals and a crisper edge between sun and shade. Per-pixel land shading only (UOD-Painterly); visible on slopes, not on flat ground.";
 pub(super) const SOFT_LIGHTING: &str =

@@ -766,7 +766,7 @@ elevation_degrees = 45.0
 # --- KR PRESETS ---
 # ------------------
 # KR-like: the Kingdom Reborn client's look on KR content.
-# Every term the KR client lacks is off: tone curve (identity), grading, gloom, fog (available, off), ambient,
+# Every term the KR client lacks is off: tone curve (identity), gloom, fog (available, off),
 # fill, rim, specular, bent normals, the warm light colour, land and art temperature, fake normals, highlights,
 # depth tint, relief shadows, mottle, grunge, transition grime, colour wash and the light decals. exposure
 # stays as brightness. The night and caves dim as in the client, through the night composite (client_lighting)
@@ -779,6 +779,13 @@ elevation_degrees = 45.0
 # which does not follow the sun; the sprite shadow shape, contact and projected shadows are off.
 # The sun is the client's terrain light, from the south at 45 degrees (azimuth 180, elevation 45).
 # Land and sprite textures take the client's plain bilinear (texture_filter 1): no pixel-art remap, no blur.
+# Two settings were tuned against the KR reference screenshots (docs/agent_notes/krlike_reference_tuning.md):
+# - grading, which the client lacks, is on with saturation 0.8 alone (vibrance 0, contrast 1, split tone 0): the
+#   screenshots' grass and foliage are about 0.33 saturated, the KR textures and art 0.5 to 0.65. It acts before
+#   the night composite.
+# - ambient_strength 0.146 lights only water under per-vertex land: with the sun at 45 degrees it lifts the water's
+#   wrapped Lambert 0.854 to 1, the client's unlit water (its water layer never modulates by the vertex light).
+#   Switched to per-pixel land, it also adds that ambient to the land.
 # The full-featured painterly rendering with all effects enabled is UOD-Painterly, below.
 
 [kr.morning]
@@ -828,17 +835,17 @@ art_mottle_strength = 0.0
 [kr.morning.lighting]
 enable_fog = 0
 enable_tonemap = 1
-enable_grading = 0
+enable_grading = 1
 enable_gloom = 0
 light_color = [1.0, 1.0, 1.0]
 tone_curve = 1
 atmosphere_tint = [0.17, 0.22, 0.29]
 exposure = 1.03
-ambient_strength = 0.0
+ambient_strength = 0.146
 grade_warm_color = [1.08, 0.98, 0.9]
 grade_cool_color = [0.82, 0.95, 1.05]
 grade_params = [1.0, 0.15, 0.4, 0.0]
-grade_extra = [0.38, 1.12, 1.10, 0.75]
+grade_extra = [0.0, 0.8, 1.0, 0.0]
 gloom_params = [0.16, 0.006, 0.52]
 fog_color = [0.035, 0.045, 0.060, 0.30]
 fog_params = [0.040, 0.012, 0.55, 0.16]
@@ -910,17 +917,17 @@ art_mottle_strength = 0.0
 [kr.afternoon.lighting]
 enable_fog = 0
 enable_tonemap = 1
-enable_grading = 0
+enable_grading = 1
 enable_gloom = 0
 light_color = [1.0, 1.0, 1.0]
 tone_curve = 1
 atmosphere_tint = [0.18, 0.22, 0.28]
 exposure = 1.06
-ambient_strength = 0.0
+ambient_strength = 0.146
 grade_warm_color = [1.08, 0.98, 0.9]
 grade_cool_color = [0.82, 0.95, 1.05]
 grade_params = [1.0, 0.15, 0.4, 0.0]
-grade_extra = [0.45, 1.14, 1.12, 0.80]
+grade_extra = [0.0, 0.8, 1.0, 0.0]
 gloom_params = [0.14, 0.005, 0.50]
 fog_color = [0.040, 0.050, 0.065, 0.28]
 fog_params = [0.035, 0.010, 0.50, 0.14]
@@ -992,17 +999,17 @@ art_mottle_strength = 0.0
 [kr.night.lighting]
 enable_fog = 0
 enable_tonemap = 1
-enable_grading = 0
+enable_grading = 1
 enable_gloom = 0
 light_color = [1.0, 1.0, 1.0]
 tone_curve = 1
 atmosphere_tint = [0.12, 0.16, 0.24]
 exposure = 1.06
-ambient_strength = 0.0
+ambient_strength = 0.146
 grade_warm_color = [1.08, 0.98, 0.9]
 grade_cool_color = [0.82, 0.95, 1.05]
 grade_params = [1.0, 0.15, 0.4, 0.0]
-grade_extra = [0.22, 1.02, 1.04, 0.65]
+grade_extra = [0.0, 0.8, 1.0, 0.0]
 gloom_params = [0.24, 0.008, 0.52]
 fog_color = [0.020, 0.026, 0.040, 0.36]
 fog_params = [0.055, 0.020, 0.48, 0.22]
@@ -1074,17 +1081,17 @@ art_mottle_strength = 0.0
 [kr.cave.lighting]
 enable_fog = 0
 enable_tonemap = 1
-enable_grading = 0
+enable_grading = 1
 enable_gloom = 0
 light_color = [1.0, 1.0, 1.0]
 tone_curve = 1
 atmosphere_tint = [0.1, 0.14, 0.2]
 exposure = 0.92
-ambient_strength = 0.0
+ambient_strength = 0.146
 grade_warm_color = [1.08, 0.98, 0.9]
 grade_cool_color = [0.82, 0.95, 1.05]
 grade_params = [1.0, 0.15, 0.4, 0.0]
-grade_extra = [0.22, 1.02, 1.05, 0.65]
+grade_extra = [0.0, 0.8, 1.0, 0.0]
 gloom_params = [0.30, 0.010, 0.58]
 fog_color = [0.018, 0.022, 0.034, 0.34]
 fog_params = [0.040, 0.026, 0.42, 0.20]
