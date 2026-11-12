@@ -269,6 +269,10 @@ fn sample_classic_land_art(world_cell_uv: vec2<f32>, tile_payload: u32) -> vec3<
 // Classic land without a texmap, drawn from its land art as the Classic client draws it (routing.rs).
 const LAND_SOURCE_MISSING: u32 = 3u;
 const LAND_SOURCE_CLASSIC_ART: u32 = 5u;
+// Classic land the Classic client does not draw: the fragment is discarded (main.wesl). A neighbour's sample of it,
+// for a transition or a blur tap, is black, the colour behind the land.
+const LAND_SOURCE_NODRAW: u32 = 6u;
+const LAND_NODRAW_COLOR: vec3<f32> = vec3<f32>(0.0);
 // The missing-texture pattern: a checker of this many cells per tile side, in two colours no terrain has.
 const MISSING_TEXTURE_CHECKER_CELLS: f32 = 4.0;
 const MISSING_TEXTURE_COLOR_A: vec3<f32> = vec3<f32>(1.0, 0.0, 1.0);
@@ -289,6 +293,9 @@ fn sample_tile_albedo(uv: vec2<f32>, tile: TileUniform, gradients: LandGradients
 
   if (tile.texture_size == LAND_SOURCE_MISSING) {
     return missing_texture_pattern(uv);
+  }
+  if (tile.texture_size == LAND_SOURCE_NODRAW) {
+    return LAND_NODRAW_COLOR;
   }
   if (tile.texture_size == LAND_SOURCE_CLASSIC_ART) {
     return sample_classic_land_art(fract(uv), tile.texture_payload);
@@ -353,7 +360,7 @@ fn sample_tile_albedo(uv: vec2<f32>, tile: TileUniform, gradients: LandGradients
 // shader twice as slow to compile.
 fn sample_tile_albedo_filtered(uv: vec2<f32>, tile: TileUniform, gradients: LandGradients) -> vec3<f32> {
   if (tile.texture_size != LAND_SOURCE_MISSING && tile.texture_size != LAND_SOURCE_CLASSIC_ART
-      && effects.texture_filter == TEXTURE_FILTER_CLIENT_BILINEAR) {
+      && tile.texture_size != LAND_SOURCE_NODRAW && effects.texture_filter == TEXTURE_FILTER_CLIENT_BILINEAR) {
     return sample_tile_albedo_client(uv, tile, gradients);
   }
   return sample_tile_albedo(uv, tile, gradients);
@@ -406,6 +413,9 @@ fn sample_tile_albedo_grad(uv: vec2<f32>, tile: TileUniform, ddx_uv: vec2<f32>, 
 
   if (tile.texture_size == LAND_SOURCE_MISSING) {
     return missing_texture_pattern(uv);
+  }
+  if (tile.texture_size == LAND_SOURCE_NODRAW) {
+    return LAND_NODRAW_COLOR;
   }
   if (tile.texture_size == LAND_SOURCE_CLASSIC_ART) {
     return sample_classic_land_art(fract(uv), tile.texture_payload);

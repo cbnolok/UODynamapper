@@ -755,8 +755,8 @@ pub fn sys_draw_spawned_land_chunks(
     // `ids` contains textures dynamically required. Pinned tracking continues async.
     {
         use crate::core::render::scene::world::land::tile_atlas::{
-            LAND_SOURCE_CC_ATLAS, LAND_SOURCE_CC_BIG, LAND_SOURCE_CC_SMALL, LAND_SOURCE_CLASSIC_ART,
-            LAND_SOURCE_EC_ATLAS, LAND_SOURCE_MISSING,
+            LAND_NODRAW_ID, LAND_SOURCE_CC_ATLAS, LAND_SOURCE_CC_BIG, LAND_SOURCE_CC_SMALL, LAND_SOURCE_CLASSIC_ART,
+            LAND_SOURCE_EC_ATLAS, LAND_SOURCE_MISSING, LAND_SOURCE_NODRAW,
         };
         use crate::core::texture_cache::land::routing::LandTileRoute;
         // Each id draws from its route (routing.rs): the land page atlas holds the first loaded source of the selected
@@ -783,7 +783,10 @@ pub fn sys_draw_spawned_land_chunks(
         for &id in &*ids {
             let land_id = u32::from(id);
             let route = cache_r.routes().route(land_id);
+            let classic_route = matches!(route, LandTileRoute::ClassicTexmap | LandTileRoute::ClassicArt);
             texture_lookup_cache[id as usize] = match route {
+                // As the Classic client, Classic land never draws the no-draw id, whichever id is routed to it.
+                _ if classic_route && cache_r.classic_target(land_id) == LAND_NODRAW_ID => LAND_SOURCE_NODRAW,
                 LandTileRoute::Enhanced(_) => (land_id << 4) | LAND_SOURCE_EC_ATLAS,
                 LandTileRoute::ClassicTexmap => {
                     let texmap_id = cache_r.classic_land().texmap_id(cache_r.classic_target(land_id))

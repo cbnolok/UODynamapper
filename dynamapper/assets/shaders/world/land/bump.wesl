@@ -18,7 +18,7 @@ import package::shaders::world::land::land_bindings::{TileUniform, tex_small, te
 import package::shaders::world::land::lighting::luminance;
 import package::shaders::world::land::sampling::{
   LandGradients, LandLookupSlot, LAND_PAGE_LOOKUP_ROLE_DETAIL, LAND_PAGE_LOOKUP_ROLE_MASK, LAND_SOURCE_MISSING,
-  LAND_SOURCE_CLASSIC_ART, ec_tile_stretch, ec_world_uv, ec_slot_world_uv, read_ec_lookup_slot,
+  LAND_SOURCE_CLASSIC_ART, LAND_SOURCE_NODRAW, ec_tile_stretch, ec_world_uv, ec_slot_world_uv, read_ec_lookup_slot,
 };
 
 // Relief depth, in texels, of a luminance change from black to white; the strength slider scales it.
@@ -87,9 +87,10 @@ fn land_bump_texels_per_tile(tile: TileUniform) -> f32 {
 
 // The derived bump's tilt of the normal in world XZ (y is 0), at full strength and faded by the footprint: add it
 // to the geometric normal and normalize. Zero for a missing texture, for Classic land drawn from its flat land art
-// (no texmap), and once the bump has faded out.
+// (no texmap), for land not drawn, and once the bump has faded out.
 fn land_derived_bump_tilt(world_xz: vec2<f32>, tile: TileUniform, world: LandGradients) -> vec3<f32> {
-  if (tile.texture_size == LAND_SOURCE_MISSING || tile.texture_size == LAND_SOURCE_CLASSIC_ART) {
+  if (tile.texture_size == LAND_SOURCE_MISSING || tile.texture_size == LAND_SOURCE_CLASSIC_ART
+      || tile.texture_size == LAND_SOURCE_NODRAW) {
     return vec3<f32>(0.0);
   }
   let texels_per_tile = land_bump_texels_per_tile(tile);

@@ -49,6 +49,7 @@ import package::shaders::world::land::sampling::{
   apply_sharpening, blurred_albedo,
   classic_land_art_is_present,
   sample_classic_land_art,
+  LAND_SOURCE_NODRAW,
 };
 import package::shaders::world::client_filter::TEXTURE_FILTER_CLIENT_BILINEAR;
 import package::shaders::world::land::shading::{
@@ -926,6 +927,10 @@ fn fragment(in: VertexOutput) -> @location(0) vec4<f32> {
   let client_shade = land_client_shade(in);
   let cell = vec2<i32>(floor(in.world_position.xz));
   let tile = atlas_read_meta(cell.x, cell.y);
+  // Land the Classic client does not draw shows what is behind it.
+  if (tile.texture_size == LAND_SOURCE_NODRAW) {
+    discard;
+  }
   var hdr_rgb: vec3<f32>;
   var composed = false;
   let ec_transitions = (effects.terrain_transition_flags & 2u) == 0u;

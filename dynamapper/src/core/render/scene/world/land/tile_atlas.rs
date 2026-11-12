@@ -37,6 +37,11 @@ pub const LAND_SOURCE_MISSING: u32 = 3;
 pub const LAND_SOURCE_CC_ATLAS: u32 = 4;
 /// Classic land art of land without a texmap; payload: land id.
 pub const LAND_SOURCE_CLASSIC_ART: u32 = 5;
+/// Classic land the Classic client does not draw (`LAND_NODRAW_ID`): the fragment is discarded; no payload.
+pub const LAND_SOURCE_NODRAW: u32 = 6;
+/// The land id the Classic client 7.0.103.0 never draws from its texmap or land art (tiledata "NODRAW";
+/// `FUN_0044c180` and `FUN_0044fa70` skip it unless a debug flag is set). Ids 0 and 1 are drawn.
+pub const LAND_NODRAW_ID: u32 = 2;
 
 impl Rg16u {
     /// Packs tile ID, height (Z), texture source mode, land flags, and is_wet into Rg16u.

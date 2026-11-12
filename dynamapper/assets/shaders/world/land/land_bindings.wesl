@@ -8,7 +8,8 @@ import package::shaders::world::common_bindings::{SceneUniform, GlobalLightingUn
 // Virtual metadata record extracted from the tile_meta_atlas.
 struct TileUniform {
   tile_height:   f32,
-  texture_size:  u32, // 0=cc-small array, 1=cc-big array, 2=ec page atlas, 3=missing, 4=cc page atlas
+  texture_size:  u32, // 0=cc-small array, 1=cc-big array, 2=ec page atlas, 3=missing, 4=cc page atlas,
+                      // 5=classic land art, 6=not drawn
   texture_layer: u32,
   texture_hue:   u32,
   texture_origin: vec2<u32>,
