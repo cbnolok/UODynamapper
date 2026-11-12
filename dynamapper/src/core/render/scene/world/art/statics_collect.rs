@@ -1019,6 +1019,7 @@ pub struct GroundTileInstance {
     pub sort_bias_ordinal: u32,
     /// Tiledata flags packed for the GPU.
     /// Bit 0: is_wet (IsWet tiledata flag → animated water UV distortion in ground shader).
+    /// Bit 10: `STATIC_FLAG_CLIENT_GRUNGE`, the KR client grunges the static (art/client_grunge.wesl).
     pub is_wet_flags: u32,
     pub texture_stretch: f32,
     pub hue_id: u32,
@@ -1027,7 +1028,10 @@ pub struct GroundTileInstance {
     pub material_flags: u32,
     /// Original item graphic selects its own optional fourth water source.
     pub material_item_id: u32,
-    pub _pad_material: [u32; 3],
+    pub _pad_material: u32,
+    /// The KR client's base point of the static, as `SpriteInstance::client_grunge_anchor`: the client grunge maps
+    /// from it (art/client_grunge.wesl).
+    pub client_grunge_anchor: [f32; 2],
     pub local_light_rgba: [f32; 4],
     pub color_rgba: [f32; 4],
 }
@@ -2587,14 +2591,15 @@ fn emit_ground_static_instance(
         tile_y: anchored_world_z,
         priority_z_units,
         sort_bias_ordinal: 0,
-        is_wet_flags: info.is_wet_flags,
+        is_wet_flags: info.is_wet_flags | info.client_grunge_flag,
         texture_stretch,
         hue_id,
         hue_flags,
         material_payload,
         material_flags,
         material_item_id: info.tile.graphic as u32,
-        _pad_material: [0; 3],
+        _pad_material: 0,
+        client_grunge_anchor: client_grunge_anchor(info.tile),
         local_light_rgba,
         color_rgba: [1.0, 1.0, 1.0, 1.0],
     });

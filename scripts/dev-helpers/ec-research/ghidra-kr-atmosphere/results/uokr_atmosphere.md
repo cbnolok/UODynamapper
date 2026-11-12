@@ -1064,11 +1064,18 @@ A follow-up pass read the grunge's UV and the choice of art in Ghidra, for Dynam
      KR's 0.840);
   3. none: one warning, and a white texel that changes nothing.
 - On in the KR-like presets, off elsewhere; any style may switch it on.
+- Statics Dynamapper draws as horizontal quads in its ground pipeline (`art/ground.wesl`) are sprites in the
+  client, and are grunged by the same rule: the ground instance carries the same flag and base point, and each
+  quad corner takes the UV above from its screen offset to that point. W is the screen point carried back to the
+  ground along R and U, so the base point drops out but for the camera's small roll and tilt, and a flat static
+  and an upright neighbour share one continuous pattern, as in the client. With today's packages this never
+  shows: Enhanced art reaches the ground pipeline only for items with an EC liquid material (225 item ids with
+  `tex_land_kr`, 261 with `tex_land_ec`, the water statics), and the client grunges none of them. Floors, carpets
+  and cobblestones draw as sprites (their EC art, or the Classic art where the EC package lacks the item), which
+  were grunged already.
 
 **Open points:**
 
-- Statics drawn by Dynamapper's ground pipeline (`art/ground.wesl`) are not grunged; the client draws them as
-  sprites.
 - The KR tileart itself was not re-read for the block rule: the census is over the EC tileart in the packages.
 - The 2.5D sprite's per-pixel position is approximated by the quad's: the client does the same.
 

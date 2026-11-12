@@ -28,9 +28,9 @@ struct GroundTileInstance {
     material_payload: u32,
     material_flags: u32,
     material_item_id: u32,
-    _pad_material_a: u32,
-    _pad_material_b: u32,
-    _pad_material_c: u32,
+    _pad_material: u32,
+    // The KR client's base point on the ground, world x and z, for the client grunge (client_grunge.wesl).
+    client_grunge_anchor: vec2<f32>,
     local_light_rgba: vec4<f32>,
     color_rgba: vec4<f32>,
 }
@@ -60,6 +60,8 @@ struct SpriteParams {
 @group(3) @binding(114) var item_liquid_atlas: texture_2d_array<f32>;
 @group(3) @binding(115) var item_liquid_lookup: texture_2d<u32>;
 @group(3) @binding(116) var liquid_sampler: sampler;
+@group(3) @binding(117) var client_grunge_texture: texture_2d<f32>;
+@group(3) @binding(118) var client_grunge_sampler: sampler;
 
 const HEIGHT_SCALE: f32 = UO_Z_TO_WORLD_SCALE;
 const DEPTH_CLASS_BACKGROUND: u32 = 1u;

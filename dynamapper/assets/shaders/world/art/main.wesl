@@ -178,8 +178,10 @@ fn vertex(vertex: Vertex) -> ArtVertexOutput {
     }
     var out: ArtVertexOutput;
     out.client_grunge_uv = vec2<f32>(0.0);
-    if (effects.enable_client_grunge == 1u && client_grunges(inst)) {
-        out.client_grunge_uv = client_grunge_uv(inst, projected_local_pos);
+    if (effects.enable_client_grunge == 1u && client_grunges(inst.is_wet_flags)) {
+        let grunge_anchor = vec3<f32>(inst.client_grunge_anchor.x, inst.base_world_y, inst.client_grunge_anchor.y);
+        out.client_grunge_uv = client_grunge_uv(grunge_anchor,
+            (vec3<f32>(inst.world_x, inst.world_y, inst.world_z) - grunge_anchor) + projected_local_pos);
     }
     if (sprite_params.pass_mode == PASS_MODE_CLIENT_SHADOW) {
         projected_local_pos = client_shadow_world_offset(inst, corner);
@@ -451,7 +453,7 @@ fn shade_fragment(in: ArtVertexOutput, sample_index: u32) -> ArtFragmentOutput {
         );
     }
     // The KR client grunges a static's hued colour (client_grunge.wesl).
-    if (effects.enable_client_grunge == 1u && client_grunges(inst)) {
+    if (effects.enable_client_grunge == 1u && client_grunges(inst.is_wet_flags)) {
         shaded = vec4<f32>(apply_client_grunge(shaded.rgb, in.client_grunge_uv, effects.client_grunge_strength,
             client_grunge_texture, client_grunge_sampler), shaded.a);
     }

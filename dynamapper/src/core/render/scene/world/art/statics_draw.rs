@@ -146,6 +146,10 @@ pub struct ArtGroundMaterialExtension {
     pub item_liquid_atlas: Handle<Image>,
     #[texture(115, sample_type = "u_int", visibility(fragment))]
     pub item_liquid_lookup: Handle<Image>,
+    /// The KR client's grunge texture, as the sprite material's (client_grunge.rs).
+    #[texture(117, visibility(fragment))]
+    #[sampler(118, visibility(fragment))]
+    pub client_grunge_texture: Handle<Image>,
 }
 
 #[derive(Resource, Clone)]
@@ -947,7 +951,8 @@ pub fn sys_setup_art_page_atlas(
         material_payload: 0,
         material_flags: 0,
         material_item_id: 0,
-        _pad_material: [0; 3],
+        _pad_material: 0,
+        client_grunge_anchor: [0.0; 2],
         local_light_rgba: [0.0, 0.0, 0.0, 0.0],
         color_rgba: [0.0, 0.0, 0.0, 0.0],
     }]);
@@ -983,6 +988,7 @@ pub fn sys_setup_art_page_atlas(
             visual_grunge_texture: visual_grunge_texture.clone(),
             item_liquid_atlas: item_liquid_images.atlas.clone(),
             item_liquid_lookup: item_liquid_images.lookup.clone(),
+            client_grunge_texture: client_grunge_texture.clone(),
         },
     });
 
@@ -1014,6 +1020,7 @@ pub fn sys_setup_art_page_atlas(
             visual_grunge_texture,
             item_liquid_atlas: item_liquid_images.atlas.clone(),
             item_liquid_lookup: item_liquid_images.lookup.clone(),
+            client_grunge_texture: client_grunge_texture.clone(),
         },
     });
 

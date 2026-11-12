@@ -22,12 +22,13 @@ import package::shaders::world::art::art_ground_bindings::{
     GroundTileInstance, SpriteParams, SceneUniform, LandEffectsUniform, GlobalLightingUniforms,
     art_atlas_sampler, art_atlas, instances, sprite_params, scene, effects, global_light,
     hue_sampler, hue_texture, land_page_atlas, land_page_lookup, visual_grunge_texture,
-    item_liquid_atlas, item_liquid_lookup, liquid_sampler,
+    item_liquid_atlas, item_liquid_lookup, liquid_sampler, client_grunge_texture, client_grunge_sampler,
     HEIGHT_SCALE, DEPTH_CLASS_BACKGROUND, DEPTH_CLASS_FOLIAGE, DEPTH_CLASS_ROOF,
     PASS_MODE_OPAQUE, PASS_MODE_TRANSPARENT, DEPTH_CLASS_SURFACE_LIKE_FLOOR,
     SURFACE_LIKE_DEPTH_CLASS_OFFSET, STATIC_DEPTH_TIE_BREAK_FRAG_EPSILON,
     GROUND_FLAG_EC_WATER_MATERIAL
 };
+import package::shaders::world::art::client_grunge::{client_grunges, client_grunge_uv, apply_client_grunge};
 import package::shaders::world::art::hue::apply_static_hue;
 import package::shaders::world::art::shading::apply_art_surface_shading;
 import package::shaders::world::projection::camera_relative_world_to_clip;
@@ -42,6 +43,8 @@ struct GroundVertexOutput {
     @location(5) world_pos: vec3<f32>,
     @location(6) @interpolate(flat) instance_index: u32,
     @location(7) reflection_uv: vec2<f32>,
+    // The KR client's grunge UV (client_grunge.wesl); used only while Client Grunge is on and the static is grunged.
+    @location(8) client_grunge_uv: vec2<f32>,
 }
 
 struct GroundFragmentOutput {
@@ -111,6 +114,12 @@ fn vertex(vertex: Vertex) -> GroundVertexOutput {
     out.world_pos = world_pos;
     out.instance_index = u32(vertex.uv_b.x + 0.5);
     out.reflection_uv = ec_liquid_camera_reflection_uv(world_pos, scene.ec_reflection_camera_distance);
+    out.client_grunge_uv = vec2<f32>(0.0);
+    if (effects.enable_client_grunge == 1u && client_grunges(inst.is_wet_flags)) {
+        let grunge_anchor = vec3<f32>(inst.client_grunge_anchor.x, inst.base_world_y, inst.client_grunge_anchor.y);
+        out.client_grunge_uv = client_grunge_uv(grunge_anchor,
+            (vec3<f32>(inst.world_x, inst.world_y, inst.world_z) - grunge_anchor) + vec3<f32>(local.x, 0.0, local.y));
+    }
     @if(STATIC_PICK)
     out.position = pick_clip(out.position);
     return out;
@@ -193,6 +202,11 @@ fn shade_fragment(in: GroundVertexOutput, sample_index: u32) -> GroundFragmentOu
         hue_texture,
         hue_sampler,
     );
+    // The KR client grunges a static's hued colour (client_grunge.wesl), as in art/main.wesl.
+    if (effects.enable_client_grunge == 1u && client_grunges(inst.is_wet_flags)) {
+        shaded = vec4<f32>(apply_client_grunge(shaded.rgb, in.client_grunge_uv, effects.client_grunge_strength,
+            client_grunge_texture, client_grunge_sampler), shaded.a);
+    }
     if (sprite_params.pass_mode == PASS_MODE_TRANSPARENT && !use_ec_water_material) {
         shaded = vec4<f32>(shaded.rgb * shaded.a * 2.0, shaded.a);
     }

@@ -29,13 +29,12 @@
 
 import bevy_pbr::render::mesh_view_bindings::view;
 import package::shaders::world::art::art_bindings::{SpriteInstance, BILLBOARD_RIGHT_XZ};
+import package::shaders::world::art::client_camera::CLIENT_Z_UNIT;
 import package::shaders::world::art::depth::{STATIC_DEPTH_TIE_BREAK_FRAG_EPSILON, STATIC_DEPTH_TIE_BREAK_VIEW_STEP};
 
 // SpriteInstance.client_shadow_flags; keep in sync with statics_collect.rs.
 const CLIENT_SHADOW_FLAG_CASTS: u32 = 1u;
 const CLIENT_SHADOW_FLAG_WALL: u32 = 2u;
-// World units per UO z unit along the camera's up axis, 0x00b86f38 (= 6 K, K = 0.021427422 per art pixel).
-const CLIENT_SHADOW_Z_UNIT: f32 = 0.12856454;
 // The lean θ, 0x00b87170 (= π / 16, 11.25 degrees).
 const CLIENT_SHADOW_LEAN: f32 = 0.19634375;
 // How far behind the caster the quad lies along the view, 0x00b42f48. Its depth is the caster's priority depth
@@ -81,7 +80,7 @@ fn client_shadow_world_offset(inst: SpriteInstance, corner: vec2<f32>) -> vec3<f
     let width = abs(high.x - low.x);
     let height = abs(high.y - low.y) / pixel_aspect;
     let h = inst.client_shadow_height;
-    let drop = h * CLIENT_SHADOW_Z_UNIT;
+    let drop = h * CLIENT_Z_UNIT;
     let wall = (inst.client_shadow_flags & CLIENT_SHADOW_FLAG_WALL) != 0u;
     var u0 = min(low.y, high.y) / pixel_aspect + drop;
     if (wall) {
