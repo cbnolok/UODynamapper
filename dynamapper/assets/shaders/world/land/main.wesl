@@ -775,11 +775,10 @@ fn shade_land(in: VertexOutput, tile: TileUniform, ordered_coverage: bool, world
     );
   }
 
-  // Classic's accepted output retains its existing light decals. In the
-  // Enhanced/KR flat-water material, the adjoining authored water quads have
-  // no equivalent land-light buffer, so applying decals only to terrain would
-  // recreate the bright bands and color step at their boundary.
-  if (!use_ec_liquid && (!use_classic_flat_wet_land_art || shading_mode == 0u)) {
+  // Light decals follow the land source, not the shading mode: Classic land
+  // takes them in every style, flat wet Classic land art included (Classic's
+  // accepted output). The Enhanced liquid material has no land-light buffer.
+  if (!use_ec_liquid) {
     hdr_rgb = apply_static_light_decals(hdr_rgb, base_albedo, in.world_position.xyz);
   }
   hdr_rgb = apply_kr_color_wash(
