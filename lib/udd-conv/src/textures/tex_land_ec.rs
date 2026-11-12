@@ -54,7 +54,8 @@ use udd_assets::tex_land_ec::{
     TexLandEcPageRecord, TexLandEcSlotRecord, TexLandEcTerrainProvenanceRecord,
     MISSING_PAGE_INDEX, MISSING_PAGE_TILE_INDEX, MISSING_SLOT_ID, MISSING_TERRAIN_LAYER_INDEX,
     MISSING_TEXTURE_ID, TERRAIN_LAYER_ROLE_NONE,
-    TERRAIN_OVERRIDES_SCHEMA, TERRAIN_OVERRIDES_SCHEMA_VERSION,
+    TERRAIN_OVERRIDES_SCHEMA, TERRAIN_OVERRIDES_SCHEMA_VERSION, TEX_LAND_EC_METADATA_VERSION,
+    TEX_LAND_EC_TERRAIN_PROVENANCE_VERSION,
     UDDP_PAGE_MANIFEST_ENTRY_VPATH, UDDP_SLOT_MANIFEST_ENTRY_VPATH,
     UDDP_TERRAIN_OVERRIDES_ENTRY_VPATH, UDDP_TERRAIN_PROVENANCE_ENTRY_VPATH,
     UDDP_TRANSCODE_ENTRY_VPATH, UDDP_LEGACY_TERRAIN_MAP_ENTRY_VPATH, UDDP_SOURCE_MATERIALS_ENTRY_VPATH,
@@ -95,11 +96,6 @@ struct DecodedLayerTexture {
 const PAGE_MANIFEST_MAGIC: [u8; 4] = *b"ELPG";
 const SLOT_MANIFEST_MAGIC: [u8; 4] = *b"ELSL";
 const TERRAIN_PROVENANCE_MAGIC: [u8; 4] = *b"ELTP";
-/// Bump version when the binary layout of either manifest changes.
-/// 5: the terrain layer table (`metadata/terrain_layers.bin`) is dropped; nothing read it any more.
-const TEX_LAND_EC_METADATA_VERSION: u32 = 5;
-/// 4: layer class and selected-item role replace the primary-selection heuristic reason and flags.
-const TEX_LAND_EC_TERRAIN_PROVENANCE_VERSION: u32 = 4;
 /// Magic, version and record count.
 const TERRAIN_PROVENANCE_HEADER_BYTES: usize = 12;
 /// Ten u32/i32/f32 fields, the u64 alias flags, the class byte and the role byte.

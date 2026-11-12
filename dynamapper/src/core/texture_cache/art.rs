@@ -307,7 +307,7 @@ impl ArtPageAtlas {
     }
 
     pub fn resolve_missing(&mut self, aux: &TexAuxEcPackage) -> Option<ResolvedArtSprite> {
-        let slot = aux.missing_texture_slot()?;
+        let slot = aux.missing_texture_slot();
         self.resolve_slot(ArtPageKey::Missing, 0, 0, slot.width, slot.height,
             f32::from(slot.width), f32::from(slot.height), -(slot.width as i32 / 2) as i16, 0,
             u32::from(slot.width), u32::from(slot.height), u32::from(slot.width), u32::from(slot.height),
@@ -339,7 +339,7 @@ impl ArtPageAtlas {
             }
             ArtPageKey::Missing => {
                 let Some(package) = aux else { return; };
-                let Some(slot) = package.missing_texture_slot() else { return; };
+                let slot = package.missing_texture_slot();
                 self.queue_page_upload(key, layer, u32::from(slot.width), u32::from(slot.height),
                     u32::from(slot.width), u32::from(slot.height), PagePixelFormat::Rgba8888,
                     || package.load_rgba(slot.payload_texture_id)?

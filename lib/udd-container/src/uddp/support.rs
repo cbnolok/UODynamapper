@@ -311,9 +311,6 @@ pub enum FormatError {
     InvalidLookupMode(u8),
     InvalidType(u8),
     InvalidCodec(u8),
-    /// The package stores payloads with the removed JPEG XL codec ([`REMOVED_JPEG_XL_CODEC_ID`]). `package` is its path
-    /// when the reader opened a file.
-    RemovedJpegXlCodec { package: Option<std::path::PathBuf> },
     MissingDictionary(u8),
     FileNotFound,
     WrongLookupMode,
@@ -334,14 +331,6 @@ impl fmt::Display for FormatError {
             Self::InvalidLookupMode(v) => write!(f, "invalid lookup mode: {v}"),
             Self::InvalidType(v) => write!(f, "invalid type {v}"),
             Self::InvalidCodec(v) => write!(f, "invalid codec: {v}"),
-            Self::RemovedJpegXlCodec { package } => {
-                let package = package.as_ref().map_or_else(|| "the package".to_string(), |path| path.display().to_string());
-                write!(
-                    f,
-                    "{package} stores payloads in JPEG XL (codec {REMOVED_JPEG_XL_CODEC_ID}), which was removed on \
-                     2026-11-06; repack it with the current udd-cli"
-                )
-            }
             Self::MissingDictionary(t) => write!(f, "missing dictionary for type {t}"),
             Self::FileNotFound => write!(f, "file not found"),
             Self::WrongLookupMode => write!(f, "wrong lookup mode for requested operation"),
@@ -354,16 +343,6 @@ impl fmt::Display for FormatError {
 }
 
 impl std::error::Error for FormatError {}
-
-impl FormatError {
-    /// Names the package file in an error that is about the whole package.
-    pub fn in_package(self, path: &Path) -> Self {
-        match self {
-            Self::RemovedJpegXlCodec { package: None } => Self::RemovedJpegXlCodec { package: Some(path.to_path_buf()) },
-            other => other,
-        }
-    }
-}
 
 /// Errors produced while building runtime or patch packages.
 #[derive(Debug)]

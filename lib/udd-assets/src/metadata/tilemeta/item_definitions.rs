@@ -1,4 +1,4 @@
-//! `metadata/item_definitions.bin` (tilemeta format 4): the `tileart.uop` records the Enhanced paperdoll reads, with
+//! `metadata/item_definitions.bin`: the `tileart.uop` records the Enhanced paperdoll reads, with
 //! the properties and appearance filters it reads, so the lookup of `uocf::enhanced::paperdoll` runs on a package.
 //!
 //! The client looks a definition up by its entry name, `build/tileart/%08d.bin`; the tile id stored in the record is

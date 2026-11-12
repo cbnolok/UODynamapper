@@ -159,18 +159,12 @@ pub enum Codec {
     ZstdTypeDict = 2,
 }
 
-/// Codec id 3 was lossless JPEG XL until 2026-11-06, when it was removed (Zstd 19 pages were smaller and decoded many
-/// times faster). The id stays reserved and is never reused: a package that still stores it fails to open with
-/// [`FormatError::RemovedJpegXlCodec`] and has to be repacked.
-pub const REMOVED_JPEG_XL_CODEC_ID: u8 = 3;
-
 impl Codec {
     pub fn from_u8(v: u8) -> Result<Self, FormatError> {
         match v {
             0 => Ok(Self::None),
             1 => Ok(Self::ZstdNoDict),
             2 => Ok(Self::ZstdTypeDict),
-            REMOVED_JPEG_XL_CODEC_ID => Err(FormatError::RemovedJpegXlCodec { package: None }),
             _ => Err(FormatError::InvalidCodec(v)),
         }
     }

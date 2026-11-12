@@ -14,7 +14,7 @@
 //! - `metadata/land.bin`: dense table for `TileMetaLandTile` entries.
 //! - `metadata/items.bin`: dense table for `TileMetaItemTile` entries.
 //! - `metadata/item_materials.json`: original per-item shader block parameters.
-//! - `metadata/item_texture_refs.v4.bin`: the texture refs; the path names `TILEMETA_FORMAT_VERSION`.
+//! - `metadata/item_texture_refs.bin`: magic `TMTR`, `u32` `TILEMETA_FORMAT_VERSION`, then the texture refs.
 //! - `metadata/item_definitions.bin`: the `tileart.uop` records the Enhanced paperdoll reads
 //!   (`TileMetaItemDefinitions`), above 10,000,000 included.
 //!
@@ -36,7 +36,7 @@ use crate::tex_art_ec::{
 use udd_assets::tex_art_ec::TexArtEcCropAdjustment;
 use udd_assets::tilemeta::item_definitions::{PropertyList, STORED_PROPERTIES};
 use udd_assets::tilemeta::{
-    EcMaterialLogicalFamily, EcMaterialPhysicalPackage,
+    encode_item_texture_refs, EcMaterialLogicalFamily, EcMaterialPhysicalPackage,
     EcMaterialStableRole, TileMetaItemDefinitions, TileMetaItemTextureRef, TileMetaItemTextureRefSpan, TileMetaItemTile,
     TileMetaItemVisualKind, TileMetaLandTile, TILEMETA_ITEM_DEFINITION_ENTRY_PATH, TILEMETA_ITEM_ENTRY_PATH,
     TILEMETA_ITEM_EC_ART_FLAG_USE_NEW_ART, TILEMETA_ITEM_TEXTURE_FLAG_AUXILIARY,
@@ -466,7 +466,7 @@ fn write_tilemeta_uddp_with_progress(
     let land_bytes = bytemuck::cast_slice(&built.land_tiles);
     let item_bytes = bytemuck::cast_slice(&built.item_tiles);
     let item_texture_ref_span_bytes = bytemuck::cast_slice(&built.item_texture_ref_spans);
-    let item_texture_ref_bytes = bytemuck::cast_slice(&built.item_texture_refs);
+    let item_texture_ref_bytes = encode_item_texture_refs(&built.item_texture_refs);
     let item_material_bytes = serde_json::to_vec(&built.item_materials)?;
     let item_definition_bytes = built.item_definitions.to_bytes()?;
 
@@ -519,7 +519,7 @@ fn write_tilemeta_uddp_with_progress(
         virtual_path: Some(TILEMETA_ITEM_TEXTURE_REF_ENTRY_PATH),
         path_hash64: None,
         id: None,
-        data: item_texture_ref_bytes,
+        data: &item_texture_ref_bytes,
     })?;
     package.add_file(AddFileRequest {
         data_type: DataType::Metadata as u8,

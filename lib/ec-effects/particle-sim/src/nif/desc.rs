@@ -25,9 +25,8 @@
 
 use crate::render::{AlphaTest, BlendFactor, BlendState, MeshGeometry};
 
-/// Version of the [`NifEffectDesc`] layout (4: texture effects, sort-adjust nodes, geometry and particle system
-/// bounds, bound update skip, every stored level of embedded pixels).
-pub const NIF_DESC_VERSION: u32 = 4;
+/// Version of the [`NifEffectDesc`] layout.
+pub const NIF_DESC_VERSION: u32 = 1;
 
 /// Name of an embedded texture: this prefix and the index of the texture in [`NifEffectDesc::textures`].
 pub const EMBEDDED_TEXTURE_PREFIX: &str = "#embedded:";

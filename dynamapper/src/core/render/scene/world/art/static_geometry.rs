@@ -134,7 +134,7 @@ impl<'w> StaticPickingResources<'w> {
             }
             StaticVisualKind::TexLandEc { .. } => unreachable!(),
             StaticVisualKind::Missing => {
-                let slot = self.aux.as_ref()?.0.missing_texture_slot()?;
+                let slot = self.aux.as_ref()?.0.missing_texture_slot();
                 geometry.route = StaticArtRoute::MissingArt;
                 (-(slot.width as i32 / 2) as i16, 0, f32::from(slot.width), f32::from(slot.height), 1.0)
             }

@@ -281,8 +281,11 @@ const PATH_ENTRY_META32_OFFSET: usize = 8 + 4;
 const META32_CODEC_SHIFT: u32 = 6;
 const META32_CODEC_MASK: u32 = 0x03;
 
-/// A package written before JPEG XL was removed: one entry's codec is the reserved id.
-fn package_with_removed_jpeg_xl_codec() -> Vec<u8> {
+/// The codec id no current codec uses, which the 2-bit codec field can still hold.
+const UNKNOWN_CODEC_ID: u32 = 3;
+
+/// A package whose one entry names [`UNKNOWN_CODEC_ID`].
+fn package_with_unknown_codec() -> Vec<u8> {
     let mut builder = UddpBuilder::new(LookupMode::VirtualPathHash);
     builder
         .add_file(AddFileRequest {
@@ -300,32 +303,18 @@ fn package_with_removed_jpeg_xl_codec() -> Vec<u8> {
     let index_offset = UddpReader::open(bytes.clone()).expect("open package").header().index_offset as usize;
     let meta32_at = index_offset + PATH_ENTRY_META32_OFFSET;
     let meta32 = u32::from_le_bytes(bytes[meta32_at..meta32_at + 4].try_into().expect("meta32 bytes"));
-    let meta32 = (meta32 & !(META32_CODEC_MASK << META32_CODEC_SHIFT))
-        | (u32::from(udd_container::uddp::REMOVED_JPEG_XL_CODEC_ID) << META32_CODEC_SHIFT);
+    let meta32 = (meta32 & !(META32_CODEC_MASK << META32_CODEC_SHIFT)) | (UNKNOWN_CODEC_ID << META32_CODEC_SHIFT);
     bytes[meta32_at..meta32_at + 4].copy_from_slice(&meta32.to_le_bytes());
     bytes
 }
 
 #[test]
-fn a_package_with_the_removed_jpeg_xl_codec_fails_to_open_and_asks_for_a_repack() {
-    let bytes = package_with_removed_jpeg_xl_codec();
-
-    let error = UddpReader::open(bytes.clone()).err().expect("the removed codec is refused");
-    assert!(matches!(error, udd_container::uddp::FormatError::RemovedJpegXlCodec { package: None }), "{error:?}");
-    assert!(error.to_string().contains("repack it with the current udd-cli"), "{error}");
-
-    let dir = streaming_test_dir("removed-jpeg-xl-codec");
-    let path = dir.join("tex_art_cc.uddp");
-    std::fs::write(&path, &bytes).expect("write package");
-    for error in [
-        UddpReader::load(&path).err().expect("the removed codec is refused when mapped"),
-        UddpReader::load_in_memory(&path).err().expect("the removed codec is refused when read"),
-    ] {
-        let message = error.to_string();
-        assert!(message.starts_with(&path.display().to_string()), "{message}");
-        assert!(message.contains("JPEG XL") && message.contains("repack it with the current udd-cli"), "{message}");
-    }
-    std::fs::remove_dir_all(&dir).expect("remove test dir");
+fn a_package_with_an_unknown_codec_fails_to_open() {
+    let error = UddpReader::open(package_with_unknown_codec()).err().expect("the unknown codec is refused");
+    assert!(
+        matches!(error, udd_container::uddp::FormatError::InvalidCodec(codec) if u32::from(codec) == UNKNOWN_CODEC_ID),
+        "{error:?}"
+    );
 }
 
 #[test]
@@ -380,14 +369,14 @@ fn reader_rejects_other_package_versions() {
         })
         .expect("add id 0");
     let mut bytes = builder.build().expect("build dense package");
-    let old_major = UDDP_VERSION_MAJOR - 1;
+    let other_major = UDDP_VERSION_MAJOR + 1;
     bytes[HEADER_VERSION_MAJOR_OFFSET..HEADER_VERSION_MAJOR_OFFSET + size_of::<u16>()]
-        .copy_from_slice(&old_major.to_le_bytes());
+        .copy_from_slice(&other_major.to_le_bytes());
 
-    let message = UddpReader::open(bytes).err().expect("old version must be rejected").to_string();
+    let message = UddpReader::open(bytes).err().expect("another version must be rejected").to_string();
     assert_eq!(
         message,
-        format!("package version {old_major}.{UDDP_VERSION_MINOR} is not supported; repack with the current udd-cli")
+        format!("package version {other_major}.{UDDP_VERSION_MINOR} is not supported; repack with the current udd-cli")
     );
 }
 

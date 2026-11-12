@@ -1,4 +1,4 @@
-use crate::common::{read_path_entry_cow, read_pod_vec};
+use crate::common::{ensure_manifest_version, read_path_entry_cow, read_pod_vec};
 use bytemuck::{Pod, Zeroable};
 use color_eyre::eyre::{self, WrapErr};
 use std::path::Path;
@@ -10,17 +10,14 @@ pub use item_definitions::{TileMetaItemDefinition, TileMetaItemDefinitions};
 pub const TILEMETA_LAND_ENTRY_PATH: &str = "metadata/land.bin";
 pub const TILEMETA_ITEM_ENTRY_PATH: &str = "metadata/items.bin";
 pub const TILEMETA_ITEM_TEXTURE_REF_INDEX_ENTRY_PATH: &str = "metadata/item_texture_refs_index.bin";
-/// Carries `TILEMETA_FORMAT_VERSION`: a package of another format has no entry at this path.
-pub const TILEMETA_ITEM_TEXTURE_REF_ENTRY_PATH: &str = "metadata/item_texture_refs.v4.bin";
-/// Texture-ref paths of older formats, each rejected with a repack message: format 1 (roles from
-/// file names), format 2 (no `TileMetaItemTile::ec_art_flags`) and format 3 (no item definitions).
-const TILEMETA_OLDER_FORMAT_ITEM_TEXTURE_REF_ENTRY_PATHS: [(u32, &str); 3] = [
-    (1, "metadata/item_texture_refs.bin"),
-    (2, "metadata/item_texture_refs.v2.bin"),
-    (3, "metadata/item_texture_refs.v3.bin"),
-];
+/// The texture refs, after a header that carries `TILEMETA_FORMAT_VERSION` ([`encode_item_texture_refs`]).
+pub const TILEMETA_ITEM_TEXTURE_REF_ENTRY_PATH: &str = "metadata/item_texture_refs.bin";
+/// Magic of the `TILEMETA_ITEM_TEXTURE_REF_ENTRY_PATH` header: magic, then `u32` `TILEMETA_FORMAT_VERSION`.
+pub const TILEMETA_ITEM_TEXTURE_REF_MAGIC: [u8; 4] = *b"TMTR";
+/// Size of the `TILEMETA_ITEM_TEXTURE_REF_ENTRY_PATH` header: the magic and the `u32` version.
+const TILEMETA_ITEM_TEXTURE_REF_HEADER_SIZE: usize = TILEMETA_ITEM_TEXTURE_REF_MAGIC.len() + std::mem::size_of::<u32>();
 pub const TILEMETA_ITEM_MATERIAL_ENTRY_PATH: &str = "metadata/item_materials.json";
-/// The `tileart.uop` records the Enhanced paperdoll reads ([`TileMetaItemDefinitions`]), since format 4.
+/// The `tileart.uop` records the Enhanced paperdoll reads ([`TileMetaItemDefinitions`]).
 pub const TILEMETA_ITEM_DEFINITION_ENTRY_PATH: &str = "metadata/item_definitions.bin";
 
 /// The item is not at its block's primary position (`uocf::enhanced::tileart::primary_texture_position`).
@@ -85,14 +82,9 @@ impl EcMaterialLogicalFamily {
     }
 }
 
-/// Version of the tilemeta texture-ref semantics, named in `TILEMETA_ITEM_TEXTURE_REF_ENTRY_PATH`.
-///
-/// 2: `stable_role` comes from (block, shader name, item position) and `AUXILIARY` from the position;
-/// the file-name roles and the speculative role byte are gone.
-/// 3: `TileMetaItemTile::ec_art_flags` (formerly padding) carries the tileart `flags2` `UseNewArt` bit.
-/// 4: `TILEMETA_ITEM_DEFINITION_ENTRY_PATH`, the records and properties the Enhanced paperdoll reads.
-/// Older packages are rejected.
-pub const TILEMETA_FORMAT_VERSION: u32 = 4;
+/// Version of the whole tilemeta package, in the `TILEMETA_ITEM_TEXTURE_REF_ENTRY_PATH` header. A package of another
+/// version is rejected with a repack message.
+pub const TILEMETA_FORMAT_VERSION: u32 = 1;
 
 /// `TileMetaItemTile::ec_art_flags`: the tileart record sets `UseNewArt` in `flags2` (bit 19), so the
 /// official Enhanced Client draws its block-0 KR art; without it the client draws classic-style art.
@@ -408,7 +400,7 @@ pub struct TileMetaItemTextureRef {
     pub physical_package: u8,
     /// `EcMaterialStableRole`, from the block shader and `item_index`.
     pub stable_role: u8,
-    /// 0. Held a file-name "speculative role" before format 2.
+    /// Reserved, 0.
     pub _reserved: u8,
     /// Stored by the client but never read: it binds item i to shader map i. Use `item_index`.
     pub sampler_index: u32,
@@ -416,7 +408,7 @@ pub struct TileMetaItemTextureRef {
     pub uv_set: u32,
 }
 
-/// On-disk size of one `item_texture_refs.bin` record.
+/// On-disk size of one `item_texture_refs.bin` record, after the header.
 const TILEMETA_ITEM_TEXTURE_REF_SIZE: usize = 24;
 
 // The record stays packed: 24 bytes with no padding.
@@ -431,6 +423,27 @@ const _: () = {
         == offset_of!(TileMetaItemTextureRef, sampler_index) + size_of::<u32>());
     assert!(offset_of!(TileMetaItemTextureRef, uv_set) + size_of::<u32>() == TILEMETA_ITEM_TEXTURE_REF_SIZE);
 };
+
+/// The `TILEMETA_ITEM_TEXTURE_REF_ENTRY_PATH` entry: the header with `TILEMETA_FORMAT_VERSION`, then the records.
+pub fn encode_item_texture_refs(refs: &[TileMetaItemTextureRef]) -> Vec<u8> {
+    let records: &[u8] = bytemuck::cast_slice(refs);
+    let mut bytes = Vec::with_capacity(TILEMETA_ITEM_TEXTURE_REF_HEADER_SIZE + records.len());
+    bytes.extend_from_slice(&TILEMETA_ITEM_TEXTURE_REF_MAGIC);
+    bytes.extend_from_slice(&TILEMETA_FORMAT_VERSION.to_le_bytes());
+    bytes.extend_from_slice(records);
+    bytes
+}
+
+/// Reads the `TILEMETA_ITEM_TEXTURE_REF_ENTRY_PATH` entry, refusing another magic or version.
+fn decode_item_texture_refs(bytes: &[u8]) -> eyre::Result<Vec<TileMetaItemTextureRef>> {
+    let path = TILEMETA_ITEM_TEXTURE_REF_ENTRY_PATH;
+    eyre::ensure!(bytes.len() >= TILEMETA_ITEM_TEXTURE_REF_HEADER_SIZE && bytes.starts_with(&TILEMETA_ITEM_TEXTURE_REF_MAGIC),
+        "{path}: no tilemeta header; repack with the current udd-cli");
+    let (header, records) = bytes.split_at(TILEMETA_ITEM_TEXTURE_REF_HEADER_SIZE);
+    let version = u32::from_le_bytes(header[TILEMETA_ITEM_TEXTURE_REF_MAGIC.len()..].try_into()?);
+    ensure_manifest_version(path, version, TILEMETA_FORMAT_VERSION)?;
+    read_pod_vec(records, path)
+}
 
 impl TileMetaItemTextureRef {
     pub fn is_auxiliary(&self) -> bool {
@@ -483,10 +496,6 @@ impl TileMetaPackage {
     }
 
     pub fn from_uddp_package(package: UddpReader) -> eyre::Result<Self> {
-        for (version, path) in TILEMETA_OLDER_FORMAT_ITEM_TEXTURE_REF_ENTRY_PATHS {
-            eyre::ensure!(package.find_by_path_hash(udd_container::xxh64_virtual_path(path)).is_none(),
-                "tilemeta format {version}, expected format {TILEMETA_FORMAT_VERSION}; repack with the current udd-cli");
-        }
         let land_bytes = read_path_entry_cow(&package, TILEMETA_LAND_ENTRY_PATH)?;
         let item_bytes = read_path_entry_cow(&package, TILEMETA_ITEM_ENTRY_PATH)?;
         let item_texture_ref_span_bytes = read_path_entry_cow(&package, TILEMETA_ITEM_TEXTURE_REF_INDEX_ENTRY_PATH)
@@ -495,7 +504,7 @@ impl TileMetaPackage {
             .wrap_err("tilemeta missing item texture refs; repack with the current udd-cli")?;
         let item_texture_ref_spans =
             read_pod_vec(item_texture_ref_span_bytes.as_ref(), TILEMETA_ITEM_TEXTURE_REF_INDEX_ENTRY_PATH)?;
-        let item_texture_refs = read_pod_vec(item_texture_ref_bytes.as_ref(), TILEMETA_ITEM_TEXTURE_REF_ENTRY_PATH)?;
+        let item_texture_refs = decode_item_texture_refs(item_texture_ref_bytes.as_ref())?;
         let land_tiles = read_pod_vec(land_bytes.as_ref(), TILEMETA_LAND_ENTRY_PATH)?;
         let item_tiles = read_pod_vec(item_bytes.as_ref(), TILEMETA_ITEM_ENTRY_PATH)?;
         let material_bytes = read_path_entry_cow(&package, TILEMETA_ITEM_MATERIAL_ENTRY_PATH)
@@ -905,13 +914,14 @@ mod tests {
 
     #[test]
     fn source_item_material_metadata_is_required_and_validated() {
+        let no_refs = encode_item_texture_refs(&[]);
         for source in [None, Some(b"invalid JSON".as_slice())] {
             let mut builder = udd_container::UddpBuilder::new(udd_container::LookupMode::VirtualPathHash);
             let entries = [
                 (TILEMETA_LAND_ENTRY_PATH, Some(b"".as_slice())),
                 (TILEMETA_ITEM_ENTRY_PATH, Some(b"".as_slice())),
                 (TILEMETA_ITEM_TEXTURE_REF_INDEX_ENTRY_PATH, Some(b"".as_slice())),
-                (TILEMETA_ITEM_TEXTURE_REF_ENTRY_PATH, Some(b"".as_slice())),
+                (TILEMETA_ITEM_TEXTURE_REF_ENTRY_PATH, Some(no_refs.as_slice())),
                 (TILEMETA_ITEM_MATERIAL_ENTRY_PATH, source),
                 (TILEMETA_ITEM_DEFINITION_ENTRY_PATH, Some(EMPTY_DEFINITIONS.as_slice())),
             ];
@@ -933,13 +943,13 @@ mod tests {
         }
     }
 
-    fn package_with_refs_at(refs_path: &str) -> eyre::Result<TileMetaPackage> {
+    fn package_with_refs(refs: &[u8]) -> eyre::Result<TileMetaPackage> {
         let mut builder = udd_container::UddpBuilder::new(udd_container::LookupMode::VirtualPathHash);
         let entries = [
             (TILEMETA_LAND_ENTRY_PATH, b"".as_slice()),
             (TILEMETA_ITEM_ENTRY_PATH, b"".as_slice()),
             (TILEMETA_ITEM_TEXTURE_REF_INDEX_ENTRY_PATH, b"".as_slice()),
-            (refs_path, b"".as_slice()),
+            (TILEMETA_ITEM_TEXTURE_REF_ENTRY_PATH, refs),
             (TILEMETA_ITEM_MATERIAL_ENTRY_PATH, b"{}".as_slice()),
             (TILEMETA_ITEM_DEFINITION_ENTRY_PATH, EMPTY_DEFINITIONS.as_slice()),
         ];
@@ -955,11 +965,17 @@ mod tests {
 
     #[test]
     fn only_the_current_format_version_loads() {
-        assert!(TILEMETA_ITEM_TEXTURE_REF_ENTRY_PATH.contains(&format!(".v{TILEMETA_FORMAT_VERSION}.")));
-        assert!(package_with_refs_at(TILEMETA_ITEM_TEXTURE_REF_ENTRY_PATH).is_ok());
-        for (version, path) in TILEMETA_OLDER_FORMAT_ITEM_TEXTURE_REF_ENTRY_PATHS {
-            let message = package_with_refs_at(path).err().expect("reject an older tilemeta").to_string();
-            assert!(message.contains(&format!("format {version}")) && message.contains("repack"), "{message}");
+        let refs = [TileMetaItemTextureRef { texture_id: 7, ..Default::default() }];
+        let current = encode_item_texture_refs(&refs);
+        let loaded = package_with_refs(&current).expect("the current version loads").item_texture_refs;
+        assert_eq!(loaded.iter().map(|r| r.texture_id).collect::<Vec<_>>(), [refs[0].texture_id]);
+        let mut other_version = current.clone();
+        other_version[TILEMETA_ITEM_TEXTURE_REF_MAGIC.len()..TILEMETA_ITEM_TEXTURE_REF_HEADER_SIZE]
+            .copy_from_slice(&(TILEMETA_FORMAT_VERSION + 1).to_le_bytes());
+        let headerless = current[TILEMETA_ITEM_TEXTURE_REF_HEADER_SIZE..].to_vec();
+        for bytes in [other_version, headerless] {
+            let message = package_with_refs(&bytes).err().expect("reject another tilemeta").to_string();
+            assert!(message.contains("repack with the current udd-cli"), "{message}");
         }
     }
 
@@ -973,7 +989,7 @@ mod tests {
         const LEGACY_BLOCK: u8 = 1;
         let material = |block_index, shader: &str| ArtMaterial {
             block_index, shader_name: Some(shader.to_owned()), ..ArtMaterial::default() };
-        let mut package = package_with_refs_at(TILEMETA_ITEM_TEXTURE_REF_ENTRY_PATH).expect("test package");
+        let mut package = package_with_refs(&encode_item_texture_refs(&[])).expect("test package");
         package.item_materials.insert(EC_WATER, vec![material(TILEMETA_EC_TEXTURE_BLOCK_INDEX, WATER_SHADER_NAME)]);
         package.item_materials.insert(LEGACY_BLOCK_WATER, vec![
             material(TILEMETA_EC_TEXTURE_BLOCK_INDEX, SPRITE_SHADER_NAME), material(LEGACY_BLOCK, WATER_SHADER_NAME)]);

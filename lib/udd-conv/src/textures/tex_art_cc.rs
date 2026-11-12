@@ -231,7 +231,7 @@ pub struct BuiltPage {
 const PAGE_MANIFEST_MAGIC: [u8; 4] = *b"CAPG";
 const SLOT_MANIFEST_MAGIC: [u8; 4] = *b"CASL";
 /// Bump version when the binary layout of either manifest changes.
-const TEX_ART_CC_METADATA_VERSION: u32 = 6;
+const TEX_ART_CC_METADATA_VERSION: u32 = 1;
 
 pub(crate) fn upscale_algorithm_code(filter: UpscaleFilter) -> u16 {
     match filter {

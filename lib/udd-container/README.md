@@ -10,10 +10,8 @@ container layout.
   package access and entry enumeration.
 - **Package writing**: package image assembly and atomic rewrite.
 - **Compression**: per-entry codec dispatch. Supported codecs: zstd (plain or
-  with a per-type dictionary) and raw (uncompressed). Codec id 3, lossless
-  JPEG XL until its removal on 2026-11-06, stays reserved: a package that still
-  uses it fails to open, naming the package, and has to be repacked with the
-  current `udd-cli`.
+  with a per-type dictionary) and raw (uncompressed). A package that names
+  another codec fails to open.
 - **Hashing**: `xxh64_virtual_path` for path-addressed entry lookup
   (xxHash-64 over the virtual path string).
 - **Metadata helpers**: `unpack_codec`, `unpack_offset40`, `unpack_type`,

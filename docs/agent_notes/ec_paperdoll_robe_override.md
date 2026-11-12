@@ -35,8 +35,8 @@ body (human, elf, gargoyle; male, female), garment by garment
 arms, chest and abovechest the client draws beneath the item is drawn with and
 without it; the garment is kept when it loses 1,600 texels or more beyond 16
 texels from the item's edges, and taken off otherwise. The decisions are stored
-per item and body in `metadata/dress_decisions.v3.bin` of paperdoll_ec.uddp
-(metadata version 3; docs/dev_wiki/UDDP_FORMATS.md): the slots they cover and the
+per item and body in `metadata/dress_decisions.bin` of paperdoll_ec.uddp
+(metadata version 1 since the 2026-11-12 reset; docs/dev_wiki/UDDP_FORMATS.md): the slots they cover and the
 garments each keeps. At run time every garment of those slots drawn beneath the
 item is taken off unless kept; a garment drawn beneath it only in another outfit
 (its draw order changed by the other items) was never measured and is taken off

@@ -111,7 +111,7 @@ Stores Enhanced Client static/art textures from the shared EC texture classifica
 
 ### `tex_land_ec.uddp`
 
-Stores representative terrain images and required terrain provenance metadata. The package preserves how `TerrainDefinition` material entries, aliases, selected texture ids, and canonical packed slots relate to each other, and `metadata/source_materials.json` keeps every material's items for the tools. The renderer reads a material's items only through the roles below; the terrain layer table that metadata version 4 carried (`metadata/terrain_layers.bin`) was dropped in version 5, since nothing read it.
+Stores representative terrain images and required terrain provenance metadata. The package preserves how `TerrainDefinition` material entries, aliases, selected texture ids, and canonical packed slots relate to each other, and `metadata/source_materials.json` keeps every material's items for the tools. The renderer reads a material's items only through the roles below; the package has no terrain layer table.
 
 EC land materials are role-based, not single-texture records. The runtime lookup table currently uses these material roles:
 
@@ -142,7 +142,7 @@ The packer logs the client of every definition, texture and route and a summary 
 
 ### `gumps_cc.uddp` and `gumps_ec.uddp`
 
-Paperdoll equipment gumps go to lossless atlas pages; every other gump is a single payload, RGBA8888 by default. The lossy build is BC1 for Classic (`pack-gumps --bc1`, 20.4 MB against 45.1 MB) and BC7 for Enhanced (`pack-ec-gumps --bc7`, 33.7 MB against 83.5 MB), which keeps the soft shadows of the Enhanced gumps that BC1 would round away. The Enhanced gumps in the Classic colour space, the 2216 Classic gumps Interface.uop repeats, take BC1 there too (2026-11-06; all BC7 was 40.5 MB). `pack-ec-gumps` reads only Interface.uop, not the EC client's `gumpartLegacyMUL.uop`, and needs no Classic files. Layout: [UDDP_FORMATS.md](UDDP_FORMATS.md) section 2.3.
+Paperdoll equipment gumps go to lossless atlas pages; every other gump is a single payload, RGBA8888 by default. The lossy build is BC1 for Classic (`pack-gumps --bc1`, 20.4 MB against 45.1 MB) and BC7 for Enhanced (`pack-ec-gumps --bc7`, 33.7 MB against 83.5 MB), which keeps the soft shadows of the Enhanced gumps that BC1 would round away. The Enhanced gumps in the Classic colour space, the 2216 Classic gumps Interface.uop repeats and its 34 empty gumps, take BC1 there too (2246 gumps: the body gumps 12-15 stay RGBA8888) (2026-11-06; all BC7 was 40.5 MB). `pack-ec-gumps` reads only Interface.uop, not the EC client's `gumpartLegacyMUL.uop`, and needs no Classic files. Layout: [UDDP_FORMATS.md](UDDP_FORMATS.md) section 2.3.
 
 Both packers trim each atlas gump to its drawn texels and record its offset in the original canvas, so the pages hold no empty margins (on the shipped clients one page in each package, where untrimmed gumps took 19); a view of one gump pads it back to its canvas. `pack-ec-gumps` also bakes the Enhanced paperdoll's drawn rule into the alpha of the paperdoll equipment and body gumps (the user, 2026-11-06), before the upscale passes and the `--share-with` check: a texel off texel 0's colour that isn't pure black is opaque, every other texel transparent black, and the unused glow of gumps 50322 and 60322 is dropped. Dynamapper then composes the Enhanced gump paperdoll, like the Classic one, by alpha blending.
 
@@ -177,7 +177,7 @@ Stores the non-base support images that tileart refs name and that a runtime con
 
 Stores dense land/item metadata tables used by the runtime to merge Classic Client tiledata with Enhanced Client metadata and sidecars.
 
-Each EC texture ref carries the shader input it feeds (`stable_role`), taken from the block's shader name and the item position, as the client binds them; file names are not read. Packages from before this rule (tilemeta format 1) are rejected; repack them.
+Each EC texture ref carries the shader input it feeds (`stable_role`), taken from the block's shader name and the item position, as the client binds them; file names are not read.
 
 ### `paperdoll_ec.uddp`
 

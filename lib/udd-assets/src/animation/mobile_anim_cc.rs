@@ -34,7 +34,7 @@ const ANIMATION_MANIFEST_MAGIC: [u8; 4] = *b"MAAN";
 const FRAME_MANIFEST_MAGIC: [u8; 4] = *b"MAFR";
 const BODY_RESOLVE_MANIFEST_MAGIC: [u8; 4] = *b"MABR";
 const BODY_TYPE_MANIFEST_MAGIC: [u8; 4] = *b"MABT";
-const MOBILE_ANIM_CC_METADATA_VERSION: u32 = 3;
+const MOBILE_ANIM_CC_METADATA_VERSION: u32 = 1;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct MobileAnimCcPageRecord {

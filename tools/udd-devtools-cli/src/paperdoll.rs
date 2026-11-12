@@ -1,5 +1,5 @@
-//! Composition equivalence check: the repacked version 4 gump packages against a dump of the installed
-//! version 3 ones (`dump_old_gumps` of the dev tree).
+//! Composition equivalence check: the repacked gump packages, which bake the Enhanced paperdoll rule, against a dump
+//! of earlier ones that did not (`dump_old_gumps` of the dev tree).
 //!
 //! Usage: check_paperdoll_bake <old cc dump> <old ec dump> <new gumps_cc.uddp> <new gumps_ec.uddp>
 use std::collections::{BTreeSet, HashMap};

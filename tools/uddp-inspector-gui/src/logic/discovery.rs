@@ -36,7 +36,7 @@ pub enum AtlasPackage {
 /// Open `reader` as the atlas package its slot manifest names.
 ///
 /// `None` when the package has no slot manifest of an atlas package; an error when it is an
-/// atlas package the reader rejects, such as one packed in an older format version.
+/// atlas package the reader rejects, such as one packed in another format version.
 pub fn load_atlas_package(reader: &UddpReader) -> Option<eyre::Result<AtlasPackage>> {
     let slot_manifest = reader.read_file_by_path_hash(xxh64_virtual_path(SLOT_MANIFEST_ENTRY_PATH)).ok()?;
     let magic: [u8; SLOT_MANIFEST_MAGIC_LEN] = slot_manifest.get(..SLOT_MANIFEST_MAGIC_LEN)?.try_into().ok()?;

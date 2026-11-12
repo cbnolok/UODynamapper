@@ -378,11 +378,8 @@ fn sys_setup_client_night_resources(
     log_system_add_startup::<ClientNightLightingPlugin>(StartupSysSet::SetupSceneStage1, fname!());
     let night_map = match tex_aux.as_deref() {
         None => Err("there is no tex_aux_ec.uddp".to_string()),
-        Some(package) => match package.0.load_terrain_texture_rgba(EC_NIGHT_MAP_TERRAIN_TEXTURE_ENTRY) {
-            Ok(Some(map)) => Ok(map),
-            Ok(None) => Err("tex_aux_ec.uddp predates the night maps; repack it with pack-ec-tex-aux".to_string()),
-            Err(error) => Err(format!("cannot read the night map from tex_aux_ec.uddp: {error:#}")),
-        },
+        Some(package) => package.0.load_terrain_texture_rgba(EC_NIGHT_MAP_TERRAIN_TEXTURE_ENTRY)
+            .map_err(|error| format!("cannot read the night map from tex_aux_ec.uddp: {error:#}")),
     };
     let (image, from_package) = match night_map {
         Ok((width, height, rgba)) => {

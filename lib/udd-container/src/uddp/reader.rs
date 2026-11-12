@@ -156,7 +156,7 @@ impl UddpReader {
         let path = path.as_ref();
         let file = std::fs::File::open(path).map_err(FormatError::Io)?;
         let mmap = unsafe { Mmap::map(&file).map_err(FormatError::Io)? };
-        Self::open_data(UddpData::Mmap(mmap), options).map_err(|error| error.in_package(path))
+        Self::open_data(UddpData::Mmap(mmap), options)
     }
 
     /// Open and fully parse a package from its complete in-memory byte image.
@@ -185,7 +185,7 @@ impl UddpReader {
     ) -> Result<Self, FormatError> {
         let path = path.as_ref();
         let bytes = std::fs::read(path).map_err(FormatError::Io)?;
-        Self::open_with_options(bytes, options).map_err(|error| error.in_package(path))
+        Self::open_with_options(bytes, options)
     }
 
     fn open_data(data: UddpData, options: UddpReaderOptions) -> Result<Self, FormatError> {
@@ -503,8 +503,8 @@ impl UddpReader {
     }
 }
 
-/// Refuses a package whose index names a removed codec ([`REMOVED_JPEG_XL_CODEC_ID`]), so the decoders and
-/// [`unpack_codec`] only ever meet current codecs.
+/// Refuses a package whose index names an unknown codec, so the decoders and [`unpack_codec`] only ever meet current
+/// codecs.
 fn check_locator_codecs<'a>(locators: impl Iterator<Item = &'a UddpLocator>) -> Result<(), FormatError> {
     for locator in locators {
         Codec::from_u8(unpack_codec_id(locator.meta32))?;

@@ -23,7 +23,7 @@ Results are marked **confirmed**, **probable** or **unknown**.
 
 | Item | Proposal |
 |---|---|
-| Per-item light inputs | New optional entry `metadata/item_lights.bin` in `tilemeta.uddp`, with its own magic and version. `TILEMETA_FORMAT_VERSION` stays 4, so no repack is forced. |
+| Per-item light inputs | New optional entry `metadata/item_lights.bin` in `tilemeta.uddp`, with its own magic and version. `TILEMETA_FORMAT_VERSION` stays 1 (reset on 2026-11-12), so no repack is forced. |
 | Light textures | `TerrainTexture.uop` entries named by the light items, stored in `tex_aux_ec.uddp` under the existing reserved keys `0x80000000 \| entry`, as the night maps already are. No new entry, and no reader change. |
 | `world_lights.uddp` | Unchanged. It stays the source of the Classic and UOD-Painterly decals, and of the KR-like and Enhanced fallback for old packages. |
 | Old packages | A tilemeta without `item_lights.bin`, or a `tex_aux_ec` without the light textures, keeps today's interim quads. |
@@ -178,7 +178,7 @@ Common combinations:
 
 ## 4. What the packages carry today
 
-- **`tilemeta.uddp` (format 4):**
+- **`tilemeta.uddp` (format 1):**
   - the block-3 texture refs: `TileMetaItemTextureRef` with `texture_id` = NN, `stable_role` Light (10) and
     `physical_package` TerrainTexture (3);
   - the LightSource flag in `TileMetaItemTile`;
@@ -221,7 +221,7 @@ The entry is little-endian and stored like the other tilemeta entries (DataType 
 
 **Versioning.** The entry carries its own version, as `world_lights` `slots.bin` does.
 
-- `TILEMETA_FORMAT_VERSION` stays 4, so every tilemeta in use keeps loading.
+- `TILEMETA_FORMAT_VERSION` stays 1 (all formats were reset to 1 on 2026-11-12), so every tilemeta in use keeps loading.
 - A reader that meets another `item_lights` version or a bad magic refuses the package with the usual "repack
   with the current udd-cli".
 

@@ -15,11 +15,8 @@ pub const GUMP_ATLAS_SLOT_MANIFEST_ID: u32 = 0xE000_0001;
 pub const GUMP_ATLAS_PAGE_ID_BASE: u32 = 0xF000_0000;
 pub const GUMP_ATLAS_PAGE_MANIFEST_MAGIC: [u8; 4] = *b"GAPG";
 pub const GUMP_ATLAS_SLOT_MANIFEST_MAGIC: [u8; 4] = *b"GASL";
-/// 3: single gumps carry a pixel format byte, and every package carries these manifests (`udd_assets::gumps`).
-/// 4: atlas gumps are trimmed to their drawn texels; each slot record adds the logical offset of the stored texels in
-/// the original canvas and the canvas's logical size, and a `gumps_ec` bakes the Enhanced paperdoll rule into alpha
-/// (`crate::ec_gumps`).
-pub const GUMP_ATLAS_METADATA_VERSION: u32 = 4;
+/// The version of the atlas manifests, which every package carries (`udd_assets::gumps`).
+pub const GUMP_ATLAS_METADATA_VERSION: u32 = 1;
 /// `magic, u32 version, u32 atlas width, u32 atlas height, u32 gutter, u32 count` before a manifest's records.
 const GUMP_ATLAS_MANIFEST_HEADER_BYTES: usize = GUMP_ATLAS_PAGE_MANIFEST_MAGIC.len() + 5 * size_of::<u32>();
 /// `u32 page index, u32 gump count, u32 used width, u32 used height`.

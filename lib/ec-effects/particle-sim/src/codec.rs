@@ -50,9 +50,8 @@ use crate::nif::desc::{
 };
 use crate::render::{BlendFactor, MeshGeometry};
 
-/// Version of the body rules and tag tables of this module (3: texture effect node kind and table, embedded
-/// texture levels, bound update skip).
-pub const DESC_CODEC_VERSION: u32 = 3;
+/// Version of the body rules and tag tables of this module.
+pub const DESC_CODEC_VERSION: u32 = 1;
 /// Magic of a [`ChaosSystemDesc`] blob.
 pub const CHAOS_BLOB_MAGIC: [u8; 4] = *b"PSCH";
 /// Magic of a [`NifEffectDesc`] blob.

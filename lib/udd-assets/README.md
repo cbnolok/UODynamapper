@@ -46,12 +46,12 @@ available; category paths such as `udd_assets::textures::tex_art_ec` also work.
 - `dynamapper` is the primary consumer at runtime. Tools use it mainly for
   inspection and validation.
 
-## `mobile_anim_ec.uddp` (metadata version 5)
+## `mobile_anim_ec.uddp` (metadata version 1)
 
 Built by `udd-conv` from the EC `AnimationFrame1..6.uop`, `AnimationSequence.uop` and the
 `tileart.uop` creature placeholders, following the client (`scripts/dev-helpers/ec-research/ghidra-animation/results/uosa_animation.md`). Every metadata
 entry starts with a 4-byte magic and the u32 version; all values are little-endian. The reader
-accepts only version 5 and asks for a repack with the current `udd-cli` otherwise.
+accepts only version 1 and asks for a repack with the current `udd-cli` otherwise.
 
 | Entry | Magic | Content |
 |---|---|---|
@@ -93,7 +93,7 @@ Bodies with frames or a sequence but no placeholder use their own sequence and f
 (`BODY_FLAG_NO_PLACEHOLDER`; the client cannot show them); `BODY_FLAG_NO_SEQUENCE` marks bodies
 whose records are the no-sequence fallback below.
 
-Creature fields (version 5):
+Creature fields:
 
 - `sequence_stored_id`: the stored id of the body's `AnimationSequence` entry (the sequence id
   when the body has no sequence). The client draws an equipment item only when the item's body

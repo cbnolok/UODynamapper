@@ -55,8 +55,8 @@ paperdoll_ec: 72 dress-layer items measured on 6 bodies: 113 decisions keep none
 `--report <file>` writes every finding to a text file, one `info:` or `warning:` line
 each, as `pack-ec-effects` does: the largest garment of each slot on each body, each
 decision, each slot not measured and why, and one line per garment measured with its
-texels near the edge and beyond it, whether it is kept, and where the slot rule of
-format 2 (the largest garment decided its slot) decided otherwise. A `warning:` line
+texels near the edge and beyond it, whether it is kept, and where a slot rule (the
+largest garment deciding its slot) would decide otherwise. A `warning:` line
 is a body that could not be measured.
 `PaperdollOverrides.kdl` in Dynamapper's `runtime_specs/paperdoll` (the user's copy in
 `cache/runtime_specs/paperdoll`) overrides a decision.

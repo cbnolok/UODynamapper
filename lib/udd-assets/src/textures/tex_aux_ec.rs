@@ -10,7 +10,7 @@
 //! - `textures/{texture_id:08x}`: raw pixel bytes per `texture_id` (format in slot record).
 //!   The virtual path is hashed for lookup in the UDDP path-hash index.
 //! - The client's missing-texture image (`Data\SystemTextures\missing.tga`) under the reserved
-//!   id [`TEX_AUX_EC_MISSING_TEXTURE_ID`], with a slot record like any other image.
+//!   id [`TEX_AUX_EC_MISSING_TEXTURE_ID`], with a slot record like any other image. Required.
 //! - One alias slot per referenced source id whose image the EC archive lacks
 //!   ([`TEX_AUX_EC_SLOT_FLAG_MISSING_SOURCE`]). It has no payload of its own: its pixels are the
 //!   missing-texture image, which the client substitutes in that case. A normal lookup
@@ -21,10 +21,10 @@
 //! - The client's atmosphere maps (`TerrainTexture.uop` entries 20 to 22: day, night and night-sight
 //!   maps), lossless RGBA8888 at their native size, under the reserved keys
 //!   [`tex_aux_ec_terrain_texture_key`]; read them with [`TexAuxEcPackage::load_terrain_texture_rgba`].
-//!   Packages built before them lack these slots.
+//!   Required.
 //!
-//! Packages built before the aliases existed lack them (and may carry an unread
-//! `metadata/absent_sources.bin`); absent ids then have no slot.
+//! The package has no version header; a package without a required entry or slot fails to load with
+//! a message to repack it.
 
 use bytemuck::{Pod, Zeroable};
 use color_eyre::eyre::{self, WrapErr};
@@ -184,12 +184,16 @@ impl TexAuxEcPackage {
         let slots: Vec<TexAuxEcSlotRecord> = read_pod_vec(slot_bytes.as_ref(), TEX_AUX_EC_SLOT_MANIFEST_ENTRY_PATH)?;
         eyre::ensure!(slots.windows(2).all(|pair| pair[0].texture_id < pair[1].texture_id),
             "{TEX_AUX_EC_SLOT_MANIFEST_ENTRY_PATH} is not sorted by unique texture id");
-        let aliases_missing = slots.iter().any(TexAuxEcSlotRecord::is_missing_source);
-        let has_missing = slots.binary_search_by_key(&TEX_AUX_EC_MISSING_TEXTURE_ID, |slot| slot.texture_id).is_ok();
-        eyre::ensure!(!aliases_missing || has_missing,
-            "tex_aux_ec has missing-source aliases but no missing-texture slot {TEX_AUX_EC_MISSING_TEXTURE_ID:#x}");
+        let reserved_keys = EC_ATMOSPHERE_MAP_TERRAIN_TEXTURE_ENTRIES.into_iter().map(tex_aux_ec_terrain_texture_key)
+            .chain([TEX_AUX_EC_MISSING_TEXTURE_ID]);
+        for key in reserved_keys {
+            let slot = slots.binary_search_by_key(&key, |slot| slot.texture_id).ok().map(|pos| &slots[pos]);
+            eyre::ensure!(slot.is_some_and(|slot| !slot.is_missing_source()),
+                "tex_aux_ec has no reserved slot {key:#x} (the missing-texture image and the atmosphere maps); \
+                 repack with the current udd-cli");
+        }
         let extent_bytes = crate::common::read_path_entry_cow(&package, TEX_AUX_EC_WATER_EXTENTS_ENTRY_PATH)
-            .wrap_err("read native water-primary extents; rebuild tex_aux_ec with the current packer")?;
+            .wrap_err("read native water-primary extents; repack with the current udd-cli")?;
         let water_primary_extents = read_pod_vec::<[u32; 3]>(extent_bytes.as_ref(), TEX_AUX_EC_WATER_EXTENTS_ENTRY_PATH)?;
         eyre::ensure!(water_primary_extents.windows(2).all(|pair| pair[0][0] < pair[1][0])
             && water_primary_extents.iter().all(|row| row[1] > 0 && row[2] > 0),
@@ -214,19 +218,20 @@ impl TexAuxEcPackage {
         Some(SlotInfo::from(&self.slots[pos]))
     }
 
-    /// The client's missing-texture image, when the package carries it.
-    pub fn missing_texture_slot(&self) -> Option<SlotInfo> {
+    /// The client's missing-texture image, which every package carries.
+    pub fn missing_texture_slot(&self) -> SlotInfo {
         self.slot_for_texture_id(TEX_AUX_EC_MISSING_TEXTURE_ID)
+            .expect("from_uddp_package checked the missing-texture slot")
     }
 
-    /// The RGBA8888 pixels and extent of `TerrainTexture.uop` entry `entry`
-    /// ([`EC_ATMOSPHERE_MAP_TERRAIN_TEXTURE_ENTRIES`]), or `None` for a package built before the
-    /// atmosphere maps were packed.
-    pub fn load_terrain_texture_rgba(&self, entry: u32) -> eyre::Result<Option<(u16, u16, Vec<u8>)>> {
+    /// The RGBA8888 pixels and extent of `TerrainTexture.uop` entry `entry`, one of
+    /// [`EC_ATMOSPHERE_MAP_TERRAIN_TEXTURE_ENTRIES`], which every package carries.
+    pub fn load_terrain_texture_rgba(&self, entry: u32) -> eyre::Result<(u16, u16, Vec<u8>)> {
         let key = tex_aux_ec_terrain_texture_key(entry);
-        let Some(slot) = self.slot_for_texture_id(key) else { return Ok(None) };
+        let slot = self.slot_for_texture_id(key)
+            .ok_or_else(|| eyre::eyre!("tex_aux_ec has no TerrainTexture.uop entry {entry}"))?;
         let rgba = self.load_rgba(key)?.ok_or_else(|| eyre::eyre!("tex_aux_ec slot {key:#x} has no payload"))?;
-        Ok(Some((slot.width, slot.height, rgba)))
+        Ok((slot.width, slot.height, rgba))
     }
 
     /// Load the RGBA8888 pixels for the given `texture_id`.
@@ -292,6 +297,7 @@ mod tests {
 
     const WORLD_ART: u8 = crate::tilemeta::EcMaterialLogicalFamily::WorldArt as u8;
     const SYSTEM_TEXTURES: u8 = crate::tilemeta::EcMaterialLogicalFamily::SystemTextures as u8;
+    const TEXTURES: u8 = crate::tilemeta::EcMaterialLogicalFamily::Textures as u8;
     const PACKED_ID: u32 = 20_002_472;
     const ABSENT_ID: u32 = 20_004_039;
     const UNLISTED_ID: u32 = 20_000_001;
@@ -308,8 +314,21 @@ mod tests {
         TexAuxEcSlotRecord { flags: TEX_AUX_EC_SLOT_FLAG_MISSING_SOURCE, ..slot(texture_id, WORLD_ART) }
     }
 
+    /// The slots every package carries, sorted: the atmosphere maps and the missing-texture image.
+    fn reserved_slots() -> Vec<TexAuxEcSlotRecord> {
+        EC_ATMOSPHERE_MAP_TERRAIN_TEXTURE_ENTRIES.into_iter()
+            .map(|entry| slot(tex_aux_ec_terrain_texture_key(entry), TEXTURES))
+            .chain([slot(TEX_AUX_EC_MISSING_TEXTURE_ID, SYSTEM_TEXTURES)])
+            .collect()
+    }
+
+    /// `tile_slots`, which must be sorted, then [`reserved_slots`].
+    fn package(tile_slots: &[TexAuxEcSlotRecord]) -> eyre::Result<TexAuxEcPackage> {
+        package_of(&[tile_slots, &reserved_slots()].concat())
+    }
+
     /// `slots` must be sorted; payloads are written for the non-alias slots only.
-    fn package(slots: &[TexAuxEcSlotRecord]) -> eyre::Result<TexAuxEcPackage> {
+    fn package_of(slots: &[TexAuxEcSlotRecord]) -> eyre::Result<TexAuxEcPackage> {
         let mut builder = UddpBuilder::new(LookupMode::VirtualPathHash);
         builder.add_file(AddFileRequest {
             data_type: DataType::Metadata as u8, compression: CompressionFlag::None, width: 0, height: 0,
@@ -337,7 +356,7 @@ mod tests {
 
     #[test]
     fn an_absent_source_reads_the_missing_texture_through_a_normal_lookup() -> eyre::Result<()> {
-        let package = package(&[slot(PACKED_ID, WORLD_ART), alias(ABSENT_ID), slot(TEX_AUX_EC_MISSING_TEXTURE_ID, SYSTEM_TEXTURES)])?;
+        let package = package(&[slot(PACKED_ID, WORLD_ART), alias(ABSENT_ID)])?;
         let packed = package.slot_for_texture_id(PACKED_ID).expect("packed slot");
         assert!(!packed.is_missing_source());
         assert_eq!(&package.load_rgba(PACKED_ID)?.expect("packed pixels")[..RGBA_CHANNELS], &PACKED_PIXEL);
@@ -350,7 +369,7 @@ mod tests {
 
         assert!(package.slot_for_texture_id(UNLISTED_ID).is_none());
         assert!(package.load_rgba(UNLISTED_ID)?.is_none());
-        assert!(package.missing_texture_slot().is_some_and(|slot| !slot.is_missing_source()));
+        assert!(!package.missing_texture_slot().is_missing_source());
         assert_eq!(package.water_primary_extent(4651), Some([64, 32]));
         assert_eq!(package.water_primary_extent(7379), None);
         Ok(())
@@ -367,13 +386,16 @@ mod tests {
         let blocks = VramTextureData::new(extent, VramTextureFormat::Bc7RgbaUnormSrgb, BLOCK.to_vec().into())?;
         let bc7_slot = TexAuxEcSlotRecord { pixel_format: PagePixelFormat::Bc7 as u8, ..slot(BC7_ID, WORLD_ART) };
         let mut builder = UddpBuilder::new(LookupMode::VirtualPathHash);
-        let slots = [slot(PACKED_ID, WORLD_ART), bc7_slot];
-        for (path, data) in [(TEX_AUX_EC_SLOT_MANIFEST_ENTRY_PATH, bytemuck::cast_slice(&slots).to_vec()),
-            (TEX_AUX_EC_WATER_EXTENTS_ENTRY_PATH, bytemuck::cast_slice(&[[4651u32, 64, 32]]).to_vec()),
-            (&texture_entry_path(PACKED_ID), rgba.clone()), (&texture_entry_path(BC7_ID), blocks.to_container_bytes())] {
+        let reserved = reserved_slots();
+        let slots = [&[slot(PACKED_ID, WORLD_ART), bc7_slot][..], &reserved].concat();
+        let reserved_payloads = reserved.iter().map(|slot| (texture_entry_path(slot.texture_id), rgba.clone()));
+        for (path, data) in [(TEX_AUX_EC_SLOT_MANIFEST_ENTRY_PATH.to_string(), bytemuck::cast_slice(&slots).to_vec()),
+            (TEX_AUX_EC_WATER_EXTENTS_ENTRY_PATH.to_string(), bytemuck::cast_slice(&[[4651u32, 64, 32]]).to_vec()),
+            (texture_entry_path(PACKED_ID), rgba.clone()), (texture_entry_path(BC7_ID), blocks.to_container_bytes())]
+            .into_iter().chain(reserved_payloads) {
             builder.add_file(AddFileRequest {
                 data_type: DataType::Metadata as u8, compression: CompressionFlag::None, width: 0, height: 0,
-                virtual_path: Some(path), path_hash64: None, id: None, data: &data,
+                virtual_path: Some(path.as_str()), path_hash64: None, id: None, data: &data,
             })?;
         }
         let package = TexAuxEcPackage::from_uddp_package(UddpReader::open(builder.build()?)?)?;
@@ -388,28 +410,29 @@ mod tests {
 
     #[test]
     fn atmosphere_maps_sit_on_reserved_keys_between_tile_ids_and_the_missing_texture() -> eyre::Result<()> {
-        const TEXTURES: u8 = crate::tilemeta::EcMaterialLogicalFamily::Textures as u8;
-        let night = tex_aux_ec_terrain_texture_key(EC_NIGHT_MAP_TERRAIN_TEXTURE_ENTRY);
+        /// A `TerrainTexture.uop` entry the packer does not store.
+        const UNSTORED_ENTRY: u32 = 23;
         assert!(EC_ATMOSPHERE_MAP_TERRAIN_TEXTURE_ENTRIES.into_iter()
             .map(tex_aux_ec_terrain_texture_key)
             .all(|key| key > i32::MAX as u32 && key < TEX_AUX_EC_MISSING_TEXTURE_ID && is_tex_aux_ec_reserved_key(key)));
         assert!(!is_tex_aux_ec_reserved_key(i32::MAX as u32));
-        let package = package(&[slot(PACKED_ID, WORLD_ART), slot(night, TEXTURES),
-            slot(TEX_AUX_EC_MISSING_TEXTURE_ID, SYSTEM_TEXTURES)])?;
-        let (width, height, rgba) = package.load_terrain_texture_rgba(EC_NIGHT_MAP_TERRAIN_TEXTURE_ENTRY)?
-            .expect("night map");
+        let package = package(&[slot(PACKED_ID, WORLD_ART)])?;
+        let (width, height, rgba) = package.load_terrain_texture_rgba(EC_NIGHT_MAP_TERRAIN_TEXTURE_ENTRY)?;
         assert_eq!((width, height, &rgba[..RGBA_CHANNELS]), (IMAGE_SIDE, IMAGE_SIDE, &PACKED_PIXEL[..]));
-        assert!(package.load_terrain_texture_rgba(EC_NIGHT_SIGHT_MAP_TERRAIN_TEXTURE_ENTRY)?.is_none());
+        assert!(package.load_terrain_texture_rgba(UNSTORED_ENTRY).is_err());
         Ok(())
     }
 
     #[test]
-    fn aliases_need_the_missing_texture_slot() -> eyre::Result<()> {
-        assert!(package(&[slot(PACKED_ID, WORLD_ART), alias(ABSENT_ID)]).is_err());
-        let without_fallback = package(&[slot(PACKED_ID, WORLD_ART)])?;
-        assert!(without_fallback.missing_texture_slot().is_none());
-        assert!(without_fallback.slot_for_texture_id(ABSENT_ID).is_none());
-        assert!(package(&[slot(TEX_AUX_EC_MISSING_TEXTURE_ID, SYSTEM_TEXTURES), slot(PACKED_ID, WORLD_ART)]).is_err(), "unsorted");
-        Ok(())
+    fn every_reserved_slot_is_required() {
+        let reserved = reserved_slots();
+        for left_out in 0..reserved.len() {
+            let mut slots = vec![slot(PACKED_ID, WORLD_ART)];
+            slots.extend(reserved.iter().enumerate().filter(|(index, _)| *index != left_out).map(|(_, slot)| *slot));
+            let message = package_of(&slots).err().expect("a reserved slot is missing").to_string();
+            assert!(message.contains("repack with the current udd-cli"), "{message}");
+        }
+        assert!(package(&[slot(PACKED_ID, WORLD_ART)]).is_ok());
+        assert!(package_of(&[&reserved[..], &[slot(PACKED_ID, WORLD_ART)]].concat()).is_err(), "unsorted");
     }
 }

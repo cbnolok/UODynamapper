@@ -54,7 +54,7 @@ use crate::upscale_profile::{UpscaleImageType, UpscaleProfile, UpscaleTarget};
 
 const PAGE_MANIFEST_MAGIC: [u8; 4] = *b"CTXP";
 const SLOT_MANIFEST_MAGIC: [u8; 4] = *b"CTXS";
-const TEX_LAND_CC_METADATA_VERSION: u32 = 2;
+const TEX_LAND_CC_METADATA_VERSION: u32 = 1;
 
 pub const DEFAULT_ATLAS_PAGE_WIDTH: u32 = 2048;
 pub const DEFAULT_ATLAS_PAGE_HEIGHT: u32 = 2048;

@@ -86,7 +86,7 @@ const ITEM_MANIFEST_MAGIC: [u8; 4] = *b"MEIT";
 const SOURCE_HINT_MANIFEST_MAGIC: [u8; 4] = *b"MESH";
 const BODY_MANIFEST_MAGIC: [u8; 4] = *b"MEBD";
 /// Metadata version written by the converter, in every manifest.
-pub const MOBILE_ANIM_EC_METADATA_VERSION: u32 = 5;
+pub const MOBILE_ANIM_EC_METADATA_VERSION: u32 = 1;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct MobileAnimEcPageRecord {

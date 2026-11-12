@@ -12,7 +12,7 @@
 //!   `AnimationFrame::decode_frame` gives it; absent for an empty frame.
 //! - `frames/SS/NNNNN.r8` (`DataType::Paperdoll`): the hue mask of a `FRAME_HUE_MASKED` frame, `HUE_MASK_HUEABLE`
 //!   on the pixels whose palette colour takes the hue, else 0.
-//! - `metadata/dress_decisions.v3.bin`: magic `PDDD`, `u32` version, `u32` slots (bit n: layer n of
+//! - `metadata/dress_decisions.bin`: magic `PDDD`, `u32` version, `u32` slots (bit n: layer n of
 //!   `uocf::enhanced::paperdoll`, the layers the decisions take garments off), `u32` count, then per decision,
 //!   ascending by (item id, body): `u32` item id, `u16` body, `u16` kept count, then per kept garment, ascending by
 //!   id, `u32` item id and `u32` texels beyond the edge. What the packer measured each dress-layer item to take off
@@ -38,15 +38,12 @@ use crate::common::{ensure_manifest_version, read_path_entry, read_path_entry_co
 pub use crate::mobile_anim_ec::{FRAME_HUE_ALL, FRAME_HUE_MASKED, FRAME_HUE_NONE};
 
 pub const FRAMES_ENTRY_PATH: &str = "metadata/frames.bin";
-/// The dress-layer decisions, per garment since format 3 (format 2 stored a mask of slots at
-/// `metadata/dress_hides.bin`).
-pub const DRESS_DECISIONS_ENTRY_PATH: &str = "metadata/dress_decisions.v3.bin";
+/// The dress-layer decisions, per garment.
+pub const DRESS_DECISIONS_ENTRY_PATH: &str = "metadata/dress_decisions.bin";
 pub const FRAMES_MAGIC: [u8; 4] = *b"PDFR";
 pub const DRESS_DECISIONS_MAGIC: [u8; 4] = *b"PDDD";
-/// Version of the manifests, written by the converter. 2 added the dress-layer decisions; 3 decides them per garment
-/// (`DRESS_DECISIONS_ENTRY_PATH`) and leaves the hue tables to `hues.uddp` (format 2 carried those of `Hues.uop` at
-/// `metadata/hue_tables.bin`).
-pub const PAPERDOLL_EC_METADATA_VERSION: u32 = 3;
+/// Version of the manifests (`FRAMES_ENTRY_PATH` and `DRESS_DECISIONS_ENTRY_PATH`), written by the converter.
+pub const PAPERDOLL_EC_METADATA_VERSION: u32 = 1;
 const RGBA_CHANNELS: usize = 4;
 const ALPHA_CHANNEL: usize = 3;
 /// Bytes of a dress decision before its kept garments: item id, body and kept count.
@@ -519,9 +516,9 @@ mod tests {
     }
 
     #[test]
-    fn an_older_manifest_is_refused_with_a_repack_message() {
+    fn a_manifest_of_another_version_is_refused_with_a_repack_message() {
         let mut bytes = encode_frames_manifest(&sets(), &[frame(0, BODY_FRAME, FRAME_HUE_ALL)]).unwrap();
-        bytes[VERSION_RANGE].copy_from_slice(&(PAPERDOLL_EC_METADATA_VERSION - 1).to_le_bytes());
+        bytes[VERSION_RANGE].copy_from_slice(&(PAPERDOLL_EC_METADATA_VERSION + 1).to_le_bytes());
         let error = parse_frames_manifest(&bytes).unwrap_err().to_string();
         assert!(error.contains("repack"), "{error}");
     }
@@ -580,7 +577,7 @@ mod tests {
     }
 
     #[test]
-    fn unsorted_dress_decisions_slots_past_the_layers_and_an_older_version_are_refused() {
+    fn unsorted_dress_decisions_slots_past_the_layers_and_another_version_are_refused() {
         let unsorted = decisions(vec![decision(ROBE, HUMAN_FEMALE, &[]), decision(ROBE, HUMAN_MALE, &[])]);
         assert!(parse_dress_decisions(&encode_dress_decisions(&unsorted).unwrap()).is_err());
         let unsorted_kept = decisions(vec![decision(ROBE, HUMAN_MALE, &[(SHIRT, 0), (PLATE_TUNIC, 0)])]);
@@ -590,9 +587,9 @@ mod tests {
         let mut truncated = encode_dress_decisions(&decisions(vec![decision(ROBE, HUMAN_MALE, &[(SHIRT, 0)])])).unwrap();
         truncated.pop();
         assert!(parse_dress_decisions(&truncated).is_err());
-        let mut older = encode_dress_decisions(&decisions(Vec::new())).unwrap();
-        older[VERSION_RANGE].copy_from_slice(&(PAPERDOLL_EC_METADATA_VERSION - 1).to_le_bytes());
-        let error = parse_dress_decisions(&older).unwrap_err().to_string();
+        let mut other_version = encode_dress_decisions(&decisions(Vec::new())).unwrap();
+        other_version[VERSION_RANGE].copy_from_slice(&(PAPERDOLL_EC_METADATA_VERSION + 1).to_le_bytes());
+        let error = parse_dress_decisions(&other_version).unwrap_err().to_string();
         assert!(error.contains("repack"), "{error}");
     }
 

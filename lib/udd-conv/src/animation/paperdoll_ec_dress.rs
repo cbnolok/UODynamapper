@@ -12,10 +12,10 @@
 //! stores the garments kept, and Dynamapper takes off every other garment of those slots the client draws beneath the
 //! item.
 //!
-//! Format 2 decided a slot at a time, after its largest garment (the most opaque texels in its frame for the body), so
-//! some garments were drawn otherwise than alone they would be: on the EC 2024 data, of the 61,120 garments drawn
-//! beneath the dress-layer items, it took off 458 in plain view (mostly the amazon armour's shoulders) and kept 2,287
-//! whose edges alone show. Deciding each garment draws every one of them as measured; the summary still counts what the
+//! The slot rule, which the packer stored before deciding each garment, decides a slot at a time, after its largest
+//! garment (the most opaque texels in its frame for the body), so some garments are drawn otherwise than alone they
+//! would be: on the EC 2024 data, of the 61,120 garments drawn beneath the dress-layer items, it takes off 458 in plain
+//! view (mostly the amazon armour's shoulders) and keeps 2,287 whose edges alone show. Deciding each garment draws every one of them as measured; the summary still counts what the
 //! slot rule would do, and the report names each garment it would draw otherwise. The client's own rules settle the
 //! garments it leaves out under the item or draws over it, so they are not measured; a garment drawn beneath the item
 //! only in another outfit, with its draw order changed by the other items, is taken off too.
@@ -77,7 +77,7 @@ pub fn tileart_name(record: &TileArtEntry, strings: &UoStringDictionary) -> Opti
     strings.get_string(index).filter(|name| !name.is_empty()).map(str::to_string)
 }
 
-/// The largest garment of a slot on one body: the one format 2 decided the slot after.
+/// The largest garment of a slot on one body: the one the slot rule decides the slot after.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct LargestGarment {
     pub body: u32,
@@ -132,7 +132,7 @@ impl SlotMeasure {
         self.garments().iter().filter(|garment| garment.shows())
     }
 
-    /// Whether format 2's slot rule takes the slot off: its largest garment does not show beyond the edge band, or the
+    /// Whether the slot rule takes the slot off: its largest garment does not show beyond the edge band, or the
     /// client leaves its garments out beneath the item.
     pub fn slot_rule_hides(&self) -> bool {
         match self {
@@ -245,7 +245,7 @@ pub struct DressMeasurement {
     pub dress_items: Vec<u32>,
     /// One per dress-layer item and body it has a frame for, ascending by (item, body order of [`WEARER_BODIES`]).
     pub decisions: Vec<DressDecision>,
-    /// Per body measured and slot, the largest garment: what format 2's slot rule followed.
+    /// Per body measured and slot, the largest garment: what the slot rule follows.
     pub largest: Vec<LargestGarment>,
     /// (item, body name) of the dress-layer items with no frame for a body.
     pub without_frame: Vec<(u32, &'static str)>,
@@ -266,9 +266,9 @@ pub struct DressCounts {
     pub garments_measured: usize,
     /// Of those, the garments kept: in plain view beyond the edge band. The others are taken off.
     pub kept: usize,
-    /// Of those, the garments in plain view that format 2's slot rule takes off with their slot.
+    /// Of those, the garments in plain view that the slot rule takes off with their slot.
     pub slot_rule_taken_off_in_view: usize,
-    /// Of those, the garments whose edges alone show that format 2's slot rule keeps with their slot.
+    /// Of those, the garments whose edges alone show that the slot rule keeps with their slot.
     pub slot_rule_kept_edges_only: usize,
 }
 
@@ -306,13 +306,13 @@ impl DressMeasurement {
         counts
     }
 
-    /// The summary line: items, bodies, decisions and garments, and what format 2's slot rule would do.
+    /// The summary line: items, bodies, decisions and garments, and what the slot rule would do.
     pub fn summary(&self) -> String {
         let counts = self.counts();
         format!(
             "{} dress-layer items measured on {} bodies: {} decisions keep none of the garments drawn beneath the \
              item, {} some, {} all, {} measure none; {} item and body pairs without a frame; of the {} garments drawn \
-             beneath them, {} show beyond the edge and are kept, {} are taken off; the slot rule of format 2 (the \
+             beneath them, {} show beyond the edge and are kept, {} are taken off; the slot rule (the \
              largest garment decides its slot) would take off {} in plain view and keep {} whose edges alone show",
             self.dress_items.len(),
             WEARER_BODIES.len() - self.skipped_bodies.len(),
@@ -369,7 +369,7 @@ impl DressMeasurement {
                 };
                 for garment in garments {
                     let verdict = if garment.shows() { "kept" } else { "taken off" };
-                    // Format 2 decided the slot after its largest garment, and drew this one otherwise.
+                    // The slot rule decides the slot after its largest garment, and drew this one otherwise.
                     let slot_rule = match (garment.shows(), measure.slot_rule_hides()) {
                         (true, true) => "; the slot rule took it off, in plain view",
                         (false, false) => "; the slot rule kept it, its edges alone showing",
@@ -748,7 +748,7 @@ mod tests {
     /// A shirt smaller than [`SHIRT`], all of it under the item: measured after it.
     const SMALL_SHIRT: u16 = 5397;
     /// A torso garment smaller than [`SMALL_SHIRT`], all of it below the edge band: in plain view, so kept, where the
-    /// slot rule of format 2 took it off with [`SHIRT`].
+    /// slot rule takes it off with [`SHIRT`].
     const LOW_TUNIC: u16 = 5401;
     const LOW_TUNIC_HEIGHT: u16 = 45;
     const PANTS: u16 = 5433;
@@ -823,7 +823,7 @@ mod tests {
     }
 
     /// The item takes off the shirts, whose edges show only beside it, and keeps the trousers, which reach far below
-    /// it, and the low tunic, which the slot rule of format 2 took off with the shirts. Every garment drawn beneath
+    /// it, and the low tunic, which the slot rule takes off with the shirts. Every garment drawn beneath
     /// the item is measured, the largest of its slot first; the mantle, which the client leaves out under the item,
     /// is not; the bodies without a frame of their own are left out.
     #[test]

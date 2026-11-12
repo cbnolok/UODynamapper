@@ -39,10 +39,9 @@ const GUMP_ATLAS_SLOT_MANIFEST_ID: u32 = 0xE000_0001;
 const GUMP_ATLAS_PAGE_ID_BASE: u32 = 0xF000_0000;
 const GUMP_ATLAS_PAGE_MANIFEST_MAGIC: [u8; 4] = *b"GAPG";
 const GUMP_ATLAS_SLOT_MANIFEST_MAGIC: [u8; 4] = *b"GASL";
-/// 3: single gumps carry a pixel format byte, and every package carries the atlas manifests.
-/// 4: atlas gumps are trimmed to their drawn texels; each slot record adds the logical offset of the stored texels in
-/// the original canvas and the canvas's logical size, and a `gumps_ec` bakes the Enhanced paperdoll rule into alpha.
-pub const GUMP_ATLAS_METADATA_VERSION: u32 = 4;
+/// The version of the atlas page and slot manifests, which every package carries and which stands for the package's
+/// layout as a whole.
+pub const GUMP_ATLAS_METADATA_VERSION: u32 = 1;
 /// The bytes of one RGBA8888 texel.
 const RGBA_BYTES: usize = 4;
 /// `u32 width, u32 height, u8 pixel format` before a single gump's pixels.
@@ -407,8 +406,7 @@ impl GumpsPackage {
                     (page_width, page_height, page_gutter, pages, slots)
                 }
                 _ => eyre::bail!(
-                    "gump atlas manifest: missing, so the package predates version {GUMP_ATLAS_METADATA_VERSION}; \
-                     repack with the current udd-cli"
+                    "gump atlas manifest: missing; repack with the current udd-cli"
                 ),
             };
 
@@ -956,20 +954,14 @@ mod tests {
         assert!(package.single_gump_pixel_format(GUMP_ID).is_err());
     }
 
-    /// A package from before version 4 fails to load with the repack message, whether its manifests are at version 2
-    /// or 3 (untrimmed atlas gumps, Enhanced paperdoll rule not baked) or, with no paperdoll gump in it, missing.
+    /// A package of another version, or without the manifests, fails to load with the repack message.
     #[test]
-    fn packages_before_version_4_must_be_repacked() {
-        const OLD_VERSIONS: [u32; 2] = [2, 3];
-        let mut packages = OLD_VERSIONS
-            .into_iter()
-            .map(|old_version| {
-                build_package_with_manifests(
-                    common_manifest_header_at(&GUMP_ATLAS_PAGE_MANIFEST_MAGIC, old_version, 3, 2, 1, 0),
-                    common_manifest_header_at(&GUMP_ATLAS_SLOT_MANIFEST_MAGIC, old_version, 3, 2, 1, 0),
-                )
-            })
-            .collect::<Vec<_>>();
+    fn packages_of_another_version_must_be_repacked() {
+        const OTHER_VERSION: u32 = GUMP_ATLAS_METADATA_VERSION + 1;
+        let mut packages = vec![build_package_with_manifests(
+            common_manifest_header_at(&GUMP_ATLAS_PAGE_MANIFEST_MAGIC, OTHER_VERSION, 3, 2, 1, 0),
+            common_manifest_header_at(&GUMP_ATLAS_SLOT_MANIFEST_MAGIC, OTHER_VERSION, 3, 2, 1, 0),
+        )];
         packages.push({
             let mut builder = UddpBuilder::new(LookupMode::SparseId);
             add_single(&mut builder, 42, &single_payload(2, 1, &[1, 2, 3, 4, 5, 6, 7, 8]));
@@ -977,7 +969,7 @@ mod tests {
         });
 
         for package in packages {
-            let error = GumpsPackage::from_uddp_package(package).err().expect("an old package is rejected");
+            let error = GumpsPackage::from_uddp_package(package).err().expect("the package is rejected");
             assert!(format!("{error:#}").contains("repack with the current udd-cli"), "{error:#}");
         }
     }

@@ -18,7 +18,7 @@ pub const MISSING_PAGE_TILE_INDEX: u16 = u16::MAX;
 
 const PAGE_MANIFEST_MAGIC: [u8; 4] = *b"CTXP";
 const SLOT_MANIFEST_MAGIC: [u8; 4] = *b"CTXS";
-const TEX_LAND_CC_METADATA_VERSION: u32 = 2;
+const TEX_LAND_CC_METADATA_VERSION: u32 = 1;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct TexLandCcPageRecord {

@@ -19,12 +19,9 @@ const PAGE_MANIFEST_MAGIC: [u8; 4] = *b"ELPG";
 const SLOT_MANIFEST_MAGIC: [u8; 4] = *b"ELSL";
 const TERRAIN_PROVENANCE_MAGIC: [u8; 4] = *b"ELTP";
 /// The version of the page and slot manifests, which stands for the package's metadata as a whole.
-/// 5: the terrain layer table (`metadata/terrain_layers.bin`, magic `TMLY`) is dropped; nothing read it once the
-/// land shader's table-driven two-base blend and ripple were removed.
-pub const TEX_LAND_EC_METADATA_VERSION: u32 = 5;
-/// 4: the terrain layer class and the selected item's role by position replace the primary-selection
-/// heuristic reason and flags.
-pub const TEX_LAND_EC_TERRAIN_PROVENANCE_VERSION: u32 = 4;
+pub const TEX_LAND_EC_METADATA_VERSION: u32 = 1;
+/// The version of the terrain provenance manifest.
+pub const TEX_LAND_EC_TERRAIN_PROVENANCE_VERSION: u32 = 1;
 
 pub const UDDP_PAGE_MANIFEST_ENTRY_VPATH: &str = "metadata/pages.bin";
 pub const UDDP_SLOT_MANIFEST_ENTRY_VPATH: &str = "metadata/slots.bin";
@@ -52,10 +49,9 @@ pub const MISSING_TERRAIN_LAYER_INDEX: u32 = u32::MAX;
 /// The provenance byte of a selected texture that is not a source item (an override or a missing layer).
 pub const TERRAIN_LAYER_ROLE_NONE: u8 = u8::MAX;
 
-// Bits 0 and 1 were the removed `policy` and `liquid` override nodes.
-pub const TERRAIN_OVERRIDE_ACTION_LAYER: u16 = 1 << 2;
-pub const TERRAIN_OVERRIDE_ACTION_TEXTURE: u16 = 1 << 3;
-pub const TERRAIN_OVERRIDE_ACTION_IGNORE: u16 = 1 << 4;
+pub const TERRAIN_OVERRIDE_ACTION_LAYER: u16 = 1 << 0;
+pub const TERRAIN_OVERRIDE_ACTION_TEXTURE: u16 = 1 << 1;
+pub const TERRAIN_OVERRIDE_ACTION_IGNORE: u16 = 1 << 2;
 
 #[cfg(all(debug_assertions, not(test)))]
 static FROM_UDDP_PACKAGE_WITH_OPTIONS_CALLS: AtomicU64 = AtomicU64::new(0);
@@ -1291,14 +1287,6 @@ fn parse_terrain_override_actions_metadata(
     Ok(actions)
 }
 
-#[cfg(test)]
-fn parse_terrain_override_details_metadata(
-    bytes: &[u8],
-) -> eyre::Result<HashMap<u32, TexLandEcTerrainOverrideDetails>> {
-    let (_, details_by_material, _) = parse_terrain_overrides_metadata_maps(bytes)?;
-    Ok(details_by_material)
-}
-
 fn parse_terrain_overrides_metadata_maps(
     bytes: &[u8],
 ) -> eyre::Result<(
@@ -1704,18 +1692,18 @@ mod tests {
         assert!(error.contains(UDDP_TERRAIN_OVERRIDES_ENTRY_VPATH) && error.contains("repack"), "{error}");
     }
 
-    /// A version 4 package, which still carries the terrain layer table, is refused with a repack hint.
+    /// A package of another metadata version is refused with a repack hint.
     #[test]
-    fn a_package_of_the_previous_metadata_version_asks_for_a_repack() {
-        const PREVIOUS_METADATA_VERSION: u32 = TEX_LAND_EC_METADATA_VERSION - 1;
+    fn a_package_of_another_metadata_version_asks_for_a_repack() {
+        const OTHER_METADATA_VERSION: u32 = TEX_LAND_EC_METADATA_VERSION + 1;
         const VERSION_OFFSET: usize = PAGE_MANIFEST_MAGIC.len();
         let mut page_manifest = page_manifest_bytes();
         page_manifest[VERSION_OFFSET..VERSION_OFFSET + size_of::<u32>()]
-            .copy_from_slice(&PREVIOUS_METADATA_VERSION.to_le_bytes());
+            .copy_from_slice(&OTHER_METADATA_VERSION.to_le_bytes());
 
         let error = parse_page_manifest(&page_manifest).unwrap_err().to_string();
 
-        assert!(error.contains(&format!("version {PREVIOUS_METADATA_VERSION}")) && error.contains("repack"), "{error}");
+        assert!(error.contains(&format!("version {OTHER_METADATA_VERSION}")) && error.contains("repack"), "{error}");
     }
 
     #[test]
@@ -1856,11 +1844,11 @@ terrain 52 {
     }
 
     #[test]
-    fn terrain_provenance_parser_rejects_older_versions() {
-        let older_version = TEX_LAND_EC_TERRAIN_PROVENANCE_VERSION - 1;
+    fn terrain_provenance_parser_rejects_other_versions() {
+        let other_version = TEX_LAND_EC_TERRAIN_PROVENANCE_VERSION + 1;
         let mut bytes = Vec::new();
         bytes.extend_from_slice(&TERRAIN_PROVENANCE_MAGIC);
-        bytes.write_u32::<LittleEndian>(older_version).unwrap();
+        bytes.write_u32::<LittleEndian>(other_version).unwrap();
         bytes.write_u32::<LittleEndian>(0).unwrap();
 
         let error = parse_terrain_provenance_manifest(&bytes).unwrap_err().to_string();
@@ -1868,7 +1856,7 @@ terrain 52 {
         assert_eq!(
             error,
             format!(
-                "tex_land_ec terrain provenance: package version {older_version} is not supported \
+                "tex_land_ec terrain provenance: package version {other_version} is not supported \
                  (current is {TEX_LAND_EC_TERRAIN_PROVENANCE_VERSION}); repack with the current udd-cli"
             )
         );
@@ -1895,30 +1883,6 @@ terrain 52 {
 
         assert_eq!(action.action_count, 1);
         assert!(action.has_layer());
-    }
-
-    #[test]
-    fn terrain_override_metadata_parser_ignores_removed_policy_and_liquid_fields() {
-        // Packages built before the `policy` and `liquid` nodes were removed still carry them.
-        let json = br#"{
-  "schema": "tex_land_ec_terrain_overrides",
-  "schema_version": 1,
-  "entries": [
-    {
-      "material_id": 52,
-      "active_action_count": 3,
-      "policies": [{"policy": "follow-center", "code": "reviewed_runtime_policy"}],
-      "liquid": {"speed": 0.01, "waveheight": 0.3, "code": "reviewed_liquid_motion"},
-      "layers": [{"role": "t0", "texture_id": 2000510}],
-      "textures": [],
-      "ignore": null
-    }
-  ]
-}"#;
-        let actions = parse_terrain_override_actions_metadata(json).expect("parse override actions");
-        assert_eq!(actions[&52].action_flags, TERRAIN_OVERRIDE_ACTION_LAYER);
-        let details = parse_terrain_override_details_metadata(json).expect("parse override details");
-        assert!(details[&52].ignore_code.is_none());
     }
 
     #[test]

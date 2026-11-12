@@ -10,7 +10,7 @@ use bytemuck::Zeroable;
 
 use udd_assets::{
     tilemeta::{
-        EcMaterialLogicalFamily, EcMaterialPhysicalPackage,
+        encode_item_texture_refs, EcMaterialLogicalFamily, EcMaterialPhysicalPackage,
         EcMaterialStableRole, TileMetaItemDefinitions, TileMetaItemTextureRef,
         TileMetaItemTextureRefSpan, TileMetaItemTile, TileMetaItemVisualKind, TileMetaLandTile,
         TILEMETA_ITEM_DEFINITION_ENTRY_PATH, TILEMETA_ITEM_ENTRY_PATH, TILEMETA_ITEM_TEXTURE_REF_ENTRY_PATH, TILEMETA_ITEM_MATERIAL_ENTRY_PATH,
@@ -132,7 +132,8 @@ fn tilemeta_package_roundtrip_preserves_metadata_records() {
             data: bytemuck::cast_slice(&item_tiles),
         })
         .expect("add item metadata");
-    for path in [TILEMETA_ITEM_TEXTURE_REF_INDEX_ENTRY_PATH, TILEMETA_ITEM_TEXTURE_REF_ENTRY_PATH] {
+    let no_refs = encode_item_texture_refs(&[]);
+    for (path, data) in [(TILEMETA_ITEM_TEXTURE_REF_INDEX_ENTRY_PATH, [].as_slice()), (TILEMETA_ITEM_TEXTURE_REF_ENTRY_PATH, &no_refs)] {
         package
             .add_file(AddFileRequest {
                 data_type: DataType::Metadata as u8,
@@ -141,7 +142,7 @@ fn tilemeta_package_roundtrip_preserves_metadata_records() {
                 virtual_path: Some(path),
                 path_hash64: None,
                 id: None,
-                data: &[],
+                data,
             })
             .expect("add empty item texture refs");
     }
@@ -333,7 +334,7 @@ fn tilemeta_texture_refs_roundtrip_preserves_role_fields() {
             virtual_path: Some(TILEMETA_ITEM_TEXTURE_REF_ENTRY_PATH),
             path_hash64: None,
             id: None,
-            data: bytemuck::cast_slice(&refs),
+            data: &encode_item_texture_refs(&refs),
         })
         .expect("add texture refs");
     add_empty_item_definitions(&mut package);
