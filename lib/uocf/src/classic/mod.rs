@@ -28,4 +28,4 @@ pub use tables::{
     asset_map, cliloc, def_files, filter_lists, generic_def, house_tables, key_names,
     legacy_tables, localized_text, professions, skills, speech,
 };
-pub use ui::{credits, fonts, gump, gump_write, help_index};
+pub use ui::{credits, fonts, gump, gump_write, help_index, paperdoll_profiles};

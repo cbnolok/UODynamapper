@@ -20,8 +20,8 @@ use crate::{
 };
 use bevy::prelude::*;
 use bevy_egui::{egui, EguiContexts, EguiPrimaryContextPass, EguiTextureHandle};
-use knuffel::Decode;
 use std::collections::HashSet;
+use uocf::classic::paperdoll_profiles::{decode_paperdoll_profiles, PaperdollProfile};
 use uocf::enhanced::paperdoll::{
     body_frame, item_layer, WearableRules, Wearer, LAYER_COUNT, SLOT_NAMES, WEARABLE_RULES_FILE_NAME,
 };
@@ -166,24 +166,6 @@ const PAPERDOLL_PROFILES_FILE_NAME: &str = "PaperdollProfiles.kdl";
 /// The folder of the cache dir the paperdoll windows wrote the user's `PaperdollOverrides.kdl` in before the runtime
 /// specs had user copies; such a copy moves to its place at startup.
 const OLD_USER_OVERRIDES_DIR: &str = "settings";
-
-/// `profile "<id>" equipment_offset=N body=N [label=] [fallback_equipment_offset=] [canvas_width=] [canvas_height=]
-/// [body_x=] [body_y=] [equipment_x=] [equipment_y=]`, decoded by `PaperdollProfilesKdl`.
-pub(crate) const PAPERDOLL_PROFILES_SCHEMA: &[uot_kdl::strict::NodeSchema] = &[uot_kdl::strict::NodeSchema::leaf(
-    "profile",
-    &[
-        "label",
-        "equipment_offset",
-        "fallback_equipment_offset",
-        "body",
-        "canvas_width",
-        "canvas_height",
-        "body_x",
-        "body_y",
-        "equipment_x",
-        "equipment_y",
-    ],
-)];
 
 #[cfg(test)]
 mod robe_edges;
@@ -729,18 +711,9 @@ impl PaperdollProfilesRes {
         loaded.value
     }
 
+    /// The profiles of `content`, decoded as the uocf editor decodes them (`uocf::classic::paperdoll_profiles`).
     fn load_from_str(source_name: &str, content: &str) -> color_eyre::eyre::Result<Self> {
-        let decoded: PaperdollProfilesKdl = uot_kdl::strict::decode(source_name, content, PAPERDOLL_PROFILES_SCHEMA)?;
-        let profiles = decoded
-            .profiles
-            .into_iter()
-            .map(PaperdollProfile::from)
-            .collect::<Vec<_>>();
-        if profiles.is_empty() {
-            color_eyre::eyre::bail!("{source_name}: contains no profile nodes");
-        }
-
-        Ok(Self { profiles })
+        Ok(Self { profiles: decode_paperdoll_profiles(source_name, content)? })
     }
 
     fn profile(&self, id: &str) -> Option<&PaperdollProfile> {
@@ -749,74 +722,6 @@ impl PaperdollProfilesRes {
 
     fn default_profile(&self) -> &PaperdollProfile {
         &self.profiles[0]
-    }
-}
-
-#[derive(Clone)]
-struct PaperdollProfile {
-    id: String,
-    label: String,
-    equipment_offset: u32,
-    /// The offset of the gump drawn when the one at `equipment_offset` is missing: the female profiles fall back to the
-    /// male gumps. `None`: no fallback.
-    fallback_equipment_offset: Option<u32>,
-    /// The server body: the 3D paperdoll draws its frame, and its race picks the overrides of the draw order.
-    body: u32,
-    canvas_width: u32,
-    canvas_height: u32,
-    body_x: i32,
-    body_y: i32,
-    equipment_x: i32,
-    equipment_y: i32,
-}
-
-#[derive(Decode)]
-struct PaperdollProfilesKdl {
-    #[knuffel(children(name = "profile"))]
-    profiles: Vec<PaperdollProfileKdl>,
-}
-
-#[derive(Decode)]
-struct PaperdollProfileKdl {
-    #[knuffel(argument)]
-    id: String,
-    #[knuffel(property)]
-    label: Option<String>,
-    #[knuffel(property(name = "equipment_offset"))]
-    equipment_offset: u32,
-    #[knuffel(property(name = "fallback_equipment_offset"))]
-    fallback_equipment_offset: Option<u32>,
-    #[knuffel(property)]
-    body: u32,
-    #[knuffel(property(name = "canvas_width"))]
-    canvas_width: Option<u32>,
-    #[knuffel(property(name = "canvas_height"))]
-    canvas_height: Option<u32>,
-    #[knuffel(property(name = "body_x"))]
-    body_x: Option<i32>,
-    #[knuffel(property(name = "body_y"))]
-    body_y: Option<i32>,
-    #[knuffel(property(name = "equipment_x"))]
-    equipment_x: Option<i32>,
-    #[knuffel(property(name = "equipment_y"))]
-    equipment_y: Option<i32>,
-}
-
-impl From<PaperdollProfileKdl> for PaperdollProfile {
-    fn from(value: PaperdollProfileKdl) -> Self {
-        Self {
-            label: value.label.unwrap_or_else(|| value.id.clone()),
-            id: value.id,
-            equipment_offset: value.equipment_offset,
-            fallback_equipment_offset: value.fallback_equipment_offset,
-            body: value.body,
-            canvas_width: value.canvas_width.unwrap_or(0),
-            canvas_height: value.canvas_height.unwrap_or(0),
-            body_x: value.body_x.unwrap_or(0),
-            body_y: value.body_y.unwrap_or(0),
-            equipment_x: value.equipment_x.unwrap_or(0),
-            equipment_y: value.equipment_y.unwrap_or(0),
-        }
     }
 }
 
@@ -1637,9 +1542,10 @@ fn gump_paperdoll_layers_taking_off(
             );
         }
         worn[layer] = Some(item.item_id);
+        let (gump_id, fallback_gump_id) = profile.equipment_gumps(tile.anim_id);
         worn_layers[layer] = Some(PaperdollLayer {
-            gump_id: u32::from(tile.anim_id) + profile.equipment_offset,
-            fallback_gump_id: profile.fallback_equipment_offset.map(|offset| u32::from(tile.anim_id) + offset),
+            gump_id,
+            fallback_gump_id,
             item: Some((layer, item.item_id)),
             hue_id: item.hue,
             partial_hue: tile.flags & TaeFlag::PartialHue.bits() != 0,

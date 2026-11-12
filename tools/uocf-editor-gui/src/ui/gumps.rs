@@ -4,7 +4,6 @@ use crate::ui::ec_paperdoll::{self, Definitions, FrameSets, WornItem, PAPERDOLL_
 use crate::ui::{arrow_delta, centered_row_offset, go_to_field, list_sort_controls, move_selection, sorted_indices_by};
 use crate::ui::{enhanced_files_availability, source_choice, ClientSource, SourceAvailability};
 use eframe::egui;
-use knuffel::Decode;
 use std::path::Path;
 use std::sync::Arc;
 use std::sync::OnceLock;
@@ -16,6 +15,7 @@ use uocf::uop_container::hash::hash_file_name_single;
 use uocf::uop_container::package::{LoadMode, UopPackage};
 use uocf::classic::gump::GumpMap;
 use uocf::classic::gump_write::GumpColors;
+use uocf::classic::paperdoll_profiles::{decode_paperdoll_profiles, PaperdollProfile};
 use uocf::image_export::gump_file_stem;
 use crate::logic::uop_cache::LoadedUop;
 use crate::ui::image_export::{
@@ -31,6 +31,10 @@ const GUMP_SPLIT_MIN_RATIO: f32 = 0.20;
 const GUMP_SPLIT_MAX_RATIO: f32 = 0.80;
 const PAPERDOLL_PROFILE_KDL: &str =
     include_str!("../../../../dynamapper/assets/runtime_specs/paperdoll/PaperdollProfiles.kdl");
+const PAPERDOLL_PROFILES_FILE_NAME: &str = "PaperdollProfiles.kdl";
+/// The gump offsets of the built-in profiles: the male gumps, and the female ones, which fall back to the male.
+const MALE_EQUIPMENT_OFFSET: u32 = 50_000;
+const FEMALE_EQUIPMENT_OFFSET: u32 = 60_000;
 /// Image preview keys of the gumps of each source, or-ed with the gump id.
 const MUL_GUMP_PREVIEW_KEY: u64 = 0x6D00000000000000;
 const CC_UOP_GUMP_PREVIEW_KEY: u64 = 0x6C00000000000000;
@@ -52,47 +56,12 @@ const EC_PAPERDOLL_NOTE: &str = "EC: the body and item frames of Paperdoll.uop, 
                                  comes from its tileart.uop Layer property, else its tiledata layer; the Slot column \
                                  and the profile are not used.";
 
-#[derive(Clone)]
-struct PaperdollProfile {
-    id: String,
-    label: String,
-    equipment_offset: u32,
-    canvas_width: u32,
-    canvas_height: u32,
-    body_x: i32,
-    body_y: i32,
-    equipment_x: i32,
-    equipment_y: i32,
-}
-
-impl PaperdollProfile {
-    fn new(
-        id: impl Into<String>,
-        label: impl Into<String>,
-        equipment_offset: u32,
-        canvas_width: u32,
-        canvas_height: u32,
-        body_x: i32,
-        body_y: i32,
-        equipment_x: i32,
-        equipment_y: i32,
-    ) -> Self {
-        Self {
-            id: id.into(),
-            label: label.into(),
-            equipment_offset,
-            canvas_width,
-            canvas_height,
-            body_x,
-            body_y,
-            equipment_x,
-            equipment_y,
-        }
-    }
-}
-
 struct PaperdollLayer {
     gump_id: u32,
+    /// The gump drawn when `gump_id` is missing: an item's gump at the profile's `fallback_equipment_offset`.
+    fallback_gump_id: Option<u32>,
+    /// The worn item's id; `None` for the body.
+    item_id: Option<u32>,
     hue_id: u16,
     partial_hue: bool,
     sort_key: u16,
@@ -214,53 +183,6 @@ const PAPERDOLL_SLOTS: &[PaperdollSlot] = &[
         layer: 29,
     },
 ];
-
-#[derive(Decode)]
-struct PaperdollProfilesKdl {
-    #[knuffel(children(name = "profile"))]
-    profiles: Vec<PaperdollProfileKdl>,
-}
-
-#[derive(Decode)]
-struct PaperdollProfileKdl {
-    #[knuffel(argument)]
-    id: String,
-    #[knuffel(property)]
-    label: Option<String>,
-    #[knuffel(property(name = "equipment_offset"))]
-    equipment_offset: u32,
-    /// The server body, whose frame Dynamapper's 3D paperdoll draws; the gump paperdoll here does not read it.
-    #[knuffel(property(name = "body"))]
-    _body: u32,
-    #[knuffel(property(name = "canvas_width"))]
-    canvas_width: Option<u32>,
-    #[knuffel(property(name = "canvas_height"))]
-    canvas_height: Option<u32>,
-    #[knuffel(property(name = "body_x"))]
-    body_x: Option<i32>,
-    #[knuffel(property(name = "body_y"))]
-    body_y: Option<i32>,
-    #[knuffel(property(name = "equipment_x"))]
-    equipment_x: Option<i32>,
-    #[knuffel(property(name = "equipment_y"))]
-    equipment_y: Option<i32>,
-}
-
-impl From<PaperdollProfileKdl> for PaperdollProfile {
-    fn from(value: PaperdollProfileKdl) -> Self {
-        Self {
-            label: value.label.unwrap_or_else(|| value.id.clone()),
-            id: value.id,
-            equipment_offset: value.equipment_offset,
-            canvas_width: value.canvas_width.unwrap_or(0),
-            canvas_height: value.canvas_height.unwrap_or(0),
-            body_x: value.body_x.unwrap_or(0),
-            body_y: value.body_y.unwrap_or(0),
-            equipment_x: value.equipment_x.unwrap_or(0),
-            equipment_y: value.equipment_y.unwrap_or(0),
-        }
-    }
-}
 
 /// The Classic gump container a source reads; `None` for the Enhanced Client's gumps.
 fn classic_container(source: GumpSource) -> Option<GumpContainer> {
@@ -959,7 +881,7 @@ fn paperdoll_profiles() -> &'static [PaperdollProfile] {
     static PROFILES: OnceLock<Vec<PaperdollProfile>> = OnceLock::new();
     PROFILES.get_or_init(|| {
         // The file is embedded and a test decodes it, so the fallback only guards a broken build.
-        match decode_paperdoll_profiles(PAPERDOLL_PROFILE_KDL) {
+        match decode_embedded_profiles(PAPERDOLL_PROFILE_KDL) {
             Ok(profiles) => profiles,
             Err(error) => {
                 log::error!("{error}; using the built-in paperdoll profiles");
@@ -969,40 +891,34 @@ fn paperdoll_profiles() -> &'static [PaperdollProfile] {
     })
 }
 
-/// The `profile` nodes and their properties, for error messages that name them.
-const PAPERDOLL_PROFILES_SCHEMA: &[uot_kdl::strict::NodeSchema] = &[uot_kdl::strict::NodeSchema::leaf(
-    "profile",
-    &[
-        "label",
-        "equipment_offset",
-        "body",
-        "canvas_width",
-        "canvas_height",
-        "body_x",
-        "body_y",
-        "equipment_x",
-        "equipment_y",
-    ],
-)];
-
-fn decode_paperdoll_profiles(text: &str) -> color_eyre::eyre::Result<Vec<PaperdollProfile>> {
-    let decoded: PaperdollProfilesKdl =
-        uot_kdl::strict::decode("PaperdollProfiles.kdl", text, PAPERDOLL_PROFILES_SCHEMA)?;
-    let profiles: Vec<_> = decoded.profiles.into_iter().map(PaperdollProfile::from).collect();
-    if profiles.is_empty() {
-        color_eyre::eyre::bail!("PaperdollProfiles.kdl: contains no profile nodes");
-    }
-    Ok(profiles)
+/// The profiles of `text`, decoded as Dynamapper decodes them (`uocf::classic::paperdoll_profiles`).
+fn decode_embedded_profiles(text: &str) -> color_eyre::eyre::Result<Vec<PaperdollProfile>> {
+    decode_paperdoll_profiles(PAPERDOLL_PROFILES_FILE_NAME, text)
 }
 
 fn default_profiles() -> Vec<PaperdollProfile> {
+    let profile = |id: &str, label: &str, female: bool, body: u32, canvas_width: u32, canvas_height: u32| {
+        PaperdollProfile {
+            id: id.to_string(),
+            label: label.to_string(),
+            equipment_offset: if female { FEMALE_EQUIPMENT_OFFSET } else { MALE_EQUIPMENT_OFFSET },
+            fallback_equipment_offset: female.then_some(MALE_EQUIPMENT_OFFSET),
+            body,
+            canvas_width,
+            canvas_height,
+            body_x: 0,
+            body_y: 0,
+            equipment_x: 0,
+            equipment_y: 0,
+        }
+    };
     vec![
-        PaperdollProfile::new("human_male", "Human Male", 50_000, 260, 300, 0, 0, 0, 0),
-        PaperdollProfile::new("human_female", "Human Female", 60_000, 260, 300, 0, 0, 0, 0),
-        PaperdollProfile::new("elf_male", "Elf Male", 50_000, 260, 300, 0, 0, 0, 0),
-        PaperdollProfile::new("elf_female", "Elf Female", 60_000, 260, 300, 0, 0, 0, 0),
-        PaperdollProfile::new("gargoyle_male", "Gargoyle Male", 50_000, 300, 340, 0, 0, 0, 0),
-        PaperdollProfile::new("gargoyle_female", "Gargoyle Female", 60_000, 300, 340, 0, 0, 0, 0),
+        profile("human_male", "Human Male", false, 400, 260, 300),
+        profile("human_female", "Human Female", true, 401, 260, 300),
+        profile("elf_male", "Elf Male", false, 605, 260, 300),
+        profile("elf_female", "Elf Female", true, 606, 260, 300),
+        profile("gargoyle_male", "Gargoyle Male", false, 666, 300, 340),
+        profile("gargoyle_female", "Gargoyle Female", true, 667, 300, 340),
     ]
 }
 
@@ -1247,11 +1163,12 @@ fn equipment_detail(
         })
         .unwrap_or_default();
 
+    let (gump_id, fallback_gump_id) = profile.equipment_gumps(item.anim_id);
+    let fallback = fallback_gump_id.map(|fallback| format!(" (else {fallback})")).unwrap_or_default();
     format!(
-        "{} anim_id={} gump={} layer={} partial_hue={}{}",
+        "{} anim_id={} gump={gump_id}{fallback} layer={} partial_hue={}{}",
         item.name_ascii(),
         item.anim_id,
-        item.anim_id as u32 + profile.equipment_offset,
         item.quality,
         item.flags.partialhue(),
         slot_note,
@@ -1394,6 +1311,8 @@ fn render_paperdoll(
     let profile = profile_by_id(paperdoll_profiles(), &app.selected_paperdoll_profile);
     let mut layers = vec![PaperdollLayer {
         gump_id: body_id,
+        fallback_gump_id: None,
+        item_id: None,
         hue_id: parse_optional_hue(&app.paperdoll_body_hue),
         partial_hue: false,
         sort_key: 0,
@@ -1416,8 +1335,11 @@ fn render_paperdoll(
             color_eyre::eyre::bail!("Equipment item {item_id} has no paperdoll anim_id.");
         }
 
+        let (gump_id, fallback_gump_id) = profile.equipment_gumps(item.anim_id);
         layers.push(PaperdollLayer {
-            gump_id: item.anim_id as u32 + profile.equipment_offset,
+            gump_id,
+            fallback_gump_id,
+            item_id: Some(item_id),
             hue_id: parse_optional_hue(&row.hue),
             partial_hue: item.flags.partialhue(),
             sort_key: item.quality as u16,
@@ -1427,7 +1349,7 @@ fn render_paperdoll(
     }
 
     layers[1..].sort_by_key(|layer| layer.sort_key);
-    let (width, height, pixels) = compose_paperdoll(app, profile, &layers)?;
+    let (width, height, pixels, notes) = compose_paperdoll(app, profile, &layers)?;
     let handle = super::textures::load_rgba(
         ctx,
         format!("paperdoll_{:?}_{}", app.selected_gump_source, app.selected_paperdoll_profile),
@@ -1444,23 +1366,61 @@ fn render_paperdoll(
         height,
         &pixels,
     );
-    Ok((handle, "Rendered paperdoll preview.".to_string()))
+    for note in &notes {
+        log::info!("Paperdoll {body_id}: {note}");
+    }
+    let status = if notes.is_empty() {
+        "Rendered paperdoll preview.".to_string()
+    } else {
+        format!("Rendered paperdoll preview; {}.", notes.join("; "))
+    };
+    Ok((handle, status))
 }
 
+/// The gump a layer draws, decoded: its own, else its fallback (a female profile's item falls back to the male gump,
+/// as Dynamapper's gump paperdoll, ClassicUO and the Enhanced client's do), else `None` with why, for a worn item; the
+/// body has no fallback and fails the paperdoll. `decode` reads a gump; the note says when the fallback is drawn.
+fn layer_gump_rgba(
+    layer: &PaperdollLayer,
+    decode: impl Fn(u32) -> color_eyre::eyre::Result<(u32, u32, Vec<u8>)>,
+    notes: &mut Vec<String>,
+) -> color_eyre::eyre::Result<Option<(u32, u32, Vec<u8>)>> {
+    let Some(item_id) = layer.item_id else {
+        return decode(layer.gump_id).map(Some);
+    };
+    let error = match decode(layer.gump_id) {
+        Ok(image) => return Ok(Some(image)),
+        Err(error) => error,
+    };
+    if let Some(fallback) = layer.fallback_gump_id {
+        if let Ok(image) = decode(fallback) {
+            notes.push(format!("item {item_id}: gump {} unreadable ({error}), drew {fallback}", layer.gump_id));
+            return Ok(Some(image));
+        }
+    }
+    let fallback = layer.fallback_gump_id.map(|fallback| format!(" nor {fallback}")).unwrap_or_default();
+    notes.push(format!("item {item_id}: no gump {}{fallback} ({error}), not drawn", layer.gump_id));
+    Ok(None)
+}
+
+/// The composed paperdoll, with a note for each worn item drawn from its fallback gump or left out.
 fn compose_paperdoll(
     app: &UocfEditorApp,
     profile: &PaperdollProfile,
     layers: &[PaperdollLayer],
-) -> color_eyre::eyre::Result<(u32, u32, Vec<u8>)> {
+) -> color_eyre::eyre::Result<(u32, u32, Vec<u8>, Vec<String>)> {
     let mut decoded_layers = Vec::with_capacity(layers.len());
+    let mut notes = Vec::new();
     let mut min_x = 0i32;
     let mut min_y = 0i32;
     let mut max_x = profile.canvas_width as i32;
     let mut max_y = profile.canvas_height as i32;
 
     for layer in layers {
-        let (layer_width, layer_height, mut pixels) =
-            decode_gump_rgba(app, app.selected_gump_source, layer.gump_id)?;
+        let decode = |gump_id: u32| decode_gump_rgba(app, app.selected_gump_source, gump_id);
+        let Some((layer_width, layer_height, mut pixels)) = layer_gump_rgba(layer, decode, &mut notes)? else {
+            continue;
+        };
         if layer.hue_id > 0 {
             apply_hue(app, &mut pixels, layer.hue_id, layer.partial_hue)?;
         }
@@ -1487,7 +1447,7 @@ fn compose_paperdoll(
         );
     }
 
-    Ok((width, height, canvas))
+    Ok((width, height, canvas, notes))
 }
 
 fn decode_gump_rgba(
@@ -1607,19 +1567,62 @@ mod tests {
 
     #[test]
     fn embedded_paperdoll_profiles_decode_strictly() {
-        let profiles = decode_paperdoll_profiles(PAPERDOLL_PROFILE_KDL).unwrap_or_else(|error| panic!("{error}"));
+        let profiles = decode_embedded_profiles(PAPERDOLL_PROFILE_KDL).unwrap_or_else(|error| panic!("{error}"));
         assert!(!profiles.is_empty());
+        // The built-in profiles, which stand in for a file that does not decode, are the file's.
+        assert_eq!(profiles, default_profiles());
     }
 
     #[test]
     fn paperdoll_profiles_reject_unknown_properties_and_missing_values() {
-        let error = decode_paperdoll_profiles("profile \"human_male\" equipment_offset=50000 body_z=1\n")
+        let error = decode_embedded_profiles("profile \"human_male\" equipment_offset=50000 body_z=1\n")
             .err()
             .expect("unknown property")
             .to_string();
         assert!(error.starts_with("PaperdollProfiles.kdl: line 1, column 45: unknown property `body_z`"), "{error}");
-        let error = decode_paperdoll_profiles("profile \"human_male\"\n").err().expect("missing").to_string();
+        let error = decode_embedded_profiles("profile \"human_male\"\n").err().expect("missing").to_string();
         assert!(error.contains("equipment_offset"), "{error}");
+    }
+
+    /// A worn item draws its own gump, else its fallback, else nothing, with a note; the body has no fallback.
+    #[test]
+    fn a_missing_item_gump_falls_back_then_leaves_out_its_layer() {
+        let layer = |gump_id: u32, fallback_gump_id: Option<u32>, item_id: Option<u32>| PaperdollLayer {
+            gump_id,
+            fallback_gump_id,
+            item_id,
+            hue_id: 0,
+            partial_hue: false,
+            sort_key: 0,
+            x: 0,
+            y: 0,
+        };
+        let present = [50_001, 60_003, 50_003];
+        let decode = |gump_id: u32| {
+            if present.contains(&gump_id) {
+                Ok((gump_id, 1, Vec::new()))
+            } else {
+                Err(color_eyre::eyre::eyre!("absent"))
+            }
+        };
+        let drawn = |layer: &PaperdollLayer, notes: &mut Vec<String>| {
+            layer_gump_rgba(layer, decode, notes).map(|image| image.map(|(gump_id, _, _)| gump_id))
+        };
+        let mut notes = Vec::new();
+        assert_eq!(drawn(&layer(60_003, Some(50_003), Some(3)), &mut notes).unwrap(), Some(60_003));
+        assert!(notes.is_empty());
+        assert_eq!(drawn(&layer(60_001, Some(50_001), Some(1)), &mut notes).unwrap(), Some(50_001));
+        assert_eq!(drawn(&layer(60_002, Some(50_002), Some(2)), &mut notes).unwrap(), None);
+        assert_eq!(drawn(&layer(50_002, None, Some(2)), &mut notes).unwrap(), None);
+        assert_eq!(
+            notes,
+            [
+                "item 1: gump 60001 unreadable (absent), drew 50001",
+                "item 2: no gump 60002 nor 50002 (absent), not drawn",
+                "item 2: no gump 50002 (absent), not drawn",
+            ]
+        );
+        assert!(drawn(&layer(12, None, None), &mut notes).is_err(), "the body is never left out");
     }
 
     #[test]
@@ -1668,8 +1671,10 @@ mod tests {
         let gargoyle = profile_by_id(profiles, "gargoyle_female");
 
         assert_eq!(male.equipment_offset, 50_000);
+        assert_eq!(male.fallback_equipment_offset, None);
         assert_eq!(male.canvas_width, 260);
         assert_eq!(gargoyle.equipment_offset, 60_000);
+        assert_eq!(gargoyle.fallback_equipment_offset, Some(50_000));
         assert_eq!(gargoyle.canvas_height, 340);
     }
 
