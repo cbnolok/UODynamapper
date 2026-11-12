@@ -711,7 +711,7 @@ kr_tonemap_params = [0.9, 0.0, 0.0, 0.0]
 
 [enhanced.morning.land_lighting]
 enable_bent = 0
-terrain_shading_model = 0
+terrain_shading_model = 1
 diffuse_strength = 1.0
 specular_strength = 0.0
 rim_strength = 0.0
@@ -739,8 +739,8 @@ rim_color = [
 ]
 
 [enhanced.morning.sun]
-azimuth_degrees = 315.0
-elevation_degrees = 60.50379
+azimuth_degrees = 180.0
+elevation_degrees = 45.0
 
 [enhanced.afternoon.client_lighting]
 light_level = 0
@@ -861,7 +861,7 @@ kr_tonemap_params = [0.9, 0.0, 0.0, 0.0]
 
 [enhanced.afternoon.land_lighting]
 enable_bent = 0
-terrain_shading_model = 0
+terrain_shading_model = 1
 diffuse_strength = 1.0
 specular_strength = 0.0
 rim_strength = 0.0
@@ -889,8 +889,8 @@ rim_color = [
 ]
 
 [enhanced.afternoon.sun]
-azimuth_degrees = 315.0
-elevation_degrees = 60.50379
+azimuth_degrees = 180.0
+elevation_degrees = 45.0
 
 [enhanced.night.client_lighting]
 light_level = 10
@@ -1011,7 +1011,7 @@ kr_tonemap_params = [0.9, 0.0, 0.0, 0.0]
 
 [enhanced.night.land_lighting]
 enable_bent = 0
-terrain_shading_model = 0
+terrain_shading_model = 1
 diffuse_strength = 1.0
 specular_strength = 0.0
 rim_strength = 0.0
@@ -1039,8 +1039,8 @@ rim_color = [
 ]
 
 [enhanced.night.sun]
-azimuth_degrees = 315.0
-elevation_degrees = 60.50379
+azimuth_degrees = 180.0
+elevation_degrees = 45.0
 
 [enhanced.cave.client_lighting]
 light_level = 26
@@ -1161,7 +1161,7 @@ kr_tonemap_params = [0.9, 0.0, 0.0, 0.0]
 
 [enhanced.cave.land_lighting]
 enable_bent = 0
-terrain_shading_model = 0
+terrain_shading_model = 1
 diffuse_strength = 1.0
 specular_strength = 0.0
 rim_strength = 0.0
@@ -1189,8 +1189,8 @@ rim_color = [
 ]
 
 [enhanced.cave.sun]
-azimuth_degrees = 315.0
-elevation_degrees = 60.50379
+azimuth_degrees = 180.0
+elevation_degrees = 45.0
 
 [kr.morning]
 client_shadows = true

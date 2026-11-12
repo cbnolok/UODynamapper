@@ -937,12 +937,12 @@ mod tests {
     }
 
     #[test]
-    fn bundled_presets_keep_the_baked_sun_but_kr_like_takes_the_client_sun() {
+    fn bundled_presets_keep_the_baked_sun_but_kr_like_and_enhanced_take_the_client_sun() {
         for text in [BUNDLED_FACTORY_PRESETS, BUNDLED_LAND_SETTINGS] {
             let presets = parse(text).expect("bundled");
             for (group, expected) in [
                 (&presets.classic, SunAngles::default()),
-                (&presets.enhanced, SunAngles::default()),
+                (&presets.enhanced, CLIENT_SUN),
                 (&presets.kr, CLIENT_SUN),
                 (&presets.painterly, SunAngles::default()),
             ] {
@@ -980,7 +980,7 @@ mod tests {
     #[test]
     fn enhanced_leaves_off_the_terms_and_static_shadows_the_client_lacks() {
         use crate::core::render::scene::world::land::mesh_material::{
-            TERRAIN_SHADING_SMOOTH_PER_PIXEL, TONE_CURVE_IDENTITY,
+            TERRAIN_SHADING_CLIENT_PER_VERTEX, TONE_CURVE_IDENTITY,
         };
         for text in [BUNDLED_FACTORY_PRESETS, BUNDLED_LAND_SETTINGS] {
             let presets = parse(text).expect("bundled");
@@ -1007,7 +1007,8 @@ mod tests {
                 assert_eq!(lighting.ambient_strength, 0.0);
 
                 let land = &slot.land_lighting;
-                assert_eq!(land.terrain_shading_model, TERRAIN_SHADING_SMOOTH_PER_PIXEL);
+                // Both clients shade the terrain with the same per-vertex code.
+                assert_eq!(land.terrain_shading_model, TERRAIN_SHADING_CLIENT_PER_VERTEX);
                 assert_eq!(land.enable_bent, 0);
                 assert_eq!(land.specular_strength, 0.0);
                 assert_eq!(land.rim_strength, 0.0);
