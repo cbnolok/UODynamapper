@@ -140,7 +140,7 @@ pub(super) const BLUR_STRENGTH: &str =
 pub(super) const BLUR_RADIUS: &str =
     "How far the land blur reaches, in screen pixels; the shader never blurs less than half a pixel. Needs Blur on.";
 pub(super) const RIM: &str =
-    "A thin light on the edges of slopes turned away from the camera. KR per-pixel shading gives it full strength in shade and a fifth of it in sunlight; Enhanced (at a quarter) lights only shaded slopes seen edge-on. Faint at the UOD-Painterly values. It is greyed out in Classic and with Client per-vertex land shading (KR-like, Enhanced), which never read it.";
+    "A thin light on the edges of slopes turned away from the camera, at full strength in shade and a fifth of it in sunlight. Enhanced and KR per-pixel shading share it; Enhanced draws it white at a quarter of the strength, too faint to see even at the slider maximum. Faint at the UOD-Painterly values. It is greyed out in Classic and with Client per-vertex land shading (KR-like, Enhanced), which never read it.";
 pub(super) const DIFFUSE_WRAP: &str =
     "Lets sunlight reach further around slopes, softening the edge of the shade. KR shading only, greyed out unless KR shading has per-pixel land shading, since Enhanced, Classic and the per-vertex model never read it; Enhanced's per-pixel light is a plain Lambert.";
 
@@ -157,7 +157,7 @@ pub(super) const FILL_GROUND: &str =
 pub(super) const RIM_COLOR: &str =
     "Colour of the rim light on land; values above 1 brighten it. KR shading only, greyed out unless KR shading has per-pixel land shading, since Enhanced, Classic and the per-vertex model never read it; Enhanced's rim is white. Faint at the UOD-Painterly rim: a tint along the edges of slopes turned away from the camera.";
 pub(super) const RIM_POWER: &str =
-    "How thin the rim light is: higher keeps it to land seen closer to edge-on, so less of each slope catches it. In UOD-Painterly it is clear from about 1 down to 0.1, the widest rim. Per-pixel land shading with some Rim; greyed out in Classic and with Client per-vertex land shading (KR-like, Enhanced), which never read it.";
+    "How thin the rim light is: higher keeps it to land seen closer to edge-on, so less of each slope catches it. In UOD-Painterly it is clear from about 1 down to 0.1, the widest rim; Enhanced's rim stays too faint to see at any power. Per-pixel land shading with some Rim; greyed out in Classic and with Client per-vertex land shading (KR-like, Enhanced), which never read it.";
 
 // --- Advanced: colour grading ---
 

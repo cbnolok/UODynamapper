@@ -1405,6 +1405,8 @@ def strong_conditions(factory, settings=None):
             _enhanced_rim_power(enhanced))
     for_textures('cc', (CC_PERIOD,))
     kr_per_pixel_mottle('cc', (CC_PERIOD,))
+    add('rim_power', 'enhanced', CC_PERIOD, 'Enhanced, Land Shading smooth per-pixel', STRONG_LAND_VIEWS,
+        _enhanced_rim_power(base('enhanced', CC_PERIOD)), 'cc')
     return out
 
 

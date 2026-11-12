@@ -38,10 +38,33 @@ fn get_specular(N: vec3<f32>, L: vec3<f32>, V: vec3<f32>, shininess: f32) -> f32
   return pow(max(dot(normalize(N), H), 0.0), shininess);
 }
 
-// Rim / fresnel-like factor (silhouette brightening)
-fn get_rim(N: vec3<f32>, V: vec3<f32>, power: f32) -> f32 {
-  let rim_dot = 1.0 - max(dot(normalize(N), normalize(V)), 0.0);
-  return pow(rim_dot, power);
+// Land rim, for the Enhanced and KR per-pixel shading: a light on the slopes the camera sees at a grazing angle,
+// those turned away from it. The grazing is measured from flat ground, which the camera sees at a fixed slant
+// (N·V 0.58 for the orthographic camera): 0 on flat ground and on slopes facing the camera, 1 on land seen edge-on,
+// raised to the rim power. In full shade (N·L 0) the rim has full weight; with more sun it fades to
+// RIM_SUNLIT_WEIGHT, reached at N·L RIM_SUN_FADE_END. Under a sun behind the scene, as UOD-Painterly's, the slopes
+// turned away from the camera face the sun, so a rim gated to the shade alone would light almost no land.
+const RIM_SUNLIT_WEIGHT: f32 = 0.2;
+const RIM_SUN_FADE_END: f32 = 0.35;
+// Flat ground seen from at least this close to edge-on still counts as facing the camera, so a camera near the
+// horizon does not turn all land into rim.
+const RIM_MIN_GROUND_FACING: f32 = 0.1;
+
+// How far land is turned away from the camera, from 0 (as flat ground or more toward it) to 1 (edge-on).
+fn rim_grazing(N: vec3<f32>, V: vec3<f32>) -> f32 {
+  let ground_facing = max(V.y, RIM_MIN_GROUND_FACING);
+  return clamp(1.0 - dot(normalize(N), V) / ground_facing, 0.0, 1.0);
+}
+
+// How much of the rim land gets for its sun exposure N·L.
+fn rim_sun_weight(n_dot_l: f32) -> f32 {
+  return mix(1.0, RIM_SUNLIT_WEIGHT, smoothstep(0.0, RIM_SUN_FADE_END, n_dot_l));
+}
+
+// The land rim's visibility, 0..1, for the rim power.
+fn get_rim(N: vec3<f32>, V: vec3<f32>, L: vec3<f32>, power: f32) -> f32 {
+  let n_dot_l = max(dot(normalize(N), normalize(L)), 0.0);
+  return pow(rim_grazing(N, V), power) * rim_sun_weight(n_dot_l);
 }
 
 // Hemisphere fill light: sky from +Y, ground from -Y, blended by surface upness.
