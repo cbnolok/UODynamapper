@@ -63,7 +63,7 @@ import package::shaders::world::texture_data::texture_color_rgb;
 import package::shaders::world::land::coverage::{EcTerrainStack, EcTerrainCache, EcTerrainLayer, ec_coverage_params, ec_terrain_cache, ec_cache_layer, ec_cache_grime_mask, ec_terrain_stack_uncached, ec_layer_tile};
 import package::shaders::world::land::liquid_bank::{ec_liquid_bank, ec_bank_vertex};
 import package::shaders::world::land::cc_transitions::{blend_cc_terrain_transitions, cc_transition_dry_material};
-import package::shaders::world::projection::camera_relative_world_to_clip;
+import package::shaders::world::projection::{camera_relative_world_to_clip, world_view_direction};
 
 import package::shaders::world::land::transitions::{
   ec_transition_neighbor_weight, ec_transition_diagonal_weight,
@@ -657,7 +657,7 @@ fn shade_land(in: VertexOutput, tile: TileUniform, ordered_coverage: bool, world
 
   // Light & view vectors
   let L = scene.light_direction; // normalized by CPU
-  let V = normalize(scene.camera_position - in.world_position.xyz);
+  let V = world_view_direction(in.world_position.xyz);
 
   // Transition grime has its own toggle and strength, so it does not depend on Grunge.
   if (visual_profile == 2u && effects.enable_kr_transition_grime == 1u && !use_classic_flat_wet_land_art && !use_ec_liquid) {

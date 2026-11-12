@@ -20,3 +20,13 @@ fn camera_relative_world_to_clip(origin: vec3<f32>, offset: vec3<f32>) -> vec4<f
     let snapped = round(screen * SCREEN_SNAP_SUBPIXELS) / SCREEN_SNAP_SUBPIXELS;
     return vec4<f32>(snapped / half_size * clip.w, clip.zw);
 }
+
+// The unit vector from a world position toward the camera, from Bevy's per-frame view uniform, so it follows the
+// camera without updating a material. An orthographic camera sees everything along one direction, its backward
+// axis; a perspective camera sees each point from its own position.
+fn world_view_direction(world_position: vec3<f32>) -> vec3<f32> {
+    if (view.clip_from_view[3][3] == 1.0) {
+        return normalize(view.world_from_view[2].xyz);
+    }
+    return normalize(view.world_from_view[3].xyz - world_position);
+}

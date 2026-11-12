@@ -1447,6 +1447,8 @@ pub fn sys_setup_terrain_cache(
                 tile_meta_atlas: atlas_image_handle,
                 atlas_params: params,
                 scene_uniform: SceneUniform {
+                    // Not read by the land shader: it takes the view direction from Bevy's per-frame view uniform
+                    // (`world_view_direction` in shaders/world/projection.wesl), which follows the camera.
                     camera_position:
                         crate::core::render::scene::camera::PlayerCamera::BASE_OFFSET_FROM_PLAYER,
                     _pad_cam: 0.0,
