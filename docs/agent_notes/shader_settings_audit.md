@@ -125,9 +125,9 @@ Numbers are mean / p99 / share over 4 levels, in the view where the change is la
 | Setting | What it looks like | Preset | Control maximum | Beyond |
 |---|---|---|---|---|
 | `art_mottle_strength` | Blotchy light and dark patches over roofs and tree canopies, at a few tiles' scale. | 0 (off) | 1.5: 0.54..0.88 / 6..10 / 2.0..6.0% (Painterly and KR-like, Yew); Classic 0.54..0.66 / 4..5 / 0.8..1.9% | 3.0: 1.0..1.7 / 12..19 / 7..13% (Painterly and KR-like); Classic 1.0..1.2 / 9..11 / 5.5..8.5% |
-| `kr_land_shadow_mottle_strength` | Breaks the shade on land into soft blotches. It cannot be seen: the shader caps the darkening at about 3%. | Painterly 0.6: 0.01 / 1 / 0% | 1.5: 0.04 / 1 / 0% | 6.0: 0.11 / 2 / 0.1% (KR-like per-pixel) |
+| `kr_land_shadow_mottle_strength` | Breaks the shade on land into soft blotches about two tiles wide. Measured again after the follow-up below: past the presets the blotches deepen and reach sunlit land. | Painterly 0.6: 0.01 / 1 / 0% | 1.5: 3.7..6.0 / 11..17 / 30..64% (Painterly); KR-like per-pixel 5.4..7.2 / 13..21 / 59..66%; CC 6.4..8.2 | none: the slider's end is the strong look (formerly 6.0: 0.11 / 2 / 0.1%) |
 | `fill_ground_color` | Light bounced up from the ground onto slopes facing away from the sky. Terrain faces up, so it gets almost no weight. | Painterly: 0.05 / 1 / 0% | Painterly night 0.46 / 2 / 0%; Enhanced with Soft Lighting 0.76 / 6 / 2.7% | 3x: Painterly night 1.02 / 5 / 1.9%; Enhanced 1.99 / 16 / 16% |
-| `rim_color` | A thin bright edge on slopes facing away from the viewer. The power (edge width) does nothing; see the open items. | Painterly 0.09..0.14 / 3..4 / 0.7..1.0% | colour at 1: 0.09..0.13 / 3..4 / 0.7..0.9% | 4x colour: 0.26..0.37 / 9..13 / 1.3..1.5% |
+| `rim_color` | A thin bright edge on shaded slopes seen edge-on. Measured again after the camera fix below: the rim no longer lights land at the Painterly rim. | Painterly 0.00 / 0 / 0% (formerly 0.09..0.14 / 3..4 / 0.7..1.0%) | hue at 2: 0.00 / 0 / 0% | Rim Power 0.1: 0.07..0.11 / 2..3 / 0.6..0.9% |
 | `enable_kr_color_wash` | A slow, low-frequency colour drift across land and statics, warmer in some places and cooler in others. | Painterly 0.55..0.74: 0.71..1.14 / 2..3 / 0% | 1.5: 1.50..2.28 / 4..9 / 0.1..10% | 3.0: 2.9..4.4 / 6..16 / 11..34%; KR-like night 4.75 / 10 / 47% |
 | `kr_color_wash_scale` | The size of the wash patches, in world units. | 72, wash at preset: at most 1.54 / 3 / 0% between scales | wash at 1.5, scale 8..160: up to 2.69 / 9 / 13.6% | 480: up to 3.75 / 8 / 30.6% (CC 47.5%) |
 
@@ -138,12 +138,11 @@ Recommendations:
 
 - **`art_mottle_strength`:** keep it off in the presets. It reads as dirt on the art rather than shading; leave it
   as an opt-in for users who want a rougher look.
-- **`kr_land_shadow_mottle_strength`:** the only one of the six that cannot be seen at any value, because of the
-  shader's cap. Either raise the cap or mark the control as cosmetic; at the preset it costs nothing visible.
+- **`kr_land_shadow_mottle_strength`:** done: the cap is gone (see the follow-up below).
 - **`fill_ground_color`:** keep for tuning. It matters only with a strong Soft Lighting fill, at night or in
   Enhanced; no preset change is needed.
-- **`rim_color`:** fix the land camera position first (see below), then measure the rim again. Until then it is
-  nearly inert, and Rim Power does nothing.
+- **`rim_color`:** the camera is fixed (see the follow-up below). With the real view direction the rim has no
+  land left to light at the UOD-Painterly sun; the open question is in the follow-up.
 - **`enable_kr_color_wash`:** keep. If UOD-Painterly should show the wash, raise its preset towards 1.0..1.5; for
   a stronger range, the slider and the shader clamp would both have to go past 1.5.
 - **`kr_color_wash_scale`:** keep, paired with the wash. It shows only when the wash is clearly visible.
@@ -163,12 +162,46 @@ All six strong-value settings act with both texture sets.
 
 ### Open
 
-- **The land camera position is set once and never updated.** `SceneUniform.camera_position` for land is written
-  when the material is built (`dynamapper/src/core/texture_cache/land.rs`, line 1440). The rim term then sees the
-  view direction at N·V ≤ 0, so Rim Power has no effect, and the specular half vector is wrong.
-- **The Enhanced presets hold per-pixel values their land shading does not read.** Enhanced now draws land with
-  the clients' per-vertex model, which has no fill, rim, specular or relief term; and its `diffuse_wrap` of 0.5 is
-  not read by Enhanced shading (mode 1) even per pixel.
+- Resolved in the follow-up below: the land camera position, and the Enhanced values its land shading never reads.
+
+### Follow-up: view direction, Enhanced's unread values, shadow mottle
+
+Measured with `strong-plan --settings rim_color,rim_power,specular_strength,kr_land_shadow_mottle_strength` and
+`strong-compare`, before (dev `827959e1`) and after, with every factory slot in EC and CC textures. Same-values
+noise is 0.000 / 0 in both builds. Sheets: `/home/claudio/rust-target/uodynamapper-scratch/settings-followup/`
+(`after/sheets/compare/<style>--<ec|cc>.png` before and after; `after/sheets/<setting>--<style>--<ec|cc>.png`).
+
+- **View direction.** The land shader took its view direction from `SceneUniform.camera_position`, set once when
+  the material is built. It now reads Bevy's per-frame view uniform (`world_view_direction` in
+  `shaders/world/projection.wesl`): the camera's backward axis for the orthographic camera, the camera position
+  for a perspective one. Nothing is written per frame, so the shared material is not re-extracted.
+  - Classic, Enhanced and KR-like are pixel identical before and after, at every time of day, in EC and CC.
+  - UOD-Painterly changes by 4..20 mean, 44..81% of pixels over 4 levels (EC), and 4..14 mean (CC). All of it is
+    its own specular preset (0.02..0.04): the sun (azimuth 315, elevation 60.5) sits behind the scene, so its
+    mirror direction is now the camera's for every flat tile (N·H 0.976, 0.976^32 = 0.46), and the specular lays
+    an even grey sheen over flat land. Specular at the preset against off: 5.8..19.5 / 19..53 / 53..81%
+    (formerly 0.01 / 0 / 0%).
+  - The rim lights only shaded slopes facing away from the camera; under this sun there are almost none.
+    `rim_color` at the preset: 0.00 / 0 / 0% (formerly 0.09..0.14). Rim Power acts now, faintly: power 0.1 gives
+    0.07..0.11 / 2..3 / 0.6..0.9%. Enhanced per-pixel with Rim 0.45: power 0.1 0.08 / 0.6%, power 8 0.03 / 0.2%.
+  - The UOD-Painterly presets are unchanged; their specular and rim need retuning by eye.
+- **Enhanced's unread values.** Enhanced's land shading (mode 1) never reads `diffuse_wrap` (its per-pixel light
+  is a plain Lambert), the rim colour (its rim is white) or the headroom reserve (`grade_params.y`; it caps at a
+  fixed 0.9). The Enhanced presets now hold their neutral values: 0, white, 0. Every other per-pixel value keeps
+  its preset, because the Land Shading option can switch Enhanced to per pixel, where they act once their
+  strengths are raised. Enhanced is pixel identical before and after, per vertex, at every time, EC and CC.
+  - The Advanced window greys out the per-pixel-only controls in Classic and with per-vertex land shading
+    (Specular, Fill, Sharpness, Rim, Rim Power, Fill Sky and Ground, Fill Chroma Tint, Headroom Limit, Gloom),
+    and the KR-only ones (Diffuse Wrap, Rim Color, Headroom Reserve, the KR land sliders) unless KR shading is
+    per pixel. Their tooltips say why.
+- **Shadow mottle.** The darkening was `0.10 * 0.18 * strength`, at most 2.7% at 1.5, in hard-edged tile cells,
+  and only on slopes facing away from the sun. Now (`kr_shadow_mottle_depth` in `land/shading.wesl`) the depth
+  stays the same up to 0.6, the highest preset, then deepens quadratically to 50% at 1.5; past 0.6 the blotches
+  also reach sunlit land, up to 60% of their shaded depth. The pattern is value noise about 2.2 tiles wide.
+  - Preset (0.48..0.6): 0.00..0.02 / 1 / 0%, as before.
+  - Mid (about 1.05): 0.55..1.26 / 1..4 / 0..0.1%. Slider end 1.5: UOD-Painterly 3.7..6.0 / 11..17 / 30..64% (EC),
+    6.4 / 18 / 57% (CC); KR-like per pixel 5.4..7.2 / 13..21 / 59..66% (EC), 8.2 / 26 / 66% (CC).
+  - KR-like presets shade land per vertex, which never reads the mottle; its sheets use per-pixel land shading.
 
 ## Method
 
@@ -827,8 +860,12 @@ python3 scripts/dev-helpers/renderer/shader_settings_audit.py sheets     # one c
   are listed in the threshold section.
 - **Strong values.** Point `SHADER_AUDIT_SCRATCH` at a folder of its own, put a rig binary built with the
   F3 slider helpers set to `SliderClamping::Edits` there (a rig-only change, so beyond values are not clamped), and
-  run `strong-plan`, `run`, `strong-metrics`, `strong-report` and `strong-sheets`. The beyond launches lift three
-  shader clamps in their own shader copy (`CLAMP_LIFTS`).
+  run `strong-plan`, `run`, `strong-metrics`, `strong-report` and `strong-sheets`. The beyond launches lift two
+  shader clamps in their own shader copy (`CLAMP_LIFTS`); `strong-plan --settings a,b` keeps only some settings.
+- **Before and after a build.** Run the same `strong-plan` in two scratch folders, each with its own rig binary
+  and a pinned copy of `dynamapper/assets` in `SCRATCH/assets`, then `strong-compare BEFORE_FOLDER` in the later
+  one: `results/compare.md` holds every capture's change, and `sheets/compare/` one before, after and change sheet
+  per render style and texture set.
 
 ## Related notes
 
