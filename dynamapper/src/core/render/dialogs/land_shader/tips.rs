@@ -85,7 +85,7 @@ pub(super) const KR_MATERIAL_CONTRAST: &str =
 pub(super) const KR_TRANSITION_GRIME: &str =
     "Dirties and darkens the edges where one kind of land meets another. Needs the KR visual profile (UOD-Painterly); clear by day, faint at night.";
 pub(super) const NORMAL_MAPS: &str =
-    "Adds the small bumps stored with the Enhanced land textures; only snow has them. Enhanced textures only, Enhanced and KR styles only; off in every preset.";
+    "Adds the small bumps stored with the Enhanced land textures; only snow has them. Enhanced land source only. Shows with per-pixel land shading (UOD-Painterly), or through Grunge in any style but Classic; greyed out otherwise. Off in every preset.";
 
 // --- Standard and KR-style art ---
 

@@ -1141,7 +1141,10 @@ fn terrain_controls(ui: &mut egui::Ui, u: &mut UniformState, gates: RenderStyleG
     // Normal maps only apply to EC-atlas land textures (`texture_size == 2`
     // in the shader); on a CC art source they are a structural no-op — the
     // label states this since there is no global "source is EC" signal here.
-    changed |= toggle_slider(ui, gates.is_fragment, "Normal Maps (EC land only)", &mut u.effects.enable_normal_maps, &mut u.effects.land_normal_map_strength, 0.0..=1.0, tips::NORMAL_MAPS);
+    // The mapped normal reaches only the per-pixel lighting and Grunge's shading; Classic shading and the client
+    // per-vertex model never read it.
+    let normal_maps = per_pixel || (gates.is_fragment && u.effects.enable_grunge != 0);
+    changed |= toggle_slider(ui, normal_maps, "Normal Maps (EC land only)", &mut u.effects.enable_normal_maps, &mut u.effects.land_normal_map_strength, 0.0..=1.0, tips::NORMAL_MAPS);
     changed
 }
 
