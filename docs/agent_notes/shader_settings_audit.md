@@ -127,7 +127,7 @@ Numbers are mean / p99 / share over 4 levels, in the view where the change is la
 | `art_mottle_strength` | Blotchy light and dark patches over roofs and tree canopies, at a few tiles' scale. | 0 (off) | 1.5: 0.54..0.88 / 6..10 / 2.0..6.0% (Painterly and KR-like, Yew); Classic 0.54..0.66 / 4..5 / 0.8..1.9% | 3.0: 1.0..1.7 / 12..19 / 7..13% (Painterly and KR-like); Classic 1.0..1.2 / 9..11 / 5.5..8.5% |
 | `kr_land_shadow_mottle_strength` | Breaks the shade on land into soft blotches about two tiles wide. Measured again after the follow-up below: past the presets the blotches deepen and reach sunlit land. | Painterly 0.6: 0.01 / 1 / 0% | 1.5: 3.7..6.0 / 11..17 / 30..64% (Painterly); KR-like per-pixel 5.4..7.2 / 13..21 / 59..66%; CC 6.4..8.2 | none: the slider's end is the strong look (formerly 6.0: 0.11 / 2 / 0.1%) |
 | `fill_ground_color` | Light bounced up from the ground onto slopes facing away from the sky. Terrain faces up, so it gets almost no weight. | Painterly: 0.05 / 1 / 0% | Painterly night 0.46 / 2 / 0%; Enhanced with Soft Lighting 0.76 / 6 / 2.7% | 3x: Painterly night 1.02 / 5 / 1.9%; Enhanced 1.99 / 16 / 16% |
-| `rim_color` | A thin bright edge on shaded slopes seen edge-on. Measured again after the camera fix below: the rim no longer lights land at the Painterly rim. | Painterly 0.00 / 0 / 0% (formerly 0.09..0.14 / 3..4 / 0.7..1.0%) | hue at 2: 0.00 / 0 / 0% | Rim Power 0.1: 0.07..0.11 / 2..3 / 0.6..0.9% |
+| `rim_color` | A thin tint along the edges of slopes turned away from the camera. Measured again after the camera fix and the rim retune below. | Painterly 0.09..0.18 / 2..3 / 0.1..0.5% (before the camera fix 0.09..0.14 / 3..4 / 0.7..1.0%) | hue at 2: 0.16..0.34 / 3..6 / 0.4..1.7% | Rim Power 0.1: 1.9..3.8 / 8..17 / 18..40% |
 | `enable_kr_color_wash` | A slow, low-frequency colour drift across land and statics, warmer in some places and cooler in others. | Painterly 0.55..0.74: 0.71..1.14 / 2..3 / 0% | 1.5: 1.50..2.28 / 4..9 / 0.1..10% | 3.0: 2.9..4.4 / 6..16 / 11..34%; KR-like night 4.75 / 10 / 47% |
 | `kr_color_wash_scale` | The size of the wash patches, in world units. | 72, wash at preset: at most 1.54 / 3 / 0% between scales | wash at 1.5, scale 8..160: up to 2.69 / 9 / 13.6% | 480: up to 3.75 / 8 / 30.6% (CC 47.5%) |
 
@@ -141,8 +141,8 @@ Recommendations:
 - **`kr_land_shadow_mottle_strength`:** done: the cap is gone (see the follow-up below).
 - **`fill_ground_color`:** keep for tuning. It matters only with a strong Soft Lighting fill, at night or in
   Enhanced; no preset change is needed.
-- **`rim_color`:** the camera is fixed (see the follow-up below). With the real view direction the rim has no
-  land left to light at the UOD-Painterly sun; the open question is in the follow-up.
+- **`rim_color`:** done: the camera is fixed and the KR rim reaches sunlit slopes (see the follow-up below), so
+  the colour shows again at the UOD-Painterly rim, about as faint as before the fix.
 - **`enable_kr_color_wash`:** keep. If UOD-Painterly should show the wash, raise its preset towards 1.0..1.5; for
   a stronger range, the slider and the shader clamp would both have to go past 1.5.
 - **`kr_color_wash_scale`:** keep, paired with the wash. It shows only when the wash is clearly visible.
@@ -184,7 +184,33 @@ noise is 0.000 / 0 in both builds. Sheets: `/home/claudio/rust-target/uodynamapp
   - The rim lights only shaded slopes facing away from the camera; under this sun there are almost none.
     `rim_color` at the preset: 0.00 / 0 / 0% (formerly 0.09..0.14). Rim Power acts now, faintly: power 0.1 gives
     0.07..0.11 / 2..3 / 0.6..0.9%. Enhanced per-pixel with Rim 0.45: power 0.1 0.08 / 0.6%, power 8 0.03 / 0.2%.
-  - The UOD-Painterly presets are unchanged; their specular and rim need retuning by eye.
+  - UOD-Painterly is retuned below to keep its look from before the fix.
+- **UOD-Painterly retune.** Measured against the captures from before the fix (dev `827959e1`), with
+  `strong-plan --settings rim_color,rim_power,specular_strength` and the factory slots, EC and CC, every time of day.
+  Sheets: `/home/claudio/rust-target/uodynamapper-scratch/painterly-retune/final/sheets/` (`retune/painterly--<ec|cc>.png`:
+  before the fix, after it, retuned, with a 2x crop; `<setting>--<style>--<ec|cc>.png` for the three settings).
+  - **KR rim** (`kr_rim_grazing` and `kr_rim_sun_weight` in `land/shading.wesl`, mode 2 only). The grazing is now
+    measured from flat ground, which the camera sees at a fixed slant: 0 on flat ground and on slopes facing the
+    camera, 1 on land seen edge-on. The camera's own grazing (1 - N·V) gave flat ground a rim of 0.12 at power 2.5,
+    an even sheen over all land (Rim Colour 5.4 mean, 45% of pixels). The shade-only gate became a weight: full in
+    shade, fading to 0.2 at N·L 0.35. Under UOD-Painterly's sun the slopes turned away from the camera face the sun,
+    so the rim now shows on sunlit slope edges rather than the shaded ones it lit before the fix. Enhanced (mode 1)
+    keeps its rim; Classic and KR-like shade land without one.
+  - **Specular.** Any specular now lays the sheen over flat land, so the closest match to the old look is 0. Each
+    time of day keeps the largest value under 1% of the pixels over 4 levels against off, in every view, EC and CC:
+    morning 0.0015, afternoon 0.001, night 0.0025, cave 0.003 (was 0.035, 0.04, 0.025, 0.02). The next steps up
+    (0.002 morning, 0.0015 afternoon, 0.003 night) reach 1.0..2.1% with CC; 0.005 reaches 3.4 / 13 / 30% (EC
+    afternoon).
+  - At the new presets, against off: specular 0.80..1.11 / 3..4 / 0.0..0.4% (EC), 0.62 / 3 / 0% (CC afternoon);
+    Rim Colour 0.09..0.18 / 2..3 / 0.1..0.5% (EC), 0.14 / 3 / 0.3% (CC afternoon). Rim Power: 0.1 gives
+    1.9..3.8 / 8..17 / 18..40%, 1 gives 0.48..0.91 / 4..8 / 0.7..4.9%, 8 gives 0.02 / 1 / 0.1%.
+  - UOD-Painterly against before the fix, worst view (slopes): 1.0..1.3 / 4..5 / 1.0..1.3% (EC), 0.8..1.2 / 4..5 /
+    0.6..1.6% (CC); the fix alone left 7.4..19.5 / 15..53 / 68..81% (EC) and 5.2..14.3 / 21..52 / 44..73% (CC).
+    The rest is the rim's new place and the remaining specular.
+  - Classic, Enhanced and KR-like are pixel identical to dev `fe633a15` at every time, EC and CC (largest channel
+    change 0). Same-values noise is 0.000 / 0.
+  - The run used the packages from before the UDDP version 1 reset
+    (`/home/claudio/test/uddp-backups/pre-v1-reset-20261112-125210`), which the `fe633a15` rig reads.
 - **Enhanced's unread values.** Enhanced's land shading (mode 1) never reads `diffuse_wrap` (its per-pixel light
   is a plain Lambert), the rim colour (its rim is white) or the headroom reserve (`grade_params.y`; it caps at a
   fixed 0.9). The Enhanced presets now hold their neutral values: 0, white, 0. Every other per-pixel value keeps
