@@ -1338,12 +1338,10 @@ Runtime:
 - `metadata/items.bin`: dense `TileMetaItemTile` table from classic item
   metadata plus EC tileart facts.
 - `metadata/item_texture_refs_index.bin`: per-item span table into refs.
-- `metadata/item_texture_refs.v4.bin`: all EC tileart texture refs. The path
-  names the format (`TILEMETA_FORMAT_VERSION`); a package of format 1
-  (`metadata/item_texture_refs.bin`, file-name roles), 2 (`.v2`, no
-  `ec_art_flags`) or 3 (`.v3`, no item definitions) is rejected with a repack
-  message.
-- `metadata/item_definitions.bin` (format 4): the tileart records the Enhanced
+- `metadata/item_texture_refs.bin`: all EC tileart texture refs, after the
+  package's version header (magic `TMTR`, `u32` `TILEMETA_FORMAT_VERSION`); a
+  package of another version is rejected with a repack message.
+- `metadata/item_definitions.bin`: the tileart records the Enhanced
   paperdoll reads, keyed by entry name, with props1 Layer, Appearance, Race,
   Gender and Paperdoll, props2 Appearance and Paperdoll, and the appearance
   filters but animation ones (layout in `docs/dev_wiki/UDDP_FORMATS.md`).
