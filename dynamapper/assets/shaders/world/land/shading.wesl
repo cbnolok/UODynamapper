@@ -12,7 +12,7 @@
 import package::shaders::world::common_bindings::{GlobalLightingUniforms};
 import package::shaders::world::land::land_bindings::{LandLightingUniforms, effects, global_light, land_light, static_lights};
 import package::shaders::world::land::lighting::{luminance, chroma_only, get_lambert, get_specular, get_rim, get_hemisphere_fill, apply_gloom};
-import package::shaders::world::land::noise::hash;
+import package::shaders::world::land::noise::noise_2d;
 
 // ============================================================================
 // Mode 0: Classic (Gouraud, vertex-lit)
@@ -128,6 +128,36 @@ fn apply_static_light_decals(color_in: vec3<f32>,
 // Mode 2: KR-like (per-fragment, painterly / Kingdom Reborn style)
 // ============================================================================
 
+// KR land shadow mottle: soft blotches about two tiles wide that darken the shade on land.
+// Its strength slider ends at KR_SHADOW_MOTTLE_STRENGTH_MAX. Up to the knee, the highest preset strength
+// (UOD-Painterly by day), it keeps its former depth, KR_SHADOW_MOTTLE_LINEAR_DEPTH per unit of strength (at most 1.08%
+// darker there), so the presets look as before. Past the knee a quadratic term, flat where it starts, deepens the
+// darkest blotches to KR_SHADOW_MOTTLE_MAX_DEPTH at the slider's end. The former cap was the depth at 1.5, 2.7%.
+// Past the knee the blotches also reach sunlit land, up to KR_SHADOW_MOTTLE_LIT_REACH of their depth in the shade
+// at the slider's end: under a high sun the shaded slopes are too few for the blotches to read as a mood.
+const KR_SHADOW_MOTTLE_STRENGTH_MAX: f32 = 1.5;
+const KR_SHADOW_MOTTLE_LINEAR_DEPTH: f32 = 0.018;
+const KR_SHADOW_MOTTLE_KNEE: f32 = 0.6;
+const KR_SHADOW_MOTTLE_MAX_DEPTH: f32 = 0.5;
+const KR_SHADOW_MOTTLE_LIT_REACH: f32 = 0.6;
+// Value-noise cells per world tile: blotches about 1 / 0.45 = 2.2 tiles wide.
+const KR_SHADOW_MOTTLE_FREQUENCY: f32 = 0.45;
+
+// How much darker the darkest shadow-mottle blotch is in full shade, for a strength on the slider.
+fn kr_shadow_mottle_depth(strength: f32) -> f32 {
+  let s = clamp(strength, 0.0, KR_SHADOW_MOTTLE_STRENGTH_MAX);
+  let past_knee = max(s - KR_SHADOW_MOTTLE_KNEE, 0.0);
+  let span = KR_SHADOW_MOTTLE_STRENGTH_MAX - KR_SHADOW_MOTTLE_KNEE;
+  let deepening = (KR_SHADOW_MOTTLE_MAX_DEPTH - KR_SHADOW_MOTTLE_LINEAR_DEPTH * KR_SHADOW_MOTTLE_STRENGTH_MAX)
+    / (span * span);
+  return KR_SHADOW_MOTTLE_LINEAR_DEPTH * s + deepening * past_knee * past_knee;
+}
+
+// How much of the shadow mottle sunlit land gets, for a strength on the slider: none up to the knee.
+fn kr_shadow_mottle_lit_reach(strength: f32) -> f32 {
+  return smoothstep(KR_SHADOW_MOTTLE_KNEE, KR_SHADOW_MOTTLE_STRENGTH_MAX, strength) * KR_SHADOW_MOTTLE_LIT_REACH;
+}
+
 // Stronger style: warm key tint, full rim with color, richer gloom.
 fn shade_mode2_kr_fragment(base_albedo_in: vec3<f32>,
                            world_pos: vec3<f32>, Nw: vec3<f32>, V: vec3<f32>, L: vec3<f32>,
@@ -186,9 +216,10 @@ fn shade_mode2_kr_fragment(base_albedo_in: vec3<f32>,
   let crease_shadow = smoothstep(0.08, 0.42, slope_steepness) * (0.35 + 0.65 * shadow_mask);
   color *= 1.0 - crease_shadow * 0.12 * relief_shadow_strength;
 
-  let shadow_mottle_strength = clamp(effects.kr_land_shadow_mottle_strength, 0.0, 1.5);
-  let shadow_mottle = 0.82 + 0.18 * hash(floor(world_pos.xz * 1.15));
-  color *= 1.0 - shadow_mask * (1.0 - shadow_mottle) * 0.10 * shadow_mottle_strength;
+  let shadow_mottle = noise_2d(world_pos.xz * KR_SHADOW_MOTTLE_FREQUENCY);
+  let mottle_strength = effects.kr_land_shadow_mottle_strength;
+  let mottle_mask = max(shadow_mask, kr_shadow_mottle_lit_reach(mottle_strength));
+  color *= 1.0 - mottle_mask * (1.0 - shadow_mottle) * kr_shadow_mottle_depth(mottle_strength);
 
   // Rim (colored + neutral, headroom-gated)
   if (rim_strength > 0.001) {
