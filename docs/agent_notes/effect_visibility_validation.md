@@ -2,10 +2,11 @@
 
 The reported inactive controls need different receivers. A checked flag alone
 does not establish that the current material supplies an input, or that lighting
-will preserve a visible difference. Use the effective cached preset: bundled
-`settings/shaders/land.toml` also overrides factory defaults. In particular, the
-bundled KR morning preset disables projected shadows even though factory KR
-morning enables them. This audit changes no preset values or shader strengths.
+will preserve a visible difference. Use the effective cached preset: the cache
+dir's `settings/shaders/land.toml` overrides the defaults. When this audit ran, the
+bundled `settings/shaders/land.toml` also overrode the factory defaults (its KR
+morning preset disabled projected shadows that factory KR morning enables); it now
+equals the factory presets. This audit changes no preset values or shader strengths.
 
 ## Normal layers are material inputs, not arbitrary fourth images
 

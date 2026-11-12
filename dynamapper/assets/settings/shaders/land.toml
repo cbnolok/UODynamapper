@@ -1,144 +1,83 @@
+# Shipped shader settings: the values a fresh install starts from, before the app saves its own copy to the
+# cache dir's settings/shaders/land.toml. Kept equal to the factory presets in assets/defaults/shader_presets.toml,
+# which documents every key (unit-tested: bundled_land_settings_match_the_factory_presets).
+
 default_preset = "classic.morning"
 
 [classic.morning]
-global_lighting = 0.95
-
+global_lighting = 1.02
+# Morning: soft warm sun, cool ambient.
 [classic.morning.effects]
 shading_mode = 0
-normal_mode = 0
+normal_mode = 1
 enable_blur = 0
 enable_linear_filtering = 0
 texture_filter = 0
-art_shadow_strength = 0.45
 sharpening_amount = 0.0
 blur_strength = 0.15
 blur_radius = 0.5
-enable_water_animation = 0
+enable_water_animation = 1
 post_process_profile = 0
-enable_grunge = 1
-grunge_strength = 0.35
-light_decal_intensity = 1.0
-art_highlight_strength = 0.58
-art_depth_tint_strength = 0.55
-enable_normal_maps = 1
-enable_art_fake_normals = 0
-art_contact_shadow_strength = 0.59
-art_mottle_strength = 0.0
-kr_land_temperature_strength = 1.1
-kr_land_relief_shadow_strength = 1.05
-kr_land_shadow_mottle_strength = 1.2
-kr_art_temperature_strength = 1.16
-land_normal_map_strength = 0.45
-enable_art_projected_shadows = 1
-art_projected_shadow_strength = 0.22
-art_projected_shadow_length = 0.42
-art_projected_shadow_softness = 0.62
-kr_land_material_contrast_strength = 0.55
-static_light_decal_visibility = 1.0
-enable_kr_transition_grime = 1
+enable_grunge = 0
+grunge_strength = 0.0
+enable_kr_transition_grime = 0
 kr_transition_grime_strength = 0.0
 enable_kr_color_wash = 0
 kr_color_wash_strength = 0.0
 kr_color_wash_scale = 72.0
+light_decal_intensity = 1.0
+static_light_decal_visibility = 1.0
+enable_normal_maps = 0
+enable_art_fake_normals = 0
+art_contact_shadow_strength = 0.0
+kr_land_temperature_strength = 0.0
+kr_land_relief_shadow_strength = 0.0
+kr_land_shadow_mottle_strength = 0.0
+kr_land_material_contrast_strength = 0.0
+kr_art_temperature_strength = 0.0
+land_normal_map_strength = 0.45
+enable_art_projected_shadows = 0
+art_projected_shadow_strength = 0.0
+art_projected_shadow_length = 0.42
+art_projected_shadow_softness = 0.62
+art_shadow_strength = 0.12
+art_highlight_strength = 0.08
+art_depth_tint_strength = 0.1
+art_mottle_strength = 0.0
 
 [classic.morning.lighting]
 enable_fog = 0
 enable_tonemap = 1
-enable_grading = 0
-enable_gloom = 0
-light_color = [
-    1.05,
-    0.99,
-    0.92,
-]
+enable_grading = 0    # Disabled in Classic mode
+enable_gloom = 0      # Disabled in Classic mode
+light_color = [1.05, 0.99, 0.92]   # Soft warm white
 tone_curve = 0
-atmosphere_tint = [
-    0.17,
-    0.22,
-    0.29,
-]
+atmosphere_tint = [0.17, 0.22, 0.29]  # Cool blueish
 exposure = 1.05
-ambient_strength = 0.16
-grade_warm_color = [
-    1.08,
-    0.98,
-    0.9,
-]
-grade_cool_color = [
-    0.82,
-    0.95,
-    1.05,
-]
-grade_params = [
-    0.9,
-    0.15,
-    0.35,
-    1.0,
-]
-grade_extra = [
-    0.45,
-    1.2,
-    1.15,
-    0.9,
-]
-gloom_params = [
-    0.0,
-    0.008,
-    0.45,
-]
-fog_color = [
-    0.75,
-    0.85,
-    0.95,
-    0.5,
-]
-fog_params = [
-    0.02,
-    0.0,
-    0.0,
-    0.0,
-]
-gloom_color = [
-    0.0,
-    0.0,
-    0.0,
-    0.0,
-]
-fog_night_color = [
-    0.0,
-    0.0,
-    0.0,
-    0.0,
-]
+ambient_strength = 0.18
+grade_warm_color = [1.08, 0.98, 0.9]
+grade_cool_color = [0.82, 0.95, 1.05]
+grade_params = [0.9, 0.15, 0.35, 1.0]
+grade_extra = [0.45, 1.2, 1.15, 0.9]
+gloom_params = [0.2, 0.008, 0.45]
+fog_color = [0.75, 0.85, 0.95, 0.5]
+fog_params = [0.02, 0.0, 0.0, 0.0]
+gloom_color = [0.0, 0.0, 0.0, 0.0]
+fog_night_color = [0.0, 0.0, 0.0, 0.0]
 
 [classic.morning.land_lighting]
-enable_bent = 0
+enable_bent = 1
 terrain_shading_model = 0
-diffuse_strength = 0.97
-specular_strength = 0.0375
-rim_strength = 0.0675
-fill_strength = 0.33
-sharpness_factor = 1.06
-sharpness_mix = 0.022
-diffuse_wrap = 0.1155
-fill_sky_color = [
-    0.5,
-    0.7,
-    1.0,
-    0.7,
-]
-fill_ground_color = [
-    0.28,
-    0.19,
-    0.12,
-    0.35,
-]
-rim_color = [
-    0.7,
-    0.85,
-    1.0,
-    2.5,
-]
+diffuse_strength = 1.0
+specular_strength = 0.0 # Disabled in Classic mode
+rim_strength = 0.0      # Disabled in Classic mode
+fill_strength = 0.0     # Disabled in Classic mode
+sharpness_factor = 1.0
+sharpness_mix = 0.0
+diffuse_wrap = 0.0
+fill_sky_color = [0.5, 0.7, 1.0, 0.7]
+fill_ground_color = [0.28, 0.19, 0.12, 0.35]
+rim_color = [0.7, 0.85, 1.0, 2.5]
 
 [classic.morning.sun]
 azimuth_degrees = 315.0
@@ -146,14 +85,13 @@ elevation_degrees = 60.50379
 
 [classic.afternoon]
 global_lighting = 1.08
-
+# Afternoon: brighter sun, rich colors.
 [classic.afternoon.effects]
 shading_mode = 0
 normal_mode = 1
 enable_blur = 0
 enable_linear_filtering = 0
 texture_filter = 0
-art_shadow_strength = 0.12
 sharpening_amount = 0.0
 blur_strength = 0.15
 blur_radius = 0.5
@@ -161,143 +99,78 @@ enable_water_animation = 1
 post_process_profile = 0
 enable_grunge = 0
 grunge_strength = 0.0
-light_decal_intensity = 1.0
-art_highlight_strength = 0.08
-art_depth_tint_strength = 0.1
-enable_normal_maps = 0
-enable_art_fake_normals = 0
-art_contact_shadow_strength = 0.0
-art_mottle_strength = 0.0
-kr_land_temperature_strength = 0.0
-kr_land_relief_shadow_strength = 0.0
-kr_land_shadow_mottle_strength = 0.0
-kr_art_temperature_strength = 0.0
-land_normal_map_strength = 0.45
-enable_art_projected_shadows = 0
-art_projected_shadow_strength = 0.22
-art_projected_shadow_length = 0.42
-art_projected_shadow_softness = 0.62
-kr_land_material_contrast_strength = 0.55
-static_light_decal_visibility = 1.0
 enable_kr_transition_grime = 0
 kr_transition_grime_strength = 0.0
 enable_kr_color_wash = 0
 kr_color_wash_strength = 0.0
 kr_color_wash_scale = 72.0
+light_decal_intensity = 1.0
+static_light_decal_visibility = 1.0
+enable_normal_maps = 0
+enable_art_fake_normals = 0
+art_contact_shadow_strength = 0.0
+kr_land_temperature_strength = 0.0
+kr_land_relief_shadow_strength = 0.0
+kr_land_shadow_mottle_strength = 0.0
+kr_land_material_contrast_strength = 0.0
+kr_art_temperature_strength = 0.0
+land_normal_map_strength = 0.45
+enable_art_projected_shadows = 0
+art_projected_shadow_strength = 0.0
+art_projected_shadow_length = 0.42
+art_projected_shadow_softness = 0.62
+art_shadow_strength = 0.12
+art_highlight_strength = 0.08
+art_depth_tint_strength = 0.1
+art_mottle_strength = 0.0
 
 [classic.afternoon.lighting]
 enable_fog = 0
 enable_tonemap = 1
-enable_grading = 0
-enable_gloom = 0
-light_color = [
-    1.08,
-    0.99,
-    0.9,
-]
+enable_grading = 0    # Disabled in Classic mode
+enable_gloom = 0      # Disabled in Classic mode
+light_color = [1.08, 0.99, 0.9]    # Bright warm white
 tone_curve = 0
-atmosphere_tint = [
-    0.18,
-    0.22,
-    0.28,
-]
+atmosphere_tint = [0.18, 0.22, 0.28]  # Neutral cool
 exposure = 1.1
 ambient_strength = 0.18
-grade_warm_color = [
-    1.08,
-    0.98,
-    0.9,
-]
-grade_cool_color = [
-    0.82,
-    0.95,
-    1.05,
-]
-grade_params = [
-    1.0,
-    0.15,
-    0.4,
-    1.0,
-]
-grade_extra = [
-    0.6,
-    1.25,
-    1.22,
-    1.0,
-]
-gloom_params = [
-    0.15,
-    0.007,
-    0.35,
-]
-fog_color = [
-    0.75,
-    0.85,
-    0.95,
-    0.5,
-]
-fog_params = [
-    0.02,
-    0.0,
-    0.0,
-    0.0,
-]
-gloom_color = [
-    0.0,
-    0.0,
-    0.0,
-    0.0,
-]
-fog_night_color = [
-    0.0,
-    0.0,
-    0.0,
-    0.0,
-]
+grade_warm_color = [1.08, 0.98, 0.9]
+grade_cool_color = [0.82, 0.95, 1.05]
+grade_params = [1.0, 0.15, 0.4, 1.0]
+grade_extra = [0.6, 1.25, 1.22, 1.0]
+gloom_params = [0.15, 0.007, 0.35]
+fog_color = [0.75, 0.85, 0.95, 0.5]
+fog_params = [0.02, 0.0, 0.0, 0.0]
+gloom_color = [0.0, 0.0, 0.0, 0.0]
+fog_night_color = [0.0, 0.0, 0.0, 0.0]
 
 [classic.afternoon.land_lighting]
 enable_bent = 1
 terrain_shading_model = 0
 diffuse_strength = 1.0
-specular_strength = 0.0
-rim_strength = 0.0
-fill_strength = 0.0
+specular_strength = 0.0 # Disabled in Classic mode
+rim_strength = 0.0      # Disabled in Classic mode
+fill_strength = 0.0     # Disabled in Classic mode
 sharpness_factor = 1.0
 sharpness_mix = 0.0
 diffuse_wrap = 0.0
-fill_sky_color = [
-    0.48,
-    0.68,
-    1.0,
-    0.75,
-]
-fill_ground_color = [
-    0.3,
-    0.2,
-    0.12,
-    0.35,
-]
-rim_color = [
-    0.95,
-    0.95,
-    0.85,
-    2.7,
-]
+fill_sky_color = [0.48, 0.68, 1.0, 0.75]
+fill_ground_color = [0.3, 0.2, 0.12, 0.35]
+rim_color = [0.95, 0.95, 0.85, 2.7]
 
 [classic.afternoon.sun]
 azimuth_degrees = 315.0
 elevation_degrees = 60.50379
 
 [classic.night]
-global_lighting = 0.65
-
+global_lighting = 0.82
+# Night: cool light, low ambient.
 [classic.night.effects]
 shading_mode = 0
 normal_mode = 1
 enable_blur = 0
 enable_linear_filtering = 0
 texture_filter = 0
-art_shadow_strength = 0.12
 sharpening_amount = 0.0
 blur_strength = 0.15
 blur_radius = 0.5
@@ -305,143 +178,78 @@ enable_water_animation = 1
 post_process_profile = 0
 enable_grunge = 0
 grunge_strength = 0.0
-light_decal_intensity = 1.0
-art_highlight_strength = 0.08
-art_depth_tint_strength = 0.1
-enable_normal_maps = 0
-enable_art_fake_normals = 0
-art_contact_shadow_strength = 0.0
-art_mottle_strength = 0.0
-kr_land_temperature_strength = 0.0
-kr_land_relief_shadow_strength = 0.0
-kr_land_shadow_mottle_strength = 0.0
-kr_art_temperature_strength = 0.0
-land_normal_map_strength = 0.45
-enable_art_projected_shadows = 0
-art_projected_shadow_strength = 0.22
-art_projected_shadow_length = 0.42
-art_projected_shadow_softness = 0.62
-kr_land_material_contrast_strength = 0.55
-static_light_decal_visibility = 1.0
 enable_kr_transition_grime = 0
 kr_transition_grime_strength = 0.0
 enable_kr_color_wash = 0
 kr_color_wash_strength = 0.0
 kr_color_wash_scale = 72.0
+light_decal_intensity = 1.0
+static_light_decal_visibility = 1.0
+enable_normal_maps = 0
+enable_art_fake_normals = 0
+art_contact_shadow_strength = 0.0
+kr_land_temperature_strength = 0.0
+kr_land_relief_shadow_strength = 0.0
+kr_land_shadow_mottle_strength = 0.0
+kr_land_material_contrast_strength = 0.0
+kr_art_temperature_strength = 0.0
+land_normal_map_strength = 0.45
+enable_art_projected_shadows = 0
+art_projected_shadow_strength = 0.0
+art_projected_shadow_length = 0.42
+art_projected_shadow_softness = 0.62
+art_shadow_strength = 0.12
+art_highlight_strength = 0.08
+art_depth_tint_strength = 0.1
+art_mottle_strength = 0.0
 
 [classic.night.lighting]
 enable_fog = 0
 enable_tonemap = 1
-enable_grading = 0
-enable_gloom = 0
-light_color = [
-    0.8,
-    0.88,
-    1.05,
-]
+enable_grading = 0    # Disabled in Classic mode
+enable_gloom = 0      # Disabled in Classic mode
+light_color = [0.8, 0.88, 1.05]     # Cool blueish moonlight
 tone_curve = 0
-atmosphere_tint = [
-    0.12,
-    0.16,
-    0.24,
-]
-exposure = 1.0
+atmosphere_tint = [0.12, 0.16, 0.24]  # Dark blue ambient
+exposure = 1.2
 ambient_strength = 0.1
-grade_warm_color = [
-    1.08,
-    0.98,
-    0.9,
-]
-grade_cool_color = [
-    0.82,
-    0.95,
-    1.05,
-]
-grade_params = [
-    1.1,
-    0.18,
-    0.45,
-    1.0,
-]
-grade_extra = [
-    0.75,
-    1.2,
-    1.3,
-    0.8,
-]
-gloom_params = [
-    0.4,
-    0.01,
-    0.65,
-]
-fog_color = [
-    0.75,
-    0.85,
-    0.95,
-    0.5,
-]
-fog_params = [
-    0.02,
-    0.0,
-    0.0,
-    0.0,
-]
-gloom_color = [
-    0.0,
-    0.0,
-    0.0,
-    0.0,
-]
-fog_night_color = [
-    0.0,
-    0.0,
-    0.0,
-    0.0,
-]
+grade_warm_color = [1.08, 0.98, 0.9]
+grade_cool_color = [0.82, 0.95, 1.05]
+grade_params = [1.1, 0.18, 0.45, 1.0]
+grade_extra = [0.75, 1.2, 1.3, 0.8]
+gloom_params = [0.4, 0.01, 0.65]
+fog_color = [0.75, 0.85, 0.95, 0.5]
+fog_params = [0.02, 0.0, 0.0, 0.0]
+gloom_color = [0.0, 0.0, 0.0, 0.0]
+fog_night_color = [0.0, 0.0, 0.0, 0.0]
 
 [classic.night.land_lighting]
 enable_bent = 1
 terrain_shading_model = 0
 diffuse_strength = 0.7
-specular_strength = 0.0
-rim_strength = 0.0
-fill_strength = 0.0
+specular_strength = 0.0 # Disabled in Classic mode
+rim_strength = 0.0      # Disabled in Classic mode
+fill_strength = 0.0     # Disabled in Classic mode
 sharpness_factor = 1.0
 sharpness_mix = 0.0
 diffuse_wrap = 0.0
-fill_sky_color = [
-    0.4,
-    0.6,
-    1.0,
-    0.7,
-]
-fill_ground_color = [
-    0.2,
-    0.16,
-    0.14,
-    0.3,
-]
-rim_color = [
-    0.65,
-    0.85,
-    1.1,
-    3.0,
-]
+fill_sky_color = [0.4, 0.6, 1.0, 0.7]
+fill_ground_color = [0.2, 0.16, 0.14, 0.3]
+rim_color = [0.65, 0.85, 1.1, 3.0]
 
 [classic.night.sun]
 azimuth_degrees = 315.0
 elevation_degrees = 60.50379
 
 [classic.cave]
-global_lighting = 0.6
-
+global_lighting = 0.60
+# Cave: very low ambient, cool tones.
 [classic.cave.effects]
 shading_mode = 0
 normal_mode = 1
 enable_blur = 0
 enable_linear_filtering = 0
 texture_filter = 0
-art_shadow_strength = 0.12
 sharpening_amount = 0.0
 blur_strength = 0.15
 blur_radius = 0.5
@@ -449,145 +257,97 @@ enable_water_animation = 1
 post_process_profile = 0
 enable_grunge = 0
 grunge_strength = 0.0
-light_decal_intensity = 1.0
-art_highlight_strength = 0.08
-art_depth_tint_strength = 0.1
-enable_normal_maps = 0
-enable_art_fake_normals = 0
-art_contact_shadow_strength = 0.0
-art_mottle_strength = 0.0
-kr_land_temperature_strength = 0.0
-kr_land_relief_shadow_strength = 0.0
-kr_land_shadow_mottle_strength = 0.0
-kr_art_temperature_strength = 0.0
-land_normal_map_strength = 0.45
-enable_art_projected_shadows = 0
-art_projected_shadow_strength = 0.22
-art_projected_shadow_length = 0.42
-art_projected_shadow_softness = 0.62
-kr_land_material_contrast_strength = 0.55
-static_light_decal_visibility = 1.0
 enable_kr_transition_grime = 0
 kr_transition_grime_strength = 0.0
 enable_kr_color_wash = 0
 kr_color_wash_strength = 0.0
 kr_color_wash_scale = 72.0
+light_decal_intensity = 1.0
+static_light_decal_visibility = 1.0
+enable_normal_maps = 0
+enable_art_fake_normals = 0
+art_contact_shadow_strength = 0.0
+kr_land_temperature_strength = 0.0
+kr_land_relief_shadow_strength = 0.0
+kr_land_shadow_mottle_strength = 0.0
+kr_land_material_contrast_strength = 0.0
+kr_art_temperature_strength = 0.0
+land_normal_map_strength = 0.45
+enable_art_projected_shadows = 0
+art_projected_shadow_strength = 0.0
+art_projected_shadow_length = 0.42
+art_projected_shadow_softness = 0.62
+art_shadow_strength = 0.12
+art_highlight_strength = 0.08
+art_depth_tint_strength = 0.1
+art_mottle_strength = 0.0
 
 [classic.cave.lighting]
 enable_fog = 0
 enable_tonemap = 1
-enable_grading = 0
-enable_gloom = 0
-light_color = [
-    0.9,
-    0.95,
-    1.05,
-]
+enable_grading = 0    # Disabled in Classic mode
+enable_gloom = 0      # Disabled in Classic mode
+light_color = [0.9, 0.95, 1.05]     # Faint cool light
 tone_curve = 0
-atmosphere_tint = [
-    0.1,
-    0.14,
-    0.2,
-]
+atmosphere_tint = [0.1, 0.14, 0.2]    # Very dark blue ambient
 exposure = 0.95
 ambient_strength = 0.06
-grade_warm_color = [
-    1.08,
-    0.98,
-    0.9,
-]
-grade_cool_color = [
-    0.82,
-    0.95,
-    1.05,
-]
-grade_params = [
-    1.05,
-    0.2,
-    0.38,
-    1.0,
-]
-grade_extra = [
-    0.65,
-    1.15,
-    1.28,
-    0.8,
-]
-gloom_params = [
-    0.65,
-    0.012,
-    0.75,
-]
-fog_color = [
-    0.75,
-    0.85,
-    0.95,
-    0.5,
-]
-fog_params = [
-    0.02,
-    0.0,
-    0.0,
-    0.0,
-]
-gloom_color = [
-    0.0,
-    0.0,
-    0.0,
-    0.0,
-]
-fog_night_color = [
-    0.0,
-    0.0,
-    0.0,
-    0.0,
-]
+grade_warm_color = [1.08, 0.98, 0.9]
+grade_cool_color = [0.82, 0.95, 1.05]
+grade_params = [1.05, 0.2, 0.38, 1.0]
+grade_extra = [0.65, 1.15, 1.28, 0.8]
+gloom_params = [0.65, 0.012, 0.75]
+fog_color = [0.75, 0.85, 0.95, 0.5]
+fog_params = [0.02, 0.0, 0.0, 0.0]
+gloom_color = [0.0, 0.0, 0.0, 0.0]
+fog_night_color = [0.0, 0.0, 0.0, 0.0]
 
 [classic.cave.land_lighting]
 enable_bent = 1
 terrain_shading_model = 0
 diffuse_strength = 0.85
-specular_strength = 0.0
-rim_strength = 0.0
-fill_strength = 0.0
+specular_strength = 0.0 # Disabled in Classic mode
+rim_strength = 0.0      # Disabled in Classic mode
+fill_strength = 0.0     # Disabled in Classic mode
 sharpness_factor = 1.0
 sharpness_mix = 0.0
 diffuse_wrap = 0.0
-fill_sky_color = [
-    0.38,
-    0.6,
-    1.0,
-    0.65,
-]
-fill_ground_color = [
-    0.18,
-    0.14,
-    0.12,
-    0.28,
-]
-rim_color = [
-    0.55,
-    0.75,
-    1.05,
-    2.8,
-]
+fill_sky_color = [0.38, 0.6, 1.0, 0.65]
+fill_ground_color = [0.18, 0.14, 0.12, 0.28]
+rim_color = [0.55, 0.75, 1.05, 2.8]
 
 [classic.cave.sun]
 azimuth_degrees = 315.0
 elevation_degrees = 60.50379
 
+
+# ------------------
+# --- ENHANCED PRESETS ---
+# ------------------
+# Formerly a more modern look with smooth lighting, fill lights, and basic grading.
+# Now the Enhanced client's look on EC content, through Enhanced's own art and terrain paths.
+# Every term the Enhanced client lacks is off: tone curve (identity), grading, gloom, fog, ambient, fill, rim,
+# specular, bent normals, sharpening, the warm light colour, highlights, depth tint, grunge and the light decals.
+# exposure stays as brightness. The night and caves dim as in the client, through the night composite
+# (client_lighting) in place of global_lighting: light level 0 by day (the client's identity; the former
+# global_lighting 1.08 and 1.14 are gone), 10 at night and 26 in caves, the levels ServUO sends, with the night
+# map at the client's strength and colour. Land shades per vertex like the client (terrain_shading_model 1,
+# the same code as the KR client's), and the per-pixel path's diffuse stays the client's half-Lambert: wrap 0.5
+# gives (N.L + 1) / 2, white, strength 1. The client draws no shadow for statics, items or foliage (only mobiles
+# get one), so the sprite shadow shape and the contact and projected shadows are off. The sun is the client's
+# terrain light, from the south at 45 degrees (azimuth 180, elevation 45), as in KR-like.
+
+[enhanced.morning]
 [enhanced.morning.client_lighting]
 light_level = 0
 overlay_strength = 1.0
 overlay_color = [0.012604, 0.017285, 0.153818]
-
 [enhanced.morning.effects]
 shading_mode = 1
 normal_mode = 1
 enable_blur = 0
 enable_linear_filtering = 0
 texture_filter = 0
-art_shadow_strength = 0.0
 sharpening_amount = 0.0
 blur_strength = 0.15
 blur_radius = 0.5
@@ -595,99 +355,50 @@ enable_water_animation = 1
 post_process_profile = 1
 enable_grunge = 0
 grunge_strength = 0.18
+enable_kr_transition_grime = 0
+kr_transition_grime_strength = 0.0
+enable_kr_color_wash = 0
+kr_color_wash_strength = 0.0
+kr_color_wash_scale = 72.0
 light_decal_intensity = 0.0
-art_highlight_strength = 0.0
-art_depth_tint_strength = 0.0
+static_light_decal_visibility = 0.0
 enable_normal_maps = 0
 enable_art_fake_normals = 0
 art_contact_shadow_strength = 0.0
-art_mottle_strength = 0.0
 kr_land_temperature_strength = 0.0
 kr_land_relief_shadow_strength = 0.0
 kr_land_shadow_mottle_strength = 0.0
+kr_land_material_contrast_strength = 0.0
 kr_art_temperature_strength = 0.0
 land_normal_map_strength = 0.45
 enable_art_projected_shadows = 0
 art_projected_shadow_strength = 0.0
 art_projected_shadow_length = 0.42
 art_projected_shadow_softness = 0.62
-kr_land_material_contrast_strength = 0.55
-static_light_decal_visibility = 0.0
-enable_kr_transition_grime = 0
-kr_transition_grime_strength = 0.0
-enable_kr_color_wash = 0
-kr_color_wash_strength = 0.0
-kr_color_wash_scale = 72.0
+art_shadow_strength = 0.0
+art_highlight_strength = 0.0
+art_depth_tint_strength = 0.0
+art_mottle_strength = 0.0
 
 [enhanced.morning.lighting]
 enable_fog = 0
 enable_tonemap = 1
 enable_grading = 0
-enable_gloom = 0
-light_color = [
-    1.0,
-    1.0,
-    1.0,
-]
+enable_gloom = 0      # Disabled in Enhanced mode
+light_color = [1.0, 1.0, 1.0]
 tone_curve = 1
-atmosphere_tint = [
-    0.17,
-    0.22,
-    0.29,
-]
+atmosphere_tint = [0.17, 0.22, 0.29]
 exposure = 1.05
 ambient_strength = 0.0
-grade_warm_color = [
-    1.08,
-    0.98,
-    0.9,
-]
-grade_cool_color = [
-    0.82,
-    0.95,
-    1.05,
-]
-grade_params = [
-    0.9,
-    0.15,
-    0.35,
-    1.0,
-]
-grade_extra = [
-    0.45,
-    1.2,
-    1.15,
-    0.9,
-]
-gloom_params = [
-    0.2,
-    0.008,
-    0.45,
-]
-fog_color = [
-    0.75,
-    0.85,
-    0.95,
-    0.5,
-]
-fog_params = [
-    0.02,
-    0.0,
-    0.0,
-    0.0,
-]
-gloom_color = [
-    0.0,
-    0.0,
-    0.0,
-    0.0,
-]
-fog_night_color = [
-    0.0,
-    0.0,
-    0.0,
-    0.0,
-]
+grade_warm_color = [1.08, 0.98, 0.9]
+grade_cool_color = [0.82, 0.95, 1.05]
+grade_params = [0.9, 0.15, 0.35, 1.0]
+grade_extra = [0.45, 1.2, 1.15, 0.9]
+gloom_params = [0.2, 0.008, 0.45]
+fog_color = [0.75, 0.85, 0.95, 0.5]
+fog_params = [0.02, 0.0, 0.0, 0.0]
+gloom_color = [0.0, 0.0, 0.0, 0.0]
+fog_night_color = [0.0, 0.0, 0.0, 0.0]
 
 [enhanced.morning.land_lighting]
 enable_bent = 0
@@ -699,41 +410,25 @@ fill_strength = 0.0
 sharpness_factor = 1.5
 sharpness_mix = 0.0
 diffuse_wrap = 0.5
-fill_sky_color = [
-    0.5,
-    0.7,
-    1.0,
-    0.7,
-]
-fill_ground_color = [
-    0.28,
-    0.19,
-    0.12,
-    0.35,
-]
-rim_color = [
-    0.7,
-    0.85,
-    1.0,
-    2.5,
-]
+fill_sky_color = [0.5, 0.7, 1.0, 0.7]
+fill_ground_color = [0.28, 0.19, 0.12, 0.35]
+rim_color = [0.7, 0.85, 1.0, 2.5]
 
 [enhanced.morning.sun]
 azimuth_degrees = 180.0
 elevation_degrees = 45.0
 
+[enhanced.afternoon]
 [enhanced.afternoon.client_lighting]
 light_level = 0
 overlay_strength = 1.0
 overlay_color = [0.012604, 0.017285, 0.153818]
-
 [enhanced.afternoon.effects]
 shading_mode = 1
 normal_mode = 1
 enable_blur = 0
 enable_linear_filtering = 0
 texture_filter = 0
-art_shadow_strength = 0.0
 sharpening_amount = 0.0
 blur_strength = 0.15
 blur_radius = 0.5
@@ -741,99 +436,50 @@ enable_water_animation = 1
 post_process_profile = 1
 enable_grunge = 0
 grunge_strength = 0.18
+enable_kr_transition_grime = 0
+kr_transition_grime_strength = 0.0
+enable_kr_color_wash = 0
+kr_color_wash_strength = 0.0
+kr_color_wash_scale = 72.0
 light_decal_intensity = 0.0
-art_highlight_strength = 0.0
-art_depth_tint_strength = 0.0
+static_light_decal_visibility = 0.0
 enable_normal_maps = 0
 enable_art_fake_normals = 0
 art_contact_shadow_strength = 0.0
-art_mottle_strength = 0.0
 kr_land_temperature_strength = 0.0
 kr_land_relief_shadow_strength = 0.0
 kr_land_shadow_mottle_strength = 0.0
+kr_land_material_contrast_strength = 0.0
 kr_art_temperature_strength = 0.0
 land_normal_map_strength = 0.45
 enable_art_projected_shadows = 0
 art_projected_shadow_strength = 0.0
 art_projected_shadow_length = 0.42
 art_projected_shadow_softness = 0.62
-kr_land_material_contrast_strength = 0.55
-static_light_decal_visibility = 0.0
-enable_kr_transition_grime = 0
-kr_transition_grime_strength = 0.0
-enable_kr_color_wash = 0
-kr_color_wash_strength = 0.0
-kr_color_wash_scale = 72.0
+art_shadow_strength = 0.0
+art_highlight_strength = 0.0
+art_depth_tint_strength = 0.0
+art_mottle_strength = 0.0
 
 [enhanced.afternoon.lighting]
 enable_fog = 0
 enable_tonemap = 1
 enable_grading = 0
-enable_gloom = 0
-light_color = [
-    1.0,
-    1.0,
-    1.0,
-]
+enable_gloom = 0      # Disabled in Enhanced mode
+light_color = [1.0, 1.0, 1.0]
 tone_curve = 1
-atmosphere_tint = [
-    0.18,
-    0.22,
-    0.28,
-]
+atmosphere_tint = [0.18, 0.22, 0.28]
 exposure = 1.1
 ambient_strength = 0.0
-grade_warm_color = [
-    1.08,
-    0.98,
-    0.9,
-]
-grade_cool_color = [
-    0.82,
-    0.95,
-    1.05,
-]
-grade_params = [
-    1.0,
-    0.15,
-    0.4,
-    1.0,
-]
-grade_extra = [
-    0.6,
-    1.25,
-    1.22,
-    1.0,
-]
-gloom_params = [
-    0.15,
-    0.007,
-    0.35,
-]
-fog_color = [
-    0.75,
-    0.85,
-    0.95,
-    0.5,
-]
-fog_params = [
-    0.02,
-    0.0,
-    0.0,
-    0.0,
-]
-gloom_color = [
-    0.0,
-    0.0,
-    0.0,
-    0.0,
-]
-fog_night_color = [
-    0.0,
-    0.0,
-    0.0,
-    0.0,
-]
+grade_warm_color = [1.08, 0.98, 0.9]
+grade_cool_color = [0.82, 0.95, 1.05]
+grade_params = [1.0, 0.15, 0.4, 1.0]
+grade_extra = [0.6, 1.25, 1.22, 1.0]
+gloom_params = [0.15, 0.007, 0.35]
+fog_color = [0.75, 0.85, 0.95, 0.5]
+fog_params = [0.02, 0.0, 0.0, 0.0]
+gloom_color = [0.0, 0.0, 0.0, 0.0]
+fog_night_color = [0.0, 0.0, 0.0, 0.0]
 
 [enhanced.afternoon.land_lighting]
 enable_bent = 0
@@ -845,41 +491,25 @@ fill_strength = 0.0
 sharpness_factor = 1.5
 sharpness_mix = 0.0
 diffuse_wrap = 0.5
-fill_sky_color = [
-    0.48,
-    0.68,
-    1.0,
-    0.75,
-]
-fill_ground_color = [
-    0.3,
-    0.2,
-    0.12,
-    0.35,
-]
-rim_color = [
-    0.95,
-    0.95,
-    0.85,
-    2.7,
-]
+fill_sky_color = [0.48, 0.68, 1.0, 0.75]
+fill_ground_color = [0.3, 0.2, 0.12, 0.35]
+rim_color = [0.95, 0.95, 0.85, 2.7]
 
 [enhanced.afternoon.sun]
 azimuth_degrees = 180.0
 elevation_degrees = 45.0
 
+[enhanced.night]
 [enhanced.night.client_lighting]
 light_level = 10
 overlay_strength = 1.0
 overlay_color = [0.012604, 0.017285, 0.153818]
-
 [enhanced.night.effects]
 shading_mode = 1
 normal_mode = 1
 enable_blur = 0
 enable_linear_filtering = 0
 texture_filter = 0
-art_shadow_strength = 0.0
 sharpening_amount = 0.0
 blur_strength = 0.15
 blur_radius = 0.5
@@ -887,99 +517,50 @@ enable_water_animation = 1
 post_process_profile = 1
 enable_grunge = 0
 grunge_strength = 0.18
+enable_kr_transition_grime = 0
+kr_transition_grime_strength = 0.0
+enable_kr_color_wash = 0
+kr_color_wash_strength = 0.0
+kr_color_wash_scale = 72.0
 light_decal_intensity = 0.0
-art_highlight_strength = 0.0
-art_depth_tint_strength = 0.0
+static_light_decal_visibility = 0.0
 enable_normal_maps = 0
 enable_art_fake_normals = 0
 art_contact_shadow_strength = 0.0
-art_mottle_strength = 0.0
 kr_land_temperature_strength = 0.0
 kr_land_relief_shadow_strength = 0.0
 kr_land_shadow_mottle_strength = 0.0
+kr_land_material_contrast_strength = 0.0
 kr_art_temperature_strength = 0.0
 land_normal_map_strength = 0.45
 enable_art_projected_shadows = 0
 art_projected_shadow_strength = 0.0
 art_projected_shadow_length = 0.42
 art_projected_shadow_softness = 0.62
-kr_land_material_contrast_strength = 0.55
-static_light_decal_visibility = 0.0
-enable_kr_transition_grime = 0
-kr_transition_grime_strength = 0.0
-enable_kr_color_wash = 0
-kr_color_wash_strength = 0.0
-kr_color_wash_scale = 72.0
+art_shadow_strength = 0.0
+art_highlight_strength = 0.0
+art_depth_tint_strength = 0.0
+art_mottle_strength = 0.0
 
 [enhanced.night.lighting]
 enable_fog = 0
 enable_tonemap = 1
 enable_grading = 0
-enable_gloom = 0
-light_color = [
-    1.0,
-    1.0,
-    1.0,
-]
+enable_gloom = 0      # Disabled in Enhanced mode
+light_color = [1.0, 1.0, 1.0]
 tone_curve = 1
-atmosphere_tint = [
-    0.12,
-    0.16,
-    0.24,
-]
+atmosphere_tint = [0.12, 0.16, 0.24]
 exposure = 1.0
 ambient_strength = 0.0
-grade_warm_color = [
-    1.08,
-    0.98,
-    0.9,
-]
-grade_cool_color = [
-    0.82,
-    0.95,
-    1.05,
-]
-grade_params = [
-    1.1,
-    0.18,
-    0.45,
-    1.0,
-]
-grade_extra = [
-    0.75,
-    1.2,
-    1.3,
-    0.8,
-]
-gloom_params = [
-    0.4,
-    0.01,
-    0.65,
-]
-fog_color = [
-    0.75,
-    0.85,
-    0.95,
-    0.5,
-]
-fog_params = [
-    0.02,
-    0.0,
-    0.0,
-    0.0,
-]
-gloom_color = [
-    0.0,
-    0.0,
-    0.0,
-    0.0,
-]
-fog_night_color = [
-    0.0,
-    0.0,
-    0.0,
-    0.0,
-]
+grade_warm_color = [1.08, 0.98, 0.9]
+grade_cool_color = [0.82, 0.95, 1.05]
+grade_params = [1.1, 0.18, 0.45, 1.0]
+grade_extra = [0.75, 1.2, 1.3, 0.8]
+gloom_params = [0.4, 0.01, 0.65]
+fog_color = [0.75, 0.85, 0.95, 0.5]
+fog_params = [0.02, 0.0, 0.0, 0.0]
+gloom_color = [0.0, 0.0, 0.0, 0.0]
+fog_night_color = [0.0, 0.0, 0.0, 0.0]
 
 [enhanced.night.land_lighting]
 enable_bent = 0
@@ -991,41 +572,25 @@ fill_strength = 0.0
 sharpness_factor = 1.5
 sharpness_mix = 0.0
 diffuse_wrap = 0.5
-fill_sky_color = [
-    0.4,
-    0.6,
-    1.0,
-    0.7,
-]
-fill_ground_color = [
-    0.2,
-    0.16,
-    0.14,
-    0.3,
-]
-rim_color = [
-    0.65,
-    0.85,
-    1.1,
-    3.0,
-]
+fill_sky_color = [0.4, 0.6, 1.0, 0.7]
+fill_ground_color = [0.2, 0.16, 0.14, 0.3]
+rim_color = [0.65, 0.85, 1.1, 3.0]
 
 [enhanced.night.sun]
 azimuth_degrees = 180.0
 elevation_degrees = 45.0
 
+[enhanced.cave]
 [enhanced.cave.client_lighting]
 light_level = 26
 overlay_strength = 1.0
 overlay_color = [0.012604, 0.017285, 0.153818]
-
 [enhanced.cave.effects]
 shading_mode = 1
 normal_mode = 1
 enable_blur = 0
 enable_linear_filtering = 0
 texture_filter = 0
-art_shadow_strength = 0.0
 sharpening_amount = 0.0
 blur_strength = 0.15
 blur_radius = 0.5
@@ -1033,99 +598,50 @@ enable_water_animation = 1
 post_process_profile = 1
 enable_grunge = 0
 grunge_strength = 0.18
+enable_kr_transition_grime = 0
+kr_transition_grime_strength = 0.0
+enable_kr_color_wash = 0
+kr_color_wash_strength = 0.0
+kr_color_wash_scale = 72.0
 light_decal_intensity = 0.0
-art_highlight_strength = 0.0
-art_depth_tint_strength = 0.0
+static_light_decal_visibility = 0.0
 enable_normal_maps = 0
 enable_art_fake_normals = 0
 art_contact_shadow_strength = 0.0
-art_mottle_strength = 0.0
 kr_land_temperature_strength = 0.0
 kr_land_relief_shadow_strength = 0.0
 kr_land_shadow_mottle_strength = 0.0
+kr_land_material_contrast_strength = 0.0
 kr_art_temperature_strength = 0.0
 land_normal_map_strength = 0.45
 enable_art_projected_shadows = 0
 art_projected_shadow_strength = 0.0
 art_projected_shadow_length = 0.42
 art_projected_shadow_softness = 0.62
-kr_land_material_contrast_strength = 0.55
-static_light_decal_visibility = 0.0
-enable_kr_transition_grime = 0
-kr_transition_grime_strength = 0.0
-enable_kr_color_wash = 0
-kr_color_wash_strength = 0.0
-kr_color_wash_scale = 72.0
+art_shadow_strength = 0.0
+art_highlight_strength = 0.0
+art_depth_tint_strength = 0.0
+art_mottle_strength = 0.0
 
 [enhanced.cave.lighting]
 enable_fog = 0
 enable_tonemap = 1
 enable_grading = 0
-enable_gloom = 0
-light_color = [
-    1.0,
-    1.0,
-    1.0,
-]
+enable_gloom = 0      # Disabled in Enhanced mode
+light_color = [1.0, 1.0, 1.0]
 tone_curve = 1
-atmosphere_tint = [
-    0.1,
-    0.14,
-    0.2,
-]
+atmosphere_tint = [0.1, 0.14, 0.2]
 exposure = 0.85
 ambient_strength = 0.0
-grade_warm_color = [
-    1.08,
-    0.98,
-    0.9,
-]
-grade_cool_color = [
-    0.82,
-    0.95,
-    1.05,
-]
-grade_params = [
-    1.05,
-    0.2,
-    0.38,
-    1.0,
-]
-grade_extra = [
-    0.65,
-    1.15,
-    1.28,
-    0.8,
-]
-gloom_params = [
-    0.65,
-    0.012,
-    0.75,
-]
-fog_color = [
-    0.75,
-    0.85,
-    0.95,
-    0.5,
-]
-fog_params = [
-    0.02,
-    0.0,
-    0.0,
-    0.0,
-]
-gloom_color = [
-    0.0,
-    0.0,
-    0.0,
-    0.0,
-]
-fog_night_color = [
-    0.0,
-    0.0,
-    0.0,
-    0.0,
-]
+grade_warm_color = [1.08, 0.98, 0.9]
+grade_cool_color = [0.82, 0.95, 1.05]
+grade_params = [1.05, 0.2, 0.38, 1.0]
+grade_extra = [0.65, 1.15, 1.28, 0.8]
+gloom_params = [0.65, 0.012, 0.75]
+fog_color = [0.75, 0.85, 0.95, 0.5]
+fog_params = [0.02, 0.0, 0.0, 0.0]
+gloom_color = [0.0, 0.0, 0.0, 0.0]
+fog_night_color = [0.0, 0.0, 0.0, 0.0]
 
 [enhanced.cave.land_lighting]
 enable_bent = 0
@@ -1137,37 +653,40 @@ fill_strength = 0.0
 sharpness_factor = 1.5
 sharpness_mix = 0.0
 diffuse_wrap = 0.5
-fill_sky_color = [
-    0.38,
-    0.6,
-    1.0,
-    0.65,
-]
-fill_ground_color = [
-    0.18,
-    0.14,
-    0.12,
-    0.28,
-]
-rim_color = [
-    0.55,
-    0.75,
-    1.05,
-    2.8,
-]
+fill_sky_color = [0.38, 0.6, 1.0, 0.65]
+fill_ground_color = [0.18, 0.14, 0.12, 0.28]
+rim_color = [0.55, 0.75, 1.05, 2.8]
 
 [enhanced.cave.sun]
 azimuth_degrees = 180.0
 elevation_degrees = 45.0
 
+
+# ------------------
+# --- KR PRESETS ---
+# ------------------
+# KR-like: the Kingdom Reborn client's look on KR content.
+# Every term the KR client lacks is off: tone curve (identity), grading, gloom, fog (available, off), ambient,
+# fill, rim, specular, bent normals, the warm light colour, land and art temperature, fake normals, highlights,
+# depth tint, relief shadows, mottle, grunge, transition grime, colour wash and the light decals. exposure
+# stays as brightness. The night and caves dim as in the client, through the night composite (client_lighting)
+# in place of global_lighting: light level 0 by day (the client's identity; the former global_lighting 1.04 and
+# 1.08 are gone), 10 at night and 26 in caves, the levels ServUO sends, with the night map at the client's
+# strength and colour. The light decals draw into the composite's light buffer, so they light only at night.
+# Land shades per vertex like the client (terrain_shading_model 1).
+# Switched to per-pixel, the land diffuse is still the client's half-Lambert: wrap 0.5 gives
+# (N.L + 1) / 2, white, strength 1. Statics, items and foliage cast the client's own shadow (client_shadows),
+# which does not follow the sun; the sprite shadow shape, contact and projected shadows are off.
+# The sun is the client's terrain light, from the south at 45 degrees (azimuth 180, elevation 45).
+# Land and sprite textures take the client's plain bilinear (texture_filter 1): no pixel-art remap, no blur.
+# The full-featured painterly rendering with all effects enabled is UOD-Painterly, below.
+
 [kr.morning]
 client_shadows = true
-
 [kr.morning.client_lighting]
 light_level = 0
 overlay_strength = 1.0
 overlay_color = [0.012604, 0.017285, 0.153818]
-
 [kr.morning.effects]
 shading_mode = 2
 normal_mode = 0
@@ -1182,99 +701,49 @@ enable_water_animation = 1
 post_process_profile = 2
 enable_grunge = 0
 grunge_strength = 0.65
+enable_kr_transition_grime = 0
+kr_transition_grime_strength = 0.65
+enable_kr_color_wash = 0
+kr_color_wash_strength = 0.55
+kr_color_wash_scale = 72.0
 light_decal_intensity = 0.0
+static_light_decal_visibility = 0.0
 art_highlight_strength = 0.0
 art_depth_tint_strength = 0.0
 enable_normal_maps = 0
 enable_art_fake_normals = 0
 art_contact_shadow_strength = 0.0
-art_mottle_strength = 0.0
 kr_land_temperature_strength = 0.0
 kr_land_relief_shadow_strength = 0.0
 kr_land_shadow_mottle_strength = 0.0
+kr_land_material_contrast_strength = 0.0
 kr_art_temperature_strength = 0.0
 land_normal_map_strength = 0.45
 enable_art_projected_shadows = 0
 art_projected_shadow_strength = 0.0
 art_projected_shadow_length = 0.42
 art_projected_shadow_softness = 0.62
-kr_land_material_contrast_strength = 0.0
-static_light_decal_visibility = 0.0
-enable_kr_transition_grime = 0
-kr_transition_grime_strength = 0.65
-enable_kr_color_wash = 0
-kr_color_wash_strength = 0.55
-kr_color_wash_scale = 72.0
+art_mottle_strength = 0.0
 
 [kr.morning.lighting]
 enable_fog = 0
 enable_tonemap = 1
 enable_grading = 0
 enable_gloom = 0
-light_color = [
-    1.0,
-    1.0,
-    1.0,
-]
+light_color = [1.0, 1.0, 1.0]
 tone_curve = 1
-atmosphere_tint = [
-    0.17,
-    0.22,
-    0.29,
-]
+atmosphere_tint = [0.17, 0.22, 0.29]
 exposure = 1.03
 ambient_strength = 0.0
-grade_warm_color = [
-    1.08,
-    0.98,
-    0.9,
-]
-grade_cool_color = [
-    0.82,
-    0.95,
-    1.05,
-]
-grade_params = [
-    1.0,
-    0.15,
-    0.4,
-    0.0,
-]
-grade_extra = [
-    0.38,
-    1.12,
-    1.1,
-    0.75,
-]
-gloom_params = [
-    0.16,
-    0.006,
-    0.52,
-]
-fog_color = [
-    0.035,
-    0.045,
-    0.06,
-    0.3,
-]
-fog_params = [
-    0.04,
-    0.012,
-    0.55,
-    0.16,
-]
-gloom_color = [
-    0.15,
-    0.18,
-    0.28,
-    0.12,
-]
-fog_night_color = [
-    0.01,
-    0.014,
-    0.024,
-    0.25,
-]
+grade_warm_color = [1.08, 0.98, 0.9]
+grade_cool_color = [0.82, 0.95, 1.05]
+grade_params = [1.0, 0.15, 0.4, 0.0]
+grade_extra = [0.38, 1.12, 1.10, 0.75]
+gloom_params = [0.16, 0.006, 0.52]
+fog_color = [0.035, 0.045, 0.060, 0.30]
+fog_params = [0.040, 0.012, 0.55, 0.16]
+gloom_color = [0.15, 0.18, 0.28, 0.12]
+fog_night_color = [0.010, 0.014, 0.024, 0.25]
 
 [kr.morning.land_lighting]
 enable_bent = 0
@@ -1286,24 +755,9 @@ fill_strength = 0.0
 sharpness_factor = 2.0
 sharpness_mix = 0.0
 diffuse_wrap = 0.5
-fill_sky_color = [
-    0.5,
-    0.7,
-    1.0,
-    0.7,
-]
-fill_ground_color = [
-    0.28,
-    0.19,
-    0.12,
-    0.35,
-]
-rim_color = [
-    0.7,
-    0.85,
-    1.0,
-    2.5,
-]
+fill_sky_color = [0.5, 0.7, 1.0, 0.7]
+fill_ground_color = [0.28, 0.19, 0.12, 0.35]
+rim_color = [0.7, 0.85, 1.0, 2.5]
 
 [kr.morning.sun]
 azimuth_degrees = 180.0
@@ -1311,12 +765,10 @@ elevation_degrees = 45.0
 
 [kr.afternoon]
 client_shadows = true
-
 [kr.afternoon.client_lighting]
 light_level = 0
 overlay_strength = 1.0
 overlay_color = [0.012604, 0.017285, 0.153818]
-
 [kr.afternoon.effects]
 shading_mode = 2
 normal_mode = 0
@@ -1325,105 +777,55 @@ enable_linear_filtering = 1
 texture_filter = 1
 art_shadow_strength = 0.0
 sharpening_amount = 0.0
-blur_strength = 0.27
+blur_strength = 0.28
 blur_radius = 0.5
 enable_water_animation = 1
 post_process_profile = 2
 enable_grunge = 0
 grunge_strength = 0.65
-light_decal_intensity = 0.0
-art_highlight_strength = 0.0
-art_depth_tint_strength = 0.0
-enable_normal_maps = 0
-enable_art_fake_normals = 0
-art_contact_shadow_strength = 0.0
-art_mottle_strength = 0.0
-kr_land_temperature_strength = 0.0
-kr_land_relief_shadow_strength = 0.0
-kr_land_shadow_mottle_strength = 0.0
-kr_art_temperature_strength = 0.0
-land_normal_map_strength = 0.45
-enable_art_projected_shadows = 0
-art_projected_shadow_strength = 0.0
-art_projected_shadow_length = 0.42
-art_projected_shadow_softness = 0.62
-kr_land_material_contrast_strength = 0.0
-static_light_decal_visibility = 0.0
 enable_kr_transition_grime = 0
 kr_transition_grime_strength = 0.65
 enable_kr_color_wash = 0
 kr_color_wash_strength = 0.55
 kr_color_wash_scale = 72.0
+light_decal_intensity = 0.0
+static_light_decal_visibility = 0.0
+art_highlight_strength = 0.0
+art_depth_tint_strength = 0.0
+enable_normal_maps = 0
+enable_art_fake_normals = 0
+art_contact_shadow_strength = 0.0
+kr_land_temperature_strength = 0.0
+kr_land_relief_shadow_strength = 0.0
+kr_land_shadow_mottle_strength = 0.0
+kr_land_material_contrast_strength = 0.0
+kr_art_temperature_strength = 0.0
+land_normal_map_strength = 0.45
+enable_art_projected_shadows = 0
+art_projected_shadow_strength = 0.0
+art_projected_shadow_length = 0.44
+art_projected_shadow_softness = 0.62
+art_mottle_strength = 0.0
 
 [kr.afternoon.lighting]
 enable_fog = 0
 enable_tonemap = 1
 enable_grading = 0
 enable_gloom = 0
-light_color = [
-    1.0,
-    1.0,
-    1.0,
-]
+light_color = [1.0, 1.0, 1.0]
 tone_curve = 1
-atmosphere_tint = [
-    0.18,
-    0.22,
-    0.28,
-]
+atmosphere_tint = [0.18, 0.22, 0.28]
 exposure = 1.06
 ambient_strength = 0.0
-grade_warm_color = [
-    1.08,
-    0.98,
-    0.9,
-]
-grade_cool_color = [
-    0.82,
-    0.95,
-    1.05,
-]
-grade_params = [
-    1.0,
-    0.15,
-    0.4,
-    0.0,
-]
-grade_extra = [
-    0.45,
-    1.14,
-    1.12,
-    0.8,
-]
-gloom_params = [
-    0.14,
-    0.005,
-    0.5,
-]
-fog_color = [
-    0.04,
-    0.05,
-    0.065,
-    0.28,
-]
-fog_params = [
-    0.035,
-    0.01,
-    0.5,
-    0.14,
-]
-gloom_color = [
-    0.14,
-    0.16,
-    0.24,
-    0.1,
-]
-fog_night_color = [
-    0.012,
-    0.016,
-    0.026,
-    0.22,
-]
+grade_warm_color = [1.08, 0.98, 0.9]
+grade_cool_color = [0.82, 0.95, 1.05]
+grade_params = [1.0, 0.15, 0.4, 0.0]
+grade_extra = [0.45, 1.14, 1.12, 0.80]
+gloom_params = [0.14, 0.005, 0.50]
+fog_color = [0.040, 0.050, 0.065, 0.28]
+fog_params = [0.035, 0.010, 0.50, 0.14]
+gloom_color = [0.14, 0.16, 0.24, 0.10]
+fog_night_color = [0.012, 0.016, 0.026, 0.22]
 
 [kr.afternoon.land_lighting]
 enable_bent = 0
@@ -1435,24 +837,9 @@ fill_strength = 0.0
 sharpness_factor = 2.0
 sharpness_mix = 0.0
 diffuse_wrap = 0.5
-fill_sky_color = [
-    0.48,
-    0.68,
-    1.0,
-    0.75,
-]
-fill_ground_color = [
-    0.3,
-    0.2,
-    0.12,
-    0.35,
-]
-rim_color = [
-    0.95,
-    0.95,
-    0.85,
-    2.7,
-]
+fill_sky_color = [0.48, 0.68, 1.0, 0.75]
+fill_ground_color = [0.3, 0.2, 0.12, 0.35]
+rim_color = [0.95, 0.95, 0.85, 2.7]
 
 [kr.afternoon.sun]
 azimuth_degrees = 180.0
@@ -1460,12 +847,10 @@ elevation_degrees = 45.0
 
 [kr.night]
 client_shadows = true
-
 [kr.night.client_lighting]
 light_level = 10
 overlay_strength = 1.0
 overlay_color = [0.012604, 0.017285, 0.153818]
-
 [kr.night.effects]
 shading_mode = 2
 normal_mode = 0
@@ -1479,100 +864,50 @@ blur_radius = 0.5
 enable_water_animation = 1
 post_process_profile = 2
 enable_grunge = 0
-grunge_strength = 0.6
+grunge_strength = 0.60
+enable_kr_transition_grime = 0
+kr_transition_grime_strength = 0.60
+enable_kr_color_wash = 0
+kr_color_wash_strength = 0.68
+kr_color_wash_scale = 80.0
 light_decal_intensity = 0.0
+static_light_decal_visibility = 0.0
 art_highlight_strength = 0.0
 art_depth_tint_strength = 0.0
 enable_normal_maps = 0
 enable_art_fake_normals = 0
 art_contact_shadow_strength = 0.0
-art_mottle_strength = 0.0
 kr_land_temperature_strength = 0.0
 kr_land_relief_shadow_strength = 0.0
 kr_land_shadow_mottle_strength = 0.0
+kr_land_material_contrast_strength = 0.0
 kr_art_temperature_strength = 0.0
 land_normal_map_strength = 0.45
 enable_art_projected_shadows = 0
 art_projected_shadow_strength = 0.0
-art_projected_shadow_length = 0.42
-art_projected_shadow_softness = 0.62
-kr_land_material_contrast_strength = 0.0
-static_light_decal_visibility = 0.0
-enable_kr_transition_grime = 0
-kr_transition_grime_strength = 0.6
-enable_kr_color_wash = 0
-kr_color_wash_strength = 0.68
-kr_color_wash_scale = 80.0
+art_projected_shadow_length = 0.36
+art_projected_shadow_softness = 0.68
+art_mottle_strength = 0.0
 
 [kr.night.lighting]
 enable_fog = 0
 enable_tonemap = 1
 enable_grading = 0
 enable_gloom = 0
-light_color = [
-    1.0,
-    1.0,
-    1.0,
-]
+light_color = [1.0, 1.0, 1.0]
 tone_curve = 1
-atmosphere_tint = [
-    0.12,
-    0.16,
-    0.24,
-]
+atmosphere_tint = [0.12, 0.16, 0.24]
 exposure = 1.06
 ambient_strength = 0.0
-grade_warm_color = [
-    1.08,
-    0.98,
-    0.9,
-]
-grade_cool_color = [
-    0.82,
-    0.95,
-    1.05,
-]
-grade_params = [
-    1.0,
-    0.15,
-    0.4,
-    0.0,
-]
-grade_extra = [
-    0.22,
-    1.02,
-    1.04,
-    0.65,
-]
-gloom_params = [
-    0.24,
-    0.008,
-    0.52,
-]
-fog_color = [
-    0.02,
-    0.026,
-    0.04,
-    0.36,
-]
-fog_params = [
-    0.055,
-    0.02,
-    0.48,
-    0.22,
-]
-gloom_color = [
-    0.08,
-    0.1,
-    0.18,
-    0.22,
-]
-fog_night_color = [
-    0.006,
-    0.008,
-    0.018,
-    0.55,
-]
+grade_warm_color = [1.08, 0.98, 0.9]
+grade_cool_color = [0.82, 0.95, 1.05]
+grade_params = [1.0, 0.15, 0.4, 0.0]
+grade_extra = [0.22, 1.02, 1.04, 0.65]
+gloom_params = [0.24, 0.008, 0.52]
+fog_color = [0.020, 0.026, 0.040, 0.36]
+fog_params = [0.055, 0.020, 0.48, 0.22]
+gloom_color = [0.08, 0.10, 0.18, 0.22]
+fog_night_color = [0.006, 0.008, 0.018, 0.55]
 
 [kr.night.land_lighting]
 enable_bent = 0
@@ -1584,24 +919,9 @@ fill_strength = 0.0
 sharpness_factor = 2.0
 sharpness_mix = 0.0
 diffuse_wrap = 0.5
-fill_sky_color = [
-    0.4,
-    0.6,
-    1.0,
-    0.7,
-]
-fill_ground_color = [
-    0.2,
-    0.16,
-    0.14,
-    0.3,
-]
-rim_color = [
-    0.65,
-    0.85,
-    1.1,
-    3.0,
-]
+fill_sky_color = [0.4, 0.6, 1.0, 0.7]
+fill_ground_color = [0.2, 0.16, 0.14, 0.3]
+rim_color = [0.65, 0.85, 1.1, 3.0]
 
 [kr.night.sun]
 azimuth_degrees = 180.0
@@ -1609,12 +929,10 @@ elevation_degrees = 45.0
 
 [kr.cave]
 client_shadows = true
-
 [kr.cave.client_lighting]
 light_level = 26
 overlay_strength = 1.0
 overlay_color = [0.012604, 0.017285, 0.153818]
-
 [kr.cave.effects]
 shading_mode = 2
 normal_mode = 0
@@ -1629,99 +947,49 @@ enable_water_animation = 1
 post_process_profile = 2
 enable_grunge = 0
 grunge_strength = 0.58
-light_decal_intensity = 0.0
-art_highlight_strength = 0.0
-art_depth_tint_strength = 0.0
-enable_normal_maps = 0
-enable_art_fake_normals = 0
-art_contact_shadow_strength = 0.0
-art_mottle_strength = 0.0
-kr_land_temperature_strength = 0.0
-kr_land_relief_shadow_strength = 0.0
-kr_land_shadow_mottle_strength = 0.0
-kr_art_temperature_strength = 0.0
-land_normal_map_strength = 0.45
-enable_art_projected_shadows = 0
-art_projected_shadow_strength = 0.0
-art_projected_shadow_length = 0.42
-art_projected_shadow_softness = 0.62
-kr_land_material_contrast_strength = 0.0
-static_light_decal_visibility = 0.0
 enable_kr_transition_grime = 0
 kr_transition_grime_strength = 0.58
 enable_kr_color_wash = 0
 kr_color_wash_strength = 0.74
 kr_color_wash_scale = 64.0
+light_decal_intensity = 0.0
+static_light_decal_visibility = 0.0
+art_highlight_strength = 0.0
+art_depth_tint_strength = 0.0
+enable_normal_maps = 0
+enable_art_fake_normals = 0
+art_contact_shadow_strength = 0.0
+kr_land_temperature_strength = 0.0
+kr_land_relief_shadow_strength = 0.0
+kr_land_shadow_mottle_strength = 0.0
+kr_land_material_contrast_strength = 0.0
+kr_art_temperature_strength = 0.0
+land_normal_map_strength = 0.45
+enable_art_projected_shadows = 0
+art_projected_shadow_strength = 0.0
+art_projected_shadow_length = 0.28
+art_projected_shadow_softness = 0.74
+art_mottle_strength = 0.0
 
 [kr.cave.lighting]
 enable_fog = 0
 enable_tonemap = 1
 enable_grading = 0
 enable_gloom = 0
-light_color = [
-    1.0,
-    1.0,
-    1.0,
-]
+light_color = [1.0, 1.0, 1.0]
 tone_curve = 1
-atmosphere_tint = [
-    0.1,
-    0.14,
-    0.2,
-]
+atmosphere_tint = [0.1, 0.14, 0.2]
 exposure = 0.92
 ambient_strength = 0.0
-grade_warm_color = [
-    1.08,
-    0.98,
-    0.9,
-]
-grade_cool_color = [
-    0.82,
-    0.95,
-    1.05,
-]
-grade_params = [
-    1.0,
-    0.15,
-    0.4,
-    0.0,
-]
-grade_extra = [
-    0.22,
-    1.02,
-    1.05,
-    0.65,
-]
-gloom_params = [
-    0.3,
-    0.01,
-    0.58,
-]
-fog_color = [
-    0.018,
-    0.022,
-    0.034,
-    0.34,
-]
-fog_params = [
-    0.04,
-    0.026,
-    0.42,
-    0.2,
-]
-gloom_color = [
-    0.06,
-    0.08,
-    0.14,
-    0.28,
-]
-fog_night_color = [
-    0.004,
-    0.006,
-    0.014,
-    0.6,
-]
+grade_warm_color = [1.08, 0.98, 0.9]
+grade_cool_color = [0.82, 0.95, 1.05]
+grade_params = [1.0, 0.15, 0.4, 0.0]
+grade_extra = [0.22, 1.02, 1.05, 0.65]
+gloom_params = [0.30, 0.010, 0.58]
+fog_color = [0.018, 0.022, 0.034, 0.34]
+fog_params = [0.040, 0.026, 0.42, 0.20]
+gloom_color = [0.06, 0.08, 0.14, 0.28]
+fog_night_color = [0.004, 0.006, 0.014, 0.60]
 
 [kr.cave.land_lighting]
 enable_bent = 0
@@ -1733,32 +1001,22 @@ fill_strength = 0.0
 sharpness_factor = 2.0
 sharpness_mix = 0.0
 diffuse_wrap = 0.5
-fill_sky_color = [
-    0.38,
-    0.6,
-    1.0,
-    0.65,
-]
-fill_ground_color = [
-    0.18,
-    0.14,
-    0.12,
-    0.28,
-]
-rim_color = [
-    0.55,
-    0.75,
-    1.05,
-    2.8,
-]
+fill_sky_color = [0.38, 0.6, 1.0, 0.65]
+fill_ground_color = [0.18, 0.14, 0.12, 0.28]
+rim_color = [0.55, 0.75, 1.05, 2.8]
 
 [kr.cave.sun]
 azimuth_degrees = 180.0
 elevation_degrees = 45.0
 
+# ------------------
+# --- UOD-PAINTERLY PRESETS ---
+# ------------------
+# Dynamapper's own painterly KR look: the KR content with every effect enabled. These were the KR-like
+# presets until KR-like became the faithful client look; the values are unchanged.
+
 [painterly.morning]
 global_lighting = 1.04
-
 [painterly.morning.effects]
 shading_mode = 2
 normal_mode = 1
@@ -1773,99 +1031,49 @@ enable_water_animation = 1
 post_process_profile = 2
 enable_grunge = 1
 grunge_strength = 0.65
-light_decal_intensity = 1.35
-art_highlight_strength = 0.38
-art_depth_tint_strength = 0.2
-enable_normal_maps = 0
-enable_art_fake_normals = 1
-art_contact_shadow_strength = 0.3
-art_mottle_strength = 1.0
-kr_land_temperature_strength = 0.75
-kr_land_relief_shadow_strength = 0.7
-kr_land_shadow_mottle_strength = 0.6
-kr_art_temperature_strength = 0.75
-land_normal_map_strength = 0.45
-enable_art_projected_shadows = 0
-art_projected_shadow_strength = 0.22
-art_projected_shadow_length = 0.42
-art_projected_shadow_softness = 0.62
-kr_land_material_contrast_strength = 0.55
-static_light_decal_visibility = 0.55
 enable_kr_transition_grime = 1
 kr_transition_grime_strength = 0.65
 enable_kr_color_wash = 1
 kr_color_wash_strength = 0.55
 kr_color_wash_scale = 72.0
+light_decal_intensity = 1.35
+static_light_decal_visibility = 0.55
+art_highlight_strength = 0.38
+art_depth_tint_strength = 0.20
+enable_normal_maps = 0
+enable_art_fake_normals = 1
+art_contact_shadow_strength = 0.30
+kr_land_temperature_strength = 0.75
+kr_land_relief_shadow_strength = 0.70
+kr_land_shadow_mottle_strength = 0.60
+kr_land_material_contrast_strength = 0.58
+kr_art_temperature_strength = 0.75
+land_normal_map_strength = 0.45
+enable_art_projected_shadows = 1
+art_projected_shadow_strength = 0.22
+art_projected_shadow_length = 0.42
+art_projected_shadow_softness = 0.62
+art_mottle_strength = 0.0
 
 [painterly.morning.lighting]
 enable_fog = 1
 enable_tonemap = 1
 enable_grading = 1
 enable_gloom = 1
-light_color = [
-    1.05,
-    0.99,
-    0.92,
-]
+light_color = [1.05, 0.99, 0.92]
 tone_curve = 0
-atmosphere_tint = [
-    0.17,
-    0.22,
-    0.29,
-]
+atmosphere_tint = [0.17, 0.22, 0.29]
 exposure = 0.927
 ambient_strength = 0.24
-grade_warm_color = [
-    1.08,
-    0.98,
-    0.9,
-]
-grade_cool_color = [
-    0.82,
-    0.95,
-    1.05,
-]
-grade_params = [
-    0.9,
-    0.15,
-    0.35,
-    1.0,
-]
-grade_extra = [
-    0.38,
-    1.12,
-    1.1,
-    0.75,
-]
-gloom_params = [
-    0.16,
-    0.006,
-    0.52,
-]
-fog_color = [
-    0.035,
-    0.045,
-    0.06,
-    0.3,
-]
-fog_params = [
-    0.04,
-    0.012,
-    0.55,
-    0.16,
-]
-gloom_color = [
-    0.15,
-    0.18,
-    0.28,
-    0.12,
-]
-fog_night_color = [
-    0.01,
-    0.014,
-    0.024,
-    0.25,
-]
+grade_warm_color = [1.08, 0.98, 0.9]
+grade_cool_color = [0.82, 0.95, 1.05]
+grade_params = [0.9, 0.15, 0.35, 1.0]
+grade_extra = [0.38, 1.12, 1.10, 0.75]
+gloom_params = [0.16, 0.006, 0.52]
+fog_color = [0.035, 0.045, 0.060, 0.30]
+fog_params = [0.040, 0.012, 0.55, 0.16]
+gloom_color = [0.15, 0.18, 0.28, 0.12]
+fog_night_color = [0.010, 0.014, 0.024, 0.25]
 
 [painterly.morning.land_lighting]
 enable_bent = 1
@@ -1877,24 +1085,9 @@ fill_strength = 0.32
 sharpness_factor = 2.0
 sharpness_mix = 0.55
 diffuse_wrap = 0.35
-fill_sky_color = [
-    0.5,
-    0.7,
-    1.0,
-    0.7,
-]
-fill_ground_color = [
-    0.28,
-    0.19,
-    0.12,
-    0.35,
-]
-rim_color = [
-    0.7,
-    0.85,
-    1.0,
-    2.5,
-]
+fill_sky_color = [0.5, 0.7, 1.0, 0.7]
+fill_ground_color = [0.28, 0.19, 0.12, 0.35]
+rim_color = [0.7, 0.85, 1.0, 2.5]
 
 [painterly.morning.sun]
 azimuth_degrees = 315.0
@@ -1902,7 +1095,6 @@ elevation_degrees = 60.50379
 
 [painterly.afternoon]
 global_lighting = 1.08
-
 [painterly.afternoon.effects]
 shading_mode = 2
 normal_mode = 1
@@ -1911,105 +1103,55 @@ enable_linear_filtering = 1
 texture_filter = 0
 art_shadow_strength = 0.26
 sharpening_amount = 0.0
-blur_strength = 0.27
+blur_strength = 0.28
 blur_radius = 0.5
 enable_water_animation = 1
 post_process_profile = 2
 enable_grunge = 1
 grunge_strength = 0.65
-light_decal_intensity = 1.35
-art_highlight_strength = 0.42
-art_depth_tint_strength = 0.22
-enable_normal_maps = 0
-enable_art_fake_normals = 1
-art_contact_shadow_strength = 0.34
-art_mottle_strength = 1.0
-kr_land_temperature_strength = 0.75
-kr_land_relief_shadow_strength = 0.7
-kr_land_shadow_mottle_strength = 0.6
-kr_art_temperature_strength = 0.75
-land_normal_map_strength = 0.45
-enable_art_projected_shadows = 0
-art_projected_shadow_strength = 0.22
-art_projected_shadow_length = 0.42
-art_projected_shadow_softness = 0.62
-kr_land_material_contrast_strength = 0.55
-static_light_decal_visibility = 0.55
 enable_kr_transition_grime = 1
 kr_transition_grime_strength = 0.65
 enable_kr_color_wash = 1
 kr_color_wash_strength = 0.55
 kr_color_wash_scale = 72.0
+light_decal_intensity = 1.35
+static_light_decal_visibility = 0.55
+art_highlight_strength = 0.42
+art_depth_tint_strength = 0.22
+enable_normal_maps = 0
+enable_art_fake_normals = 1
+art_contact_shadow_strength = 0.34
+kr_land_temperature_strength = 0.75
+kr_land_relief_shadow_strength = 0.70
+kr_land_shadow_mottle_strength = 0.60
+kr_land_material_contrast_strength = 0.58
+kr_art_temperature_strength = 0.75
+land_normal_map_strength = 0.45
+enable_art_projected_shadows = 1
+art_projected_shadow_strength = 0.24
+art_projected_shadow_length = 0.44
+art_projected_shadow_softness = 0.62
+art_mottle_strength = 0.0
 
 [painterly.afternoon.lighting]
 enable_fog = 1
 enable_tonemap = 1
 enable_grading = 1
 enable_gloom = 1
-light_color = [
-    1.08,
-    0.99,
-    0.9,
-]
+light_color = [1.08, 0.99, 0.9]
 tone_curve = 0
-atmosphere_tint = [
-    0.18,
-    0.22,
-    0.28,
-]
+atmosphere_tint = [0.18, 0.22, 0.28]
 exposure = 0.954
 ambient_strength = 0.25
-grade_warm_color = [
-    1.08,
-    0.98,
-    0.9,
-]
-grade_cool_color = [
-    0.82,
-    0.95,
-    1.05,
-]
-grade_params = [
-    1.0,
-    0.15,
-    0.4,
-    1.0,
-]
-grade_extra = [
-    0.45,
-    1.14,
-    1.12,
-    0.8,
-]
-gloom_params = [
-    0.14,
-    0.005,
-    0.5,
-]
-fog_color = [
-    0.04,
-    0.05,
-    0.065,
-    0.28,
-]
-fog_params = [
-    0.035,
-    0.01,
-    0.5,
-    0.14,
-]
-gloom_color = [
-    0.14,
-    0.16,
-    0.24,
-    0.1,
-]
-fog_night_color = [
-    0.012,
-    0.016,
-    0.026,
-    0.22,
-]
+grade_warm_color = [1.08, 0.98, 0.9]
+grade_cool_color = [0.82, 0.95, 1.05]
+grade_params = [1.0, 0.15, 0.4, 1.0]
+grade_extra = [0.45, 1.14, 1.12, 0.80]
+gloom_params = [0.14, 0.005, 0.50]
+fog_color = [0.040, 0.050, 0.065, 0.28]
+fog_params = [0.035, 0.010, 0.50, 0.14]
+gloom_color = [0.14, 0.16, 0.24, 0.10]
+fog_night_color = [0.012, 0.016, 0.026, 0.22]
 
 [painterly.afternoon.land_lighting]
 enable_bent = 1
@@ -2021,24 +1163,9 @@ fill_strength = 0.34
 sharpness_factor = 2.0
 sharpness_mix = 0.55
 diffuse_wrap = 0.35
-fill_sky_color = [
-    0.48,
-    0.68,
-    1.0,
-    0.75,
-]
-fill_ground_color = [
-    0.3,
-    0.2,
-    0.12,
-    0.35,
-]
-rim_color = [
-    0.95,
-    0.95,
-    0.85,
-    2.7,
-]
+fill_sky_color = [0.48, 0.68, 1.0, 0.75]
+fill_ground_color = [0.3, 0.2, 0.12, 0.35]
+rim_color = [0.95, 0.95, 0.85, 2.7]
 
 [painterly.afternoon.sun]
 azimuth_degrees = 315.0
@@ -2046,114 +1173,63 @@ elevation_degrees = 60.50379
 
 [painterly.night]
 global_lighting = 0.76
-
 [painterly.night.effects]
 shading_mode = 2
 normal_mode = 1
 enable_blur = 1
 enable_linear_filtering = 1
 texture_filter = 0
-art_shadow_strength = 0.3
+art_shadow_strength = 0.30
 sharpening_amount = 0.0
 blur_strength = 0.28
 blur_radius = 0.5
 enable_water_animation = 1
 post_process_profile = 2
 enable_grunge = 1
-grunge_strength = 0.6
-light_decal_intensity = 1.35
-art_highlight_strength = 0.28
-art_depth_tint_strength = 0.3
-enable_normal_maps = 0
-enable_art_fake_normals = 1
-art_contact_shadow_strength = 0.38
-art_mottle_strength = 1.15
-kr_land_temperature_strength = 0.7
-kr_land_relief_shadow_strength = 0.62
-kr_land_shadow_mottle_strength = 0.52
-kr_art_temperature_strength = 0.7
-land_normal_map_strength = 0.45
-enable_art_projected_shadows = 0
-art_projected_shadow_strength = 0.22
-art_projected_shadow_length = 0.42
-art_projected_shadow_softness = 0.62
-kr_land_material_contrast_strength = 0.55
-static_light_decal_visibility = 0.55
+grunge_strength = 0.60
 enable_kr_transition_grime = 1
-kr_transition_grime_strength = 0.6
+kr_transition_grime_strength = 0.60
 enable_kr_color_wash = 1
 kr_color_wash_strength = 0.68
 kr_color_wash_scale = 80.0
+light_decal_intensity = 1.35
+static_light_decal_visibility = 0.55
+art_highlight_strength = 0.28
+art_depth_tint_strength = 0.30
+enable_normal_maps = 0
+enable_art_fake_normals = 1
+art_contact_shadow_strength = 0.38
+kr_land_temperature_strength = 0.70
+kr_land_relief_shadow_strength = 0.62
+kr_land_shadow_mottle_strength = 0.52
+kr_land_material_contrast_strength = 0.48
+kr_art_temperature_strength = 0.70
+land_normal_map_strength = 0.45
+enable_art_projected_shadows = 1
+art_projected_shadow_strength = 0.18
+art_projected_shadow_length = 0.36
+art_projected_shadow_softness = 0.68
+art_mottle_strength = 0.0
 
 [painterly.night.lighting]
 enable_fog = 1
 enable_tonemap = 1
 enable_grading = 1
 enable_gloom = 1
-light_color = [
-    0.8,
-    0.88,
-    1.05,
-]
+light_color = [0.8, 0.88, 1.05]
 tone_curve = 0
-atmosphere_tint = [
-    0.12,
-    0.16,
-    0.24,
-]
+atmosphere_tint = [0.12, 0.16, 0.24]
 exposure = 0.954
 ambient_strength = 0.12
-grade_warm_color = [
-    1.08,
-    0.98,
-    0.9,
-]
-grade_cool_color = [
-    0.82,
-    0.95,
-    1.05,
-]
-grade_params = [
-    1.1,
-    0.18,
-    0.45,
-    1.0,
-]
-grade_extra = [
-    0.22,
-    1.02,
-    1.04,
-    0.65,
-]
-gloom_params = [
-    0.24,
-    0.008,
-    0.52,
-]
-fog_color = [
-    0.02,
-    0.026,
-    0.04,
-    0.36,
-]
-fog_params = [
-    0.055,
-    0.02,
-    0.48,
-    0.22,
-]
-gloom_color = [
-    0.08,
-    0.1,
-    0.18,
-    0.22,
-]
-fog_night_color = [
-    0.006,
-    0.008,
-    0.018,
-    0.55,
-]
+grade_warm_color = [1.08, 0.98, 0.9]
+grade_cool_color = [0.82, 0.95, 1.05]
+grade_params = [1.1, 0.18, 0.45, 1.0]
+grade_extra = [0.22, 1.02, 1.04, 0.65]
+gloom_params = [0.24, 0.008, 0.52]
+fog_color = [0.020, 0.026, 0.040, 0.36]
+fog_params = [0.055, 0.020, 0.48, 0.22]
+gloom_color = [0.08, 0.10, 0.18, 0.22]
+fog_night_color = [0.006, 0.008, 0.018, 0.55]
 
 [painterly.night.land_lighting]
 enable_bent = 1
@@ -2164,25 +1240,10 @@ rim_strength = 0.16
 fill_strength = 0.22
 sharpness_factor = 2.0
 sharpness_mix = 0.55
-diffuse_wrap = 0.2
-fill_sky_color = [
-    0.4,
-    0.6,
-    1.0,
-    0.7,
-]
-fill_ground_color = [
-    0.2,
-    0.16,
-    0.14,
-    0.3,
-]
-rim_color = [
-    0.65,
-    0.85,
-    1.1,
-    3.0,
-]
+diffuse_wrap = 0.20
+fill_sky_color = [0.4, 0.6, 1.0, 0.7]
+fill_ground_color = [0.2, 0.16, 0.14, 0.3]
+rim_color = [0.65, 0.85, 1.1, 3.0]
 
 [painterly.night.sun]
 azimuth_degrees = 315.0
@@ -2190,7 +1251,6 @@ elevation_degrees = 60.50379
 
 [painterly.cave]
 global_lighting = 0.56
-
 [painterly.cave.effects]
 shading_mode = 2
 normal_mode = 1
@@ -2205,99 +1265,49 @@ enable_water_animation = 1
 post_process_profile = 2
 enable_grunge = 1
 grunge_strength = 0.58
-light_decal_intensity = 1.35
-art_highlight_strength = 0.24
-art_depth_tint_strength = 0.34
-enable_normal_maps = 0
-enable_art_fake_normals = 1
-art_contact_shadow_strength = 0.42
-art_mottle_strength = 0.9
-kr_land_temperature_strength = 0.65
-kr_land_relief_shadow_strength = 0.58
-kr_land_shadow_mottle_strength = 0.48
-kr_art_temperature_strength = 0.65
-land_normal_map_strength = 0.45
-enable_art_projected_shadows = 0
-art_projected_shadow_strength = 0.22
-art_projected_shadow_length = 0.42
-art_projected_shadow_softness = 0.62
-kr_land_material_contrast_strength = 0.55
-static_light_decal_visibility = 0.55
 enable_kr_transition_grime = 1
 kr_transition_grime_strength = 0.58
 enable_kr_color_wash = 1
 kr_color_wash_strength = 0.74
 kr_color_wash_scale = 64.0
+light_decal_intensity = 1.35
+static_light_decal_visibility = 0.55
+art_highlight_strength = 0.24
+art_depth_tint_strength = 0.34
+enable_normal_maps = 0
+enable_art_fake_normals = 1
+art_contact_shadow_strength = 0.42
+kr_land_temperature_strength = 0.65
+kr_land_relief_shadow_strength = 0.58
+kr_land_shadow_mottle_strength = 0.48
+kr_land_material_contrast_strength = 0.42
+kr_art_temperature_strength = 0.65
+land_normal_map_strength = 0.45
+enable_art_projected_shadows = 1
+art_projected_shadow_strength = 0.16
+art_projected_shadow_length = 0.28
+art_projected_shadow_softness = 0.74
+art_mottle_strength = 0.0
 
 [painterly.cave.lighting]
 enable_fog = 1
 enable_tonemap = 1
 enable_grading = 1
 enable_gloom = 1
-light_color = [
-    0.9,
-    0.95,
-    1.05,
-]
+light_color = [0.9, 0.95, 1.05]
 tone_curve = 0
-atmosphere_tint = [
-    0.1,
-    0.14,
-    0.2,
-]
+atmosphere_tint = [0.1, 0.14, 0.2]
 exposure = 0.828
 ambient_strength = 0.07
-grade_warm_color = [
-    1.08,
-    0.98,
-    0.9,
-]
-grade_cool_color = [
-    0.82,
-    0.95,
-    1.05,
-]
-grade_params = [
-    1.05,
-    0.2,
-    0.38,
-    1.0,
-]
-grade_extra = [
-    0.22,
-    1.02,
-    1.05,
-    0.65,
-]
-gloom_params = [
-    0.3,
-    0.01,
-    0.58,
-]
-fog_color = [
-    0.018,
-    0.022,
-    0.034,
-    0.34,
-]
-fog_params = [
-    0.04,
-    0.026,
-    0.42,
-    0.2,
-]
-gloom_color = [
-    0.06,
-    0.08,
-    0.14,
-    0.28,
-]
-fog_night_color = [
-    0.004,
-    0.006,
-    0.014,
-    0.6,
-]
+grade_warm_color = [1.08, 0.98, 0.9]
+grade_cool_color = [0.82, 0.95, 1.05]
+grade_params = [1.05, 0.2, 0.38, 1.0]
+grade_extra = [0.22, 1.02, 1.05, 0.65]
+gloom_params = [0.30, 0.010, 0.58]
+fog_color = [0.018, 0.022, 0.034, 0.34]
+fog_params = [0.040, 0.026, 0.42, 0.20]
+gloom_color = [0.06, 0.08, 0.14, 0.28]
+fog_night_color = [0.004, 0.006, 0.014, 0.60]
 
 [painterly.cave.land_lighting]
 enable_bent = 1
@@ -2309,24 +1319,9 @@ fill_strength = 0.18
 sharpness_factor = 2.0
 sharpness_mix = 0.55
 diffuse_wrap = 0.15
-fill_sky_color = [
-    0.38,
-    0.6,
-    1.0,
-    0.65,
-]
-fill_ground_color = [
-    0.18,
-    0.14,
-    0.12,
-    0.28,
-]
-rim_color = [
-    0.55,
-    0.75,
-    1.05,
-    2.8,
-]
+fill_sky_color = [0.38, 0.6, 1.0, 0.65]
+fill_ground_color = [0.18, 0.14, 0.12, 0.28]
+rim_color = [0.55, 0.75, 1.05, 2.8]
 
 [painterly.cave.sun]
 azimuth_degrees = 315.0

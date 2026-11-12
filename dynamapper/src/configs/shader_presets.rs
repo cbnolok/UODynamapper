@@ -815,6 +815,15 @@ mod tests {
         parse(BUNDLED_LAND_SETTINGS).unwrap_or_else(|error| panic!("{error}"));
     }
 
+    /// A fresh install starts from the shipped land.toml, and Reset to Factory from the factory presets: they must be
+    /// the same values, or the first reset changes a preset the user never edited.
+    #[test]
+    fn bundled_land_settings_match_the_factory_presets() {
+        let shipped: toml::Table = toml::from_str(BUNDLED_LAND_SETTINGS).expect("shipped");
+        let factory: toml::Table = toml::from_str(BUNDLED_FACTORY_PRESETS).expect("factory");
+        assert_eq!(shipped, factory);
+    }
+
     #[test]
     fn shader_presets_reject_unknown_and_missing_keys() {
         let unknown = BUNDLED_FACTORY_PRESETS.replacen("exposure = ", "exposur = ", 1);
