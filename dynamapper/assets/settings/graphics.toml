@@ -4,6 +4,9 @@ vsync = false
 anti_aliasing = "off"
 art_texture_source = "ec"
 land_texture_source = "ec"
+# The profile of the land and item routes (runtime_specs/land/LandRoutes.kdl) in force, such as a season: "spring",
+# "summer", "fall", "winter", "desolation" or one of your copy's profiles; "" for none. Preferences > Graphics sets it.
+route_profile = ""
 # Which client's gumps and paperdoll the gump windows draw: "classic" (gumps_cc.uddp, the paperdoll of gumps) or
 # "enhanced" (gumps_ec.uddp, the 3D paperdoll from paperdoll_ec.uddp). The shader preset doesn't change it.
 gumps_and_paperdoll = "classic"

@@ -761,7 +761,8 @@ pub fn sys_draw_spawned_land_chunks(
         use crate::core::texture_cache::land::routing::LandTileRoute;
         // Each id draws from its route (routing.rs): the land page atlas holds the first loaded source of the selected
         // source's chain, plus the other EC-layout package's pages for the ids routed to it. Under an EC-layout atlas,
-        // the ids routed to Classic texmaps draw from the texmap arrays.
+        // the ids routed to Classic texmaps draw from the texmap arrays. An id draws the texmap, art or EC lookup row
+        // of the land id its route names (`classic_target`); an EC lookup row is written from that id already.
         let enhanced_atlas = cache_r.routes().atlas().uses_enhanced_land();
 
         let _span = crate::tracy_span!("worldmap::chunk_draw_precache_textures");
@@ -769,7 +770,7 @@ pub fn sys_draw_spawned_land_chunks(
             // Classic texmaps are keyed by texmap id (the tiledata texture id, or the land id when that is 0).
             let texmap_ids = ids.iter()
                 .filter(|&&id| cache_r.routes().route(u32::from(id)) == LandTileRoute::ClassicTexmap)
-                .filter_map(|&id| cache_r.classic_land().texmap_id(u32::from(id)))
+                .filter_map(|&id| cache_r.classic_land().texmap_id(cache_r.classic_target(u32::from(id))))
                 .filter_map(|texmap_id| u16::try_from(texmap_id).ok())
                 .collect::<Vec<_>>();
             if !texmap_ids.is_empty() {
@@ -785,7 +786,8 @@ pub fn sys_draw_spawned_land_chunks(
             texture_lookup_cache[id as usize] = match route {
                 LandTileRoute::Enhanced(_) => (land_id << 4) | LAND_SOURCE_EC_ATLAS,
                 LandTileRoute::ClassicTexmap => {
-                    let texmap_id = cache_r.classic_land().texmap_id(land_id).expect("routed to its texmap");
+                    let texmap_id = cache_r.classic_land().texmap_id(cache_r.classic_target(land_id))
+                        .expect("routed to its texmap");
                     if enhanced_atlas {
                         let (size, layer) = cache_r.get_texture_size_layer(&texmap_2d_r.0, texmap_id as u16, now);
                         let mode = match size {
@@ -797,7 +799,7 @@ pub fn sys_draw_spawned_land_chunks(
                         (texmap_id << 4) | LAND_SOURCE_CC_ATLAS
                     }
                 }
-                LandTileRoute::ClassicArt => (land_id << 4) | LAND_SOURCE_CLASSIC_ART,
+                LandTileRoute::ClassicArt => (cache_r.classic_target(land_id) << 4) | LAND_SOURCE_CLASSIC_ART,
                 LandTileRoute::Missing => {
                     missing_land_ids.push(land_id);
                     LAND_SOURCE_MISSING
@@ -806,7 +808,7 @@ pub fn sys_draw_spawned_land_chunks(
 
             land_shader_flags_cache[id as usize] = cache_r
                 .routed_enhanced_land(land_id)
-                .map(|package| ec_land_shader_flags(package, land_id))
+                .map(|(package, target)| ec_land_shader_flags(package, target))
                 .unwrap_or(0);
         }
         if let Some(warning) = cache_r.missing_land_ids.report(missing_land_ids) {
@@ -823,7 +825,7 @@ pub fn sys_draw_spawned_land_chunks(
     // because the package may not have been converted yet.
     // Classic land only: EC terrain is wet when its TerrainDefinition material is the water layer
     // class (`TERRAIN_SHADER_FLAG_REVIEWED_LIQUID`, set by `coverage::ec_land_shader_flags`). An id an EC-layout
-    // source routes to Classic land is Classic land.
+    // source routes to Classic land is Classic land, wet when the land id its route names is.
     //
     // Bit mask constant matching tiledata.mul / map_cc_flags_to_tilemeta().
     const TILEMETA_FLAG_WET: u64 = 0x80;
@@ -834,9 +836,10 @@ pub fn sys_draw_spawned_land_chunks(
             let land_tiles = meta.0.land_tiles();
             (0..LandTextureCache::MAX_TILE_ID)
                 .map(|id| {
-                    let classic_land = !matches!(cache_r.routes().route(id as u32),
+                    let target = cache_r.routes().target(id as u32);
+                    let classic_land = !matches!(target.route,
                         crate::core::texture_cache::land::routing::LandTileRoute::Enhanced(_));
-                    land_tiles.get(id).filter(|_| classic_land).map_or(0u8, |t| {
+                    land_tiles.get(target.id as usize).filter(|_| classic_land).map_or(0u8, |t| {
                         if t.flags & TILEMETA_FLAG_WET != 0 {
                             1
                         } else {

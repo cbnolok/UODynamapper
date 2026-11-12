@@ -1077,6 +1077,8 @@ struct StaticChunkCacheConfig {
     land_metadata_revision: u64,
     static_art_local_light_signature: Option<u64>,
     show_hidden_multi_parts: bool,
+    /// The statics store's item routes (`LazyStaticsStore::item_routes_revision`).
+    item_routes_revision: u64,
 }
 
 #[derive(Clone, Debug, Default)]
@@ -1752,6 +1754,7 @@ struct StaticCollectFrameConfig {
     static_art_local_lights: bool,
     show_hidden_multi_parts: bool,
     height_scale: f32,
+    item_routes_revision: u64,
 }
 
 #[derive(Clone, Copy)]
@@ -1888,6 +1891,7 @@ fn static_chunk_cache_config(
             .static_art_local_lights
             .then(|| static_light_signature(static_lights, frame.map_id)),
         show_hidden_multi_parts: frame.show_hidden_multi_parts,
+        item_routes_revision: frame.item_routes_revision,
     }
 }
 
@@ -2948,6 +2952,9 @@ pub fn sys_collect_visible_statics(
         static_art_local_lights: settings.world_rendering.enable_static_art_local_lights,
         show_hidden_multi_parts: settings.world_rendering.show_hidden_multi_parts,
         height_scale,
+        // A change of the route file's item routes rebuilds the cached chunks from the blocks read again.
+        item_routes_revision: statics_res.0.get(map_id as usize).and_then(|store| store.as_ref())
+            .map_or(0, |store| store.lock().item_routes_revision()),
     };
     let resources = static_collect_resources(
         &tex_art_cc_res,
@@ -4091,6 +4098,7 @@ mod tests {
             land_metadata_revision: 0,
             static_art_local_light_signature: None,
             show_hidden_multi_parts: false,
+            item_routes_revision: 0,
         });
         cache.chunks.insert(
             StaticChunkBatchKey {
@@ -4111,6 +4119,7 @@ mod tests {
             land_metadata_revision: 0,
             static_art_local_light_signature: None,
             show_hidden_multi_parts: false,
+            item_routes_revision: 0,
         });
 
         assert!(cache.chunks.is_empty());
@@ -4128,6 +4137,7 @@ mod tests {
             land_metadata_revision: 0,
             static_art_local_light_signature: None,
             show_hidden_multi_parts: false,
+            item_routes_revision: 0,
         });
 
         cache.chunks.insert(
@@ -4149,6 +4159,7 @@ mod tests {
             land_metadata_revision: 0,
             static_art_local_light_signature: None,
             show_hidden_multi_parts: false,
+            item_routes_revision: 0,
         }));
 
         assert!(!cache.chunks.is_empty());
@@ -4166,6 +4177,7 @@ mod tests {
             land_metadata_revision: 0,
             static_art_local_light_signature: Some(0),
             show_hidden_multi_parts: false,
+            item_routes_revision: 0,
         });
         cache.chunks.insert(
             StaticChunkBatchKey {
@@ -4186,6 +4198,7 @@ mod tests {
             land_metadata_revision: 0,
             static_art_local_light_signature: Some(1),
             show_hidden_multi_parts: false,
+            item_routes_revision: 0,
         }));
 
         assert!(cache.chunks.is_empty());

@@ -2,6 +2,7 @@ pub mod cache;
 pub mod texture_array;
 pub mod coverage;
 pub mod routing;
+pub mod route_file;
 pub(crate) mod aux_layers;
 #[cfg(test)]
 mod liquid_sampling_tests;
@@ -91,33 +92,38 @@ const AUX_ATLAS_TILE_SIZE: u32 = 256;
 
 enum LandShaderAtlasSource<'a> {
     Cc(&'a TexLandCcPackage),
-    /// The EC-layout package of the land source, and the other one for the ids it lacks (routing.rs).
-    Ec { primary: &'a TexLandEcPackage, secondary: Option<SecondaryEnhancedLand<'a>> },
+    /// The EC-layout package of the land source, and the other one for the ids it lacks or a route names (routing.rs).
+    /// `primary_ids` holds, per lookup row, the land id of `primary` the row is written from: the id a route names,
+    /// else the row's own.
+    Ec { primary: &'a TexLandEcPackage, primary_ids: Vec<u32>, secondary: Option<SecondaryEnhancedLand<'a>> },
 }
 
-/// The other EC-layout land package's share of the land page atlas: the ids drawn from it and the pages their slots
-/// lie on, appended after the atlas package's pages in ascending order.
+/// The other EC-layout land package's share of the land page atlas: the used ids drawn from it, with the land id of
+/// the package each draws, and the pages their slots lie on, appended after the atlas package's pages in ascending
+/// order.
 struct SecondaryEnhancedLand<'a> {
     package: &'a TexLandEcPackage,
-    ids: Vec<bool>,
+    ids: Vec<Option<u32>>,
     pages: Vec<u32>,
 }
 
 impl<'a> SecondaryEnhancedLand<'a> {
-    fn new(package: &'a TexLandEcPackage, ids: impl Iterator<Item = u32>) -> Self {
-        let mut drawn = vec![false; LAND_PAGE_LOOKUP_TILE_CAPACITY as usize];
+    /// `ids`: each lookup row drawn from the package, and the land id of the package it draws.
+    fn new(package: &'a TexLandEcPackage, ids: impl Iterator<Item = (u32, u32)>) -> Self {
+        let mut drawn = vec![None; LAND_PAGE_LOOKUP_TILE_CAPACITY as usize];
         let mut pages = std::collections::BTreeSet::new();
-        for id in ids {
-            if let Some(drawn) = drawn.get_mut(id as usize) {
-                *drawn = true;
-                pages.extend(enhanced_land_tile_pages(package, id));
+        for (row, source_id) in ids {
+            if let Some(drawn) = drawn.get_mut(row as usize) {
+                *drawn = Some(source_id);
+                pages.extend(enhanced_land_tile_pages(package, source_id));
             }
         }
         Self { package, ids: drawn, pages: pages.into_iter().collect() }
     }
 
-    fn draws(&self, tile_id: u32) -> bool {
-        self.ids.get(tile_id as usize).copied().unwrap_or(false)
+    /// The land id of the package lookup row `row` is written from, if the package draws it.
+    fn draws(&self, row: u32) -> Option<u32> {
+        self.ids.get(row as usize).copied().flatten()
     }
 
     /// The position of the package's `page` among the appended pages.
@@ -822,19 +828,21 @@ fn write_land_lookup_entry(
     }
 }
 
-/// Writes the lookup rows of `tile_id` from an EC-layout package. `secondary` marks the package appended after the
-/// atlas package: its material ids are offset so its materials stay distinct from the atlas package's in the coverage
-/// transitions. `atlas_layer` maps the package's page index to its atlas layer.
+/// Writes the lookup rows of land id `row` from the land id `tile_id` of an EC-layout package: its own, or the one a
+/// route names. `secondary` marks the package appended after the atlas package: its material ids are offset so its
+/// materials stay distinct from the atlas package's in the coverage transitions. `atlas_layer` maps the package's
+/// page index to its atlas layer.
 fn write_enhanced_land_lookup(
     lookup_bytes: &mut [u8],
     package: &TexLandEcPackage,
+    row: u32,
     tile_id: u32,
     secondary: bool,
     atlas_layer: &impl Fn(u32) -> u32,
 ) {
     if let Some(params) = coverage::EcTerrainParams::for_tile(package, tile_id) {
         let params = if secondary { params.from_secondary_package() } else { params };
-        write_land_lookup_entry(lookup_bytes, tile_id, LAND_PAGE_LOOKUP_ROLE_COVERAGE_PARAMS, params.0);
+        write_land_lookup_entry(lookup_bytes, row, LAND_PAGE_LOOKUP_ROLE_COVERAGE_PARAMS, params.0);
     }
     if let Some(source) = package.resolve_material_decision(tile_id).material_id
         .and_then(|id| package.source_material(id))
@@ -843,7 +851,7 @@ fn write_enhanced_land_lookup(
         // Original Technique[0] selects coordinates; Tweaks[0..2]
         // scroll item 0 (du/dv) in UV units per second
         // (UOWaterTerrainLayer::Draw, see ec_liquid.wesl).
-        write_land_lookup_entry(lookup_bytes, tile_id, LAND_PAGE_LOOKUP_ROLE_LIQUID_PARAMS, [
+        write_land_lookup_entry(lookup_bytes, row, LAND_PAGE_LOOKUP_ROLE_LIQUID_PARAMS, [
             source.techniques().first().copied().unwrap_or(0) as u32,
             source.tweaks().first().copied().unwrap_or(0.0).to_bits(),
             source.tweaks().get(1).copied().unwrap_or(0.0).to_bits(),
@@ -872,7 +880,7 @@ fn write_enhanced_land_lookup(
                         layer.texture_repetition,
                         atlas_layer,
                     );
-                    write_land_lookup_entry(lookup_bytes, tile_id, role, values);
+                    write_land_lookup_entry(lookup_bytes, row, role, values);
                 }
             }
         }
@@ -894,7 +902,7 @@ fn write_enhanced_land_lookup(
             land_lookup_values_from_ec_slot(package, slot_id, texture_repetition, atlas_layer);
         write_land_lookup_entry(
             lookup_bytes,
-            tile_id,
+            row,
             LAND_PAGE_LOOKUP_ROLE_BASE,
             values,
         );
@@ -950,7 +958,7 @@ fn create_land_shader_images(
     // Pages of two EC-layout packages keep their blocks only when both are BC7 at one extent; otherwise every page
     // is decoded.
     let bc7_pages = match &source {
-        LandShaderAtlasSource::Ec { primary, secondary } => tex_land_ec_page_format(primary) == PagePixelFormat::Bc7
+        LandShaderAtlasSource::Ec { primary, secondary, .. } => tex_land_ec_page_format(primary) == PagePixelFormat::Bc7
             && secondary.as_ref().is_none_or(|secondary| {
                 tex_land_ec_page_format(secondary.package) == PagePixelFormat::Bc7
                     && secondary.package.atlas_width() == primary.atlas_width()
@@ -1024,12 +1032,15 @@ fn create_land_shader_images(
                     );
                 }
             }
-            LandShaderAtlasSource::Ec { primary, secondary } => match secondary {
-                Some(secondary) if secondary.draws(tile_id) => write_enhanced_land_lookup(
-                    &mut lookup_bytes, secondary.package, tile_id, true,
-                    &|page| primary_page_count + secondary.atlas_page(page)),
-                _ => write_enhanced_land_lookup(&mut lookup_bytes, primary, tile_id, false, &|page| page),
-            },
+            LandShaderAtlasSource::Ec { primary, primary_ids, secondary } => {
+                match secondary.as_ref().and_then(|secondary| Some((secondary, secondary.draws(tile_id)?))) {
+                    Some((secondary, source_id)) => write_enhanced_land_lookup(
+                        &mut lookup_bytes, secondary.package, tile_id, source_id, true,
+                        &|page| primary_page_count + secondary.atlas_page(page)),
+                    None => write_enhanced_land_lookup(&mut lookup_bytes, primary, tile_id,
+                        primary_ids.get(tile_id as usize).copied().unwrap_or(tile_id), false, &|page| page),
+                }
+            }
         };
     }
 
@@ -1062,10 +1073,17 @@ fn land_shader_source_from_cache<'a>(
         }
         crate::configs::settings::LandTextureSource::Ec | crate::configs::settings::LandTextureSource::Kr => {
             let primary = cache.atlas_enhanced_land()?.as_ref();
+            // A row drawn from the atlas package is written from the land id its route names.
+            let atlas = routing::LandTileRoute::Enhanced(cache.routes().atlas());
+            let primary_ids = (0..LAND_PAGE_LOOKUP_TILE_CAPACITY).map(|id| {
+                let target = cache.routes().target(id);
+                if target.route == atlas { target.id } else { id }
+            }).collect();
+            // The other package's pages load only for the used ids drawn from it.
             let secondary = cache.secondary_enhanced_land().map(|(source, package)| {
-                SecondaryEnhancedLand::new(package, cache.routes().ids_drawn_from(routing::LandTileRoute::Enhanced(source)).map(|(id, _)| id))
+                SecondaryEnhancedLand::new(package, cache.used_ids_drawn_from(routing::LandTileRoute::Enhanced(source)))
             });
-            Some(LandShaderAtlasSource::Ec { primary, secondary })
+            Some(LandShaderAtlasSource::Ec { primary, primary_ids, secondary })
         }
     }
 }
@@ -1074,16 +1092,33 @@ impl Plugin for LandTextureCachePlugin {
     /// Allocate GPU texture array for terrain tiles and TileCache.
     fn build(&self, app: &mut App) {
         log_plugin_build(self);
+        // The route file, in front of each land id's source chain and of the static graphics (route_file.rs).
+        app.insert_resource(route_file::RouteFileRes::load());
         app.add_plugins(bevy::render::extract_resource::ExtractResourcePlugin::<
             cache::TextureArrayImageHandles,
         >::default())
             .add_systems(
                 Startup,
-                sys_setup_terrain_cache
+                (
+                    route_file::sys_select_route_profile,
+                    route_file::sys_apply_item_routes,
+                    sys_setup_terrain_cache
+                        .run_if(resource_exists::<crate::core::uo_files_loader::TexMap2DRes>),
+                )
+                    .chain()
                     .in_set(StartupSysSet::SetupSceneStage1)
-                    .after(StartupSysSet::LoadStartupUOFiles)
-                    .run_if(resource_exists::<crate::core::uo_files_loader::TexMap2DRes>),
+                    .after(StartupSysSet::LoadStartupUOFiles),
             );
+        // The routes change before the land and statics of the frame are built.
+        app.add_systems(Update, (
+            route_file::sys_watch_route_file,
+            route_file::sys_select_route_profile,
+            route_file::sys_apply_item_routes,
+        ).chain().before(sys_apply_land_texture_source_changes)
+            .before(SceneRenderLandSysSet::RenderLandChunks));
+        app.add_systems(Update, route_file::sys_show_route_file_notices
+            .run_if(in_state(crate::core::app_states::AppState::InGame))
+            .run_if(|routes: Res<route_file::RouteFileRes>| routes.has_pending_notices()));
 
         // Clear pending uploads at the start of each frame (First schedule), which runs BEFORE Update.
         // This is correct: Extract runs AFTER Last (end of previous frame), so by the time we reach
@@ -1095,7 +1130,7 @@ impl Plugin for LandTextureCachePlugin {
         app.add_systems(Update, sys_show_land_source_notice
             .after(sys_apply_land_texture_source_changes)
             .run_if(in_state(crate::core::app_states::AppState::InGame))
-            .run_if(|cache: Option<Res<cache::LandTextureCache>>| cache.is_some_and(|cache| cache.pending_land_notice.is_some())));
+            .run_if(|cache: Option<Res<cache::LandTextureCache>>| cache.is_some_and(|cache| !cache.pending_land_notices.is_empty())));
         app.add_systems(Update, coverage::sys_prepare_stack_cache
             .after(SceneRenderLandSysSet::RenderLandChunks)
             .run_if(in_state(crate::core::app_states::AppState::InGame)));
@@ -1295,6 +1330,7 @@ fn sys_evict_idle_land_cache(
 fn sys_apply_land_texture_source_changes(
     mut commands: Commands,
     settings: Res<crate::configs::settings::Settings>,
+    route_file: Res<route_file::RouteFileRes>,
     texmap_2d_r: Res<crate::core::uo_files_loader::TexMap2DRes>,
     mut cache_r: ResMut<cache::LandTextureCache>,
     mut images: ResMut<Assets<Image>>,
@@ -1305,15 +1341,20 @@ fn sys_apply_land_texture_source_changes(
     chunks: Query<Entity, With<crate::core::render::scene::world::land::LCMesh>>,
 ) {
     let desired_source = settings.graphics.land_texture_source;
-    if cache_r.preferred_source() == desired_source {
+    let routes_changed = cache_r.land_routes_revision != route_file.revision();
+    if cache_r.preferred_source() == desired_source && !routes_changed {
         return;
     }
 
-    if !cache_r.set_preferred_source(desired_source) {
+    let source_changed = cache_r.set_preferred_source(desired_source);
+    // A profile that routes only items leaves the land as it is.
+    let land_routes_changed = routes_changed && cache_r.set_land_routes(route_file.land_routes(), route_file.revision());
+    if !source_changed && !land_routes_changed {
         return;
     }
-    // The new source's chain decides each id's source again: a missing package or id falls back explicitly, logged
-    // and, for a missing package, shown in the window.
+    // The new source's chain, and the route file's routes in front of it, decide each id's source again: a missing
+    // package, id or route target falls back explicitly, logged and, for a missing package or a route not drawn as
+    // written, shown in the window.
     resolve_land_routes(&mut cache_r);
 
     // Terrain source flips only change how the shader resolves land ids into
@@ -1332,17 +1373,22 @@ fn sys_apply_land_texture_source_changes(
     // cached stacks are rebuilt from the packages now drawn. A Classic atlas does not read them.
     terrain_bases.set_sources(coverage::EcTerrainSources::from_cache(&cache_r));
 
-    console_logger::one(
-        LogSev::Info,
-        LogAbout::General,
-        &format!(
-            "Switched land texture source to {}.",
-            desired_source.land_label()
-        ),
-    );
+    if source_changed {
+        console_logger::one(
+            LogSev::Info,
+            LogAbout::General,
+            &format!(
+                "Switched land texture source to {}.",
+                desired_source.land_label()
+            ),
+        );
+    }
+    if land_routes_changed {
+        console_logger::one(LogSev::Info, LogAbout::General, "Applied the land routes in force.");
+    }
 
     // ── TEMPORARY EC package diagnostic ─────────────────────────────────────
-    if desired_source.uses_enhanced_land() {
+    if source_changed && desired_source.uses_enhanced_land() {
         if let Some(ec) = cache_r.atlas_enhanced_land() {
             let total_slots = ec.slots().len();
             let present_slots = ec.slots().iter().filter(|s| s.is_present()).count();
@@ -1363,21 +1409,29 @@ fn sys_apply_land_texture_source_changes(
 }
 
 /// Routes every land id under the preferred source (routing.rs), logs the one rerouting summary of this load or
-/// switch, and queues the in-window notice of a missing selected package.
+/// switch and the routes not drawn as written, and queues the in-window notices of a missing selected package and of
+/// those routes.
 fn resolve_land_routes(cache: &mut cache::LandTextureCache) {
-    if let Some(summary) = cache.resolve_routes() {
-        console_logger::one(LogSev::Warn, LogAbout::RenderWorldLand, &summary);
+    let warnings = cache.resolve_routes();
+    for warning in &warnings {
+        console_logger::one(LogSev::Warn, LogAbout::RenderWorldLand, warning);
     }
-    cache.pending_land_notice = cache.routes().missing_package_notice(&cache.udd_folder);
-    if let Some(notice) = &cache.pending_land_notice {
+    let missing_package = cache.routes().missing_package_notice(&cache.udd_folder);
+    if let Some(notice) = &missing_package {
         console_logger::one(LogSev::Warn, LogAbout::RenderWorldLand, notice);
     }
+    cache.pending_land_notices = missing_package.into_iter()
+        .chain(cache.routes().route_report().map(|_| ROUTES_NOT_AS_WRITTEN_NOTICE.to_string())).collect();
 }
 
-/// Shows the queued missing-package notice in the window once the world is on screen: in-window messages pushed
-/// during loading would expire before the first frame.
+/// The in-window notice of land routes not drawn as written; the log names them.
+const ROUTES_NOT_AS_WRITTEN_NOTICE: &str = "Some land routes of LandRoutes.kdl are not drawn as written: the log names \
+    them and what is drawn instead.";
+
+/// Shows the queued land notices in the window once the world is on screen: in-window messages pushed during loading
+/// would expire before the first frame.
 fn sys_show_land_source_notice(mut cache: ResMut<cache::LandTextureCache>) {
-    if let Some(notice) = cache.pending_land_notice.take() {
+    for notice in std::mem::take(&mut cache.pending_land_notices) {
         crate::ingame_sysmessage_logger::warning(notice);
     }
 }
@@ -1397,6 +1451,7 @@ pub fn sys_setup_terrain_cache(
     map_planes: Res<crate::core::uo_files_loader::MapPlanesRes>,
     uo_files_settings: Res<crate::core::uo_files_loader::UoFilesSettingsRes>,
     shader_presets: Res<crate::core::render::scene::world::land::mesh_material::LandShaderModePresets>,
+    route_file: Res<route_file::RouteFileRes>,
 ) {
     log_system_add_startup::<LandTextureCachePlugin>(StartupSysSet::SetupSceneStage1, fname!());
 
@@ -1455,6 +1510,8 @@ pub fn sys_setup_terrain_cache(
         tex_art_cc_r.as_deref().map(|resource| resource.0.as_ref()),
     ));
     land_texture_cache.udd_folder = uo_files_settings.0.udd_folder.clone();
+    land_texture_cache.set_used_land_ids(used_land_ids(&map_planes));
+    land_texture_cache.set_land_routes(route_file.land_routes(), route_file.revision());
     resolve_land_routes(&mut land_texture_cache);
 
     if let Some(plan) = residency_plan.as_ref() {
@@ -1618,6 +1675,27 @@ pub fn sys_setup_terrain_cache(
 
     let shared_mat_handle = materials.add(shared_mat);
     cmd.insert_resource(SharedLandMaterial(shared_mat_handle));
+}
+
+/// The land ids the loaded maps use, for the rerouting summary and the secondary EC-layout pages; `None`, every id
+/// counting, when a map cannot be read.
+fn used_land_ids(map_planes: &crate::core::uo_files_loader::MapPlanesRes) -> Option<Vec<bool>> {
+    let started = Instant::now();
+    let mut used = vec![false; routing::LAND_ROUTE_TILE_COUNT];
+    for plane in map_planes.0.iter().flatten() {
+        match plane.used_land_ids(routing::LAND_ROUTE_TILE_COUNT) {
+            Ok(plane_used) => used.iter_mut().zip(plane_used).for_each(|(used, plane_used)| *used |= plane_used),
+            Err(error) => {
+                console_logger::one(LogSev::Warn, LogAbout::RenderWorldLand,
+                    &format!("Cannot list the land ids of map {}: {error:#}; every land id counts as used.", plane.index));
+                return None;
+            }
+        }
+    }
+    console_logger::one(LogSev::Info, LogAbout::Startup, &format!(
+        "The loaded maps use {} land id(s) (listed in {} ms).",
+        used.iter().filter(|&&used| used).count(), started.elapsed().as_millis()));
+    Some(used)
 }
 
 fn sys_apply_texture_array_expansion(

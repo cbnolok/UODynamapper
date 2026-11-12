@@ -6,8 +6,14 @@
 //! the Classic client does (`LandView.Draw` falls back to the art when the texmap is missing). An id no source has
 //! draws the missing-texture pattern. Classic selected stays Classic: it never borrows EC-layout terrain.
 //!
+//! The route file (`configs::land_routes`, LandRoutes.kdl) stands in front of the chain: a route names the source and
+//! the id within it that draws a land id. A route its source cannot draw falls back, with a warning: to the chain of
+//! its source on the id it names, then, when no source of that chain holds the id, to the selected source's chain on
+//! the routed id itself.
+//!
 //! The chain and the summary text are independent of rendering; the land cache feeds them what each package holds.
 
+use crate::configs::land_routes::LandRouteTarget;
 use crate::configs::settings::LandTextureSource;
 
 /// Land ids the routes cover, the EC lookup's tile capacity.
@@ -59,25 +65,73 @@ impl LandTileRoute {
 }
 
 /// What one land id is drawn as: a route and the land id within that source whose definition, texmap or art it draws.
-/// The fallback chain keeps the land id; an explicit override can name another.
+/// The fallback chain keeps the land id; a route of the route file can name another.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct LandTileTarget {
     pub route: LandTileRoute,
     pub id: u32,
 }
 
-impl LandTileTarget {
-    /// Whether the target's source holds its id, by what `available` says each source holds for an id.
-    fn is_held(self, available: &impl Fn(u32) -> LandTileAvailability) -> bool {
-        let held = available(self.id);
-        match self.route {
-            LandTileRoute::Enhanced(LandTextureSource::Ec) => held.ec,
-            LandTileRoute::Enhanced(LandTextureSource::Kr) => held.kr,
-            LandTileRoute::Enhanced(LandTextureSource::Cc) => false,
-            LandTileRoute::ClassicTexmap => held.classic_texmap,
-            LandTileRoute::ClassicArt => held.classic_art,
-            LandTileRoute::Missing => true,
+/// A route the route file asks for one land id: its source (the selected one where the file names none), what it
+/// draws there, and its line in the file.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct LandRouteRequest {
+    pub source: LandTextureSource,
+    pub target: LandRouteTarget,
+    pub line: usize,
+}
+
+/// Why a route is not drawn as written.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum LandRouteMiss {
+    /// Classic selected never draws EC-layout land: the selected source's chain draws the routed id.
+    EnhancedUnderClassic,
+    /// No land id of the source is drawn with the terrain definition: the selected source's chain draws the routed id.
+    NoTerrain(u32),
+    /// No source of the route's chain holds the id it names: the selected source's chain draws the routed id.
+    TargetMissing(u32),
+    /// The route's source lacks the id it names: the next source of its chain that holds it draws it.
+    Fallback,
+}
+
+/// A route not drawn as written, for the warning about it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct LandRouteNote {
+    pub id: u32,
+    pub request: LandRouteRequest,
+    pub miss: LandRouteMiss,
+}
+
+/// What a route draws: the first source of its source's chain that holds the id it names.
+fn resolve_request(
+    selected: LandTextureSource,
+    id: u32,
+    request: LandRouteRequest,
+    available: &impl Fn(u32) -> LandTileAvailability,
+    terrain_land_id: &impl Fn(LandTextureSource, u32) -> Option<u32>,
+) -> Result<LandTileTarget, LandRouteMiss> {
+    if selected == LandTextureSource::Cc && request.source.uses_enhanced_land() {
+        return Err(LandRouteMiss::EnhancedUnderClassic);
+    }
+    let target_id = match request.target {
+        LandRouteTarget::SameId => id,
+        LandRouteTarget::Id(target) => u32::from(target),
+        LandRouteTarget::Terrain(terrain) => {
+            terrain_land_id(request.source, terrain).ok_or(LandRouteMiss::NoTerrain(terrain))?
         }
+    };
+    match route_land_tile(request.source, available(target_id)) {
+        LandTileRoute::Missing => Err(LandRouteMiss::TargetMissing(target_id)),
+        route => Ok(LandTileTarget { route, id: target_id }),
+    }
+}
+
+/// Whether `route` is drawn from `source` itself. Classic draws an id without a texmap from its land art.
+fn is_source_route(source: LandTextureSource, route: LandTileRoute) -> bool {
+    match route {
+        LandTileRoute::Enhanced(enhanced) => enhanced == source,
+        LandTileRoute::ClassicTexmap | LandTileRoute::ClassicArt => source == LandTextureSource::Cc,
+        LandTileRoute::Missing => false,
     }
 }
 
@@ -103,25 +157,46 @@ pub struct LandRoutes {
     /// draws the ids routed to Classic through the texmap arrays; a Classic atlas is the Classic source itself.
     atlas: LandTextureSource,
     targets: Vec<LandTileTarget>,
+    /// The ids a route draws, which the rerouting summary leaves out.
+    routed: Vec<bool>,
+    /// The routes not drawn as written.
+    notes: Vec<LandRouteNote>,
 }
 
 impl LandRoutes {
     /// Routes every id under `selected`; `loaded` tells which packages are loaded, `available` what each holds.
-    /// `overrides` is an explicit route table in front of the chain: an id's override applies when its source holds
-    /// the target id, and the chain decides otherwise.
+    /// `requests` are the route file's routes, in front of the chain (the module notes); `terrain_land_id` names the
+    /// first land id of an EC-layout source drawn with a terrain definition.
     pub fn resolve(
         selected: LandTextureSource,
         loaded: impl Fn(LandTextureSource) -> bool,
         available: impl Fn(u32) -> LandTileAvailability,
-        overrides: impl Fn(u32) -> Option<LandTileTarget>,
+        requests: impl Fn(u32) -> Option<LandRouteRequest>,
+        terrain_land_id: impl Fn(LandTextureSource, u32) -> Option<u32>,
     ) -> Self {
         let atlas = land_source_chain(selected).iter().copied().find(|&source| loaded(source))
             .unwrap_or(LandTextureSource::Cc);
+        let mut routed = vec![false; LAND_ROUTE_TILE_COUNT];
+        let mut notes = Vec::new();
         let targets = (0..LAND_ROUTE_TILE_COUNT as u32).map(|id| {
-            overrides(id).filter(|target| target.is_held(&available))
-                .unwrap_or(LandTileTarget { route: route_land_tile(selected, available(id)), id })
+            let chain = LandTileTarget { route: route_land_tile(selected, available(id)), id };
+            let Some(request) = requests(id) else { return chain };
+            let note = |miss| LandRouteNote { id, request, miss };
+            match resolve_request(selected, id, request, &available, &terrain_land_id) {
+                Ok(target) => {
+                    routed[id as usize] = true;
+                    if !is_source_route(request.source, target.route) {
+                        notes.push(note(LandRouteMiss::Fallback));
+                    }
+                    target
+                }
+                Err(miss) => {
+                    notes.push(note(miss));
+                    chain
+                }
+            }
         }).collect();
-        Self { selected, atlas, targets }
+        Self { selected, atlas, targets, routed, notes }
     }
 
     pub fn selected(&self) -> LandTextureSource {
@@ -163,10 +238,11 @@ impl LandRoutes {
         }
     }
 
-    /// The one warning a load or source switch logs: how many ids the selected source lacks and where each goes, with
-    /// a sample of ids. `None` when every id the sources have is drawn from the selected one. Ids no source has are
-    /// not counted here (most ids are unused); [`MissingLandIds`] reports those as the map shows them.
-    pub fn summary(&self) -> Option<String> {
+    /// The one warning a load or source switch logs: how many of the ids the maps use (`used`) the selected source
+    /// lacks and where each goes, with a sample of ids. `None` when every such id the sources have is drawn from the
+    /// selected one. Ids no source has are not counted here; [`MissingLandIds`] reports those as the map shows them.
+    /// Nor are the ids a route draws: [`Self::route_report`] names the routes not drawn as written.
+    pub fn summary(&self, used: impl Fn(u32) -> bool) -> Option<String> {
         // In chain order: the EC-layout sources, then Classic.
         const DESTINATIONS: [LandTileRoute; 4] = [
             LandTileRoute::Enhanced(LandTextureSource::Ec),
@@ -175,7 +251,8 @@ impl LandRoutes {
             LandTileRoute::ClassicArt,
         ];
         let destinations = DESTINATIONS.iter()
-            .map(|&route| (route, self.ids_drawn_from(route).map(|(id, _)| id).collect::<Vec<_>>()))
+            .map(|&route| (route, self.ids_drawn_from(route).map(|(id, _)| id)
+                .filter(|&id| used(id) && !self.routed[id as usize]).collect::<Vec<_>>()))
             .filter(|(route, ids)| !ids.is_empty() && !self.own_route(*route))
             .collect::<Vec<_>>();
         if destinations.is_empty() {
@@ -186,6 +263,30 @@ impl LandRoutes {
             format!("{} from {} (e.g. {})", ids.len(), route.label(), sample_ids(ids.iter().copied(), ids.len()))
         }).collect::<Vec<_>>();
         Some(format!("{} lacks {total} land id(s): drawing {}.", self.selected.land_label(), parts.join("; ")))
+    }
+
+    /// The warning about the routes not drawn as written: how many, and a sample with their line and what is drawn
+    /// instead. `None` when every route is drawn as written.
+    pub fn route_report(&self) -> Option<String> {
+        if self.notes.is_empty() {
+            return None;
+        }
+        let mut parts = self.notes.iter().take(LOG_SAMPLE_IDS).map(|note| {
+            let source = note.request.source.land_label();
+            let drawn = self.target(note.id);
+            let why = match note.miss {
+                LandRouteMiss::EnhancedUnderClassic => format!("Classic selected never draws {source}"),
+                LandRouteMiss::NoTerrain(terrain) => format!("no land id of {source} is drawn with terrain {terrain}"),
+                LandRouteMiss::TargetMissing(target) => format!("no source of the {source} chain has {target:#06X}"),
+                LandRouteMiss::Fallback => format!("{source} lacks {:#06X}", drawn.id),
+            };
+            format!("{:#06X} (line {}): {why}, drawn as {:#06X} from {}", note.id, note.request.line, drawn.id,
+                drawn.route.label())
+        }).collect::<Vec<_>>();
+        if self.notes.len() > LOG_SAMPLE_IDS {
+            parts.push("...".to_string());
+        }
+        Some(format!("{} land route(s) are not drawn as written: {}.", self.notes.len(), parts.join("; ")))
     }
 
     /// The in-window notice for a selected package that is not loaded: what is shown instead, and where the package
@@ -305,7 +406,7 @@ mod tests {
     #[test]
     fn the_atlas_takes_the_first_loaded_source_of_the_chain() {
         let routes = |selected, loaded: &'static [LandTextureSource]| {
-            LandRoutes::resolve(selected, |source| loaded.contains(&source), |_| NONE, |_| None).atlas()
+            LandRoutes::resolve(selected, |source| loaded.contains(&source), |_| NONE, |_| None, |_, _| None).atlas()
         };
         assert_eq!(routes(Kr, &[Cc, Ec, Kr]), Kr);
         assert_eq!(routes(Kr, &[Cc, Ec]), Ec);
@@ -321,49 +422,99 @@ mod tests {
             3 => LandTileAvailability { classic_texmap: true, ..NONE },
             4 => NONE,
             _ => ALL,
-        }, |_| None);
+        }, |_| None, |_, _| None);
         assert_eq!(routes.route(1), LandTileRoute::Enhanced(Ec));
         assert_eq!(routes.route(3), LandTileRoute::ClassicTexmap);
         assert_eq!(routes.route(4), LandTileRoute::Missing);
         assert_eq!(routes.route(LAND_ROUTE_TILE_COUNT as u32), LandTileRoute::Missing);
-        assert_eq!(routes.summary().unwrap(), "Kingdom Reborn (tex_land_kr.uddp) lacks 3 land id(s): drawing 2 from \
-            Enhanced (tex_land_ec.uddp) (e.g. 0x0001, 0x0002); 1 from Classic (tex_land_cc.uddp) (e.g. 0x0003).");
+        assert_eq!(routes.summary(|_| true).unwrap(), "Kingdom Reborn (tex_land_kr.uddp) lacks 3 land id(s): drawing 2 \
+            from Enhanced (tex_land_ec.uddp) (e.g. 0x0001, 0x0002); 1 from Classic (tex_land_cc.uddp) (e.g. 0x0003).");
+        // Only the ids the maps use count.
+        assert_eq!(routes.summary(|id| id == 3).unwrap(), "Kingdom Reborn (tex_land_kr.uddp) lacks 1 land id(s): \
+            drawing 1 from Classic (tex_land_cc.uddp) (e.g. 0x0003).");
+        assert_eq!(routes.summary(|id| id > 4), None);
+    }
+
+    fn request(source: LandTextureSource, target: LandRouteTarget, line: usize) -> Option<LandRouteRequest> {
+        Some(LandRouteRequest { source, target, line })
     }
 
     #[test]
-    fn an_override_in_front_of_the_chain_applies_when_its_source_holds_the_target() {
-        let to_kr_7 = LandTileTarget { route: LandTileRoute::Enhanced(Kr), id: 7 };
-        let overrides = |id| match id {
-            1 => Some(to_kr_7),
-            2 => Some(LandTileTarget { route: LandTileRoute::ClassicTexmap, id: 8 }),
+    fn a_route_draws_the_id_it_names_from_its_source() {
+        let routes = LandRoutes::resolve(Ec, |_| true, |_| ALL, |id| match id {
+            1 => request(Kr, LandRouteTarget::Id(7), 3),
+            2 => request(Cc, LandRouteTarget::SameId, 4),
+            3 => request(Ec, LandRouteTarget::Terrain(40), 5),
             _ => None,
-        };
-        let routes = LandRoutes::resolve(Ec, |_| true, |id| match id {
-            8 => LandTileAvailability { classic_texmap: false, ..ALL },
+        }, |source, terrain| (source == Ec && terrain == 40).then_some(9));
+        assert_eq!(routes.target(1), LandTileTarget { route: LandTileRoute::Enhanced(Kr), id: 7 });
+        assert_eq!(routes.target(2), LandTileTarget { route: LandTileRoute::ClassicTexmap, id: 2 });
+        assert_eq!(routes.target(3), LandTileTarget { route: LandTileRoute::Enhanced(Ec), id: 9 });
+        assert_eq!(routes.target(4), LandTileTarget { route: LandTileRoute::Enhanced(Ec), id: 4 });
+        assert_eq!(routes.route_report(), None);
+        // Classic routes to Classic art when the target has no texmap, as the chain does.
+        let art_only = LandRoutes::resolve(Ec, |_| true, |id| match id {
+            8 => LandTileAvailability { classic_art: true, ..NONE },
             _ => ALL,
-        }, overrides);
-        assert_eq!(routes.target(1), to_kr_7);
-        // Its target lacks the texmap: the chain decides.
+        }, |id| (id == 1).then_some(LandRouteRequest { source: Cc, target: LandRouteTarget::Id(8), line: 1 }),
+            |_, _| None);
+        assert_eq!(art_only.target(1), LandTileTarget { route: LandTileRoute::ClassicArt, id: 8 });
+        assert_eq!(art_only.route_report(), None);
+    }
+
+    #[test]
+    fn a_route_its_source_cannot_draw_falls_back_with_a_warning() {
+        let routes = LandRoutes::resolve(Ec, |_| true, |id| match id {
+            7 => LandTileAvailability { kr: false, ..ALL },
+            8 => NONE,
+            _ => ALL,
+        }, |id| match id {
+            1 => request(Kr, LandRouteTarget::Id(7), 3),
+            2 => request(Kr, LandRouteTarget::Id(8), 4),
+            3 => request(Kr, LandRouteTarget::Terrain(40), 5),
+            _ => None,
+        }, |_, _| None);
+        // The route's chain on the id it names.
+        assert_eq!(routes.target(1), LandTileTarget { route: LandTileRoute::Enhanced(Ec), id: 7 });
+        // No source has the id it names, nor a land id the terrain: the selected source's chain on the routed id.
         assert_eq!(routes.target(2), LandTileTarget { route: LandTileRoute::Enhanced(Ec), id: 2 });
         assert_eq!(routes.target(3), LandTileTarget { route: LandTileRoute::Enhanced(Ec), id: 3 });
+        assert_eq!(routes.route_report().unwrap(), "3 land route(s) are not drawn as written: \
+            0x0001 (line 3): Kingdom Reborn (tex_land_kr.uddp) lacks 0x0007, drawn as 0x0007 from Enhanced (tex_land_ec.uddp); \
+            0x0002 (line 4): no source of the Kingdom Reborn (tex_land_kr.uddp) chain has 0x0008, drawn as 0x0002 from Enhanced (tex_land_ec.uddp); \
+            0x0003 (line 5): no land id of Kingdom Reborn (tex_land_kr.uddp) is drawn with terrain 40, drawn as 0x0003 from Enhanced (tex_land_ec.uddp).");
+        // A route counts in the report, not in the summary.
+        let lacking = LandRoutes::resolve(Kr, |_| true, |_| LandTileAvailability { kr: false, ..ALL },
+            |id| (id == 1).then_some(LandRouteRequest { source: Ec, target: LandRouteTarget::SameId, line: 1 }),
+            |_, _| None);
+        assert!(lacking.summary(|id| id <= 1).unwrap().contains("lacks 1 land id(s)"));
+    }
+
+    #[test]
+    fn classic_selected_skips_enhanced_routes() {
+        let routes = LandRoutes::resolve(Cc, |_| true, |_| ALL,
+            |id| (id == 1).then_some(LandRouteRequest { source: Kr, target: LandRouteTarget::Id(7), line: 2 }),
+            |_, _| None);
+        assert_eq!(routes.target(1), LandTileTarget { route: LandTileRoute::ClassicTexmap, id: 1 });
+        assert!(routes.route_report().unwrap().contains("0x0001 (line 2): Classic selected never draws Kingdom Reborn"));
     }
 
     #[test]
     fn a_complete_source_and_classic_art_log_no_summary() {
-        assert_eq!(LandRoutes::resolve(Ec, |_| true, |_| ALL, |_| None).summary(), None);
+        assert_eq!(LandRoutes::resolve(Ec, |_| true, |_| ALL, |_| None, |_, _| None).summary(|_| true), None);
         let art_only = LandTileAvailability { classic_art: true, ..NONE };
-        assert_eq!(LandRoutes::resolve(Cc, |_| true, |_| art_only, |_| None).summary(), None);
+        assert_eq!(LandRoutes::resolve(Cc, |_| true, |_| art_only, |_| None, |_, _| None).summary(|_| true), None);
     }
 
     #[test]
     fn a_missing_selected_package_names_what_is_shown_instead() {
         let folder = std::path::Path::new("/uddp");
-        let without_kr = LandRoutes::resolve(Kr, |source| source != Kr, |_| NONE, |_| None);
+        let without_kr = LandRoutes::resolve(Kr, |source| source != Kr, |_| NONE, |_| None, |_, _| None);
         assert_eq!(without_kr.missing_package_notice(folder).unwrap(),
             "Kingdom Reborn (tex_land_kr.uddp) not found in /uddp: showing Enhanced (tex_land_ec.uddp) land.");
-        let classic_only = LandRoutes::resolve(Kr, |source| source == Cc, |_| NONE, |_| None);
+        let classic_only = LandRoutes::resolve(Kr, |source| source == Cc, |_| NONE, |_| None, |_, _| None);
         assert!(classic_only.missing_package_notice(folder).unwrap().ends_with("showing Classic (tex_land_cc.uddp) land."));
-        assert_eq!(LandRoutes::resolve(Kr, |_| true, |_| NONE, |_| None).missing_package_notice(folder), None);
+        assert_eq!(LandRoutes::resolve(Kr, |_| true, |_| NONE, |_| None, |_, _| None).missing_package_notice(folder), None);
     }
 
     #[test]

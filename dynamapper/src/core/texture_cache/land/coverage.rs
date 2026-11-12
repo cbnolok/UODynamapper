@@ -71,10 +71,14 @@ impl EcTerrainSources {
         let Some(primary) = cache.atlas_enhanced_land() else { return Self::none() };
         let secondary = cache.secondary_enhanced_land().map(|(_, package)| package);
         let (params, available) = (0..super::routing::LAND_ROUTE_TILE_COUNT as u32).map(|id| {
+            // The land id a route names draws its terrain parameters too.
             let routed = cache.routed_enhanced_land(id);
             match (routed, secondary) {
-                (Some(package), Some(secondary)) if std::sync::Arc::ptr_eq(package, secondary) => (
-                    EcTerrainParams::for_tile(package, id).map(EcTerrainParams::from_secondary_package), true),
+                (Some((package, target)), Some(secondary)) if std::sync::Arc::ptr_eq(package, secondary) => (
+                    EcTerrainParams::for_tile(package, target).map(EcTerrainParams::from_secondary_package), true),
+                (Some((package, target)), _) if std::sync::Arc::ptr_eq(package, primary) => {
+                    (EcTerrainParams::for_tile(primary, target), true)
+                }
                 _ => (EcTerrainParams::for_tile(primary, id), routed.is_some()),
             }
         }).unzip();

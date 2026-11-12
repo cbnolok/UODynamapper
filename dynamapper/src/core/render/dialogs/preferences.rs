@@ -13,6 +13,11 @@ use bevy_egui::{egui, EguiContexts, EguiPrimaryContextPass};
 
 const FPS_PRESETS: &[u32] = &[15, 30, 60, 75, 120, 144, 165, 240];
 const DEFAULT_FPS_LIMIT: u32 = 60;
+/// Hover text of the "Season / profile" choice.
+const ROUTE_PROFILE_HOVER: &str = "The profile of the land and item routes (LandRoutes.kdl) in force, on top of its \
+    routes block: the Classic client's seasons, or your copy's profiles.";
+/// Hover text of the route file's "Reload" button.
+const ROUTE_FILE_RELOAD_HOVER: &str = "Read LandRoutes.kdl again. Saving your copy reloads it too.";
 /// Hover text of the "Gumps and paperdoll" choice.
 const GUMPS_AND_PAPERDOLL_HOVER: &str = "Which client's gumps and paperdoll the gump windows draw. Like the art and \
     land sources, the shader preset doesn't change it.";
@@ -42,6 +47,8 @@ pub struct PreferencesDialogState {
     pub anti_aliasing: AntiAliasingMode,
     pub art_texture_source: ClientTextureSource,
     pub land_texture_source: LandTextureSource,
+    /// The route file's profile (`SectGraphics::route_profile`); empty for none.
+    pub route_profile: String,
     pub gumps_and_paperdoll: GumpClient,
     pub cc_terrain_transitions: bool,
     pub ec_terrain_transitions: bool,
@@ -81,6 +88,7 @@ impl Default for PreferencesDialogState {
             anti_aliasing: AntiAliasingMode::default(),
             art_texture_source: ClientTextureSource::default(),
             land_texture_source: LandTextureSource::default(),
+            route_profile: String::new(),
             gumps_and_paperdoll: GumpClient::default(),
             cc_terrain_transitions: false,
             ec_terrain_transitions: false,
@@ -151,6 +159,7 @@ fn sys_sync_settings_to_state(
         state.anti_aliasing = settings.graphics.anti_aliasing;
         state.art_texture_source = settings.graphics.art_texture_source;
         state.land_texture_source = settings.graphics.land_texture_source;
+        state.route_profile.clone_from(&settings.graphics.route_profile);
         state.gumps_and_paperdoll = settings.graphics.gumps_and_paperdoll;
         state.cc_terrain_transitions = settings.graphics.cc_terrain_transitions;
         state.ec_terrain_transitions = settings.graphics.ec_terrain_transitions;
@@ -199,6 +208,7 @@ pub fn sys_render_preferences_dialog(
     mut windows_q: Query<&mut Window>,
     time: Res<Time>,
     land_textures: Option<Res<crate::core::texture_cache::land::cache::LandTextureCache>>,
+    mut route_file: Option<ResMut<crate::core::texture_cache::land::route_file::RouteFileRes>>,
 ) {
     state.apply_timer.tick(time.delta());
 
@@ -446,6 +456,33 @@ pub fn sys_render_preferences_dialog(
                     }
                     if settings.graphics.land_texture_source != state.land_texture_source {
                         settings.graphics.land_texture_source = state.land_texture_source;
+                    }
+
+                    // The route file's profiles, such as the seasons (route_file.rs); switching one rebuilds the land
+                    // and statics it routes.
+                    if let Some(route_file) = route_file.as_deref_mut() {
+                        use crate::core::texture_cache::land::route_file::route_profile_entries;
+                        let entries = route_profile_entries(route_file.profile_names(), &state.route_profile);
+                        let selected_label = entries.iter().find(|(value, _)| *value == state.route_profile)
+                            .map(|(_, label)| label.clone()).unwrap_or_default();
+                        ui.horizontal(|ui| {
+                            egui::ComboBox::from_label("Season / profile")
+                                .selected_text(selected_label)
+                                .show_ui(ui, |ui| {
+                                    for (value, label) in entries {
+                                        ui.selectable_value(&mut state.route_profile, value, label);
+                                    }
+                                })
+                                .response
+                                .on_hover_text(ROUTE_PROFILE_HOVER);
+                            if ui.button("Reload").on_hover_text(format!("{ROUTE_FILE_RELOAD_HOVER} Your copy: {}",
+                                route_file.user_path().display())).clicked() {
+                                route_file.reload_requested = true;
+                            }
+                        });
+                    }
+                    if settings.graphics.route_profile != state.route_profile {
+                        settings.graphics.route_profile.clone_from(&state.route_profile);
                     }
 
                     // Open gump and paperdoll windows are redrawn in place from the new choice.

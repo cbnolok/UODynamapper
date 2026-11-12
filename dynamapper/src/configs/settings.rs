@@ -227,6 +227,8 @@ pub struct SectGraphics {
     pub anti_aliasing: AntiAliasingMode,
     pub art_texture_source: ClientTextureSource,
     pub land_texture_source: LandTextureSource,
+    /// The profile of the route file (runtime_specs/land/LandRoutes.kdl) in force, such as a season; empty for none.
+    pub route_profile: String,
     /// Which client's gumps and paperdoll the gump windows draw; like the art and land sources, never the preset's.
     pub gumps_and_paperdoll: GumpClient,
     pub cc_terrain_transitions: bool,

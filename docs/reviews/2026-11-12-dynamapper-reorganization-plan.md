@@ -29,9 +29,14 @@ models must not own render mesh handles or GPU textures.
   textures; Dynamapper's optional dynamic blending for Classic and EC/KR texture
   sources is unfinished. Preserve the placed artwork and logical tile identity.
   See [land textures and transitions](../dev_wiki/rendering/LAND_TEXTURES_AND_TRANSITIONS.md).
-- Missing EC terrain has explicit missing-texture behavior; do not silently
-  replace it with Classic terrain. Source formats and roles follow current
-  package contracts and executable evidence, not old filename-based guesses.
+- A land id the selected EC/KR source lacks follows an explicit, notified
+  chain: the other EC-layout source, then Classic, then the missing-texture
+  pattern, each fallback named in the log and a missing package in the window;
+  Classic selected never borrows EC/KR terrain. The user's route file
+  (LandRoutes.kdl) stands in front of the chain, with the same warnings for a
+  route not drawn as written. See `texture_cache/land/routing.rs`. Source
+  formats and roles follow current package contracts and executable evidence,
+  not old filename-based guesses.
 - Desired chunk targets, actually resident rendered chunks, and GPU-ready data
   are different states. Static collection, lights and picking must continue to
   use the right state during handoffs. Terrain picking must preserve assigned

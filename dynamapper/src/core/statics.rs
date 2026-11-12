@@ -20,6 +20,11 @@ pub struct LazyStaticsStore {
     package_chunk_height: u32,
     loaded_package_chunks: Vec<bool>,
     cached_blocks: Vec<Option<Box<[PackedStaticTile]>>>,
+    /// The item each static graphic draws (the route file's `item` routes), applied as a chunk loads; `None` draws
+    /// every graphic as it is.
+    item_routes: Option<Arc<[u16]>>,
+    /// Counts the changes of `item_routes`, so the caches built from the blocks are rebuilt.
+    item_routes_revision: u64,
 }
 
 impl LazyStaticsStore {
@@ -42,7 +47,25 @@ impl LazyStaticsStore {
             package_chunk_height,
             loaded_package_chunks: vec![false; num_package_chunks],
             cached_blocks,
+            item_routes: None,
+            item_routes_revision: 0,
         })
+    }
+
+    /// Routes the static graphics through `item_routes` from now on: when they change, the blocks read so far are
+    /// dropped and read again. Multis are not routed, as the Classic client does not switch them.
+    pub fn set_item_routes(&mut self, item_routes: Option<Arc<[u16]>>) {
+        if self.item_routes.as_deref() == item_routes.as_deref() {
+            return;
+        }
+        self.item_routes = item_routes;
+        self.item_routes_revision += 1;
+        self.loaded_package_chunks.fill(false);
+        self.cached_blocks.fill(None);
+    }
+
+    pub fn item_routes_revision(&self) -> u64 {
+        self.item_routes_revision
     }
 
     fn block_index(&self, block_x: u32, block_y: u32) -> Option<usize> {
@@ -105,7 +128,7 @@ impl LazyStaticsStore {
             let local_block_y = (tile.y_offset / 8) as u32;
             let block_slot = (local_block_x * PACKAGE_CHUNK_BLOCK_DIM + local_block_y) as usize;
             per_block_tiles[block_slot].push(PackedStaticTile {
-                graphic: tile.graphic,
+                graphic: route_static_graphic(self.item_routes.as_deref(), tile.graphic),
                 xy_packed: (tile.x_offset & 0x07) | ((tile.y_offset & 0x07) << 3),
                 z: tile.z,
                 hue: tile.hue,
@@ -130,5 +153,31 @@ impl LazyStaticsStore {
 
         self.loaded_package_chunks[package_chunk_index as usize] = true;
         Ok(())
+    }
+}
+
+/// The graphic a static draws under `item_routes`. Multis (graphics from `MULTI_STATIC_GRAPHIC_OFFSET`) keep theirs.
+fn route_static_graphic(item_routes: Option<&[u16]>, graphic: u16) -> u16 {
+    if graphic >= crate::core::multis::MULTI_STATIC_GRAPHIC_OFFSET {
+        return graphic;
+    }
+    item_routes.and_then(|routes| routes.get(usize::from(graphic)).copied()).unwrap_or(graphic)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn item_routes_switch_statics_but_not_multis() {
+        let mut routes = (0..=u16::MAX).collect::<Vec<_>>();
+        routes[0x0CA7] = 0x0C84;
+        routes[usize::from(crate::core::multis::MULTI_STATIC_GRAPHIC_OFFSET)] = 1;
+        let routes = Arc::<[u16]>::from(routes);
+        assert_eq!(route_static_graphic(Some(&routes), 0x0CA7), 0x0C84);
+        assert_eq!(route_static_graphic(Some(&routes), 0x0CA8), 0x0CA8);
+        assert_eq!(route_static_graphic(Some(&routes), crate::core::multis::MULTI_STATIC_GRAPHIC_OFFSET),
+            crate::core::multis::MULTI_STATIC_GRAPHIC_OFFSET);
+        assert_eq!(route_static_graphic(None, 0x0CA7), 0x0CA7);
     }
 }

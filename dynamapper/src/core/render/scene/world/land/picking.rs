@@ -81,7 +81,7 @@ fn update_terrain_cursor(
             let packed = atlas.read_cell(cell.x as u32, cell.y as u32)?;
             let mode = (packed.g >> 8) & 15;
             let ec = land.and_then(|land| land.routed_enhanced_land(u32::from(packed.r)));
-            let ec_present = mode == 2 && ec.is_some_and(|p| p.present_slot(u32::from(packed.r)).is_some_and(|slot| slot.width != 0 && slot.height != 0));
+            let ec_present = mode == 2 && ec.is_some_and(|(p, id)| p.present_slot(id).is_some_and(|slot| slot.width != 0 && slot.height != 0));
             Some(TerrainSample { height: f32::from(((packed.g & 255) as i16 - 128) as i8) * UO_Z_TO_WORLD_SCALE,
                 ec_present, liquid: ((packed.g >> 12) & 4) != 0 })
         };

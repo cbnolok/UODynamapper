@@ -108,6 +108,44 @@ impl MapPlane {
         &self.package_path
     }
 
+    /// Which of the land ids below `id_count` the map uses: the cells of every package chunk, read in parallel.
+    pub fn used_land_ids(&self, id_count: usize) -> eyre::Result<Vec<bool>> {
+        const TEXEL_BYTES: usize = std::mem::size_of::<PackedMapTexel>();
+        let chunk_count = self.size_blocks.width.div_ceil(PACKAGE_CHUNK_BLOCK_DIM)
+            * self.size_blocks.height.div_ceil(PACKAGE_CHUNK_BLOCK_DIM);
+        let threads = std::thread::available_parallelism().map_or(1, |threads| threads.get()) as u32;
+        let per_thread = chunk_count.div_ceil(threads);
+        let package = &self.package;
+        let parts = std::thread::scope(|scope| {
+            let workers = (0..threads).map(|thread| scope.spawn(move || -> eyre::Result<Vec<bool>> {
+                let mut used = vec![false; id_count];
+                for chunk in thread * per_thread..((thread + 1) * per_thread).min(chunk_count) {
+                    let bytes = package.read_file_by_dense_id_cow(chunk).map_err(|error| eyre::eyre!("{error}"))
+                        .wrap_err_with(|| format!("read map chunk {chunk}"))?;
+                    // A borrowed chunk may be unaligned: the texels are read from their bytes.
+                    if bytes.len() % TEXEL_BYTES != 0 {
+                        return Err(eyre::eyre!("invalid packed map chunk size {}", bytes.len()));
+                    }
+                    for texel in bytes.chunks_exact(TEXEL_BYTES) {
+                        let texel: PackedMapTexel = bytemuck::pod_read_unaligned(texel);
+                        if let Some(used) = used.get_mut(usize::from(texel.tile_id)) {
+                            *used = true;
+                        }
+                    }
+                }
+                Ok(used)
+            })).collect::<Vec<_>>();
+            workers.into_iter().map(|worker| worker.join().expect("map scan thread")).collect::<Vec<_>>()
+        });
+        let mut used = vec![false; id_count];
+        for part in parts {
+            for (used, part) in used.iter_mut().zip(part?) {
+                *used |= part;
+            }
+        }
+        Ok(used)
+    }
+
     pub fn block(&mut self, pos: MapBlockRelPos) -> Option<&MapBlock> {
         if pos.x >= self.size_blocks.width || pos.y >= self.size_blocks.height {
             return None;
