@@ -332,10 +332,14 @@ elevation_degrees = 60.50379
 # (client_lighting) in place of global_lighting: light level 0 by day (the client's identity; the former
 # global_lighting 1.08 and 1.14 are gone), 10 at night and 26 in caves, the levels ServUO sends, with the night
 # map at the client's strength and colour. Land shades per vertex like the client (terrain_shading_model 1,
-# the same code as the KR client's), and the per-pixel path's diffuse stays the client's half-Lambert: wrap 0.5
-# gives (N.L + 1) / 2, white, strength 1. The client draws no shadow for statics, items or foliage (only mobiles
-# get one), so the sprite shadow shape and the contact and projected shadows are off. The sun is the client's
-# terrain light, from the south at 45 degrees (azimuth 180, elevation 45), as in KR-like.
+# the same code as the KR client's), which reads none of the per-pixel land terms. The Land Shading option can
+# still switch Enhanced to per pixel (terrain_shading_model 0, shading_mode 1): that path reads the headroom
+# limit, and the fill colours, the rim power and the sharpness factor once their strengths are raised, so those
+# keep their values. It never reads diffuse_wrap (its diffuse is a plain Lambert, white, strength 1), the rim colour or the
+# headroom reserve (grade_params.y; it caps at a fixed 0.9): these are neutral, 0 and white. The client draws no
+# shadow for statics, items or foliage (only mobiles get one), so the sprite shadow shape and the contact and
+# projected shadows are off. The sun is the client's terrain light, from the south at 45 degrees (azimuth 180,
+# elevation 45), as in KR-like.
 
 [enhanced.morning]
 [enhanced.morning.client_lighting]
@@ -392,7 +396,7 @@ exposure = 1.05
 ambient_strength = 0.0
 grade_warm_color = [1.08, 0.98, 0.9]
 grade_cool_color = [0.82, 0.95, 1.05]
-grade_params = [0.9, 0.15, 0.35, 1.0]
+grade_params = [0.9, 0.0, 0.35, 1.0]
 grade_extra = [0.45, 1.2, 1.15, 0.9]
 gloom_params = [0.2, 0.008, 0.45]
 fog_color = [0.75, 0.85, 0.95, 0.5]
@@ -409,10 +413,10 @@ rim_strength = 0.0
 fill_strength = 0.0
 sharpness_factor = 1.5
 sharpness_mix = 0.0
-diffuse_wrap = 0.5
+diffuse_wrap = 0.0
 fill_sky_color = [0.5, 0.7, 1.0, 0.7]
 fill_ground_color = [0.28, 0.19, 0.12, 0.35]
-rim_color = [0.7, 0.85, 1.0, 2.5]
+rim_color = [1.0, 1.0, 1.0, 2.5]
 
 [enhanced.morning.sun]
 azimuth_degrees = 180.0
@@ -473,7 +477,7 @@ exposure = 1.1
 ambient_strength = 0.0
 grade_warm_color = [1.08, 0.98, 0.9]
 grade_cool_color = [0.82, 0.95, 1.05]
-grade_params = [1.0, 0.15, 0.4, 1.0]
+grade_params = [1.0, 0.0, 0.4, 1.0]
 grade_extra = [0.6, 1.25, 1.22, 1.0]
 gloom_params = [0.15, 0.007, 0.35]
 fog_color = [0.75, 0.85, 0.95, 0.5]
@@ -490,10 +494,10 @@ rim_strength = 0.0
 fill_strength = 0.0
 sharpness_factor = 1.5
 sharpness_mix = 0.0
-diffuse_wrap = 0.5
+diffuse_wrap = 0.0
 fill_sky_color = [0.48, 0.68, 1.0, 0.75]
 fill_ground_color = [0.3, 0.2, 0.12, 0.35]
-rim_color = [0.95, 0.95, 0.85, 2.7]
+rim_color = [1.0, 1.0, 1.0, 2.7]
 
 [enhanced.afternoon.sun]
 azimuth_degrees = 180.0
@@ -554,7 +558,7 @@ exposure = 1.0
 ambient_strength = 0.0
 grade_warm_color = [1.08, 0.98, 0.9]
 grade_cool_color = [0.82, 0.95, 1.05]
-grade_params = [1.1, 0.18, 0.45, 1.0]
+grade_params = [1.1, 0.0, 0.45, 1.0]
 grade_extra = [0.75, 1.2, 1.3, 0.8]
 gloom_params = [0.4, 0.01, 0.65]
 fog_color = [0.75, 0.85, 0.95, 0.5]
@@ -571,10 +575,10 @@ rim_strength = 0.0
 fill_strength = 0.0
 sharpness_factor = 1.5
 sharpness_mix = 0.0
-diffuse_wrap = 0.5
+diffuse_wrap = 0.0
 fill_sky_color = [0.4, 0.6, 1.0, 0.7]
 fill_ground_color = [0.2, 0.16, 0.14, 0.3]
-rim_color = [0.65, 0.85, 1.1, 3.0]
+rim_color = [1.0, 1.0, 1.0, 3.0]
 
 [enhanced.night.sun]
 azimuth_degrees = 180.0
@@ -635,7 +639,7 @@ exposure = 0.85
 ambient_strength = 0.0
 grade_warm_color = [1.08, 0.98, 0.9]
 grade_cool_color = [0.82, 0.95, 1.05]
-grade_params = [1.05, 0.2, 0.38, 1.0]
+grade_params = [1.05, 0.0, 0.38, 1.0]
 grade_extra = [0.65, 1.15, 1.28, 0.8]
 gloom_params = [0.65, 0.012, 0.75]
 fog_color = [0.75, 0.85, 0.95, 0.5]
@@ -652,10 +656,10 @@ rim_strength = 0.0
 fill_strength = 0.0
 sharpness_factor = 1.5
 sharpness_mix = 0.0
-diffuse_wrap = 0.5
+diffuse_wrap = 0.0
 fill_sky_color = [0.38, 0.6, 1.0, 0.65]
 fill_ground_color = [0.18, 0.14, 0.12, 0.28]
-rim_color = [0.55, 0.75, 1.05, 2.8]
+rim_color = [1.0, 1.0, 1.0, 2.8]
 
 [enhanced.cave.sun]
 azimuth_degrees = 180.0

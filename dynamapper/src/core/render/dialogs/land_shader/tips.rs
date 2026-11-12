@@ -73,13 +73,13 @@ pub(super) const LAND_RELIEF: &str =
 pub(super) const SOFT_LIGHTING: &str =
     "Adds soft light from the sky and lets sunlight reach further around slopes, lifting the shade. Per-pixel land shading only; strongest at night in UOD-Painterly.";
 pub(super) const HIGHLIGHTS: &str =
-    "Adds a shine where land reflects the sun and a thin light on slope edges. Per-pixel land shading only; almost invisible at the UOD-Painterly values.";
+    "Adds a shine where land reflects the sun and a thin light on slope edges. Per-pixel land shading only; at the UOD-Painterly values the shine is an even grey sheen on flat land by day, and the edge light is not visible.";
 pub(super) const KR_LAND_TEMPERATURE: &str =
     "Warms sunlit land and cools shaded land. KR shading with per-pixel land shading (UOD-Painterly); visible by day.";
 pub(super) const KR_LAND_RELIEF_SHADOW: &str =
     "Darkens land at the foot of height steps and along cliff banks. KR shading with per-pixel land shading (UOD-Painterly); visible by day.";
 pub(super) const KR_LAND_SHADOW_MOTTLE: &str =
-    "Breaks the shade on land into soft blotches. KR shading with per-pixel land shading; too faint to see even at its maximum.";
+    "Breaks the shade on land into soft blotches. KR shading with per-pixel land shading (UOD-Painterly). Faint on shaded slopes up to about 0.6, the UOD-Painterly value; past it the blotches darken and spread over sunlit land too, for a gloomy, cloud-shaded look at the maximum.";
 pub(super) const KR_MATERIAL_CONTRAST: &str =
     "Makes grass, rock and other land textures slightly richer and more varied from tile to tile. Needs the KR visual profile (UOD-Painterly), not on water; strongest by day.";
 pub(super) const KR_TRANSITION_GRIME: &str =
@@ -119,7 +119,7 @@ pub(super) const GRUNGE_STRENGTH: &str =
 pub(super) const BENT_NORMALS: &str =
     "Evens out the light on land below higher ground, such as the foot of a slope or a dip. Acts in Classic and with per-pixel land shading; on in Classic and UOD-Painterly.";
 pub(super) const GLOOM: &str =
-    "Darkens and cools shaded land at sea level for a moodier look. Enhanced and KR shading with per-pixel land shading (on in UOD-Painterly); clearest at night.";
+    "Darkens and cools shaded land at sea level for a moodier look. Enhanced and KR shading with per-pixel land shading (on in UOD-Painterly); clearest at night. It and the Gloom section are greyed out in Classic and with Client per-vertex land shading (KR-like, Enhanced), which never read it.";
 pub(super) const BLUR: &str =
     "Softens land textures slightly, in every render style, until zoomed far in. On in UOD-Painterly; land only.";
 
@@ -128,21 +128,21 @@ pub(super) const BLUR: &str =
 pub(super) const EXPOSURE: &str =
     "Brightens or darkens the whole frame before the tone curve. Needs Tonemap on; the presets raise it a little by day.";
 pub(super) const SPECULAR: &str =
-    "A shine where land reflects the sun. Per-pixel land shading only; invisible at the UOD-Painterly values.";
+    "A shine where land reflects the sun. With the UOD-Painterly sun, behind the scene, it lays an even grey sheen over all flat land, clear at the UOD-Painterly values by day. Per-pixel land shading only; it is greyed out in Classic and with Client per-vertex land shading (KR-like, Enhanced), which never read it.";
 pub(super) const FILL: &str =
-    "Soft light from the sky added to all land, lifting the shade. Per-pixel land shading only; strongest at night in UOD-Painterly.";
+    "Soft light from the sky added to all land, lifting the shade. Per-pixel land shading only; strongest at night in UOD-Painterly. It is greyed out in Classic and with Client per-vertex land shading (KR-like, Enhanced), which never read it.";
 pub(super) const SHARPNESS_FACTOR: &str =
-    "How crisp the line between sunlit and shaded land gets. Acts only through Sharpness Mix; per-pixel land shading only.";
+    "How crisp the line between sunlit and shaded land gets. Acts only through Sharpness Mix; greyed out in Classic and with Client per-vertex land shading (KR-like, Enhanced), which never read it.";
 pub(super) const SHARPNESS_MIX: &str =
-    "How much of the crisper sun and shade line is used. Visible in UOD-Painterly at night and in caves; per-pixel land shading only.";
+    "How much of the crisper sun and shade line is used. Visible in UOD-Painterly at night and in caves; greyed out in Classic and with Client per-vertex land shading (KR-like, Enhanced), which never read it.";
 pub(super) const BLUR_STRENGTH: &str =
     "How much of the blurred texture is mixed in. Needs Blur on.";
 pub(super) const BLUR_RADIUS: &str =
     "How far the land blur reaches, in screen pixels; the shader never blurs less than half a pixel. Needs Blur on.";
 pub(super) const RIM: &str =
-    "A thin light on land edges facing away from the sun. Enhanced (at a quarter) and KR per-pixel shading; barely visible at the UOD-Painterly values.";
+    "A thin light on land edges facing away from the sun. Enhanced (at a quarter) and KR per-pixel shading; it reaches only shaded slopes seen edge-on, so it is not visible at the UOD-Painterly values. It is greyed out in Classic and with Client per-vertex land shading (KR-like, Enhanced), which never read it.";
 pub(super) const DIFFUSE_WRAP: &str =
-    "Lets sunlight reach further around slopes, softening the edge of the shade. KR shading only; Enhanced ignores it.";
+    "Lets sunlight reach further around slopes, softening the edge of the shade. KR shading only, greyed out unless KR shading has per-pixel land shading, since Enhanced, Classic and the per-vertex model never read it; Enhanced's per-pixel light is a plain Lambert.";
 
 // --- Advanced: lighting colours ---
 
@@ -151,24 +151,24 @@ pub(super) const LIGHT_COLOR: &str =
 pub(super) const ATMOSPHERE_TINT: &str =
     "Colour that upright items fade toward with Atmosphere Tint, and the gloom colour when Gloom Tint is black. Visible in UOD-Painterly.";
 pub(super) const FILL_SKY: &str =
-    "Colour and strength (alpha) of the sky light from Soft Lighting. Per-pixel land shading only; its colour is hard to see.";
+    "Colour and strength (alpha) of the sky light from Soft Lighting. Per-pixel land shading only; its colour is hard to see. It is greyed out in Classic and with Client per-vertex land shading (KR-like, Enhanced), which never read it.";
 pub(super) const FILL_GROUND: &str =
-    "Colour and strength (alpha) of the soft light from below, which reaches only land facing down, such as cliff overhangs. Per-pixel land shading with Soft Lighting; barely visible even at full strength.";
+    "Colour and strength (alpha) of the soft light from below, which reaches only land facing down, such as cliff overhangs. Per-pixel land shading with Soft Lighting; barely visible even at full strength. It is greyed out in Classic and with Client per-vertex land shading (KR-like, Enhanced), which never read it.";
 pub(super) const RIM_COLOR: &str =
-    "Colour of the rim light on land; values above 1 brighten it. KR shading only (Enhanced ignores the colour); faint even at four times the preset.";
+    "Colour of the rim light on land; values above 1 brighten it. KR shading only, greyed out unless KR shading has per-pixel land shading, since Enhanced, Classic and the per-vertex model never read it; Enhanced's rim is white. Not visible at the UOD-Painterly rim, even at the maximum colour.";
 pub(super) const RIM_POWER: &str =
-    "How thin the rim light is: higher is thinner. It currently has no visible effect on land.";
+    "How thin the rim light is: higher is thinner, so less of each slope catches it. Faint only near 0.1, the widest rim. Per-pixel land shading with some Rim; greyed out in Classic and with Client per-vertex land shading (KR-like, Enhanced), which never read it.";
 
 // --- Advanced: colour grading ---
 
 pub(super) const GRADE_STRENGTH: &str =
     "How much of the colour grading is applied; 0 is the same as Color Grading off.";
 pub(super) const HEADROOM_RESERVE: &str =
-    "How far below white the KR light on land is capped, so sunlit ground does not bleach. KR shading with per-pixel land shading, by day, with Enable Headroom Limit on.";
+    "How far below white the KR light on land is capped, so sunlit ground does not bleach. KR shading with per-pixel land shading, by day, with Enable Headroom Limit on; greyed out unless KR shading has per-pixel land shading, since Enhanced, Classic and the per-vertex model never read it; Enhanced caps at a fixed 0.9.";
 pub(super) const FILL_CHROMA_TINT: &str =
-    "How much the sky light's colour tints land in shade. Enhanced and KR per-pixel shading; very faint.";
+    "How much the sky light's colour tints land in shade. Enhanced and KR per-pixel shading; very faint. It is greyed out in Classic and with Client per-vertex land shading (KR-like, Enhanced), which never read it.";
 pub(super) const HEADROOM_LIMIT: &str =
-    "Caps the light on land so sunlit ground keeps its colour instead of washing out. Enhanced and KR shading with per-pixel land shading, by day; turning it off brightens daylit land a lot.";
+    "Caps the light on land so sunlit ground keeps its colour instead of washing out. Enhanced and KR shading with per-pixel land shading, by day; turning it off brightens daylit land a lot. It is greyed out in Classic and with Client per-vertex land shading (KR-like, Enhanced), which never read it.";
 pub(super) const VIBRANCE: &str =
     "Boosts dull colours more than vivid ones. Needs Color Grading on.";
 pub(super) const SATURATION: &str =

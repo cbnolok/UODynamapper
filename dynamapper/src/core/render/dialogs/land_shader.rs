@@ -353,11 +353,7 @@ pub fn land_ui_system(
             // KR-land shading effects need KR shading; KR post effects need the KR
             // profile. Art (Objects) shading is independent of render style, so those
             // controls stay enabled in every style.
-            let gates = RenderStyleGates {
-                is_fragment: u.effects.shading_mode != 0,
-                is_kr_shading: u.effects.shading_mode == 2,
-                is_kr_profile: u.effects.post_process_profile == 2,
-            };
+            let gates = RenderStyleGates::of(&u);
 
             // Everything is visible at once, and each section is what a control acts on:
             // the whole frame, then land, then the two kinds of art side by side.
@@ -438,6 +434,11 @@ pub fn land_ui_system(
         .resizable(true)
         .vscroll(true)
         .show(ctx, |ui| {
+            // Controls the active land shading never reads are greyed out, as in the main window; their tooltips
+            // say why.
+            let gates = RenderStyleGates::of(&u);
+            let per_pixel = gates.is_per_pixel_land;
+            let kr_per_pixel = gates.is_kr_per_pixel_land();
 
             // ------------------------- Effects -------------------------
             ui.collapsing("Effects", |ui| {
@@ -533,7 +534,7 @@ pub fn land_ui_system(
                 if !is_classic {
                     // Gloom: fragment-only semantic
                     let toggled =
-                        toggle_u32(ui, "Gloom (fragment)", &mut u.lighting.enable_gloom, tips::GLOOM);
+                        toggle_en(ui, per_pixel, "Gloom (fragment)", &mut u.lighting.enable_gloom, tips::GLOOM);
                     if toggled {
                         if u.lighting.enable_gloom == 0 {
                             u.lighting.gloom_params[0] = 0.0;
@@ -607,38 +608,42 @@ pub fn land_ui_system(
                 ui.separator();
 
                 if !is_classic {
-                    changed |= slider_s(
+                    changed |= slider_en(
                         ui,
+                        per_pixel,
                         "Specular (fragment only)",
                         &mut u.land_lighting.specular_strength,
                         0.0..=0.4,
                         tips::SPECULAR,
                     );
-                    changed |= slider_s(
+                    changed |= slider_en(
                         ui,
+                        per_pixel,
                         "Fill (env) (fragment only)",
                         &mut u.land_lighting.fill_strength,
                         0.0..=1.0,
                         tips::FILL,
                     );
                     ui.separator();
-                    changed |= slider_s(
+                    changed |= slider_en(
                         ui,
+                        per_pixel,
                         "Sharpness Factor (fragment only)",
                         &mut u.land_lighting.sharpness_factor,
                         0.5..=4.0,
                         tips::SHARPNESS_FACTOR,
                     );
-                    changed |= slider_s(
+                    changed |= slider_en(
                         ui,
+                        per_pixel,
                         "Sharpness Mix (fragment only)",
                         &mut u.land_lighting.sharpness_mix,
                         0.0..=1.0,
                         tips::SHARPNESS_MIX,
                     );
                     ui.separator();
-                    changed |= slider_s(ui, "Rim (Enhanced and KR)", &mut u.land_lighting.rim_strength, 0.0..=0.5, tips::RIM);
-                    changed |= slider_s(ui, "Diffuse Wrap (KR only)", &mut u.land_lighting.diffuse_wrap, 0.0..=0.5, tips::DIFFUSE_WRAP);
+                    changed |= slider_en(ui, per_pixel, "Rim (Enhanced and KR)", &mut u.land_lighting.rim_strength, 0.0..=0.5, tips::RIM);
+                    changed |= slider_en(ui, kr_per_pixel, "Diffuse Wrap (KR only)", &mut u.land_lighting.diffuse_wrap, 0.0..=0.5, tips::DIFFUSE_WRAP);
                 } else {
                     // In Classic mode show a helper note.
                     ui.label("Fragment-only intensities hidden in Classic (vertex) mode.");
@@ -664,14 +669,12 @@ pub fn land_ui_system(
 
                 ui.separator();
 
-                {
+                ui.add_enabled_ui(per_pixel, |ui| {
                     let mut v = u.land_lighting.fill_sky_color;
                     if color4(ui, "Fill Sky (rgb + strength.a) (fragment only)", &mut v, tips::FILL_SKY) {
                         u.land_lighting.fill_sky_color = v;
                         changed = true;
                     }
-                }
-                {
                     let mut v = u.land_lighting.fill_ground_color;
                     if color4(
                         ui,
@@ -682,20 +685,20 @@ pub fn land_ui_system(
                         u.land_lighting.fill_ground_color = v;
                         changed = true;
                     }
-                }
+                });
 
                 ui.separator();
 
                 // The rim colour is a brightening tint and its alpha a power above 1, both out of
                 // the colour picker's 0..1, so they are edited as numbers and a slider.
-                {
+                ui.add_enabled_ui(kr_per_pixel, |ui| {
                     let mut rgb = u.land_lighting.rim_color.truncate();
                     if hdr_rgb(ui, "Rim Color (KR only)", &mut rgb, tips::RIM_COLOR) {
                         u.land_lighting.rim_color = rgb.extend(u.land_lighting.rim_color.w);
                         changed = true;
                     }
-                }
-                changed |= slider_s(ui, "Rim Power (fragment only)", &mut u.land_lighting.rim_color.w, RIM_POWER_RANGE, tips::RIM_POWER);
+                });
+                changed |= slider_en(ui, per_pixel, "Rim Power (fragment only)", &mut u.land_lighting.rim_color.w, RIM_POWER_RANGE, tips::RIM_POWER);
 
                 if changed {
                     u.dirty = true;
@@ -714,15 +717,17 @@ pub fn land_ui_system(
                         0.0..=2.0,
                         tips::GRADE_STRENGTH,
                     );
-                    changed |= slider_s(
+                    changed |= slider_en(
                         ui,
+                        kr_per_pixel,
                         "Headroom Reserve",
                         &mut u.lighting.grade_params[1],
                         0.0..=0.5,
                         tips::HEADROOM_RESERVE,
                     );
-                    changed |= slider_s(
+                    changed |= slider_en(
                         ui,
+                        per_pixel,
                         "Fill Chroma Tint",
                         &mut u.lighting.grade_params[2],
                         0.0..=1.0,
@@ -733,7 +738,10 @@ pub fn land_ui_system(
                     {
                         let mut headroom_on = u.lighting.grade_params[3] >= 0.5;
                         let before = headroom_on;
-                        with_tip(ui.checkbox(&mut headroom_on, "Enable Headroom Limit"), tips::HEADROOM_LIMIT);
+                        with_tip(
+                            ui.add_enabled(per_pixel, egui::Checkbox::new(&mut headroom_on, "Enable Headroom Limit")),
+                            tips::HEADROOM_LIMIT,
+                        );
                         if headroom_on != before {
                             u.lighting.grade_params[3] = if headroom_on { 1.0 } else { 0.0 };
                             changed = true;
@@ -784,9 +792,10 @@ pub fn land_ui_system(
                 if u.effects.shading_mode == 0 {
                     ui.label("Gloom is fragment-only and hidden in Classic mode.");
                 } else {
-                    changed |= slider_s(ui, "Amount", &mut u.lighting.gloom_params[0], 0.0..=1.0, tips::GLOOM_AMOUNT);
+                    changed |= slider_en(ui, per_pixel, "Amount", &mut u.lighting.gloom_params[0], 0.0..=1.0, tips::GLOOM_AMOUNT);
                     changed |= with_tip(
-                        ui.add(
+                        ui.add_enabled(
+                            per_pixel,
                             egui::Slider::new(&mut u.lighting.gloom_params[1], GLOOM_FADE_HEIGHT_RANGE)
                                 .logarithmic(true)
                                 .text("Height Fade Height (world units)"),
@@ -794,7 +803,7 @@ pub fn land_ui_system(
                         tips::GLOOM_FADE_HEIGHT,
                     )
                     .changed();
-                    changed |= slider_s(ui, "Shadow Bias", &mut u.lighting.gloom_params[2], 0.0..=1.0, tips::GLOOM_SHADOW_BIAS);
+                    changed |= slider_en(ui, per_pixel, "Shadow Bias", &mut u.lighting.gloom_params[2], 0.0..=1.0, tips::GLOOM_SHADOW_BIAS);
                 }
                 if changed {
                     u.dirty = true;
@@ -802,13 +811,13 @@ pub fn land_ui_system(
 
                 // Gloom color + desaturation (KR-style enhancement)
                 let mut changed_color = false;
-                {
+                ui.add_enabled_ui(per_pixel, |ui| {
                     let mut v = u.lighting.gloom_color;
                     if color4(ui, "Gloom Tint (rgb + desat.a) (KR)", &mut v, tips::GLOOM_TINT) {
                         u.lighting.gloom_color = v;
                         changed_color = true;
                     }
-                }
+                });
                 if changed_color {
                     u.dirty = true;
                 }
@@ -834,9 +843,9 @@ pub fn land_ui_system(
                 // KR-like and Enhanced draw the lights into the night composite's light buffer, not as decals.
                 let decals = u.client_lighting.is_none();
                 changed |= slider_en(ui, decals, "Static Light Decals", &mut u.effects.static_light_decal_visibility, 0.0..=2.0, tips::STATIC_LIGHT_DECALS);
-                changed |= slider_s(ui, "KR Land Temperature", &mut u.effects.kr_land_temperature_strength, 0.0..=1.5, tips::KR_LAND_TEMPERATURE);
-                changed |= slider_s(ui, "KR Land Relief Shadow", &mut u.effects.kr_land_relief_shadow_strength, 0.0..=1.5, tips::KR_LAND_RELIEF_SHADOW);
-                changed |= slider_s(ui, "KR Land Shadow Mottle", &mut u.effects.kr_land_shadow_mottle_strength, 0.0..=1.5, tips::KR_LAND_SHADOW_MOTTLE);
+                changed |= slider_en(ui, kr_per_pixel, "KR Land Temperature", &mut u.effects.kr_land_temperature_strength, 0.0..=1.5, tips::KR_LAND_TEMPERATURE);
+                changed |= slider_en(ui, kr_per_pixel, "KR Land Relief Shadow", &mut u.effects.kr_land_relief_shadow_strength, 0.0..=1.5, tips::KR_LAND_RELIEF_SHADOW);
+                changed |= slider_en(ui, kr_per_pixel, "KR Land Shadow Mottle", &mut u.effects.kr_land_shadow_mottle_strength, 0.0..=1.5, tips::KR_LAND_SHADOW_MOTTLE);
                 changed |= slider_s(ui, "KR Material Contrast", &mut u.effects.kr_land_material_contrast_strength, 0.0..=1.5, tips::KR_MATERIAL_CONTRAST);
                 changed |= toggle_u32(ui, "KR Transition Grime", &mut u.effects.enable_kr_transition_grime, tips::KR_TRANSITION_GRIME);
                 changed |= slider_s(ui, "KR Transition Grime Strength", &mut u.effects.kr_transition_grime_strength, 0.0..=1.0, tips::KR_TRANSITION_GRIME_STRENGTH);
@@ -982,11 +991,33 @@ fn push_uniforms_if_dirty(
 // avoiding overlapping &mut borrows inside the helper.
 
 /// Which controls the active render style consumes.
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 struct RenderStyleGates {
     is_fragment: bool,
     is_kr_shading: bool,
     is_kr_profile: bool,
+    /// A fragment style with smooth per-pixel land shading. Only it reads the fill, rim, specular, sharpness, gloom
+    /// and headroom terms: Classic and the clients' per-vertex model (KR-like, Enhanced) read none of them.
+    is_per_pixel_land: bool,
+}
+
+impl RenderStyleGates {
+    fn of(u: &UniformState) -> Self {
+        let is_fragment = u.effects.shading_mode != 0;
+        Self {
+            is_fragment,
+            is_kr_shading: u.effects.shading_mode == 2,
+            is_kr_profile: u.effects.post_process_profile == 2,
+            is_per_pixel_land: is_fragment
+                && u.land_lighting.terrain_shading_model == TERRAIN_SHADING_SMOOTH_PER_PIXEL,
+        }
+    }
+
+    /// KR shading with per-pixel land shading: the only land shading that reads the diffuse wrap, the rim colour,
+    /// the headroom reserve and the KR land temperature, relief shadow and shadow mottle.
+    fn is_kr_per_pixel_land(self) -> bool {
+        self.is_kr_shading && self.is_per_pixel_land
+    }
 }
 
 /// Titled section of the basic controls, with a small caption stating which part of the
@@ -1107,7 +1138,7 @@ fn terrain_controls(ui: &mut egui::Ui, u: &mut UniformState, gates: RenderStyleG
         }
     });
     // The client per-vertex model shades land with its grey alone; these controls only reach the per-pixel model.
-    let per_pixel = gates.is_fragment && u.land_lighting.terrain_shading_model == TERRAIN_SHADING_SMOOTH_PER_PIXEL;
+    let per_pixel = gates.is_per_pixel_land;
     // Every shading mode scales its sun light by this, Classic's vertex Lambert included; the client per-vertex model
     // uses it only on flat water.
     changed |= slider_s(ui, "Sun Strength", &mut u.land_lighting.diffuse_strength, 0.0..=2.0, tips::SUN_STRENGTH);
@@ -1131,7 +1162,7 @@ fn terrain_controls(ui: &mut egui::Ui, u: &mut UniformState, gates: RenderStyleG
         changed = true;
     }
 
-    let kr_per_pixel = gates.is_kr_shading && per_pixel;
+    let kr_per_pixel = gates.is_kr_per_pixel_land();
     changed |= slider_en(ui, kr_per_pixel, "KR Land Temperature", &mut u.effects.kr_land_temperature_strength, 0.0..=1.5, tips::KR_LAND_TEMPERATURE);
     changed |= slider_en(ui, kr_per_pixel, "KR Land Relief Shadow", &mut u.effects.kr_land_relief_shadow_strength, 0.0..=1.5, tips::KR_LAND_RELIEF_SHADOW);
     changed |= slider_en(ui, kr_per_pixel, "KR Land Shadow Mottle", &mut u.effects.kr_land_shadow_mottle_strength, 0.0..=1.5, tips::KR_LAND_SHADOW_MOTTLE);
@@ -1562,6 +1593,40 @@ mod tests {
                     assert!(RIM_POWER_RANGE.contains(&power), "{power}");
                 }
             }
+        }
+    }
+
+    /// Only UOD-Painterly shades land per pixel by default, so only it enables the per-pixel controls; Enhanced
+    /// switched to per pixel enables them but not the KR-only ones.
+    #[test]
+    fn per_pixel_land_controls_follow_the_style_and_its_land_shading() {
+        let factory = include_str!("../../../../assets/defaults/shader_presets.toml");
+        let presets: LandShaderModePresets =
+            uocf::utils::config_toml::parse_strict("shader_presets.toml", factory).expect("bundled");
+        let gates_of = |slot: &LandMaterialUniformsPresets, terrain_shading_model: u32| {
+            let mut u = uniform_state();
+            u.effects = slot.effects;
+            u.land_lighting = slot.land_lighting;
+            u.land_lighting.terrain_shading_model = terrain_shading_model;
+            RenderStyleGates::of(&u)
+        };
+        let groups = [
+            (&presets.classic, false, false),
+            (&presets.enhanced, false, false),
+            (&presets.kr, false, false),
+            (&presets.painterly, true, true),
+        ];
+        for (group, per_pixel, kr_per_pixel) in groups {
+            for slot in [&group.morning, &group.afternoon, &group.night, &group.cave] {
+                let gates = gates_of(slot, slot.land_lighting.terrain_shading_model);
+                assert_eq!(gates.is_per_pixel_land, per_pixel, "{gates:?}");
+                assert_eq!(gates.is_kr_per_pixel_land(), kr_per_pixel, "{gates:?}");
+            }
+        }
+        let enhanced = &presets.enhanced;
+        for slot in [&enhanced.morning, &enhanced.afternoon, &enhanced.night, &enhanced.cave] {
+            let gates = gates_of(slot, TERRAIN_SHADING_SMOOTH_PER_PIXEL);
+            assert!(gates.is_per_pixel_land && !gates.is_kr_per_pixel_land(), "{gates:?}");
         }
     }
 

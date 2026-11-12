@@ -1163,8 +1163,12 @@ mod tests {
         }
     }
 
-    /// The clients' half-Lambert, (N.L + 1) / 2: the land shader's wrap gives N.L * (1 - wrap) + wrap.
-    const CLIENT_HALF_LAMBERT_WRAP: f32 = 0.5;
+    /// Enhanced's per-pixel land light is a plain Lambert (shade_mode1_enhanced_fragment): only KR shading reads the
+    /// wrap, N.L * (1 - wrap) + wrap, so Enhanced keeps it at its neutral value, as it does the rim colour and the
+    /// headroom reserve, which only KR shading reads too.
+    const ENHANCED_UNREAD_DIFFUSE_WRAP: f32 = 0.0;
+    const ENHANCED_UNREAD_RIM_COLOR: Vec3 = Vec3::ONE;
+    const ENHANCED_UNREAD_HEADROOM_RESERVE: f32 = 0.0;
     const CLIENT_DIFFUSE_STRENGTH: f32 = 1.0;
 
     #[test]
@@ -1204,7 +1208,9 @@ mod tests {
                 assert_eq!(land.rim_strength, 0.0);
                 assert_eq!(land.fill_strength, 0.0);
                 assert_eq!(land.sharpness_mix, 0.0);
-                assert_eq!(land.diffuse_wrap, CLIENT_HALF_LAMBERT_WRAP);
+                assert_eq!(land.diffuse_wrap, ENHANCED_UNREAD_DIFFUSE_WRAP);
+                assert_eq!(land.rim_color.truncate(), ENHANCED_UNREAD_RIM_COLOR);
+                assert_eq!(lighting.grade_params.y, ENHANCED_UNREAD_HEADROOM_RESERVE);
                 assert_eq!(land.diffuse_strength, CLIENT_DIFFUSE_STRENGTH);
             }
         }
