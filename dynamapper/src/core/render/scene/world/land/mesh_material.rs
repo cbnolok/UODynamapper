@@ -166,7 +166,7 @@ pub struct LandEffectsUniform {
     pub sharpening_amount: f32,
     /// Mix factor (0..1) with blurred albedo.
     pub blur_strength: f32,
-    /// Blur radius in screen pixels (small values like 0.5..8.0).
+    /// Blur radius in screen pixels, `BLUR_RADIUS_MIN_PIXELS..=BLUR_RADIUS_MAX_PIXELS`.
     pub blur_radius: f32,
 
     // --- Animated water (vec4 slot 2) ---
@@ -316,11 +316,11 @@ pub struct GlobalLightingUniforms {
     // configs/shader_presets.rs for cached files). Its trailing vec4 slot is gone.
 }
 
-/// Default KR tonemap pre-scale. The old hardcoded value was ≈ 0.09
-/// (middle_gray(0.18) / luminance(2.0)), which crushed KR ~11x darker than EC.
-/// Defaulted near EC's own pre-scale (~1.0) so KR presets are legible out of the
-/// box; the "KR Tonemap Brightness" knob can still lower it for a moodier look.
-pub const DEFAULT_KR_TONEMAP_GAIN: f32 = 0.9;
+/// The smallest texture blur radius in screen pixels: the shader blurs a smaller one exactly as this one
+/// (`BLUR_RADIUS_MIN_PIXELS` in land/sampling.wesl).
+pub const BLUR_RADIUS_MIN_PIXELS: f32 = 0.5;
+/// The largest texture blur radius the Blur Radius slider offers, in screen pixels.
+pub const BLUR_RADIUS_MAX_PIXELS: f32 = 8.0;
 
 /// `tone_curve`: the visual profile's curve (Reinhard, EC filmic or KR filmic), with `exposure` inside it.
 pub const TONE_CURVE_PROFILE: u32 = 0;

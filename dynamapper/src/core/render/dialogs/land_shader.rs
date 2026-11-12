@@ -616,7 +616,7 @@ pub fn land_ui_system(
                         ui,
                         "Blur Radius (screen pixels) (fragment only)",
                         &mut u.effects.blur_radius,
-                        0.5..=8.0,
+                        BLUR_RADIUS_MIN_PIXELS..=BLUR_RADIUS_MAX_PIXELS,
                     );
 
                     changed |= slider_s(ui, "Rim (KR only)", &mut u.land_lighting.rim_strength, 0.0..=0.5);

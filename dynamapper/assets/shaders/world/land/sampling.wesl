@@ -41,6 +41,8 @@ const LAND_PAGE_LOOKUP_TILE_CAPACITY: u32 = 16384u;
 const LAND_PAGE_LOOKUP_ROLE_DETAIL: u32 = 1u;
 const LAND_PAGE_LOOKUP_ROLE_MASK: u32 = 2u;
 const LAND_PAGE_LOOKUP_ROLE_NORMAL: u32 = 3u;
+// The smallest texture blur radius in screen pixels: a smaller one blurs exactly as this one does.
+const BLUR_RADIUS_MIN_PIXELS: f32 = 0.5;
 
 // Derivatives of unwrapped world XZ, captured before per-material control flow.
 struct LandGradients {
@@ -474,9 +476,9 @@ fn blurred_albedo(uv: vec2<f32>, tile: TileUniform, radius_in_pixels: f32, world
   else { fw = fwidth(uv); }
   let px_uv = max(fw.x, fw.y) + 1e-6;
 
-  // Ensure at least half-pixel radius so it's *noticeable* even at low zoom
-  let min_px = 0.5;
-  let r = max(radius_in_pixels, min_px) * px_uv;
+  // Ensure at least half-pixel radius so it's *noticeable* even at low zoom.
+  // The Blur Radius slider starts at this floor (BLUR_RADIUS_MIN_PIXELS in mesh_material.rs).
+  let r = max(radius_in_pixels, BLUR_RADIUS_MIN_PIXELS) * px_uv;
 
   // Keep LOD stable for all taps
   var ddx_uv: vec2<f32>;

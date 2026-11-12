@@ -1130,6 +1130,20 @@ mod tests {
         }
     }
 
+    #[test]
+    fn bundled_blur_radius_is_on_the_slider_from_the_shader_floor() {
+        use crate::core::render::scene::world::land::mesh_material::{BLUR_RADIUS_MAX_PIXELS, BLUR_RADIUS_MIN_PIXELS};
+        for text in [BUNDLED_FACTORY_PRESETS, BUNDLED_LAND_SETTINGS] {
+            let presets = parse(text).expect("bundled");
+            for group in [&presets.classic, &presets.enhanced, &presets.kr, &presets.painterly] {
+                for slot in [&group.morning, &group.afternoon, &group.night, &group.cave] {
+                    let radius = slot.effects.blur_radius;
+                    assert!((BLUR_RADIUS_MIN_PIXELS..=BLUR_RADIUS_MAX_PIXELS).contains(&radius), "{radius}");
+                }
+            }
+        }
+    }
+
     /// The clients' half-Lambert, (N.L + 1) / 2: the land shader's wrap gives N.L * (1 - wrap) + wrap.
     const CLIENT_HALF_LAMBERT_WRAP: f32 = 0.5;
     const CLIENT_DIFFUSE_STRENGTH: f32 = 1.0;
