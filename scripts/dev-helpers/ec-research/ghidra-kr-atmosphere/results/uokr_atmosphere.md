@@ -948,14 +948,66 @@ else:
 - 0x0043f940 creates the effect's targets at the back buffer's size (+0xf0 / +0xf4, from 0x006f02e0), retrying at
   1/2, 1/3 and so on if that fails. S (+0x264) is therefore **screen-sized**.
 - 0x006f0560 attaches the back buffer's depth-stencil (+0xfc) to every post-process target group, so the shadow
-  quads are depth-tested against the scene drawn before them (*probable* that the shadow batch tests z). The
-  caster hides its own shadow (the quad is ε behind it), and the shadow lands only on what lies behind the
-  caster's plane.
+  quads are depth-tested against the scene drawn before them (the batch keeps the default z test; see **Depth
+  order** below). The caster hides its own shadow (the quad is ε behind it, with the caster's own priority bias),
+  and the shadow lands only on what lies behind the caster's priority depth.
 - `Render` 0x0043fe10 clears S to (1, 1, 1, 1), draws the list +0x134 (count +0x13a) through 0x00856600 into
   +0x264, then composites with `UOShadowShader`. That the item shadows reach list +0x134 is *probable*.
 - **Order:** `InitPostProcessEffects` 0x0041ecd0 appends the shadow effect (0x00c4a02c, ctor at 0x0041edd3) before
   the lighting effect (0x00c4a010, ctor at 0x0041ee8e). The append order is *confirmed*; that the effects run in
   array order is *probable*. So the shadow composite comes **before** the lighting composite.
+
+**Depth order** (*confirmed* from the assembly, 2026-11-12). The base point alone gives no z term (V . U = 0), but
+every sprite also carries a bias along V, the descriptor's +0x60..+0x68, which `BuildSpriteBatch` 0x004454c0 adds to
+each corner:
+
+- `UOObjectComponentSprite` 0x00435120 computes it at 0x0043518a..0x00435216 and stores it in the caster at
+  0x00435377..0x0043537f:
+
+  ```
+  b = -0.001 A - 1e-5 B              -0.001 at 0x00b4f310, 1e-5 at 0x00b86de8
+  A = UOObject vfunc +0xdc (0x00561c00) = z + 0x80 + (vfunc +0xa8 (+0x3c, the height) > 0)
+      + (vfunc +0xcc: flags & 0x8000 and not +0xd0) - (vfunc +0xb8: +0x38 & 1, Background)
+  B = UOObject vfunc +0xe4 (0x00561c70) = +0x70         an ordinal; what fills it is unknown
+  bias = b * V                       V = [[0x00c9dc70] + 0xc .. + 0x14]
+  ```
+
+  A is the classic draw priority (z, +1 with height, -1 for Background). A diagonal step, -0.0354 along V, therefore
+  weighs 35.4 priority units.
+- The same function writes **the same bias** into the shadow descriptor returned by 0x00440e50 (call 0x004353cd,
+  stores 0x004353e4..0x004353ea); the refresh path 0x00435630 recomputes it from the caster and stores it at
+  0x00435760..0x0043576a. With the placement's ε along V, the shadow sorts at its caster's priority depth plus 1e-4
+  (0.1 priority units), not at the ground under it. The wall shift adds 0.0707, two diagonal steps.
+- The shadow goes into the chunk's batch slot 3 (`0x0043cf40` with EAX = 3, at 0x00435402), the caster into the slot
+  at component +0x38.
+- Terrain (0x00448de0, from `BuildTerrainMesh` 0x0044b7f0) biases each vertex by V * (-0.001 (z' + 127) + 2e-5),
+  with z' the lower of the vertex's corner and its south corner: a terrain cell sits about one priority unit behind
+  a sprite at the same z and cell.
+- The shadow's +0x38 (0x41) has no z-buffer bit (0x30), so `BuildSpriteBatch` attaches no `NiZBufferProperty` and the
+  default applies (test on).
+
+**Stencil** (*confirmed*). `NiStencilProperty` flags: bit 0 enable, bits 1-3 fail, 4-6 z-fail, 7-9 pass action
+(0 KEEP, 1 ZERO, 2 REPLACE, 3 INCREMENT), bits 12-15 test (0 NEVER, 1 LESS, 2 EQUAL, 3 LEQUAL, 4 GREATER,
+5 NOTEQUAL, 6 GEQUAL, 7 ALWAYS); the default ctor 0x00415700 leaves it off (0x4180, reference 0, mask 0xffffffff).
+0x00440a50 picks one of four cached properties from +0x38 bit 6 and the Roof|Bridge tileart flags (0x10000400):
+
+| Global | +0x38 bit 6 | Roof or Bridge | Test, reference | Pass |
+|---|---|---|---|---|
+| 0x00c933f0 | set (shadows, 0x41) | no | ALWAYS, 1 | REPLACE |
+| 0x00c93410 | set | yes | ALWAYS, 0 | ZERO |
+| 0x00c933e8 | clear (sprites) | no | GREATER, 0xff | INCREMENT |
+| 0x00c93414 | clear | yes | GREATER, 0xff | ZERO |
+
+Mobile shadows (0x00425180, from 0x004278b0) take ALWAYS, 1, REPLACE too. The stencil serves the circle of
+transparency, `UOStencilEffect`: `BuildFirstCircleShape` 0x00416db0 writes 0xff (ALWAYS, z-fail REPLACE, z test on
+and write off, alpha test) and `BuildSecondCircleShape` 0x00417480 draws where it is 0xff (EQUAL, z off, blended).
+Sprites testing GREATER 0xff fail inside the circle. Shadows test ALWAYS, so the stencil never removes a shadow
+fragment and takes no part in which receivers are shadowed. Whether any later pass reads the shadows' 1 is not traced.
+
+**Main scene pass** 0x00459e00 draws the render groups in this order: 0x00c931a0 (terrain), 0x00c931a4, 0x00c931ac,
+0x00c931a8, 0x00c931b8 (mobiles), then optionally 0x00c931bc (weather) and 0x00c931c4 (foliage), then 0x00c931cc. When
+its +0x88 is set, a pre-pass first draws 0x00c931a4, 0x00c931ac and 0x00c931c8 (the circle), then 0x00457aa0(0, 4).
+The contents of 0x00c931a4 / 0x00c931ac / 0x00c931a8 are not identified.
 
 **Mobile shadow** (*confirmed*, KR and EC alike):
 
