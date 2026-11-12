@@ -157,6 +157,19 @@ const SUN_AZIMUTH_RANGE_DEGREES: std::ops::RangeInclusive<f32> = 0.0..=360.0;
 /// "Sun Elevation" slider: from the horizon to overhead, in degrees.
 const SUN_ELEVATION_RANGE_DEGREES: std::ops::RangeInclusive<f32> = 0.0..=90.0;
 
+/// Channels of a colour that may brighten as well as tint (light, rim, split-tone colours). egui's colour picker
+/// clamps an edit to 0..1, so these colours are edited as numbers in this range instead.
+const HDR_COLOR_RANGE: std::ops::RangeInclusive<f32> = 0.0..=2.0;
+const HDR_COLOR_DRAG_SPEED: f64 = 0.005;
+/// "Rim Power" slider. The shader never uses less than the floor (`max(0.1, rim_color.a)` in land/shading.wesl);
+/// the presets use 2.5 to 3.
+const RIM_POWER_RANGE: std::ops::RangeInclusive<f32> = 0.1..=8.0;
+/// Gloom "Height Fade" slider in world units: land spans about -11.6..+11.5 (Z x 4/44), and the presets use
+/// 0.005 to 0.01, so the slider is logarithmic to reach both ends.
+const GLOOM_FADE_HEIGHT_RANGE: std::ops::RangeInclusive<f32> = 0.0..=12.0;
+/// The fog pass draws no fog while both fog densities are below this (`fog_pass.wesl`), cloud noise included.
+const FOG_DENSITY_MIN: f32 = 0.001;
+
 const PRESET_PERIOD_BUTTONS: [(&str, ShaderPresetPeriod); 4] = [
     ("Morning", ShaderPresetPeriod::Morning),
     ("Afternoon", ShaderPresetPeriod::Afternoon),
@@ -476,13 +489,10 @@ pub fn land_ui_system(
             ui.horizontal(|ui| {
                 let mode = u.effects.shading_mode;
                 ui.strong("Normals:");
-                // Classic always uses geometric normals — disable selector.
+                // Classic shades with geometric normals whatever this value is, so the selector is
+                // disabled there; the stored value is kept for the fragment styles.
                 if mode == 0 {
                     ui.add_enabled(false, egui::Label::new("Geometric (fixed)"));
-                    if u.effects.normal_mode != 0 {
-                        u.effects.normal_mode = 0;
-                        u.dirty = true;
-                    }
                 } else {
                     let mut nm = u.effects.normal_mode;
                     if ui.selectable_label(nm == 0, "Geometric").clicked() {
@@ -505,15 +515,16 @@ pub fn land_ui_system(
             ui.collapsing("Toggles", |ui| {
                 let mut changed = false;
 
-                // Tonemap apply in ANY shading mode (keep available always)
+                // Tonemap, colour grading, bent normals (vertex shader) and blur (texture
+                // sampling) apply in ANY shading mode (keep available always)
                 changed |= toggle_u32(ui, "Tonemap", &mut u.lighting.enable_tonemap);
+                changed |= toggle_u32(ui, "Color Grading", &mut u.lighting.enable_grading);
+                changed |= toggle_u32(ui, "Bent normals", &mut u.land_lighting.enable_bent);
+                changed |= toggle_u32(ui, "Blur", &mut u.effects.enable_blur);
 
-                // Color grading & fragment-only features only when in fragment modes
+                // Gloom is applied by the fragment shading modes only
                 let is_classic = u.effects.shading_mode == 0;
                 if !is_classic {
-                    changed |= toggle_u32(ui, "Color Grading (fragment)", &mut u.lighting.enable_grading);
-                    changed |= toggle_u32(ui, "Bent normals (fragment)", &mut u.land_lighting.enable_bent);
-
                     // Gloom: fragment-only semantic
                     let toggled =
                         toggle_u32(ui, "Gloom (fragment)", &mut u.lighting.enable_gloom);
@@ -525,9 +536,6 @@ pub fn land_ui_system(
                         }
                     }
                     changed |= toggled;
-
-                    // Blur is fragment-only
-                    changed |= toggle_u32(ui, "Blur (fragment)", &mut u.effects.enable_blur);
                 } else {
                     // For classic path we can optionally display the state but disabled,
                     // but to keep the UI clean we simply hide fragment-only toggles here.
@@ -557,16 +565,10 @@ pub fn land_ui_system(
                 // Ambient always shown
                 changed |= slider_s(ui, "Ambient", &mut u.lighting.ambient_strength, 0.0..=1.5);
 
-                // Diffuse is meaningful only for fragment modes. For Classic (vertex)
-                // the shader uses the precomputed vertex Lambert (old behavior) and
-                // we intentionally hide the diffuse control to avoid confusion.
+                // Diffuse scales the sun light in every mode: Classic (vertex) multiplies its
+                // precomputed vertex Lambert by it.
                 let is_classic = u.effects.shading_mode == 0;
-                if !is_classic {
-                    changed |= slider_s(ui, "Diffuse", &mut u.land_lighting.diffuse_strength, 0.0..=2.0);
-                } else {
-                    // Show a small label to explain why Diffuse is hidden
-                    ui.label("Diffuse slider hidden in Classic mode (vertex shading).");
-                }
+                changed |= slider_s(ui, "Diffuse", &mut u.land_lighting.diffuse_strength, 0.0..=2.0);
 
                 // Exposure lives in lighting UBO
                 changed |= slider_s(
@@ -574,6 +576,22 @@ pub fn land_ui_system(
                     "Exposure (Tonemap)",
                     &mut u.lighting.exposure,
                     EXPOSURE_RANGE,
+                );
+
+                ui.separator();
+
+                // Blur parameters (texture sampling, every mode)
+                changed |= slider_s(
+                    ui,
+                    "Blur Strength",
+                    &mut u.effects.blur_strength,
+                    0.0..=0.5,
+                );
+                changed |= slider_s(
+                    ui,
+                    "Blur Radius (screen pixels)",
+                    &mut u.effects.blur_radius,
+                    BLUR_RADIUS_MIN_PIXELS..=BLUR_RADIUS_MAX_PIXELS,
                 );
 
                 ui.separator();
@@ -605,21 +623,7 @@ pub fn land_ui_system(
                         0.0..=1.0,
                     );
                     ui.separator();
-                    // Blur parameters (fragment-only)
-                    changed |= slider_s(
-                        ui,
-                        "Blur Strength (fragment only)",
-                        &mut u.effects.blur_strength,
-                        0.0..=0.5,
-                    );
-                    changed |= slider_s(
-                        ui,
-                        "Blur Radius (screen pixels) (fragment only)",
-                        &mut u.effects.blur_radius,
-                        BLUR_RADIUS_MIN_PIXELS..=BLUR_RADIUS_MAX_PIXELS,
-                    );
-
-                    changed |= slider_s(ui, "Rim (KR only)", &mut u.land_lighting.rim_strength, 0.0..=0.5);
+                    changed |= slider_s(ui, "Rim (Enhanced and KR)", &mut u.land_lighting.rim_strength, 0.0..=0.5);
                     changed |= slider_s(ui, "Diffuse Wrap (KR only)", &mut u.land_lighting.diffuse_wrap, 0.0..=0.5);
                 } else {
                     // In Classic mode show a helper note.
@@ -635,13 +639,7 @@ pub fn land_ui_system(
             ui.collapsing("Lighting Colors", |ui| {
                 let mut changed = false;
 
-                {
-                    let mut v = u.lighting.light_color;
-                    if color3(ui, "Light Color", &mut v) {
-                        u.lighting.light_color = v;
-                        changed = true;
-                    }
-                }
+                changed |= hdr_rgb(ui, "Light Color", &mut u.lighting.light_color);
                 {
                     let mut v = u.lighting.atmosphere_tint;
                     if color3(ui, "Atmosphere Tint", &mut v) {
@@ -673,13 +671,16 @@ pub fn land_ui_system(
 
                 ui.separator();
 
+                // The rim colour is a brightening tint and its alpha a power above 1, both out of
+                // the colour picker's 0..1, so they are edited as numbers and a slider.
                 {
-                    let mut v = u.land_lighting.rim_color;
-                    if color4(ui, "Rim (rgb + power.w) (fragment only)", &mut v) {
-                        u.land_lighting.rim_color = v;
+                    let mut rgb = u.land_lighting.rim_color.truncate();
+                    if hdr_rgb(ui, "Rim Color (KR only)", &mut rgb) {
+                        u.land_lighting.rim_color = rgb.extend(u.land_lighting.rim_color.w);
                         changed = true;
                     }
                 }
+                changed |= slider_s(ui, "Rim Power (fragment only)", &mut u.land_lighting.rim_color.w, RIM_POWER_RANGE);
 
                 if changed {
                     u.dirty = true;
@@ -687,11 +688,10 @@ pub fn land_ui_system(
             });
 
             // ----------------- KR like Color Grading (Vibrant) --------------
-            ui.collapsing("Color Grading (Vibrant) (fragment only)", |ui| {
+            // Grading runs after shading in every mode (land, art and ground art).
+            ui.collapsing("Color Grading (Vibrant)", |ui| {
                 let mut changed = false;
-                if u.effects.shading_mode == 0 {
-                    ui.label("Color grading is fragment-only and hidden in Classic mode.");
-                } else {
+                {
                     changed |= slider_s(
                         ui,
                         "Grade Strength",
@@ -747,6 +747,8 @@ pub fn land_ui_system(
                         &mut u.lighting.grade_extra[3],
                         0.0..=2.0,
                     );
+                    changed |= hdr_rgb(ui, "Grade Warm (bright areas)", &mut u.lighting.grade_warm_color);
+                    changed |= hdr_rgb(ui, "Grade Cool (dark areas)", &mut u.lighting.grade_cool_color);
                 }
 
                 if changed {
@@ -761,12 +763,13 @@ pub fn land_ui_system(
                     ui.label("Gloom is fragment-only and hidden in Classic mode.");
                 } else {
                     changed |= slider_s(ui, "Amount", &mut u.lighting.gloom_params[0], 0.0..=1.0);
-                    changed |= slider_s(
-                        ui,
-                        "Height Fade Height (world units)",
-                        &mut u.lighting.gloom_params[1],
-                        0.0..=200.0,
-                    );
+                    changed |= ui
+                        .add(
+                            egui::Slider::new(&mut u.lighting.gloom_params[1], GLOOM_FADE_HEIGHT_RANGE)
+                                .logarithmic(true)
+                                .text("Height Fade Height (world units)"),
+                        )
+                        .changed();
                     changed |= slider_s(ui, "Shadow Bias", &mut u.lighting.gloom_params[2], 0.0..=1.0);
                 }
                 if changed {
@@ -861,9 +864,12 @@ pub fn land_ui_system(
                     &mut u.lighting.fog_params[1],
                     0.0..=0.2,
                 );
-                changed |= slider_s(ui, "Noise Scale", &mut u.lighting.fog_params[2], 0.0..=2.0);
-                changed |= slider_s(
+                // The cloud noise only shapes haze the densities make: alone it draws nothing.
+                let has_haze = fog_has_haze(u.lighting.fog_params);
+                changed |= slider_en(ui, has_haze, "Noise Scale", &mut u.lighting.fog_params[2], 0.0..=2.0);
+                changed |= slider_en(
                     ui,
+                    has_haze,
                     "Noise Strength",
                     &mut u.lighting.fog_params[3],
                     0.0..=1.0,
@@ -1099,7 +1105,9 @@ fn terrain_controls(ui: &mut egui::Ui, u: &mut UniformState, gates: RenderStyleG
     });
     // The client per-vertex model shades land with its grey alone; these controls only reach the per-pixel model.
     let per_pixel = gates.is_fragment && u.land_lighting.terrain_shading_model == TERRAIN_SHADING_SMOOTH_PER_PIXEL;
-    changed |= slider_en(ui, gates.is_fragment, "Sun Strength", &mut u.land_lighting.diffuse_strength, 0.0..=2.0);
+    // Every shading mode scales its sun light by this, Classic's vertex Lambert included; the client per-vertex model
+    // uses it only on flat water.
+    changed |= slider_s(ui, "Sun Strength", &mut u.land_lighting.diffuse_strength, 0.0..=2.0);
     changed |= slider_tip(ui, "Sun Azimuth", &mut u.sun.azimuth_degrees, SUN_AZIMUTH_RANGE_DEGREES,
         "Compass bearing of the sun in degrees, clockwise from north (180 = south). Lights land and art and turns the sprite shadows.");
     changed |= slider_tip(ui, "Sun Elevation", &mut u.sun.elevation_degrees, SUN_ELEVATION_RANGE_DEGREES,
@@ -1284,6 +1292,32 @@ fn color4(ui: &mut egui::Ui, label: &str, v: &mut Vec4) -> bool {
         *v = Vec4::from_array(arr);
     }
     changed
+}
+
+/// Edit an RGB colour that may exceed 1 as three numbers in `HDR_COLOR_RANGE`, with a swatch of how it looks.
+/// Returns true if changed.
+fn hdr_rgb(ui: &mut egui::Ui, label: &str, v: &mut Vec3) -> bool {
+    let mut changed = false;
+    let mut arr = v.to_array();
+    ui.horizontal(|ui| {
+        for channel in &mut arr {
+            changed |= ui
+                .add(egui::DragValue::new(channel).range(HDR_COLOR_RANGE).speed(HDR_COLOR_DRAG_SPEED))
+                .changed();
+        }
+        egui::color_picker::show_color(ui, egui::Rgba::from_rgb(arr[0], arr[1], arr[2]), ui.spacing().interact_size);
+        ui.label(label);
+    });
+    if changed {
+        *v = Vec3::from_array(arr);
+    }
+    changed
+}
+
+/// Whether the fog pass draws any haze for these `fog_params` (distance and height density); the cloud noise
+/// only shapes that haze.
+fn fog_has_haze(fog_params: Vec4) -> bool {
+    fog_params.x >= FOG_DENSITY_MIN || fog_params.y >= FOG_DENSITY_MIN
 }
 
 fn land_relief_control_value(u: &UniformState) -> f32 {
@@ -1511,6 +1545,32 @@ mod tests {
         assert_eq!(presets.kr.night.global_lighting, None);
         assert_eq!(u.client_lighting, None);
         assert_eq!(u.global_lighting, 3.0);
+    }
+
+    #[test]
+    fn fog_noise_needs_a_fog_density() {
+        let noise_only = Vec4::new(0.0, 0.0, 0.55, 0.16);
+        assert!(!fog_has_haze(noise_only));
+        assert!(fog_has_haze(Vec4::new(FOG_DENSITY_MIN, 0.0, 0.55, 0.16)));
+        assert!(fog_has_haze(Vec4::new(0.0, FOG_DENSITY_MIN, 0.55, 0.16)));
+    }
+
+    #[test]
+    fn bundled_gloom_fade_heights_and_rim_powers_are_on_their_sliders() {
+        let factory = include_str!("../../../../assets/defaults/shader_presets.toml");
+        let shipped = include_str!("../../../../assets/settings/shaders/land.toml");
+        for text in [factory, shipped] {
+            let presets: LandShaderModePresets =
+                uocf::utils::config_toml::parse_strict("shader_presets.toml", text).expect("bundled");
+            for group in [&presets.classic, &presets.enhanced, &presets.kr, &presets.painterly] {
+                for slot in [&group.morning, &group.afternoon, &group.night, &group.cave] {
+                    let fade = slot.lighting.gloom_params.y;
+                    let power = slot.land_lighting.rim_color.w;
+                    assert!(GLOOM_FADE_HEIGHT_RANGE.contains(&fade), "{fade}");
+                    assert!(RIM_POWER_RANGE.contains(&power), "{power}");
+                }
+            }
+        }
     }
 
     /// The cached land.toml migration folds the retired KR tonemap gain only into these groups.
