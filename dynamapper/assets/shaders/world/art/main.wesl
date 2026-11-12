@@ -28,7 +28,7 @@ import package::shaders::world::art::art_bindings::{
     PASS_MODE_TRANSPARENT, PASS_MODE_SHADOW, PASS_MODE_CLIENT_SHADOW, SURFACE_LIKE_DEPTH_CLASS_OFFSET
 };
 import package::shaders::world::art::client_shadow::{client_shadow_casts, client_shadow_world_offset,
-    client_shadow_priority_depth};
+    client_shadow_logical_offset, client_shadow_priority_depth};
 import package::shaders::world::art::client_grunge::{client_grunges, client_grunge_uv, apply_client_grunge};
 import package::shaders::world::art::hue::{apply_static_hue, apply_ec_sprite_hue, STATIC_HUE_FLAG_APPLY, STATIC_HUE_FLAG_EC_SPRITE};
 import package::shaders::world::art::shading::apply_art_surface_shading;
@@ -92,13 +92,14 @@ fn logical_depth_from_projected_priority(inst: SpriteInstance) -> f32 {
         view.clip_from_view, inst.sort_bias_ordinal);
 }
 
-// The client shadow's depth: its caster's priority point, half a tie-break step behind (client_shadow.wesl).
+// The client shadow's depth: its caster's priority point, moved with a wall's shift and half a tie-break step behind
+// (client_shadow.wesl).
 fn client_shadow_logical_depth(inst: SpriteInstance) -> f32 {
     let logical_world_pos = vec3<f32>(
         inst.tile_x,
         inst.priority_z_units * HEIGHT_SCALE + depth_class_logical_offset(inst.depth_class),
         inst.tile_y,
-    );
+    ) + client_shadow_logical_offset(inst);
     return client_shadow_priority_depth(view_transformations::position_world_to_clip(logical_world_pos),
         view.clip_from_view, inst.sort_bias_ordinal);
 }
@@ -234,8 +235,10 @@ fn shade_fragment(in: ArtVertexOutput, sample_index: u32) -> ArtFragmentOutput {
 
     if (sprite_params.pass_mode == PASS_MODE_CLIENT_SHADOW) {
         // UOSpriteShaderShadow: black, with the caster texel's alpha. The pipeline writes only the target's alpha,
-        // S = S (1 - a), and the client night composite darkens by clamp(S + 1 - s).
-        let shadow_alpha = textureSample(art_atlas, art_atlas_sampler, uv, i32(layer)).a;
+        // S = S (1 - a), and the client night composite darkens by clamp(S + 1 - s). The client filters the shadow
+        // bilinear whatever the caster's filter (client_shadow.wesl), so its leaning edges stay smooth.
+        let shadow_alpha = client_filtered_atlas_rect(art_atlas, i32(layer), uv, inst.uv_min, inst.uv_max, false,
+            sprite_uv_dx, sprite_uv_dy, scene.client_view_scale).a;
         if (shadow_alpha <= 0.0) {
             discard;
         }

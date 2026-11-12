@@ -150,8 +150,10 @@ r0 = the sprite's left edge, W its width; u0 = its bottom edge + h Zu, u1 = u0 +
 Rot(r, u) = (r cos θ + u sin θ, u cos θ - r sin θ)
 TL = Rot(r0, u1), TR = TL + (W, 0)
 h == 0: BL = (r0, u0), BR = (r0 + W, u0)       otherwise BL = Rot(r0, u0), BR = Rot(r0 + W, u0)
-wall:   u0 and u1 drop by 1.05, and every corner moves by world (-1, 0, +1): one tile west and one tile south
+wall:   u0 and u1 drop by 1.05, and every corner moves by the client's world (X -1, Z +1): one tile west and one tile north
 ```
+
+The client's world Z is -UO y (`UOSprite::PlaceSprite` 0x004422b0 sets the base point's Z to -(y + 1.5)), so the wall shift is UO (x - 1, y - 1), our world (-1, 0, -1). On screen that is one tile straight up, 1.412 units, of which the 1.05 drop takes back all but 0.36. Along the view it puts the quad two diagonal steps further back (see the z test below). Until 2026-11-12 Dynamapper read Z as +UO y and moved wall shadows one tile to the screen left and 1.05 down, which laid each wall's shadow over its own lower neighbours: a sawtooth of horizontal shadow edges down every wall face, and the upper floors' wall shadows on the lower floors' walls and on the ground in front of doorways.
 
 Constants:
 
@@ -209,7 +211,13 @@ The client tests each shadow quad against the scene depth at ε behind the caste
 
 This is our reading of the client's ε: the shadow lands only on what is drawn behind the caster's plane, and the caster hides its own shadow.
 
-The wall shift (world -1, 0, +1) runs purely along the screen's left axis, so it does not change depth.
+The client's view direction is V = (-0.0354, 0.9988, 0.0353) in its world (the camera rotation `Rz(-π/2) Rx(0.001 - π/4) Rz(-0.05)`, 0x0045ae50, whose right and up columns are the R and U of the grunge research, P3.6). A sprite's base point is (x + 0.5, 0, -(y + 1.5)) + z Zu U, and V . U = 0, so a sprite's depth is -0.0354 (x + y) plus a constant: the diagonal x + y alone, with no z term. The shadow quad, at its pivot P - h Zu U, has its caster's depth plus ε. Dynamapper's priority depth also carries the z (`priority_z_units * HEIGHT_SCALE`), so the shadow keeps the caster's z: a receiver at the caster's level gets the client's answer, and a receiver below it can take the shadow up to (z - z') / 11 diagonal steps nearer than in the client.
+
+The wall shift (client world X -1, Z +1) changes the depth by V . (-1, 0, 1) = +0.0707, two diagonal steps further back, so the shadow's priority point moves with it: a wall's shadow sorts as if cast from the cell one tile west and one tile north (`client_shadow_logical_offset`), and its neighbours along the wall, one step back, stay in front of it.
+
+### Filtering
+
+The shadow descriptor's +0x38 is 0x41 (set at the end of the placement 0x00440e50). `UOSprite::BuildSpriteBatch` 0x004454c0 gives the sprite map BILERP unless bit 2 of that field is set, so the client samples every shadow bilinear, whatever the caster's own filter. Dynamapper's shadow pass therefore takes the client filter (`client_filtered_atlas_rect`) in every preset; until 2026-11-12 it sampled the atlas nearest, which stair-stepped the leaning edges.
 
 Because of the 11.25 degree lean and the orthographic view, most of a shadow lies behind its caster. The visible parts are slivers to the right of trees and darker bands beside walls, as in the reference screenshots (for example `6490.jpg`).
 

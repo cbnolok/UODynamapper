@@ -920,7 +920,12 @@ else:
   - u0 and u1 are both lowered by 1.05 (0x00b8716c) before the corners;
   - after the camera transform, every corner gets world x -1.0 and world z +1.0 (0x00b4e8bc);
   - with the terrain's axes (x = UO x, z = UO y), that is one tile west and one tile south, one tile width to the
-    screen left (*probable*).
+    screen left (*probable*). **Corrected after the statics grunge pass:** the client's world Z is -UO y
+    (`UOSprite::PlaceSprite` 0x004422b0 sets Z = -(y + 1.5); see [P3.6](#p36-statics-grunge)), so the shift is one
+    tile west and one tile **north**, UO (x - 1, y - 1) (*confirmed*). On screen it is one tile straight up (U . (-1, 0,
+    1) = 1.412, R . (-1, 0, 1) = 0.001), of which the 1.05 drop takes back all but 0.36; along the view direction
+    V = (-0.0354, 0.9988, 0.0353) it moves the quad 0.0707 further back, two diagonal steps, so a wall's shadow lies
+    behind its neighbours along the wall.
 - Modes outside 1-4 take the default branch; modes 1, 2 and 4 the same without the wall shift. Mode 4 keeps the
   bottom rotated at h = 0.
 

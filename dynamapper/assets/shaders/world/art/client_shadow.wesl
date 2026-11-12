@@ -11,7 +11,10 @@
 //   TL = Rot(r0, u1), TR = TL + (W, 0)
 //   h == 0: BL = (r0, u0), BR = (r0 + W, u0)       otherwise BL = Rot(r0, u0), BR = Rot(r0 + W, u0)
 //
-// Wall casters (tileart Wall) drop u0 and u1 by 1.05 and move every corner one tile west and one tile south.
+// Wall casters (tileart Wall) drop u0 and u1 by 1.05 and move every corner one tile west and one tile north: the
+// client adds world X -1 and Z +1, and its Z is -UO y (UOSprite::PlaceSprite 0x004422b0). On screen that is one
+// tile up, less the 1.05 drop; along the view it puts the quad two diagonal steps further back, so a wall's shadow
+// does not fall on its own neighbours along the wall (client_shadow_logical_offset).
 //
 // Axes. The client's camera space is Gamebryo's: X the view direction, Y up, Z right. Ours is Bevy's: x right
 // (BILLBOARD_RIGHT_XZ, world (1, 0, -1) / sqrt 2), y up, -z the view direction. So client (X, Y, Z) = our
@@ -19,7 +22,9 @@
 // world unit, a tile diamond 44 classic pixels = sqrt 2 units wide, and Zu = 4 classic pixels, the UO z step on
 // screen. Our ortho projection stretches the view's y on screen (the classic 44 x 44 diamond from an isometric
 // camera), so the maths runs in screen-square units, u_screen = u_view / pixel_aspect, and goes back after.
-// The quad samples the caster's texture with its own UVs; the fragment writes black with the texel's alpha.
+// The quad samples the caster's texture with its own UVs, bilinear as the client's (the shadow descriptor's +0x38 is
+// 0x41, without the nearest-filter bit 2 that UOSprite::BuildSpriteBatch 0x004454c0 tests); the fragment writes
+// black with the texel's alpha.
 // ============================================================================
 
 import bevy_pbr::render::mesh_view_bindings::view;
@@ -38,8 +43,9 @@ const CLIENT_SHADOW_LEAN: f32 = 0.19634375;
 const CLIENT_SHADOW_BEHIND: f32 = 0.0001;
 // Wall branch: both edges drop by 0x00b8716c along the camera's up axis...
 const CLIENT_SHADOW_WALL_DROP: f32 = 1.05;
-// ...and every corner moves by world x -1.0 and world z +1.0 (0x00b4e8bc): one tile west and one tile south.
-const CLIENT_SHADOW_WALL_SHIFT: vec3<f32> = vec3<f32>(-1.0, 0.0, 1.0);
+// ...and every corner moves by the client's world X -1.0 and Z +1.0 (0x00b4e8bc). The client's Z is -UO y, ours +UO y:
+// one tile west and one tile north.
+const CLIENT_SHADOW_WALL_SHIFT: vec3<f32> = vec3<f32>(-1.0, 0.0, -1.0);
 // The shadow's depth sits this many tie-break steps behind its caster: behind the caster's plane (the caster hides
 // its own shadow, as the client's ε does) and in front of anything sorted behind it, which receives the shadow.
 const CLIENT_SHADOW_DEPTH_ORDINAL_OFFSET: f32 = 0.5;
@@ -96,6 +102,15 @@ fn client_shadow_world_offset(inst: SpriteInstance, corner: vec2<f32>) -> vec3<f
         offset = offset + CLIENT_SHADOW_WALL_SHIFT;
     }
     return offset;
+}
+
+// The shadow's priority point relative to its caster's, in world units. The wall shift moves the client's quad along
+// the view as well as on screen, so a wall's shadow sorts as if cast from the cell one tile west and one tile north.
+fn client_shadow_logical_offset(inst: SpriteInstance) -> vec3<f32> {
+    if ((inst.client_shadow_flags & CLIENT_SHADOW_FLAG_WALL) != 0u) {
+        return CLIENT_SHADOW_WALL_SHIFT;
+    }
+    return vec3<f32>(0.0);
 }
 
 // static_priority_depth (depth.wesl) with the shadow's fractional tie-break step.
