@@ -7,9 +7,17 @@ they do not define the package format, texture roles or client behavior.
 ## Original-client contracts
 
 - `UOSA.exe`'s terrain texture loader at `0x004613b0` sets each item's U/V
-  transform scale to `1 / stretch`. With one set-0 coordinate unit per terrain
-  cell, repetition every `stretch` cells is the documented inference. Neither
-  image dimensions nor a preferred stretch range selects the client's base.
+  transform scale to `1 / stretch` (transform method 2, centre 0.5); `UOKR.exe`'s
+  at `0x0044b180` does the same. Both mesh builders (`UOSA 0x00461ae0`,
+  `UOKR 0x0044b7f0`) write set 0 as `(x, -0.0 - y)` in whole map cells and
+  set 1 as the chunk-local cell times 1/32, so every item repeats every
+  `stretch` cells. Neither client offsets, rotates or swaps UVs per cell or
+  chunk; on-screen periods measured on 2026-11-12 match the item stretches
+  (EC grass 4, KR grass 5, sand 6, EC forest 4 with an exact 16-cell repeat).
+  Neither image dimensions nor a preferred stretch range selects the client's
+  base. The client's v runs against map y while this renderer's runs with it;
+  whether transform method 2 flips v back is unverified, so terrain images may
+  be mirrored north-south here. The period is unaffected.
 - Terrain roles follow layer class and item position. Default and bump layers
   use item 0 for colour A; water's fallback is item 1, while its full path uses
   item 0 to perturb item 2. Names such as `normal`, `alpha` or `cube` do not
