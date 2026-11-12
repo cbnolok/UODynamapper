@@ -2,6 +2,7 @@
 //! the data check and the login server files.
 
 pub mod edits;
+pub mod encryption;
 pub mod login;
 pub mod opened;
 pub mod preview;

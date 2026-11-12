@@ -13,8 +13,9 @@ use uocf::client::classic_facets::{
     CLASSIC_STOCK_WIDTHS, CLASSIC_STOCK_WRAP,
 };
 use uocf::client::classic_difs::{LAND_LIST_FORMAT, STATICS_LIST_FORMAT};
+use uocf::client::encryption::CipherSiteKind;
 use uocf::client::facet_dimensions::{
-    ENHANCED_CLIENT_MARKER, FACET_RECORD_HEIGHT_OFFSET, FACET_RECORD_WIDTH_OFFSET, SPLIT_IMMEDIATE_COUNT,
+    ClientFamily, ENHANCED_CLIENT_MARKER, FACET_RECORD_HEIGHT_OFFSET, FACET_RECORD_WIDTH_OFFSET, SPLIT_IMMEDIATE_COUNT,
     STOCK_FACET_COUNT, STOCK_SPLIT_X,
 };
 use uocf::client::login::{
@@ -71,6 +72,9 @@ const UOSA_SPLIT_CODE: [u8; 51] = [
 const SPLIT_IMMEDIATES: [usize; SPLIT_IMMEDIATE_COUNT] = [9, 17, 35];
 const SPLIT_CODE_PADDING: usize = 8;
 const NOP_SLED_SIZE: usize = 64;
+/// The `INT3` filler around each cipher pattern, and the byte standing for its wildcards.
+const CIPHER_FILLER_SIZE: usize = 32;
+const CIPHER_WILDCARD_FILL: u8 = 0x12;
 
 /// The Classic facet names and the synthetic file name table (`<role><facet>.mul`, then the `x` variants of facets
 /// 0 and 1, read by the second copy).
@@ -364,6 +368,16 @@ pub fn synthetic_kingdom_reborn() -> Vec<u8> {
 /// [`synthetic_kingdom_reborn`] with its one built-in address, [`STOCK_KR_LOGIN_ADDRESS`].
 pub fn synthetic_kingdom_reborn_login() -> Vec<u8> {
     let code = login_code(&[], STOCK_KR_LOGIN_ADDRESS, &STOCK_LOGIN_PORTS[..1]);
+    twelve_byte_client(None, false, false, Some((code, Vec::new())))
+}
+
+/// [`synthetic_kingdom_reborn`] with its two ciphers in their stock form, each between `INT3` filler.
+pub fn synthetic_kingdom_reborn_ciphers() -> Vec<u8> {
+    let mut code = vec![INT3; CIPHER_FILLER_SIZE];
+    for kind in CipherSiteKind::of_family(ClientFamily::KingdomReborn) {
+        code.extend(kind.pattern().stock_code(CIPHER_WILDCARD_FILL));
+        code.extend([INT3; CIPHER_FILLER_SIZE]);
+    }
     twelve_byte_client(None, false, false, Some((code, Vec::new())))
 }
 

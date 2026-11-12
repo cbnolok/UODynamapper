@@ -1,6 +1,6 @@
 //! The edit state of the Facets, Seam and Login server sections: the text the user types per facet, for the split or
-//! seam and for the login server, its live validation (the library's validate functions) and the [`ExePatch`] it
-//! builds. Every section that edits the executable contributes its edits to [`EditState::build_patch`].
+//! seam and for the login server, the no-encryption toggle, its live validation (the library's validate functions)
+//! and the [`ExePatch`] it builds. Every section that edits the executable contributes its edits to [`EditState::build_patch`].
 
 use uocf::client::classic_facets::{classic_map_blocks, validate_classic_size, validate_classic_wrap};
 use uocf::client::facet_dimensions::{
@@ -9,6 +9,7 @@ use uocf::client::facet_dimensions::{
 use uocf::client::patch::{stock_facets, ExeEdit, ExeManifest, ExePatch, SplitEdit};
 use uocf::enhanced::facet_sector::FacetGeometry;
 
+use super::encryption::EncryptionEdit;
 use super::login::LoginEdit;
 
 /// The lowest split or seam x the library takes.
@@ -84,6 +85,8 @@ pub struct EditState {
     pub facet_0_patchable: bool,
     /// Enhanced Client and Kingdom Reborn: the built-in login server, per site.
     pub login: LoginEdit,
+    /// Enhanced Client and Kingdom Reborn: patch the network ciphers out.
+    pub encryption: EncryptionEdit,
 }
 
 /// The wrap a Classic facet gets from a new size without a wrap edit: a wrap side equal to the old side follows the
@@ -173,7 +176,14 @@ impl EditState {
         };
         let facet_0_patchable = inspection.family != ClientFamily::Classic
             || inspection.classic.as_ref().is_some_and(|layout| layout.startup.is_some());
-        Self { family: inspection.family, rows, seam, facet_0_patchable, login: LoginEdit::new(inspection) }
+        Self {
+            family: inspection.family,
+            rows,
+            seam,
+            facet_0_patchable,
+            login: LoginEdit::new(inspection),
+            encryption: EncryptionEdit::new(inspection),
+        }
     }
 
     pub fn is_classic(&self) -> bool {
@@ -331,8 +341,9 @@ impl EditState {
         self.check_row(0).wrap.map(|wrap| wrap.width)
     }
 
-    /// The patch of every section, in facet order, then the seam, then the login server; the errors of every row, the
-    /// seam and the login server when any part does not validate. An empty patch means nothing is edited.
+    /// The patch of every section, in facet order, then the seam, then the login server, then the encryption; the
+    /// errors of every row, the seam, the login server and the encryption when any part does not validate. An empty
+    /// patch means nothing is edited.
     pub fn build_patch(&self) -> Result<ExePatch, Vec<String>> {
         let mut errors = Vec::new();
         let mut edits = Vec::new();
@@ -347,6 +358,9 @@ impl EditState {
         let (login_edit, login_validation) = self.login.check();
         errors.extend(login_validation.errors.iter().map(|error| format!("login server: {error}")));
         edits.extend(login_edit);
+        let (encryption_edit, encryption_validation) = self.encryption.check();
+        errors.extend(encryption_validation.errors.iter().map(|error| format!("encryption: {error}")));
+        edits.extend(encryption_edit);
         if errors.is_empty() { Ok(ExePatch { edits }) } else { Err(errors) }
     }
 

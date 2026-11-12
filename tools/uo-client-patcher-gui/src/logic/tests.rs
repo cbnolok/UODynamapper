@@ -9,12 +9,14 @@ use uocf::client::patch::{patch_client_exe, ChangeCause, ExeEdit, ExePatch, Spli
 use uocf::enhanced::facet_sector::{FacetGeometry, CLIENT_FACET_DIMENSIONS};
 
 use super::edits::{EditState, SeamChoice};
+use super::encryption::EncryptionStatus;
 use super::login::{login_mode, login_site_rows, stock_login, ClassicLogin, LoginEdit, LoginMode, KR_IPV4_ONLY};
 use super::opened::{classic_files, dif_lines, manifest_steps, seam_status, table_locations, ManifestState, OpenedExe};
 use super::preview::{change_rows, preview, seam_warnings, DataCheck, Preview, PreviewCache};
 use super::synthetic::{
     classic_stock_size, classic_stock_wrap, synthetic_classic, synthetic_classic_with_difs, synthetic_enhanced,
-    synthetic_enhanced_login, synthetic_kingdom_reborn, synthetic_kingdom_reborn_login, SyntheticLogin, TOL_HOSTS,
+    synthetic_enhanced_login, synthetic_kingdom_reborn, synthetic_kingdom_reborn_ciphers, synthetic_kingdom_reborn_login,
+    SyntheticLogin, TOL_HOSTS,
 };
 
 const NEW_WIDTH: u32 = 8192;
@@ -454,6 +456,44 @@ fn kingdom_reborn_takes_an_ipv4_address() {
     assert_eq!((fixed.ip.to_string(), fixed.port), (SHARD_HOSTS[0].to_owned(), SHARD_PORTS[1]));
     // Without its login code there is nothing to edit.
     assert_eq!(login_mode(&ClientExeInspection::inspect(&synthetic_kingdom_reborn()).unwrap()), LoginMode::NotLocated);
+}
+
+#[test]
+fn the_encryption_toggle_patches_every_cipher_out() {
+    use uocf::client::encryption::EncryptionState;
+
+    let temp = TempDir::new("kr_encryption");
+    let exe = temp.folder("client").join(KR_EXE_NAME);
+    std::fs::write(&exe, synthetic_kingdom_reborn_ciphers()).unwrap();
+    let opened = OpenedExe::open(&exe).unwrap();
+    let mut edits = EditState::new(&opened.inspection);
+    assert_eq!(edits.encryption.status(), EncryptionStatus::Located(EncryptionState::Encrypted));
+    assert!(edits.encryption.can_remove());
+    let rows = edits.encryption.rows(&opened.inspection);
+    assert_eq!(rows.len(), 2);
+    assert!(rows.iter().all(|row| row.state.starts_with("on")));
+    assert!(edits.build_patch().unwrap().edits.is_empty(), "off by default");
+
+    edits.encryption.remove = true;
+    assert_eq!(edits.build_patch().unwrap().edits, [ExeEdit::NoEncryption]);
+    let plan = preview(&opened, &edits).plan().expect("planned").clone();
+    let sites = &opened.inspection.encryption.as_ref().unwrap().sites;
+    let offsets: Vec<usize> = plan.changes.iter().filter(|change| change.cause == ChangeCause::Edit(0)).map(|change| change.offset).collect();
+    assert_eq!(offsets, sites.iter().map(|site| site.offset).collect::<Vec<_>>());
+    let copy = plan_write_and_reopen(&opened, &edits, &temp.folder("copies").join(KR_EXE_NAME));
+    let reopened = EditState::new(&copy.inspection);
+    assert_eq!(reopened.encryption.status(), EncryptionStatus::Located(EncryptionState::Removed));
+    assert!(!reopened.encryption.can_remove());
+    assert!(reopened.encryption.rows(&copy.inspection).iter().all(|row| row.state == "patched out"));
+
+    // Without the cipher code: on is an error; Classic has none.
+    let mut missing = EditState::new(&ClientExeInspection::inspect(&synthetic_kingdom_reborn()).unwrap());
+    assert!(matches!(missing.encryption.status(), EncryptionStatus::NotLocated(_)));
+    missing.encryption.remove = true;
+    let errors = missing.build_patch().unwrap_err();
+    assert!(errors[0].starts_with("encryption: the ciphers were not all located"), "{errors:?}");
+    let classic = EditState::new(&ClientExeInspection::inspect(&synthetic_classic()).unwrap());
+    assert_eq!(classic.encryption.status(), EncryptionStatus::NotApplicable);
 }
 
 /// A Classic `login.cfg` with a comment, a line the client does not know and both kinds of server.

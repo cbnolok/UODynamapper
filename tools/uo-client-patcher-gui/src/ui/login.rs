@@ -1,6 +1,7 @@
 //! Section 5: the login server. Enhanced Client: the built-in public hosts and ports, a host per slot and a port
 //! per immediate, edited as one more edit of the patch; Kingdom Reborn: its one built-in IPv4 address and port, the
-//! same way; Classic: the login.cfg lists, saved as a copy apart from the patch.
+//! same way; Classic: the login.cfg lists, saved as a copy apart from the patch. Enhanced Client and Kingdom Reborn
+//! also show whether the client encrypts, with the toggle that patches the ciphers out.
 
 use std::path::PathBuf;
 
@@ -9,6 +10,7 @@ use uocf::client::login_servers::{LoginEntrySource, LoginFileRole};
 
 use super::{error_label, info_grid, muted_label, warning_label, ITEM_SPACING, SUCCESS_COLOR};
 use crate::app::Session;
+use crate::logic::encryption::{EncryptionStatus, PLAINTEXT_SERVER_NOTE};
 use crate::logic::login::{
     built_in_servers, check_server_row, internal_address, kind_label, login_mode, login_site_rows, login_status,
     servers_text, stock_login, ClassicLogin, LoginEdit, LoginFolder, LoginMode, CFG_KINDS, KR_IPV4_ONLY,
@@ -62,7 +64,58 @@ pub fn ui_login(ui: &mut egui::Ui, session: &mut Session) -> Option<LoginAction>
             );
         }
     }
+    ui_encryption(ui, session);
     None
+}
+
+/// Enhanced Client and Kingdom Reborn: whether the client encrypts, its ciphers and the no-encryption toggle.
+fn ui_encryption(ui: &mut egui::Ui, session: &mut Session) {
+    let status = session.edits.encryption.status();
+    if status == EncryptionStatus::NotApplicable {
+        return;
+    }
+    ui.add_space(ITEM_SPACING);
+    ui.separator();
+    ui.label(egui::RichText::new("Encryption").strong());
+    let state = match &status {
+        EncryptionStatus::Located(state) => state.label().to_owned(),
+        EncryptionStatus::NotLocated(unlocated) => format!("not all ciphers located: {unlocated}"),
+        EncryptionStatus::NotApplicable => String::new(),
+    };
+    info_grid(ui, "encryption_grid", &[("State", state)]);
+    let rows = session.edits.encryption.rows(&session.opened.inspection);
+    if !rows.is_empty() {
+        egui::Grid::new("cipher_sites_grid").striped(true).num_columns(5).spacing(SITE_GRID_SPACING).show(ui, |ui| {
+            for title in ["Cipher", "File offset", "VA", "Bytes", "State"] {
+                ui.label(egui::RichText::new(title).strong());
+            }
+            ui.end_row();
+            for row in rows {
+                ui.label(row.what);
+                ui.monospace(row.offset);
+                ui.monospace(row.va);
+                ui.monospace(row.bytes);
+                ui.label(row.state);
+                ui.end_row();
+            }
+        });
+    }
+    let encryption = &mut session.edits.encryption;
+    let can_remove = encryption.can_remove();
+    if !can_remove {
+        encryption.remove = false;
+    }
+    ui.add_enabled(can_remove, egui::Checkbox::new(&mut encryption.remove, "Remove the encryption (plaintext)"))
+        .on_hover_text("Patches every cipher above out: the client sends and reads login and game packets unencrypted")
+        .on_disabled_hover_text("Every cipher must be located, and one at least still on");
+    let (edit, validation) = encryption.check();
+    for error in &validation.errors {
+        error_label(ui, error.as_str());
+    }
+    if let Some(edit) = edit {
+        ui.colored_label(SUCCESS_COLOR, format!("In the patch: {}.", edit.describe()));
+    }
+    muted_label(ui, PLAINTEXT_SERVER_NOTE);
 }
 
 /// The login sites of the executable (Enhanced Client, Kingdom Reborn) and their editor.
