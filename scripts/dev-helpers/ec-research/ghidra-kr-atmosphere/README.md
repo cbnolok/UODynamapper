@@ -111,8 +111,8 @@ run found every UOKR row applied. The UOKR save is still pending (see above).
 
 ## Probes
 
-The first three are read only; the fourth runs headless on a read-only copy of the project. They are kept here
-because GhidraMCP deletes inline scripts; the copies Ghidra runs are in `~/ghidra_scripts/`.
+The first three and the last are read only; the fourth runs headless on a read-only copy of the project. They
+are kept here because GhidraMCP deletes inline scripts; the copies Ghidra runs are in `~/ghidra_scripts/`.
 
 | Script | Args | Use |
 |---|---|---|
@@ -120,6 +120,7 @@ because GhidraMCP deletes inline scripts; the copies Ghidra runs are in `~/ghidr
 | `KrAtmoFloats20261107.java` | `OUTPUT_FILE ADDRESS...` | prints 32-bit values as hex, float and int (the composite constants, the terrain light vector, the defaults) |
 | `KrAtmoDecompile20261107.java` | `OUTPUT_FILE ENTRY...` | decompiles the functions at the given entries into a file; an address without a function is reported, never created |
 | `KrShadowHeadlessDecompile20261107.java` | `OUTPUT_FILE ADDRESS...` | third pass, while the GUI's MCP bridge was stuck: decompiles the functions at the given addresses, with their callers. It disassembles and creates a missing function in memory, so run it only with `-readOnly` on a copy of the project |
+| `LightSpriteProbe20261112.java` | `decomp ADDR...`, `callers ADDR...`, `getters OFF...`, `bytes HEX`, `disasm ADDR COUNT` | light sprite proposal: decompiles or disassembles, lists references, finds the one-instruction field getters (`FLD`/`MOV` from `[ECX + off]`, then `RET`) and searches memory for a byte pattern with its users (the 0.021427423 pixel scale). It traced the light sprite in both clients; see [light_sprite_proposal.md](../../../../docs/agent_notes/light_sprite_proposal.md) |
 
 The rest of the research used the GhidraMCP decompiler, disassembly, cross-references, memory reads and byte
 search. The third pass ran the headless probe like this, on a copy of the project in the scratch folder, plus
@@ -143,6 +144,7 @@ sheet into the scratch folder. Run Python that reads client data with `python3 -
 | `dds_info.py` | `FILE.dds|FILE.png ...` | DDS header facts (size, mip count, FourCC) and PNG luminance statistics |
 | `uop_hash.py` | `PATH ...` | the UOP entry hash (Jenkins lookup3) of entry paths such as `build/worldart/01000045.dds`, to find unnamed extracted entries |
 | `kr_ec_data_compare.py` | `SUBCOMMAND ...` (see its docstring) | third pass: KR against EC for `TerrainTexture.uop`, the light-texture colours, the terrain textures the TerrainDefinitions reference, the per-item grunge references, the tileart light fields and `Shaders.uop` |
+| `light_sprite_census.py` | `KR_TILEART_DIR EC_TILEART_DIR KR_ITEMS EC_ITEMS MAX_ID` | light sprite proposal: per client, the light items (block 3 names a texture), their textures, scales and offsets, the overlap with the LightSource flag, and the KR / EC agreement; reads the same extractions as `kr_ec_data_compare.py` |
 
 - The inputs of `kr_composite_table.py` are previews of `TerrainTexture.uop` entries 21 and 22, decoded outside
   the repository. Its output is the source of the numeric tables in the results document.
