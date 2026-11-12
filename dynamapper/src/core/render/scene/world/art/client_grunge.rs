@@ -56,13 +56,13 @@ pub(crate) fn client_grunge_image(
     kr_land: Option<&TexLandKrPackageRes>,
     tex_aux: Option<&TexAuxEcPackageRes>,
 ) -> (Image, ClientGrungeSource) {
-    if let Some((side, rgba)) = kr_land.and_then(|package| {
+    if let Some(grunge) = kr_land.and_then(|package| {
         package.0.grunge_rgba()
             .inspect_err(|error| log::warn!("Cannot read the KR grunge texture from tex_land_kr.uddp: {error:#}"))
             .ok()
             .flatten()
     }) {
-        return (client_grunge_texture(side, side, rgba), ClientGrungeSource::KrLand);
+        return (client_grunge_texture(grunge.width, grunge.height, grunge.rgba), ClientGrungeSource::KrLand);
     }
     if let Some((width, height, rgba)) = tex_aux.and_then(|package| ec_aux_grunge(package)) {
         return (client_grunge_texture(width, height, rgba), ClientGrungeSource::EcAux);

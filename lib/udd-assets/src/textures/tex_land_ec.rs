@@ -18,10 +18,13 @@ use uocf::enhanced::terrain_definition::{TerrainLayerClass, TerrainLayerRole};
 const PAGE_MANIFEST_MAGIC: [u8; 4] = *b"ELPG";
 const SLOT_MANIFEST_MAGIC: [u8; 4] = *b"ELSL";
 const TERRAIN_PROVENANCE_MAGIC: [u8; 4] = *b"ELTP";
+const GRUNGE_MAGIC: [u8; 4] = *b"ELGR";
 /// The version of the page and slot manifests, which stands for the package's metadata as a whole.
 pub const TEX_LAND_EC_METADATA_VERSION: u32 = 1;
 /// The version of the terrain provenance manifest.
 pub const TEX_LAND_EC_TERRAIN_PROVENANCE_VERSION: u32 = 1;
+/// The version of the grunge entry's header ([`UDDP_GRUNGE_ENTRY_VPATH`]).
+pub const TEX_LAND_EC_GRUNGE_VERSION: u32 = 1;
 
 pub const UDDP_PAGE_MANIFEST_ENTRY_VPATH: &str = "metadata/pages.bin";
 pub const UDDP_SLOT_MANIFEST_ENTRY_VPATH: &str = "metadata/slots.bin";
@@ -30,12 +33,14 @@ pub const UDDP_TERRAIN_OVERRIDES_ENTRY_VPATH: &str = "metadata/terrain_overrides
 pub const UDDP_TRANSCODE_ENTRY_VPATH: &str = "metadata/transcode.bin";
 pub const UDDP_LEGACY_TERRAIN_MAP_ENTRY_VPATH: &str = "metadata/legacy_terrain_map.csv";
 pub const UDDP_SOURCE_MATERIALS_ENTRY_VPATH: &str = "metadata/source_materials.json";
-/// Optional: the client's grunge texture as RGBA8888 rows. Only the Kingdom Reborn land (`tex_land_kr.uddp`) carries
-/// it, KR's `build/worldart/01000045.dds`. The package stores no width or height for it: the image is square, its side
-/// `sqrt(bytes / 4)` ([`TexLandEcPackage::grunge_rgba`]).
+/// Optional: the client's grunge texture. Only the Kingdom Reborn land (`tex_land_kr.uddp`) carries it, KR's
+/// `build/worldart/01000045.dds`. A header (magic `ELGR`, u32 [`TEX_LAND_EC_GRUNGE_VERSION`], u32 width, u32 height,
+/// u8 [`PagePixelFormat`], always RGBA8888), then the RGBA8888 rows: [`encode_grunge_entry`], [`decode_grunge_entry`].
 pub const UDDP_GRUNGE_ENTRY_VPATH: &str = "textures/grunge.rgba8888";
 /// Bytes per pixel of the grunge entry.
 const GRUNGE_BYTES_PER_PIXEL: usize = 4;
+/// Bytes of the grunge entry's header: magic, version, width, height and pixel format.
+const GRUNGE_HEADER_SIZE: usize = 17;
 /// `schema` and `schema_version` of the terrain overrides JSON entry.
 pub const TERRAIN_OVERRIDES_SCHEMA: &str = "tex_land_ec_terrain_overrides";
 pub const TERRAIN_OVERRIDES_SCHEMA_VERSION: u32 = 1;
@@ -548,18 +553,16 @@ impl TexLandEcPackage {
         &self.package
     }
 
-    /// The client grunge texture ([`UDDP_GRUNGE_ENTRY_VPATH`]) as its side and RGBA8888 rows, or `None` when the
-    /// package has none. An entry that is not a square RGBA8888 image is an error.
-    pub fn grunge_rgba(&self) -> eyre::Result<Option<(u32, Vec<u8>)>> {
+    /// The client grunge texture ([`UDDP_GRUNGE_ENTRY_VPATH`]), or `None` when the package has none. An entry without
+    /// the current header, or whose pixels do not match it, is an error ([`decode_grunge_entry`]).
+    pub fn grunge_rgba(&self) -> eyre::Result<Option<GrungeImage>> {
         let hash = xxh64_virtual_path(UDDP_GRUNGE_ENTRY_VPATH);
         if self.package.find_by_path_hash(hash).is_none() {
             return Ok(None);
         }
-        let rgba = self.package.read_file_by_path_hash(hash)
+        let bytes = self.package.read_file_by_path_hash(hash)
             .map_err(|error| eyre::eyre!("read {UDDP_GRUNGE_ENTRY_VPATH}: {error:?}"))?;
-        let side = grunge_side(rgba.len())
-            .ok_or_else(|| eyre::eyre!("{UDDP_GRUNGE_ENTRY_VPATH}: {} bytes is not a square RGBA8888 image", rgba.len()))?;
-        Ok(Some((side, rgba)))
+        decode_grunge_entry(&bytes).map(Some)
     }
 
     pub fn atlas_width(&self) -> u32 {
@@ -1486,14 +1489,61 @@ fn optional_texture_sort_key(value: u32, missing: u32) -> u32 {
     }
 }
 
-/// The side of a square RGBA8888 image of `bytes` bytes, or `None` when there is no such image.
-fn grunge_side(bytes: usize) -> Option<u32> {
-    if bytes == 0 || bytes % GRUNGE_BYTES_PER_PIXEL != 0 {
-        return None;
-    }
-    let pixels = bytes / GRUNGE_BYTES_PER_PIXEL;
-    let side = pixels.isqrt();
-    (side * side == pixels).then(|| u32::try_from(side).ok()).flatten()
+/// The client grunge texture of a land package ([`UDDP_GRUNGE_ENTRY_VPATH`]).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct GrungeImage {
+    pub width: u32,
+    pub height: u32,
+    /// RGBA8888 rows, `width * height * 4` bytes.
+    pub rgba: Vec<u8>,
+}
+
+/// The bytes of a `width` x `height` RGBA8888 image, or `None` when that overflows.
+fn grunge_rgba_len(width: u32, height: u32) -> Option<usize> {
+    usize::try_from(width).ok()?.checked_mul(usize::try_from(height).ok()?)?.checked_mul(GRUNGE_BYTES_PER_PIXEL)
+}
+
+/// Bytes of [`UDDP_GRUNGE_ENTRY_VPATH`]: the version header, then `rgba`, which must hold `width` x `height` RGBA8888
+/// pixels.
+pub fn encode_grunge_entry(width: u32, height: u32, rgba: &[u8]) -> eyre::Result<Vec<u8>> {
+    eyre::ensure!(
+        width > 0 && height > 0 && grunge_rgba_len(width, height) == Some(rgba.len()),
+        "{UDDP_GRUNGE_ENTRY_VPATH}: {} bytes is not a {width}x{height} RGBA8888 image",
+        rgba.len()
+    );
+    let mut bytes = Vec::with_capacity(GRUNGE_HEADER_SIZE + rgba.len());
+    bytes.extend_from_slice(&GRUNGE_MAGIC);
+    bytes.extend_from_slice(&TEX_LAND_EC_GRUNGE_VERSION.to_le_bytes());
+    bytes.extend_from_slice(&width.to_le_bytes());
+    bytes.extend_from_slice(&height.to_le_bytes());
+    bytes.push(PagePixelFormat::Rgba8888 as u8);
+    bytes.extend_from_slice(rgba);
+    Ok(bytes)
+}
+
+/// The image of a [`UDDP_GRUNGE_ENTRY_VPATH`] entry, after checking its version header.
+pub fn decode_grunge_entry(bytes: &[u8]) -> eyre::Result<GrungeImage> {
+    eyre::ensure!(
+        bytes.len() >= GRUNGE_HEADER_SIZE && bytes[0..4] == GRUNGE_MAGIC,
+        "{UDDP_GRUNGE_ENTRY_VPATH}: no ELGR version header; repack with the current udd-cli"
+    );
+    let mut cursor = Cursor::new(&bytes[GRUNGE_MAGIC.len()..GRUNGE_HEADER_SIZE]);
+    let version = cursor.read_u32::<LittleEndian>()?;
+    ensure_manifest_version(UDDP_GRUNGE_ENTRY_VPATH, version, TEX_LAND_EC_GRUNGE_VERSION)?;
+    let width = cursor.read_u32::<LittleEndian>()?;
+    let height = cursor.read_u32::<LittleEndian>()?;
+    let pixel_format = cursor.read_u8()?;
+    eyre::ensure!(
+        PagePixelFormat::from_repr(pixel_format) == Some(PagePixelFormat::Rgba8888),
+        "{UDDP_GRUNGE_ENTRY_VPATH}: pixel format {pixel_format} is not RGBA8888"
+    );
+    let rgba = &bytes[GRUNGE_HEADER_SIZE..];
+    eyre::ensure!(
+        width > 0 && height > 0 && grunge_rgba_len(width, height) == Some(rgba.len()),
+        "{UDDP_GRUNGE_ENTRY_VPATH}: {} pixel bytes do not make the {width}x{height} RGBA8888 image of its header",
+        rgba.len()
+    );
+    Ok(GrungeImage { width, height, rgba: rgba.to_vec() })
 }
 
 #[cfg(test)]
@@ -1695,15 +1745,35 @@ mod tests {
     }
 
     #[test]
-    fn the_grunge_entry_is_a_square_rgba8888_image() {
-        const KR_GRUNGE_SIDE: u32 = 256;
-        let bytes = |side: usize| side * side * GRUNGE_BYTES_PER_PIXEL;
-        assert_eq!(grunge_side(bytes(KR_GRUNGE_SIDE as usize)), Some(KR_GRUNGE_SIDE));
-        assert_eq!(grunge_side(bytes(1)), Some(1));
-        assert_eq!(grunge_side(0), None);
-        assert_eq!(grunge_side(bytes(4) + 1), None);
-        assert_eq!(grunge_side(2 * bytes(4)), None, "a 4x8 image is not square");
+    fn the_grunge_entry_round_trips_through_its_header() {
+        const WIDTH: u32 = 4;
+        const HEIGHT: u32 = 8;
+        let rgba: Vec<u8> = (0..WIDTH * HEIGHT * GRUNGE_BYTES_PER_PIXEL as u32).map(|byte| byte as u8).collect();
+        let bytes = encode_grunge_entry(WIDTH, HEIGHT, &rgba).expect("encode");
+        assert_eq!(&bytes[..4], b"ELGR");
+        assert_eq!(bytes.len(), GRUNGE_HEADER_SIZE + rgba.len());
+        assert_eq!(decode_grunge_entry(&bytes).expect("decode"), GrungeImage { width: WIDTH, height: HEIGHT, rgba: rgba.clone() });
+        assert!(encode_grunge_entry(WIDTH, HEIGHT, &rgba[1..]).is_err(), "pixels short of the size");
+        assert!(encode_grunge_entry(0, 0, &[]).is_err(), "an empty image");
+        assert!(decode_grunge_entry(&bytes[..bytes.len() - 1]).is_err(), "pixels short of the header's size");
+        let mut bc7 = bytes.clone();
+        bc7[GRUNGE_HEADER_SIZE - 1] = PagePixelFormat::Bc7 as u8;
+        assert!(decode_grunge_entry(&bc7).unwrap_err().to_string().contains("not RGBA8888"));
         assert!(test_package().grunge_rgba().expect("no entry is no error").is_none());
+    }
+
+    #[test]
+    fn the_grunge_entry_rejects_other_versions_and_headerless_bytes_with_the_repack_message() {
+        const KR_GRUNGE_SIDE: usize = 256;
+        let rgba = [0u8; GRUNGE_BYTES_PER_PIXEL];
+        let mut other = encode_grunge_entry(1, 1, &rgba).expect("encode");
+        other[4..8].copy_from_slice(&(TEX_LAND_EC_GRUNGE_VERSION + 1).to_le_bytes());
+        // The entry before the header: bare RGBA8888 rows.
+        let headerless = vec![0u8; KR_GRUNGE_SIDE * KR_GRUNGE_SIDE * GRUNGE_BYTES_PER_PIXEL];
+        for bytes in [&other[..], &headerless[..]] {
+            let error = decode_grunge_entry(bytes).unwrap_err().to_string();
+            assert!(error.contains("repack with the current udd-cli"), "{error}");
+        }
     }
 
     #[test]

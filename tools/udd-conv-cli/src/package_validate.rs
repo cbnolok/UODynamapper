@@ -27,14 +27,13 @@ use rayon::prelude::*;
 use udd_assets::gumps::gump_image_hash;
 use udd_assets::map_metadata::{decode_map_package_metadata, read_statics_package_metadata};
 use udd_assets::tex_aux_ec::{tex_aux_ec_terrain_texture_key, TexAuxEcPackage};
-use udd_assets::tex_land_ec::UDDP_GRUNGE_ENTRY_VPATH;
 use udd_assets::{
     EffectsEcPackage, GumpsPackage, HuesPackage, MobileAnimCcPackage, MobileAnimEcPackage,
     PaperdollEcPackage, TexArtCcPackage, TexArtEcPackage, TexLandCcPackage, TexLandEcPackage, TileMetaPackage,
     WorldLightsPackage,
 };
 use udd_container::{
-    reconstruct_stored_size, unpack_codec, unpack_offset40, unpack_type, xxh64_virtual_path, Codec, DataType, FileKey,
+    reconstruct_stored_size, unpack_codec, unpack_offset40, unpack_type, Codec, DataType, FileKey,
     FileRecord, LookupMode, UddpReader,
 };
 use uocf::classic::statics::StaticTile;
@@ -605,7 +604,8 @@ fn run_package_reader(kind: PackageKind, package: &UddpReader) -> eyre::Result<S
         }
         PackageKind::TexLandEc | PackageKind::TexLandKr => {
             let reader = TexLandEcPackage::from_uddp_package(package.clone())?;
-            let grunge = package.find_by_path_hash(xxh64_virtual_path(UDDP_GRUNGE_ENTRY_VPATH)).is_some();
+            let grunge = reader.grunge_rgba()?
+                .map_or_else(|| "none".to_owned(), |image| format!("{}x{}", image.width, image.height));
             format!(
                 "slots={}, pages={}, terrain_provenance={}, grunge={grunge}",
                 reader.slots().len(),

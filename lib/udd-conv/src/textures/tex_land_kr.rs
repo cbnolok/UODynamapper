@@ -24,7 +24,7 @@ use std::path::{Path, PathBuf};
 use color_eyre::eyre::{self, WrapErr};
 use log::{info, warn};
 use udd_assets::eckr_terrain_kdl::EckrTerrainRouting;
-use udd_assets::tex_land_ec::UDDP_GRUNGE_ENTRY_VPATH;
+use udd_assets::tex_land_ec::{encode_grunge_entry, UDDP_GRUNGE_ENTRY_VPATH};
 use udd_container::DataType;
 use uocf::enhanced::client_dialect::ClientDialect;
 use uocf::enhanced::legacy_terrain_map::{LegacyTerrainMap, LegacyTerrainRoute};
@@ -507,7 +507,8 @@ fn merge_routes(
     })
 }
 
-/// Kingdom Reborn's grunge texture as an RGBA8888 entry, compressed as the pages are.
+/// Kingdom Reborn's grunge texture as an RGBA8888 entry behind its version header ([`encode_grunge_entry`]),
+/// compressed as the pages are.
 fn read_grunge(
     kr_textures: &Textures,
     atlas: &TexLandEcAtlasOptions,
@@ -529,7 +530,7 @@ fn read_grunge(
         compression: atlas.compression,
         width,
         height,
-        data: image.into_raw(),
+        data: encode_grunge_entry(width, height, image.as_raw())?,
     }))
 }
 
