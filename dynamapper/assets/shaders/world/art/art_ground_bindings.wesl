@@ -31,7 +31,9 @@ struct GroundTileInstance {
     _pad_material: u32,
     // The KR client's base point on the ground, world x and z, for the client grunge (client_grunge.wesl).
     client_grunge_anchor: vec2<f32>,
-    local_light_rgba: vec4<f32>,
+    // The static local lights at the quad's corners (unit quad corner (x, z) at index x + 2 z), RGBA8 packed for
+    // unpack4x8unorm; the vertex shader picks its corner's and the rasterizer interpolates them.
+    local_light_corners: array<u32, 4>,
     color_rgba: vec4<f32>,
 }
 

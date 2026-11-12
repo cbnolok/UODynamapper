@@ -31,7 +31,7 @@ import package::shaders::world::art::client_shadow::{client_shadow_casts, client
     client_shadow_logical_offset, client_shadow_priority_depth};
 import package::shaders::world::art::client_grunge::{client_grunges, client_grunge_uv, apply_client_grunge};
 import package::shaders::world::art::hue::{apply_static_hue, apply_ec_sprite_hue, STATIC_HUE_FLAG_APPLY, STATIC_HUE_FLAG_EC_SPRITE};
-import package::shaders::world::art::shading::apply_art_surface_shading;
+import package::shaders::world::art::shading::{apply_art_surface_shading, art_local_light_at_corner, STATIC_FLAG_FLAT_ART};
 import package::shaders::world::art::surface_blend::static_surface_coverage;
 import package::shaders::world::ec_item_water::{ec_item_is_water, sample_ec_item_water};
 import package::shaders::world::ec_liquid_camera::ec_liquid_camera_reflection_uv;
@@ -51,6 +51,8 @@ struct ArtVertexOutput {
     @location(8) reflection_uv: vec2<f32>,
     // The KR client's grunge UV (client_grunge.wesl); used only while Client Grunge is on and the static is grunged.
     @location(9) client_grunge_uv: vec2<f32>,
+    // The static local light, interpolated between the quad's corners (`art_local_light_at_corner`).
+    @location(10) local_light_rgba: vec4<f32>,
 }
 
 struct ArtFragmentOutput {
@@ -187,6 +189,7 @@ fn vertex(vertex: Vertex) -> ArtVertexOutput {
             projected_world_pos.y - inst.world_y, local_world_pos.z + shadow_offset.y);
     }
     var out: ArtVertexOutput;
+    out.local_light_rgba = art_local_light_at_corner(inst.local_light_corners, corner);
     out.client_grunge_uv = vec2<f32>(0.0);
     if (effects.enable_client_grunge == 1u && client_grunges(inst.is_wet_flags)) {
         let grunge_anchor = vec3<f32>(inst.client_grunge_anchor.x, inst.base_world_y, inst.client_grunge_anchor.y);
@@ -512,8 +515,9 @@ fn shade_fragment(in: ArtVertexOutput, sample_index: u32) -> ArtFragmentOutput {
             effects.light_decal_intensity,
             effects.local_light_intensity,
             effects.kr_art_temperature_strength,
-            inst.local_light_rgba,
+            in.local_light_rgba,
             inst.flat_quad != 0u,
+            inst.flat_quad != 0u || (inst.is_wet_flags & STATIC_FLAG_FLAT_ART) != 0u,
         ), shaded.a);
     }
     if (effects.enable_grunge == 1u) {
@@ -532,7 +536,7 @@ fn shade_fragment(in: ArtVertexOutput, sample_index: u32) -> ArtFragmentOutput {
     // ownership. Feeding either into the KR wash paints the authored diamond
     // outline into the water and diverges from the terrain-owned surface.
     let color_wash_shadow = select(object_color_wash_shadow, 0.0, is_cc_flat_water || use_ec_item_water);
-    let color_wash_local_light = select(inst.local_light_rgba.a, 0.0, is_cc_flat_water || use_ec_item_water);
+    let color_wash_local_light = select(in.local_light_rgba.a, 0.0, is_cc_flat_water || use_ec_item_water);
     shaded = vec4<f32>(apply_kr_color_wash(
         shaded.rgb,
         in.world_pos.xz,

@@ -30,7 +30,7 @@ fn shade_scaled(role: u32, ground: bool, fake: u32, intensity: f32, scale: f32, 
         vec2<f32>(0.25, 0.4), vec3<f32>(0.1, 0.2, 0.3), role,
         normalize(vec3<f32>(0.5, 0.8, 0.25)), vec3<f32>(1.1, 1.0, 0.9),
         vec3<f32>(0.8, 0.9, 1.1), fake, 0.2, highlight, 0.3, 0.1, 0.0,
-        intensity, scale, 0.7, local, ground), 1.0);
+        intensity, scale, 0.7, local, ground, ground), 1.0);
 }
 fn shade(role: u32, ground: bool, fake: u32, intensity: f32, local: vec4<f32>, highlight: f32) -> vec4<f32> {
     return shade_scaled(role, ground, fake, intensity, 1.0, local, highlight);

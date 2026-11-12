@@ -1,7 +1,7 @@
 use crate::configs::settings::ClientTextureSource;
 use crate::configs::settings::Settings;
 use crate::console_logger::{self, LogAbout, LogSev};
-use crate::core::render::scene::camera::RenderZoom;
+use crate::core::render::scene::camera::{PlayerCamera, RenderZoom};
 use crate::core::render::scene::world::land::{
     CHUNK_STORAGE_BLOCKS_DIM, MAP_STORAGE_BLOCK_TILE_DIM,
 };
@@ -71,6 +71,20 @@ const EC_WATER_BASE_LAYER_INDEX: u32 = 0;
 const STATIC_CHUNK_CACHE_HYSTERESIS_TICKS: u64 = 30;
 pub(super) const STATIC_BILLBOARD_RIGHT_XZ: Vec2 =
     Vec2::new(std::f32::consts::FRAC_1_SQRT_2, -std::f32::consts::FRAC_1_SQRT_2);
+/// The CC flat art's second axis, on-screen down: main.wesl's `FLAT_QUAD_FORWARD_XZ`.
+const CC_FLAT_QUAD_FORWARD_XZ: Vec2 =
+    Vec2::new(std::f32::consts::FRAC_1_SQRT_2, std::f32::consts::FRAC_1_SQRT_2);
+/// The unit quad's corners (x, z) in the art batch mesh's vertex order (`build_art_batch_mesh`): corner (x, z) is
+/// vertex x + 2 z, the index the art shaders pick a corner's local light with.
+const ART_QUAD_CORNERS: [(f32, f32); 4] = [(0.0, 0.0), (1.0, 0.0), (0.0, 1.0), (1.0, 1.0)];
+/// The largest 8-bit channel value, which a packed local light channel spans (`unpack4x8unorm` in the shaders).
+const LOCAL_LIGHT_CHANNEL_MAX: f32 = u8::MAX as f32;
+/// Bits per packed local light channel.
+const LOCAL_LIGHT_CHANNEL_BITS: u32 = u8::BITS;
+/// `SpriteInstance::is_wet_flags` bit: the upright card shows flat art, a CC ground diamond above the terrain (a floor
+/// or a flat roof, `cc_ground_diamond`), which catches the static local lights evenly. Kept in sync with
+/// art/shading.wesl.
+pub(crate) const STATIC_FLAG_FLAT_ART: u32 = 1 << 11;
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub(crate) struct StaticBillboardBounds {
@@ -979,6 +993,7 @@ pub struct SpriteInstance {
     /// Bit 0: is_wet (`static_tile_renders_wet` → animated water UV distortion in sprite shader).
     /// Bit 1: ground surface blend; bits 2..9: NW,N,NE,W,E,SW,S,SE same-material neighbors.
     /// Bit 10: `STATIC_FLAG_CLIENT_GRUNGE`, the KR client grunges the static (art/client_grunge.wesl).
+    /// Bit 11: `STATIC_FLAG_FLAT_ART`, the upright card shows flat art (art/shading.wesl).
     pub is_wet_flags: u32,
     pub hue_id: u32,
     pub hue_flags: u32,
@@ -996,7 +1011,9 @@ pub struct SpriteInstance {
     /// The KR client's base point of the static on the ground, (tile x + 0.5, tile y + 1.5) in world x and z: the
     /// client grunge maps from it (art/client_grunge.wesl). Takes the former `_pad_client_shadow` slot.
     pub client_grunge_anchor: [f32; 2],
-    pub local_light_rgba: [f32; 4],
+    /// The static local lights at the quad's four corners, in `ART_QUAD_CORNERS` order, each RGBA8 packed
+    /// (`static_local_light_corners`); the shaders interpolate them across the quad.
+    pub local_light_corners: [u32; 4],
     pub color_rgba: [f32; 4], // for dot mode
 }
 
@@ -1032,7 +1049,8 @@ pub struct GroundTileInstance {
     /// The KR client's base point of the static, as `SpriteInstance::client_grunge_anchor`: the client grunge maps
     /// from it (art/client_grunge.wesl).
     pub client_grunge_anchor: [f32; 2],
-    pub local_light_rgba: [f32; 4],
+    /// The static local lights at the quad's corners, as `SpriteInstance::local_light_corners`.
+    pub local_light_corners: [u32; 4],
     pub color_rgba: [f32; 4],
 }
 
@@ -1353,18 +1371,43 @@ fn static_light_signature(
     signature
 }
 
-fn static_art_local_light_rgba(
+/// A static's local light packed for the GPU as RGBA8, as the art shaders read it back (`unpack4x8unorm`: red in the
+/// low byte).
+fn pack_local_light_rgba(rgba: [f32; 4]) -> u32 {
+    rgba.iter().rev().fold(0, |packed, channel| {
+        (packed << LOCAL_LIGHT_CHANNEL_BITS) | (channel.clamp(0.0, 1.0) * LOCAL_LIGHT_CHANNEL_MAX).round() as u32
+    })
+}
+
+/// The static local lights at a quad's four corners (`SpriteInstance::local_light_corners`), each packed RGBA8.
+/// `corner_world` gives the world point (x, z, y) of the unit quad's corner (x, z), as the art shaders lay the quad
+/// out. The shaders interpolate the corners across the quad, so a light falls off smoothly over a floor or a roof
+/// made of many statics, as it does over the land, and an upright static brightens towards the light. Lighting each
+/// static evenly, with the strongest of a few samples, drew a block per tile.
+fn static_local_light_corners(
+    lights: &super::static_lights::RenderStaticLightInstances,
+    map_id: u32,
+    corner_world: impl Fn(f32, f32) -> (f32, f32, f32),
+) -> [u32; 4] {
+    ART_QUAD_CORNERS.map(|(corner_x, corner_z)| {
+        let (world_x, world_z, world_y) = corner_world(corner_x, corner_z);
+        pack_local_light_rgba(static_local_light_rgba(lights, map_id, world_x, world_z, world_y))
+    })
+}
+
+/// The local light at one point, the same at every corner: the dot mode's statics.
+fn static_art_point_local_light_corners(
     enabled: bool,
     lights: &super::static_lights::RenderStaticLightInstances,
     map_id: u32,
     world_x: f32,
     world_z: f32,
     world_y: f32,
-) -> [f32; 4] {
+) -> [u32; 4] {
     if enabled {
-        static_local_light_rgba(lights, map_id, world_x, world_z, world_y)
+        [pack_local_light_rgba(static_local_light_rgba(lights, map_id, world_x, world_z, world_y)); 4]
     } else {
-        [0.0; 4]
+        [0; 4]
     }
 }
 
@@ -1405,22 +1448,11 @@ fn static_local_light_rgba(
     ]
 }
 
-fn strongest_static_local_light_sample(
-    lights: &super::static_lights::RenderStaticLightInstances,
-    map_id: u32,
-    samples: &[(f32, f32, f32)],
-) -> [f32; 4] {
-    let mut best = [0.0; 4];
-    for &(world_x, world_z, world_y) in samples {
-        let sample = static_local_light_rgba(lights, map_id, world_x, world_z, world_y);
-        if sample[3] > best[3] {
-            best = sample;
-        }
-    }
-    best
-}
-
-fn static_art_billboard_local_light_rgba(
+/// The local lights at an upright billboard's corners, laid out as main.wesl does: x along the billboard's right, its
+/// top (`local_max_y`) at corner z 0. A card showing flat art (`STATIC_FLAG_FLAT_ART`) takes them at the ground points
+/// its corners show, down the view ray at its base height, so the light runs on across neighbouring floor or roof
+/// tiles as over the flat statics.
+fn static_art_billboard_local_light_corners(
     enabled: bool,
     lights: &super::static_lights::RenderStaticLightInstances,
     map_id: u32,
@@ -1428,12 +1460,24 @@ fn static_art_billboard_local_light_rgba(
     world_z: f32,
     base_world_y: f32,
     bounds: StaticBillboardBounds,
-) -> [f32; 4] {
-    if enabled {
-        static_billboard_local_light_rgba(lights, map_id, world_x, world_z, base_world_y, bounds)
-    } else {
-        [0.0; 4]
+    flat_art: bool,
+) -> [u32; 4] {
+    if !enabled {
+        return [0; 4];
     }
+    let view_ray = PlayerCamera::BASE_OFFSET_FROM_PLAYER;
+    static_local_light_corners(lights, map_id, |corner_x, corner_z| {
+        let local_x = bounds.local_min_x + (bounds.local_max_x - bounds.local_min_x) * corner_x;
+        let local_y = bounds.local_max_y - (bounds.local_max_y - bounds.local_min_y) * corner_z;
+        let (sample_x, sample_z, sample_y) =
+            static_billboard_sample_world(world_x, world_z, base_world_y, local_x, local_y);
+        if flat_art {
+            let ground = Vec3::new(sample_x, sample_y, sample_z) - view_ray * (local_y / view_ray.y);
+            (ground.x, ground.z, ground.y)
+        } else {
+            (sample_x, sample_z, sample_y)
+        }
+    })
 }
 
 fn static_billboard_sample_world(
@@ -1450,45 +1494,9 @@ fn static_billboard_sample_world(
     )
 }
 
-fn static_billboard_local_light_rgba(
-    lights: &super::static_lights::RenderStaticLightInstances,
-    map_id: u32,
-    world_x: f32,
-    world_z: f32,
-    base_world_y: f32,
-    bounds: StaticBillboardBounds,
-) -> [f32; 4] {
-    let center_x = (bounds.local_min_x + bounds.local_max_x) * 0.5;
-    let center_y = (bounds.local_min_y + bounds.local_max_y) * 0.5;
-    let samples = [
-        (world_x, world_z, base_world_y),
-        static_billboard_sample_world(world_x, world_z, base_world_y, center_x, center_y),
-        static_billboard_sample_world(
-            world_x,
-            world_z,
-            base_world_y,
-            bounds.local_min_x,
-            bounds.local_min_y,
-        ),
-        static_billboard_sample_world(
-            world_x,
-            world_z,
-            base_world_y,
-            bounds.local_max_x,
-            bounds.local_min_y,
-        ),
-        static_billboard_sample_world(
-            world_x,
-            world_z,
-            base_world_y,
-            center_x,
-            bounds.local_max_y,
-        ),
-    ];
-    strongest_static_local_light_sample(lights, map_id, &samples)
-}
-
-fn static_art_ground_local_light_rgba(
+/// The local lights at the corners of a quad lying flat along the world axes: the ground pipeline's statics and the
+/// EC item surfaces (main.wesl's `flat_quad` 2 and 3).
+fn static_art_ground_local_light_corners(
     enabled: bool,
     lights: &super::static_lights::RenderStaticLightInstances,
     map_id: u32,
@@ -1496,49 +1504,41 @@ fn static_art_ground_local_light_rgba(
     world_z: f32,
     base_world_y: f32,
     bounds: GroundQuadBounds,
-) -> [f32; 4] {
-    if enabled {
-        static_ground_local_light_rgba(lights, map_id, world_x, world_z, base_world_y, bounds)
-    } else {
-        [0.0; 4]
+) -> [u32; 4] {
+    if !enabled {
+        return [0; 4];
     }
+    static_local_light_corners(lights, map_id, |corner_x, corner_z| {
+        (
+            world_x + bounds.local_min_x + (bounds.local_max_x - bounds.local_min_x) * corner_x,
+            world_z + bounds.local_min_z + (bounds.local_max_z - bounds.local_min_z) * corner_z,
+            base_world_y,
+        )
+    })
 }
 
-fn static_ground_local_light_rgba(
+/// The local lights at the corners of a CC flat static, laid out as main.wesl lays `flat_quad` 1: x along the
+/// billboard's right, z along `CC_FLAT_QUAD_FORWARD_XZ`, around its centre.
+fn static_art_cc_flat_local_light_corners(
+    enabled: bool,
     lights: &super::static_lights::RenderStaticLightInstances,
     map_id: u32,
-    world_x: f32,
-    world_z: f32,
+    center_world_x: f32,
+    center_world_z: f32,
     base_world_y: f32,
     bounds: GroundQuadBounds,
-) -> [f32; 4] {
-    let center_x = (bounds.local_min_x + bounds.local_max_x) * 0.5;
-    let center_z = (bounds.local_min_z + bounds.local_max_z) * 0.5;
-    let samples = [
-        (world_x, world_z, base_world_y),
-        (world_x + center_x, world_z + center_z, base_world_y),
-        (
-            world_x + bounds.local_min_x,
-            world_z + bounds.local_min_z,
-            base_world_y,
-        ),
-        (
-            world_x + bounds.local_max_x,
-            world_z + bounds.local_min_z,
-            base_world_y,
-        ),
-        (
-            world_x + bounds.local_max_x,
-            world_z + bounds.local_max_z,
-            base_world_y,
-        ),
-        (
-            world_x + bounds.local_min_x,
-            world_z + bounds.local_max_z,
-            base_world_y,
-        ),
-    ];
-    strongest_static_local_light_sample(lights, map_id, &samples)
+) -> [u32; 4] {
+    if !enabled {
+        return [0; 4];
+    }
+    static_local_light_corners(lights, map_id, |corner_x, corner_z| {
+        let local_x = bounds.local_min_x + (bounds.local_max_x - bounds.local_min_x) * corner_x;
+        let local_z = bounds.local_min_z + (bounds.local_max_z - bounds.local_min_z) * corner_z;
+        let world = Vec2::new(center_world_x, center_world_z)
+            + STATIC_BILLBOARD_RIGHT_XZ * local_x
+            + CC_FLAT_QUAD_FORWARD_XZ * local_z;
+        (world.x, world.y, base_world_y)
+    })
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -2326,7 +2326,7 @@ fn emit_dot_static_tile(
         return;
     };
 
-    let local_light_rgba = static_art_local_light_rgba(
+    let local_light_corners = static_art_point_local_light_corners(
         frame.static_art_local_lights,
         resources.static_lights,
         frame.map_id,
@@ -2365,7 +2365,7 @@ fn emit_dot_static_tile(
         client_shadow_flags: 0,
         client_shadow_height: 0.0,
         client_grunge_anchor: [0.0; 2],
-        local_light_rgba,
+        local_light_corners,
         color_rgba: [
             color[2] as f32 / 255.0,
             color[1] as f32 / 255.0,
@@ -2565,7 +2565,7 @@ fn emit_ground_static_instance(
 ) {
     build.stats.ground_land_tiles += 1;
     let bounds = resolve_surface_like_ground_quad_bounds();
-    let local_light_rgba = static_art_ground_local_light_rgba(
+    let local_light_corners = static_art_ground_local_light_corners(
         frame.static_art_local_lights,
         resources.static_lights,
         frame.map_id,
@@ -2600,7 +2600,7 @@ fn emit_ground_static_instance(
         material_item_id: info.tile.graphic as u32,
         _pad_material: 0,
         client_grunge_anchor: client_grunge_anchor(info.tile),
-        local_light_rgba,
+        local_light_corners,
         color_rgba: [1.0, 1.0, 1.0, 1.0],
     });
 }
@@ -2638,8 +2638,11 @@ fn emit_billboard_static_instance(
             resolved.logical_height,
         )
     };
-    let local_light_rgba = if ec_surface {
-        static_art_ground_local_light_rgba(
+    let flat_art = !ec_surface
+        && billboard_source == ClientTextureSource::Cc
+        && cc_ground_diamond(info.tilemeta, resolved.logical_width, resolved.logical_height);
+    let local_light_corners = if ec_surface {
+        static_art_ground_local_light_corners(
             frame.static_art_local_lights,
             resources.static_lights,
             frame.map_id,
@@ -2649,7 +2652,7 @@ fn emit_billboard_static_instance(
             resolve_surface_like_ground_quad_bounds(),
         )
     } else {
-        static_art_billboard_local_light_rgba(
+        static_art_billboard_local_light_corners(
             frame.static_art_local_lights,
             resources.static_lights,
             frame.map_id,
@@ -2657,6 +2660,7 @@ fn emit_billboard_static_instance(
             anchored_world_z,
             info.base_world_y,
             bounds,
+            flat_art,
         )
     };
 
@@ -2675,7 +2679,7 @@ fn emit_billboard_static_instance(
         tile_y: anchored_world_z,
         priority_z_units,
         sort_bias_ordinal: 0,
-        is_wet_flags: info.is_wet_flags | info.client_grunge_flag,
+        is_wet_flags: info.is_wet_flags | info.client_grunge_flag | if flat_art { STATIC_FLAG_FLAT_ART } else { 0 },
         hue_id,
         hue_flags: hue_flags | if billboard_source == ClientTextureSource::Ec { STATIC_HUE_FLAG_EC_SPRITE } else { 0 },
         flat_quad: if ec_surface { if ec_static_camera_quad(info.tilemeta) { 3 } else { 2 } } else { 0 },
@@ -2684,7 +2688,7 @@ fn emit_billboard_static_instance(
         client_shadow_flags: info.client_shadow_flags,
         client_shadow_height: info.client_shadow_height,
         client_grunge_anchor: client_grunge_anchor(info.tile),
-        local_light_rgba,
+        local_light_corners,
         color_rgba: [1.0, 1.0, 1.0, static_sprite_opacity(info.tilemeta, resolved.legacy_art && !ec_surface)],
     });
 }
@@ -2716,15 +2720,6 @@ fn emit_cc_surface_like_flat_static_instance(
         resolved.logical_width,
         resolved.logical_height,
     );
-    let local_light_rgba = static_art_ground_local_light_rgba(
-        frame.static_art_local_lights,
-        resources.static_lights,
-        frame.map_id,
-        anchored_world_x,
-        anchored_world_z,
-        info.base_world_y,
-        bounds,
-    );
     // Anchor the flat diamond feet-first by the sprite's real pixel height (see
     // `cc_surface_like_flat_quad_center_offsets`): for the 44px plain-water sprites this lands
     // exactly on the cell center, so the diagonal basis in main.wesl maps the baked diamond's
@@ -2736,6 +2731,15 @@ fn emit_cc_surface_like_flat_static_instance(
         cc_surface_like_flat_quad_center_offsets(resolved.logical_height);
     let centered_world_x = anchored_world_x + center_offset_x;
     let centered_world_z = anchored_world_z + center_offset_z;
+    let local_light_corners = static_art_cc_flat_local_light_corners(
+        frame.static_art_local_lights,
+        resources.static_lights,
+        frame.map_id,
+        centered_world_x,
+        centered_world_z,
+        info.base_world_y,
+        bounds,
+    );
 
     build.sprite_instances.push(SpriteInstance {
         world_x: centered_world_x,
@@ -2761,7 +2765,7 @@ fn emit_cc_surface_like_flat_static_instance(
         client_shadow_flags: info.client_shadow_flags,
         client_shadow_height: info.client_shadow_height,
         client_grunge_anchor: client_grunge_anchor(info.tile),
-        local_light_rgba,
+        local_light_corners,
         color_rgba: [1.0, 1.0, 1.0, static_sprite_opacity(info.tilemeta, resolved.legacy_art)],
     });
 }
@@ -4055,7 +4059,7 @@ mod tests {
             client_shadow_flags: 0,
             client_shadow_height: 0.0,
             client_grunge_anchor: [0.0; 2],
-            local_light_rgba: [0.0; 4],
+            local_light_corners: [0; 4],
             color_rgba: [1.0, 1.0, 1.0, 1.0],
         };
         let mut instances = vec![
@@ -4373,50 +4377,110 @@ mod tests {
         assert_ne!(static_light_signature(&first, 1), static_light_signature(&second, 1));
     }
 
+    fn unpack_local_light(packed: u32) -> [f32; 4] {
+        std::array::from_fn(|channel| {
+            ((packed >> (channel as u32 * LOCAL_LIGHT_CHANNEL_BITS)) & u32::from(u8::MAX)) as f32 / LOCAL_LIGHT_CHANNEL_MAX
+        })
+    }
+
+    #[test]
+    fn local_light_packs_red_in_the_low_byte() {
+        assert_eq!(pack_local_light_rgba([1.0, 0.0, 0.0, 0.0]), 0x0000_00ff);
+        assert_eq!(pack_local_light_rgba([0.0, 0.0, 0.0, 1.0]), 0xff00_0000);
+        assert_eq!(pack_local_light_rgba([2.0, -1.0, 0.5, 0.0]), 0x0080_00ff);
+    }
+
     #[test]
     fn static_art_local_light_sampling_requires_opt_in() {
         let lights = super::super::static_lights::RenderStaticLightInstances(vec![
             test_static_light_at(0, [1.0, 0.72, 0.42], 0.0, 0.0, 0.0),
         ]);
 
-        assert_eq!(
-            static_art_local_light_rgba(false, &lights, 1, 0.0, 0.0, 0.0),
-            [0.0; 4]
-        );
-        assert!(static_art_local_light_rgba(true, &lights, 1, 0.0, 0.0, 0.0)[3] > 0.0);
+        assert_eq!(static_art_point_local_light_corners(false, &lights, 1, 0.0, 0.0, 0.0), [0; 4]);
+        let lit = static_art_point_local_light_corners(true, &lights, 1, 0.0, 0.0, 0.0);
+        assert!(unpack_local_light(lit[0])[3] > 0.0);
+        assert!(lit.iter().all(|corner| *corner == lit[0]), "a dot is lit evenly");
     }
 
     #[test]
-    fn billboard_local_light_samples_bounds_not_only_origin() {
+    fn billboard_local_light_corners_follow_the_quad_layout() {
         let bounds = StaticBillboardBounds {
-            local_min_x: 4.0,
+            local_min_x: -4.0,
             local_max_x: 4.0,
             local_min_y: 0.0,
             local_max_y: 0.0,
         };
-        let sample = static_billboard_sample_world(0.0, 0.0, 0.0, 4.0, 0.0);
+        // A light at the billboard's right end lights its right corners (x 1) only.
+        let right = static_billboard_sample_world(0.0, 0.0, 0.0, bounds.local_max_x, 0.0);
         let lights = super::super::static_lights::RenderStaticLightInstances(vec![
-            test_static_light_at(0, [1.0, 0.72, 0.42], sample.0, sample.1, sample.2),
+            test_static_light_at(0, [1.0, 0.72, 0.42], right.0, right.1, right.2),
         ]);
 
-        assert_eq!(static_local_light_rgba(&lights, 1, 0.0, 0.0, 0.0)[3], 0.0);
-        assert!(static_billboard_local_light_rgba(&lights, 1, 0.0, 0.0, 0.0, bounds)[3] > 0.0);
+        let corners = static_art_billboard_local_light_corners(true, &lights, 1, 0.0, 0.0, 0.0, bounds, false)
+            .map(|corner| unpack_local_light(corner)[3]);
+        assert_eq!(corners[0], 0.0);
+        assert_eq!(corners[2], 0.0);
+        assert!(corners[1] > 0.0 && corners[3] > 0.0);
     }
 
     #[test]
-    fn ground_local_light_samples_quad_extent() {
-        let bounds = GroundQuadBounds {
+    fn flat_art_cards_take_their_corner_lights_on_the_ground_they_show() {
+        let bounds = StaticBillboardBounds {
             local_min_x: 0.0,
-            local_max_x: 4.0,
-            local_min_z: 0.0,
-            local_max_z: 0.0,
+            local_max_x: 0.0,
+            local_min_y: 0.0,
+            local_max_y: 4.0,
         };
+        // The card's top shows the ground its height further back along the view ray.
+        let view_ray = PlayerCamera::BASE_OFFSET_FROM_PLAYER;
+        let shown = -view_ray * (bounds.local_max_y / view_ray.y);
         let lights = super::super::static_lights::RenderStaticLightInstances(vec![
-            test_static_light_at(0, [1.0, 0.72, 0.42], 4.0, 0.0, 0.0),
+            test_static_light_at(0, [1.0, 0.72, 0.42], shown.x, shown.z, 0.0),
+        ]);
+        let corners = |flat_art| {
+            static_art_billboard_local_light_corners(true, &lights, 1, 0.0, 0.0, 0.0, bounds, flat_art)
+                .map(|corner| unpack_local_light(corner)[3])
+        };
+
+        let flat = corners(true);
+        assert!(flat[0] > 0.0 && flat[1] > 0.0, "the top corners show the lit ground");
+        assert_eq!([flat[2], flat[3]], [0.0; 2]);
+        assert_eq!(corners(false), [0.0; 4], "an upright card's top stands above its base, away from the light");
+    }
+
+    #[test]
+    fn neighbouring_flat_statics_share_their_corner_lights() {
+        let bounds = resolve_surface_like_ground_quad_bounds();
+        let lights = super::super::static_lights::RenderStaticLightInstances(vec![
+            test_static_light_at(0, [1.0, 0.72, 0.42], 1.3, 0.4, 0.0),
+        ]);
+        let west = static_art_ground_local_light_corners(true, &lights, 1, 0.0, 0.0, 0.0, bounds);
+        let east = static_art_ground_local_light_corners(true, &lights, 1, 1.0, 0.0, 0.0, bounds);
+
+        // The west tile's east edge (corners x 1) is the east tile's west edge (corners x 0): no seam between them.
+        assert!(unpack_local_light(west[1])[3] > 0.0);
+        assert_eq!(west[1], east[0]);
+        assert_eq!(west[3], east[2]);
+        assert_ne!(west[0], west[1], "the light falls off across a tile");
+    }
+
+    #[test]
+    fn cc_flat_local_light_corners_lie_on_the_diagonal_basis() {
+        let bounds = GroundQuadBounds {
+            local_min_x: -1.0,
+            local_max_x: 1.0,
+            local_min_z: -1.0,
+            local_max_z: 1.0,
+        };
+        // Corner (1, 0): right along the billboard axis, back (up-screen) along the flat forward axis.
+        let corner = STATIC_BILLBOARD_RIGHT_XZ * bounds.local_max_x + CC_FLAT_QUAD_FORWARD_XZ * bounds.local_min_z;
+        let lights = super::super::static_lights::RenderStaticLightInstances(vec![
+            test_static_light_at(0, [1.0, 0.72, 0.42], corner.x, corner.y, 0.0),
         ]);
 
-        assert_eq!(static_local_light_rgba(&lights, 1, 0.0, 0.0, 0.0)[3], 0.0);
-        assert!(static_ground_local_light_rgba(&lights, 1, 0.0, 0.0, 0.0, bounds)[3] > 0.0);
+        let corners = static_art_cc_flat_local_light_corners(true, &lights, 1, 0.0, 0.0, 0.0, bounds)
+            .map(|corner| unpack_local_light(corner)[3]);
+        assert!(corners[1] > corners[0] && corners[1] > corners[2] && corners[1] > corners[3]);
     }
 
     #[test]

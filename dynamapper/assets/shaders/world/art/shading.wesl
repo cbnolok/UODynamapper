@@ -25,6 +25,32 @@ const ART_DEPTH_CLASS_SURFACE_LIKE_FLOOR: u32 = 4u;
 const ART_UPRIGHT_BILLBOARD_EDGE_PROFILE: f32 = 0.0;
 const ART_UPRIGHT_BILLBOARD_SIDE_FALLOFF_PROFILE: f32 = 0.0;
 
+// How much of a static local light an art pixel catches: a base share everywhere plus a top catch, which on an
+// upright sprite ramps from its foot (0) to its top (1) with this exponent.
+const ART_LOCAL_LIGHT_BASE_CATCH: f32 = 0.18;
+const ART_LOCAL_LIGHT_TOP_CATCH: f32 = 0.62;
+const ART_LOCAL_LIGHT_TOP_CATCH_EXPONENT: f32 = 1.7;
+// A flat static (a floor, a flat roof, the ground art) has no top to catch more of the light: it takes the ramp's mean
+// over the sprite height, the integral of (1 - v)^exponent, evenly. Ramping it per sprite drew every tile of a lit
+// floor or roof brighter at its far edge.
+const ART_LOCAL_LIGHT_FLAT_TOP_CATCH: f32 = 1.0 / (1.0 + ART_LOCAL_LIGHT_TOP_CATCH_EXPONENT);
+// SpriteInstance is_wet_flags bit: the upright card shows flat art, a floor or a flat roof. Keep in sync with
+// STATIC_FLAG_FLAT_ART in statics_collect.rs.
+const STATIC_FLAG_FLAT_ART: u32 = 1u << 11u;
+
+// The static local light at a unit quad corner (x, z), from the instance's four packed corners
+// (statics_collect.rs `static_local_light_corners`); the vertex shaders pass it on for the rasterizer to interpolate.
+fn art_local_light_at_corner(corners: array<u32, 4>, corner: vec2<f32>) -> vec4<f32> {
+    return unpack4x8unorm(corners[u32(corner.x + 0.5) + 2u * u32(corner.y + 0.5)]);
+}
+
+// The share of a static local light an art pixel catches (the ART_LOCAL_LIGHT_* constants above).
+fn art_local_light_catch(uv_in_tile: vec2<f32>, flat_art: bool) -> f32 {
+    let top_catch = select(pow(max(1.0 - uv_in_tile.y, 0.0), ART_LOCAL_LIGHT_TOP_CATCH_EXPONENT),
+        ART_LOCAL_LIGHT_FLAT_TOP_CATCH, flat_art);
+    return ART_LOCAL_LIGHT_BASE_CATCH + ART_LOCAL_LIGHT_TOP_CATCH * top_catch;
+}
+
 fn art_luminance(c: vec3<f32>) -> f32 {
     return dot(c, vec3<f32>(0.2126, 0.7152, 0.0722));
 }
@@ -80,6 +106,9 @@ fn apply_art_surface_shading(
     kr_art_temperature_strength: f32,
     local_light_rgba: vec4<f32>,
     is_ground_art: bool,
+    // The art is flat (a flat quad, or an upright card showing a floor or flat roof): it catches the local lights
+    // evenly.
+    flat_art: bool,
 ) -> vec3<f32> {
     let shadow_strength = clamp(art_shadow_strength, 0.0, 1.0);
     let highlight_strength = clamp(art_highlight_strength, 0.0, 1.0);
@@ -197,7 +226,8 @@ fn apply_art_surface_shading(
         out_rgb = rgb * cool_shadow * shadow_cut;
         out_rgb += rgb * warm_key * (0.25 + 0.75 * top_catch);
         out_rgb += light_color * edge_catch * highlight_strength * 0.22;
-        out_rgb += rgb * local_light_rgba.rgb * local_light_rgba.a * light_static * local_light_profile * (0.18 + 0.62 * top_catch);
+        out_rgb += rgb * local_light_rgba.rgb * local_light_rgba.a * light_static * local_light_profile
+            * art_local_light_catch(uv_in_tile, flat_art);
         let foot_contact_noise = 1.0 + (noise_2d(world_pos.xz * 0.8 + uv_in_tile * 11.0) - 0.5) * 0.24 * mottle_strength;
         let foot_contact = smoothstep(0.68, 1.0, uv_in_tile.y) * foot_contact_noise * foot_contact_profile;
         out_rgb *= 1.0 - foot_contact * contact_strength * (0.10 + 0.10 * shadow_strength);
@@ -217,8 +247,8 @@ fn apply_art_surface_shading(
     }
 
     if (enable_art_fake_normals != 1u && local_light_rgba.a > 0.001) {
-        let top_catch = pow(max(1.0 - uv_in_tile.y, 0.0), 1.7);
-        out_rgb += rgb * local_light_rgba.rgb * local_light_rgba.a * light_static * (0.18 + 0.62 * top_catch);
+        out_rgb += rgb * local_light_rgba.rgb * local_light_rgba.a * light_static
+            * art_local_light_catch(uv_in_tile, flat_art);
     }
 
     if (mottle_strength > 0.0) {

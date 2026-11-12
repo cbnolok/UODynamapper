@@ -30,7 +30,7 @@ import package::shaders::world::art::art_ground_bindings::{
 };
 import package::shaders::world::art::client_grunge::{client_grunges, client_grunge_uv, apply_client_grunge};
 import package::shaders::world::art::hue::apply_static_hue;
-import package::shaders::world::art::shading::apply_art_surface_shading;
+import package::shaders::world::art::shading::{apply_art_surface_shading, art_local_light_at_corner};
 import package::shaders::world::projection::camera_relative_world_to_clip;
 
 struct GroundVertexOutput {
@@ -45,6 +45,8 @@ struct GroundVertexOutput {
     @location(7) reflection_uv: vec2<f32>,
     // The KR client's grunge UV (client_grunge.wesl); used only while Client Grunge is on and the static is grunged.
     @location(8) client_grunge_uv: vec2<f32>,
+    // The static local light, interpolated between the quad's corners (`art_local_light_at_corner`).
+    @location(9) local_light_rgba: vec4<f32>,
 }
 
 struct GroundFragmentOutput {
@@ -114,6 +116,7 @@ fn vertex(vertex: Vertex) -> GroundVertexOutput {
     out.world_pos = world_pos;
     out.instance_index = u32(vertex.uv_b.x + 0.5);
     out.reflection_uv = ec_liquid_camera_reflection_uv(world_pos, scene.ec_reflection_camera_distance);
+    out.local_light_rgba = art_local_light_at_corner(inst.local_light_corners, corner);
     out.client_grunge_uv = vec2<f32>(0.0);
     if (effects.enable_client_grunge == 1u && client_grunges(inst.is_wet_flags)) {
         let grunge_anchor = vec3<f32>(inst.client_grunge_anchor.x, inst.base_world_y, inst.client_grunge_anchor.y);
@@ -229,7 +232,8 @@ fn shade_fragment(in: GroundVertexOutput, sample_index: u32) -> GroundFragmentOu
             effects.light_decal_intensity,
             effects.local_light_intensity,
             effects.kr_art_temperature_strength,
-            inst.local_light_rgba,
+            in.local_light_rgba,
+            true,
             true,
         ), shaded.a);
     }
@@ -248,7 +252,7 @@ fn shade_fragment(in: GroundVertexOutput, sample_index: u32) -> GroundFragmentOu
         shaded.rgb,
         in.world_pos.xz,
         color_wash_shadow,
-        select(inst.local_light_rgba.a, 0.0, use_ec_water_material),
+        select(in.local_light_rgba.a, 0.0, use_ec_water_material),
         effects.enable_kr_color_wash,
         effects.kr_color_wash_strength,
         effects.kr_color_wash_scale,

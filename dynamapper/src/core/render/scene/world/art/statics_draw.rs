@@ -833,7 +833,7 @@ pub fn sys_setup_art_page_atlas(
         client_shadow_flags: 0,
         client_shadow_height: 0.0,
         client_grunge_anchor: [0.0; 2],
-        local_light_rgba: [0.0, 0.0, 0.0, 0.0],
+        local_light_corners: [0; 4],
         color_rgba: [0.0, 0.0, 0.0, 0.0],
     }]);
 
@@ -953,7 +953,7 @@ pub fn sys_setup_art_page_atlas(
         material_item_id: 0,
         _pad_material: 0,
         client_grunge_anchor: [0.0; 2],
-        local_light_rgba: [0.0, 0.0, 0.0, 0.0],
+        local_light_corners: [0; 4],
         color_rgba: [0.0, 0.0, 0.0, 0.0],
     }]);
     let ground_buffer_handle = storage_buffers.add(initial_ground_buffer);
