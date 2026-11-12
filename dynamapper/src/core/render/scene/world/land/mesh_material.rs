@@ -243,9 +243,13 @@ pub struct LandEffectsUniform {
     /// World-tile wavelength for the broad KR color wash.
     pub kr_color_wash_scale: f32,
 
-    // --- Texture filter (vec4 slot 9) ---
+    // --- Texture filter and client grunge (vec4 slot 9) ---
     /// `TEXTURE_FILTER_PIXEL_ART` or `TEXTURE_FILTER_CLIENT_BILINEAR`, for land and sprite textures.
     pub texture_filter: u32,
+    /// 1 = the KR client's grunge on the statics it grunges (art/client_grunge.wesl), in any style.
+    pub enable_client_grunge: u32,
+    /// The client grunge's strength, 0..1: 1 is the client's full multiply, 0 leaves the colour as it is.
+    pub client_grunge_strength: f32,
 }
 
 /// Global lighting parameters shared across all shader types (land, art tiles, etc.).

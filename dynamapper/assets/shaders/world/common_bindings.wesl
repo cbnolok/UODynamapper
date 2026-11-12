@@ -56,6 +56,9 @@ struct LandEffectsUniform {
     kr_color_wash_scale: f32,
     // TEXTURE_FILTER_PIXEL_ART or TEXTURE_FILTER_CLIENT_BILINEAR (client_filter.wesl).
     texture_filter: u32,
+    // The KR client's grunge on statics (art/client_grunge.wesl): on/off and strength.
+    enable_client_grunge: u32,
+    client_grunge_strength: f32,
 }
 
 // Global lighting parameters shared across all shader types (land, art tiles, etc.).

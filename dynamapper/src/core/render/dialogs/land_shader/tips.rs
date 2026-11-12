@@ -53,6 +53,10 @@ pub(super) const NIGHT_OVERLAY_CLIENT: &str =
     "Back to the client's colour, the night map's exact mean.";
 pub(super) const CLIENT_SHADOWS: &str =
     "The KR client's shadows of statics and items, leaning from their base (its Show Shadows option). KR-like only, where they replace Shadow Shape, Contact Shadows and Projected Shadows.";
+pub(super) const CLIENT_GRUNGE: &str =
+    "The KR client's grunge: darkens statics and items it marks with soft blotches of its grunge texture, repeating every 16 tiles, never on land or light glows. The same blotches fall on Classic Client and Enhanced Client art sources. Strength 1 is the client; on in KR-like, optional in every style. Needs tex_land_kr.uddp for KR's texture, else uses the Enhanced Client's, a different image.";
+pub(super) const CLIENT_GRUNGE_STRENGTH: &str =
+    "How much Client Grunge darkens: 1 is the KR client's full multiply, 0 leaves the colours as they are.";
 
 // --- Terrain and water ---
 

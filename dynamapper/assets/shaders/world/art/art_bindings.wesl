@@ -23,6 +23,7 @@ struct SpriteInstance {
     sort_bias_ordinal: u32,
     // Tiledata flags: bit 0 = is_wet (animated water UV distortion).
     // Bit 1 = static/map surface blend; bits 2..9 = NW,N,NE,W,E,SW,S,SE neighbors.
+    // Bit 10 = the KR client grunges the static (STATIC_FLAG_CLIENT_GRUNGE, client_grunge.wesl).
     is_wet_flags: u32,
     hue_id: u32,
     hue_flags: u32,
@@ -36,7 +37,8 @@ struct SpriteInstance {
     // z units above the ground or surface below it.
     client_shadow_flags: u32,
     client_shadow_height: f32,
-    _pad_client_shadow: vec2<u32>,
+    // The KR client's base point on the ground, world x and z, for the client grunge (client_grunge.wesl).
+    client_grunge_anchor: vec2<f32>,
     local_light_rgba: vec4<f32>,
     color_rgba: vec4<f32>,
 }
@@ -89,6 +91,8 @@ struct SpriteParams {
 @group(3) @binding(111) var item_surface_atlas: texture_2d_array<f32>;
 @group(3) @binding(112) var item_surface_lookup: texture_2d<u32>;
 @group(3) @binding(113) var item_surface_sampler: sampler;
+@group(3) @binding(114) var client_grunge_texture: texture_2d<f32>;
+@group(3) @binding(115) var client_grunge_sampler: sampler;
 
 // Constants
 const INV_SQRT_2: f32 = 0.70710678118;

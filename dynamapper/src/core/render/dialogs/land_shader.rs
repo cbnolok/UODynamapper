@@ -859,6 +859,8 @@ pub fn land_ui_system(
                 changed |= slider_s(ui, "Art Light Catch", &mut u.effects.art_highlight_strength, 0.0..=1.0, tips::ART_LIGHT_CATCH);
                 changed |= slider_s(ui, "Art Atmosphere Tint", &mut u.effects.art_depth_tint_strength, 0.0..=1.0, tips::ART_ATMOSPHERE_TINT);
                 changed |= slider_s(ui, "KR Art Temperature", &mut u.effects.kr_art_temperature_strength, 0.0..=1.5, tips::KR_ART_TEMPERATURE);
+                changed |= toggle_u32(ui, "Client Grunge", &mut u.effects.enable_client_grunge, tips::CLIENT_GRUNGE);
+                changed |= slider_s(ui, "Client Grunge Strength", &mut u.effects.client_grunge_strength, 0.0..=1.0, tips::CLIENT_GRUNGE_STRENGTH);
                 changed |= toggle_u32(ui, "Art Projected Shadows", &mut u.effects.enable_art_projected_shadows, tips::ART_PROJECTED_SHADOWS);
                 changed |= slider_s(ui, "Art Projected Shadow Strength", &mut u.effects.art_projected_shadow_strength, 0.0..=1.0, tips::ART_PROJECTED_SHADOW_STRENGTH);
                 changed |= slider_s(ui, "Art Projected Shadow Length", &mut u.effects.art_projected_shadow_length, 0.0..=1.5, tips::ART_PROJECTED_SHADOW_LENGTH);
@@ -1187,6 +1189,7 @@ fn standard_art_controls(ui: &mut egui::Ui, u: &mut UniformState) -> bool {
     changed |= slider_s(ui, "Mottle", &mut effects.art_mottle_strength, 0.0..=1.5, tips::ART_MOTTLE);
     changed |= slider_s(ui, "Light Catch", &mut effects.art_highlight_strength, 0.0..=1.0, tips::ART_LIGHT_CATCH);
     changed |= slider_s(ui, "Atmosphere Tint", &mut effects.art_depth_tint_strength, 0.0..=1.0, tips::ART_ATMOSPHERE_TINT);
+    changed |= toggle_slider(ui, true, "Client Grunge", &mut effects.enable_client_grunge, &mut effects.client_grunge_strength, 0.0..=1.0, tips::CLIENT_GRUNGE);
     changed
 }
 

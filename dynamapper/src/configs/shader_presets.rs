@@ -1149,6 +1149,24 @@ mod tests {
         }
     }
 
+    /// The client grunge at strength 1 is the KR client's multiply: on in KR-like, off elsewhere, and at the client's
+    /// strength wherever it is switched on.
+    #[test]
+    fn only_kr_like_has_the_client_grunge_on() {
+        const CLIENT_GRUNGE_FULL_STRENGTH: f32 = 1.0;
+        for text in [BUNDLED_FACTORY_PRESETS, BUNDLED_LAND_SETTINGS] {
+            let presets = parse(text).expect("bundled");
+            for (group, expected) in
+                [(&presets.classic, 0), (&presets.enhanced, 0), (&presets.kr, 1), (&presets.painterly, 0)]
+            {
+                for slot in [&group.morning, &group.afternoon, &group.night, &group.cave] {
+                    assert_eq!(slot.effects.enable_client_grunge, expected);
+                    assert_eq!(slot.effects.client_grunge_strength, CLIENT_GRUNGE_FULL_STRENGTH);
+                }
+            }
+        }
+    }
+
     #[test]
     fn bundled_blur_radius_is_on_the_slider_from_the_shader_floor() {
         use crate::core::render::scene::world::land::mesh_material::{BLUR_RADIUS_MAX_PIXELS, BLUR_RADIUS_MIN_PIXELS};

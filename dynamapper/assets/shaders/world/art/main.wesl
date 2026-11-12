@@ -21,7 +21,7 @@ import package::shaders::world::ec_liquid::{ec_liquid_texture_uv, ec_liquid_worl
 import package::shaders::world::art::art_bindings::{
     SpriteInstance, SpriteParams, SceneUniform, LandEffectsUniform, GlobalLightingUniforms,
     art_atlas_sampler, art_atlas, instances, sprite_params, scene, effects, global_light,
-    hue_sampler, hue_texture, visual_grunge_texture,
+    hue_sampler, hue_texture, visual_grunge_texture, client_grunge_texture, client_grunge_sampler,
     item_surface_atlas, item_surface_lookup, item_surface_sampler,
     INV_SQRT_2, BILLBOARD_RIGHT_XZ, FLAT_QUAD_FORWARD_XZ, HEIGHT_SCALE, DEPTH_CLASS_REGULAR, DEPTH_CLASS_BACKGROUND,
     DEPTH_CLASS_FOLIAGE, DEPTH_CLASS_ROOF, DEPTH_CLASS_SURFACE_LIKE_FLOOR, PASS_MODE_OPAQUE,
@@ -29,6 +29,7 @@ import package::shaders::world::art::art_bindings::{
 };
 import package::shaders::world::art::client_shadow::{client_shadow_casts, client_shadow_world_offset,
     client_shadow_priority_depth};
+import package::shaders::world::art::client_grunge::{client_grunges, client_grunge_uv, apply_client_grunge};
 import package::shaders::world::art::hue::{apply_static_hue, apply_ec_sprite_hue, STATIC_HUE_FLAG_APPLY, STATIC_HUE_FLAG_EC_SPRITE};
 import package::shaders::world::art::shading::apply_art_surface_shading;
 import package::shaders::world::art::surface_blend::static_surface_coverage;
@@ -48,6 +49,8 @@ struct ArtVertexOutput {
     @location(6) world_pos: vec3<f32>,
     @location(7) @interpolate(flat) instance_index: u32,
     @location(8) reflection_uv: vec2<f32>,
+    // The KR client's grunge UV (client_grunge.wesl); used only while Client Grunge is on and the static is grunged.
+    @location(9) client_grunge_uv: vec2<f32>,
 }
 
 struct ArtFragmentOutput {
@@ -172,10 +175,14 @@ fn vertex(vertex: Vertex) -> ArtVertexOutput {
         projected_local_pos = vec3<f32>(local_world_pos.x + shadow_offset.x,
             projected_world_pos.y - inst.world_y, local_world_pos.z + shadow_offset.y);
     }
+    var out: ArtVertexOutput;
+    out.client_grunge_uv = vec2<f32>(0.0);
+    if (effects.enable_client_grunge == 1u && client_grunges(inst)) {
+        out.client_grunge_uv = client_grunge_uv(inst, projected_local_pos);
+    }
     if (sprite_params.pass_mode == PASS_MODE_CLIENT_SHADOW) {
         projected_local_pos = client_shadow_world_offset(inst, corner);
     }
-    var out: ArtVertexOutput;
     out.position = camera_relative_world_to_clip(vec3<f32>(inst.world_x, inst.world_y, inst.world_z), projected_local_pos);
     if (sprite_params.pass_mode == PASS_MODE_CLIENT_SHADOW && !client_shadow_casts(inst)) {
         out.position = CLIENT_SHADOW_CULLED_POSITION;
@@ -439,6 +446,11 @@ fn shade_fragment(in: ArtVertexOutput, sample_index: u32) -> ArtFragmentOutput {
             hue_texture,
             hue_sampler,
         );
+    }
+    // The KR client grunges a static's hued colour (client_grunge.wesl).
+    if (effects.enable_client_grunge == 1u && client_grunges(inst)) {
+        shaded = vec4<f32>(apply_client_grunge(shaded.rgb, in.client_grunge_uv, effects.client_grunge_strength,
+            client_grunge_texture, client_grunge_sampler), shaded.a);
     }
     // The existing fractional-edge color adjustment is not a material opacity
     // rule. Explicitly translucent art keeps straight RGB for standard blending.

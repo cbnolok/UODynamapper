@@ -16,6 +16,7 @@ use crate::core::uo_files_loader::{
     MapPlanesRes, TexArtCcPackageRes, TexArtEcPackageRes, TexLandEcPackageRes, TileMetaPackageRes, TexAuxEcPackageRes,
 };
 use crate::prelude::*;
+use super::client_grunge::STATIC_FLAG_CLIENT_GRUNGE;
 use bevy::prelude::*;
 use bevy::render::render_resource::ShaderType;
 use bytemuck::{Pod, Zeroable};
@@ -977,6 +978,7 @@ pub struct SpriteInstance {
     /// Tiledata flags packed for the GPU.
     /// Bit 0: is_wet (`static_tile_renders_wet` → animated water UV distortion in sprite shader).
     /// Bit 1: ground surface blend; bits 2..9: NW,N,NE,W,E,SW,S,SE same-material neighbors.
+    /// Bit 10: `STATIC_FLAG_CLIENT_GRUNGE`, the KR client grunges the static (art/client_grunge.wesl).
     pub is_wet_flags: u32,
     pub hue_id: u32,
     pub hue_flags: u32,
@@ -991,7 +993,9 @@ pub struct SpriteInstance {
     pub client_shadow_flags: u32,
     /// The caster's height in UO z units above the client's ground below it; 0 takes the shadow's h = 0 branch.
     pub client_shadow_height: f32,
-    pub _pad_client_shadow: [u32; 2],
+    /// The KR client's base point of the static on the ground, (tile x + 0.5, tile y + 1.5) in world x and z: the
+    /// client grunge maps from it (art/client_grunge.wesl). Takes the former `_pad_client_shadow` slot.
+    pub client_grunge_anchor: [f32; 2],
     pub local_light_rgba: [f32; 4],
     pub color_rgba: [f32; 4], // for dot mode
 }
@@ -1804,6 +1808,8 @@ struct StaticTileRenderInfo<'a> {
     client_shadow_flags: u32,
     /// The tile's height in UO z units above the client's ground below it (`client_shadow_ground_z`).
     client_shadow_height: f32,
+    /// `STATIC_FLAG_CLIENT_GRUNGE` when the KR client grunges the item, else 0: or'ed into the sprite's flags.
+    client_grunge_flag: u32,
 }
 
 #[derive(Default)]
@@ -2193,6 +2199,7 @@ fn emit_static_render_tile(
         base_world_y: (render_tile.z as f32) * frame.height_scale,
         client_shadow_flags: client_shadow_flags(tilemeta),
         client_shadow_height: (i32::from(render_tile.z) - ground_z) as f32,
+        client_grunge_flag: client_grunge_flag(tilemeta_package, render_tile.graphic),
     };
 
     if frame.is_dot_mode {
@@ -2276,6 +2283,21 @@ fn client_shadow_ground_z(z: i8, land_z: Option<i8>, surface_tops: impl Iterator
         .fold(land, i32::max)
 }
 
+/// `STATIC_FLAG_CLIENT_GRUNGE` when the KR client grunges `graphic`, by item id whatever art draws it.
+fn client_grunge_flag(tilemeta: Option<&udd_assets::tilemeta::TileMetaPackage>, graphic: u16) -> u32 {
+    if tilemeta.is_some_and(|package| package.item_has_client_grunge(u32::from(graphic))) {
+        STATIC_FLAG_CLIENT_GRUNGE
+    } else {
+        0
+    }
+}
+
+/// `SpriteInstance::client_grunge_anchor` of a tile: the KR client's base point, the EC billboard anchor.
+fn client_grunge_anchor(tile: StaticRenderTile) -> [f32; 2] {
+    let (world_x, world_z) = apply_static_world_anchor_translation(tile.world_x, tile.world_z);
+    [world_x, world_z]
+}
+
 /// `SpriteInstance::client_shadow_flags` for a tile: whether the KR client casts its shadow, and through the wall
 /// branch.
 fn client_shadow_flags(tilemeta: Option<&udd_assets::tilemeta::TileMetaItemTile>) -> u32 {
@@ -2338,7 +2360,7 @@ fn emit_dot_static_tile(
         material_item_id: 0,
         client_shadow_flags: 0,
         client_shadow_height: 0.0,
-        _pad_client_shadow: [0; 2],
+        client_grunge_anchor: [0.0; 2],
         local_light_rgba,
         color_rgba: [
             color[2] as f32 / 255.0,
@@ -2648,7 +2670,7 @@ fn emit_billboard_static_instance(
         tile_y: anchored_world_z,
         priority_z_units,
         sort_bias_ordinal: 0,
-        is_wet_flags: info.is_wet_flags,
+        is_wet_flags: info.is_wet_flags | info.client_grunge_flag,
         hue_id,
         hue_flags: hue_flags | if billboard_source == ClientTextureSource::Ec { STATIC_HUE_FLAG_EC_SPRITE } else { 0 },
         flat_quad: if ec_surface { if ec_static_camera_quad(info.tilemeta) { 3 } else { 2 } } else { 0 },
@@ -2656,7 +2678,7 @@ fn emit_billboard_static_instance(
         material_item_id: info.tile.graphic as u32,
         client_shadow_flags: info.client_shadow_flags,
         client_shadow_height: info.client_shadow_height,
-        _pad_client_shadow: [0; 2],
+        client_grunge_anchor: client_grunge_anchor(info.tile),
         local_light_rgba,
         color_rgba: [1.0, 1.0, 1.0, static_sprite_opacity(info.tilemeta, resolved.legacy_art && !ec_surface)],
     });
@@ -2725,7 +2747,7 @@ fn emit_cc_surface_like_flat_static_instance(
         tile_y: anchored_world_z,
         priority_z_units,
         sort_bias_ordinal: 0,
-        is_wet_flags: info.is_wet_flags,
+        is_wet_flags: info.is_wet_flags | info.client_grunge_flag,
         hue_id,
         hue_flags,
         flat_quad: 1,
@@ -2733,7 +2755,7 @@ fn emit_cc_surface_like_flat_static_instance(
         material_item_id: 0,
         client_shadow_flags: info.client_shadow_flags,
         client_shadow_height: info.client_shadow_height,
-        _pad_client_shadow: [0; 2],
+        client_grunge_anchor: client_grunge_anchor(info.tile),
         local_light_rgba,
         color_rgba: [1.0, 1.0, 1.0, static_sprite_opacity(info.tilemeta, resolved.legacy_art)],
     });
@@ -4027,7 +4049,7 @@ mod tests {
             material_item_id: 0,
             client_shadow_flags: 0,
             client_shadow_height: 0.0,
-            _pad_client_shadow: [0; 2],
+            client_grunge_anchor: [0.0; 2],
             local_light_rgba: [0.0; 4],
             color_rgba: [1.0, 1.0, 1.0, 1.0],
         };

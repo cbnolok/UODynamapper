@@ -111,6 +111,10 @@ pub struct ArtSpriteMaterialExtension {
     pub item_surface_atlas: Handle<Image>,
     #[texture(112, sample_type = "u_int", visibility(fragment))]
     pub item_surface_lookup: Handle<Image>,
+    /// The KR client's grunge texture (client_grunge.rs), wrapping and bilinear.
+    #[texture(114, visibility(fragment))]
+    #[sampler(115, visibility(fragment))]
+    pub client_grunge_texture: Handle<Image>,
 }
 
 #[derive(Asset, AsBindGroup, TypePath, Clone)]
@@ -768,8 +772,12 @@ pub fn sys_setup_art_page_atlas(
     tex_land_ec_res: Option<Res<TexLandEcPackageRes>>,
     tilemeta_res: Option<Res<TileMetaPackageRes>>,
     hues_package_res: Option<Res<HuesPackageRes>>,
-    item_liquid_images: Res<crate::core::texture_cache::ec_item_liquid::EcItemLiquidImages>,
-    item_surface_images: Res<crate::core::texture_cache::ec_item_surface::EcItemSurfaceImages>,
+    // One tuple: a system takes at most 16 parameters.
+    (item_liquid_images, item_surface_images): (
+        Res<crate::core::texture_cache::ec_item_liquid::EcItemLiquidImages>,
+        Res<crate::core::texture_cache::ec_item_surface::EcItemSurfaceImages>,
+    ),
+    client_grunge_packages: super::client_grunge::ClientGrungePackages,
 ) {
     log_system_add_startup::<DrawStaticSpritesPlugin>(StartupSysSet::SetupSceneStage1, fname!());
     let active_source = resolve_effective_art_source(
@@ -820,7 +828,7 @@ pub fn sys_setup_art_page_atlas(
         material_item_id: 0,
         client_shadow_flags: 0,
         client_shadow_height: 0.0,
-        _pad_client_shadow: [0; 2],
+        client_grunge_anchor: [0.0; 2],
         local_light_rgba: [0.0, 0.0, 0.0, 0.0],
         color_rgba: [0.0, 0.0, 0.0, 0.0],
     }]);
@@ -829,6 +837,8 @@ pub fn sys_setup_art_page_atlas(
     let opaque_sprite_atlas_handle = sprite_atlas_handle.clone();
     let transparent_sprite_atlas_handle = sprite_atlas_handle.clone();
     let visual_grunge_texture = images.add(crate::util_lib::image::visual_grunge_image(128));
+    let (client_grunge_image, _) = client_grunge_packages.image();
+    let client_grunge_texture = images.add(client_grunge_image);
 
     let opaque_material_handle = materials.add(ArtSpriteMaterial {
         base: StandardMaterial {
@@ -856,6 +866,7 @@ pub fn sys_setup_art_page_atlas(
             visual_grunge_texture: visual_grunge_texture.clone(),
             item_surface_atlas: item_surface_images.atlas.clone(),
             item_surface_lookup: item_surface_images.lookup.clone(),
+            client_grunge_texture: client_grunge_texture.clone(),
         },
     });
 
@@ -885,6 +896,7 @@ pub fn sys_setup_art_page_atlas(
             visual_grunge_texture: visual_grunge_texture.clone(),
             item_surface_atlas: item_surface_images.atlas.clone(),
             item_surface_lookup: item_surface_images.lookup.clone(),
+            client_grunge_texture: client_grunge_texture.clone(),
         },
     });
 
@@ -909,6 +921,7 @@ pub fn sys_setup_art_page_atlas(
             visual_grunge_texture: visual_grunge_texture.clone(),
             item_surface_atlas: item_surface_images.atlas.clone(),
             item_surface_lookup: item_surface_images.lookup.clone(),
+            client_grunge_texture: client_grunge_texture.clone(),
         },
     });
 
