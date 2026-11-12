@@ -24,10 +24,14 @@ What was built differs from the proposal in these points:
   never matched an entry of the shipped `TerrainTexture.uop`. The installed `world_lights.uddp` therefore held only
   the 55 light.mul lights, and the repack is byte-identical.
 - **U1:** the offsets are applied literally, in world units. No client night screenshot confirms the (-5, -4)
-  shift yet.
-- **Still open:** U2, U4, U5 as in §8. The land shader decals and the static local lights of KR-like and Enhanced
-  still read the light.mul instances (LightSource flag, quality as light id); only the additive decal quads are
-  replaced.
+  shift yet. Re-traced on 2026-11-12 (§8, U1): both binaries give the lava glow the same 4.06-unit shift to the
+  left, so Dynamapper keeps it.
+- **U3:** resolved on 2026-11-12 (§8): the EC base point is the KR one.
+- **Still open:** U2, U4, U5 as in §8.
+- **Land and static local lights:** the clients have none; their terrain and sprites take the lights only through
+  the composite. In KR-like and Enhanced the optional land light decals and static local lights (Light/Static
+  Interaction, 0 in those presets) read the client light sprites since 2026-11-12, no longer the light.mul
+  instances.
 
 KR-like and Enhanced draw the night composite's light buffer B with interim quads: light.mul masks with our own
 size and position (see [CLIENT_NIGHT_LIGHTING_AND_SHADOWS.md](../dev_wiki/rendering/CLIENT_NIGHT_LIGHTING_AND_SHADOWS.md),
@@ -68,7 +72,7 @@ identical.
 | Place the sprite | `PlaceLightSprite` 0x00438a80 (`UOObjectComponentLighting`, vtable slot +4) | `UOObjectComponentLighting::Initialize` 0x00449740 (vtable 0x00c9fdfc, slot +4) | confirmed |
 | Texture location | `LightingTextureFileLocation` 0x00438680: the definition's block-3 name, else object vt+0x60 | 0x00449330: the same | confirmed |
 | Quad | `BuildSpriteQuad` 0x00442430 | `BuildImageWindowQuad` 0x00459b00, through `BuildSpriteGeometry` 0x0045a080 | confirmed |
-| Base point | `PlaceSprite` 0x004422b0 with the object's map position | `SetSpriteMapPosition` 0x004598d0 with (0, 0, 0); the object's node carries the position | KR confirmed; EC probable (§8, U3) |
+| Base point | `PlaceSprite` 0x004422b0 with the object's map position | `SetSpriteMapPosition` 0x004598d0 with (0, 0, 0); the object's node carries the position | confirmed (§8, U3) |
 | Pixel scale K | 0.021427423 at 0x00b87024 | the same value at 0x00d051d8 | confirmed |
 | Light fields | definition +0x6c scale, +0x70 unused, +0x74 offset x, +0x78 offset y. Getters 0x004b56f0..0x004b5720 (vt+0x3c..+0x48); parser stores at 0x007be0ce..0x007be0eb | the same offsets. Getters `GetLightScale` 0x004c94e0 .. `GetLightOffsetY` 0x004c9510 (vt+0x40..+0x4c) | confirmed |
 
@@ -376,9 +380,9 @@ Inputs: texture 1 (256²), s = 2, offsets (0, -4.5). In our axes, x = UO x and z
 
 | # | Point | Status | How to check |
 |---|---|---|---|
-| U1 | The large default offsets (-5, -4) on 376 EC items put the glow centre about 4 world units left of the item. The binaries apply the offsets literally (confirmed). EC zeroed offset_x on several lanterns (2576, 2577, 10922, 11518), which suggests the authors saw the shift. | confirmed reading, surprising effect | A night screenshot of a fireplace or lava (EC or KR) next to a Dynamapper capture. `docs/images/kr_reference/` holds day promo shots and no lit night scene, so the user would need to supply one; client binaries are never run here. |
+| U1 | The large default offsets (-5, -4) on 376 EC items put the glow centre about 4 world units left of the item. The binaries apply the offsets literally (confirmed). EC zeroed offset_x on several lanterns (2576, 2577, 10922, 11518), which suggests the authors saw the shift. Re-traced on 2026-11-12: KR `PlaceLightSprite` adds M * (0, offset_y, offset_x) to the descriptor after `PlaceSprite`, with M the camera node's rotation (`FUN_0083aab0` is M * v); `BuildSpriteQuad` builds the corners in that same frame, at 22 - W/2 pixels by K * scale, so the offsets are not scaled. EC `Initialize` does the same with the viewer camera's matrix. No step moves the light back toward the item: at scale 2 the lava glow's centre lands 22 * 2 * K - 5 = -4.06 units along the camera's right. | confirmed reading in both binaries, surprising effect | A night screenshot of a fireplace or lava (EC or KR) next to a Dynamapper capture. `docs/images/kr_reference/` holds day promo shots and no lit night scene, so the user would need to supply one; client binaries are never run here. |
 | U2 | Texture v orientation: the quad's v = 1 - y/H at the top edge. This matters only for the asymmetric textures: 2 (post), 3 and 4 (windows), 7 (candle). | probable | Compare a window light at night; or check how `Textures` loads `TerrainTexture` DDS rows against the EC static path, which uses the same quad code. |
-| U3 | EC calls `SetSpriteMapPosition(0, 0, 0)` and relies on the component's node carrying the object position. KR passes the position directly. | probable | Trace the node attach after `Initialize` in UOSA (`CreateComponents` 0x005bf4xx). |
+| U3 | EC calls `SetSpriteMapPosition(0, 0, 0)` and relies on the component's node carrying the object position. KR passes the position directly. Resolved: `CreateComponents` 0x005befd0 attaches the component (slot 3); its event handler 0x00449e30 copies the object's vt+0x38 world position into the node's translation (+0x50..+0x58). The item sprite path (0x00444d80, event 1) feeds that same position to 0x00459a80, which adds the 0.5 and -1.5 itself, so the position carries no base offset: the light's base point is (x + 0.5, -y - 1.5) once, as in KR. | confirmed | |
 | U4 | Draw order of overlapping lights inside the batch. | unknown | `BuildLightBatch` 0x00438ee0 sort key; only visible where two lights overlap. |
 | U5 | Sampler state of the light map (filter, mips). The DDS files have no mips. | probable: linear, clamp | The `UOShaderFilenameLight` sampler setup. |
 | U6 | Descriptor mode +0x38 = 3 (EC +0x40). | unknown, no visible effect expected | Not needed for the proposal. |

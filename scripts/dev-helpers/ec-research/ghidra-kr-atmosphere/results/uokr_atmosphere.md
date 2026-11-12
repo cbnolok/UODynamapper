@@ -815,6 +815,12 @@ So the night, night-sight and day maps can come from either client.
     `position += M * (0, offset_y, offset_x)`, so offset_x is camera right and offset_y camera up, both in world
     units, scaled by neither K nor the light scale.
   - KR values are mostly 0 to -5. For example 2576 has (x -5, y -4) in KR and (0, -4.5) in EC.
+  - Re-traced on 2026-11-12 (proposal §8, U1 and U3): nothing moves the light back toward the item, so the lava's
+    (-5, -4) puts its glow centre 22 * 2 * K - 5 = -4.06 units along the camera's right, in KR and in EC alike. The
+    EC base point equals KR's: the node translation is the object's world position and `SetSpriteMapPosition(0, 0,
+    0)` adds the (0.5, -1.5) once.
+- **Terrain and statics** (*confirmed*): the light reaches them only through the composite. The sprites are unlit,
+  and the terrain has no light but the sun; no point light or light decal exists.
 
 **Batch** (*confirmed*): `BuildLightBatch` 0x00438ee0 turns z test and z write off and sends the batch to render
 group 0x00c931b4, which `UOLightingPostProcessEffect::Render` draws into B. The blend is the shared alpha property

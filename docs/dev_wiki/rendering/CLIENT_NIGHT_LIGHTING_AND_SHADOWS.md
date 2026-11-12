@@ -100,6 +100,7 @@ The client draws its light sprites into B, lerped one after the other over the n
 - **Render target:** an offscreen HDR camera (`LightBufferCamera`, a child of the PlayerCamera, order -1, transparent clear) draws them on `LIGHT_BUFFER_LAYER` into an Rgba16Float image the size of the frame.
 - **Blending:** they are drawn with straight alpha blending, which leaves the lights lerped over black with their coverage in alpha. The composite then forms `B = L.rgb + N' * (1 - L.a)`.
 - **When they show:** B is weighted by 1 - level, so the lights appear only through the composite and vanish by day, as in the client. The additive light.mul decals of `art/static_lights.rs` are off in these two styles; Classic and UOD-Painterly keep them.
+- **Terrain and statics:** the clients light them only through the composite: their sprites are unlit, and their terrain has no light other than the half-Lambert sun. The optional land light decals and static local lights (Light/Static Interaction, 0 in the KR-like and Enhanced presets; the static local lights also need `enable_static_art_local_lights`) are Dynamapper's own. In these two styles they read the light sprites, not light.mul: each sprite gives a light on the ground under its centre (the centre moved down the camera's view ray to the static's base height), sized like the light.mul masks (legacy pixels / 44) and coloured by its texture's alpha-weighted mean colour (`client_light_sprite_static_light`).
 - **Other passes:** render-world passes for the world view skip this camera (`gpu_picking` filters `Without<LightBufferCamera>`), and main-world camera queries filter `With<PlayerCamera>`.
 - **Without the packages' entries:** a `tex_aux_ec.uddp` packed against another tilemeta may lack a texture; Dynamapper warns once per texture and draws those lights without a sprite. Without `tex_aux_ec.uddp` it warns once and draws none.
 
@@ -107,7 +108,7 @@ Where they may still differ from the client:
 
 - Overlapping lights blend in Bevy's transparent sort order, not the client's batch order (U4).
 - The texture's v orientation is the EC statics' (row 0 at the top), which matters only for the asymmetric textures 2, 3, 4 and 7 (U2).
-- The large default offsets (-5, -4) of 376 EC items put their glow about 4 world units left of the item. The binaries apply them literally, so Dynamapper does too, but no night screenshot of the client confirms the effect (U1).
+- The large default offsets (-5, -4) of 376 EC items put their glow about 4 world units left of the item. Both binaries apply them literally (re-traced on 2026-11-12, for the lava too), so Dynamapper does, but no night screenshot of the client confirms the effect (U1).
 
 ## KR static shadows
 
