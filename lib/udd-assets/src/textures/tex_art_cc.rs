@@ -17,9 +17,10 @@ pub const SLOT_FLAG_STATIC: u16 = 1 << 2;
 pub const MISSING_PAGE_INDEX: u32 = u32::MAX;
 pub const MISSING_PAGE_TILE_INDEX: u16 = u16::MAX;
 
-const PAGE_MANIFEST_MAGIC: [u8; 4] = *b"CAPG";
-const SLOT_MANIFEST_MAGIC: [u8; 4] = *b"CASL";
-const TEX_ART_CC_METADATA_VERSION: u32 = 1;
+pub const PAGE_MANIFEST_MAGIC: [u8; 4] = *b"CAPG";
+pub const SLOT_MANIFEST_MAGIC: [u8; 4] = *b"CASL";
+/// Bump version when the binary layout of either manifest changes.
+pub const TEX_ART_CC_METADATA_VERSION: u32 = 1;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[repr(u8)]

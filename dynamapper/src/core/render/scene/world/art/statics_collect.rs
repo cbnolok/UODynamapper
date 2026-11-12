@@ -25,7 +25,7 @@ const CLASSIC_STATIC_ART_ID_OFFSET: u32 = 0x4000;
 const ISO_TILE_SCREEN_DIAGONAL_WORLD_UNITS: f32 = std::f32::consts::SQRT_2;
 const CC_TILE_PIXEL_WIDTH: f32 = 44.0;
 // Original legacy art projects four square sprite pixels per raw Z unit.
-const STATIC_WORLD_Y_PER_XZ_PIXEL: f32 = UO_Z_TO_WORLD_SCALE / (4.0 * CC_WORLD_XZ_PER_PIXEL);
+pub(super) const STATIC_WORLD_Y_PER_XZ_PIXEL: f32 = UO_Z_TO_WORLD_SCALE / (4.0 * CC_WORLD_XZ_PER_PIXEL);
 const CC_WORLD_XZ_PER_PIXEL: f32 = ISO_TILE_SCREEN_DIAGONAL_WORLD_UNITS / CC_TILE_PIXEL_WIDTH;
 const CC_WORLD_Y_PER_PIXEL: f32 = STATIC_WORLD_Y_PER_XZ_PIXEL * CC_WORLD_XZ_PER_PIXEL;
 const STATIC_ART_Y_BIAS: f32 = 0.002;
@@ -68,7 +68,7 @@ const CC_STATIC_TILE_TRANSLATION_Z: f32 = 1.0;
 const CLASSIC_WATER_LAND_TILE_ID: u32 = 168;
 const EC_WATER_BASE_LAYER_INDEX: u32 = 0;
 const STATIC_CHUNK_CACHE_HYSTERESIS_TICKS: u64 = 30;
-const STATIC_BILLBOARD_RIGHT_XZ: Vec2 =
+pub(super) const STATIC_BILLBOARD_RIGHT_XZ: Vec2 =
     Vec2::new(std::f32::consts::FRAC_1_SQRT_2, -std::f32::consts::FRAC_1_SQRT_2);
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -177,7 +177,7 @@ pub(super) fn cc_surface_like_flat_quad_center_offsets(logical_height: f32) -> (
     )
 }
 
-fn apply_static_world_anchor_translation(world_x: f32, world_z: f32) -> (f32, f32) {
+pub(super) fn apply_static_world_anchor_translation(world_x: f32, world_z: f32) -> (f32, f32) {
     (
         world_x + EC_STATIC_TILE_TRANSLATION_X,
         world_z + EC_STATIC_TILE_TRANSLATION_Z,

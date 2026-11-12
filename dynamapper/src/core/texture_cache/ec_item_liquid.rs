@@ -100,6 +100,7 @@ mod tests {
         let source = br#"{"17000":[{"block_index":0,"shader_name":"UOWaterShader","technique":[0,1],"tweaks":[0,0,-0.02,0.001],"field_04":0}],"17001":[{"block_index":0,"shader_name":"UOWaterShader","technique":[0,2],"tweaks":[0,0,0,0],"field_04":0}]}"#;
         let definitions = TileMetaItemDefinitions::default().to_bytes().unwrap();
         let refs = encode_item_texture_refs(&refs);
+        let lights = encode_item_lights(&[]);
         let mut builder = UddpBuilder::new(LookupMode::VirtualPathHash);
         for (path, data) in [
             (TILEMETA_LAND_ENTRY_PATH, b"".as_slice()),
@@ -108,6 +109,7 @@ mod tests {
             (TILEMETA_ITEM_TEXTURE_REF_ENTRY_PATH, refs.as_slice()),
             (TILEMETA_ITEM_MATERIAL_ENTRY_PATH, source.as_slice()),
             (TILEMETA_ITEM_DEFINITION_ENTRY_PATH, definitions.as_slice()),
+            (TILEMETA_ITEM_LIGHT_ENTRY_PATH, lights.as_slice()),
         ] {
             builder.add_file(AddFileRequest {
                 data_type: DataType::Metadata as u8, compression: CompressionFlag::ZstdNoDict,

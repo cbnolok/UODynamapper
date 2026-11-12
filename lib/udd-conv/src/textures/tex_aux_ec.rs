@@ -19,8 +19,10 @@
 //!   independent of trimmed primary art and optional auxiliary upscaling.
 //! - the client's atmosphere maps (`TerrainTexture.uop` entries 20 to 22: day, night and night-sight
 //!   maps) under reserved keys above the tile ids, always lossless RGBA8888 at native size.
+//! - the light textures the tilemeta's item lights name (`TerrainTexture.uop` entries), under the same
+//!   reserved keys and with the same rules, role Light. Every one is required.
 
-use std::collections::HashMap;
+use std::collections::{BTreeSet, HashMap};
 use std::path::{Path, PathBuf};
 
 use bytemuck::cast_slice;
@@ -30,7 +32,7 @@ use rayon::prelude::*;
 
 use udd_assets::tex_art_cc::PagePixelFormat;
 use udd_assets::tex_aux_ec::{
-    is_tex_aux_ec_reserved_key, tex_aux_ec_terrain_texture_key, texture_entry_path, TexAuxEcSlotRecord,
+    encode_tex_aux_ec_slots, is_tex_aux_ec_reserved_key, tex_aux_ec_terrain_texture_key, texture_entry_path, TexAuxEcSlotRecord,
     EC_ATMOSPHERE_MAP_TERRAIN_TEXTURE_ENTRIES, TEX_AUX_EC_MISSING_TEXTURE_ID, TEX_AUX_EC_SLOT_FLAG_MISSING_SOURCE,
     TEX_AUX_EC_SLOT_MANIFEST_ENTRY_PATH,
     TEX_AUX_EC_WATER_EXTENTS_ENTRY_PATH,
@@ -160,7 +162,7 @@ pub fn pack_tex_aux_ec(
         .map(|p| Textures::new(p, None, None).wrap_err_with(|| format!("load {}", p.display())))
         .transpose()?;
     let missing_texture = load_missing_texture(source_dirs)?;
-    let atmosphere_maps = load_atmosphere_maps(source_dirs)?;
+    let terrain_textures = load_terrain_textures(source_dirs, &reserved_terrain_texture_entries(&tilemeta)?)?;
     // Water map 1 is not sampled on capable hardware, so its pixels still belong
     // only to tex_art_ec. Retain its native dimensions for the item's local UVs;
     // a trimmed art slot or an upscaled support map cannot supply those dimensions.
@@ -255,13 +257,13 @@ pub fn pack_tex_aux_ec(
         )
         .ok_or_else(|| eyre::eyre!("encode {EC_MISSING_TEXTURE_UOP_ENTRY}"))?,
     );
-    // The atmosphere maps, stored as decoded: the composite must sample the client's own texels, so
-    // neither BC7 nor an upscale pass may touch them. Not counted in `included`.
-    for (entry, image) in atmosphere_maps {
+    // The atmosphere maps and the light textures, stored as decoded: the night composite must sample the client's
+    // own texels, so neither BC7 nor an upscale pass may touch them. Not counted in `included`.
+    for (entry, stable_role, image) in terrain_textures {
         push_entry(DecodedEntry {
             texture_id: tex_aux_ec_terrain_texture_key(entry),
             logical_family: EcMaterialLogicalFamily::Textures as u8,
-            stable_role: EcMaterialStableRole::Unknown as u8,
+            stable_role: stable_role as u8,
             width: image.width,
             height: image.height,
             pixel_format: PagePixelFormat::Rgba8888,
@@ -302,7 +304,7 @@ pub fn pack_tex_aux_ec(
 
     // Build UDDP.
     let mut package = UddpBuilder::new(LookupMode::VirtualPathHash);
-    let slot_bytes = cast_slice::<TexAuxEcSlotRecord, u8>(&slot_records);
+    let slot_bytes = encode_tex_aux_ec_slots(&slot_records);
     package.add_file(AddFileRequest {
         data_type: DataType::Metadata as u8,
         compression: CompressionFlag::ZstdNoDict,
@@ -311,7 +313,7 @@ pub fn pack_tex_aux_ec(
         virtual_path: Some(TEX_AUX_EC_SLOT_MANIFEST_ENTRY_PATH),
         path_hash64: None,
         id: None,
-        data: slot_bytes,
+        data: &slot_bytes,
     })?;
     package.add_file(AddFileRequest {
         data_type: DataType::Metadata as u8,
@@ -444,21 +446,36 @@ fn load_missing_texture(source_dirs: &[PathBuf]) -> eyre::Result<RawRgba> {
         .wrap_err_with(|| format!("decode {EC_MISSING_TEXTURE_UOP_ENTRY}"))
 }
 
-/// Decodes the client's atmosphere maps ([`EC_ATMOSPHERE_MAP_TERRAIN_TEXTURE_ENTRIES`]) from
-/// `TerrainTexture.uop`, as `(entry, image)`.
-fn load_atmosphere_maps(source_dirs: &[PathBuf]) -> eyre::Result<Vec<(u32, RawRgba)>> {
+/// The `TerrainTexture.uop` entries stored under reserved keys, with their roles: the atmosphere maps
+/// ([`EC_ATMOSPHERE_MAP_TERRAIN_TEXTURE_ENTRIES`]), then each light texture the tilemeta's item lights name.
+fn reserved_terrain_texture_entries(tilemeta: &TileMetaPackage) -> eyre::Result<Vec<(u32, EcMaterialStableRole)>> {
+    let light_entries: BTreeSet<u32> = tilemeta.item_lights().iter().map(|light| light.light_texture_entry).collect();
+    if let Some(entry) = light_entries.iter().find(|entry| EC_ATMOSPHERE_MAP_TERRAIN_TEXTURE_ENTRIES.contains(entry)) {
+        eyre::bail!("tilemeta names atmosphere map {entry} as a light texture");
+    }
+    info!("tex_aux_ec: {} light textures, {TERRAIN_TEXTURE_UOP} entries {light_entries:?}", light_entries.len());
+    Ok(EC_ATMOSPHERE_MAP_TERRAIN_TEXTURE_ENTRIES.into_iter().map(|entry| (entry, EcMaterialStableRole::Unknown))
+        .chain(light_entries.into_iter().map(|entry| (entry, EcMaterialStableRole::Light)))
+        .collect())
+}
+
+/// Decodes `TerrainTexture.uop` entries, as `(entry, role, image)`. Every entry is required.
+fn load_terrain_textures(
+    source_dirs: &[PathBuf],
+    entries: &[(u32, EcMaterialStableRole)],
+) -> eyre::Result<Vec<(u32, EcMaterialStableRole, RawRgba)>> {
     let path = find_first_existing_file(source_dirs, &[TERRAIN_TEXTURE_UOP])
-        .ok_or_else(|| eyre::eyre!("{TERRAIN_TEXTURE_UOP} not found in the EC source dirs; it holds the night maps"))?;
+        .ok_or_else(|| eyre::eyre!("{TERRAIN_TEXTURE_UOP} not found in the EC source dirs; it holds the night maps and the lights"))?;
     let textures = Textures::new(&path, None, None).wrap_err_with(|| format!("load {}", path.display()))?;
-    EC_ATMOSPHERE_MAP_TERRAIN_TEXTURE_ENTRIES
-        .into_iter()
-        .map(|entry| {
+    entries
+        .iter()
+        .map(|&(entry, role)| {
             let name = terrain_texture_uop_entry(entry);
             textures
                 .get_from_name(&name)?
                 .ok_or_else(|| eyre::eyre!("{} has no {name}", path.display()))
                 .and_then(|file| decode_raw_rgba(&file))
-                .map(|image| (entry, image))
+                .map(|image| (entry, role, image))
                 .wrap_err_with(|| format!("decode {name}"))
         })
         .collect()

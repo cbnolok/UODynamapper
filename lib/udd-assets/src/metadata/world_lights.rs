@@ -9,8 +9,8 @@ pub const SLOT_MANIFEST_ENTRY_PATH: &str = "metadata/slots.bin";
 
 pub const SLOT_FLAG_PRESENT: u16 = 1 << 0;
 
-const SLOT_MANIFEST_MAGIC: [u8; 4] = *b"WLSL";
-const WORLD_LIGHTS_METADATA_VERSION: u32 = 1;
+pub const SLOT_MANIFEST_MAGIC: [u8; 4] = *b"WLSL";
+pub const WORLD_LIGHTS_METADATA_VERSION: u32 = 1;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct WorldLightSlotRecord {

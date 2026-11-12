@@ -5,6 +5,7 @@ use parking_lot::Mutex;
 use std::path::Path;
 use std::sync::Arc;
 use uocf::classic::statics::{PackedStaticTile, StaticTile};
+use udd_assets::map_metadata::read_statics_package_metadata;
 use udd_container::UddpReader;
 
 const PACKAGE_CHUNK_BLOCK_DIM: u32 = 4;
@@ -28,7 +29,7 @@ pub struct LazyStaticsStore {
 }
 
 impl LazyStaticsStore {
-    pub fn new(package_path: &Path, width: u32, height: u32) -> eyre::Result<Self> {
+    pub fn new(package_path: &Path, map_id: u32, width: u32, height: u32) -> eyre::Result<Self> {
         let package_path = package_path.canonicalize()?;
         let package =
             Arc::new(UddpReader::load(&package_path).map_err(|error| eyre::eyre!("{error}"))?);
@@ -38,6 +39,17 @@ impl LazyStaticsStore {
         let package_chunk_height = block_height.div_ceil(PACKAGE_CHUNK_BLOCK_DIM);
         let num_blocks = (block_width * block_height) as usize;
         let num_package_chunks = (package_chunk_width * package_chunk_height) as usize;
+        let metadata = read_statics_package_metadata(&package).map_err(|error| eyre::eyre!("{error}"))?;
+        eyre::ensure!(
+            metadata.map_id == map_id,
+            "statics package is for map {}, expected map {map_id}",
+            metadata.map_id
+        );
+        eyre::ensure!(
+            metadata.chunk_count as usize == num_package_chunks,
+            "statics package has {} chunks, map {map_id} needs {num_package_chunks}",
+            metadata.chunk_count
+        );
         let cached_blocks = std::iter::repeat_with(|| None).take(num_blocks).collect();
 
         Ok(Self {

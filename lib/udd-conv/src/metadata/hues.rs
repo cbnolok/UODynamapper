@@ -6,7 +6,7 @@ use log::info;
 use crate::package_progress::build_and_write_package;
 use crate::source_paths::find_first_existing_file;
 use udd_assets::hues::{
-    encode_hues_csv, HueSlotRecord, HUE_FLAG_PRESENT, HUES_METADATA_ENTRY_PATH,
+    encode_hues_csv, encode_hues_package_header, HueSlotRecord, HUE_FLAG_PRESENT, HUES_METADATA_ENTRY_PATH, HUES_PACKAGE_ENTRY_PATH,
     HUES_TEXTURE_ENTRY_PATH, HUES_TEXTURE_HEIGHT, HUES_TEXTURE_WIDTH, HUE_STRIP_WIDTH, MAX_HUE_ID,
 };
 use udd_container::{AddFileRequest, CompressionFlag, DataType, LookupMode, UddpBuilder};
@@ -103,7 +103,20 @@ fn write_hues_uddp(
     options: &HuesOptions,
 ) -> eyre::Result<()> {
     let csv_bytes = encode_hues_csv(records)?;
+    let header = encode_hues_package_header();
     let mut package = UddpBuilder::new(LookupMode::VirtualPathHash);
+    package
+        .add_file(AddFileRequest {
+            data_type: DataType::Metadata as u8,
+            compression: CompressionFlag::None,
+            width: 0,
+            height: 0,
+            virtual_path: Some(HUES_PACKAGE_ENTRY_PATH),
+            path_hash64: None,
+            id: None,
+            data: &header,
+        })
+        .context("add metadata/package.bin")?;
     package
         .add_file(AddFileRequest {
             data_type: DataType::Metadata as u8,
@@ -318,7 +331,20 @@ mod tests {
         let parsed = parse_hues_csv(&csv).expect("parse csv");
         assert_eq!(parsed[1].as_ref().expect("hue 1").name, "alpha,beta");
 
+        let header = encode_hues_package_header();
         let mut builder = UddpBuilder::new(LookupMode::VirtualPathHash);
+        builder
+            .add_file(AddFileRequest {
+                data_type: DataType::Metadata as u8,
+                compression: CompressionFlag::None,
+                width: 0,
+                height: 0,
+                virtual_path: Some(HUES_PACKAGE_ENTRY_PATH),
+                path_hash64: None,
+                id: None,
+                data: &header,
+            })
+            .expect("add header");
         builder
             .add_file(AddFileRequest {
                 data_type: DataType::Metadata as u8,

@@ -618,15 +618,14 @@ fn world_lights_options(settings: &AppSettings) -> WorldLightsOptions {
     }
 }
 
-/// Packs the world lights as `pack-lights` does: the Classic light.mul and the Enhanced TerrainTexture.uop lights.
+/// Packs the world lights as `pack-lights` does: the Classic light.mul masks.
 fn pack_world_lights(settings: &AppSettings, output: &Path) -> eyre::Result<String> {
-    if settings.cc_dir.is_none() && settings.ec_dir.is_none() {
-        eyre::bail!("No Classic or Enhanced source dir configured");
-    }
+    let Some(cc_dir) = settings.cc_dir.as_deref() else {
+        eyre::bail!("No Classic source dir configured; the world lights come from light.mul");
+    };
     ensure_output_parent(output)?;
     convert_client_lights_to_world_lights_uddp(
-        settings.cc_dir.as_deref(),
-        settings.ec_dir.as_deref(),
+        cc_dir,
         output,
         &world_lights_options(settings),
     )?;

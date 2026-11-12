@@ -19,6 +19,12 @@ const TILEMETA_ITEM_TEXTURE_REF_HEADER_SIZE: usize = TILEMETA_ITEM_TEXTURE_REF_M
 pub const TILEMETA_ITEM_MATERIAL_ENTRY_PATH: &str = "metadata/item_materials.json";
 /// The `tileart.uop` records the Enhanced paperdoll reads ([`TileMetaItemDefinitions`]).
 pub const TILEMETA_ITEM_DEFINITION_ENTRY_PATH: &str = "metadata/item_definitions.bin";
+/// The light sprites of the Enhanced and KR clients ([`encode_item_lights`]). Required; empty without EC tileart.
+pub const TILEMETA_ITEM_LIGHT_ENTRY_PATH: &str = "metadata/item_lights.bin";
+/// Magic of the `TILEMETA_ITEM_LIGHT_ENTRY_PATH` header: magic, `u32` `TILEMETA_FORMAT_VERSION`, `u32` record count.
+pub const TILEMETA_ITEM_LIGHT_MAGIC: [u8; 4] = *b"TMIL";
+/// Size of the `TILEMETA_ITEM_LIGHT_ENTRY_PATH` header.
+const TILEMETA_ITEM_LIGHT_HEADER_SIZE: usize = TILEMETA_ITEM_LIGHT_MAGIC.len() + 2 * std::mem::size_of::<u32>();
 
 /// The item is not at its block's primary position (`uocf::enhanced::tileart::primary_texture_position`).
 pub const TILEMETA_ITEM_TEXTURE_FLAG_AUXILIARY: u8 = 1 << 0;
@@ -445,6 +451,56 @@ fn decode_item_texture_refs(bytes: &[u8]) -> eyre::Result<Vec<TileMetaItemTextur
     read_pod_vec(records, path)
 }
 
+/// The light sprite of an item, as the Enhanced and KR clients place it (`UOObjectComponentLighting`).
+///
+/// One record per item whose tileart shader block 3 (`uocf::enhanced::tileart::LIGHT_TEXTURE_BLOCK_INDEX`) names a
+/// texture at map 0; the client creates the light from that name alone, not from the LightSource flag.
+#[repr(C)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Pod, Zeroable)]
+pub struct TileMetaItemLight {
+    /// Item id, as `TileMetaItemTile::tile_id`.
+    pub tile_id: u32,
+    /// `TerrainTexture.uop` entry of the light texture (`build/terraintexture/%08d.dds`); its `tex_aux_ec` key is
+    /// `tex_aux_ec_terrain_texture_key(entry)`.
+    pub light_texture_entry: u32,
+    /// Tileart `light_scale`: texture pixels to sprite pixels.
+    pub scale: f32,
+    /// Tileart `light_offset_x`: world units along camera right, added after the camera rotation.
+    pub offset_x: f32,
+    /// Tileart `light_offset_y`: world units along camera up, added after the camera rotation.
+    pub offset_y: f32,
+}
+
+pub const TILEMETA_ITEM_LIGHT_SIZE: usize = 20;
+const _: () = assert!(std::mem::size_of::<TileMetaItemLight>() == TILEMETA_ITEM_LIGHT_SIZE);
+
+/// The `TILEMETA_ITEM_LIGHT_ENTRY_PATH` entry: the header, then `lights`, which must be sorted by unique `tile_id`.
+pub fn encode_item_lights(lights: &[TileMetaItemLight]) -> Vec<u8> {
+    let records: &[u8] = bytemuck::cast_slice(lights);
+    let mut bytes = Vec::with_capacity(TILEMETA_ITEM_LIGHT_HEADER_SIZE + records.len());
+    bytes.extend_from_slice(&TILEMETA_ITEM_LIGHT_MAGIC);
+    bytes.extend_from_slice(&TILEMETA_FORMAT_VERSION.to_le_bytes());
+    bytes.extend_from_slice(&u32::try_from(lights.len()).expect("item light count fits u32").to_le_bytes());
+    bytes.extend_from_slice(records);
+    bytes
+}
+
+/// Reads the `TILEMETA_ITEM_LIGHT_ENTRY_PATH` entry, refusing another magic, version or count, or unsorted records.
+pub fn decode_item_lights(bytes: &[u8]) -> eyre::Result<Vec<TileMetaItemLight>> {
+    let path = TILEMETA_ITEM_LIGHT_ENTRY_PATH;
+    eyre::ensure!(bytes.len() >= TILEMETA_ITEM_LIGHT_HEADER_SIZE && bytes.starts_with(&TILEMETA_ITEM_LIGHT_MAGIC),
+        "{path}: no TMIL header; repack with the current udd-cli");
+    let word = |index: usize| {
+        let start = TILEMETA_ITEM_LIGHT_MAGIC.len() + index * std::mem::size_of::<u32>();
+        u32::from_le_bytes(bytes[start..start + std::mem::size_of::<u32>()].try_into().expect("slice length checked"))
+    };
+    ensure_manifest_version(path, word(0), TILEMETA_FORMAT_VERSION)?;
+    let lights: Vec<TileMetaItemLight> = read_pod_vec(&bytes[TILEMETA_ITEM_LIGHT_HEADER_SIZE..], path)?;
+    eyre::ensure!(lights.len() == word(1) as usize, "{path}: {} records, the header says {}", lights.len(), word(1));
+    eyre::ensure!(lights.windows(2).all(|pair| pair[0].tile_id < pair[1].tile_id), "{path}: not sorted by unique tile id");
+    Ok(lights)
+}
+
 impl TileMetaItemTextureRef {
     pub fn is_auxiliary(&self) -> bool {
         self.flags & TILEMETA_ITEM_TEXTURE_FLAG_AUXILIARY != 0
@@ -480,6 +536,7 @@ pub struct TileMetaPackage {
     item_texture_refs: Vec<TileMetaItemTextureRef>,
     item_materials: std::collections::BTreeMap<u32, Vec<uocf::enhanced::tileart::ArtMaterial>>,
     item_definitions: TileMetaItemDefinitions,
+    item_lights: Vec<TileMetaItemLight>,
 }
 
 impl TileMetaPackage {
@@ -514,6 +571,9 @@ impl TileMetaPackage {
         let definition_bytes = read_path_entry_cow(&package, TILEMETA_ITEM_DEFINITION_ENTRY_PATH)?;
         let item_definitions =
             TileMetaItemDefinitions::from_bytes(definition_bytes.as_ref(), TILEMETA_ITEM_DEFINITION_ENTRY_PATH)?;
+        let light_bytes = read_path_entry_cow(&package, TILEMETA_ITEM_LIGHT_ENTRY_PATH)
+            .wrap_err("tilemeta missing item lights; repack with the current udd-cli")?;
+        let item_lights = decode_item_lights(light_bytes.as_ref())?;
 
         Ok(Self {
             package,
@@ -523,7 +583,18 @@ impl TileMetaPackage {
             item_texture_refs,
             item_materials,
             item_definitions,
+            item_lights,
         })
+    }
+
+    /// The light sprite of `tile_id` in the Enhanced and KR clients, if its tileart names a light texture.
+    pub fn item_light(&self, tile_id: u32) -> Option<&TileMetaItemLight> {
+        self.item_lights.binary_search_by_key(&tile_id, |light| light.tile_id).ok().map(|index| &self.item_lights[index])
+    }
+
+    /// Every item light, sorted by `tile_id`.
+    pub fn item_lights(&self) -> &[TileMetaItemLight] {
+        &self.item_lights
     }
 
     /// The `tileart.uop` records the Enhanced paperdoll reads: the lookup of `uocf::enhanced::paperdoll` runs on
@@ -915,6 +986,7 @@ mod tests {
     #[test]
     fn source_item_material_metadata_is_required_and_validated() {
         let no_refs = encode_item_texture_refs(&[]);
+        let no_lights = encode_item_lights(&[]);
         for source in [None, Some(b"invalid JSON".as_slice())] {
             let mut builder = udd_container::UddpBuilder::new(udd_container::LookupMode::VirtualPathHash);
             let entries = [
@@ -924,6 +996,7 @@ mod tests {
                 (TILEMETA_ITEM_TEXTURE_REF_ENTRY_PATH, Some(no_refs.as_slice())),
                 (TILEMETA_ITEM_MATERIAL_ENTRY_PATH, source),
                 (TILEMETA_ITEM_DEFINITION_ENTRY_PATH, Some(EMPTY_DEFINITIONS.as_slice())),
+                (TILEMETA_ITEM_LIGHT_ENTRY_PATH, Some(no_lights.as_slice())),
             ];
             for (path, data) in entries {
                 if let Some(data) = data {
@@ -944,6 +1017,10 @@ mod tests {
     }
 
     fn package_with_refs(refs: &[u8]) -> eyre::Result<TileMetaPackage> {
+        package_with_entries(refs, Some(&encode_item_lights(&[])))
+    }
+
+    fn package_with_entries(refs: &[u8], lights: Option<&[u8]>) -> eyre::Result<TileMetaPackage> {
         let mut builder = udd_container::UddpBuilder::new(udd_container::LookupMode::VirtualPathHash);
         let entries = [
             (TILEMETA_LAND_ENTRY_PATH, b"".as_slice()),
@@ -953,7 +1030,7 @@ mod tests {
             (TILEMETA_ITEM_MATERIAL_ENTRY_PATH, b"{}".as_slice()),
             (TILEMETA_ITEM_DEFINITION_ENTRY_PATH, EMPTY_DEFINITIONS.as_slice()),
         ];
-        for (path, data) in entries {
+        for (path, data) in entries.into_iter().chain(lights.map(|lights| (TILEMETA_ITEM_LIGHT_ENTRY_PATH, lights))) {
             builder.add_file(udd_container::AddFileRequest {
                 data_type: udd_container::DataType::Metadata as u8,
                 compression: udd_container::CompressionFlag::ZstdNoDict,
@@ -977,6 +1054,52 @@ mod tests {
             let message = package_with_refs(&bytes).err().expect("reject another tilemeta").to_string();
             assert!(message.contains("repack with the current udd-cli"), "{message}");
         }
+    }
+
+    /// Lantern 2594 as the EC tileart carries it, and a later item with the south window light values.
+    fn sample_item_lights() -> [TileMetaItemLight; 2] {
+        [
+            TileMetaItemLight { tile_id: 2594, light_texture_entry: 1, scale: 2.0, offset_x: 0.0, offset_y: -4.5 },
+            TileMetaItemLight { tile_id: 2850, light_texture_entry: 3, scale: 1.0, offset_x: -1.35, offset_y: -3.0 },
+        ]
+    }
+
+    #[test]
+    fn item_lights_round_trip_and_are_found_by_tile_id() {
+        let lights = sample_item_lights();
+        let bytes = encode_item_lights(&lights);
+        assert_eq!(&bytes[..4], b"TMIL");
+        assert_eq!(bytes.len(), TILEMETA_ITEM_LIGHT_HEADER_SIZE + lights.len() * TILEMETA_ITEM_LIGHT_SIZE);
+        // The record is five little-endian words: tile id, texture entry, scale, offset x, offset y.
+        let first = &bytes[TILEMETA_ITEM_LIGHT_HEADER_SIZE..][..TILEMETA_ITEM_LIGHT_SIZE];
+        assert_eq!(first[..8], [0x22, 0x0A, 0, 0, 1, 0, 0, 0]);
+        assert_eq!(f32::from_le_bytes(first[8..12].try_into().unwrap()), 2.0);
+        assert_eq!(f32::from_le_bytes(first[16..20].try_into().unwrap()), -4.5);
+        assert_eq!(decode_item_lights(&bytes).expect("decode"), lights);
+
+        let package = package_with_entries(&encode_item_texture_refs(&[]), Some(&bytes)).expect("package");
+        assert_eq!(package.item_light(2594), Some(&lights[0]));
+        assert_eq!(package.item_light(2850).map(|light| light.light_texture_entry), Some(3));
+        assert_eq!(package.item_light(2595), None);
+        assert_eq!(package.item_lights(), &lights);
+    }
+
+    #[test]
+    fn item_lights_are_required_at_the_current_version() {
+        let refs = encode_item_texture_refs(&[]);
+        let lights = sample_item_lights();
+        let current = encode_item_lights(&lights);
+        let mut other_version = current.clone();
+        other_version[4..8].copy_from_slice(&(TILEMETA_FORMAT_VERSION + 1).to_le_bytes());
+        let mut wrong_count = current.clone();
+        wrong_count[8..12].copy_from_slice(&3u32.to_le_bytes());
+        let unsorted = encode_item_lights(&[lights[1], lights[0]]);
+        let message = |lights: Option<&[u8]>| package_with_entries(&refs, lights).err().expect("rejected").to_string();
+        assert!(message(None).contains("repack with the current udd-cli"));
+        assert!(message(Some(&other_version)).contains("repack with the current udd-cli"));
+        assert!(message(Some(&current[TILEMETA_ITEM_LIGHT_HEADER_SIZE..])).contains("repack with the current udd-cli"));
+        assert!(message(Some(&wrong_count)).contains("the header says 3"));
+        assert!(message(Some(&unsorted)).contains("not sorted"));
     }
 
     #[test]

@@ -1442,7 +1442,7 @@ enum Commands {
         #[arg(long, default_value_t = false, help = CHUNK_STORED_HELP)]
         stored: bool,
     },
-    /// Packs CC and EC lighting textures into world_lights.uddp.
+    /// Packs the Classic light.mul masks (`--ccdir`) into world_lights.uddp; the Enhanced and KR light sprites go to tex_aux_ec.uddp.
     PackLights {
         #[command(flatten)]
         source_dirs: SourceDirArgs,
@@ -2521,9 +2521,10 @@ where
             } else {
                 CompressionFlag::ZstdNoDict
             };
+            let ccdir = source_dir_args.ccdir.as_deref()
+                .ok_or_else(|| eyre::eyre!("pack-lights reads light.mul: pass --ccdir"))?;
             convert_client_lights_to_world_lights_uddp(
-                source_dir_args.ccdir.as_deref(),
-                source_dir_args.ecdir.as_deref(),
+                ccdir,
                 &out_file,
                 &WorldLightsOptions {
                     compression,

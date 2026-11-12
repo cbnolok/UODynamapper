@@ -17,6 +17,8 @@
 //! - `metadata/item_texture_refs.bin`: magic `TMTR`, `u32` `TILEMETA_FORMAT_VERSION`, then the texture refs.
 //! - `metadata/item_definitions.bin`: the `tileart.uop` records the Enhanced paperdoll reads
 //!   (`TileMetaItemDefinitions`), above 10,000,000 included.
+//! - `metadata/item_lights.bin`: magic `TMIL`, `u32` `TILEMETA_FORMAT_VERSION`, `u32` count, then one
+//!   `TileMetaItemLight` per item whose tileart block 3 names a light texture.
 //!
 //! Texture ref roles come from the block shader and the item position
 //! (`EcMaterialStableRole::for_texture_position`); no rule reads the file name.
@@ -36,7 +38,7 @@ use crate::tex_art_ec::{
 use udd_assets::tex_art_ec::TexArtEcCropAdjustment;
 use udd_assets::tilemeta::item_definitions::{PropertyList, STORED_PROPERTIES};
 use udd_assets::tilemeta::{
-    encode_item_texture_refs, EcMaterialLogicalFamily, EcMaterialPhysicalPackage,
+    encode_item_lights, encode_item_texture_refs, EcMaterialLogicalFamily, TileMetaItemLight, TILEMETA_ITEM_LIGHT_ENTRY_PATH, EcMaterialPhysicalPackage,
     EcMaterialStableRole, TileMetaItemDefinitions, TileMetaItemTextureRef, TileMetaItemTextureRefSpan, TileMetaItemTile,
     TileMetaItemVisualKind, TileMetaLandTile, TILEMETA_ITEM_DEFINITION_ENTRY_PATH, TILEMETA_ITEM_ENTRY_PATH,
     TILEMETA_ITEM_EC_ART_FLAG_USE_NEW_ART, TILEMETA_ITEM_TEXTURE_FLAG_AUXILIARY,
@@ -55,7 +57,9 @@ use uocf::enhanced::mobile_body::MOBILE_DEFINITION_BASE;
 use uocf::enhanced::paperdoll::NamedTileArt;
 use uocf::enhanced::tileart::{
     primary_texture_position, ArtData, PropertyKey, TaeAppearanceFilter, TaeFlag, TextureItem, TileArtEntry,
+    LIGHT_TEXTURE_BLOCK_INDEX,
 };
+use uocf::ec_material_axes::EcLogicalFamily;
 use uocf::uop_container::package::UopPackage;
 
 pub struct TileMetaBuildOptions {
@@ -83,7 +87,30 @@ struct BuiltTileMetaTables {
     item_texture_refs: Vec<TileMetaItemTextureRef>,
     item_materials: std::collections::BTreeMap<u32, Vec<uocf::enhanced::tileart::ArtMaterial>>,
     item_definitions: TileMetaItemDefinitions,
+    item_lights: Vec<TileMetaItemLight>,
     package_compression: CompressionFlag,
+}
+
+/// Map of the light texture in tileart block `LIGHT_TEXTURE_BLOCK_INDEX`: the client's lighting component reads the
+/// block's first texture (`LightingTextureFileLocation`).
+const LIGHT_TEXTURE_ITEM_INDEX: u8 = 0;
+
+/// The light sprite of an item: its block-3 map-0 texture (`Data\Textures\000000NN_<name>.tga`, `TerrainTexture.uop`
+/// entry NN) with the record's light scale and offsets. The clients create the light from that name alone.
+fn item_light(tile_id: u32, ec_data: &ArtData) -> Option<TileMetaItemLight> {
+    let texture = ec_data.texture_items.iter().flatten()
+        .find(|item| item.block_index == LIGHT_TEXTURE_BLOCK_INDEX && item.item_index == LIGHT_TEXTURE_ITEM_INDEX)?;
+    if texture.ec_logical_family != EcLogicalFamily::Textures {
+        log::warn!("tilemeta: item {tile_id} light texture {:?} is not in Data\\Textures; no light", texture.path);
+        return None;
+    }
+    Some(TileMetaItemLight {
+        tile_id,
+        light_texture_entry: texture.id,
+        scale: ec_data.light_scale,
+        offset_x: ec_data.light_offset_x,
+        offset_y: ec_data.light_offset_y,
+    })
 }
 
 /// The tiledata layer of an item: its quality, when not 0, as the Enhanced paperdoll falls back to it.
@@ -240,6 +267,27 @@ mod tests {
         assert!(!<TileMetaItemTile as bytemuck::Zeroable>::zeroed().uses_new_art());
     }
 
+    /// An item light comes from the block-3 map-0 texture of the Textures family, with the record's light fields.
+    #[test]
+    fn item_lights_come_from_the_block_three_texture() {
+        use uocf::ec_material_axes::EcLogicalFamily;
+        const LANTERN: u32 = 2594;
+        let light_texture = |item_index, ec_logical_family| TextureItem {
+            block_index: LIGHT_TEXTURE_BLOCK_INDEX, item_index, id: 1, ec_logical_family, ..TextureItem::default()
+        };
+        let art = |items: Vec<TextureItem>| ArtData {
+            texture_items: vec![items], light_scale: 2.0, light_offset_x: 0.0, light_offset_y: -4.5, ..ArtData::default()
+        };
+        let lantern = art(vec![light_texture(LIGHT_TEXTURE_ITEM_INDEX, EcLogicalFamily::Textures)]);
+        assert_eq!(item_light(LANTERN, &lantern), Some(TileMetaItemLight {
+            tile_id: LANTERN, light_texture_entry: 1, scale: 2.0, offset_x: 0.0, offset_y: -4.5,
+        }));
+        let world_art = TextureItem { block_index: EC_PRIMARY_TEXTURE_BLOCK_INDEX, ..light_texture(0, EcLogicalFamily::WorldArt) };
+        assert_eq!(item_light(LANTERN, &art(vec![world_art])), None, "no block-3 texture, no light");
+        assert_eq!(item_light(LANTERN, &art(vec![light_texture(1, EcLogicalFamily::Textures)])), None, "not map 0");
+        assert_eq!(item_light(LANTERN, &art(vec![light_texture(0, EcLogicalFamily::WorldArt)])), None, "not a Textures path");
+    }
+
     #[test]
     fn classic_upper_flags_survive_the_tilemeta_mapping() {
         let impassable = TaeFlag::Impassable.bits();
@@ -260,7 +308,7 @@ mod tests {
             land_tiles: Vec::new(), item_tiles: Vec::new(),
             item_texture_ref_spans: Vec::new(), item_texture_refs: Vec::new(),
             item_materials: [(6038, vec![material.clone()])].into_iter().collect(),
-            item_definitions: TileMetaItemDefinitions::default(),
+            item_definitions: TileMetaItemDefinitions::default(), item_lights: Vec::new(),
             package_compression: CompressionFlag::ZstdNoDict,
         }).expect("write source material metadata");
         let package = udd_assets::tilemeta::TileMetaPackage::load(&path).expect("read source material metadata");
@@ -298,6 +346,7 @@ mod tests {
             item_materials: std::collections::BTreeMap::new(),
             item_definitions: TileMetaItemDefinitions::from_tileart([(ROBE, &robe), (BODY_DEFINITION, &body)])
                 .expect("definitions"),
+            item_lights: Vec::new(),
             package_compression: CompressionFlag::ZstdNoDict,
         }).expect("write item definitions");
         let package = udd_assets::tilemeta::TileMetaPackage::load(&path).expect("read item definitions");
@@ -469,6 +518,7 @@ fn write_tilemeta_uddp_with_progress(
     let item_texture_ref_bytes = encode_item_texture_refs(&built.item_texture_refs);
     let item_material_bytes = serde_json::to_vec(&built.item_materials)?;
     let item_definition_bytes = built.item_definitions.to_bytes()?;
+    let item_light_bytes = encode_item_lights(&built.item_lights);
 
     let mut package = UddpBuilder::new(LookupMode::VirtualPathHash);
     package.add_file(AddFileRequest {
@@ -530,6 +580,16 @@ fn write_tilemeta_uddp_with_progress(
         path_hash64: None,
         id: None,
         data: &item_definition_bytes,
+    })?;
+    package.add_file(AddFileRequest {
+        data_type: DataType::Metadata as u8,
+        compression: built.package_compression,
+        width: 0,
+        height: 0,
+        virtual_path: Some(TILEMETA_ITEM_LIGHT_ENTRY_PATH),
+        path_hash64: None,
+        id: None,
+        data: &item_light_bytes,
     })?;
     build_and_write_package_with_progress(package, out_file, &mut package_progress)?;
 
@@ -660,6 +720,7 @@ fn build_tilemeta_tables_with_ec_sources(
     let mut item_texture_refs = Vec::new();
     let mut unknown_shader_refs = std::collections::BTreeMap::<String, usize>::new();
     let mut item_materials = std::collections::BTreeMap::new();
+    let mut item_lights = Vec::new();
     for tile in cc_tiledata.item_tiles() {
         pb.inc(1);
         let mut tile_meta_item = TileMetaItemTile {
@@ -692,6 +753,7 @@ fn build_tilemeta_tables_with_ec_sources(
             if !ec_data.materials.is_empty() {
                 item_materials.insert(tile.tile_id as u32, ec_data.materials.clone());
             }
+            item_lights.extend(item_light(tile.tile_id as u32, ec_data));
             tile_meta_item.flags |= ec_data.flags.bits();
             tile_meta_item.ec_art_flags = ec_art_flags(ec_data);
             tile_meta_item.set_visual_kind(classify_item_visual_kind(
@@ -795,6 +857,8 @@ fn build_tilemeta_tables_with_ec_sources(
     if !layers.examples.is_empty() {
         info!("tilemeta: first layer disagreements (item, tileart Layer, tiledata layer): {:?}", layers.examples);
     }
+    let light_textures: std::collections::BTreeSet<u32> = item_lights.iter().map(|light| light.light_texture_entry).collect();
+    info!("tilemeta: {} item lights, light textures {light_textures:?}", item_lights.len());
 
     Ok(BuiltTileMetaTables {
         land_tiles: tilemeta_land,
@@ -803,6 +867,7 @@ fn build_tilemeta_tables_with_ec_sources(
         item_texture_refs,
         item_materials,
         item_definitions,
+        item_lights,
         package_compression: options.package_compression,
     })
 }

@@ -8,6 +8,8 @@
 //! containing the list of static items for that chunk with offsets relative to
 //! the 32x32 chunk origin.
 //! The lookup mode is `DenseId` where ID is the block index.
+//! A final metadata record (`USTA`, id = chunk count) carries the format version, the map id
+//! and the chunk count.
 
 use color_eyre::eyre::{self};
 use crate::progress::{ProgressBar, ProgressStyle};
@@ -19,6 +21,7 @@ use crate::classic_patches::ClassicPatchOptions;
 use crate::classic_sources::{resolve_classic_map_source, ClassicMapSource, SourceFormatPreference};
 use crate::package_progress::build_and_write_package;
 use uocf::classic::statics::StaticTile;
+use udd_assets::map_metadata::{encode_statics_package_metadata, StaticsPackageMetadata};
 use udd_container::{AddFileRequest, CompressionFlag, DataType, LookupMode, UddpBuilder};
 
 const PACKAGE_CHUNK_BLOCK_DIM: u32 = 4;
@@ -212,6 +215,18 @@ fn convert_statics_mul_to_uddp_from_resolved_sources_with_dimensions(
     }
 
     pb.finish_with_message("Statics chunks packed");
+
+    let metadata = encode_statics_package_metadata(StaticsPackageMetadata { map_id, chunk_count: total_chunks });
+    builder.add_file(AddFileRequest {
+        data_type: DataType::Metadata as u8,
+        compression: CompressionFlag::None,
+        width: 0,
+        height: 0,
+        virtual_path: None,
+        path_hash64: None,
+        id: Some(total_chunks),
+        data: &metadata,
+    })?;
 
     build_and_write_package(builder, output_path)?;
 

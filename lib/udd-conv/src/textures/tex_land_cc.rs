@@ -42,6 +42,7 @@ use udd_assets::tex_art_cc::PagePixelFormat;
 use udd_assets::tex_land_cc::{
     page_entry_path, TexLandCcPageRecord, TexLandCcSlotRecord, MISSING_PAGE_INDEX,
     MISSING_PAGE_TILE_INDEX, PAGE_MANIFEST_ENTRY_PATH, SLOT_FLAG_PRESENT, SLOT_MANIFEST_ENTRY_PATH,
+    PAGE_MANIFEST_MAGIC, SLOT_MANIFEST_MAGIC, TEX_LAND_CC_METADATA_VERSION,
 };
 use udd_container::xxh64_virtual_path;
 use udd_container::{
@@ -52,9 +53,6 @@ use uocf::classic::land_texture::TexMap;
 use crate::upscale::{apply_upscale_passes, UpscaleConfig, UpscaleFilter, UpscalePass};
 use crate::upscale_profile::{UpscaleImageType, UpscaleProfile, UpscaleTarget};
 
-const PAGE_MANIFEST_MAGIC: [u8; 4] = *b"CTXP";
-const SLOT_MANIFEST_MAGIC: [u8; 4] = *b"CTXS";
-const TEX_LAND_CC_METADATA_VERSION: u32 = 1;
 
 pub const DEFAULT_ATLAS_PAGE_WIDTH: u32 = 2048;
 pub const DEFAULT_ATLAS_PAGE_HEIGHT: u32 = 2048;

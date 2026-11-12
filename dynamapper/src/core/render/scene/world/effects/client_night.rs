@@ -110,11 +110,6 @@ const NIGHT_MAP_MEAN_TOLERANCE: f32 = 1.0 / 255.0;
 /// One repeat of the night map spans 26 world units: twice the client's frustum half-width 13 (`UOWorldViewer`
 /// +0x6c, 0x00b4f2e4), at every zoom.
 pub const NIGHT_MAP_WORLD_UNITS_PER_REPEAT: f64 = 26.0;
-/// The client's light sprites: their colour lerps over the night map with at most this alpha (light_generic,
-/// TerrainTexture.uop entry 1, peaks at 115).
-pub const CLIENT_LIGHT_SPRITE_PEAK_ALPHA: f32 = 115.0 / 255.0;
-/// The colour of light_generic, the sprite of 462 of the client's 599 light sources.
-pub const CLIENT_GENERIC_LIGHT_COLOR: [u8; 3] = [192, 162, 93];
 /// The shadow composite's intensity s: `InitPostProcessEffects` stores 0.25 (0x00c4a024) over the constructor's 0.4
 /// (0x0043f740); only debug keys change it.
 pub const CLIENT_SHADOW_INTENSITY: f32 = 0.25;
@@ -133,7 +128,7 @@ pub const NIGHT_OVERLAY_LUMA_WEIGHTS: Vec3 = Vec3::new(0.2126, 0.7152, 0.0722);
 
 // ---- Rendering --------------------------------------------------------------------
 
-/// The render layer of the light quads the light buffer camera draws.
+/// The render layer of the light sprites the light buffer camera draws.
 pub const LIGHT_BUFFER_LAYER: usize = 1;
 /// The light buffer camera renders before the world camera (order 0), which reads its image in the composite.
 const LIGHT_BUFFER_CAMERA_ORDER: isize = -1;
@@ -701,6 +696,11 @@ fn client_night_composite(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// light_generic (TerrainTexture.uop entry 1), the sprite of 462 of the client's 599 light sources: its colour and
+    /// its peak alpha, 115.
+    const CLIENT_GENERIC_LIGHT_COLOR: [u8; 3] = [192, 162, 93];
+    const CLIENT_LIGHT_SPRITE_PEAK_ALPHA: f32 = 115.0 / 255.0;
 
     /// The research's mean of the night map (another DXT decoder), from which its table was computed.
     const RESEARCH_NIGHT_MAP_MEAN: Vec3 = Vec3::new(0.012, 0.016, 0.152);

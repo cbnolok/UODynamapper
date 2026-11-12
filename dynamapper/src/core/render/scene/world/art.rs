@@ -9,6 +9,7 @@ use crate::util_lib::tracked_plugin::TrackedPlugin;
 pub mod statics_collect;
 pub mod statics_draw;
 pub mod static_lights;
+pub mod client_light_sprites;
 mod static_surface;
 pub(crate) mod static_geometry;
 mod transparent_order;
@@ -39,6 +40,8 @@ impl Plugin for DrawStaticSpritesPlugin {
         app.init_resource::<statics_draw::StaticBatchEntitySyncState>();
         app.init_resource::<static_lights::RenderStaticLightInstances>();
         app.init_resource::<static_lights::StaticLightDrawDebugState>();
+        app.init_resource::<client_light_sprites::RenderClientLightSprites>();
+        app.init_resource::<client_light_sprites::ClientLightSpriteCache>();
         app.add_plugins(bevy::render::extract_component::ExtractComponentPlugin::<
             transparent_order::StaticTransparentBatchOrder,
         >::default());
@@ -88,6 +91,11 @@ impl Plugin for DrawStaticSpritesPlugin {
                    .in_set(SceneRenderArtSysSet::RenderStaticSprites)
                    .after(SceneRenderArtSysSet::CollectVisibleStatics),
                statics_draw::sys_update_art_materials,
+           ).chain().run_if(in_state(AppState::InGame)));
+        app.add_systems(Update, (
+               client_light_sprites::sys_collect_client_light_sprites
+                   .after(SceneRenderLandSysSet::RenderLandChunks),
+               client_light_sprites::sys_sync_client_light_sprites,
            ).chain().run_if(in_state(AppState::InGame)));
 
         let Some(render_app) = app.get_sub_app_mut(RenderApp) else { return };

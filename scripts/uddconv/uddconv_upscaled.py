@@ -299,7 +299,7 @@ def run_all(
         )
     else:
         run_pack("pack-tilemeta", *non_texture_zstd, *source_args, "--output", f"{output_dir}/tilemeta.uddp")
-    run_pack("pack-lights", *non_texture_zstd, *source_args, "--output", f"{output_dir}/world_lights.uddp")
+    run_pack("pack-lights", *non_texture_zstd, "--ccdir", ccdir, "--output", f"{output_dir}/world_lights.uddp")
     run_pack("pack-hues", *non_texture_zstd, "--ccdir", ccdir, "--output", f"{output_dir}/hues.uddp")
     for map_id in map_ids:
         run_pack(

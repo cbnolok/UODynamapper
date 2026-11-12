@@ -379,7 +379,7 @@ impl UddConvApp {
             (clicked, stop_clicked) = draw_asset_card_header(
                 ui,
                 "World Lights",
-                "Light textures from light.mul and TerrainTexture.uop",
+                "Light masks from light.mul",
                 Some(&source),
                 &progress,
                 !is_busy,
@@ -797,17 +797,9 @@ fn hues_source_label(source: &HuesSource) -> String {
 }
 
 fn world_lights_source_label(settings: &AppSettings) -> String {
-    let folders: Vec<String> = [
-        settings.cc_dir.as_ref().map(|dir| format!("light.mul from {}", dir.display())),
-        settings.ec_dir.as_ref().map(|dir| format!("TerrainTexture.uop from {}", dir.display())),
-    ]
-    .into_iter()
-    .flatten()
-    .collect();
-    if folders.is_empty() {
-        "Source: select a Classic or Enhanced source directory".to_string()
-    } else {
-        format!("Source: {}", folders.join("; "))
+    match &settings.cc_dir {
+        Some(dir) => format!("Source: light.mul from {}", dir.display()),
+        None => "Source: select a Classic source directory".to_string(),
     }
 }
 

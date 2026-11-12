@@ -228,6 +228,12 @@ pub struct ArtData {
     /// Effect definitions of the record. Particle names stay client string dictionary
     /// indices; resolve them with `ParticleEffect::name`.
     pub effects: Vec<EffectDefinition>,
+    /// Scale of the light sprite; see `TileArtEntry::light_scale`.
+    pub light_scale: f32,
+    /// Light sprite offset along camera right, in world units; see `TileArtEntry::light_offset_x`.
+    pub light_offset_x: f32,
+    /// Light sprite offset along camera up, in world units; see `TileArtEntry::light_offset_y`.
+    pub light_offset_y: f32,
 }
 
 #[derive(Debug, Default, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
@@ -974,6 +980,9 @@ impl TileArtEntry {
         art_data.appearance = self.appearance_vector.clone();
         art_data.sitting = self.sitting.clone();
         art_data.effects = self.effects.clone();
+        art_data.light_scale = self.light_scale;
+        art_data.light_offset_x = self.light_offset_x;
+        art_data.light_offset_y = self.light_offset_y;
 
         if let Some(ec_texture_block) = self.texture_vector.first() {
             if ec_texture_block.has_texture == 1 {

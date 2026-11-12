@@ -10,13 +10,11 @@ use crate::rgba_bounds::nonzero_alpha_bounds;
 use crate::tex_art_cc::crop_rgba_page;
 use crate::{merge_unplaced_tiles, resolve_packing_axis, AtlasPackingMode};
 
-pub const GUMP_ATLAS_PAGE_MANIFEST_ID: u32 = 0xE000_0000;
-pub const GUMP_ATLAS_SLOT_MANIFEST_ID: u32 = 0xE000_0001;
-pub const GUMP_ATLAS_PAGE_ID_BASE: u32 = 0xF000_0000;
-pub const GUMP_ATLAS_PAGE_MANIFEST_MAGIC: [u8; 4] = *b"GAPG";
-pub const GUMP_ATLAS_SLOT_MANIFEST_MAGIC: [u8; 4] = *b"GASL";
-/// The version of the atlas manifests, which every package carries (`udd_assets::gumps`).
-pub const GUMP_ATLAS_METADATA_VERSION: u32 = 1;
+/// The atlas ids, magics and the version of the atlas manifests, which every package carries, are the reader's.
+pub use udd_assets::gumps::{
+    GUMP_ATLAS_METADATA_VERSION, GUMP_ATLAS_PAGE_ID_BASE, GUMP_ATLAS_PAGE_MANIFEST_ID, GUMP_ATLAS_PAGE_MANIFEST_MAGIC,
+    GUMP_ATLAS_SLOT_MANIFEST_ID, GUMP_ATLAS_SLOT_MANIFEST_MAGIC,
+};
 /// `magic, u32 version, u32 atlas width, u32 atlas height, u32 gutter, u32 count` before a manifest's records.
 const GUMP_ATLAS_MANIFEST_HEADER_BYTES: usize = GUMP_ATLAS_PAGE_MANIFEST_MAGIC.len() + 5 * size_of::<u32>();
 /// `u32 page index, u32 gump count, u32 used width, u32 used height`.
@@ -805,7 +803,6 @@ mod tests {
         let empty = (DEFAULT_GUMP_ATLAS_WIDTH, DEFAULT_GUMP_ATLAS_HEIGHT, u32::from(DEFAULT_GUMP_ATLAS_GUTTER), 0);
         assert_eq!(page_manifest_header(&page_manifest), empty);
         assert_eq!(slot_manifest_header(&slot_manifest), empty);
-        assert_eq!(GUMP_ATLAS_METADATA_VERSION, udd_assets::gumps::GUMP_ATLAS_METADATA_VERSION);
         assert!(udd_assets::gumps::GumpsPackage::from_uddp_package(package).is_ok());
     }
 

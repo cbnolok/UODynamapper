@@ -17,7 +17,7 @@
 //! names the kind.
 
 use std::borrow::Cow;
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::path::{Path, PathBuf};
 
@@ -25,8 +25,8 @@ use color_eyre::eyre::{self, WrapErr};
 use log::info;
 use rayon::prelude::*;
 use udd_assets::gumps::gump_image_hash;
-use udd_assets::map_metadata::decode_map_package_metadata;
-use udd_assets::tex_aux_ec::TexAuxEcPackage;
+use udd_assets::map_metadata::{decode_map_package_metadata, read_statics_package_metadata};
+use udd_assets::tex_aux_ec::{tex_aux_ec_terrain_texture_key, TexAuxEcPackage};
 use udd_assets::tex_land_ec::UDDP_GRUNGE_ENTRY_VPATH;
 use udd_assets::{
     EffectsEcPackage, GumpsPackage, HuesPackage, MobileAnimCcPackage, MobileAnimEcPackage,
@@ -52,6 +52,8 @@ const MAX_LISTED_ENTRY_FAILURES: usize = 16;
 const BYTES_PER_MIB: f64 = 1024.0 * 1024.0;
 /// The package a gumps package that shares gumps draws them from, looked for beside it.
 const SHARED_CLASSIC_GUMPS_FILE_NAME: &str = "gumps_cc.uddp";
+/// The tilemeta whose item lights a tex_aux_ec beside it must carry the textures of.
+const TILEMETA_FILE_NAME: &str = "tilemeta.uddp";
 
 /// Package kinds, each read by its own reader.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -369,6 +371,9 @@ pub fn validate_package(path: &Path) -> PackageReport {
                 if kind == PackageKind::Gumps {
                     check_shared_classic_gumps(path, &package, &mut report);
                 }
+                if kind == PackageKind::TexAuxEc {
+                    check_item_light_textures(path, &package, &mut report);
+                }
             }
             Err(error) => report.failures.push(format!("{} reader: {error:#}", kind.name())),
         },
@@ -431,6 +436,41 @@ fn check_shared_classic_gumps(path: &Path, package: &UddpReader, report: &mut Pa
         "{differing_count} of {shared_count} shared gumps differ: {} is not the {SHARED_CLASSIC_GUMPS_FILE_NAME} this \
          package was packed against",
         classic_path.display()
+    ));
+}
+
+/// A tex_aux_ec package against the tilemeta beside it: every light texture its item lights name must be packed.
+fn check_item_light_textures(path: &Path, package: &UddpReader, report: &mut PackageReport) {
+    let tilemeta_path = path.with_file_name(TILEMETA_FILE_NAME);
+    if !tilemeta_path.is_file() {
+        return report
+            .notes
+            .push(format!("no {TILEMETA_FILE_NAME} beside it: its light textures were not checked against the item lights"));
+    }
+    let (aux, tilemeta) = match (
+        TexAuxEcPackage::from_uddp_package(package.clone()),
+        TileMetaPackage::load(&tilemeta_path),
+    ) {
+        (Ok(aux), Ok(tilemeta)) => (aux, tilemeta),
+        (Err(error), _) => return report.failures.push(format!("tex_aux_ec reader: {error:#}")),
+        (_, Err(error)) => return report.failures.push(format!("light textures: {}: {error:#}", tilemeta_path.display())),
+    };
+    let entries = tilemeta.item_lights().iter().map(|light| light.light_texture_entry).collect::<BTreeSet<_>>();
+    let missing = entries
+        .iter()
+        .filter(|entry| aux.slot_for_texture_id(tex_aux_ec_terrain_texture_key(**entry)).is_none())
+        .collect::<Vec<_>>();
+    if missing.is_empty() {
+        return report.notes.push(format!(
+            "the {} light textures of {}'s {} item lights are packed",
+            entries.len(),
+            tilemeta_path.display(),
+            tilemeta.item_lights().len()
+        ));
+    }
+    report.failures.push(format!(
+        "light textures {missing:?} of {} are not packed: repack tex_aux_ec against it",
+        tilemeta_path.display()
     ));
 }
 
@@ -580,10 +620,11 @@ fn run_package_reader(kind: PackageKind, package: &UddpReader) -> eyre::Result<S
         PackageKind::TileMeta => {
             let reader = TileMetaPackage::from_uddp_package(package.clone())?;
             format!(
-                "land_tiles={}, item_tiles={}, item_definitions={}",
+                "land_tiles={}, item_tiles={}, item_definitions={}, item_lights={}",
                 reader.land_tiles().len(),
                 reader.item_tiles().len(),
-                reader.item_definitions().entry_ids().count()
+                reader.item_definitions().entry_ids().count(),
+                reader.item_lights().len()
             )
         }
         PackageKind::Hues => {
@@ -622,7 +663,7 @@ fn run_package_reader(kind: PackageKind, package: &UddpReader) -> eyre::Result<S
             "gumps ok".into()
         }
         PackageKind::Map(map_id) => check_map_package(package, map_id)?,
-        PackageKind::Statics(_) => check_statics_package(package)?,
+        PackageKind::Statics(map_id) => check_statics_package(package, map_id)?,
     };
     Ok(summary)
 }
@@ -679,9 +720,12 @@ fn check_map_package(package: &UddpReader, map_id: u32) -> eyre::Result<String> 
     ))
 }
 
-/// Statics chunks are arrays of `StaticTile`.
-fn check_statics_package(package: &UddpReader) -> eyre::Result<String> {
+/// Statics chunks are arrays of `StaticTile`, followed by the final metadata record.
+fn check_statics_package(package: &UddpReader, map_id: u32) -> eyre::Result<String> {
+    let metadata = read_statics_package_metadata(package).map_err(|error| eyre::eyre!("{error}"))?;
+    eyre::ensure!(metadata.map_id == map_id, "statics metadata is for map {}, the file name says map {map_id}", metadata.map_id);
     let records = package.records();
+    let records = &records[..metadata.chunk_count as usize];
     let tile_size = std::mem::size_of::<StaticTile>();
     let ragged = records
         .iter()
@@ -695,6 +739,7 @@ fn check_statics_package(package: &UddpReader) -> eyre::Result<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use udd_assets::map_metadata::{encode_statics_package_metadata, StaticsPackageMetadata, STATICS_METADATA_SIZE};
     use udd_container::{AddFileRequest, CompressionFlag, UddpBuilder};
 
     #[test]
@@ -717,7 +762,12 @@ mod tests {
         dir
     }
 
+    /// Writes the chunks and the final metadata record; the map id comes from a `staticsN` file name, else 0.
     fn write_statics_package(path: &Path, chunk_bytes: &[&[u8]]) {
+        let map_id = match path.file_name().and_then(|name| name.to_str()).and_then(PackageKind::from_file_name) {
+            Some(PackageKind::Statics(map_id)) => map_id,
+            _ => 0,
+        };
         let mut builder = UddpBuilder::new(LookupMode::DenseId);
         for (id, data) in chunk_bytes.iter().enumerate() {
             builder
@@ -733,6 +783,20 @@ mod tests {
                 })
                 .expect("add chunk");
         }
+        let chunk_count = chunk_bytes.len() as u32;
+        let metadata = encode_statics_package_metadata(StaticsPackageMetadata { map_id, chunk_count });
+        builder
+            .add_file(AddFileRequest {
+                data_type: DataType::Metadata as u8,
+                compression: CompressionFlag::None,
+                width: 0,
+                height: 0,
+                virtual_path: None,
+                path_hash64: None,
+                id: Some(chunk_count),
+                data: &metadata,
+            })
+            .expect("add metadata");
         fs::write(path, builder.build().expect("build package")).expect("write package");
     }
 
@@ -748,8 +812,8 @@ mod tests {
 
         assert!(report.passed(), "{:?}", report.failures);
         assert_eq!(report.kind, Some(PackageKind::Statics(0)));
-        assert_eq!(report.entry_count, 3);
-        assert_eq!(report.raw_bytes, (3 * tile.len()) as u64);
+        assert_eq!(report.entry_count, 4);
+        assert_eq!(report.raw_bytes, (3 * tile.len() + STATICS_METADATA_SIZE) as u64);
         assert_eq!(report.reader_summary.as_deref(), Some("chunks=3, statics=3"));
         fs::remove_dir_all(&dir).ok();
     }
@@ -796,6 +860,33 @@ mod tests {
 
         assert!(!report.passed());
         assert!(report.failures.iter().any(|failure| failure.contains("not a whole number")), "{:?}", report.failures);
+        fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn statics_without_their_metadata_record_fail_with_the_repack_message() {
+        let dir = scratch_dir("statics_unversioned");
+        let path = dir.join("statics0.uddp");
+        let mut builder = UddpBuilder::new(LookupMode::DenseId);
+        let tile = [0u8; std::mem::size_of::<StaticTile>()];
+        builder
+            .add_file(AddFileRequest {
+                data_type: DataType::Static as u8,
+                compression: CompressionFlag::None,
+                width: 0,
+                height: 0,
+                virtual_path: None,
+                path_hash64: None,
+                id: Some(0),
+                data: &tile,
+            })
+            .expect("add chunk");
+        fs::write(&path, builder.build().expect("build package")).expect("write package");
+
+        let report = validate_package(&path);
+
+        assert!(!report.passed());
+        assert!(report.failures.iter().any(|failure| failure.contains("repack with the current udd-cli")), "{:?}", report.failures);
         fs::remove_dir_all(&dir).ok();
     }
 

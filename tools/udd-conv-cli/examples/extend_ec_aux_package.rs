@@ -2,7 +2,7 @@
 use std::{collections::{BTreeMap, BTreeSet}, path::PathBuf};
 use clap::Parser;
 use color_eyre::eyre::{Result, ensure};
-use udd_assets::tex_aux_ec::{TexAuxEcPackage, TexAuxEcSlotRecord,
+use udd_assets::tex_aux_ec::{decode_tex_aux_ec_slots, encode_tex_aux_ec_slots, TexAuxEcPackage, TexAuxEcSlotRecord,
     TEX_AUX_EC_MISSING_TEXTURE_ID, TEX_AUX_EC_SLOT_MANIFEST_ENTRY_PATH, texture_entry_path};
 use udd_container::{AddOwnedFileRequest, CompressionFlag, DataType, FileKey,
     LookupMode, UddpReader, UddpStreamingBuilder, xxh64_virtual_path};
@@ -35,13 +35,11 @@ fn main() -> Result<()> {
     let mut added = Vec::new();
     for (index, package) in [&base, &additions].into_iter().enumerate() {
         let bytes = package.read_file_by_path_hash(manifest_hash)?;
-        let size = std::mem::size_of::<TexAuxEcSlotRecord>();
-        ensure!(size >= 4 && bytes.len() % size == 0, "invalid auxiliary manifest");
-        for record in bytes.chunks_exact(size) {
-            let id = u32::from_le_bytes(record[..4].try_into().unwrap());
+        for record in decode_tex_aux_ec_slots(&bytes)? {
+            let id = record.texture_id;
             if index == 1 && !requested.contains(&id) { continue; }
             if let std::collections::btree_map::Entry::Vacant(entry) = slots.entry(id) {
-                entry.insert(record.to_vec());
+                entry.insert(record);
                 if index == 1 { added.push(id); }
             }
         }
@@ -51,7 +49,7 @@ fn main() -> Result<()> {
     output.add_owned_file(AddOwnedFileRequest {
         data_type: DataType::Metadata as u8, compression: CompressionFlag::ZstdNoDictLevel(3),
         width: 0, height: 0, virtual_path: None, path_hash64: Some(manifest_hash), id: None,
-        data: slots.values().flatten().copied().collect(),
+        data: encode_tex_aux_ec_slots(&slots.values().copied().collect::<Vec<TexAuxEcSlotRecord>>()),
     })?;
     let mut batch = Vec::new();
     let mut append = |package: &UddpReader, hash| -> Result<()> {

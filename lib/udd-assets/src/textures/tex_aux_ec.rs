@@ -6,7 +6,10 @@
 //! `tex_art_ec.uddp` instead.
 //!
 //! Package layout:
-//! - `metadata/slots.bin`: flat array of `TexAuxEcSlotRecord`, sorted by `texture_id`.
+//! - `metadata/slots.bin`: the version header (`TEX_AUX_EC_SLOT_MANIFEST_MAGIC`, then u32
+//!   [`TEX_AUX_EC_METADATA_VERSION`], which versions the whole package), then a flat array of
+//!   `TexAuxEcSlotRecord`, sorted by `texture_id`. Read and write it with
+//!   [`decode_tex_aux_ec_slots`] and [`encode_tex_aux_ec_slots`].
 //! - `textures/{texture_id:08x}`: raw pixel bytes per `texture_id` (format in slot record).
 //!   The virtual path is hashed for lookup in the UDDP path-hash index.
 //! - The client's missing-texture image (`Data\SystemTextures\missing.tga`) under the reserved
@@ -22,9 +25,12 @@
 //!   maps), lossless RGBA8888 at their native size, under the reserved keys
 //!   [`tex_aux_ec_terrain_texture_key`]; read them with [`TexAuxEcPackage::load_terrain_texture_rgba`].
 //!   Required.
+//! - The light textures: every `TerrainTexture.uop` entry the tilemeta's item lights name, the same
+//!   way under the same keys, with the Light role. Required: the KR-like and Enhanced light sprites
+//!   draw them.
 //!
-//! The package has no version header; a package without a required entry or slot fails to load with
-//! a message to repack it.
+//! A package of another version, or without a required entry or slot, fails to load with a message
+//! to repack it.
 
 use bytemuck::{Pod, Zeroable};
 use color_eyre::eyre::{self, WrapErr};
@@ -32,10 +38,15 @@ use std::path::Path;
 use udd_container::{xxh64_virtual_path, UddpReader};
 use uot_texture_codecs::bc7::{decode_from_vram, RawImageFormat, VramTextureData, VramTextureFormat};
 
-use crate::common::read_pod_vec;
+use crate::common::{ensure_manifest_version, read_pod_vec};
 use crate::tex_art_cc::PagePixelFormat;
 
 pub const TEX_AUX_EC_SLOT_MANIFEST_ENTRY_PATH: &str = "metadata/slots.bin";
+pub const TEX_AUX_EC_SLOT_MANIFEST_MAGIC: [u8; 4] = *b"AXSL";
+/// Version of the whole package, stored after the slot manifest magic.
+pub const TEX_AUX_EC_METADATA_VERSION: u32 = 1;
+/// Magic and version before the slot records.
+const TEX_AUX_EC_SLOT_MANIFEST_HEADER_SIZE: usize = 8;
 /// Native (pre-upscale) dimensions of block-0 water primary images. The shader
 /// samples other maps, but its local UV window is defined against these images.
 pub const TEX_AUX_EC_WATER_EXTENTS_ENTRY_PATH: &str = "metadata/water_primary_extents.bin";
@@ -129,6 +140,26 @@ impl TexAuxEcSlotRecord {
     }
 }
 
+/// Bytes of `metadata/slots.bin`: the version header, then `slots`.
+pub fn encode_tex_aux_ec_slots(slots: &[TexAuxEcSlotRecord]) -> Vec<u8> {
+    let mut bytes = Vec::with_capacity(TEX_AUX_EC_SLOT_MANIFEST_HEADER_SIZE + std::mem::size_of_val(slots));
+    bytes.extend_from_slice(&TEX_AUX_EC_SLOT_MANIFEST_MAGIC);
+    bytes.extend_from_slice(&TEX_AUX_EC_METADATA_VERSION.to_le_bytes());
+    bytes.extend_from_slice(bytemuck::cast_slice(slots));
+    bytes
+}
+
+/// Slot records of `metadata/slots.bin`, after checking its version header.
+pub fn decode_tex_aux_ec_slots(bytes: &[u8]) -> eyre::Result<Vec<TexAuxEcSlotRecord>> {
+    eyre::ensure!(
+        bytes.len() >= TEX_AUX_EC_SLOT_MANIFEST_HEADER_SIZE && bytes[0..4] == TEX_AUX_EC_SLOT_MANIFEST_MAGIC,
+        "{TEX_AUX_EC_SLOT_MANIFEST_ENTRY_PATH}: no AXSL version header; repack with the current udd-cli"
+    );
+    let version = u32::from_le_bytes(bytes[4..8].try_into().expect("slice length checked"));
+    ensure_manifest_version(TEX_AUX_EC_SLOT_MANIFEST_ENTRY_PATH, version, TEX_AUX_EC_METADATA_VERSION)?;
+    read_pod_vec(&bytes[TEX_AUX_EC_SLOT_MANIFEST_HEADER_SIZE..], TEX_AUX_EC_SLOT_MANIFEST_ENTRY_PATH)
+}
+
 /// Runtime handle for an auxiliary texture slot.
 #[derive(Debug, Clone)]
 pub struct SlotInfo {
@@ -181,7 +212,7 @@ impl TexAuxEcPackage {
     pub fn from_uddp_package(package: UddpReader) -> eyre::Result<Self> {
         let slot_bytes = crate::common::read_path_entry_cow(&package, TEX_AUX_EC_SLOT_MANIFEST_ENTRY_PATH)
             .wrap_err("read tex_aux_ec slot manifest")?;
-        let slots: Vec<TexAuxEcSlotRecord> = read_pod_vec(slot_bytes.as_ref(), TEX_AUX_EC_SLOT_MANIFEST_ENTRY_PATH)?;
+        let slots = decode_tex_aux_ec_slots(slot_bytes.as_ref())?;
         eyre::ensure!(slots.windows(2).all(|pair| pair[0].texture_id < pair[1].texture_id),
             "{TEX_AUX_EC_SLOT_MANIFEST_ENTRY_PATH} is not sorted by unique texture id");
         let reserved_keys = EC_ATMOSPHERE_MAP_TERRAIN_TEXTURE_ENTRIES.into_iter().map(tex_aux_ec_terrain_texture_key)
@@ -224,8 +255,9 @@ impl TexAuxEcPackage {
             .expect("from_uddp_package checked the missing-texture slot")
     }
 
-    /// The RGBA8888 pixels and extent of `TerrainTexture.uop` entry `entry`, one of
-    /// [`EC_ATMOSPHERE_MAP_TERRAIN_TEXTURE_ENTRIES`], which every package carries.
+    /// The RGBA8888 pixels and extent of `TerrainTexture.uop` entry `entry`: one of
+    /// [`EC_ATMOSPHERE_MAP_TERRAIN_TEXTURE_ENTRIES`], or a light texture the tilemeta's item lights name, which every
+    /// package carries.
     pub fn load_terrain_texture_rgba(&self, entry: u32) -> eyre::Result<(u16, u16, Vec<u8>)> {
         let key = tex_aux_ec_terrain_texture_key(entry);
         let slot = self.slot_for_texture_id(key)
@@ -333,7 +365,7 @@ mod tests {
         builder.add_file(AddFileRequest {
             data_type: DataType::Metadata as u8, compression: CompressionFlag::None, width: 0, height: 0,
             virtual_path: Some(TEX_AUX_EC_SLOT_MANIFEST_ENTRY_PATH), path_hash64: None, id: None,
-            data: bytemuck::cast_slice(slots),
+            data: &encode_tex_aux_ec_slots(slots),
         })?;
         builder.add_file(AddFileRequest {
             data_type: DataType::Metadata as u8, compression: CompressionFlag::None, width: 0, height: 0,
@@ -389,7 +421,7 @@ mod tests {
         let reserved = reserved_slots();
         let slots = [&[slot(PACKED_ID, WORLD_ART), bc7_slot][..], &reserved].concat();
         let reserved_payloads = reserved.iter().map(|slot| (texture_entry_path(slot.texture_id), rgba.clone()));
-        for (path, data) in [(TEX_AUX_EC_SLOT_MANIFEST_ENTRY_PATH.to_string(), bytemuck::cast_slice(&slots).to_vec()),
+        for (path, data) in [(TEX_AUX_EC_SLOT_MANIFEST_ENTRY_PATH.to_string(), encode_tex_aux_ec_slots(&slots)),
             (TEX_AUX_EC_WATER_EXTENTS_ENTRY_PATH.to_string(), bytemuck::cast_slice(&[[4651u32, 64, 32]]).to_vec()),
             (texture_entry_path(PACKED_ID), rgba.clone()), (texture_entry_path(BC7_ID), blocks.to_container_bytes())]
             .into_iter().chain(reserved_payloads) {
@@ -434,5 +466,20 @@ mod tests {
         }
         assert!(package(&[slot(PACKED_ID, WORLD_ART)]).is_ok());
         assert!(package_of(&[&reserved[..], &[slot(PACKED_ID, WORLD_ART)]].concat()).is_err(), "unsorted");
+    }
+
+    #[test]
+    fn the_slot_manifest_header_rejects_other_versions_with_the_repack_message() -> eyre::Result<()> {
+        let slots = [slot(PACKED_ID, WORLD_ART)];
+        let bytes = encode_tex_aux_ec_slots(&slots);
+        assert_eq!(&bytes[..4], b"AXSL");
+        assert_eq!(decode_tex_aux_ec_slots(&bytes)?.len(), 1);
+        let mut other = bytes.clone();
+        other[4..8].copy_from_slice(&(TEX_AUX_EC_METADATA_VERSION + 1).to_le_bytes());
+        for bytes in [other, bytemuck::cast_slice(&slots).to_vec()] {
+            let message = decode_tex_aux_ec_slots(&bytes).unwrap_err().to_string();
+            assert!(message.contains("repack with the current udd-cli"), "{message}");
+        }
+        Ok(())
     }
 }

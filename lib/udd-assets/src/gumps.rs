@@ -34,11 +34,11 @@ use uot_texture_codecs::premultiplied::unpremultiply_rgba8888;
 
 use crate::common::ensure_manifest_version;
 
-const GUMP_ATLAS_PAGE_MANIFEST_ID: u32 = 0xE000_0000;
-const GUMP_ATLAS_SLOT_MANIFEST_ID: u32 = 0xE000_0001;
-const GUMP_ATLAS_PAGE_ID_BASE: u32 = 0xF000_0000;
-const GUMP_ATLAS_PAGE_MANIFEST_MAGIC: [u8; 4] = *b"GAPG";
-const GUMP_ATLAS_SLOT_MANIFEST_MAGIC: [u8; 4] = *b"GASL";
+pub const GUMP_ATLAS_PAGE_MANIFEST_ID: u32 = 0xE000_0000;
+pub const GUMP_ATLAS_SLOT_MANIFEST_ID: u32 = 0xE000_0001;
+pub const GUMP_ATLAS_PAGE_ID_BASE: u32 = 0xF000_0000;
+pub const GUMP_ATLAS_PAGE_MANIFEST_MAGIC: [u8; 4] = *b"GAPG";
+pub const GUMP_ATLAS_SLOT_MANIFEST_MAGIC: [u8; 4] = *b"GASL";
 /// The version of the atlas page and slot manifests, which every package carries and which stands for the package's
 /// layout as a whole.
 pub const GUMP_ATLAS_METADATA_VERSION: u32 = 1;

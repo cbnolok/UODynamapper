@@ -25,7 +25,7 @@ const SLOT_MANIFEST_MAGIC: [u8; 4] = *b"EASL";
 pub const TEX_ART_EC_METADATA_VERSION: u32 = 1;
 
 /// The original window builder's legacy pixel unit, against which the descriptor scales are given.
-const LEGACY_PIXEL_UNIT: f32 = 1.5;
+pub const LEGACY_PIXEL_UNIT: f32 = 1.5;
 
 /// Source geometry of a packed sprite. Its source is always the block-0 WorldArt image.
 #[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]

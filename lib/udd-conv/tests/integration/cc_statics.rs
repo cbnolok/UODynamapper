@@ -80,6 +80,8 @@ fn statics_pack_uses_legacy_map_uop_for_dimensions() {
     let package = UddpReader::open(fs::read(output).expect("read statics package"))
         .expect("open statics package");
     assert_eq!(package.read_file_by_dense_id(0).unwrap().len(), 8);
+    let metadata = udd_assets::map_metadata::read_statics_package_metadata(&package).expect("statics metadata");
+    assert_eq!((metadata.map_id, metadata.chunk_count), (2, summary.chunk_count));
 
     let _ = fs::remove_dir_all(dir);
 }

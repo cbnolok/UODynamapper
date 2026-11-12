@@ -8,7 +8,8 @@ use log::info;
 use crate::classic_patches::{load_verdata_if_enabled, ClassicPatchOptions};
 use uocf::classic::light::LightMap;
 use udd_assets::world_lights::{
-    light_entry_path, WorldLightSlotRecord, SLOT_FLAG_PRESENT, SLOT_MANIFEST_ENTRY_PATH,
+    light_entry_path, WorldLightSlotRecord, SLOT_FLAG_PRESENT, SLOT_MANIFEST_ENTRY_PATH, SLOT_MANIFEST_MAGIC,
+    WORLD_LIGHTS_METADATA_VERSION,
 };
 use udd_container::{AddFileRequest, CompressionFlag, DataType, LookupMode, UddpBuilder};
 
@@ -28,33 +29,37 @@ impl Default for WorldLightsOptions {
     }
 }
 
+/// Light ids of the slot manifest: `0..WORLD_LIGHT_SLOT_COUNT`. Classic `lightidx.mul` holds about 100.
+const WORLD_LIGHT_SLOT_COUNT: u32 = 1024;
+
+/// Packs the Classic light masks (`light.mul`, `lightidx.mul`, patched by verdata when enabled), keyed by light id.
+///
+/// The Enhanced and KR light sprites are not here: their textures are `TerrainTexture.uop` entries named by the
+/// tileart, packed in `tex_aux_ec.uddp`, and their entry numbers are not light ids.
 pub fn convert_client_lights_to_world_lights_uddp(
-    cc_path: Option<&Path>,
-    ec_path: Option<&Path>,
+    cc_path: &Path,
     out_file: &Path,
     options: &WorldLightsOptions,
 ) -> eyre::Result<()> {
     info!("Converting World Lights to {}", out_file.display());
 
-    let cc_source_dirs: Vec<_> = cc_path.iter().map(|path| path.to_path_buf()).collect();
+    let cc_source_dirs = [cc_path.to_path_buf()];
+    let no_ec_path: Option<&Path> = None;
     let light_map = if let Some(verdata) =
         load_verdata_if_enabled(&cc_source_dirs, &options.classic_patches)?
     {
-        LightMap::load_with_verdata(cc_path, ec_path, verdata)
+        LightMap::load_with_verdata(Some(cc_path), no_ec_path, verdata)
     } else {
-        LightMap::load(cc_path, ec_path)
+        LightMap::load(Some(cc_path), no_ec_path)
     }
     .wrap_err("Failed to load client lights")?;
+    eyre::ensure!(light_map.element_count() > 0, "no light.mul lights in {}", cc_path.display());
 
     let mut slots = Vec::new();
     let mut package = UddpBuilder::new(LookupMode::VirtualPathHash);
-
-    // CC lights are up to 100 entries. EC might have more.
-    // We iterate up to 1024 to cover most standard and extended IDs.
-    let limit = 1024;
     let mut added_count = 0;
 
-    for id in 0..limit {
+    for id in 0..WORLD_LIGHT_SLOT_COUNT {
         if light_map.has_id(id) {
             match light_map.decode_light(id) {
                 Ok((width, height, pixels)) => {
@@ -108,9 +113,6 @@ pub fn convert_client_lights_to_world_lights_uddp(
 
     Ok(())
 }
-
-const SLOT_MANIFEST_MAGIC: [u8; 4] = *b"WLSL";
-const WORLD_LIGHTS_METADATA_VERSION: u32 = 1;
 
 fn serialize_slot_manifest(slots: &[WorldLightSlotRecord]) -> eyre::Result<Vec<u8>> {
     let mut buf = Vec::new();

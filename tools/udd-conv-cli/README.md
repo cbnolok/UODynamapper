@@ -26,7 +26,7 @@ packages consumed by Dynamapper and the other tools at runtime.
 | `pack-map` | `mapX.uddp` | Classic `mapX.mul` |
 | `pack-statics` | `staticsX.uddp` | Classic `staticsX.mul` |
 | `pack-map-statics` | `mapX.uddp` + `staticsX.uddp` | Combined map+statics pass |
-| `pack-lights` | `world_lights.uddp` | CC and EC lighting textures |
+| `pack-lights` | `world_lights.uddp` | CC light.mul masks (`--ccdir`) |
 | `pack-hues` | `hues.uddp` | Classic `hues.mul` (`--hue-ramp linear`, the default, or `flat`) or EC `hues.uop` |
 | `pack-gumps` | `gumps_cc.uddp` | Classic `gumpart.mul` / `gumpidx.mul`, or `gumpartLegacyMUL.uop` |
 | `pack-ec-gumps` | `gumps_ec.uddp` | EC `interface.uop` gumpart; `--share-with <gumps_cc.uddp>` leaves out the single gumps that package draws the same, so the package then needs it |

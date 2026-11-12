@@ -61,7 +61,7 @@ use crate::upscale::{apply_upscale_passes, UpscaleFilter, UpscalePass};
 use udd_assets::tex_art_cc::{
     page_entry_path, TexArtCcPageRecord, TexArtCcSlotRecord, PagePixelFormat, MISSING_PAGE_INDEX,
     MISSING_PAGE_TILE_INDEX, PAGE_MANIFEST_ENTRY_PATH, SLOT_FLAG_LAND, SLOT_FLAG_PRESENT,
-    SLOT_FLAG_STATIC, SLOT_MANIFEST_ENTRY_PATH,
+    SLOT_FLAG_STATIC, SLOT_MANIFEST_ENTRY_PATH, PAGE_MANIFEST_MAGIC, SLOT_MANIFEST_MAGIC, TEX_ART_CC_METADATA_VERSION,
 };
 use udd_container::{
     AddFileRequest, AddOwnedFileRequest, CompressionFlag, DataType, LookupMode, UddpBuilder,
@@ -227,11 +227,6 @@ pub struct BuiltPage {
     pub pixels: Vec<u8>,
     pub placed_tiles: Vec<PlacedTile>,
 }
-
-const PAGE_MANIFEST_MAGIC: [u8; 4] = *b"CAPG";
-const SLOT_MANIFEST_MAGIC: [u8; 4] = *b"CASL";
-/// Bump version when the binary layout of either manifest changes.
-const TEX_ART_CC_METADATA_VERSION: u32 = 1;
 
 pub(crate) fn upscale_algorithm_code(filter: UpscaleFilter) -> u16 {
     match filter {

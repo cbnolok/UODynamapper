@@ -7,9 +7,15 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use color_eyre::eyre::{self, Context};
 use udd_container::UddpReader;
 
-use crate::common::{read_path_entry, read_path_entry_cow};
+use crate::common::{ensure_manifest_version, read_path_entry, read_path_entry_cow};
 use uocf::enhanced::hues::{EcHueLookup, EcHueTable, EcHueTables, HUE_TABLE_ENTRIES};
 
+/// Version header of the package: `HUES_PACKAGE_MAGIC` then u32 `HUES_FORMAT_VERSION`.
+pub const HUES_PACKAGE_ENTRY_PATH: &str = "metadata/package.bin";
+pub const HUES_PACKAGE_MAGIC: [u8; 4] = *b"HUPK";
+/// Version of the whole package: the header, the CSV columns and the texture layout.
+pub const HUES_FORMAT_VERSION: u32 = 1;
+const HUES_PACKAGE_HEADER_SIZE: usize = 8;
 pub const HUES_METADATA_ENTRY_PATH: &str = "metadata/hues.csv";
 pub const HUES_TEXTURE_ENTRY_PATH: &str = "textures/hues.rgba8888";
 
@@ -42,6 +48,23 @@ static FROM_UDDP_PACKAGE_CALLS: AtomicU64 = AtomicU64::new(0);
 // that load packages concurrently, and a shared counter would make absolute-count
 // assertions depend on scheduling. Diagnostic (non-test) builds keep the process-wide
 // atomic, which is read across threads by the application.
+/// Bytes of `HUES_PACKAGE_ENTRY_PATH`.
+pub fn encode_hues_package_header() -> [u8; HUES_PACKAGE_HEADER_SIZE] {
+    let mut bytes = [0u8; HUES_PACKAGE_HEADER_SIZE];
+    bytes[0..4].copy_from_slice(&HUES_PACKAGE_MAGIC);
+    bytes[4..8].copy_from_slice(&HUES_FORMAT_VERSION.to_le_bytes());
+    bytes
+}
+
+fn check_hues_package_header(bytes: &[u8]) -> eyre::Result<()> {
+    eyre::ensure!(
+        bytes.len() == HUES_PACKAGE_HEADER_SIZE && bytes[0..4] == HUES_PACKAGE_MAGIC,
+        "{HUES_PACKAGE_ENTRY_PATH}: no {HUES_PACKAGE_HEADER_SIZE}-byte HUPK header; repack with the current udd-cli"
+    );
+    let version = u32::from_le_bytes(bytes[4..8].try_into().expect("slice length checked"));
+    ensure_manifest_version(HUES_PACKAGE_ENTRY_PATH, version, HUES_FORMAT_VERSION)
+}
+
 #[cfg(test)]
 thread_local! {
     static FROM_UDDP_PACKAGE_CALLS: Cell<u64> = const { Cell::new(0) };
@@ -123,6 +146,9 @@ impl HuesPackage {
         #[cfg(any(test, debug_assertions))]
         note_from_uddp_package_call();
 
+        let header = read_path_entry_cow(&package, HUES_PACKAGE_ENTRY_PATH)
+            .context("hues.uddp has no metadata/package.bin; repack with the current udd-cli")?;
+        check_hues_package_header(&header)?;
         let csv_bytes = read_path_entry_cow(&package, HUES_METADATA_ENTRY_PATH)
             .context("hues.uddp missing metadata/hues.csv")?;
         let slots = parse_hues_csv(&csv_bytes)?;
@@ -517,7 +543,20 @@ mod tests {
         let csv = encode_hues_csv(&records).expect("encode csv");
         let texture = vec![0u8; HUES_TEXTURE_WIDTH as usize * HUES_TEXTURE_HEIGHT as usize * 4];
 
+        let header = encode_hues_package_header();
         let mut builder = UddpBuilder::new(LookupMode::VirtualPathHash);
+        builder
+            .add_file(AddFileRequest {
+                data_type: DataType::Metadata as u8,
+                compression: CompressionFlag::None,
+                width: 0,
+                height: 0,
+                virtual_path: Some(HUES_PACKAGE_ENTRY_PATH),
+                path_hash64: None,
+                id: None,
+                data: &header,
+            })
+            .expect("add header");
         builder
             .add_file(AddFileRequest {
                 data_type: DataType::Metadata as u8,
@@ -552,5 +591,16 @@ mod tests {
         assert_eq!(package.hue_name(1), Some("name"));
         assert_eq!(package.texture_bytes().len(), texture.len());
         assert_eq!(package.read_texture_bytes().expect("texture bytes").len(), texture.len());
+    }
+
+    #[test]
+    fn the_package_header_rejects_other_versions_with_the_repack_message() {
+        assert!(check_hues_package_header(&encode_hues_package_header()).is_ok());
+        let mut other = encode_hues_package_header();
+        other[4..8].copy_from_slice(&(HUES_FORMAT_VERSION + 1).to_le_bytes());
+        for bytes in [&other[..], &other[..4]] {
+            let error = check_hues_package_header(bytes).unwrap_err().to_string();
+            assert!(error.contains("repack with the current udd-cli"), "{error}");
+        }
     }
 }

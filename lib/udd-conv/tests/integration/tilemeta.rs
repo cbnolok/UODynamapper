@@ -22,21 +22,24 @@ use udd_assets::{
 use udd_conv::tilemeta::*;
 use udd_container::CompressionFlag;
 
-/// The item definitions entry every tilemeta package holds, with no records.
+/// The item definitions and item lights entries every tilemeta package holds, with no records.
 fn add_empty_item_definitions(package: &mut UddpBuilder) {
     let definitions = TileMetaItemDefinitions::default().to_bytes().expect("encode item definitions");
-    package
-        .add_file(AddFileRequest {
-            data_type: DataType::Metadata as u8,
-            compression: CompressionFlag::ZstdNoDict,
-            width: 0,
-            height: 0,
-            virtual_path: Some(TILEMETA_ITEM_DEFINITION_ENTRY_PATH),
-            path_hash64: None,
-            id: None,
-            data: &definitions,
-        })
-        .expect("add item definitions");
+    let lights = udd_assets::tilemeta::encode_item_lights(&[]);
+    for (path, data) in [(TILEMETA_ITEM_DEFINITION_ENTRY_PATH, &definitions), (udd_assets::tilemeta::TILEMETA_ITEM_LIGHT_ENTRY_PATH, &lights)] {
+        package
+            .add_file(AddFileRequest {
+                data_type: DataType::Metadata as u8,
+                compression: CompressionFlag::ZstdNoDict,
+                width: 0,
+                height: 0,
+                virtual_path: Some(path),
+                path_hash64: None,
+                id: None,
+                data,
+            })
+            .expect("add item definitions");
+    }
 }
 
 fn temp_dir(test_name: &str) -> PathBuf {

@@ -29,12 +29,12 @@ pub const MOBILE_ANIM_CC_FLAG_UOP_SOURCE: u16 = 1 << 14;
 pub const MOB_TYPE_FLAG_USES_UOP_FRAMES: u32 = 0x10000;
 pub const MOB_TYPE_BODY_IDS: std::ops::RangeInclusive<u16> = 1..=0x7FF;
 
-const PAGE_MANIFEST_MAGIC: [u8; 4] = *b"MAPG";
-const ANIMATION_MANIFEST_MAGIC: [u8; 4] = *b"MAAN";
-const FRAME_MANIFEST_MAGIC: [u8; 4] = *b"MAFR";
-const BODY_RESOLVE_MANIFEST_MAGIC: [u8; 4] = *b"MABR";
-const BODY_TYPE_MANIFEST_MAGIC: [u8; 4] = *b"MABT";
-const MOBILE_ANIM_CC_METADATA_VERSION: u32 = 1;
+pub const PAGE_MANIFEST_MAGIC: [u8; 4] = *b"MAPG";
+pub const ANIMATION_MANIFEST_MAGIC: [u8; 4] = *b"MAAN";
+pub const FRAME_MANIFEST_MAGIC: [u8; 4] = *b"MAFR";
+pub const BODY_RESOLVE_MANIFEST_MAGIC: [u8; 4] = *b"MABR";
+pub const BODY_TYPE_MANIFEST_MAGIC: [u8; 4] = *b"MABT";
+pub const MOBILE_ANIM_CC_METADATA_VERSION: u32 = 1;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct MobileAnimCcPageRecord {

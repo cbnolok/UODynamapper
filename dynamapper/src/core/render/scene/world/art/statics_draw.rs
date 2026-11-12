@@ -1813,7 +1813,20 @@ mod tests {
         }];
         let csv = udd_assets::hues::encode_hues_csv(&records).expect("encode hues csv");
 
+        let header = udd_assets::hues::encode_hues_package_header();
         let mut builder = UddpBuilder::new(LookupMode::VirtualPathHash);
+        builder
+            .add_file(AddFileRequest {
+                data_type: DataType::Metadata as u8,
+                compression: CompressionFlag::None,
+                width: 0,
+                height: 0,
+                virtual_path: Some(udd_assets::hues::HUES_PACKAGE_ENTRY_PATH),
+                path_hash64: None,
+                id: None,
+                data: &header,
+            })
+            .expect("add hues header");
         builder
             .add_file(AddFileRequest {
                 data_type: DataType::Metadata as u8,

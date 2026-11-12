@@ -591,11 +591,12 @@ pub fn sys_setup_uo_data(mut commands: Commands, settings: Res<Settings>) {
                 );
                 let store = LazyStaticsStore::new(
                     &statics_path,
+                    map_plane_index,
                     map_plane.size_blocks.width * 8,
                     map_plane.size_blocks.height * 8,
                 )
-                .unwrap_or_else(|_| {
-                    panic!("Error initializing statics reader for plane {map_plane_index}")
+                .unwrap_or_else(|error| {
+                    panic!("Error initializing statics reader for plane {map_plane_index}: {error:#}")
                 });
                 statics_stores[map_plane_index as usize] = Some(Mutex::new(store));
             } else {
