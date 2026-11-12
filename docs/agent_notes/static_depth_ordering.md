@@ -202,6 +202,31 @@ Native acceptance and source/package evidence are retained in
 `/tmp/uodynamapper-ec-followup`.
 
 
+## Coplanar flat quads across chunk batches
+
+Flat statics (Classic flat art, `flat_quad` 1; Enhanced item surfaces, 2; the
+`art_ground` quads) write the depth of their horizontal plane solved at the
+pixel centre (`horizontal_plane_frag_depth`), bit-identical for every quad of
+one plane. The 44-pixel Classic diamonds overlap their neighbours by a pixel
+along each shared edge, so those pixels tie exactly. Inside one chunk batch the
+instances run in `static_depth_key` order (x + y ascending) and the later one
+wins the `GreaterEqual` test: the cell nearer the viewer, as in the clients'
+painter order (cells in map order, larger x + y later). Across a chunk boundary
+the two cells sit in different batches, and the winner followed the batches'
+submission order. The reported case is the one-pixel diagonal between the CC
+cobblestones 1301-1304 (z 0) on the rows y = 575 and 576 at Minoc, which
+changed with unrelated spawn-order changes.
+
+`horizontal_plane_painter_depth` (art `depth.wesl`) now steps a fragment in the
+near half of its cell, toward +x + z from the cell centre, one unit in the last
+place farther (reverse Z: lower). On a shared edge the far cell's fragment is
+in that half and the near cell's is not, so the near cell wins in either draw
+order; inside a batch that is the winner it already had. Two quads of one cell
+step alike at a pixel and keep their draw order. One unit in the last place
+(about 6e-8 near depth 0.5) stays far below the art's 0.002 world-Y lift over
+the terrain (about 6e-7). Perspective keeps the rasterised depth unchanged, and
+the pick pass keeps its own depth.
+
 ## Visible-object query
 
 Inspection/highlighting now use [the GPU material/depth query](static_hover_geometry.md#current-visibility-query).

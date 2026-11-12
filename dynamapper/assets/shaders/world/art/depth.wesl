@@ -41,3 +41,23 @@ fn horizontal_plane_frag_depth(frag_position: vec4<f32>, plane_y: f32) -> f32 {
         / world_from_view[2].y;
     return clamp(view.clip_from_view[2].z * view_z + view.clip_from_view[3].z, 0.0, 1.0);
 }
+
+// The depth step that decides a shared pixel: one unit in the last place, the smallest change of the depth.
+const PAINTER_ORDER_DEPTH_STEP_BITS: u32 = 1u;
+
+// `horizontal_plane_frag_depth` with the clients' painter order on the pixels that coplanar quads of neighbouring
+// cells share. The clients paint the cells in map order, a larger x + y later, so the cell nearer the viewer (down
+// the screen, toward +x and +z) covers the shared pixel. Draw order alone decided it only inside one chunk batch:
+// between two batches the winner followed their submission order. A fragment in the near half of its cell, toward
+// +x + z from the cell centre, sits one depth step farther (reverse Z, so lower). On an edge shared by two cells the
+// far cell's fragment is in that half and the near cell's is not, so the near cell wins in either draw order. Two
+// quads of one cell take the same step at a pixel and keep their draw order. Perspective keeps the rasterised depth.
+fn horizontal_plane_painter_depth(frag_position: vec4<f32>, plane_y: f32, frag_world_xz: vec2<f32>,
+    cell_center_xz: vec2<f32>) -> f32 {
+    let depth = horizontal_plane_frag_depth(frag_position, plane_y);
+    let toward_viewer = (frag_world_xz.x - cell_center_xz.x) + (frag_world_xz.y - cell_center_xz.y);
+    if (view.clip_from_view[3][3] != 1.0 || toward_viewer <= 0.0 || depth <= 0.0) {
+        return depth;
+    }
+    return bitcast<f32>(bitcast<u32>(depth) - PAINTER_ORDER_DEPTH_STEP_BITS);
+}

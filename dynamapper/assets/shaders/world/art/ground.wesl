@@ -1,5 +1,5 @@
 import package::shaders::world::art::picking::{pick_clip, pick_pass, pick_color};
-import package::shaders::world::art::depth::horizontal_plane_frag_depth;
+import package::shaders::world::art::depth::horizontal_plane_painter_depth;
 import bevy_pbr::render::{
     forward_io::Vertex,
     view_transformations,
@@ -132,7 +132,8 @@ fn shade_fragment(in: GroundVertexOutput, sample_index: u32) -> GroundFragmentOu
     // triangular gaps along otherwise coplanar EC water tiles.
     let layer = u32(in.uv_b.x);
     let inst = instances[in.instance_index];
-    out.depth = horizontal_plane_frag_depth(in.position, inst.world_y);
+    out.depth = horizontal_plane_painter_depth(in.position, inst.world_y, in.world_pos.xz,
+        vec2<f32>(inst.world_x, inst.world_z) + (inst.local_min + inst.local_max) * 0.5);
     // The pick target crops XY, so its pixel is not a screen position.
     @if(STATIC_PICK)
     out.depth = in.position.z;

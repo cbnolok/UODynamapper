@@ -35,7 +35,7 @@ import package::shaders::world::art::shading::apply_art_surface_shading;
 import package::shaders::world::art::surface_blend::static_surface_coverage;
 import package::shaders::world::ec_item_water::{ec_item_is_water, sample_ec_item_water};
 import package::shaders::world::ec_liquid_camera::ec_liquid_camera_reflection_uv;
-import package::shaders::world::art::depth::{static_priority_depth, horizontal_plane_frag_depth};
+import package::shaders::world::art::depth::{static_priority_depth, horizontal_plane_painter_depth};
 import package::shaders::world::projection::camera_relative_world_to_clip;
 
 struct ArtVertexOutput {
@@ -102,6 +102,16 @@ fn client_shadow_logical_depth(inst: SpriteInstance) -> f32 {
     ) + client_shadow_logical_offset(inst);
     return client_shadow_priority_depth(view_transformations::position_world_to_clip(logical_world_pos),
         view.clip_from_view, inst.sort_bias_ordinal);
+}
+
+// The world XZ centre of a flat quad, laid out as the vertex shader lays it: on the diagonal screen basis for the CC
+// flat art (flat_quad 1), on the axis-aligned cell for the EC item surfaces (flat_quad 2).
+fn flat_quad_center_xz(inst: SpriteInstance) -> vec2<f32> {
+    let mid = (inst.local_min + inst.local_max) * 0.5;
+    if (inst.flat_quad == 1u) {
+        return vec2<f32>(inst.world_x, inst.world_z) + BILLBOARD_RIGHT_XZ * mid.x + FLAT_QUAD_FORWARD_XZ * mid.y;
+    }
+    return vec2<f32>(inst.world_x, inst.world_z) + mid;
 }
 
 // Every corner of a non-caster lands on this one clip point: zero-area triangles draw nothing.
@@ -343,7 +353,7 @@ fn shade_fragment(in: ArtVertexOutput, sample_index: u32) -> ArtFragmentOutput {
     if (inst.flat_quad == 3u) {
         out.depth = in.position.z;
     } else if (inst.flat_quad != 0u) {
-        out.depth = horizontal_plane_frag_depth(in.position, inst.world_y);
+        out.depth = horizontal_plane_painter_depth(in.position, inst.world_y, in.world_pos.xz, flat_quad_center_xz(inst));
         // The pick target crops XY, so its pixel is not a screen position.
         @if(STATIC_PICK)
         out.depth = in.position.z;
