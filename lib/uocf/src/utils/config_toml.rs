@@ -4,9 +4,9 @@
 //!   structs use `#[serde(deny_unknown_fields)]`, so an unknown key is an error, and a missing required key is an
 //!   error. The message names the file, the line and column, the key and the allowed keys.
 //! - Files an app writes itself and nobody edits by hand (session state, a GUI's remembered settings) are read with
-//!   [`parse_app_state`]: a key missing from the file is filled from the defaults and an unknown key is dropped, each
-//!   with a warning, so an older or newer build's file still loads. The app rewrites the file complete on its next
-//!   save.
+//!   [`parse_app_state`]: a key missing from the file is filled from the defaults, an unknown key is dropped and a key
+//!   with a value the struct rejects takes its default, each with a warning, so an older or newer build's file still
+//!   loads with every other key as saved. The app rewrites the file complete on its next save.
 
 use color_eyre::eyre;
 use serde::Serialize;
@@ -26,9 +26,11 @@ pub struct AppStateLoad<T> {
 }
 
 /// Parses a file the app writes itself. Keys missing from the file take their value from `defaults`, unknown keys
-/// are dropped; both are reported in [`AppStateLoad::warnings`].
+/// are dropped, and a key whose value the struct rejects (an unknown enum variant, a value of the wrong type) takes
+/// its default alone; each is reported in [`AppStateLoad::warnings`].
 ///
-/// Errors (invalid TOML, a value of the wrong type) start with `file_name`; the caller falls back to its defaults.
+/// Errors (invalid TOML, values that are valid one by one but not together) start with `file_name`; the caller falls
+/// back to its defaults.
 pub fn parse_app_state<T>(file_name: &str, text: &str, defaults: &T) -> eyre::Result<AppStateLoad<T>>
 where
     T: Serialize + DeserializeOwned,
@@ -41,9 +43,25 @@ where
     let mut extras = Vec::new();
     let merged = merge(file, &defaults, &[], &mut warnings, &mut extras);
 
+    let mut accepted = without(&merged, &extras);
+    // A value the struct rejects (an enum variant only another build knows, a value of the wrong type) resets its own
+    // key to the default; every other key keeps the file's value. Each changed key is tried alone among the defaults.
+    if T::deserialize(accepted.clone()).is_err() {
+        let mut changed = Vec::new();
+        changed_values(&accepted, &defaults, &[], &mut changed);
+        for (path, value, default) in changed {
+            let mut candidate = defaults.clone();
+            insert(&mut candidate, &path, value.clone());
+            if let Err(error) = T::deserialize(candidate) {
+                let reason = error.to_string().trim_end().replace('\n', " ");
+                warnings.push(format!("invalid value {value} of key `{}` reset to the default ({reason})", path.join(".")));
+                insert(&mut accepted, &path, default);
+            }
+        }
+    }
+
     // Keys the defaults do not serialize: unknown keys, or optional keys whose default is unset. Keep each one the
     // struct accepts.
-    let mut accepted = without(&merged, &extras);
     for (path, value) in &extras {
         let mut candidate = accepted.clone();
         insert(&mut candidate, path, value.clone());
@@ -93,6 +111,30 @@ fn merge(
         extras.push(([path, &[key]].concat(), value));
     }
     merged
+}
+
+/// Each value of `table` that differs from its default, with its key path and the default; tables that have a default
+/// table are walked, other values (arrays included) are taken whole, as `merge` takes them. Keys without a default
+/// are skipped.
+fn changed_values(
+    table: &toml::Table,
+    defaults: &toml::Table,
+    path: &[String],
+    changed: &mut Vec<(KeyPath, toml::Value, toml::Value)>,
+) {
+    for (key, value) in table {
+        let Some(default) = defaults.get(key) else {
+            continue;
+        };
+        let key_path = [path, &[key.clone()]].concat();
+        match (value, default) {
+            (toml::Value::Table(table), toml::Value::Table(defaults)) => {
+                changed_values(table, defaults, &key_path, changed);
+            }
+            _ if value != default => changed.push((key_path, value.clone(), default.clone())),
+            _ => {}
+        }
+    }
 }
 
 fn without(table: &toml::Table, extras: &[(KeyPath, toml::Value)]) -> toml::Table {
@@ -183,10 +225,53 @@ mod tests {
         );
     }
 
+    #[derive(Debug, PartialEq, Serialize, Deserialize)]
+    #[serde(deny_unknown_fields)]
+    struct Picks {
+        source: Source,
+        vsync: bool,
+        window: Window,
+    }
+
+    #[derive(Debug, PartialEq, Serialize, Deserialize)]
+    #[serde(rename_all = "lowercase")]
+    enum Source {
+        Classic,
+        Enhanced,
+    }
+
     #[test]
-    fn app_state_rejects_invalid_files() {
-        let error = parse_app_state("state.toml", "zoom = \"big\"\n", &defaults()).expect_err("bad type").to_string();
+    fn app_state_resets_only_the_keys_with_invalid_values() {
+        let defaults = Picks {
+            source: Source::Classic,
+            vsync: false,
+            window: Window { width: DEFAULT_WIDTH, height: DEFAULT_HEIGHT },
+        };
+        // An enum variant only another build knows, and a value of the wrong type, next to valid saved values.
+        let text = "source = \"kingdom\"\nvsync = true\n[window]\nwidth = \"wide\"\nheight = 2\n";
+        let load = parse_app_state("picks.toml", text, &defaults).expect("load");
+        assert_eq!(
+            load.value,
+            Picks { source: Source::Classic, vsync: true, window: Window { width: DEFAULT_WIDTH, height: 2 } }
+        );
+        assert_eq!(load.warnings.len(), 2, "{:?}", load.warnings);
+        assert!(load.warnings[0].starts_with("picks.toml: invalid value \"kingdom\" of key `source` reset"), "{:?}", load.warnings);
+        assert!(load.warnings[0].contains("unknown variant `kingdom`"), "{:?}", load.warnings);
+        assert!(load.warnings[1].starts_with("picks.toml: invalid value \"wide\" of key `window.width` reset"), "{:?}", load.warnings);
+
+        let valid = "source = \"enhanced\"\nvsync = true\n[window]\nwidth = 1\nheight = 2\n";
+        let load = parse_app_state("picks.toml", valid, &defaults).expect("load");
+        assert_eq!(load.value, Picks { source: Source::Enhanced, vsync: true, window: Window { width: 1, height: 2 } });
+        assert!(load.warnings.is_empty(), "{:?}", load.warnings);
+    }
+
+    #[test]
+    fn app_state_resets_a_value_of_the_wrong_type_and_rejects_invalid_toml() {
+        let load = parse_app_state("state.toml", "zoom = \"big\"\n[window]\nwidth = 1\nheight = 2\n", &defaults())
+            .expect("load");
+        assert_eq!(load.value, State { zoom: DEFAULT_ZOOM, window: Window { width: 1, height: 2 }, last_path: None });
+        assert_eq!(load.warnings.len(), 1, "{:?}", load.warnings);
+        let error = parse_app_state("state.toml", "zoom = \n", &defaults()).expect_err("invalid TOML").to_string();
         assert!(error.starts_with("state.toml: "), "{error}");
-        assert!(parse_app_state("state.toml", "zoom = \n", &defaults()).is_err());
     }
 }

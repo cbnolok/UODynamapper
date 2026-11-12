@@ -446,8 +446,9 @@ pub(crate) fn load_bundled_settings<T: serde::de::DeserializeOwned>(rel: &str) -
 
 /// Reads a user-side settings file: the bundled default under `assets/` (hand-written, strict), then the cache
 /// copy the app writes, if any. The cache copy is lenient: keys it lacks keep the bundled values, unknown keys are
-/// dropped, each with a warning; the app rewrites it complete on its next save. A cache copy that cannot be read
-/// at all is replaced by the bundled values, with a warning.
+/// dropped and keys with a value this build rejects take the bundled value, each with a warning; the app rewrites it
+/// complete on its next save. A cache copy that cannot be read at all is replaced by the bundled values, with a
+/// warning.
 pub(crate) fn load_user_settings<T>(rel: &str) -> eyre::Result<T>
 where
     T: Serialize + serde::de::DeserializeOwned,
@@ -1154,17 +1155,30 @@ mod tests {
     }
 
     /// A saved Kingdom Reborn land source reads back. A land source this build does not know (as `kr` is to builds
-    /// before it) fails the lenient load, and `load_user_settings` then warns and uses the bundled graphics settings.
+    /// before it) takes the bundled value alone, with one warning naming the key and the value; the other saved
+    /// graphics settings keep their values.
     #[test]
-    fn a_saved_kingdom_reborn_land_source_reads_back_and_an_unknown_one_falls_back() {
+    fn a_saved_kingdom_reborn_land_source_reads_back_and_an_unknown_one_falls_back_alone() {
         let bundled = parse_strict::<GraphicsFile>(GRAPHICS_CONFIG_FILE, BUNDLED_GRAPHICS).expect("bundled graphics");
         let saved = BUNDLED_GRAPHICS.replace("land_texture_source = \"ec\"", "land_texture_source = \"kr\"");
         let load = parse_app_state(GRAPHICS_CONFIG_FILE, &saved, &bundled).expect("lenient load");
         assert_eq!(load.value.graphics.land_texture_source, LandTextureSource::Kr);
         assert!(load.warnings.is_empty(), "{:?}", load.warnings);
 
-        let newer = BUNDLED_GRAPHICS.replace("land_texture_source = \"ec\"", "land_texture_source = \"newer\"");
-        assert!(parse_app_state(GRAPHICS_CONFIG_FILE, &newer, &bundled).is_err());
+        let newer = BUNDLED_GRAPHICS
+            .replace("land_texture_source = \"ec\"", "land_texture_source = \"newer\"")
+            .replace("art_texture_source = \"ec\"", "art_texture_source = \"cc\"")
+            .replace("gumps_and_paperdoll = \"classic\"", "gumps_and_paperdoll = \"enhanced\"")
+            .replace("vsync = false", "vsync = true");
+        let load = parse_app_state(GRAPHICS_CONFIG_FILE, &newer, &bundled).expect("lenient load");
+        let graphics = &load.value.graphics;
+        assert_eq!(graphics.land_texture_source, bundled.graphics.land_texture_source);
+        assert_eq!(graphics.art_texture_source, ClientTextureSource::Cc);
+        assert_eq!(graphics.gumps_and_paperdoll, GumpClient::Enhanced);
+        assert!(graphics.vsync);
+        assert_eq!(load.warnings.len(), 1, "{:?}", load.warnings);
+        let warning = &load.warnings[0];
+        assert!(warning.contains("invalid value \"newer\" of key `graphics.land_texture_source`"), "{warning}");
     }
 
     /// The bundled settings draw the Classic gumps and paperdoll, as the default Classic preset drew them before the
