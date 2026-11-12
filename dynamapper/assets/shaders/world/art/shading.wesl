@@ -76,6 +76,7 @@ fn apply_art_surface_shading(
     art_contact_shadow_strength: f32,
     art_mottle_strength: f32,
     light_decal_intensity: f32,
+    local_light_intensity: f32,
     kr_art_temperature_strength: f32,
     local_light_rgba: vec4<f32>,
     is_ground_art: bool,
@@ -85,7 +86,7 @@ fn apply_art_surface_shading(
     let tint_strength = clamp(art_depth_tint_strength, 0.0, 1.0);
     let contact_strength = clamp(art_contact_shadow_strength, 0.0, 1.0);
     let mottle_strength = clamp(art_mottle_strength, 0.0, 1.5);
-    let light_static = clamp(light_decal_intensity, 0.0, 2.0);
+    let light_static = clamp(light_decal_intensity, 0.0, 2.0) * local_light_intensity;
 
     let vertical_light = clamp(1.0 - uv_in_tile.y, 0.0, 1.0);
     let lower_occlusion = smoothstep(0.18, 1.0, uv_in_tile.y);

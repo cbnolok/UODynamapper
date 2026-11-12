@@ -227,6 +227,7 @@ fn shade_fragment(in: GroundVertexOutput, sample_index: u32) -> GroundFragmentOu
             effects.art_contact_shadow_strength,
             effects.art_mottle_strength,
             effects.light_decal_intensity,
+            effects.local_light_intensity,
             effects.kr_art_temperature_strength,
             inst.local_light_rgba,
             true,

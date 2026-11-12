@@ -3,9 +3,9 @@ use crate::{
         MAX_CLIENT_LIGHT_LEVEL, MAX_NIGHT_OVERLAY_STRENGTH, MIN_NIGHT_OVERLAY_STRENGTH,
     },
     core::render::scene::world::land::mesh_material::{
-        ClientNightLighting, GlobalLightingUniforms, LandEffectsUniform, LandLightingUniforms,
-        LandMaterialUniformsPresets, LandRenderStylePresetsPerMode, LandShaderModePresets, SunAngles,
-        TONE_CURVE_PROFILE,
+        local_light_intensity, ClientLocalLights, ClientNightLighting, GlobalLightingUniforms, LandEffectsUniform,
+        LandLightingUniforms, LandMaterialUniformsPresets, LandRenderStylePresetsPerMode, LandShaderModePresets,
+        SunAngles, LOCAL_LIGHT_INTENSITY_RANGE, TONE_CURVE_PROFILE,
     },
     core::system_sets::StartupSysSet,
     prelude::*,
@@ -72,6 +72,9 @@ pub struct UniformState {
     pub client_lighting: Option<ClientNightLighting>,
     /// The KR client's static shadows on or off: `Some` in KR-like only.
     pub client_shadows: Option<bool>,
+    /// The local lights of the active preset's style, not of its slot: `Some` in KR-like and Enhanced.
+    /// `effects.local_light_intensity` follows them.
+    pub local_lights: Option<ClientLocalLights>,
     pub sun: SunAngles,              // static light direction (maps to scene.light_direction)
     pub dirty: bool,                 // when true, push to GPU materials this frame
     /// Snapshot of the last values saved to disk (for undo). `None` until first save.
@@ -90,6 +93,7 @@ pub struct UniformSnapshot {
     pub global_lighting: f32,
     pub client_lighting: Option<ClientNightLighting>,
     pub client_shadows: Option<bool>,
+    pub local_lights: Option<ClientLocalLights>,
     pub sun: SunAngles,
 }
 
@@ -110,6 +114,7 @@ impl UniformState {
             global_lighting: self.global_lighting,
             client_lighting: self.client_lighting,
             client_shadows: self.client_shadows,
+            local_lights: self.local_lights,
             sun: self.sun,
         }
     }
@@ -122,8 +127,14 @@ impl UniformState {
         self.global_lighting = snap.global_lighting;
         self.client_lighting = snap.client_lighting;
         self.client_shadows = snap.client_shadows;
+        self.local_lights = snap.local_lights;
         self.sun = snap.sun;
         self.dirty = true;
+    }
+
+    /// Bring `effects.local_light_intensity` in line with `local_lights`.
+    pub fn sync_local_light_intensity(&mut self) {
+        self.effects.local_light_intensity = local_light_intensity(self.local_lights.as_ref());
     }
 }
 
@@ -164,15 +175,19 @@ fn load_factory_presets() -> eyre::Result<LandShaderModePresets> {
     Ok(presets)
 }
 
-/// The group and period names of each preset slot, in file order.
-fn preset_slots(presets: &LandShaderModePresets) -> Vec<(&'static str, &'static str, &LandMaterialUniformsPresets)> {
-    let groups = [
+/// Each preset group with its name, in file order.
+fn preset_groups(presets: &LandShaderModePresets) -> [(&'static str, &LandRenderStylePresetsPerMode); 4] {
+    [
         (CLASSIC_PRESET_GROUP, &presets.classic),
         (ENHANCED_PRESET_GROUP, &presets.enhanced),
         (KR_PRESET_GROUP, &presets.kr),
         (PAINTERLY_PRESET_GROUP, &presets.painterly),
-    ];
-    groups
+    ]
+}
+
+/// The group and period names of each preset slot, in file order.
+fn preset_slots(presets: &LandShaderModePresets) -> Vec<(&'static str, &'static str, &LandMaterialUniformsPresets)> {
+    preset_groups(presets)
         .into_iter()
         .flat_map(|(group, slots)| {
             PRESET_PERIODS
@@ -201,6 +216,34 @@ fn client_lighting_range_problems(lighting: &ClientNightLighting) -> Vec<String>
     problems
 }
 
+/// The out-of-range intensities of a style's local lights, described for an error or a warning.
+fn local_lights_range_problems(local_lights: &ClientLocalLights) -> Vec<String> {
+    [
+        ("light_sprites_intensity", local_lights.light_sprites_intensity),
+        ("light_mul_intensity", local_lights.light_mul_intensity),
+    ]
+    .into_iter()
+    .filter(|(_, intensity)| !LOCAL_LIGHT_INTENSITY_RANGE.contains(intensity))
+    .map(|(key, intensity)| {
+        format!(
+            "{key} {intensity} is outside {}..={}",
+            LOCAL_LIGHT_INTENSITY_RANGE.start(),
+            LOCAL_LIGHT_INTENSITY_RANGE.end()
+        )
+    })
+    .collect()
+}
+
+/// A style's local lights with both intensities brought into their range.
+fn clamp_local_lights(local_lights: ClientLocalLights) -> ClientLocalLights {
+    let (min, max) = (*LOCAL_LIGHT_INTENSITY_RANGE.start(), *LOCAL_LIGHT_INTENSITY_RANGE.end());
+    ClientLocalLights {
+        source: local_lights.source,
+        light_sprites_intensity: local_lights.light_sprites_intensity.clamp(min, max),
+        light_mul_intensity: local_lights.light_mul_intensity.clamp(min, max),
+    }
+}
+
 /// The client night lighting with every value brought into its range.
 fn clamp_client_lighting(lighting: ClientNightLighting) -> ClientNightLighting {
     ClientNightLighting {
@@ -209,14 +252,28 @@ fn clamp_client_lighting(lighting: ClientNightLighting) -> ClientNightLighting {
         overlay_color: lighting
             .overlay_color
             .clamp(Vec3::splat(*OVERLAY_COLOR_RANGE.start()), Vec3::splat(*OVERLAY_COLOR_RANGE.end())),
-        local_light_source: lighting.local_light_source,
     }
 }
 
 /// A hand-written preset file must give KR-like and Enhanced `client_lighting` and no `global_lighting`, and the
-/// other groups the reverse, with every value in range; and KR-like, alone, `client_shadows`.
+/// other groups the reverse, with every value in range; KR-like, alone, `client_shadows`; and KR-like and Enhanced,
+/// alone, their `local_lights`, in range.
 fn validate_preset_lighting(presets: &LandShaderModePresets) -> eyre::Result<()> {
     let mut problems = Vec::new();
+    for (group, slots) in preset_groups(presets) {
+        match (preset_group_uses_client_lighting(group), &slots.local_lights) {
+            (true, None) => problems.push(format!("missing `{group}.local_lights`")),
+            (true, Some(local_lights)) => problems.extend(
+                local_lights_range_problems(local_lights)
+                    .into_iter()
+                    .map(|problem| format!("`{group}.local_lights`: {problem}")),
+            ),
+            (false, Some(_)) => problems.push(format!(
+                "`{group}.local_lights` is not a setting there: only KR-like and Enhanced choose their local lights"
+            )),
+            (false, None) => {}
+        }
+    }
     for (group, period, slot) in preset_slots(presets) {
         let key = format!("{group}.{period}");
         if preset_group_uses_client_lighting(group) {
@@ -255,16 +312,42 @@ fn validate_preset_lighting(presets: &LandShaderModePresets) -> eyre::Result<()>
 }
 
 /// Bring a leniently read land.toml in line with `validate_preset_lighting`: drop the dimming setting a group does not
-/// use, fill the one it lacks from `defaults` and clamp out-of-range values; likewise `client_shadows`. Returns a
-/// warning per change.
+/// use, fill the one it lacks from `defaults` and clamp out-of-range values; likewise `client_shadows` and
+/// `local_lights`. Returns a warning per change.
 ///
 /// A land.toml saved before the night composite keeps `global_lighting` in KR-like and Enhanced; it is dropped there.
+/// One saved before `local_lights` has a `client_lighting.local_light_source` per slot instead: the lenient load drops
+/// it as an unknown key and fills `local_lights` from the defaults.
 fn normalize_cached_preset_lighting(
     presets: &mut LandShaderModePresets,
     defaults: &LandShaderModePresets,
     file_name: &str,
 ) -> Vec<String> {
     let mut warnings = Vec::new();
+    for (group, default_slots) in preset_groups(defaults) {
+        let Some(slots) = get_preset_group_mut(presets, group) else {
+            continue;
+        };
+        if preset_group_uses_client_lighting(group) {
+            match slots.local_lights {
+                None => {
+                    slots.local_lights = default_slots.local_lights;
+                    warnings.push(format!("{file_name}: missing key `{group}.local_lights` filled from the default"));
+                }
+                Some(local_lights) => {
+                    let problems = local_lights_range_problems(&local_lights);
+                    if !problems.is_empty() {
+                        slots.local_lights = Some(clamp_local_lights(local_lights));
+                        warnings.push(format!("{file_name}: `{group}.local_lights` clamped: {}", problems.join("; ")));
+                    }
+                }
+            }
+        } else if slots.local_lights.take().is_some() {
+            warnings.push(format!(
+                "{file_name}: `{group}.local_lights` dropped: only KR-like and Enhanced choose their local lights"
+            ));
+        }
+    }
     for (group, period, default_slot) in preset_slots(defaults) {
         let key = format!("{group}.{period}");
         let Some(slot) = get_preset_slot_mut(presets, &key) else {
@@ -525,11 +608,14 @@ pub fn build_save_presets(u: &UniformState, base: &LandShaderModePresets) -> Lan
     out
 }
 
-/// Capture the live shader values in their active mode × time-of-day slot.
+/// Capture the live shader values in their active mode × time-of-day slot, and the style's local lights in its group.
 ///
 /// The UI calls this before changing presets so edits are not discarded when the
 /// next slot is applied. Disk persistence remains tied to closing the shader panel.
 pub fn store_active_preset(presets: &mut LandShaderModePresets, u: &UniformState) {
+    if let Some(slots) = preset_key_group(&u.active_preset).and_then(|group| get_preset_group_mut(presets, group)) {
+        slots.local_lights = u.local_lights;
+    }
     if let Some(slot) = get_preset_slot_mut(presets, &u.active_preset) {
         slot.effects = u.effects;
         slot.lighting = u.lighting;
@@ -544,6 +630,36 @@ pub fn store_active_preset(presets: &mut LandShaderModePresets, u: &UniformState
     presets.default_preset = u.active_preset.clone();
 }
 
+/// The group of a preset key such as "kr.morning".
+fn preset_key_group(key: &str) -> Option<&str> {
+    key.split_once('.').map(|(group, _)| group)
+}
+
+/// Get a mutable reference to a preset group (one render style) by name.
+fn get_preset_group_mut<'a>(
+    presets: &'a mut LandShaderModePresets,
+    group: &str,
+) -> Option<&'a mut LandRenderStylePresetsPerMode> {
+    match group {
+        CLASSIC_PRESET_GROUP => Some(&mut presets.classic),
+        ENHANCED_PRESET_GROUP => Some(&mut presets.enhanced),
+        KR_PRESET_GROUP => Some(&mut presets.kr),
+        PAINTERLY_PRESET_GROUP => Some(&mut presets.painterly),
+        _ => None,
+    }
+}
+
+/// Get an immutable reference to a preset group (one render style) by name.
+pub fn get_preset_group<'a>(presets: &'a LandShaderModePresets, group: &str) -> Option<&'a LandRenderStylePresetsPerMode> {
+    match group {
+        CLASSIC_PRESET_GROUP => Some(&presets.classic),
+        ENHANCED_PRESET_GROUP => Some(&presets.enhanced),
+        KR_PRESET_GROUP => Some(&presets.kr),
+        PAINTERLY_PRESET_GROUP => Some(&presets.painterly),
+        _ => None,
+    }
+}
+
 /// Get a mutable reference to a particular mode×time slot by key.
 fn get_preset_slot_mut<'a>(
     presets: &'a mut LandShaderModePresets,
@@ -553,13 +669,7 @@ fn get_preset_slot_mut<'a>(
     if parts.len() != 2 {
         return None;
     }
-    let mode_group = match parts[0] {
-        CLASSIC_PRESET_GROUP => &mut presets.classic,
-        ENHANCED_PRESET_GROUP => &mut presets.enhanced,
-        KR_PRESET_GROUP => &mut presets.kr,
-        PAINTERLY_PRESET_GROUP => &mut presets.painterly,
-        _ => return None,
-    };
+    let mode_group = get_preset_group_mut(presets, parts[0])?;
     match parts[1] {
         "morning" => Some(&mut mode_group.morning),
         "afternoon" => Some(&mut mode_group.afternoon),
@@ -578,13 +688,7 @@ pub fn get_preset_slot<'a>(
     if parts.len() != 2 {
         return None;
     }
-    let mode_group = match parts[0] {
-        CLASSIC_PRESET_GROUP => &presets.classic,
-        ENHANCED_PRESET_GROUP => &presets.enhanced,
-        KR_PRESET_GROUP => &presets.kr,
-        PAINTERLY_PRESET_GROUP => &presets.painterly,
-        _ => return None,
-    };
+    let mode_group = get_preset_group(presets, parts[0])?;
     match parts[1] {
         "morning" => Some(&mode_group.morning),
         "afternoon" => Some(&mode_group.afternoon),
@@ -594,7 +698,8 @@ pub fn get_preset_slot<'a>(
     }
 }
 
-/// Replace one mode × time-of-day slot with its immutable factory values.
+/// Replace one mode × time-of-day slot with its immutable factory values, and its style's local lights, which the
+/// shader window shows with the slot's values.
 pub fn reset_preset_to_factory(
     presets: &mut LandShaderModePresets,
     factory_presets: &LandShaderModePresets,
@@ -607,6 +712,12 @@ pub fn reset_preset_to_factory(
         return false;
     };
     *target_slot = clone_slot(factory_slot);
+    let group = preset_key_group(key);
+    let factory_local_lights =
+        group.and_then(|group| get_preset_group(factory_presets, group)).and_then(|slots| slots.local_lights);
+    if let Some(slots) = group.and_then(|group| get_preset_group_mut(presets, group)) {
+        slots.local_lights = factory_local_lights;
+    }
     true
 }
 
@@ -623,6 +734,7 @@ fn clone_presets(p: &LandShaderModePresets) -> LandShaderModePresets {
 
 fn clone_mode(m: &LandRenderStylePresetsPerMode) -> LandRenderStylePresetsPerMode {
     LandRenderStylePresetsPerMode {
+        local_lights: m.local_lights,
         morning: clone_slot(&m.morning),
         afternoon: clone_slot(&m.afternoon),
         night: clone_slot(&m.night),
@@ -664,26 +776,25 @@ fn uniform_state_from_presets(source: &LandShaderModePresets) -> UniformState {
     });
 
     let global_lighting = preset_scene_multiplier(preset);
-    UniformState {
+    let local_lights = preset_key_group(&preset_key)
+        .and_then(|group| get_preset_group(source, group))
+        .and_then(|slots| slots.local_lights);
+    let mut state = UniformState {
         effects: preset.effects,
         lighting: preset.lighting,
         land_lighting: preset.land_lighting,
         global_lighting,
         client_lighting: preset.client_lighting,
         client_shadows: preset.client_shadows,
+        local_lights,
         sun: preset.sun,
         dirty: true,
-        saved_snapshot: Some(UniformSnapshot {
-            effects: preset.effects,
-            lighting: preset.lighting,
-            land_lighting: preset.land_lighting,
-            global_lighting,
-            client_lighting: preset.client_lighting,
-            client_shadows: preset.client_shadows,
-            sun: preset.sun,
-        }),
+        saved_snapshot: None,
         active_preset: preset_key,
-    }
+    };
+    state.sync_local_light_intensity();
+    state.saved_snapshot = Some(state.snapshot());
+    state
 }
 
 /// The scene multiplier a preset slot applies: its `global_lighting`, or the identity where the clients' night
@@ -716,6 +827,7 @@ mod tests {
 
     fn mode(base_mode: u32, base_global: f32) -> LandRenderStylePresetsPerMode {
         LandRenderStylePresetsPerMode {
+            local_lights: None,
             morning: slot(base_mode, base_global, 1.0),
             afternoon: slot(base_mode, base_global + 0.1, 1.1),
             night: slot(base_mode, base_global + 0.2, 1.2),
@@ -813,6 +925,28 @@ mod tests {
         assert_eq!(effective.default_preset, "classic.cave");
     }
 
+    /// The shader window shows a style's local lights with the slot's values, so resetting a slot resets them too.
+    #[test]
+    fn resetting_a_preset_restores_its_style_local_lights() {
+        use crate::core::render::scene::world::land::mesh_material::ClientLocalLightSource;
+        let local_lights = |source, light_mul_intensity| ClientLocalLights {
+            source,
+            light_sprites_intensity: 1.0,
+            light_mul_intensity,
+        };
+        let mut factory = presets();
+        factory.kr.local_lights = Some(local_lights(ClientLocalLightSource::LightSprites, 1.0));
+        factory.enhanced.local_lights = factory.kr.local_lights;
+        let mut effective = presets();
+        effective.kr.local_lights = Some(local_lights(ClientLocalLightSource::LightMul, 0.5));
+        effective.enhanced.local_lights = effective.kr.local_lights;
+
+        assert!(reset_preset_to_factory(&mut effective, &factory, "kr.night"));
+
+        assert_eq!(effective.kr.local_lights, factory.kr.local_lights);
+        assert_eq!(effective.enhanced.local_lights, Some(local_lights(ClientLocalLightSource::LightMul, 0.5)));
+    }
+
     const BUNDLED_FACTORY_PRESETS: &str = include_str!("../../assets/defaults/shader_presets.toml");
     const BUNDLED_LAND_SETTINGS: &str = include_str!("../../assets/settings/shaders/land.toml");
 
@@ -899,7 +1033,6 @@ mod tests {
     #[test]
     fn bundled_presets_dim_kr_like_and_enhanced_through_the_client_night_lighting() {
         use crate::core::render::scene::world::effects::client_night::NIGHT_MAP_MEAN;
-        use crate::core::render::scene::world::land::mesh_material::ClientLocalLightSource;
         const DAY: u32 = 0;
         const NIGHT: u32 = 10;
         const DUNGEON: u32 = 26;
@@ -915,7 +1048,6 @@ mod tests {
                         light_level: level,
                         overlay_strength: CLIENT_STRENGTH,
                         overlay_color: NIGHT_MAP_MEAN,
-                        local_light_source: ClientLocalLightSource::LightSprites,
                     };
                     assert_eq!(slot.client_lighting, Some(expected), "{name}");
                 }
@@ -923,37 +1055,127 @@ mod tests {
         }
     }
 
-    /// The source of KR-like's and Enhanced's local lights is required in a hand-written file, filled in a cache from
-    /// before it, and a pick of light.mul is written and read back.
+    /// KR-like and Enhanced each have one `local_lights` table, the light sprites at their own intensity, in both
+    /// bundled files; the other styles have none.
     #[test]
-    fn the_client_local_light_source_is_strict_by_hand_and_filled_in_a_cache() {
-        use crate::core::render::scene::world::land::mesh_material::ClientLocalLightSource;
-        const BUNDLED_SOURCE_LINE: &str = "local_light_source = \"light_sprites\"\n";
-        let unknown = BUNDLED_FACTORY_PRESETS.replacen(BUNDLED_SOURCE_LINE, "local_light_source = \"sprites\"\n", 1);
+    fn bundled_presets_give_kr_like_and_enhanced_their_local_lights() {
+        use crate::core::render::scene::world::land::mesh_material::{
+            ClientLocalLightSource, NEUTRAL_LOCAL_LIGHT_INTENSITY,
+        };
+        let expected = ClientLocalLights {
+            source: ClientLocalLightSource::LightSprites,
+            light_sprites_intensity: NEUTRAL_LOCAL_LIGHT_INTENSITY,
+            light_mul_intensity: NEUTRAL_LOCAL_LIGHT_INTENSITY,
+        };
+        for (name, text) in [("shader_presets.toml", BUNDLED_FACTORY_PRESETS), ("land.toml", BUNDLED_LAND_SETTINGS)] {
+            let presets = parse(text).expect("bundled");
+            for (group, slots) in preset_groups(&presets) {
+                let local_lights = preset_group_uses_client_lighting(group).then_some(expected);
+                assert_eq!(slots.local_lights, local_lights, "{name} {group}");
+            }
+        }
+    }
+
+    /// A hand-written file must give KR-like and Enhanced their local lights, complete and in range, and no other
+    /// style any; the former per-slot source is an unknown key there.
+    #[test]
+    fn hand_written_local_lights_are_strict() {
+        const BUNDLED_SOURCE_LINE: &str = "source = \"light_sprites\"\n";
+        let unknown = BUNDLED_FACTORY_PRESETS.replacen(BUNDLED_SOURCE_LINE, "source = \"sprites\"\n", 1);
         let error = parse(&unknown).err().expect("unknown source").to_string();
         assert!(error.contains("unknown variant `sprites`, expected `light_sprites` or `light_mul`"), "{error}");
-        let missing = BUNDLED_FACTORY_PRESETS.replacen(BUNDLED_SOURCE_LINE, "", 1);
-        let error = parse(&missing).err().expect("missing source").to_string();
-        assert!(error.contains("missing field `local_light_source`"), "{error}");
+        let missing = BUNDLED_FACTORY_PRESETS.replacen("light_mul_intensity = 1.0\n", "", 1);
+        let error = parse(&missing).err().expect("missing intensity").to_string();
+        assert!(error.contains("missing field `light_mul_intensity`"), "{error}");
+        let per_slot = BUNDLED_FACTORY_PRESETS
+            .replacen("[kr.night.effects]\n", "local_light_source = \"light_mul\"\n[kr.night.effects]\n", 1);
+        let error = parse(&per_slot).err().expect("per-slot source").to_string();
+        assert!(error.contains("unknown field `local_light_source`"), "{error}");
 
+        let mut presets = parse(BUNDLED_FACTORY_PRESETS).expect("bundled");
+        presets.classic.local_lights = presets.kr.local_lights;
+        presets.enhanced.local_lights = None;
+        presets.kr.local_lights.as_mut().unwrap().light_mul_intensity = LOCAL_LIGHT_INTENSITY_RANGE.end() + 1.0;
+        let error = validate_preset_lighting(&presets).expect_err("misplaced local lights").to_string();
+        for expected in [
+            "`classic.local_lights` is not a setting there",
+            "missing `enhanced.local_lights`",
+            "`kr.local_lights`: light_mul_intensity 5 is outside 0..=4",
+        ] {
+            assert!(error.contains(expected), "{error}");
+        }
+    }
+
+    /// A cache from before the local lights were a per-style setting keeps a source in every client-lit slot: each is
+    /// dropped with a warning and the style takes the defaults. A cache's misplaced or out-of-range local lights are
+    /// dropped or clamped, and a pick of light.mul with its intensities is written and read back.
+    #[test]
+    fn cached_local_lights_drop_the_per_slot_source_and_fill_clamp_or_drop_the_style_setting() {
+        use crate::core::render::scene::world::land::mesh_material::ClientLocalLightSource;
         let bundled = parse(BUNDLED_LAND_SETTINGS).expect("bundled");
-        let older = BUNDLED_LAND_SETTINGS.replacen(BUNDLED_SOURCE_LINE, "", 1);
-        let load = uocf::utils::config_toml::parse_app_state("land.toml", &older, &bundled).expect("lenient load");
-        assert_eq!(
-            load.warnings,
-            ["land.toml: missing key `enhanced.morning.client_lighting.local_light_source` filled from the default"]
-        );
-        assert_eq!(load.value.enhanced.morning.client_lighting, bundled.enhanced.morning.client_lighting);
+        let mut older: toml::Table = toml::from_str(BUNDLED_LAND_SETTINGS).expect("bundled");
+        for group in [ENHANCED_PRESET_GROUP, KR_PRESET_GROUP] {
+            let group_table = older[group].as_table_mut().expect("group");
+            group_table.remove("local_lights");
+            for period in PRESET_PERIODS {
+                let lighting = group_table[period]["client_lighting"].as_table_mut().expect("client lighting");
+                lighting.insert("local_light_source".to_string(), toml::Value::String("light_mul".to_string()));
+            }
+        }
+        let older = toml::to_string(&older).expect("serialize");
+        let mut load = uocf::utils::config_toml::parse_app_state("land.toml", &older, &bundled).expect("lenient load");
+        let mut dropped = Vec::new();
+        for group in [ENHANCED_PRESET_GROUP, KR_PRESET_GROUP] {
+            for period in PRESET_PERIODS {
+                dropped.push(format!("land.toml: unknown key `{group}.{period}.client_lighting.local_light_source` dropped"));
+            }
+        }
+        // The lenient load reports the unknown keys in the table's (alphabetical) order.
+        dropped.sort();
+        let mut expected: Vec<String> = [ENHANCED_PRESET_GROUP, KR_PRESET_GROUP]
+            .into_iter()
+            .map(|group| format!("land.toml: missing key `{group}.local_lights` filled from the default"))
+            .collect();
+        expected.extend(dropped);
+        assert_eq!(load.warnings, expected);
+        assert!(normalize_cached_preset_lighting(&mut load.value, &bundled, "land.toml").is_empty());
+        assert_eq!(load.value.kr.local_lights, bundled.kr.local_lights);
+        assert_eq!(load.value.enhanced.local_lights, bundled.enhanced.local_lights);
 
-        let mut picked = clone_presets(&bundled);
-        picked.kr.night.client_lighting.as_mut().expect("client lit").local_light_source = ClientLocalLightSource::LightMul;
-        let written = toml::to_string_pretty(&picked).expect("serialize");
+        let mut cached = clone_presets(&bundled);
+        cached.painterly.local_lights = bundled.kr.local_lights;
+        cached.enhanced.local_lights.as_mut().unwrap().light_sprites_intensity = -1.0;
+        let warnings = normalize_cached_preset_lighting(&mut cached, &bundled, "land.toml");
+        assert_eq!(
+            warnings,
+            [
+                "land.toml: `enhanced.local_lights` clamped: light_sprites_intensity -1 is outside 0..=4",
+                "land.toml: `painterly.local_lights` dropped: only KR-like and Enhanced choose their local lights",
+            ]
+        );
+        assert_eq!(cached.enhanced.local_lights.map(|local_lights| local_lights.light_sprites_intensity), Some(0.0));
+        assert_eq!(cached.painterly.local_lights, None);
+
+        const SPRITES_INTENSITY: f32 = 1.5;
+        const LIGHT_MUL_INTENSITY: f32 = 0.6;
+        let picked = ClientLocalLights {
+            source: ClientLocalLightSource::LightMul,
+            light_sprites_intensity: SPRITES_INTENSITY,
+            light_mul_intensity: LIGHT_MUL_INTENSITY,
+        };
+        let mut on_kr_night = clone_presets(&bundled);
+        on_kr_night.default_preset = "kr.night".to_string();
+        let mut state = uniform_state_from_presets(&on_kr_night);
+        state.local_lights = Some(picked);
+        let written = toml::to_string_pretty(&build_save_presets(&state, &bundled)).expect("serialize");
         let load = uocf::utils::config_toml::parse_app_state("land.toml", &written, &bundled).expect("lenient load");
         assert!(load.warnings.is_empty(), "{:?}", load.warnings);
-        assert_eq!(
-            load.value.kr.night.client_lighting.map(|lighting| lighting.local_light_source),
-            Some(ClientLocalLightSource::LightMul)
-        );
+        assert_eq!(load.value.kr.local_lights, Some(picked));
+        assert_eq!(load.value.enhanced.local_lights, bundled.enhanced.local_lights);
+        validate_preset_lighting(&load.value).expect("valid");
+        let restored = uniform_state_from_presets(&load.value);
+        assert_eq!(restored.local_lights, Some(picked));
+        assert_eq!(restored.effects.local_light_intensity, LIGHT_MUL_INTENSITY);
     }
 
     #[test]

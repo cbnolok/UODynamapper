@@ -11,7 +11,7 @@
 //! The clients light the terrain and the statics through the composite alone: their sprites are unlit and their
 //! terrain has no other light. The optional land light decals and static local lights (Light/Static Interaction,
 //! off in the KR-like and Enhanced presets) read these sprites in the two styles (`client_light_sprite_static_light`),
-//! unless the preset's `client_lighting.local_light_source` picks light.mul, as Classic (`static_lights`).
+//! unless the style's `local_lights.source` picks light.mul, as Classic (`static_lights`).
 
 use super::static_lights::{StaticLightInstance, StaticLightKey, StaticLightTarget, LIGHT_PIXELS_PER_WORLD_TILE,
     STATIC_LIGHT_Y_BIAS};

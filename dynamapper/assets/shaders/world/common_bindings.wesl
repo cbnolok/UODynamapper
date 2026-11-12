@@ -59,6 +59,9 @@ struct LandEffectsUniform {
     // The KR client's grunge on statics (art/client_grunge.wesl): on/off and strength.
     enable_client_grunge: u32,
     client_grunge_strength: f32,
+    // Multiplies the land light decals and static local lights with light_decal_intensity: the intensity of the
+    // source KR-like's and Enhanced's local lights take, 1 in Classic and UOD-Painterly.
+    local_light_intensity: f32,
 }
 
 // Global lighting parameters shared across all shader types (land, art tiles, etc.).

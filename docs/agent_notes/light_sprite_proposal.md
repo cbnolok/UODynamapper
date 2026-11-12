@@ -30,9 +30,10 @@ What was built differs from the proposal in these points:
 - **Still open:** U2, U4, U5 as in §8.
 - **Land and static local lights:** the clients have none; their terrain and sprites take the lights only through
   the composite. In KR-like and Enhanced the optional land light decals and static local lights (Light/Static
-  Interaction, 0 in those presets) read the client light sprites since 2026-11-12 by default; a preset's
-  `client_lighting.local_light_source = "light_mul"` (the shader window's Local Lights) makes them read the light.mul
-  instances, as Classic, instead. The light buffer keeps the sprites either way.
+  Interaction, 0 in those presets) read the client light sprites since 2026-11-12 by default; the style's
+  `[<group>.local_lights] source = "light_mul"` (the shader window's Local Lights, one setting per style) makes them
+  read the light.mul instances, as Classic, instead, and each source has its own intensity there. The light buffer
+  keeps the sprites either way.
 
 KR-like and Enhanced draw the night composite's light buffer B with interim quads: light.mul masks with our own
 size and position (see [CLIENT_NIGHT_LIGHTING_AND_SHADOWS.md](../dev_wiki/rendering/CLIENT_NIGHT_LIGHTING_AND_SHADOWS.md),

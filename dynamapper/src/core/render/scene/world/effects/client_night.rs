@@ -714,13 +714,7 @@ mod tests {
     const TABLE: [(u32, Vec3); 2] = [(10, Vec3::new(0.693, 0.699, 0.874)), (26, Vec3::new(0.201, 0.216, 0.671))];
 
     fn client_settings() -> ClientNightLighting {
-        use crate::core::render::scene::world::land::mesh_material::ClientLocalLightSource;
-        ClientNightLighting {
-            light_level: 0,
-            overlay_strength: 1.0,
-            overlay_color: NIGHT_MAP_MEAN,
-            local_light_source: ClientLocalLightSource::LightSprites,
-        }
+        ClientNightLighting { light_level: 0, overlay_strength: 1.0, overlay_color: NIGHT_MAP_MEAN }
     }
 
     /// The composite of a flat grey scene over a night map of uniform colour `night`, divided by the grey: the scene

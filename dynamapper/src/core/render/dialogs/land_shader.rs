@@ -13,7 +13,7 @@ use super::super::scene::world::land::mesh_material::*;
 use crate::core::controls::input_actions::ActionToggleShaderSettings;
 use crate::{
     configs::shader_presets::{
-        build_save_presets, get_preset_slot, preset_scene_multiplier, reset_preset_to_factory,
+        build_save_presets, get_preset_group, get_preset_slot, preset_scene_multiplier, reset_preset_to_factory,
         save_shader_settings, store_active_preset, FactoryShaderPresets, UniformState,
         CLASSIC_PRESET_GROUP, ENHANCED_PRESET_GROUP, KR_PRESET_GROUP, PAINTERLY_PRESET_GROUP,
     },
@@ -144,6 +144,14 @@ const LOCAL_LIGHT_SOURCE_OPTIONS: [(&str, ClientLocalLightSource, &str); 2] = [
     ("light.mul", ClientLocalLightSource::LightMul, tips::LOCAL_LIGHTS_LIGHT_MUL),
 ];
 
+/// The intensity slider of each local light source, under the "Local Lights" row: `(label, tooltip)`.
+fn local_light_intensity_slider(source: ClientLocalLightSource) -> (&'static str, &'static str) {
+    match source {
+        ClientLocalLightSource::LightSprites => ("Light Sprites Intensity", tips::LIGHT_SPRITES_INTENSITY),
+        ClientLocalLightSource::LightMul => ("light.mul Intensity", tips::LIGHT_MUL_INTENSITY),
+    }
+}
+
 /// Terrain "Land Shading" choices for the fragment styles: `(label, terrain_shading_model, tooltip)`.
 const TERRAIN_SHADING_OPTIONS: [(&str, u32, &str); 2] = [
     ("Smooth per-pixel", TERRAIN_SHADING_SMOOTH_PER_PIXEL, "Lighting per pixel from a smooth normal, with every land lighting control."),
@@ -232,12 +240,14 @@ fn preset_for_style(
     get_preset_slot(presets, &period.key(style.preset_group)).unwrap_or(&presets.classic.morning)
 }
 
+/// Load the preset of a style and time of day, with the style's local lights.
 fn apply_render_preset(
     u: &mut UniformState,
-    preset: &LandMaterialUniformsPresets,
+    presets: &LandShaderModePresets,
     style: RenderStylePreset,
     period: ShaderPresetPeriod,
 ) {
+    let preset = preset_for_style(presets, style, period);
     let (mode, profile) = (style.shading_mode, style.post_process_profile);
     // Animation is an interactive playback preference, not part of the visual
     // time/style preset. Keep the user's current choice when changing either.
@@ -253,6 +263,8 @@ fn apply_render_preset(
     u.global_lighting = preset_scene_multiplier(preset);
     u.client_lighting = preset.client_lighting;
     u.client_shadows = preset.client_shadows;
+    u.local_lights = get_preset_group(presets, style.preset_group).and_then(|slots| slots.local_lights);
+    u.sync_local_light_intensity();
     u.sun = preset.sun;
     u.active_preset = period.key(style.preset_group);
     u.dirty = true;
@@ -265,8 +277,7 @@ fn store_active_and_apply_render_preset(
     period: ShaderPresetPeriod,
 ) {
     store_active_preset(presets, u);
-    let preset = preset_for_style(presets, style, period);
-    apply_render_preset(u, preset, style, period);
+    apply_render_preset(u, presets, style, period);
 }
 
 /// Default screen position of the detached "Advanced Raw Shader Knobs" window.
@@ -409,8 +420,7 @@ pub fn land_ui_system(
                     &factory_shader_presets.0,
                     &key,
                 );
-                let preset = preset_for_style(&shader_presets, style, period);
-                apply_render_preset(&mut u, preset, style, period);
+                apply_render_preset(&mut u, &shader_presets, style, period);
             }
 
             // Undo button: restore the last saved values.
@@ -989,6 +999,11 @@ fn push_uniforms_if_dirty(
         u.effects.terrain_transition_flags = transitions;
         u.dirty = true;
     }
+    // The local lights are edited apart from the effects: bring the intensity the shaders read in line.
+    if u.effects.local_light_intensity != local_light_intensity(u.local_lights.as_ref()) {
+        u.sync_local_light_intensity();
+        u.dirty = true;
+    }
     if !u.dirty {
         return;
     }
@@ -1085,8 +1100,8 @@ fn whole_scene_controls(ui: &mut egui::Ui, u: &mut UniformState, gates: RenderSt
         // KR's filmic tonemap had its own pre-scale here ("KR Tonemap Brightness"); it multiplied
         // exactly like Exposure, so it is folded into Exposure (Advanced -> Intensities).
         changed |= slider_s(ui, "Light/Static Interaction", &mut u.effects.light_decal_intensity, 0.0..=2.0, tips::LIGHT_STATIC_INTERACTION);
-        if let Some(lighting) = u.client_lighting.as_mut() {
-            changed |= local_light_source_row(ui, &mut lighting.local_light_source);
+        if let Some(local_lights) = u.local_lights.as_mut() {
+            changed |= local_lights_controls(ui, local_lights);
         }
 
         let ui = &mut columns[1];
@@ -1114,19 +1129,22 @@ fn client_night_controls(ui: &mut egui::Ui, lighting: &mut ClientNightLighting) 
     changed
 }
 
-/// Which lights KR-like's and Enhanced's land light decals and static local lights take.
-fn local_light_source_row(ui: &mut egui::Ui, source: &mut ClientLocalLightSource) -> bool {
+/// Which lights KR-like's and Enhanced's land light decals and static local lights take, and the intensity of that
+/// source right under it.
+fn local_lights_controls(ui: &mut egui::Ui, local_lights: &mut ClientLocalLights) -> bool {
     let mut changed = false;
     ui.horizontal_wrapped(|ui| {
         with_tip(ui.label("Local Lights:"), tips::LOCAL_LIGHT_SOURCE);
         for (label, option, tip) in LOCAL_LIGHT_SOURCE_OPTIONS {
-            let selected = *source == option;
+            let selected = local_lights.source == option;
             if with_tip(ui.selectable_label(selected, label), tip).clicked() && !selected {
-                *source = option;
+                local_lights.source = option;
                 changed = true;
             }
         }
     });
+    let (label, tip) = local_light_intensity_slider(local_lights.source);
+    changed |= slider_s(ui, label, local_lights.intensity_mut(), LOCAL_LIGHT_INTENSITY_RANGE, tip);
     changed
 }
 
@@ -1432,6 +1450,7 @@ mod tests {
             global_lighting: 1.0,
             client_lighting: None,
             client_shadows: None,
+            local_lights: None,
             sun: SunAngles::default(),
             dirty: false,
             saved_snapshot: None,
@@ -1453,6 +1472,7 @@ mod tests {
 
     fn mode(base: f32) -> LandRenderStylePresetsPerMode {
         LandRenderStylePresetsPerMode {
+            local_lights: None,
             morning: preset(base),
             afternoon: preset(base + 1.0),
             night: preset(base + 2.0),
@@ -1500,9 +1520,12 @@ mod tests {
             sun: SunAngles { azimuth_degrees: 180.0, elevation_degrees: 45.0 },
         };
 
+        let mut presets = mode_presets();
+        let sun = preset.sun;
+        presets.classic.morning = preset;
         apply_render_preset(
             &mut u,
-            &preset,
+            &presets,
             RENDER_STYLE_PRESETS[0],
             ShaderPresetPeriod::Morning,
         );
@@ -1515,7 +1538,8 @@ mod tests {
         assert_eq!(u.global_lighting, 0.75);
         assert_eq!(u.lighting.exposure, 1.25);
         assert_eq!(u.land_lighting.diffuse_strength, 0.8);
-        assert_eq!(u.sun, preset.sun);
+        assert_eq!(u.sun, sun);
+        assert_eq!(u.effects.local_light_intensity, NEUTRAL_LOCAL_LIGHT_INTENSITY);
         assert!(u.dirty);
     }
 
@@ -1567,7 +1591,7 @@ mod tests {
             seen_groups.push(style.preset_group);
 
             let mut u = uniform_state();
-            apply_render_preset(&mut u, preset_for_style(&presets, style, ShaderPresetPeriod::Night), style, ShaderPresetPeriod::Night);
+            apply_render_preset(&mut u, &presets, style, ShaderPresetPeriod::Night);
             assert_eq!(active_render_style(&u), style);
         }
         seen_groups.dedup();
@@ -1584,12 +1608,8 @@ mod tests {
     fn client_lit_presets_load_their_lighting_and_a_neutral_scene_multiplier() {
         const NIGHT_LEVEL: u32 = 10;
         const STRENGTH: f32 = 0.5;
-        let lighting = ClientNightLighting {
-            light_level: NIGHT_LEVEL,
-            overlay_strength: STRENGTH,
-            overlay_color: NIGHT_MAP_MEAN,
-            local_light_source: ClientLocalLightSource::LightSprites,
-        };
+        let lighting =
+            ClientNightLighting { light_level: NIGHT_LEVEL, overlay_strength: STRENGTH, overlay_color: NIGHT_MAP_MEAN };
         let mut presets = mode_presets();
         presets.kr.night = LandMaterialUniformsPresets {
             global_lighting: None,
@@ -1611,6 +1631,54 @@ mod tests {
         assert_eq!(presets.kr.night.global_lighting, None);
         assert_eq!(u.client_lighting, None);
         assert_eq!(u.global_lighting, 3.0);
+    }
+
+    /// The local lights belong to the style: every time of day of KR-like shows the same, an edit in one is there
+    /// in the others and stays with KR-like, and their source's intensity reaches the shaders' effects.
+    #[test]
+    fn local_lights_are_one_setting_per_style_and_their_intensity_reaches_the_shaders() {
+        const SPRITES_INTENSITY: f32 = 0.5;
+        const LIGHT_MUL_INTENSITY: f32 = 2.0;
+        let local_lights = ClientLocalLights {
+            source: ClientLocalLightSource::LightSprites,
+            light_sprites_intensity: SPRITES_INTENSITY,
+            light_mul_intensity: LIGHT_MUL_INTENSITY,
+        };
+        let mut presets = mode_presets();
+        presets.kr.local_lights = Some(local_lights);
+        let [classic, _, kr_like, _] = RENDER_STYLE_PRESETS;
+        let mut u = uniform_state();
+
+        store_active_and_apply_render_preset(&mut u, &mut presets, kr_like, ShaderPresetPeriod::Night);
+        assert_eq!(u.local_lights, Some(local_lights));
+        assert_eq!(u.effects.local_light_intensity, SPRITES_INTENSITY);
+
+        // Picking light.mul at night is light.mul's intensity, and KR-like's in the morning too.
+        u.local_lights.as_mut().unwrap().source = ClientLocalLightSource::LightMul;
+        u.sync_local_light_intensity();
+        assert_eq!(u.effects.local_light_intensity, LIGHT_MUL_INTENSITY);
+        store_active_and_apply_render_preset(&mut u, &mut presets, kr_like, ShaderPresetPeriod::Morning);
+        let picked = ClientLocalLights { source: ClientLocalLightSource::LightMul, ..local_lights };
+        assert_eq!(presets.kr.local_lights, Some(picked));
+        assert_eq!(u.local_lights, Some(picked));
+        assert_eq!(u.effects.local_light_intensity, LIGHT_MUL_INTENSITY);
+
+        // Classic has none, and its lights stay as they come.
+        store_active_and_apply_render_preset(&mut u, &mut presets, classic, ShaderPresetPeriod::Morning);
+        assert_eq!(u.local_lights, None);
+        assert_eq!(presets.classic.local_lights, None);
+        assert_eq!(u.effects.local_light_intensity, NEUTRAL_LOCAL_LIGHT_INTENSITY);
+        store_active_and_apply_render_preset(&mut u, &mut presets, kr_like, ShaderPresetPeriod::Cave);
+        assert_eq!(u.local_lights, Some(picked));
+        assert_eq!(u.effects.local_light_intensity, LIGHT_MUL_INTENSITY);
+    }
+
+    #[test]
+    fn local_light_intensity_sliders_name_their_source() {
+        for (label, source, _) in LOCAL_LIGHT_SOURCE_OPTIONS {
+            let (slider, _) = local_light_intensity_slider(source);
+            assert!(slider.starts_with(label), "{slider}");
+        }
     }
 
     #[test]

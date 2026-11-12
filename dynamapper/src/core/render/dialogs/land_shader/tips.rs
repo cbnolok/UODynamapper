@@ -12,7 +12,7 @@ pub(super) const TIME_OF_DAY: &str =
 pub(super) const SHOW_ADVANCED: &str =
     "Opens every raw shader value in a second window. Its controls edit the same values as the ones here.";
 pub(super) const RESET_PRESET: &str =
-    "Puts the current render style and time of day back to the factory values.";
+    "Puts the current render style and time of day back to the factory values, and in KR-like and Enhanced the style's Local Lights, shared by every time of day.";
 pub(super) const UNDO_TO_SAVED: &str =
     "Restores the values saved when this window was last closed.";
 
@@ -52,11 +52,15 @@ pub(super) const NIGHT_OVERLAY_COLOR: &str =
 pub(super) const NIGHT_OVERLAY_CLIENT: &str =
     "Back to the client's colour, the night map's exact mean.";
 pub(super) const LOCAL_LIGHT_SOURCE: &str =
-    "Which lights light the ground through Light/Static Interaction in KR-like and Enhanced, and the statics too when world_rendering.enable_static_art_local_lights is on. Light Sprites: the client light sprites, each lighting the ground under its glow, as large as the sprite and in its texture's colour. light.mul: the Classic lights, as in Classic and UOD-Painterly: every static with the light source flag, with its light.mul light's size and its hue or light colour. Either way the night still glows with the client light sprites. Needs Light/Static Interaction above 0 (0 in these presets).";
+    "Which lights light the ground through Light/Static Interaction in KR-like and Enhanced, and the statics too when world_rendering.enable_static_art_local_lights is on. Light Sprites: the client light sprites, each lighting the ground under its glow, as large as the sprite and in its texture's colour. light.mul: the Classic lights, as in Classic and UOD-Painterly: every static with the light source flag, with its light.mul light's size and its hue or light colour. Either way the night still glows with the client light sprites. Needs Light/Static Interaction above 0 (0 in these presets). One choice for the style at every time of day, and each source keeps its own intensity, the slider below.";
 pub(super) const LOCAL_LIGHTS_LIGHT_SPRITES: &str =
     "The client light sprites light the ground under their glow, as large as the sprite and in its texture's colour.";
 pub(super) const LOCAL_LIGHTS_LIGHT_MUL: &str =
     "The Classic lights from light.mul, as in Classic: every static with the light source flag, with its light's size and its hue or light colour.";
+pub(super) const LIGHT_SPRITES_INTENSITY: &str =
+    "How strongly the light sprites light the ground and the statics, on top of Light/Static Interaction: 1 as they come, 0 off, up to 4. One value for the style at every time of day; light.mul keeps its own. The light sprites' glow in the night stays as it is.";
+pub(super) const LIGHT_MUL_INTENSITY: &str =
+    "How strongly the light.mul lights light the ground and the statics, on top of Light/Static Interaction: 1 as they come, 0 off, up to 4. light.mul lights fewer statics and smaller pools than the light sprites, so at 1 it lights less overall; raise this to even them out where both have a light. One value for the style at every time of day; the light sprites keep their own. The light sprites' glow in the night stays as it is.";
 pub(super) const CLIENT_SHADOWS: &str =
     "The KR client's shadows of statics and items, leaning from their base (its Show Shadows option). KR-like only, where they replace Shadow Shape, Contact Shadows and Projected Shadows.";
 pub(super) const CLIENT_GRUNGE: &str =

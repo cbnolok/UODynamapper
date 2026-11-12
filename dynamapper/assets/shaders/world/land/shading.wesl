@@ -90,7 +90,7 @@ fn shade_mode1_enhanced_fragment(base_albedo_in: vec3<f32>,
 fn apply_static_light_decals(color_in: vec3<f32>,
                              base_albedo_in: vec3<f32>,
                              world_pos: vec3<f32>) -> vec3<f32> {
-  let decal_strength = clamp(effects.light_decal_intensity, 0.0, 2.0);
+  let decal_strength = clamp(effects.light_decal_intensity, 0.0, 2.0) * effects.local_light_intensity;
   if (decal_strength <= 0.001) {
     return color_in;
   }

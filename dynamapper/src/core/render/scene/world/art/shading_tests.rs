@@ -24,12 +24,16 @@ fn local_light_intensity_preserves_unlit_art_and_scales_collected_light() {
         shaders.set_shader(id(0), Shader::from_wesl(r#"
 import package::shaders::world::art::shading::apply_art_surface_shading;
 @group(0) @binding(0) var<storage, read_write> result: array<vec4<f32>>;
-fn shade(role: u32, ground: bool, fake: u32, intensity: f32, local: vec4<f32>, highlight: f32) -> vec4<f32> {
+fn shade_scaled(role: u32, ground: bool, fake: u32, intensity: f32, scale: f32, local: vec4<f32>, highlight: f32)
+    -> vec4<f32> {
     return vec4<f32>(apply_art_surface_shading(vec3<f32>(0.3, 0.4, 0.5),
         vec2<f32>(0.25, 0.4), vec3<f32>(0.1, 0.2, 0.3), role,
         normalize(vec3<f32>(0.5, 0.8, 0.25)), vec3<f32>(1.1, 1.0, 0.9),
         vec3<f32>(0.8, 0.9, 1.1), fake, 0.2, highlight, 0.3, 0.1, 0.0,
-        intensity, 0.7, local, ground), 1.0);
+        intensity, scale, 0.7, local, ground), 1.0);
+}
+fn shade(role: u32, ground: bool, fake: u32, intensity: f32, local: vec4<f32>, highlight: f32) -> vec4<f32> {
+    return shade_scaled(role, ground, fake, intensity, 1.0, local, highlight);
 }
 @compute @workgroup_size(1)
 fn main() {
@@ -43,6 +47,15 @@ fn main() {
         }
     }
     result[120] = shade(0u, false, 0u, 1.0, vec4<f32>(0.0), 0.0);
+    // The local light intensity multiplies Light/Static Interaction: 1 x 2 and 2 x 0.5 light as 2 and 1.
+    for (var family = 0u; family < 20u; family += 1u) {
+        let role = family % 5u;
+        let ground = ((family / 5u) % 2u) != 0u;
+        let fake = family / 10u;
+        let local = vec4<f32>(1.0, 0.7, 0.3, 0.8);
+        result[121u + family * 2u] = shade_scaled(role, ground, fake, 1.0, 2.0, local, 0.4);
+        result[122u + family * 2u] = shade_scaled(role, ground, fake, 2.0, 0.5, local, 0.4);
+    }
 }
 "#, "shaders/test/art_lighting.wesl"));
         let wgsl = shaders.get(0, id(0), &[]).unwrap();
@@ -53,7 +66,7 @@ fn main() {
             label: None, layout: None, module: &module, entry_point: Some("main"),
             compilation_options: Default::default(), cache: None,
         });
-        let bytes = 121 * 16;
+        let bytes = 161 * 16;
         let output = device.create_buffer(&wgpu::BufferDescriptor {
             label: None, size: bytes, mapped_at_creation: false,
             usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_SRC,
@@ -97,6 +110,14 @@ fn main() {
         }
         for channel in 0..3 {
             assert!(actual[1][channel] > actual[120][channel], "global art highlight must remain effective");
+        }
+        for family in 0..20 {
+            let samples = &actual[family * 6..family * 6 + 6];
+            let scaled = &actual[121 + family * 2..123 + family * 2];
+            for channel in 0..3 {
+                assert!((scaled[0][channel] - samples[5][channel]).abs() < 0.00001, "doubled family {family}");
+                assert!((scaled[1][channel] - samples[4][channel]).abs() < 0.00001, "halved family {family}");
+            }
         }
     });
 }

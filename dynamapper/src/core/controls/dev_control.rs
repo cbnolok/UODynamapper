@@ -181,7 +181,8 @@ fn poll_control(
                                 "graphic": hit.graphic, "world_position": hit.world_position}))})),
                         "render": uniforms.as_ref().map(|state| json!({
                             "preset": state.active_preset, "global_lighting": state.global_lighting,
-                            "effects": state.effects})),
+                            "effects": state.effects, "local_lights": state.local_lights,
+                            "local_light_intensity": state.effects.local_light_intensity})),
                         "static_lights": static_lights.as_ref().map(|lights| json!({"instances": lights.0.len()})),
                         "input": {"queued_frames": input.queued_frames(), "context_focus_override": input.focused,
                             "pointer": pointer.0.map(|position| [position.x, position.y])},
