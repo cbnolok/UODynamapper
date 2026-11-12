@@ -913,8 +913,11 @@ mod tests {
         parse(&rewritten).expect("rewritten file is complete");
     }
 
-    /// The KR and Enhanced clients' terrain light. Their D = (0, -0.7071, -0.7071) points from the light to the
-    /// ground; towards the light that is (0, 0.7071, 0.7071) in our axes: from the south (+z) at 45 degrees.
+    /// The KR and Enhanced clients' terrain light, grey = (N.D + 1) / 2 with D = (0, -0.7071, -0.7071) (KR
+    /// 0x00c0f3b8, EC 0x00dc18b8). UOTerrain::ComputeVertexNormal (KR 0x004488a0) builds N in x = cell column,
+    /// y = -z * 0.12856454 (height negated) and z = -cell row, so flat ground has N = (0, -1, 0) and D points
+    /// towards the light: up and to increasing rows. In our axes (y up, +z south) that is (0, 0.7071, 0.7071):
+    /// from the south at 45 degrees.
     const CLIENT_SUN: SunAngles = SunAngles { azimuth_degrees: 180.0, elevation_degrees: 45.0 };
     const SUN_DIRECTION_TOLERANCE: f32 = 1e-6;
 
