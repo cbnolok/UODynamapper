@@ -13,7 +13,9 @@ Every format was reset to version 1 on 2026-11-12, and the packages were repacke
 | Package | Versioned entries (magic) | Version constant |
 |---|---|---|
 | every `.uddp` / `.uddpi` | container header (`UDDP`, `UDPI`), patch manifest (`PMAN`) | `UDDP_VERSION_MAJOR`.`MINOR`, `PMAN_VERSION_MAJOR`.`MINOR` = 1.0 |
-| `mapN.uddp` | map metadata record (`UMAP`) | `MAP_METADATA_VERSION` = 1 |
+| `mapN.uddp` | final map metadata record (`UMAP`), for the whole package, chunks included | `MAP_METADATA_VERSION` = 1 |
+| `staticsN.uddp` | final statics metadata record (`USTA`), for the whole package, chunks included | `STATICS_METADATA_VERSION` = 1 |
+| `hues.uddp` | `metadata/package.bin` (`HUPK`), for the whole package | `HUES_FORMAT_VERSION` = 1 |
 | `tilemeta.uddp` | `metadata/item_texture_refs.bin` (`TMTR`), for the whole package | `TILEMETA_FORMAT_VERSION` = 1 |
 | `tex_art_cc.uddp` | `metadata/pages.bin` (`CAPG`), `metadata/slots.bin` (`CASL`) | `TEX_ART_CC_METADATA_VERSION` = 1 |
 | `tex_art_ec.uddp` | `metadata/pages.bin` (`EAPG`), `metadata/slots.bin` (`EASL`) | `TEX_ART_EC_METADATA_VERSION` = 1 |
@@ -24,10 +26,11 @@ Every format was reset to version 1 on 2026-11-12, and the packages were repacke
 | `mobile_anim_ec.uddp` | page, animation, frame, item, source hint and body manifests (`MEPG`, `MEAN`, `MEFR`, `MEIT`, `MESH`, `MEBD`) | `MOBILE_ANIM_EC_METADATA_VERSION` = 1 |
 | `paperdoll_ec.uddp` | `metadata/frames.bin` (`PDFR`), `metadata/dress_decisions.bin` (`PDDD`) | `PAPERDOLL_EC_METADATA_VERSION` = 1 |
 | `world_lights.uddp` | slot manifest (`WLSL`) | `WORLD_LIGHTS_METADATA_VERSION` = 1 |
+| `tex_aux_ec.uddp` | `metadata/slots.bin` (`AXSL`), for the whole package | `TEX_AUX_EC_METADATA_VERSION` = 1 |
 | `effects_ec.uddp` | every manifest (`EFPK`, `EFST`, `EFCO`, `EFTA`, `EFSF`, ...); `metadata/package.bin` holds the versions of the system blobs (`PSCH`, `PSNF`) | `EFFECTS_EC_METADATA_VERSION`, `CHAOS_DESC_VERSION`, `NIF_DESC_VERSION`, `DESC_CODEC_VERSION` = 1 |
 | BC7 payloads | VRAM texture container (`UDT1`) | `VRAM_TEXTURE_CONTAINER_VERSION` = 1 |
 
-`hues.uddp`, `statics*.uddp`, the map chunks and `tex_aux_ec.uddp` have no version header: `hues.uddp` checks its CSV header, and a `tex_aux_ec.uddp` without a required entry or slot fails to load with the repack message.
+A header is a 4-byte magic then a `u32` version. Packer and reader share one version constant per format, defined next to the reader in `udd-assets`. The map and statics chunks carry no header of their own: the final metadata record of their package versions them, as `TMTR` versions every `tilemeta.uddp` entry.
 
 The current implementation still uses a unified `flags` field in `tilemeta.uddp`, but the active design direction is to separate CC and EC metadata fields more explicitly when the schema is bumped. Treat the tables below as the current wire format, not the final semantic model.
 
@@ -51,14 +54,36 @@ The final dense id has data type `Metadata` and stores:
 | Offset | Type | Name | Description |
 |--------|------|------|-------------|
 | 0x00 | `u32` | `magic` | ASCII `UMAP`. |
-| 0x04 | `u16` | `version` | Current value: `1`. |
-| 0x06 | `u16` | `_reserved` | Zero. |
+| 0x04 | `u32` | `version` | `MAP_METADATA_VERSION` (1). It versions the chunk layout too. |
 | 0x08 | `u32` | `map_id` | Facet id, matching `mapN.uddp`. |
 | 0x0C | `u32` | `width_tiles` | Map width in tiles. |
 | 0x10 | `u32` | `height_tiles` | Map height in tiles. |
 | 0x14 | `u32` | `chunk_count` | Number of 32x32 chunk records before the metadata record. |
 
 Runtime loading requires this metadata; map dimensions are no longer configured through TOML.
+
+The version was a `u16` followed by a zero `u16` until 2026-11-12. Version 1 has the same bytes either way, so map packages written before then still load.
+
+### 1.2 `staticsN.uddp`
+
+Dense ids hold the 32x32-tile statics chunks: arrays of 8-byte `StaticTile` records (`u16` graphic, `u8` x and y offsets within the chunk, `i8` z, `u8` padding, `u16` hue). An empty chunk is an empty entry. The ids run column-major like the map's: `chunk_x * height_chunks + chunk_y`.
+
+The final dense id (= the chunk count) has data type `Metadata` and stores:
+
+| Offset | Type | Name | Description |
+|--------|------|------|-------------|
+| 0x00 | `u32` | `magic` | ASCII `USTA`. |
+| 0x04 | `u32` | `version` | `STATICS_METADATA_VERSION` (1). It versions the chunk layout too. |
+| 0x08 | `u32` | `map_id` | Facet id, matching `staticsN.uddp`. |
+| 0x0C | `u32` | `chunk_count` | Number of chunk records before the metadata record. |
+
+`udd_assets::map_metadata::read_statics_package_metadata` checks the record. Dynamapper also checks that the map id and the chunk count match the loaded map; a package without the record fails with the repack message.
+
+### 1.3 `hues.uddp`
+
+- `metadata/package.bin`: magic `HUPK`, then `u32` `HUES_FORMAT_VERSION` (1), which versions the whole package. A package without it, or of another version, fails with the repack message.
+- `metadata/hues.csv`: one row per hue slot; the loader checks the column header.
+- `textures/hues.rgba8888`: the hue strips, `HUES_TEXTURE_WIDTH` x `HUES_TEXTURE_HEIGHT` RGBA8888.
 
 ---
 
@@ -75,6 +100,7 @@ The long-term schema direction is to keep CC and EC ownership/behavior separate 
 - `metadata/items.bin`: Dense array of `TileMetaItemTile` structs.
 - `metadata/item_texture_refs_index.bin` and `metadata/item_texture_refs.bin`: the per-item span table and the EC tileart texture refs. `item_texture_refs.bin` starts with the package's version header, magic `TMTR` and `u32` `TILEMETA_FORMAT_VERSION` (1), then holds the `TileMetaItemTextureRef` records (24 bytes each); the loader rejects another magic or version and asks for a repack. `stable_role` is the shader input the item feeds, from the block's shader name and the item position (`EcMaterialStableRole::for_texture_position`; the table is in `lib/uocf/src/enhanced/ENHANCED_CLIENT_FILES.md` §5). Byte 0x0F is reserved (zero). Flags: `AUXILIARY` (1) = the item is not at its block's primary position (1 for `UOWaterShader`, else 0); `PRIMARY_SELECTED` (2) = the block-0 item `ec_texture_id` comes from, or a block-1/2 item with the same id.
 - `metadata/item_materials.json`: per-item shader block material. `TileMetaPackage::uses_water_shader(art_id)` reads it: the block-0 material is `UOWaterShader` (322 items in the shipped client), which makes the item wet in Enhanced mode.
+- `metadata/item_lights.bin`: the items' light sprites, required. Magic `TMIL`, `u32` `TILEMETA_FORMAT_VERSION` (1), `u32` count, then one `TileMetaItemLight` per item whose tileart shader block 3 names a light texture, sorted by unique `tile_id` (§2.3). Read it with `TileMetaPackage::item_light(tile_id)` or `item_lights()`; the loader rejects a package without it, or with another magic or version, with the message to repack.
 - `metadata/item_definitions.bin`: the `tileart.uop` records the Enhanced paperdoll reads (`TileMetaItemDefinitions`, read by `uocf::enhanced::paperdoll`): every record from 10,000,000 and every item record with a tileart property or appearance filter the paperdoll reads, or a tiledata layer. Little-endian: a `u32` count, then per record, ascending by entry id: `u32` entry id (the id of its `build/tileart/%08d.bin` name, by which the client finds it), `u8` presence mask, `u8` filter count, the stored tile id (`u32`, only when presence bit 7 says it differs from the entry id: 25 shipped records), one `u32` per present property (bits 0..6: props1 Layer 6, Appearance 8, Race 9, Gender 10, Paperdoll 11; props2 Appearance 8, Paperdoll 11), then the filters: `u8` kind 0 (by owner body type: `u16` row count, rows of `u32` body type and `u32` appearance) or 1 (by owner gender: `u8` gender, `u32` appearance). Animation filters are not stored. The shipped client gives 4,022 records, 46 KB raw, 12 KB stored.
 
 ### 2.1 `TileMetaLandTile` Struct (48 Bytes, 8-Byte Aligned)
@@ -123,7 +149,21 @@ Art draw offsets are package-local metadata in `tex_art_cc.uddp` and `tex_art_ec
 Future work is expected to keep the original source texture intact for EC art and let runtime sampling windows handle subrect selection, so cropped packing here should be understood as the current behavior, not the final target.
 When the schema is eventually widened, the CC texture coordinates, EC texture coordinates, and the CC/EC flags should be split into explicit fields rather than compressed into one mixed record layout.
 
-Runtime static lights use this item metadata: `flags & 0x00800000` marks a light-source static, `quality` is interpreted as the world light id, and the placed static hue id can tint the light mask through the configured runtime hue source.
+The Classic and UOD-Painterly static lights use this item metadata: `flags & 0x00800000` marks a light-source static, `quality` is interpreted as the world light id, and the placed static hue id can tint the light mask through the configured runtime hue source. KR-like and Enhanced draw the clients' light sprites of §2.3 instead.
+
+### 2.3 `TileMetaItemLight` Struct (20 Bytes)
+
+One item's light sprite, as the KR and Enhanced clients create it: an object gets one when its tileart shader block 3 names a texture (the LightSource flag plays no part). The packer reads block 3, map 0 (`Data\Textures\000000NN_<name>.tga`, which is `TerrainTexture.uop` entry NN) and the record's light fields. The shipped EC tileart gives 1,042 items and 29 distinct textures; the textures are in `tex_aux_ec.uddp` (§2.5).
+
+| Offset | Type | Name | Description |
+|--------|------|------|-------------|
+| 0x00 | `u32` | `tile_id` | The item's graphic id. |
+| 0x04 | `u32` | `light_texture_entry` | The `TerrainTexture.uop` entry of the light texture. |
+| 0x08 | `f32` | `scale` | Tileart light scale: the sprite is the texture at K * scale world units per pixel, K = sqrt(2) / 66. |
+| 0x0C | `f32` | `offset_x` | Tileart light offset along the camera's right, in world units. |
+| 0x10 | `f32` | `offset_y` | Tileart light offset along the camera's up, in world units. |
+
+The geometry and its sources are in `docs/agent_notes/light_sprite_proposal.md` §2.3.
 
 ---
 
@@ -300,10 +340,13 @@ Contents:
   - The slots have family `Textures` (4) and role `Unknown` (0), and are always lossless RGBA8888 at native size, whatever format and upscale passes the package's other textures take: the composite samples the client's own texels.
   - They are required, like the missing-texture image: the reader refuses a package without one of them.
   - The packer rejects a tilemeta ref on any reserved key (`is_tex_aux_ec_reserved_key`: ids from `0x80000000`).
+- **The light textures**: every `TerrainTexture.uop` entry the tilemeta's item lights name (§2.3), stored like the atmosphere maps: the same reserved keys, family `Textures` (4), lossless RGBA8888 at native size, but role `Light` (10). The shipped client gives 29 (1 to 4, 6 to 15, 17, 23, 25 to 29, 32 to 35, 37 to 40), 25 of 256x256 and 4 of 128x128.
+  - They are required: the packer fails when one is missing, and `udd-cli tool validate` checks them against the `tilemeta.uddp` beside the package.
+  - KR-like and Enhanced draw them as the light sprites; a package packed against another tilemeta may lack some, and Dynamapper then warns once per texture and draws those lights without a sprite.
 
 **Virtual Files:**
 
-- `metadata/slots.bin`: array of `TexAuxEcSlotRecord`, sorted by `texture_id` (the atmosphere maps follow the tile ids and the missing-texture entry sorts last). It has no version header.
+- `metadata/slots.bin`: magic `AXSL` and `u32` `TEX_AUX_EC_METADATA_VERSION` (1), which versions the whole package, then the array of `TexAuxEcSlotRecord`, sorted by `texture_id` (the atmosphere maps follow the tile ids and the missing-texture entry sorts last). `encode_tex_aux_ec_slots` and `decode_tex_aux_ec_slots` write and read it.
 - `textures/{texture_id:08x}`: raw pixels for one slot, RGBA8888 or a BC7 container according to the slot's `pixel_format`.
 - Missing-source aliases: each distinct referenced id of a packed family whose image the EC archive does not contain gets a slot record with `TEX_AUX_EC_SLOT_FLAG_MISSING_SOURCE`, and no payload of its own. Its pixels are the reserved missing-texture payload, stored once.
   - The alias keeps the ref's id, family and role, and copies the missing image's `width`, `height` and `pixel_format`.
@@ -317,7 +360,7 @@ Contents:
 | 0x00 | `u32` | `texture_id` | Source texture id, or a reserved key (atmosphere map, missing texture). |
 | 0x04 | `u16` | `width` | Image width in pixels. |
 | 0x06 | `u16` | `height` | Image height in pixels. |
-| 0x08 | `u8` | `logical_family` | `EcMaterialLogicalFamily`: 1 = WorldArt; 4 = Textures (atmosphere maps only); 6 = SystemTextures (missing-texture entry only). |
+| 0x08 | `u8` | `logical_family` | `EcMaterialLogicalFamily`: 1 = WorldArt; 4 = Textures (atmosphere maps and light textures only); 6 = SystemTextures (missing-texture entry only). |
 | 0x09 | `u8` | `stable_role` | `EcMaterialStableRole` of the first ref that named the id (from the block shader and the item position). |
 | 0x0A | `u8` | `pixel_format` | 0 = RGBA8888, 1 = BC7. |
 | 0x0B | `u8` | `flags` | `TEX_AUX_EC_SLOT_FLAG_*`. Bit 0 (`MISSING_SOURCE`): alias of the reserved missing-texture slot; read the payload `textures/ffffffff`. |
@@ -328,7 +371,7 @@ Tilemeta refs keep their true source ids; nothing is substituted at build time.
 
 - A normal lookup resolves a ref as the client does. `TexAuxEcPackage::slot_for_texture_id(id)` returns the packed slot or, for an absent source, its alias (`SlotInfo::is_missing_source`, `SlotInfo::payload_texture_id` = the reserved id, for caching). `load_rgba(id)` returns the alias's magenta pixels.
 - `TexAuxEcPackage::missing_texture_slot()` returns the reserved slot itself, e.g. for art with no image in any package.
-- `TexAuxEcPackage::load_terrain_texture_rgba(entry)` returns an atmosphere map's extent and RGBA8888 pixels (`EC_NIGHT_MAP_TERRAIN_TEXTURE_ENTRY` and its siblings).
+- `TexAuxEcPackage::load_terrain_texture_rgba(entry)` returns an atmosphere map's or a light texture's extent and RGBA8888 pixels (`EC_NIGHT_MAP_TERRAIN_TEXTURE_ENTRY` and its siblings, or an item light's `light_texture_entry`).
 - `TexAuxEcPackage::load_bc7(id)` returns a BC7 slot's stored container (`Bc7RgbaUnormSrgb` blocks) without decoding, for a direct GPU upload; it refuses an RGBA slot. `TexAuxEcSlotRecord::is_bc7` tells the two apart.
 
 ---
@@ -343,7 +386,9 @@ Mobile animation atlas pages store edge-extruded allocation gutters, including B
 
 ## 4. `world_lights.uddp`
 
-This package stores decoded light masks from Classic `light.mul`/`lightidx.mul` and optional EC light textures. `dynamapper` loads it when present and uses tilemeta light-source statics to place additive world light decals. Classic light masks are grayscale; colored EC light payloads keep their stored RGB at runtime unless the placed static has a nonzero hue id, in which case the runtime recolors the mask from `hues.uddp`. The `hues.uddp` package is the single runtime hue source and may be built from Classic `hues.mul` or EC `hues.uop`.
+This package stores the decoded light masks of Classic `light.mul`/`lightidx.mul` (patched by `verdata.mul` when enabled), keyed by light id. `pack-lights` reads only the Classic folder (`--ccdir`). `dynamapper` loads it when present and, in Classic and UOD-Painterly, uses tilemeta light-source statics to place additive world light decals; the land and static local lights of every style read them too. The light masks are grayscale; the runtime recolors a mask from `hues.uddp` when the placed static has a nonzero hue id. The `hues.uddp` package is the single runtime hue source and may be built from Classic `hues.mul` or EC `hues.uop`.
+
+The Enhanced and KR light sprites are not here: they are `TerrainTexture.uop` entries named by the tileart (§2.3), packed in `tex_aux_ec.uddp`. Until 2026-11-12 the packer also looked up every light id the Classic files lack in `TerrainTexture.uop` as `build/terraintexture/%08u.dds`, a name space that mixes the atmosphere maps and unrelated textures with the light ids. No entry of the shipped client has such a name, so the shipped packages held only the 55 `light.mul` lights; the packer no longer reads the Enhanced folder.
 
 **Virtual Files:**
 

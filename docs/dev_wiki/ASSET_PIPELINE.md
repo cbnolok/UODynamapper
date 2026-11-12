@@ -66,7 +66,7 @@ output folder; the formats are the packers' lossless defaults):
 udd-cli pack pack-art --ccdir CC --ecdir EC --output OUT/tex_art_cc.uddp
 udd-cli pack pack-texmaps --ccdir CC --output OUT/tex_land_cc.uddp
 udd-cli pack pack-ec-textures --ccdir CC --ecdir EC --art-output OUT/tex_art_ec.uddp --land-output OUT/tex_land_ec.uddp --tilemeta-output OUT/tilemeta.uddp
-udd-cli pack pack-lights --zstd --ccdir CC --ecdir EC --output OUT/world_lights.uddp
+udd-cli pack pack-lights --zstd --ccdir CC --output OUT/world_lights.uddp
 udd-cli pack pack-hues --zstd --ccdir CC --output OUT/hues.uddp
 udd-cli pack pack-map-statics --zstd --ccdir CC --map-id N --map-output OUT/mapN.uddp --statics-output OUT/staticsN.uddp
 udd-cli pack pack-gumps --ccdir CC --output OUT/gumps_cc.uddp

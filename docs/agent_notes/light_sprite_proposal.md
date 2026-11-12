@@ -1,7 +1,33 @@
 # Light sprites as the Enhanced and KR clients draw them: proposal
 
-Status: **proposal, waiting for the user's confirmation of the format change** (2026-11-12). Nothing in the
-formats or the renderer has changed yet.
+Status: **implemented** (2026-11-12), with the user's answers to §8 and the differences below. The current
+formats are in [UDDP_FORMATS.md](../dev_wiki/UDDP_FORMATS.md) §2.3 and §2.5, and the renderer in
+[CLIENT_NIGHT_LIGHTING_AND_SHADOWS.md](../dev_wiki/rendering/CLIENT_NIGHT_LIGHTING_AND_SHADOWS.md), "Light sprites".
+The rest of this note is the proposal as written.
+
+What was built differs from the proposal in these points:
+
+- **Required, not optional** (Q1): `metadata/item_lights.bin` is a required tilemeta entry. It carries the magic
+  `TMIL` and `TILEMETA_FORMAT_VERSION` (1), not a version of its own. A tilemeta without it is refused with the
+  message to repack.
+- **Light textures required:** `pack-ec-tex-aux` fails when a light texture named by the tilemeta is missing from
+  `TerrainTexture.uop`. `udd-cli tool validate` checks them against the `tilemeta.uddp` beside the package.
+  `tex_aux_ec.uddp`'s `slots.bin` gained the `AXSL` header in the same repack.
+- **No interim fallback:** §5.3 is dropped. KR-like and Enhanced always draw the client sprites, and the light.mul
+  quads remain only in Classic and UOD-Painterly. A light whose texture is absent from `tex_aux_ec.uddp` (a package
+  packed against another tilemeta) draws nothing, with one warning per texture.
+- **Counts:** the shipped EC tileart gives 1,042 records (not 1,040) and 29 textures (25 of 256x256, 4 of 128x128).
+- **Q2:** yes. No hue on the sprites, and the flag-only items get no light, in KR-like and Enhanced.
+- **Q3:** EC's entry 17 only. The placement comes from the map and the tileart alone, so it is the same under CC
+  and EC art.
+- **Q4:** `pack-lights` reads only the Classic folder now. The old Enhanced lookup (`build/terraintexture/%08u.dds`)
+  never matched an entry of the shipped `TerrainTexture.uop`. The installed `world_lights.uddp` therefore held only
+  the 55 light.mul lights, and the repack is byte-identical.
+- **U1:** the offsets are applied literally, in world units. No client night screenshot confirms the (-5, -4)
+  shift yet.
+- **Still open:** U2, U4, U5 as in §8. The land shader decals and the static local lights of KR-like and Enhanced
+  still read the light.mul instances (LightSource flag, quality as light id); only the additive decal quads are
+  replaced.
 
 KR-like and Enhanced draw the night composite's light buffer B with interim quads: light.mul masks with our own
 size and position (see [CLIENT_NIGHT_LIGHTING_AND_SHADOWS.md](../dev_wiki/rendering/CLIENT_NIGHT_LIGHTING_AND_SHADOWS.md),

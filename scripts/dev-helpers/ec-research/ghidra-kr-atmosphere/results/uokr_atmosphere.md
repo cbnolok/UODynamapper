@@ -788,9 +788,13 @@ So the night, night-sight and day maps can come from either client.
 
 **Placement** (*confirmed*, `UOObjectComponentLighting::PlaceLightSprite` 0x00438a80):
 
-- The texture comes from `LightingTextureFileLocation` 0x00438680: an object override (vtable +0x38) or the
-  definition (vtable +0x60). That is tileart block 3, map 0, named `Data\Textures\000000NN_<name>.tga`; these names
-  are the `TerrainTexture.uop` entries NN (*probable*: the name match was checked, the lookup was not traced).
+- The texture comes from `LightingTextureFileLocation` 0x00438680: the definition's tileart block 3, map 0, named
+  `Data\Textures\000000NN_<name>.tga`, else the object's vtable +0x60. These names are the `TerrainTexture.uop`
+  entries NN (*probable*: the name match was checked, the lookup was not traced). *Corrected* by the light sprite
+  proposal (`docs/agent_notes/light_sprite_proposal.md` §2.1): this pass read the order as "object override vt+0x38,
+  else definition vt+0x60". The fallback never runs for a light, because the component exists only when the block-3
+  name does; so an object gets a light exactly when its tileart block 3 names a texture, and the LightSource flag
+  plays no part.
 - The material is a `UOShaderFilenameLight` (ctor 0x004387d0, vtable 0x00b522d4) with the shader name
   `UOSpriteShader` (0x00438930). Its map count (0x004388e0) is **1** and its map (0x004388f0) is the texture with
   repetition 1.0.
@@ -807,7 +811,9 @@ So the night, night-sight and day maps can come from either client.
 - **Mode:** descriptor +0x38 = 3.
 - **Position:** `UOSprite::PlaceSprite` 0x004422b0 at the object's position, plus the camera transform (0x0083aab0)
   of the two tileart light offsets, added to +0x60..+0x68.
-  - Which offset is up and which is right, and whether they are scaled, was not resolved.
+  - *Resolved* by the light sprite proposal (§2.3, KR 0x00438d43..0x00438dbc, EC 0x00449972..0x00449a31):
+    `position += M * (0, offset_y, offset_x)`, so offset_x is camera right and offset_y camera up, both in world
+    units, scaled by neither K nor the light scale.
   - KR values are mostly 0 to -5. For example 2576 has (x -5, y -4) in KR and (0, -4.5) in EC.
 
 **Batch** (*confirmed*): `BuildLightBatch` 0x00438ee0 turns z test and z write off and sends the batch to render
@@ -834,9 +840,10 @@ group 0x00c931b4, which `UOLightingPostProcessEffect::Render` draws into B. The 
 - The light fields follow `body_type` in the raw tileart record, at offset 0x23 (KR, version 3) or 0x25 (EC,
   version 4), as `<fIff` (scale, unused field +0x70, offset x, offset y).
 - KR and EC agree on fields and texture for 585 of the 603 items that have a light in either client.
-- In this repository only the decoder (`tileart.rs`, `light_scale`, `light_offset_x`, `light_offset_y`) and the
-  tileart editor GUI read these fields; no package stores them. `world_lights.uddp` holds the Classic `light.mul`
-  shapes (light id, flags, width, height), not the TerrainTexture lights.
+- Since 2026-11-12 `tilemeta.uddp` stores them per item (`metadata/item_lights.bin`: texture entry, scale and
+  offsets, from the EC tileart) and `tex_aux_ec.uddp` stores the textures they name, and Dynamapper's KR-like and
+  Enhanced draw these sprites (`art/client_light_sprites.rs`; `docs/dev_wiki/rendering/CLIENT_NIGHT_LIGHTING_AND_SHADOWS.md`).
+  `world_lights.uddp` holds only the Classic `light.mul` shapes (light id, flags, width, height).
 
 ### P3.4 Sprite shadow geometry
 

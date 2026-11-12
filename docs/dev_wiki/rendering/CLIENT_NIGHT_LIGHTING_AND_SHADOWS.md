@@ -87,30 +87,27 @@ The atmosphere maps go into `tex_aux_ec.uddp` without a format change. See [UDDP
 - **Where they live:** entries 20, 21 and 22 sit under the reserved keys `0x80000000 | entry` (`tex_aux_ec_terrain_texture_key`), as lossless RGBA8888 at native size.
 - **Source file:** the KR and Enhanced clients carry byte-identical copies, and the packer reads the Enhanced client's `TerrainTexture.uop`.
 - **Older packages:** a package built before 2026-11-07 has no maps. Dynamapper then logs one warning and uses a flat texel of `NIGHT_MAP_MEAN`.
+- **Light sprites:** `tilemeta.uddp` carries each item's light (`metadata/item_lights.bin`: the light texture's entry, the tileart light scale and offsets), and `tex_aux_ec.uddp` carries every light texture those name, under the same reserved keys and the same lossless rules (UDDP_FORMATS.md §2.3 and §2.5). Both are required.
 
-### Interim lights
+### Light sprites
 
-The client draws its light sprites into B, lerped one after the other over the night map (P3.3, `UOObjectComponentLighting::PlaceLightSprite` 0x00438a80). Each sprite is:
+The client draws its light sprites into B, lerped one after the other over the night map (P3.3; the full trace is in `docs/agent_notes/light_sprite_proposal.md`). KR-like and Enhanced draw the same sprites (`art/client_light_sprites.rs`):
 
-- a `TerrainTexture.uop` image named by the item's tileart, in its own RGBA;
-- scaled by the tileart `light_scale`;
-- placed by the tileart light offsets.
-
-No package stores the scale or the offsets yet. That needs a later format proposal.
-
-Until then, the static light quads of `art/static_lights.rs` stand in for the client's sprites in KR-like and Enhanced:
-
+- **Which statics:** a static draws a sprite when its tileart shader block 3 names a light texture (`TileMetaPackage::item_light`). The LightSource flag plays no part: the items with the flag and no texture get no light, as in the clients.
+- **Texture:** the `TerrainTexture.uop` entry from `tex_aux_ec.uddp`, in its own RGBA, uploaded as `Rgba8Unorm` (not sRGB, so B holds the client's 8-bit values) with linear filtering, clamped addressing and no mips. No hue, even on a hued item.
+- **Quad:** the EC static billboard (right = screen right, up = world Y) at the static's base point, the client's (x + 0.5, y + 1.5) at its z. The sprite window is the texture at K * light_scale world units per pixel (K = sqrt(2) / 66), its left edge 22 - W/2 pixels right of the base and its bottom edge at the base; then the light offsets move it, in world units along the camera's right (offset_x) and up (offset_y, which is 1/sqrt(2) of world Y). The placement follows the map position and the tileart alone, so it is the same under CC and EC art.
+- **Scan:** a sprite reaches up to about 27 world units across and its offsets up to 11.5, so the collector scans the statics beyond the visible chunks by the largest reach of the loaded lights, computed once, and rescans only when the visible chunks change.
 - **Render target:** an offscreen HDR camera (`LightBufferCamera`, a child of the PlayerCamera, order -1, transparent clear) draws them on `LIGHT_BUFFER_LAYER` into an Rgba16Float image the size of the frame.
 - **Blending:** they are drawn with straight alpha blending, which leaves the lights lerped over black with their coverage in alpha. The composite then forms `B = L.rgb + N' * (1 - L.a)`.
-- **When they show:** B is weighted by 1 - level, so the lights appear only through the composite and vanish by day, as in the client. The additive light decals are off in these two styles.
+- **When they show:** B is weighted by 1 - level, so the lights appear only through the composite and vanish by day, as in the client. The additive light.mul decals of `art/static_lights.rs` are off in these two styles; Classic and UOD-Painterly keep them.
 - **Other passes:** render-world passes for the world view skip this camera (`gpu_picking` filters `Without<LightBufferCamera>`), and main-world camera queries filter `With<PlayerCamera>`.
+- **Without the packages' entries:** a `tex_aux_ec.uddp` packed against another tilemeta may lack a texture; Dynamapper warns once per texture and draws those lights without a sprite. Without `tex_aux_ec.uddp` it warns once and draws none.
 
-How the interim lights differ from the client:
+Where they may still differ from the client:
 
-- Their shapes are the light.mul masks, not the client's light textures, and their size and position are ours, not `light_scale` and the light offsets.
-- An unhued light takes the colour of light_generic (`CLIENT_GENERIC_LIGHT_COLOR` = (192, 162, 93)), the sprite of 462 of the client's 599 light sources. A hued light keeps its hue at light_generic's brightness, 192.
-- Coverage is the mask's brightness times light_generic's peak alpha, 115/255 (`CLIENT_LIGHT_SPRITE_PEAK_ALPHA`).
-- Overlapping lights blend in Bevy's transparent sort order, not the client's draw order.
+- Overlapping lights blend in Bevy's transparent sort order, not the client's batch order (U4).
+- The texture's v orientation is the EC statics' (row 0 at the top), which matters only for the asymmetric textures 2, 3, 4 and 7 (U2).
+- The large default offsets (-5, -4) of 376 EC items put their glow about 4 world units left of the item. The binaries apply them literally, so Dynamapper does too, but no night screenshot of the client confirms the effect (U1).
 
 ## KR static shadows
 
