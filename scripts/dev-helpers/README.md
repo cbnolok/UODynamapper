@@ -11,6 +11,8 @@ workspace members under [tools/udd-devtools-cli](../../tools/udd-devtools-cli/RE
   client formats and consumers, terrain-coverage checks and mask comparisons.
   The scripts and result notes make the executable-derived renderer/UDDP
   contracts reproducible; preserve them together.
+- [Season profiles](seasons/README.md): the generator of the bundled route file's season profiles from the
+  Classic client's season tables, and where those tables are in the client.
 - [Renderer controls](renderer/README.md): app-only input, readiness and capture
   controls, benchmarks, GPU pass timings and optional shader statistics. These
   support repeatable validation without taking over the working desktop.
