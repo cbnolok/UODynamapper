@@ -39,7 +39,7 @@ use crate::client::facet_dimensions::{
     validate_facet_size, ClientExeInspection, ClientFamily, ExeValues, FacetValues, CLASSIC_GOLD_SHA256, DISABLED_SPLIT_X,
     FACET_RECORD_HEIGHT_OFFSET, FACET_RECORD_WIDTH_OFFSET, SPLIT_FACETS, STOCK_SPLIT_X,
 };
-use crate::client::encryption::{CipherSiteKind, EncryptionSites, EncryptionState};
+use crate::client::encryption::{CipherSiteKind, EncryptionPart, EncryptionSites, EncryptionState};
 use crate::client::login::{LoginHost, LoginServerEdit, LoginSites, LoginValues};
 use crate::client::pe::pe_checksum;
 use crate::client::version::ExeVersion;
@@ -122,6 +122,12 @@ pub enum ExeEdit {
     /// Plaintext login and game traffic (Enhanced Client, Kingdom Reborn): every network cipher patched out,
     /// and KR's mandatory key exchange replaced with immediate game login.
     NoEncryption,
+    /// Remove only the login connection's cipher (Enhanced Client, Kingdom Reborn).
+    NoLoginEncryption,
+    /// Remove only the game connection's ciphers (Enhanced Client, Kingdom Reborn).
+    NoGameEncryption,
+    /// Replace KR's mandatory key exchange with the auth-key seed, Huffman and immediate plaintext game login.
+    BypassKrHandshake,
 }
 
 impl ExeEdit {
@@ -135,6 +141,9 @@ impl ExeEdit {
             }
             Self::LoginServer(login) => login.describe(),
             Self::NoEncryption => "no encryption".to_owned(),
+            Self::NoLoginEncryption => "no login encryption".to_owned(),
+            Self::NoGameEncryption => "no game encryption".to_owned(),
+            Self::BypassKrHandshake => "bypass KR handshake".to_owned(),
         }
     }
 }
@@ -308,14 +317,21 @@ fn recorded_inspection_values_match(recorded: &ExeValues, inspection: &ClientExe
     recorded_values_match(recorded, &current)
 }
 
-/// The ciphers a no-encryption edit patches: every one of the family, each located exactly once.
-fn checked_encryption_sites(before: &ClientExeInspection) -> eyre::Result<&EncryptionSites> {
+/// The sites of a scoped or legacy all-in-one encryption edit, each located exactly once.
+fn checked_encryption_sites(before: &ClientExeInspection, part: Option<EncryptionPart>) -> eyre::Result<EncryptionSites> {
+    if part == Some(EncryptionPart::KrHandshake) {
+        eyre::ensure!(before.family == ClientFamily::KingdomReborn, "the KR handshake bypass needs a Kingdom Reborn client");
+    }
     let Some(sites) = &before.encryption else {
         eyre::bail!(
             "removing the encryption is supported for the Enhanced Client and Kingdom Reborn only: the {} client's \
              ciphers are not located",
             before.family.label()
         );
+    };
+    let sites = match part {
+        Some(part) => sites.for_part(part),
+        None => sites.clone(),
     };
     eyre::ensure!(
         sites.is_complete(),
@@ -446,7 +462,7 @@ pub fn plan_patch_inspected(
     let mut wrapped = vec![None; count];
     let mut split_edit = None;
     let mut login_edit = None;
-    let mut encryption_edit = None;
+    let mut encryption_edits: Vec<(usize, EncryptionSites)> = Vec::new();
     if !before.checksum_valid() {
         warnings.push(PatchWarning::new(
             PatchWarningKind::Checksum,
@@ -515,14 +531,33 @@ pub fn plan_patch_inspected(
                 }
                 login_edit = Some((index, login));
             }
-            ExeEdit::NoEncryption => {
-                eyre::ensure!(encryption_edit.is_none(), "two no-encryption edits");
-                encryption_edit = Some((index, checked_encryption_sites(&before)?));
+            ExeEdit::NoEncryption | ExeEdit::NoLoginEncryption | ExeEdit::NoGameEncryption | ExeEdit::BypassKrHandshake => {
+                eyre::ensure!(
+                    !matches!(edit, ExeEdit::NoEncryption)
+                        || !encryption_edits.iter().any(|(prior, _)| matches!(patch.edits[*prior], ExeEdit::NoEncryption)),
+                    "two no-encryption edits"
+                );
+                let part = match edit {
+                    ExeEdit::NoLoginEncryption => Some(EncryptionPart::Login),
+                    ExeEdit::NoGameEncryption => Some(EncryptionPart::Game),
+                    ExeEdit::BypassKrHandshake => Some(EncryptionPart::KrHandshake),
+                    _ => None,
+                };
+                let sites = checked_encryption_sites(&before, part)?;
+                eyre::ensure!(
+                    !encryption_edits.iter().any(|(_, prior)| {
+                        prior.sites.iter().any(|old| sites.sites.iter().any(|site| site.kind == old.kind))
+                    }),
+                    "overlapping encryption edits: {} selects sites already selected by another edit",
+                    edit.describe()
+                );
+                encryption_edits.push((index, sites));
             }
         }
         let facet = match *edit {
             ExeEdit::FacetSize { facet, .. } | ExeEdit::ClassicWrap { facet, .. } => Some(facet),
-            ExeEdit::Split(_) | ExeEdit::LoginServer(_) | ExeEdit::NoEncryption => None,
+            ExeEdit::Split(_) | ExeEdit::LoginServer(_) | ExeEdit::NoEncryption | ExeEdit::NoLoginEncryption
+            | ExeEdit::NoGameEncryption | ExeEdit::BypassKrHandshake => None,
         };
         if classic && facet == Some(0) {
             eyre::ensure!(
@@ -574,8 +609,16 @@ pub fn plan_patch_inspected(
             ports: login.ports.clone(),
         });
     }
-    if encryption_edit.is_some() {
-        expected.encryption = Some(EncryptionState::Removed);
+    if !encryption_edits.is_empty() {
+        let mut ciphers = before.encryption.clone().expect("selected encryption sites were checked");
+        for (_, sites) in &encryption_edits {
+            for site in &mut ciphers.sites {
+                if sites.sites.iter().any(|selected| selected.kind == site.kind) {
+                    site.removed = true;
+                }
+            }
+        }
+        expected.encryption = ciphers.values();
     }
     warnings.extend(split_warnings(&before, &expected, &sized));
 
@@ -644,7 +687,7 @@ pub fn plan_patch_inspected(
             writes.push(FieldWrite { offset: site.offset, new: port.to_le_bytes().to_vec(), field, edit });
         }
     }
-    if let Some((edit, sites)) = encryption_edit {
+    for (edit, sites) in encryption_edits {
         for site in &sites.sites {
             let field = site.kind.patch_label().to_owned();
             writes.push(FieldWrite { offset: site.offset, new: site.patched().to_vec(), field, edit });
@@ -940,9 +983,9 @@ pub fn write_patched_client_exe(input: &Path, output: &Path, patch: &ExePatch) -
 mod tests {
     use super::*;
     use crate::client::classic_facets::tests::{seam_imm_offsets, stock_size, synthetic_classic};
-    use crate::client::facet_dimensions::tests::{synthetic_client, synthetic_kr_client, NEW_SPLIT};
+    use crate::client::facet_dimensions::tests::{synthetic_client, synthetic_image_with, synthetic_kr_client, NEW_SPLIT};
     use crate::client::facet_dimensions::{FACET_SIDE_ALIGNMENT, MAX_FACET_SIDE, STOCK_FACET_COUNT};
-    use crate::client::encryption::tests::{synthetic_enhanced_encrypted_client, synthetic_kr_encrypted_client};
+    use crate::client::encryption::tests::{cipher_code, synthetic_enhanced_encrypted_client, synthetic_kr_encrypted_client};
     use crate::client::login::tests::{synthetic_kr_login_client, synthetic_login_client};
     use crate::client::login::LOGIN_HOST_SLOT_SIZE;
     use crate::client::classic_facets::CLASSIC_STOCK_WRAP;
@@ -955,6 +998,11 @@ mod tests {
     const CLASSIC_NEW_WIDTH: u32 = 8192;
     const CLASSIC_ILSHENAR_WIDTH: u32 = 2400;
     const CLASSIC_TRAMMEL_WRAP: u32 = 6144;
+    const ENCRYPTION_PART_EDITS: [(EncryptionPart, ExeEdit); 3] = [
+        (EncryptionPart::Login, ExeEdit::NoLoginEncryption),
+        (EncryptionPart::Game, ExeEdit::NoGameEncryption),
+        (EncryptionPart::KrHandshake, ExeEdit::BypassKrHandshake),
+    ];
 
     fn size(facet: u8, width: u32, height: u32) -> ExeEdit {
         ExeEdit::FacetSize { facet, width, height }
@@ -1295,6 +1343,106 @@ mod tests {
     }
 
     #[test]
+    fn scoped_encryption_edits_patch_every_supported_combination_independently() {
+        for image in [synthetic_kr_encrypted_client(), synthetic_enhanced_encrypted_client()] {
+            let before = ClientExeInspection::inspect(&image).unwrap();
+            let ciphers = before.encryption.as_ref().unwrap();
+            let supported: Vec<_> = ENCRYPTION_PART_EDITS.iter()
+                .filter(|(part, _)| ciphers.for_part(*part).is_complete()).collect();
+            let combination_count = 1 << supported.len();
+            for mask in 1..combination_count {
+                let selected: Vec<_> = supported.iter().enumerate()
+                    .filter(|(index, _)| mask & (1 << index) != 0).map(|(_, choice)| *choice).collect();
+                let patch = ExePatch { edits: selected.iter().map(|(_, edit)| edit.clone()).collect() };
+                let plan = plan_patch(&image, &patch, None).unwrap();
+                let patched = patch_client_exe(&image, &patch, None).unwrap();
+                assert_plan_is_the_write(&image, &plan, &patched.bytes);
+                assert_eq!(patched.manifest.steps.last().unwrap().edits, patch.edits);
+                for site in &patched.after.encryption.as_ref().unwrap().sites {
+                    let selected_edit = selected.iter().position(|(part, _)| *part == site.kind.part());
+                    assert_eq!(site.removed, selected_edit.is_some(), "{:?}: {:?}", before.family, patch.edits);
+                    let write = plan.changes.iter().find(|change| change.offset == site.offset);
+                    assert_eq!(write.map(|change| change.cause), selected_edit.map(ChangeCause::Edit));
+                }
+                let state = if selected.len() == supported.len() { EncryptionState::Removed } else { EncryptionState::Partial };
+                assert_eq!(patched.manifest.values.encryption, Some(state));
+                if state == EncryptionState::Removed {
+                    let legacy = ExePatch { edits: vec![ExeEdit::NoEncryption] };
+                    assert_eq!(patched.bytes, patch_client_exe(&image, &legacy, None).unwrap().bytes);
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn scoped_encryption_edits_validate_only_the_selected_sites() {
+        for (kind, part, edit) in [
+            (CipherSiteKind::LoginCipher, EncryptionPart::Login, ExeEdit::NoLoginEncryption),
+            (CipherSiteKind::KeyExchangeCipher, EncryptionPart::Game, ExeEdit::NoGameEncryption),
+            (CipherSiteKind::GameLoginHandshake, EncryptionPart::KrHandshake, ExeEdit::BypassKrHandshake),
+        ] {
+            let image = synthetic_image_with(cipher_code(&[kind]), Vec::new(), false);
+            let patch = ExePatch { edits: vec![edit] };
+            let patched = patch_client_exe(&image, &patch, None).unwrap();
+            let ciphers = patched.after.encryption.as_ref().unwrap();
+            assert_eq!(ciphers.for_part(part).values(), Some(EncryptionState::Removed));
+            assert_eq!(patched.manifest.values.encryption, None, "unselected missing sites remain unknown");
+            for (missing_part, missing_edit) in ENCRYPTION_PART_EDITS.iter().filter(|(other, _)| *other != part) {
+                assert!(!ciphers.for_part(*missing_part).is_complete());
+                let missing = ExePatch { edits: vec![missing_edit.clone()] };
+                assert!(plan_patch(&image, &missing, None).unwrap_err().to_string().contains("not located"));
+            }
+            let legacy = ExePatch { edits: vec![ExeEdit::NoEncryption] };
+            assert!(plan_patch(&image, &legacy, None).is_err());
+        }
+        let ambiguous = synthetic_image_with(cipher_code(&[CipherSiteKind::LoginCipher, CipherSiteKind::LoginCipher]), Vec::new(), false);
+        let patch = ExePatch { edits: vec![ExeEdit::NoLoginEncryption] };
+        assert!(plan_patch(&ambiguous, &patch, None).unwrap_err().to_string().contains("2 matches"));
+        let incomplete_game = synthetic_image_with(cipher_code(&[CipherSiteKind::GameCipherSend]), Vec::new(), true);
+        let patch = ExePatch { edits: vec![ExeEdit::NoGameEncryption] };
+        assert!(plan_patch(&incomplete_game, &patch, None).unwrap_err().to_string().contains("game cipher (receive)"));
+    }
+
+    #[test]
+    fn scoped_encryption_edits_reject_overlap_and_unsupported_handshakes() {
+        let image = synthetic_kr_encrypted_client();
+        for (_, edit) in &ENCRYPTION_PART_EDITS {
+            for edits in [vec![edit.clone(), edit.clone()], vec![ExeEdit::NoEncryption, edit.clone()], vec![edit.clone(), ExeEdit::NoEncryption]] {
+                assert!(plan_patch(&image, &ExePatch { edits }, None).unwrap_err().to_string().contains("overlapping encryption edits"));
+            }
+        }
+        let bypass = ExePatch { edits: vec![ExeEdit::BypassKrHandshake] };
+        for image in [synthetic_enhanced_encrypted_client(), synthetic_classic(6, 2)] {
+            assert!(plan_patch(&image, &bypass, None).unwrap_err().to_string().contains("needs a Kingdom Reborn client"));
+        }
+    }
+
+    #[test]
+    fn scoped_encryption_edits_chain_and_keep_distinct_manifest_steps() {
+        let image = synthetic_kr_encrypted_client();
+        let mut bytes = image.clone();
+        let mut manifest = None;
+        for (_, edit) in &ENCRYPTION_PART_EDITS {
+            let patch = ExePatch { edits: vec![edit.clone()] };
+            let patched = patch_client_exe(&bytes, &patch, manifest.as_ref()).unwrap();
+            assert_eq!(patched.manifest.steps.last().unwrap().edits, patch.edits);
+            assert!(plan_patch(&patched.bytes, &patch, Some(&patched.manifest)).unwrap_err().to_string().contains("changes nothing"));
+            bytes = patched.bytes;
+            manifest = Some(patched.manifest);
+        }
+        let manifest = manifest.unwrap();
+        assert_eq!(manifest.steps.len(), ENCRYPTION_PART_EDITS.len());
+        assert_eq!(manifest.values.encryption, Some(EncryptionState::Removed));
+        let legacy = ExePatch { edits: vec![ExeEdit::NoEncryption] };
+        assert_eq!(bytes, patch_client_exe(&image, &legacy, None).unwrap().bytes);
+        let serialized = r#"["no_login_encryption","no_game_encryption","bypass_kr_handshake","no_encryption"]"#;
+        let mut edits: Vec<_> = ENCRYPTION_PART_EDITS.iter().map(|(_, edit)| edit.clone()).collect();
+        edits.push(ExeEdit::NoEncryption);
+        assert_eq!(serde_json::to_string(&edits).unwrap(), serialized);
+        assert_eq!(serde_json::from_str::<Vec<ExeEdit>>(serialized).unwrap(), edits);
+    }
+
+    #[test]
     fn no_encryption_upgrades_the_legacy_kr_manifest_only_for_the_stock_handshake() {
         let image = synthetic_kr_encrypted_client();
         let patch = ExePatch { edits: vec![ExeEdit::NoEncryption] };
@@ -1323,6 +1471,10 @@ mod tests {
         let writes: Vec<_> = upgraded.changes.iter().filter(|change| change.cause == ChangeCause::Edit(0)).collect();
         assert_eq!(writes.len(), 1);
         assert_eq!(writes[0].offset, handshake.offset);
+        let bypass = ExePatch { edits: vec![ExeEdit::BypassKrHandshake] };
+        let scoped_upgrade = patch_client_exe(&legacy, &bypass, Some(&manifest)).unwrap();
+        assert_eq!(scoped_upgrade.bytes, upgraded.bytes);
+        assert_eq!(scoped_upgrade.manifest.steps.last().unwrap().edits, bypass.edits);
 
         // The compatibility exception never forgives other recorded value mismatches.
         let mut wrong_values = manifest.clone();

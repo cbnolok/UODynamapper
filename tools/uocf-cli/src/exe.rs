@@ -71,12 +71,23 @@ pub enum ExeCmd {
         /// --login-server's port; without --login-server every port site needs one.
         #[arg(long = "login-port", value_name = "[N=]PORT", value_parser = parse_login_port)]
         login_ports: Vec<(Option<usize>, u16)>,
-        /// Make the client send and read plaintext (Enhanced Client, Kingdom Reborn): the login cipher, the
-        /// Enhanced Client's game ciphers and the 0xE3 key exchange ciphers are patched out (`exe show` lists them).
-        /// Kingdom Reborn skips 0xE3/0xE4, uses the relay auth key as its game seed and sends 0x91 immediately.
-        /// The server must take unencrypted 0x80 and 0x91 and send unencrypted, Huffman-compressed game packets.
-        #[arg(long)]
+        /// Remove login and game ciphers and, for Kingdom Reborn, bypass 0xE3/0xE4. Shortcut for all three
+        /// controls below. The server must take unencrypted 0x80 and 0x91 and send unencrypted,
+        /// Huffman-compressed game packets.
+        #[arg(long, conflicts_with_all = ["no_login_encryption", "no_game_encryption", "bypass_kr_handshake"])]
         no_encryption: bool,
+        /// Remove only the login connection's send cipher (Enhanced Client, Kingdom Reborn). The 0xEF seed
+        /// stays unchanged; 0x80 is sent unencrypted. Game ciphers and the KR handshake stay as they are.
+        #[arg(long)]
+        no_login_encryption: bool,
+        /// Remove only game cipher transforms (Enhanced Client, Kingdom Reborn). KR still requires a valid
+        /// 0xE3 and answers 0xE4 before sending 0x91. Server game packets must remain Huffman-compressed.
+        #[arg(long)]
+        no_game_encryption: bool,
+        /// Kingdom Reborn only: skip 0xE3/0xE4, send the relay auth key as the game seed, install Huffman and
+        /// send 0x91 immediately. Installs no game cipher, even when its transform code remains stock.
+        #[arg(long)]
+        bypass_kr_handshake: bool,
         /// Print the byte changes without writing anything.
         #[arg(long)]
         dry_run: bool,
@@ -196,6 +207,9 @@ pub fn run(cmd: ExeCmd) -> eyre::Result<()> {
             login_hosts,
             login_ports,
             no_encryption,
+            no_login_encryption,
+            no_game_encryption,
+            bypass_kr_handshake,
             dry_run,
         } => {
             let mut edits: Vec<ExeEdit> =
@@ -217,6 +231,15 @@ pub fn run(cmd: ExeCmd) -> eyre::Result<()> {
             }
             if no_encryption {
                 edits.push(ExeEdit::NoEncryption);
+            }
+            if no_login_encryption {
+                edits.push(ExeEdit::NoLoginEncryption);
+            }
+            if no_game_encryption {
+                edits.push(ExeEdit::NoGameEncryption);
+            }
+            if bypass_kr_handshake {
+                edits.push(ExeEdit::BypassKrHandshake);
             }
             let patch = ExePatch { edits };
             match (dry_run, output) {
@@ -452,7 +475,11 @@ fn print_encryption(inspection: &ClientExeInspection) {
         println!("  not located (pattern not matched exactly once): {}", ciphers.describe_unlocated());
     }
     if ciphers.values() == Some(EncryptionState::Encrypted) {
-        println!("  --no-encryption patches them out");
+        println!("  --no-login-encryption and --no-game-encryption select cipher groups");
+        if inspection.family == ClientFamily::KingdomReborn {
+            println!("  --bypass-kr-handshake independently enables immediate plaintext game login");
+        }
+        println!("  --no-encryption selects all applicable changes");
     }
 }
 
@@ -558,4 +585,41 @@ fn check_data(exe: &Path, client_dir: &Path) -> eyre::Result<()> {
     }
     eyre::ensure!(mismatches == 0, "{mismatches} files disagree with the executable's facet table");
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use clap::Parser;
+
+    #[derive(Parser)]
+    struct TestCli {
+        #[command(subcommand)]
+        command: ExeCmd,
+    }
+
+    #[test]
+    fn scoped_encryption_flags_combine_and_default_off() {
+        let base = ["uocf-cli", "patch", "UOKR.exe", "--dry-run"];
+        let flags = ["--no-login-encryption", "--no-game-encryption", "--bypass-kr-handshake"];
+        for selected in [&[][..], &flags[..]] {
+            let args = base.iter().chain(selected).copied();
+            let cli = TestCli::try_parse_from(args).unwrap();
+            let ExeCmd::Patch { no_encryption, no_login_encryption, no_game_encryption, bypass_kr_handshake, .. } = cli.command else {
+                panic!("expected patch command");
+            };
+            assert!(!no_encryption);
+            let enabled = !selected.is_empty();
+            assert_eq!((no_login_encryption, no_game_encryption, bypass_kr_handshake), (enabled, enabled, enabled));
+        }
+    }
+
+    #[test]
+    fn all_encryption_shortcut_conflicts_with_each_scoped_flag() {
+        for flag in ["--no-login-encryption", "--no-game-encryption", "--bypass-kr-handshake"] {
+            let error = TestCli::try_parse_from(["uocf-cli", "patch", "UOKR.exe", "--dry-run", "--no-encryption", flag])
+                .err().expect("conflicting flags");
+            assert_eq!(error.kind(), clap::error::ErrorKind::ArgumentConflict);
+        }
+    }
 }

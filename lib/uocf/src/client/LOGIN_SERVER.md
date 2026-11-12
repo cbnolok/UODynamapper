@@ -2,7 +2,7 @@
 
 Where each client family reads its login server address from, and how `uocf` reads and changes it
 (`client::login_servers`, `client::login`, `ExeEdit::LoginServer`), and how the Enhanced Client and Kingdom Reborn
-encryption is patched out (`client::encryption`, `ExeEdit::NoEncryption`; see [Encryption](#encryption)).
+encryption and KR handshake are patched independently (`client::encryption`; see [Encryption](#encryption)).
 
 ## Classic (`client.exe`)
 
@@ -75,8 +75,18 @@ The survey's versions come from each exe's version resource (`VS_FIXEDFILEINFO`,
 
 ## Encryption
 
-`ExeEdit::NoEncryption` (`exe patch --no-encryption`, the GUI's "Remove the encryption" toggle) makes the client send
-and read plaintext. Traced in [the UOKR research](../../../../scripts/dev-helpers/ec-research/ghidra-login-names/results/uokr_login.md),
+The login cipher, game ciphers and KR handshake have three independent controls in the GUI and CLI:
+
+| CLI flag | Patch edit | Effect |
+|---|---|---|
+| `--no-login-encryption` | `ExeEdit::NoLoginEncryption` | Remove the login send cipher only; leave game setup alone |
+| `--no-game-encryption` | `ExeEdit::NoGameEncryption` | Remove game cipher transforms only; retain KR's E3/E4 exchange |
+| `--bypass-kr-handshake` | `ExeEdit::BypassKrHandshake` | KR only: immediate plaintext game login with Huffman, without E3/E4 |
+
+Scoped flags may be combined. `ExeEdit::NoEncryption` (`exe patch --no-encryption`) retains its existing meaning:
+remove login and game ciphers and bypass KR's handshake. It cannot be combined with the scoped flags.
+All controls default off and only the selected sites must be located. Traced in
+[the UOKR research](../../../../scripts/dev-helpers/ec-research/ghidra-login-names/results/uokr_login.md),
 which also lists every site of every build.
 
 - **Login cipher** (both families): the login connection's client-to-server LFSR cipher, installed after the 0xEF
@@ -87,21 +97,37 @@ which also lists every site of every build.
   Reborn has the classes but never creates them.
 - **0xE3 key exchange ciphers** (both): the Crypto++ pair the 0xE3 handler installs, behind one
   `CryptoPPAdapter::Transform`. The patch turns the `JZ` that enters its per-chunk loop into a `JMP` (`74` to `eb`),
-  so messages pass through unchanged both ways.
+  so messages pass through unchanged both ways. In the audited KR build these are AES (Rijndael) in CFB mode,
+  following Diffie-Hellman and SHA-256, rather than the older Twofish/MD5 pair. Removing their transforms alone
+  leaves E3 validation, the plaintext E4 response and Huffman installation intact.
 - **KR game handshake**: replace the fixed `0xffffffff` seed with the relay auth key, enter state 2, install
   Huffman and send 0x91 immediately. The client no longer waits for 0xE3 or sends 0xE4. This replacement is
   specific to the audited KR build: its complete game-connect function must match at VA `0x5b6b40`.
 - Huffman compression of server-to-client game traffic is left alone.
 
-Each site is located by its instruction pattern and must match exactly once (stock or patched); otherwise the edit is
+Each selected site is located by its instruction pattern and must match exactly once (stock or patched); otherwise the edit is
 refused, naming the cipher and its match count. Classic is refused. `exe show` prints the state (on, removed or
 partly removed) and each site; the manifest records it (`values.encryption`: `encrypted`, `removed`, `partial`).
 
-What a server must do with a patched client: read 0xEF / 0x80 and the game 0x91 unencrypted, and send game packets
+With all controls selected, a server must read 0xEF / 0x80 and the game 0x91 unencrypted, and send game packets
 Huffman-compressed, not encrypted. Patched Kingdom Reborn sends the relay auth key as the game seed and 0x91
 immediately, with Huffman already installed; it needs no 0xE3 / 0xE4 support from the server. This also avoids
 advertising KR's fixed `0xffffffff` seed to servers that use it to select the key exchange. Stock KR still requires
 0xE3; stock ServUO does not send it. The Enhanced Client already sends the auth key and 0x91 immediately.
+
+Selecting only game cipher removal still requires a server that sends valid E3 and accepts E4. Selecting only
+the KR handshake bypass installs no game ciphers: game traffic is plaintext even when the adapter's code remains
+stock. Login encryption remains enabled unless its separate control is selected. The reported patch-site state
+describes executable bytes, so a stock cipher site does not prove that this login path installs that cipher.
+
+The login seed and the version-derived master keys are separate. In the audited KR build, `0x5e80c0` resolves
+the local hostname with `gethostbyname`, takes its first IPv4 address and applies `ntohl`; `0x5a4520` sends that
+seed in 0xEF with protocol version dwords **66, 55, 52, 0**. These are not the PE resource version **2.58.0.6**.
+`0x5de0e0` mixes the seed into initial cipher state; the byte transform uses embedded master keys
+`0x5b6b4d6c` and `0xd3d51816`. They exactly match the standard formula for protocol major/minor/third
+`66.55.52`; the fourth component is unused. EC protocol `67.0.102` similarly yields `0x1b92eb9d` and
+`0xb91e227f`. The match identifies the constants' derivation; the traced clients use constants embedded in code,
+not a runtime calculation from their PE version. Formula source and instruction evidence are in the linked research.
 
 | exe | login | game send | game receive | key exchange | KR handshake |
 |---|---|---|---|---|---|
@@ -121,5 +147,6 @@ and only the newly introduced handshake site is stock.
 - `uocf-cli exe patch <exe> --output <copy> [--dry-run]` with `--login-server HOST:PORT` (every site),
   `--login-host N=HOST` (one host slot; overrides `--login-server`'s host) and `--login-port [N=]PORT` (one port site,
   or every site without `N`). Without `--login-server` every site needs its own value. EC and KR (KR: IPv4 only).
-  `--no-encryption` patches the ciphers out (EC and KR).
+  `--no-login-encryption`, `--no-game-encryption` and `--bypass-kr-handshake` select independent changes;
+  `--no-encryption` remains the combined shortcut (EC and KR; handshake bypass applies only to KR).
 - `uocf-cli login show <client_dir>` / `login set <client_dir|file> --output <path> --server HOST:PORT ...`.

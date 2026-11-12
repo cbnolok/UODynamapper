@@ -1,17 +1,27 @@
 //! The encryption part of the Login server section (Enhanced Client, Kingdom Reborn): whether the opened
-//! executable's network ciphers are on, where each is, and the toggle that patches them out
-//! ([`ExeEdit::NoEncryption`], one more edit of the patch).
+//! executable's network ciphers are on, where each is, and independent login, game and KR handshake edits.
 
-use uocf::client::encryption::{EncryptionSites, EncryptionState};
+use uocf::client::encryption::{EncryptionPart, EncryptionSites, EncryptionState};
 use uocf::client::facet_dimensions::ClientExeInspection;
 use uocf::client::patch::ExeEdit;
 
 use super::edits::Validation;
 
 /// What the server must do once the client talks plaintext, for the section's note.
-pub const PLAINTEXT_SERVER_NOTE: &str = "The server must take the login packets (0xEF seed, 0x80) and, after the game \
-     seed, the 0x91 unencrypted, and send unencrypted (still Huffman-compressed) game packets. Kingdom Reborn sends \
-     the relay auth key as its game seed and sends 0x91 immediately, skipping the 0xE3/0xE4 key exchange.";
+pub const PLAINTEXT_SERVER_NOTE: &str = "Login and game encryption are independent. Removing KR game encryption \
+     keeps its 0xE3/0xE4 handshake. Bypassing the KR handshake sends the relay auth-key seed and plaintext 0x91 \
+     immediately, without installing game ciphers, even if their bytes remain stock. Plaintext game traffic \
+     still requires Huffman-compressed server replies.";
+
+pub const ENCRYPTION_PARTS: [EncryptionPart; 3] = [EncryptionPart::Login, EncryptionPart::Game, EncryptionPart::KrHandshake];
+
+pub fn part_label(part: EncryptionPart) -> &'static str {
+    match part {
+        EncryptionPart::Login => "login encryption",
+        EncryptionPart::Game => "game encryption",
+        EncryptionPart::KrHandshake => "KR handshake",
+    }
+}
 
 /// Whether the opened executable encrypts.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -37,17 +47,18 @@ fn hex_bytes(bytes: &[u8]) -> String {
     bytes.iter().map(|byte| format!("{byte:02x}")).collect::<Vec<_>>().join(" ")
 }
 
-/// The toggle and the ciphers it patches.
+/// Independent selections; each validates only the sites it patches.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct EncryptionEdit {
     pub sites: Option<EncryptionSites>,
-    /// Patch every cipher out.
-    pub remove: bool,
+    pub remove_login: bool,
+    pub remove_game: bool,
+    pub bypass_kr_handshake: bool,
 }
 
 impl EncryptionEdit {
     pub fn new(inspection: &ClientExeInspection) -> Self {
-        Self { sites: inspection.encryption.clone(), remove: false }
+        Self { sites: inspection.encryption.clone(), remove_login: false, remove_game: false, bypass_kr_handshake: false }
     }
 
     pub fn status(&self) -> EncryptionStatus {
@@ -60,28 +71,60 @@ impl EncryptionEdit {
         }
     }
 
-    /// True when the toggle patches something: every cipher located, and one at least still on.
-    pub fn can_remove(&self) -> bool {
-        matches!(self.status(), EncryptionStatus::Located(EncryptionState::Encrypted | EncryptionState::Partial))
+    pub fn part_status(&self, part: EncryptionPart) -> EncryptionStatus {
+        let Some(sites) = &self.sites else {
+            return EncryptionStatus::NotApplicable;
+        };
+        let sites = sites.for_part(part);
+        if sites.sites.is_empty() && sites.unlocated.is_empty() {
+            return EncryptionStatus::NotApplicable;
+        }
+        match sites.values() {
+            Some(state) => EncryptionStatus::Located(state),
+            None => EncryptionStatus::NotLocated(sites.describe_unlocated()),
+        }
     }
 
-    /// The edit of the toggle; an error when it is on but cannot apply.
-    pub fn check(&self) -> (Option<ExeEdit>, Validation) {
+    /// True when every site of this part is located and at least one still needs patching.
+    pub fn can_remove(&self, part: EncryptionPart) -> bool {
+        matches!(self.part_status(part), EncryptionStatus::Located(EncryptionState::Encrypted | EncryptionState::Partial))
+    }
+
+    pub fn selection_mut(&mut self, part: EncryptionPart) -> &mut bool {
+        match part {
+            EncryptionPart::Login => &mut self.remove_login,
+            EncryptionPart::Game => &mut self.remove_game,
+            EncryptionPart::KrHandshake => &mut self.bypass_kr_handshake,
+        }
+    }
+
+    /// Selected edits; no edits are returned if any selected part cannot apply.
+    pub fn check(&self) -> (Vec<ExeEdit>, Validation) {
+        let mut edits = Vec::new();
         let mut validation = Validation::default();
-        if !self.remove {
-            return (None, validation);
-        }
-        match self.status() {
-            EncryptionStatus::Located(EncryptionState::Removed) => {}
-            EncryptionStatus::Located(_) => return (Some(ExeEdit::NoEncryption), validation),
-            EncryptionStatus::NotLocated(unlocated) => {
-                validation.errors.push(format!("the ciphers were not all located ({unlocated}): nothing is patched"))
+        for (part, selected, edit) in [
+            (EncryptionPart::Login, self.remove_login, ExeEdit::NoLoginEncryption),
+            (EncryptionPart::Game, self.remove_game, ExeEdit::NoGameEncryption),
+            (EncryptionPart::KrHandshake, self.bypass_kr_handshake, ExeEdit::BypassKrHandshake),
+        ] {
+            if !selected {
+                continue;
             }
-            EncryptionStatus::NotApplicable => {
-                validation.errors.push("only the Enhanced Client and Kingdom Reborn ciphers are located".to_owned())
+            match self.part_status(part) {
+                EncryptionStatus::Located(EncryptionState::Removed) => {}
+                EncryptionStatus::Located(_) => edits.push(edit),
+                EncryptionStatus::NotLocated(unlocated) => {
+                    validation.errors.push(format!("{}: sites not all located ({unlocated}): nothing is patched", part_label(part)))
+                }
+                EncryptionStatus::NotApplicable => {
+                    validation.errors.push(format!("{} is not applicable to this client", part_label(part)))
+                }
             }
         }
-        (None, validation)
+        if !validation.is_ok() {
+            edits.clear();
+        }
+        (edits, validation)
     }
 
     /// The located ciphers with their bytes now.

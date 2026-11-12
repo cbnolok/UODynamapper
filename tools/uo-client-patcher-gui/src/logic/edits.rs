@@ -1,5 +1,5 @@
 //! The edit state of the Facets, Seam and Login server sections: the text the user types per facet, for the split or
-//! seam and for the login server, the no-encryption toggle, its live validation (the library's validate functions)
+//! seam and for the login server, independent encryption controls, live validation (the library's validate functions)
 //! and the [`ExePatch`] it builds. Every section that edits the executable contributes its edits to [`EditState::build_patch`].
 
 use uocf::client::classic_facets::{classic_map_blocks, validate_classic_size, validate_classic_wrap};

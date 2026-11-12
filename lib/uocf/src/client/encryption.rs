@@ -49,7 +49,18 @@ const XOR_MEM_EBP_AL: [u8; 3] = [0x30, 0x45, 0x00];
 /// `XOR [EAX],DL`: 30 /r, ModRM `00 010 000`.
 const XOR_MEM_EAX_DL: [u8; 2] = [0x30, 0x10];
 
-/// One cipher the patch disables.
+/// Independently selectable parts of the executable's network encryption and KR connection setup.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum EncryptionPart {
+    /// The login connection's cipher.
+    Login,
+    /// All game send/receive ciphers, including the optional key exchange ciphers.
+    Game,
+    /// KR's mandatory game key exchange setup, independent of cipher removal.
+    KrHandshake,
+}
+
+/// One cipher or connection setup the patch disables.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum CipherSiteKind {
     /// The login connection's client-to-server cipher (both families).
@@ -154,6 +165,14 @@ const KEY_EXCHANGE_CIPHER: CipherPattern = CipherPattern {
 };
 
 impl CipherSiteKind {
+    pub fn part(self) -> EncryptionPart {
+        match self {
+            Self::LoginCipher => EncryptionPart::Login,
+            Self::GameCipherSend | Self::GameCipherReceive | Self::KeyExchangeCipher => EncryptionPart::Game,
+            Self::GameLoginHandshake => EncryptionPart::KrHandshake,
+        }
+    }
+
     pub fn label(self) -> &'static str {
         match self {
             Self::LoginCipher => "login cipher",
@@ -254,6 +273,14 @@ pub struct EncryptionSites {
 }
 
 impl EncryptionSites {
+    /// The located and unlocated sites of one independently selectable part. An empty part is unsupported.
+    pub fn for_part(&self, part: EncryptionPart) -> Self {
+        Self {
+            sites: self.sites.iter().filter(|site| site.kind.part() == part).cloned().collect(),
+            unlocated: self.unlocated.iter().filter(|site| site.kind.part() == part).copied().collect(),
+        }
+    }
+
     /// True when every cipher of the family was located.
     pub fn is_complete(&self) -> bool {
         self.unlocated.is_empty() && !self.sites.is_empty()

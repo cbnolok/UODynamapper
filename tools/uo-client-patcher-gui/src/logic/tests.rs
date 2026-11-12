@@ -459,8 +459,8 @@ fn kingdom_reborn_takes_an_ipv4_address() {
 }
 
 #[test]
-fn the_encryption_toggle_patches_every_cipher_out() {
-    use uocf::client::encryption::{CipherSiteKind, EncryptionState};
+fn the_encryption_controls_patch_their_selected_sites() {
+    use uocf::client::encryption::{CipherSiteKind, EncryptionPart, EncryptionState};
 
     let temp = TempDir::new("kr_encryption");
     let exe = temp.folder("client").join(KR_EXE_NAME);
@@ -468,32 +468,74 @@ fn the_encryption_toggle_patches_every_cipher_out() {
     let opened = OpenedExe::open(&exe).unwrap();
     let mut edits = EditState::new(&opened.inspection);
     assert_eq!(edits.encryption.status(), EncryptionStatus::Located(EncryptionState::Encrypted));
-    assert!(edits.encryption.can_remove());
+    assert!(edits.encryption.can_remove(EncryptionPart::Login));
+    assert!(edits.encryption.can_remove(EncryptionPart::Game));
+    assert!(edits.encryption.can_remove(EncryptionPart::KrHandshake));
     let rows = edits.encryption.rows(&opened.inspection);
     assert_eq!(rows.len(), CipherSiteKind::of_family(ClientFamily::KingdomReborn).len());
     assert!(rows.iter().all(|row| row.state.starts_with("on")));
     assert!(edits.build_patch().unwrap().edits.is_empty(), "off by default");
 
-    edits.encryption.remove = true;
-    assert_eq!(edits.build_patch().unwrap().edits, [ExeEdit::NoEncryption]);
+    edits.encryption.remove_login = true;
+    edits.encryption.remove_game = true;
+    edits.encryption.bypass_kr_handshake = true;
+    assert_eq!(edits.build_patch().unwrap().edits, [ExeEdit::NoLoginEncryption, ExeEdit::NoGameEncryption, ExeEdit::BypassKrHandshake]);
     let plan = preview(&opened, &edits).plan().expect("planned").clone();
     let sites = &opened.inspection.encryption.as_ref().unwrap().sites;
-    let offsets: Vec<usize> = plan.changes.iter().filter(|change| change.cause == ChangeCause::Edit(0)).map(|change| change.offset).collect();
+    let offsets: Vec<usize> = plan.changes.iter().filter(|change| matches!(change.cause, ChangeCause::Edit(_))).map(|change| change.offset).collect();
     assert_eq!(offsets, sites.iter().map(|site| site.offset).collect::<Vec<_>>());
     let copy = plan_write_and_reopen(&opened, &edits, &temp.folder("copies").join(KR_EXE_NAME));
     let reopened = EditState::new(&copy.inspection);
     assert_eq!(reopened.encryption.status(), EncryptionStatus::Located(EncryptionState::Removed));
-    assert!(!reopened.encryption.can_remove());
+    assert!(!reopened.encryption.can_remove(EncryptionPart::Login));
+    assert!(!reopened.encryption.can_remove(EncryptionPart::Game));
+    assert!(!reopened.encryption.can_remove(EncryptionPart::KrHandshake));
     assert!(reopened.encryption.rows(&copy.inspection).iter().all(|row| row.state == "patched out"));
 
     // Without the cipher code: on is an error; Classic has none.
     let mut missing = EditState::new(&ClientExeInspection::inspect(&synthetic_kingdom_reborn()).unwrap());
     assert!(matches!(missing.encryption.status(), EncryptionStatus::NotLocated(_)));
-    missing.encryption.remove = true;
+    missing.encryption.remove_login = true;
     let errors = missing.build_patch().unwrap_err();
-    assert!(errors[0].starts_with("encryption: the ciphers were not all located"), "{errors:?}");
+    assert!(errors[0].starts_with("encryption: login encryption: sites not all located"), "{errors:?}");
     let classic = EditState::new(&ClientExeInspection::inspect(&synthetic_classic()).unwrap());
     assert_eq!(classic.encryption.status(), EncryptionStatus::NotApplicable);
+}
+
+#[test]
+fn encryption_controls_validate_only_their_selected_part() {
+    use uocf::client::encryption::{CipherSiteKind, EncryptionPart, EncryptionState};
+
+    const UNKNOWN_OPCODE: u8 = 0xcc;
+    let mut image = synthetic_kingdom_reborn_ciphers();
+    let inspected = ClientExeInspection::inspect(&image).unwrap();
+    let handshake = inspected.encryption.as_ref().unwrap().sites.iter()
+        .find(|site| site.kind == CipherSiteKind::GameLoginHandshake).unwrap();
+    image[handshake.offset] = UNKNOWN_OPCODE;
+    let inspection = ClientExeInspection::inspect(&image).unwrap();
+    let mut edits = EditState::new(&inspection);
+    assert!(matches!(edits.encryption.part_status(EncryptionPart::KrHandshake), EncryptionStatus::NotLocated(_)));
+    assert!(edits.encryption.can_remove(EncryptionPart::Login));
+    assert!(edits.encryption.can_remove(EncryptionPart::Game));
+    edits.encryption.remove_login = true;
+    assert_eq!(edits.build_patch().unwrap().edits, [ExeEdit::NoLoginEncryption]);
+    edits.encryption.remove_game = true;
+    assert_eq!(edits.build_patch().unwrap().edits, [ExeEdit::NoLoginEncryption, ExeEdit::NoGameEncryption]);
+    edits.encryption.bypass_kr_handshake = true;
+    let (patches, validation) = edits.encryption.check();
+    assert!(patches.is_empty() && !validation.is_ok());
+
+    let mut enhanced = EditState::new(&ClientExeInspection::inspect(&synthetic_enhanced(false)).unwrap());
+    assert_eq!(enhanced.encryption.part_status(EncryptionPart::KrHandshake), EncryptionStatus::NotApplicable);
+    enhanced.encryption.bypass_kr_handshake = true;
+    assert!(enhanced.build_patch().unwrap_err()[0].contains("KR handshake is not applicable"));
+
+    // Selecting the bypass alone leaves both cipher controls off.
+    let mut bypass = EditState::new(&inspected);
+    bypass.encryption.bypass_kr_handshake = true;
+    assert_eq!(bypass.build_patch().unwrap().edits, [ExeEdit::BypassKrHandshake]);
+    assert_eq!(bypass.encryption.part_status(EncryptionPart::Login), EncryptionStatus::Located(EncryptionState::Encrypted));
+    assert_eq!(bypass.encryption.part_status(EncryptionPart::Game), EncryptionStatus::Located(EncryptionState::Encrypted));
 }
 
 /// A Classic `login.cfg` with a comment, a line the client does not know and both kinds of server.

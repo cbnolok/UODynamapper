@@ -33,8 +33,8 @@ patterns (ECLO's ENC1 and ENC2) are not in this build.
    `FUN_005a4360` writes the seed and four version dwords, each `htonl`), sends it raw (vtable `+0x40`, past the
    transforms), creates `UOLoginCipher_C2S_Encrypt`, initializes it (`FUN_005de0e0`) and adds it as the send
    transform.
-3. `FUN_005de0e0` derives the two keys from the seed with the classic constants (`0xffffaaaa`, `0x1357`,
-   `0xabcdffff`, `0x43210000`); they do not depend on the version.
+3. `FUN_005de0e0` derives the initial two-word state from the seed with the classic constants (`0xffffaaaa`, `0x1357`,
+   `0xabcdffff`, `0x43210000`), as EC does. This seed mixing is separate from the version-derived master keys.
 4. `UOLoginCipher_C2S_Encrypt::Transform` (`0x5de170`) XORs each byte with the low byte of key 1, then steps the
    keys (the KR constants `0x5b6b4d6c` twice and `0xd3d51816`; the Enhanced Client has `0x1b92eb9c`/`0x1b92eb9d`
    and `0xb91e227f`):
@@ -48,6 +48,36 @@ patterns (ECLO's ENC1 and ENC2) are not in this build.
    ```
 
 The login connection has no receive transform: the server's login replies are plaintext and uncompressed.
+
+### Seed versus version-derived keys
+
+Read-only Ghidra tracing identifies `FUN_005e80c0` as the login-seed source: get the local hostname, resolve it
+with `gethostbyname`, take the first IPv4 address and apply `ntohl`. `FUN_005a4520` passes that seed and the
+four dwords **66, 55, 52, 0** to the 0xEF writer. Thus the wire protocol version is **66.55.52.0**; the PE resource
+version **2.58.0.6** is a separate identifier. Changing the login destination does not make that hostname-derived
+seed a version constant. The game connection's fixed `0xffffffff` seed is a third, separate value.
+
+The master-key formula is preserved in the local source
+`/mnt/dati/__cloud/mega/_proj/_UOTools/__nonmio/vCrypter-master (src)/vCrypter/vCrypter.cs:59-74`.
+For unsigned 32-bit arithmetic, with protocol major `a`, minor `b` and third component `c`, it is:
+
+```
+k1 = ((a << 23) | (b << 14) | (c << 4))
+     ^ ((c * c) << 9) ^ (b * b) ^ ((b * 11) << 24) ^ ((c * 7) << 19) ^ 0x2c13a5fd
+k2 = ((a << 22) | (c << 13) | (b << 3))
+     ^ ((c * c * 3) << 10) ^ (b * b) ^ ((b * 13) << 23) ^ ((c * 7) << 18) ^ 0xa31d527f
+```
+
+The fourth version component is read by that tool but does not enter these expressions. Recalculation gives:
+
+| Protocol major/minor/third | Formula k1 | Formula k2 |
+|---|---|---|
+| KR 66.55.52 | `0x5b6b4d6c` | `0xd3d51816` |
+| EC 67.0.102 | `0x1b92eb9d` | `0xb91e227f` |
+
+These exactly match the embedded master keys. KR's step uses `0x5b6b4d6c` in both relevant operations; EC's
+step contains both `0x1b92eb9c` and `0x1b92eb9d`. This proves the formula match for these builds, not runtime
+recomputation: the traced transforms use immediates embedded in their machine code.
 
 ## Game connection and the 0xE3 / 0xE4 key exchange
 
@@ -68,6 +98,12 @@ The login connection has no receive transform: the server's login replies are pl
    - `UOGameCipher2_S2C_Decrypt` (`::Init` `FUN_005dd2e0`; receive transform);
    - `UOHuffmanCoding_S2C_Decompress` (constructor `FUN_005dd850`; receive transform after the cipher).
    Then `FUN_005b59d0` sends 0x91 (the auth key from `+0x58`, account and password) through the new send cipher.
+
+The Cipher2 pair is **AES (Rijndael) in CFB mode**, following the DH/SHA-256 exchange. The send initializer
+`0x5dc400` calls `0x5dc620`, whose RTTI identifies `Rijndael::Enc` and `CFB_EncryptionTemplate`. The receive
+initializer `0x5dd2e0` calls `0x5dd370`, identified by `CFB_DecryptionTemplate`. These filters are distinct from
+the compiled but unused older `UOGameCipher` Twofish/MD5 classes. CFB uses the underlying AES encryption
+primitive in both feedback directions; the receive filter's decryption role does not imply AES block decryption.
 
 So Kingdom Reborn sends 0x91 only after a valid 0xE3. Until then it waits in state 1, and any other packet
 disconnects it. No timeout was traced. The Huffman decompression is installed by the 0xE3 handler too, so before
@@ -97,6 +133,22 @@ validated, 0xE4 is sent, the state becomes 2), but nothing is enciphered or deci
 classic Huffman tree. The patch leaves it alone: the server still compresses its game packets.
 
 ## The plaintext patch
+
+The controls are independent:
+
+| Flag / edit | Patched sites | KR behavior |
+|---|---|---|
+| `--no-login-encryption` / `NoLoginEncryption` | Login XOR | Unencrypted account login; game setup unchanged |
+| `--no-game-encryption` / `NoGameEncryption` | Game cipher transforms | Still waits for valid E3, sends E4, then plaintext 0x91 with Huffman |
+| `--bypass-kr-handshake` / `BypassKrHandshake` | Game-connect replacement | Auth-key seed, state 2, Huffman, immediate plaintext 0x91; no game cipher created |
+| `--no-encryption` / `NoEncryption` | All applicable sites | Plaintext login and immediate plaintext game login |
+
+The scoped flags may combine; the all-in-one flag conflicts with them. Defaults leave every site unchanged.
+The bypass alone leaves login encryption enabled. It also leaves the Crypto++ adapter's bytes unchanged, but
+that game path never installs its ciphers, so its game traffic is still plaintext. Conversely, removing the adapter
+alone preserves the handshake and still requires an E3-capable server. Inspection's aggregate state describes
+patched sites, not whether a cipher is instantiated on a particular runtime path. The existing serialized
+`no_encryption` edit and older KR manifests remain readable.
 
 | File offset | VA | Stock | Patched | Cipher |
 |---|---|---|---|---|

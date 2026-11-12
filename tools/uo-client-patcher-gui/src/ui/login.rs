@@ -1,16 +1,17 @@
 //! Section 5: the login server. Enhanced Client: the built-in public hosts and ports, a host per slot and a port
 //! per immediate, edited as one more edit of the patch; Kingdom Reborn: its one built-in IPv4 address and port, the
 //! same way; Classic: the login.cfg lists, saved as a copy apart from the patch. Enhanced Client and Kingdom Reborn
-//! also show whether the client encrypts, with the toggle that patches the ciphers out.
+//! also show separate controls for login encryption, game encryption and KR's handshake.
 
 use std::path::PathBuf;
 
 use eframe::egui;
+use uocf::client::encryption::EncryptionPart;
 use uocf::client::login_servers::{LoginEntrySource, LoginFileRole};
 
 use super::{error_label, info_grid, muted_label, warning_label, ITEM_SPACING, SUCCESS_COLOR};
 use crate::app::Session;
-use crate::logic::encryption::{EncryptionStatus, PLAINTEXT_SERVER_NOTE};
+use crate::logic::encryption::{part_label, EncryptionStatus, ENCRYPTION_PARTS, PLAINTEXT_SERVER_NOTE};
 use crate::logic::login::{
     built_in_servers, check_server_row, internal_address, kind_label, login_mode, login_site_rows, login_status,
     servers_text, stock_login, ClassicLogin, LoginEdit, LoginFolder, LoginMode, CFG_KINDS, KR_IPV4_ONLY,
@@ -68,7 +69,7 @@ pub fn ui_login(ui: &mut egui::Ui, session: &mut Session) -> Option<LoginAction>
     None
 }
 
-/// Enhanced Client and Kingdom Reborn: whether the client encrypts, its ciphers and the no-encryption toggle.
+/// Enhanced Client and Kingdom Reborn: cipher sites and independent encryption/handshake controls.
 fn ui_encryption(ui: &mut egui::Ui, session: &mut Session) {
     let status = session.edits.encryption.status();
     if status == EncryptionStatus::NotApplicable {
@@ -101,18 +102,35 @@ fn ui_encryption(ui: &mut egui::Ui, session: &mut Session) {
         });
     }
     let encryption = &mut session.edits.encryption;
-    let can_remove = encryption.can_remove();
-    if !can_remove {
-        encryption.remove = false;
+    for part in ENCRYPTION_PARTS {
+        let status = encryption.part_status(part);
+        if status == EncryptionStatus::NotApplicable {
+            continue;
+        }
+        let can_remove = encryption.can_remove(part);
+        if !can_remove {
+            *encryption.selection_mut(part) = false;
+        }
+        let (label, help) = match part {
+            EncryptionPart::Login => ("Remove login encryption", "Send account login unencrypted; game settings are independent"),
+            EncryptionPart::Game => ("Remove game encryption", "Disable game ciphers in both directions; KR still waits for its 0xE3/0xE4 handshake"),
+            EncryptionPart::KrHandshake => ("Bypass KR handshake (direct plaintext game login)", "Send the relay auth-key seed and 0x91 immediately with Huffman enabled; no game cipher is installed, even if its bytes remain stock"),
+        };
+        ui.add_enabled(can_remove, egui::Checkbox::new(encryption.selection_mut(part), label))
+            .on_hover_text(help)
+            .on_disabled_hover_text("All sites for this control must be located, and at least one must still need patching");
+        let state = match status {
+            EncryptionStatus::Located(state) => state.label().to_owned(),
+            EncryptionStatus::NotLocated(unlocated) => format!("not located: {unlocated}"),
+            EncryptionStatus::NotApplicable => unreachable!(),
+        };
+        muted_label(ui, format!("{}: {state}", part_label(part)));
     }
-    ui.add_enabled(can_remove, egui::Checkbox::new(&mut encryption.remove, "Remove the encryption (plaintext)"))
-        .on_hover_text("Patches every cipher above out: the client sends and reads login and game packets unencrypted")
-        .on_disabled_hover_text("Every cipher must be located, and one at least still on");
-    let (edit, validation) = encryption.check();
+    let (edits, validation) = encryption.check();
     for error in &validation.errors {
         error_label(ui, error.as_str());
     }
-    if let Some(edit) = edit {
+    for edit in edits {
         ui.colored_label(SUCCESS_COLOR, format!("In the patch: {}.", edit.describe()));
     }
     muted_label(ui, PLAINTEXT_SERVER_NOTE);
