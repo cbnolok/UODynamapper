@@ -765,6 +765,20 @@ pub fn land_ui_system(
                     );
                     changed |= slider_s(
                         ui,
+                        "Chroma Knee",
+                        &mut u.lighting.grade_chroma_knee,
+                        0.0..=CHROMA_KNEE_OFF,
+                        tips::CHROMA_KNEE,
+                    );
+                    changed |= slider_s(
+                        ui,
+                        "Chroma Knee Slope",
+                        &mut u.lighting.grade_chroma_slope,
+                        0.0..=1.0,
+                        tips::CHROMA_KNEE_SLOPE,
+                    );
+                    changed |= slider_s(
+                        ui,
                         "Contrast (global)",
                         &mut u.lighting.grade_extra[2],
                         0.5..=2.0,

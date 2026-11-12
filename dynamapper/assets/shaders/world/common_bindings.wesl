@@ -87,6 +87,11 @@ struct GlobalLightingUniforms {
     _pad4_: f32,
     grade_params: vec4<f32>,
     grade_extra: vec4<f32>,
+    // The chroma knee after saturation (postprocess/color_grading.wesl): the knee (1 is off) and the slope above it;
+    // padded like the Rust `_pad6_`.
+    grade_chroma_knee: f32,
+    grade_chroma_slope: f32,
+    _pad6_: vec2<f32>,
     // [amount, falloff_height, shadow_bias]; padded like the Rust `_pad5_`.
     gloom_params: vec3<f32>,
     _pad5_: f32,

@@ -394,6 +394,7 @@ SPECS = [
     Spec('lighting.grade_params', const(0.0), fragment, '0 (headroom limit off)', comp=3),
     Spec('lighting.grade_extra', const([0.0, 1.0, 1.0, 0.0]), grading_on,
          '[0, 1, 1, 0] (no vibrance, saturation 1, contrast 1, no split toning)'),
+    Spec('lighting.grade_chroma_knee', const(1.0), grading_on, '1 (chroma knee off)'),
     Spec('lighting.grade_warm_color', lambda v, s: [1.0, 1.0, 1.0] + list(v[3:]),
          lambda s: grading_on(s) and s['lighting.grade_extra'][3] > 0, 'white'),
     Spec('lighting.grade_cool_color', lambda v, s: [1.0, 1.0, 1.0] + list(v[3:]),

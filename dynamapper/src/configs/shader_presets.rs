@@ -1167,6 +1167,32 @@ mod tests {
         }
     }
 
+    /// The chroma knee replaces KR-like's lower saturation: every other style keeps it off (knee 1, slope 1), and
+    /// KR-like keeps saturation at 1 so the two do not compound.
+    #[test]
+    fn only_kr_like_has_the_chroma_knee_on() {
+        use crate::core::render::scene::world::land::mesh_material::CHROMA_KNEE_OFF;
+        const NEUTRAL_SLOPE: f32 = 1.0;
+        const NEUTRAL_SATURATION: f32 = 1.0;
+        for text in [BUNDLED_FACTORY_PRESETS, BUNDLED_LAND_SETTINGS] {
+            let presets = parse(text).expect("bundled");
+            for (group, knee_on) in
+                [(&presets.classic, false), (&presets.enhanced, false), (&presets.kr, true), (&presets.painterly, false)]
+            {
+                for slot in [&group.morning, &group.afternoon, &group.night, &group.cave] {
+                    let lighting = &slot.lighting;
+                    if knee_on {
+                        assert!(lighting.grade_chroma_knee < CHROMA_KNEE_OFF);
+                        assert_eq!(lighting.grade_extra.y, NEUTRAL_SATURATION);
+                    } else {
+                        assert_eq!(lighting.grade_chroma_knee, CHROMA_KNEE_OFF);
+                        assert_eq!(lighting.grade_chroma_slope, NEUTRAL_SLOPE);
+                    }
+                }
+            }
+        }
+    }
+
     #[test]
     fn bundled_blur_radius_is_on_the_slider_from_the_shader_floor() {
         use crate::core::render::scene::world::land::mesh_material::{BLUR_RADIUS_MAX_PIXELS, BLUR_RADIUS_MIN_PIXELS};

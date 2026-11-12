@@ -294,6 +294,12 @@ pub struct GlobalLightingUniforms {
     pub grade_params: Vec4,
     //   grade_extra   = [vibrance, saturation, contrast, split_tone_strength]
     pub grade_extra: Vec4,
+    //   The chroma knee, after saturation (postprocess/color_grading.wesl): relative chroma (max − min) / max above
+    //   `grade_chroma_knee` becomes knee + (c − knee) · `grade_chroma_slope`. `CHROMA_KNEE_OFF` is off.
+    pub grade_chroma_knee: f32,
+    pub grade_chroma_slope: f32,
+    #[serde(skip)]
+    pub _pad6_: Vec2,
 
     // --- Gloom ---
     //   gloom_params  = [amount, falloff_height, shadow_bias]
@@ -326,6 +332,10 @@ pub struct GlobalLightingUniforms {
 pub const BLUR_RADIUS_MIN_PIXELS: f32 = 0.5;
 /// The largest texture blur radius the Blur Radius slider offers, in screen pixels.
 pub const BLUR_RADIUS_MAX_PIXELS: f32 = 8.0;
+
+/// `grade_chroma_knee` at or above which the chroma knee leaves every colour as it is. Matches `CHROMA_KNEE_OFF` in
+/// `postprocess/color_grading.wesl`.
+pub const CHROMA_KNEE_OFF: f32 = 1.0;
 
 /// `tone_curve`: the visual profile's curve (Reinhard, EC filmic or KR filmic), with `exposure` inside it.
 pub const TONE_CURVE_PROFILE: u32 = 0;

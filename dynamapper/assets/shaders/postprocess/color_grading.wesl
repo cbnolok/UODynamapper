@@ -15,6 +15,33 @@ fn apply_contrast_neutral(x: vec3<f32>, contrast: f32) -> vec3<f32> {
   return x + t * ((x - x * x) * 2.0);
 }
 
+// The knee at or above which the chroma knee is off: relative chroma never exceeds 1 for a colour without negative
+// channels, and the early return keeps the colour bit for bit.
+const CHROMA_KNEE_OFF: f32 = 1.0;
+
+// Chroma knee: compresses only vivid colours. A colour's relative chroma is c = (max - min) / max of its linear RGB
+// channels (HSV saturation in linear light). Above the knee, c becomes knee + (c - knee) * slope, by scaling the
+// colour's offset from its Rec. 709 luma `luma` by the target over c, the same mix toward luma as saturation: luma
+// stays, and so does the hue (the offset keeps its direction). Colours at or below the knee are unchanged; slope 1
+// changes nothing, slope 0 caps c at the knee. Matches `mock_colour` in
+// scripts/dev-helpers/renderer/krlike_reference_tuning.py.
+fn apply_chroma_knee(col: vec3<f32>, luma: f32, knee: f32, slope: f32) -> vec3<f32> {
+  if (knee >= CHROMA_KNEE_OFF) {
+    return col;
+  }
+  let top = max(max(col.r, col.g), col.b);
+  if (top <= 0.0) {
+    return col;
+  }
+  let c = (top - min(min(col.r, col.g), col.b)) / top;
+  let k = max(knee, 0.0);
+  if (c <= k) {
+    return col;
+  }
+  let target_c = k + (c - k) * max(slope, 0.0);
+  return mix(vec3<f32>(luma), col, target_c / c);
+}
+
 fn grade_color_vibrant(color_in: vec3<f32>, global_light: GlobalLightingUniforms) -> vec3<f32> {
   let strength    = global_light.grade_params.x;
   let vibrance    = global_light.grade_extra.x;
@@ -24,11 +51,13 @@ fn grade_color_vibrant(color_in: vec3<f32>, global_light: GlobalLightingUniforms
 
   let l = color_grading_luminance(color_in);
   let sat_col = mix(vec3<f32>(l), color_in, saturation);
+  // After saturation, as the mock-up: saturation keeps the luma l, so the knee mixes toward the same grey.
+  let knee_col = apply_chroma_knee(sat_col, l, global_light.grade_chroma_knee, global_light.grade_chroma_slope);
 
-  let chroma = sat_col - vec3<f32>(l);
+  let chroma = knee_col - vec3<f32>(l);
   let sat_mag = max(max(abs(chroma.r), abs(chroma.g)), abs(chroma.b));
   let vib_mask = smoothstep(0.0, 0.7, 1.0 - sat_mag);
-  let vib_col = sat_col + chroma * (vibrance * vib_mask);
+  let vib_col = knee_col + chroma * (vibrance * vib_mask);
 
   let ctr_col = apply_contrast_neutral(vib_col, contrast);
 

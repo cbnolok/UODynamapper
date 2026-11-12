@@ -23,7 +23,7 @@ pub(super) const TONEMAP: &str =
 pub(super) const TONE_CURVE: &str =
     "Which tone curve Tonemap uses. Needs Tonemap on.";
 pub(super) const COLOR_GRADING: &str =
-    "Turns on the colour grading tuned under Advanced > Color Grading, in every render style; on in UOD-Painterly, and in KR-like for a lower Saturation alone. If colours look oversaturated, lower Saturation or Vibrance there.";
+    "Turns on the colour grading tuned under Advanced > Color Grading, in every render style; on in UOD-Painterly, and in KR-like for the Chroma Knee alone. If colours look oversaturated, lower Saturation, Vibrance or the Chroma Knee there.";
 pub(super) const TEXTURE_SMOOTHNESS: &str =
     "Softens the seams between texture pixels under the Pixel art filter; liquids and item surfaces follow it under either filter. On in KR-like and UOD-Painterly.";
 pub(super) const TEXTURE_FILTER: &str =
@@ -177,6 +177,10 @@ pub(super) const VIBRANCE: &str =
     "Boosts dull colours more than vivid ones. Needs Color Grading on.";
 pub(super) const SATURATION: &str =
     "Strength of all colours; 1 leaves them unchanged. Needs Color Grading on.";
+pub(super) const CHROMA_KNEE: &str =
+    "Tones down only the vivid colours: a colour more saturated than the knee is pulled toward grey, keeping its brightness and hue, while duller colours stay as they are. 1 is off; KR-like uses it in place of a lower Saturation to bring its greens to the KR screenshots without greying stone and wood. Needs Color Grading on.";
+pub(super) const CHROMA_KNEE_SLOPE: &str =
+    "How much saturation above the Chroma Knee is kept: 1 keeps it all (no effect), 0 caps every colour at the knee. Needs Color Grading on and a Chroma Knee below 1.";
 pub(super) const CONTRAST: &str =
     "Pushes darks and lights apart; 1 leaves them unchanged. Needs Color Grading on.";
 pub(super) const SPLIT_TONE: &str =
