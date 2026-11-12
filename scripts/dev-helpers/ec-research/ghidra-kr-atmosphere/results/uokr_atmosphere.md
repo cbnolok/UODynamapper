@@ -957,7 +957,8 @@ else:
   the lighting effect (0x00c4a010, ctor at 0x0041ee8e). The append order is *confirmed*; that the effects run in
   array order is *probable*. So the shadow composite comes **before** the lighting composite.
 
-**Depth order** (*confirmed* from the assembly, 2026-11-12). The base point alone gives no z term (V . U = 0), but
+**Depth order** (*confirmed* from the assembly, 2026-11-12; compared with Dynamapper's geometric scale in
+[DEPTH_SCALE_AND_KR_CLIENT.md](../../../../../docs/dev_wiki/rendering/DEPTH_SCALE_AND_KR_CLIENT.md)). The base point alone gives no z term (V . U = 0), but
 every sprite also carries a bias along V, the descriptor's +0x60..+0x68, which `BuildSpriteBatch` 0x004454c0 adds to
 each corner:
 
