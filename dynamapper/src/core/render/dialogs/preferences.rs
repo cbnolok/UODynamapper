@@ -15,7 +15,8 @@ const FPS_PRESETS: &[u32] = &[15, 30, 60, 75, 120, 144, 165, 240];
 const DEFAULT_FPS_LIMIT: u32 = 60;
 /// Hover text of the "Season / profile" choice.
 const ROUTE_PROFILE_HOVER: &str = "The profile of the land and item routes (LandRoutes.kdl) in force, on top of its \
-    routes block: the Classic client's seasons, or your copy's profiles.";
+    routes block: the Classic client's seasons, or your copy's profiles. A profile's `when` limits it to where the \
+    player stands: desolation applies west of x 0x1800, as in the Classic client.";
 /// Hover text of the route file's "Reload" button.
 const ROUTE_FILE_RELOAD_HOVER: &str = "Read LandRoutes.kdl again. Saving your copy reloads it too.";
 /// Hover text of the "Gumps and paperdoll" choice.

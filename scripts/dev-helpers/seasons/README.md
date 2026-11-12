@@ -25,8 +25,20 @@ matches the client's.
   `0x008891d8` (the 31 land ids). The other tables stay identity.
 - `FUN_0045c0d0` looks a land id up in winter only; the land getter `FUN_00594670` is its only caller.
 - `FUN_0045c5a0` switches a static's graphic: spring `FUN_0045c130`, fall `FUN_0045c250`, desolation `FUN_0045c3d0`.
-  Desolation applies only while the player's x (`DAT_00afb6d4 + 0x24`) is below 0x1800; elsewhere the client reports
-  summer (`FUN_0045c5e0`). Dynamapper applies desolation everywhere. Summer and winter change no static.
+  Desolation applies only while the player's x (`DAT_00afb6d4 + 0x24`, a signed 16-bit compare:
+  `CMP word ptr [EAX + 0x24],0x1800; JGE`) is below 0x1800, strictly, and only with a player object. No map is
+  checked: the rule holds on every map, and only Felucca and Trammel are wider than 0x1800. Elsewhere the client
+  reports summer (`FUN_0045c5e0`, read by the radar, the object list and the season packet handler). Summer and
+  winter change no static. The script writes the rule as the desolation profile's `when player-x-below=0x1800`, which
+  Dynamapper follows from the player's position.
+- When it is evaluated: per statics block. `FUN_00595240` keeps the 8x8 blocks of a 7x7-block window around the
+  player and builds only the blocks entering it (at each step, through `RebuildTilesAroundPlayer`), switching their
+  statics with the player's x of that moment; blocks already built keep their graphics until they leave the window.
+  The world is cleared (`FUN_00470370`) and built again only on a map change (`SetFacet`) and when the season
+  packet (`FUN_004704c0`) changes the reported season; a teleport (`FUN_00476290`) builds the blocks missing around
+  the new position, the others leaving as they fall out of the window. The client has no hysteresis or other guard at
+  the line. Dynamapper switches the whole
+  profile at once when the player crosses the line.
 - The static switch has one caller, `FUN_005b00f0`, called only by `FUN_00595240`, which builds the statics of the
   blocks around the player from `staidx`/`statics`. `FUN_005b00f0` stores the switched graphic and reads the tile
   data of that graphic, so a switched static takes the new item's tile data too. Multis are built elsewhere and are

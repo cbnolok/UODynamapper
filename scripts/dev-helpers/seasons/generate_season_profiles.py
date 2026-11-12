@@ -35,6 +35,11 @@ SEASONS = ("spring", "summer", "fall", "winter", "desolation")
 STATIC_FUNCTIONS = {"spring": "GetSpringGraphic", "fall": "GetFallGraphic", "desolation": "GetDesolationGraphic"}
 # The array of the winter land graphics. No other season changes land.
 WINTER_LAND_ARRAY = "_winterGraphic"
+# The client's rule of where a season applies, as a `when` node of its profile: desolation switches statics only
+# while the player's x is below 0x1800, on every map (FUN_0045c5a0 in the Classic client 7.0.103.0).
+CONDITIONS = {"desolation": "player-x-below=0x1800"}
+CONDITION_NOTE = ("The Classic client's rule. A custom map can change it, add a `when ... map=<n>` for a map of its "
+                  "own, or remove it to apply the profile everywhere.")
 INDENT = "    "
 # The width the comments of the route file wrap at.
 COMMENT_WIDTH = 118
@@ -44,8 +49,8 @@ NOTES = {
     "summer": "Summer: the client draws everything as it is.",
     "fall": "Fall: the client changes these statics; land is unchanged.",
     "winter": "Winter: the client draws snow on these land ids; statics are unchanged.",
-    "desolation": "Desolation: the client changes these statics, only while the player stands west of x 0x1800 (the "
-                  "map's Britannia); Dynamapper changes them everywhere. Land is unchanged.",
+    "desolation": "Desolation: the client changes these statics only while the player stands west of x 0x1800, on "
+                  "every map (only Felucca and Trammel reach past it). Land is unchanged.",
 }
 
 
@@ -114,8 +119,16 @@ def route_lines(node, table):
     return lines
 
 
-def comment(text):
-    return textwrap.wrap(text, COMMENT_WIDTH, initial_indent="// ", subsequent_indent="// ")
+def comment(text, indent=""):
+    prefix = indent + "// "
+    return textwrap.wrap(text, COMMENT_WIDTH, initial_indent=prefix, subsequent_indent=prefix)
+
+
+def condition_lines(season):
+    """The `when` node of a season the client limits, with its note."""
+    if season not in CONDITIONS:
+        return []
+    return [*comment(CONDITION_NOTE, INDENT), f"{INDENT}when {CONDITIONS[season]}"]
 
 
 def profiles(source):
@@ -127,7 +140,8 @@ def profiles(source):
         "entry for entry. Do not edit by hand: run the script again.")]
     for season in SEASONS:
         out += comment(NOTES[season])
-        body = route_lines("land", land.get(season, {})) + route_lines("item", statics.get(season, {}))
+        body = (condition_lines(season) + route_lines("land", land.get(season, {}))
+                + route_lines("item", statics.get(season, {})))
         if body:
             out += [f'profile "{season}" {{', *body, "}"]
         else:

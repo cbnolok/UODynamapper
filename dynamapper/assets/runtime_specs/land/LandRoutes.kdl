@@ -15,6 +15,11 @@
 //   item <id> [<last id>] id=<item id>
 //     Statics of the item id, or of every id up to <last id>, draw the item `id` with its tile data, as the Classic
 //     client does for its seasons. Multis are not routed.
+//   when player-x-below=<x> [map=<map>]
+//     In a profile only: the profile applies only while the player's x is below <x>, on the map <map>, or on every
+//     map when left out. On each map the `when` naming it decides, else the one without `map`; a profile with `when`
+//     nodes, none of which covers the map, does not apply there. A profile without `when` applies everywhere. The
+//     player crossing the line switches the profile on or off at once.
 //
 // An id is routed once per block. A route whose source lacks the id it names falls back to the usual chain (the
 // selected source, the other Enhanced-layout source, then Classic), with a warning; Classic selected never draws
@@ -116,9 +121,12 @@ profile "winter" {
     land 0x0603 id=0x011C
     land 0x0604 id=0x011D
 }
-// Desolation: the client changes these statics, only while the player stands west of x 0x1800 (the map's Britannia);
-// Dynamapper changes them everywhere. Land is unchanged.
+// Desolation: the client changes these statics only while the player stands west of x 0x1800, on every map (only
+// Felucca and Trammel reach past it). Land is unchanged.
 profile "desolation" {
+    // The Classic client's rule. A custom map can change it, add a `when ... map=<n>` for a map of its own, or remove
+    // it to apply the profile everywhere.
+    when player-x-below=0x1800
     item 0x0C37 0x0C38 id=0x1BAE
     item 0x0C45 id=0x1B9C
     item 0x0C46 id=0x1B9D

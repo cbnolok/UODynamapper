@@ -1,8 +1,10 @@
 //! The route file at run time (`configs::land_routes`, LandRoutes.kdl): read at startup, read again when the user's
-//! copy is saved or Preferences asks for it, with the profile Preferences > Graphics names in force. Each change of
-//! the file in force or of the profile counts a revision: the land routes are resolved again and the land atlas rebuilt
-//! (`sys_apply_land_texture_source_changes`), and the statics stores read their blocks again through the new item
-//! routes (`sys_apply_item_routes`).
+//! copy is saved or Preferences asks for it, with the profile Preferences > Graphics names in force. A profile with
+//! `when` nodes is in force only while the player stands where one holds (`RouteProfile::applies_at`), so the player
+//! crossing its line switches it on or off. Each change of the file in force or of the profile in force counts a
+//! revision: the land routes are resolved again and the land atlas rebuilt when they changed
+//! (`sys_apply_land_texture_source_changes`), and the statics stores read their blocks again when the item routes
+//! changed (`sys_apply_item_routes`).
 //!
 //! A user copy that does not read leaves the bundled file in force, with the error in the log and in the window, until
 //! it is fixed (`configs::runtime_specs`).
@@ -15,7 +17,9 @@ use bevy::prelude::*;
 use crate::configs::land_routes::{LandRoute, LandRoutesFile, LAND_ROUTES_FILE_NAME, LAND_ROUTES_SPECS_FOLDER};
 use crate::configs::runtime_specs::{LoadedSpec, SpecFiles};
 use crate::console_logger::{self, LogAbout, LogSev};
+use crate::core::render::scene::player::Player;
 use crate::core::statics::StaticsStoreRes;
+use crate::util_lib::uo_coords::UOVec4;
 
 /// How often the user's copy is checked for a save.
 const ROUTE_FILE_CHECK_INTERVAL: Duration = Duration::from_secs(1);
@@ -28,8 +32,10 @@ pub struct RouteFileRes {
     file: LandRoutesFile,
     /// The user copy's modification time when it was last read; `None` when there was none.
     user_modified: Option<SystemTime>,
-    /// The profile in force: the one the settings name, when the file has it.
+    /// The profile in force: the one the settings name, when the file has it and it applies where the player is.
     profile: Option<String>,
+    /// The settings' profile with `when` nodes and whether they held when last selected, for the log of a crossing.
+    condition_held: Option<(String, bool)>,
     /// Counts the changes of the file in force and of the profile in force.
     revision: u64,
     /// Set by Preferences' "Reload" button: the file is read again on the next frame.
@@ -69,6 +75,7 @@ impl RouteFileRes {
             file: loaded.value,
             user_modified,
             profile: None,
+            condition_held: None,
             revision: 1,
             reload_requested: false,
             warned_missing_profile: None,
@@ -98,19 +105,33 @@ impl RouteFileRes {
         }
     }
 
-    /// Puts the profile `requested` (empty: none) in force when the file has it; a profile the file lacks applies no
-    /// profile, with a warning. Counts a revision when the profile in force changes.
-    fn select_profile(&mut self, requested: &str) {
-        let profile = (!requested.is_empty() && self.file.profile(requested).is_some()).then(|| requested.to_string());
-        if !requested.is_empty() && profile.is_none() && self.warned_missing_profile.as_deref() != Some(requested) {
+    /// Puts the profile `requested` (empty: none) in force when the file has it and it applies at the player's
+    /// position; a profile the file lacks applies no profile, with a warning. Counts a revision when the profile in
+    /// force changes.
+    fn select_profile(&mut self, requested: &str, player: UOVec4) {
+        let selected = (!requested.is_empty()).then(|| self.file.profile(requested)).flatten();
+        // Whether the `when` nodes of the selected profile hold; `None` when it has none.
+        let held = selected.filter(|profile| !profile.conditions.is_empty())
+            .map(|profile| profile.applies_at(player.m, player.x));
+        let profile = selected.filter(|_| held != Some(false)).map(|profile| profile.name.as_str());
+        if let Some(held) = held
+            && self.condition_held.as_ref().map(|(name, was)| (name.as_str(), *was)) != Some((requested, held))
+        {
+            self.condition_held = Some((requested.to_string(), held));
+            let verb = if held { "applies" } else { "does not apply" };
+            console_logger::one(LogSev::Info, LogAbout::Settings, &format!(
+                "The route profile \"{requested}\" {verb} with the player at x {} ({:#06X}) on map {}: its `when` \
+                 decides where it applies.", player.x, player.x, player.m));
+        }
+        if !requested.is_empty() && selected.is_none() && self.warned_missing_profile.as_deref() != Some(requested) {
             self.warned_missing_profile = Some(requested.to_string());
             let message = format!("The route profile \"{requested}\" is not in {}: no profile applies.",
                 LAND_ROUTES_FILE_NAME);
             console_logger::one(LogSev::Warn, LogAbout::Settings, &message);
             crate::ingame_sysmessage_logger::warning(message);
         }
-        if profile != self.profile {
-            self.profile = profile;
+        if profile != self.profile.as_deref() {
+            self.profile = profile.map(str::to_string);
             self.revision += 1;
         }
     }
@@ -170,11 +191,19 @@ pub fn sys_watch_route_file(mut routes: ResMut<RouteFileRes>, time: Res<Time<Rea
 }
 
 /// Puts the profile the settings name in force (Preferences > Graphics > "Season / profile"), also after the file is
-/// read again: a profile may appear in it or leave it.
-pub fn sys_select_route_profile(settings: Res<crate::configs::settings::Settings>, mut routes: ResMut<RouteFileRes>) {
-    if settings.is_changed() || routes.is_changed() {
+/// read again: a profile may appear in it or leave it. A profile with `when` nodes follows the player's position (the
+/// position the HUD shows; the saved one until the player exists): crossing the line of its `when` switches it.
+pub fn sys_select_route_profile(
+    settings: Res<crate::configs::settings::Settings>,
+    mut routes: ResMut<RouteFileRes>,
+    player_q: Query<Ref<Player>>,
+) {
+    let player = player_q.iter().next();
+    let player_moved = player.as_ref().is_some_and(|player| player.is_changed());
+    if settings.is_changed() || routes.is_changed() || player_moved {
+        let position = player.and_then(|player| player.current_pos).unwrap_or(settings.session_state.world.last_p);
         // The revision tells the systems that apply the routes what changed; the change flag stays the file's.
-        routes.bypass_change_detection().select_profile(&settings.graphics.route_profile);
+        routes.bypass_change_detection().select_profile(&settings.graphics.route_profile, position);
     }
 }
 
@@ -215,5 +244,55 @@ mod tests {
         assert_eq!(labels("winter"), ["None", "spring", "winter"]);
         assert_eq!(labels("fall"), ["None", "spring", "winter", "fall (missing)"]);
         assert_eq!(route_profile_entries(profiles.into_iter(), "")[0].0, "");
+    }
+
+    fn routes_of(text: &str) -> RouteFileRes {
+        let file = LandRoutesFile::decode(LAND_ROUTES_FILE_NAME, text).unwrap_or_else(|error| panic!("{error:#}"));
+        RouteFileRes {
+            files: SpecFiles::under(std::path::Path::new("assets"), std::path::Path::new("cache"),
+                LAND_ROUTES_SPECS_FOLDER, LAND_ROUTES_FILE_NAME),
+            file,
+            user_modified: None,
+            profile: None,
+            condition_held: None,
+            revision: 1,
+            reload_requested: false,
+            warned_missing_profile: None,
+            pending_notices: Vec::new(),
+        }
+    }
+
+    /// The player crossing the line of the selected profile's `when` switches its routes on and off, each switch
+    /// counting one revision; moving on the same side changes nothing.
+    #[test]
+    fn crossing_the_when_line_switches_the_profile() {
+        let mut routes = routes_of(
+            "profile \"desolation\" {\n    when player-x-below=0x1800\n    when player-x-below=0x1000 map=1\n    \
+             item 0x0C37 id=0x1BAE\n}\nprofile \"fall\" {\n    item 0x0CD1 id=0x0CD2\n}\n");
+        let at = |x, m| UOVec4::new(x, 100, 0, m);
+        routes.select_profile("desolation", at(0x17FF, 0));
+        let west = routes.revision();
+        assert_eq!(routes.item_routes().unwrap()[0x0C37], 0x1BAE);
+        routes.select_profile("desolation", at(0x1000, 0));
+        assert_eq!(routes.revision(), west);
+
+        routes.select_profile("desolation", at(0x1800, 0));
+        assert_eq!(routes.revision(), west + 1);
+        assert_eq!(routes.item_routes(), None);
+        routes.select_profile("desolation", at(0x1BFF, 0));
+        assert_eq!(routes.revision(), west + 1);
+
+        routes.select_profile("desolation", at(0x17FF, 0));
+        assert_eq!(routes.revision(), west + 2);
+        assert_eq!(routes.item_routes().unwrap()[0x0C37], 0x1BAE);
+        // Map 1 has a `when` of its own.
+        routes.select_profile("desolation", at(0x1000, 1));
+        assert_eq!((routes.revision(), routes.item_routes()), (west + 3, None));
+
+        // A profile without `when` applies wherever the player is.
+        routes.select_profile("fall", at(0x1BFF, 0));
+        assert_eq!(routes.item_routes().unwrap()[0x0CD1], 0x0CD2);
+        routes.select_profile("", at(0x17FF, 0));
+        assert_eq!(routes.item_routes(), None);
     }
 }

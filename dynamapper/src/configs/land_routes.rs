@@ -13,12 +13,22 @@
 //! profile "winter" {
 //!     land 0x00C4 0x00C7 source="cc" id=0x011A
 //! }
+//! profile "desolation" {
+//!     when player-x-below=0x1800          // only while the player stands west of x 0x1800
+//!     item 0x0C37 0x0C38 id=0x1BAE
+//! }
 //! ```
 //!
 //! `land` and `item` take one id, or two: the first and last of a range. A land route's `source` defaults to the Land
 //! Texture Source preference and its `id` to the routed id; `terrain` names an Enhanced-layout terrain definition in
 //! place of `id`. An item route needs `id`. Within one block an id is routed once; the profile's route of an id
 //! replaces the `routes` block's.
+//!
+//! A profile's `when` nodes (the user's design, 2026-11-12) limit where it applies: `when player-x-below=<x>
+//! [map=<n>]` holds while the player's x is below `x` on the map `n`, or on every map without `map`. On each map the
+//! `when` naming it decides, else the `when` without `map`; a profile with `when` nodes, none of which covers the
+//! map, does not apply there. A profile without `when` applies everywhere. The Classic client applies desolation
+//! only while the player's x is below 0x1800, on every map (`FUN_0045c5a0`); a custom map may need another line.
 
 use color_eyre::eyre;
 use uot_kdl::ast::{Literal, Node, SpannedNode, Value};
@@ -43,16 +53,28 @@ const ITEM_NODE: &str = "item";
 const SOURCE_PROPERTY: &str = "source";
 const ID_PROPERTY: &str = "id";
 const TERRAIN_PROPERTY: &str = "terrain";
+const WHEN_NODE: &str = "when";
+const PLAYER_X_BELOW_PROPERTY: &str = "player-x-below";
+const MAP_PROPERTY: &str = "map";
 
-/// The nodes of a route block.
-const ROUTE_BLOCK_CHILDREN: &[NodeSchema] = &[
-    NodeSchema::leaf(LAND_NODE, &[SOURCE_PROPERTY, ID_PROPERTY, TERRAIN_PROPERTY]),
-    NodeSchema::leaf(ITEM_NODE, &[ID_PROPERTY]),
+/// Map ids a `when` can name: the player position's map (`UOVec4::m`).
+pub const PROFILE_MAP_ID_COUNT: usize = 1 << u8::BITS;
+
+const LAND_ROUTE_SCHEMA: NodeSchema = NodeSchema::leaf(LAND_NODE, &[SOURCE_PROPERTY, ID_PROPERTY, TERRAIN_PROPERTY]);
+const ITEM_ROUTE_SCHEMA: NodeSchema = NodeSchema::leaf(ITEM_NODE, &[ID_PROPERTY]);
+
+/// The nodes of the `routes` block.
+const ROUTE_BLOCK_CHILDREN: &[NodeSchema] = &[LAND_ROUTE_SCHEMA, ITEM_ROUTE_SCHEMA];
+/// The nodes of a profile: its routes and where it applies.
+const PROFILE_CHILDREN: &[NodeSchema] = &[
+    LAND_ROUTE_SCHEMA,
+    ITEM_ROUTE_SCHEMA,
+    NodeSchema::leaf(WHEN_NODE, &[PLAYER_X_BELOW_PROPERTY, MAP_PROPERTY]),
 ];
 
 pub const LAND_ROUTES_SCHEMA: &[NodeSchema] = &[
     NodeSchema { name: ROUTES_NODE, properties: &[], children: ROUTE_BLOCK_CHILDREN },
-    NodeSchema { name: PROFILE_NODE, properties: &[], children: ROUTE_BLOCK_CHILDREN },
+    NodeSchema { name: PROFILE_NODE, properties: &[], children: PROFILE_CHILDREN },
 ];
 
 /// What a land route draws, within its source.
@@ -116,11 +138,36 @@ impl RouteBlock {
     }
 }
 
+/// A `when` node: where its profile applies.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct ProfileCondition {
+    /// `None`: every map no other `when` of the profile names.
+    pub map: Option<u8>,
+    /// The profile applies while the player's x is below this.
+    pub player_x_below: u16,
+    pub line: usize,
+}
+
 /// A named set of routes, chosen at run time.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct RouteProfile {
     pub name: String,
+    /// Where the profile applies; empty: everywhere.
+    pub conditions: Vec<ProfileCondition>,
     pub block: RouteBlock,
+}
+
+impl RouteProfile {
+    /// Whether the profile applies with the player at `x` on `map`: everywhere without `when`; else under the `when`
+    /// naming the map, or the `when` without a map when none names it, and nowhere on a map no `when` covers.
+    pub fn applies_at(&self, map: u8, x: u16) -> bool {
+        if self.conditions.is_empty() {
+            return true;
+        }
+        let condition = self.conditions.iter().find(|condition| condition.map == Some(map))
+            .or_else(|| self.conditions.iter().find(|condition| condition.map.is_none()));
+        condition.is_some_and(|condition| x < condition.player_x_below)
+    }
 }
 
 /// The route file as read.
@@ -196,7 +243,8 @@ fn decode_document(nodes: &[SpannedNode<LineSpan>]) -> eyre::Result<LandRoutesFi
                         format!("a second `{ROUTES_NODE}` block (the first is on line {first})")));
                 }
                 routes_line = Some(line);
-                file.routes = decode_block(node)?;
+                // The `routes` schema has no `when`.
+                (file.routes, _) = decode_block(node, ROUTE_BLOCK_CHILDREN)?;
             }
             _ => {
                 let [name] = strict::arguments::<1>(node)?;
@@ -207,21 +255,25 @@ fn decode_document(nodes: &[SpannedNode<LineSpan>]) -> eyre::Result<LandRoutesFi
                 if file.profile(&name_text).is_some() {
                     return Err(strict::error_at(name.literal.span(), format!("a second profile \"{name_text}\"")));
                 }
-                file.profiles.push(RouteProfile { name: name_text, block: decode_block(node)? });
+                let (block, conditions) = decode_block(node, PROFILE_CHILDREN)?;
+                file.profiles.push(RouteProfile { name: name_text, conditions, block });
             }
         }
     }
     Ok(file)
 }
 
-fn decode_block(block_node: &Node<LineSpan>) -> eyre::Result<RouteBlock> {
+/// The routes of a block and its `when` nodes, which only a profile's `children` allow.
+fn decode_block(block_node: &Node<LineSpan>, children: &[NodeSchema])
+    -> eyre::Result<(RouteBlock, Vec<ProfileCondition>)> {
     let block_name: &str = &block_node.node_name;
     let mut block = RouteBlock::default();
+    let mut conditions = Vec::<ProfileCondition>::new();
     // The line routing each id, to name both lines of an id routed twice.
     let mut land_lines = vec![None; LAND_ROUTE_ID_COUNT];
     let mut item_lines = vec![None; ITEM_ROUTE_ID_COUNT];
     for node in block_node.children() {
-        let schema = strict::node_schema(node, Some(block_name), ROUTE_BLOCK_CHILDREN)?;
+        let schema = strict::node_schema(node, Some(block_name), children)?;
         strict::check_properties(node, schema.properties)?;
         strict::reject_children(node)?;
         let line = line_of(node);
@@ -232,15 +284,39 @@ fn decode_block(block_node: &Node<LineSpan>) -> eyre::Result<RouteBlock> {
                 claim_ids(node, first, last, &mut land_lines)?;
                 block.land.push(LandRouteRule { first, last, route });
             }
-            _ => {
+            ITEM_NODE => {
                 let (first, last) = id_range(node, ITEM_ROUTE_ID_COUNT)?;
                 let id = item_id(strict::required_property(node, ID_PROPERTY)?, ID_PROPERTY)?;
                 claim_ids(node, first, last, &mut item_lines)?;
                 block.items.push(ItemRouteRule { first, last, id });
             }
+            _ => {
+                let condition = decode_condition(node, line)?;
+                if let Some(earlier) = conditions.iter().find(|earlier| earlier.map == condition.map) {
+                    let maps = condition.map.map_or("without map=".to_string(), |map| format!("for map {map}"));
+                    return Err(strict::error_at(node.node_name.span(),
+                        format!("a second `{WHEN_NODE}` {maps} (the first is on line {})", earlier.line)));
+                }
+                conditions.push(condition);
+            }
         }
     }
-    Ok(block)
+    Ok((block, conditions))
+}
+
+fn decode_condition(node: &Node<LineSpan>, line: usize) -> eyre::Result<ProfileCondition> {
+    strict::arguments::<0>(node)?;
+    let below = strict::required_property(node, PLAYER_X_BELOW_PROPERTY)?;
+    let player_x_below = strict::value_u16(below, PLAYER_X_BELOW_PROPERTY)?;
+    if player_x_below == 0 {
+        return Err(strict::error_at(below.literal.span(), format!("{PLAYER_X_BELOW_PROPERTY}: no x is below 0")));
+    }
+    let map = strict::property(node, MAP_PROPERTY).map(|value| {
+        let map = strict::value_u32(value, MAP_PROPERTY)?;
+        u8::try_from(map).map_err(|_| strict::error_at(value.literal.span(),
+            format!("{MAP_PROPERTY}: {map} is past the last map, {}", PROFILE_MAP_ID_COUNT - 1)))
+    }).transpose()?;
+    Ok(ProfileCondition { map, player_x_below, line })
 }
 
 fn decode_land_route(node: &Node<LineSpan>, line: usize) -> eyre::Result<LandRoute> {
@@ -407,6 +483,83 @@ mod tests {
         assert_eq!(winter[0xC4].unwrap().target_id(0xC4), Some(0x11A));
         assert_eq!(winter[0xC4].unwrap().source, None);
         assert_eq!(file.item_routes(Some("desolation")).unwrap()[0x1B7E], 0x1E34);
+        // Desolation carries the client's rule: west of x 0x1800 on every map. The seasons apply everywhere.
+        let desolation = file.profile("desolation").unwrap();
+        assert_eq!(desolation.conditions.iter().map(|condition| (condition.map, condition.player_x_below))
+            .collect::<Vec<_>>(), [(None, 0x1800)]);
+        assert!(file.profiles.iter().filter(|profile| profile.name != "desolation")
+            .all(|profile| profile.conditions.is_empty()));
+    }
+
+    #[test]
+    fn when_nodes_read_with_their_lines() {
+        let file = decode(
+            r#"
+            profile "desolation" {
+                when player-x-below=0x1800
+                item 0x0C37 id=0x1BAE
+                when player-x-below=0x1000 map=0
+                when player-x-below=900 map=5
+            }
+            "#,
+        );
+        let profile = file.profile("desolation").unwrap();
+        assert_eq!(profile.conditions, vec![
+            ProfileCondition { map: None, player_x_below: 0x1800, line: 3 },
+            ProfileCondition { map: Some(0), player_x_below: 0x1000, line: 5 },
+            ProfileCondition { map: Some(5), player_x_below: 900, line: 6 },
+        ]);
+        assert_eq!(profile.block.items, vec![ItemRouteRule { first: 0xC37, last: 0xC37, id: 0x1BAE }]);
+    }
+
+    /// The `when` naming the map decides, else the one without a map; a map none covers has no profile; a profile
+    /// without `when` applies everywhere. The bound is strict, as the client's `x < 0x1800`.
+    #[test]
+    fn a_profile_applies_where_its_when_holds() {
+        let file = decode(
+            r#"
+            profile "everywhere" {}
+            profile "west" {
+                when player-x-below=0x1800
+            }
+            profile "per-map" {
+                when player-x-below=0x1800
+                when player-x-below=0x1000 map=1
+            }
+            profile "map-two" {
+                when player-x-below=100 map=2
+            }
+            "#,
+        );
+        let applies = |name, map, x| file.profile(name).unwrap().applies_at(map, x);
+        assert!(applies("everywhere", 0, u16::MAX));
+        assert!(applies("west", 0, 0x17FF) && !applies("west", 0, 0x1800) && !applies("west", 0, 0x1BFF));
+        assert!(applies("west", 4, 0x17FF) && !applies("west", 4, 0x1800));
+        assert!(applies("per-map", 0, 0x17FF) && applies("per-map", 1, 0x0FFF) && !applies("per-map", 1, 0x1000));
+        assert!(applies("map-two", 2, 99) && !applies("map-two", 2, 100) && !applies("map-two", 0, 0));
+    }
+
+    #[test]
+    fn when_errors_name_their_line() {
+        assert_error("routes {\n    when player-x-below=10\n}\n", 2,
+            "unknown node `when` in `routes`: expected `land` or `item`");
+        assert_error("profile \"a\" {\n    season 3\n}\n", 2,
+            "unknown node `season` in `profile`: expected one of `land`, `item`, `when`");
+        assert_error("profile \"a\" {\n    when x=10\n}\n", 2,
+            "unknown property `x` of `when`: expected `player-x-below` or `map`");
+        assert_error("profile \"a\" {\n    when map=0\n}\n", 2, "`when`: missing player-x-below=");
+        assert_error("profile \"a\" {\n    when 3 player-x-below=10\n}\n", 2, "`when` takes 0 arguments, found 1");
+        assert_error("profile \"a\" {\n    when player-x-below=10 {\n        land 1\n    }\n}\n", 3,
+            "`when` takes no children");
+        assert_error("profile \"a\" {\n    when player-x-below=0\n}\n", 2, "player-x-below: no x is below 0");
+        assert_error("profile \"a\" {\n    when player-x-below=0x10000\n}\n", 2, "player-x-below: not a u16");
+        assert_error("profile \"a\" {\n    when player-x-below=\"10\"\n}\n", 2, "player-x-below: expected an integer");
+        assert_error("profile \"a\" {\n    when player-x-below=10 map=256\n}\n", 2, "map: 256 is past the last map, 255");
+        assert_error("profile \"a\" {\n    when player-x-below=10 map=-1\n}\n", 2, "map: not a u32");
+        assert_error("profile \"a\" {\n    when player-x-below=10\n    when player-x-below=20\n}\n", 3,
+            "a second `when` without map= (the first is on line 2)");
+        assert_error("profile \"a\" {\n    when player-x-below=10 map=1\n    land 3\n    when player-x-below=20 map=1\n}\n",
+            4, "a second `when` for map 1 (the first is on line 2)");
     }
 
     #[test]
