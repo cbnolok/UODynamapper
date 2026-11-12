@@ -2,12 +2,12 @@ use crate::core::controls::input_actions::{ActionCloseActiveDialog, ActionToggle
 use crate::core::render::dialogs::image_background::{image_background_control, ImageBackground};
 use crate::core::render::dialogs::paperdoll_ec::{paperdoll_drawing, EnhancedPaperdoll, PaperdollCanvas, PaperdollItem};
 use crate::core::render::dialogs::paperdoll_menu::{
-    load_overrides, menu_ui, user_overrides_path, write_choice, ChosenRule, MenuAction, PaperdollDrawn, PaperdollMenu,
-    PickLayer,
+    menu_ui, write_choice, ChosenRule, MenuAction, PaperdollDrawn, PaperdollMenu, PickLayer,
 };
 use crate::core::render::dialogs::paperdoll_overrides::{
-    measured_garment, taken_off, PaperdollOrder, TakenOff, PAPERDOLL_OVERRIDES_FILE_NAME,
+    measured_garment, taken_off, PaperdollOrder, PaperdollOverrides, TakenOff, PAPERDOLL_OVERRIDES_FILE_NAME,
 };
+use crate::configs::runtime_specs::SpecFiles;
 use crate::core::render::scene::camera::UiCameraResource;
 use crate::configs::shader_presets::UniformState;
 use crate::core::uo_files_loader::{GumpClient, GumpMapRes, HuesPackageRes, PaperdollEcPackageRes, TileMetaPackageRes};
@@ -21,7 +21,7 @@ use crate::{
 use bevy::prelude::*;
 use bevy_egui::{egui, EguiContexts, EguiPrimaryContextPass, EguiTextureHandle};
 use knuffel::Decode;
-use std::{collections::HashSet, path::Path};
+use std::collections::HashSet;
 use uocf::enhanced::paperdoll::{
     body_frame, item_layer, WearableRules, Wearer, LAYER_COUNT, SLOT_NAMES, WEARABLE_RULES_FILE_NAME,
 };
@@ -152,16 +152,20 @@ struct PaperdollOrderRes(PaperdollOrder);
 /// Where the paperdoll overrides come from and where the paperdoll windows write the user's choices.
 #[derive(Resource, Default)]
 struct PaperdollOverridesFilesRes {
-    /// The bundled `PaperdollOverrides.kdl`, which the first choice starts the user's copy from.
-    bundled: std::path::PathBuf,
-    /// The user's copy (`paperdoll_menu::user_overrides_path`), read before the bundled file when it exists.
-    user: std::path::PathBuf,
+    /// The bundled `PaperdollOverrides.kdl`, which the first choice starts the user's copy from, and the user's copy
+    /// (`cache/runtime_specs/paperdoll/`), read in its place when it exists.
+    files: SpecFiles,
     /// Why the user's copy did not read at startup, shown in the paperdoll menu until a choice writes it.
     user_error: Option<String>,
 }
 
-const PAPERDOLL_SPECS_DIR: &str = "runtime_specs/paperdoll";
+/// The folder of the paperdoll specs among the runtime specs, bundled (`assets/runtime_specs/`) and the user's copies
+/// (`cache/runtime_specs/`, `configs::runtime_specs`).
+const PAPERDOLL_SPECS_FOLDER: &str = "paperdoll";
 const PAPERDOLL_PROFILES_FILE_NAME: &str = "PaperdollProfiles.kdl";
+/// The folder of the cache dir the paperdoll windows wrote the user's `PaperdollOverrides.kdl` in before the runtime
+/// specs had user copies; such a copy moves to its place at startup.
+const OLD_USER_OVERRIDES_DIR: &str = "settings";
 
 /// `profile "<id>" equipment_offset=N body=N [label=] [fallback_equipment_offset=] [canvas_width=] [canvas_height=]
 /// [body_x=] [body_y=] [equipment_x=] [equipment_y=]`, decoded by `PaperdollProfilesKdl`.
@@ -187,7 +191,6 @@ mod robe_edges;
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::core::render::dialogs::paperdoll_overrides::PaperdollOverrides;
 
     /// The server body of each bundled profile.
     const PROFILE_BODIES: [(&str, u32); 6] = [
@@ -220,6 +223,49 @@ mod tests {
         )
         .unwrap();
         PaperdollOrder { rules: bundled_rules(), overrides }
+    }
+
+    /// Each paperdoll spec reads the user's copy under `cache/runtime_specs/paperdoll/` in place of the bundled file,
+    /// with the decoder used at startup; a copy that does not read leaves the bundled file in force, and the overrides
+    /// the paperdoll windows wrote in `cache/settings/` move to their place.
+    #[test]
+    fn the_paperdoll_specs_read_the_users_copies() {
+        const ONE_PROFILE: &str = "profile \"only\" equipment_offset=50000 body=400\n";
+        const UNCLOSED_RULES: &str = "draworder \"paperdoll\" {\n";
+        let assets = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("assets");
+        let cache = std::env::temp_dir().join(format!("dynamapper-paperdoll-specs-{}", std::process::id()));
+        if cache.exists() {
+            std::fs::remove_dir_all(&cache).unwrap();
+        }
+        let files = |file_name| SpecFiles::under(&assets, &cache, PAPERDOLL_SPECS_FOLDER, file_name);
+        let profiles = files(PAPERDOLL_PROFILES_FILE_NAME);
+        let rules = files(WEARABLE_RULES_FILE_NAME);
+        let overrides = files(PAPERDOLL_OVERRIDES_FILE_NAME);
+        assert_eq!(profiles.user, cache.join("runtime_specs/paperdoll/PaperdollProfiles.kdl"));
+        assert_eq!(profiles.load(PaperdollProfilesRes::load_from_str).unwrap().path, profiles.bundled);
+        assert_eq!(rules.load(decode_wearable_rules).unwrap().path, rules.bundled);
+        assert_eq!(overrides.load(PaperdollOverrides::decode).unwrap().path, overrides.bundled);
+
+        std::fs::create_dir_all(profiles.user.parent().unwrap()).unwrap();
+        std::fs::write(&profiles.user, ONE_PROFILE).unwrap();
+        let loaded = profiles.load(PaperdollProfilesRes::load_from_str).unwrap();
+        assert_eq!((loaded.path, loaded.value.profiles.len()), (profiles.user.clone(), 1));
+        std::fs::copy(&rules.bundled, &rules.user).unwrap();
+        assert_eq!(rules.load(decode_wearable_rules).unwrap().path, rules.user);
+
+        let old = cache.join(OLD_USER_OVERRIDES_DIR).join(PAPERDOLL_OVERRIDES_FILE_NAME);
+        std::fs::create_dir_all(old.parent().unwrap()).unwrap();
+        std::fs::copy(&overrides.bundled, &old).unwrap();
+        overrides.adopt_old_copy(&old);
+        assert!(!old.exists());
+        assert_eq!(overrides.load(PaperdollOverrides::decode).unwrap().path, overrides.user);
+
+        std::fs::write(&rules.user, UNCLOSED_RULES).unwrap();
+        let invalid = rules.load(decode_wearable_rules).unwrap();
+        assert_eq!(invalid.path, rules.bundled);
+        let error = format!("{:#}", invalid.user_error.unwrap());
+        assert!(error.starts_with(&rules.user.display().to_string()), "{error}");
+        std::fs::remove_dir_all(&cache).unwrap();
     }
 
     #[test]
@@ -673,17 +719,14 @@ mod tests {
 }
 
 impl PaperdollProfilesRes {
-    /// The bundled profiles are required: a missing or invalid file stops the app.
+    /// The user's copy of the profiles when it exists and reads (`configs::runtime_specs`), else the bundled profiles,
+    /// which are required: a missing or invalid file stops the app.
     fn load() -> Self {
-        let path = constants::valid_asset_dir().join(PAPERDOLL_SPECS_DIR).join(PAPERDOLL_PROFILES_FILE_NAME);
-        Self::load_from_path(&path)
-            .unwrap_or_else(|error| crate::configs::settings::exit_on_startup_config_error(&error))
-    }
-
-    fn load_from_path(path: &Path) -> color_eyre::eyre::Result<Self> {
-        let content = std::fs::read_to_string(path)
-            .map_err(|error| color_eyre::eyre::eyre!("{}: cannot read: {error}", path.display()))?;
-        Self::load_from_str(&path.display().to_string(), &content)
+        let loaded = SpecFiles::of(PAPERDOLL_SPECS_FOLDER, PAPERDOLL_PROFILES_FILE_NAME)
+            .load(Self::load_from_str)
+            .unwrap_or_else(|error| crate::configs::settings::exit_on_startup_config_error(&error));
+        loaded.report("the paperdoll profiles");
+        loaded.value
     }
 
     fn load_from_str(source_name: &str, content: &str) -> color_eyre::eyre::Result<Self> {
@@ -799,47 +842,41 @@ impl Plugin for GumpDialogPlugin {
     }
 }
 
-/// The bundled wearable rules and paperdoll overrides are required: a missing or invalid file stops the app. The
-/// user's copy of the overrides, which the paperdoll windows write (`paperdoll_menu`), is read before the bundled one;
-/// when it does not read, the bundled overrides apply, with a warning, and the windows write nothing to it until it
-/// is fixed.
+/// The wearable rules and paperdoll overrides: the user's copy of each when it exists and reads
+/// (`configs::runtime_specs`), else the bundled file, which is required: a missing or invalid one stops the app. The
+/// paperdoll windows write the user's copy of the overrides (`paperdoll_menu`); a copy that does not read leaves the
+/// bundled file in force, with a warning, and the windows write nothing to it until it is fixed. A copy of the
+/// overrides the windows wrote in `cache/settings/` before moves to its place first.
 fn sys_load_paperdoll_order(
     mut order_res: ResMut<PaperdollOrderRes>,
     mut files_res: ResMut<PaperdollOverridesFilesRes>,
 ) {
-    let specs_dir = constants::valid_asset_dir().join(PAPERDOLL_SPECS_DIR);
-    let read = |path: &std::path::Path| {
-        std::fs::read_to_string(path)
-            .map_err(|error| color_eyre::eyre::eyre!("{}: cannot read: {error}", path.display()))
-    };
-    let rules_path = specs_dir.join(WEARABLE_RULES_FILE_NAME);
-    let bundled_path = specs_dir.join(PAPERDOLL_OVERRIDES_FILE_NAME);
-    let user_path = user_overrides_path();
-    let order = read(&rules_path).and_then(|content| WearableRules::decode(&content)).and_then(|rules| {
-        let loaded = load_overrides(&bundled_path, &user_path)?;
-        Ok((PaperdollOrder { rules, overrides: loaded.overrides }, loaded.path, loaded.user_error))
-    });
+    let rules_files = SpecFiles::of(PAPERDOLL_SPECS_FOLDER, WEARABLE_RULES_FILE_NAME);
+    let overrides_files = SpecFiles::of(PAPERDOLL_SPECS_FOLDER, PAPERDOLL_OVERRIDES_FILE_NAME);
+    overrides_files.adopt_old_copy(&old_user_overrides_path());
+    let order = rules_files
+        .load(decode_wearable_rules)
+        .and_then(|rules| Ok((rules, overrides_files.load(PaperdollOverrides::decode)?)));
     match order {
-        Ok((order, overrides_path, user_error)) => {
-            log::info!(
-                "Loaded paperdoll wearable rules from {} and overrides from {}",
-                rules_path.display(),
-                overrides_path.display()
-            );
-            if let Some(error) = &user_error {
-                let message = format!("{error:#}: the bundled paperdoll overrides apply until it is fixed.");
-                log::warn!("{message}");
-                ingame_sysmessage_logger::warning(message);
-            }
-            order_res.0 = order;
-            *files_res = PaperdollOverridesFilesRes {
-                bundled: bundled_path,
-                user: user_path,
-                user_error: user_error.map(|error| format!("{error:#}")),
-            };
+        Ok((rules, overrides)) => {
+            rules.report("the paperdoll wearable rules");
+            let user_error = overrides.report("the paperdoll overrides");
+            order_res.0 = PaperdollOrder { rules: rules.value, overrides: overrides.value };
+            *files_res = PaperdollOverridesFilesRes { files: overrides_files, user_error };
         }
         Err(error) => crate::configs::settings::exit_on_startup_config_error(&error),
     }
+}
+
+/// Where the paperdoll windows wrote the user's `PaperdollOverrides.kdl` before the runtime specs had user copies.
+fn old_user_overrides_path() -> std::path::PathBuf {
+    constants::valid_cache_dir().join(OLD_USER_OVERRIDES_DIR).join(PAPERDOLL_OVERRIDES_FILE_NAME)
+}
+
+/// `WearableRules::decode`, its errors naming the file read.
+fn decode_wearable_rules(source_name: &str, text: &str) -> color_eyre::eyre::Result<WearableRules> {
+    use color_eyre::eyre::WrapErr;
+    WearableRules::decode(text).wrap_err_with(|| source_name.to_string())
 }
 
 fn sys_gump_toggle(
@@ -1015,13 +1052,18 @@ fn sys_render_gump_dialog(
 
     // A choice in a paperdoll menu: into the user's copy of the overrides, then every paperdoll is drawn again.
     if let Some(chosen) = chosen_rule {
-        let user = overrides_files.user.clone();
-        match write_choice(&overrides_files.bundled, &user, &chosen.edit()) {
+        let files = overrides_files.files.clone();
+        let user = &files.user;
+        match write_choice(&files, &chosen.edit()) {
             Ok(overrides) => {
                 paperdoll_order.0.overrides = overrides;
                 overrides_files.user_error = None;
                 state.paperdolls_stale = true;
-                log::info!("Paperdoll overrides: {}, written to {}.", chosen.describe(), user.display());
+                console_logger::one(
+                    LogSev::Info,
+                    LogAbout::Settings,
+                    &format!("Paperdoll overrides: {}, written to {}.", chosen.describe(), user.display()),
+                );
                 ingame_sysmessage_logger::normal(format!("{}.", chosen.describe()));
             }
             Err(error) => {

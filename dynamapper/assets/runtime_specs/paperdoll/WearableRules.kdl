@@ -1,5 +1,10 @@
 // Translated from EC/KR mainmisc_ec/data/wearables.xml.
 // Runtime paperdoll draw-order and wearable override rules.
+//
+// Dynamapper reads your copy, cache/runtime_specs/paperdoll/WearableRules.kdl beside the assets folder, in place of
+// this file when it exists; a copy that does not read is not used, with a warning, and this file applies until it is
+// fixed. The uocf editor and the paperdoll_ec.uddp packer build this file in: your copy changes Dynamapper's
+// paperdolls only, not what the packer measures beneath a robe.
 
 draworder "paperdoll" {
     slot "riding" priority=100

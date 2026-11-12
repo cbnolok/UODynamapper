@@ -1,3 +1,4 @@
+pub mod runtime_specs;
 pub mod settings;
 pub mod shader_presets;
 

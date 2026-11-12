@@ -123,15 +123,24 @@ this robe", "Hide under this robe" and "Back to measured", the current choice
 checked; it lists the garments taken off beneath the robe, each a submenu with
 the same choices. A choice is for that robe on the body frame drawn (none
 without paperdoll_ec.uddp) and goes to the user's copy,
-`cache/settings/PaperdollOverrides.kdl` (`paperdoll_menu::user_overrides_path`):
-the runtime specs have no user copy, and the app writes what the user sets in
-`cache/settings/`. `udd_assets::paperdoll_overrides::set_garment_rule` edits the
-KDL text by its spans, keeping comments and other covers, in a cover per robe
+`cache/runtime_specs/paperdoll/PaperdollOverrides.kdl`: each runtime spec has
+its user copy at its assets path under the cache dir (`configs::runtime_specs`,
+`SpecFiles`), as the settings files have theirs in `cache/settings/`, and
+Dynamapper reads the copy in place of the bundled file when it exists; so do
+`PaperdollProfiles.kdl` and `WearableRules.kdl`. The menu first wrote
+`cache/settings/PaperdollOverrides.kdl`; such a copy moves to the new place at
+startup, with an info line, unless a copy is there already (then a warning says
+the old one is not read).
+`udd_assets::paperdoll_overrides::set_garment_rule` edits the KDL text by its spans, keeping comments and other covers, in a cover per robe
 and body headed "chosen in the paperdoll window"; the file is written through a
 temporary file renamed over it and every open paperdoll is drawn again. A copy
 that does not decode at startup is neither read nor written (a warning, the
 bundled file applies); a choice re-reads the copy from disk first, so one fixed
-meanwhile is taken up.
+meanwhile is taken up. The same holds for the profiles and the wearable rules:
+strict, a copy that does not read leaves the bundled file in force with a
+warning in the log and in game; the bundled files are required. The uocf editor
+and the paperdoll_ec.uddp packer build the bundled files in, so a user's
+`WearableRules.kdl` changes Dynamapper's paperdolls only.
 
 The gump paperdolls take the decision for the frame the 3D paperdoll draws for
 the profile's body, and none without paperdoll_ec.uddp. The gump art shows the

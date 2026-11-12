@@ -57,7 +57,8 @@ decision, each slot not measured and why, and one line per garment measured with
 texels near the edge and beyond it, whether it is kept, and where the slot rule of
 format 2 (the largest garment decided its slot) decided otherwise. A `warning:` line
 is a body that could not be measured.
-`PaperdollOverrides.kdl` in Dynamapper's `runtime_specs/paperdoll` overrides a decision.
+`PaperdollOverrides.kdl` in Dynamapper's `runtime_specs/paperdoll` (the user's copy in
+`cache/runtime_specs/paperdoll`) overrides a decision.
 
 Output paths (`--output`, `--art-output`, `--land-output`, `--map-output`, ...) and the
 default file names above resolve against the current working directory, like any

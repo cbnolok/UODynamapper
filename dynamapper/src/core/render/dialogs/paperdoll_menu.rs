@@ -2,12 +2,10 @@
 //! drawn on top under the pointer, by the alpha of each drawn item's texels. While a dress-layer item is drawn, the
 //! menu offers "Show under this robe", "Hide under this robe" and "Back to measured" for a garment drawn beneath it,
 //! and lists the garments taken off beneath it, each to be brought back. A choice goes to the user's copy of
-//! `PaperdollOverrides.kdl` ([`user_overrides_path`]), never to the bundled file:
+//! `PaperdollOverrides.kdl` (`cache/runtime_specs/paperdoll/`, `configs::runtime_specs`), never to the bundled file:
 //! `udd_assets::paperdoll_overrides::set_garment_rule` edits it in place, keeping its comments and other covers, for
 //! the covering item on the body frame drawn, and the paperdolls are drawn again. Both the 3D and the gump paperdolls
 //! take the menu; egui draws it as a popup of the window, no viewport of its own.
-
-use std::path::{Path, PathBuf};
 
 use bevy_egui::egui;
 use color_eyre::eyre;
@@ -18,11 +16,8 @@ use udd_assets::paperdoll_overrides::{
 use uocf::enhanced::paperdoll::slot_layer;
 
 use super::paperdoll_overrides::TakenOff;
-use crate::core::constants;
+use crate::configs::runtime_specs::{read_text, SpecFiles};
 
-/// The folder of the cache dir the user's copy of `PaperdollOverrides.kdl` goes in: the app's settings, as no user
-/// copy of the runtime specs exists yet.
-const USER_OVERRIDES_DIR: &str = "settings";
 /// A texel at least this opaque picks its item; fainter ones (antialiased edges, shadows) let the item beneath it be
 /// picked, and only where no item is that opaque does the faintest texel drawn pick its item.
 const PICKED_ALPHA_MIN: u8 = 128;
@@ -39,44 +34,12 @@ const MEASURED_HOVER: &str =
 const NO_BODY_FRAME_TEXT: &str = "The choices need paperdoll_ec.uddp: they apply to its body frame.";
 const CLOSE_LABEL: &str = "Close window";
 
-/// The user's copy of `PaperdollOverrides.kdl`: in the cache dir's settings, where the app writes what the user sets.
-pub fn user_overrides_path() -> PathBuf {
-    constants::valid_cache_dir().join(USER_OVERRIDES_DIR).join(PAPERDOLL_OVERRIDES_FILE_NAME)
-}
-
-/// The overrides Dynamapper reads.
-pub struct LoadedOverrides {
-    pub overrides: PaperdollOverrides,
-    /// The file they come from.
-    pub path: PathBuf,
-    /// Why the user's copy, which exists, is not read: then the bundled overrides apply and the menu writes nothing
-    /// until it is fixed (`set_garment_rule` refuses a file the overrides do not read).
-    pub user_error: Option<eyre::Report>,
-}
-
-fn read_text(path: &Path) -> eyre::Result<String> {
-    std::fs::read_to_string(path).map_err(|error| eyre::eyre!("{}: cannot read: {error}", path.display()))
-}
-
-/// The user's copy `user` when it exists and reads, else the bundled file `bundled`, which must read.
-pub fn load_overrides(bundled: &Path, user: &Path) -> eyre::Result<LoadedOverrides> {
-    let decode = |path: &Path| PaperdollOverrides::decode(&path.display().to_string(), &read_text(path)?);
-    let bundled_overrides = decode(bundled)?;
-    if !user.exists() {
-        return Ok(LoadedOverrides { overrides: bundled_overrides, path: bundled.to_path_buf(), user_error: None });
-    }
-    Ok(match decode(user) {
-        Ok(overrides) => LoadedOverrides { overrides, path: user.to_path_buf(), user_error: None },
-        Err(error) => {
-            LoadedOverrides { overrides: bundled_overrides, path: bundled.to_path_buf(), user_error: Some(error) }
-        }
-    })
-}
-
-/// Writes `edit` into the user's copy `user`, started from the bundled file `bundled` when there is none, through a
-/// temporary file renamed over it, and returns the overrides it now holds.
-pub fn write_choice(bundled: &Path, user: &Path, edit: &GarmentRuleEdit) -> eyre::Result<PaperdollOverrides> {
-    let text = read_text(if user.exists() { user } else { bundled })?;
+/// Writes `edit` into the user's copy of `files`, started from the bundled file when there is none, through a
+/// temporary file renamed over it, and returns the overrides it now holds. A copy the overrides do not read is refused
+/// (`set_garment_rule`) and stays as it is, so the menu writes nothing to it until it is fixed.
+pub fn write_choice(files: &SpecFiles, edit: &GarmentRuleEdit) -> eyre::Result<PaperdollOverrides> {
+    let user = &files.user;
+    let text = read_text(if user.exists() { user } else { &files.bundled })?;
     let source_name = user.display().to_string();
     let edited = set_garment_rule(&source_name, &text, edit)?;
     let overrides = PaperdollOverrides::decode(&source_name, &edited)?;
@@ -454,17 +417,20 @@ mod tests {
     fn choices_go_to_the_users_copy() {
         static NEXT_DIRECTORY: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
         const BUNDLED: &str = "// The bundled file.\n";
+        const SPECS_FOLDER: &str = "paperdoll";
         let ordering = std::sync::atomic::Ordering::Relaxed;
         let root = std::env::temp_dir().join(format!(
             "dynamapper-paperdoll-menu-{}-{}",
             std::process::id(),
             NEXT_DIRECTORY.fetch_add(1, ordering)
         ));
-        let bundled = root.join("assets").join(PAPERDOLL_OVERRIDES_FILE_NAME);
-        let user = root.join("cache").join(USER_OVERRIDES_DIR).join(PAPERDOLL_OVERRIDES_FILE_NAME);
+        let files =
+            SpecFiles::under(&root.join("assets"), &root.join("cache"), SPECS_FOLDER, PAPERDOLL_OVERRIDES_FILE_NAME);
+        let (bundled, user) = (files.bundled.clone(), files.user.clone());
+        let load = || files.load(PaperdollOverrides::decode).unwrap();
         std::fs::create_dir_all(bundled.parent().unwrap()).unwrap();
         std::fs::write(&bundled, BUNDLED).unwrap();
-        assert_eq!(load_overrides(&bundled, &user).unwrap().path, bundled);
+        assert_eq!(load().path, bundled);
 
         let chosen = |garment: u32, choice| ChosenRule {
             covering: MenuItem { item: item("dress", ROBE), name: Some("robe".to_string()) },
@@ -472,23 +438,23 @@ mod tests {
             body: BODY,
             choice,
         };
-        let shown = write_choice(&bundled, &user, &chosen(SHIRT, GarmentChoice::Show).edit()).unwrap();
+        let shown = write_choice(&files, &chosen(SHIRT, GarmentChoice::Show).edit()).unwrap();
         assert_eq!(current_choice(&shown, item("dress", ROBE), BODY, item("torso", SHIRT)), GarmentChoice::Show);
         assert_eq!(std::fs::read_to_string(&bundled).unwrap(), BUNDLED);
         let written = std::fs::read_to_string(&user).unwrap();
         assert!(written.starts_with(BUNDLED), "{written}");
-        let loaded = load_overrides(&bundled, &user).unwrap();
-        assert_eq!((loaded.path, loaded.overrides, loaded.user_error.is_none()), (user.clone(), shown, true));
+        let loaded = load();
+        assert_eq!((loaded.path, loaded.value, loaded.user_error.is_none()), (user.clone(), shown, true));
 
-        write_choice(&bundled, &user, &chosen(0x1F7B, GarmentChoice::Hide).edit()).unwrap();
-        let both = load_overrides(&bundled, &user).unwrap().overrides;
+        write_choice(&files, &chosen(0x1F7B, GarmentChoice::Hide).edit()).unwrap();
+        let both = load().value;
         assert_eq!(current_choice(&both, item("dress", ROBE), BODY, item("torso", 0x1F7B)), GarmentChoice::Hide);
         assert_eq!(current_choice(&both, item("dress", ROBE), BODY, item("torso", SHIRT)), GarmentChoice::Show);
 
         std::fs::write(&user, "cover \"robe\" items=\"any\"\n").unwrap();
-        let invalid = load_overrides(&bundled, &user).unwrap();
+        let invalid = load();
         assert_eq!((invalid.path, invalid.user_error.is_some()), (bundled.clone(), true));
-        assert!(write_choice(&bundled, &user, &chosen(SHIRT, GarmentChoice::Hide).edit()).is_err());
+        assert!(write_choice(&files, &chosen(SHIRT, GarmentChoice::Hide).edit()).is_err());
         assert_eq!(std::fs::read_to_string(&user).unwrap(), "cover \"robe\" items=\"any\"\n");
         std::fs::remove_dir_all(&root).unwrap();
     }
