@@ -57,6 +57,28 @@ For Classic facet packages that need both map and statics data, prefer:
 udd-cli pack pack-map-statics --ccdir /path/to/cc --map-id 0 --map-output map0.uddp --statics-output statics0.uddp
 ```
 
+A package of another format version fails to load with a message to repack it. To repack a whole package folder,
+run `scripts/uddconv/uddconv.py all --ccdir CC --ecdir EC --output-dir OUT --no-animations` and then
+`pack-kr-land`, or the same packers by hand, in this order (`CC`, `EC` and `KR` are the client folders, `OUT` the
+output folder; the formats are the packers' lossless defaults):
+
+```text
+udd-cli pack pack-art --ccdir CC --ecdir EC --output OUT/tex_art_cc.uddp
+udd-cli pack pack-texmaps --ccdir CC --output OUT/tex_land_cc.uddp
+udd-cli pack pack-ec-textures --ccdir CC --ecdir EC --art-output OUT/tex_art_ec.uddp --land-output OUT/tex_land_ec.uddp --tilemeta-output OUT/tilemeta.uddp
+udd-cli pack pack-lights --zstd --ccdir CC --ecdir EC --output OUT/world_lights.uddp
+udd-cli pack pack-hues --zstd --ccdir CC --output OUT/hues.uddp
+udd-cli pack pack-map-statics --zstd --ccdir CC --map-id N --map-output OUT/mapN.uddp --statics-output OUT/staticsN.uddp
+udd-cli pack pack-gumps --ccdir CC --output OUT/gumps_cc.uddp
+udd-cli pack pack-ec-gumps --share-with OUT/gumps_cc.uddp --ecdir EC --output OUT/gumps_ec.uddp
+udd-cli pack pack-ec-tex-aux --zstd --ccdir CC --ecdir EC --tilemeta OUT/tilemeta.uddp --output OUT/tex_aux_ec.uddp
+udd-cli pack pack-ec-effects --zstd --ccdir CC --ecdir EC --output OUT/effects_ec.uddp
+udd-cli pack pack-ec-paperdoll --ecdir EC --output OUT/paperdoll_ec.uddp
+udd-cli pack pack-kr-land --krdir KR --ecdir EC --output OUT/tex_land_kr.uddp
+```
+
+`pack-map-statics` runs once per facet, `N` from 0 to 5. Check the result with `udd-cli tool validate OUT`.
+
 ### `udd-cli tool`
 
 `udd-cli tool` inspects and edits already-built packages. It is produced by the `udd-conv-cli` crate.
