@@ -17,6 +17,8 @@ use color_eyre::eyre;
 
 const SHADER_PRESETS_FILE_NAME: &str = "defaults/shader_presets.toml";
 const SHADER_SETTINGS_FILE_NAME: &str = "settings/shaders/land.toml";
+/// The land.toml key of the selected preset (`LandShaderModePresets::default_preset`).
+const DEFAULT_PRESET_KEY: &str = "default_preset";
 
 /// Preset groups, the first part of a preset key such as "kr.morning". One group per render style.
 pub const CLASSIC_PRESET_GROUP: &str = "classic";
@@ -392,6 +394,14 @@ pub fn load_shader_settings(
             Ok(Some(clone_presets(defaults)))
         }
     }
+}
+
+/// The preset the app saved as selected, `default_preset` of the cached land.toml; `None` when there is no cache copy
+/// (the shipped default preset is selected) or it names none.
+pub fn saved_preset_key() -> Option<String> {
+    let cache_path = crate::core::constants::valid_cache_dir().join(SHADER_SETTINGS_FILE_NAME);
+    let table: toml::Table = toml::from_str(&std::fs::read_to_string(cache_path).ok()?).ok()?;
+    table.get(DEFAULT_PRESET_KEY)?.as_str().map(str::to_owned)
 }
 
 /// A cached land.toml written before UOD-Painterly existed holds the painterly look under `kr`, which is the faithful
