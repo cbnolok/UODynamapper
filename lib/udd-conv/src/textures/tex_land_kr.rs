@@ -11,7 +11,7 @@
 //!   `metadata/legacy_terrain_map.csv` and leave `metadata/transcode.bin` (TerrainTranscode.kdl, which the runtime
 //!   reads over the csv), which keeps only the ids KR does not route;
 //! - KR's grunge texture, `build/worldart/01000045.dds`, as the optional entry
-//!   [`UDDP_GRUNGE_ENTRY_VPATH`] for a later KR grunge shader option.
+//!   [`UDDP_GRUNGE_ENTRY_VPATH`], which Dynamapper's Client Grunge multiplies onto the statics.
 //!
 //! Every definition, texture and route is logged with the client it came from, and written to the report when one
 //! is asked for.
@@ -46,7 +46,7 @@ use crate::textures::tex_land_ec::{
 /// Default file name of the package.
 pub const TEX_LAND_KR_FILE_NAME: &str = "tex_land_kr.uddp";
 /// Texture id of the grunge texture, `build/worldart/01000045.dds` (256x256 grey noise; KR's differs from EC's).
-pub const KR_GRUNGE_TEXTURE_ID: u32 = 1_000_045;
+pub const KR_GRUNGE_TEXTURE_ID: u32 = udd_assets::tilemeta::CLIENT_GRUNGE_TEXTURE_ID;
 
 const TERRAIN_DEFINITION_FILE_NAME: &str = "TerrainDefinition.uop";
 const TEXTURE_FILE_NAME: &str = "Texture.uop";

@@ -729,6 +729,36 @@ impl TileMetaPackage {
 /// Tileart block holding the Enhanced Client's own (KR) art; blocks 1 and 2 are the legacy and
 /// enhanced art sets, whose position 0 is a `Base` image too.
 pub const TILEMETA_EC_TEXTURE_BLOCK_INDEX: u8 = 0;
+/// Tileart block of the legacy art: the KR client draws it for an item without KR art.
+pub const TILEMETA_LEGACY_ART_BLOCK_INDEX: u8 = 1;
+/// The KR client's grunge texture, `01000045_noise` (`build/worldart/01000045.dds`). The Enhanced Client ships another
+/// image under this id.
+pub const CLIENT_GRUNGE_TEXTURE_ID: u32 = 1_000_045;
+/// The shader map the KR sprite shader samples as its grunge (`GrungeSampler` in `UOSprite.psh`): a ref's
+/// `item_index`.
+pub const CLIENT_GRUNGE_SHADER_MAP: u8 = 1;
+
+impl TileMetaPackage {
+    /// Whether the KR client multiplies `tile_id`'s sprite by its grunge texture: see
+    /// [`item_refs_have_client_grunge`].
+    pub fn item_has_client_grunge(&self, tile_id: u32) -> bool {
+        item_refs_have_client_grunge(self.item_texture_refs(tile_id))
+    }
+}
+
+/// Whether the tileart block the KR client draws an item from binds [`CLIENT_GRUNGE_TEXTURE_ID`] as its shader map
+/// [`CLIENT_GRUNGE_SHADER_MAP`] (research P3.6). That block is the KR art's ([`TILEMETA_EC_TEXTURE_BLOCK_INDEX`]) when
+/// the item has KR art, else the legacy art's. The light block (`LIGHT_TEXTURE_BLOCK_INDEX`) names the same texture
+/// for the light sprite, which the client never grunges, so it is never read here.
+pub fn item_refs_have_client_grunge(texture_refs: &[TileMetaItemTextureRef]) -> bool {
+    let has_kr_art = texture_refs.iter().any(|texture_ref| texture_ref.block_index == TILEMETA_EC_TEXTURE_BLOCK_INDEX);
+    let drawn_block = if has_kr_art { TILEMETA_EC_TEXTURE_BLOCK_INDEX } else { TILEMETA_LEGACY_ART_BLOCK_INDEX };
+    texture_refs.iter().any(|texture_ref| {
+        texture_ref.block_index == drawn_block
+            && texture_ref.item_index == CLIENT_GRUNGE_SHADER_MAP
+            && texture_ref.texture_id == CLIENT_GRUNGE_TEXTURE_ID
+    })
+}
 
 /// Refs of the EC block. The main-texture selectors read only these through their role branches:
 /// every block has a `Base` image at its primary position.
@@ -1266,6 +1296,35 @@ mod tests {
             flags,
             ..TileMetaItemTextureRef::zeroed()
         }
+    }
+
+    #[test]
+    fn client_grunge_follows_the_block_the_kr_client_draws() {
+        use uocf::enhanced::tileart::LIGHT_TEXTURE_BLOCK_INDEX;
+        const OTHER_TEXTURE_ID: u32 = 2_000_000;
+        let reference = |block_index: u8, item_index: u8, texture_id: u32| TileMetaItemTextureRef {
+            texture_id,
+            block_index,
+            item_index,
+            ..TileMetaItemTextureRef::zeroed()
+        };
+        let kr_base = reference(TILEMETA_EC_TEXTURE_BLOCK_INDEX, 0, OTHER_TEXTURE_ID);
+        let kr_grunge = reference(TILEMETA_EC_TEXTURE_BLOCK_INDEX, CLIENT_GRUNGE_SHADER_MAP, CLIENT_GRUNGE_TEXTURE_ID);
+        let legacy_grunge = reference(TILEMETA_LEGACY_ART_BLOCK_INDEX, CLIENT_GRUNGE_SHADER_MAP, CLIENT_GRUNGE_TEXTURE_ID);
+        let light_grunge = reference(LIGHT_TEXTURE_BLOCK_INDEX, CLIENT_GRUNGE_SHADER_MAP, CLIENT_GRUNGE_TEXTURE_ID);
+        let kr_other_map1 = reference(TILEMETA_EC_TEXTURE_BLOCK_INDEX, CLIENT_GRUNGE_SHADER_MAP, OTHER_TEXTURE_ID);
+        let kr_grunge_map0 = reference(TILEMETA_EC_TEXTURE_BLOCK_INDEX, 0, CLIENT_GRUNGE_TEXTURE_ID);
+
+        assert!(item_refs_have_client_grunge(&[kr_base, kr_grunge]));
+        // KR art without a grunge map wins over a grunged legacy block: the client draws the KR art.
+        assert!(!item_refs_have_client_grunge(&[kr_base, legacy_grunge]));
+        // No KR art: the legacy block decides.
+        assert!(item_refs_have_client_grunge(&[legacy_grunge]));
+        // The light block is a light sprite, never grunged; another texture or shader map is no grunge.
+        assert!(!item_refs_have_client_grunge(&[light_grunge]));
+        assert!(!item_refs_have_client_grunge(&[kr_base, kr_other_map1]));
+        assert!(!item_refs_have_client_grunge(&[kr_grunge_map0]));
+        assert!(!item_refs_have_client_grunge(&[]));
     }
 
     // --- Role-aware selection tests ---

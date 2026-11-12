@@ -30,9 +30,12 @@ pub const UDDP_TERRAIN_OVERRIDES_ENTRY_VPATH: &str = "metadata/terrain_overrides
 pub const UDDP_TRANSCODE_ENTRY_VPATH: &str = "metadata/transcode.bin";
 pub const UDDP_LEGACY_TERRAIN_MAP_ENTRY_VPATH: &str = "metadata/legacy_terrain_map.csv";
 pub const UDDP_SOURCE_MATERIALS_ENTRY_VPATH: &str = "metadata/source_materials.json";
-/// Optional: the client's grunge texture as RGBA8888, the entry's width and height in its record. Only the Kingdom
-/// Reborn land (`tex_land_kr.uddp`) carries it, KR's `build/worldart/01000045.dds`; this reader does not read it.
+/// Optional: the client's grunge texture as RGBA8888 rows. Only the Kingdom Reborn land (`tex_land_kr.uddp`) carries
+/// it, KR's `build/worldart/01000045.dds`. The package stores no width or height for it: the image is square, its side
+/// `sqrt(bytes / 4)` ([`TexLandEcPackage::grunge_rgba`]).
 pub const UDDP_GRUNGE_ENTRY_VPATH: &str = "textures/grunge.rgba8888";
+/// Bytes per pixel of the grunge entry.
+const GRUNGE_BYTES_PER_PIXEL: usize = 4;
 /// `schema` and `schema_version` of the terrain overrides JSON entry.
 pub const TERRAIN_OVERRIDES_SCHEMA: &str = "tex_land_ec_terrain_overrides";
 pub const TERRAIN_OVERRIDES_SCHEMA_VERSION: u32 = 1;
@@ -543,6 +546,20 @@ impl TexLandEcPackage {
 
     pub fn package(&self) -> &UddpReader {
         &self.package
+    }
+
+    /// The client grunge texture ([`UDDP_GRUNGE_ENTRY_VPATH`]) as its side and RGBA8888 rows, or `None` when the
+    /// package has none. An entry that is not a square RGBA8888 image is an error.
+    pub fn grunge_rgba(&self) -> eyre::Result<Option<(u32, Vec<u8>)>> {
+        let hash = xxh64_virtual_path(UDDP_GRUNGE_ENTRY_VPATH);
+        if self.package.find_by_path_hash(hash).is_none() {
+            return Ok(None);
+        }
+        let rgba = self.package.read_file_by_path_hash(hash)
+            .map_err(|error| eyre::eyre!("read {UDDP_GRUNGE_ENTRY_VPATH}: {error:?}"))?;
+        let side = grunge_side(rgba.len())
+            .ok_or_else(|| eyre::eyre!("{UDDP_GRUNGE_ENTRY_VPATH}: {} bytes is not a square RGBA8888 image", rgba.len()))?;
+        Ok(Some((side, rgba)))
     }
 
     pub fn atlas_width(&self) -> u32 {
@@ -1469,6 +1486,16 @@ fn optional_texture_sort_key(value: u32, missing: u32) -> u32 {
     }
 }
 
+/// The side of a square RGBA8888 image of `bytes` bytes, or `None` when there is no such image.
+fn grunge_side(bytes: usize) -> Option<u32> {
+    if bytes == 0 || bytes % GRUNGE_BYTES_PER_PIXEL != 0 {
+        return None;
+    }
+    let pixels = bytes / GRUNGE_BYTES_PER_PIXEL;
+    let side = pixels.isqrt();
+    (side * side == pixels).then(|| u32::try_from(side).ok()).flatten()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1665,6 +1692,18 @@ mod tests {
         let bytes = builder.build().expect("build test package");
         TexLandEcPackage::from_uddp_package(UddpReader::open(bytes).expect("open package"))
             .expect("load test package")
+    }
+
+    #[test]
+    fn the_grunge_entry_is_a_square_rgba8888_image() {
+        const KR_GRUNGE_SIDE: u32 = 256;
+        let bytes = |side: usize| side * side * GRUNGE_BYTES_PER_PIXEL;
+        assert_eq!(grunge_side(bytes(KR_GRUNGE_SIDE as usize)), Some(KR_GRUNGE_SIDE));
+        assert_eq!(grunge_side(bytes(1)), Some(1));
+        assert_eq!(grunge_side(0), None);
+        assert_eq!(grunge_side(bytes(4) + 1), None);
+        assert_eq!(grunge_side(2 * bytes(4)), None, "a 4x8 image is not square");
+        assert!(test_package().grunge_rgba().expect("no entry is no error").is_none());
     }
 
     #[test]
