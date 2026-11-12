@@ -992,6 +992,81 @@ else:
   `(TaeFlag::Rotated | TaeFlag::AlphaBlend).bits() as u32`. Both flags are above bit 31, so the value truncates
   to 0 and the test never exercises KR flags.
 
+### P3.6 Statics grunge
+
+A follow-up pass read the grunge's UV and the choice of art in Ghidra, for Dynamapper's Client Grunge setting
+(`art/client_grunge.wesl`). It refines the [P2.1](#p21-sprites) notes on `BuildSpriteBatch`.
+
+- **The multiply** (*confirmed*, `UOSprite.psh`): the sprite texel, then the hue (RGB replaced from the hue
+  lookup, through the hue mask when bound), then `rgb *= tex2D(GrungeSampler, uv1).rgb`, then
+  `a *= vertex alpha`. Full strength, RGB only, after the hue. The client multiplies 8-bit values in an 8-bit
+  target, so the multiply is on the sRGB-encoded colour. `UOSpriteShaderHLSL::BindSamplers` 0x005477d0 binds shader
+  map 1 to GrungeSampler and sets HAS_GRUNGE_TEX.
+- **The texture transform** (*confirmed*, `UOSprite::BuildSpriteBatch` 0x004454c0): for every shader map from 1 up,
+  the batch gets an `NiTextureTransform` initialised by 0x0085c740 (method 2, scale 1, centre (0.5, 0.5)), then
+  given scale 1 / texture_stretch (16 for every grunge ref) about the centre. The map is bilinear (flags `| 0x100`)
+  and wraps; it clamps only when the stretch is 1 and the tileart field +0x38 lacks bit 3. `UOSprite.vsh` computes
+  `texCoord1 = mul(float3(uv1, 1), grungeTransform)`, so
+
+  ```
+  grunge uv = (uv1 - 0.5) / 16 + 0.5
+  ```
+
+  The phase of method 2 (scale about the centre, Maya convention) is *probable*: only a constant shift of a
+  wrapping pattern depends on it.
+- **uv1** (*confirmed*, `UOSprite::BuildSpriteQuad` 0x00442430): each quad corner W (KR world, X east, Z = -UO y)
+  gets `uv1 = (W.x - 0.5, W.z + 0.5)`. The corners are `W = P + R r + U u`: the sprite's base point P plus the
+  corner's offset in the camera plane (r right, u up, world units). `UOSprite::PlaceSprite` 0x004422b0 sets
+  `P = (x + 0.5, 0, -(y + 1.5)) + z Zu U`, Zu = 0.12856454 (0x00b86f38) as in [P3.4](#p34-sprite-shadow-geometry).
+- **The camera axes** (*confirmed*, 0x0045ae50): the view rotation is `Rz(-π/2) Rx(0.001 - π/4) Rz(-0.05)`
+  (0.001 at 0x00b86f10, -0.05 at 0x00b87004). Its right and up axes on the ground plane (X, Z) are
+  R = (0.7063993, 0.7078135) and U = (-0.7069290, 0.7055165).
+- **What that means on screen.** R and U are orthonormal on the ground to 0.2 %: `I - R Rᵀ - U Uᵀ` is about
+  0.00125 `[[1, -1], [-1, 1]]`. So W.xz is the screen position, turned 45 degrees, and the field is anchored to the
+  screen plane, scrolling with the map: a sprite pixel takes the grunge of the ground point drawn under it. Raised
+  objects (z) move up the screen and take the pattern there, and a tall sprite's top takes the pattern of the
+  ground drawn behind it. Neighbouring sprites share one continuous pattern. The period is 16 tiles along each
+  screen-diagonal axis.
+- **Which art is grunged** (*confirmed*, the EC tileart in `tilemeta.uddp`, all 65536 ids; *probable* for KR, see the
+  last point): the client draws block 0 (KR art) when the entry has one, else block 1 (legacy art), and grunges
+  it when that block binds `01000045` as shader map 1. `displayLegacyWorldArt` (0x00b5579c) switches to legacy art.
+
+  | Refs | Items |
+  |---|---|
+  | none | 28925 |
+  | block 0 grunged | 11208 (+3 whose block 1 is not) |
+  | block 0 not grunged, block 1 grunged | 3977 |
+  | no block 0, block 1 grunged | 21090 |
+  | no block 0, block 1 not grunged | 250 |
+  | block 0 and block 1 not grunged | 83 |
+
+  Every `01000045` ref has stretch 16, shader map 1 and UV set 1. Block 3 (1042 refs) holds the light sprites,
+  which are never grunged ([P3.3](#p33-light-sprites)). The KR tileart census of [P2.1](#p21-sprites) gives the
+  same picture (75 % of block 0 and 16298 of 16384 block 1 entries grunged).
+
+**Dynamapper's Client Grunge** (the implementation):
+
+- `udd_assets::tilemeta::item_refs_have_client_grunge` applies the block rule by item id, so CC and EC art at the
+  same place get the same answer; the collector sets `STATIC_FLAG_CLIENT_GRUNGE` (bit 10 of the sprite instance
+  flags) and the static's base point (tile x + 0.5, tile y + 1.5).
+- The vertex shader takes each corner's screen offset from the base point (view x is r; view y over the pixel
+  aspect is u, as for the client shadows), builds W as above, and lets the rasteriser interpolate the UV. The
+  fragment multiplies the hued colour on its sRGB encoding by `mix(1, grunge, strength)`, before the transparent
+  premultiply and the art shading. Strength 1 is the client.
+- The texture is sampled raw (Rgba8Unorm), wrapping and bilinear, from the first of:
+  1. KR's image, the optional `textures/grunge.rgba8888` entry of `tex_land_kr.uddp`;
+  2. the Enhanced Client's image of `01000045` in `tex_aux_ec.uddp` (a different picture, mean 0.898 against
+     KR's 0.840);
+  3. none: one warning, and a white texel that changes nothing.
+- On in the KR-like presets, off elsewhere; any style may switch it on.
+
+**Open points:**
+
+- Statics drawn by Dynamapper's ground pipeline (`art/ground.wesl`) are not grunged; the client draws them as
+  sprites.
+- The KR tileart itself was not re-read for the block rule: the census is over the EC tileart in the packages.
+- The 2.5D sprite's per-pixel position is approximated by the quad's: the client does the same.
+
 ## Comparison with Dynamapper's KR-like preset (revised)
 
 Dynamapper sources:

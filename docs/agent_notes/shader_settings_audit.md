@@ -452,6 +452,7 @@ to the presets and controls of 2026-11-12; the audit itself measured the 65 keys
 | `effects.art_shadow_strength` | Standard art Shadow Shape; Adv Graphics | art, ground | 0.12 / 0 / 0 / 0.24/0.26/0.3/0.34 | |
 | `effects.art_highlight_strength` | Standard art Light Catch; Adv Graphics | art, ground | 0.08 / 0 / 0 / 0.38/0.42/0.28/0.24 | |
 | `effects.art_depth_tint_strength` | Standard art Atmosphere Tint; Adv Graphics | art upright sprites (not floors, ground or background) | 0.1 / 0 / 0 / 0.2/0.22/0.3/0.34 | Amount of the `atmosphere_tint` colour. |
+| `effects.enable_client_grunge`, `client_grunge_strength` | Standard art Client Grunge; Adv Graphics | art sprites the KR client grunges (by item id, CC and EC art) | 0 / 0 / 1 / 0, strength 1 | The KR client's `01000045` grunge on statics, mapped as the client does (research P3.6). Never on land, ground statics or light sprites. |
 | `effects.art_contact_shadow_strength` | Standard art Contact Shadows; Adv Graphics | art, only inside the fake-normals block | 0 / 0 / 0 / 0.3/0.34/0.38/0.42 | Needs Fake Normals. |
 | `effects.art_mottle_strength` | Standard art Mottle; Adv Graphics | art: shadow-shape noise and fake-normal dapple | 0 everywhere | Off in every preset; visible from about 1.0. |
 | `effects.enable_art_fake_normals` | KR-style art Fake Normals; Adv Graphics | art, ground | 0 / 0 / 0 / 1 | |
@@ -813,6 +814,7 @@ have no tooltip.
 | Mottle | `art_mottle_strength` | Adds blotchy light and dark patches over items such as roofs and tree canopies, in every render style. Off in every preset; visible from about 1.0. |
 | Light Catch | `art_highlight_strength` | Brightens the sunlit side of items and buildings. Clear in UOD-Painterly; too light to see in Classic. |
 | Atmosphere Tint | `art_depth_tint_strength` | Fades upright items toward the Atmosphere Tint colour (Advanced > Lighting Colors) for a sense of depth. Clear in UOD-Painterly; too light to see in Classic. |
+| Client Grunge | `enable_client_grunge`, `client_grunge_strength` | The KR client's grunge: soft blotches of its grunge texture on the statics it marks, every 16 tiles. On in KR-like. |
 | Client Shadows | `client_shadows` | The KR client's shadows of statics and items, leaning from their base (its Show Shadows option). KR-like only, where they replace Shadow Shape, Contact Shadows and Projected Shadows. |
 | Temperature | `kr_art_temperature_strength` | Warms the sunlit side of items and cools their shaded side. Needs Fake Normals on (UOD-Painterly); faint, mostly by day. |
 | Projected Shadows | `enable_art_projected_shadows`, `art_projected_shadow_strength` | Casts a soft shadow from each item onto the ground. On in UOD-Painterly; greyed out in KR-like, where Client Shadows replace it. |
