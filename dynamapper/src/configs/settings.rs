@@ -517,10 +517,27 @@ fn migrate_cached_gumps_and_paperdoll(contents: &str, saved_preset: &str) -> Opt
     if graphics.contains_key(GUMPS_AND_PAPERDOLL_KEY) {
         return None;
     }
-    let classic_preset = saved_preset.split('.').next() == Some(crate::configs::shader_presets::CLASSIC_PRESET_GROUP);
-    let client = if classic_preset { GumpClient::Classic } else { GumpClient::Enhanced };
+    let client = gumps_and_paperdoll_of_preset(saved_preset);
     graphics.insert(GUMPS_AND_PAPERDOLL_KEY.to_string(), toml::Value::try_from(client).ok()?);
     Some((toml::to_string(&table).ok()?, client))
+}
+
+/// Without a cached graphics.toml, the gumps and paperdoll `saved_preset` drew before the "Gumps and paperdoll"
+/// preference, when they differ from the bundled Classic ones: the Enhanced client's for a saved preset other than
+/// Classic's. `None` for a Classic preset, or when no preset was saved (a fresh install).
+fn gumps_and_paperdoll_without_a_cache_copy(saved_preset: Option<&str>) -> Option<GumpClient> {
+    let client = gumps_and_paperdoll_of_preset(saved_preset?);
+    (client != GumpClient::Classic).then_some(client)
+}
+
+/// The gumps and paperdoll a shader preset drew when the preset picked them: the Classic client's for the Classic
+/// presets, the Enhanced client's for every other.
+fn gumps_and_paperdoll_of_preset(preset: &str) -> GumpClient {
+    if preset.split('.').next() == Some(crate::configs::shader_presets::CLASSIC_PRESET_GROUP) {
+        GumpClient::Classic
+    } else {
+        GumpClient::Enhanced
+    }
 }
 
 pub fn load_from_files() -> eyre::Result<Settings> {
@@ -530,10 +547,21 @@ pub fn load_from_files() -> eyre::Result<Settings> {
     // User preferences file contains SectApp fields directly at top level.
     let user_app: SectApp = load_user_settings(USER_PREFERENCES_CONFIG_FILE)?;
     let session_state: SectSessionState = load_user_settings(SESSION_STATE_CONFIG_FILE)?;
-    let mut gumps_migrated = false;
-    let graphics = load_user_settings_migrated::<GraphicsFile>(GRAPHICS_CONFIG_FILE, |contents| {
-        let saved_preset = crate::configs::shader_presets::saved_preset_key()?;
-        let (migrated, client) = migrate_cached_gumps_and_paperdoll(contents, &saved_preset)?;
+    // Gumps and paperdoll the saved shader preset drew before they were a preference of their own.
+    let saved_preset = crate::configs::shader_presets::saved_preset_key();
+    let graphics_cached = crate::core::constants::valid_cache_dir().join(GRAPHICS_CONFIG_FILE).is_file();
+    let mut kept_gumps = None;
+    let mut graphics = load_user_settings_migrated::<GraphicsFile>(GRAPHICS_CONFIG_FILE, |contents| {
+        let (migrated, client) = migrate_cached_gumps_and_paperdoll(contents, saved_preset.as_deref()?)?;
+        kept_gumps = Some(client);
+        Some(migrated)
+    })?
+    .graphics;
+    if !graphics_cached && let Some(client) = gumps_and_paperdoll_without_a_cache_copy(saved_preset.as_deref()) {
+        graphics.gumps_and_paperdoll = client;
+        kept_gumps = Some(client);
+    }
+    if let (Some(client), Some(saved_preset)) = (kept_gumps, &saved_preset) {
         console_logger::one(
             LogSev::Warn,
             LogAbout::Settings,
@@ -543,10 +571,7 @@ pub fn load_from_files() -> eyre::Result<Settings> {
                 client.label()
             ),
         );
-        gumps_migrated = true;
-        Some(migrated)
-    })?
-    .graphics;
+    }
     let keybindings: SectKeybindings = load_user_settings(KEYBINDINGS_CONFIG_FILE)?;
     let world_rendering: SectWorldRendering = load_user_settings(WORLD_RENDERING_CONFIG_FILE)?;
 
@@ -561,7 +586,7 @@ pub fn load_from_files() -> eyre::Result<Settings> {
         world_rendering,
     };
     // Written at once, so the migration runs and is logged a single time.
-    if gumps_migrated {
+    if kept_gumps.is_some() {
         save_graphics_settings(&settings);
     }
     Ok(settings)
@@ -1260,7 +1285,8 @@ mod tests {
     }
 
     /// A graphics.toml from before the "Gumps and paperdoll" preference keeps the gumps its saved preset drew: Enhanced
-    /// under every preset but Classic's. A file with the key, migrated or picked, is left as it is.
+    /// under every preset but Classic's, with or without a cached graphics.toml. A file with the key, migrated or
+    /// picked, is left as it is.
     #[test]
     fn a_graphics_file_from_before_the_gumps_preference_keeps_the_saved_presets_gumps() {
         let bundled = parse_strict::<GraphicsFile>(GRAPHICS_CONFIG_FILE, BUNDLED_GRAPHICS).expect("bundled graphics");
@@ -1288,6 +1314,15 @@ mod tests {
         }
         assert!(migrate_cached_gumps_and_paperdoll(BUNDLED_GRAPHICS, "kr.night").is_none());
         assert!(migrate_cached_gumps_and_paperdoll("not toml = ", "kr.night").is_none());
+
+        // Without a graphics.toml, a saved preset other than Classic's keeps the Enhanced gumps; a Classic one and a
+        // fresh install (no saved preset) keep the bundled Classic ones.
+        assert_eq!(bundled.graphics.gumps_and_paperdoll, GumpClient::Classic);
+        for (saved_preset, expected) in cases {
+            let kept = gumps_and_paperdoll_without_a_cache_copy(Some(saved_preset));
+            assert_eq!(kept, (expected != GumpClient::Classic).then_some(expected), "{saved_preset}");
+        }
+        assert!(gumps_and_paperdoll_without_a_cache_copy(None).is_none());
     }
 
     #[test]
