@@ -35,6 +35,8 @@ use bevy::pbr::MeshMaterial3d;
 use bevy::prelude::*;
 use bevy_egui::{egui, EguiContexts, EguiPrimaryContextPass};
 
+mod tips;
+
 /// Resource that tracks whether the land shader panel is visible.
 /// Toggled by the keybinding; also closed when egui's own close button is used.
 #[derive(Resource, Default)]
@@ -334,7 +336,7 @@ pub fn land_ui_system(
                 // ------------------------ Presets -------------------------
                 ui.strong("Time of Day:");
                 for (label, period) in PRESET_PERIOD_BUTTONS {
-                    if ui.selectable_label(cur_period == period, label).clicked() {
+                    if with_tip(ui.selectable_label(cur_period == period, label), tips::TIME_OF_DAY).clicked() {
                         store_active_and_apply_render_preset(
                             &mut u,
                             &mut shader_presets,
@@ -391,9 +393,12 @@ pub fn land_ui_system(
 
             ui.add_space(SECTION_SPACING);
             ui.separator();
-            ui.checkbox(&mut advanced_open, "Show advanced raw shader knobs (opens a side panel on the right)");
+            with_tip(
+                ui.checkbox(&mut advanced_open, "Show advanced raw shader knobs (opens a side panel on the right)"),
+                tips::SHOW_ADVANCED,
+            );
 
-            if ui.button("Reset Current Preset to Factory Defaults").clicked() {
+            if with_tip(ui.button("Reset Current Preset to Factory Defaults"), tips::RESET_PRESET).clicked() {
                 let style = active_render_style(&u);
                 let period = ShaderPresetPeriod::from_active_key(&u.active_preset);
                 let key = period.key(style.preset_group);
@@ -408,7 +413,7 @@ pub fn land_ui_system(
 
             // Undo button: restore the last saved values.
             ui.horizontal(|ui| {
-                if ui.button("⟲ Undo to Last Saved").clicked() {
+                if with_tip(ui.button("⟲ Undo to Last Saved"), tips::UNDO_TO_SAVED).clicked() {
                     if let Some(snap) = u.saved_snapshot {
                         u.restore(&snap);
                     }
@@ -438,10 +443,10 @@ pub fn land_ui_system(
             ui.collapsing("Effects", |ui| {
                 let mut changed = false;
                 ui.horizontal(|ui| {
-                    ui.label("Visual Profile:");
+                    with_tip(ui.label("Visual Profile:"), tips::VISUAL_PROFILE);
                     let mut profile = u.effects.post_process_profile;
                     for (label, val) in [("Neutral", 0u32), ("EC", 1u32), ("KR", 2u32)] {
-                        if ui.selectable_label(profile == val, label).clicked() {
+                        if with_tip(ui.selectable_label(profile == val, label), tips::VISUAL_PROFILE).clicked() {
                             profile = val;
                         }
                     }
@@ -452,19 +457,20 @@ pub fn land_ui_system(
                 });
                 ui.separator();
                 ui.strong("Whole scene");
-                if toggle_u32(ui, "Fog", &mut u.lighting.enable_fog) {
+                if toggle_u32(ui, "Fog", &mut u.lighting.enable_fog, tips::FOG) {
                     changed = true;
                 }
-                changed |= toggle_u32(ui, "Grunge / Weathering", &mut u.effects.enable_grunge);
+                changed |= toggle_u32(ui, "Grunge / Weathering", &mut u.effects.enable_grunge, tips::GRUNGE);
                 changed |= slider_s(
                     ui,
                     "Grunge Strength",
                     &mut u.effects.grunge_strength,
                     0.0..=1.0,
+                    tips::GRUNGE_STRENGTH,
                 );
                 ui.separator();
                 ui.strong("Water surfaces (terrain and statics)");
-                changed |= toggle_u32(ui, "Water Animation", &mut u.effects.enable_water_animation);
+                changed |= toggle_u32(ui, "Water Animation", &mut u.effects.enable_water_animation, tips::WATER_ANIMATION);
                 if changed {
                     u.dirty = true;
                 }
@@ -474,10 +480,10 @@ pub fn land_ui_system(
 
             // --------------------- Mode & Normals ---------------------
             ui.horizontal(|ui| {
-                ui.strong("Shading Mode:");
+                with_tip(ui.strong("Shading Mode:"), tips::SHADING_MODE);
                 let mut mode = u.effects.shading_mode;
                 for (label, val) in [("Classic", 0u32), ("Enhanced", 1u32), ("KR", 2u32)] {
-                    if ui.selectable_label(mode == val, label).clicked() {
+                    if with_tip(ui.selectable_label(mode == val, label), tips::SHADING_MODE).clicked() {
                         mode = val;
                     }
                 }
@@ -488,17 +494,17 @@ pub fn land_ui_system(
             });
             ui.horizontal(|ui| {
                 let mode = u.effects.shading_mode;
-                ui.strong("Normals:");
+                with_tip(ui.strong("Normals:"), tips::NORMALS);
                 // Classic shades with geometric normals whatever this value is, so the selector is
                 // disabled there; the stored value is kept for the fragment styles.
                 if mode == 0 {
-                    ui.add_enabled(false, egui::Label::new("Geometric (fixed)"));
+                    with_tip(ui.add_enabled(false, egui::Label::new("Geometric (fixed)")), tips::NORMALS);
                 } else {
                     let mut nm = u.effects.normal_mode;
-                    if ui.selectable_label(nm == 0, "Geometric").clicked() {
+                    if with_tip(ui.selectable_label(nm == 0, "Geometric"), tips::NORMALS).clicked() {
                         nm = 0;
                     }
-                    if ui.selectable_label(nm == 1, "Bicubic").clicked() {
+                    if with_tip(ui.selectable_label(nm == 1, "Bicubic"), tips::NORMALS).clicked() {
                         nm = 1;
                     }
                     if nm != u.effects.normal_mode {
@@ -517,17 +523,17 @@ pub fn land_ui_system(
 
                 // Tonemap, colour grading, bent normals (vertex shader) and blur (texture
                 // sampling) apply in ANY shading mode (keep available always)
-                changed |= toggle_u32(ui, "Tonemap", &mut u.lighting.enable_tonemap);
-                changed |= toggle_u32(ui, "Color Grading", &mut u.lighting.enable_grading);
-                changed |= toggle_u32(ui, "Bent normals", &mut u.land_lighting.enable_bent);
-                changed |= toggle_u32(ui, "Blur", &mut u.effects.enable_blur);
+                changed |= toggle_u32(ui, "Tonemap", &mut u.lighting.enable_tonemap, tips::TONEMAP);
+                changed |= toggle_u32(ui, "Color Grading", &mut u.lighting.enable_grading, tips::COLOR_GRADING);
+                changed |= toggle_u32(ui, "Bent normals", &mut u.land_lighting.enable_bent, tips::BENT_NORMALS);
+                changed |= toggle_u32(ui, "Blur", &mut u.effects.enable_blur, tips::BLUR);
 
                 // Gloom is applied by the fragment shading modes only
                 let is_classic = u.effects.shading_mode == 0;
                 if !is_classic {
                     // Gloom: fragment-only semantic
                     let toggled =
-                        toggle_u32(ui, "Gloom (fragment)", &mut u.lighting.enable_gloom);
+                        toggle_u32(ui, "Gloom (fragment)", &mut u.lighting.enable_gloom, tips::GLOOM);
                     if toggled {
                         if u.lighting.enable_gloom == 0 {
                             u.lighting.gloom_params[0] = 0.0;
@@ -559,16 +565,17 @@ pub fn land_ui_system(
                         "Global Lighting (Scene Luminosity)",
                         &mut u.global_lighting,
                         0.0..=2.0,
+                        tips::BRIGHTNESS,
                     );
                 }
 
                 // Ambient always shown
-                changed |= slider_s(ui, "Ambient", &mut u.lighting.ambient_strength, 0.0..=1.5);
+                changed |= slider_s(ui, "Ambient", &mut u.lighting.ambient_strength, 0.0..=1.5, tips::TERRAIN_AMBIENT);
 
                 // Diffuse scales the sun light in every mode: Classic (vertex) multiplies its
                 // precomputed vertex Lambert by it.
                 let is_classic = u.effects.shading_mode == 0;
-                changed |= slider_s(ui, "Diffuse", &mut u.land_lighting.diffuse_strength, 0.0..=2.0);
+                changed |= slider_s(ui, "Diffuse", &mut u.land_lighting.diffuse_strength, 0.0..=2.0, tips::SUN_STRENGTH);
 
                 // Exposure lives in lighting UBO
                 changed |= slider_s(
@@ -576,6 +583,7 @@ pub fn land_ui_system(
                     "Exposure (Tonemap)",
                     &mut u.lighting.exposure,
                     EXPOSURE_RANGE,
+                    tips::EXPOSURE,
                 );
 
                 ui.separator();
@@ -586,12 +594,14 @@ pub fn land_ui_system(
                     "Blur Strength",
                     &mut u.effects.blur_strength,
                     0.0..=0.5,
+                    tips::BLUR_STRENGTH,
                 );
                 changed |= slider_s(
                     ui,
                     "Blur Radius (screen pixels)",
                     &mut u.effects.blur_radius,
                     BLUR_RADIUS_MIN_PIXELS..=BLUR_RADIUS_MAX_PIXELS,
+                    tips::BLUR_RADIUS,
                 );
 
                 ui.separator();
@@ -602,12 +612,14 @@ pub fn land_ui_system(
                         "Specular (fragment only)",
                         &mut u.land_lighting.specular_strength,
                         0.0..=0.4,
+                        tips::SPECULAR,
                     );
                     changed |= slider_s(
                         ui,
                         "Fill (env) (fragment only)",
                         &mut u.land_lighting.fill_strength,
                         0.0..=1.0,
+                        tips::FILL,
                     );
                     ui.separator();
                     changed |= slider_s(
@@ -615,16 +627,18 @@ pub fn land_ui_system(
                         "Sharpness Factor (fragment only)",
                         &mut u.land_lighting.sharpness_factor,
                         0.5..=4.0,
+                        tips::SHARPNESS_FACTOR,
                     );
                     changed |= slider_s(
                         ui,
                         "Sharpness Mix (fragment only)",
                         &mut u.land_lighting.sharpness_mix,
                         0.0..=1.0,
+                        tips::SHARPNESS_MIX,
                     );
                     ui.separator();
-                    changed |= slider_s(ui, "Rim (Enhanced and KR)", &mut u.land_lighting.rim_strength, 0.0..=0.5);
-                    changed |= slider_s(ui, "Diffuse Wrap (KR only)", &mut u.land_lighting.diffuse_wrap, 0.0..=0.5);
+                    changed |= slider_s(ui, "Rim (Enhanced and KR)", &mut u.land_lighting.rim_strength, 0.0..=0.5, tips::RIM);
+                    changed |= slider_s(ui, "Diffuse Wrap (KR only)", &mut u.land_lighting.diffuse_wrap, 0.0..=0.5, tips::DIFFUSE_WRAP);
                 } else {
                     // In Classic mode show a helper note.
                     ui.label("Fragment-only intensities hidden in Classic (vertex) mode.");
@@ -639,10 +653,10 @@ pub fn land_ui_system(
             ui.collapsing("Lighting Colors", |ui| {
                 let mut changed = false;
 
-                changed |= hdr_rgb(ui, "Light Color", &mut u.lighting.light_color);
+                changed |= hdr_rgb(ui, "Light Color", &mut u.lighting.light_color, tips::LIGHT_COLOR);
                 {
                     let mut v = u.lighting.atmosphere_tint;
-                    if color3(ui, "Atmosphere Tint", &mut v) {
+                    if color3(ui, "Atmosphere Tint", &mut v, tips::ATMOSPHERE_TINT) {
                         u.lighting.atmosphere_tint = v;
                         changed = true;
                     }
@@ -652,7 +666,7 @@ pub fn land_ui_system(
 
                 {
                     let mut v = u.land_lighting.fill_sky_color;
-                    if color4(ui, "Fill Sky (rgb + strength.a) (fragment only)", &mut v) {
+                    if color4(ui, "Fill Sky (rgb + strength.a) (fragment only)", &mut v, tips::FILL_SKY) {
                         u.land_lighting.fill_sky_color = v;
                         changed = true;
                     }
@@ -663,6 +677,7 @@ pub fn land_ui_system(
                         ui,
                         "Fill Ground (rgb + strength.a) (fragment only)",
                         &mut v,
+                        tips::FILL_GROUND,
                     ) {
                         u.land_lighting.fill_ground_color = v;
                         changed = true;
@@ -675,12 +690,12 @@ pub fn land_ui_system(
                 // the colour picker's 0..1, so they are edited as numbers and a slider.
                 {
                     let mut rgb = u.land_lighting.rim_color.truncate();
-                    if hdr_rgb(ui, "Rim Color (KR only)", &mut rgb) {
+                    if hdr_rgb(ui, "Rim Color (KR only)", &mut rgb, tips::RIM_COLOR) {
                         u.land_lighting.rim_color = rgb.extend(u.land_lighting.rim_color.w);
                         changed = true;
                     }
                 }
-                changed |= slider_s(ui, "Rim Power (fragment only)", &mut u.land_lighting.rim_color.w, RIM_POWER_RANGE);
+                changed |= slider_s(ui, "Rim Power (fragment only)", &mut u.land_lighting.rim_color.w, RIM_POWER_RANGE, tips::RIM_POWER);
 
                 if changed {
                     u.dirty = true;
@@ -697,25 +712,28 @@ pub fn land_ui_system(
                         "Grade Strength",
                         &mut u.lighting.grade_params[0],
                         0.0..=2.0,
+                        tips::GRADE_STRENGTH,
                     );
                     changed |= slider_s(
                         ui,
                         "Headroom Reserve",
                         &mut u.lighting.grade_params[1],
                         0.0..=0.5,
+                        tips::HEADROOM_RESERVE,
                     );
                     changed |= slider_s(
                         ui,
                         "Fill Chroma Tint",
                         &mut u.lighting.grade_params[2],
                         0.0..=1.0,
+                        tips::FILL_CHROMA_TINT,
                     );
 
                     // Headroom on/off via local bool to avoid overlapping borrows
                     {
                         let mut headroom_on = u.lighting.grade_params[3] >= 0.5;
                         let before = headroom_on;
-                        ui.checkbox(&mut headroom_on, "Enable Headroom Limit");
+                        with_tip(ui.checkbox(&mut headroom_on, "Enable Headroom Limit"), tips::HEADROOM_LIMIT);
                         if headroom_on != before {
                             u.lighting.grade_params[3] = if headroom_on { 1.0 } else { 0.0 };
                             changed = true;
@@ -728,27 +746,31 @@ pub fn land_ui_system(
                         "Vibrance (selective sat)",
                         &mut u.lighting.grade_extra[0],
                         0.0..=1.5,
+                        tips::VIBRANCE,
                     );
                     changed |= slider_s(
                         ui,
                         "Saturation (global)",
                         &mut u.lighting.grade_extra[1],
                         0.5..=2.0,
+                        tips::SATURATION,
                     );
                     changed |= slider_s(
                         ui,
                         "Contrast (global)",
                         &mut u.lighting.grade_extra[2],
                         0.5..=2.0,
+                        tips::CONTRAST,
                     );
                     changed |= slider_s(
                         ui,
                         "Split Tone Strength",
                         &mut u.lighting.grade_extra[3],
                         0.0..=2.0,
+                        tips::SPLIT_TONE,
                     );
-                    changed |= hdr_rgb(ui, "Grade Warm (bright areas)", &mut u.lighting.grade_warm_color);
-                    changed |= hdr_rgb(ui, "Grade Cool (dark areas)", &mut u.lighting.grade_cool_color);
+                    changed |= hdr_rgb(ui, "Grade Warm (bright areas)", &mut u.lighting.grade_warm_color, tips::GRADE_WARM);
+                    changed |= hdr_rgb(ui, "Grade Cool (dark areas)", &mut u.lighting.grade_cool_color, tips::GRADE_COOL);
                 }
 
                 if changed {
@@ -762,15 +784,17 @@ pub fn land_ui_system(
                 if u.effects.shading_mode == 0 {
                     ui.label("Gloom is fragment-only and hidden in Classic mode.");
                 } else {
-                    changed |= slider_s(ui, "Amount", &mut u.lighting.gloom_params[0], 0.0..=1.0);
-                    changed |= ui
-                        .add(
+                    changed |= slider_s(ui, "Amount", &mut u.lighting.gloom_params[0], 0.0..=1.0, tips::GLOOM_AMOUNT);
+                    changed |= with_tip(
+                        ui.add(
                             egui::Slider::new(&mut u.lighting.gloom_params[1], GLOOM_FADE_HEIGHT_RANGE)
                                 .logarithmic(true)
                                 .text("Height Fade Height (world units)"),
-                        )
-                        .changed();
-                    changed |= slider_s(ui, "Shadow Bias", &mut u.lighting.gloom_params[2], 0.0..=1.0);
+                        ),
+                        tips::GLOOM_FADE_HEIGHT,
+                    )
+                    .changed();
+                    changed |= slider_s(ui, "Shadow Bias", &mut u.lighting.gloom_params[2], 0.0..=1.0, tips::GLOOM_SHADOW_BIAS);
                 }
                 if changed {
                     u.dirty = true;
@@ -780,7 +804,7 @@ pub fn land_ui_system(
                 let mut changed_color = false;
                 {
                     let mut v = u.lighting.gloom_color;
-                    if color4(ui, "Gloom Tint (rgb + desat.a) (KR)", &mut v) {
+                    if color4(ui, "Gloom Tint (rgb + desat.a) (KR)", &mut v, tips::GLOOM_TINT) {
                         u.lighting.gloom_color = v;
                         changed_color = true;
                     }
@@ -795,47 +819,41 @@ pub fn land_ui_system(
                 let mut changed = false;
 
                 ui.strong("Whole scene");
-                changed |= toggle_u32(ui, "Linear Filtering", &mut u.effects.enable_linear_filtering);
+                changed |= toggle_u32(ui, "Linear Filtering", &mut u.effects.enable_linear_filtering, tips::TEXTURE_SMOOTHNESS);
                 changed |= texture_filter_row(ui, &mut u);
-                changed |= slider_s(ui, "Sharpening Amount", &mut u.effects.sharpening_amount, 0.0..=2.0);
-                changed |= toggle_u32(ui, "KR Color Wash", &mut u.effects.enable_kr_color_wash);
-                changed |= slider_s(ui, "KR Color Wash Strength", &mut u.effects.kr_color_wash_strength, 0.0..=1.5);
-                changed |= slider_s(ui, "KR Color Wash Scale", &mut u.effects.kr_color_wash_scale, 8.0..=160.0);
-                changed |= slider_s(ui, "Light/Static Interaction", &mut u.effects.light_decal_intensity, 0.0..=2.0);
+                changed |= slider_s(ui, "Sharpening Amount", &mut u.effects.sharpening_amount, 0.0..=2.0, tips::SHARPENING);
+                changed |= toggle_u32(ui, "KR Color Wash", &mut u.effects.enable_kr_color_wash, tips::KR_COLOR_WASH);
+                changed |= slider_s(ui, "KR Color Wash Strength", &mut u.effects.kr_color_wash_strength, 0.0..=1.5, tips::KR_COLOR_WASH_STRENGTH);
+                changed |= slider_s(ui, "KR Color Wash Scale", &mut u.effects.kr_color_wash_scale, 8.0..=160.0, tips::KR_COLOR_WASH_SCALE);
+                changed |= slider_s(ui, "Light/Static Interaction", &mut u.effects.light_decal_intensity, 0.0..=2.0, tips::LIGHT_STATIC_INTERACTION);
 
                 ui.separator();
                 ui.strong("Terrain");
-                changed |= toggle_u32(ui, "Texture Normal Maps", &mut u.effects.enable_normal_maps);
-                changed |= slider_s(ui, "Land Normal Maps", &mut u.effects.land_normal_map_strength, 0.0..=1.0);
+                changed |= toggle_u32(ui, "Texture Normal Maps", &mut u.effects.enable_normal_maps, tips::NORMAL_MAPS);
+                changed |= slider_s(ui, "Land Normal Maps", &mut u.effects.land_normal_map_strength, 0.0..=1.0, tips::NORMAL_MAP_STRENGTH);
                 // KR-like and Enhanced draw the lights into the night composite's light buffer, not as decals.
                 let decals = u.client_lighting.is_none();
-                changed |= ui
-                    .add_enabled(
-                        decals,
-                        egui::Slider::new(&mut u.effects.static_light_decal_visibility, 0.0..=2.0).text("Static Light Decals"),
-                    )
-                    .on_disabled_hover_text("KR-like and Enhanced light the night through the client's light buffer instead.")
-                    .changed();
-                changed |= slider_s(ui, "KR Land Temperature", &mut u.effects.kr_land_temperature_strength, 0.0..=1.5);
-                changed |= slider_s(ui, "KR Land Relief Shadow", &mut u.effects.kr_land_relief_shadow_strength, 0.0..=1.5);
-                changed |= slider_s(ui, "KR Land Shadow Mottle", &mut u.effects.kr_land_shadow_mottle_strength, 0.0..=1.5);
-                changed |= slider_s(ui, "KR Material Contrast", &mut u.effects.kr_land_material_contrast_strength, 0.0..=1.5);
-                changed |= toggle_u32(ui, "KR Transition Grime", &mut u.effects.enable_kr_transition_grime);
-                changed |= slider_s(ui, "KR Transition Grime Strength", &mut u.effects.kr_transition_grime_strength, 0.0..=1.0);
+                changed |= slider_en(ui, decals, "Static Light Decals", &mut u.effects.static_light_decal_visibility, 0.0..=2.0, tips::STATIC_LIGHT_DECALS);
+                changed |= slider_s(ui, "KR Land Temperature", &mut u.effects.kr_land_temperature_strength, 0.0..=1.5, tips::KR_LAND_TEMPERATURE);
+                changed |= slider_s(ui, "KR Land Relief Shadow", &mut u.effects.kr_land_relief_shadow_strength, 0.0..=1.5, tips::KR_LAND_RELIEF_SHADOW);
+                changed |= slider_s(ui, "KR Land Shadow Mottle", &mut u.effects.kr_land_shadow_mottle_strength, 0.0..=1.5, tips::KR_LAND_SHADOW_MOTTLE);
+                changed |= slider_s(ui, "KR Material Contrast", &mut u.effects.kr_land_material_contrast_strength, 0.0..=1.5, tips::KR_MATERIAL_CONTRAST);
+                changed |= toggle_u32(ui, "KR Transition Grime", &mut u.effects.enable_kr_transition_grime, tips::KR_TRANSITION_GRIME);
+                changed |= slider_s(ui, "KR Transition Grime Strength", &mut u.effects.kr_transition_grime_strength, 0.0..=1.0, tips::KR_TRANSITION_GRIME_STRENGTH);
 
                 ui.separator();
                 ui.strong("Objects (art / statics)");
-                changed |= toggle_u32(ui, "Art Fake Normals", &mut u.effects.enable_art_fake_normals);
-                changed |= slider_s(ui, "Art Shadow Shape", &mut u.effects.art_shadow_strength, 0.0..=1.0);
-                changed |= slider_s(ui, "Art Contact Shadows", &mut u.effects.art_contact_shadow_strength, 0.0..=1.0);
-                changed |= slider_s(ui, "Art Mottle", &mut u.effects.art_mottle_strength, 0.0..=1.5);
-                changed |= slider_s(ui, "Art Light Catch", &mut u.effects.art_highlight_strength, 0.0..=1.0);
-                changed |= slider_s(ui, "Art Atmosphere Tint", &mut u.effects.art_depth_tint_strength, 0.0..=1.0);
-                changed |= slider_s(ui, "KR Art Temperature", &mut u.effects.kr_art_temperature_strength, 0.0..=1.5);
-                changed |= toggle_u32(ui, "Art Projected Shadows", &mut u.effects.enable_art_projected_shadows);
-                changed |= slider_s(ui, "Art Projected Shadow Strength", &mut u.effects.art_projected_shadow_strength, 0.0..=1.0);
-                changed |= slider_s(ui, "Art Projected Shadow Length", &mut u.effects.art_projected_shadow_length, 0.0..=1.5);
-                changed |= slider_s(ui, "Art Projected Shadow Softness", &mut u.effects.art_projected_shadow_softness, 0.05..=1.0);
+                changed |= toggle_u32(ui, "Art Fake Normals", &mut u.effects.enable_art_fake_normals, tips::ART_FAKE_NORMALS);
+                changed |= slider_s(ui, "Art Shadow Shape", &mut u.effects.art_shadow_strength, 0.0..=1.0, tips::ART_SHADOW_SHAPE);
+                changed |= slider_s(ui, "Art Contact Shadows", &mut u.effects.art_contact_shadow_strength, 0.0..=1.0, tips::ART_CONTACT_SHADOWS);
+                changed |= slider_s(ui, "Art Mottle", &mut u.effects.art_mottle_strength, 0.0..=1.5, tips::ART_MOTTLE);
+                changed |= slider_s(ui, "Art Light Catch", &mut u.effects.art_highlight_strength, 0.0..=1.0, tips::ART_LIGHT_CATCH);
+                changed |= slider_s(ui, "Art Atmosphere Tint", &mut u.effects.art_depth_tint_strength, 0.0..=1.0, tips::ART_ATMOSPHERE_TINT);
+                changed |= slider_s(ui, "KR Art Temperature", &mut u.effects.kr_art_temperature_strength, 0.0..=1.5, tips::KR_ART_TEMPERATURE);
+                changed |= toggle_u32(ui, "Art Projected Shadows", &mut u.effects.enable_art_projected_shadows, tips::ART_PROJECTED_SHADOWS);
+                changed |= slider_s(ui, "Art Projected Shadow Strength", &mut u.effects.art_projected_shadow_strength, 0.0..=1.0, tips::ART_PROJECTED_SHADOW_STRENGTH);
+                changed |= slider_s(ui, "Art Projected Shadow Length", &mut u.effects.art_projected_shadow_length, 0.0..=1.5, tips::ART_PROJECTED_SHADOW_LENGTH);
+                changed |= slider_s(ui, "Art Projected Shadow Softness", &mut u.effects.art_projected_shadow_softness, 0.05..=1.0, tips::ART_PROJECTED_SHADOW_SOFTNESS);
 
                 if changed {
                     u.dirty = true;
@@ -847,7 +865,7 @@ pub fn land_ui_system(
                 let mut changed = false;
                 // Tint + max mix (alpha)
                 let mut fog = u.lighting.fog_color;
-                if color4(ui, "Fog Color (alpha = max mix)", &mut fog) {
+                if color4(ui, "Fog Color (alpha = max mix)", &mut fog, tips::FOG_COLOR) {
                     u.lighting.fog_color = fog;
                     changed = true;
                 }
@@ -857,22 +875,25 @@ pub fn land_ui_system(
                     "Distance Density",
                     &mut u.lighting.fog_params[0],
                     0.0..=0.2,
+                    tips::FOG_DISTANCE_DENSITY,
                 );
                 changed |= slider_s(
                     ui,
                     "Height Density",
                     &mut u.lighting.fog_params[1],
                     0.0..=0.2,
+                    tips::FOG_HEIGHT_DENSITY,
                 );
                 // The cloud noise only shapes haze the densities make: alone it draws nothing.
                 let has_haze = fog_has_haze(u.lighting.fog_params);
-                changed |= slider_en(ui, has_haze, "Noise Scale", &mut u.lighting.fog_params[2], 0.0..=2.0);
+                changed |= slider_en(ui, has_haze, "Noise Scale", &mut u.lighting.fog_params[2], 0.0..=2.0, tips::FOG_NOISE_SCALE);
                 changed |= slider_en(
                     ui,
                     has_haze,
                     "Noise Strength",
                     &mut u.lighting.fog_params[3],
                     0.0..=1.0,
+                    tips::FOG_NOISE_STRENGTH,
                 );
                 if changed {
                     u.dirty = true;
@@ -882,7 +903,7 @@ pub fn land_ui_system(
                 let mut changed_night = false;
                 {
                     let mut v = u.lighting.fog_night_color;
-                    if color4(ui, "Night Fog Tint (rgb + blend.a)", &mut v) {
+                    if color4(ui, "Night Fog Tint (rgb + blend.a)", &mut v, tips::FOG_NIGHT_TINT) {
                         u.lighting.fog_night_color = v;
                         changed_night = true;
                     }
@@ -960,7 +981,6 @@ fn push_uniforms_if_dirty(
 // These helpers return "changed" (bool) so callers can set u.dirty |= changed,
 // avoiding overlapping &mut borrows inside the helper.
 
-// Toggle a u32 field as a boolean (0/1). Returns true if the value changed.
 /// Which controls the active render style consumes.
 #[derive(Clone, Copy)]
 struct RenderStyleGates {
@@ -980,34 +1000,22 @@ fn whole_scene_controls(ui: &mut egui::Ui, u: &mut UniformState, gates: RenderSt
     section_header(ui, "Whole scene", "Affects both land and art / the full frame.");
     let mut changed = false;
     ui.horizontal_wrapped(|ui| {
-        changed |= toggle_u32(ui, "Tonemap", &mut u.lighting.enable_tonemap);
+        changed |= toggle_u32(ui, "Tonemap", &mut u.lighting.enable_tonemap, tips::TONEMAP);
         // "Color Grading" is the master on/off for the same vibrant grading
         // whose knobs live under Advanced → "Color Grading (Vibrant)". The
         // excess saturation the user sees comes from those defaults, not a
         // separate effect — the tooltip makes the relationship explicit.
-        changed |= toggle_tip(
-            ui,
-            "Color Grading",
-            &mut u.lighting.enable_grading,
-            "Master on/off for the vibrant color grading tuned under \
-             Advanced -> Color Grading (Vibrant). If colors look \
-             oversaturated, lower Saturation / Vibrance there.",
-        );
-        changed |= toggle_tip(
-            ui,
-            "Texture Smoothness",
-            &mut u.effects.enable_linear_filtering,
-            "Softens texel seams in the pixel-art filter. Liquids and item surfaces follow it under either filter.",
-        );
-        changed |= toggle_u32(ui, "Fog", &mut u.lighting.enable_fog);
+        changed |= toggle_u32(ui, "Color Grading", &mut u.lighting.enable_grading, tips::COLOR_GRADING);
+        changed |= toggle_u32(ui, "Texture Smoothness", &mut u.effects.enable_linear_filtering, tips::TEXTURE_SMOOTHNESS);
+        changed |= toggle_u32(ui, "Fog", &mut u.lighting.enable_fog, tips::FOG);
     });
     changed |= texture_filter_row(ui, u);
     ui.horizontal_wrapped(|ui| {
         let enabled = u.lighting.enable_tonemap != 0;
-        ui.add_enabled(enabled, egui::Label::new("Tone Curve:"));
+        with_tip(ui.add_enabled(enabled, egui::Label::new("Tone Curve:")), tips::TONE_CURVE);
         for (label, curve, tip) in TONE_CURVE_OPTIONS {
             let selected = u.lighting.tone_curve == curve;
-            if ui.add_enabled(enabled, egui::Button::selectable(selected, label)).on_hover_text(tip).clicked() && !selected {
+            if with_tip(ui.add_enabled(enabled, egui::Button::selectable(selected, label)), tip).clicked() && !selected {
                 u.lighting.tone_curve = curve;
                 changed = true;
             }
@@ -1019,16 +1027,16 @@ fn whole_scene_controls(ui: &mut egui::Ui, u: &mut UniformState, gates: RenderSt
         // styles through the Brightness multiplier.
         match u.client_lighting.as_mut() {
             Some(lighting) => changed |= client_night_controls(ui, lighting),
-            None => changed |= slider_s(ui, "Brightness", &mut u.global_lighting, 0.0..=2.0),
+            None => changed |= slider_s(ui, "Brightness", &mut u.global_lighting, 0.0..=2.0, tips::BRIGHTNESS),
         }
         // KR's filmic tonemap had its own pre-scale here ("KR Tonemap Brightness"); it multiplied
         // exactly like Exposure, so it is folded into Exposure (Advanced -> Intensities).
-        changed |= slider_s(ui, "Light/Static Interaction", &mut u.effects.light_decal_intensity, 0.0..=2.0);
+        changed |= slider_s(ui, "Light/Static Interaction", &mut u.effects.light_decal_intensity, 0.0..=2.0, tips::LIGHT_STATIC_INTERACTION);
 
         let ui = &mut columns[1];
-        changed |= toggle_slider(ui, true, "Grunge", &mut u.effects.enable_grunge, &mut u.effects.grunge_strength, 0.0..=1.0);
-        changed |= toggle_slider(ui, gates.is_kr_profile, "KR Color Wash", &mut u.effects.enable_kr_color_wash, &mut u.effects.kr_color_wash_strength, 0.0..=1.5);
-        changed |= slider_en(ui, gates.is_kr_profile, "KR Color Wash Scale", &mut u.effects.kr_color_wash_scale, 8.0..=160.0);
+        changed |= toggle_slider(ui, true, "Grunge", &mut u.effects.enable_grunge, &mut u.effects.grunge_strength, 0.0..=1.0, tips::GRUNGE);
+        changed |= toggle_slider(ui, gates.is_kr_profile, "KR Color Wash", &mut u.effects.enable_kr_color_wash, &mut u.effects.kr_color_wash_strength, 0.0..=1.5, tips::KR_COLOR_WASH);
+        changed |= slider_en(ui, gates.is_kr_profile, "KR Color Wash Scale", &mut u.effects.kr_color_wash_scale, 8.0..=160.0, tips::KR_COLOR_WASH_SCALE);
     });
     changed
 }
@@ -1037,14 +1045,14 @@ fn whole_scene_controls(ui: &mut egui::Ui, u: &mut UniformState, gates: RenderSt
 fn client_night_controls(ui: &mut egui::Ui, lighting: &mut ClientNightLighting) -> bool {
     let mut changed = ui
         .add(egui::Slider::new(&mut lighting.light_level, 0..=MAX_CLIENT_LIGHT_LEVEL).text("Light Level"))
-        .on_hover_text("The server's light level: 0 is full day (no change), about 10 a night, 26 a dungeon.")
+        .on_hover_text(tips::CLIENT_LIGHT_LEVEL)
         .changed();
-    changed |= slider_tip(
+    changed |= slider_s(
         ui,
         "Night Overlay Strength",
         &mut lighting.overlay_strength,
         MIN_NIGHT_OVERLAY_STRENGTH..=MAX_NIGHT_OVERLAY_STRENGTH,
-        "The night map's tint. 1 is the client; 0 darkens as much without the blue; above 1 tints more.",
+        tips::NIGHT_OVERLAY_STRENGTH,
     );
     changed |= night_overlay_color(ui, &mut lighting.overlay_color);
     changed
@@ -1052,21 +1060,16 @@ fn client_night_controls(ui: &mut egui::Ui, lighting: &mut ClientNightLighting) 
 
 /// The night overlay colour as 8-bit values, as the night map stores them, with a button back to the client's.
 fn night_overlay_color(ui: &mut egui::Ui, color: &mut Vec3) -> bool {
-    const OVERLAY_COLOR_TIP: &str =
-        "The night map's mean colour. The client's keeps its blue; another colour keeps its cloud pattern.";
     let mut changed = false;
     ui.horizontal(|ui| {
         let mut bytes = color.to_array().map(|channel| (channel * f32::from(u8::MAX)).round() as u8);
-        if ui.color_edit_button_srgb(&mut bytes).on_hover_text(OVERLAY_COLOR_TIP).changed() {
+        if ui.color_edit_button_srgb(&mut bytes).on_hover_text(tips::NIGHT_OVERLAY_COLOR).changed() {
             *color = Vec3::from_array(bytes.map(|channel| f32::from(channel) / f32::from(u8::MAX)));
             changed = true;
         }
-        ui.label("Night Overlay Colour").on_hover_text(OVERLAY_COLOR_TIP);
+        ui.label("Night Overlay Colour").on_hover_text(tips::NIGHT_OVERLAY_COLOR);
         let is_client = *color == NIGHT_MAP_MEAN;
-        if ui
-            .add_enabled(!is_client, egui::Button::new("Client"))
-            .on_hover_text("Back to the client's colour, the night map's exact mean.")
-            .clicked()
+        if with_tip(ui.add_enabled(!is_client, egui::Button::new("Client")), tips::NIGHT_OVERLAY_CLIENT).clicked()
         {
             *color = NIGHT_MAP_MEAN;
             changed = true;
@@ -1078,10 +1081,10 @@ fn night_overlay_color(ui: &mut egui::Ui, color: &mut Vec3) -> bool {
 fn texture_filter_row(ui: &mut egui::Ui, u: &mut UniformState) -> bool {
     let mut changed = false;
     ui.horizontal_wrapped(|ui| {
-        ui.label("Texture Filter:");
+        with_tip(ui.label("Texture Filter:"), tips::TEXTURE_FILTER);
         for (label, filter, tip) in TEXTURE_FILTER_OPTIONS {
             let selected = u.effects.texture_filter == filter;
-            if ui.add(egui::Button::selectable(selected, label)).on_hover_text(tip).clicked() && !selected {
+            if with_tip(ui.add(egui::Button::selectable(selected, label)), tip).clicked() && !selected {
                 u.effects.texture_filter = filter;
                 changed = true;
             }
@@ -1092,12 +1095,12 @@ fn texture_filter_row(ui: &mut egui::Ui, u: &mut UniformState) -> bool {
 
 fn terrain_controls(ui: &mut egui::Ui, u: &mut UniformState, gates: RenderStyleGates) -> bool {
     section_header(ui, "Terrain and water", "Land tiles. Water also covers static water surfaces.");
-    let mut changed = toggle_u32(ui, "Water Animation", &mut u.effects.enable_water_animation);
+    let mut changed = toggle_u32(ui, "Water Animation", &mut u.effects.enable_water_animation, tips::WATER_ANIMATION);
     ui.horizontal_wrapped(|ui| {
-        ui.add_enabled(gates.is_fragment, egui::Label::new("Land Shading:"));
+        with_tip(ui.add_enabled(gates.is_fragment, egui::Label::new("Land Shading:")), tips::LAND_SHADING);
         for (label, model, tip) in TERRAIN_SHADING_OPTIONS {
             let selected = u.land_lighting.terrain_shading_model == model;
-            if ui.add_enabled(gates.is_fragment, egui::Button::selectable(selected, label)).on_hover_text(tip).clicked() && !selected {
+            if with_tip(ui.add_enabled(gates.is_fragment, egui::Button::selectable(selected, label)), tip).clicked() && !selected {
                 u.land_lighting.terrain_shading_model = model;
                 changed = true;
             }
@@ -1107,40 +1110,38 @@ fn terrain_controls(ui: &mut egui::Ui, u: &mut UniformState, gates: RenderStyleG
     let per_pixel = gates.is_fragment && u.land_lighting.terrain_shading_model == TERRAIN_SHADING_SMOOTH_PER_PIXEL;
     // Every shading mode scales its sun light by this, Classic's vertex Lambert included; the client per-vertex model
     // uses it only on flat water.
-    changed |= slider_s(ui, "Sun Strength", &mut u.land_lighting.diffuse_strength, 0.0..=2.0);
-    changed |= slider_tip(ui, "Sun Azimuth", &mut u.sun.azimuth_degrees, SUN_AZIMUTH_RANGE_DEGREES,
-        "Compass bearing of the sun in degrees, clockwise from north (180 = south). Lights land and art and turns the sprite shadows.");
-    changed |= slider_tip(ui, "Sun Elevation", &mut u.sun.elevation_degrees, SUN_ELEVATION_RANGE_DEGREES,
-        "Height of the sun above the horizon in degrees (90 = overhead).");
-    changed |= slider_s(ui, "Terrain Ambient Light", &mut u.lighting.ambient_strength, 0.0..=1.5);
+    changed |= slider_s(ui, "Sun Strength", &mut u.land_lighting.diffuse_strength, 0.0..=2.0, tips::SUN_STRENGTH);
+    changed |= slider_s(ui, "Sun Azimuth", &mut u.sun.azimuth_degrees, SUN_AZIMUTH_RANGE_DEGREES, tips::SUN_AZIMUTH);
+    changed |= slider_s(ui, "Sun Elevation", &mut u.sun.elevation_degrees, SUN_ELEVATION_RANGE_DEGREES, tips::SUN_ELEVATION);
+    changed |= slider_s(ui, "Terrain Ambient Light", &mut u.lighting.ambient_strength, 0.0..=1.5, tips::TERRAIN_AMBIENT);
 
     let mut land_relief = land_relief_control_value(u);
-    if slider_en(ui, per_pixel, "Land Relief", &mut land_relief, 0.0..=1.0) {
+    if slider_en(ui, per_pixel, "Land Relief", &mut land_relief, 0.0..=1.0, tips::LAND_RELIEF) {
         apply_land_relief_control(u, land_relief);
         changed = true;
     }
     let mut soft_lighting = soft_lighting_control_value(u);
-    if slider_en(ui, per_pixel, "Soft Lighting", &mut soft_lighting, 0.0..=1.0) {
+    if slider_en(ui, per_pixel, "Soft Lighting", &mut soft_lighting, 0.0..=1.0, tips::SOFT_LIGHTING) {
         apply_soft_lighting_control(u, soft_lighting);
         changed = true;
     }
     let mut highlights = highlights_control_value(u);
-    if slider_en(ui, per_pixel, "Highlights", &mut highlights, 0.0..=1.0) {
+    if slider_en(ui, per_pixel, "Highlights", &mut highlights, 0.0..=1.0, tips::HIGHLIGHTS) {
         apply_highlights_control(u, highlights);
         changed = true;
     }
 
     let kr_per_pixel = gates.is_kr_shading && per_pixel;
-    changed |= slider_en(ui, kr_per_pixel, "KR Land Temperature", &mut u.effects.kr_land_temperature_strength, 0.0..=1.5);
-    changed |= slider_en(ui, kr_per_pixel, "KR Land Relief Shadow", &mut u.effects.kr_land_relief_shadow_strength, 0.0..=1.5);
-    changed |= slider_en(ui, kr_per_pixel, "KR Land Shadow Mottle", &mut u.effects.kr_land_shadow_mottle_strength, 0.0..=1.5);
-    changed |= slider_en(ui, gates.is_kr_profile, "KR Material Contrast", &mut u.effects.kr_land_material_contrast_strength, 0.0..=1.5);
-    changed |= toggle_slider(ui, gates.is_kr_profile, "KR Transition Grime", &mut u.effects.enable_kr_transition_grime, &mut u.effects.kr_transition_grime_strength, 0.0..=1.0);
+    changed |= slider_en(ui, kr_per_pixel, "KR Land Temperature", &mut u.effects.kr_land_temperature_strength, 0.0..=1.5, tips::KR_LAND_TEMPERATURE);
+    changed |= slider_en(ui, kr_per_pixel, "KR Land Relief Shadow", &mut u.effects.kr_land_relief_shadow_strength, 0.0..=1.5, tips::KR_LAND_RELIEF_SHADOW);
+    changed |= slider_en(ui, kr_per_pixel, "KR Land Shadow Mottle", &mut u.effects.kr_land_shadow_mottle_strength, 0.0..=1.5, tips::KR_LAND_SHADOW_MOTTLE);
+    changed |= slider_en(ui, gates.is_kr_profile, "KR Material Contrast", &mut u.effects.kr_land_material_contrast_strength, 0.0..=1.5, tips::KR_MATERIAL_CONTRAST);
+    changed |= toggle_slider(ui, gates.is_kr_profile, "KR Transition Grime", &mut u.effects.enable_kr_transition_grime, &mut u.effects.kr_transition_grime_strength, 0.0..=1.0, tips::KR_TRANSITION_GRIME);
 
     // Normal maps only apply to EC-atlas land textures (`texture_size == 2`
     // in the shader); on a CC art source they are a structural no-op — the
     // label states this since there is no global "source is EC" signal here.
-    changed |= toggle_slider(ui, gates.is_fragment, "Normal Maps (EC land only)", &mut u.effects.enable_normal_maps, &mut u.effects.land_normal_map_strength, 0.0..=1.0);
+    changed |= toggle_slider(ui, gates.is_fragment, "Normal Maps (EC land only)", &mut u.effects.enable_normal_maps, &mut u.effects.land_normal_map_strength, 0.0..=1.0, tips::NORMAL_MAPS);
     changed
 }
 
@@ -1150,11 +1151,11 @@ fn standard_art_controls(ui: &mut egui::Ui, u: &mut UniformState) -> bool {
     // KR-like's client shadow replaces these sprite shadows.
     let sprite_shadows = u.client_shadows.is_none();
     let effects = &mut u.effects;
-    changed |= slider_en(ui, sprite_shadows, "Shadow Shape", &mut effects.art_shadow_strength, 0.0..=1.0);
-    changed |= slider_en(ui, sprite_shadows, "Contact Shadows", &mut effects.art_contact_shadow_strength, 0.0..=1.0);
-    changed |= slider_s(ui, "Mottle", &mut effects.art_mottle_strength, 0.0..=1.5);
-    changed |= slider_s(ui, "Light Catch", &mut effects.art_highlight_strength, 0.0..=1.0);
-    changed |= slider_s(ui, "Atmosphere Tint", &mut effects.art_depth_tint_strength, 0.0..=1.0);
+    changed |= slider_en(ui, sprite_shadows, "Shadow Shape", &mut effects.art_shadow_strength, 0.0..=1.0, tips::ART_SHADOW_SHAPE);
+    changed |= slider_en(ui, sprite_shadows, "Contact Shadows", &mut effects.art_contact_shadow_strength, 0.0..=1.0, tips::ART_CONTACT_SHADOWS);
+    changed |= slider_s(ui, "Mottle", &mut effects.art_mottle_strength, 0.0..=1.5, tips::ART_MOTTLE);
+    changed |= slider_s(ui, "Light Catch", &mut effects.art_highlight_strength, 0.0..=1.0, tips::ART_LIGHT_CATCH);
+    changed |= slider_s(ui, "Atmosphere Tint", &mut effects.art_depth_tint_strength, 0.0..=1.0, tips::ART_ATMOSPHERE_TINT);
     changed
 }
 
@@ -1164,7 +1165,7 @@ fn client_shadows_toggle(ui: &mut egui::Ui, client_shadows: &mut Option<bool>) -
         return false;
     };
     ui.checkbox(enabled, "Client Shadows")
-        .on_hover_text("The KR client's shadows of statics and items, leaning from their base (its Show Shadows option).")
+        .on_hover_text(tips::CLIENT_SHADOWS)
         .changed()
 }
 
@@ -1173,10 +1174,16 @@ fn stylized_art_controls(ui: &mut egui::Ui, u: &mut UniformState) -> bool {
     // KR-like's client shadow replaces the projected shadows.
     let sprite_shadows = u.client_shadows.is_none();
     let effects = &mut u.effects;
-    let mut changed = slider_s(ui, "Temperature", &mut effects.kr_art_temperature_strength, 0.0..=1.5);
-    changed |= toggle_slider(ui, sprite_shadows, "Projected Shadows", &mut effects.enable_art_projected_shadows, &mut effects.art_projected_shadow_strength, 0.0..=1.0);
-    changed |= toggle_u32(ui, "Fake Normals", &mut effects.enable_art_fake_normals);
+    let mut changed = slider_s(ui, "Temperature", &mut effects.kr_art_temperature_strength, 0.0..=1.5, tips::KR_ART_TEMPERATURE);
+    changed |= toggle_slider(ui, sprite_shadows, "Projected Shadows", &mut effects.enable_art_projected_shadows, &mut effects.art_projected_shadow_strength, 0.0..=1.0, tips::ART_PROJECTED_SHADOWS);
+    changed |= toggle_u32(ui, "Fake Normals", &mut effects.enable_art_fake_normals, tips::ART_FAKE_NORMALS);
     changed
+}
+
+/// Show `tip` when the pointer rests on the control, enabled or grayed out: egui shows a plain hover text only on
+/// enabled widgets, and a grayed-out control is where "needs X" matters most.
+fn with_tip(response: egui::Response, tip: &str) -> egui::Response {
+    response.on_hover_text(tip).on_disabled_hover_text(tip)
 }
 
 /// One row for an effect with a strength: the slider, then the checkbox that switches the effect.
@@ -1188,18 +1195,20 @@ fn toggle_slider(
     toggle: &mut u32,
     strength: &mut f32,
     range: std::ops::RangeInclusive<f32>,
+    tip: &str,
 ) -> bool {
     let mut changed = false;
     ui.horizontal(|ui| {
-        changed |= ui.add_enabled(enabled && *toggle != 0, egui::Slider::new(strength, range)).changed();
-        changed |= toggle_en(ui, enabled, label, toggle);
+        changed |= with_tip(ui.add_enabled(enabled && *toggle != 0, egui::Slider::new(strength, range)), tip).changed();
+        changed |= toggle_en(ui, enabled, label, toggle, tip);
     });
     changed
 }
 
-fn toggle_u32(ui: &mut egui::Ui, label: &str, val: &mut u32) -> bool {
+// Toggle a u32 field as a boolean (0/1). Returns true if the value changed.
+fn toggle_u32(ui: &mut egui::Ui, label: &str, val: &mut u32, tip: &str) -> bool {
     let mut b = *val != 0;
-    let changed = ui.checkbox(&mut b, label).changed();
+    let changed = with_tip(ui.checkbox(&mut b, label), tip).changed();
     if changed {
         *val = if b { 1 } else { 0 };
     }
@@ -1212,8 +1221,9 @@ fn slider_s(
     label: &str,
     val: &mut f32,
     range: std::ops::RangeInclusive<f32>,
+    tip: &str,
 ) -> bool {
-    ui.add(egui::Slider::new(val, range).text(label)).changed()
+    with_tip(ui.add(egui::Slider::new(val, range).text(label)), tip).changed()
 }
 
 // Like `slider_s`, but grayed out (non-interactive) when `enabled` is false —
@@ -1224,38 +1234,15 @@ fn slider_en(
     label: &str,
     val: &mut f32,
     range: std::ops::RangeInclusive<f32>,
-) -> bool {
-    ui.add_enabled(enabled, egui::Slider::new(val, range).text(label))
-        .changed()
-}
-
-// Like `slider_s`, but shows an explanatory tooltip on hover.
-fn slider_tip(
-    ui: &mut egui::Ui,
-    label: &str,
-    val: &mut f32,
-    range: std::ops::RangeInclusive<f32>,
     tip: &str,
 ) -> bool {
-    ui.add(egui::Slider::new(val, range).text(label)).on_hover_text(tip).changed()
-}
-
-// Like `toggle_u32`, but shows an explanatory tooltip on hover.
-fn toggle_tip(ui: &mut egui::Ui, label: &str, val: &mut u32, tip: &str) -> bool {
-    let mut b = *val != 0;
-    let changed = ui.checkbox(&mut b, label).on_hover_text(tip).changed();
-    if changed {
-        *val = if b { 1 } else { 0 };
-    }
-    changed
+    with_tip(ui.add_enabled(enabled, egui::Slider::new(val, range).text(label)), tip).changed()
 }
 
 // Like `toggle_u32`, but grayed out when `enabled` is false.
-fn toggle_en(ui: &mut egui::Ui, enabled: bool, label: &str, val: &mut u32) -> bool {
+fn toggle_en(ui: &mut egui::Ui, enabled: bool, label: &str, val: &mut u32, tip: &str) -> bool {
     let mut b = *val != 0;
-    let changed = ui
-        .add_enabled(enabled, egui::Checkbox::new(&mut b, label))
-        .changed();
+    let changed = with_tip(ui.add_enabled(enabled, egui::Checkbox::new(&mut b, label)), tip).changed();
     if changed {
         *val = if b { 1 } else { 0 };
     }
@@ -1263,12 +1250,12 @@ fn toggle_en(ui: &mut egui::Ui, enabled: bool, label: &str, val: &mut u32) -> bo
 }
 
 // Edit a Vec3 as RGB (0..1). Returns true if changed.
-fn color3(ui: &mut egui::Ui, label: &str, v: &mut Vec3) -> bool {
+fn color3(ui: &mut egui::Ui, label: &str, v: &mut Vec3, tip: &str) -> bool {
     let mut changed = false;
     let mut arr = v.to_array();
     ui.horizontal(|ui| {
-        ui.label(label);
-        if ui.color_edit_button_rgb(&mut arr).changed() {
+        with_tip(ui.label(label), tip);
+        if with_tip(ui.color_edit_button_rgb(&mut arr), tip).changed() {
             changed = true;
         }
     });
@@ -1279,12 +1266,12 @@ fn color3(ui: &mut egui::Ui, label: &str, v: &mut Vec3) -> bool {
 }
 
 // Edit a Vec4 as RGBA (0..1). Returns true if changed.
-fn color4(ui: &mut egui::Ui, label: &str, v: &mut Vec4) -> bool {
+fn color4(ui: &mut egui::Ui, label: &str, v: &mut Vec4, tip: &str) -> bool {
     let mut changed = false;
     let mut arr = v.to_array();
     ui.horizontal(|ui| {
-        ui.label(label);
-        if ui.color_edit_button_rgba_unmultiplied(&mut arr).changed() {
+        with_tip(ui.label(label), tip);
+        if with_tip(ui.color_edit_button_rgba_unmultiplied(&mut arr), tip).changed() {
             changed = true;
         }
     });
@@ -1296,17 +1283,19 @@ fn color4(ui: &mut egui::Ui, label: &str, v: &mut Vec4) -> bool {
 
 /// Edit an RGB colour that may exceed 1 as three numbers in `HDR_COLOR_RANGE`, with a swatch of how it looks.
 /// Returns true if changed.
-fn hdr_rgb(ui: &mut egui::Ui, label: &str, v: &mut Vec3) -> bool {
+fn hdr_rgb(ui: &mut egui::Ui, label: &str, v: &mut Vec3, tip: &str) -> bool {
     let mut changed = false;
     let mut arr = v.to_array();
     ui.horizontal(|ui| {
         for channel in &mut arr {
-            changed |= ui
-                .add(egui::DragValue::new(channel).range(HDR_COLOR_RANGE).speed(HDR_COLOR_DRAG_SPEED))
-                .changed();
+            let drag = egui::DragValue::new(channel).range(HDR_COLOR_RANGE).speed(HDR_COLOR_DRAG_SPEED);
+            changed |= with_tip(ui.add(drag), tip).changed();
         }
-        egui::color_picker::show_color(ui, egui::Rgba::from_rgb(arr[0], arr[1], arr[2]), ui.spacing().interact_size);
-        ui.label(label);
+        with_tip(
+            egui::color_picker::show_color(ui, egui::Rgba::from_rgb(arr[0], arr[1], arr[2]), ui.spacing().interact_size),
+            tip,
+        );
+        with_tip(ui.label(label), tip);
     });
     if changed {
         *v = Vec3::from_array(arr);
