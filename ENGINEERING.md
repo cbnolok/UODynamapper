@@ -48,6 +48,8 @@ just bevy-lint                                   # Bevy-specific lints
 
 **Cargo target directory**: keep the one configured in `.cargo/config.toml`. Never pass `CARGO_TARGET_DIR` or `--target-dir`.
 
+**dynamapper debug build**: built for quick iteration, with no debug info and no symbol table (`[profile.dev.package.dynamapper]` in `Cargo.toml` gives the measurements). Rebuilds are about a third faster and the binary is less than half the size. Panics keep their message, file and line, but backtraces show no function names: use the `profiling` profile through the `just` recipes when you need names, for perf or for a backtrace.
+
 **Feature unification (`lib/workspace-hack`)**: every member depends on the `workspace-hack` crate that cargo-hakari generates. It
 turns on the union of the third-party features, so the workspace build, `-p dynamapper` and each tool share one copy of each
 dependency instead of rebuilding it per feature set. Members name it as `workspace-hack.workspace = true`, the empty stub

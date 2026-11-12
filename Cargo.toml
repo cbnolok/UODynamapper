@@ -189,12 +189,18 @@ opt-level = 3
 # --- Workspace Member Overrides
 # Since "*" above is very aggressive, we must opt-back-in to debug info for our own code.
 
+# dynamapper's debug build is for quick iteration, so it carries no debug info and the linker writes no symbol table.
+# Measured on 2026-11-12, rebuilding after a one-file change: line tables and symbols took 72-81 s and gave a 248 MB
+# binary, about 110 MB of it symbol names (Bevy's generic types spelled out by the v0 mangling); without them it takes
+# 52 s and gives 117 MB. Debug info alone was only ~2 MB and no time: the saving is the symbol table. The cost: panics
+# still print their message, file and line, but backtrace frames have no function names. Use the `profiling` profile
+# (just recipes) for perf or a named backtrace. Incremental stays off: its cache takes tens of GB.
 [profile.dev.package.dynamapper]
 opt-level = 1
 #incremental = true
-debug = "line-tables-only" # true
+debug = false # was "line-tables-only"
 debug-assertions = true
-strip = false
+strip = "symbols"
 
 # Specifically optimize data processing libraries for performance
 [profile.dev.package.uot-image-postprocess]
