@@ -6,6 +6,8 @@ setting. It changes no rendering code and no preset value. Every setting of
 that read it. Each setting that can act was then rendered in six fixed views, in every style and time of day where
 it is reachable. Each was rendered once at the factory value and once neutralised.
 
+The decisions taken on this audit, and the changes made after it, are in [After the audit](#after-the-audit).
+
 - **Build:** dev `33242b90`.
 - **Settings:** factory presets, with EC land and art at zoom 1.0.
 - **Script:** [`scripts/dev-helpers/renderer/shader_settings_audit.py`](../../scripts/dev-helpers/renderer/shader_settings_audit.py).
@@ -60,6 +62,109 @@ Main findings:
   clearly visible.
 - **The shipped `assets/settings/shaders/land.toml` replaces 66 factory values.** It is what a fresh install shows;
   see [The shipped land.toml](#the-shipped-landtoml-differs-from-the-factory-presets).
+
+## After the audit
+
+The audit itself changed nothing. These are the decisions taken on it and what they changed.
+
+### What changed
+
+- **Removed** (never read): `kr_tonemap_params` y, z and w, `gloom_params.w` (Adv "Fog Height Bias"), and the
+  alpha of `grade_warm_color` and `grade_cool_color` (now three-value fields).
+- **Folded:** `kr_tonemap_params.x` (KR Tonemap Brightness) multiplied exactly like `exposure`, so each KR-profile
+  preset's exposure now holds the product, and the field is gone.
+  - A cached `land.toml` is migrated on load (`migrate_cached_retired_lighting` in
+    `dynamapper/src/configs/shader_presets.rs`): the saved gain moves into the slot's exposure, the fourth values
+    are dropped, and the file is rewritten.
+  - Pixel identity: the new build against the old one, 16 slots by 4 views, in two launches. Every cell is 0.000
+    mean, p99 0, 0% changed, at all four times of day.
+- **`blur_radius` kept:** the presets and the slider start at the shader's half-pixel floor
+  (`BLUR_RADIUS_MIN_PIXELS`, 0.5), so the value shown is the value used. The identity runs cover this too.
+- **Kept as they are:** `sharpening_amount`, `enable_normal_maps` and `land_normal_map_strength`. The Normal Maps
+  tooltip says they act only on snow, and only with Enhanced textures.
+- **GUI fixes** (numbers from [GUI findings](#gui-findings)):
+  1. Fixed: Sun Strength is live in Classic, and Adv Diffuse and Bent normals are shown there.
+  2. Fixed: the Color Grading section is shown in every style.
+  3. Fixed: the label reads "Rim (Enhanced and KR)"; Rim Color says "KR only", since Enhanced reads only the power.
+  4. Gone with `gloom_params.w`.
+  5. Fixed: Grade Warm and Grade Cool have controls. Light Color, Rim Color and the grade colours are edited as
+     numbers from 0 to 2, because a colour button stops at 1 and these presets go past it. Rim Power has its own
+     slider.
+  6. Fixed with the floor above.
+  7. Gone with the fold.
+  8. Fixed: Height Fade runs 0 to 12 on a logarithmic slider.
+  9. Fixed: in Classic, Adv Normals no longer writes `normal_mode`.
+  10. The composite sliders' tooltips name the settings they drive.
+  11. Fixed: the Fog Noise controls are greyed out, with a tooltip, until a fog density reaches 0.001.
+  12. As designed; the Water Animation tooltip says the value is kept across presets.
+- **Tooltips:** every control of both windows has one, also when greyed out. There are 88 texts in
+  `dynamapper/src/core/render/dialogs/land_shader/tips.rs`, one per setting, shared by both windows. They revise
+  the drafts below.
+- **Shipped `land.toml`:** it now equals the factory presets, and a unit test keeps it so
+  (`bundled_land_settings_match_the_factory_presets`). A user's cached copy is still read over it leniently, and
+  is never replaced by it.
+
+### Strong values: six kept settings
+
+Six low-impact settings stay. Each was rendered off, at the preset, at twice the preset, at its control's maximum
+and beyond it. The beyond values lift the shader clamp in the launch's own shader copy. Each was rendered in
+UOD-Painterly and in every other style where it acts once its gate is on, with EC textures at every time of day and
+CC textures in the afternoon.
+
+- **Script:** `strong-plan`, `run`, `strong-metrics`, `strong-report`, `strong-sheets` (see [Reproducing](#reproducing)).
+- **Sheets:** `/home/claudio/rust-target/uodynamapper-scratch/settings-cleanup/strong/sheets/`, one per setting,
+  style and texture set, named `<setting>--<style>--<ec|cc>.png`. Each sheet has a full view and a 2x crop per time
+  of day, one column per value, and a change image.
+- **Noise:** the same values in two launches differ by 0.000 mean and p99 0.
+
+Numbers are mean / p99 / share over 4 levels, in the view where the change is largest, against the setting off.
+
+| Setting | What it looks like | Preset | Control maximum | Beyond |
+|---|---|---|---|---|
+| `art_mottle_strength` | Blotchy light and dark patches over roofs and tree canopies, at a few tiles' scale. | 0 (off) | 1.5: 0.54..0.88 / 6..10 / 2.0..6.0% (Painterly and KR-like, Yew); Classic 0.54..0.66 / 4..5 / 0.8..1.9% | 3.0: 1.0..1.7 / 12..19 / 7..13% (Painterly and KR-like); Classic 1.0..1.2 / 9..11 / 5.5..8.5% |
+| `kr_land_shadow_mottle_strength` | Breaks the shade on land into soft blotches. It cannot be seen: the shader caps the darkening at about 3%. | Painterly 0.6: 0.01 / 1 / 0% | 1.5: 0.04 / 1 / 0% | 6.0: 0.11 / 2 / 0.1% (KR-like per-pixel) |
+| `fill_ground_color` | Light bounced up from the ground onto slopes facing away from the sky. Terrain faces up, so it gets almost no weight. | Painterly: 0.05 / 1 / 0% | Painterly night 0.46 / 2 / 0%; Enhanced with Soft Lighting 0.76 / 6 / 2.7% | 3x: Painterly night 1.02 / 5 / 1.9%; Enhanced 1.99 / 16 / 16% |
+| `rim_color` | A thin bright edge on slopes facing away from the viewer. The power (edge width) does nothing; see the open items. | Painterly 0.09..0.14 / 3..4 / 0.7..1.0% | colour at 1: 0.09..0.13 / 3..4 / 0.7..0.9% | 4x colour: 0.26..0.37 / 9..13 / 1.3..1.5% |
+| `enable_kr_color_wash` | A slow, low-frequency colour drift across land and statics, warmer in some places and cooler in others. | Painterly 0.55..0.74: 0.71..1.14 / 2..3 / 0% | 1.5: 1.50..2.28 / 4..9 / 0.1..10% | 3.0: 2.9..4.4 / 6..16 / 11..34%; KR-like night 4.75 / 10 / 47% |
+| `kr_color_wash_scale` | The size of the wash patches, in world units. | 72, wash at preset: at most 1.54 / 3 / 0% between scales | wash at 1.5, scale 8..160: up to 2.69 / 9 / 13.6% | 480: up to 3.75 / 8 / 30.6% (CC 47.5%) |
+
+CC textures give the same picture: art mottle at 1.5 is 0.72..0.82 / 3..6%, the wash at 1.5 is 1.96 / 2.4%, and the
+fill ground colour and shadow mottle stay at 0.05..0.07.
+
+Recommendations:
+
+- **`art_mottle_strength`:** keep it off in the presets. It reads as dirt on the art rather than shading; leave it
+  as an opt-in for users who want a rougher look.
+- **`kr_land_shadow_mottle_strength`:** the only one of the six that cannot be seen at any value, because of the
+  shader's cap. Either raise the cap or mark the control as cosmetic; at the preset it costs nothing visible.
+- **`fill_ground_color`:** keep for tuning. It matters only with a strong Soft Lighting fill, at night or in
+  Enhanced; no preset change is needed.
+- **`rim_color`:** fix the land camera position first (see below), then measure the rim again. Until then it is
+  nearly inert, and Rim Power does nothing.
+- **`enable_kr_color_wash`:** keep. If UOD-Painterly should show the wash, raise its preset towards 1.0..1.5; for
+  a stronger range, the slider and the shader clamp would both have to go past 1.5.
+- **`kr_color_wash_scale`:** keep, paired with the wash. It shows only when the wash is clearly visible.
+
+### Settings that act with one texture set only
+
+The Render Style picks only shader values, never textures, so every option must work with Classic (CC) and
+Enhanced (EC) textures. These act with one set only; their tooltips say so:
+
+- `enable_normal_maps` and `land_normal_map_strength`: EC land only, and only snow has a bump layer.
+- Sun Strength and Terrain Ambient Light on water: EC liquid carries its own light and ignores both. CC water uses
+  them.
+- KR transition grime and KR material contrast skip EC liquid.
+- The EC terrain transitions belong to EC land.
+
+All six strong-value settings act with both texture sets.
+
+### Open
+
+- **The land camera position is set once and never updated.** `SceneUniform.camera_position` for land is written
+  when the material is built (`dynamapper/src/core/texture_cache/land.rs`, line 1440). The rim term then sees the
+  view direction at N·V ≤ 0, so Rim Power has no effect, and the specular half vector is wrong.
+- **The Enhanced `diffuse_wrap` of 0.5 is inert:** Enhanced shading (mode 1) does not read it.
+- **The night and shadow controls being added on another branch have no tooltips yet.** They are not on dev.
 
 ## Method
 
@@ -517,6 +622,9 @@ switch (`apply_render_preset`), so the value stored in a slot never matters once
 
 ## The shipped land.toml differs from the factory presets
 
+The shipped file now equals the factory presets (see [After the audit](#after-the-audit)). This section describes
+the file as it was when the audit ran.
+
 The bundled `dynamapper/assets/settings/shaders/land.toml` overrides the factory presets (see
 [effect_visibility_validation.md](effect_visibility_validation.md)), so a fresh install shows its values. This audit
 measured the factory file. The shipped file differs in 66 of 780 values. These differences change a verdict above:
@@ -544,6 +652,9 @@ measured the factory file. The shipped file differs in 66 of 780 values. These d
 - **`blur_radius`** is 0.5 in Classic morning, which looks the same as every other value.
 
 ## Tooltip drafts
+
+These drafts are implemented, revised, in `dynamapper/src/core/render/dialogs/land_shader/tips.rs`. The drafts
+for the removed controls (KR Tonemap Brightness, Fog Height Bias) are kept as a record.
 
 There is one tooltip per setting. Wherever a setting has two controls (the main panel and the Advanced window), the
 same text serves both. The amounts share their switch's text. Settings without a control have no tooltip.
@@ -644,6 +755,9 @@ wash, KR land effects, light decals, normal maps and the art strengths.
 
 ## Where the tooltips go
 
+This section describes the code as it was when the audit ran. Every helper now takes the tooltip text, and the
+line numbers have moved.
+
 All the controls are in `dynamapper/src/core/render/dialogs/land_shader.rs`.
 
 - **Main F3 window** (`egui::Window::new(title)`, line 213).
@@ -707,6 +821,10 @@ python3 scripts/dev-helpers/renderer/shader_settings_audit.py sheets     # one c
   light-dense spots.
 - **`report`.** It writes the per-setting suggestion that this note's verdicts start from. The manual overrides
   are listed in the threshold section.
+- **Strong values.** Point `SHADER_AUDIT_SCRATCH` at a folder of its own, put a rig binary built with the
+  F3 slider helpers set to `SliderClamping::Edits` there (a rig-only change, so beyond values are not clamped), and
+  run `strong-plan`, `run`, `strong-metrics`, `strong-report` and `strong-sheets`. The beyond launches lift three
+  shader clamps in their own shader copy (`CLAMP_LIFTS`).
 
 ## Related notes
 

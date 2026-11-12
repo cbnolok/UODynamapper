@@ -19,8 +19,13 @@ Subcommands:
   metrics              diff every capture against its baseline (SCRATCH/results/metrics.json)
   sheets               contact sheets per setting (SCRATCH/sheets/)
   report               markdown tables (SCRATCH/results/report.md)
+  strong-plan          plan of the kept low-impact settings at strong values (SCRATCH/plan.json); then `run`
+  strong-metrics       diff every strong capture against its condition's off column
+  strong-report        markdown tables (SCRATCH/results/strong_report.md)
+  strong-sheets        one side-by-side sheet per setting, style and texture set (SCRATCH/sheets/)
 
-Typical session: plan, run, metrics, report, sheets. `run` starts each launch as its own process under the shared
+Typical session: plan, run, metrics, report, sheets. For strong values, in a scratch folder of its own:
+strong-plan, run, strong-metrics, strong-report, strong-sheets. `run` starts each launch as its own process under the shared
 preview lock and lowprio.sh, so other agents' GPU runs can interleave; every app start goes to KDE Desktop 4 only.
 
 The binary is a copy of a build of this repository placed in SCRATCH/rig/bin by hand. The user's saved settings
@@ -51,15 +56,23 @@ RESULTS = SCRATCH / 'results'
 SHEETS = SCRATCH / 'sheets'
 PLAN = SCRATCH / 'plan.json'
 PACKAGES = Path('/home/claudio/test/uddp')
-PREVIEW = Path.home() / '.codex/skills/kde-x11-preview/scripts/preview.py'
+PREVIEW = REPO / 'skills/kde-x11-preview/scripts/preview.py'
 DESKTOP = 'Desktop 4'
-FACTORY = REPO / 'dynamapper/assets/defaults/shader_presets.toml'
+# Launches copy the assets from SCRATCH/assets when that folder exists, a copy pinned when the measurement started,
+# so later edits to the working tree's shaders and presets cannot reach a measurement already under way.
+PINNED_ASSETS = SCRATCH / 'assets'
+ASSETS = PINNED_ASSETS if PINNED_ASSETS.is_dir() else REPO / 'dynamapper/assets'
+FACTORY = ASSETS / 'defaults/shader_presets.toml'
 BUNDLED_PRESETS = Path('settings/shaders/land.toml')
 
-MODES = ('classic', 'enhanced', 'kr')
+MODES = ('classic', 'enhanced', 'kr', 'painterly')
 TIMES = ('morning', 'afternoon', 'night', 'cave')
 SLOTS_PER_MODE = len(TIMES)
-MODE_BUTTON = {'classic': 'Classic', 'enhanced': 'Enhanced', 'kr': 'KR'}
+MODE_BUTTON = {'classic': 'Classic', 'enhanced': 'Enhanced', 'kr': 'KR-like', 'painterly': 'UOD-Painterly'}
+# The Render Style buttons force each group's shading mode and post-process profile. KR-like and UOD-Painterly force
+# the same pair and nothing else reads the group, so either group's slots can hold the other's values.
+SLOT_GROUPS = {'classic': ('classic',), 'enhanced': ('enhanced',), 'kr': ('kr', 'painterly'),
+               'painterly': ('painterly', 'kr')}
 TIME_BUTTON = {'morning': 'Morning', 'afternoon': 'Afternoon', 'night': 'Night', 'cave': 'Cave'}
 
 # Well under two thirds of the 2880 x 1692 screen, or the preview comes up maximized.
@@ -67,8 +80,8 @@ WINDOW = (1024, 768)
 ZOOM = 1.0
 # Logical window pixels of the F3 panel's top-row buttons at WINDOW, ui_scale 1.15 (from `calibrate`).
 PANEL_BUTTONS = {
-    'Classic': (132, 149), 'Enhanced': (204, 149), 'KR': (264, 149),
-    'Morning': (428, 149), 'Afternoon': (509, 149), 'Night': (581, 149), 'Cave': (633, 149),
+    'Classic': (132, 149), 'Enhanced': (204, 149), 'KR-like': (278, 149), 'UOD-Painterly': (367, 149),
+    'Morning': (569, 149), 'Afternoon': (650, 149), 'Night': (721, 149), 'Cave': (774, 149),
 }
 
 # (name, x, y, z, why). Map 0 (Felucca).
@@ -355,8 +368,6 @@ SPECS = [
     Spec('lighting.fog_night_color', const(0.0), fog_on, '0 (night blend: day fog colour only)', comp=3),
     Spec('lighting.enable_tonemap', const(0), ALWAYS, '0'),
     Spec('lighting.exposure', const(1.0), tonemap_on, '1.0'),
-    Spec('lighting.kr_tonemap_params', const(1.0), lambda s: tonemap_on(s) and profile(s) == 2,
-         '1.0 (identity gain)', comp=0),
     Spec('lighting.enable_grading', const(0), grading_on, '0'),
     Spec('lighting.grade_params', const(0.0),
          lambda s: shading(s) == 2 and s['lighting.grade_params'][3] >= 0.5, '0 (KR headroom reserve)', comp=1),
@@ -413,12 +424,8 @@ NOT_MEASURED = {
     'effects.land_normal_map_strength': 'read only with enable_normal_maps, which every preset leaves off',
     'lighting.gloom_params.x': 'amount of enable_gloom: 0 is the same as gloom off',
     'lighting.grade_params.x': 'amount of enable_grading: 0 is the same as grading off',
-    'lighting.gloom_params.w': 'never read (only legacy/world/fog.wesl, which is not compiled)',
     'lighting.fog_color.a': 'fog opacity cap: 0 is the same as fog off',
     'lighting.fog_params.z': 'cloud scale: acts only with fog_params.w',
-    'lighting.kr_tonemap_params.yzw': 'reserved, never read',
-    'lighting.grade_warm_color.a': 'never read',
-    'lighting.grade_cool_color.a': 'never read',
 }
 
 
@@ -570,7 +577,7 @@ class Run:
             shutil.rmtree(self.dir)
         self.dir.mkdir(parents=True)
         assets = self.dir / 'assets'
-        shutil.copytree(REPO / 'dynamapper/assets', assets)
+        shutil.copytree(ASSETS, assets)
         # Without the bundled land.toml, the factory presets are the defaults under the run's cache copy.
         (assets / BUNDLED_PRESETS).unlink()
         settings = assets / 'settings'
@@ -579,27 +586,36 @@ class Run:
         prefs = settings / 'user_preferences.toml'
         prefs.write_text(_sub_toml_value(prefs.read_text(), 'show_overlay', 'false'))
         graphics = settings / 'graphics.toml'
-        graphics.write_text(_sub_toml_value(graphics.read_text(), 'reduce_unfocused_fps', 'false'))
+        text = _sub_toml_value(graphics.read_text(), 'reduce_unfocused_fps', 'false')
+        for key, value in launch.get('graphics', {}).items():
+            text = _sub_toml_value(text, key, value)
+        graphics.write_text(text)
+        if launch.get('lift_clamps'):
+            for path, clamp, lifted in CLAMP_LIFTS:
+                shader = assets / path
+                source = shader.read_text()
+                assert source.count(clamp) == 1, (path, clamp)
+                shader.write_text(source.replace(clamp, lifted))
         world = settings / 'world_rendering.toml'
         text = world.read_text()
         for key, value in launch.get('world_rendering', {}).items():
             text = _sub_toml_value(text, key, value)
         world.write_text(text)
 
-        # Slots: each mode's configs fill its time-of-day slots in order; the rest keep the baseline.
+        # Slots: each mode's configs fill its time-of-day slots in order, then those of a group that renders them the
+        # same (SLOT_GROUPS); the rest keep the baseline.
         self.slot_of = {}
         slots = {(m, t): deterministic(factory_slot(factory, m, t)) for m in MODES for t in TIMES}
-        used = {m: 0 for m in MODES}
+        free = {m: list(TIMES) for m in MODES}
         for config_id in launch['configs']:
             config = configs[config_id]
-            mode = config['mode']
-            period = TIMES[used[mode]]
-            used[mode] += 1
+            group = next((g for g in SLOT_GROUPS[config['mode']] if free[g]), None)
+            assert group is not None, f'no free slot for {config_id}'
+            period = free[group].pop(0)
             slot = dict(config['slot'])
             slot['effects.enable_water_animation'] = launch.get('water', 0)
-            slots[(mode, period)] = slot
-            self.slot_of[config_id] = (mode, period)
-        assert all(n <= SLOTS_PER_MODE for n in used.values()), used
+            slots[(group, period)] = slot
+            self.slot_of[config_id] = (group, period)
         first = configs[launch['configs'][0]]
         view = VIEWS[0]
         cache = self.dir / 'cache/settings'
@@ -741,13 +757,14 @@ def run_launch(launch_id):
     configs = plan['configs']
     run = Run(launch, configs, load_factory())
     timings = {}
+    views = [view for view in VIEWS if view[0] in launch.get('views', [v[0] for v in VIEWS])]
     with run:
         first_view = VIEWS[0]
         run.wait_in_game(position=[first_view[1], first_view[2], first_view[3], 0])
         timings['ready'] = time.monotonic() - run.started
         # The first capture of a run may be black or stale.
         run.capture(run.caps / '0_discard.png')
-        for view in VIEWS:
+        for view in views:
             run.teleport(view)
             for config_id in launch['configs']:
                 run.select(config_id)
@@ -772,9 +789,13 @@ CALIBRATION_CANDIDATES = (
 
 
 def calibrate():
-    plan = make_plan()
-    configs = plan['configs']
-    launch = {'id': 'calibrate', 'configs': ['kr.night.baseline', 'classic.night.baseline']}
+    factory = load_factory()
+    configs = {}
+    for mode, period in (('kr', 'night'), ('classic', 'night')):
+        config_id = f'{mode}.{period}.baseline'
+        configs[config_id] = {'id': config_id, 'mode': mode, 'time': period,
+                              'slot': deterministic(factory_slot(factory, mode, period))}
+    launch = {'id': 'calibrate', 'configs': list(configs)}
     run = Run(launch, configs, load_factory())
     report = {}
     with run:
@@ -1129,6 +1150,416 @@ def report():
     print(RESULTS / 'report.md')
 
 
+# ----------------------------------------------------------------------------------------------------------------
+# Strong values: kept low-impact settings pushed past their presets
+# ----------------------------------------------------------------------------------------------------------------
+#
+# The note's "Strong values" section. Each setting is rendered off, at the preset, stronger, at its control's maximum
+# and beyond it, in UOD-Painterly and in every other style where it can act once its gate is on. Point
+# SHADER_AUDIT_SCRATCH at a folder of its own: strong-plan writes that folder's plan.json, `run` executes it as
+# usual, then strong-metrics, strong-report and strong-sheets read it.
+#
+# Beyond values exceed the F3 sliders, which clamp the values they draw (egui's default SliderClamping::Always).
+# The rig binary is therefore built with the slider helpers of land_shader.rs set to SliderClamping::Edits, a
+# rig-only change that draws the same frames. Every capture is verified against its slot, so a clamped value fails
+# the launch.
+
+# The shader clamps that stop three settings at their slider maximum, lifted in each launch's copy of the shaders
+# (lift_clamps) so a beyond value reaches the screen. Inside the slider range the result is the same.
+BEYOND_CLAMP = 16.0
+CLAMP_LIFTS = (
+    ('shaders/world/art/shading.wesl', 'clamp(art_mottle_strength, 0.0, 1.5)',
+     f'clamp(art_mottle_strength, 0.0, {BEYOND_CLAMP})'),
+    ('shaders/world/land/shading.wesl', 'clamp(effects.kr_land_shadow_mottle_strength, 0.0, 1.5)',
+     f'clamp(effects.kr_land_shadow_mottle_strength, 0.0, {BEYOND_CLAMP})'),
+    ('shaders/postprocess/kr_color_wash.wesl', 'clamp(strength, 0.0, 1.5)', f'clamp(strength, 0.0, {BEYOND_CLAMP})'),
+)
+
+STRONG_LAND_VIEWS = ('slopes', 'covetous')
+STRONG_ART_VIEWS = ('yew', 'britain')
+STRONG_WASH_VIEWS = ('slopes', 'britain', 'yew')
+STRONG_ALL_VIEWS = ('slopes', 'covetous', 'yew', 'britain')
+# For a style that only lends a setting its gate, one day and one night row: the term itself does not change with
+# the time of day, only the light it sits in.
+DAY_NIGHT = ('afternoon', 'night')
+CC_PERIOD = 'afternoon'
+TEXTURE_SETS = {'ec': {}, 'cc': {'art_texture_source': '"cc"', 'land_texture_source': '"cc"'}}
+
+# The strength sliders of art mottle, shadow mottle and colour wash end at 1.5, where their shader clamps them.
+STRENGTH_SLIDER_MAX = 1.5
+STRONG_GAIN = 2.0
+# The audit's probe value, about the 0.9..1.15 the shipped land.toml once set in KR.
+ART_MOTTLE_STRONG = 1.0
+ART_MOTTLE_BEYOND = 3.0
+SHADOW_MOTTLE_BEYOND = 6.0
+WASH_BEYOND = 3.0
+# The scale slider runs 8..160 world units; the shader floors it at 8.
+WASH_SCALE_MIN = 8.0
+WASH_SCALE_MAX = 160.0
+WASH_SCALE_BEYOND = 480.0
+# When this was measured, a colour button gave at most 1 per channel: the preset hue brought up to 1, then this many
+# times past it. The Advanced window now edits Rim Color with numbers up to 2 and Rim Power with its own slider.
+FILL_BEYOND_GAIN = 3.0
+RIM_BEYOND_GAIN = 4.0
+# The colour button's alpha ran 0..1; the shader floors the rim power at 0.1, the widest rim.
+RIM_PICKER_POWER_MIN = 0.0
+RIM_PICKER_POWER_MAX = 1.0
+# Enhanced reads a quarter of rim_strength; give it the Highlights slider's maximum.
+ENHANCED_RIM_GATE = 0.45
+
+ART_MOTTLE = 'effects.art_mottle_strength'
+SHADOW_MOTTLE = 'effects.kr_land_shadow_mottle_strength'
+FILL_GROUND = 'land_lighting.fill_ground_color'
+FILL_STRENGTH = 'land_lighting.fill_strength'
+RIM_COLOR = 'land_lighting.rim_color'
+RIM_STRENGTH = 'land_lighting.rim_strength'
+WASH_ON = 'effects.enable_kr_color_wash'
+WASH_STRENGTH = 'effects.kr_color_wash_strength'
+WASH_SCALE = 'effects.kr_color_wash_scale'
+TERRAIN_MODEL = 'land_lighting.terrain_shading_model'
+TERRAIN_SMOOTH_PER_PIXEL = 0
+
+
+def _with(slot, key, value):
+    out = dict(slot)
+    out[key] = value
+    return out
+
+
+def _gain(rgb, gain):
+    return [round(c * gain, 6) for c in rgb]
+
+
+def _to_one(rgb):
+    return _gain(rgb, 1.0 / max(rgb))
+
+
+def _art_mottle(s):
+    return [('off = preset 0', _with(s, ART_MOTTLE, 0.0)),
+            (f'{ART_MOTTLE_STRONG} (old shipped KR)', _with(s, ART_MOTTLE, ART_MOTTLE_STRONG)),
+            (f'{STRENGTH_SLIDER_MAX} slider max', _with(s, ART_MOTTLE, STRENGTH_SLIDER_MAX)),
+            (f'{ART_MOTTLE_BEYOND} beyond', _with(s, ART_MOTTLE, ART_MOTTLE_BEYOND))], 0
+
+
+def _shadow_mottle(s, preset):
+    columns = [('off', _with(s, SHADOW_MOTTLE, 0.0)), (f'preset {preset}', _with(s, SHADOW_MOTTLE, preset))]
+    if s[SHADOW_MOTTLE] == preset:
+        strong = round(preset * STRONG_GAIN, 4)
+        columns.append((f'2x {strong}', _with(s, SHADOW_MOTTLE, strong)))
+    else:
+        columns[1] = (f'UOD-Painterly value {preset}', columns[1][1])
+    return columns + [(f'{STRENGTH_SLIDER_MAX} slider max', _with(s, SHADOW_MOTTLE, STRENGTH_SLIDER_MAX)),
+                      (f'{SHADOW_MOTTLE_BEYOND} beyond', _with(s, SHADOW_MOTTLE, SHADOW_MOTTLE_BEYOND))], 1
+
+
+def _fill_ground(s):
+    rgb, alpha = s[FILL_GROUND][:3], s[FILL_GROUND][3]
+    strong = round(alpha * STRONG_GAIN, 4)
+    return [('off (alpha 0)', _with(s, FILL_GROUND, rgb + [0.0])),
+            (f'preset (alpha {alpha})', s),
+            (f'2x (alpha {strong})', _with(s, FILL_GROUND, rgb + [strong])),
+            ('max: hue at 1, alpha 1', _with(s, FILL_GROUND, _to_one(rgb) + [1.0])),
+            (f'beyond: {FILL_BEYOND_GAIN:g}x max', _with(s, FILL_GROUND, _gain(_to_one(rgb), FILL_BEYOND_GAIN) + [1.0]))], 1
+
+
+def _rim_color(s):
+    rgb, power = s[RIM_COLOR][:3], s[RIM_COLOR][3]
+    return [('off (black)', _with(s, RIM_COLOR, [0.0, 0.0, 0.0, power])),
+            (f'preset (power {power})', s),
+            ('2x colour', _with(s, RIM_COLOR, _gain(rgb, STRONG_GAIN) + [power])),
+            ('max: colour at 1, power 0.1', _with(s, RIM_COLOR, _to_one(rgb) + [RIM_PICKER_POWER_MIN])),
+            (f'beyond: {RIM_BEYOND_GAIN:g}x colour, power 0.1',
+             _with(s, RIM_COLOR, _gain(_to_one(rgb), RIM_BEYOND_GAIN) + [RIM_PICKER_POWER_MIN]))], 1
+
+
+def _enhanced_rim_power(s):
+    on = _with(s, RIM_STRENGTH, ENHANCED_RIM_GATE)
+    rgb, power = s[RIM_COLOR][:3], s[RIM_COLOR][3]
+    return [('rim off (strength 0)', s), (f'rim {ENHANCED_RIM_GATE}, preset power {power}', on),
+            (f'power {RIM_PICKER_POWER_MAX:g}', _with(on, RIM_COLOR, rgb + [RIM_PICKER_POWER_MAX])),
+            ('power 0.1 (picker max)', _with(on, RIM_COLOR, rgb + [RIM_PICKER_POWER_MIN]))], 1
+
+
+def _wash(s, strength):
+    on = _with(s, WASH_ON, 1)
+    if s[WASH_ON] == 1:
+        strong = round(strength * STRONG_GAIN, 4)
+        columns = [('off', _with(s, WASH_ON, 0)), (f'preset {strength}', s),
+                   (f'2x {strong}', _with(s, WASH_STRENGTH, strong))]
+        preset = 1
+    else:
+        columns = [('off = preset', s), (f'on at {strength}', _with(on, WASH_STRENGTH, strength))]
+        preset = 0
+    return columns + [(f'{STRENGTH_SLIDER_MAX} slider max', _with(on, WASH_STRENGTH, STRENGTH_SLIDER_MAX)),
+                      (f'{WASH_BEYOND} beyond', _with(on, WASH_STRENGTH, WASH_BEYOND))], preset
+
+
+def _wash_scale(s, strength):
+    wash = _with(_with(s, WASH_ON, 1), WASH_STRENGTH, strength)
+    scale = s[WASH_SCALE]
+    return [('wash off', _with(s, WASH_ON, 0)),
+            (f'scale {WASH_SCALE_MIN:g} (min)', _with(wash, WASH_SCALE, WASH_SCALE_MIN)),
+            (f'preset scale {scale:g}', wash),
+            (f'{WASH_SCALE_MAX:g} (max)', _with(wash, WASH_SCALE, WASH_SCALE_MAX)),
+            (f'{WASH_SCALE_BEYOND:g} beyond', _with(wash, WASH_SCALE, WASH_SCALE_BEYOND))], 2
+
+
+def strong_conditions(factory):
+    """Every measured condition: the setting, style, time of day and texture set, the views, the columns as
+    (label, slot) and which column is the preset. Column 0 is the setting off."""
+    out = []
+
+    def base(group, period):
+        return deterministic(factory_slot(factory, group, period))
+
+    def add(setting, group, period, condition, views, built, textures='ec'):
+        columns, preset = built
+        out.append({'setting': setting, 'group': group, 'period': period, 'textures': textures,
+                    'condition': condition, 'views': list(views), 'labels': [c[0] for c in columns],
+                    'slots': [c[1] for c in columns], 'preset': preset})
+
+    def for_textures(textures, periods):
+        for period in periods:
+            p = base('painterly', period)
+            add('art_mottle_strength', 'painterly', period, 'UOD-Painterly', STRONG_ART_VIEWS, _art_mottle(p), textures)
+            add('art_mottle_strength', 'classic', period, 'Classic', STRONG_ART_VIEWS,
+                _art_mottle(base('classic', period)), textures)
+            add('kr_land_shadow_mottle_strength', 'painterly', period, 'UOD-Painterly', STRONG_LAND_VIEWS,
+                _shadow_mottle(p, p[SHADOW_MOTTLE]), textures)
+            add('fill_ground_color', 'painterly', period, 'UOD-Painterly', STRONG_LAND_VIEWS, _fill_ground(p), textures)
+            add('rim_color', 'painterly', period, 'UOD-Painterly', STRONG_LAND_VIEWS, _rim_color(p), textures)
+            add('kr_color_wash', 'painterly', period, 'UOD-Painterly', STRONG_WASH_VIEWS,
+                _wash(p, p[WASH_STRENGTH]), textures)
+            add('kr_color_wash_scale', 'painterly', period, 'UOD-Painterly, wash at 1.5', STRONG_WASH_VIEWS,
+                _wash_scale(p, STRENGTH_SLIDER_MAX), textures)
+
+    for_textures('ec', TIMES)
+    for period in TIMES:
+        p = base('painterly', period)
+        add('art_mottle_strength', 'kr', period, 'KR-like', STRONG_ART_VIEWS, _art_mottle(base('kr', period)))
+        add('kr_color_wash', 'kr', period, 'KR-like', STRONG_WASH_VIEWS, _wash(base('kr', period), p[WASH_STRENGTH]))
+        add('kr_color_wash_scale', 'painterly', period, 'UOD-Painterly, preset wash', STRONG_WASH_VIEWS,
+            _wash_scale(p, p[WASH_STRENGTH]))
+    for period in DAY_NIGHT:
+        p = base('painterly', period)
+        smooth = _with(base('kr', period), TERRAIN_MODEL, TERRAIN_SMOOTH_PER_PIXEL)
+        add('kr_land_shadow_mottle_strength', 'kr', period, 'KR-like, Land Shading smooth per-pixel',
+            STRONG_LAND_VIEWS, _shadow_mottle(smooth, p[SHADOW_MOTTLE]))
+        filled = _with(base('enhanced', period), FILL_STRENGTH, p[FILL_STRENGTH])
+        add('fill_ground_color', 'enhanced', period, 'Enhanced, Soft Lighting at the UOD-Painterly fill',
+            STRONG_LAND_VIEWS, _fill_ground(filled))
+        add('rim_color', 'enhanced', period, 'Enhanced (rim power only)', STRONG_LAND_VIEWS,
+            _enhanced_rim_power(base('enhanced', period)))
+    for_textures('cc', (CC_PERIOD,))
+    return out
+
+
+def make_strong_plan():
+    factory = load_factory()
+    conditions = strong_conditions(factory)
+    configs = {}
+    by_slot = {}
+    needs = {}
+
+    def config_for(textures, group, period, name, slot):
+        key = (textures, group, json.dumps(slot, sort_keys=True))
+        if key not in by_slot:
+            config_id = f'{textures}.{group}.{period}.{name}'
+            assert config_id not in configs, config_id
+            by_slot[key] = config_id
+            configs[config_id] = {'id': config_id, 'mode': group, 'time': period, 'slot': slot,
+                                  'textures': textures, 'setting': name}
+        return by_slot[key]
+
+    baselines = [config_for('ec', group, period, 'baseline', deterministic(factory_slot(factory, group, period)))
+                 for group in MODES for period in TIMES]
+    for cond in conditions:
+        cond['configs'] = []
+        for index, slot in enumerate(cond['slots']):
+            config_id = config_for(cond['textures'], cond['group'], cond['period'],
+                                   f'{cond["setting"]}.{cond["condition"]}.c{index}', slot)
+            needs.setdefault(config_id, set()).update(cond['views'])
+            cond['configs'].append(config_id)
+        del cond['slots']
+
+    # Two launches of the factory slots measure the noise between launches; the first also serves every
+    # condition column equal to a factory slot.
+    launches = [{'id': launch_id, 'configs': baselines, 'views': list(STRONG_ALL_VIEWS), 'lift_clamps': True}
+                for launch_id in ('base-a', 'base-b')]
+    launch_of = {config_id: 'base-a' for config_id in baselines}
+    packs = {}
+    for config_id, views in needs.items():
+        if config_id in launch_of:
+            continue
+        key = (configs[config_id]['textures'], tuple(v for v in STRONG_ALL_VIEWS if v in views))
+        packs.setdefault(key, []).append(config_id)
+    for (textures, views), pending in sorted(packs.items()):
+        while pending:
+            room = {group: SLOTS_PER_MODE for group in MODES}
+            batch, rest = [], []
+            for config_id in pending:
+                group = next((g for g in SLOT_GROUPS[configs[config_id]['mode']] if room[g]), None)
+                if group is None:
+                    rest.append(config_id)
+                    continue
+                room[group] -= 1
+                batch.append(config_id)
+            launch_id = f'{textures}-{len(launches) - 1:02d}'
+            launches.append({'id': launch_id, 'configs': batch, 'views': list(views),
+                             'graphics': TEXTURE_SETS[textures], 'lift_clamps': True})
+            launch_of.update({config_id: launch_id for config_id in batch})
+            pending = rest
+    # The CC conditions compare against their own off column, so they need no CC baseline launch.
+    plan = {'configs': configs, 'launches': launches, 'strong': conditions, 'launch_of': launch_of}
+    SCRATCH.mkdir(parents=True, exist_ok=True)
+    PLAN.write_text(json.dumps(plan, indent=1))
+    return plan
+
+
+def strong_metrics():
+    plan = load_plan()
+    launch_of = plan['launch_of']
+    results = {'noise': {}, 'conditions': []}
+    for config_id in plan['launches'][0]['configs']:
+        for view in STRONG_ALL_VIEWS:
+            other = cap('base-b', config_id, view)
+            if other.exists():
+                results['noise'][f'{config_id}/{view}'] = stats(change(load_rgb(cap('base-a', config_id, view)),
+                                                                        load_rgb(other)))
+    for cond in plan['strong']:
+        per_view = {}
+        for view in cond['views']:
+            images = [load_rgb(cap(launch_of[c], c, view)) for c in cond['configs']]
+            per_view[view] = {'vs_off': [stats(change(images[0], image)) for image in images],
+                              'vs_preset': [stats(change(images[cond['preset']], image)) for image in images]}
+        results['conditions'].append(dict(cond, metrics=per_view))
+    RESULTS.mkdir(parents=True, exist_ok=True)
+    (RESULTS / 'strong_metrics.json').write_text(json.dumps(results, indent=1))
+    worst = max(results['noise'].values(), key=lambda m: m['mean'], default=None)
+    print(f'{len(results["conditions"])} conditions; worst cross-launch noise {worst}')
+
+
+def _worst(metrics, column, against='vs_off'):
+    return max(((view, m[against][column]) for view, m in metrics.items()),
+               key=lambda item: (item[1]['mean'], item[1]['share']))
+
+
+def _cell(numbers):
+    return f'{numbers["mean"]:.2f} / {numbers["p99"]:.0f} / {numbers["share"] * 100:.1f}%'
+
+
+def _strong_groups(conditions):
+    groups = {}
+    for cond in conditions:
+        groups.setdefault((cond['setting'], cond['condition'], cond['textures']), []).append(cond)
+    return groups
+
+
+def strong_report():
+    results = json.loads((RESULTS / 'strong_metrics.json').read_text())
+    lines = ['# Strong values: measurements', '',
+             'Each cell: mean / p99 / share over 4 levels of the change against the off column, in the view where '
+             'it is largest (named in brackets). The last column compares the strongest value with the preset.', '']
+    worst = max(results['noise'].values(), key=lambda m: m['mean'], default=None)
+    if worst:
+        lines += [f'Cross-launch noise (same values, two launches), worst view: mean {worst["mean"]:.4f}, p99 '
+                  f'{worst["p99"]:.0f}, share {worst["share"] * 100:.2f}%.', '']
+    for (setting, condition, textures), conds in _strong_groups(results['conditions']).items():
+        labels = conds[0]['labels']
+        lines += [f'## {setting}: {condition} ({textures.upper()} textures)', '',
+                  '| time | ' + ' | '.join(labels[1:]) + ' | strongest vs preset |',
+                  '|---|' + '---|' * len(labels)]
+        for cond in conds:
+            row = []
+            for column in range(1, len(labels)):
+                view, numbers = _worst(cond['metrics'], column)
+                row.append(f'{_cell(numbers)} ({view})')
+            row.append(_cell(_worst(cond['metrics'], len(labels) - 1, 'vs_preset')[1]))
+            lines.append(f'| {cond["period"]} | ' + ' | '.join(row) + ' |')
+        lines.append('')
+    (RESULTS / 'strong_report.md').write_text('\n'.join(lines))
+    print(RESULTS / 'strong_report.md')
+
+
+STRONG_THUMB = (384, 288)
+STRONG_CROP = (192, 144)
+STRONG_LABEL = 18
+STRONG_FONT = 13
+STRONG_HEAT_GAIN = 8
+
+
+def _best_window(d, size):
+    """Top-left corner of the size window holding the most change."""
+    import numpy as np
+    w, h = size
+    integral = np.pad(d.astype(np.int64), ((1, 0), (1, 0))).cumsum(0).cumsum(1)
+    sums = integral[h:, w:] - integral[:-h, w:] - integral[h:, :-w] + integral[:-h, :-w]
+    y, x = np.unravel_index(np.argmax(sums), sums.shape)
+    return int(x), int(y)
+
+
+def _heat_image(d):
+    import numpy as np
+    from PIL import Image
+    return Image.fromarray(np.clip(d.astype(np.int32) * STRONG_HEAT_GAIN, 0, 255).astype(np.uint8)).convert('RGB')
+
+
+def strong_sheets():
+    from PIL import Image, ImageDraw, ImageFont
+    plan = load_plan()
+    results = json.loads((RESULTS / 'strong_metrics.json').read_text())
+    launch_of = plan['launch_of']
+    font = ImageFont.load_default(size=STRONG_FONT)
+    SHEETS.mkdir(parents=True, exist_ok=True)
+    count = 0
+    for (setting, condition, textures), conds in _strong_groups(results['conditions']).items():
+        columns = len(conds[0]['labels']) + 1
+        row_height = 2 * STRONG_LABEL + 2 * STRONG_THUMB[1]
+        sheet = Image.new('RGB', (columns * STRONG_THUMB[0], STRONG_LABEL + len(conds) * row_height), 'black')
+        draw = ImageDraw.Draw(sheet)
+        draw.text((4, 2), f'{setting} - {condition} - {textures.upper()} textures. Top: full view; below: 2x crop of '
+                          f'the yellow box. Numbers: change against the off column (mean / share over 4 levels).',
+                  fill='white', font=font)
+        for row, cond in enumerate(conds):
+            last = len(cond['labels']) - 1
+            view, _ = _worst(cond['metrics'], last)
+            paths = [cap(launch_of[c], c, view) for c in cond['configs']]
+            images = [load_rgb(path) for path in paths]
+            d = change(images[0], images[last])
+            height, width = d.shape
+            scale = STRONG_THUMB[0] / width
+            x0, y0 = _best_window(d, STRONG_CROP)
+            top = STRONG_LABEL + row * row_height
+            draw.text((4, top + 2), f'{cond["period"]} - {view} view', fill='yellow', font=font)
+            tiles = list(zip(cond['labels'], paths)) + [(f'change, strongest vs off (x{STRONG_HEAT_GAIN})', None)]
+            for col, (label, path) in enumerate(tiles):
+                x = col * STRONG_THUMB[0]
+                if path is None:
+                    full = _heat_image(d).resize(STRONG_THUMB)
+                    crop = _heat_image(d[y0:y0 + STRONG_CROP[1], x0:x0 + STRONG_CROP[0]]).resize(STRONG_THUMB,
+                                                                                               Image.NEAREST)
+                    text = label
+                else:
+                    with Image.open(path) as image:
+                        rgb = image.convert('RGB')
+                        full = rgb.resize(STRONG_THUMB, Image.LANCZOS)
+                        crop = rgb.crop((x0, y0, x0 + STRONG_CROP[0], y0 + STRONG_CROP[1])).resize(STRONG_THUMB,
+                                                                                                    Image.NEAREST)
+                    m = cond['metrics'][view]['vs_off'][col]
+                    text = label if col == 0 else f'{label}: {m["mean"]:.2f} / {m["share"] * 100:.1f}%'
+                draw.text((x + 4, top + STRONG_LABEL + 2), text, fill='white', font=font)
+                sheet.paste(full, (x, top + 2 * STRONG_LABEL))
+                sheet.paste(crop, (x, top + 2 * STRONG_LABEL + STRONG_THUMB[1]))
+                box = [x + x0 * scale, top + 2 * STRONG_LABEL + y0 * scale,
+                       x + (x0 + STRONG_CROP[0]) * scale, top + 2 * STRONG_LABEL + (y0 + STRONG_CROP[1]) * scale]
+                draw.rectangle(box, outline='yellow')
+        name = f'{setting}--{condition}--{textures}'
+        name = ''.join(c if c.isalnum() or c in '-_' else '_' for c in name)
+        sheet.save(SHEETS / f'{name}.png', optimize=True)
+        count += 1
+    print(f'{count} sheets in {SHEETS}')
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     sub = parser.add_subparsers(dest='command', required=True)
@@ -1142,6 +1573,8 @@ def main():
     sub.add_parser('metrics')
     sub.add_parser('sheets')
     sub.add_parser('report')
+    for name in ('strong-plan', 'strong-metrics', 'strong-report', 'strong-sheets'):
+        sub.add_parser(name)
     args = parser.parse_args()
     if args.command == 'plan':
         plan = make_plan()
@@ -1166,6 +1599,16 @@ def main():
         sheets()
     elif args.command == 'report':
         report()
+    elif args.command == 'strong-plan':
+        plan = make_strong_plan()
+        print(json.dumps({'conditions': len(plan['strong']), 'configs': len(plan['configs']),
+                          'launches': {l['id']: len(l['configs']) for l in plan['launches']}}))
+    elif args.command == 'strong-metrics':
+        strong_metrics()
+    elif args.command == 'strong-report':
+        strong_report()
+    elif args.command == 'strong-sheets':
+        strong_sheets()
 
 
 if __name__ == '__main__':
