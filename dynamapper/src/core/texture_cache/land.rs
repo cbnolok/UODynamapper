@@ -944,11 +944,11 @@ fn land_shader_source_from_cache<'a>(
     cache: &'a cache::LandTextureCache,
 ) -> Option<LandShaderAtlasSource<'a>> {
     match cache.preferred_source() {
-        crate::configs::settings::ClientTextureSource::Cc => {
+        crate::configs::settings::LandTextureSource::Cc => {
             cache.tex_land_cc.as_deref().map(LandShaderAtlasSource::Cc)
         }
-        crate::configs::settings::ClientTextureSource::Ec => {
-            cache.tex_land_ec.as_deref().map(LandShaderAtlasSource::Ec)
+        crate::configs::settings::LandTextureSource::Ec | crate::configs::settings::LandTextureSource::Kr => {
+            cache.enhanced_land().map(|package| LandShaderAtlasSource::Ec(package.as_ref()))
         }
     }
 }
@@ -1179,6 +1179,7 @@ fn sys_apply_land_texture_source_changes(
     mut images: ResMut<Assets<Image>>,
     mut materials: ResMut<Assets<LandCustomMeshMaterial>>,
     shared_mat: Res<crate::core::render::scene::world::land::draw_mesh::SharedLandMaterial>,
+    mut terrain_bases: ResMut<coverage::EcTerrainBases>,
     time: Res<Time<Real>>,
     chunks: Query<Entity, With<crate::core::render::scene::world::land::LCMesh>>,
 ) {
@@ -1187,10 +1188,8 @@ fn sys_apply_land_texture_source_changes(
         return;
     }
 
-    let missing_requested_package = match desired_source {
-        crate::configs::settings::ClientTextureSource::Cc => false,
-        crate::configs::settings::ClientTextureSource::Ec => cache_r.tex_land_ec.is_none(),
-    };
+    let missing_requested_package =
+        desired_source.uses_enhanced_land() && cache_r.enhanced_land_for(desired_source).is_none();
 
     if missing_requested_package {
         console_logger::one(
@@ -1219,6 +1218,11 @@ fn sys_apply_land_texture_source_changes(
         mat.extension.land_page_atlas = shader_images.page_atlas;
         mat.extension.land_page_lookup = shader_images.lookup;
     }
+    // Enhanced and Kingdom Reborn land differ in their terrain definitions, so the per-chunk base ownership and the
+    // cached stacks are rebuilt from the package now drawn. The Classic source does not read them.
+    if desired_source.uses_enhanced_land() {
+        terrain_bases.set_package(cache_r.enhanced_land().map(|package| package.as_ref()));
+    }
 
     console_logger::one(
         LogSev::Info,
@@ -1230,8 +1234,8 @@ fn sys_apply_land_texture_source_changes(
     );
 
     // ── TEMPORARY EC package diagnostic ─────────────────────────────────────
-    if desired_source == crate::configs::settings::ClientTextureSource::Ec {
-        if let Some(ec) = &cache_r.tex_land_ec {
+    if desired_source.uses_enhanced_land() {
+        if let Some(ec) = cache_r.enhanced_land() {
             let total_slots = ec.slots().len();
             let present_slots = ec.slots().iter().filter(|s| s.is_present()).count();
             let prov_count = ec.terrain_provenance().len();
@@ -1260,6 +1264,7 @@ pub fn sys_setup_terrain_cache(
     tex_art_cc_r: Option<Res<crate::core::uo_files_loader::TexArtCcPackageRes>>,
     tex_art_ec_r: Option<Res<crate::core::uo_files_loader::TexArtEcPackageRes>>,
     tex_land_ec_r: Option<Res<crate::core::uo_files_loader::TexLandEcPackageRes>>,
+    tex_land_kr_r: Option<Res<crate::core::uo_files_loader::TexLandKrPackageRes>>,
     tex_aux_ec_r: Option<Res<crate::core::uo_files_loader::TexAuxEcPackageRes>>,
     map_planes: Res<crate::core::uo_files_loader::MapPlanesRes>,
     shader_presets: Res<crate::core::render::scene::world::land::mesh_material::LandShaderModePresets>,
@@ -1270,7 +1275,6 @@ pub fn sys_setup_terrain_cache(
     let residency_plan = residency_strategy
         .preloads_full_collection()
         .then(|| texture_array::build_texture_residency_plan(&texmap_2d_r.0));
-    let tex_land_ec_package = tex_land_ec_r.as_ref().map(|res| res.0.clone());
     // Shared layer budgeting keeps the terrain module responsible only for defining its
     // groups; the generic residency layer decides whether startup uses LRU-sized arrays
     // or exact-fit preloaded arrays.
@@ -1314,7 +1318,8 @@ pub fn sys_setup_terrain_cache(
     land_texture_cache.tex_art_cc = tex_art_cc_r.as_ref().map(|r| r.0.clone());
     land_texture_cache.tex_land_cc = Some(texmap_2d_r.0.clone());
     land_texture_cache.tex_art_ec = tex_art_ec_r.map(|r| r.0.clone());
-    land_texture_cache.tex_land_ec = tex_land_ec_package.clone();
+    land_texture_cache.tex_land_ec = tex_land_ec_r.as_ref().map(|res| res.0.clone());
+    land_texture_cache.tex_land_kr = tex_land_kr_r.as_ref().map(|res| res.0.clone());
 
     if let Some(plan) = residency_plan.as_ref() {
         land_texture_cache.prime_full_file_residency(
@@ -1364,6 +1369,7 @@ pub fn sys_setup_terrain_cache(
         lookup: aux_images.surface_lookup.clone(),
     });
 
+    let enhanced_land_package = land_texture_cache.enhanced_land().cloned();
     cmd.insert_resource(land_texture_cache);
 
     cmd.insert_resource(cache::TextureArrayImageHandles {
@@ -1417,7 +1423,11 @@ pub fn sys_setup_terrain_cache(
     let base_dimensions = map_planes.0.iter().flatten().fold(UVec2::ONE, |size, plane| {
         size.max(UVec2::new(plane.size_blocks.width.div_ceil(4), plane.size_blocks.height.div_ceil(4)))
     });
-    let terrain_bases = coverage::EcTerrainBases::new(&mut images, base_dimensions, tex_land_ec_package.as_deref());
+    let terrain_bases = coverage::EcTerrainBases::new(
+        &mut images,
+        base_dimensions,
+        enhanced_land_package.as_deref(),
+    );
     let ec_terrain_bases = terrain_bases.image.clone();
     let ec_terrain_stacks = terrain_bases.stack_image();
     cmd.insert_resource(terrain_bases);

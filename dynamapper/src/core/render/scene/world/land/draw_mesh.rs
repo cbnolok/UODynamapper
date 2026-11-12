@@ -754,9 +754,12 @@ pub fn sys_draw_spawned_land_chunks(
 
     // `ids` contains textures dynamically required. Pinned tracking continues async.
     {
-        let use_land_page_atlas = match frame_pacing.settings.graphics.land_texture_source {
-            crate::configs::settings::ClientTextureSource::Cc => cache_r.tex_land_cc.is_some(),
-            crate::configs::settings::ClientTextureSource::Ec => cache_r.tex_land_ec.is_some(),
+        let land_texture_source = frame_pacing.settings.graphics.land_texture_source;
+        let use_land_page_atlas = match land_texture_source {
+            crate::configs::settings::LandTextureSource::Cc => cache_r.tex_land_cc.is_some(),
+            crate::configs::settings::LandTextureSource::Ec | crate::configs::settings::LandTextureSource::Kr => {
+                cache_r.enhanced_land_for(land_texture_source).is_some()
+            }
         };
 
         let _span = crate::tracy_span!("worldmap::chunk_draw_precache_textures");
@@ -771,8 +774,8 @@ pub fn sys_draw_spawned_land_chunks(
         // Pre-populate lookup cache sequentially so background threads don't need mutable cache access.
         for &id in &*ids {
             let resolved_page_slot = if use_land_page_atlas {
-                match frame_pacing.settings.graphics.land_texture_source {
-                    crate::configs::settings::ClientTextureSource::Cc => {
+                match land_texture_source {
+                    crate::configs::settings::LandTextureSource::Cc => {
                         // Resolve graphic id -> tiledata texture id (tex_land_cc slots are keyed by texmap id).
                         // Fall back to the graphic id itself when texture_id is 0 or tilemeta is unavailable,
                         // preserving current behavior for untextured tiles.
@@ -788,9 +791,9 @@ pub fn sys_draw_spawned_land_chunks(
                             .as_ref()
                             .and_then(|package| package.present_slot(cc_lookup_id).map(|_| cc_lookup_id))
                     }
-                    crate::configs::settings::ClientTextureSource::Ec => cache_r
-                        .tex_land_ec
-                        .as_ref()
+                    crate::configs::settings::LandTextureSource::Ec
+                    | crate::configs::settings::LandTextureSource::Kr => cache_r
+                        .enhanced_land_for(land_texture_source)
                         .and_then(|package| {
                             package
                                 .resolve_effective_runtime_slot_id(id as u32)
@@ -802,9 +805,10 @@ pub fn sys_draw_spawned_land_chunks(
             };
 
             if let Some(payload_id) = resolved_page_slot {
-                let atlas_mode = match frame_pacing.settings.graphics.land_texture_source {
-                    crate::configs::settings::ClientTextureSource::Cc => 4u32,
-                    crate::configs::settings::ClientTextureSource::Ec => 2u32,
+                let atlas_mode = match land_texture_source {
+                    crate::configs::settings::LandTextureSource::Cc => 4u32,
+                    crate::configs::settings::LandTextureSource::Ec
+                    | crate::configs::settings::LandTextureSource::Kr => 2u32,
                 };
                 texture_lookup_cache[id as usize] = (payload_id << 4) | atlas_mode;
             } else if use_land_page_atlas {
@@ -819,13 +823,14 @@ pub fn sys_draw_spawned_land_chunks(
                 texture_lookup_cache[id as usize] = (layer << 4) | mode;
             }
 
-            land_shader_flags_cache[id as usize] = match frame_pacing.settings.graphics.land_texture_source {
-                crate::configs::settings::ClientTextureSource::Ec => cache_r
-                    .tex_land_ec
-                    .as_ref()
-                    .map(|package| ec_land_shader_flags(package, id as u32))
-                    .unwrap_or(0),
-                crate::configs::settings::ClientTextureSource::Cc => 0,
+            land_shader_flags_cache[id as usize] = match land_texture_source {
+                crate::configs::settings::LandTextureSource::Ec | crate::configs::settings::LandTextureSource::Kr => {
+                    cache_r
+                        .enhanced_land_for(land_texture_source)
+                        .map(|package| ec_land_shader_flags(package, id as u32))
+                        .unwrap_or(0)
+                }
+                crate::configs::settings::LandTextureSource::Cc => 0,
             };
         }
 
@@ -844,7 +849,7 @@ pub fn sys_draw_spawned_land_chunks(
     // Bit mask constant matching tiledata.mul / map_cc_flags_to_tilemeta().
     const TILEMETA_FLAG_WET: u64 = 0x80;
     let classic_land_source =
-        frame_pacing.settings.graphics.land_texture_source == crate::configs::settings::ClientTextureSource::Cc;
+        frame_pacing.settings.graphics.land_texture_source == crate::configs::settings::LandTextureSource::Cc;
     let wet_bits: Vec<u8> = frame_pacing
         .tilemeta
         .as_ref()
@@ -872,7 +877,7 @@ pub fn sys_draw_spawned_land_chunks(
         .and_then(|opt| opt.as_ref())
         .expect("Requested map plane metadata is uncached?");
 
-    if frame_pacing.settings.graphics.land_texture_source == crate::configs::settings::ClientTextureSource::Ec {
+    if frame_pacing.settings.graphics.land_texture_source.uses_enhanced_land() {
         let bases = &mut frame_pacing.terrain_bases;
         bases.begin_map(current_map_id);
         let mut payloads = Vec::with_capacity((TILE_NUM_PER_CHUNK_DIM * TILE_NUM_PER_CHUNK_DIM) as usize);

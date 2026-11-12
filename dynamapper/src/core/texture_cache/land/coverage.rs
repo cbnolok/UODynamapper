@@ -82,12 +82,23 @@ impl EcTerrainBases {
             TextureDimension::D2, bytemuck::cast_slice(&values).to_vec(), TextureFormat::Rgba16Uint,
             bevy::asset::RenderAssetUsages::MAIN_WORLD | bevy::asset::RenderAssetUsages::RENDER_WORLD,
         ));
-        let params = (0..16_384).map(|id| package.and_then(|p| EcTerrainParams::for_tile(p, id))).collect();
+        let params = terrain_params(package);
         let cache = cache::StackCache::new(images, package);
         Self { image, params, cache, dimensions, map: None, values, dirty: false }
     }
 
     pub fn stack_image(&self) -> Handle<Image> { self.cache.image.clone() }
+
+    /// Rebuilds the terrain parameters and stack availability from another EC-layout land package (the land source
+    /// changed between tex_land_ec.uddp and tex_land_kr.uddp) and drops every published base and cached stack, so the
+    /// next chunk pass republishes them; the image handles stay bound to the land material.
+    pub fn set_package(&mut self, package: Option<&TexLandEcPackage>) {
+        self.params = terrain_params(package);
+        self.cache.set_package(package);
+        self.map = None;
+        self.values.fill([u16::MAX; 4]);
+        self.dirty = true;
+    }
 
     pub fn cached_chunk_count(&self) -> usize {
         self.values.iter().filter(|value| value[2] != u16::MAX).count()
@@ -118,6 +129,10 @@ impl EcTerrainBases {
             self.dirty = false;
         }
     }
+}
+
+fn terrain_params(package: Option<&TexLandEcPackage>) -> Vec<Option<EcTerrainParams>> {
+    (0..16_384).map(|id| package.and_then(|p| EcTerrainParams::for_tile(p, id))).collect()
 }
 
 /// All chunk materials participate in the original sorting, including a base

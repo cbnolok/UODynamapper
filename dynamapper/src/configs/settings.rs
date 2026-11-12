@@ -226,7 +226,7 @@ pub struct SectGraphics {
     pub vsync: bool, // Added vsync control
     pub anti_aliasing: AntiAliasingMode,
     pub art_texture_source: ClientTextureSource,
-    pub land_texture_source: ClientTextureSource,
+    pub land_texture_source: LandTextureSource,
     /// Which client's gumps and paperdoll the gump windows draw; like the art and land sources, never the preset's.
     pub gumps_and_paperdoll: GumpClient,
     pub cc_terrain_transitions: bool,
@@ -267,11 +267,44 @@ impl ClientTextureSource {
             Self::Ec => "Enhanced (tex_art_ec.uddp)",
         }
     }
+}
+
+/// The package the terrain is drawn from. Kingdom Reborn land (tex_land_kr.uddp) has the Enhanced land layout and is
+/// drawn by the Enhanced terrain path; the art source stays Classic or Enhanced, since the art packages have no
+/// Kingdom Reborn counterpart. The shader presets never choose it.
+#[derive(Clone, Copy, Debug, Deserialize, Serialize, PartialEq, Eq, Default)]
+pub enum LandTextureSource {
+    #[default]
+    #[serde(rename = "cc")]
+    Cc,
+    #[serde(rename = "ec")]
+    Ec,
+    #[serde(rename = "kr")]
+    Kr,
+}
+
+impl LandTextureSource {
+    pub const ALL: [Self; 3] = [Self::Cc, Self::Ec, Self::Kr];
 
     pub const fn land_label(self) -> &'static str {
         match self {
             Self::Cc => "Classic (tex_land_cc.uddp)",
             Self::Ec => "Enhanced (tex_land_ec.uddp)",
+            Self::Kr => "Kingdom Reborn (tex_land_kr.uddp)",
+        }
+    }
+
+    /// Whether the terrain is drawn from a package in the Enhanced land layout (tex_land_ec.uddp or tex_land_kr.uddp).
+    pub const fn uses_enhanced_land(self) -> bool {
+        matches!(self, Self::Ec | Self::Kr)
+    }
+}
+
+impl From<ClientTextureSource> for LandTextureSource {
+    fn from(source: ClientTextureSource) -> Self {
+        match source {
+            ClientTextureSource::Cc => Self::Cc,
+            ClientTextureSource::Ec => Self::Ec,
         }
     }
 }
@@ -1117,7 +1150,21 @@ mod tests {
 
         assert!(!settings.cc_terrain_transitions);
         assert!(settings.ec_terrain_transitions);
-        assert_eq!(settings.land_texture_source, ClientTextureSource::Ec);
+        assert_eq!(settings.land_texture_source, LandTextureSource::Ec);
+    }
+
+    /// A saved Kingdom Reborn land source reads back. A land source this build does not know (as `kr` is to builds
+    /// before it) fails the lenient load, and `load_user_settings` then warns and uses the bundled graphics settings.
+    #[test]
+    fn a_saved_kingdom_reborn_land_source_reads_back_and_an_unknown_one_falls_back() {
+        let bundled = parse_strict::<GraphicsFile>(GRAPHICS_CONFIG_FILE, BUNDLED_GRAPHICS).expect("bundled graphics");
+        let saved = BUNDLED_GRAPHICS.replace("land_texture_source = \"ec\"", "land_texture_source = \"kr\"");
+        let load = parse_app_state(GRAPHICS_CONFIG_FILE, &saved, &bundled).expect("lenient load");
+        assert_eq!(load.value.graphics.land_texture_source, LandTextureSource::Kr);
+        assert!(load.warnings.is_empty(), "{:?}", load.warnings);
+
+        let newer = BUNDLED_GRAPHICS.replace("land_texture_source = \"ec\"", "land_texture_source = \"newer\"");
+        assert!(parse_app_state(GRAPHICS_CONFIG_FILE, &newer, &bundled).is_err());
     }
 
     /// The bundled settings draw the Classic gumps and paperdoll, as the default Classic preset drew them before the

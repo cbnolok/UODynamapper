@@ -3,7 +3,8 @@
 use super::{draw_mesh::LandMeshHandles, tile_atlas::TileAtlas, LCMesh, LandUploadTelemetry};
 use crate::core::{app_states::AppState, controls::{InjectedPointer, effective_cursor_position},
     render::scene::{camera::PlayerCamera, player::Player}, system_sets::{MovementSysSet, SceneRenderLandSysSet},
-    uo_files_loader::{MapPlanesRes, TexLandEcPackageRes}};
+    texture_cache::land::cache::LandTextureCache, uo_files_loader::MapPlanesRes};
+use crate::configs::settings::LandTextureSource;
 use crate::util_lib::uo_coords::{UOVec4, UO_Z_TO_WORLD_SCALE};
 use bevy::{prelude::*, window::PrimaryWindow};
 use std::collections::HashMap;
@@ -25,7 +26,7 @@ struct Grid { origin: UVec2, span: u32, step: u32 }
 #[derive(PartialEq)]
 struct Signature {
     pointer: Vec2, view: Mat4, clip: Mat4, viewport: UVec4, map: u8,
-    revision: u64, ec_revision: u32, submitted: bool, grids: Vec<Grid>,
+    revision: u64, land_source: Option<LandTextureSource>, submitted: bool, grids: Vec<Grid>,
 }
 
 #[derive(SystemSet, Debug, Clone, PartialEq, Eq, Hash)]
@@ -43,8 +44,10 @@ fn update_terrain_cursor(
     cameras: Query<(&Camera, &GlobalTransform), With<PlayerCamera>>, players: Query<&Player>,
     chunks: Query<(&LCMesh, &Mesh3d, &ViewVisibility)>, handles: Res<LandMeshHandles>,
     atlas: Res<TileAtlas>, uploads: Res<LandUploadTelemetry>, maps: Res<MapPlanesRes>,
-    ec: Option<Res<TexLandEcPackageRes>>,
+    land_textures: Option<Res<LandTextureCache>>,
 ) {
+    // The EC-layout land package the terrain draws (tex_land_ec.uddp or tex_land_kr.uddp) decides which cells bank.
+    let ec = land_textures.as_deref().and_then(LandTextureCache::enhanced_land);
     let inputs = (|| {
         let pointer = effective_cursor_position(windows.single().ok()?, pointer.as_deref())?;
         let (camera, transform) = cameras.single().ok()?;
@@ -61,7 +64,8 @@ fn update_terrain_cursor(
             && telemetry.submitted_metadata_revision == atlas.content_revision;
         let signature = Signature { pointer, view: transform.to_matrix(), clip: camera.clip_from_view(),
             viewport: UVec4::new(viewport.min.x, viewport.min.y, viewport.width(), viewport.height()), map,
-            revision: atlas.content_revision, ec_revision: ec.as_ref().map_or(0, |p| p.last_changed().get()), submitted, grids };
+            revision: atlas.content_revision, land_source: land_textures.as_deref().map(LandTextureCache::preferred_source),
+            submitted, grids };
         Some((signature, cursor_ray(camera, transform, pointer)?, transform.back().as_vec3()))
     })();
     let Some((signature, ray, back)) = inputs else {
@@ -75,7 +79,7 @@ fn update_terrain_cursor(
             if cell.min_element() < 0 { return None; }
             let packed = atlas.read_cell(cell.x as u32, cell.y as u32)?;
             let mode = (packed.g >> 8) & 15;
-            let ec_present = mode == 2 && ec.as_ref().is_some_and(|p| p.0.present_slot(u32::from(packed.r)).is_some_and(|slot| slot.width != 0 && slot.height != 0));
+            let ec_present = mode == 2 && ec.is_some_and(|p| p.present_slot(u32::from(packed.r)).is_some_and(|slot| slot.width != 0 && slot.height != 0));
             Some(TerrainSample { height: f32::from(((packed.g & 255) as i16 - 128) as i8) * UO_Z_TO_WORLD_SCALE,
                 ec_present, liquid: ((packed.g >> 12) & 4) != 0 })
         };

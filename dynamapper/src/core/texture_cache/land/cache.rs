@@ -5,7 +5,7 @@
 
 use super::texture_array;
 use crate::{
-    configs::settings::ClientTextureSource,
+    configs::settings::LandTextureSource,
     console_logger::{self, LogAbout, LogSev},
     core::texture_cache::{
         visit_grouped_layer_assignments, visit_grouped_texture_ids, TextureResidencyPlan,
@@ -99,7 +99,7 @@ impl LandTextureArrayWrapper {
 #[derive(Resource)]
 pub struct LandTextureCache {
     residency_strategy: TextureResidencyStrategy,
-    preferred_source: ClientTextureSource,
+    preferred_source: LandTextureSource,
     upload_generation: u64,
     pub small: LandTextureArrayWrapper,
     pub big: LandTextureArrayWrapper,
@@ -115,6 +115,8 @@ pub struct LandTextureCache {
     pub tex_land_cc: Option<Arc<udd_assets::tex_land_cc::TexLandCcPackage>>,
     pub tex_art_ec: Option<Arc<udd_assets::tex_art_ec::TexArtEcPackage>>,
     pub tex_land_ec: Option<Arc<udd_assets::tex_land_ec::TexLandEcPackage>>,
+    /// tex_land_kr.uddp, in the EC land layout; drawn in place of `tex_land_ec` under the Kingdom Reborn land source.
+    pub tex_land_kr: Option<Arc<udd_assets::tex_land_ec::TexLandEcPackage>>,
 }
 
 pub fn sys_drain_texture_upload_tasks(mut cache: ResMut<LandTextureCache>) {
@@ -195,7 +197,7 @@ fn try_load_cc_land_tile(
 
 fn try_load_tile_from_packages_with_sources(
     texture_id: u16,
-    _preferred_source: ClientTextureSource,
+    _preferred_source: LandTextureSource,
     _tex_art_cc: Option<&Arc<udd_assets::tex_art_cc::TexArtCcPackage>>,
     tex_land_cc: Option<&Arc<udd_assets::tex_land_cc::TexLandCcPackage>>,
     _tex_land_ec: Option<&Arc<udd_assets::tex_land_ec::TexLandEcPackage>>,
@@ -229,7 +231,7 @@ impl LandTextureCache {
         small_initial_layers: u32,
         big_initial_layers: u32,
         residency_strategy: TextureResidencyStrategy,
-        preferred_source: ClientTextureSource,
+        preferred_source: LandTextureSource,
     ) -> Self {
         let (upload_sender, upload_receiver) = std::sync::mpsc::channel();
         Self {
@@ -256,6 +258,7 @@ impl LandTextureCache {
             tex_land_cc: None,
             tex_art_ec: None,
             tex_land_ec: None,
+            tex_land_kr: None,
         }
     }
 
@@ -263,11 +266,26 @@ impl LandTextureCache {
         self.residency_strategy
     }
 
-    pub fn preferred_source(&self) -> ClientTextureSource {
+    pub fn preferred_source(&self) -> LandTextureSource {
         self.preferred_source
     }
 
-    pub fn set_preferred_source(&mut self, source: ClientTextureSource) -> bool {
+    /// The EC-layout land package the preferred source draws: tex_land_ec.uddp or tex_land_kr.uddp; `None` under the
+    /// Classic source or when that package is not loaded.
+    pub fn enhanced_land(&self) -> Option<&Arc<udd_assets::tex_land_ec::TexLandEcPackage>> {
+        self.enhanced_land_for(self.preferred_source)
+    }
+
+    /// The EC-layout land package `source` draws, as [`Self::enhanced_land`] does for the preferred source.
+    pub fn enhanced_land_for(&self, source: LandTextureSource) -> Option<&Arc<udd_assets::tex_land_ec::TexLandEcPackage>> {
+        match source {
+            LandTextureSource::Cc => None,
+            LandTextureSource::Ec => self.tex_land_ec.as_ref(),
+            LandTextureSource::Kr => self.tex_land_kr.as_ref(),
+        }
+    }
+
+    pub fn set_preferred_source(&mut self, source: LandTextureSource) -> bool {
         if self.preferred_source == source {
             return false;
         }

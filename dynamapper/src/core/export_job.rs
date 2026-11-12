@@ -206,7 +206,7 @@ pub fn apply_settings_overrides(settings: &mut Settings, job: &ExportJob) {
     settings.graphics.reduce_unfocused_fps = false;
     settings.graphics.anti_aliasing = AntiAliasingMode::Off;
     settings.graphics.art_texture_source = job.texture_source;
-    settings.graphics.land_texture_source = job.texture_source;
+    settings.graphics.land_texture_source = job.texture_source.into();
     settings.app.window.free_camera = false;
     settings.app.window.perspective_camera = false;
     settings.app.performance.show_overlay = false;

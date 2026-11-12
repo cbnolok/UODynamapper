@@ -1,7 +1,7 @@
 //! A bounded native-chunk cache, published only after metadata uploads settle.
 use super::{build_stack_layer, HALO, HEIGHT, SIDE, WIDTH};
 use super::super::EcTerrainBases;
-use crate::configs::settings::{ClientTextureSource, Settings};
+use crate::configs::settings::Settings;
 use crate::core::{maps::MapPlane, render::scene::{player::Player, world::land::{tile_atlas::TileAtlas, LandUploadTelemetry}}, uo_files_loader::MapPlanesRes};
 use bevy::{asset::RenderAssetUsages, prelude::*, render::render_resource::{Extent3d, TextureDimension, TextureFormat, TextureViewDescriptor, TextureViewDimension}};
 use uocf::classic::map::MapBlockRelPos;
@@ -36,17 +36,26 @@ impl StackCache {
         image.texture_view_descriptor = Some(TextureViewDescriptor {
             dimension: Some(TextureViewDimension::D2Array), ..Default::default()
         });
-        let available = (0..16384).map(|id| package.is_some_and(|p|
-            p.resolve_effective_runtime_slot_id(id).and_then(|slot| p.present_slot(slot))
-                .is_some_and(|slot| slot.width > 0 && slot.height > 0))).collect();
-        Self { image: images.add(image), available, slots: std::array::from_fn(|_| None),
+        Self { image: images.add(image), available: available_payloads(package), slots: std::array::from_fn(|_| None),
             atlas_revision: u64::MAX }
+    }
+
+    /// Takes the payload availability of another EC-layout land package and drops every cached stack.
+    pub fn set_package(&mut self, package: Option<&udd_assets::tex_land_ec::TexLandEcPackage>) {
+        self.available = available_payloads(package);
+        self.clear();
     }
 
     pub fn clear(&mut self) {
         self.slots = std::array::from_fn(|_| None);
         self.atlas_revision = u64::MAX;
     }
+}
+
+fn available_payloads(package: Option<&udd_assets::tex_land_ec::TexLandEcPackage>) -> Vec<bool> {
+    (0..16384).map(|id| package.is_some_and(|p|
+        p.resolve_effective_runtime_slot_id(id).and_then(|slot| p.present_slot(slot))
+            .is_some_and(|slot| slot.width > 0 && slot.height > 0))).collect()
 }
 
 fn raw_halo(plane: &MapPlane, chunk: UVec2) -> Option<Box<[u16; HALO * HALO]>> {
@@ -126,7 +135,7 @@ pub(crate) fn sys_prepare(
     mut materials: ResMut<Assets<crate::core::render::scene::world::land::mesh_material::LandCustomMeshMaterial>>,
     shared_material: Res<crate::core::render::scene::world::land::draw_mesh::SharedLandMaterial>,
 ) {
-    if settings.graphics.land_texture_source != ClientTextureSource::Ec { return; }
+    if !settings.graphics.land_texture_source.uses_enhanced_land() { return; }
     let Some(position) = player.single().ok().and_then(|p| p.current_pos) else { return; };
     let map = u32::from(position.m);
     if bases.map != Some(map) { return; }

@@ -50,6 +50,11 @@ pub struct TexArtEcPackageRes(pub Arc<udd_assets::tex_art_ec::TexArtEcPackage>);
 #[derive(Resource)]
 pub struct TexLandEcPackageRes(pub Arc<udd_assets::tex_land_ec::TexLandEcPackage>);
 
+/// Optional prepacked Kingdom Reborn land package (tex_land_kr.uddp), in the EC land layout. Only the terrain draws it,
+/// when the Kingdom Reborn land source is selected; EC art keeps reading [`TexLandEcPackageRes`].
+#[derive(Resource)]
+pub struct TexLandKrPackageRes(pub Arc<udd_assets::tex_land_ec::TexLandEcPackage>);
+
 /// Optional auxiliary texture package: the non-primary tileart textures that item liquids and item surfaces sample.
 #[derive(Resource)]
 pub struct TexAuxEcPackageRes(pub Arc<udd_assets::tex_aux_ec::TexAuxEcPackage>);
@@ -447,7 +452,38 @@ impl Plugin for UOFilesPlugin {
 /// How many unresolved terrain override texture refs the load log names.
 const UNRESOLVED_OVERRIDE_REF_LOG_SAMPLE: usize = 8;
 
-fn log_tex_land_ec_coverage(lg: &impl Fn(&str), package: &udd_assets::tex_land_ec::TexLandEcPackage) {
+/// Loads an optional land package in the EC land layout (tex_land_ec.uddp or tex_land_kr.uddp) and logs its coverage;
+/// `None` when the file is not in `udd_path`.
+fn load_optional_enhanced_land_package(
+    lg: &impl Fn(&str),
+    udd_path: &Path,
+    file_name: &str,
+    label: &str,
+    reader_options: UddpReaderOptions,
+) -> Option<udd_assets::tex_land_ec::TexLandEcPackage> {
+    let path = resolve_optional_uddp_path(udd_path, file_name)?;
+    log_source_choice(
+        lg,
+        &format!("{} land package", label.to_lowercase()),
+        SourceContainerKind::Uddp,
+        std::slice::from_ref(&path),
+    );
+    let package = udd_assets::tex_land_ec::TexLandEcPackage::from_uddp_package_with_options(
+        UddpReader::load_with_options(&path, reader_options)
+            .unwrap_or_else(|_| panic!("Error loading {}", path.display())),
+        AtlasCacheOptions::enabled(),
+    )
+    .unwrap_or_else(|error| panic!("Error loading {}: {error:#}", path.display()));
+    log_tex_land_ec_coverage(lg, &package, label, file_name);
+    Some(package)
+}
+
+fn log_tex_land_ec_coverage(
+    lg: &impl Fn(&str),
+    package: &udd_assets::tex_land_ec::TexLandEcPackage,
+    label: &str,
+    file_name: &str,
+) {
     let populated_slot_count = package
         .slots()
         .iter()
@@ -457,7 +493,7 @@ fn log_tex_land_ec_coverage(lg: &impl Fn(&str), package: &udd_assets::tex_land_e
     let slot_table_len = package.slots().len();
 
     lg(&format!(
-        "Enhanced land package coverage: {populated_slot_count} populated slots from {alias_ref_count} TerrainDefinition alias refs (slot table span: 0..{}). Unmapped EC land ids remain explicitly black.",
+        "{label} land package coverage: {populated_slot_count} populated slots from {alias_ref_count} TerrainDefinition alias refs (slot table span: 0..{}). Unmapped EC land ids remain explicitly black.",
         slot_table_len.saturating_sub(1),
     ));
     if let Some(source_map) = package.source_terrain_map() {
@@ -489,7 +525,7 @@ fn log_tex_land_ec_coverage(lg: &impl Fn(&str), package: &udd_assets::tex_land_e
             .collect::<Vec<_>>()
             .join(", ");
         bevy::log::warn!(
-            "Embedded EcTerrainOverrides.kdl references {} texture(s) that are not packed in tex_land_ec.uddp. Falling back where needed. Sample: {}",
+            "Embedded EcTerrainOverrides.kdl references {} texture(s) that are not packed in {file_name}. Falling back where needed. Sample: {}",
             summary.unresolved_texture_refs.len(),
             sample
         );
@@ -647,26 +683,28 @@ pub fn sys_setup_uo_data(mut commands: Commands, settings: Res<Settings>) {
         None
     };
 
-    let tex_land_ec_path = resolve_optional_uddp_path(&udd_path, "tex_land_ec.uddp");
-    let tex_land_ec_package = if let Some(tex_land_ec_path) = tex_land_ec_path {
-        log_source_choice(
-            &lg,
-            "enhanced land package",
-            SourceContainerKind::Uddp,
-            std::slice::from_ref(&tex_land_ec_path),
-        );
-        let package = udd_assets::tex_land_ec::TexLandEcPackage::from_uddp_package_with_options(
-            UddpReader::load_with_options(&tex_land_ec_path, land_atlas_reader_options)
-                .unwrap_or_else(|_| panic!("Error loading {}", tex_land_ec_path.display())),
-            AtlasCacheOptions::enabled(),
-        )
-        .unwrap_or_else(|error| panic!("Error loading {}: {error:#}", tex_land_ec_path.display()));
-        log_tex_land_ec_coverage(&lg, &package);
-        Some(package)
-    } else {
+    let tex_land_ec_package =
+        load_optional_enhanced_land_package(&lg, &udd_path, "tex_land_ec.uddp", "Enhanced", land_atlas_reader_options);
+    if tex_land_ec_package.is_none() {
         lg_err("No enhanced land package source selected: tex_land_ec.uddp not found in udd_path.");
-        None
-    };
+    }
+    // The Kingdom Reborn land is optional: its absence is an error only when it is the selected land source, which
+    // then falls back as a missing tex_land_ec.uddp does.
+    let tex_land_kr_package = load_optional_enhanced_land_package(
+        &lg,
+        &udd_path,
+        "tex_land_kr.uddp",
+        "Kingdom Reborn",
+        land_atlas_reader_options,
+    );
+    if tex_land_kr_package.is_none() {
+        let message = "No Kingdom Reborn land package source selected: tex_land_kr.uddp not found in udd_path.";
+        if settings.graphics.land_texture_source == crate::configs::settings::LandTextureSource::Kr {
+            lg_err(message);
+        } else {
+            lg(message);
+        }
+    }
 
     let tex_aux_ec_path = resolve_optional_uddp_path(&udd_path, "tex_aux_ec.uddp");
     let tex_aux_ec_package = if let Some(tex_aux_ec_path) = tex_aux_ec_path {
@@ -821,6 +859,9 @@ pub fn sys_setup_uo_data(mut commands: Commands, settings: Res<Settings>) {
     }
     if let Some(tex_land_ec_package) = tex_land_ec_package {
         commands.insert_resource(TexLandEcPackageRes(Arc::new(tex_land_ec_package)));
+    }
+    if let Some(tex_land_kr_package) = tex_land_kr_package {
+        commands.insert_resource(TexLandKrPackageRes(Arc::new(tex_land_kr_package)));
     }
     if let Some(world_lights_package) = world_lights_package {
         commands.insert_resource(WorldLightsPackageRes(Arc::new(world_lights_package)));

@@ -1,6 +1,6 @@
 use crate::core::controls::input_actions::{ActionCloseActiveDialog, ActionTogglePreferences};
 use crate::{
-    configs::settings::{AntiAliasingMode, ClientTextureSource, GumpClient},
+    configs::settings::{AntiAliasingMode, ClientTextureSource, GumpClient, LandTextureSource},
     core::{
         frame_limiter::FrameLimiterSettings, frame_limiter_for_options, frame_limiter_for_settings,
         present_mode_for_vsync,
@@ -41,7 +41,7 @@ pub struct PreferencesDialogState {
     pub vsync: bool,
     pub anti_aliasing: AntiAliasingMode,
     pub art_texture_source: ClientTextureSource,
-    pub land_texture_source: ClientTextureSource,
+    pub land_texture_source: LandTextureSource,
     pub gumps_and_paperdoll: GumpClient,
     pub cc_terrain_transitions: bool,
     pub ec_terrain_transitions: bool,
@@ -80,7 +80,7 @@ impl Default for PreferencesDialogState {
             vsync: false,
             anti_aliasing: AntiAliasingMode::default(),
             art_texture_source: ClientTextureSource::default(),
-            land_texture_source: ClientTextureSource::default(),
+            land_texture_source: LandTextureSource::default(),
             gumps_and_paperdoll: GumpClient::default(),
             cc_terrain_transitions: false,
             ec_terrain_transitions: false,
@@ -424,7 +424,7 @@ pub fn sys_render_preferences_dialog(
                     egui::ComboBox::from_label("Land Texture Source")
                         .selected_text(state.land_texture_source.land_label())
                         .show_ui(ui, |ui| {
-                            for source in ClientTextureSource::ALL {
+                            for source in LandTextureSource::ALL {
                                 ui.selectable_value(
                                     &mut state.land_texture_source,
                                     source,
