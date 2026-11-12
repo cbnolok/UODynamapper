@@ -864,8 +864,13 @@ group 0x00c931b4, which `UOLightingPostProcessEffect::Render` draws into B. The 
   | 0x00435630 | shared by both components | +0x50 | 0x00435693 | 0x00435749 |
   | 0x00436320 | `UOObjectComponentFoliage` (vtable 0x00b520b4) | +0x20 | 0x0043661e | 0x00436638 |
 
-- `mode` is the component's +0x24, 1 by default (ctors 0x00434de0 and 0x00436160). Mode 0 casts nothing. What
-  writes other values is *unknown*.
+- `mode` is the component's +0x24, 1 by default (ctors 0x00434de0 and 0x00436160). Mode 0 casts nothing. In the
+  sprite component (vtable 0x00b5203c) the only other writer is slot +0x04 (0x00434ef0), at 0x00435014: it stores
+  the return of virtual +0x84 on the resource that a `UOResourceRequest` (0x0056c260) loads for the object's
+  graphic. The mode is therefore per graphic, from a resource definition; which file and field is *unknown*
+  (2026-11-12).
+- No branch of 0x00440e50 lays the shadow on the ground: every mode leans the same black copy in the camera plane
+  (rotation θ below), and the wall branch only drops and shifts it. A wall's shadow never reaches the ground in front.
 - No shadow when the tileart flags (`obj` +0x34) have any of 0x10004200:
   - Surface 0x200;
   - Roof 0x10000000;
@@ -1260,7 +1265,7 @@ first proposal needs only settings. The rest need code or data.
 - Whether the post-process effects run in the order they were appended (shadow first). Both are multiplies, so
   the order only matters through the clamp.
 - Third pass:
-  - the shadow modes other than 0 and 1 (component +0x24) and what sets them;
+  - the shadow modes other than 0 and 1 (component +0x24): which resource field virtual +0x84 returns;
   - whether the shadow batch tests z (the depth buffer is shared);
   - the units and the axis order of the tileart light offsets;
   - the light sprite's quad anchor in `BuildSpriteQuad`;
