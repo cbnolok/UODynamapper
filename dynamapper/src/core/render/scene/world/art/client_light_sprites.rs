@@ -7,12 +7,19 @@
 //! to the static's map position (never to its art, so CC and EC art place it alike), sized by the tileart light
 //! scale, and moved by the light offsets in world units along the camera's right and up. Classic and UOD-Painterly
 //! draw the light.mul decals of `static_lights` instead.
+//!
+//! The clients light the terrain and the statics through the composite alone: their sprites are unlit and their
+//! terrain has no other light. The optional land light decals and static local lights (Light/Static Interaction,
+//! off in the KR-like and Enhanced presets) read these sprites in the two styles (`client_light_sprite_static_light`).
 
-use super::static_lights::StaticLightTarget;
+use super::static_lights::{StaticLightInstance, StaticLightKey, StaticLightTarget, LIGHT_PIXELS_PER_WORLD_TILE,
+    STATIC_LIGHT_Y_BIAS};
 use super::statics_collect::{
     apply_static_world_anchor_translation, resolve_static_billboard_bounds, StaticBillboardBounds,
-    StaticChunkBatchKey, STATIC_BILLBOARD_RIGHT_XZ, STATIC_WORLD_Y_PER_XZ_PIXEL,
+    StaticChunkBatchKey, CC_WORLD_XZ_PER_PIXEL, CC_WORLD_Y_PER_PIXEL, STATIC_BILLBOARD_RIGHT_XZ,
+    STATIC_WORLD_Y_PER_XZ_PIXEL,
 };
+use crate::core::render::scene::camera::PlayerCamera;
 use crate::configs::{settings::Settings, shader_presets::UniformState};
 use crate::console_logger::{self, LogAbout, LogSev};
 use crate::core::render::scene::world::effects::client_night::LIGHT_BUFFER_LAYER;
@@ -34,6 +41,10 @@ use udd_assets::tilemeta::TileMetaItemLight;
 const CLIENT_LIGHT_SPRITE_ANCHOR_PIXELS: i32 = 22;
 /// The sprite's vertical anchor: its bottom edge sits at the base point.
 const CLIENT_LIGHT_SPRITE_ANCHOR_Y_PIXELS: i16 = 0;
+/// The largest 8-bit channel value, which maps a light texture's channel to 0..1.
+const LIGHT_TEXTURE_CHANNEL_MAX: f32 = 255.0;
+/// The bytes of one RGBA8888 texel.
+const RGBA_TEXEL_BYTES: usize = 4;
 
 /// One static's light sprite. The key holds everything its placement and texture follow from.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Component)]
@@ -54,6 +65,9 @@ pub struct ClientLightSpriteInstance {
     /// The quad's centre and its size along the billboard's right and world Y.
     pub center: Vec3,
     pub size: Vec2,
+    /// The light texture's colour where it shows, the mean of its texels weighted by alpha (`light_texture_glow_rgb`),
+    /// which the land light decals and the static local lights take as the light's colour.
+    pub glow_rgb: [f32; 3],
 }
 
 /// The light sprites of the statics in and around the visible chunks.
@@ -68,6 +82,8 @@ pub struct RenderClientLightSprites {
 #[derive(Resource, Default)]
 pub struct ClientLightSpriteCache {
     materials_by_entry: HashMap<u32, Option<Handle<StandardMaterial>>>,
+    /// Each light texture's glow colour, `None` once the texture failed to load.
+    glow_rgb_by_entry: HashMap<u32, Option<[f32; 3]>>,
     mesh: Option<Handle<Mesh>>,
     reach_blocks: Option<u32>,
     warned_entries: HashSet<u32>,
@@ -121,6 +137,56 @@ fn client_light_sprite_quad(origin: Vec3, bounds: StaticBillboardBounds) -> (Vec
     let center = origin + billboard_right() * center_x + Vec3::Y * center_y;
     let size = Vec2::new(bounds.local_max_x - bounds.local_min_x, bounds.local_max_y - bounds.local_min_y);
     (center, size)
+}
+
+/// A light texture's colour where it shows: the mean of its RGBA8888 texels' colour weighted by their alpha. `None`
+/// for a texture without a visible texel.
+fn light_texture_glow_rgb(rgba: &[u8]) -> Option<[f32; 3]> {
+    let mut weighted = [0.0f64; 3];
+    let mut coverage = 0.0f64;
+    for texel in rgba.chunks_exact(RGBA_TEXEL_BYTES) {
+        let alpha = f64::from(texel[3]);
+        for (sum, channel) in weighted.iter_mut().zip(&texel[..3]) {
+            *sum += f64::from(*channel) * alpha;
+        }
+        coverage += alpha;
+    }
+    (coverage > 0.0).then(|| weighted.map(|sum| (sum / coverage) as f32 / LIGHT_TEXTURE_CHANNEL_MAX))
+}
+
+/// The light that the land light decals and the static local lights take from a client light sprite.
+///
+/// - **Where:** the ground point that shows at the sprite's centre: the centre moved along the camera's view ray down
+///   to the static's base height, so the land lights where the glow shows. The light sits at that height, as the
+///   light.mul lights sit at their static's z.
+/// - **Size:** the sprite's size in legacy pixels over `LIGHT_PIXELS_PER_WORLD_TILE`, as the light.mul lights give
+///   their mask's.
+/// - **Colour:** the texture's glow colour, with no hue, as the sprite draws.
+/// - **Key:** the light id is the light texture's `TerrainTexture.uop` entry.
+pub(super) fn client_light_sprite_static_light(sprite: &ClientLightSpriteInstance) -> StaticLightInstance {
+    let key = sprite.key;
+    let base_y = client_light_sprite_origin(key.tile_x, key.tile_y, key.z).y;
+    let view_ray = PlayerCamera::BASE_OFFSET_FROM_PLAYER;
+    let ground = sprite.center - view_ray * ((sprite.center.y - base_y) / view_ray.y);
+    StaticLightInstance {
+        key: StaticLightKey {
+            map_id: key.map_id,
+            tile_x: key.tile_x,
+            tile_y: key.tile_y,
+            z: key.z,
+            graphic: key.graphic,
+            light_id: sprite.texture_entry,
+            hue_id: 0,
+        },
+        light_id: sprite.texture_entry,
+        hue_id: 0,
+        color_rgb: sprite.glow_rgb,
+        world_x: ground.x,
+        world_z: ground.z,
+        world_y: base_y + STATIC_LIGHT_Y_BIAS,
+        width_world: sprite.size.x / CC_WORLD_XZ_PER_PIXEL / LIGHT_PIXELS_PER_WORLD_TILE,
+        height_world: sprite.size.y / CC_WORLD_Y_PER_PIXEL / LIGHT_PIXELS_PER_WORLD_TILE,
+    }
 }
 
 /// How far a sprite reaches from its base point, in world units: the largest absolute bound.
@@ -243,10 +309,20 @@ pub fn sys_collect_client_light_sprites(
             if !seen.insert(key) {
                 continue;
             }
+            let Some(glow_rgb) = *cache.glow_rgb_by_entry.entry(entry).or_insert_with(|| {
+                let (_, _, rgba) = tex_aux
+                    .0
+                    .load_terrain_texture_rgba(entry)
+                    .inspect_err(|error| log::warn!("Cannot read light texture {entry} from tex_aux_ec.uddp: {error:#}"))
+                    .ok()?;
+                light_texture_glow_rgb(&rgba)
+            }) else {
+                continue;
+            };
             let bounds = client_light_sprite_bounds(light, u32::from(slot.width), u32::from(slot.height));
             let (center, size) =
                 client_light_sprite_quad(client_light_sprite_origin(key.tile_x, key.tile_y, key.z), bounds);
-            instances.push(ClientLightSpriteInstance { key, texture_entry: entry, center, size });
+            instances.push(ClientLightSpriteInstance { key, texture_entry: entry, center, size, glow_rgb });
         }
     }
 
@@ -420,6 +496,39 @@ mod tests {
         assert!((rotation * Vec3::Y).abs_diff_eq(Vec3::Y, EPSILON));
         let toward_camera = Vec3::new(1.0, 0.0, 1.0).normalize();
         assert!((rotation * Vec3::Z).abs_diff_eq(toward_camera, EPSILON));
+    }
+
+    #[test]
+    fn the_glow_colour_is_the_alpha_weighted_mean() {
+        // An opaque red texel, a half-covered blue one and a clear green one, which counts for nothing.
+        let rgba = [255, 0, 0, 255, 0, 0, 255, 128, 0, 255, 0, 0];
+        let [red, green, blue] = light_texture_glow_rgb(&rgba).expect("visible");
+        assert!((red - 255.0 / 383.0).abs() < EPSILON, "{red}");
+        assert_eq!(green, 0.0);
+        assert!((blue - 128.0 / 383.0).abs() < EPSILON, "{blue}");
+        assert_eq!(light_texture_glow_rgb(&[255, 255, 255, 0]), None);
+    }
+
+    #[test]
+    fn the_land_light_sits_on_the_ground_under_the_glow() {
+        let bounds = client_light_sprite_bounds(&LANTERN_LIGHT, LIGHT_GENERIC_SIDE, LIGHT_GENERIC_SIDE);
+        let key = ClientLightSpriteKey { map_id: 0, tile_x: 2507, tile_y: 560, z: 12, graphic: 2594 };
+        let origin = client_light_sprite_origin(key.tile_x, key.tile_y, key.z);
+        let (center, size) = client_light_sprite_quad(origin, bounds);
+        let glow_rgb = [1.0, 0.5, 0.25];
+        let sprite = ClientLightSpriteInstance { key, texture_entry: LANTERN_LIGHT.light_texture_entry, center, size, glow_rgb };
+        let light = client_light_sprite_static_light(&sprite);
+        // The centre, 0.697 above the base, shows over the ground 0.697 back along the (1, 1, 1) view ray.
+        let lift = center.y - origin.y;
+        assert!((light.world_x - (center.x - lift)).abs() < EPSILON, "{light:?}");
+        assert!((light.world_z - (center.z - lift)).abs() < EPSILON, "{light:?}");
+        assert!((light.world_y - (origin.y + STATIC_LIGHT_Y_BIAS)).abs() < EPSILON, "{light:?}");
+        // 512 Enhanced pixels each way: 512 / 66 legacy tiles, as light.mul sizes its masks.
+        let side_tiles = 2.0 * LIGHT_GENERIC_SIDE as f32 / 66.0;
+        assert!((light.width_world - side_tiles).abs() < EPSILON, "{light:?}");
+        assert!((light.height_world - side_tiles).abs() < EPSILON, "{light:?}");
+        assert_eq!(light.color_rgb, glow_rgb);
+        assert_eq!((light.light_id, light.hue_id, light.key.graphic), (1, 0, 2594));
     }
 
     #[test]

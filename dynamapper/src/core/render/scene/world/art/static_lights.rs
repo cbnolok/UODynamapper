@@ -1,3 +1,4 @@
+use super::client_light_sprites::{client_light_sprite_static_light, RenderClientLightSprites};
 use super::statics_collect::StaticChunkBatchKey;
 use crate::configs::{settings::Settings, shader_presets::UniformState};
 use crate::console_logger::{self, LogAbout, LogSev};
@@ -15,8 +16,8 @@ use std::collections::{HashMap, HashSet};
 use std::hash::{Hash, Hasher};
 
 const TILE_FLAG_LIGHT_SOURCE: u64 = 0x00800000;
-const LIGHT_PIXELS_PER_WORLD_TILE: f32 = 44.0;
-const STATIC_LIGHT_Y_BIAS: f32 = 0.012;
+pub(super) const LIGHT_PIXELS_PER_WORLD_TILE: f32 = 44.0;
+pub(super) const STATIC_LIGHT_Y_BIAS: f32 = 0.012;
 const STATIC_LIGHT_ALPHA: f32 = 0.65;
 const STATIC_LIGHT_DEPTH_BIAS: f32 = 128.0;
 /// The render layer of the scene decals: the world camera's, Bevy's default.
@@ -54,7 +55,8 @@ enum StaticLightRenderStyle {
 /// sprites into the client night composite's light buffer (`client_light_sprites`), where they lerp over the night
 /// map and show only through the composite, so only below full day, as in the clients.
 ///
-/// The instances stay collected for every style: the land and static local lights read them.
+/// The instances stay collected for every style: the land and static local lights read them. In KR-like and Enhanced
+/// they are the client light sprites' (`client_light_sprites::client_light_sprite_static_light`), not light.mul's.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub(super) enum StaticLightTarget {
     SceneDecal,
@@ -240,6 +242,8 @@ pub fn sys_collect_visible_static_lights(
     world_lights_res: Option<Res<WorldLightsPackageRes>>,
     hues_package_res: Option<Res<HuesPackageRes>>,
     settings: Res<Settings>,
+    uniform_state: Res<UniformState>,
+    client_light_sprites: Res<RenderClientLightSprites>,
     scene_state: Res<SceneStateData>,
     chunks_q: Query<&crate::core::render::scene::world::land::LCMesh>,
     mut material_cache: ResMut<StaticLightMaterialCache>,
@@ -249,6 +253,12 @@ pub fn sys_collect_visible_static_lights(
     output.0.clear();
 
     if !settings.world_rendering.enable_static_lights {
+        return;
+    }
+
+    if StaticLightTarget::for_uniform_state(&uniform_state) == StaticLightTarget::ClientLightBuffer {
+        output.0.extend(client_light_sprites.instances.iter().map(client_light_sprite_static_light));
+        log_static_light_instance_count(&output, &mut debug_state);
         return;
     }
 
@@ -344,6 +354,10 @@ pub fn sys_collect_visible_static_lights(
         }
     }
 
+    log_static_light_instance_count(&output, &mut debug_state);
+}
+
+fn log_static_light_instance_count(output: &RenderStaticLightInstances, debug_state: &mut StaticLightDrawDebugState) {
     if debug_state.last_instance_count != Some(output.0.len()) {
         console_logger::one(
             LogSev::Debug,

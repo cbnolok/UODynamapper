@@ -69,7 +69,8 @@ impl Plugin for DrawStaticSpritesPlugin {
                crate::core::texture_cache::art::sys_stage_sprite_art_page_uploads,
                crate::core::texture_cache::art::sys_stage_ground_art_page_uploads,
                static_lights::sys_collect_visible_static_lights
-                   .after(SceneRenderLandSysSet::RenderLandChunks),
+                   .after(SceneRenderLandSysSet::RenderLandChunks)
+                   .after(client_light_sprites::sys_collect_client_light_sprites),
                statics_collect::sys_collect_visible_statics
                    .in_set(SceneRenderArtSysSet::CollectVisibleStatics)
                    .after(static_lights::sys_collect_visible_static_lights),
