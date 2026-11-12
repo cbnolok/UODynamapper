@@ -377,21 +377,22 @@ fn shade_fragment(in: ArtVertexOutput, sample_index: u32) -> ArtFragmentOutput {
         } else {
             color = textureSample(art_atlas, art_atlas_sampler, sample_uv, i32(layer));
         }
+        // Item surfaces (flat_quad 2 and 3) and their boundary coverage below come only from the Enhanced art
+        // package, so they follow the art source, never the preset: every preset draws the authored coverage masks
+        // filtered and fades the surface into the map, as the Enhanced client does.
         if (inst.flat_quad >= 2u) {
             color = apply_ec_item_surface(color, item_surface_atlas, item_surface_lookup,
                 item_surface_sampler, surface_header, uv_in_tile_for_shading, in.world_pos.xz,
-                effects.enable_linear_filtering == 1u,
-                effects.enable_linear_filtering == 1u || effects.post_process_profile != 0u);
+                effects.enable_linear_filtering == 1u, true);
         }
     }
-    if (surface_header.x != 0u && !use_ec_item_water && effects.post_process_profile != 0u) {
+    if (surface_header.x != 0u && !use_ec_item_water) {
         // The authored overlap margin allows a 1.5-pixel coverage fade at the
         // quad boundary without drawing a hard cutout over the liquid below.
         let edge = min(uv_in_tile_for_shading, vec2<f32>(1.0) - uv_in_tile_for_shading);
         color.a *= smoothstep(0.0, 1.5, min(edge.x / surface_footprint.x, edge.y / surface_footprint.y));
     }
-    let blend_surface = (inst.is_wet_flags & 2u) != 0u && effects.post_process_profile != 0u
-        && (effects.terrain_transition_flags & 2u) == 0u;
+    let blend_surface = (inst.is_wet_flags & 2u) != 0u && (effects.terrain_transition_flags & 2u) == 0u;
     if (blend_surface) {
         color.a *= static_surface_coverage(uv_in_tile_for_shading, (inst.is_wet_flags >> 2u) & 255u);
     }
