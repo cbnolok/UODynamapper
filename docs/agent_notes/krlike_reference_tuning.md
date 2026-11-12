@@ -2,7 +2,8 @@
 
 The aim is to make KR-like feel more like the KR screenshots in `docs/images/kr_reference/`, even where the
 screenshots were post-processed. This note measures the screenshots and KR-like by region type, sets two preset
-values from the measurements, and proposes one new shader term.
+values from the measurements, and proposed one new shader term, the chroma knee. The knee is now implemented and
+replaces KR-like's saturation 0.8: see [The chroma knee](#the-chroma-knee-implemented).
 
 - **Build:** dev `3ad8597c` (debug build). No rendering code changed. The tuning is preset values only.
 - **Settings:** isolated copies of the bundled settings. Views at the KR client's frustum (zoom 0.79 at a 1024 x 768
@@ -116,7 +117,7 @@ Trinsic and Buccaneer's Den.
 | 0.75 | 0.084 | 0.084 | 0.097 |
 | chroma knee 0.6 (proposal) | 0.048 | 0.040 | 0.066 |
 
-The choice is 0.8. Below it, the gain on greens is paid for by stone, wood and water, which are already at or
+The choice was 0.8 (since replaced by the chroma knee, below). Below it, the gain on greens is paid for by stone, wood and water, which are already at or
 below the shots. Vibrance cannot single out the vivid greens: its mask `smoothstep(0, 0.7, 1 − chroma)` is about
 1 for every colour these scenes hold, so it acts as more saturation.
 
@@ -129,7 +130,7 @@ Both files changed identically: `dynamapper/assets/defaults/shader_presets.toml`
 |---|---|---|---|
 | `lighting.ambient_strength` | 0.0 | 0.146 | Water factor 0.146 + 0.854 = 1: the client's unlit water. +17% on every water |
 | `lighting.enable_grading` | 0 | 1 | for the saturation below |
-| `lighting.grade_extra` | per period, e.g. [0.45, 1.14, 1.12, 0.80] (unused while grading was off) | [0.0, 0.8, 1.0, 0.0] | Saturation 0.8 alone: no vibrance, contrast 1 (identity), split tone 0 |
+| `lighting.grade_extra` | per period, e.g. [0.45, 1.14, 1.12, 0.80] (unused while grading was off) | [0.0, 0.8, 1.0, 0.0] | Saturation 0.8 alone: no vibrance, contrast 1 (identity), split tone 0. Now [0.0, 1.0, 1.0, 0.0] with the chroma knee |
 
 Unchanged:
 - the night composite (light levels 0 / 0 / 10 / 26, overlay strength and colour);
@@ -188,14 +189,124 @@ In caves, saturation measures mostly the composite's blue overlay, which is appl
 moves. Classic, Enhanced and UOD-Painterly are pixel identical before and after at Buccaneer's Den and Trinsic,
 with KR, EC and CC land (18 captures, every one differs by 0).
 
-## Proposals (not implemented)
+## The chroma knee (implemented)
+
+A grading term in `postprocess/color_grading.wesl` (`apply_chroma_knee`), with two settings in the grading part of
+the presets: `grade_chroma_knee` and `grade_chroma_slope` (Advanced > Color Grading: Chroma Knee and Chroma Knee
+Slope, beside Saturation).
+
+- **Definition, as the mock-up.** After the saturation step, in linear light, before vibrance, contrast, split tone,
+  the tonemap and the night composite: relative chroma c = (max − min) / max of the colour's RGB channels (HSV
+  saturation in linear light). Above the knee K it becomes K + (c − K)·m, by scaling the colour's offset from its
+  Rec. 709 luma by that target over c: the same mix toward luma as saturation, so luma stays and the offset keeps
+  its direction (hue). Colours at or below the knee are untouched. `mock_colour` in the script is the same formula
+  on sRGB captures.
+- **Neutral.** Knee 1 is off (`CHROMA_KNEE_OFF`); the shader returns the colour unchanged. Classic, Enhanced and
+  UOD-Painterly have knee 1, slope 1. Testing `knee >= 1` rather than `c <= knee` matters: saturation above 1
+  (Classic 1.2, UOD-Painterly 1.12) can drive a channel negative, and then c exceeds 1.
+- **Uniform.** `GlobalLightingUniforms` takes a new 16-byte slot after `grade_extra`: knee, slope and a `vec2` pad
+  (`_pad6_`), the same `f32, f32, vec2` pattern as `exposure, ambient_strength, _pad2_`.
+- **Saved settings.** Older cache copies of `land.toml` lack the two keys; the lenient load fills them from the
+  bundled presets, as it did for the grunge keys. A cache saved between `673e6c6f` and this change keeps KR-like's
+  saturation 0.8 and gets the knee on top, until the preset is reset to factory.
+- **KR-like, all four periods:** saturation 1.0, knee 0.55, slope 0. Everything client-faithful is unchanged:
+  the night composite, light levels, client shadows and sun, ambient 0.146 for water, grunge.
+
+### Shader against mock-up
+
+Captures with grading off on the knee build, mocked up at knee 0.55 / slope 0, against the shader's own captures
+of the same views (afternoon, EC art, all seven views): mean absolute pixel difference 0.12 (KR land), 0.12 (EC),
+0.13 (CC); 99th percentile of the largest channel difference 1 to 3 levels; region means within 0.5 level and
+region saturation within 0.015. At the proposal's knee 0.6 the shader gave the proposal's numbers exactly (KR land
+grass 0.37, foliage 0.40, stone 0.27, wood 0.36, ground 0.28).
+
+### Fine-tuning
+
+The mock-up over a grid (knee 0.45 to 0.7, slope 0 to 0.5) on the knee build's ungraded captures, RMS saturation
+error over grass, foliage, stone, wood and ground, on the view sets of the table above (KR: coast, Britain, Yew,
+Trinsic, Buccaneer's Den; EC and CC: coast, Trinsic, Buccaneer's Den):
+
+| Grading | KR land | EC land | CC land |
+|---|---|---|---|
+| saturation 0.8 (before) | 0.086 | 0.083 | 0.120 |
+| knee 0.6, slope 0 (proposal) | 0.048 | 0.040 | 0.067 |
+| knee 0.55, slope 0 (chosen) | 0.041 | 0.031 | 0.042 |
+| knee 0.55, slope 0.1 | 0.044 | 0.037 | 0.057 |
+| knee 0.5, slope 0 | 0.051 | 0.043 | 0.033 |
+
+Knee 0.55 is best on KR and EC land and second on CC. A slope above 0 always cost a little. The grunge on statics
+(added after the proposal) is in every capture here, so foliage measures 70 rather than 74 and the numbers differ
+slightly from the proposal's.
+
+Measured on the shader (afternoon), the RMS goes from saturation 0.8 to the knee: KR land 0.086 → 0.041 (all seven
+views 0.096 → 0.047), EC land 0.083 → 0.029 (0.096 → 0.063), CC land 0.119 → 0.039 (0.159 → 0.095).
+
+### Results (afternoon, median per kind; saturation, luma unchanged within 1 level)
+
+| Kind | References | KR land: dev → knee | EC land: dev → knee | CC land: dev → knee |
+|---|---|---|---|---|
+| water | 0.59 | 0.62 → 0.52 | 0.62 → 0.49 | 0.77 → 0.60 |
+| grass | 0.33 | 0.38 → 0.34 | 0.31 → 0.34 | 0.53 → 0.37 |
+| foliage | 0.33 | 0.46 → 0.36 | 0.42 → 0.35 | 0.52 → 0.38 |
+| stone | 0.34 | 0.22 → 0.26 | 0.25 → 0.29 | 0.28 → 0.29 |
+| wood | 0.38 | 0.32 → 0.34 | 0.33 → 0.35 | 0.33 → 0.35 |
+| ground | 0.33 | 0.23 → 0.28 | 0.17 → 0.21 | 0.11 → 0.14 |
+| rock | 0.24 | 0.19 → 0.23 | 0.11 → 0.13 | 0.08 → 0.10 |
+
+Per region, KR land (luma / saturation), dev (saturation 0.8) → knee:
+
+| View | Region | Dev | Knee |
+|---|---|---|---|
+| coast | water | 26 / 0.64 | 26 / 0.53 |
+| coast | grass | 81 / 0.43 | 82 / 0.35 |
+| coast | foliage | 77 / 0.45 | 77 / 0.35 |
+| coast | sand | 101 / 0.29 | 101 / 0.32 |
+| Britain | stone | 61 / 0.25 | 61 / 0.28 |
+| Britain | grass | 73 / 0.38 | 73 / 0.34 |
+| Britain | foliage | 63 / 0.37 | 63 / 0.34 |
+| Yew | grass | 76 / 0.47 | 76 / 0.35 |
+| Yew | foliage | 82 / 0.47 | 83 / 0.37 |
+| Covetous | rock | 39 / 0.19 | 39 / 0.23 |
+| Trinsic | stone | 118 / 0.31 | 118 / 0.33 |
+| Trinsic | wood | 48 / 0.30 | 47 / 0.34 |
+| Trinsic | water | 32 / 0.52 | 32 / 0.45 |
+| Buccaneer's Den | grass | 70 / 0.28 | 70 / 0.31 |
+| Buccaneer's Den | foliage | 63 / 0.53 | 64 / 0.40 |
+| Buccaneer's Den | water | 26 / 0.62 | 27 / 0.52 |
+
+Vivid greens drop to the shots' range while stone, wood, roofs, ground and rock regain what saturation 0.8 took.
+Water saturation goes below the references' 0.59 on KR and EC land (0.45 to 0.53), as the proposal expected.
+
+Per period at Buccaneer's Den, KR land (saturation, dev → knee):
+
+| Region | Morning | Afternoon | Night | Cave |
+|---|---|---|---|---|
+| foliage | 0.53 → 0.40 | 0.53 → 0.40 | 0.54 → 0.42 | 0.66 → 0.58 |
+| grass | 0.29 → 0.31 | 0.28 → 0.31 | 0.17 → 0.20 | 0.49 → 0.48 |
+| water | 0.62 → 0.52 | 0.62 → 0.52 | 0.69 → 0.61 | 0.88 → 0.85 |
+| roof | 0.23 → 0.26 | 0.23 → 0.26 | 0.18 → 0.21 | 0.52 → 0.52 |
+
+EC and CC land move the same way in every period; region luma moves by at most 1 level. In caves the composite's
+blue overlay, applied after the grading, dominates as before.
+
+### Validation
+
+- Classic, Enhanced and UOD-Painterly are pixel identical to dev in every period, with art CC and EC, each with land
+  CC, EC and KR, at Buccaneer's Den and Trinsic: 144 captures, every one differs by 0.
+- Sheets in `/home/claudio/rust-target/uodynamapper-scratch/chroma-knee/knee/sheets/`: `ref_vs_dev_vs_knee.png`
+  (KR land) and `ref_vs_dev_vs_knee_ec_land.png` (each reference, KR-like on dev, KR-like with the knee), and
+  `periods_kr.png`, `periods_ec.png`, `periods_cc.png` (the four periods, dev and knee side by side).
+- `cargo test -p dynamapper --bin dynamapper`: the bundled presets parse strictly, the shipped `land.toml` matches
+  the factory presets, and `only_kr_like_has_the_chroma_knee_on` checks the neutral values elsewhere.
+
+## Proposals
 
 1. **Brighter KR water texture.** KR land's water is 26 against the shots' 41, because KR's `01000017_cube3` has
    luma 24 and EC's has 43. If the KR land package took EC's cube3 for material 5, water on KR land would draw
    the same as on EC land: 44 to 46, measured. That is a data change to `tex_land_kr.uddp` (its builder's
    source choice), so it waits for confirmation. The other route, a separate water gain per land source, would be
    a new setting in the user-written settings file, a schema change.
-2. **Chroma knee: a new grading term.** It would compress only vivid colours. In linear light, relative chroma
+2. **Chroma knee: a new grading term (implemented, above, at knee 0.55).** It would compress only vivid colours. In linear light, relative chroma
    c = (max − min) / max above a knee K maps to K + (c − K)·m, by the same mix toward luma as saturation. Measured
    by the validated mock-up (`mockup … --knee 0.6 --slope 0`, in place of saturation 0.8):
    - KR land: grass 0.37, foliage 0.40, stone 0.27, wood 0.36, ground 0.28;
@@ -203,7 +314,7 @@ with KR, EC and CC land (18 captures, every one differs by 0).
    - the RMS error against the references is about half that of saturation 0.8 (KR 0.048, EC 0.040, CC 0.066).
 
    Water goes to 0.53 to 0.55, against 0.62 with saturation 0.8. It would need two new `grade_extra`-style values
-   (knee, slope), which is a schema change, so it is proposed only. The `ref_vs_krlike*.png` sheets show it in
+   (knee, slope), which is a schema change, so it was proposed only. The `ref_vs_krlike*.png` sheets show it in
    their fourth column.
 
 ## Open questions
@@ -213,8 +324,8 @@ with KR, EC and CC land (18 captures, every one differs by 0).
   (`01000014_cube0`, almost black) on top. So the final client should draw snow near white, and the beta shot
   probably shows other textures or a darker gamma. Nothing was changed for snow.
 - **Foliage brightness.** EC art foliage is about 16 levels brighter than the shots' (74 against 58), while grass
-  matches. No setting dims art alone. The grunge on statics (×0.55..1.0) that the other change adds may close part
-  of this; measure again after it lands.
+  matches. No setting dims art alone. The grunge on statics (×0.55..1.0), since added, closes part of this: with
+  it, KR-like foliage measures 70 on KR land and 71 on EC land, still 12 to 13 above the shots.
 - **Water on KR land** stays darker than the shots until proposal 1 is decided.
 - **Per-pixel land.** If a user switches KR-like to per-pixel land, the new ambient 0.146 is also added to the land's
   light factor.
