@@ -480,7 +480,8 @@ pub struct LandMaterialUniformsPresets {
     pub sun: SunAngles,
 }
 
-/// The KR and Enhanced clients' night lighting: the server light level and Dynamapper's night overlay controls.
+/// The KR and Enhanced clients' night lighting: the server light level and Dynamapper's night overlay controls, and
+/// which lights the optional land light decals and static local lights take in these two styles.
 ///
 /// The composite and its formulas are in `world::effects::client_night`.
 #[derive(Clone, Copy, Debug, PartialEq, Deserialize, Serialize)]
@@ -495,6 +496,23 @@ pub struct ClientNightLighting {
     /// The night map's colour, in 8-bit (sRGB-encoded) values. The default, the map's mean
     /// (`client_night::NIGHT_MAP_MEAN`), is the client; another colour keeps the map's cloud pattern.
     pub overlay_color: Vec3,
+    /// The lights the land light decals and static local lights (Light/Static Interaction) take. The client light
+    /// sprites in the composite's light buffer stay as they are either way.
+    pub local_light_source: ClientLocalLightSource,
+}
+
+/// Where KR-like and Enhanced take the land light decals and static local lights from (`static_lights`). Classic and
+/// UOD-Painterly always take light.mul's.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Deserialize, Serialize)]
+pub enum ClientLocalLightSource {
+    /// The client light sprites: a light on the ground under each sprite's glow, sized like the sprite and coloured
+    /// by its texture (`client_light_sprites::client_light_sprite_static_light`).
+    #[serde(rename = "light_sprites")]
+    LightSprites,
+    /// light.mul, as Classic: the statics with the LightSource flag, their `quality` as the light.mul id, the light's
+    /// size and its colour (the static's hue, the ClassicUO light shader or the light.mul mask's).
+    #[serde(rename = "light_mul")]
+    LightMul,
 }
 
 /// A preset's sun: one static light direction for land, art and the sprite shadows, as compass angles.

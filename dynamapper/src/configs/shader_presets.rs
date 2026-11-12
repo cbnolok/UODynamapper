@@ -209,6 +209,7 @@ fn clamp_client_lighting(lighting: ClientNightLighting) -> ClientNightLighting {
         overlay_color: lighting
             .overlay_color
             .clamp(Vec3::splat(*OVERLAY_COLOR_RANGE.start()), Vec3::splat(*OVERLAY_COLOR_RANGE.end())),
+        local_light_source: lighting.local_light_source,
     }
 }
 
@@ -898,6 +899,7 @@ mod tests {
     #[test]
     fn bundled_presets_dim_kr_like_and_enhanced_through_the_client_night_lighting() {
         use crate::core::render::scene::world::effects::client_night::NIGHT_MAP_MEAN;
+        use crate::core::render::scene::world::land::mesh_material::ClientLocalLightSource;
         const DAY: u32 = 0;
         const NIGHT: u32 = 10;
         const DUNGEON: u32 = 26;
@@ -913,11 +915,45 @@ mod tests {
                         light_level: level,
                         overlay_strength: CLIENT_STRENGTH,
                         overlay_color: NIGHT_MAP_MEAN,
+                        local_light_source: ClientLocalLightSource::LightSprites,
                     };
                     assert_eq!(slot.client_lighting, Some(expected), "{name}");
                 }
             }
         }
+    }
+
+    /// The source of KR-like's and Enhanced's local lights is required in a hand-written file, filled in a cache from
+    /// before it, and a pick of light.mul is written and read back.
+    #[test]
+    fn the_client_local_light_source_is_strict_by_hand_and_filled_in_a_cache() {
+        use crate::core::render::scene::world::land::mesh_material::ClientLocalLightSource;
+        const BUNDLED_SOURCE_LINE: &str = "local_light_source = \"light_sprites\"\n";
+        let unknown = BUNDLED_FACTORY_PRESETS.replacen(BUNDLED_SOURCE_LINE, "local_light_source = \"sprites\"\n", 1);
+        let error = parse(&unknown).err().expect("unknown source").to_string();
+        assert!(error.contains("unknown variant `sprites`, expected `light_sprites` or `light_mul`"), "{error}");
+        let missing = BUNDLED_FACTORY_PRESETS.replacen(BUNDLED_SOURCE_LINE, "", 1);
+        let error = parse(&missing).err().expect("missing source").to_string();
+        assert!(error.contains("missing field `local_light_source`"), "{error}");
+
+        let bundled = parse(BUNDLED_LAND_SETTINGS).expect("bundled");
+        let older = BUNDLED_LAND_SETTINGS.replacen(BUNDLED_SOURCE_LINE, "", 1);
+        let load = uocf::utils::config_toml::parse_app_state("land.toml", &older, &bundled).expect("lenient load");
+        assert_eq!(
+            load.warnings,
+            ["land.toml: missing key `enhanced.morning.client_lighting.local_light_source` filled from the default"]
+        );
+        assert_eq!(load.value.enhanced.morning.client_lighting, bundled.enhanced.morning.client_lighting);
+
+        let mut picked = clone_presets(&bundled);
+        picked.kr.night.client_lighting.as_mut().expect("client lit").local_light_source = ClientLocalLightSource::LightMul;
+        let written = toml::to_string_pretty(&picked).expect("serialize");
+        let load = uocf::utils::config_toml::parse_app_state("land.toml", &written, &bundled).expect("lenient load");
+        assert!(load.warnings.is_empty(), "{:?}", load.warnings);
+        assert_eq!(
+            load.value.kr.night.client_lighting.map(|lighting| lighting.local_light_source),
+            Some(ClientLocalLightSource::LightMul)
+        );
     }
 
     #[test]

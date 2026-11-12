@@ -2,6 +2,7 @@ use super::client_light_sprites::{client_light_sprite_static_light, RenderClient
 use super::statics_collect::StaticChunkBatchKey;
 use crate::configs::{settings::Settings, shader_presets::UniformState};
 use crate::console_logger::{self, LogAbout, LogSev};
+use crate::core::render::scene::world::land::mesh_material::{ClientLocalLightSource, ClientNightLighting};
 use crate::core::render::scene::world::land::{
     CHUNK_STORAGE_BLOCKS_DIM, MAP_STORAGE_BLOCK_TILE_DIM,
 };
@@ -56,7 +57,8 @@ enum StaticLightRenderStyle {
 /// map and show only through the composite, so only below full day, as in the clients.
 ///
 /// The instances stay collected for every style: the land and static local lights read them. In KR-like and Enhanced
-/// they are the client light sprites' (`client_light_sprites::client_light_sprite_static_light`), not light.mul's.
+/// they are, as `client_lighting.local_light_source` picks (`local_light_source`), the client light sprites'
+/// (`client_light_sprites::client_light_sprite_static_light`) or light.mul's, as in Classic.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub(super) enum StaticLightTarget {
     SceneDecal,
@@ -71,6 +73,12 @@ impl StaticLightTarget {
             Self::SceneDecal
         }
     }
+}
+
+/// The lights the land light decals and the static local lights take: light.mul's in Classic and UOD-Painterly, which
+/// have no `client_lighting`, and in KR-like and Enhanced the source their `client_lighting` picks.
+pub(super) fn local_light_source(client_lighting: Option<&ClientNightLighting>) -> ClientLocalLightSource {
+    client_lighting.map_or(ClientLocalLightSource::LightMul, |lighting| lighting.local_light_source)
 }
 
 #[derive(Clone, Copy)]
@@ -256,7 +264,7 @@ pub fn sys_collect_visible_static_lights(
         return;
     }
 
-    if StaticLightTarget::for_uniform_state(&uniform_state) == StaticLightTarget::ClientLightBuffer {
+    if local_light_source(uniform_state.client_lighting.as_ref()) == ClientLocalLightSource::LightSprites {
         output.0.extend(client_light_sprites.instances.iter().map(client_light_sprite_static_light));
         log_static_light_instance_count(&output, &mut debug_state);
         return;
@@ -1105,6 +1113,22 @@ mod tests {
         let mut hasher = DefaultHasher::new();
         key.hash(&mut hasher);
         hasher.finish()
+    }
+
+    /// Classic and UOD-Painterly (no client lighting) always take light.mul; KR-like and Enhanced what they pick.
+    #[test]
+    fn the_local_lights_take_the_source_the_client_lighting_picks() {
+        use crate::core::render::scene::world::effects::client_night::NIGHT_MAP_MEAN;
+        assert_eq!(local_light_source(None), ClientLocalLightSource::LightMul);
+        for source in [ClientLocalLightSource::LightSprites, ClientLocalLightSource::LightMul] {
+            let lighting = ClientNightLighting {
+                light_level: 0,
+                overlay_strength: 1.0,
+                overlay_color: NIGHT_MAP_MEAN,
+                local_light_source: source,
+            };
+            assert_eq!(local_light_source(Some(&lighting)), source);
+        }
     }
 
     #[test]

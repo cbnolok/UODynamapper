@@ -138,6 +138,12 @@ const TONE_CURVE_OPTIONS: [(&str, u32, &str); 2] = [
     ("Identity", TONE_CURVE_IDENTITY, "No curve, as the clients draw: exposure is plain brightness."),
 ];
 
+/// KR-like's and Enhanced's "Local Lights" choices: `(label, source, tooltip)`.
+const LOCAL_LIGHT_SOURCE_OPTIONS: [(&str, ClientLocalLightSource, &str); 2] = [
+    ("Light Sprites", ClientLocalLightSource::LightSprites, tips::LOCAL_LIGHTS_LIGHT_SPRITES),
+    ("light.mul", ClientLocalLightSource::LightMul, tips::LOCAL_LIGHTS_LIGHT_MUL),
+];
+
 /// Terrain "Land Shading" choices for the fragment styles: `(label, terrain_shading_model, tooltip)`.
 const TERRAIN_SHADING_OPTIONS: [(&str, u32, &str); 2] = [
     ("Smooth per-pixel", TERRAIN_SHADING_SMOOTH_PER_PIXEL, "Lighting per pixel from a smooth normal, with every land lighting control."),
@@ -1079,6 +1085,9 @@ fn whole_scene_controls(ui: &mut egui::Ui, u: &mut UniformState, gates: RenderSt
         // KR's filmic tonemap had its own pre-scale here ("KR Tonemap Brightness"); it multiplied
         // exactly like Exposure, so it is folded into Exposure (Advanced -> Intensities).
         changed |= slider_s(ui, "Light/Static Interaction", &mut u.effects.light_decal_intensity, 0.0..=2.0, tips::LIGHT_STATIC_INTERACTION);
+        if let Some(lighting) = u.client_lighting.as_mut() {
+            changed |= local_light_source_row(ui, &mut lighting.local_light_source);
+        }
 
         let ui = &mut columns[1];
         changed |= toggle_slider(ui, true, "Grunge", &mut u.effects.enable_grunge, &mut u.effects.grunge_strength, 0.0..=1.0, tips::GRUNGE);
@@ -1102,6 +1111,22 @@ fn client_night_controls(ui: &mut egui::Ui, lighting: &mut ClientNightLighting) 
         tips::NIGHT_OVERLAY_STRENGTH,
     );
     changed |= night_overlay_color(ui, &mut lighting.overlay_color);
+    changed
+}
+
+/// Which lights KR-like's and Enhanced's land light decals and static local lights take.
+fn local_light_source_row(ui: &mut egui::Ui, source: &mut ClientLocalLightSource) -> bool {
+    let mut changed = false;
+    ui.horizontal_wrapped(|ui| {
+        with_tip(ui.label("Local Lights:"), tips::LOCAL_LIGHT_SOURCE);
+        for (label, option, tip) in LOCAL_LIGHT_SOURCE_OPTIONS {
+            let selected = *source == option;
+            if with_tip(ui.selectable_label(selected, label), tip).clicked() && !selected {
+                *source = option;
+                changed = true;
+            }
+        }
+    });
     changed
 }
 
@@ -1559,8 +1584,12 @@ mod tests {
     fn client_lit_presets_load_their_lighting_and_a_neutral_scene_multiplier() {
         const NIGHT_LEVEL: u32 = 10;
         const STRENGTH: f32 = 0.5;
-        let lighting =
-            ClientNightLighting { light_level: NIGHT_LEVEL, overlay_strength: STRENGTH, overlay_color: NIGHT_MAP_MEAN };
+        let lighting = ClientNightLighting {
+            light_level: NIGHT_LEVEL,
+            overlay_strength: STRENGTH,
+            overlay_color: NIGHT_MAP_MEAN,
+            local_light_source: ClientLocalLightSource::LightSprites,
+        };
         let mut presets = mode_presets();
         presets.kr.night = LandMaterialUniformsPresets {
             global_lighting: None,

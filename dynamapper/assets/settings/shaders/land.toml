@@ -362,6 +362,7 @@ elevation_degrees = 60.50379
 light_level = 0
 overlay_strength = 1.0
 overlay_color = [0.012604, 0.017285, 0.153818]
+local_light_source = "light_sprites"
 [enhanced.morning.effects]
 shading_mode = 1
 normal_mode = 1
@@ -447,6 +448,7 @@ elevation_degrees = 45.0
 light_level = 0
 overlay_strength = 1.0
 overlay_color = [0.012604, 0.017285, 0.153818]
+local_light_source = "light_sprites"
 [enhanced.afternoon.effects]
 shading_mode = 1
 normal_mode = 1
@@ -532,6 +534,7 @@ elevation_degrees = 45.0
 light_level = 10
 overlay_strength = 1.0
 overlay_color = [0.012604, 0.017285, 0.153818]
+local_light_source = "light_sprites"
 [enhanced.night.effects]
 shading_mode = 1
 normal_mode = 1
@@ -617,6 +620,7 @@ elevation_degrees = 45.0
 light_level = 26
 overlay_strength = 1.0
 overlay_color = [0.012604, 0.017285, 0.153818]
+local_light_source = "light_sprites"
 [enhanced.cave.effects]
 shading_mode = 1
 normal_mode = 1
@@ -731,6 +735,7 @@ client_shadows = true
 light_level = 0
 overlay_strength = 1.0
 overlay_color = [0.012604, 0.017285, 0.153818]
+local_light_source = "light_sprites"
 [kr.morning.effects]
 shading_mode = 2
 normal_mode = 0
@@ -817,6 +822,7 @@ client_shadows = true
 light_level = 0
 overlay_strength = 1.0
 overlay_color = [0.012604, 0.017285, 0.153818]
+local_light_source = "light_sprites"
 [kr.afternoon.effects]
 shading_mode = 2
 normal_mode = 0
@@ -903,6 +909,7 @@ client_shadows = true
 light_level = 10
 overlay_strength = 1.0
 overlay_color = [0.012604, 0.017285, 0.153818]
+local_light_source = "light_sprites"
 [kr.night.effects]
 shading_mode = 2
 normal_mode = 0
@@ -989,6 +996,7 @@ client_shadows = true
 light_level = 26
 overlay_strength = 1.0
 overlay_color = [0.012604, 0.017285, 0.153818]
+local_light_source = "light_sprites"
 [kr.cave.effects]
 shading_mode = 2
 normal_mode = 0

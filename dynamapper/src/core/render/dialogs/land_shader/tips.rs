@@ -51,6 +51,12 @@ pub(super) const NIGHT_OVERLAY_COLOR: &str =
     "The night map's mean colour. The client's keeps its blue; another colour keeps its cloud pattern.";
 pub(super) const NIGHT_OVERLAY_CLIENT: &str =
     "Back to the client's colour, the night map's exact mean.";
+pub(super) const LOCAL_LIGHT_SOURCE: &str =
+    "Which lights light the ground through Light/Static Interaction in KR-like and Enhanced, and the statics too when world_rendering.enable_static_art_local_lights is on. Light Sprites: the client light sprites, each lighting the ground under its glow, as large as the sprite and in its texture's colour. light.mul: the Classic lights, as in Classic and UOD-Painterly: every static with the light source flag, with its light.mul light's size and its hue or light colour. Either way the night still glows with the client light sprites. Needs Light/Static Interaction above 0 (0 in these presets).";
+pub(super) const LOCAL_LIGHTS_LIGHT_SPRITES: &str =
+    "The client light sprites light the ground under their glow, as large as the sprite and in its texture's colour.";
+pub(super) const LOCAL_LIGHTS_LIGHT_MUL: &str =
+    "The Classic lights from light.mul, as in Classic: every static with the light source flag, with its light's size and its hue or light colour.";
 pub(super) const CLIENT_SHADOWS: &str =
     "The KR client's shadows of statics and items, leaning from their base (its Show Shadows option). KR-like only, where they replace Shadow Shape, Contact Shadows and Projected Shadows.";
 pub(super) const CLIENT_GRUNGE: &str =
