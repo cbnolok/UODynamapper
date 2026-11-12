@@ -14,7 +14,7 @@
 //!     land 0x00C4 0x00C7 source="cc" id=0x011A
 //! }
 //! profile "desolation" {
-//!     when player-x-below=0x1800          // only while the player stands west of x 0x1800
+//!     apply-in x1=0 y1=0 x2=0x17FF y2=0xFFFF   // only west of x 0x1800, on every map
 //!     item 0x0C37 0x0C38 id=0x1BAE
 //! }
 //! ```
@@ -24,11 +24,13 @@
 //! place of `id`. An item route needs `id`. Within one block an id is routed once; the profile's route of an id
 //! replaces the `routes` block's.
 //!
-//! A profile's `when` nodes (the user's design, 2026-11-12) limit where it applies: `when player-x-below=<x>
-//! [map=<n>]` holds while the player's x is below `x` on the map `n`, or on every map without `map`. On each map the
-//! `when` naming it decides, else the `when` without `map`; a profile with `when` nodes, none of which covers the
-//! map, does not apply there. A profile without `when` applies everywhere. The Classic client applies desolation
-//! only while the player's x is below 0x1800, on every map (`FUN_0045c5a0`); a custom map may need another line.
+//! A profile's areas (the user's design, 2026-11-12) limit where its routes apply, by the position of each land tile
+//! and static: `apply-in x1= y1= x2= y2= [map=<n>]` and `skip-in` with the same properties name rectangles of tiles,
+//! corners included, on the map `n` or on every map without `map`; the part of a rectangle past the map's edge covers
+//! nothing. On a map, the profile applies at a tile when no `apply-in` covers the map or one contains the tile, and no
+//! `skip-in` contains it: `skip-in` wins. Elsewhere the `routes` block alone applies. The Classic client applies
+//! desolation only while the player's x is below 0x1800, on every map (`FUN_0045c5a0`); the bundled file applies it
+//! to the statics west of that line, and a custom map may need other areas.
 
 use color_eyre::eyre;
 use uot_kdl::ast::{Literal, Node, SpannedNode, Value};
@@ -53,11 +55,16 @@ const ITEM_NODE: &str = "item";
 const SOURCE_PROPERTY: &str = "source";
 const ID_PROPERTY: &str = "id";
 const TERRAIN_PROPERTY: &str = "terrain";
-const WHEN_NODE: &str = "when";
-const PLAYER_X_BELOW_PROPERTY: &str = "player-x-below";
+const APPLY_IN_NODE: &str = "apply-in";
+const SKIP_IN_NODE: &str = "skip-in";
+const X1_PROPERTY: &str = "x1";
+const Y1_PROPERTY: &str = "y1";
+const X2_PROPERTY: &str = "x2";
+const Y2_PROPERTY: &str = "y2";
 const MAP_PROPERTY: &str = "map";
+const AREA_PROPERTIES: &[&str] = &[X1_PROPERTY, Y1_PROPERTY, X2_PROPERTY, Y2_PROPERTY, MAP_PROPERTY];
 
-/// Map ids a `when` can name: the player position's map (`UOVec4::m`).
+/// Map ids an area can name: a map plane's index (`UOVec4::m`).
 pub const PROFILE_MAP_ID_COUNT: usize = 1 << u8::BITS;
 
 const LAND_ROUTE_SCHEMA: NodeSchema = NodeSchema::leaf(LAND_NODE, &[SOURCE_PROPERTY, ID_PROPERTY, TERRAIN_PROPERTY]);
@@ -65,11 +72,12 @@ const ITEM_ROUTE_SCHEMA: NodeSchema = NodeSchema::leaf(ITEM_NODE, &[ID_PROPERTY]
 
 /// The nodes of the `routes` block.
 const ROUTE_BLOCK_CHILDREN: &[NodeSchema] = &[LAND_ROUTE_SCHEMA, ITEM_ROUTE_SCHEMA];
-/// The nodes of a profile: its routes and where it applies.
+/// The nodes of a profile: its routes and where they apply.
 const PROFILE_CHILDREN: &[NodeSchema] = &[
     LAND_ROUTE_SCHEMA,
     ITEM_ROUTE_SCHEMA,
-    NodeSchema::leaf(WHEN_NODE, &[PLAYER_X_BELOW_PROPERTY, MAP_PROPERTY]),
+    NodeSchema::leaf(APPLY_IN_NODE, AREA_PROPERTIES),
+    NodeSchema::leaf(SKIP_IN_NODE, AREA_PROPERTIES),
 ];
 
 pub const LAND_ROUTES_SCHEMA: &[NodeSchema] = &[
@@ -138,36 +146,94 @@ impl RouteBlock {
     }
 }
 
-/// A `when` node: where its profile applies.
+/// A rectangle of tiles, its corners included; `x1 <= x2` and `y1 <= y2`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct ProfileCondition {
-    /// `None`: every map no other `when` of the profile names.
+pub struct TileRect {
+    pub x1: u16,
+    pub y1: u16,
+    pub x2: u16,
+    pub y2: u16,
+}
+
+impl TileRect {
+    /// Whether the tile at `x`, `y` lies in the rectangle. A map's tiles are all it can contain, so the part of the
+    /// rectangle past the map's edge covers nothing.
+    pub fn contains(&self, x: u32, y: u32) -> bool {
+        (u32::from(self.x1)..=u32::from(self.x2)).contains(&x) && (u32::from(self.y1)..=u32::from(self.y2)).contains(&y)
+    }
+}
+
+/// An `apply-in` or `skip-in` node.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct RouteArea {
+    /// `None`: every map.
     pub map: Option<u8>,
-    /// The profile applies while the player's x is below this.
-    pub player_x_below: u16,
+    pub rect: TileRect,
     pub line: usize,
+}
+
+/// Where a profile's routes apply: its `apply-in` and `skip-in` areas, in file order. Empty: everywhere.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct RouteAreas {
+    pub apply_in: Vec<RouteArea>,
+    pub skip_in: Vec<RouteArea>,
+}
+
+impl RouteAreas {
+    pub fn is_empty(&self) -> bool {
+        self.apply_in.is_empty() && self.skip_in.is_empty()
+    }
+
+    /// The areas on the map `map`: those naming it and those naming no map.
+    pub fn on_map(&self, map: u32) -> MapRouteAreas {
+        let rects = |areas: &[RouteArea]| areas.iter()
+            .filter(|area| area.map.is_none_or(|area_map| u32::from(area_map) == map))
+            .map(|area| area.rect).collect();
+        MapRouteAreas { apply_in: rects(&self.apply_in), skip_in: rects(&self.skip_in) }
+    }
+
+    /// Whether the profile applies at the tile `x`, `y` of the map `map` ([`MapRouteAreas::contains`]).
+    pub fn contains(&self, map: u32, x: u32, y: u32) -> bool {
+        self.on_map(map).contains(x, y)
+    }
+}
+
+/// A profile's areas on one map.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct MapRouteAreas {
+    apply_in: Vec<TileRect>,
+    skip_in: Vec<TileRect>,
+}
+
+impl MapRouteAreas {
+    /// Whether the profile applies at the tile `x`, `y`: inside an `apply-in`, or anywhere when the map has none, and
+    /// inside no `skip-in`.
+    pub fn contains(&self, x: u32, y: u32) -> bool {
+        (self.apply_in.is_empty() || self.apply_in.iter().any(|rect| rect.contains(x, y)))
+            && !self.skip_in.iter().any(|rect| rect.contains(x, y))
+    }
 }
 
 /// A named set of routes, chosen at run time.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct RouteProfile {
     pub name: String,
-    /// Where the profile applies; empty: everywhere.
-    pub conditions: Vec<ProfileCondition>,
+    /// Where the profile's routes apply.
+    pub areas: RouteAreas,
     pub block: RouteBlock,
 }
 
-impl RouteProfile {
-    /// Whether the profile applies with the player at `x` on `map`: everywhere without `when`; else under the `when`
-    /// naming the map, or the `when` without a map when none names it, and nowhere on a map no `when` covers.
-    pub fn applies_at(&self, map: u8, x: u16) -> bool {
-        if self.conditions.is_empty() {
-            return true;
-        }
-        let condition = self.conditions.iter().find(|condition| condition.map == Some(map))
-            .or_else(|| self.conditions.iter().find(|condition| condition.map.is_none()));
-        condition.is_some_and(|condition| x < condition.player_x_below)
-    }
+/// Route tables by where they apply: `inside` a profile's areas, `outside` elsewhere.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct AreaRoutes<T> {
+    /// The routes where the profile does not apply: the `routes` block's, and the profile's too when it applies
+    /// everywhere.
+    pub outside: T,
+    /// The routes where the profile applies, the profile's in front of the `routes` block's; `None` when the profile
+    /// has no area or its routes add nothing to `outside`.
+    pub inside: Option<T>,
+    /// Where `inside` applies; empty when `inside` is `None`.
+    pub areas: RouteAreas,
 }
 
 /// The route file as read.
@@ -214,6 +280,43 @@ impl LandRoutesFile {
         Some(items)
     }
 
+    /// [`Self::land_routes`] inside the profile's areas and the `routes` block's outside them.
+    pub fn land_routes_by_area(&self, profile: Option<&str>) -> AreaRoutes<Vec<Option<LandRoute>>> {
+        self.routes_by_area(profile, Self::land_routes)
+    }
+
+    /// [`Self::item_routes`] inside the profile's areas and the `routes` block's outside them, each a table of every
+    /// static graphic; `None` when no item is routed anywhere.
+    pub fn item_routes_by_area(&self, profile: Option<&str>) -> Option<AreaRoutes<Vec<u16>>> {
+        let routes = self.routes_by_area(profile, Self::item_routes);
+        if routes.outside.is_none() && routes.inside.is_none() {
+            return None;
+        }
+        let identity = || (0..ITEM_ROUTE_ID_COUNT).map(|id| id as u16).collect();
+        Some(AreaRoutes {
+            outside: routes.outside.unwrap_or_else(identity),
+            inside: routes.inside.map(|inside| inside.unwrap_or_else(identity)),
+            areas: routes.areas,
+        })
+    }
+
+    /// The tables `routes` gives without the profile and with it, split by the profile's areas.
+    fn routes_by_area<T: PartialEq>(&self, profile: Option<&str>, routes: impl Fn(&Self, Option<&str>) -> T)
+        -> AreaRoutes<T> {
+        let profile = profile.and_then(|name| self.profile(name));
+        let Some(limited) = profile.filter(|profile| !profile.areas.is_empty()) else {
+            // A profile without areas applies everywhere.
+            let outside = routes(self, profile.map(|profile| profile.name.as_str()));
+            return AreaRoutes { outside, inside: None, areas: RouteAreas::default() };
+        };
+        let outside = routes(self, None);
+        let inside = routes(self, Some(&limited.name));
+        if inside == outside {
+            return AreaRoutes { outside, inside: None, areas: RouteAreas::default() };
+        }
+        AreaRoutes { outside, inside: Some(inside), areas: limited.areas.clone() }
+    }
+
     /// The `routes` block, then the profile, if the file has it.
     fn blocks<'a>(&'a self, profile: Option<&str>) -> impl Iterator<Item = &'a RouteBlock> {
         let profile = profile.and_then(|name| self.profile(name)).map(|profile| &profile.block);
@@ -243,7 +346,7 @@ fn decode_document(nodes: &[SpannedNode<LineSpan>]) -> eyre::Result<LandRoutesFi
                         format!("a second `{ROUTES_NODE}` block (the first is on line {first})")));
                 }
                 routes_line = Some(line);
-                // The `routes` schema has no `when`.
+                // The `routes` schema has no areas.
                 (file.routes, _) = decode_block(node, ROUTE_BLOCK_CHILDREN)?;
             }
             _ => {
@@ -255,20 +358,19 @@ fn decode_document(nodes: &[SpannedNode<LineSpan>]) -> eyre::Result<LandRoutesFi
                 if file.profile(&name_text).is_some() {
                     return Err(strict::error_at(name.literal.span(), format!("a second profile \"{name_text}\"")));
                 }
-                let (block, conditions) = decode_block(node, PROFILE_CHILDREN)?;
-                file.profiles.push(RouteProfile { name: name_text, conditions, block });
+                let (block, areas) = decode_block(node, PROFILE_CHILDREN)?;
+                file.profiles.push(RouteProfile { name: name_text, areas, block });
             }
         }
     }
     Ok(file)
 }
 
-/// The routes of a block and its `when` nodes, which only a profile's `children` allow.
-fn decode_block(block_node: &Node<LineSpan>, children: &[NodeSchema])
-    -> eyre::Result<(RouteBlock, Vec<ProfileCondition>)> {
+/// The routes of a block and its areas, which only a profile's `children` allow.
+fn decode_block(block_node: &Node<LineSpan>, children: &[NodeSchema]) -> eyre::Result<(RouteBlock, RouteAreas)> {
     let block_name: &str = &block_node.node_name;
     let mut block = RouteBlock::default();
-    let mut conditions = Vec::<ProfileCondition>::new();
+    let mut areas = RouteAreas::default();
     // The line routing each id, to name both lines of an id routed twice.
     let mut land_lines = vec![None; LAND_ROUTE_ID_COUNT];
     let mut item_lines = vec![None; ITEM_ROUTE_ID_COUNT];
@@ -290,33 +392,37 @@ fn decode_block(block_node: &Node<LineSpan>, children: &[NodeSchema])
                 claim_ids(node, first, last, &mut item_lines)?;
                 block.items.push(ItemRouteRule { first, last, id });
             }
-            _ => {
-                let condition = decode_condition(node, line)?;
-                if let Some(earlier) = conditions.iter().find(|earlier| earlier.map == condition.map) {
-                    let maps = condition.map.map_or("without map=".to_string(), |map| format!("for map {map}"));
-                    return Err(strict::error_at(node.node_name.span(),
-                        format!("a second `{WHEN_NODE}` {maps} (the first is on line {})", earlier.line)));
-                }
-                conditions.push(condition);
-            }
+            APPLY_IN_NODE => areas.apply_in.push(decode_area(node, line)?),
+            _ => areas.skip_in.push(decode_area(node, line)?),
         }
     }
-    Ok((block, conditions))
+    Ok((block, areas))
 }
 
-fn decode_condition(node: &Node<LineSpan>, line: usize) -> eyre::Result<ProfileCondition> {
+/// An `apply-in` or `skip-in` node: its corners, in tiles, and its map.
+fn decode_area(node: &Node<LineSpan>, line: usize) -> eyre::Result<RouteArea> {
     strict::arguments::<0>(node)?;
-    let below = strict::required_property(node, PLAYER_X_BELOW_PROPERTY)?;
-    let player_x_below = strict::value_u16(below, PLAYER_X_BELOW_PROPERTY)?;
-    if player_x_below == 0 {
-        return Err(strict::error_at(below.literal.span(), format!("{PLAYER_X_BELOW_PROPERTY}: no x is below 0")));
+    let coordinate = |name| -> eyre::Result<(u16, &Value<LineSpan>)> {
+        let value = strict::required_property(node, name)?;
+        Ok((strict::value_u16(value, name)?, value))
+    };
+    let (x1, _) = coordinate(X1_PROPERTY)?;
+    let (y1, _) = coordinate(Y1_PROPERTY)?;
+    let (x2, x2_value) = coordinate(X2_PROPERTY)?;
+    let (y2, y2_value) = coordinate(Y2_PROPERTY)?;
+    for (first, last, value, first_name, last_name) in
+        [(x1, x2, x2_value, X1_PROPERTY, X2_PROPERTY), (y1, y2, y2_value, Y1_PROPERTY, Y2_PROPERTY)] {
+        if last < first {
+            return Err(strict::error_at(value.literal.span(),
+                format!("{last_name}: {last} ({last:#06X}) is less than {first_name}, {first} ({first:#06X})")));
+        }
     }
     let map = strict::property(node, MAP_PROPERTY).map(|value| {
         let map = strict::value_u32(value, MAP_PROPERTY)?;
         u8::try_from(map).map_err(|_| strict::error_at(value.literal.span(),
             format!("{MAP_PROPERTY}: {map} is past the last map, {}", PROFILE_MAP_ID_COUNT - 1)))
     }).transpose()?;
-    Ok(ProfileCondition { map, player_x_below, line })
+    Ok(RouteArea { map, rect: TileRect { x1, y1, x2, y2 }, line })
 }
 
 fn decode_land_route(node: &Node<LineSpan>, line: usize) -> eyre::Result<LandRoute> {
@@ -483,83 +589,166 @@ mod tests {
         assert_eq!(winter[0xC4].unwrap().target_id(0xC4), Some(0x11A));
         assert_eq!(winter[0xC4].unwrap().source, None);
         assert_eq!(file.item_routes(Some("desolation")).unwrap()[0x1B7E], 0x1E34);
-        // Desolation carries the client's rule: west of x 0x1800 on every map. The seasons apply everywhere.
+        // Desolation carries the client's rule as an area: west of x 0x1800 on every map. The seasons apply
+        // everywhere.
         let desolation = file.profile("desolation").unwrap();
-        assert_eq!(desolation.conditions.iter().map(|condition| (condition.map, condition.player_x_below))
-            .collect::<Vec<_>>(), [(None, 0x1800)]);
+        assert_eq!(desolation.areas.apply_in.iter().map(|area| (area.map, area.rect)).collect::<Vec<_>>(),
+            [(None, TileRect { x1: 0, y1: 0, x2: 0x17FF, y2: u16::MAX })]);
+        assert!(desolation.areas.skip_in.is_empty());
         assert!(file.profiles.iter().filter(|profile| profile.name != "desolation")
-            .all(|profile| profile.conditions.is_empty()));
+            .all(|profile| profile.areas.is_empty()));
+        assert!(desolation.areas.contains(0, 0x17FF, 0x0FFF) && !desolation.areas.contains(0, 0x1800, 0));
+        assert!(desolation.areas.contains(5, 0, 0x2000));
     }
 
     #[test]
-    fn when_nodes_read_with_their_lines() {
+    fn areas_read_with_their_lines() {
         let file = decode(
             r#"
             profile "desolation" {
-                when player-x-below=0x1800
+                apply-in x1=0 y1=0 x2=0x17FF y2=0xFFFF
                 item 0x0C37 id=0x1BAE
-                when player-x-below=0x1000 map=0
-                when player-x-below=900 map=5
+                skip-in x1=10 y1=20 x2=10 y2=30 map=0
+                apply-in x1=5 y1=6 x2=7 y2=8 map=5
             }
             "#,
         );
         let profile = file.profile("desolation").unwrap();
-        assert_eq!(profile.conditions, vec![
-            ProfileCondition { map: None, player_x_below: 0x1800, line: 3 },
-            ProfileCondition { map: Some(0), player_x_below: 0x1000, line: 5 },
-            ProfileCondition { map: Some(5), player_x_below: 900, line: 6 },
-        ]);
+        assert_eq!(profile.areas, RouteAreas {
+            apply_in: vec![
+                RouteArea { map: None, rect: TileRect { x1: 0, y1: 0, x2: 0x17FF, y2: 0xFFFF }, line: 3 },
+                RouteArea { map: Some(5), rect: TileRect { x1: 5, y1: 6, x2: 7, y2: 8 }, line: 6 },
+            ],
+            skip_in: vec![RouteArea { map: Some(0), rect: TileRect { x1: 10, y1: 20, x2: 10, y2: 30 }, line: 5 }],
+        });
         assert_eq!(profile.block.items, vec![ItemRouteRule { first: 0xC37, last: 0xC37, id: 0x1BAE }]);
     }
 
-    /// The `when` naming the map decides, else the one without a map; a map none covers has no profile; a profile
-    /// without `when` applies everywhere. The bound is strict, as the client's `x < 0x1800`.
+    /// On a map, a profile applies inside its `apply-in` areas for that map or for every map, or everywhere when
+    /// there is none, and never inside a `skip-in`. Corners are inclusive.
     #[test]
-    fn a_profile_applies_where_its_when_holds() {
+    fn a_profile_applies_inside_its_areas_and_outside_its_holes() {
         let file = decode(
             r#"
             profile "everywhere" {}
             profile "west" {
-                when player-x-below=0x1800
+                apply-in x1=0 y1=0 x2=0x17FF y2=0xFFFF
+            }
+            profile "holes" {
+                skip-in x1=10 y1=10 x2=19 y2=19
+                skip-in x1=100 y1=100 x2=100 y2=100 map=1
             }
             profile "per-map" {
-                when player-x-below=0x1800
-                when player-x-below=0x1000 map=1
+                apply-in x1=0 y1=0 x2=99 y2=99 map=1
+                apply-in x1=200 y1=200 x2=299 y2=299 map=1
+                apply-in x1=50 y1=50 x2=59 y2=59 map=2
             }
-            profile "map-two" {
-                when player-x-below=100 map=2
+            profile "overlaps" {
+                apply-in x1=0 y1=0 x2=20 y2=20
+                apply-in x1=10 y1=10 x2=30 y2=30
+                skip-in x1=15 y1=15 x2=25 y2=25
+                skip-in x1=20 y1=20 x2=40 y2=40
             }
             "#,
         );
-        let applies = |name, map, x| file.profile(name).unwrap().applies_at(map, x);
-        assert!(applies("everywhere", 0, u16::MAX));
-        assert!(applies("west", 0, 0x17FF) && !applies("west", 0, 0x1800) && !applies("west", 0, 0x1BFF));
-        assert!(applies("west", 4, 0x17FF) && !applies("west", 4, 0x1800));
-        assert!(applies("per-map", 0, 0x17FF) && applies("per-map", 1, 0x0FFF) && !applies("per-map", 1, 0x1000));
-        assert!(applies("map-two", 2, 99) && !applies("map-two", 2, 100) && !applies("map-two", 0, 0));
+        let applies = |name, map, x, y| file.profile(name).unwrap().areas.contains(map, x, y);
+        assert!(applies("everywhere", 0, 0, 0) && applies("everywhere", 7, 0xFFFF, 0xFFFF));
+        // Every map: x 0x17FF is in, 0x1800 is out.
+        for map in [0, 1, 4] {
+            assert!(applies("west", map, 0x17FF, 0x0FFF) && applies("west", map, 0, 0));
+            assert!(!applies("west", map, 0x1800, 0) && !applies("west", map, 0x1BFF, 100));
+        }
+        // A `skip-in` alone: everywhere but its holes; one for map 1 only holes map 1.
+        assert!(applies("holes", 0, 9, 10) && !applies("holes", 0, 10, 10) && !applies("holes", 0, 19, 19));
+        assert!(applies("holes", 0, 20, 19) && applies("holes", 0, 100, 100) && !applies("holes", 1, 100, 100));
+        // Areas for other maps leave a map without any applying everywhere.
+        assert!(applies("per-map", 1, 99, 99) && applies("per-map", 1, 250, 200) && !applies("per-map", 1, 100, 0));
+        assert!(!applies("per-map", 1, 150, 150) && applies("per-map", 2, 55, 55) && !applies("per-map", 2, 0, 0));
+        assert!(applies("per-map", 0, 150, 150) && applies("per-map", 3, 0xFFFF, 0));
+        // Overlapping areas: either `apply-in` holds, either `skip-in` wins.
+        assert!(applies("overlaps", 0, 5, 5) && applies("overlaps", 0, 30, 12) && applies("overlaps", 0, 14, 25));
+        assert!(!applies("overlaps", 0, 15, 15) && !applies("overlaps", 0, 30, 30) && !applies("overlaps", 0, 31, 31));
     }
 
     #[test]
-    fn when_errors_name_their_line() {
-        assert_error("routes {\n    when player-x-below=10\n}\n", 2,
-            "unknown node `when` in `routes`: expected `land` or `item`");
+    fn area_errors_name_their_line() {
+        assert_error("routes {\n    apply-in x1=0 y1=0 x2=1 y2=1\n}\n", 2,
+            "unknown node `apply-in` in `routes`: expected `land` or `item`");
         assert_error("profile \"a\" {\n    season 3\n}\n", 2,
-            "unknown node `season` in `profile`: expected one of `land`, `item`, `when`");
-        assert_error("profile \"a\" {\n    when x=10\n}\n", 2,
-            "unknown property `x` of `when`: expected `player-x-below` or `map`");
-        assert_error("profile \"a\" {\n    when map=0\n}\n", 2, "`when`: missing player-x-below=");
-        assert_error("profile \"a\" {\n    when 3 player-x-below=10\n}\n", 2, "`when` takes 0 arguments, found 1");
-        assert_error("profile \"a\" {\n    when player-x-below=10 {\n        land 1\n    }\n}\n", 3,
-            "`when` takes no children");
-        assert_error("profile \"a\" {\n    when player-x-below=0\n}\n", 2, "player-x-below: no x is below 0");
-        assert_error("profile \"a\" {\n    when player-x-below=0x10000\n}\n", 2, "player-x-below: not a u16");
-        assert_error("profile \"a\" {\n    when player-x-below=\"10\"\n}\n", 2, "player-x-below: expected an integer");
-        assert_error("profile \"a\" {\n    when player-x-below=10 map=256\n}\n", 2, "map: 256 is past the last map, 255");
-        assert_error("profile \"a\" {\n    when player-x-below=10 map=-1\n}\n", 2, "map: not a u32");
-        assert_error("profile \"a\" {\n    when player-x-below=10\n    when player-x-below=20\n}\n", 3,
-            "a second `when` without map= (the first is on line 2)");
-        assert_error("profile \"a\" {\n    when player-x-below=10 map=1\n    land 3\n    when player-x-below=20 map=1\n}\n",
-            4, "a second `when` for map 1 (the first is on line 2)");
+            "unknown node `season` in `profile`: expected one of `land`, `item`, `apply-in`, `skip-in`");
+        assert_error("profile \"a\" {\n    when player-x-below=0x1800\n}\n", 2, "unknown node `when` in `profile`");
+        assert_error("profile \"a\" {\n    skip-in x=10\n}\n", 2,
+            "unknown property `x` of `skip-in`: expected one of `x1`, `y1`, `x2`, `y2`, `map`");
+        assert_error("profile \"a\" {\n    apply-in y1=0 x2=1 y2=1\n}\n", 2, "`apply-in`: missing x1=");
+        assert_error("profile \"a\" {\n    apply-in x1=0 y1=0 x2=1\n}\n", 2, "`apply-in`: missing y2=");
+        assert_error("profile \"a\" {\n    skip-in 3 x1=0 y1=0 x2=1 y2=1\n}\n", 2, "`skip-in` takes 0 arguments, found 1");
+        assert_error("profile \"a\" {\n    apply-in x1=0 y1=0 x2=1 y2=1 {\n        land 1\n    }\n}\n", 3,
+            "`apply-in` takes no children");
+        assert_error("profile \"a\" {\n    apply-in x1=0 y1=0 x2=0x10000 y2=1\n}\n", 2, "x2: not a u16");
+        assert_error("profile \"a\" {\n    apply-in x1=-1 y1=0 x2=1 y2=1\n}\n", 2, "x1: not a u16");
+        assert_error("profile \"a\" {\n    apply-in x1=0 y1=\"0\" x2=1 y2=1\n}\n", 2, "y1: expected an integer");
+        assert_error("profile \"a\" {\n    apply-in x1=10 y1=0 x2=9 y2=1\n}\n", 2,
+            "x2: 9 (0x0009) is less than x1, 10 (0x000A)");
+        assert_error("profile \"a\" {\n    land 3\n    skip-in x1=0 y1=0x1800 x2=0 y2=0x17FF\n}\n", 3,
+            "y2: 6143 (0x17FF) is less than y1, 6144 (0x1800)");
+        assert_error("profile \"a\" {\n    apply-in x1=0 y1=0 x2=1 y2=1 map=256\n}\n", 2, "map: 256 is past the last map, 255");
+        assert_error("profile \"a\" {\n    skip-in x1=0 y1=0 x2=1 y2=1 map=-1\n}\n", 2, "map: not a u32");
+        // A single tile and an area repeated read.
+        decode("profile \"a\" {\n    apply-in x1=4 y1=4 x2=4 y2=4\n    apply-in x1=4 y1=4 x2=4 y2=4\n}\n");
+    }
+
+    /// Without areas the profile's routes apply everywhere; with them, the `routes` block's apply outside and the
+    /// profile's in front of them inside, and a profile adding nothing needs no inside table.
+    #[test]
+    fn routes_split_by_the_profile_areas() {
+        let file = decode(
+            r#"
+            routes {
+                land 1 source="cc"
+                item 10 id=20
+            }
+            profile "everywhere" {
+                land 2 source="ec"
+                item 11 id=21
+            }
+            profile "west" {
+                apply-in x1=0 y1=0 x2=0x17FF y2=0xFFFF
+                land 2 source="ec"
+                item 11 id=21
+            }
+            profile "land-only" {
+                skip-in x1=0 y1=0 x2=9 y2=9 map=1
+                land 3
+            }
+            profile "nothing" {
+                apply-in x1=0 y1=0 x2=9 y2=9
+            }
+            "#,
+        );
+        let everywhere = file.land_routes_by_area(Some("everywhere"));
+        assert_eq!((everywhere.outside, everywhere.inside), (file.land_routes(Some("everywhere")), None));
+        assert!(everywhere.areas.is_empty());
+        let west = file.land_routes_by_area(Some("west"));
+        assert_eq!(west.outside, file.land_routes(None));
+        assert_eq!(west.inside.as_ref(), Some(&file.land_routes(Some("west"))));
+        assert_eq!(west.areas, file.profile("west").unwrap().areas);
+        let items = file.item_routes_by_area(Some("west")).unwrap();
+        assert_eq!((items.outside[10], items.outside[11], items.outside[12]), (20, 11, 12));
+        assert_eq!(items.inside.as_ref().map(|inside| (inside[10], inside[11])), Some((20, 21)));
+        // A profile routing land alone keeps one item table; one routing nothing keeps no inside table.
+        let land_only = file.item_routes_by_area(Some("land-only")).unwrap();
+        assert_eq!((land_only.inside, land_only.areas.is_empty()), (None, true));
+        assert!(file.land_routes_by_area(Some("land-only")).inside.unwrap()[3].is_some());
+        assert_eq!(file.land_routes_by_area(Some("nothing")).inside, None);
+        assert_eq!(file.land_routes_by_area(None), AreaRoutes { outside: file.land_routes(None), inside: None,
+            areas: RouteAreas::default() });
+
+        // Nothing routes an item anywhere.
+        let plain = decode("profile \"a\" {\n    apply-in x1=0 y1=0 x2=9 y2=9\n    land 3\n}\n");
+        assert_eq!(plain.item_routes_by_area(Some("a")), None);
+        let profile_items = decode("profile \"a\" {\n    apply-in x1=0 y1=0 x2=9 y2=9\n    item 3 id=4\n}\n");
+        let items = profile_items.item_routes_by_area(Some("a")).unwrap();
+        assert_eq!((items.outside[3], items.inside.unwrap()[3]), (3, 4));
     }
 
     #[test]

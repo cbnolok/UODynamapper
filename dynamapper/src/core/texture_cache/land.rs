@@ -133,7 +133,9 @@ impl<'a> SecondaryEnhancedLand<'a> {
 }
 
 const LAND_PAGE_LOOKUP_WIDTH: u32 = 256;
-const LAND_PAGE_LOOKUP_TILE_CAPACITY: u32 = 16_384;
+/// Lookup rows per role: a row per land id, then an area row per land id (`routing::LandRowMap`). Mirrored as
+/// `LAND_PAGE_LOOKUP_TILE_CAPACITY` in land/land_bindings.wesl and `LIQUID_LOOKUP_CAPACITY` in ec_liquid.wesl.
+const LAND_PAGE_LOOKUP_TILE_CAPACITY: u32 = routing::LAND_ROUTE_ROW_COUNT as u32;
 const LAND_PAGE_LOOKUP_ROLE_COUNT: u32 = 7;
 const LAND_PAGE_LOOKUP_ROLE_BASE: u32 = 0;
 const LAND_PAGE_LOOKUP_ROLE_DETAIL: u32 = 1;
@@ -1014,8 +1016,13 @@ fn create_land_shader_images(
     let lookup_entry_count = max_cc_tile_id * LAND_PAGE_LOOKUP_ROLE_COUNT;
     let lookup_height = (lookup_entry_count + lookup_width - 1) / lookup_width;
     let mut lookup_bytes = vec![0u8; (lookup_width * lookup_height * 16) as usize];
+    // The rows written: the Classic texmap ids, or the EC-layout land ids and the area rows resolved.
+    let written_rows = match &source {
+        LandShaderAtlasSource::Cc(_) => routing::LAND_ROUTE_TILE_COUNT as u32,
+        LandShaderAtlasSource::Ec { primary_ids, .. } => primary_ids.len() as u32,
+    };
 
-    for tile_id in 0..max_cc_tile_id {
+    for tile_id in 0..written_rows.min(max_cc_tile_id) {
         match &source {
             LandShaderAtlasSource::Cc(package) => {
                 if let Some(slot) = package.present_slot(tile_id) {
@@ -1075,9 +1082,9 @@ fn land_shader_source_from_cache<'a>(
             let primary = cache.atlas_enhanced_land()?.as_ref();
             // A row drawn from the atlas package is written from the land id its route names.
             let atlas = routing::LandTileRoute::Enhanced(cache.routes().atlas());
-            let primary_ids = (0..LAND_PAGE_LOOKUP_TILE_CAPACITY).map(|id| {
-                let target = cache.routes().target(id);
-                if target.route == atlas { target.id } else { id }
+            let primary_ids = (0..cache.routes().row_count() as u32).map(|row| {
+                let target = cache.routes().target(row);
+                if target.route == atlas { target.id } else { routing::land_id_of_row(row) }
             }).collect();
             // The other package's pages load only for the used ids drawn from it.
             let secondary = cache.secondary_enhanced_land().map(|(source, package)| {

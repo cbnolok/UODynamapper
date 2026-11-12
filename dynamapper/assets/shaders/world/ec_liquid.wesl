@@ -4,7 +4,9 @@
 
 import package::shaders::world::uo_coords::UO_Z_TO_WORLD_SCALE;
 
-const LIQUID_LOOKUP_CAPACITY: u32 = 16384u;
+// The land page lookup's rows per role (LAND_PAGE_LOOKUP_TILE_CAPACITY in
+// land/land_bindings.wesl and texture_cache/land.rs).
+const LIQUID_LOOKUP_CAPACITY: u32 = 32768u;
 // UOWaterTerrainLayer::Draw (0x005988a0) sets item 0's texture translation
 // (0x005101c0, NiTextureTransform translate + dirty flag) to t * tweaks[0..2].
 // t is UOApplication +0x58, advanced each frame by the frame time in seconds

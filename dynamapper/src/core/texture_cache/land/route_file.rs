@@ -1,10 +1,10 @@
 //! The route file at run time (`configs::land_routes`, LandRoutes.kdl): read at startup, read again when the user's
 //! copy is saved or Preferences asks for it, with the profile Preferences > Graphics names in force. A profile with
-//! `when` nodes is in force only while the player stands where one holds (`RouteProfile::applies_at`), so the player
-//! crossing its line switches it on or off. Each change of the file in force or of the profile in force counts a
-//! revision: the land routes are resolved again and the land atlas rebuilt when they changed
-//! (`sys_apply_land_texture_source_changes`), and the statics stores read their blocks again when the item routes
-//! changed (`sys_apply_item_routes`).
+//! areas applies to the land tiles and statics inside them (`RouteAreas`), the `routes` block alone elsewhere: the
+//! routes are split by area once (`AreaRoutes`), and the player's position plays no part. Each change of the file in
+//! force or of the profile in force counts a revision: the land routes are resolved again and the land atlas rebuilt
+//! when they changed (`sys_apply_land_texture_source_changes`), and the statics stores read their blocks again when
+//! the item routes changed (`sys_apply_item_routes`).
 //!
 //! A user copy that does not read leaves the bundled file in force, with the error in the log and in the window, until
 //! it is fixed (`configs::runtime_specs`).
@@ -14,12 +14,12 @@ use std::time::{Duration, SystemTime};
 
 use bevy::prelude::*;
 
-use crate::configs::land_routes::{LandRoute, LandRoutesFile, LAND_ROUTES_FILE_NAME, LAND_ROUTES_SPECS_FOLDER};
+use crate::configs::land_routes::{
+    AreaRoutes, LandRoute, LandRoutesFile, LAND_ROUTES_FILE_NAME, LAND_ROUTES_SPECS_FOLDER,
+};
 use crate::configs::runtime_specs::{LoadedSpec, SpecFiles};
 use crate::console_logger::{self, LogAbout, LogSev};
-use crate::core::render::scene::player::Player;
 use crate::core::statics::StaticsStoreRes;
-use crate::util_lib::uo_coords::UOVec4;
 
 /// How often the user's copy is checked for a save.
 const ROUTE_FILE_CHECK_INTERVAL: Duration = Duration::from_secs(1);
@@ -32,10 +32,8 @@ pub struct RouteFileRes {
     file: LandRoutesFile,
     /// The user copy's modification time when it was last read; `None` when there was none.
     user_modified: Option<SystemTime>,
-    /// The profile in force: the one the settings name, when the file has it and it applies where the player is.
+    /// The profile in force: the one the settings name, when the file has it.
     profile: Option<String>,
-    /// The settings' profile with `when` nodes and whether they held when last selected, for the log of a crossing.
-    condition_held: Option<(String, bool)>,
     /// Counts the changes of the file in force and of the profile in force.
     revision: u64,
     /// Set by Preferences' "Reload" button: the file is read again on the next frame.
@@ -75,7 +73,6 @@ impl RouteFileRes {
             file: loaded.value,
             user_modified,
             profile: None,
-            condition_held: None,
             revision: 1,
             reload_requested: false,
             warned_missing_profile: None,
@@ -105,24 +102,11 @@ impl RouteFileRes {
         }
     }
 
-    /// Puts the profile `requested` (empty: none) in force when the file has it and it applies at the player's
-    /// position; a profile the file lacks applies no profile, with a warning. Counts a revision when the profile in
-    /// force changes.
-    fn select_profile(&mut self, requested: &str, player: UOVec4) {
+    /// Puts the profile `requested` (empty: none) in force when the file has it; a profile the file lacks applies no
+    /// profile, with a warning. Counts a revision when the profile in force changes.
+    fn select_profile(&mut self, requested: &str) {
         let selected = (!requested.is_empty()).then(|| self.file.profile(requested)).flatten();
-        // Whether the `when` nodes of the selected profile hold; `None` when it has none.
-        let held = selected.filter(|profile| !profile.conditions.is_empty())
-            .map(|profile| profile.applies_at(player.m, player.x));
-        let profile = selected.filter(|_| held != Some(false)).map(|profile| profile.name.as_str());
-        if let Some(held) = held
-            && self.condition_held.as_ref().map(|(name, was)| (name.as_str(), *was)) != Some((requested, held))
-        {
-            self.condition_held = Some((requested.to_string(), held));
-            let verb = if held { "applies" } else { "does not apply" };
-            console_logger::one(LogSev::Info, LogAbout::Settings, &format!(
-                "The route profile \"{requested}\" {verb} with the player at x {} ({:#06X}) on map {}: its `when` \
-                 decides where it applies.", player.x, player.x, player.m));
-        }
+        let profile = selected.map(|profile| profile.name.as_str());
         if !requested.is_empty() && selected.is_none() && self.warned_missing_profile.as_deref() != Some(requested) {
             self.warned_missing_profile = Some(requested.to_string());
             let message = format!("The route profile \"{requested}\" is not in {}: no profile applies.",
@@ -154,14 +138,15 @@ impl RouteFileRes {
         self.file.profiles.iter().map(|profile| profile.name.as_str())
     }
 
-    /// The route of every land id under the profile in force.
-    pub fn land_routes(&self) -> Vec<Option<LandRoute>> {
-        self.file.land_routes(self.profile.as_deref())
+    /// The route of every land id under the profile in force, inside its areas and outside them.
+    pub fn land_routes(&self) -> AreaRoutes<Vec<Option<LandRoute>>> {
+        self.file.land_routes_by_area(self.profile.as_deref())
     }
 
-    /// The item each static graphic draws under the profile in force; `None` when no item is routed.
-    pub fn item_routes(&self) -> Option<Arc<[u16]>> {
-        self.file.item_routes(self.profile.as_deref()).map(Arc::from)
+    /// The item each static graphic draws under the profile in force, inside its areas and outside them; `None` when
+    /// no item is routed.
+    pub fn item_routes(&self) -> Option<Arc<AreaRoutes<Vec<u16>>>> {
+        self.file.item_routes_by_area(self.profile.as_deref()).map(Arc::new)
     }
 }
 
@@ -191,19 +176,11 @@ pub fn sys_watch_route_file(mut routes: ResMut<RouteFileRes>, time: Res<Time<Rea
 }
 
 /// Puts the profile the settings name in force (Preferences > Graphics > "Season / profile"), also after the file is
-/// read again: a profile may appear in it or leave it. A profile with `when` nodes follows the player's position (the
-/// position the HUD shows; the saved one until the player exists): crossing the line of its `when` switches it.
-pub fn sys_select_route_profile(
-    settings: Res<crate::configs::settings::Settings>,
-    mut routes: ResMut<RouteFileRes>,
-    player_q: Query<Ref<Player>>,
-) {
-    let player = player_q.iter().next();
-    let player_moved = player.as_ref().is_some_and(|player| player.is_changed());
-    if settings.is_changed() || routes.is_changed() || player_moved {
-        let position = player.and_then(|player| player.current_pos).unwrap_or(settings.session_state.world.last_p);
+/// read again: a profile may appear in it or leave it.
+pub fn sys_select_route_profile(settings: Res<crate::configs::settings::Settings>, mut routes: ResMut<RouteFileRes>) {
+    if settings.is_changed() || routes.is_changed() {
         // The revision tells the systems that apply the routes what changed; the change flag stays the file's.
-        routes.bypass_change_detection().select_profile(&settings.graphics.route_profile, position);
+        routes.bypass_change_detection().select_profile(&settings.graphics.route_profile);
     }
 }
 
@@ -254,7 +231,6 @@ mod tests {
             file,
             user_modified: None,
             profile: None,
-            condition_held: None,
             revision: 1,
             reload_requested: false,
             warned_missing_profile: None,
@@ -262,37 +238,28 @@ mod tests {
         }
     }
 
-    /// The player crossing the line of the selected profile's `when` switches its routes on and off, each switch
-    /// counting one revision; moving on the same side changes nothing.
+    /// The profile in force follows the settings alone, a switch counting one revision; a profile with areas splits
+    /// its routes by them, and the land routes of a profile without land stay those of the `routes` block.
     #[test]
-    fn crossing_the_when_line_switches_the_profile() {
+    fn the_profile_in_force_switches_with_the_settings_and_routes_by_area() {
         let mut routes = routes_of(
-            "profile \"desolation\" {\n    when player-x-below=0x1800\n    when player-x-below=0x1000 map=1\n    \
+            "profile \"desolation\" {\n    apply-in x1=0 y1=0 x2=0x17FF y2=0xFFFF\n    \
              item 0x0C37 id=0x1BAE\n}\nprofile \"fall\" {\n    item 0x0CD1 id=0x0CD2\n}\n");
-        let at = |x, m| UOVec4::new(x, 100, 0, m);
-        routes.select_profile("desolation", at(0x17FF, 0));
-        let west = routes.revision();
-        assert_eq!(routes.item_routes().unwrap()[0x0C37], 0x1BAE);
-        routes.select_profile("desolation", at(0x1000, 0));
-        assert_eq!(routes.revision(), west);
+        routes.select_profile("desolation");
+        let selected = routes.revision();
+        let desolation = routes.item_routes().unwrap();
+        assert_eq!((desolation.outside[0x0C37], desolation.inside.as_ref().unwrap()[0x0C37]), (0x0C37, 0x1BAE));
+        assert!(desolation.areas.contains(0, 0x17FF, 0) && !desolation.areas.contains(0, 0x1800, 0));
+        assert_eq!(routes.land_routes().inside, None);
+        routes.select_profile("desolation");
+        assert_eq!(routes.revision(), selected);
 
-        routes.select_profile("desolation", at(0x1800, 0));
-        assert_eq!(routes.revision(), west + 1);
-        assert_eq!(routes.item_routes(), None);
-        routes.select_profile("desolation", at(0x1BFF, 0));
-        assert_eq!(routes.revision(), west + 1);
-
-        routes.select_profile("desolation", at(0x17FF, 0));
-        assert_eq!(routes.revision(), west + 2);
-        assert_eq!(routes.item_routes().unwrap()[0x0C37], 0x1BAE);
-        // Map 1 has a `when` of its own.
-        routes.select_profile("desolation", at(0x1000, 1));
-        assert_eq!((routes.revision(), routes.item_routes()), (west + 3, None));
-
-        // A profile without `when` applies wherever the player is.
-        routes.select_profile("fall", at(0x1BFF, 0));
-        assert_eq!(routes.item_routes().unwrap()[0x0CD1], 0x0CD2);
-        routes.select_profile("", at(0x17FF, 0));
-        assert_eq!(routes.item_routes(), None);
+        // A profile without areas applies everywhere.
+        routes.select_profile("fall");
+        assert_eq!(routes.revision(), selected + 1);
+        let fall = routes.item_routes().unwrap();
+        assert_eq!((fall.outside[0x0CD1], fall.inside.is_none()), (0x0CD2, true));
+        routes.select_profile("");
+        assert_eq!((routes.revision(), routes.item_routes()), (selected + 2, None));
     }
 }

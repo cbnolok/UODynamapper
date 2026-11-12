@@ -3,7 +3,7 @@
 // ownership cells. Keep every distinct material there and the chunk's base;
 // this bound does not truncate the chunk's (up to 49) original material passes.
 import package::shaders::world::land::land_bindings::{
-    TileUniform, land_page_lookup, ec_terrain_bases, ec_terrain_stacks,
+    TileUniform, land_page_lookup, LAND_PAGE_LOOKUP_TILE_CAPACITY, ec_terrain_bases, ec_terrain_stacks,
 };
 import package::shaders::world::land::atlas::atlas_read_meta;
 
@@ -16,10 +16,10 @@ struct EcTerrainStack {
 }
 
 fn ec_coverage_params(payload: u32) -> vec4<u32> {
-    let index = 6u * 16384u + payload;
+    let index = 6u * LAND_PAGE_LOOKUP_TILE_CAPACITY + payload;
     let dims = textureDimensions(land_page_lookup);
     // Classic lookups have no EC coverage records.
-    if (payload >= 16384u || index >= dims.x * dims.y) { return vec4<u32>(0u); }
+    if (payload >= LAND_PAGE_LOOKUP_TILE_CAPACITY || index >= dims.x * dims.y) { return vec4<u32>(0u); }
     return textureLoad(land_page_lookup, vec2<i32>(i32(index % dims.x), i32(index / dims.x)), 0);
 }
 

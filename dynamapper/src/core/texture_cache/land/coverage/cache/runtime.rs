@@ -1,7 +1,7 @@
 //! A bounded native-chunk cache, published only after metadata uploads settle.
 use super::{build_stack_layer, HALO, HEIGHT, SIDE, WIDTH};
 use super::super::EcTerrainBases;
-use crate::core::texture_cache::land::cache::LandTextureCache;
+use crate::core::texture_cache::land::{cache::LandTextureCache, routing::LandRowMap};
 use crate::core::{maps::MapPlane, render::scene::{player::Player, world::land::{tile_atlas::TileAtlas, LandUploadTelemetry}}, uo_files_loader::MapPlanesRes};
 use bevy::{asset::RenderAssetUsages, prelude::*, render::render_resource::{Extent3d, TextureDimension, TextureFormat, TextureViewDescriptor, TextureViewDimension}};
 use uocf::classic::map::MapBlockRelPos;
@@ -53,7 +53,8 @@ impl StackCache {
     }
 }
 
-fn raw_halo(plane: &MapPlane, chunk: UVec2) -> Option<Box<[u16; HALO * HALO]>> {
+/// The lookup rows (`rows`) the cells of `chunk`'s halo draw, as the land atlas holds them.
+fn raw_halo(plane: &MapPlane, chunk: UVec2, rows: &LandRowMap) -> Option<Box<[u16; HALO * HALO]>> {
     // A 34-square neighborhood touches six native 8-square blocks per axis.
     // Read cached blocks only; missing in-world data defers this bake.
     let origin = IVec2::new(chunk.x as i32 * 4 - 1, chunk.y as i32 * 4 - 1);
@@ -72,7 +73,11 @@ fn raw_halo(plane: &MapPlane, chunk: UVec2) -> Option<Box<[u16; HALO * HALO]>> {
         for x in 0..HALO {
             let (px, py) = (x + 7, y + 7);
             if let Some(block) = blocks[(py / 8) * 6 + px / 8] {
-                raw[y * HALO + x] = block.cells[(py % 8) * 8 + px % 8].id;
+                let id = block.cells[(py % 8) * 8 + px % 8].id;
+                // The halo starts one tile before the chunk's first; past the map's west or north edge no block is read.
+                let (tile_x, tile_y) = ((chunk.x * SIDE as u32 + x as u32).wrapping_sub(1),
+                    (chunk.y * SIDE as u32 + y as u32).wrapping_sub(1));
+                raw[y * HALO + x] = rows.row(id, tile_x, tile_y);
             }
         }
     }
@@ -180,6 +185,7 @@ pub(crate) fn sys_prepare(
             }
         }
     }
+    let rows = land.land_rows(map);
     let mut baked = Vec::new();
     for &chunk in &desired {
         let at = (chunk.y * dimensions.x + chunk.x) as usize;
@@ -190,7 +196,7 @@ pub(crate) fn sys_prepare(
         // Grime decisions use the same resident flags as the original shader.
         if !ready { continue; }
         if baked.len() >= BAKES_PER_FRAME { break; }
-        let Some(raw) = raw_halo(plane, chunk) else { continue; };
+        let Some(raw) = raw_halo(plane, chunk, &rows) else { continue; };
         if !resident_matches(&atlas, chunk, &raw, &cache.available) { continue; }
         let liquids = liquid_halo(&atlas, chunk);
         let Some(records) = build_stack_layer(chunk, map, &raw, params, &cache.available, &liquids, limits) else { continue; };

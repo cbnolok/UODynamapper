@@ -11,13 +11,54 @@
 //! its source on the id it names, then, when no source of that chain holds the id, to the selected source's chain on
 //! the routed id itself.
 //!
+//! A route profile with areas (`configs::land_routes::RouteAreas`) routes a land id one way inside them and another
+//! outside, so a map cell draws a lookup row rather than its land id: the row of its land id, or inside the areas the
+//! area row `LAND_ROUTE_TILE_COUNT + id` of a land id the profile routes otherwise there ([`LandRowMap`]). Each row
+//! has its route and target here, as each land id did, and its own rows in the land page lookup.
+//!
 //! The chain and the summary text are independent of rendering; the land cache feeds them what each package holds.
 
-use crate::configs::land_routes::LandRouteTarget;
+use std::sync::Arc;
+
+use crate::configs::land_routes::{LandRouteTarget, MapRouteAreas};
 use crate::configs::settings::LandTextureSource;
 
-/// Land ids the routes cover, the EC lookup's tile capacity.
+/// Land ids the routes cover.
 pub const LAND_ROUTE_TILE_COUNT: usize = 16_384;
+/// Lookup rows: a row per land id, then an area row per land id ([`land_id_of_row`]), the EC lookup's tile capacity.
+pub const LAND_ROUTE_ROW_COUNT: usize = 2 * LAND_ROUTE_TILE_COUNT;
+
+/// The land id a lookup row draws.
+pub const fn land_id_of_row(row: u32) -> u32 {
+    row % LAND_ROUTE_TILE_COUNT as u32
+}
+
+/// Which lookup row each cell of one map draws: its land id, or inside the route profile's areas the area row of a
+/// land id the profile routes otherwise there.
+#[derive(Clone, Debug, Default)]
+pub struct LandRowMap {
+    /// The land ids with an area row; `None` when no land id has one.
+    area_ids: Option<Arc<[bool]>>,
+    /// The profile's areas on the map.
+    areas: MapRouteAreas,
+}
+
+impl LandRowMap {
+    pub fn new(area_ids: Option<Arc<[bool]>>, areas: MapRouteAreas) -> Self {
+        Self { area_ids, areas }
+    }
+
+    /// The lookup row the cell of land id `id` at the tile `x`, `y` draws.
+    #[inline]
+    pub fn row(&self, id: u16, x: u32, y: u32) -> u16 {
+        match &self.area_ids {
+            Some(area_ids) if area_ids.get(usize::from(id)).copied().unwrap_or(false) && self.areas.contains(x, y) => {
+                id + LAND_ROUTE_TILE_COUNT as u16
+            }
+            _ => id,
+        }
+    }
+}
 /// Ids named per destination in the rerouting summary and per missing-texture warning.
 const LOG_SAMPLE_IDS: usize = 8;
 
@@ -97,6 +138,7 @@ pub enum LandRouteMiss {
 /// A route not drawn as written, for the warning about it.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct LandRouteNote {
+    /// The lookup row: the land id, or its area row.
     pub id: u32,
     pub request: LandRouteRequest,
     pub miss: LandRouteMiss,
@@ -157,7 +199,7 @@ pub struct LandRoutes {
     /// draws the ids routed to Classic through the texmap arrays; a Classic atlas is the Classic source itself.
     atlas: LandTextureSource,
     targets: Vec<LandTileTarget>,
-    /// The ids a route draws, which the rerouting summary leaves out.
+    /// The rows a route draws, which the rerouting summary leaves out.
     routed: Vec<bool>,
     /// The routes not drawn as written.
     notes: Vec<LandRouteNote>,
@@ -174,17 +216,42 @@ impl LandRoutes {
         requests: impl Fn(u32) -> Option<LandRouteRequest>,
         terrain_land_id: impl Fn(LandTextureSource, u32) -> Option<u32>,
     ) -> Self {
+        Self::resolve_rows(selected, loaded, available, requests, terrain_land_id, LAND_ROUTE_TILE_COUNT)
+    }
+
+    /// [`Self::resolve`] over the first `row_count` lookup rows: the land ids' rows, and with
+    /// [`LAND_ROUTE_ROW_COUNT`] their area rows too. `requests` is asked per row; an area row asking what its land id's
+    /// row asks draws what that row draws, so a route of the `routes` block is noted once.
+    pub fn resolve_rows(
+        selected: LandTextureSource,
+        loaded: impl Fn(LandTextureSource) -> bool,
+        available: impl Fn(u32) -> LandTileAvailability,
+        requests: impl Fn(u32) -> Option<LandRouteRequest>,
+        terrain_land_id: impl Fn(LandTextureSource, u32) -> Option<u32>,
+        row_count: usize,
+    ) -> Self {
         let atlas = land_source_chain(selected).iter().copied().find(|&source| loaded(source))
             .unwrap_or(LandTextureSource::Cc);
-        let mut routed = vec![false; LAND_ROUTE_TILE_COUNT];
+        let mut routed = vec![false; row_count];
         let mut notes = Vec::new();
-        let targets = (0..LAND_ROUTE_TILE_COUNT as u32).map(|id| {
+        let mut targets = Vec::with_capacity(row_count);
+        for row in 0..row_count as u32 {
+            let id = land_id_of_row(row);
+            let request = requests(row);
+            if row != id && request == requests(id) {
+                routed[row as usize] = routed[id as usize];
+                targets.push(targets[id as usize]);
+                continue;
+            }
             let chain = LandTileTarget { route: route_land_tile(selected, available(id)), id };
-            let Some(request) = requests(id) else { return chain };
-            let note = |miss| LandRouteNote { id, request, miss };
-            match resolve_request(selected, id, request, &available, &terrain_land_id) {
+            let Some(request) = request else {
+                targets.push(chain);
+                continue;
+            };
+            let note = |miss| LandRouteNote { id: row, request, miss };
+            targets.push(match resolve_request(selected, id, request, &available, &terrain_land_id) {
                 Ok(target) => {
-                    routed[id as usize] = true;
+                    routed[row as usize] = true;
                     if !is_source_route(request.source, target.route) {
                         notes.push(note(LandRouteMiss::Fallback));
                     }
@@ -194,9 +261,14 @@ impl LandRoutes {
                     notes.push(note(miss));
                     chain
                 }
-            }
-        }).collect();
+            });
+        }
         Self { selected, atlas, targets, routed, notes }
+    }
+
+    /// The lookup rows resolved: [`LAND_ROUTE_TILE_COUNT`], or [`LAND_ROUTE_ROW_COUNT`] with the area rows.
+    pub fn row_count(&self) -> usize {
+        self.targets.len()
     }
 
     pub fn selected(&self) -> LandTextureSource {
@@ -207,7 +279,8 @@ impl LandRoutes {
         self.atlas
     }
 
-    /// What `id` is drawn as; ids past the route table have none of the sources.
+    /// What the lookup row `id` (a land id, or an area row) is drawn as; rows past the route table have none of
+    /// the sources.
     pub fn target(&self, id: u32) -> LandTileTarget {
         self.targets.get(id as usize).copied().unwrap_or(LandTileTarget { route: LandTileRoute::Missing, id })
     }
@@ -222,7 +295,7 @@ impl LandRoutes {
         self.targets.iter().any(|target| target.route == route)
     }
 
-    /// The ids drawn through `route`, with their targets.
+    /// The lookup rows drawn through `route`, with their targets.
     pub fn ids_drawn_from(&self, route: LandTileRoute) -> impl Iterator<Item = (u32, LandTileTarget)> + '_ {
         self.targets.iter().enumerate().filter(move |(_, target)| target.route == route)
             .map(|(id, &target)| (id as u32, target))
@@ -241,7 +314,8 @@ impl LandRoutes {
     /// The one warning a load or source switch logs: how many of the ids the maps use (`used`) the selected source
     /// lacks and where each goes, with a sample of ids. `None` when every such id the sources have is drawn from the
     /// selected one. Ids no source has are not counted here; [`MissingLandIds`] reports those as the map shows them.
-    /// Nor are the ids a route draws: [`Self::route_report`] names the routes not drawn as written.
+    /// Nor are the ids a route draws: [`Self::route_report`] names the routes not drawn as written. An area row draws
+    /// its land id's chain only where its row does, so the land ids' rows alone are counted.
     pub fn summary(&self, used: impl Fn(u32) -> bool) -> Option<String> {
         // In chain order: the EC-layout sources, then Classic.
         const DESTINATIONS: [LandTileRoute; 4] = [
@@ -252,7 +326,8 @@ impl LandRoutes {
         ];
         let destinations = DESTINATIONS.iter()
             .map(|&route| (route, self.ids_drawn_from(route).map(|(id, _)| id)
-                .filter(|&id| used(id) && !self.routed[id as usize]).collect::<Vec<_>>()))
+                .filter(|&id| (id as usize) < LAND_ROUTE_TILE_COUNT && used(id) && !self.routed[id as usize])
+                .collect::<Vec<_>>()))
             .filter(|(route, ids)| !ids.is_empty() && !self.own_route(*route))
             .collect::<Vec<_>>();
         if destinations.is_empty() {
@@ -280,8 +355,8 @@ impl LandRoutes {
                 LandRouteMiss::TargetMissing(target) => format!("no source of the {source} chain has {target:#06X}"),
                 LandRouteMiss::Fallback => format!("{source} lacks {:#06X}", drawn.id),
             };
-            format!("{:#06X} (line {}): {why}, drawn as {:#06X} from {}", note.id, note.request.line, drawn.id,
-                drawn.route.label())
+            format!("{:#06X} (line {}): {why}, drawn as {:#06X} from {}", land_id_of_row(note.id), note.request.line,
+                drawn.id, drawn.route.label())
         }).collect::<Vec<_>>();
         if self.notes.len() > LOG_SAMPLE_IDS {
             parts.push("...".to_string());
@@ -488,6 +563,62 @@ mod tests {
             |id| (id == 1).then_some(LandRouteRequest { source: Ec, target: LandRouteTarget::SameId, line: 1 }),
             |_, _| None);
         assert!(lacking.summary(|id| id <= 1).unwrap().contains("lacks 1 land id(s)"));
+    }
+
+    /// An area row resolves its own route on its land id; one asking what its land id's row asks draws that row's
+    /// target, so a route of the `routes` block is noted once.
+    #[test]
+    fn area_rows_route_their_land_id_their_own_way() {
+        const AREA: u32 = LAND_ROUTE_TILE_COUNT as u32;
+        let routes = LandRoutes::resolve_rows(Ec, |_| true, |id| match id {
+            8 => NONE,
+            _ => ALL,
+        }, |row| match row {
+            // Outside: land 1 from Kingdom Reborn, land 3 to the missing 8; inside, land 1 too.
+            1 => request(Kr, LandRouteTarget::Id(7), 3),
+            row if row == AREA + 1 => request(Kr, LandRouteTarget::Id(7), 3),
+            // Inside only: land 2 drawn as Classic 5.
+            row if row == AREA + 2 => request(Cc, LandRouteTarget::Id(5), 9),
+            3 => request(Kr, LandRouteTarget::Id(8), 4),
+            row if row == AREA + 3 => request(Kr, LandRouteTarget::Id(8), 4),
+            _ => None,
+        }, |_, _| None, LAND_ROUTE_ROW_COUNT);
+        assert_eq!(routes.row_count(), LAND_ROUTE_ROW_COUNT);
+        assert_eq!(routes.target(AREA + 1), routes.target(1));
+        assert_eq!(routes.target(2), LandTileTarget { route: LandTileRoute::Enhanced(Ec), id: 2 });
+        assert_eq!(routes.target(AREA + 2), LandTileTarget { route: LandTileRoute::ClassicTexmap, id: 5 });
+        // An area row without a route draws its land id's chain.
+        assert_eq!(routes.target(AREA + 4), LandTileTarget { route: LandTileRoute::Enhanced(Ec), id: 4 });
+        assert_eq!(routes.target(LAND_ROUTE_ROW_COUNT as u32), LandTileTarget { route: LandTileRoute::Missing,
+            id: LAND_ROUTE_ROW_COUNT as u32 });
+        // The miss shared by land 3's rows is noted once, with the land id.
+        assert_eq!(routes.route_report().unwrap(), "1 land route(s) are not drawn as written: \
+            0x0003 (line 4): no source of the Kingdom Reborn (tex_land_kr.uddp) chain has 0x0008, drawn as 0x0003 from Enhanced (tex_land_ec.uddp).");
+        // The summary counts land ids, not their area rows.
+        let lacking = LandRoutes::resolve_rows(Kr, |_| true, |_| LandTileAvailability { kr: false, ..ALL },
+            |_| None, |_, _| None, LAND_ROUTE_ROW_COUNT);
+        assert!(lacking.summary(|id| id <= 1).unwrap().contains("lacks 2 land id(s)"));
+    }
+
+    /// Inside the areas, a land id with an area row draws that row; elsewhere, and any other land id, its own.
+    #[test]
+    fn cells_draw_their_area_row_inside_the_areas() {
+        let file = crate::configs::land_routes::LandRoutesFile::decode("LandRoutes.kdl",
+            "profile \"a\" {\n    apply-in x1=0 y1=0 x2=0x17FF y2=0xFFFF\n    skip-in x1=10 y1=10 x2=19 y2=19 map=1\n}\n")
+            .unwrap_or_else(|error| panic!("{error:#}"));
+        let areas = &file.profile("a").unwrap().areas;
+        let mut area_ids = vec![false; LAND_ROUTE_TILE_COUNT];
+        area_ids[3] = true;
+        let area_ids = Some(Arc::<[bool]>::from(area_ids));
+        let map0 = LandRowMap::new(area_ids.clone(), areas.on_map(0));
+        let area_row = 3 + LAND_ROUTE_TILE_COUNT as u16;
+        assert_eq!((map0.row(3, 0x17FF, 5), map0.row(3, 0x1800, 5), map0.row(4, 0, 0)), (area_row, 3, 4));
+        assert_eq!(map0.row(3, 10, 10), area_row);
+        let map1 = LandRowMap::new(area_ids, areas.on_map(1));
+        assert_eq!((map1.row(3, 10, 10), map1.row(3, 20, 10)), (3, area_row));
+        // Without area ids every cell draws its land id.
+        assert_eq!(LandRowMap::new(None, areas.on_map(0)).row(3, 0, 0), 3);
+        assert_eq!(LandRowMap::default().row(3, 0, 0), 3);
     }
 
     #[test]

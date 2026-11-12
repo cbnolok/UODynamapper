@@ -36,6 +36,7 @@ use crate::{
             camera::PlayerCamera, player::Player, world::WorldGeoData, SceneStateData,
         },
         texture_cache::land::cache::*,
+        texture_cache::land::routing::land_id_of_row,
         uo_files_loader::{MapPlanesRes, TexMap2DRes, TileMetaPackageRes},
     },
     prelude::*,
@@ -696,6 +697,11 @@ pub fn sys_draw_spawned_land_chunks(
         ..
     } = &mut *scratch;
 
+    // Each cell draws a lookup row: its land id, or inside the route profile's areas the area row of a land id the
+    // profile routes otherwise there (routing.rs). `ids` and the caches below are by row.
+    let land_rows = cache_r.land_rows(current_map_id);
+    let land_rows = &land_rows;
+
     // ── Collect missing_tile_bits from visible blocks (parallel plane read) ──
     {
         let _span = crate::tracy_span!("worldmap::chunk_draw_collect_missing_tiles");
@@ -715,8 +721,9 @@ pub fn sys_draw_spawned_land_chunks(
                     let mut local_bits = [0u64; LandTextureCache::TILE_BITSET_SIZE];
                     for &block_coords in batch {
                         if let Some(block_ref) = plane_ref.block_no_update(block_coords) {
-                            for cell in &block_ref.cells {
-                                let cell_id = cell.id as usize;
+                            for (index, cell) in block_ref.cells.iter().enumerate() {
+                                let (x, y) = cell_tile(block_coords.x, block_coords.y, index);
+                                let cell_id = land_rows.row(cell.id, x, y) as usize;
                                 let word = cell_id >> LandTextureCache::TILE_ID_WORD_SHIFT;
                                 let bit = cell_id & LandTextureCache::TILE_ID_BIT_MASK;
                                 local_bits[word] |= 1u64 << bit;
@@ -745,8 +752,12 @@ pub fn sys_draw_spawned_land_chunks(
             let bit = bits.trailing_zeros() as usize;
             let id = (word_idx << LandTextureCache::TILE_ID_WORD_SHIFT) + bit;
             ids.push(id as u16);
-            if word_idx < cache_r.pinned_visible_bits.len() {
-                cache_r.pinned_visible_bits[word_idx] |= 1u64 << bit;
+            // Textures are pinned by land id.
+            let land_id = land_id_of_row(id as u32) as usize;
+            let (land_word, land_bit) = (land_id >> LandTextureCache::TILE_ID_WORD_SHIFT,
+                land_id & LandTextureCache::TILE_ID_BIT_MASK);
+            if land_word < cache_r.pinned_visible_bits.len() {
+                cache_r.pinned_visible_bits[land_word] |= 1u64 << land_bit;
             }
             bits &= bits - 1;
         }
@@ -804,7 +815,7 @@ pub fn sys_draw_spawned_land_chunks(
                 }
                 LandTileRoute::ClassicArt => (cache_r.classic_target(land_id) << 4) | LAND_SOURCE_CLASSIC_ART,
                 LandTileRoute::Missing => {
-                    missing_land_ids.push(land_id);
+                    missing_land_ids.push(land_id_of_row(land_id));
                     LAND_SOURCE_MISSING
                 }
             };
@@ -873,7 +884,10 @@ pub fn sys_draw_spawned_land_chunks(
                     for bx in gx * CHUNK_STORAGE_BLOCKS_DIM..((gx + 1) * CHUNK_STORAGE_BLOCKS_DIM).min(max_chunk_x as u32) {
                         for by in gy * CHUNK_STORAGE_BLOCKS_DIM..((gy + 1) * CHUNK_STORAGE_BLOCKS_DIM).min(max_chunk_y as u32) {
                             if let Some(block) = plane_ref.block_no_update(MapBlockRelPos { x: bx, y: by }) {
-                                payloads.extend(block.cells.iter().map(|cell| cell.id));
+                                payloads.extend(block.cells.iter().enumerate().map(|(index, cell)| {
+                                    let (x, y) = cell_tile(bx, by, index);
+                                    land_rows.row(cell.id, x, y)
+                                }));
                             } else {
                                 complete = false;
                             }
@@ -968,12 +982,14 @@ pub fn sys_draw_spawned_land_chunks(
                             let mut has_fallback = false;
 
                             for (texel_count, cell) in block.cells.iter().enumerate() {
-                                let packed = lookup_slice[cell.id as usize];
+                                let (x, y) = cell_tile(bx as u32, bz as u32, texel_count);
+                                let row = land_rows.row(cell.id, x, y);
+                                let packed = lookup_slice[row as usize];
                                 // ids were pre-populated, this should never be u32::MAX theoretically.
                                 debug_assert!(
                                     packed != u32::MAX,
                                     "Missing lookup cache for {}",
-                                    cell.id
+                                    row
                                 );
 
                                 let mode = packed & 0xF;
@@ -983,9 +999,9 @@ pub fn sys_draw_spawned_land_chunks(
                                 }
                                 // Look up whether this land tile has the IsWet flag.
                                 let is_wet =
-                                    wet_slice.get(cell.id as usize).copied().unwrap_or(0) != 0;
+                                    wet_slice.get(row as usize).copied().unwrap_or(0) != 0;
                                 let land_flags = land_flags_slice
-                                    .get(cell.id as usize)
+                                    .get(row as usize)
                                     .copied()
                                     .unwrap_or(0);
                                 texels_local[texel_count] = Rg16u::pack(
@@ -1177,6 +1193,13 @@ fn draw_land_chunk(
 /// budget — so the sort order rarely matters for walking.  After a full
 /// respawn (teleport / scale change) we want the player's surroundings
 /// rendered before distant edges.
+/// The map tile of the cell `index` of the block `block_x`, `block_y`: its cells run row by row.
+#[inline]
+fn cell_tile(block_x: u32, block_y: u32, index: usize) -> (u32, u32) {
+    let (local_x, local_y) = (index as u32 % MAP_STORAGE_BLOCK_TILE_DIM, index as u32 / MAP_STORAGE_BLOCK_TILE_DIM);
+    (block_x * MAP_STORAGE_BLOCK_TILE_DIM + local_x, block_y * MAP_STORAGE_BLOCK_TILE_DIM + local_y)
+}
+
 fn sort_construction_targets(chunks: &mut [LandChunkConstructionData], camera_chunk: (i32, i32)) {
     let cx = camera_chunk.0;
     let cy = camera_chunk.1;

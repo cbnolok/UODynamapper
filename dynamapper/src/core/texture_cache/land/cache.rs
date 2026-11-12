@@ -4,11 +4,12 @@
 #![allow(dead_code)]
 
 use super::routing::{
-    LandRouteRequest, LandRoutes, LandTileAvailability, LandTileRoute, MissingLandIds, LAND_ROUTE_TILE_COUNT,
+    land_id_of_row, LandRouteRequest, LandRowMap, LandRoutes, LandTileAvailability, LandTileRoute, MissingLandIds,
+    LAND_ROUTE_ROW_COUNT, LAND_ROUTE_TILE_COUNT,
 };
 use super::texture_array;
 use crate::{
-    configs::{land_routes::LandRoute, settings::LandTextureSource},
+    configs::{land_routes::{AreaRoutes, LandRoute}, settings::LandTextureSource},
     console_logger::{self, LogAbout, LogSev},
     core::texture_cache::{
         visit_grouped_layer_assignments, visit_grouped_texture_ids, TextureResidencyPlan,
@@ -123,11 +124,16 @@ pub struct LandTextureCache {
 
     /// What the Classic source holds per land id, fixed at setup: its texmap (`tex_land_cc` slot id) and its land art.
     classic_land: ClassicLandIndex,
-    /// The source each land id draws from under the preferred source ([`Self::resolve_routes`]).
+    /// The source each lookup row draws from under the preferred source ([`Self::resolve_routes`]): each land id,
+    /// and the area rows of [`Self::area_land_ids`].
     routes: LandRoutes,
-    /// The route file's land routes, by land id, in front of the chain; their source is the preferred one where the
-    /// file names none. Empty when the file routes no land id.
-    land_routes: Vec<Option<LandRoute>>,
+    /// The route file's land routes, by land id, in front of the chain, outside the route profile's areas and inside
+    /// them; their source is the preferred one where the file names none. `outside` is empty when the file routes no
+    /// land id there, `inside` `None` when the areas route no land id otherwise.
+    land_routes: AreaRoutes<Vec<Option<LandRoute>>>,
+    /// The land ids the areas route otherwise than outside them, each with an area row (`routing::LandRowMap`);
+    /// `None` when there is none.
+    area_land_ids: Option<Arc<[bool]>>,
     /// The revision of the route file and profile [`Self::land_routes`] comes from (`route_file::RouteFileRes`).
     pub land_routes_revision: u64,
     /// The land ids the loaded maps use, which the rerouting summary counts and whose secondary EC-layout pages the
@@ -326,7 +332,8 @@ impl LandTextureCache {
             classic_land: ClassicLandIndex::default(),
             routes: LandRoutes::resolve(preferred_source, |_| false, |_| LandTileAvailability::default(), |_| None,
                 |_, _| None),
-            land_routes: Vec::new(),
+            land_routes: AreaRoutes::default(),
+            area_land_ids: None,
             land_routes_revision: 0,
             used_land_ids: None,
             missing_land_ids: MissingLandIds::default(),
@@ -359,9 +366,11 @@ impl LandTextureCache {
             .and_then(|source| Some((source, self.enhanced_land_for(source)?)))
     }
 
-    /// The used land ids drawn through `route` (see [`Self::used_land_ids`]), with the id each draws there.
+    /// The lookup rows of the used land ids drawn through `route` (see [`Self::used_land_ids`]), with the id each
+    /// draws there.
     pub fn used_ids_drawn_from(&self, route: LandTileRoute) -> impl Iterator<Item = (u32, u32)> + '_ {
-        self.routes.ids_drawn_from(route).filter(|&(id, _)| self.land_id_used(id)).map(|(id, target)| (id, target.id))
+        self.routes.ids_drawn_from(route).filter(|&(row, _)| self.land_id_used(land_id_of_row(row)))
+            .map(|(row, target)| (row, target.id))
     }
 
     /// Whether the loaded maps use `land_id`; every id is used until the maps are scanned.
@@ -373,7 +382,8 @@ impl LandTextureCache {
         self.used_land_ids = used;
     }
 
-    /// The EC-layout land package `land_id` is drawn from, if it is routed to one, and the land id it draws there.
+    /// The EC-layout land package `land_id` (a lookup row) is drawn from, if it is routed to one, and the land id it
+    /// draws there.
     pub fn routed_enhanced_land(&self, land_id: u32) -> Option<(&Arc<udd_assets::tex_land_ec::TexLandEcPackage>, u32)> {
         let target = self.routes.target(land_id);
         match target.route {
@@ -382,19 +392,36 @@ impl LandTextureCache {
         }
     }
 
-    /// The land id whose Classic texmap or art `land_id` draws: its route's target.
+    /// The land id whose Classic texmap or art `land_id` (a lookup row) draws: its route's target.
     pub fn classic_target(&self, land_id: u32) -> u32 {
         self.routes.target(land_id).id
     }
 
     /// Takes the route file's land routes of `revision`; returns whether they differ from the routes taken before.
-    pub fn set_land_routes(&mut self, land_routes: Vec<Option<LandRoute>>, revision: u64) -> bool {
+    pub fn set_land_routes(&mut self, mut land_routes: AreaRoutes<Vec<Option<LandRoute>>>, revision: u64) -> bool {
         self.land_routes_revision = revision;
         // No route at all reads as the empty table, which `new` starts with.
-        let land_routes = if land_routes.iter().all(Option::is_none) { Vec::new() } else { land_routes };
+        if land_routes.outside.iter().all(Option::is_none) {
+            land_routes.outside = Vec::new();
+        }
         let changed = land_routes != self.land_routes;
+        if changed {
+            self.area_land_ids = land_routes.inside.as_ref().map(|inside| {
+                (0..LAND_ROUTE_TILE_COUNT).map(|id| {
+                    inside.get(id).copied().flatten() != land_routes.outside.get(id).copied().flatten()
+                }).collect::<Arc<[bool]>>()
+            }).filter(|ids| ids.iter().any(|&differs| differs));
+        }
         self.land_routes = land_routes;
         changed
+    }
+
+    /// Which lookup row each cell of the map `map` draws (`routing::LandRowMap`).
+    pub fn land_rows(&self, map: u32) -> LandRowMap {
+        match &self.area_land_ids {
+            Some(area_land_ids) => LandRowMap::new(Some(area_land_ids.clone()), self.land_routes.areas.on_map(map)),
+            None => LandRowMap::default(),
+        }
     }
 
     /// Whether the package of a land source is loaded.
@@ -424,7 +451,16 @@ impl LandTextureCache {
         let selected = self.preferred_source;
         // A terrain definition's first land id, per source, found once per definition.
         let terrain_land_ids = std::cell::RefCell::new(std::collections::HashMap::new());
-        let routes = LandRoutes::resolve(
+        // The route a lookup row asks for: an area row's from inside the areas.
+        let request = |row: u32| {
+            let routes = match &self.land_routes.inside {
+                Some(inside) if row as usize >= LAND_ROUTE_TILE_COUNT => inside,
+                _ => &self.land_routes.outside,
+            };
+            routes.get(land_id_of_row(row) as usize).copied().flatten()
+        };
+        let row_count = if self.area_land_ids.is_some() { LAND_ROUTE_ROW_COUNT } else { LAND_ROUTE_TILE_COUNT };
+        let routes = LandRoutes::resolve_rows(
             selected,
             |source| self.land_source_loaded(source),
             |id| LandTileAvailability {
@@ -433,7 +469,7 @@ impl LandTextureCache {
                 classic_texmap: self.classic_land.texmap_id(id).is_some(),
                 classic_art: self.classic_land.has_art(id),
             },
-            |id| self.land_routes.get(id as usize).copied().flatten().map(|route| LandRouteRequest {
+            |row| request(row).map(|route| LandRouteRequest {
                 source: route.source.unwrap_or(selected),
                 target: route.target,
                 line: route.line,
@@ -445,6 +481,7 @@ impl LandTextureCache {
                         && enhanced_land_has_tile(package, id)
                 })
             }),
+            row_count,
         );
         self.routes = routes;
         self.missing_land_ids.clear();

@@ -29,7 +29,7 @@
 
 
 import package::shaders::world::common_bindings::{LandEffectsUniform};
-import package::shaders::world::land::land_bindings::{TileUniform, tex_small, tex_big, land_page_atlas, land_page_lookup, tex_small_sampler, effects, scene, classic_land_art_atlas, classic_land_art_lookup};
+import package::shaders::world::land::land_bindings::{TileUniform, tex_small, tex_big, land_page_atlas, land_page_lookup, LAND_PAGE_LOOKUP_TILE_CAPACITY, tex_small_sampler, effects, scene, classic_land_art_atlas, classic_land_art_lookup};
 import package::shaders::world::pixel_art_filters::{pixel_art_uv_iq, pixel_art_uv_iq_grad};
 import package::shaders::world::client_filter::{client_filtered_rect_sampled, TEXTURE_FILTER_CLIENT_BILINEAR};
 import package::shaders::world::texture_data::texture_color_rgb;
@@ -37,7 +37,6 @@ import package::shaders::world::texture_data::texture_color_rgb;
 // Width in pixels of one Classic Client isometric tile — the world-unit
 // denominator shared by both CC and EC coordinate systems.
 const CC_TILE_PX: f32 = 44.0;
-const LAND_PAGE_LOOKUP_TILE_CAPACITY: u32 = 16384u;
 const LAND_PAGE_LOOKUP_ROLE_DETAIL: u32 = 1u;
 const LAND_PAGE_LOOKUP_ROLE_MASK: u32 = 2u;
 const LAND_PAGE_LOOKUP_ROLE_NORMAL: u32 = 3u;

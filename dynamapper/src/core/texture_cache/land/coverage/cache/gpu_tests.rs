@@ -2,6 +2,12 @@
 use super::*;
 use bevy::{asset::{uuid::Uuid, AssetId}, shader::{Shader, ShaderCache, ShaderCacheError, ShaderCacheSource}};
 
+/// The land page lookup's rows per role and its texels per row (`LAND_PAGE_LOOKUP_TILE_CAPACITY`, land.rs).
+const LOOKUP_CAPACITY: usize = crate::core::texture_cache::land::routing::LAND_ROUTE_ROW_COUNT;
+const LOOKUP_WIDTH: usize = 256;
+const LOOKUP_ROLES: usize = 7;
+const COVERAGE_ROLE: usize = 6;
+
 #[test]
 #[ignore = "requires a Vulkan adapter; run explicitly for terrain stack changes"]
 fn cached_layers_and_alpha_match_original_gpu_reconstruction() {
@@ -151,14 +157,16 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
         }
         queue.write_texture(cells.as_image_copy(), bytemuck::cast_slice(&cell_data),
             wgpu::TexelCopyBufferLayout { offset: 0, bytes_per_row: Some(96 * 4), rows_per_image: Some(96) }, cells.size());
-        let lookup = texture(256, 448, wgpu::TextureFormat::Rgba32Uint);
-        let mut lookup_data = vec![[0u32; 4]; 7 * 16384];
+        let lookup_height = (LOOKUP_ROLES * LOOKUP_CAPACITY / LOOKUP_WIDTH) as u32;
+        let lookup = texture(LOOKUP_WIDTH as u32, lookup_height, wgpu::TextureFormat::Rgba32Uint);
+        let mut lookup_data = vec![[0u32; 4]; LOOKUP_ROLES * LOOKUP_CAPACITY];
         for (payload, value) in params.iter().enumerate() {
             if available[payload] { lookup_data[payload][3] = 1 | (1 << 16); }
-            if let Some(value) = value { lookup_data[6 * 16384 + payload] = value.0; }
+            if let Some(value) = value { lookup_data[COVERAGE_ROLE * LOOKUP_CAPACITY + payload] = value.0; }
         }
         queue.write_texture(lookup.as_image_copy(), bytemuck::cast_slice(&lookup_data),
-            wgpu::TexelCopyBufferLayout { offset: 0, bytes_per_row: Some(256 * 16), rows_per_image: Some(448) }, lookup.size());
+            wgpu::TexelCopyBufferLayout { offset: 0, bytes_per_row: Some(LOOKUP_WIDTH as u32 * 16),
+                rows_per_image: Some(lookup_height) }, lookup.size());
         let bases = texture(3, 3, wgpu::TextureFormat::Rgba16Uint);
         let mut base_data = [[u16::MAX; 4]; 9];
         base_data[4] = [1, 60, 0, 0];
@@ -209,13 +217,18 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
         assert_eq!(result[4 * 1024 + 15 * 32 + 15][1], 17);
 
         queue.write_buffer(&mode, 0, bytemuck::cast_slice(&[1u32, 0, 0, 0]));
-        let role_region = wgpu::TexelCopyTextureInfo { origin: wgpu::Origin3d { x: 0, y: 384, z: 0 }, ..lookup.as_image_copy() };
-        let role_extent = wgpu::Extent3d { width: 256, height: 64, depth_or_array_layers: 1 };
-        let role_layout = wgpu::TexelCopyBufferLayout { offset: 0, bytes_per_row: Some(256 * 16), rows_per_image: Some(64) };
+        let role_rows = (LOOKUP_CAPACITY / LOOKUP_WIDTH) as u32;
+        let role_region = wgpu::TexelCopyTextureInfo {
+            origin: wgpu::Origin3d { x: 0, y: COVERAGE_ROLE as u32 * role_rows, z: 0 }, ..lookup.as_image_copy()
+        };
+        let role_extent = wgpu::Extent3d { width: LOOKUP_WIDTH as u32, height: role_rows, depth_or_array_layers: 1 };
+        let role_layout = wgpu::TexelCopyBufferLayout { offset: 0, bytes_per_row: Some(LOOKUP_WIDTH as u32 * 16),
+            rows_per_image: Some(role_rows) };
         // Prove this is a cache hit, not a test that silently exercises fallback.
-        queue.write_texture(role_region, &vec![0; 16384 * 16], role_layout, role_extent);
+        queue.write_texture(role_region, &vec![0; LOOKUP_CAPACITY * 16], role_layout, role_extent);
         assert_eq!(dispatch(1)[0], [17, 0, 1, 0]);
-        queue.write_texture(role_region, bytemuck::cast_slice(&lookup_data[6 * 16384..]), role_layout, role_extent);
+        queue.write_texture(role_region, bytemuck::cast_slice(&lookup_data[COVERAGE_ROLE * LOOKUP_CAPACITY..]),
+            role_layout, role_extent);
         let pixel_layout = wgpu::TexelCopyBufferLayout { offset: 0, bytes_per_row: Some(16), rows_per_image: Some(1) };
         let pixel_extent = wgpu::Extent3d { width: 1, height: 1, depth_or_array_layers: 1 };
         let write_stack = |x, y, value: [u32; 4]| queue.write_texture(wgpu::TexelCopyTextureInfo {

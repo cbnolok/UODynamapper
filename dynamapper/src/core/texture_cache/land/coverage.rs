@@ -53,9 +53,9 @@ impl EcTerrainParams {
     }
 }
 
-/// The terrain parameters and the stack availability of each land id, from the EC-layout package the land page
-/// atlas draws it from: the atlas package, or the other one for the ids routed to it. Mirrors the atlas lookup's
-/// role 6 (`write_enhanced_land_lookup`).
+/// The terrain parameters and the stack availability of each lookup row (a land id, or an area row: routing.rs), from
+/// the EC-layout package the land page atlas draws it from: the atlas package, or the other one for the rows routed to
+/// it. Mirrors the atlas lookup's role 6 (`write_enhanced_land_lookup`); rows not resolved have neither.
 pub struct EcTerrainSources {
     pub params: Vec<Option<EcTerrainParams>>,
     pub available: Vec<bool>,
@@ -63,14 +63,18 @@ pub struct EcTerrainSources {
 
 impl EcTerrainSources {
     pub fn none() -> Self {
-        Self { params: vec![None; super::routing::LAND_ROUTE_TILE_COUNT],
-            available: vec![false; super::routing::LAND_ROUTE_TILE_COUNT] }
+        Self { params: vec![None; super::routing::LAND_ROUTE_ROW_COUNT],
+            available: vec![false; super::routing::LAND_ROUTE_ROW_COUNT] }
     }
 
     pub fn from_cache(cache: &super::cache::LandTextureCache) -> Self {
         let Some(primary) = cache.atlas_enhanced_land() else { return Self::none() };
         let secondary = cache.secondary_enhanced_land().map(|(_, package)| package);
-        let (params, available) = (0..super::routing::LAND_ROUTE_TILE_COUNT as u32).map(|id| {
+        let row_count = cache.routes().row_count() as u32;
+        let (params, available) = (0..super::routing::LAND_ROUTE_ROW_COUNT as u32).map(|id| {
+            if id >= row_count {
+                return (None, false);
+            }
             // The land id a route names draws its terrain parameters too.
             let routed = cache.routed_enhanced_land(id);
             match (routed, secondary) {
@@ -79,7 +83,7 @@ impl EcTerrainSources {
                 (Some((package, target)), _) if std::sync::Arc::ptr_eq(package, primary) => {
                     (EcTerrainParams::for_tile(primary, target), true)
                 }
-                _ => (EcTerrainParams::for_tile(primary, id), routed.is_some()),
+                _ => (EcTerrainParams::for_tile(primary, super::routing::land_id_of_row(id)), routed.is_some()),
             }
         }).unzip();
         Self { params, available }
