@@ -28,6 +28,7 @@ mod classic_text_tables;
 mod classic_credits_help_asset_map;
 mod classic_facet_images;
 mod classic_ui_files;
+mod client_encryption;
 mod client_exe_facet_dimensions;
 mod client_login_servers;
 mod dds_client_textures;

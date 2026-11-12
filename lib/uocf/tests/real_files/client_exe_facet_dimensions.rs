@@ -180,6 +180,11 @@ pub(super) fn allowed_ranges(before: &ClientExeInspection, edits: &[ExeEdit]) ->
                     ranges.extend(login.ports.iter().map(|site| site.offset..site.offset + size_of::<u16>()));
                 }
             }
+            ExeEdit::NoEncryption => {
+                if let Some(ciphers) = &before.encryption {
+                    ranges.extend(ciphers.sites.iter().map(|site| site.offset..site.offset + site.patched().len()));
+                }
+            }
         }
     }
     ranges

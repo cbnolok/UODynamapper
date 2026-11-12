@@ -1,8 +1,8 @@
 # Login server
 
 Where each client family reads its login server address from, and how `uocf` reads and changes it
-(`client::login_servers`, `client::login`, `ExeEdit::LoginServer`). Address and port only; the login
-encryption is out of scope here.
+(`client::login_servers`, `client::login`, `ExeEdit::LoginServer`), and how the Enhanced Client and Kingdom Reborn
+encryption is patched out (`client::encryption`, `ExeEdit::NoEncryption`; see [Encryption](#encryption)).
 
 ## Classic (`client.exe`)
 
@@ -73,10 +73,46 @@ characters: ECLO's fixed 16-byte write would run into the next string.
 The survey's versions come from each exe's version resource (`VS_FIXEDFILEINFO`, `client::version`), which
 `exe show`, the inspection and the manifest (`exe_version`) report; nothing is decided from them.
 
+## Encryption
+
+`ExeEdit::NoEncryption` (`exe patch --no-encryption`, the GUI's "Remove the encryption" toggle) makes the client send
+and read plaintext. Traced in [the UOKR research](../../../../scripts/dev-helpers/ec-research/ghidra-login-names/results/uokr_login.md),
+which also lists every site of every build.
+
+- **Login cipher** (both families): the login connection's client-to-server LFSR cipher, installed after the 0xEF
+  seed. The patch writes NOPs over its `XOR [EAX],CL` (`30 08`); the keys still step. The login connection has no
+  receive transform.
+- **Game ciphers** (Enhanced Client only): the classic Twofish send cipher (`XOR [EBP+0],AL`, `30 45 00`) and MD5 pad
+  receive cipher (`XOR [EAX],DL`, `30 10`), installed when the client connects to the game server; NOPs. Kingdom
+  Reborn has the classes but never creates them.
+- **0xE3 key exchange ciphers** (both): the Crypto++ pair the 0xE3 handler installs, behind one
+  `CryptoPPAdapter::Transform`. The patch turns the `JZ` that enters its per-chunk loop into a `JMP` (`74` to `eb`),
+  so messages pass through unchanged both ways.
+- Huffman compression of server-to-client game traffic is left alone.
+
+Each site is located by its instruction pattern and must match exactly once (stock or patched); otherwise the edit is
+refused, naming the cipher and its match count. Classic is refused. `exe show` prints the state (on, removed or
+partly removed) and each site; the manifest records it (`values.encryption`: `encrypted`, `removed`, `partial`).
+
+What a server must do with a patched client: read 0xEF / 0x80 and the game 0x91 unencrypted, and send game packets
+Huffman-compressed, not encrypted. Kingdom Reborn sends the game seed `0xffffffff`, then waits for 0xE3: only 0xE3
+passes its filter until a valid one arrives (anything else disconnects). It answers 0xE4 (plaintext) and only then
+sends 0x91. A server must send a valid 0xE3 and ignore the 0xE4 key. Stock ServUO sends no 0xE3. The Enhanced Client
+sends the auth key as its seed and 0x91 right away; 0xE3 is optional there.
+
+| exe | login | game send | game receive | key exchange |
+|---|---|---|---|---|
+| Old KR/UOKR.exe | 0x1dd59a | - | - | 0x1da198 |
+| Enhanced/UOSA.exe 4.0.102.3, UOSA_eclo.exe | 0x23c7da | 0x239ff9 | 0x23becb | 0x2390e8 |
+| Enhanced/UOSA_TC.exe 4.0.29.97 | 0x22ab6a | 0x228389 | 0x22a25b | 0x227478 |
+| Enhanced fp/UOSA.exe 4.0.115.0 | 0x240daa | 0x23e5c9 | 0x24049b | 0x23d6b8 |
+
 ## Tools
 
-- `uocf-cli exe show <exe>`: the version, the built-in address, slots, ports and whether they are stock.
+- `uocf-cli exe show <exe>`: the version, the built-in address, slots, ports and whether they are stock, and
+  whether the encryption is on.
 - `uocf-cli exe patch <exe> --output <copy> [--dry-run]` with `--login-server HOST:PORT` (every site),
   `--login-host N=HOST` (one host slot; overrides `--login-server`'s host) and `--login-port [N=]PORT` (one port site,
   or every site without `N`). Without `--login-server` every site needs its own value. EC and KR (KR: IPv4 only).
+  `--no-encryption` patches the ciphers out (EC and KR).
 - `uocf-cli login show <client_dir>` / `login set <client_dir|file> --output <path> --server HOST:PORT ...`.

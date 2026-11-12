@@ -9,6 +9,7 @@ use uocf::client::login_servers::LoginServerAddress;
 use uocf::client::facet_dimensions::{
     ClientExeInspection, ClientFamily, FacetTable, DISABLED_SPLIT_X, FACET_RECORD_SIZE, STOCK_SPLIT_X,
 };
+use uocf::client::encryption::EncryptionState;
 use uocf::client::login::{LoginHost, LoginServerEdit, LoginSites};
 use uocf::client::patch::{
     dry_run_client_exe, manifest_path, read_manifest, write_patched_client_exe, ByteChange, ChangeCause, ExeEdit,
@@ -27,8 +28,8 @@ const FIRST_SITE_NUMBER: usize = 1;
 #[derive(Subcommand, Debug)]
 pub enum ExeCmd {
     /// Print the facet size tables, the split (Enhanced Client) or wrap seam (Classic), the built-in login server
-    /// (Enhanced Client, Kingdom Reborn) and the PE checksum of a client executable (UOSA*.exe, UOKR.exe, Classic
-    /// client.exe; any 32-bit build, located by structure). Classic: both table copies with wrap, file ids and flag,
+    /// and whether the encryption is on (Enhanced Client, Kingdom Reborn) and the PE checksum of a client executable
+    /// (UOSA*.exe, UOKR.exe, Classic client.exe; any 32-bit build, located by structure). Classic: both table copies with wrap, file ids and flag,
     /// the startup copy of facet 0 and whether the code applies the mapdif / stadif patches. Only reads the file.
     Show {
         exe: PathBuf,
@@ -70,6 +71,11 @@ pub enum ExeCmd {
         /// --login-server's port; without --login-server every port site needs one.
         #[arg(long = "login-port", value_name = "[N=]PORT", value_parser = parse_login_port)]
         login_ports: Vec<(Option<usize>, u16)>,
+        /// Make the client send and read plaintext (Enhanced Client, Kingdom Reborn): the login cipher, the
+        /// Enhanced Client's game ciphers and the 0xE3 key exchange ciphers are patched out (`exe show` lists them).
+        /// The server must take an unencrypted 0x80 and 0x91; Kingdom Reborn still waits for 0xE3 before its 0x91.
+        #[arg(long)]
+        no_encryption: bool,
         /// Print the byte changes without writing anything.
         #[arg(long)]
         dry_run: bool,
@@ -178,7 +184,19 @@ impl LoginOptions {
 pub fn run(cmd: ExeCmd) -> eyre::Result<()> {
     match cmd {
         ExeCmd::Show { exe } => show(&exe),
-        ExeCmd::Patch { exe, output, sizes, wraps, split, no_split, login_server, login_hosts, login_ports, dry_run } => {
+        ExeCmd::Patch {
+            exe,
+            output,
+            sizes,
+            wraps,
+            split,
+            no_split,
+            login_server,
+            login_hosts,
+            login_ports,
+            no_encryption,
+            dry_run,
+        } => {
             let mut edits: Vec<ExeEdit> =
                 sizes.into_iter().map(|(facet, width, height)| ExeEdit::FacetSize { facet, width, height }).collect();
             edits.extend(wraps.into_iter().map(|(facet, wrap_width, wrap_height)| ExeEdit::ClassicWrap {
@@ -195,6 +213,9 @@ pub fn run(cmd: ExeCmd) -> eyre::Result<()> {
             if !login.is_empty() {
                 let inspection = inspect(&exe)?;
                 edits.push(ExeEdit::LoginServer(login.edit(inspection.login.as_ref())?));
+            }
+            if no_encryption {
+                edits.push(ExeEdit::NoEncryption);
             }
             let patch = ExePatch { edits };
             match (dry_run, output) {
@@ -322,6 +343,7 @@ fn print_inspection(inspection: &ClientExeInspection) {
         }
     }
     print_login(inspection);
+    print_encryption(inspection);
     print_difs(inspection);
     let what = if inspection.family == ClientFamily::Classic { "wrap seam" } else { "split" };
     match &inspection.split {
@@ -407,6 +429,30 @@ fn print_login(inspection: &ClientExeInspection) {
         );
     }
     println!("  internal {}:{} (internal flag only, not patched) at {fixed_at}", fixed.ip, fixed.port);
+}
+
+/// Enhanced Client and Kingdom Reborn: whether the network ciphers are on, and where each is.
+fn print_encryption(inspection: &ClientExeInspection) {
+    let Some(ciphers) = &inspection.encryption else {
+        return;
+    };
+    let state = match ciphers.state() {
+        Some(state) if ciphers.is_complete() => state.label().to_owned(),
+        Some(state) => format!("{} where located; NOT all ciphers located", state.label()),
+        None => "the cipher code was not located".to_owned(),
+    };
+    println!("crypto    {state}");
+    for site in &ciphers.sites {
+        let form = if site.removed { hex(site.patched()) } else { hex(site.stock()) };
+        let what = if site.removed { "patched" } else { "stock" };
+        println!("  {:<26} {form} ({what}) at {}", site.kind.label(), located(inspection, site.offset));
+    }
+    if !ciphers.unlocated.is_empty() {
+        println!("  not located (pattern not matched exactly once): {}", ciphers.describe_unlocated());
+    }
+    if ciphers.values() == Some(EncryptionState::Encrypted) {
+        println!("  --no-encryption patches them out");
+    }
 }
 
 fn show(exe: &Path) -> eyre::Result<()> {

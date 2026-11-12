@@ -22,6 +22,9 @@
 //!   ([`crate::client::login`]); the internal test address is left alone. Kingdom Reborn: the fixed address's
 //!   ip imm32 (dotted IPv4 only: the code holds a number, not a string the client resolves) and port imm16.
 //!   Classic is refused: it reads `login.cfg` ([`crate::client::login_servers`]).
+//! - [`ExeEdit::NoEncryption`]: the bytes of each network cipher ([`crate::client::encryption`]): NOPs over the
+//!   login cipher's XOR (and the Enhanced Client's game cipher XORs), and a `JMP` for the `JZ` that enters the 0xE3
+//!   key exchange ciphers' loop. Every cipher of the family must be located exactly once; Classic is refused.
 
 crate::eyre_imports!();
 use std::path::{Path, PathBuf};
@@ -35,6 +38,7 @@ use crate::client::facet_dimensions::{
     validate_facet_size, ClientExeInspection, ClientFamily, ExeValues, FacetValues, CLASSIC_GOLD_SHA256, DISABLED_SPLIT_X,
     FACET_RECORD_HEIGHT_OFFSET, FACET_RECORD_WIDTH_OFFSET, SPLIT_FACETS, STOCK_SPLIT_X,
 };
+use crate::client::encryption::{EncryptionSites, EncryptionState};
 use crate::client::login::{LoginHost, LoginServerEdit, LoginSites, LoginValues};
 use crate::client::pe::pe_checksum;
 use crate::client::version::ExeVersion;
@@ -114,6 +118,8 @@ pub enum ExeEdit {
     ClassicWrap { facet: u8, wrap_width: u32, wrap_height: u32 },
     /// A new built-in login server (Enhanced Client, Kingdom Reborn): one host per host site, one port per port site.
     LoginServer(LoginServerEdit),
+    /// Plaintext login and game traffic (Enhanced Client, Kingdom Reborn): every network cipher patched out.
+    NoEncryption,
 }
 
 impl ExeEdit {
@@ -126,6 +132,7 @@ impl ExeEdit {
                 format!("facet {facet} wrap {wrap_width}x{wrap_height}")
             }
             Self::LoginServer(login) => login.describe(),
+            Self::NoEncryption => "no encryption".to_owned(),
         }
     }
 }
@@ -273,11 +280,30 @@ fn checked_facet(facet: u8, count: usize) -> eyre::Result<usize> {
 }
 
 /// True when the `recorded` values of a manifest are the `current` values of the executable. A manifest written
-/// before the login values were recorded has none, and then only the facet values and split compare.
+/// before the login values or the encryption state were recorded has none, and then they do not compare.
 pub fn recorded_values_match(recorded: &ExeValues, current: &ExeValues) -> bool {
     recorded.facets == current.facets
         && recorded.split_x == current.split_x
         && (recorded.login.is_none() || recorded.login == current.login)
+        && (recorded.encryption.is_none() || recorded.encryption == current.encryption)
+}
+
+/// The ciphers a no-encryption edit patches: every one of the family, each located exactly once.
+fn checked_encryption_sites(before: &ClientExeInspection) -> eyre::Result<&EncryptionSites> {
+    let Some(sites) = &before.encryption else {
+        eyre::bail!(
+            "removing the encryption is supported for the Enhanced Client and Kingdom Reborn only: the {} client's \
+             ciphers are not located",
+            before.family.label()
+        );
+    };
+    eyre::ensure!(
+        sites.is_complete(),
+        "the encryption code was not located in this build: {}: each cipher's instruction pattern must match exactly \
+         once (nothing is patched at a guessed offset)",
+        sites.describe_unlocated()
+    );
+    Ok(sites)
 }
 
 /// Why a login server edit is refused for `family`.
@@ -377,7 +403,7 @@ pub fn plan_patch_inspected(
         Some(manifest) => {
             eyre::ensure!(
                 recorded_values_match(&manifest.values, &before.values()),
-                "the executable's facet or login values differ from the ones its manifest records"
+                "the executable's facet, login or encryption values differ from the ones its manifest records"
             );
             let build = manifest.build.clone();
             (manifest.original_sha256.clone(), manifest.original_values.clone(), build, manifest.steps.clone())
@@ -400,6 +426,7 @@ pub fn plan_patch_inspected(
     let mut wrapped = vec![None; count];
     let mut split_edit = None;
     let mut login_edit = None;
+    let mut encryption_edit = None;
     if !before.checksum_valid() {
         warnings.push(PatchWarning::new(
             PatchWarningKind::Checksum,
@@ -468,10 +495,14 @@ pub fn plan_patch_inspected(
                 }
                 login_edit = Some((index, login));
             }
+            ExeEdit::NoEncryption => {
+                eyre::ensure!(encryption_edit.is_none(), "two no-encryption edits");
+                encryption_edit = Some((index, checked_encryption_sites(&before)?));
+            }
         }
         let facet = match *edit {
             ExeEdit::FacetSize { facet, .. } | ExeEdit::ClassicWrap { facet, .. } => Some(facet),
-            ExeEdit::Split(_) | ExeEdit::LoginServer(_) => None,
+            ExeEdit::Split(_) | ExeEdit::LoginServer(_) | ExeEdit::NoEncryption => None,
         };
         if classic && facet == Some(0) {
             eyre::ensure!(
@@ -522,6 +553,9 @@ pub fn plan_patch_inspected(
             hosts: login.hosts.iter().map(|host| host.as_str().to_owned()).collect(),
             ports: login.ports.clone(),
         });
+    }
+    if encryption_edit.is_some() {
+        expected.encryption = Some(EncryptionState::Removed);
     }
     warnings.extend(split_warnings(&before, &expected, &sized));
 
@@ -588,6 +622,12 @@ pub fn plan_patch_inspected(
         for (number, (site, port)) in sites.ports.iter().zip(&login.ports).enumerate() {
             let field = format!("login port {} (imm16)", number + 1);
             writes.push(FieldWrite { offset: site.offset, new: port.to_le_bytes().to_vec(), field, edit });
+        }
+    }
+    if let Some((edit, sites)) = encryption_edit {
+        for site in &sites.sites {
+            let field = site.kind.patch_label().to_owned();
+            writes.push(FieldWrite { offset: site.offset, new: site.patched().to_vec(), field, edit });
         }
     }
 
@@ -692,13 +732,15 @@ pub fn patch_client_exe(bytes: &[u8], patch: &ExePatch, previous: Option<&ExeMan
         inspection.classic.as_ref().and_then(|layout| layout.startup).map(|startup| startup.offset)
     };
     let login_offsets = |inspection: &ClientExeInspection| inspection.login.as_ref().map(LoginSites::offsets);
+    let cipher_offsets = |inspection: &ClientExeInspection| inspection.encryption.as_ref().map(EncryptionSites::offsets);
     eyre::ensure!(
         after.family == before.family
             && offsets(&after) == offsets(&before)
             && split_offsets(&after) == split_offsets(&before)
             && startup(&after) == startup(&before)
-            && login_offsets(&after) == login_offsets(&before),
-        "internal error: the patched copy's tables, split, startup values or login sites are located elsewhere"
+            && login_offsets(&after) == login_offsets(&before)
+            && cipher_offsets(&after) == cipher_offsets(&before),
+        "internal error: the patched copy's tables, split, startup values, login sites or ciphers are located elsewhere"
     );
     eyre::ensure!(after.values() == plan.expected, "internal error: the patched copy does not have the planned values");
     let facet_0_edited = plan.patch.edits.iter().any(|edit| {
@@ -880,6 +922,7 @@ mod tests {
     use crate::client::classic_facets::tests::{seam_imm_offsets, stock_size, synthetic_classic};
     use crate::client::facet_dimensions::tests::{synthetic_client, synthetic_kr_client, NEW_SPLIT};
     use crate::client::facet_dimensions::{FACET_SIDE_ALIGNMENT, MAX_FACET_SIDE, STOCK_FACET_COUNT};
+    use crate::client::encryption::tests::{synthetic_enhanced_encrypted_client, synthetic_kr_encrypted_client};
     use crate::client::login::tests::{synthetic_kr_login_client, synthetic_login_client};
     use crate::client::login::LOGIN_HOST_SLOT_SIZE;
     use crate::client::classic_facets::CLASSIC_STOCK_WRAP;
@@ -1194,6 +1237,52 @@ mod tests {
         // A manifest step written before per-site edits reads as one host and one port.
         let single = r#"[{"login_server":{"host":"127.0.0.1","port":2593}}]"#;
         assert_eq!(serde_json::from_str::<Vec<ExeEdit>>(single).unwrap(), edit.edits);
+    }
+
+    #[test]
+    fn no_encryption_patches_every_cipher_of_the_family() {
+        let patch = ExePatch { edits: vec![ExeEdit::NoEncryption] };
+        for image in [synthetic_kr_encrypted_client(), synthetic_enhanced_encrypted_client()] {
+            let before = ClientExeInspection::inspect(&image).unwrap();
+            let sites = before.encryption.clone().unwrap();
+            assert_eq!(before.values().encryption, Some(EncryptionState::Encrypted));
+            let plan = plan_patch(&image, &patch, None).unwrap();
+            let patched = patch_client_exe(&image, &patch, None).unwrap();
+            assert_plan_is_the_write(&image, &plan, &patched.bytes);
+            let fields: Vec<(&str, usize, &[u8])> = plan
+                .changes
+                .iter()
+                .filter(|change| change.cause == ChangeCause::Edit(0))
+                .map(|change| (change.field.as_str(), change.offset, change.new.as_slice()))
+                .collect();
+            let planned: Vec<(&str, usize, &[u8])> =
+                sites.sites.iter().map(|site| (site.kind.patch_label(), site.offset, site.patched())).collect();
+            assert_eq!(fields, planned);
+            assert_eq!(plan.changes.last().unwrap().cause, ChangeCause::Checksum);
+            assert_eq!(patched.after.encryption.as_ref().unwrap().state(), Some(EncryptionState::Removed));
+            assert_eq!(patched.manifest.values.encryption, Some(EncryptionState::Removed));
+            assert_eq!(patched.manifest.original_values.as_ref().unwrap().encryption, Some(EncryptionState::Encrypted));
+            // Once removed, the edit changes nothing; the copy takes other edits with its manifest.
+            let error = plan_patch(&patched.bytes, &patch, Some(&patched.manifest)).unwrap_err().to_string();
+            assert!(error.contains("changes nothing"), "{error}");
+            let resize = ExePatch { edits: vec![size(6, 512, 512)] };
+            let chained = patch_client_exe(&patched.bytes, &resize, Some(&patched.manifest)).unwrap();
+            assert_eq!(chained.manifest.values.encryption, Some(EncryptionState::Removed));
+        }
+        let serialized = serde_json::to_string(&patch.edits).unwrap();
+        assert_eq!(serialized, r#"["no_encryption"]"#);
+        assert_eq!(serde_json::from_str::<Vec<ExeEdit>>(&serialized).unwrap(), patch.edits);
+    }
+
+    #[test]
+    fn no_encryption_is_refused_without_every_cipher() {
+        let patch = ExePatch { edits: vec![ExeEdit::NoEncryption] };
+        let error = |image: &[u8], patch: &ExePatch| plan_patch(image, patch, None).unwrap_err().to_string();
+        assert!(error(&synthetic_classic(6, 2), &patch).contains("Enhanced Client and Kingdom Reborn only"));
+        let missing = error(&synthetic_kr_client(), &patch);
+        assert!(missing.contains("login cipher (0 matches)") && missing.contains("exactly once"), "{missing}");
+        let twice = ExePatch { edits: vec![ExeEdit::NoEncryption, ExeEdit::NoEncryption] };
+        assert!(error(&synthetic_kr_encrypted_client(), &twice).contains("two no-encryption edits"));
     }
 
     #[test]

@@ -34,6 +34,7 @@ use crate::client::classic_facets::{
     UNLOCATED_FILE_ID_LIMIT,
 };
 use crate::client::classic_difs::{inspect_classic_difs, ClassicDifUsage};
+use crate::client::encryption::{locate_encryption_sites, EncryptionSites, EncryptionState};
 use crate::client::login::{locate_login_sites, LoginSites, LoginValues};
 use crate::client::version::{read_exe_version, ExeVersion};
 use crate::client::pe::{pe_checksum, read_u32, PeImage, PeSection, MACHINE_I386};
@@ -361,6 +362,10 @@ pub struct ExeValues {
     /// written before they were recorded.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub login: Option<LoginValues>,
+    /// Whether the client encrypts its login and game traffic ([`EncryptionSites::values`]); `None` for Classic, in
+    /// builds where the ciphers were not all located, and in manifests written before it was recorded.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub encryption: Option<EncryptionState>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
@@ -396,6 +401,8 @@ pub struct ClientExeInspection {
     pub classic: Option<ClassicLayout>,
     /// The login address code (Enhanced Client and Kingdom Reborn), when located ([`locate_login_sites`]).
     pub login: Option<LoginSites>,
+    /// The network ciphers (Enhanced Client and Kingdom Reborn; [`locate_encryption_sites`]); `None` for Classic.
+    pub encryption: Option<EncryptionSites>,
     /// The file and product versions of the version resource, when it has one (information only).
     pub version: Option<ExeVersion>,
     /// Classic: whether the code applies the mapdif / stadif patches ([`inspect_classic_difs`]); `None` in the other
@@ -446,6 +453,7 @@ impl ClientExeInspection {
         let known = known_build(&sha256);
         let computed_checksum = pe_checksum(bytes, pe.checksum_offset);
         let login = locate_login_sites(bytes, &pe, family)?;
+        let encryption = locate_encryption_sites(bytes, &pe, family)?;
         let version = read_exe_version(bytes, &pe);
         let difs = (family == ClientFamily::Classic).then(|| inspect_classic_difs(bytes, &pe));
         Ok(Self {
@@ -459,6 +467,7 @@ impl ClientExeInspection {
             split,
             classic,
             login,
+            encryption,
             version,
             difs,
         })
@@ -504,6 +513,7 @@ impl ClientExeInspection {
                 ClientFamily::Enhanced | ClientFamily::KingdomReborn => self.login.as_ref().map(LoginSites::values),
                 ClientFamily::Classic => None,
             },
+            encryption: self.encryption.as_ref().and_then(EncryptionSites::values),
         }
     }
 
