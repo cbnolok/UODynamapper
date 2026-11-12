@@ -85,7 +85,7 @@ pub(super) const KR_MATERIAL_CONTRAST: &str =
 pub(super) const KR_TRANSITION_GRIME: &str =
     "Dirties and darkens the edges where one kind of land meets another. Needs the KR visual profile (UOD-Painterly); clear by day, faint at night.";
 pub(super) const NORMAL_MAPS: &str =
-    "Adds the small bumps stored with the Enhanced land textures; only snow has them. Enhanced land source only. Shows with per-pixel land shading (UOD-Painterly), or through Grunge in any style but Classic; greyed out otherwise. Off in every preset.";
+    "Gives land textures small bumps that catch the sun. Enhanced and KR snow use the bump map the client ships with it; every other land texture, Classic texmaps included, derives its bumps from its own light and dark texels. Works in every render style and land source: per-pixel land shading lights the bumps directly, Classic shading and the clients' per-vertex shading brighten and darken their own light by them. Water and other liquids stay flat. The derived bumps fade out as you zoom out. Off in every preset.";
 
 // --- Standard and KR-style art ---
 
@@ -202,7 +202,7 @@ pub(super) const SHARPENING: &str =
 pub(super) const KR_COLOR_WASH_STRENGTH: &str =
     "How strong the colour wash is. Needs KR Color Wash on and the KR visual profile.";
 pub(super) const NORMAL_MAP_STRENGTH: &str =
-    "How strong the Enhanced texture bumps are. Needs Normal Maps on; Enhanced textures only.";
+    "How strong the land bumps are: how far a bump map tilts the surface, or how deep the bumps derived from a texture are. Needs Land Bump Maps on.";
 pub(super) const KR_TRANSITION_GRIME_STRENGTH: &str =
     "How strong the grime on land borders is. Needs KR Transition Grime on and the KR visual profile.";
 pub(super) const ART_PROJECTED_SHADOW_STRENGTH: &str =

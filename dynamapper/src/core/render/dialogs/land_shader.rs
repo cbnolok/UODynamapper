@@ -838,8 +838,8 @@ pub fn land_ui_system(
 
                 ui.separator();
                 ui.strong("Terrain");
-                changed |= toggle_u32(ui, "Texture Normal Maps", &mut u.effects.enable_normal_maps, tips::NORMAL_MAPS);
-                changed |= slider_s(ui, "Land Normal Maps", &mut u.effects.land_normal_map_strength, 0.0..=1.0, tips::NORMAL_MAP_STRENGTH);
+                changed |= toggle_u32(ui, "Land Bump Maps", &mut u.effects.enable_normal_maps, tips::NORMAL_MAPS);
+                changed |= slider_s(ui, "Land Bump Strength", &mut u.effects.land_normal_map_strength, 0.0..=1.0, tips::NORMAL_MAP_STRENGTH);
                 // KR-like and Enhanced draw the lights into the night composite's light buffer, not as decals.
                 let decals = u.client_lighting.is_none();
                 changed |= slider_en(ui, decals, "Static Light Decals", &mut u.effects.static_light_decal_visibility, 0.0..=2.0, tips::STATIC_LIGHT_DECALS);
@@ -1169,13 +1169,10 @@ fn terrain_controls(ui: &mut egui::Ui, u: &mut UniformState, gates: RenderStyleG
     changed |= slider_en(ui, gates.is_kr_profile, "KR Material Contrast", &mut u.effects.kr_land_material_contrast_strength, 0.0..=1.5, tips::KR_MATERIAL_CONTRAST);
     changed |= toggle_slider(ui, gates.is_kr_profile, "KR Transition Grime", &mut u.effects.enable_kr_transition_grime, &mut u.effects.kr_transition_grime_strength, 0.0..=1.0, tips::KR_TRANSITION_GRIME);
 
-    // Normal maps only apply to EC-atlas land textures (`texture_size == 2`
-    // in the shader); on a CC art source they are a structural no-op — the
-    // label states this since there is no global "source is EC" signal here.
-    // The mapped normal reaches only the per-pixel lighting and Grunge's shading; Classic shading and the client
-    // per-vertex model never read it.
-    let normal_maps = per_pixel || (gates.is_fragment && u.effects.enable_grunge != 0);
-    changed |= toggle_slider(ui, normal_maps, "Normal Maps (EC land only)", &mut u.effects.enable_normal_maps, &mut u.effects.land_normal_map_strength, 0.0..=1.0, tips::NORMAL_MAPS);
+    // Every land source and style takes a bump: an Enhanced or KR material's bump map where it has one (snow), else
+    // the one derived from the texture (land/bump.wesl). The per-pixel lighting reads the bumped normal, Classic
+    // shading and the client per-vertex model scale their vertex light by it, and Grunge's shading reads it too.
+    changed |= toggle_slider(ui, true, "Bump Maps", &mut u.effects.enable_normal_maps, &mut u.effects.land_normal_map_strength, 0.0..=1.0, tips::NORMAL_MAPS);
     changed
 }
 

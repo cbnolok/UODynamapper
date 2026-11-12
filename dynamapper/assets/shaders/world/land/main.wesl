@@ -31,6 +31,7 @@ import package::shaders::world::land::land_bindings::{
 import package::shaders::world::land::atlas::{atlas_read_meta, atlas_read_height, chunk_edge_blend_factor};
 import package::shaders::world::land::noise::{hash, fbm_billow, domain_warp};
 import package::shaders::world::land::normals::{get_geometric_normal_local, get_bicubic_normal, get_bent_normal, client_vertex_terrain_shade};
+import package::shaders::world::land::bump::{land_derived_bump_tilt, land_bump_light_ratio};
 import package::shaders::postprocess::color_grading::{grade_color_vibrant};
 import package::shaders::postprocess::global_lighting::{apply_global_lighting_rgb};
 import package::shaders::postprocess::grunge::{apply_texture_shadow_aware_land_grunge, apply_texture_visual_grunge, visual_grunge_uv};
@@ -647,17 +648,34 @@ fn shade_land(in: VertexOutput, tile: TileUniform, ordered_coverage: bool, world
   // We already computed in the vertex shader and passed in.world_normal.
   // For non-classic modes we can still override with bicubic if desired.
   var Nw = surface_normal;
-  if (effects.enable_normal_maps == 1u && shading_mode != 0u && tile.texture_size == 2u && !use_ec_liquid) {
-    let normal_map = sample_ec_material_normal_world(in.world_position.xz, tile, world_gradients);
-    if (normal_map.w > 0.5) {
-      let normal_map_strength = clamp(effects.land_normal_map_strength, 0.0, 1.0);
-      Nw = normalize(mix(Nw, normal_map.xyz, normal_map_strength));
-    }
-  }
 
   // Light & view vectors
   let L = scene.light_direction; // normalized by CPU
   let V = world_view_direction(in.world_position.xyz);
+
+  // ---- Bump ----
+  // A material's bump map where it has one, else the bump derived from the texture (land/bump.wesl). Liquids keep
+  // a flat surface: their light must match the water statics along their edges, the Enhanced liquid perturbs its
+  // own colour, and a water texture's luminance draws waves, not relief. Classic shading and the clients'
+  // per-vertex model scale their vertex light by `bump_light`; the per-pixel models light Nw directly.
+  var bump_light = 1.0;
+  if (effects.enable_normal_maps == 1u && !use_ec_liquid && tile.is_wet == 0u && !reviewed_liquid) {
+    let bump_strength = clamp(effects.land_normal_map_strength, 0.0, 1.0);
+    var bump_mapped = false;
+    if (tile.texture_size == 2u) {
+      let normal_map = sample_ec_material_normal_world(in.world_position.xz, tile, world_gradients);
+      if (normal_map.w > 0.5) {
+        Nw = normalize(mix(Nw, normal_map.xyz, bump_strength));
+        bump_mapped = true;
+      }
+    }
+    if (!bump_mapped) {
+      Nw = normalize(Nw + bump_strength * land_derived_bump_tilt(in.world_position.xz, tile, world_gradients));
+    }
+    if (shading_mode == 0u || land_light.terrain_shading_model == TERRAIN_SHADING_CLIENT_PER_VERTEX) {
+      bump_light = land_bump_light_ratio(surface_normal, Nw, L, shading_mode != 0u);
+    }
+  }
 
   // Transition grime has its own toggle and strength, so it does not depend on Grunge.
   if (visual_profile == 2u && effects.enable_kr_transition_grime == 1u && !use_classic_flat_wet_land_art && !use_ec_liquid) {
@@ -729,11 +747,11 @@ fn shade_land(in: VertexOutput, tile: TileUniform, ordered_coverage: bool, world
       water_flat_wrapped_lambert(scene.light_direction),
       tile.is_wet == 1u || reviewed_liquid,
     );
-    hdr_rgb = shade_mode0_classic_vertex(base_albedo, classic_lambert, ambient_strength, diffuse_strength);
+    hdr_rgb = shade_mode0_classic_vertex(base_albedo, classic_lambert * bump_light, ambient_strength, diffuse_strength);
   } else if (land_light.terrain_shading_model == TERRAIN_SHADING_CLIENT_PER_VERTEX) {
     // The KR and Enhanced clients' terrain: the material times the per-vertex
     // half-Lambert grey, with no ambient, fill, rim, specular or relief terms.
-    hdr_rgb = base_albedo * client_shade;
+    hdr_rgb = base_albedo * client_shade * bump_light;
   } else if (shading_mode == 1u) {
     hdr_rgb = shade_mode1_enhanced_fragment(
       base_albedo, in.world_position.xyz, Nw, V, L,

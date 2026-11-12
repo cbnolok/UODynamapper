@@ -193,7 +193,8 @@ pub struct LandEffectsUniform {
     pub art_depth_tint_strength: f32,
 
     // --- Reserved future controls (vec4 slot 4) ---
-    /// Reserved for future texture normal-map atlas sampling.
+    /// 1 = land bump: a material's bump map where it has one (Enhanced and KR snow), else the bump derived from the
+    /// texture's luminance, in every shading mode (land/bump.wesl). Liquids stay flat.
     pub enable_normal_maps: u32,
     /// 1 = use KR-style fake normal lighting on 2D art sprites/ground art.
     pub enable_art_fake_normals: u32,
@@ -213,7 +214,7 @@ pub struct LandEffectsUniform {
     pub kr_art_temperature_strength: f32,
 
     // --- Texture normal / art projected shadow controls (vec4 slot 6) ---
-    /// Strength for EC land role-3 texture normal contribution.
+    /// Land bump strength, 0..1: the blend towards a bump map's normal, or the derived bump's depth.
     pub land_normal_map_strength: f32,
     /// 1 = render KR-style projected bounds shadows for tall art sprites.
     pub enable_art_projected_shadows: u32,

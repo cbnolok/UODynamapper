@@ -2027,6 +2027,14 @@ mod tests {
                 include_str!("../../../assets/shaders/world/land/normals.wesl"),
                 "shaders/world/land/normals.wesl",
             ),
+            Shader::from_wesl(
+                include_str!("../../../assets/shaders/world/land/lighting.wesl"),
+                "shaders/world/land/lighting.wesl",
+            ),
+            Shader::from_wesl(
+                include_str!("../../../assets/shaders/world/land/bump.wesl"),
+                "shaders/world/land/bump.wesl",
+            ),
         ];
         for (n, shader) in (1..).zip(shaders) {
             shader_cache.set_shader(shader_id(n), shader);
@@ -2047,6 +2055,7 @@ import package::shaders::world::ec_item_surface::apply_ec_item_surface;
 import package::shaders::world::land::coverage::{ec_terrain_cache, ec_cache_layer, ec_layer_tile};
 import package::shaders::world::land::liquid_bank::{ec_liquid_bank, ec_bank_vertex};
 import package::shaders::world::land::normals::client_vertex_terrain_shade;
+import package::shaders::world::land::bump::{land_derived_bump_tilt, land_bump_light_ratio};
 import package::shaders::world::land::sampling::{
     LandGradients, apply_sharpening, blurred_albedo, classic_land_art_is_present,
     sample_classic_land_art, sample_ec_material_albedo,
@@ -2069,6 +2078,8 @@ fn fragment() -> @location(0) vec4<f32> {
     }
     let normal = sample_ec_material_normal_world(uv, tile, gradients);
     color *= client_vertex_terrain_shade(vec3<f32>(0.5), normal.xyz);
+    let bumped = normalize(normal.xyz + land_derived_bump_tilt(uv, tile, gradients));
+    color *= land_bump_light_ratio(normal.xyz, bumped, vec3<f32>(0.0, 1.0, 0.0), true);
     let reflection_uv = ec_liquid_reflection_uv(vec3<f32>(0.0, 0.0, -1.0));
     color += sample_ec_liquid(land_page_atlas, land_page_lookup, tex_small_sampler,
         0u, uv, ec_liquid_world_uv(uv), reflection_uv, 0.0, true, true).rgb;
