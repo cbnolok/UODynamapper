@@ -59,6 +59,26 @@ impl UddConvApp {
                         }
                         ui.end_row();
 
+                        ui.label("Kingdom Reborn Client (KR):");
+                        if ui.button("Select Folder...").clicked() {
+                            if let Some(path) = pick_folder(
+                                "Select Kingdom Reborn Client (KR) Directory",
+                                self.settings.kr_dir.as_deref(),
+                            ) {
+                                self.settings.kr_dir = Some(path);
+                                self.persist_settings();
+                            }
+                        }
+                        if let Some(path) = &self.settings.kr_dir {
+                            ui.label(path.to_string_lossy());
+                        } else {
+                            ui.colored_label(
+                                egui::Color32::YELLOW,
+                                "Not selected (needed only for Kingdom Reborn Land)",
+                            );
+                        }
+                        ui.end_row();
+
                         ui.horizontal(|ui| {
                             ui.label("Dynamapper Routing Files:");
                             ui.label(egui::RichText::new("(?)").color(egui::Color32::from_rgb(100, 200, 255)))

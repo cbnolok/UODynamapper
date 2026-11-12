@@ -61,10 +61,15 @@ impl UddConvApp {
             });
 
             ui.add_space(4.0);
-            draw_section_header(ui, "Enhanced Client", "Assets read from the Enhanced Client directory");
+            draw_section_header(
+                ui,
+                "Enhanced Client",
+                "Assets read from the Enhanced Client directory; Kingdom Reborn Land also from the Kingdom Reborn one",
+            );
             draw_asset_cards(ui, "enhanced_client_cards", |cards| {
                 cards.card(|ui| self.ui_tex_art_ec(ui, is_busy));
                 cards.card(|ui| self.ui_tex_land_ec(ui, is_busy));
+                cards.card(|ui| self.ui_tex_land_kr(ui, is_busy));
                 cards.card(|ui| self.ui_tex_aux_ec(ui, is_busy));
                 cards.card(|ui| self.ui_mobile_anim_ec(ui, is_busy));
                 cards.card(|ui| self.ui_effects_ec(ui, is_busy));
@@ -229,6 +234,39 @@ impl UddConvApp {
         if clicked { self.convert_tex_land_ec(); }
         if stop_clicked { self.request_cancel_conversion(); }
         if let Some((target, filter)) = preview { self.open_upscale_preview(target, filter); }
+    }
+
+    fn ui_tex_land_kr(&mut self, ui: &mut egui::Ui, is_busy: bool) {
+        let source = tex_land_kr_source_label(&self.settings);
+        let progress = self.asset_pack_progress(AssetPackTask::TexLandKr);
+        let (clicked, stop_clicked, _) = draw_asset_card(
+            ui,
+            "Kingdom Reborn Land",
+            "KR terrain definitions, textures and land routes, with what KR lacks from the Enhanced Client \
+            (tex_land_kr.uddp); upscaled as Enhanced Land",
+            Some(&source),
+            &progress,
+            !is_busy,
+            Some(&mut self.settings.zstd_tex_land_kr),
+            None,
+            Some(&mut self.settings.opt_tex_land_kr),
+            None,
+            // As the lossy Enhanced land: BC7 without RDO.
+            None,
+            None,
+            vec![],
+        );
+        ui.add_enabled_ui(!is_busy, |ui| {
+            draw_findings_report_cell(
+                ui,
+                &mut self.settings.tex_land_kr_report,
+                TEX_LAND_KR_REPORT_DEFAULT_NAME,
+                TEX_LAND_KR_REPORT_TOOLTIP,
+                "None: the log lists each source",
+            );
+        });
+        if clicked { self.convert_tex_land_kr(); }
+        if stop_clicked { self.request_cancel_conversion(); }
     }
 
     fn ui_tex_aux_ec(&mut self, ui: &mut egui::Ui, is_busy: bool) {
@@ -708,6 +746,7 @@ const FINDINGS_REPORT_CELL_WIDTH: f32 = 250.0;
 /// The file names the findings report dialogs offer.
 const EFFECTS_EC_REPORT_DEFAULT_NAME: &str = "effects_ec_findings.txt";
 const PAPERDOLL_EC_REPORT_DEFAULT_NAME: &str = "paperdoll_ec_findings.txt";
+const TEX_LAND_KR_REPORT_DEFAULT_NAME: &str = "tex_land_kr_sources.txt";
 
 const HUE_RAMP_LINEAR_TOOLTIP: &str = "Each hues.mul colour at every 8th texel, ramping linearly to the next, as EA's \
 Hues.uop does (pack-hues --hue-ramp linear): the default.";
@@ -734,6 +773,19 @@ Default: the packer's level, 19. The frames are lossless at every level.";
 const PAPERDOLL_EC_REPORT_TOOLTIP: &str = "Write every finding of the dress-layer measurement to this file, one line \
 each (pack-ec-paperdoll --report): the largest garment of each slot and body, each robe's decision and the texels each \
 garment drawn beneath it loses. The log lists the decisions either way.";
+
+const TEX_LAND_KR_REPORT_TOOLTIP: &str = "Write which client every terrain definition, texture and land route came \
+from to this file, one line each (pack-kr-land --report). The log lists them either way.";
+
+fn tex_land_kr_source_label(settings: &AppSettings) -> String {
+    match (settings.kr_dir.as_ref(), settings.ec_dir.as_ref()) {
+        (Some(kr_dir), Some(ec_dir)) => {
+            format!("Source: {} with the Enhanced Client in {}", kr_dir.display(), ec_dir.display())
+        }
+        (None, _) => "Source: select a Kingdom Reborn source directory".to_string(),
+        (Some(_), None) => "Source: select an Enhanced source directory, for what Kingdom Reborn lacks".to_string(),
+    }
+}
 
 fn hues_source_label(source: &HuesSource) -> String {
     match source {

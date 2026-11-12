@@ -50,6 +50,7 @@ Two gaps apply to the image jobs, and the rows below leave them out:
 | `pack-texmaps` | Partial: Assets, Classic Texmaps | `--atlas-width`, `--atlas-height`, `--gutter` |
 | `pack-mobile-anims` | Partial: Assets, Classic Mobile Animations | `--atlas-width`, `--atlas-height`, `--gutter` |
 | `pack-ec-textures` | Partial: Assets, Enhanced Art and Enhanced Land, as two jobs | `--tilemeta-output`, `--tilemeta-use-ec-radarcol`, `--land-transcode-kdl` and `--land-terrain-overrides-kdl` (the GUI reads them from the routing folder, else the bundled copies), the art and land atlas sizes and gutters |
+| `pack-kr-land` | Partial: Assets, Kingdom Reborn Land (Kingdom Reborn and Enhanced folders from the Sources tab; `--report` is the Findings Report cell; the log panel lists each source) | the upscale settings (the job uses the Enhanced Land card's), `--land-transcode-kdl` and `--land-terrain-overrides-kdl` (routing folder or bundled copies), `--bc7-rdo`, the atlas size and gutter |
 | `pack-ec-mobile-anims` | Partial: Assets, Enhanced Mobile Animations | `--tables` and `--ec-mobile-animations-kdl` (routing folder or bundled copy only), `--atlas-width`, `--atlas-height`, `--gutter` |
 | `pack-ec-tex-aux` | Partial: Assets, Enhanced Auxiliary Textures | `--tilemeta` (always the input folder's `tilemeta.uddp`) |
 | `pack-gumps` | Yes: Assets, Classic Gumps | |

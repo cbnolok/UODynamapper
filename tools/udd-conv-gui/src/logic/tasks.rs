@@ -24,6 +24,7 @@ use udd_conv::{
     tex_art_cc::{TexArtCcAtlasOptions, convert_art_mul_to_tex_art_cc_uddp_from_sources_with_patches_and_progress, DEFAULT_ATLAS_GUTTER, DEFAULT_ATLAS_PAGE_WIDTH, DEFAULT_ATLAS_PAGE_HEIGHT},
     tex_art_ec::{TexArtEcAtlasOptions, convert_tex_art_ec_uop_to_tex_art_ec_uddp_from_sources_with_progress},
     tex_land_ec::{TexLandEcAtlasOptions, convert_tex_land_ec_uop_to_tex_land_ec_uddp_from_sources_with_progress},
+    tex_land_kr::{TexLandKrPackOptions, convert_kr_land_to_tex_land_kr_uddp_with_progress, TEX_LAND_KR_FILE_NAME},
     tilemeta::{TileMetaBuildOptions, build_tilemeta_uddp_from_sources_with_progress, build_tilemeta_uddp_from_split_sources_with_progress},
     cc_map::convert_map_mul_to_uddp_from_sources_with_patches,
     chunk_compression::ChunkCompression,
@@ -1079,6 +1080,65 @@ impl UddConvApp {
                 |build_progress| progress.build_progress(build_progress),
             )?;
             Ok(format!("Wrote {} pages to {}", summary.page_count, output.display()))
+        });
+    }
+
+    /// The Kingdom Reborn land: KR's terrain from the Kingdom Reborn folder, what KR lacks from the Enhanced one, with
+    /// the Enhanced Land card's upscale settings and its own encoding.
+    pub fn convert_tex_land_kr(&self) {
+        let settings = self.settings.clone();
+        let output = self.get_output_path(TEX_LAND_KR_FILE_NAME);
+        self.spawn_asset_task(AssetPackTask::TexLandKr, "KR Land Packing".to_string(), vec![output.clone()], move |progress| {
+            let Some(kr_dir) = settings.kr_dir.clone() else { eyre::bail!("No Kingdom Reborn source dir") };
+            let Some(ec_dir) = settings.ec_dir.clone() else { eyre::bail!("No Enhanced source dir") };
+            ensure_output_parent(&output)?;
+            let terrain_overrides_kdl = conversion_table(&settings, EC_TERRAIN_OVERRIDES_KDL)?;
+            let transcode_kdl = conversion_table(&settings, TERRAIN_TRANSCODE_KDL)?;
+            let upscale_profile = load_upscale_profile(&settings)?;
+            let extract_label = if upscale_config_active(settings.upscale_tex_land_ec_64)
+                || upscale_config_active(settings.upscale_tex_land_ec_128)
+                || upscale_config_active(settings.upscale_tex_land_ec_256)
+                || upscale_config_active(settings.upscale_tex_land_ec_512)
+                || upscale_profile_active(&settings)
+            {
+                "Extracting and upscaling"
+            } else {
+                "Extracting"
+            };
+
+            let summary = convert_kr_land_to_tex_land_kr_uddp_with_progress(
+                &kr_dir, &ec_dir, &output,
+                &TexLandKrPackOptions {
+                    atlas: TexLandEcAtlasOptions {
+                        atlas_width: DEFAULT_ATLAS_PAGE_WIDTH,
+                        atlas_height: DEFAULT_ATLAS_PAGE_HEIGHT,
+                        gutter: DEFAULT_ATLAS_GUTTER,
+                        compression: texture_compression(settings.opt_tex_land_kr, settings.zstd_tex_land_kr),
+                        upscale_64: settings.upscale_tex_land_ec_64,
+                        upscale_128: settings.upscale_tex_land_ec_128,
+                        upscale_256: settings.upscale_tex_land_ec_256,
+                        upscale_512: settings.upscale_tex_land_ec_512,
+                        upscale_64_passes: Vec::new(),
+                        upscale_128_passes: Vec::new(),
+                        upscale_256_passes: Vec::new(),
+                        upscale_512_passes: Vec::new(),
+                        upscale_profile,
+                        pixel_format: match settings.opt_tex_land_kr {
+                            TextureOptimization::Bc7 | TextureOptimization::Bc7Zstd => PagePixelFormat::Bc7,
+                            _ => PagePixelFormat::Rgba8888,
+                        },
+                        // As the lossy Enhanced land: BC7 without RDO.
+                        bc7_rdo_lambda: NO_BC7_RDO_LAMBDA,
+                        bc7_rdo_lookback_blocks: bc7_rdo_lookback_blocks(&settings),
+                        transcode_kdl_path: Some(transcode_kdl),
+                        terrain_overrides_kdl_path: Some(terrain_overrides_kdl),
+                    },
+                    report: settings.tex_land_kr_report.clone(),
+                },
+                |task_progress| progress.task_progress_with_extract_label(task_progress, extract_label),
+                |build_progress| progress.build_progress(build_progress),
+            )?;
+            Ok(format!("Wrote {} pages to {} ({summary})", summary.package.page_count, output.display()))
         });
     }
 
