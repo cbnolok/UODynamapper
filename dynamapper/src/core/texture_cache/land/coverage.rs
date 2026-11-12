@@ -19,6 +19,10 @@ const GPU_LAYER_CLASS_WATER: u32 = 2;
 const GPU_LAYER_CLASS_BUMP: u32 = 3;
 /// `UOWaterTerrainLayer::SetMaterialId` 0x004601e0 stores `material × 1000`, so water layers sort after the others.
 const WATER_LAYER_SORT_KEY_SCALE: u32 = 1000;
+/// Added to the material ids of the EC-layout package drawn for the ids the land source's own package lacks
+/// (routing.rs), so a material of tex_land_kr.uddp and one of tex_land_ec.uddp sharing an id stay two coverage
+/// layers. The shaders compare material ids only for equality; the sort keys stay the source's.
+const SECONDARY_PACKAGE_MATERIAL_ID_OFFSET: u32 = 1 << 24;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct EcTerrainParams(pub [u32; 4]);
@@ -40,6 +44,41 @@ impl EcTerrainParams {
             | (u32::from(ec_land_shader_flags(package, payload)) << 4)
             | (u32::from(b != 0.0) << 7);
         Some(Self([id, key, u32::from(weights[0]) | (u32::from(weights[1]) << 8), flags]))
+    }
+
+    /// These parameters as the second EC-layout package of the land page atlas has them.
+    pub fn from_secondary_package(self) -> Self {
+        let [id, key, weights, flags] = self.0;
+        Self([id + SECONDARY_PACKAGE_MATERIAL_ID_OFFSET, key, weights, flags])
+    }
+}
+
+/// The terrain parameters and the stack availability of each land id, from the EC-layout package the land page
+/// atlas draws it from: the atlas package, or the other one for the ids routed to it. Mirrors the atlas lookup's
+/// role 6 (`write_enhanced_land_lookup`).
+pub struct EcTerrainSources {
+    pub params: Vec<Option<EcTerrainParams>>,
+    pub available: Vec<bool>,
+}
+
+impl EcTerrainSources {
+    pub fn none() -> Self {
+        Self { params: vec![None; super::routing::LAND_ROUTE_TILE_COUNT],
+            available: vec![false; super::routing::LAND_ROUTE_TILE_COUNT] }
+    }
+
+    pub fn from_cache(cache: &super::cache::LandTextureCache) -> Self {
+        let Some(primary) = cache.atlas_enhanced_land() else { return Self::none() };
+        let secondary = cache.secondary_enhanced_land().map(|(_, package)| package);
+        let (params, available) = (0..super::routing::LAND_ROUTE_TILE_COUNT as u32).map(|id| {
+            let routed = cache.routed_enhanced_land(id);
+            match (routed, secondary) {
+                (Some(package), Some(secondary)) if std::sync::Arc::ptr_eq(package, secondary) => (
+                    EcTerrainParams::for_tile(package, id).map(EcTerrainParams::from_secondary_package), true),
+                _ => (EcTerrainParams::for_tile(primary, id), routed.is_some()),
+            }
+        }).unzip();
+        Self { params, available }
     }
 }
 
@@ -73,7 +112,7 @@ pub struct EcTerrainBases {
 }
 
 impl EcTerrainBases {
-    pub fn new(images: &mut Assets<Image>, dimensions: UVec2, package: Option<&TexLandEcPackage>) -> Self {
+    pub fn new(images: &mut Assets<Image>, dimensions: UVec2, sources: EcTerrainSources) -> Self {
         use bevy::render::render_resource::{Extent3d, TextureDimension, TextureFormat};
         let dimensions = dimensions.max(UVec2::ONE);
         let values = vec![[u16::MAX; 4]; (dimensions.x * dimensions.y) as usize];
@@ -82,19 +121,18 @@ impl EcTerrainBases {
             TextureDimension::D2, bytemuck::cast_slice(&values).to_vec(), TextureFormat::Rgba16Uint,
             bevy::asset::RenderAssetUsages::MAIN_WORLD | bevy::asset::RenderAssetUsages::RENDER_WORLD,
         ));
-        let params = terrain_params(package);
-        let cache = cache::StackCache::new(images, package);
-        Self { image, params, cache, dimensions, map: None, values, dirty: false }
+        let cache = cache::StackCache::new(images, sources.available);
+        Self { image, params: sources.params, cache, dimensions, map: None, values, dirty: false }
     }
 
     pub fn stack_image(&self) -> Handle<Image> { self.cache.image.clone() }
 
-    /// Rebuilds the terrain parameters and stack availability from another EC-layout land package (the land source
-    /// changed between tex_land_ec.uddp and tex_land_kr.uddp) and drops every published base and cached stack, so the
-    /// next chunk pass republishes them; the image handles stay bound to the land material.
-    pub fn set_package(&mut self, package: Option<&TexLandEcPackage>) {
-        self.params = terrain_params(package);
-        self.cache.set_package(package);
+    /// Takes the terrain parameters and stack availability of the land source now drawn (the source changed, and with
+    /// it the EC-layout package each id comes from) and drops every published base and cached stack, so the next chunk
+    /// pass republishes them; the image handles stay bound to the land material.
+    pub fn set_sources(&mut self, sources: EcTerrainSources) {
+        self.params = sources.params;
+        self.cache.set_available(sources.available);
         self.map = None;
         self.values.fill([u16::MAX; 4]);
         self.dirty = true;
@@ -129,10 +167,6 @@ impl EcTerrainBases {
             self.dirty = false;
         }
     }
-}
-
-fn terrain_params(package: Option<&TexLandEcPackage>) -> Vec<Option<EcTerrainParams>> {
-    (0..16_384).map(|id| package.and_then(|p| EcTerrainParams::for_tile(p, id))).collect()
 }
 
 /// All chunk materials participate in the original sorting, including a base
@@ -187,7 +221,7 @@ mod tests {
     #[test]
     fn map_switch_clears_cached_chunk_bases() {
         let mut images = Assets::default();
-        let mut bases = EcTerrainBases::new(&mut images, UVec2::splat(2), None);
+        let mut bases = EcTerrainBases::new(&mut images, UVec2::splat(2), EcTerrainSources::none());
         bases.begin_map(0);
         bases.set(UVec2::ZERO, [5, 5]);
         bases.flush(&mut images);

@@ -493,7 +493,7 @@ fn log_tex_land_ec_coverage(
     let slot_table_len = package.slots().len();
 
     lg(&format!(
-        "{label} land package coverage: {populated_slot_count} populated slots from {alias_ref_count} TerrainDefinition alias refs (slot table span: 0..{}). Unmapped EC land ids remain explicitly black.",
+        "{label} land package coverage: {populated_slot_count} populated slots from {alias_ref_count} TerrainDefinition alias refs (slot table span: 0..{}). Land ids it lacks are drawn from the next land source of the chain, or with the missing-texture pattern.",
         slot_table_len.saturating_sub(1),
     ));
     if let Some(source_map) = package.source_terrain_map() {
@@ -689,7 +689,7 @@ pub fn sys_setup_uo_data(mut commands: Commands, settings: Res<Settings>) {
         lg_err("No enhanced land package source selected: tex_land_ec.uddp not found in udd_path.");
     }
     // The Kingdom Reborn land is optional: its absence is an error only when it is the selected land source, which
-    // then falls back as a missing tex_land_ec.uddp does.
+    // then draws from the next source of its chain, tex_land_ec.uddp or Classic (texture_cache/land/routing.rs).
     let tex_land_kr_package = load_optional_enhanced_land_package(
         &lg,
         &udd_path,

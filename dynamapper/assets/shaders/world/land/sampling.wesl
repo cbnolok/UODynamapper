@@ -265,6 +265,20 @@ fn sample_classic_land_art(world_cell_uv: vec2<f32>, tile_payload: u32) -> vec3<
   return textureLoad(classic_land_art_atlas, local_iuv, layer, 0).rgb;
 }
 
+// Texture source modes of a tile (tile_atlas.rs LAND_SOURCE_*; atlas.wesl): no land source has the id, or it is
+// Classic land without a texmap, drawn from its land art as the Classic client draws it (routing.rs).
+const LAND_SOURCE_MISSING: u32 = 3u;
+const LAND_SOURCE_CLASSIC_ART: u32 = 5u;
+// The missing-texture pattern: a checker of this many cells per tile side, in two colours no terrain has.
+const MISSING_TEXTURE_CHECKER_CELLS: f32 = 4.0;
+const MISSING_TEXTURE_COLOR_A: vec3<f32> = vec3<f32>(1.0, 0.0, 1.0);
+const MISSING_TEXTURE_COLOR_B: vec3<f32> = vec3<f32>(0.0, 0.0, 0.0);
+
+fn missing_texture_pattern(uv: vec2<f32>) -> vec3<f32> {
+  let cell = vec2<i32>(floor(fract(uv) * MISSING_TEXTURE_CHECKER_CELLS));
+  return select(MISSING_TEXTURE_COLOR_B, MISSING_TEXTURE_COLOR_A, ((cell.x + cell.y) & 1) == 0);
+}
+
 // Single-tap albedo: linear (textureSample) or nearest (textureLoad).
 // For CC/array tiles, uv is the [0,1) coordinate within the tile.
 // For EC atlas tiles, uv must already be the world-space tiling UV (see ec_world_uv);
@@ -273,8 +287,11 @@ fn sample_tile_albedo(uv: vec2<f32>, tile: TileUniform, gradients: LandGradients
   let layer: i32 = i32(tile.texture_layer);
   let use_linear = effects.enable_linear_filtering == 1u;
 
-  if (tile.texture_size == 3u) {
-    return vec3<f32>(0.0);
+  if (tile.texture_size == LAND_SOURCE_MISSING) {
+    return missing_texture_pattern(uv);
+  }
+  if (tile.texture_size == LAND_SOURCE_CLASSIC_ART) {
+    return sample_classic_land_art(fract(uv), tile.texture_payload);
   }
 
   if (tile.texture_size == 2u || tile.texture_size == 4u) {
@@ -335,7 +352,8 @@ fn sample_tile_albedo(uv: vec2<f32>, tile: TileUniform, gradients: LandGradients
 // keep sample_tile_albedo: every land sample inlines its filter, and the client's on all of them made the land
 // shader twice as slow to compile.
 fn sample_tile_albedo_filtered(uv: vec2<f32>, tile: TileUniform, gradients: LandGradients) -> vec3<f32> {
-  if (tile.texture_size != 3u && effects.texture_filter == TEXTURE_FILTER_CLIENT_BILINEAR) {
+  if (tile.texture_size != LAND_SOURCE_MISSING && tile.texture_size != LAND_SOURCE_CLASSIC_ART
+      && effects.texture_filter == TEXTURE_FILTER_CLIENT_BILINEAR) {
     return sample_tile_albedo_client(uv, tile, gradients);
   }
   return sample_tile_albedo(uv, tile, gradients);
@@ -386,8 +404,11 @@ fn sample_tile_albedo_grad(uv: vec2<f32>, tile: TileUniform, ddx_uv: vec2<f32>, 
   let layer: i32 = i32(tile.texture_layer);
   let use_linear = effects.enable_linear_filtering == 1u;
 
-  if (tile.texture_size == 3u) {
-    return vec3<f32>(0.0);
+  if (tile.texture_size == LAND_SOURCE_MISSING) {
+    return missing_texture_pattern(uv);
+  }
+  if (tile.texture_size == LAND_SOURCE_CLASSIC_ART) {
+    return sample_classic_land_art(fract(uv), tile.texture_payload);
   }
 
   if (tile.texture_size == 2u || tile.texture_size == 4u) {

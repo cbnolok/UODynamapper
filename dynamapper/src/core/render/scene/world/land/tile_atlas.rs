@@ -23,11 +23,27 @@ pub struct Rg16u {
 /// EC wetness flag; the `is_wet` bit carries the classic IsWet tiledata flag in classic mode only.
 pub const TERRAIN_SHADER_FLAG_REVIEWED_LIQUID: u16 = 1 << 2;
 
+/// Texture source modes of a tile (bits 0-3 of the G high byte), mirrored in land/atlas.wesl. The payload (R) is
+/// the texmap array layer, the land id or the texmap id, as each mode says.
+/// Classic texmap in the small texmap array; payload: array layer.
+pub const LAND_SOURCE_CC_SMALL: u32 = 0;
+/// Classic texmap in the big texmap array; payload: array layer.
+pub const LAND_SOURCE_CC_BIG: u32 = 1;
+/// EC-layout terrain on the land page atlas; payload: land id.
+pub const LAND_SOURCE_EC_ATLAS: u32 = 2;
+/// No source has the id: the missing-texture pattern.
+pub const LAND_SOURCE_MISSING: u32 = 3;
+/// Classic texmap on the land page atlas; payload: texmap id.
+pub const LAND_SOURCE_CC_ATLAS: u32 = 4;
+/// Classic land art of land without a texmap; payload: land id.
+pub const LAND_SOURCE_CLASSIC_ART: u32 = 5;
+
 impl Rg16u {
     /// Packs tile ID, height (Z), texture source mode, land flags, and is_wet into Rg16u.
     ///
     /// G channel high-byte layout (mirrored in atlas.wesl):
-    ///   bits 0-3: `tex_size_bits` (texture source mode: 0=cc-small, 1=cc-big, 2=ec-atlas, 3=missing, 4=cc-atlas)
+    ///   bits 0-3: `tex_size_bits` (texture source mode, `LAND_SOURCE_*`: 0=cc-small, 1=cc-big, 2=ec-atlas,
+    ///             3=missing, 4=cc-atlas, 5=classic land art)
     ///   bits 4-6: `land_flags` (EC reviewed land policy/liquid hints)
     ///   bit  7:   `is_wet` (classic mode: the IsWet tiledata flag → animated water effect)
     ///

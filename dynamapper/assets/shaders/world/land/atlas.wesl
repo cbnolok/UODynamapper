@@ -76,7 +76,8 @@ fn atlas_read_meta(world_x: i32, world_z: i32) -> TileUniform {
   let tile_height = f32(z_i32) * UO_Z_TO_WORLD_SCALE;
 
   // G channel high byte: terrain texture source/mode, reviewed EC flags, and water flag.
-  // Bits 0-3: tex_size / source mode (0=cc-small, 1=cc-big, 2=ec-atlas, 3=missing, 4=cc-atlas).
+  // Bits 0-3: tex_size / source mode (0=cc-small, 1=cc-big, 2=ec-atlas, 3=missing, 4=cc-atlas,
+  //           5=classic land art; tile_atlas.rs LAND_SOURCE_*).
   // Bits 4-6: reviewed EC terrain flags (bits 0-1 unused, bit 2=liquid).
   // Bit 7:    is_wet flag (tile has IsWet in tiledata.mul).
   let g_high  = (g >> 8u) & 0xFFu;

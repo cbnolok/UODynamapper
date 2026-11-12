@@ -1,7 +1,7 @@
 //! A bounded native-chunk cache, published only after metadata uploads settle.
 use super::{build_stack_layer, HALO, HEIGHT, SIDE, WIDTH};
 use super::super::EcTerrainBases;
-use crate::configs::settings::Settings;
+use crate::core::texture_cache::land::cache::LandTextureCache;
 use crate::core::{maps::MapPlane, render::scene::{player::Player, world::land::{tile_atlas::TileAtlas, LandUploadTelemetry}}, uo_files_loader::MapPlanesRes};
 use bevy::{asset::RenderAssetUsages, prelude::*, render::render_resource::{Extent3d, TextureDimension, TextureFormat, TextureViewDescriptor, TextureViewDimension}};
 use uocf::classic::map::MapBlockRelPos;
@@ -27,7 +27,8 @@ pub(crate) struct StackCache {
 }
 
 impl StackCache {
-    pub fn new(images: &mut Assets<Image>, package: Option<&udd_assets::tex_land_ec::TexLandEcPackage>) -> Self {
+    /// `available`: per land id, whether the land page atlas draws it from an EC-layout package.
+    pub fn new(images: &mut Assets<Image>, available: Vec<bool>) -> Self {
         let mut image = Image::new(
             Extent3d { width: 1, height: 1, depth_or_array_layers: 1 },
             TextureDimension::D2, vec![0; 16], TextureFormat::Rgba32Uint,
@@ -36,13 +37,13 @@ impl StackCache {
         image.texture_view_descriptor = Some(TextureViewDescriptor {
             dimension: Some(TextureViewDimension::D2Array), ..Default::default()
         });
-        Self { image: images.add(image), available: available_payloads(package), slots: std::array::from_fn(|_| None),
+        Self { image: images.add(image), available, slots: std::array::from_fn(|_| None),
             atlas_revision: u64::MAX }
     }
 
-    /// Takes the payload availability of another EC-layout land package and drops every cached stack.
-    pub fn set_package(&mut self, package: Option<&udd_assets::tex_land_ec::TexLandEcPackage>) {
-        self.available = available_payloads(package);
+    /// Takes the payload availability of another land source and drops every cached stack.
+    pub fn set_available(&mut self, available: Vec<bool>) {
+        self.available = available;
         self.clear();
     }
 
@@ -50,12 +51,6 @@ impl StackCache {
         self.slots = std::array::from_fn(|_| None);
         self.atlas_revision = u64::MAX;
     }
-}
-
-fn available_payloads(package: Option<&udd_assets::tex_land_ec::TexLandEcPackage>) -> Vec<bool> {
-    (0..16384).map(|id| package.is_some_and(|p|
-        p.resolve_effective_runtime_slot_id(id).and_then(|slot| p.present_slot(slot))
-            .is_some_and(|slot| slot.width > 0 && slot.height > 0))).collect()
 }
 
 fn raw_halo(plane: &MapPlane, chunk: UVec2) -> Option<Box<[u16; HALO * HALO]>> {
@@ -128,14 +123,15 @@ fn publish(values: &mut [[u16; 4]], dimensions: UVec2, dirty: &mut bool,
 }
 
 pub(crate) fn sys_prepare(
-    settings: Res<Settings>, maps: Res<MapPlanesRes>, player: Query<&Player>,
+    land: Res<LandTextureCache>, maps: Res<MapPlanesRes>, player: Query<&Player>,
     camera: Query<(&Camera, &GlobalTransform), With<crate::core::render::scene::camera::PlayerCamera>>,
     atlas: Res<TileAtlas>, telemetry: Res<LandUploadTelemetry>,
     mut bases: ResMut<EcTerrainBases>, mut images: ResMut<Assets<Image>>,
     mut materials: ResMut<Assets<crate::core::render::scene::world::land::mesh_material::LandCustomMeshMaterial>>,
     shared_material: Res<crate::core::render::scene::world::land::draw_mesh::SharedLandMaterial>,
 ) {
-    if !settings.graphics.land_texture_source.uses_enhanced_land() { return; }
+    // The EC-layout land page atlas is the only one with coverage stacks.
+    if !land.routes().atlas().uses_enhanced_land() { return; }
     let Some(position) = player.single().ok().and_then(|p| p.current_pos) else { return; };
     let map = u32::from(position.m);
     if bases.map != Some(map) { return; }

@@ -46,8 +46,19 @@ establish land ownership.
 `tex_land_ec.uddp` embeds the original routing CSV and an explicit
 `TerrainTranscode.kdl` policy overlay. The runtime reads those embedded copies,
 not loose KDL files. Preserve the original route and subtype even when an
-explicit overlay selects another material. Missing EC terrain remains black;
-there is no implicit Classic texmap fallback.
+explicit overlay selects another material.
+
+Missing terrain follows an explicit, logged chain
+(`dynamapper/src/core/texture_cache/land/routing.rs`). A land id the selected
+EC-layout source lacks is drawn from the other one (Kingdom Reborn and Enhanced
+stand in for each other), then from Classic: its texmap or, as the Classic
+client does, its land art. An id no source has draws a magenta and black
+missing-texture checker. Each load or source switch logs one summary of the
+rerouted ids; a missing selected package also shows an in-window notice and is
+marked in Preferences. Classic selected never borrows EC-layout terrain.
+EC-layout cells from both packages blend through coverage (their material ids
+stay distinct); a border between EC-layout and Classic or missing cells is a
+hard edge, since coverage and transitions consider EC-layout cells only.
 
 Texture roles follow the source shader/layer class and item position. Names,
 stretch and visual resemblance do not select the base or establish a role.

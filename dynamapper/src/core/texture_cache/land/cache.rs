@@ -3,6 +3,7 @@
 
 #![allow(dead_code)]
 
+use super::routing::{LandRoutes, LandTileAvailability, LandTileRoute, MissingLandIds, LAND_ROUTE_TILE_COUNT};
 use super::texture_array;
 use crate::{
     configs::settings::LandTextureSource,
@@ -117,6 +118,58 @@ pub struct LandTextureCache {
     pub tex_land_ec: Option<Arc<udd_assets::tex_land_ec::TexLandEcPackage>>,
     /// tex_land_kr.uddp, in the EC land layout; drawn in place of `tex_land_ec` under the Kingdom Reborn land source.
     pub tex_land_kr: Option<Arc<udd_assets::tex_land_ec::TexLandEcPackage>>,
+
+    /// What the Classic source holds per land id, fixed at setup: its texmap (`tex_land_cc` slot id) and its land art.
+    classic_land: ClassicLandIndex,
+    /// The source each land id draws from under the preferred source ([`Self::resolve_routes`]).
+    routes: LandRoutes,
+    /// Land ids drawn with the missing-texture pattern that the log has named since the routes were resolved.
+    pub missing_land_ids: MissingLandIds,
+    /// Where the runtime packages were looked for, named by the missing-package notice.
+    pub udd_folder: std::path::PathBuf,
+    /// The in-window notice of a missing selected land package, shown once the world is on screen.
+    pub pending_land_notice: Option<String>,
+}
+
+/// What the Classic source holds for each land id. Classic land draws its texmap: the tiledata texture id, or the
+/// land id itself when that is 0 (the Classic client's `TexID == 0` case). Land without a texmap draws its land art,
+/// as `LandView.Draw` does in the Classic client.
+#[derive(Clone, Debug, Default)]
+pub struct ClassicLandIndex {
+    texmap_ids: Vec<Option<u32>>,
+    art: Vec<bool>,
+}
+
+impl ClassicLandIndex {
+    pub fn new(
+        tilemeta: Option<&udd_assets::tilemeta::TileMetaPackage>,
+        tex_land_cc: Option<&udd_assets::tex_land_cc::TexLandCcPackage>,
+        tex_art_cc: Option<&udd_assets::tex_art_cc::TexArtCcPackage>,
+    ) -> Self {
+        let texmap_ids = (0..LAND_ROUTE_TILE_COUNT as u32).map(|id| {
+            let texture_id = tilemeta.and_then(|meta| meta.land_tiles().get(id as usize))
+                .map(|tile| u32::from(tile.texture_id)).filter(|&texture_id| texture_id != 0).unwrap_or(id);
+            tex_land_cc?.present_slot(texture_id).map(|_| texture_id)
+        }).collect();
+        let art = (0..LAND_ROUTE_TILE_COUNT as u32).map(|id| tex_art_cc.and_then(|art| art.present_slot(id))
+            .is_some_and(|slot| slot.is_land() && slot.width != 0 && slot.height != 0)).collect();
+        Self { texmap_ids, art }
+    }
+
+    /// The `tex_land_cc` slot id `land_id` draws, if it has a texmap.
+    pub fn texmap_id(&self, land_id: u32) -> Option<u32> {
+        self.texmap_ids.get(land_id as usize).copied().flatten()
+    }
+
+    pub fn has_art(&self, land_id: u32) -> bool {
+        self.art.get(land_id as usize).copied().unwrap_or(false)
+    }
+}
+
+/// Whether an EC-layout land package draws `land_id`: its definition resolves to a runtime slot with texels.
+pub fn enhanced_land_has_tile(package: &udd_assets::tex_land_ec::TexLandEcPackage, land_id: u32) -> bool {
+    package.resolve_effective_runtime_slot_id(land_id).and_then(|slot| package.present_slot(slot))
+        .is_some_and(|slot| slot.width > 0 && slot.height > 0)
 }
 
 pub fn sys_drain_texture_upload_tasks(mut cache: ResMut<LandTextureCache>) {
@@ -259,6 +312,11 @@ impl LandTextureCache {
             tex_art_ec: None,
             tex_land_ec: None,
             tex_land_kr: None,
+            classic_land: ClassicLandIndex::default(),
+            routes: LandRoutes::resolve(preferred_source, |_| false, |_| LandTileAvailability::default(), |_| None),
+            missing_land_ids: MissingLandIds::default(),
+            udd_folder: std::path::PathBuf::new(),
+            pending_land_notice: None,
         }
     }
 
@@ -270,10 +328,68 @@ impl LandTextureCache {
         self.preferred_source
     }
 
-    /// The EC-layout land package the preferred source draws: tex_land_ec.uddp or tex_land_kr.uddp; `None` under the
-    /// Classic source or when that package is not loaded.
-    pub fn enhanced_land(&self) -> Option<&Arc<udd_assets::tex_land_ec::TexLandEcPackage>> {
-        self.enhanced_land_for(self.preferred_source)
+    /// The EC-layout land package the land page atlas holds: tex_land_ec.uddp or tex_land_kr.uddp, the first loaded
+    /// one of the preferred source's chain; `None` under the Classic source or when neither is loaded.
+    pub fn atlas_enhanced_land(&self) -> Option<&Arc<udd_assets::tex_land_ec::TexLandEcPackage>> {
+        self.enhanced_land_for(self.routes.atlas())
+    }
+
+    /// The other EC-layout land package some ids are drawn from, appended to the land page atlas; `None` when the
+    /// atlas package draws every EC-layout id.
+    pub fn secondary_enhanced_land(&self) -> Option<(LandTextureSource, &Arc<udd_assets::tex_land_ec::TexLandEcPackage>)> {
+        let atlas = self.routes.atlas();
+        LandTextureSource::ALL.into_iter()
+            .filter(|&source| source.uses_enhanced_land() && source != atlas)
+            .find(|&source| self.routes.draws_from(LandTileRoute::Enhanced(source)))
+            .and_then(|source| Some((source, self.enhanced_land_for(source)?)))
+    }
+
+    /// The EC-layout land package `land_id` is drawn from, if it is routed to one.
+    pub fn routed_enhanced_land(&self, land_id: u32) -> Option<&Arc<udd_assets::tex_land_ec::TexLandEcPackage>> {
+        match self.routes.route(land_id) {
+            LandTileRoute::Enhanced(source) => self.enhanced_land_for(source),
+            _ => None,
+        }
+    }
+
+    /// Whether the package of a land source is loaded.
+    pub fn land_source_loaded(&self, source: LandTextureSource) -> bool {
+        match source {
+            LandTextureSource::Cc => self.tex_land_cc.is_some(),
+            LandTextureSource::Ec | LandTextureSource::Kr => self.enhanced_land_for(source).is_some(),
+        }
+    }
+
+    pub fn routes(&self) -> &LandRoutes {
+        &self.routes
+    }
+
+    pub fn classic_land(&self) -> &ClassicLandIndex {
+        &self.classic_land
+    }
+
+    pub fn set_classic_land(&mut self, classic_land: ClassicLandIndex) {
+        self.classic_land = classic_land;
+    }
+
+    /// Routes every land id under the preferred source and forgets the missing ids already reported; returns the
+    /// rerouting summary to log, if any id is drawn from another source.
+    pub fn resolve_routes(&mut self) -> Option<String> {
+        let routes = LandRoutes::resolve(
+            self.preferred_source,
+            |source| self.land_source_loaded(source),
+            |id| LandTileAvailability {
+                ec: self.tex_land_ec.as_deref().is_some_and(|package| enhanced_land_has_tile(package, id)),
+                kr: self.tex_land_kr.as_deref().is_some_and(|package| enhanced_land_has_tile(package, id)),
+                classic_texmap: self.classic_land.texmap_id(id).is_some(),
+                classic_art: self.classic_land.has_art(id),
+            },
+            // No explicit route table yet: every id follows the chain and keeps its own id.
+            |_| None,
+        );
+        self.routes = routes;
+        self.missing_land_ids.clear();
+        self.routes.summary()
     }
 
     /// The EC-layout land package `source` draws, as [`Self::enhanced_land`] does for the preferred source.

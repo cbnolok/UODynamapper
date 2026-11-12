@@ -198,6 +198,7 @@ pub fn sys_render_preferences_dialog(
     mut settings: ResMut<Settings>,
     mut windows_q: Query<&mut Window>,
     time: Res<Time>,
+    land_textures: Option<Res<crate::core::texture_cache::land::cache::LandTextureCache>>,
 ) {
     state.apply_timer.tick(time.delta());
 
@@ -421,17 +422,28 @@ pub fn sys_render_preferences_dialog(
                         settings.graphics.art_texture_source = state.art_texture_source;
                     }
 
-                    egui::ComboBox::from_label("Land Texture Source")
-                        .selected_text(state.land_texture_source.land_label())
+                    // A source whose package is missing stays selectable, marked, with where it was looked for and
+                    // what is drawn instead (routing.rs).
+                    let land_source_entry = |source: LandTextureSource| match land_textures.as_deref() {
+                        Some(land) => crate::core::texture_cache::land::routing::land_source_entry(
+                            source, land.land_source_loaded(source), &land.udd_folder),
+                        None => (source.land_label().to_string(), None),
+                    };
+                    let (selected_label, selected_hover) = land_source_entry(state.land_texture_source);
+                    let combo = egui::ComboBox::from_label("Land Texture Source")
+                        .selected_text(selected_label)
                         .show_ui(ui, |ui| {
                             for source in LandTextureSource::ALL {
-                                ui.selectable_value(
-                                    &mut state.land_texture_source,
-                                    source,
-                                    source.land_label(),
-                                );
+                                let (label, hover) = land_source_entry(source);
+                                let entry = ui.selectable_value(&mut state.land_texture_source, source, label);
+                                if let Some(hover) = hover {
+                                    entry.on_hover_text(hover);
+                                }
                             }
                         });
+                    if let Some(hover) = selected_hover {
+                        combo.response.on_hover_text(hover);
+                    }
                     if settings.graphics.land_texture_source != state.land_texture_source {
                         settings.graphics.land_texture_source = state.land_texture_source;
                     }

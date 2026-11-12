@@ -46,8 +46,9 @@ fn update_terrain_cursor(
     atlas: Res<TileAtlas>, uploads: Res<LandUploadTelemetry>, maps: Res<MapPlanesRes>,
     land_textures: Option<Res<LandTextureCache>>,
 ) {
-    // The EC-layout land package the terrain draws (tex_land_ec.uddp or tex_land_kr.uddp) decides which cells bank.
-    let ec = land_textures.as_deref().and_then(LandTextureCache::enhanced_land);
+    // The EC-layout land package each cell draws from (tex_land_ec.uddp or tex_land_kr.uddp, routing.rs) decides which
+    // cells bank.
+    let land = land_textures.as_deref();
     let inputs = (|| {
         let pointer = effective_cursor_position(windows.single().ok()?, pointer.as_deref())?;
         let (camera, transform) = cameras.single().ok()?;
@@ -79,6 +80,7 @@ fn update_terrain_cursor(
             if cell.min_element() < 0 { return None; }
             let packed = atlas.read_cell(cell.x as u32, cell.y as u32)?;
             let mode = (packed.g >> 8) & 15;
+            let ec = land.and_then(|land| land.routed_enhanced_land(u32::from(packed.r)));
             let ec_present = mode == 2 && ec.is_some_and(|p| p.present_slot(u32::from(packed.r)).is_some_and(|slot| slot.width != 0 && slot.height != 0));
             Some(TerrainSample { height: f32::from(((packed.g & 255) as i16 - 128) as i8) * UO_Z_TO_WORLD_SCALE,
                 ec_present, liquid: ((packed.g >> 12) & 4) != 0 })

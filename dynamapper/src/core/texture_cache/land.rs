@@ -1,6 +1,7 @@
 pub mod cache;
 pub mod texture_array;
 pub mod coverage;
+pub mod routing;
 pub(crate) mod aux_layers;
 #[cfg(test)]
 mod liquid_sampling_tests;
@@ -90,7 +91,39 @@ const AUX_ATLAS_TILE_SIZE: u32 = 256;
 
 enum LandShaderAtlasSource<'a> {
     Cc(&'a TexLandCcPackage),
-    Ec(&'a TexLandEcPackage),
+    /// The EC-layout package of the land source, and the other one for the ids it lacks (routing.rs).
+    Ec { primary: &'a TexLandEcPackage, secondary: Option<SecondaryEnhancedLand<'a>> },
+}
+
+/// The other EC-layout land package's share of the land page atlas: the ids drawn from it and the pages their slots
+/// lie on, appended after the atlas package's pages in ascending order.
+struct SecondaryEnhancedLand<'a> {
+    package: &'a TexLandEcPackage,
+    ids: Vec<bool>,
+    pages: Vec<u32>,
+}
+
+impl<'a> SecondaryEnhancedLand<'a> {
+    fn new(package: &'a TexLandEcPackage, ids: impl Iterator<Item = u32>) -> Self {
+        let mut drawn = vec![false; LAND_PAGE_LOOKUP_TILE_CAPACITY as usize];
+        let mut pages = std::collections::BTreeSet::new();
+        for id in ids {
+            if let Some(drawn) = drawn.get_mut(id as usize) {
+                *drawn = true;
+                pages.extend(enhanced_land_tile_pages(package, id));
+            }
+        }
+        Self { package, ids: drawn, pages: pages.into_iter().collect() }
+    }
+
+    fn draws(&self, tile_id: u32) -> bool {
+        self.ids.get(tile_id as usize).copied().unwrap_or(false)
+    }
+
+    /// The position of the package's `page` among the appended pages.
+    fn atlas_page(&self, page: u32) -> u32 {
+        self.pages.binary_search(&page).map_or(0, |index| index as u32)
+    }
 }
 
 const LAND_PAGE_LOOKUP_WIDTH: u32 = 256;
@@ -376,6 +409,7 @@ fn create_classic_land_art_images(
     images: &mut Assets<Image>,
     tex_art_cc: Option<&TexArtCcPackage>,
     tilemeta: Option<&TileMetaPackage>,
+    classic_land: &cache::ClassicLandIndex,
 ) -> eyre::Result<ClassicLandArtImages> {
     use bevy::render::render_resource::{
         Extent3d, TextureDimension, TextureFormat, TextureUsages, TextureViewDescriptor,
@@ -386,11 +420,23 @@ fn create_classic_land_art_images(
         return Ok(create_blank_classic_land_art_images(images));
     };
 
+    // Besides flat wet terrain, the land without a texmap draws its art whole (routing.rs, mode
+    // LAND_SOURCE_CLASSIC_ART), keyed by its land id. An id that some tile's texmap payload names is left out: the wet
+    // check looks the art up by that payload.
+    let texmap_payloads = (0..CLASSIC_LAND_ART_TILE_CAPACITY)
+        .filter_map(|id| classic_land.texmap_id(id))
+        .collect::<std::collections::HashSet<_>>();
+    let art_only = (0..CLASSIC_LAND_ART_TILE_CAPACITY).filter(|&id| {
+        classic_land.texmap_id(id).is_none() && classic_land.has_art(id) && !texmap_payloads.contains(&id)
+    });
     let mut candidates = tilemeta
         .land_tiles()
         .iter()
-        .filter_map(|tile| {
-            let art_id = classic_land_art_payload_id(tile)?;
+        .filter_map(classic_land_art_payload_id)
+        .chain(art_only)
+        .collect::<std::collections::BTreeSet<_>>()
+        .into_iter()
+        .filter_map(|art_id| {
             if art_id >= CLASSIC_LAND_ART_TILE_CAPACITY {
                 return None;
             }
@@ -655,15 +701,22 @@ fn decode_tex_land_cc_page_rgba(package: &TexLandCcPackage, page_index: u32) -> 
     )
 }
 
-fn decode_tex_land_ec_page_rgba(package: &TexLandEcPackage, page_index: u32) -> eyre::Result<Vec<u8>> {
+/// One Enhanced land page's texels in the top-left of an `atlas_width`×`atlas_height` layer: the package's own atlas
+/// extent, or a larger one when another EC-layout package's pages share the array.
+fn decode_tex_land_ec_page_rgba(
+    package: &TexLandEcPackage,
+    page_index: u32,
+    atlas_width: u32,
+    atlas_height: u32,
+) -> eyre::Result<Vec<u8>> {
     let page = package
         .pages()
         .get(page_index as usize)
         .ok_or_else(|| eyre::eyre!("missing tex_land_ec page metadata for {page_index}"))?;
     let used_rgba = package.read_page_rgba(page_index)?;
     copy_land_page_into_full_atlas_rgba(
-        package.atlas_width(),
-        package.atlas_height(),
+        atlas_width,
+        atlas_height,
         page.used_width,
         page.used_height,
         &used_rgba,
@@ -733,10 +786,12 @@ fn packed_page_and_stretch(page_index: u32, texture_repetition: f32) -> u32 {
     (page_index & 0xFFFF) | (stretch_q8 << 16)
 }
 
+/// `atlas_layer` maps the package's page index to its land page atlas layer.
 fn land_lookup_values_from_ec_slot(
     package: &TexLandEcPackage,
     slot_id: u32,
     texture_repetition: f32,
+    atlas_layer: &impl Fn(u32) -> u32,
 ) -> [u32; 4] {
     package
         .slots()
@@ -744,7 +799,7 @@ fn land_lookup_values_from_ec_slot(
         .filter(|slot| slot.is_present())
         .map(|slot| {
             [
-                packed_page_and_stretch(slot.page_index, texture_repetition),
+                packed_page_and_stretch(atlas_layer(slot.page_index), texture_repetition),
                 slot.x as u32,
                 slot.y as u32,
                 (slot.width as u32) | ((slot.height as u32) << 16),
@@ -767,6 +822,94 @@ fn write_land_lookup_entry(
     }
 }
 
+/// Writes the lookup rows of `tile_id` from an EC-layout package. `secondary` marks the package appended after the
+/// atlas package: its material ids are offset so its materials stay distinct from the atlas package's in the coverage
+/// transitions. `atlas_layer` maps the package's page index to its atlas layer.
+fn write_enhanced_land_lookup(
+    lookup_bytes: &mut [u8],
+    package: &TexLandEcPackage,
+    tile_id: u32,
+    secondary: bool,
+    atlas_layer: &impl Fn(u32) -> u32,
+) {
+    if let Some(params) = coverage::EcTerrainParams::for_tile(package, tile_id) {
+        let params = if secondary { params.from_secondary_package() } else { params };
+        write_land_lookup_entry(lookup_bytes, tile_id, LAND_PAGE_LOOKUP_ROLE_COVERAGE_PARAMS, params.0);
+    }
+    if let Some(source) = package.resolve_material_decision(tile_id).material_id
+        .and_then(|id| package.source_material(id))
+        .and_then(|entry| entry.texture.as_ref())
+        .filter(|texture| texture.layer_class() == TerrainLayerClass::Water) {
+        // Original Technique[0] selects coordinates; Tweaks[0..2]
+        // scroll item 0 (du/dv) in UV units per second
+        // (UOWaterTerrainLayer::Draw, see ec_liquid.wesl).
+        write_land_lookup_entry(lookup_bytes, tile_id, LAND_PAGE_LOOKUP_ROLE_LIQUID_PARAMS, [
+            source.techniques().first().copied().unwrap_or(0) as u32,
+            source.tweaks().first().copied().unwrap_or(0.0).to_bits(),
+            source.tweaks().get(1).copied().unwrap_or(0.0).to_bits(),
+            LIQUID_PARAMS_FROM_SOURCE,
+        ]);
+    }
+    let [layer0, layer1, layer2, layer3, animated] = package.resolve_material_render_layers(tile_id);
+    let has_base_layer = layer0
+        .as_ref()
+        .and_then(|layer| layer.runtime_slot_id)
+        .is_some();
+
+    if has_base_layer {
+        for (role, layer) in [
+            (LAND_PAGE_LOOKUP_ROLE_BASE, layer0),
+            (LAND_PAGE_LOOKUP_ROLE_DETAIL, layer1),
+            (LAND_PAGE_LOOKUP_ROLE_MASK, layer2),
+            (LAND_PAGE_LOOKUP_ROLE_NORMAL, layer3),
+            (LAND_PAGE_LOOKUP_ROLE_ANIMATED, animated),
+        ] {
+            if let Some(layer) = layer {
+                if let Some(slot_id) = layer.runtime_slot_id {
+                    let values = land_lookup_values_from_ec_slot(
+                        package,
+                        slot_id,
+                        layer.texture_repetition,
+                        atlas_layer,
+                    );
+                    write_land_lookup_entry(lookup_bytes, tile_id, role, values);
+                }
+            }
+        }
+    } else if let Some(slot_id) = package.resolve_effective_runtime_slot_id(tile_id) {
+        // A tile without a base layer draws its runtime slot alone. In the shipped data these are the
+        // tiles with a slot of their own and no material (103, 109-112, 128, 16380-16383), which no
+        // facet places; with no material layer the stretch stays 0 and the shader sizes the slot by its
+        // extent (`ec_tile_stretch`).
+        let texture_repetition = package
+            .resolve_material_decision(tile_id)
+            .primary_layer_index
+            .and_then(|layer_index| {
+                package
+                    .resolve_material_layer_slot(tile_id, layer_index)
+                    .map(|layer| layer.texture_repetition)
+            })
+            .unwrap_or(0.0);
+        let values =
+            land_lookup_values_from_ec_slot(package, slot_id, texture_repetition, atlas_layer);
+        write_land_lookup_entry(
+            lookup_bytes,
+            tile_id,
+            LAND_PAGE_LOOKUP_ROLE_BASE,
+            values,
+        );
+    }
+}
+
+/// The pages of an EC-layout package's slots that `tile_id`'s lookup rows address.
+fn enhanced_land_tile_pages(package: &TexLandEcPackage, tile_id: u32) -> impl Iterator<Item = u32> + '_ {
+    let layers = package.resolve_material_render_layers(tile_id);
+    layers.into_iter().flatten().filter_map(|layer| layer.runtime_slot_id)
+        .chain(package.resolve_effective_runtime_slot_id(tile_id))
+        .filter_map(|slot_id| package.slots().get(slot_id as usize).filter(|slot| slot.is_present()))
+        .map(|slot| slot.page_index)
+}
+
 fn create_land_shader_images(
     images: &mut Assets<Image>,
     source: Option<LandShaderAtlasSource<'_>>,
@@ -780,28 +923,58 @@ fn create_land_shader_images(
         return Ok(create_blank_land_page_atlas_images(images));
     };
 
-    let (page_count, atlas_width, atlas_height) = match source {
+    let (primary_page_count, mut atlas_width, mut atlas_height) = match &source {
         LandShaderAtlasSource::Cc(package) => (
             package.pages().len().max(1) as u32,
             package.atlas_width().max(1),
             package.atlas_height().max(1),
         ),
-        LandShaderAtlasSource::Ec(package) => (
+        LandShaderAtlasSource::Ec { primary: package, .. } => (
             package.pages().len().max(1) as u32,
             package.atlas_width().max(1),
             package.atlas_height().max(1),
         ),
     };
+    let secondary = match &source {
+        LandShaderAtlasSource::Ec { secondary: Some(secondary), .. } => Some(secondary),
+        _ => None,
+    };
+    // The other EC-layout package's pages follow the atlas package's in the same array, padded to the larger extent.
+    if let Some(secondary) = secondary {
+        atlas_width = atlas_width.max(secondary.package.atlas_width());
+        atlas_height = atlas_height.max(secondary.package.atlas_height());
+    }
+    let page_count = primary_page_count + secondary.map_or(0, |secondary| secondary.pages.len() as u32);
 
     // Enhanced BC7 pages are uploaded as their blocks (linear, like the Enhanced RGBA pages); the rest as RGBA8888.
-    let bc7_pages = matches!(source, LandShaderAtlasSource::Ec(package)
-        if tex_land_ec_page_format(package) == PagePixelFormat::Bc7);
+    // Pages of two EC-layout packages keep their blocks only when both are BC7 at one extent; otherwise every page
+    // is decoded.
+    let bc7_pages = match &source {
+        LandShaderAtlasSource::Ec { primary, secondary } => tex_land_ec_page_format(primary) == PagePixelFormat::Bc7
+            && secondary.as_ref().is_none_or(|secondary| {
+                tex_land_ec_page_format(secondary.package) == PagePixelFormat::Bc7
+                    && secondary.package.atlas_width() == primary.atlas_width()
+                    && secondary.package.atlas_height() == primary.atlas_height()
+            }),
+        LandShaderAtlasSource::Cc(_) => false,
+    };
     let mut atlas_bytes = Vec::new();
-    for page_index in 0..page_count {
-        let layer = match source {
+    for page_index in 0..primary_page_count {
+        let layer = match &source {
             LandShaderAtlasSource::Cc(package) => decode_tex_land_cc_page_rgba(package, page_index)?,
-            LandShaderAtlasSource::Ec(package) if bc7_pages => read_tex_land_ec_page_bc7_layer(package, page_index)?,
-            LandShaderAtlasSource::Ec(package) => decode_tex_land_ec_page_rgba(package, page_index)?,
+            LandShaderAtlasSource::Ec { primary, .. } if bc7_pages => read_tex_land_ec_page_bc7_layer(primary, page_index)?,
+            LandShaderAtlasSource::Ec { primary, .. } => {
+                decode_tex_land_ec_page_rgba(primary, page_index, atlas_width, atlas_height)?
+            }
+        };
+        atlas_bytes.extend_from_slice(&layer);
+    }
+    for &page_index in secondary.map_or(&[][..], |secondary| &secondary.pages) {
+        let package = secondary.expect("secondary pages").package;
+        let layer = if bc7_pages {
+            read_tex_land_ec_page_bc7_layer(package, page_index)?
+        } else {
+            decode_tex_land_ec_page_rgba(package, page_index, atlas_width, atlas_height)?
         };
         atlas_bytes.extend_from_slice(&layer);
     }
@@ -814,9 +987,9 @@ fn create_land_shader_images(
         },
         TextureDimension::D2,
         atlas_bytes,
-        match source {
-            LandShaderAtlasSource::Ec(_) if bc7_pages => TextureFormat::Bc7RgbaUnorm,
-            LandShaderAtlasSource::Ec(_) => TextureFormat::Rgba8Unorm,
+        match &source {
+            LandShaderAtlasSource::Ec { .. } if bc7_pages => TextureFormat::Bc7RgbaUnorm,
+            LandShaderAtlasSource::Ec { .. } => TextureFormat::Rgba8Unorm,
             LandShaderAtlasSource::Cc(_) => TextureFormat::Rgba8UnormSrgb,
         },
         bevy::asset::RenderAssetUsages::RENDER_WORLD,
@@ -835,7 +1008,7 @@ fn create_land_shader_images(
     let mut lookup_bytes = vec![0u8; (lookup_width * lookup_height * 16) as usize];
 
     for tile_id in 0..max_cc_tile_id {
-        match source {
+        match &source {
             LandShaderAtlasSource::Cc(package) => {
                 if let Some(slot) = package.present_slot(tile_id) {
                     write_land_lookup_entry(
@@ -851,73 +1024,12 @@ fn create_land_shader_images(
                     );
                 }
             }
-            LandShaderAtlasSource::Ec(package) => {
-                if let Some(params) = coverage::EcTerrainParams::for_tile(package, tile_id) {
-                    write_land_lookup_entry(&mut lookup_bytes, tile_id, LAND_PAGE_LOOKUP_ROLE_COVERAGE_PARAMS, params.0);
-                }
-                if let Some(source) = package.resolve_material_decision(tile_id).material_id
-                    .and_then(|id| package.source_material(id))
-                    .and_then(|entry| entry.texture.as_ref())
-                    .filter(|texture| texture.layer_class() == TerrainLayerClass::Water) {
-                    // Original Technique[0] selects coordinates; Tweaks[0..2]
-                    // scroll item 0 (du/dv) in UV units per second
-                    // (UOWaterTerrainLayer::Draw, see ec_liquid.wesl).
-                    write_land_lookup_entry(&mut lookup_bytes, tile_id, LAND_PAGE_LOOKUP_ROLE_LIQUID_PARAMS, [
-                        source.techniques().first().copied().unwrap_or(0) as u32,
-                        source.tweaks().first().copied().unwrap_or(0.0).to_bits(),
-                        source.tweaks().get(1).copied().unwrap_or(0.0).to_bits(),
-                        LIQUID_PARAMS_FROM_SOURCE,
-                    ]);
-                }
-                let [layer0, layer1, layer2, layer3, animated] = package.resolve_material_render_layers(tile_id);
-                let has_base_layer = layer0
-                    .as_ref()
-                    .and_then(|layer| layer.runtime_slot_id)
-                    .is_some();
-
-                if has_base_layer {
-                    for (role, layer) in [
-                        (LAND_PAGE_LOOKUP_ROLE_BASE, layer0),
-                        (LAND_PAGE_LOOKUP_ROLE_DETAIL, layer1),
-                        (LAND_PAGE_LOOKUP_ROLE_MASK, layer2),
-                        (LAND_PAGE_LOOKUP_ROLE_NORMAL, layer3),
-                        (LAND_PAGE_LOOKUP_ROLE_ANIMATED, animated),
-                    ] {
-                        if let Some(layer) = layer {
-                            if let Some(slot_id) = layer.runtime_slot_id {
-                                let values = land_lookup_values_from_ec_slot(
-                                    package,
-                                    slot_id,
-                                    layer.texture_repetition,
-                                );
-                                write_land_lookup_entry(&mut lookup_bytes, tile_id, role, values);
-                            }
-                        }
-                    }
-                } else if let Some(slot_id) = package.resolve_effective_runtime_slot_id(tile_id) {
-                    // A tile without a base layer draws its runtime slot alone. In the shipped data these are the
-                    // tiles with a slot of their own and no material (103, 109-112, 128, 16380-16383), which no
-                    // facet places; with no material layer the stretch stays 0 and the shader sizes the slot by its
-                    // extent (`ec_tile_stretch`).
-                    let texture_repetition = package
-                        .resolve_material_decision(tile_id)
-                        .primary_layer_index
-                        .and_then(|layer_index| {
-                            package
-                                .resolve_material_layer_slot(tile_id, layer_index)
-                                .map(|layer| layer.texture_repetition)
-                        })
-                        .unwrap_or(0.0);
-                    let values =
-                        land_lookup_values_from_ec_slot(package, slot_id, texture_repetition);
-                    write_land_lookup_entry(
-                        &mut lookup_bytes,
-                        tile_id,
-                        LAND_PAGE_LOOKUP_ROLE_BASE,
-                        values,
-                    );
-                }
-            }
+            LandShaderAtlasSource::Ec { primary, secondary } => match secondary {
+                Some(secondary) if secondary.draws(tile_id) => write_enhanced_land_lookup(
+                    &mut lookup_bytes, secondary.package, tile_id, true,
+                    &|page| primary_page_count + secondary.atlas_page(page)),
+                _ => write_enhanced_land_lookup(&mut lookup_bytes, primary, tile_id, false, &|page| page),
+            },
         };
     }
 
@@ -943,12 +1055,17 @@ fn create_land_shader_images(
 fn land_shader_source_from_cache<'a>(
     cache: &'a cache::LandTextureCache,
 ) -> Option<LandShaderAtlasSource<'a>> {
-    match cache.preferred_source() {
+    // The atlas holds the first loaded source of the preferred source's chain (routing.rs).
+    match cache.routes().atlas() {
         crate::configs::settings::LandTextureSource::Cc => {
             cache.tex_land_cc.as_deref().map(LandShaderAtlasSource::Cc)
         }
         crate::configs::settings::LandTextureSource::Ec | crate::configs::settings::LandTextureSource::Kr => {
-            cache.enhanced_land().map(|package| LandShaderAtlasSource::Ec(package.as_ref()))
+            let primary = cache.atlas_enhanced_land()?.as_ref();
+            let secondary = cache.secondary_enhanced_land().map(|(source, package)| {
+                SecondaryEnhancedLand::new(package, cache.routes().ids_drawn_from(routing::LandTileRoute::Enhanced(source)).map(|(id, _)| id))
+            });
+            Some(LandShaderAtlasSource::Ec { primary, secondary })
         }
     }
 }
@@ -975,6 +1092,10 @@ impl Plugin for LandTextureCachePlugin {
         app.add_systems(First, cache::sys_clear_texture_array_uploads);
         app.add_systems(Update, cache::sys_drain_texture_upload_tasks);
         app.add_systems(Update, sys_apply_land_texture_source_changes);
+        app.add_systems(Update, sys_show_land_source_notice
+            .after(sys_apply_land_texture_source_changes)
+            .run_if(in_state(crate::core::app_states::AppState::InGame))
+            .run_if(|cache: Option<Res<cache::LandTextureCache>>| cache.is_some_and(|cache| cache.pending_land_notice.is_some())));
         app.add_systems(Update, coverage::sys_prepare_stack_cache
             .after(SceneRenderLandSysSet::RenderLandChunks)
             .run_if(in_state(crate::core::app_states::AppState::InGame)));
@@ -1188,28 +1309,17 @@ fn sys_apply_land_texture_source_changes(
         return;
     }
 
-    let missing_requested_package =
-        desired_source.uses_enhanced_land() && cache_r.enhanced_land_for(desired_source).is_none();
-
-    if missing_requested_package {
-        console_logger::one(
-            LogSev::Warn,
-            LogAbout::General,
-            &format!(
-                "Requested {} land textures, but the corresponding package is not loaded. Terrain rendering will fall back, so you may see no visible change.",
-                desired_source.land_label()
-            ),
-        );
-    }
-
     if !cache_r.set_preferred_source(desired_source) {
         return;
     }
+    // The new source's chain decides each id's source again: a missing package or id falls back explicitly, logged
+    // and, for a missing package, shown in the window.
+    resolve_land_routes(&mut cache_r);
 
     // Terrain source flips only change how the shader resolves land ids into
     // EC atlas slots. The fixed texture arrays still back classic texmaps and
-    // remain the fallback path for unmapped EC ids, so clearing or reuploading
-    // them here creates visible patchwork while those fallbacks stream back in.
+    // remain the path of the ids an EC-layout source routes to Classic texmaps, so clearing or reuploading
+    // them here creates visible patchwork while those textures stream back in.
     let _ = (&texmap_2d_r, &time);
 
     let shader_images = create_land_shader_images(&mut images, land_shader_source_from_cache(&cache_r))
@@ -1219,10 +1329,8 @@ fn sys_apply_land_texture_source_changes(
         mat.extension.land_page_lookup = shader_images.lookup;
     }
     // Enhanced and Kingdom Reborn land differ in their terrain definitions, so the per-chunk base ownership and the
-    // cached stacks are rebuilt from the package now drawn. The Classic source does not read them.
-    if desired_source.uses_enhanced_land() {
-        terrain_bases.set_package(cache_r.enhanced_land().map(|package| package.as_ref()));
-    }
+    // cached stacks are rebuilt from the packages now drawn. A Classic atlas does not read them.
+    terrain_bases.set_sources(coverage::EcTerrainSources::from_cache(&cache_r));
 
     console_logger::one(
         LogSev::Info,
@@ -1235,7 +1343,7 @@ fn sys_apply_land_texture_source_changes(
 
     // ── TEMPORARY EC package diagnostic ─────────────────────────────────────
     if desired_source.uses_enhanced_land() {
-        if let Some(ec) = cache_r.enhanced_land() {
+        if let Some(ec) = cache_r.atlas_enhanced_land() {
             let total_slots = ec.slots().len();
             let present_slots = ec.slots().iter().filter(|s| s.is_present()).count();
             let prov_count = ec.terrain_provenance().len();
@@ -1254,6 +1362,26 @@ fn sys_apply_land_texture_source_changes(
     }
 }
 
+/// Routes every land id under the preferred source (routing.rs), logs the one rerouting summary of this load or
+/// switch, and queues the in-window notice of a missing selected package.
+fn resolve_land_routes(cache: &mut cache::LandTextureCache) {
+    if let Some(summary) = cache.resolve_routes() {
+        console_logger::one(LogSev::Warn, LogAbout::RenderWorldLand, &summary);
+    }
+    cache.pending_land_notice = cache.routes().missing_package_notice(&cache.udd_folder);
+    if let Some(notice) = &cache.pending_land_notice {
+        console_logger::one(LogSev::Warn, LogAbout::RenderWorldLand, notice);
+    }
+}
+
+/// Shows the queued missing-package notice in the window once the world is on screen: in-window messages pushed
+/// during loading would expire before the first frame.
+fn sys_show_land_source_notice(mut cache: ResMut<cache::LandTextureCache>) {
+    if let Some(notice) = cache.pending_land_notice.take() {
+        crate::ingame_sysmessage_logger::warning(notice);
+    }
+}
+
 pub fn sys_setup_terrain_cache(
     mut cmd: Commands,
     mut images: ResMut<Assets<Image>>,
@@ -1267,6 +1395,7 @@ pub fn sys_setup_terrain_cache(
     tex_land_kr_r: Option<Res<crate::core::uo_files_loader::TexLandKrPackageRes>>,
     tex_aux_ec_r: Option<Res<crate::core::uo_files_loader::TexAuxEcPackageRes>>,
     map_planes: Res<crate::core::uo_files_loader::MapPlanesRes>,
+    uo_files_settings: Res<crate::core::uo_files_loader::UoFilesSettingsRes>,
     shader_presets: Res<crate::core::render::scene::world::land::mesh_material::LandShaderModePresets>,
 ) {
     log_system_add_startup::<LandTextureCachePlugin>(StartupSysSet::SetupSceneStage1, fname!());
@@ -1320,6 +1449,13 @@ pub fn sys_setup_terrain_cache(
     land_texture_cache.tex_art_ec = tex_art_ec_r.map(|r| r.0.clone());
     land_texture_cache.tex_land_ec = tex_land_ec_r.as_ref().map(|res| res.0.clone());
     land_texture_cache.tex_land_kr = tex_land_kr_r.as_ref().map(|res| res.0.clone());
+    land_texture_cache.set_classic_land(cache::ClassicLandIndex::new(
+        tilemeta_r.as_deref().map(|resource| resource.0.as_ref()),
+        Some(texmap_2d_r.0.as_ref()),
+        tex_art_cc_r.as_deref().map(|resource| resource.0.as_ref()),
+    ));
+    land_texture_cache.udd_folder = uo_files_settings.0.udd_folder.clone();
+    resolve_land_routes(&mut land_texture_cache);
 
     if let Some(plan) = residency_plan.as_ref() {
         land_texture_cache.prime_full_file_residency(
@@ -1351,8 +1487,9 @@ pub fn sys_setup_terrain_cache(
         &mut images,
         tex_art_cc_r.as_deref().map(|resource| resource.0.as_ref()),
         tilemeta_r.as_deref().map(|resource| resource.0.as_ref()),
+        land_texture_cache.classic_land(),
     )
-    .expect("Failed to build Classic wet land-art shader images");
+    .expect("Failed to build Classic land-art shader images");
 
     let aux_images = create_aux_atlas_images(
         &mut images,
@@ -1369,7 +1506,7 @@ pub fn sys_setup_terrain_cache(
         lookup: aux_images.surface_lookup.clone(),
     });
 
-    let enhanced_land_package = land_texture_cache.enhanced_land().cloned();
+    let terrain_sources = coverage::EcTerrainSources::from_cache(&land_texture_cache);
     cmd.insert_resource(land_texture_cache);
 
     cmd.insert_resource(cache::TextureArrayImageHandles {
@@ -1426,7 +1563,7 @@ pub fn sys_setup_terrain_cache(
     let terrain_bases = coverage::EcTerrainBases::new(
         &mut images,
         base_dimensions,
-        enhanced_land_package.as_deref(),
+        terrain_sources,
     );
     let ec_terrain_bases = terrain_bases.image.clone();
     let ec_terrain_stacks = terrain_bases.stack_image();
