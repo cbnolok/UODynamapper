@@ -92,7 +92,7 @@ Dynamapper's hand-written specs under `assets/runtime_specs/` (KDL) have user co
 - Keep Rust material uniform bindings and shader declarations in agreement. When changing a uniform, update its Rust definition, populated value and shader declaration together.
 - Use the logging facade for diagnostics rather than printing from the application.
 
-There are three shading modes and four render styles: Classic, Enhanced, KR-like and UOD-Painterly. KR-like and UOD-Painterly share a shading mode but have separate presets. Test visual changes across all four as required by `AGENTS.md`. The bundled shader preset comments and `docs/agent_notes/shader_settings_audit.md` provide additional context; check current settings and code when using the dated audit.
+There are three shading modes and four render styles: Classic, Enhanced, KR-like and UOD-Painterly. KR-like and UOD-Painterly share a shading mode but have separate presets. Test visual changes across all four as required by `AGENTS.md`. The bundled shader preset comments and `docs/agent_notes/shader_settings_audit.md` provide additional context; check current settings and code when using the dated audit. `docs/dev_wiki/rendering/CLIENT_NIGHT_LIGHTING_AND_SHADOWS.md` documents the clients' night composite, KR's static shadows and the clients' sun that KR-like and Enhanced reproduce.
 
 For missing Enhanced terrain textures, retain the explicit missing-texture behavior rather than silently substituting Classic texmaps. See `docs/dev_wiki/rendering/LAND_TEXTURES_AND_TRANSITIONS.md` for the terrain and transition constraints.
 

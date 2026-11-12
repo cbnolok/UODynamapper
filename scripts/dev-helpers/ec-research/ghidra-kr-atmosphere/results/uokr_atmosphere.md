@@ -254,6 +254,12 @@ diffuse (UODefaultTerrainLayer, see `ghidra-terrain-layers` and [P2.3](#p23-terr
 capture). D points 45 degrees above the horizon, towards decreasing cell row, which is UO north, the upper right of
 the screen.
 
+**Correction (2026-11-12):** the light is from the **south**. In `ComputeVertexNormal` the cross-product terms put
+the cell column on x and `-row` on z, with the height negated on y, so flat ground has N = (0, -1, 0) and D points
+towards the light: up and towards increasing cell row, UO south. Slopes facing south (towards the viewer) are the
+brightest, not the darkest, and "facing the light" in the table below means facing south. See
+[the Dynamapper rendering note](../../../../../docs/dev_wiki/rendering/CLIENT_NIGHT_LIGHTING_AND_SHADOWS.md#sun-direction).
+
 **Values:**
 
 | slope | facing the light | facing east or west | facing away |
@@ -267,7 +273,7 @@ the screen.
 **Contribution:**
 
 - all terrain is at most 1.0 and flat ground loses 15 %;
-- slopes facing south (towards the viewer) darken strongly; cliffs facing away fall to 0.15 to 0.3;
+- slopes facing north (away from the viewer) darken strongly (corrected above); cliffs facing away fall to 0.15 to 0.3;
 - there is no ambient floor other than the half-Lambert's own 0.5 at 90 degrees from the light;
 - the shade is evaluated per vertex and interpolated across two triangles per cell, so hills look faceted.
 
