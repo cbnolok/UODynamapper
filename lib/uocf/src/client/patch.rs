@@ -25,6 +25,7 @@
 //! - [`ExeEdit::NoEncryption`]: the bytes of each network cipher ([`crate::client::encryption`]): NOPs over the
 //!   login cipher's XOR (and the Enhanced Client's game cipher XORs), and a `JMP` for the `JZ` that enters the 0xE3
 //!   key exchange ciphers' loop. Every cipher of the family must be located exactly once; Classic is refused.
+//!   KR also bypasses the key exchange wait, sends the auth-key seed and installs Huffman before sending 0x91.
 
 crate::eyre_imports!();
 use std::path::{Path, PathBuf};
@@ -38,7 +39,7 @@ use crate::client::facet_dimensions::{
     validate_facet_size, ClientExeInspection, ClientFamily, ExeValues, FacetValues, CLASSIC_GOLD_SHA256, DISABLED_SPLIT_X,
     FACET_RECORD_HEIGHT_OFFSET, FACET_RECORD_WIDTH_OFFSET, SPLIT_FACETS, STOCK_SPLIT_X,
 };
-use crate::client::encryption::{EncryptionSites, EncryptionState};
+use crate::client::encryption::{CipherSiteKind, EncryptionSites, EncryptionState};
 use crate::client::login::{LoginHost, LoginServerEdit, LoginSites, LoginValues};
 use crate::client::pe::pe_checksum;
 use crate::client::version::ExeVersion;
@@ -118,7 +119,8 @@ pub enum ExeEdit {
     ClassicWrap { facet: u8, wrap_width: u32, wrap_height: u32 },
     /// A new built-in login server (Enhanced Client, Kingdom Reborn): one host per host site, one port per port site.
     LoginServer(LoginServerEdit),
-    /// Plaintext login and game traffic (Enhanced Client, Kingdom Reborn): every network cipher patched out.
+    /// Plaintext login and game traffic (Enhanced Client, Kingdom Reborn): every network cipher patched out,
+    /// and KR's mandatory key exchange replaced with immediate game login.
     NoEncryption,
 }
 
@@ -288,6 +290,24 @@ pub fn recorded_values_match(recorded: &ExeValues, current: &ExeValues) -> bool 
         && (recorded.encryption.is_none() || recorded.encryption == current.encryption)
 }
 
+/// Older KR plaintext patches removed both ciphers but left the game handshake stock. Their manifests call
+/// that state `Removed`; accept it only when the newly added handshake is the sole site still stock.
+fn recorded_inspection_values_match(recorded: &ExeValues, inspection: &ClientExeInspection) -> bool {
+    let mut current = inspection.values();
+    if inspection.family == ClientFamily::KingdomReborn
+        && recorded.encryption == Some(EncryptionState::Removed)
+        && current.encryption == Some(EncryptionState::Partial)
+        && inspection.encryption.as_ref().is_some_and(|sites| {
+            sites.is_complete()
+                && sites.sites.iter().filter(|site| !site.removed).map(|site| site.kind)
+                    .eq([CipherSiteKind::GameLoginHandshake])
+        })
+    {
+        current.encryption = Some(EncryptionState::Removed);
+    }
+    recorded_values_match(recorded, &current)
+}
+
 /// The ciphers a no-encryption edit patches: every one of the family, each located exactly once.
 fn checked_encryption_sites(before: &ClientExeInspection) -> eyre::Result<&EncryptionSites> {
     let Some(sites) = &before.encryption else {
@@ -402,7 +422,7 @@ pub fn plan_patch_inspected(
     let (original_sha256, original_values, build, previous_steps) = match previous {
         Some(manifest) => {
             eyre::ensure!(
-                recorded_values_match(&manifest.values, &before.values()),
+                recorded_inspection_values_match(&manifest.values, &before),
                 "the executable's facet, login or encryption values differ from the ones its manifest records"
             );
             let build = manifest.build.clone();
@@ -1272,6 +1292,64 @@ mod tests {
         let serialized = serde_json::to_string(&patch.edits).unwrap();
         assert_eq!(serialized, r#"["no_encryption"]"#);
         assert_eq!(serde_json::from_str::<Vec<ExeEdit>>(&serialized).unwrap(), patch.edits);
+    }
+
+    #[test]
+    fn no_encryption_upgrades_the_legacy_kr_manifest_only_for_the_stock_handshake() {
+        let image = synthetic_kr_encrypted_client();
+        let patch = ExePatch { edits: vec![ExeEdit::NoEncryption] };
+        let patched = patch_client_exe(&image, &patch, None).unwrap();
+        let sites = &patched.after.encryption.as_ref().unwrap().sites;
+        let handshake = sites.iter().find(|site| site.kind == CipherSiteKind::GameLoginHandshake).unwrap();
+        // Reconstruct the earlier two-site patch and its hash-matching manifest.
+        let mut legacy = patched.bytes.clone();
+        legacy[handshake.offset..][..handshake.stock().len()].copy_from_slice(handshake.stock());
+        let checksum_offset = patched.after.pe.checksum_offset;
+        let checksum = pe_checksum(&legacy, checksum_offset);
+        legacy[checksum_offset..][..PATCH_FIELD_SIZE].copy_from_slice(&checksum.to_le_bytes());
+        let mut manifest = patched.manifest.clone();
+        manifest.patched_sha256 = sha256_hex(&legacy);
+        manifest.steps.last_mut().unwrap().patched_sha256 = manifest.patched_sha256.clone();
+        manifest.checksum = checksum;
+        let inspection = ClientExeInspection::inspect(&legacy).unwrap();
+        assert_eq!(inspection.values().encryption, Some(EncryptionState::Partial));
+        assert!(!recorded_values_match(&manifest.values, &inspection.values()));
+
+        let upgraded = patch_client_exe(&legacy, &patch, Some(&manifest)).unwrap();
+        assert_eq!(upgraded.bytes, patched.bytes);
+        assert_eq!(upgraded.manifest.values.encryption, Some(EncryptionState::Removed));
+        assert_eq!(upgraded.manifest.original_sha256, manifest.original_sha256);
+        assert_eq!(upgraded.manifest.steps[..manifest.steps.len()], manifest.steps);
+        let writes: Vec<_> = upgraded.changes.iter().filter(|change| change.cause == ChangeCause::Edit(0)).collect();
+        assert_eq!(writes.len(), 1);
+        assert_eq!(writes[0].offset, handshake.offset);
+
+        // The compatibility exception never forgives other recorded value mismatches.
+        let mut wrong_values = manifest.clone();
+        wrong_values.values.facets[0].width = NEW_WIDTH;
+        assert!(plan_patch(&legacy, &patch, Some(&wrong_values)).unwrap_err().to_string().contains("values differ"));
+        wrong_values = manifest.clone();
+        wrong_values.values.login = ClientExeInspection::inspect(&synthetic_kr_login_client()).unwrap().values().login;
+        assert!(plan_patch(&legacy, &patch, Some(&wrong_values)).unwrap_err().to_string().contains("values differ"));
+        wrong_values = manifest.clone();
+        wrong_values.values.encryption = Some(EncryptionState::Encrypted);
+        assert!(plan_patch(&legacy, &patch, Some(&wrong_values)).unwrap_err().to_string().contains("values differ"));
+
+        // Another cipher still on, an incomplete inspection or a different family is not the legacy state.
+        let mut other = inspection.clone();
+        other.encryption.as_mut().unwrap().sites[0].removed = false;
+        assert!(!recorded_inspection_values_match(&manifest.values, &other));
+        other = inspection.clone();
+        let ciphers = other.encryption.as_mut().unwrap();
+        ciphers.sites.retain(|site| site.kind != CipherSiteKind::GameLoginHandshake);
+        ciphers.unlocated.push(crate::client::encryption::UnlocatedCipherSite {
+            kind: CipherSiteKind::GameLoginHandshake,
+            matches: 0,
+        });
+        assert!(!recorded_inspection_values_match(&manifest.values, &other));
+        other = inspection.clone();
+        other.family = ClientFamily::Enhanced;
+        assert!(!recorded_inspection_values_match(&manifest.values, &other));
     }
 
     #[test]

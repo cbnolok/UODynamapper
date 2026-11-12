@@ -96,27 +96,72 @@ validated, 0xE4 is sent, the state becomes 2), but nothing is enciphered or deci
 `UOHuffmanCoding_S2C_Decompress` (Transform `0x5dddc0`) decompresses server-to-client game traffic with the
 classic Huffman tree. The patch leaves it alone: the server still compresses its game packets.
 
-## The patch
+## The plaintext patch
 
 | File offset | VA | Stock | Patched | Cipher |
 |---|---|---|---|---|
 | `0x1dd59a` | `0x5de19a` | `30 08` | `90 90` | login, client to server |
 | `0x1da198` | `0x5dad98` | `74` | `eb` | 0xE3 key exchange, both directions |
 
-Both are located by instruction pattern (the bytes around them, the call displacement as a wildcard) and must match
-exactly once; the patched form is recognized too. The login cipher's key step still runs, harmlessly. Nothing else
-enciphers: the classic game ciphers are never installed, and the login connection receives plaintext.
+These cipher sites alone leave the client waiting for 0xE3. The complete plaintext patch also replaces the
+game connection setup in `FUN_005b6b40`:
 
-With the patch, a server must:
+| File range | VA range | Change |
+|---|---|---|
+| `0x1b5f9f..0x1b5fb1` | `0x5b6b9f..0x5b6bb1` | Replace the no-op boost hook and `htonl(-1)` with `htonl(LoginManager.auth_key)` |
+| `0x1b605d` | `0x5b6c5d` | State immediate 1 becomes 2 |
+| `0x1b608d..0x1b6169` | `0x5b6c8d..0x5b6d69` | Replace E3 callback construction/registration with Huffman construction, receive-transform installation and immediate 0x91 |
 
-- read 0xEF and 0x80 on the login connection unencrypted (0xEF was already unencrypted);
-- after the 4-byte game seed `0xffffffff`, send a valid 0xE3 (the client checks the Diffie-Hellman parameters),
-  read the client's 0xE4 and ignore it (its key is no longer used), then read 0x91 unencrypted;
-- send game packets Huffman-compressed and not encrypted, from the first packet after 0xE3.
+The patcher records this as one 458-byte site starting at `0x1b5f9f`. Unchanged instructions within that range
+are preserved. The **entire 655-byte function** (through `RET 4`, ending exclusively at VA `0x5b6dcf`) must
+match its stock or patched form at the original VA; calls and absolute operands are specific to this build.
+Unknown changes, mixed handshake replacements and a relocated function are refused. Cipher patterns still
+accept their stock or patched form and require exactly one match.
 
-ServUO sends no 0xE3 and has no 0xE4 handler, so a stock ServUO cannot take Kingdom Reborn past the game seed, with
-or without this patch. Sphere (Source-X) has a 0xE3 packet with a fixed 77-byte body (`PacketKREncryption`,
-`pDataKR_E3`); how it is triggered and how it treats 0xE4 was not checked.
+The seed replacement reads the original stack argument `[ESP+0x24]`, then its auth key at `+0x58`. Its outgoing
+four bytes still pass through the original `htonl` and raw send. Using that auth key, as EC does, avoids the
+fixed `0xffffffff` seed that servers can use to select the KR key exchange.
+
+The callback replacement is reproduced by [`../kr-plaintext-game-login.s`](../kr-plaintext-game-login.s).
+It allocates the same 32-byte Huffman object and calls the original constructor (`0x5dd850`, object in ESI),
+creates its correctly typed shared pointer (`0x5bca20`), and calls `AddReceiveTransform` (`0x5a29e0`). The
+by-value shared pointer consumes one reference; EDI retains the local reference for the original cleanup at
+`0x5b6d69`. EBX retains the seed message reference, released by the original cleanup at `0x5b6d97`. No
+Crypto++ cipher or E3 callback is installed. `0x5b59d0` receives the original LoginManager in EAX and sends 0x91.
+A failed Huffman allocation calls `Disconnect(1)` and releases the seed message without sending 0x91.
+
+Assemble the callback for review with GNU binutils:
+
+```sh
+as --32 kr-plaintext-game-login.s -o /tmp/kr-callback.o
+ld -m elf_i386 -Ttext=0x5b6c8d -e _start /tmp/kr-callback.o -o /tmp/kr-callback.elf
+objdump -d -Mintel /tmp/kr-callback.elf
+```
+
+With the complete patch, a server reads plaintext 0xEF / 0x80, the relay auth key as the game seed, and
+plaintext 0x91 immediately. It sends Huffman-compressed, unencrypted game packets. No E3/E4 support is required.
+This removes the stock KR handshake obstacle on ServUO; it does not establish compatibility with every other
+KR protocol feature. Sphere's fixed E3 exchange is no longer required for this login path.
+
+### Historical loader comparison
+
+The supplied `uokrloader/UoKRLoader/Utility.cs` (lines 188–272) NOPs the login XOR and zeroes the game cipher's
+output. It does not bypass E3, install Huffman early or send 0x91 early. Its game signature covers 50 bytes but
+the replacement writes 89; the replacement must not be copied without validating its full extent.
+`UO-SALoader/Form1.cs` actively patches login addresses only; its encryption patches in `StaticData.cs` are
+commented out. `UOCH_2.2-master/Main.c` patches Classic login, Blowfish/Twofish and MD5 ciphers; it has no KR
+handshake implementation. None supplies an E3/E4 bypass.
+
+### Validation
+
+The actual patched 655-byte function was executed under `qemu-i386` with stubs for the client APIs. Normal
+login, a null connection control block, and failed Huffman allocation passed seed byte-order, state, call-order,
+stack, nonvolatile-register and shared-pointer lifetime checks. The CLI-written executable contains exactly the
+executed function (SHA-256 `9caf512831decaafb0ab67803693abf5c302105567d1fc6aade3af19ca49895e`).
+This checks the x86 flow and calling conventions; a live Sphere login has not been tested.
+
+The encryption pattern tests, patch/legacy-manifest tests, GUI toggle test and real KR/EC encryption regression
+passed, as did `cargo check --workspace`. The real-client regression only patches temporary copies.
 
 ## Enhanced Client (UOSA.exe) for comparison
 

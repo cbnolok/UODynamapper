@@ -371,11 +371,17 @@ pub fn synthetic_kingdom_reborn_login() -> Vec<u8> {
     twelve_byte_client(None, false, false, Some((code, Vec::new())))
 }
 
-/// [`synthetic_kingdom_reborn`] with its two ciphers in their stock form, each between `INT3` filler.
+/// [`synthetic_kingdom_reborn`] with its encryption patch sites in their stock form, each between `INT3` filler.
 pub fn synthetic_kingdom_reborn_ciphers() -> Vec<u8> {
     let mut code = vec![INT3; CIPHER_FILLER_SIZE];
     for kind in CipherSiteKind::of_family(ClientFamily::KingdomReborn) {
-        code.extend(kind.pattern().stock_code(CIPHER_WILDCARD_FILL));
+        let pattern = kind.pattern();
+        if let Some(va) = pattern.required_va {
+            let at = (va - IMAGE_BASE - SECTION_ALIGNMENT) as usize - NOP_SLED_SIZE;
+            assert!(code.len() <= at);
+            code.resize(at, INT3);
+        }
+        code.extend(pattern.stock_code(CIPHER_WILDCARD_FILL));
         code.extend([INT3; CIPHER_FILLER_SIZE]);
     }
     twelve_byte_client(None, false, false, Some((code, Vec::new())))

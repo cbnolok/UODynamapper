@@ -18,6 +18,7 @@ use super::client_exe_facet_dimensions::{allowed_ranges, client_exes, exe_kind, 
 /// The traced UOKR.exe: the login cipher's `XOR [EAX],CL` and the key exchange adapter's `JZ`.
 const KR_LOGIN_CIPHER_OFFSET: usize = 0x1d_d59a;
 const KR_KEY_EXCHANGE_CIPHER_OFFSET: usize = 0x1d_a198;
+const KR_GAME_LOGIN_HANDSHAKE_OFFSET: usize = 0x1b_5f9f;
 /// The login address of the patched copies.
 const PATCHED_HOST: &str = "127.0.0.1";
 const PATCHED_PORT: u16 = 2593;
@@ -37,7 +38,7 @@ fn every_enhanced_client_and_kingdom_reborn_build_patches_its_encryption_out() {
         let kinds: Vec<CipherSiteKind> = ciphers.sites.iter().map(|site| site.kind).collect();
         assert_eq!(kinds, CipherSiteKind::of_family(before.family), "{}", exe.display());
         if before.family == ClientFamily::KingdomReborn {
-            assert_eq!(ciphers.offsets(), [KR_LOGIN_CIPHER_OFFSET, KR_KEY_EXCHANGE_CIPHER_OFFSET]);
+            assert_eq!(ciphers.offsets(), [KR_LOGIN_CIPHER_OFFSET, KR_KEY_EXCHANGE_CIPHER_OFFSET, KR_GAME_LOGIN_HANDSHAKE_OFFSET]);
         }
         let sites = before.login.as_ref().unwrap();
         let login = LoginServerEdit::uniform(sites, LoginHost::new(PATCHED_HOST).unwrap(), PATCHED_PORT);

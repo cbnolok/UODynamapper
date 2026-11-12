@@ -88,6 +88,9 @@ which also lists every site of every build.
 - **0xE3 key exchange ciphers** (both): the Crypto++ pair the 0xE3 handler installs, behind one
   `CryptoPPAdapter::Transform`. The patch turns the `JZ` that enters its per-chunk loop into a `JMP` (`74` to `eb`),
   so messages pass through unchanged both ways.
+- **KR game handshake**: replace the fixed `0xffffffff` seed with the relay auth key, enter state 2, install
+  Huffman and send 0x91 immediately. The client no longer waits for 0xE3 or sends 0xE4. This replacement is
+  specific to the audited KR build: its complete game-connect function must match at VA `0x5b6b40`.
 - Huffman compression of server-to-client game traffic is left alone.
 
 Each site is located by its instruction pattern and must match exactly once (stock or patched); otherwise the edit is
@@ -95,17 +98,21 @@ refused, naming the cipher and its match count. Classic is refused. `exe show` p
 partly removed) and each site; the manifest records it (`values.encryption`: `encrypted`, `removed`, `partial`).
 
 What a server must do with a patched client: read 0xEF / 0x80 and the game 0x91 unencrypted, and send game packets
-Huffman-compressed, not encrypted. Kingdom Reborn sends the game seed `0xffffffff`, then waits for 0xE3: only 0xE3
-passes its filter until a valid one arrives (anything else disconnects). It answers 0xE4 (plaintext) and only then
-sends 0x91. A server must send a valid 0xE3 and ignore the 0xE4 key. Stock ServUO sends no 0xE3. The Enhanced Client
-sends the auth key as its seed and 0x91 right away; 0xE3 is optional there.
+Huffman-compressed, not encrypted. Patched Kingdom Reborn sends the relay auth key as the game seed and 0x91
+immediately, with Huffman already installed; it needs no 0xE3 / 0xE4 support from the server. This also avoids
+advertising KR's fixed `0xffffffff` seed to servers that use it to select the key exchange. Stock KR still requires
+0xE3; stock ServUO does not send it. The Enhanced Client already sends the auth key and 0x91 immediately.
 
-| exe | login | game send | game receive | key exchange |
-|---|---|---|---|---|
-| Old KR/UOKR.exe | 0x1dd59a | - | - | 0x1da198 |
-| Enhanced/UOSA.exe 4.0.102.3, UOSA_eclo.exe | 0x23c7da | 0x239ff9 | 0x23becb | 0x2390e8 |
-| Enhanced/UOSA_TC.exe 4.0.29.97 | 0x22ab6a | 0x228389 | 0x22a25b | 0x227478 |
-| Enhanced fp/UOSA.exe 4.0.115.0 | 0x240daa | 0x23e5c9 | 0x24049b | 0x23d6b8 |
+| exe | login | game send | game receive | key exchange | KR handshake |
+|---|---|---|---|---|---|
+| Old KR/UOKR.exe | 0x1dd59a | - | - | 0x1da198 | 0x1b5f9f (458 bytes) |
+| Enhanced/UOSA.exe 4.0.102.3, UOSA_eclo.exe | 0x23c7da | 0x239ff9 | 0x23becb | 0x2390e8 | - |
+| Enhanced/UOSA_TC.exe 4.0.29.97 | 0x22ab6a | 0x228389 | 0x22a25b | 0x227478 | - |
+| Enhanced fp/UOSA.exe 4.0.115.0 | 0x240daa | 0x23e5c9 | 0x24049b | 0x23d6b8 | - |
+
+Earlier KR copies with only the two cipher patches inspect as partly removed. Reapplying `--no-encryption`
+adds the handshake bypass; their hash-matching manifests remain usable when the original cipher sites are removed
+and only the newly introduced handshake site is stock.
 
 ## Tools
 

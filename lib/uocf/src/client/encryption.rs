@@ -19,11 +19,14 @@
 //!   `CryptoPPAdapter::Transform`). The adapter loops over the message's chunks and runs the filter on each in
 //!   place; the patch turns the loop's entry `JZ` into a `JMP`, so the message passes through unchanged in both
 //!   directions. Kingdom Reborn's only game ciphers; optional in the Enhanced Client (only if the server sends 0xE3).
+//! - [`CipherSiteKind::GameLoginHandshake`]: Kingdom Reborn's game connection setup. Send the relay auth key as
+//!   the seed, enter the ready state, install Huffman and send 0x91 immediately, bypassing the 0xE3 / 0xE4 exchange.
 //!
 //! The Huffman compression of server-to-client game traffic is left alone: the server still compresses.
 //!
-//! Each site is a byte pattern (with wildcards for call displacements) around the bytes the patch writes; those
-//! bytes match either their stock or their patched form, so a patched copy is located too. A site counts only when
+//! Cipher sites use byte patterns with wildcards for call displacements; the KR handshake requires its exact
+//! audited function and original VA because its replacement embeds build-specific calls. The bytes each patch writes
+//! match either their stock or their patched form, so a patched copy is located too. A site counts only when
 //! its pattern matches exactly once in `.text`; otherwise it is reported unlocated and the patch is refused.
 
 crate::eyre_imports!();
@@ -57,6 +60,8 @@ pub enum CipherSiteKind {
     GameCipherReceive,
     /// The ciphers the 0xE3 / 0xE4 key exchange installs on the game connection, both directions.
     KeyExchangeCipher,
+    /// KR's game seed and mandatory key exchange, replaced with immediate plaintext game login.
+    GameLoginHandshake,
 }
 
 /// The sites each family has, in order. Classic has none located here.
@@ -66,7 +71,11 @@ const ENHANCED_SITES: [CipherSiteKind; 4] = [
     CipherSiteKind::GameCipherReceive,
     CipherSiteKind::KeyExchangeCipher,
 ];
-const KINGDOM_REBORN_SITES: [CipherSiteKind; 2] = [CipherSiteKind::LoginCipher, CipherSiteKind::KeyExchangeCipher];
+const KINGDOM_REBORN_SITES: [CipherSiteKind; 3] = [
+    CipherSiteKind::LoginCipher,
+    CipherSiteKind::KeyExchangeCipher,
+    CipherSiteKind::GameLoginHandshake,
+];
 
 /// Where a cipher's bytes are and what the patch writes there.
 #[derive(Debug)]
@@ -77,6 +86,8 @@ pub struct CipherPattern {
     pub patch_at: usize,
     pub stock: &'static [u8],
     pub patched: &'static [u8],
+    /// Required pattern VA for replacements containing build-specific calls or absolute operands.
+    pub required_va: Option<u32>,
 }
 
 impl CipherPattern {
@@ -97,6 +108,7 @@ const LOGIN_CIPHER: CipherPattern = CipherPattern {
     patch_at: 10,
     stock: &XOR_MEM_EAX_CL,
     patched: &[OPCODE_NOP; XOR_MEM_EAX_CL.len()],
+    required_va: None,
 };
 
 /// `UOGameCipher_C2S_Encrypt::EncryptByte`, the XOR at UOSA 4.0.102.3 VA 0x639ff9: `MOV EDX,[EBX+0x124C];
@@ -109,6 +121,7 @@ const GAME_CIPHER_SEND: CipherPattern = CipherPattern {
     patch_at: 13,
     stock: &XOR_MEM_EBP_AL,
     patched: &[OPCODE_NOP; XOR_MEM_EBP_AL.len()],
+    required_va: None,
 };
 
 /// `UOGameCipher_S2C_Decrypt::Transform`, the XOR at UOSA 4.0.102.3 VA 0x63becb: `MOV ECX,[ESI+0x18];
@@ -122,6 +135,7 @@ const GAME_CIPHER_RECEIVE: CipherPattern = CipherPattern {
     patch_at: 20,
     stock: &XOR_MEM_EAX_DL,
     patched: &[OPCODE_NOP; XOR_MEM_EAX_DL.len()],
+    required_va: None,
 };
 
 /// `CryptoPPAdapter::Transform` (KR 0x5dad60, UOSA 4.0.102.3 0x6390b0), after the message's chunk range is read:
@@ -136,6 +150,7 @@ const KEY_EXCHANGE_CIPHER: CipherPattern = CipherPattern {
     patch_at: 24,
     stock: &[OPCODE_JZ_REL8],
     patched: &[OPCODE_JMP_REL8],
+    required_va: None,
 };
 
 impl CipherSiteKind {
@@ -145,6 +160,7 @@ impl CipherSiteKind {
             Self::GameCipherSend => "game cipher (send)",
             Self::GameCipherReceive => "game cipher (receive)",
             Self::KeyExchangeCipher => "0xE3 key exchange ciphers",
+            Self::GameLoginHandshake => "KR game login handshake",
         }
     }
 
@@ -155,6 +171,7 @@ impl CipherSiteKind {
             Self::GameCipherSend => "game send cipher XOR (NOPs)",
             Self::GameCipherReceive => "game receive cipher XOR (NOPs)",
             Self::KeyExchangeCipher => "key exchange cipher loop (JZ to JMP)",
+            Self::GameLoginHandshake => "KR auth seed, Huffman and immediate 0x91 (skip 0xE3/0xE4)",
         }
     }
 
@@ -164,6 +181,7 @@ impl CipherSiteKind {
             Self::GameCipherSend => &GAME_CIPHER_SEND,
             Self::GameCipherReceive => &GAME_CIPHER_RECEIVE,
             Self::KeyExchangeCipher => &KEY_EXCHANGE_CIPHER,
+            Self::GameLoginHandshake => &super::kr_game_login::PATTERN,
         }
     }
 
@@ -315,7 +333,11 @@ pub fn locate_encryption_sites(
     let mut located = EncryptionSites { sites: Vec::new(), unlocated: Vec::new() };
     for &kind in kinds {
         let pattern = kind.pattern();
-        match pattern_matches(code, pattern).as_slice() {
+        let matches: Vec<_> = pattern_matches(code, pattern)
+            .into_iter()
+            .filter(|(at, _)| pattern.required_va.is_none_or(|va| pe.offset_to_va(base + at) == Some(va)))
+            .collect();
+        match matches.as_slice() {
             [(at, removed)] => {
                 located.sites.push(CipherSite { kind, offset: base + at + pattern.patch_at, removed: *removed })
             }
@@ -336,18 +358,23 @@ pub(crate) mod tests {
     const FILLER_LEN: usize = 32;
     /// The bytes standing for a pattern's wildcards.
     const WILDCARD_FILL: u8 = 0x12;
+    /// The synthetic PE's first section VA.
+    const CODE_VA: u32 = super::super::pe::tests::TEST_IMAGE_BASE + super::super::pe::tests::TEST_SECTION_ALIGNMENT;
 
     /// Code with the stock patterns of `kinds`, each between filler.
     pub fn cipher_code(kinds: &[CipherSiteKind]) -> Vec<u8> {
         let mut code = vec![FILLER; FILLER_LEN];
         for kind in kinds {
+            if let Some(va) = kind.pattern().required_va {
+                code.resize((va - CODE_VA) as usize, FILLER);
+            }
             code.extend(kind.pattern().stock_code(WILDCARD_FILL));
             code.extend([FILLER; FILLER_LEN]);
         }
         code
     }
 
-    /// A Kingdom Reborn image with its two ciphers.
+    /// A Kingdom Reborn image with its ciphers and game handshake.
     pub fn synthetic_kr_encrypted_client() -> Vec<u8> {
         synthetic_image_with(cipher_code(&KINGDOM_REBORN_SITES), Vec::new(), false)
     }
@@ -418,11 +445,29 @@ pub(crate) mod tests {
     }
 
     #[test]
+    fn kr_handshake_requires_the_audited_function_at_its_original_address() {
+        let pattern = CipherSiteKind::GameLoginHandshake.pattern();
+        let code = cipher_code(&KINGDOM_REBORN_SITES);
+        let at = (pattern.required_va.unwrap() - CODE_VA) as usize;
+        // An altered cleanup is outside the written range but must still reject the entire handshake patch.
+        let mut altered = code.clone();
+        altered[at + pattern.bytes.len() - 1] = FILLER;
+        let altered = sites(&synthetic_image_with(altered, Vec::new(), false));
+        assert_eq!(altered.unlocated, [UnlocatedCipherSite { kind: CipherSiteKind::GameLoginHandshake, matches: 0 }]);
+
+        // The exact instructions at a different VA would call the wrong helpers.
+        let mut shifted = vec![FILLER; FILLER_LEN];
+        shifted.extend(code);
+        let shifted = sites(&synthetic_image_with(shifted, Vec::new(), false));
+        assert_eq!(shifted.unlocated, altered.unlocated);
+    }
+
+    #[test]
     fn classic_has_no_encryption_sites_and_the_state_serializes_in_snake_case() {
         let classic = crate::client::classic_facets::tests::synthetic_classic(6, 2);
         assert!(ClientExeInspection::inspect(&classic).unwrap().encryption.is_none());
         assert_eq!(serde_json::to_string(&EncryptionState::Removed).unwrap(), "\"removed\"");
-        for pattern in [&LOGIN_CIPHER, &GAME_CIPHER_SEND, &GAME_CIPHER_RECEIVE, &KEY_EXCHANGE_CIPHER] {
+        for pattern in [&LOGIN_CIPHER, &GAME_CIPHER_SEND, &GAME_CIPHER_RECEIVE, &KEY_EXCHANGE_CIPHER, &super::super::kr_game_login::PATTERN] {
             let stock = &pattern.bytes[pattern.patch_at..pattern.patch_at + pattern.stock.len()];
             assert!(stock.iter().zip(pattern.stock).all(|(byte, expected)| *byte == u16::from(*expected)));
             assert_eq!(pattern.stock.len(), pattern.patched.len());

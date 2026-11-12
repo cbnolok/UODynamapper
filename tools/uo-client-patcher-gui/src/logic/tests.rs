@@ -460,7 +460,7 @@ fn kingdom_reborn_takes_an_ipv4_address() {
 
 #[test]
 fn the_encryption_toggle_patches_every_cipher_out() {
-    use uocf::client::encryption::EncryptionState;
+    use uocf::client::encryption::{CipherSiteKind, EncryptionState};
 
     let temp = TempDir::new("kr_encryption");
     let exe = temp.folder("client").join(KR_EXE_NAME);
@@ -470,7 +470,7 @@ fn the_encryption_toggle_patches_every_cipher_out() {
     assert_eq!(edits.encryption.status(), EncryptionStatus::Located(EncryptionState::Encrypted));
     assert!(edits.encryption.can_remove());
     let rows = edits.encryption.rows(&opened.inspection);
-    assert_eq!(rows.len(), 2);
+    assert_eq!(rows.len(), CipherSiteKind::of_family(ClientFamily::KingdomReborn).len());
     assert!(rows.iter().all(|row| row.state.starts_with("on")));
     assert!(edits.build_patch().unwrap().edits.is_empty(), "off by default");
 

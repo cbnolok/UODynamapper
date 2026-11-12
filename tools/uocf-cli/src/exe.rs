@@ -73,7 +73,8 @@ pub enum ExeCmd {
         login_ports: Vec<(Option<usize>, u16)>,
         /// Make the client send and read plaintext (Enhanced Client, Kingdom Reborn): the login cipher, the
         /// Enhanced Client's game ciphers and the 0xE3 key exchange ciphers are patched out (`exe show` lists them).
-        /// The server must take an unencrypted 0x80 and 0x91; Kingdom Reborn still waits for 0xE3 before its 0x91.
+        /// Kingdom Reborn skips 0xE3/0xE4, uses the relay auth key as its game seed and sends 0x91 immediately.
+        /// The server must take unencrypted 0x80 and 0x91 and send unencrypted, Huffman-compressed game packets.
         #[arg(long)]
         no_encryption: bool,
         /// Print the byte changes without writing anything.

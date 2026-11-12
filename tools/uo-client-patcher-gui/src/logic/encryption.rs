@@ -11,7 +11,7 @@ use super::edits::Validation;
 /// What the server must do once the client talks plaintext, for the section's note.
 pub const PLAINTEXT_SERVER_NOTE: &str = "The server must take the login packets (0xEF seed, 0x80) and, after the game \
      seed, the 0x91 unencrypted, and send unencrypted (still Huffman-compressed) game packets. Kingdom Reborn sends \
-     its 0x91 only after a valid 0xE3 key exchange packet from the server (it answers 0xE4), as before.";
+     the relay auth key as its game seed and sends 0x91 immediately, skipping the 0xE3/0xE4 key exchange.";
 
 /// Whether the opened executable encrypts.
 #[derive(Debug, Clone, PartialEq, Eq)]
