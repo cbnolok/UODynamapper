@@ -1919,6 +1919,7 @@ mod tests {
             client_lighting: None,
             client_shadows: None,
             local_lights: None,
+            land_texture_variation: None,
             sun: world::land::mesh_material::SunAngles::default(),
             dirty: false,
             saved_snapshot: None,

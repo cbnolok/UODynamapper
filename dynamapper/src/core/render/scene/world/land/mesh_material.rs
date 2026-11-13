@@ -6,6 +6,8 @@ use bevy::{
 };
 use serde::{self, Deserialize, Serialize};
 
+use crate::configs::land_texture_variation::{LandTextureVariationMaterials, LAND_TEXTURE_VARIATION_MASK_WORDS};
+
 // ------------- Land material/shader data -------------
 pub type LandCustomMeshMaterial = ExtendedMaterial<StandardMaterial, LandMaterialExtension>;
 
@@ -69,6 +71,11 @@ pub struct LandMaterialExtension {
     /// Shared generated grunge/noise texture for EC/KR weathering overlays.
     #[texture(112, visibility(fragment))]
     pub visual_grunge_texture: Handle<Image>,
+
+    /// The KR and Enhanced materials the land texture variation breaks up, and which of them turn
+    /// (`configs::land_texture_variation`).
+    #[uniform(113, visibility(fragment))]
+    pub texture_variation_uniform: LandTextureVariationUniform,
 
     /// Compact Classic `art.mul` land diamonds used only by flat wet terrain.
     #[texture(115, dimension = "2d_array", visibility(fragment))]
@@ -248,9 +255,14 @@ pub struct LandEffectsUniform {
     /// World-tile wavelength for the broad KR color wash.
     pub kr_color_wash_scale: f32,
 
-    // --- Texture filter and client grunge (vec4 slot 9) ---
+    // --- Texture filter, land texture variation and client grunge (vec4 slot 9); local lights (slot 10) ---
     /// `TEXTURE_FILTER_PIXEL_ART` or `TEXTURE_FILTER_CLIENT_BILINEAR`, for land and sprite textures.
     pub texture_filter: u32,
+    /// 1 = break up the repetition of the listed KR and Enhanced terrain materials (land/sampling.wesl), 0 = their
+    /// plain tiling. A per-style setting, not a slot value: `UniformState` keeps it in line with its
+    /// `land_texture_variation`.
+    #[serde(skip)]
+    pub land_texture_variation: u32,
     /// 1 = the KR client's grunge on the statics it grunges (art/client_grunge.wesl), in any style.
     pub enable_client_grunge: u32,
     /// The client grunge's strength, 0..1: 1 is the client's full multiply, 0 leaves the colour as it is.
@@ -445,6 +457,29 @@ impl Default for LandStaticLightUniform {
     }
 }
 
+/// The 32-bit words of the land texture variation bitmask in one `UVec4` of the uniform array.
+const LAND_TEXTURE_VARIATION_WORDS_PER_VEC4: usize = 4;
+
+/// The materials the land texture variation breaks up (land/sampling.wesl `land_texture_variation_bits`): the bits of
+/// `LandTextureVariationMaterials::bitmask`, four words to a `UVec4`, as uniform arrays need 16-byte elements.
+#[repr(C, align(16))]
+#[derive(Clone, Copy, PartialEq, ShaderType)]
+#[allow(dead_code)]
+pub struct LandTextureVariationUniform {
+    pub materials: [UVec4; LAND_TEXTURE_VARIATION_MASK_WORDS / LAND_TEXTURE_VARIATION_WORDS_PER_VEC4],
+}
+
+impl LandTextureVariationUniform {
+    pub fn from_materials(materials: &LandTextureVariationMaterials) -> Self {
+        let words = materials.bitmask();
+        Self {
+            materials: std::array::from_fn(|index| {
+                UVec4::from_slice(&words[index * LAND_TEXTURE_VARIATION_WORDS_PER_VEC4..][..LAND_TEXTURE_VARIATION_WORDS_PER_VEC4])
+            }),
+        }
+    }
+}
+
 #[derive(Clone, Copy, Debug)]
 pub enum LandShaderMode {
     Classic2D = 0,
@@ -467,6 +502,11 @@ pub struct LandShaderModePresets {
 #[derive(Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct LandRenderStylePresetsPerMode {
+    /// Break up the texture repetition of the KR and Enhanced terrain materials `LandTextureVariation.kdl` lists, in
+    /// KR-like, Enhanced and UOD-Painterly, one setting for the style rather than per time of day; Classic has no such
+    /// materials. Placed before the tables so that it serializes as a plain key of the style's table.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub land_texture_variation: Option<bool>,
     /// The local lights of KR-like and Enhanced, one setting for the style rather than per time of day: which
     /// lights the land light decals and static local lights take, and how strongly.
     #[serde(skip_serializing_if = "Option::is_none")]

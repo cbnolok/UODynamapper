@@ -240,7 +240,7 @@ fn preset_for_style(
     get_preset_slot(presets, &period.key(style.preset_group)).unwrap_or(&presets.classic.morning)
 }
 
-/// Load the preset of a style and time of day, with the style's local lights.
+/// Load the preset of a style and time of day, with the style's local lights and land texture variation.
 fn apply_render_preset(
     u: &mut UniformState,
     presets: &LandShaderModePresets,
@@ -263,8 +263,11 @@ fn apply_render_preset(
     u.global_lighting = preset_scene_multiplier(preset);
     u.client_lighting = preset.client_lighting;
     u.client_shadows = preset.client_shadows;
-    u.local_lights = get_preset_group(presets, style.preset_group).and_then(|slots| slots.local_lights);
+    let style_slots = get_preset_group(presets, style.preset_group);
+    u.local_lights = style_slots.and_then(|slots| slots.local_lights);
     u.sync_local_light_intensity();
+    u.land_texture_variation = style_slots.and_then(|slots| slots.land_texture_variation);
+    u.sync_land_texture_variation();
     u.sun = preset.sun;
     u.active_preset = period.key(style.preset_group);
     u.dirty = true;
@@ -1004,6 +1007,11 @@ fn push_uniforms_if_dirty(
         u.sync_local_light_intensity();
         u.dirty = true;
     }
+    // So is the land texture variation: bring the flag the shaders read in line.
+    if u.effects.land_texture_variation != u.land_texture_variation_flag() {
+        u.sync_land_texture_variation();
+        u.dirty = true;
+    }
     if !u.dirty {
         return;
     }
@@ -1234,6 +1242,10 @@ fn terrain_controls(ui: &mut egui::Ui, u: &mut UniformState, gates: RenderStyleG
     // the one derived from the texture (land/bump.wesl). The per-pixel lighting reads the bumped normal, Classic
     // shading and the client per-vertex model scale their vertex light by it, and Grunge's shading reads it too.
     changed |= toggle_slider(ui, true, "Bump Maps", &mut u.effects.enable_normal_maps, &mut u.effects.land_normal_map_strength, 0.0..=1.0, tips::NORMAL_MAPS);
+    // KR-like, Enhanced and UOD-Painterly, one setting for the style; Classic draws no KR or Enhanced materials.
+    if let Some(variation) = u.land_texture_variation.as_mut() {
+        changed |= with_tip(ui.checkbox(variation, "Break up terrain texture repetition"), tips::LAND_TEXTURE_VARIATION).changed();
+    }
     changed
 }
 
@@ -1453,6 +1465,7 @@ mod tests {
             client_lighting: None,
             client_shadows: None,
             local_lights: None,
+            land_texture_variation: None,
             sun: SunAngles::default(),
             dirty: false,
             saved_snapshot: None,
@@ -1474,6 +1487,7 @@ mod tests {
 
     fn mode(base: f32) -> LandRenderStylePresetsPerMode {
         LandRenderStylePresetsPerMode {
+            land_texture_variation: None,
             local_lights: None,
             morning: preset(base),
             afternoon: preset(base + 1.0),
@@ -1674,6 +1688,32 @@ mod tests {
         store_active_and_apply_render_preset(&mut u, &mut presets, kr_like, ShaderPresetPeriod::Cave);
         assert_eq!(u.local_lights, Some(picked));
         assert_eq!(u.effects.local_light_intensity, LIGHT_MUL_INTENSITY);
+    }
+
+    /// The land texture variation belongs to the style: switched on at one time of day of UOD-Painterly, it is on at
+    /// the others, stays off in KR-like, and Classic has none; the shaders' flag follows it.
+    #[test]
+    fn land_texture_variation_is_one_setting_per_style_and_reaches_the_shaders() {
+        let mut presets = mode_presets();
+        presets.kr.land_texture_variation = Some(false);
+        presets.painterly.land_texture_variation = Some(false);
+        let [classic, _, kr_like, painterly] = RENDER_STYLE_PRESETS;
+        let mut u = uniform_state();
+
+        store_active_and_apply_render_preset(&mut u, &mut presets, painterly, ShaderPresetPeriod::Night);
+        assert_eq!(u.land_texture_variation, Some(false));
+        assert_eq!(u.effects.land_texture_variation, 0);
+        u.land_texture_variation = Some(true);
+        store_active_and_apply_render_preset(&mut u, &mut presets, painterly, ShaderPresetPeriod::Morning);
+        assert_eq!(presets.painterly.land_texture_variation, Some(true));
+        assert_eq!(u.effects.land_texture_variation, 1);
+
+        store_active_and_apply_render_preset(&mut u, &mut presets, kr_like, ShaderPresetPeriod::Morning);
+        assert_eq!(u.effects.land_texture_variation, 0);
+        store_active_and_apply_render_preset(&mut u, &mut presets, classic, ShaderPresetPeriod::Morning);
+        assert_eq!(u.land_texture_variation, None);
+        assert_eq!(presets.classic.land_texture_variation, None);
+        assert_eq!(u.effects.land_texture_variation, 0);
     }
 
     #[test]

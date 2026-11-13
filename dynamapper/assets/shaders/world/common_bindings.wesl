@@ -57,6 +57,8 @@ struct LandEffectsUniform {
     kr_color_wash_scale: f32,
     // TEXTURE_FILTER_PIXEL_ART or TEXTURE_FILTER_CLIENT_BILINEAR (client_filter.wesl).
     texture_filter: u32,
+    // 1 breaks up the repetition of the listed KR and Enhanced terrain materials (land/sampling.wesl).
+    land_texture_variation: u32,
     // The KR client's grunge on statics (art/client_grunge.wesl): on/off and strength.
     enable_client_grunge: u32,
     client_grunge_strength: f32,

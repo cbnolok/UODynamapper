@@ -100,6 +100,9 @@ pub(super) const KR_MATERIAL_CONTRAST: &str =
     "Makes grass, rock and other land textures slightly richer and more varied from tile to tile. Needs the KR visual profile (UOD-Painterly), not on water; strongest by day.";
 pub(super) const KR_TRANSITION_GRIME: &str =
     "Dirties and darkens the edges where one kind of land meets another. Needs the KR visual profile (UOD-Painterly); clear by day, faint at night.";
+pub(super) const LAND_TEXTURE_VARIATION: &str =
+    "Hides the grid in which the KR and Enhanced terrain textures repeat, every few cells, on grass, dirt, sand, forest, snow, swamp, jungle, rock and cool lava. Each texture is drawn through overlapping hexagons two cells wide, each showing it moved by its own random offset, and turned by a random quarter turn where the texture has no direction; its blend between the two layers follows a larger grid of its own. Cobblestone, planks, bricks, tiles, furrows and cliffs keep their plain tiling. runtime_specs/land/LandTextureVariation.kdl lists the materials. Costs a few more texture reads per pixel, and fades out as you zoom out, where the repetition no longer shows. One setting for the style at every time of day. Off in every preset.";
+
 pub(super) const NORMAL_MAPS: &str =
     "Gives land textures small bumps that catch the sun. Enhanced and KR snow use the bump map the client ships with it; every other land texture, Classic texmaps included, derives its bumps from its own light and dark texels. Works in every render style and land source: per-pixel land shading lights the bumps directly, Classic shading and the clients' per-vertex shading brighten and darken their own light by them. Water and other liquids stay flat. The derived bumps fade out as you zoom out. Off in every preset.";
 

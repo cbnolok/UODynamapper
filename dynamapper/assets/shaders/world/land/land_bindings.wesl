@@ -72,6 +72,14 @@ struct LandStaticLightUniform {
     params: vec4<u32>,
 };
 
+// The KR and Enhanced materials the land texture variation breaks up (LandTextureVariationUniform in mesh_material.rs,
+// configs/land_texture_variation.rs): two bits per material id, sixteen materials to a word, four words to a vec4.
+const LAND_TEXTURE_VARIATION_MATERIAL_CAPACITY: u32 = 256u;
+const LAND_TEXTURE_VARIATION_VEC4_COUNT: u32 = 4u;
+struct LandTextureVariationUniform {
+    materials: array<vec4<u32>, LAND_TEXTURE_VARIATION_VEC4_COUNT>,
+};
+
 // ============================================================================
 // GPU resource bindings (group 3, matching Rust #[uniform(10X)] indices)
 // ============================================================================
@@ -92,7 +100,8 @@ const LAND_PAGE_LOOKUP_TILE_CAPACITY: u32 = 32768u;
 @group(3) @binding(108) var<uniform> land_light:   LandLightingUniforms;
 @group(3) @binding(111) var<uniform> static_lights: LandStaticLightUniform;
 @group(3) @binding(112) var visual_grunge_texture: texture_2d<f32>;
-// Bindings 113 and 114 are free: they held the removed table-driven two-base blend and ripple inputs.
+@group(3) @binding(113) var<uniform> texture_variation: LandTextureVariationUniform;
+// Binding 114 is free: it held the removed ripple inputs (113 held the removed table-driven two-base blend).
 // Compact Classic art.mul land diamonds for flat wet terrain (layer 0 = absent).
 @group(3) @binding(115) var classic_land_art_atlas: texture_2d_array<f32>;
 // Rgba32Uint texel = [atlas layer, physical width, physical height, upscale factor].

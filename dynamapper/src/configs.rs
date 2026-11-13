@@ -1,4 +1,5 @@
 pub mod land_routes;
+pub mod land_texture_variation;
 pub mod light_scale;
 pub mod runtime_specs;
 pub mod settings;

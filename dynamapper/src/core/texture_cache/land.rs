@@ -1101,6 +1101,8 @@ impl Plugin for LandTextureCachePlugin {
         log_plugin_build(self);
         // The route file, in front of each land id's source chain and of the static graphics (route_file.rs).
         app.insert_resource(route_file::RouteFileRes::load());
+        // The terrain materials the land texture variation breaks up, bound in the land material.
+        app.insert_resource(crate::configs::land_texture_variation::LandTextureVariationMaterials::load());
         app.add_plugins(bevy::render::extract_resource::ExtractResourcePlugin::<
             cache::TextureArrayImageHandles,
         >::default())
@@ -1459,6 +1461,7 @@ pub fn sys_setup_terrain_cache(
     uo_files_settings: Res<crate::core::uo_files_loader::UoFilesSettingsRes>,
     shader_presets: Res<crate::core::render::scene::world::land::mesh_material::LandShaderModePresets>,
     route_file: Res<route_file::RouteFileRes>,
+    texture_variation: Res<crate::configs::land_texture_variation::LandTextureVariationMaterials>,
 ) {
     log_system_add_startup::<LandTextureCachePlugin>(StartupSysSet::SetupSceneStage1, fname!());
 
@@ -1673,6 +1676,10 @@ pub fn sys_setup_terrain_cache(
                 land_lighting_uniform: Default::default(),
                 static_light_uniform: Default::default(),
                 visual_grunge_texture,
+                texture_variation_uniform:
+                    crate::core::render::scene::world::land::mesh_material::LandTextureVariationUniform::from_materials(
+                        &texture_variation,
+                    ),
                 classic_land_art_atlas: classic_land_art_images.atlas,
                 classic_land_art_lookup: classic_land_art_images.lookup,
                 ec_terrain_bases,

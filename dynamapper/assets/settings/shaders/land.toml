@@ -357,6 +357,9 @@ elevation_degrees = 60.50379
 # projected shadows are off. The sun is the client's terrain light, from the south at 45 degrees (azimuth 180,
 # elevation 45), as in KR-like.
 
+[enhanced]
+land_texture_variation = false
+
 [enhanced.local_lights]
 source = "light_sprites"
 light_sprites_intensity = 1.0
@@ -731,6 +734,9 @@ elevation_degrees = 45.0
 #   Switched to per-pixel land, it also adds that ambient to the land.
 # The full-featured painterly rendering with all effects enabled is UOD-Painterly, below.
 
+[kr]
+land_texture_variation = false
+
 [kr.local_lights]
 source = "light_sprites"
 light_sprites_intensity = 1.0
@@ -1092,6 +1098,9 @@ elevation_degrees = 45.0
 # and CC land).
 # The vibrance (grade_extra's first value) of the morning and afternoon, once 0.38 and 0.45, turned the desert sand
 # orange: 0.21 and 0.25 bring its chroma down by about a quarter while grass and rock change little.
+
+[painterly]
+land_texture_variation = false
 
 [painterly.morning]
 global_lighting = 1.04

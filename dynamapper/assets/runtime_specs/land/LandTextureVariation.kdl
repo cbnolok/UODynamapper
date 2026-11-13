@@ -1,0 +1,37 @@
+// The KR and Enhanced terrain materials whose texture repetition KR-like, Enhanced and UOD-Painterly may break up,
+// when the style's land_texture_variation is on (the land shader settings' "Break up terrain texture repetition").
+// The land shader then draws each listed material's two colour layers through a grid of overlapping hexagons two
+// cells wide, each hexagon showing the texture moved by its own random offset, and its blend mask through a larger
+// grid of its own; materials not listed keep their plain tiling. Classic draws no materials. Dynamapper reads your
+// copy, cache/runtime_specs/land/LandTextureVariation.kdl beside the assets folder, in place of this file when it
+// exists, at startup: copy this file there and edit the copy. A copy that does not read leaves this file in force,
+// with a warning naming the line, until it is fixed.
+//
+//   material <id> [<last id>] rotate=true|false
+//     The material id of the KR and Enhanced terrain (tex_land_kr.uddp and tex_land_ec.uddp number them alike), or
+//     every id from <id> to <last id>, 0 to 255. rotate=true also turns each hexagon by a random quarter turn: only
+//     for textures with no direction and no light baked in. A material is listed once.
+//
+// Never list masonry, planks, tiles or furrows, whose courses must line up across the cells, nor cliffs and
+// embankments, whose strata follow the slope. The seed list was checked on the colour layers and masks of every
+// material, tiled 2x2, and on captures of the plains in both packages.
+
+// Grass, dirt, forest litter and snow: no direction (snow's bump layer turns with it).
+material 1 2 rotate=true
+material 4 rotate=true
+material 8 rotate=true
+// Jungle: the detail layer has diagonal streaks.
+material 3 rotate=false
+// Rock and dark rock: relief lit from one side.
+material 6 rotate=false
+material 146 rotate=false
+// Sand: dimples and ripples lit from one side.
+material 7 rotate=false
+// Swamp and its edges: leaves and vines.
+material 48 rotate=true
+material 69 rotate=true
+material 129 144 rotate=true
+// Dirt with large rocks: the rocks are lit from one side.
+material 155 rotate=false
+// Cool lava and the void destruction: an organic crust, its cracks embossed by a light from the top left.
+material 193 194 rotate=false

@@ -59,6 +59,12 @@ pub fn preset_group_uses_client_shadows(group: &str) -> bool {
     group == KR_PRESET_GROUP
 }
 
+/// KR-like, Enhanced and UOD-Painterly draw the KR and Enhanced terrain materials, whose repetition
+/// `land_texture_variation` may break up; Classic draws none.
+pub fn preset_group_has_land_texture_variation(group: &str) -> bool {
+    group != CLASSIC_PRESET_GROUP
+}
+
 // Holds current values, a dirty flag, a saved snapshot for undo, and the active
 // preset name (e.g. "kr.morning") so we know which mode × time to save into.
 #[derive(Resource, Clone)]
@@ -75,6 +81,9 @@ pub struct UniformState {
     /// The local lights of the active preset's style, not of its slot: `Some` in KR-like and Enhanced.
     /// `effects.local_light_intensity` follows them.
     pub local_lights: Option<ClientLocalLights>,
+    /// The land texture variation of the active preset's style, not of its slot: `Some` in KR-like, Enhanced and
+    /// UOD-Painterly. `effects.land_texture_variation` follows it.
+    pub land_texture_variation: Option<bool>,
     pub sun: SunAngles,              // static light direction (maps to scene.light_direction)
     pub dirty: bool,                 // when true, push to GPU materials this frame
     /// Snapshot of the last values saved to disk (for undo). `None` until first save.
@@ -94,6 +103,7 @@ pub struct UniformSnapshot {
     pub client_lighting: Option<ClientNightLighting>,
     pub client_shadows: Option<bool>,
     pub local_lights: Option<ClientLocalLights>,
+    pub land_texture_variation: Option<bool>,
     pub sun: SunAngles,
 }
 
@@ -115,6 +125,7 @@ impl UniformState {
             client_lighting: self.client_lighting,
             client_shadows: self.client_shadows,
             local_lights: self.local_lights,
+            land_texture_variation: self.land_texture_variation,
             sun: self.sun,
         }
     }
@@ -128,6 +139,7 @@ impl UniformState {
         self.client_lighting = snap.client_lighting;
         self.client_shadows = snap.client_shadows;
         self.local_lights = snap.local_lights;
+        self.land_texture_variation = snap.land_texture_variation;
         self.sun = snap.sun;
         self.dirty = true;
     }
@@ -135,6 +147,16 @@ impl UniformState {
     /// Bring `effects.local_light_intensity` in line with `local_lights`.
     pub fn sync_local_light_intensity(&mut self) {
         self.effects.local_light_intensity = local_light_intensity(self.local_lights.as_ref());
+    }
+
+    /// The `effects.land_texture_variation` flag `land_texture_variation` gives: on only where the style has it on.
+    pub fn land_texture_variation_flag(&self) -> u32 {
+        u32::from(self.land_texture_variation == Some(true))
+    }
+
+    /// Bring `effects.land_texture_variation` in line with `land_texture_variation`.
+    pub fn sync_land_texture_variation(&mut self) {
+        self.effects.land_texture_variation = self.land_texture_variation_flag();
     }
 }
 
@@ -257,11 +279,18 @@ fn clamp_client_lighting(lighting: ClientNightLighting) -> ClientNightLighting {
 }
 
 /// A hand-written preset file must give KR-like and Enhanced `client_lighting` and no `global_lighting`, and the
-/// other groups the reverse, with every value in range; KR-like, alone, `client_shadows`; and KR-like and Enhanced,
-/// alone, their `local_lights`, in range.
+/// other groups the reverse, with every value in range; KR-like, alone, `client_shadows`; KR-like and Enhanced,
+/// alone, their `local_lights`, in range; and every group but Classic, alone, its `land_texture_variation`.
 fn validate_preset_lighting(presets: &LandShaderModePresets) -> eyre::Result<()> {
     let mut problems = Vec::new();
     for (group, slots) in preset_groups(presets) {
+        match (preset_group_has_land_texture_variation(group), slots.land_texture_variation) {
+            (true, None) => problems.push(format!("missing `{group}.land_texture_variation`")),
+            (false, Some(_)) => problems.push(format!(
+                "`{group}.land_texture_variation` is not a setting there: Classic draws no KR or Enhanced materials"
+            )),
+            _ => {}
+        }
         match (preset_group_uses_client_lighting(group), &slots.local_lights) {
             (true, None) => problems.push(format!("missing `{group}.local_lights`")),
             (true, Some(local_lights)) => problems.extend(
@@ -313,8 +342,8 @@ fn validate_preset_lighting(presets: &LandShaderModePresets) -> eyre::Result<()>
 }
 
 /// Bring a leniently read land.toml in line with `validate_preset_lighting`: drop the dimming setting a group does not
-/// use, fill the one it lacks from `defaults` and clamp out-of-range values; likewise `client_shadows` and
-/// `local_lights`. Returns a warning per change.
+/// use, fill the one it lacks from `defaults` and clamp out-of-range values; likewise `client_shadows`,
+/// `local_lights` and `land_texture_variation`. Returns a warning per change.
 ///
 /// A land.toml saved before the night composite keeps `global_lighting` in KR-like and Enhanced; it is dropped there.
 /// One saved before `local_lights` has a `client_lighting.local_light_source` per slot instead: the lenient load drops
@@ -329,6 +358,16 @@ fn normalize_cached_preset_lighting(
         let Some(slots) = get_preset_group_mut(presets, group) else {
             continue;
         };
+        if preset_group_has_land_texture_variation(group) {
+            if slots.land_texture_variation.is_none() {
+                slots.land_texture_variation = default_slots.land_texture_variation;
+                warnings.push(format!("{file_name}: missing key `{group}.land_texture_variation` filled from the default"));
+            }
+        } else if slots.land_texture_variation.take().is_some() {
+            warnings.push(format!(
+                "{file_name}: `{group}.land_texture_variation` dropped: Classic draws no KR or Enhanced materials"
+            ));
+        }
         if preset_group_uses_client_lighting(group) {
             match slots.local_lights {
                 None => {
@@ -609,13 +648,15 @@ pub fn build_save_presets(u: &UniformState, base: &LandShaderModePresets) -> Lan
     out
 }
 
-/// Capture the live shader values in their active mode × time-of-day slot, and the style's local lights in its group.
+/// Capture the live shader values in their active mode × time-of-day slot, and the style's local lights and land
+/// texture variation in its group.
 ///
 /// The UI calls this before changing presets so edits are not discarded when the
 /// next slot is applied. Disk persistence remains tied to closing the shader panel.
 pub fn store_active_preset(presets: &mut LandShaderModePresets, u: &UniformState) {
     if let Some(slots) = preset_key_group(&u.active_preset).and_then(|group| get_preset_group_mut(presets, group)) {
         slots.local_lights = u.local_lights;
+        slots.land_texture_variation = u.land_texture_variation;
     }
     if let Some(slot) = get_preset_slot_mut(presets, &u.active_preset) {
         slot.effects = u.effects;
@@ -699,8 +740,8 @@ pub fn get_preset_slot<'a>(
     }
 }
 
-/// Replace one mode × time-of-day slot with its immutable factory values, and its style's local lights, which the
-/// shader window shows with the slot's values.
+/// Replace one mode × time-of-day slot with its immutable factory values, and its style's local lights and land
+/// texture variation, which the shader window shows with the slot's values.
 pub fn reset_preset_to_factory(
     presets: &mut LandShaderModePresets,
     factory_presets: &LandShaderModePresets,
@@ -714,10 +755,12 @@ pub fn reset_preset_to_factory(
     };
     *target_slot = clone_slot(factory_slot);
     let group = preset_key_group(key);
-    let factory_local_lights =
-        group.and_then(|group| get_preset_group(factory_presets, group)).and_then(|slots| slots.local_lights);
+    let factory_slots = group.and_then(|group| get_preset_group(factory_presets, group));
+    let factory_local_lights = factory_slots.and_then(|slots| slots.local_lights);
+    let factory_land_texture_variation = factory_slots.and_then(|slots| slots.land_texture_variation);
     if let Some(slots) = group.and_then(|group| get_preset_group_mut(presets, group)) {
         slots.local_lights = factory_local_lights;
+        slots.land_texture_variation = factory_land_texture_variation;
     }
     true
 }
@@ -735,6 +778,7 @@ fn clone_presets(p: &LandShaderModePresets) -> LandShaderModePresets {
 
 fn clone_mode(m: &LandRenderStylePresetsPerMode) -> LandRenderStylePresetsPerMode {
     LandRenderStylePresetsPerMode {
+        land_texture_variation: m.land_texture_variation,
         local_lights: m.local_lights,
         morning: clone_slot(&m.morning),
         afternoon: clone_slot(&m.afternoon),
@@ -777,9 +821,9 @@ fn uniform_state_from_presets(source: &LandShaderModePresets) -> UniformState {
     });
 
     let global_lighting = preset_scene_multiplier(preset);
-    let local_lights = preset_key_group(&preset_key)
-        .and_then(|group| get_preset_group(source, group))
-        .and_then(|slots| slots.local_lights);
+    let style = preset_key_group(&preset_key).and_then(|group| get_preset_group(source, group));
+    let local_lights = style.and_then(|slots| slots.local_lights);
+    let land_texture_variation = style.and_then(|slots| slots.land_texture_variation);
     let mut state = UniformState {
         effects: preset.effects,
         lighting: preset.lighting,
@@ -788,12 +832,14 @@ fn uniform_state_from_presets(source: &LandShaderModePresets) -> UniformState {
         client_lighting: preset.client_lighting,
         client_shadows: preset.client_shadows,
         local_lights,
+        land_texture_variation,
         sun: preset.sun,
         dirty: true,
         saved_snapshot: None,
         active_preset: preset_key,
     };
     state.sync_local_light_intensity();
+    state.sync_land_texture_variation();
     state.saved_snapshot = Some(state.snapshot());
     state
 }
@@ -828,6 +874,7 @@ mod tests {
 
     fn mode(base_mode: u32, base_global: f32) -> LandRenderStylePresetsPerMode {
         LandRenderStylePresetsPerMode {
+            land_texture_variation: None,
             local_lights: None,
             morning: slot(base_mode, base_global, 1.0),
             afternoon: slot(base_mode, base_global + 0.1, 1.1),
@@ -1077,6 +1124,79 @@ mod tests {
                 assert_eq!(slots.local_lights, local_lights, "{name} {group}");
             }
         }
+    }
+
+    /// The land texture variation is a style setting of KR-like, Enhanced and UOD-Painterly, off in every bundled
+    /// preset; Classic has none.
+    #[test]
+    fn bundled_presets_turn_the_land_texture_variation_off_in_every_style_but_classic() {
+        for (name, text) in [("shader_presets.toml", BUNDLED_FACTORY_PRESETS), ("land.toml", BUNDLED_LAND_SETTINGS)] {
+            let presets = parse(text).expect("bundled");
+            for (group, slots) in preset_groups(&presets) {
+                let expected = preset_group_has_land_texture_variation(group).then_some(false);
+                assert_eq!(slots.land_texture_variation, expected, "{name} {group}");
+            }
+            assert!(!preset_group_has_land_texture_variation(CLASSIC_PRESET_GROUP));
+            let state = uniform_state_from_presets(&presets);
+            assert_eq!(state.effects.land_texture_variation, 0, "{name}");
+        }
+    }
+
+    /// A hand-written file must give every style but Classic its land texture variation, as a boolean, and Classic
+    /// none.
+    #[test]
+    fn hand_written_land_texture_variation_is_strict() {
+        const BUNDLED_KR_LINE: &str = "[kr]\nland_texture_variation = false\n";
+        let not_bool = BUNDLED_FACTORY_PRESETS.replacen(BUNDLED_KR_LINE, "[kr]\nland_texture_variation = 1\n", 1);
+        let error = parse(&not_bool).err().expect("not a boolean").to_string();
+        assert!(error.contains("invalid type: integer `1`, expected a boolean"), "{error}");
+
+        let mut presets = parse(BUNDLED_FACTORY_PRESETS).expect("bundled");
+        presets.classic.land_texture_variation = Some(true);
+        presets.kr.land_texture_variation = None;
+        let error = validate_preset_lighting(&presets).expect_err("misplaced variation").to_string();
+        for expected in ["`classic.land_texture_variation` is not a setting there", "missing `kr.land_texture_variation`"] {
+            assert!(error.contains(expected), "{error}");
+        }
+    }
+
+    /// A cache from before the land texture variation takes the default, off, with a warning; one with it in Classic
+    /// loses it; a style's choice is written and read back, and Reset to Factory restores the style's default.
+    #[test]
+    fn cached_land_texture_variation_is_filled_kept_or_dropped() {
+        let bundled = parse(BUNDLED_LAND_SETTINGS).expect("bundled");
+        let mut older: toml::Table = toml::from_str(BUNDLED_LAND_SETTINGS).expect("bundled");
+        older[KR_PRESET_GROUP].as_table_mut().expect("kr").remove("land_texture_variation");
+        let older = toml::to_string(&older).expect("serialize");
+        let mut load = uocf::utils::config_toml::parse_app_state("land.toml", &older, &bundled).expect("lenient load");
+        load.warnings.extend(normalize_cached_preset_lighting(&mut load.value, &bundled, "land.toml"));
+        assert_eq!(load.warnings, ["land.toml: missing key `kr.land_texture_variation` filled from the default"]);
+        assert_eq!(load.value.kr.land_texture_variation, Some(false));
+
+        let mut cached = clone_presets(&bundled);
+        cached.classic.land_texture_variation = Some(true);
+        let warnings = normalize_cached_preset_lighting(&mut cached, &bundled, "land.toml");
+        assert_eq!(warnings, ["land.toml: `classic.land_texture_variation` dropped: Classic draws no KR or Enhanced materials"]);
+        assert_eq!(cached.classic.land_texture_variation, None);
+
+        let mut on_painterly = clone_presets(&bundled);
+        on_painterly.default_preset = "painterly.cave".to_string();
+        let mut state = uniform_state_from_presets(&on_painterly);
+        state.land_texture_variation = Some(true);
+        state.sync_land_texture_variation();
+        assert_eq!(state.effects.land_texture_variation, 1);
+        let written = toml::to_string_pretty(&build_save_presets(&state, &bundled)).expect("serialize");
+        let load = uocf::utils::config_toml::parse_app_state("land.toml", &written, &bundled).expect("lenient load");
+        assert!(load.warnings.is_empty(), "{:?}", load.warnings);
+        let mut saved = load.value;
+        assert_eq!(saved.painterly.land_texture_variation, Some(true));
+        assert_eq!(saved.kr.land_texture_variation, Some(false));
+        assert_eq!(saved.classic.land_texture_variation, None);
+        // The slot's effects keep no flag of their own: the style's setting is the one source.
+        assert_eq!(saved.painterly.cave.effects.land_texture_variation, 0);
+
+        assert!(reset_preset_to_factory(&mut saved, &bundled, "painterly.morning"));
+        assert_eq!(saved.painterly.land_texture_variation, Some(false));
     }
 
     /// A hand-written file must give KR-like and Enhanced their local lights, complete and in range, and no other
