@@ -10,6 +10,7 @@ pub mod statics_collect;
 pub mod statics_draw;
 pub mod static_lights;
 pub mod client_light_sprites;
+pub mod light_cover;
 pub mod client_grunge;
 mod static_surface;
 pub(crate) mod static_geometry;

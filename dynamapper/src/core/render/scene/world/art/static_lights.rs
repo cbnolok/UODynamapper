@@ -1,4 +1,5 @@
 use super::client_light_sprites::{client_light_sprite_static_light, RenderClientLightSprites};
+use super::light_cover::{static_light_is_hidden, NO_Z_VIEW_LIMIT};
 use super::statics_collect::StaticChunkBatchKey;
 use crate::configs::light_scale::{ItemLightScales, NEUTRAL_LIGHT_SCALE};
 use crate::configs::{settings::Settings, shader_presets::UniformState};
@@ -312,14 +313,19 @@ pub fn sys_collect_visible_static_lights(
                 let Ok(tiles) = statics_store.block_tiles(gx, gy) else {
                     continue;
                 };
+                // Copied out of the store, which `static_light_is_hidden` reads again for the cover cells.
+                let lit_tiles = tiles
+                    .iter()
+                    .copied()
+                    .filter(|tile| {
+                        tilemeta.0.item_tile(tile.graphic as u32).is_some_and(|meta| meta.flags & TILE_FLAG_LIGHT_SOURCE != 0)
+                    })
+                    .collect::<Vec<_>>();
 
-                for tile in tiles {
+                for tile in lit_tiles {
                     let Some(meta) = tilemeta.0.item_tile(tile.graphic as u32) else {
                         continue;
                     };
-                    if meta.flags & TILE_FLAG_LIGHT_SOURCE == 0 {
-                        continue;
-                    }
 
                     let light_id = meta.quality as u32;
                     let Some(slot) = world_lights.0.present_slot(light_id) else {
@@ -340,7 +346,9 @@ pub fn sys_collect_visible_static_lights(
                         light_id,
                         hue_id: tile.hue,
                     };
-                    if !seen.insert(key) {
+                    if !seen.insert(key)
+                        || static_light_is_hidden(&mut statics_store, &tilemeta.0, tile_x, tile_y, tile.z, NO_Z_VIEW_LIMIT)
+                    {
                         continue;
                     }
 

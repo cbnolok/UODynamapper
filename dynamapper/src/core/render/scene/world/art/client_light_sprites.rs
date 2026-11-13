@@ -17,6 +17,7 @@
 //! off in the KR-like and Enhanced presets) read these sprites in the two styles (`client_light_sprite_static_light`),
 //! unless the style's `local_lights.source` picks light.mul, as Classic (`static_lights`).
 
+use super::light_cover::{static_light_is_hidden, NO_Z_VIEW_LIMIT};
 use super::static_lights::{StaticLightInstance, StaticLightKey, StaticLightTarget, LIGHT_PIXELS_PER_WORLD_TILE,
     STATIC_LIGHT_Y_BIAS};
 use super::statics_collect::{
@@ -87,9 +88,9 @@ pub struct ClientLightSpriteInstance {
 #[derive(Resource, Default)]
 pub struct RenderClientLightSprites {
     pub instances: Vec<ClientLightSpriteInstance>,
-    /// What the last scan covered and whether it centred the sprites on their items; the scan reruns only when it
-    /// changes.
-    last_scan: Option<(u32, Vec<StaticChunkBatchKey>, bool)>,
+    /// What the last scan covered, whether it centred the sprites on their items and the z limit it hid covered
+    /// lights under (`light_cover`); the scan reruns only when it changes.
+    last_scan: Option<(u32, Vec<StaticChunkBatchKey>, bool, i32)>,
 }
 
 /// The sprites' materials, one per light texture (`None` once a texture failed to load), and the scan reach.
@@ -304,8 +305,10 @@ pub fn sys_collect_client_light_sprites(
         .collect::<Vec<_>>();
     visible_chunk_keys.sort_by_key(|key| (key.gy, key.gx, key.scale));
     let centre_on_items = uniform_state.local_lights.is_some_and(|local_lights| local_lights.centre_on_items);
-    if output.last_scan.as_ref().is_some_and(|(last_map, last_keys, last_centred)| {
+    let max_z = NO_Z_VIEW_LIMIT;
+    if output.last_scan.as_ref().is_some_and(|(last_map, last_keys, last_centred, last_max_z)| {
         *last_map == map_id && *last_keys == visible_chunk_keys && *last_centred == centre_on_items
+            && *last_max_z == max_z
     }) {
         return;
     }
@@ -337,7 +340,13 @@ pub fn sys_collect_client_light_sprites(
         let Ok(tiles) = statics_store.block_tiles(gx, gy) else {
             continue;
         };
-        for tile in tiles {
+        // Copied out of the store, which `static_light_is_hidden` reads again for the cover cells.
+        let lit_tiles = tiles
+            .iter()
+            .copied()
+            .filter(|tile| tilemeta.0.item_light(u32::from(tile.graphic)).is_some())
+            .collect::<Vec<_>>();
+        for tile in lit_tiles {
             let Some(light) = tilemeta.0.item_light(u32::from(tile.graphic)) else {
                 continue;
             };
@@ -359,7 +368,9 @@ pub fn sys_collect_client_light_sprites(
                 z: tile.z,
                 graphic: tile.graphic,
             };
-            if !seen.insert(key) {
+            if !seen.insert(key)
+                || static_light_is_hidden(&mut statics_store, &tilemeta.0, key.tile_x, key.tile_y, key.z, max_z)
+            {
                 continue;
             }
             let Some(glow_rgb) = *cache.glow_rgb_by_entry.entry(entry).or_insert_with(|| {
@@ -389,7 +400,7 @@ pub fn sys_collect_client_light_sprites(
         );
     }
     output.instances = instances;
-    output.last_scan = Some((map_id, visible_chunk_keys, centre_on_items));
+    output.last_scan = Some((map_id, visible_chunk_keys, centre_on_items, max_z));
 }
 
 pub fn sys_sync_client_light_sprites(
