@@ -61,6 +61,8 @@ pub(super) const LIGHT_SPRITES_INTENSITY: &str =
     "How strongly the light sprites light the ground and the statics, on top of Light/Static Interaction: 1 as they come, 0 off, up to 4. One value for the style at every time of day; light.mul keeps its own. The light sprites' glow in the night stays as it is.";
 pub(super) const LIGHT_MUL_INTENSITY: &str =
     "How strongly the light.mul lights light the ground and the statics, on top of Light/Static Interaction: 1 as they come, 0 off, up to 4. light.mul lights fewer statics and smaller pools than the light sprites, so at 1 it lights less overall; raise this to even them out where both have a light. One value for the style at every time of day; the light sprites keep their own. The light sprites' glow in the night stays as it is.";
+pub(super) const CENTRE_LIGHTS_ON_ITEMS: &str =
+    "Moves the light sprites the client places far from their item onto the item's tile, keeping their height on screen, and the ground light taken from them with them: lava, fires, hearths and some sconces and windows, whose glow the client throws about five tiles aside. The sprites the client places near their item (lanterns, wall torches, window beams) stay. Off is the client's placement. light.mul lights sit on their item's tile either way. One choice for the style at every time of day.";
 pub(super) const CLIENT_SHADOWS: &str =
     "The KR client's shadows of statics and items, leaning from their base (its Show Shadows option). KR-like only, where they replace Shadow Shape, Contact Shadows and Projected Shadows.";
 pub(super) const CLIENT_GRUNGE: &str =

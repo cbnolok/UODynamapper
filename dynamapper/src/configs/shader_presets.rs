@@ -241,6 +241,7 @@ fn clamp_local_lights(local_lights: ClientLocalLights) -> ClientLocalLights {
         source: local_lights.source,
         light_sprites_intensity: local_lights.light_sprites_intensity.clamp(min, max),
         light_mul_intensity: local_lights.light_mul_intensity.clamp(min, max),
+        centre_on_items: local_lights.centre_on_items,
     }
 }
 
@@ -933,6 +934,7 @@ mod tests {
             source,
             light_sprites_intensity: 1.0,
             light_mul_intensity,
+            centre_on_items: true,
         };
         let mut factory = presets();
         factory.kr.local_lights = Some(local_lights(ClientLocalLightSource::LightSprites, 1.0));
@@ -1055,8 +1057,8 @@ mod tests {
         }
     }
 
-    /// KR-like and Enhanced each have one `local_lights` table, the light sprites at their own intensity, in both
-    /// bundled files; the other styles have none.
+    /// KR-like and Enhanced each have one `local_lights` table, the light sprites at their own intensity, centred on
+    /// their items, in both bundled files; the other styles have none.
     #[test]
     fn bundled_presets_give_kr_like_and_enhanced_their_local_lights() {
         use crate::core::render::scene::world::land::mesh_material::{
@@ -1066,6 +1068,7 @@ mod tests {
             source: ClientLocalLightSource::LightSprites,
             light_sprites_intensity: NEUTRAL_LOCAL_LIGHT_INTENSITY,
             light_mul_intensity: NEUTRAL_LOCAL_LIGHT_INTENSITY,
+            centre_on_items: true,
         };
         for (name, text) in [("shader_presets.toml", BUNDLED_FACTORY_PRESETS), ("land.toml", BUNDLED_LAND_SETTINGS)] {
             let presets = parse(text).expect("bundled");
@@ -1087,6 +1090,9 @@ mod tests {
         let missing = BUNDLED_FACTORY_PRESETS.replacen("light_mul_intensity = 1.0\n", "", 1);
         let error = parse(&missing).err().expect("missing intensity").to_string();
         assert!(error.contains("missing field `light_mul_intensity`"), "{error}");
+        let no_centring = BUNDLED_FACTORY_PRESETS.replacen("centre_on_items = true\n", "", 1);
+        let error = parse(&no_centring).err().expect("missing centring").to_string();
+        assert!(error.contains("missing field `centre_on_items`"), "{error}");
         let per_slot = BUNDLED_FACTORY_PRESETS
             .replacen("[kr.night.effects]\n", "local_light_source = \"light_mul\"\n[kr.night.effects]\n", 1);
         let error = parse(&per_slot).err().expect("per-slot source").to_string();
@@ -1107,7 +1113,7 @@ mod tests {
     }
 
     /// A cache from before the local lights were a per-style setting keeps a source in every client-lit slot: each is
-    /// dropped with a warning and the style takes the defaults. A cache's misplaced or out-of-range local lights are
+    /// dropped with a warning and the style takes the defaults; one from before the centring takes it on. A cache's misplaced or out-of-range local lights are
     /// dropped or clamped, and a pick of light.mul with its intensities is written and read back.
     #[test]
     fn cached_local_lights_drop_the_per_slot_source_and_fill_clamp_or_drop_the_style_setting() {
@@ -1142,6 +1148,18 @@ mod tests {
         assert_eq!(load.value.kr.local_lights, bundled.kr.local_lights);
         assert_eq!(load.value.enhanced.local_lights, bundled.enhanced.local_lights);
 
+        // A cache from before the centring takes the bundled default, on, and keeps its other choices.
+        let mut before_centring: toml::Table = toml::from_str(BUNDLED_LAND_SETTINGS).expect("bundled");
+        let kr_local_lights = before_centring[KR_PRESET_GROUP]["local_lights"].as_table_mut().expect("local lights");
+        kr_local_lights.remove("centre_on_items");
+        kr_local_lights.insert("source".to_string(), toml::Value::String("light_mul".to_string()));
+        let before_centring = toml::to_string(&before_centring).expect("serialize");
+        let load = uocf::utils::config_toml::parse_app_state("land.toml", &before_centring, &bundled).expect("lenient");
+        assert_eq!(load.warnings, ["land.toml: missing key `kr.local_lights.centre_on_items` filled from the default"]);
+        let kr_local_lights = load.value.kr.local_lights.expect("kr local lights");
+        assert!(kr_local_lights.centre_on_items);
+        assert_eq!(kr_local_lights.source, ClientLocalLightSource::LightMul);
+
         let mut cached = clone_presets(&bundled);
         cached.painterly.local_lights = bundled.kr.local_lights;
         cached.enhanced.local_lights.as_mut().unwrap().light_sprites_intensity = -1.0;
@@ -1162,6 +1180,7 @@ mod tests {
             source: ClientLocalLightSource::LightMul,
             light_sprites_intensity: SPRITES_INTENSITY,
             light_mul_intensity: LIGHT_MUL_INTENSITY,
+            centre_on_items: false,
         };
         let mut on_kr_night = clone_presets(&bundled);
         on_kr_night.default_preset = "kr.night".to_string();

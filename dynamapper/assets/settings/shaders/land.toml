@@ -361,6 +361,7 @@ elevation_degrees = 60.50379
 source = "light_sprites"
 light_sprites_intensity = 1.0
 light_mul_intensity = 1.0
+centre_on_items = true
 
 [enhanced.morning]
 [enhanced.morning.client_lighting]
@@ -734,6 +735,7 @@ elevation_degrees = 45.0
 source = "light_sprites"
 light_sprites_intensity = 1.0
 light_mul_intensity = 1.0
+centre_on_items = true
 
 [kr.morning]
 client_shadows = true

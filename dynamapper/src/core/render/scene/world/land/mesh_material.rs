@@ -512,9 +512,9 @@ pub const LOCAL_LIGHT_INTENSITY_RANGE: std::ops::RangeInclusive<f32> = 0.0..=4.0
 /// The intensity that leaves the local lights as they come, and the one of the styles without `ClientLocalLights`.
 pub const NEUTRAL_LOCAL_LIGHT_INTENSITY: f32 = 1.0;
 
-/// The optional land light decals and static local lights (Light/Static Interaction) of KR-like and Enhanced: one
-/// setting per style, `[<group>.local_lights]`. The client light sprites in the composite's light buffer stay as
-/// they are either way.
+/// The optional land light decals and static local lights (Light/Static Interaction) of KR-like and Enhanced, and
+/// where the client light sprites in the composite's light buffer sit: one setting per style,
+/// `[<group>.local_lights]`. The source and intensities leave the light sprites as they are.
 ///
 /// Each source keeps its own intensity, so switching sources keeps each one's calibration: at one, light.mul lights
 /// as brightly as the light sprites at a light's centre but fewer statics and smaller pools (none at some lanterns the
@@ -528,6 +528,10 @@ pub struct ClientLocalLights {
     pub light_sprites_intensity: f32,
     /// The multiplier of their contribution while they take light.mul, in `LOCAL_LIGHT_INTENSITY_RANGE`.
     pub light_mul_intensity: f32,
+    /// Centre the light sprites the clients place far from their item on the item's cell, and the local lights taken
+    /// from them with them (`client_light_sprites::client_light_sprite_centred`). False is the clients' placement.
+    /// The light.mul lights sit on their item's cell either way.
+    pub centre_on_items: bool,
 }
 
 impl ClientLocalLights {

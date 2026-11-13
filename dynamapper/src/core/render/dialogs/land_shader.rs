@@ -1129,8 +1129,8 @@ fn client_night_controls(ui: &mut egui::Ui, lighting: &mut ClientNightLighting) 
     changed
 }
 
-/// Which lights KR-like's and Enhanced's land light decals and static local lights take, and the intensity of that
-/// source right under it.
+/// Which lights KR-like's and Enhanced's land light decals and static local lights take, the intensity of that
+/// source right under it, and whether the light sprites are centred on their items.
 fn local_lights_controls(ui: &mut egui::Ui, local_lights: &mut ClientLocalLights) -> bool {
     let mut changed = false;
     ui.horizontal_wrapped(|ui| {
@@ -1145,6 +1145,8 @@ fn local_lights_controls(ui: &mut egui::Ui, local_lights: &mut ClientLocalLights
     });
     let (label, tip) = local_light_intensity_slider(local_lights.source);
     changed |= slider_s(ui, label, local_lights.intensity_mut(), LOCAL_LIGHT_INTENSITY_RANGE, tip);
+    let centre = ui.checkbox(&mut local_lights.centre_on_items, "Centre Lights on Items");
+    changed |= with_tip(centre, tips::CENTRE_LIGHTS_ON_ITEMS).changed();
     changed
 }
 
@@ -1643,6 +1645,7 @@ mod tests {
             source: ClientLocalLightSource::LightSprites,
             light_sprites_intensity: SPRITES_INTENSITY,
             light_mul_intensity: LIGHT_MUL_INTENSITY,
+            centre_on_items: true,
         };
         let mut presets = mode_presets();
         presets.kr.local_lights = Some(local_lights);

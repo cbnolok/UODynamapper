@@ -99,8 +99,8 @@ default_preset = "classic.morning"
 # === [Local lights] ===
 # [<group>.local_lights]: KR-like and Enhanced, one table per style (not per time of day), required there and refused
 #                    elsewhere. The land light decals and static local lights (Light/Static Interaction, 0 in these
-#                    presets; the static local lights also need enable_static_art_local_lights). The light sprites
-#                    drawn into the light buffer stay as they are either way.
+#                    presets; the static local lights also need enable_static_art_local_lights), and where the light
+#                    sprites drawn into the light buffer sit (centre_on_items; source and intensities leave them be).
 #   source:           The lights they take: "light_sprites", the client light sprites (a light on the ground under
 #                     each sprite's glow, sized like the sprite, coloured by its texture's alpha-weighted mean), or
 #                     "light_mul", light.mul as in Classic (the statics with the LightSource flag, the light.mul size,
@@ -109,6 +109,11 @@ default_preset = "classic.morning"
 #   light_sprites_intensity, light_mul_intensity: 0 to 4, the multiplier of their contribution while they take that
 #                     source, on top of Light/Static Interaction; each source keeps its own. 1 leaves the lights as
 #                     they come, 0 turns them off.
+#   centre_on_items:  true centres the light sprites the clients place far from their item (the tileart's default
+#                     offsets, (-5, -4) at scale 2 and the like: lava, fires, hearths, some sconces and windows) on
+#                     the item's cell, keeping their height on screen, and the lights taken from them with them; the
+#                     sprites whose offsets place them near their item (lanterns, wall torches, window beams) stay.
+#                     false is the clients' placement. light.mul lights sit on their item's cell either way.
 #
 # === [Client shadows] ===
 # client_shadows:    KR-like only, required there and refused elsewhere. true draws the KR client's static shadows
@@ -480,6 +485,7 @@ elevation_degrees = 60.50379
 source = "light_sprites"
 light_sprites_intensity = 1.0
 light_mul_intensity = 1.0
+centre_on_items = true
 
 [enhanced.morning]
 [enhanced.morning.client_lighting]
@@ -853,6 +859,7 @@ elevation_degrees = 45.0
 source = "light_sprites"
 light_sprites_intensity = 1.0
 light_mul_intensity = 1.0
+centre_on_items = true
 
 [kr.morning]
 client_shadows = true

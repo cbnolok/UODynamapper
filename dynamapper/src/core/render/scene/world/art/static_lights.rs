@@ -1121,7 +1121,12 @@ mod tests {
     fn the_local_lights_take_the_source_their_style_picks() {
         assert_eq!(local_light_source(None), ClientLocalLightSource::LightMul);
         for source in [ClientLocalLightSource::LightSprites, ClientLocalLightSource::LightMul] {
-            let local_lights = ClientLocalLights { source, light_sprites_intensity: 1.0, light_mul_intensity: 1.0 };
+            let local_lights = ClientLocalLights {
+                source,
+                light_sprites_intensity: 1.0,
+                light_mul_intensity: 1.0,
+                centre_on_items: true,
+            };
             assert_eq!(local_light_source(Some(&local_lights)), source);
         }
     }

@@ -8,6 +8,10 @@
 //! scale, and moved by the light offsets in world units along the camera's right and up. Classic and UOD-Painterly
 //! draw the light.mul decals of `static_lights` instead.
 //!
+//! One setting departs from the clients in the two styles: the style's `local_lights.centre_on_items` centres the
+//! sprites the tileart's default offsets throw far from their item on the item's cell
+//! (`client_light_sprite_centred`).
+//!
 //! The clients light the terrain and the statics through the composite alone: their sprites are unlit and their
 //! terrain has no other light. The optional land light decals and static local lights (Light/Static Interaction,
 //! off in the KR-like and Enhanced presets) read these sprites in the two styles (`client_light_sprite_static_light`),
@@ -42,6 +46,14 @@ use udd_assets::tilemeta::TileMetaItemLight;
 const CLIENT_LIGHT_SPRITE_ANCHOR_PIXELS: i32 = 22;
 /// The sprite's vertical anchor: its bottom edge sits at the base point.
 const CLIENT_LIGHT_SPRITE_ANCHOR_Y_PIXELS: i16 = 0;
+/// How far, in tiles, the ground point under a sprite's glow may lie from its item's cell centre for
+/// `centre_on_items` to keep the clients' placement. The offsets the tileart gives an item of its own keep the glow
+/// within 4.04 tiles of it (window beams, wall torches and sconces, fireplace fires, candles, lanterns); the tileart's
+/// default offsets, (-5, -4) on 378 items and (0, 0) at scale 2 on 7, and two candelabras' (-4.7, -2) throw it 4.78
+/// tiles or more away, with no light in between.
+pub(super) const CLIENT_LIGHT_SPRITE_KEPT_PLACEMENT_REACH: f32 = 4.5;
+/// From a tile's corner to its centre, along each map axis.
+const TILE_CENTRE_OFFSET: f32 = 0.5;
 /// The largest 8-bit channel value, which maps a light texture's channel to 0..1.
 const LIGHT_TEXTURE_CHANNEL_MAX: f32 = 255.0;
 /// The bytes of one RGBA8888 texel.
@@ -75,8 +87,9 @@ pub struct ClientLightSpriteInstance {
 #[derive(Resource, Default)]
 pub struct RenderClientLightSprites {
     pub instances: Vec<ClientLightSpriteInstance>,
-    /// What the last scan covered; the scan reruns only when it changes.
-    last_scan: Option<(u32, Vec<StaticChunkBatchKey>)>,
+    /// What the last scan covered and whether it centred the sprites on their items; the scan reruns only when it
+    /// changes.
+    last_scan: Option<(u32, Vec<StaticChunkBatchKey>, bool)>,
 }
 
 /// The sprites' materials, one per light texture (`None` once a texture failed to load), and the scan reach.
@@ -140,6 +153,36 @@ fn client_light_sprite_quad(origin: Vec3, bounds: StaticBillboardBounds) -> (Vec
     (center, size)
 }
 
+/// The item's cell centre at its base height.
+fn client_light_sprite_cell_centre(tile_x: u32, tile_y: u32, z: i8) -> Vec3 {
+    Vec3::new(
+        tile_x as f32 + TILE_CENTRE_OFFSET,
+        scale_uo_z_to_bevy_units(f32::from(z)),
+        tile_y as f32 + TILE_CENTRE_OFFSET,
+    )
+}
+
+/// The point at height `base_y` that shows where `point` shows: `point` moved along the camera's view ray.
+fn ground_under(point: Vec3, base_y: f32) -> Vec3 {
+    let view_ray = PlayerCamera::BASE_OFFSET_FROM_PLAYER;
+    point - view_ray * ((point.y - base_y) / view_ray.y)
+}
+
+/// The sprite centre `center` as `centre_on_items` places it: moved across the ground so that it shows over its
+/// item's cell centre, when the clients' placement shows it more than `CLIENT_LIGHT_SPRITE_KEPT_PLACEMENT_REACH` tiles
+/// away; as it is otherwise. The move is horizontal, so the glow keeps its height above the item, and the light on
+/// the ground under it (`client_light_sprite_static_light`) lands on the cell centre.
+pub(super) fn client_light_sprite_centred(center: Vec3, key: ClientLightSpriteKey) -> Vec3 {
+    let cell = client_light_sprite_cell_centre(key.tile_x, key.tile_y, key.z);
+    let ground = ground_under(center, cell.y);
+    let shift = Vec3::new(cell.x - ground.x, 0.0, cell.z - ground.z);
+    if shift.length() > CLIENT_LIGHT_SPRITE_KEPT_PLACEMENT_REACH {
+        center + shift
+    } else {
+        center
+    }
+}
+
 /// A light texture's colour where it shows: the mean of its RGBA8888 texels' colour weighted by their alpha. `None`
 /// for a texture without a visible texel.
 fn light_texture_glow_rgb(rgba: &[u8]) -> Option<[f32; 3]> {
@@ -167,8 +210,7 @@ fn light_texture_glow_rgb(rgba: &[u8]) -> Option<[f32; 3]> {
 pub(super) fn client_light_sprite_static_light(sprite: &ClientLightSpriteInstance) -> StaticLightInstance {
     let key = sprite.key;
     let base_y = client_light_sprite_origin(key.tile_x, key.tile_y, key.z).y;
-    let view_ray = PlayerCamera::BASE_OFFSET_FROM_PLAYER;
-    let ground = sprite.center - view_ray * ((sprite.center.y - base_y) / view_ray.y);
+    let ground = ground_under(sprite.center, base_y);
     StaticLightInstance {
         key: StaticLightKey {
             map_id: key.map_id,
@@ -205,7 +247,7 @@ fn has_drawable_scale(light: &TileMetaItemLight) -> bool {
 
 /// The scan margin in map blocks around the visible chunks: the largest reach of a loaded light, so no sprite whose
 /// static lies off screen is missing. A world unit along the billboard's right or world Y moves the sprite at most
-/// one tile along each map axis on screen.
+/// one tile along each map axis on screen. Centring only brings sprites nearer their items.
 fn client_light_sprite_reach_blocks(tilemeta: &TileMetaPackageRes, tex_aux: &TexAuxEcPackageRes) -> u32 {
     let reach = tilemeta
         .0
@@ -255,8 +297,10 @@ pub fn sys_collect_client_light_sprites(
         .map(|chunk| StaticChunkBatchKey { map_id, gx: chunk.gx, gy: chunk.gy, scale: chunk.scale })
         .collect::<Vec<_>>();
     visible_chunk_keys.sort_by_key(|key| (key.gy, key.gx, key.scale));
-    if output.last_scan.as_ref().is_some_and(|(last_map, last_keys)| *last_map == map_id && *last_keys == visible_chunk_keys)
-    {
+    let centre_on_items = uniform_state.local_lights.is_some_and(|local_lights| local_lights.centre_on_items);
+    if output.last_scan.as_ref().is_some_and(|(last_map, last_keys, last_centred)| {
+        *last_map == map_id && *last_keys == visible_chunk_keys && *last_centred == centre_on_items
+    }) {
         return;
     }
 
@@ -323,6 +367,7 @@ pub fn sys_collect_client_light_sprites(
             let bounds = client_light_sprite_bounds(light, u32::from(slot.width), u32::from(slot.height));
             let (center, size) =
                 client_light_sprite_quad(client_light_sprite_origin(key.tile_x, key.tile_y, key.z), bounds);
+            let center = if centre_on_items { client_light_sprite_centred(center, key) } else { center };
             instances.push(ClientLightSpriteInstance { key, texture_entry: entry, center, size, glow_rgb });
         }
     }
@@ -335,7 +380,7 @@ pub fn sys_collect_client_light_sprites(
         );
     }
     output.instances = instances;
-    output.last_scan = Some((map_id, visible_chunk_keys));
+    output.last_scan = Some((map_id, visible_chunk_keys, centre_on_items));
 }
 
 pub fn sys_sync_client_light_sprites(
@@ -346,15 +391,18 @@ pub fn sys_sync_client_light_sprites(
     mut images: ResMut<Assets<Image>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
     mut meshes: ResMut<Assets<Mesh>>,
-    existing_q: Query<(Entity, &ClientLightSpriteKey), With<ClientLightSpriteEntity>>,
+    mut existing_q: Query<(Entity, &ClientLightSpriteKey, &mut Transform), With<ClientLightSpriteEntity>>,
 ) {
     if !sprites.is_changed() {
         return;
     }
-    let desired_keys = sprites.instances.iter().map(|instance| instance.key).collect::<HashSet<_>>();
+    let desired = sprites.instances.iter().map(|instance| (instance.key, instance)).collect::<HashMap<_, _>>();
     let mut existing_keys = HashSet::new();
-    for (entity, key) in existing_q.iter() {
-        if desired_keys.contains(key) {
+    for (entity, key, mut transform) in existing_q.iter_mut() {
+        if let Some(instance) = desired.get(key) {
+            // A kept sprite may have moved: Local Lights' centring changed.
+            transform.translation = instance.center;
+            transform.scale = instance.size.extend(1.0);
             existing_keys.insert(*key);
         } else {
             commands.entity(entity).despawn();
@@ -530,6 +578,86 @@ mod tests {
         assert!((light.height_world - side_tiles).abs() < EPSILON, "{light:?}");
         assert_eq!(light.color_rgb, glow_rgb);
         assert_eq!((light.light_id, light.hue_id, light.key.graphic), (1, 0, 2594));
+    }
+
+    /// Where the clients show a light's glow centre, on the ground, against its item's cell centre: the distance
+    /// `centre_on_items` classifies by.
+    fn glow_distance_from_cell(light: &TileMetaItemLight, side: u32) -> (f32, Vec3, ClientLightSpriteKey) {
+        let key = ClientLightSpriteKey { map_id: 0, tile_x: 4622, tile_y: 3560, z: 30, graphic: light.tile_id as u16 };
+        let origin = client_light_sprite_origin(key.tile_x, key.tile_y, key.z);
+        let (center, _) = client_light_sprite_quad(origin, client_light_sprite_bounds(light, side, side));
+        let cell = client_light_sprite_cell_centre(key.tile_x, key.tile_y, key.z);
+        let ground = ground_under(center, cell.y);
+        (Vec2::new(ground.x - cell.x, ground.z - cell.z).length(), center, key)
+    }
+
+    /// The tileart's own offsets keep the glow near its item and stay; its default offsets throw it about five tiles
+    /// away and are centred. The tilemeta records of the census in `CLIENT_LIGHT_SPRITE_KEPT_PLACEMENT_REACH`.
+    #[test]
+    fn centring_moves_the_default_offsets_and_keeps_the_items_own() {
+        const SMALL_SIDE: u32 = 128;
+        let light = |tile_id, light_texture_entry, scale, offset_x, offset_y| TileMetaItemLight {
+            tile_id,
+            light_texture_entry,
+            scale,
+            offset_x,
+            offset_y,
+        };
+        let kept = [
+            (LANTERN_LIGHT, LIGHT_GENERIC_SIDE, 0.36),
+            (light(14, 3, 1.0, -1.35, -3.0), LIGHT_GENERIC_SIDE, 1.86), // window, south wall: its beam
+            (light(60, 4, 1.0, 1.75, -3.0), LIGHT_GENERIC_SIDE, 1.80), // window, east wall: its beam
+            (light(2567, 9, 1.5, 0.21, -2.8), LIGHT_GENERIC_SIDE, 0.64), // wall torch
+            (light(2401, 1, 2.0, -1.0, -4.0), LIGHT_GENERIC_SIDE, 1.09), // fireplace, its fire
+            (light(2555, 9, 1.5, -3.15, -2.5), LIGHT_GENERIC_SIDE, 3.28), // wall sconce
+            (light(1, 3, 1.0, -3.6, -3.0), LIGHT_GENERIC_SIDE, 3.96), // the farthest kept: a window
+            (light(1, 11, 1.6, 0.1, -1.0), SMALL_SIDE, 0.50), // crystal, a 128-pixel texture
+        ];
+        let centred = [
+            (light(4846, 1, 2.0, -5.0, -4.0), 4.83), // lava
+            (light(2557, 1, 2.0, -5.0, -4.0), 4.83), // wall sconce
+            (light(186, 1, 2.0, -5.0, -4.0), 4.83), // window
+            (light(2402, 1, 2.0, -5.0, -4.0), 4.83), // fireplace, beside its fire
+            (light(3555, 1, 2.0, 0.0, 0.0), 4.78), // campfire
+            (light(1, 7, 2.0, -4.7, -2.0), 5.26), // candelabra
+        ];
+        for (light, side, distance) in kept {
+            let (actual, center, key) = glow_distance_from_cell(&light, side);
+            assert!((actual - distance).abs() < 0.01, "{light:?}: {actual}");
+            assert!(actual <= CLIENT_LIGHT_SPRITE_KEPT_PLACEMENT_REACH, "{light:?}");
+            assert_eq!(client_light_sprite_centred(center, key), center, "{light:?}");
+        }
+        for (light, distance) in centred {
+            let (actual, center, key) = glow_distance_from_cell(&light, LIGHT_GENERIC_SIDE);
+            assert!((actual - distance).abs() < 0.01, "{light:?}: {actual}");
+            let moved = client_light_sprite_centred(center, key);
+            // Moved across the ground, at its height, over the cell centre.
+            assert_eq!(moved.y, center.y, "{light:?}");
+            let cell = client_light_sprite_cell_centre(key.tile_x, key.tile_y, key.z);
+            assert!(ground_under(moved, cell.y).abs_diff_eq(cell, EPSILON), "{light:?}: {moved}");
+        }
+    }
+
+    /// A centred lava light: the light on the ground lands on the lava's cell centre, as large as the sprite.
+    #[test]
+    fn a_centred_sprites_land_light_lands_on_its_cell() {
+        const LAVA_SCALE: f32 = 1.5;
+        let lava = TileMetaItemLight { tile_id: 4846, light_texture_entry: 1, scale: 2.0, offset_x: -5.0, offset_y: -4.0 };
+        let (_, center, key) = glow_distance_from_cell(&lava, LIGHT_GENERIC_SIDE);
+        let bounds = client_light_sprite_bounds(&lava, LIGHT_GENERIC_SIDE, LIGHT_GENERIC_SIDE);
+        let (_, size) = client_light_sprite_quad(Vec3::ZERO, bounds);
+        let sprite = ClientLightSpriteInstance {
+            key,
+            texture_entry: lava.light_texture_entry,
+            center: client_light_sprite_centred(center, key),
+            size: size * LAVA_SCALE,
+            glow_rgb: [1.0; 3],
+        };
+        let light = client_light_sprite_static_light(&sprite);
+        assert!((light.world_x - (key.tile_x as f32 + TILE_CENTRE_OFFSET)).abs() < EPSILON, "{light:?}");
+        assert!((light.world_z - (key.tile_y as f32 + TILE_CENTRE_OFFSET)).abs() < EPSILON, "{light:?}");
+        let side_tiles = LAVA_SCALE * 2.0 * LIGHT_GENERIC_SIDE as f32 / 66.0;
+        assert!((light.width_world - side_tiles).abs() < EPSILON, "{light:?}");
     }
 
     #[test]
