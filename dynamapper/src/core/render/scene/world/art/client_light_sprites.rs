@@ -8,9 +8,9 @@
 //! scale, and moved by the light offsets in world units along the camera's right and up. Classic and UOD-Painterly
 //! draw the light.mul decals of `static_lights` instead.
 //!
-//! One setting departs from the clients in the two styles: the style's `local_lights.centre_on_items` centres the
+//! Two settings depart from the clients in the two styles. The style's `local_lights.centre_on_items` centres the
 //! sprites the tileart's default offsets throw far from their item on the item's cell
-//! (`client_light_sprite_centred`).
+//! (`client_light_sprite_centred`), and `configs::light_scale` (LightScale.kdl) enlarges chosen items' sprites.
 //!
 //! The clients light the terrain and the statics through the composite alone: their sprites are unlit and their
 //! terrain has no other light. The optional land light decals and static local lights (Light/Static Interaction,
@@ -25,7 +25,7 @@ use super::statics_collect::{
     STATIC_WORLD_Y_PER_XZ_PIXEL,
 };
 use crate::core::render::scene::camera::PlayerCamera;
-use crate::configs::{settings::Settings, shader_presets::UniformState};
+use crate::configs::{light_scale::ItemLightScales, settings::Settings, shader_presets::UniformState};
 use crate::console_logger::{self, LogAbout, LogSev};
 use crate::core::render::scene::world::effects::client_night::LIGHT_BUFFER_LAYER;
 use crate::core::render::scene::world::land::{LCMesh, CHUNK_STORAGE_BLOCKS_DIM, MAP_STORAGE_BLOCK_TILE_DIM};
@@ -245,10 +245,15 @@ fn has_drawable_scale(light: &TileMetaItemLight) -> bool {
     light.scale.is_finite() && light.scale > 0.0
 }
 
-/// The scan margin in map blocks around the visible chunks: the largest reach of a loaded light, so no sprite whose
-/// static lies off screen is missing. A world unit along the billboard's right or world Y moves the sprite at most
-/// one tile along each map axis on screen. Centring only brings sprites nearer their items.
-fn client_light_sprite_reach_blocks(tilemeta: &TileMetaPackageRes, tex_aux: &TexAuxEcPackageRes) -> u32 {
+/// The scan margin in map blocks around the visible chunks: the largest reach of a loaded light, enlarged by the
+/// largest item light scale, so no sprite whose static lies off screen is missing. A world unit along the billboard's
+/// right or world Y moves the sprite at most one tile along each map axis on screen. Centring only brings sprites
+/// nearer their items.
+fn client_light_sprite_reach_blocks(
+    tilemeta: &TileMetaPackageRes,
+    tex_aux: &TexAuxEcPackageRes,
+    light_scales: &ItemLightScales,
+) -> u32 {
     let reach = tilemeta
         .0
         .item_lights()
@@ -259,7 +264,7 @@ fn client_light_sprite_reach_blocks(tilemeta: &TileMetaPackageRes, tex_aux: &Tex
             Some(client_light_sprite_reach(client_light_sprite_bounds(light, u32::from(slot.width), u32::from(slot.height))))
         })
         .fold(0.0, f32::max);
-    (reach / MAP_STORAGE_BLOCK_TILE_DIM as f32).ceil() as u32
+    (reach * light_scales.largest() / MAP_STORAGE_BLOCK_TILE_DIM as f32).ceil() as u32
 }
 
 pub fn sys_collect_client_light_sprites(
@@ -268,6 +273,7 @@ pub fn sys_collect_client_light_sprites(
     tex_aux_res: Option<Res<TexAuxEcPackageRes>>,
     settings: Res<Settings>,
     uniform_state: Res<UniformState>,
+    light_scales: Res<ItemLightScales>,
     scene_state: Res<SceneStateData>,
     chunks_q: Query<&LCMesh>,
     mut cache: ResMut<ClientLightSpriteCache>,
@@ -308,7 +314,9 @@ pub fn sys_collect_client_light_sprites(
         return;
     };
     let mut statics_store = statics_store.lock();
-    let reach_blocks = *cache.reach_blocks.get_or_insert_with(|| client_light_sprite_reach_blocks(&tilemeta, &tex_aux));
+    let reach_blocks = *cache
+        .reach_blocks
+        .get_or_insert_with(|| client_light_sprite_reach_blocks(&tilemeta, &tex_aux, &light_scales));
 
     let mut blocks = BTreeSet::new();
     for chunk_key in &visible_chunk_keys {
@@ -368,6 +376,7 @@ pub fn sys_collect_client_light_sprites(
             let (center, size) =
                 client_light_sprite_quad(client_light_sprite_origin(key.tile_x, key.tile_y, key.z), bounds);
             let center = if centre_on_items { client_light_sprite_centred(center, key) } else { center };
+            let size = size * light_scales.scale(key.graphic);
             instances.push(ClientLightSpriteInstance { key, texture_entry: entry, center, size, glow_rgb });
         }
     }
@@ -400,7 +409,7 @@ pub fn sys_sync_client_light_sprites(
     let mut existing_keys = HashSet::new();
     for (entity, key, mut transform) in existing_q.iter_mut() {
         if let Some(instance) = desired.get(key) {
-            // A kept sprite may have moved: Local Lights' centring changed.
+            // A kept sprite may have moved or grown: Local Lights' centring changed.
             transform.translation = instance.center;
             transform.scale = instance.size.extend(1.0);
             existing_keys.insert(*key);

@@ -43,6 +43,7 @@ impl Plugin for DrawStaticSpritesPlugin {
         app.init_resource::<static_lights::StaticLightDrawDebugState>();
         app.init_resource::<client_light_sprites::RenderClientLightSprites>();
         app.init_resource::<client_light_sprites::ClientLightSpriteCache>();
+        app.insert_resource(crate::configs::light_scale::ItemLightScales::load());
         app.add_plugins(bevy::render::extract_component::ExtractComponentPlugin::<
             transparent_order::StaticTransparentBatchOrder,
         >::default());

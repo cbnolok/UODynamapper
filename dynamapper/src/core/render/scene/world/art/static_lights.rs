@@ -1,5 +1,6 @@
 use super::client_light_sprites::{client_light_sprite_static_light, RenderClientLightSprites};
 use super::statics_collect::StaticChunkBatchKey;
+use crate::configs::light_scale::{ItemLightScales, NEUTRAL_LIGHT_SCALE};
 use crate::configs::{settings::Settings, shader_presets::UniformState};
 use crate::console_logger::{self, LogAbout, LogSev};
 use crate::core::render::scene::world::land::mesh_material::{ClientLocalLightSource, ClientLocalLights};
@@ -253,6 +254,7 @@ pub fn sys_collect_visible_static_lights(
     settings: Res<Settings>,
     uniform_state: Res<UniformState>,
     client_light_sprites: Res<RenderClientLightSprites>,
+    light_scales: Res<ItemLightScales>,
     scene_state: Res<SceneStateData>,
     chunks_q: Query<&crate::core::render::scene::world::land::LCMesh>,
     mut material_cache: ResMut<StaticLightMaterialCache>,
@@ -283,6 +285,8 @@ pub fn sys_collect_visible_static_lights(
         return;
     };
     let mut statics_store = statics_store.lock();
+    // KR-like and Enhanced enlarge the items LightScale.kdl lists; Classic and UOD-Painterly draw light.mul as it is.
+    let scaled = StaticLightTarget::for_uniform_state(&uniform_state) == StaticLightTarget::ClientLightBuffer;
 
     let mut visible_chunk_keys = chunks_q
         .iter()
@@ -340,6 +344,7 @@ pub fn sys_collect_visible_static_lights(
                         continue;
                     }
 
+                    let scale = if scaled { light_scales.scale(tile.graphic) } else { NEUTRAL_LIGHT_SCALE };
                     output.0.push(StaticLightInstance {
                         key,
                         light_id,
@@ -355,8 +360,8 @@ pub fn sys_collect_visible_static_lights(
                         world_x: tile_x as f32 + 0.5,
                         world_z: tile_y as f32 + 0.5,
                         world_y: scale_uo_z_to_bevy_units(tile.z as f32) + STATIC_LIGHT_Y_BIAS,
-                        width_world: slot.width as f32 / LIGHT_PIXELS_PER_WORLD_TILE,
-                        height_world: slot.height as f32 / LIGHT_PIXELS_PER_WORLD_TILE,
+                        width_world: slot.width as f32 / LIGHT_PIXELS_PER_WORLD_TILE * scale,
+                        height_world: slot.height as f32 / LIGHT_PIXELS_PER_WORLD_TILE * scale,
                     });
                 }
             }

@@ -1,0 +1,16 @@
+// How large KR-like and Enhanced draw the local lights of chosen items: their light sprites (on top of the tileart's
+// light scale) and the lights on the ground taken from them, or their light.mul lights when the style's Local Lights
+// take light.mul. Classic and UOD-Painterly draw every light as the client does. Dynamapper reads your copy,
+// cache/runtime_specs/lights/LightScale.kdl beside the assets folder, in place of this file when it exists, at startup:
+// copy this file there and edit the copy. A copy that does not read leaves this file in force, with a warning naming
+// the line, until it is fixed.
+//
+//   item <id> [<last id>] scale=<multiplier>
+//     The lights of the item id, or of every id from <id> to <last id>, drawn <multiplier> times as large (0.25 to
+//     8; 1 is the lights as they come), about the glow's centre. An item is listed once.
+
+// Lava: its glow reaches past the lava bed.
+item 4846 4892 scale=1.5
+item 12935 scale=1.5
+item 12950 12953 scale=1.5
+item 13639 13643 scale=1.5
