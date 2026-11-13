@@ -15,9 +15,17 @@ they do not define the package format, texture roles or client behavior.
   chunk; on-screen periods measured on 2026-11-12 match the item stretches
   (EC grass 4, KR grass 5, sand 6, EC forest 4 with an exact 16-cell repeat).
   Neither image dimensions nor a preferred stretch range selects the client's
-  base. The client's v runs against map y while this renderer's runs with it;
-  whether transform method 2 flips v back is unverified, so terrain images may
-  be mirrored north-south here. The period is unaffected.
+  base. The client's set 0 v runs against map y while this renderer's runs
+  with it, yet the screen orientation matches: an EC client screenshot of a
+  grass plain (2026-11-13, 19.62 px per cell axis, EC zoom 0.89) folded into
+  one period correlates with item 1 (stretch 4) at r = +0.87 with v along +y
+  and at most +0.16 in the seven other flips and quarter turns, and with
+  item 0 (stretch 10) at +0.52, again only along +y. Terrain is not mirrored
+  here. The same screenshot repeats every 4 cells, with item 0's 10 cells and
+  the mask's 32 under it, and adds no further detail or macro layer; it
+  repeats less visibly than this renderer mainly because its filtering is
+  softer and its contrast lower (period-4 correlation about 0.3 against 0.4
+  in Enhanced and 0.45 in KR-like).
 - Terrain roles follow layer class and item position. Default and bump layers
   use item 0 for colour A; water's fallback is item 1, while its full path uses
   item 0 to perturb item 2. Names such as `normal`, `alpha` or `cube` do not
