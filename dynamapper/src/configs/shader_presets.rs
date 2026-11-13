@@ -5,7 +5,7 @@ use crate::{
     core::render::scene::world::land::mesh_material::{
         local_light_intensity, ClientLocalLights, ClientNightLighting, GlobalLightingUniforms, LandEffectsUniform,
         LandLightingUniforms, LandMaterialUniformsPresets, LandRenderStylePresetsPerMode, LandShaderModePresets,
-        SunAngles, LOCAL_LIGHT_INTENSITY_RANGE, TONE_CURVE_PROFILE,
+        LightCover, SunAngles, LOCAL_LIGHT_INTENSITY_RANGE, TONE_CURVE_PROFILE,
     },
     core::system_sets::StartupSysSet,
     prelude::*,
@@ -84,6 +84,8 @@ pub struct UniformState {
     /// The land texture variation of the active preset's style, not of its slot: `Some` in KR-like, Enhanced and
     /// UOD-Painterly. `effects.land_texture_variation` follows it.
     pub land_texture_variation: Option<bool>,
+    /// The rule that hides covered lights, of the active preset's style.
+    pub light_cover: LightCover,
     pub sun: SunAngles,              // static light direction (maps to scene.light_direction)
     pub dirty: bool,                 // when true, push to GPU materials this frame
     /// Snapshot of the last values saved to disk (for undo). `None` until first save.
@@ -104,6 +106,7 @@ pub struct UniformSnapshot {
     pub client_shadows: Option<bool>,
     pub local_lights: Option<ClientLocalLights>,
     pub land_texture_variation: Option<bool>,
+    pub light_cover: LightCover,
     pub sun: SunAngles,
 }
 
@@ -126,6 +129,7 @@ impl UniformState {
             client_shadows: self.client_shadows,
             local_lights: self.local_lights,
             land_texture_variation: self.land_texture_variation,
+            light_cover: self.light_cover,
             sun: self.sun,
         }
     }
@@ -140,6 +144,7 @@ impl UniformState {
         self.client_shadows = snap.client_shadows;
         self.local_lights = snap.local_lights;
         self.land_texture_variation = snap.land_texture_variation;
+        self.light_cover = snap.light_cover;
         self.sun = snap.sun;
         self.dirty = true;
     }
@@ -648,8 +653,8 @@ pub fn build_save_presets(u: &UniformState, base: &LandShaderModePresets) -> Lan
     out
 }
 
-/// Capture the live shader values in their active mode × time-of-day slot, and the style's local lights and land
-/// texture variation in its group.
+/// Capture the live shader values in their active mode × time-of-day slot, and the style's local lights, land
+/// texture variation and light cover in its group.
 ///
 /// The UI calls this before changing presets so edits are not discarded when the
 /// next slot is applied. Disk persistence remains tied to closing the shader panel.
@@ -657,6 +662,7 @@ pub fn store_active_preset(presets: &mut LandShaderModePresets, u: &UniformState
     if let Some(slots) = preset_key_group(&u.active_preset).and_then(|group| get_preset_group_mut(presets, group)) {
         slots.local_lights = u.local_lights;
         slots.land_texture_variation = u.land_texture_variation;
+        slots.light_cover = u.light_cover;
     }
     if let Some(slot) = get_preset_slot_mut(presets, &u.active_preset) {
         slot.effects = u.effects;
@@ -740,8 +746,8 @@ pub fn get_preset_slot<'a>(
     }
 }
 
-/// Replace one mode × time-of-day slot with its immutable factory values, and its style's local lights and land
-/// texture variation, which the shader window shows with the slot's values.
+/// Replace one mode × time-of-day slot with its immutable factory values, and its style's local lights, land
+/// texture variation and light cover, which the shader window shows with the slot's values.
 pub fn reset_preset_to_factory(
     presets: &mut LandShaderModePresets,
     factory_presets: &LandShaderModePresets,
@@ -758,9 +764,13 @@ pub fn reset_preset_to_factory(
     let factory_slots = group.and_then(|group| get_preset_group(factory_presets, group));
     let factory_local_lights = factory_slots.and_then(|slots| slots.local_lights);
     let factory_land_texture_variation = factory_slots.and_then(|slots| slots.land_texture_variation);
+    let factory_light_cover = factory_slots.map(|slots| slots.light_cover);
     if let Some(slots) = group.and_then(|group| get_preset_group_mut(presets, group)) {
         slots.local_lights = factory_local_lights;
         slots.land_texture_variation = factory_land_texture_variation;
+        if let Some(light_cover) = factory_light_cover {
+            slots.light_cover = light_cover;
+        }
     }
     true
 }
@@ -779,6 +789,7 @@ fn clone_presets(p: &LandShaderModePresets) -> LandShaderModePresets {
 fn clone_mode(m: &LandRenderStylePresetsPerMode) -> LandRenderStylePresetsPerMode {
     LandRenderStylePresetsPerMode {
         land_texture_variation: m.land_texture_variation,
+        light_cover: m.light_cover,
         local_lights: m.local_lights,
         morning: clone_slot(&m.morning),
         afternoon: clone_slot(&m.afternoon),
@@ -824,6 +835,8 @@ fn uniform_state_from_presets(source: &LandShaderModePresets) -> UniformState {
     let style = preset_key_group(&preset_key).and_then(|group| get_preset_group(source, group));
     let local_lights = style.and_then(|slots| slots.local_lights);
     let land_texture_variation = style.and_then(|slots| slots.land_texture_variation);
+    // An invalid active preset falls back to classic.morning, and so to Classic's light cover.
+    let light_cover = style.map_or(source.classic.light_cover, |slots| slots.light_cover);
     let mut state = UniformState {
         effects: preset.effects,
         lighting: preset.lighting,
@@ -833,6 +846,7 @@ fn uniform_state_from_presets(source: &LandShaderModePresets) -> UniformState {
         client_shadows: preset.client_shadows,
         local_lights,
         land_texture_variation,
+        light_cover,
         sun: preset.sun,
         dirty: true,
         saved_snapshot: None,
@@ -875,6 +889,7 @@ mod tests {
     fn mode(base_mode: u32, base_global: f32) -> LandRenderStylePresetsPerMode {
         LandRenderStylePresetsPerMode {
             land_texture_variation: None,
+            light_cover: LightCover::ClassicUo,
             local_lights: None,
             morning: slot(base_mode, base_global, 1.0),
             afternoon: slot(base_mode, base_global + 0.1, 1.1),
@@ -994,6 +1009,46 @@ mod tests {
 
         assert_eq!(effective.kr.local_lights, factory.kr.local_lights);
         assert_eq!(effective.enhanced.local_lights, Some(local_lights(ClientLocalLightSource::LightMul, 0.5)));
+    }
+
+    /// The shader window shows a style's light cover with the slot's values, so resetting a slot resets it too, and
+    /// only in that style.
+    #[test]
+    fn resetting_a_preset_restores_its_style_light_cover() {
+        let factory = presets();
+        let mut effective = presets();
+        effective.kr.light_cover = LightCover::Clients;
+        effective.classic.light_cover = LightCover::Clients;
+
+        assert!(reset_preset_to_factory(&mut effective, &factory, "kr.night"));
+
+        assert_eq!(effective.kr.light_cover, LightCover::ClassicUo);
+        assert_eq!(effective.classic.light_cover, LightCover::Clients);
+    }
+
+    /// The light cover belongs to the style: storing the live state writes it to the active group, and loading a
+    /// style's preset reads it back.
+    #[test]
+    fn the_light_cover_is_stored_in_and_read_from_its_style() {
+        let mut source = presets();
+        source.default_preset = "painterly.night".to_string();
+        source.painterly.light_cover = LightCover::Clients;
+        let mut u = uniform_state_from_presets(&source);
+        assert_eq!(u.light_cover, LightCover::Clients);
+
+        u.light_cover = LightCover::ClassicUo;
+        u.active_preset = "enhanced.cave".to_string();
+        let mut stored = presets();
+        stored.enhanced.light_cover = LightCover::Clients;
+        store_active_preset(&mut stored, &u);
+        assert_eq!(stored.enhanced.light_cover, LightCover::ClassicUo);
+        assert_eq!(stored.painterly.light_cover, LightCover::ClassicUo);
+
+        // Undo brings the saved value back.
+        let snapshot = u.snapshot();
+        u.light_cover = LightCover::Clients;
+        u.restore(&snapshot);
+        assert_eq!(u.light_cover, LightCover::ClassicUo);
     }
 
     const BUNDLED_FACTORY_PRESETS: &str = include_str!("../../assets/defaults/shader_presets.toml");
@@ -1197,6 +1252,56 @@ mod tests {
 
         assert!(reset_preset_to_factory(&mut saved, &bundled, "painterly.morning"));
         assert_eq!(saved.painterly.land_texture_variation, Some(false));
+    }
+
+    /// Every style has its light cover, ClassicUO's rule by default, in both bundled files.
+    #[test]
+    fn bundled_presets_give_every_style_classicuos_light_cover() {
+        for (name, text) in [("shader_presets.toml", BUNDLED_FACTORY_PRESETS), ("land.toml", BUNDLED_LAND_SETTINGS)] {
+            let presets = parse(text).expect("bundled");
+            for (group, slots) in preset_groups(&presets) {
+                assert_eq!(slots.light_cover, LightCover::ClassicUo, "{name} {group}");
+            }
+        }
+    }
+
+    /// A hand-written file must give every style a known light cover; a cached land.toml takes the default for a
+    /// missing or unknown one, with a warning.
+    #[test]
+    fn hand_written_light_cover_is_strict_and_cached_is_filled() {
+        const BUNDLED_LIGHT_COVER_LINE: &str = "[classic]\nlight_cover = \"classicuo\"\n";
+        assert!(BUNDLED_FACTORY_PRESETS.contains(BUNDLED_LIGHT_COVER_LINE));
+        let missing = BUNDLED_FACTORY_PRESETS.replacen(BUNDLED_LIGHT_COVER_LINE, "[classic]\n", 1);
+        let error = parse(&missing).err().expect("missing light cover").to_string();
+        assert!(error.contains("missing field `light_cover`"), "{error}");
+        let unknown = BUNDLED_FACTORY_PRESETS.replacen(BUNDLED_LIGHT_COVER_LINE, "[classic]\nlight_cover = \"none\"\n", 1);
+        let error = parse(&unknown).err().expect("unknown light cover").to_string();
+        assert!(error.contains("unknown variant `none`, expected `classicuo` or `clients`"), "{error}");
+        let clients =
+            BUNDLED_FACTORY_PRESETS.replacen(BUNDLED_LIGHT_COVER_LINE, "[classic]\nlight_cover = \"clients\"\n", 1);
+        assert_eq!(parse(&clients).expect("clients").classic.light_cover, LightCover::Clients);
+
+        let bundled = parse(BUNDLED_LAND_SETTINGS).expect("bundled");
+        let mut older: toml::Table = toml::from_str(BUNDLED_LAND_SETTINGS).expect("bundled");
+        older[KR_PRESET_GROUP].as_table_mut().expect("group").remove("light_cover");
+        older[ENHANCED_PRESET_GROUP]
+            .as_table_mut()
+            .expect("group")
+            .insert("light_cover".to_string(), toml::Value::String("roofs".to_string()));
+        older[CLASSIC_PRESET_GROUP]
+            .as_table_mut()
+            .expect("group")
+            .insert("light_cover".to_string(), toml::Value::String("clients".to_string()));
+        let older = toml::to_string(&older).expect("serialize");
+        let load = uocf::utils::config_toml::parse_app_state("land.toml", &older, &bundled).expect("lenient load");
+        assert_eq!(load.warnings.len(), 2, "{:?}", load.warnings);
+        assert!(load.warnings.contains(&"land.toml: missing key `kr.light_cover` filled from the default".to_string()));
+        assert!(load.warnings.iter().any(|warning| warning.starts_with(
+            "land.toml: invalid value \"roofs\" of key `enhanced.light_cover` reset to the default"
+        )), "{:?}", load.warnings);
+        assert_eq!(load.value.kr.light_cover, LightCover::ClassicUo);
+        assert_eq!(load.value.enhanced.light_cover, LightCover::ClassicUo);
+        assert_eq!(load.value.classic.light_cover, LightCover::Clients);
     }
 
     /// A hand-written file must give KR-like and Enhanced their local lights, complete and in range, and no other

@@ -124,6 +124,18 @@ default_preset = "classic.morning"
 #                    their blend mask through a larger grid of its own. It fades out as the view zooms out, where the
 #                    repetition no longer shows. false is the plain tiling, as the clients draw it. Off in every preset.
 #
+# === [Light cover] ===
+# [<group>] light_cover: every style, one value per style (not per time of day), required. The rule that hides the
+#                    lights a roof or an upper floor covers: the light.mul decals of Classic and UOD-Painterly, the
+#                    light sprites of KR-like and Enhanced, and the local lights taken from either. Both rules look at
+#                    the cell in front of a light, (x + 1, y + 1), toward the camera.
+#   "classicuo":      ClassicUO's rule: an opaque static (not Transparent or NoDraw) at least 5 z above the light hides
+#                     it. Dynamapper keeps a light hung under an eave lit: no wall at the light's height in front of
+#                     it, and the cover ends within two more cells along the diagonal.
+#   "clients":        The Enhanced and KR clients' rule: any static in a higher 20-z band above the land of the
+#                     light's cell, band = (z - land z + 140) / 20, hides it; no exception for eaves or see-through
+#                     items.
+#
 # === [Client shadows] ===
 # client_shadows:    KR-like only, required there and refused elsewhere. true draws the KR client's static shadows
 #                    (its Show Shadows option): a black copy of each static, item and foliage sprite, leaning right
@@ -136,6 +148,9 @@ default_preset = "classic.morning"
 # ------------------
 # Simplified rendering emulating the original UO client.
 # Key features like grading, gloom, specular, and rim lighting are disabled.
+
+[classic]
+light_cover = "classicuo"
 
 [classic.morning]
 global_lighting = 1.02
@@ -492,6 +507,7 @@ elevation_degrees = 60.50379
 
 [enhanced]
 land_texture_variation = false
+light_cover = "classicuo"
 
 [enhanced.local_lights]
 source = "light_sprites"
@@ -869,6 +885,7 @@ elevation_degrees = 45.0
 
 [kr]
 land_texture_variation = false
+light_cover = "classicuo"
 
 [kr.local_lights]
 source = "light_sprites"
@@ -1234,6 +1251,7 @@ elevation_degrees = 45.0
 
 [painterly]
 land_texture_variation = false
+light_cover = "classicuo"
 
 [painterly.morning]
 global_lighting = 1.04

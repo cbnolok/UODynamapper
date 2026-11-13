@@ -22,7 +22,7 @@ use crate::core::render::scene::world::z_view::ZViewLimit;
 use super::static_lights::{StaticLightInstance, StaticLightKey, StaticLightTarget, LIGHT_PIXELS_PER_WORLD_TILE,
     STATIC_LIGHT_Y_BIAS};
 use super::statics_collect::{
-    apply_static_world_anchor_translation, resolve_static_billboard_bounds, StaticBillboardBounds,
+    apply_static_world_anchor_translation, resolve_static_billboard_bounds, static_land_z, StaticBillboardBounds,
     StaticChunkBatchKey, CC_WORLD_XZ_PER_PIXEL, CC_WORLD_Y_PER_PIXEL, STATIC_BILLBOARD_RIGHT_XZ,
     STATIC_WORLD_Y_PER_XZ_PIXEL,
 };
@@ -30,10 +30,11 @@ use crate::core::render::scene::camera::PlayerCamera;
 use crate::configs::{light_scale::ItemLightScales, settings::Settings, shader_presets::UniformState};
 use crate::console_logger::{self, LogAbout, LogSev};
 use crate::core::render::scene::world::effects::client_night::LIGHT_BUFFER_LAYER;
+use crate::core::render::scene::world::land::mesh_material::LightCover;
 use crate::core::render::scene::world::land::{LCMesh, CHUNK_STORAGE_BLOCKS_DIM, MAP_STORAGE_BLOCK_TILE_DIM};
 use crate::core::render::scene::SceneStateData;
 use crate::core::statics::StaticsStoreRes;
-use crate::core::uo_files_loader::{TexAuxEcPackageRes, TileMetaPackageRes};
+use crate::core::uo_files_loader::{MapPlanesRes, TexAuxEcPackageRes, TileMetaPackageRes};
 use crate::util_lib::uo_coords::scale_uo_z_to_bevy_units;
 use bevy::camera::visibility::{NoFrustumCulling, RenderLayers};
 use bevy::prelude::*;
@@ -89,9 +90,9 @@ pub struct ClientLightSpriteInstance {
 #[derive(Resource, Default)]
 pub struct RenderClientLightSprites {
     pub instances: Vec<ClientLightSpriteInstance>,
-    /// What the last scan covered, whether it centred the sprites on their items and the z limit it hid covered
-    /// lights under (`light_cover`); the scan reruns only when it changes.
-    last_scan: Option<(u32, Vec<StaticChunkBatchKey>, bool, i32)>,
+    /// What the last scan covered, whether it centred the sprites on their items, and the rule and z limit it hid
+    /// covered lights by (`light_cover`); the scan reruns only when it changes.
+    last_scan: Option<(u32, Vec<StaticChunkBatchKey>, bool, LightCover, i32)>,
 }
 
 /// The sprites' materials, one per light texture (`None` once a texture failed to load), and the scan reach.
@@ -273,6 +274,7 @@ pub fn sys_collect_client_light_sprites(
     statics_res: Res<StaticsStoreRes>,
     tilemeta_res: Option<Res<TileMetaPackageRes>>,
     tex_aux_res: Option<Res<TexAuxEcPackageRes>>,
+    map_planes: Option<Res<MapPlanesRes>>,
     settings: Res<Settings>,
     uniform_state: Res<UniformState>,
     light_scales: Res<ItemLightScales>,
@@ -307,10 +309,11 @@ pub fn sys_collect_client_light_sprites(
         .collect::<Vec<_>>();
     visible_chunk_keys.sort_by_key(|key| (key.gy, key.gx, key.scale));
     let centre_on_items = uniform_state.local_lights.is_some_and(|local_lights| local_lights.centre_on_items);
+    let light_cover = uniform_state.light_cover;
     let max_z = z_view.0.max_z;
-    if output.last_scan.as_ref().is_some_and(|(last_map, last_keys, last_centred, last_max_z)| {
+    if output.last_scan.as_ref().is_some_and(|(last_map, last_keys, last_centred, last_cover, last_max_z)| {
         *last_map == map_id && *last_keys == visible_chunk_keys && *last_centred == centre_on_items
-            && *last_max_z == max_z
+            && *last_cover == light_cover && *last_max_z == max_z
     }) {
         return;
     }
@@ -370,8 +373,22 @@ pub fn sys_collect_client_light_sprites(
                 z: tile.z,
                 graphic: tile.graphic,
             };
+            let land_z = static_land_z(
+                map_planes.as_deref(),
+                map_id,
+                (key.tile_x as i32, key.tile_y as i32),
+            );
             if !seen.insert(key)
-                || static_light_is_hidden(&mut statics_store, &tilemeta.0, key.tile_x, key.tile_y, key.z, max_z)
+                || static_light_is_hidden(
+                    &mut statics_store,
+                    &tilemeta.0,
+                    light_cover,
+                    land_z,
+                    key.tile_x,
+                    key.tile_y,
+                    key.z,
+                    max_z,
+                )
             {
                 continue;
             }
@@ -402,7 +419,7 @@ pub fn sys_collect_client_light_sprites(
         );
     }
     output.instances = instances;
-    output.last_scan = Some((map_id, visible_chunk_keys, centre_on_items, max_z));
+    output.last_scan = Some((map_id, visible_chunk_keys, centre_on_items, light_cover, max_z));
 }
 
 pub fn sys_sync_client_light_sprites(

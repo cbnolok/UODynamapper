@@ -51,6 +51,12 @@ pub(super) const NIGHT_OVERLAY_COLOR: &str =
     "The night map's mean colour. The client's keeps its blue; another colour keeps its cloud pattern.";
 pub(super) const NIGHT_OVERLAY_CLIENT: &str =
     "Back to the client's colour, the night map's exact mean.";
+pub(super) const LIGHT_COVER: &str =
+    "Which rule hides the lights a roof or an upper floor covers, in this style at every time of day. Both look at the cell in front of a light, toward the camera: a room's lights go under its roof, a light on an outer wall facing you stays. The light's glow and the local lights taken from it go together.";
+pub(super) const LIGHT_COVER_CLASSICUO: &str =
+    "ClassicUO's rule: an opaque static at least 5 z above the light, in the cell in front of it, hides it. Dynamapper keeps the lights hung under an eave lit: when no wall stands at the light's height in front of it and the cover ends within two more cells toward the camera, the light is outside the building.";
+pub(super) const LIGHT_COVER_CLIENTS: &str =
+    "The Enhanced and KR clients' rule: anything in the cell in front of the light that sits in a higher 20-z band above the land hides it, with no exception for eaves or see-through items. A roof 20 z above always hides; one 5 to 19 z above hides when it crosses a band.";
 pub(super) const LOCAL_LIGHT_SOURCE: &str =
     "Which lights light the ground through Light/Static Interaction in KR-like and Enhanced, and the statics too when world_rendering.enable_static_art_local_lights is on. Light Sprites: the client light sprites, each lighting the ground under its glow, as large as the sprite and in its texture's colour. light.mul: the Classic lights, as in Classic and UOD-Painterly: every static with the light source flag, with its light.mul light's size and its hue or light colour. Either way the night still glows with the client light sprites. Needs Light/Static Interaction above 0 (0 in these presets). One choice for the style at every time of day, and each source keeps its own intensity, the slider below.";
 pub(super) const LOCAL_LIGHTS_LIGHT_SPRITES: &str =

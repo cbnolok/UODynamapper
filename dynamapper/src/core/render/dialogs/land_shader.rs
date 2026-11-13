@@ -144,6 +144,12 @@ const LOCAL_LIGHT_SOURCE_OPTIONS: [(&str, ClientLocalLightSource, &str); 2] = [
     ("light.mul", ClientLocalLightSource::LightMul, tips::LOCAL_LIGHTS_LIGHT_MUL),
 ];
 
+/// The "Lights under Roofs" choices: `(label, rule, tooltip)`.
+const LIGHT_COVER_OPTIONS: [(&str, LightCover, &str); 2] = [
+    ("ClassicUO", LightCover::ClassicUo, tips::LIGHT_COVER_CLASSICUO),
+    ("Enhanced/KR Clients", LightCover::Clients, tips::LIGHT_COVER_CLIENTS),
+];
+
 /// The intensity slider of each local light source, under the "Local Lights" row: `(label, tooltip)`.
 fn local_light_intensity_slider(source: ClientLocalLightSource) -> (&'static str, &'static str) {
     match source {
@@ -265,6 +271,9 @@ fn apply_render_preset(
     u.client_shadows = preset.client_shadows;
     let style_slots = get_preset_group(presets, style.preset_group);
     u.local_lights = style_slots.and_then(|slots| slots.local_lights);
+    if let Some(slots) = style_slots {
+        u.light_cover = slots.light_cover;
+    }
     u.sync_local_light_intensity();
     u.land_texture_variation = style_slots.and_then(|slots| slots.land_texture_variation);
     u.sync_land_texture_variation();
@@ -1108,6 +1117,7 @@ fn whole_scene_controls(ui: &mut egui::Ui, u: &mut UniformState, gates: RenderSt
         // KR's filmic tonemap had its own pre-scale here ("KR Tonemap Brightness"); it multiplied
         // exactly like Exposure, so it is folded into Exposure (Advanced -> Intensities).
         changed |= slider_s(ui, "Light/Static Interaction", &mut u.effects.light_decal_intensity, 0.0..=2.0, tips::LIGHT_STATIC_INTERACTION);
+        changed |= light_cover_controls(ui, &mut u.light_cover);
         if let Some(local_lights) = u.local_lights.as_mut() {
             changed |= local_lights_controls(ui, local_lights);
         }
@@ -1134,6 +1144,22 @@ fn client_night_controls(ui: &mut egui::Ui, lighting: &mut ClientNightLighting) 
         tips::NIGHT_OVERLAY_STRENGTH,
     );
     changed |= night_overlay_color(ui, &mut lighting.overlay_color);
+    changed
+}
+
+/// Which rule hides the lights a roof or an upper floor covers, in every style.
+fn light_cover_controls(ui: &mut egui::Ui, light_cover: &mut LightCover) -> bool {
+    let mut changed = false;
+    ui.horizontal_wrapped(|ui| {
+        with_tip(ui.label("Lights under Roofs:"), tips::LIGHT_COVER);
+        for (label, option, tip) in LIGHT_COVER_OPTIONS {
+            let selected = *light_cover == option;
+            if with_tip(ui.selectable_label(selected, label), tip).clicked() && !selected {
+                *light_cover = option;
+                changed = true;
+            }
+        }
+    });
     changed
 }
 
@@ -1466,6 +1492,7 @@ mod tests {
             client_shadows: None,
             local_lights: None,
             land_texture_variation: None,
+            light_cover: LightCover::ClassicUo,
             sun: SunAngles::default(),
             dirty: false,
             saved_snapshot: None,
@@ -1488,6 +1515,7 @@ mod tests {
     fn mode(base: f32) -> LandRenderStylePresetsPerMode {
         LandRenderStylePresetsPerMode {
             land_texture_variation: None,
+            light_cover: LightCover::ClassicUo,
             local_lights: None,
             morning: preset(base),
             afternoon: preset(base + 1.0),

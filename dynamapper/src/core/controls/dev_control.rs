@@ -183,6 +183,7 @@ fn poll_control(
                             "preset": state.active_preset, "global_lighting": state.global_lighting,
                             "effects": state.effects, "local_lights": state.local_lights,
                             "land_texture_variation": state.land_texture_variation,
+                            "light_cover": state.light_cover,
                             "local_light_intensity": state.effects.local_light_intensity})),
                         "static_lights": static_lights.as_ref().map(|lights| json!({"instances": lights.0.len()})),
                         "input": {"queued_frames": input.queued_frames(), "context_focus_override": input.focused,

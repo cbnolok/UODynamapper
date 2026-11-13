@@ -1920,6 +1920,7 @@ mod tests {
             client_shadows: None,
             local_lights: None,
             land_texture_variation: None,
+            light_cover: world::land::mesh_material::LightCover::ClassicUo,
             sun: world::land::mesh_material::SunAngles::default(),
             dirty: false,
             saved_snapshot: None,

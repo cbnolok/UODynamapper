@@ -2276,7 +2276,7 @@ fn client_shadow_surface_tops(
 }
 
 /// The land z of a cell, while its map block is loaded.
-fn static_land_z(map_planes: Option<&MapPlanesRes>, map_id: u32, cell: (i32, i32)) -> Option<i8> {
+pub(super) fn static_land_z(map_planes: Option<&MapPlanesRes>, map_id: u32, cell: (i32, i32)) -> Option<i8> {
     use uocf::classic::map::{MapCell, MapCellCoords};
     let plane = map_planes?.0.get(usize::try_from(map_id).ok()?)?.as_ref()?;
     let coords = MapCellCoords { x: u32::try_from(cell.0).ok()?, y: u32::try_from(cell.1).ok()? };

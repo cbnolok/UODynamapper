@@ -1,6 +1,6 @@
 use super::client_light_sprites::{client_light_sprite_static_light, RenderClientLightSprites};
 use super::light_cover::static_light_is_hidden;
-use super::statics_collect::StaticChunkBatchKey;
+use super::statics_collect::{static_land_z, StaticChunkBatchKey};
 use crate::configs::light_scale::{ItemLightScales, NEUTRAL_LIGHT_SCALE};
 use crate::configs::{settings::Settings, shader_presets::UniformState};
 use crate::console_logger::{self, LogAbout, LogSev};
@@ -11,7 +11,7 @@ use crate::core::render::scene::world::land::{
 use crate::core::render::scene::world::z_view::ZViewLimit;
 use crate::core::render::scene::SceneStateData;
 use crate::core::statics::StaticsStoreRes;
-use crate::core::uo_files_loader::{HuesPackageRes, TileMetaPackageRes, WorldLightsPackageRes};
+use crate::core::uo_files_loader::{HuesPackageRes, MapPlanesRes, TileMetaPackageRes, WorldLightsPackageRes};
 use crate::util_lib::uo_coords::scale_uo_z_to_bevy_units;
 use bevy::camera::visibility::{NoFrustumCulling, RenderLayers};
 use bevy::prelude::*;
@@ -253,6 +253,7 @@ pub fn sys_collect_visible_static_lights(
     tilemeta_res: Option<Res<TileMetaPackageRes>>,
     world_lights_res: Option<Res<WorldLightsPackageRes>>,
     hues_package_res: Option<Res<HuesPackageRes>>,
+    map_planes: Option<Res<MapPlanesRes>>,
     settings: Res<Settings>,
     uniform_state: Res<UniformState>,
     client_light_sprites: Res<RenderClientLightSprites>,
@@ -348,8 +349,18 @@ pub fn sys_collect_visible_static_lights(
                         light_id,
                         hue_id: tile.hue,
                     };
+                    let land_z = static_land_z(map_planes.as_deref(), map_id, (tile_x as i32, tile_y as i32));
                     if !seen.insert(key)
-                        || static_light_is_hidden(&mut statics_store, &tilemeta.0, tile_x, tile_y, tile.z, z_view.0.max_z)
+                        || static_light_is_hidden(
+                            &mut statics_store,
+                            &tilemeta.0,
+                            uniform_state.light_cover,
+                            land_z,
+                            tile_x,
+                            tile_y,
+                            tile.z,
+                            z_view.0.max_z,
+                        )
                     {
                         continue;
                     }

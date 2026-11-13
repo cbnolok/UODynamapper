@@ -507,6 +507,9 @@ pub struct LandRenderStylePresetsPerMode {
     /// materials. Placed before the tables so that it serializes as a plain key of the style's table.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub land_texture_variation: Option<bool>,
+    /// Which rule hides the lights a roof or an upper floor covers, one setting for the style in all four styles
+    /// (`world::art::light_cover`).
+    pub light_cover: LightCover,
     /// The local lights of KR-like and Enhanced, one setting for the style rather than per time of day: which
     /// lights the land light decals and static local lights take, and how strongly.
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -615,6 +618,20 @@ pub enum ClientLocalLightSource {
     /// size and its colour (the static's hue, the ClassicUO light shader or the light.mul mask's).
     #[serde(rename = "light_mul")]
     LightMul,
+}
+
+/// The rule that hides the lights a roof or an upper floor covers (`world::art::light_cover`), per style: to the
+/// light.mul decals of Classic and UOD-Painterly, to the light sprites of KR-like and Enhanced, and to the local
+/// lights taken from them. Both rules look at the cell in front of a light, (x + 1, y + 1).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Deserialize, Serialize)]
+pub enum LightCover {
+    /// ClassicUO's: an opaque static at least 5 z above the light covers it. A light hung under an eave, with an
+    /// open cell in front of the eave and no wall at its height, stays lit.
+    #[serde(rename = "classicuo")]
+    ClassicUo,
+    /// The Enhanced and KR clients': any object in a higher 20-z band above the land covers it.
+    #[serde(rename = "clients")]
+    Clients,
 }
 
 /// A preset's sun: one static light direction for land, art and the sprite shadows, as compass angles.
