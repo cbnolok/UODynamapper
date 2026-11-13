@@ -18,10 +18,17 @@
 //!
 //! The rules take the view's z limit (`max_z`) so a z-view limit composes with them: a static the limit stops drawing
 //! no longer covers, and its lights come back; a light at or above the limit is hidden with its item.
+//!
+//! A cell's objects are its statics and the parts the renderer draws there of the multis around it
+//! (`MultiCoverParts`), in place of the multis' anchor statics, as the renderer expands them.
 
+use crate::core::multis::{expanded_multi_part_z, multi_id_from_static_graphic, MultiDefinitionsRes, MultiPart};
 use crate::core::render::scene::world::land::mesh_material::LightCover;
 use crate::core::render::scene::world::land::MAP_STORAGE_BLOCK_TILE_DIM;
+use crate::core::render::scene::world::z_view::MULTI_PART_MAX_REACH;
 use crate::core::statics::LazyStaticsStore;
+use std::collections::HashMap;
+use std::ops::Range;
 use udd_assets::tilemeta::TileMetaPackage;
 use uocf::enhanced::tileart::TaeFlag;
 
@@ -139,13 +146,115 @@ pub fn client_light_is_hidden(light_z: i8, land_z: i8, cover_cell: impl IntoIter
             .any(|static_z| i32::from(static_z) < max_z && client_light_band(static_z, land_z) > light_band)
 }
 
+/// The parts of the multis the renderer draws that land on the cover cells of a scan's lights, by cell, and which
+/// anchor statics the renderer replaces with their parts. Empty while no multi definitions are loaded, when the
+/// renderer draws the anchors as statics.
+#[derive(Default)]
+pub struct MultiCoverParts<'a> {
+    multis: Option<&'a MultiDefinitionsRes>,
+    show_hidden_parts: bool,
+    cells: HashMap<(u32, u32), Vec<CoverStatic>>,
+}
+
+impl<'a> MultiCoverParts<'a> {
+    /// Reads the multi parts that land on the cover cells, and the cells past them the eave exception walks, of the
+    /// lights in the blocks `blocks_x` × `blocks_y`: those of every multi anchored within `MULTI_PART_MAX_REACH` of
+    /// them, the drawn parts or, with `show_hidden_parts`, all, as the renderer expands them.
+    pub fn read(
+        statics_store: &mut LazyStaticsStore,
+        tilemeta: &TileMetaPackage,
+        multis: Option<&'a MultiDefinitionsRes>,
+        show_hidden_parts: bool,
+        blocks_x: Range<u32>,
+        blocks_y: Range<u32>,
+    ) -> Self {
+        let mut cover = Self { multis, show_hidden_parts, cells: HashMap::new() };
+        let Some(multis) = multis else {
+            return cover;
+        };
+        if blocks_x.is_empty() || blocks_y.is_empty() {
+            return cover;
+        }
+        let cover_tiles = |blocks: &Range<u32>| {
+            let (first, _) = light_cover_cell(blocks.start * MAP_STORAGE_BLOCK_TILE_DIM, 0);
+            first..blocks.end * MAP_STORAGE_BLOCK_TILE_DIM + 1 + EAVE_WALK_CELLS
+        };
+        let (tiles_x, tiles_y) = (cover_tiles(&blocks_x), cover_tiles(&blocks_y));
+        let reach = MULTI_PART_MAX_REACH as u32;
+        let anchor_blocks = |tiles: &Range<u32>| {
+            tiles.start.saturating_sub(reach) / MAP_STORAGE_BLOCK_TILE_DIM..(tiles.end + reach) / MAP_STORAGE_BLOCK_TILE_DIM + 1
+        };
+        let meta = |graphic: u16| {
+            tilemeta.item_tile(u32::from(graphic)).map_or((0, 0), |meta| (meta.flags, meta.height))
+        };
+        for block_y in anchor_blocks(&tiles_y) {
+            for block_x in anchor_blocks(&tiles_x) {
+                let Ok(tiles) = statics_store.block_tiles(block_x, block_y) else {
+                    continue;
+                };
+                for tile in tiles {
+                    let Some(parts) = multi_id_from_static_graphic(tile.graphic)
+                        .and_then(|multi_id| multis.parts(multi_id, show_hidden_parts))
+                    else {
+                        continue;
+                    };
+                    let anchor = (
+                        block_x * MAP_STORAGE_BLOCK_TILE_DIM + u32::from(tile.x_offset()),
+                        block_y * MAP_STORAGE_BLOCK_TILE_DIM + u32::from(tile.y_offset()),
+                    );
+                    for (cell, part) in multi_parts_on_cells(anchor, tile.z, parts, &tiles_x, &tiles_y, meta) {
+                        cover.cells.entry(cell).or_default().push(part);
+                    }
+                }
+            }
+        }
+        cover
+    }
+
+    /// Whether the renderer draws the static `graphic` as the parts of a multi rather than as itself.
+    fn expands(&self, graphic: u16) -> bool {
+        self.multis.is_some_and(|multis| {
+            multi_id_from_static_graphic(graphic).is_some_and(|multi_id| multis.parts(multi_id, self.show_hidden_parts).is_some())
+        })
+    }
+
+    fn cell(&self, x: u32, y: u32) -> &[CoverStatic] {
+        self.cells.get(&(x, y)).map_or(&[], Vec::as_slice)
+    }
+}
+
+/// The parts of a multi anchored at `anchor`, at `anchor_z`, that land on the cells `tiles_x` × `tiles_y`, with their
+/// tile flags and heights from `meta` and their z as the renderer expands it.
+fn multi_parts_on_cells(
+    anchor: (u32, u32),
+    anchor_z: i8,
+    parts: &[MultiPart],
+    tiles_x: &Range<u32>,
+    tiles_y: &Range<u32>,
+    meta: impl Fn(u16) -> (u64, i8),
+) -> Vec<((u32, u32), CoverStatic)> {
+    parts
+        .iter()
+        .filter_map(|part| {
+            let x = u32::try_from(i64::from(anchor.0) + i64::from(part.x)).ok()?;
+            let y = u32::try_from(i64::from(anchor.1) + i64::from(part.y)).ok()?;
+            if !tiles_x.contains(&x) || !tiles_y.contains(&y) {
+                return None;
+            }
+            let (flags, height) = meta(part.item_id);
+            Some(((x, y), CoverStatic { flags, z: expanded_multi_part_z(anchor_z, part.z), height }))
+        })
+        .collect()
+}
+
 /// Whether `rule` hides a light on (`tile_x`, `tile_y`) at `light_z`, reading its cover cell, and for the eave
-/// exception the cells past it, from the statics store. `land_z` is the land z of the light's cell, which the clients'
-/// bands start from; while it is not known (its map block is not loaded) the light's own z stands in for it. Multis
-/// are not expanded: their parts do not cover lights. A cell the store cannot read covers nothing.
+/// exception the cells past it, from the statics store and the multi parts `multi_parts` holds. `land_z` is the land z
+/// of the light's cell, which the clients' bands start from; while it is not known (its map block is not loaded) the
+/// light's own z stands in for it. A cell the store cannot read covers nothing.
 pub fn static_light_is_hidden(
     statics_store: &mut LazyStaticsStore,
     tilemeta: &TileMetaPackage,
+    multi_parts: &MultiCoverParts,
     rule: LightCover,
     land_z: Option<i8>,
     tile_x: u32,
@@ -157,30 +266,38 @@ pub fn static_light_is_hidden(
     match rule {
         LightCover::ClassicUo => {
             let diagonal = (0..=EAVE_WALK_CELLS)
-                .map(|step| cell_statics(statics_store, tilemeta, cover_x + step, cover_y + step))
+                .map(|step| cell_statics(statics_store, tilemeta, multi_parts, cover_x + step, cover_y + step))
                 .collect::<Vec<_>>();
             let diagonal = diagonal.iter().map(Vec::as_slice).collect::<Vec<_>>();
             classicuo_light_is_hidden(light_z, &diagonal, max_z)
         }
         LightCover::Clients => {
-            let cover_cell = cell_statics(statics_store, tilemeta, cover_x, cover_y);
+            let cover_cell = cell_statics(statics_store, tilemeta, multi_parts, cover_x, cover_y);
             client_light_is_hidden(light_z, land_z.unwrap_or(light_z), cover_cell.iter().map(|item| item.z), max_z)
         }
     }
 }
 
-/// The statics of the cell (`x`, `y`) with their tile flags and heights; none while the store cannot read its block.
-fn cell_statics(statics_store: &mut LazyStaticsStore, tilemeta: &TileMetaPackage, x: u32, y: u32) -> Vec<CoverStatic> {
+/// The objects the renderer draws on the cell (`x`, `y`), with their tile flags and heights: its statics, but for the
+/// multi anchors it expands, and the multi parts landing there. No statics while the store cannot read its block.
+fn cell_statics(
+    statics_store: &mut LazyStaticsStore,
+    tilemeta: &TileMetaPackage,
+    multi_parts: &MultiCoverParts,
+    x: u32,
+    y: u32,
+) -> Vec<CoverStatic> {
     let (block_x, block_y) = (x / MAP_STORAGE_BLOCK_TILE_DIM, y / MAP_STORAGE_BLOCK_TILE_DIM);
     let (offset_x, offset_y) = ((x % MAP_STORAGE_BLOCK_TILE_DIM) as u8, (y % MAP_STORAGE_BLOCK_TILE_DIM) as u8);
     let tiles = statics_store.block_tiles(block_x, block_y).unwrap_or(&[]);
     tiles
         .iter()
-        .filter(|tile| tile.x_offset() == offset_x && tile.y_offset() == offset_y)
+        .filter(|tile| tile.x_offset() == offset_x && tile.y_offset() == offset_y && !multi_parts.expands(tile.graphic))
         .map(|tile| {
             let meta = tilemeta.item_tile(u32::from(tile.graphic));
             CoverStatic { flags: meta.map_or(0, |meta| meta.flags), z: tile.z, height: meta.map_or(0, |meta| meta.height) }
         })
+        .chain(multi_parts.cell(x, y).iter().copied())
         .collect()
 }
 
@@ -314,6 +431,27 @@ mod tests {
         // 2 z above, across a band boundary: the clients hide, ClassicUO does not.
         assert!(!light_is_hidden(18, [(OPAQUE, 20)], NO_Z_VIEW_LIMIT));
         assert!(client_light_is_hidden(18, 0, [20], NO_Z_VIEW_LIMIT));
+    }
+
+    #[test]
+    fn multi_parts_land_on_their_cells_at_their_expanded_z() {
+        let floor = MultiPart { item_id: 1, x: 1, y: 1, z: 20 };
+        let far = MultiPart { item_id: 1, x: 40, y: 0, z: 20 };
+        let behind = MultiPart { item_id: 1, x: -11, y: 0, z: 0 };
+        let meta = |_| (OPAQUE, 0);
+        let parts = multi_parts_on_cells((10, 10), 5, &[floor, far, behind], &(0..20), &(0..20), meta);
+        assert_eq!(parts, [((11, 11), item(OPAQUE, 25))]);
+        // A part over a light's cover cell covers it as a static does.
+        let cover = parts.iter().map(|(_, part)| *part).collect::<Vec<_>>();
+        assert!(classicuo(5, &[&cover]));
+        assert!(client_light_is_hidden(5, 5, cover.iter().map(|part| part.z), NO_Z_VIEW_LIMIT));
+    }
+
+    #[test]
+    fn without_multi_definitions_no_static_is_expanded() {
+        let none = MultiCoverParts::default();
+        assert!(!none.expands(0x4001));
+        assert!(none.cell(11, 11).is_empty());
     }
 
     #[test]

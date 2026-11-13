@@ -1,9 +1,10 @@
 use super::client_light_sprites::{client_light_sprite_static_light, RenderClientLightSprites};
-use super::light_cover::static_light_is_hidden;
+use super::light_cover::{static_light_is_hidden, MultiCoverParts};
 use super::statics_collect::{static_land_z, StaticChunkBatchKey};
 use crate::configs::light_scale::{ItemLightScales, NEUTRAL_LIGHT_SCALE};
 use crate::configs::{settings::Settings, shader_presets::UniformState};
 use crate::console_logger::{self, LogAbout, LogSev};
+use crate::core::multis::MultiDefinitionsRes;
 use crate::core::render::scene::world::land::mesh_material::{ClientLocalLightSource, ClientLocalLights};
 use crate::core::render::scene::world::land::{
     CHUNK_STORAGE_BLOCKS_DIM, MAP_STORAGE_BLOCK_TILE_DIM,
@@ -254,6 +255,7 @@ pub fn sys_collect_visible_static_lights(
     world_lights_res: Option<Res<WorldLightsPackageRes>>,
     hues_package_res: Option<Res<HuesPackageRes>>,
     map_planes: Option<Res<MapPlanesRes>>,
+    multis: Option<Res<MultiDefinitionsRes>>,
     settings: Res<Settings>,
     uniform_state: Res<UniformState>,
     client_light_sprites: Res<RenderClientLightSprites>,
@@ -303,6 +305,24 @@ pub fn sys_collect_visible_static_lights(
         })
         .collect::<Vec<_>>();
     visible_chunk_keys.sort_by_key(|key| (key.gy, key.gx, key.scale));
+
+    let block_range = |start: fn(&StaticChunkBatchKey) -> u32| {
+        let first = visible_chunk_keys.iter().map(start).min().unwrap_or(0);
+        let end = visible_chunk_keys
+            .iter()
+            .map(|key| (start(key) + key.scale) * CHUNK_STORAGE_BLOCKS_DIM)
+            .max()
+            .unwrap_or(0);
+        first * CHUNK_STORAGE_BLOCKS_DIM..end
+    };
+    let multi_parts = MultiCoverParts::read(
+        &mut statics_store,
+        &tilemeta.0,
+        multis.as_deref(),
+        settings.world_rendering.show_hidden_multi_parts,
+        block_range(|key| key.gx),
+        block_range(|key| key.gy),
+    );
 
     let mut seen = HashSet::new();
     for chunk_key in visible_chunk_keys {
@@ -354,6 +374,7 @@ pub fn sys_collect_visible_static_lights(
                         || static_light_is_hidden(
                             &mut statics_store,
                             &tilemeta.0,
+                            &multi_parts,
                             uniform_state.light_cover,
                             land_z,
                             tile_x,
