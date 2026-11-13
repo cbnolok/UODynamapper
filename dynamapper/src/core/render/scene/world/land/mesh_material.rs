@@ -127,12 +127,17 @@ impl MaterialExtension for LandMaterialExtension {
 // In order to have 16-bytes (not bit!) alignment, we can use some packing helpers.
 // UVec4 (from glam crate, used by Bevy) is a struct holding four unsigned 32-bit integers (u32 values), used as a “vector of four elements”:
 
+/// `SceneUniform::land_max_z` while nothing caps the land.
+pub const LAND_NO_Z_LIMIT: f32 = f32::MAX;
+
 #[repr(C, align(16))]
 #[derive(Clone, Copy, ShaderType, bytemuck::Pod, bytemuck::Zeroable, Default)]
 #[allow(dead_code)] // ShaderType derive generates internal `check` functions that appear unused
 pub struct SceneUniform {
     pub camera_position: Vec3,
-    pub _pad_cam: f32,
+    /// Land above this z is not drawn (the z-view limit, `z_view.rs`); `LAND_NO_Z_LIMIT` draws all. Only the land
+    /// shader reads it. Takes the former `_pad_cam` slot.
+    pub land_max_z: f32,
     pub light_direction: Vec3,
     pub global_lighting: f32,
     pub render_zoom: f32,

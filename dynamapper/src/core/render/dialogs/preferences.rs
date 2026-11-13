@@ -58,6 +58,7 @@ pub struct PreferencesDialogState {
     pub enable_statics: bool,
     pub enable_static_lights: bool,
     pub show_hidden_multi_parts: bool,
+    pub show_only_player_floor: bool,
     /// Timer used to debounce applying settings that cause UI layout shifts (like UI scale).
     pub apply_timer: Timer,
 }
@@ -98,6 +99,7 @@ impl Default for PreferencesDialogState {
             enable_statics: true,
             enable_static_lights: false,
             show_hidden_multi_parts: false,
+            show_only_player_floor: false,
             apply_timer: {
                 let mut t = Timer::from_seconds(0.3, TimerMode::Once);
                 t.pause();
@@ -169,6 +171,7 @@ fn sys_sync_settings_to_state(
         state.enable_statics = settings.world_rendering.enable_statics;
         state.enable_static_lights = settings.world_rendering.enable_static_lights;
         state.show_hidden_multi_parts = settings.world_rendering.show_hidden_multi_parts;
+        state.show_only_player_floor = settings.world_rendering.show_only_player_floor;
 
         wireframe_config.global = settings.app.debug.map_render_wireframe;
 
@@ -273,6 +276,9 @@ pub fn sys_render_preferences_dialog(
             != state.show_hidden_multi_parts
         {
             settings.world_rendering.show_hidden_multi_parts = state.show_hidden_multi_parts;
+        }
+        if settings.as_ref().world_rendering.show_only_player_floor != state.show_only_player_floor {
+            settings.world_rendering.show_only_player_floor = state.show_only_player_floor;
         }
         if (settings.as_ref().app.window.ui_scale - state.ui_scale).abs() > 0.001 {
             settings.app.window.ui_scale = state.ui_scale;
@@ -642,6 +648,17 @@ pub fn sys_render_preferences_dialog(
                     if ui
                         .checkbox(&mut state.show_hidden_multi_parts, "Show Hidden Multi Parts")
                         .on_hover_text("Also draw the multi parts the client never draws.")
+                        .changed()
+                    {
+                        state.apply_timer.reset();
+                        state.apply_timer.unpause();
+                    }
+                    if ui
+                        .checkbox(&mut state.show_only_player_floor, "Show Only the Player's Floor")
+                        .on_hover_text(
+                            "Hide what is above the player as the client does: the floors and roof over the player \
+                             inside a building, and the land over the player inside a cave.",
+                        )
                         .changed()
                     {
                         state.apply_timer.reset();

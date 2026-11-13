@@ -129,6 +129,10 @@ pub struct SectWorldRendering {
     /// Also draws the multi parts the client never draws (classic parts without the visible
     /// flag, EC `not_drawn` parts).
     pub show_hidden_multi_parts: bool,
+    /// Hides what is above the player, as the client does: statics, multis and land at or above the cap the player's
+    /// cell sets (a ceiling, a roof one cell south-east, or land over the player in a cave) are not drawn, and roofs are
+    /// not drawn while the player is under one. A view setting shared by every render style.
+    pub show_only_player_floor: bool,
     pub land_streaming: SectLandStreaming,
     pub diagnostics: SectWorldRenderingDiagnostics,
     pub shader_simplification: SectWorldRenderingShaderSimplification,
@@ -1473,6 +1477,28 @@ mod tests {
         assert!(settings.enable_static_lights);
         assert!(!settings.enable_static_art_local_lights);
         assert!(!settings.show_hidden_multi_parts);
+        assert!(!settings.show_only_player_floor);
+    }
+
+    /// A cache copy written before the player-floor view existed loads with it off, and a saved opt-in round-trips.
+    #[test]
+    fn world_rendering_cache_without_player_floor_view_loads_it_off() {
+        let bundled: SectWorldRendering =
+            parse_strict(WORLD_RENDERING_CONFIG_FILE, BUNDLED_WORLD_RENDERING).expect("bundled");
+        let older = BUNDLED_WORLD_RENDERING
+            .lines()
+            .filter(|line| !line.starts_with("show_only_player_floor"))
+            .collect::<Vec<_>>()
+            .join("\n");
+        let load = parse_app_state(WORLD_RENDERING_CONFIG_FILE, &older, &bundled).expect("lenient load");
+        assert!(!load.value.show_only_player_floor);
+
+        let mut picked = bundled.clone();
+        picked.show_only_player_floor = true;
+        let written = toml::to_string_pretty(&picked).expect("serialize");
+        let load = parse_app_state(WORLD_RENDERING_CONFIG_FILE, &written, &bundled).expect("lenient load");
+        assert!(load.warnings.is_empty(), "{:?}", load.warnings);
+        assert!(load.value.show_only_player_floor);
     }
 
     #[test]

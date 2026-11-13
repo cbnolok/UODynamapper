@@ -1652,7 +1652,7 @@ pub fn sys_setup_terrain_cache(
                     // (`world_view_direction` in shaders/world/projection.wesl), which follows the camera.
                     camera_position:
                         crate::core::render::scene::camera::PlayerCamera::BASE_OFFSET_FROM_PLAYER,
-                    _pad_cam: 0.0,
+                    land_max_z: crate::core::render::scene::world::land::mesh_material::LAND_NO_Z_LIMIT,
                     // The active preset's sun; the shader panel pushes the live one whenever it changes.
                     light_direction: crate::configs::shader_presets::get_preset_slot(
                         &shader_presets,

@@ -28,7 +28,7 @@ import package::shaders::world::land::land_bindings::{
   ATLAS, scene, effects, global_light, land_light,
   TERRAIN_SHADING_CLIENT_PER_VERTEX
 };
-import package::shaders::world::land::atlas::{atlas_read_meta, atlas_read_height, chunk_edge_blend_factor};
+import package::shaders::world::land::atlas::{atlas_read_meta, atlas_read_height, atlas_read_z, chunk_edge_blend_factor};
 import package::shaders::world::land::noise::{hash, fbm_billow, domain_warp};
 import package::shaders::world::land::normals::{get_geometric_normal_local, get_bicubic_normal, get_bent_normal, client_vertex_terrain_shade};
 import package::shaders::world::land::bump::{land_derived_bump_tilt, land_bump_light_ratio};
@@ -929,6 +929,10 @@ fn fragment(in: VertexOutput) -> @location(0) vec4<f32> {
   let tile = atlas_read_meta(cell.x, cell.y);
   // Land the Classic client does not draw shows what is behind it.
   if (tile.texture_size == LAND_SOURCE_NODRAW) {
+    discard;
+  }
+  // Land over the player in a cave, with the z-view limit on (z_view.rs), is not drawn either.
+  if (f32(atlas_read_z(cell.x, cell.y)) > scene.land_max_z) {
     discard;
   }
   var hdr_rgb: vec3<f32>;

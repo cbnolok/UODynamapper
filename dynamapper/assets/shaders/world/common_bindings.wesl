@@ -5,7 +5,8 @@
 // Global scene state: camera, light, zoom level.
 struct SceneUniform {
     camera_position: vec3<f32>,
-    _pad_cam: f32,
+    // Land above this z is not drawn (the z-view limit, z_view.rs); LAND_NO_Z_LIMIT draws all. Only land reads it.
+    land_max_z: f32,
     light_direction: vec3<f32>,
     global_lighting: f32,
     render_zoom: f32,

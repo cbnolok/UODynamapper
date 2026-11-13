@@ -201,6 +201,7 @@ pub fn apply_settings_overrides(settings: &mut Settings, job: &ExportJob) {
     settings.world_rendering.enable_static_lights = false;
     settings.world_rendering.enable_static_art_local_lights = false;
     settings.world_rendering.show_hidden_multi_parts = false;
+    settings.world_rendering.show_only_player_floor = false;
     settings.world_rendering.diagnostics.highlight_hovered_static_object = false;
     settings.graphics.vsync = false;
     settings.graphics.reduce_unfocused_fps = false;

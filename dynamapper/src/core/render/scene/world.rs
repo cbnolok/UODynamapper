@@ -1,6 +1,7 @@
 pub mod land;
 pub mod art;
 pub mod effects;
+pub mod z_view;
 
 use nohash_hasher::BuildNoHashHasher;
 use indexmap::IndexMap;
@@ -10,7 +11,7 @@ use crate::core::maps::MapPlaneMetadata;
 
 
 use crate::core::uo_files_loader::MapPlanesRes;
-use crate::core::system_sets::StartupSysSet;
+use crate::core::system_sets::{MovementSysSet, SceneRenderArtSysSet, StartupSysSet};
 
 #[derive(Resource, Default)]
 pub struct WorldGeoData {
@@ -27,11 +28,22 @@ impl Plugin for WorldPlugin
         log_plugin_build(self);
         app
             .init_resource::<WorldGeoData>()
+            .init_resource::<z_view::ZViewLimit>()
             .add_systems(
                 Startup,
                 sys_populate_world_geo_data
                     .in_set(StartupSysSet::SetupSceneStage1)
                     .after(StartupSysSet::LoadStartupUOFiles),
+            )
+            .add_systems(
+                Update,
+                z_view::sys_update_z_view_limit
+                    .after(MovementSysSet::MovementActions)
+                    .before(SceneRenderArtSysSet::CollectVisibleStatics)
+                    .before(art::static_lights::sys_collect_visible_static_lights)
+                    .before(art::client_light_sprites::sys_collect_client_light_sprites)
+                    .before(land::sys_update_shared_land_material)
+                    .run_if(in_state(AppState::InGame)),
             )
             .add_plugins((
                 land::DrawLandChunkMeshPlugin { registered_by: "WorldPlugin" },

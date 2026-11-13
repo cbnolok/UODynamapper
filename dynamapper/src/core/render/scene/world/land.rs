@@ -301,11 +301,13 @@ pub fn sys_update_shared_land_material(
     static_lights: Option<Res<crate::core::render::scene::world::art::static_lights::RenderStaticLightInstances>>,
     player_q: Query<&Transform, With<crate::core::render::scene::player::Player>>,
     camera_q: Query<&Projection, With<crate::core::render::scene::camera::PlayerCamera>>,
+    z_view: Res<crate::core::render::scene::world::z_view::ZViewLimit>,
     mut last_atlas_params: Local<Option<tile_atlas::AtlasParams>>,
     mut last_global_lighting: Local<f32>,
     mut last_render_zoom: Local<f32>,
     mut last_static_light_signature: Local<u64>,
     mut last_client_view_scale: Local<f32>,
+    mut last_land_max_z: Local<Option<f32>>,
 ) {
     let Some(shared_mat) = shared_mat else {
         return;
@@ -336,6 +338,8 @@ pub fn sys_update_shared_land_material(
         build_land_static_light_uniform(static_lights.as_deref(), static_light_focus_xz);
     let static_light_signature = land_static_light_signature(&static_light_uniform);
     let static_lights_changed = static_light_signature != *last_static_light_signature;
+    let current_land_max_z = z_view.0.land_max_z();
+    let land_max_z_changed = *last_land_max_z != Some(current_land_max_z);
 
     // ONLY call get_mut() when something actually changed.
     // This avoids triggering Bevy's asset change detection, which would force
@@ -345,6 +349,7 @@ pub fn sys_update_shared_land_material(
         || zoom_changed
         || static_lights_changed
         || client_view_scale_changed
+        || land_max_z_changed
     {
         if let Some(mut mat) = materials.get_mut(&shared_mat.0) {
             /*
@@ -381,6 +386,10 @@ pub fn sys_update_shared_land_material(
             if client_view_scale_changed {
                 mat.extension.scene_uniform.client_view_scale = current_client_view_scale;
                 *last_client_view_scale = current_client_view_scale;
+            }
+            if land_max_z_changed {
+                mat.extension.scene_uniform.land_max_z = current_land_max_z;
+                *last_land_max_z = Some(current_land_max_z);
             }
         }
     }

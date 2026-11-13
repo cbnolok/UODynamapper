@@ -9,6 +9,7 @@ use crate::core::render::scene::world::land::tile_atlas::TileAtlas;
 use crate::core::multis::{
     expanded_multi_part_z, multi_id_from_static_graphic, MultiDefinitionsRes,
 };
+use crate::core::render::scene::world::z_view::{ZViewCut, ZViewLimit};
 use crate::core::render::scene::SceneStateData;
 use crate::core::statics::{LazyStaticsStore, StaticsStoreRes};
 use crate::core::texture_cache::art::{GroundArtPageAtlas, ResolvedArtSprite, SpriteArtPageAtlas};
@@ -1105,6 +1106,8 @@ struct StaticChunkCacheConfig {
     show_hidden_multi_parts: bool,
     /// The statics store's item routes (`LazyStaticsStore::item_routes_revision`).
     item_routes_revision: u64,
+    /// The z-view limit: a change rebuilds the cached chunks without the statics it hides.
+    z_view: ZViewCut,
 }
 
 #[derive(Clone, Debug, Default)]
@@ -1763,6 +1766,7 @@ struct StaticCollectFrameConfig {
     show_hidden_multi_parts: bool,
     height_scale: f32,
     item_routes_revision: u64,
+    z_view: ZViewCut,
 }
 
 #[derive(Clone, Copy)]
@@ -1902,6 +1906,7 @@ fn static_chunk_cache_config(
             .then(|| static_light_signature(static_lights, frame.map_id)),
         show_hidden_multi_parts: frame.show_hidden_multi_parts,
         item_routes_revision: frame.item_routes_revision,
+        z_view: frame.z_view,
     }
 }
 
@@ -2184,6 +2189,10 @@ fn emit_static_render_tile(
     let tilemeta_package = resources.tilemeta_package();
     let tilemeta = tilemeta_package.and_then(|meta| meta.item_tile(render_tile.graphic as u32));
     if !frame.is_dot_mode && tilemeta.is_some_and(|meta| meta.is_nodraw()) {
+        return;
+    }
+    // Above the player's floor, with the z-view limit on; picking skips them too, as they are never emitted.
+    if frame.z_view.hides_static(tilemeta.map_or(0, |meta| meta.flags), render_tile.z) {
         return;
     }
     let visual_kind = frame.art_source.filter(|_| !frame.is_dot_mode).map(|source|
@@ -2930,6 +2939,7 @@ pub fn sys_collect_visible_statics(
     mut ground_atlas: ResMut<GroundArtPageAtlas>,
     settings: Res<crate::configs::settings::Settings>,
     scene_state: Res<SceneStateData>,
+    z_view: Res<ZViewLimit>,
     zoom: Res<RenderZoom>,
     multis_res: Option<Res<MultiDefinitionsRes>>,
     map_planes: Option<Res<MapPlanesRes>>,
@@ -2986,6 +2996,7 @@ pub fn sys_collect_visible_statics(
         // A change of the route file's item routes rebuilds the cached chunks from the blocks read again.
         item_routes_revision: statics_res.0.get(map_id as usize).and_then(|store| store.as_ref())
             .map_or(0, |store| store.lock().item_routes_revision()),
+        z_view: z_view.0,
     };
     let resources = static_collect_resources(
         &tex_art_cc_res,
@@ -3646,6 +3657,7 @@ mod tests {
         world.insert_resource(settings);
         world.insert_resource(StaticsStoreRes(Vec::new()));
         world.insert_resource(SceneStateData { map_id: 0 });
+        world.init_resource::<ZViewLimit>();
         world.insert_resource(TileAtlas::new(Default::default(), 0));
         world.insert_resource(RenderZoom::default());
         world.insert_resource(SpriteArtPageAtlas(crate::core::texture_cache::art::ArtPageAtlas::new(
@@ -4130,6 +4142,7 @@ mod tests {
             static_art_local_light_signature: None,
             show_hidden_multi_parts: false,
             item_routes_revision: 0,
+            z_view: ZViewCut::NONE,
         });
         cache.chunks.insert(
             StaticChunkBatchKey {
@@ -4151,6 +4164,7 @@ mod tests {
             static_art_local_light_signature: None,
             show_hidden_multi_parts: false,
             item_routes_revision: 0,
+            z_view: ZViewCut::NONE,
         });
 
         assert!(cache.chunks.is_empty());
@@ -4169,6 +4183,7 @@ mod tests {
             static_art_local_light_signature: None,
             show_hidden_multi_parts: false,
             item_routes_revision: 0,
+            z_view: ZViewCut::NONE,
         });
 
         cache.chunks.insert(
@@ -4191,6 +4206,7 @@ mod tests {
             static_art_local_light_signature: None,
             show_hidden_multi_parts: false,
             item_routes_revision: 0,
+            z_view: ZViewCut::NONE,
         }));
 
         assert!(!cache.chunks.is_empty());
@@ -4209,6 +4225,7 @@ mod tests {
             static_art_local_light_signature: Some(0),
             show_hidden_multi_parts: false,
             item_routes_revision: 0,
+            z_view: ZViewCut::NONE,
         });
         cache.chunks.insert(
             StaticChunkBatchKey {
@@ -4230,6 +4247,7 @@ mod tests {
             static_art_local_light_signature: Some(1),
             show_hidden_multi_parts: false,
             item_routes_revision: 0,
+            z_view: ZViewCut::NONE,
         }));
 
         assert!(cache.chunks.is_empty());
