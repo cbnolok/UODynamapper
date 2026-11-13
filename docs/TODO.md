@@ -122,6 +122,7 @@ Older captures apply to their recorded package revisions.
 - Re-tune foliage only after the explicit depth key is live.
 - Implement timer-based alpha lerp for fade-in and fade-out behavior rather than abrupt opacity changes.
 - Add player-local building ceiling scan state similar to `_maxZ` or `_maxGroundZ` to support roof and upper-floor hiding or fading.
+- Z-view limit (not started): limit the drawn z as a client player sees it under a roof. ClassicUO's rule (`GameSceneDrawingSorting.UpdateMaxDrawZ`, lines ~60 to 212 of the read-only copy, recomputed when the player moves; check the flag names against `TaeFlag`): from `_maxZ = 127` with pz14 = player z + 14 and pz16 = player z + 16, land on the player's cell at or above pz16 sets the limit to pz16; a static there above pz14 with none of flags 0x20004 (Foliage, Transparent) and not a Roof unless also a Surface sets it to its z and hides roofs; a Roof above pz14 on cell (x + 1, y + 1) with none of 0x204 (Surface, Transparent) sets it to its z (ground z from `CalculateNearZ`) and hides roofs; the limit is then raised to at least pz16. Statics at or above the limit, and roofs while hidden, fade out (`ProcessAlpha`, ~line 339). The KR and Enhanced rule was not traced. The light cover rule (`art/light_cover.rs`) already takes the limit as `max_z`: pass it there (and to the light sprite scan's rescan key) and covered lights come back as their roofs are cut.
 - Validate the result in dense town and building scenes with equal-Z walls, foliage near walls, and terrain-versus-land-static overlap.
 
 ## Next
