@@ -1,5 +1,5 @@
 use super::client_light_sprites::{client_light_sprite_static_light, RenderClientLightSprites};
-use super::light_cover::{static_light_is_hidden, NO_Z_VIEW_LIMIT};
+use super::light_cover::static_light_is_hidden;
 use super::statics_collect::StaticChunkBatchKey;
 use crate::configs::light_scale::{ItemLightScales, NEUTRAL_LIGHT_SCALE};
 use crate::configs::{settings::Settings, shader_presets::UniformState};
@@ -8,6 +8,7 @@ use crate::core::render::scene::world::land::mesh_material::{ClientLocalLightSou
 use crate::core::render::scene::world::land::{
     CHUNK_STORAGE_BLOCKS_DIM, MAP_STORAGE_BLOCK_TILE_DIM,
 };
+use crate::core::render::scene::world::z_view::ZViewLimit;
 use crate::core::render::scene::SceneStateData;
 use crate::core::statics::StaticsStoreRes;
 use crate::core::uo_files_loader::{HuesPackageRes, TileMetaPackageRes, WorldLightsPackageRes};
@@ -257,6 +258,7 @@ pub fn sys_collect_visible_static_lights(
     client_light_sprites: Res<RenderClientLightSprites>,
     light_scales: Res<ItemLightScales>,
     scene_state: Res<SceneStateData>,
+    z_view: Res<ZViewLimit>,
     chunks_q: Query<&crate::core::render::scene::world::land::LCMesh>,
     mut material_cache: ResMut<StaticLightMaterialCache>,
     mut output: ResMut<RenderStaticLightInstances>,
@@ -347,7 +349,7 @@ pub fn sys_collect_visible_static_lights(
                         hue_id: tile.hue,
                     };
                     if !seen.insert(key)
-                        || static_light_is_hidden(&mut statics_store, &tilemeta.0, tile_x, tile_y, tile.z, NO_Z_VIEW_LIMIT)
+                        || static_light_is_hidden(&mut statics_store, &tilemeta.0, tile_x, tile_y, tile.z, z_view.0.max_z)
                     {
                         continue;
                     }

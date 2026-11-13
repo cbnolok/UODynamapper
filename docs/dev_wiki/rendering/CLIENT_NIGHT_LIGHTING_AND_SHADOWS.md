@@ -129,7 +129,7 @@ Where they may still differ from the client:
 - The light's own cell never counts, so its own wall, the item it sits on and a roof over its own cell do not cover it; the floor it stands on starts at or below it.
 - A light on a north or west wall (its front cell inside the building) goes when the building has a roof; one on a south or east wall stays unless a roof or eave runs over the cell in front of it.
 - Multis are not expanded for the test: their parts do not cover lights yet.
-- The rule takes the view's z limit (`NO_Z_VIEW_LIMIT` until a z-view limit exists): a static the limit stops drawing no longer covers, so a room's lights come back when its roof is cut, and a light at or above the limit goes with its item. The light sprite scan keys its rescan on the limit.
+- The rule takes the view's z limit (the z-view limit's `max_z`, `scene/world/z_view.rs`; `NO_Z_VIEW_LIMIT` while it is off): a static the limit stops drawing no longer covers, so a room's lights come back when its roof is cut, and a light at or above the limit goes with its item. The light sprite scan keys its rescan on the limit.
 - The static local lights' falloff does not ignore z: the land shader and `static_local_light_rgba` measure the distance with world Y weighted 1.8, so a roof 20 z above a light is about 3.3 world units from it, outside most lights' radius.
 
 ## KR static shadows

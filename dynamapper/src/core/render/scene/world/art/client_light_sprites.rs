@@ -17,7 +17,8 @@
 //! off in the KR-like and Enhanced presets) read these sprites in the two styles (`client_light_sprite_static_light`),
 //! unless the style's `local_lights.source` picks light.mul, as Classic (`static_lights`).
 
-use super::light_cover::{static_light_is_hidden, NO_Z_VIEW_LIMIT};
+use super::light_cover::static_light_is_hidden;
+use crate::core::render::scene::world::z_view::ZViewLimit;
 use super::static_lights::{StaticLightInstance, StaticLightKey, StaticLightTarget, LIGHT_PIXELS_PER_WORLD_TILE,
     STATIC_LIGHT_Y_BIAS};
 use super::statics_collect::{
@@ -277,6 +278,7 @@ pub fn sys_collect_client_light_sprites(
     light_scales: Res<ItemLightScales>,
     scene_state: Res<SceneStateData>,
     chunks_q: Query<&LCMesh>,
+    z_view: Res<ZViewLimit>,
     mut cache: ResMut<ClientLightSpriteCache>,
     mut output: ResMut<RenderClientLightSprites>,
 ) {
@@ -305,7 +307,7 @@ pub fn sys_collect_client_light_sprites(
         .collect::<Vec<_>>();
     visible_chunk_keys.sort_by_key(|key| (key.gy, key.gx, key.scale));
     let centre_on_items = uniform_state.local_lights.is_some_and(|local_lights| local_lights.centre_on_items);
-    let max_z = NO_Z_VIEW_LIMIT;
+    let max_z = z_view.0.max_z;
     if output.last_scan.as_ref().is_some_and(|(last_map, last_keys, last_centred, last_max_z)| {
         *last_map == map_id && *last_keys == visible_chunk_keys && *last_centred == centre_on_items
             && *last_max_z == max_z
