@@ -623,7 +623,7 @@ fn shade_land(in: VertexOutput, tile: TileUniform, ordered_coverage: bool, world
       base_albedo = mix(base_albedo, blurred, clamp(blur_strength, 0.0, 1.0));
     }
     if (!disable_sharpen && effects.sharpening_amount > 0.0) {
-      base_albedo = apply_sharpening(base_albedo, sample_uv, tile, effects.sharpening_amount, uv_gradients);
+      base_albedo = apply_sharpening(base_albedo, sample_uv, tile, effects.sharpening_amount, in.world_position.xz, uv_gradients);
     }
   }
 

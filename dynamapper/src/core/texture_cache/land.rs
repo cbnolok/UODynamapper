@@ -2164,7 +2164,7 @@ fn fragment() -> @location(0) vec4<f32> {
     let gradients = LandGradients(vec2<f32>(0.01, 0.0), vec2<f32>(0.0, 0.01));
     let uv = vec2<f32>(0.0);
     var color = sample_tile_albedo(uv, tile, gradients) + sample_ec_material_albedo(uv, uv, tile, gradients);
-    color = apply_sharpening(color, uv, tile, 0.0, gradients) + blurred_albedo(uv, tile, 0.0, uv, gradients);
+    color = apply_sharpening(color, uv, tile, 0.0, uv, gradients) + blurred_albedo(uv, tile, 0.0, uv, gradients);
     if (classic_land_art_is_present(0u)) {
         color += sample_classic_land_art(uv, 0u);
     }

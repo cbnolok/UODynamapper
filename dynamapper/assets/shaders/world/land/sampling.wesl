@@ -29,7 +29,7 @@
 
 
 import package::shaders::world::common_bindings::{LandEffectsUniform};
-import package::shaders::world::land::land_bindings::{TileUniform, tex_small, tex_big, land_page_atlas, land_page_lookup, LAND_PAGE_LOOKUP_TILE_CAPACITY, tex_small_sampler, effects, scene, classic_land_art_atlas, classic_land_art_lookup};
+import package::shaders::world::land::land_bindings::{TileUniform, tex_small, tex_big, land_page_atlas, land_page_lookup, LAND_PAGE_LOOKUP_TILE_CAPACITY, tex_small_sampler, effects, scene, classic_land_art_atlas, classic_land_art_lookup, texture_variation, LAND_TEXTURE_VARIATION_MATERIAL_CAPACITY};
 import package::shaders::world::pixel_art_filters::{pixel_art_uv_iq, pixel_art_uv_iq_grad};
 import package::shaders::world::client_filter::{client_filtered_rect_sampled, TEXTURE_FILTER_CLIENT_BILINEAR};
 import package::shaders::world::texture_data::texture_color_rgb;
@@ -158,23 +158,339 @@ fn ec_material_mask_value(mask_sample: vec4<f32>) -> f32 {
   return mask_sample.a;
 }
 
+// ============================================================================
+// Land texture variation
+// ============================================================================
+//
+// The KR and Enhanced terrain textures repeat every few cells in a grid the eye picks out. With a style's
+// land_texture_variation on, the materials LandTextureVariation.kdl lists (texture_variation, land_bindings.wesl)
+// draw their two colour layers through Mikkelsen's hex tiling ("Practical Real-Time Hex-Tiling", JCGT 2022): a
+// triangle grid whose three vertices around a point each show the texture moved by a random offset, and turned by
+// a random quarter turn where the list allows it, blended by sharpened barycentric weights that favour the
+// brighter sample, so that the blend keeps the texture's contrast. The blend mask (item 2) moves through a coarser
+// grid of its own, so its blobs keep their size but no longer repeat with the colours. Every tap keeps explicit
+// gradients turned with it, so the filters see the same footprint as the plain tiling and draw no mip seams. The
+// transform depends on the world position alone: transitions, coverage layers, blur, sharpening, the bump and the
+// normal map follow it. The variation fades out between two zooms; past the second every land sample takes the
+// plain tiling at no extra cost.
+//
+// Every consumer walks the same four taps: the three hex vertices, then the plain tiling (LAND_VARIATION_PLAIN_TAP),
+// which carries the weight the zoom fade leaves it (land_variation_first_tap and land_variation_end_tap). Variation
+// off, the plain tap alone has weight 1, and every sum below reduces exactly to the plain sample. A frame keeps only
+// the point's triangle; land_variation_tap derives each tap's offset and turn when a loop reaches it.
+
+// Distance between the hex centres of the colour layers, and of the blend mask, in world cells.
+const LAND_VARIATION_HEX_EDGE_CELLS: f32 = 2.0;
+const LAND_VARIATION_MASK_HEX_EDGE_CELLS: f32 = 12.0;
+// The random offsets span this many cells, in steps of 1 / LAND_VARIATION_OFFSET_STEPS_PER_CELL.
+const LAND_VARIATION_OFFSET_RANGE_CELLS: f32 = 64.0;
+const LAND_VARIATION_OFFSET_STEPS_PER_CELL: f32 = 8.0;
+// Mikkelsen's barycentric weight exponent, and how strongly the blend favours the brighter sample (0 not at all).
+const LAND_VARIATION_WEIGHT_EXPONENT: f32 = 7.0;
+const LAND_VARIATION_LUMA_CONTRAST: f32 = 0.6;
+const LAND_VARIATION_LUMA_WEIGHTS: vec3<f32> = vec3<f32>(0.299, 0.587, 0.114);
+// Taps whose weight is at most this are skipped.
+const LAND_VARIATION_MIN_WEIGHT: f32 = 0.002;
+// The smallest sum of luminance weights a blend divides by.
+const LAND_VARIATION_WEIGHT_EPSILON: f32 = 1e-6;
+// Added to the grid ids of the mask's grid, so that its offsets are not the colours'; added to a grid id for its
+// quarter turn, so that the turn is not its offset.
+const LAND_VARIATION_MASK_SALT: vec2<i32> = vec2<i32>(15485863, 32452843);
+const LAND_VARIATION_TURN_SALT: vec2<i32> = vec2<i32>(7919, 104729);
+// The skewed triangle grid: a world point st (in hex edges) is (st.x - st.y / sqrt(3), st.y * 2 / sqrt(3)).
+const LAND_VARIATION_SKEW_X: f32 = 0.57735027;
+const LAND_VARIATION_SKEW_Y: f32 = 1.15470054;
+// The zooms (scene.render_zoom, larger is farther out) over which the variation fades out. Its cost grows as the
+// view widens (measured on Enhanced grass: +0.5 ms at zoom 1, +2 ms at 6, +4 ms at 11) while the repetition it hides
+// does not fade, so it ends where shade_land's level of detail drops blur and sharpening (zoom 10, main.wesl).
+const LAND_VARIATION_FADE_START_ZOOM: f32 = 8.0;
+const LAND_VARIATION_FADE_END_ZOOM: f32 = 10.0;
+// A pixel keeps a material's normal map where the taps reading one weigh more than this, else it takes the derived
+// bump (main.wesl), as the plain tiling does where its tap reads none.
+const LAND_VARIATION_MAPPED_HALF: f32 = 0.5;
+// The taps of a variation frame: three hex vertices, then the plain tiling.
+const LAND_VARIATION_TAP_COUNT: u32 = 4u;
+const LAND_VARIATION_PLAIN_TAP: u32 = 3u;
+// The quarter turns a rotating material's hex vertex picks from.
+const LAND_VARIATION_QUARTER_TURNS: u32 = 4u;
+// The texture source of the EC-layout materials, KR's and Enhanced's (tile_atlas.rs LAND_SOURCE_EC_ATLAS).
+const LAND_SOURCE_EC_ATLAS: u32 = 2u;
+// The coverage parameters' lookup role (coverage.wesl), whose x is the material id.
+const LAND_PAGE_LOOKUP_ROLE_COVERAGE_PARAMS: u32 = 6u;
+// The package-local material id: the secondary EC-layout package's ids carry 1 << 24 on top
+// (SECONDARY_PACKAGE_MATERIAL_ID_OFFSET in texture_cache/land/coverage.rs), and both packages number alike.
+const LAND_MATERIAL_ID_MASK: u32 = 0xFFFFFFu;
+// The bitmask's layout (configs/land_texture_variation.rs): two bits per material, sixteen materials per word.
+const LAND_VARIATION_BITS_PER_MATERIAL: u32 = 2u;
+const LAND_VARIATION_MATERIALS_PER_WORD: u32 = 16u;
+const LAND_VARIATION_WORDS_PER_VEC4: u32 = 4u;
+const LAND_VARIATION_ELIGIBLE_BIT: u32 = 1u;
+const LAND_VARIATION_ROTATE_BIT: u32 = 2u;
+
+// Whether and how strongly a tile's material varies.
+struct LandVariation {
+  // 1 fully varied, 0 the plain tiling.
+  fade: f32,
+  rotate: bool,
+}
+
+// The triangle of the hex grid around a world point: its three vertices are taps 0 to 2, the plain tiling tap 3.
+struct LandVariationFrame {
+  // The skewed grid cell, and whether the point is in its upper triangle (1) or its lower one (0).
+  cell: vec2<i32>,
+  upper: i32,
+  // The hex vertices' weights, summing to 1.
+  weights: vec3<f32>,
+  fade: f32,
+  rotate: bool,
+  edge: f32,
+  salt: vec2<i32>,
+}
+
+// One tap of a frame: it reads the world point turn * (p - origin) + shift; the plain tap reads p.
+struct LandVariationTap {
+  plain: bool,
+  turn: mat2x2<f32>,
+  origin: vec2<f32>,
+  shift: vec2<f32>,
+  // The tap's weight in the sample, and a hex vertex's share of the varied part.
+  weight: f32,
+  share: f32,
+}
+
+// The bits of a material in the list: LAND_VARIATION_ELIGIBLE_BIT, LAND_VARIATION_ROTATE_BIT.
+fn land_texture_variation_bits(material_id: u32) -> u32 {
+  if (material_id >= LAND_TEXTURE_VARIATION_MATERIAL_CAPACITY) {
+    return 0u;
+  }
+  let word = material_id / LAND_VARIATION_MATERIALS_PER_WORD;
+  let packed = texture_variation.materials[word / LAND_VARIATION_WORDS_PER_VEC4][word % LAND_VARIATION_WORDS_PER_VEC4];
+  let shift = (material_id % LAND_VARIATION_MATERIALS_PER_WORD) * LAND_VARIATION_BITS_PER_MATERIAL;
+  return (packed >> shift) & ((1u << LAND_VARIATION_BITS_PER_MATERIAL) - 1u);
+}
+
+// The variation of a tile: none unless the style has it on, the view is near enough and the tile is an EC-layout
+// material the list names. The zoom and the flag come first, so that a plain view reads no lookup.
+fn land_texture_variation(tile: TileUniform) -> LandVariation {
+  var variation = LandVariation(0.0, false);
+  if (effects.land_texture_variation == 0u || tile.texture_size != LAND_SOURCE_EC_ATLAS) {
+    return variation;
+  }
+  let fade = 1.0 - smoothstep(LAND_VARIATION_FADE_START_ZOOM, LAND_VARIATION_FADE_END_ZOOM, scene.render_zoom);
+  if (fade <= 0.0 || tile.texture_payload >= LAND_PAGE_LOOKUP_TILE_CAPACITY) {
+    return variation;
+  }
+  let params = textureLoad(land_page_lookup, ec_lookup_uv(tile.texture_payload, LAND_PAGE_LOOKUP_ROLE_COVERAGE_PARAMS), 0);
+  if (params.w == 0u) {
+    return variation;
+  }
+  let bits = land_texture_variation_bits(params.x & LAND_MATERIAL_ID_MASK);
+  if ((bits & LAND_VARIATION_ELIGIBLE_BIT) == 0u) {
+    return variation;
+  }
+  variation.fade = fade;
+  variation.rotate = (bits & LAND_VARIATION_ROTATE_BIT) != 0u;
+  return variation;
+}
+
+// A hash of a grid id to two values in [0, 1) (pcg2d, Jarzynski and Olano 2020).
+fn land_variation_hash(id: vec2<i32>) -> vec2<f32> {
+  const PCG_MULTIPLIER: u32 = 1664525u;
+  const PCG_INCREMENT: u32 = 1013904223u;
+  const PCG_SHIFT: u32 = 16u;
+  const TWO_POW_32: f32 = 4294967296.0;
+  var v = vec2<u32>(bitcast<u32>(id.x), bitcast<u32>(id.y)) * PCG_MULTIPLIER + vec2<u32>(PCG_INCREMENT);
+  v.x += v.y * PCG_MULTIPLIER;
+  v.y += v.x * PCG_MULTIPLIER;
+  v = v ^ (v >> vec2<u32>(PCG_SHIFT));
+  v.x += v.y * PCG_MULTIPLIER;
+  v.y += v.x * PCG_MULTIPLIER;
+  v = v ^ (v >> vec2<u32>(PCG_SHIFT));
+  return vec2<f32>(v) / TWO_POW_32;
+}
+
+// A quarter turn: 0 to 3 times 90 degrees.
+fn land_variation_quarter_turn(turns: u32) -> mat2x2<f32> {
+  switch (turns % LAND_VARIATION_QUARTER_TURNS) {
+    case 1u: { return mat2x2<f32>(0.0, 1.0, -1.0, 0.0); }
+    case 2u: { return mat2x2<f32>(-1.0, 0.0, 0.0, -1.0); }
+    case 3u: { return mat2x2<f32>(0.0, -1.0, 1.0, 0.0); }
+    default: { return mat2x2<f32>(1.0, 0.0, 0.0, 1.0); }
+  }
+}
+
+// The frame of the triangle grid of edge `edge` cells around a world point, its grid ids moved by `salt`. A plain
+// variation (fade 0) leaves the hex weights 0.
+fn land_variation_frame(world_xz: vec2<f32>, edge: f32, salt: vec2<i32>, variation: LandVariation) -> LandVariationFrame {
+  var frame: LandVariationFrame;
+  frame.fade = variation.fade;
+  if (variation.fade <= 0.0) {
+    return frame;
+  }
+  frame.rotate = variation.rotate;
+  frame.edge = edge;
+  frame.salt = salt;
+  let st = world_xz / edge;
+  let skewed = vec2<f32>(st.x - LAND_VARIATION_SKEW_X * st.y, LAND_VARIATION_SKEW_Y * st.y);
+  frame.cell = vec2<i32>(floor(skewed));
+  let f = fract(skewed);
+  // The point's triangle, lower (s 0) or upper (s 1), and its barycentric weights for the vertices
+  // cell + (s, s), cell + (s, 1 - s) and cell + (1 - s, s).
+  let z = 1.0 - f.x - f.y;
+  let s = select(0.0, 1.0, z < 0.0);
+  let s2 = 2.0 * s - 1.0;
+  let barycentric = vec3<f32>(-z * s2, s - f.y * s2, s - f.x * s2);
+  frame.upper = i32(s);
+  let sharpened = pow(max(barycentric, vec3<f32>(0.0)), vec3<f32>(LAND_VARIATION_WEIGHT_EXPONENT));
+  frame.weights = sharpened / (sharpened.x + sharpened.y + sharpened.z);
+  return frame;
+}
+
+// Tap i of a frame. A hex vertex's offset and turn come from a hash of its grid id, computed here rather than kept in
+// arrays in the frame: dynamically indexed arrays made the land shader much slower to compile.
+fn land_variation_tap(frame: LandVariationFrame, i: u32) -> LandVariationTap {
+  var tap = LandVariationTap(true, mat2x2<f32>(1.0, 0.0, 0.0, 1.0), vec2<f32>(0.0), vec2<f32>(0.0), 1.0 - frame.fade, 0.0);
+  if (i == LAND_VARIATION_PLAIN_TAP) {
+    return tap;
+  }
+  let s = frame.upper;
+  let vertex_id = frame.cell + vec2<i32>(select(s, 1 - s, i == 2u), select(s, 1 - s, i == 1u));
+  let vertex = vec2<f32>(vertex_id);
+  let centre = vec2<f32>(vertex.x + 0.5 * vertex.y, vertex.y / LAND_VARIATION_SKEW_Y) * frame.edge;
+  let id = vertex_id + frame.salt;
+  let offset = floor(land_variation_hash(id) * LAND_VARIATION_OFFSET_RANGE_CELLS * LAND_VARIATION_OFFSET_STEPS_PER_CELL)
+    / LAND_VARIATION_OFFSET_STEPS_PER_CELL;
+  let turns = select(0u, u32(land_variation_hash(id + LAND_VARIATION_TURN_SALT).x * f32(LAND_VARIATION_QUARTER_TURNS)),
+    frame.rotate);
+  tap.plain = false;
+  tap.turn = land_variation_quarter_turn(turns);
+  tap.origin = centre;
+  tap.shift = centre + offset;
+  tap.share = frame.weights[i];
+  tap.weight = tap.share * frame.fade;
+  return tap;
+}
+
+// The taps a loop over a frame walks, first to end (exclusive): the plain tiling alone when the variation is off, the
+// hex vertices alone when it is in full. The bounds depend on the frame, so that the shader compilers keep each loop
+// rolled: unrolled, every land sample site would inline its texture reads four times over.
+fn land_variation_first_tap(frame: LandVariationFrame) -> u32 {
+  return select(LAND_VARIATION_PLAIN_TAP, 0u, frame.fade > 0.0);
+}
+
+fn land_variation_end_tap(frame: LandVariationFrame) -> u32 {
+  return select(LAND_VARIATION_TAP_COUNT, LAND_VARIATION_PLAIN_TAP, frame.fade >= 1.0);
+}
+
+// Whether tap i is sampled: a hex vertex above LAND_VARIATION_MIN_WEIGHT, the plain tiling whenever it weighs
+// anything, so that the plain path stays exact.
+fn land_variation_tap_active(frame: LandVariationFrame, i: u32) -> bool {
+  if (i == LAND_VARIATION_PLAIN_TAP) {
+    return frame.fade < 1.0;
+  }
+  return frame.weights[i] * frame.fade > LAND_VARIATION_MIN_WEIGHT;
+}
+
+// The world point a tap reads for the world point p.
+fn land_variation_tap_point(tap: LandVariationTap, p: vec2<f32>) -> vec2<f32> {
+  if (tap.plain) {
+    return p;
+  }
+  return tap.turn * (p - tap.origin) + tap.shift;
+}
+
+// The screen gradients of a tap's world point: the world's, turned with it.
+fn land_variation_tap_gradients(tap: LandVariationTap, world: LandGradients) -> LandGradients {
+  if (tap.plain) {
+    return world;
+  }
+  return LandGradients(tap.turn * world.dx, tap.turn * world.dy);
+}
+
+// A world direction a tap reads, back in world axes: the transpose of its turn.
+fn land_variation_tap_unturn(tap: LandVariationTap, v: vec2<f32>) -> vec2<f32> {
+  if (tap.plain) {
+    return v;
+  }
+  return transpose(tap.turn) * v;
+}
+
+// How much a hex vertex's colour counts in the blend: brighter samples more, keeping the texture's contrast.
+fn land_variation_luma_weight(color: vec3<f32>) -> f32 {
+  return mix(1.0, dot(color, LAND_VARIATION_LUMA_WEIGHTS), LAND_VARIATION_LUMA_CONTRAST);
+}
+
+// Accumulates the colours of a frame's taps: the hex vertices by their weights and luminance, the plain tap apart.
+struct LandVariationColorSum {
+  varied: vec3<f32>,
+  varied_weight: f32,
+  plain: vec3<f32>,
+}
+
+fn land_variation_add_color(sum: ptr<function, LandVariationColorSum>, tap: LandVariationTap, color: vec3<f32>) {
+  if (tap.plain) {
+    (*sum).plain = color;
+    return;
+  }
+  let weight = tap.share * land_variation_luma_weight(color);
+  (*sum).varied += color * weight;
+  (*sum).varied_weight += weight;
+}
+
+// The varied colour faded with the plain one; the plain colour exactly when the variation is off.
+fn land_variation_resolve_color(sum: LandVariationColorSum, frame: LandVariationFrame) -> vec3<f32> {
+  let varied = select(vec3<f32>(0.0), sum.varied / max(sum.varied_weight, LAND_VARIATION_WEIGHT_EPSILON),
+    sum.varied_weight > 0.0);
+  return varied * frame.fade + sum.plain * (1.0 - frame.fade);
+}
+
+// The blend mask's value at a world point, through the mask's own grid when the material varies.
+fn ec_material_mask_value_varied(world_xz: vec2<f32>, mask: LandLookupSlot, world: LandGradients, variation: LandVariation) -> f32 {
+  let frame = land_variation_frame(world_xz, LAND_VARIATION_MASK_HEX_EDGE_CELLS, LAND_VARIATION_MASK_SALT, variation);
+  var value = 0.0;
+  // One call site in a loop: every land sample inlines its texture reads.
+  for (var i = land_variation_first_tap(frame); i < land_variation_end_tap(frame); i++) {
+    if (land_variation_tap_active(frame, i)) {
+      let tap = land_variation_tap(frame, i);
+      let mask_uv = ec_slot_world_uv(land_variation_tap_point(tap, world_xz), mask);
+      value += ec_material_mask_value(sample_ec_lookup_slot_rgba(mask_uv, mask, land_variation_tap_gradients(tap, world)))
+        * tap.weight;
+    }
+  }
+  return value;
+}
+
+// An EC material's colour: item 0 (base) and item 1 (detail) blended by the alpha of item 2 (mask). `base_uv` is the
+// plain tiling's base uv (the adaptive cheap path passes it quantized); the varied taps take theirs from their point.
 fn sample_ec_material_albedo(world_xz: vec2<f32>, base_uv: vec2<f32>, tile: TileUniform, world: LandGradients) -> vec3<f32> {
   let detail = read_ec_lookup_slot(tile.texture_payload, LAND_PAGE_LOOKUP_ROLE_DETAIL);
   let mask = read_ec_lookup_slot(tile.texture_payload, LAND_PAGE_LOOKUP_ROLE_MASK);
-  // One base sample serves both returns: every land sample inlines its filter, so fewer call sites compile
-  // faster.
-  let base = sample_ec_tile_albedo(base_uv, tile, ec_tile_gradients(world, tile));
-  if (!detail.present || !mask.present) {
-    return base;
+  let layered = detail.present && mask.present;
+  let variation = land_texture_variation(tile);
+  var mask_value = 1.0;
+  if (layered) {
+    mask_value = ec_material_mask_value_varied(world_xz, mask, world, variation);
   }
-
-  let detail_uv = ec_slot_world_uv(world_xz, detail);
-  let mask_uv = ec_slot_world_uv(world_xz, mask);
-  let detail_color = sample_ec_lookup_slot(detail_uv, detail, world);
-  let mask_value = ec_material_mask_value(sample_ec_lookup_slot_rgba(mask_uv, mask, world));
-  // The client's SetupFourStages: item0 · a + item1 · (1 − a), a = the blend item alpha
-  // (base = item 0, detail = item 1).
-  return mix(detail_color, base, mask_value);
+  let frame = land_variation_frame(world_xz, LAND_VARIATION_HEX_EDGE_CELLS, vec2<i32>(0), variation);
+  var sum = LandVariationColorSum(vec3<f32>(0.0), 0.0, vec3<f32>(0.0));
+  // One base and one detail sample site: every land sample inlines its filter, so fewer call sites compile faster.
+  for (var i = land_variation_first_tap(frame); i < land_variation_end_tap(frame); i++) {
+    if (land_variation_tap_active(frame, i)) {
+      let tap = land_variation_tap(frame, i);
+      let p = land_variation_tap_point(tap, world_xz);
+      let gradients = land_variation_tap_gradients(tap, world);
+      let uv = select(ec_world_uv(p, tile), base_uv, i == LAND_VARIATION_PLAIN_TAP);
+      var color = sample_ec_tile_albedo(uv, tile, ec_tile_gradients(gradients, tile));
+      if (layered) {
+        let detail_color = sample_ec_lookup_slot(ec_slot_world_uv(p, detail), detail, gradients);
+        // The client's SetupFourStages: item0 · a + item1 · (1 − a), a = the blend item alpha
+        // (base = item 0, detail = item 1).
+        color = mix(detail_color, color, mask_value);
+      }
+      land_variation_add_color(&sum, tap, color);
+    }
+  }
+  return land_variation_resolve_color(sum, frame);
 }
 
 fn sample_ec_material_albedo_at_world(world_xz: vec2<f32>, tile: TileUniform, world: LandGradients) -> vec3<f32> {
@@ -188,25 +504,42 @@ fn ec_material_has_liquid_normal(tile: TileUniform) -> bool {
 // The static (non-water) normal map. Water materials take the original
 // UOWaterShader path (`ec_liquid::sample_ec_liquid`), which scrolls item 0 by
 // the material's tweaks; this sampler never animates.
+// With the land texture variation, each tap of the colour layers' frame reads the map at its moved and turned point,
+// turns its normal back into world axes and weighs it as the colour; the pixel keeps the map where taps reading
+// one outweigh those that read none.
 fn sample_ec_material_normal_world(world_xz: vec2<f32>, tile: TileUniform, world: LandGradients) -> vec4<f32> {
   let normal = read_ec_lookup_slot(tile.texture_payload, LAND_PAGE_LOOKUP_ROLE_NORMAL);
   if (!normal.present) {
     return vec4<f32>(0.0, 1.0, 0.0, 0.0);
   }
 
-  let normal_uv = ec_slot_world_uv(world_xz, normal);
-  let normal_sample = sample_ec_lookup_slot_rgba(normal_uv, normal, world).rgb;
-  if (normal_sample.b < 0.35) {
+  let frame = land_variation_frame(world_xz, LAND_VARIATION_HEX_EDGE_CELLS, vec2<i32>(0), land_texture_variation(tile));
+  var normal_sum = vec3<f32>(0.0);
+  var mapped_weight = 0.0;
+  // One call site in a loop: every land sample inlines its texture reads.
+  for (var i = land_variation_first_tap(frame); i < land_variation_end_tap(frame); i++) {
+    if (land_variation_tap_active(frame, i)) {
+      let tap = land_variation_tap(frame, i);
+      let normal_uv = ec_slot_world_uv(land_variation_tap_point(tap, world_xz), normal);
+      let normal_sample = sample_ec_lookup_slot_rgba(normal_uv, normal, land_variation_tap_gradients(tap, world)).rgb;
+      if (normal_sample.b >= 0.35) {
+        let tangent_normal = normal_sample * 2.0 - vec3<f32>(1.0);
+        let world_normal = normalize(vec3<f32>(
+          tangent_normal.x,
+          max(tangent_normal.z, 0.08),
+          tangent_normal.y,
+        ));
+        let world_xz_normal = land_variation_tap_unturn(tap, world_normal.xz);
+        normal_sum += vec3<f32>(world_xz_normal.x, world_normal.y, world_xz_normal.y) * tap.weight;
+        mapped_weight += tap.weight;
+      }
+    }
+  }
+  if (mapped_weight <= LAND_VARIATION_MAPPED_HALF) {
     return vec4<f32>(0.0, 1.0, 0.0, 0.0);
   }
-
-  let tangent_normal = normal_sample * 2.0 - vec3<f32>(1.0);
-  let world_normal = normalize(vec3<f32>(
-    tangent_normal.x,
-    max(tangent_normal.z, 0.08),
-    tangent_normal.y,
-  ));
-  return vec4<f32>(world_normal, 1.0);
+  // The plain tiling alone is its one normal, as it is.
+  return vec4<f32>(select(normalize(normal_sum), normal_sum, frame.fade <= 0.0), 1.0);
 }
 
 // ============================================================================
@@ -471,21 +804,36 @@ fn sample_tile_albedo_grad(uv: vec2<f32>, tile: TileUniform, ddx_uv: vec2<f32>, 
 // ============================================================================
 
 // Simple sharpening filter (Unsharp Masking style).
-fn apply_sharpening(color: vec3<f32>, uv: vec2<f32>, tile: TileUniform, amount: f32, gradients: LandGradients) -> vec3<f32> {
+// With the land texture variation, each tap of the colour layers' frame reads its neighbours around its own point,
+// so that the plain tiling does not show through. `world_xz` is the pixel's world position.
+fn apply_sharpening(color: vec3<f32>, uv: vec2<f32>, tile: TileUniform, amount: f32, world_xz: vec2<f32>,
+    gradients: LandGradients) -> vec3<f32> {
   if (amount <= 0.0) { return color; }
 
   // Approximate a 1-pixel offset in UV space
   var fw: vec2<f32>;
   if (tile.texture_size == 2u) { fw = abs(gradients.dx) + abs(gradients.dy); }
   else { fw = fwidth(uv); }
+  // A quarter turn swaps the gradients' axes: the offset holds for every tap.
   let off = max(fw.x, fw.y);
 
-  let s1 = sample_tile_albedo(uv + vec2<f32>(off, 0.0), tile, gradients);
-  let s2 = sample_tile_albedo(uv - vec2<f32>(off, 0.0), tile, gradients);
-  let s3 = sample_tile_albedo(uv + vec2<f32>(0.0, off), tile, gradients);
-  let s4 = sample_tile_albedo(uv - vec2<f32>(0.0, off), tile, gradients);
+  let frame = land_variation_frame(world_xz, LAND_VARIATION_HEX_EDGE_CELLS, vec2<i32>(0), land_texture_variation(tile));
+  var sum = LandVariationColorSum(vec3<f32>(0.0), 0.0, vec3<f32>(0.0));
+  // One call site in a loop: every land sample inlines its texture reads.
+  for (var i = land_variation_first_tap(frame); i < land_variation_end_tap(frame); i++) {
+    if (land_variation_tap_active(frame, i)) {
+      let tap = land_variation_tap(frame, i);
+      let tap_uv = select(ec_world_uv(land_variation_tap_point(tap, world_xz), tile), uv, tap.plain);
+      let tap_gradients = land_variation_tap_gradients(tap, gradients);
+      let s1 = sample_tile_albedo(tap_uv + vec2<f32>(off, 0.0), tile, tap_gradients);
+      let s2 = sample_tile_albedo(tap_uv - vec2<f32>(off, 0.0), tile, tap_gradients);
+      let s3 = sample_tile_albedo(tap_uv + vec2<f32>(0.0, off), tile, tap_gradients);
+      let s4 = sample_tile_albedo(tap_uv - vec2<f32>(0.0, off), tile, tap_gradients);
+      land_variation_add_color(&sum, tap, (s1 + s2 + s3 + s4) * 0.25);
+    }
+  }
 
-  let neighbor_avg = (s1 + s2 + s3 + s4) * 0.25;
+  let neighbor_avg = land_variation_resolve_color(sum, frame);
   return color + (color - neighbor_avg) * amount;
 }
 
@@ -524,6 +872,25 @@ fn blurred_albedo(uv: vec2<f32>, tile: TileUniform, radius_in_pixels: f32, world
   let sa = sin(ang);
   let rot = mat2x2<f32>(ca, -sa, sa, ca);
 
+  // With the land texture variation, each tap of the colour layers' frame blurs around its own point with its turned
+  // gradients, so that the plain tiling does not show through. A quarter turn swaps the gradients' axes: the radius
+  // holds for every tap.
+  let frame = land_variation_frame(world_xz, LAND_VARIATION_HEX_EDGE_CELLS, vec2<i32>(0), land_texture_variation(tile));
+  var sum = LandVariationColorSum(vec3<f32>(0.0), 0.0, vec3<f32>(0.0));
+  // One call site in a loop: every land sample inlines its texture reads.
+  for (var i = land_variation_first_tap(frame); i < land_variation_end_tap(frame); i++) {
+    if (land_variation_tap_active(frame, i)) {
+      let tap = land_variation_tap(frame, i);
+      let tap_uv = select(ec_world_uv(land_variation_tap_point(tap, world_xz), tile), uv, tap.plain);
+      let tap_gradients = land_variation_tap_gradients(tap, LandGradients(ddx_uv, ddy_uv));
+      land_variation_add_color(&sum, tap, blurred_albedo_kernel(tap_uv, tile, r, rot, tap_gradients.dx, tap_gradients.dy));
+    }
+  }
+  return land_variation_resolve_color(sum, frame);
+}
+
+// blurred_albedo's 9-tap kernel of radius r (uv units), turned by rot, around uv.
+fn blurred_albedo_kernel(uv: vec2<f32>, tile: TileUniform, r: f32, rot: mat2x2<f32>, ddx_uv: vec2<f32>, ddy_uv: vec2<f32>) -> vec3<f32> {
   // Rotated offsets for the 8 surrounding taps
   let o1 = rot * vec2<f32>( r, 0.0);
   let o2 = rot * vec2<f32>(-r, 0.0);

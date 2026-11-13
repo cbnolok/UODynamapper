@@ -11,6 +11,10 @@
 //
 //  Classic shading and the clients' per-vertex model keep their vertex light
 //  and scale it per pixel by land_bump_light_ratio.
+//
+//  With the land texture variation (sampling.wesl), the height field is the
+//  colours': each tap of the frame at the pixel reads its moved and turned
+//  point, so that the differences, taken in world axes, need no turning back.
 // ============================================================================
 
 
@@ -19,6 +23,9 @@ import package::shaders::world::land::lighting::luminance;
 import package::shaders::world::land::sampling::{
   LandGradients, LandLookupSlot, LAND_PAGE_LOOKUP_ROLE_DETAIL, LAND_PAGE_LOOKUP_ROLE_MASK, LAND_SOURCE_MISSING,
   LAND_SOURCE_CLASSIC_ART, LAND_SOURCE_NODRAW, ec_tile_stretch, ec_world_uv, ec_slot_world_uv, read_ec_lookup_slot,
+  LAND_VARIATION_HEX_EDGE_CELLS, LAND_VARIATION_MASK_HEX_EDGE_CELLS, LAND_VARIATION_MASK_SALT,
+  land_texture_variation, land_variation_first_tap, land_variation_end_tap, land_variation_frame, land_variation_tap, land_variation_tap_active,
+  land_variation_tap_point,
 };
 
 // Relief depth, in texels, of a luminance change from black to white; the strength slider scales it.
@@ -102,24 +109,42 @@ fn land_derived_bump_tilt(world_xz: vec2<f32>, tile: TileUniform, world: LandGra
   let step_texels = max(footprint, LAND_BUMP_STEP_MIN_TEXELS);
   let step_world = step_texels / texels_per_tile;
 
+  let variation = land_texture_variation(tile);
   var detail = LandLookupSlot(false, 0u, vec2<u32>(0u), vec2<u32>(0u), 0.0);
   var mask_alpha = 1.0;
   if (tile.texture_size == 2u) {
     detail = read_ec_lookup_slot(tile.texture_payload, LAND_PAGE_LOOKUP_ROLE_DETAIL);
     let mask = read_ec_lookup_slot(tile.texture_payload, LAND_PAGE_LOOKUP_ROLE_MASK);
     if (detail.present && mask.present) {
-      mask_alpha = land_bump_page_tap(ec_slot_world_uv(world_xz, mask), mask.texture_layer, mask.texture_origin, mask.texture_extent).a;
+      let mask_frame = land_variation_frame(world_xz, LAND_VARIATION_MASK_HEX_EDGE_CELLS, LAND_VARIATION_MASK_SALT, variation);
+      mask_alpha = 0.0;
+      for (var tap = land_variation_first_tap(mask_frame); tap < land_variation_end_tap(mask_frame); tap++) {
+        if (land_variation_tap_active(mask_frame, tap)) {
+          let mask_tap = land_variation_tap(mask_frame, tap);
+          let mask_uv = ec_slot_world_uv(land_variation_tap_point(mask_tap, world_xz), mask);
+          mask_alpha += land_bump_page_tap(mask_uv, mask.texture_layer, mask.texture_origin, mask.texture_extent).a
+            * mask_tap.weight;
+        }
+      }
     } else {
       detail.present = false;
     }
   }
 
-  // Taps +X, -X, +Z, -Z. One call site in a loop: every land sample inlines its texture reads.
-  var heights: array<f32, 4>;
-  for (var i = 0u; i < 4u; i++) {
-    let axis = select(vec2<f32>(0.0, 1.0), vec2<f32>(1.0, 0.0), i < 2u);
-    let direction = select(-1.0, 1.0, (i & 1u) == 0u);
-    heights[i] = land_bump_height(world_xz + axis * (direction * step_world), tile, detail, mask_alpha);
+  // Taps +X, -X, +Z, -Z of every tap of the variation frame, which stays the pixel's along the differences. One
+  // call site in a loop: every land sample inlines its texture reads.
+  let frame = land_variation_frame(world_xz, LAND_VARIATION_HEX_EDGE_CELLS, vec2<i32>(0), variation);
+  var heights = array<f32, 4>(0.0, 0.0, 0.0, 0.0);
+  for (var tap = land_variation_first_tap(frame); tap < land_variation_end_tap(frame); tap++) {
+    if (land_variation_tap_active(frame, tap)) {
+      let frame_tap = land_variation_tap(frame, tap);
+      for (var i = 0u; i < 4u; i++) {
+        let axis = select(vec2<f32>(0.0, 1.0), vec2<f32>(1.0, 0.0), i < 2u);
+        let direction = select(-1.0, 1.0, (i & 1u) == 0u);
+        let tap_world = land_variation_tap_point(frame_tap, world_xz + axis * (direction * step_world));
+        heights[i] += land_bump_height(tap_world, tile, detail, mask_alpha) * frame_tap.weight;
+      }
+    }
   }
   // The normal tilts away from rising height.
   let scale = LAND_BUMP_DEPTH_TEXELS * fade / (2.0 * step_texels);
