@@ -27,11 +27,20 @@ material 6 rotate=false
 material 146 rotate=false
 // Sand: dimples and ripples lit from one side.
 material 7 rotate=false
+// Cave floor and the cave transitions, which draw the same layers: embossed relief lit from one side.
+material 13 rotate=false
+material 171 189 rotate=false
 // Swamp and its edges: leaves and vines.
 material 48 rotate=true
 material 69 rotate=true
 material 129 144 rotate=true
+// Obsidian and its reversed colours: rough stone with no courses, its flakes all slanting one way.
+material 50 51 rotate=false
+// Forest canopy seen from above: leaf clumps with no direction and no light from one side.
+material 145 rotate=true
 // Dirt with large rocks: the rocks are lit from one side.
 material 155 rotate=false
+// Road: stones set in bands that run one way, lit from one side.
+material 190 rotate=false
 // Cool lava and the void destruction: an organic crust, its cracks embossed by a light from the top left.
 material 193 194 rotate=false
