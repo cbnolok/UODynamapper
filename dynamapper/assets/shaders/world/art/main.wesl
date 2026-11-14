@@ -35,7 +35,7 @@ import package::shaders::world::art::shading::{apply_art_surface_shading, art_lo
 import package::shaders::world::art::surface_blend::static_surface_coverage;
 import package::shaders::world::ec_item_water::{ec_item_is_water, sample_ec_item_water};
 import package::shaders::world::ec_liquid_camera::ec_liquid_camera_reflection_uv;
-import package::shaders::world::art::depth::{static_priority_depth, horizontal_plane_painter_depth};
+import package::shaders::world::art::depth::{static_priority_depth, horizontal_plane_painter_depth, cave_lifted_depth};
 import package::shaders::world::projection::camera_relative_world_to_clip;
 
 struct ArtVertexOutput {
@@ -213,6 +213,8 @@ fn vertex(vertex: Vertex) -> ArtVertexOutput {
     } else {
         out.logical_depth = logical_depth_from_projected_priority(inst);
     }
+    // A cave drawn over the map shows in front of the land around it, its shadows with it.
+    out.logical_depth = cave_lifted_depth(out.logical_depth, inst.is_wet_flags);
     out.depth_class = inst.depth_class;
     out.is_wet = inst.is_wet_flags & 1u;
     out.world_pos = world_pos;
@@ -360,6 +362,9 @@ fn shade_fragment(in: ArtVertexOutput, sample_index: u32) -> ArtFragmentOutput {
         // The pick target crops XY, so its pixel is not a screen position.
         @if(STATIC_PICK)
         out.depth = in.position.z;
+    }
+    if (inst.flat_quad != 0u) {
+        out.depth = cave_lifted_depth(out.depth, inst.is_wet_flags);
     }
 
     var surface_header = vec4<u32>(0u);

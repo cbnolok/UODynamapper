@@ -9,6 +9,7 @@ use crate::core::render::scene::world::land::tile_atlas::TileAtlas;
 use crate::core::multis::{
     expanded_multi_part_z, multi_id_from_static_graphic, MultiDefinitionsRes,
 };
+use crate::core::render::scene::world::caves::{CaveMap, CaveStatic, CavesRes};
 use crate::core::render::scene::world::z_view::{ZViewCut, ZViewLimit};
 use crate::core::render::scene::SceneStateData;
 use crate::core::statics::{LazyStaticsStore, StaticsStoreRes};
@@ -86,6 +87,9 @@ const LOCAL_LIGHT_CHANNEL_BITS: u32 = u8::BITS;
 /// or a flat roof, `cc_ground_diamond`), which catches the static local lights evenly. Kept in sync with
 /// art/shading.wesl.
 pub(crate) const STATIC_FLAG_FLAT_ART: u32 = 1 << 11;
+/// `SpriteInstance` and `GroundTileInstance::is_wet_flags` bit: the static is part of a cave drawn over the map
+/// (`CaveStatic::Lifted`), drawn in front of the land and statics around it. Kept in sync with art/depth.wesl.
+pub(crate) const STATIC_FLAG_CAVE: u32 = 1 << 12;
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub(crate) struct StaticBillboardBounds {
@@ -1108,6 +1112,8 @@ struct StaticChunkCacheConfig {
     item_routes_revision: u64,
     /// The z-view limit: a change rebuilds the cached chunks without the statics it hides.
     z_view: ZViewCut,
+    /// The caves drawn over the map (`CavesRes::revision`).
+    caves_revision: u64,
 }
 
 #[derive(Clone, Debug, Default)]
@@ -1767,6 +1773,7 @@ struct StaticCollectFrameConfig {
     height_scale: f32,
     item_routes_revision: u64,
     z_view: ZViewCut,
+    caves_revision: u64,
 }
 
 #[derive(Clone, Copy)]
@@ -1780,6 +1787,8 @@ struct StaticCollectResources<'a> {
     static_lights: &'a super::static_lights::RenderStaticLightInstances,
     tile_atlas: &'a TileAtlas,
     map_planes: Option<&'a MapPlanesRes>,
+    /// The caves drawn over the map, if any.
+    caves: Option<&'a CaveMap>,
 }
 
 impl<'a> StaticCollectResources<'a> {
@@ -1873,6 +1882,7 @@ fn static_collect_resources<'a>(
     static_lights: &'a super::static_lights::RenderStaticLightInstances,
     tile_atlas: &'a TileAtlas,
     map_planes: &'a Option<Res<MapPlanesRes>>,
+    caves: &'a CavesRes,
 ) -> StaticCollectResources<'a> {
     StaticCollectResources {
         tex_art_cc: tex_art_cc_res.as_ref().map(|res| &**res),
@@ -1884,6 +1894,7 @@ fn static_collect_resources<'a>(
         static_lights,
         tile_atlas,
         map_planes: map_planes.as_ref().map(|res| &**res),
+        caves: caves.active(),
     }
 }
 
@@ -1907,6 +1918,7 @@ fn static_chunk_cache_config(
         show_hidden_multi_parts: frame.show_hidden_multi_parts,
         item_routes_revision: frame.item_routes_revision,
         z_view: frame.z_view,
+        caves_revision: frame.caves_revision,
     }
 }
 
@@ -2195,6 +2207,12 @@ fn emit_static_render_tile(
     if frame.z_view.hides_static(tilemeta.map_or(0, |meta| meta.flags), render_tile.z) {
         return;
     }
+    // Over a cave drawn over the map, and in it (caves.rs).
+    let cave = resources.caves.map_or(CaveStatic::Outside, |caves|
+        caves.static_view(render_tile.world_x as i32, render_tile.world_z as i32, render_tile.z));
+    if cave == CaveStatic::Hidden {
+        return;
+    }
     let visual_kind = frame.art_source.filter(|_| !frame.is_dot_mode).map(|source|
         resolve_static_visual_kind_cached(source, render_tile.graphic, tilemeta_package, tilemeta,
             resources.tex_art_cc_package(), resources.tex_art_ec_package(), resources.tex_land_ec_package(),
@@ -2208,7 +2226,7 @@ fn emit_static_render_tile(
         world_x: render_tile.world_x,
         world_z: render_tile.world_z,
         depth_class: resolve_static_depth_class(tilemeta, renders_wet),
-        is_wet_flags: u32::from(renders_wet),
+        is_wet_flags: u32::from(renders_wet) | if cave == CaveStatic::Lifted { STATIC_FLAG_CAVE } else { 0 },
         base_world_y: (render_tile.z as f32) * frame.height_scale,
         client_shadow_flags: client_shadow_flags(tilemeta),
         client_shadow_height: (i32::from(render_tile.z) - ground_z) as f32,
@@ -2939,7 +2957,7 @@ pub fn sys_collect_visible_statics(
     mut ground_atlas: ResMut<GroundArtPageAtlas>,
     settings: Res<crate::configs::settings::Settings>,
     scene_state: Res<SceneStateData>,
-    z_view: Res<ZViewLimit>,
+    view_cuts: (Res<ZViewLimit>, Res<CavesRes>),
     zoom: Res<RenderZoom>,
     multis_res: Option<Res<MultiDefinitionsRes>>,
     map_planes: Option<Res<MapPlanesRes>>,
@@ -2959,6 +2977,7 @@ pub fn sys_collect_visible_statics(
 ) {
     let (tex_art_cc_res, tex_art_ec_res, tex_land_ec_res, tilemeta_res, tex_aux_ec_res) = packages;
     let (chunks_q, tile_atlas) = terrain;
+    let (z_view, caves) = view_cuts;
     if !settings.world_rendering.enable_statics {
         let (sprite_output, ground_output, batches, cache, _) = &mut outputs;
         clear_static_collect_outputs(sprite_output, ground_output, batches);
@@ -2997,6 +3016,7 @@ pub fn sys_collect_visible_statics(
         item_routes_revision: statics_res.0.get(map_id as usize).and_then(|store| store.as_ref())
             .map_or(0, |store| store.lock().item_routes_revision()),
         z_view: z_view.0,
+        caves_revision: caves.revision(),
     };
     let resources = static_collect_resources(
         &tex_art_cc_res,
@@ -3008,6 +3028,7 @@ pub fn sys_collect_visible_statics(
         &static_lights,
         &tile_atlas,
         &map_planes,
+        &caves,
     );
     let cache_config =
         static_chunk_cache_config(frame, &sprite_atlas, &ground_atlas, &static_lights, &tile_atlas);
@@ -3658,6 +3679,7 @@ mod tests {
         world.insert_resource(StaticsStoreRes(Vec::new()));
         world.insert_resource(SceneStateData { map_id: 0 });
         world.init_resource::<ZViewLimit>();
+        world.init_resource::<CavesRes>();
         world.insert_resource(TileAtlas::new(Default::default(), 0));
         world.insert_resource(RenderZoom::default());
         world.insert_resource(SpriteArtPageAtlas(crate::core::texture_cache::art::ArtPageAtlas::new(
@@ -4143,6 +4165,7 @@ mod tests {
             show_hidden_multi_parts: false,
             item_routes_revision: 0,
             z_view: ZViewCut::NONE,
+            caves_revision: 0,
         });
         cache.chunks.insert(
             StaticChunkBatchKey {
@@ -4165,6 +4188,7 @@ mod tests {
             show_hidden_multi_parts: false,
             item_routes_revision: 0,
             z_view: ZViewCut::NONE,
+            caves_revision: 0,
         });
 
         assert!(cache.chunks.is_empty());
@@ -4184,6 +4208,7 @@ mod tests {
             show_hidden_multi_parts: false,
             item_routes_revision: 0,
             z_view: ZViewCut::NONE,
+            caves_revision: 0,
         });
 
         cache.chunks.insert(
@@ -4207,6 +4232,7 @@ mod tests {
             show_hidden_multi_parts: false,
             item_routes_revision: 0,
             z_view: ZViewCut::NONE,
+            caves_revision: 0,
         }));
 
         assert!(!cache.chunks.is_empty());
@@ -4226,6 +4252,7 @@ mod tests {
             show_hidden_multi_parts: false,
             item_routes_revision: 0,
             z_view: ZViewCut::NONE,
+            caves_revision: 0,
         });
         cache.chunks.insert(
             StaticChunkBatchKey {
@@ -4248,6 +4275,7 @@ mod tests {
             show_hidden_multi_parts: false,
             item_routes_revision: 0,
             z_view: ZViewCut::NONE,
+            caves_revision: 0,
         }));
 
         assert!(cache.chunks.is_empty());

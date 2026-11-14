@@ -18,6 +18,7 @@
 //! unless the style's `local_lights.source` picks light.mul, as Classic (`static_lights`).
 
 use super::light_cover::{static_light_is_hidden, MultiCoverParts};
+use crate::core::render::scene::world::caves::CavesRes;
 use crate::core::render::scene::world::z_view::ZViewLimit;
 use super::static_lights::{StaticLightInstance, StaticLightKey, StaticLightTarget, LIGHT_PIXELS_PER_WORLD_TILE,
     STATIC_LIGHT_Y_BIAS};
@@ -92,8 +93,9 @@ pub struct ClientLightSpriteInstance {
 pub struct RenderClientLightSprites {
     pub instances: Vec<ClientLightSpriteInstance>,
     /// What the last scan covered, whether it centred the sprites on their items, and the rule, z limit and multi
-    /// parts it hid covered lights by (`light_cover`); the scan reruns only when it changes.
-    last_scan: Option<(u32, Vec<StaticChunkBatchKey>, bool, LightCover, i32, bool)>,
+    /// parts it hid covered lights by (`light_cover`), and the caves drawn over the map (`CavesRes::revision`); the scan
+    /// reruns only when it changes.
+    last_scan: Option<(u32, Vec<StaticChunkBatchKey>, bool, LightCover, i32, bool, u64)>,
 }
 
 /// The sprites' materials, one per light texture (`None` once a texture failed to load), and the scan reach.
@@ -282,7 +284,7 @@ pub fn sys_collect_client_light_sprites(
     light_scales: Res<ItemLightScales>,
     scene_state: Res<SceneStateData>,
     chunks_q: Query<&LCMesh>,
-    z_view: Res<ZViewLimit>,
+    view_cuts: (Res<ZViewLimit>, Res<CavesRes>),
     mut cache: ResMut<ClientLightSpriteCache>,
     mut output: ResMut<RenderClientLightSprites>,
 ) {
@@ -312,11 +314,14 @@ pub fn sys_collect_client_light_sprites(
     visible_chunk_keys.sort_by_key(|key| (key.gy, key.gx, key.scale));
     let centre_on_items = uniform_state.local_lights.is_some_and(|local_lights| local_lights.centre_on_items);
     let light_cover = uniform_state.light_cover;
+    let (z_view, caves) = view_cuts;
     let max_z = z_view.0.max_z;
     let show_hidden_multi_parts = settings.world_rendering.show_hidden_multi_parts;
-    if output.last_scan.as_ref().is_some_and(|(last_map, last_keys, last_centred, last_cover, last_max_z, last_hidden)| {
+    if output.last_scan.as_ref().is_some_and(|(last_map, last_keys, last_centred, last_cover, last_max_z, last_hidden,
+        last_caves)| {
         *last_map == map_id && *last_keys == visible_chunk_keys && *last_centred == centre_on_items
             && *last_cover == light_cover && *last_max_z == max_z && *last_hidden == show_hidden_multi_parts
+            && *last_caves == caves.revision()
     }) {
         return;
     }
@@ -405,7 +410,7 @@ pub fn sys_collect_client_light_sprites(
                     key.tile_x,
                     key.tile_y,
                     key.z,
-                    max_z,
+                    caves.light_max_z(key.tile_x, key.tile_y, max_z),
                 )
             {
                 continue;
@@ -437,7 +442,8 @@ pub fn sys_collect_client_light_sprites(
         );
     }
     output.instances = instances;
-    output.last_scan = Some((map_id, visible_chunk_keys, centre_on_items, light_cover, max_z, show_hidden_multi_parts));
+    output.last_scan = Some((map_id, visible_chunk_keys, centre_on_items, light_cover, max_z, show_hidden_multi_parts,
+        caves.revision()));
 }
 
 pub fn sys_sync_client_light_sprites(

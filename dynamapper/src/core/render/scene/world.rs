@@ -2,6 +2,7 @@ pub mod land;
 pub mod art;
 pub mod effects;
 pub mod z_view;
+pub mod caves;
 
 use nohash_hasher::BuildNoHashHasher;
 use indexmap::IndexMap;
@@ -29,6 +30,7 @@ impl Plugin for WorldPlugin
         app
             .init_resource::<WorldGeoData>()
             .init_resource::<z_view::ZViewLimit>()
+            .init_resource::<caves::CavesRes>()
             .add_systems(
                 Startup,
                 sys_populate_world_geo_data
@@ -43,6 +45,15 @@ impl Plugin for WorldPlugin
                     .before(art::static_lights::sys_collect_visible_static_lights)
                     .before(art::client_light_sprites::sys_collect_client_light_sprites)
                     .before(land::sys_update_shared_land_material)
+                    .run_if(in_state(AppState::InGame)),
+            )
+            .add_systems(
+                Update,
+                caves::sys_update_caves
+                    .before(SceneRenderArtSysSet::CollectVisibleStatics)
+                    .before(art::static_lights::sys_collect_visible_static_lights)
+                    .before(art::client_light_sprites::sys_collect_client_light_sprites)
+                    .before(land::draw_mesh::sys_draw_spawned_land_chunks)
                     .run_if(in_state(AppState::InGame)),
             )
             .add_plugins((

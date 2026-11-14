@@ -88,6 +88,11 @@ impl LazyStaticsStore {
         self.item_routes_revision
     }
 
+    /// The statics package, for readers that scan it apart from the store (caves.rs).
+    pub fn package(&self) -> Arc<UddpReader> {
+        self.package.clone()
+    }
+
     fn block_index(&self, block_x: u32, block_y: u32) -> Option<usize> {
         if block_x >= self.block_width || block_y >= self.block_height {
             return None;
@@ -178,6 +183,18 @@ impl LazyStaticsStore {
         self.loaded_package_chunks[package_chunk_index as usize] = true;
         Ok(())
     }
+}
+
+/// The statics of the package chunk `chunk_index`, unrouted, with offsets from the chunk's first cell. The map
+/// package numbers its chunks the same way (`maps::read_package_chunk_land_z`).
+pub fn read_package_chunk_statics(package: &UddpReader, chunk_index: u32) -> eyre::Result<Vec<StaticTile>> {
+    const TILE_BYTES: usize = std::mem::size_of::<StaticTile>();
+    let bytes = package.read_file_by_dense_id_cow(chunk_index).map_err(|error| eyre::eyre!("{error}"))?;
+    if bytes.len() % TILE_BYTES != 0 {
+        return Err(eyre::eyre!("invalid statics chunk size {}", bytes.len()));
+    }
+    // A borrowed chunk may be unaligned: the statics are read from their bytes.
+    Ok(bytes.chunks_exact(TILE_BYTES).map(bytemuck::pod_read_unaligned).collect())
 }
 
 /// The graphic a static at the tile `x`, `y` draws under `item_routes`: their inside table where `areas` (the

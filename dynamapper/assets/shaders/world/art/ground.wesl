@@ -1,5 +1,5 @@
 import package::shaders::world::art::picking::{pick_clip, pick_pass, pick_color};
-import package::shaders::world::art::depth::horizontal_plane_painter_depth;
+import package::shaders::world::art::depth::{horizontal_plane_painter_depth, cave_lifted_depth};
 import bevy_pbr::render::{
     forward_io::Vertex,
     view_transformations,
@@ -140,6 +140,8 @@ fn shade_fragment(in: GroundVertexOutput, sample_index: u32) -> GroundFragmentOu
     // The pick target crops XY, so its pixel is not a screen position.
     @if(STATIC_PICK)
     out.depth = in.position.z;
+    // A cave drawn over the map shows in front of the land around it.
+    out.depth = cave_lifted_depth(out.depth, inst.is_wet_flags);
     let atlas_extent = max(inst.uv_max - inst.uv_min, vec2<f32>(0.000001));
     var uv_in_tile = (in.uv - inst.uv_min) / atlas_extent;
     // The client filter's footprint: the quad's atlas uv per screen pixel, taken before any branch.

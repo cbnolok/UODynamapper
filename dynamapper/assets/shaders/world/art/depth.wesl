@@ -61,3 +61,32 @@ fn horizontal_plane_painter_depth(frag_position: vec4<f32>, plane_y: f32, frag_w
     }
     return bitcast<f32>(bitcast<u32>(depth) - PAINTER_ORDER_DEPTH_STEP_BITS);
 }
+
+// SpriteInstance and GroundTileInstance is_wet_flags bit: the static is part of a cave drawn over the map (caves.rs).
+// Keep in sync with STATIC_FLAG_CAVE in statics_collect.rs.
+const STATIC_FLAG_CAVE: u32 = 1u << 12u;
+// How high the land and statics in front of a cave may rise over it, in world units: the whole UO z range, 256 z units
+// (UO_Z_TO_WORLD_SCALE = 4 / 44).
+const CAVE_LIFT_WORLD_HEIGHT: f32 = 256.0 * 4.0 / 44.0;
+// The least rise of the view direction the lift is solved for, so a camera near the horizon keeps a finite lift.
+const CAVE_LIFT_MIN_VIEW_RISE: f32 = 0.1;
+
+// The depth `depth` of a cave static's fragment moved toward the camera along the view ray past anything in front of
+// the cave: the land and statics in front rise at most CAVE_LIFT_WORLD_HEIGHT over it, which is that height divided by
+// the view direction's rise along the ray. A cave drawn over the map then shows through the land around it, while
+// its own statics keep their order. Other fragments keep `depth`. Solved through the projection, so it holds for the
+// orthographic and the perspective camera.
+fn cave_lifted_depth(depth: f32, is_wet_flags: u32) -> f32 {
+    if ((is_wet_flags & STATIC_FLAG_CAVE) == 0u || depth <= 0.0) {
+        return depth;
+    }
+    let projection = view.clip_from_view;
+    let view_z = (projection[3].z - depth * projection[3].w) / (depth * projection[2].w - projection[2].z);
+    let lift = CAVE_LIFT_WORLD_HEIGHT / max(abs(view.world_from_view[2].y), CAVE_LIFT_MIN_VIEW_RISE);
+    let lifted_z = view_z + lift;
+    let clip_w = projection[2].w * lifted_z + projection[3].w;
+    if (clip_w <= 0.0) {
+        return 1.0;
+    }
+    return clamp((projection[2].z * lifted_z + projection[3].z) / clip_w, 0.0, 1.0);
+}

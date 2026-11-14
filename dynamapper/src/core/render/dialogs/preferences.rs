@@ -4,7 +4,7 @@ use crate::{
     core::{
         frame_limiter::FrameLimiterSettings, frame_limiter_for_options, frame_limiter_for_settings,
         present_mode_for_vsync,
-        render::{dialogs, scene::camera::UiCameraResource},
+        render::{dialogs, scene::{camera::UiCameraResource, world::caves::CaveView}},
     },
     prelude::*,
 };
@@ -59,6 +59,7 @@ pub struct PreferencesDialogState {
     pub enable_static_lights: bool,
     pub show_hidden_multi_parts: bool,
     pub show_only_player_floor: bool,
+    pub caves: CaveView,
     /// Timer used to debounce applying settings that cause UI layout shifts (like UI scale).
     pub apply_timer: Timer,
 }
@@ -100,6 +101,7 @@ impl Default for PreferencesDialogState {
             enable_static_lights: false,
             show_hidden_multi_parts: false,
             show_only_player_floor: false,
+            caves: CaveView::HiddenUntilEntered,
             apply_timer: {
                 let mut t = Timer::from_seconds(0.3, TimerMode::Once);
                 t.pause();
@@ -172,6 +174,7 @@ fn sys_sync_settings_to_state(
         state.enable_static_lights = settings.world_rendering.enable_static_lights;
         state.show_hidden_multi_parts = settings.world_rendering.show_hidden_multi_parts;
         state.show_only_player_floor = settings.world_rendering.show_only_player_floor;
+        state.caves = settings.world_rendering.caves;
 
         wireframe_config.global = settings.app.debug.map_render_wireframe;
 
@@ -279,6 +282,9 @@ pub fn sys_render_preferences_dialog(
         }
         if settings.as_ref().world_rendering.show_only_player_floor != state.show_only_player_floor {
             settings.world_rendering.show_only_player_floor = state.show_only_player_floor;
+        }
+        if settings.as_ref().world_rendering.caves != state.caves {
+            settings.world_rendering.caves = state.caves;
         }
         if (settings.as_ref().app.window.ui_scale - state.ui_scale).abs() > 0.001 {
             settings.app.window.ui_scale = state.ui_scale;
@@ -664,6 +670,27 @@ pub fn sys_render_preferences_dialog(
                         state.apply_timer.reset();
                         state.apply_timer.unpause();
                     }
+                    ui.horizontal(|ui| {
+                        ui.label("Caves:");
+                        let mut changed = false;
+                        egui::ComboBox::from_id_salt("preferences_caves")
+                            .selected_text(state.caves.label())
+                            .show_ui(ui, |ui| {
+                                for view in CaveView::ALL {
+                                    changed |= ui.selectable_value(&mut state.caves, view, view.label()).changed();
+                                }
+                            })
+                            .response
+                            .on_hover_text(
+                                "Hidden Until Entered: caves stay under the land, as in the client; with \"Show Only the \
+                                 Player's Floor\" a cave shows with the player inside. Drawn Over the Map: the caves \
+                                 connected to a cave mouth open through the land above them.",
+                            );
+                        if changed {
+                            state.apply_timer.reset();
+                            state.apply_timer.unpause();
+                        }
+                    });
                 }
 
                 // ====================== UI TAB ========================

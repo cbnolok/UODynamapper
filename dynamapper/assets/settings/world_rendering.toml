@@ -3,6 +3,7 @@ enable_static_lights = true
 enable_static_art_local_lights = false
 show_hidden_multi_parts = false
 show_only_player_floor = false
+caves = "hidden_until_entered"
 
 [land_streaming]
 prepare_max_blocks_per_frame = 32768

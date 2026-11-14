@@ -9,6 +9,7 @@ use crate::core::render::scene::world::land::mesh_material::{ClientLocalLightSou
 use crate::core::render::scene::world::land::{
     CHUNK_STORAGE_BLOCKS_DIM, MAP_STORAGE_BLOCK_TILE_DIM,
 };
+use crate::core::render::scene::world::caves::CavesRes;
 use crate::core::render::scene::world::z_view::ZViewLimit;
 use crate::core::render::scene::SceneStateData;
 use crate::core::statics::StaticsStoreRes;
@@ -261,13 +262,14 @@ pub fn sys_collect_visible_static_lights(
     client_light_sprites: Res<RenderClientLightSprites>,
     light_scales: Res<ItemLightScales>,
     scene_state: Res<SceneStateData>,
-    z_view: Res<ZViewLimit>,
+    view_cuts: (Res<ZViewLimit>, Res<CavesRes>),
     chunks_q: Query<&crate::core::render::scene::world::land::LCMesh>,
     mut material_cache: ResMut<StaticLightMaterialCache>,
     mut output: ResMut<RenderStaticLightInstances>,
     mut debug_state: ResMut<StaticLightDrawDebugState>,
 ) {
     output.0.clear();
+    let (z_view, caves) = view_cuts;
 
     if !settings.world_rendering.enable_static_lights {
         return;
@@ -380,7 +382,7 @@ pub fn sys_collect_visible_static_lights(
                             tile_x,
                             tile_y,
                             tile.z,
-                            z_view.0.max_z,
+                            caves.light_max_z(tile_x, tile_y, z_view.0.max_z),
                         )
                     {
                         continue;

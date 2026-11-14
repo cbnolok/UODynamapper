@@ -133,6 +133,10 @@ pub struct SectWorldRendering {
     /// cell sets (a ceiling, a roof one cell south-east, or land over the player in a cave) are not drawn, and roofs are
     /// not drawn while the player is under one. A view setting shared by every render style.
     pub show_only_player_floor: bool,
+    /// How the caves buried under the land show: hidden until the player enters one (with `show_only_player_floor`),
+    /// as the client does, or drawn over the map, those connected to a cave mouth (caves.rs). A view setting shared by
+    /// every render style.
+    pub caves: crate::core::render::scene::world::caves::CaveView,
     pub land_streaming: SectLandStreaming,
     pub diagnostics: SectWorldRenderingDiagnostics,
     pub shader_simplification: SectWorldRenderingShaderSimplification,
@@ -1175,6 +1179,7 @@ fn sys_debounced_save(
 mod tests {
     use super::*;
     use uocf::utils::config_toml::{parse_app_state, parse_strict};
+    use crate::core::render::scene::world::caves::CaveView;
 
     const BUNDLED_GRAPHICS: &str = include_str!("../../assets/settings/graphics.toml");
     const BUNDLED_USER_PREFERENCES: &str = include_str!("../../assets/settings/user_preferences.toml");
@@ -1478,6 +1483,7 @@ mod tests {
         assert!(!settings.enable_static_art_local_lights);
         assert!(!settings.show_hidden_multi_parts);
         assert!(!settings.show_only_player_floor);
+        assert_eq!(settings.caves, CaveView::HiddenUntilEntered);
     }
 
     /// A cache copy written before the player-floor view existed loads with it off, and a saved opt-in round-trips.
@@ -1499,6 +1505,28 @@ mod tests {
         let load = parse_app_state(WORLD_RENDERING_CONFIG_FILE, &written, &bundled).expect("lenient load");
         assert!(load.warnings.is_empty(), "{:?}", load.warnings);
         assert!(load.value.show_only_player_floor);
+    }
+
+    /// A cache copy written before the cave view existed loads with the caves hidden, and drawing them round-trips.
+    #[test]
+    fn world_rendering_cache_without_cave_view_loads_caves_hidden() {
+        let bundled: SectWorldRendering =
+            parse_strict(WORLD_RENDERING_CONFIG_FILE, BUNDLED_WORLD_RENDERING).expect("bundled");
+        let older = BUNDLED_WORLD_RENDERING
+            .lines()
+            .filter(|line| !line.starts_with("caves"))
+            .collect::<Vec<_>>()
+            .join("\n");
+        let load = parse_app_state(WORLD_RENDERING_CONFIG_FILE, &older, &bundled).expect("lenient load");
+        assert_eq!(load.value.caves, CaveView::HiddenUntilEntered);
+
+        let mut picked = bundled.clone();
+        picked.caves = CaveView::DrawnOverMap;
+        let written = toml::to_string_pretty(&picked).expect("serialize");
+        assert!(written.contains("caves = \"drawn_over_map\""), "{written}");
+        let load = parse_app_state(WORLD_RENDERING_CONFIG_FILE, &written, &bundled).expect("lenient load");
+        assert!(load.warnings.is_empty(), "{:?}", load.warnings);
+        assert_eq!(load.value.caves, CaveView::DrawnOverMap);
     }
 
     #[test]

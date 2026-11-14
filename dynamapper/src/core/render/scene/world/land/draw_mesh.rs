@@ -324,6 +324,8 @@ pub struct LandFramePacing<'w> {
     pub tilemeta: Option<Res<'w, TileMetaPackageRes>>,
     pub terrain_bases: ResMut<'w, crate::core::texture_cache::land::coverage::EcTerrainBases>,
     pub images: ResMut<'w, Assets<Image>>,
+    /// The caves drawn over the map, whose land is lowered to their floors (`CaveMap::floor_z`).
+    pub caves: Res<'w, crate::core::render::scene::world::caves::CavesRes>,
 }
 
 /// Main system: finds visible land map chunks and ensures their mesh is generated and rendered.
@@ -918,6 +920,7 @@ pub fn sys_draw_spawned_land_chunks(
 
     // Process blocks in parallel using Bevy's ComputeTaskPool
     let pool: &bevy::tasks::ComputeTaskPool = bevy::tasks::ComputeTaskPool::get();
+    let caves = frame_pacing.caves.active();
     let thread_results: Vec<SuperChunkResult> = {
         let _span = crate::tracy_span!("worldmap::chunk_draw_build_chunk_payloads");
         pool.scope(|s| {
@@ -1004,9 +1007,11 @@ pub fn sys_draw_spawned_land_chunks(
                                     .get(row as usize)
                                     .copied()
                                     .unwrap_or(0);
+                                // The land over a cave drawn over the map opens down to the cave floor.
+                                let z = caves.and_then(|caves| caves.floor_z(x, y)).unwrap_or(cell.z);
                                 texels_local[texel_count] = Rg16u::pack(
                                     payload as u16,
-                                    cell.z,
+                                    z,
                                     mode as u16,
                                     is_wet,
                                     land_flags,
