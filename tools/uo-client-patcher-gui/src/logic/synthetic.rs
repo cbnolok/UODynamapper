@@ -6,6 +6,11 @@
 
 use std::net::Ipv4Addr;
 
+#[path = "../../../../lib/uocf/tests/common/kr_handshake.rs"]
+mod handshake_fixture;
+#[path = "../../../../lib/uocf/tests/common/kr_client_fixture.rs"]
+mod client_fixture;
+
 use uocf::classic::map::CLASSIC_FACET_HEIGHTS;
 use uocf::client::classic_facets::{
     ClassicFileRole, CLASSIC_FACET_RECORD_SIZE, CLASSIC_FILE_ID_COUNT, CLASSIC_RECORD_FILE_IDS_OFFSET,
@@ -15,7 +20,7 @@ use uocf::client::classic_facets::{
 use uocf::client::classic_difs::{LAND_LIST_FORMAT, STATICS_LIST_FORMAT};
 use uocf::client::encryption::CipherSiteKind;
 use uocf::client::facet_dimensions::{
-    ClientFamily, ENHANCED_CLIENT_MARKER, FACET_RECORD_HEIGHT_OFFSET, FACET_RECORD_WIDTH_OFFSET, SPLIT_IMMEDIATE_COUNT,
+    ENHANCED_CLIENT_MARKER, FACET_RECORD_HEIGHT_OFFSET, FACET_RECORD_WIDTH_OFFSET, SPLIT_IMMEDIATE_COUNT,
     STOCK_FACET_COUNT, STOCK_SPLIT_X,
 };
 use uocf::client::login::{
@@ -371,20 +376,17 @@ pub fn synthetic_kingdom_reborn_login() -> Vec<u8> {
     twelve_byte_client(None, false, false, Some((code, Vec::new())))
 }
 
-/// [`synthetic_kingdom_reborn`] with its encryption patch sites in their stock form, each between `INT3` filler.
+/// A KR client with the complete validated handshake/helper graph, imports, RTTI, ciphers and facet table.
 pub fn synthetic_kingdom_reborn_ciphers() -> Vec<u8> {
     let mut code = vec![INT3; CIPHER_FILLER_SIZE];
-    for kind in CipherSiteKind::of_family(ClientFamily::KingdomReborn) {
+    for kind in [CipherSiteKind::LoginCipher, CipherSiteKind::KeyExchangeCipher] {
         let pattern = kind.pattern();
-        if let Some(va) = pattern.required_va {
-            let at = (va - IMAGE_BASE - SECTION_ALIGNMENT) as usize - NOP_SLED_SIZE;
-            assert!(code.len() <= at);
-            code.resize(at, INT3);
-        }
         code.extend(pattern.stock_code(CIPHER_WILDCARD_FILL));
         code.extend([INT3; CIPHER_FILLER_SIZE]);
     }
-    twelve_byte_client(None, false, false, Some((code, Vec::new())))
+    let facets: Vec<_> = EC_NAMES.into_iter().zip(CLIENT_FACET_DIMENSIONS)
+        .map(|(name, geometry)| (name, geometry.width, geometry.height)).collect();
+    client_fixture::client_image(handshake_fixture::modern(client_fixture::CONNECT_OFFSET).bytes, &code, &facets)
 }
 
 pub fn classic_stock_size(facet: usize) -> FacetGeometry {

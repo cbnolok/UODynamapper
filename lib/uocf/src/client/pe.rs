@@ -1,6 +1,5 @@
 //! The parts of a 32-bit PE image the patchers need: sections (to map virtual addresses to file offsets), the
-//! checksum field and its algorithm, the Authenticode (security) directory and the resource directory (for the
-//! version resource, [`super::version`]).
+//! checksum field and its algorithm, the Authenticode (security), resource and base-relocation directories.
 
 crate::eyre_imports!();
 
@@ -29,6 +28,7 @@ const DATA_DIRECTORY_SIZE: usize = 8;
 pub(crate) const RESOURCE_DIRECTORY: usize = 2;
 /// Index of the security (Authenticode certificate table) data directory; its address is a file offset.
 const SECURITY_DIRECTORY: usize = 4;
+const BASE_RELOCATION_DIRECTORY: usize = 5;
 const SECTION_HEADER_SIZE: usize = 40;
 const SECTION_NAME_SIZE: usize = 8;
 const SECTION_VIRTUAL_SIZE_OFFSET: usize = 8;
@@ -98,6 +98,8 @@ pub struct PeImage {
     pub security_directory: (u32, u32),
     /// RVA and size of the resource directory; size 0 when the image has none.
     pub resource_directory: (u32, u32),
+    /// RVA and size of the PE32 base relocation directory; size 0 when it is absent.
+    pub base_relocation_directory: (u32, u32),
     pub sections: Vec<PeSection>,
 }
 
@@ -140,6 +142,7 @@ impl PeImage {
         };
         let security_directory = directory(SECURITY_DIRECTORY)?;
         let resource_directory = directory(RESOURCE_DIRECTORY)?;
+        let base_relocation_directory = directory(BASE_RELOCATION_DIRECTORY)?;
         let mut sections = Vec::with_capacity(usize::from(section_count));
         for index in 0..usize::from(section_count) {
             let header = optional + optional_size + SECTION_HEADER_SIZE * index;
@@ -156,12 +159,17 @@ impl PeImage {
                 characteristics: read_u32(bytes, header + SECTION_CHARACTERISTICS_OFFSET)?,
             });
         }
-        Ok(Self { machine, image_base, checksum_offset, stored_checksum, security_directory, resource_directory, sections })
+        Ok(Self { machine, image_base, checksum_offset, stored_checksum, security_directory, resource_directory, base_relocation_directory, sections })
     }
 
     /// True when the image carries an Authenticode signature (a non-empty security directory).
     pub fn is_signed(&self) -> bool {
         self.security_directory.1 != 0
+    }
+
+    /// File offset of the base-relocation directory header, for an in-place table-size update.
+    pub fn base_relocation_directory_entry_offset(&self) -> usize {
+        self.checksum_offset - OPTIONAL_CHECKSUM_OFFSET + OPTIONAL_DIRECTORIES_OFFSET + DATA_DIRECTORY_SIZE * BASE_RELOCATION_DIRECTORY
     }
 
     pub fn section(&self, name: &str) -> Option<&PeSection> {

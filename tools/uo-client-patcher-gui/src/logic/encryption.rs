@@ -85,9 +85,12 @@ impl EncryptionEdit {
         }
     }
 
-    /// True when every site of this part is located and at least one still needs patching.
+    /// True when every site is located and code or loader relocation records still need patching.
     pub fn can_remove(&self, part: EncryptionPart) -> bool {
-        matches!(self.part_status(part), EncryptionStatus::Located(EncryptionState::Encrypted | EncryptionState::Partial))
+        self.sites.as_ref().is_some_and(|sites| {
+            let sites = sites.for_part(part);
+            sites.is_complete() && sites.sites.iter().any(|site| !site.removed || site.needs_relocation_repair())
+        })
     }
 
     pub fn selection_mut(&mut self, part: EncryptionPart) -> &mut bool {
@@ -111,6 +114,7 @@ impl EncryptionEdit {
                 continue;
             }
             match self.part_status(part) {
+                EncryptionStatus::Located(EncryptionState::Removed) if self.can_remove(part) => edits.push(edit),
                 EncryptionStatus::Located(EncryptionState::Removed) => {}
                 EncryptionStatus::Located(_) => edits.push(edit),
                 EncryptionStatus::NotLocated(unlocated) => {
@@ -141,7 +145,9 @@ impl EncryptionEdit {
                 offset: format!("{:#010x}", site.offset),
                 va: va(site.offset),
                 bytes: hex_bytes(if site.removed { site.patched() } else { site.stock() }),
-                state: if site.removed {
+                state: if site.needs_relocation_repair() {
+                    "patched out; PE relocation repair needed".to_owned()
+                } else if site.removed {
                     "patched out".to_owned()
                 } else {
                     format!("on (patch: {})", hex_bytes(site.patched()))

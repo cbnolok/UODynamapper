@@ -1,5 +1,5 @@
 # KR 2.45.4.4, callback replacement at VA 0x504837, within its original 397-byte function.
-# Other exact profiles relocate the audited calls and game singleton operand.
+# Dynamic resolution regenerates the audited calls and game singleton operand for each image.
 # The original aligned EBP frame, FS:0 registration and seed lifetime remain intact.
 # At entry ESP=B: seed shared_ptr at B+0x10, Huffman shared_ptr at B+0x18,
 # raw allocation at B+0x0c and exception state at B+0x34. EBX=1.

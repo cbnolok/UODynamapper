@@ -1,11 +1,13 @@
-//! Strict game-connect signatures and plaintext replacements for audited KR builds.
+//! The modern KR game-connect layout, resolved from instructions, typed control blocks and PE imports.
 //!
-//! Every 655-byte function must match its stock/patched form at its original VA. The profiles substitute
-//! only the 23 audited address/displacement operands into the common instruction template; they are not
-//! wildcards. The replacement uses each build's original helpers and preserves shared-pointer cleanup.
+//! Only known operand slots vary in the 655-byte instruction shape. Helper roles and register/stack ABIs
+//! are validated independently against the retained E3 path, including when a previous patch erased callback
+//! anchors. Runtime addresses come from the executable; canonical reference bytes supply instruction shapes
+//! and shared fixture generation.
 //! See tools/uo-client-patcher-gui/docs/research/uokr_login.md and the adjacent assembly source.
 
 use super::encryption::CipherPattern;
+use super::kr_resolver::{Image, ResolvedHandshake};
 
 const CONNECT_SIZE: usize = 0x28f;
 const PATCH_START: usize = 0x5f;
@@ -29,6 +31,18 @@ const OPERANDS: [usize; 23] = [
 struct ConnectBuild {
     va: u32,
     operands: [u32; OPERANDS.len()],
+    heap_new: u32,
+    huffman_constructor: u32,
+    huffman_shared: u32,
+    add_receive_transform: u32,
+    send91: u32,
+    disconnect: u32,
+}
+
+struct PatchTargets {
+    va: u32,
+    htonl: u32,
+    game: u32,
     heap_new: u32,
     huffman_constructor: u32,
     huffman_shared: u32,
@@ -81,257 +95,369 @@ const STOCK_CODE: [u8; CONNECT_SIZE] = [
     0x08, 0x8b, 0xcb, 0xff, 0xd2, 0x5f, 0x5e, 0x5d, 0x5b, 0x83, 0xc4, 0x10, 0xc2, 0x04, 0x00,
 ];
 
-// 2.46.0.3, SHA-256 619c458eb70175c7ca389e2c31415d262155d188d7388608eb86efd89140667c
-const BUILD_2_46_0_3: ConnectBuild = ConnectBuild {
-    va: 0x5aa350,
-    operands: [
-        0x00d7035c, 0x00a420d4, 0x0003b423, 0x00a420d8, 0x0002ef26,
-        0xfffee3c1, 0xffe5e68a, 0x00a42464, 0x0002f076, 0x00d7f29c,
-        0x00d7f298, 0x00d7f29c, 0x00d7f298, 0x00d7035c, 0x00a420d4,
-        0x0003b2dd, 0x00c0418c, 0x005aa5e0, 0x000059a3, 0xffe5e53c,
-        0x00d7f29c, 0x00d7f298, 0x0002cb45,
-    ],
-    heap_new: 0x5ea8f0,
-    huffman_constructor: 0x5cee20,
-    huffman_shared: 0x5b00f0,
-    add_receive_transform: 0x596a20,
-    send91: 0x5a94a0,
-    disconnect: 0x5a7770,
-};
+const E3_PROLOGUE: [u8; 48] = [
+    0x55, 0x8b, 0xec, 0x83, 0xe4, 0xf8, 0x81, 0xec, 0x84, 0x02, 0x00, 0x00, 0x53, 0x56, 0x57, 0x83,
+    0xec, 0x08, 0x89, 0x8c, 0x24, 0x80, 0x00, 0x00, 0x00, 0x8b, 0x4d, 0x08, 0x8b, 0xc4, 0x89, 0x08,
+    0x8b, 0x4d, 0x0c, 0x33, 0xdb, 0x3b, 0xcb, 0x89, 0x48, 0x04, 0x74, 0x0c, 0x83, 0xc1, 0x04, 0xba,
+];
 
-// 2.46.1.6, SHA-256 cc664cc8550bf40877b597889e893409924e3a42cf78fb177ba4f68fb19a76f7
-const BUILD_2_46_1_6: ConnectBuild = ConnectBuild {
-    va: 0x5b08e0,
-    operands: [
-        0x00d81a50, 0x00a4a0d8, 0x0003c8a3, 0x00a4a0d4, 0x000303a6,
-        0xfffee3c1, 0xffe580fa, 0x00a4a460, 0x000304f6, 0x00d909e8,
-        0x00d909e4, 0x00d909e8, 0x00d909e4, 0x00d81a50, 0x00a4a0d8,
-        0x0003c75d, 0x00c1545c, 0x005b0b70, 0x000059a3, 0xffe57fac,
-        0x00d909e8, 0x00d909e4, 0x0002dfc5,
-    ],
-    heap_new: 0x5f2300,
-    huffman_constructor: 0x5d6820,
-    huffman_shared: 0x5b6680,
-    add_receive_transform: 0x59cfb0,
-    send91: 0x5afa30,
-    disconnect: 0x5add00,
-};
+const E3_HUFFMAN_TAIL: [u8; 168] = [
+    0x6a, 0x20, 0xe8, 0x52, 0x1e, 0x04, 0x00, 0x83, 0xc4, 0x04, 0x3b, 0xc3, 0x74, 0x0b, 0x8b, 0xf0,
+    0xe8, 0xc4, 0x61, 0x02, 0x00, 0x8b, 0xf0, 0xeb, 0x02, 0x33, 0xf6, 0x56, 0x8d, 0x44, 0x24, 0x18,
+    0x50, 0x89, 0x74, 0x24, 0x18, 0xe8, 0x7f, 0x53, 0x00, 0x00, 0x56, 0x56, 0xe8, 0x78, 0x14, 0xe5,
+    0xff, 0x8b, 0x7c, 0x24, 0x1c, 0x3b, 0xfb, 0x8b, 0x4c, 0x24, 0x18, 0x8b, 0xc4, 0x89, 0x08, 0x89,
+    0x78, 0x04, 0x74, 0x0c, 0x8d, 0x57, 0x04, 0xb8, 0x01, 0x00, 0x00, 0x00, 0xf0, 0x0f, 0xc1, 0x02,
+    0x8b, 0x35, 0x1c, 0xf9, 0xc9, 0x00, 0x3b, 0xf3, 0xa1, 0x18, 0xf9, 0xc9, 0x00, 0x74, 0x0c, 0x8d,
+    0x4e, 0x04, 0xba, 0x01, 0x00, 0x00, 0x00, 0xf0, 0x0f, 0xc1, 0x11, 0x50, 0xe8, 0xf8, 0xb2, 0xfe,
+    0xff, 0x3b, 0xf3, 0x74, 0x2a, 0x8d, 0x46, 0x04, 0x83, 0xc9, 0xff, 0xf0, 0x0f, 0xc1, 0x08, 0x75,
+    0x1e, 0x8b, 0x16, 0x8b, 0x42, 0x04, 0x8b, 0xce, 0xff, 0xd0, 0x8d, 0x4e, 0x08, 0x83, 0xca, 0xff,
+    0xf0, 0x0f, 0xc1, 0x11, 0x75, 0x09, 0x8b, 0x06, 0x8b, 0x50, 0x08, 0x8b, 0xce, 0xff, 0xd2, 0x8b,
+    0x44, 0x24, 0x78, 0xe8, 0xb1, 0xe2, 0xff, 0xff,
+];
 
-// 2.46.1.9, SHA-256 fb5c60cd6ea81969b30a54b1978ce47c8c7a1d200a736f321602c61517c051ec
-const BUILD_2_46_1_9: ConnectBuild = ConnectBuild {
-    va: 0x5b08e0,
-    operands: [
-        0x00d81a50, 0x00a4a0d8, 0x0003c8a3, 0x00a4a0d4, 0x000303a6,
-        0xfffee3c1, 0xffe580fa, 0x00a4a460, 0x000304f6, 0x00d909e8,
-        0x00d909e4, 0x00d909e8, 0x00d909e4, 0x00d81a50, 0x00a4a0d8,
-        0x0003c75d, 0x00c15594, 0x005b0b70, 0x000059a3, 0xffe57fac,
-        0x00d909e8, 0x00d909e4, 0x0002dfc5,
-    ],
-    heap_new: 0x5f2300,
-    huffman_constructor: 0x5d6820,
-    huffman_shared: 0x5b6680,
-    add_receive_transform: 0x59cfb0,
-    send91: 0x5afa30,
-    disconnect: 0x5add00,
-};
+const HEAP_ALLOCATOR: [u8; 65] = [
+    0xa1, 0x7c, 0x23, 0xc9, 0x00, 0x56, 0x8b, 0xb0, 0xe4, 0x04, 0x00, 0x00, 0x85, 0xf6, 0x57, 0x8b,
+    0xf8, 0x74, 0x0b, 0x56, 0xff, 0x15, 0xd8, 0x10, 0xa9, 0x00, 0x83, 0x46, 0x18, 0x01, 0x8b, 0x44,
+    0x24, 0x0c, 0x6a, 0x00, 0x50, 0x57, 0xe8, 0x85, 0xae, 0xff, 0xff, 0x85, 0xf6, 0x8b, 0xf8, 0x74,
+    0x0b, 0x83, 0x46, 0x18, 0xff, 0x56, 0xff, 0x15, 0xdc, 0x10, 0xa9, 0x00, 0x8b, 0xc7, 0x5f, 0x5e,
+    0xc3,
+];
 
-// 2.47.0.6, SHA-256 36ea9fadbbb2d4c8e1180b7845aaba74d3bf5e7bd654735d5f023de69ade3059
-const BUILD_2_47_0_6: ConnectBuild = ConnectBuild {
-    va: 0x5b1080,
-    operands: [
-        0x00d85e20, 0x00a4b0d8, 0x0003c8a3, 0x00a4b0d4, 0x000303a6,
-        0xfffee3c1, 0xffe5795a, 0x00a4b46c, 0x000304f6, 0x00d94db0,
-        0x00d94dac, 0x00d94db0, 0x00d94dac, 0x00d85e20, 0x00a4b0d8,
-        0x0003c75d, 0x00c185a4, 0x005b1310, 0x000059a3, 0xffe5780c,
-        0x00d94db0, 0x00d94dac, 0x0002dfc5,
-    ],
-    heap_new: 0x5f2aa0,
-    huffman_constructor: 0x5d6fc0,
-    huffman_shared: 0x5b6e20,
-    add_receive_transform: 0x59d750,
-    send91: 0x5b01d0,
-    disconnect: 0x5ae4a0,
-};
+const SHARED_WRAPPER: [u8; 108] = [
+    0xa1, 0x7c, 0x23, 0xc9, 0x00, 0x83, 0xec, 0x0c, 0x53, 0x8b, 0x5c, 0x24, 0x14, 0x55, 0x8b, 0x6c,
+    0x24, 0x1c, 0x56, 0xc7, 0x03, 0x00, 0x00, 0x00, 0x00, 0x8b, 0xb0, 0xe4, 0x04, 0x00, 0x00, 0x85,
+    0xf6, 0x57, 0x8b, 0xf8, 0x74, 0x0b, 0x56, 0xff, 0x15, 0xd8, 0x10, 0xa9, 0x00, 0x83, 0x46, 0x18,
+    0x01, 0x6a, 0x00, 0x6a, 0x10, 0x57, 0xe8, 0x55, 0x7b, 0x03, 0x00, 0x85, 0xf6, 0x8b, 0xf8, 0x74,
+    0x0b, 0x83, 0x46, 0x18, 0xff, 0x56, 0xff, 0x15, 0xdc, 0x10, 0xa9, 0x00, 0x85, 0xff, 0x74, 0x16,
+    0xb8, 0x01, 0x00, 0x00, 0x00, 0x89, 0x47, 0x04, 0x89, 0x47, 0x08, 0xc7, 0x07, 0x40, 0x4d, 0xb6,
+    0x00, 0x89, 0x6f, 0x0c, 0xeb, 0x02, 0x33, 0xff, 0x85, 0xff, 0x89, 0x3b,
+];
 
-// 2.47.1.6, SHA-256 3fde36e0ffa1920e5ac12c58e62d15647cb015b9b66ce1e31fe1d50678c2bd5b
-const BUILD_2_47_1_6: ConnectBuild = ConnectBuild {
-    va: 0x5b3240,
-    operands: [
-        0x00d942c4, 0x00a4d0d8, 0x0003c873, 0x00a4d0d4, 0x00030376,
-        0xfffedfc1, 0xffe557ea, 0x00a4d478, 0x000304c6, 0x00da33c0,
-        0x00da33bc, 0x00da33c0, 0x00da33bc, 0x00d942c4, 0x00a4d0d8,
-        0x0003c72d, 0x00c1d4a4, 0x005b34d0, 0x000059b3, 0xffe5569c,
-        0x00da33c0, 0x00da33bc, 0x0002df95,
-    ],
-    heap_new: 0x5f4c30,
-    huffman_constructor: 0x5d9150,
-    huffman_shared: 0x5b8ff0,
-    add_receive_transform: 0x59f510,
-    send91: 0x5b2300,
-    disconnect: 0x5b0530,
-};
+const HUFFMAN_CONSTRUCTOR: [u8; 86] = [
+    0xa1, 0x7c, 0x23, 0xc9, 0x00, 0x83, 0xec, 0x10, 0x53, 0x55, 0x33, 0xed, 0xc7, 0x06, 0xf8, 0x60,
+    0xb6, 0x00, 0x89, 0x6e, 0x08, 0x89, 0x6e, 0x0c, 0x89, 0x6e, 0x10, 0x89, 0x6e, 0x14, 0x89, 0x6e,
+    0x18, 0x89, 0x6e, 0x1c, 0x8b, 0x98, 0xe4, 0x04, 0x00, 0x00, 0x3b, 0xdd, 0x57, 0x8b, 0xf8, 0x74,
+    0x0b, 0x53, 0xff, 0x15, 0xd8, 0x10, 0xa9, 0x00, 0x83, 0x43, 0x18, 0x01, 0x55, 0x6a, 0x3c, 0x57,
+    0xe8, 0xeb, 0x6a, 0x01, 0x00, 0x3b, 0xdd, 0x8b, 0xf8, 0x74, 0x0b, 0x83, 0x43, 0x18, 0xff, 0x53,
+    0xff, 0x15, 0xdc, 0x10, 0xa9, 0x00,
+];
 
-// 2.47.1.10, SHA-256 fc5eea0a9aa99eb3984cf7d24406799b19e82567861f44dd0385cabae44e7a4e
-const BUILD_2_47_1_10: ConnectBuild = ConnectBuild {
-    va: 0x5b32b0,
-    operands: [
-        0x00d932c4, 0x00a4d0d8, 0x0003c873, 0x00a4d0d4, 0x00030376,
-        0xfffedfc1, 0xffe5577a, 0x00a4d478, 0x000304c6, 0x00da23c0,
-        0x00da23bc, 0x00da23c0, 0x00da23bc, 0x00d932c4, 0x00a4d0d8,
-        0x0003c72d, 0x00c1d1ec, 0x005b3540, 0x000059b3, 0xffe5562c,
-        0x00da23c0, 0x00da23bc, 0x0002df95,
-    ],
-    heap_new: 0x5f4ca0,
-    huffman_constructor: 0x5d91c0,
-    huffman_shared: 0x5b9060,
-    add_receive_transform: 0x59f580,
-    send91: 0x5b2370,
-    disconnect: 0x5b05a0,
-};
+const SEED_CONSTRUCTOR: [u8; 82] = [
+    0xa1, 0x7c, 0x23, 0xc9, 0x00, 0x83, 0xec, 0x08, 0x53, 0x8b, 0x5c, 0x24, 0x10, 0x55, 0x33, 0xed,
+    0x89, 0x6b, 0x04, 0x89, 0x6b, 0x08, 0x56, 0x89, 0x6b, 0x0c, 0xc7, 0x03, 0xb4, 0x64, 0xb6, 0x00,
+    0x8b, 0xb0, 0xe4, 0x04, 0x00, 0x00, 0x3b, 0xf5, 0x57, 0x8b, 0xf8, 0x74, 0x0b, 0x56, 0xff, 0x15,
+    0xd8, 0x10, 0xa9, 0x00, 0x83, 0x46, 0x18, 0x01, 0x55, 0x6a, 0x14, 0x57, 0xe8, 0x6f, 0xc6, 0x00,
+    0x00, 0x3b, 0xf5, 0x8b, 0xf8, 0x74, 0x0b, 0x83, 0x46, 0x18, 0xff, 0x56, 0xff, 0x15, 0xdc, 0x10,
+    0xa9, 0x00,
+];
 
-// 2.48.0.3, SHA-256 d88f0cd5a31c3cafe754b52424f615ab5c7b5f69d464fbb510e842e9610c43ea
-const BUILD_2_48_0_3: ConnectBuild = ConnectBuild {
-    va: 0x5baeb0,
-    operands: [
-        0x00dc911c, 0x00a950d8, 0x0003d833, 0x00a950dc, 0x00031166,
-        0x00005c51, 0xffe4dc0a, 0x00a95464, 0x000312b6, 0x00dd66c4,
-        0x00dd66c0, 0x00dd66c4, 0x00dd66c0, 0x00dc911c, 0x00a950d8,
-        0x0003d6ed, 0x00c9bf3c, 0x005bb180, 0x00005a33, 0xffe4dabc,
-        0x00dd66c4, 0x00dd66c0, 0x0002ed85,
-    ],
-    heap_new: 0x5fd860,
-    huffman_constructor: 0x5e1be0,
-    huffman_shared: 0x5c0d90,
-    add_receive_transform: 0x5a6dc0,
-    send91: 0x5b9d40,
-    disconnect: 0x5b7f70,
-};
+const RECEIVE_TRANSFORM: [u8; 97] = [
+    0x8b, 0x4c, 0x24, 0x08, 0x56, 0x8b, 0x74, 0x24, 0x10, 0x83, 0xec, 0x08, 0x85, 0xf6, 0x8b, 0xc4,
+    0x89, 0x08, 0x89, 0x70, 0x04, 0x74, 0x0c, 0x8d, 0x56, 0x04, 0xb8, 0x01, 0x00, 0x00, 0x00, 0xf0,
+    0x0f, 0xc1, 0x02, 0x8b, 0x44, 0x24, 0x10, 0x83, 0xc0, 0x5c, 0xe8, 0x11, 0xf7, 0xff, 0xff, 0x85,
+    0xf6, 0x74, 0x2a, 0x8d, 0x4e, 0x04, 0x83, 0xca, 0xff, 0xf0, 0x0f, 0xc1, 0x11, 0x75, 0x1e, 0x8b,
+    0x06, 0x8b, 0x50, 0x04, 0x8b, 0xce, 0xff, 0xd2, 0x8d, 0x46, 0x08, 0x83, 0xc9, 0xff, 0xf0, 0x0f,
+    0xc1, 0x08, 0x75, 0x09, 0x8b, 0x16, 0x8b, 0x42, 0x08, 0x8b, 0xce, 0xff, 0xd0, 0x5e, 0xc2, 0x0c,
+    0x00,
+];
 
-// 2.48.0.7, SHA-256 c9b4f6ce4a0763ca16bb3a1133d56a332be93e644db5c441506281632c57d77a
-const BUILD_2_48_0_7: ConnectBuild = ConnectBuild {
-    va: 0x5bae70,
-    operands: [
-        0x00dc911c, 0x00a950d8, 0x0003d833, 0x00a950dc, 0x00031166,
-        0x00005c51, 0xffe4dc4a, 0x00a95464, 0x000312b6, 0x00dd66c4,
-        0x00dd66c0, 0x00dd66c4, 0x00dd66c0, 0x00dc911c, 0x00a950d8,
-        0x0003d6ed, 0x00c9bdd4, 0x005bb140, 0x00005a33, 0xffe4dafc,
-        0x00dd66c4, 0x00dd66c0, 0x0002ed85,
-    ],
-    heap_new: 0x5fd820,
-    huffman_constructor: 0x5e1ba0,
-    huffman_shared: 0x5c0d50,
-    add_receive_transform: 0x5a6d80,
-    send91: 0x5b9d00,
-    disconnect: 0x5b7f30,
-};
+const SEND91_PREFIX: [u8; 104] = [
+    0x83, 0xec, 0x44, 0x53, 0x55, 0x56, 0x57, 0x8b, 0xf8, 0x8b, 0x47, 0x58, 0x33, 0xdb, 0x6a, 0xff,
+    0x53, 0xbd, 0x0f, 0x00, 0x00, 0x00, 0x57, 0x8d, 0x4c, 0x24, 0x28, 0x8d, 0x77, 0x1c, 0x89, 0x44,
+    0x24, 0x24, 0x89, 0x6c, 0x24, 0x40, 0x89, 0x5c, 0x24, 0x3c, 0x88, 0x5c, 0x24, 0x2c, 0xe8, 0xed,
+    0xdb, 0xe4, 0xff, 0x6a, 0xff, 0x53, 0x56, 0x8d, 0x4c, 0x24, 0x44, 0x89, 0x6c, 0x24, 0x5c, 0x89,
+    0x5c, 0x24, 0x58, 0x88, 0x5c, 0x24, 0x48, 0xe8, 0xd4, 0xdb, 0xe4, 0xff, 0x8b, 0x35, 0x1c, 0xf9,
+    0xc9, 0x00, 0x3b, 0xf3, 0x8b, 0x2d, 0x18, 0xf9, 0xc9, 0x00, 0x74, 0x0c, 0x8d, 0x4e, 0x04, 0xba,
+    0x01, 0x00, 0x00, 0x00, 0xf0, 0x0f, 0xc1, 0x11,
+];
 
-// 2.50.0.3, SHA-256 9547f6ccbaaca0a3695a7cbe31ec9a9e62dda4ac8ee627714061d38ecc70e8e8
-const BUILD_2_50_0_3: ConnectBuild = ConnectBuild {
-    va: 0x5babe0,
-    operands: [
-        0x00dc813c, 0x00a950d8, 0x0003d813, 0x00a950dc, 0x00031146,
-        0x00005c51, 0xffe4deda, 0x00a95470, 0x00031296, 0x00dd56e4,
-        0x00dd56e0, 0x00dd56e4, 0x00dd56e0, 0x00dc813c, 0x00a950d8,
-        0x0003d6cd, 0x00c9aef4, 0x005baeb0, 0x00005a33, 0xffe4dd8c,
-        0x00dd56e4, 0x00dd56e0, 0x0002ed65,
-    ],
-    heap_new: 0x5fd570,
-    huffman_constructor: 0x5e18f0,
-    huffman_shared: 0x5c0ac0,
-    add_receive_transform: 0x5a6af0,
-    send91: 0x5b9a70,
-    disconnect: 0x5b7ca0,
-};
+const DISCONNECT_PREFIX: [u8; 42] = [
+    0x55, 0x8b, 0xec, 0x83, 0xe4, 0xf8, 0xa1, 0x10, 0xf9, 0xc9, 0x00, 0x53, 0x33, 0xdb, 0x3b, 0xc3,
+    0x56, 0x74, 0x4d, 0x8b, 0x35, 0x14, 0xf9, 0xc9, 0x00, 0x3b, 0xf3, 0x74, 0x0c, 0x8d, 0x4e, 0x04,
+    0xba, 0x01, 0x00, 0x00, 0x00, 0xf0, 0x0f, 0xc1, 0x11, 0x8b,
+];
 
-// 2.51.0.3, SHA-256 5f70b0aad9ccdafaea04b0883610de2e8a75937806b53faaa54cb03eb346a48a
-const BUILD_2_51_0_3: ConnectBuild = ConnectBuild {
-    va: 0x5babe0,
-    operands: [
-        0x00dc813c, 0x00a950d8, 0x0003d813, 0x00a950dc, 0x00031146,
-        0x00005c51, 0xffe4deda, 0x00a95470, 0x00031296, 0x00dd56e4,
-        0x00dd56e0, 0x00dd56e4, 0x00dd56e0, 0x00dc813c, 0x00a950d8,
-        0x0003d6cd, 0x00c9af14, 0x005baeb0, 0x00005a33, 0xffe4dd8c,
-        0x00dd56e4, 0x00dd56e0, 0x0002ed65,
-    ],
-    heap_new: 0x5fd570,
-    huffman_constructor: 0x5e18f0,
-    huffman_shared: 0x5c0ac0,
-    add_receive_transform: 0x5a6af0,
-    send91: 0x5b9a70,
-    disconnect: 0x5b7ca0,
-};
+const APPEND_PREFIX: [u8; 79] = [
+    0x85, 0xf6, 0x74, 0x67, 0x8b, 0x4f, 0x04, 0x8b, 0x01, 0x8b, 0x50, 0x04, 0x53, 0x8b, 0x5f, 0x0c,
+    0x55, 0x03, 0xde, 0xff, 0xd2, 0x3b, 0xd8, 0x76, 0x0b, 0x8b, 0x4f, 0x04, 0x8b, 0x01, 0x8b, 0x50,
+    0x0c, 0x53, 0xff, 0xd2, 0x8b, 0x6c, 0x24, 0x10, 0x3b, 0xee, 0x72, 0x02, 0x8b, 0xee, 0x8b, 0x4f,
+    0x04, 0x8b, 0x01, 0x8b, 0x10, 0xff, 0xd2, 0x8b, 0xd8, 0x03, 0x5f, 0x0c, 0x3b, 0xee, 0x73, 0x17,
+    0x8b, 0x4c, 0x24, 0x10, 0x8b, 0xc6, 0x2b, 0xc5, 0x50, 0x8d, 0x14, 0x0b, 0x6a, 0x00, 0x52,
+];
 
-// 2.52.0.4, SHA-256 f4876dbbb5f4911cce12662e8e5b67d715946e33d0c1aff4ad2cd5f3c708e6ad
-const BUILD_2_52_0_4: ConnectBuild = ConnectBuild {
-    va: 0x5babe0,
-    operands: [
-        0x00dc813c, 0x00a950d8, 0x0003d813, 0x00a950dc, 0x00031146,
-        0x00005c51, 0xffe4deda, 0x00a95470, 0x00031296, 0x00dd56dc,
-        0x00dd56d8, 0x00dd56dc, 0x00dd56d8, 0x00dc813c, 0x00a950d8,
-        0x0003d6cd, 0x00c9afb4, 0x005baeb0, 0x00005a33, 0xffe4dd8c,
-        0x00dd56dc, 0x00dd56d8, 0x0002ed65,
-    ],
-    heap_new: 0x5fd570,
-    huffman_constructor: 0x5e18f0,
-    huffman_shared: 0x5c0ac0,
-    add_receive_transform: 0x5a6af0,
-    send91: 0x5b9a70,
-    disconnect: 0x5b7ca0,
-};
+const ANY_OPERAND: u16 = super::encryption::PATTERN_WILDCARD;
+const E3_MAX_SIZE: usize = 0xc00;
+const E3_EPILOGUE: [u8; 9] = [0x5f, 0x5e, 0x5b, 0x8b, 0xe5, 0x5d, 0xc2, 0x08, 0x00];
+const E3_FAILURE: [u16; 13] = [0x8b, 0x3d, ANY_OPERAND, ANY_OPERAND, ANY_OPERAND, ANY_OPERAND, 0x6a, 0x01, 0xe8, ANY_OPERAND, ANY_OPERAND, ANY_OPERAND, ANY_OPERAND];
+const E3_FAILURE_MANAGER: usize = 2;
+const E3_FAILURE_CALL: usize = 8;
+const DISCONNECT_SIZE: usize = 277;
+const DISCONNECT_GAME: usize = 0x62;
+const DISCONNECT_CONTROL: usize = 0x6c;
+const DISCONNECT_FIELDS: [usize; 2] = [7, 0x15];
+const DISCONNECT_RETURN: [u8; 6] = [0x8b, 0xe5, 0x5d, 0xc2, 0x04, 0x00];
+const SHARED_RETURN: [u8; 3] = [0xc2, 0x08, 0x00];
+const SHARED_SIZE: usize = 0xab;
+const CALLBACK_SHARED_SIZE: usize = 0xa4;
+const SHARED_FIELDS: [usize; 5] = [1, 0x29, 0x37, 0x48, 0x5d];
+const HEAP_FIELDS: [usize; 4] = [1, 0x16, 0x27, 0x38];
+const HUFFMAN_FIELDS: [usize; 5] = [1, 0x0e, 0x34, 0x41, 0x52];
+const SEED_FIELDS: [usize; 5] = [1, 0x1c, 0x30, 0x3d, 0x4e];
+const SEND_FIELDS: [usize; 4] = [0x2f, 0x48, 0x4e, 0x56];
+const RECEIVE_CALL: usize = 0x2a;
+const TAIL_FIELDS: [usize; 8] = [3, 17, 38, 45, 109, 164, 0x52, 0x59];
+const TAIL_CALLS: [usize; 6] = [2, 16, 37, 44, 108, 163];
+const TAIL_CONTROL: usize = 0x52;
+const TAIL_GAME: usize = 0x59;
+const CONNECT_ALLOCATOR: usize = 1;
+const CONNECT_ENTER: usize = 0x1b;
+const CONNECT_LEAVE: usize = 0x31;
+const CONNECT_ENGINE: usize = 0x28;
+const CONNECT_SEED: usize = 0x45;
+const CONNECT_SHARED: usize = 0x5a;
+const CONNECT_BOOST: usize = 0x61;
+const CONNECT_APPEND: usize = 0x85;
+const CONNECT_CONTROL: usize = 0x8b;
+const CONNECT_GAME: usize = 0x93;
+const CONNECT_CONTROL_COPY: usize = 0xfc;
+const CONNECT_GAME_COPY: usize = 0x103;
+const CONNECT_ALLOCATOR_COPY: usize = 0x14e;
+const CONNECT_ENTER_COPY: usize = 0x161;
+const CONNECT_ENGINE_COPY: usize = 0x16e;
+const CONNECT_CALLBACK_VTABLE: usize = 0x18a;
+const CONNECT_HANDLER: usize = 0x194;
+const CONNECT_CALLBACK_SHARED: usize = 0x1a8;
+const CONNECT_BOOST_COPY: usize = 0x1af;
+const CONNECT_CONTROL_CALLBACK: usize = 0x1d5;
+const CONNECT_GAME_CALLBACK: usize = 0x1dc;
+const CONNECT_REGISTER: usize = 0x1f6;
+const PATCHED_HTONL: usize = PATCH_START + 9;
+const CALLBACK_GAME: usize = CALLBACK_START + 46;
+const PATCHED_FIELDS: [usize; 19] = [
+    1, 0x1b, 0x29, 0x31, 0x46, 0x5b, PATCHED_HTONL, 0x86, 0x8b, 0x93, 0xfc, 0x103,
+    CALLBACK_START + 3, CALLBACK_START + 17, CALLBACK_START + 30, CALLBACK_GAME,
+    CALLBACK_START + 51, CALLBACK_START + 60, CALLBACK_START + 76,
+];
+const PREVIOUS_DISCONNECT_OPERAND: usize = CALLBACK_START + 72;
+const NEW_ABSOLUTE_OPERANDS: [usize; 6] = [PATCHED_HTONL, 0x8b, 0x93, 0xfc, 0x103, CALLBACK_GAME];
+const HUFFMAN_TYPE: &str = ".?AVUOHuffmanCoding_S2C_Decompress@@";
+const SEED_TYPE: &str = ".?AVNetMessageSend@@";
+const SEED_SHARED_TYPE: &str = ".?AV?$sp_counted_impl_p@VNetMessageSend@@@detail@boost@@";
+const HUFFMAN_SHARED_TYPE: &str = ".?AV?$sp_counted_impl_p@VUOHuffmanCoding_S2C_Decompress@@@detail@boost@@";
+const CALLBACK_TYPE: &str = ".?AV?$UOClassCallback@V?$shared_ptr@VUONetMessageReceive@@@boost@@VLoginManager@@@@";
+const CALLBACK_SHARED_TYPE: &str = ".?AV?$sp_counted_impl_p@V?$UOClassCallback@V?$shared_ptr@VUONetMessageReceive@@@boost@@VLoginManager@@@@@detail@boost@@";
 
-// 2.53.0.2, SHA-256 dc498608e3c8dec517d2435ad5d442816214b33c430077a2a815fd761daa02e6
-const BUILD_2_53_0_2: ConnectBuild = ConnectBuild {
-    va: 0x5babe0,
-    operands: [
-        0x00dc813c, 0x00a950d8, 0x0003d813, 0x00a950dc, 0x00031146,
-        0x00005c51, 0xffe4deda, 0x00a95470, 0x00031296, 0x00dd56e4,
-        0x00dd56e0, 0x00dd56e4, 0x00dd56e0, 0x00dc813c, 0x00a950d8,
-        0x0003d6cd, 0x00c9afd4, 0x005baeb0, 0x00005a33, 0xffe4dd8c,
-        0x00dd56e4, 0x00dd56e0, 0x0002ed65,
-    ],
-    heap_new: 0x5fd570,
-    huffman_constructor: 0x5e18f0,
-    huffman_shared: 0x5c0ac0,
-    add_receive_transform: 0x5a6af0,
-    send91: 0x5b9a70,
-    disconnect: 0x5b7ca0,
-};
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Form { Stock, Current, Previous }
 
-// 2.54.0.7, SHA-256 35f6612cacd3c5f0f1cef6310ff1ceaf04e647ad8b0c0cfbf64684e1d81dc984
-const BUILD_2_54_0_7: ConnectBuild = ConnectBuild {
-    va: 0x5babe0,
-    operands: [
-        0x00dc813c, 0x00a950d8, 0x0003d813, 0x00a950dc, 0x00031146,
-        0x00005c51, 0xffe4deda, 0x00a95470, 0x00031296, 0x00dd56dc,
-        0x00dd56d8, 0x00dd56dc, 0x00dd56d8, 0x00dc813c, 0x00a950d8,
-        0x0003d6cd, 0x00c9afd4, 0x005baeb0, 0x00005a33, 0xffe4dd8c,
-        0x00dd56dc, 0x00dd56d8, 0x0002ed65,
-    ],
-    heap_new: 0x5fd570,
-    huffman_constructor: 0x5e18f0,
-    huffman_shared: 0x5c0ac0,
-    add_receive_transform: 0x5a6af0,
-    send91: 0x5b9a70,
-    disconnect: 0x5b7ca0,
-};
+#[derive(Clone, Copy)]
+struct Relations {
+    allocator: u32,
+    enter: u32,
+    leave: u32,
+    engine: u32,
+    game: u32,
+    control: u32,
+}
 
-// 2.57.0.17, SHA-256 b6ab0422c25e22c3e97d6220d3284723f2fb44039c4a4e7a0c3b7cc10acb1715
-const BUILD_2_57_0_17: ConnectBuild = ConnectBuild {
-    va: 0x5b6b60,
-    operands: [
-        0x00c9237c, 0x00a910d8, 0x0003d713, 0x00a910dc, 0x00031046,
-        0x00005c51, 0xffe51f5a, 0x00a9146c, 0x00031196, 0x00c9f91c,
-        0x00c9f918, 0x00c9f91c, 0x00c9f918, 0x00c9237c, 0x00a910d8,
-        0x0003d5cd, 0x00b64d24, 0x005b6e30, 0x00005a33, 0xffe51e0c,
-        0x00c9f91c, 0x00c9f918, 0x0002ec65,
-    ],
-    heap_new: 0x5f93f0,
-    huffman_constructor: 0x5dd770,
-    huffman_shared: 0x5bca40,
-    add_receive_transform: 0x5a2a00,
-    send91: 0x5b59f0,
-    disconnect: 0x5b3bb0,
-};
+#[derive(Clone, Copy, PartialEq, Eq)]
+struct Exchange {
+    handler: u32,
+    heap: u32,
+    huffman: u32,
+    shared: u32,
+    receive: u32,
+    send: u32,
+    disconnect: u32,
+}
+
+fn masked(template: &[u8], fields: &[usize]) -> Vec<u16> {
+    template.iter().enumerate().map(|(at, byte)| {
+        if fields.iter().any(|field| (*field..*field + WORD_SIZE).contains(&at)) { ANY_OPERAND } else { u16::from(*byte) }
+    }).collect()
+}
+
+fn matches(code: &[u8], template: &[u16]) -> bool {
+    code.len() == template.len() && code.iter().zip(template).all(|(byte, expected)| *expected == ANY_OPERAND || u16::from(*byte) == *expected)
+}
+
+fn shaped(image: &Image<'_>, va: u32, template: &[u8], fields: &[usize]) -> bool {
+    image.read(va, template.len()).is_some_and(|code| matches(code, &masked(template, fields)))
+}
+
+fn address(base: u32, offset: usize) -> Option<u32> {
+    base.checked_add(u32::try_from(offset).ok()?)
+}
+
+fn call(image: &Image<'_>, base: u32, offset: usize) -> Option<u32> {
+    image.call_target(address(base, offset)?)
+}
+
+fn at(image: &Image<'_>, base: u32, offset: usize) -> Option<u32> {
+    image.u32(address(base, offset)?)
+}
+
+fn named_import(image: &Image<'_>, va: u32, name: &str) -> bool {
+    image.is_iat(va) && image.import(va).is_some_and(|import| {
+        import.module.eq_ignore_ascii_case("kernel32.dll") && import.name.as_deref() == Some(name)
+    })
+}
+
+fn htonl_import(image: &Image<'_>, va: u32) -> bool {
+    const HTONL_ORDINAL: u16 = 8;
+    image.is_iat(va) && image.import(va).is_some_and(|import| {
+        (import.module.eq_ignore_ascii_case("ws2_32.dll") || import.module.eq_ignore_ascii_case("wsock32.dll"))
+            && (import.name.as_deref() == Some("htonl") || import.ordinal == Some(HTONL_ORDINAL))
+    })
+}
+
+fn shared_pointer(image: &Image<'_>, va: u32, kind: &str, size: usize, data: Relations) -> bool {
+    shaped(image, va, &SHARED_WRAPPER, &SHARED_FIELDS)
+        && at(image, va, SHARED_FIELDS[0]) == Some(data.allocator)
+        && at(image, va, SHARED_FIELDS[1]) == Some(data.enter)
+        && call(image, va, SHARED_FIELDS[2] - 1) == Some(data.engine)
+        && at(image, va, SHARED_FIELDS[3]) == Some(data.leave)
+        && at(image, va, SHARED_FIELDS[4]).and_then(|vtable| image.rtti_type(vtable)) == Some(kind)
+        && image.read(va, size).is_some_and(|code| code.ends_with(&SHARED_RETURN))
+}
+
+fn bounded_code<'a>(image: &Image<'a>, va: u32, max: usize) -> Option<&'a [u8]> {
+    if !image.is_code(va) { return None; }
+    let section = image.pe.section_of_va(va)?;
+    let remaining = section.raw_size.checked_sub(va.checked_sub(section.virtual_address)?)? as usize;
+    image.read(va, max.min(remaining))
+}
+
+fn validate_exchange(image: &Image<'_>, handler: u32, tail: u32, data: Relations) -> Option<Exchange> {
+    if tail < handler || !shaped(image, handler, &E3_PROLOGUE, &[]) { return None; }
+    let body = bounded_code(image, handler, E3_MAX_SIZE)?;
+    let ends: Vec<_> = body.windows(E3_EPILOGUE.len()).enumerate().filter(|(_, bytes)| *bytes == E3_EPILOGUE).map(|(at, _)| at + E3_EPILOGUE.len()).collect();
+    let [end] = ends.as_slice() else { return None };
+    let tail_at = usize::try_from(tail.checked_sub(handler)?).ok()?;
+    if tail_at.checked_add(E3_HUFFMAN_TAIL.len())? > *end { return None; }
+    let code = image.read(tail, E3_HUFFMAN_TAIL.len())?;
+    if !matches(code, &masked(&E3_HUFFMAN_TAIL, &TAIL_FIELDS))
+        || word(code, TAIL_GAME) != data.game || word(code, TAIL_CONTROL) != data.control { return None; }
+    let targets: Vec<_> = TAIL_CALLS.iter().map(|offset| call(image, tail, *offset)).collect::<Option<_>>()?;
+    let [heap, huffman, shared, boost, receive, send] = targets.as_slice() else { return None };
+    const BOOST_NOOP: [u8; 16] = [0xc3, 0xcc, 0xcc, 0xcc, 0xcc, 0xcc, 0xcc, 0xcc, 0xcc, 0xcc, 0xcc, 0xcc, 0xcc, 0xcc, 0xcc, 0xcc];
+    if image.read(*boost, BOOST_NOOP.len()) != Some(BOOST_NOOP.as_slice())
+        || !shaped(image, *heap, &HEAP_ALLOCATOR, &HEAP_FIELDS)
+        || at(image, *heap, HEAP_FIELDS[0]) != Some(data.allocator)
+        || at(image, *heap, HEAP_FIELDS[1]) != Some(data.enter)
+        || call(image, *heap, HEAP_FIELDS[2] - 1) != Some(data.engine)
+        || at(image, *heap, HEAP_FIELDS[3]) != Some(data.leave)
+        || !shaped(image, *huffman, &HUFFMAN_CONSTRUCTOR, &HUFFMAN_FIELDS)
+        || at(image, *huffman, HUFFMAN_FIELDS[0]) != Some(data.allocator)
+        || at(image, *huffman, HUFFMAN_FIELDS[1]).and_then(|vtable| image.rtti_type(vtable)) != Some(HUFFMAN_TYPE)
+        || at(image, *huffman, HUFFMAN_FIELDS[2]) != Some(data.enter)
+        || call(image, *huffman, HUFFMAN_FIELDS[3] - 1) != Some(data.engine)
+        || at(image, *huffman, HUFFMAN_FIELDS[4]) != Some(data.leave)
+        || !shared_pointer(image, *shared, HUFFMAN_SHARED_TYPE, SHARED_SIZE, data)
+        || !shaped(image, *receive, &RECEIVE_TRANSFORM, &[RECEIVE_CALL + 1])
+        || call(image, *receive, RECEIVE_CALL).is_none()
+        || !shaped(image, *send, &SEND91_PREFIX, &SEND_FIELDS)
+        || call(image, *send, SEND_FIELDS[0] - 1) != call(image, *send, SEND_FIELDS[1] - 1)
+        || call(image, *send, SEND_FIELDS[0] - 1).is_none()
+        || at(image, *send, SEND_FIELDS[2]) != Some(data.control)
+        || at(image, *send, SEND_FIELDS[3]) != Some(data.game) { return None; }
+    let mut disconnects = Vec::new();
+    for (offset, window) in body[..tail_at].windows(E3_FAILURE.len()).enumerate() {
+        if !matches(window, &E3_FAILURE) { continue; }
+        let manager = word(window, E3_FAILURE_MANAGER);
+        if !image.is_writable_data(manager, WORD_SIZE) { continue; }
+        let Some(disconnect) = call(image, handler, offset + E3_FAILURE_CALL) else { continue };
+        if !shaped(image, disconnect, &DISCONNECT_PREFIX, &DISCONNECT_FIELDS)
+            || at(image, disconnect, DISCONNECT_GAME) != Some(data.game)
+            || at(image, disconnect, DISCONNECT_CONTROL) != Some(data.control) { continue; }
+        let Some(code) = image.read(disconnect, DISCONNECT_SIZE) else { continue };
+        if !code.ends_with(&DISCONNECT_RETURN) { continue; }
+        disconnects.push(disconnect);
+    }
+    let [disconnect] = disconnects.as_slice() else { return None };
+    Some(Exchange { handler, heap: *heap, huffman: *huffman, shared: *shared, receive: *receive, send: *send, disconnect: *disconnect })
+}
+
+fn resolve_candidate(image: &Image<'_>, va: u32, form: Form, handlers: &[u32], tails: &[u32]) -> Option<ResolvedHandshake> {
+    let code: &[u8; CONNECT_SIZE] = image.read(va, CONNECT_SIZE)?.try_into().ok()?;
+    let data = Relations {
+        allocator: word(code, CONNECT_ALLOCATOR), enter: word(code, CONNECT_ENTER), leave: word(code, CONNECT_LEAVE),
+        engine: call(image, va, CONNECT_ENGINE)?, game: word(code, CONNECT_GAME), control: word(code, CONNECT_CONTROL),
+    };
+    let htonl = word(code, if form == Form::Stock { HTONL_OPERAND } else { PATCHED_HTONL });
+    if !image.is_writable_data(data.allocator, WORD_SIZE) || !image.is_writable_data(data.game, WORD_SIZE)
+        || !image.is_writable_data(data.control, WORD_SIZE) || data.control != data.game.checked_add(WORD_SIZE as u32)?
+        || word(code, CONNECT_CONTROL_COPY) != data.control || word(code, CONNECT_GAME_COPY) != data.game
+        || !named_import(image, data.enter, "EnterCriticalSection") || !named_import(image, data.leave, "LeaveCriticalSection")
+        || !htonl_import(image, htonl) { return None; }
+    let seed = call(image, va, CONNECT_SEED)?;
+    if !shaped(image, seed, &SEED_CONSTRUCTOR, &SEED_FIELDS)
+        || at(image, seed, SEED_FIELDS[0]) != Some(data.allocator)
+        || at(image, seed, SEED_FIELDS[1]).and_then(|vtable| image.rtti_type(vtable)) != Some(SEED_TYPE)
+        || at(image, seed, SEED_FIELDS[2]) != Some(data.enter)
+        || call(image, seed, SEED_FIELDS[3] - 1) != Some(data.engine)
+        || at(image, seed, SEED_FIELDS[4]) != Some(data.leave)
+        || !shared_pointer(image, call(image, va, CONNECT_SHARED)?, SEED_SHARED_TYPE, SHARED_SIZE, data)
+        || !shaped(image, call(image, va, CONNECT_APPEND)?, &APPEND_PREFIX, &[]) { return None; }
+    if form == Form::Stock {
+        if word(code, CONNECT_ALLOCATOR_COPY) != data.allocator || word(code, CONNECT_ENTER_COPY) != data.enter
+            || call(image, va, CONNECT_ENGINE_COPY) != Some(data.engine)
+            || word(code, CONNECT_CONTROL_CALLBACK) != data.control || word(code, CONNECT_GAME_CALLBACK) != data.game
+            || image.rtti_type(word(code, CONNECT_CALLBACK_VTABLE)) != Some(CALLBACK_TYPE)
+            || !shared_pointer(image, call(image, va, CONNECT_CALLBACK_SHARED)?, CALLBACK_SHARED_TYPE, CALLBACK_SHARED_SIZE, data)
+            || call(image, va, CONNECT_REGISTER).is_none()
+            || call(image, va, CONNECT_BOOST) != call(image, va, CONNECT_BOOST_COPY) { return None; }
+    }
+    let mut exchanges = Vec::new();
+    for tail in tails {
+        for handler in handlers {
+            if let Some(exchange) = validate_exchange(image, *handler, *tail, data) { exchanges.push(exchange); }
+        }
+    }
+    let [exchange] = exchanges.as_slice() else { return None };
+    if form == Form::Stock && word(code, CONNECT_HANDLER) != exchange.handler { return None; }
+    let targets = PatchTargets { va, htonl, game: data.game, heap_new: exchange.heap, huffman_constructor: exchange.huffman,
+        huffman_shared: exchange.shared, add_receive_transform: exchange.receive, send91: exchange.send, disconnect: exchange.disconnect };
+    let patched = patch_from(code, &targets);
+    let current = &code[PATCH_START..PATCH_END];
+    if form == Form::Current && current != patched { return None; }
+    if form == Form::Previous {
+        // The previous form has the same successful path. Verify every decoded call against the independently
+        // discovered E3 path; the missing EDI load is recognized only to replace it with the corrected ABI.
+        const OLD_CALLS: [(usize, usize); 6] = [(3, 0), (17, 1), (30, 2), (51, 3), (60, 4), (72, 5)];
+        let helpers = [exchange.heap, exchange.huffman, exchange.shared, exchange.receive, exchange.send, exchange.disconnect];
+        for (operand, index) in OLD_CALLS {
+            if call(image, va, CALLBACK_START + operand - 1) != Some(helpers[index]) { return None; }
+        }
+        if word(code, CALLBACK_GAME) != data.game { return None; }
+    }
+    let function_offset = image.pe.va_to_offset(va)?;
+    Some(ResolvedHandshake { offset: function_offset + PATCH_START, stock: current.to_vec(), patched: patched.to_vec(),
+        removed: form == Form::Current, absolute_operands: NEW_ABSOLUTE_OPERANDS.iter().map(|offset| function_offset + offset).collect() })
+}
+
+/// Resolve the modern layout entirely from executable instructions, typed control blocks and imports.
+pub(super) fn resolve(image: &Image<'_>) -> Vec<ResolvedHandshake> {
+    let handlers = image.scan(&masked(&E3_PROLOGUE, &[]));
+    let tails = image.scan(&masked(&E3_HUFFMAN_TAIL, &TAIL_FIELDS));
+    let mut current_template = STOCK_CODE;
+    current_template[PATCH_START..PATCH_END].copy_from_slice(PATTERN.patched);
+    let mut previous_template = STOCK_CODE;
+    previous_template[PATCH_START..PATCH_END].copy_from_slice(&PREVIOUS_PATCH);
+    let mut previous_fields = PATCHED_FIELDS;
+    *previous_fields.last_mut().expect("disconnect operand") = PREVIOUS_DISCONNECT_OPERAND;
+    let mut resolved = Vec::new();
+    for (form, pattern) in [
+        (Form::Stock, masked(&STOCK_CODE, &OPERANDS)),
+        (Form::Current, masked(&current_template, &PATCHED_FIELDS)),
+        (Form::Previous, masked(&previous_template, &previous_fields)),
+    ] {
+        for va in image.scan(&pattern) {
+            if let Some(site) = resolve_candidate(image, va, form, &handlers, &tails) { resolved.push(site); }
+        }
+    }
+    resolved
+}
 
 // 2.58.0.6, SHA-256 1b802e5c00f3bf89a771778b9c6c57406be0703808eeb4cd983e2f5baa348a43
 const BUILD_2_58_0_6: ConnectBuild = ConnectBuild {
@@ -435,6 +561,14 @@ const fn stock_patch(code: &[u8; CONNECT_SIZE]) -> [u8; PATCH_SIZE] {
 }
 
 const fn patched_code(code: &[u8; CONNECT_SIZE], build: &ConnectBuild) -> [u8; PATCH_SIZE] {
+    patch_from(code, &PatchTargets {
+        va: build.va, htonl: word(code, HTONL_OPERAND), game: word(code, GAME_GLOBAL_OPERAND),
+        heap_new: build.heap_new, huffman_constructor: build.huffman_constructor, huffman_shared: build.huffman_shared,
+        add_receive_transform: build.add_receive_transform, send91: build.send91, disconnect: build.disconnect,
+    })
+}
+
+const fn patch_from(code: &[u8; CONNECT_SIZE], build: &PatchTargets) -> [u8; PATCH_SIZE] {
     const SEED_HTONL_OPERAND: usize = 9;
     const CALLBACK_GAME_OPERAND: usize = 46;
     let mut bytes = stock_patch(code);
@@ -443,7 +577,7 @@ const fn patched_code(code: &[u8; CONNECT_SIZE], build: &ConnectBuild) -> [u8; P
         bytes[index] = AUTH_SEED[index];
         index += 1;
     }
-    put_word(&mut bytes, SEED_HTONL_OPERAND, word(code, HTONL_OPERAND));
+    put_word(&mut bytes, SEED_HTONL_OPERAND, build.htonl);
     bytes[STATE_IMMEDIATE - PATCH_START] = GAME_READY;
     index = CALLBACK_START - PATCH_START;
     while index < PATCH_SIZE {
@@ -451,7 +585,7 @@ const fn patched_code(code: &[u8; CONNECT_SIZE], build: &ConnectBuild) -> [u8; P
         index += 1;
     }
     let mut callback = HUFFMAN_AND_LOGIN;
-    put_word(&mut callback, CALLBACK_GAME_OPERAND, word(code, GAME_GLOBAL_OPERAND));
+    put_word(&mut callback, CALLBACK_GAME_OPERAND, build.game);
     // Each offset is the rel32 operand, immediately after its CALL/JMP opcode.
     let targets = [
         (3, build.heap_new), (17, build.huffman_constructor), (30, build.huffman_shared),
@@ -485,146 +619,6 @@ const fn pattern_bytes(code: &[u8; CONNECT_SIZE]) -> [u16; CONNECT_SIZE] {
     bytes
 }
 
-const CODE_2_46_0_3: [u8; CONNECT_SIZE] = code_for(&BUILD_2_46_0_3);
-const PATTERN_2_46_0_3: CipherPattern = CipherPattern {
-    bytes: &pattern_bytes(&CODE_2_46_0_3),
-    patch_at: PATCH_START,
-    stock: &stock_patch(&CODE_2_46_0_3),
-    patched: &patched_code(&CODE_2_46_0_3, &BUILD_2_46_0_3),
-    required_va: Some(BUILD_2_46_0_3.va),
-    previous: None,
-};
-
-const CODE_2_46_1_6: [u8; CONNECT_SIZE] = code_for(&BUILD_2_46_1_6);
-const PATTERN_2_46_1_6: CipherPattern = CipherPattern {
-    bytes: &pattern_bytes(&CODE_2_46_1_6),
-    patch_at: PATCH_START,
-    stock: &stock_patch(&CODE_2_46_1_6),
-    patched: &patched_code(&CODE_2_46_1_6, &BUILD_2_46_1_6),
-    required_va: Some(BUILD_2_46_1_6.va),
-    previous: None,
-};
-
-const CODE_2_46_1_9: [u8; CONNECT_SIZE] = code_for(&BUILD_2_46_1_9);
-const PATTERN_2_46_1_9: CipherPattern = CipherPattern {
-    bytes: &pattern_bytes(&CODE_2_46_1_9),
-    patch_at: PATCH_START,
-    stock: &stock_patch(&CODE_2_46_1_9),
-    patched: &patched_code(&CODE_2_46_1_9, &BUILD_2_46_1_9),
-    required_va: Some(BUILD_2_46_1_9.va),
-    previous: None,
-};
-
-const CODE_2_47_0_6: [u8; CONNECT_SIZE] = code_for(&BUILD_2_47_0_6);
-const PATTERN_2_47_0_6: CipherPattern = CipherPattern {
-    bytes: &pattern_bytes(&CODE_2_47_0_6),
-    patch_at: PATCH_START,
-    stock: &stock_patch(&CODE_2_47_0_6),
-    patched: &patched_code(&CODE_2_47_0_6, &BUILD_2_47_0_6),
-    required_va: Some(BUILD_2_47_0_6.va),
-    previous: None,
-};
-
-const CODE_2_47_1_6: [u8; CONNECT_SIZE] = code_for(&BUILD_2_47_1_6);
-const PATTERN_2_47_1_6: CipherPattern = CipherPattern {
-    bytes: &pattern_bytes(&CODE_2_47_1_6),
-    patch_at: PATCH_START,
-    stock: &stock_patch(&CODE_2_47_1_6),
-    patched: &patched_code(&CODE_2_47_1_6, &BUILD_2_47_1_6),
-    required_va: Some(BUILD_2_47_1_6.va),
-    previous: None,
-};
-
-const CODE_2_47_1_10: [u8; CONNECT_SIZE] = code_for(&BUILD_2_47_1_10);
-const PATTERN_2_47_1_10: CipherPattern = CipherPattern {
-    bytes: &pattern_bytes(&CODE_2_47_1_10),
-    patch_at: PATCH_START,
-    stock: &stock_patch(&CODE_2_47_1_10),
-    patched: &patched_code(&CODE_2_47_1_10, &BUILD_2_47_1_10),
-    required_va: Some(BUILD_2_47_1_10.va),
-    previous: None,
-};
-
-const CODE_2_48_0_3: [u8; CONNECT_SIZE] = code_for(&BUILD_2_48_0_3);
-const PATTERN_2_48_0_3: CipherPattern = CipherPattern {
-    bytes: &pattern_bytes(&CODE_2_48_0_3),
-    patch_at: PATCH_START,
-    stock: &stock_patch(&CODE_2_48_0_3),
-    patched: &patched_code(&CODE_2_48_0_3, &BUILD_2_48_0_3),
-    required_va: Some(BUILD_2_48_0_3.va),
-    previous: None,
-};
-
-const CODE_2_48_0_7: [u8; CONNECT_SIZE] = code_for(&BUILD_2_48_0_7);
-const PATTERN_2_48_0_7: CipherPattern = CipherPattern {
-    bytes: &pattern_bytes(&CODE_2_48_0_7),
-    patch_at: PATCH_START,
-    stock: &stock_patch(&CODE_2_48_0_7),
-    patched: &patched_code(&CODE_2_48_0_7, &BUILD_2_48_0_7),
-    required_va: Some(BUILD_2_48_0_7.va),
-    previous: None,
-};
-
-const CODE_2_50_0_3: [u8; CONNECT_SIZE] = code_for(&BUILD_2_50_0_3);
-const PATTERN_2_50_0_3: CipherPattern = CipherPattern {
-    bytes: &pattern_bytes(&CODE_2_50_0_3),
-    patch_at: PATCH_START,
-    stock: &stock_patch(&CODE_2_50_0_3),
-    patched: &patched_code(&CODE_2_50_0_3, &BUILD_2_50_0_3),
-    required_va: Some(BUILD_2_50_0_3.va),
-    previous: None,
-};
-
-const CODE_2_51_0_3: [u8; CONNECT_SIZE] = code_for(&BUILD_2_51_0_3);
-const PATTERN_2_51_0_3: CipherPattern = CipherPattern {
-    bytes: &pattern_bytes(&CODE_2_51_0_3),
-    patch_at: PATCH_START,
-    stock: &stock_patch(&CODE_2_51_0_3),
-    patched: &patched_code(&CODE_2_51_0_3, &BUILD_2_51_0_3),
-    required_va: Some(BUILD_2_51_0_3.va),
-    previous: None,
-};
-
-const CODE_2_52_0_4: [u8; CONNECT_SIZE] = code_for(&BUILD_2_52_0_4);
-const PATTERN_2_52_0_4: CipherPattern = CipherPattern {
-    bytes: &pattern_bytes(&CODE_2_52_0_4),
-    patch_at: PATCH_START,
-    stock: &stock_patch(&CODE_2_52_0_4),
-    patched: &patched_code(&CODE_2_52_0_4, &BUILD_2_52_0_4),
-    required_va: Some(BUILD_2_52_0_4.va),
-    previous: None,
-};
-
-const CODE_2_53_0_2: [u8; CONNECT_SIZE] = code_for(&BUILD_2_53_0_2);
-const PATTERN_2_53_0_2: CipherPattern = CipherPattern {
-    bytes: &pattern_bytes(&CODE_2_53_0_2),
-    patch_at: PATCH_START,
-    stock: &stock_patch(&CODE_2_53_0_2),
-    patched: &patched_code(&CODE_2_53_0_2, &BUILD_2_53_0_2),
-    required_va: Some(BUILD_2_53_0_2.va),
-    previous: None,
-};
-
-const CODE_2_54_0_7: [u8; CONNECT_SIZE] = code_for(&BUILD_2_54_0_7);
-const PATTERN_2_54_0_7: CipherPattern = CipherPattern {
-    bytes: &pattern_bytes(&CODE_2_54_0_7),
-    patch_at: PATCH_START,
-    stock: &stock_patch(&CODE_2_54_0_7),
-    patched: &patched_code(&CODE_2_54_0_7, &BUILD_2_54_0_7),
-    required_va: Some(BUILD_2_54_0_7.va),
-    previous: None,
-};
-
-const CODE_2_57_0_17: [u8; CONNECT_SIZE] = code_for(&BUILD_2_57_0_17);
-const PATTERN_2_57_0_17: CipherPattern = CipherPattern {
-    bytes: &pattern_bytes(&CODE_2_57_0_17),
-    patch_at: PATCH_START,
-    stock: &stock_patch(&CODE_2_57_0_17),
-    patched: &patched_code(&CODE_2_57_0_17, &BUILD_2_57_0_17),
-    required_va: Some(BUILD_2_57_0_17.va),
-    previous: None,
-};
-
 const CODE_2_58_0_6: [u8; CONNECT_SIZE] = code_for(&BUILD_2_58_0_6);
 const PATTERN_2_58_0_6: CipherPattern = CipherPattern {
     bytes: &pattern_bytes(&CODE_2_58_0_6),
@@ -637,8 +631,143 @@ const PATTERN_2_58_0_6: CipherPattern = CipherPattern {
 
 pub(super) const PATTERN: CipherPattern = PATTERN_2_58_0_6;
 
-pub(super) const PATTERNS: [CipherPattern; 15] = [
-    PATTERN_2_58_0_6, PATTERN_2_57_0_17, PATTERN_2_54_0_7, PATTERN_2_53_0_2, PATTERN_2_52_0_4,
-    PATTERN_2_51_0_3, PATTERN_2_50_0_3, PATTERN_2_48_0_7, PATTERN_2_48_0_3, PATTERN_2_47_1_10,
-    PATTERN_2_47_1_6, PATTERN_2_47_0_6, PATTERN_2_46_1_9, PATTERN_2_46_1_6, PATTERN_2_46_0_3,
-];
+#[cfg(test)]
+#[path = "../../tests/common/kr_handshake.rs"]
+pub(super) mod fixtures;
+
+#[cfg(test)]
+pub(super) fn fixture_image(connect_offset: usize) -> Vec<u8> {
+    fixtures::modern(connect_offset).bytes
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use super::fixtures::{Fixture, current_patch, previous_patch};
+    use crate::client::pe::PeImage;
+
+    const FIXTURE_CONNECT: usize = 0x700;
+    const MOVED_HELPERS: usize = 0x1800;
+    const MOVED_CONNECT: usize = 0x140;
+    const MOVED_IMAGE_BASE: u32 = 0x2200_0000;
+    const MOVED_RDATA_RVA: u32 = 0xa000;
+    const MOVED_DATA_RVA: u32 = 0x10000;
+    const SECOND_CONNECT: usize = 0xb00;
+    const SECOND_TAIL: usize = 0x150;
+
+    fn sites(bytes: &[u8]) -> Vec<ResolvedHandshake> {
+        let pe = PeImage::parse(bytes).unwrap();
+        resolve(&Image::new(bytes, &pe))
+    }
+
+    fn value(fixture: &mut Fixture, va: u32, offset: usize, value: u32) {
+        let at = fixture.offset(va) + offset;
+        put_word(&mut fixture.bytes, at, value);
+    }
+
+    fn edge(fixture: &mut Fixture, va: u32, operand: usize, target: u32) {
+        value(fixture, va, operand, target.wrapping_sub(va + operand as u32 + WORD_SIZE as u32));
+    }
+
+    #[test]
+    fn resolves_unseen_locations_helpers_data_and_imports_then_reads_the_current_patch() {
+        for fixture in [fixtures::modern(FIXTURE_CONNECT), fixtures::modern_layout(MOVED_CONNECT,
+            MOVED_HELPERS, MOVED_IMAGE_BASE, MOVED_RDATA_RVA, MOVED_DATA_RVA)]
+        {
+            let found = sites(&fixture.bytes);
+            assert_eq!(found.len(), 1);
+            let site = &found[0];
+            assert!(!site.removed);
+            assert_eq!(site.offset, fixture.offset(fixture.connect) + PATCH_START);
+            assert_eq!(&fixture.bytes[site.offset..site.offset + site.stock.len()], site.stock);
+            let mut independently_patched = fixture.clone();
+            current_patch(&mut independently_patched);
+            assert_eq!(&independently_patched.bytes[site.offset..site.offset + site.patched.len()], site.patched);
+            let current = sites(&independently_patched.bytes);
+            assert_eq!(current.len(), 1);
+            assert!(current[0].removed);
+            assert_eq!(current[0].stock, site.patched);
+            assert_eq!(current[0].patched, site.patched);
+            assert_eq!(site.absolute_operands.len(), NEW_ABSOLUTE_OPERANDS.len());
+            assert!(site.absolute_operands.iter().all(|at| (site.offset..site.offset + site.patched.len()).contains(at)));
+        }
+    }
+
+    #[test]
+    fn upgrades_the_previous_callback_at_an_unseen_address_from_its_retained_dependencies() {
+        let mut fixture = fixtures::modern_layout(MOVED_CONNECT, MOVED_HELPERS, MOVED_IMAGE_BASE, MOVED_RDATA_RVA, MOVED_DATA_RVA);
+        let mut expected = fixture.clone();
+        current_patch(&mut expected);
+        previous_patch(&mut fixture);
+        let found = sites(&fixture.bytes);
+        assert_eq!(found.len(), 1);
+        let site = &found[0];
+        assert!(!site.removed);
+        assert_eq!(&fixture.bytes[site.offset..site.offset + site.stock.len()], site.stock);
+        fixture.bytes[site.offset..site.offset + site.patched.len()].copy_from_slice(&site.patched);
+        assert_eq!(fixture.bytes, expected.bytes);
+        assert!(sites(&fixture.bytes)[0].removed);
+    }
+
+    #[test]
+    fn refuses_corrupt_helper_types_opcodes_imports_and_argument_relationships() {
+        for removed in [false, true] {
+            let mut fixture = fixtures::modern(FIXTURE_CONNECT);
+            if removed { current_patch(&mut fixture); }
+            let pe = PeImage::parse(&fixture.bytes).unwrap();
+            let image = Image::new(&fixture.bytes, &pe);
+            let enter = image.u32(fixture.connect + CONNECT_ENTER as u32).unwrap();
+            let wrong_type = image.u32(fixture.huffman_constructor + HUFFMAN_FIELDS[1] as u32).unwrap();
+            for (va, operand, replacement) in [
+                (fixture.huffman_constructor, HUFFMAN_FIELDS[1], 0),
+                (fixture.huffman_shared, SHARED_FIELDS[4], wrong_type),
+                (fixture.connect, if removed { PATCHED_HTONL } else { HTONL_OPERAND }, enter),
+                (fixture.connect, CONNECT_CONTROL_COPY, fixture.allocator),
+            ] {
+                let mut changed = fixture.clone();
+                value(&mut changed, va, operand, replacement);
+                assert!(sites(&changed.bytes).is_empty(), "accepted modified operand {va:#x}+{operand:#x}");
+            }
+            let mut changed = fixture.clone();
+            edge(&mut changed, fixture.huffman_constructor, HUFFMAN_FIELDS[3], fixture.receive);
+            assert!(sites(&changed.bytes).is_empty(), "wrong allocator target");
+            for va in [fixture.heap, fixture.handler, fixture.receive, fixture.send] {
+                let mut changed = fixture.clone();
+                let at = fixture.offset(va);
+                changed.bytes[at] ^= 1;
+                assert!(sites(&changed.bytes).is_empty(), "accepted modified helper {va:#x}");
+            }
+        }
+    }
+
+    #[test]
+    fn refuses_ambiguous_retained_helper_paths_without_collapsing_separate_connect_functions() {
+        let fixture = fixtures::modern(FIXTURE_CONNECT);
+        for removed in [false, true] {
+            let mut ambiguous = fixture.clone();
+            if removed { current_patch(&mut ambiguous); }
+            let target = fixture.handler + SECOND_TAIL as u32;
+            let from = fixture.offset(fixture.tail);
+            let to = fixture.offset(target);
+            ambiguous.bytes[to..to + E3_HUFFMAN_TAIL.len()].copy_from_slice(&fixture.bytes[from..from + E3_HUFFMAN_TAIL.len()]);
+            let pe = PeImage::parse(&fixture.bytes).unwrap();
+            let image = Image::new(&fixture.bytes, &pe);
+            for operand in TAIL_FIELDS[..TAIL_CALLS.len()].iter().copied() {
+                let destination = image.call_target(fixture.tail + operand as u32 - 1).unwrap();
+                edge(&mut ambiguous, target, operand, destination);
+            }
+            assert!(sites(&ambiguous.bytes).is_empty(), "ambiguous E3 tail");
+        }
+        let mut separate = fixture.clone();
+        let target = fixture.text_va + SECOND_CONNECT as u32;
+        let from = fixture.offset(fixture.connect);
+        let to = fixture.offset(target);
+        separate.bytes[to..to + CONNECT_SIZE].copy_from_slice(&fixture.bytes[from..from + CONNECT_SIZE]);
+        let pe = PeImage::parse(&fixture.bytes).unwrap();
+        let image = Image::new(&fixture.bytes, &pe);
+        for operand in OPERANDS.iter().copied().filter(|operand| STOCK_CODE[operand - 1] == OPCODE_CALL_REL32) {
+            edge(&mut separate, target, operand, image.call_target(fixture.connect + operand as u32 - 1).unwrap());
+        }
+        assert_eq!(sites(&separate.bytes).len(), 2);
+    }
+}

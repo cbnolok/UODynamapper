@@ -25,12 +25,14 @@
 //!
 //! The Huffman compression of server-to-client game traffic is left alone: the server still compresses.
 //!
-//! Cipher sites use byte patterns with wildcards for call displacements; the KR handshake requires its exact
-//! audited function and original VA because its replacement embeds build-specific calls. The bytes each patch writes
-//! match either their stock or their patched form, so a patched copy is located too. A site counts only when
-//! its pattern matches exactly once in `.text`; otherwise it is reported unlocated and the patch is refused.
+//! Cipher sites use byte patterns with wildcards for call displacements. KR handshake resolution checks a known
+//! complete instruction layout and independently validates its helper/RTTI/import/ownership graph; addresses are
+//! decoded from the image. Stock, current and supported earlier replacements are recognized. Only a unique
+//! validated site is exposed; unknown or ambiguous layouts are refused.
 
 crate::eyre_imports!();
+
+use std::borrow::Cow;
 
 use crate::client::facet_dimensions::{code_section, ClientFamily};
 use crate::client::pe::PeImage;
@@ -201,6 +203,8 @@ impl CipherSiteKind {
         }
     }
 
+    /// Static cipher signature; the KR handshake entry is a canonical fixture template, not a runtime address.
+    /// Runtime patches use the bytes of the resolved [`CipherSite`].
     pub fn pattern(self) -> &'static CipherPattern {
         match self {
             Self::LoginCipher => &LOGIN_CIPHER,
@@ -229,17 +233,29 @@ pub struct CipherSite {
     pub offset: usize,
     /// True when they are in their patched form.
     pub removed: bool,
-    pattern: &'static CipherPattern,
-    previous: bool,
+    stock_bytes: Cow<'static, [u8]>,
+    patched_bytes: Cow<'static, [u8]>,
+    absolute_operands: Vec<usize>,
+    relocation_repair: bool,
 }
 
 impl CipherSite {
-    pub fn stock(&self) -> &'static [u8] {
-        if self.previous { self.pattern.previous.expect("recognized earlier replacement") } else { self.pattern.stock }
+    /// Expected input bytes. Dynamic sites retain their actual input, including earlier replacements.
+    pub fn stock(&self) -> &[u8] {
+        &self.stock_bytes
     }
 
-    pub fn patched(&self) -> &'static [u8] {
-        self.pattern.patched
+    pub fn patched(&self) -> &[u8] {
+        &self.patched_bytes
+    }
+
+    pub(crate) fn absolute_operands(&self) -> &[usize] {
+        &self.absolute_operands
+    }
+
+    /// Already patched code can still carry stale loader relocations from an earlier patcher.
+    pub fn needs_relocation_repair(&self) -> bool {
+        self.relocation_repair
     }
 }
 
@@ -331,7 +347,7 @@ impl EncryptionSites {
 }
 
 /// The offsets in `code` where `pattern` matches, its patched bytes in either form, with whether they are patched.
-fn pattern_matches(code: &[u8], pattern: &CipherPattern) -> Vec<(usize, bool, bool)> {
+fn pattern_matches(code: &[u8], pattern: &CipherPattern) -> Vec<(usize, bool)> {
     let length = pattern.bytes.len();
     let patched_range = pattern.patch_at..pattern.patch_at + pattern.stock.len();
     if code.len() < length {
@@ -347,11 +363,9 @@ fn pattern_matches(code: &[u8], pattern: &CipherPattern) -> Vec<(usize, bool, bo
         }
         let written = &window[patched_range.clone()];
         if written == pattern.stock {
-            found.push((at, false, false));
+            found.push((at, false));
         } else if written == pattern.patched {
-            found.push((at, true, false));
-        } else if pattern.previous == Some(written) {
-            found.push((at, false, true));
+            found.push((at, true));
         }
     }
     found
@@ -370,8 +384,28 @@ pub fn locate_encryption_sites(
     let (code, base) = code_section(bytes, pe)?;
     let mut located = EncryptionSites { sites: Vec::new(), unlocated: Vec::new() };
     for &kind in kinds {
+        if kind == CipherSiteKind::GameLoginHandshake {
+            let image = super::kr_resolver::Image::new(bytes, pe);
+            let mut matches = super::kr_game_login::resolve(&image);
+            matches.extend(super::kr_game_login_legacy::resolve(&image));
+            if matches.len() == 1 {
+                let resolved = matches.pop().expect("one validated handshake");
+                let span = resolved.offset..resolved.offset + resolved.patched.len();
+                let relocation_repair = resolved.removed
+                    && !super::pe_relocations::plan(bytes, pe, span, &resolved.absolute_operands)
+                        .is_ok_and(|writes| writes.is_empty());
+                located.sites.push(CipherSite {
+                    kind, offset: resolved.offset, removed: resolved.removed,
+                    stock_bytes: Cow::Owned(resolved.stock), patched_bytes: Cow::Owned(resolved.patched),
+                    absolute_operands: resolved.absolute_operands,
+                    relocation_repair,
+                });
+            } else {
+                located.unlocated.push(UnlocatedCipherSite { kind, matches: matches.len() });
+            }
+            continue;
+        }
         let (patterns, earlier): (&[CipherPattern], &[CipherPattern]) = match kind {
-            CipherSiteKind::GameLoginHandshake => (&super::kr_game_login::PATTERNS, &super::kr_game_login_legacy::PATTERNS),
             CipherSiteKind::LoginCipher if family == ClientFamily::KingdomReborn => {
                 (std::slice::from_ref(kind.pattern()), std::slice::from_ref(&super::kr_legacy_login::LOGIN_CIPHER))
             }
@@ -380,32 +414,20 @@ pub fn locate_encryption_sites(
             }
             _ => (std::slice::from_ref(kind.pattern()), &[]),
         };
-        let mut matches: Vec<(usize, bool, bool, &CipherPattern)> = Vec::new();
+        let mut matches: Vec<(usize, bool, &CipherPattern)> = Vec::new();
         for pattern in patterns.iter().chain(earlier) {
-            // A fixed-VA profile can only match at that address; validate its complete window directly.
-            let (search, origin) = if let Some(va) = pattern.required_va {
-                let Some(at) = pe.va_to_offset(va).and_then(|raw| raw.checked_sub(base)) else { continue };
-                let Some(window) = code.get(at..at + pattern.bytes.len()) else { continue };
-                (window, at)
-            } else { (code, 0) };
-            for (at, removed, previous) in pattern_matches(search, pattern) {
-                let at = origin + at;
-                if pattern.required_va.is_none_or(|va| pe.offset_to_va(base + at) == Some(va)) {
-                    // Different exact stock profiles can converge after their differing callback operands are
-                    // replaced. They describe one physical patched site, with the same future write.
-                    let equivalent_patched = removed && matches.iter().any(|(prior, patched, _, other)| {
-                        *patched && at + pattern.patch_at == *prior + other.patch_at && pattern.patched == other.patched
-                    });
-                    if equivalent_patched {
-                        continue;
-                    }
-                    matches.push((at, removed, previous, pattern));
-                }
+            for (at, removed) in pattern_matches(code, pattern) {
+                matches.push((at, removed, pattern));
             }
         }
         match matches.as_slice() {
-            [(at, removed, previous, pattern)] => {
-                located.sites.push(CipherSite { kind, offset: base + at + pattern.patch_at, removed: *removed, pattern, previous: *previous })
+            [(at, removed, pattern)] => {
+                located.sites.push(CipherSite {
+                    kind, offset: base + at + pattern.patch_at, removed: *removed,
+                    stock_bytes: Cow::Borrowed(pattern.stock), patched_bytes: Cow::Borrowed(pattern.patched),
+                    absolute_operands: Vec::new(),
+                    relocation_repair: false,
+                })
             }
             matches => located.unlocated.push(UnlocatedCipherSite { kind, matches: matches.len() }),
         }
@@ -414,16 +436,25 @@ pub fn locate_encryption_sites(
 }
 
 #[cfg(test)]
+#[path = "../../tests/common/kr_handshake.rs"]
+pub(crate) mod handshake_fixture;
+#[cfg(test)]
+#[path = "../../tests/common/kr_client_fixture.rs"]
+pub(crate) mod client_fixture;
+
+#[cfg(test)]
 pub(crate) mod tests {
     use super::*;
     use crate::client::facet_dimensions::tests::synthetic_image_with;
     use crate::client::facet_dimensions::ClientExeInspection;
+    use crate::enhanced::facet_sector::CLIENT_FACET_DIMENSIONS;
 
     /// Filler between the patterns: `INT3`, which no pattern starts with.
     const FILLER: u8 = 0xcc;
     const FILLER_LEN: usize = 32;
     /// The bytes standing for a pattern's wildcards.
     const WILDCARD_FILL: u8 = 0x12;
+    const FACET_NAMES: [&str; 7] = ["Felucca", "Trammel", "Ilshenar", "Malas", "Tokuno", "Gargoyle", "Test"];
     /// The synthetic PE's first section VA.
     const CODE_VA: u32 = super::super::pe::tests::TEST_IMAGE_BASE + super::super::pe::tests::TEST_SECTION_ALIGNMENT;
 
@@ -440,9 +471,22 @@ pub(crate) mod tests {
         code
     }
 
-    /// A Kingdom Reborn image with its ciphers and game handshake.
+    pub fn complete_kr_client(image: Vec<u8>, ciphers: &[CipherSiteKind]) -> Vec<u8> {
+        let facets: Vec<_> = FACET_NAMES.into_iter().zip(CLIENT_FACET_DIMENSIONS)
+            .map(|(name, geometry)| (name, geometry.width, geometry.height)).collect();
+        client_fixture::client_image(image, &cipher_code(ciphers), &facets)
+    }
+
+    /// A Kingdom Reborn image with real helper relationships, imports, RTTI, ciphers and facet table.
     pub fn synthetic_kr_encrypted_client() -> Vec<u8> {
-        synthetic_image_with(cipher_code(&KINGDOM_REBORN_SITES), Vec::new(), false)
+        complete_kr_client(handshake_fixture::modern(client_fixture::CONNECT_OFFSET).bytes,
+            &[CipherSiteKind::LoginCipher, CipherSiteKind::KeyExchangeCipher])
+    }
+
+    pub fn synthetic_kr_previous_client() -> Vec<u8> {
+        let mut fixture = handshake_fixture::modern(client_fixture::CONNECT_OFFSET);
+        handshake_fixture::previous_patch(&mut fixture);
+        complete_kr_client(fixture.bytes, &[CipherSiteKind::LoginCipher, CipherSiteKind::KeyExchangeCipher])
     }
 
     /// An Enhanced Client image with its four ciphers.
@@ -491,65 +535,78 @@ pub(crate) mod tests {
         assert_eq!(none.unlocated.len(), KINGDOM_REBORN_SITES.len());
         assert!(!none.is_complete() && none.state().is_none() && none.values().is_none());
 
-        let mut twice = cipher_code(&KINGDOM_REBORN_SITES);
-        twice.extend(cipher_code(&[CipherSiteKind::LoginCipher]));
-        let twice = sites(&synthetic_image_with(twice, Vec::new(), false));
+        let twice = complete_kr_client(handshake_fixture::modern(client_fixture::CONNECT_OFFSET).bytes,
+            &[CipherSiteKind::LoginCipher, CipherSiteKind::KeyExchangeCipher, CipherSiteKind::LoginCipher]);
+        let twice = sites(&twice);
         assert_eq!(twice.unlocated, [UnlocatedCipherSite { kind: CipherSiteKind::LoginCipher, matches: 2 }]);
         assert_eq!(twice.describe_unlocated(), "login cipher (2 matches)");
         assert_eq!(twice.values(), None, "not complete: not recorded");
 
-        let mut other = cipher_code(&KINGDOM_REBORN_SITES);
-        let at = FILLER_LEN + LOGIN_CIPHER.patch_at;
+        let mut other = synthetic_kr_encrypted_client();
+        let at = sites(&other).sites[0].offset;
         other[at] = FILLER;
-        let other = sites(&synthetic_image_with(other, Vec::new(), false));
+        let other = sites(&other);
         assert_eq!(other.unlocated[0].matches, 0);
 
         // The Kingdom Reborn sites only, in an Enhanced Client: its game ciphers are missing.
-        let partial = sites(&synthetic_image_with(cipher_code(&KINGDOM_REBORN_SITES), Vec::new(), true));
+        let partial = sites(&synthetic_image_with(cipher_code(&[CipherSiteKind::LoginCipher, CipherSiteKind::KeyExchangeCipher]), Vec::new(), true));
         let kinds: Vec<CipherSiteKind> = partial.unlocated.iter().map(|site| site.kind).collect();
         assert_eq!(kinds, [CipherSiteKind::GameCipherSend, CipherSiteKind::GameCipherReceive]);
     }
 
     #[test]
-    fn kr_handshake_requires_the_audited_function_at_its_original_address() {
-        let pattern = CipherSiteKind::GameLoginHandshake.pattern();
-        let code = cipher_code(&KINGDOM_REBORN_SITES);
-        let at = (pattern.required_va.unwrap() - CODE_VA) as usize;
-        // An altered cleanup is outside the written range but must still reject the entire handshake patch.
-        let mut altered = code.clone();
-        altered[at + pattern.bytes.len() - 1] = FILLER;
-        let altered = sites(&synthetic_image_with(altered, Vec::new(), false));
+    fn kr_handshake_requires_valid_cleanup_and_helper_relationships() {
+        const CONNECT_SIZE: usize = 655;
+        let fixture = handshake_fixture::modern(client_fixture::CONNECT_OFFSET);
+        let mut image = complete_kr_client(fixture.bytes, &[CipherSiteKind::LoginCipher, CipherSiteKind::KeyExchangeCipher]);
+        let pe = PeImage::parse(&image).unwrap();
+        let start = pe.va_to_offset(fixture.connect).unwrap();
+        image[start + CONNECT_SIZE - 1] = FILLER;
+        let altered = sites(&image);
         assert_eq!(altered.unlocated, [UnlocatedCipherSite { kind: CipherSiteKind::GameLoginHandshake, matches: 0 }]);
 
-        // The exact instructions at a different VA would call the wrong helpers.
-        let mut shifted = vec![FILLER; FILLER_LEN];
-        shifted.extend(code);
-        let shifted = sites(&synthetic_image_with(shifted, Vec::new(), false));
-        assert_eq!(shifted.unlocated, altered.unlocated);
+        // A function-shaped byte sequence without imports, RTTI and independently checked helpers is insufficient.
+        let bare = synthetic_image_with(cipher_code(&KINGDOM_REBORN_SITES), Vec::new(), false);
+        assert_eq!(sites(&bare).unlocated, altered.unlocated);
     }
 
     #[test]
-    fn every_audited_kr_handshake_profile_locates_and_round_trips() {
-        for pattern in super::super::kr_game_login::PATTERNS.iter().chain(&super::super::kr_game_login_legacy::PATTERNS) {
-            let mut code = cipher_code(&[CipherSiteKind::LoginCipher, CipherSiteKind::KeyExchangeCipher]);
-            let at = (pattern.required_va.unwrap() - CODE_VA) as usize;
-            code.resize(at, FILLER);
-            code.extend(pattern.stock_code(WILDCARD_FILL));
-            let mut image = synthetic_image_with(code, Vec::new(), false);
-            let before = sites(&image);
-            assert!(before.is_complete());
-            let handshake = before.sites.last().unwrap();
-            assert_eq!(handshake.stock(), pattern.stock);
-            assert_eq!(handshake.patched(), pattern.patched);
-            image[handshake.offset..][..handshake.patched().len()].copy_from_slice(handshake.patched());
-            let after = sites(&image);
-            assert!(after.is_complete());
-            assert!(after.sites.last().unwrap().removed);
-            assert_eq!(after.offsets(), before.offsets());
-            // An unrecognized helper operand must never be accepted as another build.
-            image[handshake.offset - pattern.patch_at + 1] ^= 1;
-            assert_eq!(sites(&image).unlocated, [UnlocatedCipherSite { kind: CipherSiteKind::GameLoginHandshake, matches: 0 }]);
+    fn unseen_modern_and_legacy_graphs_locate_and_round_trip() {
+        const CONNECT_OFFSETS: [usize; 2] = [0x700, 0x900];
+        for connect in CONNECT_OFFSETS {
+            for raw in [handshake_fixture::modern(connect).bytes, super::super::kr_game_login_legacy::fixture_image(connect)] {
+                let mut image = complete_kr_client(raw, &[CipherSiteKind::LoginCipher, CipherSiteKind::KeyExchangeCipher]);
+                let before = sites(&image);
+                assert!(before.is_complete(), "{}", before.describe_unlocated());
+                let handshake = before.sites.last().unwrap();
+                image[handshake.offset..][..handshake.patched().len()].copy_from_slice(handshake.patched());
+                let after = sites(&image);
+                assert!(after.is_complete());
+                assert!(after.sites.last().unwrap().removed);
+                assert_eq!(after.offsets(), before.offsets());
+                assert_eq!(after.sites.last().unwrap().stock(), after.sites.last().unwrap().patched(),
+                    "a removed dynamic site's input bytes are its current replacement");
+                image[handshake.offset] = FILLER;
+                assert_eq!(sites(&image).unlocated, [UnlocatedCipherSite { kind: CipherSiteKind::GameLoginHandshake, matches: 0 }]);
+            }
         }
+    }
+
+    #[test]
+    fn dynamically_resolved_helpers_may_use_an_unseen_image_base_and_section_layout() {
+        const IMAGE_BASE: u32 = 0x0060_0000;
+        const HELPER_START: usize = 0x1200;
+        const RDATA_RVA: u32 = 0xa000;
+        const DATA_RVA: u32 = 0x12000;
+        let fixture = handshake_fixture::modern_layout(client_fixture::CONNECT_OFFSET,
+            HELPER_START, IMAGE_BASE, RDATA_RVA, DATA_RVA);
+        let mut image = complete_kr_client(fixture.bytes, &[CipherSiteKind::LoginCipher, CipherSiteKind::KeyExchangeCipher]);
+        let before = sites(&image);
+        assert!(before.is_complete(), "{}", before.describe_unlocated());
+        for site in before.sites {
+            image[site.offset..][..site.patched().len()].copy_from_slice(site.patched());
+        }
+        assert_eq!(sites(&image).values(), Some(EncryptionState::Removed));
     }
 
     #[test]
@@ -560,10 +617,10 @@ pub(crate) mod tests {
             code.extend(pattern.stock_code(WILDCARD_FILL));
             code.extend([FILLER; FILLER_LEN]);
         }
-        let handshake = CipherSiteKind::GameLoginHandshake.pattern();
-        code.resize((handshake.required_va.unwrap() - CODE_VA) as usize, FILLER);
-        code.extend(handshake.stock_code(WILDCARD_FILL));
-        let mut image = synthetic_image_with(code.clone(), Vec::new(), false);
+        let mut image = complete_kr_client(super::super::kr_game_login_legacy::fixture_image(client_fixture::CONNECT_OFFSET), &[]);
+        let pe = PeImage::parse(&image).unwrap();
+        let at = pe.section(".text").unwrap().raw_offset as usize + client_fixture::CIPHER_TEXT_OFFSET;
+        image[at..at + code.len()].copy_from_slice(&code);
         let before = sites(&image);
         assert!(before.is_complete());
         assert_eq!(before.values(), Some(EncryptionState::Encrypted));
@@ -574,63 +631,48 @@ pub(crate) mod tests {
         assert!(after.is_complete());
         assert_eq!(after.values(), Some(EncryptionState::Removed));
         assert_eq!(after.offsets(), before.offsets());
-        code.extend(LOGIN_CIPHER.stock_code(WILDCARD_FILL));
-        let duplicate = sites(&synthetic_image_with(code, Vec::new(), false));
+        const DUPLICATE_OFFSET: usize = 0x400;
+        let at = pe.section(".text").unwrap().raw_offset as usize + DUPLICATE_OFFSET;
+        let duplicate_code = LOGIN_CIPHER.stock_code(WILDCARD_FILL);
+        image[at..at + duplicate_code.len()].copy_from_slice(&duplicate_code);
+        let duplicate = sites(&image);
         assert_eq!(duplicate.unlocated, [UnlocatedCipherSite { kind: CipherSiteKind::LoginCipher, matches: 2 }]);
     }
 
     #[test]
-    fn converging_kr_profiles_locate_one_patched_site_but_separate_physical_sites_stay_ambiguous() {
-        const SHARED_VA: u32 = 0x005b_abe0;
-        const EXPECTED_PEER_COUNTS: [usize; 5] = [2, 2, 3, 3, 3];
-        let patterns = &super::super::kr_game_login::PATTERNS;
-        let patched_code = |pattern: &CipherPattern| {
-            let mut code = pattern.stock_code(WILDCARD_FILL);
-            code[pattern.patch_at..][..pattern.patched.len()].copy_from_slice(pattern.patched);
-            code
-        };
-        let mut peer_counts = Vec::new();
-        for pattern in patterns.iter().filter(|pattern| pattern.required_va == Some(SHARED_VA)) {
-            let patched = patched_code(pattern);
-            peer_counts.push(patterns.iter().filter(|other| {
-                other.required_va == Some(SHARED_VA) && patched_code(other) == patched
-            }).count());
-            let mut code = cipher_code(&[CipherSiteKind::LoginCipher, CipherSiteKind::KeyExchangeCipher]);
-            code.resize((SHARED_VA - CODE_VA) as usize, FILLER);
-            code.extend(patched);
-            let located = sites(&synthetic_image_with(code, Vec::new(), false));
-            assert!(located.is_complete(), "{}", located.describe_unlocated());
-            assert_eq!(located.sites.iter().filter(|site| site.kind == CipherSiteKind::GameLoginHandshake).count(), 1);
-            assert!(located.sites.last().unwrap().removed);
+    fn separate_valid_dynamic_functions_remain_ambiguous_in_stock_and_patched_forms() {
+        const FIRST_CONNECT: usize = 0x700;
+        const SECOND_CONNECT: usize = 0x400;
+        const CONNECT_SIZE: usize = 655;
+        for removed in [false, true] {
+            let mut first = handshake_fixture::modern(FIRST_CONNECT);
+            let mut second = handshake_fixture::modern(SECOND_CONNECT);
+            if removed {
+                handshake_fixture::current_patch(&mut first);
+                handshake_fixture::current_patch(&mut second);
+            }
+            let second_pe = PeImage::parse(&second.bytes).unwrap();
+            let source = second_pe.va_to_offset(second.connect).unwrap();
+            let mut image = complete_kr_client(first.bytes, &[CipherSiteKind::LoginCipher, CipherSiteKind::KeyExchangeCipher]);
+            let pe = PeImage::parse(&image).unwrap();
+            let destination = pe.va_to_offset(second.connect).unwrap();
+            image[destination..destination + CONNECT_SIZE].copy_from_slice(&second.bytes[source..source + CONNECT_SIZE]);
+            let ambiguous = sites(&image);
+            assert_eq!(ambiguous.unlocated, [UnlocatedCipherSite { kind: CipherSiteKind::GameLoginHandshake, matches: 2 }]);
         }
-        peer_counts.sort_unstable();
-        assert_eq!(peer_counts, EXPECTED_PEER_COUNTS);
-
-        // Full functions at separate audited VAs remain two physical sites, even though both are patched.
-        const SEPARATE_VAS: [u32; 2] = [0x005b_6b40, 0x005b_aeb0];
-        let mut code = cipher_code(&[CipherSiteKind::LoginCipher, CipherSiteKind::KeyExchangeCipher]);
-        for va in SEPARATE_VAS {
-            let pattern = patterns.iter().find(|pattern| pattern.required_va == Some(va)).unwrap();
-            code.resize((va - CODE_VA) as usize, FILLER);
-            code.extend(patched_code(pattern));
-        }
-        let ambiguous = sites(&synthetic_image_with(code, Vec::new(), false));
-        assert_eq!(ambiguous.unlocated, [UnlocatedCipherSite { kind: CipherSiteKind::GameLoginHandshake, matches: SEPARATE_VAS.len() }]);
     }
 
     #[test]
     fn previous_kr_handshake_replacement_is_located_for_upgrade() {
-        let pattern = CipherSiteKind::GameLoginHandshake.pattern();
-        let mut image = synthetic_kr_encrypted_client();
-        let before = sites(&image);
-        let handshake = before.sites.last().unwrap();
-        image[handshake.offset..][..pattern.stock.len()].copy_from_slice(pattern.previous.unwrap());
+        let mut image = synthetic_kr_previous_client();
         let previous = sites(&image);
         assert!(previous.is_complete());
         let upgrade = previous.sites.last().unwrap();
         assert!(!upgrade.removed);
-        assert_eq!(upgrade.stock(), pattern.previous.unwrap());
-        assert_eq!(upgrade.patched(), pattern.patched);
+        assert_ne!(upgrade.stock(), upgrade.patched());
+        assert_eq!(&image[upgrade.offset..][..upgrade.stock().len()], upgrade.stock());
+        image[upgrade.offset..][..upgrade.patched().len()].copy_from_slice(upgrade.patched());
+        assert!(sites(&image).sites.last().unwrap().removed);
     }
 
     #[test]

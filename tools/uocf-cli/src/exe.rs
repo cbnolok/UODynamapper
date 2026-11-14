@@ -480,6 +480,9 @@ fn print_encryption(inspection: &ClientExeInspection) {
         let form = if site.removed { hex(site.patched()) } else { hex(site.stock()) };
         let what = if site.removed { "patched" } else { "stock" };
         println!("  {:<26} {form} ({what}) at {}", site.kind.label(), located(inspection, site.offset));
+        if site.needs_relocation_repair() {
+            println!("    PE relocation repair needed: reapply --bypass-kr-handshake or --no-encryption");
+        }
     }
     if !ciphers.unlocated.is_empty() {
         println!("  not located (pattern not matched exactly once): {}", ciphers.describe_unlocated());

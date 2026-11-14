@@ -15,6 +15,7 @@ use uocf::client::crypt_keys::inspect_login_crypt;
 use uocf::client::facet_dimensions::{ClientExeInspection, ClientFamily};
 use uocf::client::login::{LoginHost, LoginServerEdit};
 use uocf::client::patch::{dry_run_client_exe, patch_client_exe, read_manifest, write_patched_client_exe, ExeEdit, ExePatch};
+use uocf::client::pe::{PeImage, pe_checksum, OPTIONAL_CHECKSUM_OFFSET};
 
 use super::client_exe_facet_dimensions::{allowed_ranges, client_exes, exe_kind, ExeKind};
 
@@ -32,6 +33,18 @@ const SCOPED_EDITS: [(EncryptionPart, ExeEdit); 3] = [
 ];
 const KR_EXES_ENV: &str = "UO_KR_EXES";
 const KR_PREVIOUS_EXE_ENV: &str = "UO_KR_PREVIOUS_EXE";
+const WORD_SIZE: usize = size_of::<u32>();
+const REBASE_DELTA: u32 = 0x0010_0000;
+const PE_IMAGE_BASE_OFFSET: usize = 28;
+const BASE_RELOCATION_HEADER_SIZE: usize = WORD_SIZE * 2;
+const BASE_RELOCATION_ENTRY_SIZE: usize = size_of::<u16>();
+const BASE_RELOCATION_TYPE_SHIFT: u32 = 12;
+const BASE_RELOCATION_OFFSET_MASK: u16 = 0x0fff;
+const BASE_RELOCATION_HIGHLOW: u16 = 3;
+const FIXED_FILE_INFO_SIGNATURE: u32 = 0xfeef_04bd;
+const FIXED_FILE_VERSION_OFFSET: usize = WORD_SIZE * 2;
+const UNTESTED_VERSION_MAJOR: u32 = 2;
+const UNTESTED_VERSION_MINOR: u32 = 99;
 
 struct AuditedKrProfile {
     version: &'static str,
@@ -229,6 +242,108 @@ fn every_audited_kr_executable_patches_at_its_verified_profile() {
         assert_eq!(std::fs::read(&path).unwrap(), original, "the source is unchanged");
     }
     assert!(seen.iter().all(|seen| *seen), "not all audited KR profiles were supplied: {seen:?}");
+}
+
+fn read_word(bytes: &[u8], at: usize) -> u32 {
+    u32::from_le_bytes(bytes[at..][..WORD_SIZE].try_into().unwrap())
+}
+
+fn fix_checksum(bytes: &mut [u8]) {
+    let pe = PeImage::parse(bytes).unwrap();
+    let checksum = pe_checksum(bytes, pe.checksum_offset);
+    bytes[pe.checksum_offset..][..WORD_SIZE].copy_from_slice(&checksum.to_le_bytes());
+}
+
+/// Simulate the PE loader: update the preferred base and every HIGHLOW target without changing RVAs.
+fn rebase(bytes: &[u8], delta: u32) -> Vec<u8> {
+    let pe = PeImage::parse(bytes).unwrap();
+    let (rva, size) = pe.base_relocation_directory;
+    assert!(rva != 0 && size != 0);
+    let start = pe.va_to_offset(pe.image_base + rva).unwrap();
+    let mut cursor = start;
+    let end = start + size as usize;
+    let mut targets = Vec::new();
+    while cursor < end && bytes[cursor..end].iter().any(|byte| *byte != 0) {
+        let page = read_word(bytes, cursor);
+        let length = read_word(bytes, cursor + WORD_SIZE) as usize;
+        assert!(length >= BASE_RELOCATION_HEADER_SIZE && cursor + length <= end);
+        for at in (cursor + BASE_RELOCATION_HEADER_SIZE..cursor + length).step_by(BASE_RELOCATION_ENTRY_SIZE) {
+            let word = u16::from_le_bytes(bytes[at..][..BASE_RELOCATION_ENTRY_SIZE].try_into().unwrap());
+            match word >> BASE_RELOCATION_TYPE_SHIFT {
+                0 => {}
+                BASE_RELOCATION_HIGHLOW => {
+                    let va = pe.image_base + page + u32::from(word & BASE_RELOCATION_OFFSET_MASK);
+                    targets.push(pe.va_to_offset(va).unwrap());
+                }
+                kind => panic!("unexpected fixture relocation type {kind}"),
+            }
+        }
+        cursor += length;
+    }
+    let mut rebased = bytes.to_vec();
+    for at in targets {
+        let value = read_word(bytes, at).wrapping_add(delta);
+        rebased[at..][..WORD_SIZE].copy_from_slice(&value.to_le_bytes());
+    }
+    let base_at = pe.checksum_offset - OPTIONAL_CHECKSUM_OFFSET + PE_IMAGE_BASE_OFFSET;
+    rebased[base_at..][..WORD_SIZE].copy_from_slice(&pe.image_base.checked_add(delta).unwrap().to_le_bytes());
+    fix_checksum(&mut rebased);
+    rebased
+}
+
+#[test]
+#[ignore = "needs the audited KR files: set UO_KR_EXES and run with --ignored"]
+fn dynamic_kr_patching_commutes_with_loader_rebasing_and_repairs_previous_relocations() {
+    let paths = std::env::var_os(KR_EXES_ENV).unwrap_or_else(|| panic!("set {KR_EXES_ENV}"));
+    let expected = AUDITED_KR_PROFILES.iter().find(|profile| profile.version == "2.46.0.3").unwrap();
+    let original = std::env::split_paths(&paths).find_map(|path| {
+        let bytes = std::fs::read(path).unwrap();
+        let before = ClientExeInspection::inspect(&bytes).unwrap();
+        (before.sha256 == expected.sha256).then_some(bytes)
+    }).expect("supply the 2.46.0.3 relocation-bearing fixture");
+    let before = ClientExeInspection::inspect(&original).unwrap();
+    let patch = ExePatch { edits: vec![ExeEdit::BypassKrHandshake] };
+    let patched = patch_client_exe(&original, &patch, None).unwrap();
+    let after_rebase = rebase(&patched.bytes, REBASE_DELTA);
+    let relocated_source = rebase(&original, REBASE_DELTA);
+    let rebased_then_patched = patch_client_exe(&relocated_source, &patch, None).unwrap();
+    assert_eq!(after_rebase, rebased_then_patched.bytes, "patching and loader rebasing produce identical code and relocation tables");
+    assert_eq!(rebased_then_patched.before.pe.image_base, before.pe.image_base + REBASE_DELTA);
+    assert!(rebased_then_patched.after.encryption.as_ref().unwrap().is_complete());
+
+    let mut unknown_version = relocated_source;
+    let pe = PeImage::parse(&unknown_version).unwrap();
+    let resources = pe.va_to_offset(pe.image_base + pe.resource_directory.0).unwrap();
+    let end = resources + pe.resource_directory.1 as usize;
+    let signature = FIXED_FILE_INFO_SIGNATURE.to_le_bytes();
+    let records: Vec<_> = unknown_version[resources..end].windows(WORD_SIZE).enumerate()
+        .filter(|(_, value)| *value == signature).map(|(at, _)| resources + at).collect();
+    assert_eq!(records.len(), 1);
+    let version_at = records[0] + FIXED_FILE_VERSION_OFFSET;
+    let version = (UNTESTED_VERSION_MAJOR << u16::BITS) | UNTESTED_VERSION_MINOR;
+    unknown_version[version_at..][..WORD_SIZE].copy_from_slice(&version.to_le_bytes());
+    unknown_version[version_at + WORD_SIZE..][..WORD_SIZE].fill(0);
+    fix_checksum(&mut unknown_version);
+    let unknown = patch_client_exe(&unknown_version, &patch, None).unwrap();
+    assert_eq!(unknown.before.version.unwrap().file.to_string(), "2.99.0.0");
+    assert!(unknown.after.encryption.as_ref().unwrap().is_complete());
+
+    // Earlier patchers changed only the function and left the original relocation entries in place.
+    let site = patched.after.encryption.as_ref().unwrap().sites.iter()
+        .find(|site| site.kind == CipherSiteKind::GameLoginHandshake).unwrap();
+    let mut stale = original.clone();
+    stale[site.offset..][..site.patched().len()].copy_from_slice(site.patched());
+    fix_checksum(&mut stale);
+    let inspection = ClientExeInspection::inspect(&stale).unwrap();
+    let stale_site = inspection.encryption.as_ref().unwrap().sites.iter()
+        .find(|site| site.kind == CipherSiteKind::GameLoginHandshake).unwrap();
+    assert!(stale_site.removed && stale_site.needs_relocation_repair());
+    let repaired = patch_client_exe(&stale, &patch, None).unwrap();
+    assert_eq!(repaired.bytes, patched.bytes);
+    assert!(repaired.changes.iter().filter(|change| change.cause == uocf::client::patch::ChangeCause::Edit(0))
+        .all(|change| change.field.contains("base relocation")));
+    assert!(!repaired.after.encryption.as_ref().unwrap().sites.iter().any(|site| site.needs_relocation_repair()));
+    assert!(patch_client_exe(&repaired.bytes, &patch, None).unwrap_err().to_string().contains("changes nothing"));
 }
 
 #[test]

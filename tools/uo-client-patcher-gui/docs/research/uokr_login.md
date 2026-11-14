@@ -9,9 +9,11 @@ given here. Traced with read-only Ghidra probes, enough for the no-encryption pa
 ## Audited sibling builds
 
 Nineteen executables from 2.45.3.13 through 2.58.0.6 use two verified game-connect layouts. The fifteen
-2.46–2.58 executables share a 655-byte template with 23 exact four-byte address/displacement operands.
-The four 2.45 executables have a 397-byte SEH template with 20 such operands. Profiles substitute audited
-values and compare the complete function at its original VA; these operands are not wildcards.
+2.46–2.58 executables share a 655-byte template with 23 four-byte address/displacement operands.
+The four 2.45 executables have a 397-byte SEH template with 20 such operands. The resolver scans for these
+opcode layouts, resolves their operands and validates dependencies before generating a replacement. These
+versions, addresses and hashes document the regression corpus; runtime resolution uses none of them as a lookup
+key. See [dynamic patch resolution](../DYNAMIC_PATCHING.md).
 
 | PE version | Connect VA | File patch start | Function bytes | Executable SHA-256 |
 |---|---|---|---|---|
@@ -43,10 +45,9 @@ stack ABI and typed control blocks were audited through RTTI and the actual E3 p
 main discussion below refer to 2.58.0.6; [earlier layout details](#kr-245-seh-layout) are separate.
 See [the collection inventory](kr-build-coverage.md) for login-seed differences and filename/version identities.
 
-Some exact stock profiles converge after the callback operands are replaced: 2.50.0.3/2.51.0.3/2.53.0.2
-produce one identical patched function at `0x5babe0`, as do 2.52.0.4/2.54.0.7. The locator counts equivalent
-patched matches with the same physical write range and replacement bytes as one site. Stock matching remains
-strict; matches at distinct locations still fail uniqueness. The original-VA guards also remain in force.
+Some stock functions converge after the callback operands are replaced: 2.50.0.3/2.51.0.3/2.53.0.2
+produce one identical patched function at `0x5babe0`, as do 2.52.0.4/2.54.0.7. Each physical function is resolved
+once, regardless of which fixture originally produced it. Matches at distinct locations fail uniqueness. The retained E3 handler independently corroborates dependencies erased by the bypass.
 
 ## Transforms
 
@@ -208,9 +209,9 @@ game connection setup in `FUN_005b6b40`:
 
 The patcher records this as one 458-byte site starting at `0x1b5f9f`. Unchanged instructions within that range
 are preserved. The **entire 655-byte function** (through `RET 4`, ending exclusively at VA `0x5b6dcf`) must
-match its stock or patched form at the original VA; calls and absolute operands are specific to this build.
-Do not wildcard its relative calls or absolute operands without also deriving their replacements.
-Unknown changes, mixed handshake replacements and a relocated function are refused. Cipher patterns still
+match its stock or patched opcode form; calls and absolute operands are derived from that executable and
+validated against helper instructions, imports, globals and RTTI. Relocated matching functions are accepted.
+Unknown opcode changes and mixed handshake replacements are refused. Cipher patterns still
 accept their stock or patched form and require exactly one match.
 
 The seed replacement reads the original stack argument `[ESP+0x24]`, then its auth key at `+0x58`. Its outgoing
@@ -268,7 +269,7 @@ Real-file regressions cover all nineteen executable identities, complete patch/r
 login destinations, preserved embedded keys, checksums and byte ranges. Each of the three scoped controls
 also patches independently and leaves the other controls' sites stock. Originals remain read only.
 
-All 55 client unit tests, the nineteen-file regression (including 57 scoped-control cases), both tool builds
+All 74 client unit tests, the nineteen-file regression (including 57 scoped-control cases), both tool builds
 and `cargo check --workspace` passed. CLI-generated functions match the x86-executed buffers byte for byte
 for every file. Four additional executions of the actual patched 2.45 endpoint constructors verify the address
 `255.128.254.192:45000`, including the signed `PUSH imm8` case; unused adjacent port helpers remain unchanged.
@@ -276,7 +277,7 @@ Live Windows logins with the newly supported older clients were not exercised by
 
 ## KR 2.45 SEH layout
 
-`kr_game_login_legacy.rs` checks all 397 bytes and the original VA. In 2.45.4.4 the function starts at `0x504766`;
+`kr_game_login_legacy.rs` checks the complete 397-byte opcode layout and resolves its twenty operand fields. In 2.45.4.4 the function starts at `0x504766`;
 the reviewed [legacy callback assembly](kr-legacy-plaintext-game-login.s) starts at `0x504837`.
 The replacement spans function offsets `+0x5c..+0x16a` (270 bytes):
 
@@ -303,12 +304,17 @@ For 2.45.4.4, Huffman construction is `0x51b1d9` (object argument, RET 4), its s
 state 1, which releases the seed. The four exact functions normalize to SHA-256
 `b7c52fa6d9f488aaf33195bf34d5c2f6d34bc3154703f942a7a498418f04c77a` after their twenty operands are cleared.
 
-Fixed VAs are the current validation policy, not an intrinsic property of KR encryption. A dynamic implementation
-could recognize the two layouts, resolve calls/globals/RTTI, validate helper ABIs and generate relocated bytes.
-This implementation keeps exact profiles and retains every supplied executable as a regression fixture.
-All nineteen images prefer base `0x400000` and have `DYNAMIC_BASE` clear. Eighteen strip base relocations;
-2.46.0.3 retains a relocation directory. The current replacement bytes are validated at the preferred base;
-forced rebasing of that executable is outside this validation and its relocation records are not rewritten.
+Dynamic resolution validates each layout's helper ABIs and ownership graph, including the legacy EH states,
+and regenerates all replacement addresses. Every supplied executable remains a regression fixture. Synthetic
+fixtures move code, data, imports and image bases independently and reject malformed helpers or ambiguous
+matches. The real 2.46.0.3 executable also resolves with a deliberately unknown resource version (2.99.0.0).
+
+All nineteen original images prefer base `0x400000` and have `DYNAMIC_BASE` clear. Eighteen strip base relocations;
+2.46.0.3 retains a relocation directory. The patcher now replaces stale HIGHLOW records within its overwritten
+span with the generated absolute operands, preserving unrelated entries. A real-file test verifies byte-for-byte
+that patching then rebasing equals rebasing then patching, and that reapplying the bypass repairs older patched
+copies whose code is current but whose relocation records are stale. Unsupported relocation tables or
+insufficient verified padding cause refusal before writing.
 
 ## Enhanced Client (UOSA.exe) for comparison
 

@@ -700,6 +700,15 @@ pub fn plan_patch_inspected(
         for site in &sites.sites {
             let field = site.kind.patch_label().to_owned();
             writes.push(FieldWrite { offset: site.offset, new: site.patched().to_vec(), field, edit });
+            if site.kind == CipherSiteKind::GameLoginHandshake {
+                let span = site.offset..site.offset + site.patched().len();
+                for relocation in super::pe_relocations::plan(bytes, &before.pe, span, site.absolute_operands())? {
+                    writes.push(FieldWrite {
+                        offset: relocation.offset, new: relocation.new,
+                        field: "KR handshake PE base relocation".to_owned(), edit,
+                    });
+                }
+            }
         }
     }
 
@@ -994,7 +1003,8 @@ mod tests {
     use crate::client::classic_facets::tests::{seam_imm_offsets, stock_size, synthetic_classic};
     use crate::client::facet_dimensions::tests::{synthetic_client, synthetic_image_with, synthetic_kr_client, NEW_SPLIT};
     use crate::client::facet_dimensions::{FACET_SIDE_ALIGNMENT, MAX_FACET_SIDE, STOCK_FACET_COUNT};
-    use crate::client::encryption::tests::{cipher_code, synthetic_enhanced_encrypted_client, synthetic_kr_encrypted_client};
+    use crate::client::encryption::tests::{cipher_code, complete_kr_client, synthetic_enhanced_encrypted_client, synthetic_kr_encrypted_client, synthetic_kr_previous_client};
+    use crate::client::encryption::{client_fixture, handshake_fixture};
     use crate::client::login::tests::{synthetic_kr_login_client, synthetic_login_client};
     use crate::client::login::LOGIN_HOST_SLOT_SIZE;
     use crate::client::classic_facets::CLASSIC_STOCK_WRAP;
@@ -1390,7 +1400,11 @@ mod tests {
             (CipherSiteKind::KeyExchangeCipher, EncryptionPart::Game, ExeEdit::NoGameEncryption),
             (CipherSiteKind::GameLoginHandshake, EncryptionPart::KrHandshake, ExeEdit::BypassKrHandshake),
         ] {
-            let image = synthetic_image_with(cipher_code(&[kind]), Vec::new(), false);
+            let image = if kind == CipherSiteKind::GameLoginHandshake {
+                complete_kr_client(handshake_fixture::modern(client_fixture::CONNECT_OFFSET).bytes, &[])
+            } else {
+                synthetic_image_with(cipher_code(&[kind]), Vec::new(), false)
+            };
             let patch = ExePatch { edits: vec![edit] };
             let patched = patch_client_exe(&image, &patch, None).unwrap();
             let ciphers = patched.after.encryption.as_ref().unwrap();
@@ -1458,9 +1472,12 @@ mod tests {
         let patched = patch_client_exe(&image, &all, None).unwrap();
         let handshake = patched.after.encryption.as_ref().unwrap().sites.iter()
             .find(|site| site.kind == CipherSiteKind::GameLoginHandshake).unwrap();
-        let previous = handshake.kind.pattern().previous.unwrap();
+        let previous_image = synthetic_kr_previous_client();
+        let previous_inspection = ClientExeInspection::inspect(&previous_image).unwrap();
+        let previous = previous_inspection.encryption.as_ref().unwrap().sites.iter()
+            .find(|site| site.kind == CipherSiteKind::GameLoginHandshake).unwrap().stock().to_vec();
         let mut legacy = patched.bytes.clone();
-        legacy[handshake.offset..][..previous.len()].copy_from_slice(previous);
+        legacy[handshake.offset..][..previous.len()].copy_from_slice(&previous);
         let checksum_offset = patched.after.pe.checksum_offset;
         let checksum = pe_checksum(&legacy, checksum_offset);
         legacy[checksum_offset..][..PATCH_FIELD_SIZE].copy_from_slice(&checksum.to_le_bytes());
@@ -1496,7 +1513,7 @@ mod tests {
         let image = synthetic_kr_encrypted_client();
         let patch = ExePatch { edits: vec![ExeEdit::NoEncryption] };
         let patched = patch_client_exe(&image, &patch, None).unwrap();
-        let sites = &patched.after.encryption.as_ref().unwrap().sites;
+        let sites = &patched.before.encryption.as_ref().unwrap().sites;
         let handshake = sites.iter().find(|site| site.kind == CipherSiteKind::GameLoginHandshake).unwrap();
         // Reconstruct the earlier two-site patch and its hash-matching manifest.
         let mut legacy = patched.bytes.clone();

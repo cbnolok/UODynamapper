@@ -468,6 +468,12 @@ fn the_encryption_controls_patch_their_selected_sites() {
     let opened = OpenedExe::open(&exe).unwrap();
     let mut edits = EditState::new(&opened.inspection);
     assert_eq!(edits.encryption.status(), EncryptionStatus::Located(EncryptionState::Encrypted));
+    let handshake = opened.inspection.encryption.as_ref().unwrap().sites.iter()
+        .find(|site| site.kind == CipherSiteKind::GameLoginHandshake).unwrap();
+    let canonical = handshake.kind.pattern();
+    assert_ne!(opened.inspection.pe.offset_to_va(handshake.offset),
+        canonical.required_va.map(|va| va + canonical.patch_at as u32),
+        "the GUI must accept validated helper graphs at previously unseen addresses");
     assert!(edits.encryption.can_remove(EncryptionPart::Login));
     assert!(edits.encryption.can_remove(EncryptionPart::Game));
     assert!(edits.encryption.can_remove(EncryptionPart::KrHandshake));
@@ -536,6 +542,57 @@ fn encryption_controls_validate_only_their_selected_part() {
     assert_eq!(bypass.build_patch().unwrap().edits, [ExeEdit::BypassKrHandshake]);
     assert_eq!(bypass.encryption.part_status(EncryptionPart::Login), EncryptionStatus::Located(EncryptionState::Encrypted));
     assert_eq!(bypass.encryption.part_status(EncryptionPart::Game), EncryptionStatus::Located(EncryptionState::Encrypted));
+}
+
+#[test]
+fn a_removed_handshake_with_stale_loader_relocations_remains_repairable() {
+    use uocf::client::encryption::{CipherSiteKind, EncryptionPart, EncryptionState};
+    use uocf::client::pe::pe_checksum;
+
+    const RELOCATION_DATA_OFFSET: usize = 0x800;
+    const RELOCATION_BLOCK_SIZE: usize = 0x80;
+    const RELOCATION_HEADER_SIZE: usize = 8;
+    const PAGE_SIZE: u32 = 0x1000;
+    const HIGHLOW: u16 = 0x3000;
+    const OLD_HTONL_FROM_PATCH: usize = 0x6d - 0x5f;
+    let all = ExePatch { edits: vec![ExeEdit::NoEncryption] };
+    let patched = patch_client_exe(&synthetic_kingdom_reborn_ciphers(), &all, None).unwrap();
+    let handshake = patched.after.encryption.as_ref().unwrap().sites.iter()
+        .find(|site| site.kind == CipherSiteKind::GameLoginHandshake).unwrap();
+    let handshake_range = handshake.offset..handshake.offset + handshake.patched().len();
+    let pe = &patched.after.pe;
+    let section = pe.section(".data").unwrap();
+    let table = section.raw_offset as usize + RELOCATION_DATA_OFFSET;
+    let table_rva = section.virtual_address - pe.image_base + RELOCATION_DATA_OFFSET as u32;
+    let stale_rva = pe.offset_to_va(handshake.offset + OLD_HTONL_FROM_PATCH).unwrap() - pe.image_base;
+    let mut bytes = patched.bytes;
+    assert!(bytes[table..table + RELOCATION_BLOCK_SIZE].iter().all(|byte| *byte == 0));
+    bytes[table..table + size_of::<u32>()].copy_from_slice(&(stale_rva / PAGE_SIZE * PAGE_SIZE).to_le_bytes());
+    bytes[table + size_of::<u32>()..table + RELOCATION_HEADER_SIZE]
+        .copy_from_slice(&(RELOCATION_BLOCK_SIZE as u32).to_le_bytes());
+    bytes[table + RELOCATION_HEADER_SIZE..table + RELOCATION_HEADER_SIZE + size_of::<u16>()]
+        .copy_from_slice(&(HIGHLOW | (stale_rva % PAGE_SIZE) as u16).to_le_bytes());
+    let directory = pe.base_relocation_directory_entry_offset();
+    bytes[directory..directory + size_of::<u32>()].copy_from_slice(&table_rva.to_le_bytes());
+    bytes[directory + size_of::<u32>()..directory + size_of::<u32>() * 2]
+        .copy_from_slice(&(RELOCATION_BLOCK_SIZE as u32).to_le_bytes());
+    let checksum = pe_checksum(&bytes, pe.checksum_offset);
+    bytes[pe.checksum_offset..pe.checksum_offset + size_of::<u32>()].copy_from_slice(&checksum.to_le_bytes());
+
+    let opened = opened_from(bytes, ManifestState::None);
+    let mut edits = EditState::new(&opened.inspection);
+    assert_eq!(edits.encryption.status(), EncryptionStatus::Located(EncryptionState::Removed));
+    assert!(edits.encryption.can_remove(EncryptionPart::KrHandshake));
+    assert!(edits.encryption.rows(&opened.inspection).iter().any(|row| row.state.contains("relocation repair needed")));
+    edits.encryption.bypass_kr_handshake = true;
+    assert_eq!(edits.build_patch().unwrap().edits, [ExeEdit::BypassKrHandshake]);
+    let plan = preview(&opened, &edits).plan().expect("metadata repair planned").clone();
+    let repaired = plan.apply(&opened.bytes).unwrap();
+    assert_eq!(repaired[handshake_range.clone()], opened.bytes[handshake_range]);
+    let inspection = ClientExeInspection::inspect(&repaired).unwrap();
+    let finished = EditState::new(&inspection);
+    assert_eq!(finished.encryption.status(), EncryptionStatus::Located(EncryptionState::Removed));
+    assert!(!finished.encryption.can_remove(EncryptionPart::KrHandshake));
 }
 
 /// A Classic `login.cfg` with a comment, a line the client does not know and both kinds of server.

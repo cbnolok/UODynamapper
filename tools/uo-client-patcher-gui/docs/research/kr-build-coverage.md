@@ -7,7 +7,10 @@ uses PE resource versions and decoded instructions, not filename-based version g
 The complete encryption patch (including the independent E3 bypass) supports all eighteen supplied 2.45–2.57
 executables and the original 2.58.0.6. Login destinations and embedded-key inspection also support every file.
 Exact function addresses and hashes are recorded in [the sibling-build table](uokr_login.md#audited-sibling-builds).
-Unknown layouts or mismatched function bytes remain refused.
+The nineteen files are regression fixtures, not a version allowlist. Dynamic resolution accepts either verified
+instruction layout at new addresses, including unknown resource versions, after validating the complete helper
+graph. Unknown layouts, inconsistent dependencies and multiple matches remain refused. See
+[dynamic patch resolution](../DYNAMIC_PATCHING.md).
 
 | Collection filename | PE resource version | Login address located | Login cipher located | Full encryption patch |
 |---|---|---|---|---|
@@ -61,7 +64,8 @@ The 2.45 extractor validates its earlier loop form and reads the actual `MOV EBX
 
 The six 2.46–2.47 game-connect functions share the 655-byte opcode layout but also differ at two relative-call
 operands `+0x5b` and `+0x1a9`, targeting seed/callback shared-pointer helpers. Both are audited and included
-in the common 23-operand profile. Every operand still has an exact value.
+in the common 23-operand layout. These fields are resolved from the executable and their targets validated;
+they no longer need per-build constants.
 
 The four 2.45 builds use the older compiler/SEH login-transform layout: key 1 is loaded with `MOV EBX,imm32`
 and key 2 enters `XOR ECX,imm32`. Their game-connect functions are 397 bytes with an aligned EBP frame and

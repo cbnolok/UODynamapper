@@ -189,6 +189,13 @@ pub(super) fn allowed_ranges(before: &ClientExeInspection, edits: &[ExeEdit]) ->
                         _ => ciphers.clone(),
                     };
                     ranges.extend(selected.sites.iter().map(|site| site.offset..site.offset + site.patched().len()));
+                    if selected.sites.iter().any(|site| site.kind == uocf::client::encryption::CipherSiteKind::GameLoginHandshake)
+                        && before.pe.base_relocation_directory.1 != 0
+                    {
+                        let va = before.pe.image_base + before.pe.base_relocation_directory.0;
+                        ranges.push(before.pe.section_of_va(va).unwrap().raw_range());
+                        ranges.push(field(before.pe.base_relocation_directory_entry_offset() + size_of::<u32>()));
+                    }
                 }
             }
         }

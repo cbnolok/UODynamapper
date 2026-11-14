@@ -27,9 +27,10 @@ which also lists every site of every build.
   following Diffie-Hellman and SHA-256, rather than the older Twofish/MD5 pair. Removing their transforms alone
   leaves E3 validation, the plaintext E4 response and Huffman installation intact.
 - **KR game handshake**: replace the fixed `0xffffffff` seed with the relay auth key, enter state 2, install
-  Huffman and send 0x91 immediately. The client no longer waits for 0xE3 or sends 0xE4. This replacement is
-  restricted to the nineteen audited KR profiles below: each complete game-connect function must match at its
-  original VA. Unsupported versions are refused rather than patched with guessed addresses.
+  Huffman and send 0x91 immediately. The client no longer waits for 0xE3 or sends 0xE4. The patcher dynamically
+  locates either verified game-connect layout, resolves its dependencies and generates replacement operands
+  from that executable. Versions and addresses are not an allowlist; unfamiliar layouts or
+  inconsistent dependencies are refused. See [dynamic patch resolution](DYNAMIC_PATCHING.md).
 - **EC normal route (4.0.102.3)**: the relay handler directly selects the auth-key seed, ready state 2,
   Twofish/MD5 and Huffman, then sends 0x91. Its compiled-in fixed-seed/E3 initializer has no callers or references;
   E3 is not registered by the normal route. The exchange handler clears and replaces both transform chains before
@@ -103,9 +104,13 @@ and only the newly introduced handshake site is stock.
 | 2.57.0.17 | `0x5b6b60` | `0x1b5fbf` | 655 / 458 |
 | 2.58.0.6 | `0x5b6b40` | `0x1b5f9f` | 655 / 458 |
 
-Every profile checks the complete function at its original VA, with exact address operands and relative calls.
-The 2.46–2.58 profiles use the 655-byte layout and 458-byte replacement. The four 2.45 profiles use a separate
-397-byte SEH layout and 270-byte replacement, preserving their original exception registration and cleanup.
+These addresses document regression fixtures, rather than runtime lookup entries. The resolver scans executable
+sections and validates each complete instruction layout, its calls, globals, RTTI and helper calling conventions.
+The supplied 2.46–2.58 files use the 655-byte layout and 458-byte replacement. The four supplied 2.45 files use a
+separate 397-byte SEH layout and 270-byte replacement, preserving their original exception registration and cleanup.
+Matching layouts at other addresses or with an unknown resource version are accepted. Existing PE base
+relocations are updated for the generated operands; previously patched copies with stale records can be repaired
+by reapplying the handshake bypass.
 The [collection inventory](research/kr-build-coverage.md) records address/cipher coverage, keys and the
 filename/resource-version discrepancy. The three encryption controls work independently in every audited build.
 
