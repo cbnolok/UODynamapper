@@ -151,6 +151,12 @@ const LIGHT_COVER_OPTIONS: [(&str, LightCover, &str); 3] = [
     ("Enhanced/KR Clients", LightCover::Clients, tips::LIGHT_COVER_CLIENTS),
 ];
 
+/// KR-like's "Player's Floor Rule" choices: `(label, rule, tooltip)`.
+const PLAYER_FLOOR_RULE_OPTIONS: [(&str, PlayerFloorRule, &str); 2] = [
+    ("ClassicUO", PlayerFloorRule::ClassicUo, tips::PLAYER_FLOOR_RULE_CLASSICUO),
+    ("KR Client", PlayerFloorRule::Kr, tips::PLAYER_FLOOR_RULE_KR),
+];
+
 /// The intensity slider of each local light source, under the "Local Lights" row: `(label, tooltip)`.
 fn local_light_intensity_slider(source: ClientLocalLightSource) -> (&'static str, &'static str) {
     match source {
@@ -275,6 +281,7 @@ fn apply_render_preset(
     if let Some(slots) = style_slots {
         u.light_cover = slots.light_cover;
     }
+    u.player_floor_rule = style_slots.and_then(|slots| slots.player_floor_rule);
     u.sync_local_light_intensity();
     u.land_texture_variation = style_slots.and_then(|slots| slots.land_texture_variation);
     u.sync_land_texture_variation();
@@ -1119,6 +1126,9 @@ fn whole_scene_controls(ui: &mut egui::Ui, u: &mut UniformState, gates: RenderSt
         // exactly like Exposure, so it is folded into Exposure (Advanced -> Intensities).
         changed |= slider_s(ui, "Light/Static Interaction", &mut u.effects.light_decal_intensity, 0.0..=2.0, tips::LIGHT_STATIC_INTERACTION);
         changed |= light_cover_controls(ui, &mut u.light_cover);
+        if let Some(rule) = u.player_floor_rule.as_mut() {
+            changed |= player_floor_rule_controls(ui, rule);
+        }
         if let Some(local_lights) = u.local_lights.as_mut() {
             changed |= local_lights_controls(ui, local_lights);
         }
@@ -1157,6 +1167,22 @@ fn light_cover_controls(ui: &mut egui::Ui, light_cover: &mut LightCover) -> bool
             let selected = *light_cover == option;
             if with_tip(ui.selectable_label(selected, label), tip).clicked() && !selected {
                 *light_cover = option;
+                changed = true;
+            }
+        }
+    });
+    changed
+}
+
+/// Which rule "Show Only the Player's Floor" follows in KR-like.
+fn player_floor_rule_controls(ui: &mut egui::Ui, rule: &mut PlayerFloorRule) -> bool {
+    let mut changed = false;
+    ui.horizontal_wrapped(|ui| {
+        with_tip(ui.label("Player's Floor Rule:"), tips::PLAYER_FLOOR_RULE);
+        for (label, option, tip) in PLAYER_FLOOR_RULE_OPTIONS {
+            let selected = *rule == option;
+            if with_tip(ui.selectable_label(selected, label), tip).clicked() && !selected {
+                *rule = option;
                 changed = true;
             }
         }
@@ -1494,6 +1520,7 @@ mod tests {
             local_lights: None,
             land_texture_variation: None,
             light_cover: LightCover::ClassicUo,
+            player_floor_rule: None,
             sun: SunAngles::default(),
             dirty: false,
             saved_snapshot: None,
@@ -1517,6 +1544,7 @@ mod tests {
         LandRenderStylePresetsPerMode {
             land_texture_variation: None,
             light_cover: LightCover::ClassicUo,
+            player_floor_rule: None,
             local_lights: None,
             morning: preset(base),
             afternoon: preset(base + 1.0),

@@ -510,6 +510,10 @@ pub struct LandRenderStylePresetsPerMode {
     /// Which rule hides the lights a roof or an upper floor covers, one setting for the style in all four styles
     /// (`world::art::light_cover`).
     pub light_cover: LightCover,
+    /// Which rule "Show Only the Player's Floor" follows, in KR-like only, one setting for the style
+    /// (`world::z_view`); the other styles follow ClassicUO's.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub player_floor_rule: Option<PlayerFloorRule>,
     /// The local lights of KR-like and Enhanced, one setting for the style rather than per time of day: which
     /// lights the land light decals and static local lights take, and how strongly.
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -637,6 +641,20 @@ pub enum LightCover {
     /// The Enhanced and KR clients': any object in a higher 20-z band above the land covers it.
     #[serde(rename = "clients")]
     Clients,
+}
+
+/// The rule "Show Only the Player's Floor" (`world_rendering.show_only_player_floor`) hides what is above the player
+/// by (`world::z_view`), chosen in KR-like; the other styles follow ClassicUO's.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Deserialize, Serialize)]
+pub enum PlayerFloorRule {
+    /// ClassicUO's: a ceiling over the player caps the statics at its z and hides the roofs; land over the player
+    /// caps the land and the statics a little above the player.
+    #[serde(rename = "classicuo")]
+    ClassicUo,
+    /// The KR client's: a ceiling over the player hides the statics in the 20-z layers above the player's, each
+    /// counted from the land under its own cell; the land goes whole while the player is below the land.
+    #[serde(rename = "kr")]
+    Kr,
 }
 
 /// A preset's sun: one static light direction for land, art and the sprite shadows, as compass angles.

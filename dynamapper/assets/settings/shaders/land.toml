@@ -741,6 +741,7 @@ elevation_degrees = 45.0
 [kr]
 land_texture_variation = false
 light_cover = "uod"
+player_floor_rule = "kr"
 
 [kr.local_lights]
 source = "light_sprites"

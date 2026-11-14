@@ -1921,6 +1921,7 @@ mod tests {
             local_lights: None,
             land_texture_variation: None,
             light_cover: world::land::mesh_material::LightCover::ClassicUo,
+            player_floor_rule: None,
             sun: world::land::mesh_material::SunAngles::default(),
             dirty: false,
             saved_snapshot: None,

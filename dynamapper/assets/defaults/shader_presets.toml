@@ -144,6 +144,19 @@ default_preset = "classic.morning"
 #                     cell. In both, a floor or roof at least 5 z above the light hides it too (the clients draw such
 #                     lights over the floor).
 #
+# === [Player floor rule] ===
+# [kr] player_floor_rule: KR-like only, one value for the style, required there and refused elsewhere (the other
+#                    styles follow ClassicUO's rule). Which rule "Show Only the Player's Floor"
+#                    (world_rendering.show_only_player_floor) hides what is above the player by:
+#   "classicuo":      ClassicUO's: a ceiling over the player caps the statics at its z and hides the roofs; land over
+#                     the player caps the land and the statics a little above the player.
+#   "kr":             The KR client's: with a static more than 14 z above the player on the player's cell, or a roof
+#                     on the cell in front, every static, item and multi part in a higher 20-z layer than the player's
+#                     is hidden, layer = clamp((z - land z + 140) / 20, 0, 15), each counted from the averaged land z
+#                     of its own cell; land is never cut by height, and goes whole while the player stands below the
+#                     land of the player's cell (in a cave). The lights of the hidden layers go with them, and the
+#                     statics of the hidden layers no longer cover or clip the lights below them.
+#
 # === [Client shadows] ===
 # client_shadows:    KR-like only, required there and refused elsewhere. true draws the KR client's static shadows
 #                    (its Show Shadows option): a black copy of each static, item and foliage sprite, leaning right
@@ -894,6 +907,7 @@ elevation_degrees = 45.0
 [kr]
 land_texture_variation = false
 light_cover = "uod"
+player_floor_rule = "kr"
 
 [kr.local_lights]
 source = "light_sprites"

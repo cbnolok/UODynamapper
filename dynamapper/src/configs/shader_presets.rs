@@ -6,7 +6,7 @@ use crate::{
     core::render::scene::world::land::mesh_material::{
         local_light_intensity, ClientLocalLights, ClientNightLighting, GlobalLightingUniforms, LandEffectsUniform,
         LandLightingUniforms, LandMaterialUniformsPresets, LandRenderStylePresetsPerMode, LandShaderModePresets,
-        LightCover, SunAngles, LOCAL_LIGHT_INTENSITY_RANGE, TONE_CURVE_PROFILE,
+        LightCover, PlayerFloorRule, SunAngles, LOCAL_LIGHT_INTENSITY_RANGE, TONE_CURVE_PROFILE,
     },
     core::system_sets::StartupSysSet,
     prelude::*,
@@ -60,6 +60,12 @@ pub fn preset_group_uses_client_shadows(group: &str) -> bool {
     group == KR_PRESET_GROUP
 }
 
+/// KR-like chooses the rule "Show Only the Player's Floor" follows (`player_floor_rule`), ClassicUO's or the KR
+/// client's; the other styles follow ClassicUO's.
+pub fn preset_group_has_player_floor_rule(group: &str) -> bool {
+    group == KR_PRESET_GROUP
+}
+
 /// KR-like, Enhanced and UOD-Painterly draw the KR and Enhanced terrain materials, whose repetition
 /// `land_texture_variation` may break up; Classic draws none.
 pub fn preset_group_has_land_texture_variation(group: &str) -> bool {
@@ -87,6 +93,8 @@ pub struct UniformState {
     pub land_texture_variation: Option<bool>,
     /// The rule that hides covered lights, of the active preset's style.
     pub light_cover: LightCover,
+    /// The rule "Show Only the Player's Floor" follows, of the active preset's style: `Some` in KR-like only.
+    pub player_floor_rule: Option<PlayerFloorRule>,
     pub sun: SunAngles,              // static light direction (maps to scene.light_direction)
     pub dirty: bool,                 // when true, push to GPU materials this frame
     /// Snapshot of the last values saved to disk (for undo). `None` until first save.
@@ -108,6 +116,7 @@ pub struct UniformSnapshot {
     pub local_lights: Option<ClientLocalLights>,
     pub land_texture_variation: Option<bool>,
     pub light_cover: LightCover,
+    pub player_floor_rule: Option<PlayerFloorRule>,
     pub sun: SunAngles,
 }
 
@@ -131,6 +140,7 @@ impl UniformState {
             local_lights: self.local_lights,
             land_texture_variation: self.land_texture_variation,
             light_cover: self.light_cover,
+            player_floor_rule: self.player_floor_rule,
             sun: self.sun,
         }
     }
@@ -146,6 +156,7 @@ impl UniformState {
         self.local_lights = snap.local_lights;
         self.land_texture_variation = snap.land_texture_variation;
         self.light_cover = snap.light_cover;
+        self.player_floor_rule = snap.player_floor_rule;
         self.sun = snap.sun;
         self.dirty = true;
     }
@@ -154,6 +165,12 @@ impl UniformState {
     /// client in the other styles.
     pub fn light_cover_rule(&self) -> LightCoverRule {
         LightCoverRule::of_style(self.light_cover, preset_key_group(&self.active_preset) == Some(KR_PRESET_GROUP))
+    }
+
+    /// The rule "Show Only the Player's Floor" follows in the active style: its `player_floor_rule`, ClassicUO's in
+    /// the styles without one.
+    pub fn effective_player_floor_rule(&self) -> PlayerFloorRule {
+        self.player_floor_rule.unwrap_or(PlayerFloorRule::ClassicUo)
     }
 
     /// Bring `effects.local_light_intensity` in line with `local_lights`.
@@ -291,8 +308,9 @@ fn clamp_client_lighting(lighting: ClientNightLighting) -> ClientNightLighting {
 }
 
 /// A hand-written preset file must give KR-like and Enhanced `client_lighting` and no `global_lighting`, and the
-/// other groups the reverse, with every value in range; KR-like, alone, `client_shadows`; KR-like and Enhanced,
-/// alone, their `local_lights`, in range; and every group but Classic, alone, its `land_texture_variation`.
+/// other groups the reverse, with every value in range; KR-like, alone, `client_shadows` and `player_floor_rule`;
+/// KR-like and Enhanced, alone, their `local_lights`, in range; and every group but Classic, alone, its
+/// `land_texture_variation`.
 fn validate_preset_lighting(presets: &LandShaderModePresets) -> eyre::Result<()> {
     let mut problems = Vec::new();
     for (group, slots) in preset_groups(presets) {
@@ -300,6 +318,13 @@ fn validate_preset_lighting(presets: &LandShaderModePresets) -> eyre::Result<()>
             (true, None) => problems.push(format!("missing `{group}.land_texture_variation`")),
             (false, Some(_)) => problems.push(format!(
                 "`{group}.land_texture_variation` is not a setting there: Classic draws no KR or Enhanced materials"
+            )),
+            _ => {}
+        }
+        match (preset_group_has_player_floor_rule(group), slots.player_floor_rule) {
+            (true, None) => problems.push(format!("missing `{group}.player_floor_rule`")),
+            (false, Some(_)) => problems.push(format!(
+                "`{group}.player_floor_rule` is not a setting there: only KR-like chooses it, the others follow ClassicUO's"
             )),
             _ => {}
         }
@@ -355,7 +380,7 @@ fn validate_preset_lighting(presets: &LandShaderModePresets) -> eyre::Result<()>
 
 /// Bring a leniently read land.toml in line with `validate_preset_lighting`: drop the dimming setting a group does not
 /// use, fill the one it lacks from `defaults` and clamp out-of-range values; likewise `client_shadows`,
-/// `local_lights` and `land_texture_variation`. Returns a warning per change.
+/// `local_lights`, `land_texture_variation` and `player_floor_rule`. Returns a warning per change.
 ///
 /// A land.toml saved before the night composite keeps `global_lighting` in KR-like and Enhanced; it is dropped there.
 /// One saved before `local_lights` has a `client_lighting.local_light_source` per slot instead: the lenient load drops
@@ -379,6 +404,14 @@ fn normalize_cached_preset_lighting(
             warnings.push(format!(
                 "{file_name}: `{group}.land_texture_variation` dropped: Classic draws no KR or Enhanced materials"
             ));
+        }
+        if preset_group_has_player_floor_rule(group) {
+            if slots.player_floor_rule.is_none() {
+                slots.player_floor_rule = default_slots.player_floor_rule;
+                warnings.push(format!("{file_name}: missing key `{group}.player_floor_rule` filled from the default"));
+            }
+        } else if slots.player_floor_rule.take().is_some() {
+            warnings.push(format!("{file_name}: `{group}.player_floor_rule` dropped: only KR-like chooses it"));
         }
         if preset_group_uses_client_lighting(group) {
             match slots.local_lights {
@@ -661,7 +694,7 @@ pub fn build_save_presets(u: &UniformState, base: &LandShaderModePresets) -> Lan
 }
 
 /// Capture the live shader values in their active mode × time-of-day slot, and the style's local lights, land
-/// texture variation and light cover in its group.
+/// texture variation, light cover and player floor rule in its group.
 ///
 /// The UI calls this before changing presets so edits are not discarded when the
 /// next slot is applied. Disk persistence remains tied to closing the shader panel.
@@ -670,6 +703,7 @@ pub fn store_active_preset(presets: &mut LandShaderModePresets, u: &UniformState
         slots.local_lights = u.local_lights;
         slots.land_texture_variation = u.land_texture_variation;
         slots.light_cover = u.light_cover;
+        slots.player_floor_rule = u.player_floor_rule;
     }
     if let Some(slot) = get_preset_slot_mut(presets, &u.active_preset) {
         slot.effects = u.effects;
@@ -754,7 +788,7 @@ pub fn get_preset_slot<'a>(
 }
 
 /// Replace one mode × time-of-day slot with its immutable factory values, and its style's local lights, land
-/// texture variation and light cover, which the shader window shows with the slot's values.
+/// texture variation, light cover and player floor rule, which the shader window shows with the slot's values.
 pub fn reset_preset_to_factory(
     presets: &mut LandShaderModePresets,
     factory_presets: &LandShaderModePresets,
@@ -772,9 +806,11 @@ pub fn reset_preset_to_factory(
     let factory_local_lights = factory_slots.and_then(|slots| slots.local_lights);
     let factory_land_texture_variation = factory_slots.and_then(|slots| slots.land_texture_variation);
     let factory_light_cover = factory_slots.map(|slots| slots.light_cover);
+    let factory_player_floor_rule = factory_slots.and_then(|slots| slots.player_floor_rule);
     if let Some(slots) = group.and_then(|group| get_preset_group_mut(presets, group)) {
         slots.local_lights = factory_local_lights;
         slots.land_texture_variation = factory_land_texture_variation;
+        slots.player_floor_rule = factory_player_floor_rule;
         if let Some(light_cover) = factory_light_cover {
             slots.light_cover = light_cover;
         }
@@ -797,6 +833,7 @@ fn clone_mode(m: &LandRenderStylePresetsPerMode) -> LandRenderStylePresetsPerMod
     LandRenderStylePresetsPerMode {
         land_texture_variation: m.land_texture_variation,
         light_cover: m.light_cover,
+        player_floor_rule: m.player_floor_rule,
         local_lights: m.local_lights,
         morning: clone_slot(&m.morning),
         afternoon: clone_slot(&m.afternoon),
@@ -844,6 +881,7 @@ fn uniform_state_from_presets(source: &LandShaderModePresets) -> UniformState {
     let land_texture_variation = style.and_then(|slots| slots.land_texture_variation);
     // An invalid active preset falls back to classic.morning, and so to Classic's light cover.
     let light_cover = style.map_or(source.classic.light_cover, |slots| slots.light_cover);
+    let player_floor_rule = style.and_then(|slots| slots.player_floor_rule);
     let mut state = UniformState {
         effects: preset.effects,
         lighting: preset.lighting,
@@ -854,6 +892,7 @@ fn uniform_state_from_presets(source: &LandShaderModePresets) -> UniformState {
         local_lights,
         land_texture_variation,
         light_cover,
+        player_floor_rule,
         sun: preset.sun,
         dirty: true,
         saved_snapshot: None,
@@ -897,6 +936,7 @@ mod tests {
         LandRenderStylePresetsPerMode {
             land_texture_variation: None,
             light_cover: LightCover::ClassicUo,
+            player_floor_rule: None,
             local_lights: None,
             morning: slot(base_mode, base_global, 1.0),
             afternoon: slot(base_mode, base_global + 0.1, 1.1),
@@ -1330,6 +1370,53 @@ mod tests {
         assert_eq!(load.value.kr.light_cover, LightCover::Uod);
         assert_eq!(load.value.enhanced.light_cover, LightCover::Uod);
         assert_eq!(load.value.classic.light_cover, LightCover::Clients);
+    }
+
+    /// KR-like alone chooses its player floor rule, the KR client's in both bundled files; a hand-written file must
+    /// give it and no other style one; a cached land.toml fills or drops it; the choice is stored in, read from and
+    /// reset in its style.
+    #[test]
+    fn player_floor_rule_is_kr_likes_alone() {
+        for (name, text) in [("shader_presets.toml", BUNDLED_FACTORY_PRESETS), ("land.toml", BUNDLED_LAND_SETTINGS)] {
+            let presets = parse(text).expect("bundled");
+            for (group, slots) in preset_groups(&presets) {
+                let expected = preset_group_has_player_floor_rule(group).then_some(PlayerFloorRule::Kr);
+                assert_eq!(slots.player_floor_rule, expected, "{name} {group}");
+            }
+        }
+
+        let mut presets = parse(BUNDLED_FACTORY_PRESETS).expect("bundled");
+        presets.enhanced.player_floor_rule = Some(PlayerFloorRule::Kr);
+        presets.kr.player_floor_rule = None;
+        let error = validate_preset_lighting(&presets).expect_err("misplaced rule").to_string();
+        for expected in ["`enhanced.player_floor_rule` is not a setting there", "missing `kr.player_floor_rule`"] {
+            assert!(error.contains(expected), "{error}");
+        }
+
+        let bundled = parse(BUNDLED_LAND_SETTINGS).expect("bundled");
+        let mut cached = clone_presets(&bundled);
+        cached.kr.player_floor_rule = None;
+        cached.classic.player_floor_rule = Some(PlayerFloorRule::ClassicUo);
+        let warnings = normalize_cached_preset_lighting(&mut cached, &bundled, "land.toml");
+        assert_eq!(warnings, [
+            "land.toml: `classic.player_floor_rule` dropped: only KR-like chooses it",
+            "land.toml: missing key `kr.player_floor_rule` filled from the default",
+        ]);
+        assert_eq!((cached.kr.player_floor_rule, cached.classic.player_floor_rule), (Some(PlayerFloorRule::Kr), None));
+
+        let mut on_kr = clone_presets(&bundled);
+        on_kr.default_preset = "kr.night".to_string();
+        let mut state = uniform_state_from_presets(&on_kr);
+        assert_eq!(state.effective_player_floor_rule(), PlayerFloorRule::Kr);
+        state.player_floor_rule = Some(PlayerFloorRule::ClassicUo);
+        let mut saved = build_save_presets(&state, &bundled);
+        assert_eq!(saved.kr.player_floor_rule, Some(PlayerFloorRule::ClassicUo));
+        assert!(reset_preset_to_factory(&mut saved, &bundled, "kr.morning"));
+        assert_eq!(saved.kr.player_floor_rule, Some(PlayerFloorRule::Kr));
+
+        on_kr.default_preset = "enhanced.night".to_string();
+        let state = uniform_state_from_presets(&on_kr);
+        assert_eq!((state.player_floor_rule, state.effective_player_floor_rule()), (None, PlayerFloorRule::ClassicUo));
     }
 
     /// A hand-written file must give KR-like and Enhanced their local lights, complete and in range, and no other
