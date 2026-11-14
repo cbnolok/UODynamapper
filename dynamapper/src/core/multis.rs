@@ -155,6 +155,11 @@ impl PlacedMultisRes {
             .filter(move |multi| x.contains(&multi.x) && y.contains(&multi.y))
     }
 
+    /// Whether no map has a multi placed: Preferences then greys out "Show Hidden Multi Parts".
+    pub fn is_empty(&self) -> bool {
+        self.maps.iter().all(Vec::is_empty)
+    }
+
     #[cfg(test)]
     pub fn from_maps(maps: Vec<Vec<PlacedMulti>>) -> Self {
         Self { maps }
@@ -183,6 +188,14 @@ mod tests {
         assert!(ids(0, 0..21, 0..21).is_empty());
         assert!(ids(5, 0..21, 0..21).is_empty());
         assert!(PlacedMultisRes::default().anchored_in(0, 0..u32::MAX, 0..u32::MAX).next().is_none());
+    }
+
+    #[test]
+    fn placed_multis_are_empty_until_a_map_has_one() {
+        assert!(PlacedMultisRes::default().is_empty());
+        assert!(PlacedMultisRes::from_maps(vec![Vec::new(), Vec::new()]).is_empty());
+        let multi = PlacedMulti { multi_id: 1, x: 10, y: 10, z: 0, hue: 0 };
+        assert!(!PlacedMultisRes::from_maps(vec![Vec::new(), vec![multi]]).is_empty());
     }
 
     #[test]

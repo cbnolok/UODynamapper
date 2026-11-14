@@ -23,6 +23,11 @@ const ROUTE_FILE_RELOAD_HOVER: &str = "Read LandRoutes.kdl again. Saving your co
 /// Hover text of the "Gumps and paperdoll" choice.
 const GUMPS_AND_PAPERDOLL_HOVER: &str = "Which client's gumps and paperdoll the gump windows draw. Like the art and \
     land sources, the shader preset doesn't change it.";
+/// Hover text of "Show Hidden Multi Parts" while multis are placed.
+const HIDDEN_MULTI_PARTS_HOVER: &str = "Also draw the multi parts the client never draws.";
+/// Hover text of "Show Hidden Multi Parts" while no multi is placed (`PlacedMultisRes`): it then changes nothing.
+const HIDDEN_MULTI_PARTS_UNAVAILABLE_HOVER: &str = "No multis are placed: the map statics are plain items, never \
+    multis. Multis appear only once a server feed or a placement file provides them, and this option then applies.";
 
 #[derive(Resource)]
 pub struct PreferencesDialogState {
@@ -217,6 +222,7 @@ pub fn sys_render_preferences_dialog(
     time: Res<Time>,
     land_textures: Option<Res<crate::core::texture_cache::land::cache::LandTextureCache>>,
     mut route_file: Option<ResMut<crate::core::texture_cache::land::route_file::RouteFileRes>>,
+    placed_multis: Option<Res<crate::core::multis::PlacedMultisRes>>,
 ) {
     state.apply_timer.tick(time.delta());
 
@@ -651,9 +657,13 @@ pub fn sys_render_preferences_dialog(
                         state.apply_timer.reset();
                         state.apply_timer.unpause();
                     }
+                    // Greyed out while nothing places a multi; enabled again as soon as a source places one.
+                    let multis_placed = placed_multis.as_ref().is_some_and(|placed| !placed.is_empty());
                     if ui
-                        .checkbox(&mut state.show_hidden_multi_parts, "Show Hidden Multi Parts")
-                        .on_hover_text("Also draw the multi parts the client never draws.")
+                        .add_enabled(multis_placed,
+                            egui::Checkbox::new(&mut state.show_hidden_multi_parts, "Show Hidden Multi Parts"))
+                        .on_hover_text(HIDDEN_MULTI_PARTS_HOVER)
+                        .on_disabled_hover_text(HIDDEN_MULTI_PARTS_UNAVAILABLE_HOVER)
                         .changed()
                     {
                         state.apply_timer.reset();
