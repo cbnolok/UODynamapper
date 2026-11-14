@@ -1,7 +1,7 @@
 import package::shaders::world::art::picking::{pick_clip, pick_pass, pick_color};
 import package::shaders::world::art::light_scene::{light_scene_drawn, light_scene_texel, light_scene_class,
-    light_scene_height, light_scene_cap_probe_v, light_scene_may_be_cap, light_scene_cap_texel, LIGHT_SCENE_MIN_ALPHA,
-    LIGHT_SCENE_CAP_MIN_ALPHA, LIGHT_SCENE_CLASS_HEIGHT};
+    light_scene_height, light_scene_cell_rise, light_scene_cap_probe_v, light_scene_may_be_cap, light_scene_cap_texel,
+    LIGHT_SCENE_MIN_ALPHA, LIGHT_SCENE_CAP_MIN_ALPHA, LIGHT_SCENE_CLASS_HEIGHT};
 import bevy_pbr::render::{
     forward_io::Vertex,
     view_transformations,
@@ -390,7 +390,8 @@ fn shade_fragment(in: ArtVertexOutput, sample_index: u32) -> ArtFragmentOutput {
         // A wall's or a solid static's cap is a floor at its top (light_scene_cap_probe_v): one more tap, the art
         // its height under the pixel.
         let height = light_scene_height(inst.is_wet_flags);
-        if (kind != LIGHT_SCENE_CLASS_HEIGHT && height > 0 && light_scene_may_be_cap(texel, z + height)) {
+        if (kind != LIGHT_SCENE_CLASS_HEIGHT && height > 0 && light_scene_may_be_cap(texel, z + height,
+            light_scene_cell_rise(view.world_from_view[2].xyz, HEIGHT_SCALE))) {
             let v = light_scene_cap_probe_v((uv.y - inst.uv_min.y) / (inst.uv_max.y - inst.uv_min.y),
                 f32(height) * HEIGHT_SCALE, inst.local_max.y - inst.local_min.y);
             if (v <= 1.0 && textureSampleLevel(art_atlas, art_atlas_sampler,

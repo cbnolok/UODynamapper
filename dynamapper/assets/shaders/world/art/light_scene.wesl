@@ -15,8 +15,8 @@ const LIGHT_SCENE_CLASS_SHIFT: u32 = 1u;
 const LIGHT_SCENE_CLASS_MASK: u32 = 3u;
 // A floor, a roof, flat art or any other static: lit below LIGHT_COVER_MIN_RISE above the light.
 const LIGHT_SCENE_CLASS_HEIGHT: u32 = 0u;
-// A wall: its left half stands on the cell's west edge and shows its east face, its right half on the north edge
-// and shows its south face.
+// A wall: its left half stands on the cell's south edge and shows its south face, its right half on the east edge
+// and shows its east face, the faces of a solid static; its art's top, its cap, covers the cell.
 const LIGHT_SCENE_CLASS_WALL: u32 = 1u;
 // A solid static filling its cell: its left half shows its south face, its right half its east face.
 const LIGHT_SCENE_CLASS_BLOCK: u32 = 2u;
@@ -46,6 +46,8 @@ const LIGHT_SCENE_CELL_CENTRE: vec2<f32> = vec2<f32>(0.5, 0.5);
 // Below this slope of the view direction across a face's plane, the face is seen edge on and keeps the static's z.
 const LIGHT_SCENE_MIN_VIEW_SLOPE: f32 = 0.001;
 const LIGHT_SCENE_MIN_ALPHA: f32 = 0.0001;
+// The depth of a cell, from its south or east edge to the opposite one, in world units.
+const LIGHT_SCENE_CELL_DEPTH: f32 = 1.0;
 // How far a fragment's depth may lie from the depth drawn at its pixel and still be the static drawn there: the
 // fragments recompute the opaque pass's depth exactly, and the art's tie-break between statics is 1e-6.
 const LIGHT_SCENE_DEPTH_TOLERANCE: f32 = 2.5e-7;
@@ -76,20 +78,28 @@ fn light_scene_height(is_wet_flags: u32) -> i32 {
 
 // Where to look for a wall's or a solid static's cap. Its art draws each upright face `height` z tall, the same in
 // every column of the art, and the cap above the face: a pixel is on the cap when the art still covers the point
-// `height` z under it. The face's height under the pixel (`light_scene_texel`) cannot tell: the art draws a wall's
-// face, and its cap, in front of the wall's plane by the wall's thickness, so the cap reads up to about 12 z under
-// the wall's top, as low as the top of its face (Britain's walls). This gives the art's v (0 at its top, 1 at its
-// bottom) of the point `height_world` (the height in world units) under the fragment at `v` on a card
+// `height` z under it. The face's height under the pixel (`light_scene_texel`) cannot tell: the cap lies behind the
+// face's plane, up to the cell's far edge, so its view line meets the plane above the top, by up to
+// `light_scene_cell_rise` (Britain's walls, whose cap covers the cell). This gives the art's v (0 at its top, 1 at
+// its bottom) of the point `height_world` (the height in world units) under the fragment at `v` on a card
 // `card_height` tall; past 1 lies under the art.
 fn light_scene_cap_probe_v(v: f32, height_world: f32, card_height: f32) -> f32 {
     return v + height_world / card_height;
 }
 
+// How far, in z, the view line `view_dir` climbs across a cell's depth: the most a point of the top of a static
+// that fills its cell, its cap, reads above the top on the plane of its face (`light_scene_texel`).
+fn light_scene_cell_rise(view_dir: vec3<f32>, height_scale: f32) -> i32 {
+    let slope = max(min(abs(view_dir.x), abs(view_dir.z)), LIGHT_SCENE_MIN_VIEW_SLOPE);
+    return i32(ceil(LIGHT_SCENE_CELL_DEPTH * abs(view_dir.y) / slope / height_scale));
+}
+
 // Whether the light scene texel `texel` of a wall or a solid static at its art's pixel may lie on the static's cap,
-// at `top_z`: its face's point under the pixel is no higher than the top. Art drawn taller than its static's height
-// (a bookcase) keeps its faces above the top.
-fn light_scene_may_be_cap(texel: vec4<u32>, top_z: i32) -> bool {
-    return i32(texel.z) <= top_z + LIGHT_SCENE_Z_BIAS;
+// at `top_z`: its face's point under the pixel is no higher than the top by more than `cell_rise`
+// (`light_scene_cell_rise`), as a point of its top reads. Art drawn taller than its static's height (a bookcase)
+// keeps its faces higher above the top.
+fn light_scene_may_be_cap(texel: vec4<u32>, top_z: i32, cell_rise: i32) -> bool {
+    return i32(texel.z) <= top_z + cell_rise + LIGHT_SCENE_Z_BIAS;
 }
 
 // The texel of a pixel on the cap of the static of `texel`, at `top_z`: a floor there, a height static, which the
@@ -119,14 +129,13 @@ fn light_scene_texel(world_pos: vec3<f32>, anchor: vec2<f32>, z: i32, kind: u32,
     var face_z = z;
     if (kind != LIGHT_SCENE_CLASS_HEIGHT) {
         // The face's point under the pixel lies on the view line through the card's point, where the line crosses
-        // the face's plane: a wall's west edge (x = cell x) on the left half and its north edge (world z = cell y)
-        // on the right; a solid static's south face (world z = cell y + 1) on the left and its east face
-        // (x = cell x + 1) on the right. The card's own height overstates it by up to the cell's depth. The art
-        // drawn in front of the plane, such as the top of a wall's thickness, lands below it: no point of a face lies
-        // below its static's z. The top itself, its cap, goes as a floor (light_scene_cap_texel).
-        let wall = kind == LIGHT_SCENE_CLASS_WALL;
-        let across_x = left == wall;
-        let planes = select(cell + vec2<f32>(1.0), cell, wall);
+        // the face's plane: the south face (world z = cell y + 1) on the left half and the east face
+        // (x = cell x + 1) on the right, of a wall as of a solid static: UO's wall art stands on the cell's south
+        // and east edges, and a light hangs on it from the cell in front. The card's own height overstates it by up
+        // to the cell's depth. No point of a face lies below its static's z. The top, its cap, behind the plane,
+        // reads above the top and goes as a floor (light_scene_cap_texel).
+        let across_x = !left;
+        let planes = cell + vec2<f32>(LIGHT_SCENE_CELL_DEPTH);
         let slope = select(view_dir.z, view_dir.x, across_x);
         if (abs(slope) > LIGHT_SCENE_MIN_VIEW_SLOPE) {
             let run = select(planes.y, planes.x, across_x) - select(world_pos.z, world_pos.x, across_x);

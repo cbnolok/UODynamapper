@@ -21,6 +21,8 @@ pub(crate) mod gpu_picking;
 mod shading_tests;
 #[cfg(test)]
 mod depth_tests;
+#[cfg(test)]
+mod light_scene_tests;
 
 pub struct DrawStaticSpritesPlugin {
     pub registered_by: &'static str,

@@ -9,7 +9,7 @@ import bevy_pbr::render::{
     mesh_functions::{get_tag, get_world_from_local},
 };
 import package::shaders::world::art::light_scene::{LIGHT_SCENE_ART, LIGHT_SCENE_CLASS_SHIFT, LIGHT_SCENE_CLASS_MASK,
-    LIGHT_SCENE_CLASS_HEIGHT, LIGHT_SCENE_CLASS_WALL, LIGHT_SCENE_LEFT, LIGHT_SCENE_Z_BIAS};
+    LIGHT_SCENE_CLASS_HEIGHT, LIGHT_SCENE_LEFT, LIGHT_SCENE_Z_BIAS};
 
 @group(3) @binding(100) var light_scene: texture_2d<u32>;
 
@@ -37,9 +37,9 @@ const LIGHT_CLIP_EDGE_REACH: i32 = 2;
 // - a floor, a roof or another static (LIGHT_SCENE_CLASS_HEIGHT): below LIGHT_COVER_MIN_RISE above the light. The
 //   top of a wall or a solid static, its cap, is one at the static's top z (light_scene.wesl), so the cap flush with
 //   the floor over a light stays dark with the floor;
-// - a wall or a solid static: below the ceiling, on the light's own cell, and on the faces turned to the light. Its
-//   face's height (light_scene.wesl) reads a few z low, as the art draws a wall's face in front of its plane: the
-//   face stays dark from LIGHT_COVER_MIN_RISE under the ceiling up.
+// - a wall or a solid static: below the ceiling, on the faces turned to the light or on its own row or column. The
+//   face stays dark from LIGHT_COVER_MIN_RISE under the ceiling up: the seams between a wall's cap tiles and the
+//   rim where the cap meets the face read as the face's top, just under the floor flush with it.
 fn light_reaches(texel: vec4<u32>, light_cell: vec2<i32>, light_z: i32, ceiling: i32) -> bool {
     let code = texel.w;
     if ((code & LIGHT_SCENE_ART) == 0u) {
@@ -54,16 +54,13 @@ fn light_reaches(texel: vec4<u32>, light_cell: vec2<i32>, light_z: i32, ceiling:
         return false;
     }
     let cell = vec2<i32>(texel.xy);
-    if (all(cell == light_cell)) {
-        return true;
-    }
+    // The south face (the card's left half) and the east face of a wall or a solid static: lit from beyond them, and
+    // from their own row or column. A wall's art stands on its cell's south and east edges, so a sconce on the cell
+    // in front of it lights the whole run of the wall along its row or column; taking them for the west and north
+    // edges cut the glow at the sconce. A light on the run's own line lies in the wall's thickness, a window or a
+    // torch set in the wall, and lights the run's face on both sides as it lights its own cell's.
     let left = (code & LIGHT_SCENE_LEFT) != 0u;
-    if (kind == LIGHT_SCENE_CLASS_WALL) {
-        // The west edge's wall faces east, the north edge's faces south: lit from its own row or column onward.
-        return select(light_cell.y >= cell.y, light_cell.x >= cell.x, left);
-    }
-    // A solid static's south face and east face: lit from beyond them.
-    return select(light_cell.x > cell.x, light_cell.y > cell.y, left);
+    return select(light_cell.x >= cell.x, light_cell.y >= cell.y, left);
 }
 
 // Whether the light reaches the light scene texel at `pixel`, clamped into the light scene of size `size`.
