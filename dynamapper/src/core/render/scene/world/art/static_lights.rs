@@ -4,7 +4,7 @@ use super::statics_collect::{static_land_z, StaticChunkBatchKey};
 use crate::configs::light_scale::{ItemLightScales, NEUTRAL_LIGHT_SCALE};
 use crate::configs::{settings::Settings, shader_presets::UniformState};
 use crate::console_logger::{self, LogAbout, LogSev};
-use crate::core::multis::MultiDefinitionsRes;
+use crate::core::multis::{MultiDefinitionsRes, PlacedMultisRes};
 use crate::core::render::scene::world::land::mesh_material::{ClientLocalLightSource, ClientLocalLights};
 use crate::core::render::scene::world::land::{
     CHUNK_STORAGE_BLOCKS_DIM, MAP_STORAGE_BLOCK_TILE_DIM,
@@ -256,7 +256,7 @@ pub fn sys_collect_visible_static_lights(
     world_lights_res: Option<Res<WorldLightsPackageRes>>,
     hues_package_res: Option<Res<HuesPackageRes>>,
     map_planes: Option<Res<MapPlanesRes>>,
-    multis: Option<Res<MultiDefinitionsRes>>,
+    multis: (Option<Res<MultiDefinitionsRes>>, Res<PlacedMultisRes>),
     settings: Res<Settings>,
     uniform_state: Res<UniformState>,
     client_light_sprites: Res<RenderClientLightSprites>,
@@ -318,10 +318,11 @@ pub fn sys_collect_visible_static_lights(
         first * CHUNK_STORAGE_BLOCKS_DIM..end
     };
     let multi_parts = MultiCoverParts::read(
-        &mut statics_store,
         &tilemeta.0,
-        multis.as_deref(),
+        multis.0.as_deref(),
+        &multis.1,
         settings.world_rendering.show_hidden_multi_parts,
+        map_id,
         block_range(|key| key.gx),
         block_range(|key| key.gy),
     );

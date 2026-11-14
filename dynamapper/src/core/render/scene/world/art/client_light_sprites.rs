@@ -30,7 +30,7 @@ use super::statics_collect::{
 use crate::core::render::scene::camera::PlayerCamera;
 use crate::configs::{light_scale::ItemLightScales, settings::Settings, shader_presets::UniformState};
 use crate::console_logger::{self, LogAbout, LogSev};
-use crate::core::multis::MultiDefinitionsRes;
+use crate::core::multis::{MultiDefinitionsRes, PlacedMultisRes};
 use crate::core::render::scene::world::effects::client_night::LIGHT_BUFFER_LAYER;
 use crate::core::render::scene::world::land::mesh_material::LightCover;
 use crate::core::render::scene::world::land::{LCMesh, CHUNK_STORAGE_BLOCKS_DIM, MAP_STORAGE_BLOCK_TILE_DIM};
@@ -278,7 +278,7 @@ pub fn sys_collect_client_light_sprites(
     tilemeta_res: Option<Res<TileMetaPackageRes>>,
     tex_aux_res: Option<Res<TexAuxEcPackageRes>>,
     map_planes: Option<Res<MapPlanesRes>>,
-    multis: Option<Res<MultiDefinitionsRes>>,
+    multis: (Option<Res<MultiDefinitionsRes>>, Res<PlacedMultisRes>),
     settings: Res<Settings>,
     uniform_state: Res<UniformState>,
     light_scales: Res<ItemLightScales>,
@@ -353,10 +353,11 @@ pub fn sys_collect_client_light_sprites(
     };
     let (blocks_x, blocks_y) = (block_range(|&(_, gx)| gx), block_range(|&(gy, _)| gy));
     let multi_parts = MultiCoverParts::read(
-        &mut statics_store,
         &tilemeta.0,
-        multis.as_deref(),
+        multis.0.as_deref(),
+        &multis.1,
         show_hidden_multi_parts,
+        map_id,
         blocks_x,
         blocks_y,
     );

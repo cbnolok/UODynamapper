@@ -1,6 +1,21 @@
-use bevy::prelude::*;
+//! Multis: their definitions (`multi.mul` or `MultiCollection.uop`), and the multis placed in the world by their
+//! multi id (`PlacedMultisRes`), which the renderer, the z-view limit and the light cover expand into parts.
+//!
+//! Map statics are never multis, whatever their graphic. `statics*.mul` (and the converted statics packages) hold
+//! plain items, and since the High Seas and Stygian Abyss tiledata item ids run up to 0xFFFF, so the maps hold
+//! ordinary items at 0x4000 and above (map 0: 3706, map 1: 9469, map 5: 168922). The emulators read the statics the
+//! same way: ServUO's `TileMatrix.ReadStaticBlock` (Server/TileMatrix.cs) and ModernUO's read every entry as an item
+//! with no 0x4000 test, keep the multis as separate world objects, and ModernUO's TileData.cs caps item ids at
+//! `MaxItemValue` 0xFFFF. 0x4000 marked a multi only in the legacy 0x1A WorldItem packet, whose graphic field is an
+//! item id cut to 14 bits or a multi id or'ed with 0x4000 (ServUO's `WorldItem`, Server/Network/Packets.cs; ClassicUO's
+//! `PacketHandlers.UpdateItem`: `if (graphic >= 0x4000) type = 2`); the 0xF3 packet that ServUO and ModernUO send
+//! instead carries a type byte, 2 for a multi. Dynamapper supports neither that convention nor the 0x1A packet, now or
+//! later: 0x4000 divides nothing between items and multis here. A multi is drawn only from a source that names it as
+//! one, through `PlacedMultisRes`.
 
-pub const MULTI_STATIC_GRAPHIC_OFFSET: u16 = 0x4000;
+use bevy::prelude::*;
+use std::ops::Range;
+
 pub const MULTI_PART_VISIBLE_FLAG: u32 = 0x1;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -110,10 +125,40 @@ impl MultiDefinitionsRes {
     }
 }
 
-pub fn multi_id_from_static_graphic(graphic: u16) -> Option<u32> {
-    graphic
-        .checked_sub(MULTI_STATIC_GRAPHIC_OFFSET)
-        .map(u32::from)
+/// A multi placed in the world by its multi id, anchored on the cell (`x`, `y`) at `z`: its parts lie at their offsets
+/// from the anchor, their z added to the anchor's (`expanded_multi_part_z`), all with the multi's hue.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct PlacedMulti {
+    pub multi_id: u32,
+    pub x: u32,
+    pub y: u32,
+    pub z: i8,
+    pub hue: u16,
+}
+
+/// The multis placed in the world, by map. Only a source that names its objects as multis may fill it, such as a
+/// server's 0xF3 objects of type 2 or a placement file, never the map statics (see the module comment). None does
+/// yet, so it stays empty and no multi is drawn. A source that changes it must also invalidate what was built from
+/// it: the static chunk cache, the z-view limit and the light scans.
+#[derive(Resource, Default)]
+pub struct PlacedMultisRes {
+    maps: Vec<Vec<PlacedMulti>>,
+}
+
+impl PlacedMultisRes {
+    /// The multis placed on `map_id` whose anchors lie in the cells `x` × `y`.
+    pub fn anchored_in(&self, map_id: u32, x: Range<u32>, y: Range<u32>) -> impl Iterator<Item = &PlacedMulti> {
+        self.maps
+            .get(map_id as usize)
+            .map_or(&[][..], Vec::as_slice)
+            .iter()
+            .filter(move |multi| x.contains(&multi.x) && y.contains(&multi.y))
+    }
+
+    #[cfg(test)]
+    pub fn from_maps(maps: Vec<Vec<PlacedMulti>>) -> Self {
+        Self { maps }
+    }
 }
 
 fn multi_part_is_visible(flags: u32) -> bool {
@@ -129,10 +174,15 @@ mod tests {
     use super::*;
 
     #[test]
-    fn multi_id_only_uses_static_graphic_range() {
-        assert_eq!(multi_id_from_static_graphic(0x3fff), None);
-        assert_eq!(multi_id_from_static_graphic(0x4000), Some(0));
-        assert_eq!(multi_id_from_static_graphic(0x4007), Some(7));
+    fn placed_multis_are_found_by_map_and_anchor() {
+        let multi = |multi_id, x, y| PlacedMulti { multi_id, x, y, z: 0, hue: 0 };
+        let placed = PlacedMultisRes::from_maps(vec![Vec::new(), vec![multi(1, 10, 10), multi(2, 20, 10)]]);
+        let ids = |map_id, x, y| placed.anchored_in(map_id, x, y).map(|multi| multi.multi_id).collect::<Vec<_>>();
+        assert_eq!(ids(1, 0..15, 0..15), [1]);
+        assert_eq!(ids(1, 0..21, 10..11), [1, 2]);
+        assert!(ids(0, 0..21, 0..21).is_empty());
+        assert!(ids(5, 0..21, 0..21).is_empty());
+        assert!(PlacedMultisRes::default().anchored_in(0, 0..u32::MAX, 0..u32::MAX).next().is_none());
     }
 
     #[test]

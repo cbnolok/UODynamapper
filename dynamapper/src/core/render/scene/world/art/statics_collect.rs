@@ -7,7 +7,7 @@ use crate::core::render::scene::world::land::{
 };
 use crate::core::render::scene::world::land::tile_atlas::TileAtlas;
 use crate::core::multis::{
-    expanded_multi_part_z, multi_id_from_static_graphic, MultiDefinitionsRes,
+    expanded_multi_part_z, MultiDefinitionsRes, MultiPart, PlacedMulti, PlacedMultisRes,
 };
 use crate::core::render::scene::world::caves::{CaveMap, CaveStatic, CavesRes};
 use crate::core::render::scene::world::z_view::{ZViewCut, ZViewLimit};
@@ -274,45 +274,16 @@ pub(crate) struct StaticPickTile {
     pub is_wet: bool,
 }
 
-fn collect_static_render_tiles(
-    source_tile: uocf::classic::statics::PackedStaticTile,
-    block_x: u32,
-    block_y: u32,
-    multis: Option<&MultiDefinitionsRes>,
-    show_hidden_multi_parts: bool,
-    output: &mut Vec<StaticRenderTile>,
-) {
+/// The parts `parts` of the multi `multi` as the renderer draws them, around its anchor, with its hue.
+fn collect_multi_render_tiles(multi: &PlacedMulti, parts: &[MultiPart], output: &mut Vec<StaticRenderTile>) {
     output.clear();
-
-    let base_world_x =
-        (block_x * MAP_STORAGE_BLOCK_TILE_DIM) as i32 + source_tile.x_offset() as i32;
-    let base_world_z =
-        (block_y * MAP_STORAGE_BLOCK_TILE_DIM) as i32 + source_tile.y_offset() as i32;
-    let parts = multi_id_from_static_graphic(source_tile.graphic)
-        .and_then(|multi_id| {
-            multis.and_then(|multis| multis.parts(multi_id, show_hidden_multi_parts))
-        });
-
-    let Some(parts) = parts else {
-        output.push(StaticRenderTile {
-            graphic: source_tile.graphic,
-            world_x: base_world_x as f32,
-            world_z: base_world_z as f32,
-            z: source_tile.z,
-            hue: source_tile.hue,
-        });
-        return;
-    };
-
-    for part in parts {
-        output.push(StaticRenderTile {
-            graphic: part.item_id,
-            world_x: (base_world_x + part.x as i32) as f32,
-            world_z: (base_world_z + part.y as i32) as f32,
-            z: expanded_multi_part_z(source_tile.z, part.z),
-            hue: source_tile.hue,
-        });
-    }
+    output.extend(parts.iter().map(|part| StaticRenderTile {
+        graphic: part.item_id,
+        world_x: (i64::from(multi.x) + i64::from(part.x)) as f32,
+        world_z: (i64::from(multi.y) + i64::from(part.y)) as f32,
+        z: expanded_multi_part_z(multi.z, part.z),
+        hue: multi.hue,
+    }));
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -1784,6 +1755,7 @@ struct StaticCollectResources<'a> {
     tilemeta: Option<&'a TileMetaPackageRes>,
     tex_aux_ec: Option<&'a TexAuxEcPackageRes>,
     multis: Option<&'a MultiDefinitionsRes>,
+    placed_multis: &'a PlacedMultisRes,
     static_lights: &'a super::static_lights::RenderStaticLightInstances,
     tile_atlas: &'a TileAtlas,
     map_planes: Option<&'a MapPlanesRes>,
@@ -1879,6 +1851,7 @@ fn static_collect_resources<'a>(
     tilemeta_res: &'a Option<Res<TileMetaPackageRes>>,
     tex_aux_ec_res: &'a Option<Res<TexAuxEcPackageRes>>,
     multis_res: &'a Option<Res<MultiDefinitionsRes>>,
+    placed_multis: &'a PlacedMultisRes,
     static_lights: &'a super::static_lights::RenderStaticLightInstances,
     tile_atlas: &'a TileAtlas,
     map_planes: &'a Option<Res<MapPlanesRes>>,
@@ -1891,6 +1864,7 @@ fn static_collect_resources<'a>(
         tilemeta: tilemeta_res.as_ref().map(|res| &**res),
         tex_aux_ec: tex_aux_ec_res.as_ref().map(|res| &**res),
         multis: multis_res.as_ref().map(|res| &**res),
+        placed_multis,
         static_lights,
         tile_atlas,
         map_planes: map_planes.as_ref().map(|res| &**res),
@@ -2131,36 +2105,37 @@ fn rebuild_static_chunk(
                 resources.tilemeta_package(),
             );
 
+            // Every static draws as itself, whatever its graphic: map statics are never multis (`core::multis`).
             for tile in tiles {
-                collect_static_render_tiles(
-                    *tile,
-                    gx,
-                    gy,
-                    resources.multis,
-                    frame.show_hidden_multi_parts,
-                    &mut build.render_tiles,
+                emit_static_render_tile_on_surfaces(
+                    static_cell_tile(gx, gy, *tile),
+                    &[&block_surface_tops],
+                    frame,
+                    resources,
+                    sprite_atlas,
+                    ground_atlas,
+                    surface_resolution_cache,
+                    &mut build,
                 );
-                // A multi's own parts are the surfaces under its parts; a plain static sits on the block's statics.
-                let multi_surface_tops = if multi_id_from_static_graphic(tile.graphic).is_some() {
-                    client_shadow_surface_tops(build.render_tiles.iter().copied(), resources.tilemeta_package())
-                } else {
-                    Vec::new()
-                };
+            }
 
-                for render_tile_index in 0..build.render_tiles.len() {
-                    let render_tile = build.render_tiles[render_tile_index];
-                    let cell = (render_tile.world_x as i32, render_tile.world_z as i32);
-                    let surface_tops = block_surface_tops.iter().chain(&multi_surface_tops)
-                        .filter(|top| top.0 == cell)
-                        .map(|top| top.1);
-                    let ground_z = client_shadow_ground_z(
-                        render_tile.z,
-                        static_land_z(resources.map_planes, frame.map_id, cell),
-                        surface_tops,
-                    );
-                    emit_static_render_tile(
-                        render_tile,
-                        ground_z,
+            // The multis placed in the block draw as their parts.
+            let mut render_tiles = std::mem::take(&mut build.render_tiles);
+            let block_cells = |block: u32| block * MAP_STORAGE_BLOCK_TILE_DIM..(block + 1) * MAP_STORAGE_BLOCK_TILE_DIM;
+            for placed_multi in resources.placed_multis.anchored_in(frame.map_id, block_cells(gx), block_cells(gy)) {
+                let Some(parts) = resources.multis
+                    .and_then(|multis| multis.parts(placed_multi.multi_id, frame.show_hidden_multi_parts))
+                else {
+                    continue;
+                };
+                collect_multi_render_tiles(placed_multi, parts, &mut render_tiles);
+                // A multi's own parts are the surfaces under its parts; a plain static sits on the block's statics.
+                let multi_surface_tops =
+                    client_shadow_surface_tops(render_tiles.iter().copied(), resources.tilemeta_package());
+                for render_tile in &render_tiles {
+                    emit_static_render_tile_on_surfaces(
+                        *render_tile,
+                        &[&block_surface_tops, &multi_surface_tops],
                         frame,
                         resources,
                         sprite_atlas,
@@ -2170,6 +2145,7 @@ fn rebuild_static_chunk(
                     );
                 }
             }
+            build.render_tiles = render_tiles;
         }
     }
 
@@ -2182,6 +2158,37 @@ fn rebuild_static_chunk(
         }
     }
     finish_rebuilt_static_chunk(build, visible_tick)
+}
+
+/// Emits `render_tile` over the ground it stands on (`client_shadow_ground_z`): the highest of the `surface_tops` on its
+/// cell within its reach, or the land.
+fn emit_static_render_tile_on_surfaces(
+    render_tile: StaticRenderTile,
+    surface_tops: &[&[((i32, i32), i32)]],
+    frame: StaticCollectFrameConfig,
+    resources: StaticCollectResources<'_>,
+    sprite_atlas: &mut SpriteArtPageAtlas,
+    ground_atlas: &mut GroundArtPageAtlas,
+    surface_resolution_cache: &mut StaticSurfaceLikeResolutionCache,
+    build: &mut StaticChunkBuildState,
+) {
+    let cell = (render_tile.world_x as i32, render_tile.world_z as i32);
+    let surface_tops = surface_tops.iter().flat_map(|tops| tops.iter()).filter(|top| top.0 == cell).map(|top| top.1);
+    let ground_z = client_shadow_ground_z(
+        render_tile.z,
+        static_land_z(resources.map_planes, frame.map_id, cell),
+        surface_tops,
+    );
+    emit_static_render_tile(
+        render_tile,
+        ground_z,
+        frame,
+        resources,
+        sprite_atlas,
+        ground_atlas,
+        surface_resolution_cache,
+        build,
+    );
 }
 
 fn emit_static_render_tile(
@@ -2959,7 +2966,7 @@ pub fn sys_collect_visible_statics(
     scene_state: Res<SceneStateData>,
     view_cuts: (Res<ZViewLimit>, Res<CavesRes>),
     zoom: Res<RenderZoom>,
-    multis_res: Option<Res<MultiDefinitionsRes>>,
+    multis: (Option<Res<MultiDefinitionsRes>>, Res<PlacedMultisRes>),
     map_planes: Option<Res<MapPlanesRes>>,
     mut outputs: (
         ResMut<RenderStaticInstances>,
@@ -2978,6 +2985,7 @@ pub fn sys_collect_visible_statics(
     let (tex_art_cc_res, tex_art_ec_res, tex_land_ec_res, tilemeta_res, tex_aux_ec_res) = packages;
     let (chunks_q, tile_atlas) = terrain;
     let (z_view, caves) = view_cuts;
+    let (multis_res, placed_multis) = multis;
     if !settings.world_rendering.enable_statics {
         let (sprite_output, ground_output, batches, cache, _) = &mut outputs;
         clear_static_collect_outputs(sprite_output, ground_output, batches);
@@ -3025,6 +3033,7 @@ pub fn sys_collect_visible_statics(
         &tilemeta_res,
         &tex_aux_ec_res,
         &multis_res,
+        &placed_multis,
         &static_lights,
         &tile_atlas,
         &map_planes,
@@ -3680,6 +3689,7 @@ mod tests {
         world.insert_resource(SceneStateData { map_id: 0 });
         world.init_resource::<ZViewLimit>();
         world.init_resource::<CavesRes>();
+        world.init_resource::<PlacedMultisRes>();
         world.insert_resource(TileAtlas::new(Default::default(), 0));
         world.insert_resource(RenderZoom::default());
         world.insert_resource(SpriteArtPageAtlas(crate::core::texture_cache::art::ArtPageAtlas::new(
@@ -3763,31 +3773,31 @@ mod tests {
     }
 
     #[test]
-    fn regular_static_tile_collects_without_multi_expansion() {
-        let source_tile = uocf::classic::statics::PackedStaticTile {
-            graphic: 7,
-            xy_packed: 3 | (4 << 3),
-            z: 5,
-            hue: 0,
-        };
-        let mut output = Vec::new();
-
-        collect_static_render_tiles(source_tile, 2, 3, None, false, &mut output);
-
-        assert_eq!(
-            output,
-            vec![StaticRenderTile {
-                graphic: 7,
-                world_x: 19.0,
-                world_z: 28.0,
+    fn statics_of_every_graphic_collect_as_themselves() {
+        // Graphics from 0x4000 up are ordinary items in the map statics (thousands on maps 0, 1 and 5), never multis.
+        for graphic in [7, 0x4000, 0x4007, 0xFFFF] {
+            let source_tile = uocf::classic::statics::PackedStaticTile {
+                graphic,
+                xy_packed: 3 | (4 << 3),
                 z: 5,
-                hue: 0,
-            }],
-        );
+                hue: 9,
+            };
+
+            assert_eq!(
+                static_cell_tile(2, 3, source_tile),
+                StaticRenderTile {
+                    graphic,
+                    world_x: 19.0,
+                    world_z: 28.0,
+                    z: 5,
+                    hue: 9,
+                },
+            );
+        }
     }
 
     #[test]
-    fn multi_static_tile_expands_hidden_parts_only_on_request() {
+    fn placed_multi_expands_hidden_parts_only_on_request() {
         let definitions = MultiDefinitionsRes::from_classic_parts(vec![vec![
             uocf::classic::multi::MultiPart {
                 item_id: 10,
@@ -3804,25 +3814,20 @@ mod tests {
                 flags: 0,
             },
         ]]);
-        let source_tile = uocf::classic::statics::PackedStaticTile {
-            graphic: crate::core::multis::MULTI_STATIC_GRAPHIC_OFFSET,
-            xy_packed: 0,
-            z: 0,
-            hue: 0,
-        };
+        let multi = PlacedMulti { multi_id: 0, x: 0, y: 0, z: 0, hue: 0 };
         let mut output = Vec::new();
 
-        collect_static_render_tiles(source_tile, 0, 0, Some(&definitions), false, &mut output);
+        collect_multi_render_tiles(&multi, definitions.parts(multi.multi_id, false).unwrap(), &mut output);
         let graphics: Vec<u16> = output.iter().map(|tile| tile.graphic).collect();
         assert_eq!(graphics, vec![10]);
 
-        collect_static_render_tiles(source_tile, 0, 0, Some(&definitions), true, &mut output);
+        collect_multi_render_tiles(&multi, definitions.parts(multi.multi_id, true).unwrap(), &mut output);
         let graphics: Vec<u16> = output.iter().map(|tile| tile.graphic).collect();
         assert_eq!(graphics, vec![10, 11]);
     }
 
     #[test]
-    fn multi_static_tile_expands_visible_parts_at_world_offsets() {
+    fn placed_multi_expands_visible_parts_at_world_offsets() {
         let definitions = MultiDefinitionsRes::from_classic_parts(vec![vec![
             uocf::classic::multi::MultiPart {
                 item_id: 10,
@@ -3839,15 +3844,10 @@ mod tests {
                 flags: crate::core::multis::MULTI_PART_VISIBLE_FLAG,
             },
         ]]);
-        let source_tile = uocf::classic::statics::PackedStaticTile {
-            graphic: crate::core::multis::MULTI_STATIC_GRAPHIC_OFFSET,
-            xy_packed: 3 | (4 << 3),
-            z: 5,
-            hue: 9,
-        };
+        let multi = PlacedMulti { multi_id: 0, x: 19, y: 28, z: 5, hue: 9 };
         let mut output = Vec::new();
 
-        collect_static_render_tiles(source_tile, 2, 3, Some(&definitions), false, &mut output);
+        collect_multi_render_tiles(&multi, definitions.parts(multi.multi_id, false).unwrap(), &mut output);
 
         assert_eq!(
             output,

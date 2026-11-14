@@ -19,10 +19,10 @@
 //! The rules take the view's z limit (`max_z`) so a z-view limit composes with them: a static the limit stops drawing
 //! no longer covers, and its lights come back; a light at or above the limit is hidden with its item.
 //!
-//! A cell's objects are its statics and the parts the renderer draws there of the multis around it
-//! (`MultiCoverParts`), in place of the multis' anchor statics, as the renderer expands them.
+//! A cell's objects are its statics, each as itself whatever its graphic (map statics are never multis:
+//! `core::multis`), and the parts the renderer draws there of the multis placed around it (`MultiCoverParts`).
 
-use crate::core::multis::{expanded_multi_part_z, multi_id_from_static_graphic, MultiDefinitionsRes, MultiPart};
+use crate::core::multis::{expanded_multi_part_z, MultiDefinitionsRes, MultiPart, PlacedMultisRes};
 use crate::core::render::scene::world::land::mesh_material::LightCover;
 use crate::core::render::scene::world::land::MAP_STORAGE_BLOCK_TILE_DIM;
 use crate::core::render::scene::world::z_view::MULTI_PART_MAX_REACH;
@@ -146,29 +146,27 @@ pub fn client_light_is_hidden(light_z: i8, land_z: i8, cover_cell: impl IntoIter
             .any(|static_z| i32::from(static_z) < max_z && client_light_band(static_z, land_z) > light_band)
 }
 
-/// The parts of the multis the renderer draws that land on the cover cells of a scan's lights, by cell, and which
-/// anchor statics the renderer replaces with their parts. Empty while no multi definitions are loaded, when the
-/// renderer draws the anchors as statics.
+/// The parts of the multis the renderer draws that land on the cover cells of a scan's lights, by cell. Empty while
+/// no multi is placed or no multi definitions are loaded.
 #[derive(Default)]
-pub struct MultiCoverParts<'a> {
-    multis: Option<&'a MultiDefinitionsRes>,
-    show_hidden_parts: bool,
+pub struct MultiCoverParts {
     cells: HashMap<(u32, u32), Vec<CoverStatic>>,
 }
 
-impl<'a> MultiCoverParts<'a> {
+impl MultiCoverParts {
     /// Reads the multi parts that land on the cover cells, and the cells past them the eave exception walks, of the
-    /// lights in the blocks `blocks_x` × `blocks_y`: those of every multi anchored within `MULTI_PART_MAX_REACH` of
-    /// them, the drawn parts or, with `show_hidden_parts`, all, as the renderer expands them.
+    /// lights in the blocks `blocks_x` × `blocks_y` of the map `map_id`: those of every multi placed within
+    /// `MULTI_PART_MAX_REACH` of them, the drawn parts or, with `show_hidden_parts`, all, as the renderer expands them.
     pub fn read(
-        statics_store: &mut LazyStaticsStore,
         tilemeta: &TileMetaPackage,
-        multis: Option<&'a MultiDefinitionsRes>,
+        multis: Option<&MultiDefinitionsRes>,
+        placed_multis: &PlacedMultisRes,
         show_hidden_parts: bool,
+        map_id: u32,
         blocks_x: Range<u32>,
         blocks_y: Range<u32>,
     ) -> Self {
-        let mut cover = Self { multis, show_hidden_parts, cells: HashMap::new() };
+        let mut cover = Self::default();
         let Some(multis) = multis else {
             return cover;
         };
@@ -181,41 +179,19 @@ impl<'a> MultiCoverParts<'a> {
         };
         let (tiles_x, tiles_y) = (cover_tiles(&blocks_x), cover_tiles(&blocks_y));
         let reach = MULTI_PART_MAX_REACH as u32;
-        let anchor_blocks = |tiles: &Range<u32>| {
-            tiles.start.saturating_sub(reach) / MAP_STORAGE_BLOCK_TILE_DIM..(tiles.end + reach) / MAP_STORAGE_BLOCK_TILE_DIM + 1
-        };
+        let anchor_cells = |tiles: &Range<u32>| tiles.start.saturating_sub(reach)..tiles.end.saturating_add(reach);
         let meta = |graphic: u16| {
             tilemeta.item_tile(u32::from(graphic)).map_or((0, 0), |meta| (meta.flags, meta.height))
         };
-        for block_y in anchor_blocks(&tiles_y) {
-            for block_x in anchor_blocks(&tiles_x) {
-                let Ok(tiles) = statics_store.block_tiles(block_x, block_y) else {
-                    continue;
-                };
-                for tile in tiles {
-                    let Some(parts) = multi_id_from_static_graphic(tile.graphic)
-                        .and_then(|multi_id| multis.parts(multi_id, show_hidden_parts))
-                    else {
-                        continue;
-                    };
-                    let anchor = (
-                        block_x * MAP_STORAGE_BLOCK_TILE_DIM + u32::from(tile.x_offset()),
-                        block_y * MAP_STORAGE_BLOCK_TILE_DIM + u32::from(tile.y_offset()),
-                    );
-                    for (cell, part) in multi_parts_on_cells(anchor, tile.z, parts, &tiles_x, &tiles_y, meta) {
-                        cover.cells.entry(cell).or_default().push(part);
-                    }
-                }
+        for multi in placed_multis.anchored_in(map_id, anchor_cells(&tiles_x), anchor_cells(&tiles_y)) {
+            let Some(parts) = multis.parts(multi.multi_id, show_hidden_parts) else {
+                continue;
+            };
+            for (cell, part) in multi_parts_on_cells((multi.x, multi.y), multi.z, parts, &tiles_x, &tiles_y, meta) {
+                cover.cells.entry(cell).or_default().push(part);
             }
         }
         cover
-    }
-
-    /// Whether the renderer draws the static `graphic` as the parts of a multi rather than as itself.
-    fn expands(&self, graphic: u16) -> bool {
-        self.multis.is_some_and(|multis| {
-            multi_id_from_static_graphic(graphic).is_some_and(|multi_id| multis.parts(multi_id, self.show_hidden_parts).is_some())
-        })
     }
 
     fn cell(&self, x: u32, y: u32) -> &[CoverStatic] {
@@ -278,8 +254,8 @@ pub fn static_light_is_hidden(
     }
 }
 
-/// The objects the renderer draws on the cell (`x`, `y`), with their tile flags and heights: its statics, but for the
-/// multi anchors it expands, and the multi parts landing there. No statics while the store cannot read its block.
+/// The objects the renderer draws on the cell (`x`, `y`), with their tile flags and heights: its statics and the multi
+/// parts landing there. No statics while the store cannot read its block.
 fn cell_statics(
     statics_store: &mut LazyStaticsStore,
     tilemeta: &TileMetaPackage,
@@ -292,7 +268,7 @@ fn cell_statics(
     let tiles = statics_store.block_tiles(block_x, block_y).unwrap_or(&[]);
     tiles
         .iter()
-        .filter(|tile| tile.x_offset() == offset_x && tile.y_offset() == offset_y && !multi_parts.expands(tile.graphic))
+        .filter(|tile| tile.x_offset() == offset_x && tile.y_offset() == offset_y)
         .map(|tile| {
             let meta = tilemeta.item_tile(u32::from(tile.graphic));
             CoverStatic { flags: meta.map_or(0, |meta| meta.flags), z: tile.z, height: meta.map_or(0, |meta| meta.height) }
@@ -448,9 +424,8 @@ mod tests {
     }
 
     #[test]
-    fn without_multi_definitions_no_static_is_expanded() {
+    fn without_placed_multis_no_part_covers() {
         let none = MultiCoverParts::default();
-        assert!(!none.expands(0x4001));
         assert!(none.cell(11, 11).is_empty());
     }
 

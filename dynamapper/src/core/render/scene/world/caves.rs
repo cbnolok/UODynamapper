@@ -317,7 +317,6 @@ impl ChunkCells {
         let land_z = read_package_chunk_land_z(map, chunk_index)?;
         let mut cell_tops = read_package_chunk_statics(statics, chunk_index)?
             .into_iter()
-            .filter(|tile| tile.graphic < crate::core::multis::MULTI_STATIC_GRAPHIC_OFFSET)
             .filter_map(|tile| {
                 let cell = usize::from(tile.y_offset) * PACKAGE_CHUNK_CELL_DIM as usize + usize::from(tile.x_offset);
                 Some((cell, surfaces.top(tile.graphic, tile.z)?)).filter(|(cell, _)| *cell < CHUNK_CELLS)

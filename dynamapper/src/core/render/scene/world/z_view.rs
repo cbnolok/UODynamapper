@@ -20,7 +20,7 @@
 //! ClassicUO rule.
 
 use crate::configs::settings::Settings;
-use crate::core::multis::{expanded_multi_part_z, multi_id_from_static_graphic, MultiDefinitionsRes};
+use crate::core::multis::{expanded_multi_part_z, MultiDefinitionsRes, PlacedMultisRes};
 use crate::core::render::scene::player::Player;
 use crate::core::render::scene::world::art::light_cover::NO_Z_VIEW_LIMIT;
 use crate::core::render::scene::world::land::mesh_material::LAND_NO_Z_LIMIT;
@@ -183,13 +183,16 @@ impl ZViewCells for ZViewRegion {
 }
 
 impl ZViewRegion {
-    /// Reads the region around (`center_x`, `center_y`): every static on it, and every part of the multis anchored
-    /// within `MULTI_PART_MAX_REACH` of it that lands on it (the drawn parts, or all with `show_hidden_multi_parts`).
+    /// Reads the region around (`center_x`, `center_y`) on the map `map_id`: every static on it, each as itself
+    /// whatever its graphic (map statics are never multis), and every part of the multis placed within
+    /// `MULTI_PART_MAX_REACH` of it that lands on it (the drawn parts, or all with `show_hidden_multi_parts`).
     pub fn read(
         statics_store: &mut LazyStaticsStore,
         tilemeta: &TileMetaPackage,
         multis: Option<&MultiDefinitionsRes>,
+        placed_multis: &PlacedMultisRes,
         show_hidden_multi_parts: bool,
+        map_id: u32,
         center_x: i32,
         center_y: i32,
     ) -> Self {
@@ -197,9 +200,10 @@ impl ZViewRegion {
         let in_region = |x: i32, y: i32| {
             (x - center_x).abs() <= Z_VIEW_REGION_RADIUS && (y - center_y).abs() <= Z_VIEW_REGION_RADIUS
         };
-        let reach = Z_VIEW_REGION_RADIUS + MULTI_PART_MAX_REACH;
         let block_dim = MAP_STORAGE_BLOCK_TILE_DIM as i32;
-        let block_range = |center: i32| ((center - reach).max(0) / block_dim)..=((center + reach).max(0) / block_dim);
+        let block_range = |center: i32| {
+            ((center - Z_VIEW_REGION_RADIUS).max(0) / block_dim)..=((center + Z_VIEW_REGION_RADIUS).max(0) / block_dim)
+        };
         for block_y in block_range(center_y) {
             for block_x in block_range(center_x) {
                 let Ok(tiles) = statics_store.block_tiles(block_x as u32, block_y as u32) else {
@@ -208,20 +212,26 @@ impl ZViewRegion {
                 for tile in tiles {
                     let x = block_x * block_dim + i32::from(tile.x_offset());
                     let y = block_y * block_dim + i32::from(tile.y_offset());
-                    let multi_parts = multi_id_from_static_graphic(tile.graphic)
-                        .and_then(|multi_id| multis.and_then(|multis| multis.parts(multi_id, show_hidden_multi_parts)));
-                    let Some(parts) = multi_parts else {
-                        if in_region(x, y) {
-                            region.push(tilemeta, x, y, tile.graphic, tile.z);
-                        }
-                        continue;
-                    };
-                    for part in parts {
-                        let (part_x, part_y) = (x + i32::from(part.x), y + i32::from(part.y));
-                        if in_region(part_x, part_y) {
-                            region.push(tilemeta, part_x, part_y, part.item_id, expanded_multi_part_z(tile.z, part.z));
-                        }
+                    if in_region(x, y) {
+                        region.push(tilemeta, x, y, tile.graphic, tile.z);
                     }
+                }
+            }
+        }
+        let Some(multis) = multis else {
+            return region;
+        };
+        let reach = Z_VIEW_REGION_RADIUS + MULTI_PART_MAX_REACH;
+        let anchor_cells = |center: i32| (center - reach).max(0) as u32..(center + reach + 1).max(0) as u32;
+        for multi in placed_multis.anchored_in(map_id, anchor_cells(center_x), anchor_cells(center_y)) {
+            let Some(parts) = multis.parts(multi.multi_id, show_hidden_multi_parts) else {
+                continue;
+            };
+            let (x, y) = (multi.x as i32, multi.y as i32);
+            for part in parts {
+                let (part_x, part_y) = (x + i32::from(part.x), y + i32::from(part.y));
+                if in_region(part_x, part_y) {
+                    region.push(tilemeta, part_x, part_y, part.item_id, expanded_multi_part_z(multi.z, part.z));
                 }
             }
         }
@@ -277,7 +287,7 @@ pub fn sys_update_z_view_limit(
     player_q: Query<&Player>,
     statics_res: Res<StaticsStoreRes>,
     tilemeta_res: Option<Res<TileMetaPackageRes>>,
-    multis_res: Option<Res<MultiDefinitionsRes>>,
+    multis: (Option<Res<MultiDefinitionsRes>>, Res<PlacedMultisRes>),
     map_planes: Option<Res<MapPlanesRes>>,
     mut limit: ResMut<ZViewLimit>,
     mut last_inputs: Local<Option<ZViewInputs>>,
@@ -310,8 +320,10 @@ pub fn sys_update_z_view_limit(
     let region = ZViewRegion::read(
         &mut statics_store.lock(),
         &tilemeta.0,
-        multis_res.as_deref(),
+        multis.0.as_deref(),
+        &multis.1,
         inputs.show_hidden_multi_parts,
+        map_id,
         x,
         y,
     );

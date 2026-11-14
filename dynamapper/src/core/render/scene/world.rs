@@ -31,6 +31,7 @@ impl Plugin for WorldPlugin
             .init_resource::<WorldGeoData>()
             .init_resource::<z_view::ZViewLimit>()
             .init_resource::<caves::CavesRes>()
+            .init_resource::<crate::core::multis::PlacedMultisRes>()
             .add_systems(
                 Startup,
                 sys_populate_world_geo_data

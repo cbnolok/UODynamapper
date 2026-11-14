@@ -14,7 +14,7 @@
 //     first land id of that source drawn with it.
 //   item <id> [<last id>] id=<item id>
 //     Statics of the item id, or of every id up to <last id>, draw the item `id` with its tile data, as the Classic
-//     client does for its seasons. Multis are not routed.
+//     client does for its seasons, whatever the id (map statics are never multis). Multi parts are not routed.
 //   apply-in x1=<x> y1=<y> x2=<x> y2=<y> [map=<map>]
 //   skip-in x1=<x> y1=<y> x2=<x> y2=<y> [map=<map>]
 //     In a profile only, each as often as needed: a rectangle of tiles, corners included (x1 <= x2, y1 <= y2), on
