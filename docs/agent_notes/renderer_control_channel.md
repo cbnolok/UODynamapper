@@ -30,7 +30,9 @@ snapshots. It has a bounded timeout; it does not fence GPU completion or shader
 compilation. Keep actual-frame inspection in the validation workflow.
 
 `status.render` reports the actual active preset, global lighting and effects
-uniform values; `status.static_lights.instances` reports collected lights. These
+uniform values; `status.static_lights.instances` reports collected lights,
+`status.client_light_sprites.instances` the KR-like and Enhanced light sprites
+left after the light cover, and `status.z_view` the z-view limit. These
 read-only snapshots help detect a stale cached preset or an empty collector
 without temporarily instrumenting shaders. A positive instance count does not
 by itself prove visible mask composition or completion of GPU uploads.

@@ -63,7 +63,10 @@ texture have finished. Inspect actual frames and compare multiple captures for
 animated fixtures.
 
 `status.render` exposes the effective preset name, global-light value and effect
-uniforms. `status.static_lights.instances` exposes the collector count. Use these
+uniforms. `status.static_lights.instances` exposes the collector count,
+`status.client_light_sprites.instances` the light sprites left after the light
+cover, and `status.z_view` the z-view limit (`max_z`, `max_ground_z`,
+`hide_roofs`). Use these
 to verify the source state for an effect comparison, then inspect actual pixels;
 the count does not establish visible light decals or GPU completion.
 

@@ -120,9 +120,12 @@ fn poll_control(
         Option<Res<crate::core::texture_cache::art::SpriteArtPageAtlas>>,
         Option<Res<crate::core::texture_cache::art::GroundArtPageAtlas>>,
         Option<Res<crate::core::render::scene::world::art::gpu_picking::VisibleStaticPick>>,
-        Option<Res<crate::core::render::scene::world::land::picking::TerrainCursor>>),
+        Option<Res<crate::core::render::scene::world::land::picking::TerrainCursor>>,
+        Option<Res<crate::core::render::scene::world::art::client_light_sprites::RenderClientLightSprites>>,
+        Option<Res<crate::core::render::scene::world::z_view::ZViewLimit>>),
 ) {
-    let (uniforms, static_lights, art_stats, sprite_atlas, ground_atlas, picking, terrain_cursor) = render_state;
+    let (uniforms, static_lights, art_stats, sprite_atlas, ground_atlas, picking, terrain_cursor, light_sprites, z_view) =
+        render_state;
     let (windows, inspect_text) = view;
     if capture_pending.as_ref().is_some_and(|(path, started)| path.exists() || time.elapsed_secs_f64() - started > 30.0) {
         *capture_pending = None;
@@ -186,6 +189,9 @@ fn poll_control(
                             "light_cover": state.light_cover,
                             "local_light_intensity": state.effects.local_light_intensity})),
                         "static_lights": static_lights.as_ref().map(|lights| json!({"instances": lights.0.len()})),
+                        "client_light_sprites": light_sprites.as_ref().map(|sprites| json!({"instances": sprites.instances.len()})),
+                        "z_view": z_view.as_ref().map(|limit| json!({"max_z": limit.0.max_z,
+                            "max_ground_z": limit.0.max_ground_z, "hide_roofs": limit.0.hide_roofs})),
                         "input": {"queued_frames": input.queued_frames(), "context_focus_override": input.focused,
                             "pointer": pointer.0.map(|position| [position.x, position.y])},
                         "cursor_inspect": inspect_text.single().ok().map(|text| &text.0),
