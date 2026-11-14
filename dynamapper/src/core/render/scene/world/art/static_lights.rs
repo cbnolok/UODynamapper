@@ -326,6 +326,7 @@ pub fn sys_collect_visible_static_lights(
         block_range(|key| key.gx),
         block_range(|key| key.gy),
     );
+    let light_cover = uniform_state.light_cover_rule();
 
     let mut seen = HashSet::new();
     for chunk_key in visible_chunk_keys {
@@ -372,13 +373,13 @@ pub fn sys_collect_visible_static_lights(
                         light_id,
                         hue_id: tile.hue,
                     };
-                    let land_z = static_land_z(map_planes.as_deref(), map_id, (tile_x as i32, tile_y as i32));
+                    let land_z = |x: u32, y: u32| static_land_z(map_planes.as_deref(), map_id, (x as i32, y as i32));
                     if !seen.insert(key)
                         || static_light_is_hidden(
                             &mut statics_store,
                             &tilemeta.0,
                             &multi_parts,
-                            uniform_state.light_cover,
+                            light_cover,
                             land_z,
                             tile_x,
                             tile_y,

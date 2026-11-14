@@ -14,10 +14,15 @@
 //! `LightCover::Clients` is the Enhanced and KR clients' rule (`UOObjectComponentLighting`, Enhanced 0x00449f60, KR
 //! 0x004391d0; see `CLIENT_NIGHT_LIGHTING_AND_SHADOWS.md`): a light sprite is culled when an object of its cover cell
 //! sits in a higher 20-z band above the land than the light (`client_light_band`), or when its own item is not drawn.
-//! The clients draw the sprites that are left with no depth test.
+//! The clients draw the sprites that are left with no depth test. The two clients count the bands differently, and
+//! each style follows one of them (`LightCoverRule`): KR-like the KR client's 16 clamped layers, each object's from
+//! the average land z of its own cell (`kr_light_is_hidden`), the other styles the Enhanced client's unclamped bands,
+//! all from the raw land z of the light's cell (`client_light_is_hidden`).
 //!
 //! The rules take the view's z limit (`max_z`) so a z-view limit composes with them: a static the limit stops drawing
-//! no longer covers, and its lights come back; a light at or above the limit is hidden with its item.
+//! no longer covers, and its lights come back; a light at or above the limit is hidden with its item. KR's own cut
+//! (the layers above the player's, 0x0043c9f0) is not used, as the renderer draws to the z-view limit in every style:
+//! the light cover follows what is drawn.
 //!
 //! A cell's objects are its statics, each as itself whatever its graphic (map statics are never multis:
 //! `core::multis`), and the parts the renderer draws there of the multis placed around it (`MultiCoverParts`).
@@ -25,7 +30,7 @@
 use crate::core::multis::{expanded_multi_part_z, MultiDefinitionsRes, MultiPart, PlacedMultisRes};
 use crate::core::render::scene::world::land::mesh_material::LightCover;
 use crate::core::render::scene::world::land::MAP_STORAGE_BLOCK_TILE_DIM;
-use crate::core::render::scene::world::z_view::MULTI_PART_MAX_REACH;
+use crate::core::render::scene::world::z_view::{average_land_z, MULTI_PART_MAX_REACH};
 use crate::core::statics::LazyStaticsStore;
 use std::collections::HashMap;
 use std::ops::Range;
@@ -49,10 +54,35 @@ pub const EAVE_WALK_CELLS: u32 = 2;
 pub const CLIENT_BAND_HEIGHT: i32 = 20;
 /// See `CLIENT_BAND_HEIGHT`.
 pub const CLIENT_BAND_BASE: i32 = 140;
+/// The KR client's top height layer: it clamps the bands to its 16 layers, 0 to 15 (0x0043c5b0).
+pub const KR_LIGHT_TOP_LAYER: i32 = 15;
 
 /// Statics that never cover a light under ClassicUO's rule: the see-through (tiledata Transparent) and the never
 /// drawn (NoDraw).
 const NON_COVERING_FLAGS: u64 = TaeFlag::Transparent.bits() | TaeFlag::NoDraw.bits();
+
+/// The rule a style's `LightCover` gives: `LightCover::Clients` is the KR client's rule in KR-like and the Enhanced
+/// client's in the other styles.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum LightCoverRule {
+    /// `LightCover::ClassicUo`: `classicuo_light_is_hidden`.
+    ClassicUo,
+    /// `LightCover::Clients` outside KR-like: `client_light_is_hidden`.
+    EnhancedClient,
+    /// `LightCover::Clients` in KR-like: `kr_light_is_hidden`.
+    KrClient,
+}
+
+impl LightCoverRule {
+    /// The rule `light_cover` gives in a style, `kr_like` when the style is KR-like.
+    pub fn of_style(light_cover: LightCover, kr_like: bool) -> Self {
+        match (light_cover, kr_like) {
+            (LightCover::ClassicUo, _) => Self::ClassicUo,
+            (LightCover::Clients, false) => Self::EnhancedClient,
+            (LightCover::Clients, true) => Self::KrClient,
+        }
+    }
+}
 
 /// A static of a cell the cover rules read: its tile flags, z and tiledata height.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -146,6 +176,40 @@ pub fn client_light_is_hidden(light_z: i8, land_z: i8, cover_cell: impl IntoIter
             .any(|static_z| i32::from(static_z) < max_z && client_light_band(static_z, land_z) > light_band)
 }
 
+/// The KR client's height layer of `z` over the land z `land_z` of its own cell: the clients' band
+/// (`client_light_band`) clamped to 0 to `KR_LIGHT_TOP_LAYER` (0x0043c950 → 0x0043c5b0).
+pub fn kr_light_layer(z: i8, land_z: i8) -> i32 {
+    client_light_band(z, land_z).clamp(0, KR_LIGHT_TOP_LAYER)
+}
+
+/// Whether `LightCover::Clients` hides a light at `light_z` in KR-like, the KR client's rule (0x004391d0): it is at or
+/// above the z limit `max_z`, as its item is then not drawn, or a static of its cover cell, given by z, drawn below the
+/// limit, sits in a higher layer (`kr_light_layer`), the light's from `light_land_z`, the land z of its own cell, and
+/// the statics' from `cover_land_z`, the land z of the cover cell. Like the Enhanced client it counts every object
+/// there, whatever its flags.
+pub fn kr_light_is_hidden(
+    light_z: i8,
+    light_land_z: i8,
+    cover_land_z: i8,
+    cover_cell: impl IntoIterator<Item = i8>,
+    max_z: i32,
+) -> bool {
+    let light_layer = kr_light_layer(light_z, light_land_z);
+    i32::from(light_z) >= max_z
+        || cover_cell
+            .into_iter()
+            .any(|static_z| i32::from(static_z) < max_z && kr_light_layer(static_z, cover_land_z) > light_layer)
+}
+
+/// The land z the KR client keeps for the cell (`x`, `y`), `land_z` giving each cell's raw land z: ClassicUO's
+/// average of its corners (`average_land_z`), stored at +0x10 of its cell record (`BuildChunkFromSector` 0x0058d890).
+/// `None` while a corner is not known.
+fn kr_cell_land_z(land_z: &impl Fn(u32, u32) -> Option<i8>, x: u32, y: u32) -> Option<i8> {
+    let corner = |x, y| land_z(x, y).map(i32::from);
+    let average = average_land_z(corner(x, y)?, corner(x + 1, y)?, corner(x + 1, y + 1)?, corner(x, y + 1)?);
+    i8::try_from(average).ok()
+}
+
 /// The parts of the multis the renderer draws that land on the cover cells of a scan's lights, by cell. Empty while
 /// no multi is placed or no multi definitions are loaded.
 #[derive(Default)]
@@ -224,15 +288,17 @@ fn multi_parts_on_cells(
 }
 
 /// Whether `rule` hides a light on (`tile_x`, `tile_y`) at `light_z`, reading its cover cell, and for the eave
-/// exception the cells past it, from the statics store and the multi parts `multi_parts` holds. `land_z` is the land z
-/// of the light's cell, which the clients' bands start from; while it is not known (its map block is not loaded) the
-/// light's own z stands in for it. A cell the store cannot read covers nothing.
+/// exception the cells past it, from the statics store and the multi parts `multi_parts` holds. `land_z` gives the raw
+/// land z of a cell, which the clients' bands start from: the Enhanced client's the light cell's own, the KR client's
+/// each cell's average (`kr_cell_land_z`). While the light cell's is not known (its map block is not loaded) the
+/// light's own z stands in for it, and while the cover cell's is not known, the light cell's. A cell the store cannot
+/// read covers nothing.
 pub fn static_light_is_hidden(
     statics_store: &mut LazyStaticsStore,
     tilemeta: &TileMetaPackage,
     multi_parts: &MultiCoverParts,
-    rule: LightCover,
-    land_z: Option<i8>,
+    rule: LightCoverRule,
+    land_z: impl Fn(u32, u32) -> Option<i8>,
     tile_x: u32,
     tile_y: u32,
     light_z: i8,
@@ -240,16 +306,23 @@ pub fn static_light_is_hidden(
 ) -> bool {
     let (cover_x, cover_y) = light_cover_cell(tile_x, tile_y);
     match rule {
-        LightCover::ClassicUo => {
+        LightCoverRule::ClassicUo => {
             let diagonal = (0..=EAVE_WALK_CELLS)
                 .map(|step| cell_statics(statics_store, tilemeta, multi_parts, cover_x + step, cover_y + step))
                 .collect::<Vec<_>>();
             let diagonal = diagonal.iter().map(Vec::as_slice).collect::<Vec<_>>();
             classicuo_light_is_hidden(light_z, &diagonal, max_z)
         }
-        LightCover::Clients => {
+        LightCoverRule::EnhancedClient => {
             let cover_cell = cell_statics(statics_store, tilemeta, multi_parts, cover_x, cover_y);
-            client_light_is_hidden(light_z, land_z.unwrap_or(light_z), cover_cell.iter().map(|item| item.z), max_z)
+            let light_land_z = land_z(tile_x, tile_y).unwrap_or(light_z);
+            client_light_is_hidden(light_z, light_land_z, cover_cell.iter().map(|item| item.z), max_z)
+        }
+        LightCoverRule::KrClient => {
+            let cover_cell = cell_statics(statics_store, tilemeta, multi_parts, cover_x, cover_y);
+            let light_land_z = kr_cell_land_z(&land_z, tile_x, tile_y).unwrap_or(light_z);
+            let cover_land_z = kr_cell_land_z(&land_z, cover_x, cover_y).unwrap_or(light_land_z);
+            kr_light_is_hidden(light_z, light_land_z, cover_land_z, cover_cell.iter().map(|item| item.z), max_z)
         }
     }
 }
@@ -427,6 +500,83 @@ mod tests {
     fn without_placed_multis_no_part_covers() {
         let none = MultiCoverParts::default();
         assert!(none.cell(11, 11).is_empty());
+    }
+
+    #[test]
+    fn the_kr_layers_are_the_bands_clamped_to_sixteen() {
+        assert_eq!(kr_light_layer(0, 0), 7);
+        assert_eq!(kr_light_layer(20, 0), 8);
+        // Far below the land the layer stays 0, far above it stops at the top layer.
+        assert_eq!(kr_light_layer(-128, 40), 0);
+        assert_eq!(kr_light_layer(-128, 0), 0);
+        assert_eq!(kr_light_layer(100, -100), KR_LIGHT_TOP_LAYER);
+        assert_eq!(kr_light_layer(127, -128), KR_LIGHT_TOP_LAYER);
+    }
+
+    #[test]
+    fn kr_hides_a_light_under_a_higher_layer() {
+        // Britain 1407,1595 on map 1: the light at 30 over the average land 7 of its cell in layer 8, the pavers at 70
+        // over the cover cell's land 30 in layer 9 (the boards at 50 in layer 8).
+        assert!(kr_light_is_hidden(30, 7, 30, [50, 70], NO_Z_VIEW_LIMIT));
+        assert!(!kr_light_is_hidden(30, 7, 30, [50], NO_Z_VIEW_LIMIT));
+        // The keep's sconces at 63 under the floor at 72, all over land 50.
+        assert!(kr_light_is_hidden(63, 50, 50, [72], NO_Z_VIEW_LIMIT));
+        // Nothing in front, or only the light's own layer: lit.
+        assert!(!kr_light_is_hidden(30, 0, 0, [], NO_Z_VIEW_LIMIT));
+        assert!(!kr_light_is_hidden(0, 0, 0, [19], NO_Z_VIEW_LIMIT));
+    }
+
+    #[test]
+    fn kr_counts_each_layer_from_its_own_cells_land() {
+        // Map 1, 337,1284: mushrooms at -3 over the average land -2 (layer 6), another static at 0 in front over land
+        // 0 (layer 7). KR hides them; the Enhanced client counts both from the light cell's raw land -3, band 7.
+        assert!(kr_light_is_hidden(-3, -2, 0, [0], NO_Z_VIEW_LIMIT));
+        assert!(!client_light_is_hidden(-3, -3, [0], NO_Z_VIEW_LIMIT));
+        // A cover cell whose land rises with the cover keeps it in the light's layer.
+        assert!(!kr_light_is_hidden(0, 0, 20, [20], NO_Z_VIEW_LIMIT));
+        assert!(client_light_is_hidden(0, 0, [20], NO_Z_VIEW_LIMIT));
+    }
+
+    #[test]
+    fn kr_clamps_a_high_light_and_its_cover_into_the_top_layer() {
+        // A light 200 z above the land and a cover 20 z above it: both in the top layer, so KR keeps the light lit;
+        // the Enhanced client's unclamped bands hide it.
+        assert!(!kr_light_is_hidden(100, -100, -100, [120], NO_Z_VIEW_LIMIT));
+        assert!(client_light_is_hidden(100, -100, [120], NO_Z_VIEW_LIMIT));
+    }
+
+    #[test]
+    fn the_kr_rule_follows_the_z_limit() {
+        // The ceiling over the player's floor at the limit no longer covers the floor's lights; the player's own floor
+        // below the limit still covers the lights of the floor beneath.
+        assert!(!kr_light_is_hidden(0, 0, 0, [20], 20));
+        assert!(kr_light_is_hidden(0, 0, 0, [20, 40], 41));
+        // A light at or above the limit goes with its item.
+        assert!(kr_light_is_hidden(20, 0, 0, [], 20));
+    }
+
+    #[test]
+    fn kr_reads_the_average_land_z_of_each_cell() {
+        // A cell sloping from 0 to 10 along its 0-to-10 diagonal and flat 4 across the other: the flatter diagonal.
+        let land = |x: u32, y: u32| -> Option<i8> {
+            Some(match (x, y) {
+                (10, 10) => 0,
+                (11, 11) => 10,
+                _ => 4,
+            })
+        };
+        assert_eq!(kr_cell_land_z(&land, 10, 10), Some(4));
+        assert_eq!(kr_cell_land_z(&|_, _| Some(-7), 10, 10), Some(-7));
+        // A corner not known: none.
+        assert_eq!(kr_cell_land_z(&|x, _| (x == 10).then_some(0), 10, 10), None);
+    }
+
+    #[test]
+    fn clients_is_the_kr_rule_only_in_kr_like() {
+        assert_eq!(LightCoverRule::of_style(LightCover::Clients, true), LightCoverRule::KrClient);
+        assert_eq!(LightCoverRule::of_style(LightCover::Clients, false), LightCoverRule::EnhancedClient);
+        assert_eq!(LightCoverRule::of_style(LightCover::ClassicUo, true), LightCoverRule::ClassicUo);
+        assert_eq!(LightCoverRule::of_style(LightCover::ClassicUo, false), LightCoverRule::ClassicUo);
     }
 
     #[test]

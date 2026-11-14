@@ -1,4 +1,5 @@
 use crate::{
+    core::render::scene::world::art::light_cover::LightCoverRule,
     core::render::scene::world::effects::client_night::{
         MAX_CLIENT_LIGHT_LEVEL, MAX_NIGHT_OVERLAY_STRENGTH, MIN_NIGHT_OVERLAY_STRENGTH,
     },
@@ -147,6 +148,12 @@ impl UniformState {
         self.light_cover = snap.light_cover;
         self.sun = snap.sun;
         self.dirty = true;
+    }
+
+    /// The rule the active style's `light_cover` gives: "clients" follows the KR client in KR-like and the Enhanced
+    /// client in the other styles.
+    pub fn light_cover_rule(&self) -> LightCoverRule {
+        LightCoverRule::of_style(self.light_cover, preset_key_group(&self.active_preset) == Some(KR_PRESET_GROUP))
     }
 
     /// Bring `effects.local_light_intensity` in line with `local_lights`.
@@ -1049,6 +1056,27 @@ mod tests {
         u.light_cover = LightCover::Clients;
         u.restore(&snapshot);
         assert_eq!(u.light_cover, LightCover::ClassicUo);
+    }
+
+    /// "clients" is the KR client's rule in KR-like and the Enhanced client's in the other styles, UOD-Painterly too.
+    #[test]
+    fn the_clients_light_cover_follows_kr_in_kr_like_only() {
+        let mut source = presets();
+        for group in PRESET_GROUPS {
+            get_preset_group_mut(&mut source, group).expect("group").light_cover = LightCover::Clients;
+        }
+        for (group, rule) in [
+            (CLASSIC_PRESET_GROUP, LightCoverRule::EnhancedClient),
+            (ENHANCED_PRESET_GROUP, LightCoverRule::EnhancedClient),
+            (KR_PRESET_GROUP, LightCoverRule::KrClient),
+            (PAINTERLY_PRESET_GROUP, LightCoverRule::EnhancedClient),
+        ] {
+            source.default_preset = format!("{group}.night");
+            assert_eq!(uniform_state_from_presets(&source).light_cover_rule(), rule, "{group}");
+        }
+        source.kr.light_cover = LightCover::ClassicUo;
+        source.default_preset = "kr.night".to_string();
+        assert_eq!(uniform_state_from_presets(&source).light_cover_rule(), LightCoverRule::ClassicUo);
     }
 
     const BUNDLED_FACTORY_PRESETS: &str = include_str!("../../assets/defaults/shader_presets.toml");

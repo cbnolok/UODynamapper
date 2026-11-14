@@ -17,7 +17,7 @@
 //! off in the KR-like and Enhanced presets) read these sprites in the two styles (`client_light_sprite_static_light`),
 //! unless the style's `local_lights.source` picks light.mul, as Classic (`static_lights`).
 
-use super::light_cover::{static_light_is_hidden, MultiCoverParts};
+use super::light_cover::{static_light_is_hidden, LightCoverRule, MultiCoverParts};
 use crate::core::render::scene::world::caves::CavesRes;
 use crate::core::render::scene::world::z_view::ZViewLimit;
 use super::static_lights::{StaticLightInstance, StaticLightKey, StaticLightTarget, LIGHT_PIXELS_PER_WORLD_TILE,
@@ -32,7 +32,6 @@ use crate::configs::{light_scale::ItemLightScales, settings::Settings, shader_pr
 use crate::console_logger::{self, LogAbout, LogSev};
 use crate::core::multis::{MultiDefinitionsRes, PlacedMultisRes};
 use crate::core::render::scene::world::effects::client_night::LIGHT_BUFFER_LAYER;
-use crate::core::render::scene::world::land::mesh_material::LightCover;
 use crate::core::render::scene::world::land::{LCMesh, CHUNK_STORAGE_BLOCKS_DIM, MAP_STORAGE_BLOCK_TILE_DIM};
 use crate::core::render::scene::SceneStateData;
 use crate::core::statics::StaticsStoreRes;
@@ -95,7 +94,7 @@ pub struct RenderClientLightSprites {
     /// What the last scan covered, whether it centred the sprites on their items, and the rule, z limit and multi
     /// parts it hid covered lights by (`light_cover`), and the caves drawn over the map (`CavesRes::revision`); the scan
     /// reruns only when it changes.
-    last_scan: Option<(u32, Vec<StaticChunkBatchKey>, bool, LightCover, i32, bool, u64)>,
+    last_scan: Option<(u32, Vec<StaticChunkBatchKey>, bool, LightCoverRule, i32, bool, u64)>,
 }
 
 /// The sprites' materials, one per light texture (`None` once a texture failed to load), and the scan reach.
@@ -313,7 +312,7 @@ pub fn sys_collect_client_light_sprites(
         .collect::<Vec<_>>();
     visible_chunk_keys.sort_by_key(|key| (key.gy, key.gx, key.scale));
     let centre_on_items = uniform_state.local_lights.is_some_and(|local_lights| local_lights.centre_on_items);
-    let light_cover = uniform_state.light_cover;
+    let light_cover = uniform_state.light_cover_rule();
     let (z_view, caves) = view_cuts;
     let max_z = z_view.0.max_z;
     let show_hidden_multi_parts = settings.world_rendering.show_hidden_multi_parts;
@@ -396,11 +395,7 @@ pub fn sys_collect_client_light_sprites(
                 z: tile.z,
                 graphic: tile.graphic,
             };
-            let land_z = static_land_z(
-                map_planes.as_deref(),
-                map_id,
-                (key.tile_x as i32, key.tile_y as i32),
-            );
+            let land_z = |x: u32, y: u32| static_land_z(map_planes.as_deref(), map_id, (x as i32, y as i32));
             if !seen.insert(key)
                 || static_light_is_hidden(
                     &mut statics_store,

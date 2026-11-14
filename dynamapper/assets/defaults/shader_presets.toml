@@ -132,9 +132,11 @@ default_preset = "classic.morning"
 #   "classicuo":      ClassicUO's rule: an opaque static (not Transparent or NoDraw) at least 5 z above the light hides
 #                     it. Dynamapper keeps a light hung under an eave lit: no wall at the light's height in front of
 #                     it, and the cover ends within two more cells along the diagonal.
-#   "clients":        The Enhanced and KR clients' rule: any static in a higher 20-z band above the land of the
-#                     light's cell, band = (z - land z + 140) / 20, hides it; no exception for eaves or see-through
-#                     items.
+#   "clients":        The Enhanced and KR clients' rule: any static in a higher 20-z band above the land, band =
+#                     (z - land z + 140) / 20, hides it; no exception for eaves or see-through items. KR-like follows
+#                     the KR client: the bands clamped to 0 to 15, each counted from the averaged land z of its own
+#                     cell. The other styles follow the Enhanced client: all counted from the land z of the light's
+#                     cell.
 #
 # === [Client shadows] ===
 # client_shadows:    KR-like only, required there and refused elsewhere. true draws the KR client's static shadows
