@@ -4,23 +4,23 @@ The supplied `/home/claudio/Scaricati/` collection contains 18 KR executables wi
 Old KR `UOKR.exe` (2.58.0.6) is a nineteenth audited executable outside that folder. The inventory below
 uses PE resource versions and decoded instructions, not filename-based version guesses. Originals are read only.
 
-The complete encryption patch (including the independent E3 bypass) supports all supplied 2.48–2.57 builds
-and the original 2.58.0.6. Their exact function addresses and executable hashes are recorded in
-[the sibling-build table](uokr_login.md#audited-sibling-builds). Earlier builds remain partially supported;
-`--no-encryption` refuses them rather than writing an unverified game-login replacement.
+The complete encryption patch (including the independent E3 bypass) supports all eighteen supplied 2.45–2.57
+executables and the original 2.58.0.6. Login destinations and embedded-key inspection also support every file.
+Exact function addresses and hashes are recorded in [the sibling-build table](uokr_login.md#audited-sibling-builds).
+Unknown layouts or mismatched function bytes remain refused.
 
 | Collection filename | PE resource version | Login address located | Login cipher located | Full encryption patch |
 |---|---|---|---|---|
-| `UOKR.2-45-3-13.exe` | 2.45.3.13 | no | no | no |
-| `UOKR.2-45-4-4.exe` | 2.45.4.4 | no | no | no |
-| `UOKR.2-45-5-6.exe` | 2.45.5.6 | no | no | no |
-| `UOKR.2-45-6-3.exe` | 2.45.6.3 | no | no | no |
-| `UOKR.2-46-0-3.exe` | 2.46.0.3 | no | yes | no |
-| `UOKR.2-46-1-6.exe` | 2.46.1.6 | no | yes | no |
-| `UOKR.2-46-1-9.exe` | 2.46.1.9 | no | yes | no |
-| `UOKR.2-47-0-8.exe` | 2.47.0.6 | no | yes | no |
-| `UOKR.2-47-1-10.exe` | 2.47.1.10 | yes | yes | no |
-| `UOKR.2-47-1-6.exe` | 2.47.1.6 | yes | yes | no |
+| `UOKR.2-45-3-13.exe` | 2.45.3.13 | yes | yes | yes |
+| `UOKR.2-45-4-4.exe` | 2.45.4.4 | yes | yes | yes |
+| `UOKR.2-45-5-6.exe` | 2.45.5.6 | yes | yes | yes |
+| `UOKR.2-45-6-3.exe` | 2.45.6.3 | yes | yes | yes |
+| `UOKR.2-46-0-3.exe` | 2.46.0.3 | yes | yes | yes |
+| `UOKR.2-46-1-6.exe` | 2.46.1.6 | yes | yes | yes |
+| `UOKR.2-46-1-9.exe` | 2.46.1.9 | yes | yes | yes |
+| `UOKR.2-47-0-8.exe` | 2.47.0.6 | yes | yes | yes |
+| `UOKR.2-47-1-10.exe` | 2.47.1.10 | yes | yes | yes |
+| `UOKR.2-47-1-6.exe` | 2.47.1.6 | yes | yes | yes |
 | `UOKR.2-48-0-3.exe` | 2.48.0.3 | yes | yes | yes |
 | `UOKR.2-48-0-7.exe` | 2.48.0.7 | yes | yes | yes |
 | `UOKR.2-50-0-3.exe` | 2.50.0.3 | yes | yes | yes |
@@ -31,9 +31,8 @@ and the original 2.58.0.6. Their exact function addresses and executable hashes 
 | `UOKR.2-57-0-17.exe` | 2.57.0.17 | yes | yes | yes |
 
 `UOKR.2-47-0-8.exe` contains resource version **2.47.0.6**; support and key reports must retain this distinction.
-The located built-in `159.153.196.57:7775` address in 2.47.1.6 and 2.47.1.10 differs from the patcher's canonical
-`.41` stock address and is therefore currently displayed as changed. That label alone does not establish that
-the downloaded file was modified.
+Both native `159.153.196.57:7775` and `159.153.196.41:7775` endpoints are recognized as stock. The earlier
+address no longer appears changed merely because it differs from the originally audited 2.58 endpoint.
 
 ## Login keys and advertised versions
 
@@ -53,23 +52,24 @@ instructions. Every listed wire-version formula independently matches both actua
 | 2.58.0.6 | 66.55.52.0 | `0x5b6b4d6c` | `0xd3d51816` |
 
 All six supplied 2.46–2.47 executables embed the same login keys `0xd09c9589` and `0x1bd26d6b`;
-the current CLI extracts these but reports zero supported version-writer matches. Direct tracing confirms
-that all ten supplied pre-2.48 builds send a raw four-byte login seed, without a 0xEF version record on that
-route. The CLI does not substitute a PE version or infer a wire version by reversing the key formula. Read-only disassembly also finds the same pair in
-all four 2.45 login transforms, whose earlier instruction form the CLI currently refuses.
+the CLI extracts these, and the matching 2.45 keys, but reports no supported version-writer match.
+Direct tracing confirms that all ten supplied pre-2.48 builds send a raw four-byte login seed, without a 0xEF version record on that
+route. The CLI does not substitute a PE version or infer a wire version by reversing the key formula.
+The 2.45 extractor validates its earlier loop form and reads the actual `MOV EBX` / `XOR ECX` immediates.
 
-## Earlier-build boundaries
+## Earlier-build layouts
 
 The six 2.46–2.47 game-connect functions share the 655-byte opcode layout but also differ at two relative-call
-operands outside the current 21-field profile: `+0x5b` and `+0x1a9`, targeting seed/callback shared-pointer
-helpers. Those calls still need a complete helper and replacement audit before adding safe profiles.
+operands `+0x5b` and `+0x1a9`, targeting seed/callback shared-pointer helpers. Both are audited and included
+in the common 23-operand profile. Every operand still has an exact value.
 
 The four 2.45 builds use the older compiler/SEH login-transform layout: key 1 is loaded with `MOV EBX,imm32`
-and key 2 enters `XOR ECX,imm32`. Their game-connect functions are 397 bytes with an aligned EBP frame and `FS:0` exception handling; modern
-stack offsets and cleanup jumps cannot be reused. In 2.45.4.4, the traced login-seed setup at `0x4f90ff` creates a raw message,
+and key 2 enters `XOR ECX,imm32`. Their game-connect functions are 397 bytes with an aligned EBP frame and
+`FS:0` exception handling; modern stack offsets and cleanup jumps cannot be reused. In 2.45.4.4, the traced
+login-seed setup at `0x4f90ff` creates a raw message,
 appends only a four-byte seed through `0x442457` (`htonl`, then append four bytes), sends it through vtable
-`+0x40`, and installs the login transform. This route sends no 0xEF version record. The corresponding seed routes were traced independently in all ten
-early executables, rather than inferring packet behavior from a missing modern signature.
+`+0x40`, and installs the login transform. This route sends no 0xEF version record. The corresponding seed routes
+were traced independently in all ten early executables, rather than inferred from a missing modern signature.
 
 | PE version | Earlier login transform VA | Login byte XOR VA |
 |---|---|---|
@@ -97,5 +97,5 @@ builds originally selected their keys; no runtime formula or fallback selection 
 | 2.47.1.6 | `0x5a0ee0` | `0x5a0f93` | `0x5d99e0` | `3fde36e0ffa1920e5ac12c58e62d15647cb015b9b66ce1e31fe1d50678c2bd5b` |
 | 2.47.1.10 | `0x5a0f50` | `0x5a1003` | `0x5d9a50` | `fc5eea0a9aa99eb3984cf7d24406799b19e82567861f44dd0385cabae44e7a4e` |
 
-These are retained research results, not additional patch signatures. No source executable or Sphere
-configuration was changed by this audit.
+The nineteen identities above are regression fixtures for the two exact handshake layouts and the supported
+address/cipher patterns. Original executables and Sphere configuration remain unchanged.

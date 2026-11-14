@@ -424,12 +424,16 @@ fn print_login(inspection: &ClientExeInspection) {
     let fixed_at = located(inspection, fixed.offset);
     if inspection.family == ClientFamily::KingdomReborn {
         let state = if login.is_stock() { "stock" } else { "NOT the stock address: patched" };
-        println!("login     built-in {}:{} ({state}; the only address; MOV imm32/imm16 at {fixed_at})", fixed.ip, fixed.port);
-        println!(
-            "  ip imm32 at {}, port imm16 at {}: --login-server takes a dotted IPv4 address only",
-            located(inspection, fixed.ip_offset),
-            located(inspection, fixed.port_offset)
-        );
+        let encoding = if fixed.ip_byte_offsets.is_some() { "octet constructor" } else { "MOV imm32/imm16" };
+        println!("login     built-in {}:{} ({state}; the only address; {encoding} at {fixed_at})", fixed.ip, fixed.port);
+        for (index, (offset, _)) in fixed.ip_writes(fixed.ip).into_iter().enumerate() {
+            let operand = if fixed.ip_byte_offsets.is_some() { format!("ip octet {}", index + 1) } else { "ip imm32".to_owned() };
+            println!("  {operand} at {}", located(inspection, offset));
+        }
+        for (offset, _) in fixed.port_writes(fixed.port) {
+            println!("  port imm16 at {}", located(inspection, offset));
+        }
+        println!("  --login-server takes a dotted IPv4 address only");
         return;
     }
     let state = if login.is_stock() { "stock" } else { "NOT the stock address: patched" };

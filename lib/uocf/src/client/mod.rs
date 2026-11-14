@@ -12,6 +12,8 @@ pub mod encryption;
 pub mod facet_data;
 pub mod facet_dimensions;
 mod kr_game_login;
+mod kr_game_login_legacy;
+mod kr_legacy_login;
 pub mod login;
 pub mod login_servers;
 pub mod patch;

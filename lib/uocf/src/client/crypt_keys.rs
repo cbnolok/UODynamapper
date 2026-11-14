@@ -115,6 +115,20 @@ fn protocol_version(code: &[u8], at: usize) -> Option<ProtocolVersion> {
     (code.get(cursor) == Some(&OPCODE_CALL_REL32)).then_some(ProtocolVersion(parts))
 }
 
+fn legacy_login_keys(bytes: &[u8], cipher_offset: usize) -> Option<LoginMasterKeys> {
+    let pattern = &super::kr_legacy_login::LOGIN_CIPHER;
+    let start = cipher_offset.checked_sub(pattern.patch_at)?;
+    let code = bytes.get(start..start + pattern.bytes.len())?;
+    let patch = pattern.patch_at..pattern.patch_at + pattern.stock.len();
+    if !code.iter().zip(pattern.bytes).enumerate().all(|(at, (byte, expected))| {
+        patch.contains(&at) || *expected == ANY || u16::from(*byte) == *expected
+    }) || (code[patch.clone()] != *pattern.stock && code[patch] != *pattern.patched) {
+        return None;
+    }
+    let key_1 = read_u32(code, super::kr_legacy_login::KEY_1_OFFSET).ok()?;
+    Some(LoginMasterKeys { key_1, key_2: read_u32(code, super::kr_legacy_login::KEY_2_OFFSET).ok()?, first_round: key_1 })
+}
+
 /// Read the real login transform's immediates. Classic or unrecognized code is refused rather than guessed
 /// from the PE resource. Patched login XORs are supported because key stepping remains intact.
 pub fn inspect_login_crypt(bytes: &[u8], inspection: &ClientExeInspection) -> eyre::Result<LoginCryptInfo> {
@@ -122,14 +136,18 @@ pub fn inspect_login_crypt(bytes: &[u8], inspection: &ClientExeInspection) -> ey
     let site = inspection.encryption.as_ref().and_then(|sites| {
         sites.sites.iter().find(|site| site.kind == CipherSiteKind::LoginCipher)
     }).ok_or_else(|| eyre!("the login cipher was not located uniquely; embedded keys cannot be extracted"))?;
-    let block = bytes.get(site.offset..site.offset + KEY_STEP.len())
-        .ok_or_else(|| eyre!("the executable ends inside the login key step"))?;
-    eyre::ensure!(block.iter().zip(KEY_STEP).all(|(byte, expected)| *expected == ANY || u16::from(*byte) == *expected),
-        "the login key-step instructions are not recognized; keys are not guessed from the PE version");
-    let keys = LoginMasterKeys {
-        key_1: read_u32(block, MASTER_KEY_1_OFFSET)?,
-        key_2: read_u32(block, MASTER_KEY_2_OFFSET)?,
-        first_round: read_u32(block, FIRST_ROUND_KEY_OFFSET)?,
+    let keys = if let Some(keys) = legacy_login_keys(bytes, site.offset) {
+        keys
+    } else {
+        let block = bytes.get(site.offset..site.offset + KEY_STEP.len())
+            .ok_or_else(|| eyre!("the executable ends inside the login key step"))?;
+        eyre::ensure!(block.iter().zip(KEY_STEP).all(|(byte, expected)| *expected == ANY || u16::from(*byte) == *expected),
+            "the login key-step instructions are not recognized; keys are not guessed from the PE version");
+        LoginMasterKeys {
+            key_1: read_u32(block, MASTER_KEY_1_OFFSET)?,
+            key_2: read_u32(block, MASTER_KEY_2_OFFSET)?,
+            first_round: read_u32(block, FIRST_ROUND_KEY_OFFSET)?,
+        }
     };
     let (code, _) = code_section(bytes, &inspection.pe)?;
     let versions: Vec<_> = code.windows(SEED_WRITER_PROLOGUE.len()).enumerate()
@@ -244,5 +262,26 @@ mod tests {
         assert!(inspect_login_crypt(&image, &ClientExeInspection::inspect(&image).unwrap()).unwrap_err().to_string().contains("not recognized"));
         let classic = crate::client::classic_facets::tests::synthetic_classic(6, 2);
         assert!(inspect_login_crypt(&classic, &ClientExeInspection::inspect(&classic).unwrap()).unwrap_err().to_string().contains("Classic"));
+    }
+
+    #[test]
+    fn earlier_kr_keys_are_actual_immediates_without_a_guessed_version() {
+        let pattern = &super::super::kr_legacy_login::LOGIN_CIPHER;
+        let keys = LoginMasterKeys { key_1: 0xd09c_9589, key_2: 0x1bd2_6d6b, first_round: 0xd09c_9589 };
+        for removed in [false, true] {
+            let mut code = pattern.stock_code(FILLER);
+            for (at, value) in [(super::super::kr_legacy_login::KEY_1_OFFSET, keys.key_1), (super::super::kr_legacy_login::KEY_2_OFFSET, keys.key_2)] {
+                code[at..][..DWORD_SIZE].copy_from_slice(&value.to_le_bytes());
+            }
+            if removed {
+                code[pattern.patch_at..][..pattern.patched.len()].copy_from_slice(pattern.patched);
+            }
+            let bytes = synthetic_image_with(code, Vec::new(), false);
+            let info = inspect_login_crypt(&bytes, &ClientExeInspection::inspect(&bytes).unwrap()).unwrap();
+            assert_eq!(info.keys, keys);
+            assert_eq!(info.cipher_removed, removed);
+            assert_eq!(info.protocol_version, None);
+            assert_eq!(info.protocol_version_matches, 0);
+        }
     }
 }

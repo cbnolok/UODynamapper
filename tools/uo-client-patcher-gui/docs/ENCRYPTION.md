@@ -28,7 +28,7 @@ which also lists every site of every build.
   leaves E3 validation, the plaintext E4 response and Huffman installation intact.
 - **KR game handshake**: replace the fixed `0xffffffff` seed with the relay auth key, enter state 2, install
   Huffman and send 0x91 immediately. The client no longer waits for 0xE3 or sends 0xE4. This replacement is
-  restricted to the nine audited KR profiles below: each complete game-connect function must match at its
+  restricted to the nineteen audited KR profiles below: each complete game-connect function must match at its
   original VA. Unsupported versions are refused rather than patched with guessed addresses.
 - **EC normal route (4.0.102.3)**: the relay handler directly selects the auth-key seed, ready state 2,
   Twofish/MD5 and Huffman, then sends 0x91. Its compiled-in fixed-seed/E3 initializer has no callers or references;
@@ -40,7 +40,8 @@ Each selected site is located by its instruction pattern and must match exactly 
 refused, naming the cipher and its match count. Classic is refused. `exe show` prints the state (on, removed or
 partly removed) and each site; the manifest records it (`values.encryption`: `encrypted`, `removed`, `partial`).
 
-With all controls selected, a server must read 0xEF / 0x80 and the game 0x91 unencrypted, and send game packets
+With all controls selected, a server must read the login seed (0xEF or the earlier four-byte form), 0x80 and
+the game 0x91 unencrypted, and send game packets
 Huffman-compressed, not encrypted. Patched Kingdom Reborn sends the relay auth key as the game seed and 0x91
 immediately, with Huffman already installed; it needs no 0xE3 / 0xE4 support from the server. This also avoids
 advertising KR's fixed `0xffffffff` seed to servers that use it to select the key exchange. Stock KR still requires
@@ -80,22 +81,33 @@ and only the newly introduced handshake site is stock.
 
 ## KR build coverage and upgrades
 
-| PE version | Game-connect VA | Handshake patch file offset |
-|---|---|---|
-| 2.48.0.3 | `0x5baeb0` | `0x1ba30f` |
-| 2.48.0.7 | `0x5bae70` | `0x1ba2cf` |
-| 2.50.0.3 | `0x5babe0` | `0x1ba03f` |
-| 2.51.0.3 | `0x5babe0` | `0x1ba03f` |
-| 2.52.0.4 | `0x5babe0` | `0x1ba03f` |
-| 2.53.0.2 | `0x5babe0` | `0x1ba03f` |
-| 2.54.0.7 | `0x5babe0` | `0x1ba03f` |
-| 2.57.0.17 | `0x5b6b60` | `0x1b5fbf` |
-| 2.58.0.6 | `0x5b6b40` | `0x1b5f9f` |
+| PE version | Game-connect VA | Handshake patch file offset | Function / patch bytes |
+|---|---|---|---|
+| 2.45.3.13 | `0x4fee41` | `0xfe29d` | 397 / 270 |
+| 2.45.4.4 | `0x504766` | `0x103bc2` | 397 / 270 |
+| 2.45.5.6 | `0x509df4` | `0x109250` | 397 / 270 |
+| 2.45.6.3 | `0x51323d` | `0x112699` | 397 / 270 |
+| 2.46.0.3 | `0x5aa350` | `0x1a97af` | 655 / 458 |
+| 2.46.1.6 | `0x5b08e0` | `0x1afd3f` | 655 / 458 |
+| 2.46.1.9 | `0x5b08e0` | `0x1afd3f` | 655 / 458 |
+| 2.47.0.6 | `0x5b1080` | `0x1b04df` | 655 / 458 |
+| 2.47.1.6 | `0x5b3240` | `0x1b269f` | 655 / 458 |
+| 2.47.1.10 | `0x5b32b0` | `0x1b270f` | 655 / 458 |
+| 2.48.0.3 | `0x5baeb0` | `0x1ba30f` | 655 / 458 |
+| 2.48.0.7 | `0x5bae70` | `0x1ba2cf` | 655 / 458 |
+| 2.50.0.3 | `0x5babe0` | `0x1ba03f` | 655 / 458 |
+| 2.51.0.3 | `0x5babe0` | `0x1ba03f` | 655 / 458 |
+| 2.52.0.4 | `0x5babe0` | `0x1ba03f` | 655 / 458 |
+| 2.53.0.2 | `0x5babe0` | `0x1ba03f` | 655 / 458 |
+| 2.54.0.7 | `0x5babe0` | `0x1ba03f` | 655 / 458 |
+| 2.57.0.17 | `0x5b6b60` | `0x1b5fbf` | 655 / 458 |
+| 2.58.0.6 | `0x5b6b40` | `0x1b5f9f` | 655 / 458 |
 
-Every profile checks all 655 bytes and its original VA, with exact per-build address operands and relative calls.
-The replacement changes a 458-byte span and uses each build's own helpers. The supplied KR 2.45–2.47 builds use
-earlier layouts and are not supported by these handshake profiles. The [collection inventory](research/kr-build-coverage.md)
-records their partial cipher/address coverage and the filename/resource-version discrepancy.
+Every profile checks the complete function at its original VA, with exact address operands and relative calls.
+The 2.46–2.58 profiles use the 655-byte layout and 458-byte replacement. The four 2.45 profiles use a separate
+397-byte SEH layout and 270-byte replacement, preserving their original exception registration and cleanup.
+The [collection inventory](research/kr-build-coverage.md) records address/cipher coverage, keys and the
+filename/resource-version discrepancy. The three encryption controls work independently in every audited build.
 
 The older 81-byte callback omitted the EDI LoginManager argument on Huffman-allocation failure. The corrected
 85-byte callback supplies it. Earlier fully patched 2.58 copies are recognized for an explicit handshake upgrade,

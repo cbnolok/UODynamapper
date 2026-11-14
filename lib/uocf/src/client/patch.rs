@@ -674,9 +674,16 @@ pub fn plan_patch_inspected(
         if sites.uses_fixed_address() {
             let ip: std::net::Ipv4Addr = login.hosts[0].as_str().parse().wrap_err("the checked IPv4 host")?;
             let fixed = &sites.fixed;
-            writes.push(FieldWrite::u32(fixed.ip_offset, u32::from(ip), "login address (ip imm32)".to_owned(), edit));
-            let new = login.ports[0].to_le_bytes().to_vec();
-            writes.push(FieldWrite { offset: fixed.port_offset, new, field: "login port (imm16)".to_owned(), edit });
+            for (index, (offset, new)) in fixed.ip_writes(ip).into_iter().enumerate() {
+                let field = if fixed.ip_byte_offsets.is_some() {
+                    format!("login address (octet {})", index + 1)
+                } else { "login address (ip imm32)".to_owned() };
+                writes.push(FieldWrite { offset, new, field, edit });
+            }
+            for (offset, new) in fixed.port_writes(login.ports[0]) {
+                let field = "login port (imm16)".to_owned();
+                writes.push(FieldWrite { offset, new, field, edit });
+            }
         }
         for (number, (slot, host)) in sites.hosts.iter().zip(&login.hosts).enumerate() {
             let mut new = host.as_str().as_bytes().to_vec();

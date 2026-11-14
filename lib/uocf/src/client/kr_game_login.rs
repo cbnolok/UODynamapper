@@ -1,7 +1,7 @@
 //! Strict game-connect signatures and plaintext replacements for audited KR builds.
 //!
 //! Every 655-byte function must match its stock/patched form at its original VA. The profiles substitute
-//! only the 21 audited address/displacement operands into the common instruction template; they are not
+//! only the 23 audited address/displacement operands into the common instruction template; they are not
 //! wildcards. The replacement uses each build's original helpers and preserves shared-pointer cleanup.
 //! See tools/uo-client-patcher-gui/docs/research/uokr_login.md and the adjacent assembly source.
 
@@ -21,9 +21,9 @@ const GAME_READY: u8 = 2;
 const WORD_SIZE: usize = size_of::<u32>();
 const HTONL_OPERAND: usize = 0x6d;
 const GAME_GLOBAL_OPERAND: usize = 0x93;
-const OPERANDS: [usize; 21] = [
-    0x001, 0x01b, 0x029, 0x031, 0x046, 0x062, 0x06d, 0x086, 0x08b, 0x093, 0x0fc,
-    0x103, 0x14e, 0x161, 0x16f, 0x18a, 0x194, 0x1b0, 0x1d5, 0x1dc, 0x1f7,
+const OPERANDS: [usize; 23] = [
+    0x001, 0x01b, 0x029, 0x031, 0x046, 0x05b, 0x062, 0x06d, 0x086, 0x08b, 0x093, 0x0fc,
+    0x103, 0x14e, 0x161, 0x16f, 0x18a, 0x194, 0x1a9, 0x1b0, 0x1d5, 0x1dc, 0x1f7,
 ];
 
 struct ConnectBuild {
@@ -81,15 +81,123 @@ const STOCK_CODE: [u8; CONNECT_SIZE] = [
     0x08, 0x8b, 0xcb, 0xff, 0xd2, 0x5f, 0x5e, 0x5d, 0x5b, 0x83, 0xc4, 0x10, 0xc2, 0x04, 0x00,
 ];
 
+// 2.46.0.3, SHA-256 619c458eb70175c7ca389e2c31415d262155d188d7388608eb86efd89140667c
+const BUILD_2_46_0_3: ConnectBuild = ConnectBuild {
+    va: 0x5aa350,
+    operands: [
+        0x00d7035c, 0x00a420d4, 0x0003b423, 0x00a420d8, 0x0002ef26,
+        0xfffee3c1, 0xffe5e68a, 0x00a42464, 0x0002f076, 0x00d7f29c,
+        0x00d7f298, 0x00d7f29c, 0x00d7f298, 0x00d7035c, 0x00a420d4,
+        0x0003b2dd, 0x00c0418c, 0x005aa5e0, 0x000059a3, 0xffe5e53c,
+        0x00d7f29c, 0x00d7f298, 0x0002cb45,
+    ],
+    heap_new: 0x5ea8f0,
+    huffman_constructor: 0x5cee20,
+    huffman_shared: 0x5b00f0,
+    add_receive_transform: 0x596a20,
+    send91: 0x5a94a0,
+    disconnect: 0x5a7770,
+};
+
+// 2.46.1.6, SHA-256 cc664cc8550bf40877b597889e893409924e3a42cf78fb177ba4f68fb19a76f7
+const BUILD_2_46_1_6: ConnectBuild = ConnectBuild {
+    va: 0x5b08e0,
+    operands: [
+        0x00d81a50, 0x00a4a0d8, 0x0003c8a3, 0x00a4a0d4, 0x000303a6,
+        0xfffee3c1, 0xffe580fa, 0x00a4a460, 0x000304f6, 0x00d909e8,
+        0x00d909e4, 0x00d909e8, 0x00d909e4, 0x00d81a50, 0x00a4a0d8,
+        0x0003c75d, 0x00c1545c, 0x005b0b70, 0x000059a3, 0xffe57fac,
+        0x00d909e8, 0x00d909e4, 0x0002dfc5,
+    ],
+    heap_new: 0x5f2300,
+    huffman_constructor: 0x5d6820,
+    huffman_shared: 0x5b6680,
+    add_receive_transform: 0x59cfb0,
+    send91: 0x5afa30,
+    disconnect: 0x5add00,
+};
+
+// 2.46.1.9, SHA-256 fb5c60cd6ea81969b30a54b1978ce47c8c7a1d200a736f321602c61517c051ec
+const BUILD_2_46_1_9: ConnectBuild = ConnectBuild {
+    va: 0x5b08e0,
+    operands: [
+        0x00d81a50, 0x00a4a0d8, 0x0003c8a3, 0x00a4a0d4, 0x000303a6,
+        0xfffee3c1, 0xffe580fa, 0x00a4a460, 0x000304f6, 0x00d909e8,
+        0x00d909e4, 0x00d909e8, 0x00d909e4, 0x00d81a50, 0x00a4a0d8,
+        0x0003c75d, 0x00c15594, 0x005b0b70, 0x000059a3, 0xffe57fac,
+        0x00d909e8, 0x00d909e4, 0x0002dfc5,
+    ],
+    heap_new: 0x5f2300,
+    huffman_constructor: 0x5d6820,
+    huffman_shared: 0x5b6680,
+    add_receive_transform: 0x59cfb0,
+    send91: 0x5afa30,
+    disconnect: 0x5add00,
+};
+
+// 2.47.0.6, SHA-256 36ea9fadbbb2d4c8e1180b7845aaba74d3bf5e7bd654735d5f023de69ade3059
+const BUILD_2_47_0_6: ConnectBuild = ConnectBuild {
+    va: 0x5b1080,
+    operands: [
+        0x00d85e20, 0x00a4b0d8, 0x0003c8a3, 0x00a4b0d4, 0x000303a6,
+        0xfffee3c1, 0xffe5795a, 0x00a4b46c, 0x000304f6, 0x00d94db0,
+        0x00d94dac, 0x00d94db0, 0x00d94dac, 0x00d85e20, 0x00a4b0d8,
+        0x0003c75d, 0x00c185a4, 0x005b1310, 0x000059a3, 0xffe5780c,
+        0x00d94db0, 0x00d94dac, 0x0002dfc5,
+    ],
+    heap_new: 0x5f2aa0,
+    huffman_constructor: 0x5d6fc0,
+    huffman_shared: 0x5b6e20,
+    add_receive_transform: 0x59d750,
+    send91: 0x5b01d0,
+    disconnect: 0x5ae4a0,
+};
+
+// 2.47.1.6, SHA-256 3fde36e0ffa1920e5ac12c58e62d15647cb015b9b66ce1e31fe1d50678c2bd5b
+const BUILD_2_47_1_6: ConnectBuild = ConnectBuild {
+    va: 0x5b3240,
+    operands: [
+        0x00d942c4, 0x00a4d0d8, 0x0003c873, 0x00a4d0d4, 0x00030376,
+        0xfffedfc1, 0xffe557ea, 0x00a4d478, 0x000304c6, 0x00da33c0,
+        0x00da33bc, 0x00da33c0, 0x00da33bc, 0x00d942c4, 0x00a4d0d8,
+        0x0003c72d, 0x00c1d4a4, 0x005b34d0, 0x000059b3, 0xffe5569c,
+        0x00da33c0, 0x00da33bc, 0x0002df95,
+    ],
+    heap_new: 0x5f4c30,
+    huffman_constructor: 0x5d9150,
+    huffman_shared: 0x5b8ff0,
+    add_receive_transform: 0x59f510,
+    send91: 0x5b2300,
+    disconnect: 0x5b0530,
+};
+
+// 2.47.1.10, SHA-256 fc5eea0a9aa99eb3984cf7d24406799b19e82567861f44dd0385cabae44e7a4e
+const BUILD_2_47_1_10: ConnectBuild = ConnectBuild {
+    va: 0x5b32b0,
+    operands: [
+        0x00d932c4, 0x00a4d0d8, 0x0003c873, 0x00a4d0d4, 0x00030376,
+        0xfffedfc1, 0xffe5577a, 0x00a4d478, 0x000304c6, 0x00da23c0,
+        0x00da23bc, 0x00da23c0, 0x00da23bc, 0x00d932c4, 0x00a4d0d8,
+        0x0003c72d, 0x00c1d1ec, 0x005b3540, 0x000059b3, 0xffe5562c,
+        0x00da23c0, 0x00da23bc, 0x0002df95,
+    ],
+    heap_new: 0x5f4ca0,
+    huffman_constructor: 0x5d91c0,
+    huffman_shared: 0x5b9060,
+    add_receive_transform: 0x59f580,
+    send91: 0x5b2370,
+    disconnect: 0x5b05a0,
+};
+
 // 2.48.0.3, SHA-256 d88f0cd5a31c3cafe754b52424f615ab5c7b5f69d464fbb510e842e9610c43ea
 const BUILD_2_48_0_3: ConnectBuild = ConnectBuild {
     va: 0x5baeb0,
     operands: [
         0x00dc911c, 0x00a950d8, 0x0003d833, 0x00a950dc, 0x00031166,
-        0xffe4dc0a, 0x00a95464, 0x000312b6, 0x00dd66c4, 0x00dd66c0,
-        0x00dd66c4, 0x00dd66c0, 0x00dc911c, 0x00a950d8, 0x0003d6ed,
-        0x00c9bf3c, 0x005bb180, 0xffe4dabc, 0x00dd66c4, 0x00dd66c0,
-        0x0002ed85,
+        0x00005c51, 0xffe4dc0a, 0x00a95464, 0x000312b6, 0x00dd66c4,
+        0x00dd66c0, 0x00dd66c4, 0x00dd66c0, 0x00dc911c, 0x00a950d8,
+        0x0003d6ed, 0x00c9bf3c, 0x005bb180, 0x00005a33, 0xffe4dabc,
+        0x00dd66c4, 0x00dd66c0, 0x0002ed85,
     ],
     heap_new: 0x5fd860,
     huffman_constructor: 0x5e1be0,
@@ -104,10 +212,10 @@ const BUILD_2_48_0_7: ConnectBuild = ConnectBuild {
     va: 0x5bae70,
     operands: [
         0x00dc911c, 0x00a950d8, 0x0003d833, 0x00a950dc, 0x00031166,
-        0xffe4dc4a, 0x00a95464, 0x000312b6, 0x00dd66c4, 0x00dd66c0,
-        0x00dd66c4, 0x00dd66c0, 0x00dc911c, 0x00a950d8, 0x0003d6ed,
-        0x00c9bdd4, 0x005bb140, 0xffe4dafc, 0x00dd66c4, 0x00dd66c0,
-        0x0002ed85,
+        0x00005c51, 0xffe4dc4a, 0x00a95464, 0x000312b6, 0x00dd66c4,
+        0x00dd66c0, 0x00dd66c4, 0x00dd66c0, 0x00dc911c, 0x00a950d8,
+        0x0003d6ed, 0x00c9bdd4, 0x005bb140, 0x00005a33, 0xffe4dafc,
+        0x00dd66c4, 0x00dd66c0, 0x0002ed85,
     ],
     heap_new: 0x5fd820,
     huffman_constructor: 0x5e1ba0,
@@ -122,10 +230,10 @@ const BUILD_2_50_0_3: ConnectBuild = ConnectBuild {
     va: 0x5babe0,
     operands: [
         0x00dc813c, 0x00a950d8, 0x0003d813, 0x00a950dc, 0x00031146,
-        0xffe4deda, 0x00a95470, 0x00031296, 0x00dd56e4, 0x00dd56e0,
-        0x00dd56e4, 0x00dd56e0, 0x00dc813c, 0x00a950d8, 0x0003d6cd,
-        0x00c9aef4, 0x005baeb0, 0xffe4dd8c, 0x00dd56e4, 0x00dd56e0,
-        0x0002ed65,
+        0x00005c51, 0xffe4deda, 0x00a95470, 0x00031296, 0x00dd56e4,
+        0x00dd56e0, 0x00dd56e4, 0x00dd56e0, 0x00dc813c, 0x00a950d8,
+        0x0003d6cd, 0x00c9aef4, 0x005baeb0, 0x00005a33, 0xffe4dd8c,
+        0x00dd56e4, 0x00dd56e0, 0x0002ed65,
     ],
     heap_new: 0x5fd570,
     huffman_constructor: 0x5e18f0,
@@ -140,10 +248,10 @@ const BUILD_2_51_0_3: ConnectBuild = ConnectBuild {
     va: 0x5babe0,
     operands: [
         0x00dc813c, 0x00a950d8, 0x0003d813, 0x00a950dc, 0x00031146,
-        0xffe4deda, 0x00a95470, 0x00031296, 0x00dd56e4, 0x00dd56e0,
-        0x00dd56e4, 0x00dd56e0, 0x00dc813c, 0x00a950d8, 0x0003d6cd,
-        0x00c9af14, 0x005baeb0, 0xffe4dd8c, 0x00dd56e4, 0x00dd56e0,
-        0x0002ed65,
+        0x00005c51, 0xffe4deda, 0x00a95470, 0x00031296, 0x00dd56e4,
+        0x00dd56e0, 0x00dd56e4, 0x00dd56e0, 0x00dc813c, 0x00a950d8,
+        0x0003d6cd, 0x00c9af14, 0x005baeb0, 0x00005a33, 0xffe4dd8c,
+        0x00dd56e4, 0x00dd56e0, 0x0002ed65,
     ],
     heap_new: 0x5fd570,
     huffman_constructor: 0x5e18f0,
@@ -158,10 +266,10 @@ const BUILD_2_52_0_4: ConnectBuild = ConnectBuild {
     va: 0x5babe0,
     operands: [
         0x00dc813c, 0x00a950d8, 0x0003d813, 0x00a950dc, 0x00031146,
-        0xffe4deda, 0x00a95470, 0x00031296, 0x00dd56dc, 0x00dd56d8,
-        0x00dd56dc, 0x00dd56d8, 0x00dc813c, 0x00a950d8, 0x0003d6cd,
-        0x00c9afb4, 0x005baeb0, 0xffe4dd8c, 0x00dd56dc, 0x00dd56d8,
-        0x0002ed65,
+        0x00005c51, 0xffe4deda, 0x00a95470, 0x00031296, 0x00dd56dc,
+        0x00dd56d8, 0x00dd56dc, 0x00dd56d8, 0x00dc813c, 0x00a950d8,
+        0x0003d6cd, 0x00c9afb4, 0x005baeb0, 0x00005a33, 0xffe4dd8c,
+        0x00dd56dc, 0x00dd56d8, 0x0002ed65,
     ],
     heap_new: 0x5fd570,
     huffman_constructor: 0x5e18f0,
@@ -176,10 +284,10 @@ const BUILD_2_53_0_2: ConnectBuild = ConnectBuild {
     va: 0x5babe0,
     operands: [
         0x00dc813c, 0x00a950d8, 0x0003d813, 0x00a950dc, 0x00031146,
-        0xffe4deda, 0x00a95470, 0x00031296, 0x00dd56e4, 0x00dd56e0,
-        0x00dd56e4, 0x00dd56e0, 0x00dc813c, 0x00a950d8, 0x0003d6cd,
-        0x00c9afd4, 0x005baeb0, 0xffe4dd8c, 0x00dd56e4, 0x00dd56e0,
-        0x0002ed65,
+        0x00005c51, 0xffe4deda, 0x00a95470, 0x00031296, 0x00dd56e4,
+        0x00dd56e0, 0x00dd56e4, 0x00dd56e0, 0x00dc813c, 0x00a950d8,
+        0x0003d6cd, 0x00c9afd4, 0x005baeb0, 0x00005a33, 0xffe4dd8c,
+        0x00dd56e4, 0x00dd56e0, 0x0002ed65,
     ],
     heap_new: 0x5fd570,
     huffman_constructor: 0x5e18f0,
@@ -194,10 +302,10 @@ const BUILD_2_54_0_7: ConnectBuild = ConnectBuild {
     va: 0x5babe0,
     operands: [
         0x00dc813c, 0x00a950d8, 0x0003d813, 0x00a950dc, 0x00031146,
-        0xffe4deda, 0x00a95470, 0x00031296, 0x00dd56dc, 0x00dd56d8,
-        0x00dd56dc, 0x00dd56d8, 0x00dc813c, 0x00a950d8, 0x0003d6cd,
-        0x00c9afd4, 0x005baeb0, 0xffe4dd8c, 0x00dd56dc, 0x00dd56d8,
-        0x0002ed65,
+        0x00005c51, 0xffe4deda, 0x00a95470, 0x00031296, 0x00dd56dc,
+        0x00dd56d8, 0x00dd56dc, 0x00dd56d8, 0x00dc813c, 0x00a950d8,
+        0x0003d6cd, 0x00c9afd4, 0x005baeb0, 0x00005a33, 0xffe4dd8c,
+        0x00dd56dc, 0x00dd56d8, 0x0002ed65,
     ],
     heap_new: 0x5fd570,
     huffman_constructor: 0x5e18f0,
@@ -212,10 +320,10 @@ const BUILD_2_57_0_17: ConnectBuild = ConnectBuild {
     va: 0x5b6b60,
     operands: [
         0x00c9237c, 0x00a910d8, 0x0003d713, 0x00a910dc, 0x00031046,
-        0xffe51f5a, 0x00a9146c, 0x00031196, 0x00c9f91c, 0x00c9f918,
-        0x00c9f91c, 0x00c9f918, 0x00c9237c, 0x00a910d8, 0x0003d5cd,
-        0x00b64d24, 0x005b6e30, 0xffe51e0c, 0x00c9f91c, 0x00c9f918,
-        0x0002ec65,
+        0x00005c51, 0xffe51f5a, 0x00a9146c, 0x00031196, 0x00c9f91c,
+        0x00c9f918, 0x00c9f91c, 0x00c9f918, 0x00c9237c, 0x00a910d8,
+        0x0003d5cd, 0x00b64d24, 0x005b6e30, 0x00005a33, 0xffe51e0c,
+        0x00c9f91c, 0x00c9f918, 0x0002ec65,
     ],
     heap_new: 0x5f93f0,
     huffman_constructor: 0x5dd770,
@@ -230,10 +338,10 @@ const BUILD_2_58_0_6: ConnectBuild = ConnectBuild {
     va: 0x5b6b40,
     operands: [
         0x00c9237c, 0x00a910d8, 0x0003d813, 0x00a910dc, 0x00031146,
-        0xffe51f7a, 0x00a9146c, 0x00031296, 0x00c9f91c, 0x00c9f918,
-        0x00c9f91c, 0x00c9f918, 0x00c9237c, 0x00a910d8, 0x0003d6cd,
-        0x00b64d24, 0x005b6e10, 0xffe51e2c, 0x00c9f91c, 0x00c9f918,
-        0x0002ed65,
+        0x00005c51, 0xffe51f7a, 0x00a9146c, 0x00031296, 0x00c9f91c,
+        0x00c9f918, 0x00c9f91c, 0x00c9f918, 0x00c9237c, 0x00a910d8,
+        0x0003d6cd, 0x00b64d24, 0x005b6e10, 0x00005a33, 0xffe51e2c,
+        0x00c9f91c, 0x00c9f918, 0x0002ed65,
     ],
     heap_new: 0x5f94d0,
     huffman_constructor: 0x5dd850,
@@ -377,6 +485,66 @@ const fn pattern_bytes(code: &[u8; CONNECT_SIZE]) -> [u16; CONNECT_SIZE] {
     bytes
 }
 
+const CODE_2_46_0_3: [u8; CONNECT_SIZE] = code_for(&BUILD_2_46_0_3);
+const PATTERN_2_46_0_3: CipherPattern = CipherPattern {
+    bytes: &pattern_bytes(&CODE_2_46_0_3),
+    patch_at: PATCH_START,
+    stock: &stock_patch(&CODE_2_46_0_3),
+    patched: &patched_code(&CODE_2_46_0_3, &BUILD_2_46_0_3),
+    required_va: Some(BUILD_2_46_0_3.va),
+    previous: None,
+};
+
+const CODE_2_46_1_6: [u8; CONNECT_SIZE] = code_for(&BUILD_2_46_1_6);
+const PATTERN_2_46_1_6: CipherPattern = CipherPattern {
+    bytes: &pattern_bytes(&CODE_2_46_1_6),
+    patch_at: PATCH_START,
+    stock: &stock_patch(&CODE_2_46_1_6),
+    patched: &patched_code(&CODE_2_46_1_6, &BUILD_2_46_1_6),
+    required_va: Some(BUILD_2_46_1_6.va),
+    previous: None,
+};
+
+const CODE_2_46_1_9: [u8; CONNECT_SIZE] = code_for(&BUILD_2_46_1_9);
+const PATTERN_2_46_1_9: CipherPattern = CipherPattern {
+    bytes: &pattern_bytes(&CODE_2_46_1_9),
+    patch_at: PATCH_START,
+    stock: &stock_patch(&CODE_2_46_1_9),
+    patched: &patched_code(&CODE_2_46_1_9, &BUILD_2_46_1_9),
+    required_va: Some(BUILD_2_46_1_9.va),
+    previous: None,
+};
+
+const CODE_2_47_0_6: [u8; CONNECT_SIZE] = code_for(&BUILD_2_47_0_6);
+const PATTERN_2_47_0_6: CipherPattern = CipherPattern {
+    bytes: &pattern_bytes(&CODE_2_47_0_6),
+    patch_at: PATCH_START,
+    stock: &stock_patch(&CODE_2_47_0_6),
+    patched: &patched_code(&CODE_2_47_0_6, &BUILD_2_47_0_6),
+    required_va: Some(BUILD_2_47_0_6.va),
+    previous: None,
+};
+
+const CODE_2_47_1_6: [u8; CONNECT_SIZE] = code_for(&BUILD_2_47_1_6);
+const PATTERN_2_47_1_6: CipherPattern = CipherPattern {
+    bytes: &pattern_bytes(&CODE_2_47_1_6),
+    patch_at: PATCH_START,
+    stock: &stock_patch(&CODE_2_47_1_6),
+    patched: &patched_code(&CODE_2_47_1_6, &BUILD_2_47_1_6),
+    required_va: Some(BUILD_2_47_1_6.va),
+    previous: None,
+};
+
+const CODE_2_47_1_10: [u8; CONNECT_SIZE] = code_for(&BUILD_2_47_1_10);
+const PATTERN_2_47_1_10: CipherPattern = CipherPattern {
+    bytes: &pattern_bytes(&CODE_2_47_1_10),
+    patch_at: PATCH_START,
+    stock: &stock_patch(&CODE_2_47_1_10),
+    patched: &patched_code(&CODE_2_47_1_10, &BUILD_2_47_1_10),
+    required_va: Some(BUILD_2_47_1_10.va),
+    previous: None,
+};
+
 const CODE_2_48_0_3: [u8; CONNECT_SIZE] = code_for(&BUILD_2_48_0_3);
 const PATTERN_2_48_0_3: CipherPattern = CipherPattern {
     bytes: &pattern_bytes(&CODE_2_48_0_3),
@@ -469,7 +637,8 @@ const PATTERN_2_58_0_6: CipherPattern = CipherPattern {
 
 pub(super) const PATTERN: CipherPattern = PATTERN_2_58_0_6;
 
-pub(super) const PATTERNS: [CipherPattern; 9] = [
+pub(super) const PATTERNS: [CipherPattern; 15] = [
     PATTERN_2_58_0_6, PATTERN_2_57_0_17, PATTERN_2_54_0_7, PATTERN_2_53_0_2, PATTERN_2_52_0_4,
-    PATTERN_2_51_0_3, PATTERN_2_50_0_3, PATTERN_2_48_0_7, PATTERN_2_48_0_3,
+    PATTERN_2_51_0_3, PATTERN_2_50_0_3, PATTERN_2_48_0_7, PATTERN_2_48_0_3, PATTERN_2_47_1_10,
+    PATTERN_2_47_1_6, PATTERN_2_47_0_6, PATTERN_2_46_1_9, PATTERN_2_46_1_6, PATTERN_2_46_0_3,
 ];

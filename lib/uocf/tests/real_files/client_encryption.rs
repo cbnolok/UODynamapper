@@ -11,6 +11,7 @@
 use crate::common;
 
 use uocf::client::encryption::{CipherSiteKind, EncryptionPart, EncryptionState};
+use uocf::client::crypt_keys::inspect_login_crypt;
 use uocf::client::facet_dimensions::{ClientExeInspection, ClientFamily};
 use uocf::client::login::{LoginHost, LoginServerEdit};
 use uocf::client::patch::{dry_run_client_exe, patch_client_exe, read_manifest, write_patched_client_exe, ExeEdit, ExePatch};
@@ -40,7 +41,67 @@ struct AuditedKrProfile {
 }
 
 /// Audited complete game-connect functions and patch sites; these are independent of the locator's profiles.
-const AUDITED_KR_PROFILES: [AuditedKrProfile; 9] = [
+const AUDITED_KR_PROFILES: [AuditedKrProfile; 19] = [
+    AuditedKrProfile {
+        version: "2.45.3.13",
+        sha256: "e94190c52febc13585a159f44f976686835ee4140197d0363a4d00ce6ab6e25b",
+        connect_va: 0x004fee41,
+        handshake_va: 0x004fee9d,
+    },
+    AuditedKrProfile {
+        version: "2.45.4.4",
+        sha256: "d2eb90b428d29d83a235fc7d553a816128d95c780e4707b0a19a2b4617e9363b",
+        connect_va: 0x00504766,
+        handshake_va: 0x005047c2,
+    },
+    AuditedKrProfile {
+        version: "2.45.5.6",
+        sha256: "9d7e8257d2e5e7309ec7a8e3fc86863db087ce18228e6ebb8b7589695555e0e5",
+        connect_va: 0x00509df4,
+        handshake_va: 0x00509e50,
+    },
+    AuditedKrProfile {
+        version: "2.45.6.3",
+        sha256: "aebb584d6bcf73ec8b7821606fbe11832d223b3554bfe94a57507a226a48833e",
+        connect_va: 0x0051323d,
+        handshake_va: 0x00513299,
+    },
+    AuditedKrProfile {
+        version: "2.46.0.3",
+        sha256: "619c458eb70175c7ca389e2c31415d262155d188d7388608eb86efd89140667c",
+        connect_va: 0x005a_a350,
+        handshake_va: 0x005a_a3af,
+    },
+    AuditedKrProfile {
+        version: "2.46.1.6",
+        sha256: "cc664cc8550bf40877b597889e893409924e3a42cf78fb177ba4f68fb19a76f7",
+        connect_va: 0x005b_08e0,
+        handshake_va: 0x005b_093f,
+    },
+    AuditedKrProfile {
+        version: "2.46.1.9",
+        sha256: "fb5c60cd6ea81969b30a54b1978ce47c8c7a1d200a736f321602c61517c051ec",
+        connect_va: 0x005b_08e0,
+        handshake_va: 0x005b_093f,
+    },
+    AuditedKrProfile {
+        version: "2.47.0.6",
+        sha256: "36ea9fadbbb2d4c8e1180b7845aaba74d3bf5e7bd654735d5f023de69ade3059",
+        connect_va: 0x005b_1080,
+        handshake_va: 0x005b_10df,
+    },
+    AuditedKrProfile {
+        version: "2.47.1.6",
+        sha256: "3fde36e0ffa1920e5ac12c58e62d15647cb015b9b66ce1e31fe1d50678c2bd5b",
+        connect_va: 0x005b_3240,
+        handshake_va: 0x005b_329f,
+    },
+    AuditedKrProfile {
+        version: "2.47.1.10",
+        sha256: "fc5eea0a9aa99eb3984cf7d24406799b19e82567861f44dd0385cabae44e7a4e",
+        connect_va: 0x005b_32b0,
+        handshake_va: 0x005b_330f,
+    },
     AuditedKrProfile {
         version: "2.48.0.3",
         sha256: "d88f0cd5a31c3cafe754b52424f615ab5c7b5f69d464fbb510e842e9610c43ea",
@@ -102,7 +163,6 @@ const AUDITED_KR_PROFILES: [AuditedKrProfile; 9] = [
 fn every_audited_kr_executable_patches_at_its_verified_profile() {
     let paths = std::env::var_os(KR_EXES_ENV).unwrap_or_else(|| panic!("set {KR_EXES_ENV}"));
     let mut seen = [false; AUDITED_KR_PROFILES.len()];
-    let patch = ExePatch { edits: vec![ExeEdit::NoEncryption] };
     for path in std::env::split_paths(&paths) {
         let original = std::fs::read(&path).unwrap();
         let before = ClientExeInspection::inspect(&original).unwrap();
@@ -119,9 +179,14 @@ fn every_audited_kr_executable_patches_at_its_verified_profile() {
         assert_eq!(kinds, CipherSiteKind::of_family(ClientFamily::KingdomReborn));
         let handshake = ciphers.sites.iter().find(|site| site.kind == CipherSiteKind::GameLoginHandshake).unwrap();
         assert_eq!(before.pe.offset_to_va(handshake.offset), Some(profile.handshake_va));
-        let function_offset = handshake.offset - handshake.kind.pattern().patch_at;
+        let patch_at = usize::try_from(profile.handshake_va - profile.connect_va).unwrap();
+        let function_offset = handshake.offset - patch_at;
         assert_eq!(before.pe.offset_to_va(function_offset), Some(profile.connect_va));
 
+        let login = before.login.as_ref().expect("every audited KR executable has a supported login destination");
+        assert!(login.is_stock(), "{}: native endpoint is recognized", path.display());
+        let login_edit = LoginServerEdit::uniform(login, LoginHost::new(PATCHED_HOST).unwrap(), PATCHED_PORT);
+        let patch = ExePatch { edits: vec![ExeEdit::LoginServer(login_edit), ExeEdit::NoEncryption] };
         let plan = dry_run_client_exe(&path, &patch).unwrap();
         let patched = patch_client_exe(&original, &patch, None).unwrap();
         assert_eq!(plan.apply(&original).unwrap(), patched.bytes, "{}: dry run differs", path.display());
@@ -134,6 +199,33 @@ fn every_audited_kr_executable_patches_at_its_verified_profile() {
         assert_eq!(patched.after.encryption.as_ref().unwrap().values(), Some(EncryptionState::Removed));
         assert_eq!(patched.after.encryption.as_ref().unwrap().offsets(), ciphers.offsets());
         assert_eq!(patched.after.tables, before.tables);
+        let after_login = patched.after.login.as_ref().unwrap();
+        assert_eq!(after_login.values().hosts, [PATCHED_HOST]);
+        assert_eq!(after_login.values().ports, [PATCHED_PORT]);
+        for (at, expected) in login.fixed.port_writes(PATCHED_PORT) {
+            assert_eq!(&patched.bytes[at..][..expected.len()], expected, "{}: the login port is changed", path.display());
+        }
+        let crypt_before = inspect_login_crypt(&original, &before).unwrap();
+        let crypt_after = inspect_login_crypt(&patched.bytes, &patched.after).unwrap();
+        assert_eq!(crypt_before.keys, crypt_after.keys, "{}: embedded keys stay intact", path.display());
+        assert_eq!(crypt_before.protocol_version, crypt_after.protocol_version);
+        assert!(crypt_after.cipher_removed);
+        for (part, edit) in &SCOPED_EDITS {
+            let scoped = ExePatch { edits: vec![edit.clone()] };
+            let scoped_patch = patch_client_exe(&original, &scoped, None).unwrap();
+            assert!(scoped_patch.after.checksum_valid());
+            let allowed = allowed_ranges(&before, &scoped.edits);
+            assert!(original.iter().zip(&scoped_patch.bytes).enumerate().all(|(at, (old, new))| {
+                old == new || allowed.iter().any(|range| range.contains(&at))
+            }), "{}: {part:?} touched unrelated bytes", path.display());
+            let after = scoped_patch.after.encryption.as_ref().unwrap();
+            assert!(after.is_complete());
+            assert_eq!(after.values(), Some(EncryptionState::Partial));
+            for site in &after.sites {
+                assert_eq!(site.removed, site.kind.part() == *part, "{}: {part:?}", path.display());
+            }
+            assert_eq!(scoped_patch.after.login, before.login);
+        }
         assert_eq!(std::fs::read(&path).unwrap(), original, "the source is unchanged");
     }
     assert!(seen.iter().all(|seen| *seen), "not all audited KR profiles were supplied: {seen:?}");

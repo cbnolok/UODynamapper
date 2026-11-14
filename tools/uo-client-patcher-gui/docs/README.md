@@ -10,6 +10,7 @@ from cipher removal and KR game-login setup.
   ECLO patch sites and the complete recovered function/name tables.
 - [Kingdom Reborn research](research/uokr_login.md): RTTI classes, cipher/handshake evidence, byte patches and validation.
 - [KR plaintext callback assembly](research/kr-plaintext-game-login.s): the reviewed source for the bypass callback.
+- [KR 2.45 callback assembly](research/kr-legacy-plaintext-game-login.s): the separate callback preserving the earlier SEH frame and cleanup.
 - [Sphere/KR packet compatibility](SPHERE_KR_COMPATIBILITY.md): post-login packet formats, the applied server patch and the reported successful login.
 
 The [Ghidra naming workflow](../../../scripts/dev-helpers/ec-research/ghidra-login-names/README.md) and

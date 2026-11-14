@@ -173,8 +173,8 @@ pub(super) fn allowed_ranges(before: &ClientExeInspection, edits: &[ExeEdit]) ->
             ExeEdit::LoginServer(_) => {
                 if let Some(login) = &before.login {
                     if login.uses_fixed_address() {
-                        ranges.push(field(login.fixed.ip_offset));
-                        ranges.push(login.fixed.port_offset..login.fixed.port_offset + size_of::<u16>());
+                        ranges.extend(login.fixed.ip_writes(login.fixed.ip).into_iter()
+                            .chain(login.fixed.port_writes(login.fixed.port)).map(|(at, bytes)| at..at + bytes.len()));
                     }
                     ranges.extend(login.hosts.iter().map(|slot| slot.offset..slot.offset + slot.capacity));
                     ranges.extend(login.ports.iter().map(|site| site.offset..site.offset + size_of::<u16>()));

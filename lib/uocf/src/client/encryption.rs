@@ -370,14 +370,26 @@ pub fn locate_encryption_sites(
     let (code, base) = code_section(bytes, pe)?;
     let mut located = EncryptionSites { sites: Vec::new(), unlocated: Vec::new() };
     for &kind in kinds {
-        let patterns = if kind == CipherSiteKind::GameLoginHandshake {
-            &super::kr_game_login::PATTERNS[..]
-        } else {
-            std::slice::from_ref(kind.pattern())
+        let (patterns, earlier): (&[CipherPattern], &[CipherPattern]) = match kind {
+            CipherSiteKind::GameLoginHandshake => (&super::kr_game_login::PATTERNS, &super::kr_game_login_legacy::PATTERNS),
+            CipherSiteKind::LoginCipher if family == ClientFamily::KingdomReborn => {
+                (std::slice::from_ref(kind.pattern()), std::slice::from_ref(&super::kr_legacy_login::LOGIN_CIPHER))
+            }
+            CipherSiteKind::KeyExchangeCipher if family == ClientFamily::KingdomReborn => {
+                (std::slice::from_ref(kind.pattern()), std::slice::from_ref(&super::kr_legacy_login::KEY_EXCHANGE_CIPHER))
+            }
+            _ => (std::slice::from_ref(kind.pattern()), &[]),
         };
         let mut matches: Vec<(usize, bool, bool, &CipherPattern)> = Vec::new();
-        for pattern in patterns {
-            for (at, removed, previous) in pattern_matches(code, pattern) {
+        for pattern in patterns.iter().chain(earlier) {
+            // A fixed-VA profile can only match at that address; validate its complete window directly.
+            let (search, origin) = if let Some(va) = pattern.required_va {
+                let Some(at) = pe.va_to_offset(va).and_then(|raw| raw.checked_sub(base)) else { continue };
+                let Some(window) = code.get(at..at + pattern.bytes.len()) else { continue };
+                (window, at)
+            } else { (code, 0) };
+            for (at, removed, previous) in pattern_matches(search, pattern) {
+                let at = origin + at;
                 if pattern.required_va.is_none_or(|va| pe.offset_to_va(base + at) == Some(va)) {
                     // Different exact stock profiles can converge after their differing callback operands are
                     // replaced. They describe one physical patched site, with the same future write.
@@ -518,7 +530,7 @@ pub(crate) mod tests {
 
     #[test]
     fn every_audited_kr_handshake_profile_locates_and_round_trips() {
-        for pattern in &super::super::kr_game_login::PATTERNS {
+        for pattern in super::super::kr_game_login::PATTERNS.iter().chain(&super::super::kr_game_login_legacy::PATTERNS) {
             let mut code = cipher_code(&[CipherSiteKind::LoginCipher, CipherSiteKind::KeyExchangeCipher]);
             let at = (pattern.required_va.unwrap() - CODE_VA) as usize;
             code.resize(at, FILLER);
@@ -538,6 +550,33 @@ pub(crate) mod tests {
             image[handshake.offset - pattern.patch_at + 1] ^= 1;
             assert_eq!(sites(&image).unlocated, [UnlocatedCipherSite { kind: CipherSiteKind::GameLoginHandshake, matches: 0 }]);
         }
+    }
+
+    #[test]
+    fn earlier_kr_ciphers_round_trip_and_remain_ambiguous_with_another_login_loop() {
+        let earlier = [&super::super::kr_legacy_login::LOGIN_CIPHER, &super::super::kr_legacy_login::KEY_EXCHANGE_CIPHER];
+        let mut code = vec![FILLER; FILLER_LEN];
+        for pattern in earlier {
+            code.extend(pattern.stock_code(WILDCARD_FILL));
+            code.extend([FILLER; FILLER_LEN]);
+        }
+        let handshake = CipherSiteKind::GameLoginHandshake.pattern();
+        code.resize((handshake.required_va.unwrap() - CODE_VA) as usize, FILLER);
+        code.extend(handshake.stock_code(WILDCARD_FILL));
+        let mut image = synthetic_image_with(code.clone(), Vec::new(), false);
+        let before = sites(&image);
+        assert!(before.is_complete());
+        assert_eq!(before.values(), Some(EncryptionState::Encrypted));
+        for site in &before.sites {
+            image[site.offset..][..site.patched().len()].copy_from_slice(site.patched());
+        }
+        let after = sites(&image);
+        assert!(after.is_complete());
+        assert_eq!(after.values(), Some(EncryptionState::Removed));
+        assert_eq!(after.offsets(), before.offsets());
+        code.extend(LOGIN_CIPHER.stock_code(WILDCARD_FILL));
+        let duplicate = sites(&synthetic_image_with(code, Vec::new(), false));
+        assert_eq!(duplicate.unlocated, [UnlocatedCipherSite { kind: CipherSiteKind::LoginCipher, matches: 2 }]);
     }
 
     #[test]

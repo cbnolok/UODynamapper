@@ -18,7 +18,7 @@ use uocf::client::login_servers::{
 };
 use uocf::client::facet_dimensions::{ClientExeInspection, ClientFamily};
 use uocf::client::login::{
-    LoginHost, LoginServerEdit, LoginSites, LoginValues, STOCK_INTERNAL_LOGIN_ADDRESSES, STOCK_KR_LOGIN_ADDRESS,
+    LoginHost, LoginServerEdit, LoginSites, LoginValues, STOCK_INTERNAL_LOGIN_ADDRESSES,
     STOCK_LOGIN_HOSTS, STOCK_LOGIN_PORTS,
 };
 use uocf::client::patch::{ExeEdit, ExeManifest};
@@ -150,14 +150,15 @@ pub fn login_site_rows(inspection: &ClientExeInspection, stock: Option<&LoginVal
     if sites.uses_fixed_address() {
         let fixed = &sites.fixed;
         let (ip, port) = (fixed.ip.to_string(), fixed.port.to_string());
-        let traced = (fixed.ip, fixed.port) == STOCK_KR_LOGIN_ADDRESS;
+        let traced = sites.is_stock();
+        let ip_offsets: Vec<_> = fixed.ip_writes(fixed.ip).into_iter().map(|(at, _)| at).collect();
         return vec![
             LoginSiteRow {
                 what: "address".to_owned(),
                 drawn_by: drawn_by(0, 1, ""),
-                offset: hex(fixed.ip_offset),
-                va: va(fixed.ip_offset),
-                size: format!("imm{} (IPv4 only)", u32::BITS),
+                offset: ip_offsets.iter().map(|at| hex(*at)).collect::<Vec<_>>().join(", "),
+                va: ip_offsets.iter().map(|at| va(*at)).collect::<Vec<_>>().join(", "),
+                size: if fixed.ip_byte_offsets.is_some() { format!("{} octet operands (IPv4 only)", ip_offsets.len()) } else { format!("imm{} (IPv4 only)", u32::BITS) },
                 stock: stock_cell(&ip, stock_host(0), traced),
                 value: ip,
             },

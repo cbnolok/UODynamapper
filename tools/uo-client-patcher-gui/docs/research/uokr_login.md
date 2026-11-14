@@ -8,26 +8,40 @@ given here. Traced with read-only Ghidra probes, enough for the no-encryption pa
 
 ## Audited sibling builds
 
-Nine executables from 2.48.0.3 through 2.58.0.6 share exactly the same 655-byte instruction layout.
-Only 21 four-byte address/displacement fields differ; the patcher substitutes their audited values and
-still compares the complete function at its original VA. It does not wildcard those fields.
+Nineteen executables from 2.45.3.13 through 2.58.0.6 use two verified game-connect layouts. The fifteen
+2.46–2.58 executables share a 655-byte template with 23 exact four-byte address/displacement operands.
+The four 2.45 executables have a 397-byte SEH template with 20 such operands. Profiles substitute audited
+values and compare the complete function at its original VA; these operands are not wildcards.
 
-| PE version | Connect VA | File patch start | Executable SHA-256 |
-|---|---|---|---|
-| 2.48.0.3 | `0x5baeb0` | `0x1ba30f` | `d88f0cd5a31c3cafe754b52424f615ab5c7b5f69d464fbb510e842e9610c43ea` |
-| 2.48.0.7 | `0x5bae70` | `0x1ba2cf` | `c9b4f6ce4a0763ca16bb3a1133d56a332be93e644db5c441506281632c57d77a` |
-| 2.50.0.3 | `0x5babe0` | `0x1ba03f` | `9547f6ccbaaca0a3695a7cbe31ec9a9e62dda4ac8ee627714061d38ecc70e8e8` |
-| 2.51.0.3 | `0x5babe0` | `0x1ba03f` | `5f70b0aad9ccdafaea04b0883610de2e8a75937806b53faaa54cb03eb346a48a` |
-| 2.52.0.4 | `0x5babe0` | `0x1ba03f` | `f4876dbbb5f4911cce12662e8e5b67d715946e33d0c1aff4ad2cd5f3c708e6ad` |
-| 2.53.0.2 | `0x5babe0` | `0x1ba03f` | `dc498608e3c8dec517d2435ad5d442816214b33c430077a2a815fd761daa02e6` |
-| 2.54.0.7 | `0x5babe0` | `0x1ba03f` | `35f6612cacd3c5f0f1cef6310ff1ceaf04e647ad8b0c0cfbf64684e1d81dc984` |
-| 2.57.0.17 | `0x5b6b60` | `0x1b5fbf` | `b6ab0422c25e22c3e97d6220d3284723f2fb44039c4a4e7a0c3b7cc10acb1715` |
-| 2.58.0.6 | `0x5b6b40` | `0x1b5f9f` | `1b802e5c00f3bf89a771778b9c6c57406be0703808eeb4cd983e2f5baa348a43` |
+| PE version | Connect VA | File patch start | Function bytes | Executable SHA-256 |
+|---|---|---|---|---|
+| 2.45.3.13 | `0x4fee41` | `0xfe29d` | 397 | `e94190c52febc13585a159f44f976686835ee4140197d0363a4d00ce6ab6e25b` |
+| 2.45.4.4 | `0x504766` | `0x103bc2` | 397 | `d2eb90b428d29d83a235fc7d553a816128d95c780e4707b0a19a2b4617e9363b` |
+| 2.45.5.6 | `0x509df4` | `0x109250` | 397 | `9d7e8257d2e5e7309ec7a8e3fc86863db087ce18228e6ebb8b7589695555e0e5` |
+| 2.45.6.3 | `0x51323d` | `0x112699` | 397 | `aebb584d6bcf73ec8b7821606fbe11832d223b3554bfe94a57507a226a48833e` |
+| 2.46.0.3 | `0x5aa350` | `0x1a97af` | 655 | `619c458eb70175c7ca389e2c31415d262155d188d7388608eb86efd89140667c` |
+| 2.46.1.6 | `0x5b08e0` | `0x1afd3f` | 655 | `cc664cc8550bf40877b597889e893409924e3a42cf78fb177ba4f68fb19a76f7` |
+| 2.46.1.9 | `0x5b08e0` | `0x1afd3f` | 655 | `fb5c60cd6ea81969b30a54b1978ce47c8c7a1d200a736f321602c61517c051ec` |
+| 2.47.0.6 | `0x5b1080` | `0x1b04df` | 655 | `36ea9fadbbb2d4c8e1180b7845aaba74d3bf5e7bd654735d5f023de69ade3059` |
+| 2.47.1.6 | `0x5b3240` | `0x1b269f` | 655 | `3fde36e0ffa1920e5ac12c58e62d15647cb015b9b66ce1e31fe1d50678c2bd5b` |
+| 2.47.1.10 | `0x5b32b0` | `0x1b270f` | 655 | `fc5eea0a9aa99eb3984cf7d24406799b19e82567861f44dd0385cabae44e7a4e` |
+| 2.48.0.3 | `0x5baeb0` | `0x1ba30f` | 655 | `d88f0cd5a31c3cafe754b52424f615ab5c7b5f69d464fbb510e842e9610c43ea` |
+| 2.48.0.7 | `0x5bae70` | `0x1ba2cf` | 655 | `c9b4f6ce4a0763ca16bb3a1133d56a332be93e644db5c441506281632c57d77a` |
+| 2.50.0.3 | `0x5babe0` | `0x1ba03f` | 655 | `9547f6ccbaaca0a3695a7cbe31ec9a9e62dda4ac8ee627714061d38ecc70e8e8` |
+| 2.51.0.3 | `0x5babe0` | `0x1ba03f` | 655 | `5f70b0aad9ccdafaea04b0883610de2e8a75937806b53faaa54cb03eb346a48a` |
+| 2.52.0.4 | `0x5babe0` | `0x1ba03f` | 655 | `f4876dbbb5f4911cce12662e8e5b67d715946e33d0c1aff4ad2cd5f3c708e6ad` |
+| 2.53.0.2 | `0x5babe0` | `0x1ba03f` | 655 | `dc498608e3c8dec517d2435ad5d442816214b33c430077a2a815fd761daa02e6` |
+| 2.54.0.7 | `0x5babe0` | `0x1ba03f` | 655 | `35f6612cacd3c5f0f1cef6310ff1ceaf04e647ad8b0c0cfbf64684e1d81dc984` |
+| 2.57.0.17 | `0x5b6b60` | `0x1b5fbf` | 655 | `b6ab0422c25e22c3e97d6220d3284723f2fb44039c4a4e7a0c3b7cc10acb1715` |
+| 2.58.0.6 | `0x5b6b40` | `0x1b5f9f` | 655 | `1b802e5c00f3bf89a771778b9c6c57406be0703808eeb4cd983e2f5baa348a43` |
 
-The shared operand offsets are `001,01b,029,031,046,062,06d,086,08b,093,0fc,103,14e,161,16f,18a,194,1b0,1d5,1dc,1f7`.
-Clearing exactly these fields yields function SHA-256 `9c3f21d814e1cddf6ec61cb8ac4492503ebc03b961f510502645079f85d886e7`.
-The addresses in the detailed discussion below refer to 2.58.0.6. The 2.45–2.47 executables have earlier layouts
-and are deliberately refused by these profiles. See [the collection inventory](kr-build-coverage.md).
+The 655-byte operand offsets are `001,01b,029,031,046,05b,062,06d,086,08b,093,0fc,103,14e,161,16f,18a,194,1a9,1b0,1d5,1dc,1f7`.
+Clearing exactly these fields yields function SHA-256 `92031ac14a3b7d2a9b1b2999e3437b371d7a762295d7debf7c94d51d86b7dd38`.
+
+The added fields `+0x5b` and `+0x1a9` are calls to the seed and callback shared-pointer constructors. Their
+stack ABI and typed control blocks were audited through RTTI and the actual E3 path. The addresses in the
+main discussion below refer to 2.58.0.6; [earlier layout details](#kr-245-seh-layout) are separate.
+See [the collection inventory](kr-build-coverage.md) for login-seed differences and filename/version identities.
 
 Some exact stock profiles converge after the callback operands are replaced: 2.50.0.3/2.51.0.3/2.53.0.2
 produce one identical patched function at `0x5babe0`, as do 2.52.0.4/2.54.0.7. The locator counts equivalent
@@ -238,21 +252,63 @@ handshake implementation. None supplies an E3/E4 bypass.
 
 ### Validation
 
-The actual patched 655-byte functions for all nine profiles were executed under `qemu-i386` with stubs for the
-client APIs. Normal login, a null connection control block, and failed Huffman allocation passed seed byte-order,
-state, call-order, stack, nonvolatile-register and shared-pointer lifetime checks (27 cases total). Strict register
-checks include ESI for the Huffman constructor, EAX for Send91 and EDI for Disconnect. This catches the earlier
-81-byte callback's missing failure-path EDI argument; the corrected callback is 85 bytes. Earlier 2.58 replacements
-are recognized as needing an explicit upgrade, with their matching manifest history preserved.
+The complete patched functions execute under `qemu-i386` with client-API stubs enforcing the decoded calling
+conventions. All fifteen 655-byte profiles pass normal login, null connection-control and Huffman-allocation
+failure cases (45 cases). Checks cover seed byte order, state, call order, stack, nonvolatile registers and
+shared-pointer lifetimes. Strict checks include ESI for the modern Huffman constructor, EAX for modern Send91
+and EDI for modern Disconnect. The older 81-byte callback's missing failure-path EDI argument is corrected;
+matching earlier 2.58 replacements remain eligible for explicit upgrade with manifest history preserved.
 
-These checks cover x86 flow and calling conventions, not a live Sphere login. The profile/legacy-upgrade tests read
-all supplied executables without changing them, check exact VAs, checksum and allowed changed ranges, and patch
-copies only. Scoped-control and destination/source-alias tests cover the library and GUI.
+The four 397-byte profiles additionally execute two input stack alignments and constructor/shared-pointer/
+receive/send exception simulations (56 cases). The original state-5, state-6 and state-1 unwind actions and
+polymorphic reference-count release instructions execute directly from each executable. These tests verify
+parent-frame ownership and normal FS:0 restoration; they do not emulate Windows' C++ exception dispatcher.
 
-For the expanded collection, all seven encryption tests and the nine-executable real-file regression passed.
-Both CLI and GUI builds passed. CLI-generated copies for all nine supported builds match the executed x86
-function bytes exactly, inspect as plaintext and retain their embedded login keys. Full-patch dry runs for all
-ten pre-2.48 files are refused; original hashes remain unchanged in every case.
+Real-file regressions cover all nineteen executable identities, complete patch/readback, dry-run equality,
+login destinations, preserved embedded keys, checksums and byte ranges. Each of the three scoped controls
+also patches independently and leaves the other controls' sites stock. Originals remain read only.
+
+All 55 client unit tests, the nineteen-file regression (including 57 scoped-control cases), both tool builds
+and `cargo check --workspace` passed. CLI-generated functions match the x86-executed buffers byte for byte
+for every file. Four additional executions of the actual patched 2.45 endpoint constructors verify the address
+`255.128.254.192:45000`, including the signed `PUSH imm8` case; unused adjacent port helpers remain unchanged.
+Live Windows logins with the newly supported older clients were not exercised by these offline checks.
+
+## KR 2.45 SEH layout
+
+`kr_game_login_legacy.rs` checks all 397 bytes and the original VA. In 2.45.4.4 the function starts at `0x504766`;
+the reviewed [legacy callback assembly](kr-legacy-plaintext-game-login.s) starts at `0x504837`.
+The replacement spans function offsets `+0x5c..+0x16a` (270 bytes):
+
+- Replace the nine-byte fixed-seed setup with `MOV EAX,[EBP+8]; ADD EAX,0x58; NOPs`. The original u32 writer
+  still performs `htonl` and sends the seed through the original raw-send route.
+- Replace callback construction/registration at `+0xd1..+0x16a` with a 125-byte Huffman/setup/login block,
+  followed by NOP padding. The original aligned EBP frame, `FS:0` chain, temporary connection ownership before
+  this block, and final seed cleanup remain intact.
+- Use the original raw-allocation slot and unwind state 5 while constructing Huffman. State 6 then owns a typed
+  Huffman shared pointer in the old callback local. Both its normal cleanup and original unwind action release
+  through the control block's virtual dispose/destroy functions; the old local's static type does not select a
+  callback destructor. Constructor failure and shared-pointer-constructor failure keep their original ownership
+  transitions. A null Huffman allocation calls `Disconnect(1)` and proceeds directly to seed cleanup.
+- Pass the by-value Huffman pair directly to `AddReceiveTransform`, which consumes it on return or exception.
+  The game singleton remains owned by the existing global shared pointer. Set game state 2 and call Send91.
+  Huffman construction/shared ownership/Send91/Disconnect have different register ABIs from the modern layout;
+  they are encoded and tested separately.
+
+For 2.45.4.4, Huffman construction is `0x51b1d9` (object argument, RET 4), its shared constructor is `0x50795e`
+(object EDI plus output argument, RET 4), AddReceiveTransform is `0x4f7d4c` (RET 12), Send91 is `0x503cca`
+(manager ECX), and Disconnect is `0x502ac3` (manager ECX, RET 4). Game pointer/control globals are
+`0xd09b68`/`0xd09b6c`. The generic local release `0x45dc93` delegates to polymorphic control-block release
+`0x405817`. FuncInfo `0xc4d6c0` retains the original ten-state unwind graph: states 5 and 6 both unwind to
+state 1, which releases the seed. The four exact functions normalize to SHA-256
+`b7c52fa6d9f488aaf33195bf34d5c2f6d34bc3154703f942a7a498418f04c77a` after their twenty operands are cleared.
+
+Fixed VAs are the current validation policy, not an intrinsic property of KR encryption. A dynamic implementation
+could recognize the two layouts, resolve calls/globals/RTTI, validate helper ABIs and generate relocated bytes.
+This implementation keeps exact profiles and retains every supplied executable as a regression fixture.
+All nineteen images prefer base `0x400000` and have `DYNAMIC_BASE` clear. Eighteen strip base relocations;
+2.46.0.3 retains a relocation directory. The current replacement bytes are validated at the preferred base;
+forced rebasing of that executable is outside this validation and its relocation records are not rewritten.
 
 ## Enhanced Client (UOSA.exe) for comparison
 

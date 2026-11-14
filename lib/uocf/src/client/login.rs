@@ -46,6 +46,10 @@ pub const STOCK_INTERNAL_LOGIN_ADDRESSES: [(Ipv4Addr, u16); 2] =
     [(Ipv4Addr::new(172, 16, 17, 41), STOCK_LOGIN_PORTS[0]), (Ipv4Addr::new(10, 18, 37, 29), STOCK_LOGIN_PORTS[0])];
 /// Kingdom Reborn's only address (the fixed store) in the traced build.
 pub const STOCK_KR_LOGIN_ADDRESS: (Ipv4Addr, u16) = (Ipv4Addr::new(159, 153, 196, 41), STOCK_LOGIN_PORTS[0]);
+/// Both built-in addresses found in the audited KR collection.
+pub const STOCK_KR_LOGIN_ADDRESSES: [(Ipv4Addr, u16); 2] = [
+    STOCK_KR_LOGIN_ADDRESS, (Ipv4Addr::new(159, 153, 196, 57), STOCK_LOGIN_PORTS[0]),
+];
 
 const OPCODE_MOV_RM32_IMM32: u8 = 0xc7;
 const OPCODE_MOV_RM32_R32: u8 = 0x89;
@@ -75,19 +79,53 @@ const JCC_REL8_LEN: usize = 2;
 const PAIR_PORT_OFFSET: u8 = size_of::<u32>() as u8;
 /// The longest host string read before giving up.
 const MAX_HOST_SCAN: usize = 64;
+const INLINE_KR_PREFIX: &[u8] = &[0x8d, 0x44, 0x24];
+const INLINE_KR_AFTER_LEA: &[u8] = &[0x50, 0x8b, 0xc6];
+const INLINE_KR_PREFIX_LEN: usize = INLINE_KR_PREFIX.len() + 1 + INLINE_KR_AFTER_LEA.len();
+const INLINE_KR_TAIL: &[u8] = &[0x5f, 0x5e, 0x83, 0xc4, 0x08, 0xc2, 0x04, 0x00];
+const OPCODE_CALL_REL32: u8 = 0xe8;
+const CALL_REL32_LEN: usize = 5;
+/// The 2.45 octet packer and active endpoint constructor. Only the endpoint operands vary.
+const LEGACY_ADDRESS_CODE: &[u8] = &[
+    0x33, 0xc0, 0x8a, 0x64, 0x24, 0x08, 0x0f, 0xb6, 0xc9, 0x8a, 0x44, 0x24, 0x0c, 0xc1, 0xe0, 0x08,
+    0x0b, 0xc1, 0x0f, 0xb6, 0x4c, 0x24, 0x10, 0xc1, 0xe0, 0x08, 0x0b, 0xc1, 0x8b, 0x4c, 0x24, 0x04,
+    0x89, 0x01, 0xc2, 0x10, 0x00,
+    0x6a, 0x39, 0x68, 0x99, 0x00, 0x00, 0x00, 0x68, 0x9f, 0x00, 0x00, 0x00, 0x56, 0xb1, 0xc4, 0xe8,
+    0xc7, 0xff, 0xff, 0xff, 0x66, 0xc7, 0x46, 0x04, 0x5f, 0x1e, 0xc3,
+];
+const LEGACY_PACKER_SIZE: usize = 37;
+const LEGACY_IP_OCTET_OFFSETS: [usize; 4] = [8, 3, 14, 1];
+const LEGACY_PORT_OFFSET: usize = 24;
 
 /// The fixed address store.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct LoginAddressSite {
-    /// File offset of the `MOV DWORD [ESP+D],ip` instruction.
+    /// Start of endpoint construction: a packed store or the earlier octet constructor.
     pub offset: usize,
-    /// File offsets of the ip imm32 and the port imm16.
+    /// File offsets of the packed IP immediate (or first octet) and the port imm16.
     pub ip_offset: usize,
     pub port_offset: usize,
+    /// Earlier KR stores four separate octet operands, in network order; otherwise the IP is one imm32.
+    pub ip_byte_offsets: Option<[usize; 4]>,
     pub ip: Ipv4Addr,
     pub port: u16,
-    /// The pair's stack displacement D.
+    /// The packed pair's stack displacement D; unused by the earlier octet constructor.
     pub displacement: u8,
+}
+
+impl LoginAddressSite {
+    /// Exact operand writes for the address, preserving every instruction and immediate's unused bytes.
+    pub fn ip_writes(&self, ip: Ipv4Addr) -> Vec<(usize, Vec<u8>)> {
+        match self.ip_byte_offsets {
+            Some(offsets) => offsets.into_iter().zip(ip.octets()).map(|(at, octet)| (at, vec![octet])).collect(),
+            None => vec![(self.ip_offset, u32::from(ip).to_le_bytes().to_vec())],
+        }
+    }
+
+    /// The active endpoint constructor's port operand.
+    pub fn port_writes(&self, port: u16) -> Vec<(usize, Vec<u8>)> {
+        vec![(self.port_offset, port.to_le_bytes().to_vec())]
+    }
 }
 
 /// A public host string the code pushes.
@@ -159,10 +197,10 @@ impl LoginSites {
     }
 
     /// Enhanced Client: true when every public host is an official one and every port is the stock one of its
-    /// draw. Kingdom Reborn: true at the traced address ([`STOCK_KR_LOGIN_ADDRESS`]).
+    /// draw. Kingdom Reborn: true at one of the audited [`STOCK_KR_LOGIN_ADDRESSES`].
     pub fn is_stock(&self) -> bool {
         if self.uses_fixed_address() {
-            return (self.fixed.ip, self.fixed.port) == STOCK_KR_LOGIN_ADDRESS;
+            return STOCK_KR_LOGIN_ADDRESSES.contains(&(self.fixed.ip, self.fixed.port));
         }
         self.hosts.iter().all(|slot| STOCK_LOGIN_HOSTS.contains(&slot.host.as_str()))
             && self.ports.iter().zip(STOCK_LOGIN_PORTS).all(|(site, stock)| site.port == stock)
@@ -346,12 +384,61 @@ pub fn locate_login_fixed_candidates(bytes: &[u8], pe: &PeImage) -> eyre::Result
                 offset: base + at,
                 ip_offset: base + ip,
                 port_offset: base + port,
+                ip_byte_offsets: None,
                 ip: Ipv4Addr::from(u32_at(code, ip)?),
                 port: u16_at(code, port)?,
                 displacement,
             })
         })
         .collect())
+}
+
+fn earlier_kr_candidates(code: &[u8], base: usize) -> Vec<LoginAddressSite> {
+    let mut found = Vec::new();
+    for at in 0..code.len() {
+        // 2.46: the pair is built immediately before the direct connect call, after its pointer is pushed.
+        if at >= INLINE_KR_PREFIX_LEN && code.get(at..at + 3) == Some(&[OPCODE_MOV_RM32_IMM32, MODRM_SIB_DISP8, SIB_ESP])
+            && let Some(&disp) = code.get(at + 3)
+        {
+            let prefix = at - INLINE_KR_PREFIX_LEN;
+            let port = disp.checked_add(PAIR_PORT_OFFSET).and_then(|port_disp| mov_word_esp(code, at + MOV_DWORD_ESP_LEN, port_disp));
+            let call = at + MOV_DWORD_ESP_LEN + MOV_WORD_ESP_LEN;
+            let tail = call + CALL_REL32_LEN;
+            let prefix_matches = code.get(prefix..prefix + INLINE_KR_PREFIX.len()) == Some(INLINE_KR_PREFIX)
+                && code.get(prefix + INLINE_KR_PREFIX.len()) == disp.checked_sub(PAIR_PORT_OFFSET).as_ref()
+                && code.get(prefix + INLINE_KR_PREFIX.len() + 1..at) == Some(INLINE_KR_AFTER_LEA);
+            if prefix_matches && code.get(call) == Some(&OPCODE_CALL_REL32) && code.get(tail..tail + INLINE_KR_TAIL.len()) == Some(INLINE_KR_TAIL)
+                && let Some(port) = port
+                && let (Some(ip), Some(port_value)) = (u32_at(code, at + 4), u16_at(code, port))
+            {
+                found.push(LoginAddressSite {
+                    offset: base + at, ip_offset: base + at + 4, port_offset: base + port,
+                    ip_byte_offsets: None,
+                    ip: Ipv4Addr::from(ip), port: port_value, displacement: disp,
+                });
+            }
+        }
+        // 2.45: verify the complete octet packer, its exact backward call, and the active constructor.
+        let Some(window) = code.get(at..at + LEGACY_ADDRESS_CODE.len()) else { continue };
+        let operands = |index: usize| {
+            index.checked_sub(LEGACY_PACKER_SIZE).is_some_and(|index| {
+                LEGACY_IP_OCTET_OFFSETS.contains(&index)
+                    || (LEGACY_PORT_OFFSET..LEGACY_PORT_OFFSET + size_of::<u16>()).contains(&index)
+            })
+        };
+        if !window.iter().zip(LEGACY_ADDRESS_CODE).enumerate().all(|(index, (actual, expected))| operands(index) || actual == expected) {
+            continue;
+        }
+        let ctor = at + LEGACY_PACKER_SIZE;
+        let port = u16_at(code, ctor + LEGACY_PORT_OFFSET).expect("matched constructor");
+        let offsets = LEGACY_IP_OCTET_OFFSETS.map(|at| base + ctor + at);
+        found.push(LoginAddressSite {
+            offset: base + ctor, ip_offset: offsets[0], port_offset: base + ctor + LEGACY_PORT_OFFSET,
+            ip_byte_offsets: Some(offsets),
+            ip: Ipv4Addr::from(LEGACY_IP_OCTET_OFFSETS.map(|at| code[ctor + at])), port, displacement: 0,
+        });
+    }
+    found
 }
 
 /// The host string at `va`: in a data section, 1..=[`MAX_LOGIN_HOST_LENGTH`] host characters and a NUL.
@@ -404,6 +491,10 @@ pub fn locate_login_sites(bytes: &[u8], pe: &PeImage, family: ClientFamily) -> e
         return Ok(None);
     }
     let mut candidates = locate_login_fixed_candidates(bytes, pe)?;
+    if family == ClientFamily::KingdomReborn {
+        let (code, base) = code_section(bytes, pe)?;
+        candidates.extend(earlier_kr_candidates(code, base));
+    }
     if candidates.len() != 1 {
         return Ok(None);
     }
@@ -536,6 +627,60 @@ pub(crate) mod tests {
     pub fn synthetic_kr_login_client() -> Vec<u8> {
         let (code, _) = login_code(&[], (KR_IP, STOCK_LOGIN_PORTS[0]), &[STOCK_LOGIN_PORTS[0]]);
         synthetic_image_with(code, Vec::new(), false)
+    }
+
+    pub fn synthetic_kr_legacy_login_client() -> Vec<u8> {
+        synthetic_image_with(LEGACY_ADDRESS_CODE.to_vec(), Vec::new(), false)
+    }
+
+    #[test]
+    fn earlier_kr_octet_address_is_guarded_and_relocatable() {
+        let image = synthetic_kr_legacy_login_client();
+        let before = ClientExeInspection::inspect(&image).unwrap();
+        let login = before.login.unwrap();
+        assert!(login.is_stock());
+        assert_eq!(login.fixed.ip, STOCK_KR_LOGIN_ADDRESSES[1].0);
+        let ip = Ipv4Addr::new(255, 128, 254, 192);
+        const PORT: u16 = 2593;
+        let mut patched = image.clone();
+        for (at, bytes) in login.fixed.ip_writes(ip).into_iter().chain(login.fixed.port_writes(PORT)) {
+            patched[at..][..bytes.len()].copy_from_slice(&bytes);
+        }
+        let after = ClientExeInspection::inspect(&patched).unwrap().login.unwrap();
+        assert_eq!((after.fixed.ip, after.fixed.port), (ip, PORT));
+        assert_eq!(after.offsets(), login.offsets());
+        assert_eq!(after.fixed.ip_writes(ip).len(), ip.octets().len());
+        assert_eq!(after.fixed.port_writes(PORT).len(), 1);
+        let mut bad_packer = image;
+        let (code, base) = code_section(&bad_packer, &before.pe).unwrap();
+        assert_eq!(code[0], LEGACY_ADDRESS_CODE[0]);
+        bad_packer[base] ^= 1;
+        assert!(ClientExeInspection::inspect(&bad_packer).unwrap().login.is_none());
+        let mut twice = LEGACY_ADDRESS_CODE.to_vec();
+        twice.extend(LEGACY_ADDRESS_CODE);
+        assert!(ClientExeInspection::inspect(&synthetic_image_with(twice, Vec::new(), false)).unwrap().login.is_none());
+    }
+
+    #[test]
+    fn earlier_kr_inline_pair_requires_its_connect_context() {
+        const IP: Ipv4Addr = Ipv4Addr::new(159, 153, 196, 57);
+        const DISP: u8 = 0x0c;
+        let mut code = vec![0x8d, 0x44, 0x24, DISP - PAIR_PORT_OFFSET, 0x50, 0x8b, 0xc6, 0xc7, 0x44, 0x24, DISP];
+        code.extend(u32::from(IP).to_le_bytes());
+        code.extend([0x66, 0xc7, 0x44, 0x24, DISP + PAIR_PORT_OFFSET]);
+        code.extend(STOCK_LOGIN_PORTS[0].to_le_bytes());
+        code.extend([OPCODE_CALL_REL32, 0, 0, 0, 0]);
+        code.extend(INLINE_KR_TAIL);
+        let image = synthetic_image_with(code.clone(), Vec::new(), false);
+        let fixed = ClientExeInspection::inspect(&image).unwrap().login.unwrap().fixed;
+        assert_eq!((fixed.ip, fixed.port), (IP, STOCK_LOGIN_PORTS[0]));
+        assert!(fixed.ip_byte_offsets.is_none());
+        code[0] ^= 1;
+        assert!(ClientExeInspection::inspect(&synthetic_image_with(code, Vec::new(), false)).unwrap().login.is_none());
+        for length in 0..INLINE_KR_PREFIX_LEN + MOV_DWORD_ESP_LEN {
+            let truncated = vec![OPCODE_MOV_RM32_IMM32; length];
+            assert!(earlier_kr_candidates(&truncated, 0).is_empty());
+        }
     }
 
     #[test]
