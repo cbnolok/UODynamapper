@@ -1,15 +1,19 @@
 //! Whether a static light is hidden by what is drawn over it: the one rule every style applies before it draws a
 //! light, to Classic and UOD-Painterly's light.mul decals and to KR-like and Enhanced's light sprites, and so to the
 //! land and static local lights they feed. Each style picks its rule with its preset group's `light_cover`
-//! (`LightCover`); both rules look at the diagonal neighbour in front of a light, the cell (x+1, y+1) the camera
-//! looks across to reach it, and neither counts the light's own cell, so its own wall, the item it sits on and the
-//! floor it stands on never cover it.
+//! (`LightCover`); the clients' and ClassicUO's rules look at the diagonal neighbour in front of a light, the cell
+//! (x+1, y+1) the camera looks across to reach it, and none counts the light's own cell, so its own wall, the item it
+//! sits on and the floor it stands on never cover it.
+//!
+//! `LightCover::Uod` is Dynamapper's: it hides no light for being covered, only the lights whose item is not drawn
+//! (at or above the view's z limit). The glow is clipped pixel by pixel instead (`light_scene`), and what it takes
+//! from here is the light's ceiling (`static_light_ceiling_z`): the lowest floor or roof over it, from which up the
+//! walls and solid statics past the light are not lit.
 //!
 //! `LightCover::ClassicUo` is ClassicUO's rule (`GameScene.AddLight`, a Classic reference): a light is not added
 //! when its cover cell holds a drawn, opaque static whose z is at least `LIGHT_COVER_MIN_RISE` above the light's and
 //! below the view's z limit. A roof or an upper floor over a room covers the room's lights; a light on an outer wall
-//! facing the camera, an open-air light and a light on top of a tall item keep theirs. Dynamapper adds one exception:
-//! a light hung under an eave stays lit (`eave_keeps_light_lit`).
+//! facing the camera, an open-air light and a light on top of a tall item keep theirs.
 //!
 //! `LightCover::Clients` is the Enhanced and KR clients' rule (`UOObjectComponentLighting`, Enhanced 0x00449f60, KR
 //! 0x004391d0; see `CLIENT_NIGHT_LIGHTING_AND_SHADOWS.md`): a light sprite is culled when an object of its cover cell
@@ -17,10 +21,10 @@
 //! The clients draw the sprites that are left with no depth test. The two clients count the bands differently, and
 //! each style follows one of them (`LightCoverRule`): KR-like the KR client's 16 clamped layers, each object's from
 //! the average land z of its own cell (`kr_light_is_hidden`), the other styles the Enhanced client's unclamped bands,
-//! all from the raw land z of the light's cell (`client_light_is_hidden`). KR's layers let a light show through a
-//! floor or roof just above it in its own layer, or in a lower layer when the land under the two cells differs (the KR
-//! client draws such glows over the floor); KR-like does not follow that: a floor or roof of the cover cell at least
-//! `LIGHT_COVER_MIN_RISE` above the light also hides it there (`floor_covers_light`).
+//! all from the raw land z of the light's cell (`client_light_is_hidden`). Both clients' bands let a light show
+//! through a floor or roof just above it in its own band, and KR's in a lower layer too when the land under the two
+//! cells differs (the clients draw such glows over the floor); neither style follows that: a floor or roof of the
+//! cover cell at least `LIGHT_COVER_MIN_RISE` above the light also hides it there (`floor_covers_light`).
 //!
 //! The rules take the view's z limit (`max_z`) so a z-view limit composes with them: a static the limit stops drawing
 //! no longer covers, and its lights come back; a light at or above the limit is hidden with its item. KR's own cut
@@ -47,11 +51,6 @@ pub const LIGHT_COVER_MIN_RISE: i32 = 5;
 /// The z limit while there is no z-view limit: every static is drawn.
 pub const NO_Z_VIEW_LIMIT: i32 = i32::MAX;
 
-/// How many cells past the cover cell the eave exception walks along the diagonal toward the camera, looking for the
-/// open cell in front of an eave. Measured on maps 0 and 1: the eaves over the lights on outer walls end within two
-/// cells (1539 of 1564 on map 1), while the cover over a room's lights mostly runs on past that.
-pub const EAVE_WALK_CELLS: u32 = 2;
-
 /// The clients' z bands: an object covers a light from the band above the light's, the bands `CLIENT_BAND_HEIGHT`
 /// z high and counted from `CLIENT_BAND_BASE` below the land (Enhanced 0x00449f60, KR 0x0043c950).
 pub const CLIENT_BAND_HEIGHT: i32 = 20;
@@ -64,14 +63,17 @@ pub const KR_LIGHT_TOP_LAYER: i32 = 15;
 /// drawn (NoDraw).
 const NON_COVERING_FLAGS: u64 = TaeFlag::Transparent.bits() | TaeFlag::NoDraw.bits();
 
-/// The statics that are floors or roofs, which always cover a light under them in KR-like (`floor_covers_light`).
+/// The statics that are floors or roofs, which always cover a light under them with the clients' rules
+/// (`floor_covers_light`) and make the ceiling of `LightCover::Uod` (`light_ceiling_z`).
 const FLOOR_FLAGS: u64 = TaeFlag::Surface.bits() | TaeFlag::Roof.bits();
 
 /// The rule a style's `LightCover` gives: `LightCover::Clients` is the KR client's rule in KR-like and the Enhanced
 /// client's in the other styles.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum LightCoverRule {
-    /// `LightCover::ClassicUo`: `classicuo_light_is_hidden`.
+    /// `LightCover::Uod`: only a light whose item is not drawn is hidden; its glow is clipped (`light_scene`).
+    Uod,
+    /// `LightCover::ClassicUo`: `light_is_hidden` on the cover cell.
     ClassicUo,
     /// `LightCover::Clients` outside KR-like: `client_light_is_hidden`.
     EnhancedClient,
@@ -83,6 +85,7 @@ impl LightCoverRule {
     /// The rule `light_cover` gives in a style, `kr_like` when the style is KR-like.
     pub fn of_style(light_cover: LightCover, kr_like: bool) -> Self {
         match (light_cover, kr_like) {
+            (LightCover::Uod, _) => Self::Uod,
             (LightCover::ClassicUo, _) => Self::ClassicUo,
             (LightCover::Clients, false) => Self::EnhancedClient,
             (LightCover::Clients, true) => Self::KrClient,
@@ -90,12 +93,11 @@ impl LightCoverRule {
     }
 }
 
-/// A static of a cell the cover rules read: its tile flags, z and tiledata height.
+/// A static of a cell the cover rules read: its tile flags and z.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct CoverStatic {
     pub flags: u64,
     pub z: i8,
-    pub height: i8,
 }
 
 /// The cell whose statics can cover a light on (`tile_x`, `tile_y`): the diagonal neighbour toward the camera.
@@ -115,53 +117,6 @@ pub fn static_covers_light(flags: u64, static_z: i8, light_z: i8, max_z: i32) ->
 pub fn light_is_hidden(light_z: i8, cover_cell: impl IntoIterator<Item = (u64, i8)>, max_z: i32) -> bool {
     i32::from(light_z) >= max_z
         || cover_cell.into_iter().any(|(flags, static_z)| static_covers_light(flags, static_z, light_z, max_z))
-}
-
-/// Whether a drawn wall of `cell` stands at the height of a light at `light_z`: its span, z up to z + height (at
-/// least one), holds the light's z.
-fn wall_at_light_height(cell: &[CoverStatic], light_z: i8, max_z: i32) -> bool {
-    let light_z = i32::from(light_z);
-    cell.iter().any(|item| {
-        let (z, height) = (i32::from(item.z), i32::from(item.height).max(1));
-        item.flags & TaeFlag::Wall.bits() != 0
-            && item.flags & NON_COVERING_FLAGS == 0
-            && z < max_z
-            && z <= light_z
-            && light_z < z + height
-    })
-}
-
-/// Whether a light ClassicUO's rule hides hangs under an eave, a porch or an overhang, outside the building, and so
-/// stays lit. `diagonal` holds the cells in front of the light toward the camera, the cover cell first and then the
-/// next `EAVE_WALK_CELLS` cells along the diagonal (x+1+k, y+1+k).
-///
-/// It does when no wall stands at the light's height in the cover cell, and an uncovered cell comes, walking on
-/// along the diagonal, before such a wall and within the walk: the cover in front of the light ends in the open. A
-/// wall at the light's height encloses it in a room, and so does a cover that runs on past the walk.
-pub fn eave_keeps_light_lit(light_z: i8, diagonal: &[&[CoverStatic]], max_z: i32) -> bool {
-    let Some((cover_cell, beyond)) = diagonal.split_first() else {
-        return false;
-    };
-    if wall_at_light_height(cover_cell, light_z, max_z) {
-        return false;
-    }
-    for cell in beyond.iter().take(EAVE_WALK_CELLS as usize) {
-        if wall_at_light_height(cell, light_z, max_z) {
-            return false;
-        }
-        if !cell.iter().any(|item| static_covers_light(item.flags, item.z, light_z, max_z)) {
-            return true;
-        }
-    }
-    false
-}
-
-/// Whether `LightCover::ClassicUo` hides a light at `light_z`: ClassicUO's rule (`light_is_hidden`) on the first cell
-/// of `diagonal`, unless the light hangs under an eave (`eave_keeps_light_lit`).
-pub fn classicuo_light_is_hidden(light_z: i8, diagonal: &[&[CoverStatic]], max_z: i32) -> bool {
-    let cover_cell = diagonal.first().copied().unwrap_or(&[]);
-    light_is_hidden(light_z, cover_cell.iter().map(|item| (item.flags, item.z)), max_z)
-        && !eave_keeps_light_lit(light_z, diagonal, max_z)
 }
 
 /// The clients' z band of `z` above the land z `land_z`: `(z - land_z + CLIENT_BAND_BASE) / CLIENT_BAND_HEIGHT`,
@@ -190,13 +145,28 @@ pub fn kr_light_layer(z: i8, land_z: i8) -> i32 {
 
 /// Whether a floor or roof of the cover cell `cover_cell` covers a light at `light_z` under ClassicUO's rule
 /// (`static_covers_light`): a Surface or Roof static, neither Transparent nor NoDraw, at least `LIGHT_COVER_MIN_RISE`
-/// above the light and below the z limit `max_z`. KR-like adds it to the KR client's rule, whose layers let such a
-/// floor through when it sits in the light's layer or below (Britain 1407,1594 on map 1: windows at 50 under the
-/// pavers at 70), which the KR client then draws as a glow over the floor.
+/// above the light and below the z limit `max_z`. Both clients' rules take it on top of their bands, which let such a
+/// floor through when it sits in the light's band or below (Britain 1407,1594 on map 1: windows at 50 under the
+/// pavers at 70), which the clients then draw as a glow over the floor.
 pub fn floor_covers_light(light_z: i8, cover_cell: &[CoverStatic], max_z: i32) -> bool {
-    cover_cell
+    cover_cell.iter().any(|item| covers_as_floor(item, light_z, max_z))
+}
+
+/// Whether `item` is a floor or roof over a light at `light_z`, below the z limit `max_z` (`floor_covers_light`).
+fn covers_as_floor(item: &CoverStatic, light_z: i8, max_z: i32) -> bool {
+    item.flags & FLOOR_FLAGS != 0 && static_covers_light(item.flags, item.z, light_z, max_z)
+}
+
+/// The ceiling of a light at `light_z` under `LightCover::Uod`: the z of the lowest floor or roof over it
+/// (`floor_covers_light`) in `cells`, its own cell and its cover cell, below the z limit `max_z`. The light does not
+/// light the walls and solid statics past it from there up (`light_scene`); `None` when nothing covers it.
+pub fn light_ceiling_z(light_z: i8, cells: &[&[CoverStatic]], max_z: i32) -> Option<i8> {
+    cells
         .iter()
-        .any(|item| item.flags & FLOOR_FLAGS != 0 && static_covers_light(item.flags, item.z, light_z, max_z))
+        .flat_map(|cell| cell.iter())
+        .filter(|item| covers_as_floor(item, light_z, max_z))
+        .map(|item| item.z)
+        .min()
 }
 
 /// Whether `LightCover::Clients` hides a light at `light_z` in KR-like, the KR client's rule (0x004391d0): it is at or
@@ -235,9 +205,9 @@ pub struct MultiCoverParts {
 }
 
 impl MultiCoverParts {
-    /// Reads the multi parts that land on the cover cells, and the cells past them the eave exception walks, of the
-    /// lights in the blocks `blocks_x` × `blocks_y` of the map `map_id`: those of every multi placed within
-    /// `MULTI_PART_MAX_REACH` of them, the drawn parts or, with `show_hidden_parts`, all, as the renderer expands them.
+    /// Reads the multi parts that land on the cells, and the cover cells, of the lights in the blocks
+    /// `blocks_x` × `blocks_y` of the map `map_id`: those of every multi placed within `MULTI_PART_MAX_REACH` of them,
+    /// the drawn parts or, with `show_hidden_parts`, all, as the renderer expands them.
     pub fn read(
         tilemeta: &TileMetaPackage,
         multis: Option<&MultiDefinitionsRes>,
@@ -255,20 +225,18 @@ impl MultiCoverParts {
             return cover;
         }
         let cover_tiles = |blocks: &Range<u32>| {
-            let (first, _) = light_cover_cell(blocks.start * MAP_STORAGE_BLOCK_TILE_DIM, 0);
-            first..blocks.end * MAP_STORAGE_BLOCK_TILE_DIM + 1 + EAVE_WALK_CELLS
+            let (last_cover, _) = light_cover_cell(blocks.end * MAP_STORAGE_BLOCK_TILE_DIM - 1, 0);
+            blocks.start * MAP_STORAGE_BLOCK_TILE_DIM..last_cover + 1
         };
         let (tiles_x, tiles_y) = (cover_tiles(&blocks_x), cover_tiles(&blocks_y));
         let reach = MULTI_PART_MAX_REACH as u32;
         let anchor_cells = |tiles: &Range<u32>| tiles.start.saturating_sub(reach)..tiles.end.saturating_add(reach);
-        let meta = |graphic: u16| {
-            tilemeta.item_tile(u32::from(graphic)).map_or((0, 0), |meta| (meta.flags, meta.height))
-        };
+        let flags = |graphic: u16| tilemeta.item_tile(u32::from(graphic)).map_or(0, |meta| meta.flags);
         for multi in placed_multis.anchored_in(map_id, anchor_cells(&tiles_x), anchor_cells(&tiles_y)) {
             let Some(parts) = multis.parts(multi.multi_id, show_hidden_parts) else {
                 continue;
             };
-            for (cell, part) in multi_parts_on_cells((multi.x, multi.y), multi.z, parts, &tiles_x, &tiles_y, meta) {
+            for (cell, part) in multi_parts_on_cells((multi.x, multi.y), multi.z, parts, &tiles_x, &tiles_y, flags) {
                 cover.cells.entry(cell).or_default().push(part);
             }
         }
@@ -281,14 +249,14 @@ impl MultiCoverParts {
 }
 
 /// The parts of a multi anchored at `anchor`, at `anchor_z`, that land on the cells `tiles_x` × `tiles_y`, with their
-/// tile flags and heights from `meta` and their z as the renderer expands it.
+/// tile flags from `flags` and their z as the renderer expands it.
 fn multi_parts_on_cells(
     anchor: (u32, u32),
     anchor_z: i8,
     parts: &[MultiPart],
     tiles_x: &Range<u32>,
     tiles_y: &Range<u32>,
-    meta: impl Fn(u16) -> (u64, i8),
+    flags: impl Fn(u16) -> u64,
 ) -> Vec<((u32, u32), CoverStatic)> {
     parts
         .iter()
@@ -298,14 +266,14 @@ fn multi_parts_on_cells(
             if !tiles_x.contains(&x) || !tiles_y.contains(&y) {
                 return None;
             }
-            let (flags, height) = meta(part.item_id);
-            Some(((x, y), CoverStatic { flags, z: expanded_multi_part_z(anchor_z, part.z), height }))
+            Some(((x, y), CoverStatic { flags: flags(part.item_id), z: expanded_multi_part_z(anchor_z, part.z) }))
         })
         .collect()
 }
 
-/// Whether `rule` hides a light on (`tile_x`, `tile_y`) at `light_z`, reading its cover cell, and for the eave
-/// exception the cells past it, from the statics store and the multi parts `multi_parts` holds. `land_z` gives the raw
+/// Whether `rule` hides a light on (`tile_x`, `tile_y`) at `light_z`, reading its cover cell from the statics store
+/// and the multi parts `multi_parts` holds; `LightCoverRule::Uod` reads nothing and hides only a light at or above the
+/// z limit `max_z`, whose item is not drawn. `land_z` gives the raw
 /// land z of a cell, which the clients' bands start from: the Enhanced client's the light cell's own, the KR client's
 /// each cell's average (`kr_cell_land_z`). While the light cell's is not known (its map block is not loaded) the
 /// light's own z stands in for it, and while the cover cell's is not known, the light cell's. A cell the store cannot
@@ -323,17 +291,16 @@ pub fn static_light_is_hidden(
 ) -> bool {
     let (cover_x, cover_y) = light_cover_cell(tile_x, tile_y);
     match rule {
+        LightCoverRule::Uod => i32::from(light_z) >= max_z,
         LightCoverRule::ClassicUo => {
-            let diagonal = (0..=EAVE_WALK_CELLS)
-                .map(|step| cell_statics(statics_store, tilemeta, multi_parts, cover_x + step, cover_y + step))
-                .collect::<Vec<_>>();
-            let diagonal = diagonal.iter().map(Vec::as_slice).collect::<Vec<_>>();
-            classicuo_light_is_hidden(light_z, &diagonal, max_z)
+            let cover_cell = cell_statics(statics_store, tilemeta, multi_parts, cover_x, cover_y);
+            light_is_hidden(light_z, cover_cell.iter().map(|item| (item.flags, item.z)), max_z)
         }
         LightCoverRule::EnhancedClient => {
             let cover_cell = cell_statics(statics_store, tilemeta, multi_parts, cover_x, cover_y);
             let light_land_z = land_z(tile_x, tile_y).unwrap_or(light_z);
             client_light_is_hidden(light_z, light_land_z, cover_cell.iter().map(|item| item.z), max_z)
+                || floor_covers_light(light_z, &cover_cell, max_z)
         }
         LightCoverRule::KrClient => {
             let cover_cell = cell_statics(statics_store, tilemeta, multi_parts, cover_x, cover_y);
@@ -345,8 +312,26 @@ pub fn static_light_is_hidden(
     }
 }
 
-/// The objects the renderer draws on the cell (`x`, `y`), with their tile flags and heights: its statics and the multi
-/// parts landing there. No statics while the store cannot read its block.
+/// The ceiling of a light on (`tile_x`, `tile_y`) at `light_z` under `LightCover::Uod` (`light_ceiling_z`), reading
+/// its own cell and its cover cell from the statics store and the multi parts `multi_parts` holds, below the z limit
+/// `max_z`.
+pub fn static_light_ceiling_z(
+    statics_store: &mut LazyStaticsStore,
+    tilemeta: &TileMetaPackage,
+    multi_parts: &MultiCoverParts,
+    tile_x: u32,
+    tile_y: u32,
+    light_z: i8,
+    max_z: i32,
+) -> Option<i8> {
+    let (cover_x, cover_y) = light_cover_cell(tile_x, tile_y);
+    let own_cell = cell_statics(statics_store, tilemeta, multi_parts, tile_x, tile_y);
+    let cover_cell = cell_statics(statics_store, tilemeta, multi_parts, cover_x, cover_y);
+    light_ceiling_z(light_z, &[&own_cell, &cover_cell], max_z)
+}
+
+/// The objects the renderer draws on the cell (`x`, `y`), with their tile flags: its statics and the multi parts
+/// landing there. No statics while the store cannot read its block.
 fn cell_statics(
     statics_store: &mut LazyStaticsStore,
     tilemeta: &TileMetaPackage,
@@ -360,9 +345,9 @@ fn cell_statics(
     tiles
         .iter()
         .filter(|tile| tile.x_offset() == offset_x && tile.y_offset() == offset_y)
-        .map(|tile| {
-            let meta = tilemeta.item_tile(u32::from(tile.graphic));
-            CoverStatic { flags: meta.map_or(0, |meta| meta.flags), z: tile.z, height: meta.map_or(0, |meta| meta.height) }
+        .map(|tile| CoverStatic {
+            flags: tilemeta.item_tile(u32::from(tile.graphic)).map_or(0, |meta| meta.flags),
+            z: tile.z,
         })
         .chain(multi_parts.cell(x, y).iter().copied())
         .collect()
@@ -375,15 +360,9 @@ mod tests {
     const OPAQUE: u64 = TaeFlag::Surface.bits();
     const ROOF: u64 = TaeFlag::Roof.bits();
     const WALL: u64 = TaeFlag::Wall.bits();
-    /// A wall's tiledata height, as the stone walls of the real cases.
-    const WALL_HEIGHT: i8 = 20;
 
     fn item(flags: u64, z: i8) -> CoverStatic {
-        CoverStatic { flags, z, height: if flags & WALL != 0 { WALL_HEIGHT } else { 0 } }
-    }
-
-    fn classicuo(light_z: i8, diagonal: &[&[CoverStatic]]) -> bool {
-        classicuo_light_is_hidden(light_z, diagonal, NO_Z_VIEW_LIMIT)
+        CoverStatic { flags, z }
     }
 
     #[test]
@@ -432,42 +411,6 @@ mod tests {
     }
 
     #[test]
-    fn a_light_under_an_eave_stays_lit() {
-        // A window light at z 0 on a south wall, an eave at 20 over the cell in front of it, open ground beyond
-        // (map 1, 285,991: the most common case, windows under the eaves of Yew's houses).
-        let eave: &[CoverStatic] = &[item(ROOF, 20)];
-        assert!(!classicuo(0, &[eave, &[], &[]]));
-        // A deeper overhang, two cells of cover, still ends in the open within the walk.
-        assert!(!classicuo(0, &[eave, eave, &[]]));
-        // ClassicUO itself hides it: the exception is Dynamapper's.
-        assert!(light_is_hidden(0, [(ROOF, 20)], NO_Z_VIEW_LIMIT));
-    }
-
-    #[test]
-    fn a_light_in_a_covered_room_stays_hidden() {
-        let floor: &[CoverStatic] = &[item(OPAQUE, 20)];
-        // The roof runs on past the walk: the light is inside.
-        assert!(classicuo(0, &[floor, floor, floor]));
-        // A wall at the light's height ahead, the room's far wall, encloses it even when the cover ends after it.
-        let far_wall: &[CoverStatic] = &[item(WALL, 0), item(OPAQUE, 20)];
-        assert!(classicuo(0, &[floor, far_wall, &[]]));
-        // A wall at the light's height in the cover cell itself: a room one cell deep.
-        let wall_in_front: &[CoverStatic] = &[item(WALL, 0), item(OPAQUE, 20)];
-        assert!(classicuo(0, &[wall_in_front, &[], &[]]));
-        // A wall below or above the light's height does not enclose it.
-        let low_wall: &[CoverStatic] = &[item(WALL, -WALL_HEIGHT), item(OPAQUE, 20)];
-        assert!(!classicuo(0, &[low_wall, &[], &[]]));
-    }
-
-    #[test]
-    fn the_eave_walk_needs_the_cells_beyond() {
-        // Without the cells past the cover cell (a map edge) the rule is ClassicUO's.
-        assert!(classicuo(0, &[&[item(ROOF, 20)]]));
-        assert!(!classicuo(0, &[&[]]));
-        assert!(!classicuo(0, &[]));
-    }
-
-    #[test]
     fn the_client_bands_count_twenty_z_above_the_land() {
         assert_eq!(client_light_band(0, 0), 7);
         assert_eq!(client_light_band(19, 0), 7);
@@ -505,12 +448,11 @@ mod tests {
         let floor = MultiPart { item_id: 1, x: 1, y: 1, z: 20 };
         let far = MultiPart { item_id: 1, x: 40, y: 0, z: 20 };
         let behind = MultiPart { item_id: 1, x: -11, y: 0, z: 0 };
-        let meta = |_| (OPAQUE, 0);
-        let parts = multi_parts_on_cells((10, 10), 5, &[floor, far, behind], &(0..20), &(0..20), meta);
+        let parts = multi_parts_on_cells((10, 10), 5, &[floor, far, behind], &(0..20), &(0..20), |_| OPAQUE);
         assert_eq!(parts, [((11, 11), item(OPAQUE, 25))]);
         // A part over a light's cover cell covers it as a static does.
         let cover = parts.iter().map(|(_, part)| *part).collect::<Vec<_>>();
-        assert!(classicuo(5, &[&cover]));
+        assert!(light_is_hidden(5, cover.iter().map(|part| (part.flags, part.z)), NO_Z_VIEW_LIMIT));
         assert!(client_light_is_hidden(5, 5, cover.iter().map(|part| part.z), NO_Z_VIEW_LIMIT));
     }
 
@@ -574,10 +516,12 @@ mod tests {
     }
 
     #[test]
-    fn floors_and_roofs_over_a_light_cover_it_whatever_the_kr_layers() {
-        let item = |flags, z| CoverStatic { flags, z, height: 0 };
+    fn floors_and_roofs_over_a_light_cover_it_whatever_the_client_bands() {
         // Britain 1407,1594 on map 1: the KR layers put the window at 50 and the pavers at 70 in front in one layer.
         assert!(!kr_light_is_hidden(50, 7, 30, [70], NO_Z_VIEW_LIMIT));
+        // The Enhanced client's bands too: the window at 50 over land 30 in band 8, the pavers at 70 in band 9 hide it,
+        // but a roof at 55 sits in its band.
+        assert!(!client_light_is_hidden(50, 30, [55], NO_Z_VIEW_LIMIT));
         assert!(floor_covers_light(50, &[item(OPAQUE, 70)], NO_Z_VIEW_LIMIT));
         assert!(floor_covers_light(50, &[item(ROOF, 55)], NO_Z_VIEW_LIMIT));
         // Too close above, see-through, a wall, or cut by the z limit: no cover.
@@ -609,6 +553,25 @@ mod tests {
         assert_eq!(LightCoverRule::of_style(LightCover::Clients, false), LightCoverRule::EnhancedClient);
         assert_eq!(LightCoverRule::of_style(LightCover::ClassicUo, true), LightCoverRule::ClassicUo);
         assert_eq!(LightCoverRule::of_style(LightCover::ClassicUo, false), LightCoverRule::ClassicUo);
+        assert_eq!(LightCoverRule::of_style(LightCover::Uod, true), LightCoverRule::Uod);
+        assert_eq!(LightCoverRule::of_style(LightCover::Uod, false), LightCoverRule::Uod);
+    }
+
+    #[test]
+    fn a_lights_ceiling_is_the_lowest_floor_or_roof_over_it() {
+        // Britain 1407,1595: a window at 30 under the boards at 50 and the pavers at 70.
+        let own: &[CoverStatic] = &[item(OPAQUE, 30), item(WALL, 30)];
+        let cover: &[CoverStatic] = &[item(OPAQUE, 70), item(OPAQUE, 50)];
+        assert_eq!(light_ceiling_z(30, &[own, cover], NO_Z_VIEW_LIMIT), Some(50));
+        // The roof over its own cell counts as well as the one in front.
+        assert_eq!(light_ceiling_z(30, &[&[item(ROOF, 45)], cover], NO_Z_VIEW_LIMIT), Some(45));
+        // Its own floor, a wall, a see-through floor and a floor within the rise are no ceiling.
+        let none: &[CoverStatic] =
+            &[item(OPAQUE, 34), item(WALL, 50), item(OPAQUE | TaeFlag::Transparent.bits(), 50)];
+        assert_eq!(light_ceiling_z(30, &[own, none], NO_Z_VIEW_LIMIT), None);
+        // The z limit cuts the floors it stops drawing.
+        assert_eq!(light_ceiling_z(30, &[own, cover], 70), Some(50));
+        assert_eq!(light_ceiling_z(30, &[own, cover], 50), None);
     }
 
     #[test]

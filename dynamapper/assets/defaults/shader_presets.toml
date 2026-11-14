@@ -125,19 +125,24 @@ default_preset = "classic.morning"
 #                    repetition no longer shows. false is the plain tiling, as the clients draw it. Off in every preset.
 #
 # === [Light cover] ===
-# [<group>] light_cover: every style, one value per style (not per time of day), required. The rule that hides the
-#                    lights a roof or an upper floor covers: the light.mul decals of Classic and UOD-Painterly, the
-#                    light sprites of KR-like and Enhanced, and the local lights taken from either. Both rules look at
-#                    the cell in front of a light, (x + 1, y + 1), toward the camera.
+# [<group>] light_cover: every style, one value per style (not per time of day), required. How the lights a roof,
+#                    an upper floor or a wall covers are drawn: the light.mul decals of Classic and UOD-Painterly, the
+#                    light sprites of KR-like and Enhanced, and the local lights taken from either. "uod" in every
+#                    preset. "classicuo" and "clients" hide a whole light by the cell in front of it, (x + 1, y + 1),
+#                    toward the camera.
+#   "uod":            Dynamapper's rule: no light is hidden for being covered; each glow is clipped pixel by pixel.
+#                     It does not light the floors, roofs and other opaque statics (not Transparent or NoDraw) at
+#                     least 5 z above the light, nor the side facing the camera of the walls and solid statics past
+#                     the light toward the camera; it lights the ground and floors at or below it on both sides of a
+#                     wall, and the walls facing it. A light whose item the z view does not draw goes with it.
 #   "classicuo":      ClassicUO's rule: an opaque static (not Transparent or NoDraw) at least 5 z above the light hides
-#                     it. Dynamapper keeps a light hung under an eave lit: no wall at the light's height in front of
-#                     it, and the cover ends within two more cells along the diagonal.
+#                     it.
 #   "clients":        The Enhanced and KR clients' rule: any static in a higher 20-z band above the land, band =
 #                     (z - land z + 140) / 20, hides it; no exception for eaves or see-through items. KR-like follows
 #                     the KR client: the bands clamped to 0 to 15, each counted from the averaged land z of its own
-#                     cell, and a floor or roof at least 5 z above the light hides it too (the KR client draws
-#                     such lights over the floor). The other styles follow the Enhanced client: all counted from the
-#                     land z of the light's cell.
+#                     cell. The other styles follow the Enhanced client: all counted from the land z of the light's
+#                     cell. In both, a floor or roof at least 5 z above the light hides it too (the clients draw such
+#                     lights over the floor).
 #
 # === [Client shadows] ===
 # client_shadows:    KR-like only, required there and refused elsewhere. true draws the KR client's static shadows
@@ -153,7 +158,7 @@ default_preset = "classic.morning"
 # Key features like grading, gloom, specular, and rim lighting are disabled.
 
 [classic]
-light_cover = "classicuo"
+light_cover = "uod"
 
 [classic.morning]
 global_lighting = 1.02
@@ -510,7 +515,7 @@ elevation_degrees = 60.50379
 
 [enhanced]
 land_texture_variation = false
-light_cover = "classicuo"
+light_cover = "uod"
 
 [enhanced.local_lights]
 source = "light_sprites"
@@ -888,7 +893,7 @@ elevation_degrees = 45.0
 
 [kr]
 land_texture_variation = false
-light_cover = "classicuo"
+light_cover = "uod"
 
 [kr.local_lights]
 source = "light_sprites"
@@ -1254,7 +1259,7 @@ elevation_degrees = 45.0
 
 [painterly]
 land_texture_variation = false
-light_cover = "classicuo"
+light_cover = "uod"
 
 [painterly.morning]
 global_lighting = 1.04

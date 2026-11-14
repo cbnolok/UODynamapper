@@ -1,4 +1,5 @@
 import package::shaders::world::art::picking::{pick_clip, pick_pass, pick_color};
+import package::shaders::world::art::light_scene::{light_scene_drawn, light_scene_texel, LIGHT_SCENE_CLASS_HEIGHT};
 import package::shaders::world::art::depth::{horizontal_plane_painter_depth, cave_lifted_depth};
 import bevy_pbr::render::{
     forward_io::Vertex,
@@ -142,6 +143,17 @@ fn shade_fragment(in: GroundVertexOutput, sample_index: u32) -> GroundFragmentOu
     out.depth = in.position.z;
     // A cave drawn over the map shows in front of the land around it.
     out.depth = cave_lifted_depth(out.depth, inst.is_wet_flags);
+    // The light scene keeps the fragment the opaque pass drew at its pixel (light_scene.wesl): a ground static lies
+    // flat, a floor with no halves, and fills its diamond, so its depth decides.
+    @if(LIGHT_SCENE) {
+        if (!light_scene_drawn(in.position, out.depth)) {
+            discard;
+        }
+        out.color = vec4<f32>(light_scene_texel(in.world_pos, inst.client_grunge_anchor,
+            i32(round(inst.base_world_y / HEIGHT_SCALE)), LIGHT_SCENE_CLASS_HEIGHT, vec2<f32>(0.0), vec3<f32>(0.0),
+            HEIGHT_SCALE));
+        return out;
+    }
     let atlas_extent = max(inst.uv_max - inst.uv_min, vec2<f32>(0.000001));
     var uv_in_tile = (in.uv - inst.uv_min) / atlas_extent;
     // The client filter's footprint: the quad's atlas uv per screen pixel, taken before any branch.
@@ -283,4 +295,11 @@ fn fragment(in: GroundVertexOutput) -> GroundFragmentOutput { return shade_fragm
 @fragment
 fn pick_fragment(in: GroundVertexOutput, @builtin(sample_index) sample_index: u32) -> GroundFragmentOutput {
     return shade_fragment(in, sample_index);
+}
+
+// The light scene's texel (light_scene.wesl), without a depth output: the pass has no depth attachment.
+@if(LIGHT_SCENE)
+@fragment
+fn light_scene_fragment(in: GroundVertexOutput) -> @location(0) vec4<u32> {
+    return vec4<u32>(shade_fragment(in, 0u).color);
 }

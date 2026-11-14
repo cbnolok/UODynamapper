@@ -507,6 +507,7 @@ mod tests {
             world_y: 0.0,
             width_world,
             height_world: width_world,
+            ceiling: None,
         }
     }
 

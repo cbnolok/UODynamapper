@@ -11,6 +11,7 @@ pub mod statics_draw;
 pub mod static_lights;
 pub mod client_light_sprites;
 pub mod light_cover;
+pub(crate) mod light_scene;
 pub mod client_grunge;
 mod static_surface;
 pub(crate) mod static_geometry;
@@ -37,6 +38,7 @@ impl Plugin for DrawStaticSpritesPlugin {
         app.init_resource::<statics_collect::StaticArtCollectDebugState>();
         app.init_resource::<statics_collect::StaticArtSourceState>();
         gpu_picking::install(app);
+        light_scene::install(app);
         app.init_resource::<statics_draw::StaticArtDrawDebugState>();
         app.init_resource::<statics_draw::StaticArtUploadCache>();
         app.init_resource::<statics_draw::StaticBatchEntitySyncState>();

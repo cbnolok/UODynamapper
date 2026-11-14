@@ -1282,13 +1282,13 @@ mod tests {
         assert_eq!(saved.painterly.land_texture_variation, Some(false));
     }
 
-    /// Every style has its light cover, ClassicUO's rule by default, in both bundled files.
+    /// Every style has its light cover, Dynamapper's rule by default, in both bundled files.
     #[test]
-    fn bundled_presets_give_every_style_classicuos_light_cover() {
+    fn bundled_presets_give_every_style_the_uod_light_cover() {
         for (name, text) in [("shader_presets.toml", BUNDLED_FACTORY_PRESETS), ("land.toml", BUNDLED_LAND_SETTINGS)] {
             let presets = parse(text).expect("bundled");
             for (group, slots) in preset_groups(&presets) {
-                assert_eq!(slots.light_cover, LightCover::ClassicUo, "{name} {group}");
+                assert_eq!(slots.light_cover, LightCover::Uod, "{name} {group}");
             }
         }
     }
@@ -1297,14 +1297,14 @@ mod tests {
     /// missing or unknown one, with a warning.
     #[test]
     fn hand_written_light_cover_is_strict_and_cached_is_filled() {
-        const BUNDLED_LIGHT_COVER_LINE: &str = "[classic]\nlight_cover = \"classicuo\"\n";
+        const BUNDLED_LIGHT_COVER_LINE: &str = "[classic]\nlight_cover = \"uod\"\n";
         assert!(BUNDLED_FACTORY_PRESETS.contains(BUNDLED_LIGHT_COVER_LINE));
         let missing = BUNDLED_FACTORY_PRESETS.replacen(BUNDLED_LIGHT_COVER_LINE, "[classic]\n", 1);
         let error = parse(&missing).err().expect("missing light cover").to_string();
         assert!(error.contains("missing field `light_cover`"), "{error}");
         let unknown = BUNDLED_FACTORY_PRESETS.replacen(BUNDLED_LIGHT_COVER_LINE, "[classic]\nlight_cover = \"none\"\n", 1);
         let error = parse(&unknown).err().expect("unknown light cover").to_string();
-        assert!(error.contains("unknown variant `none`, expected `classicuo` or `clients`"), "{error}");
+        assert!(error.contains("unknown variant `none`, expected one of `uod`, `classicuo`, `clients`"), "{error}");
         let clients =
             BUNDLED_FACTORY_PRESETS.replacen(BUNDLED_LIGHT_COVER_LINE, "[classic]\nlight_cover = \"clients\"\n", 1);
         assert_eq!(parse(&clients).expect("clients").classic.light_cover, LightCover::Clients);
@@ -1327,8 +1327,8 @@ mod tests {
         assert!(load.warnings.iter().any(|warning| warning.starts_with(
             "land.toml: invalid value \"roofs\" of key `enhanced.light_cover` reset to the default"
         )), "{:?}", load.warnings);
-        assert_eq!(load.value.kr.light_cover, LightCover::ClassicUo);
-        assert_eq!(load.value.enhanced.light_cover, LightCover::ClassicUo);
+        assert_eq!(load.value.kr.light_cover, LightCover::Uod);
+        assert_eq!(load.value.enhanced.light_cover, LightCover::Uod);
         assert_eq!(load.value.classic.light_cover, LightCover::Clients);
     }
 

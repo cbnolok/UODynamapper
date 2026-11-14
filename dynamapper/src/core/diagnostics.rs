@@ -602,15 +602,21 @@ fn sys_dump_configurable_diagnostics(
         );
         let upscaling_frag =
             find_diag_value(&diagnostics, "render/upscaling/fragment_shader_invocations");
+        // The "uod" light cover's passes (art/light_scene.rs).
+        let light_scene_gpu = find_diag_value(&diagnostics, "render/light_scene/elapsed_gpu");
+        let light_sprites_gpu = find_diag_value(&diagnostics, "render/deferred_light_sprites/elapsed_gpu");
 
         let _ = writeln!(
             &mut output,
-            "Render | total gpu {} | main3d {} | upscale {} | frag main3d {} | frag upscale {}",
+            "Render | total gpu {} | main3d {} | upscale {} | frag main3d {} | frag upscale {} | light scene {} \
+             | light sprites {}",
             format_ms(total_gpu),
             format_ms(main_opaque_gpu),
             format_ms(upscaling_gpu),
             format_count(main_frag),
             format_count(upscaling_frag),
+            format_ms(light_scene_gpu),
+            format_ms(light_sprites_gpu),
         );
     }
 

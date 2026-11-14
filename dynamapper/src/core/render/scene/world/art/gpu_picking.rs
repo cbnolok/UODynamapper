@@ -34,7 +34,8 @@ type Targets = Arc<[Vec<StaticPickTile>; 2]>;
 // Art vertices already carry the global instance index and reconstruct their
 // world positions. Their normal mesh bind group is unused, so query resources
 // can occupy group 2 without increasing the renderer's bind-group requirement.
-type DrawPixelQuery = (SetItemPipeline, SetMeshViewBindGroup<0>, SetMeshViewBindingArrayBindGroup<1>,
+// The light scene draws with it too (light_scene.rs).
+pub(super) type DrawPixelQuery = (SetItemPipeline, SetMeshViewBindGroup<0>, SetMeshViewBindingArrayBindGroup<1>,
     SetMaterialBindGroup<3>, DrawMesh);
 #[derive(Clone)]
 struct Request {

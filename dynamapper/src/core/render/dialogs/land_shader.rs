@@ -145,7 +145,8 @@ const LOCAL_LIGHT_SOURCE_OPTIONS: [(&str, ClientLocalLightSource, &str); 2] = [
 ];
 
 /// The "Lights under Roofs" choices: `(label, rule, tooltip)`.
-const LIGHT_COVER_OPTIONS: [(&str, LightCover, &str); 2] = [
+const LIGHT_COVER_OPTIONS: [(&str, LightCover, &str); 3] = [
+    ("UOD", LightCover::Uod, tips::LIGHT_COVER_UOD),
     ("ClassicUO", LightCover::ClassicUo, tips::LIGHT_COVER_CLASSICUO),
     ("Enhanced/KR Clients", LightCover::Clients, tips::LIGHT_COVER_CLIENTS),
 ];
@@ -1147,7 +1148,7 @@ fn client_night_controls(ui: &mut egui::Ui, lighting: &mut ClientNightLighting) 
     changed
 }
 
-/// Which rule hides the lights a roof or an upper floor covers, in every style.
+/// How the lights a roof, an upper floor or a wall covers are drawn, in every style.
 fn light_cover_controls(ui: &mut egui::Ui, light_cover: &mut LightCover) -> bool {
     let mut changed = false;
     ui.horizontal_wrapped(|ui| {

@@ -622,11 +622,16 @@ pub enum ClientLocalLightSource {
 
 /// The rule that hides the lights a roof or an upper floor covers (`world::art::light_cover`), per style: to the
 /// light.mul decals of Classic and UOD-Painterly, to the light sprites of KR-like and Enhanced, and to the local
-/// lights taken from them. Both rules look at the cell in front of a light, (x + 1, y + 1).
+/// lights taken from them. The clients' and ClassicUO's rules hide a whole light by the cell in front of it, (x + 1,
+/// y + 1); Dynamapper's keeps every light and clips each glow pixel by pixel (`world::art::light_scene`).
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Deserialize, Serialize)]
 pub enum LightCover {
-    /// ClassicUO's: an opaque static at least 5 z above the light covers it. A light hung under an eave, with an
-    /// open cell in front of the eave and no wall at its height, stays lit.
+    /// Dynamapper's: no light is hidden for being covered. Its glow does not light the floors, roofs and other
+    /// statics at least 5 z above it, nor the camera-facing side of the walls and solid statics past it toward the
+    /// camera; it lights the ground and floors at or below it on both sides of a wall, and the walls facing it.
+    #[serde(rename = "uod")]
+    Uod,
+    /// ClassicUO's: an opaque static at least 5 z above the light, in the cell in front of it, covers it.
     #[serde(rename = "classicuo")]
     ClassicUo,
     /// The Enhanced and KR clients': any object in a higher 20-z band above the land covers it.

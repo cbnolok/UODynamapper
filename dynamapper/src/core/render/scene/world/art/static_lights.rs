@@ -1,5 +1,8 @@
 use super::client_light_sprites::{client_light_sprite_static_light, RenderClientLightSprites};
-use super::light_cover::{static_light_is_hidden, MultiCoverParts};
+use super::light_cover::{static_light_ceiling_z, static_light_is_hidden, LightCoverRule, MultiCoverParts};
+use super::light_scene::{
+    light_clip_material, light_clip_tag, set_light_clip_mode, LightClipMaterial, LightClipMode, LightScene,
+};
 use super::statics_collect::{static_land_z, StaticChunkBatchKey};
 use crate::configs::light_scale::{ItemLightScales, NEUTRAL_LIGHT_SCALE};
 use crate::configs::{settings::Settings, shader_presets::UniformState};
@@ -16,6 +19,7 @@ use crate::core::statics::StaticsStoreRes;
 use crate::core::uo_files_loader::{HuesPackageRes, MapPlanesRes, TileMetaPackageRes, WorldLightsPackageRes};
 use crate::util_lib::uo_coords::scale_uo_z_to_bevy_units;
 use bevy::camera::visibility::{NoFrustumCulling, RenderLayers};
+use bevy::mesh::MeshTag;
 use bevy::prelude::*;
 use bevy::render::render_resource::{Extent3d, PrimitiveTopology, TextureDimension, TextureFormat};
 use std::collections::{HashMap, HashSet};
@@ -118,6 +122,9 @@ pub struct StaticLightInstance {
     pub world_y: f32,
     pub width_world: f32,
     pub height_world: f32,
+    /// Under `LightCover::Uod`, the z of the lowest floor or roof over the light (`static_light_ceiling_z`), which its
+    /// glow does not light walls from; `None` under the other covers and with nothing over it.
+    pub ceiling: Option<i8>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Component)]
@@ -156,7 +163,10 @@ pub struct StaticLightDrawDebugState {
 
 #[derive(Resource, Default)]
 pub struct StaticLightMaterialCache {
-    materials_by_key: HashMap<StaticLightMaterialKey, Handle<StandardMaterial>>,
+    materials_by_key: HashMap<StaticLightMaterialKey, Handle<LightClipMaterial>>,
+    /// Each light mask's sampled colour (`sampled_static_light_mask_color`), `None` where it has none: reading a mask
+    /// unpacks it, too slow for every visible light on every frame.
+    mask_color_by_light: HashMap<u32, Option<[f32; 3]>>,
     hue_texture_bytes: Option<Vec<u8>>,
     hue_texture_failed: bool,
 }
@@ -200,6 +210,8 @@ fn static_light_sync_signature(
         for channel in instance.color_rgb {
             static_light_sync_hash_u32(&mut hash, channel.to_bits());
         }
+        static_light_sync_hash_u32(&mut hash, u32::from(instance.ceiling.is_some()));
+        static_light_sync_hash_u32(&mut hash, u32::from(instance.ceiling.unwrap_or_default() as u8));
     }
 
     StaticLightSyncSignature {
@@ -374,6 +386,7 @@ pub fn sys_collect_visible_static_lights(
                         hue_id: tile.hue,
                     };
                     let land_z = |x: u32, y: u32| static_land_z(map_planes.as_deref(), map_id, (x as i32, y as i32));
+                    let max_z = caves.light_max_z(tile_x, tile_y, z_view.0.max_z);
                     if !seen.insert(key)
                         || static_light_is_hidden(
                             &mut statics_store,
@@ -384,11 +397,24 @@ pub fn sys_collect_visible_static_lights(
                             tile_x,
                             tile_y,
                             tile.z,
-                            caves.light_max_z(tile_x, tile_y, z_view.0.max_z),
+                            max_z,
                         )
                     {
                         continue;
                     }
+                    let ceiling = (light_cover == LightCoverRule::Uod)
+                        .then(|| {
+                            static_light_ceiling_z(
+                                &mut statics_store,
+                                &tilemeta.0,
+                                &multi_parts,
+                                tile_x,
+                                tile_y,
+                                tile.z,
+                                max_z,
+                            )
+                        })
+                        .flatten();
 
                     let scale = if scaled { light_scales.scale(tile.graphic) } else { NEUTRAL_LIGHT_SCALE };
                     output.0.push(StaticLightInstance {
@@ -408,6 +434,7 @@ pub fn sys_collect_visible_static_lights(
                         world_y: scale_uo_z_to_bevy_units(tile.z as f32) + STATIC_LIGHT_Y_BIAS,
                         width_world: slot.width as f32 / LIGHT_PIXELS_PER_WORLD_TILE * scale,
                         height_world: slot.height as f32 / LIGHT_PIXELS_PER_WORLD_TILE * scale,
+                        ceiling,
                     });
                 }
             }
@@ -436,15 +463,30 @@ pub fn sys_sync_static_light_entities(
     uniform_state: Res<UniformState>,
     mut material_cache: ResMut<StaticLightMaterialCache>,
     mut images: ResMut<Assets<Image>>,
-    mut materials: ResMut<Assets<StandardMaterial>>,
+    mut materials: ResMut<Assets<LightClipMaterial>>,
     mut meshes: ResMut<Assets<Mesh>>,
+    light_scene: Option<Res<LightScene>>,
     mut mesh_handle: Local<Option<Handle<Mesh>>>,
     mut last_alpha: Local<Option<f32>>,
+    mut last_clip_mode: Local<Option<LightClipMode>>,
     mut last_sync_signature: Local<Option<StaticLightSyncSignature>>,
     existing_q: Query<(Entity, &StaticLightKey), With<StaticLightEntity>>,
 ) {
+    let Some(light_scene) = light_scene else {
+        return;
+    };
     let render_style = StaticLightRenderStyle::from_shading_mode(uniform_state.effects.shading_mode);
     let target = StaticLightTarget::for_uniform_state(&uniform_state);
+    // Under the "uod" light cover the decals are clipped to what their light reaches, in the transparent pass.
+    let clip_mode = if uniform_state.light_cover_rule() == LightCoverRule::Uod {
+        LightClipMode::InPlace
+    } else {
+        LightClipMode::Unclipped
+    };
+    if *last_clip_mode != Some(clip_mode) {
+        set_light_clip_mode(&mut materials, material_cache.materials_by_key.values(), clip_mode);
+        *last_clip_mode = Some(clip_mode);
+    }
     let no_decals = RenderStaticLightInstances::default();
     let (instances, material_alpha) = match target {
         StaticLightTarget::SceneDecal => (
@@ -515,6 +557,7 @@ pub fn sys_sync_static_light_entities(
             &mut material_cache,
             &mut images,
             &mut materials,
+            (&light_scene, clip_mode),
         ) else {
             sync_complete = false;
             continue;
@@ -523,16 +566,19 @@ pub fn sys_sync_static_light_entities(
         let transform = Transform::from_xyz(instance.world_x, instance.world_y, instance.world_z)
             .with_rotation(static_light_billboard_rotation())
             .with_scale(Vec3::new(instance.width_world, instance.height_world, 1.0));
+        let key = instance.key;
+        let tag = MeshTag::new(light_clip_tag(key.tile_x, key.tile_y, key.z, instance.ceiling, transform.translation));
 
         if let Some(entity) = existing_by_key.get(&instance.key) {
             let _ = commands
                 .entity(*entity)
-                .insert((transform, MeshMaterial3d(material_handle), RenderLayers::layer(SCENE_DECAL_LAYER)));
+                .insert((transform, tag, MeshMaterial3d(material_handle), RenderLayers::layer(SCENE_DECAL_LAYER)));
         } else {
             commands.spawn((
                 Mesh3d(mesh_handle.clone()),
                 MeshMaterial3d(material_handle),
                 transform,
+                tag,
                 RenderLayers::layer(SCENE_DECAL_LAYER),
                 NoFrustumCulling,
                 instance.key,
@@ -544,7 +590,7 @@ pub fn sys_sync_static_light_entities(
     if target == StaticLightTarget::SceneDecal && *last_alpha != Some(material_alpha) {
         for handle in material_cache.materials_by_key.values() {
             if let Some(mut material) = materials.get_mut(handle) {
-                material.base_color = static_light_base_color(material_alpha);
+                material.base.base_color = static_light_base_color(material_alpha);
             }
         }
         *last_alpha = Some(material_alpha);
@@ -573,8 +619,9 @@ fn static_light_material(
     hues_package: Option<&HuesPackageRes>,
     material_cache: &mut StaticLightMaterialCache,
     images: &mut Assets<Image>,
-    materials: &mut Assets<StandardMaterial>,
-) -> Option<Handle<StandardMaterial>> {
+    materials: &mut Assets<LightClipMaterial>,
+    (light_scene, clip_mode): (&LightScene, LightClipMode),
+) -> Option<Handle<LightClipMaterial>> {
     let hue_source_kind = resolve_static_light_hue_source_kind(
         graphic,
         hue_id,
@@ -636,7 +683,7 @@ fn static_light_material(
     );
     image.sampler = bevy::image::ImageSampler::linear();
     let image_handle = images.add(image);
-    let material_handle = materials.add(StandardMaterial {
+    let base = StandardMaterial {
         base_color,
         base_color_texture: Some(image_handle),
         alpha_mode,
@@ -645,7 +692,8 @@ fn static_light_material(
         fog_enabled: false,
         depth_bias: STATIC_LIGHT_DEPTH_BIAS,
         ..default()
-    });
+    };
+    let material_handle = materials.add(light_clip_material(base, light_scene, clip_mode));
     material_cache
         .materials_by_key
         .insert(material_key, material_handle.clone());
@@ -757,10 +805,12 @@ fn static_light_response_color_from_sources(
         return color;
     }
 
-    world_lights
-        .read_light_bytes(light_id)
-        .ok()
-        .and_then(|rgba| sampled_static_light_mask_color(&rgba))
+    material_cache
+        .mask_color_by_light
+        .entry(light_id)
+        .or_insert_with(|| {
+            world_lights.read_light_bytes(light_id).ok().and_then(|rgba| sampled_static_light_mask_color(&rgba))
+        })
         .unwrap_or([1.0, 0.72, 0.42])
 }
 
@@ -1227,6 +1277,7 @@ mod tests {
             world_y: 0.3,
             width_world: 2.0,
             height_world: 3.0,
+            ceiling: None,
         }
     }
 

@@ -5,7 +5,7 @@
 default_preset = "classic.morning"
 
 [classic]
-light_cover = "classicuo"
+light_cover = "uod"
 
 [classic.morning]
 global_lighting = 1.02
@@ -362,7 +362,7 @@ elevation_degrees = 60.50379
 
 [enhanced]
 land_texture_variation = false
-light_cover = "classicuo"
+light_cover = "uod"
 
 [enhanced.local_lights]
 source = "light_sprites"
@@ -740,7 +740,7 @@ elevation_degrees = 45.0
 
 [kr]
 land_texture_variation = false
-light_cover = "classicuo"
+light_cover = "uod"
 
 [kr.local_lights]
 source = "light_sprites"
@@ -1106,7 +1106,7 @@ elevation_degrees = 45.0
 
 [painterly]
 land_texture_variation = false
-light_cover = "classicuo"
+light_cover = "uod"
 
 [painterly.morning]
 global_lighting = 1.04

@@ -17,7 +17,10 @@
 //! off in the KR-like and Enhanced presets) read these sprites in the two styles (`client_light_sprite_static_light`),
 //! unless the style's `local_lights.source` picks light.mul, as Classic (`static_lights`).
 
-use super::light_cover::{static_light_is_hidden, LightCoverRule, MultiCoverParts};
+use super::light_cover::{static_light_ceiling_z, static_light_is_hidden, LightCoverRule, MultiCoverParts};
+use super::light_scene::{
+    light_clip_material, light_clip_tag, set_light_clip_mode, LightClipMaterial, LightClipMode, LightScene,
+};
 use crate::core::render::scene::world::caves::CavesRes;
 use crate::core::render::scene::world::z_view::ZViewLimit;
 use super::static_lights::{StaticLightInstance, StaticLightKey, StaticLightTarget, LIGHT_PIXELS_PER_WORLD_TILE,
@@ -38,6 +41,7 @@ use crate::core::statics::StaticsStoreRes;
 use crate::core::uo_files_loader::{MapPlanesRes, TexAuxEcPackageRes, TileMetaPackageRes};
 use crate::util_lib::uo_coords::scale_uo_z_to_bevy_units;
 use bevy::camera::visibility::{NoFrustumCulling, RenderLayers};
+use bevy::mesh::MeshTag;
 use bevy::prelude::*;
 use bevy::render::render_resource::{Extent3d, PrimitiveTopology, TextureDimension, TextureFormat};
 use std::cell::Cell;
@@ -86,6 +90,9 @@ pub struct ClientLightSpriteInstance {
     /// The light texture's colour where it shows, the mean of its texels weighted by alpha (`light_texture_glow_rgb`),
     /// which the land light decals and the static local lights take as the light's colour.
     pub glow_rgb: [f32; 3],
+    /// Under `LightCover::Uod`, the z of the lowest floor or roof over the light (`static_light_ceiling_z`), which its
+    /// glow does not light walls from; `None` under the other covers and with nothing over it.
+    pub ceiling: Option<i8>,
 }
 
 /// The light sprites of the statics in and around the visible chunks.
@@ -103,7 +110,7 @@ pub struct RenderClientLightSprites {
 /// The sprites' materials, one per light texture (`None` once a texture failed to load), and the scan reach.
 #[derive(Resource, Default)]
 pub struct ClientLightSpriteCache {
-    materials_by_entry: HashMap<u32, Option<Handle<StandardMaterial>>>,
+    materials_by_entry: HashMap<u32, Option<Handle<LightClipMaterial>>>,
     /// Each light texture's glow colour, `None` once the texture failed to load.
     glow_rgb_by_entry: HashMap<u32, Option<[f32; 3]>>,
     mesh: Option<Handle<Mesh>>,
@@ -237,6 +244,7 @@ pub(super) fn client_light_sprite_static_light(sprite: &ClientLightSpriteInstanc
         world_y: base_y + STATIC_LIGHT_Y_BIAS,
         width_world: sprite.size.x / CC_WORLD_XZ_PER_PIXEL / LIGHT_PIXELS_PER_WORLD_TILE,
         height_world: sprite.size.y / CC_WORLD_Y_PER_PIXEL / LIGHT_PIXELS_PER_WORLD_TILE,
+        ceiling: sprite.ceiling,
     }
 }
 
@@ -410,6 +418,7 @@ pub fn sys_collect_client_light_sprites(
                 land_missed.set(land_missed.get() || land_z.is_none());
                 land_z
             };
+            let light_max_z = caves.light_max_z(key.tile_x, key.tile_y, max_z);
             if !seen.insert(key)
                 || static_light_is_hidden(
                     &mut statics_store,
@@ -420,11 +429,24 @@ pub fn sys_collect_client_light_sprites(
                     key.tile_x,
                     key.tile_y,
                     key.z,
-                    caves.light_max_z(key.tile_x, key.tile_y, max_z),
+                    light_max_z,
                 )
             {
                 continue;
             }
+            let ceiling = (light_cover == LightCoverRule::Uod)
+                .then(|| {
+                    static_light_ceiling_z(
+                        &mut statics_store,
+                        &tilemeta.0,
+                        &multi_parts,
+                        key.tile_x,
+                        key.tile_y,
+                        key.z,
+                        light_max_z,
+                    )
+                })
+                .flatten();
             let Some(glow_rgb) = *cache.glow_rgb_by_entry.entry(entry).or_insert_with(|| {
                 let (_, _, rgba) = tex_aux
                     .0
@@ -440,7 +462,7 @@ pub fn sys_collect_client_light_sprites(
                 client_light_sprite_quad(client_light_sprite_origin(key.tile_x, key.tile_y, key.z), bounds);
             let center = if centre_on_items { client_light_sprite_centred(center, key) } else { center };
             let size = size * light_scales.scale(key.graphic);
-            instances.push(ClientLightSpriteInstance { key, texture_entry: entry, center, size, glow_rgb });
+            instances.push(ClientLightSpriteInstance { key, texture_entry: entry, center, size, glow_rgb, ceiling });
         }
     }
 
@@ -461,12 +483,29 @@ pub fn sys_sync_client_light_sprites(
     mut commands: Commands,
     sprites: Res<RenderClientLightSprites>,
     tex_aux_res: Option<Res<TexAuxEcPackageRes>>,
+    uniform_state: Res<UniformState>,
+    light_scene: Option<Res<LightScene>>,
     mut cache: ResMut<ClientLightSpriteCache>,
     mut images: ResMut<Assets<Image>>,
-    mut materials: ResMut<Assets<StandardMaterial>>,
+    mut materials: ResMut<Assets<LightClipMaterial>>,
     mut meshes: ResMut<Assets<Mesh>>,
+    mut last_clip_mode: Local<Option<LightClipMode>>,
     mut existing_q: Query<(Entity, &ClientLightSpriteKey, &mut Transform), With<ClientLightSpriteEntity>>,
 ) {
+    let Some(light_scene) = light_scene else {
+        return;
+    };
+    // Under the "uod" light cover the sprites are clipped to what their light reaches, drawn into the light buffer
+    // after the world view's light scene (`light_scene::render_deferred_light_sprites`).
+    let clip_mode = if uniform_state.light_cover_rule() == LightCoverRule::Uod {
+        LightClipMode::Deferred
+    } else {
+        LightClipMode::Unclipped
+    };
+    if *last_clip_mode != Some(clip_mode) {
+        set_light_clip_mode(&mut materials, cache.materials_by_entry.values().flatten(), clip_mode);
+        *last_clip_mode = Some(clip_mode);
+    }
     if !sprites.is_changed() {
         return;
     }
@@ -474,9 +513,11 @@ pub fn sys_sync_client_light_sprites(
     let mut existing_keys = HashSet::new();
     for (entity, key, mut transform) in existing_q.iter_mut() {
         if let Some(instance) = desired.get(key) {
-            // A kept sprite may have moved or grown: Local Lights' centring changed.
+            // A kept sprite may have moved or grown: Local Lights' centring changed. Its light's ceiling may have
+            // changed with the light cover.
             transform.translation = instance.center;
             transform.scale = instance.size.extend(1.0);
+            commands.entity(entity).insert(client_light_sprite_tag(instance));
             existing_keys.insert(*key);
         } else {
             commands.entity(entity).despawn();
@@ -493,7 +534,10 @@ pub fn sys_sync_client_light_sprites(
         let material = cache
             .materials_by_entry
             .entry(instance.texture_entry)
-            .or_insert_with(|| client_light_sprite_material(&tex_aux, instance.texture_entry, &mut images, &mut materials));
+            .or_insert_with(|| {
+                let base = client_light_sprite_material(&tex_aux, instance.texture_entry, &mut images)?;
+                Some(materials.add(light_clip_material(base, &light_scene, clip_mode)))
+            });
         let Some(material) = material.clone() else {
             continue;
         };
@@ -503,6 +547,7 @@ pub fn sys_sync_client_light_sprites(
             Transform::from_translation(instance.center)
                 .with_rotation(rotation)
                 .with_scale(instance.size.extend(1.0)),
+            client_light_sprite_tag(instance),
             RenderLayers::layer(LIGHT_BUFFER_LAYER),
             NoFrustumCulling,
             instance.key,
@@ -518,8 +563,7 @@ fn client_light_sprite_material(
     tex_aux: &TexAuxEcPackageRes,
     entry: u32,
     images: &mut Assets<Image>,
-    materials: &mut Assets<StandardMaterial>,
-) -> Option<Handle<StandardMaterial>> {
+) -> Option<StandardMaterial> {
     let (width, height, rgba) = tex_aux
         .0
         .load_terrain_texture_rgba(entry)
@@ -533,7 +577,7 @@ fn client_light_sprite_material(
         bevy::asset::RenderAssetUsages::default(),
     );
     image.sampler = bevy::image::ImageSampler::linear();
-    Some(materials.add(StandardMaterial {
+    Some(StandardMaterial {
         base_color: Color::WHITE,
         base_color_texture: Some(images.add(image)),
         alpha_mode: AlphaMode::Blend,
@@ -541,7 +585,13 @@ fn client_light_sprite_material(
         unlit: true,
         fog_enabled: false,
         ..default()
-    }))
+    })
+}
+
+/// The light clip tag of a sprite (`light_scene::light_clip_tag`): its static's cell, z and ceiling.
+fn client_light_sprite_tag(instance: &ClientLightSpriteInstance) -> MeshTag {
+    let key = instance.key;
+    MeshTag::new(light_clip_tag(key.tile_x, key.tile_y, key.z, instance.ceiling, instance.center))
 }
 
 /// A unit quad centred on the origin, texture row 0 at the top (+y): the sprite stands upright, as the EC statics.
@@ -639,7 +689,7 @@ mod tests {
         let origin = client_light_sprite_origin(key.tile_x, key.tile_y, key.z);
         let (center, size) = client_light_sprite_quad(origin, bounds);
         let glow_rgb = [1.0, 0.5, 0.25];
-        let sprite = ClientLightSpriteInstance { key, texture_entry: LANTERN_LIGHT.light_texture_entry, center, size, glow_rgb };
+        let sprite = ClientLightSpriteInstance { key, texture_entry: LANTERN_LIGHT.light_texture_entry, center, size, glow_rgb, ceiling: None };
         let light = client_light_sprite_static_light(&sprite);
         // The centre, 0.697 above the base, shows over the ground 0.697 back along the (1, 1, 1) view ray.
         let lift = center.y - origin.y;
@@ -726,6 +776,7 @@ mod tests {
             center: client_light_sprite_centred(center, key),
             size: size * LAVA_SCALE,
             glow_rgb: [1.0; 3],
+            ceiling: None,
         };
         let light = client_light_sprite_static_light(&sprite);
         assert!((light.world_x - (key.tile_x as f32 + TILE_CENTRE_OFFSET)).abs() < EPSILON, "{light:?}");

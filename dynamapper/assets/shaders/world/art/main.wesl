@@ -1,4 +1,6 @@
 import package::shaders::world::art::picking::{pick_clip, pick_pass, pick_color};
+import package::shaders::world::art::light_scene::{light_scene_drawn, light_scene_texel, light_scene_class,
+    LIGHT_SCENE_MIN_ALPHA};
 import bevy_pbr::render::{
     forward_io::Vertex,
     view_transformations,
@@ -236,6 +238,9 @@ fn shade_fragment(in: ArtVertexOutput, sample_index: u32) -> ArtFragmentOutput {
 
     if sprite_params.render_mode == 1u {
         // Dot mode (radarcol)
+        @if(LIGHT_SCENE) {
+            discard;
+        }
         out.color = in.color;
         return out;
     }
@@ -365,6 +370,22 @@ fn shade_fragment(in: ArtVertexOutput, sample_index: u32) -> ArtFragmentOutput {
     }
     if (inst.flat_quad != 0u) {
         out.depth = cave_lifted_depth(out.depth, inst.is_wet_flags);
+    }
+    // The light scene keeps the fragment the opaque pass drew at its pixel (light_scene.wesl). One unfiltered tap
+    // breaks a depth tie with an empty texel; an item surface's coverage is its surface's, so its depth decides.
+    @if(LIGHT_SCENE) {
+        if (!light_scene_drawn(in.position, out.depth)) {
+            discard;
+        }
+        if (inst.flat_quad < 2u && textureSampleLevel(art_atlas, art_atlas_sampler,
+            clamp(uv, inst.uv_min, inst.uv_max), i32(layer), 0.0).a < LIGHT_SCENE_MIN_ALPHA) {
+            discard;
+        }
+        let lies_flat = inst.flat_quad != 0u || (inst.is_wet_flags & STATIC_FLAG_FLAT_ART) != 0u;
+        out.color = vec4<f32>(light_scene_texel(in.world_pos, inst.client_grunge_anchor,
+            i32(round(inst.base_world_y / HEIGHT_SCALE)), light_scene_class(inst.is_wet_flags, lies_flat),
+            BILLBOARD_RIGHT_XZ, view.world_from_view[2].xyz, HEIGHT_SCALE));
+        return out;
     }
 
     var surface_header = vec4<u32>(0u);
@@ -575,4 +596,11 @@ fn fragment(in: ArtVertexOutput) -> ArtFragmentOutput { return shade_fragment(in
 @fragment
 fn pick_fragment(in: ArtVertexOutput, @builtin(sample_index) sample_index: u32) -> ArtFragmentOutput {
     return shade_fragment(in, sample_index);
+}
+
+// The light scene's texel (light_scene.wesl), without a depth output: the pass has no depth attachment.
+@if(LIGHT_SCENE)
+@fragment
+fn light_scene_fragment(in: ArtVertexOutput) -> @location(0) vec4<u32> {
+    return vec4<u32>(shade_fragment(in, 0u).color);
 }
