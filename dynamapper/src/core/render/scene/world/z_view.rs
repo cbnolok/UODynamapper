@@ -14,7 +14,7 @@
 //! (ClassicUO's `ProcessAlpha`, which fades them out; Dynamapper cuts them at once). Land above
 //! `ZViewCut::max_ground_z` is not drawn, which only the cave case sets: in the open and in buildings all land stays.
 //!
-//! KR-like can follow the Kingdom Reborn client's rule instead (`PlayerFloorRule::Kr`, `compute_kr_z_view_cut`), which
+//! KR-like and UOD-Painterly can follow the Kingdom Reborn client's rule instead (`PlayerFloorRule::Kr`, `compute_kr_z_view_cut`), which
 //! tests the same two cells with the same threshold (UOKR.exe `0x0043c350`: a static more than
 //! `PLAYER_CEILING_MIN_RISE` above the player on the player's cell with flags `0x20004` clear and Roof only with
 //! Surface, or a Roof on the next cell, with no other flag test) and then, rather than a cap at the ceiling's z, hides

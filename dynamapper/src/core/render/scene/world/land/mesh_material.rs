@@ -510,7 +510,7 @@ pub struct LandRenderStylePresetsPerMode {
     /// Which rule hides the lights a roof or an upper floor covers, one setting for the style in all four styles
     /// (`world::art::light_cover`).
     pub light_cover: LightCover,
-    /// Which rule "Show Only the Player's Floor" follows, in KR-like only, one setting for the style
+    /// Which rule "Show Only the Player's Floor" follows, in KR-like and UOD-Painterly only, one setting for the style
     /// (`world::z_view`); the other styles follow ClassicUO's.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub player_floor_rule: Option<PlayerFloorRule>,

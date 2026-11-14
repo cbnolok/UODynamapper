@@ -60,9 +60,9 @@ pub(super) const LIGHT_COVER_CLASSICUO: &str =
 pub(super) const LIGHT_COVER_CLIENTS: &str =
     "The Enhanced and KR clients' rule: anything in the cell in front of the light that sits in a higher 20-z band above the land hides it, with no exception for eaves or see-through items. A roof 20 z above always hides; one 5 to 19 z above hides when it crosses a band. KR-like and UOD-Painterly follow the KR client, counting each band from the land under the light or the cover; Enhanced and Classic follow the Enhanced client, counting both from the land under the light. In both, a floor or roof 5 z or more above the light hides it too, where the clients draw its glow over the floor.";
 pub(super) const PLAYER_FLOOR_RULE: &str =
-    "Which rule Show Only the Player's Floor (Preferences) hides what is above the player by, in KR-like at every time of day. Only matters while that option is on.";
+    "Which rule Show Only the Player's Floor (Preferences) hides what is above the player by, in KR-like and UOD-Painterly at every time of day. Only matters while that option is on.";
 pub(super) const PLAYER_FLOOR_RULE_CLASSICUO: &str =
-    "ClassicUO's rule, as the other styles: a ceiling over the player hides every static at its height or above, and every roof; land over the player hides the land and the statics a little above the player.";
+    "ClassicUO's rule, as Enhanced and Classic: a ceiling over the player hides every static at its height or above, and every roof; land over the player hides the land and the statics a little above the player.";
 pub(super) const PLAYER_FLOOR_RULE_KR: &str =
     "The KR client's rule: a static more than 14 z above the player on the player's tile, or a roof on the tile in front, hides every static, item and multi part in a higher 20-z layer than the player's, every layer counted from the land under the player's tile (the KR client counts each from the land under its own tile, which drops whole walls of buildings on uneven ground). Land is never cut by height; it all goes while the player is below the land, in a cave. The lights in the hidden layers go with them; the floors and roofs left still cover the lights under them.";
 pub(super) const LOCAL_LIGHT_SOURCE: &str =

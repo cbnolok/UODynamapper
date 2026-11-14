@@ -29,7 +29,7 @@
 //!
 //! The rules take the view's z limit (`max_z`) so a z-view limit composes with them: a static the limit stops drawing
 //! no longer covers, and its lights come back; a light at or above the limit is hidden with its item. Under KR's own
-//! cut (KR-like's `player_floor_rule = "kr"`: the layers above the player's, 0x0043c9f0) the limit is the bottom of the
+//! cut (KR-like's and UOD-Painterly's `player_floor_rule = "kr"`: the layers above the player's, 0x0043c9f0) the limit is the bottom of the
 //! layer above the player's, every layer counted from the player's cell (`z_view::kr_layer_cut_z`), so a light in a
 //! hidden layer goes and an object counts only in the layers drawn: the light cover follows what is drawn, one limit
 //! for the light and its cover cell wherever the land under them differs.

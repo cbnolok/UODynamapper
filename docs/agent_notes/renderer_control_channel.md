@@ -31,7 +31,7 @@ compilation. Keep actual-frame inspection in the validation workflow.
 
 `status.render` reports the actual active preset, global lighting and effects
 uniform values (`light_cover_rule` the cover rule the style's `light_cover` gives,
-`player_floor_rule` KR-like's z-view rule, null in the other styles);
+`player_floor_rule` KR-like's and UOD-Painterly's z-view rule, null in Enhanced and Classic);
 `status.static_lights.instances` reports collected lights,
 `status.client_light_sprites.instances` the KR-like and Enhanced light sprites
 left after the light cover, and `status.z_view` the z-view limit (under the KR

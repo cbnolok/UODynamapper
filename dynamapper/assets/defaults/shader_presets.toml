@@ -148,8 +148,8 @@ default_preset = "classic.morning"
 #                     lights over the floor).
 #
 # === [Player floor rule] ===
-# [kr] player_floor_rule: KR-like only, one value for the style, required there and refused elsewhere (the other
-#                    styles follow ClassicUO's rule). Which rule "Show Only the Player's Floor"
+# [kr], [painterly] player_floor_rule: KR-like and UOD-Painterly only, one value for the style, required there and
+#                    refused elsewhere (Enhanced and Classic follow ClassicUO's rule). Which rule "Show Only the Player's Floor"
 #                    (world_rendering.show_only_player_floor) hides what is above the player by:
 #   "classicuo":      ClassicUO's: a ceiling over the player caps the statics at its z and hides the roofs; land over
 #                     the player caps the land and the statics a little above the player.
@@ -1281,6 +1281,7 @@ elevation_degrees = 45.0
 [painterly]
 land_texture_variation = false
 light_cover = "uod"
+player_floor_rule = "kr"
 
 [painterly.local_lights]
 source = "light_sprites"

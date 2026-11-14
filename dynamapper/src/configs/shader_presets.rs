@@ -72,10 +72,10 @@ pub fn preset_group_uses_client_shadows(group: &str) -> bool {
     group == KR_PRESET_GROUP
 }
 
-/// KR-like chooses the rule "Show Only the Player's Floor" follows (`player_floor_rule`), ClassicUO's or the KR
-/// client's; the other styles follow ClassicUO's.
+/// KR-like and UOD-Painterly choose the rule "Show Only the Player's Floor" follows (`player_floor_rule`), ClassicUO's
+/// or the KR client's; Enhanced and Classic follow ClassicUO's.
 pub fn preset_group_has_player_floor_rule(group: &str) -> bool {
-    group == KR_PRESET_GROUP
+    matches!(group, KR_PRESET_GROUP | PAINTERLY_PRESET_GROUP)
 }
 
 /// KR-like, Enhanced and UOD-Painterly draw the KR and Enhanced terrain materials, whose repetition
@@ -105,7 +105,8 @@ pub struct UniformState {
     pub land_texture_variation: Option<bool>,
     /// The rule that hides covered lights, of the active preset's style.
     pub light_cover: LightCover,
-    /// The rule "Show Only the Player's Floor" follows, of the active preset's style: `Some` in KR-like only.
+    /// The rule "Show Only the Player's Floor" follows, of the active preset's style: `Some` in KR-like and
+    /// UOD-Painterly only.
     pub player_floor_rule: Option<PlayerFloorRule>,
     pub sun: SunAngles,              // static light direction (maps to scene.light_direction)
     pub dirty: bool,                 // when true, push to GPU materials this frame
@@ -326,9 +327,9 @@ fn clamp_client_lighting(lighting: ClientNightLighting) -> ClientNightLighting {
 }
 
 /// A hand-written preset file must give KR-like and Enhanced `client_lighting` and no `global_lighting`, and the
-/// other groups the reverse, with every value in range; KR-like, alone, `client_shadows` and `player_floor_rule`;
-/// KR-like, Enhanced and UOD-Painterly, alone, their `local_lights`, in range; and every group but Classic, alone, its
-/// `land_texture_variation`.
+/// other groups the reverse, with every value in range; KR-like, alone, `client_shadows`; KR-like and UOD-Painterly,
+/// alone, `player_floor_rule`; KR-like, Enhanced and UOD-Painterly, alone, their `local_lights`, in range; and every
+/// group but Classic, alone, its `land_texture_variation`.
 fn validate_preset_lighting(presets: &LandShaderModePresets) -> eyre::Result<()> {
     let mut problems = Vec::new();
     for (group, slots) in preset_groups(presets) {
@@ -342,7 +343,8 @@ fn validate_preset_lighting(presets: &LandShaderModePresets) -> eyre::Result<()>
         match (preset_group_has_player_floor_rule(group), slots.player_floor_rule) {
             (true, None) => problems.push(format!("missing `{group}.player_floor_rule`")),
             (false, Some(_)) => problems.push(format!(
-                "`{group}.player_floor_rule` is not a setting there: only KR-like chooses it, the others follow ClassicUO's"
+                "`{group}.player_floor_rule` is not a setting there: only KR-like and UOD-Painterly choose it, the \
+                 others follow ClassicUO's"
             )),
             _ => {}
         }
@@ -430,7 +432,9 @@ fn normalize_cached_preset_lighting(
                 warnings.push(format!("{file_name}: missing key `{group}.player_floor_rule` filled from the default"));
             }
         } else if slots.player_floor_rule.take().is_some() {
-            warnings.push(format!("{file_name}: `{group}.player_floor_rule` dropped: only KR-like chooses it"));
+            warnings.push(format!(
+                "{file_name}: `{group}.player_floor_rule` dropped: only KR-like and UOD-Painterly choose it"
+            ));
         }
         if preset_group_draws_light_sprites(group) {
             match slots.local_lights {
@@ -1393,11 +1397,11 @@ mod tests {
         assert_eq!(load.value.classic.light_cover, LightCover::Clients);
     }
 
-    /// KR-like alone chooses its player floor rule, the KR client's in both bundled files; a hand-written file must
-    /// give it and no other style one; a cached land.toml fills or drops it; the choice is stored in, read from and
-    /// reset in its style.
+    /// KR-like and UOD-Painterly alone choose their player floor rule, the KR client's in both bundled files; a
+    /// hand-written file must give it to both and to no other style; a cached land.toml fills or drops it; the choice
+    /// is stored in, read from and reset in its style.
     #[test]
-    fn player_floor_rule_is_kr_likes_alone() {
+    fn player_floor_rule_is_kr_likes_and_painterlys_alone() {
         for (name, text) in [("shader_presets.toml", BUNDLED_FACTORY_PRESETS), ("land.toml", BUNDLED_LAND_SETTINGS)] {
             let presets = parse(text).expect("bundled");
             for (group, slots) in preset_groups(&presets) {
@@ -1409,8 +1413,13 @@ mod tests {
         let mut presets = parse(BUNDLED_FACTORY_PRESETS).expect("bundled");
         presets.enhanced.player_floor_rule = Some(PlayerFloorRule::Kr);
         presets.kr.player_floor_rule = None;
+        presets.painterly.player_floor_rule = None;
         let error = validate_preset_lighting(&presets).expect_err("misplaced rule").to_string();
-        for expected in ["`enhanced.player_floor_rule` is not a setting there", "missing `kr.player_floor_rule`"] {
+        for expected in [
+            "`enhanced.player_floor_rule` is not a setting there",
+            "missing `kr.player_floor_rule`",
+            "missing `painterly.player_floor_rule`",
+        ] {
             assert!(error.contains(expected), "{error}");
         }
 
@@ -1420,7 +1429,7 @@ mod tests {
         cached.classic.player_floor_rule = Some(PlayerFloorRule::ClassicUo);
         let warnings = normalize_cached_preset_lighting(&mut cached, &bundled, "land.toml");
         assert_eq!(warnings, [
-            "land.toml: `classic.player_floor_rule` dropped: only KR-like chooses it",
+            "land.toml: `classic.player_floor_rule` dropped: only KR-like and UOD-Painterly choose it",
             "land.toml: missing key `kr.player_floor_rule` filled from the default",
         ]);
         assert_eq!((cached.kr.player_floor_rule, cached.classic.player_floor_rule), (Some(PlayerFloorRule::Kr), None));
@@ -1434,6 +1443,16 @@ mod tests {
         assert_eq!(saved.kr.player_floor_rule, Some(PlayerFloorRule::ClassicUo));
         assert!(reset_preset_to_factory(&mut saved, &bundled, "kr.morning"));
         assert_eq!(saved.kr.player_floor_rule, Some(PlayerFloorRule::Kr));
+
+        on_kr.default_preset = "painterly.night".to_string();
+        let mut state = uniform_state_from_presets(&on_kr);
+        assert_eq!(state.effective_player_floor_rule(), PlayerFloorRule::Kr);
+        state.player_floor_rule = Some(PlayerFloorRule::ClassicUo);
+        let saved = build_save_presets(&state, &bundled);
+        assert_eq!(
+            (saved.painterly.player_floor_rule, saved.kr.player_floor_rule),
+            (Some(PlayerFloorRule::ClassicUo), Some(PlayerFloorRule::Kr))
+        );
 
         on_kr.default_preset = "enhanced.night".to_string();
         let state = uniform_state_from_presets(&on_kr);
