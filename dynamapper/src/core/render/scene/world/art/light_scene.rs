@@ -14,9 +14,9 @@
 //!   or roof over it, `light_cover::static_light_ceiling_z`), or on a face turned away from it. It reads the texels a
 //!   few pixels around too (`LIGHT_CLIP_EDGE_REACH`): a filtered static's blended edge leaves the static behind it in
 //!   the light scene. The light's cell, z and ceiling ride in the glow's `MeshTag` (`light_clip_tag`).
-//! - **When they draw.** The light.mul decals of Classic and UOD-Painterly draw in the world view's transparent pass,
-//!   after the light scene, with no depth test: the clip stands in for it, and lets a room's glow reach the street
-//!   in front of its wall. The light sprites of KR-like and Enhanced belong to the light buffer camera, which renders
+//! - **When they draw.** The light.mul decals of Classic draw in the world view's transparent pass, after the light
+//!   scene, with no depth test: the clip stands in for it, and lets a room's glow reach the street in front of its
+//!   wall. The light sprites of KR-like, Enhanced and UOD-Painterly belong to the light buffer camera, which renders
 //!   before the world view: their pipelines draw nothing there (`LightClipMode::Deferred`), and the world view draws
 //!   them into the light buffer once the light scene is done (`render_deferred_light_sprites`), before the client
 //!   night composite reads it.
