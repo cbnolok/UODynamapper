@@ -99,7 +99,7 @@ impl<'w> StaticPickingResources<'w> {
         let source = self.source.active_source?;
         let meta = self.meta.as_ref().and_then(|package| package.0.item_tile(u32::from(graphic)));
         if meta.is_some_and(|tile| tile.is_nodraw()) { return None; }
-        let kind = statics_collect::resolve_static_visual_kind_cached(source, graphic,
+        let kind = statics_collect::resolve_static_visual_kind_cached(source, self.source.classic_land, graphic,
             self.meta.as_ref().map(|package| package.0.as_ref()), meta,
             self.cc.as_ref().map(|package| package.0.as_ref()),
             self.ec.as_ref().map(|package| package.0.as_ref()),

@@ -149,4 +149,28 @@ land 0x64 at z -15, with a raised strip of 0x64 and a few land-water cells
   EC-terrain diamond among Classic static water. With art EC and land CC the EC
   item water is near-black: the art ground material binds the active land
   material's page atlas (`land_page_binding_handles` in `statics_draw.rs`), so
-  the EC liquid payload indexes the Classic atlas. Open; no client mixes them.
+  the EC liquid payload indexes the Classic atlas. No client mixes them.
+
+### Art EC with land CC draws the water statics the Classic way (2026-11-14)
+
+The user's choice, to keep the Classic land style: while the land page atlas
+holds Classic land (`LandRoutes::atlas() == Cc`, mirrored in
+`StaticArtSourceState::classic_land`), Enhanced art draws its water pieces from
+their Classic art, as Classic art mode does (`classic_land_draws_classic_water`
+in `statics_collect.rs`). The pieces are the statics whose EC visual kind is
+`TexLandEc` with a liquid payload, the only ones whose shader reads the land
+page atlas: 261 items in the current packages, water and foam 0x1796–0x17B2 and
+0x346E–0x34D2, acid 0x2E02–0x2E39 and the lava the same UOWaterShader draws
+(0x12EE–0x131C, 0x2B3E–0x2B65, 0x3296–0x3299, 0x343C–0x354B). They become
+`CcRegular`, so the EC sprite atlas (which already holds Classic pages for EC
+art fallbacks) draws them through the Classic flat-quad path with Classic
+wetness, depth class and picking geometry; tex_art_cc.uddp loads whatever the
+art source. The EC-art blood items (`EcSurface`, sprite path) and the other EC
+art are unchanged, as are matched sources and land EC/KR.
+
+The opposite mix (art CC, land EC/KR) is unchanged: its land-water cells keep
+the EC terrain liquid. Matching it the same way would route the wet land ids to
+Classic while the art is Classic (`resolve_land_routes`, re-resolved on an art
+source change, with a land atlas rebuild) and draw those Classic-routed flat
+wet cells from the compact Classic land-art atlas, as land CC does, rather than
+from square texmaps.
