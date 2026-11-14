@@ -122,3 +122,31 @@ See [the translucency source proof and native controls](classic_static_transluce
 The current matching-pair Classic, Enhanced and KR coast/bridge controls are
 byte-identical across the repair. Keep the accepted source, lighting, grunge
 and fog ownership decisions unless new evidence contradicts them.
+
+## Minoc river streaks are authored, not seams (2026-11-14)
+
+Map 0 west of the Minoc mine, around `(2542,490,-5)`, looks like a water seam
+but is not one. The river is static water (0x1797–0x179C at z -5) over seabed
+land 0x64 at z -15, with a raised strip of 0x64 and a few land-water cells
+(0xA8/0xAA/0xAB) at z -5 under the same statics.
+
+- The pale curved streak in every style is wave art: wet foam statics
+  0x179F/0x17A0/0x17AC/0x17AF along y 489 (x 2539–2543) and 0x17A3/0x17A4 down
+  x 2542 (y 490–499), stacked on the plain water statics. Classic `art.mul`
+  draws the same foam.
+- The darker diagonal band in KR-like only is the KR static shadow of the
+  bridge's north railing (wooden fence 0x085D/0x0860 at z 30, row y 498). Those
+  cells have no plank under the fence, so G is the seabed (-15) and h = 45 puts
+  the shadow well onto the water; `client_shadows = false` removes it. The KR
+  client shows static shadows on water (tree and rider shadows in the KR
+  reference capture of 2026-11-14 07:28:26).
+- Matched sources show no land-water/static-water boundary: the exposed
+  land-water cells at (2540,468–469) blend in Classic, Enhanced, KR-like and
+  UOD-Painterly. The pale glints near the screen centre in the EC-water styles
+  move with the camera (camera-space reflection); the same KR reference shows
+  them around the rider.
+- Mixed sources do show it. With art CC and land EC those two cells are a darker
+  EC-terrain diamond among Classic static water. With art EC and land CC the EC
+  item water is near-black: the art ground material binds the active land
+  material's page atlas (`land_page_binding_handles` in `statics_draw.rs`), so
+  the EC liquid payload indexes the Classic atlas. Open; no client mixes them.
