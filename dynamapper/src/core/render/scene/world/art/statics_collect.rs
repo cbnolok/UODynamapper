@@ -2282,7 +2282,8 @@ fn emit_static_render_tile(
         world_z: render_tile.world_z,
         depth_class: resolve_static_depth_class(tilemeta, renders_wet),
         is_wet_flags: u32::from(renders_wet) | if cave == CaveStatic::Lifted { STATIC_FLAG_CAVE } else { 0 }
-            | super::light_scene::static_light_class_flags(tilemeta.map_or(0, |meta| meta.flags)),
+            | super::light_scene::static_light_class_flags(tilemeta.map_or(0, |meta| meta.flags),
+                tilemeta.map_or(0, |meta| meta.height)),
         base_world_y: (render_tile.z as f32) * frame.height_scale,
         client_shadow_flags: client_shadow_flags(tilemeta),
         client_shadow_height: (i32::from(render_tile.z) - ground_z) as f32,

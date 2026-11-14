@@ -4,9 +4,10 @@
 //! - **The light scene.** After the opaque pass, the art redraws its batches into an image the size of the view
 //!   (`render_light_scene`, art/light_scene.wesl): for each pixel, the cell, the z and the class of the static drawn
 //!   there, from the fragment whose depth is the one drawn. On a wall or a solid static the z is the height of the
-//!   point of its face under the pixel, so a floor over a light cuts the wall it meets. The land, the mobiles and whatever else is not a static
-//!   leave 0. The class comes from the tile flags (`static_light_class_flags`): a wall, a solid static, or any other
-//!   (a floor, a roof, flat art).
+//!   point of its face under the pixel, so a floor over a light cuts the wall it meets, and its top, its cap, is a
+//!   floor at its top z (the static's tiledata height rides in its flags, `static_light_class_flags`). The land, the
+//!   mobiles and whatever else is not a static leave 0. The class comes from the tile flags
+//!   (`static_light_class_flags`): a wall, a solid static, or any other (a floor, a roof, flat art).
 //! - **The clip.** The glows draw with `LightClipMaterial` (art/light_clip.wesl), which reads the light scene under
 //!   each fragment and drops it where the light does not reach: a floor, a roof or another static from
 //!   `LIGHT_COVER_MIN_RISE` above the light up; a wall or a solid static from the light's ceiling up (the lowest floor
@@ -56,6 +57,11 @@ pub(crate) const STATIC_FLAG_LIGHT_WALL: u32 = 1 << 13;
 /// `SpriteInstance` and `GroundTileInstance::is_wet_flags` bit: the static is a solid block to the light scene. Kept
 /// in sync with art/light_scene.wesl.
 pub(crate) const STATIC_FLAG_LIGHT_BLOCK: u32 = 1 << 14;
+/// `SpriteInstance::is_wet_flags` bits of a wall or a solid block: its tiledata height, `STATIC_LIGHT_HEIGHT_MASK`
+/// from `STATIC_LIGHT_HEIGHT_SHIFT`, which tells its top (its cap) from its faces in the light scene. Kept in sync
+/// with art/light_scene.wesl.
+const STATIC_LIGHT_HEIGHT_SHIFT: u32 = 16;
+const STATIC_LIGHT_HEIGHT_MASK: u32 = 0xff;
 /// The statics that lie flat over the light's floor, or that a light shows through: never walls or blocks.
 const LIGHT_SCENE_NEVER_SOLID_FLAGS: u64 = TaeFlag::Surface.bits() | TaeFlag::Roof.bits() | TaeFlag::Foliage.bits()
     | TaeFlag::Transparent.bits() | TaeFlag::Translucent.bits();
@@ -82,11 +88,12 @@ const LIGHT_CLIP_CELL_REACH: i32 = (1 << (LIGHT_CLIP_CELL_BITS - 1)) - 1;
 /// The ceiling of a light with nothing over it.
 const LIGHT_CLIP_NO_CEILING: i8 = i8::MIN;
 
-/// The light scene class bits of a static with tile flags `flags`: `STATIC_FLAG_LIGHT_WALL` for a wall,
-/// `STATIC_FLAG_LIGHT_BLOCK` for another impassable static, and none for a floor, a roof, foliage, a see-through
-/// static or anything a light shows on from above.
-pub(crate) fn static_light_class_flags(flags: u64) -> u32 {
-    if flags & LIGHT_SCENE_NEVER_SOLID_FLAGS != 0 {
+/// The light scene class bits of a static with tile flags `flags` and tiledata height `height`:
+/// `STATIC_FLAG_LIGHT_WALL` for a wall, `STATIC_FLAG_LIGHT_BLOCK` for another impassable static, each with its
+/// height (`STATIC_LIGHT_HEIGHT_SHIFT`), and none for a floor, a roof, foliage, a see-through static or anything a
+/// light shows on from above.
+pub(crate) fn static_light_class_flags(flags: u64, height: i8) -> u32 {
+    let class = if flags & LIGHT_SCENE_NEVER_SOLID_FLAGS != 0 {
         0
     } else if flags & TaeFlag::Wall.bits() != 0 {
         STATIC_FLAG_LIGHT_WALL
@@ -94,7 +101,11 @@ pub(crate) fn static_light_class_flags(flags: u64) -> u32 {
         STATIC_FLAG_LIGHT_BLOCK
     } else {
         0
+    };
+    if class == 0 {
+        return 0;
     }
+    class | (height.max(0) as u32 & STATIC_LIGHT_HEIGHT_MASK) << STATIC_LIGHT_HEIGHT_SHIFT
 }
 
 /// The `MeshTag` of a clipped glow whose quad sits at `origin`: its light's cell (`tile_x`, `tile_y`), from the cell
@@ -551,12 +562,29 @@ mod tests {
     /// roofs, foliage and passable statics neither.
     #[test]
     fn statics_take_their_light_scene_class_from_their_flags() {
-        assert_eq!(static_light_class_flags(WALL), STATIC_FLAG_LIGHT_WALL);
-        assert_eq!(static_light_class_flags(WINDOW), STATIC_FLAG_LIGHT_WALL);
-        assert_eq!(static_light_class_flags(TREE), STATIC_FLAG_LIGHT_BLOCK);
+        let class = |flags| static_light_class_flags(flags, 0);
+        assert_eq!(class(WALL), STATIC_FLAG_LIGHT_WALL);
+        assert_eq!(class(WINDOW), STATIC_FLAG_LIGHT_WALL);
+        assert_eq!(class(TREE), STATIC_FLAG_LIGHT_BLOCK);
         for flags in [ROOF, FLOOR, LEAVES, 0, TaeFlag::Transparent.bits() | TaeFlag::Impassable.bits()] {
-            assert_eq!(static_light_class_flags(flags), 0, "{flags:#x}");
+            assert_eq!(class(flags), 0, "{flags:#x}");
         }
+    }
+
+    /// The height of a wall or a block, which art/light_scene.wesl reads to tell its cap from its faces, rides in its
+    /// own bits; the other statics carry none, and a negative height reads as none.
+    #[test]
+    fn walls_and_blocks_carry_their_tiledata_height() {
+        let height = |bits: u32| bits >> STATIC_LIGHT_HEIGHT_SHIFT & STATIC_LIGHT_HEIGHT_MASK;
+        // The lower wall of Britain's torch walkway (map 1, 1391,1567: 0x0084 at z 30, height 22).
+        let wall = static_light_class_flags(WALL, 22);
+        assert_eq!(wall & !(STATIC_LIGHT_HEIGHT_MASK << STATIC_LIGHT_HEIGHT_SHIFT), STATIC_FLAG_LIGHT_WALL);
+        assert_eq!(height(wall), 22);
+        assert_eq!(height(static_light_class_flags(TREE, i8::MAX)), i8::MAX as u32);
+        assert_eq!(height(static_light_class_flags(WALL, -3)), 0);
+        assert_eq!(static_light_class_flags(FLOOR, 22), 0);
+        // Above the other is_wet_flags bits, the class bits the highest of them.
+        assert!(STATIC_FLAG_LIGHT_BLOCK < 1 << STATIC_LIGHT_HEIGHT_SHIFT);
     }
 
     /// The fields light_clip.wesl unpacks: signed cell offsets from the cell under the origin, the z and the ceiling.

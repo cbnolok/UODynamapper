@@ -1,6 +1,7 @@
 import package::shaders::world::art::picking::{pick_clip, pick_pass, pick_color};
 import package::shaders::world::art::light_scene::{light_scene_drawn, light_scene_texel, light_scene_class,
-    LIGHT_SCENE_MIN_ALPHA};
+    light_scene_height, light_scene_cap_probe_v, light_scene_may_be_cap, light_scene_cap_texel, LIGHT_SCENE_MIN_ALPHA,
+    LIGHT_SCENE_CAP_MIN_ALPHA, LIGHT_SCENE_CLASS_HEIGHT};
 import bevy_pbr::render::{
     forward_io::Vertex,
     view_transformations,
@@ -382,9 +383,23 @@ fn shade_fragment(in: ArtVertexOutput, sample_index: u32) -> ArtFragmentOutput {
             discard;
         }
         let lies_flat = inst.flat_quad != 0u || (inst.is_wet_flags & STATIC_FLAG_FLAT_ART) != 0u;
-        out.color = vec4<f32>(light_scene_texel(in.world_pos, inst.client_grunge_anchor,
-            i32(round(inst.base_world_y / HEIGHT_SCALE)), light_scene_class(inst.is_wet_flags, lies_flat),
-            BILLBOARD_RIGHT_XZ, view.world_from_view[2].xyz, HEIGHT_SCALE));
+        let z = i32(round(inst.base_world_y / HEIGHT_SCALE));
+        let kind = light_scene_class(inst.is_wet_flags, lies_flat);
+        var texel = light_scene_texel(in.world_pos, inst.client_grunge_anchor, z, kind, BILLBOARD_RIGHT_XZ,
+            view.world_from_view[2].xyz, HEIGHT_SCALE);
+        // A wall's or a solid static's cap is a floor at its top (light_scene_cap_probe_v): one more tap, the art
+        // its height under the pixel.
+        let height = light_scene_height(inst.is_wet_flags);
+        if (kind != LIGHT_SCENE_CLASS_HEIGHT && height > 0 && light_scene_may_be_cap(texel, z + height)) {
+            let v = light_scene_cap_probe_v((uv.y - inst.uv_min.y) / (inst.uv_max.y - inst.uv_min.y),
+                f32(height) * HEIGHT_SCALE, inst.local_max.y - inst.local_min.y);
+            if (v <= 1.0 && textureSampleLevel(art_atlas, art_atlas_sampler,
+                vec2<f32>(clamp(uv.x, inst.uv_min.x, inst.uv_max.x), mix(inst.uv_min.y, inst.uv_max.y, v)),
+                i32(layer), 0.0).a >= LIGHT_SCENE_CAP_MIN_ALPHA) {
+                texel = light_scene_cap_texel(texel, z + height);
+            }
+        }
+        out.color = vec4<f32>(texel);
         return out;
     }
 

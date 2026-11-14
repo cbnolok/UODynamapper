@@ -34,10 +34,12 @@ const LIGHT_CLIP_EDGE_REACH: i32 = 2;
 // Whether a light on `light_cell` at `light_z`, under the floor or roof at `ceiling`, lights the static of the light
 // scene texel `texel`:
 // - the land and anything else that is not a static: always;
-// - a floor, a roof or another static (LIGHT_SCENE_CLASS_HEIGHT): below LIGHT_COVER_MIN_RISE above the light;
+// - a floor, a roof or another static (LIGHT_SCENE_CLASS_HEIGHT): below LIGHT_COVER_MIN_RISE above the light. The
+//   top of a wall or a solid static, its cap, is one at the static's top z (light_scene.wesl), so the cap flush with
+//   the floor over a light stays dark with the floor;
 // - a wall or a solid static: below the ceiling, on the light's own cell, and on the faces turned to the light. Its
-//   face's height (light_scene.wesl) reads the top of a wall's thickness, drawn in front of its plane, a few z low:
-//   the face stays dark from LIGHT_COVER_MIN_RISE under the ceiling up.
+//   face's height (light_scene.wesl) reads a few z low, as the art draws a wall's face in front of its plane: the
+//   face stays dark from LIGHT_COVER_MIN_RISE under the ceiling up.
 fn light_reaches(texel: vec4<u32>, light_cell: vec2<i32>, light_z: i32, ceiling: i32) -> bool {
     let code = texel.w;
     if ((code & LIGHT_SCENE_ART) == 0u) {
