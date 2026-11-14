@@ -1,5 +1,5 @@
-//! Where a client reads its login server from, and writers of the login server files. See `LOGIN_SERVER.md` next
-//! to this module for the evidence.
+//! Where a client reads its login server from, and writers of the login server files. See
+//! `tools/uo-client-patcher-gui/docs/LOGIN_SERVER.md` for the evidence.
 //!
 //! - Classic `client.exe`: `uo.cfg`, then the file its `LoginServerFile` key names, or `login.cfg`; both go through
 //!   the same key table, so `LoginServer=host,port` and `BackupLoginServer=host,port` lines count in either.

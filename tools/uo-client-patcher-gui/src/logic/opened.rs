@@ -76,8 +76,8 @@ impl OpenedExe {
         plan_patch_inspected(&self.bytes, &self.inspection, patch, self.current_manifest())
     }
 
-    /// Writes the patched copy `output` and its manifest (see [`write_patched_client_exe`]: a new file outside the
-    /// folder of this one).
+    /// Writes the patched copy `output` and its manifest (see [`write_patched_client_exe`]). Existing destination
+    /// files may be replaced, including in this folder; the opened executable is always protected.
     pub fn write_copy(&self, output: &Path, patch: &ExePatch) -> eyre::Result<PatchedClientExe> {
         write_patched_client_exe(&self.path, output, patch)
     }

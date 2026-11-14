@@ -7,6 +7,7 @@
 
 pub mod classic_difs;
 pub mod classic_facets;
+pub mod crypt_keys;
 pub mod encryption;
 pub mod facet_data;
 pub mod facet_dimensions;

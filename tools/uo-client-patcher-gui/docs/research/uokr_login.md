@@ -6,6 +6,24 @@ given here. Traced with read-only Ghidra probes, enough for the no-encryption pa
 (`uocf::client::encryption`, `ExeEdit::NoEncryption`, `uocf-cli exe patch --no-encryption`). File offsets are in
 `.text` (VA `0x401000`, raw `0x400`): file offset = VA - `0x400c00`.
 
+## Audited sibling builds
+
+The 2.48.0.3, 2.54.0.7 and 2.57.0.17 executables supplied later share exactly the same 655-byte instruction
+layout. Only 21 four-byte address/displacement fields differ; the patcher substitutes their audited values and
+still compares the complete function at its original VA. It does not wildcard those fields.
+
+| PE version | Connect VA | File patch start | Executable SHA-256 |
+|---|---|---|---|
+| 2.48.0.3 | `0x5baeb0` | `0x1ba30f` | `d88f0cd5a31c3cafe754b52424f615ab5c7b5f69d464fbb510e842e9610c43ea` |
+| 2.54.0.7 | `0x5babe0` | `0x1ba03f` | `35f6612cacd3c5f0f1cef6310ff1ceaf04e647ad8b0c0cfbf64684e1d81dc984` |
+| 2.57.0.17 | `0x5b6b60` | `0x1b5fbf` | `b6ab0422c25e22c3e97d6220d3284723f2fb44039c4a4e7a0c3b7cc10acb1715` |
+| 2.58.0.6 | `0x5b6b40` | `0x1b5f9f` | `1b802e5c00f3bf89a771778b9c6c57406be0703808eeb4cd983e2f5baa348a43` |
+
+The shared operand offsets are `001,01b,029,031,046,062,06d,086,08b,093,0fc,103,14e,161,16f,18a,194,1b0,1d5,1dc,1f7`.
+Clearing exactly these fields yields function SHA-256 `9c3f21d814e1cddf6ec61cb8ac4492503ebc03b961f510502645079f85d886e7`.
+The addresses in the detailed discussion below refer to 2.58.0.6. Version 2.45.4.4 has an older compiler/SEH layout
+and is deliberately refused by these profiles.
+
 ## Transforms
 
 The client sends and receives through per-connection transform chains (`boost::shared_ptr` transforms;
@@ -167,6 +185,7 @@ game connection setup in `FUN_005b6b40`:
 The patcher records this as one 458-byte site starting at `0x1b5f9f`. Unchanged instructions within that range
 are preserved. The **entire 655-byte function** (through `RET 4`, ending exclusively at VA `0x5b6dcf`) must
 match its stock or patched form at the original VA; calls and absolute operands are specific to this build.
+Do not wildcard its relative calls or absolute operands without also deriving their replacements.
 Unknown changes, mixed handshake replacements and a relocated function are refused. Cipher patterns still
 accept their stock or patched form and require exactly one match.
 
@@ -174,13 +193,14 @@ The seed replacement reads the original stack argument `[ESP+0x24]`, then its au
 four bytes still pass through the original `htonl` and raw send. Using that auth key, as EC does, avoids the
 fixed `0xffffffff` seed that servers can use to select the KR key exchange.
 
-The callback replacement is reproduced by [`../kr-plaintext-game-login.s`](../kr-plaintext-game-login.s).
+The callback replacement is reproduced by [`kr-plaintext-game-login.s`](kr-plaintext-game-login.s).
 It allocates the same 32-byte Huffman object and calls the original constructor (`0x5dd850`, object in ESI),
 creates its correctly typed shared pointer (`0x5bca20`), and calls `AddReceiveTransform` (`0x5a29e0`). The
 by-value shared pointer consumes one reference; EDI retains the local reference for the original cleanup at
 `0x5b6d69`. EBX retains the seed message reference, released by the original cleanup at `0x5b6d97`. No
 Crypto++ cipher or E3 callback is installed. `0x5b59d0` receives the original LoginManager in EAX and sends 0x91.
-A failed Huffman allocation calls `Disconnect(1)` and releases the seed message without sending 0x91.
+A failed Huffman allocation loads LoginManager from `[ESP+0x24]` into EDI, then calls `Disconnect(1)` and
+releases the seed message without sending 0x91. The EDI argument is part of the real function ABI.
 
 Assemble the callback for review with GNU binutils:
 
@@ -200,27 +220,33 @@ KR protocol feature. Sphere's fixed E3 exchange is no longer required for this l
 The supplied `uokrloader/UoKRLoader/Utility.cs` (lines 188–272) NOPs the login XOR and zeroes the game cipher's
 output. It does not bypass E3, install Huffman early or send 0x91 early. Its game signature covers 50 bytes but
 the replacement writes 89; the replacement must not be copied without validating its full extent.
+UoKRLoader exposes `Yes`, `Remove Login`, `Remove Game` and `Remove Both`, defaulting to `Yes` (no removal).
+Its game choice is cipher-only; it is not the KR handshake bypass.
 `UO-SALoader/Form1.cs` actively patches login addresses only; its encryption patches in `StaticData.cs` are
 commented out. `UOCH_2.2-master/Main.c` patches Classic login, Blowfish/Twofish and MD5 ciphers; it has no KR
 handshake implementation. None supplies an E3/E4 bypass.
 
 ### Validation
 
-The actual patched 655-byte function was executed under `qemu-i386` with stubs for the client APIs. Normal
-login, a null connection control block, and failed Huffman allocation passed seed byte-order, state, call-order,
-stack, nonvolatile-register and shared-pointer lifetime checks. The CLI-written executable contains exactly the
-executed function (SHA-256 `9caf512831decaafb0ab67803693abf5c302105567d1fc6aade3af19ca49895e`).
-This checks the x86 flow and calling conventions; a live Sphere login has not been tested.
+The actual patched 655-byte functions for all four profiles were executed under `qemu-i386` with stubs for the
+client APIs. Normal login, a null connection control block, and failed Huffman allocation passed seed byte-order,
+state, call-order, stack, nonvolatile-register and shared-pointer lifetime checks (12 cases total). Strict register
+checks include ESI for the Huffman constructor, EAX for Send91 and EDI for Disconnect. This catches the earlier
+81-byte callback's missing failure-path EDI argument; the corrected callback is 85 bytes. Earlier 2.58 replacements
+are recognized as needing an explicit upgrade, with their matching manifest history preserved.
 
-The encryption pattern tests, patch/legacy-manifest tests, GUI toggle test and real KR/EC encryption regression
-passed, as did `cargo check --workspace`. The real-client regression only patches temporary copies.
+These checks cover x86 flow and calling conventions, not a live Sphere login. The profile/legacy-upgrade tests read
+all supplied executables without changing them, check exact VAs, checksum and allowed changed ranges, and patch
+copies only. Scoped-control and destination/source-alias tests cover the library and GUI.
 
 ## Enhanced Client (UOSA.exe) for comparison
 
 `LoginManager::ConnectToGameServer` (UOSA 4.0.102.3 `0x613e20`) sends the auth key as the game seed, sets the state
 to 2 at once and installs the classic `UOGameCipher_C2S_Encrypt` (Twofish), `UOGameCipher_S2C_Decrypt` (MD5 pad)
-and Huffman, then sends 0x91. 0xE3 is optional there; when a server sends it, the Cipher2 pair is added on top. The
-no-encryption patch therefore writes four sites in the Enhanced Client: the login XOR (ENC3), the game send XOR
+and Huffman, then sends 0x91. Its alternative fixed-seed/E3 initializer `0x614380` has no callers or references,
+and normal setup does not register E3. The compiled-in E3 handler resets both transform chains before installing
+AES/CFB and Huffman; it does not layer AES over Twofish. See the [EC evidence](uosa_login.md#normal-game-login-versus-compiled-in-key-exchange).
+The no-encryption patch writes four sites in the Enhanced Client: the login XOR (ENC3), the game send XOR
 (ENC1, `30 45 00`), the game receive XOR (ENC2, `30 10`) and the same adapter `JZ`. Patched bytes, by file offset:
 
 | exe | login | game send | game receive | key exchange |

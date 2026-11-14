@@ -67,7 +67,7 @@ pub fn ui_preview(ui: &mut egui::Ui, session: &mut Session) -> Option<ExePatch> 
                 if clicked {
                     save = Some(patch.clone());
                 }
-                muted_label(ui, "Outside the input executable's folder, to a new file name.");
+                muted_label(ui, "The copy may be beside the input. An existing destination and its manifest will be replaced.");
             });
         }
     }

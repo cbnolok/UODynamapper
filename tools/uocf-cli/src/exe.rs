@@ -4,6 +4,7 @@ use clap::Subcommand;
 use color_eyre::eyre::{self, eyre, WrapErr};
 use uocf::client::classic_difs::DifKind;
 use uocf::client::classic_facets::{ClassicFileRole, CLASSIC_FACET_RECORD_SIZE};
+use uocf::client::crypt_keys::{inspect_login_crypt, version_master_keys};
 use uocf::client::facet_data::{check_client_facet_data, FacetDataStatus};
 use uocf::client::login_servers::LoginServerAddress;
 use uocf::client::facet_dimensions::{
@@ -33,9 +34,14 @@ pub enum ExeCmd {
     /// the startup copy of facet 0 and whether the code applies the mapdif / stadif patches. Only reads the file.
     Show {
         exe: PathBuf,
+        /// Print the actual embedded login master keys and advertised 0xEF protocol version (EC/KR).
+        /// Compare the standard version formula without assuming that the PE resource version is the wire version.
+        #[arg(long)]
+        crypt_keys: bool,
     },
     /// Write a copy of a client executable with new facet sizes, wraps and split in one step, and its manifest
-    /// `<output>.facet-dims.json`. The input is only read; the output must be a new file outside the input's folder.
+    /// `<output>.facet-dims.json`. The output may be beside the input and replace a different destination;
+    /// the input executable is never overwritten.
     /// Resize the facet data too (see `check-data`).
     Patch {
         exe: PathBuf,
@@ -195,7 +201,7 @@ impl LoginOptions {
 
 pub fn run(cmd: ExeCmd) -> eyre::Result<()> {
     match cmd {
-        ExeCmd::Show { exe } => show(&exe),
+        ExeCmd::Show { exe, crypt_keys } => show(&exe, crypt_keys),
         ExeCmd::Patch {
             exe,
             output,
@@ -483,9 +489,13 @@ fn print_encryption(inspection: &ClientExeInspection) {
     }
 }
 
-fn show(exe: &Path) -> eyre::Result<()> {
+fn show(exe: &Path, crypt_keys: bool) -> eyre::Result<()> {
     let inspection = inspect(exe)?;
     print_inspection(&inspection);
+    if crypt_keys {
+        let bytes = std::fs::read(exe).wrap_err_with(|| format!("read {}", exe.display()))?;
+        print_crypt_keys(&bytes, &inspection)?;
+    }
     if let Some(manifest) = read_manifest(exe)? {
         let current =
             if manifest.patched_sha256 == inspection.sha256 { "matches this file" } else { "STALE: another file" };
@@ -501,6 +511,30 @@ fn show(exe: &Path) -> eyre::Result<()> {
             println!("  step {} {} -> {}: {edits}", number + 1, step.source_sha256, step.patched_sha256);
         }
     }
+    Ok(())
+}
+
+fn print_crypt_keys(bytes: &[u8], inspection: &ClientExeInspection) -> eyre::Result<()> {
+    let info = inspect_login_crypt(bytes, inspection)?;
+    let keys = info.keys;
+    println!("cryptkeys embedded {:#010x} {:#010x} (login master keys)", keys.key_1, keys.key_2);
+    println!("  first-round XOR {:#010x}; {}", keys.first_round, located(inspection, info.cipher_offset));
+    println!("  login XOR {}", if info.cipher_removed { "patched out; keys are still embedded" } else { "stock" });
+    match info.protocol_version {
+        Some(version) => {
+            println!("  wire version {version} (0xEF writer instructions)");
+            if let Some(resource) = inspection.version {
+                let resource_parts = resource.file.0.map(u32::from);
+                let relation = if version.0 == resource_parts { "same" } else { "DIFFERS" };
+                println!("  PE file version {}: {relation} from wire version", resource.file);
+            }
+            let (key_1, key_2) = version_master_keys(version);
+            let relation = if (key_1, key_2) == (keys.key_1, keys.key_2) { "matches" } else { "DIFFERS from" };
+            println!("  version formula {key_1:#010x} {key_2:#010x}: {relation} embedded keys (fourth component ignored)");
+        }
+        None => println!("  wire version not located uniquely ({} matches); no PE-version substitution", info.protocol_version_matches),
+    }
+    println!("  These are login master keys; the connection seed and DH game keys are separate.");
     Ok(())
 }
 

@@ -635,11 +635,17 @@ fn the_dry_run_is_what_is_written_and_copies_chain() {
         move_seam(&mut edits, NEW_SPLIT);
         let patch = edits.build_patch().unwrap();
 
-        let inside = opened.write_copy(&client.join("copy.exe"), &patch).unwrap_err();
-        assert!(format!("{inside:#}").contains("refusing to write inside the folder"), "{inside:#}");
+        let same = opened.write_copy(&exe, &patch).unwrap_err();
+        assert!(format!("{same:#}").contains("refusing to overwrite the input executable"), "{same:#}");
+        let sibling = plan_write_and_reopen(&opened, &edits, &client.join("copy.exe"));
+        assert_eq!(sibling.folder(), client);
+        assert_eq!(std::fs::read(&exe).unwrap(), opened.bytes, "the source is unchanged");
         let copy = plan_write_and_reopen(&opened, &edits, &copies.join(name));
-        let exists = opened.write_copy(&copies.join(name), &patch).unwrap_err();
-        assert!(format!("{exists:#}").contains("exists"), "{exists:#}");
+        std::fs::write(copies.join(name), b"old destination").unwrap();
+        std::fs::write(uocf::client::patch::manifest_path(&copies.join(name)), b"old manifest").unwrap();
+        let replacement = plan_write_and_reopen(&opened, &edits, &copies.join(name));
+        assert_eq!(replacement.bytes, copy.bytes);
+        assert_eq!(std::fs::read(&exe).unwrap(), opened.bytes, "replacing the destination preserves the source");
 
         // The reopened copy patches again; its manifest keeps the chain.
         let mut chained = EditState::new(&copy.inspection);

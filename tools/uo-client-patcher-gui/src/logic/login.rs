@@ -1,5 +1,5 @@
 //! The login server section: where each family reads its login server from (see
-//! `lib/uocf/src/client/LOGIN_SERVER.md`), the executable's per-site host and port edit ([`LoginEdit`], one
+//! `tools/uo-client-patcher-gui/docs/LOGIN_SERVER.md`), the executable's per-site host and port edit ([`LoginEdit`], one
 //! more edit of the patch [`super::edits::EditState::build_patch`] builds) and the Classic `login.cfg` editor
 //! ([`ClassicLogin`]), saved as a copy apart from the patch.
 //!

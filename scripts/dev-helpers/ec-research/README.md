@@ -71,8 +71,9 @@ The statically linked zlib, FreeType, TinyXML and Crypto++ functions are named f
 their sources, and the UOP read/decompress chain is traced, in
 [`ghidra-source-names`](ghidra-source-names/README.md).
 
-The login flow, packet table, login/game ciphers and the patch sites of the ECLO
-loader are named and documented in [`ghidra-login-names`](ghidra-login-names/README.md).
+The login flow, packet table, login/game ciphers and the patch sites of the ECLO loader are named with
+[`ghidra-login-names`](ghidra-login-names/README.md). The recovered names and executable evidence live with the
+[client patcher documentation](../../../tools/uo-client-patcher-gui/docs/README.md).
 
 The `tileart.uop` load path, its record format as the client reads it and the code
 using tile definitions are named and documented in [`ghidra-tileart`](ghidra-tileart/README.md).

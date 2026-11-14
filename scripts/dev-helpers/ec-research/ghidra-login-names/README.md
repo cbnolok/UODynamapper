@@ -9,7 +9,9 @@ ECLO (the Enhanced Client login patcher).
 | Path | Content |
 |---|---|
 | `NameLoginCode.java` | Ghidra script: report, and with `--apply` annotations |
-| `results/uosa_login.md` | Findings for the tested `UOSA.exe` (flow, packets, encryption, ECLO sites, every name) |
+| [Enhanced Client research](../../../../tools/uo-client-patcher-gui/docs/research/uosa_login.md) | Findings for the tested `UOSA.exe` (flow, packets, encryption, ECLO sites, every name) |
+| [Kingdom Reborn research](../../../../tools/uo-client-patcher-gui/docs/research/uokr_login.md) | KR flow, RTTI classes, cipher and handshake evidence |
+| [KR callback assembly](../../../../tools/uo-client-patcher-gui/docs/research/kr-plaintext-game-login.s) | Source for the reviewed plaintext game-login replacement |
 
 ## What it recovers
 
@@ -114,4 +116,4 @@ On `UOSA.exe` 4.0.102.3 (SHA-256
 - 8 ECLO comments.
 
 The second `--apply` changed nothing. There were no anomalies and nothing was kept. See
-`results/uosa_login.md`.
+[the Enhanced Client report](../../../../tools/uo-client-patcher-gui/docs/research/uosa_login.md).

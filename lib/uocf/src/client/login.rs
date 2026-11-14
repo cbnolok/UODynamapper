@@ -1,5 +1,5 @@
 //! The login server address built into Enhanced Client and Kingdom Reborn executables, located by instruction
-//! structure ([`locate_login_sites`]); see `client/LOGIN_SERVER.md` for the traced code.
+//! structure ([`locate_login_sites`]); see `tools/uo-client-patcher-gui/docs/LOGIN_SERVER.md` for the traced code.
 //!
 //! `LoginManager::LoginAccount` fills a `{u32 ip (host order), u16 port}` pair on the stack at `[ESP+D]`:
 //!

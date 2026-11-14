@@ -29,6 +29,7 @@ _start:
     call 0x5b59d0                 # send normal 0x91; no cipher installed
     jmp 0x5b6d69                  # release local Huffman reference, then seed message
 allocation_failed:
+    mov edi, [esp + 0x24]        # Disconnect also receives LoginManager, in EDI
     push 1
     call 0x5b3b90                 # Disconnect(1)
     jmp 0x5b6d97                  # release only the seed message

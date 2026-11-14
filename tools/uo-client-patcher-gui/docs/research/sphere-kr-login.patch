@@ -1,0 +1,40 @@
+diff --git a/src/network/send.cpp b/src/network/send.cpp
+index b9fadaf1..a0120472 100644
+--- a/src/network/send.cpp
++++ b/src/network/send.cpp
+@@ -31,0 +32,21 @@ namespace zlib {
++namespace
++{
++constexpr dword kKrLoginProtocolMajor = 66;
++constexpr dword kLegacyVersionMajorFactor = 100'00'00;
++
++// KR reports protocol version 66.x in 0xEF. Its 0xE1 client-type report arrives
++// only after the character list, so the account's saved login version is needed here.
++bool usesKrLoginPackets(const CNetState* pState, dword dwReportedVersion)
++{
++    if (pState->isClientKR())
++    {
++        return true;
++    }
++    if (dwReportedVersion == 0)
++    {
++        dwReportedVersion = pState->getReportedVersion();
++    }
++    return dwReportedVersion / kLegacyVersionMajorFactor == kKrLoginProtocolMajor;
++}
++}
++
+@@ -3397 +3418,3 @@ PacketCharacterList::PacketCharacterList(CClient* target) : PacketSend(XCMD_Char
+-	if ( tmVer >= MINCLIVER_EXTRASTARTINFO || tmVerReported >= MINCLIVER_EXTRASTARTINFO )
++    const CNetState* ns = target->GetNetState();
++    const bool fKrLogin = usesKrLoginPackets(ns, tmVerReported);
++	if ( !fKrLogin && (tmVer >= MINCLIVER_EXTRASTARTINFO || tmVerReported >= MINCLIVER_EXTRASTARTINFO) )
+@@ -3427 +3450 @@ PacketCharacterList::PacketCharacterList(CClient* target) : PacketSend(XCMD_Char
+-    if (tmVerReported > 1'26'00'00)
++    if (fKrLogin || tmVerReported > 1'26'00'00)
+@@ -3429 +3451,0 @@ PacketCharacterList::PacketCharacterList(CClient* target) : PacketSend(XCMD_Char
+-		const CNetState* ns = target->GetNetState();
+@@ -3870 +3892,2 @@ PacketEnableFeatures::PacketEnableFeatures(const CClient* target, dword flags) :
+-	if (tmVer >= MINCLIVER_EXTRAFEATURES || tmVerReported >= MINCLIVER_EXTRAFEATURES)
++	if (!usesKrLoginPackets(target->GetNetState(), tmVerReported)
++        && (tmVer >= MINCLIVER_EXTRAFEATURES || tmVerReported >= MINCLIVER_EXTRAFEATURES))

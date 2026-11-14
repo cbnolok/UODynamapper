@@ -4,7 +4,8 @@
 //! applied, the PE checksum recomputed and the copy inspected again: the tables, split or seam and Classic startup
 //! globals must be found at the same places with the planned values.
 //!
-//! Safety rules: the copy goes to a new path outside the input's folder; signed images are refused (and 64-bit ones,
+//! Safety rules: the copy may replace a different file, including beside the input; the input is never overwritten.
+//! Signed images are refused (and 64-bit ones,
 //! which [`ClientExeInspection::inspect`] does not take); sizes the client cannot hold are refused
 //! ([`validate_facet_size`], [`validate_classic_size`], [`validate_classic_wrap`]). The input must have the stock
 //! values, or the values the manifest of the copy it is (`<copy>.facet-dims.json`, [`ExeManifest`]) records. The
@@ -45,6 +46,7 @@ use crate::client::pe::pe_checksum;
 use crate::client::version::ExeVersion;
 use crate::client::login_servers::{validate_login_port, HostKind, validate_login_host};
 use crate::enhanced::facet_sector::{FacetGeometry, CLIENT_FACET_DIMENSIONS};
+use crate::utils::output_file::refuse_same_file;
 
 /// The manifest of a patched copy: `<copy>` plus this suffix.
 pub const MANIFEST_SUFFIX: &str = ".facet-dims.json";
@@ -936,25 +938,24 @@ pub fn read_manifest(exe: &Path) -> eyre::Result<Option<ExeManifest>> {
     parse_manifest(&text).wrap_err_with(|| format!("parse {}", path.display())).map(Some)
 }
 
-/// Fails unless `output` is a new file outside the folder of `input` (the client folder), and its manifest path is
-/// free too.
+/// Existing files may be replaced, but neither destination may alias `input` or the other destination.
 fn check_output_path(input: &Path, output: &Path) -> eyre::Result<()> {
     let input = std::fs::canonicalize(input).wrap_err_with(|| format!("resolve {}", input.display()))?;
-    let client_dir = input.parent().ok_or_else(|| eyre!("{} has no folder", input.display()))?;
-    for path in [output.to_path_buf(), manifest_path(output)] {
-        eyre::ensure!(path.symlink_metadata().is_err(), "{} exists: write to a new path", path.display());
+    let manifest = manifest_path(output);
+    for path in [output, manifest.as_path()] {
+        refuse_same_file([input.as_path()], path, "input executable")?;
+        match path.symlink_metadata() {
+            Ok(_) => eyre::ensure!(path.is_file(), "{} is not a regular file", path.display()),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(error) => return Err(error).wrap_err_with(|| format!("inspect {}", path.display())),
+        }
     }
-    let output_dir = match output.parent() {
-        Some(parent) if !parent.as_os_str().is_empty() => parent,
-        _ => Path::new("."),
-    };
-    let output_dir =
-        std::fs::canonicalize(output_dir).wrap_err_with(|| format!("resolve the folder of {}", output.display()))?;
-    eyre::ensure!(
-        !output_dir.starts_with(client_dir),
-        "refusing to write inside the folder of the input executable ({}): write the copy elsewhere",
-        client_dir.display()
-    );
+    let output_dir = output.parent().filter(|parent| !parent.as_os_str().is_empty()).unwrap_or_else(|| Path::new("."));
+    let output_dir = std::fs::canonicalize(output_dir).wrap_err_with(|| format!("resolve the folder of {}", output.display()))?;
+    eyre::ensure!(output_dir.is_dir(), "{} is not a folder", output_dir.display());
+    if output.is_file() {
+        refuse_same_file([output], &manifest, "output executable")?;
+    }
     Ok(())
 }
 
@@ -965,8 +966,9 @@ pub fn dry_run_client_exe(input: &Path, patch: &ExePatch) -> eyre::Result<PatchP
     plan_patch(&bytes, patch, previous.as_ref())
 }
 
-/// Patches a copy of `input` to the new file `output` (outside the input's folder) and writes its manifest
+/// Patches a copy of `input` to `output` (which may be beside `input`) and writes its manifest
 /// `<output>.facet-dims.json`. The input is only read; when it is an earlier patched copy, its manifest is read too.
+/// Existing destination files are replaced, but neither destination may be the input or alias the other.
 pub fn write_patched_client_exe(input: &Path, output: &Path, patch: &ExePatch) -> eyre::Result<PatchedClientExe> {
     check_output_path(input, output)?;
     let bytes = std::fs::read(input).wrap_err_with(|| format!("read {}", input.display()))?;
@@ -1443,6 +1445,46 @@ mod tests {
     }
 
     #[test]
+    fn the_previous_kr_bypass_replacement_upgrades_without_losing_its_manifest() {
+        let image = synthetic_kr_encrypted_client();
+        let all = ExePatch { edits: vec![ExeEdit::NoEncryption] };
+        let patched = patch_client_exe(&image, &all, None).unwrap();
+        let handshake = patched.after.encryption.as_ref().unwrap().sites.iter()
+            .find(|site| site.kind == CipherSiteKind::GameLoginHandshake).unwrap();
+        let previous = handshake.kind.pattern().previous.unwrap();
+        let mut legacy = patched.bytes.clone();
+        legacy[handshake.offset..][..previous.len()].copy_from_slice(previous);
+        let checksum_offset = patched.after.pe.checksum_offset;
+        let checksum = pe_checksum(&legacy, checksum_offset);
+        legacy[checksum_offset..][..PATCH_FIELD_SIZE].copy_from_slice(&checksum.to_le_bytes());
+        let mut manifest = patched.manifest.clone();
+        manifest.patched_sha256 = sha256_hex(&legacy);
+        manifest.steps.last_mut().unwrap().patched_sha256 = manifest.patched_sha256.clone();
+        manifest.checksum = checksum;
+        let before = ClientExeInspection::inspect(&legacy).unwrap();
+        let sites = before.encryption.as_ref().unwrap();
+        assert!(sites.is_complete());
+        assert_eq!(sites.values(), Some(EncryptionState::Partial));
+        let old_handshake = sites.sites.iter().find(|site| site.kind == CipherSiteKind::GameLoginHandshake).unwrap();
+        assert_eq!(old_handshake.stock(), previous);
+        assert!(!old_handshake.removed);
+        let bypass = ExePatch { edits: vec![ExeEdit::BypassKrHandshake] };
+        let plan = plan_patch(&legacy, &bypass, Some(&manifest)).unwrap();
+        let upgraded = patch_client_exe(&legacy, &bypass, Some(&manifest)).unwrap();
+        assert_plan_is_the_write(&legacy, &plan, &upgraded.bytes);
+        assert_eq!(upgraded.bytes, patched.bytes);
+        assert_eq!(upgraded.manifest.values.encryption, Some(EncryptionState::Removed));
+        assert_eq!(upgraded.manifest.original_sha256, manifest.original_sha256);
+        assert_eq!(upgraded.manifest.steps[..manifest.steps.len()], manifest.steps);
+        assert_eq!(upgraded.manifest.steps.last().unwrap().edits, bypass.edits);
+        let writes: Vec<_> = upgraded.changes.iter().filter(|change| change.cause == ChangeCause::Edit(0)).collect();
+        assert_eq!(writes.len(), 1);
+        assert_eq!(writes[0].old, previous);
+        assert_eq!(writes[0].new, handshake.patched());
+        assert!(plan_patch(&upgraded.bytes, &bypass, Some(&upgraded.manifest)).unwrap_err().to_string().contains("changes nothing"));
+    }
+
+    #[test]
     fn no_encryption_upgrades_the_legacy_kr_manifest_only_for_the_stock_handshake() {
         let image = synthetic_kr_encrypted_client();
         let patch = ExePatch { edits: vec![ExeEdit::NoEncryption] };
@@ -1552,7 +1594,7 @@ mod tests {
     }
 
     #[test]
-    fn the_copy_goes_to_a_new_path_outside_the_client_folder() {
+    fn the_copy_can_replace_destinations_beside_the_source_but_never_the_source() {
         let root = std::env::temp_dir().join(format!("uocf_client_exe_patch_{}", std::process::id()));
         let (client, copies) = (root.join("client"), root.join("copies"));
         std::fs::create_dir_all(&client).unwrap();
@@ -1560,16 +1602,70 @@ mod tests {
         let exe = client.join("UOSA.exe");
         std::fs::write(&exe, synthetic_client(Some(STOCK_SPLIT_X), false)).unwrap();
         let patch = ExePatch { edits: vec![size(5, 1280, 4160)] };
-        assert!(write_patched_client_exe(&exe, &exe, &patch).is_err());
-        assert!(write_patched_client_exe(&exe, &client.join("copy.exe"), &patch).is_err());
-        let output = copies.join("UOSA.exe");
+        let original = std::fs::read(&exe).unwrap();
+        let same = write_patched_client_exe(&exe, &exe, &patch).unwrap_err().to_string();
+        assert!(same.contains("refusing to overwrite the input executable"), "{same}");
+        let alias = copies.join("source_alias.exe");
+        std::fs::hard_link(&exe, &alias).unwrap();
+        let same = write_patched_client_exe(&exe, &alias, &patch).unwrap_err().to_string();
+        assert!(same.contains("refusing to overwrite the input executable"), "{same}");
+        let manifest_alias = client.join("source_manifest_alias.exe");
+        std::fs::hard_link(&exe, manifest_path(&manifest_alias)).unwrap();
+        let same = write_patched_client_exe(&exe, &manifest_alias, &patch).unwrap_err().to_string();
+        assert!(same.contains("refusing to overwrite the input executable"), "{same}");
+        assert!(!manifest_alias.exists(), "a refused manifest never writes its executable");
+        #[cfg(unix)]
+        {
+            let symlink = copies.join("source_symlink.exe");
+            std::os::unix::fs::symlink(&exe, &symlink).unwrap();
+            let same = write_patched_client_exe(&exe, &symlink, &patch).unwrap_err().to_string();
+            assert!(same.contains("refusing to overwrite the input executable"), "{same}");
+            let manifest_symlink = client.join("source_manifest_symlink.exe");
+            std::os::unix::fs::symlink(&exe, manifest_path(&manifest_symlink)).unwrap();
+            let same = write_patched_client_exe(&exe, &manifest_symlink, &patch).unwrap_err().to_string();
+            assert!(same.contains("refusing to overwrite the input executable"), "{same}");
+            assert!(!manifest_symlink.exists());
+        }
+        let output = client.join("copy.exe");
         let plan = dry_run_client_exe(&exe, &patch).unwrap();
         assert!(!output.exists(), "a dry run writes nothing");
         let patched = write_patched_client_exe(&exe, &output, &patch).unwrap();
         assert_eq!(plan.changes, patched.changes);
         assert_eq!(std::fs::read(&output).unwrap(), patched.bytes);
         assert_eq!(read_manifest(&output).unwrap().unwrap(), patched.manifest);
-        assert!(write_patched_client_exe(&exe, &output, &patch).is_err(), "the copy exists");
+        std::fs::write(&output, b"existing executable").unwrap();
+        std::fs::write(manifest_path(&output), b"existing manifest").unwrap();
+        let replacement = write_patched_client_exe(&exe, &output, &patch).unwrap();
+        assert_eq!(std::fs::read(&output).unwrap(), patched.bytes);
+        assert_eq!(read_manifest(&output).unwrap().unwrap(), replacement.manifest);
+        let reserved = client.join("reserved.exe");
+        std::fs::write(manifest_path(&reserved), b"existing manifest").unwrap();
+        let reserved_copy = write_patched_client_exe(&exe, &reserved, &patch).unwrap();
+        assert_eq!(std::fs::read(&reserved).unwrap(), patched.bytes);
+        assert_eq!(read_manifest(&reserved).unwrap().unwrap(), reserved_copy.manifest);
+        let overlap = client.join("overlapping.exe");
+        std::fs::write(&overlap, b"same destination").unwrap();
+        std::fs::hard_link(&overlap, manifest_path(&overlap)).unwrap();
+        let same = write_patched_client_exe(&exe, &overlap, &patch).unwrap_err().to_string();
+        assert!(same.contains("refusing to overwrite the output executable"), "{same}");
+        assert_eq!(std::fs::read(&overlap).unwrap(), b"same destination");
+        #[cfg(unix)]
+        {
+            let overlap = client.join("symlink_overlap.exe");
+            std::fs::write(&overlap, b"same symlink destination").unwrap();
+            std::os::unix::fs::symlink(&overlap, manifest_path(&overlap)).unwrap();
+            assert!(write_patched_client_exe(&exe, &overlap, &patch).is_err());
+            assert_eq!(std::fs::read(&overlap).unwrap(), b"same symlink destination");
+        }
+        let directory = client.join("directory.exe");
+        std::fs::create_dir(&directory).unwrap();
+        assert!(write_patched_client_exe(&exe, &directory, &patch).is_err());
+        let manifest_directory = client.join("manifest_directory.exe");
+        std::fs::create_dir(manifest_path(&manifest_directory)).unwrap();
+        assert!(write_patched_client_exe(&exe, &manifest_directory, &patch).is_err());
+        assert!(!manifest_directory.exists());
+        assert!(write_patched_client_exe(&exe, &client.join("missing/copy.exe"), &patch).is_err());
+        assert_eq!(std::fs::read(&exe).unwrap(), original, "the source is unchanged");
         let second = root.join("second.exe");
         let again = write_patched_client_exe(&output, &second, &ExePatch { edits: vec![size(6, 512, 512)] });
         assert_eq!(again.unwrap().manifest.original_sha256, patched.manifest.original_sha256);

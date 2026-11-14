@@ -11,7 +11,7 @@ UOCF works with client files directly; it does not require UODynamapper runtime 
 
 - Looking for an application? Start with the [tools guide](../../tools/README.md), [graphical editor](../../tools/uocf-editor-gui/README.md), or [client-file CLI](../../tools/uocf-cli/README.md).
 - Building with the library? Use the module overview below and generate the API reference with `cargo doc -p uocf --no-deps` from the workspace root.
-- Looking for format details or coverage? See the [Enhanced and KR format notes](src/enhanced/ENHANCED_CLIENT_FILES.md), [login configuration](src/client/LOGIN_SERVER.md), and the dated [Classic](../../docs/agent_notes/cc_file_coverage.md) and [Enhanced/KR](../../docs/agent_notes/ec_uop_coverage.md) coverage audits. The audits record what was checked at the time; consult current code and tests for later changes.
+- Looking for format details or coverage? See the [Enhanced and KR format notes](src/enhanced/ENHANCED_CLIENT_FILES.md), [login configuration](../../tools/uo-client-patcher-gui/docs/LOGIN_SERVER.md), [encryption and KR handshake](../../tools/uo-client-patcher-gui/docs/ENCRYPTION.md), and the dated [Classic](../../docs/agent_notes/cc_file_coverage.md) and [Enhanced/KR](../../docs/agent_notes/ec_uop_coverage.md) coverage audits. The audits record what was checked at the time; consult current code and tests for later changes.
 
 ## Bundled data
 
@@ -88,7 +88,7 @@ Classic login configuration and client executable inspection/patching share this
 `login_servers.rs` reads and edits Classic `uo.cfg`/`login.cfg` and reports built-in EC/KR
 addresses. `login.rs` locates executable login sites; the remaining modules handle PE
 inspection, versions, facet dimensions and patches. Dormant `LoginServers*.xml` files
-are ignored. See [LOGIN_SERVER.md](src/client/LOGIN_SERVER.md).
+are ignored. See [login configuration](../../tools/uo-client-patcher-gui/docs/LOGIN_SERVER.md).
 
 ### `facet_convert.rs`
 

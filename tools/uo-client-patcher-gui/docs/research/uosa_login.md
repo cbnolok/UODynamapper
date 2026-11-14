@@ -44,6 +44,33 @@ stores the IP at +0x9c and the port at +0xa0 only if that dormant configuration 
 The address struct keeps the IPv4 and the port in host order. The window title is set to
 "UOSA - %s " (account), and later "UOSA - %s (%s) " (account, shard).
 
+## Normal game login versus compiled-in key exchange
+
+This control-flow evidence is for the SHA-256/build above. `Handle_0x8C_UserServer` (`0x612670`) calls
+`ConnectToGameServer` (`0x613e20`) unconditionally with the relay auth key at LoginManager `+0x58`.
+The normal setup sends that key as a raw four-byte seed, sets connection state 2, clears old transforms,
+installs Twofish send, MD5-pad receive and Huffman decompression, then calls `SendGameLogin` (`0x612790`)
+once. It does not wait for E3 and has no stock branch selecting the KR-style exchange.
+
+The alternative initializer `FUN_00614380` sends `0xffffffff`, sets state 1 and registers E3 handler
+`0x6145c0`. It has **no Ghidra callers or references**; a raw image scan also found no absolute pointer or
+E8/E9 branch targeting it. The only registration of the E3 callback is inside this unused initializer.
+The normal registration routine `0x60ee10` does not register E3. A permissive state-2 packet filter does not
+register missing callbacks: `PacketHandlerMap_Dispatch` (`0x6442f0`) returns 0 when a callback is absent.
+Thus an ordinary server-sent E3 does not establish that this exchange activates on the normal login path.
+The earlier description of E3 as optional on that path was unsupported.
+
+The exchange handler, if reached through the alternative setup, validates DH parameters, sends E4,
+sets state 2, clears both transform chains and installs AES/CFB send, AES/CFB receive and Huffman before
+sending 0x91 once. It **replaces** the cipher chains; it does not layer AES over Twofish/MD5.
+`GameServerConnection` vtable `0xcb675c` slot `+0x4c` targets `0x5fee30`, which releases and empties the
+receive vector at `+0x5c/+0x60` and the send vector at `+0x4c/+0x50` through `0x600580`/`0x5ffcb0`.
+Both normal setup and the exchange handler call this reset before installing their transforms.
+
+Consequently EC needs no KR handshake bypass on the traced normal route. The patcher's login and game cipher
+controls remain independent; game removal keeps Huffman and immediate 0x91. Other EC builds have byte-pattern
+coverage in the real-file tests, but their complete reachability was not re-established by this trace.
+
 ## Packet registry, framing and dispatch
 
 - **Length table.** `UONet::PacketRegistry_RegisterAll` (0x005f8630) registers a
@@ -74,7 +101,7 @@ The address struct keeps the IPv4 and the port in host order. The window title i
   - on `g_GameServerConnection` (0x00e3994c): 0x82, 0xB9, 0xA9, 0x86, 0x1B, 0xC8, 0x53,
     0x85, 0xEE.
 
-  0xE3 is registered separately in `FUN_00614380` (not renamed).
+  0xE3 is registered only in the unused `FUN_00614380` (not renamed), not on normal game login.
 - **Filter.** `GameServerConnection::FilterPacket` (0x00600720) only lets 0xE3 through
   while the connection state (+0x80) is 1. Any other packet in that state calls
   `LoginManager::Disconnect`. In state 2 everything passes.
@@ -128,16 +155,19 @@ The address struct keeps the IPv4 and the port in host order. The window title i
   - `::Transform` (0x0063be90) XORs each incoming byte with `digest[counter % 16]`.
 - **Compression.** `UOHuffmanCoding_S2C_Decompress::Transform` (0x0063c410) does the
   classic server-to-client Huffman decompression.
-- **KR/EC key exchange (0xE3/0xE4).** `UOPacket::Handle_0xE3_EncryptionRequest` uses
+- **Compiled-in KR/EC key exchange (0xE3/0xE4), unused on the traced normal route.** `UOPacket::Handle_0xE3_EncryptionRequest` uses
   Crypto++ `DH_Domain<DL_GroupParameters_GFP_DefaultSafePrime>`, SHA256 and
   `AutoSeededRandomPool`. It sends 0xE4 and sets the game connection state to 2. It then
-  installs three transforms:
+  clears the existing send and receive chains, then installs three transforms:
   - `UOGameCipher2_C2S_Encrypt` (`::Init` 0x0063a810);
   - `UOGameCipher2_S2C_Decrypt` (`::Init` 0x0063b900);
   - Huffman.
 
   Both Cipher2 classes share slot 0 `CryptoPPAdapter::Transform` (0x006390b0). The
-  symmetric cipher behind the adapters was not identified.
+  symmetric cipher is AES (Rijndael) in CFB mode. Send init `0x63a810` calls constructor `0x63aa00`, whose
+  RTTI names `Rijndael::Enc` and `CFB_EncryptionTemplate`; receive init `0x63b900` calls `0x63b960`, whose
+  RTTI names `Rijndael::Enc` and `CFB_DecryptionTemplate`. Both feedback directions use the AES encryption
+  primitive. These are the same cipher family as KR's exchange filters.
 - **Transform chains.** Ciphers are appended with `UONet::Connection_AddSendTransform`
   (0x005feeb0) and `UONet::Connection_AddReceiveTransform` (0x005fef40).
 
@@ -161,7 +191,8 @@ Limits of the address and encryption patches:
 - The config branch would bypass the built-in address if `g_LoginConfig` were populated,
   but the examined build never populates it. The earlier inference that XML file
   presence alone bypassed the patches was incorrect.
-- The encryption NOPs would not cover the 0xE3/0xE4 Crypto++ path, if a server uses it.
+- ECLO's three XOR NOPs do not patch the compiled-in Crypto++ adapter. The current patcher also patches that
+  adapter, though its initializer is unused on the traced normal EC route.
 
 ## Uncertain points
 
@@ -179,7 +210,8 @@ Limits of the address and encryption patches:
 - The S2C digest is believed to be MD5 from its shape (16 bytes, init/update calls) and
   from the classic client. The digest functions were not checked against constants.
 - The connection vtable slots +0x34 (connect), +0x38 (send), +0x40 (send without
-  transforms), +0x4c and +0x50 (close) were identified from their use and are not renamed.
+  transforms) and +0x50 (close) were identified from their use and are not renamed. Slot +0x4c is now
+  confirmed as the transform-chain reset (`0x5fee30`).
 - Other managers register their packet handlers through their own wrappers. Those were
   not scanned.
 
@@ -329,14 +361,9 @@ Changes: {}
 | PORT1 | 00613612 | LoginManager::LoginAccount | 1 | ECLO port patch 1 rewrites the imm16 at 00613617 (default 7775): the port of the internal test address 172.16.17.41 (previous instruction, not patched by ECLO), used only when app +0x1c9 is set. |
 | PORT2 | 006136bd | LoginManager::LoginAccount | 9 | ECLO port patch 2 (first port2 match after port1) rewrites the imm16 at 006136c2 (default 7775): the hardcoded-host port when rand() is odd. |
 | PORT3 | 006136c6 | LoginManager::LoginAccount | 1 | ECLO port patch 3 (TOL clients) rewrites the imm16 at 006136cb (default 7776): the hardcoded-host port when rand() is even. |
-| IP1 | 00cb78cc | - | 1 | ECLO IP patch 1 rewrites this 16-byte host slot (default "107.23.85.115"; host 1 is used when rand() is odd). Bypassed when LoginServers*.xml provides a LoginConfig. |
-| IP2 | 00cb78dc | - | 1 | ECLO IP patch 2 rewrites this 16-byte host slot (default "107.23.176.74"; host 2 is used when rand() is even). Bypassed when LoginServers*.xml provides a LoginConfig. |
+| IP1 | 00cb78cc | - | 1 | ECLO IP patch 1 rewrites this 16-byte host slot (default "107.23.85.115"; host 1 is used when rand() is odd). The LoginConfig branch is dormant in this build; XML file presence does not activate it. |
+| IP2 | 00cb78dc | - | 1 | ECLO IP patch 2 rewrites this 16-byte host slot (default "107.23.176.74"; host 2 is used when rand() is even). The LoginConfig branch is dormant in this build; XML file presence does not activate it. |
 | ENC1 | 00639ff9 | UOGameCipher_C2S_Encrypt::EncryptByte | 1 | ECLO disable-encryption ENC1 (commented out in ECLO): NOP this XOR (game client-to-server Twofish pad XOR). |
 | ENC2 | 0063becb | UOGameCipher_S2C_Decrypt::Transform | 1 | ECLO disable-encryption ENC2 (commented out in ECLO): NOP this XOR (game server-to-client digest XOR). |
 | ENC3 | 0063c7da | UOLoginCipher_C2S_Encrypt::Transform | 1 | ECLO disable-encryption ENC3 (commented out in ECLO): NOP this XOR (login client-to-server key XOR). |
-
-### Kept (not DEFAULT, not changed)
-
-
-### Anomalies
 

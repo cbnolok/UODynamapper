@@ -1,7 +1,7 @@
 //! The network encryption of Enhanced Client and Kingdom Reborn executables, located by instruction pattern
 //! ([`locate_encryption_sites`]) so a patch ([`crate::client::patch::ExeEdit::NoEncryption`]) can make the client
-//! talk plaintext. See `client/LOGIN_SERVER.md` and the traced code in
-//! `scripts/dev-helpers/ec-research/ghidra-login-names/results/uokr_login.md`.
+//! talk plaintext. See `tools/uo-client-patcher-gui/docs/ENCRYPTION.md` and the traced code in
+//! `tools/uo-client-patcher-gui/docs/research/uokr_login.md`.
 //!
 //! The client sends and receives through a chain of transforms per connection. The ones this patch disables:
 //!
@@ -18,7 +18,8 @@
 //!   connection (`UOGameCipher2_C2S_Encrypt` and `UOGameCipher2_S2C_Decrypt`, both Crypto++ filters behind one
 //!   `CryptoPPAdapter::Transform`). The adapter loops over the message's chunks and runs the filter on each in
 //!   place; the patch turns the loop's entry `JZ` into a `JMP`, so the message passes through unchanged in both
-//!   directions. Kingdom Reborn's only game ciphers; optional in the Enhanced Client (only if the server sends 0xE3).
+//!   directions. Kingdom Reborn's only game ciphers; the exchange code is compiled into the traced Enhanced Client
+//!   but is not used on its normal game-login route.
 //! - [`CipherSiteKind::GameLoginHandshake`]: Kingdom Reborn's game connection setup. Send the relay auth key as
 //!   the seed, enter the ready state, install Huffman and send 0x91 immediately, bypassing the 0xE3 / 0xE4 exchange.
 //!
@@ -54,7 +55,7 @@ const XOR_MEM_EAX_DL: [u8; 2] = [0x30, 0x10];
 pub enum EncryptionPart {
     /// The login connection's cipher.
     Login,
-    /// All game send/receive ciphers, including the optional key exchange ciphers.
+    /// All game send/receive ciphers, including the compiled-in key exchange ciphers.
     Game,
     /// KR's mandatory game key exchange setup, independent of cipher removal.
     KrHandshake,
@@ -89,7 +90,7 @@ const KINGDOM_REBORN_SITES: [CipherSiteKind; 3] = [
 ];
 
 /// Where a cipher's bytes are and what the patch writes there.
-#[derive(Debug)]
+#[derive(Debug, PartialEq, Eq)]
 pub struct CipherPattern {
     /// The code around the patched bytes, a byte or [`PATTERN_WILDCARD`]; the patched bytes are at
     /// [`Self::patch_at`] in their stock form.
@@ -99,6 +100,8 @@ pub struct CipherPattern {
     pub patched: &'static [u8],
     /// Required pattern VA for replacements containing build-specific calls or absolute operands.
     pub required_va: Option<u32>,
+    /// An earlier replacement that can be recognized and upgraded to `patched`.
+    pub previous: Option<&'static [u8]>,
 }
 
 impl CipherPattern {
@@ -120,6 +123,7 @@ const LOGIN_CIPHER: CipherPattern = CipherPattern {
     stock: &XOR_MEM_EAX_CL,
     patched: &[OPCODE_NOP; XOR_MEM_EAX_CL.len()],
     required_va: None,
+    previous: None,
 };
 
 /// `UOGameCipher_C2S_Encrypt::EncryptByte`, the XOR at UOSA 4.0.102.3 VA 0x639ff9: `MOV EDX,[EBX+0x124C];
@@ -133,6 +137,7 @@ const GAME_CIPHER_SEND: CipherPattern = CipherPattern {
     stock: &XOR_MEM_EBP_AL,
     patched: &[OPCODE_NOP; XOR_MEM_EBP_AL.len()],
     required_va: None,
+    previous: None,
 };
 
 /// `UOGameCipher_S2C_Decrypt::Transform`, the XOR at UOSA 4.0.102.3 VA 0x63becb: `MOV ECX,[ESI+0x18];
@@ -147,6 +152,7 @@ const GAME_CIPHER_RECEIVE: CipherPattern = CipherPattern {
     stock: &XOR_MEM_EAX_DL,
     patched: &[OPCODE_NOP; XOR_MEM_EAX_DL.len()],
     required_va: None,
+    previous: None,
 };
 
 /// `CryptoPPAdapter::Transform` (KR 0x5dad60, UOSA 4.0.102.3 0x6390b0), after the message's chunk range is read:
@@ -162,6 +168,7 @@ const KEY_EXCHANGE_CIPHER: CipherPattern = CipherPattern {
     stock: &[OPCODE_JZ_REL8],
     patched: &[OPCODE_JMP_REL8],
     required_va: None,
+    previous: None,
 };
 
 impl CipherSiteKind {
@@ -222,15 +229,17 @@ pub struct CipherSite {
     pub offset: usize,
     /// True when they are in their patched form.
     pub removed: bool,
+    pattern: &'static CipherPattern,
+    previous: bool,
 }
 
 impl CipherSite {
     pub fn stock(&self) -> &'static [u8] {
-        self.kind.pattern().stock
+        if self.previous { self.pattern.previous.expect("recognized earlier replacement") } else { self.pattern.stock }
     }
 
     pub fn patched(&self) -> &'static [u8] {
-        self.kind.pattern().patched
+        self.pattern.patched
     }
 }
 
@@ -322,7 +331,7 @@ impl EncryptionSites {
 }
 
 /// The offsets in `code` where `pattern` matches, its patched bytes in either form, with whether they are patched.
-fn pattern_matches(code: &[u8], pattern: &CipherPattern) -> Vec<(usize, bool)> {
+fn pattern_matches(code: &[u8], pattern: &CipherPattern) -> Vec<(usize, bool, bool)> {
     let length = pattern.bytes.len();
     let patched_range = pattern.patch_at..pattern.patch_at + pattern.stock.len();
     if code.len() < length {
@@ -338,9 +347,11 @@ fn pattern_matches(code: &[u8], pattern: &CipherPattern) -> Vec<(usize, bool)> {
         }
         let written = &window[patched_range.clone()];
         if written == pattern.stock {
-            found.push((at, false));
+            found.push((at, false, false));
         } else if written == pattern.patched {
-            found.push((at, true));
+            found.push((at, true, false));
+        } else if pattern.previous == Some(written) {
+            found.push((at, false, true));
         }
     }
     found
@@ -359,14 +370,22 @@ pub fn locate_encryption_sites(
     let (code, base) = code_section(bytes, pe)?;
     let mut located = EncryptionSites { sites: Vec::new(), unlocated: Vec::new() };
     for &kind in kinds {
-        let pattern = kind.pattern();
-        let matches: Vec<_> = pattern_matches(code, pattern)
-            .into_iter()
-            .filter(|(at, _)| pattern.required_va.is_none_or(|va| pe.offset_to_va(base + at) == Some(va)))
-            .collect();
+        let patterns = if kind == CipherSiteKind::GameLoginHandshake {
+            &super::kr_game_login::PATTERNS[..]
+        } else {
+            std::slice::from_ref(kind.pattern())
+        };
+        let mut matches = Vec::new();
+        for pattern in patterns {
+            for (at, removed, previous) in pattern_matches(code, pattern) {
+                if pattern.required_va.is_none_or(|va| pe.offset_to_va(base + at) == Some(va)) {
+                    matches.push((at, removed, previous, pattern));
+                }
+            }
+        }
         match matches.as_slice() {
-            [(at, removed)] => {
-                located.sites.push(CipherSite { kind, offset: base + at + pattern.patch_at, removed: *removed })
+            [(at, removed, previous, pattern)] => {
+                located.sites.push(CipherSite { kind, offset: base + at + pattern.patch_at, removed: *removed, pattern, previous: *previous })
             }
             matches => located.unlocated.push(UnlocatedCipherSite { kind, matches: matches.len() }),
         }
@@ -487,6 +506,45 @@ pub(crate) mod tests {
         shifted.extend(code);
         let shifted = sites(&synthetic_image_with(shifted, Vec::new(), false));
         assert_eq!(shifted.unlocated, altered.unlocated);
+    }
+
+    #[test]
+    fn every_audited_kr_handshake_profile_locates_and_round_trips() {
+        for pattern in &super::super::kr_game_login::PATTERNS {
+            let mut code = cipher_code(&[CipherSiteKind::LoginCipher, CipherSiteKind::KeyExchangeCipher]);
+            let at = (pattern.required_va.unwrap() - CODE_VA) as usize;
+            code.resize(at, FILLER);
+            code.extend(pattern.stock_code(WILDCARD_FILL));
+            let mut image = synthetic_image_with(code, Vec::new(), false);
+            let before = sites(&image);
+            assert!(before.is_complete());
+            let handshake = before.sites.last().unwrap();
+            assert_eq!(handshake.stock(), pattern.stock);
+            assert_eq!(handshake.patched(), pattern.patched);
+            image[handshake.offset..][..handshake.patched().len()].copy_from_slice(handshake.patched());
+            let after = sites(&image);
+            assert!(after.is_complete());
+            assert!(after.sites.last().unwrap().removed);
+            assert_eq!(after.offsets(), before.offsets());
+            // An unrecognized helper operand must never be accepted as another build.
+            image[handshake.offset - pattern.patch_at + 1] ^= 1;
+            assert_eq!(sites(&image).unlocated, [UnlocatedCipherSite { kind: CipherSiteKind::GameLoginHandshake, matches: 0 }]);
+        }
+    }
+
+    #[test]
+    fn previous_kr_handshake_replacement_is_located_for_upgrade() {
+        let pattern = CipherSiteKind::GameLoginHandshake.pattern();
+        let mut image = synthetic_kr_encrypted_client();
+        let before = sites(&image);
+        let handshake = before.sites.last().unwrap();
+        image[handshake.offset..][..pattern.stock.len()].copy_from_slice(pattern.previous.unwrap());
+        let previous = sites(&image);
+        assert!(previous.is_complete());
+        let upgrade = previous.sites.last().unwrap();
+        assert!(!upgrade.removed);
+        assert_eq!(upgrade.stock(), pattern.previous.unwrap());
+        assert_eq!(upgrade.patched(), pattern.patched);
     }
 
     #[test]
