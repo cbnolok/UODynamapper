@@ -40,6 +40,7 @@ use crate::util_lib::uo_coords::scale_uo_z_to_bevy_units;
 use bevy::camera::visibility::{NoFrustumCulling, RenderLayers};
 use bevy::prelude::*;
 use bevy::render::render_resource::{Extent3d, PrimitiveTopology, TextureDimension, TextureFormat};
+use std::cell::Cell;
 use std::collections::{BTreeSet, HashMap, HashSet};
 use udd_assets::tex_art_ec::LEGACY_PIXEL_UNIT;
 use udd_assets::tex_aux_ec::tex_aux_ec_terrain_texture_key;
@@ -93,8 +94,10 @@ pub struct RenderClientLightSprites {
     pub instances: Vec<ClientLightSpriteInstance>,
     /// What the last scan covered, whether it centred the sprites on their items, and the rule, z limit and multi
     /// parts it hid covered lights by (`light_cover`), and the caves drawn over the map (`CavesRes::revision`); the scan
-    /// reruns only when it changes.
-    last_scan: Option<(u32, Vec<StaticChunkBatchKey>, bool, LightCoverRule, i32, bool, u64)>,
+    /// reruns only when it changes. The last field is the map plane's `blocks_loaded_version` when the scan read the
+    /// land z of a cell whose block was not loaded yet: the scan reruns once more land loads, so a scan made before the
+    /// land does not keep its stand-in land z.
+    last_scan: Option<(u32, Vec<StaticChunkBatchKey>, bool, LightCoverRule, i32, bool, u64, Option<u64>)>,
 }
 
 /// The sprites' materials, one per light texture (`None` once a texture failed to load), and the scan reach.
@@ -316,12 +319,18 @@ pub fn sys_collect_client_light_sprites(
     let (z_view, caves) = view_cuts;
     let max_z = z_view.0.max_z;
     let show_hidden_multi_parts = settings.world_rendering.show_hidden_multi_parts;
-    if output.last_scan.as_ref().is_some_and(|(last_map, last_keys, last_centred, last_cover, last_max_z, last_hidden,
-        last_caves)| {
-        *last_map == map_id && *last_keys == visible_chunk_keys && *last_centred == centre_on_items
-            && *last_cover == light_cover && *last_max_z == max_z && *last_hidden == show_hidden_multi_parts
-            && *last_caves == caves.revision()
-    }) {
+    let land_version = map_planes
+        .as_deref()
+        .and_then(|planes| planes.0.get(map_id as usize)?.as_ref())
+        .map(|plane| plane.blocks_loaded_version);
+    if output.last_scan.as_ref().is_some_and(
+        |(last_map, last_keys, last_centred, last_cover, last_max_z, last_hidden, last_caves, land_wait)| {
+            *last_map == map_id && *last_keys == visible_chunk_keys && *last_centred == centre_on_items
+                && *last_cover == light_cover && *last_max_z == max_z && *last_hidden == show_hidden_multi_parts
+                && *last_caves == caves.revision()
+                && land_wait.is_none_or(|version| Some(version) == land_version)
+        },
+    ) {
         return;
     }
 
@@ -363,6 +372,7 @@ pub fn sys_collect_client_light_sprites(
 
     let mut instances = Vec::new();
     let mut seen = HashSet::new();
+    let land_missed = Cell::new(false);
     for (gy, gx) in blocks {
         let Ok(tiles) = statics_store.block_tiles(gx, gy) else {
             continue;
@@ -395,7 +405,11 @@ pub fn sys_collect_client_light_sprites(
                 z: tile.z,
                 graphic: tile.graphic,
             };
-            let land_z = |x: u32, y: u32| static_land_z(map_planes.as_deref(), map_id, (x as i32, y as i32));
+            let land_z = |x: u32, y: u32| {
+                let land_z = static_land_z(map_planes.as_deref(), map_id, (x as i32, y as i32));
+                land_missed.set(land_missed.get() || land_z.is_none());
+                land_z
+            };
             if !seen.insert(key)
                 || static_light_is_hidden(
                     &mut statics_store,
@@ -438,8 +452,9 @@ pub fn sys_collect_client_light_sprites(
         );
     }
     output.instances = instances;
+    let land_wait = land_version.filter(|_| land_missed.get());
     output.last_scan = Some((map_id, visible_chunk_keys, centre_on_items, light_cover, max_z, show_hidden_multi_parts,
-        caves.revision()));
+        caves.revision(), land_wait));
 }
 
 pub fn sys_sync_client_light_sprites(
