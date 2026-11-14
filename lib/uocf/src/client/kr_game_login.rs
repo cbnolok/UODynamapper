@@ -1,4 +1,4 @@
-//! Strict game-connect signatures and plaintext replacements for four audited KR builds.
+//! Strict game-connect signatures and plaintext replacements for audited KR builds.
 //!
 //! Every 655-byte function must match its stock/patched form at its original VA. The profiles substitute
 //! only the 21 audited address/displacement operands into the common instruction template; they are not
@@ -97,6 +97,96 @@ const BUILD_2_48_0_3: ConnectBuild = ConnectBuild {
     add_receive_transform: 0x5a6dc0,
     send91: 0x5b9d40,
     disconnect: 0x5b7f70,
+};
+
+// 2.48.0.7, SHA-256 c9b4f6ce4a0763ca16bb3a1133d56a332be93e644db5c441506281632c57d77a
+const BUILD_2_48_0_7: ConnectBuild = ConnectBuild {
+    va: 0x5bae70,
+    operands: [
+        0x00dc911c, 0x00a950d8, 0x0003d833, 0x00a950dc, 0x00031166,
+        0xffe4dc4a, 0x00a95464, 0x000312b6, 0x00dd66c4, 0x00dd66c0,
+        0x00dd66c4, 0x00dd66c0, 0x00dc911c, 0x00a950d8, 0x0003d6ed,
+        0x00c9bdd4, 0x005bb140, 0xffe4dafc, 0x00dd66c4, 0x00dd66c0,
+        0x0002ed85,
+    ],
+    heap_new: 0x5fd820,
+    huffman_constructor: 0x5e1ba0,
+    huffman_shared: 0x5c0d50,
+    add_receive_transform: 0x5a6d80,
+    send91: 0x5b9d00,
+    disconnect: 0x5b7f30,
+};
+
+// 2.50.0.3, SHA-256 9547f6ccbaaca0a3695a7cbe31ec9a9e62dda4ac8ee627714061d38ecc70e8e8
+const BUILD_2_50_0_3: ConnectBuild = ConnectBuild {
+    va: 0x5babe0,
+    operands: [
+        0x00dc813c, 0x00a950d8, 0x0003d813, 0x00a950dc, 0x00031146,
+        0xffe4deda, 0x00a95470, 0x00031296, 0x00dd56e4, 0x00dd56e0,
+        0x00dd56e4, 0x00dd56e0, 0x00dc813c, 0x00a950d8, 0x0003d6cd,
+        0x00c9aef4, 0x005baeb0, 0xffe4dd8c, 0x00dd56e4, 0x00dd56e0,
+        0x0002ed65,
+    ],
+    heap_new: 0x5fd570,
+    huffman_constructor: 0x5e18f0,
+    huffman_shared: 0x5c0ac0,
+    add_receive_transform: 0x5a6af0,
+    send91: 0x5b9a70,
+    disconnect: 0x5b7ca0,
+};
+
+// 2.51.0.3, SHA-256 5f70b0aad9ccdafaea04b0883610de2e8a75937806b53faaa54cb03eb346a48a
+const BUILD_2_51_0_3: ConnectBuild = ConnectBuild {
+    va: 0x5babe0,
+    operands: [
+        0x00dc813c, 0x00a950d8, 0x0003d813, 0x00a950dc, 0x00031146,
+        0xffe4deda, 0x00a95470, 0x00031296, 0x00dd56e4, 0x00dd56e0,
+        0x00dd56e4, 0x00dd56e0, 0x00dc813c, 0x00a950d8, 0x0003d6cd,
+        0x00c9af14, 0x005baeb0, 0xffe4dd8c, 0x00dd56e4, 0x00dd56e0,
+        0x0002ed65,
+    ],
+    heap_new: 0x5fd570,
+    huffman_constructor: 0x5e18f0,
+    huffman_shared: 0x5c0ac0,
+    add_receive_transform: 0x5a6af0,
+    send91: 0x5b9a70,
+    disconnect: 0x5b7ca0,
+};
+
+// 2.52.0.4, SHA-256 f4876dbbb5f4911cce12662e8e5b67d715946e33d0c1aff4ad2cd5f3c708e6ad
+const BUILD_2_52_0_4: ConnectBuild = ConnectBuild {
+    va: 0x5babe0,
+    operands: [
+        0x00dc813c, 0x00a950d8, 0x0003d813, 0x00a950dc, 0x00031146,
+        0xffe4deda, 0x00a95470, 0x00031296, 0x00dd56dc, 0x00dd56d8,
+        0x00dd56dc, 0x00dd56d8, 0x00dc813c, 0x00a950d8, 0x0003d6cd,
+        0x00c9afb4, 0x005baeb0, 0xffe4dd8c, 0x00dd56dc, 0x00dd56d8,
+        0x0002ed65,
+    ],
+    heap_new: 0x5fd570,
+    huffman_constructor: 0x5e18f0,
+    huffman_shared: 0x5c0ac0,
+    add_receive_transform: 0x5a6af0,
+    send91: 0x5b9a70,
+    disconnect: 0x5b7ca0,
+};
+
+// 2.53.0.2, SHA-256 dc498608e3c8dec517d2435ad5d442816214b33c430077a2a815fd761daa02e6
+const BUILD_2_53_0_2: ConnectBuild = ConnectBuild {
+    va: 0x5babe0,
+    operands: [
+        0x00dc813c, 0x00a950d8, 0x0003d813, 0x00a950dc, 0x00031146,
+        0xffe4deda, 0x00a95470, 0x00031296, 0x00dd56e4, 0x00dd56e0,
+        0x00dd56e4, 0x00dd56e0, 0x00dc813c, 0x00a950d8, 0x0003d6cd,
+        0x00c9afd4, 0x005baeb0, 0xffe4dd8c, 0x00dd56e4, 0x00dd56e0,
+        0x0002ed65,
+    ],
+    heap_new: 0x5fd570,
+    huffman_constructor: 0x5e18f0,
+    huffman_shared: 0x5c0ac0,
+    add_receive_transform: 0x5a6af0,
+    send91: 0x5b9a70,
+    disconnect: 0x5b7ca0,
 };
 
 // 2.54.0.7, SHA-256 35f6612cacd3c5f0f1cef6310ff1ceaf04e647ad8b0c0cfbf64684e1d81dc984
@@ -287,23 +377,63 @@ const fn pattern_bytes(code: &[u8; CONNECT_SIZE]) -> [u16; CONNECT_SIZE] {
     bytes
 }
 
-const CODE_2_58_0_6: [u8; CONNECT_SIZE] = code_for(&BUILD_2_58_0_6);
-const PATTERN_2_58_0_6: CipherPattern = CipherPattern {
-    bytes: &pattern_bytes(&CODE_2_58_0_6),
+const CODE_2_48_0_3: [u8; CONNECT_SIZE] = code_for(&BUILD_2_48_0_3);
+const PATTERN_2_48_0_3: CipherPattern = CipherPattern {
+    bytes: &pattern_bytes(&CODE_2_48_0_3),
     patch_at: PATCH_START,
-    stock: &stock_patch(&CODE_2_58_0_6),
-    patched: &patched_code(&CODE_2_58_0_6, &BUILD_2_58_0_6),
-    required_va: Some(BUILD_2_58_0_6.va),
-    previous: Some(&PREVIOUS_PATCH),
+    stock: &stock_patch(&CODE_2_48_0_3),
+    patched: &patched_code(&CODE_2_48_0_3, &BUILD_2_48_0_3),
+    required_va: Some(BUILD_2_48_0_3.va),
+    previous: None,
 };
 
-const CODE_2_57_0_17: [u8; CONNECT_SIZE] = code_for(&BUILD_2_57_0_17);
-const PATTERN_2_57_0_17: CipherPattern = CipherPattern {
-    bytes: &pattern_bytes(&CODE_2_57_0_17),
+const CODE_2_48_0_7: [u8; CONNECT_SIZE] = code_for(&BUILD_2_48_0_7);
+const PATTERN_2_48_0_7: CipherPattern = CipherPattern {
+    bytes: &pattern_bytes(&CODE_2_48_0_7),
     patch_at: PATCH_START,
-    stock: &stock_patch(&CODE_2_57_0_17),
-    patched: &patched_code(&CODE_2_57_0_17, &BUILD_2_57_0_17),
-    required_va: Some(BUILD_2_57_0_17.va),
+    stock: &stock_patch(&CODE_2_48_0_7),
+    patched: &patched_code(&CODE_2_48_0_7, &BUILD_2_48_0_7),
+    required_va: Some(BUILD_2_48_0_7.va),
+    previous: None,
+};
+
+const CODE_2_50_0_3: [u8; CONNECT_SIZE] = code_for(&BUILD_2_50_0_3);
+const PATTERN_2_50_0_3: CipherPattern = CipherPattern {
+    bytes: &pattern_bytes(&CODE_2_50_0_3),
+    patch_at: PATCH_START,
+    stock: &stock_patch(&CODE_2_50_0_3),
+    patched: &patched_code(&CODE_2_50_0_3, &BUILD_2_50_0_3),
+    required_va: Some(BUILD_2_50_0_3.va),
+    previous: None,
+};
+
+const CODE_2_51_0_3: [u8; CONNECT_SIZE] = code_for(&BUILD_2_51_0_3);
+const PATTERN_2_51_0_3: CipherPattern = CipherPattern {
+    bytes: &pattern_bytes(&CODE_2_51_0_3),
+    patch_at: PATCH_START,
+    stock: &stock_patch(&CODE_2_51_0_3),
+    patched: &patched_code(&CODE_2_51_0_3, &BUILD_2_51_0_3),
+    required_va: Some(BUILD_2_51_0_3.va),
+    previous: None,
+};
+
+const CODE_2_52_0_4: [u8; CONNECT_SIZE] = code_for(&BUILD_2_52_0_4);
+const PATTERN_2_52_0_4: CipherPattern = CipherPattern {
+    bytes: &pattern_bytes(&CODE_2_52_0_4),
+    patch_at: PATCH_START,
+    stock: &stock_patch(&CODE_2_52_0_4),
+    patched: &patched_code(&CODE_2_52_0_4, &BUILD_2_52_0_4),
+    required_va: Some(BUILD_2_52_0_4.va),
+    previous: None,
+};
+
+const CODE_2_53_0_2: [u8; CONNECT_SIZE] = code_for(&BUILD_2_53_0_2);
+const PATTERN_2_53_0_2: CipherPattern = CipherPattern {
+    bytes: &pattern_bytes(&CODE_2_53_0_2),
+    patch_at: PATCH_START,
+    stock: &stock_patch(&CODE_2_53_0_2),
+    patched: &patched_code(&CODE_2_53_0_2, &BUILD_2_53_0_2),
+    required_va: Some(BUILD_2_53_0_2.va),
     previous: None,
 };
 
@@ -317,16 +447,29 @@ const PATTERN_2_54_0_7: CipherPattern = CipherPattern {
     previous: None,
 };
 
-const CODE_2_48_0_3: [u8; CONNECT_SIZE] = code_for(&BUILD_2_48_0_3);
-const PATTERN_2_48_0_3: CipherPattern = CipherPattern {
-    bytes: &pattern_bytes(&CODE_2_48_0_3),
+const CODE_2_57_0_17: [u8; CONNECT_SIZE] = code_for(&BUILD_2_57_0_17);
+const PATTERN_2_57_0_17: CipherPattern = CipherPattern {
+    bytes: &pattern_bytes(&CODE_2_57_0_17),
     patch_at: PATCH_START,
-    stock: &stock_patch(&CODE_2_48_0_3),
-    patched: &patched_code(&CODE_2_48_0_3, &BUILD_2_48_0_3),
-    required_va: Some(BUILD_2_48_0_3.va),
+    stock: &stock_patch(&CODE_2_57_0_17),
+    patched: &patched_code(&CODE_2_57_0_17, &BUILD_2_57_0_17),
+    required_va: Some(BUILD_2_57_0_17.va),
     previous: None,
+};
+
+const CODE_2_58_0_6: [u8; CONNECT_SIZE] = code_for(&BUILD_2_58_0_6);
+const PATTERN_2_58_0_6: CipherPattern = CipherPattern {
+    bytes: &pattern_bytes(&CODE_2_58_0_6),
+    patch_at: PATCH_START,
+    stock: &stock_patch(&CODE_2_58_0_6),
+    patched: &patched_code(&CODE_2_58_0_6, &BUILD_2_58_0_6),
+    required_va: Some(BUILD_2_58_0_6.va),
+    previous: Some(&PREVIOUS_PATCH),
 };
 
 pub(super) const PATTERN: CipherPattern = PATTERN_2_58_0_6;
 
-pub(super) const PATTERNS: [CipherPattern; 4] = [PATTERN_2_58_0_6, PATTERN_2_57_0_17, PATTERN_2_54_0_7, PATTERN_2_48_0_3];
+pub(super) const PATTERNS: [CipherPattern; 9] = [
+    PATTERN_2_58_0_6, PATTERN_2_57_0_17, PATTERN_2_54_0_7, PATTERN_2_53_0_2, PATTERN_2_52_0_4,
+    PATTERN_2_51_0_3, PATTERN_2_50_0_3, PATTERN_2_48_0_7, PATTERN_2_48_0_3,
+];

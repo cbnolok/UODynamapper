@@ -40,12 +40,42 @@ struct AuditedKrProfile {
 }
 
 /// Audited complete game-connect functions and patch sites; these are independent of the locator's profiles.
-const AUDITED_KR_PROFILES: [AuditedKrProfile; 4] = [
+const AUDITED_KR_PROFILES: [AuditedKrProfile; 9] = [
     AuditedKrProfile {
         version: "2.48.0.3",
         sha256: "d88f0cd5a31c3cafe754b52424f615ab5c7b5f69d464fbb510e842e9610c43ea",
         connect_va: 0x005b_aeb0,
         handshake_va: 0x005b_af0f,
+    },
+    AuditedKrProfile {
+        version: "2.48.0.7",
+        sha256: "c9b4f6ce4a0763ca16bb3a1133d56a332be93e644db5c441506281632c57d77a",
+        connect_va: 0x005b_ae70,
+        handshake_va: 0x005b_aecf,
+    },
+    AuditedKrProfile {
+        version: "2.50.0.3",
+        sha256: "9547f6ccbaaca0a3695a7cbe31ec9a9e62dda4ac8ee627714061d38ecc70e8e8",
+        connect_va: 0x005b_abe0,
+        handshake_va: 0x005b_ac3f,
+    },
+    AuditedKrProfile {
+        version: "2.51.0.3",
+        sha256: "5f70b0aad9ccdafaea04b0883610de2e8a75937806b53faaa54cb03eb346a48a",
+        connect_va: 0x005b_abe0,
+        handshake_va: 0x005b_ac3f,
+    },
+    AuditedKrProfile {
+        version: "2.52.0.4",
+        sha256: "f4876dbbb5f4911cce12662e8e5b67d715946e33d0c1aff4ad2cd5f3c708e6ad",
+        connect_va: 0x005b_abe0,
+        handshake_va: 0x005b_ac3f,
+    },
+    AuditedKrProfile {
+        version: "2.53.0.2",
+        sha256: "dc498608e3c8dec517d2435ad5d442816214b33c430077a2a815fd761daa02e6",
+        connect_va: 0x005b_abe0,
+        handshake_va: 0x005b_ac3f,
     },
     AuditedKrProfile {
         version: "2.54.0.7",
@@ -68,7 +98,7 @@ const AUDITED_KR_PROFILES: [AuditedKrProfile; 4] = [
 ];
 
 #[test]
-#[ignore = "needs all four audited KR executables: set UO_KR_EXES and run with --ignored"]
+#[ignore = "needs every audited KR executable: set UO_KR_EXES and run with --ignored"]
 fn every_audited_kr_executable_patches_at_its_verified_profile() {
     let paths = std::env::var_os(KR_EXES_ENV).unwrap_or_else(|| panic!("set {KR_EXES_ENV}"));
     let mut seen = [false; AUDITED_KR_PROFILES.len()];
@@ -106,7 +136,7 @@ fn every_audited_kr_executable_patches_at_its_verified_profile() {
         assert_eq!(patched.after.tables, before.tables);
         assert_eq!(std::fs::read(&path).unwrap(), original, "the source is unchanged");
     }
-    assert!(seen.iter().all(|seen| *seen), "not all four audited KR profiles were supplied: {seen:?}");
+    assert!(seen.iter().all(|seen| *seen), "not all audited KR profiles were supplied: {seen:?}");
 }
 
 #[test]

@@ -28,7 +28,11 @@ The approved change is committed in Source-X as `6bcbc951`. The actual patched c
 standalone framework fixture with `-Wall -Wextra -Werror`; seven format cases passed, including KR before/after
 0xE1, EC and modern Classic. The full Clang Nightly server build also passed. Its separate candidate is
 `build/kr-login-compat/SphereSvrX64_nightly`; the existing running server binary and configuration were preserved.
-The candidate has not been launched, so a live KR login remains unverified.
+The candidate was not launched by the patcher work. The user subsequently reported a successful login with
+the unencrypted KR client and identified incompatible `sphereCrypt.ini` entries. No packet capture or exact
+client/server binary pair accompanied that report, so it confirms the working local route without identifying
+which earlier change resolved each symptom. See [Sphere crypt-table IDs](ENCRYPTION.md#sphere-crypt-table-version-ids)
+for the independently verified configuration errors.
 The archived patch uses zero context; apply it to the recorded base with `git apply --unidiff-zero`.
 
 Reproduce the isolated build from the patched Source-X checkout:

@@ -6,7 +6,7 @@
 //! The client sends and receives through a chain of transforms per connection. The ones this patch disables:
 //!
 //! - [`CipherSiteKind::LoginCipher`]: the login connection's client-to-server cipher (`UOLoginCipher`, the seed's
-//!   LFSR keys), installed right after the 0xEF seed. Its transform XORs each byte with the low key byte, then steps
+//!   LFSR keys), installed right after the login seed. Its transform XORs each byte with the low key byte, then steps
 //!   the keys; the patch replaces the `XOR [EAX],CL` with two NOPs, so the keys still step and the bytes stay as
 //!   they are. Both families.
 //! - [`CipherSiteKind::GameCipherSend`], [`CipherSiteKind::GameCipherReceive`]: the Enhanced Client's game
@@ -375,10 +375,18 @@ pub fn locate_encryption_sites(
         } else {
             std::slice::from_ref(kind.pattern())
         };
-        let mut matches = Vec::new();
+        let mut matches: Vec<(usize, bool, bool, &CipherPattern)> = Vec::new();
         for pattern in patterns {
             for (at, removed, previous) in pattern_matches(code, pattern) {
                 if pattern.required_va.is_none_or(|va| pe.offset_to_va(base + at) == Some(va)) {
+                    // Different exact stock profiles can converge after their differing callback operands are
+                    // replaced. They describe one physical patched site, with the same future write.
+                    let equivalent_patched = removed && matches.iter().any(|(prior, patched, _, other)| {
+                        *patched && at + pattern.patch_at == *prior + other.patch_at && pattern.patched == other.patched
+                    });
+                    if equivalent_patched {
+                        continue;
+                    }
                     matches.push((at, removed, previous, pattern));
                 }
             }
@@ -530,6 +538,45 @@ pub(crate) mod tests {
             image[handshake.offset - pattern.patch_at + 1] ^= 1;
             assert_eq!(sites(&image).unlocated, [UnlocatedCipherSite { kind: CipherSiteKind::GameLoginHandshake, matches: 0 }]);
         }
+    }
+
+    #[test]
+    fn converging_kr_profiles_locate_one_patched_site_but_separate_physical_sites_stay_ambiguous() {
+        const SHARED_VA: u32 = 0x005b_abe0;
+        const EXPECTED_PEER_COUNTS: [usize; 5] = [2, 2, 3, 3, 3];
+        let patterns = &super::super::kr_game_login::PATTERNS;
+        let patched_code = |pattern: &CipherPattern| {
+            let mut code = pattern.stock_code(WILDCARD_FILL);
+            code[pattern.patch_at..][..pattern.patched.len()].copy_from_slice(pattern.patched);
+            code
+        };
+        let mut peer_counts = Vec::new();
+        for pattern in patterns.iter().filter(|pattern| pattern.required_va == Some(SHARED_VA)) {
+            let patched = patched_code(pattern);
+            peer_counts.push(patterns.iter().filter(|other| {
+                other.required_va == Some(SHARED_VA) && patched_code(other) == patched
+            }).count());
+            let mut code = cipher_code(&[CipherSiteKind::LoginCipher, CipherSiteKind::KeyExchangeCipher]);
+            code.resize((SHARED_VA - CODE_VA) as usize, FILLER);
+            code.extend(patched);
+            let located = sites(&synthetic_image_with(code, Vec::new(), false));
+            assert!(located.is_complete(), "{}", located.describe_unlocated());
+            assert_eq!(located.sites.iter().filter(|site| site.kind == CipherSiteKind::GameLoginHandshake).count(), 1);
+            assert!(located.sites.last().unwrap().removed);
+        }
+        peer_counts.sort_unstable();
+        assert_eq!(peer_counts, EXPECTED_PEER_COUNTS);
+
+        // Full functions at separate audited VAs remain two physical sites, even though both are patched.
+        const SEPARATE_VAS: [u32; 2] = [0x005b_6b40, 0x005b_aeb0];
+        let mut code = cipher_code(&[CipherSiteKind::LoginCipher, CipherSiteKind::KeyExchangeCipher]);
+        for va in SEPARATE_VAS {
+            let pattern = patterns.iter().find(|pattern| pattern.required_va == Some(va)).unwrap();
+            code.resize((va - CODE_VA) as usize, FILLER);
+            code.extend(patched_code(pattern));
+        }
+        let ambiguous = sites(&synthetic_image_with(code, Vec::new(), false));
+        assert_eq!(ambiguous.unlocated, [UnlocatedCipherSite { kind: CipherSiteKind::GameLoginHandshake, matches: SEPARATE_VAS.len() }]);
     }
 
     #[test]

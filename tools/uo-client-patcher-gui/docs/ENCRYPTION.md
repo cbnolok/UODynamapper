@@ -14,8 +14,9 @@ All controls default off and only the selected sites must be located. Traced in
 [the UOKR research](research/uokr_login.md),
 which also lists every site of every build.
 
-- **Login cipher** (both families): the login connection's client-to-server LFSR cipher, installed after the 0xEF
-  seed. The patch writes NOPs over its `XOR [EAX],CL` (`30 08`); the keys still step. The login connection has no
+- **Login cipher** (both families): the login connection's client-to-server LFSR cipher, installed after the login
+  seed (0xEF in the modern builds; four raw bytes in the supplied pre-2.48 KR builds). The patch writes NOPs over
+  its `XOR [EAX],CL` (`30 08`); the keys still step. The login connection has no
   receive transform.
 - **Game ciphers** (Enhanced Client only): the classic Twofish send cipher (`XOR [EBP+0],AL`, `30 45 00`) and MD5 pad
   receive cipher (`XOR [EAX],DL`, `30 10`), installed when the client connects to the game server; NOPs. Kingdom
@@ -27,7 +28,7 @@ which also lists every site of every build.
   leaves E3 validation, the plaintext E4 response and Huffman installation intact.
 - **KR game handshake**: replace the fixed `0xffffffff` seed with the relay auth key, enter state 2, install
   Huffman and send 0x91 immediately. The client no longer waits for 0xE3 or sends 0xE4. This replacement is
-  restricted to the four audited KR profiles below: each complete game-connect function must match at its
+  restricted to the nine audited KR profiles below: each complete game-connect function must match at its
   original VA. Unsupported versions are refused rather than patched with guessed addresses.
 - **EC normal route (4.0.102.3)**: the relay handler directly selects the auth-key seed, ready state 2,
   Twofish/MD5 and Huffman, then sends 0x91. Its compiled-in fixed-seed/E3 initializer has no callers or references;
@@ -82,13 +83,19 @@ and only the newly introduced handshake site is stock.
 | PE version | Game-connect VA | Handshake patch file offset |
 |---|---|---|
 | 2.48.0.3 | `0x5baeb0` | `0x1ba30f` |
+| 2.48.0.7 | `0x5bae70` | `0x1ba2cf` |
+| 2.50.0.3 | `0x5babe0` | `0x1ba03f` |
+| 2.51.0.3 | `0x5babe0` | `0x1ba03f` |
+| 2.52.0.4 | `0x5babe0` | `0x1ba03f` |
+| 2.53.0.2 | `0x5babe0` | `0x1ba03f` |
 | 2.54.0.7 | `0x5babe0` | `0x1ba03f` |
 | 2.57.0.17 | `0x5b6b60` | `0x1b5fbf` |
 | 2.58.0.6 | `0x5b6b40` | `0x1b5f9f` |
 
 Every profile checks all 655 bytes and its original VA, with exact per-build address operands and relative calls.
-The replacement changes a 458-byte span and uses each build's own helpers. KR 2.45.4.4 uses an earlier compiler/SEH
-layout and is not supported by these handshake profiles or by the current crypt-key extractor.
+The replacement changes a 458-byte span and uses each build's own helpers. The supplied KR 2.45–2.47 builds use
+earlier layouts and are not supported by these handshake profiles. The [collection inventory](research/kr-build-coverage.md)
+records their partial cipher/address coverage and the filename/resource-version discrepancy.
 
 The older 81-byte callback omitted the EDI LoginManager argument on Huffman-allocation failure. The corrected
 85-byte callback supplies it. Earlier fully patched 2.58 copies are recognized for an explicit handshake upgrade,
@@ -120,6 +127,32 @@ For the audited KR files, the extracted wire versions and login keys can be writ
 These describe the login rotation cipher, not KR AES game encryption. The patcher does not edit the server's
 crypt configuration. The source for the entries is the executable's instructions, independently cross-checked
 with the version formula.
+
+### Sphere crypt-table version IDs
+
+Source-X's `CCryptoKeysHolder::LoadKeyTable` parses each version ID with unsigned 32-bit `Str_ToU`. The nine EC entries
+at `src/sphereCrypt.ini:238-246` in the inspected checkout contain an extra `9` after `67`; their IDs exceed
+`4,294,967,295`, so Sphere prints `Invalid Crypt client version` and skips them before reading their keys.
+The corrected IDs are:
+
+| EC resource version | Rejected ID | Correct ID |
+|---|---|---|
+| 4.0.111 | `6790011100` | `670011100` |
+| 4.0.110 | `6790011000` | `670011000` |
+| 4.0.109 | `6790010900` | `670010900` |
+| 4.0.108 | `6790010800` | `670010800` |
+| 4.0.107 | `6790010700` | `670010700` |
+| 4.0.106 | `6790010600` | `670010600` |
+| 4.0.105 | `6790010500` | `670010500` |
+| 4.0.104 | `6790010400` | `670010400` |
+| 4.0.103 | `6790010300` | `670010300` |
+
+`CUOClientVersion::GetLegacyVersionNumber` increases the version factors for three-digit revisions: protocol
+`67.0.111.0` becomes `67 * 10,000,000 + 111 * 100 = 670011100`. The existing `670010200` entry for EC 4.0.102
+already follows this rule. All nine existing key pairs match the formula for their intended protocol versions;
+only the IDs need correction. Increasing the parser's integer width would retain the wrong version identities.
+These rejected entries describe EC, not KR; their rejection alone does not establish the cause of a KR login
+stall. This documentation does not edit Sphere's source, active configuration or process.
 
 ## Sphere packet-format compatibility
 

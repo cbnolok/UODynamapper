@@ -8,21 +8,31 @@ given here. Traced with read-only Ghidra probes, enough for the no-encryption pa
 
 ## Audited sibling builds
 
-The 2.48.0.3, 2.54.0.7 and 2.57.0.17 executables supplied later share exactly the same 655-byte instruction
-layout. Only 21 four-byte address/displacement fields differ; the patcher substitutes their audited values and
+Nine executables from 2.48.0.3 through 2.58.0.6 share exactly the same 655-byte instruction layout.
+Only 21 four-byte address/displacement fields differ; the patcher substitutes their audited values and
 still compares the complete function at its original VA. It does not wildcard those fields.
 
 | PE version | Connect VA | File patch start | Executable SHA-256 |
 |---|---|---|---|
 | 2.48.0.3 | `0x5baeb0` | `0x1ba30f` | `d88f0cd5a31c3cafe754b52424f615ab5c7b5f69d464fbb510e842e9610c43ea` |
+| 2.48.0.7 | `0x5bae70` | `0x1ba2cf` | `c9b4f6ce4a0763ca16bb3a1133d56a332be93e644db5c441506281632c57d77a` |
+| 2.50.0.3 | `0x5babe0` | `0x1ba03f` | `9547f6ccbaaca0a3695a7cbe31ec9a9e62dda4ac8ee627714061d38ecc70e8e8` |
+| 2.51.0.3 | `0x5babe0` | `0x1ba03f` | `5f70b0aad9ccdafaea04b0883610de2e8a75937806b53faaa54cb03eb346a48a` |
+| 2.52.0.4 | `0x5babe0` | `0x1ba03f` | `f4876dbbb5f4911cce12662e8e5b67d715946e33d0c1aff4ad2cd5f3c708e6ad` |
+| 2.53.0.2 | `0x5babe0` | `0x1ba03f` | `dc498608e3c8dec517d2435ad5d442816214b33c430077a2a815fd761daa02e6` |
 | 2.54.0.7 | `0x5babe0` | `0x1ba03f` | `35f6612cacd3c5f0f1cef6310ff1ceaf04e647ad8b0c0cfbf64684e1d81dc984` |
 | 2.57.0.17 | `0x5b6b60` | `0x1b5fbf` | `b6ab0422c25e22c3e97d6220d3284723f2fb44039c4a4e7a0c3b7cc10acb1715` |
 | 2.58.0.6 | `0x5b6b40` | `0x1b5f9f` | `1b802e5c00f3bf89a771778b9c6c57406be0703808eeb4cd983e2f5baa348a43` |
 
 The shared operand offsets are `001,01b,029,031,046,062,06d,086,08b,093,0fc,103,14e,161,16f,18a,194,1b0,1d5,1dc,1f7`.
 Clearing exactly these fields yields function SHA-256 `9c3f21d814e1cddf6ec61cb8ac4492503ebc03b961f510502645079f85d886e7`.
-The addresses in the detailed discussion below refer to 2.58.0.6. Version 2.45.4.4 has an older compiler/SEH layout
-and is deliberately refused by these profiles.
+The addresses in the detailed discussion below refer to 2.58.0.6. The 2.45–2.47 executables have earlier layouts
+and are deliberately refused by these profiles. See [the collection inventory](kr-build-coverage.md).
+
+Some exact stock profiles converge after the callback operands are replaced: 2.50.0.3/2.51.0.3/2.53.0.2
+produce one identical patched function at `0x5babe0`, as do 2.52.0.4/2.54.0.7. The locator counts equivalent
+patched matches with the same physical write range and replacement bytes as one site. Stock matching remains
+strict; matches at distinct locations still fail uniqueness. The original-VA guards also remain in force.
 
 ## Transforms
 
@@ -228,9 +238,9 @@ handshake implementation. None supplies an E3/E4 bypass.
 
 ### Validation
 
-The actual patched 655-byte functions for all four profiles were executed under `qemu-i386` with stubs for the
+The actual patched 655-byte functions for all nine profiles were executed under `qemu-i386` with stubs for the
 client APIs. Normal login, a null connection control block, and failed Huffman allocation passed seed byte-order,
-state, call-order, stack, nonvolatile-register and shared-pointer lifetime checks (12 cases total). Strict register
+state, call-order, stack, nonvolatile-register and shared-pointer lifetime checks (27 cases total). Strict register
 checks include ESI for the Huffman constructor, EAX for Send91 and EDI for Disconnect. This catches the earlier
 81-byte callback's missing failure-path EDI argument; the corrected callback is 85 bytes. Earlier 2.58 replacements
 are recognized as needing an explicit upgrade, with their matching manifest history preserved.
@@ -238,6 +248,11 @@ are recognized as needing an explicit upgrade, with their matching manifest hist
 These checks cover x86 flow and calling conventions, not a live Sphere login. The profile/legacy-upgrade tests read
 all supplied executables without changing them, check exact VAs, checksum and allowed changed ranges, and patch
 copies only. Scoped-control and destination/source-alias tests cover the library and GUI.
+
+For the expanded collection, all seven encryption tests and the nine-executable real-file regression passed.
+Both CLI and GUI builds passed. CLI-generated copies for all nine supported builds match the executed x86
+function bytes exactly, inspect as plaintext and retain their embedded login keys. Full-patch dry runs for all
+ten pre-2.48 files are refused; original hashes remain unchanged in every case.
 
 ## Enhanced Client (UOSA.exe) for comparison
 

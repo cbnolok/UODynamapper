@@ -82,7 +82,7 @@ pub enum ExeCmd {
         /// Huffman-compressed game packets.
         #[arg(long, conflicts_with_all = ["no_login_encryption", "no_game_encryption", "bypass_kr_handshake"])]
         no_encryption: bool,
-        /// Remove only the login connection's send cipher (Enhanced Client, Kingdom Reborn). The 0xEF seed
+        /// Remove only the login connection's send cipher (Enhanced Client, Kingdom Reborn). The login seed
         /// stays unchanged; 0x80 is sent unencrypted. Game ciphers and the KR handshake stay as they are.
         #[arg(long)]
         no_login_encryption: bool,
