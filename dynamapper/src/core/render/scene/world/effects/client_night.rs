@@ -30,11 +30,10 @@
 // luminance; the composite is affine in B, so the night then dims by the luminance of the client's multiplier,
 // without the tint. Another colour rescales the map's channels, keeping its cloud pattern.
 //
-// Lights: until the packages carry the client's light sprites (tileart light scale and offsets), the static light
-// quads of `art::static_lights` stand in for them. In KR-like and Enhanced they are drawn on `LIGHT_BUFFER_LAYER`
-// by an offscreen camera into the light buffer image, with straight alpha blending from a transparent clear. That
-// leaves L, the lights lerped over black with L.a their coverage, so B = L.rgb + N' * (1 - L.a) is the client's
-// sequential lerp of the sprites over the night map.
+// Lights: the clients' light sprites (`art::client_light_sprites`) are drawn on `LIGHT_BUFFER_LAYER` by an
+// offscreen camera into the light buffer image, with straight alpha blending from a transparent clear. That leaves
+// L, the lights lerped over black with L.a their coverage, so B = L.rgb + N' * (1 - L.a) is the client's sequential
+// lerp of the sprites over the night map.
 //
 // KR-like's static shadows (the KR client's shadow effect, research P3.4) composite in the same pass, first, as the
 // client runs its shadow effect before its lighting effect. The shadow quads of `art::client_shadow.wesl` leave the
@@ -45,12 +44,21 @@
 //
 // so a shadow darkens by at most 0.25 and overlapping shadows do not darken further. The pass writes alpha 1.
 //
+// UOD-Painterly draws the same light sprites but keeps `global_lighting`, with no client composite: the pass adds its
+// light buffer over the frame instead, as its light.mul decals added their glow, at the decals' strength g
+// (`static_lights::light_sprite_glow_strength`, from the scene multiplier and the decal visibility). In linear light,
+// with L.rgb / L.a the lights' 8-bit colour:
+//
+//     out = scene + decode_srgb(L.rgb / L.a) * L.a * g
+//
 // The composite runs after the fog pass (and tonemapping) and before FXAA and SMAA, on the PlayerCamera only, and
-// only while the active preset has `client_lighting` (KR-like and Enhanced) and darkens the frame: a light level
-// above 0, or KR-like's client shadows. Classic and UOD-Painterly keep `global_lighting` and never run it.
+// only while it changes the frame: while the active preset has `client_lighting` (KR-like and Enhanced) and a light
+// level above 0 or KR-like's client shadows, or while UOD-Painterly's glow is above 0 (its scene multiplier below 1).
+// Classic keeps `global_lighting` and its decals, and never runs it.
 
 use crate::configs::shader_presets::UniformState;
 use crate::core::render::scene::camera::{PlayerCamera, RenderZoom, ORTHO_SIZE_FACTOR};
+use crate::core::render::scene::world::art::static_lights::{light_sprite_glow_strength, NO_LIGHT_SPRITE_GLOW};
 use crate::core::render::scene::world::effects::fog_pass::FogPassSystems;
 use crate::core::render::scene::world::land::mesh_material::ClientNightLighting;
 use crate::core::system_sets::StartupSysSet;
@@ -143,6 +151,8 @@ const RGBA_CHANNELS: usize = 4;
 const BYTE_MAX: f32 = 255.0;
 const OPAQUE_ALPHA: u8 = u8::MAX;
 const COMPOSITE_SHADER: &str = "shaders/world/effects/client_night_composite.wesl";
+/// The light buffer coverage below which a texel holds no light, so its colour is not divided out.
+pub const LIGHT_COVERAGE_EPSILON: f32 = 1.0 / 1024.0;
 
 // ---- The composite's maths (mirrored by client_night_composite.wesl) ---------------
 
@@ -166,6 +176,16 @@ pub fn light_buffer_over_night(lights: Vec4, night: Vec3) -> Vec3 {
 /// The KR client's shadow composite's factor for a shadow buffer value: `clamp(S + 1 - s)`.
 pub fn client_shadow_factor(shadow_buffer: f32, intensity: f32) -> f32 {
     (shadow_buffer + CLIENT_SHADOW_BUFFER_CLEAR - intensity).clamp(0.0, 1.0)
+}
+
+/// UOD-Painterly's light sprite glow, in linear light: the light buffer texel's colour, decoded, times its coverage
+/// and the glow strength. No coverage, no glow.
+pub fn light_sprite_glow(lights: Vec4, strength: f32) -> Vec3 {
+    if lights.w <= LIGHT_COVERAGE_EPSILON {
+        return Vec3::ZERO;
+    }
+    let colour = (lights.truncate() / lights.w).clamp(Vec3::ZERO, Vec3::ONE);
+    colour.map(Srgba::gamma_function) * lights.w * strength
 }
 
 /// The client composite on 8-bit (sRGB-encoded) values.
@@ -214,6 +234,8 @@ pub struct ClientNightCompositeUniform {
     pub flat_night_color: Vec4,
     /// `night_map_placement`.
     pub night_uv: Vec4,
+    /// UOD-Painterly's light sprite glow strength, `light_sprite_glow`; `NO_LIGHT_SPRITE_GLOW` in KR-like and Enhanced.
+    pub light_glow: f32,
 }
 
 impl ClientNightCompositeUniform {
@@ -226,7 +248,14 @@ impl ClientNightCompositeUniform {
             overlay_color_ratio: (lighting.overlay_color / NIGHT_MAP_MEAN).extend(0.0),
             flat_night_color: NIGHT_MAP_MEAN.extend(0.0),
             night_uv,
+            light_glow: NO_LIGHT_SPRITE_GLOW,
         }
+    }
+
+    /// UOD-Painterly's pass: no client composite (full day, no shadow, so the night map plays no part), only the
+    /// light sprite glow.
+    pub fn light_glow_only(light_glow: f32) -> Self {
+        Self { level: CLIENT_FULL_DAY_LEVEL, shadow_intensity: NO_CLIENT_SHADOW, light_glow, ..Self::default() }
     }
 }
 
@@ -440,8 +469,8 @@ fn sys_spawn_light_buffer_camera(
     }
 }
 
-/// Keep the light buffer camera active only while the composite runs, its projection equal to the world camera's
-/// and its image the size of the world camera's target.
+/// Keep the light buffer camera active only while the composite reads it (below full day, or UOD-Painterly's glow
+/// above 0), its projection equal to the world camera's and its image the size of the world camera's target.
 fn sys_sync_light_buffer_camera(
     uniform_state: Res<UniformState>,
     light_buffer: Option<Res<ClientLightBuffer>>,
@@ -454,7 +483,8 @@ fn sys_sync_light_buffer_camera(
     else {
         return;
     };
-    let active = night_lighting(&uniform_state).is_some();
+    let active =
+        night_lighting(&uniform_state).is_some() || light_sprite_glow_strength(&uniform_state) > NO_LIGHT_SPRITE_GLOW;
     let activated = active && !light_camera.is_active;
     if light_camera.is_active != active {
         light_camera.is_active = active;
@@ -487,8 +517,8 @@ fn half_view_world(camera: &Camera, projection: &Projection, zoom: f32) -> Optio
     (physical.x > 0.0).then(|| Vec2::new(half_width, half_width * physical.y / physical.x))
 }
 
-/// Put the composite on the PlayerCamera while the active preset's client lighting or shadows darken the frame, and
-/// keep it current.
+/// Put the composite on the PlayerCamera while the active preset's client lighting or shadows darken the frame, or
+/// UOD-Painterly's light sprites glow, and keep it current.
 fn sys_sync_client_night_composite(
     mut commands: Commands,
     uniform_state: Res<UniformState>,
@@ -503,24 +533,31 @@ fn sys_sync_client_night_composite(
     let Ok((entity, camera, projection, transform, current)) = cameras.single_mut() else {
         return;
     };
-    let (Some((lighting, shadow_intensity)), Some(night_map), Some(light_buffer)) =
-        (composite_settings(&uniform_state), night_map, light_buffer)
+    let settings = composite_settings(&uniform_state);
+    let light_glow = light_sprite_glow_strength(&uniform_state);
+    let (Some(night_map), Some(light_buffer), true) =
+        (night_map, light_buffer, settings.is_some() || light_glow > NO_LIGHT_SPRITE_GLOW)
     else {
         if current.is_some() {
             commands.entity(entity).remove::<(ClientNightCompositeUniform, ClientNightCompositeTextures)>();
         }
         return;
     };
-    let Some(half_view) = half_view_world(camera, projection, zoom.0) else {
-        return;
+    let uniform = match settings {
+        Some((lighting, shadow_intensity)) => {
+            let Some(half_view) = half_view_world(camera, projection, zoom.0) else {
+                return;
+            };
+            let focus = DVec2::new(f64::from(transform.translation.x), f64::from(transform.translation.z));
+            ClientNightCompositeUniform::new(
+                &lighting,
+                shadow_intensity,
+                night_map.from_package,
+                night_map_placement(focus, half_view),
+            )
+        }
+        None => ClientNightCompositeUniform::light_glow_only(light_glow),
     };
-    let focus = DVec2::new(f64::from(transform.translation.x), f64::from(transform.translation.z));
-    let uniform = ClientNightCompositeUniform::new(
-        &lighting,
-        shadow_intensity,
-        night_map.from_package,
-        night_map_placement(focus, half_view),
-    );
     match current {
         Some(mut current) => {
             if *current != uniform {
@@ -788,6 +825,26 @@ mod tests {
         let lights = (colour * alpha).extend(alpha);
         let expected = night * (1.0 - alpha) + colour * alpha;
         assert!(light_buffer_over_night(lights, night).abs_diff_eq(expected, 1e-6));
+    }
+
+    /// UOD-Painterly's glow adds a light sprite as its light.mul decal added its texel: the decoded colour times its
+    /// alpha and the strength; outside the lights, and in KR-like and Enhanced, it adds nothing.
+    #[test]
+    fn the_light_sprite_glow_adds_a_sprite_as_a_decal() {
+        const STRENGTH: f32 = 0.065;
+        let colour = Vec3::from_array(CLIENT_GENERIC_LIGHT_COLOR.map(|channel| f32::from(channel) / BYTE_MAX));
+        let alpha = CLIENT_LIGHT_SPRITE_PEAK_ALPHA;
+        let lights = (colour * alpha).extend(alpha);
+        let decal = Color::srgba(colour.x, colour.y, colour.z, alpha).to_linear();
+        let expected = Vec3::new(decal.red, decal.green, decal.blue) * decal.alpha * STRENGTH;
+        let glow = light_sprite_glow(lights, STRENGTH);
+        assert!(glow.abs_diff_eq(expected, 1e-6), "{glow} vs {expected}");
+        assert_eq!(light_sprite_glow(NO_LIGHTS, STRENGTH), Vec3::ZERO);
+        assert_eq!(light_sprite_glow(lights, NO_LIGHT_SPRITE_GLOW), Vec3::ZERO);
+        let client = ClientNightCompositeUniform::new(&client_settings(), NO_CLIENT_SHADOW, true, Vec4::ZERO);
+        assert_eq!(client.light_glow, NO_LIGHT_SPRITE_GLOW);
+        let glow_only = ClientNightCompositeUniform::light_glow_only(STRENGTH);
+        assert_eq!((glow_only.level, glow_only.shadow_intensity), (CLIENT_FULL_DAY_LEVEL, NO_CLIENT_SHADOW));
     }
 
     #[test]

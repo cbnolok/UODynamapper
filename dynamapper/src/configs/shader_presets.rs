@@ -54,6 +54,18 @@ pub fn preset_group_uses_client_lighting(group: &str) -> bool {
     matches!(group, KR_PRESET_GROUP | ENHANCED_PRESET_GROUP)
 }
 
+/// KR-like, Enhanced and UOD-Painterly draw the clients' light sprites (`art::client_light_sprites`) and choose their
+/// local lights (`local_lights`); Classic draws light.mul's decals (`art::static_lights`).
+pub fn preset_group_draws_light_sprites(group: &str) -> bool {
+    matches!(group, KR_PRESET_GROUP | ENHANCED_PRESET_GROUP | PAINTERLY_PRESET_GROUP)
+}
+
+/// KR-like and UOD-Painterly follow the KR client's light rules where the two clients differ (the "clients" light
+/// cover, `LightCoverRule::of_style`); Enhanced and Classic follow the Enhanced client's.
+pub fn preset_group_follows_kr_light_rules(group: &str) -> bool {
+    matches!(group, KR_PRESET_GROUP | PAINTERLY_PRESET_GROUP)
+}
+
 /// KR-like draws the KR client's static shadows (`client_shadows`) in place of the projected and contact sprite
 /// shadows; the Enhanced client draws none for statics, and Classic and UOD-Painterly keep their own.
 pub fn preset_group_uses_client_shadows(group: &str) -> bool {
@@ -85,7 +97,7 @@ pub struct UniformState {
     pub client_lighting: Option<ClientNightLighting>,
     /// The KR client's static shadows on or off: `Some` in KR-like only.
     pub client_shadows: Option<bool>,
-    /// The local lights of the active preset's style, not of its slot: `Some` in KR-like and Enhanced.
+    /// The local lights of the active preset's style, not of its slot: `Some` in KR-like, Enhanced and UOD-Painterly.
     /// `effects.local_light_intensity` follows them.
     pub local_lights: Option<ClientLocalLights>,
     /// The land texture variation of the active preset's style, not of its slot: `Some` in KR-like, Enhanced and
@@ -161,10 +173,16 @@ impl UniformState {
         self.dirty = true;
     }
 
-    /// The rule the active style's `light_cover` gives: "clients" follows the KR client in KR-like and the Enhanced
-    /// client in the other styles.
+    /// The rule the active style's `light_cover` gives: "clients" follows the KR client in KR-like and UOD-Painterly
+    /// and the Enhanced client in the other styles.
     pub fn light_cover_rule(&self) -> LightCoverRule {
-        LightCoverRule::of_style(self.light_cover, preset_key_group(&self.active_preset) == Some(KR_PRESET_GROUP))
+        let kr_rules = preset_key_group(&self.active_preset).is_some_and(preset_group_follows_kr_light_rules);
+        LightCoverRule::of_style(self.light_cover, kr_rules)
+    }
+
+    /// Whether the active style draws the clients' light sprites rather than light.mul's decals.
+    pub fn draws_light_sprites(&self) -> bool {
+        preset_key_group(&self.active_preset).is_some_and(preset_group_draws_light_sprites)
     }
 
     /// The rule "Show Only the Player's Floor" follows in the active style: its `player_floor_rule`, ClassicUO's in
@@ -309,7 +327,7 @@ fn clamp_client_lighting(lighting: ClientNightLighting) -> ClientNightLighting {
 
 /// A hand-written preset file must give KR-like and Enhanced `client_lighting` and no `global_lighting`, and the
 /// other groups the reverse, with every value in range; KR-like, alone, `client_shadows` and `player_floor_rule`;
-/// KR-like and Enhanced, alone, their `local_lights`, in range; and every group but Classic, alone, its
+/// KR-like, Enhanced and UOD-Painterly, alone, their `local_lights`, in range; and every group but Classic, alone, its
 /// `land_texture_variation`.
 fn validate_preset_lighting(presets: &LandShaderModePresets) -> eyre::Result<()> {
     let mut problems = Vec::new();
@@ -328,7 +346,7 @@ fn validate_preset_lighting(presets: &LandShaderModePresets) -> eyre::Result<()>
             )),
             _ => {}
         }
-        match (preset_group_uses_client_lighting(group), &slots.local_lights) {
+        match (preset_group_draws_light_sprites(group), &slots.local_lights) {
             (true, None) => problems.push(format!("missing `{group}.local_lights`")),
             (true, Some(local_lights)) => problems.extend(
                 local_lights_range_problems(local_lights)
@@ -336,7 +354,8 @@ fn validate_preset_lighting(presets: &LandShaderModePresets) -> eyre::Result<()>
                     .map(|problem| format!("`{group}.local_lights`: {problem}")),
             ),
             (false, Some(_)) => problems.push(format!(
-                "`{group}.local_lights` is not a setting there: only KR-like and Enhanced choose their local lights"
+                "`{group}.local_lights` is not a setting there: only KR-like, Enhanced and UOD-Painterly choose their \
+                 local lights"
             )),
             (false, None) => {}
         }
@@ -413,7 +432,7 @@ fn normalize_cached_preset_lighting(
         } else if slots.player_floor_rule.take().is_some() {
             warnings.push(format!("{file_name}: `{group}.player_floor_rule` dropped: only KR-like chooses it"));
         }
-        if preset_group_uses_client_lighting(group) {
+        if preset_group_draws_light_sprites(group) {
             match slots.local_lights {
                 None => {
                     slots.local_lights = default_slots.local_lights;
@@ -429,7 +448,8 @@ fn normalize_cached_preset_lighting(
             }
         } else if slots.local_lights.take().is_some() {
             warnings.push(format!(
-                "{file_name}: `{group}.local_lights` dropped: only KR-like and Enhanced choose their local lights"
+                "{file_name}: `{group}.local_lights` dropped: only KR-like, Enhanced and UOD-Painterly choose their \
+                 local lights"
             ));
         }
     }
@@ -1098,9 +1118,10 @@ mod tests {
         assert_eq!(u.light_cover, LightCover::ClassicUo);
     }
 
-    /// "clients" is the KR client's rule in KR-like and the Enhanced client's in the other styles, UOD-Painterly too.
+    /// "clients" is the KR client's rule in KR-like and UOD-Painterly, which draws KR-like's light sprites, and the
+    /// Enhanced client's in Enhanced and Classic.
     #[test]
-    fn the_clients_light_cover_follows_kr_in_kr_like_only() {
+    fn the_clients_light_cover_follows_kr_in_kr_like_and_painterly() {
         let mut source = presets();
         for group in PRESET_GROUPS {
             get_preset_group_mut(&mut source, group).expect("group").light_cover = LightCover::Clients;
@@ -1109,7 +1130,7 @@ mod tests {
             (CLASSIC_PRESET_GROUP, LightCoverRule::EnhancedClient),
             (ENHANCED_PRESET_GROUP, LightCoverRule::EnhancedClient),
             (KR_PRESET_GROUP, LightCoverRule::KrClient),
-            (PAINTERLY_PRESET_GROUP, LightCoverRule::EnhancedClient),
+            (PAINTERLY_PRESET_GROUP, LightCoverRule::KrClient),
         ] {
             source.default_preset = format!("{group}.night");
             assert_eq!(uniform_state_from_presets(&source).light_cover_rule(), rule, "{group}");
@@ -1227,10 +1248,10 @@ mod tests {
         }
     }
 
-    /// KR-like and Enhanced each have one `local_lights` table, the light sprites at their own intensity, centred on
-    /// their items, in both bundled files; the other styles have none.
+    /// KR-like, Enhanced and UOD-Painterly each have one `local_lights` table, the light sprites at their own
+    /// intensity, centred on their items, in both bundled files; Classic has none.
     #[test]
-    fn bundled_presets_give_kr_like_and_enhanced_their_local_lights() {
+    fn bundled_presets_give_the_light_sprite_styles_their_local_lights() {
         use crate::core::render::scene::world::land::mesh_material::{
             ClientLocalLightSource, NEUTRAL_LOCAL_LIGHT_INTENSITY,
         };
@@ -1243,7 +1264,7 @@ mod tests {
         for (name, text) in [("shader_presets.toml", BUNDLED_FACTORY_PRESETS), ("land.toml", BUNDLED_LAND_SETTINGS)] {
             let presets = parse(text).expect("bundled");
             for (group, slots) in preset_groups(&presets) {
-                let local_lights = preset_group_uses_client_lighting(group).then_some(expected);
+                let local_lights = preset_group_draws_light_sprites(group).then_some(expected);
                 assert_eq!(slots.local_lights, local_lights, "{name} {group}");
             }
         }
@@ -1419,8 +1440,8 @@ mod tests {
         assert_eq!((state.player_floor_rule, state.effective_player_floor_rule()), (None, PlayerFloorRule::ClassicUo));
     }
 
-    /// A hand-written file must give KR-like and Enhanced their local lights, complete and in range, and no other
-    /// style any; the former per-slot source is an unknown key there.
+    /// A hand-written file must give KR-like, Enhanced and UOD-Painterly their local lights, complete and in range,
+    /// and Classic none; the former per-slot source is an unknown key there.
     #[test]
     fn hand_written_local_lights_are_strict() {
         const BUNDLED_SOURCE_LINE: &str = "source = \"light_sprites\"\n";
@@ -1501,18 +1522,19 @@ mod tests {
         assert_eq!(kr_local_lights.source, ClientLocalLightSource::LightMul);
 
         let mut cached = clone_presets(&bundled);
-        cached.painterly.local_lights = bundled.kr.local_lights;
+        cached.classic.local_lights = bundled.kr.local_lights;
         cached.enhanced.local_lights.as_mut().unwrap().light_sprites_intensity = -1.0;
         let warnings = normalize_cached_preset_lighting(&mut cached, &bundled, "land.toml");
         assert_eq!(
             warnings,
             [
+                "land.toml: `classic.local_lights` dropped: only KR-like, Enhanced and UOD-Painterly choose their \
+                 local lights",
                 "land.toml: `enhanced.local_lights` clamped: light_sprites_intensity -1 is outside 0..=4",
-                "land.toml: `painterly.local_lights` dropped: only KR-like and Enhanced choose their local lights",
             ]
         );
         assert_eq!(cached.enhanced.local_lights.map(|local_lights| local_lights.light_sprites_intensity), Some(0.0));
-        assert_eq!(cached.painterly.local_lights, None);
+        assert_eq!(cached.classic.local_lights, None);
 
         const SPRITES_INTENSITY: f32 = 1.5;
         const LIGHT_MUL_INTENSITY: f32 = 0.6;

@@ -1,6 +1,6 @@
 //! The item light scales, `runtime_specs/lights/LightScale.kdl`: a multiplier on the size of chosen items' local
-//! lights in KR-like and Enhanced, the light sprites (on top of their tileart scale) and the light.mul lights alike.
-//! Classic and UOD-Painterly draw the lights as the client does. The file is hand-written and read strictly
+//! lights in KR-like, Enhanced and UOD-Painterly, the light sprites (on top of their tileart scale) and the light.mul
+//! lights alike. Classic draws the lights as the client does. The file is hand-written and read strictly
 //! (`uot_kdl::strict`): every error names its line. It is read at startup; a user copy under the cache dir takes the
 //! bundled file's place (`configs::runtime_specs`).
 

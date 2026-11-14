@@ -1109,6 +1109,12 @@ elevation_degrees = 45.0
 land_texture_variation = false
 light_cover = "uod"
 
+[painterly.local_lights]
+source = "light_sprites"
+light_sprites_intensity = 1.0
+light_mul_intensity = 1.0
+centre_on_items = true
+
 [painterly.morning]
 global_lighting = 1.04
 [painterly.morning.effects]

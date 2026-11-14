@@ -12,7 +12,7 @@ pub(super) const TIME_OF_DAY: &str =
 pub(super) const SHOW_ADVANCED: &str =
     "Opens every raw shader value in a second window. Its controls edit the same values as the ones here.";
 pub(super) const RESET_PRESET: &str =
-    "Puts the current render style and time of day back to the factory values, and in KR-like and Enhanced the style's Local Lights, shared by every time of day.";
+    "Puts the current render style and time of day back to the factory values, and in KR-like, Enhanced and UOD-Painterly the style's Local Lights, shared by every time of day.";
 pub(super) const UNDO_TO_SAVED: &str =
     "Restores the values saved when this window was last closed.";
 
@@ -58,7 +58,7 @@ pub(super) const LIGHT_COVER_UOD: &str =
 pub(super) const LIGHT_COVER_CLASSICUO: &str =
     "ClassicUO's rule: an opaque static at least 5 z above the light, in the cell in front of it, hides it.";
 pub(super) const LIGHT_COVER_CLIENTS: &str =
-    "The Enhanced and KR clients' rule: anything in the cell in front of the light that sits in a higher 20-z band above the land hides it, with no exception for eaves or see-through items. A roof 20 z above always hides; one 5 to 19 z above hides when it crosses a band. KR-like follows the KR client, counting each band from the land under the light or the cover; the other styles follow the Enhanced client, counting both from the land under the light. In both, a floor or roof 5 z or more above the light hides it too, where the clients draw its glow over the floor.";
+    "The Enhanced and KR clients' rule: anything in the cell in front of the light that sits in a higher 20-z band above the land hides it, with no exception for eaves or see-through items. A roof 20 z above always hides; one 5 to 19 z above hides when it crosses a band. KR-like and UOD-Painterly follow the KR client, counting each band from the land under the light or the cover; Enhanced and Classic follow the Enhanced client, counting both from the land under the light. In both, a floor or roof 5 z or more above the light hides it too, where the clients draw its glow over the floor.";
 pub(super) const PLAYER_FLOOR_RULE: &str =
     "Which rule Show Only the Player's Floor (Preferences) hides what is above the player by, in KR-like at every time of day. Only matters while that option is on.";
 pub(super) const PLAYER_FLOOR_RULE_CLASSICUO: &str =
@@ -66,7 +66,7 @@ pub(super) const PLAYER_FLOOR_RULE_CLASSICUO: &str =
 pub(super) const PLAYER_FLOOR_RULE_KR: &str =
     "The KR client's rule: a static more than 14 z above the player on the player's tile, or a roof on the tile in front, hides every static, item and multi part in a higher 20-z layer than the player's, each layer counted from the land under its own tile. Land is never cut by height; it all goes while the player is below the land, in a cave. The lights in the hidden layers go with them; the floors and roofs left still cover the lights under them.";
 pub(super) const LOCAL_LIGHT_SOURCE: &str =
-    "Which lights light the ground through Light/Static Interaction in KR-like and Enhanced, and the statics too when world_rendering.enable_static_art_local_lights is on. Light Sprites: the client light sprites, each lighting the ground under its glow, as large as the sprite and in its texture's colour. light.mul: the Classic lights, as in Classic and UOD-Painterly: every static with the light source flag, with its light.mul light's size and its hue or light colour. Either way the night still glows with the client light sprites. Needs Light/Static Interaction above 0 (0 in these presets). One choice for the style at every time of day, and each source keeps its own intensity, the slider below.";
+    "Which lights light the ground through Light/Static Interaction in KR-like, Enhanced and UOD-Painterly, and the statics too when world_rendering.enable_static_art_local_lights is on. Light Sprites: the client light sprites, each lighting the ground under its glow, as large as the sprite and in its texture's colour. light.mul: the Classic lights, as in Classic: every static with the light source flag, with its light.mul light's size and its hue or light colour. Either way the night still glows with the client light sprites. Needs Light/Static Interaction above 0 (0 in the KR-like and Enhanced presets). One choice for the style at every time of day, and each source keeps its own intensity, the slider below.";
 pub(super) const LOCAL_LIGHTS_LIGHT_SPRITES: &str =
     "The client light sprites light the ground under their glow, as large as the sprite and in its texture's colour.";
 pub(super) const LOCAL_LIGHTS_LIGHT_MUL: &str =
@@ -233,7 +233,7 @@ pub(super) const GLOOM_TINT: &str =
 // --- Advanced: graphics ---
 
 pub(super) const STATIC_LIGHT_DECALS: &str =
-    "Strength of the glow drawn around light sources. Shows at night and in caves in Classic and UOD-Painterly, and grows as Brightness drops; greyed out in KR-like and Enhanced, which light the night through the client's light buffer.";
+    "Strength of the glow drawn around light sources: Classic's light.mul glow and UOD-Painterly's light sprites. Shows at night and in caves, and grows as Brightness drops; greyed out in KR-like and Enhanced, which light the night through the client's light buffer.";
 pub(super) const SHARPENING: &str =
     "Sharpens land textures, in every render style. 0 in every preset; even 0.5 changes most of the frame.";
 pub(super) const KR_COLOR_WASH_STRENGTH: &str =

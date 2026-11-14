@@ -32,7 +32,7 @@ const STATIC_LIGHT_ALPHA: f32 = 0.65;
 const STATIC_LIGHT_DEPTH_BIAS: f32 = 128.0;
 /// The render layer of the scene decals: the world camera's, Bevy's default.
 const SCENE_DECAL_LAYER: usize = 0;
-/// The signature's material alpha where no decal draws (KR-like and Enhanced).
+/// The signature's material alpha where no decal draws (KR-like, Enhanced and UOD-Painterly).
 const NO_DECAL_ALPHA: f32 = 0.0;
 const STATIC_LIGHT_BILLBOARD_RIGHT: Vec3 = Vec3::new(-0.70710677, 0.0, 0.70710677);
 const STATIC_LIGHT_BILLBOARD_UP: Vec3 = Vec3::new(0.4082483, -0.8164966, 0.4082483);
@@ -60,14 +60,16 @@ enum StaticLightRenderStyle {
     Kr,
 }
 
-/// Where the lights draw. Classic and UOD-Painterly add these light.mul quads over the scene as decals, faded by the
-/// scene multiplier and the decal visibility. KR-like and Enhanced draw no decal: they draw the clients' own light
-/// sprites into the client night composite's light buffer (`client_light_sprites`), where they lerp over the night
-/// map and show only through the composite, so only below full day, as in the clients.
+/// Where the lights draw. Classic adds these light.mul quads over the scene as decals, faded by the scene multiplier
+/// and the decal visibility. KR-like, Enhanced and UOD-Painterly draw no decal: they draw the clients' own light
+/// sprites into the light buffer (`client_light_sprites`). In KR-like and Enhanced the sprites lerp over the night map
+/// and show only through the client night composite, so only below full day, as in the clients; UOD-Painterly, which
+/// dims through its scene multiplier, adds the light buffer over the frame at the strength its decals had
+/// (`light_sprite_glow_strength`).
 ///
-/// The instances stay collected for every style: the land and static local lights read them. In KR-like and Enhanced
-/// they are, as the style's `local_lights.source` picks (`local_light_source`), the client light sprites'
-/// (`client_light_sprites::client_light_sprite_static_light`) or light.mul's, as in Classic. Their intensity
+/// The instances stay collected for every style: the land and static local lights read them. In KR-like, Enhanced
+/// and UOD-Painterly they are, as the style's `local_lights.source` picks (`local_light_source`), the client light
+/// sprites' (`client_light_sprites::client_light_sprite_static_light`) or light.mul's, as in Classic. Their intensity
 /// (`ClientLocalLights::intensity`) scales them in the shaders, through `LandEffectsUniform::local_light_intensity`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub(super) enum StaticLightTarget {
@@ -77,7 +79,7 @@ pub(super) enum StaticLightTarget {
 
 impl StaticLightTarget {
     pub(super) fn for_uniform_state(uniform_state: &UniformState) -> Self {
-        if uniform_state.client_lighting.is_some() {
+        if uniform_state.draws_light_sprites() {
             Self::ClientLightBuffer
         } else {
             Self::SceneDecal
@@ -85,8 +87,28 @@ impl StaticLightTarget {
     }
 }
 
-/// The lights the land light decals and the static local lights take: light.mul's in Classic and UOD-Painterly, which
-/// have no `local_lights`, and in KR-like and Enhanced the source their `local_lights` picks.
+/// The light sprites' glow where the frame takes none from the client night composite.
+pub const NO_LIGHT_SPRITE_GLOW: f32 = 0.0;
+
+/// How strongly UOD-Painterly adds its light sprites over the frame (`effects::client_night`): the alpha its light.mul
+/// decals took, from the scene multiplier and the decal visibility (`static_light_decal_alpha`), so it shows only as
+/// `global_lighting` drops below 1, at night and in caves. `NO_LIGHT_SPRITE_GLOW` in the other styles: Classic draws
+/// decals, and KR-like and Enhanced show their sprites through the client night composite.
+pub fn light_sprite_glow_strength(uniform_state: &UniformState) -> f32 {
+    if StaticLightTarget::for_uniform_state(uniform_state) != StaticLightTarget::ClientLightBuffer
+        || uniform_state.client_lighting.is_some()
+    {
+        return NO_LIGHT_SPRITE_GLOW;
+    }
+    static_light_decal_alpha(
+        uniform_state.global_lighting,
+        uniform_state.effects.static_light_decal_visibility,
+        StaticLightRenderStyle::from_shading_mode(uniform_state.effects.shading_mode),
+    )
+}
+
+/// The lights the land light decals and the static local lights take: light.mul's in Classic, which has no
+/// `local_lights`, and in KR-like, Enhanced and UOD-Painterly the source their `local_lights` picks.
 pub(super) fn local_light_source(local_lights: Option<&ClientLocalLights>) -> ClientLocalLightSource {
     local_lights.map_or(ClientLocalLightSource::LightMul, |local_lights| local_lights.source)
 }
@@ -305,7 +327,7 @@ pub fn sys_collect_visible_static_lights(
         return;
     };
     let mut statics_store = statics_store.lock();
-    // KR-like and Enhanced enlarge the items LightScale.kdl lists; Classic and UOD-Painterly draw light.mul as it is.
+    // The light sprite styles enlarge the items LightScale.kdl lists; Classic draws light.mul as it is.
     let scaled = StaticLightTarget::for_uniform_state(&uniform_state) == StaticLightTarget::ClientLightBuffer;
 
     let mut visible_chunk_keys = chunks_q
@@ -498,7 +520,7 @@ pub fn sys_sync_static_light_entities(
                 render_style,
             ),
         ),
-        // KR-like and Enhanced draw the clients' light sprites instead (`client_light_sprites`).
+        // KR-like, Enhanced and UOD-Painterly draw the clients' light sprites instead (`client_light_sprites`).
         StaticLightTarget::ClientLightBuffer => (&no_decals, NO_DECAL_ALPHA),
     };
     let Some(world_lights) = world_lights_res else {
@@ -1218,7 +1240,7 @@ mod tests {
         hasher.finish()
     }
 
-    /// Classic and UOD-Painterly (no local lights setting) always take light.mul; KR-like and Enhanced what they pick.
+    /// Classic (no local lights setting) always takes light.mul; the light sprite styles what they pick.
     #[test]
     fn the_local_lights_take_the_source_their_style_picks() {
         assert_eq!(local_light_source(None), ClientLocalLightSource::LightMul);

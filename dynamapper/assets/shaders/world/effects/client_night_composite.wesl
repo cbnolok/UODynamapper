@@ -15,6 +15,12 @@
 // (art/client_shadow.wesl), and scene' = scene * clamp(S + 1 - s, 0, 1),
 // mirroring `client_shadow_factor`. The pass then writes alpha 1.
 //
+// UOD-Painterly runs the pass at full day with no shadow, for its light sprite
+// glow alone (light_glow above 0, `light_sprite_glow`): the light buffer adds
+// over the frame in linear light, as its light.mul decals added,
+//
+//     out = scene + decode_srgb(lights.rgb / lights.a) * lights.a * light_glow
+//
 // The frame arrives in linear light (the world camera's sRGB main texture);
 // it is encoded to 8-bit values, composited, and decoded back.
 // ============================================================================
@@ -32,6 +38,7 @@ struct ClientNightCompositeUniform {
     flat_night_color: vec4<f32>,
     // xy: half the view in map repeats, zw: the focus in repeats.
     night_uv: vec4<f32>,
+    light_glow: f32,
 }
 
 @group(0) @binding(0) var scene_texture: texture_2d<f32>;
@@ -48,6 +55,9 @@ const CLIENT_FULL_DAY_LEVEL: f32 = 1.0;
 const CLIENT_SHADOW_BUFFER_CLEAR: f32 = 1.0;
 const NO_CLIENT_SHADOW: f32 = 0.0;
 const OPAQUE_ALPHA: f32 = 1.0;
+// NO_LIGHT_SPRITE_GLOW in static_lights.rs and LIGHT_COVERAGE_EPSILON in client_night.rs.
+const NO_LIGHT_SPRITE_GLOW: f32 = 0.0;
+const LIGHT_COVERAGE_EPSILON: f32 = 1.0 / 1024.0;
 const NIGHT_OVERLAY_LUMA_WEIGHTS: vec3<f32> = vec3<f32>(0.2126, 0.7152, 0.0722);
 
 fn night_overlay(texel: vec3<f32>) -> vec3<f32> {
@@ -57,10 +67,28 @@ fn night_overlay(texel: vec3<f32>) -> vec3<f32> {
     return clamp(luma * (1.0 - strength) + tinted * strength, vec3<f32>(0.0), vec3<f32>(1.0));
 }
 
+// The light buffer texel under the pixel. The buffer matches the frame's size; clamp for the frame after a resize.
+fn light_buffer_texel(pixel: vec2<i32>) -> vec4<f32> {
+    let light_size = vec2<i32>(textureDimensions(light_buffer)) - vec2<i32>(1);
+    return textureLoad(light_buffer, clamp(pixel, vec2<i32>(0), light_size), 0);
+}
+
+// UOD-Painterly's glow: mirrors `light_sprite_glow`.
+fn light_sprite_glow(lights: vec4<f32>) -> vec3<f32> {
+    if lights.a <= LIGHT_COVERAGE_EPSILON {
+        return vec3<f32>(0.0);
+    }
+    let colour = clamp(lights.rgb / lights.a, vec3<f32>(0.0), vec3<f32>(1.0));
+    return decode_srgb(colour) * lights.a * night.light_glow;
+}
+
 @fragment
 fn fragment(in: FullscreenVertexOutput) -> @location(0) vec4<f32> {
     let pixel = vec2<i32>(in.position.xy);
     let scene = textureLoad(scene_texture, pixel, 0);
+    if night.light_glow > NO_LIGHT_SPRITE_GLOW {
+        return vec4<f32>(scene.rgb + light_sprite_glow(light_buffer_texel(pixel)), scene.a);
+    }
     let shadows = night.shadow_intensity > NO_CLIENT_SHADOW;
     if night.level >= CLIENT_FULL_DAY_LEVEL && !shadows {
         return scene;
@@ -82,9 +110,7 @@ fn fragment(in: FullscreenVertexOutput) -> @location(0) vec4<f32> {
         night_texel = textureSampleLevel(night_map, night_map_sampler, uv, 0.0).rgb;
     }
 
-    // The light buffer matches the frame's size; clamp for the frame after a resize.
-    let light_size = vec2<i32>(textureDimensions(light_buffer)) - vec2<i32>(1);
-    let lights = textureLoad(light_buffer, clamp(pixel, vec2<i32>(0), light_size), 0);
+    let lights = light_buffer_texel(pixel);
     let light_buffer_rgb = lights.rgb + night_overlay(night_texel) * (1.0 - lights.a);
 
     let level = night.level;

@@ -83,7 +83,9 @@ default_preset = "classic.morning"
 #
 # === [Scene dimming] ===
 # Each group dims one way, required there and refused elsewhere:
-# global_lighting:   Classic and UOD-Painterly. A scene brightness multiplier (1.0 = unchanged).
+# global_lighting:   Classic and UOD-Painterly. A scene brightness multiplier (1.0 = unchanged). UOD-Painterly
+#                    adds its light sprites' glow over the frame as the multiplier drops below 1, as Classic's
+#                    light.mul decals show: by static_light_decal_visibility and 1 - global_lighting.
 # [client_lighting]: KR-like and Enhanced. Both clients' night composite, per channel on the 8-bit values:
 #                    out = clamp(4 * (0.25 * level + B * (1 - level)) * scene), level = 1 - light_level / 31,
 #                    B = the night map (TerrainTexture.uop entry 21, in tex_aux_ec.uddp) with the lights lerped
@@ -97,10 +99,11 @@ default_preset = "classic.morning"
 #                     colour scales the map's channels by colour / mean, keeping its cloud pattern.
 #
 # === [Local lights] ===
-# [<group>.local_lights]: KR-like and Enhanced, one table per style (not per time of day), required there and refused
-#                    elsewhere. The land light decals and static local lights (Light/Static Interaction, 0 in these
-#                    presets; the static local lights also need enable_static_art_local_lights), and where the light
-#                    sprites drawn into the light buffer sit (centre_on_items; source and intensities leave them be).
+# [<group>.local_lights]: KR-like, Enhanced and UOD-Painterly, the styles that draw the clients' light sprites, one
+#                    table per style (not per time of day), required there and refused in Classic. The land light
+#                    decals and static local lights (Light/Static Interaction, 0 in the KR-like and Enhanced presets;
+#                    the static local lights also need enable_static_art_local_lights), and where the light sprites
+#                    drawn into the light buffer sit (centre_on_items; source and intensities leave them be).
 #   source:           The lights they take: "light_sprites", the client light sprites (a light on the ground under
 #                     each sprite's glow, sized like the sprite, coloured by its texture's alpha-weighted mean), or
 #                     "light_mul", light.mul as in Classic (the statics with the LightSource flag, the light.mul size,
@@ -126,8 +129,8 @@ default_preset = "classic.morning"
 #
 # === [Light cover] ===
 # [<group>] light_cover: every style, one value per style (not per time of day), required. How the lights a roof,
-#                    an upper floor or a wall covers are drawn: the light.mul decals of Classic and UOD-Painterly, the
-#                    light sprites of KR-like and Enhanced, and the local lights taken from either. "uod" in every
+#                    an upper floor or a wall covers are drawn: the light.mul decals of Classic, the light sprites
+#                    of KR-like, Enhanced and UOD-Painterly, and the local lights taken from either. "uod" in every
 #                    preset. "classicuo" and "clients" hide a whole light by the cell in front of it, (x + 1, y + 1),
 #                    toward the camera.
 #   "uod":            Dynamapper's rule: no light is hidden for being covered; each glow is clipped pixel by pixel.
@@ -138,10 +141,10 @@ default_preset = "classic.morning"
 #   "classicuo":      ClassicUO's rule: an opaque static (not Transparent or NoDraw) at least 5 z above the light hides
 #                     it.
 #   "clients":        The Enhanced and KR clients' rule: any static in a higher 20-z band above the land, band =
-#                     (z - land z + 140) / 20, hides it; no exception for eaves or see-through items. KR-like follows
-#                     the KR client: the bands clamped to 0 to 15, each counted from the averaged land z of its own
-#                     cell. The other styles follow the Enhanced client: all counted from the land z of the light's
-#                     cell. In both, a floor or roof at least 5 z above the light hides it too (the clients draw such
+#                     (z - land z + 140) / 20, hides it; no exception for eaves or see-through items. KR-like and
+#                     UOD-Painterly follow the KR client: the bands clamped to 0 to 15, each counted from the
+#                     averaged land z of its own cell. Enhanced and Classic follow the Enhanced client: all counted
+#                     from the land z of the light's cell. In both, a floor or roof at least 5 z above the light hides it too (the clients draw such
 #                     lights over the floor).
 #
 # === [Player floor rule] ===
@@ -1270,10 +1273,18 @@ elevation_degrees = 45.0
 # and CC land).
 # The vibrance (grade_extra's first value) of the morning and afternoon, once 0.38 and 0.45, turned the desert sand
 # orange: 0.21 and 0.25 bring its chroma down by about a quarter while grass and rock change little.
+# Its lights are KR-like's: the clients' light sprites, centred and scaled as in KR-like, under KR-like's light cover
+# rules, glowing over the frame where Classic draws light.mul's decals (see [Scene dimming]).
 
 [painterly]
 land_texture_variation = false
 light_cover = "uod"
+
+[painterly.local_lights]
+source = "light_sprites"
+light_sprites_intensity = 1.0
+light_mul_intensity = 1.0
+centre_on_items = true
 
 [painterly.morning]
 global_lighting = 1.04

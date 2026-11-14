@@ -1,21 +1,24 @@
-//! The Enhanced and KR clients' light sprites, drawn by KR-like and Enhanced into the client night composite's light
-//! buffer (`effects::client_night`).
+//! The Enhanced and KR clients' light sprites, drawn by KR-like, Enhanced and UOD-Painterly into the light buffer
+//! (`effects::client_night`). KR-like and Enhanced show it through the client night composite; UOD-Painterly, which
+//! dims through its scene multiplier, adds it over the frame as a glow (`static_lights::light_sprite_glow_strength`).
 //!
 //! A static draws a sprite when its tileart names a light texture (tilemeta `item_lights`); the LightSource flag plays
 //! no part. The texture is a `TerrainTexture.uop` entry packed in `tex_aux_ec.uddp`, drawn with its own colour and
-//! alpha: no hue, even on a hued item. The quad is the EC static billboard of the clients' sprite builder: anchored
-//! to the static's map position (never to its art, so CC and EC art place it alike), sized by the tileart light
-//! scale, and moved by the light offsets in world units along the camera's right and up. Classic and UOD-Painterly
-//! draw the light.mul decals of `static_lights` instead.
+//! alpha: no hue, even on a hued item. The KR and Enhanced clients ship the same textures, so the three styles draw
+//! one set. The quad is the EC static billboard of the clients' sprite builder: anchored to the static's map
+//! position (never to its art, so CC and EC art place it alike), sized by the tileart light scale, and moved by the
+//! light offsets in world units along the camera's right and up. Classic draws the light.mul decals of
+//! `static_lights` instead.
 //!
-//! Two settings depart from the clients in the two styles. The style's `local_lights.centre_on_items` centres the
+//! Two settings depart from the clients in these styles. The style's `local_lights.centre_on_items` centres the
 //! sprites the tileart's default offsets throw far from their item on the item's cell
 //! (`client_light_sprite_centred`), and `configs::light_scale` (LightScale.kdl) enlarges chosen items' sprites.
 //!
 //! The clients light the terrain and the statics through the composite alone: their sprites are unlit and their
 //! terrain has no other light. The optional land light decals and static local lights (Light/Static Interaction,
-//! off in the KR-like and Enhanced presets) read these sprites in the two styles (`client_light_sprite_static_light`),
-//! unless the style's `local_lights.source` picks light.mul, as Classic (`static_lights`).
+//! off in the KR-like and Enhanced presets, on in UOD-Painterly's) read these sprites in these styles
+//! (`client_light_sprite_static_light`), unless the style's `local_lights.source` picks light.mul, as Classic
+//! (`static_lights`).
 
 use super::light_cover::{static_light_ceiling_z, static_light_is_hidden, LightCoverRule, MultiCoverParts};
 use super::light_scene::{
@@ -309,7 +312,9 @@ pub fn sys_collect_client_light_sprites(
     };
     let Some(tex_aux) = tex_aux_res else {
         if !cache.warned_no_package {
-            log::warn!("KR-like and Enhanced draw no light sprites: there is no tex_aux_ec.uddp, which holds them");
+            log::warn!(
+                "KR-like, Enhanced and UOD-Painterly draw no light sprites: there is no tex_aux_ec.uddp, which holds them"
+            );
             cache.warned_no_package = true;
         }
         return;

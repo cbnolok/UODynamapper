@@ -268,8 +268,8 @@ pub struct LandEffectsUniform {
     /// The client grunge's strength, 0..1: 1 is the client's full multiply, 0 leaves the colour as it is.
     pub client_grunge_strength: f32,
     /// What multiplies the land light decals and static local lights besides `light_decal_intensity`: the
-    /// intensity of the source KR-like's and Enhanced's local lights take (`ClientLocalLights::intensity`), the
-    /// neutral 1 in Classic and UOD-Painterly. A per-style setting, not a slot value: `UniformState` keeps it in
+    /// intensity of the source the local lights of KR-like, Enhanced and UOD-Painterly take
+    /// (`ClientLocalLights::intensity`), the neutral 1 in Classic. A per-style setting, not a slot value: `UniformState` keeps it in
     /// line with its `local_lights`.
     #[serde(skip)]
     pub local_light_intensity: f32,
@@ -514,8 +514,8 @@ pub struct LandRenderStylePresetsPerMode {
     /// (`world::z_view`); the other styles follow ClassicUO's.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub player_floor_rule: Option<PlayerFloorRule>,
-    /// The local lights of KR-like and Enhanced, one setting for the style rather than per time of day: which
-    /// lights the land light decals and static local lights take, and how strongly.
+    /// The local lights of KR-like, Enhanced and UOD-Painterly, one setting for the style rather than per time of
+    /// day: which lights the land light decals and static local lights take, and how strongly.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub local_lights: Option<ClientLocalLights>,
     pub morning: LandMaterialUniformsPresets,
@@ -564,8 +564,8 @@ pub const LOCAL_LIGHT_INTENSITY_RANGE: std::ops::RangeInclusive<f32> = 0.0..=4.0
 /// The intensity that leaves the local lights as they come, and the one of the styles without `ClientLocalLights`.
 pub const NEUTRAL_LOCAL_LIGHT_INTENSITY: f32 = 1.0;
 
-/// The optional land light decals and static local lights (Light/Static Interaction) of KR-like and Enhanced, and
-/// where the client light sprites in the composite's light buffer sit: one setting per style,
+/// The optional land light decals and static local lights (Light/Static Interaction) of KR-like, Enhanced and
+/// UOD-Painterly, and where the client light sprites in the light buffer sit: one setting per style,
 /// `[<group>.local_lights]`. The source and intensities leave the light sprites as they are.
 ///
 /// Each source keeps its own intensity, so switching sources keeps each one's calibration: at one, light.mul lights
@@ -610,8 +610,8 @@ pub fn local_light_intensity(local_lights: Option<&ClientLocalLights>) -> f32 {
     local_lights.map_or(NEUTRAL_LOCAL_LIGHT_INTENSITY, ClientLocalLights::intensity)
 }
 
-/// Where KR-like and Enhanced take the land light decals and static local lights from (`static_lights`). Classic and
-/// UOD-Painterly always take light.mul's.
+/// Where KR-like, Enhanced and UOD-Painterly take the land light decals and static local lights from
+/// (`static_lights`). Classic always takes light.mul's.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Deserialize, Serialize)]
 pub enum ClientLocalLightSource {
     /// The client light sprites: a light on the ground under each sprite's glow, sized like the sprite and coloured
@@ -625,7 +625,7 @@ pub enum ClientLocalLightSource {
 }
 
 /// The rule that hides the lights a roof or an upper floor covers (`world::art::light_cover`), per style: to the
-/// light.mul decals of Classic and UOD-Painterly, to the light sprites of KR-like and Enhanced, and to the local
+/// light.mul decals of Classic, to the light sprites of KR-like, Enhanced and UOD-Painterly, and to the local
 /// lights taken from them. The clients' and ClassicUO's rules hide a whole light by the cell in front of it, (x + 1,
 /// y + 1); Dynamapper's keeps every light and clips each glow pixel by pixel (`world::art::light_scene`).
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Deserialize, Serialize)]

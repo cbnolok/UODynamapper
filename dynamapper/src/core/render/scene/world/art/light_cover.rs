@@ -1,5 +1,5 @@
 //! Whether a static light is hidden by what is drawn over it: the one rule every style applies before it draws a
-//! light, to Classic and UOD-Painterly's light.mul decals and to KR-like and Enhanced's light sprites, and so to the
+//! light, to Classic's light.mul decals and to KR-like, Enhanced and UOD-Painterly's light sprites, and so to the
 //! land and static local lights they feed. Each style picks its rule with its preset group's `light_cover`
 //! (`LightCover`); the clients' and ClassicUO's rules look at the diagonal neighbour in front of a light, the cell
 //! (x+1, y+1) the camera looks across to reach it, and none counts the light's own cell, so its own wall, the item it
@@ -19,12 +19,13 @@
 //! 0x004391d0; see `CLIENT_NIGHT_LIGHTING_AND_SHADOWS.md`): a light sprite is culled when an object of its cover cell
 //! sits in a higher 20-z band above the land than the light (`client_light_band`), or when its own item is not drawn.
 //! The clients draw the sprites that are left with no depth test. The two clients count the bands differently, and
-//! each style follows one of them (`LightCoverRule`): KR-like the KR client's 16 clamped layers, each object's from
-//! the average land z of its own cell (`kr_light_is_hidden`), the other styles the Enhanced client's unclamped bands,
-//! all from the raw land z of the light's cell (`client_light_is_hidden`). Both clients' bands let a light show
-//! through a floor or roof just above it in its own band, and KR's in a lower layer too when the land under the two
-//! cells differs (the clients draw such glows over the floor); neither style follows that: a floor or roof of the
-//! cover cell at least `LIGHT_COVER_MIN_RISE` above the light also hides it there (`floor_covers_light`).
+//! each style follows one of them (`LightCoverRule`): KR-like and UOD-Painterly the KR client's 16 clamped layers,
+//! each object's from the average land z of its own cell (`kr_light_is_hidden`), the other styles the Enhanced
+//! client's unclamped bands, all from the raw land z of the light's cell (`client_light_is_hidden`). Both clients'
+//! bands let a light show through a floor or roof just above it in its own band, and KR's in a lower layer too when
+//! the land under the two cells differs (the clients draw such glows over the floor); no style follows that: a floor
+//! or roof of the cover cell at least `LIGHT_COVER_MIN_RISE` above the light also hides it there
+//! (`floor_covers_light`).
 //!
 //! The rules take the view's z limit (`max_z`) so a z-view limit composes with them: a static the limit stops drawing
 //! no longer covers, and its lights come back; a light at or above the limit is hidden with its item. Under KR's own
@@ -70,24 +71,25 @@ const NON_COVERING_FLAGS: u64 = TaeFlag::Transparent.bits() | TaeFlag::NoDraw.bi
 /// (`floor_covers_light`) and make the ceiling of `LightCover::Uod` (`light_ceiling_z`).
 const FLOOR_FLAGS: u64 = TaeFlag::Surface.bits() | TaeFlag::Roof.bits();
 
-/// The rule a style's `LightCover` gives: `LightCover::Clients` is the KR client's rule in KR-like and the Enhanced
-/// client's in the other styles.
+/// The rule a style's `LightCover` gives: `LightCover::Clients` is the KR client's rule in KR-like and UOD-Painterly
+/// and the Enhanced client's in the other styles.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum LightCoverRule {
     /// `LightCover::Uod`: only a light whose item is not drawn is hidden; its glow is clipped (`light_scene`).
     Uod,
     /// `LightCover::ClassicUo`: `light_is_hidden` on the cover cell.
     ClassicUo,
-    /// `LightCover::Clients` outside KR-like: `client_light_is_hidden`.
+    /// `LightCover::Clients` in Enhanced and Classic: `client_light_is_hidden`.
     EnhancedClient,
-    /// `LightCover::Clients` in KR-like: `kr_light_is_hidden`.
+    /// `LightCover::Clients` in KR-like and UOD-Painterly: `kr_light_is_hidden`.
     KrClient,
 }
 
 impl LightCoverRule {
-    /// The rule `light_cover` gives in a style, `kr_like` when the style is KR-like.
-    pub fn of_style(light_cover: LightCover, kr_like: bool) -> Self {
-        match (light_cover, kr_like) {
+    /// The rule `light_cover` gives in a style, `kr_rules` when the style follows the KR client's light rules
+    /// (KR-like, and UOD-Painterly, which draws KR-like's light sprites).
+    pub fn of_style(light_cover: LightCover, kr_rules: bool) -> Self {
+        match (light_cover, kr_rules) {
             (LightCover::Uod, _) => Self::Uod,
             (LightCover::ClassicUo, _) => Self::ClassicUo,
             (LightCover::Clients, false) => Self::EnhancedClient,
@@ -172,10 +174,10 @@ pub fn light_ceiling_z(light_z: i8, cells: &[&[CoverStatic]], max_z: i32) -> Opt
         .min()
 }
 
-/// Whether `LightCover::Clients` hides a light at `light_z` in KR-like, the KR client's rule (0x004391d0): it is at or
-/// above the z limit `max_z`, as its item is then not drawn, or a static of its cover cell, given by z, drawn below the
-/// limit, sits in a higher layer (`kr_light_layer`), the light's from `light_land_z`, the land z of its own cell, and
-/// the statics' from `cover_land_z`, the land z of the cover cell. Like the Enhanced client it counts every object
+/// Whether `LightCover::Clients` hides a light at `light_z` in KR-like and UOD-Painterly, the KR client's rule
+/// (0x004391d0): it is at or above the z limit `max_z`, as its item is then not drawn, or a static of its cover cell,
+/// given by z, drawn below the limit, sits in a higher layer (`kr_light_layer`), the light's from `light_land_z`, the
+/// land z of its own cell, and the statics' from `cover_land_z`, the land z of the cover cell. Like the Enhanced client it counts every object
 /// there, whatever its flags.
 pub fn kr_light_is_hidden(
     light_z: i8,
