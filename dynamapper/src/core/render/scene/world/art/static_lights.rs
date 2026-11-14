@@ -386,7 +386,7 @@ pub fn sys_collect_visible_static_lights(
                         hue_id: tile.hue,
                     };
                     let land_z = |x: u32, y: u32| static_land_z(map_planes.as_deref(), map_id, (x as i32, y as i32));
-                    let max_z = caves.light_max_z(tile_x, tile_y, z_view.0.max_z);
+                    let max_z = caves.light_max_z(tile_x, tile_y, z_view.0.max_z_on_cell(land_z, tile_x, tile_y));
                     if !seen.insert(key)
                         || static_light_is_hidden(
                             &mut statics_store,

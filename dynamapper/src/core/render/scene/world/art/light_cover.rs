@@ -27,9 +27,10 @@
 //! cover cell at least `LIGHT_COVER_MIN_RISE` above the light also hides it there (`floor_covers_light`).
 //!
 //! The rules take the view's z limit (`max_z`) so a z-view limit composes with them: a static the limit stops drawing
-//! no longer covers, and its lights come back; a light at or above the limit is hidden with its item. KR's own cut
-//! (the layers above the player's, 0x0043c9f0) is not used, as the renderer draws to the z-view limit in every style:
-//! the light cover follows what is drawn.
+//! no longer covers, and its lights come back; a light at or above the limit is hidden with its item. Under KR's own
+//! cut (KR-like's `player_floor_rule = "kr"`: the layers above the player's, 0x0043c9f0) the callers pass the z from
+//! which the light cell's layers are hidden (`ZViewCut::max_z_on_cell`), so a light in a hidden layer goes and a cover
+//! object counts only in the layers drawn, as KR culls: the light cover follows what is drawn.
 //!
 //! A cell's objects are its statics, each as itself whatever its graphic (map statics are never multis:
 //! `core::multis`), and the parts the renderer draws there of the multis placed around it (`MultiCoverParts`).
