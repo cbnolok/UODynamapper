@@ -1112,7 +1112,7 @@ player_floor_rule = "kr"
 
 [painterly.local_lights]
 source = "light_sprites"
-light_sprites_intensity = 1.0
+light_sprites_intensity = 0.85
 light_mul_intensity = 1.0
 centre_on_items = true
 
@@ -1304,7 +1304,7 @@ enable_kr_color_wash = 1
 kr_color_wash_strength = 0.68
 kr_color_wash_scale = 80.0
 light_decal_intensity = 1.35
-static_light_decal_visibility = 0.55
+static_light_decal_visibility = 0.2
 art_highlight_strength = 0.28
 art_depth_tint_strength = 0.30
 enable_normal_maps = 0
@@ -1386,7 +1386,7 @@ enable_kr_color_wash = 1
 kr_color_wash_strength = 0.74
 kr_color_wash_scale = 64.0
 light_decal_intensity = 1.35
-static_light_decal_visibility = 0.55
+static_light_decal_visibility = 0.2
 art_highlight_strength = 0.24
 art_depth_tint_strength = 0.34
 enable_normal_maps = 0

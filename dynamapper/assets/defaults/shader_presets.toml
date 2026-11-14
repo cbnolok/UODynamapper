@@ -1277,6 +1277,11 @@ elevation_degrees = 45.0
 # orange: 0.21 and 0.25 bring its chroma down by about a quarter while grass and rock change little.
 # Its lights are KR-like's: the clients' light sprites, centred and scaled as in KR-like, under KR-like's light cover
 # rules, glowing over the frame where Classic draws light.mul's decals (see [Scene dimming]).
+# The sprites' pools are larger than the decals were, so two values bring the lit ground back to the decals' mean
+# brightness (luma of the lit ground at the lamp post at 1472,1714 on map 1): light_sprites_intensity 0.85 (1.0 lit the
+# ground 17% more by day), and static_light_decal_visibility 0.2 at night and in caves, the strength of the glow over
+# the frame (0.55 made it 2.8 times the decals'). Inside the Britain house at 1407,1596 the room stays brighter than
+# with the decals, which hardly reached its floor.
 
 [painterly]
 land_texture_variation = false
@@ -1285,7 +1290,7 @@ player_floor_rule = "kr"
 
 [painterly.local_lights]
 source = "light_sprites"
-light_sprites_intensity = 1.0
+light_sprites_intensity = 0.85
 light_mul_intensity = 1.0
 centre_on_items = true
 
@@ -1477,7 +1482,7 @@ enable_kr_color_wash = 1
 kr_color_wash_strength = 0.68
 kr_color_wash_scale = 80.0
 light_decal_intensity = 1.35
-static_light_decal_visibility = 0.55
+static_light_decal_visibility = 0.2
 art_highlight_strength = 0.28
 art_depth_tint_strength = 0.30
 enable_normal_maps = 0
@@ -1559,7 +1564,7 @@ enable_kr_color_wash = 1
 kr_color_wash_strength = 0.74
 kr_color_wash_scale = 64.0
 light_decal_intensity = 1.35
-static_light_decal_visibility = 0.55
+static_light_decal_visibility = 0.2
 art_highlight_strength = 0.24
 art_depth_tint_strength = 0.34
 enable_normal_maps = 0

@@ -1253,12 +1253,14 @@ mod tests {
     }
 
     /// KR-like, Enhanced and UOD-Painterly each have one `local_lights` table, the light sprites at their own
-    /// intensity, centred on their items, in both bundled files; Classic has none.
+    /// intensity, centred on their items, in both bundled files; Classic has none. UOD-Painterly's sprites light the
+    /// ground at 0.85, where they match the mean brightness its light.mul decals gave the lit ground.
     #[test]
     fn bundled_presets_give_the_light_sprite_styles_their_local_lights() {
         use crate::core::render::scene::world::land::mesh_material::{
             ClientLocalLightSource, NEUTRAL_LOCAL_LIGHT_INTENSITY,
         };
+        const PAINTERLY_LIGHT_SPRITES_INTENSITY: f32 = 0.85;
         let expected = ClientLocalLights {
             source: ClientLocalLightSource::LightSprites,
             light_sprites_intensity: NEUTRAL_LOCAL_LIGHT_INTENSITY,
@@ -1268,6 +1270,12 @@ mod tests {
         for (name, text) in [("shader_presets.toml", BUNDLED_FACTORY_PRESETS), ("land.toml", BUNDLED_LAND_SETTINGS)] {
             let presets = parse(text).expect("bundled");
             for (group, slots) in preset_groups(&presets) {
+                let expected = match group {
+                    PAINTERLY_PRESET_GROUP => {
+                        ClientLocalLights { light_sprites_intensity: PAINTERLY_LIGHT_SPRITES_INTENSITY, ..expected }
+                    }
+                    _ => expected,
+                };
                 let local_lights = preset_group_draws_light_sprites(group).then_some(expected);
                 assert_eq!(slots.local_lights, local_lights, "{name} {group}");
             }
