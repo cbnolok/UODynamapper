@@ -651,8 +651,9 @@ pub enum PlayerFloorRule {
     /// caps the land and the statics a little above the player.
     #[serde(rename = "classicuo")]
     ClassicUo,
-    /// The KR client's: a ceiling over the player hides the statics in the 20-z layers above the player's, each
-    /// counted from the land under its own cell; the land goes whole while the player is below the land.
+    /// The KR client's: a ceiling over the player hides the statics in the 20-z layers above the player's, every
+    /// layer counted from the land under the player's cell (KR counts each from its own cell's); the land goes whole
+    /// while the player is below the land.
     #[serde(rename = "kr")]
     Kr,
 }

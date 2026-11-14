@@ -66,7 +66,7 @@ animated fixtures.
 uniforms. `status.static_lights.instances` exposes the collector count,
 `status.client_light_sprites.instances` the light sprites left after the light
 cover, and `status.z_view` the z-view limit (`max_z`, `max_ground_z`,
-`hide_roofs`, and `kr_max_layer` under KR-like's KR rule). Use these
+`hide_roofs`). Use these
 to verify the source state for an effect comparison, then inspect actual pixels;
 the count does not establish visible light decals or GPU completion.
 

@@ -10,7 +10,7 @@ use crate::core::multis::{
     expanded_multi_part_z, MultiDefinitionsRes, MultiPart, PlacedMulti, PlacedMultisRes,
 };
 use crate::core::render::scene::world::caves::{CaveMap, CaveStatic, CavesRes};
-use crate::core::render::scene::world::z_view::{cell_average_land_z, ZViewCut, ZViewLimit};
+use crate::core::render::scene::world::z_view::{ZViewCut, ZViewLimit};
 use crate::core::render::scene::SceneStateData;
 use crate::core::statics::{LazyStaticsStore, StaticsStoreRes};
 use crate::core::texture_cache::art::{GroundArtPageAtlas, ResolvedArtSprite, SpriteArtPageAtlas};
@@ -2253,13 +2253,8 @@ fn emit_static_render_tile(
     if !frame.is_dot_mode && tilemeta.is_some_and(|meta| meta.is_nodraw()) {
         return;
     }
-    // Above the player's floor, with the z-view limit on; picking skips them too, as they are never emitted. The KR
-    // rule counts its layers from the averaged land z of the static's cell.
-    let (cell_x, cell_y) = (render_tile.world_x as i32, render_tile.world_z as i32);
-    let cell_land_z = || {
-        cell_average_land_z(|x, y| static_land_z(resources.map_planes, frame.map_id, (x, y)).map(i32::from), cell_x, cell_y)
-    };
-    if frame.z_view.hides_static(tilemeta.map_or(0, |meta| meta.flags), render_tile.z, cell_land_z) {
+    // Above the player's floor, with the z-view limit on; picking skips them too, as they are never emitted.
+    if frame.z_view.hides_static(tilemeta.map_or(0, |meta| meta.flags), render_tile.z) {
         return;
     }
     // Over a cave drawn over the map, and in it (caves.rs).

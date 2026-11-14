@@ -17,8 +17,8 @@
 //! KR-like can follow the Kingdom Reborn client's rule instead (`PlayerFloorRule::Kr`, `compute_kr_z_view_cut`), which
 //! tests the same two cells with the same threshold (UOKR.exe `0x0043c350`: a static more than
 //! `PLAYER_CEILING_MIN_RISE` above the player on the player's cell with flags `0x20004` clear and Roof only with
-//! Surface, or a Roof on the next cell, with no other flag test) and then, rather than a cap at a z, hides whole 20-z
-//! height layers (`KrLayerCut`):
+//! Surface, or a Roof on the next cell, with no other flag test) and then, rather than a cap at the ceiling's z, hides
+//! whole 20-z height layers. What KR does:
 //! - every static, item and multi part is filed in a layer, clamp((z - land z + 140) / 20, 0, 15), its land z the
 //!   average of its own cell's corners (`0x00458160` → `0x0043c8a0` → `0x0043c950`, `0x00587e50`, `0x0043c5b0`; the
 //!   layer groups `0x0043d3a0`, `0x0043d2c0`, `0x0043d070`; multis `0x0056a6d0`); mobiles and one kind of multi
@@ -30,6 +30,15 @@
 //!   flag +0x50, set by its constructor `0x00459360` and never cleared), which is how KR shows a cave: no land at
 //!   all, the cave's statics on black;
 //! - there are no roof flags in it: a roof goes only when its layer does.
+//!
+//! Dynamapper diverges from KR in one point: every object's layer is counted from the averaged land z of the player's
+//! cell, not of its own, so the cut is one z for the whole view, `ZViewCut::max_z`, the bottom of the layer above the
+//! player's (`kr_layer_cut_z`). KR's count from each object's own cell drops whole walls where a building stands on
+//! uneven land: at Britain 1409,1596 on map 1 the house's west wall stands on the river bank (cells x 1407, averaged
+//! land 7, against 30 inside), so with the player in the room at z 30 (layer 7) the wall and its windows, at z 30
+//! over land 7, are in layer 8 and go, in KR too. Counting from the player's cell keeps the ceiling test, the 20-z
+//! layers, their clamp, the cut at the player's own layer and the land's drop below ground; only the land under an
+//! object no longer moves it across a layer.
 
 use crate::configs::settings::Settings;
 use crate::core::multis::{expanded_multi_part_z, MultiDefinitionsRes, PlacedMultisRes};
@@ -80,61 +89,15 @@ pub struct ZViewCut {
     pub max_ground_z: i32,
     /// Roofs are not drawn.
     pub hide_roofs: bool,
-    /// The KR client's height layers above the player's that are not drawn (`PlayerFloorRule::Kr`).
-    pub layers: Option<KrLayerCut>,
-}
-
-/// The KR client's layer cut: statics and multi parts in a layer above `max_layer` are not drawn, each layer counted
-/// from the averaged land z of the object's own cell (`kr_light_layer`).
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct KrLayerCut {
-    /// The highest layer drawn: the player's.
-    pub max_layer: i32,
-    /// The player's z, which stands in for a cell's land z while it is not loaded, as in the KR client
-    /// (`0x0043c950`).
-    pub fallback_land_z: i32,
-}
-
-impl KrLayerCut {
-    /// The z from which an object over the averaged land z `land_z` lies in a hidden layer: the bottom of the layer
-    /// above `max_layer` (a layer is `(z - land z + CLIENT_BAND_BASE) / CLIENT_BAND_HEIGHT`, clamped), none when
-    /// `max_layer` is the top one.
-    pub fn max_z_over(&self, land_z: i32) -> i32 {
-        if self.max_layer >= KR_LIGHT_TOP_LAYER {
-            NO_Z_VIEW_LIMIT
-        } else {
-            land_z + CLIENT_BAND_HEIGHT * (self.max_layer + 1) - CLIENT_BAND_BASE
-        }
-    }
 }
 
 impl ZViewCut {
     /// Nothing is hidden.
-    pub const NONE: Self =
-        Self { max_z: NO_Z_VIEW_LIMIT, max_ground_z: NO_Z_VIEW_LIMIT, hide_roofs: false, layers: None };
+    pub const NONE: Self = Self { max_z: NO_Z_VIEW_LIMIT, max_ground_z: NO_Z_VIEW_LIMIT, hide_roofs: false };
 
-    /// The z from which a static or multi part on a cell is hidden, `land_z` giving the averaged land z of the cell
-    /// (`cell_average_land_z`, `None` while unknown), which only the KR layer cut reads.
-    pub fn max_z_over_land(&self, land_z: impl FnOnce() -> Option<i32>) -> i32 {
-        match self.layers {
-            None => self.max_z,
-            Some(layers) => self.max_z.min(layers.max_z_over(land_z().unwrap_or(layers.fallback_land_z))),
-        }
-    }
-
-    /// `max_z_over_land` for the cell (`x`, `y`), `land_z` giving each cell's raw land z: the z limit of the light cover
-    /// (art/light_cover.rs) for a light or a cover object there, as the statics of the cell are hidden at it.
-    pub fn max_z_on_cell(&self, land_z: impl Fn(u32, u32) -> Option<i8>, x: u32, y: u32) -> i32 {
-        self.max_z_over_land(|| {
-            let raw_z = |x: i32, y: i32| land_z(u32::try_from(x).ok()?, u32::try_from(y).ok()?).map(i32::from);
-            cell_average_land_z(raw_z, i32::try_from(x).ok()?, i32::try_from(y).ok()?)
-        })
-    }
-
-    /// Whether a static or multi part with tile flags `flags` at `z` is hidden, on a cell whose averaged land z
-    /// `land_z` gives (see `max_z_over_land`).
-    pub fn hides_static(&self, flags: u64, z: i8, land_z: impl FnOnce() -> Option<i32>) -> bool {
-        i32::from(z) >= self.max_z_over_land(land_z) || (self.hide_roofs && flags & TaeFlag::Roof.bits() != 0)
+    /// Whether a static or multi part with tile flags `flags` at `z` is hidden.
+    pub fn hides_static(&self, flags: u64, z: i8) -> bool {
+        i32::from(z) >= self.max_z || (self.hide_roofs && flags & TaeFlag::Roof.bits() != 0)
     }
 
     /// `max_ground_z` for the land shader (`SceneUniform::land_max_z`).
@@ -198,14 +161,15 @@ pub fn compute_z_view_cut(x: i32, y: i32, z: i32, player_land_z: Option<i32>, ce
     if roof_cap < headroom {
         max_z = headroom;
     }
-    ZViewCut { max_z, max_ground_z, hide_roofs, layers: None }
+    ZViewCut { max_z, max_ground_z, hide_roofs }
 }
 
 /// The KR client's cut for a player on (`x`, `y`) at `z`, over the averaged land z `player_land_z` of the cell (`None`
 /// while unknown: then nothing hides the land and the player's own z stands in for it to count the layers). A static
 /// more than `PLAYER_CEILING_MIN_RISE` above the player on the player's cell, neither foliage nor see-through and a
 /// floor if it is a roof, or a roof on the cell (x+1, y+1), hides the layers above the player's (UOKR.exe
-/// `0x0043c350`); the land goes whole while the player is below it (`0x00587ad0`).
+/// `0x0043c350`), every object's counted from the player's cell (`kr_layer_cut_z`); the land goes whole while the
+/// player is below it (`0x00587ad0`).
 pub fn compute_kr_z_view_cut(x: i32, y: i32, z: i32, player_land_z: Option<i32>, cells: &impl ZViewCells) -> ZViewCut {
     let ceiling_min = z + PLAYER_CEILING_MIN_RISE;
     let under_ceiling = cells.objects(x, y).iter().any(|&(flags, object_z)| {
@@ -216,16 +180,23 @@ pub fn compute_kr_z_view_cut(x: i32, y: i32, z: i32, player_land_z: Option<i32>,
         .objects(x + 1, y + 1)
         .iter()
         .any(|&(flags, object_z)| i32::from(object_z) > ceiling_min && flags & TaeFlag::Roof.bits() != 0);
-    let layers = under_ceiling.then(|| KrLayerCut {
-        max_layer: kr_light_layer(clamp_to_i8(z), clamp_to_i8(player_land_z.unwrap_or(z))),
-        fallback_land_z: z,
-    });
     let below_land = player_land_z.is_some_and(|land_z| z < land_z);
     ZViewCut {
-        max_z: NO_Z_VIEW_LIMIT,
+        max_z: if under_ceiling { kr_layer_cut_z(z, player_land_z.unwrap_or(z)) } else { NO_Z_VIEW_LIMIT },
         max_ground_z: if below_land { ALL_LAND_HIDDEN_Z } else { NO_Z_VIEW_LIMIT },
         hide_roofs: false,
-        layers,
+    }
+}
+
+/// The z from which KR's cut hides the view for a player at `z` over the averaged land z `land_z`: the bottom of the
+/// layer above the player's (`kr_light_layer`: `(z - land_z + CLIENT_BAND_BASE) / CLIENT_BAND_HEIGHT`, clamped to 0 to
+/// `KR_LIGHT_TOP_LAYER`), every object's layer counted from the same land z; none while the player is in the top layer.
+pub fn kr_layer_cut_z(z: i32, land_z: i32) -> i32 {
+    let player_layer = kr_light_layer(clamp_to_i8(z), clamp_to_i8(land_z));
+    if player_layer >= KR_LIGHT_TOP_LAYER {
+        NO_Z_VIEW_LIMIT
+    } else {
+        land_z + CLIENT_BAND_HEIGHT * (player_layer + 1) - CLIENT_BAND_BASE
     }
 }
 
@@ -375,7 +346,7 @@ fn player_cell_land_z(map_planes: Option<&MapPlanesRes>, map_id: u32, x: i32, y:
 
 /// The averaged land z of the cell (`x`, `y`) (`average_land_z`), `land_z` giving each cell's raw land z; `None` while
 /// a corner is not known.
-pub fn cell_average_land_z(land_z: impl Fn(i32, i32) -> Option<i32>, x: i32, y: i32) -> Option<i32> {
+fn cell_average_land_z(land_z: impl Fn(i32, i32) -> Option<i32>, x: i32, y: i32) -> Option<i32> {
     Some(average_land_z(land_z(x, y)?, land_z(x + 1, y)?, land_z(x + 1, y + 1)?, land_z(x, y + 1)?))
 }
 
@@ -468,20 +439,15 @@ mod tests {
         }
     }
 
-    /// `ZViewCut::hides_static` on a cell whose land is not known.
-    fn hides(cut: &ZViewCut, flags: u64, z: i8) -> bool {
-        cut.hides_static(flags, z, || None)
-    }
-
     /// A room: the floor above caps the view at its z and hides the roof; land stays.
     #[test]
     fn room_under_an_upper_floor_caps_at_the_floor() {
         // The Britain cell (map 1, 1413,1595): wooden floor land at 30, a table, boards at 50, pavers at 70.
         let cells = Cells::default().with(10, 10, 0, 30).with(10, 10, FLOOR, 50).with(10, 10, FLOOR, 70);
         let cut = compute_z_view_cut(10, 10, 30, Some(30), &cells);
-        assert_eq!(cut, ZViewCut { max_z: 50, max_ground_z: NO_Z_VIEW_LIMIT, hide_roofs: true, layers: None });
-        assert!(hides(&cut, FLOOR, 50) && hides(&cut, WALL, 70) && hides(&cut, ROOF, 40));
-        assert!(!hides(&cut, WALL, 49));
+        assert_eq!(cut, ZViewCut { max_z: 50, max_ground_z: NO_Z_VIEW_LIMIT, hide_roofs: true });
+        assert!(cut.hides_static(FLOOR, 50) && cut.hides_static(WALL, 70) && cut.hides_static(ROOF, 40));
+        assert!(!cut.hides_static(WALL, 49));
     }
 
     /// The upper floor of a two-storey building: the floor the player stands on and its walls stay, the storey above
@@ -494,10 +460,10 @@ mod tests {
             .with(11, 11, ROOF, 60)
             .with(12, 12, ROOF, 63);
         let cut = compute_z_view_cut(10, 10, 20, Some(0), &cells);
-        assert_eq!(cut, ZViewCut { max_z: 40, max_ground_z: NO_Z_VIEW_LIMIT, hide_roofs: true, layers: None });
+        assert_eq!(cut, ZViewCut { max_z: 40, max_ground_z: NO_Z_VIEW_LIMIT, hide_roofs: true });
         let upstairs = compute_z_view_cut(10, 10, 40, Some(0), &cells);
         assert_eq!(upstairs.max_z, 60, "the roof one cell south-east caps the top storey");
-        assert!(upstairs.hide_roofs && !hides(&upstairs, FLOOR, 40));
+        assert!(upstairs.hide_roofs && !upstairs.hides_static(FLOOR, 40));
     }
 
     /// Under a roof alone: the cap is the lowest z of the connected roof (its eaves), not the tile over the player.
@@ -511,7 +477,7 @@ mod tests {
             // A separate roof more than `NEAR_ROOF_MAX_STEP` lower is not part of it.
             .with(15, 11, ROOF, 5);
         let cut = compute_z_view_cut(10, 10, 0, Some(0), &cells);
-        assert_eq!(cut, ZViewCut { max_z: 21, max_ground_z: NO_Z_VIEW_LIMIT, hide_roofs: true, layers: None });
+        assert_eq!(cut, ZViewCut { max_z: 21, max_ground_z: NO_Z_VIEW_LIMIT, hide_roofs: true });
     }
 
     /// A cap below the player's headroom is raised to it.
@@ -545,8 +511,8 @@ mod tests {
         // The Minoc mine: rock land at 79, cave floor statics at 0.
         let cells = Cells::default().with(10, 10, FLOOR, 0).with(10, 10, WALL, 40);
         let cut = compute_z_view_cut(10, 10, 0, Some(79), &cells);
-        assert_eq!(cut, ZViewCut { max_z: 16, max_ground_z: 16, hide_roofs: false, layers: None });
-        assert!(hides(&cut, WALL, 40) && !hides(&cut, FLOOR, 0));
+        assert_eq!(cut, ZViewCut { max_z: 16, max_ground_z: 16, hide_roofs: false });
+        assert!(cut.hides_static(WALL, 40) && !cut.hides_static(FLOOR, 0));
         let entrance = Cells::default().with(10, 10, FLOOR, 0);
         assert_eq!(compute_z_view_cut(10, 10, 0, Some(15), &entrance), ZViewCut::NONE);
     }
@@ -563,36 +529,49 @@ mod tests {
     }
 
     /// KR: the boards over a Britain room (map 1, 1413,1595: land at 30, boards at 50, pavers at 70) put the player
-    /// at 30 under a ceiling; the layers above the player's, 7 ((30 - 30 + 140) / 20), go: from z 50 over land 30.
+    /// at 30 under a ceiling; the layers above the player's, 7 ((30 - 30 + 140) / 20), go: from z 50.
     #[test]
     fn kr_ceiling_hides_the_layers_above_the_players() {
         let cells = Cells::default().with(10, 10, FLOOR, 50).with(10, 10, FLOOR, 70);
         let cut = compute_kr_z_view_cut(10, 10, 30, Some(30), &cells);
-        assert_eq!(cut.layers, Some(KrLayerCut { max_layer: 7, fallback_land_z: 30 }));
-        assert_eq!((cut.max_z, cut.max_ground_z, cut.hide_roofs), (NO_Z_VIEW_LIMIT, NO_Z_VIEW_LIMIT, false));
-        assert!(!hides(&cut, FLOOR, 49) && cut.hides_static(FLOOR, 50, || Some(30)));
+        assert_eq!(cut, ZViewCut { max_z: 50, ..ZViewCut::NONE });
+        assert!(!cut.hides_static(FLOOR, 49) && cut.hides_static(FLOOR, 50));
         // A roof stays while its layer does: no roof flag in the KR rule.
-        assert!(!cut.hides_static(ROOF, 45, || Some(30)));
-        // Each cell counts from its own land: over land 40 the hidden layers start at 60, over land 10 at 30.
-        assert!(!cut.hides_static(WALL, 55, || Some(40)) && cut.hides_static(WALL, 60, || Some(40)));
-        assert!(cut.hides_static(WALL, 30, || Some(10)) && !cut.hides_static(WALL, 29, || Some(10)));
+        assert!(!cut.hides_static(ROOF, 45));
         // Upstairs on the boards, layer 8, the pavers at 70 are the ceiling and go; on the pavers, the open.
         let upstairs = compute_kr_z_view_cut(10, 10, 50, Some(30), &cells);
-        assert_eq!(upstairs.layers.map(|layers| layers.max_layer), Some(8));
-        assert!(!upstairs.hides_static(FLOOR, 50, || Some(30)) && upstairs.hides_static(FLOOR, 70, || Some(30)));
+        assert_eq!(upstairs.max_z, 70);
+        assert!(!upstairs.hides_static(FLOOR, 50) && upstairs.hides_static(FLOOR, 70));
         assert_eq!(compute_kr_z_view_cut(10, 10, 70, Some(30), &cells), ZViewCut::NONE);
+    }
+
+    /// KR's layers counted from the player's cell: anywhere in the player's layer the cut is the next layer's bottom,
+    /// so one z for the whole view, and the land under another cell no longer moves its objects across a layer.
+    #[test]
+    fn kr_layers_count_from_the_players_cell() {
+        // Britain 1409,1596 on map 1: the player in the room at 30 over land 30 (layer 7). The west wall on the river
+        // bank, its cells over land 7, has its windows at 30: KR files them in layer 8 and hides them; the cut at 50
+        // keeps them.
+        let cells = Cells::default().with(10, 10, FLOOR, 50);
+        let cut = compute_kr_z_view_cut(10, 10, 30, Some(30), &cells);
+        assert!(!cut.hides_static(WALL, 30) && !cut.hides_static(WALL, 49));
+        // The whole of the player's layer gives one cut.
+        for z in [30, 40, 49] {
+            assert_eq!(kr_layer_cut_z(z, 30), 50);
+        }
+        assert_eq!(kr_layer_cut_z(50, 30), 70);
+        // Over land 7 the layers start 7 z higher: a player at 30 is in layer 8, from 27, cut from 47.
+        assert_eq!(kr_layer_cut_z(30, 7), 47);
     }
 
     /// KR: the layers clamp, so a player in the top layer hides nothing, and one far below the land is in layer 0.
     #[test]
     fn kr_layers_clamp_to_the_client_range() {
-        let top = KrLayerCut { max_layer: KR_LIGHT_TOP_LAYER, fallback_land_z: 0 };
-        assert_eq!(top.max_z_over(0), NO_Z_VIEW_LIMIT);
-        let bottom = KrLayerCut { max_layer: 0, fallback_land_z: 0 };
-        assert_eq!(bottom.max_z_over(0), CLIENT_BAND_HEIGHT - CLIENT_BAND_BASE);
+        assert_eq!(kr_layer_cut_z(100, -100), NO_Z_VIEW_LIMIT);
+        assert_eq!(kr_layer_cut_z(0, 0), CLIENT_BAND_HEIGHT * 8 - CLIENT_BAND_BASE);
         let cells = Cells::default().with(10, 10, FLOOR, 127);
         let cut = compute_kr_z_view_cut(10, 10, -100, Some(100), &cells);
-        assert_eq!(cut.layers.map(|layers| layers.max_layer), Some(0));
+        assert_eq!(cut.max_z, 100 + CLIENT_BAND_HEIGHT - CLIENT_BAND_BASE, "layer 0's top");
     }
 
     /// KR: the roof on the cell in front counts whatever its other flags; the player's own cell skips foliage,
@@ -607,9 +586,9 @@ mod tests {
             .with(11, 11, ROOF, 14);
         assert_eq!(compute_kr_z_view_cut(10, 10, 0, Some(0), &open), ZViewCut::NONE);
         let walkable_roof = Cells::default().with(11, 11, ROOF | TaeFlag::Surface.bits(), 15);
-        assert!(compute_kr_z_view_cut(10, 10, 0, Some(0), &walkable_roof).layers.is_some());
+        assert_eq!(compute_kr_z_view_cut(10, 10, 0, Some(0), &walkable_roof).max_z, 20);
         let roof_floor = Cells::default().with(10, 10, ROOF | TaeFlag::Surface.bits(), 15);
-        assert!(compute_kr_z_view_cut(10, 10, 0, Some(0), &roof_floor).layers.is_some());
+        assert_eq!(compute_kr_z_view_cut(10, 10, 0, Some(0), &roof_floor).max_z, 20);
     }
 
     /// KR in the Minoc mine (rock land at 79, cave floor statics at 0): no ceiling statics, so no layer goes, but

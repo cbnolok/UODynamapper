@@ -155,10 +155,12 @@ default_preset = "classic.morning"
 #                     the player caps the land and the statics a little above the player.
 #   "kr":             The KR client's: with a static more than 14 z above the player on the player's cell, or a roof
 #                     on the cell in front, every static, item and multi part in a higher 20-z layer than the player's
-#                     is hidden, layer = clamp((z - land z + 140) / 20, 0, 15), each counted from the averaged land z
-#                     of its own cell; land is never cut by height, and goes whole while the player stands below the
-#                     land of the player's cell (in a cave). The lights of the hidden layers go with them, and the
-#                     statics of the hidden layers no longer cover or clip the lights below them.
+#                     is hidden, layer = clamp((z - land z + 140) / 20, 0, 15), every one counted from the averaged
+#                     land z of the player's cell (the KR client counts each from its own cell's, which drops whole
+#                     walls of buildings on uneven ground); land is never cut by height, and goes whole while the
+#                     player stands below the land of the player's cell (in a cave). The lights of the hidden layers
+#                     go with them, and the statics of the hidden layers no longer cover or clip the lights below
+#                     them.
 #
 # === [Client shadows] ===
 # client_shadows:    KR-like only, required there and refused elsewhere. true draws the KR client's static shadows

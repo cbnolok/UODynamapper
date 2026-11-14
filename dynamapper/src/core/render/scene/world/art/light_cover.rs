@@ -29,11 +29,10 @@
 //!
 //! The rules take the view's z limit (`max_z`) so a z-view limit composes with them: a static the limit stops drawing
 //! no longer covers, and its lights come back; a light at or above the limit is hidden with its item. Under KR's own
-//! cut (KR-like's `player_floor_rule = "kr"`: the layers above the player's, 0x0043c9f0) the limit differs from cell to
-//! cell, so `static_light_is_hidden` and `static_light_ceiling_z` take it per cell (`ZViewCut::max_z_on_cell`, the z
-//! from which a cell's layers are hidden): the light against its own cell's, each object against its own cell's. A
-//! light in a hidden layer goes and an object counts only in the layers drawn, as KR culls: the light cover follows
-//! what is drawn, also where the land under the light cell and the cover cell differs across a layer boundary.
+//! cut (KR-like's `player_floor_rule = "kr"`: the layers above the player's, 0x0043c9f0) the limit is the bottom of the
+//! layer above the player's, every layer counted from the player's cell (`z_view::kr_layer_cut_z`), so a light in a
+//! hidden layer goes and an object counts only in the layers drawn: the light cover follows what is drawn, one limit
+//! for the light and its cover cell wherever the land under them differs.
 //!
 //! A cell's objects are its statics, each as itself whatever its graphic (map statics are never multis:
 //! `core::multis`), and the parts the renderer draws there of the multis placed around it (`MultiCoverParts`).
@@ -278,8 +277,7 @@ fn multi_parts_on_cells(
 
 /// Whether `rule` hides a light on (`tile_x`, `tile_y`) at `light_z`, reading its cover cell from the statics store
 /// and the multi parts `multi_parts` holds; `LightCoverRule::Uod` reads nothing and hides only a light at or above the
-/// z limit of its cell, whose item is not drawn. `max_z` gives a cell's z limit: the light goes at or above its own
-/// cell's, and an object of the cover cell counts only below the cover cell's. `land_z` gives the raw
+/// z limit `max_z`, whose item is not drawn. `land_z` gives the raw
 /// land z of a cell, which the clients' bands start from: the Enhanced client's the light cell's own, the KR client's
 /// each cell's average (`kr_cell_land_z`). While the light cell's is not known (its map block is not loaded) the
 /// light's own z stands in for it, and while the cover cell's is not known, the light cell's. A cell the store cannot
@@ -293,49 +291,34 @@ pub fn static_light_is_hidden(
     tile_x: u32,
     tile_y: u32,
     light_z: i8,
-    max_z: impl Fn(u32, u32) -> i32,
+    max_z: i32,
 ) -> bool {
-    if i32::from(light_z) >= max_z(tile_x, tile_y) {
-        return true;
-    }
     let (cover_x, cover_y) = light_cover_cell(tile_x, tile_y);
-    // The cover cell's objects its limit leaves; the rules below then take no limit of their own.
-    let mut drawn_cover_cell = || {
-        let mut cover_cell = cell_statics(statics_store, tilemeta, multi_parts, cover_x, cover_y);
-        let cover_max_z = max_z(cover_x, cover_y);
-        cover_cell.retain(|item| i32::from(item.z) < cover_max_z);
-        cover_cell
-    };
     match rule {
-        LightCoverRule::Uod => false,
+        LightCoverRule::Uod => i32::from(light_z) >= max_z,
         LightCoverRule::ClassicUo => {
-            let cover_cell = drawn_cover_cell();
-            light_is_hidden(light_z, cover_cell.iter().map(|item| (item.flags, item.z)), NO_Z_VIEW_LIMIT)
+            let cover_cell = cell_statics(statics_store, tilemeta, multi_parts, cover_x, cover_y);
+            light_is_hidden(light_z, cover_cell.iter().map(|item| (item.flags, item.z)), max_z)
         }
         LightCoverRule::EnhancedClient => {
-            let cover_cell = drawn_cover_cell();
+            let cover_cell = cell_statics(statics_store, tilemeta, multi_parts, cover_x, cover_y);
             let light_land_z = land_z(tile_x, tile_y).unwrap_or(light_z);
-            client_light_is_hidden(light_z, light_land_z, cover_cell.iter().map(|item| item.z), NO_Z_VIEW_LIMIT)
-                || floor_covers_light(light_z, &cover_cell, NO_Z_VIEW_LIMIT)
+            client_light_is_hidden(light_z, light_land_z, cover_cell.iter().map(|item| item.z), max_z)
+                || floor_covers_light(light_z, &cover_cell, max_z)
         }
         LightCoverRule::KrClient => {
-            let cover_cell = drawn_cover_cell();
+            let cover_cell = cell_statics(statics_store, tilemeta, multi_parts, cover_x, cover_y);
             let light_land_z = kr_cell_land_z(&land_z, tile_x, tile_y).unwrap_or(light_z);
             let cover_land_z = kr_cell_land_z(&land_z, cover_x, cover_y).unwrap_or(light_land_z);
-            kr_light_is_hidden(
-                light_z,
-                light_land_z,
-                cover_land_z,
-                cover_cell.iter().map(|item| item.z),
-                NO_Z_VIEW_LIMIT,
-            ) || floor_covers_light(light_z, &cover_cell, NO_Z_VIEW_LIMIT)
+            kr_light_is_hidden(light_z, light_land_z, cover_land_z, cover_cell.iter().map(|item| item.z), max_z)
+                || floor_covers_light(light_z, &cover_cell, max_z)
         }
     }
 }
 
 /// The ceiling of a light on (`tile_x`, `tile_y`) at `light_z` under `LightCover::Uod` (`light_ceiling_z`), reading
-/// its own cell and its cover cell from the statics store and the multi parts `multi_parts` holds, each below its own
-/// cell's z limit, which `max_z` gives.
+/// its own cell and its cover cell from the statics store and the multi parts `multi_parts` holds, below the z limit
+/// `max_z`.
 pub fn static_light_ceiling_z(
     statics_store: &mut LazyStaticsStore,
     tilemeta: &TileMetaPackage,
@@ -343,18 +326,12 @@ pub fn static_light_ceiling_z(
     tile_x: u32,
     tile_y: u32,
     light_z: i8,
-    max_z: impl Fn(u32, u32) -> i32,
+    max_z: i32,
 ) -> Option<i8> {
     let (cover_x, cover_y) = light_cover_cell(tile_x, tile_y);
-    let mut drawn_cell = |x, y| {
-        let mut cell = cell_statics(statics_store, tilemeta, multi_parts, x, y);
-        let cell_max_z = max_z(x, y);
-        cell.retain(|item| i32::from(item.z) < cell_max_z);
-        cell
-    };
-    let own_cell = drawn_cell(tile_x, tile_y);
-    let cover_cell = drawn_cell(cover_x, cover_y);
-    light_ceiling_z(light_z, &[&own_cell, &cover_cell], NO_Z_VIEW_LIMIT)
+    let own_cell = cell_statics(statics_store, tilemeta, multi_parts, tile_x, tile_y);
+    let cover_cell = cell_statics(statics_store, tilemeta, multi_parts, cover_x, cover_y);
+    light_ceiling_z(light_z, &[&own_cell, &cover_cell], max_z)
 }
 
 /// The objects the renderer draws on the cell (`x`, `y`), with their tile flags: its statics and the multi parts
@@ -383,6 +360,7 @@ fn cell_statics(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::core::render::scene::world::z_view::kr_layer_cut_z;
 
     const OPAQUE: u64 = TaeFlag::Surface.bits();
     const ROOF: u64 = TaeFlag::Roof.bits();
@@ -556,6 +534,21 @@ mod tests {
         assert!(!floor_covers_light(50, &[item(OPAQUE | TaeFlag::Transparent.bits(), 70)], NO_Z_VIEW_LIMIT));
         assert!(!floor_covers_light(50, &[item(WALL, 70)], NO_Z_VIEW_LIMIT));
         assert!(!floor_covers_light(50, &[item(OPAQUE, 70)], 70));
+    }
+
+    #[test]
+    fn under_krs_cut_the_players_floor_covers_the_lights_below_it() {
+        // Britain 1409,1596 on map 1: the player upstairs at 50 over land 30. The west wall's windows at 30 stand on
+        // the river bank (their cells over land 7), their cover cell inside (over land 30) holds the floor at 50. The
+        // cut counts from the player's cell, 70 on both cells, so the floor stays drawn and covers the windows.
+        let max_z = kr_layer_cut_z(50, 30);
+        let floor = [item(OPAQUE, 50)];
+        assert!(floor_covers_light(30, &floor, max_z));
+        // KR's own layers would let it through: the windows in layer 8 over land 7, the floor in layer 8 over land 30.
+        assert!(!kr_light_is_hidden(30, 7, 30, [50], max_z));
+        // The player downstairs at 30: the cut at 50 drops the floor, and the windows light the player's floor.
+        let max_z = kr_layer_cut_z(30, 30);
+        assert!(!floor_covers_light(30, &floor, max_z) && !kr_light_is_hidden(30, 7, 30, [50], max_z));
     }
 
     #[test]

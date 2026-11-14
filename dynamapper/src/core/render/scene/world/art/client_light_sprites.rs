@@ -426,8 +426,7 @@ pub fn sys_collect_client_light_sprites(
             if !seen.insert(key) {
                 continue;
             }
-            // A drawn cave caps the cells by the light's (`CavesRes::light_max_z`); KR's cut by each cell.
-            let light_max_z = |x, y| caves.light_max_z(key.tile_x, key.tile_y, z_cut.max_z_on_cell(land_z, x, y));
+            let light_max_z = caves.light_max_z(key.tile_x, key.tile_y, z_cut.max_z);
             if static_light_is_hidden(
                 &mut statics_store,
                 &tilemeta.0,
