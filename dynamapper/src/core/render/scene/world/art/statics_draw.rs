@@ -5,7 +5,7 @@ use crate::console_logger::{self, LogAbout, LogSev};
 use crate::core::render::scene::world;
 use crate::core::render::scene::world::art::statics_collect::{
     GroundTileInstance, RenderStaticChunkBatches, RenderStaticInstances, RenderStaticLandInstances,
-    SpriteInstance, StaticChunkBatch, StaticChunkBatchKey,
+    SpriteInstance, StaticChunkBatch, StaticChunkBatchKey, StaticLandStyle,
 };
 use crate::core::system_sets::StartupSysSet;
 use crate::core::texture_cache::art::{
@@ -216,6 +216,7 @@ pub struct StaticBatchEntitySyncState {
 
 #[derive(Resource, Default)]
 pub struct ActiveArtAtlasBindingState {
+    /// The art source the bound atlases are built for (`art_atlas_source`).
     pub configured_source: Option<ClientTextureSource>,
 }
 
@@ -407,6 +408,22 @@ fn resolve_effective_art_source(
                 tilemeta_res,
             )
     })
+}
+
+/// The art source whose atlases the statics need: the active one, or Enhanced while Classic art draws the statics that
+/// continue Enhanced or KR land the Enhanced way (`StaticLandStyle`). The Enhanced sprite atlas holds the Classic pages
+/// too, and the ground atlas holds the land liquids.
+fn art_atlas_source(
+    active_source: Option<ClientTextureSource>,
+    land_style: StaticLandStyle,
+    enhanced_available: bool,
+) -> Option<ClientTextureSource> {
+    match active_source {
+        Some(ClientTextureSource::Cc) if land_style == StaticLandStyle::Enhanced && enhanced_available => {
+            Some(ClientTextureSource::Ec)
+        }
+        source => source,
+    }
 }
 
 fn blank_atlas_spec() -> AtlasAllocationSpec {
@@ -1083,8 +1100,12 @@ pub fn sys_sync_active_art_page_atlases(
     tex_art_cc_res: Option<Res<TexArtCcPackageRes>>,
     tex_art_ec_res: Option<Res<TexArtEcPackageRes>>,
     tex_land_ec_res: Option<Res<TexLandEcPackageRes>>,
+    tilemeta_res: Option<Res<TileMetaPackageRes>>,
 ) {
-    if binding_state.configured_source == source_state.active_source {
+    let atlas_source = art_atlas_source(source_state.active_source, source_state.land_style,
+        source_available(ClientTextureSource::Ec, tex_art_cc_res.as_ref(), tex_art_ec_res.as_ref(),
+            tex_land_ec_res.as_ref(), tilemeta_res.as_ref()));
+    if binding_state.configured_source == atlas_source {
         return;
     }
 
@@ -1100,13 +1121,13 @@ pub fn sys_sync_active_art_page_atlases(
         &mut sprite_atlas_handle,
         &mut ground_atlas,
         &mut ground_atlas_handle,
-        source_state.active_source,
+        atlas_source,
         tex_art_cc_res.as_ref(),
         tex_art_ec_res.as_ref(),
         tex_land_ec_res.as_ref(),
     );
 
-    binding_state.configured_source = source_state.active_source;
+    binding_state.configured_source = atlas_source;
 }
 
 pub fn sys_apply_pending_art_page_atlas_resizes(

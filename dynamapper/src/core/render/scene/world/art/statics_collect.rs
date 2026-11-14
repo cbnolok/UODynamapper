@@ -312,6 +312,8 @@ const TILE_FLAG_SURFACE: u64 = 0x200;
 const TILE_FLAG_BRIDGE: u64 = 0x400;
 const TILE_FLAG_FOLIAGE: u64 = 0x20_000;
 const TILE_FLAG_ROOF: u64 = 0x1000_0000;
+/// NoShoot: the built floors (`static_continues_land`).
+const TILE_FLAG_NO_SHOOT: u64 = 0x2000;
 /// IsWet flag — tile has tidal/water properties (matches tiledata.mul bit 0x80). An object property;
 /// whether the art shader applies the animated sin/cos UV distortion is `static_tile_renders_wet`.
 const TILE_FLAG_WET: u64 = 0x80;
@@ -823,11 +825,31 @@ fn resolve_static_visual_kind(
     }
 }
 
-/// `classic_land`: the land page atlas holds Classic land (`StaticArtSourceState::classic_land`). Enhanced art then
-/// draws its water pieces the Classic way (`classic_land_draws_classic_water`).
+/// The style of the land (`StaticArtSourceState::land_style`), which the statics that continue it take whatever the art
+/// source (`static_continues_land`).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
+pub enum StaticLandStyle {
+    /// No land cache yet: every static keeps its art source.
+    #[default]
+    Unknown,
+    /// The land page atlas holds Classic land (`LandRoutes::atlas`).
+    Classic,
+    /// The land page atlas holds EC-layout land: Enhanced or Kingdom Reborn.
+    Enhanced,
+}
+
+impl StaticLandStyle {
+    pub(super) fn of_land_atlas(atlas: LandTextureSource) -> Self {
+        if atlas.uses_enhanced_land() { Self::Enhanced } else { Self::Classic }
+    }
+}
+
+/// `land_style`: the statics that continue the land take its style (`static_continues_land`). Under Classic land
+/// Enhanced art draws them from their Classic art, as Classic art mode does; under Enhanced or KR land Classic art draws
+/// them the Enhanced way, as Enhanced art mode does.
 pub(super) fn resolve_static_visual_kind_cached(
     art_source: ClientTextureSource,
-    classic_land: bool,
+    land_style: StaticLandStyle,
     tile_graphic: u16,
     tilemeta_package: Option<&udd_assets::tilemeta::TileMetaPackage>,
     tilemeta: Option<&udd_assets::tilemeta::TileMetaItemTile>,
@@ -836,36 +858,56 @@ pub(super) fn resolve_static_visual_kind_cached(
     tex_land_ec: Option<&udd_assets::tex_land_ec::TexLandEcPackage>,
     surface_resolution_cache: &mut StaticSurfaceLikeResolutionCache,
 ) -> StaticVisualKind {
+    let mut enhanced = || enhanced_static_visual_kind(tile_graphic, tilemeta_package, tilemeta, tex_art_ec,
+        tex_land_ec, surface_resolution_cache);
     match art_source {
         ClientTextureSource::Cc => {
-            classic_static_visual_kind(tile_graphic, tilemeta)
-        }
-        ClientTextureSource::Ec if tex_art_ec.and_then(|p| p.present_slot(u32::from(tile_graphic))).is_none() => {
-            present_classic_static_visual_kind(tile_graphic, tilemeta, tex_art_cc)
-                .unwrap_or(StaticVisualKind::Missing)
+            let classic = classic_static_visual_kind(tile_graphic, tilemeta);
+            if land_style != StaticLandStyle::Enhanced {
+                return classic;
+            }
+            enhanced().filter(|&kind| static_continues_land(kind, tilemeta,
+                surface_resolution_cache.landlike_item_texture(tile_graphic, tilemeta_package, tex_land_ec)))
+                .unwrap_or(classic)
         }
         ClientTextureSource::Ec => {
-            let enhanced = resolve_ec_static_visual_kind(
-                tile_graphic,
-                tex_art_ec.and_then(|package| package.present_slot(tile_graphic as u32))
-                    .is_some_and(|slot| slot.is_static()),
-                tex_art_ec.and_then(|package| package.present_slot(tile_graphic as u32))
-                    .is_some_and(|slot| slot.is_land())
-                    && tileart_surface_has_visible_primary(tilemeta_package.map_or(&[], |package| package.item_texture_refs(tile_graphic as u32))),
-                surface_resolution_cache.resolve_surface_like_tex_land_ec_slot_id(
-                    art_source,
-                    tile_graphic as u32,
-                    tilemeta_package,
-                    tilemeta,
-                    tex_land_ec,
-                ),
-            );
-            classic_land_draws_classic_water(classic_land, enhanced)
+            let Some(enhanced) = enhanced() else {
+                return present_classic_static_visual_kind(tile_graphic, tilemeta, tex_art_cc)
+                    .unwrap_or(StaticVisualKind::Missing);
+            };
+            (land_style == StaticLandStyle::Classic && static_continues_land(enhanced, tilemeta,
+                surface_resolution_cache.landlike_item_texture(tile_graphic, tilemeta_package, tex_land_ec)))
                 .then(|| present_classic_static_visual_kind(tile_graphic, tilemeta, tex_art_cc))
                 .flatten()
                 .unwrap_or(enhanced)
         }
     }
+}
+
+/// What Enhanced art draws for `tile_graphic`, or `None` when the EC art package has no image for it (Enhanced art mode
+/// then falls back to its Classic art).
+fn enhanced_static_visual_kind(
+    tile_graphic: u16,
+    tilemeta_package: Option<&udd_assets::tilemeta::TileMetaPackage>,
+    tilemeta: Option<&udd_assets::tilemeta::TileMetaItemTile>,
+    tex_art_ec: Option<&udd_assets::tex_art_ec::TexArtEcPackage>,
+    tex_land_ec: Option<&udd_assets::tex_land_ec::TexLandEcPackage>,
+    surface_resolution_cache: &mut StaticSurfaceLikeResolutionCache,
+) -> Option<StaticVisualKind> {
+    let slot = tex_art_ec?.present_slot(u32::from(tile_graphic))?;
+    Some(resolve_ec_static_visual_kind(
+        tile_graphic,
+        slot.is_static(),
+        slot.is_land()
+            && tileart_surface_has_visible_primary(tilemeta_package.map_or(&[], |package| package.item_texture_refs(tile_graphic as u32))),
+        surface_resolution_cache.resolve_surface_like_tex_land_ec_slot_id(
+            ClientTextureSource::Ec,
+            tile_graphic as u32,
+            tilemeta_package,
+            tilemeta,
+            tex_land_ec,
+        ),
+    ))
 }
 
 /// The Classic art of `tile_graphic` (`classic_static_visual_kind`), when the Classic art package has it.
@@ -880,13 +922,47 @@ fn present_classic_static_visual_kind(
         .then_some(classic)
 }
 
-/// Whether Enhanced art draws a static the Classic way, from its Classic art, as Classic art mode does: the water
-/// pieces (an EC material that is a land liquid, `TexLandEc` with a liquid payload: the water and foam 0x1796–0x17B2
-/// and 0x346E–0x34D2, and the acid and lava the same water shader draws) under Classic land. Their liquid samples the
-/// land page atlas, which then holds Classic land, and the Classic water statics keep the Classic land water's style.
-fn classic_land_draws_classic_water(classic_land: bool, enhanced: StaticVisualKind) -> bool {
-    classic_land && matches!(enhanced,
-        StaticVisualKind::TexLandEc { resolution } if resolution.liquid_payload.is_some())
+/// Whether a static continues the land, so it takes the land's style (`StaticLandStyle`) whatever the art source.
+/// `enhanced` is what Enhanced art draws for it; `terrain_texture` is `landlike_item_texture`. The data decides:
+/// - its Enhanced material is drawn from the terrain: a land liquid (`TexLandEc` with a liquid payload: the water and
+///   foam 0x1796–0x17B2 and 0x346E–0x34D2, the acid and the lava the same water shader draws), or an item surface or
+///   land-textured item whose visible texture a terrain material draws (grass, dirt, snow, swamp, the lava fields);
+/// - and it is not a built floor (NoShoot): cobblestones, pavers, marble, flagstones, bricks and the other town floors
+///   share the terrain textures of the town floor land, but the maps place them almost only raised or roofed, as house,
+///   castle and dungeon floors, so they keep their art source (docs/agent_notes/water_terrain_static_resolution.md).
+fn static_continues_land(
+    enhanced: StaticVisualKind,
+    tilemeta: Option<&udd_assets::tilemeta::TileMetaItemTile>,
+    terrain_texture: bool,
+) -> bool {
+    let built_floor = tilemeta.is_some_and(|meta| meta.flags & TILE_FLAG_NO_SHOOT != 0);
+    match enhanced {
+        StaticVisualKind::TexLandEc { resolution } if resolution.liquid_payload.is_some() => true,
+        StaticVisualKind::TexLandEc { .. } | StaticVisualKind::EcSurface { .. } => terrain_texture && !built_floor,
+        StaticVisualKind::CcRegular { .. } | StaticVisualKind::EcRegular { .. } | StaticVisualKind::Missing => false,
+    }
+}
+
+/// Whether one of the visible Enhanced textures of item `tile_id` (its world-art base layers) is a texture a terrain
+/// material of the EC land package draws.
+fn item_draws_terrain_texture(
+    tile_id: u32,
+    tilemeta_package: Option<&udd_assets::tilemeta::TileMetaPackage>,
+    terrain_textures: &HashSet<u32>,
+) -> bool {
+    tilemeta_package.is_some_and(|package| package.item_texture_refs(tile_id).iter().any(|texture_ref|
+        texture_ref.is_world_art() && !texture_ref.is_auxiliary()
+            && matches!(texture_ref.stable_role(), udd_assets::tilemeta::EcMaterialStableRole::Base
+                | udd_assets::tilemeta::EcMaterialStableRole::SecondaryBase)
+            && terrain_textures.contains(&texture_ref.texture_id)))
+}
+
+/// The textures the terrain materials of the EC land package draw: each terrain record's selected and primary texture.
+fn terrain_texture_ids(tex_land_ec: &udd_assets::tex_land_ec::TexLandEcPackage) -> HashSet<u32> {
+    tex_land_ec.terrain_provenance().iter()
+        .flat_map(|record| [record.selected_texture_id, record.primary_texture_id])
+        .filter(|&texture_id| texture_id != udd_assets::tex_land_ec::MISSING_TEXTURE_ID)
+        .collect()
 }
 
 fn tileart_surface_has_visible_primary(
@@ -1102,8 +1178,8 @@ struct StaticChunkCacheConfig {
     map_id: u32,
     dot_mode: bool,
     art_source: Option<ClientTextureSource>,
-    /// `StaticArtSourceState::classic_land`: a change redraws the water pieces from the other art.
-    classic_land: bool,
+    /// `StaticArtSourceState::land_style`: a change redraws the statics that continue the land from the other art.
+    land_style: StaticLandStyle,
     sprite_atlas_mapping_revision: u64,
     ground_atlas_mapping_revision: u64,
     land_metadata_revision: u64,
@@ -1581,9 +1657,9 @@ pub struct StaticArtCollectDebugState {
 pub struct StaticArtSourceState {
     pub active_source: Option<ClientTextureSource>,
     pub warned_unavailable_source: Option<ClientTextureSource>,
-    /// The land page atlas holds Classic land (`LandRoutes::atlas`): Enhanced art draws its water pieces the Classic
-    /// way (`classic_land_draws_classic_water`).
-    pub classic_land: bool,
+    /// The style of the land page atlas (`LandRoutes::atlas`), which the statics that continue the land take
+    /// (`static_continues_land`).
+    pub land_style: StaticLandStyle,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -1595,9 +1671,30 @@ struct StaticSurfaceLikeResolutionCacheKey {
 #[derive(Resource, Default)]
 pub struct StaticSurfaceLikeResolutionCache {
     entries: HashMap<StaticSurfaceLikeResolutionCacheKey, Option<SurfaceLikeTexLandEcResolution>>,
+    /// `terrain_texture_ids`, read once from the EC land package.
+    terrain_textures: Option<HashSet<u32>>,
+    /// `item_draws_terrain_texture` by item.
+    terrain_texture_items: HashMap<u16, bool>,
 }
 
 impl StaticSurfaceLikeResolutionCache {
+    /// Whether item `tile_graphic` draws a terrain texture in Enhanced art (`item_draws_terrain_texture`).
+    fn landlike_item_texture(
+        &mut self,
+        tile_graphic: u16,
+        tilemeta_package: Option<&udd_assets::tilemeta::TileMetaPackage>,
+        tex_land_ec: Option<&udd_assets::tex_land_ec::TexLandEcPackage>,
+    ) -> bool {
+        if let Some(&cached) = self.terrain_texture_items.get(&tile_graphic) {
+            return cached;
+        }
+        let Some(tex_land_ec) = tex_land_ec else { return false; };
+        let terrain_textures = self.terrain_textures.get_or_insert_with(|| terrain_texture_ids(tex_land_ec));
+        let draws = item_draws_terrain_texture(u32::from(tile_graphic), tilemeta_package, terrain_textures);
+        self.terrain_texture_items.insert(tile_graphic, draws);
+        draws
+    }
+
     fn resolve_surface_like_tex_land_ec_slot_id(
         &mut self,
         art_source: ClientTextureSource,
@@ -1700,10 +1797,11 @@ pub fn sys_sync_static_art_source(
     land_cache: Option<Res<crate::core::texture_cache::land::cache::LandTextureCache>>,
     mut source_state: ResMut<StaticArtSourceState>,
 ) {
-    let classic_land = land_cache.is_some_and(|cache| cache.routes().atlas() == LandTextureSource::Cc);
+    let land_style = land_cache.map_or(StaticLandStyle::Unknown,
+        |cache| StaticLandStyle::of_land_atlas(cache.routes().atlas()));
     // Written only on a change, like `warned_unavailable_source` below.
-    if source_state.classic_land != classic_land {
-        source_state.classic_land = classic_land;
+    if source_state.land_style != land_style {
+        source_state.land_style = land_style;
     }
 
     let requested_source = settings.graphics.art_texture_source;
@@ -1778,8 +1876,8 @@ pub fn sys_sync_static_art_source(
 struct StaticCollectFrameConfig {
     map_id: u32,
     art_source: Option<ClientTextureSource>,
-    /// `StaticArtSourceState::classic_land`.
-    classic_land: bool,
+    /// `StaticArtSourceState::land_style`.
+    land_style: StaticLandStyle,
     is_dot_mode: bool,
     static_art_local_lights: bool,
     show_hidden_multi_parts: bool,
@@ -1925,7 +2023,7 @@ fn static_chunk_cache_config(
         map_id: frame.map_id,
         dot_mode: frame.is_dot_mode,
         art_source: frame.art_source,
-        classic_land: frame.classic_land,
+        land_style: frame.land_style,
         sprite_atlas_mapping_revision: sprite_atlas.0.mapping_revision(),
         ground_atlas_mapping_revision: ground_atlas.0.mapping_revision(),
         land_metadata_revision: tile_atlas.content_revision,
@@ -2192,7 +2290,13 @@ fn rebuild_static_chunk(
         }
     }
 
-    if !frame.is_dot_mode && frame.art_source == Some(ClientTextureSource::Ec) {
+    // Classic art under Enhanced land draws the item surfaces that continue the land too (`static_continues_land`).
+    let draws_enhanced_surfaces = match frame.art_source {
+        Some(ClientTextureSource::Ec) => true,
+        Some(ClientTextureSource::Cc) => frame.land_style == StaticLandStyle::Enhanced,
+        None => false,
+    };
+    if !frame.is_dot_mode && draws_enhanced_surfaces {
         if let (Some(tilemeta), Some(art)) = (resources.tilemeta_package(), resources.tex_art_ec_package()) {
             super::static_surface::apply_boundary_coverage(
                 &mut build.sprite_instances, chunk_key, frame.height_scale,
@@ -2264,7 +2368,7 @@ fn emit_static_render_tile(
         return;
     }
     let visual_kind = frame.art_source.filter(|_| !frame.is_dot_mode).map(|source|
-        resolve_static_visual_kind_cached(source, frame.classic_land, render_tile.graphic, tilemeta_package, tilemeta,
+        resolve_static_visual_kind_cached(source, frame.land_style, render_tile.graphic, tilemeta_package, tilemeta,
             resources.tex_art_cc_package(), resources.tex_art_ec_package(), resources.tex_land_ec_package(),
             surface_resolution_cache));
     let renders_wet = visual_kind.map_or_else(|| static_tile_renders_wet(tilemeta, tilemeta_package,
@@ -3061,7 +3165,7 @@ pub fn sys_collect_visible_statics(
     let frame = StaticCollectFrameConfig {
         map_id,
         art_source,
-        classic_land: source_state.classic_land,
+        land_style: source_state.land_style,
         is_dot_mode,
         static_art_local_lights: settings.world_rendering.enable_static_art_local_lights,
         show_hidden_multi_parts: settings.world_rendering.show_hidden_multi_parts,
@@ -3405,7 +3509,7 @@ mod tests {
         assert_eq!(surface_like_static_world_anchor(classic, 10.0, 20.0), (11.0, 21.0));
         assert!(static_visual_renders_wet(classic, Some(&tile), None, 60_000));
         assert!(!static_visual_renders_wet(StaticVisualKind::Missing, Some(&tile), None, 60_000));
-        assert_eq!(resolve_static_visual_kind_cached(ClientTextureSource::Ec, false, 60_000,
+        assert_eq!(resolve_static_visual_kind_cached(ClientTextureSource::Ec, StaticLandStyle::Unknown, 60_000,
             None, Some(&tile), None, None, None, &mut StaticSurfaceLikeResolutionCache::default()),
             StaticVisualKind::Missing);
     }
@@ -3423,7 +3527,7 @@ mod tests {
         let (mut world, mut classic) = (0, 0);
         for tile in meta.item_tiles().iter().filter(|t| !t.is_nodraw()) {
             let Ok(graphic) = u16::try_from(tile.tile_id) else { continue; };
-            let selected = resolve_static_visual_kind_cached(ClientTextureSource::Ec, false, graphic,
+            let selected = resolve_static_visual_kind_cached(ClientTextureSource::Ec, StaticLandStyle::Unknown, graphic,
                 Some(&meta), Some(tile), Some(&cc), Some(&ec), Some(&land), &mut cache);
             if ec.present_slot(tile.tile_id).is_some() {
                 assert!(!matches!(selected, StaticVisualKind::CcRegular { .. } | StaticVisualKind::Missing));
@@ -3442,23 +3546,55 @@ mod tests {
     }
 
     #[test]
-    fn classic_land_draws_only_enhanced_liquid_pieces_the_classic_way() {
+    fn statics_continue_the_land_when_enhanced_draws_them_from_the_terrain_and_they_are_not_built_floors() {
         let liquid = SurfaceLikeTexLandEcResolution { liquid_payload: Some(7), ..test_surface_like_resolution() };
         let liquid = StaticVisualKind::TexLandEc { resolution: liquid };
-        assert!(classic_land_draws_classic_water(true, liquid));
-        assert!(!classic_land_draws_classic_water(false, liquid));
-        for other in [StaticVisualKind::TexLandEc { resolution: test_surface_like_resolution() },
-            StaticVisualKind::EcSurface { art_id: 0x1CC7 }, StaticVisualKind::EcRegular { art_id: 0x1797 },
-            StaticVisualKind::Missing] {
-            assert!(!classic_land_draws_classic_water(true, other), "{other:?}");
+        let surface = StaticVisualKind::EcSurface { art_id: 0x1782 };
+        let dry_land = StaticVisualKind::TexLandEc { resolution: test_surface_like_resolution() };
+        let nature = item_tile_with_flags(TILE_FLAG_SURFACE, udd_assets::tilemeta::TileMetaItemVisualKind::RegularArt);
+        let floor = item_tile_with_flags(TILE_FLAG_BACKGROUND | TILE_FLAG_SURFACE | TILE_FLAG_NO_SHOOT,
+            udd_assets::tilemeta::TileMetaItemVisualKind::RegularArt);
+        // A land liquid always continues the land, whatever else.
+        assert!(static_continues_land(liquid, Some(&floor), false));
+        // A surface continues it when it draws a terrain texture, unless it is a built floor.
+        for kind in [surface, dry_land] {
+            assert!(static_continues_land(kind, Some(&nature), true), "{kind:?}");
+            assert!(!static_continues_land(kind, Some(&nature), false), "{kind:?}");
+            assert!(!static_continues_land(kind, Some(&floor), true), "{kind:?}");
+        }
+        for other in [StaticVisualKind::EcRegular { art_id: 0x1797 }, StaticVisualKind::Missing,
+            classic_static_visual_kind(0x1797, Some(&nature))] {
+            assert!(!static_continues_land(other, Some(&nature), true), "{other:?}");
         }
     }
 
     #[test]
+    fn land_style_follows_the_land_atlas() {
+        assert_eq!(StaticLandStyle::of_land_atlas(LandTextureSource::Cc), StaticLandStyle::Classic);
+        assert_eq!(StaticLandStyle::of_land_atlas(LandTextureSource::Ec), StaticLandStyle::Enhanced);
+        assert_eq!(StaticLandStyle::of_land_atlas(LandTextureSource::Kr), StaticLandStyle::Enhanced);
+    }
+
+    #[test]
+    fn classic_art_keeps_its_art_without_enhanced_land() {
+        let tile = item_tile_with_flags(TILE_FLAG_WET, udd_assets::tilemeta::TileMetaItemVisualKind::RegularArt);
+        for style in [StaticLandStyle::Unknown, StaticLandStyle::Classic, StaticLandStyle::Enhanced] {
+            // Without the Enhanced packages Classic art draws its art under any land.
+            assert_eq!(resolve_static_visual_kind_cached(ClientTextureSource::Cc, style, 0x1797, None, Some(&tile),
+                None, None, None, &mut StaticSurfaceLikeResolutionCache::default()),
+                classic_static_visual_kind(0x1797, Some(&tile)), "{style:?}");
+        }
+    }
+
+    /// The statics that continue the land take its style under the mixed sources, and the matched sources draw as
+    /// before. Prints the set by Enhanced kind.
+    #[test]
     #[ignore = "requires current canonical packages in DYNAMAPPER_TEST_PACKAGES"]
-    fn canonical_water_pieces_under_classic_land_draw_their_classic_art() {
-        const RIVER_WATER: u16 = 0x1797;
-        const RIVER_FOAM: u16 = 0x179F;
+    fn canonical_statics_that_continue_the_land_take_its_style() {
+        const LANDLIKE: [(u16, &str); 7] = [(0x1797, "river water"), (0x179F, "river foam"), (0x2E02, "acid"),
+            (0x12EE, "lava liquid"), (0x1782, "grass"), (0x3209, "swamp"), (0x329C, "lava field")];
+        const BUILT_FLOORS: [(u16, &str); 3] = [(0x0515, "cobblestones"), (0x051D, "stone pavers"),
+            (0x04A9, "wooden boards")];
         let root = std::path::PathBuf::from(std::env::var_os("DYNAMAPPER_TEST_PACKAGES")
             .expect("set DYNAMAPPER_TEST_PACKAGES to the matching current package directory"));
         let cc = udd_assets::tex_art_cc::TexArtCcPackage::load(root.join("tex_art_cc.uddp")).unwrap();
@@ -3466,20 +3602,44 @@ mod tests {
         let land = udd_assets::tex_land_ec::TexLandEcPackage::load(root.join("tex_land_ec.uddp")).unwrap();
         let meta = udd_assets::tilemeta::TileMetaPackage::load(root.join("tilemeta.uddp")).unwrap();
         let mut cache = StaticSurfaceLikeResolutionCache::default();
-        let mut redrawn = Vec::new();
+        let mut landlike = Vec::new();
+        let (mut liquids, mut surfaces) = (0, 0);
         for tile in meta.item_tiles().iter().filter(|t| !t.is_nodraw()) {
             let Ok(graphic) = u16::try_from(tile.tile_id) else { continue; };
-            let mut resolve = |classic_land| resolve_static_visual_kind_cached(ClientTextureSource::Ec, classic_land,
-                graphic, Some(&meta), Some(tile), Some(&cc), Some(&ec), Some(&land), &mut cache);
-            let (enhanced, classic_land) = (resolve(false), resolve(true));
-            if classic_land_draws_classic_water(true, enhanced) {
-                assert_eq!(classic_land, classic_static_visual_kind(graphic, Some(tile)), "{graphic:#x}");
-                redrawn.push(graphic);
+            let mut resolve = |art, style| resolve_static_visual_kind_cached(art, style, graphic, Some(&meta),
+                Some(tile), Some(&cc), Some(&ec), Some(&land), &mut cache);
+            let (enhanced, classic) = (resolve(ClientTextureSource::Ec, StaticLandStyle::Unknown),
+                resolve(ClientTextureSource::Cc, StaticLandStyle::Unknown));
+            // Matched sources draw as before.
+            assert_eq!(resolve(ClientTextureSource::Ec, StaticLandStyle::Enhanced), enhanced, "{graphic:#x}");
+            assert_eq!(resolve(ClientTextureSource::Cc, StaticLandStyle::Classic), classic, "{graphic:#x}");
+            let (enhanced_art_classic_land, classic_art_enhanced_land) = (
+                resolve(ClientTextureSource::Ec, StaticLandStyle::Classic),
+                resolve(ClientTextureSource::Cc, StaticLandStyle::Enhanced));
+            let continues = ec.present_slot(tile.tile_id).is_some() && static_continues_land(enhanced, Some(tile),
+                cache.landlike_item_texture(graphic, Some(&meta), Some(&land)));
+            if continues {
+                landlike.push(graphic);
+                match enhanced {
+                    StaticVisualKind::TexLandEc { .. } => liquids += 1,
+                    _ => surfaces += 1,
+                }
+                assert_eq!(classic_art_enhanced_land, enhanced, "{graphic:#x}");
+                let has_classic = present_classic_static_visual_kind(graphic, Some(tile), Some(&cc)).is_some();
+                assert_eq!(enhanced_art_classic_land, if has_classic { classic } else { enhanced }, "{graphic:#x}");
             } else {
-                assert_eq!(classic_land, enhanced, "{graphic:#x}");
+                assert_eq!(classic_art_enhanced_land, classic, "{graphic:#x}");
+                assert_eq!(enhanced_art_classic_land, enhanced, "{graphic:#x}");
             }
         }
-        assert!(redrawn.contains(&RIVER_WATER) && redrawn.contains(&RIVER_FOAM), "{redrawn:x?}");
+        println!("statics that continue the land: {} ({liquids} land liquids, {surfaces} terrain-textured surfaces)",
+            landlike.len());
+        for (graphic, name) in LANDLIKE {
+            assert!(landlike.contains(&graphic), "{name} {graphic:#x} does not continue the land");
+        }
+        for (graphic, name) in BUILT_FLOORS {
+            assert!(!landlike.contains(&graphic), "{name} {graphic:#x} is a built floor");
+        }
     }
 
     #[test]
@@ -4245,7 +4405,7 @@ mod tests {
             map_id: 1,
             dot_mode: false,
             art_source: Some(ClientTextureSource::Cc),
-            classic_land: false,
+            land_style: StaticLandStyle::Unknown,
             sprite_atlas_mapping_revision: 0,
             ground_atlas_mapping_revision: 0,
             land_metadata_revision: 0,
@@ -4269,7 +4429,7 @@ mod tests {
             map_id: 1,
             dot_mode: false,
             art_source: Some(ClientTextureSource::Cc),
-            classic_land: false,
+            land_style: StaticLandStyle::Unknown,
             sprite_atlas_mapping_revision: 1,
             ground_atlas_mapping_revision: 0,
             land_metadata_revision: 0,
@@ -4290,7 +4450,7 @@ mod tests {
             map_id: 1,
             dot_mode: false,
             art_source: Some(ClientTextureSource::Cc),
-            classic_land: false,
+            land_style: StaticLandStyle::Unknown,
             sprite_atlas_mapping_revision: 0,
             ground_atlas_mapping_revision: 0,
             land_metadata_revision: 0,
@@ -4315,7 +4475,7 @@ mod tests {
             map_id: 1,
             dot_mode: false,
             art_source: Some(ClientTextureSource::Cc),
-            classic_land: false,
+            land_style: StaticLandStyle::Unknown,
             sprite_atlas_mapping_revision: 0,
             ground_atlas_mapping_revision: 0,
             land_metadata_revision: 0,
@@ -4336,7 +4496,7 @@ mod tests {
             map_id: 1,
             dot_mode: false,
             art_source: Some(ClientTextureSource::Cc),
-            classic_land: false,
+            land_style: StaticLandStyle::Unknown,
             sprite_atlas_mapping_revision: 0,
             ground_atlas_mapping_revision: 0,
             land_metadata_revision: 0,
@@ -4360,7 +4520,7 @@ mod tests {
             map_id: 1,
             dot_mode: false,
             art_source: Some(ClientTextureSource::Cc),
-            classic_land: false,
+            land_style: StaticLandStyle::Unknown,
             sprite_atlas_mapping_revision: 0,
             ground_atlas_mapping_revision: 0,
             land_metadata_revision: 0,

@@ -155,9 +155,9 @@ land 0x64 at z -15, with a raised strip of 0x64 and a few land-water cells
 
 The user's choice, to keep the Classic land style: while the land page atlas
 holds Classic land (`LandRoutes::atlas() == Cc`, mirrored in
-`StaticArtSourceState::classic_land`), Enhanced art draws its water pieces from
-their Classic art, as Classic art mode does (`classic_land_draws_classic_water`
-in `statics_collect.rs`). The pieces are the statics whose EC visual kind is
+`StaticArtSourceState::land_style`), Enhanced art draws its water pieces from
+their Classic art, as Classic art mode does (`static_continues_land` in
+`statics_collect.rs`, generalised below). The pieces are the statics whose EC visual kind is
 `TexLandEc` with a liquid payload, the only ones whose shader reads the land
 page atlas: 261 items in the current packages, water and foam 0x1796–0x17B2 and
 0x346E–0x34D2, acid 0x2E02–0x2E39 and the lava the same UOWaterShader draws
@@ -168,9 +168,43 @@ wetness, depth class and picking geometry; tex_art_cc.uddp loads whatever the
 art source. The EC-art blood items (`EcSurface`, sprite path) and the other EC
 art are unchanged, as are matched sources and land EC/KR.
 
-The opposite mix (art CC, land EC/KR) is unchanged: its land-water cells keep
+The opposite mix (art CC, land EC/KR) keeps its land-water cells as they are
+(its water statics follow the land since the next section): they keep
 the EC terrain liquid. Matching it the same way would route the wet land ids to
 Classic while the art is Classic (`resolve_land_routes`, re-resolved on an art
 source change, with a land atlas rebuild) and draw those Classic-routed flat
 wet cells from the compact Classic land-art atlas, as land CC does, rather than
 from square texmaps.
+
+### Statics that continue the land take the land's style (2026-11-14)
+
+The user generalised the rule above: every static that continues the land
+draws in the land's style, whatever the art source, without switching an art
+tile that is also used as an ordinary floor. `StaticLandStyle` (Classic,
+Enhanced for land EC and KR, Unknown before the land cache exists) replaces
+`classic_land`; `static_continues_land` decides from the data alone:
+
+- the item's Enhanced kind is a land liquid (`TexLandEc` with a liquid
+  payload: 261 items), or an item surface or land-textured item
+  (`EcSurface`, dry `TexLandEc`) one of whose world-art base textures a
+  terrain material of tex_land_ec.uddp draws (selected or primary texture of a
+  terrain provenance record): grass, dirt, snow, swamp, the lava fields;
+- and it is not NoShoot (tiledata 0x2000). Every built-floor family that
+  shares a terrain texture (cobblestones, stone pavers and their dark kind,
+  marble and white marble, grey slate, sandstone paver, bricks, flagstones,
+  blue and red tiles, cave floor, stone roof) carries NoShoot; no nature
+  family (liquids, lava, swamp, grass, snow, dirt, whirlpool, forest) does.
+  Measured over all maps, those floors lie at their cell's land z on land of
+  the same texture for 0-4% of their placements (cobblestones 151 of 44,310);
+  the rest are raised, roofed or on other land, as house, castle and dungeon
+  floors, so they keep their art source.
+
+837 items continue the land in the current packages: the 261 liquids and 576
+terrain-textured surfaces. Under Classic land Enhanced art draws them from
+their Classic art when it exists (else the Enhanced kind). Under Enhanced or KR
+land Classic art draws their Enhanced kind when tex_art_ec has their image: the
+art atlases are then built for Enhanced art (`art_atlas_source` in
+`statics_draw.rs`: the EC sprite atlas holds the Classic pages too, and the
+ground atlas holds the land pages the liquids read), and the item-surface
+boundary coverage runs as in Enhanced art mode. Matched sources resolve
+exactly as before (`canonical_statics_that_continue_the_land_take_its_style`).
