@@ -17,7 +17,10 @@
 //! The clients draw the sprites that are left with no depth test. The two clients count the bands differently, and
 //! each style follows one of them (`LightCoverRule`): KR-like the KR client's 16 clamped layers, each object's from
 //! the average land z of its own cell (`kr_light_is_hidden`), the other styles the Enhanced client's unclamped bands,
-//! all from the raw land z of the light's cell (`client_light_is_hidden`).
+//! all from the raw land z of the light's cell (`client_light_is_hidden`). KR's layers let a light show through a
+//! floor or roof just above it in its own layer, or in a lower layer when the land under the two cells differs (the KR
+//! client draws such glows over the floor); KR-like does not follow that: a floor or roof of the cover cell at least
+//! `LIGHT_COVER_MIN_RISE` above the light also hides it there (`floor_covers_light`).
 //!
 //! The rules take the view's z limit (`max_z`) so a z-view limit composes with them: a static the limit stops drawing
 //! no longer covers, and its lights come back; a light at or above the limit is hidden with its item. KR's own cut
@@ -60,6 +63,9 @@ pub const KR_LIGHT_TOP_LAYER: i32 = 15;
 /// Statics that never cover a light under ClassicUO's rule: the see-through (tiledata Transparent) and the never
 /// drawn (NoDraw).
 const NON_COVERING_FLAGS: u64 = TaeFlag::Transparent.bits() | TaeFlag::NoDraw.bits();
+
+/// The statics that are floors or roofs, which always cover a light under them in KR-like (`floor_covers_light`).
+const FLOOR_FLAGS: u64 = TaeFlag::Surface.bits() | TaeFlag::Roof.bits();
 
 /// The rule a style's `LightCover` gives: `LightCover::Clients` is the KR client's rule in KR-like and the Enhanced
 /// client's in the other styles.
@@ -180,6 +186,17 @@ pub fn client_light_is_hidden(light_z: i8, land_z: i8, cover_cell: impl IntoIter
 /// (`client_light_band`) clamped to 0 to `KR_LIGHT_TOP_LAYER` (0x0043c950 → 0x0043c5b0).
 pub fn kr_light_layer(z: i8, land_z: i8) -> i32 {
     client_light_band(z, land_z).clamp(0, KR_LIGHT_TOP_LAYER)
+}
+
+/// Whether a floor or roof of the cover cell `cover_cell` covers a light at `light_z` under ClassicUO's rule
+/// (`static_covers_light`): a Surface or Roof static, neither Transparent nor NoDraw, at least `LIGHT_COVER_MIN_RISE`
+/// above the light and below the z limit `max_z`. KR-like adds it to the KR client's rule, whose layers let such a
+/// floor through when it sits in the light's layer or below (Britain 1407,1594 on map 1: windows at 50 under the
+/// pavers at 70), which the KR client then draws as a glow over the floor.
+pub fn floor_covers_light(light_z: i8, cover_cell: &[CoverStatic], max_z: i32) -> bool {
+    cover_cell
+        .iter()
+        .any(|item| item.flags & FLOOR_FLAGS != 0 && static_covers_light(item.flags, item.z, light_z, max_z))
 }
 
 /// Whether `LightCover::Clients` hides a light at `light_z` in KR-like, the KR client's rule (0x004391d0): it is at or
@@ -323,6 +340,7 @@ pub fn static_light_is_hidden(
             let light_land_z = kr_cell_land_z(&land_z, tile_x, tile_y).unwrap_or(light_z);
             let cover_land_z = kr_cell_land_z(&land_z, cover_x, cover_y).unwrap_or(light_land_z);
             kr_light_is_hidden(light_z, light_land_z, cover_land_z, cover_cell.iter().map(|item| item.z), max_z)
+                || floor_covers_light(light_z, &cover_cell, max_z)
         }
     }
 }
@@ -553,6 +571,20 @@ mod tests {
         assert!(kr_light_is_hidden(0, 0, 0, [20, 40], 41));
         // A light at or above the limit goes with its item.
         assert!(kr_light_is_hidden(20, 0, 0, [], 20));
+    }
+
+    #[test]
+    fn floors_and_roofs_over_a_light_cover_it_whatever_the_kr_layers() {
+        let item = |flags, z| CoverStatic { flags, z, height: 0 };
+        // Britain 1407,1594 on map 1: the KR layers put the window at 50 and the pavers at 70 in front in one layer.
+        assert!(!kr_light_is_hidden(50, 7, 30, [70], NO_Z_VIEW_LIMIT));
+        assert!(floor_covers_light(50, &[item(OPAQUE, 70)], NO_Z_VIEW_LIMIT));
+        assert!(floor_covers_light(50, &[item(ROOF, 55)], NO_Z_VIEW_LIMIT));
+        // Too close above, see-through, a wall, or cut by the z limit: no cover.
+        assert!(!floor_covers_light(50, &[item(OPAQUE, 54)], NO_Z_VIEW_LIMIT));
+        assert!(!floor_covers_light(50, &[item(OPAQUE | TaeFlag::Transparent.bits(), 70)], NO_Z_VIEW_LIMIT));
+        assert!(!floor_covers_light(50, &[item(WALL, 70)], NO_Z_VIEW_LIMIT));
+        assert!(!floor_covers_light(50, &[item(OPAQUE, 70)], 70));
     }
 
     #[test]
