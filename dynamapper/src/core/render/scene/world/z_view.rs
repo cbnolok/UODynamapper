@@ -123,8 +123,7 @@ impl ZViewCut {
     }
 
     /// `max_z_over_land` for the cell (`x`, `y`), `land_z` giving each cell's raw land z: the z limit of the light cover
-    /// (art/light_cover.rs) for a light there, as its item and the statics over it are hidden at it. The light's cell
-    /// stands for its cover cell, which is mostly on the same land.
+    /// (art/light_cover.rs) for a light or a cover object there, as the statics of the cell are hidden at it.
     pub fn max_z_on_cell(&self, land_z: impl Fn(u32, u32) -> Option<i8>, x: u32, y: u32) -> i32 {
         self.max_z_over_land(|| {
             let raw_z = |x: i32, y: i32| land_z(u32::try_from(x).ok()?, u32::try_from(y).ok()?).map(i32::from);
