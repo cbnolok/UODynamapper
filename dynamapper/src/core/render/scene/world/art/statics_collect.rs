@@ -308,7 +308,7 @@ impl StaticDepthClass {
 }
 
 const TILE_FLAG_BACKGROUND: u64 = 0x01;
-const TILE_FLAG_SURFACE: u64 = 0x200;
+pub(super) const TILE_FLAG_SURFACE: u64 = 0x200;
 const TILE_FLAG_BRIDGE: u64 = 0x400;
 const TILE_FLAG_FOLIAGE: u64 = 0x20_000;
 const TILE_FLAG_ROOF: u64 = 0x1000_0000;
@@ -3406,6 +3406,34 @@ mod tests {
 
         approx_eq(bounds.local_min_x, ISO_TILE_SCREEN_DIAGONAL_WORLD_UNITS);
         approx_eq(bounds.local_min_y, -(22.0 * CC_WORLD_Y_PER_PIXEL));
+    }
+
+    /// The clients' WorldArt rule (UOSA 0x00459b00/0x004598d0, UOKR 0x00442430/0x004422b0), in Classic pixels from the
+    /// tile's south vertex: the sprite's left edge at `-22 + x_off * s / 1.5`, its bottom at `y_off * s / 1.5`. A
+    /// Classic sprite stands centred on the south vertex. Measured over 7015 scale-1 items, the two silhouettes then
+    /// coincide within a pixel (docs/agent_notes/ec_sprite_descriptor_geometry.md).
+    #[test]
+    fn enhanced_sprites_stand_where_the_clients_place_world_art() {
+        // Pixel quantities tens of pixels large carry a few ulps of f32 error.
+        const PIXEL_EPSILON: f32 = 1.0e-4;
+        let approx_eq = |left: f32, right: f32| assert!((left - right).abs() < PIXEL_EPSILON, "left={left} right={right}");
+        let screen_right_pixels = |world_x: f32, world_z: f32| (Vec2::new(world_x, world_z)
+            .dot(STATIC_BILLBOARD_RIGHT_XZ)) / CC_WORLD_XZ_PER_PIXEL;
+        let screen_forward = |world_x: f32, world_z: f32| world_x + world_z;
+        let (ec_x, ec_z) = apply_static_world_anchor_translation(0.0, 0.0);
+        let (cc_x, cc_z) = apply_cc_static_world_anchor_translation(0.0, 0.0);
+        // The Enhanced base point is the west vertex's column on the south vertex's row.
+        approx_eq(screen_right_pixels(ec_x, ec_z) - screen_right_pixels(cc_x, cc_z), -CC_TILE_PIXEL_WIDTH / 2.0);
+        approx_eq(screen_forward(ec_x, ec_z), screen_forward(cc_x, cc_z));
+        // A log wall's KR art (x_off 22, y_off 0, 46 x 104 at scale 1) against a scale-0.8 item's (x_off 7, y_off -24).
+        for (scale, x_off, y_off) in [(1.0f32, 22, 0), (0.8, 7, -24)] {
+            let ratio = scale / udd_assets::tex_art_ec::LEGACY_PIXEL_UNIT;
+            let bounds = resolve_static_billboard_bounds(ratio, x_off, y_off, 46.0, 104.0);
+            let left_pixels = screen_right_pixels(ec_x, ec_z) - screen_right_pixels(cc_x, cc_z)
+                + bounds.local_min_x / CC_WORLD_XZ_PER_PIXEL;
+            approx_eq(left_pixels, -CC_TILE_PIXEL_WIDTH / 2.0 + x_off as f32 * ratio);
+            approx_eq(-bounds.local_min_y / CC_WORLD_Y_PER_PIXEL, y_off as f32 * ratio);
+        }
     }
 
     #[test]

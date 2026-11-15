@@ -127,6 +127,32 @@ offsets.
 `find_hued_statics --include-unhued --ec-source legacy` (or `scaled-world`)
 locates actual placements from packed source metadata.
 
+## Measured alignment against Classic art (2026-11-15)
+
+In Classic pixels from a tile's south vertex, the clients place world art with
+its left edge at `-22 + x_off * s / 1.5` and its bottom at `y_off * s / 1.5`
+(UOSA `0x00459b00`/`0x004598d0`; KR's `0x00442430`/`0x004422b0` build the same
+quad and base point). The renderer's Enhanced anchor `(0.5, 1.5)` and
+`resolve_static_billboard_bounds` give exactly this
+(`enhanced_sprites_stand_where_the_clients_place_world_art`). KR tileart
+carries the same world windows and offsets as EC's for 12,800 of 12,802 items.
+
+Each packed owner's alpha silhouette, placed by that rule, was
+cross-correlated with its Classic silhouette placed centred on the south
+vertex (search ±24 pixels, IoU at least 0.6). For the 7015 scale-1 items the
+best shift has median (0, 0) and mean (-0.1, +0.4) pixels; 64% are within one
+pixel and no category drifts: walls of both orientations, doors, roofs,
+floors, signs, lamp posts and rocks. Trees and foliage are redrawn in KR and
+fit poorly, but their trunk bottoms sit within two pixels of Classic's.
+Placement is therefore not a source of misalignment for ordinary items.
+
+The 193 items with a non-default scale (436 owners in all, almost all clothes,
+armour, weapons and creature statuettes, which the maps hardly place) fit
+better shifted by about `33 * (1 - s) / 1.5` pixels right and up, as if the
+artist had scaled them about the tile's centre rather than the base point; the
+fit is noisy above scale 1. The clients' code applies the scale about the base
+point, which the renderer follows; this is noted, not corrected.
+
 ## Native acceptance and scope
 
 The 0.8-scale banana tree at map 0 `(1046,2253)` exercises a non-default world
