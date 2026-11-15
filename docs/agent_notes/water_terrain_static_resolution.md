@@ -266,4 +266,28 @@ source and covers it: dropping every grass item static (under the EC and the
 KR land), every static of row 445, or the house leaves the frame byte-identical
 or the strip in place. The strip is land at the cobblestones' edge, and the
 grass 0x1782-0x1785 at 2478-2480,443 and 2443,425-434 is covered the same way.
-What tints that land under KR is still open.
+
+### The Minoc strip is the grass terrain, authored (2026-11-15)
+
+The strip is another terrain, not a tint. Map 1 holds grass land 0x03-0x06
+(z 15, flat) in a band along the cobblestones: under the 0x0515 statics at
+y 440-445, open at y 446-448 (x 2446-2473) between them and the house, whose
+walls stand on y 449, and open again at x 2428-2448, y 446-449 up to the lawn.
+The lawn around is forest land 0xC4-0xD7. Under KR they are material 1 (grass:
+Grass_A at repetition 10, Grass_B at 5, noise_alpha mask at 24) and material 4
+(forest: Forest_A and Forest_B at 5, mask at 16), the same UODefaultTerrainLayer
+shader; KR's own `facet1.uop` stores exactly those materials on those squares
+(`uocf-cli facet dump-cell`: 2461,447 material 1 land 4; 2440,460 material 4
+land 0xC4), so the KR client draws the band with another material too. KR's
+grass images are brighter and greener than its forest ones (mask-weighted
+means about (78,88,37) and (81,81,27)), EC's grass is darker and bluer than
+EC's forest, and the Classic texmaps differ as well: the band shows with every
+land source, in its own way.
+
+Measured in all four styles and three land sources (afternoon, 1600x1000): the
+strip cells (y 446-447) match the same grass away from the house (x 2430-2446,
+y 448-449) within 2-3 levels of luma, so nothing at the house edge (slope,
+normals, contact shadow, the cobblestones' boundary fade, variation) changes
+it; the strip and the forest differ as their textures do, and UOD-Painterly's
+grading saturates the greener grass most (0.94 against 0.79 for the forest).
+No change was made.
