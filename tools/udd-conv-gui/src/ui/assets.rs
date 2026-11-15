@@ -243,7 +243,8 @@ impl UddConvApp {
             ui,
             "Kingdom Reborn Land",
             "KR terrain definitions, textures and land routes, with what KR lacks from the Enhanced Client \
-            (tex_land_kr.uddp); upscaled as Enhanced Land",
+            (tex_land_kr.uddp); upscaled as Enhanced Land. Beside it, lossless from KR alone: its tileart \
+            (tilemeta_kr.uddp), item art (tex_art_kr.uddp) and item material textures (tex_aux_kr.uddp)",
             Some(&source),
             &progress,
             !is_busy,
@@ -778,12 +779,18 @@ const TEX_LAND_KR_REPORT_TOOLTIP: &str = "Write which client every terrain defin
 from to this file, one line each (pack-kr-land --report). The log lists them either way.";
 
 fn tex_land_kr_source_label(settings: &AppSettings) -> String {
-    match (settings.kr_dir.as_ref(), settings.ec_dir.as_ref()) {
-        (Some(kr_dir), Some(ec_dir)) => {
-            format!("Source: {} with the Enhanced Client in {}", kr_dir.display(), ec_dir.display())
+    match (settings.kr_dir.as_ref(), settings.ec_dir.as_ref(), settings.cc_dir.as_ref()) {
+        (Some(kr_dir), Some(ec_dir), Some(cc_dir)) => format!(
+            "Source: {} with the Enhanced Client in {} and the Classic tiledata in {}",
+            kr_dir.display(),
+            ec_dir.display(),
+            cc_dir.display()
+        ),
+        (None, _, _) => "Source: select a Kingdom Reborn source directory".to_string(),
+        (Some(_), None, _) => "Source: select an Enhanced source directory, for what Kingdom Reborn lacks".to_string(),
+        (Some(_), Some(_), None) => {
+            "Source: select a Classic source directory, for the tiledata.mul of the KR items".to_string()
         }
-        (None, _) => "Source: select a Kingdom Reborn source directory".to_string(),
-        (Some(_), None) => "Source: select an Enhanced source directory, for what Kingdom Reborn lacks".to_string(),
     }
 }
 

@@ -26,6 +26,16 @@ pub const TILEMETA_ITEM_LIGHT_MAGIC: [u8; 4] = *b"TMIL";
 /// Size of the `TILEMETA_ITEM_LIGHT_ENTRY_PATH` header.
 const TILEMETA_ITEM_LIGHT_HEADER_SIZE: usize = TILEMETA_ITEM_LIGHT_MAGIC.len() + 2 * std::mem::size_of::<u32>();
 
+/// Every `tileart.uop` record, byte for byte as the client stores it (decompressed), so nothing the packed tables
+/// leave out is lost ([`TileMetaTileArtRecords`]). Required.
+pub const TILEMETA_TILEART_RECORD_ENTRY_PATH: &str = "metadata/tileart_records.bin";
+/// Magic of the `TILEMETA_TILEART_RECORD_ENTRY_PATH` header: magic, `u32` `TILEMETA_FORMAT_VERSION`, `u32` record count.
+pub const TILEMETA_TILEART_RECORD_MAGIC: [u8; 4] = *b"TMTA";
+/// Size of the `TILEMETA_TILEART_RECORD_ENTRY_PATH` header.
+const TILEMETA_TILEART_RECORD_HEADER_SIZE: usize = TILEMETA_TILEART_RECORD_MAGIC.len() + 2 * std::mem::size_of::<u32>();
+/// `TileMetaTileArtRecordIndex::entry_id` of a record whose entry name is not one of the ids the client looks up.
+pub const TILEMETA_TILEART_RECORD_UNNAMED: u32 = u32::MAX;
+
 /// The item is not at its block's primary position (`uocf::enhanced::tileart::primary_texture_position`).
 pub const TILEMETA_ITEM_TEXTURE_FLAG_AUXILIARY: u8 = 1 << 0;
 /// Block 0: the item `ec_texture_id` was taken from (its primary position). Blocks 1 and 2: an item
@@ -451,6 +461,116 @@ fn decode_item_texture_refs(bytes: &[u8]) -> eyre::Result<Vec<TileMetaItemTextur
     read_pod_vec(records, path)
 }
 
+/// One record of `TILEMETA_TILEART_RECORD_ENTRY_PATH`: its bytes follow the previous record's in the data.
+#[repr(C)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Pod, Zeroable)]
+pub struct TileMetaTileArtRecordIndex {
+    /// The hash of the record's `tileart.uop` entry name.
+    pub name_hash: u64,
+    /// The id of its entry name (`build/tileart/%08d.bin`), or `TILEMETA_TILEART_RECORD_UNNAMED`.
+    pub entry_id: u32,
+    /// Byte length of the record.
+    pub len: u32,
+}
+
+const TILEMETA_TILEART_RECORD_INDEX_SIZE: usize = 16;
+const _: () = assert!(std::mem::size_of::<TileMetaTileArtRecordIndex>() == TILEMETA_TILEART_RECORD_INDEX_SIZE);
+
+/// The `tileart.uop` records of a tilemeta package ([`TILEMETA_TILEART_RECORD_ENTRY_PATH`]).
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct TileMetaTileArtRecords {
+    /// Ascending by `entry_id` then `name_hash`; unnamed records last.
+    index: Vec<TileMetaTileArtRecordIndex>,
+    /// Start of each record in `bytes`.
+    starts: Vec<usize>,
+    bytes: Vec<u8>,
+}
+
+impl TileMetaTileArtRecords {
+    /// The records of `(name_hash, entry_id, bytes)`, sorted as the entry stores them.
+    pub fn new<'a>(records: impl IntoIterator<Item = (u64, Option<u32>, &'a [u8])>) -> eyre::Result<Self> {
+        let mut records: Vec<_> = records.into_iter().collect();
+        records.sort_unstable_by_key(|&(hash, entry_id, _)| (entry_id.unwrap_or(TILEMETA_TILEART_RECORD_UNNAMED), entry_id.is_none(), hash));
+        let mut table = Self::default();
+        for (name_hash, entry_id, bytes) in records {
+            let entry_id = entry_id.unwrap_or(TILEMETA_TILEART_RECORD_UNNAMED);
+            eyre::ensure!(entry_id != TILEMETA_TILEART_RECORD_UNNAMED || name_hash != 0, "tileart record without a name");
+            table.index.push(TileMetaTileArtRecordIndex { name_hash, entry_id, len: u32::try_from(bytes.len())? });
+            table.starts.push(table.bytes.len());
+            table.bytes.extend_from_slice(bytes);
+        }
+        Ok(table)
+    }
+
+    pub fn len(&self) -> usize {
+        self.index.len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.index.is_empty()
+    }
+
+    /// Every record: its index entry and bytes, in stored order.
+    pub fn iter(&self) -> impl Iterator<Item = (&TileMetaTileArtRecordIndex, &[u8])> {
+        self.index.iter().zip(&self.starts).map(|(index, &start)| (index, &self.bytes[start..start + index.len as usize]))
+    }
+
+    /// The bytes of the record the client finds by `entry_id` (an item id, or a mobile definition id).
+    pub fn record(&self, entry_id: u32) -> Option<&[u8]> {
+        if entry_id == TILEMETA_TILEART_RECORD_UNNAMED { return None; }
+        let position = self.index.partition_point(|index| index.entry_id < entry_id);
+        let index = self.index.get(position).filter(|index| index.entry_id == entry_id)?;
+        let start = self.starts[position];
+        Some(&self.bytes[start..start + index.len as usize])
+    }
+
+    /// The record of `entry_id`, parsed as the client parses it (either dialect: Enhanced or Kingdom Reborn).
+    pub fn parse(&self, entry_id: u32) -> Option<eyre::Result<uocf::enhanced::tileart::TileArtEntry>> {
+        self.record(entry_id).map(uocf::enhanced::tileart::TileArtEntry::parse_bytes)
+    }
+
+    /// The `TILEMETA_TILEART_RECORD_ENTRY_PATH` entry: the header, the index, then the record bytes.
+    pub fn to_bytes(&self) -> Vec<u8> {
+        let index: &[u8] = bytemuck::cast_slice(&self.index);
+        let mut bytes = Vec::with_capacity(TILEMETA_TILEART_RECORD_HEADER_SIZE + index.len() + self.bytes.len());
+        bytes.extend_from_slice(&TILEMETA_TILEART_RECORD_MAGIC);
+        bytes.extend_from_slice(&TILEMETA_FORMAT_VERSION.to_le_bytes());
+        bytes.extend_from_slice(&u32::try_from(self.index.len()).expect("tileart record count fits u32").to_le_bytes());
+        bytes.extend_from_slice(index);
+        bytes.extend_from_slice(&self.bytes);
+        bytes
+    }
+
+    /// Reads the `TILEMETA_TILEART_RECORD_ENTRY_PATH` entry, refusing another magic or version, an unsorted index or
+    /// lengths that do not add up to the data.
+    pub fn from_bytes(bytes: &[u8]) -> eyre::Result<Self> {
+        let path = TILEMETA_TILEART_RECORD_ENTRY_PATH;
+        eyre::ensure!(bytes.len() >= TILEMETA_TILEART_RECORD_HEADER_SIZE && bytes.starts_with(&TILEMETA_TILEART_RECORD_MAGIC),
+            "{path}: no TMTA header; repack with the current udd-cli");
+        let word = |index: usize| {
+            let start = TILEMETA_TILEART_RECORD_MAGIC.len() + index * std::mem::size_of::<u32>();
+            u32::from_le_bytes(bytes[start..start + std::mem::size_of::<u32>()].try_into().expect("slice length checked"))
+        };
+        ensure_manifest_version(path, word(0), TILEMETA_FORMAT_VERSION)?;
+        let count = word(1) as usize;
+        let data = &bytes[TILEMETA_TILEART_RECORD_HEADER_SIZE..];
+        let index_len = count.checked_mul(TILEMETA_TILEART_RECORD_INDEX_SIZE)
+            .filter(|&len| len <= data.len()).ok_or_else(|| eyre::eyre!("{path}: {count} records do not fit"))?;
+        let index: Vec<TileMetaTileArtRecordIndex> = read_pod_vec(&data[..index_len], path)?;
+        let records = data[index_len..].to_vec();
+        let mut starts = Vec::with_capacity(count);
+        let mut end = 0usize;
+        for entry in &index {
+            starts.push(end);
+            end += entry.len as usize;
+        }
+        eyre::ensure!(end == records.len(), "{path}: records take {end} bytes, the entry has {}", records.len());
+        eyre::ensure!(index.windows(2).all(|pair| (pair[0].entry_id, pair[0].name_hash) < (pair[1].entry_id, pair[1].name_hash)),
+            "{path}: not sorted by unique entry id");
+        Ok(Self { index, starts, bytes: records })
+    }
+}
+
 /// The light sprite of an item, as the Enhanced and KR clients place it (`UOObjectComponentLighting`).
 ///
 /// One record per item whose tileart shader block 3 (`uocf::enhanced::tileart::LIGHT_TEXTURE_BLOCK_INDEX`) names a
@@ -537,6 +657,7 @@ pub struct TileMetaPackage {
     item_materials: std::collections::BTreeMap<u32, Vec<uocf::enhanced::tileart::ArtMaterial>>,
     item_definitions: TileMetaItemDefinitions,
     item_lights: Vec<TileMetaItemLight>,
+    tileart_records: TileMetaTileArtRecords,
 }
 
 impl TileMetaPackage {
@@ -574,6 +695,9 @@ impl TileMetaPackage {
         let light_bytes = read_path_entry_cow(&package, TILEMETA_ITEM_LIGHT_ENTRY_PATH)
             .wrap_err("tilemeta missing item lights; repack with the current udd-cli")?;
         let item_lights = decode_item_lights(light_bytes.as_ref())?;
+        let tileart_record_bytes = read_path_entry_cow(&package, TILEMETA_TILEART_RECORD_ENTRY_PATH)
+            .wrap_err("tilemeta missing the tileart records; repack with the current udd-cli")?;
+        let tileart_records = TileMetaTileArtRecords::from_bytes(tileart_record_bytes.as_ref())?;
 
         Ok(Self {
             package,
@@ -584,7 +708,14 @@ impl TileMetaPackage {
             item_materials,
             item_definitions,
             item_lights,
+            tileart_records,
         })
+    }
+
+    /// Every `tileart.uop` record the package was built from, byte for byte: the fields the tables above leave out
+    /// are read from them.
+    pub fn tileart_records(&self) -> &TileMetaTileArtRecords {
+        &self.tileart_records
     }
 
     /// The light sprite of `tile_id` in the Enhanced and KR clients, if its tileart names a light texture.
@@ -1051,6 +1182,10 @@ mod tests {
     }
 
     fn package_with_entries(refs: &[u8], lights: Option<&[u8]>) -> eyre::Result<TileMetaPackage> {
+        package_with_tileart_records(refs, lights, Some(&TileMetaTileArtRecords::default().to_bytes()))
+    }
+
+    fn package_with_tileart_records(refs: &[u8], lights: Option<&[u8]>, records: Option<&[u8]>) -> eyre::Result<TileMetaPackage> {
         let mut builder = udd_container::UddpBuilder::new(udd_container::LookupMode::VirtualPathHash);
         let entries = [
             (TILEMETA_LAND_ENTRY_PATH, b"".as_slice()),
@@ -1060,7 +1195,8 @@ mod tests {
             (TILEMETA_ITEM_MATERIAL_ENTRY_PATH, b"{}".as_slice()),
             (TILEMETA_ITEM_DEFINITION_ENTRY_PATH, EMPTY_DEFINITIONS.as_slice()),
         ];
-        for (path, data) in entries.into_iter().chain(lights.map(|lights| (TILEMETA_ITEM_LIGHT_ENTRY_PATH, lights))) {
+        for (path, data) in entries.into_iter().chain(lights.map(|lights| (TILEMETA_ITEM_LIGHT_ENTRY_PATH, lights)))
+            .chain(records.map(|records| (TILEMETA_TILEART_RECORD_ENTRY_PATH, records))) {
             builder.add_file(udd_container::AddFileRequest {
                 data_type: udd_container::DataType::Metadata as u8,
                 compression: udd_container::CompressionFlag::ZstdNoDict,
@@ -1112,6 +1248,46 @@ mod tests {
         assert_eq!(package.item_light(2850).map(|light| light.light_texture_entry), Some(3));
         assert_eq!(package.item_light(2595), None);
         assert_eq!(package.item_lights(), &lights);
+    }
+
+    /// Two named records, out of order, and an unnamed one: byte for byte back, found by entry id, unnamed last.
+    #[test]
+    fn tileart_records_round_trip_byte_for_byte() {
+        const LANTERN: u32 = 2594;
+        const MOBILE_DEFINITION: u32 = 10_000_400;
+        const UNNAMED_HASH: u64 = 0xDEAD_BEEF;
+        let (lantern, mobile, unnamed) = ([4u8, 0, 0x22, 0x0A, 9].as_slice(), [3u8, 0, 1].as_slice(), [7u8].as_slice());
+        let records = TileMetaTileArtRecords::new([(1, Some(MOBILE_DEFINITION), mobile), (UNNAMED_HASH, None, unnamed),
+            (2, Some(LANTERN), lantern)]).expect("records");
+        let bytes = records.to_bytes();
+        assert_eq!(&bytes[..4], b"TMTA");
+        let decoded = TileMetaTileArtRecords::from_bytes(&bytes).expect("decode");
+        assert_eq!(decoded, records);
+        assert_eq!(decoded.record(LANTERN), Some(lantern));
+        assert_eq!(decoded.record(MOBILE_DEFINITION), Some(mobile));
+        assert_eq!(decoded.record(LANTERN + 1), None);
+        assert_eq!(decoded.record(TILEMETA_TILEART_RECORD_UNNAMED), None);
+        let stored: Vec<_> = decoded.iter().map(|(index, bytes)| (index.entry_id, index.name_hash, bytes)).collect();
+        assert_eq!(stored, [(LANTERN, 2, lantern), (MOBILE_DEFINITION, 1, mobile),
+            (TILEMETA_TILEART_RECORD_UNNAMED, UNNAMED_HASH, unnamed)]);
+        let package = package_with_tileart_records(&encode_item_texture_refs(&[]), Some(&encode_item_lights(&[])), Some(&bytes))
+            .expect("package");
+        assert_eq!(package.tileart_records().record(LANTERN), Some(lantern));
+    }
+
+    /// A package without the records, or with another version or truncated data, is refused.
+    #[test]
+    fn tileart_records_are_required_at_the_current_version() {
+        let refs = encode_item_texture_refs(&[]);
+        let lights = encode_item_lights(&[]);
+        let current = TileMetaTileArtRecords::new([(1, Some(1), [1u8, 2].as_slice())]).expect("records").to_bytes();
+        let mut other_version = current.clone();
+        other_version[4..8].copy_from_slice(&(TILEMETA_FORMAT_VERSION + 1).to_le_bytes());
+        let message = |records: Option<&[u8]>| package_with_tileart_records(&refs, Some(&lights), records)
+            .err().expect("rejected").to_string();
+        assert!(message(None).contains("repack with the current udd-cli"));
+        assert!(message(Some(&other_version)).contains("repack with the current udd-cli"));
+        assert!(message(Some(&current[..current.len() - 1])).contains("the entry has"));
     }
 
     #[test]

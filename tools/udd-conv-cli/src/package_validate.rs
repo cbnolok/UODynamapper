@@ -12,7 +12,8 @@
 //! notes that the package depends on it.
 //!
 //! The kind comes from the file name (`tex_land_ec.uddp`, `map0.uddp`); `tex_land_kr.uddp`, the Kingdom Reborn land, is
-//! read by the `tex_land_ec` reader.
+//! read by the `tex_land_ec` reader, and the Kingdom Reborn item packages `tilemeta_kr.uddp`, `tex_art_kr.uddp` and
+//! `tex_aux_kr.uddp` by the `tilemeta`, `tex_art_ec` and `tex_aux_ec` readers.
 //! A file with an unknown name is offered to every reader, and the first one that accepts it
 //! names the kind.
 
@@ -53,6 +54,8 @@ const BYTES_PER_MIB: f64 = 1024.0 * 1024.0;
 const SHARED_CLASSIC_GUMPS_FILE_NAME: &str = "gumps_cc.uddp";
 /// The tilemeta whose item lights a tex_aux_ec beside it must carry the textures of.
 const TILEMETA_FILE_NAME: &str = "tilemeta.uddp";
+/// The tilemeta whose item lights a tex_aux_kr beside it must carry the textures of.
+const TILEMETA_KR_FILE_NAME: &str = udd_conv::kr_items::TILEMETA_KR_FILE_NAME;
 
 /// Package kinds, each read by its own reader.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -65,6 +68,10 @@ pub enum PackageKind {
     TexLandKr,
     TexAuxEc,
     TileMeta,
+    /// The Kingdom Reborn item packages: the `tex_art_ec`, `tex_aux_ec` and `tilemeta` layouts, read by their readers.
+    TexArtKr,
+    TexAuxKr,
+    TileMetaKr,
     Hues,
     WorldLights,
     MobileAnimCc,
@@ -106,6 +113,9 @@ impl PackageKind {
             "tex_land_kr" => Self::TexLandKr,
             "tex_aux_ec" => Self::TexAuxEc,
             "tilemeta" => Self::TileMeta,
+            "tex_art_kr" => Self::TexArtKr,
+            "tex_aux_kr" => Self::TexAuxKr,
+            "tilemeta_kr" => Self::TileMetaKr,
             "hues" => Self::Hues,
             "world_lights" => Self::WorldLights,
             "mobile_anim_cc" => Self::MobileAnimCc,
@@ -135,6 +145,9 @@ impl PackageKind {
             Self::TexLandKr => "tex_land_kr".into(),
             Self::TexAuxEc => "tex_aux_ec".into(),
             Self::TileMeta => "tilemeta".into(),
+            Self::TexArtKr => "tex_art_kr".into(),
+            Self::TexAuxKr => "tex_aux_kr".into(),
+            Self::TileMetaKr => "tilemeta_kr".into(),
             Self::Hues => "hues".into(),
             Self::WorldLights => "world_lights".into(),
             Self::MobileAnimCc => "mobile_anim_cc".into(),
@@ -371,7 +384,10 @@ pub fn validate_package(path: &Path) -> PackageReport {
                     check_shared_classic_gumps(path, &package, &mut report);
                 }
                 if kind == PackageKind::TexAuxEc {
-                    check_item_light_textures(path, &package, &mut report);
+                    check_item_light_textures(path, TILEMETA_FILE_NAME, &package, &mut report);
+                }
+                if kind == PackageKind::TexAuxKr {
+                    check_item_light_textures(path, TILEMETA_KR_FILE_NAME, &package, &mut report);
                 }
             }
             Err(error) => report.failures.push(format!("{} reader: {error:#}", kind.name())),
@@ -439,12 +455,12 @@ fn check_shared_classic_gumps(path: &Path, package: &UddpReader, report: &mut Pa
 }
 
 /// A tex_aux_ec package against the tilemeta beside it: every light texture its item lights name must be packed.
-fn check_item_light_textures(path: &Path, package: &UddpReader, report: &mut PackageReport) {
-    let tilemeta_path = path.with_file_name(TILEMETA_FILE_NAME);
+fn check_item_light_textures(path: &Path, tilemeta_name: &str, package: &UddpReader, report: &mut PackageReport) {
+    let tilemeta_path = path.with_file_name(tilemeta_name);
     if !tilemeta_path.is_file() {
         return report
             .notes
-            .push(format!("no {TILEMETA_FILE_NAME} beside it: its light textures were not checked against the item lights"));
+            .push(format!("no {tilemeta_name} beside it: its light textures were not checked against the item lights"));
     }
     let (aux, tilemeta) = match (
         TexAuxEcPackage::from_uddp_package(package.clone()),
@@ -594,7 +610,7 @@ fn run_package_reader(kind: PackageKind, package: &UddpReader) -> eyre::Result<S
             let reader = TexArtCcPackage::from_uddp_package(package.clone())?;
             format!("slots={}, pages={}", reader.slots().len(), reader.pages().len())
         }
-        PackageKind::TexArtEc => {
+        PackageKind::TexArtEc | PackageKind::TexArtKr => {
             let reader = TexArtEcPackage::from_uddp_package(package.clone())?;
             format!("slots={}, pages={}", reader.slots().len(), reader.pages().len())
         }
@@ -613,18 +629,19 @@ fn run_package_reader(kind: PackageKind, package: &UddpReader) -> eyre::Result<S
                 reader.terrain_provenance().len()
             )
         }
-        PackageKind::TexAuxEc => {
+        PackageKind::TexAuxEc | PackageKind::TexAuxKr => {
             let reader = TexAuxEcPackage::from_uddp_package(package.clone())?;
             format!("slots={}", reader.slots().len())
         }
-        PackageKind::TileMeta => {
+        PackageKind::TileMeta | PackageKind::TileMetaKr => {
             let reader = TileMetaPackage::from_uddp_package(package.clone())?;
             format!(
-                "land_tiles={}, item_tiles={}, item_definitions={}, item_lights={}",
+                "land_tiles={}, item_tiles={}, item_definitions={}, item_lights={}, tileart_records={}",
                 reader.land_tiles().len(),
                 reader.item_tiles().len(),
                 reader.item_definitions().entry_ids().count(),
-                reader.item_lights().len()
+                reader.item_lights().len(),
+                reader.tileart_records().len()
             )
         }
         PackageKind::Hues => {
@@ -747,6 +764,9 @@ mod tests {
         assert_eq!(PackageKind::from_file_name("tex_land_ec.uddp"), Some(PackageKind::TexLandEc));
         assert_eq!(PackageKind::from_file_name("tex_land_ec.rebuilt.uddp"), Some(PackageKind::TexLandEc));
         assert_eq!(PackageKind::from_file_name("tex_land_kr.uddp"), Some(PackageKind::TexLandKr));
+        assert_eq!(PackageKind::from_file_name("tilemeta_kr.uddp"), Some(PackageKind::TileMetaKr));
+        assert_eq!(PackageKind::from_file_name("tex_art_kr.uddp"), Some(PackageKind::TexArtKr));
+        assert_eq!(PackageKind::from_file_name("tex_aux_kr.uddp"), Some(PackageKind::TexAuxKr));
         assert_eq!(PackageKind::from_file_name("effects_ec_bc7.uddp"), Some(PackageKind::EffectsEc));
         assert_eq!(PackageKind::from_file_name("gumps_cc.uddp"), Some(PackageKind::Gumps));
         assert_eq!(PackageKind::from_file_name("paperdoll_ec.uddp"), Some(PackageKind::PaperdollEc));

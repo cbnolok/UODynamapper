@@ -17,7 +17,7 @@ Common commands:
 - `pack-art`: pack Classic Client art from MUL or UOP sources into `tex_art_cc.uddp`.
 - `pack-texmaps`: pack Classic Client land textures into `tex_land_cc.uddp`.
 - `pack-ec-textures`: pack Enhanced Client static-art and terrain textures into `tex_art_ec.uddp` and `tex_land_ec.uddp`.
-- `pack-kr-land`: pack the Kingdom Reborn land into `tex_land_kr.uddp`, in the `tex_land_ec.uddp` layout (see below).
+- `pack-kr-land`: pack the Kingdom Reborn land into `tex_land_kr.uddp`, in the `tex_land_ec.uddp` layout, and the Kingdom Reborn items beside it into `tilemeta_kr.uddp`, `tex_art_kr.uddp` and `tex_aux_kr.uddp` (see below).
 - `pack-tilemeta`: pack Classic Client tiledata and Enhanced Client tileart metadata into `tilemeta.uddp`.
 - `pack-ec-tex-aux`: pack the EC support images that runtime consumers read (WorldArt hue masks, terrain-surface masks, liquid inputs) from a `tilemeta.uddp`'s texture refs into `tex_aux_ec.uddp`. The package also holds the client's missing-texture fallback and its day, night and night-sight maps (`TerrainTexture.uop`); see below.
 - `pack-ec-paperdoll`: pack the Enhanced Client's 3D paperdoll frames (`Paperdoll.uop`), lossless, into `paperdoll_ec.uddp`, with what each dress-layer item takes off; Dynamapper hues them with `hues.uddp`.
@@ -74,7 +74,7 @@ udd-cli pack pack-ec-gumps --share-with OUT/gumps_cc.uddp --ecdir EC --output OU
 udd-cli pack pack-ec-tex-aux --zstd --ccdir CC --ecdir EC --tilemeta OUT/tilemeta.uddp --output OUT/tex_aux_ec.uddp
 udd-cli pack pack-ec-effects --zstd --ccdir CC --ecdir EC --output OUT/effects_ec.uddp
 udd-cli pack pack-ec-paperdoll --ecdir EC --output OUT/paperdoll_ec.uddp
-udd-cli pack pack-kr-land --krdir KR --ecdir EC --output OUT/tex_land_kr.uddp
+udd-cli pack pack-kr-land --krdir KR --ecdir EC --ccdir CC --output OUT/tex_land_kr.uddp
 ```
 
 `pack-map-statics` runs once per facet, `N` from 0 to 5. Check the result with `udd-cli tool validate OUT`.
@@ -153,7 +153,7 @@ Normal maps are stored in the same UDDP page-atlas infrastructure as visible EC 
 
 ### `tex_land_kr.uddp`
 
-The Kingdom Reborn land: `udd-cli pack pack-kr-land --krdir /path/to/kr --ecdir /path/to/ec --output tex_land_kr.uddp` (the converter GUI's Kingdom Reborn Land job). It has the `tex_land_ec.uddp` layout and is built by the same packer with the same defaults (lossless, the same upscale passes), so Dynamapper draws it through the Enhanced terrain path. Each input comes from the Kingdom Reborn client (2.53.0.2) where it has one, and from the Enhanced Client where it does not:
+The Kingdom Reborn land: `udd-cli pack pack-kr-land --krdir /path/to/kr --ecdir /path/to/ec --ccdir /path/to/cc --output tex_land_kr.uddp` (the converter GUI's Kingdom Reborn Land job, which needs the Classic folder too). It has the `tex_land_ec.uddp` layout and is built by the same packer with the same defaults (lossless, the same upscale passes), so Dynamapper draws it through the Enhanced terrain path. Each input comes from the Kingdom Reborn client (2.53.0.2) where it has one, and from the Enhanced Client where it does not:
 
 - definitions: KR's `TerrainDefinition.uop`, its alias flags moved to the Enhanced Client layout, then the Enhanced Client materials KR lacks. On the shipped clients: 191 KR definitions (140 differ from the Enhanced Client's, mostly in alias counts and coverage exponents) and 10 from the Enhanced Client.
 - textures: an id a KR definition uses comes from KR's `Texture.uop`, an id only Enhanced Client definitions use from the Enhanced Client's; an id missing there comes from the other client. On the shipped clients 198 come from KR and 9 from the Enhanced Client (none of them for a KR definition); texture 1000003 is used by both clients' definitions and KR's image is packed.
@@ -161,6 +161,16 @@ The Kingdom Reborn land: `udd-cli pack pack-kr-land --krdir /path/to/kr --ecdir 
 - KR's grunge texture, as the optional `textures/grunge.rgba8888` entry, its size in a versioned header ([UDDP_FORMATS.md](UDDP_FORMATS.md) section 2), read by the Client Grunge shader setting. A `tex_land_kr.uddp` packed before 2026-11-12 has the entry without the header: `udd-cli tool validate` fails it, and Dynamapper warns and falls back to the Enhanced Client's image until it is repacked.
 
 The packer logs the client of every definition, texture and route and a summary line; `--report FILE` writes them to a file. Dynamapper draws it under the "Kingdom Reborn (tex_land_kr.uddp)" land source in Preferences (`land_texture_source = "kr"` in `graphics.toml`); the shader presets never choose a land source, and the art source stays Classic or Enhanced. Without the file, the Kingdom Reborn source falls back as a missing `tex_land_ec.uddp` does, and startup logs it.
+
+### `tilemeta_kr.uddp`, `tex_art_kr.uddp` and `tex_aux_kr.uddp`
+
+The Kingdom Reborn items, which `pack-kr-land` writes after the land, beside `--output` (`--tilemeta-output`, `--art-output` and `--aux-output` move them). They have the `tilemeta.uddp`, `tex_art_ec.uddp` and `tex_aux_ec.uddp` layouts and are built by the Enhanced packers with their lossless defaults from the Kingdom Reborn client alone, with the Classic `tiledata.mul` and `radarcol.mul` of `--ccdir` for the tilemeta, as `pack-ec-textures` takes them:
+
+- `tilemeta_kr.uddp`: KR's `tileart.uop` (its record version 3 read by `uocf`, which moves its flags to the Enhanced layout), with every record byte for byte in `metadata/tileart_records.bin`, so no KR field is lost: its texture refs, shaders, techniques and tweaks (the acid's scroll is ten times the Enhanced Client's), item lights and sampling starts.
+- `tex_art_kr.uddp`: KR's block-0 world art from its `Texture.uop`, trimmed of transparent borders only (the trims go to the tilemeta's sampling starts). On the shipped client: 13,052 slots on 9 pages, 58 MB.
+- `tex_aux_kr.uddp`: the material inputs KR's refs name (masks, noise, water maps), its `missing.tga`, atmosphere maps and light textures. On the shipped client: 646 textures, 5 MB; the 9,152 refs to KR's legacy art (`TileArtLegacy`) are not packed, as for the Enhanced Client, and 6 ids KR's `Texture.uop` lacks alias the missing texture.
+
+Dynamapper does not read them yet.
 
 ### `gumps_cc.uddp` and `gumps_ec.uddp`
 

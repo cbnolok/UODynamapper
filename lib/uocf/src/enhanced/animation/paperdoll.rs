@@ -8,6 +8,7 @@
 
 use std::collections::HashMap;
 use std::path::Path;
+use std::sync::Arc;
 
 use color_eyre::eyre::{self, WrapErr};
 use knuffel::Decode;
@@ -174,12 +175,45 @@ pub struct NamedTileArt {
     pub renamed: Vec<(u32, u32)>,
 }
 
+/// The entry ids the client looks a `tileart.uop` record up by, keyed by the hash of their entry name.
+fn tileart_entry_names() -> HashMap<u64, u32> {
+    (0..ENTRY_ID_SPAN)
+        .chain(MOBILE_DEFINITION_BASE..MOBILE_DEFINITION_BASE + ENTRY_ID_SPAN)
+        .map(|id| (tileart_entry_hash(id), id))
+        .collect()
+}
+
+/// One `tileart.uop` record as the client stores it, decompressed and not parsed.
+#[derive(Debug, Clone)]
+pub struct RawTileArtRecord {
+    /// The hash of its entry name.
+    pub name_hash: u64,
+    /// The id of its entry name (`build/tileart/%08d.bin`), `None` for a name outside the ids the client looks up.
+    pub entry_id: Option<u32>,
+    pub bytes: Arc<[u8]>,
+}
+
+/// Every record of a `tileart.uop`, read or not by [`TileArtEntry::parse_bytes`], ascending by entry id then name
+/// hash (unnamed records last).
+pub fn raw_tileart_records(package: &UopPackage) -> eyre::Result<Vec<RawTileArtRecord>> {
+    let names = tileart_entry_names();
+    let mut records = package
+        .iter_files()
+        .map(|file| {
+            Ok(RawTileArtRecord {
+                name_hash: file.filename_hash(),
+                entry_id: names.get(&file.filename_hash()).copied(),
+                bytes: file.unpack_arc().wrap_err("unpack a tileart.uop record")?,
+            })
+        })
+        .collect::<eyre::Result<Vec<_>>>()?;
+    records.sort_unstable_by_key(|record| (record.entry_id.unwrap_or(u32::MAX), record.entry_id.is_none(), record.name_hash));
+    Ok(records)
+}
+
 impl NamedTileArt {
     pub fn read(package: &UopPackage) -> Self {
-        let names: HashMap<u64, u32> = (0..ENTRY_ID_SPAN)
-            .chain(MOBILE_DEFINITION_BASE..MOBILE_DEFINITION_BASE + ENTRY_ID_SPAN)
-            .map(|id| (tileart_entry_hash(id), id))
-            .collect();
+        let names = tileart_entry_names();
         let mut named = Self::default();
         for file in package.iter_files() {
             let Ok(record) = TileArtEntry::parse_raw(file) else {

@@ -25,6 +25,7 @@ use udd_conv::{
     tex_art_ec::{TexArtEcAtlasOptions, convert_tex_art_ec_uop_to_tex_art_ec_uddp_from_sources_with_progress},
     tex_land_ec::{TexLandEcAtlasOptions, convert_tex_land_ec_uop_to_tex_land_ec_uddp_from_sources_with_progress},
     tex_land_kr::{TexLandKrPackOptions, convert_kr_land_to_tex_land_kr_uddp_with_progress, TEX_LAND_KR_FILE_NAME},
+    kr_items::{pack_kr_items, KrItemOutputs},
     tilemeta::{TileMetaBuildOptions, build_tilemeta_uddp_from_sources_with_progress, build_tilemeta_uddp_from_split_sources_with_progress},
     cc_map::convert_map_mul_to_uddp_from_sources_with_patches,
     chunk_compression::ChunkCompression,
@@ -1083,13 +1084,17 @@ impl UddConvApp {
     }
 
     /// The Kingdom Reborn land: KR's terrain from the Kingdom Reborn folder, what KR lacks from the Enhanced one, with
-    /// the Enhanced Land card's upscale settings and its own encoding.
+    /// the Enhanced Land card's upscale settings and its own encoding. Beside it, the lossless KR item packages (KR's
+    /// tileart with the Classic tiledata, its item art and material textures).
     pub fn convert_tex_land_kr(&self) {
         let settings = self.settings.clone();
         let output = self.get_output_path(TEX_LAND_KR_FILE_NAME);
-        self.spawn_asset_task(AssetPackTask::TexLandKr, "KR Land Packing".to_string(), vec![output.clone()], move |progress| {
+        let item_outputs = KrItemOutputs::beside(&output);
+        let outputs = vec![output.clone(), item_outputs.tilemeta.clone(), item_outputs.art.clone(), item_outputs.aux.clone()];
+        self.spawn_asset_task(AssetPackTask::TexLandKr, "KR Land Packing".to_string(), outputs, move |progress| {
             let Some(kr_dir) = settings.kr_dir.clone() else { eyre::bail!("No Kingdom Reborn source dir") };
             let Some(ec_dir) = settings.ec_dir.clone() else { eyre::bail!("No Enhanced source dir") };
+            let Some(cc_dir) = settings.cc_dir.clone() else { eyre::bail!("No Classic source dir (tiledata.mul for tilemeta_kr.uddp)") };
             ensure_output_parent(&output)?;
             let terrain_overrides_kdl = conversion_table(&settings, EC_TERRAIN_OVERRIDES_KDL)?;
             let transcode_kdl = conversion_table(&settings, TERRAIN_TRANSCODE_KDL)?;
@@ -1137,7 +1142,9 @@ impl UddConvApp {
                 |task_progress| progress.task_progress_with_extract_label(task_progress, extract_label),
                 |build_progress| progress.build_progress(build_progress),
             )?;
-            Ok(format!("Wrote {} pages to {} ({summary})", summary.package.page_count, output.display()))
+            let items = pack_kr_items(&kr_dir, &cc_dir, &item_outputs)?;
+            Ok(format!("Wrote {} pages to {} ({summary}); KR items: {} art slots, {} material textures",
+                summary.package.page_count, output.display(), items.art.populated_slot_count, items.aux.included))
         });
     }
 

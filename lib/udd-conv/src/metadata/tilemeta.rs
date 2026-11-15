@@ -39,6 +39,7 @@ use udd_assets::tex_art_ec::TexArtEcCropAdjustment;
 use udd_assets::tilemeta::item_definitions::{PropertyList, STORED_PROPERTIES};
 use udd_assets::tilemeta::{
     encode_item_lights, encode_item_texture_refs, EcMaterialLogicalFamily, TileMetaItemLight, TILEMETA_ITEM_LIGHT_ENTRY_PATH, EcMaterialPhysicalPackage,
+    TileMetaTileArtRecords, TILEMETA_TILEART_RECORD_ENTRY_PATH,
     EcMaterialStableRole, TileMetaItemDefinitions, TileMetaItemTextureRef, TileMetaItemTextureRefSpan, TileMetaItemTile,
     TileMetaItemVisualKind, TileMetaLandTile, TILEMETA_ITEM_DEFINITION_ENTRY_PATH, TILEMETA_ITEM_ENTRY_PATH,
     TILEMETA_ITEM_EC_ART_FLAG_USE_NEW_ART, TILEMETA_ITEM_TEXTURE_FLAG_AUXILIARY,
@@ -88,6 +89,8 @@ struct BuiltTileMetaTables {
     item_materials: std::collections::BTreeMap<u32, Vec<uocf::enhanced::tileart::ArtMaterial>>,
     item_definitions: TileMetaItemDefinitions,
     item_lights: Vec<TileMetaItemLight>,
+    /// Every `tileart.uop` record, byte for byte.
+    tileart_records: TileMetaTileArtRecords,
     package_compression: CompressionFlag,
 }
 
@@ -309,6 +312,7 @@ mod tests {
             item_texture_ref_spans: Vec::new(), item_texture_refs: Vec::new(),
             item_materials: [(6038, vec![material.clone()])].into_iter().collect(),
             item_definitions: TileMetaItemDefinitions::default(), item_lights: Vec::new(),
+            tileart_records: TileMetaTileArtRecords::default(),
             package_compression: CompressionFlag::ZstdNoDict,
         }).expect("write source material metadata");
         let package = udd_assets::tilemeta::TileMetaPackage::load(&path).expect("read source material metadata");
@@ -347,6 +351,7 @@ mod tests {
             item_definitions: TileMetaItemDefinitions::from_tileart([(ROBE, &robe), (BODY_DEFINITION, &body)])
                 .expect("definitions"),
             item_lights: Vec::new(),
+            tileart_records: TileMetaTileArtRecords::default(),
             package_compression: CompressionFlag::ZstdNoDict,
         }).expect("write item definitions");
         let package = udd_assets::tilemeta::TileMetaPackage::load(&path).expect("read item definitions");
@@ -519,6 +524,7 @@ fn write_tilemeta_uddp_with_progress(
     let item_material_bytes = serde_json::to_vec(&built.item_materials)?;
     let item_definition_bytes = built.item_definitions.to_bytes()?;
     let item_light_bytes = encode_item_lights(&built.item_lights);
+    let tileart_record_bytes = built.tileart_records.to_bytes();
 
     let mut package = UddpBuilder::new(LookupMode::VirtualPathHash);
     package.add_file(AddFileRequest {
@@ -590,6 +596,16 @@ fn write_tilemeta_uddp_with_progress(
         path_hash64: None,
         id: None,
         data: &item_light_bytes,
+    })?;
+    package.add_file(AddFileRequest {
+        data_type: DataType::Metadata as u8,
+        compression: built.package_compression,
+        width: 0,
+        height: 0,
+        virtual_path: Some(TILEMETA_TILEART_RECORD_ENTRY_PATH),
+        path_hash64: None,
+        id: None,
+        data: &tileart_record_bytes,
     })?;
     build_and_write_package_with_progress(package, out_file, &mut package_progress)?;
 
@@ -859,6 +875,9 @@ fn build_tilemeta_tables_with_ec_sources(
     }
     let light_textures: std::collections::BTreeSet<u32> = item_lights.iter().map(|light| light.light_texture_entry).collect();
     info!("tilemeta: {} item lights, light textures {light_textures:?}", item_lights.len());
+    let tileart_records = read_tileart_records(&ec_sources.tileart_path)?;
+    info!("tilemeta: {} tileart.uop records kept byte for byte ({} bytes)", tileart_records.len(),
+        tileart_records.iter().map(|(_, bytes)| bytes.len()).sum::<usize>());
 
     Ok(BuiltTileMetaTables {
         land_tiles: tilemeta_land,
@@ -868,8 +887,21 @@ fn build_tilemeta_tables_with_ec_sources(
         item_materials,
         item_definitions,
         item_lights,
+        tileart_records,
         package_compression: options.package_compression,
     })
+}
+
+/// Every record of `tileart_path` as the client stores it, parsed or not, so the package loses none of it.
+fn read_tileart_records(tileart_path: &Path) -> eyre::Result<TileMetaTileArtRecords> {
+    let package =
+        UopPackage::load(tileart_path).wrap_err_with(|| format!("cannot open {}", tileart_path.display()))?;
+    let records = uocf::enhanced::paperdoll::raw_tileart_records(&package)?;
+    let unnamed = records.iter().filter(|record| record.entry_id.is_none()).count();
+    if unnamed > 0 {
+        info!("tilemeta: {unnamed} tileart.uop records are named outside the ids the client looks up; kept unnamed");
+    }
+    TileMetaTileArtRecords::new(records.iter().map(|record| (record.name_hash, record.entry_id, record.bytes.as_ref())))
 }
 
 /// Maps `EcLogicalFamily` (from `uocf::ec_material_axes`) to the numeric discriminant

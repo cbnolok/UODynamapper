@@ -83,6 +83,7 @@ use udd_conv::{
         DEFAULT_ATLAS_PAGE_WIDTH as EC_LAND_DEFAULT_ATLAS_PAGE_WIDTH,
     },
     tex_land_kr::{convert_kr_land_to_tex_land_kr_uddp, TexLandKrPackOptions, TEX_LAND_KR_FILE_NAME},
+    kr_items::{pack_kr_items, KrItemOutputs},
     tilemeta::{
         build_tilemeta_uddp_from_sources, build_tilemeta_uddp_from_split_sources,
         build_tilemeta_uddp_from_split_sources_with_loaded_ec_sources, TileMetaBuildOptions,
@@ -1119,15 +1120,25 @@ enum Commands {
     },
     /// Packs the Kingdom Reborn land into tex_land_kr.uddp, in the tex_land_ec.uddp layout: KR's TerrainDefinition.uop,
     /// Texture.uop and facet land routes, with what KR lacks from the Enhanced Client, and KR's grunge texture. Without
-    /// a format flag the pages are lossless RGBA8888 with Zstd 19; BC7 blocks take Zstd 19 too.
+    /// a format flag the pages are lossless RGBA8888 with Zstd 19; BC7 blocks take Zstd 19 too. Beside it go the KR
+    /// item packages, lossless, from KR alone: tilemeta_kr.uddp (KR's tileart.uop with Classic tiledata.mul),
+    /// tex_art_kr.uddp (its item world art) and tex_aux_kr.uddp (its item material textures).
     #[command(group(ArgGroup::new("output_format").args(["raw", "bc7", "bc7_rdo"])))]
     PackKrLand {
-        #[arg(long, help = "Kingdom Reborn client folder (TerrainDefinition.uop, Texture.uop).")]
+        #[arg(long, help = "Kingdom Reborn client folder (TerrainDefinition.uop, Texture.uop, tileart.uop, string_dictionary.uop, TerrainTexture.uop, SystemTextures.uop).")]
         krdir: PathBuf,
         #[arg(long, help = "Enhanced Client folder, for what Kingdom Reborn lacks (TerrainDefinition.uop, Texture.uop, GameData.uop).")]
         ecdir: PathBuf,
+        #[arg(long, help = "Classic Client folder, for the tiledata.mul (and radarcol.mul) of tilemeta_kr.uddp.")]
+        ccdir: PathBuf,
         #[arg(long, default_value = TEX_LAND_KR_FILE_NAME)]
         output: PathBuf,
+        #[arg(long, help = "Output of the KR tileart package. Default: tilemeta_kr.uddp beside --output.")]
+        tilemeta_output: Option<PathBuf>,
+        #[arg(long, help = "Output of the KR item world art package. Default: tex_art_kr.uddp beside --output.")]
+        art_output: Option<PathBuf>,
+        #[arg(long, help = "Output of the KR item material texture package. Default: tex_aux_kr.uddp beside --output.")]
+        aux_output: Option<PathBuf>,
         #[arg(long, help = "Embed this TerrainTranscode.kdl (the terrain routing table), without the ids Kingdom Reborn routes. Default: the copy shipped with the tools.")]
         land_transcode_kdl: Option<PathBuf>,
         #[arg(long, help = "Embed this EcTerrainOverrides.kdl (the reviewed terrain layer substitutions). Default: the copy shipped with the tools.")]
@@ -2016,7 +2027,11 @@ where
         Commands::PackKrLand {
             krdir,
             ecdir,
+            ccdir,
             output,
+            tilemeta_output,
+            art_output,
+            aux_output,
             land_transcode_kdl,
             land_terrain_overrides_kdl,
             atlas_width,
@@ -2033,7 +2048,14 @@ where
         } => {
             validate_source_dir(&krdir, "--krdir")?;
             validate_source_dir(&ecdir, "--ecdir")?;
+            validate_source_dir(&ccdir, "--ccdir")?;
             let out_file = resolve_output_path(&output);
+            let beside = KrItemOutputs::beside(&out_file);
+            let item_outputs = KrItemOutputs {
+                tilemeta: tilemeta_output.map_or(beside.tilemeta, |path| resolve_output_path(&path)),
+                art: art_output.map_or(beside.art, |path| resolve_output_path(&path)),
+                aux: aux_output.map_or(beside.aux, |path| resolve_output_path(&path)),
+            };
             let output_format = resolve_land_output_format(
                 TextureOutputFormatArgs { raw, zstd: land_zstd_level(zstd), bc7, bc7_rdo },
                 bc7_rdo_lambda,
@@ -2079,6 +2101,7 @@ where
                 summary.package.slot_count,
                 out_file.display()
             );
+            pack_kr_items(&krdir, &ccdir, &item_outputs)?;
         }
         Commands::AuditEcMaterialRefs {
             source_dirs: source_dir_args,
@@ -2817,6 +2840,10 @@ mod tests {
             "/kr",
             "--ecdir",
             "/ec",
+            "--ccdir",
+            "/cc",
+            "--art-output",
+            "/out/art.uddp",
             "--report",
             "/out/kr_land.txt",
             "--upscale-64-algo",
@@ -2825,9 +2852,11 @@ mod tests {
         .expect("parse KR land args");
 
         match cli.command {
-            Commands::PackKrLand { krdir, ecdir, output, report, bc7, raw, zstd, upscale, .. } => {
-                assert_eq!((krdir, ecdir), (PathBuf::from("/kr"), PathBuf::from("/ec")));
+            Commands::PackKrLand { krdir, ecdir, ccdir, output, tilemeta_output, art_output, aux_output, report, bc7, raw,
+                zstd, upscale, .. } => {
+                assert_eq!((krdir, ecdir, ccdir), (PathBuf::from("/kr"), PathBuf::from("/ec"), PathBuf::from("/cc")));
                 assert_eq!(output, PathBuf::from(TEX_LAND_KR_FILE_NAME));
+                assert_eq!((tilemeta_output, art_output, aux_output), (None, Some(PathBuf::from("/out/art.uddp")), None));
                 assert_eq!(report, Some(PathBuf::from("/out/kr_land.txt")));
                 assert!(!bc7 && !raw && zstd.is_none());
                 assert!(matches!(upscale.upscale_64_algo, CliUpscaleFilter::None));
@@ -2837,6 +2866,8 @@ mod tests {
             _ => panic!("unexpected command parsed"),
         }
         assert!(Cli::try_parse_from(["uddpack", "pack-kr-land", "--krdir", "/kr"]).is_err(), "--ecdir is required");
+        assert!(Cli::try_parse_from(["uddpack", "pack-kr-land", "--krdir", "/kr", "--ecdir", "/ec"]).is_err(),
+            "--ccdir is required");
     }
 
     #[test]
