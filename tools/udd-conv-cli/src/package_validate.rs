@@ -730,7 +730,12 @@ fn run_package_reader(kind: PackageKind, package: &UddpReader) -> eyre::Result<S
         }
         PackageKind::WorldLights => {
             let reader = WorldLightsPackage::from_uddp_package(package.clone())?;
-            format!("slots={}", reader.slots().len())
+            let mut darkening = 0;
+            for slot in reader.slots().iter().filter(|slot| slot.is_present()) {
+                let intensities = reader.read_light_intensities(slot.light_id)?;
+                darkening += usize::from(intensities.iter().any(|&value| value < 0));
+            }
+            format!("slots={}, lights with darkening pixels={darkening}", reader.slots().len())
         }
         PackageKind::MobileAnimCc => {
             let reader = MobileAnimCcPackage::from_uddp_package(package.clone())?;

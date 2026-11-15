@@ -1,3 +1,6 @@
+//! `world_lights.uddp`: the Classic `light.mul` lights by light id, each its signed intensities as stored, one byte
+//! per pixel (`lights/{id:08}.i8`), and the slot manifest of their sizes.
+
 use std::io::{Cursor, Read};
 use std::path::Path;
 use color_eyre::eyre::{self, WrapErr};
@@ -58,6 +61,14 @@ impl WorldLightsPackage {
             .context("world_lights.uddp missing metadata/slots.bin")?;
 
         let slots = parse_slot_manifest(&slot_manifest)?;
+        // Packages made before the signed intensities hold RGBA masks under other paths.
+        if let Some(slot) = slots.iter().find(|slot| slot.is_present()) {
+            eyre::ensure!(
+                package.find_by_path_hash(udd_container::xxh64_virtual_path(&light_entry_path(slot.light_id))).is_some(),
+                "world_lights.uddp has no {}: it predates the signed light intensities, repack it",
+                light_entry_path(slot.light_id),
+            );
+        }
 
         Ok(Self {
             package,
@@ -73,9 +84,16 @@ impl WorldLightsPackage {
         &self.slots
     }
 
-    pub fn read_light_bytes(&self, light_id: u32) -> eyre::Result<Vec<u8>> {
-        read_path_entry(&self.package, &light_entry_path(light_id))
-            .wrap_err_with(|| format!("unpack light {light_id}"))
+    /// The light's signed intensities, `width * height` of them (`present_slot`): positive values light, negative
+    /// ones darken, -31 to 31 in the shipped files.
+    pub fn read_light_intensities(&self, light_id: u32) -> eyre::Result<Vec<i8>> {
+        let slot = self.present_slot(light_id).ok_or_else(|| eyre::eyre!("no light {light_id}"))?;
+        let bytes = read_path_entry(&self.package, &light_entry_path(light_id))
+            .wrap_err_with(|| format!("unpack light {light_id}"))?;
+        let pixels = usize::from(slot.width) * usize::from(slot.height);
+        eyre::ensure!(bytes.len() == pixels, "light {light_id} has {} intensities for {}x{}", bytes.len(), slot.width,
+            slot.height);
+        Ok(bytes.into_iter().map(|byte| byte as i8).collect())
     }
 
     pub fn present_slot(&self, light_id: u32) -> Option<&WorldLightSlotRecord> {
@@ -107,5 +125,23 @@ fn parse_slot_manifest(bytes: &[u8]) -> eyre::Result<Vec<WorldLightSlotRecord>> 
 }
 
 pub fn light_entry_path(light_id: u32) -> String {
-    format!("lights/{light_id:08}.rgba8888")
+    format!("lights/{light_id:08}.i8")
+}
+
+/// The largest intensity of the shipped `light.mul` files, which lights fully.
+pub const LIGHT_FULL_INTENSITY: i8 = 31;
+
+/// A light's intensities as an RGBA8888 preview: a lighting pixel grey by its intensity, a darkening one blue by its
+/// depth, the rest transparent.
+pub fn light_preview_rgba(intensities: &[i8]) -> Vec<u8> {
+    let level = |value: i8| (i32::from(value).unsigned_abs().min(LIGHT_FULL_INTENSITY as u32) * 255
+        / LIGHT_FULL_INTENSITY as u32) as u8;
+    intensities
+        .iter()
+        .flat_map(|&value| match value {
+            0 => [0, 0, 0, 0],
+            1.. => [level(value), level(value), level(value), u8::MAX],
+            _ => [0, 0, level(value), u8::MAX],
+        })
+        .collect()
 }

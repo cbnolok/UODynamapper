@@ -23,6 +23,7 @@ use crate::core::render::scene::SceneStateData;
 use crate::core::statics::StaticsStoreRes;
 use crate::core::uo_files_loader::{HuesPackageRes, MapPlanesRes, TileMetaPackageRes, WorldLightsPackageRes};
 use crate::util_lib::uo_coords::scale_uo_z_to_bevy_units;
+use udd_assets::world_lights::LIGHT_FULL_INTENSITY;
 use bevy::camera::visibility::{NoFrustumCulling, RenderLayers};
 use bevy::mesh::MeshTag;
 use bevy::prelude::*;
@@ -35,6 +36,10 @@ pub(super) const LIGHT_PIXELS_PER_WORLD_TILE: f32 = 44.0;
 pub(super) const STATIC_LIGHT_Y_BIAS: f32 = 0.012;
 const STATIC_LIGHT_ALPHA: f32 = 0.65;
 const STATIC_LIGHT_DEPTH_BIAS: f32 = 128.0;
+/// The light textures' format: signed, so a darkening pixel subtracts from the light buffer.
+const STATIC_LIGHT_TEXTURE_FORMAT: TextureFormat = TextureFormat::Rgba8Snorm;
+/// The largest value of an 8-bit signed normalized channel, which reads as 1.
+const SNORM8_MAX: f32 = 127.0;
 /// The signature's material alpha where no light.mul quad draws (KR-like, Enhanced and UOD-Painterly).
 const NO_DECAL_ALPHA: f32 = 0.0;
 /// The range of `static_light_decal_visibility` (the Static Light Decals slider's).
@@ -694,22 +699,14 @@ fn static_light_material(
     }
 
     let slot = world_lights.present_slot(light_id)?;
-    let mut rgba = match world_lights.read_light_bytes(light_id) {
-        Ok(bytes) => bytes,
+    let intensities = match world_lights.read_light_intensities(light_id) {
+        Ok(intensities) => intensities,
         Err(error) => {
-            log::warn!("Failed to read static light mask {light_id}: {error}");
+            log::warn!("Failed to read static light mask {light_id}: {error:#}");
             return None;
         }
     };
-    if rgba.len() != slot.width as usize * slot.height as usize * 4 {
-        log::warn!(
-            "Static light mask {light_id} has invalid byte length {} for {}x{} rgba8888.",
-            rgba.len(),
-            slot.width,
-            slot.height,
-        );
-        return None;
-    }
+    let mut rgba = static_light_mask_rgba(&intensities);
 
     {
         let hue_source = resolve_static_light_hue_source(
@@ -722,10 +719,11 @@ fn static_light_material(
         apply_static_light_style(&mut rgba, slot.width as u32, slot.height as u32, render_style);
     }
 
-    // The lights add into the light buffer with their 8-bit values unchanged (not sRGB): light.mul's value over 31,
-    // which the Classic rule takes off the darkness (`client_night::classic_composite`).
+    // The lights add into the light buffer with their values unchanged (not sRGB): light.mul's value over 31, which
+    // the Classic rule takes off the darkness (`client_night::classic_composite`). Signed: the darkening pixels add a
+    // negative value and deepen the darkness, as the client's do.
     let (format, base_color, alpha_mode) =
-        (TextureFormat::Rgba8Unorm, static_light_base_color(material_alpha), AlphaMode::Add);
+        (STATIC_LIGHT_TEXTURE_FORMAT, static_light_base_color(material_alpha), AlphaMode::Add);
     let mut image = Image::new(
         Extent3d {
             width: slot.width as u32,
@@ -733,7 +731,7 @@ fn static_light_material(
             depth_or_array_layers: 1,
         },
         TextureDimension::D2,
-        rgba,
+        static_light_texels(&intensities, &rgba),
         format,
         bevy::asset::RenderAssetUsages::default(),
     );
@@ -865,7 +863,10 @@ fn static_light_response_color_from_sources(
         .mask_color_by_light
         .entry(light_id)
         .or_insert_with(|| {
-            world_lights.read_light_bytes(light_id).ok().and_then(|rgba| sampled_static_light_mask_color(&rgba))
+            world_lights
+                .read_light_intensities(light_id)
+                .ok()
+                .and_then(|intensities| sampled_static_light_mask_color(&static_light_mask_rgba(&intensities)))
         })
         .unwrap_or([1.0, 0.72, 0.42])
 }
@@ -902,6 +903,42 @@ fn normalized_response_color_from_rgba(color: [u8; 4]) -> Option<[f32; 3]> {
     rgb[1] /= max_channel;
     rgb[2] /= max_channel;
     Some(rgb)
+}
+
+/// A light's lighting pixels as RGBA8888, the hue and the style apply to: a positive intensity as grey, its 5 bits
+/// widened to 8, opaque; the darkening and empty pixels transparent (`static_light_texels` adds the darkening back).
+fn static_light_mask_rgba(intensities: &[i8]) -> Vec<u8> {
+    intensities
+        .iter()
+        .flat_map(|&value| {
+            let value = value.max(0) as u8;
+            if value == 0 {
+                return [0; 4];
+            }
+            let level = (value << 3) | (value >> 2);
+            [level, level, level, u8::MAX]
+        })
+        .collect()
+}
+
+/// The light texture's `STATIC_LIGHT_TEXTURE_FORMAT` texels: the hued lighting pixels `rgba`
+/// (`static_light_mask_rgba`), and each darkening pixel its negative intensity over `LIGHT_FULL_INTENSITY`, white
+/// and opaque. The client takes a negative value off the darkness of every channel alike, whatever the light's colour
+/// (0x00448c80); its coloured lights read their colour tables at a negative index (0x00449240 and its siblings), past
+/// the table's start into the one before it, which brightens those pixels instead: a client bug, not reproduced.
+fn static_light_texels(intensities: &[i8], rgba: &[u8]) -> Vec<u8> {
+    let snorm = |value: f32| (value.clamp(-1.0, 1.0) * SNORM8_MAX).round() as i8 as u8;
+    intensities
+        .iter()
+        .zip(rgba.as_chunks::<4>().0)
+        .flat_map(|(&value, pixel)| {
+            if value < 0 {
+                let darkness = snorm(f32::from(value) / f32::from(LIGHT_FULL_INTENSITY));
+                return [darkness, darkness, darkness, snorm(1.0)];
+            }
+            pixel.map(|channel| snorm(f32::from(channel) / f32::from(u8::MAX)))
+        })
+        .collect()
 }
 
 fn sampled_static_light_mask_color(rgba: &[u8]) -> Option<[f32; 3]> {
@@ -1552,6 +1589,30 @@ mod tests {
         ];
 
         assert_eq!(sampled_static_light_mask_color(&rgba), None);
+    }
+
+    #[test]
+    fn a_light_mask_widens_its_lighting_intensities_and_leaves_the_darkening_out() {
+        assert_eq!(static_light_mask_rgba(&[31, 16, 0, -12]), vec![
+            255, 255, 255, 255,
+            132, 132, 132, 255,
+            0, 0, 0, 0,
+            0, 0, 0, 0,
+        ]);
+    }
+
+    #[test]
+    fn a_light_texture_signs_its_darkening_pixels_whatever_the_hue() {
+        let intensities = [31, -31, -16, 0];
+        let hued = [255, 128, 0, 255, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0];
+        let texels = static_light_texels(&intensities, &hued).into_iter().map(|byte| byte as i8).collect::<Vec<_>>();
+
+        assert_eq!(texels, vec![
+            127, 64, 0, 127,
+            -127, -127, -127, 127,
+            -66, -66, -66, 127,
+            0, 0, 0, 0,
+        ]);
     }
 
     #[test]

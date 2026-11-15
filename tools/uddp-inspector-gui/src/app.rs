@@ -1131,10 +1131,10 @@ impl InspectorApp {
                     _data_type: udd_container::DataType::Light as u8,
                     kind: "World Light".to_string(),
                     summary: format!(
-                        "{}x{} rgba8888 | {} raw",
+                        "{}x{} signed intensities | {} raw",
                         slot.width,
                         slot.height,
-                        format_size(slot.width as u64 * slot.height as u64 * 4)
+                        format_size(slot.width as u64 * slot.height as u64)
                     ),
                     location: path.clone(),
                     data: VirtualEntryData::WorldLight(WorldLightInfo {
@@ -1448,14 +1448,14 @@ impl InspectorApp {
                             return;
                         };
                         let expected_len =
-                            info.width as usize * info.height as usize * 4;
+                            info.width as usize * info.height as usize;
                         if info.width == 0
                             || info.height == 0
                             || light_bytes.len() != expected_len
                         {
                             self.preview_texture = None;
                             self.preview_text = Some(format!(
-                                "World Light {} has invalid rgba8888 payload: expected {} bytes for {}x{}, got {} bytes.",
+                                "World Light {} has invalid intensities: expected {} bytes for {}x{}, got {} bytes.",
                                 ventry.id,
                                 expected_len,
                                 info.width,
@@ -1469,9 +1469,11 @@ impl InspectorApp {
                             ctx,
                             &format!("world_light_{}", ventry.id),
                             [info.width as usize, info.height as usize],
-                            &light_bytes,
+                            &udd_assets::world_lights::light_preview_rgba(
+                                &light_bytes.iter().map(|&byte| byte as i8).collect::<Vec<_>>(),
+                            ),
                             format!(
-                                "World Light {} ({}x{}, format: rgba8888)",
+                                "World Light {} ({}x{}, signed intensities: grey lights, blue darkens)",
                                 ventry.id,
                                 info.width,
                                 info.height
@@ -2139,10 +2141,10 @@ mod tests {
                 compression: CompressionFlag::None,
                 width: 2,
                 height: 1,
-                virtual_path: Some("lights/00000001.rgba8888"),
+                virtual_path: Some("lights/00000001.i8"),
                 path_hash64: None,
                 id: None,
-                data: &[255, 255, 255, 255, 64, 64, 64, 255],
+                data: &[31, 0xF0],
             })
             .expect("add world light payload");
         let bytes = builder.build().expect("build test package");
@@ -2663,8 +2665,8 @@ mod tests {
         assert_eq!(entries.len(), 1);
         assert_eq!(entries[0].id, 1);
         assert_eq!(entries[0].kind, "World Light");
-        assert_eq!(entries[0].summary, "2x1 rgba8888 | 8 B raw");
-        assert_eq!(entries[0].location, "lights/00000001.rgba8888");
+        assert_eq!(entries[0].summary, "2x1 signed intensities | 2 B raw");
+        assert_eq!(entries[0].location, "lights/00000001.i8");
         let VirtualEntryData::WorldLight(info) = &entries[0].data else {
             panic!("expected world light entry");
         };

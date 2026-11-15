@@ -3,6 +3,10 @@
 //!
 //! This module handles the loading and decoding of light sources from the Ultima Online
 //! client files. Light sources are used to create lighting effects in the game world.
+//!
+//! Each pixel is a signed intensity byte, -31 to 31 in the shipped files. The Classic client (7.0.103.0, the
+//! single-value path at 0x00458a40 and the white light at 0x00448c80) sign-extends it and takes it off the darkness:
+//! a positive value lights, a negative one darkens. [`LightMap::light`] keeps the values as stored.
 
 crate::eyre_imports!();
 
@@ -15,11 +19,29 @@ use crate::classic::generic_index::IndexFile;
 use crate::classic::verdata::{VerFileId, Verdata};
 use crate::enhanced::textures::Textures;
 
+/// One `light.mul` light: its size and its signed intensities, one per pixel, rows top to bottom.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ClassicLight {
+    pub width: u16,
+    pub height: u16,
+    pub intensities: Vec<i8>,
+}
+
+impl ClassicLight {
+    fn from_raw(raw_data: &[u8], width: u16, height: u16) -> eyre::Result<Self> {
+        let pixel_count = width as usize * height as usize;
+        if raw_data.len() < pixel_count {
+            eyre::bail!("Light data truncated: expected {} bytes, got {}", pixel_count, raw_data.len());
+        }
+        let intensities = raw_data[..pixel_count].iter().map(|&byte| byte as i8).collect();
+        Ok(Self { width, height, intensities })
+    }
+}
+
 #[derive(Clone)]
 pub struct LightMap {
-    /// Decoded light data. Index is light_id.
-    /// Each entry is (width, height, pixel_data_rgba8888).
-    decoded_lights: Vec<Option<(u16, u16, Vec<u8>)>>,
+    /// The lights by light_id.
+    lights: Vec<Option<ClassicLight>>,
     /// EC lighting textures from TerrainTexture.uop
     ec_textures: Option<Textures>,
 }
@@ -42,7 +64,7 @@ impl LightMap {
         ec_path: Option<impl AsRef<Path>>,
         verdata: Option<Arc<Verdata>>,
     ) -> eyre::Result<Self> {
-        let mut decoded_lights = Vec::new();
+        let mut lights = Vec::new();
         
         if let Some(cc_path) = cc_path {
             let cc_path = cc_path.as_ref();
@@ -56,7 +78,7 @@ impl LightMap {
                 mul_file.read_to_end(&mut mul_data)?;
 
                 let count = idx_file.element_count();
-                decoded_lights.reserve(count);
+                lights.reserve(count);
 
                 for i in 0..count {
                     let entry = idx_file.element(i)?;
@@ -66,15 +88,15 @@ impl LightMap {
                             let height = ((patch.extra as u32 >> 16) & 0xFFFF) as u16;
                             match verdata
                                 .read_patch_data(patch)
-                                .and_then(|raw| decode_light_from_raw(&raw, width, height))
+                                .and_then(|raw| ClassicLight::from_raw(&raw, width, height))
                             {
-                                Ok(decoded) => {
-                                    decoded_lights.push(Some((width, height, decoded)));
+                                Ok(light) => {
+                                    lights.push(Some(light));
                                     continue;
                                 }
                                 Err(e) => {
                                     log::error!("Failed to decode verdata light {}: {}", i, e);
-                                    decoded_lights.push(None);
+                                    lights.push(None);
                                     continue;
                                 }
                             }
@@ -92,7 +114,7 @@ impl LightMap {
                         let height = ((extra >> 16) & 0xFFFF) as u16;
 
                         if width == 0 || height == 0 || size == 0 {
-                            decoded_lights.push(None);
+                            lights.push(None);
                             continue;
                         }
 
@@ -102,20 +124,20 @@ impl LightMap {
 
                         if end > mul_data.len() {
                             log::warn!("Light index {} points outside mul data range", i);
-                            decoded_lights.push(None);
+                            lights.push(None);
                             continue;
                         }
 
                         let raw_data = &mul_data[lookup..end];
-                        match decode_light_from_raw(raw_data, width, height) {
-                            Ok(decoded) => decoded_lights.push(Some((width, height, decoded))),
+                        match ClassicLight::from_raw(raw_data, width, height) {
+                            Ok(light) => lights.push(Some(light)),
                             Err(e) => {
                                 log::error!("Failed to decode light {}: {}", i, e);
-                                decoded_lights.push(None);
+                                lights.push(None);
                             }
                         }
                     } else {
-                        decoded_lights.push(None);
+                        lights.push(None);
                     }
                 }
             }
@@ -136,15 +158,21 @@ impl LightMap {
             None
         };
 
-        Ok(Self { decoded_lights, ec_textures })
+        Ok(Self { lights, ec_textures })
     }
 
-    /// Fetches the decoded pixels for a given `light_id`.
+    /// The `light.mul` light `light_id`, its intensities as stored.
+    pub fn light(&self, light_id: u32) -> Option<&ClassicLight> {
+        self.lights.get(light_id as usize).and_then(|light| light.as_ref())
+    }
+
+    /// Fetches the pixels for a given `light_id` as RGBA8888 (`decode_light_from_raw`: the lighting pixels only).
     /// Returns `(width, height, pixel_data)`.
     pub fn decode_light(&self, light_id: u32) -> eyre::Result<(u16, u16, Vec<u8>)> {
-        // Try classic decoded lights first
-        if let Some(light) = self.decoded_lights.get(light_id as usize).and_then(|l| l.as_ref()) {
-            return Ok((light.0, light.1, light.2.clone()));
+        // Try classic lights first
+        if let Some(light) = self.light(light_id) {
+            let raw = light.intensities.iter().map(|&value| value as u8).collect::<Vec<_>>();
+            return Ok((light.width, light.height, decode_light_from_raw(&raw, light.width, light.height)?));
         }
 
         // Try EC lighting from TerrainTexture.uop
@@ -162,11 +190,11 @@ impl LightMap {
     }
 
     pub fn max_id(&self) -> u32 {
-        self.decoded_lights.len() as u32
+        self.lights.len() as u32
     }
 
     pub fn has_id(&self, light_id: u32) -> bool {
-        if self.decoded_lights.get(light_id as usize).is_some_and(|l| l.is_some()) {
+        if self.light(light_id).is_some() {
             return true;
         }
 
@@ -180,11 +208,12 @@ impl LightMap {
     }
 
     pub fn element_count(&self) -> usize {
-        self.decoded_lights.len()
+        self.lights.len()
     }
 }
 
-/// Decodes raw light intensity data into RGBA8888 pixels.
+/// Decodes raw light intensity data into RGBA8888 pixels: a positive intensity as grey, a negative one, which the
+/// client takes as darkness (see the module notes), transparent. Lossy: [`LightMap::light`] keeps the signed values.
 pub fn decode_light_from_raw(raw_data: &[u8], width: u16, height: u16) -> eyre::Result<Vec<u8>> {
     let pixel_count = width as usize * height as usize;
     if raw_data.len() < pixel_count {
@@ -194,13 +223,9 @@ pub fn decode_light_from_raw(raw_data: &[u8], width: u16, height: u16) -> eyre::
     let mut pixel_data_out = vec![0u8; pixel_count * 4];
 
     for i in 0..pixel_count {
-        let mut val = raw_data[i];
-        
-        // Follow ClassicUO logic for intensity decoding
-        // Light can be from -31 to 31. When they are below 0 they are bit inverted
-        if val > 0x1F {
-            val = !val & 0x1F;
-        }
+        // Signed, -31 to 31. ClassicUO inverts the negative values (`!val & 0x1F`), which turns darkness into light;
+        // the client does not.
+        let val = (raw_data[i] as i8).max(0) as u8;
 
         if val != 0 {
             // Light intensity in UO is 5-bit (0-31).
@@ -223,7 +248,7 @@ mod tests {
 
     #[test]
     fn test_decode_light_logic() {
-        let raw_data = vec![0, 0x1F, 0x20, 0xFF];
+        let raw_data = vec![0, 0x1F, 0xE1, 0xFF];
         let decoded = decode_light_from_raw(&raw_data, 2, 2).unwrap();
         
         // Pixel 0: 0 -> transparent
@@ -234,12 +259,14 @@ mod tests {
         assert_eq!(decoded[4], 255);
         assert_eq!(decoded[7], 255);
         
-        // Pixel 2: 0x20 -> 31 -> 255
-        assert_eq!(decoded[8], 255);
-        assert_eq!(decoded[11], 255);
-        
-        // Pixel 3: 0xFF -> 0 -> transparent
-        assert_eq!(decoded[12], 0);
-        assert_eq!(decoded[15], 0);
+        // Pixels 2 and 3: -31 and -1, darkness -> transparent
+        assert_eq!(decoded[8..16], [0; 8]);
+    }
+
+    #[test]
+    fn a_light_keeps_its_signed_intensities() {
+        let light = ClassicLight::from_raw(&[0, 0x1F, 0xE1, 0xFF, 0x42], 2, 2).unwrap();
+        assert_eq!(light.intensities, [0, 31, -31, -1]);
+        assert!(ClassicLight::from_raw(&[0; 3], 2, 2).is_err());
     }
 }

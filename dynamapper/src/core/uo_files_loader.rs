@@ -788,7 +788,7 @@ pub fn sys_setup_uo_data(mut commands: Commands, settings: Res<Settings>) {
         );
         Some(
             udd_assets::world_lights::WorldLightsPackage::load(&world_lights_path)
-                .unwrap_or_else(|_| panic!("Error loading {}", world_lights_path.display())),
+                .unwrap_or_else(|error| panic!("Error loading {}: {error:#}", world_lights_path.display())),
         )
     } else {
         lg("No world light mask package selected: world_lights.uddp not found in udd_path.");

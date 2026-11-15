@@ -32,7 +32,8 @@ impl Default for WorldLightsOptions {
 /// Light ids of the slot manifest: `0..WORLD_LIGHT_SLOT_COUNT`. Classic `lightidx.mul` holds about 100.
 const WORLD_LIGHT_SLOT_COUNT: u32 = 1024;
 
-/// Packs the Classic light masks (`light.mul`, `lightidx.mul`, patched by verdata when enabled), keyed by light id.
+/// Packs the Classic light masks (`light.mul`, `lightidx.mul`, patched by verdata when enabled), keyed by light id:
+/// each its signed intensities as stored, one byte per pixel.
 ///
 /// The Enhanced and KR light sprites are not here: their textures are `TerrainTexture.uop` entries named by the
 /// tileart, packed in `tex_aux_ec.uddp`, and their entry numbers are not light ids.
@@ -60,36 +61,24 @@ pub fn convert_client_lights_to_world_lights_uddp(
     let mut added_count = 0;
 
     for id in 0..WORLD_LIGHT_SLOT_COUNT {
-        if light_map.has_id(id) {
-            match light_map.decode_light(id) {
-                Ok((width, height, pixels)) => {
-                    if width > 0 && height > 0 && !pixels.is_empty() {
-                        let vpath = light_entry_path(id);
-                        package.add_file(AddFileRequest {
-                            data_type: DataType::Texture as u8,
-                            compression: options.compression,
-                            width: width as u32,
-                            height: height as u32,
-                            virtual_path: Some(&vpath),
-                            path_hash64: None,
-                            id: None,
-                            data: &pixels,
-                        })?;
-
-                        slots.push(WorldLightSlotRecord {
-                            light_id: id,
-                            flags: SLOT_FLAG_PRESENT,
-                            width,
-                            height,
-                        });
-                        added_count += 1;
-                        continue;
-                    }
-                }
-                Err(e) => {
-                    log::error!("Failed to decode light {}: {}", id, e);
-                }
-            }
+        // The signed intensities as light.mul stores them: the client darkens by the negative ones.
+        if let Some(light) = light_map.light(id) {
+            let vpath = light_entry_path(id);
+            let intensities = light.intensities.iter().map(|&value| value as u8).collect::<Vec<_>>();
+            package.add_file(AddFileRequest {
+                data_type: DataType::Light as u8,
+                compression: options.compression,
+                width: u32::from(light.width),
+                height: u32::from(light.height),
+                virtual_path: Some(&vpath),
+                path_hash64: None,
+                id: None,
+                data: &intensities,
+            })?;
+            slots.push(WorldLightSlotRecord { light_id: id, flags: SLOT_FLAG_PRESENT, width: light.width,
+                height: light.height });
+            added_count += 1;
+            continue;
         }
         slots.push(WorldLightSlotRecord::absent(id));
     }

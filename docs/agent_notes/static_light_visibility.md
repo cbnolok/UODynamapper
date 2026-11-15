@@ -16,7 +16,11 @@ SHA-256: `93712c9fc20da0e1ec20c8d3e3872b5734fe5e92d43d68471565d5ce3443e362`.
 No source client file or existing package was overwritten. The normal conversion
 scripts already invoke `pack-lights`; there is no missing converter feature.
 
-Rebuild with `udd-cli pack pack-lights --ccdir <classic-client> --output <data-dir>/world_lights.uddp`.
+On 2026-11-16 it was repacked with the lights' signed intensities (`--zstd`, 366527 bytes, SHA-256
+`a2da05d3453afeaede6979bbf32ced224cd110b4089031b645531b04f9022223`); a package of the earlier RGBA masks no longer
+loads.
+
+Rebuild with `udd-cli pack pack-lights --zstd --ccdir <classic-client> --output <data-dir>/world_lights.uddp`.
 The reusable packed-data diagnostic is `cargo run -p udd-conv-cli --example
 inspect_static_lights -- --packages <data-dir> --x 2507 --y 560`.
 It reads actual placed statics, tile metadata and mask-slot availability.

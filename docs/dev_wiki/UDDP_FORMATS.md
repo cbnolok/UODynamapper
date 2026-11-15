@@ -393,14 +393,14 @@ Mobile animation atlas pages store edge-extruded allocation gutters, including B
 
 ## 4. `world_lights.uddp`
 
-This package stores the decoded light masks of Classic `light.mul`/`lightidx.mul` (patched by `verdata.mul` when enabled), keyed by light id. `pack-lights` reads only the Classic folder (`--ccdir`). `dynamapper` loads it when present and, in Classic and UOD-Painterly, uses tilemeta light-source statics to place additive world light decals; the land and static local lights of every style read them too. The light masks are grayscale; the runtime recolors a mask from `hues.uddp` when the placed static has a nonzero hue id. The `hues.uddp` package is the single runtime hue source and may be built from Classic `hues.mul` or EC `hues.uop`.
+This package stores the lights of Classic `light.mul`/`lightidx.mul` (patched by `verdata.mul` when enabled), keyed by light id, each its signed intensities as stored: positive values light, negative ones darken, as the Classic client takes them (`CLIENT_NIGHT_LIGHTING_AND_SHADOWS.md`, Classic night lighting). `pack-lights` reads only the Classic folder (`--ccdir`). `dynamapper` loads it when present and, in Classic and UOD-Painterly, uses tilemeta light-source statics to place additive world light decals; the land and static local lights of every style read them too. The lights have no colour; the runtime recolors a light's lighting pixels from `hues.uddp` when the placed static has a nonzero hue id. The `hues.uddp` package is the single runtime hue source and may be built from Classic `hues.mul` or EC `hues.uop`.
 
 The Enhanced and KR light sprites are not here: they are `TerrainTexture.uop` entries named by the tileart (§2.3), packed in `tex_aux_ec.uddp`. Until 2026-11-12 the packer also looked up every light id the Classic files lack in `TerrainTexture.uop` as `build/terraintexture/%08u.dds`, a name space that mixes the atmosphere maps and unrelated textures with the light ids. No entry of the shipped client has such a name, so the shipped packages held only the 55 `light.mul` lights; the packer no longer reads the Enhanced folder.
 
 **Virtual Files:**
 
 - `metadata/slots.bin`: Dense slot manifest indexed by light id.
-- `lights/{light_id:08}.rgba8888`: Raw RGBA8888 light-mask payload for present slots.
+- `lights/{light_id:08}.i8`: the light's intensities for present slots, one signed byte per pixel (`width * height`, rows top to bottom), -31 to 31 in the shipped file. Readers: `WorldLightsPackage::read_light_intensities`; a package without these entries (packed before 2026-11-16, RGBA masks) fails to load and is repacked.
 
 ### 4.1 `WorldLightSlotRecord` Struct (10 Bytes)
 
