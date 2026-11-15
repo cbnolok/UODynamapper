@@ -308,14 +308,24 @@ impl Plugin for ExportJobPlugin {
             .init_resource::<ExportCapture>()
             .add_systems(PostStartup, sys_apply_export_uniforms)
             .add_systems(Update, sys_run_export.run_if(in_state(AppState::InGame)));
-        let waiting_pipelines = WaitingRenderPipelines::default();
-        app.insert_resource(waiting_pipelines.clone());
+        count_waiting_render_pipelines(app);
         // Animated materials read `globals.time`; the export draws them all at one fixed time.
         app.sub_app_mut(RenderApp)
-            .insert_resource(waiting_pipelines)
-            .add_systems(Render, sys_freeze_render_time.in_set(RenderSystems::PrepareAssets))
-            .add_systems(Render, sys_count_waiting_pipelines.in_set(RenderSystems::Cleanup));
+            .add_systems(Render, sys_freeze_render_time.in_set(RenderSystems::PrepareAssets));
     }
+}
+
+/// Publish `WaitingRenderPipelines` in the main world, counted in the render world; the export and the development
+/// control channel both read it, and either may install it first.
+pub(crate) fn count_waiting_render_pipelines(app: &mut App) {
+    if app.world().contains_resource::<WaitingRenderPipelines>() {
+        return;
+    }
+    let waiting_pipelines = WaitingRenderPipelines::default();
+    app.insert_resource(waiting_pipelines.clone());
+    app.sub_app_mut(RenderApp)
+        .insert_resource(waiting_pipelines)
+        .add_systems(Render, sys_count_waiting_pipelines.in_set(RenderSystems::Cleanup));
 }
 
 fn sys_apply_export_uniforms(mut uniforms: ResMut<UniformState>) {
@@ -369,7 +379,14 @@ struct ExportRuntime {
 /// Render pipelines still compiling, counted in the render world. A new target format needs new pipelines,
 /// and Bevy skips draws whose pipeline is not ready yet.
 #[derive(Resource, Clone, Default)]
-struct WaitingRenderPipelines(Arc<AtomicUsize>);
+pub(crate) struct WaitingRenderPipelines(Arc<AtomicUsize>);
+
+impl WaitingRenderPipelines {
+    /// The count of the render world's last completed frame.
+    pub(crate) fn count(&self) -> usize {
+        self.0.load(Ordering::Relaxed)
+    }
+}
 
 /// The pixels of the frame being captured, delivered by the screenshot observer.
 #[derive(Resource, Default)]

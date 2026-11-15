@@ -3,7 +3,11 @@
 use super::teleport::teleport_player;
 use super::InjectedPointer;
 mod input;
+mod settings;
 use input::{ControlInput, InputState, PointerButton, inject_control_input, focus_control_context};
+use settings::{ControlSetting, ControlSettings};
+use crate::configs::settings::{ClientTextureSource, LandTextureSource};
+use crate::core::render::scene::world::land::{LCMesh, draw_mesh::PendingTextureBake};
 use crate::core::{render::scene::world::land::{tile_atlas::TileAtlas, LandUploadTelemetry}, texture_cache::land::coverage::EcTerrainBases};
 use crate::core::{app_states::AppState, render::scene::{player::Player, world::WorldGeoData, RecomputeVisibleChunksEvent}, system_sets::MovementSysSet};
 use crate::prelude::*;
@@ -15,6 +19,8 @@ use std::{fs, io, os::unix::{fs::{MetadataExt, PermissionsExt}, net::UnixDatagra
 
 const MAX_COMMAND_BYTES: usize = 4096;
 const COMMANDS_PER_FRAME: usize = 8;
+/// A pending capture is dropped after this long without its file.
+const CAPTURE_PENDING_SECONDS: f64 = 30.0;
 
 #[derive(Deserialize)]
 #[serde(tag = "command", rename_all = "snake_case", deny_unknown_fields)]
@@ -28,6 +34,19 @@ enum ControlCommand {
     Click { x: f32, y: f32, button: PointerButton, state: InputState },
     Scroll { x: f32, y: f32 },
     ResetInput {},
+    /// The shader window's Render Style (preset group) and Time of Day.
+    Preset { style: String, time: String },
+    /// The preferences' Art and Land Texture Source.
+    Sources { art: ClientTextureSource, land: LandTextureSource },
+    /// One whitelisted setting (`settings::ControlSetting`), its value typed by the key.
+    Set { key: String, value: Value },
+}
+
+/// The last accepted runtime switch (preset, sources or setting): readiness after a switch counts frames from it.
+#[derive(Default)]
+struct ControlSwitch {
+    serial: u64,
+    frame: u64,
 }
 
 #[derive(Resource)]
@@ -74,6 +93,8 @@ impl Plugin for DevControlPlugin {
         let socket = ControlSocket::bind(PathBuf::from(path))
             .unwrap_or_else(|error| panic!("Cannot bind development control socket: {error}"));
         log::info!("Development control socket: {}", socket.path.display());
+        // Readiness after a switch includes the render pipelines it makes Bevy compile.
+        crate::core::export_job::count_waiting_render_pipelines(app);
         app.insert_resource(socket)
             .init_resource::<ControlInput>()
             .init_resource::<InjectedPointer>()
@@ -109,12 +130,14 @@ fn poll_control(
     uploads: Option<Res<LandUploadTelemetry>>,
     terrain_bases: Option<Res<EcTerrainBases>>,
     view: (Query<(Entity, &Window), With<PrimaryWindow>>,
-        Query<&Text, With<crate::core::render::overlays::cursor_behavior::OverlayCursorInspectText>>),
+        Query<&Text, With<crate::core::render::overlays::cursor_behavior::OverlayCursorInspectText>>,
+        Query<(Has<Mesh3d>, Has<PendingTextureBake>), With<LCMesh>>),
     mut input: ResMut<ControlInput>,
     pointer: Res<InjectedPointer>,
-    mut capture_pending: Local<Option<(PathBuf, f64)>>,
+    locals: (Local<Option<(PathBuf, f64)>>, Local<ControlSwitch>),
     time: Res<Time<Real>>,
-    render_state: (Option<Res<crate::configs::shader_presets::UniformState>>,
+    mut control_settings: ControlSettings,
+    render_state: (
         Option<Res<crate::core::render::scene::world::art::static_lights::RenderStaticLightInstances>>,
         Option<Res<crate::core::render::scene::world::art::statics_collect::StaticArtCollectDebugState>>,
         Option<Res<crate::core::texture_cache::art::SpriteArtPageAtlas>>,
@@ -123,13 +146,14 @@ fn poll_control(
         Option<Res<crate::core::render::scene::world::land::picking::TerrainCursor>>,
         Option<Res<crate::core::render::scene::world::art::client_light_sprites::RenderClientLightSprites>>,
         Option<Res<crate::core::render::scene::world::z_view::ZViewLimit>>,
-        Option<Res<crate::core::render::scene::world::caves::CavesRes>>,
-        Option<Res<crate::configs::settings::Settings>>),
+        Option<Res<crate::core::render::scene::world::caves::CavesRes>>),
 ) {
-    let (uniforms, static_lights, art_stats, sprite_atlas, ground_atlas, picking, terrain_cursor, light_sprites, z_view,
-        caves, settings) = render_state;
-    let (windows, inspect_text) = view;
-    if capture_pending.as_ref().is_some_and(|(path, started)| path.exists() || time.elapsed_secs_f64() - started > 30.0) {
+    let (static_lights, art_stats, sprite_atlas, ground_atlas, picking, terrain_cursor, light_sprites, z_view,
+        caves) = render_state;
+    let (windows, inspect_text, land_chunks) = view;
+    let (mut capture_pending, mut switch) = locals;
+    if capture_pending.as_ref().is_some_and(|(path, started)|
+        path.exists() || time.elapsed_secs_f64() - started > CAPTURE_PENDING_SECONDS) {
         *capture_pending = None;
     }
     let mut buffer = [0u8; MAX_COMMAND_BYTES + 1];
@@ -155,13 +179,23 @@ fn poll_control(
                     let (player, _) = player_query.single().map_err(|error| error.to_string())?;
                     let position = player.current_pos.map(|p| json!([p.x, p.y, p.z, p.m]));
                     let rendered = player.prev_rendered_pos.map(|p| json!([p.x, p.y, p.z, p.m]));
+                    // A land source switch re-bakes every chunk's texture slots; chunks whose textures are still
+                    // streaming stay pending too.
+                    let (mut unbuilt_chunks, mut pending_bakes) = (0, 0);
+                    for (has_mesh, pending) in &land_chunks {
+                        unbuilt_chunks += usize::from(!has_mesh);
+                        pending_bakes += usize::from(pending);
+                    }
                     let terrain = atlas.as_ref().zip(uploads.as_ref()).map(|(atlas, uploads)| {
                         let uploads = uploads.snapshot();
                         json!({"metadata_revision": atlas.content_revision,
                             "submitted_metadata_revision": uploads.submitted_metadata_revision,
                             "metadata_pending": atlas.has_pending_uploads() || uploads.pending_ops != 0,
-                            "cached_chunks": terrain_bases.as_ref().map(|bases| bases.cached_chunk_count())})
+                            "cached_chunks": terrain_bases.as_ref().map(|bases| bases.cached_chunk_count()),
+                            "unbuilt_chunks": unbuilt_chunks, "pending_bakes": pending_bakes})
                     });
+                    let uniforms = control_settings.uniforms();
+                    let settings = control_settings.settings();
                     // Terrain metadata can settle before sprite pages and
                     // collection retries. Capture clients must wait for both.
                     let art = art_stats.as_ref().and_then(|state| state.last.as_ref()).map(|stats| json!({
@@ -190,13 +224,20 @@ fn poll_control(
                             "land_texture_variation": state.land_texture_variation,
                             "light_cover": state.light_cover, "light_cover_rule": format!("{:?}", state.light_cover_rule()),
                             "player_floor_rule": state.player_floor_rule,
-                            "local_light_intensity": state.effects.local_light_intensity})),
+                            "local_light_intensity": state.effects.local_light_intensity,
+                            "fog_params": state.lighting.fog_params, "uniforms_dirty": state.dirty})),
                         "static_lights": static_lights.as_ref().map(|lights| json!({"instances": lights.0.len()})),
                         "client_light_sprites": light_sprites.as_ref().map(|sprites| json!({"instances": sprites.instances.len()})),
                         "z_view": z_view.as_ref().map(|limit| json!({"max_z": limit.0.max_z,
                             "max_ground_z": limit.0.max_ground_z, "hide_roofs": limit.0.hide_roofs,
                             "roof_layer": limit.0.roof_layer})),
-                        "cave_surroundings": settings.as_ref().map(|settings| settings.world_rendering.cave_surroundings),
+                        "cave_surroundings": settings.map(|settings| settings.world_rendering.cave_surroundings),
+                        "control": control_settings.status().as_object().cloned().map(|mut control| {
+                            control.insert("switch_serial".into(), switch.serial.into());
+                            control.insert("frames_since_switch".into(),
+                                frame_rate.total_frames().saturating_sub(switch.frame).into());
+                            control
+                        }),
                         "player_cave": caves.as_ref().and_then(|caves| caves.player()).map(|cave| json!({
                             "floor_z": cave.floor_z(), "cells": cave.inside_cells()})),
                         "input": {"queued_frames": input.queued_frames(), "context_focus_override": input.focused,
@@ -214,6 +255,20 @@ fn poll_control(
                     *capture_pending = Some((path.clone(), time.elapsed_secs_f64()));
                     Ok(json!({"ok": true, "capture_queued": path}))
                 }
+                ControlCommand::Preset { style, time } => {
+                    let changed = control_settings.set_preset(&style, &time)?;
+                    Ok(switched(&mut switch, changed, frame_rate.total_frames(),
+                        json!({"preset": format!("{style}.{time}")})))
+                }
+                ControlCommand::Sources { art, land } => {
+                    let changed = control_settings.set_sources(art, land)?;
+                    Ok(switched(&mut switch, changed, frame_rate.total_frames(), json!({"art": art, "land": land})))
+                }
+                ControlCommand::Set { key, value } => {
+                    let setting = ControlSetting::parse(&key, value)?;
+                    let changed = control_settings.set(setting, &mut recompute)?;
+                    Ok(switched(&mut switch, changed, frame_rate.total_frames(), json!({"key": key})))
+                }
                 command => {
                     let (entity, window) = windows.single().map_err(|error| error.to_string())?;
                     input.enqueue(command, entity, Vec2::new(window.width(), window.height()))?;
@@ -226,6 +281,15 @@ fn poll_control(
             log::debug!("Development control reply failed: {error}");
         }
     }
+}
+
+/// The reply to an accepted switch; a change restarts the frame count readiness waits on.
+fn switched(switch: &mut ControlSwitch, changed: bool, frame: u64, applied: Value) -> Value {
+    if changed {
+        switch.serial += 1;
+        switch.frame = frame;
+    }
+    json!({"ok": true, "changed": changed, "applied": applied, "switch_serial": switch.serial})
 }
 
 #[cfg(test)]
@@ -244,6 +308,34 @@ mod tests {
             assert!(serde_json::from_str::<ControlCommand>(value).is_err(), "{value}");
         }
         assert!(matches!(serde_json::from_str::<ControlCommand>(r#"{"command":"teleport","x":2518,"y":561,"z":0,"map":0}"#).unwrap(), ControlCommand::Teleport { x: 2518, y: 561, .. }));
+    }
+
+    #[test]
+    fn switch_commands_are_typed_and_refuse_missing_extra_and_unknown_values() {
+        for value in [r#"{"command":"preset","style":"kr"}"#,
+            r#"{"command":"preset","style":"kr","time":"night","save":true}"#,
+            r#"{"command":"sources","art":"kr","land":"ec"}"#, r#"{"command":"sources","art":"cc"}"#,
+            r#"{"command":"sources","art":"cc","land":"uop"}"#, r#"{"command":"set","key":"caves"}"#,
+            r#"{"command":"set","key":"caves","value":"black","persist":true}"#] {
+            assert!(serde_json::from_str::<ControlCommand>(value).is_err(), "{value}");
+        }
+        assert!(matches!(serde_json::from_str::<ControlCommand>(r#"{"command":"sources","art":"cc","land":"kr"}"#)
+            .unwrap(), ControlCommand::Sources { art: ClientTextureSource::Cc, land: LandTextureSource::Kr }));
+        let ControlCommand::Set { key, value } = serde_json::from_str::<ControlCommand>(
+            r#"{"command":"set","key":"show_only_player_floor","value":true}"#).unwrap() else { panic!("set") };
+        assert_eq!(ControlSetting::parse(&key, value).unwrap(), ControlSetting::ShowOnlyPlayerFloor(true));
+        let ControlCommand::Preset { style, time } = serde_json::from_str::<ControlCommand>(
+            r#"{"command":"preset","style":"painterly","time":"cave"}"#).unwrap() else { panic!("preset") };
+        assert_eq!((style.as_str(), time.as_str()), ("painterly", "cave"));
+    }
+
+    #[test]
+    fn only_a_change_restarts_the_switch_frame_count() {
+        let mut switch = ControlSwitch::default();
+        let reply = switched(&mut switch, false, 10, json!({}));
+        assert_eq!((switch.serial, switch.frame, reply["changed"].as_bool()), (0, 0, Some(false)));
+        let reply = switched(&mut switch, true, 12, json!({}));
+        assert_eq!((switch.serial, switch.frame, reply["switch_serial"].as_u64()), (1, 12, Some(1)));
     }
 
     #[test]

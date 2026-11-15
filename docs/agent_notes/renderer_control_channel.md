@@ -7,7 +7,8 @@ limited to 4096 bytes and eight requests per frame, handled nonblockingly on the
 main ECS thread in `MovementActions`.
 
 Commands include `teleport`, `status`, `capture` and app-only keyboard/pointer
-input (`key`, `text`, `pointer`, `click`, `scroll`, `reset_input`). There is no shell/code
+input (`key`, `text`, `pointer`, `click`, `scroll`, `reset_input`), and the typed
+runtime switches `preset`, `sources` and `set` (see below). There is no shell/code
 execution or generic settings setter. The owner-only socket refuses occupied
 paths; normal resource cleanup only removes the bound inode. Forced termination
 may leave a socket, so isolate each run in its own temporary directory.
@@ -115,3 +116,57 @@ map cell, and `world_position` is the continuous rendered triangle point. These
 heights intentionally differ on slopes and eased banks. A null hit does not
 fabricate a plane destination; inspect `status.terrain` for streaming readiness.
 See [the terrain query contract](terrain_cursor_surface.md).
+
+
+## Runtime switches
+
+Three commands change what a fresh launch would otherwise fix in its settings
+files, so one preview can visit several styles, times and sources
+(`controls/dev_control/settings.rs`):
+
+- `{"command":"preset","style":"kr","time":"night"}`: the shader window's
+  style and time buttons (`land_shader::switch_render_preset`, which stores the
+  live slot in the in-memory presets and applies the target, as a click does).
+- `{"command":"sources","art":"ec","land":"kr"}`: the preferences' art and land
+  texture sources (`cc`/`ec`; `cc`/`ec`/`kr`). The land texture images and every
+  terrain chunk's bake follow through `sys_apply_land_texture_source_changes`,
+  the statics through `sys_sync_static_art_source`, as after a click.
+- `{"command":"set","key":K,"value":V}` for an allowlist with typed values:
+  `show_only_player_floor`, `caves`, `cave_surroundings`, `enable_statics`,
+  `enable_static_lights`, `show_hidden_multi_parts` (world_rendering);
+  `cc_terrain_transitions`, `ec_terrain_transitions` (graphics);
+  `light_cover`, `player_floor_rule`, `land_texture_variation` (the active
+  style's settings, refused where the style has none); and `zoom`
+  (clamped range, refused with the free perspective camera, which dollies
+  instead). An unknown key, a wrong type or an out-of-range value is an error
+  naming the allowed keys or the expected type.
+
+Each reply has `changed` (false when the value was already in force; no switch
+is counted then), `applied` and `switch_serial`. Freezes in the startup land.toml
+(water animation, fog drift) stay in force: every preset slot is loaded frozen
+and a preset switch keeps the current water-animation flag.
+
+Persistence is the UI's. Preset switches stay in memory (the shader window
+writes land.toml only when it closes). A `sources` or `set` change of `Settings`
+reaches `cache/settings/` of the process's working directory through the app's
+debounced save, as a preference picked in the window does. In a harness or
+preview run that directory is the run's own isolated copy; never point a
+controlled preview at the user's working directory.
+
+`status.control` reports the applied values: `settings` (the allowlisted world
+and graphics keys, both sources, the camera mode), `zoom`, `applied_sources`
+(the land source the texture cache uses and the art source the statics were
+collected with), `waiting_pipelines` (render pipelines still compiling, counted
+in the render world), `switch_serial` and `frames_since_switch`.
+`status.terrain.pending_bakes` and `unbuilt_chunks` count land chunks still
+waiting for a texture bake or a mesh, `status.render.uniforms_dirty` style
+values not yet pushed to the materials, and `status.render.fog_params` the
+fog uniform.
+
+`control.py wait-ready` adds a switch's readiness to the scene's: at least
+`MIN_FRAMES_AFTER_SWITCH` frames since the last switch, no waiting pipelines, no
+pending bakes, no dirty uniforms and applied sources equal to the requested
+ones (art only while statics are drawn). The stable fingerprint also covers the
+static-light and light-sprite counts, the z-view and the switch serial. This is
+still not a GPU fence: discard the first capture after a switch and require two
+identical frames, as after a launch.

@@ -7,6 +7,38 @@ import socket
 import tempfile
 import time
 
+# A runtime switch (preset, sources, set) is settled only after this many frames: the systems that follow a settings
+# change run on the next update, and Bevy requests the pipelines it needs only when it draws with them.
+MIN_FRAMES_AFTER_SWITCH = 5
+
+
+def switch_settled(status):
+    """The readiness a runtime switch adds; true for a build without the switch commands (no status.control)."""
+    control = status.get('control')
+    if control is None:
+        return True
+    settings = control.get('settings') or {}
+    applied = control.get('applied_sources') or {}
+    render = status.get('render') or {}
+    terrain = status.get('terrain') or {}
+    return (control['frames_since_switch'] >= MIN_FRAMES_AFTER_SWITCH
+            and not control.get('waiting_pipelines')
+            and not render.get('uniforms_dirty')
+            and not terrain.get('pending_bakes')
+            and applied.get('land') == settings.get('land_texture_source')
+            and (applied.get('art') == settings.get('art_texture_source') or not settings.get('enable_statics')))
+
+
+def scene_fingerprint(status):
+    """What must hold still across the stable snapshots: the scene's collections, light buffers and switch."""
+    art = status.get('art') or {}
+    control = status.get('control') or {}
+    return (tuple(status.get('position') or ()), (status.get('terrain') or {}).get('metadata_revision'),
+            art.get('emitted_instances'), art.get('visible_chunks'),
+            (status.get('static_lights') or {}).get('instances'),
+            (status.get('client_light_sprites') or {}).get('instances'),
+            json.dumps(status.get('z_view'), sort_keys=True), control.get('switch_serial'))
+
 
 def request(endpoint, command, timeout):
     with tempfile.TemporaryDirectory(prefix='dynamapper-ctl-') as directory:
@@ -44,7 +76,7 @@ def wait_for_input(endpoint, timeout):
 
 
 def wait_for_scene(endpoint, timeout, position=None):
-    """Wait for matching terrain and art state across three stable snapshots."""
+    """Wait for matching terrain and art state, and a settled runtime switch, across three stable snapshots."""
     deadline = time.monotonic() + timeout
     stable = 0
     previous = None
@@ -62,9 +94,8 @@ def wait_for_scene(endpoint, timeout, position=None):
                 and not terrain['metadata_pending']
                 and terrain['metadata_revision'] == terrain['submitted_metadata_revision']
                 and art['map_id'] == position[3] and art['visible_chunks'] > 0
-                and art['atlas_misses'] == 0 and art['pending_pages'] == 0):
-            fingerprint = (tuple(position), terrain['metadata_revision'],
-                           art['emitted_instances'], art['visible_chunks'])
+                and art['atlas_misses'] == 0 and art['pending_pages'] == 0 and switch_settled(status)):
+            fingerprint = scene_fingerprint(status)
             stable = stable + 1 if fingerprint == previous else 1
             previous = fingerprint
             if stable >= 3:
@@ -134,6 +165,15 @@ def main():
     scroll.add_argument('x', type=float)
     scroll.add_argument('y', type=float)
     actions.add_parser('reset-input', help='Discard pending input and release controller-held keys/buttons')
+    preset = actions.add_parser('preset', help='Switch the render style and time of day, as the shader window does')
+    preset.add_argument('style', help='classic, enhanced, kr or painterly')
+    preset.add_argument('time', help='morning, afternoon, night or cave')
+    sources = actions.add_parser('sources', help='Switch the art and land texture sources, as the preferences do')
+    sources.add_argument('art', help='cc or ec')
+    sources.add_argument('land', help='cc, ec or kr')
+    setting = actions.add_parser('set', help='Set one whitelisted setting, for example set show_only_player_floor true')
+    setting.add_argument('key')
+    setting.add_argument('value', help='a JSON value such as true or 1.5; a bare word such as black is a string')
     args = parser.parse_args()
     command = {'command': args.command}
     if args.command == 'teleport':
@@ -152,6 +192,16 @@ def main():
         command.update(button=args.button, state=args.state)
     if args.command == 'reset-input':
         command['command'] = 'reset_input'
+    if args.command == 'preset':
+        command.update(style=args.style, time=args.time)
+    if args.command == 'sources':
+        command.update(art=args.art, land=args.land)
+    if args.command == 'set':
+        try:
+            value = json.loads(args.value)
+        except json.JSONDecodeError:
+            value = args.value
+        command.update(key=args.key, value=value)
     result = (wait_for_scene(args.socket, args.timeout) if args.command == 'wait-ready'
               else wait_for_pick(args.socket, args.timeout) if args.command == 'wait-pick'
               else request(args.socket, command, args.timeout))

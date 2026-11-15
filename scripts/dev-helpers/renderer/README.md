@@ -103,6 +103,36 @@ signature and final IEND chunk before reporting completion. Destinations must
 be new absolute PNG paths with an existing parent; existing files are refused.
 No arbitrary code, shell command or generic settings setter is exposed.
 
+## Runtime switches
+
+`preset`, `sources` and `set` switch what a launch otherwise fixes in its settings
+files, through the same code path as the UI control:
+
+```sh
+python3 scripts/dev-helpers/renderer/control.py --socket /tmp/my-preview/control.sock preset kr night
+python3 scripts/dev-helpers/renderer/control.py --socket /tmp/my-preview/control.sock sources ec kr
+python3 scripts/dev-helpers/renderer/control.py --socket /tmp/my-preview/control.sock set show_only_player_floor true
+python3 scripts/dev-helpers/renderer/control.py --socket /tmp/my-preview/control.sock set light_cover clients
+python3 scripts/dev-helpers/renderer/control.py --socket /tmp/my-preview/control.sock set zoom 1.5
+python3 scripts/dev-helpers/renderer/control.py --socket /tmp/my-preview/control.sock wait-ready
+```
+
+`set` takes a JSON value; a bare word is a string. Its keys are an allowlist:
+`show_only_player_floor`, `caves`, `cave_surroundings`, `enable_statics`,
+`enable_static_lights`, `show_hidden_multi_parts`, `cc_terrain_transitions`,
+`ec_terrain_transitions`, the active style's `light_cover`, `player_floor_rule` and
+`land_texture_variation`, and `zoom` (not with the free perspective camera). Other
+keys, types or ranges are refused with the allowed keys or the expected type. A
+reply's `changed` is false when the value was already in force.
+
+Preset switches stay in memory. Settings changes are saved, debounced, into
+`cache/settings/` of the preview's working directory, as a preference picked in
+the window is: keep that directory an isolated copy. `status.control` reports the
+applied values, the sources actually in use, compiling pipelines and the frames
+since the last switch. `wait-ready` also waits for those (see
+[the control channel note](../../../docs/agent_notes/renderer_control_channel.md#runtime-switches));
+discard the first capture after a switch, as after a launch.
+
 ## App-only keyboard and pointer input
 
 Input commands feed Bevy's normal typed messages and ordered window-event stream.

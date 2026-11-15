@@ -233,14 +233,18 @@ impl ShaderPresetPeriod {
         }
     }
 
-    fn key(self, preset_group: &str) -> String {
-        let period = match self {
+    /// The period's part of a preset key, such as "night" in "kr.night".
+    const fn name(self) -> &'static str {
+        match self {
             Self::Morning => "morning",
             Self::Afternoon => "afternoon",
             Self::Night => "night",
             Self::Cave => "cave",
-        };
-        format!("{preset_group}.{period}")
+        }
+    }
+
+    fn key(self, preset_group: &str) -> String {
+        format!("{preset_group}.{}", self.name())
     }
 }
 
@@ -298,6 +302,27 @@ fn store_active_and_apply_render_preset(
 ) {
     store_active_preset(presets, u);
     apply_render_preset(u, presets, style, period);
+}
+
+/// Switch to the preset of a style's preset group and a time of day by name, as the Render Style and Time of Day
+/// buttons do: the development control channel's `preset` command. Unknown names are refused, listing the known ones.
+pub(crate) fn switch_render_preset(
+    u: &mut UniformState,
+    presets: &mut LandShaderModePresets,
+    preset_group: &str,
+    period: &str,
+) -> Result<(), String> {
+    let style = RENDER_STYLE_PRESETS.into_iter().find(|style| style.preset_group == preset_group).ok_or_else(|| {
+        let known: Vec<_> = RENDER_STYLE_PRESETS.iter().map(|style| style.preset_group).collect();
+        format!("unknown style `{preset_group}`; known: {}", known.join(", "))
+    })?;
+    let period = PRESET_PERIOD_BUTTONS.into_iter().map(|(_, period)| period)
+        .find(|candidate| candidate.name() == period).ok_or_else(|| {
+            let known: Vec<_> = PRESET_PERIOD_BUTTONS.iter().map(|(_, period)| period.name()).collect();
+            format!("unknown time `{period}`; known: {}", known.join(", "))
+        })?;
+    store_active_and_apply_render_preset(u, presets, style, period);
+    Ok(())
 }
 
 /// Default screen position of the detached "Advanced Raw Shader Knobs" window.
@@ -1660,6 +1685,28 @@ mod tests {
         assert_eq!(presets.classic.morning.global_lighting, Some(0.42));
         assert_eq!(u.active_preset, "enhanced.afternoon");
         assert_eq!(u.global_lighting, 6.0);
+    }
+
+    /// The control channel's switch by name stores the live slot and loads the target as the buttons do, and refuses
+    /// an unknown style or time without touching either.
+    #[test]
+    fn switching_presets_by_name_follows_the_buttons_and_refuses_unknown_names() {
+        let mut u = uniform_state();
+        let mut presets = mode_presets();
+        u.global_lighting = 0.42;
+
+        switch_render_preset(&mut u, &mut presets, PAINTERLY_PRESET_GROUP, "night").unwrap();
+        assert_eq!(presets.classic.morning.global_lighting, Some(0.42));
+        assert_eq!(u.active_preset, "painterly.night");
+        assert_eq!(u.global_lighting, 15.0);
+        assert!(u.dirty);
+
+        for (group, period, named) in [("kr-like", "night", "known: classic, enhanced, kr, painterly"),
+            (KR_PRESET_GROUP, "dusk", "known: morning, afternoon, night, cave")] {
+            let error = switch_render_preset(&mut u, &mut presets, group, period).unwrap_err();
+            assert!(error.contains(named), "{error}");
+            assert_eq!(u.active_preset, "painterly.night");
+        }
     }
 
     #[test]
