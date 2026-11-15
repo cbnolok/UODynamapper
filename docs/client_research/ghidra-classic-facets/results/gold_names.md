@@ -1,6 +1,6 @@
 # Classic facet names
 
-Program: `gold_client.exe` (tested build UO Gold client.exe), SHA-256 `aa21bb3ea16b6c5e00837569466b052e978baa6e38fd945e2694af4f14fa28c2`.
+Program: `gold_client.exe` (tested build UO Gold client.exe (no version resource, PE timestamp 2004-11-11)), SHA-256 `aa21bb3ea16b6c5e00837569466b052e978baa6e38fd945e2694af4f14fa28c2`.
 
 Mode: `--apply` (changes: {labels created=6, plate comments set=31, functions renamed=25, tags added=25}).
 

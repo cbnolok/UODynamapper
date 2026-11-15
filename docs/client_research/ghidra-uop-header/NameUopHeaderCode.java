@@ -263,8 +263,9 @@ public class NameUopHeaderCode extends GhidraScript {
         String sha = currentProgram.getExecutableSHA256();
         Entry[] entries = sha == null ? null : TARGETS.get(sha.toLowerCase());
         if (entries == null) {
-            throw new IllegalStateException("NameUopHeaderCode names fixed addresses of the tested UOSA.exe (SHA-256 "
-                + TESTED_SHA256 + "), uopatch.exe (" + UOPATCH_SHA256 + ") and Classic UO.exe (" + CLASSIC_PATCHER_SHA256
+            throw new IllegalStateException("NameUopHeaderCode names fixed addresses of the tested "
+                + "UOSA.exe 4.0.102.3 (SHA-256 "
+                + TESTED_SHA256 + "), uopatch.exe 1.0.6.5 (" + UOPATCH_SHA256 + ") and Classic UO.exe 1.0.6.5 (" + CLASSIC_PATCHER_SHA256
                 + "); " + currentProgram.getName() + " has SHA-256 " + sha + ". Nothing done.");
         }
         boolean apply = args.length == 2;
@@ -278,7 +279,8 @@ public class NameUopHeaderCode extends GhidraScript {
             }
             output.println("# UOP header names");
             output.println();
-            output.println("Program: `" + currentProgram.getName() + "`, SHA-256 `" + sha + "`.");
+            output.println("Program: `" + currentProgram.getName() + "` (PE file version " + peFileVersion()
+                + "), SHA-256 `" + sha + "`.");
             output.println();
             output.println("Mode: " + (apply ? "`--apply` (changes: " + (changes.isEmpty() ? "none" : changes) + ")"
                 : "report only") + ".");
@@ -459,5 +461,15 @@ public class NameUopHeaderCode extends GhidraScript {
 
     private void count(String what) {
         changes.merge(what, 1, Integer::sum);
+    }
+
+    // The program's PE version resource as Ghidra's importer stored it ("4, 0, 102, 3" -> "4.0.102.3").
+    private static final String PE_FILE_VERSION_OPTION = "PE Property[FileVersion]";
+
+    private String peFileVersion() {
+        ghidra.framework.options.Options info =
+            currentProgram.getOptions(ghidra.program.model.listing.Program.PROGRAM_INFO);
+        return info.contains(PE_FILE_VERSION_OPTION)
+            ? info.getString(PE_FILE_VERSION_OPTION, "").replace(", ", ".") : "none";
     }
 }

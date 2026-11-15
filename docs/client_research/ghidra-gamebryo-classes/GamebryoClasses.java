@@ -533,6 +533,7 @@ public class GamebryoClasses extends GhidraScript {
             output.println();
             output.println("Program: " + currentProgram.getName());
             output.println("SHA-256: " + currentProgram.getExecutableSHA256());
+            output.println("PE file version: " + peFileVersion());
             output.println("Mode: " + (apply ? "analysis and " + APPLY_FLAG : "analysis only"));
             output.println();
             output.println("| Item | Count |");
@@ -1259,5 +1260,15 @@ public class GamebryoClasses extends GhidraScript {
             parts.add(hex(value));
         }
         return parts.isEmpty() ? "none" : String.join(", ", parts);
+    }
+
+    // The program's PE version resource as Ghidra's importer stored it ("4, 0, 102, 3" -> "4.0.102.3").
+    private static final String PE_FILE_VERSION_OPTION = "PE Property[FileVersion]";
+
+    private String peFileVersion() {
+        ghidra.framework.options.Options info =
+            currentProgram.getOptions(ghidra.program.model.listing.Program.PROGRAM_INFO);
+        return info.contains(PE_FILE_VERSION_OPTION)
+            ? info.getString(PE_FILE_VERSION_OPTION, "").replace(", ", ".") : "none";
     }
 }

@@ -1,6 +1,6 @@
 # UOKR.exe: the Kingdom Reborn audio tables
 
-Program `UOKR.exe`, SHA-256 `1b802e5c00f3bf89a771778b9c6c57406be0703808eeb4cd983e2f5baa348a43`.
+Program `UOKR.exe` 2.58.0.6, SHA-256 `1b802e5c00f3bf89a771778b9c6c57406be0703808eeb4cd983e2f5baa348a43`.
 **confirmed** = read in the code; **probable** = inferred from the code and the shipped data.
 
 KR uses the full MythAudio system that UOSA.exe carries as dead code: sound structures with parameter

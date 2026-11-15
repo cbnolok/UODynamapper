@@ -50,7 +50,7 @@ and a locator may start from a function found by an earlier one.
   and the commented-out patterns in `patcher_encryption.cpp`. Each site gets an EOL
   comment with the default value read from the program.
 
-On the tested build (SHA-256 `5a5e9dc5...`), every located address is checked against the
+On the tested build (`UOSA.exe` 4.0.102.3, SHA-256 `5a5e9dc5...`), every located address is checked against the
 address recorded in the script:
 
 - A mismatch is reported and the name is skipped.

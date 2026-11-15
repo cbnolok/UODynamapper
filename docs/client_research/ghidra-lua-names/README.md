@@ -136,7 +136,7 @@ Nothing is deleted or retyped. A second `--apply` changes nothing.
 
 ## Tested result
 
-Ghidra 12.1.4, `UOSA.exe` SHA-256
+Ghidra 12.1.4, `UOSA.exe` 4.0.102.3 SHA-256
 `5a5e9dc536c836d1bf10b6f86bb88f61a6ae078f519d4060d3bc47aecbebad50`: registration helper
 `0x0098fb25`, 560 UO API registrations (559 direct calls and one `{func, name}` table
 loop) of 536 distinct names on 536 functions (81 created), no name on two functions and no

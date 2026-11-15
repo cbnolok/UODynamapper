@@ -1,6 +1,6 @@
 # Gamebryo 2.6 names in UOSA
 
-Program: UOSA.exe
+Program: UOSA.exe 4.0.102.3
 SHA-256: 5a5e9dc536c836d1bf10b6f86bb88f61a6ae078f519d4060d3bc47aecbebad50
 Mode: analysis and --apply
 Sources: `NiAnimation26VC80R.dll` (3738 functions), `NiCollision26VC80R.dll` (1183 functions), `NiDX9Renderer26VC80R.dll` (2568 functions), `NiMain26VC80R.dll` (5786 functions), `NiParticle26VC80R.dll` (2640 functions), `NiSystem26VC80R.dll` (624 functions)

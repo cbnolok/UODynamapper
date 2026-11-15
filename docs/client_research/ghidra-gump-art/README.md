@@ -21,7 +21,7 @@ In the Ghidra project `UOSA`, imported read-only, never executed, auto-analysed,
 
 | Ghidra program | Source | SHA-256 |
 |---|---|---|
-| `/UOSA.exe` | `_Ultima Online Enhanced/UOSA.exe` | `5a5e9dc536c836d1bf10b6f86bb88f61a6ae078f519d4060d3bc47aecbebad50` |
+| `/UOSA.exe` | `_Ultima Online Enhanced/UOSA.exe` 4.0.102.3 | `5a5e9dc536c836d1bf10b6f86bb88f61a6ae078f519d4060d3bc47aecbebad50` |
 
 The client folder is under `/mnt/dati/_proj_local/_uo_clients/`. Do not commit the binary, `Interface.uop` or
 anything extracted from them.

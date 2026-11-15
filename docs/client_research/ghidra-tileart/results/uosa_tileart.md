@@ -1,6 +1,6 @@
 # tileart.uop in UOSA.exe
 
-Program: `UOSA.exe` (Enhanced Client), image base 0x400000,
+Program: `UOSA.exe` 4.0.102.3 (Enhanced Client), image base 0x400000,
 SHA-256 `5a5e9dc536c836d1bf10b6f86bb88f61a6ae078f519d4060d3bc47aecbebad50`.
 
 All names below were applied by `NameTileartCode.java --apply` (tag `UO_TILEART`, source ANALYSIS,

@@ -12,7 +12,7 @@ the code) or **I** (inferred). Builds on [`ghidra-animation`](../ghidra-animatio
 
 ## Program
 
-`UOSA.exe` in the Ghidra project `UOSA`, imported read-only, never executed, auto-analysed, named with `--apply`
+`UOSA.exe` 4.0.102.3 in the Ghidra project `UOSA`, imported read-only, never executed, auto-analysed, named with `--apply`
 and saved. SHA-256 `5a5e9dc536c836d1bf10b6f86bb88f61a6ae078f519d4060d3bc47aecbebad50`. Do not commit the binary or
 anything extracted from it.
 

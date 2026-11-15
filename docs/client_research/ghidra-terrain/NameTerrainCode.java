@@ -146,8 +146,8 @@ public class NameTerrainCode extends GhidraScript {
     };
 
     private static final Build[] BUILDS = {
-        new Build("UOSA.exe", UOSA_SHA256, UOSA_ENTRIES),
-        new Build("UOKR.exe", UOKR_SHA256, UOKR_ENTRIES),
+        new Build("UOSA.exe 4.0.102.3", UOSA_SHA256, UOSA_ENTRIES),
+        new Build("UOKR.exe 2.58.0.6", UOKR_SHA256, UOKR_ENTRIES),
     };
 
     private final Map<String, Integer> changes = new LinkedHashMap<>();

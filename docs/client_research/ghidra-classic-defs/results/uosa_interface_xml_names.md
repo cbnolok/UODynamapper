@@ -1,6 +1,6 @@
 # Classic def and Interface XML names
 
-Program: `UOSA.exe` (tested file UOSA.exe (Enhanced Client)), SHA-256 `5a5e9dc536c836d1bf10b6f86bb88f61a6ae078f519d4060d3bc47aecbebad50`.
+Program: `UOSA.exe` (tested file UOSA.exe 4.0.102.3 (Enhanced Client)), SHA-256 `5a5e9dc536c836d1bf10b6f86bb88f61a6ae078f519d4060d3bc47aecbebad50`.
 
 Mode: `--apply` (changes: {tag created=1, functions renamed=2, tags added=2, plate comments set=2}).
 

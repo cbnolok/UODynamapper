@@ -90,7 +90,7 @@ public class NameClassicDefCode extends GhidraScript {
     private static final Build[] BUILDS = {
         new Build("classic_7.0.103.0_client.exe (Classic Client 7.0.103.0)", CLASSIC_7_0_103_SHA256, TAG_DEFS,
             TAG_DEFS_COMMENT, ENTRIES_CLASSIC_7_0_103),
-        new Build("UOSA.exe (Enhanced Client)", UOSA_SHA256, TAG_XML, TAG_XML_COMMENT, ENTRIES_UOSA),
+        new Build("UOSA.exe 4.0.102.3 (Enhanced Client)", UOSA_SHA256, TAG_XML, TAG_XML_COMMENT, ENTRIES_UOSA),
     };
 
     private final Map<String, Integer> changes = new LinkedHashMap<>();

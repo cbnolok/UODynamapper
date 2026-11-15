@@ -82,7 +82,7 @@ public class NameClassicMapImageCode extends GhidraScript {
     private static final Build[] BUILDS = {
         new Build("classic_7.0.103.0_client.exe (Classic Client 7.0.103.0)", CLASSIC_7_0_103_SHA256, TAG_IMAGE,
             TAG_IMAGE_COMMENT, ENTRIES_CLASSIC_7_0_103),
-        new Build("gold_client.exe (UO Gold, 2004-11-11)", GOLD_SHA256, TAG_IMAGE, TAG_IMAGE_COMMENT, ENTRIES_GOLD),
+        new Build("gold_client.exe (UO Gold, no version resource, PE timestamp 2004-11-11)", GOLD_SHA256, TAG_IMAGE, TAG_IMAGE_COMMENT, ENTRIES_GOLD),
     };
 
     private final Map<String, Integer> changes = new LinkedHashMap<>();

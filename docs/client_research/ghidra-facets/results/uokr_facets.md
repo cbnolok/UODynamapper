@@ -1,6 +1,6 @@
 # KR (UOKR.exe): sectors, map sizes and the format deltas the KR inventory asked about
 
-Program: `UO - Old KR/UOKR.exe`, SHA-256 `1b802e5c00f3bf89a771778b9c6c57406be0703808eeb4cd983e2f5baa348a43`.
+Program: `UO - Old KR/UOKR.exe` 2.58.0.6, SHA-256 `1b802e5c00f3bf89a771778b9c6c57406be0703808eeb4cd983e2f5baa348a43`.
 It is imported into the Ghidra project as `/UOKR.exe` and auto-analysed (40683 functions). It was never
 executed. The names below are those applied by [`NameFacetCode.java`](../NameFacetCode.java) and
 [`NameTerrainCode.java`](../../ghidra-terrain/NameTerrainCode.java) (namespaces `UOFacet`, `UOTerrain`).

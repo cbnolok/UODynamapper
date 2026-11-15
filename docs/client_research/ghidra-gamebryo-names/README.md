@@ -186,7 +186,7 @@ run reports `Changes: none`.
 
 ## Tested result
 
-Ghidra 12.1.4, `UOSA.exe` SHA-256
+Ghidra 12.1.4, `UOSA.exe` 4.0.102.3 SHA-256
 `5a5e9dc536c836d1bf10b6f86bb88f61a6ae078f519d4060d3bc47aecbebad50`, with the six 2.6
 DLLs above: 265 classes mapped by vtable (4929 slots), naming 1073 functions with no
 conflicts; BSim accepted 428 pairs, of which 46 agree with a vtable name and 2 disagree

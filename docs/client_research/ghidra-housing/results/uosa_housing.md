@@ -1,6 +1,6 @@
 # UOSA.exe: housing.bin and MultiCollection.uop
 
-Client: `UOSA.exe`, SHA-256 `5a5e9dc536c836d1bf10b6f86bb88f61a6ae078f519d4060d3bc47aecbebad50`.
+Client: `UOSA.exe` 4.0.102.3, SHA-256 `5a5e9dc536c836d1bf10b6f86bb88f61a6ae078f519d4060d3bc47aecbebad50`.
 Names below are the ones applied by [`NameHousingCode.java`](../NameHousingCode.java) (tag `UO_HOUSING`)
 unless marked otherwise. Addresses are for this build. "Instr." means the conclusion was checked in the
 disassembly, not only in the decompiler output.

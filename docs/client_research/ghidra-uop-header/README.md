@@ -24,7 +24,7 @@ NameUopHeaderCode.java OUTPUT_FILE [--apply]
 ```
 
 - Names fixed addresses, so it refuses any program whose SHA-256 is not one of the tested builds:
-  `UOSA.exe` (`5a5e9dc5...ebad50`), `uopatch.exe` (`7c4ec66d...44dad`, namespace `UOPatch`) or Classic
+  `UOSA.exe` 4.0.102.3 (`5a5e9dc5...ebad50`), `uopatch.exe` 1.0.6.5 (`7c4ec66d...44dad`, namespace `UOPatch`) or Classic
   `UO.exe` (`422c8fbb...83417`, namespace `UOPatch`). Import the patchers into the Ghidra project to run it
   on them.
 - Before naming, each address is checked: a function exists there, and its stated evidence holds (vtable

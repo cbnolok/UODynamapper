@@ -1,6 +1,6 @@
 # Image decoders in UOSA.exe
 
-Program: `UOSA.exe`, SHA-256 `5a5e9dc536c836d1bf10b6f86bb88f61a6ae078f519d4060d3bc47aecbebad50`.
+Program: `UOSA.exe` 4.0.102.3, SHA-256 `5a5e9dc536c836d1bf10b6f86bb88f61a6ae078f519d4060d3bc47aecbebad50`.
 Sources compared: Gamebryo 2.6 `CoreLibs/NiMain` (`NiDevImageConverter.cpp`, `NiTGAReader.cpp`,
 `NiBMPReader.cpp`, `NiDDSReader.cpp`, `NiTexture.cpp`, `NiPixelData.cpp`) and `CoreLibs/NiDX9Renderer`
 (`NiDX9SourceTextureData.cpp`). Data: the `_Ultima Online Enhanced` install, the `ec_kr_extract`

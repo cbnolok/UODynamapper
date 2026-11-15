@@ -1,6 +1,6 @@
 # UOP data block headers in UOSA.exe
 
-Program: `UOSA.exe`, SHA-256 `5a5e9dc536c836d1bf10b6f86bb88f61a6ae078f519d4060d3bc47aecbebad50`.
+Program: `UOSA.exe` 4.0.102.3, SHA-256 `5a5e9dc536c836d1bf10b6f86bb88f61a6ae078f519d4060d3bc47aecbebad50`.
 Data: the client packages in `_Ultima Online Enhanced` (EC) and `_Ultima Online Classic` (CC), plus the
 copies in `_Ultima Online Enhanced fp`, `_Ultima Online Classic fp` and `Ultima Online Classic_7_0_20_0`.
 
@@ -198,9 +198,9 @@ So no package the repo writes can stale a client cache, whatever its `data_block
 
 ## The patcher
 
-Binaries (EC folder): `uopatch.exe` (SHA-256
+Binaries (EC folder): `uopatch.exe` 1.0.6.5 (SHA-256
 `7c4ec66d9c53a8e45e35b4eba8fcfd5a7ce96dbf4f3baaea4ae32823fcf44dad`; `uopatch.bin` is identical),
-`patchui.dll`, `patch.cfg`, `mft.myp`, `patch.myp`. Classic: `UO.exe` is the patcher (SHA-256
+`patchui.dll`, `patch.cfg`, `mft.myp`, `patch.myp`. Classic: `UO.exe` 1.0.6.5 is the patcher (SHA-256
 `422c8fbbbe2105c4486bea88c9a6dea27a0e07d233ebd96f3f659143f3d83417`, the same libpatchclient); its
 `UOPatch.exe` is a 73 KB stub. Both are the EAMythic patcher (libpatchclient).
 

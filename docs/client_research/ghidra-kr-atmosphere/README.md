@@ -53,8 +53,8 @@ yet: the GUI's MCP bridge stopped answering after the run.
 
 | Ghidra program | Source | SHA-256 |
 |---|---|---|
-| `/UOKR.exe` | `UO - Old KR/UOKR.exe` (2.53.0.2, changelist 108899) | `1b802e5c00f3bf89a771778b9c6c57406be0703808eeb4cd983e2f5baa348a43` |
-| `/UOSA.exe` | `_Ultima Online Enhanced/UOSA.exe` | `5a5e9dc536c836d1bf10b6f86bb88f61a6ae078f519d4060d3bc47aecbebad50` |
+| `/UOKR.exe` | `UO - Old KR/UOKR.exe` 2.58.0.6 (version resource; the folder's `buildinfo.txt` says 2.53.0.2, but that file is stale) | `1b802e5c00f3bf89a771778b9c6c57406be0703808eeb4cd983e2f5baa348a43` |
+| `/UOSA.exe` | `_Ultima Online Enhanced/UOSA.exe` 4.0.102.3 | `5a5e9dc536c836d1bf10b6f86bb88f61a6ae078f519d4060d3bc47aecbebad50` |
 
 - The client folders are under `/mnt/dati/_proj_local/_uo_clients/`.
 - Do not commit the binaries or anything extracted from them (UOP entries, decoded textures, UI files, shader

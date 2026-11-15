@@ -16,7 +16,7 @@ In the Ghidra project `UOSA`, imported read-only, never executed, auto-analysed,
 | Ghidra program | Source | SHA-256 |
 |---|---|---|
 | `/classic/classic_7.0.103.0_client.exe` | `_Ultima Online Classic/client.exe` (7.0.103.0) | `4d857f2f5f8bf350bc50a87ee66b2236bfa480e712e9546c740ff04f9106690a` |
-| `/UOSA.exe` | `_Ultima Online Enhanced/UOSA.exe` | `5a5e9dc536c836d1bf10b6f86bb88f61a6ae078f519d4060d3bc47aecbebad50` |
+| `/UOSA.exe` | `_Ultima Online Enhanced/UOSA.exe` 4.0.102.3 | `5a5e9dc536c836d1bf10b6f86bb88f61a6ae078f519d4060d3bc47aecbebad50` |
 
 The client folders are under `/mnt/dati/_proj_local/_uo_clients/`. Do not commit the binaries or anything
 extracted from them. The UO Gold client's `bodyconv.def` reader (`gold_client.exe` `0x004f4650`) was read, not named.

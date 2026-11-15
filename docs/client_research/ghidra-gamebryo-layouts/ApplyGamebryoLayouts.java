@@ -1103,6 +1103,7 @@ public class ApplyGamebryoLayouts extends GhidraScript {
         output.println();
         output.println("Program: " + currentProgram.getName());
         output.println("SHA-256: " + currentProgram.getExecutableSHA256());
+        output.println("PE file version: " + peFileVersion());
         output.println("Mode: " + (apply ? APPLY_FLAG : "report only"));
         output.println("Sources (" + SOURCE_FOLDER + "): " + String.join(", ", sources.stream().map(source -> "`"
             + source.name + "` (" + source.program.getDataTypeManager().getDataTypeCount(false) + " data types)").toList()));
@@ -1265,6 +1266,7 @@ public class ApplyGamebryoLayouts extends GhidraScript {
         output.println("# Gamebryo 2.6 layouts: members");
         output.println();
         output.println("Program: " + currentProgram.getName());
+        output.println("PE file version: " + peFileVersion());
         output.println("Mode: " + (apply ? APPLY_FLAG : "report only (planned layouts)"));
         output.println();
         output.println("## Classes");
@@ -1332,5 +1334,15 @@ public class ApplyGamebryoLayouts extends GhidraScript {
 
     private static String hex(long value) {
         return String.format("0x%x", value);
+    }
+
+    // The program's PE version resource as Ghidra's importer stored it ("4, 0, 102, 3" -> "4.0.102.3").
+    private static final String PE_FILE_VERSION_OPTION = "PE Property[FileVersion]";
+
+    private String peFileVersion() {
+        ghidra.framework.options.Options info =
+            currentProgram.getOptions(ghidra.program.model.listing.Program.PROGRAM_INFO);
+        return info.contains(PE_FILE_VERSION_OPTION)
+            ? info.getString(PE_FILE_VERSION_OPTION, "").replace(", ", ".") : "none";
     }
 }

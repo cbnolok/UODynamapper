@@ -33,10 +33,10 @@ All are in the Ghidra project `UOSA`. Each was imported read-only, never execute
 
 | Ghidra program | Source | SHA-256 |
 |---|---|---|
-| `/UOSA.exe` | `_Ultima Online Enhanced/UOSA.exe` | `5a5e9dc536c836d1bf10b6f86bb88f61a6ae078f519d4060d3bc47aecbebad50` |
-| `/UOKR.exe` | `UO - Old KR/UOKR.exe` | `1b802e5c00f3bf89a771778b9c6c57406be0703808eeb4cd983e2f5baa348a43` |
+| `/UOSA.exe` | `_Ultima Online Enhanced/UOSA.exe` 4.0.102.3 | `5a5e9dc536c836d1bf10b6f86bb88f61a6ae078f519d4060d3bc47aecbebad50` |
+| `/UOKR.exe` | `UO - Old KR/UOKR.exe` 2.58.0.6 | `1b802e5c00f3bf89a771778b9c6c57406be0703808eeb4cd983e2f5baa348a43` |
 | `/classic/classic_7.0.103.0_client.exe` | `_Ultima Online Classic/client.exe` | `4d857f2f5f8bf350bc50a87ee66b2236bfa480e712e9546c740ff04f9106690a` |
-| `/classic/gold_client.exe` | `Ultima Online Gold/client.exe` | `aa21bb3ea16b6c5e00837569466b052e978baa6e38fd945e2694af4f14fa28c2` |
+| `/classic/gold_client.exe` | `Ultima Online Gold/client.exe` (no version resource) | `aa21bb3ea16b6c5e00837569466b052e978baa6e38fd945e2694af4f14fa28c2` |
 | `/libs/mss32.dll` | `_Ultima Online Enhanced/mss32.dll` (Miles 7.2c) | `b588b4791ff6803247962c661b6d3ff9a8625d0f60363a6fa53f61d401f0e74e` |
 | `/libs/miles/mssmp3.asi` | `_Ultima Online Enhanced/miles/mssmp3.asi` | `0fb784a9cc9826a9ec2412b7d71453b917af6c74442647f38061512e2c3a05bb` |
 | `/libs/miles/mssvoice.asi` | `_Ultima Online Enhanced/miles/mssvoice.asi` | `c0163aaf5c6ac0b252261dfbf718c32de02a34efc97761d6612bda3d529b772e` |

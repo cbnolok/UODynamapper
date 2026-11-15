@@ -2,7 +2,7 @@
 
 Sources:
 
-- `UOSA.exe` SHA-256 `5a5e9dc536c836d1bf10b6f86bb88f61a6ae078f519d4060d3bc47aecbebad50`, in Ghidra;
+- `UOSA.exe` 4.0.102.3 SHA-256 `5a5e9dc536c836d1bf10b6f86bb88f61a6ae078f519d4060d3bc47aecbebad50`, in Ghidra;
 - `_Ultima Online Enhanced/TerrainDefinition.uop` + `string_dictionary.uop` (201 records), read with the repo
   reader `uocf::enhanced::terrain_definition` from a scratch crate ([`../terrain_layers_census.rs`](../terrain_layers_census.rs));
 - `GameData.uop:data/gamedata/legacyterrainmap.csv` (2705 rows).

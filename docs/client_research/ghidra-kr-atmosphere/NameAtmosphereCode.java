@@ -303,8 +303,8 @@ public class NameAtmosphereCode extends GhidraScript {
     };
 
     private static final Build[] BUILDS = {
-        new Build("UOKR.exe (Kingdom Reborn)", UOKR_SHA256, ENTRIES_UOKR),
-        new Build("UOSA.exe (Enhanced Client)", UOSA_SHA256, ENTRIES_UOSA),
+        new Build("UOKR.exe 2.58.0.6 (Kingdom Reborn)", UOKR_SHA256, ENTRIES_UOKR),
+        new Build("UOSA.exe 4.0.102.3 (Enhanced Client)", UOSA_SHA256, ENTRIES_UOSA),
     };
 
     private final Map<String, Integer> changes = new LinkedHashMap<>();

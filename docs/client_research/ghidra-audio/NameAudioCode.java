@@ -327,12 +327,12 @@ public class NameAudioCode extends GhidraScript {
     };
 
     private static final Build[] BUILDS = {
-        new Build("UOSA.exe (Enhanced Client)", UOSA_SHA256, ENTRIES_UOSA),
-        new Build("UOKR.exe (Kingdom Reborn)", UOKR_SHA256, ENTRIES_UOKR),
+        new Build("UOSA.exe 4.0.102.3 (Enhanced Client)", UOSA_SHA256, ENTRIES_UOSA),
+        new Build("UOKR.exe 2.58.0.6 (Kingdom Reborn)", UOKR_SHA256, ENTRIES_UOKR),
         new Build("classic 7.0.103.0 client.exe", CLASSIC_7_0_103_SHA256, ENTRIES_CLASSIC_7_0_103),
-        new Build("UO Gold client.exe", GOLD_SHA256, ENTRIES_GOLD),
+        new Build("UO Gold client.exe (no version resource, PE timestamp 2004-11-11)", GOLD_SHA256, ENTRIES_GOLD),
         new Build("EC mss32.dll (Miles 7.2c)", MSS32_SHA256, ENTRIES_MSS32),
-        new Build("EC miles/mssmp3.asi", MSSMP3_SHA256, ENTRIES_MSSMP3),
+        new Build("EC miles/mssmp3.asi (no version resource, shipped with Miles 7.2c)", MSSMP3_SHA256, ENTRIES_MSSMP3),
     };
 
     private final Map<String, Integer> changes = new LinkedHashMap<>();

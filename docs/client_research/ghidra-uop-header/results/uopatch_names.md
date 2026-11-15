@@ -1,6 +1,6 @@
 # UOP header names
 
-Program: `uopatch.exe`, SHA-256 `7c4ec66d9c53a8e45e35b4eba8fcfd5a7ce96dbf4f3baaea4ae32823fcf44dad`.
+Program: `uopatch.exe` 1.0.6.5, SHA-256 `7c4ec66d9c53a8e45e35b4eba8fcfd5a7ce96dbf4f3baaea4ae32823fcf44dad`.
 
 Mode: `--apply` (changes: none).
 

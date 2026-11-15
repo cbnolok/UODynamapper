@@ -1,6 +1,6 @@
 # Source library names in UOSA.exe
 
-Program: `UOSA.exe`, SHA-256 `5a5e9dc536c836d1bf10b6f86bb88f61a6ae078f519d4060d3bc47aecbebad50`,
+Program: `UOSA.exe` 4.0.102.3, SHA-256 `5a5e9dc536c836d1bf10b6f86bb88f61a6ae078f519d4060d3bc47aecbebad50`,
 Ghidra 12.1.4. Maps: `maps/zlib-1.2.2.tsv`, `maps/freetype-2.3.5.tsv`,
 `maps/tinyxml-2.5.3.tsv`, `maps/cryptopp-5.4.tsv`. Version evidence is in `README.md`.
 
@@ -78,7 +78,7 @@ state size `0x1ba8`, `wbits` 15, reset fields).
 
 # Report of the `--apply` run
 
-Program: `UOSA.exe`, SHA-256 `5a5e9dc536c836d1bf10b6f86bb88f61a6ae078f519d4060d3bc47aecbebad50`, 49357 functions.
+Program: `UOSA.exe` 4.0.102.3, SHA-256 `5a5e9dc536c836d1bf10b6f86bb88f61a6ae078f519d4060d3bc47aecbebad50`, 49357 functions.
 
 - Map `zlib-1.2.2.tsv`: zlib 1.2.2, 102 functions, 28 unique strings, 1 tables, 0 vtable classes
 - Map `freetype-2.3.5.tsv`: freetype 2.3.5, 1724 functions, 219 unique strings, 104 tables, 0 vtable classes

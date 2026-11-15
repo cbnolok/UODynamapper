@@ -27,7 +27,7 @@ GhidraScript, category `ECResearch`. Built on `ghidra-image-decoders/NameImageDe
 NameTextureRoleCode.java OUTPUT_FILE [--apply]
 ```
 
-- Names fixed addresses, so it refuses any program whose SHA-256 is not the tested `UOSA.exe`
+- Names fixed addresses, so it refuses any program whose SHA-256 is not the tested `UOSA.exe` 4.0.102.3
   (`5a5e9dc5...ebad50`).
 - Before naming, each address is checked: a function exists there, and its stated evidence holds (vtable
   slot, callers, callees, constants, referenced strings). A failed check is reported as a mismatch and

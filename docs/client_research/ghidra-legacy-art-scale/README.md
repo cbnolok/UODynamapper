@@ -28,7 +28,7 @@ GhidraScript, category `ECResearch`. Built on `ghidra-texture-roles/NameTextureR
 NameLegacyArtScaleCode.java OUTPUT_FILE [--apply]
 ```
 
-- Refuses any program whose SHA-256 is not the tested `UOSA.exe` (`5a5e9dc5...ebad50`).
+- Refuses any program whose SHA-256 is not the tested `UOSA.exe` 4.0.102.3 (`5a5e9dc5...ebad50`).
 - Checks each address first (callers, callees, referenced float constants); a failed check is a mismatch and
   nothing is named.
 - `OUTPUT_FILE` is created with CREATE_NEW; pass spaces as `%20`.

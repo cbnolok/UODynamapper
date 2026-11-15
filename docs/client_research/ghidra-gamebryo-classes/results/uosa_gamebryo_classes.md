@@ -1,6 +1,6 @@
 # Gamebryo classes
 
-Program: UOSA.exe
+Program: UOSA.exe 4.0.102.3
 SHA-256: 5a5e9dc536c836d1bf10b6f86bb88f61a6ae078f519d4060d3bc47aecbebad50
 Mode: analysis and --apply
 

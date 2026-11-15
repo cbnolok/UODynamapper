@@ -1403,7 +1403,8 @@ public class NameSourceFunctions extends GhidraScript {
     private void report(PrintWriter output, boolean apply, Map<Long, Proposal> chosen) {
         output.println("# Source library function names in " + currentProgram.getName());
         output.println();
-        output.println("Program: `" + currentProgram.getName() + "`, SHA-256 `" + currentProgram.getExecutableSHA256()
+        output.println("Program: `" + currentProgram.getName() + "` (PE file version " + peFileVersion()
+            + "), SHA-256 `" + currentProgram.getExecutableSHA256()
             + "`, " + currentProgram.getFunctionManager().getFunctionCount() + " functions.");
         output.println();
         for (Lib lib : libs) {
@@ -1616,5 +1617,15 @@ public class NameSourceFunctions extends GhidraScript {
             parts.add(hex(value));
         }
         return parts.isEmpty() ? "none" : String.join(", ", parts);
+    }
+
+    // The program's PE version resource as Ghidra's importer stored it ("4, 0, 102, 3" -> "4.0.102.3").
+    private static final String PE_FILE_VERSION_OPTION = "PE Property[FileVersion]";
+
+    private String peFileVersion() {
+        ghidra.framework.options.Options info =
+            currentProgram.getOptions(ghidra.program.model.listing.Program.PROGRAM_INFO);
+        return info.contains(PE_FILE_VERSION_OPTION)
+            ? info.getString(PE_FILE_VERSION_OPTION, "").replace(", ", ".") : "none";
     }
 }

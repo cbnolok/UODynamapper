@@ -2,7 +2,7 @@
 
 Programs `classic_7.0.103.0_client.exe` (SHA-256
 `4d857f2f5f8bf350bc50a87ee66b2236bfa480e712e9546c740ff04f9106690a`, the canonical Classic client) and
-`gold_client.exe` (`aa21bb3ea16b6c5e00837569466b052e978baa6e38fd945e2694af4f14fa28c2`) for the Config.txt
+`gold_client.exe` (no version resource) (`aa21bb3ea16b6c5e00837569466b052e978baa6e38fd945e2694af4f14fa28c2`) for the Config.txt
 check. **confirmed** = read in the code; **probable** = inferred from the code and the shipped data.
 
 The Classic client plays sounds with DirectSound directly; Miles is not involved.

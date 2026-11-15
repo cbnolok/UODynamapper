@@ -27,7 +27,7 @@ Other builds were not imported. Their facet tables were decoded from the file by
 
 | Build | Source | SHA-256 |
 |---|---|---|
-| Mondain's Legacy folder | `Ultima Online Mondain's Legacy/client.exe` (2005-07-26) | `17ab35e10bf38077fa101938a4a0b85d1b4caa505245fc6bc83d3b131a0c2918` |
+| Mondain's Legacy folder | `Ultima Online Mondain's Legacy/client.exe` (no version resource) (2005-07-26) | `17ab35e10bf38077fa101938a4a0b85d1b4caa505245fc6bc83d3b131a0c2918` |
 | 5.0.9.1 | `_packs/uoml_setup_fully_patched_5.0.9.1.zip` | `6250963022ec03855dedf89176c54dc7ad603e230b415edaa4b08d1509f568e9` |
 | 7.0.50.0 | `_packs/Ultima Online Classic_7_0_50_00.zip` | `8b3af41390d34930ac1dc914b865edb7961c5448e0592b43a912790814987940` |
 

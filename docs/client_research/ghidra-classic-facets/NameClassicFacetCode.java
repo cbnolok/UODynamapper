@@ -244,7 +244,7 @@ public class NameClassicFacetCode extends GhidraScript {
         new Build("classic 7.0.103.0 client.exe", CLASSIC_7_0_103_SHA256, LABELS_7_0_103, ENTRIES_7_0_103),
         new Build("classic 7.0.20.0 client.exe", CLASSIC_7_0_20_SHA256, LABELS_7_0_20, ENTRIES_7_0_20),
         new Build("classic 6.0.14.3 client.exe", CLASSIC_6_0_14_3_SHA256, LABELS_6_0_14_3, ENTRIES_6_0_14_3),
-        new Build("UO Gold client.exe", GOLD_SHA256, LABELS_GOLD, ENTRIES_GOLD),
+        new Build("UO Gold client.exe (no version resource, PE timestamp 2004-11-11)", GOLD_SHA256, LABELS_GOLD, ENTRIES_GOLD),
     };
 
     private final Map<String, Integer> changes = new LinkedHashMap<>();

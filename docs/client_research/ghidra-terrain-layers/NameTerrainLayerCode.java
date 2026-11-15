@@ -160,7 +160,8 @@ public class NameTerrainLayerCode extends GhidraScript {
         }
         String sha = currentProgram.getExecutableSHA256();
         if (sha == null || !sha.equalsIgnoreCase(TESTED_SHA256)) {
-            throw new IllegalStateException("NameTerrainLayerCode names fixed addresses of the tested UOSA.exe (SHA-256 "
+            throw new IllegalStateException("NameTerrainLayerCode names fixed addresses of the tested "
+                + "UOSA.exe 4.0.102.3 (SHA-256 "
                 + TESTED_SHA256 + "); " + currentProgram.getName() + " has SHA-256 " + sha + ". Nothing done.");
         }
         boolean apply = args.length == 2;
@@ -177,7 +178,8 @@ public class NameTerrainLayerCode extends GhidraScript {
             }
             output.println("# Terrain layer names");
             output.println();
-            output.println("Program: `" + currentProgram.getName() + "`, SHA-256 `" + sha + "`.");
+            output.println("Program: `" + currentProgram.getName() + "` (PE file version " + peFileVersion()
+                + "), SHA-256 `" + sha + "`.");
             output.println();
             output.println("Mode: " + (apply ? "`--apply` (changes: " + (changes.isEmpty() ? "none" : changes) + ")"
                 : "report only") + ".");
@@ -420,5 +422,15 @@ public class NameTerrainLayerCode extends GhidraScript {
 
     private void count(String what) {
         changes.merge(what, 1, Integer::sum);
+    }
+
+    // The program's PE version resource as Ghidra's importer stored it ("4, 0, 102, 3" -> "4.0.102.3").
+    private static final String PE_FILE_VERSION_OPTION = "PE Property[FileVersion]";
+
+    private String peFileVersion() {
+        ghidra.framework.options.Options info =
+            currentProgram.getOptions(ghidra.program.model.listing.Program.PROGRAM_INFO);
+        return info.contains(PE_FILE_VERSION_OPTION)
+            ? info.getString(PE_FILE_VERSION_OPTION, "").replace(", ", ".") : "none";
     }
 }

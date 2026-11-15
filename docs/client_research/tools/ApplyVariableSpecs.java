@@ -1079,6 +1079,7 @@ public class ApplyVariableSpecs extends GhidraScript {
         out.println();
         out.println("Program: " + currentProgram.getName());
         out.println("SHA-256: " + currentProgram.getExecutableSHA256());
+        out.println("PE file version: " + peFileVersion());
         out.println("Spec: " + Path.of(spec).getFileName());
         out.println("Mode: " + (apply ? "analysis and " + APPLY_FLAG : "analysis only"));
         out.println();
@@ -1131,5 +1132,15 @@ public class ApplyVariableSpecs extends GhidraScript {
 
     private static String hex(long value) {
         return String.format("0x%x", value);
+    }
+
+    // The program's PE version resource as Ghidra's importer stored it ("4, 0, 102, 3" -> "4.0.102.3").
+    private static final String PE_FILE_VERSION_OPTION = "PE Property[FileVersion]";
+
+    private String peFileVersion() {
+        ghidra.framework.options.Options info =
+            currentProgram.getOptions(ghidra.program.model.listing.Program.PROGRAM_INFO);
+        return info.contains(PE_FILE_VERSION_OPTION)
+            ? info.getString(PE_FILE_VERSION_OPTION, "").replace(", ", ".") : "none";
     }
 }

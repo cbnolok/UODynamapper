@@ -1,6 +1,6 @@
 # UOSA.exe: single Interface.uop gumps outside the paperdoll
 
-Program `UOSA.exe` (SHA-256 `5a5e9dc536c836d1bf10b6f86bb88f61a6ae078f519d4060d3bc47aecbebad50`).
+Program `UOSA.exe` 4.0.102.3 (SHA-256 `5a5e9dc536c836d1bf10b6f86bb88f61a6ae078f519d4060d3bc47aecbebad50`).
 
 - **confirmed** = read in the decompiler and checked in the assembly.
 - **decompiler** = read in the decompiler only.

@@ -142,7 +142,7 @@ members file shows the planned layouts.
 
 ## Tested result
 
-Ghidra 12.1.4, `UOSA.exe` SHA-256
+Ghidra 12.1.4, `UOSA.exe` 4.0.102.3 SHA-256
 `5a5e9dc536c836d1bf10b6f86bb88f61a6ae078f519d4060d3bc47aecbebad50`, sources NiMain,
 NiDX9Renderer, NiSystem, NiAnimation, NiParticle and NiCollision 2.6 (VC80 release DLLs): of 343
 classes, 117 filled with exact size and 25 inferred (`NiObject` 0x8, `NiObjectNET` 0x18,

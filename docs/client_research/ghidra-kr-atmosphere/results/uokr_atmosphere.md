@@ -1,7 +1,7 @@
 # Kingdom Reborn atmosphere: how UOKR.exe darkens and tints the scene
 
-Program: `UOKR.exe` 2.53.0.2 (2008/05/27, CL 108899), SHA-256
-`1b802e5c00f3bf89a771778b9c6c57406be0703808eeb4cd983e2f5baa348a43`. Cross-checked against `UOSA.exe`, SHA-256
+Program: `UOKR.exe` 2.58.0.6 (PE version resource, built 2009-03-09; earlier notes called it 2.53.0.2 after the folder's stale `buildinfo.txt`), SHA-256
+`1b802e5c00f3bf89a771778b9c6c57406be0703808eeb4cd983e2f5baa348a43`. Cross-checked against `UOSA.exe` 4.0.102.3, SHA-256
 `5a5e9dc536c836d1bf10b6f86bb88f61a6ae078f519d4060d3bc47aecbebad50`. Addresses are UOKR unless marked UOSA.
 
 Every finding has a label:

@@ -14,7 +14,7 @@ Mode: `--apply` (changes: none).
 
 # Classic map image names
 
-Program: `gold_client.exe` (tested file gold_client.exe (UO Gold, 2004-11-11)), SHA-256 `aa21bb3ea16b6c5e00837569466b052e978baa6e38fd945e2694af4f14fa28c2`.
+Program: `gold_client.exe` (tested file gold_client.exe (UO Gold, no version resource, PE timestamp 2004-11-11)), SHA-256 `aa21bb3ea16b6c5e00837569466b052e978baa6e38fd945e2694af4f14fa28c2`.
 
 Mode: `--apply` (changes: none).
 

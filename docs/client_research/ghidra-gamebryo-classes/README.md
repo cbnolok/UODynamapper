@@ -114,7 +114,7 @@ zero changes.
 
 ## Tested result
 
-Ghidra 12.1.4, `UOSA.exe` SHA-256
+Ghidra 12.1.4, `UOSA.exe` 4.0.102.3 SHA-256
 `5a5e9dc536c836d1bf10b6f86bb88f61a6ae078f519d4060d3bc47aecbebad50`: 343 classes (60 with
 non-`Ni` names) under 15 roots (`NiObject` plus `NiRefObject`-derived roots such as
 `NiShader`, `NiMaterial`, `NiRenderView`), 343 `GetRTTI`s, 396 vtables with a `GetRTTI`

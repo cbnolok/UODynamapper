@@ -1382,6 +1382,7 @@ public class TransferGamebryoNames extends GhidraScript {
             output.println();
             output.println("Program: " + currentProgram.getName());
             output.println("SHA-256: " + currentProgram.getExecutableSHA256());
+            output.println("PE file version: " + peFileVersion());
             output.println("Mode: " + (settings.apply ? "analysis and " + APPLY_FLAG : "analysis only"));
             StringBuilder sourceLine = new StringBuilder();
             for (Program source : sources) {
@@ -1695,5 +1696,15 @@ public class TransferGamebryoNames extends GhidraScript {
 
     private static String hex(long value) {
         return String.format("0x%08x", value);
+    }
+
+    // The program's PE version resource as Ghidra's importer stored it ("4, 0, 102, 3" -> "4.0.102.3").
+    private static final String PE_FILE_VERSION_OPTION = "PE Property[FileVersion]";
+
+    private String peFileVersion() {
+        ghidra.framework.options.Options info =
+            currentProgram.getOptions(ghidra.program.model.listing.Program.PROGRAM_INFO);
+        return info.contains(PE_FILE_VERSION_OPTION)
+            ? info.getString(PE_FILE_VERSION_OPTION, "").replace(", ", ".") : "none";
     }
 }

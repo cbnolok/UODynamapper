@@ -1,6 +1,6 @@
 # Gamebryo 2.6 layouts
 
-Program: UOSA.exe
+Program: UOSA.exe 4.0.102.3
 SHA-256: 5a5e9dc536c836d1bf10b6f86bb88f61a6ae078f519d4060d3bc47aecbebad50
 Mode: --apply
 Sources (/gamebryo26): `NiAnimation26VC80R.dll` (22363 data types), `NiCollision26VC80R.dll` (18420 data types), `NiDX9Renderer26VC80R.dll` (22240 data types), `NiMain26VC80R.dll` (17330 data types), `NiParticle26VC80R.dll` (25084 data types), `NiSystem26VC80R.dll` (9190 data types)

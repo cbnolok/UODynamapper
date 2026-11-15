@@ -31,8 +31,8 @@ NameTerrainCode.java OUTPUT_FILE [--apply]
 ```
 
 - It names fixed addresses. It holds one entry set per tested build, selected by SHA-256:
-  - `UOSA.exe` `5a5e9dc5...ebad50`, the same build as `ghidra-uop-header`;
-  - `UOKR.exe` `1b802e5c...348a43`, from `UO - Old KR`.
+  - `UOSA.exe` 4.0.102.3 `5a5e9dc5...ebad50`, the same build as `ghidra-uop-header`;
+  - `UOKR.exe` 2.58.0.6 `1b802e5c...348a43`, from `UO - Old KR`.
 
   It refuses any other program.
 - Before naming, it checks each address. A function must exist there and its stated evidence must hold:

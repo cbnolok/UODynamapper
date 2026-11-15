@@ -1,6 +1,6 @@
 # Atmosphere names
 
-Program: `UOSA.exe` (tested file UOSA.exe (Enhanced Client)), SHA-256 `5a5e9dc536c836d1bf10b6f86bb88f61a6ae078f519d4060d3bc47aecbebad50`.
+Program: `UOSA.exe` (tested file UOSA.exe 4.0.102.3 (Enhanced Client)), SHA-256 `5a5e9dc536c836d1bf10b6f86bb88f61a6ae078f519d4060d3bc47aecbebad50`.
 
 Mode: `--apply`, third pass (changes: {functions renamed=10, tags added=10, plate comments set=10}); the first-pass and second-pass rows were already applied. `UOSA.exe` was saved.
 

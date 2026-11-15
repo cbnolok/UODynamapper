@@ -17,7 +17,7 @@ Conventions:
 
 - All values are little-endian and unaligned. The stream is read field by field through
   `UOAssets::StreamRead` 0x00a6fe55.
-- Addresses are function entries in `UOSA.exe` SHA-256
+- Addresses are function entries in `UOSA.exe` 4.0.102.3 SHA-256
   5a5e9dc536c836d1bf10b6f86bb88f61a6ae078f519d4060d3bc47aecbebad50.
 - Confidence: **confirmed** means read in the assembly and checked against the data. **probable** means
   inferred from how the value is used. **unknown** means no reader was found or the use is unclear.

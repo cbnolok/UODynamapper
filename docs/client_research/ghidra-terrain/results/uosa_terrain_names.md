@@ -1,6 +1,6 @@
 # Terrain names
 
-Program: `UOSA.exe` (tested build UOSA.exe), SHA-256 `5a5e9dc536c836d1bf10b6f86bb88f61a6ae078f519d4060d3bc47aecbebad50`.
+Program: `UOSA.exe` (tested build UOSA.exe 4.0.102.3), SHA-256 `5a5e9dc536c836d1bf10b6f86bb88f61a6ae078f519d4060d3bc47aecbebad50`.
 
 Mode: `--apply` (changes: {functions renamed=23, tags added=23, plate comments set=23}).
 

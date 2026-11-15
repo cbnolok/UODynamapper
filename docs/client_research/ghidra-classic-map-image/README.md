@@ -15,7 +15,7 @@ auto-analysed, then named with `--apply` and saved.
 | Ghidra program | Source | SHA-256 |
 |---|---|---|
 | `/classic/classic_7.0.103.0_client.exe` | `_Ultima Online Classic/client.exe` (7.0.103.0) | `4d857f2f5f8bf350bc50a87ee66b2236bfa480e712e9546c740ff04f9106690a` |
-| `/classic/gold_client.exe` | `Ultima Online Gold/client.exe` (2004-11-11) | `aa21bb3ea16b6c5e00837569466b052e978baa6e38fd945e2694af4f14fa28c2` |
+| `/classic/gold_client.exe` | `Ultima Online Gold/client.exe` (no version resource) (2004-11-11) | `aa21bb3ea16b6c5e00837569466b052e978baa6e38fd945e2694af4f14fa28c2` |
 
 The other clients were searched for the file names only: ML, 7.0.20, `uotd.exe`, UOKR and UOSA. The client
 folders are under `/mnt/dati/_proj_local/_uo_clients/`. Do not commit the binaries or anything extracted from

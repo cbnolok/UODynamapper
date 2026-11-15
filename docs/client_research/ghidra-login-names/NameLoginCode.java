@@ -1223,7 +1223,9 @@ public class NameLoginCode extends GhidraScript {
         out.println("# NameLoginCode report");
         out.println();
         out.println("Program: " + currentProgram.getName());
-        out.println("SHA-256: " + currentProgram.getExecutableSHA256() + (testedBuild ? " (tested build)" : " (untested build)"));
+        out.println("SHA-256: " + currentProgram.getExecutableSHA256()
+            + (testedBuild ? " (tested build, UOSA.exe 4.0.102.3)" : " (untested build)"));
+        out.println("PE file version: " + peFileVersion());
         out.println("Mode: " + (apply ? "apply" : "report only"));
         out.println("Changes: " + (apply ? changes.toString() : "none"));
         out.println();
@@ -1299,5 +1301,15 @@ public class NameLoginCode extends GhidraScript {
             parts.add(String.format("0x%02X", id));
         }
         return parts.isEmpty() ? "none" : String.join(", ", parts);
+    }
+
+    // The program's PE version resource as Ghidra's importer stored it ("4, 0, 102, 3" -> "4.0.102.3").
+    private static final String PE_FILE_VERSION_OPTION = "PE Property[FileVersion]";
+
+    private String peFileVersion() {
+        ghidra.framework.options.Options info =
+            currentProgram.getOptions(ghidra.program.model.listing.Program.PROGRAM_INFO);
+        return info.contains(PE_FILE_VERSION_OPTION)
+            ? info.getString(PE_FILE_VERSION_OPTION, "").replace(", ", ".") : "none";
     }
 }

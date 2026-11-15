@@ -2,10 +2,10 @@
 
 Sources:
 
-- `UOSA.exe` SHA-256 `5a5e9dc536c836d1bf10b6f86bb88f61a6ae078f519d4060d3bc47aecbebad50`, in Ghidra;
+- `UOSA.exe` 4.0.102.3 SHA-256 `5a5e9dc536c836d1bf10b6f86bb88f61a6ae078f519d4060d3bc47aecbebad50`, in Ghidra;
 - `_Ultima Online Enhanced/TerrainDefinition.uop`, `string_dictionary.uop`, and
   `GameData.uop:data/gamedata/legacyterrainmap.csv`;
-- KR: `UOKR.exe` `1b802e5c...348a43` and `UO - Old KR/TerrainDefinition.uop`.
+- KR: `UOKR.exe` 2.58.0.6 `1b802e5c...348a43` and `UO - Old KR/TerrainDefinition.uop`.
 
 The offline checks are scratch tools: `terrain_def.py` for the parser, encoder and statistics, and
 `kr_td.py` for KR. They use the Python stdlib and run with `-I`.

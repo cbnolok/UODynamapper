@@ -1,6 +1,6 @@
 # Atmosphere names
 
-Program: `UOKR.exe` (tested file UOKR.exe (Kingdom Reborn)), SHA-256 `1b802e5c00f3bf89a771778b9c6c57406be0703808eeb4cd983e2f5baa348a43`.
+Program: `UOKR.exe` (tested file UOKR.exe 2.58.0.6 (Kingdom Reborn)), SHA-256 `1b802e5c00f3bf89a771778b9c6c57406be0703808eeb4cd983e2f5baa348a43`.
 
 Mode: `--apply`, third pass (changes: {functions renamed=1, tags added=1, plate comments set=1}); the first-pass and second-pass rows were already applied. A report-only rerun found every row applied. The save of `UOKR.exe` is pending: the GUI's MCP bridge stopped answering after the run, so the third-pass rename of `0x004387d0` is not yet saved in the project.
 

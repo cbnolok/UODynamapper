@@ -1,6 +1,6 @@
 # EC facets: sector packages, the 8-byte header entry, facetNN.dds and FacetDefinition
 
-Program: `UOSA.exe`, SHA-256 `5a5e9dc536c836d1bf10b6f86bb88f61a6ae078f519d4060d3bc47aecbebad50`. Data:
+Program: `UOSA.exe` 4.0.102.3, SHA-256 `5a5e9dc536c836d1bf10b6f86bb88f61a6ae078f519d4060d3bc47aecbebad50`. Data:
 `_Ultima Online Enhanced` (EC), `UO - Old KR` (KR), and `_Ultima Online Classic/radarcol.mul` for the
 radar colours. The names below are the ones `NameFacetCode.java` applies (namespace `UOFacet`, tag
 `UO_FACET`); [uosa_facets_names.md](uosa_facets_names.md) is its report.
@@ -328,11 +328,11 @@ signature below. The client files were only read.
 
 | Build | SHA-256 | Table file / VA | Split signature file / imm32 VAs |
 |---|---|---|---|
-| EC `UOSA.exe` | `5a5e9dc536c836d1bf10b6f86bb88f61a6ae078f519d4060d3bc47aecbebad50` | 0x9a72a8 / 0xda72a8 | 0x1df6d2 / 0x5df6db, 0x5df6e3, 0x5df6f5 |
-| `UOSA_TC.exe` (both EC folders) | `4e38c1cb834083c18050ca9fc85f1ebf77cf4d8bcb1a39a1f37878ea314553d0` | 0x98f870 / 0xd8f870 | 0x1cfce2 / 0x5cfceb, 0x5cfcf3, 0x5cfd05 |
+| EC `UOSA.exe` 4.0.102.3 | `5a5e9dc536c836d1bf10b6f86bb88f61a6ae078f519d4060d3bc47aecbebad50` | 0x9a72a8 / 0xda72a8 | 0x1df6d2 / 0x5df6db, 0x5df6e3, 0x5df6f5 |
+| `UOSA_TC.exe` 4.0.29.97 (both EC folders) | `4e38c1cb834083c18050ca9fc85f1ebf77cf4d8bcb1a39a1f37878ea314553d0` | 0x98f870 / 0xd8f870 | 0x1cfce2 / 0x5cfceb, 0x5cfcf3, 0x5cfd05 |
 | `UOSA_eclo.exe` (both EC folders) | `5aaa654c517adc3aab88467f8bc869e9b048c78c0c195caf085723fecbb8fdf0` | 0x9a72a8 / 0xda72a8 | as EC |
-| `Ultima Online Enhanced fp/UOSA.exe` | `9692f6ae95dd55338985caabf247f3a2490ba2ef4d0cfe2d75694b56ba65e3dd` | 0x9ad2e0 / 0xdad2e0 | 0x1e1a02 / 0x5e1a0b, 0x5e1a13, 0x5e1a25 |
-| `UO - Old KR/UOKR.exe` | `1b802e5c00f3bf89a771778b9c6c57406be0703808eeb4cd983e2f5baa348a43` | 0x7fb688 / 0xbfcc88 | none (KR has no split) |
+| `Ultima Online Enhanced fp/UOSA.exe` 4.0.115.0 | `9692f6ae95dd55338985caabf247f3a2490ba2ef4d0cfe2d75694b56ba65e3dd` | 0x9ad2e0 / 0xdad2e0 | 0x1e1a02 / 0x5e1a0b, 0x5e1a13, 0x5e1a25 |
+| `UO - Old KR/UOKR.exe` 2.58.0.6 | `1b802e5c00f3bf89a771778b9c6c57406be0703808eeb4cd983e2f5baa348a43` | 0x7fb688 / 0xbfcc88 | none (KR has no split) |
 
 Recipe:
 

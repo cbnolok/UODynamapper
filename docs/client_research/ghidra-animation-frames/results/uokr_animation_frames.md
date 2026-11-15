@@ -1,6 +1,6 @@
 # UOKR.exe: AnimationFrame*.uop as the client reads it
 
-Program `UOKR.exe` (Kingdom Reborn), SHA-256 `1b802e5c00f3bf89a771778b9c6c57406be0703808eeb4cd983e2f5baa348a43`.
+Program `UOKR.exe` 2.58.0.6 (Kingdom Reborn), SHA-256 `1b802e5c00f3bf89a771778b9c6c57406be0703808eeb4cd983e2f5baa348a43`.
 Nothing animation-related was named before this folder. RTTI: `.?AVUOMobFrameSet@@`,
 `.?AVUOAnimationFrameSetFactory@@`, `.?AVUOAnimationFrameSet@@`; the path string `client\AnimationFrame`.
 **confirmed** = read at the instruction level; **probable** = from the decompiled code.

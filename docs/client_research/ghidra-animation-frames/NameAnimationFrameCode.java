@@ -579,6 +579,7 @@ public class NameAnimationFrameCode extends GhidraScript {
         out.println();
         out.println("Program: " + currentProgram.getName());
         out.println("SHA-256: " + currentProgram.getExecutableSHA256());
+        out.println("PE file version: " + peFileVersion());
         out.println("Mode: " + (apply ? "analysis and " + APPLY_FLAG : "analysis only"));
         out.println();
         out.println("| Item | Count |");
@@ -633,5 +634,15 @@ public class NameAnimationFrameCode extends GhidraScript {
 
     private static String hexOrNone(long value) {
         return value < 0 ? "not found" : hex(value);
+    }
+
+    // The program's PE version resource as Ghidra's importer stored it ("4, 0, 102, 3" -> "4.0.102.3").
+    private static final String PE_FILE_VERSION_OPTION = "PE Property[FileVersion]";
+
+    private String peFileVersion() {
+        ghidra.framework.options.Options info =
+            currentProgram.getOptions(ghidra.program.model.listing.Program.PROGRAM_INFO);
+        return info.contains(PE_FILE_VERSION_OPTION)
+            ? info.getString(PE_FILE_VERSION_OPTION, "").replace(", ", ".") : "none";
     }
 }

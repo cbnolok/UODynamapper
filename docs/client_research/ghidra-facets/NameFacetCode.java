@@ -353,10 +353,10 @@ public class NameFacetCode extends GhidraScript {
     };
 
     private static final Build[] BUILDS = {
-        new Build("UOSA.exe", UOSA_SHA256, FACET_TABLE, FACET_TABLE_WIDTHS, FACET_TABLE_HEIGHTS, "005dfef0", "005df210",
+        new Build("UOSA.exe 4.0.102.3", UOSA_SHA256, FACET_TABLE, FACET_TABLE_WIDTHS, FACET_TABLE_HEIGHTS, "005dfef0", "005df210",
             TABLE_COMMENT_DIMS + "; readers: SetPlayerChunkPosition, QueueNeighbourChunks, SectorIndexFromXY, QueueSectorChunks, LoadWaypoints (radar and DDS use FacetDefinition)",
             UOSA_ENTRIES),
-        new Build("UOKR.exe", UOKR_SHA256, KR_FACET_TABLE, KR_FACET_TABLE_WIDTHS, KR_FACET_TABLE_HEIGHTS, "00589bd0", "00589ef0",
+        new Build("UOKR.exe 2.58.0.6", UOKR_SHA256, KR_FACET_TABLE, KR_FACET_TABLE_WIDTHS, KR_FACET_TABLE_HEIGHTS, "00589bd0", "00589ef0",
             TABLE_COMMENT_DIMS + "; readers: SetPlayerChunkPosition, SectorIndexFromXY, QueueSectorChunks, LoadWaypoints, FacetDds_GetMipOffset (no FacetDefinition in KR)",
             UOKR_ENTRIES),
     };

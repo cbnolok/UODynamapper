@@ -1,6 +1,6 @@
 # UOP header names
 
-Program: `UO.exe`, SHA-256 `422c8fbbbe2105c4486bea88c9a6dea27a0e07d233ebd96f3f659143f3d83417`.
+Program: `UO.exe` 1.0.6.5, SHA-256 `422c8fbbbe2105c4486bea88c9a6dea27a0e07d233ebd96f3f659143f3d83417`.
 
 Mode: `--apply` (changes: none).
 

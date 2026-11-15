@@ -181,7 +181,8 @@ public class TransferMilesNames extends GhidraScript {
         out.println();
         out.println("source " + source.getDomainFile().getPathname() + " functions " + sourceInfo.size()
             + " with a name " + sourceNamed);
-        out.println("target " + currentProgram.getDomainFile().getPathname() + " sha256 "
+        out.println("target " + currentProgram.getDomainFile().getPathname() + " version " + peFileVersion()
+            + " sha256 "
             + currentProgram.getExecutableSHA256() + " functions " + targetInfo.size());
         out.println("seeds (same export on both sides) " + seeds.size() + "; found again by tiers 1-3 " + calibrated
             + ", in conflict " + calibratedWrong);
@@ -463,5 +464,15 @@ public class TransferMilesNames extends GhidraScript {
             current = swap;
         }
         return (double) previous[y.length] / Math.max(x.length, y.length);
+    }
+
+    // The program's PE version resource as Ghidra's importer stored it ("4, 0, 102, 3" -> "4.0.102.3").
+    private static final String PE_FILE_VERSION_OPTION = "PE Property[FileVersion]";
+
+    private String peFileVersion() {
+        ghidra.framework.options.Options info =
+            currentProgram.getOptions(ghidra.program.model.listing.Program.PROGRAM_INFO);
+        return info.contains(PE_FILE_VERSION_OPTION)
+            ? info.getString(PE_FILE_VERSION_OPTION, "").replace(", ", ".") : "none";
     }
 }
