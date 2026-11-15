@@ -1,6 +1,7 @@
 //! Ground-level, world-textured art keeps its own pixels, but exposes the map
 //! smoothly at patch boundaries. Neighbor flags are built only on chunk rebuild.
 use super::statics_collect::{SpriteInstance, StaticChunkBatchKey, TILE_FLAG_SURFACE};
+use crate::core::texture_cache::ec_item_surface::KR_ITEM_RECORD_BASE;
 use crate::core::{statics::LazyStaticsStore, render::scene::world::land::{tile_atlas::TileAtlas, CHUNK_STORAGE_BLOCKS_DIM, MAP_STORAGE_BLOCK_TILE_DIM}};
 use std::collections::{HashMap, HashSet};
 use udd_assets::{tex_art_ec::TexArtEcPackage, tilemeta::{EcMaterialStableRole, TileMetaItemTextureRef, TileMetaItemTile, TileMetaPackage}};
@@ -65,13 +66,21 @@ fn neighbor_mask(cells: &HashSet<SurfaceCell>, closing: &ClosingStatics, cell: S
     mask
 }
 
+/// `kingdom_reborn` is the Kingdom Reborn tile data and art the instances with a `material_item_id` from
+/// `KR_ITEM_RECORD_BASE` were drawn from; the source statics take both their Enhanced and their Kingdom Reborn keys.
 pub(super) fn apply_boundary_coverage(
     instances: &mut [SpriteInstance], chunk: StaticChunkBatchKey, height_scale: f32,
     statics: &mut LazyStaticsStore, tilemeta: &TileMetaPackage, art: &TexArtEcPackage,
+    kingdom_reborn: Option<(&TileMetaPackage, &TexArtEcPackage)>,
     atlas: &TileAtlas,
 ) {
     let mut keys: HashMap<u32, Option<MaterialKey>> = HashMap::new();
-    let mut key_for = |id: u32| *keys.entry(id).or_insert_with(|| {
+    let mut key_for = |item: u32| *keys.entry(item).or_insert_with(|| {
+        let (tilemeta, art, id) = match kingdom_reborn {
+            Some((kr_tilemeta, kr_art)) if item >= KR_ITEM_RECORD_BASE => (kr_tilemeta, kr_art, item - KR_ITEM_RECORD_BASE),
+            _ if item >= KR_ITEM_RECORD_BASE => return None,
+            _ => (tilemeta, art, item),
+        };
         if !art.present_slot(id).is_some_and(|slot| slot.is_land()) { return None; }
         source_key(tilemeta.item_tile(id)?, tilemeta.item_texture_refs(id))
     });
@@ -100,8 +109,13 @@ pub(super) fn apply_boundary_coverage(
                 let (x, y) = (bx * MAP_STORAGE_BLOCK_TILE_DIM + u32::from(tile.x_offset()), by * MAP_STORAGE_BLOCK_TILE_DIM + u32::from(tile.y_offset()));
                 if x < (start_x * MAP_STORAGE_BLOCK_TILE_DIM).saturating_sub(1) || x > end_x * MAP_STORAGE_BLOCK_TILE_DIM
                     || y < (start_y * MAP_STORAGE_BLOCK_TILE_DIM).saturating_sub(1) || y > end_y * MAP_STORAGE_BLOCK_TILE_DIM { continue; }
-                if let Some(key) = key_for(u32::from(tile.graphic)) { cells.insert((x, y, tile.z, key)); }
-                else if let Some(meta) = tilemeta.item_tile(u32::from(tile.graphic)) { closing.insert(x, y, tile.z, meta); }
+                let graphic = u32::from(tile.graphic);
+                let kr_key = kingdom_reborn.and_then(|_| key_for(graphic + KR_ITEM_RECORD_BASE));
+                if let Some(key) = kr_key { cells.insert((x, y, tile.z, key)); }
+                if let Some(key) = key_for(graphic) { cells.insert((x, y, tile.z, key)); }
+                else if kr_key.is_none() {
+                    if let Some(meta) = tilemeta.item_tile(graphic) { closing.insert(x, y, tile.z, meta); }
+                }
             }
         }
     }

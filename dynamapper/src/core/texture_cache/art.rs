@@ -59,7 +59,22 @@ pub enum ArtPageKey {
     Classic(u32),
     Enhanced(u32),
     Terrain(u32),
+    /// The pages of the Kingdom Reborn item art (`tex_art_kr.uddp`) and land (`tex_land_kr.uddp`), in the Enhanced
+    /// layouts, which the statics that continue the Kingdom Reborn land draw.
+    KrEnhanced(u32),
+    KrTerrain(u32),
     Missing,
+}
+
+/// The packages whose pages an atlas re-uploads after it grows (`ArtPageAtlas::requeue_page`).
+#[derive(Clone, Copy, Default)]
+pub struct ArtPageSources<'a> {
+    pub cc: Option<&'a TexArtCcPackage>,
+    pub ec: Option<&'a TexArtEcPackage>,
+    pub terrain: Option<&'a TexLandEcPackage>,
+    pub kr_art: Option<&'a TexArtEcPackage>,
+    pub kr_terrain: Option<&'a TexLandEcPackage>,
+    pub aux: Option<&'a TexAuxEcPackage>,
 }
 
 pub struct ArtPageAtlas {
@@ -258,9 +273,16 @@ impl ArtPageAtlas {
     }
 
     pub fn resolve_ec(&mut self, tex_art_ec: &TexArtEcPackage, art_id: u32) -> Option<ResolvedArtSprite> {
+        self.resolve_ec_pages(tex_art_ec, art_id, ArtPageKey::Enhanced)
+    }
+
+    /// `resolve_ec` from a package in the Enhanced art layout whose pages are `page_key`: `tex_art_ec.uddp`
+    /// (`ArtPageKey::Enhanced`) or `tex_art_kr.uddp` (`ArtPageKey::KrEnhanced`).
+    pub fn resolve_ec_pages(&mut self, tex_art_ec: &TexArtEcPackage, art_id: u32, page_key: fn(u32) -> ArtPageKey)
+        -> Option<ResolvedArtSprite> {
         let slot = tex_art_ec.present_slot(art_id)?;
         let mut resolved = self.resolve_slot(
-            ArtPageKey::Enhanced(slot.page_index),
+            page_key(slot.page_index),
             slot.x,
             slot.y,
             slot.width,
@@ -286,9 +308,20 @@ impl ArtPageAtlas {
         tex_land_ec: &TexLandEcPackage,
         art_id: u32,
     ) -> Option<ResolvedArtSprite> {
+        self.resolve_tex_land_ec_pages(tex_land_ec, art_id, ArtPageKey::Terrain)
+    }
+
+    /// `resolve_tex_land_ec` from a package in the Enhanced land layout whose pages are `page_key`: `tex_land_ec.uddp`
+    /// (`ArtPageKey::Terrain`) or `tex_land_kr.uddp` (`ArtPageKey::KrTerrain`).
+    pub fn resolve_tex_land_ec_pages(
+        &mut self,
+        tex_land_ec: &TexLandEcPackage,
+        art_id: u32,
+        page_key: fn(u32) -> ArtPageKey,
+    ) -> Option<ResolvedArtSprite> {
         let slot = tex_land_ec.present_slot(art_id)?;
         self.resolve_slot(
-            ArtPageKey::Terrain(slot.page_index),
+            page_key(slot.page_index),
             slot.x,
             slot.y,
             slot.width,
@@ -315,9 +348,13 @@ impl ArtPageAtlas {
                 .ok_or_else(|| eyre::eyre!("missing-texture payload is unavailable")))
     }
 
-    pub fn requeue_page(&mut self, key: ArtPageKey, layer: u32,
-        cc: Option<&TexArtCcPackage>, ec: Option<&TexArtEcPackage>,
-        terrain: Option<&TexLandEcPackage>, aux: Option<&TexAuxEcPackage>) {
+    pub fn requeue_page(&mut self, key: ArtPageKey, layer: u32, sources: ArtPageSources) {
+        let ArtPageSources { cc, ec, terrain, kr_art, kr_terrain, aux } = sources;
+        let (ec, terrain) = match key {
+            ArtPageKey::KrEnhanced(_) => (kr_art, terrain),
+            ArtPageKey::KrTerrain(_) => (ec, kr_terrain),
+            _ => (ec, terrain),
+        };
         match key {
             ArtPageKey::Classic(index) => {
                 let Some(package) = cc else { return; };
@@ -325,13 +362,13 @@ impl ArtPageAtlas {
                 self.queue_page_upload(key, layer, package.atlas_width(), package.atlas_height(),
                     page.used_width, page.used_height, page.pixel_format, || package.read_page_bytes(index));
             }
-            ArtPageKey::Enhanced(index) => {
+            ArtPageKey::Enhanced(index) | ArtPageKey::KrEnhanced(index) => {
                 let Some(package) = ec else { return; };
                 let Some(page) = package.pages().get(index as usize) else { return; };
                 self.queue_page_upload(key, layer, package.atlas_width(), package.atlas_height(),
                     page.used_width, page.used_height, page.pixel_format, || package.read_page_bytes(index));
             }
-            ArtPageKey::Terrain(index) => {
+            ArtPageKey::Terrain(index) | ArtPageKey::KrTerrain(index) => {
                 let Some(package) = terrain else { return; };
                 let Some(page) = package.pages().get(index as usize) else { return; };
                 self.queue_page_upload(key, layer, package.atlas_width(), package.atlas_height(),

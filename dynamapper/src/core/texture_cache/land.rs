@@ -197,21 +197,24 @@ fn create_blank_aux_atlas_images(images: &mut Assets<Image>) -> LandAuxAtlasImag
 
     LandAuxAtlasImages {
         aux_atlas: images.add(aux_atlas),
-        item_lookup: super::ec_item_liquid::create_lookup(images, None, |_| None),
-        surface_lookup: super::ec_item_surface::create_lookup(images, None, None, None, |_| None),
+        item_lookup: super::ec_item_liquid::create_lookup(images, &[], |_, _| None),
+        surface_lookup: super::ec_item_surface::create_lookup(images, &[], |_, _| None),
     }
 }
 
+/// `source` is the item source (`ec_item_surface::ItemRecordSource`) whose `package` holds the texture: equal payload ids
+/// of two sources' packages are different images.
 fn assign_aux_layer(
     package: &TexAuxEcPackage,
+    source: usize,
     texture_id: u32,
-    assigned: &mut std::collections::HashMap<u32, u32>,
+    assigned: &mut std::collections::HashMap<(usize, u32), u32>,
     layers: &mut aux_layers::AuxLayers,
 ) -> Option<(u32, UVec2)> {
     let slot = package.slot_for_texture_id(texture_id)?;
     let extent = UVec2::new(slot.width.into(), slot.height.into());
     let payload_id = slot.payload_texture_id;
-    if let Some(&layer) = assigned.get(&payload_id) { return Some((layer, extent)); }
+    if let Some(&layer) = assigned.get(&(source, payload_id)) { return Some((layer, extent)); }
     if extent.min_element() == 0 || extent.max_element() > AUX_ATLAS_TILE_SIZE {
         log::warn!("EC auxiliary source {texture_id} exceeds atlas cell extent: {extent:?}");
         return None;
@@ -222,12 +225,14 @@ fn assign_aux_layer(
         Err(error) => { log::warn!("EC auxiliary source {texture_id} could not be read: {error:#}"); return None; }
     };
     let layer = layers.push_image(&image);
-    assigned.insert(payload_id, layer);
+    assigned.insert((source, payload_id), layer);
     Some((layer, extent))
 }
 
 /// Build the `tex_aux_ec` atlas and the item liquid and item surface lookups from the auxiliary
 /// texture package: the atlas holds only the textures those lookups reference.
+/// With the Kingdom Reborn item packages, `kr_items`, the lookups hold their records too, from
+/// `ec_item_surface::KR_ITEM_RECORD_BASE`, and the atlas their textures, for the statics drawn from them.
 ///
 /// Missing auxiliary pixels leave the existing base path intact.
 fn create_aux_atlas_images(
@@ -235,7 +240,9 @@ fn create_aux_atlas_images(
     tex_aux_ec: Option<&TexAuxEcPackage>,
     tilemeta: Option<&TileMetaPackage>,
     tex_art_ec: Option<&udd_assets::tex_art_ec::TexArtEcPackage>,
+    kr_items: Option<&crate::core::uo_files_loader::KrItemPackagesRes>,
 ) -> LandAuxAtlasImages {
+    use super::ec_item_surface::{ItemRecordSource, KR_ITEM_RECORD_BASE};
     use bevy::render::render_resource::{
         Extent3d, TextureDimension, TextureUsages, TextureViewDescriptor, TextureViewDimension,
     };
@@ -244,32 +251,52 @@ fn create_aux_atlas_images(
         return create_blank_aux_atlas_images(images);
     };
 
-    // Map texture_id → atlas layer index (1-based; 0 = absent sentinel).
-    let mut texture_id_to_layer: std::collections::HashMap<u32, u32> =
+    // The item sources: the Enhanced items, then the Kingdom Reborn items.
+    let sources = tilemeta.map(|tilemeta| ItemRecordSource { base: 0, tilemeta, art: tex_art_ec, aux: tex_aux_ec })
+        .into_iter()
+        .chain(kr_items.map(|kr| ItemRecordSource {
+            base: KR_ITEM_RECORD_BASE, tilemeta: &kr.tilemeta, art: Some(&kr.art), aux: &kr.aux,
+        }))
+        .collect::<Vec<_>>();
+    // Map (item source, texture_id) → atlas layer index (1-based; 0 = absent sentinel).
+    let mut texture_id_to_layer: std::collections::HashMap<(usize, u32), u32> =
         std::collections::HashMap::new();
     // Layer 0 is the sentinel. Collect the distinct texture_ids needed.
-    // The layers keep the package's BC7 blocks when every texture is BC7, and decode to RGBA8 otherwise.
-    let mut layers = aux_layers::AuxLayers::new(aux_layers::AuxLayerFormat::for_package(tex_aux_ec));
+    // The layers keep the packages' BC7 blocks when every texture of each is BC7, and decode to RGBA8 otherwise.
+    let format = sources.iter().map(|source| aux_layers::AuxLayerFormat::for_package(source.aux))
+        .reduce(|a, b| if a == b { a } else { aux_layers::AuxLayerFormat::Rgba8 })
+        .unwrap_or_else(|| aux_layers::AuxLayerFormat::for_package(tex_aux_ec));
+    let mut layers = aux_layers::AuxLayers::new(format);
 
-    let item_lookup = super::ec_item_liquid::create_lookup(images, tilemeta, |source| {
-        let slot = tex_aux_ec.slot_for_texture_id(source.texture_id)?;
+    let liquid_sources = sources.iter().map(|source| (source.base, source.tilemeta)).collect::<Vec<_>>();
+    let item_lookup = super::ec_item_liquid::create_lookup(images, &liquid_sources, |index, source| {
+        let package = sources[index].aux;
+        let slot = package.slot_for_texture_id(source.texture_id)?;
         // The package is keyed by numeric ID; a legacy/sprite family collision
         // must never supply a WorldArt shoreline mask.
         if slot.logical_family != source.texture_type {
             log::warn!("EC item liquid source {} has a different packed family; rebuild tex_aux_ec", source.texture_id);
             return None;
         }
-        assign_aux_layer(tex_aux_ec, source.texture_id, &mut texture_id_to_layer, &mut layers)
+        assign_aux_layer(package, index, source.texture_id, &mut texture_id_to_layer, &mut layers)
     });
-    let surface_lookup = super::ec_item_surface::create_lookup(images, tilemeta, tex_art_ec, Some(tex_aux_ec), |source| {
-        let slot = tex_aux_ec.slot_for_texture_id(source.texture_id)?;
+    let surface_lookup = super::ec_item_surface::create_lookup(images, &sources, |index, source| {
+        let package = sources[index].aux;
+        let slot = package.slot_for_texture_id(source.texture_id)?;
         if slot.logical_family != source.texture_type { return None; }
-        assign_aux_layer(tex_aux_ec, source.texture_id, &mut texture_id_to_layer, &mut layers)
+        assign_aux_layer(package, index, source.texture_id, &mut texture_id_to_layer, &mut layers)
     });
 
-    if let (Some(meta), Some(art)) = (tilemeta, tex_art_ec) {
+    for source in &sources {
+        // The Kingdom Reborn sprites draw only the statics that continue the land (`statics_collect`
+        // `kingdom_reborn_static_visual_kind`), land materials by the Enhanced data or by Kingdom Reborn's: only those
+        // need their hue coverage.
+        let land_item = |meta: &TileMetaPackage, art: Option<&udd_assets::tex_art_ec::TexArtEcPackage>, tile_id: u32|
+            meta.uses_water_shader(tile_id) || art.and_then(|art| art.present_slot(tile_id)).is_some_and(|slot| slot.is_land());
+        let drawn_item = |tile_id: u32| source.base == 0 || land_item(source.tilemeta, source.art, tile_id)
+            || tilemeta.is_some_and(|meta| land_item(meta, tex_art_ec, tile_id));
         super::ec_item_surface::append_sprite_hues(&mut images.get_mut(&surface_lookup).expect("new item lookup"),
-            meta, art, tex_aux_ec, &mut layers);
+            *source, drawn_item, &mut layers);
     }
 
     let layer_count = layers.len().max(1) as u32;
@@ -1456,7 +1483,8 @@ pub fn sys_setup_terrain_cache(
     tex_art_ec_r: Option<Res<crate::core::uo_files_loader::TexArtEcPackageRes>>,
     tex_land_ec_r: Option<Res<crate::core::uo_files_loader::TexLandEcPackageRes>>,
     tex_land_kr_r: Option<Res<crate::core::uo_files_loader::TexLandKrPackageRes>>,
-    tex_aux_ec_r: Option<Res<crate::core::uo_files_loader::TexAuxEcPackageRes>>,
+    item_packages: (Option<Res<crate::core::uo_files_loader::TexAuxEcPackageRes>>,
+        Option<Res<crate::core::uo_files_loader::KrItemPackagesRes>>),
     map_planes: Res<crate::core::uo_files_loader::MapPlanesRes>,
     uo_files_settings: Res<crate::core::uo_files_loader::UoFilesSettingsRes>,
     shader_presets: Res<crate::core::render::scene::world::land::mesh_material::LandShaderModePresets>,
@@ -1464,6 +1492,7 @@ pub fn sys_setup_terrain_cache(
     texture_variation: Res<crate::configs::land_texture_variation::LandTextureVariationMaterials>,
 ) {
     log_system_add_startup::<LandTextureCachePlugin>(StartupSysSet::SetupSceneStage1, fname!());
+    let (tex_aux_ec_r, kr_items_r) = item_packages;
 
     let residency_strategy = TextureResidencyStrategy::LruCache;
     let residency_plan = residency_strategy
@@ -1563,6 +1592,7 @@ pub fn sys_setup_terrain_cache(
         tex_aux_ec_r.as_deref().map(|r| r.0.as_ref()),
         tilemeta_r.as_deref().map(|r| r.0.as_ref()),
         land_texture_cache.tex_art_ec.as_deref(),
+        kr_items_r.as_deref(),
     );
     cmd.insert_resource(super::ec_item_liquid::EcItemLiquidImages {
         atlas: aux_images.aux_atlas.clone(),
@@ -1978,7 +2008,7 @@ mod tests {
         let mut layers = aux_layers::AuxLayers::new(aux_layers::AuxLayerFormat::Rgba8);
         let mut aliases = 0;
         for slot in package.slots().iter().filter(|slot| slot.is_missing_source()) {
-            assert_eq!(assign_aux_layer(&package, slot.texture_id, &mut assigned, &mut layers),
+            assert_eq!(assign_aux_layer(&package, 0, slot.texture_id, &mut assigned, &mut layers),
                 Some((1, UVec2::new(256, 256))));
             aliases += 1;
         }

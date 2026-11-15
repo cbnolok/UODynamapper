@@ -170,7 +170,7 @@ The Kingdom Reborn items, which `pack-kr-land` writes after the land, beside `--
 - `tex_art_kr.uddp`: KR's block-0 world art from its `Texture.uop`, trimmed of transparent borders only (the trims go to the tilemeta's sampling starts). On the shipped client: 13,052 slots on 9 pages, 58 MB.
 - `tex_aux_kr.uddp`: the material inputs KR's refs name (masks, noise, water maps), its `missing.tga`, atmosphere maps and light textures. On the shipped client: 646 textures, 5 MB; the 9,152 refs to KR's legacy art (`TileArtLegacy`) are not packed, as for the Enhanced Client, and 6 ids KR's `Texture.uop` lacks alias the missing texture.
 
-Dynamapper does not read them yet.
+Under the Kingdom Reborn land Dynamapper draws from them the statics that continue the land (grass, dirt, snow, swamp, lava, water and the other liquids), so they match KR's land; an item KR lacks keeps the Enhanced Client's data and is logged. The art source of the other statics is unchanged. Without the three files those statics keep the Enhanced Client's data, and startup logs it.
 
 ### `gumps_cc.uddp` and `gumps_ec.uddp`
 

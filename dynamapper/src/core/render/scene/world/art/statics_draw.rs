@@ -5,11 +5,11 @@ use crate::console_logger::{self, LogAbout, LogSev};
 use crate::core::render::scene::world;
 use crate::core::render::scene::world::art::statics_collect::{
     GroundTileInstance, RenderStaticChunkBatches, RenderStaticInstances, RenderStaticLandInstances,
-    SpriteInstance, StaticChunkBatch, StaticChunkBatchKey, StaticLandStyle,
+    KrStaticPackages, KrStaticSources, SpriteInstance, StaticChunkBatch, StaticChunkBatchKey, StaticLandStyle,
 };
 use crate::core::system_sets::StartupSysSet;
 use crate::core::texture_cache::art::{
-    ArtPageAtlas, GroundArtPageAtlas, GroundArtPageAtlasHandle, SpriteArtPageAtlas,
+    ArtPageAtlas, ArtPageSources, GroundArtPageAtlas, GroundArtPageAtlasHandle, SpriteArtPageAtlas,
     SpriteArtPageAtlasHandle,
 };
 use crate::core::uo_files_loader::{
@@ -218,6 +218,9 @@ pub struct StaticBatchEntitySyncState {
 pub struct ActiveArtAtlasBindingState {
     /// The art source the bound atlases are built for (`art_atlas_source`).
     pub configured_source: Option<ClientTextureSource>,
+    /// Whether the bound Enhanced atlases hold the pages of the Kingdom Reborn item art and land too
+    /// (`atlas_kingdom_reborn_sources`).
+    pub kingdom_reborn: bool,
 }
 
 #[derive(Clone, Copy)]
@@ -419,10 +422,35 @@ fn art_atlas_source(
     enhanced_available: bool,
 ) -> Option<ClientTextureSource> {
     match active_source {
-        Some(ClientTextureSource::Cc) if land_style == StaticLandStyle::Enhanced && enhanced_available => {
+        Some(ClientTextureSource::Cc) if land_style.is_enhanced() && enhanced_available => {
             Some(ClientTextureSource::Ec)
         }
         source => source,
+    }
+}
+
+/// The Kingdom Reborn packages the Enhanced atlases hold the pages of: under the Kingdom Reborn land, when the statics
+/// that continue it are drawn from them (`statics_collect::kingdom_reborn_static_visual_kind`).
+fn atlas_kingdom_reborn_sources<'a>(
+    atlas_source: Option<ClientTextureSource>,
+    land_style: StaticLandStyle,
+    kr_packages: &'a KrStaticPackages,
+) -> Option<KrStaticSources<'a>> {
+    kr_packages.sources().filter(|_| atlas_source == Some(ClientTextureSource::Ec)
+        && land_style == StaticLandStyle::KingdomReborn)
+}
+
+impl AtlasAllocationSpec {
+    /// Room for `pages` more pages of `width`×`height` in `format` (lossless RGBA8888 when the formats differ).
+    fn with_pages(self, pages: usize, width: u32, height: u32, format: PagePixelFormat) -> Self {
+        let max_layers = self.max_layers + pages as u32;
+        Self {
+            page_width: self.page_width.max(width),
+            page_height: self.page_height.max(height),
+            initial_layers: self.initial_layers.min(max_layers),
+            max_layers,
+            pixel_format: if self.pixel_format == format { format } else { PagePixelFormat::Rgba8888 },
+        }
     }
 }
 
@@ -446,10 +474,12 @@ fn package_pixel_format<T>(
         .unwrap_or(PagePixelFormat::Rgba8888)
 }
 
+/// `kingdom_reborn` adds the pages of the Kingdom Reborn item art to the Enhanced atlas (`atlas_kingdom_reborn_sources`).
 fn sprite_atlas_spec(
     active_source: Option<ClientTextureSource>,
     tex_art_cc_res: Option<&Res<TexArtCcPackageRes>>,
     tex_art_ec_res: Option<&Res<TexArtEcPackageRes>>,
+    kingdom_reborn: Option<KrStaticSources>,
 ) -> AtlasAllocationSpec {
     match active_source {
         Some(ClientTextureSource::Cc) => tex_art_cc_res
@@ -474,27 +504,34 @@ fn sprite_atlas_spec(
                 package_pixel_format(p.pages(), |p| p.pixel_format) != format) {
                 PagePixelFormat::Rgba8888
             } else { format };
-            AtlasAllocationSpec {
+            let spec = AtlasAllocationSpec {
                 page_width: enhanced.map_or(0, |p| p.atlas_width()).max(classic.map_or(0, |p| p.atlas_width())).max(256),
                 page_height: enhanced.map_or(0, |p| p.atlas_height()).max(classic.map_or(0, |p| p.atlas_height())).max(256),
                 initial_layers: (layers as u32).min(4),
                 max_layers: layers as u32,
                 pixel_format: format,
+            };
+            match kingdom_reborn {
+                Some(kr) => spec.with_pages(kr.art.pages().len(), kr.art.atlas_width(), kr.art.atlas_height(),
+                    package_pixel_format(kr.art.pages(), |p| p.pixel_format)),
+                None => spec,
             }
         }
         None => blank_atlas_spec(),
     }
 }
 
+/// `kingdom_reborn` adds the pages of the Kingdom Reborn land to the Enhanced atlas (`atlas_kingdom_reborn_sources`).
 fn ground_atlas_spec(
     active_source: Option<ClientTextureSource>,
     tex_land_ec_res: Option<&Res<TexLandEcPackageRes>>,
+    kingdom_reborn: Option<KrStaticSources>,
 ) -> AtlasAllocationSpec {
     if active_source != Some(ClientTextureSource::Ec) {
         return blank_atlas_spec();
     }
 
-    tex_land_ec_res
+    let spec = tex_land_ec_res
         .map(|package| AtlasAllocationSpec {
             page_width: package.0.atlas_width().max(1),
             page_height: package.0.atlas_height().max(1),
@@ -502,7 +539,12 @@ fn ground_atlas_spec(
             max_layers: package.0.pages().len().max(1) as u32,
             pixel_format: package_pixel_format(package.0.pages(), |page| page.pixel_format),
         })
-        .unwrap_or_else(blank_atlas_spec)
+        .unwrap_or_else(blank_atlas_spec);
+    match kingdom_reborn {
+        Some(kr) => spec.with_pages(kr.land.pages().len(), kr.land.atlas_width(), kr.land.atlas_height(),
+            package_pixel_format(kr.land.pages(), |page| page.pixel_format)),
+        None => spec,
+    }
 }
 
 fn atlas_texture_format(pixel_format: PagePixelFormat) -> TextureFormat {
@@ -657,6 +699,7 @@ fn apply_sprite_art_atlas_resize(
     tex_art_cc_res: Option<&Res<TexArtCcPackageRes>>,
     tex_art_ec_res: Option<&Res<TexArtEcPackageRes>>,
     tex_aux_ec_res: Option<&Res<TexAuxEcPackageRes>>,
+    kingdom_reborn: Option<KrStaticSources>,
 ) {
     let Some(new_layers) = atlas.take_resize_request() else {
         return;
@@ -676,8 +719,13 @@ fn apply_sprite_art_atlas_resize(
     atlas.apply_resize(new_handle.clone(), new_layers);
 
     for (key, layer) in resident_pages {
-        atlas.requeue_page(key, layer, tex_art_cc_res.map(|p| p.0.as_ref()),
-            tex_art_ec_res.map(|p| p.0.as_ref()), None, tex_aux_ec_res.map(|p| p.0.as_ref()));
+        atlas.requeue_page(key, layer, ArtPageSources {
+            cc: tex_art_cc_res.map(|p| p.0.as_ref()),
+            ec: tex_art_ec_res.map(|p| p.0.as_ref()),
+            kr_art: kingdom_reborn.map(|kr| kr.art),
+            aux: tex_aux_ec_res.map(|p| p.0.as_ref()),
+            ..ArtPageSources::default()
+        });
     }
 
     *atlas_handle = new_handle.clone();
@@ -700,6 +748,7 @@ fn apply_ground_art_atlas_resize(
     atlas: &mut ArtPageAtlas,
     atlas_handle: &mut Handle<Image>,
     tex_land_ec_res: Option<&Res<TexLandEcPackageRes>>,
+    kingdom_reborn: Option<KrStaticSources>,
 ) {
     let Some(new_layers) = atlas.take_resize_request() else {
         return;
@@ -719,7 +768,11 @@ fn apply_ground_art_atlas_resize(
     atlas.apply_resize(new_handle.clone(), new_layers);
 
     for (key, layer) in resident_pages {
-        atlas.requeue_page(key, layer, None, None, tex_land_ec_res.map(|p| p.0.as_ref()), None);
+        atlas.requeue_page(key, layer, ArtPageSources {
+            terrain: tex_land_ec_res.map(|p| p.0.as_ref()),
+            kr_terrain: kingdom_reborn.map(|kr| kr.land),
+            ..ArtPageSources::default()
+        });
     }
 
     *atlas_handle = new_handle.clone();
@@ -746,9 +799,10 @@ fn rebind_active_art_atlases(
     tex_art_cc_res: Option<&Res<TexArtCcPackageRes>>,
     tex_art_ec_res: Option<&Res<TexArtEcPackageRes>>,
     tex_land_ec_res: Option<&Res<TexLandEcPackageRes>>,
+    kingdom_reborn: Option<KrStaticSources>,
 ) {
-    let sprite_spec = sprite_atlas_spec(active_source, tex_art_cc_res, tex_art_ec_res);
-    let ground_spec = ground_atlas_spec(active_source, tex_land_ec_res);
+    let sprite_spec = sprite_atlas_spec(active_source, tex_art_cc_res, tex_art_ec_res, kingdom_reborn);
+    let ground_spec = ground_atlas_spec(active_source, tex_land_ec_res, kingdom_reborn);
 
     let next_sprite_atlas = build_art_atlas(images, sprite_spec);
     let next_sprite_handle = next_sprite_atlas.gpu_handle.clone();
@@ -809,12 +863,14 @@ pub fn sys_setup_art_page_atlas(
         tilemeta_res.as_ref(),
     );
 
+    // The Kingdom Reborn pages join when the land style is known (`sys_sync_active_art_page_atlases`).
     let sprite_spec = sprite_atlas_spec(
         active_source,
         tex_art_cc_res.as_ref(),
         tex_art_ec_res.as_ref(),
+        None,
     );
-    let ground_spec = ground_atlas_spec(active_source, tex_land_ec_res.as_ref());
+    let ground_spec = ground_atlas_spec(active_source, tex_land_ec_res.as_ref(), None);
 
     let sprite_atlas = build_art_atlas(&mut images, sprite_spec);
     let sprite_atlas_handle = sprite_atlas.gpu_handle.clone();
@@ -1082,6 +1138,7 @@ pub fn sys_setup_art_page_atlas(
     commands.insert_resource(GroundArtPageAtlasHandle(ground_atlas_handle.clone()));
     commands.insert_resource(ActiveArtAtlasBindingState {
         configured_source: active_source,
+        kingdom_reborn: false,
     });
 }
 
@@ -1101,11 +1158,13 @@ pub fn sys_sync_active_art_page_atlases(
     tex_art_ec_res: Option<Res<TexArtEcPackageRes>>,
     tex_land_ec_res: Option<Res<TexLandEcPackageRes>>,
     tilemeta_res: Option<Res<TileMetaPackageRes>>,
+    kr_packages: KrStaticPackages,
 ) {
     let atlas_source = art_atlas_source(source_state.active_source, source_state.land_style,
         source_available(ClientTextureSource::Ec, tex_art_cc_res.as_ref(), tex_art_ec_res.as_ref(),
             tex_land_ec_res.as_ref(), tilemeta_res.as_ref()));
-    if binding_state.configured_source == atlas_source {
+    let kingdom_reborn = atlas_kingdom_reborn_sources(atlas_source, source_state.land_style, &kr_packages);
+    if binding_state.configured_source == atlas_source && binding_state.kingdom_reborn == kingdom_reborn.is_some() {
         return;
     }
 
@@ -1125,9 +1184,11 @@ pub fn sys_sync_active_art_page_atlases(
         tex_art_cc_res.as_ref(),
         tex_art_ec_res.as_ref(),
         tex_land_ec_res.as_ref(),
+        kingdom_reborn,
     );
 
     binding_state.configured_source = atlas_source;
+    binding_state.kingdom_reborn = kingdom_reborn.is_some();
 }
 
 pub fn sys_apply_pending_art_page_atlas_resizes(
@@ -1144,7 +1205,9 @@ pub fn sys_apply_pending_art_page_atlas_resizes(
     tex_art_ec_res: Option<Res<TexArtEcPackageRes>>,
     tex_aux_ec_res: Option<Res<TexAuxEcPackageRes>>,
     tex_land_ec_res: Option<Res<TexLandEcPackageRes>>,
+    (binding_state, kr_packages): (Res<ActiveArtAtlasBindingState>, KrStaticPackages),
 ) {
+    let kingdom_reborn = kr_packages.sources().filter(|_| binding_state.kingdom_reborn);
     apply_sprite_art_atlas_resize(
         &mut images,
         &mut materials,
@@ -1154,6 +1217,7 @@ pub fn sys_apply_pending_art_page_atlas_resizes(
         tex_art_cc_res.as_ref(),
         tex_art_ec_res.as_ref(),
         tex_aux_ec_res.as_ref(),
+        kingdom_reborn,
     );
     apply_ground_art_atlas_resize(
         &mut images,
@@ -1162,6 +1226,7 @@ pub fn sys_apply_pending_art_page_atlas_resizes(
         &mut ground_atlas,
         &mut ground_atlas_handle.0,
         tex_land_ec_res.as_ref(),
+        kingdom_reborn,
     );
 }
 
@@ -1837,6 +1902,32 @@ fn update_art_material_uniforms_ground(
 mod tests {
     use super::*;
     use std::sync::Arc;
+
+    #[test]
+    fn kingdom_reborn_pages_widen_the_enhanced_atlas() {
+        const EC_PAGES: u32 = 10;
+        const KR_PAGES: usize = 3;
+        const EC_DIM: u32 = 2048;
+        const KR_DIM: u32 = 4096;
+        let enhanced = AtlasAllocationSpec { page_width: EC_DIM, page_height: EC_DIM, initial_layers: 4,
+            max_layers: EC_PAGES, pixel_format: PagePixelFormat::Bc7 };
+        let widened = enhanced.with_pages(KR_PAGES, KR_DIM, EC_DIM, PagePixelFormat::Rgba8888);
+        assert_eq!((widened.page_width, widened.page_height), (KR_DIM, EC_DIM));
+        assert_eq!((widened.initial_layers, widened.max_layers), (4, EC_PAGES + KR_PAGES as u32));
+        // Mixed storage formats share lossless RGBA8888; matching ones keep theirs.
+        assert_eq!(widened.pixel_format, PagePixelFormat::Rgba8888);
+        assert_eq!(enhanced.with_pages(KR_PAGES, EC_DIM, EC_DIM, PagePixelFormat::Bc7).pixel_format,
+            PagePixelFormat::Bc7);
+    }
+
+    #[test]
+    fn classic_art_takes_the_enhanced_atlases_under_kingdom_reborn_land() {
+        for style in [StaticLandStyle::Enhanced, StaticLandStyle::KingdomReborn] {
+            assert_eq!(art_atlas_source(Some(ClientTextureSource::Cc), style, true), Some(ClientTextureSource::Ec));
+        }
+        assert_eq!(art_atlas_source(Some(ClientTextureSource::Cc), StaticLandStyle::Classic, true),
+            Some(ClientTextureSource::Cc));
+    }
     use udd_container::{
         AddFileRequest, CompressionFlag, DataType, LookupMode, UddpBuilder, UddpReader,
     };

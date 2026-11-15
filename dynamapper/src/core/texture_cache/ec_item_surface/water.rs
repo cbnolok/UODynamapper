@@ -1,5 +1,7 @@
 //! Item-owned water graphs that need no TerrainDefinition material proxy.
-use super::{has_source, source, ITEM_CAPACITY};
+use super::{has_source, source, ITEM_HEADER_COUNT};
+#[cfg(test)]
+use super::ITEM_CAPACITY;
 use bevy::prelude::*;
 use udd_assets::tilemeta::TileMetaItemTextureRef;
 use uocf::enhanced::tileart::ArtMaterial;
@@ -11,7 +13,7 @@ pub(super) fn append(
     refs: &[TileMetaItemTextureRef], window: Vec4, extent: UVec2, camera_quad: bool,
     assign: &mut impl FnMut(&TileMetaItemTextureRef) -> Option<(u32, UVec2)>,
 ) {
-    if item as usize >= ITEM_CAPACITY || material.block_index != 0
+    if item as usize >= ITEM_HEADER_COUNT || material.block_index != 0
         || material.shader_name.as_deref() != Some("UOWaterShader") { return; }
     let (Some(bump), Some(fallback), Some(reflection)) = (source(refs, 0), source(refs, 1), source(refs, 2)) else { return; };
     // The item's art window is derived from map 1. Keep it even though normal

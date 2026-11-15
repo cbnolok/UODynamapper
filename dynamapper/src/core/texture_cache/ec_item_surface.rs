@@ -5,13 +5,31 @@ use bevy::render::render_resource::{Extent3d, TextureDimension, TextureFormat};
 use udd_assets::tilemeta::{EcMaterialPhysicalPackage, TileMetaItemTextureRef, TileMetaPackage};
 use uocf::enhanced::tileart::ArtMaterial;
 
+/// Item records per item source (`ItemRecordSource`): one per 16-bit graphic.
 const ITEM_CAPACITY: usize = 65_536;
+/// The item sources of the item lookups: the Enhanced items, then the Kingdom Reborn items at `KR_ITEM_RECORD_BASE`.
+pub(crate) const ITEM_SOURCE_COUNT: usize = 2;
+/// Where the Kingdom Reborn items' records start in the item lookups (this one and `ec_item_liquid`'s): a static drawn
+/// from the Kingdom Reborn item packages adds it to its graphic in `material_item_id`.
+pub(crate) const KR_ITEM_RECORD_BASE: u32 = ITEM_CAPACITY as u32;
+/// The item headers of the lookup, one per graphic of each source; the descriptors follow them.
+const ITEM_HEADER_COUNT: usize = ITEM_CAPACITY * ITEM_SOURCE_COUNT;
 const LOOKUP_WIDTH: usize = 256;
 /// Item position of the static terrain shader's fourth map (coverage alpha).
 const FOURTH_SOURCE_POSITION: u8 = 3;
 mod hue_mask;
 mod water;
 pub(super) use hue_mask::append as append_sprite_hues;
+
+/// One item source of the item lookups: its tile data, item art and material inputs, and where its records start.
+#[derive(Clone, Copy)]
+pub(crate) struct ItemRecordSource<'a> {
+    /// What the source adds to a graphic for its record: 0 for the Enhanced items, or `KR_ITEM_RECORD_BASE`.
+    pub base: u32,
+    pub tilemeta: &'a TileMetaPackage,
+    pub art: Option<&'a udd_assets::tex_art_ec::TexArtEcPackage>,
+    pub aux: &'a udd_assets::tex_aux_ec::TexAuxEcPackage,
+}
 
 #[derive(Resource, Clone)]
 pub struct EcItemSurfaceImages {
@@ -43,7 +61,7 @@ fn append_material(
     refs: &[TileMetaItemTextureRef],
     assign: &mut impl FnMut(&TileMetaItemTextureRef) -> Option<(u32, UVec2)>,
 ) {
-    if item as usize >= ITEM_CAPACITY || material.block_index != 0
+    if item as usize >= ITEM_HEADER_COUNT || material.block_index != 0
         || material.shader_name.as_deref() != Some("UOStaticTerrainShader") { return; }
     let (Some(base), Some(temporary), Some(mask)) = (source(refs, 0), source(refs, 1), source(refs, 2))
         else { return; };
@@ -70,21 +88,23 @@ fn append_material(
     records.extend(descriptors);
 }
 
+/// `assign` places a texture ref of the source at index `source` of `sources` in the auxiliary atlas.
 pub(super) fn create_lookup(
-    images: &mut Assets<Image>, tilemeta: Option<&TileMetaPackage>,
-    art: Option<&udd_assets::tex_art_ec::TexArtEcPackage>,
-    aux: Option<&udd_assets::tex_aux_ec::TexAuxEcPackage>,
-    mut assign: impl FnMut(&TileMetaItemTextureRef) -> Option<(u32, UVec2)>,
+    images: &mut Assets<Image>, sources: &[ItemRecordSource],
+    mut assign: impl FnMut(usize, &TileMetaItemTextureRef) -> Option<(u32, UVec2)>,
 ) -> Handle<Image> {
-    let mut records = vec![[0u32; 4]; ITEM_CAPACITY];
-    if let Some(tilemeta) = tilemeta {
-        for tile in tilemeta.item_tiles() {
+    let mut records = vec![[0u32; 4]; ITEM_HEADER_COUNT];
+    for (index, item_source) in sources.iter().enumerate() {
+        let (tilemeta, art, aux) = (item_source.tilemeta, item_source.art, item_source.aux);
+        let mut assign = |r: &TileMetaItemTextureRef| assign(index, r);
+        for tile in tilemeta.item_tiles().iter().filter(|tile| (tile.tile_id as usize) < ITEM_CAPACITY) {
+            let item = item_source.base + tile.tile_id;
             let Some(material) = tilemeta.item_material(tile.tile_id, 0) else { continue; };
-            append_material(&mut records, tile.tile_id, material, tilemeta.item_texture_refs(tile.tile_id), &mut assign);
+            append_material(&mut records, item, material, tilemeta.item_texture_refs(tile.tile_id), &mut assign);
             let refs = tilemeta.item_texture_refs(tile.tile_id);
             if let (Some(slot), Some(extent)) = (art.and_then(|art| art.present_slot(tile.tile_id)),
-                source(refs, 1).and_then(|r| aux?.water_primary_extent(r.texture_id))) {
-                water::append(&mut records, tile.tile_id, material, tilemeta.item_texture_refs(tile.tile_id),
+                source(refs, 1).and_then(|r| aux.water_primary_extent(r.texture_id))) {
+                water::append(&mut records, item, material, tilemeta.item_texture_refs(tile.tile_id),
                     Vec4::new(f32::from(tile.ec_start_x), f32::from(tile.ec_start_y), slot.logical_width(), slot.logical_height()),
                     UVec2::from_array(extent), tile.flags & uocf::enhanced::tileart::TaeFlag::Rotated.bits() != 0, &mut assign);
             }

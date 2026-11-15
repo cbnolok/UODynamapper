@@ -6,7 +6,9 @@ use udd_assets::tilemeta::{EcMaterialPhysicalPackage, TileMetaItemTextureRef, Ti
 use uocf::enhanced::tileart::ArtMaterial;
 
 const LOOKUP_WIDTH: u32 = 256;
+/// Graphics per item source; the Kingdom Reborn items follow the Enhanced ones (`ec_item_surface::KR_ITEM_RECORD_BASE`).
 const ITEM_CAPACITY: u32 = 65_536;
+const ITEM_RECORD_COUNT: u32 = ITEM_CAPACITY * super::ec_item_surface::ITEM_SOURCE_COUNT as u32;
 /// Item position of the water shader's fourth map: the client binds item i to map i.
 const FOURTH_SOURCE_POSITION: u8 = 3;
 
@@ -27,21 +29,23 @@ fn fourth_source<'a>(material: &ArtMaterial, refs: &'a [TileMetaItemTextureRef])
         && r.uv_set <= 1 && r.texture_stretch.is_finite() && r.texture_stretch > 0.0)
 }
 
+/// `sources` are the item sources' record bases and tile data (`ec_item_surface::ItemRecordSource`); `assign` places
+/// a texture ref of the source at that index in the auxiliary atlas.
 pub(super) fn create_lookup(
     images: &mut Assets<Image>,
-    tilemeta: Option<&TileMetaPackage>,
-    mut assign: impl FnMut(&TileMetaItemTextureRef) -> Option<(u32, UVec2)>,
+    sources: &[(u32, &TileMetaPackage)],
+    mut assign: impl FnMut(usize, &TileMetaItemTextureRef) -> Option<(u32, UVec2)>,
 ) -> Handle<Image> {
     // Two Rgba32Uint records per graphic, independent of the 14-bit land IDs.
     // First: atlas layer, width, height, Technique[1].
     // Second: repetition and two scroll velocities as f32 bits, original UV set.
-    let mut records = vec![[0u32; 4]; (ITEM_CAPACITY * 2) as usize];
-    if let Some(tilemeta) = tilemeta {
+    let mut records = vec![[0u32; 4]; (ITEM_RECORD_COUNT * 2) as usize];
+    for (source_index, &(base, tilemeta)) in sources.iter().enumerate() {
         for tile in tilemeta.item_tiles().iter().filter(|tile| tile.tile_id < ITEM_CAPACITY) {
             let Some(material) = tilemeta.item_material(tile.tile_id, 0) else { continue; };
             let Some(source) = fourth_source(material, tilemeta.item_texture_refs(tile.tile_id)) else { continue; };
-            let Some((layer, extent)) = assign(source) else { continue; };
-            let index = tile.tile_id as usize * 2;
+            let Some((layer, extent)) = assign(source_index, source) else { continue; };
+            let index = (base + tile.tile_id) as usize * 2;
             records[index] = [layer, extent.x, extent.y, material.technique.get(1).copied().unwrap_or(0) as u32];
             records[index + 1] = [source.texture_stretch.to_bits(),
                 material.tweaks.get(2).copied().unwrap_or(0.0).to_bits(),
@@ -49,7 +53,7 @@ pub(super) fn create_lookup(
         }
     }
     images.add(Image::new(
-        Extent3d { width: LOOKUP_WIDTH, height: ITEM_CAPACITY * 2 / LOOKUP_WIDTH, depth_or_array_layers: 1 },
+        Extent3d { width: LOOKUP_WIDTH, height: ITEM_RECORD_COUNT * 2 / LOOKUP_WIDTH, depth_or_array_layers: 1 },
         TextureDimension::D2,
         bytemuck::cast_slice(&records).to_vec(),
         TextureFormat::Rgba32Uint,
@@ -120,11 +124,18 @@ mod tests {
         }
         let tilemeta = TileMetaPackage::from_uddp_package(UddpReader::open(builder.build().unwrap()).unwrap()).unwrap();
         let mut images = Assets::<Image>::default();
-        let lookup = create_lookup(&mut images, Some(&tilemeta), |r| Some((r.texture_id, UVec2::splat(64))));
+        // The second source stands for the Kingdom Reborn items: its records follow the first source's, with its layers.
+        const KR_LAYER_OFFSET: u32 = 1;
+        let kr_base = super::super::ec_item_surface::KR_ITEM_RECORD_BASE;
+        let lookup = create_lookup(&mut images, &[(0, &tilemeta), (kr_base, &tilemeta)],
+            |source, r| Some((r.texture_id + source as u32 * KR_LAYER_OFFSET, UVec2::splat(64))));
         let records: &[[u32; 4]] = bytemuck::cast_slice(images.get(&lookup).unwrap().data.as_ref().unwrap());
         assert_eq!(records[17000 * 2], [6038, 64, 64, 1]);
         assert_eq!(records[17001 * 2], [2100014, 64, 64, 2]);
         assert_eq!(records[17000 * 2 + 1], [1.0f32.to_bits(), (-0.02f32).to_bits(), 0.001f32.to_bits(), 0]);
         assert_eq!(records[0], [0; 4]);
+        let kr = (kr_base + 17000) as usize * 2;
+        assert_eq!(records[kr], [6038 + KR_LAYER_OFFSET, 64, 64, 1]);
+        assert_eq!(records[kr + 1], records[17000 * 2 + 1]);
     }
 }

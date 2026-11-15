@@ -14,7 +14,10 @@ use crate::core::render::scene::world::z_view::{PackageLand, ZViewCut, ZViewLimi
 use crate::core::render::scene::SceneStateData;
 use crate::core::statics::{LazyStaticsStore, StaticsStoreRes};
 use crate::core::texture_cache::art::{GroundArtPageAtlas, ResolvedArtSprite, SpriteArtPageAtlas};
+use crate::core::texture_cache::art::ArtPageKey;
+use crate::core::texture_cache::ec_item_surface::KR_ITEM_RECORD_BASE;
 use crate::core::uo_files_loader::{
+    KrItemPackagesRes, TexLandKrPackageRes,
     MapPlanesRes, TexArtCcPackageRes, TexArtEcPackageRes, TexLandEcPackageRes, TileMetaPackageRes, TexAuxEcPackageRes,
 };
 use crate::prelude::*;
@@ -577,6 +580,7 @@ fn resolve_surface_like_tex_land_ec_slot_id(
                             runtime_slot_id,
                             texture_repetition: base.texture_repetition,
                             liquid_payload: Some(payload),
+                            kingdom_reborn: false,
                         });
                     }
                 }
@@ -718,6 +722,7 @@ fn wet_surface_like_water_resolution(
                 runtime_slot_id,
                 texture_repetition: valid_texture_repetition(layer.texture_repetition),
                 liquid_payload: None,
+                kingdom_reborn: false,
             });
         }
     }
@@ -740,6 +745,8 @@ pub(super) struct SurfaceLikeTexLandEcResolution {
     pub(super) runtime_slot_id: u32,
     texture_repetition: f32,
     liquid_payload: Option<u32>,
+    /// A slot of the Kingdom Reborn land package (`kingdom_reborn_static_visual_kind`), not of the Enhanced one.
+    kingdom_reborn: bool,
 }
 
 fn surface_like_tex_land_ec_resolution(
@@ -771,6 +778,7 @@ fn surface_like_tex_land_ec_resolution(
         runtime_slot_id,
         texture_repetition,
         liquid_payload: None,
+        kingdom_reborn: false,
     }
 }
 
@@ -839,13 +847,25 @@ pub enum StaticLandStyle {
     Unknown,
     /// The land page atlas holds Classic land (`LandRoutes::atlas`).
     Classic,
-    /// The land page atlas holds EC-layout land: Enhanced or Kingdom Reborn.
+    /// The land page atlas holds Enhanced land.
     Enhanced,
+    /// The land page atlas holds Kingdom Reborn land: the statics that continue it are drawn as for Enhanced land, from
+    /// the Kingdom Reborn item packages where they hold them (`kingdom_reborn_static_visual_kind`).
+    KingdomReborn,
 }
 
 impl StaticLandStyle {
     pub(super) fn of_land_atlas(atlas: LandTextureSource) -> Self {
-        if atlas.uses_enhanced_land() { Self::Enhanced } else { Self::Classic }
+        match atlas {
+            LandTextureSource::Kr => Self::KingdomReborn,
+            atlas if atlas.uses_enhanced_land() => Self::Enhanced,
+            _ => Self::Classic,
+        }
+    }
+
+    /// EC-layout land: Enhanced or Kingdom Reborn.
+    pub(super) fn is_enhanced(self) -> bool {
+        matches!(self, Self::Enhanced | Self::KingdomReborn)
     }
 }
 
@@ -868,7 +888,7 @@ pub(super) fn resolve_static_visual_kind_cached(
     match art_source {
         ClientTextureSource::Cc => {
             let classic = classic_static_visual_kind(tile_graphic, tilemeta);
-            if land_style != StaticLandStyle::Enhanced {
+            if !land_style.is_enhanced() {
                 return classic;
             }
             enhanced().filter(|&kind| static_continues_land(kind, tilemeta,
@@ -925,6 +945,103 @@ fn present_classic_static_visual_kind(
     let StaticVisualKind::CcRegular { art_id, fallback_art_id } = classic else { unreachable!() };
     tex_art_cc.is_some_and(|p| p.present_slot(art_id).is_some() || p.present_slot(fallback_art_id).is_some())
         .then_some(classic)
+}
+
+/// The Kingdom Reborn packages the statics that continue the Kingdom Reborn land are drawn from
+/// (`kingdom_reborn_static_visual_kind`).
+#[derive(bevy::ecs::system::SystemParam)]
+pub struct KrStaticPackages<'w> {
+    items: Option<Res<'w, KrItemPackagesRes>>,
+    land: Option<Res<'w, TexLandKrPackageRes>>,
+}
+
+impl KrStaticPackages<'_> {
+    /// The packages, when the item packages and the land package are all there.
+    pub(super) fn sources(&self) -> Option<KrStaticSources<'_>> {
+        let (items, land) = (self.items.as_deref()?, self.land.as_deref()?);
+        Some(KrStaticSources { tilemeta: &items.tilemeta, art: &items.art, land: &land.0 })
+    }
+}
+
+/// The Kingdom Reborn tile data, item art (in the Enhanced layouts) and land.
+#[derive(Clone, Copy)]
+pub(super) struct KrStaticSources<'a> {
+    pub(super) tilemeta: &'a udd_assets::tilemeta::TileMetaPackage,
+    pub(super) art: &'a udd_assets::tex_art_ec::TexArtEcPackage,
+    pub(super) land: &'a udd_assets::tex_land_ec::TexLandEcPackage,
+}
+
+impl StaticVisualKind {
+    /// The kind drawn from the Kingdom Reborn packages: its art ids and `material_item_id` from
+    /// `KR_ITEM_RECORD_BASE`, its ground slots in the Kingdom Reborn land.
+    fn kingdom_reborn(self) -> Self {
+        match self {
+            Self::EcRegular { art_id } => Self::EcRegular { art_id: art_id + KR_ITEM_RECORD_BASE },
+            Self::EcSurface { art_id } => Self::EcSurface { art_id: art_id + KR_ITEM_RECORD_BASE },
+            Self::TexLandEc { resolution } => Self::TexLandEc {
+                resolution: SurfaceLikeTexLandEcResolution { kingdom_reborn: true, ..resolution },
+            },
+            kind @ (Self::CcRegular { .. } | Self::Missing) => kind,
+        }
+    }
+
+    fn is_kingdom_reborn(self) -> bool {
+        match self {
+            Self::EcRegular { art_id } | Self::EcSurface { art_id } => art_id >= KR_ITEM_RECORD_BASE,
+            Self::TexLandEc { resolution } => resolution.kingdom_reborn,
+            Self::CcRegular { .. } | Self::Missing => false,
+        }
+    }
+
+    /// The item of the item lookups (`ec_item_surface`, `ec_item_liquid`) a static of `graphic` drawn as this kind reads.
+    fn material_item_id(self, graphic: u16) -> u32 {
+        u32::from(graphic) + if self.is_kingdom_reborn() { KR_ITEM_RECORD_BASE } else { 0 }
+    }
+}
+
+/// Under the Kingdom Reborn land (`StaticLandStyle::KingdomReborn`), a static that continues the land
+/// (`static_continues_land`) by the Enhanced data or by Kingdom Reborn's is drawn as Kingdom Reborn draws it: its item
+/// art, material and land textures, so it matches the land under and around it (the grass, liquids, lava and swamp, and
+/// the water 0x34D2, a sprite in KR). `None` keeps the kind of `resolve_static_visual_kind_cached`: a static that does
+/// not continue the land, or one the Kingdom Reborn art lacks (logged once).
+fn kingdom_reborn_static_visual_kind(
+    tile_graphic: u16,
+    tilemeta_package: Option<&udd_assets::tilemeta::TileMetaPackage>,
+    tilemeta: Option<&udd_assets::tilemeta::TileMetaItemTile>,
+    tex_art_ec: Option<&udd_assets::tex_art_ec::TexArtEcPackage>,
+    tex_land_ec: Option<&udd_assets::tex_land_ec::TexLandEcPackage>,
+    kr: KrStaticSources<'_>,
+    cache: &mut StaticSurfaceLikeResolutionCache,
+) -> Option<StaticVisualKind> {
+    if let Some(&cached) = cache.kingdom_reborn_kinds.get(&tile_graphic) {
+        return cached;
+    }
+    let graphic = u32::from(tile_graphic);
+    let enhanced_continues = enhanced_static_visual_kind(tile_graphic, tilemeta_package, tilemeta, tex_art_ec,
+        tex_land_ec, cache).is_some_and(|kind| static_continues_land(kind, tilemeta,
+            cache.landlike_item_texture(tile_graphic, tilemeta_package, tex_land_ec)));
+    let kr_tilemeta = kr.tilemeta.item_tile(graphic);
+    let kr_kind = kr.art.present_slot(graphic).map(|slot| resolve_ec_static_visual_kind(
+        tile_graphic,
+        slot.is_static(),
+        slot.is_land() && tileart_surface_has_visible_primary(kr.tilemeta.item_texture_refs(graphic)),
+        resolve_surface_like_tex_land_ec_slot_id(graphic, Some(kr.tilemeta), kr_tilemeta, Some(kr.land)),
+    ));
+    let kr_terrain_textures = cache.kingdom_reborn_terrain_textures.get_or_insert_with(|| terrain_texture_ids(kr.land));
+    let kr_continues = kr_kind.is_some_and(|kind| static_continues_land(kind, kr_tilemeta,
+        item_draws_terrain_texture(graphic, Some(kr.tilemeta), kr_terrain_textures)));
+    let kind = if !(enhanced_continues || kr_continues) {
+        None
+    } else if let Some(kind) = kr_kind {
+        Some(kind.kingdom_reborn())
+    } else {
+        console_logger::one(LogSev::Info, LogAbout::RenderWorldArt, &format!(
+            "Static {tile_graphic:#06x} continues the land, but the Kingdom Reborn art (tex_art_kr.uddp) lacks it: it \
+             keeps the Enhanced item data under the Kingdom Reborn land."));
+        None
+    };
+    cache.kingdom_reborn_kinds.insert(tile_graphic, kind);
+    kind
 }
 
 /// Whether a static continues the land, so it takes the land's style (`StaticLandStyle`) whatever the art source.
@@ -1680,6 +1797,10 @@ pub struct StaticSurfaceLikeResolutionCache {
     terrain_textures: Option<HashSet<u32>>,
     /// `item_draws_terrain_texture` by item.
     terrain_texture_items: HashMap<u16, bool>,
+    /// `kingdom_reborn_static_visual_kind` by item.
+    kingdom_reborn_kinds: HashMap<u16, Option<StaticVisualKind>>,
+    /// `terrain_texture_ids` of the Kingdom Reborn land package.
+    kingdom_reborn_terrain_textures: Option<HashSet<u32>>,
 }
 
 impl StaticSurfaceLikeResolutionCache {
@@ -1908,6 +2029,8 @@ struct StaticCollectResources<'a> {
     caves: Option<&'a CaveMap>,
     /// The player's cave, with the player in one.
     player_cave: Option<&'a PlayerCave>,
+    /// The Kingdom Reborn packages, when the land is Kingdom Reborn's (`StaticLandStyle::KingdomReborn`).
+    kingdom_reborn: Option<KrStaticSources<'a>>,
 }
 
 impl<'a> StaticCollectResources<'a> {
@@ -2005,6 +2128,7 @@ fn static_collect_resources<'a>(
     tile_atlas: &'a TileAtlas,
     map_planes: &'a Option<Res<MapPlanesRes>>,
     caves: &'a CavesRes,
+    kingdom_reborn: Option<KrStaticSources<'a>>,
 ) -> StaticCollectResources<'a> {
     StaticCollectResources {
         tex_art_cc: tex_art_cc_res.as_ref().map(|res| &**res),
@@ -2019,6 +2143,7 @@ fn static_collect_resources<'a>(
         map_planes: map_planes.as_ref().map(|res| &**res),
         caves: caves.active(),
         player_cave: caves.player(),
+        kingdom_reborn,
     }
 }
 
@@ -2303,14 +2428,15 @@ fn rebuild_static_chunk(
     // Classic art under Enhanced land draws the item surfaces that continue the land too (`static_continues_land`).
     let draws_enhanced_surfaces = match frame.art_source {
         Some(ClientTextureSource::Ec) => true,
-        Some(ClientTextureSource::Cc) => frame.land_style == StaticLandStyle::Enhanced,
+        Some(ClientTextureSource::Cc) => frame.land_style.is_enhanced(),
         None => false,
     };
     if !frame.is_dot_mode && draws_enhanced_surfaces {
         if let (Some(tilemeta), Some(art)) = (resources.tilemeta_package(), resources.tex_art_ec_package()) {
             super::static_surface::apply_boundary_coverage(
                 &mut build.sprite_instances, chunk_key, frame.height_scale,
-                statics_store, tilemeta, art, resources.tile_atlas,
+                statics_store, tilemeta, art, resources.kingdom_reborn.map(|kr| (kr.tilemeta, kr.art)),
+                resources.tile_atlas,
             );
         }
     }
@@ -2391,13 +2517,22 @@ fn emit_static_render_tile(
         CaveStatic::Outside if player_cave.is_some() => STATIC_FLAG_CAVE_OUTSIDE,
         _ => 0,
     };
-    let visual_kind = frame.art_source.filter(|_| !frame.is_dot_mode).map(|source|
-        resolve_static_visual_kind_cached(source, frame.land_style, render_tile.graphic, tilemeta_package, tilemeta,
-            resources.tex_art_cc_package(), resources.tex_art_ec_package(), resources.tex_land_ec_package(),
-            surface_resolution_cache));
+    let visual_kind = frame.art_source.filter(|_| !frame.is_dot_mode).map(|source| {
+        let kind = resolve_static_visual_kind_cached(source, frame.land_style, render_tile.graphic, tilemeta_package,
+            tilemeta, resources.tex_art_cc_package(), resources.tex_art_ec_package(), resources.tex_land_ec_package(),
+            surface_resolution_cache);
+        resources.kingdom_reborn.and_then(|kr| kingdom_reborn_static_visual_kind(render_tile.graphic, tilemeta_package,
+            tilemeta, resources.tex_art_ec_package(), resources.tex_land_ec_package(), kr, surface_resolution_cache))
+            .unwrap_or(kind)
+    });
+    // A static drawn from the Kingdom Reborn packages renders wet by its Kingdom Reborn material.
+    let (wet_tilemeta, wet_package) = match (visual_kind.filter(|kind| kind.is_kingdom_reborn()), resources.kingdom_reborn) {
+        (Some(_), Some(kr)) => (kr.tilemeta.item_tile(u32::from(render_tile.graphic)), Some(kr.tilemeta)),
+        _ => (tilemeta, tilemeta_package),
+    };
     let renders_wet = visual_kind.map_or_else(|| static_tile_renders_wet(tilemeta, tilemeta_package,
         u32::from(render_tile.graphic), frame.art_source), |kind|
-        static_visual_renders_wet(kind, tilemeta, tilemeta_package, u32::from(render_tile.graphic)));
+        static_visual_renders_wet(kind, wet_tilemeta, wet_package, u32::from(render_tile.graphic)));
     let info = StaticTileRenderInfo {
         tile: render_tile,
         tilemeta,
@@ -2600,6 +2735,7 @@ fn emit_art_static_tile(
     let priority_z_units =
         resolve_priority_z_units(info.tile.z, info.tilemeta, info.depth_class);
     let world_y = info.base_world_y + bias;
+    let material_item_id = visual_kind.material_item_id(info.tile.graphic);
     let Some((billboard_source, resolved_sprite, texture_stretch)) = resolve_art_static_sprite(
         visual_kind,
         resources,
@@ -2646,6 +2782,7 @@ fn emit_art_static_tile(
                 priority_z_units,
                 texture_stretch,
                 match visual_kind { StaticVisualKind::TexLandEc { resolution } => resolution.liquid_payload, _ => None },
+                material_item_id,
                 hue_id,
                 hue_flags,
                 build,
@@ -2674,6 +2811,7 @@ fn emit_art_static_tile(
                 billboard_source,
                 matches!(visual_kind, StaticVisualKind::EcSurface { .. }),
                 texture_stretch,
+                material_item_id,
                 anchored_world_x,
                 anchored_world_z,
                 world_y,
@@ -2688,6 +2826,11 @@ fn emit_art_static_tile(
         build.stats.atlas_misses += 1;
     }
 }
+
+/// `requested_pages` flags of the Kingdom Reborn item art and land pages, beside the Enhanced art (1 << 62), land
+/// (1 << 63) and missing texture (1 << 61) ones.
+const KR_ART_REQUESTED_PAGE_FLAG: u64 = 1 << 60;
+const KR_TERRAIN_REQUESTED_PAGE_FLAG: u64 = 1 << 59;
 
 fn resolve_art_static_sprite(
     visual_kind: StaticVisualKind,
@@ -2717,27 +2860,39 @@ fn resolve_art_static_sprite(
             Some((ClientTextureSource::Cc, resolved_sprite, 0.0))
         }
         StaticVisualKind::TexLandEc { resolution } => {
-            let tex_land_ec = resources.tex_land_ec_package()?;
+            let (tex_land_ec, page_key, page_flag): (_, fn(u32) -> ArtPageKey, _) = if resolution.kingdom_reborn {
+                (resources.kingdom_reborn?.land, ArtPageKey::KrTerrain, KR_TERRAIN_REQUESTED_PAGE_FLAG)
+            } else {
+                (resources.tex_land_ec_package()?, ArtPageKey::Terrain, 1u64 << 63)
+            };
 
             if let Some(slot) = tex_land_ec.present_slot(resolution.runtime_slot_id) {
-                requested_pages.insert((1u64 << 63) | slot.page_index as u64);
+                requested_pages.insert(page_flag | slot.page_index as u64);
             }
 
             Some((
                 ClientTextureSource::Ec,
-                ground_atlas.resolve_tex_land_ec(tex_land_ec, resolution.runtime_slot_id),
+                ground_atlas.resolve_tex_land_ec_pages(tex_land_ec, resolution.runtime_slot_id, page_key),
                 resolution.texture_repetition,
             ))
         }
         StaticVisualKind::EcRegular { art_id } | StaticVisualKind::EcSurface { art_id } => {
-            let tex_art_ec = resources.tex_art_ec_package()?;
+            let (tex_art_ec, tilemeta_package, art_id, page_key, page_flag): (_, _, _, fn(u32) -> ArtPageKey, _) =
+                if art_id >= KR_ITEM_RECORD_BASE {
+                    let kr = resources.kingdom_reborn?;
+                    (kr.art, Some(kr.tilemeta), art_id - KR_ITEM_RECORD_BASE, ArtPageKey::KrEnhanced,
+                        KR_ART_REQUESTED_PAGE_FLAG)
+                } else {
+                    (resources.tex_art_ec_package()?, resources.tilemeta_package(), art_id, ArtPageKey::Enhanced,
+                        1u64 << 62)
+                };
 
             if let Some(slot) = tex_art_ec.present_slot(art_id) {
-                requested_pages.insert((1u64 << 62) | u64::from(slot.page_index));
+                requested_pages.insert(page_flag | u64::from(slot.page_index));
             }
 
             let texture_stretch = if matches!(visual_kind, StaticVisualKind::EcSurface { .. }) {
-                resources.tilemeta_package()
+                tilemeta_package
                     .and_then(|package| package.item_texture_refs(art_id).iter()
                         .find(|texture_ref| texture_ref.is_world_art() && texture_ref.is_primary_selected()))
                     .map(|texture_ref| valid_texture_repetition(texture_ref.texture_stretch))
@@ -2745,7 +2900,7 @@ fn resolve_art_static_sprite(
             } else {
                 0.0
             };
-            Some((ClientTextureSource::Ec, sprite_atlas.resolve_ec(tex_art_ec, art_id), texture_stretch))
+            Some((ClientTextureSource::Ec, sprite_atlas.resolve_ec_pages(tex_art_ec, art_id, page_key), texture_stretch))
         }
         StaticVisualKind::Missing => {
             requested_pages.insert(1u64 << 61);
@@ -2766,6 +2921,7 @@ fn emit_ground_static_instance(
     priority_z_units: f32,
     texture_stretch: f32,
     liquid_payload: Option<u32>,
+    material_item_id: u32,
     hue_id: u32,
     hue_flags: u32,
     build: &mut StaticChunkBuildState,
@@ -2804,7 +2960,7 @@ fn emit_ground_static_instance(
         hue_flags,
         material_payload,
         material_flags,
-        material_item_id: info.tile.graphic as u32,
+        material_item_id,
         _pad_material: 0,
         client_grunge_anchor: client_grunge_anchor(info.tile),
         local_light_corners,
@@ -2820,6 +2976,7 @@ fn emit_billboard_static_instance(
     billboard_source: ClientTextureSource,
     ec_surface: bool,
     texture_stretch: f32,
+    material_item_id: u32,
     anchored_world_x: f32,
     anchored_world_z: f32,
     world_y: f32,
@@ -2891,7 +3048,7 @@ fn emit_billboard_static_instance(
         hue_flags: hue_flags | if billboard_source == ClientTextureSource::Ec { STATIC_HUE_FLAG_EC_SPRITE } else { 0 },
         flat_quad: if ec_surface { if ec_static_camera_quad(info.tilemeta) { 3 } else { 2 } } else { 0 },
         texture_stretch,
-        material_item_id: info.tile.graphic as u32,
+        material_item_id,
         client_shadow_flags: info.client_shadow_flags,
         client_shadow_height: info.client_shadow_height,
         client_grunge_anchor: client_grunge_anchor(info.tile),
@@ -3132,7 +3289,8 @@ fn finish_static_collect_slow_path(
 pub fn sys_collect_visible_statics(
     statics_res: Res<StaticsStoreRes>,
     packages: (Option<Res<TexArtCcPackageRes>>, Option<Res<TexArtEcPackageRes>>,
-        Option<Res<TexLandEcPackageRes>>, Option<Res<TileMetaPackageRes>>, Option<Res<TexAuxEcPackageRes>>),
+        Option<Res<TexLandEcPackageRes>>, Option<Res<TileMetaPackageRes>>, Option<Res<TexAuxEcPackageRes>>,
+        KrStaticPackages),
     mut sprite_atlas: ResMut<SpriteArtPageAtlas>,
     mut ground_atlas: ResMut<GroundArtPageAtlas>,
     settings: Res<crate::configs::settings::Settings>,
@@ -3155,7 +3313,7 @@ pub fn sys_collect_visible_statics(
     // We can iterate over existing land chunk entities to find which blocks to draw.
     terrain: (Query<&crate::core::render::scene::world::land::LCMesh>, Res<TileAtlas>),
 ) {
-    let (tex_art_cc_res, tex_art_ec_res, tex_land_ec_res, tilemeta_res, tex_aux_ec_res) = packages;
+    let (tex_art_cc_res, tex_art_ec_res, tex_land_ec_res, tilemeta_res, tex_aux_ec_res, kr_packages) = packages;
     let (chunks_q, tile_atlas) = terrain;
     let (z_view, caves) = view_cuts;
     let (multis_res, placed_multis) = multis;
@@ -3212,6 +3370,7 @@ pub fn sys_collect_visible_statics(
         &tile_atlas,
         &map_planes,
         &caves,
+        kr_packages.sources().filter(|_| frame.land_style == StaticLandStyle::KingdomReborn),
     );
     let cache_config =
         static_chunk_cache_config(frame, &sprite_atlas, &ground_atlas, &static_lights, &tile_atlas);
@@ -3343,6 +3502,7 @@ mod tests {
             runtime_slot_id: 42,
             texture_repetition: 1.0,
             liquid_payload: None,
+            kingdom_reborn: false,
         }
     }
 
@@ -3621,10 +3781,84 @@ mod tests {
     }
 
     #[test]
+    fn kingdom_reborn_kinds_read_the_kingdom_reborn_records() {
+        const GRASS: u16 = 0x1782;
+        let surface = StaticVisualKind::EcSurface { art_id: u32::from(GRASS) };
+        assert!(!surface.is_kingdom_reborn());
+        assert_eq!(surface.material_item_id(GRASS), u32::from(GRASS));
+        let kr = surface.kingdom_reborn();
+        assert_eq!(kr, StaticVisualKind::EcSurface { art_id: u32::from(GRASS) + KR_ITEM_RECORD_BASE });
+        assert!(kr.is_kingdom_reborn());
+        assert_eq!(kr.material_item_id(GRASS), u32::from(GRASS) + KR_ITEM_RECORD_BASE);
+        let liquid = StaticVisualKind::TexLandEc { resolution: test_surface_like_resolution() }.kingdom_reborn();
+        assert!(liquid.is_kingdom_reborn());
+        assert_eq!(liquid.material_item_id(GRASS), u32::from(GRASS) + KR_ITEM_RECORD_BASE);
+        let classic = classic_static_visual_kind(GRASS, None);
+        assert_eq!(classic.kingdom_reborn(), classic);
+        assert!(!classic.is_kingdom_reborn());
+    }
+
+    /// Under the Kingdom Reborn land the statics that continue it are drawn from the Kingdom Reborn packages, and the
+    /// others keep their kind. Prints the Kingdom Reborn kinds that differ from the Enhanced ones.
+    #[test]
+    #[ignore = "requires current canonical packages in DYNAMAPPER_TEST_PACKAGES"]
+    fn canonical_statics_that_continue_the_kingdom_reborn_land_take_its_items() {
+        const GRASS: u16 = 0x1782;
+        const ACID: u16 = 0x2E02;
+        const KR_SPRITE_WATER: u16 = 0x34D2;
+        const TABLE: u16 = 0x0B90;
+        let root = std::path::PathBuf::from(std::env::var_os("DYNAMAPPER_TEST_PACKAGES")
+            .expect("set DYNAMAPPER_TEST_PACKAGES to the matching current package directory"));
+        let ec = udd_assets::tex_art_ec::TexArtEcPackage::load(root.join("tex_art_ec.uddp")).unwrap();
+        let land = udd_assets::tex_land_ec::TexLandEcPackage::load(root.join("tex_land_ec.uddp")).unwrap();
+        let meta = udd_assets::tilemeta::TileMetaPackage::load(root.join("tilemeta.uddp")).unwrap();
+        let kr_meta = udd_assets::tilemeta::TileMetaPackage::load(root.join("tilemeta_kr.uddp")).unwrap();
+        let kr_art = udd_assets::tex_art_ec::TexArtEcPackage::load(root.join("tex_art_kr.uddp")).unwrap();
+        let kr_land = udd_assets::tex_land_ec::TexLandEcPackage::load(root.join("tex_land_kr.uddp")).unwrap();
+        let kr = KrStaticSources { tilemeta: &kr_meta, art: &kr_art, land: &kr_land };
+        let mut cache = StaticSurfaceLikeResolutionCache::default();
+        let mut resolve = |graphic: u16| kingdom_reborn_static_visual_kind(graphic, Some(&meta),
+            meta.item_tile(u32::from(graphic)), Some(&ec), Some(&land), kr, &mut cache);
+        let base = |graphic: u16| u32::from(graphic) + KR_ITEM_RECORD_BASE;
+        assert_eq!(resolve(GRASS), Some(StaticVisualKind::EcSurface { art_id: base(GRASS) }));
+        assert!(matches!(resolve(ACID), Some(StaticVisualKind::TexLandEc { resolution })
+            if resolution.kingdom_reborn && resolution.liquid_payload.is_some()), "{:?}", resolve(ACID));
+        // A water sprite in Kingdom Reborn, a land liquid in the Enhanced Client.
+        assert_eq!(resolve(KR_SPRITE_WATER), Some(StaticVisualKind::EcRegular { art_id: base(KR_SPRITE_WATER) }));
+        assert_eq!(resolve(TABLE), None);
+        let mut kinds = std::collections::BTreeMap::<String, Vec<String>>::new();
+        let mut enhanced_cache = StaticSurfaceLikeResolutionCache::default();
+        for tile in meta.item_tiles().iter().filter(|t| !t.is_nodraw()) {
+            let Ok(graphic) = u16::try_from(tile.tile_id) else { continue; };
+            let Some(kind) = resolve(graphic) else { continue; };
+            assert!(kind.is_kingdom_reborn(), "{graphic:#x}");
+            let name = match kind {
+                StaticVisualKind::EcRegular { .. } => "sprite",
+                StaticVisualKind::EcSurface { .. } => "surface",
+                StaticVisualKind::TexLandEc { resolution } if resolution.liquid_payload.is_some() => "liquid",
+                StaticVisualKind::TexLandEc { .. } => "land",
+                StaticVisualKind::CcRegular { .. } | StaticVisualKind::Missing => "other",
+            };
+            kinds.entry(name.to_string()).or_default().push(format!("{graphic:#06x}"));
+            let enhanced_continues = enhanced_static_visual_kind(graphic, Some(&meta), Some(tile), Some(&ec),
+                Some(&land), &mut enhanced_cache).is_some_and(|kind| static_continues_land(kind, Some(tile),
+                    enhanced_cache.landlike_item_texture(graphic, Some(&meta), Some(&land))));
+            if !enhanced_continues {
+                kinds.entry("by the Kingdom Reborn data only".to_string()).or_default().push(format!("{graphic:#06x}"));
+            }
+        }
+        for (name, graphics) in kinds {
+            println!("{name}: {} {}", graphics.len(), graphics.join(" "));
+        }
+    }
+
+    #[test]
     fn land_style_follows_the_land_atlas() {
         assert_eq!(StaticLandStyle::of_land_atlas(LandTextureSource::Cc), StaticLandStyle::Classic);
         assert_eq!(StaticLandStyle::of_land_atlas(LandTextureSource::Ec), StaticLandStyle::Enhanced);
-        assert_eq!(StaticLandStyle::of_land_atlas(LandTextureSource::Kr), StaticLandStyle::Enhanced);
+        assert_eq!(StaticLandStyle::of_land_atlas(LandTextureSource::Kr), StaticLandStyle::KingdomReborn);
+        assert!(StaticLandStyle::KingdomReborn.is_enhanced() && StaticLandStyle::Enhanced.is_enhanced());
+        assert!(!StaticLandStyle::Classic.is_enhanced() && !StaticLandStyle::Unknown.is_enhanced());
     }
 
     #[test]

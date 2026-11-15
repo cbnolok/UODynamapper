@@ -4,7 +4,7 @@ use crate::core::texture_cache::land::aux_layers::{AuxImage, AuxLayers};
 use bevy::prelude::*;
 use color_eyre::eyre;
 use std::collections::HashMap;
-use udd_assets::{tex_art_ec::TexArtEcPackage, tex_aux_ec::TexAuxEcPackage, tilemeta::TileMetaPackage};
+use udd_assets::{tex_aux_ec::TexAuxEcPackage, tilemeta::TileMetaPackage};
 
 const EDGE: u32 = 256;
 const SPRITE: u32 = 256;
@@ -76,8 +76,11 @@ fn native_extent(width: u16, height: u16, upscale: u16) -> Option<UVec2> {
     Some(UVec2::new(u32::from(width / scale), u32::from(height / scale)))
 }
 
-pub(crate) fn append(lookup: &mut Image, meta: &TileMetaPackage, art: &TexArtEcPackage,
-    aux: &TexAuxEcPackage, layers: &mut AuxLayers) {
+/// The sprite hue records of the item source `source`, for the items `include` accepts.
+pub(crate) fn append(lookup: &mut Image, source: super::ItemRecordSource, include: impl Fn(u32) -> bool,
+    layers: &mut AuxLayers) {
+    let Some(art) = source.art else { return; };
+    let (meta, aux): (&TileMetaPackage, &TexAuxEcPackage) = (source.tilemeta, source.aux);
     let mut records: Vec<[u32; 4]> = bytemuck::cast_slice(lookup.data.as_deref().expect("item lookup pixels")).to_vec();
     let format = layers.format();
     let mut pixels: HashMap<u32, Option<AuxImage>> = HashMap::new();
@@ -86,8 +89,8 @@ pub(crate) fn append(lookup: &mut Image, meta: &TileMetaPackage, art: &TexArtEcP
     let mut missing = 0;
     let mut registered = 0;
     for tile in meta.item_tiles() {
-        let id = tile.tile_id as usize;
-        if id >= ITEM_CAPACITY { continue; }
+        if tile.tile_id as usize >= ITEM_CAPACITY || !include(tile.tile_id) { continue; }
+        let id = (source.base + tile.tile_id) as usize;
         let Some(material) = meta.item_material(tile.tile_id, 0) else { continue; };
         if material.shader_name.as_deref() != Some("UOSpriteShader") { continue; }
         let Some(slot) = art.present_slot(tile.tile_id).filter(|s| s.is_static()) else { continue; };

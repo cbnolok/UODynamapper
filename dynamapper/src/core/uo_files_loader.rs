@@ -59,6 +59,46 @@ pub struct TexLandKrPackageRes(pub Arc<udd_assets::tex_land_ec::TexLandEcPackage
 #[derive(Resource)]
 pub struct TexAuxEcPackageRes(pub Arc<udd_assets::tex_aux_ec::TexAuxEcPackage>);
 
+/// The Kingdom Reborn item packages `pack-kr-land` writes beside tex_land_kr.uddp, in the Enhanced layouts: KR's tileart
+/// (`tilemeta_kr.uddp`), item art (`tex_art_kr.uddp`) and item material textures (`tex_aux_kr.uddp`). Under the KR land
+/// the statics that continue the land are drawn from them (`statics_collect::StaticLandStyle::KingdomReborn`).
+#[derive(Resource, Clone)]
+pub struct KrItemPackagesRes {
+    pub tilemeta: Arc<TileMetaPackage>,
+    pub art: Arc<udd_assets::tex_art_ec::TexArtEcPackage>,
+    pub aux: Arc<udd_assets::tex_aux_ec::TexAuxEcPackage>,
+}
+
+/// The file names of [`KrItemPackagesRes`], as `udd_conv::kr_items` writes them.
+const KR_ITEM_PACKAGE_FILE_NAMES: [&str; 3] = ["tilemeta_kr.uddp", "tex_art_kr.uddp", "tex_aux_kr.uddp"];
+
+/// Loads [`KrItemPackagesRes`] when all three packages are in `udd_path`. A package that is there but does not load
+/// (an older layout) is an error naming the repack; their absence is one when the KR land is the selected source,
+/// whose land-continuing statics then keep the Enhanced item data.
+fn load_kr_item_packages(lg: &impl Fn(&str), lg_err: &impl Fn(&str), udd_path: &Path, kr_land_selected: bool)
+    -> Option<KrItemPackagesRes> {
+    let paths = KR_ITEM_PACKAGE_FILE_NAMES.map(|name| resolve_optional_uddp_path(udd_path, name));
+    let [Some(tilemeta_path), Some(art_path), Some(aux_path)] = paths else {
+        let message = format!("No Kingdom Reborn item packages ({}) in udd_path: under the Kingdom Reborn land, the \
+            statics that continue the land keep the Enhanced item data. Pack them with `udd-cli pack pack-kr-land`.",
+            KR_ITEM_PACKAGE_FILE_NAMES.join(", "));
+        if kr_land_selected { lg_err(&message) } else { lg(&message) }
+        return None;
+    };
+    log_source_choice(lg, "Kingdom Reborn item packages", SourceContainerKind::Uddp,
+        &[tilemeta_path.clone(), art_path.clone(), aux_path.clone()]);
+    let loaded = (|| -> color_eyre::eyre::Result<KrItemPackagesRes> {
+        Ok(KrItemPackagesRes {
+            tilemeta: Arc::new(TileMetaPackage::load(&tilemeta_path)?),
+            art: Arc::new(udd_assets::tex_art_ec::TexArtEcPackage::from_uddp_package_with_options(
+                UddpReader::load_with_options(&art_path, UddpReaderOptions::disabled())?, AtlasCacheOptions::disabled())?),
+            aux: Arc::new(udd_assets::tex_aux_ec::TexAuxEcPackage::load(&aux_path)?),
+        })
+    })();
+    loaded.map_err(|error| lg_err(&format!("Kingdom Reborn item packages not loaded: {error:#}; repack them with \
+        `udd-cli pack pack-kr-land`."))).ok()
+}
+
 /// Optional prepacked world light mask package from light.mul/lightidx.mul.
 #[derive(Resource)]
 pub struct WorldLightsPackageRes(pub Arc<udd_assets::world_lights::WorldLightsPackage>);
@@ -727,6 +767,9 @@ pub fn sys_setup_uo_data(mut commands: Commands, settings: Res<Settings>) {
         None
     };
 
+    let kr_item_packages = load_kr_item_packages(&lg, &lg_err, &udd_path,
+        settings.graphics.land_texture_source == crate::configs::settings::LandTextureSource::Kr);
+
     let world_lights_path = resolve_optional_uddp_path(&udd_path, "world_lights.uddp");
     let world_lights_package = if let Some(world_lights_path) = world_lights_path {
         log_source_choice(
@@ -884,6 +927,9 @@ pub fn sys_setup_uo_data(mut commands: Commands, settings: Res<Settings>) {
     }
     if let Some(tex_aux_ec_package) = tex_aux_ec_package {
         commands.insert_resource(TexAuxEcPackageRes(Arc::new(tex_aux_ec_package)));
+    }
+    if let Some(kr_item_packages) = kr_item_packages {
+        commands.insert_resource(kr_item_packages);
     }
     commands.insert_resource(StaticsStoreRes(statics_stores));
 }

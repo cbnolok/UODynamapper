@@ -236,3 +236,34 @@ whose page lookup row comes from tex_land_kr. Dry item surfaces do not:
 ground atlas built from tex_land_ec, so the Minoc grass rows 0x1782/0x1783
 along the roads show EC's green Grass_C beside KR's yellower Grass_A land.
 Swamp (2000480/2000700) and water match.
+
+### Under KR land those statics draw KR's items (2026-11-15)
+
+`pack-kr-land` now writes KR's items losslessly beside tex_land_kr.uddp
+(`tilemeta_kr.uddp`, `tex_art_kr.uddp`, `tex_aux_kr.uddp`; ASSET_PIPELINE.md),
+and land KR is its own `StaticLandStyle::KingdomReborn`. Under it,
+`kingdom_reborn_static_visual_kind` (`statics_collect.rs`) draws a static that
+continues the land by the EC data or by KR's from the KR packages: its kind is
+resolved from KR's tileart, art slots and tex_land_kr, its art ids and
+`material_item_id` are offset by `KR_ITEM_RECORD_BASE` (65,536), and its
+liquid resolution is flagged `kingdom_reborn`. The item lookups
+(`ec_item_surface`, `ec_item_liquid`) hold a second source of records at that
+base, with KR's masks, water maps and tweaks in the auxiliary atlas; the art
+atlases hold the KR art and land pages (`ArtPageKey::KrEnhanced`/`KrTerrain`)
+only while the KR land is active (`ActiveArtAtlasBindingState.kingdom_reborn`);
+the item-surface boundary coverage keys KR instances by KR's data.
+
+848 statics take KR's items: the 837 above (0x34D2 becomes KR's water sprite)
+and 11 that continue the land by KR's data only (swamp 0x3236-0x323F, lava
+0x343B). An item KR lacks keeps its EC kind and is logged once
+(`canonical_statics_that_continue_the_kingdom_reborn_land_take_its_items`).
+Without the three packages, or under land CC/EC, nothing changes.
+
+The green strip along the long house at Minoc (2461,445) is not drawn by these
+statics, so it stays. The 0x1782 row there (y 445, x 2446-2473, z 15) shares
+its cells and z with cobblestones 0x0515, a built floor that keeps its art
+source and covers it: dropping every grass item static (under the EC and the
+KR land), every static of row 445, or the house leaves the frame byte-identical
+or the strip in place. The strip is land at the cobblestones' edge, and the
+grass 0x1782-0x1785 at 2478-2480,443 and 2443,425-434 is covered the same way.
+What tints that land under KR is still open.
