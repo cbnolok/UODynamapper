@@ -580,8 +580,8 @@ pub struct ClientLocalLights {
     pub light_sprites_intensity: f32,
     /// The multiplier of their contribution while they take light.mul, in `LOCAL_LIGHT_INTENSITY_RANGE`.
     pub light_mul_intensity: f32,
-    /// Centre the light sprites the clients place far from their item on the item's cell, and the local lights taken
-    /// from them with them (`client_light_sprites::client_light_sprite_centred`). False is the clients' placement.
+    /// Put each light sprite's light where its item is drawn, and the local lights taken from them with them
+    /// (`client_light_sprites::client_light_sprite_centred`). False is the clients' placement.
     /// The light.mul lights sit on their item's cell either way.
     pub centre_on_items: bool,
 }

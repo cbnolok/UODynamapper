@@ -26,7 +26,8 @@ What was built differs from the proposal in these points:
 - **U1:** the offsets are applied literally, in world units. No client night screenshot confirms the (-5, -4)
   shift yet. Re-traced on 2026-11-12 (§8, U1): both binaries give the lava glow the same 4.06-unit shift to the
   left, so Dynamapper keeps it with `centre_on_items` off; on, the default since 2026-11-13, centres the sprites the
-  default offsets throw more than 4.5 tiles from their item (CLIENT_NIGHT_LIGHTING_AND_SHADOWS.md, Light sprites).
+  default offsets throw more than 4.5 tiles from their item, on their item's Classic art since 2026-11-15, and moves
+  the other sprites' light onto the nearest point of that art (CLIENT_NIGHT_LIGHTING_AND_SHADOWS.md, Light sprites).
 - **U3:** resolved on 2026-11-12 (§8): the EC base point is the KR one.
 - **Still open:** U2, U4, U5 as in §8.
 - **Land and static local lights:** the clients have none; their terrain and sprites take the lights only through

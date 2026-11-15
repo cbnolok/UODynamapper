@@ -112,10 +112,12 @@ default_preset = "classic.morning"
 #   light_sprites_intensity, light_mul_intensity: 0 to 4, the multiplier of their contribution while they take that
 #                     source, on top of Light/Static Interaction; each source keeps its own. 1 leaves the lights as
 #                     they come, 0 turns them off.
-#   centre_on_items:  true centres the light sprites the clients place far from their item (the tileart's default
-#                     offsets, (-5, -4) at scale 2 and the like: lava, fires, hearths, some sconces and windows) on
-#                     the item's cell, keeping their height on screen, and the lights taken from them with them; the
-#                     sprites whose offsets place them near their item (lanterns, wall torches, window beams) stay.
+#   centre_on_items:  true puts each light sprite's light where its item is drawn, and the lights taken from them
+#                     with them: the sprites the clients place far from their item (the tileart's default offsets,
+#                     (-5, -4) at scale 2 and the like: lava, fires, hearths, some sconces and windows) on the
+#                     centre of the item's Classic art; the others on the nearest point of that art (wall sconces'
+#                     and candles' glows moved onto their flame's side), so the sprites already on their item
+#                     (lanterns, most wall torches, lamp posts' lamps, window beams' panes) stay.
 #                     false is the clients' placement. light.mul lights sit on their item's cell either way.
 #
 # === [Land texture variation] ===

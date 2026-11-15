@@ -26,7 +26,7 @@ use std::collections::{BTreeSet, HashMap, HashSet};
 
 const CLASSIC_STATIC_ART_ID_OFFSET: u32 = 0x4000;
 const ISO_TILE_SCREEN_DIAGONAL_WORLD_UNITS: f32 = std::f32::consts::SQRT_2;
-const CC_TILE_PIXEL_WIDTH: f32 = 44.0;
+pub(super) const CC_TILE_PIXEL_WIDTH: f32 = 44.0;
 // Original legacy art projects four square sprite pixels per raw Z unit.
 pub(super) const STATIC_WORLD_Y_PER_XZ_PIXEL: f32 = UO_Z_TO_WORLD_SCALE / (4.0 * CC_WORLD_XZ_PER_PIXEL);
 pub(super) const CC_WORLD_XZ_PER_PIXEL: f32 = ISO_TILE_SCREEN_DIAGONAL_WORLD_UNITS / CC_TILE_PIXEL_WIDTH;
@@ -204,7 +204,7 @@ pub(super) fn apply_static_world_anchor_translation(world_x: f32, world_z: f32) 
     )
 }
 
-fn apply_cc_static_world_anchor_translation(world_x: f32, world_z: f32) -> (f32, f32) {
+pub(super) fn apply_cc_static_world_anchor_translation(world_x: f32, world_z: f32) -> (f32, f32) {
     (
         world_x + CC_STATIC_TILE_TRANSLATION_X,
         world_z + CC_STATIC_TILE_TRANSLATION_Z,
@@ -239,7 +239,7 @@ pub(super) enum StaticVisualKind {
     Missing,
 }
 
-fn classic_static_visual_kind(graphic: u16,
+pub(super) fn classic_static_visual_kind(graphic: u16,
     tilemeta: Option<&udd_assets::tilemeta::TileMetaItemTile>) -> StaticVisualKind {
     StaticVisualKind::CcRegular {
         art_id: u32::from(graphic) + CLASSIC_STATIC_ART_ID_OFFSET,

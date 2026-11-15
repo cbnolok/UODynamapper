@@ -10,9 +10,10 @@
 //! light offsets in world units along the camera's right and up. Classic draws the light.mul decals of
 //! `static_lights` instead.
 //!
-//! Two settings depart from the clients in these styles. The style's `local_lights.centre_on_items` centres the
-//! sprites the tileart's default offsets throw far from their item on the item's cell
-//! (`client_light_sprite_centred`), and `configs::light_scale` (LightScale.kdl) enlarges chosen items' sprites.
+//! Two settings depart from the clients in these styles. The style's `local_lights.centre_on_items` puts each
+//! sprite's light where its item is drawn: the sprites the tileart's default offsets throw far from their item on the
+//! centre of the item's Classic art, the others on the nearest point of that art (`client_light_sprite_centred`).
+//! `configs::light_scale` (LightScale.kdl) enlarges chosen items' sprites.
 //!
 //! The clients light the terrain and the statics through the composite alone: their sprites are unlit and their
 //! terrain has no other light. The optional land light decals and static local lights (Light/Static Interaction,
@@ -29,8 +30,9 @@ use crate::core::render::scene::world::z_view::{ZViewCut, ZViewLimit};
 use super::static_lights::{StaticLightInstance, StaticLightKey, StaticLightTarget, LIGHT_PIXELS_PER_WORLD_TILE,
     STATIC_LIGHT_Y_BIAS};
 use super::statics_collect::{
-    apply_static_world_anchor_translation, resolve_static_billboard_bounds, static_land_z, StaticBillboardBounds,
-    StaticChunkBatchKey, CC_WORLD_XZ_PER_PIXEL, CC_WORLD_Y_PER_PIXEL, STATIC_BILLBOARD_RIGHT_XZ,
+    apply_cc_static_world_anchor_translation, apply_static_world_anchor_translation, classic_static_visual_kind,
+    resolve_static_billboard_bounds, static_land_z, StaticBillboardBounds, StaticChunkBatchKey, StaticVisualKind,
+    CC_TILE_PIXEL_WIDTH, CC_WORLD_XZ_PER_PIXEL, CC_WORLD_Y_PER_PIXEL, STATIC_BILLBOARD_RIGHT_XZ,
     STATIC_WORLD_Y_PER_XZ_PIXEL,
 };
 use crate::core::render::scene::camera::PlayerCamera;
@@ -41,7 +43,7 @@ use crate::core::render::scene::world::effects::client_night::LIGHT_BUFFER_LAYER
 use crate::core::render::scene::world::land::{LCMesh, CHUNK_STORAGE_BLOCKS_DIM, MAP_STORAGE_BLOCK_TILE_DIM};
 use crate::core::render::scene::SceneStateData;
 use crate::core::statics::StaticsStoreRes;
-use crate::core::uo_files_loader::{MapPlanesRes, TexAuxEcPackageRes, TileMetaPackageRes};
+use crate::core::uo_files_loader::{MapPlanesRes, TexArtCcPackageRes, TexAuxEcPackageRes, TileMetaPackageRes};
 use crate::util_lib::uo_coords::scale_uo_z_to_bevy_units;
 use bevy::camera::visibility::{NoFrustumCulling, RenderLayers};
 use bevy::mesh::MeshTag;
@@ -49,9 +51,10 @@ use bevy::prelude::*;
 use bevy::render::render_resource::{Extent3d, PrimitiveTopology, TextureDimension, TextureFormat};
 use std::cell::Cell;
 use std::collections::{BTreeSet, HashMap, HashSet};
+use udd_assets::tex_art_cc::TexArtCcPackage;
 use udd_assets::tex_art_ec::LEGACY_PIXEL_UNIT;
 use udd_assets::tex_aux_ec::tex_aux_ec_terrain_texture_key;
-use udd_assets::tilemeta::TileMetaItemLight;
+use udd_assets::tilemeta::{TileMetaItemLight, TileMetaPackage};
 
 /// The sprite's horizontal anchor: its left edge sits `CLIENT_LIGHT_SPRITE_ANCHOR_PIXELS - W/2` texture pixels right
 /// of the base point (W/2 an integer shift), so its centre sits 22 scaled pixels right, on a 44-pixel tile's centre.
@@ -59,11 +62,32 @@ const CLIENT_LIGHT_SPRITE_ANCHOR_PIXELS: i32 = 22;
 /// The sprite's vertical anchor: its bottom edge sits at the base point.
 const CLIENT_LIGHT_SPRITE_ANCHOR_Y_PIXELS: i16 = 0;
 /// How far, in tiles, the ground point under a sprite's glow may lie from its item's cell centre for
-/// `centre_on_items` to keep the clients' placement. The offsets the tileart gives an item of its own keep the glow
-/// within 4.04 tiles of it (window beams, wall torches and sconces, fireplace fires, candles, lanterns); the tileart's
-/// default offsets, (-5, -4) on 378 items and (0, 0) at scale 2 on 7, and two candelabras' (-4.7, -2) throw it 4.78
-/// tiles or more away, with no light in between.
+/// `centre_on_items` to take the offsets as the item's own. The offsets the tileart gives an item of its own keep the
+/// glow within 4.04 tiles of it (window beams, wall torches and sconces, fireplace fires, candles, lanterns); the
+/// tileart's default offsets, (-5, -4) on 378 items and (0, 0) at scale 2 on 7, and two candelabras' (-4.7, -2) throw
+/// it 4.78 tiles or more away, with no light in between. The default offsets place nothing: their light goes on the
+/// art's centre. An item's own offsets place it, but not always on the item (a sconce's flame 17 pixels right of and
+/// 47 below its glow, a candle's 65 right): their light goes on the nearest point of the art.
 pub(super) const CLIENT_LIGHT_SPRITE_KEPT_PLACEMENT_REACH: f32 = 4.5;
+/// A light texture's source, (u, v) with v from the top, where the texture draws no source of its own: its centre.
+const LIGHT_TEXTURE_CENTRE_UV: Vec2 = Vec2::splat(0.5);
+/// The `TerrainTexture.uop` entry of the lamp posts' light (lamp posts 2848, 2850, 2852 and 44555, 44557, 44559): a
+/// post lit by its lamp, whose centre sits at the post's foot.
+const LAMP_POST_LIGHT_TEXTURE_ENTRY: u32 = 2;
+/// The lamp in the lamp posts' light texture.
+const LAMP_POST_LIGHT_SOURCE_UV: Vec2 = Vec2::new(0.47, 0.24);
+/// The `TerrainTexture.uop` entry of the south walls' window beam: a lit pane at the top right, its beam down to the
+/// left across the floor.
+const SOUTH_WINDOW_BEAM_TEXTURE_ENTRY: u32 = 3;
+/// The pane in the south walls' window beam.
+const SOUTH_WINDOW_BEAM_SOURCE_UV: Vec2 = Vec2::new(0.736, 0.178);
+/// The `TerrainTexture.uop` entry of the east walls' window beam: the south beam mirrored.
+const EAST_WINDOW_BEAM_TEXTURE_ENTRY: u32 = 4;
+/// The pane in the east walls' window beam.
+const EAST_WINDOW_BEAM_SOURCE_UV: Vec2 = Vec2::new(0.260, 0.178);
+/// The fewest Classic art pixels each way that place a light. Smaller art is a stand-in for an item drawn otherwise
+/// (fire column 14119's animation, the one-pixel light markers), whose light is placed as if it had no art.
+const CLIENT_LIGHT_ART_MIN_PIXELS: f32 = 2.0;
 /// From a tile's corner to its centre, along each map axis.
 const TILE_CENTRE_OFFSET: f32 = 0.5;
 /// The largest 8-bit channel value, which maps a light texture's channel to 0..1.
@@ -116,6 +140,8 @@ pub struct ClientLightSpriteCache {
     materials_by_entry: HashMap<u32, Option<Handle<LightClipMaterial>>>,
     /// Each light texture's glow colour, `None` once the texture failed to load.
     glow_rgb_by_entry: HashMap<u32, Option<[f32; 3]>>,
+    /// Each lit item's Classic art bounds (`client_light_sprite_art_bounds`), `None` for an item without one.
+    art_bounds_by_graphic: HashMap<u16, Option<StaticBillboardBounds>>,
     mesh: Option<Handle<Mesh>>,
     reach_blocks: Option<u32>,
     warned_entries: HashSet<u32>,
@@ -186,19 +212,152 @@ fn ground_under(point: Vec3, base_y: f32) -> Vec3 {
     point - view_ray * ((point.y - base_y) / view_ray.y)
 }
 
-/// The sprite centre `center` as `centre_on_items` places it: moved across the ground so that it shows over its
-/// item's cell centre, when the clients' placement shows it more than `CLIENT_LIGHT_SPRITE_KEPT_PLACEMENT_REACH` tiles
-/// away; as it is otherwise. The move is horizontal, so the glow keeps its height above the item, and the light on
-/// the ground under it (`client_light_sprite_static_light`) lands on the cell centre.
-pub(super) fn client_light_sprite_centred(center: Vec3, key: ClientLightSpriteKey) -> Vec3 {
+/// Whether the clients' placement shows the sprite centre `center` more than `CLIENT_LIGHT_SPRITE_KEPT_PLACEMENT_REACH`
+/// tiles from its item's cell centre, on the ground: whether its offsets are the tileart's defaults.
+fn client_light_sprite_has_default_offsets(center: Vec3, key: ClientLightSpriteKey) -> bool {
     let cell = client_light_sprite_cell_centre(key.tile_x, key.tile_y, key.z);
     let ground = ground_under(center, cell.y);
-    let shift = Vec3::new(cell.x - ground.x, 0.0, cell.z - ground.z);
-    if shift.length() > CLIENT_LIGHT_SPRITE_KEPT_PLACEMENT_REACH {
-        center + shift
-    } else {
-        center
+    Vec2::new(cell.x - ground.x, cell.z - ground.z).length() > CLIENT_LIGHT_SPRITE_KEPT_PLACEMENT_REACH
+}
+
+/// Where in a light texture its light comes from, (u, v) with v from the top: the lamp of the lamp posts' light, the
+/// pane of the window beams, the centre of the others.
+fn light_texture_source_uv(texture_entry: u32) -> Vec2 {
+    match texture_entry {
+        LAMP_POST_LIGHT_TEXTURE_ENTRY => LAMP_POST_LIGHT_SOURCE_UV,
+        SOUTH_WINDOW_BEAM_TEXTURE_ENTRY => SOUTH_WINDOW_BEAM_SOURCE_UV,
+        EAST_WINDOW_BEAM_TEXTURE_ENTRY => EAST_WINDOW_BEAM_SOURCE_UV,
+        _ => LIGHT_TEXTURE_CENTRE_UV,
     }
+}
+
+/// The box around an art's texels with any alpha, in its pixels from its top left, its far edges past the last
+/// texels: `[min_x, min_y, max_x, max_y]`. `None` for an art without one.
+fn art_opaque_rect(rgba: &[u8], width: u32) -> Option<[u32; 4]> {
+    let width = width as usize;
+    let mut rect: Option<[u32; 4]> = None;
+    for (index, texel) in rgba.chunks_exact(RGBA_TEXEL_BYTES).enumerate() {
+        if texel[3] == 0 {
+            continue;
+        }
+        let (x, y) = ((index % width) as u32, (index / width) as u32);
+        let [min_x, min_y, max_x, max_y] = rect.get_or_insert([x, y, x + 1, y + 1]);
+        (*min_x, *min_y, *max_x, *max_y) = ((*min_x).min(x), (*min_y).min(y), (*max_x).max(x + 1), (*max_y).max(y + 1));
+    }
+    rect
+}
+
+/// A Classic static art's opaque box (`art_opaque_rect`, in the slot's upscaled pixels) as the static draws it, in
+/// the sprite's local coordinates (`client_light_sprite_bounds`): the art stands at its CC anchor, the cell's near
+/// vertex, 22 pixels right of the sprite's base point in the same upright plane, moved by its draw offsets. `None`
+/// for a box too small to place a light (`CLIENT_LIGHT_ART_MIN_PIXELS`).
+fn client_light_sprite_art_bounds(rect: [u32; 4], upscale_factor: u16, draw_offset: (i16, i16), logical_height: f32)
+    -> Option<StaticBillboardBounds> {
+    let (cc_x, cc_z) = apply_cc_static_world_anchor_translation(0.0, 0.0);
+    let (ec_x, ec_z) = apply_static_world_anchor_translation(0.0, 0.0);
+    let anchor_right = Vec2::new(cc_x - ec_x, cc_z - ec_z).dot(STATIC_BILLBOARD_RIGHT_XZ);
+    let pixels = |value: u32| value as f32 / f32::from(upscale_factor.max(1));
+    let [min_x, min_y, max_x, max_y] = rect;
+    if pixels(max_x - min_x) < CLIENT_LIGHT_ART_MIN_PIXELS || pixels(max_y - min_y) < CLIENT_LIGHT_ART_MIN_PIXELS {
+        return None;
+    }
+    let left = f32::from(draw_offset.0);
+    let bottom = -f32::from(draw_offset.1) + logical_height;
+    Some(StaticBillboardBounds {
+        local_min_x: anchor_right + (left + pixels(min_x)) * CC_WORLD_XZ_PER_PIXEL,
+        local_max_x: anchor_right + (left + pixels(max_x)) * CC_WORLD_XZ_PER_PIXEL,
+        local_min_y: (bottom - pixels(max_y)) * CC_WORLD_Y_PER_PIXEL,
+        local_max_y: (bottom - pixels(min_y)) * CC_WORLD_Y_PER_PIXEL,
+    })
+}
+
+/// Caches the Classic art bounds (`client_light_sprite_art_bounds`) of the items `graphics` not cached yet, reading
+/// each art page once: the art the Classic statics draw an item with, its own or its tilemeta's stand-in. `None`
+/// without the art (or `tex_art_cc.uddp`), or with art too small to place a light.
+fn cache_client_light_sprite_art_bounds(
+    art_bounds_by_graphic: &mut HashMap<u16, Option<StaticBillboardBounds>>,
+    tex_art_cc: Option<&TexArtCcPackage>,
+    tilemeta: &TileMetaPackage,
+    graphics: impl IntoIterator<Item = u16>,
+) {
+    let mut slots = Vec::new();
+    for graphic in graphics {
+        if art_bounds_by_graphic.contains_key(&graphic) {
+            continue;
+        }
+        let slot = tex_art_cc.and_then(|tex_art_cc| {
+            let StaticVisualKind::CcRegular { art_id, fallback_art_id } =
+                classic_static_visual_kind(graphic, tilemeta.item_tile(u32::from(graphic)))
+            else {
+                return None;
+            };
+            tex_art_cc.present_slot(art_id).or_else(|| tex_art_cc.present_slot(fallback_art_id)).copied()
+        });
+        match slot {
+            Some(slot) => slots.push((graphic, slot)),
+            None => {
+                art_bounds_by_graphic.insert(graphic, None);
+            }
+        }
+    }
+    let Some(tex_art_cc) = tex_art_cc.filter(|_| !slots.is_empty()) else {
+        return;
+    };
+    let art_ids = slots.iter().map(|(_, slot)| slot.art_id).collect::<Vec<_>>();
+    for ((graphic, slot), rgba) in slots.into_iter().zip(tex_art_cc.get_pixel_data_many(&art_ids)) {
+        let bounds = rgba.and_then(|rgba| art_opaque_rect(&rgba, u32::from(slot.width))).and_then(|rect| {
+            client_light_sprite_art_bounds(rect, slot.upscale_factor, (slot.draw_offset_x, slot.draw_offset_y),
+                slot.logical_height())
+        });
+        art_bounds_by_graphic.insert(graphic, bounds);
+    }
+}
+
+/// A tile's Classic art bounds, the 44-pixel diamond over the cell: where a light without art goes when its offsets
+/// are the tileart's defaults, its centre the cell centre's.
+fn client_light_sprite_tile_bounds() -> StaticBillboardBounds {
+    let side = CC_TILE_PIXEL_WIDTH as u32;
+    let half = (CC_TILE_PIXEL_WIDTH / 2.0) as i16;
+    client_light_sprite_art_bounds([0, 0, side, side], 1, (-half, 0), CC_TILE_PIXEL_WIDTH)
+        .expect("a tile is large enough to place a light")
+}
+
+/// The sprite centre `center`, of a sprite `size` large drawing `texture_entry`, as `centre_on_items` places it:
+/// moved so that its light (`light_texture_source_uv`) shows where its item is drawn, `art` its Classic art bounds
+/// (`cache_client_light_sprite_art_bounds`).
+///
+/// - **Default offsets** (`client_light_sprite_has_default_offsets`), which place nothing: the light goes on the
+///   art's centre, or without art on the cell centre's, where the light on the ground under the sprite
+///   (`client_light_sprite_static_light`) lands.
+/// - **The item's own offsets:** the light goes on the nearest point of the art. A light already on its art stays
+///   (window beams, lamp posts, lanterns, most wall torches); one beside it moves onto its edge (the sconces' and
+///   candles' flames). Without art it stays.
+///
+/// The move is along the sprite's plane, upright through the item's art, so the light shows on the art.
+pub(super) fn client_light_sprite_centred(
+    center: Vec3,
+    size: Vec2,
+    key: ClientLightSpriteKey,
+    texture_entry: u32,
+    art: Option<StaticBillboardBounds>,
+) -> Vec3 {
+    let origin = client_light_sprite_origin(key.tile_x, key.tile_y, key.z);
+    let right = billboard_right();
+    let local = Vec2::new((center - origin).dot(right), center.y - origin.y);
+    let source_uv = light_texture_source_uv(texture_entry);
+    let source = local + (source_uv - LIGHT_TEXTURE_CENTRE_UV) * size * Vec2::new(1.0, -1.0);
+    let box_min = |bounds: StaticBillboardBounds| Vec2::new(bounds.local_min_x, bounds.local_min_y);
+    let box_max = |bounds: StaticBillboardBounds| Vec2::new(bounds.local_max_x, bounds.local_max_y);
+    let target = if client_light_sprite_has_default_offsets(center, key) {
+        let bounds = art.unwrap_or_else(client_light_sprite_tile_bounds);
+        (box_min(bounds) + box_max(bounds)) * 0.5
+    } else if let Some(bounds) = art {
+        source.clamp(box_min(bounds), box_max(bounds))
+    } else {
+        source
+    };
+    let shift = target - source;
+    center + right * shift.x + Vec3::Y * shift.y
 }
 
 /// A light texture's colour where it shows: the mean of its RGBA8888 texels' colour weighted by their alpha. `None`
@@ -290,6 +449,7 @@ pub fn sys_collect_client_light_sprites(
     statics_res: Res<StaticsStoreRes>,
     tilemeta_res: Option<Res<TileMetaPackageRes>>,
     tex_aux_res: Option<Res<TexAuxEcPackageRes>>,
+    tex_art_cc_res: Option<Res<TexArtCcPackageRes>>,
     map_planes: Option<Res<MapPlanesRes>>,
     multis: (Option<Res<MultiDefinitionsRes>>, Res<PlacedMultisRes>),
     settings: Res<Settings>,
@@ -383,6 +543,21 @@ pub fn sys_collect_client_light_sprites(
         blocks_y,
     );
 
+    if centre_on_items {
+        let mut lit_graphics = BTreeSet::new();
+        for &(gy, gx) in &blocks {
+            if let Ok(tiles) = statics_store.block_tiles(gx, gy) {
+                lit_graphics.extend(
+                    tiles.iter().map(|tile| tile.graphic).filter(|graphic| {
+                        tilemeta.0.item_light(u32::from(*graphic)).is_some()
+                    }),
+                );
+            }
+        }
+        cache_client_light_sprite_art_bounds(&mut cache.art_bounds_by_graphic,
+            tex_art_cc_res.as_deref().map(|package| package.0.as_ref()), &tilemeta.0, lit_graphics);
+    }
+
     let mut instances = Vec::new();
     let mut seen = HashSet::new();
     let land_missed = Cell::new(false);
@@ -466,8 +641,13 @@ pub fn sys_collect_client_light_sprites(
             let bounds = client_light_sprite_bounds(light, u32::from(slot.width), u32::from(slot.height));
             let (center, size) =
                 client_light_sprite_quad(client_light_sprite_origin(key.tile_x, key.tile_y, key.z), bounds);
-            let center = if centre_on_items { client_light_sprite_centred(center, key) } else { center };
             let size = size * light_scales.scale(key.graphic);
+            let center = if centre_on_items {
+                let art = cache.art_bounds_by_graphic.get(&key.graphic).copied().flatten();
+                client_light_sprite_centred(center, size, key, entry, art)
+            } else {
+                center
+            };
             instances.push(ClientLightSpriteInstance { key, texture_entry: entry, center, size, glow_rgb, ceiling });
         }
     }
@@ -721,10 +901,10 @@ mod tests {
         (Vec2::new(ground.x - cell.x, ground.z - cell.z).length(), center, key)
     }
 
-    /// The tileart's own offsets keep the glow near its item and stay; its default offsets throw it about five tiles
-    /// away and are centred. The tilemeta records of the census in `CLIENT_LIGHT_SPRITE_KEPT_PLACEMENT_REACH`.
+    /// The tileart's own offsets keep the glow near its item; its default offsets throw it about five tiles away. The
+    /// tilemeta records of the census in `CLIENT_LIGHT_SPRITE_KEPT_PLACEMENT_REACH`.
     #[test]
-    fn centring_moves_the_default_offsets_and_keeps_the_items_own() {
+    fn the_default_offsets_are_told_from_the_items_own() {
         const SMALL_SIDE: u32 = 128;
         let light = |tile_id, light_texture_entry, scale, offset_x, offset_y| TileMetaItemLight {
             tile_id,
@@ -733,17 +913,17 @@ mod tests {
             offset_x,
             offset_y,
         };
-        let kept = [
+        let own = [
             (LANTERN_LIGHT, LIGHT_GENERIC_SIDE, 0.36),
             (light(14, 3, 1.0, -1.35, -3.0), LIGHT_GENERIC_SIDE, 1.86), // window, south wall: its beam
             (light(60, 4, 1.0, 1.75, -3.0), LIGHT_GENERIC_SIDE, 1.80), // window, east wall: its beam
             (light(2567, 9, 1.5, 0.21, -2.8), LIGHT_GENERIC_SIDE, 0.64), // wall torch
             (light(2401, 1, 2.0, -1.0, -4.0), LIGHT_GENERIC_SIDE, 1.09), // fireplace, its fire
             (light(2555, 9, 1.5, -3.15, -2.5), LIGHT_GENERIC_SIDE, 3.28), // wall sconce
-            (light(1, 3, 1.0, -3.6, -3.0), LIGHT_GENERIC_SIDE, 3.96), // the farthest kept: a window
+            (light(1, 3, 1.0, -3.6, -3.0), LIGHT_GENERIC_SIDE, 3.96), // the farthest of the items' own: a window
             (light(1, 11, 1.6, 0.1, -1.0), SMALL_SIDE, 0.50), // crystal, a 128-pixel texture
         ];
-        let centred = [
+        let default = [
             (light(4846, 1, 2.0, -5.0, -4.0), 4.83), // lava
             (light(2557, 1, 2.0, -5.0, -4.0), 4.83), // wall sconce
             (light(186, 1, 2.0, -5.0, -4.0), 4.83), // window
@@ -751,20 +931,101 @@ mod tests {
             (light(3555, 1, 2.0, 0.0, 0.0), 4.78), // campfire
             (light(1, 7, 2.0, -4.7, -2.0), 5.26), // candelabra
         ];
-        for (light, side, distance) in kept {
+        for (light, side, distance) in own {
             let (actual, center, key) = glow_distance_from_cell(&light, side);
             assert!((actual - distance).abs() < 0.01, "{light:?}: {actual}");
-            assert!(actual <= CLIENT_LIGHT_SPRITE_KEPT_PLACEMENT_REACH, "{light:?}");
-            assert_eq!(client_light_sprite_centred(center, key), center, "{light:?}");
+            assert!(!client_light_sprite_has_default_offsets(center, key), "{light:?}");
         }
-        for (light, distance) in centred {
+        for (light, distance) in default {
             let (actual, center, key) = glow_distance_from_cell(&light, LIGHT_GENERIC_SIDE);
             assert!((actual - distance).abs() < 0.01, "{light:?}: {actual}");
-            let moved = client_light_sprite_centred(center, key);
-            // Moved across the ground, at its height, over the cell centre.
-            assert_eq!(moved.y, center.y, "{light:?}");
+            assert!(client_light_sprite_has_default_offsets(center, key), "{light:?}");
+        }
+    }
+
+    /// The bounds of a Classic static art `width` x `height`, centred on its anchor as `classic_static_draw_offset`
+    /// draws it, whose opaque texels span `rect` (`art_opaque_rect`).
+    fn classic_art_bounds(width: u32, height: u32, rect: [u32; 4]) -> Option<StaticBillboardBounds> {
+        client_light_sprite_art_bounds(rect, 1, (-((width / 2) as i16), 0), height as f32)
+    }
+
+    /// A 256-pixel light sprite of `light` on its item at the lava's cell, placed by `centre_on_items` over the art
+    /// `art`: where its light shows, in Classic pixels right of and above the art's anchor (the cell's near vertex),
+    /// as the clients place it and as it is placed; the placed centre and the key.
+    fn shown_light(light: &TileMetaItemLight, art: Option<StaticBillboardBounds>)
+        -> (Vec2, Vec2, Vec3, ClientLightSpriteKey) {
+        let (_, center, key) = glow_distance_from_cell(light, LIGHT_GENERIC_SIDE);
+        let origin = client_light_sprite_origin(key.tile_x, key.tile_y, key.z);
+        let bounds = client_light_sprite_bounds(light, LIGHT_GENERIC_SIDE, LIGHT_GENERIC_SIDE);
+        let (_, size) = client_light_sprite_quad(origin, bounds);
+        let entry = light.light_texture_entry;
+        let source_offset = (light_texture_source_uv(entry) - LIGHT_TEXTURE_CENTRE_UV) * size * Vec2::new(1.0, -1.0);
+        let shown = |center: Vec3| {
+            let source = Vec2::new((center - origin).dot(billboard_right()), center.y - origin.y) + source_offset;
+            let anchor_right = std::f32::consts::FRAC_1_SQRT_2;
+            Vec2::new((source.x - anchor_right) / CC_WORLD_XZ_PER_PIXEL, source.y / CC_WORLD_Y_PER_PIXEL)
+        };
+        let placed = client_light_sprite_centred(center, size, key, entry, art);
+        (shown(center), shown(placed), placed, key)
+    }
+
+    /// The census' pixel precision.
+    const PIXEL_EPSILON: f32 = 0.1;
+
+    /// Wall sconce 2562 in the Britain keep: the clients show its glow 15.6 pixels left of and 81.3 above its anchor,
+    /// up and to the left of the sconce, whose art spans -2..11 x 21..44. The glow moves onto the art's nearest
+    /// point, its top left corner, by the flame. Candle 2843 likewise, from 69.6 pixels left of its art.
+    #[test]
+    fn a_sconces_light_moves_onto_its_art() {
+        let sconce =
+            TileMetaItemLight { tile_id: 2562, light_texture_entry: 8, scale: 1.5, offset_x: -0.5, offset_y: -1.5 };
+        let (clients, placed, center, key) = shown_light(&sconce, classic_art_bounds(44, 44, [20, 0, 33, 23]));
+        assert!(clients.abs_diff_eq(Vec2::new(-15.6, 81.3), PIXEL_EPSILON), "{clients}");
+        assert!(placed.abs_diff_eq(Vec2::new(-2.0, 44.0), PIXEL_EPSILON), "{placed}");
+        // The move stays in the sprite's upright plane.
+        let local = center - client_light_sprite_origin(key.tile_x, key.tile_y, key.z);
+        let off_plane = local - billboard_right() * local.dot(billboard_right());
+        assert!(off_plane.x.abs() < EPSILON && off_plane.z.abs() < EPSILON, "{center}");
+        let candle =
+            TileMetaItemLight { tile_id: 2843, light_texture_entry: 7, scale: 1.0, offset_x: -2.0, offset_y: -1.0 };
+        let (clients, placed, _, _) = shown_light(&candle, classic_art_bounds(44, 44, [17, 0, 28, 30]));
+        assert!(clients.abs_diff_eq(Vec2::new(-69.6, 54.2), PIXEL_EPSILON), "{clients}");
+        assert!(placed.abs_diff_eq(Vec2::new(-5.0, 44.0), PIXEL_EPSILON), "{placed}");
+    }
+
+    /// Lights the clients already show on their item stay: window 14's beam, whose pane shows on the window, lamp
+    /// post 2848's light, whose lamp shows on the post's top, and a light of the item's own without art.
+    #[test]
+    fn lights_on_their_art_stay() {
+        let window =
+            TileMetaItemLight { tile_id: 14, light_texture_entry: 3, scale: 1.0, offset_x: -1.35, offset_y: -3.0 };
+        let (clients, placed, _, _) = shown_light(&window, classic_art_bounds(44, 106, [0, 1, 25, 105]));
+        assert!(clients.abs_diff_eq(Vec2::new(-9.1, 46.9), PIXEL_EPSILON), "{clients}");
+        assert!(placed.abs_diff_eq(clients, EPSILON), "{placed}");
+        let lamp_post =
+            TileMetaItemLight { tile_id: 2848, light_texture_entry: 2, scale: 2.0, offset_x: 0.0, offset_y: -5.5 };
+        let (clients, placed, _, _) = shown_light(&lamp_post, classic_art_bounds(22, 100, [1, 0, 20, 100]));
+        assert!(clients.abs_diff_eq(Vec2::new(-2.9, 88.3), PIXEL_EPSILON), "{clients}");
+        assert!(placed.abs_diff_eq(clients, EPSILON), "{placed}");
+        let (clients, placed, _, _) = shown_light(&LANTERN_LIGHT, None);
+        assert!(placed.abs_diff_eq(clients, EPSILON), "{placed}");
+    }
+
+    /// The default offsets put the light on the art's centre, or without art on the cell centre's, where the light on
+    /// the ground under the sprite lands.
+    #[test]
+    fn the_default_offsets_put_the_light_on_the_arts_centre() {
+        let lava =
+            TileMetaItemLight { tile_id: 4846, light_texture_entry: 1, scale: 2.0, offset_x: -5.0, offset_y: -4.0 };
+        // Over window 14's art, -22..3 x 1..105.
+        let (clients, placed, _, _) = shown_light(&lava, classic_art_bounds(44, 106, [0, 1, 25, 105]));
+        assert!(clients.abs_diff_eq(Vec2::new(-148.2, 46.2), PIXEL_EPSILON), "{clients}");
+        assert!(placed.abs_diff_eq(Vec2::new(-9.5, 53.0), PIXEL_EPSILON), "{placed}");
+        for art in [None, classic_art_bounds(44, 44, [0, 0, 44, 44])] {
+            let (_, placed, center, key) = shown_light(&lava, art);
+            assert!(placed.abs_diff_eq(Vec2::new(0.0, 22.0), PIXEL_EPSILON), "{placed}");
             let cell = client_light_sprite_cell_centre(key.tile_x, key.tile_y, key.z);
-            assert!(ground_under(moved, cell.y).abs_diff_eq(cell, EPSILON), "{light:?}: {moved}");
+            assert!(ground_under(center, cell.y).abs_diff_eq(cell, EPSILON), "{center}");
         }
     }
 
@@ -772,15 +1033,17 @@ mod tests {
     #[test]
     fn a_centred_sprites_land_light_lands_on_its_cell() {
         const LAVA_SCALE: f32 = 1.5;
-        let lava = TileMetaItemLight { tile_id: 4846, light_texture_entry: 1, scale: 2.0, offset_x: -5.0, offset_y: -4.0 };
+        let lava =
+            TileMetaItemLight { tile_id: 4846, light_texture_entry: 1, scale: 2.0, offset_x: -5.0, offset_y: -4.0 };
         let (_, center, key) = glow_distance_from_cell(&lava, LIGHT_GENERIC_SIDE);
         let bounds = client_light_sprite_bounds(&lava, LIGHT_GENERIC_SIDE, LIGHT_GENERIC_SIDE);
         let (_, size) = client_light_sprite_quad(Vec3::ZERO, bounds);
+        let size = size * LAVA_SCALE;
         let sprite = ClientLightSpriteInstance {
             key,
             texture_entry: lava.light_texture_entry,
-            center: client_light_sprite_centred(center, key),
-            size: size * LAVA_SCALE,
+            center: client_light_sprite_centred(center, size, key, lava.light_texture_entry, None),
+            size,
             glow_rgb: [1.0; 3],
             ceiling: None,
         };
@@ -789,6 +1052,28 @@ mod tests {
         assert!((light.world_z - (key.tile_y as f32 + TILE_CENTRE_OFFSET)).abs() < EPSILON, "{light:?}");
         let side_tiles = LAVA_SCALE * 2.0 * LIGHT_GENERIC_SIDE as f32 / 66.0;
         assert!((light.width_world - side_tiles).abs() < EPSILON, "{light:?}");
+    }
+
+    /// The opaque box spans the texels with alpha; art of less than two pixels either way places no light (fire
+    /// column 14119's one-pixel stand-in).
+    #[test]
+    fn the_art_box_spans_the_visible_texels() {
+        const WIDTH: u32 = 4;
+        const HEIGHT: u32 = 3;
+        let mut rgba = vec![0u8; (WIDTH * HEIGHT) as usize * RGBA_TEXEL_BYTES];
+        for (x, y) in [(1u32, 0u32), (2, 2)] {
+            rgba[(y * WIDTH + x) as usize * RGBA_TEXEL_BYTES + 3] = 1;
+        }
+        assert_eq!(art_opaque_rect(&rgba, WIDTH), Some([1, 0, 3, 3]));
+        assert_eq!(art_opaque_rect(&[0u8; RGBA_TEXEL_BYTES * 2], WIDTH), None);
+        assert!(classic_art_bounds(80, 140, [79, 0, 80, 1]).is_none());
+        // An upscaled art's box is its logical pixels'.
+        let upscaled = client_light_sprite_art_bounds([40, 0, 66, 46], 2, (-22, 0), 44.0);
+        assert_eq!(upscaled, classic_art_bounds(44, 44, [20, 0, 33, 23]));
+        // The tile's centre shows 22 pixels above its near vertex, where its cell centre shows.
+        let tile = client_light_sprite_tile_bounds();
+        let centre_y = (tile.local_min_y + tile.local_max_y) * 0.5 / CC_WORLD_Y_PER_PIXEL;
+        assert!((centre_y - CC_TILE_PIXEL_WIDTH / 2.0).abs() < EPSILON, "{tile:?}");
     }
 
     #[test]
