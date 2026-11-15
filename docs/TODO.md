@@ -234,6 +234,12 @@ These need a person at the GUI or in a running client; the code side is done.
 ### Terrain Blending And Water Modes
 
 - Validate and complete Classic fidelity for manually placed terrain-like static transition art. Classic and Enhanced share the same map tiles, even though their storage differs.
+- Built floors drawn over the land keep their own art source. Cobblestones, pavers, marble, flagstones, bricks, tiles and cave floor (NoShoot items whose texture is also a land terrain texture) do not take the land's style the way the statics that continue the land do (f6b7b590, `static_continues_land` in `art/statics_collect.rs`). Held back because:
+  - they are mostly building, castle and dungeon floors: only 0 to 4% of their placements sit at their cell's land z on land of the same texture (cobblestones 151 of 44,310);
+  - of the open cobblestones at land z, about 17% (7,618 placements) do not match the land under them, so a per-placement rule could switch tiles meant as built floors;
+  - the user asked not to apply the land-style rule blindly to tiles used both as floors and as land continuation.
+
+  To evaluate later: a per-placement rule (open sky, at land z, on land of the same texture), validated with captures.
 - Finish the switch for dynamic terrain texture blending at transitions for both Classic and KR/Enhanced textures. Dynamic blending can reduce reliance on manually placed transition art.
 - Keep source logical tile ids immutable in both modes.
 - Treat stochastic or noise seam refinement as optional after the base auto-blend path works.
