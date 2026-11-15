@@ -173,6 +173,7 @@ pub fn check_client_facet_data_with_sizes(
     dimensions: &[FacetGeometry],
     client_dir: &Path,
 ) -> eyre::Result<Vec<FacetDataReport>> {
+    eyre::ensure!(inspection.table().is_some(), "facet data validation is unavailable: this early Classic client has no supported facet table");
     eyre::ensure!(
         dimensions.len() == inspection.facet_count(),
         "{} sizes for a table of {} facets",
@@ -278,6 +279,7 @@ fn check_classic_file(
 /// Checks every facet of the Classic `inspection` (both table copies) against the data in `client_dir`: map blocks,
 /// `staidx` entries and `statics` ranges. Files the folder does not have are reported absent. Only reads.
 pub fn check_classic_facet_data(inspection: &ClientExeInspection, client_dir: &Path) -> eyre::Result<Vec<FacetDataReport>> {
+    eyre::ensure!(inspection.table().is_some(), "facet data validation is unavailable: this early Classic client has no supported facet table");
     classic_facet_data(inspection, &inspection.dimensions(), client_dir)
 }
 

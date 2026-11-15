@@ -1,10 +1,13 @@
-//! The network encryption of Enhanced Client and Kingdom Reborn executables, located by instruction pattern
+//! The network encryption of early Classic, Enhanced Client and Kingdom Reborn executables, located by instruction pattern
 //! ([`locate_encryption_sites`]) so a patch ([`crate::client::patch::ExeEdit::NoEncryption`]) can make the client
 //! talk plaintext. See `tools/uo-client-patcher-gui/docs/ENCRYPTION.md` and the traced code in
 //! `tools/uo-client-patcher-gui/docs/research/uokr_login.md`.
 //!
 //! The client sends and receives through a chain of transforms per connection. The ones this patch disables:
 //!
+//! - [`CipherSiteKind::SharedLoginGameCipher`]: early Classic clients' one client-to-server rotation cipher,
+//!   used by both login and game connections. The two-byte XOR becomes NOPs while mask stepping stays active.
+//!   See `tools/uo-client-patcher-gui/docs/research/classic-rotation-cipher.md` for the verified layouts.
 //! - [`CipherSiteKind::LoginCipher`]: the login connection's client-to-server cipher (`UOLoginCipher`, the seed's
 //!   LFSR keys), installed right after the login seed. Its transform XORs each byte with the low key byte, then steps
 //!   the keys; the patch replaces the `XOR [EAX],CL` with two NOPs, so the keys still step and the bytes stay as
@@ -55,6 +58,8 @@ const XOR_MEM_EAX_DL: [u8; 2] = [0x30, 0x10];
 /// Independently selectable parts of the executable's network encryption and KR connection setup.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum EncryptionPart {
+    /// Early Classic clients share one cipher between their login and game connections.
+    SharedLoginGame,
     /// The login connection's cipher.
     Login,
     /// All game send/receive ciphers, including the compiled-in key exchange ciphers.
@@ -66,6 +71,8 @@ pub enum EncryptionPart {
 /// One cipher or connection setup the patch disables.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum CipherSiteKind {
+    /// Early Classic clients' shared client-to-server rotation cipher.
+    SharedLoginGameCipher,
     /// The login connection's client-to-server cipher (both families).
     LoginCipher,
     /// The Enhanced Client's game connection client-to-server cipher.
@@ -78,7 +85,7 @@ pub enum CipherSiteKind {
     GameLoginHandshake,
 }
 
-/// The sites each family has, in order. Classic has none located here.
+/// The sites each family has, in order. Only the recognized early Classic layouts expose a shared cipher.
 const ENHANCED_SITES: [CipherSiteKind; 4] = [
     CipherSiteKind::LoginCipher,
     CipherSiteKind::GameCipherSend,
@@ -90,6 +97,7 @@ const KINGDOM_REBORN_SITES: [CipherSiteKind; 3] = [
     CipherSiteKind::KeyExchangeCipher,
     CipherSiteKind::GameLoginHandshake,
 ];
+const EARLY_CLASSIC_SITES: [CipherSiteKind; 1] = [CipherSiteKind::SharedLoginGameCipher];
 
 /// Where a cipher's bytes are and what the patch writes there.
 #[derive(Debug, PartialEq, Eq)]
@@ -176,6 +184,7 @@ const KEY_EXCHANGE_CIPHER: CipherPattern = CipherPattern {
 impl CipherSiteKind {
     pub fn part(self) -> EncryptionPart {
         match self {
+            Self::SharedLoginGameCipher => EncryptionPart::SharedLoginGame,
             Self::LoginCipher => EncryptionPart::Login,
             Self::GameCipherSend | Self::GameCipherReceive | Self::KeyExchangeCipher => EncryptionPart::Game,
             Self::GameLoginHandshake => EncryptionPart::KrHandshake,
@@ -184,6 +193,7 @@ impl CipherSiteKind {
 
     pub fn label(self) -> &'static str {
         match self {
+            Self::SharedLoginGameCipher => "shared login/game cipher",
             Self::LoginCipher => "login cipher",
             Self::GameCipherSend => "game cipher (send)",
             Self::GameCipherReceive => "game cipher (receive)",
@@ -195,6 +205,7 @@ impl CipherSiteKind {
     /// What the patch writes, for a byte change's field name.
     pub fn patch_label(self) -> &'static str {
         match self {
+            Self::SharedLoginGameCipher => "shared login/game cipher XOR (NOPs)",
             Self::LoginCipher => "login cipher XOR (NOPs)",
             Self::GameCipherSend => "game send cipher XOR (NOPs)",
             Self::GameCipherReceive => "game receive cipher XOR (NOPs)",
@@ -207,6 +218,7 @@ impl CipherSiteKind {
     /// Runtime patches use the bytes of the resolved [`CipherSite`].
     pub fn pattern(self) -> &'static CipherPattern {
         match self {
+            Self::SharedLoginGameCipher => &super::classic_login::PATTERN,
             Self::LoginCipher => &LOGIN_CIPHER,
             Self::GameCipherSend => &GAME_CIPHER_SEND,
             Self::GameCipherReceive => &GAME_CIPHER_RECEIVE,
@@ -215,12 +227,12 @@ impl CipherSiteKind {
         }
     }
 
-    /// The sites `family` has; empty for Classic.
+    /// The sites `family` has; Classic's shared site is conditional on recognizing an early cipher layout.
     pub fn of_family(family: ClientFamily) -> &'static [Self] {
         match family {
             ClientFamily::Enhanced => &ENHANCED_SITES,
             ClientFamily::KingdomReborn => &KINGDOM_REBORN_SITES,
-            ClientFamily::Classic => &[],
+            ClientFamily::Classic => &EARLY_CLASSIC_SITES,
         }
     }
 }
@@ -371,12 +383,27 @@ fn pattern_matches(code: &[u8], pattern: &CipherPattern) -> Vec<(usize, bool)> {
     found
 }
 
-/// Locates the ciphers of `family` in the `.text` section of `bytes`; `None` for Classic.
+/// Locates the ciphers of `family` in `.text`; `None` for Classic without a supported early cipher graph.
 pub fn locate_encryption_sites(
     bytes: &[u8],
     pe: &PeImage,
     family: ClientFamily,
 ) -> eyre::Result<Option<EncryptionSites>> {
+    if family == ClientFamily::Classic {
+        let mut matches = super::classic_login::locate(bytes, pe);
+        if matches.is_empty() { return Ok(None); }
+        let kind = CipherSiteKind::SharedLoginGameCipher;
+        let mut located = EncryptionSites { sites: Vec::new(), unlocated: Vec::new() };
+        if matches.len() == 1 {
+            let site = matches.pop().expect("one validated Classic cipher");
+            located.sites.push(CipherSite {
+                kind, offset: site.offset, removed: site.removed,
+                stock_bytes: Cow::Owned(site.stock.to_vec()), patched_bytes: Cow::Owned(vec![OPCODE_NOP; site.stock.len()]),
+                absolute_operands: Vec::new(), relocation_repair: false,
+            });
+        } else { located.unlocated.push(UnlocatedCipherSite { kind, matches: matches.len() }); }
+        return Ok(Some(located));
+    }
     let kinds = CipherSiteKind::of_family(family);
     if kinds.is_empty() {
         return Ok(None);
@@ -676,7 +703,7 @@ pub(crate) mod tests {
     }
 
     #[test]
-    fn classic_has_no_encryption_sites_and_the_state_serializes_in_snake_case() {
+    fn later_classic_has_no_encryption_sites_and_the_state_serializes_in_snake_case() {
         let classic = crate::client::classic_facets::tests::synthetic_classic(6, 2);
         assert!(ClientExeInspection::inspect(&classic).unwrap().encryption.is_none());
         assert_eq!(serde_json::to_string(&EncryptionState::Removed).unwrap(), "\"removed\"");

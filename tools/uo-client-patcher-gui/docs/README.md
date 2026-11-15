@@ -5,6 +5,8 @@ from cipher removal and KR game-login setup.
 
 - [Login server](LOGIN_SERVER.md): Classic configuration files, EC/KR built-in addresses, supported edits and survey.
 - [Encryption and KR handshake](ENCRYPTION.md): independent controls, server requirements, seeds and master keys.
+- [Early Classic rotation ciphers](research/classic-rotation-cipher.md): shared login/game encryption, embedded
+  keys, executable-derived vectors and Sphere compatibility limits.
 - [KR executable coverage](research/kr-build-coverage.md): the expanded collection, exact version distinctions and earlier-build limits.
 - [Enhanced Client research](research/uosa_login.md): login and network flow, packet registry, cipher code,
   ECLO patch sites and the complete recovered function/name tables.

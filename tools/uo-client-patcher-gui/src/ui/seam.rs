@@ -14,6 +14,9 @@ const X_EDIT_WIDTH: f32 = 64.0;
 pub fn ui_seam(ui: &mut egui::Ui, session: &mut Session) {
     let family = session.edits.family;
     ui.label(seam_status(&session.opened.inspection));
+    if session.opened.inspection.table().is_none() {
+        return;
+    }
     match family {
         ClientFamily::KingdomReborn => {
             muted_label(

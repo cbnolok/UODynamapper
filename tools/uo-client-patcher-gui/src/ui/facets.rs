@@ -7,7 +7,7 @@ use uocf::enhanced::facet_sector::{FacetGeometry, SECTOR_SIDE};
 use super::{cell, error_label, muted_label, warning_label, ERROR_COLOR, ITEM_SPACING, SUCCESS_COLOR, WARNING_COLOR};
 use crate::app::Session;
 use crate::logic::edits::{size_units, EditState};
-use crate::logic::opened::classic_files;
+use crate::logic::opened::{classic_files, NO_FACET_TABLE_NOTE};
 
 const INDEX_WIDTH: f32 = 24.0;
 const NAME_WIDTH: f32 = 100.0;
@@ -63,6 +63,10 @@ fn header(ui: &mut egui::Ui, columns: &Columns, family: ClientFamily) {
 
 pub fn ui_facets(ui: &mut egui::Ui, session: &mut Session, hide_file_ids: &mut bool) {
     let inspection = &session.opened.inspection;
+    if inspection.table().is_none() {
+        muted_label(ui, NO_FACET_TABLE_NOTE);
+        return;
+    }
     let edits = &mut session.edits;
     let columns = Columns { classic: edits.is_classic() };
     ui.horizontal(|ui| {

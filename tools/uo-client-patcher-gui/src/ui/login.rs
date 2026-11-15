@@ -1,7 +1,8 @@
 //! Section 5: the login server. Enhanced Client: the built-in public hosts and ports, a host per slot and a port
 //! per immediate, edited as one more edit of the patch; Kingdom Reborn: its one built-in IPv4 address and port, the
 //! same way; Classic: the login.cfg lists, saved as a copy apart from the patch. Enhanced Client and Kingdom Reborn
-//! also show separate controls for login encryption, game encryption and KR's handshake.
+//! also show separate controls for login encryption, game encryption and KR's handshake. Early Classic clients
+//! have one shared login/game cipher control.
 
 use std::path::PathBuf;
 
@@ -11,7 +12,9 @@ use uocf::client::login_servers::{LoginEntrySource, LoginFileRole};
 
 use super::{error_label, info_grid, muted_label, warning_label, ITEM_SPACING, SUCCESS_COLOR};
 use crate::app::Session;
-use crate::logic::encryption::{part_label, EncryptionStatus, ENCRYPTION_PARTS, PLAINTEXT_SERVER_NOTE};
+use crate::logic::encryption::{
+    part_label, EncryptionStatus, CLASSIC_PLAINTEXT_SERVER_NOTE, ENCRYPTION_PARTS, PLAINTEXT_SERVER_NOTE,
+};
 use crate::logic::login::{
     built_in_servers, check_server_row, internal_address, kind_label, login_mode, login_site_rows, login_status,
     servers_text, stock_login, ClassicLogin, LoginEdit, LoginFolder, LoginMode, CFG_KINDS, KR_IPV4_ONLY,
@@ -34,6 +37,7 @@ pub enum LoginAction {
 
 pub fn ui_login(ui: &mut egui::Ui, session: &mut Session) -> Option<LoginAction> {
     let family = session.opened.inspection.family;
+    let mut action = None;
     match login_mode(&session.opened.inspection) {
         LoginMode::PublicSites => {
             muted_label(
@@ -53,7 +57,7 @@ pub fn ui_login(ui: &mut egui::Ui, session: &mut Session) -> Option<LoginAction>
             );
             ui_executable_sites(ui, session);
         }
-        LoginMode::ConfigFile => return ui_classic(ui, session),
+        LoginMode::ConfigFile => action = ui_classic(ui, session),
         LoginMode::NotLocated => {
             warning_label(
                 ui,
@@ -66,10 +70,10 @@ pub fn ui_login(ui: &mut egui::Ui, session: &mut Session) -> Option<LoginAction>
         }
     }
     ui_encryption(ui, session);
-    None
+    action
 }
 
-/// Enhanced Client and Kingdom Reborn: cipher sites and independent encryption/handshake controls.
+/// Cipher sites and the controls supported by this client.
 fn ui_encryption(ui: &mut egui::Ui, session: &mut Session) {
     let status = session.edits.encryption.status();
     if status == EncryptionStatus::NotApplicable {
@@ -115,6 +119,7 @@ fn ui_encryption(ui: &mut egui::Ui, session: &mut Session) {
             EncryptionPart::Login => ("Remove login encryption", "Send account login unencrypted; game settings are independent"),
             EncryptionPart::Game => ("Remove game encryption", "Disable game ciphers in both directions; KR still waits for its 0xE3/0xE4 handshake"),
             EncryptionPart::KrHandshake => ("Bypass KR handshake (direct plaintext game login)", "Send the relay auth-key seed and 0x91 immediately with Huffman enabled; no game cipher is installed, even if its bytes remain stock"),
+            EncryptionPart::SharedLoginGame => ("Remove login and game encryption", "Disable the shared rotation cipher for both connections"),
         };
         ui.add_enabled(can_remove, egui::Checkbox::new(encryption.selection_mut(part), label))
             .on_hover_text(help)
@@ -133,7 +138,8 @@ fn ui_encryption(ui: &mut egui::Ui, session: &mut Session) {
     for edit in edits {
         ui.colored_label(SUCCESS_COLOR, format!("In the patch: {}.", edit.describe()));
     }
-    muted_label(ui, PLAINTEXT_SERVER_NOTE);
+    let shared = session.edits.encryption.part_status(EncryptionPart::SharedLoginGame) != EncryptionStatus::NotApplicable;
+    muted_label(ui, if shared { CLASSIC_PLAINTEXT_SERVER_NOTE } else { PLAINTEXT_SERVER_NOTE });
 }
 
 /// The login sites of the executable (Enhanced Client, Kingdom Reborn) and their editor.

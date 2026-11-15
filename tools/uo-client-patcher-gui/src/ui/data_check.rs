@@ -8,12 +8,17 @@ use uocf::client::facet_dimensions::ClientFamily;
 
 use super::{error_label, muted_label, warning_label, ERROR_COLOR, ITEM_SPACING, MUTED_COLOR, SUCCESS_COLOR};
 use crate::app::Session;
+use crate::logic::opened::NO_FACET_TABLE_NOTE;
 
 const SOURCE_WIDTH: f32 = 260.0;
 const STATUS_WIDTH: f32 = 70.0;
 
 /// Draws the section; returns true when the check is asked for.
 pub fn ui_data_check(ui: &mut egui::Ui, session: &mut Session, last_data_dir: &mut Option<PathBuf>) -> bool {
+    if session.opened.inspection.table().is_none() {
+        muted_label(ui, NO_FACET_TABLE_NOTE);
+        return false;
+    }
     let what = match session.edits.family {
         ClientFamily::Classic => "the map, staidx and statics files of both table copies",
         ClientFamily::Enhanced => "facetN.uop / facetNx.uop sectors and data.map, facets.uop, facetNN.dds",

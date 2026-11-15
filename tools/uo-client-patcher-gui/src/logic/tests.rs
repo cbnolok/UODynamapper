@@ -1,6 +1,9 @@
 use std::path::{Path, PathBuf};
 use std::time::Instant;
 
+#[path = "../../../../lib/uocf/tests/common/classic_cipher.rs"]
+mod classic_cipher;
+
 use uocf::client::login_servers::{CfgServerKind, LoginCfg};
 use uocf::client::facet_data::FacetDataStatus;
 use uocf::client::facet_dimensions::{ClientExeInspection, ClientFamily, DISABLED_SPLIT_X, STOCK_SPLIT_X};
@@ -506,6 +509,41 @@ fn the_encryption_controls_patch_their_selected_sites() {
     assert!(errors[0].starts_with("encryption: login encryption: sites not all located"), "{errors:?}");
     let classic = EditState::new(&ClientExeInspection::inspect(&synthetic_classic()).unwrap());
     assert_eq!(classic.encryption.status(), EncryptionStatus::NotApplicable);
+}
+
+#[test]
+fn early_classic_has_one_shared_cipher_control_without_facet_edits() {
+    use uocf::client::encryption::{EncryptionPart, EncryptionState};
+
+    let temp = TempDir::new("early_classic_encryption");
+    let exe = temp.folder("client").join(CLASSIC_EXE_NAME);
+    std::fs::write(&exe, classic_cipher::image()).unwrap();
+    let opened = OpenedExe::open(&exe).unwrap();
+    let mut edits = EditState::new(&opened.inspection);
+    assert!(opened.blockers().is_empty());
+    assert!(edits.rows.is_empty());
+    assert!(edits.edited_dimensions().unwrap_err().contains("no supported facet table"));
+    assert!(seam_status(&opened.inspection).starts_with("unavailable"));
+    assert!(table_locations(&opened.inspection)[0].starts_with("unavailable"));
+    assert_eq!(login_mode(&opened.inspection), LoginMode::ConfigFile);
+    assert_eq!(edits.encryption.part_status(EncryptionPart::SharedLoginGame), EncryptionStatus::Located(EncryptionState::Encrypted));
+    for part in [EncryptionPart::Login, EncryptionPart::Game, EncryptionPart::KrHandshake] {
+        assert_eq!(edits.encryption.part_status(part), EncryptionStatus::NotApplicable);
+        assert!(!edits.encryption.can_remove(part));
+    }
+    assert!(edits.build_patch().unwrap().edits.is_empty(), "off by default");
+    edits.encryption.remove_shared = true;
+    assert_eq!(edits.build_patch().unwrap().edits, [ExeEdit::NoEncryption]);
+    let copy = plan_write_and_reopen(&opened, &edits, &temp.folder("copies").join(CLASSIC_EXE_NAME));
+    assert!(copy.inspection.table().is_none());
+    let reopened = EditState::new(&copy.inspection);
+    assert_eq!(reopened.encryption.part_status(EncryptionPart::SharedLoginGame), EncryptionStatus::Located(EncryptionState::Removed));
+    assert!(!reopened.encryption.can_remove(EncryptionPart::SharedLoginGame));
+
+    edits.encryption.remove_login = true;
+    assert!(edits.build_patch().unwrap_err().iter().any(|error| error.contains("login encryption is not applicable")));
+    let modern = EditState::new(&ClientExeInspection::inspect(&synthetic_kingdom_reborn_ciphers()).unwrap());
+    assert_eq!(modern.encryption.part_status(EncryptionPart::SharedLoginGame), EncryptionStatus::NotApplicable);
 }
 
 #[test]

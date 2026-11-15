@@ -639,7 +639,7 @@ pub(crate) mod tests {
         let image = synthetic_classic(5, 1);
         let inspection = ClientExeInspection::inspect(&image).unwrap();
         let mut gold = image.clone();
-        let table = inspection.table();
+        let table = inspection.table().unwrap();
         for facet in 0..CLASSIC_STOCK_SPLIT_FACETS {
             put(&mut gold, table.record_offset(facet) + FACET_RECORD_WIDTH_OFFSET, CLASSIC_OLD_FELUCCA_WIDTH);
         }
@@ -650,7 +650,7 @@ pub(crate) mod tests {
         let felucca_map = table.records[0].classic.unwrap().file_ids[map_role];
         put(&mut gold, table.record_offset(1) + CLASSIC_RECORD_FILE_IDS_OFFSET + map_role * size_of::<u32>(), felucca_map);
         let gold = ClientExeInspection::inspect(&gold).unwrap();
-        assert!(classic_trammel_reads_map0(gold.table()));
+        assert!(classic_trammel_reads_map0(gold.table().unwrap()));
         assert!(gold.is_stock(), "UO Gold: Felucca and Trammel 6144 wide on map0");
         let mut uneven = image.clone();
         put(&mut uneven, table.record_offset(1) + FACET_RECORD_WIDTH_OFFSET, CLASSIC_OLD_FELUCCA_WIDTH);

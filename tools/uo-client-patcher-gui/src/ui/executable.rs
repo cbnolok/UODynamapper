@@ -18,7 +18,9 @@ pub fn ui_executable(ui: &mut egui::Ui, session: &Session) {
         ("SHA-256", inspection.sha256.clone()),
         ("Size", format!("{} bytes", inspection.file_size)),
         ("Version", version_label(inspection.version.as_ref())),
-        ("Values", if inspection.is_stock() { "stock".to_owned() } else { "not stock".to_owned() }),
+        ("Facet values", if inspection.table().is_none() {
+            "unavailable: no supported facet layout".to_owned()
+        } else if inspection.is_stock() { "stock".to_owned() } else { "not stock".to_owned() }),
         ("PE checksum", checksum_status(inspection)),
         ("Signature", if inspection.pe.is_signed() { "Authenticode signed".to_owned() } else { "not signed".to_owned() }),
     ];

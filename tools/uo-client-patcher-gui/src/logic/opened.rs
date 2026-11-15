@@ -14,6 +14,9 @@ use uocf::client::patch::{
     plan_patch_inspected, read_manifest, write_patched_client_exe, ExeEdit, ExeManifest, ExePatch, PatchPlan, PatchedClientExe,
 };
 
+pub const NO_FACET_TABLE_NOTE: &str = "Facet editing and data checks are unavailable for this early client. \
+     Encryption and login.cfg settings are available in the Login server section.";
+
 /// The manifest found next to the opened file.
 #[derive(Debug, Clone)]
 pub enum ManifestState {
@@ -36,7 +39,7 @@ pub struct OpenedExe {
 
 impl OpenedExe {
     /// Reads and inspects `path` and its manifest. Fails when the file is not a client the library takes (a 64-bit
-    /// image, no facet table, ...).
+    /// image, no supported facet table or early cipher, ...).
     pub fn open(path: &Path) -> eyre::Result<Self> {
         let bytes = std::fs::read(path).wrap_err_with(|| format!("read {}", path.display()))?;
         let inspection = ClientExeInspection::inspect(&bytes).wrap_err_with(|| format!("inspect {}", path.display()))?;
@@ -111,6 +114,9 @@ pub fn split_x_label(x: u32) -> &'static str {
 
 /// The split or seam of `inspection`, in words.
 pub fn seam_status(inspection: &ClientExeInspection) -> String {
+    if inspection.table().is_none() {
+        return "unavailable: no supported facet layout in this early client".to_owned();
+    }
     match (&inspection.split, inspection.family) {
         (_, ClientFamily::KingdomReborn) => "none: Kingdom Reborn has no Felucca/Trammel split".to_owned(),
         (None, ClientFamily::Enhanced) => format!(
@@ -132,6 +138,9 @@ pub fn seam_status(inspection: &ClientExeInspection) -> String {
 
 /// Where each table copy lies.
 pub fn table_locations(inspection: &ClientExeInspection) -> Vec<String> {
+    if inspection.table().is_none() {
+        return vec!["unavailable: no supported facet table in this early client".to_owned()];
+    }
     let copies = inspection.tables.len();
     inspection
         .tables

@@ -141,8 +141,8 @@ impl EditState {
         let stock_sizes = stock_facets(inspection, manifest);
         let rows = inspection
             .table()
-            .records
-            .iter()
+            .into_iter()
+            .flat_map(|table| &table.records)
             .enumerate()
             .map(|(facet, record)| {
                 let stock = stock_sizes[facet];
@@ -366,6 +366,9 @@ impl EditState {
 
     /// The sizes the rows show, for the data check; the first parse error otherwise.
     pub fn edited_dimensions(&self) -> Result<Vec<FacetGeometry>, String> {
+        if self.rows.is_empty() {
+            return Err("Facet data checks are unavailable: no supported facet table in this client".to_owned());
+        }
         self.rows
             .iter()
             .map(|row| {

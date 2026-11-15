@@ -14,6 +14,20 @@ All controls default off and only the selected sites must be located. Traced in
 [the UOKR research](research/uokr_login.md),
 which also lists every site of every build.
 
+Recognized early Classic clients (the supplied 1.23 through 1.25.36 executables) share one outgoing rotation
+cipher between login and game traffic. They expose one **Remove login + game encryption** control, using
+`--no-encryption`. Individual `--no-login-encryption` and `--no-game-encryption` requests are refused with a
+shared-cipher explanation. There is no KR handshake in these clients. The patch replaces only the two-byte XOR;
+queueing and cipher-state updates remain intact. `exe show --crypt-keys` extracts the actual constants and
+identifies the old rotation or special 1.25.36 algorithm. These clients send a raw four-byte seed, without 0xEF;
+their filenames and absent PE version resources are not used to guess keys. See
+[early Classic cipher evidence and Sphere compatibility](research/classic-rotation-cipher.md).
+
+These early executables predate the patcher's supported facet tables. They can be inspected and patched for
+encryption, and use the Classic configuration-file login destination tools; facet editing and data validation
+are unavailable. Later Classic encryption layouts remain unsupported unless their network code matches a
+validated early layout.
+
 - **Login cipher** (both families): the login connection's client-to-server LFSR cipher, installed after the login
   seed (0xEF in the modern builds; four raw bytes in the supplied pre-2.48 KR builds). The patch writes NOPs over
   its `XOR [EAX],CL` (`30 08`); the keys still step. The login connection has no
@@ -38,7 +52,7 @@ which also lists every site of every build.
 - Huffman compression of server-to-client game traffic is left alone.
 
 Each selected site is located by its instruction pattern and must match exactly once (stock or patched); otherwise the edit is
-refused, naming the cipher and its match count. Classic is refused. `exe show` prints the state (on, removed or
+refused, naming the cipher and its match count. Unrecognized Classic ciphers are refused. `exe show` prints the state (on, removed or
 partly removed) and each site; the manifest records it (`values.encryption`: `encrypted`, `removed`, `partial`).
 
 With all controls selected, a server must read the login seed (0xEF or the earlier four-byte form), 0x80 and

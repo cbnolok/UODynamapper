@@ -1,4 +1,4 @@
-//! Embedded login master keys and the protocol version advertised by EC/KR's 0xEF seed writer.
+//! Embedded login master keys, early Classic algorithm identity and EC/KR's 0xEF protocol version.
 //!
 //! These are read from instructions, independently of the PE version resource. The version formula is a
 //! comparison only: a patched or unusual executable may embed different keys. No connection seed is generated.
@@ -48,6 +48,24 @@ pub struct LoginMasterKeys {
     pub first_round: u32,
 }
 
+/// The key-step algorithm read from the executable, independent of its version label.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum LoginCipherAlgorithm {
+    ModernRotation,
+    ClassicRotation,
+    ClassicMultiKey12536,
+}
+
+impl LoginCipherAlgorithm {
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::ModernRotation => "login rotation cipher",
+            Self::ClassicRotation => "early Classic rotation cipher (shared login/game)",
+            Self::ClassicMultiKey12536 => "1.25.36 multikey cipher (shared login/game)",
+        }
+    }
+}
+
 /// The version fields passed to the 0xEF writer, not the PE resource version.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ProtocolVersion(pub [u32; 4]);
@@ -78,6 +96,7 @@ pub fn version_master_keys(version: ProtocolVersion) -> (u32, u32) {
 /// Located instructions and their extracted values.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct LoginCryptInfo {
+    pub algorithm: LoginCipherAlgorithm,
     pub keys: LoginMasterKeys,
     pub cipher_offset: usize,
     pub cipher_removed: bool,
@@ -129,10 +148,19 @@ fn legacy_login_keys(bytes: &[u8], cipher_offset: usize) -> Option<LoginMasterKe
     Some(LoginMasterKeys { key_1, key_2: read_u32(code, super::kr_legacy_login::KEY_2_OFFSET).ok()?, first_round: key_1 })
 }
 
-/// Read the real login transform's immediates. Classic or unrecognized code is refused rather than guessed
-/// from the PE resource. Patched login XORs are supported because key stepping remains intact.
+/// Read the real transform's immediates. Unrecognized code is refused rather than guessed from the PE
+/// resource. Early Classic reports its shared cipher without inventing an 0xEF version. Patched XORs
+/// are supported because key stepping remains intact.
 pub fn inspect_login_crypt(bytes: &[u8], inspection: &ClientExeInspection) -> eyre::Result<LoginCryptInfo> {
-    eyre::ensure!(inspection.family != ClientFamily::Classic, "Classic login master-key extraction is not supported");
+    if inspection.family == ClientFamily::Classic {
+        let mut sites = super::classic_login::locate(bytes, &inspection.pe);
+        eyre::ensure!(sites.len() == 1, "Classic shared login/game cipher was not located uniquely; embedded keys cannot be extracted");
+        let site = sites.pop().expect("one validated Classic cipher");
+        return Ok(LoginCryptInfo {
+            algorithm: site.algorithm, keys: site.keys, cipher_offset: site.offset,
+            cipher_removed: site.removed, protocol_version: None, protocol_version_matches: 0,
+        });
+    }
     let site = inspection.encryption.as_ref().and_then(|sites| {
         sites.sites.iter().find(|site| site.kind == CipherSiteKind::LoginCipher)
     }).ok_or_else(|| eyre!("the login cipher was not located uniquely; embedded keys cannot be extracted"))?;
@@ -154,6 +182,7 @@ pub fn inspect_login_crypt(bytes: &[u8], inspection: &ClientExeInspection) -> ey
         .filter(|(_, window)| *window == SEED_WRITER_PROLOGUE)
         .filter_map(|(at, _)| protocol_version(code, at)).collect();
     Ok(LoginCryptInfo {
+        algorithm: LoginCipherAlgorithm::ModernRotation,
         keys,
         cipher_offset: site.offset,
         cipher_removed: site.removed,
@@ -257,7 +286,7 @@ mod tests {
     }
 
     #[test]
-    fn unknown_key_steps_and_classic_are_refused() {
+    fn unknown_key_steps_and_later_classic_are_refused() {
         let image = image(KR_KEYS, false, &[KR_VERSION], true);
         assert!(inspect_login_crypt(&image, &ClientExeInspection::inspect(&image).unwrap()).unwrap_err().to_string().contains("not recognized"));
         let classic = crate::client::classic_facets::tests::synthetic_classic(6, 2);
@@ -282,6 +311,28 @@ mod tests {
             assert_eq!(info.cipher_removed, removed);
             assert_eq!(info.protocol_version, None);
             assert_eq!(info.protocol_version_matches, 0);
+        }
+    }
+
+    #[test]
+    fn early_classic_algorithms_and_embedded_keys_survive_xor_removal() {
+        use super::super::classic_login::fixture;
+        for (layout, algorithm) in [
+            (fixture::Layout::Optimized, LoginCipherAlgorithm::ClassicRotation),
+            (fixture::Layout::Unoptimized, LoginCipherAlgorithm::ClassicRotation),
+            (fixture::Layout::MultiKey, LoginCipherAlgorithm::ClassicMultiKey12536),
+        ] {
+            for removed in [false, true] {
+                let bytes = fixture::image_with(layout, removed, fixture::MOVED_CODE_OFFSET);
+                let info = inspect_login_crypt(&bytes, &ClientExeInspection::inspect(&bytes).unwrap()).unwrap();
+                assert_eq!(info.algorithm, algorithm);
+                assert_eq!(info.keys, LoginMasterKeys {
+                    key_1: fixture::KEY_HI, key_2: fixture::KEY_LO, first_round: fixture::KEY_HI,
+                });
+                assert_eq!(info.cipher_removed, removed);
+                assert_eq!(info.protocol_version, None);
+                assert_eq!(info.protocol_version_matches, 0);
+            }
         }
     }
 }

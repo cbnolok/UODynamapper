@@ -25,7 +25,8 @@
 //!   Classic is refused: it reads `login.cfg` ([`crate::client::login_servers`]).
 //! - [`ExeEdit::NoEncryption`]: the bytes of each network cipher ([`crate::client::encryption`]): NOPs over the
 //!   login cipher's XOR (and the Enhanced Client's game cipher XORs), and a `JMP` for the `JZ` that enters the 0xE3
-//!   key exchange ciphers' loop. Every cipher of the family must be located exactly once; Classic is refused.
+//!   key exchange ciphers' loop. Recognized early Classic clients share one login/game XOR; other Classic ciphers
+//!   are refused. Every selected cipher must be located exactly once.
 //!   KR also bypasses the key exchange wait, sends the auth-key seed and installs Huffman before sending 0x91.
 
 crate::eyre_imports!();
@@ -326,11 +327,15 @@ fn checked_encryption_sites(before: &ClientExeInspection, part: Option<Encryptio
     }
     let Some(sites) = &before.encryption else {
         eyre::bail!(
-            "removing the encryption is supported for the Enhanced Client and Kingdom Reborn only: the {} client's \
+            "removing the encryption is supported for recognized early Classic, Enhanced Client and Kingdom Reborn builds: the {} client's \
              ciphers are not located",
             before.family.label()
         );
     };
+    eyre::ensure!(
+        part.is_none() || !sites.sites.iter().any(|site| site.kind == CipherSiteKind::SharedLoginGameCipher),
+        "this early Classic client shares one cipher for login and game traffic; use --no-encryption to remove both"
+    );
     let sites = match part {
         Some(part) => sites.for_part(part),
         None => sites.clone(),
@@ -477,6 +482,7 @@ pub fn plan_patch_inspected(
     for (index, edit) in patch.edits.iter().enumerate() {
         match *edit {
             ExeEdit::FacetSize { facet, width, height } => {
+                eyre::ensure!(count != 0, "facet editing is unavailable: this early Classic client has no supported facet table");
                 let facet_index = checked_facet(facet, count)?;
                 eyre::ensure!(sized[facet_index].is_none(), "two size edits for facet {facet}");
                 sized[facet_index] = Some(index);
@@ -500,6 +506,7 @@ pub fn plan_patch_inspected(
             }
             ExeEdit::ClassicWrap { facet, .. } => {
                 eyre::ensure!(classic, "a wrap edit needs a Classic client, not {}", before.family.label());
+                eyre::ensure!(count != 0, "facet editing is unavailable: this early Classic client has no supported facet table");
                 let facet_index = checked_facet(facet, count)?;
                 eyre::ensure!(wrapped[facet_index].is_none(), "two wrap edits for facet {facet}");
                 wrapped[facet_index] = Some(index);
@@ -902,7 +909,8 @@ pub fn stock_facets(inspection: &ClientExeInspection, manifest: Option<&ExeManif
             .map(|facet| CLIENT_FACET_DIMENSIONS.get(facet).map(|size| StockFacet { size: *size, wrap: None }))
             .collect(),
         ClientFamily::Classic => {
-            let widths = classic_split_widths(inspection.table());
+            let Some(table) = inspection.table() else { return Vec::new(); };
+            let widths = classic_split_widths(table);
             let gold = manifest.is_some_and(|manifest| manifest.original_sha256 == CLASSIC_GOLD_SHA256);
             let split_width = match widths {
                 [only] => Some(*only),
@@ -1571,10 +1579,36 @@ mod tests {
     }
 
     #[test]
+    fn early_classic_shared_cipher_patches_without_fabricating_facet_capabilities() {
+        let image = crate::client::classic_login::fixture::image();
+        let inspection = ClientExeInspection::inspect(&image).unwrap();
+        assert_eq!(inspection.family, ClientFamily::Classic);
+        assert!(inspection.table().is_none() && inspection.dimensions().is_empty());
+        assert!(inspection.values().facets.is_empty() && stock_facets(&inspection, None).is_empty());
+        let patch = ExePatch { edits: vec![ExeEdit::NoEncryption] };
+        let plan = plan_patch(&image, &patch, None).unwrap();
+        let patched = patch_client_exe(&image, &patch, None).unwrap();
+        assert_plan_is_the_write(&image, &plan, &patched.bytes);
+        assert_eq!(patched.after.values().encryption, Some(EncryptionState::Removed));
+        assert!(patched.after.table().is_none() && patched.after.checksum_valid());
+        assert_eq!(patched.manifest.original_values.as_ref().unwrap().facets, Vec::new());
+        for edit in [ExeEdit::NoLoginEncryption, ExeEdit::NoGameEncryption] {
+            let error = plan_patch(&image, &ExePatch { edits: vec![edit] }, None).unwrap_err().to_string();
+            assert!(error.contains("shares one cipher"), "{error}");
+        }
+        let error = plan_patch(&image, &ExePatch { edits: vec![size(0, NEW_WIDTH, NEW_HEIGHT)] }, None).unwrap_err();
+        assert!(error.to_string().contains("no supported facet table"));
+        let error = crate::client::facet_data::check_client_facet_data(&inspection, Path::new(".")).unwrap_err();
+        assert!(error.to_string().contains("no supported facet table"));
+        let error = crate::client::facet_data::check_classic_facet_data(&inspection, Path::new(".")).unwrap_err();
+        assert!(error.to_string().contains("no supported facet table"));
+    }
+
+    #[test]
     fn no_encryption_is_refused_without_every_cipher() {
         let patch = ExePatch { edits: vec![ExeEdit::NoEncryption] };
         let error = |image: &[u8], patch: &ExePatch| plan_patch(image, patch, None).unwrap_err().to_string();
-        assert!(error(&synthetic_classic(6, 2), &patch).contains("Enhanced Client and Kingdom Reborn only"));
+        assert!(error(&synthetic_classic(6, 2), &patch).contains("ciphers are not located"));
         let missing = error(&synthetic_kr_client(), &patch);
         assert!(missing.contains("login cipher (0 matches)") && missing.contains("exactly once"), "{missing}");
         let twice = ExePatch { edits: vec![ExeEdit::NoEncryption, ExeEdit::NoEncryption] };

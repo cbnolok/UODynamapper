@@ -393,11 +393,11 @@ pub struct ClientExeInspection {
     /// The checksum the file should store.
     pub computed_checksum: u32,
     /// The facet tables: one, or two equal-sized copies (Classic 7.0 and later; the second is read when the server
-    /// sets 0xA9 flag 0x8000). Every size edit writes each.
+    /// sets 0xA9 flag 0x8000). Every size edit writes each. Empty in recognized early Classic clients.
     pub tables: Vec<FacetTable>,
     /// The Enhanced Client split, or the Classic wrap seam.
     pub split: Option<FacetSplit>,
-    /// The Classic startup copy of facet 0 and file name table; `None` in the other families.
+    /// The Classic startup copy of facet 0 and file name table; `None` without a supported Classic facet table.
     pub classic: Option<ClassicLayout>,
     /// The login address code (Enhanced Client and Kingdom Reborn), when located ([`locate_login_sites`]).
     pub login: Option<LoginSites>,
@@ -417,7 +417,8 @@ pub(crate) fn single<T>(mut items: Vec<T>) -> Option<T> {
 
 impl ClientExeInspection {
     /// Locates the tables, the split or seam and the Classic startup values of the client executable `bytes` (PE32
-    /// i386) by their structure, and tells the family. Fails without exactly one 12-byte table or one or two agreeing
+    /// i386) by their structure, and tells the family. Early Classic can instead be identified by a unique validated
+    /// shared login/game cipher. Otherwise fails without exactly one 12-byte table or one or two agreeing
     /// Classic tables (not both), with more than one split, or with split or seam values that differ. The SHA-256 only
     /// selects the [`KnownBuild`] label.
     pub fn inspect(bytes: &[u8]) -> eyre::Result<Self> {
@@ -441,6 +442,11 @@ impl ClientExeInspection {
                     None => None,
                 };
                 (ClientFamily::Classic, classic_tables, split, Some(ClassicLayout { startup, file_names }))
+            }
+            (0, 0) if super::classic_login::locate(bytes, &pe).len() == 1 => {
+                // Early clients predate facet records. Their validated network code identifies the family,
+                // without inventing writable map offsets or trusting a filename/version label.
+                (ClientFamily::Classic, Vec::new(), None, None)
             }
             (ec, classic) => eyre::bail!(
                 "{ec} Enhanced Client / Kingdom Reborn facet tables (runs of {MIN_FACET_RECORDS}..={MAX_FACET_RECORDS} \
@@ -473,18 +479,18 @@ impl ClientExeInspection {
         })
     }
 
-    /// The first table: the only one, or the copy the Classic client reads without the 0xA9 flag.
-    pub fn table(&self) -> &FacetTable {
-        &self.tables[0]
+    /// The first table, or None when an early Classic client predates the supported facet layouts.
+    pub fn table(&self) -> Option<&FacetTable> {
+        self.tables.first()
     }
 
     /// Records of the table.
     pub fn facet_count(&self) -> usize {
-        self.table().records.len()
+        self.table().map_or(0, |table| table.records.len())
     }
 
     pub fn dimensions(&self) -> Vec<FacetGeometry> {
-        self.table().records.iter().map(|record| record.geometry).collect()
+        self.table().into_iter().flat_map(|table| &table.records).map(|record| record.geometry).collect()
     }
 
     /// True when the stored PE checksum is the computed one.
@@ -496,8 +502,8 @@ impl ClientExeInspection {
         ExeValues {
             facets: self
                 .table()
-                .records
-                .iter()
+                .into_iter()
+                .flat_map(|table| &table.records)
                 .enumerate()
                 .map(|(facet, record)| FacetValues {
                     facet: facet as u8,
@@ -525,7 +531,8 @@ impl ClientExeInspection {
             Some(classic) => is_classic_stock(&self.tables, classic),
             None => {
                 self.facet_count() <= STOCK_FACET_COUNT
-                    && self.table().records.iter().zip(CLIENT_FACET_DIMENSIONS).all(|(record, stock)| record.geometry == stock)
+                    && self.table().is_none_or(|table| table.records.iter().zip(CLIENT_FACET_DIMENSIONS)
+                        .all(|(record, stock)| record.geometry == stock))
             }
         };
         split_stock && records_stock
@@ -874,11 +881,11 @@ pub(crate) mod tests {
         assert!(facets.known.is_none());
         assert_eq!(facets.family, ClientFamily::Enhanced);
         assert_eq!(facets.dimensions(), CLIENT_FACET_DIMENSIONS);
-        assert_eq!(facets.table().records.iter().map(|record| record.name.as_str()).collect::<Vec<_>>(), STOCK_NAMES);
+        assert_eq!(facets.table().unwrap().records.iter().map(|record| record.name.as_str()).collect::<Vec<_>>(), STOCK_NAMES);
         assert_eq!(facets.split.as_ref().unwrap().x, STOCK_SPLIT_X);
         assert!(facets.is_stock() && facets.checksum_valid());
         let data = facets.pe.section(".data").unwrap();
-        assert_eq!(facets.table().offset, data.raw_offset as usize + TABLE_DATA_OFFSET);
+        assert_eq!(facets.table().unwrap().offset, data.raw_offset as usize + TABLE_DATA_OFFSET);
         let text = facets.pe.section(CODE_SECTION).unwrap().raw_offset as usize + SPLIT_CODE_START;
         let split = facets.split.clone().unwrap();
         assert_eq!(split.signature_offsets, [text]);
@@ -893,7 +900,7 @@ pub(crate) mod tests {
         unequal[offset] ^= 1;
         assert!(ClientExeInspection::inspect(&unequal).is_err(), "differing split values");
         let mut two_tables = image.clone();
-        let (table, table_size) = (facets.table().offset, FACET_RECORD_SIZE * STOCK_FACET_COUNT);
+        let (table, table_size) = (facets.table().unwrap().offset, FACET_RECORD_SIZE * STOCK_FACET_COUNT);
         two_tables.copy_within(table..table + table_size, table + table_size + TABLE_DATA_OFFSET);
         assert!(ClientExeInspection::inspect(&two_tables).is_err(), "two tables");
     }
@@ -911,12 +918,12 @@ pub(crate) mod tests {
         let image = synthetic_client(None, false);
         let facets = ClientExeInspection::inspect(&image).unwrap();
         let mut broken = image.clone();
-        let width = facets.table().record_offset(3) + FACET_RECORD_WIDTH_OFFSET;
+        let width = facets.table().unwrap().record_offset(3) + FACET_RECORD_WIDTH_OFFSET;
         broken[width..width + 4].copy_from_slice(&(MAX_FACET_SIDE + FACET_SIDE_ALIGNMENT).to_le_bytes());
         assert!(locate_facet_tables(&broken, &facets.pe).is_empty());
         // A name that is not a word does not count either.
         let mut unnamed = image.clone();
-        let name = facets.pe.va_to_offset(read_u32(&image, facets.table().offset).unwrap()).unwrap();
+        let name = facets.pe.va_to_offset(read_u32(&image, facets.table().unwrap().offset).unwrap()).unwrap();
         unnamed[name] = b'#';
         let tables = locate_facet_tables(&unnamed, &facets.pe);
         assert_eq!(tables.len(), 1);

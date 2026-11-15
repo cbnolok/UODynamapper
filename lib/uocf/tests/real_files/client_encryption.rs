@@ -19,6 +19,58 @@ use uocf::client::pe::{PeImage, pe_checksum, OPTIONAL_CHECKSUM_OFFSET};
 
 use super::client_exe_facet_dimensions::{allowed_ranges, client_exes, exe_kind, ExeKind};
 
+/// Hashes and XOR offsets are regression evidence only, never a production locator allowlist.
+#[test]
+#[ignore = "requires UO_EARLY_CLASSIC_EXES naming the eight audited early Classic executables"]
+fn early_classic_shared_encryption_round_trips_all_audited_executables() {
+    const CASES: [(&str, usize, u32, u32); 8] = [
+        ("e5ebe07148034b8d7f47e2828075ce93ef779c53fb3acf8edc7cdca5aac35195", 0x9790a, 0xf1a372d5, 0x3a1fd527),
+        ("35c4903d50c56c5f8f1de5e5fb72ec310d0e5b074656be31a20ebf82946d6f02", 0x693f4, 0xf1a372d5, 0x3a1fd527),
+        ("b36482dc091c0c0d333636271766a5ce8ef4be4002a2c7d44ff96b47fe2f09c4", 0x87784, 0x38ecedac, 0x025720c6),
+        ("dc2c53d70ff1595d2a6f16a50794a4cd42c9a1823879a9fc7e46d15bb7297f57", 0x88a54, 0x383477bc, 0x02345cc6),
+        ("8363693e3d8634985aa7ed2599566551423990fce8bc337af3bb1fe3ab2f059d", 0x889e4, 0x383477bc, 0x02345cc6),
+        ("9dfe78e72ca03acb71c753729bbf8d3a4f9b7c71d74b8fabdc54c8d58ec40aa3", 0x88a04, 0x383477bc, 0x02345cc6),
+        ("07944a089187e5fbcc8c14196898487135683fab0d1c101f4549d31273a6d601", 0x88a44, 0x383477bc, 0x02345cc6),
+        ("60d62325b911b08bcf672f207cfba3f0bc35136a40e4318881b66630bb238ccb", 0x88748, 0x387fc5cc, 0x021510c6),
+    ];
+    let paths: Vec<_> = std::env::split_paths(&std::env::var_os("UO_EARLY_CLASSIC_EXES")
+        .expect("set UO_EARLY_CLASSIC_EXES")).collect();
+    assert_eq!(paths.len(), CASES.len());
+    let mut seen = std::collections::HashSet::new();
+    for path in paths {
+        let bytes = std::fs::read(&path).unwrap();
+        let inspection = ClientExeInspection::inspect(&bytes).unwrap();
+        let &(hash, offset, hi, lo) = CASES.iter().find(|case| case.0 == inspection.sha256)
+            .unwrap_or_else(|| panic!("unexpected fixture: {}", path.display()));
+        assert!(seen.insert(hash), "duplicate fixture");
+        assert_eq!(inspection.family, ClientFamily::Classic);
+        assert!(inspection.table().is_none() && inspection.values().facets.is_empty());
+        let crypt = inspect_login_crypt(&bytes, &inspection).unwrap();
+        assert_eq!((crypt.keys.key_1, crypt.keys.key_2), (hi, lo));
+        assert_eq!(crypt.cipher_offset, offset);
+        assert!(crypt.protocol_version.is_none() && !crypt.cipher_removed);
+        let patch = ExePatch { edits: vec![ExeEdit::NoEncryption] };
+        let patched = patch_client_exe(&bytes, &patch, None).unwrap();
+        assert_eq!(patched.after.values().encryption, Some(EncryptionState::Removed));
+        assert!(patched.after.checksum_valid());
+        assert_eq!(&patched.bytes[offset..offset + 2], &[0x90, 0x90]);
+        let checksum = inspection.pe.checksum_offset..inspection.pe.checksum_offset + WORD_SIZE;
+        for (at, (old, new)) in bytes.iter().zip(&patched.bytes).enumerate() {
+            assert!(old == new || (offset..offset + 2).contains(&at) || checksum.contains(&at),
+                "unexpected change at {at:#x}");
+        }
+        let after = inspect_login_crypt(&patched.bytes, &patched.after).unwrap();
+        assert_eq!(after.keys, crypt.keys);
+        assert!(after.cipher_removed);
+        assert!(patch_client_exe(&patched.bytes, &patch, Some(&patched.manifest)).is_err());
+        for edit in [ExeEdit::NoLoginEncryption, ExeEdit::NoGameEncryption] {
+            let error = patch_client_exe(&bytes, &ExePatch { edits: vec![edit] }, None).unwrap_err();
+            assert!(error.to_string().contains("shares one cipher"));
+        }
+        assert_eq!(std::fs::read(&path).unwrap(), bytes, "source changed");
+    }
+}
+
 /// The traced UOKR.exe: the login cipher's `XOR [EAX],CL` and the key exchange adapter's `JZ`.
 const KR_LOGIN_CIPHER_OFFSET: usize = 0x1d_d59a;
 const KR_KEY_EXCHANGE_CIPHER_OFFSET: usize = 0x1d_a198;

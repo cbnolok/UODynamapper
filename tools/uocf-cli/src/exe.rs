@@ -4,7 +4,7 @@ use clap::Subcommand;
 use color_eyre::eyre::{self, eyre, WrapErr};
 use uocf::client::classic_difs::DifKind;
 use uocf::client::classic_facets::{ClassicFileRole, CLASSIC_FACET_RECORD_SIZE};
-use uocf::client::crypt_keys::{inspect_login_crypt, version_master_keys};
+use uocf::client::crypt_keys::{inspect_login_crypt, version_master_keys, LoginCipherAlgorithm};
 use uocf::client::facet_data::{check_client_facet_data, FacetDataStatus};
 use uocf::client::login_servers::LoginServerAddress;
 use uocf::client::facet_dimensions::{
@@ -29,12 +29,12 @@ const FIRST_SITE_NUMBER: usize = 1;
 #[derive(Subcommand, Debug)]
 pub enum ExeCmd {
     /// Print the facet size tables, the split (Enhanced Client) or wrap seam (Classic), the built-in login server
-    /// and whether the encryption is on (Enhanced Client, Kingdom Reborn) and the PE checksum of a client executable
+    /// and whether supported encryption is on, and the PE checksum of a client executable
     /// (UOSA*.exe, UOKR.exe, Classic client.exe; any 32-bit build, located by structure). Classic: both table copies with wrap, file ids and flag,
     /// the startup copy of facet 0 and whether the code applies the mapdif / stadif patches. Only reads the file.
     Show {
         exe: PathBuf,
-        /// Print the actual embedded login master keys and advertised 0xEF protocol version (EC/KR).
+        /// Print the actual embedded master keys (early Classic, EC/KR) and advertised 0xEF protocol version (EC/KR).
         /// Compare the standard version formula without assuming that the PE resource version is the wire version.
         #[arg(long)]
         crypt_keys: bool,
@@ -78,7 +78,7 @@ pub enum ExeCmd {
         #[arg(long = "login-port", value_name = "[N=]PORT", value_parser = parse_login_port)]
         login_ports: Vec<(Option<usize>, u16)>,
         /// Remove login and game ciphers and, for Kingdom Reborn, bypass 0xE3/0xE4. Shortcut for all three
-        /// controls below. The server must take unencrypted 0x80 and 0x91 and send unencrypted,
+        /// controls below. Early Classic: remove its shared login/game rotation cipher. The server must take unencrypted 0x80 and 0x91 and send unencrypted,
         /// Huffman-compressed game packets.
         #[arg(long, conflicts_with_all = ["no_login_encryption", "no_game_encryption", "bypass_kr_handshake"])]
         no_encryption: bool,
@@ -346,7 +346,11 @@ fn print_inspection(inspection: &ClientExeInspection) {
     );
     let signed = if inspection.pe.is_signed() { "Authenticode signed (cannot be patched)" } else { "not signed" };
     println!("signature {signed}");
-    println!("values    {}", if inspection.is_stock() { "stock" } else { "not stock" });
+    if inspection.table().is_none() {
+        println!("table     unavailable: facet editing and data checks are unsupported for this early client");
+    } else {
+        println!("values    {}", if inspection.is_stock() { "stock" } else { "not stock" });
+    }
     for (index, table) in inspection.tables.iter().enumerate() {
         print_table(inspection, index, table);
     }
@@ -375,6 +379,10 @@ fn print_inspection(inspection: &ClientExeInspection) {
     print_login(inspection);
     print_encryption(inspection);
     print_difs(inspection);
+    if inspection.table().is_none() {
+        println!("seam      unavailable: no supported facet layout in this early client");
+        return;
+    }
     let what = if inspection.family == ClientFamily::Classic { "wrap seam" } else { "split" };
     match &inspection.split {
         None => match inspection.family {
@@ -465,7 +473,7 @@ fn print_login(inspection: &ClientExeInspection) {
     println!("  internal {}:{} (internal flag only, not patched) at {fixed_at}", fixed.ip, fixed.port);
 }
 
-/// Enhanced Client and Kingdom Reborn: whether the network ciphers are on, and where each is.
+/// Whether the supported network ciphers are on, and where each is.
 fn print_encryption(inspection: &ClientExeInspection) {
     let Some(ciphers) = &inspection.encryption else {
         return;
@@ -488,6 +496,10 @@ fn print_encryption(inspection: &ClientExeInspection) {
         println!("  not located (pattern not matched exactly once): {}", ciphers.describe_unlocated());
     }
     if ciphers.values() == Some(EncryptionState::Encrypted) {
+        if inspection.family == ClientFamily::Classic {
+            println!("  --no-encryption removes the shared login/game rotation cipher; individual phase flags are unsupported");
+            return;
+        }
         println!("  --no-login-encryption and --no-game-encryption select cipher groups");
         if inspection.family == ClientFamily::KingdomReborn {
             println!("  --bypass-kr-handshake independently enables immediate plaintext game login");
@@ -524,6 +536,14 @@ fn show(exe: &Path, crypt_keys: bool) -> eyre::Result<()> {
 fn print_crypt_keys(bytes: &[u8], inspection: &ClientExeInspection) -> eyre::Result<()> {
     let info = inspect_login_crypt(bytes, inspection)?;
     let keys = info.keys;
+    println!("algorithm {}", info.algorithm.label());
+    if info.algorithm != LoginCipherAlgorithm::ModernRotation {
+        println!("cryptkeys embedded {:#010x} {:#010x} (shared login/game master keys: high, low)", keys.key_1, keys.key_2);
+        println!("  shared cipher {}; {}", if info.cipher_removed { "patched out; keys are still embedded" } else { "stock" }, located(inspection, info.cipher_offset));
+        println!("  raw four-byte connection seed; no 0xEF protocol version is sent");
+        println!("  These keys apply to client-to-server traffic on both connections; the seed is separate.");
+        return Ok(());
+    }
     println!("cryptkeys embedded {:#010x} {:#010x} (login master keys)", keys.key_1, keys.key_2);
     println!("  first-round XOR {:#010x}; {}", keys.first_round, located(inspection, info.cipher_offset));
     println!("  login XOR {}", if info.cipher_removed { "patched out; keys are still embedded" } else { "stock" });
@@ -599,11 +619,12 @@ fn write_patch(exe: &Path, output: &Path, patch: &ExePatch) -> eyre::Result<()> 
 
 fn check_data(exe: &Path, client_dir: &Path) -> eyre::Result<()> {
     let inspection = inspect(exe)?;
+    let table = inspection.table().ok_or_else(|| eyre!("facet data checks are unavailable: no supported facet table in this client"))?;
     let reports = check_client_facet_data(&inspection, client_dir)?;
     let mut mismatches = 0;
     for report in &reports {
         let geometry = report.geometry;
-        let name = &inspection.table().records[usize::from(report.facet)].name;
+        let name = &table.records[usize::from(report.facet)].name;
         match inspection.family {
             ClientFamily::Classic => println!("facet {} {name} {}x{}", report.facet, geometry.width, geometry.height),
             _ => println!(

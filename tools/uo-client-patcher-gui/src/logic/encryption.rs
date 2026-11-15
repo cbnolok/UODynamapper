@@ -1,4 +1,4 @@
-//! The encryption part of the Login server section (Enhanced Client, Kingdom Reborn): whether the opened
+//! The encryption part of the Login server section: whether the opened
 //! executable's network ciphers are on, where each is, and independent login, game and KR handshake edits.
 
 use uocf::client::encryption::{EncryptionPart, EncryptionSites, EncryptionState};
@@ -13,20 +13,27 @@ pub const PLAINTEXT_SERVER_NOTE: &str = "Login and game encryption are independe
      immediately, without installing game ciphers, even if their bytes remain stock. Plaintext game traffic \
      still requires Huffman-compressed server replies.";
 
-pub const ENCRYPTION_PARTS: [EncryptionPart; 3] = [EncryptionPart::Login, EncryptionPart::Game, EncryptionPart::KrHandshake];
+pub const CLASSIC_PLAINTEXT_SERVER_NOTE: &str = "This early Classic client shares one rotation cipher between \
+     login and game sends. Removing it affects both connections. The seed and Huffman-compressed game replies \
+     stay unchanged. The server must support this client's older packet formats.";
+
+pub const ENCRYPTION_PARTS: [EncryptionPart; 4] = [
+    EncryptionPart::Login, EncryptionPart::Game, EncryptionPart::KrHandshake, EncryptionPart::SharedLoginGame,
+];
 
 pub fn part_label(part: EncryptionPart) -> &'static str {
     match part {
         EncryptionPart::Login => "login encryption",
         EncryptionPart::Game => "game encryption",
         EncryptionPart::KrHandshake => "KR handshake",
+        EncryptionPart::SharedLoginGame => "shared login and game encryption",
     }
 }
 
 /// Whether the opened executable encrypts.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum EncryptionStatus {
-    /// Classic: not located here.
+    /// No supported cipher in this client.
     NotApplicable,
     /// Some cipher's pattern did not match exactly once: these, in words.
     NotLocated(String),
@@ -54,11 +61,12 @@ pub struct EncryptionEdit {
     pub remove_login: bool,
     pub remove_game: bool,
     pub bypass_kr_handshake: bool,
+    pub remove_shared: bool,
 }
 
 impl EncryptionEdit {
     pub fn new(inspection: &ClientExeInspection) -> Self {
-        Self { sites: inspection.encryption.clone(), remove_login: false, remove_game: false, bypass_kr_handshake: false }
+        Self { sites: inspection.encryption.clone(), remove_login: false, remove_game: false, bypass_kr_handshake: false, remove_shared: false }
     }
 
     pub fn status(&self) -> EncryptionStatus {
@@ -98,6 +106,7 @@ impl EncryptionEdit {
             EncryptionPart::Login => &mut self.remove_login,
             EncryptionPart::Game => &mut self.remove_game,
             EncryptionPart::KrHandshake => &mut self.bypass_kr_handshake,
+            EncryptionPart::SharedLoginGame => &mut self.remove_shared,
         }
     }
 
@@ -109,6 +118,7 @@ impl EncryptionEdit {
             (EncryptionPart::Login, self.remove_login, ExeEdit::NoLoginEncryption),
             (EncryptionPart::Game, self.remove_game, ExeEdit::NoGameEncryption),
             (EncryptionPart::KrHandshake, self.bypass_kr_handshake, ExeEdit::BypassKrHandshake),
+            (EncryptionPart::SharedLoginGame, self.remove_shared, ExeEdit::NoEncryption),
         ] {
             if !selected {
                 continue;
