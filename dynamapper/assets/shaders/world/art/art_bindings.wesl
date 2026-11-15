@@ -117,4 +117,3 @@ const PASS_MODE_TRANSPARENT: u32 = 1u;
 const PASS_MODE_SHADOW: u32 = 2u;
 // The KR client's static shadow into the shadow buffer S, the main target's alpha (client_shadow.wesl).
 const PASS_MODE_CLIENT_SHADOW: u32 = 3u;
-const SURFACE_LIKE_DEPTH_CLASS_OFFSET: f32 = -4.0;

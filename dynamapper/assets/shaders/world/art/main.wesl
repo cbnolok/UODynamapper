@@ -28,7 +28,7 @@ import package::shaders::world::art::art_bindings::{
     item_surface_atlas, item_surface_lookup, item_surface_sampler,
     INV_SQRT_2, BILLBOARD_RIGHT_XZ, FLAT_QUAD_FORWARD_XZ, HEIGHT_SCALE, DEPTH_CLASS_REGULAR, DEPTH_CLASS_BACKGROUND,
     DEPTH_CLASS_FOLIAGE, DEPTH_CLASS_ROOF, DEPTH_CLASS_SURFACE_LIKE_FLOOR, PASS_MODE_OPAQUE,
-    PASS_MODE_TRANSPARENT, PASS_MODE_SHADOW, PASS_MODE_CLIENT_SHADOW, SURFACE_LIKE_DEPTH_CLASS_OFFSET
+    PASS_MODE_TRANSPARENT, PASS_MODE_SHADOW, PASS_MODE_CLIENT_SHADOW
 };
 import package::shaders::world::art::client_shadow::{client_shadow_casts, client_shadow_world_offset,
     client_shadow_logical_offset, client_shadow_priority_depth};
@@ -67,11 +67,12 @@ fn clip_depth_to_frag_depth(clip_position: vec4<f32>) -> f32 {
     return clamp(clip_position.z / clip_position.w, 0.0, 1.0);
 }
 
+// An upright SurfaceLikeFloor sprite (a table, counter, bed or display case, a mat or a decal drawn upright) takes no
+// offset: its bare-z priority already sorts it behind what stands on it, and it stays in front of the land and the
+// Background floor it stands on. The draw-order offset of the CPU sort (statics_collect.rs
+// SURFACE_LIKE_DEPTH_CLASS_OFFSET, -4 world y: 44 z) put that point under them here, which hid the sprite wherever
+// land or a floor lay less than 44 z below it.
 fn depth_class_logical_offset(depth_class: u32) -> f32 {
-    if (depth_class == DEPTH_CLASS_SURFACE_LIKE_FLOOR) {
-        return SURFACE_LIKE_DEPTH_CLASS_OFFSET;
-    }
-
     if (depth_class == DEPTH_CLASS_BACKGROUND) {
         return -0.001;
     }

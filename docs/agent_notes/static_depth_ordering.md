@@ -53,6 +53,30 @@ including its explicitly executed 72-case GPU regression. The original bridge re
 `docs/images/ec_reference/20261026_181634.png`; this comparison validates the
 occlusion correction, not complete lighting, framing or pixel parity.
 
+## Upright surface items under the land
+
+The rest of the Surface statics stay `SurfaceLikeFloor`: tables, counters,
+display cases, beds and benches (Surface with a height, `0x4240` for the table
+0x0B73), and the flat ones drawn upright (mats, blood, floor cracks, grass
+patches off a level cell). Their upright sprite took the class's
+`SURFACE_LIKE_DEPTH_CLASS_OFFSET`, -4 world y (44 z), on its priority point, which
+put that point 44 z under its own cell: behind the land and the Background
+floors around it. They vanished wherever land or a floor lay less than 44 z
+below them, in every style, art source and z-view rule: the Minoc log hall
+(map 1, 2467-2492,397-409, its 70 tables at z 15 on wooden land at z 15), the
+Britain shops' tables and display cases, of which only the parts reaching above
+the floor's diamond were left. Of the ~59k Surface statics of that class on
+maps 0-5 (tiledata flags), ~56k stand less than 44 z above their land, ~41k of
+them with a height (339 ids).
+
+`art/main.wesl` `depth_class_logical_offset` now gives that class no offset: its
+bare-z priority already sorts it behind what stands on it (z plus height, or 10
+for a flat Regular item), and in front of the Background floor (-0.001) and the
+land under it. The KR client shadows take the same point, so the tables' shadows
+come back with them. The CPU key `static_depth_key` keeps -4: it orders the
+draws (flat items first) and finds equal keys, and never reaches the depth.
+Flat quads and ground statics write their plane depth and are unchanged.
+
 ## Perspective tie bias
 
 The later perspective-only stair blocks over the wooden deck at `(2834,987)`

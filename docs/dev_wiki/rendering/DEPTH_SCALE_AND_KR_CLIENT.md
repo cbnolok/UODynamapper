@@ -40,7 +40,9 @@ depth = static_priority_depth(position_world_to_clip(P), clip_from_view, sort_bi
   - Background: -0.001;
   - Roof: +0.002;
   - Foliage: +2.0 (22 z);
-  - SurfaceLikeFloor: -4.0 (-44 z).
+  - SurfaceLikeFloor: none. Its bare-z priority already puts it behind what stands on it. The CPU sort keeps -4.0
+    (-44 z) for the draw order only: on the priority point it sank every upright table, counter, bed and display case
+    under the land or floor it stood on ([static depth ordering](../../agent_notes/static_depth_ordering.md#upright-surface-items-under-the-land)).
 - **`static_priority_depth`** subtracts the tie-break ordinal. In orthographic it subtracts 1e-6 NDC per ordinal. In perspective it moves the point 0.002 view units per ordinal (see [static depth ordering](../../agent_notes/static_depth_ordering.md#perspective-tie-bias)).
 - **The ordinal** comes from `assign_sprite_depth_tie_breakers`. It numbers sprites whose CPU key `static_depth_key_with_tie_break` is equal.
   - That key, (x + y) + 0.01 (127 + priority z) + class offset, only finds equal keys and orders picking.

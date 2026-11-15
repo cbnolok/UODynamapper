@@ -320,6 +320,8 @@ const TILE_FLAG_WET: u64 = 0x80;
 const STATIC_HUE_FLAG_APPLY: u32 = 1;
 const STATIC_HUE_FLAG_EC_SPRITE: u32 = 2;
 const DEFAULT_PRIORITY_HEIGHT: i8 = 10;
+/// The draw order only (`static_depth_key`): an upright SurfaceLikeFloor sprite's depth takes no offset (art/main.wesl
+/// `depth_class_logical_offset`), as one 44 z down hid the tables and counters under the land and floors they stand on.
 const SURFACE_LIKE_DEPTH_CLASS_OFFSET: f32 = -4.0;
 const STATIC_DEPTH_TIE_BREAK_STEP: f32 = 0.000_001;
 
