@@ -28,7 +28,9 @@ import package::shaders::world::land::land_bindings::{
   ATLAS, scene, effects, global_light, land_light,
   TERRAIN_SHADING_CLIENT_PER_VERTEX
 };
-import package::shaders::world::land::atlas::{atlas_read_meta, atlas_read_height, atlas_read_z, chunk_edge_blend_factor};
+import package::shaders::world::land::atlas::{atlas_read_meta, atlas_read_height, atlas_read_z, atlas_read_terrain_flags,
+  chunk_edge_blend_factor};
+import package::shaders::world::art::depth::cave_lifted_clip;
 import package::shaders::world::land::noise::{hash, fbm_billow, domain_warp};
 import package::shaders::world::land::normals::{get_geometric_normal_local, get_bicubic_normal, get_bent_normal, client_vertex_terrain_shade};
 import package::shaders::world::land::bump::{land_derived_bump_tilt, land_bump_light_ratio};
@@ -81,6 +83,8 @@ import package::shaders::world::land::transitions::{
 // ============================================================================
 
 const TERRAIN_FLAG_REVIEWED_LIQUID: u32 = 0x4u;
+// The land of the player's cave's mouth (tile_atlas.rs TERRAIN_SHADER_FLAG_PLAYER_CAVE): drawn whole, not darkened.
+const TERRAIN_FLAG_PLAYER_CAVE: u32 = 0x1u;
 const EC_TERRAIN_TRANSITION_BASE_WEIGHT: f32 = 0.35;
 
 fn land_cell_is_flat(world_tile: vec2<i32>, tile_height: f32) -> bool {
@@ -399,6 +403,13 @@ fn vertex(in: Vertex, @builtin(vertex_index) vertex_index: u32) -> VertexOutput 
   let local_world_pos = world_from_local * vec4<f32>(flat_local_pos, 0.0);
   out.position = camera_relative_world_to_clip(world_from_local[3].xyz,
       local_world_pos.xyz + vec3<f32>(bank_vertex.x * relax_corner, bank_vertex.y, bank_vertex.z * relax_corner));
+  // A corner of the player's cave's mouth land is lifted toward the camera with the cave's statics (art/depth.wesl
+  // cave_lifted_depth), so the rock over the opening covers the cave floor behind it as it does without the cut.
+  let corner_flags = atlas_read_terrain_flags(wx, wz) | atlas_read_terrain_flags(wx - 1, wz)
+    | atlas_read_terrain_flags(wx, wz - 1) | atlas_read_terrain_flags(wx - 1, wz - 1);
+  if ((corner_flags & TERRAIN_FLAG_PLAYER_CAVE) != 0u) {
+    out.position = cave_lifted_clip(out.position);
+  }
   // Terrain albedo uses world coordinates; use the otherwise unused UV varying
   // for the original vertex-generated liquid reflection coordinates.
   out.uv = ec_liquid_camera_reflection_uv(final_world_pos.xyz, scene.ec_reflection_camera_distance);
@@ -931,8 +942,10 @@ fn fragment(in: VertexOutput) -> @location(0) vec4<f32> {
   if (tile.texture_size == LAND_SOURCE_NODRAW) {
     discard;
   }
-  // Land over the player in a cave, with the z-view limit on (z_view.rs), is not drawn either.
-  if (f32(atlas_read_z(cell.x, cell.y)) > scene.land_max_z) {
+  // Land over the player in a cave, with the z-view limit on (z_view.rs), is not drawn either, but for the land of
+  // the player's cave's mouth (caves.rs PlayerCave::owns_land).
+  let cave_mouth = (tile.terrain_flags & TERRAIN_FLAG_PLAYER_CAVE) != 0u;
+  if (!cave_mouth && f32(atlas_read_z(cell.x, cell.y)) > scene.land_max_z) {
     discard;
   }
   var hdr_rgb: vec3<f32>;
@@ -964,7 +977,8 @@ fn fragment(in: VertexOutput) -> @location(0) vec4<f32> {
       }
     }
   }
-  // Outside the player's cave, which all land is, darkened (caves.rs CaveSurroundings::Dimmed).
+  // Outside the player's cave, which all land is but its mouth's, darkened (caves.rs CaveSurroundings::Dimmed).
   let finished = finish_land(apply_global_lighting_rgb(hdr_rgb, scene.global_lighting));
-  return vec4<f32>(finished.rgb * (1.0 - scene.land_outside_dimming), finished.a);
+  let dimming = select(scene.land_outside_dimming, 0.0, cave_mouth);
+  return vec4<f32>(finished.rgb * (1.0 - dimming), finished.a);
 }

@@ -250,7 +250,8 @@ settings = { world_rendering = { show_only_player_floor = true } }
 [[fixture]]
 name = "minoc-mine-inside-zview-cave"
 guards = """Deeper inside the Minoc mine with the player's-floor view: the cave floor and walls drawn over the map, \
-its lights covered as the cave's own items (08348a65, zview-kr2)."""
+its lights covered as the cave's own items (08348a65, zview-kr2). Since 0e0839cd the player's cave replaces it: the \
+upper tunnel to the east goes."""
 tier = "full"
 tags = ["caves", "z-view", "minoc"]
 map = 1
@@ -258,6 +259,91 @@ x = 2578
 y = 476
 z = 0
 settings = { world_rendering = { show_only_player_floor = true } }
+
+[[fixture]]
+name = "minoc-mine-mouth-player-cave-dimmed"
+guards = """Just inside the Minoc mine's mouth with the player's-floor view: the player's cave whole, its floor and \
+rock walls, not the hill's boulders and trees over it nor the tunnel above (0e0839cd); its mouth's land whole, \
+undimmed and over the cave floor behind it: the rock jambs and the black opening between them, no lone strip of rock \
+in a cut-out hole; outside it the land and objects darkened under the z+16 cut."""
+tier = "quick"
+tags = ["caves", "player-cave", "z-view", "minoc"]
+map = 1
+x = 2557
+y = 499
+z = 0
+times = ["afternoon", "night"]
+settings = { world_rendering = { show_only_player_floor = true, cave_surroundings = "dimmed" } }
+
+[fixture.reference]
+path = "/home/claudio/Immagini/Schermate/uokr/Schermata_20261114_072948.png"
+note = "KR client in the Minoc mine by its mouth: the cave and its arch on black, the hill's boulders and trees too"
+
+[[fixture]]
+name = "minoc-mine-mouth-player-cave-black"
+guards = """The same view with nothing drawn outside the player's cave, as the KR client does (0e0839cd): no stray \
+rocks, logs or shore water lifted as its walls; the mouth's land, the rock around the black opening, kept."""
+tier = "full"
+tags = ["caves", "player-cave", "z-view", "minoc"]
+map = 1
+x = 2557
+y = 499
+z = 0
+times = ["afternoon", "night"]
+settings = { world_rendering = { show_only_player_floor = true, cave_surroundings = "black" } }
+
+[fixture.reference]
+path = "/home/claudio/Immagini/Schermate/uokr/Schermata_20261114_072948.png"
+note = "KR client in the Minoc mine by its mouth: the cave and its arch on black, the hill's boulders and trees too"
+
+[[fixture]]
+name = "minoc-north-cave-mouth-player-cave"
+guards = """Another cave's mouth, north of Minoc, with the player's-floor view: the cave's walls drawn, the hill over it \
+not (0e0839cd); its mouth's land, the black opening and the rock over it, drawn whole."""
+tier = "full"
+tags = ["caves", "player-cave", "z-view", "minoc"]
+map = 1
+x = 2423
+y = 172
+z = 0
+settings = { world_rendering = { show_only_player_floor = true, cave_surroundings = "dimmed" } }
+
+[[fixture]]
+name = "britain-north-cave-arch-player-cave"
+guards = """A cave north of Britain whose mouth has the cave entrance art, the mossy rock arch, with the player's-floor \
+view: the arch's pieces standing in the opening drawn as the cave's, in front of the black opening and the mouth's \
+land, not darkened."""
+tier = "full"
+tags = ["caves", "player-cave", "z-view"]
+map = 1
+x = 1259
+y = 1248
+z = 0
+settings = { world_rendering = { show_only_player_floor = true, cave_surroundings = "dimmed" } }
+
+[[fixture]]
+name = "yew-crypt-player-cave-dimmed"
+guards = """In a crypt's corridor at z-20 with the player's-floor view: the player's cave is the corridor, its walls \
+and what lies in it; the forest and the ruins above, and the stairs room of the level below, are not drawn \
+(0e0839cd)."""
+tier = "full"
+tags = ["caves", "player-cave", "z-view"]
+map = 1
+x = 1008
+y = 805
+z = -20
+settings = { world_rendering = { show_only_player_floor = true, cave_surroundings = "dimmed" } }
+
+[[fixture]]
+name = "yew-crypt-player-cave-black"
+guards = """The crypt's corridor with nothing drawn outside the player's cave (0e0839cd)."""
+tier = "full"
+tags = ["caves", "player-cave", "z-view"]
+map = 1
+x = 1008
+y = 805
+z = -20
+settings = { world_rendering = { show_only_player_floor = true, cave_surroundings = "black" } }
 
 [[fixture]]
 name = "minoc-hall-tables-zview"

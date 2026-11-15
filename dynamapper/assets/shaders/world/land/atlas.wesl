@@ -7,7 +7,7 @@
 //
 // G channel high-byte bit layout (set by Rg16u::pack on the Rust side):
 //   bits 0-3: tex_size / source mode (0=cc-small, 1=cc-big, 2=ec-atlas, 3=missing, 4=cc-atlas)
-//   bits 4-6: reviewed EC terrain flags
+//   bits 4-6: reviewed EC terrain flags, and the player's cave's mouth (bit 4, a cell's flag)
 //   bit  7:   is_wet flag (tile has IsWet in tiledata.mul)
 // ============================================================================
 
@@ -78,7 +78,7 @@ fn atlas_read_meta(world_x: i32, world_z: i32) -> TileUniform {
   // G channel high byte: terrain texture source/mode, reviewed EC flags, and water flag.
   // Bits 0-3: tex_size / source mode (0=cc-small, 1=cc-big, 2=ec-atlas, 3=missing, 4=cc-atlas,
   //           5=classic land art, 6=not drawn; tile_atlas.rs LAND_SOURCE_*).
-  // Bits 4-6: reviewed EC terrain flags (bits 0-1 unused, bit 2=liquid).
+  // Bits 4-6: reviewed EC terrain flags (bit 0=the player's cave's mouth, a cell's flag; bit 1 unused; bit 2=liquid).
   // Bit 7:    is_wet flag (tile has IsWet in tiledata.mul).
   let g_high  = (g >> 8u) & 0xFFu;
   let tex_size = g_high & 0x0Fu;          // lower nibble = source mode
@@ -134,6 +134,17 @@ fn atlas_read_z(world_x: i32, world_z: i32) -> i32 {
   }
   let packed = textureLoad(tile_meta_atlas, vec2<i32>(texel.xy), i32(texel.z), 0);
   return i32(packed.y & TILE_HEIGHT_BYTE_MASK) - TILE_HEIGHT_BIAS;
+}
+
+// The reviewed EC terrain flags of a tile (bits 4-6 of the G high byte), 0 outside the paged region, without the
+// texture lookups atlas_read_meta also does.
+fn atlas_read_terrain_flags(world_x: i32, world_z: i32) -> u32 {
+  let texel = atlas_tile_texel(world_x, world_z);
+  if (texel.z >= ATLAS.max_layers) {
+    return 0u;
+  }
+  let packed = textureLoad(tile_meta_atlas, vec2<i32>(texel.xy), i32(texel.z), 0);
+  return (packed.y >> 12u) & 0x7u;
 }
 
 // Near the chunk edge, blend normals toward the original to hide seams.

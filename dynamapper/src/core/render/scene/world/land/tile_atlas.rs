@@ -15,10 +15,13 @@ pub struct Rg16u {
     pub g: u16,
 }
 
-// Bits 0 and 1 are unused. The old repo `policy "smooth"` (bit 0) had no client basis and no shader
+// Bit 1 is unused. The old repo `policy "smooth"` (bit 0) had no client basis and no shader
 // reader; edge softness comes from the TerrainDefinition `coverage_exponent` (coverage params,
 // land/coverage.wesl). The old repo `policy "follow-center"` (bit 1) had no client basis either;
 // water scrolls by the material's tweaks (UOWaterTerrainLayer::Draw, ec_liquid.wesl).
+/// A cell's flag, not a land tile's: the land of the player's cave's mouth (caves.rs `PlayerCave::owns_land`), drawn
+/// over the z-view's land cut and not darkened as outside the cave.
+pub const TERRAIN_SHADER_FLAG_PLAYER_CAVE: u16 = 1 << 0;
 /// EC liquid terrain: the TerrainDefinition material is the water layer class (`UOWaterTerrainLayer`). The
 /// EC wetness flag; the `is_wet` bit carries the classic IsWet tiledata flag in classic mode only.
 pub const TERRAIN_SHADER_FLAG_REVIEWED_LIQUID: u16 = 1 << 2;
@@ -49,7 +52,7 @@ impl Rg16u {
     /// G channel high-byte layout (mirrored in atlas.wesl):
     ///   bits 0-3: `tex_size_bits` (texture source mode, `LAND_SOURCE_*`: 0=cc-small, 1=cc-big, 2=ec-atlas,
     ///             3=missing, 4=cc-atlas, 5=classic land art)
-    ///   bits 4-6: `land_flags` (EC reviewed land policy/liquid hints)
+    ///   bits 4-6: `land_flags` (EC reviewed land policy/liquid hints, and the player's cave's mouth)
     ///   bit  7:   `is_wet` (classic mode: the IsWet tiledata flag → animated water effect)
     ///
     /// This packing must be manually unrolled in the WGSL shader logic.

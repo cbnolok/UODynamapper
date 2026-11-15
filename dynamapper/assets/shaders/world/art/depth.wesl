@@ -82,13 +82,36 @@ fn cave_lifted_depth(depth: f32, is_wet_flags: u32) -> f32 {
     }
     let projection = view.clip_from_view;
     let view_z = (projection[3].z - depth * projection[3].w) / (depth * projection[2].w - projection[2].z);
-    let lift = CAVE_LIFT_WORLD_HEIGHT / max(abs(view.world_from_view[2].y), CAVE_LIFT_MIN_VIEW_RISE);
-    let lifted_z = view_z + lift;
+    let lifted_z = view_z + cave_lift();
     let clip_w = projection[2].w * lifted_z + projection[3].w;
     if (clip_w <= 0.0) {
         return 1.0;
     }
     return clamp((projection[2].z * lifted_z + projection[3].z) / clip_w, 0.0, 1.0);
+}
+
+// How far toward the camera a cave's fragments move, in view-space z (cave_lifted_depth).
+fn cave_lift() -> f32 {
+    return CAVE_LIFT_WORLD_HEIGHT / max(abs(view.world_from_view[2].y), CAVE_LIFT_MIN_VIEW_RISE);
+}
+
+// The clip position `clip` of a vertex of the player's cave's land (land/main.wesl, caves.rs PlayerCave::owns_land)
+// moved toward the camera as cave_lifted_depth moves a cave static's depth: the same screen position, the depth
+// lifted by cave_lift, so the cave's land and statics keep their order. A vertex the lift would bring past the near
+// plane stays on it.
+fn cave_lifted_clip(clip: vec4<f32>) -> vec4<f32> {
+    let projection = view.clip_from_view;
+    // An orthographic projection has no w term (projection[2].w is 0): view z from clip z then.
+    let perspective = projection[2].w != 0.0;
+    let view_z = select((clip.z - projection[3].z) / projection[2].z, (clip.w - projection[3].w) / projection[2].w,
+        perspective);
+    let lifted_z = view_z + cave_lift();
+    let lifted_w = projection[2].w * lifted_z + projection[3].w;
+    if (lifted_w <= 0.0) {
+        return vec4<f32>(clip.xy / clip.w, 1.0, 1.0);
+    }
+    let lifted_depth = clamp((projection[2].z * lifted_z + projection[3].z) / lifted_w, 0.0, 1.0);
+    return vec4<f32>(clip.xy / clip.w * lifted_w, lifted_depth * lifted_w, lifted_w);
 }
 
 // SpriteInstance and GroundTileInstance is_wet_flags bit: the static is outside the player's cave, drawn darkened

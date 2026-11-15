@@ -37,7 +37,12 @@
 //! - the cave is drawn in front of what is outside it (`CaveStatic::Lifted`), and outside it, as
 //!   `world_rendering.cave_surroundings` says (`CaveSurroundings`), the land and the statics not buried are drawn under
 //!   ClassicUO's cut and darkened, or nothing is, as the KR client shows a cave; buried statics outside it are not drawn;
-//! - a light shows when its static is drawn, darkened with it outside the cave (`CavesRes::light_view`).
+//! - a light shows when its static is drawn, darkened with it outside the cave (`CavesRes::light_view`);
+//! - the cave's mouth is its own: where its floor walks out onto the land of a cell next to it, at most `WALK_STEP_Z`
+//!   from the floor (an exit), the land rising from there over the floor is the rock framing the opening, drawn whole,
+//!   in front of the cave's floor behind it and not darkened (`PlayerCave::owns_land`: the land quads with a corner on
+//!   a buried cell of the cave or of the ring around it next to an exit), and what stands on an exit at the cave's
+//!   level, the cave entrance art of the KR client's arches, is the cave's (`CaveStatic::Lifted`).
 
 use crate::configs::settings::Settings;
 use crate::console_logger::{self, LogAbout, LogSev};
@@ -418,6 +423,10 @@ pub struct PlayerCave {
     /// How many cells are the cave's.
     inside_cells: usize,
     surroundings: CaveSurroundings,
+    /// The cells next to the cave whose land its floor walks out onto (`exits`).
+    exits: HashSet<(i32, i32)>,
+    /// The cells whose land is the cave's mouth (`owns_land`).
+    mouth_land: HashSet<(i32, i32)>,
 }
 
 impl PlayerCave {
@@ -463,7 +472,37 @@ impl PlayerCave {
             let tops = buried_tops(cells, x, y).filter(|&top| !own(top)).map(to_i16).collect::<Box<[i16]>>();
             (!tops.is_empty()).then_some(((x, y), tops))
         }).collect();
-        Self { floor_z, cells: found, other_floors, inside_cells: inside.len(), surroundings }
+        let exits = Self::exits(&found);
+        let mouth_land = Self::mouth_land(&found, &exits);
+        Self { floor_z, cells: found, other_floors, inside_cells: inside.len(), surroundings, exits, mouth_land }
+    }
+
+    /// The exits of the cave among `cells`: the cells next to it whose land is at most `WALK_STEP_Z` from the floors
+    /// next to them, the land its floor walks out onto at a mouth.
+    fn exits(cells: &HashMap<(i32, i32), PlayerCaveCell>) -> HashSet<(i32, i32)> {
+        cells.iter().filter(|(_, cell)| {
+            let (low, high, land_z) = (i32::from(cell.low), i32::from(cell.high), i32::from(cell.land_z));
+            cell.distance == 1 && low - WALK_STEP_Z <= land_z && land_z <= high + WALK_STEP_Z
+        }).map(|(&cell, _)| cell).collect()
+    }
+
+    /// The land of the cave's mouth (module docs) among `cells`: the cells whose land quad (its corners the cell and
+    /// its neighbours at +x, +y and both) has a corner on a rim, a buried cell of the cave or next to it beside one of
+    /// the `exits`.
+    fn mouth_land(cells: &HashMap<(i32, i32), PlayerCaveCell>, exits: &HashSet<(i32, i32)>) -> HashSet<(i32, i32)> {
+        let mut mouth = HashSet::new();
+        for (&(x, y), cell) in cells {
+            let buried = i32::from(cell.land_z) - i32::from(cell.high) >= CAVE_MIN_BURY_DEPTH;
+            if cell.distance > 1 || !buried || !NEIGHBOURS.iter().any(|&(dx, dy)| exits.contains(&(x + dx, y + dy))) {
+                continue;
+            }
+            for quad in [(x, y), (x - 1, y), (x, y - 1), (x - 1, y - 1)] {
+                if cells.contains_key(&quad) {
+                    mouth.insert(quad);
+                }
+            }
+        }
+        mouth
     }
 
     pub fn floor_z(&self) -> i32 {
@@ -477,6 +516,17 @@ impl PlayerCave {
 
     pub fn surroundings(&self) -> CaveSurroundings {
         self.surroundings
+    }
+
+    /// Whether the land of the cell (`x`, `y`) is the cave's mouth (module docs): drawn whole, over the z-view's cut
+    /// and in the black surroundings, and not darkened.
+    pub fn owns_land(&self, x: i32, y: i32) -> bool {
+        self.mouth_land.contains(&(x, y))
+    }
+
+    /// Whether the cave has a mouth whose land it draws (`owns_land`).
+    pub fn has_mouth_land(&self) -> bool {
+        !self.mouth_land.is_empty()
     }
 
     /// What the cave does to a static at `z` with tile flags `flags` and height `height` on the cell (`x`, `y`),
@@ -498,6 +548,12 @@ impl PlayerCave {
         if distance == 0 {
             return if low - CAVE_LEVEL_HEIGHT <= z && z < high + CAVE_LEVEL_HEIGHT { CaveStatic::Lifted } else { CaveStatic::Hidden };
         }
+        // On an exit, what stands at the cave's level, not water, frames its mouth with the land (`owns_land`): the
+        // cave entrance art standing in the opening.
+        let rock = flags & TaeFlag::Wet.bits() == 0;
+        if rock && self.exits.contains(&(x, y)) && low - CAVE_LEVEL_HEIGHT <= z && z < high + CAVE_LEVEL_HEIGHT {
+            return CaveStatic::Lifted;
+        }
         // Around the cave: a buried floor is another tunnel's, and what stands on one under the cave's floor, or next to
         // one, a level up from it at most: the walls and the bones of a tunnel below.
         if surface_top(flags, height, z as i8).is_some_and(|top| land_z - top >= CAVE_MIN_BURY_DEPTH) {
@@ -511,7 +567,6 @@ impl PlayerCave {
         let wall_bottom = low - CAVE_WALL_DROP_PER_CELL * (distance + CAVE_WALL_DROP_SLACK_CELLS);
         // Buried, as the rock walls are: the rocks and logs lying on the land outside, a little under it, are not lifted,
         // nor the water under a shore's lip: rock is never wet.
-        let rock = flags & TaeFlag::Wet.bits() == 0;
         if rock && buried(land_z) && z < high + CAVE_LEVEL_HEIGHT && z >= wall_bottom {
             CaveStatic::Lifted
         } else if buried(land_z) {
@@ -813,8 +868,11 @@ type PlayerCaveInputs = (u32, u16, u16, i8, CaveSurroundings);
 
 /// Finds the player's cave when the player moves, with "Show Only the Player's Floor" on (module docs), and bumps
 /// `CavesRes::revision` when it changes. A cave found the same as the last one keeps it: the statics and lights
-/// built from it are not rebuilt while the player walks in it.
+/// built from it are not rebuilt while the player walks in it. The land is packed again when the new cave or the last
+/// one has a mouth whose land it draws (`PlayerCave::owns_land`).
 pub fn sys_update_player_cave(
+    mut commands: Commands,
+    chunks: Query<Entity, With<LCMesh>>,
     settings: Res<Settings>,
     scene_state: Res<SceneStateData>,
     player_q: Query<&Player>,
@@ -871,6 +929,12 @@ pub fn sys_update_player_cave(
     *last_inputs = inputs;
     if caves.player.as_deref() == next.as_ref() {
         return;
+    }
+    let mouth_land = |cave: Option<&PlayerCave>| cave.is_some_and(PlayerCave::has_mouth_land);
+    if mouth_land(caves.player()) || mouth_land(next.as_ref()) {
+        for entity in &chunks {
+            commands.entity(entity).insert(PendingTextureBake);
+        }
     }
     caves.player = next.map(Arc::new);
     caves.revision += 1;
@@ -1252,6 +1316,39 @@ mod tests {
         assert_eq!(cave.static_view(3, 1, 0, wall, 20, || unreachable!()), CaveStatic::Lifted);
         assert_eq!(cave.static_view(3, 1, ROCK as i8, wall, 20, || unreachable!()), CaveStatic::Hidden);
         assert_eq!(cave.static_view(40, 1, 0, wall, 20, || Some(0)), CaveStatic::Hidden);
+    }
+
+    /// Where the cave's floor walks out onto land at its level, the land rising from there over the floor is its
+    /// mouth's, drawn whole: the face over the opening, the rock one cell into the hill over it and the jambs beside
+    /// it; and what stands at the cave's level on that land is the cave's. A tunnel whose ground outside is a hill
+    /// slope over its level has no mouth.
+    #[test]
+    fn the_players_cave_owns_its_mouth() {
+        // A tunnel under rock over 0..3 by 0..3, opening east onto land at its floor's level over x = 3..6.
+        let open = |cells: Cells| (0..3).fold(cells, |cells, y| (3..6).fold(cells, |cells, x| cells.with(x, y, 0, &[])));
+        let cells = open(Cells::default().tunnel(0, 0, 3, 3, 0));
+        let cave = player_cave(&cells, 1, 1, 0, CaveSurroundings::Black).unwrap();
+        let mouth = (-4..8).flat_map(|y| (-4..8).map(move |x| (x, y))).filter(|&(x, y)| cave.owns_land(x, y))
+            .collect::<HashSet<_>>();
+        // The rims, buried corners next to the exits (3, 0..3): the cave's cells (2, 0..3) and the rock (2..4, -1) and
+        // (2..4, 3) beside the opening. Their quads start a cell back and up from them: all of 1..4 by -2..4 but the
+        // exits' own quads (3, 0) and (3, 1), level on the open land.
+        let expected = (-2..4).flat_map(|y| (1..4).map(move |x| (x, y)))
+            .filter(|&cell| cell != (3, 0) && cell != (3, 1)).collect::<HashSet<_>>();
+        assert_eq!(mouth, expected);
+        assert!(cave.has_mouth_land());
+        // On an exit, a rock at the cave's level is the cave's; one a level over it, or water, is not.
+        let wall = TaeFlag::Wall.bits();
+        assert_eq!(cave.static_view(3, 1, 0, wall, 20, || unreachable!()), CaveStatic::Lifted);
+        assert_eq!(cave.static_view(3, 1, CAVE_LEVEL_HEIGHT as i8, wall, 20, || unreachable!()), CaveStatic::Hidden);
+        assert_eq!(cave.static_view(3, 1, 0, TaeFlag::Wet.bits(), 0, || unreachable!()), CaveStatic::Hidden);
+        // Two cells out, on the open land: outside.
+        assert_eq!(cave.static_view(4, 1, 0, wall, 20, || unreachable!()), CaveStatic::Hidden);
+        // Opening onto a slope a level over the floor: no exit, no mouth.
+        let slope = (0..3).fold(Cells::default().tunnel(0, 0, 3, 3, 0), |cells, y| cells.with(3, y, CAVE_MIN_BURY_DEPTH - 1, &[]));
+        let cave = player_cave(&slope, 1, 1, 0, CaveSurroundings::Black).unwrap();
+        assert!(!cave.has_mouth_land());
+        assert_eq!(cave.static_view(3, 1, 0, wall, 20, || unreachable!()), CaveStatic::Hidden);
     }
 
     /// A light shows with its static: in the cave covered up to its level whatever the view's limit, outside it

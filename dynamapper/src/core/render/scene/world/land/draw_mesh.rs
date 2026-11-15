@@ -199,7 +199,7 @@ fn mesh_for_scale(handles: &LandMeshHandles, scale: u32, lod: LandMeshLod) -> Ha
 }
 
 use crate::core::render::scene::world::land::tile_atlas::{
-    Rg16u, TileAtlas, TERRAIN_SHADER_FLAG_REVIEWED_LIQUID,
+    Rg16u, TileAtlas, TERRAIN_SHADER_FLAG_PLAYER_CAVE, TERRAIN_SHADER_FLAG_REVIEWED_LIQUID,
 };
 
 #[derive(Component)]
@@ -921,6 +921,7 @@ pub fn sys_draw_spawned_land_chunks(
     // Process blocks in parallel using Bevy's ComputeTaskPool
     let pool: &bevy::tasks::ComputeTaskPool = bevy::tasks::ComputeTaskPool::get();
     let caves = frame_pacing.caves.active();
+    let player_cave = frame_pacing.caves.player();
     let thread_results: Vec<SuperChunkResult> = {
         let _span = crate::tracy_span!("worldmap::chunk_draw_build_chunk_payloads");
         pool.scope(|s| {
@@ -1003,10 +1004,14 @@ pub fn sys_draw_spawned_land_chunks(
                                 // Look up whether this land tile has the IsWet flag.
                                 let is_wet =
                                     wet_slice.get(row as usize).copied().unwrap_or(0) != 0;
-                                let land_flags = land_flags_slice
+                                let mut land_flags = land_flags_slice
                                     .get(row as usize)
                                     .copied()
                                     .unwrap_or(0);
+                                // The land of the player's cave's mouth is drawn whole and not darkened.
+                                if player_cave.is_some_and(|cave| cave.owns_land(x as i32, y as i32)) {
+                                    land_flags |= TERRAIN_SHADER_FLAG_PLAYER_CAVE;
+                                }
                                 // The land over a cave drawn over the map opens down to the cave floor.
                                 let z = caves.and_then(|caves| caves.floor_z(x, y)).unwrap_or(cell.z);
                                 texels_local[texel_count] = Rg16u::pack(
