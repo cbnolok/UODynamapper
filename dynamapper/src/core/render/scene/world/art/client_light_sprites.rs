@@ -754,11 +754,12 @@ pub fn sys_collect_client_light_sprites(
                 &tilemeta.0,
                 &multi_parts,
                 light_cover,
-                land_z,
+                &land_z,
                 key.tile_x,
                 key.tile_y,
                 key.z,
                 light_max_z,
+                z_cut.roof_layer,
             ) {
                 continue;
             }
@@ -768,10 +769,12 @@ pub fn sys_collect_client_light_sprites(
                         &mut statics_store,
                         &tilemeta.0,
                         &multi_parts,
+                        &land_z,
                         key.tile_x,
                         key.tile_y,
                         key.z,
                         light_max_z,
+                        z_cut.roof_layer,
                     )
                 })
                 .flatten();

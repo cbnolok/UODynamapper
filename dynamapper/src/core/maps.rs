@@ -277,6 +277,18 @@ pub fn load_blocks_from_package(
 /// The side of a package chunk in cells; a chunk holds `PACKAGE_CHUNK_BLOCK_DIM` x `PACKAGE_CHUNK_BLOCK_DIM` blocks.
 pub const PACKAGE_CHUNK_CELL_DIM: u32 = PACKAGE_CHUNK_TILE_DIM as u32;
 
+/// The package chunk of the cell (`x`, `y`) on a map `width` x `height` cells, and the cell's index in it (row by row,
+/// as `read_package_chunk_land_z` gives them); `None` off the map.
+pub fn package_chunk_cell(width: u32, height: u32, x: i32, y: i32) -> Option<(u32, usize)> {
+    let (x, y) = (u32::try_from(x).ok()?, u32::try_from(y).ok()?);
+    if x >= width || y >= height {
+        return None;
+    }
+    let chunk_columns = height.div_ceil(PACKAGE_CHUNK_CELL_DIM);
+    let chunk = (x / PACKAGE_CHUNK_CELL_DIM) * chunk_columns + y / PACKAGE_CHUNK_CELL_DIM;
+    Some((chunk, ((y % PACKAGE_CHUNK_CELL_DIM) * PACKAGE_CHUNK_CELL_DIM + x % PACKAGE_CHUNK_CELL_DIM) as usize))
+}
+
 /// The land z of every cell of the package chunk `chunk_index` (chunks run down each column of chunks first), row by
 /// row: `PACKAGE_CHUNK_CELL_DIM` x `PACKAGE_CHUNK_CELL_DIM` values.
 pub fn read_package_chunk_land_z(package: &UddpReader, chunk_index: u32) -> eyre::Result<Vec<i8>> {

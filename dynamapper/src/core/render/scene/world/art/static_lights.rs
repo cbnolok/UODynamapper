@@ -415,11 +415,12 @@ pub fn sys_collect_visible_static_lights(
                             &tilemeta.0,
                             &multi_parts,
                             light_cover,
-                            land_z,
+                            &land_z,
                             tile_x,
                             tile_y,
                             tile.z,
                             max_z,
+                            z_view.0.roof_layer,
                         )
                     {
                         continue;
@@ -430,10 +431,12 @@ pub fn sys_collect_visible_static_lights(
                                 &mut statics_store,
                                 &tilemeta.0,
                                 &multi_parts,
+                                &land_z,
                                 tile_x,
                                 tile_y,
                                 tile.z,
                                 max_z,
+                                z_view.0.roof_layer,
                             )
                         })
                         .flatten();

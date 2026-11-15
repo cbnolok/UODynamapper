@@ -32,7 +32,8 @@
 //! cut (KR-like's and UOD-Painterly's `player_floor_rule = "kr"`: the layers above the player's, 0x0043c9f0) the limit is the bottom of the
 //! layer above the player's, every layer counted from the player's cell (`z_view::kr_layer_cut_z`), so a light in a
 //! hidden layer goes and an object counts only in the layers drawn: the light cover follows what is drawn, one limit
-//! for the light and its cover cell wherever the land under them differs.
+//! for the light and its cover cell wherever the land under them differs. A roof there is drawn by its layer over its
+//! own cell's land (`ZViewCut::roof_layer`), and covers while it is (`drawn_cell_statics`).
 //!
 //! A cell's objects are its statics, each as itself whatever its graphic (map statics are never multis:
 //! `core::multis`), and the parts the renderer draws there of the multis placed around it (`MultiCoverParts`).
@@ -40,7 +41,7 @@
 use crate::core::multis::{expanded_multi_part_z, MultiDefinitionsRes, MultiPart, PlacedMultisRes};
 use crate::core::render::scene::world::land::mesh_material::LightCover;
 use crate::core::render::scene::world::land::MAP_STORAGE_BLOCK_TILE_DIM;
-use crate::core::render::scene::world::z_view::{average_land_z, MULTI_PART_MAX_REACH};
+use crate::core::render::scene::world::z_view::{average_land_z, kr_roof_is_hidden, MULTI_PART_MAX_REACH};
 use crate::core::statics::LazyStaticsStore;
 use std::collections::HashMap;
 use std::ops::Range;
@@ -281,7 +282,8 @@ fn multi_parts_on_cells(
 /// land z of a cell, which the clients' bands start from: the Enhanced client's the light cell's own, the KR client's
 /// each cell's average (`kr_cell_land_z`). While the light cell's is not known (its map block is not loaded) the
 /// light's own z stands in for it, and while the cover cell's is not known, the light cell's. A cell the store cannot
-/// read covers nothing.
+/// read covers nothing. Only the statics drawn cover (`drawn_cell_statics`): under KR's cut, `roof_layer`, its roofs
+/// by their own cell's layer.
 pub fn static_light_is_hidden(
     statics_store: &mut LazyStaticsStore,
     tilemeta: &TileMetaPackage,
@@ -292,46 +294,85 @@ pub fn static_light_is_hidden(
     tile_y: u32,
     light_z: i8,
     max_z: i32,
+    roof_layer: Option<i32>,
 ) -> bool {
+    if i32::from(light_z) >= max_z {
+        return true;
+    }
     let (cover_x, cover_y) = light_cover_cell(tile_x, tile_y);
+    let mut cover_cell =
+        || drawn_cell_statics(statics_store, tilemeta, multi_parts, &land_z, cover_x, cover_y, max_z, roof_layer);
+    // The cover cell holds only drawn statics, so the rules below need no z limit.
     match rule {
-        LightCoverRule::Uod => i32::from(light_z) >= max_z,
+        LightCoverRule::Uod => false,
         LightCoverRule::ClassicUo => {
-            let cover_cell = cell_statics(statics_store, tilemeta, multi_parts, cover_x, cover_y);
-            light_is_hidden(light_z, cover_cell.iter().map(|item| (item.flags, item.z)), max_z)
+            light_is_hidden(light_z, cover_cell().iter().map(|item| (item.flags, item.z)), NO_Z_VIEW_LIMIT)
         }
         LightCoverRule::EnhancedClient => {
-            let cover_cell = cell_statics(statics_store, tilemeta, multi_parts, cover_x, cover_y);
+            let cover_cell = cover_cell();
             let light_land_z = land_z(tile_x, tile_y).unwrap_or(light_z);
-            client_light_is_hidden(light_z, light_land_z, cover_cell.iter().map(|item| item.z), max_z)
-                || floor_covers_light(light_z, &cover_cell, max_z)
+            client_light_is_hidden(light_z, light_land_z, cover_cell.iter().map(|item| item.z), NO_Z_VIEW_LIMIT)
+                || floor_covers_light(light_z, &cover_cell, NO_Z_VIEW_LIMIT)
         }
         LightCoverRule::KrClient => {
-            let cover_cell = cell_statics(statics_store, tilemeta, multi_parts, cover_x, cover_y);
+            let cover_cell = cover_cell();
             let light_land_z = kr_cell_land_z(&land_z, tile_x, tile_y).unwrap_or(light_z);
             let cover_land_z = kr_cell_land_z(&land_z, cover_x, cover_y).unwrap_or(light_land_z);
-            kr_light_is_hidden(light_z, light_land_z, cover_land_z, cover_cell.iter().map(|item| item.z), max_z)
-                || floor_covers_light(light_z, &cover_cell, max_z)
+            let cover_zs = cover_cell.iter().map(|item| item.z);
+            kr_light_is_hidden(light_z, light_land_z, cover_land_z, cover_zs, NO_Z_VIEW_LIMIT)
+                || floor_covers_light(light_z, &cover_cell, NO_Z_VIEW_LIMIT)
         }
     }
 }
 
 /// The ceiling of a light on (`tile_x`, `tile_y`) at `light_z` under `LightCover::Uod` (`light_ceiling_z`), reading
-/// its own cell and its cover cell from the statics store and the multi parts `multi_parts` holds, below the z limit
-/// `max_z`.
+/// its own cell and its cover cell from the statics store and the multi parts `multi_parts` holds, of their statics
+/// drawn under the z limit `max_z` and KR's `roof_layer` (`drawn_cell_statics`, `land_z` giving a cell's raw land z).
 pub fn static_light_ceiling_z(
     statics_store: &mut LazyStaticsStore,
     tilemeta: &TileMetaPackage,
     multi_parts: &MultiCoverParts,
+    land_z: impl Fn(u32, u32) -> Option<i8>,
     tile_x: u32,
     tile_y: u32,
     light_z: i8,
     max_z: i32,
+    roof_layer: Option<i32>,
 ) -> Option<i8> {
     let (cover_x, cover_y) = light_cover_cell(tile_x, tile_y);
-    let own_cell = cell_statics(statics_store, tilemeta, multi_parts, tile_x, tile_y);
-    let cover_cell = cell_statics(statics_store, tilemeta, multi_parts, cover_x, cover_y);
-    light_ceiling_z(light_z, &[&own_cell, &cover_cell], max_z)
+    let mut drawn = |x, y| drawn_cell_statics(statics_store, tilemeta, multi_parts, &land_z, x, y, max_z, roof_layer);
+    let own_cell = drawn(tile_x, tile_y);
+    let cover_cell = drawn(cover_x, cover_y);
+    light_ceiling_z(light_z, &[&own_cell, &cover_cell], NO_Z_VIEW_LIMIT)
+}
+
+/// The statics of the cell (`x`, `y`) (`cell_statics`) that the z-view limit draws: those below `max_z`, but under
+/// KR's cut (`ZViewCut::roof_layer`) a roof by its layer over its own cell's averaged land (`kr_roof_is_hidden`, the
+/// statics' rule), and by `max_z` while that land is not known. `land_z` gives a cell's raw land z.
+fn drawn_cell_statics(
+    statics_store: &mut LazyStaticsStore,
+    tilemeta: &TileMetaPackage,
+    multi_parts: &MultiCoverParts,
+    land_z: &impl Fn(u32, u32) -> Option<i8>,
+    x: u32,
+    y: u32,
+    max_z: i32,
+    roof_layer: Option<i32>,
+) -> Vec<CoverStatic> {
+    let mut statics = cell_statics(statics_store, tilemeta, multi_parts, x, y);
+    let own_land_z = roof_layer.and_then(|_| kr_cell_land_z(land_z, x, y));
+    statics.retain(|item| item_is_drawn(item, max_z, roof_layer, own_land_z));
+    statics
+}
+
+/// Whether the z-view limit draws `item` (`drawn_cell_statics`), its cell's averaged land z `own_land_z`.
+fn item_is_drawn(item: &CoverStatic, max_z: i32, roof_layer: Option<i32>, own_land_z: Option<i8>) -> bool {
+    match (roof_layer, own_land_z) {
+        (Some(player_layer), Some(land_z)) if item.flags & TaeFlag::Roof.bits() != 0 => {
+            !kr_roof_is_hidden(item.z, i32::from(land_z), player_layer)
+        }
+        _ => i32::from(item.z) < max_z,
+    }
 }
 
 /// The objects the renderer draws on the cell (`x`, `y`), with their tile flags: its statics and the multi parts
@@ -549,6 +590,22 @@ mod tests {
         // The player downstairs at 30: the cut at 50 drops the floor, and the windows light the player's floor.
         let max_z = kr_layer_cut_z(30, 30);
         assert!(!floor_covers_light(30, &floor, max_z) && !kr_light_is_hidden(30, 7, 30, [50], max_z));
+    }
+
+    /// Under KR's cut a roof covers a light while the statics draw it: by its layer over its own cell's land
+    /// (`z_view::kr_roof_is_hidden`), not the cut.
+    #[test]
+    fn under_krs_cut_a_roof_covers_while_its_own_layer_is_drawn() {
+        // The player at 30 over land 30 (layer 7), the cut at 50.
+        let (max_z, player_layer) = (kr_layer_cut_z(30, 30), Some(7));
+        // A roof at 52 up a slope over land 45 is in layer 7: drawn, it covers; a wall there is not.
+        assert!(item_is_drawn(&item(ROOF, 52), max_z, player_layer, Some(45)));
+        assert!(!item_is_drawn(&item(WALL, 52), max_z, player_layer, Some(45)));
+        // A roof at 48 over land 7 is in layer 9: not drawn, it no longer covers.
+        assert!(!item_is_drawn(&item(ROOF, 48), max_z, player_layer, Some(7)));
+        // Its land not known, or with no KR cut, the cut decides.
+        assert!(item_is_drawn(&item(ROOF, 48), max_z, player_layer, None));
+        assert!(!item_is_drawn(&item(ROOF, 52), max_z, None, Some(45)));
     }
 
     #[test]

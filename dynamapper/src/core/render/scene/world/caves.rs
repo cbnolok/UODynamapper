@@ -24,7 +24,7 @@
 
 use crate::configs::settings::Settings;
 use crate::console_logger::{self, LogAbout, LogSev};
-use crate::core::maps::{read_package_chunk_land_z, PACKAGE_CHUNK_CELL_DIM};
+use crate::core::maps::{package_chunk_cell, read_package_chunk_land_z, PACKAGE_CHUNK_CELL_DIM};
 use crate::core::render::scene::world::land::draw_mesh::PendingTextureBake;
 use crate::core::render::scene::world::land::{LCMesh, MAP_STORAGE_BLOCK_TILE_DIM};
 use crate::core::render::scene::world::z_view::PLAYER_VIEW_HEADROOM;
@@ -342,19 +342,13 @@ impl ChunkCells {
 struct MapChunks {
     width: i32,
     height: i32,
-    chunk_columns: u32,
     chunks: HashMap<u32, ChunkCells>,
 }
 
 impl MapChunks {
     /// The chunk of the cell (`x`, `y`) and the cell's index in it; `None` off the map.
     fn locate(&self, x: i32, y: i32) -> Option<(u32, usize)> {
-        if x < 0 || y < 0 || x >= self.width || y >= self.height {
-            return None;
-        }
-        let (x, y) = (x as u32, y as u32);
-        let chunk = (x / PACKAGE_CHUNK_CELL_DIM) * self.chunk_columns + y / PACKAGE_CHUNK_CELL_DIM;
-        Some((chunk, ((y % PACKAGE_CHUNK_CELL_DIM) * PACKAGE_CHUNK_CELL_DIM + x % PACKAGE_CHUNK_CELL_DIM) as usize))
+        package_chunk_cell(self.width as u32, self.height as u32, x, y)
     }
 }
 
@@ -389,7 +383,6 @@ fn find_map_caves(input: &CaveScanInput) -> eyre::Result<CaveMap> {
     let mut chunks = MapChunks {
         width: input.width as i32,
         height: input.height as i32,
-        chunk_columns,
         chunks: HashMap::new(),
     };
     let threads = std::thread::available_parallelism().map_or(1, |threads| threads.get()) as u32;

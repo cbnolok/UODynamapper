@@ -10,7 +10,7 @@ use crate::core::multis::{
     expanded_multi_part_z, MultiDefinitionsRes, MultiPart, PlacedMulti, PlacedMultisRes,
 };
 use crate::core::render::scene::world::caves::{CaveMap, CaveStatic, CavesRes};
-use crate::core::render::scene::world::z_view::{ZViewCut, ZViewLimit};
+use crate::core::render::scene::world::z_view::{PackageLand, ZViewCut, ZViewLimit};
 use crate::core::render::scene::SceneStateData;
 use crate::core::statics::{LazyStaticsStore, StaticsStoreRes};
 use crate::core::texture_cache::art::{GroundArtPageAtlas, ResolvedArtSprite, SpriteArtPageAtlas};
@@ -1953,6 +1953,8 @@ struct StaticChunkBuildState {
     requested_pages: HashSet<u64>,
     stats: CachedStaticChunkStats,
     render_tiles: Vec<StaticRenderTile>,
+    /// The land the roofs under KR's cut are counted from (`ZViewCut::roof_layer`).
+    own_land: PackageLand,
 }
 
 #[derive(Default)]
@@ -2359,8 +2361,11 @@ fn emit_static_render_tile(
     if !frame.is_dot_mode && tilemeta.is_some_and(|meta| meta.is_nodraw()) {
         return;
     }
-    // Above the player's floor, with the z-view limit on; picking skips them too, as they are never emitted.
-    if frame.z_view.hides_static(tilemeta.map_or(0, |meta| meta.flags), render_tile.z) {
+    // Above the player's floor, with the z-view limit on; picking skips them too, as they are never emitted. A roof
+    // under KR's cut reads its own cell's land.
+    let own_land_z = || build.own_land.averaged_land_z(resources.map_planes, frame.map_id,
+        render_tile.world_x as i32, render_tile.world_z as i32);
+    if frame.z_view.hides_static_over_land(tilemeta.map_or(0, |meta| meta.flags), render_tile.z, own_land_z) {
         return;
     }
     // Over a cave drawn over the map, and in it (caves.rs).
