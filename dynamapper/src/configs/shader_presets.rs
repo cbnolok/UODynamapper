@@ -1282,19 +1282,23 @@ mod tests {
         }
     }
 
-    /// The land texture variation is a style setting of KR-like, Enhanced and UOD-Painterly, off in every bundled
-    /// preset; Classic has none.
+    /// The land texture variation is a style setting of KR-like, Enhanced and UOD-Painterly, on in every bundled
+    /// preset and so in the shaders' flag at each of their slots; Classic has none.
     #[test]
-    fn bundled_presets_turn_the_land_texture_variation_off_in_every_style_but_classic() {
+    fn bundled_presets_turn_the_land_texture_variation_on_in_every_style_but_classic() {
         for (name, text) in [("shader_presets.toml", BUNDLED_FACTORY_PRESETS), ("land.toml", BUNDLED_LAND_SETTINGS)] {
-            let presets = parse(text).expect("bundled");
+            let mut presets = parse(text).expect("bundled");
             for (group, slots) in preset_groups(&presets) {
-                let expected = preset_group_has_land_texture_variation(group).then_some(false);
+                let expected = preset_group_has_land_texture_variation(group).then_some(true);
                 assert_eq!(slots.land_texture_variation, expected, "{name} {group}");
             }
             assert!(!preset_group_has_land_texture_variation(CLASSIC_PRESET_GROUP));
-            let state = uniform_state_from_presets(&presets);
-            assert_eq!(state.effects.land_texture_variation, 0, "{name}");
+            for (group, period, _) in preset_slots(&clone_presets(&presets)) {
+                presets.default_preset = format!("{group}.{period}");
+                let state = uniform_state_from_presets(&presets);
+                let expected = u32::from(preset_group_has_land_texture_variation(group));
+                assert_eq!(state.effects.land_texture_variation, expected, "{name} {group}.{period}");
+            }
         }
     }
 
@@ -1302,7 +1306,7 @@ mod tests {
     /// none.
     #[test]
     fn hand_written_land_texture_variation_is_strict() {
-        const BUNDLED_KR_LINE: &str = "[kr]\nland_texture_variation = false\n";
+        const BUNDLED_KR_LINE: &str = "[kr]\nland_texture_variation = true\n";
         let not_bool = BUNDLED_FACTORY_PRESETS.replacen(BUNDLED_KR_LINE, "[kr]\nland_texture_variation = 1\n", 1);
         let error = parse(&not_bool).err().expect("not a boolean").to_string();
         assert!(error.contains("invalid type: integer `1`, expected a boolean"), "{error}");
@@ -1316,8 +1320,10 @@ mod tests {
         }
     }
 
-    /// A cache from before the land texture variation takes the default, off, with a warning; one with it in Classic
-    /// loses it; a style's choice is written and read back, and Reset to Factory restores the style's default.
+    /// A cache from before the land texture variation takes the default, on, with a warning; one with it in Classic
+    /// loses it; a style's choice is written and read back, and Reset to Factory restores the style's default. A cache
+    /// the app wrote with the variation off, the default before, keeps it off: the lenient load fills only what a file
+    /// lacks.
     #[test]
     fn cached_land_texture_variation_is_filled_kept_or_dropped() {
         let bundled = parse(BUNDLED_LAND_SETTINGS).expect("bundled");
@@ -1327,7 +1333,7 @@ mod tests {
         let mut load = uocf::utils::config_toml::parse_app_state("land.toml", &older, &bundled).expect("lenient load");
         load.warnings.extend(normalize_cached_preset_lighting(&mut load.value, &bundled, "land.toml"));
         assert_eq!(load.warnings, ["land.toml: missing key `kr.land_texture_variation` filled from the default"]);
-        assert_eq!(load.value.kr.land_texture_variation, Some(false));
+        assert_eq!(load.value.kr.land_texture_variation, Some(true));
 
         let mut cached = clone_presets(&bundled);
         cached.classic.land_texture_variation = Some(true);
@@ -1338,21 +1344,23 @@ mod tests {
         let mut on_painterly = clone_presets(&bundled);
         on_painterly.default_preset = "painterly.cave".to_string();
         let mut state = uniform_state_from_presets(&on_painterly);
-        state.land_texture_variation = Some(true);
-        state.sync_land_texture_variation();
         assert_eq!(state.effects.land_texture_variation, 1);
+        state.land_texture_variation = Some(false);
+        state.sync_land_texture_variation();
+        assert_eq!(state.effects.land_texture_variation, 0);
         let written = toml::to_string_pretty(&build_save_presets(&state, &bundled)).expect("serialize");
         let load = uocf::utils::config_toml::parse_app_state("land.toml", &written, &bundled).expect("lenient load");
         assert!(load.warnings.is_empty(), "{:?}", load.warnings);
         let mut saved = load.value;
-        assert_eq!(saved.painterly.land_texture_variation, Some(true));
-        assert_eq!(saved.kr.land_texture_variation, Some(false));
+        assert!(normalize_cached_preset_lighting(&mut saved, &bundled, "land.toml").is_empty());
+        assert_eq!(saved.painterly.land_texture_variation, Some(false));
+        assert_eq!(saved.kr.land_texture_variation, Some(true));
         assert_eq!(saved.classic.land_texture_variation, None);
         // The slot's effects keep no flag of their own: the style's setting is the one source.
         assert_eq!(saved.painterly.cave.effects.land_texture_variation, 0);
 
         assert!(reset_preset_to_factory(&mut saved, &bundled, "painterly.morning"));
-        assert_eq!(saved.painterly.land_texture_variation, Some(false));
+        assert_eq!(saved.painterly.land_texture_variation, Some(true));
     }
 
     /// Every style has its light cover, Dynamapper's rule by default, in both bundled files.

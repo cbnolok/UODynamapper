@@ -125,7 +125,7 @@ default_preset = "classic.morning"
 #                    rock, cool lava): their colour layers drawn through overlapping hexagons two cells wide, each
 #                    moved by a random offset and, for textures with no direction, turned by a random quarter turn,
 #                    their blend mask through a larger grid of its own. It fades out as the view zooms out, where the
-#                    repetition no longer shows. false is the plain tiling, as the clients draw it. Off in every preset.
+#                    repetition no longer shows. false is the plain tiling, as the clients draw it. On in every preset.
 #
 # === [Light cover] ===
 # [<group>] light_cover: every style, one value per style (not per time of day), required. How the lights a roof,
@@ -532,7 +532,7 @@ elevation_degrees = 60.50379
 # elevation 45), as in KR-like.
 
 [enhanced]
-land_texture_variation = false
+land_texture_variation = true
 light_cover = "uod"
 
 [enhanced.local_lights]
@@ -910,7 +910,7 @@ elevation_degrees = 45.0
 # The full-featured painterly rendering with all effects enabled is UOD-Painterly, below.
 
 [kr]
-land_texture_variation = false
+land_texture_variation = true
 light_cover = "uod"
 player_floor_rule = "kr"
 
@@ -1284,7 +1284,7 @@ elevation_degrees = 45.0
 # with the decals, which hardly reached its floor.
 
 [painterly]
-land_texture_variation = false
+land_texture_variation = true
 light_cover = "uod"
 player_floor_rule = "kr"
 

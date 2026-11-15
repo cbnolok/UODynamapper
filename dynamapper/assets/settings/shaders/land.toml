@@ -361,7 +361,7 @@ elevation_degrees = 60.50379
 # elevation 45), as in KR-like.
 
 [enhanced]
-land_texture_variation = false
+land_texture_variation = true
 light_cover = "uod"
 
 [enhanced.local_lights]
@@ -739,7 +739,7 @@ elevation_degrees = 45.0
 # The full-featured painterly rendering with all effects enabled is UOD-Painterly, below.
 
 [kr]
-land_texture_variation = false
+land_texture_variation = true
 light_cover = "uod"
 player_floor_rule = "kr"
 
@@ -1106,7 +1106,7 @@ elevation_degrees = 45.0
 # orange: 0.21 and 0.25 bring its chroma down by about a quarter while grass and rock change little.
 
 [painterly]
-land_texture_variation = false
+land_texture_variation = true
 light_cover = "uod"
 player_floor_rule = "kr"
 
