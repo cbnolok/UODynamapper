@@ -152,6 +152,10 @@ rustflags_optimized_common_nightly  := linker_optimized_flags_nightly + remap_wo
 no_unwind_tables_flag               := if is_windows == "true" { "" } else { " -Cforce-unwind-tables=no" }
 export RUSTFLAGS_RELEASE_STABLE     := rustflags_optimized_common_stable  + no_unwind_tables_flag
 export RUSTFLAGS_RELEASE_NIGHTLY    := rustflags_optimized_common_nightly + no_unwind_tables_flag
+export RUSTFLAGS_PROFILE_STABLE     := rustflags_optimized_common_stable  +\
+                                        " -Cforce-frame-pointers=yes -Cembed-bitcode=no"
+export RUSTFLAGS_PROFILE_NIGHTLY    := rustflags_optimized_common_nightly +\
+                                        " -Cforce-frame-pointers=yes -Cembed-bitcode=no"
 # Specialized cargo flags
 # On Windows/PowerShell, commas are array separators, so -Zbuild-std=std,panic_abort must be quoted.
 export CARGO_FLAGS_NIGHTLY := if is_windows == "true" {
@@ -167,6 +171,10 @@ cargo_release_nightly   :=\
     if is_windows == "true" { "$env:RUSTFLAGS=$env:RUSTFLAGS_RELEASE_NIGHTLY; cargo +" + nightly_toolchain } else { "export RUSTFLAGS=\"$RUSTFLAGS_RELEASE_NIGHTLY\"; cargo +" + nightly_toolchain }
 cargo_release_stable    :=\
     if is_windows == "true" { "$env:RUSTFLAGS=$env:RUSTFLAGS_RELEASE_STABLE; cargo" }           else { "export RUSTFLAGS=\"$RUSTFLAGS_RELEASE_STABLE\"; cargo" }
+cargo_profile_nightly   :=\
+    if is_windows == "true" { "$env:RUSTFLAGS=$env:RUSTFLAGS_PROFILE_NIGHTLY; cargo +" + nightly_toolchain } else { "export RUSTFLAGS=\"$RUSTFLAGS_PROFILE_NIGHTLY\"; cargo +" + nightly_toolchain }
+cargo_profile_stable    :=\
+    if is_windows == "true" { "$env:RUSTFLAGS=$env:RUSTFLAGS_PROFILE_STABLE; cargo" }           else { "export RUSTFLAGS=\"$RUSTFLAGS_PROFILE_STABLE\"; cargo" }
 
 # --- Release Package Contents ---
 # The app package: UODynamapper/ holds dynamapper, the assets/ tree it reads (settings, shaders, fonts, the KDL
@@ -227,6 +235,57 @@ build-linux-musl-release-nightly target *args:
 build-ci-workspace *args:
     @echo "Building CI workspace release on {{os}}..."
     @just build-local-workspace-release-nightly {{args}}
+
+# Build the full workspace in profiling mode with the stable toolchain.
+build-local-workspace-profile *args:
+    @echo "Building workspace profiling profile with the stable toolchain on {{os}}..."
+    @echo "Using RUSTFLAGS: {{RUSTFLAGS_PROFILE_STABLE}}"
+    @echo "Using features: profiling,{{build_features}}"
+    {{cargo_profile_stable}} build --profile profiling --locked --workspace --no-default-features --features "profiling,{{build_features}}" {{args}}
+
+# Build the full workspace in profiling mode with nightly build-std optimizations.
+build-local-workspace-profile-nightly *args:
+    @echo "Building workspace profiling profile with the nightly toolchain on {{os}}..."
+    @echo "Using RUSTFLAGS: {{RUSTFLAGS_PROFILE_NIGHTLY}}"
+    @echo "Using features: profiling,{{build_features}}"
+    @echo 'Adding cargo flags: {{CARGO_FLAGS_NIGHTLY}}'
+    {{cargo_profile_nightly}} build --profile profiling --locked --workspace --no-default-features --features "profiling,{{build_features}}" {{CARGO_FLAGS_NIGHTLY}} {{args}}
+
+# Generate a Dynamapper SVG flamegraph with cargo-flamegraph and nightly profiling settings.
+profile-dynamapper-flamegraph *args:
+    @echo "Generating dynamapper flamegraph on {{os}}..."
+    @echo "Using RUSTFLAGS: {{RUSTFLAGS_PROFILE_NIGHTLY}}"
+    @echo "Using features: profiling,{{build_features}}"
+    @echo 'Adding cargo flags: {{CARGO_FLAGS_NIGHTLY}}'
+    {{cargo_profile_nightly}} flamegraph --profile profiling --no-default-features --features "profiling,{{build_features}}" {{CARGO_FLAGS_NIGHTLY}} \
+        --bin dynamapper --package dynamapper {{args}}
+
+# Analyze release binary size with cargo-bloat and stable release settings.
+bloat-stable *args:
+    @echo "Running cargo-bloat stable release analysis on {{os}}..."
+    @echo "Using RUSTFLAGS: {{RUSTFLAGS_RELEASE_STABLE}}"
+    @echo "Using features: {{build_features}}"
+    {{cargo_release_stable}} bloat --profile profiling --no-default-features --features "profiling,{{build_features}}" \
+        --config 'profile.profiling.strip=false' --config 'profile.profiling.debug=true' \
+        {{args}}
+
+# Analyze release binary size with cargo-bloat and nightly release settings.
+bloat-nightly *args:
+    @echo "Running cargo-bloat nightly release analysis on {{os}}..."
+    @echo "Using RUSTFLAGS: {{RUSTFLAGS_RELEASE_NIGHTLY}}"
+    @echo "Using features: {{build_features}}"
+    @echo 'Adding cargo flags: {{CARGO_FLAGS_NIGHTLY}}'
+    {{cargo_release_nightly}} bloat --profile profiling --no-default-features --features "profiling,{{build_features}}" {{CARGO_FLAGS_NIGHTLY}} \
+        --config 'profile.profiling.strip=false' --config 'profile.profiling.debug=true' \
+        {{args}}
+
+# Run the Dynamapper application in profiling mode with the stable toolchain.
+run-dynamapper-profile *args:
+    @echo "Running dynamapper in profiling mode with the stable toolchain on {{os}}..."
+    @echo "Using RUSTFLAGS: {{RUSTFLAGS_PROFILE_STABLE}}"
+    @echo "Using features: profiling,{{build_features}}"
+    {{cargo_profile_stable}} run --profile profiling --no-default-features --features "profiling,{{build_features}}" \
+        --bin dynamapper {{args}}
 
 # Validate and package the CLI tools artifact of a CLI-only build (the musl targets).
 [unix]
