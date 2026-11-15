@@ -208,3 +208,31 @@ art atlases are then built for Enhanced art (`art_atlas_source` in
 ground atlas holds the land pages the liquids read), and the item-surface
 boundary coverage runs as in Enhanced art mode. Matched sources resolve
 exactly as before (`canonical_statics_that_continue_the_land_take_its_style`).
+
+### KR has the same item surfaces; only some images differ (2026-11-15)
+
+KR tileart (Old KR `tileart.uop`, record version 3) defines all 837 items
+that continue the land, with the same world-art (block 0) shader as EC for
+836 of them (207 UOStaticTerrainShader, 260 UOWaterShader, 369
+UOSpriteShader) and the same texture references, repetitions and masks. The
+exception is 0x34D2: a sprite (art 5703 and grunge) in KR, the water triple
+in EC. 58 records differ only in Tweaks: acid 0x2E02.. scrolls about 8x
+faster in KR (`[-0.1, 0.01]` against `[-0.012, 0.0012]`, the same values as
+KR's acid terrain materials) and some lava 2x (0x12EF `[-0.015, 0, -0.02]`
+against `[-0.0075, 0, -0.01]`).
+
+The difference is in Texture.uop: the ids are shared, but KR ships other
+images for some of them. Of the 271 world-art textures those items use, 259
+are byte-identical. The rest are other art in KR (2000010/2000011 Grass_A/B
+where EC has Grass_C, 2000020/2000021 Dirt_A/B, 2000040 Forest_A, 2000130
+Cave_Floor_A, 2001540 Dirt_Rocks_A, 1000006 UO_dirt_02, 1000045 grunge) or
+the same art re-graded (1000017 cube3 darker, 1000003 noise_alpha, 2000103
+Lava_Grey brighter). 2000103 is not used by any KR terrain definition, so
+tex_land_kr.uddp holds EC's image of it.
+
+Under KR land, liquids already follow KR: their payload is a land tile id
+whose page lookup row comes from tex_land_kr. Dry item surfaces do not:
+`EcSurface` items draw their tex_art_ec image and dry `TexLandEc` items the
+ground atlas built from tex_land_ec, so the Minoc grass rows 0x1782/0x1783
+along the roads show EC's green Grass_C beside KR's yellower Grass_A land.
+Swamp (2000480/2000700) and water match.
