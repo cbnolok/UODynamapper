@@ -35,7 +35,8 @@ uniform values (`light_cover_rule` the cover rule the style's `light_cover` give
 `player_floor_rule` KR-like's and UOD-Painterly's z-view rule, null in Enhanced and Classic);
 `status.static_lights.instances` reports collected lights,
 `status.client_light_sprites.instances` the KR-like and Enhanced light sprites
-left after the light cover, and `status.z_view` the z-view limit (under the KR
+left after the light cover (`digest` a hash of every sprite's key, texture, quad
+and ceiling: two runs that collected the same sprites report the same one), and `status.z_view` the z-view limit (under the KR
 rule `max_z` is the bottom of the layer above the player's, and `roof_layer`
 the player's layer, against which each roof is counted from its own cell's
 land; null otherwise), `status.cave_surroundings` the setting and

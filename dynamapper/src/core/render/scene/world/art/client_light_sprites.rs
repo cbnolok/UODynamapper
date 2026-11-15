@@ -52,6 +52,7 @@ use bevy::prelude::*;
 use bevy::render::render_resource::{Extent3d, PrimitiveTopology, TextureDimension, TextureFormat};
 use std::cell::Cell;
 use std::collections::{BTreeSet, HashMap, HashSet};
+use std::hash::{Hash, Hasher};
 use udd_assets::tex_art_cc::TexArtCcPackage;
 use udd_assets::tex_art_ec::LEGACY_PIXEL_UNIT;
 use udd_assets::tex_aux_ec::tex_aux_ec_terrain_texture_key;
@@ -157,6 +158,23 @@ pub struct RenderClientLightSprites {
     /// land z of a cell whose block was not loaded yet: the scan reruns once more land loads, so a scan made before the
     /// land does not keep its stand-in land z.
     last_scan: Option<(u32, Vec<StaticChunkBatchKey>, bool, LightCoverRule, ZViewCut, bool, u64, Option<u64>)>,
+}
+
+impl RenderClientLightSprites {
+    /// A hash of every sprite's key, texture, quad and ceiling, in scan order: two runs that collected the same
+    /// sprites report the same digest (`status.client_light_sprites.digest` on the control socket).
+    pub fn digest(&self) -> u64 {
+        let mut hasher = std::hash::DefaultHasher::new();
+        for instance in &self.instances {
+            instance.key.hash(&mut hasher);
+            instance.texture_entry.hash(&mut hasher);
+            for value in instance.center.to_array().into_iter().chain(instance.size.to_array()).chain(instance.glow_rgb) {
+                value.to_bits().hash(&mut hasher);
+            }
+            instance.ceiling.hash(&mut hasher);
+        }
+        hasher.finish()
+    }
 }
 
 /// The sprites' materials, one per light texture (`None` once a texture failed to load), and the scan reach.
@@ -833,7 +851,7 @@ pub fn sys_sync_client_light_sprites(
     mut materials: ResMut<Assets<LightClipMaterial>>,
     mut meshes: ResMut<Assets<Mesh>>,
     mut last_clip_mode: Local<Option<LightClipMode>>,
-    mut existing_q: Query<(Entity, &ClientLightSpriteKey, &mut Transform), With<ClientLightSpriteEntity>>,
+    existing_q: Query<Entity, With<ClientLightSpriteEntity>>,
 ) {
     let Some(light_scene) = light_scene else {
         return;
@@ -852,19 +870,13 @@ pub fn sys_sync_client_light_sprites(
     if !sprites.is_changed() {
         return;
     }
-    let desired = sprites.instances.iter().map(|instance| (instance.key, instance)).collect::<HashMap<_, _>>();
-    let mut existing_keys = HashSet::new();
-    for (entity, key, mut transform) in existing_q.iter_mut() {
-        if let Some(instance) = desired.get(key) {
-            // A kept sprite may have moved or grown: Local Lights' centring changed. Its light's ceiling may have
-            // changed with the light cover.
-            transform.translation = instance.center;
-            transform.scale = instance.size.extend(1.0);
-            commands.entity(entity).insert(client_light_sprite_tag(instance));
-            existing_keys.insert(*key);
-        } else {
-            commands.entity(entity).despawn();
-        }
+    // Every sprite is spawned anew, in scan order, whenever the set changes. The sprites blend over one another, so
+    // their order shows, and the light buffer draws them in its transparent phase, which Bevy keeps from frame to
+    // frame and sorts by depth with a stable sort: sprites at one depth (many, under the tilted camera) draw in the
+    // order they entered it. Kept sprites kept their places from the views before, so the glows of a view depended
+    // on the views the launch had visited (the keep's floors, the Britain lamp posts).
+    for entity in &existing_q {
+        commands.entity(entity).despawn();
     }
     let Some(tex_aux) = tex_aux_res else {
         return;
@@ -873,7 +885,7 @@ pub fn sys_sync_client_light_sprites(
     let cache = &mut *cache;
     let mesh = cache.mesh.get_or_insert_with(|| meshes.add(build_client_light_sprite_mesh())).clone();
     let rotation = client_light_sprite_rotation();
-    for instance in sprites.instances.iter().filter(|instance| !existing_keys.contains(&instance.key)) {
+    for instance in &sprites.instances {
         let material = cache
             .materials_by_entry
             .entry(instance.texture_entry)
