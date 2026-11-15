@@ -508,6 +508,23 @@ pub fn build_tilemeta_uddp_from_split_sources_with_loaded_ec_sources(
     write_tilemeta_uddp(out_file, built)
 }
 
+/// The item texture refs and item lights of the `tilemeta.uddp` these sources build, without writing it: what the
+/// `tex_aux_ec.uddp` packed from it selects its textures by (`crate::tex_aux_ec::tex_aux_ec_texture_keys`).
+pub(crate) fn build_item_texture_refs_and_lights(
+    cc_source_dir: &Path,
+    ec_sources: &TexArtEcLoadedSources,
+    ec_crop_adjustments: &[Option<TexArtEcCropAdjustment>],
+) -> eyre::Result<(Vec<TileMetaItemTextureRef>, Vec<TileMetaItemLight>)> {
+    let built = build_tilemeta_tables_with_ec_sources(
+        &[cc_source_dir.to_path_buf()],
+        ec_sources,
+        ec_crop_adjustments,
+        &TileMetaBuildOptions::default(),
+        "unifying tiledata",
+    )?;
+    Ok((built.item_texture_refs, built.item_lights))
+}
+
 fn write_tilemeta_uddp(out_file: &Path, built: BuiltTileMetaTables) -> eyre::Result<()> {
     write_tilemeta_uddp_with_progress(out_file, built, |_| {})
 }

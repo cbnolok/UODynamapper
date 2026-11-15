@@ -66,8 +66,9 @@ fn neighbor_mask(cells: &HashSet<SurfaceCell>, closing: &ClosingStatics, cell: S
     mask
 }
 
-/// `kingdom_reborn` is the Kingdom Reborn tile data and art the instances with a `material_item_id` from
-/// `KR_ITEM_RECORD_BASE` were drawn from; the source statics take both their Enhanced and their Kingdom Reborn keys.
+/// `kingdom_reborn` is the Kingdom Reborn tile data and art (an overlay over `art`) the instances with a
+/// `material_item_id` from `KR_ITEM_RECORD_BASE` were drawn from; the source statics take both their Enhanced and their
+/// Kingdom Reborn keys.
 pub(super) fn apply_boundary_coverage(
     instances: &mut [SpriteInstance], chunk: StaticChunkBatchKey, height_scale: f32,
     statics: &mut LazyStaticsStore, tilemeta: &TileMetaPackage, art: &TexArtEcPackage,
@@ -76,12 +77,15 @@ pub(super) fn apply_boundary_coverage(
 ) {
     let mut keys: HashMap<u32, Option<MaterialKey>> = HashMap::new();
     let mut key_for = |item: u32| *keys.entry(item).or_insert_with(|| {
-        let (tilemeta, art, id) = match kingdom_reborn {
-            Some((kr_tilemeta, kr_art)) if item >= KR_ITEM_RECORD_BASE => (kr_tilemeta, kr_art, item - KR_ITEM_RECORD_BASE),
+        let (tilemeta, slot, id) = match kingdom_reborn {
+            Some((kr_tilemeta, kr_art)) if item >= KR_ITEM_RECORD_BASE => {
+                let id = item - KR_ITEM_RECORD_BASE;
+                (kr_tilemeta, kr_art.overlay_slot(art, id).map(|(_, slot)| slot), id)
+            }
             _ if item >= KR_ITEM_RECORD_BASE => return None,
-            _ => (tilemeta, art, item),
+            _ => (tilemeta, art.present_slot(item), item),
         };
-        if !art.present_slot(id).is_some_and(|slot| slot.is_land()) { return None; }
+        if !slot.is_some_and(|slot| slot.is_land()) { return None; }
         source_key(tilemeta.item_tile(id)?, tilemeta.item_texture_refs(id))
     });
     let mut candidates = Vec::new();

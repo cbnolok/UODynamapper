@@ -31,6 +31,11 @@
 //!
 //! A package of another version, or without a required entry or slot, fails to load with a message
 //! to repack it.
+//!
+//! An overlay (the Kingdom Reborn `tex_aux_kr.uddp`) has the same layout plus `metadata/ec_equivalents.bin`
+//! ([`crate::common::EC_EQUIVALENTS_ENTRY_PATH`], magic [`TEX_AUX_EC_EQUIVALENTS_MAGIC`]): the textures it leaves to
+//! the `tex_aux_ec.uddp` beside it, whose image is the overlay client's re-encoded. Its slots hold only the other textures, so the reserved slots it lists there are
+//! not required of it; read it through [`TexAuxEcPackage::overlay_slot`].
 
 use bytemuck::{Pod, Zeroable};
 use color_eyre::eyre::{self, WrapErr};
@@ -38,7 +43,10 @@ use std::path::Path;
 use udd_container::{xxh64_virtual_path, UddpReader};
 use uot_texture_codecs::bc7::{decode_from_vram, RawImageFormat, VramTextureData, VramTextureFormat};
 
-use crate::common::{ensure_manifest_version, read_pod_vec};
+use crate::common::{
+    encode_ec_equivalents, ensure_manifest_version, lists_equivalent, read_ec_equivalents, read_pod_vec,
+    EcEquivalentRecord,
+};
 use crate::tex_art_cc::PagePixelFormat;
 
 pub const TEX_AUX_EC_SLOT_MANIFEST_ENTRY_PATH: &str = "metadata/slots.bin";
@@ -95,6 +103,15 @@ pub const fn is_tex_aux_ec_reserved_key(texture_id: u32) -> bool {
 /// Virtual path template for a packed auxiliary texture image.
 pub fn texture_entry_path(texture_id: u32) -> String {
     format!("textures/{:08x}", texture_id)
+}
+
+/// Magic of the overlay table of this layout ([`TexAuxEcPackage::is_overlay`]), whose ids are texture ids and
+/// reserved keys.
+pub const TEX_AUX_EC_EQUIVALENTS_MAGIC: [u8; 4] = *b"AXEQ";
+
+/// Bytes of the overlay table of this layout.
+pub fn encode_tex_aux_ec_equivalents(records: &[EcEquivalentRecord]) -> Vec<u8> {
+    encode_ec_equivalents(TEX_AUX_EC_EQUIVALENTS_MAGIC, TEX_AUX_EC_METADATA_VERSION, records)
 }
 
 /// Binary record stored in `metadata/slots.bin`.
@@ -186,6 +203,8 @@ pub struct TexAuxEcPackage {
     package: UddpReader,
     slots: Vec<TexAuxEcSlotRecord>,
     water_primary_extents: Vec<[u32; 3]>,
+    /// `metadata/ec_equivalents.bin` of an overlay.
+    equivalents: Option<Vec<EcEquivalentRecord>>,
 }
 
 impl From<&TexAuxEcSlotRecord> for SlotInfo {
@@ -215,8 +234,11 @@ impl TexAuxEcPackage {
         let slots = decode_tex_aux_ec_slots(slot_bytes.as_ref())?;
         eyre::ensure!(slots.windows(2).all(|pair| pair[0].texture_id < pair[1].texture_id),
             "{TEX_AUX_EC_SLOT_MANIFEST_ENTRY_PATH} is not sorted by unique texture id");
+        let equivalents = read_ec_equivalents(&package, TEX_AUX_EC_EQUIVALENTS_MAGIC, TEX_AUX_EC_METADATA_VERSION)?;
+        let left_to_base = |key: u32| equivalents.as_deref().is_some_and(|records| lists_equivalent(records, key));
         let reserved_keys = EC_ATMOSPHERE_MAP_TERRAIN_TEXTURE_ENTRIES.into_iter().map(tex_aux_ec_terrain_texture_key)
-            .chain([TEX_AUX_EC_MISSING_TEXTURE_ID]);
+            .chain([TEX_AUX_EC_MISSING_TEXTURE_ID])
+            .filter(|&key| !left_to_base(key));
         for key in reserved_keys {
             let slot = slots.binary_search_by_key(&key, |slot| slot.texture_id).ok().map(|pos| &slots[pos]);
             eyre::ensure!(slot.is_some_and(|slot| !slot.is_missing_source()),
@@ -229,7 +251,37 @@ impl TexAuxEcPackage {
         eyre::ensure!(water_primary_extents.windows(2).all(|pair| pair[0][0] < pair[1][0])
             && water_primary_extents.iter().all(|row| row[1] > 0 && row[2] > 0),
             "invalid native water-primary extents");
-        Ok(Self { package, slots, water_primary_extents })
+        Ok(Self { package, slots, water_primary_extents, equivalents })
+    }
+
+    /// Whether this is an overlay: a package that holds only the textures its client draws differently from the
+    /// client of the base package beside it, and lists the others ([`Self::equivalents`]).
+    pub fn is_overlay(&self) -> bool {
+        self.equivalents.is_some()
+    }
+
+    /// The textures an overlay leaves to its base package, sorted by key; empty for a full package.
+    pub fn equivalents(&self) -> &[EcEquivalentRecord] {
+        self.equivalents.as_deref().unwrap_or_default()
+    }
+
+    /// The slot of `texture_id` read through this overlay over `base`, with the package holding its payload: this
+    /// package's slot, whose payload is here or (a missing-source alias of a missing-texture image left to the base)
+    /// in `base`, or else, for a texture it leaves to `base` ([`Self::equivalents`]), `base`'s slot. A full package
+    /// reads only itself.
+    pub fn overlay_slot<'a>(&'a self, base: &'a TexAuxEcPackage, texture_id: u32) -> Option<(&'a TexAuxEcPackage, SlotInfo)> {
+        if let Some(slot) = self.slot_for_texture_id(texture_id) {
+            let payload_here = !self.left_to_base(slot.payload_texture_id);
+            return Some((if payload_here { self } else { base }, slot));
+        }
+        if !self.left_to_base(texture_id) {
+            return None;
+        }
+        base.slot_for_texture_id(texture_id).map(|slot| (base, slot))
+    }
+
+    fn left_to_base(&self, texture_id: u32) -> bool {
+        lists_equivalent(self.equivalents(), texture_id)
     }
 
     /// Full source dimensions, independent of the trimmed art slot and auxiliary upscaling.
@@ -249,10 +301,10 @@ impl TexAuxEcPackage {
         Some(SlotInfo::from(&self.slots[pos]))
     }
 
-    /// The client's missing-texture image, which every package carries.
+    /// The client's missing-texture image, which every package but an overlay carries.
     pub fn missing_texture_slot(&self) -> SlotInfo {
         self.slot_for_texture_id(TEX_AUX_EC_MISSING_TEXTURE_ID)
-            .expect("from_uddp_package checked the missing-texture slot")
+            .expect("from_uddp_package checked the missing-texture slot of a full package")
     }
 
     /// The RGBA8888 pixels and extent of `TerrainTexture.uop` entry `entry`: one of
@@ -325,6 +377,7 @@ impl TexAuxEcPackage {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::common::EC_EQUIVALENTS_ENTRY_PATH;
     use udd_container::{AddFileRequest, CompressionFlag, DataType, LookupMode, UddpBuilder};
 
     const WORLD_ART: u8 = crate::tilemeta::EcMaterialLogicalFamily::WorldArt as u8;
@@ -361,7 +414,20 @@ mod tests {
 
     /// `slots` must be sorted; payloads are written for the non-alias slots only.
     fn package_of(slots: &[TexAuxEcSlotRecord]) -> eyre::Result<TexAuxEcPackage> {
+        package_with(slots, None, PACKED_PIXEL)
+    }
+
+    /// [`package_of`], an overlay leaving `equivalents` to its base when given, its packed payloads `pixel`.
+    fn package_with(slots: &[TexAuxEcSlotRecord], equivalents: Option<&[EcEquivalentRecord]>, packed_pixel: [u8; 4])
+        -> eyre::Result<TexAuxEcPackage> {
         let mut builder = UddpBuilder::new(LookupMode::VirtualPathHash);
+        let equivalents = equivalents.map(encode_tex_aux_ec_equivalents);
+        if let Some(data) = &equivalents {
+            builder.add_file(AddFileRequest {
+                data_type: DataType::Metadata as u8, compression: CompressionFlag::None, width: 0, height: 0,
+                virtual_path: Some(EC_EQUIVALENTS_ENTRY_PATH), path_hash64: None, id: None, data,
+            })?;
+        }
         builder.add_file(AddFileRequest {
             data_type: DataType::Metadata as u8, compression: CompressionFlag::None, width: 0, height: 0,
             virtual_path: Some(TEX_AUX_EC_SLOT_MANIFEST_ENTRY_PATH), path_hash64: None, id: None,
@@ -373,7 +439,7 @@ mod tests {
             data: bytemuck::cast_slice(&[[4651u32, 64, 32]]),
         })?;
         let images: Vec<(String, Vec<u8>)> = slots.iter().filter(|slot| !slot.is_missing_source()).map(|slot| {
-            let pixel = if slot.texture_id == TEX_AUX_EC_MISSING_TEXTURE_ID { MISSING_PIXEL } else { PACKED_PIXEL };
+            let pixel = if slot.texture_id == TEX_AUX_EC_MISSING_TEXTURE_ID { MISSING_PIXEL } else { packed_pixel };
             (texture_entry_path(slot.texture_id), pixel.repeat(usize::from(IMAGE_SIDE) * usize::from(IMAGE_SIDE)))
         }).collect();
         for (path, data) in &images {
@@ -404,6 +470,37 @@ mod tests {
         assert!(!package.missing_texture_slot().is_missing_source());
         assert_eq!(package.water_primary_extent(4651), Some([64, 32]));
         assert_eq!(package.water_primary_extent(7379), None);
+        Ok(())
+    }
+
+    /// An overlay reads its own slots, then the ones it lists from its base; its listed missing-texture image is the
+    /// base's, and it holds none of the textures it leaves.
+    #[test]
+    fn an_overlay_reads_through_to_the_textures_it_leaves_to_its_base() -> eyre::Result<()> {
+        const OVERLAY_PIXEL: [u8; 4] = [50, 60, 70, 80];
+        const LEFT_ID: u32 = 20_002_480;
+        let base = package(&[slot(UNLISTED_ID + 1, WORLD_ART), slot(PACKED_ID, WORLD_ART), slot(LEFT_ID, WORLD_ART)])?;
+        let left = [LEFT_ID, TEX_AUX_EC_MISSING_TEXTURE_ID]
+            .map(|id| EcEquivalentRecord { id, difference: 0.5 });
+        let reserved = reserved_slots();
+        let (missing, atmosphere) = reserved.split_last().expect("missing-texture slot");
+        let overlay_slots = [&[slot(PACKED_ID, WORLD_ART), alias(ABSENT_ID)][..], atmosphere].concat();
+        let overlay = package_with(&overlay_slots, Some(&left), OVERLAY_PIXEL)?;
+        assert!(overlay.is_overlay() && !base.is_overlay());
+        assert_eq!(overlay.equivalents().len(), left.len());
+        assert!(overlay.slot_for_texture_id(missing.texture_id).is_none(), "left to the base");
+
+        let (holder, packed) = overlay.overlay_slot(&base, PACKED_ID).expect("own slot");
+        assert!(std::ptr::eq(holder, &overlay));
+        assert_eq!(&holder.load_rgba(packed.payload_texture_id)?.expect("own pixels")[..RGBA_CHANNELS], &OVERLAY_PIXEL);
+        let (holder, listed) = overlay.overlay_slot(&base, LEFT_ID).expect("listed slot");
+        assert!(std::ptr::eq(holder, &base));
+        assert_eq!(&holder.load_rgba(listed.payload_texture_id)?.expect("base pixels")[..RGBA_CHANNELS], &PACKED_PIXEL);
+        let (holder, absent) = overlay.overlay_slot(&base, ABSENT_ID).expect("alias slot");
+        assert!(absent.is_missing_source() && std::ptr::eq(holder, &base), "the alias payload is the base's");
+        assert_eq!(&holder.load_rgba(absent.payload_texture_id)?.expect("missing pixels")[..RGBA_CHANNELS], &MISSING_PIXEL);
+        assert!(overlay.overlay_slot(&base, UNLISTED_ID + 1).is_none(), "neither held nor listed");
+        assert!(base.overlay_slot(&base, LEFT_ID).is_some(), "a full package reads itself");
         Ok(())
     }
 

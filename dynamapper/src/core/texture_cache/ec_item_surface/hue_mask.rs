@@ -79,11 +79,12 @@ fn native_extent(width: u16, height: u16, upscale: u16) -> Option<UVec2> {
 /// The sprite hue records of the item source `source`, for the items `include` accepts.
 pub(crate) fn append(lookup: &mut Image, source: super::ItemRecordSource, include: impl Fn(u32) -> bool,
     layers: &mut AuxLayers) {
-    let Some(art) = source.art else { return; };
-    let (meta, aux): (&TileMetaPackage, &TexAuxEcPackage) = (source.tilemeta, source.aux);
+    if source.art.is_none() { return; }
+    let meta: &TileMetaPackage = source.tilemeta;
     let mut records: Vec<[u32; 4]> = bytemuck::cast_slice(lookup.data.as_deref().expect("item lookup pixels")).to_vec();
     let format = layers.format();
-    let mut pixels: HashMap<u32, Option<AuxImage>> = HashMap::new();
+    // By package and payload id: equal payload ids of two packages are different images.
+    let mut pixels: HashMap<(usize, u32), Option<AuxImage>> = HashMap::new();
     let mut crops = HashMap::new();
     let mut shelf = Shelf::default();
     let mut missing = 0;
@@ -93,7 +94,7 @@ pub(crate) fn append(lookup: &mut Image, source: super::ItemRecordSource, includ
         let id = (source.base + tile.tile_id) as usize;
         let Some(material) = meta.item_material(tile.tile_id, 0) else { continue; };
         if material.shader_name.as_deref() != Some("UOSpriteShader") { continue; }
-        let Some(slot) = art.present_slot(tile.tile_id).filter(|s| s.is_static()) else { continue; };
+        let Some(slot) = source.art_slot(tile.tile_id).filter(|s| s.is_static()) else { continue; };
         let refs = meta.item_texture_refs(tile.tile_id);
         if !super::sprite_source(refs, 0).is_some_and(|r| r.is_primary_selected()
             && r.texture_id == tile.ec_texture_id) { continue; }
@@ -103,17 +104,18 @@ pub(crate) fn append(lookup: &mut Image, source: super::ItemRecordSource, includ
         if !declared { continue; }
         let descriptor = (|| {
             let mask = super::sprite_source(refs, 2)?;
-            let source = aux.slot_for_texture_id(mask.texture_id)?;
+            let (aux, source): (&TexAuxEcPackage, _) = source.aux_slot(mask.texture_id)?;
             if source.logical_family != mask.texture_type { return None; }
             let start = UVec2::new(u32::try_from(tile.ec_start_x).ok()?, u32::try_from(tile.ec_start_y).ok()?);
             let extent = native_extent(slot.width, slot.height, slot.upscale_factor)?;
             if (start + extent).x > u32::from(source.width) || (start + extent).y > u32::from(source.height) { return None; }
-            let key = (source.payload_texture_id, start.x, start.y, extent.x, extent.y);
+            let package = std::ptr::from_ref(aux) as usize;
+            let key = (package, source.payload_texture_id, start.x, start.y, extent.x, extent.y);
             if let Some(&descriptor) = crops.get(&key) { return Some(descriptor); }
             let warn = |error: eyre::Report| crate::console_logger::one(crate::console_logger::LogSev::Warn,
                 crate::console_logger::LogAbout::RenderWorldArt, &format!("EC hue mask {}: {error:#}", mask.texture_id));
             let source_extent = UVec2::new(source.width.into(), source.height.into());
-            let image = pixels.entry(source.payload_texture_id)
+            let image = pixels.entry((package, source.payload_texture_id))
                 .or_insert_with(|| AuxImage::load(aux, source.payload_texture_id, source_extent, format)
                     .unwrap_or_else(|error| { warn(error); None }))
                 .as_ref()?;

@@ -21,8 +21,13 @@
 //!   maps) under reserved keys above the tile ids, always lossless RGBA8888 at native size.
 //! - the light textures the tilemeta's item lights name (`TerrainTexture.uop` entries), under the same
 //!   reserved keys and with the same rules, role Light. Every one is required.
+//!
+//! [`pack_tex_aux_ec_overlay`] packs an overlay (the Kingdom Reborn `tex_aux_kr.uddp`): it decodes the base client's
+//! image of each texture too, and leaves a texture to the base package when that package holds it and the image is
+//! the same within [`TexAuxEcOverlayBase::max_difference`]; the textures it leaves go to
+//! `metadata/ec_equivalents.bin` with their measured difference, and the others are stored as above.
 
-use std::collections::{BTreeSet, HashMap};
+use std::collections::{BTreeSet, HashMap, HashSet};
 use std::path::{Path, PathBuf};
 
 use bytemuck::cast_slice;
@@ -30,15 +35,17 @@ use color_eyre::eyre::{self, WrapErr};
 use log::info;
 use rayon::prelude::*;
 
+use udd_assets::common::{EcEquivalentRecord, EC_EQUIVALENTS_ENTRY_PATH};
 use udd_assets::tex_art_cc::PagePixelFormat;
 use udd_assets::tex_aux_ec::{
-    encode_tex_aux_ec_slots, is_tex_aux_ec_reserved_key, tex_aux_ec_terrain_texture_key, texture_entry_path, TexAuxEcSlotRecord,
-    EC_ATMOSPHERE_MAP_TERRAIN_TEXTURE_ENTRIES, TEX_AUX_EC_MISSING_TEXTURE_ID, TEX_AUX_EC_SLOT_FLAG_MISSING_SOURCE,
-    TEX_AUX_EC_SLOT_MANIFEST_ENTRY_PATH,
+    encode_tex_aux_ec_equivalents, encode_tex_aux_ec_slots, is_tex_aux_ec_reserved_key, tex_aux_ec_terrain_texture_key,
+    texture_entry_path, TexAuxEcSlotRecord, EC_ATMOSPHERE_MAP_TERRAIN_TEXTURE_ENTRIES, TEX_AUX_EC_MISSING_TEXTURE_ID, TEX_AUX_EC_SLOT_FLAG_MISSING_SOURCE,
+    TEX_AUX_EC_SLOT_MANIFEST_ENTRY_PATH, TEX_AUX_EC_TERRAIN_TEXTURE_KEY_BASE,
     TEX_AUX_EC_WATER_EXTENTS_ENTRY_PATH,
 };
 use udd_assets::tilemeta::{
-    EcMaterialLogicalFamily, EcMaterialPhysicalPackage, EcMaterialStableRole, TileMetaItemTextureRef, TileMetaPackage,
+    EcMaterialLogicalFamily, EcMaterialPhysicalPackage, EcMaterialStableRole, TileMetaItemLight, TileMetaItemTextureRef,
+    TileMetaPackage,
 };
 use udd_container::{
     AddFileRequest, AddOwnedFileRequest, CompressionFlag, DataType, LookupMode, UddpBuilder,
@@ -125,6 +132,92 @@ pub struct TexAuxEcPackSummary {
     pub included: u64,
 }
 
+/// The base client an overlay ([`pack_tex_aux_ec_overlay`]) leaves the textures it draws the same to.
+pub struct TexAuxEcOverlayBase {
+    /// The base client's folders (`Texture.uop`, `TerrainTexture.uop`, `SystemTextures.uop`).
+    pub source_dirs: Vec<PathBuf>,
+    /// The keys of the base package (`tex_aux_ec_texture_keys`): a texture it lacks is never left to it.
+    pub keys: HashSet<u32>,
+    /// The largest difference (`crate::kr_items::image_difference`) of an image left to the base.
+    pub max_difference: f32,
+}
+
+/// What [`pack_tex_aux_ec_overlay`] stored and left to the base, by key, with each image's difference from the
+/// base client's (`None` for a key the base package lacks or whose base image is missing or of another extent).
+#[derive(Debug, Clone, Default)]
+pub struct TexAuxEcOverlaySummary {
+    pub pack: TexAuxEcPackSummary,
+    pub kept: Vec<(u32, Option<f32>)>,
+    pub equivalents: Vec<EcEquivalentRecord>,
+}
+
+/// The keys of the `tex_aux_ec.uddp` packed from a tilemeta with these texture refs and item lights: the qualifying
+/// texture ids (with an alias slot for those the client lacks), the missing-texture image, the atmosphere maps and
+/// the light textures.
+pub(crate) fn tex_aux_ec_texture_keys(
+    refs: &[TileMetaItemTextureRef],
+    lights: &[TileMetaItemLight],
+) -> eyre::Result<HashSet<u32>> {
+    let ids = select_qualifying_refs(refs, &mut TexAuxEcPackSummary::default())?;
+    Ok(ids.into_iter().map(|q| q.texture_id)
+        .chain(reserved_terrain_texture_entries(lights)?.into_iter().map(|(entry, _)| tex_aux_ec_terrain_texture_key(entry)))
+        .chain([TEX_AUX_EC_MISSING_TEXTURE_ID])
+        .collect())
+}
+
+/// The base client's sources, loaded for an overlay pack.
+struct LoadedOverlayBase<'a> {
+    base: &'a TexAuxEcOverlayBase,
+    world_textures: Option<Textures>,
+    terrain_textures: Option<Textures>,
+    missing_texture: RawRgba,
+}
+
+/// How an overlay pack places one image.
+#[derive(Debug, Clone, Copy, PartialEq)]
+struct OverlayChoice {
+    left_to_base: bool,
+    difference: Option<f32>,
+}
+
+impl<'a> LoadedOverlayBase<'a> {
+    fn load(base: &'a TexAuxEcOverlayBase) -> eyre::Result<Self> {
+        let open = |name: &str| find_first_existing_file(&base.source_dirs, &[name])
+            .map(|path| Textures::new(&path, None, None).wrap_err_with(|| format!("load {}", path.display())))
+            .transpose();
+        Ok(Self {
+            base,
+            world_textures: open("Texture.uop")?,
+            terrain_textures: open(TERRAIN_TEXTURE_UOP)?,
+            missing_texture: load_missing_texture(&base.source_dirs)?,
+        })
+    }
+
+    /// The base client's image under `key`, `None` when it has none.
+    fn image(&self, key: u32) -> Option<RawRgba> {
+        let file = if key == TEX_AUX_EC_MISSING_TEXTURE_ID {
+            return Some(RawRgba { width: self.missing_texture.width, height: self.missing_texture.height,
+                rgba: self.missing_texture.rgba.clone() });
+        } else if is_tex_aux_ec_reserved_key(key) {
+            self.terrain_textures.as_ref()?.get_from_name(&terrain_texture_uop_entry(key & !TEX_AUX_EC_TERRAIN_TEXTURE_KEY_BASE))
+        } else {
+            self.world_textures.as_ref()?.get_from_id(key)
+        };
+        decode_raw_rgba(&file.ok()??).ok()
+    }
+
+    /// Whether the image under `key` is left to the base package, and how far it is from the base client's.
+    fn choose(&self, key: u32, image: &RawRgba) -> OverlayChoice {
+        let difference = self.base.keys.contains(&key).then(|| self.image(key)).flatten()
+            .and_then(|base| crate::kr_items::image_difference(
+                (image.width, image.height, &image.rgba), (base.width, base.height, &base.rgba)));
+        OverlayChoice {
+            left_to_base: difference.is_some_and(|difference| difference <= self.base.max_difference),
+            difference,
+        }
+    }
+}
+
 /// Entry for deferred parallel decoding.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 struct QualifiedRef {
@@ -146,6 +239,27 @@ pub fn pack_tex_aux_ec(
     output: &Path,
     options: &TexAuxEcPackOptions,
 ) -> eyre::Result<TexAuxEcPackSummary> {
+    pack_tex_aux_ec_with_base(source_dirs, tilemeta_path, output, options, None).map(|summary| summary.pack)
+}
+
+/// [`pack_tex_aux_ec`] as an overlay over the `tex_aux_ec.uddp` of `base` (see the module documentation).
+pub fn pack_tex_aux_ec_overlay(
+    source_dirs: &[PathBuf],
+    tilemeta_path: &Path,
+    output: &Path,
+    options: &TexAuxEcPackOptions,
+    base: &TexAuxEcOverlayBase,
+) -> eyre::Result<TexAuxEcOverlaySummary> {
+    pack_tex_aux_ec_with_base(source_dirs, tilemeta_path, output, options, Some(base))
+}
+
+fn pack_tex_aux_ec_with_base(
+    source_dirs: &[PathBuf],
+    tilemeta_path: &Path,
+    output: &Path,
+    options: &TexAuxEcPackOptions,
+    base: Option<&TexAuxEcOverlayBase>,
+) -> eyre::Result<TexAuxEcOverlaySummary> {
     info!(
         "Building tex_aux_ec.uddp from tilemeta '{}' -> '{}'",
         tilemeta_path.display(),
@@ -162,7 +276,18 @@ pub fn pack_tex_aux_ec(
         .map(|p| Textures::new(p, None, None).wrap_err_with(|| format!("load {}", p.display())))
         .transpose()?;
     let missing_texture = load_missing_texture(source_dirs)?;
-    let terrain_textures = load_terrain_textures(source_dirs, &reserved_terrain_texture_entries(&tilemeta)?)?;
+    let terrain_textures = load_terrain_textures(source_dirs, &reserved_terrain_texture_entries(tilemeta.item_lights())?)?;
+    let base = base.map(LoadedOverlayBase::load).transpose()?;
+    let mut overlay = TexAuxEcOverlaySummary::default();
+    // Whether an image is stored, recording the choice of an overlay.
+    let mut stored = |key: u32, choice: Option<OverlayChoice>| match choice {
+        Some(OverlayChoice { left_to_base: true, difference }) => {
+            overlay.equivalents.push(EcEquivalentRecord { id: key, difference: difference.unwrap_or_default() });
+            false
+        }
+        Some(OverlayChoice { difference, .. }) => { overlay.kept.push((key, difference)); true }
+        None => true,
+    };
     // Water map 1 is not sampled on capable hardware, so its pixels still belong
     // only to tex_art_ec. Retain its native dimensions for the item's local UVs;
     // a trimmed art slot or an upscaled support map cannot supply those dimensions.
@@ -200,7 +325,7 @@ pub fn pack_tex_aux_ec(
     };
 
     enum Decoded {
-        Entry(DecodedEntry),
+        Entry(DecodedEntry, Option<OverlayChoice>),
         SourceAbsent(QualifiedRef),
         DecodeError,
     }
@@ -224,42 +349,56 @@ pub fn pack_tex_aux_ec(
                 // No archive for this package, or the entry could not be read.
                 _ => return Decoded::DecodeError,
             };
-            decode_raw_rgba(&file).ok()
-                .and_then(|image| encode(q.texture_id, q.logical_family, q.stable_role, image))
-                .map_or(Decoded::DecodeError, Decoded::Entry)
+            let Ok(image) = decode_raw_rgba(&file) else { return Decoded::DecodeError };
+            let choice = base.as_ref().map(|base| base.choose(q.texture_id, &image));
+            if choice.is_some_and(|choice| choice.left_to_base) {
+                // Left to the base package: nothing to encode.
+                return Decoded::Entry(DecodedEntry { texture_id: q.texture_id, logical_family: q.logical_family,
+                    stable_role: q.stable_role, width: image.width, height: image.height,
+                    pixel_format: PagePixelFormat::Rgba8888, data: Vec::new() }, choice);
+            }
+            encode(q.texture_id, q.logical_family, q.stable_role, image)
+                .map_or(Decoded::DecodeError, |entry| Decoded::Entry(entry, choice))
         })
         .collect();
 
     let mut slot_records: Vec<TexAuxEcSlotRecord> = Vec::new();
     let mut image_entries: Vec<(u32, u32, u32, PagePixelFormat, Vec<u8>)> = Vec::new();
 
-    let mut push_entry = |entry: DecodedEntry| -> TexAuxEcSlotRecord {
-        let record = TexAuxEcSlotRecord {
-            texture_id: entry.texture_id,
-            width: entry.width as u16,
-            height: entry.height as u16,
-            logical_family: entry.logical_family,
-            stable_role: entry.stable_role,
-            pixel_format: entry.pixel_format as u8,
-            flags: 0,
-        };
-        slot_records.push(record);
-        image_entries.push((entry.texture_id, entry.width, entry.height, entry.pixel_format, entry.data));
-        record
+    let slot_record = |entry: &DecodedEntry| TexAuxEcSlotRecord {
+        texture_id: entry.texture_id,
+        width: entry.width as u16,
+        height: entry.height as u16,
+        logical_family: entry.logical_family,
+        stable_role: entry.stable_role,
+        pixel_format: entry.pixel_format as u8,
+        flags: 0,
     };
-    // The client's fallback image, stored once under the reserved key; not counted in `included`.
-    let missing_slot = push_entry(
-        encode(
-            TEX_AUX_EC_MISSING_TEXTURE_ID,
-            EcMaterialLogicalFamily::SystemTextures as u8,
-            EcMaterialStableRole::Unknown as u8,
-            missing_texture,
-        )
-        .ok_or_else(|| eyre::eyre!("encode {EC_MISSING_TEXTURE_UOP_ENTRY}"))?,
-    );
+    let mut push_entry = |entry: DecodedEntry| {
+        slot_records.push(slot_record(&entry));
+        image_entries.push((entry.texture_id, entry.width, entry.height, entry.pixel_format, entry.data));
+    };
+    // The client's fallback image, stored once under the reserved key; not counted in `included`. An overlay that
+    // leaves it to the base keeps its slot record for the aliases below, whose payload the base then holds.
+    let missing_choice = base.as_ref().map(|base| base.choose(TEX_AUX_EC_MISSING_TEXTURE_ID, &missing_texture));
+    let missing_entry = encode(
+        TEX_AUX_EC_MISSING_TEXTURE_ID,
+        EcMaterialLogicalFamily::SystemTextures as u8,
+        EcMaterialStableRole::Unknown as u8,
+        missing_texture,
+    )
+    .ok_or_else(|| eyre::eyre!("encode {EC_MISSING_TEXTURE_UOP_ENTRY}"))?;
+    let missing_slot = slot_record(&missing_entry);
+    if stored(TEX_AUX_EC_MISSING_TEXTURE_ID, missing_choice) {
+        push_entry(missing_entry);
+    }
     // The atmosphere maps and the light textures, stored as decoded: the night composite must sample the client's
     // own texels, so neither BC7 nor an upscale pass may touch them. Not counted in `included`.
     for (entry, stable_role, image) in terrain_textures {
+        let key = tex_aux_ec_terrain_texture_key(entry);
+        if !stored(key, base.as_ref().map(|base| base.choose(key, &image))) {
+            continue;
+        }
         push_entry(DecodedEntry {
             texture_id: tex_aux_ec_terrain_texture_key(entry),
             logical_family: EcMaterialLogicalFamily::Textures as u8,
@@ -273,9 +412,11 @@ pub fn pack_tex_aux_ec(
     let mut alias_records = Vec::new();
     for decoded in decoded {
         match decoded {
-            Decoded::Entry(entry) => {
-                summary.included += 1;
-                push_entry(entry);
+            Decoded::Entry(entry, choice) => {
+                if stored(entry.texture_id, choice) {
+                    summary.included += 1;
+                    push_entry(entry);
+                }
             }
             Decoded::SourceAbsent(q) => {
                 summary.excluded_source_absent += 1;
@@ -315,6 +456,18 @@ pub fn pack_tex_aux_ec(
         id: None,
         data: &slot_bytes,
     })?;
+    overlay.equivalents.sort_by_key(|record| record.id);
+    overlay.kept.sort_by_key(|(key, _)| *key);
+    if base.is_some() {
+        package.add_file(AddFileRequest {
+            data_type: DataType::Metadata as u8,
+            compression: CompressionFlag::ZstdNoDict,
+            width: 0, height: 0,
+            virtual_path: Some(EC_EQUIVALENTS_ENTRY_PATH),
+            path_hash64: None, id: None,
+            data: &encode_tex_aux_ec_equivalents(&overlay.equivalents),
+        })?;
+    }
     package.add_file(AddFileRequest {
         data_type: DataType::Metadata as u8,
         compression: CompressionFlag::ZstdNoDict,
@@ -346,7 +499,8 @@ pub fn pack_tex_aux_ec(
         output.display()
     );
 
-    Ok(summary)
+    overlay.pack = summary;
+    Ok(overlay)
 }
 
 fn collect_water_primary_extents(tilemeta: &TileMetaPackage, textures: Option<&Textures>,
@@ -448,8 +602,8 @@ fn load_missing_texture(source_dirs: &[PathBuf]) -> eyre::Result<RawRgba> {
 
 /// The `TerrainTexture.uop` entries stored under reserved keys, with their roles: the atmosphere maps
 /// ([`EC_ATMOSPHERE_MAP_TERRAIN_TEXTURE_ENTRIES`]), then each light texture the tilemeta's item lights name.
-fn reserved_terrain_texture_entries(tilemeta: &TileMetaPackage) -> eyre::Result<Vec<(u32, EcMaterialStableRole)>> {
-    let light_entries: BTreeSet<u32> = tilemeta.item_lights().iter().map(|light| light.light_texture_entry).collect();
+fn reserved_terrain_texture_entries(item_lights: &[TileMetaItemLight]) -> eyre::Result<Vec<(u32, EcMaterialStableRole)>> {
+    let light_entries: BTreeSet<u32> = item_lights.iter().map(|light| light.light_texture_entry).collect();
     if let Some(entry) = light_entries.iter().find(|entry| EC_ATMOSPHERE_MAP_TERRAIN_TEXTURE_ENTRIES.contains(entry)) {
         eyre::bail!("tilemeta names atmosphere map {entry} as a light texture");
     }

@@ -4,7 +4,8 @@ use color_eyre::eyre::{self, WrapErr};
 use byteorder::{LittleEndian, ReadBytesExt};
 use udd_container::UddpReader;
 use crate::common::{
-    AtlasCacheOptions, AtlasPageCache, decode_atlas_page_rgba, ensure_manifest_version, read_path_entry, read_path_entry_cow,
+    AtlasCacheOptions, AtlasPageCache, decode_atlas_page_rgba, ensure_manifest_version, lists_equivalent,
+    read_ec_equivalents, read_path_entry, read_path_entry_cow, EcEquivalentRecord,
 };
 use crate::tex_art_cc::{upscale_algorithm_name, AtlasPackingMode, PagePixelFormat};
 
@@ -23,6 +24,10 @@ const SLOT_MANIFEST_MAGIC: [u8; 4] = *b"EASL";
 /// Bump version when the binary layout of either manifest changes.
 /// Required source-geometry metadata is also part of this package contract.
 pub const TEX_ART_EC_METADATA_VERSION: u32 = 1;
+/// Magic of the overlay table of this layout ([`crate::common::EC_EQUIVALENTS_ENTRY_PATH`]), whose ids are art ids:
+/// an overlay (the Kingdom Reborn `tex_art_kr.uddp`) holds the items whose world art its client draws differently
+/// from the client of the `tex_art_ec.uddp` beside it, and lists the others there ([`TexArtEcPackage::overlay_slot`]).
+pub const TEX_ART_EC_EQUIVALENTS_MAGIC: [u8; 4] = *b"AREQ";
 
 /// The original window builder's legacy pixel unit, against which the descriptor scales are given.
 pub const LEGACY_PIXEL_UNIT: f32 = 1.5;
@@ -129,6 +134,8 @@ pub struct TexArtEcPackage {
     slots: Vec<TexArtEcSlotRecord>,
     sprite_geometry: std::collections::BTreeMap<u32, TexArtEcSpriteGeometry>,
     page_cache: AtlasPageCache,
+    /// `metadata/ec_equivalents.bin` of an overlay.
+    equivalents: Option<Vec<EcEquivalentRecord>>,
 }
 
 impl TexArtEcPackage {
@@ -175,6 +182,11 @@ impl TexArtEcPackage {
         let geometry_bytes = read_path_entry_cow(&package, SPRITE_GEOMETRY_ENTRY_PATH)
             .context("tex_art_ec missing source sprite geometry; rebuild tex_art_ec.uddp")?;
         let sprite_geometry = parse_sprite_geometry(&geometry_bytes, &slots)?;
+        let equivalents = read_ec_equivalents(&package, TEX_ART_EC_EQUIVALENTS_MAGIC, TEX_ART_EC_METADATA_VERSION)?;
+        if let Some(listed) = equivalents.as_deref().and_then(|records| records.iter()
+            .find(|record| slots.get(record.id as usize).is_some_and(|slot| slot.is_present()))) {
+            eyre::bail!("tex_art_ec overlay both holds and leaves to its base art {}; repack it", listed.id);
+        }
 
         if (page_width, page_height, page_gutter) != (slot_width, slot_height, slot_gutter) {
             eyre::bail!("tex_art_ec metadata headers disagree on atlas dimensions or gutter");
@@ -193,6 +205,7 @@ impl TexArtEcPackage {
             slots,
             sprite_geometry,
             page_cache: AtlasPageCache::new(options),
+            equivalents,
         })
     }
 
@@ -242,6 +255,31 @@ impl TexArtEcPackage {
 
     pub fn present_slot(&self, art_id: u32) -> Option<&TexArtEcSlotRecord> {
         self.slot_record(art_id).filter(|slot| slot.is_present())
+    }
+
+    /// Whether this is an overlay: a package that holds only the items whose world art its client draws differently
+    /// from the client of the base package beside it, and lists the others ([`Self::equivalents`]).
+    pub fn is_overlay(&self) -> bool {
+        self.equivalents.is_some()
+    }
+
+    /// The art ids an overlay leaves to its base package, sorted; empty for a full package.
+    pub fn equivalents(&self) -> &[EcEquivalentRecord] {
+        self.equivalents.as_deref().unwrap_or_default()
+    }
+
+    /// The present slot of `art_id` read through this overlay over `base`, with the package holding it: this
+    /// package's slot, or else, for an art id it leaves to `base` ([`Self::equivalents`]), `base`'s. A full package
+    /// reads only itself.
+    pub fn overlay_slot<'a>(&'a self, base: &'a TexArtEcPackage, art_id: u32)
+        -> Option<(&'a TexArtEcPackage, &'a TexArtEcSlotRecord)> {
+        if let Some(slot) = self.present_slot(art_id) {
+            return Some((self, slot));
+        }
+        if !lists_equivalent(self.equivalents(), art_id) {
+            return None;
+        }
+        base.present_slot(art_id).map(|slot| (base, slot))
     }
 
     pub fn read_page_bytes(&self, page_index: u32) -> eyre::Result<Vec<u8>> {

@@ -967,8 +967,18 @@ impl KrStaticPackages<'_> {
 #[derive(Clone, Copy)]
 pub(super) struct KrStaticSources<'a> {
     pub(super) tilemeta: &'a udd_assets::tilemeta::TileMetaPackage,
+    /// An overlay over the Enhanced art: the items whose world art Kingdom Reborn draws differently ([`Self::art_slot`]).
     pub(super) art: &'a udd_assets::tex_art_ec::TexArtEcPackage,
     pub(super) land: &'a udd_assets::tex_land_ec::TexLandEcPackage,
+}
+
+impl<'a> KrStaticSources<'a> {
+    /// The present Kingdom Reborn art slot of `graphic`, read through the overlay over the Enhanced art `enhanced`, with
+    /// the package holding it.
+    pub(super) fn art_slot(self, enhanced: Option<&'a udd_assets::tex_art_ec::TexArtEcPackage>, graphic: u32)
+        -> Option<(&'a udd_assets::tex_art_ec::TexArtEcPackage, &'a udd_assets::tex_art_ec::TexArtEcSlotRecord)> {
+        self.art.overlay_slot(enhanced.unwrap_or(self.art), graphic)
+    }
 }
 
 impl StaticVisualKind {
@@ -1021,7 +1031,7 @@ fn kingdom_reborn_static_visual_kind(
         tex_land_ec, cache).is_some_and(|kind| static_continues_land(kind, tilemeta,
             cache.landlike_item_texture(tile_graphic, tilemeta_package, tex_land_ec)));
     let kr_tilemeta = kr.tilemeta.item_tile(graphic);
-    let kr_kind = kr.art.present_slot(graphic).map(|slot| resolve_ec_static_visual_kind(
+    let kr_kind = kr.art_slot(tex_art_ec, graphic).map(|(_, slot)| resolve_ec_static_visual_kind(
         tile_graphic,
         slot.is_static(),
         slot.is_land() && tileart_surface_has_visible_primary(kr.tilemeta.item_texture_refs(graphic)),
@@ -1036,8 +1046,8 @@ fn kingdom_reborn_static_visual_kind(
         Some(kind.kingdom_reborn())
     } else {
         console_logger::one(LogSev::Info, LogAbout::RenderWorldArt, &format!(
-            "Static {tile_graphic:#06x} continues the land, but the Kingdom Reborn art (tex_art_kr.uddp) lacks it: it \
-             keeps the Enhanced item data under the Kingdom Reborn land."));
+            "Static {tile_graphic:#06x} continues the land, but the Kingdom Reborn art (tex_art_kr.uddp over \
+             tex_art_ec.uddp) lacks it: it keeps the Enhanced item data under the Kingdom Reborn land."));
         None
     };
     cache.kingdom_reborn_kinds.insert(tile_graphic, kind);
@@ -2879,9 +2889,14 @@ fn resolve_art_static_sprite(
         StaticVisualKind::EcRegular { art_id } | StaticVisualKind::EcSurface { art_id } => {
             let (tex_art_ec, tilemeta_package, art_id, page_key, page_flag): (_, _, _, fn(u32) -> ArtPageKey, _) =
                 if art_id >= KR_ITEM_RECORD_BASE {
+                    // The Kingdom Reborn records, drawn from the Kingdom Reborn art or the Enhanced art it leaves them to.
                     let kr = resources.kingdom_reborn?;
-                    (kr.art, Some(kr.tilemeta), art_id - KR_ITEM_RECORD_BASE, ArtPageKey::KrEnhanced,
-                        KR_ART_REQUESTED_PAGE_FLAG)
+                    let art_id = art_id - KR_ITEM_RECORD_BASE;
+                    match kr.art_slot(resources.tex_art_ec_package(), art_id) {
+                        Some((art, _)) if !std::ptr::eq(art, kr.art) =>
+                            (art, Some(kr.tilemeta), art_id, ArtPageKey::Enhanced, 1u64 << 62),
+                        _ => (kr.art, Some(kr.tilemeta), art_id, ArtPageKey::KrEnhanced, KR_ART_REQUESTED_PAGE_FLAG),
+                    }
                 } else {
                     (resources.tex_art_ec_package()?, resources.tilemeta_package(), art_id, ArtPageKey::Enhanced,
                         1u64 << 62)

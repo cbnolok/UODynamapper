@@ -29,6 +29,24 @@ pub(crate) struct ItemRecordSource<'a> {
     pub tilemeta: &'a TileMetaPackage,
     pub art: Option<&'a udd_assets::tex_art_ec::TexArtEcPackage>,
     pub aux: &'a udd_assets::tex_aux_ec::TexAuxEcPackage,
+    /// The Enhanced packages an overlay `art` or `aux` (the Kingdom Reborn ones) leaves what it lists to; the Enhanced
+    /// packages for the Enhanced items, which read only themselves.
+    pub base_art: Option<&'a udd_assets::tex_art_ec::TexArtEcPackage>,
+    pub base_aux: &'a udd_assets::tex_aux_ec::TexAuxEcPackage,
+}
+
+impl<'a> ItemRecordSource<'a> {
+    /// The present art slot of item `tile_id`, read through an overlay `art`.
+    pub fn art_slot(&self, tile_id: u32) -> Option<&'a udd_assets::tex_art_ec::TexArtEcSlotRecord> {
+        let art = self.art?;
+        art.overlay_slot(self.base_art.unwrap_or(art), tile_id).map(|(_, slot)| slot)
+    }
+
+    /// The slot of `texture_id`, read through an overlay `aux`, with the package holding its payload.
+    pub fn aux_slot(&self, texture_id: u32)
+        -> Option<(&'a udd_assets::tex_aux_ec::TexAuxEcPackage, udd_assets::tex_aux_ec::SlotInfo)> {
+        self.aux.overlay_slot(self.base_aux, texture_id)
+    }
 }
 
 #[derive(Resource, Clone)]
@@ -95,14 +113,14 @@ pub(super) fn create_lookup(
 ) -> Handle<Image> {
     let mut records = vec![[0u32; 4]; ITEM_HEADER_COUNT];
     for (index, item_source) in sources.iter().enumerate() {
-        let (tilemeta, art, aux) = (item_source.tilemeta, item_source.art, item_source.aux);
+        let (tilemeta, aux) = (item_source.tilemeta, item_source.aux);
         let mut assign = |r: &TileMetaItemTextureRef| assign(index, r);
         for tile in tilemeta.item_tiles().iter().filter(|tile| (tile.tile_id as usize) < ITEM_CAPACITY) {
             let item = item_source.base + tile.tile_id;
             let Some(material) = tilemeta.item_material(tile.tile_id, 0) else { continue; };
             append_material(&mut records, item, material, tilemeta.item_texture_refs(tile.tile_id), &mut assign);
             let refs = tilemeta.item_texture_refs(tile.tile_id);
-            if let (Some(slot), Some(extent)) = (art.and_then(|art| art.present_slot(tile.tile_id)),
+            if let (Some(slot), Some(extent)) = (item_source.art_slot(tile.tile_id),
                 source(refs, 1).and_then(|r| aux.water_primary_extent(r.texture_id))) {
                 water::append(&mut records, item, material, tilemeta.item_texture_refs(tile.tile_id),
                     Vec4::new(f32::from(tile.ec_start_x), f32::from(tile.ec_start_y), slot.logical_width(), slot.logical_height()),

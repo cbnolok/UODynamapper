@@ -60,8 +60,10 @@ pub struct TexLandKrPackageRes(pub Arc<udd_assets::tex_land_ec::TexLandEcPackage
 pub struct TexAuxEcPackageRes(pub Arc<udd_assets::tex_aux_ec::TexAuxEcPackage>);
 
 /// The Kingdom Reborn item packages `pack-kr-land` writes beside tex_land_kr.uddp, in the Enhanced layouts: KR's tileart
-/// (`tilemeta_kr.uddp`), item art (`tex_art_kr.uddp`) and item material textures (`tex_aux_kr.uddp`). Under the KR land
-/// the statics that continue the land are drawn from them (`statics_collect::StaticLandStyle::KingdomReborn`).
+/// (`tilemeta_kr.uddp`), and the item art (`tex_art_kr.uddp`) and material textures (`tex_aux_kr.uddp`) KR draws
+/// differently from the Enhanced Client, overlays over `tex_art_ec.uddp` and `tex_aux_ec.uddp` that the others are read
+/// from. Under the KR land the statics that continue the land are drawn from them
+/// (`statics_collect::StaticLandStyle::KingdomReborn`).
 #[derive(Resource, Clone)]
 pub struct KrItemPackagesRes {
     pub tilemeta: Arc<TileMetaPackage>,
@@ -93,6 +95,12 @@ fn load_kr_item_packages(lg: &impl Fn(&str), lg_err: &impl Fn(&str), udd_path: &
             art: Arc::new(udd_assets::tex_art_ec::TexArtEcPackage::from_uddp_package_with_options(
                 UddpReader::load_with_options(&art_path, UddpReaderOptions::disabled())?, AtlasCacheOptions::disabled())?),
             aux: Arc::new(udd_assets::tex_aux_ec::TexAuxEcPackage::load(&aux_path)?),
+        })
+        .and_then(|packages| {
+            // The earlier layout held all of Kingdom Reborn's art and material textures, not overlays.
+            color_eyre::eyre::ensure!(packages.art.is_overlay() && packages.aux.is_overlay(),
+                "tex_art_kr.uddp and tex_aux_kr.uddp are not overlays over the Enhanced packages");
+            Ok(packages)
         })
     })();
     loaded.map_err(|error| lg_err(&format!("Kingdom Reborn item packages not loaded: {error:#}; repack them with \

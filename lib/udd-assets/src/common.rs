@@ -3,7 +3,7 @@ use std::collections::HashMap;
 use std::sync::{Arc, RwLock};
 
 use color_eyre::eyre::{self, WrapErr};
-use bytemuck::Pod;
+use bytemuck::{Pod, Zeroable};
 use udd_container::UddpReader;
 
 use crate::bc7::{
@@ -48,6 +48,62 @@ pub(crate) fn ensure_manifest_version(manifest: &str, version: u32, current: u32
         "{manifest}: package version {version} is not supported (current is {current}); repack with the current udd-cli"
     );
     Ok(())
+}
+
+/// The table of an overlay package: one that holds only what its client draws differently from the client of the
+/// base package beside it (the Kingdom Reborn `tex_art_kr.uddp` and `tex_aux_kr.uddp` over the Enhanced packages).
+/// A four-byte magic of the package layout and its metadata version, then one [`EcEquivalentRecord`] per id the
+/// overlay leaves to its base package, sorted by unique id. A package without the entry is a full package.
+pub const EC_EQUIVALENTS_ENTRY_PATH: &str = "metadata/ec_equivalents.bin";
+/// Magic and version.
+const EC_EQUIVALENTS_HEADER_SIZE: usize = 8;
+
+/// An id an overlay leaves to its base package ([`EC_EQUIVALENTS_ENTRY_PATH`]).
+#[repr(C)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Pod, Zeroable)]
+pub struct EcEquivalentRecord {
+    /// The id the package layout keys its entries by (an art id, a texture id or a reserved key).
+    pub id: u32,
+    /// How far the overlay client's image is from the base client's, in 8-bit levels, as the packer measured it.
+    pub difference: f32,
+}
+
+/// Bytes of [`EC_EQUIVALENTS_ENTRY_PATH`] for a package layout of `magic` at metadata `version`.
+pub fn encode_ec_equivalents(magic: [u8; 4], version: u32, records: &[EcEquivalentRecord]) -> Vec<u8> {
+    let mut bytes = Vec::with_capacity(EC_EQUIVALENTS_HEADER_SIZE + std::mem::size_of_val(records));
+    bytes.extend_from_slice(&magic);
+    bytes.extend_from_slice(&version.to_le_bytes());
+    bytes.extend_from_slice(bytemuck::cast_slice(records));
+    bytes
+}
+
+/// Records of [`EC_EQUIVALENTS_ENTRY_PATH`], after checking its magic, version and order.
+pub fn decode_ec_equivalents(bytes: &[u8], magic: [u8; 4], version: u32) -> eyre::Result<Vec<EcEquivalentRecord>> {
+    eyre::ensure!(
+        bytes.len() >= EC_EQUIVALENTS_HEADER_SIZE && bytes[0..4] == magic,
+        "{EC_EQUIVALENTS_ENTRY_PATH}: no {} header; repack with the current udd-cli",
+        String::from_utf8_lossy(&magic)
+    );
+    let found = u32::from_le_bytes(bytes[4..8].try_into().expect("slice length checked"));
+    ensure_manifest_version(EC_EQUIVALENTS_ENTRY_PATH, found, version)?;
+    let records: Vec<EcEquivalentRecord> = read_pod_vec(&bytes[EC_EQUIVALENTS_HEADER_SIZE..], EC_EQUIVALENTS_ENTRY_PATH)?;
+    eyre::ensure!(records.windows(2).all(|pair| pair[0].id < pair[1].id),
+        "{EC_EQUIVALENTS_ENTRY_PATH} is not sorted by unique id");
+    Ok(records)
+}
+
+/// The overlay table of `package`, `None` for a full package.
+pub(crate) fn read_ec_equivalents(package: &UddpReader, magic: [u8; 4], version: u32)
+    -> eyre::Result<Option<Vec<EcEquivalentRecord>>> {
+    package.find_by_path_hash(udd_container::xxh64_virtual_path(EC_EQUIVALENTS_ENTRY_PATH))
+        .map(|_| read_path_entry_cow(package, EC_EQUIVALENTS_ENTRY_PATH)
+            .and_then(|bytes| decode_ec_equivalents(bytes.as_ref(), magic, version)))
+        .transpose()
+}
+
+/// Whether the sorted overlay table `records` lists `id`.
+pub(crate) fn lists_equivalent(records: &[EcEquivalentRecord], id: u32) -> bool {
+    records.binary_search_by_key(&id, |record| record.id).is_ok()
 }
 
 pub(crate) struct AtlasPageCache {
@@ -251,6 +307,22 @@ mod tests {
 
     use super::*;
     use dds::{ColorFormat, CompressionQuality, EncodeOptions, Format, ImageView, Size};
+
+    /// The equivalents round-trip, and other magics, versions and unsorted ids are refused.
+    #[test]
+    fn ec_equivalents_round_trip_and_reject_other_layouts() {
+        const MAGIC: [u8; 4] = *b"TEQV";
+        const VERSION: u32 = 1;
+        let records = [3, 7].map(|id| EcEquivalentRecord { id, difference: 0.25 });
+        let bytes = encode_ec_equivalents(MAGIC, VERSION, &records);
+        let decoded = decode_ec_equivalents(&bytes, MAGIC, VERSION).unwrap();
+        assert_eq!(decoded.iter().map(|r| (r.id, r.difference)).collect::<Vec<_>>(), [(3, 0.25), (7, 0.25)]);
+        assert!(lists_equivalent(&decoded, 7) && !lists_equivalent(&decoded, 5));
+        assert!(decode_ec_equivalents(&bytes, *b"XXXX", VERSION).is_err());
+        assert!(decode_ec_equivalents(&bytes, MAGIC, VERSION + 1).is_err());
+        let unsorted = encode_ec_equivalents(MAGIC, VERSION, &[records[1], records[0]]);
+        assert!(decode_ec_equivalents(&unsorted, MAGIC, VERSION).is_err());
+    }
 
     #[test]
     fn atlas_page_cache_loads_each_page_once() {

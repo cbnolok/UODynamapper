@@ -243,8 +243,9 @@ impl UddConvApp {
             ui,
             "Kingdom Reborn Land",
             "KR terrain definitions, textures and land routes, with what KR lacks from the Enhanced Client \
-            (tex_land_kr.uddp); upscaled as Enhanced Land. Beside it, lossless from KR alone: its tileart \
-            (tilemeta_kr.uddp), item art (tex_art_kr.uddp) and item material textures (tex_aux_kr.uddp)",
+            (tex_land_kr.uddp); upscaled as Enhanced Land. Beside it, lossless: KR's tileart (tilemeta_kr.uddp), and \
+            the item art (tex_art_kr.uddp) and material textures (tex_aux_kr.uddp) KR draws differently from the \
+            Enhanced Client",
             Some(&source),
             &progress,
             !is_busy,

@@ -1121,13 +1121,14 @@ enum Commands {
     /// Packs the Kingdom Reborn land into tex_land_kr.uddp, in the tex_land_ec.uddp layout: KR's TerrainDefinition.uop,
     /// Texture.uop and facet land routes, with what KR lacks from the Enhanced Client, and KR's grunge texture. Without
     /// a format flag the pages are lossless RGBA8888 with Zstd 19; BC7 blocks take Zstd 19 too. Beside it go the KR
-    /// item packages, lossless, from KR alone: tilemeta_kr.uddp (KR's tileart.uop with Classic tiledata.mul),
-    /// tex_art_kr.uddp (its item world art) and tex_aux_kr.uddp (its item material textures).
+    /// item packages, lossless: tilemeta_kr.uddp (KR's tileart.uop with Classic tiledata.mul), and, as overlays over
+    /// the Enhanced packages beside them, tex_art_kr.uddp (the item world art KR draws differently from the Enhanced
+    /// Client) and tex_aux_kr.uddp (the item material textures KR draws differently).
     #[command(group(ArgGroup::new("output_format").args(["raw", "bc7", "bc7_rdo"])))]
     PackKrLand {
         #[arg(long, help = "Kingdom Reborn client folder (TerrainDefinition.uop, Texture.uop, tileart.uop, string_dictionary.uop, TerrainTexture.uop, SystemTextures.uop).")]
         krdir: PathBuf,
-        #[arg(long, help = "Enhanced Client folder, for what Kingdom Reborn lacks (TerrainDefinition.uop, Texture.uop, GameData.uop).")]
+        #[arg(long, help = "Enhanced Client folder, for what Kingdom Reborn lacks (TerrainDefinition.uop, Texture.uop, GameData.uop) and what its items share with it (tileart.uop, string_dictionary.uop, Texture.uop, TerrainTexture.uop, SystemTextures.uop).")]
         ecdir: PathBuf,
         #[arg(long, help = "Classic Client folder, for the tiledata.mul (and radarcol.mul) of tilemeta_kr.uddp.")]
         ccdir: PathBuf,
@@ -1135,9 +1136,9 @@ enum Commands {
         output: PathBuf,
         #[arg(long, help = "Output of the KR tileart package. Default: tilemeta_kr.uddp beside --output.")]
         tilemeta_output: Option<PathBuf>,
-        #[arg(long, help = "Output of the KR item world art package. Default: tex_art_kr.uddp beside --output.")]
+        #[arg(long, help = "Output of the KR item world art overlay. Default: tex_art_kr.uddp beside --output.")]
         art_output: Option<PathBuf>,
-        #[arg(long, help = "Output of the KR item material texture package. Default: tex_aux_kr.uddp beside --output.")]
+        #[arg(long, help = "Output of the KR item material texture overlay. Default: tex_aux_kr.uddp beside --output.")]
         aux_output: Option<PathBuf>,
         #[arg(long, help = "Embed this TerrainTranscode.kdl (the terrain routing table), without the ids Kingdom Reborn routes. Default: the copy shipped with the tools.")]
         land_transcode_kdl: Option<PathBuf>,
@@ -2101,7 +2102,7 @@ where
                 summary.package.slot_count,
                 out_file.display()
             );
-            pack_kr_items(&krdir, &ccdir, &item_outputs)?;
+            pack_kr_items(&krdir, &ecdir, &ccdir, &item_outputs)?;
         }
         Commands::AuditEcMaterialRefs {
             source_dirs: source_dir_args,
@@ -2842,8 +2843,8 @@ mod tests {
             "/ec",
             "--ccdir",
             "/cc",
-            "--art-output",
-            "/out/art.uddp",
+            "--aux-output",
+            "/out/aux.uddp",
             "--report",
             "/out/kr_land.txt",
             "--upscale-64-algo",
@@ -2856,7 +2857,7 @@ mod tests {
                 zstd, upscale, .. } => {
                 assert_eq!((krdir, ecdir, ccdir), (PathBuf::from("/kr"), PathBuf::from("/ec"), PathBuf::from("/cc")));
                 assert_eq!(output, PathBuf::from(TEX_LAND_KR_FILE_NAME));
-                assert_eq!((tilemeta_output, art_output, aux_output), (None, Some(PathBuf::from("/out/art.uddp")), None));
+                assert_eq!((tilemeta_output, art_output, aux_output), (None, None, Some(PathBuf::from("/out/aux.uddp"))));
                 assert_eq!(report, Some(PathBuf::from("/out/kr_land.txt")));
                 assert!(!bc7 && !raw && zstd.is_none());
                 assert!(matches!(upscale.upscale_64_algo, CliUpscaleFilter::None));

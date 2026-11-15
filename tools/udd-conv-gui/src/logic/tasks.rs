@@ -1085,7 +1085,8 @@ impl UddConvApp {
 
     /// The Kingdom Reborn land: KR's terrain from the Kingdom Reborn folder, what KR lacks from the Enhanced one, with
     /// the Enhanced Land card's upscale settings and its own encoding. Beside it, the lossless KR item packages (KR's
-    /// tileart with the Classic tiledata, its item art and material textures).
+    /// tileart with the Classic tiledata, and the item art and material textures KR draws differently from the
+    /// Enhanced Client).
     pub fn convert_tex_land_kr(&self) {
         let settings = self.settings.clone();
         let output = self.get_output_path(TEX_LAND_KR_FILE_NAME);
@@ -1142,9 +1143,11 @@ impl UddConvApp {
                 |task_progress| progress.task_progress_with_extract_label(task_progress, extract_label),
                 |build_progress| progress.build_progress(build_progress),
             )?;
-            let items = pack_kr_items(&kr_dir, &cc_dir, &item_outputs)?;
-            Ok(format!("Wrote {} pages to {} ({summary}); KR items: {} art slots, {} material textures",
-                summary.package.page_count, output.display(), items.art.populated_slot_count, items.aux.included))
+            let items = pack_kr_items(&kr_dir, &ec_dir, &cc_dir, &item_outputs)?;
+            Ok(format!("Wrote {} pages to {} ({summary}); KR items: {} art slots ({} items left to tex_art_ec.uddp), {} \
+                material textures ({} left to tex_aux_ec.uddp)", summary.package.page_count, output.display(),
+                items.art.populated_slot_count, items.world_art.equivalents.len(), items.aux.kept.len(),
+                items.aux.equivalents.len()))
         });
     }
 

@@ -202,18 +202,18 @@ fn create_blank_aux_atlas_images(images: &mut Assets<Image>) -> LandAuxAtlasImag
     }
 }
 
-/// `source` is the item source (`ec_item_surface::ItemRecordSource`) whose `package` holds the texture: equal payload ids
-/// of two sources' packages are different images.
+/// The layer of `texture_id`, whose `slot` (`ec_item_surface::ItemRecordSource::aux_slot`) has its payload in
+/// `package`. `assigned` is keyed by package and payload id: equal payload ids of two packages are different images.
 fn assign_aux_layer(
     package: &TexAuxEcPackage,
-    source: usize,
+    slot: udd_assets::tex_aux_ec::SlotInfo,
     texture_id: u32,
     assigned: &mut std::collections::HashMap<(usize, u32), u32>,
     layers: &mut aux_layers::AuxLayers,
 ) -> Option<(u32, UVec2)> {
-    let slot = package.slot_for_texture_id(texture_id)?;
     let extent = UVec2::new(slot.width.into(), slot.height.into());
     let payload_id = slot.payload_texture_id;
+    let source = std::ptr::from_ref(package) as usize;
     if let Some(&layer) = assigned.get(&(source, payload_id)) { return Some((layer, extent)); }
     if extent.min_element() == 0 || extent.max_element() > AUX_ATLAS_TILE_SIZE {
         log::warn!("EC auxiliary source {texture_id} exceeds atlas cell extent: {extent:?}");
@@ -252,13 +252,17 @@ fn create_aux_atlas_images(
     };
 
     // The item sources: the Enhanced items, then the Kingdom Reborn items.
-    let sources = tilemeta.map(|tilemeta| ItemRecordSource { base: 0, tilemeta, art: tex_art_ec, aux: tex_aux_ec })
+    // The Kingdom Reborn packages are overlays over the Enhanced ones.
+    let sources = tilemeta.map(|tilemeta| ItemRecordSource {
+        base: 0, tilemeta, art: tex_art_ec, aux: tex_aux_ec, base_art: tex_art_ec, base_aux: tex_aux_ec,
+    })
         .into_iter()
         .chain(kr_items.map(|kr| ItemRecordSource {
             base: KR_ITEM_RECORD_BASE, tilemeta: &kr.tilemeta, art: Some(&kr.art), aux: &kr.aux,
+            base_art: tex_art_ec, base_aux: tex_aux_ec,
         }))
         .collect::<Vec<_>>();
-    // Map (item source, texture_id) → atlas layer index (1-based; 0 = absent sentinel).
+    // Map (package, payload id) → atlas layer index (1-based; 0 = absent sentinel).
     let mut texture_id_to_layer: std::collections::HashMap<(usize, u32), u32> =
         std::collections::HashMap::new();
     // Layer 0 is the sentinel. Collect the distinct texture_ids needed.
@@ -270,31 +274,29 @@ fn create_aux_atlas_images(
 
     let liquid_sources = sources.iter().map(|source| (source.base, source.tilemeta)).collect::<Vec<_>>();
     let item_lookup = super::ec_item_liquid::create_lookup(images, &liquid_sources, |index, source| {
-        let package = sources[index].aux;
-        let slot = package.slot_for_texture_id(source.texture_id)?;
+        let (package, slot) = sources[index].aux_slot(source.texture_id)?;
         // The package is keyed by numeric ID; a legacy/sprite family collision
         // must never supply a WorldArt shoreline mask.
         if slot.logical_family != source.texture_type {
             log::warn!("EC item liquid source {} has a different packed family; rebuild tex_aux_ec", source.texture_id);
             return None;
         }
-        assign_aux_layer(package, index, source.texture_id, &mut texture_id_to_layer, &mut layers)
+        assign_aux_layer(package, slot, source.texture_id, &mut texture_id_to_layer, &mut layers)
     });
     let surface_lookup = super::ec_item_surface::create_lookup(images, &sources, |index, source| {
-        let package = sources[index].aux;
-        let slot = package.slot_for_texture_id(source.texture_id)?;
+        let (package, slot) = sources[index].aux_slot(source.texture_id)?;
         if slot.logical_family != source.texture_type { return None; }
-        assign_aux_layer(package, index, source.texture_id, &mut texture_id_to_layer, &mut layers)
+        assign_aux_layer(package, slot, source.texture_id, &mut texture_id_to_layer, &mut layers)
     });
 
     for source in &sources {
         // The Kingdom Reborn sprites draw only the statics that continue the land (`statics_collect`
         // `kingdom_reborn_static_visual_kind`), land materials by the Enhanced data or by Kingdom Reborn's: only those
         // need their hue coverage.
-        let land_item = |meta: &TileMetaPackage, art: Option<&udd_assets::tex_art_ec::TexArtEcPackage>, tile_id: u32|
-            meta.uses_water_shader(tile_id) || art.and_then(|art| art.present_slot(tile_id)).is_some_and(|slot| slot.is_land());
-        let drawn_item = |tile_id: u32| source.base == 0 || land_item(source.tilemeta, source.art, tile_id)
-            || tilemeta.is_some_and(|meta| land_item(meta, tex_art_ec, tile_id));
+        let land_item = |source: &ItemRecordSource, tile_id: u32| source.tilemeta.uses_water_shader(tile_id)
+            || source.art_slot(tile_id).is_some_and(|slot| slot.is_land());
+        let drawn_item = |tile_id: u32| source.base == 0 || land_item(source, tile_id)
+            || sources.first().is_some_and(|enhanced| enhanced.base == 0 && land_item(enhanced, tile_id));
         super::ec_item_surface::append_sprite_hues(&mut images.get_mut(&surface_lookup).expect("new item lookup"),
             *source, drawn_item, &mut layers);
     }
@@ -2008,7 +2010,8 @@ mod tests {
         let mut layers = aux_layers::AuxLayers::new(aux_layers::AuxLayerFormat::Rgba8);
         let mut aliases = 0;
         for slot in package.slots().iter().filter(|slot| slot.is_missing_source()) {
-            assert_eq!(assign_aux_layer(&package, 0, slot.texture_id, &mut assigned, &mut layers),
+            let info = package.slot_for_texture_id(slot.texture_id).unwrap();
+            assert_eq!(assign_aux_layer(&package, info, slot.texture_id, &mut assigned, &mut layers),
                 Some((1, UVec2::new(256, 256))));
             aliases += 1;
         }

@@ -56,6 +56,12 @@ const SHARED_CLASSIC_GUMPS_FILE_NAME: &str = "gumps_cc.uddp";
 const TILEMETA_FILE_NAME: &str = "tilemeta.uddp";
 /// The tilemeta whose item lights a tex_aux_kr beside it must carry the textures of.
 const TILEMETA_KR_FILE_NAME: &str = udd_conv::kr_items::TILEMETA_KR_FILE_NAME;
+/// The Enhanced packages the Kingdom Reborn overlays (`tex_art_kr`, `tex_aux_kr`) leave what they list to.
+const TEX_ART_EC_FILE_NAME: &str = "tex_art_ec.uddp";
+const TEX_AUX_EC_FILE_NAME: &str = "tex_aux_ec.uddp";
+/// What a Kingdom Reborn package of the earlier layout, all of Kingdom Reborn's art or material textures, fails with.
+const KR_OVERLAY_REPACK: &str = "not an overlay over the Enhanced package (the earlier layout, all of Kingdom \
+    Reborn's images): repack it with `udd-cli pack pack-kr-land`";
 
 /// Package kinds, each read by its own reader.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -386,8 +392,11 @@ pub fn validate_package(path: &Path) -> PackageReport {
                 if kind == PackageKind::TexAuxEc {
                     check_item_light_textures(path, TILEMETA_FILE_NAME, &package, &mut report);
                 }
+                if kind == PackageKind::TexArtKr {
+                    check_kr_art_overlay(path, &package, &mut report);
+                }
                 if kind == PackageKind::TexAuxKr {
-                    check_item_light_textures(path, TILEMETA_KR_FILE_NAME, &package, &mut report);
+                    check_kr_aux_overlay(path, &package, &mut report);
                 }
             }
             Err(error) => report.failures.push(format!("{} reader: {error:#}", kind.name())),
@@ -456,24 +465,29 @@ fn check_shared_classic_gumps(path: &Path, package: &UddpReader, report: &mut Pa
 
 /// A tex_aux_ec package against the tilemeta beside it: every light texture its item lights name must be packed.
 fn check_item_light_textures(path: &Path, tilemeta_name: &str, package: &UddpReader, report: &mut PackageReport) {
+    match TexAuxEcPackage::from_uddp_package(package.clone()) {
+        Ok(aux) => check_item_light_textures_of(path, tilemeta_name, &aux, &aux, report),
+        Err(error) => report.failures.push(format!("tex_aux_ec reader: {error:#}")),
+    }
+}
+
+/// [`check_item_light_textures`] for `aux`, read through an overlay over `base` (`aux` itself for a full package).
+fn check_item_light_textures_of(path: &Path, tilemeta_name: &str, aux: &TexAuxEcPackage, base: &TexAuxEcPackage,
+    report: &mut PackageReport) {
     let tilemeta_path = path.with_file_name(tilemeta_name);
     if !tilemeta_path.is_file() {
         return report
             .notes
             .push(format!("no {tilemeta_name} beside it: its light textures were not checked against the item lights"));
     }
-    let (aux, tilemeta) = match (
-        TexAuxEcPackage::from_uddp_package(package.clone()),
-        TileMetaPackage::load(&tilemeta_path),
-    ) {
-        (Ok(aux), Ok(tilemeta)) => (aux, tilemeta),
-        (Err(error), _) => return report.failures.push(format!("tex_aux_ec reader: {error:#}")),
-        (_, Err(error)) => return report.failures.push(format!("light textures: {}: {error:#}", tilemeta_path.display())),
+    let tilemeta = match TileMetaPackage::load(&tilemeta_path) {
+        Ok(tilemeta) => tilemeta,
+        Err(error) => return report.failures.push(format!("light textures: {}: {error:#}", tilemeta_path.display())),
     };
     let entries = tilemeta.item_lights().iter().map(|light| light.light_texture_entry).collect::<BTreeSet<_>>();
     let missing = entries
         .iter()
-        .filter(|entry| aux.slot_for_texture_id(tex_aux_ec_terrain_texture_key(**entry)).is_none())
+        .filter(|entry| aux.overlay_slot(base, tex_aux_ec_terrain_texture_key(**entry)).is_none())
         .collect::<Vec<_>>();
     if missing.is_empty() {
         return report.notes.push(format!(
@@ -486,6 +500,72 @@ fn check_item_light_textures(path: &Path, tilemeta_name: &str, package: &UddpRea
     report.failures.push(format!(
         "light textures {missing:?} of {} are not packed: repack tex_aux_ec against it",
         tilemeta_path.display()
+    ));
+}
+
+/// A Kingdom Reborn art package: an overlay, whose listed art ids the `tex_art_ec.uddp` beside it holds.
+fn check_kr_art_overlay(path: &Path, package: &UddpReader, report: &mut PackageReport) {
+    let art = match TexArtEcPackage::from_uddp_package(package.clone()) {
+        Ok(art) => art,
+        Err(error) => return report.failures.push(format!("tex_art_ec reader: {error:#}")),
+    };
+    if !art.is_overlay() {
+        return report.failures.push(KR_OVERLAY_REPACK.to_owned());
+    }
+    let base_path = path.with_file_name(TEX_ART_EC_FILE_NAME);
+    if !base_path.is_file() {
+        return report.notes.push(format!(
+            "no {TEX_ART_EC_FILE_NAME} beside it: the {} art ids it leaves to one were not checked",
+            art.equivalents().len()
+        ));
+    }
+    let base = match TexArtEcPackage::load(&base_path) {
+        Ok(base) => base,
+        Err(error) => return report.failures.push(format!("overlay base: {}: {error:#}", base_path.display())),
+    };
+    let missing = art.equivalents().iter().map(|record| record.id)
+        .filter(|&id| base.present_slot(id).is_none())
+        .collect::<Vec<_>>();
+    report_overlay_base(&base_path, art.equivalents().len(), &missing, report);
+}
+
+/// A Kingdom Reborn material texture package: an overlay, whose listed keys the `tex_aux_ec.uddp` beside it holds,
+/// with the light textures of the `tilemeta_kr.uddp` beside it.
+fn check_kr_aux_overlay(path: &Path, package: &UddpReader, report: &mut PackageReport) {
+    let aux = match TexAuxEcPackage::from_uddp_package(package.clone()) {
+        Ok(aux) => aux,
+        Err(error) => return report.failures.push(format!("tex_aux_ec reader: {error:#}")),
+    };
+    if !aux.is_overlay() {
+        return report.failures.push(KR_OVERLAY_REPACK.to_owned());
+    }
+    let base_path = path.with_file_name(TEX_AUX_EC_FILE_NAME);
+    if !base_path.is_file() {
+        return report.notes.push(format!(
+            "no {TEX_AUX_EC_FILE_NAME} beside it: the {} keys it leaves to one and its light textures were not checked",
+            aux.equivalents().len()
+        ));
+    }
+    let base = match TexAuxEcPackage::load(&base_path) {
+        Ok(base) => base,
+        Err(error) => return report.failures.push(format!("overlay base: {}: {error:#}", base_path.display())),
+    };
+    let missing = aux.equivalents().iter().map(|record| record.id)
+        .filter(|&id| base.slot_for_texture_id(id).is_none())
+        .collect::<Vec<_>>();
+    report_overlay_base(&base_path, aux.equivalents().len(), &missing, report);
+    check_item_light_textures_of(path, TILEMETA_KR_FILE_NAME, &aux, &base, report);
+}
+
+/// Whether the `listed` ids an overlay leaves to the package at `base_path` are all there, but `missing`.
+fn report_overlay_base(base_path: &Path, listed: usize, missing: &[u32], report: &mut PackageReport) {
+    if missing.is_empty() {
+        return report.notes.push(format!("the {listed} ids it leaves to {} are there", base_path.display()));
+    }
+    report.failures.push(format!(
+        "{} of the ids it leaves to {} are not there ({missing:?}): repack it against that package",
+        missing.len(),
+        base_path.display()
     ));
 }
 
