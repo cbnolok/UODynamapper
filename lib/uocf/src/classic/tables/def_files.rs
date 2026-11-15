@@ -1,6 +1,6 @@
 //! The Classic remap def files read as the client reads them, strictly, and written back byte for byte.
 //!
-//! Traced in the 2024 Classic client (`scripts/dev-helpers/ec-research/ghidra-classic-defs`):
+//! Traced in the 2024 Classic client (`docs/client_research/ghidra-classic-defs`):
 //!
 //! - **`{targets}` files** ([`TargetsRecord`]): `gump.def`, `anim1.def` to `anim4.def`, `art.def`, `texterr.def`,
 //!   `body.def`, `corpse.def`. A line is `ID {T1, T2, ...} VALUE`, then whitespace or `#` and a comment. The client

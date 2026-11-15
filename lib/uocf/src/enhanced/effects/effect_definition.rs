@@ -3,7 +3,7 @@
 //! The same recursive format ends every `tileart.uop` record (u8 count, then the definitions)
 //! and is the whole payload of every `EffectDefinitionCollection.uop` entry (u32 count, then
 //! the definitions). Formats, field meanings and confidence levels follow
-//! `scripts/dev-helpers/ec-research/ghidra-effects/results/uosa_effects.md`.
+//! `docs/client_research/ghidra-effects/results/uosa_effects.md`.
 //!
 //! A definition is a u32 type key followed by a type-specific body. An effect list is a u32
 //! count followed by that many definitions; an effect map is a u32 count followed by that many
@@ -19,7 +19,7 @@
 //! - the property flag mask is a u32 (EC u64).
 //!
 //! The KR layouts follow the factories of `UOKR.exe`
-//! (`scripts/dev-helpers/ec-research/ghidra-facets/results/uokr_facets.md`, answers 3 and 4).
+//! (`docs/client_research/ghidra-facets/results/uokr_facets.md`, answers 3 and 4).
 
 mod collection;
 mod encode;

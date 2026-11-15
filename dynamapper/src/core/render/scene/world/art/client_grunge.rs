@@ -2,7 +2,7 @@
 //!
 //! The KR sprite shader multiplies a static's colour, after the hue, by its grunge texture `01000045_noise` when the
 //! tileart block it draws binds that texture as shader map 1 (research P3.6 in
-//! `scripts/dev-helpers/ec-research/ghidra-kr-atmosphere/results/uokr_atmosphere.md`). Which items are grunged comes
+//! `docs/client_research/ghidra-kr-atmosphere/results/uokr_atmosphere.md`). Which items are grunged comes
 //! from tilemeta by item id, whatever art the renderer draws ([`udd_assets::tilemeta::item_refs_have_client_grunge`]),
 //! and the grunge is mapped from the item's map position, so CC and EC art at the same place get the same grunge.
 //!

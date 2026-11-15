@@ -207,7 +207,7 @@ impl MobileAnimCcPackage {
     }
 
     /// Whether the client draws this body from UOP. The client's frame code doesn't always test the requested id
-    /// (`scripts/dev-helpers/ec-research/ghidra-classic-frames/results/classic_frames.md`); this is the mobile's own body.
+    /// (`docs/client_research/ghidra-classic-frames/results/classic_frames.md`); this is the mobile's own body.
     pub fn body_uses_uop_frames(&self, body_id: u16) -> bool {
         MOB_TYPE_BODY_IDS.contains(&body_id)
             && self
@@ -218,7 +218,7 @@ impl MobileAnimCcPackage {
     /// The animation of a mobile's own body, from the source the client would use. A package can hold both a MUL and
     /// a UOP entry for one action, as when a shard replaces a body in the MUL; the other source only fills in when that
     /// one has none. Layer items and mounts don't follow this rule: the client tests the wearer, not the requested id
-    /// (`scripts/dev-helpers/ec-research/ghidra-classic-frames/results/uop_reachability.md`).
+    /// (`docs/client_research/ghidra-classic-frames/results/uop_reachability.md`).
     pub fn animation(&self, body_id: u16, action_id: u16, direction: u8) -> Option<&MobileAnimCcAnimationRecord> {
         let matching = self.animations.iter().filter(|animation| {
             animation.body_id == body_id

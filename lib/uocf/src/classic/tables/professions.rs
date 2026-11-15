@@ -2,7 +2,7 @@
 //! and written back byte for byte.
 //!
 //! Traced in the 2024 Classic client (`UOClassicDataFiles::Professions_Load`,
-//! `scripts/dev-helpers/ec-research/ghidra-classic-text-tables`):
+//! `docs/client_research/ghidra-classic-text-tables`):
 //!
 //! - The file is opened in text mode and read with `fgets(buffer, 255)` ([`MAX_LINE_BYTES`]).
 //! - A line holding `Begin` anywhere starts a profession; else a line holding `End` anywhere adds it. Any other

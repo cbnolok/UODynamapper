@@ -3,7 +3,7 @@
 //!
 //! Neither the 2024 client nor UO Gold holds these file names (nor `gamegen.txt`, which holds only the text
 //! `metrics.txt`); the client's `ArtTable` classes are the `art.def`, `sound.def` and `body.def` remaps
-//! (`scripts/dev-helpers/ec-research/ghidra-classic-text-tables`). There is no client grammar to follow, so what
+//! (`docs/client_research/ghidra-classic-text-tables`). There is no client grammar to follow, so what
 //! the shipped files hold is accepted and only what this model cannot hold is an error:
 //!
 //! - **`Tile256.txt`, `Tile1024.txt`** ([`TileTableRecord`]): a land tile id and a number per line, separated by a

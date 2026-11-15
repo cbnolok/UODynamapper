@@ -9,7 +9,7 @@ clients: the 2024 Enhanced Client, the current Classic Client, the old Kingdom R
 `lib/uocf/src/enhanced/sound/audio_edit.rs`, `lib/uocf/src/classic/audio/sound_edit.rs`, `lib/uocf/src/audio/validate.rs`,
 `lib/uocf/src/audio/convert.rs` ([Writing](#writing)). Real-file tests:
 `lib/uocf/tests/real_files/audio_client_files.rs`, `lib/uocf/tests/real_files/audio_writers.rs`. How the clients
-read and play all this was traced in Ghidra (commit 7906ae18): `scripts/dev-helpers/ec-research/ghidra-audio/results/`
+read and play all this was traced in Ghidra (commit 7906ae18): `docs/client_research/ghidra-audio/results/`
 `uosa_audio.md` (Enhanced Client), `miles_audio.md` (its decoder, Miles 7.2c), `uokr_audio.md` (Kingdom Reborn),
 `classic_audio.md` (Classic Client and UO Gold). How Miles sounds, for a playback path: `miles_playback_reference.md`.
 
@@ -316,7 +316,7 @@ after parsing is written `id {a, b} extra`; ids and targets go up to 32,767 (`%h
 
 ## Questions for a Ghidra pass
 
-Answered by the pass of commit 7906ae18 (above, and in `scripts/dev-helpers/ec-research/ghidra-audio/results/`):
+Answered by the pass of commit 7906ae18 (above, and in `docs/client_research/ghidra-audio/results/`):
 the Enhanced Client plays the table's MP3 and never the legacy WAV; rows without an entry are silent; the decoder
 is Miles 7.2c with the rules above; how `Sound.def`, `Music.def` and `Config.txt` are read; bytes 32..40 are
 unread; Kingdom Reborn's table grammar and its id offset. Still open:

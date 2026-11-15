@@ -135,7 +135,7 @@ const TILE_HALF_SIDE: f32 = 22.0;
 const Z_STEP_PIXELS: f32 = 4.0;
 /// The `tileart.uop` art scale that draws one source pixel as one classic pixel: a scale `s` draws it `s / 1.5`
 /// classic pixels (traced, `UOTileArt::BuildImageWindowQuad` 0x00459b00; see
-/// `scripts/dev-helpers/ec-research/ghidra-legacy-art-scale/results/uosa_legacy_art_scale.md`).
+/// `docs/client_research/ghidra-legacy-art-scale/results/uosa_legacy_art_scale.md`).
 const TILEART_SCALE_OF_ONE_CLASSIC_PIXEL: f32 = 1.5;
 /// Side of the box drawn for a part without art, in classic pixels.
 const MISSING_PART_SIDE: f32 = 14.0;
@@ -1161,7 +1161,7 @@ fn tile_bottom_vertex(x: i32, y: i32, z: i32) -> egui::Pos2 {
 /// raised 4 pixels per Z. The Classic client centres it (left edge `floor(width / 2)` left of the vertex); the EC
 /// client puts the left edge `x_off` right of the tile's left vertex and moves the bottom `y_off` down, both from the
 /// record's window, which hold the same centring in 92 % of the records and an authored shift of a few pixels in the
-/// rest (traced: `scripts/dev-helpers/ec-research/ghidra-legacy-art-scale/results/uosa_legacy_art_scale.md`).
+/// rest (traced: `docs/client_research/ghidra-legacy-art-scale/results/uosa_legacy_art_scale.md`).
 fn preview_part_position(render_part: &PreviewRenderPart, min_x: i16, min_y: i16, min_z: i16) -> egui::Pos2 {
     let part = &render_part.part;
     let vertex = tile_bottom_vertex(

@@ -1,9 +1,9 @@
 //! The facet size tables of the client executables and the hard-coded values that go with them: locate and report
 //! them in any 32-bit build. Patching a copy: [`super::patch`].
 //!
-//! Traced in `scripts/dev-helpers/ec-research/ghidra-facets/results/uosa_facets.md` ("Other dimension sites",
+//! Traced in `docs/client_research/ghidra-facets/results/uosa_facets.md` ("Other dimension sites",
 //! "Constraints", "Builds and the cross-build patch recipe"), `uokr_facets.md` and
-//! `scripts/dev-helpers/ec-research/ghidra-classic-facets/results/classic_facets.md`. Everything is located by
+//! `docs/client_research/ghidra-classic-facets/results/classic_facets.md`. Everything is located by
 //! structure; the SHA-256 of a traced build ([`KNOWN_BUILDS`]) is only a label. The family ([`ClientFamily`]) is told
 //! by the table found:
 //!

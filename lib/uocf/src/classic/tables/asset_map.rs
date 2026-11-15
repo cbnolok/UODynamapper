@@ -2,7 +2,7 @@
 //! read as the 2024 Classic client reads it, strictly, and written back byte for byte.
 //!
 //! Traced in the 2024 Classic client (`UOClassicUiFiles::AssetMap_Load` and the handlers it names,
-//! `scripts/dev-helpers/ec-research/ghidra-classic-ui-files`): the client loads `Data/assetmap.xml` with TinyXML
+//! `docs/client_research/ghidra-classic-ui-files`): the client loads `Data/assetmap.xml` with TinyXML
 //! through `VirtualFile_Open` in its UOP-only mode, so the copy it reads is the `data/assetmap.xml` entry of
 //! `MainMisc.uop` (the loose `Data/assetmap.xml` the 2024 and fp clients ship, with `../../Runtime/` paths, is
 //! not read). The root must be `<assetmap>` ("Assetmap root node isn't <assetmap>"); each child element is

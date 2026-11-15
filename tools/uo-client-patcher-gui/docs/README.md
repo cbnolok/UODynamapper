@@ -13,6 +13,6 @@ from cipher removal and KR game-login setup.
 - [KR 2.45 callback assembly](research/kr-legacy-plaintext-game-login.s): the separate callback preserving the earlier SEH frame and cleanup.
 - [Sphere/KR packet compatibility](SPHERE_KR_COMPATIBILITY.md): post-login packet formats, the applied server patch and the reported successful login.
 
-The [Ghidra naming workflow](../../../scripts/dev-helpers/ec-research/ghidra-login-names/README.md) and
+The [Ghidra naming workflow](../../../docs/client_research/ghidra-login-names/README.md) and
 `NameLoginCode.java` remain with the reusable inspection helpers. Research reports live here so future helper
 cleanup cannot discard their recovered class names, addresses and evidence.

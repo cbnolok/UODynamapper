@@ -1,6 +1,6 @@
 //! The facet tables of the Classic client (`client.exe`, UO Gold to the current client) and the values derived from
 //! them that the client also hard-codes. Traced in
-//! `scripts/dev-helpers/ec-research/ghidra-classic-facets/results/classic_facets.md`; everything is located by
+//! `docs/client_research/ghidra-classic-facets/results/classic_facets.md`; everything is located by
 //! structure:
 //!
 //! - The table: a run of 48-byte `.rdata` records `{char* name, u32 width, u32 height, u32 wrap_width,

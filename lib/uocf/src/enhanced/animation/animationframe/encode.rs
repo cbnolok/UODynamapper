@@ -2,7 +2,7 @@
 //! form both work on ([`IndexedFrame`]).
 //!
 //! The rules come from the client decoders (`UOAnimations::DecodeFrameRle` / `FindFrameEntry` in UOSA.exe and
-//! UOKR.exe, `scripts/dev-helpers/ec-research/ghidra-animation-frames/`) and from the shipped files, which this
+//! UOKR.exe, `docs/client_research/ghidra-animation-frames/`) and from the shipped files, which this
 //! writer reproduces byte for byte when given their palette (see `ENHANCED_CLIENT_FILES.md`, AnimationFrame).
 
 use color_eyre::eyre::{self, WrapErr};

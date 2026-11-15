@@ -2,7 +2,7 @@
 //! decodes real `AnimationFrame*.uop` pixels.
 //!
 //! The expected figures are the ones verified by
-//! `scripts/dev-helpers/ec-research/ghidra-animation/verify_animation.py --tileart --pixels` on the reference
+//! `docs/client_research/ghidra-animation/verify_animation.py --tileart --pixels` on the reference
 //! release (the 2024 Enhanced Client); they are asserted only when the placeholder count identifies that
 //! release, and printed otherwise.
 

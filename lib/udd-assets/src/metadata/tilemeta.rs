@@ -105,7 +105,7 @@ pub const TILEMETA_ITEM_EC_ART_FLAG_USE_NEW_ART: u16 = 1 << 0;
 /// The Enhanced Client binds item i of a block to shader map i (`SetShaderMap(i)`), and each UO
 /// shader class reads its maps by fixed index. The role is therefore a function of the block, its
 /// shader name and the item position (`for_texture_position`); the client never reads a role from a
-/// file name. See `scripts/dev-helpers/ec-research/ghidra-texture-roles/results/uosa_texture_roles.md`.
+/// file name. See `docs/client_research/ghidra-texture-roles/results/uosa_texture_roles.md`.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 #[repr(u8)]
 pub enum EcMaterialStableRole {

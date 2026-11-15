@@ -37,7 +37,7 @@ they do not define the package format, texture roles or client behavior.
 - Item image-window UVs and camera-quad UVs are separate contracts. A trimmed
   packed image does not establish its original primary texture dimensions.
 
-The [terrain-layer executable research](../../../scripts/dev-helpers/ec-research/ghidra-terrain-layers/results/uosa_terrain_layers.md)
+The [terrain-layer executable research](../../client_research/ghidra-terrain-layers/results/uosa_terrain_layers.md)
 records stage positions, addresses, confidence and the rejected name/repetition
 heuristics. The [water investigation](../../agent_notes/ec_original_water_code.md)
 records transforms, clocks, reflection and item-window evidence and its limits.

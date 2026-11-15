@@ -1,6 +1,6 @@
 # Reachable EC item shader families
 
-Use the original-package helper in `scripts/dev-helpers/ec-research/README.md`:
+Use the original-package helper in `docs/client_research/README.md`:
 `ec_research --client <matching bundle> items --summary`. Keep source blocks
 separate. The processed material parser includes `has_texture=1`; a raw nonzero
 block marker is not sufficient. Blank raw blocks can otherwise inflate the

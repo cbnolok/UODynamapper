@@ -1,5 +1,5 @@
 //! Hued NIF effects: `UOHuedParticleEffectNif` (UOSA.exe, constructor 0x0041d9c0), as described in
-//! `scripts/dev-helpers/ec-research/ghidra-effects/results/uosa_effects.md`, "Hued NIF effects".
+//! `docs/client_research/ghidra-effects/results/uosa_effects.md`, "Hued NIF effects".
 //!
 //! - **Selection** (`UOParticleEffectDefinition::Instantiate` 0x0040e490): only `.nif` particles are hued, and only
 //!   with an object whose hue H is non-zero and the definition's `hued` flag set ([`hue_mode`]). Chaos (`.ems`)

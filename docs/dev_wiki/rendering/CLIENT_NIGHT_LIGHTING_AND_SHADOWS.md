@@ -8,7 +8,7 @@ KR-like and Enhanced reproduce three parts of the KR and Enhanced clients' look.
 
 Classic and UOD-Painterly use none of them: they keep `global_lighting`, their own sun and their own sprite shadows. UOD-Painterly draws KR-like's light sprites, though, added over the frame where KR-like shows them through the composite (Light sprites, below); Classic draws light.mul's decals.
 
-The client evidence is the KR atmosphere research, [`uokr_atmosphere.md`](../../../scripts/dev-helpers/ec-research/ghidra-kr-atmosphere/results/uokr_atmosphere.md). Its sections are cited below as §1, §4, P3.3 and P3.4, and the addresses are UOKR.exe unless marked otherwise. The research scripts are in [`ghidra-kr-atmosphere/`](../../../scripts/dev-helpers/ec-research/ghidra-kr-atmosphere/README.md), and the reference screenshots are in [`docs/images/kr_reference/`](../../images/kr_reference/).
+The client evidence is the KR atmosphere research, [`uokr_atmosphere.md`](../../client_research/ghidra-kr-atmosphere/results/uokr_atmosphere.md). Its sections are cited below as §1, §4, P3.3 and P3.4, and the addresses are UOKR.exe unless marked otherwise. The research scripts are in [`ghidra-kr-atmosphere/`](../../client_research/ghidra-kr-atmosphere/README.md), and the reference screenshots are in [`docs/images/kr_reference/`](../../images/kr_reference/).
 
 Two other places carry user-facing descriptions of the same settings, and they must stay in line with this page:
 

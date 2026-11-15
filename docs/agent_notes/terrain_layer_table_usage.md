@@ -35,7 +35,7 @@ keyed by `TerrainDefinitionEntry::runtime_slot_ids()`
 `layers_for_tile` returns the first span for a key (`lib/udd-assets/src/metadata/terrain_meta.rs`).
 
 The client never reads `legacy_land_id`
-(`scripts/dev-helpers/ec-research/ghidra-terrain/results/uosa_terrain.md:86-88`,
+(`docs/client_research/ghidra-terrain/results/uosa_terrain.md:86-88`,
 high confidence for "unused"). It routes a classic land id through
 `legacyterrainmap.csv` to `(material, subtype)`. Dynamapper's runtime does the same
 (`TexLandEcPackage::resolve_material_decision`, `lib/udd-assets/src/textures/tex_land_ec.rs:812`).
@@ -183,7 +183,7 @@ No tile the client blends from two different textures lacks the packed pair.
 ## Client or guessed, per parameter
 
 Client facts are from
-`scripts/dev-helpers/ec-research/ghidra-terrain-layers/results/uosa_terrain_layers.md`
+`docs/client_research/ghidra-terrain-layers/results/uosa_terrain_layers.md`
 (verified in Ghidra): roles by position, `SetupFourStages` 0x005974f0 with
 `a` = item 2's sampled alpha, UV scale `1 / stretch` per item (0x004613b0),
 `UOWaterTerrainLayer::Draw` 0x005988a0 scrolling item 0 by `t · tweak0, t · tweak1`

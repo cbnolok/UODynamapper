@@ -5,8 +5,8 @@ Status of the EC particle effects pipeline (`lib/ec-effects/particle-sim`, the `
 tracing. The full list of known differences, with evidence and impact, is in
 [`lib/ec-effects/particle-sim/README.md`, "Known differences from the client"](../../lib/ec-effects/particle-sim/README.md#known-differences-from-the-client).
 The client research is in
-[`uosa_effects.md`](../../scripts/dev-helpers/ec-research/ghidra-effects/results/uosa_effects.md) and
-[`uosa_chaos.md`](../../scripts/dev-helpers/ec-research/ghidra-effects/results/uosa_chaos.md). Those docs
+[`uosa_effects.md`](../client_research/ghidra-effects/results/uosa_effects.md) and
+[`uosa_chaos.md`](../client_research/ghidra-effects/results/uosa_chaos.md). Those docs
 mark each item **confirmed** or **probable**; this note does not repeat their addresses.
 
 ## Verified against UOSA.exe and implemented

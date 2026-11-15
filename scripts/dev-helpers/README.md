@@ -7,10 +7,9 @@ notes record evidence and its limits, not current implementation requirements.
 Rust package comparisons, gump scoring and optional GPU/codec experiments are
 workspace members under [tools/udd-devtools-cli](../../tools/udd-devtools-cli/README.md).
 
-- [EC research](ec-research/README.md): PE inspection, Ghidra scripts, recovered
-  client formats and consumers, terrain-coverage checks and mask comparisons.
-  The scripts and result notes make the executable-derived renderer/UDDP
-  contracts reproducible; preserve them together.
+- Original-client research moved to [docs/client_research](../../docs/client_research/README.md):
+  the findings of every Ghidra study, with the scripts that reproduce them, the PE and
+  Ghidra helpers, and the water and terrain-material checks.
 - [Season profiles](seasons/README.md): the generator of the bundled route file's season profiles from the
   Classic client's season tables, and where those tables are in the client.
 - [Renderer controls](renderer/README.md): app-only input, readiness and capture
@@ -26,10 +25,11 @@ workspace members under [tools/udd-devtools-cli](../../tools/udd-devtools-cli/RE
 The Python unit checks need no client installation or GUI:
 
 ```sh
-python3 -B -m unittest discover -s scripts/dev-helpers/ec-research -p 'test_*.py'
+python3 -B -m unittest discover -s docs/client_research/tools -p 'test_*.py'
+python3 -B -m unittest discover -s docs/client_research/water -p 'test_*.py'
 python3 -B -m unittest discover -s scripts/dev-helpers/renderer -p 'test_*.py'
 ```
 
-`compare_mask_edges.py` and the renderer frame/seam helpers require Pillow and NumPy;
+`docs/client_research/water/compare_mask_edges.py` and the renderer frame/seam helpers require Pillow and NumPy;
 the frame-comparison unit tests use these dependencies too. Ghidra helpers
 require the locally installed Ghidra tooling; follow each research README.

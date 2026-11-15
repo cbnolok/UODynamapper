@@ -6,7 +6,7 @@
 //! (mobile frames are keyed by the `AnimationSequence` stored id).
 //!
 //! Layout, field meanings and confidence levels follow
-//! `scripts/dev-helpers/ec-research/ghidra-animation/results/uosa_animation.md`, verified against
+//! `docs/client_research/ghidra-animation/results/uosa_animation.md`, verified against
 //! `UOSA.exe` (`UOAnimationDefinition::Parse` 0x004b8d80, `ParseFrameSets` 0x004b8ec0). All values
 //! are little-endian and unaligned:
 //!

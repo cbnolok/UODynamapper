@@ -1,5 +1,5 @@
 //! Checks the map editions (`uocf::map_edition`) on the 2024 installs measured in
-//! `scripts/dev-helpers/ec-research/ghidra-facets/results/facet_variants_data.md`: the Classic resolver reads
+//! `docs/client_research/ghidra-facets/results/facet_variants_data.md`: the Classic resolver reads
 //! `mapNxLegacyMUL.uop`/`staidxNx`/`staticsNx` for the variant, and the Enhanced Client lookup picks `facetNx.uop`.
 //! The standard and variant data differ exactly as measured there (CC-2024 map0/0x and map1/1x, EC-2024
 //! facet0/0x and facet1/1x).

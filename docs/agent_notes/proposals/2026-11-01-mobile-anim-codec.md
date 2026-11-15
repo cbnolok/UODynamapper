@@ -248,7 +248,7 @@ streaming already does, and less for whole-body batches.
 
 ### What the official client does, and what the design needs
 
-From [the UOSA loading study](../../../scripts/dev-helpers/ec-research/ghidra-ec-anim-loading/results/uosa_anim_loading.md)
+From [the UOSA loading study](../../client_research/ghidra-ec-anim-loading/results/uosa_anim_loading.md)
 (commit f8c14c5c), the EC client stutters because all of this work is synchronous and on the main thread:
 
 - **Whole-entry inflate.** Each new (body, action) inflates its whole UOP entry with zlib inside the frame. With boost

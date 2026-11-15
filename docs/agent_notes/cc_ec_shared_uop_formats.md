@@ -36,17 +36,17 @@ Checked on the 2024 and 2026 ("fp") Classic and Enhanced Client folders.
 - Kingdom Reborn frame files are the Enhanced format, but UOKR.exe keys the hue table with the integer mean of
   the three colour bytes where UOSA.exe uses byte 0. Layout, encoder rules and verification marks:
   `lib/uocf/src/enhanced/ENHANCED_CLIENT_FILES.md` (`AnimationFrame*.uop` pixels) and
-  `scripts/dev-helpers/ec-research/ghidra-animation-frames`.
+  `docs/client_research/ghidra-animation-frames`.
 - The EC and KR `Paperdoll.uop` entries `build/paperdoll/000001/00.bin` (male) and `01.bin` (female) are the
   same Enhanced AMOU format: the paperdoll images, action = gender, frame number = the body or worn item id
   (fallback 400 in the male set). The container and the encoder write both back byte for byte
-  (`paperdoll_frame_sets` real-file test); research in `scripts/dev-helpers/ec-research/ghidra-paperdoll`.
+  (`paperdoll_frame_sets` real-file test); research in `docs/client_research/ghidra-paperdoll`.
   The Classic client has no `Paperdoll.uop`.
 
 ## Classic frames: `anim*.mul` and `animationlegacyframe`
 
 The same frame codec in both, read by the 7.0.103.0 client in `UOClassicAnim::DrawFrameRle`, `GetMulFrame`,
-`GetUopFrame` and `FindFrameEntry` (`scripts/dev-helpers/ec-research/ghidra-classic-frames/`). **V** = read in
+`GetUopFrame` and `FindFrameEntry` (`docs/client_research/ghidra-classic-frames/`). **V** = read in
 the client code; **S** = holds on every shipped file checked; **I** = inferred.
 
 - **Palette**: 256 `u16` RGB555 words (red bits 10..14, green 5..9, blue 0..4). The client draws

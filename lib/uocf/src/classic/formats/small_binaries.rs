@@ -2,7 +2,7 @@
 //! written back byte for byte.
 //!
 //! Traced in the 2024 Classic client (`UOClassicDataFiles::Palette_Load`, `AnimInfo_Load`,
-//! `scripts/dev-helpers/ec-research/ghidra-classic-text-tables`):
+//! `docs/client_research/ghidra-classic-text-tables`):
 //!
 //! - **`palette.mul`** ([`PaletteFile`]): 256 RGB triples, one `fread` of [`PALETTE_BYTES`]; the client's palette on
 //!   an 8-bit desktop.

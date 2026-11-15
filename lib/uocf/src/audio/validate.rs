@@ -4,7 +4,7 @@
 //! The client hands the whole entry to `AIL_set_named_sample_file` with the entry name, and checks nothing itself.
 //! Miles picks the decoder by the name's extension (a leading ID3v2 tag forces MP3), so a file of another kind than
 //! its name ([`kind_mismatch`]) is refused under every policy. The rest of the rules come from the Miles code
-//! (`scripts/dev-helpers/ec-research/ghidra-audio/results/miles_audio.md`); `docs/agent_notes/ec_audio_formats.md`
+//! (`docs/client_research/ghidra-audio/results/miles_audio.md`); `docs/agent_notes/ec_audio_formats.md`
 //! names the evidence of each:
 //!
 //! - **WAV** (the built-in parser): `WAVE` at +8; the chunk walk ([`miles_wav_walk`]) steps

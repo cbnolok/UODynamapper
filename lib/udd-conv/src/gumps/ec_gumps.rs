@@ -482,7 +482,7 @@ fn is_enhanced_paperdoll_gump_id(gump_id: u32) -> bool {
 /// paperdoll composes its layers by plain alpha blending. `UOPaperdoll::DrawGumpLayer` (UOSA 0x00509b30) never reads
 /// alpha: it draws each texel whose R, G, B differ from texel 0's (the key), and `UOPaperdoll::BuildImage` (0x0050c790)
 /// then gives the canvas alpha 255 where its colour isn't pure black and 0 where it is
-/// (`scripts/dev-helpers/ec-research/ghidra-paperdoll/results/uosa_paperdoll.md`, items 15 and 16).
+/// (`docs/client_research/ghidra-paperdoll/results/uosa_paperdoll.md`, items 15 and 16).
 ///
 /// A drawn texel, one off the key that isn't pure black, is stored opaque with its colour whatever alpha the art gave
 /// it: the client draws the clear handle of gump 50669 and the clear trident of 60675, and body 665's soft texels

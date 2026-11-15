@@ -46,11 +46,11 @@ size and position (see [CLIENT_NIGHT_LIGHTING_AND_SHADOWS.md](../dev_wiki/render
 
 Evidence:
 
-- the KR atmosphere research P3.3 ([uokr_atmosphere.md](../../scripts/dev-helpers/ec-research/ghidra-kr-atmosphere/results/uokr_atmosphere.md));
+- the KR atmosphere research P3.3 ([uokr_atmosphere.md](../client_research/ghidra-kr-atmosphere/results/uokr_atmosphere.md));
 - this pass's Ghidra traces of both binaries, with `LightSpriteProbe20261112.java`;
 - the census `light_sprite_census.py`.
 
-Both scripts are in [`ghidra-kr-atmosphere/`](../../scripts/dev-helpers/ec-research/ghidra-kr-atmosphere/README.md).
+Both scripts are in [`ghidra-kr-atmosphere/`](../client_research/ghidra-kr-atmosphere/README.md).
 Results are marked **confirmed**, **probable** or **unknown**.
 
 ## 1. The decision needed

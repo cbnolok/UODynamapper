@@ -3,7 +3,7 @@
 //!
 //! Layout and field meanings follow the client parser (`UOCustomHousingPieces::Parse` in UOSA.exe) and its
 //! only reader (`UOHouseCustomization::BuildPieceTables`), documented in
-//! `scripts/dev-helpers/ec-research/ghidra-housing/results/uosa_housing.md` (sections 2 and 3). The asset is
+//! `docs/client_research/ghidra-housing/results/uosa_housing.md` (sections 2 and 3). The asset is
 //! separate from the multi entries of the same package; the only link is the stairs multi list, which refers to
 //! the stair block multis.
 //!

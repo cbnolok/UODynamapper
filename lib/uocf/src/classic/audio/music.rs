@@ -2,7 +2,7 @@
 //! ([`MusicConfig`]), and the files it names.
 //!
 //! The client's reading (`DigitalMusic_LoadConfig` and `DigitalMusic_Play` in UO Gold and 7.0.103;
-//! `scripts/dev-helpers/ec-research/ghidra-audio/results/classic_audio.md`):
+//! `docs/client_research/ghidra-audio/results/classic_audio.md`):
 //!
 //! - Lines are read with `fgets` of 512 bytes ([`CONFIG_MAX_LINE_BYTES`] before the line feed); trailing characters
 //!   below `!` (spaces, tabs, CR) are trimmed; empty lines and lines starting with `#` are skipped.

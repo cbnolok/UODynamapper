@@ -1,7 +1,7 @@
 // ============================================================================
 // art::client_shadow — the Kingdom Reborn client's static shadow quad (KR-like).
 //
-// Research P3.4 (scripts/dev-helpers/ec-research/ghidra-kr-atmosphere/results/uokr_atmosphere.md), placement
+// Research P3.4 (docs/client_research/ghidra-kr-atmosphere/results/uokr_atmosphere.md), placement
 // 0x00440e50. The shadow is a copy of the caster's sprite in the camera plane, a hair behind the caster, rotated by
 // θ about a pivot on the ground below the caster's anchor, so it leans right with the caster's full width and
 // height. In camera-plane units (r right, u up) relative to the pivot P' = P - h Zu (camera up):

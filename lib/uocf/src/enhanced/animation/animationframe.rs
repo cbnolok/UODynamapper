@@ -5,7 +5,7 @@
 //!
 
 //! The Kingdom Reborn client reads the same format with the same code (`UOKR.exe`,
-//! `scripts/dev-helpers/ec-research/ghidra-animation-frames/`); only its hue key differs.
+//! `docs/client_research/ghidra-animation-frames/`); only its hue key differs.
 //!
 //! Writing: [`encode`] (container and RLE encoder), [`quantize`] (RGBA to palette indices), [`folder`] (PNG folder
 //! plus KDL sidecar) and [`package`] (UOP entry and `AnimationSequence` frame count edits).

@@ -3,7 +3,7 @@
 ## Reproducible search
 
 Reusable PE string/reference extraction and bounded Ghidra decompilation helpers
-live in [scripts/dev-helpers/ec-research](../../scripts/dev-helpers/ec-research/README.md).
+live in [docs/client_research](../client_research/README.md).
 They accept input/output paths and keep generated evidence outside the repository.
 
 Start with material identities from `TerrainDefinition.uop` and `tileart.uop`,
@@ -492,7 +492,7 @@ packed source/embedded routing; `--routing` applies an explicitly selected loose
 facet-edge fixture without a complete border, or existing output. This provenance
 is not a claim that every manual routing override is original-client truth.
 
-`scripts/dev-helpers/ec-research/terrain_coverage.py` reconstructs the generator's
+`docs/client_research/water/terrain_coverage.py` reconstructs the generator's
 raw bytes, writes one RGBA dump and 32×32 PNG per material, and reports sort keys,
 weights and byte histograms. It does not composite a fabricated client screenshot
 or feed a heuristic mask back into the renderer. Its fixtures cover cardinal vs

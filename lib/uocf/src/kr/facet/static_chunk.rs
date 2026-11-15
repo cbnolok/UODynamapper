@@ -7,7 +7,7 @@
 //! The client keys a chunk `cx << 10 | cy` (chunk coordinates, 32 squares each; the facet is the current one),
 //! and `StaticChunkBuildRequest` builds the chunk's static objects in memory from the loaded entry; no writer of
 //! the file was found, so it is shipped data rather than a cache the client fills (`UOKR.exe`;
-//! `scripts/dev-helpers/ec-research/ghidra-facets/results/uokr_facets.md`). The entry names, and so which entry
+//! `docs/client_research/ghidra-facets/results/uokr_facets.md`). The entry names, and so which entry
 //! holds which chunk, are unresolved: 91 of the 145 chunks are found exactly in the KR facet statics, at origins
 //! mostly (16, 8) or (0, 0) modulo 32. The facet sectors are self-contained: map decoding does not need this
 //! package. `TerrainChunk.uop` is mounted by the client too but not shipped.

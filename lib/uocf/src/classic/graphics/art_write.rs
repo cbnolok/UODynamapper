@@ -2,7 +2,7 @@
 //! encoded as every shipped one is.
 //!
 //! The art id says what a record holds, as in the client (`UOClassicArt::GetArtRecord`, see
-//! `scripts/dev-helpers/ec-research/ghidra-classic-art/`): an id below [`STATIC_ART_ID_BASE`] is a land tile, any other
+//! `docs/client_research/ghidra-classic-art/`): an id below [`STATIC_ART_ID_BASE`] is a land tile, any other
 //! a static (item id + 0x4000). [`ArtKind::of_id`].
 //!
 //! The shipped convention, measured on every record of the Classic (`artLegacyMUL.uop`), Classic fp, 7.0.20,

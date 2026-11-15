@@ -3,7 +3,7 @@
 //! the client's sector constraints and the shipped delimiter rule.
 //!
 //! The client rules are traced in
-//! `scripts/dev-helpers/ec-research/ghidra-facets/results/uosa_facets.md`:
+//! `docs/client_research/ghidra-facets/results/uosa_facets.md`:
 //!
 //! - Sector `s` of facet `f` is the entry `build/sectors/facet_%02d/%08d.bin` (`f`, `s`). Sectors are 64x64
 //!   squares numbered column-major, `s = ceil(height / 64) * (x >> 6) + (y >> 6)`. A facet whose size is not a

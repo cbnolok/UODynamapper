@@ -3,7 +3,7 @@
 //!
 //! The client directories come from the variables in `common::CLIENT_DIR_ENVS`; a directory without a file is
 //! skipped. Every entry must parse in any release. The expected figures are the ones verified by
-//! `scripts/dev-helpers/ec-research/ghidra-animation/verify_animation.py` on the reference release (the 2024
+//! `docs/client_research/ghidra-animation/verify_animation.py` on the reference release (the 2024
 //! Enhanced Client; the Classic Client of the same release has the same `AnimationSequence.uop` payloads); they
 //! are asserted only when the entry count identifies that release, and printed otherwise. Every sequence must
 //! also re-encode byte for byte.

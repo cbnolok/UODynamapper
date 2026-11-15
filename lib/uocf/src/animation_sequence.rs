@@ -9,7 +9,7 @@
 //! (`crate::enhanced::mobile_body`), not from this file.
 //!
 //! Layout, field meanings, run-time semantics and confidence levels follow
-//! `scripts/dev-helpers/ec-research/ghidra-animation/results/uosa_animation.md`, verified against
+//! `docs/client_research/ghidra-animation/results/uosa_animation.md`, verified against
 //! `UOSA.exe` (`UOAnimationSequence::Parse` 0x0083c0ba). Confidence: **confirmed** means read in
 //! the client code and checked against the data, **probable** inferred from how the value is used,
 //! **unknown** no reader found. All values are little-endian and unaligned:

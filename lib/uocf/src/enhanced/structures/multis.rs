@@ -1,7 +1,7 @@
 //! Decoding for EC/CC `MultiCollection.uop` files.
 //!
 //! Layout and field meanings follow the client parser (`UOMultiCollection::Parse` in UOSA.exe), documented in
-//! `scripts/dev-helpers/ec-research/ghidra-housing/results/uosa_housing.md` (section 4). The `housing.bin` entry
+//! `docs/client_research/ghidra-housing/results/uosa_housing.md` (section 4). The `housing.bin` entry
 //! of the same package is decoded by [`super::housing`].
 //!
 //! Besides decoding, the module serves an editor: [`MultiItem::to_payload_bytes`] is the exact inverse of the
@@ -13,7 +13,7 @@
 //! functions) stores parts without `flag2`: `{u16 tile, i16 x, i16 y, i16 z, u8 not_drawn, u32 n, n x u32}`. That
 //! the single flag is `not_drawn` rests on the data (it equals the EC `not_drawn` in all 48,428 parts of the multis
 //! whose geometry is the same in both clients) and on its place; its KR readers were not traced
-//! (`scripts/dev-helpers/ec-research/ghidra-facets/results/uokr_facets.md`, answer 10).
+//! (`docs/client_research/ghidra-facets/results/uokr_facets.md`, answer 10).
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::io::{Cursor, Read};

@@ -49,7 +49,7 @@ available; category paths such as `udd_assets::textures::tex_art_ec` also work.
 ## `mobile_anim_ec.uddp` (metadata version 1)
 
 Built by `udd-conv` from the EC `AnimationFrame1..6.uop`, `AnimationSequence.uop` and the
-`tileart.uop` creature placeholders, following the client (`scripts/dev-helpers/ec-research/ghidra-animation/results/uosa_animation.md`). Every metadata
+`tileart.uop` creature placeholders, following the client (`docs/client_research/ghidra-animation/results/uosa_animation.md`). Every metadata
 entry starts with a 4-byte magic and the u32 version; all values are little-endian. The reader
 accepts only version 1 and asks for a repack with the current `udd-cli` otherwise.
 
@@ -162,7 +162,7 @@ pick actions from movement or packets must read them from `AnimationSequence.uop
 Built by `udd-conv` (`udd_conv::effects_ec`, CLI `udd-cli pack pack-ec-effects`) from the EC
 `EffectDefinitionCollection.uop`, `tileart.uop`, `AnimationSequence.uop`, `string_dictionary.uop` and
 `EffectTexture.uop`, following the client research in
-`scripts/dev-helpers/ec-research/ghidra-effects/results/uosa_effects.md`. Read it with `EffectsEcPackage`
+`docs/client_research/ghidra-effects/results/uosa_effects.md`. Read it with `EffectsEcPackage`
 (`effects_ec.rs`). The package is shaped for the runtime and is not meant to be turned back into NIF or
 `.ems` files. It holds:
 

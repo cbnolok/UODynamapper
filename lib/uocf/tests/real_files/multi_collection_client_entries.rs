@@ -3,7 +3,7 @@
 //!
 //! The client directories come from the variables in `common::CLIENT_DIR_ENVS`. Every entry must parse in any
 //! release. The expected counts are the ones verified by
-//! `scripts/dev-helpers/ec-research/ghidra-housing/verify_housing.py` on the reference release (the 2024 clients);
+//! `docs/client_research/ghidra-housing/verify_housing.py` on the reference release (the 2024 clients);
 //! they are asserted only when the multi count identifies that release, and printed otherwise.
 //!
 //! The housing editing tests also check that `housing.bin` re-serializes byte for byte (directly and through

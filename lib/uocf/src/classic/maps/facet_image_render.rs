@@ -4,7 +4,7 @@
 //! ([`plan_facet_image`]).
 //!
 //! **The rule is an approximation of how the shipped images were made**, measured on the 2024 client
-//! (`scripts/dev-helpers/ec-research/ghidra-classic-map-image/README.md`). A tile takes the `radarcol.mul` colour
+//! (`docs/client_research/ghidra-classic-map-image/README.md`). A tile takes the `radarcol.mul` colour
 //! of its highest static by (z + `tiledata.mul` height, z), when that top reaches the land z, else of its land
 //! tile. Every 5-bit channel is then shifted by the land slope `s = z(x + 1, y) - z(x, y + 1)` (the edge tiles
 //! use their own z past the edge), clamped to 0..=31: -1 when `|s| <= 2`, +3 when `s >= 3`, -4 when `s <= -3`.

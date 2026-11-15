@@ -2,7 +2,7 @@
 //! package, updating it around edited squares, and scoring a regenerated image against a shipped one.
 //!
 //! The client format and use are traced in
-//! `scripts/dev-helpers/ec-research/ghidra-facets/results/uosa_facets.md`: a loose file `facet%02d.dds` (zero
+//! `docs/client_research/ghidra-facets/results/uosa_facets.md`: a loose file `facet%02d.dds` (zero
 //! padded, `facet0.dds` is never found), DXT1, one pixel per square, with the full mip chain of
 //! `floor(log2(min(w, h))) + 1` levels. The client copies its 8-byte DXT1 blocks raw and never recomputes land
 //! colours, so the land and far statics on the radar exist only in this file.

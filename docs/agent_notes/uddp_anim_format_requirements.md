@@ -50,7 +50,7 @@ Also needed, derived from the above and from how the art works:
   appearance (a gargoyle in tile 42002 draws UOP body 1525, an unflagged id, with no MUL fallback). So the Classic package
   must carry that tile-to-appearance data, as the Enhanced one does, plus `IsMountBody`'s list. Its reader's `animation()`
   follows the rule for a mobile's own body only. See
-  [`uop_reachability.md`](../../scripts/dev-helpers/ec-research/ghidra-classic-frames/results/uop_reachability.md).
+  [`uop_reachability.md`](../client_research/ghidra-classic-frames/results/uop_reachability.md).
 
 ## 2. Constraints
 
@@ -609,7 +609,7 @@ enabled. 73.5 MB of the 85 comes from 4 unflagged UOP bodies (compressed sizes b
 | 1525 | EQUIP_Tabbard_Gargoyle | 0.8 MB |
 
 **This rule is wrong for one of the four, and was too simple.** Traced on 2026-11-03 in the code and in parses of the
-shipped data; nothing ran. Details and addresses: `scripts/dev-helpers/ec-research/ghidra-classic-frames/results/uop_reachability.md`.
+shipped data; nothing ran. Details and addresses: `docs/client_research/ghidra-classic-frames/results/uop_reachability.md`.
 
 - The flag is tested on the object, not on the id it requests. On a flagged object, `GetObjectLayerFrame` (0x005441e0)
   requests its id untested, and for a layer item the id is the item's graphic. Proven by the code read.
@@ -718,7 +718,7 @@ the same day ([`bc7_alpha_plane_search.md`](bc7_alpha_plane_search.md)). The use
     allows. Giving the wearer its own map hides such items instead, so no extra setting is needed.
 - **A server's 0x8000 on a block-coded creature gets an approximate grey test, logged once** (the user, 2026-11-05). Its tolerance isn't set yet.
 - **Classic data that can take partial hue stays lossless: exact greys can't be lost.** The client hues only pixels whose 5-bit channels match
-  (`(c & 0x3FF) == c >> 5`, [traced](../../scripts/dev-helpers/ec-research/ghidra-classic-frames/results/classic_frames.md)), with the red byte as the key. On every Classic body BC1
+  (`(c & 0x3FF) == c >> 5`, [traced](../client_research/ghidra-classic-frames/results/classic_frames.md)), with the red byte as the key. On every Classic body BC1
   breaks that test on 30.60 % of grey pixels at 5 bits and 84.31 % at 8, and changes the key on 56.19 %. What it covers:
   - **By tile flag,** in `tiledata.mul`: 107 worn tiles with PartialHue reach 76 animation ids, and 12708 tiles that aren't worn flag their art.
     Their paperdoll gumps probably follow: traced in the Enhanced client (`UOPaperdoll::BuildImage`), not in Classic. BC7 for `gumps_cc` needs this check.
@@ -774,7 +774,7 @@ the same day ([`bc7_alpha_plane_search.md`](bc7_alpha_plane_search.md)). The use
         `gumpartLegacyMUL.uop` (set aside, section 9).
     - Enhanced paperdoll pages stay lossless for now: the Enhanced client hues exact greys only, with the red byte as the
       hue index (`UOPaperdoll::DrawGumpLayer` 0x00509b30, compares at 0x00509d64 and 0x00509d6c,
-      [traced](../../scripts/dev-helpers/ec-research/ghidra-paperdoll/results/uosa_paperdoll.md)). Open below.
+      [traced](../client_research/ghidra-paperdoll/results/uosa_paperdoll.md)). Open below.
     - The paperdoll body gumps stay RGBA8888 in both lossy packs, by the user's rule "we can't lose exact grays"
       (2026-11-06). Both clients draw the body with partial hue on exact greys, indexed by red. The ids come from
       `PAPERDOLL_BODY_GUMP_BY_BODY` in `lib/udd-conv/src/gumps/single_gumps.rs`, the body-to-gump table both clients share

@@ -1,7 +1,7 @@
 //! The two `Paperdoll.uop` entries of the Enhanced Client and Kingdom Reborn: AMOU frame sets of the paperdoll
 //! images (`build/paperdoll/000001/00.bin` male, `01.bin` female; the client loads them as assets 0x40 and 0x41
 //! of type 0x12, `PaperdollFrameSet`, and looks a frame up by action = gender and frame number = the body or worn
-//! item id, falling back to number 400 of the male set; see `scripts/dev-helpers/ec-research/ghidra-paperdoll/`).
+//! item id, falling back to number 400 of the male set; see `docs/client_research/ghidra-paperdoll/`).
 //!
 //! For each entry: the container parses and writes back byte for byte, every frame decodes and re-encodes from
 //! its indices with the entry's palette to the same bytes and pixels, the frame table is sorted as the client's

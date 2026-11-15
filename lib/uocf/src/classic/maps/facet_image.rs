@@ -3,7 +3,7 @@
 //! from RGBA images.
 //!
 //! Traced in the 2024 Classic client (`UOClassicMapImage::CourseGump_DrawFacetImage`,
-//! `scripts/dev-helpers/ec-research/ghidra-classic-map-image`): the map item gump (`CCourseGump`, a map with its
+//! `docs/client_research/ghidra-classic-map-image`): the map item gump (`CCourseGump`, a map with its
 //! course pins) reads file id `0x38 + facet` of the client's file table, the memory
 //! mapped `facetNN.mul`. It skips the 4-byte header without reading it and walks the rows from the top: a `u32`
 //! byte count, then runs of a `u8` pixel count and a `u16` colour, until it reaches the map's tile rectangle (clamped

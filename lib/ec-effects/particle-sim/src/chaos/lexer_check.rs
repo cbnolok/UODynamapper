@@ -11,7 +11,7 @@
 //! - a token is a number only if it starts with a digit or `-` (`.5`, `+1`).
 //!
 //! The 61 client scripts hit none of these. The state machine is the one of the reference script
-//! `scripts/dev-helpers/ec-research/ghidra-effects/verify_chaos.py`.
+//! `docs/client_research/ghidra-effects/verify_chaos.py`.
 
 use super::issues::{ChaosIssue, ChaosIssueKind, SourceLocation};
 

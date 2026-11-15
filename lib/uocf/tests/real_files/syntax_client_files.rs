@@ -6,7 +6,7 @@
 //! Known exception: `startmenu.xml`, in both clients, lacks its last `</Interface>`. The client's TinyXML
 //! reports error 9 for it and the Interface loader drops the document ("unable to load ... due to error"), and no
 //! Interface document, mod or script names it, so the check fails it as the client does
-//! (`scripts/dev-helpers/ec-research/ghidra-classic-defs`). The test requires that failure in each client.
+//! (`docs/client_research/ghidra-classic-defs`). The test requires that failure in each client.
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};

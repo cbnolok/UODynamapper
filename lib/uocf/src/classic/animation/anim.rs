@@ -565,7 +565,7 @@ fn read_frame_offset(frame_offsets: &[u8], index: usize) -> eyre::Result<u32> {
 
 /// The palette as opaque RGBA words, bit 15 ignored. A word of 0 is opaque black: the client draws
 /// `palette[index]` for every pixel of a run, whatever the word (`UOClassicAnim::DrawFrameRle`,
-/// `scripts/dev-helpers/ec-research/ghidra-classic-frames/`); only pixels outside the runs are transparent.
+/// `docs/client_research/ghidra-classic-frames/`); only pixels outside the runs are transparent.
 pub(crate) fn rgb555_palette_to_rgba_words(palette: &[u16; 256]) -> [u32; 256] {
     let mut rgba_palette = [0u32; 256];
     let mask = u16x8::splat(0x1F);

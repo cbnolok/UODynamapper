@@ -28,7 +28,7 @@ const SIGNATURE_VALUE_LEN: usize = 128;
 const SIGNATURE_BYTE_STEP: usize = 7;
 const SIGNATURE_BYTE_BASE: usize = 3;
 /// lookup3 `hashlittle` (initial value 0) of the synthetic signature header, computed by an independent
-/// implementation (`scripts/dev-helpers/ec-research/ghidra-uop-header/verify_uop_headers.py`).
+/// implementation (`docs/client_research/ghidra-uop-header/verify_uop_headers.py`).
 const SIGNATURE_HEADER_HASH: u32 = 0x7ed1_ef50;
 /// Signature value lengths seen in client packages: a 1025/1026-bit integer without leading zero bytes.
 const SIGNATURE_VALUE_LEN_RANGE: std::ops::RangeInclusive<usize> = 126..=129;

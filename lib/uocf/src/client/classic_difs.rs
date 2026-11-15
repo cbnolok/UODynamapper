@@ -1,5 +1,5 @@
 //! Whether a Classic client (`client.exe`) applies the mapdif / stadif patches, told from its code. Traced in
-//! `scripts/dev-helpers/ec-research/ghidra-classic-facets/results/classic_facets.md` ("Dif usage checker"); every
+//! `docs/client_research/ghidra-classic-facets/results/classic_facets.md` ("Dif usage checker"); every
 //! step is located by structure, never by address or hash:
 //!
 //! 1. **The loader.** The `.text` `PUSH imm32` of the `mapdifl%d.mul` (land) or `stadifl%d.mul` (statics) format

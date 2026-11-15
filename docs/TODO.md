@@ -95,7 +95,7 @@ Older captures apply to their recorded package revisions.
   - direct populated slot wins
   - only then fall back through provenance or canonical mapping
 - Revisit runtime terrain-id override coverage, including the documented forest-family `196` case in `runtime_material_id_overrides`.
-- Draw the rest of the bump terrain layer (`UOBumpMapTerrainLayer`, material 8): item 3 (luminance bump, du/dv) and item 4 (environment map). The land shader now draws only items 0..2 (colour A/B by the item 2 alpha); see `scripts/dev-helpers/ec-research/ghidra-terrain-layers/results/uosa_terrain_layers.md` for the stage setup.
+- Draw the rest of the bump terrain layer (`UOBumpMapTerrainLayer`, material 8): item 3 (luminance bump, du/dv) and item 4 (environment map). The land shader now draws only items 0..2 (colour A/B by the item 2 alpha); see `docs/client_research/ghidra-terrain-layers/results/uosa_terrain_layers.md` for the stage setup.
   - Meanwhile `sample_ec_material_normal_world` (`sampling.wesl`) reads item 3 as a tangent-space normal for the lighting, with a repo-side `normal_sample.b < 0.35` guard; the client has no such normal. The guard never fires on the current packages (blue is 255 in every normal-role texel, lossless and BC7). Replace both with the client's du/dv perturbation of item 4.
 
 ### Static Art Pipeline And Residency
@@ -179,7 +179,7 @@ These need a person at the GUI or in a running client; the code side is done.
   animation packages. The design is in `docs/agent_notes/uddp_anim_format_requirements.md`, section 8.
 - Carry the tile-to-appearance data and `IsMountBody`'s list in the Classic animation package, and add a reader call that
   takes the object drawn as well as the requested id. Traced in
-  `scripts/dev-helpers/ec-research/ghidra-classic-frames/results/uop_reachability.md`. Do it with the animation format
+  `docs/client_research/ghidra-classic-frames/results/uop_reachability.md`. Do it with the animation format
   change, before the renderer draws Classic equipment.
 
 ### Static Light Source Follow-Up

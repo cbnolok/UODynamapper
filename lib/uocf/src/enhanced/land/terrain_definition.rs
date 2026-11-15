@@ -2,7 +2,7 @@
 //!
 //! Each entry `build/terraindefinition/{id}.bin` (decimal, no padding) is the definition of terrain material `id`,
 //! the id that sector squares and `legacyterrainmap.csv` (`newId`) refer to. Layout (little endian, traced in
-//! `scripts/dev-helpers/ec-research/ghidra-terrain/results/uosa_terrain.md`, `UOTerrain::TerrainDefinition_Read`
+//! `docs/client_research/ghidra-terrain/results/uosa_terrain.md`, `UOTerrain::TerrainDefinition_Read`
 //! 0x00845c25):
 //!
 //! ```text
@@ -203,7 +203,7 @@ pub struct TerrainDefinitionTextureLayer {
 pub const WATER_SHADER_TERRAIN_LAYER_ALIAS: &str = crate::enhanced::tileart::WATER_SHADER_NAME;
 
 /// The terrain layer class, chosen from the shader name only by `UOTerrain::CreateTerrainLayerForShader`
-/// 0x004616e0 (`scripts/dev-helpers/ec-research/ghidra-terrain-layers/results/uosa_terrain_layers.md` §1).
+/// 0x004616e0 (`docs/client_research/ghidra-terrain-layers/results/uosa_terrain_layers.md` §1).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Default)]
 #[repr(u8)]
 pub enum TerrainLayerClass {

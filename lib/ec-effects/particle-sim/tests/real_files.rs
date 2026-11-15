@@ -1,7 +1,7 @@
 //! Compiles and simulates every Chaos script of a real Enhanced Client (not in the repository).
 //!
 //! Source: `UO_EC_CLIENT_DIR`, an Enhanced Client directory; the scripts are the `particlesystem` payloads of its
-//! `EffectTexture.uop`. The counts are those of `scripts/dev-helpers/ec-research/ghidra-effects/verify_chaos.py`
+//! `EffectTexture.uop`. The counts are those of `docs/client_research/ghidra-effects/verify_chaos.py`
 //! on the same package.
 //!
 //! Run: `UO_EC_CLIENT_DIR=... cargo test -p particle-sim --test real_files -- --ignored --nocapture`

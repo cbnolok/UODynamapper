@@ -8,7 +8,7 @@ In short:
 - They weigh the two differently. In Dynamapper one diagonal step is worth about **11** priority z units, which is what the camera geometry gives. In the KR client it is worth **35.4**, because the client adds a fixed bias of its own.
 - KR client shadows sort at their caster's depth in both renderers, so a shadow follows the same scale as the sprites around it.
 
-Related: [KR static shadows](CLIENT_NIGHT_LIGHTING_AND_SHADOWS.md#kr-static-shadows), the client trace in [`uokr_atmosphere.md` P3.4](../../../scripts/dev-helpers/ec-research/ghidra-kr-atmosphere/results/uokr_atmosphere.md#p34-sprite-shadow-geometry), and [static depth ordering](../../agent_notes/static_depth_ordering.md) for the depth classes and the perspective tie bias.
+Related: [KR static shadows](CLIENT_NIGHT_LIGHTING_AND_SHADOWS.md#kr-static-shadows), the client trace in [`uokr_atmosphere.md` P3.4](../../client_research/ghidra-kr-atmosphere/results/uokr_atmosphere.md#p34-sprite-shadow-geometry), and [static depth ordering](../../agent_notes/static_depth_ordering.md) for the depth classes and the perspective tie bias.
 
 ## Dynamapper today
 

@@ -3,7 +3,7 @@
 //! - `Uobscene.lst` (Classic clients, named `uobscene.lst` in `client.exe` of every era): UTF-16LE without a byte
 //!   order mark, every code unit (line endings too) shifted up by [`UOBSCENE_SHIFT`]. The 2024 client reads it
 //!   at start-up and writes it back itself (`ChatFilterLists_Load` / `ChatFilterLists_Save`, see
-//!   `scripts/dev-helpers/ec-research/ghidra-classic-ui-files/`), each word followed by a shifted line feed
+//!   `docs/client_research/ghidra-classic-ui-files/`), each word followed by a shifted line feed
 //!   (`0x17`): the shipped form.
 //! - `Obscene.lst` (shipped next to it, named by no client): printable ASCII rotated by [`OBSCENE_ROTATION`]
 //!   within the 95 characters from space to tilde ([`FilterListScheme::Rotated`]); carriage returns and line feeds

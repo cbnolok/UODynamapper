@@ -47,7 +47,7 @@ from the block shader and the item position.
 
 - File-name roles are gone (tilemeta format 2). UOSA.exe never reads a role from a file name, only
   (block shader, item position); see
-  `scripts/dev-helpers/ec-research/ghidra-texture-roles/results/uosa_texture_roles.md` §5. The
+  `docs/client_research/ghidra-texture-roles/results/uosa_texture_roles.md` §5. The
   name rules were wrong at scale: the `"_n"` rule alone matched 85,504 refs, none a normal map
   (`01000045_noise`, `_NO_DRAW`, `_nautilus`, ...).
 - Water primaries. `UOWaterShader` binds the surface at position 1 and the bump map at position 0.

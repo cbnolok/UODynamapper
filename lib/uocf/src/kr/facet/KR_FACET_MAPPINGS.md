@@ -2,7 +2,7 @@
 
 A Kingdom Reborn (KR) facet square stores its material (a `TerrainDefinition` id), its `subtype` (which alias of
 that material: 0/1/2) and its legacy (Classic) land id. The KR client renders from material and subtype and does
-not read the legacy id (`scripts/dev-helpers/ec-research/ghidra-facets/results/uokr_facets.md`). The mapping
+not read the legacy id (`docs/client_research/ghidra-facets/results/uokr_facets.md`). The mapping
 therefore runs one way only:
 
 - **Decoding (KR -> Classic) needs no mapping.** `facet_decoder` takes the land from the stored `classic_land`
@@ -71,7 +71,7 @@ above) and `get_statics_table` (the static whitelist, unused).
 ## Can the original client replace these tables?
 
 An executable and asset audit on 2026-11-07 confirmed the following for the
-original KR bundle described in the [KR facet research](../../../../../scripts/dev-helpers/ec-research/ghidra-facets/results/uokr_facets.md)
+original KR bundle described in the [KR facet research](../../../../../docs/client_research/ghidra-facets/results/uokr_facets.md)
 (`UOKR.exe` SHA-256 `1b802e5c00f3bf89a771778b9c6c57406be0703808eeb4cd983e2f5baa348a43`).
 
 - `Sector_ReadSquare` (`0x007b6994`) reads material, subtype and Classic land id

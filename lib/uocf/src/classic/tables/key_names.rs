@@ -2,7 +2,7 @@
 //! written back byte for byte.
 //!
 //! Traced in the 2024 Classic client (`UOClassicDataFiles::KeyNamesAndMacros_Load` and `KeyNames_ReadLine`,
-//! `scripts/dev-helpers/ec-research/ghidra-classic-text-tables`): the file is opened in text mode and
+//! `docs/client_research/ghidra-classic-text-tables`): the file is opened in text mode and
 //! [`KEY_NAME_COUNT`] lines are read, line `n` naming scan code `n` (`MapVirtualKeyA`); a macro names its key by
 //! these names. A line ends at a line feed or a carriage return, at most [`MAX_KEY_NAME_BYTES`] of it are kept, and
 //! a file with fewer lines leaves the remaining names empty. The shipped file (the same on every client) has 89

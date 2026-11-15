@@ -2,7 +2,7 @@
 //! `roof.txt`) and `suppinfo.txt`, read as the 2024 Classic client reads them, strictly, and written back byte
 //! for byte.
 //!
-//! Traced in the 2024 Classic client (`scripts/dev-helpers/ec-research/ghidra-classic-text-tables`):
+//! Traced in the 2024 Classic client (`docs/client_research/ghidra-classic-text-tables`):
 //!
 //! - The file is opened in text mode and read with `fgets(buffer, 255)`, so a line of more than
 //!   [`MAX_LINE_BYTES`] bytes would be read as two. Lines 1 and 2 (the column types and names) are skipped, every

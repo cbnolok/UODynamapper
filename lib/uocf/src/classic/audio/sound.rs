@@ -7,7 +7,7 @@
 //! NUL-terminated in 32 bytes, then 8 bytes no client reads (`Voice_SetData` copies from byte 40 on): build-tool
 //! leftovers by their look (`30 00 00 00 98 fb 18 00` throughout `soundLegacyMUL.uop`, pointer-like values or
 //! MSVC's `cc` fill in UO Gold's `sound.mul`). A slot of 40 bytes or fewer counts as missing, and the client plays
-//! no id above [`MAX_SOUND_ID`]; `scripts/dev-helpers/ec-research/ghidra-audio/results/classic_audio.md` has the
+//! no id above [`MAX_SOUND_ID`]; `docs/client_research/ghidra-audio/results/classic_audio.md` has the
 //! code. The Enhanced Client's `data/audio/legacysounds/*.wav` hold the same PCM bytes as these slots,
 //! from byte 40 on. [`ClassicSound`] keeps the header as stored, so a slot can be written back unchanged.
 

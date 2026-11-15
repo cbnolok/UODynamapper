@@ -12,7 +12,7 @@
 //! - [`ChaosEffectInstance`] ([`instance`]): `UOParticleEffectChaos`, the effect around an emitter, with its own
 //!   RNG and clock; a [`crate::system::ParticleSystemInstance`].
 //!
-//! Semantics follow the reverse engineering in `scripts/dev-helpers/ec-research/ghidra-effects/results/
+//! Semantics follow the reverse engineering in `docs/client_research/ghidra-effects/results/
 //! uosa_chaos.md` (addresses are UOSA.exe virtual addresses).
 
 #[cfg(feature = "uocf")]

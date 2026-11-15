@@ -1,7 +1,7 @@
 //! Enhanced Client facet definitions (`facets.uop`): per facet, its name, size and the radar regions (names,
 //! background colours, rectangles).
 //!
-//! Layout traced in `scripts/dev-helpers/ec-research/ghidra-facets/results/uosa_facets.md`
+//! Layout traced in `docs/client_research/ghidra-facets/results/uosa_facets.md`
 //! (`FacetDefinition_Read` 0x0083c933, `_ReadRegions` 0x0083ca5f, `_ReadRegionRects` 0x0083cb53). Entry
 //! `build/facetdefinition/%08d.bin`, ids 0..6 (asset type 0x17), little endian, no padding:
 //!

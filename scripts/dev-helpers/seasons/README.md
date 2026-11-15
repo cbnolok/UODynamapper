@@ -17,7 +17,7 @@ read a `seasons.txt`. OrionUO (`OrionUO.cpp` at `0377275cab9147725a6c74553191d6d
 ## The Classic client
 
 Checked read-only in Ghidra on `classic_7.0.103.0_client.exe` (project `UOSA`, `/classic`; see
-[ghidra-classic-facets](../ec-research/ghidra-classic-facets/README.md) for the import). Every table entry above
+[ghidra-classic-facets](../../../docs/client_research/ghidra-classic-facets/README.md) for the import). Every table entry above
 matches the client's.
 
 - `DAT_00708be0` holds the season: 0 spring, 1 summer, 2 fall, 3 winter, 4 desolation (set by `FUN_0045c620`).

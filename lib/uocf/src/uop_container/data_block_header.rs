@@ -22,7 +22,7 @@
 //! The client never checks either: every payload read starts at `data_block_address + data_block_length`,
 //! no code reads a signature record, and `data_block_hash` is only compared with copies stored in the string
 //! table and audio caches, to decide whether to rebuild them (see
-//! `scripts/dev-helpers/ec-research/ghidra-uop-header/results/uosa_uop_header.md`).
+//! `docs/client_research/ghidra-uop-header/results/uosa_uop_header.md`).
 //!
 //! Writers give every entry they replace or add a fresh timestamp header ([`DataBlockHeader::from_timestamp`])
 //! in both package versions: a signature cannot be made, and the new FILETIME changes the cache stamp.

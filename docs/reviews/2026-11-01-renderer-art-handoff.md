@@ -58,7 +58,7 @@ coverage diagnosis and conservative missing-mask policy are superseded; see
 The terrain integration retains the asset agent's class/position contracts,
 correct blend direction, source-selected lava/swamp bases, shader-based EC
 render wetness and original water tweak clock. The executable evidence is in
-[the terrain-layer research](../../scripts/dev-helpers/ec-research/ghidra-terrain-layers/results/uosa_terrain_layers.md)
+[the terrain-layer research](../client_research/ghidra-terrain-layers/results/uosa_terrain_layers.md)
 and [the terrain documentation](../dev_wiki/rendering/LAND_TEXTURES_AND_TRANSITIONS.md).
 Raw IsWet remains gameplay metadata. Still captures do not establish motion
 or reflection parity.

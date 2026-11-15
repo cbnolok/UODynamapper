@@ -2,7 +2,7 @@
 //!
 //! The Enhanced Client draws server body `S` through the tileart record `10000000 + S`
 //! (`UOTileArt::GetObjectDefinition`, see
-//! `scripts/dev-helpers/ec-research/ghidra-animation/results/uosa_animation.md`, "Body to sequence
+//! `docs/client_research/ghidra-animation/results/uosa_animation.md`, "Body to sequence
 //! and frames"):
 //!
 //! - the `AnimationSequence.uop` entry is the record's body type (+0x20);

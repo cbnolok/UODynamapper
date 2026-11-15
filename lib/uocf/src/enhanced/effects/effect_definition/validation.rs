@@ -1,5 +1,5 @@
 //! Checks of effect definitions against what the client does with them
-//! (`scripts/dev-helpers/ec-research/ghidra-effects/results/uosa_effects.md`, "Runtime semantics").
+//! (`docs/client_research/ghidra-effects/results/uosa_effects.md`, "Runtime semantics").
 //!
 //! Unknown definition type keys need no check: they cannot be represented ([`EffectDefinition`] has one variant
 //! per client type) and both readers (binary and KDL) reject them.

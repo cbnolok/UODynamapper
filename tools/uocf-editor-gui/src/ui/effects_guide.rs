@@ -1,7 +1,7 @@
 //! The guide of the Effects tab: what each definition does in the client, and how the tab works.
 //!
 //! What it says about the client comes from
-//! `scripts/dev-helpers/ec-research/ghidra-effects/results/uosa_effects.md`, and the KDL grammar from
+//! `docs/client_research/ghidra-effects/results/uosa_effects.md`, and the KDL grammar from
 //! `uocf::enhanced::effect_definition`'s `kdl_text`.
 
 use crate::logic::effects_editor::DefinitionKind;

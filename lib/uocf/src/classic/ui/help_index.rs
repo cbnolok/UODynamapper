@@ -2,7 +2,7 @@
 //! written back byte for byte.
 //!
 //! Traced in the 2024 Classic client (`UOClassicUiFiles::HelpIndex_Load`,
-//! `scripts/dev-helpers/ec-research/ghidra-classic-ui-files`): the file is opened in text mode and read with
+//! `docs/client_research/ghidra-classic-ui-files`): the file is opened in text mode and read with
 //! `fgets` into 512 bytes. A line starting with `#` is a comment. Any other line must be shorter than 511 bytes
 //! with its line feed; an optional `@` before it sets the topic's flag to 0 (1 otherwise; what the flag does was
 //! not traced), then `strtok` splits it at tabs: the topic id and three cliloc numbers (`atol`; the row is dropped

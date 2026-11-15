@@ -4,8 +4,8 @@
 //! the Classic client then reads its second facet table, the Enhanced Client mounts `facetNx.uop` in place of
 //! `facetN.uop`. The variant is an alternate source of the facet, never a patch layer over the standard files, and
 //! no client falls back from one to the other. See
-//! `scripts/dev-helpers/ec-research/ghidra-classic-facets/results/classic_facets.md` and
-//! `scripts/dev-helpers/ec-research/ghidra-facets/results/facet_variants_data.md`.
+//! `docs/client_research/ghidra-classic-facets/results/classic_facets.md` and
+//! `docs/client_research/ghidra-facets/results/facet_variants_data.md`.
 
 use serde::{Deserialize, Serialize};
 

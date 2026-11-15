@@ -42,7 +42,7 @@
 //! square, `u8 subtype, u16 classic_land` ([`KrSquareLand`]); everything else is the same. Its land id is the
 //! KR material (`TerrainDefinition` id), and its delimiters hold the neighbour's material
 //! (`UOFacet::Sector_ReadSquare` 0x007b6994 in `UOKR.exe`;
-//! `scripts/dev-helpers/ec-research/ghidra-facets/results/uokr_facets.md`). The KR reader is more lenient than
+//! `docs/client_research/ghidra-facets/results/uokr_facets.md`). The KR reader is more lenient than
 //! EC's: it only logs bytes left over, a delimiter direction above 7 (and then reads out of step) and a header
 //! naming another facet or sector. This decoder rejects all three, as for EC sectors.
 

@@ -141,7 +141,7 @@ The core driver of the overall mood in both clients is the screen-space post-pro
 >   - a baked half-Lambert terrain shade (0.854 on flat ground);
 >   - sprite shadows (×0.75) and the KR art itself.
 >
-> See [`ghidra-kr-atmosphere/results/uokr_atmosphere.md`](../../../scripts/dev-helpers/ec-research/ghidra-kr-atmosphere/results/uokr_atmosphere.md).
+> See [`ghidra-kr-atmosphere/results/uokr_atmosphere.md`](../../../docs/client_research/ghidra-kr-atmosphere/results/uokr_atmosphere.md).
 
 ### Implementation Steps (UODynamapper)
 1.  **DONE (material path):** Add shared EC/KR-aware tonemapping helpers in `postprocess/tonemapping.wgsl`.

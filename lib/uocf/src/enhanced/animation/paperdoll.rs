@@ -1,6 +1,6 @@
 //! The Enhanced Client's paperdoll images: the body and worn-item frames of `Paperdoll.uop`, found and ordered as
 //! `ECPaperdollTexture::Build` (UOSA 0x0050b340) does. The rule and its addresses are in
-//! `scripts/dev-helpers/ec-research/ghidra-paperdoll/results/uosa_paperdoll.md`.
+//! `docs/client_research/ghidra-paperdoll/results/uosa_paperdoll.md`.
 //!
 //! The lookup reads the definition records through [`PaperdollDefinitions`] and the frames through
 //! [`PaperdollFrames`], so the editor (over `tileart.uop` and `Paperdoll.uop`) and dynamapper (over `tilemeta.uddp`

@@ -16,7 +16,7 @@
 //! ```
 //!
 //! How the Classic client reads it (`UOClassicDefs::DefTable_ParseLine` in 7.0.103,
-//! `scripts/dev-helpers/ec-research/ghidra-audio/results/classic_audio.md`):
+//! `docs/client_research/ghidra-audio/results/classic_audio.md`):
 //!
 //! - Each line is read with `fgets` of 255 bytes, so lines of more than [`MAX_LINE_BYTES`] bytes are refused here.
 //!   Numbers are read with `%hd`: ids and targets above [`MAX_DEF_VALUE`] are refused.

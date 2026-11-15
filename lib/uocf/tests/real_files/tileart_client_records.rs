@@ -3,7 +3,7 @@
 //!
 //! The client directories come from the variables in `common::CLIENT_DIR_ENVS`; a directory without a file is
 //! skipped. Every record must parse in any release. The expected effect counts are the ones verified by
-//! `scripts/dev-helpers/ec-research/ghidra-effects/verify_effects.py` on the reference release (the 2024
+//! `docs/client_research/ghidra-effects/verify_effects.py` on the reference release (the 2024
 //! clients); they are asserted only when the record or entry count identifies that release.
 //!
 //! The tileart writer tests check that every record re-encodes byte for byte, and that a package rewritten with an edited, an added and a removed record changes only those entries. The

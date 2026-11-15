@@ -3,7 +3,7 @@
 //! export to and import from ([`folder`]).
 //!
 //! The rules come from the 7.0.103.0 client (`UOClassicAnim::DrawFrameRle`, `GetMulFrame`, `GetUopFrame`,
-//! `FindFrameEntry`; `scripts/dev-helpers/ec-research/ghidra-classic-frames/`) and from the shipped files, which
+//! `FindFrameEntry`; `docs/client_research/ghidra-classic-frames/`) and from the shipped files, which
 //! this writer reproduces byte for byte (see `docs/agent_notes/cc_ec_shared_uop_formats.md`, Classic frames):
 //!
 //! - a palette of 256 RGB555 words; a frame's pixels are indices into it. The client draws `palette[index]` for

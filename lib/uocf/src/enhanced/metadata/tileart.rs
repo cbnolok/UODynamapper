@@ -60,7 +60,7 @@ pub const TILEART_RECORD_VERSION: u16 = 4;
 /// `uses_enhanced_tileart`, `alternate_animation`, sitting words 4 and 5, the radar colour and the TileArtEnhanced
 /// shader block, with u32 flags (`flags1` in another bit layout: [`kr_flags1_to_enhanced`]) and the Kingdom Reborn
 /// effect grammar
-/// (`scripts/dev-helpers/ec-research/ghidra-facets/results/uokr_facets.md`, answer 9).
+/// (`docs/client_research/ghidra-facets/results/uokr_facets.md`, answer 9).
 pub const TILEART_KR_RECORD_VERSION: u16 = 3;
 /// Client package holding one record per tile id.
 pub const TILEART_UOP_NAME: &str = "tileart.uop";
@@ -505,7 +505,7 @@ pub struct TaeImgOffset {
 /// Raw, bit-for-bit mapping of an Art Tile entry as stored in the UOP binary.
 ///
 /// Field meanings follow the client parser (`UOTileArt::ParseObjectDefinition` in UOSA.exe,
-/// see `scripts/dev-helpers/ec-research/ghidra-tileart/results/uosa_tileart.md`); fields
+/// see `docs/client_research/ghidra-tileart/results/uosa_tileart.md`); fields
 /// without a known meaning are named after their in-memory offset. It is used internally
 /// for parsing and should not be exposed to the main application. Use `ArtData` instead
 /// for a cleaned-up version.

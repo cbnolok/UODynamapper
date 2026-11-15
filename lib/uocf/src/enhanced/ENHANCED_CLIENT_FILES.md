@@ -92,7 +92,7 @@ Editing `.uop` packages (`uop_container::package`):
 
 - Stores KR/EC map chunks under paths like `build/sectors/facet_0M/XXXXXXXX.bin`.
 - EC (client trace and measurements:
-  [uosa_facets.md](../../../../scripts/dev-helpers/ec-research/ghidra-facets/results/uosa_facets.md)):
+  [uosa_facets.md](../../../../docs/client_research/ghidra-facets/results/uosa_facets.md)):
   - Each decompressed `.bin` is a 64x64 tile chunk in column-major order.
   - Header: facet id byte and file id word.
   - Each cell stores land z, land graphic id, delimiter records, and static
@@ -158,7 +158,7 @@ Editing `.uop` packages (`uop_container::package`):
     delimiters (holding the neighbour's z and material) and statics.
     The material is a `TerrainDefinition` id and `subtype` picks its alias
     (0/1/2); the client renders from them and does not read the legacy
-    (Classic) id ([uokr_facets.md](../../../../scripts/dev-helpers/ec-research/ghidra-facets/results/uokr_facets.md)).
+    (Classic) id ([uokr_facets.md](../../../../docs/client_research/ghidra-facets/results/uokr_facets.md)).
     The KR reader only logs leftover bytes, a direction above 7 and a
     mismatched header; UOCF rejects them. Same entry names, header,
     column-major numbering over the ceil size, `data.map` (first entry,
@@ -297,7 +297,7 @@ Facet sizes in the executable (`client::facet_dimensions`,
 - Owns EC terrain/material semantics. One zlib entry
   `build/terraindefinition/{id}.bin` (decimal, no padding) per material: 201
   in the Enhanced Client, 191 in Kingdom Reborn. Layout traced in
-  `scripts/dev-helpers/ec-research/ghidra-terrain/results/uosa_terrain.md`
+  `docs/client_research/ghidra-terrain/results/uosa_terrain.md`
   (`TerrainDefinition_Read` 0x00845c25): u32 name (string index), u32 id,
   f32 `field_34` (no reader, always 0), f32 `coverage_exponent`, f32
   `field_3c` (no reader, always 0), u32
@@ -359,7 +359,7 @@ Facet sizes in the executable (`client::facet_dimensions`,
 - Owns EC item/static semantics, including flat surface-like statics.
 - Record layout and field meanings follow the client parser
   (`UOTileArt::ParseObjectDefinition` in UOSA.exe), documented in
-  `scripts/dev-helpers/ec-research/ghidra-tileart/results/uosa_tileart.md`
+  `docs/client_research/ghidra-tileart/results/uosa_tileart.md`
   (sections 2, 5, 6 and 8) and verified on all 37756 client records.
 - Records are version 4; the client and `TileArtEntry::parse_raw` reject any
   other version.
@@ -514,7 +514,7 @@ Facet sizes in the executable (`client::facet_dimensions`,
   (`has_world_art`; no `uses_enhanced_tileart`), no `alternate_animation`,
   u32 flags, a 4-word sitting block, no radar colour, 3 shader blocks (EC
   blocks 0, 1 and 3; no TileArtEnhanced) and the KR effect grammar
-  ([uokr_facets.md](../../../../scripts/dev-helpers/ec-research/ghidra-facets/results/uokr_facets.md), answer 9). All 17,086 KR records re-encode
+  ([uokr_facets.md](../../../../docs/client_research/ghidra-facets/results/uokr_facets.md), answer 9). All 17,086 KR records re-encode
   byte for byte; writing fails on a value v3 cannot hold.
 
 `EffectDefinitionCollection.uop`:
@@ -545,7 +545,7 @@ Facet sizes in the executable (`client::facet_dimensions`,
   Sound `value_08` is copied into the sound instance but never read (1.0 in
   the data, probably an intended gain).
 - Formats, field meanings, confidence and verification against the client data
-  are in `scripts/dev-helpers/ec-research/ghidra-effects/results/uosa_effects.md`.
+  are in `docs/client_research/ghidra-effects/results/uosa_effects.md`.
 - `effect_definition::EffectDefinitionCollection` holds every entry in package
   order. Entries are keyed by collection id, or by name hash when no id below
   `EFFECT_COLLECTION_ID_SCAN_END` hashes to them. Client data has 269 entries,
@@ -602,7 +602,7 @@ Facet sizes in the executable (`client::facet_dimensions`,
   KR type keys are the EC keys minus one from KR 5 (container) on, because EC
   inserted the tile effect at 5 (and appended fade at 18); particles have no
   `hued` byte (27-byte body); the property flag mask is a u32. All 258 KR
-  entries re-encode byte for byte ([uokr_facets.md](../../../../scripts/dev-helpers/ec-research/ghidra-facets/results/uokr_facets.md), answers 3 and 4).
+  entries re-encode byte for byte ([uokr_facets.md](../../../../docs/client_research/ghidra-facets/results/uokr_facets.md), answers 3 and 4).
 
 `EffectTexture.uop`:
 
@@ -653,7 +653,7 @@ Facet sizes in the executable (`client::facet_dimensions`,
     fixes the FILETIME for reproducible output. An entry replaced by the same
     payload, and every untouched entry, keeps its header and hash byte for
     byte. See
-    `scripts/dev-helpers/ec-research/ghidra-uop-header/results/uosa_uop_header.md`
+    `docs/client_research/ghidra-uop-header/results/uosa_uop_header.md`
     for the evidence (option 4 of its writer policy).
 
 `.ems` Chaos particle scripts (in `EffectTexture.uop`):
@@ -885,7 +885,7 @@ Facet sizes in the executable (`client::facet_dimensions`,
   exports KDL and saves the package.
 - Layout, run-time semantics, confidence and verification against the client
   data for both files are in
-  `scripts/dev-helpers/ec-research/ghidra-animation/results/uosa_animation.md`.
+  `docs/client_research/ghidra-animation/results/uosa_animation.md`.
 
 `MultiCollection.uop`:
 
@@ -950,7 +950,7 @@ Facet sizes in the executable (`client::facet_dimensions`,
   writes a copy of a package.
 - Layouts, field meanings, confidence and verification against the client
   data are in
-  [`uosa_housing.md`](../../../../scripts/dev-helpers/ec-research/ghidra-housing/results/uosa_housing.md)
+  [`uosa_housing.md`](../../../../docs/client_research/ghidra-housing/results/uosa_housing.md)
   (decoder: `verify_housing.py` next to it).
 - Kingdom Reborn parts have one flag (`not_drawn`, by the data and its place)
   and no `flag2` (`MultiCollection::from_package_dialect`,
@@ -1085,7 +1085,7 @@ or raw texture package membership.
 
 The client binds a material's texture items by class and position, never by
 file name or stretch
-(`scripts/dev-helpers/ec-research/ghidra-terrain-layers/results/uosa_terrain_layers.md`).
+(`docs/client_research/ghidra-terrain-layers/results/uosa_terrain_layers.md`).
 `uocf::enhanced::terrain_definition::TerrainLayerClass` and
 `TerrainLayerRole` name those rules:
 
@@ -1136,7 +1136,7 @@ shader only uses base/detail/mask.
 For EC tileart texture refs, the stable role is the shader input the item feeds.
 The client binds item i of a block to shader map i of the block's shader and
 never reads a role from a file name
-(`scripts/dev-helpers/ec-research/ghidra-texture-roles/results/uosa_texture_roles.md`
+(`docs/client_research/ghidra-texture-roles/results/uosa_texture_roles.md`
 §5). `EcMaterialStableRole::for_texture_position(block, shader, position)`:
 
 | Block shader | Position 0 | Position 1 | Position 2 | Position 3 |
@@ -1681,7 +1681,7 @@ Consequences for writers:
   still store the true size.
 
 Details and addresses:
-[`ghidra-image-decoders`](../../../../scripts/dev-helpers/ec-research/ghidra-image-decoders/results/uosa_image_decoders.md).
+[`ghidra-image-decoders`](../../../../docs/client_research/ghidra-image-decoders/results/uosa_image_decoders.md).
 
 ### Writing textures
 

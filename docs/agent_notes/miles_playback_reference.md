@@ -2,7 +2,7 @@
 
 What a Rust playback path must do to sound like the clients. It describes how the Miles Sound System behaves, then
 what the Classic, Kingdom Reborn and Enhanced clients actually ask of it. For what the decoder accepts, see
-`scripts/dev-helpers/ec-research/ghidra-audio/results/miles_audio.md` and `docs/agent_notes/ec_audio_formats.md`.
+`docs/client_research/ghidra-audio/results/miles_audio.md` and `docs/agent_notes/ec_audio_formats.md`.
 
 Everything here is in our own words. The SDK is third-party and proprietary, so none of its code or tables belong in
 this repository, and no reimplementation should be copied from it.

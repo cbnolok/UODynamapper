@@ -2,7 +2,7 @@
 //! back byte for byte.
 //!
 //! Traced in the 2024 Classic client (`UOClassicUiFiles::Credits_Load` and `Credits_ParseColour`,
-//! `scripts/dev-helpers/ec-research/ghidra-classic-ui-files`): the file is opened in text mode and read a line at
+//! `docs/client_research/ghidra-classic-ui-files`): the file is opened in text mode and read a line at
 //! a time (`KeyNames_ReadLine`, [`MAX_CREDITS_LINE_BYTES`] bytes kept). When the line's first token (`strtok`
 //! with [`FIRST_TOKEN_DELIMITERS`]) is `!`, the rest of the line (`strtok` with [`DIRECTIVE_DELIMITERS`]) is
 //! directives, each a keyword and a value: `color`, `defaultcolor` (also the current colour), `font`,

@@ -102,7 +102,7 @@ The rules compared, for a tile with its north vertex at the focus:
   `GameObject.cs:152-153` and `View.cs:118-122`. ClassicUO is a reimplementation,
   so this is evidence for Classic only.
 - Legacy art in EC: the same rule when `x_off = 22 - floor(W/2)` and `y_off = 0`
-  ([trace](../../scripts/dev-helpers/ec-research/ghidra-legacy-art-scale/results/uosa_legacy_art_scale.md),
+  ([trace](../client_research/ghidra-legacy-art-scale/results/uosa_legacy_art_scale.md),
   `0x4598d0`, `0x459b00`). The two sources agree.
 - World art in EC: left `south.x - 22 + x_off * s/1.5`, bottom `south.y + y_off * s/1.5`
   in screen pixels growing down, so a negative `y_off` raises the sprite.

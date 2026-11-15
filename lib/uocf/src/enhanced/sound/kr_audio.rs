@@ -1,5 +1,5 @@
 //! Kingdom Reborn's sound tables in `Audio.uop`, read the way UOKR.exe reads them and strictly
-//! (`scripts/dev-helpers/ec-research/ghidra-audio/results/uokr_audio.md`):
+//! (`docs/client_research/ghidra-audio/results/uokr_audio.md`):
 //!
 //! - `data/audio/audio_sounds.csv` ([`KrSoundTable`], `MythAudio::ParseSoundsCsv`): MythAudio sound structures.
 //! - `data/audio/audio_effects.csv` ([`KrEffectsTable`], `UOAudio::LoadEffectsTable`): `ID#` and a structure

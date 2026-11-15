@@ -1,7 +1,7 @@
 // ============================================================================
 // art::client_grunge — the Kingdom Reborn client's grunge on statics (Client Grunge).
 //
-// Research P3.6 (scripts/dev-helpers/ec-research/ghidra-kr-atmosphere/results/uokr_atmosphere.md). UOSprite.psh
+// Research P3.6 (docs/client_research/ghidra-kr-atmosphere/results/uokr_atmosphere.md). UOSprite.psh
 // multiplies the hued colour's RGB by the grunge texture, alpha untouched, on the 8-bit values:
 //
 //   colour.rgb *= tex2D(GrungeSampler, uv1).rgb

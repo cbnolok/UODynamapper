@@ -4,7 +4,7 @@
 //! The Enhanced Client's package holds two tables, `data/audio/audio_sounds.csv` (`#ID,FilePath`) and
 //! `data/audio/audio_music.csv` (`#ID,FilePath,Loop`), and the files. The client plays a sound id (the server's id,
 //! no offset) from `data/audio/` + its row's `FilePath`, with `\` turned into `/` and lowercased, nothing trimmed
-//! (`UOP::NormalizePath`; `scripts/dev-helpers/ec-research/ghidra-audio/results/uosa_audio.md`): sound 0,
+//! (`UOP::NormalizePath`; `docs/client_research/ghidra-audio/results/uosa_audio.md`): sound 0,
 //! `Sounds\aaaenvir\d_frst01.mp3`, is `data/audio/sounds/aaaenvir/d_frst01.mp3`. The name is built in a buffer of
 //! [`MAX_ENTRY_NAME_BYTES`]. Most sounds also have the Classic sound of the same id as a WAV file, under
 //! `data/audio/legacysounds/` with the `sounds/` folder dropped and `.wav` for `.mp3`:
