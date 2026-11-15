@@ -19,6 +19,7 @@ Read **[ENGINEERING.md](ENGINEERING.md)** before starting any task. It contains 
 - Use `cargo check -p <crate>` for fast feedback. Use `cargo check --workspace` as final validation when touching cross-crate interfaces.
 - Do not run `cargo fmt`, `rustfmt`, or `cargo clippy` automatically; follow the maintainer-only policy in `ENGINEERING.md`.
 - After visual changes in `dynamapper/`, test all four render styles: **Classic**, **Enhanced**, **KR-like**, and **UOD-Painterly**. There are three shading modes but four preset groups; testing only three styles is incomplete.
+- For renderer changes, record a screenshot baseline before and compare after with the regression harness in [`renderer-reference-validation`](skills/renderer-reference-validation/SKILL.md#regression-harness).
 - When touching Bevy plugin or system code, run `just bevy-lint`.
 
 ## Development Skills

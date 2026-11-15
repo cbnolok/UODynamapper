@@ -37,6 +37,22 @@ Off-desktop XWayland windows can reject external `XGetImage`/ffmpeg capture with
 
 When animation matters, capture more than one settled frame at recorded times or compare equivalent paused states. A single still cannot validate motion, reflection stability, or overlap flicker.
 
+## Regression harness
+
+[`scripts/visual_harness.py`](scripts/visual_harness.py) captures the fixed views of [`fixtures.toml`](fixtures.toml) with a given binary and compares them with a baseline. It applies the preview rules itself: Desktop 4 through the exact-PID preview helper, private copies of the settings and cache, the shared preview lock held per launch, positioning and capture through the control socket, and a discarded first capture. It also freezes water, lava and KR fog drift, and repeats each capture until two consecutive frames agree, at most four times. Run it with `python3 -I -B` from any checkout. `--tree` names the checkout whose `dynamapper/assets` the runs copy; the default is the script's own.
+
+For every visual change:
+
+1. Before the change, build and record a baseline: `visual_harness.py record before-<topic> --binary <old dynamapper>`. A baseline from the same commit can be reused.
+2. Make the change and build.
+3. Run `visual_harness.py compare before-<topic> after-<topic> --binary <new dynamapper>`. It captures the label unless it exists and writes `summary.json` and sheets (baseline, current, |diff| ×4, client reference) under `--root`. The exit status is 0 when nothing changed beyond each fixture's tolerance, 1 on changes and 2 on errors.
+4. View the sheets of the changed fixtures, and attach the summary and the sheets that show the intended change to the report. An intended change is still listed as changed; say why it is expected.
+5. Add a fixture for every visual bug fixed: the smallest view that showed it, with `guards` naming the bug and the fix commit.
+
+The default selection is the quick tier: 40 captures in 20 launches, about 4 minutes when the preview lock is free. Use `--tier full` (200 captures in about 70 launches, 15 to 20 minutes) before a milestone or after shared shader, lighting or atlas changes. Two runs of one binary match exactly except lava at night, which varies by up to 3 levels; a capture whose consecutive frames never agree is marked unstable in the manifest and the compare output. Narrow a run with `--only <name or tag glob>`, `--style`, `--source art/land` and `--time`. `list -v` shows the fixtures and the launches they need. `sheet <label>` draws a label's captures with the styles side by side. `clean --keep N` drops old labels. `self-test` checks the parser, the settings rewriting and the diff math without a GUI.
+
+Labels default to `/home/claudio/rust-target/uodynamapper-scratch/visual-baselines/`, outside the repository. A label stores the tree commit, the binary hash and a hash of each fixture's view. A fixture edited after the baseline reports `stale` instead of a diff. Captures are lossless WebP by default; `--format jpeg` is leaner for throwaway runs.
+
 ## Compare and diagnose
 
 View the baseline, changed capture, and relevant original reference images. Compare the affected content, not just overall color or aesthetic similarity. Useful independent dimensions include:
