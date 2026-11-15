@@ -15,8 +15,13 @@ Selection: --tier quick|full, --only NAME_OR_TAG (glob, repeatable), --style, --
 Every GUI run follows the repository's preview rules itself: KDE "Desktop 4" through the exact-PID preview helper,
 a private working directory with copies of the tree's assets/ and a fresh cache/, never the user's settings; the
 shared preview lock held around each launch only; the control socket for positioning and capture; the first capture
-of a launch discarded; water and lava animation and the KR fog's cloud drift frozen in every preset; each capture
-repeated until two consecutive frames agree (else marked unstable). One launch covers every fixture of a style,
+of a launch and after every runtime switch discarded; water and lava animation and the KR fog's cloud drift frozen in
+every preset; each capture repeated until two consecutive frames agree (else marked unstable).
+
+By default one launch per map runs fixture after fixture, switching the style, time of day, art and land sources,
+zoom and the whitelisted settings through the control socket as the UI does, for at most --chunk-seconds before it
+closes and the next launch goes on (the preview lock is held per launch). A fixture with an override the socket
+cannot switch, or a binary without the switch commands, gets the --fresh-launch behaviour: one launch per style,
 source, time of day, map and settings set, up to a time budget.
 
 Labels live outside the repository (derived from client files), under --root. Each holds manifest.json (tree commit,
@@ -82,6 +87,19 @@ DEFAULT_WINDOW = (1280, 800)
 # preview.py refuses --seconds above 300; captures stop being started past the budget and continue in a new launch.
 PREVIEW_SECONDS = 300
 LAUNCH_BUDGET_SECONDS = 220
+# A switching launch holds the shared preview lock for about this long (plus its last capture and the shutdown)
+# before it closes and lets other agents' previews in; the next launch goes on from there.
+LIVE_CHUNK_SECONDS = 60
+# The overrides the control socket switches at runtime (dynamapper's dev_control/settings.rs): a fixture whose
+# overrides are all here shares the switching launches; any other override needs launches of its own.
+LIVE_SETTINGS = {
+    'world_rendering': ('show_only_player_floor', 'caves', 'cave_surroundings', 'enable_statics',
+                        'enable_static_lights', 'show_hidden_multi_parts'),
+    'graphics': ('cc_terrain_transitions', 'ec_terrain_transitions'),
+    'style': ('light_cover', 'player_floor_rule', 'land_texture_variation'),
+}
+# A status field only binaries with the switch commands report; older binaries run in --fresh-launch mode.
+SWITCH_MARKER = b'frames_since_switch'
 MAX_CAPTURES_PER_LAUNCH = 16
 PLACEMENT_TIMEOUT_SECONDS = 60
 SOCKET_TIMEOUT_SECONDS = 180
@@ -95,6 +113,8 @@ SCENE_STABLE_SNAPSHOTS = 3
 SCENE_POLL_SECONDS = 0.1
 # After the scene reports ready: light-cover rechecks and uploads that follow the land.
 SETTLE_SECONDS = 1.0
+# The zoom the app reports is an f32: compare it to the fixture's with this slack.
+ZOOM_TOLERANCE = 1e-4
 CAPTURE_TIMEOUT_SECONDS = 60
 CAPTURE_POLL_SECONDS = 0.03
 # Each capture is taken until two consecutive frames agree, at most this many times.
@@ -384,6 +404,18 @@ class Capture:
         return (self.style, self.time, self.art, self.land, f.map, f.zoom, f.camera,
                 json.dumps(f.settings, sort_keys=True))
 
+    def live_order(self):
+        """The switching launches' order: the settings set outermost, then the package switches, then the preset, the
+        views in fixture order within. Each settings set then visits its views in the order of a --fresh-launch launch:
+        some light glows depend on the views visited before (a renderer bug), so a different order changes pixels."""
+        return (self.fixture.camera, self.fixture.map, json.dumps(self.fixture.settings, sort_keys=True), self.art,
+                self.land, self.style, self.time)
+
+
+def live_capable(fixture):
+    """Whether the control socket can switch every override of the fixture at runtime."""
+    return all(key in LIVE_SETTINGS.get(group, ()) for group, values in fixture.settings.items() for key in values)
+
 
 def fixture_selected(fixture, args):
     if args.tier == 'quick' and fixture.tier != 'quick':
@@ -413,12 +445,22 @@ def expand(fixtures, args):
     return captures
 
 
-def plan_launches(captures):
-    """Group captures by what is fixed at startup, in fixture order, chunked to the per-launch limit."""
+def plan_launches(captures, live=False):
+    """Group captures by what is fixed at startup, in fixture order, chunked to the per-launch limit.
+
+    live: the captures the socket can switch to form one sequence per camera and map instead (the app loads only its
+    startup map), chunked by time at run time."""
     groups = {}
+    launches = []
+    if live:
+        switchable = sorted((c for c in captures if live_capable(c.fixture)), key=Capture.live_order)
+        for capture in switchable:
+            groups.setdefault(('live', capture.fixture.camera, capture.fixture.map), []).append(capture)
+        launches = list(groups.values())
+        groups = {}
+        captures = [c for c in captures if not live_capable(c.fixture)]
     for capture in captures:
         groups.setdefault(capture.group(), []).append(capture)
-    launches = []
     for group, members in groups.items():
         for start in range(0, len(members), MAX_CAPTURES_PER_LAUNCH):
             launches.append(members[start:start + MAX_CAPTURES_PER_LAUNCH])
@@ -552,6 +594,31 @@ class SettingsFiles:
                     raise HarnessError(f'settings.{group}.{key}: {value!r} has not the type of the file\'s {old!r}')
 
 
+def live_state(files, capture):
+    """Everything a switching launch sets for a capture, the tree's values where the fixture overrides nothing."""
+    f = capture.fixture
+    world = {key: files.data['world_rendering'][key] for key in LIVE_SETTINGS['world_rendering']}
+    graphics = {key: files.data['graphics']['graphics'][key] for key in LIVE_SETTINGS['graphics']}
+    own = files.data['land'].get(capture.style, {})
+    # A style without the key (player_floor_rule outside KR-like and UOD-Painterly) skips it, as a fresh launch does.
+    style = {key: f.settings.get('style', {}).get(key, own[key]) for key in LIVE_SETTINGS['style'] if key in own}
+    return {'preset': (capture.style, capture.time), 'sources': (capture.art, capture.land),
+            'settings': world | f.settings.get('world_rendering', {}) | graphics | f.settings.get('graphics', {}),
+            'style': style, 'zoom': f.zoom, 'position': [f.x, f.y, f.z, f.map]}
+
+
+def supports_switching(binary):
+    """Whether the binary has the control socket's switch commands (its status reports frames_since_switch)."""
+    overlap = len(SWITCH_MARKER)
+    tail = b''
+    with open(binary, 'rb') as stream:
+        for block in iter(lambda: stream.read(1 << 22), b''):
+            if SWITCH_MARKER in tail + block:
+                return True
+            tail = block[-overlap:]
+    return False
+
+
 def write_run_settings(files, run_dir, capture, window, packages):
     """Make the run's private assets/ and cache/ for one launch group."""
     fixture = capture.fixture
@@ -646,10 +713,11 @@ def png_rgb(path):
 
 
 class Launch:
-    def __init__(self, ctx, launch_id, captures):
+    def __init__(self, ctx, launch_id, captures, live=False):
         self.ctx = ctx
         self.id = launch_id
         self.captures = captures
+        self.live = live
         self.dir = ctx.work / launch_id
         if self.dir.exists():
             shutil.rmtree(self.dir)
@@ -662,7 +730,8 @@ class Launch:
             self.socket.unlink()
         self.child = None
         self.control = ctx.control
-        self.record = {'id': launch_id, 'captures': [c.key for c in captures], 'overrides_applied': self.applied}
+        self.record = {'id': launch_id, 'mode': 'live' if live else 'fresh', 'captures': [c.key for c in captures],
+                       'overrides_applied': self.applied}
 
     # -- process -------------------------------------------------------------------------------------------------
     def start(self):
@@ -733,8 +802,9 @@ class Launch:
             terrain = status.get('terrain')
             if (status.get('position') == position and status.get('rendered_position') == position and terrain
                     and not terrain['metadata_pending']
-                    and terrain['metadata_revision'] == terrain['submitted_metadata_revision']):
-                fingerprint = terrain['metadata_revision']
+                    and terrain['metadata_revision'] == terrain['submitted_metadata_revision']
+                    and self.control.switch_settled(status)):
+                fingerprint = self.control.scene_fingerprint(status)
                 stable = stable + 1 if fingerprint == previous else 1
                 previous = fingerprint
                 if stable >= SCENE_STABLE_SNAPSHOTS:
@@ -798,6 +868,10 @@ class Launch:
             problems.append(f'preset {render.get("preset")} instead of {want}')
         if (render.get('effects') or {}).get('enable_water_animation') not in (0, None):
             problems.append('water animation is running')
+        if (render.get('fog_params') or [0] * 4)[3] != 0:
+            problems.append('the fog cloud drift is running')
+        if self.live:
+            problems += self.verify_live(capture, status)
         size = (status.get('window') or {}).get('logical_size')
         if size and [round(v) for v in size] != list(self.ctx.window):
             problems.append(f'window {size} instead of {list(self.ctx.window)}')
@@ -806,12 +880,57 @@ class Launch:
             problems.append(f'position {status.get("position")}')
         return problems
 
+    def verify_live(self, capture, status):
+        """The switched state as the app reports it: the settings, the sources and the active style's settings."""
+        want = live_state(self.ctx.files, capture)
+        control = status.get('control') or {}
+        settings = control.get('settings') or {}
+        problems = [f'{key} {settings.get(key)!r} instead of {value!r}'
+                    for key, value in want['settings'].items() if settings.get(key) != value]
+        sources = (settings.get('art_texture_source'), settings.get('land_texture_source'))
+        if sources != want['sources']:
+            problems.append(f'sources {sources} instead of {want["sources"]}')
+        render = status.get('render') or {}
+        problems += [f'{key} {render.get(key)!r} instead of {value!r}'
+                     for key, value in want['style'].items() if render.get(key) != value]
+        if control.get('zoom') is None or abs(control['zoom'] - want['zoom']) > ZOOM_TOLERANCE:
+            problems.append(f'zoom {control.get("zoom")} instead of {want["zoom"]}')
+        return problems
+
+    def switch(self, capture, state):
+        """Bring the app from `state` to the capture's: sources, preset, settings, the style's settings, zoom and
+        position, each through its control command. Returns whether anything changed."""
+        want = live_state(self.ctx.files, capture)
+        changed = False
+        if want['sources'] != state['sources']:
+            art, land = want['sources']
+            changed |= self.request({'command': 'sources', 'art': art, 'land': land})['changed']
+        if want['preset'] != state['preset']:
+            style, time_of_day = want['preset']
+            changed |= self.request({'command': 'preset', 'style': style, 'time': time_of_day})['changed']
+        for key, value in want['settings'].items():
+            if state['settings'].get(key) != value:
+                changed |= self.request({'command': 'set', 'key': key, 'value': value})['changed']
+        # A preset switch reloads the style's settings from the in-memory presets, where an earlier switch away
+        # stored the then live values: set them every time.
+        for key, value in want['style'].items():
+            changed |= self.request({'command': 'set', 'key': key, 'value': value})['changed']
+        if want['zoom'] != state['zoom']:
+            changed |= self.request({'command': 'set', 'key': 'zoom', 'value': want['zoom']})['changed']
+        if want['position'] != state['position']:
+            x, y, z, map_id = want['position']
+            self.request({'command': 'teleport', 'x': x, 'y': y, 'z': z, 'map': map_id})
+            changed = True
+        state.update(want)
+        return changed
+
     # -- run -----------------------------------------------------------------------------------------------------
     def run(self):
         """Capture as many of the launch's captures as fit the budget; returns (results, the ones left over)."""
         results = {}
         left = []
         timings = {}
+        budget = self.ctx.chunk_seconds if self.live else LAUNCH_BUDGET_SECONDS
         with PreviewLock() as lock:
             timings['lock_wait'] = lock.waited
             self.start()
@@ -819,22 +938,34 @@ class Launch:
                 first = self.captures[0]
                 self.wait_ready(first)
                 timings['ready'] = round(time.monotonic() - self.started, 2)
+                if self.live and 'control' not in self.request({'command': 'status'}):
+                    raise HarnessError(f'{self.id}: the binary has no switch commands; use --fresh-launch')
                 # The first capture of a run may be black or stale.
                 self.capture_png(self.staging / '0_discard.png')
                 position = None
+                # The startup settings are the first capture's (write_run_settings).
+                state = live_state(self.ctx.files, first)
+                switches = 0
                 for index, capture in enumerate(self.captures):
-                    if time.monotonic() - self.started > LAUNCH_BUDGET_SECONDS:
+                    if time.monotonic() - self.started > budget:
                         left = self.captures[index:]
                         break
                     began = time.monotonic()
                     f = capture.fixture
                     target = [f.x, f.y, f.z, f.map]
-                    if position is not None and position != target:
+                    switched = False
+                    if self.live:
+                        switched = self.switch(capture, state)
+                    elif position is not None and position != target:
                         self.request({'command': 'teleport', 'x': f.x, 'y': f.y, 'z': f.z, 'map': f.map})
                     position = target
                     self.wait_ready(capture)
                     time.sleep(SETTLE_SECONDS)
                     status = self.wait_ready(capture)
+                    if switched:
+                        # As after a launch: the first frame after a switch may be stale.
+                        switches += 1
+                        self.capture_png(self.staging / f'0_discard.{switches}.png')
                     path, attempts, stable, difference = self.capture_stable(capture)
                     problems = self.verify(capture, self.request({'command': 'status'}))
                     results[capture.key] = {
@@ -852,6 +983,7 @@ class Launch:
             finally:
                 self.stop()
         timings['total'] = round(time.monotonic() - self.started, 2)
+        timings['captures'] = len(results)
         errors = self.log_errors()
         self.record.update(timings=timings, log_errors=errors[:LOG_TAIL_LINES],
                            placement_verified='placement_verified' in self.preview_text())
@@ -928,6 +1060,7 @@ class Context:
         self.work = self.root / 'work' / label
         self.sockets = self.root / 'sk'
         self.control = load_control()
+        self.chunk_seconds = getattr(args, 'chunk_seconds', LIVE_CHUNK_SECONDS)
 
 
 def record(args, label, captures, fixtures_path):
@@ -939,6 +1072,9 @@ def record(args, label, captures, fixtures_path):
     if 'DISPLAY' not in os.environ:
         raise HarnessError('no DISPLAY: the preview needs the X11/XWayland display')
     ctx = Context(args, label)
+    live = not args.fresh_launch and supports_switching(ctx.binary)
+    if not args.fresh_launch and not live:
+        log('note: the binary has no switch commands; one launch per startup settings set (--fresh-launch)')
     if ctx.dir.exists():
         if not args.replace:
             raise HarnessError(f'label "{label}" exists; pass --replace or pick another label')
@@ -956,27 +1092,29 @@ def record(args, label, captures, fixtures_path):
                    'mtime': datetime.datetime.fromtimestamp(ctx.binary.stat().st_mtime).isoformat(timespec='seconds')},
         'tree': git_state(ctx.tree), 'packages': str(ctx.packages), 'note': args.note,
         'fixtures_file': {'path': str(fixtures_path), 'sha256': file_sha256(fixtures_path)},
-        'window': list(ctx.window), 'format': args.format,
+        'window': list(ctx.window), 'format': args.format, 'mode': 'live' if live else 'fresh',
+        'chunk_seconds': ctx.chunk_seconds if live else None,
         'selection': {'tier': args.tier, 'only': args.only, 'style': args.style, 'source': args.source,
                       'time': args.time},
         'frozen': ['enable_water_animation = 0 in every preset slot', 'fog_params.w = 0 in every preset slot'],
         'launches': [], 'captures': {}, 'errors': [],
     }
     ctx.dir.mkdir(parents=True)
-    pending = plan_launches(captures)
-    log(f'{label}: {len(captures)} captures in {len(pending)} launches; binary {ctx.binary}')
+    pending = [(group, live and live_capable(group[0].fixture)) for group in plan_launches(captures, live)]
+    log(f'{label}: {len(captures)} captures, {"switching at runtime" if live else "one launch per settings set"}; '
+        f'binary {ctx.binary}')
     counter = 0
     encoders = concurrent.futures.ProcessPoolExecutor(max_workers=ENCODE_WORKERS)
     futures = []
     try:
         while pending:
-            group = pending.pop(0)
+            group, switching = pending.pop(0)
             counter += 1
             first = group[0]
             launch_id = f'l{counter:03d}-{first.style}-{first.time}-{first.art}-{first.land}-m{first.fixture.map}'
-            log(f'[{counter}] {launch_id}: {len(group)} captures')
+            log(f'[{counter}] {launch_id}: {len(group)} captures' + (' (switching)' if switching else ''))
             try:
-                launch = Launch(ctx, launch_id, group)
+                launch = Launch(ctx, launch_id, group, switching)
                 results, left = launch.run()
             except (HarnessError, OSError, RuntimeError, TimeoutError) as error:
                 # One failed launch (a control error, a crashed app) loses its captures, not the whole label.
@@ -984,7 +1122,7 @@ def record(args, label, captures, fixtures_path):
                 manifest['errors'].append(f'{launch_id}: {error}')
                 continue
             if left:
-                pending.insert(0, left)
+                pending.insert(0, (left, switching))
             manifest['launches'].append(launch.record)
             if launch.record['log_errors']:
                 log(f'  {len(launch.record["log_errors"])} error lines in the app log, first: '
@@ -1013,12 +1151,14 @@ def record(args, label, captures, fixtures_path):
     if missing:
         manifest['errors'].append(f'{len(missing)} captures missing: {missing[:10]}')
     manifest['wall_seconds'] = round(time.monotonic() - started, 1)
+    manifest['launch_count'] = len(manifest['launches'])
     manifest['bytes'] = sum(p.stat().st_size for p in (ctx.dir / 'caps').rglob('*') if p.is_file()) \
         if (ctx.dir / 'caps').exists() else 0
     (ctx.dir / 'manifest.json').write_text(json.dumps(manifest, indent=1, default=str))
     unstable = [key for key, value in manifest['captures'].items() if not value['stable']]
-    log(f'{label}: {len(manifest["captures"])} captures, {manifest["bytes"] / 1e6:.1f} MB, '
-        f'{manifest["wall_seconds"]} s; {len(unstable)} unstable, {len(manifest["errors"])} errors')
+    log(f'{label}: {len(manifest["captures"])} captures in {manifest["launch_count"]} launches, '
+        f'{manifest["bytes"] / 1e6:.1f} MB, {manifest["wall_seconds"]} s; {len(unstable)} unstable, '
+        f'{len(manifest["errors"])} errors')
     return manifest
 
 
@@ -1322,7 +1462,11 @@ def command_list(args, fixtures):
             log(f'    guards: {fixture.guards}')
             if fixture.reference:
                 log(f'    reference: {fixture.reference["path"]} ({fixture.reference["note"]})')
-    log(f'{len(captures)} captures in {len(plan_launches(captures))} launches (tier {args.tier})')
+    fresh = plan_launches(captures)
+    switching = [group for group in plan_launches(captures, live=True) if live_capable(group[0].fixture)]
+    log(f'{len(captures)} captures (tier {args.tier}): {len(fresh)} launches with --fresh-launch; switching at '
+        f'runtime, {sum(map(len, switching))} captures in launches of up to {LIVE_CHUNK_SECONDS} s and '
+        f'{len(plan_launches(captures, live=True)) - len(switching)} launches of their own')
     return 0
 
 
@@ -1382,6 +1526,11 @@ def parser():
     capture.add_argument('--note', default='', help='free text stored in the manifest')
     capture.add_argument('--replace', action='store_true', help='overwrite an existing label')
     capture.add_argument('--keep-work', action='store_true', help='keep the run folders (settings, logs)')
+    capture.add_argument('--fresh-launch', action='store_true',
+                         help='one launch per startup settings set instead of switching them at runtime')
+    capture.add_argument('--chunk-seconds', type=float, default=LIVE_CHUNK_SECONDS,
+                         help=f'how long a switching launch holds the preview lock before the next launch goes on '
+                              f'(default {LIVE_CHUNK_SECONDS})')
     top = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     commands = top.add_subparsers(dest='command', required=True)
     listing = commands.add_parser('list', parents=[common], help='fixtures and captures of the selection')
@@ -1522,6 +1671,44 @@ class SelfTest(unittest.TestCase):
             self.assertEqual(len({c.group() for c in group}), 1)
         only = expand(fixtures, self.selection(only=['two-*'], style=['kr']))
         self.assertEqual([c.key for c in only], ['two-view/kr.afternoon.ec-cc'])
+
+    def test_switching_launches(self):
+        text = SAMPLE + """
+[[fixture]]
+name = "three-view"
+guards = "a preset override"
+tier = "full"
+map = 1
+x = 50
+y = 60
+z = 0
+settings = { preset = { "effects.light_decal_intensity" = 0.5 } }
+"""
+        fixtures = load_fixtures(self.write(text), self.files)
+        self.assertEqual([live_capable(f) for f in fixtures], [True, True, False])
+        full = expand(fixtures, self.selection())
+        launches = plan_launches(full, live=True)
+        switching = [group for group in launches if live_capable(group[0].fixture)]
+        # One sequence per map: the app loads only the map it starts on.
+        self.assertEqual([{c.fixture.map for c in group} for group in switching], [{0}, {1}])
+        self.assertEqual(sum(map(len, launches)), len(full))
+        orders = [c.live_order() for group in switching for c in group]
+        self.assertEqual(orders, sorted(orders))
+        for group in launches[len(switching):]:
+            self.assertEqual({c.fixture.name for c in group}, {'three-view'})
+        kr = live_state(self.files, Capture(fixtures[0], 'kr', 'night', 'ec', 'kr'))
+        self.assertTrue(kr['settings']['show_only_player_floor'])
+        self.assertEqual(set(kr['style']), {'light_cover', 'player_floor_rule', 'land_texture_variation'})
+        classic = live_state(self.files, Capture(fixtures[1], 'classic', 'afternoon', 'cc', 'cc'))
+        self.assertFalse(classic['settings']['show_only_player_floor'])
+        self.assertNotIn('player_floor_rule', classic['style'])
+        self.assertEqual((classic['preset'], classic['sources'], classic['position']),
+                         (('classic', 'afternoon'), ('cc', 'cc'), [30, 40, 0, 0]))
+        binary = Path(tempfile.mkdtemp(dir=self.scratch)) / 'dynamapper'
+        binary.write_bytes(b'x' * ((1 << 22) - 3) + SWITCH_MARKER)
+        self.assertTrue(supports_switching(binary))
+        binary.write_bytes(b'x' * 64)
+        self.assertFalse(supports_switching(binary))
 
     def assert_rejected(self, text, *words):
         with self.assertRaises(HarnessError) as caught:
