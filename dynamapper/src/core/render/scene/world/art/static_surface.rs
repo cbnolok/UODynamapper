@@ -1,6 +1,6 @@
 //! Ground-level, world-textured art keeps its own pixels, but exposes the map
 //! smoothly at patch boundaries. Neighbor flags are built only on chunk rebuild.
-use super::statics_collect::{SpriteInstance, StaticChunkBatchKey};
+use super::statics_collect::{SpriteInstance, StaticChunkBatchKey, TILE_FLAG_SURFACE};
 use crate::core::{statics::LazyStaticsStore, render::scene::world::land::{tile_atlas::TileAtlas, CHUNK_STORAGE_BLOCKS_DIM, MAP_STORAGE_BLOCK_TILE_DIM}};
 use std::collections::{HashMap, HashSet};
 use udd_assets::{tex_art_ec::TexArtEcPackage, tilemeta::{EcMaterialStableRole, TileMetaItemTextureRef, TileMetaItemTile, TileMetaPackage}};
@@ -8,8 +8,34 @@ use udd_assets::{tex_art_ec::TexArtEcPackage, tilemeta::{EcMaterialStableRole, T
 const BLEND_ENABLED: u32 = 1 << 1;
 const NEIGHBOR_SHIFT: u32 = 2;
 const OFFSETS: [(i32, i32); 8] = [(-1, -1), (0, -1), (1, -1), (-1, 0), (1, 0), (-1, 1), (0, 1), (1, 1)];
+/// Tiledata Wall flag. With `TILE_FLAG_SURFACE` it marks the statics that close a patch's side (`ClosingStatics`):
+/// walls (with their posts, windows and door frames) and surfaces (floors, boards, steps and tables).
+const TILE_FLAG_WALL: u64 = 0x10;
+/// How far, in Z units, a closing static may start above a patch and still close its side: a building's floor or
+/// foundation often sits a step above the street it meets.
+const CLOSING_STATIC_Z_REACH: i16 = 2;
 type MaterialKey = (u32, u32);
 type SurfaceCell = (u32, u32, i8, MaterialKey);
+
+/// The Z spans (bottom, top) of the walls and surfaces of each cell that are not patches themselves.
+/// The clients draw a floor right up to the wall or floor beside it (the KR yard at Minoc 2476,408), so a patch side
+/// against one is not exposed: fading it revealed a band of the map along the wall, as if the floor stopped short.
+#[derive(Default)]
+struct ClosingStatics(HashMap<(u32, u32), Vec<(i16, i16)>>);
+
+impl ClosingStatics {
+    fn insert(&mut self, x: u32, y: u32, z: i8, tile: &TileMetaItemTile) {
+        if tile.flags & (TILE_FLAG_WALL | TILE_FLAG_SURFACE) == 0 || tile.is_nodraw() { return; }
+        let bottom = i16::from(z);
+        self.0.entry((x, y)).or_default().push((bottom, bottom + i16::from(tile.height)));
+    }
+
+    fn closes(&self, x: u32, y: u32, z: i8) -> bool {
+        let z = i16::from(z);
+        self.0.get(&(x, y)).is_some_and(|spans| spans.iter()
+            .any(|&(bottom, top)| bottom <= z + CLOSING_STATIC_Z_REACH && top >= z))
+    }
+}
 
 fn source_key(tile: &TileMetaItemTile, refs: &[TileMetaItemTextureRef]) -> Option<MaterialKey> {
     // The camera-plane terrain-item flag is source-backed. Exclude volumes,
@@ -30,11 +56,11 @@ pub(super) fn map_height(atlas: &TileAtlas, x: u32, y: u32) -> Option<i8> {
     Some(((texel.g & 255) as i16 - 128) as i8)
 }
 
-fn neighbor_mask(cells: &HashSet<SurfaceCell>, cell: SurfaceCell) -> u32 {
+fn neighbor_mask(cells: &HashSet<SurfaceCell>, closing: &ClosingStatics, cell: SurfaceCell) -> u32 {
     let mut mask = 0;
     for (bit, (dx, dy)) in OFFSETS.into_iter().enumerate() {
         let (Some(x), Some(y)) = (cell.0.checked_add_signed(dx), cell.1.checked_add_signed(dy)) else { continue; };
-        if cells.contains(&(x, y, cell.2, cell.3)) { mask |= 1 << bit; }
+        if cells.contains(&(x, y, cell.2, cell.3)) || closing.closes(x, y, cell.2) { mask |= 1 << bit; }
     }
     mask
 }
@@ -66,6 +92,7 @@ pub(super) fn apply_boundary_coverage(
     let (start_x, start_y) = (chunk.gx * CHUNK_STORAGE_BLOCKS_DIM, chunk.gy * CHUNK_STORAGE_BLOCKS_DIM);
     let (end_x, end_y) = (start_x + chunk.scale * CHUNK_STORAGE_BLOCKS_DIM, start_y + chunk.scale * CHUNK_STORAGE_BLOCKS_DIM);
     let mut cells = HashSet::new();
+    let mut closing = ClosingStatics::default();
     for by in start_y.saturating_sub(1)..=end_y {
         for bx in start_x.saturating_sub(1)..=end_x {
             let Ok(tiles) = statics.block_tiles(bx, by) else { continue; };
@@ -74,6 +101,7 @@ pub(super) fn apply_boundary_coverage(
                 if x < (start_x * MAP_STORAGE_BLOCK_TILE_DIM).saturating_sub(1) || x > end_x * MAP_STORAGE_BLOCK_TILE_DIM
                     || y < (start_y * MAP_STORAGE_BLOCK_TILE_DIM).saturating_sub(1) || y > end_y * MAP_STORAGE_BLOCK_TILE_DIM { continue; }
                 if let Some(key) = key_for(u32::from(tile.graphic)) { cells.insert((x, y, tile.z, key)); }
+                else if let Some(meta) = tilemeta.item_tile(u32::from(tile.graphic)) { closing.insert(x, y, tile.z, meta); }
             }
         }
     }
@@ -81,7 +109,7 @@ pub(super) fn apply_boundary_coverage(
         // Multis/raised floors must not become ground blends just because their
         // emitted sprite resembles a raw background static.
         if !cells.contains(&cell) { continue; }
-        instances[index].is_wet_flags |= BLEND_ENABLED | (neighbor_mask(&cells, cell) << NEIGHBOR_SHIFT);
+        instances[index].is_wet_flags |= BLEND_ENABLED | (neighbor_mask(&cells, &closing, cell) << NEIGHBOR_SHIFT);
     }
 }
 
@@ -115,11 +143,38 @@ mod tests {
         let center = (31, 31, 0, key);
         let mut cells = HashSet::from([center, (32, 31, 0, key), (31, 32, 0, key),
             (32, 32, 5, key), (30, 31, 0, (2000010, 10.0f32.to_bits()))]);
-        assert_eq!(neighbor_mask(&cells, center), (1 << 4) | (1 << 6));
+        assert_eq!(neighbor_mask(&cells, &ClosingStatics::default(), center), (1 << 4) | (1 << 6));
         for (dx, dy) in OFFSETS {
             cells.insert(((31i32 + dx) as u32, (31i32 + dy) as u32, 0, key));
         }
-        assert_eq!(neighbor_mask(&cells, center), 255);
+        assert_eq!(neighbor_mask(&cells, &ClosingStatics::default(), center), 255);
+    }
+
+    #[test]
+    fn walls_and_floors_beside_a_patch_close_its_side() {
+        let key = (2000090, 8.0f32.to_bits());
+        // The Minoc yard's corner cell (2473,405) at Z 15: log walls west, north-west and north-east of it.
+        let center = (2473, 405, 15, key);
+        let cells = HashSet::from([center]);
+        let mut wall = TileMetaItemTile::zeroed();
+        wall.flags = TILE_FLAG_WALL;
+        wall.height = 20;
+        let mut floor = TileMetaItemTile::zeroed();
+        floor.flags = TILE_FLAG_SURFACE;
+        let mut closing = ClosingStatics::default();
+        closing.insert(2472, 405, 15, &wall);
+        closing.insert(2472, 404, 15, &wall);
+        closing.insert(2474, 404, 15, &wall);
+        // A floor a step above the yard closes its side; one far above it, or a wall that ends below it, does not.
+        closing.insert(2473, 406, (15 + CLOSING_STATIC_Z_REACH) as i8, &floor);
+        closing.insert(2474, 406, 30, &floor);
+        closing.insert(2474, 405, -10, &wall);
+        // Bits: NW 0, N 1, NE 2, W 3, E 4, SW 5, S 6, SE 7.
+        assert_eq!(neighbor_mask(&cells, &closing, center), (1 << 0) | (1 << 2) | (1 << 3) | (1 << 6));
+        // Statics with neither flag (a sign, a plant) leave the side exposed.
+        let mut plain = ClosingStatics::default();
+        plain.insert(2472, 405, 15, &TileMetaItemTile::zeroed());
+        assert_eq!(neighbor_mask(&cells, &plain, center), 0);
     }
 
     #[test]

@@ -39,6 +39,16 @@ share coverage. Bits use spare space in `SpriteInstance.is_wet_flags`, keeping
 its 128-byte stride. The terrain atlas CPU mirror supplies map height without
 another package reader or GPU readback.
 
+A side against a wall or surface static is closed, not exposed: a cell
+whose Wall (0x10) or Surface (0x200) static spans the patch's Z, or starts
+at most `CLOSING_STATIC_Z_REACH` (2) above it, counts as filled (walls with
+their posts, windows and frames; floors, boards and tables). Fading those
+sides showed a 0.82-cell band of map between a town's cobblestones and its
+walls, so the floor seemed to stop short of the building; the KR client draws
+the cobblestones up to the walls (Minoc yard 2476,408, KR reference
+`Schermata_20261114_072854.png`), as Classic art and the renderer with the
+EC transitions off do. Other terrain patches still fade into each other.
+
 `art/surface_blend.wesl` fades exposed borders over 0.82 local cell, matching
 the existing terrain edge-transition reach. When both sides of an axis are
 exposed, each ramp finishes at the half-cell so a narrow path or isolated tile
