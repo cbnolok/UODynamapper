@@ -77,6 +77,64 @@ come back with them. The CPU key `static_depth_key` keeps -4: it orders the
 draws (flat items first) and finds equal keys, and never reaches the depth.
 Flat quads and ground statics write their plane depth and are unchanged.
 
+### A tall wall over the table in front of it (2026-11-15, open)
+
+In the Minoc hall the back log wall (0x92, z 15, height 20, flags `0x6050`) on
+y 396 covers the back corner of each table (0x0B72/0x0B73, z 15, height 6) on
+y 397 in a stair-step. The KR reference (`uokr/Schermata_20261114_072859`)
+and ClassicUO draw the tables in front.
+
+- **Cause: the priority height, not the depth scale.** Ours: wall 15 + 20 = 35,
+  table bare z 15, one diagonal step nearer: 15 + 11 = 26 < 35, so the wall
+  wins. Both clients add at most 1 for height (KR: `z + 128 + (height > 0)`;
+  ClassicUO `PriorityZ`: z, +1 if Height != 0, -1 if Background): 16 against
+  16, and the nearer table wins on any scale. `effective_priority_height`
+  (the full tiledata height, 10 for a flat Regular item) is from be44e69c and
+  is not traced from either client. A wall's 20 counts nearly two diagonal
+  steps, so it beats anything at its own z one step in front with a priority
+  height under 9.
+- **Candidate: cap the height below one step**, `min(height,
+  DEFAULT_PRIORITY_HEIGHT)`. A shader-only probe (`min(priority_z_units,
+  base z + 10)` on the priority point) fixes the hall in Classic and KR-like;
+  it also hides the lower floor's wall tops that poked through flat roofs and
+  castle pavements in Britain (1496,1628). Sheets in
+  `uodynamapper-scratch/surface-items/sheets/issue2-*`.
+- **It is a depth-model change.** On map 1's MUL statics (8.29M pairs of
+  statics one or two diagonal steps apart), the cap changes the winner of
+  254k pairs: 153k move to the KR answer (a tall farther item now loses to the
+  nearer one: trunks against grass, walls against tables and floors), 101k move
+  away from it (a raised farther item now beats a tall nearer one: an upper
+  storey's wall or eaves against the lower storey's wall one step in front,
+  dz 20 > 11; the full height hid the 11 against 35.4 scale gap there). Pairs
+  disagreeing with the KR rule, `py/priority_compare.py`:
+
+  | Height term | Disagree | At the same z |
+  |---|---|---|
+  | full height (today) | 787k | 239k |
+  | capped at 10 | 735k | 125k |
+  | full height x 0.6 | 809k | 227k |
+  | client, +1 if height | 785k | 132k |
+
+  The rest at the same z is mostly foliage's +22 z offset, by design. KR
+  client shadows sort at their caster's point, so a capped wall's shadow also
+  reaches less far forward. Not implemented; it needs the user's decision
+  together with the scale question in
+  [DEPTH_SCALE_AND_KR_CLIENT.md](../dev_wiki/rendering/DEPTH_SCALE_AND_KR_CLIENT.md#decision-2026-11-12).
+
+### Grass edges over the road in Classic (2026-11-15)
+
+Since the floor class lost its -4 offset, the grass edges 0x1782..0x1785
+(Surface, height 0) and 0x0CBB draw their fringe over the cobbles in Classic
+(map 1, 2512,555). This is the original order. The edges share their cell with
+the cobbles (0x0515..0x0518, Background|Surface): ClassicUO gives the cobbles
+z - 1 and the grass z, so the grass draws after them on its cell, and the
+cobbles of the nearer cells after the grass. Ours matches (Background -0.001,
+the next cell one step nearer). Before, the -44 z offset hid the edges under
+the cobbles of their own cell. Only Classic shows it: the grass continues the
+land, so under EC or KR land (the other styles) it draws as an Enhanced
+land-style quad, without the CC art's fringe
+([water_terrain_static_resolution.md](water_terrain_static_resolution.md)).
+
 ## Perspective tie bias
 
 The later perspective-only stair blocks over the wooden deck at `(2834,987)`
