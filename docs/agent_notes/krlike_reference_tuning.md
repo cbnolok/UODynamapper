@@ -329,3 +329,26 @@ blue overlay, applied after the grading, dominates as before.
 - **Water on KR land** stays darker than the shots until proposal 1 is decided.
 - **Per-pixel land.** If a user switches KR-like to per-pixel land, the new ambient 0.146 is also added to the land's
   light factor.
+- **Saturated furniture (2026-11-15).** In KR-like the Britain shop's L-counter (map 1, 1435,1687, CC art) turns
+  the grey-brown of the floor, and the Minoc hall's tables (2476,404, EC art) turn grey. The cause is the knee, with
+  the client grunge on top. It is not their `SurfaceLikeFloor` class. In KR-like every art shading strength is 0, so
+  the class's floor branch in `art/shading.wesl` does nothing there. In Classic and UOD-Painterly, shading them as
+  upright moves them by at most 1.6 levels. Client shadows off change nothing.
+  - The counter's CC orange (linear relative chroma about 0.95) is capped to 0.55. The walls are capped the same.
+  - Counter mean, sRGB:
+
+    | Setting | Mean |
+    |---|---|
+    | Enhanced | (104, 63, 15) |
+    | KR-like | (66, 48, 34) |
+    | KR-like, grunge off | (90, 66, 48) |
+    | KR-like, knee off | (74, 45, 11) |
+
+  - The night hall reference (`uokr/Schermata_20261114_072859`) shows warm tables (chroma 0.50 to 0.55), clearly
+    apart from the floor. KR-like night measures 0.38, the same as the floor (0.41).
+  - Knee off gives 0.49 and the reference's warm tables, but night grass rises from 0.30 to 0.75.
+  - Slope 0.4 gives tables 0.42 and grass 0.48 at night. In the afternoon, tables go from 0.59 to 0.62 and grass
+    from 0.57 to 0.69.
+
+  Any global setting therefore trades the land tuning for the furniture. Options: a knee on land only, or a softer
+  knee at night only. Undecided. Sheets: `uodynamapper-scratch/surface-items/sheets/issue1-*`.
