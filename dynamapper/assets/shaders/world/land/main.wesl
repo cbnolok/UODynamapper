@@ -964,5 +964,7 @@ fn fragment(in: VertexOutput) -> @location(0) vec4<f32> {
       }
     }
   }
-  return finish_land(apply_global_lighting_rgb(hdr_rgb, scene.global_lighting));
+  // Outside the player's cave, which all land is, darkened (caves.rs CaveSurroundings::Dimmed).
+  let finished = finish_land(apply_global_lighting_rgb(hdr_rgb, scene.global_lighting));
+  return vec4<f32>(finished.rgb * (1.0 - scene.land_outside_dimming), finished.a);
 }

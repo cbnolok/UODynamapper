@@ -14,6 +14,9 @@ struct SceneUniform {
     ec_reflection_camera_distance: f32,
     // How many times wider than the KR client's 26-world-unit view the camera shows (client_filter.wesl).
     client_view_scale: f32,
+    _reserved: vec3<f32>,
+    // How much the land is darkened, 0 not at all: outside the player's cave (caves.rs). Only land reads it.
+    land_outside_dimming: f32,
 }
 
 // Visual feature toggles and intensity parameters.

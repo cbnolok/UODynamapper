@@ -1,6 +1,6 @@
 import package::shaders::world::art::picking::{pick_clip, pick_pass, pick_color};
 import package::shaders::world::art::light_scene::{light_scene_drawn, light_scene_texel, LIGHT_SCENE_CLASS_HEIGHT};
-import package::shaders::world::art::depth::{horizontal_plane_painter_depth, cave_lifted_depth};
+import package::shaders::world::art::depth::{horizontal_plane_painter_depth, cave_lifted_depth, cave_outside_rgb};
 import bevy_pbr::render::{
     forward_io::Vertex,
     view_transformations,
@@ -284,7 +284,8 @@ fn shade_fragment(in: GroundVertexOutput, sample_index: u32) -> GroundFragmentOu
         final_rgb = tonemap_with_curve(max(final_rgb, vec3<f32>(0.0)), global_light.exposure, effects.post_process_profile, global_light.tone_curve);
     }
 
-    out.color = vec4<f32>(max(final_rgb, vec3<f32>(0.0)), shaded.a);
+    // Outside the player's cave, darkened.
+    out.color = vec4<f32>(cave_outside_rgb(max(final_rgb, vec3<f32>(0.0)), inst.is_wet_flags), shaded.a);
     return out;
 }
 

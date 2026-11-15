@@ -50,6 +50,14 @@ impl Plugin for WorldPlugin
             )
             .add_systems(
                 Update,
+                caves::sys_update_player_cave
+                    .after(MovementSysSet::MovementActions)
+                    .before(z_view::sys_update_z_view_limit)
+                    .before(caves::sys_update_caves)
+                    .run_if(in_state(AppState::InGame)),
+            )
+            .add_systems(
+                Update,
                 caves::sys_update_caves
                     .before(SceneRenderArtSysSet::CollectVisibleStatics)
                     .before(art::static_lights::sys_collect_visible_static_lights)

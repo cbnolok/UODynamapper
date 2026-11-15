@@ -49,11 +49,16 @@
 //! tile roofs over land 20, the player's cell at 0). A roof's
 //! land is read from the map package (`PackageLand`), so every roof in the view finds it whether or not its map block
 //! is loaded; the lights follow the same roofs (`light_cover::static_light_is_hidden`).
+//!
+//! In a cave, under either rule and in every style, the player's cave is drawn whole instead (caves.rs `PlayerCave`):
+//! its statics whatever the cut, and outside it ClassicUO's cut at the player's z + `PLAYER_VIEW_HEADROOM`, land with
+//! it or none (`player_cave_z_view_cut`).
 
 use crate::configs::settings::Settings;
 use crate::core::maps::{package_chunk_cell, read_package_chunk_land_z};
 use crate::core::multis::{expanded_multi_part_z, MultiDefinitionsRes, PlacedMultisRes};
 use crate::core::render::scene::player::Player;
+use crate::core::render::scene::world::caves::{CaveSurroundings, CavesRes};
 use crate::core::render::scene::world::art::light_cover::{
     kr_light_layer, CLIENT_BAND_BASE, CLIENT_BAND_HEIGHT, KR_LIGHT_TOP_LAYER, NO_Z_VIEW_LIMIT,
 };
@@ -228,6 +233,19 @@ pub fn kr_roof_is_hidden(z: i8, own_land_z: i32, player_layer: i32) -> bool {
     kr_light_layer(z, clamp_to_i8(own_land_z)) > player_layer
 }
 
+/// The cut with the player in a cave (caves.rs `PlayerCave`) at `z`, under either rule: the cave's own statics are
+/// drawn whatever it says, and what is outside the cave is under ClassicUO's cap at the player's z +
+/// `PLAYER_VIEW_HEADROOM`, the land with it while it shows (`CaveSurroundings::Dimmed`), and none of the land
+/// otherwise.
+pub fn player_cave_z_view_cut(z: i32, surroundings: CaveSurroundings) -> ZViewCut {
+    let headroom = z + PLAYER_VIEW_HEADROOM;
+    let max_ground_z = match surroundings {
+        CaveSurroundings::Dimmed => headroom,
+        CaveSurroundings::Black => ALL_LAND_HIDDEN_Z,
+    };
+    ZViewCut { max_z: headroom, max_ground_z, hide_roofs: false, roof_layer: None }
+}
+
 /// The z from which KR's cut hides the view for a player at `z` over the averaged land z `land_z`: the bottom of the
 /// layer above the player's (`kr_light_layer`: `(z - land_z + CLIENT_BAND_BASE) / CLIENT_BAND_HEIGHT`, clamped to 0 to
 /// `KR_LIGHT_TOP_LAYER`), every object's layer counted from the same land z; none while the player is in the top layer.
@@ -368,6 +386,8 @@ pub struct ZViewInputs {
     z: i8,
     show_hidden_multi_parts: bool,
     land_known: bool,
+    /// `CavesRes::revision`: the player's cave.
+    caves_revision: u64,
 }
 
 /// The land z ClassicUO tests on the player's cell: the average of the two diagonals' ends that differ least, which a
@@ -409,17 +429,30 @@ impl PackageLand {
     /// The averaged land z of the cell (`x`, `y`) of the map `map_id`; `None` on the map's last row or column, or
     /// while the map is not open.
     pub fn averaged_land_z(&mut self, map_planes: Option<&MapPlanesRes>, map_id: u32, x: i32, y: i32) -> Option<i32> {
-        if !matches!(self.map, Some((read_map, ..)) if read_map == map_id) {
-            let plane = map_planes?.0.get(usize::try_from(map_id).ok()?)?.as_ref()?;
-            self.map = Some((map_id, plane.package(), plane.size_cells()));
-            self.chunks.clear();
-        }
+        self.open(map_planes, map_id)?;
         Some(average_land_z(
             self.raw_land_z(x, y)?,
             self.raw_land_z(x + 1, y)?,
             self.raw_land_z(x + 1, y + 1)?,
             self.raw_land_z(x, y + 1)?,
         ))
+    }
+
+    /// The land z of the cell (`x`, `y`) of the map `map_id`, its own corner's, not averaged; `None` off the map, or
+    /// while the map is not open.
+    pub fn land_z(&mut self, map_planes: Option<&MapPlanesRes>, map_id: u32, x: i32, y: i32) -> Option<i32> {
+        self.open(map_planes, map_id)?;
+        self.raw_land_z(x, y)
+    }
+
+    /// Reads the map `map_id` from now on, unless it is the one read.
+    fn open(&mut self, map_planes: Option<&MapPlanesRes>, map_id: u32) -> Option<()> {
+        if !matches!(self.map, Some((read_map, ..)) if read_map == map_id) {
+            let plane = map_planes?.0.get(usize::try_from(map_id).ok()?)?.as_ref()?;
+            self.map = Some((map_id, plane.package(), plane.size_cells()));
+            self.chunks.clear();
+        }
+        Some(())
     }
 
     fn raw_land_z(&mut self, x: i32, y: i32) -> Option<i32> {
@@ -441,6 +474,7 @@ pub fn sys_update_z_view_limit(
     tilemeta_res: Option<Res<TileMetaPackageRes>>,
     multis: (Option<Res<MultiDefinitionsRes>>, Res<PlacedMultisRes>),
     map_planes: Option<Res<MapPlanesRes>>,
+    caves: Res<CavesRes>,
     mut limit: ResMut<ZViewLimit>,
     mut last_inputs: Local<Option<ZViewInputs>>,
 ) {
@@ -464,8 +498,14 @@ pub fn sys_update_z_view_limit(
         z: pos.z,
         show_hidden_multi_parts: settings.world_rendering.show_hidden_multi_parts,
         land_known: land_z.is_some(),
+        caves_revision: caves.revision(),
     };
     if *last_inputs == Some(inputs) {
+        return;
+    }
+    if let Some(cave) = caves.player() {
+        *last_inputs = Some(inputs);
+        limit.set_if_neq(ZViewLimit(player_cave_z_view_cut(z, cave.surroundings())));
         return;
     }
     let Some(statics_store) = statics_res.0.get(map_id as usize).and_then(|x| x.as_ref()) else {
@@ -698,6 +738,19 @@ mod tests {
         assert!(cut.land_max_z() < f32::from(i8::MIN));
         assert_eq!(compute_kr_z_view_cut(10, 10, 0, Some(0), &cells), ZViewCut::NONE);
         assert_eq!(compute_kr_z_view_cut(10, 10, 0, None, &cells), ZViewCut::NONE);
+    }
+
+    /// In the player's cave what is outside it is cut at ClassicUO's headroom, the land with it, or none of the land
+    /// with black surroundings; no roof goes on its own.
+    #[test]
+    fn the_players_cave_cuts_outside_it_at_the_headroom() {
+        let headroom = PLAYER_VIEW_HEADROOM;
+        let cut = player_cave_z_view_cut(-20, CaveSurroundings::Dimmed);
+        let expected = ZViewCut { max_z: headroom - 20, max_ground_z: headroom - 20, hide_roofs: false, roof_layer: None };
+        assert_eq!(cut, expected);
+        let cut = player_cave_z_view_cut(0, CaveSurroundings::Black);
+        assert_eq!((cut.max_z, cut.max_ground_z), (headroom, ALL_LAND_HIDDEN_Z));
+        assert!(cut.land_max_z() < f32::from(i8::MIN));
     }
 
     #[test]

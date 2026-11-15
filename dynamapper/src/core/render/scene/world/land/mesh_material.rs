@@ -153,6 +153,10 @@ pub struct SceneUniform {
     /// How many times wider than the KR client's view the camera shows (`client_view_scale`); above 1 the client
     /// texture filter emulates mip levels. Takes the former `_pad` slot.
     pub client_view_scale: f32,
+    pub _reserved: Vec3,
+    /// How much the land is darkened, 0 not at all: outside the player's cave (caves.rs
+    /// `CavesRes::land_outside_dimming`). Only the land shader reads it.
+    pub land_outside_dimming: f32,
 }
 
 #[repr(C, align(16))]

@@ -38,7 +38,8 @@ import package::shaders::world::art::shading::{apply_art_surface_shading, art_lo
 import package::shaders::world::art::surface_blend::static_surface_coverage;
 import package::shaders::world::ec_item_water::{ec_item_is_water, sample_ec_item_water};
 import package::shaders::world::ec_liquid_camera::ec_liquid_camera_reflection_uv;
-import package::shaders::world::art::depth::{static_priority_depth, horizontal_plane_painter_depth, cave_lifted_depth};
+import package::shaders::world::art::depth::{static_priority_depth, horizontal_plane_painter_depth, cave_lifted_depth,
+    cave_outside_rgb};
 import package::shaders::world::projection::camera_relative_world_to_clip;
 
 struct ArtVertexOutput {
@@ -602,7 +603,8 @@ fn shade_fragment(in: ArtVertexOutput, sample_index: u32) -> ArtFragmentOutput {
         final_rgb = tonemap_with_curve(max(final_rgb, vec3<f32>(0.0)), global_light.exposure, effects.post_process_profile, global_light.tone_curve);
     }
 
-    out.color = vec4<f32>(max(final_rgb, vec3<f32>(0.0)), shaded.a);
+    // Outside the player's cave, darkened.
+    out.color = vec4<f32>(cave_outside_rgb(max(final_rgb, vec3<f32>(0.0)), inst.is_wet_flags), shaded.a);
     return out;
 }
 

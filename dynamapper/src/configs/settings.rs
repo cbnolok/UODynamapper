@@ -137,6 +137,10 @@ pub struct SectWorldRendering {
     /// as the client does, or drawn over the map, those connected to a cave mouth (caves.rs). A view setting shared by
     /// every render style.
     pub caves: crate::core::render::scene::world::caves::CaveView,
+    /// What shows around the player's cave, with `show_only_player_floor` and the player in one: what is outside the
+    /// cave darkened under ClassicUO's cut, or nothing, as the KR client shows a cave (caves.rs). A view setting shared
+    /// by every render style.
+    pub cave_surroundings: crate::core::render::scene::world::caves::CaveSurroundings,
     pub land_streaming: SectLandStreaming,
     pub diagnostics: SectWorldRenderingDiagnostics,
     pub shader_simplification: SectWorldRenderingShaderSimplification,
@@ -1179,7 +1183,7 @@ fn sys_debounced_save(
 mod tests {
     use super::*;
     use uocf::utils::config_toml::{parse_app_state, parse_strict};
-    use crate::core::render::scene::world::caves::CaveView;
+    use crate::core::render::scene::world::caves::{CaveSurroundings, CaveView};
 
     const BUNDLED_GRAPHICS: &str = include_str!("../../assets/settings/graphics.toml");
     const BUNDLED_USER_PREFERENCES: &str = include_str!("../../assets/settings/user_preferences.toml");
@@ -1484,6 +1488,7 @@ mod tests {
         assert!(!settings.show_hidden_multi_parts);
         assert!(!settings.show_only_player_floor);
         assert_eq!(settings.caves, CaveView::HiddenUntilEntered);
+        assert_eq!(settings.cave_surroundings, CaveSurroundings::Dimmed);
     }
 
     /// A cache copy written before the player-floor view existed loads with it off, and a saved opt-in round-trips.
@@ -1527,6 +1532,28 @@ mod tests {
         let load = parse_app_state(WORLD_RENDERING_CONFIG_FILE, &written, &bundled).expect("lenient load");
         assert!(load.warnings.is_empty(), "{:?}", load.warnings);
         assert_eq!(load.value.caves, CaveView::DrawnOverMap);
+    }
+
+    /// A cache copy written before the cave surroundings existed loads them dimmed, and a black pick round-trips.
+    #[test]
+    fn world_rendering_cache_without_cave_surroundings_loads_them_dimmed() {
+        let bundled: SectWorldRendering =
+            parse_strict(WORLD_RENDERING_CONFIG_FILE, BUNDLED_WORLD_RENDERING).expect("bundled");
+        let older = BUNDLED_WORLD_RENDERING
+            .lines()
+            .filter(|line| !line.starts_with("cave_surroundings"))
+            .collect::<Vec<_>>()
+            .join("\n");
+        let load = parse_app_state(WORLD_RENDERING_CONFIG_FILE, &older, &bundled).expect("lenient load");
+        assert_eq!(load.value.cave_surroundings, CaveSurroundings::Dimmed);
+
+        let mut picked = bundled.clone();
+        picked.cave_surroundings = CaveSurroundings::Black;
+        let written = toml::to_string_pretty(&picked).expect("serialize");
+        assert!(written.contains("cave_surroundings = \"black\""), "{written}");
+        let load = parse_app_state(WORLD_RENDERING_CONFIG_FILE, &written, &bundled).expect("lenient load");
+        assert!(load.warnings.is_empty(), "{:?}", load.warnings);
+        assert_eq!(load.value.cave_surroundings, CaveSurroundings::Black);
     }
 
     #[test]

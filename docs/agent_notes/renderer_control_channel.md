@@ -37,7 +37,9 @@ uniform values (`light_cover_rule` the cover rule the style's `light_cover` give
 left after the light cover, and `status.z_view` the z-view limit (under the KR
 rule `max_z` is the bottom of the layer above the player's, and `roof_layer`
 the player's layer, against which each roof is counted from its own cell's
-land; null otherwise). These
+land; null otherwise), `status.cave_surroundings` the setting and
+`status.player_cave` the player's cave (its floor z and its cell count; null
+out of one, or with Show Only the Player's Floor off). These
 read-only snapshots help detect a stale cached preset or an empty collector
 without temporarily instrumenting shaders. A positive instance count does not
 by itself prove visible mask composition or completion of GPU uploads.

@@ -554,6 +554,8 @@ pub(super) fn client_light_sprite_static_light(sprite: &ClientLightSpriteInstanc
         width_world: sprite.size.x / CC_WORLD_XZ_PER_PIXEL / LIGHT_PIXELS_PER_WORLD_TILE,
         height_world: sprite.size.y / CC_WORLD_Y_PER_PIXEL / LIGHT_PIXELS_PER_WORLD_TILE,
         ceiling: sprite.ceiling,
+        // No decal draws it.
+        cave_outside: false,
     }
 }
 
@@ -748,7 +750,14 @@ pub fn sys_collect_client_light_sprites(
             if !seen.insert(key) {
                 continue;
             }
-            let light_max_z = caves.light_max_z(key.tile_x, key.tile_y, z_cut.max_z);
+            // The player's cave hides it, or draws it whatever the view's limit (caves.rs). Outside it the sprite is
+            // not darkened itself: the light buffer multiplies the scene, darkened already.
+            let flags_height = tilemeta.0.item_tile(u32::from(key.graphic)).map_or((0, 0), |meta| (meta.flags, meta.height));
+            let Some(cave_light) = caves.light_view(key.tile_x, key.tile_y, key.z, flags_height.0, flags_height.1,
+                || land_z(key.tile_x, key.tile_y).map(i32::from), z_cut.max_z) else {
+                continue;
+            };
+            let light_max_z = cave_light.max_z;
             if static_light_is_hidden(
                 &mut statics_store,
                 &tilemeta.0,
@@ -927,7 +936,7 @@ fn client_light_sprite_material(
 /// The light clip tag of a sprite (`light_scene::light_clip_tag`): its static's cell, z and ceiling.
 fn client_light_sprite_tag(instance: &ClientLightSpriteInstance) -> MeshTag {
     let key = instance.key;
-    MeshTag::new(light_clip_tag(key.tile_x, key.tile_y, key.z, instance.ceiling, instance.center))
+    MeshTag::new(light_clip_tag(key.tile_x, key.tile_y, key.z, instance.ceiling, false, instance.center))
 }
 
 /// A unit quad centred on the origin, texture row 0 at the top (+y): the sprite stands upright, as the EC statics.

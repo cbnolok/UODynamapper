@@ -82,6 +82,9 @@ const LIGHT_CLIP_DY_SHIFT: u32 = LIGHT_CLIP_CELL_BITS;
 const LIGHT_CLIP_Z_SHIFT: u32 = 2 * LIGHT_CLIP_CELL_BITS;
 const LIGHT_CLIP_CEILING_SHIFT: u32 = LIGHT_CLIP_Z_SHIFT + u8::BITS;
 const LIGHT_CLIP_CELL_MASK: u32 = (1 << LIGHT_CLIP_CELL_BITS) - 1;
+/// The light clip tag's bit of a glow outside the player's cave, which draws darkened (caves.rs
+/// `CAVE_OUTSIDE_SHADE`).
+const LIGHT_CLIP_CAVE_OUTSIDE: u32 = 1 << (LIGHT_CLIP_CEILING_SHIFT + u8::BITS);
 /// The farthest a light's cell may lie from the cell under its quad's origin, along each axis: the sprites the
 /// tileart's offsets throw farthest land about 5 cells away.
 const LIGHT_CLIP_CELL_REACH: i32 = (1 << (LIGHT_CLIP_CELL_BITS - 1)) - 1;
@@ -109,9 +112,10 @@ pub(crate) fn static_light_class_flags(flags: u64, height: i8) -> u32 {
 }
 
 /// The `MeshTag` of a clipped glow whose quad sits at `origin`: its light's cell (`tile_x`, `tile_y`), from the cell
-/// under the origin, its z and its ceiling (`light_cover::static_light_ceiling_z`). A cell beyond
-/// `LIGHT_CLIP_CELL_REACH` is clamped to it.
-pub(crate) fn light_clip_tag(tile_x: u32, tile_y: u32, z: i8, ceiling: Option<i8>, origin: Vec3) -> u32 {
+/// under the origin, its z and its ceiling (`light_cover::static_light_ceiling_z`), and whether it is outside the
+/// player's cave (`LIGHT_CLIP_CAVE_OUTSIDE`). A cell beyond `LIGHT_CLIP_CELL_REACH` is clamped to it.
+pub(crate) fn light_clip_tag(tile_x: u32, tile_y: u32, z: i8, ceiling: Option<i8>, cave_outside: bool, origin: Vec3)
+    -> u32 {
     let offset = |tile: u32, origin: f32| {
         let offset = i64::from(tile) - origin.floor() as i64;
         let clamped = offset.clamp(-i64::from(LIGHT_CLIP_CELL_REACH) - 1, i64::from(LIGHT_CLIP_CELL_REACH));
@@ -121,6 +125,7 @@ pub(crate) fn light_clip_tag(tile_x: u32, tile_y: u32, z: i8, ceiling: Option<i8
         | offset(tile_y, origin.z) << LIGHT_CLIP_DY_SHIFT
         | u32::from(z as u8) << LIGHT_CLIP_Z_SHIFT
         | u32::from(ceiling.unwrap_or(LIGHT_CLIP_NO_CEILING) as u8) << LIGHT_CLIP_CEILING_SHIFT
+        | if cave_outside { LIGHT_CLIP_CAVE_OUTSIDE } else { 0 }
 }
 
 /// The light scene image, and whether it is drawn: the active style's light cover is "uod" and some glow shows.
@@ -596,17 +601,22 @@ mod tests {
     #[test]
     fn the_light_clip_tag_carries_the_cell_z_and_ceiling() {
         // A sprite thrown by the tileart's default offsets, (-5, -4), up and to the left of its item.
-        let tag = light_clip_tag(1407, 1596, -12, Some(70), Vec3::new(1402.3, 9.0, 1592.9));
+        let tag = light_clip_tag(1407, 1596, -12, Some(70), false, Vec3::new(1402.3, 9.0, 1592.9));
         assert_eq!(unpack(tag), (5, 4, -12, 70));
-        let tag = light_clip_tag(1407, 1596, 50, None, Vec3::new(1407.5, 4.6, 1596.5));
+        let tag = light_clip_tag(1407, 1596, 50, None, false, Vec3::new(1407.5, 4.6, 1596.5));
         assert_eq!(unpack(tag), (0, 0, 50, LIGHT_CLIP_NO_CEILING));
-        let tag = light_clip_tag(10, 10, 0, None, Vec3::new(12.5, 0.0, 11.0));
+        let tag = light_clip_tag(10, 10, 0, None, false, Vec3::new(12.5, 0.0, 11.0));
         assert_eq!(unpack(tag), (-2, -1, 0, LIGHT_CLIP_NO_CEILING));
+        assert_eq!(tag & LIGHT_CLIP_CAVE_OUTSIDE, 0);
+        // Outside the player's cave: the other fields stay.
+        let tag = light_clip_tag(1407, 1596, -12, Some(-1), true, Vec3::new(1402.3, 9.0, 1592.9));
+        assert_eq!(unpack(tag), (5, 4, -12, -1));
+        assert_ne!(tag & LIGHT_CLIP_CAVE_OUTSIDE, 0);
     }
 
     #[test]
     fn a_light_cell_beyond_the_tag_reach_is_clamped() {
-        let tag = light_clip_tag(100, 0, 0, None, Vec3::new(0.0, 0.0, 200.0));
+        let tag = light_clip_tag(100, 0, 0, None, false, Vec3::new(0.0, 0.0, 200.0));
         assert_eq!(unpack(tag), (LIGHT_CLIP_CELL_REACH, -LIGHT_CLIP_CELL_REACH - 1, 0, LIGHT_CLIP_NO_CEILING));
     }
 }

@@ -90,3 +90,14 @@ fn cave_lifted_depth(depth: f32, is_wet_flags: u32) -> f32 {
     }
     return clamp((projection[2].z * lifted_z + projection[3].z) / clip_w, 0.0, 1.0);
 }
+
+// SpriteInstance and GroundTileInstance is_wet_flags bit: the static is outside the player's cave, drawn darkened
+// (caves.rs CaveSurroundings::Dimmed). Keep in sync with STATIC_FLAG_CAVE_OUTSIDE in statics_collect.rs.
+const STATIC_FLAG_CAVE_OUTSIDE: u32 = 1u << 15u;
+// How bright what is outside the player's cave draws. Keep in sync with CAVE_OUTSIDE_SHADE in caves.rs.
+const CAVE_OUTSIDE_SHADE: f32 = 0.35;
+
+// The final colour `rgb` of a static, darkened when it is outside the player's cave.
+fn cave_outside_rgb(rgb: vec3<f32>, is_wet_flags: u32) -> vec3<f32> {
+    return select(rgb, rgb * CAVE_OUTSIDE_SHADE, (is_wet_flags & STATIC_FLAG_CAVE_OUTSIDE) != 0u);
+}

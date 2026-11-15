@@ -122,10 +122,12 @@ fn poll_control(
         Option<Res<crate::core::render::scene::world::art::gpu_picking::VisibleStaticPick>>,
         Option<Res<crate::core::render::scene::world::land::picking::TerrainCursor>>,
         Option<Res<crate::core::render::scene::world::art::client_light_sprites::RenderClientLightSprites>>,
-        Option<Res<crate::core::render::scene::world::z_view::ZViewLimit>>),
+        Option<Res<crate::core::render::scene::world::z_view::ZViewLimit>>,
+        Option<Res<crate::core::render::scene::world::caves::CavesRes>>,
+        Option<Res<crate::configs::settings::Settings>>),
 ) {
-    let (uniforms, static_lights, art_stats, sprite_atlas, ground_atlas, picking, terrain_cursor, light_sprites, z_view) =
-        render_state;
+    let (uniforms, static_lights, art_stats, sprite_atlas, ground_atlas, picking, terrain_cursor, light_sprites, z_view,
+        caves, settings) = render_state;
     let (windows, inspect_text) = view;
     if capture_pending.as_ref().is_some_and(|(path, started)| path.exists() || time.elapsed_secs_f64() - started > 30.0) {
         *capture_pending = None;
@@ -194,6 +196,9 @@ fn poll_control(
                         "z_view": z_view.as_ref().map(|limit| json!({"max_z": limit.0.max_z,
                             "max_ground_z": limit.0.max_ground_z, "hide_roofs": limit.0.hide_roofs,
                             "roof_layer": limit.0.roof_layer})),
+                        "cave_surroundings": settings.as_ref().map(|settings| settings.world_rendering.cave_surroundings),
+                        "player_cave": caves.as_ref().and_then(|caves| caves.player()).map(|cave| json!({
+                            "floor_z": cave.floor_z(), "cells": cave.inside_cells()})),
                         "input": {"queued_frames": input.queued_frames(), "context_focus_override": input.focused,
                             "pointer": pointer.0.map(|position| [position.x, position.y])},
                         "cursor_inspect": inspect_text.single().ok().map(|text| &text.0),

@@ -9,7 +9,7 @@ use crate::core::render::scene::world::land::tile_atlas::TileAtlas;
 use crate::core::multis::{
     expanded_multi_part_z, MultiDefinitionsRes, MultiPart, PlacedMulti, PlacedMultisRes,
 };
-use crate::core::render::scene::world::caves::{CaveMap, CaveStatic, CavesRes};
+use crate::core::render::scene::world::caves::{CaveMap, CaveStatic, CavesRes, PlayerCave};
 use crate::core::render::scene::world::z_view::{PackageLand, ZViewCut, ZViewLimit};
 use crate::core::render::scene::SceneStateData;
 use crate::core::statics::{LazyStaticsStore, StaticsStoreRes};
@@ -90,6 +90,9 @@ pub(crate) const STATIC_FLAG_FLAT_ART: u32 = 1 << 11;
 /// `SpriteInstance` and `GroundTileInstance::is_wet_flags` bit: the static is part of a cave drawn over the map
 /// (`CaveStatic::Lifted`), drawn in front of the land and statics around it. Kept in sync with art/depth.wesl.
 pub(crate) const STATIC_FLAG_CAVE: u32 = 1 << 12;
+/// `SpriteInstance` and `GroundTileInstance::is_wet_flags` bit: the static is outside the player's cave, drawn
+/// darkened to `CAVE_OUTSIDE_SHADE` (caves.rs `CaveSurroundings::Dimmed`). Kept in sync with art/depth.wesl.
+pub(crate) const STATIC_FLAG_CAVE_OUTSIDE: u32 = 1 << 15;
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub(crate) struct StaticBillboardBounds {
@@ -1903,6 +1906,8 @@ struct StaticCollectResources<'a> {
     map_planes: Option<&'a MapPlanesRes>,
     /// The caves drawn over the map, if any.
     caves: Option<&'a CaveMap>,
+    /// The player's cave, with the player in one.
+    player_cave: Option<&'a PlayerCave>,
 }
 
 impl<'a> StaticCollectResources<'a> {
@@ -2013,6 +2018,7 @@ fn static_collect_resources<'a>(
         tile_atlas,
         map_planes: map_planes.as_ref().map(|res| &**res),
         caves: caves.active(),
+        player_cave: caves.player(),
     }
 }
 
@@ -2361,19 +2367,30 @@ fn emit_static_render_tile(
     if !frame.is_dot_mode && tilemeta.is_some_and(|meta| meta.is_nodraw()) {
         return;
     }
+    let (cell_x, cell_y) = (render_tile.world_x as i32, render_tile.world_z as i32);
+    let flags = tilemeta.map_or(0, |meta| meta.flags);
+    // In the player's cave, and outside it (caves.rs): the cave's statics are drawn whole, whatever the z-view limit.
+    let player_cave = resources.player_cave.map(|cave| {
+        let land_z = || build.own_land.land_z(resources.map_planes, frame.map_id, cell_x, cell_y);
+        cave.static_view(cell_x, cell_y, render_tile.z, flags, tilemeta.map_or(0, |meta| meta.height), land_z)
+    });
     // Above the player's floor, with the z-view limit on; picking skips them too, as they are never emitted. A roof
     // under KR's cut reads its own cell's land.
-    let own_land_z = || build.own_land.averaged_land_z(resources.map_planes, frame.map_id,
-        render_tile.world_x as i32, render_tile.world_z as i32);
-    if frame.z_view.hides_static_over_land(tilemeta.map_or(0, |meta| meta.flags), render_tile.z, own_land_z) {
+    let own_land_z = || build.own_land.averaged_land_z(resources.map_planes, frame.map_id, cell_x, cell_y);
+    if player_cave != Some(CaveStatic::Lifted) && frame.z_view.hides_static_over_land(flags, render_tile.z, own_land_z) {
         return;
     }
     // Over a cave drawn over the map, and in it (caves.rs).
-    let cave = resources.caves.map_or(CaveStatic::Outside, |caves|
-        caves.static_view(render_tile.world_x as i32, render_tile.world_z as i32, render_tile.z));
+    let cave = player_cave.unwrap_or_else(|| resources.caves.map_or(CaveStatic::Outside, |caves|
+        caves.static_view(cell_x, cell_y, render_tile.z)));
     if cave == CaveStatic::Hidden {
         return;
     }
+    let cave_flags = match cave {
+        CaveStatic::Lifted => STATIC_FLAG_CAVE,
+        CaveStatic::Outside if player_cave.is_some() => STATIC_FLAG_CAVE_OUTSIDE,
+        _ => 0,
+    };
     let visual_kind = frame.art_source.filter(|_| !frame.is_dot_mode).map(|source|
         resolve_static_visual_kind_cached(source, frame.land_style, render_tile.graphic, tilemeta_package, tilemeta,
             resources.tex_art_cc_package(), resources.tex_art_ec_package(), resources.tex_land_ec_package(),
@@ -2387,7 +2404,7 @@ fn emit_static_render_tile(
         world_x: render_tile.world_x,
         world_z: render_tile.world_z,
         depth_class: resolve_static_depth_class(tilemeta, renders_wet),
-        is_wet_flags: u32::from(renders_wet) | if cave == CaveStatic::Lifted { STATIC_FLAG_CAVE } else { 0 }
+        is_wet_flags: u32::from(renders_wet) | cave_flags
             | super::light_scene::static_light_class_flags(tilemeta.map_or(0, |meta| meta.flags),
                 tilemeta.map_or(0, |meta| meta.height)),
         base_world_y: (render_tile.z as f32) * frame.height_scale,
@@ -4685,6 +4702,7 @@ mod tests {
             width_world: 2.0,
             height_world: 2.0,
             ceiling: None,
+            cave_outside: false,
         }
     }
 

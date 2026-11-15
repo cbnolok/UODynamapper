@@ -4,7 +4,7 @@ use crate::{
     core::{
         frame_limiter::FrameLimiterSettings, frame_limiter_for_options, frame_limiter_for_settings,
         present_mode_for_vsync,
-        render::{dialogs, scene::{camera::UiCameraResource, world::caves::CaveView}},
+        render::{dialogs, scene::{camera::UiCameraResource, world::caves::{CaveSurroundings, CaveView}}},
     },
     prelude::*,
 };
@@ -65,6 +65,7 @@ pub struct PreferencesDialogState {
     pub show_hidden_multi_parts: bool,
     pub show_only_player_floor: bool,
     pub caves: CaveView,
+    pub cave_surroundings: CaveSurroundings,
     /// Timer used to debounce applying settings that cause UI layout shifts (like UI scale).
     pub apply_timer: Timer,
 }
@@ -107,6 +108,7 @@ impl Default for PreferencesDialogState {
             show_hidden_multi_parts: false,
             show_only_player_floor: false,
             caves: CaveView::HiddenUntilEntered,
+            cave_surroundings: CaveSurroundings::Dimmed,
             apply_timer: {
                 let mut t = Timer::from_seconds(0.3, TimerMode::Once);
                 t.pause();
@@ -180,6 +182,7 @@ fn sys_sync_settings_to_state(
         state.show_hidden_multi_parts = settings.world_rendering.show_hidden_multi_parts;
         state.show_only_player_floor = settings.world_rendering.show_only_player_floor;
         state.caves = settings.world_rendering.caves;
+        state.cave_surroundings = settings.world_rendering.cave_surroundings;
 
         wireframe_config.global = settings.app.debug.map_render_wireframe;
 
@@ -291,6 +294,9 @@ pub fn sys_render_preferences_dialog(
         }
         if settings.as_ref().world_rendering.caves != state.caves {
             settings.world_rendering.caves = state.caves;
+        }
+        if settings.as_ref().world_rendering.cave_surroundings != state.cave_surroundings {
+            settings.world_rendering.cave_surroundings = state.cave_surroundings;
         }
         if (settings.as_ref().app.window.ui_scale - state.ui_scale).abs() > 0.001 {
             settings.app.window.ui_scale = state.ui_scale;
@@ -695,6 +701,30 @@ pub fn sys_render_preferences_dialog(
                                 "Hidden Until Entered: caves stay under the land, as in the client; with \"Show Only the \
                                  Player's Floor\" a cave shows with the player inside. Drawn Over the Map: the caves \
                                  connected to a cave mouth open through the land above them.",
+                            );
+                        if changed {
+                            state.apply_timer.reset();
+                            state.apply_timer.unpause();
+                        }
+                    });
+                    ui.horizontal(|ui| {
+                        ui.label("Around the Player's Cave:");
+                        let mut changed = false;
+                        egui::ComboBox::from_id_salt("preferences_cave_surroundings")
+                            .selected_text(state.cave_surroundings.label())
+                            .show_ui(ui, |ui| {
+                                for surroundings in CaveSurroundings::ALL {
+                                    changed |= ui
+                                        .selectable_value(&mut state.cave_surroundings, surroundings, surroundings.label())
+                                        .changed();
+                                }
+                            })
+                            .response
+                            .on_hover_text(
+                                "With \"Show Only the Player's Floor\" and the player in a cave, the cave shows whole: \
+                                 its floor, what stands on it and its rock walls, not the hill over it or the tunnels \
+                                 above and below. Dimmed: the land and objects outside the cave show darkened, cut over \
+                                 the player as in ClassicUO. Black: nothing outside the cave shows, as in the KR client.",
                             );
                         if changed {
                             state.apply_timer.reset();

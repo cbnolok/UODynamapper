@@ -20,13 +20,32 @@
 //! ceiling, with the buried statics of the cells around it (the cave walls), are drawn in front of the land and
 //! statics around the cave (`CaveStatic::Lifted`, art/depth.wesl `cave_lifted_depth`): in the slanted view the land in
 //! front of a cave rises over it. A light in a shown cell is covered as the z-view covers it for a player there
-//! (`CavesRes::light_max_z`).
+//! (`CavesRes::light_view`).
+//!
+//! The player's cave (`PlayerCave`): with "Show Only the Player's Floor" on and the player on a buried floor, the cave
+//! is drawn whole in every style, in place of both z-view rules' cave cut and of the caves drawn over the map:
+//! - the cave is the buried floors reached from the player's floor through the eight neighbours, a step at most
+//!   `WALK_STEP_Z` apart, each within `CAVE_LEVEL_HEIGHT` of the player's floor (one level), as far as
+//!   `PLAYER_CAVE_REACH_CHUNKS` package chunks around the player's;
+//! - on a cave cell the statics within `CAVE_LEVEL_HEIGHT` of its floors are drawn, its floor and what stands on it;
+//!   the hill over it and the levels above and below are not;
+//! - around the cave, up to `CAVE_WALL_REACH` cells away, the statics buried under their cell's land (`CAVE_MIN_BURY_DEPTH`,
+//!   not the rocks and logs lying a little under it outside, nor water) are its rock walls, drawn
+//!   up to the land over them with no cut, down to `CAVE_WALL_DROP_PER_CELL` per cell away under its floor, the walls
+//!   lower the farther back as the slanted view stacks them; the buried floors there are other tunnels, not drawn, nor
+//!   what stands under the cave's floor on them or next to them, a level up from them at most (a tunnel below's walls);
+//! - the cave is drawn in front of what is outside it (`CaveStatic::Lifted`), and outside it, as
+//!   `world_rendering.cave_surroundings` says (`CaveSurroundings`), the land and the statics not buried are drawn under
+//!   ClassicUO's cut and darkened, or nothing is, as the KR client shows a cave; buried statics outside it are not drawn;
+//! - a light shows when its static is drawn, darkened with it outside the cave (`CavesRes::light_view`).
 
 use crate::configs::settings::Settings;
 use crate::console_logger::{self, LogAbout, LogSev};
 use crate::core::maps::{package_chunk_cell, read_package_chunk_land_z, PACKAGE_CHUNK_CELL_DIM};
 use crate::core::render::scene::world::land::draw_mesh::PendingTextureBake;
 use crate::core::render::scene::world::land::{LCMesh, MAP_STORAGE_BLOCK_TILE_DIM};
+use crate::core::render::scene::player::Player;
+use crate::core::render::scene::world::art::light_cover::{CLIENT_BAND_HEIGHT, NO_Z_VIEW_LIMIT};
 use crate::core::render::scene::world::z_view::PLAYER_VIEW_HEADROOM;
 use crate::core::render::scene::SceneStateData;
 use crate::core::statics::{read_package_chunk_statics, StaticsStoreRes};
@@ -65,6 +84,30 @@ impl CaveView {
     }
 }
 
+/// What shows around the player's cave (`PlayerCave`). Kept in the app-written world rendering settings as
+/// `world_rendering.cave_surroundings`.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum CaveSurroundings {
+    /// The land and the statics outside the cave under ClassicUO's cut (the player's z + `PLAYER_VIEW_HEADROOM`),
+    /// darkened to `CAVE_OUTSIDE_SHADE`, their lights with them.
+    #[default]
+    Dimmed,
+    /// Nothing outside the cave, as the KR client shows a cave.
+    Black,
+}
+
+impl CaveSurroundings {
+    pub const ALL: [Self; 2] = [Self::Dimmed, Self::Black];
+
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Dimmed => "Dimmed",
+            Self::Black => "Black",
+        }
+    }
+}
+
 /// How far land must rise over a floor to bury it, in z units: the z-view's cave test, land `PLAYER_VIEW_HEADROOM`
 /// over the player.
 pub const CAVE_MIN_BURY_DEPTH: i32 = PLAYER_VIEW_HEADROOM;
@@ -74,6 +117,29 @@ pub const CAVE_MIN_BURY_DEPTH: i32 = PLAYER_VIEW_HEADROOM;
 pub const WALK_STEP_Z: i32 = 2;
 /// The cave ceiling over a shown floor: the z-view's cap for a player under a mountain (`PLAYER_VIEW_HEADROOM`).
 pub const CAVE_CEILING_HEADROOM: i32 = PLAYER_VIEW_HEADROOM;
+/// One level of the player's cave, in z units: its floors lie within this of the player's floor, and on a cave cell
+/// the statics within this of its floors are the cave's. The KR client's 20-z height layer (`CLIENT_BAND_HEIGHT`).
+/// The Minoc mine's upper gallery (map 1, 2586,457) is 60 over the main one, the crossing tunnels of the crypt
+/// under the meadow at 1008,800 are 40 apart.
+pub const CAVE_LEVEL_HEIGHT: i32 = CLIENT_BAND_HEIGHT;
+/// How far from the player's cave, in cells, its rock walls stand. On the Minoc mine they reach 7.
+pub const CAVE_WALL_REACH: i32 = 8;
+/// How far under the cave's floor a rock wall may stand, in z units for each cell it stands away from the cave: a
+/// cell's 44 screen pixels at 4 pixels a z unit. A cave's rock face is a stack of walls, each lower one farther back,
+/// which the slanted view draws over the same place: on the Minoc mine the walls at z 0 stand next to the floor at 0,
+/// those at -20 one or two cells back, at -40 two or three, at -60 five to seven.
+pub const CAVE_WALL_DROP_PER_CELL: i32 = 11;
+/// The cells added to a wall's distance from the cave for its depth (`CAVE_WALL_DROP_PER_CELL`): the walls at -40 two
+/// cells back stay.
+const CAVE_WALL_DROP_SLACK_CELLS: i32 = 2;
+/// How far the player's cave is found around the player's package chunk, in chunks each way: the chunks read and the
+/// bound of the flood, held to the chunk grid so the cave found stays while the player walks in a chunk. Seven chunks,
+/// 224 cells, across: the view at the farthest zoom.
+pub const PLAYER_CAVE_REACH_CHUNKS: i32 = 3;
+/// How bright what is outside the player's cave draws with `CaveSurroundings::Dimmed`, a fraction of its own
+/// brightness: the land (`SceneUniform::land_outside_dimming`), the statics (`STATIC_FLAG_CAVE_OUTSIDE`) and their
+/// lights (`light_clip_tag`). Kept in sync with art/depth.wesl and art/light_clip.wesl.
+pub const CAVE_OUTSIDE_SHADE: f32 = 0.35;
 
 /// The eight neighbours of a cell.
 const NEIGHBOURS: [(i32, i32); 8] = [(-1, -1), (0, -1), (1, -1), (-1, 0), (1, 0), (-1, 1), (0, 1), (1, 1)];
@@ -172,12 +238,12 @@ pub fn shown_cave_floors(cells: &impl CaveCells, candidates: &HashMap<(i32, i32)
     shown
 }
 
-/// What a shown cave does to a static.
+/// What a shown cave, or the player's (`PlayerCave::static_view`), does to a static.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum CaveStatic {
-    /// Drawn as without caves.
+    /// Drawn as without caves; outside the player's cave, darkened with `CaveSurroundings::Dimmed`.
     Outside,
-    /// Over a shown cave floor, at or above its ceiling: not drawn.
+    /// Over a shown cave floor, at or above its ceiling, or not the player's cave's: not drawn.
     Hidden,
     /// In a shown cave, or a buried wall around one: drawn in front of what is around the cave.
     Lifted,
@@ -289,6 +355,188 @@ impl CaveMap {
     }
 }
 
+/// The buried floor tops of the cell (`x`, `y`): those at least `CAVE_MIN_BURY_DEPTH` under its land.
+fn buried_tops(cells: &impl CaveCells, x: i32, y: i32) -> impl Iterator<Item = i32> + '_ {
+    let land_z = cells.land_z(x, y);
+    cells.surface_tops(x, y).iter().copied().filter(move |&top| land_z.is_some_and(|land_z| land_z - top >= CAVE_MIN_BURY_DEPTH))
+}
+
+/// The floor the player at `z` on (`x`, `y`) stands on in a cave: the highest buried floor top at most `WALK_STEP_Z`
+/// above the player and less than `CAVE_LEVEL_HEIGHT` below. `None` out of a cave.
+pub fn player_cave_floor(cells: &impl CaveCells, x: i32, y: i32, z: i32) -> Option<i32> {
+    buried_tops(cells, x, y).filter(|&top| top <= z + WALK_STEP_Z && z - top < CAVE_LEVEL_HEIGHT).max()
+}
+
+/// The cells of the player's cave, with the lowest and highest of their floors: the buried floors reached from
+/// `floor`, the player's on (`x`, `y`) (`player_cave_floor`), through the eight neighbours, each step at most
+/// `WALK_STEP_Z`, each floor within `CAVE_LEVEL_HEIGHT` of `floor`, on the cells `in_reach` allows.
+pub fn player_cave_cells(cells: &impl CaveCells, x: i32, y: i32, floor: i32, in_reach: impl Fn(i32, i32) -> bool)
+    -> HashMap<(i32, i32), (i32, i32)> {
+    let mut found: HashMap<(i32, i32), (i32, i32)> = HashMap::new();
+    let mut visited = HashSet::from([(x, y, floor)]);
+    let mut stack = vec![(x, y, floor)];
+    while let Some((cell_x, cell_y, cell_floor)) = stack.pop() {
+        let range = found.entry((cell_x, cell_y)).or_insert((cell_floor, cell_floor));
+        *range = (range.0.min(cell_floor), range.1.max(cell_floor));
+        for (dx, dy) in NEIGHBOURS {
+            let (next_x, next_y) = (cell_x + dx, cell_y + dy);
+            if !in_reach(next_x, next_y) {
+                continue;
+            }
+            for top in buried_tops(cells, next_x, next_y) {
+                if (top - cell_floor).abs() <= WALK_STEP_Z && (top - floor).abs() < CAVE_LEVEL_HEIGHT
+                    && visited.insert((next_x, next_y, top)) {
+                    stack.push((next_x, next_y, top));
+                }
+            }
+        }
+    }
+    found
+}
+
+/// A cell of the player's cave or around it (`PlayerCave`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct PlayerCaveCell {
+    /// How far from the cave, in cells: 0 inside it, up to `CAVE_WALL_REACH` around it.
+    distance: u8,
+    /// The lowest and highest floor z of the cave there, or around it of the nearest cave cells.
+    low: i16,
+    high: i16,
+    /// The cell's land z.
+    land_z: i16,
+}
+
+/// The player's cave (module docs): its cells and those around it up to `CAVE_WALL_REACH`, and what shows outside it.
+#[derive(Debug, PartialEq, Eq)]
+pub struct PlayerCave {
+    /// The floor the player stands on.
+    floor_z: i32,
+    cells: HashMap<(i32, i32), PlayerCaveCell>,
+    /// The buried floors of other tunnels on the cells of `cells`: those of the cells around the cave, and those of its
+    /// cells not its own.
+    other_floors: HashMap<(i32, i32), Box<[i16]>>,
+    /// How many cells are the cave's.
+    inside_cells: usize,
+    surroundings: CaveSurroundings,
+}
+
+impl PlayerCave {
+    /// The cave of the cells `inside` (`player_cave_cells`) from the player's floor `floor_z`, the cells around it read
+    /// from `cells` where `in_reach` allows.
+    pub fn new(inside: &HashMap<(i32, i32), (i32, i32)>, floor_z: i32, cells: &impl CaveCells,
+        in_reach: impl Fn(i32, i32) -> bool, surroundings: CaveSurroundings) -> Self {
+        let to_i16 = |z: i32| z.clamp(i32::from(i16::MIN), i32::from(i16::MAX)) as i16;
+        let mut found = HashMap::with_capacity(inside.len());
+        let mut layer = Vec::with_capacity(inside.len());
+        for (&cell, &(low, high)) in inside {
+            let land_z = cells.land_z(cell.0, cell.1).unwrap_or(high);
+            found.insert(cell, PlayerCaveCell { distance: 0, low: to_i16(low), high: to_i16(high), land_z: to_i16(land_z) });
+            layer.push(cell);
+        }
+        // The rings around the cave, one cell farther each, each cell taking the floors of the nearest ring's cells.
+        for distance in 1..=CAVE_WALL_REACH as u8 {
+            let mut next_layer = Vec::new();
+            for &(x, y) in &layer {
+                let from = found[&(x, y)];
+                for (dx, dy) in NEIGHBOURS {
+                    let next = (x + dx, y + dy);
+                    let Some(land_z) = cells.land_z(next.0, next.1).filter(|_| in_reach(next.0, next.1)) else {
+                        continue;
+                    };
+                    match found.get_mut(&next) {
+                        Some(cell) if cell.distance == distance => {
+                            cell.low = cell.low.min(from.low);
+                            cell.high = cell.high.max(from.high);
+                        }
+                        Some(_) => {}
+                        None => {
+                            found.insert(next, PlayerCaveCell { distance, low: from.low, high: from.high, land_z: to_i16(land_z) });
+                            next_layer.push(next);
+                        }
+                    }
+                }
+            }
+            layer = next_layer;
+        }
+        let other_floors = found.iter().filter_map(|(&(x, y), cell)| {
+            let own = |top: i32| cell.distance == 0 && i32::from(cell.low) <= top && top <= i32::from(cell.high);
+            let tops = buried_tops(cells, x, y).filter(|&top| !own(top)).map(to_i16).collect::<Box<[i16]>>();
+            (!tops.is_empty()).then_some(((x, y), tops))
+        }).collect();
+        Self { floor_z, cells: found, other_floors, inside_cells: inside.len(), surroundings }
+    }
+
+    pub fn floor_z(&self) -> i32 {
+        self.floor_z
+    }
+
+    /// How many cells are the cave's.
+    pub fn inside_cells(&self) -> usize {
+        self.inside_cells
+    }
+
+    pub fn surroundings(&self) -> CaveSurroundings {
+        self.surroundings
+    }
+
+    /// What the cave does to a static at `z` with tile flags `flags` and height `height` on the cell (`x`, `y`),
+    /// `land_z` giving the cell's land z where the cave did not read it: `Lifted`, the cave's; `Outside`, drawn as
+    /// outside the cave (`CaveSurroundings::Dimmed`); `Hidden`, not drawn.
+    pub fn static_view(&self, x: i32, y: i32, z: i8, flags: u64, height: i8, land_z: impl FnOnce() -> Option<i32>)
+        -> CaveStatic {
+        let z = i32::from(z);
+        let outside = match self.surroundings {
+            CaveSurroundings::Dimmed => CaveStatic::Outside,
+            CaveSurroundings::Black => CaveStatic::Hidden,
+        };
+        let buried = |land_z: i32| land_z - z >= CAVE_MIN_BURY_DEPTH;
+        let Some(cell) = self.cells.get(&(x, y)) else {
+            return if land_z().is_some_and(buried) { CaveStatic::Hidden } else { outside };
+        };
+        let (low, high, land_z) = (i32::from(cell.low), i32::from(cell.high), i32::from(cell.land_z));
+        let distance = i32::from(cell.distance);
+        if distance == 0 {
+            return if low - CAVE_LEVEL_HEIGHT <= z && z < high + CAVE_LEVEL_HEIGHT { CaveStatic::Lifted } else { CaveStatic::Hidden };
+        }
+        // Around the cave: a buried floor is another tunnel's, and what stands on one under the cave's floor, or next to
+        // one, a level up from it at most: the walls and the bones of a tunnel below.
+        if surface_top(flags, height, z as i8).is_some_and(|top| land_z - top >= CAVE_MIN_BURY_DEPTH) {
+            return CaveStatic::Hidden;
+        }
+        let other_level = |cell: (i32, i32)| self.other_floors.get(&cell).is_some_and(|tops|
+            tops.iter().any(|&top| i32::from(top) <= z && z < i32::from(top) + CAVE_LEVEL_HEIGHT));
+        if z < low && (other_level((x, y)) || NEIGHBOURS.iter().any(|&(dx, dy)| other_level((x + dx, y + dy)))) {
+            return CaveStatic::Hidden;
+        }
+        let wall_bottom = low - CAVE_WALL_DROP_PER_CELL * (distance + CAVE_WALL_DROP_SLACK_CELLS);
+        // Buried, as the rock walls are: the rocks and logs lying on the land outside, a little under it, are not lifted,
+        // nor the water under a shore's lip: rock is never wet.
+        let rock = flags & TaeFlag::Wet.bits() == 0;
+        if rock && buried(land_z) && z < high + CAVE_LEVEL_HEIGHT && z >= wall_bottom {
+            CaveStatic::Lifted
+        } else if buried(land_z) {
+            CaveStatic::Hidden
+        } else {
+            outside
+        }
+    }
+
+    /// The z limit of the light cover (art/light_cover.rs) of a light the cave draws (`CaveStatic::Lifted`) on the cell
+    /// (`x`, `y`): over its floors' level, what is not drawn covers nothing.
+    fn light_max_z(&self, x: i32, y: i32) -> i32 {
+        self.cells.get(&(x, y)).map_or(NO_Z_VIEW_LIMIT, |cell| i32::from(cell.high) + CAVE_LEVEL_HEIGHT)
+    }
+}
+
+/// How a light shows (`CavesRes::light_view`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct CaveLight {
+    /// The z limit of its cover (art/light_cover.rs).
+    pub max_z: i32,
+    /// Outside the player's cave, darkened with what is around it (`CaveSurroundings::Dimmed`).
+    pub outside: bool,
+}
+
 /// The floor top over its z (`surface_top`) of each item graphic, `NOT_A_FLOOR` for the others.
 struct ItemSurfaces(Vec<i16>);
 
@@ -360,6 +608,69 @@ impl CaveCells for MapChunks {
 
     fn surface_tops(&self, x: i32, y: i32) -> &[i32] {
         self.locate(x, y).and_then(|(chunk, cell)| Some(self.chunks.get(&chunk)?.tops(cell))).unwrap_or(&[])
+    }
+}
+
+/// Finds the player's cave on a map, keeping the package chunks it read around the player.
+pub struct PlayerCaveFinder {
+    map_id: u32,
+    map: Arc<UddpReader>,
+    statics: Arc<UddpReader>,
+    surfaces: ItemSurfaces,
+    chunks: MapChunks,
+}
+
+impl PlayerCaveFinder {
+    fn new(map_id: u32, width: u32, height: u32, map: Arc<UddpReader>, statics: Arc<UddpReader>, tilemeta: &TileMetaPackage)
+        -> Self {
+        let chunks = MapChunks { width: width as i32, height: height as i32, chunks: HashMap::new() };
+        Self { map_id, map, statics, surfaces: ItemSurfaces::new(tilemeta), chunks }
+    }
+
+    /// The package chunk (column, row) of the cell (`x`, `y`).
+    fn chunk_of(x: i32, y: i32) -> (i32, i32) {
+        let dim = PACKAGE_CHUNK_CELL_DIM as i32;
+        (x.div_euclid(dim), y.div_euclid(dim))
+    }
+
+    /// Reads the chunk (column, row) unless read or off the map.
+    fn load(&mut self, (column, row): (i32, i32)) -> eyre::Result<()> {
+        let dim = PACKAGE_CHUNK_CELL_DIM as i32;
+        let Some((chunk, _)) = self.chunks.locate(column * dim, row * dim) else {
+            return Ok(());
+        };
+        if !self.chunks.chunks.contains_key(&chunk) {
+            let cells = ChunkCells::read(&self.map, &self.statics, &self.surfaces, chunk)?;
+            self.chunks.chunks.insert(chunk, cells);
+        }
+        Ok(())
+    }
+
+    /// The cave of the player at `z` on (`x`, `y`) (module docs); `None` out of one.
+    fn find(&mut self, x: i32, y: i32, z: i32, surroundings: CaveSurroundings) -> eyre::Result<Option<PlayerCave>> {
+        let centre = Self::chunk_of(x, y);
+        self.load(centre)?;
+        let Some(floor) = player_cave_floor(&self.chunks, x, y, z) else {
+            return Ok(None);
+        };
+        let reach = PLAYER_CAVE_REACH_CHUNKS;
+        let in_reach = |x: i32, y: i32| {
+            let (column, row) = Self::chunk_of(x, y);
+            (column - centre.0).abs() <= reach && (row - centre.1).abs() <= reach
+        };
+        for row in centre.1 - reach..=centre.1 + reach {
+            for column in centre.0 - reach..=centre.0 + reach {
+                self.load((column, row))?;
+            }
+        }
+        // The chunks out of reach go; those just out stay for the next steps.
+        let height_chunks = (self.chunks.height as u32).div_ceil(PACKAGE_CHUNK_CELL_DIM) as i32;
+        self.chunks.chunks.retain(|&chunk, _| {
+            let (column, row) = (chunk as i32 / height_chunks, chunk as i32 % height_chunks);
+            (column - centre.0).abs() <= reach + 1 && (row - centre.1).abs() <= reach + 1
+        });
+        let inside = player_cave_cells(&self.chunks, x, y, floor, in_reach);
+        Ok(Some(PlayerCave::new(&inside, floor, &self.chunks, in_reach, surroundings)))
     }
 }
 
@@ -441,12 +752,15 @@ fn find_map_caves(input: &CaveScanInput) -> eyre::Result<CaveMap> {
     Ok(CaveMap::new(&shown, &chunks))
 }
 
-/// The shown caves while `world_rendering.caves` draws them over the map.
+/// The shown caves while `world_rendering.caves` draws them over the map, and the player's cave.
 #[derive(Resource, Default)]
 pub struct CavesRes {
-    /// The caves of the current map drawn now; `None` while hidden, or while they are found.
+    /// The caves of the current map drawn now; `None` while hidden, while they are found, or while the player is in a
+    /// cave (`player`).
     active: Option<Arc<CaveMap>>,
-    /// Counts the changes of `active`, so the caches built from it are rebuilt.
+    /// The player's cave, with "Show Only the Player's Floor" on and the player in one.
+    player: Option<Arc<PlayerCave>>,
+    /// Counts the changes of `active` and `player`, so the caches built from them are rebuilt.
     revision: u64,
     /// The caves found so far, by map.
     found: HashMap<u32, Arc<CaveMap>>,
@@ -463,10 +777,103 @@ impl CavesRes {
         self.revision
     }
 
-    /// `CaveMap::light_max_z` of the active caves; `max_z` without them.
-    pub fn light_max_z(&self, x: u32, y: u32, max_z: i32) -> i32 {
-        self.active().map_or(max_z, |caves| caves.light_max_z(x, y, max_z))
+    pub fn player(&self) -> Option<&PlayerCave> {
+        self.player.as_deref()
     }
+
+    /// How a light on the static at `z` with tile flags `flags` and height `height` on the cell (`x`, `y`) shows under
+    /// the view's limit `max_z`, `land_z` giving the cell's land z: `None` when the player's cave hides its static
+    /// (`PlayerCave::static_view`); else the cover limit, `max_z` or the caves' (`CaveMap::light_max_z`,
+    /// `PlayerCave::light_max_z`), and whether it is darkened outside the player's cave.
+    pub fn light_view(&self, x: u32, y: u32, z: i8, flags: u64, height: i8, land_z: impl FnOnce() -> Option<i32>,
+        max_z: i32) -> Option<CaveLight> {
+        let Some(cave) = self.player() else {
+            let max_z = self.active().map_or(max_z, |caves| caves.light_max_z(x, y, max_z));
+            return Some(CaveLight { max_z, outside: false });
+        };
+        let (x, y) = (x as i32, y as i32);
+        match cave.static_view(x, y, z, flags, height, land_z) {
+            CaveStatic::Lifted => Some(CaveLight { max_z: cave.light_max_z(x, y), outside: false }),
+            CaveStatic::Outside => Some(CaveLight { max_z, outside: true }),
+            CaveStatic::Hidden => None,
+        }
+    }
+
+    /// How dark the land draws (`SceneUniform::land_outside_dimming`): all of it is outside the player's cave.
+    pub fn land_outside_dimming(&self) -> f32 {
+        match self.player().map(PlayerCave::surroundings) {
+            Some(CaveSurroundings::Dimmed) => 1.0 - CAVE_OUTSIDE_SHADE,
+            _ => 0.0,
+        }
+    }
+}
+
+/// What the player's cave was last found from: the map, the player's cell and z, and `world_rendering.cave_surroundings`.
+type PlayerCaveInputs = (u32, u16, u16, i8, CaveSurroundings);
+
+/// Finds the player's cave when the player moves, with "Show Only the Player's Floor" on (module docs), and bumps
+/// `CavesRes::revision` when it changes. A cave found the same as the last one keeps it: the statics and lights
+/// built from it are not rebuilt while the player walks in it.
+pub fn sys_update_player_cave(
+    settings: Res<Settings>,
+    scene_state: Res<SceneStateData>,
+    player_q: Query<&Player>,
+    map_planes: Option<Res<MapPlanesRes>>,
+    statics_res: Res<StaticsStoreRes>,
+    tilemeta_res: Option<Res<TileMetaPackageRes>>,
+    mut caves: ResMut<CavesRes>,
+    mut finder: Local<Option<PlayerCaveFinder>>,
+    mut last_inputs: Local<Option<PlayerCaveInputs>>,
+) {
+    let map_id = scene_state.map_id;
+    let pos = player_q.iter().find_map(|player| player.current_pos);
+    let surroundings = settings.world_rendering.cave_surroundings;
+    let inputs = pos.filter(|_| settings.world_rendering.show_only_player_floor)
+        .map(|pos| (map_id, pos.x, pos.y, pos.z, surroundings));
+    if *last_inputs == inputs {
+        return;
+    }
+    let next = match inputs {
+        None => None,
+        Some((_, x, y, z, _)) => {
+            if finder.as_ref().is_none_or(|finder| finder.map_id != map_id) {
+                let plane = map_planes.as_ref().and_then(|planes| planes.0.get(map_id as usize)?.as_ref());
+                let statics = statics_res.0.get(map_id as usize).and_then(|store| store.as_ref());
+                *finder = match (plane, statics, tilemeta_res.as_ref()) {
+                    (Some(plane), Some(statics), Some(tilemeta)) => {
+                        let size = plane.size_cells();
+                        Some(PlayerCaveFinder::new(map_id, size.width, size.height, plane.package(),
+                            statics.lock().package(), &tilemeta.0))
+                    }
+                    // Tried again on the next move.
+                    _ => return,
+                };
+            }
+            let finder = finder.as_mut().expect("a player cave finder");
+            let started = Instant::now();
+            match finder.find(i32::from(x), i32::from(y), i32::from(z), surroundings) {
+                Ok(cave) => {
+                    if let Some(cave) = cave.as_ref().filter(|cave| caves.player.as_deref() != Some(cave)) {
+                        console_logger::one(LogSev::Info, LogAbout::RenderWorldLand, &format!(
+                            "The player's cave: {} cells from floor z {}, found in {} us.",
+                            cave.inside_cells(), cave.floor_z(), started.elapsed().as_micros()));
+                    }
+                    cave
+                }
+                Err(error) => {
+                    console_logger::one(LogSev::Warn, LogAbout::RenderWorldLand,
+                        &format!("The player's cave is not drawn: {error:#}"));
+                    None
+                }
+            }
+        }
+    };
+    *last_inputs = inputs;
+    if caves.player.as_deref() == next.as_ref() {
+        return;
+    }
+    caves.player = next.map(Arc::new);
+    caves.revision += 1;
 }
 
 /// Finds the caves of the current map in the background when the setting draws them, and switches the drawn caves:
@@ -494,7 +901,8 @@ pub fn sys_update_caves(
     }
 
     let map_id = scene_state.map_id;
-    let wanted = settings.world_rendering.caves == CaveView::DrawnOverMap;
+    // The player's cave takes their place.
+    let wanted = settings.world_rendering.caves == CaveView::DrawnOverMap && caves.player.is_none();
     let next = wanted.then(|| caves.found.get(&map_id).cloned()).flatten();
     if wanted && next.is_none() && caves.finding.is_none() {
         let plane = map_planes.as_ref().and_then(|planes| planes.0.get(map_id as usize)?.as_ref());
@@ -706,5 +1114,192 @@ mod tests {
         }
         assert!(places[0].1 > 0 && places[1].1 > 0);
         assert_eq!((places[2].1, places[3].1), (0, 0));
+    }
+
+    /// The player's cave from (`x`, `y`) at `z` in `cells`, with no reach bound.
+    fn player_cave(cells: &Cells, x: i32, y: i32, z: i32, surroundings: CaveSurroundings) -> Option<PlayerCave> {
+        let floor = player_cave_floor(cells, x, y, z)?;
+        let inside = player_cave_cells(cells, x, y, floor, |_, _| true);
+        Some(PlayerCave::new(&inside, floor, cells, |_, _| true, surroundings))
+    }
+
+    /// The player stands in a cave on a buried floor at most a walking step over them and less than a level under
+    /// them, the highest such; on an open floor, or with only floors above, they are not in one.
+    #[test]
+    fn the_player_stands_in_a_cave_on_a_buried_floor() {
+        let cells = Cells::default().with(0, 0, ROCK, &[0, 40]).with(1, 0, 0, &[0]).with(2, 0, ROCK, &[30]);
+        assert_eq!(player_cave_floor(&cells, 0, 0, 0), Some(0));
+        assert_eq!(player_cave_floor(&cells, 0, 0, 12), Some(0));
+        assert_eq!(player_cave_floor(&cells, 0, 0, 40), Some(40));
+        assert_eq!(player_cave_floor(&cells, 0, 0, -30), None);
+        assert_eq!(player_cave_floor(&cells, 1, 0, 0), None);
+        assert_eq!(player_cave_floor(&cells, 2, 0, 0), None);
+        assert!(player_cave(&cells, 1, 0, 0, CaveSurroundings::Dimmed).is_none());
+    }
+
+    /// The cave is the buried floors walked to from the player's, a step at a time: not a tunnel apart from it, not
+    /// one past a step too high, not one at the same place a level above.
+    #[test]
+    fn the_players_cave_is_the_floors_walked_to() {
+        let cells = Cells::default()
+            .tunnel(0, 0, 6, 2, 0)
+            // Rising a step at a time to 6 at x 6..8.
+            .with(6, 0, ROCK, &[2]).with(7, 0, ROCK, &[4]).with(8, 0, ROCK, &[6])
+            // Past a step too high.
+            .with(9, 0, ROCK, &[10])
+            // A tunnel apart, through rock.
+            .tunnel(0, 4, 6, 5, 0)
+            // The level above, over the cave's own cells.
+            .with(2, 1, ROCK, &[0, 40]).with(3, 1, ROCK, &[0, 42]);
+        let inside = player_cave_cells(&cells, 0, 0, 0, |_, _| true);
+        assert_eq!(inside.len(), 12 + 3);
+        assert_eq!(inside.get(&(8, 0)), Some(&(6, 6)));
+        assert!(!inside.contains_key(&(9, 0)));
+        assert!(!inside.contains_key(&(0, 4)));
+        assert_eq!(inside.get(&(2, 1)), Some(&(0, 0)));
+        // The reach bounds it.
+        assert_eq!(player_cave_cells(&cells, 0, 0, 0, |x, _| x < 3).len(), 6);
+    }
+
+    /// The cave keeps to the player's level: a ramp rising from it stops less than `CAVE_LEVEL_HEIGHT` over the
+    /// player's floor, and the floors it reached keep their lowest and highest.
+    #[test]
+    fn the_players_cave_keeps_to_one_level() {
+        let cells = (0..20).fold(Cells::default(), |cells, x| cells.with(x, 0, ROCK, &[2 * x]))
+            .with(3, 0, ROCK, &[6, 8]);
+        let inside = player_cave_cells(&cells, 0, 0, 0, |_, _| true);
+        let highest = inside.values().map(|&(_, high)| high).max();
+        assert_eq!(highest, Some(CAVE_LEVEL_HEIGHT - WALK_STEP_Z));
+        assert_eq!(inside.len(), (CAVE_LEVEL_HEIGHT / WALK_STEP_Z) as usize);
+        assert_eq!(inside.get(&(3, 0)), Some(&(6, 8)));
+    }
+
+    /// On the cave's cells its floor and what stands on it are the cave's, the hill over it and the levels above and
+    /// below are not.
+    #[test]
+    fn the_players_cave_draws_its_own_level() {
+        let cells = Cells::default().tunnel(0, 0, 6, 3, 0);
+        let cave = player_cave(&cells, 2, 1, 0, CaveSurroundings::Dimmed).unwrap();
+        assert_eq!((cave.floor_z(), cave.inside_cells()), (0, 18));
+        let view = |z: i8| cave.static_view(2, 1, z, 0, 0, || unreachable!());
+        assert_eq!(view(0), CaveStatic::Lifted);
+        assert_eq!(view(15), CaveStatic::Lifted);
+        assert_eq!(view(-15), CaveStatic::Lifted);
+        assert_eq!(view(ROCK as i8), CaveStatic::Hidden);
+        assert_eq!(view(40), CaveStatic::Hidden);
+        assert_eq!(view(-30), CaveStatic::Hidden);
+    }
+
+    /// Around the cave, the statics under the land are its rock walls down to `CAVE_WALL_DROP_PER_CELL` a cell away
+    /// under its floor; the buried floors are other tunnels; what stands on the land over them is outside.
+    #[test]
+    fn the_players_cave_draws_its_rock_walls() {
+        let cells = Cells::default().tunnel(0, 0, 3, 3, 0);
+        let cave = player_cave(&cells, 1, 1, 0, CaveSurroundings::Dimmed).unwrap();
+        let wall = TaeFlag::Wall.bits() | TaeFlag::Impassable.bits();
+        let view = |x: i32, z: i8, flags: u64| cave.static_view(x, 1, z, flags, 20, || unreachable!());
+        // One cell away: the walls at the floor's level and one level under it, not two.
+        assert_eq!(view(3, 0, wall), CaveStatic::Lifted);
+        assert_eq!(view(3, -20, wall), CaveStatic::Lifted);
+        assert_eq!(view(3, -40, wall), CaveStatic::Hidden);
+        // Five cells away, three levels under it.
+        assert_eq!(view(7, -60, wall), CaveStatic::Lifted);
+        assert_eq!(view(7, -90, wall), CaveStatic::Hidden);
+        // Over the cave's level, under the land: hidden; on the land: outside.
+        assert_eq!(view(3, 25, wall), CaveStatic::Hidden);
+        assert_eq!(view(3, ROCK as i8, wall), CaveStatic::Outside);
+        // Outside the cave's mouth, land low over its level: a rock lying a little under it is outside, not a wall.
+        let mouth = player_cave(&cells.with(3, 1, 10, &[]), 1, 1, 0, CaveSurroundings::Dimmed).unwrap();
+        assert_eq!(mouth.static_view(3, 1, 5, 0, 4, || unreachable!()), CaveStatic::Outside);
+        // Water under a shore's lip, buried: not a wall.
+        assert_eq!(view(3, 0, TaeFlag::Wet.bits()), CaveStatic::Hidden);
+        // Another tunnel's floor.
+        assert_eq!(view(4, -40, TaeFlag::Surface.bits()), CaveStatic::Hidden);
+        // Farther than `CAVE_WALL_REACH`: buried, hidden; over the land, or the land unknown, outside.
+        let far = 3 + CAVE_WALL_REACH;
+        assert_eq!(cave.static_view(far, 1, 0, wall, 20, || Some(ROCK)), CaveStatic::Hidden);
+        assert_eq!(cave.static_view(far, 1, ROCK as i8, wall, 20, || Some(ROCK)), CaveStatic::Outside);
+        assert_eq!(cave.static_view(far, 1, 0, wall, 20, || None), CaveStatic::Outside);
+    }
+
+    /// A tunnel below the cave, beside it: its floor, its walls and what lies on it are not drawn, the cave's rock
+    /// walls down to its level are.
+    #[test]
+    fn the_players_cave_leaves_out_the_tunnels_below() {
+        let cells = Cells::default().tunnel(0, 0, 3, 3, 0).tunnel(5, 0, 8, 3, -40);
+        let cave = player_cave(&cells, 1, 1, 0, CaveSurroundings::Dimmed).unwrap();
+        assert_eq!(cave.inside_cells(), 9);
+        let wall = TaeFlag::Wall.bits();
+        let view = |x: i32, z: i8, flags: u64| cave.static_view(x, 1, z, flags, 20, || unreachable!());
+        // Next to the tunnel below: its walls go; the cave's at its own floor and the course under it stay.
+        assert_eq!(view(4, -40, wall), CaveStatic::Hidden);
+        assert_eq!(view(4, -20, wall), CaveStatic::Lifted);
+        assert_eq!(view(4, 0, wall), CaveStatic::Lifted);
+        // On the tunnel below: its floor and its bones.
+        assert_eq!(view(6, -40, TaeFlag::Surface.bits()), CaveStatic::Hidden);
+        assert_eq!(view(6, -38, 0), CaveStatic::Hidden);
+        // Without it, the wall at its level is a rock wall of the cave.
+        let alone = player_cave(&Cells::default().tunnel(0, 0, 3, 3, 0), 1, 1, 0, CaveSurroundings::Dimmed).unwrap();
+        assert_eq!(alone.static_view(4, 1, -40, wall, 20, || unreachable!()), CaveStatic::Lifted);
+    }
+
+    /// With `CaveSurroundings::Black` nothing outside the cave is drawn.
+    #[test]
+    fn black_surroundings_hide_what_is_outside_the_players_cave() {
+        let cells = Cells::default().tunnel(0, 0, 3, 3, 0);
+        let cave = player_cave(&cells, 1, 1, 0, CaveSurroundings::Black).unwrap();
+        let wall = TaeFlag::Wall.bits();
+        assert_eq!(cave.static_view(3, 1, 0, wall, 20, || unreachable!()), CaveStatic::Lifted);
+        assert_eq!(cave.static_view(3, 1, ROCK as i8, wall, 20, || unreachable!()), CaveStatic::Hidden);
+        assert_eq!(cave.static_view(40, 1, 0, wall, 20, || Some(0)), CaveStatic::Hidden);
+    }
+
+    /// A light shows with its static: in the cave covered up to its level whatever the view's limit, outside it
+    /// under the view's limit and darkened, not at all when hidden. The land is darkened with dimmed surroundings.
+    #[test]
+    fn lights_follow_the_players_cave() {
+        let cells = Cells::default().tunnel(0, 0, 3, 3, 0);
+        let mut caves = CavesRes::default();
+        let max_z = 16;
+        let light = |caves: &CavesRes, x: u32, z: i8| caves.light_view(x, 1, z, 0, 0, || Some(0), max_z);
+        assert_eq!(light(&caves, 1, 40), Some(CaveLight { max_z, outside: false }));
+        assert_eq!(caves.land_outside_dimming(), 0.0);
+        caves.player = player_cave(&cells, 1, 1, 0, CaveSurroundings::Dimmed).map(Arc::new);
+        assert_eq!(light(&caves, 1, 0), Some(CaveLight { max_z: CAVE_LEVEL_HEIGHT, outside: false }));
+        assert_eq!(light(&caves, 1, 40), None);
+        assert_eq!(light(&caves, 40, 5), Some(CaveLight { max_z, outside: true }));
+        assert_eq!(caves.land_outside_dimming(), 1.0 - CAVE_OUTSIDE_SHADE);
+        caves.player = player_cave(&cells, 1, 1, 0, CaveSurroundings::Black).map(Arc::new);
+        assert_eq!(light(&caves, 40, 5), None);
+        assert_eq!(caves.land_outside_dimming(), 0.0);
+    }
+
+    /// The player's cave found on the packages, from the Minoc mine's entrance, deeper in, out of it, and in the
+    /// crypt under the meadow at 1008,805, with the time each find takes: cold, reading the chunks, and a step on.
+    /// Needs `UDD_PATH`, a folder of packages.
+    #[test]
+    #[ignore]
+    fn players_caves_on_map_1() {
+        let folder = std::path::PathBuf::from(std::env::var_os("UDD_PATH").expect("set UDD_PATH"));
+        let read = |name: &str| Arc::new(UddpReader::load(&folder.join(name)).unwrap());
+        let tilemeta = TileMetaPackage::load(folder.join("tilemeta.uddp")).unwrap();
+        let mut finder = PlayerCaveFinder::new(1, 7168, 4096, read("map1.uddp"), read("statics1.uddp"), &tilemeta);
+        let places = [("mine entrance", 2556, 496, 0), ("mine deeper", 2578, 476, 0), ("crypt", 1008, 805, -20),
+            ("outside the mine", 2540, 505, 0)];
+        for (name, x, y, z) in places {
+            let started = Instant::now();
+            let cave = finder.find(x, y, z, CaveSurroundings::Dimmed).unwrap();
+            let cold = started.elapsed();
+            // A step to a neighbouring cell of the cave, its chunks read: the same cave.
+            let step = cave.as_ref().and_then(|cave| NEIGHBOURS.into_iter().map(|(dx, dy)| (x + dx, y + dy))
+                .find(|cell| cave.cells.get(cell).is_some_and(|cell| cell.distance == 0)));
+            let started = Instant::now();
+            let again = step.map(|(x, y)| finder.find(x, y, z, CaveSurroundings::Dimmed).unwrap());
+            println!("{name}: {:?} cells from floor {:?}, {} us cold, {} us a step on",
+                cave.as_ref().map(PlayerCave::inside_cells), cave.as_ref().map(PlayerCave::floor_z),
+                cold.as_micros(), started.elapsed().as_micros());
+            assert!(cave.is_some() != (name == "outside the mine"));
+            assert_eq!(again.flatten(), cave);
+        }
     }
 }
