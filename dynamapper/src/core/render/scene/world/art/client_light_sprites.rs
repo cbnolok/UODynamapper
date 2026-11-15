@@ -11,8 +11,9 @@
 //! `static_lights` instead.
 //!
 //! Two settings depart from the clients in these styles. The style's `local_lights.centre_on_items` puts each
-//! sprite's light where its item is drawn: the sprites the tileart's default offsets throw far from their item on the
-//! centre of the item's Classic art, the others on the nearest point of that art (`client_light_sprite_centred`).
+//! sprite's light where its item is drawn: on the flame of the item's Classic art where it has one, else the sprites
+//! the tileart's default offsets throw far from their item on the art's centre, the others on the nearest point of
+//! that art (`client_light_sprite_centred`).
 //! `configs::light_scale` (LightScale.kdl) enlarges chosen items' sprites.
 //!
 //! The clients light the terrain and the statics through the composite alone: their sprites are unlit and their
@@ -67,7 +68,8 @@ const CLIENT_LIGHT_SPRITE_ANCHOR_Y_PIXELS: i16 = 0;
 /// tileart's default offsets, (-5, -4) on 378 items and (0, 0) at scale 2 on 7, and two candelabras' (-4.7, -2) throw
 /// it 4.78 tiles or more away, with no light in between. The default offsets place nothing: their light goes on the
 /// art's centre. An item's own offsets place it, but not always on the item (a sconce's flame 17 pixels right of and
-/// 47 below its glow, a candle's 65 right): their light goes on the nearest point of the art.
+/// 47 below its glow, a candle's 65 right, a wall torch's 51 above): their light goes on the nearest point of the
+/// art. Either way a flame in the art takes the light first (`client_light_sprite_centred`).
 pub(super) const CLIENT_LIGHT_SPRITE_KEPT_PLACEMENT_REACH: f32 = 4.5;
 /// A light texture's source, (u, v) with v from the top, where the texture draws no source of its own: its centre.
 const LIGHT_TEXTURE_CENTRE_UV: Vec2 = Vec2::splat(0.5);
@@ -88,9 +90,32 @@ const EAST_WINDOW_BEAM_SOURCE_UV: Vec2 = Vec2::new(0.260, 0.178);
 /// The fewest Classic art pixels each way that place a light. Smaller art is a stand-in for an item drawn otherwise
 /// (fire column 14119's animation, the one-pixel light markers), whose light is placed as if it had no art.
 const CLIENT_LIGHT_ART_MIN_PIXELS: f32 = 2.0;
+/// The hues, in degrees, of an art's flame texels (`is_flame_texel`): orange to yellow. Red is left out, as the lava's
+/// and the red cloths' and gems' red.
+const FLAME_HUE_MIN_DEGREES: f32 = 15.0;
+const FLAME_HUE_MAX_DEGREES: f32 = 65.0;
+/// The least saturation of a flame texel, (max - min) / max of its channels: the flames' pure orange and yellow, not
+/// the sandstone's, the brass' or the gold's paler hues of the same.
+const FLAME_SATURATION_MIN: f32 = 0.85;
+/// The least value of a flame texel, its largest channel over `LIGHT_TEXTURE_CHANNEL_MAX`: the dim flames of an
+/// animation's frames too, not the dark wood of a torch.
+const FLAME_VALUE_MIN: f32 = 0.75;
+/// The value at least one texel of a flame reaches: its hot core.
+const FLAME_HOT_VALUE_MIN: f32 = 0.9;
+/// The fewest Classic art pixels of one flame: a candle's flame has 3 to 5.
+const FLAME_CLUSTER_MIN_PIXELS: usize = 3;
+/// The share of the art's box, both ways, that flames spanning it make the whole item a glow (lava, a campfire's
+/// blaze, the glowing Windows): its light is placed as without a flame.
+const FLAME_SPREAD_FRACTION: f32 = 0.5;
+/// The degrees of hue between two of red, green and blue.
+const HUE_SECTOR_DEGREES: f32 = 60.0;
+/// The degrees of the hue circle.
+const HUE_CIRCLE_DEGREES: f32 = 360.0;
+/// From a texel's corner to its centre.
+const TEXEL_CENTRE_OFFSET: f32 = 0.5;
 /// From a tile's corner to its centre, along each map axis.
 const TILE_CENTRE_OFFSET: f32 = 0.5;
-/// The largest 8-bit channel value, which maps a light texture's channel to 0..1.
+/// The largest 8-bit channel value, which maps a light texture's or an art's channel to 0..1.
 const LIGHT_TEXTURE_CHANNEL_MAX: f32 = 255.0;
 /// The bytes of one RGBA8888 texel.
 const RGBA_TEXEL_BYTES: usize = 4;
@@ -140,8 +165,8 @@ pub struct ClientLightSpriteCache {
     materials_by_entry: HashMap<u32, Option<Handle<LightClipMaterial>>>,
     /// Each light texture's glow colour, `None` once the texture failed to load.
     glow_rgb_by_entry: HashMap<u32, Option<[f32; 3]>>,
-    /// Each lit item's Classic art bounds (`client_light_sprite_art_bounds`), `None` for an item without one.
-    art_bounds_by_graphic: HashMap<u16, Option<StaticBillboardBounds>>,
+    /// Each lit item's Classic art (`cache_client_light_sprite_art`), `None` for an item without one.
+    art_by_graphic: HashMap<u16, Option<ClientLightSpriteArt>>,
     mesh: Option<Handle<Mesh>>,
     reach_blocks: Option<u32>,
     warned_entries: HashSet<u32>,
@@ -247,42 +272,159 @@ fn art_opaque_rect(rgba: &[u8], width: u32) -> Option<[u32; 4]> {
     rect
 }
 
-/// A Classic static art's opaque box (`art_opaque_rect`, in the slot's upscaled pixels) as the static draws it, in
-/// the sprite's local coordinates (`client_light_sprite_bounds`): the art stands at its CC anchor, the cell's near
-/// vertex, 22 pixels right of the sprite's base point in the same upright plane, moved by its draw offsets. `None`
-/// for a box too small to place a light (`CLIENT_LIGHT_ART_MIN_PIXELS`).
-fn client_light_sprite_art_bounds(rect: [u32; 4], upscale_factor: u16, draw_offset: (i16, i16), logical_height: f32)
-    -> Option<StaticBillboardBounds> {
+/// Whether an art texel is a flame's: orange to yellow (`FLAME_HUE_MIN_DEGREES` to `FLAME_HUE_MAX_DEGREES`), pure
+/// (`FLAME_SATURATION_MIN`) and bright (`FLAME_VALUE_MIN`), and opaque.
+fn is_flame_texel(texel: &[u8]) -> bool {
+    let [r, g, b] = [texel[0], texel[1], texel[2]].map(f32::from);
+    let (max, min) = (r.max(g).max(b), r.min(g).min(b));
+    let chroma = max - min;
+    if texel[3] == 0 || max < FLAME_VALUE_MIN * LIGHT_TEXTURE_CHANNEL_MAX || chroma < FLAME_SATURATION_MIN * max {
+        return false;
+    }
+    let sector = if max == r {
+        (g - b) / chroma
+    } else if max == g {
+        2.0 + (b - r) / chroma
+    } else {
+        4.0 + (r - g) / chroma
+    };
+    let hue = (sector * HUE_SECTOR_DEGREES).rem_euclid(HUE_CIRCLE_DEGREES);
+    (FLAME_HUE_MIN_DEGREES..=FLAME_HUE_MAX_DEGREES).contains(&hue)
+}
+
+/// Where an art's flames burn, in its pixels from its top left: the centroid of its flame texels (`is_flame_texel`)
+/// that touch each other (diagonally too) in groups of at least `FLAME_CLUSTER_MIN_PIXELS` Classic pixels with a hot
+/// core (`FLAME_HOT_VALUE_MIN`); `opaque` is its box (`art_opaque_rect`). `None` for art without a flame, and for art
+/// whose flames span `FLAME_SPREAD_FRACTION` of its box both ways: the whole item glows (lava, a campfire's blaze).
+fn art_flame_centroid(rgba: &[u8], width: u32, upscale_factor: u16, opaque: [u32; 4]) -> Option<Vec2> {
+    let width = width as usize;
+    let texels = rgba.chunks_exact(RGBA_TEXEL_BYTES).collect::<Vec<_>>();
+    if width == 0 || texels.is_empty() {
+        return None;
+    }
+    let height = texels.len() / width;
+    let flame = texels.iter().map(|texel| is_flame_texel(texel)).collect::<Vec<_>>();
+    let hot = |index: usize| {
+        let texel = texels[index];
+        f32::from(texel[0].max(texel[1]).max(texel[2])) >= FLAME_HOT_VALUE_MIN * LIGHT_TEXTURE_CHANNEL_MAX
+    };
+    let upscale = usize::from(upscale_factor.max(1));
+    let cluster_min = FLAME_CLUSTER_MIN_PIXELS * upscale * upscale;
+    let mut seen = vec![false; flame.len()];
+    let mut kept = Vec::new();
+    let mut stack = Vec::new();
+    for start in 0..height * width {
+        if !flame[start] || seen[start] {
+            continue;
+        }
+        seen[start] = true;
+        stack.push(start);
+        let cluster_start = kept.len();
+        let mut has_hot_core = false;
+        while let Some(index) = stack.pop() {
+            kept.push(index);
+            has_hot_core |= hot(index);
+            let (x, y) = (index % width, index / width);
+            for ny in y.saturating_sub(1)..=(y + 1).min(height - 1) {
+                for nx in x.saturating_sub(1)..=(x + 1).min(width - 1) {
+                    let next = ny * width + nx;
+                    if flame[next] && !seen[next] {
+                        seen[next] = true;
+                        stack.push(next);
+                    }
+                }
+            }
+        }
+        if kept.len() - cluster_start < cluster_min || !has_hot_core {
+            kept.truncate(cluster_start);
+        }
+    }
+    if kept.is_empty() {
+        return None;
+    }
+    let (mut min, mut max, mut sum) = (Vec2::splat(f32::MAX), Vec2::splat(f32::MIN), Vec2::ZERO);
+    for &index in &kept {
+        let texel = Vec2::new((index % width) as f32, (index / width) as f32);
+        (min, max, sum) = (min.min(texel), max.max(texel), sum + texel);
+    }
+    let [opaque_min_x, opaque_min_y, opaque_max_x, opaque_max_y] = opaque;
+    let opaque_size = Vec2::new((opaque_max_x - opaque_min_x) as f32, (opaque_max_y - opaque_min_y) as f32);
+    let flame_size = max - min + Vec2::ONE;
+    if flame_size.cmpge(opaque_size * FLAME_SPREAD_FRACTION).all() {
+        return None;
+    }
+    Some(sum / kept.len() as f32 + Vec2::splat(TEXEL_CENTRE_OFFSET))
+}
+
+/// Where a point of a Classic static art, in the slot's upscaled pixels from its top left, shows in the sprite's local
+/// coordinates (`client_light_sprite_bounds`): the art stands at its CC anchor, the cell's near vertex, 22 pixels
+/// right of the sprite's base point in the same upright plane, moved by its draw offsets.
+fn client_light_sprite_art_point(point: Vec2, upscale_factor: u16, draw_offset: (i16, i16), logical_height: f32)
+    -> Vec2 {
     let (cc_x, cc_z) = apply_cc_static_world_anchor_translation(0.0, 0.0);
     let (ec_x, ec_z) = apply_static_world_anchor_translation(0.0, 0.0);
     let anchor_right = Vec2::new(cc_x - ec_x, cc_z - ec_z).dot(STATIC_BILLBOARD_RIGHT_XZ);
-    let pixels = |value: u32| value as f32 / f32::from(upscale_factor.max(1));
+    let pixels = point / f32::from(upscale_factor.max(1));
+    Vec2::new(
+        anchor_right + (f32::from(draw_offset.0) + pixels.x) * CC_WORLD_XZ_PER_PIXEL,
+        (logical_height - f32::from(draw_offset.1) - pixels.y) * CC_WORLD_Y_PER_PIXEL,
+    )
+}
+
+/// A Classic static art's opaque box (`art_opaque_rect`, in the slot's upscaled pixels) as the static draws it, in
+/// the sprite's local coordinates (`client_light_sprite_art_point`). `None` for a box too small to place a light
+/// (`CLIENT_LIGHT_ART_MIN_PIXELS`).
+fn client_light_sprite_art_bounds(rect: [u32; 4], upscale_factor: u16, draw_offset: (i16, i16), logical_height: f32)
+    -> Option<StaticBillboardBounds> {
     let [min_x, min_y, max_x, max_y] = rect;
-    if pixels(max_x - min_x) < CLIENT_LIGHT_ART_MIN_PIXELS || pixels(max_y - min_y) < CLIENT_LIGHT_ART_MIN_PIXELS {
+    let size = Vec2::new((max_x - min_x) as f32, (max_y - min_y) as f32) / f32::from(upscale_factor.max(1));
+    if size.min_element() < CLIENT_LIGHT_ART_MIN_PIXELS {
         return None;
     }
-    let left = f32::from(draw_offset.0);
-    let bottom = -f32::from(draw_offset.1) + logical_height;
+    let point = |x: u32, y: u32| {
+        client_light_sprite_art_point(Vec2::new(x as f32, y as f32), upscale_factor, draw_offset, logical_height)
+    };
+    let (bottom_left, top_right) = (point(min_x, max_y), point(max_x, min_y));
     Some(StaticBillboardBounds {
-        local_min_x: anchor_right + (left + pixels(min_x)) * CC_WORLD_XZ_PER_PIXEL,
-        local_max_x: anchor_right + (left + pixels(max_x)) * CC_WORLD_XZ_PER_PIXEL,
-        local_min_y: (bottom - pixels(max_y)) * CC_WORLD_Y_PER_PIXEL,
-        local_max_y: (bottom - pixels(min_y)) * CC_WORLD_Y_PER_PIXEL,
+        local_min_x: bottom_left.x,
+        local_max_x: top_right.x,
+        local_min_y: bottom_left.y,
+        local_max_y: top_right.y,
     })
 }
 
-/// Caches the Classic art bounds (`client_light_sprite_art_bounds`) of the items `graphics` not cached yet, reading
-/// each art page once: the art the Classic statics draw an item with, its own or its tilemeta's stand-in. `None`
-/// without the art (or `tex_art_cc.uddp`), or with art too small to place a light.
-fn cache_client_light_sprite_art_bounds(
-    art_bounds_by_graphic: &mut HashMap<u16, Option<StaticBillboardBounds>>,
+/// A lit item's Classic art as `centre_on_items` places its light by, in the sprite's local coordinates.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(super) struct ClientLightSpriteArt {
+    /// The box around its visible texels (`client_light_sprite_art_bounds`).
+    pub bounds: StaticBillboardBounds,
+    /// Where its flames burn (`art_flame_centroid`), `None` for art without a flame.
+    pub flame: Option<Vec2>,
+}
+
+/// An item's Classic art (`ClientLightSpriteArt`) from its slot's RGBA, `width` upscaled pixels wide. `None` for art
+/// too small to place a light.
+fn client_light_sprite_art(rgba: &[u8], width: u32, upscale_factor: u16, draw_offset: (i16, i16), logical_height: f32)
+    -> Option<ClientLightSpriteArt> {
+    let rect = art_opaque_rect(rgba, width)?;
+    let bounds = client_light_sprite_art_bounds(rect, upscale_factor, draw_offset, logical_height)?;
+    let flame = art_flame_centroid(rgba, width, upscale_factor, rect)
+        .map(|point| client_light_sprite_art_point(point, upscale_factor, draw_offset, logical_height));
+    Some(ClientLightSpriteArt { bounds, flame })
+}
+
+/// Caches the Classic art (`client_light_sprite_art`) of the items `graphics` not cached yet, reading each art page
+/// once: the art the Classic statics draw an item with, its own or its tilemeta's stand-in. `None` without the art (or
+/// `tex_art_cc.uddp`), or with art too small to place a light.
+fn cache_client_light_sprite_art(
+    art_by_graphic: &mut HashMap<u16, Option<ClientLightSpriteArt>>,
     tex_art_cc: Option<&TexArtCcPackage>,
     tilemeta: &TileMetaPackage,
     graphics: impl IntoIterator<Item = u16>,
 ) {
     let mut slots = Vec::new();
     for graphic in graphics {
-        if art_bounds_by_graphic.contains_key(&graphic) {
+        if art_by_graphic.contains_key(&graphic) {
             continue;
         }
         let slot = tex_art_cc.and_then(|tex_art_cc| {
@@ -296,7 +438,7 @@ fn cache_client_light_sprite_art_bounds(
         match slot {
             Some(slot) => slots.push((graphic, slot)),
             None => {
-                art_bounds_by_graphic.insert(graphic, None);
+                art_by_graphic.insert(graphic, None);
             }
         }
     }
@@ -305,11 +447,11 @@ fn cache_client_light_sprite_art_bounds(
     };
     let art_ids = slots.iter().map(|(_, slot)| slot.art_id).collect::<Vec<_>>();
     for ((graphic, slot), rgba) in slots.into_iter().zip(tex_art_cc.get_pixel_data_many(&art_ids)) {
-        let bounds = rgba.and_then(|rgba| art_opaque_rect(&rgba, u32::from(slot.width))).and_then(|rect| {
-            client_light_sprite_art_bounds(rect, slot.upscale_factor, (slot.draw_offset_x, slot.draw_offset_y),
-                slot.logical_height())
+        let art = rgba.and_then(|rgba| {
+            client_light_sprite_art(&rgba, u32::from(slot.width), slot.upscale_factor,
+                (slot.draw_offset_x, slot.draw_offset_y), slot.logical_height())
         });
-        art_bounds_by_graphic.insert(graphic, bounds);
+        art_by_graphic.insert(graphic, art);
     }
 }
 
@@ -323,15 +465,17 @@ fn client_light_sprite_tile_bounds() -> StaticBillboardBounds {
 }
 
 /// The sprite centre `center`, of a sprite `size` large drawing `texture_entry`, as `centre_on_items` places it:
-/// moved so that its light (`light_texture_source_uv`) shows where its item is drawn, `art` its Classic art bounds
-/// (`cache_client_light_sprite_art_bounds`).
+/// moved so that its light (`light_texture_source_uv`) shows where its item is drawn, `art` its Classic art
+/// (`cache_client_light_sprite_art`).
 ///
+/// - **A flame** in the art (`art_flame_centroid`): the light goes on it, whatever the offsets (candles, sconces,
+///   wall torches, candelabras, braziers, fireplaces and hearths, fields of fire). The light textures with a source
+///   of their own, the lamp posts' and the window beams', keep the rules below.
 /// - **Default offsets** (`client_light_sprite_has_default_offsets`), which place nothing: the light goes on the
 ///   art's centre, or without art on the cell centre's, where the light on the ground under the sprite
 ///   (`client_light_sprite_static_light`) lands.
 /// - **The item's own offsets:** the light goes on the nearest point of the art. A light already on its art stays
-///   (window beams, lamp posts, lanterns, most wall torches); one beside it moves onto its edge (the sconces' and
-///   candles' flames). Without art it stays.
+///   (window beams, lamp posts, lanterns); one beside it moves onto its edge. Without art it stays.
 ///
 /// The move is along the sprite's plane, upright through the item's art, so the light shows on the art.
 pub(super) fn client_light_sprite_centred(
@@ -339,7 +483,7 @@ pub(super) fn client_light_sprite_centred(
     size: Vec2,
     key: ClientLightSpriteKey,
     texture_entry: u32,
-    art: Option<StaticBillboardBounds>,
+    art: Option<ClientLightSpriteArt>,
 ) -> Vec3 {
     let origin = client_light_sprite_origin(key.tile_x, key.tile_y, key.z);
     let right = billboard_right();
@@ -348,11 +492,14 @@ pub(super) fn client_light_sprite_centred(
     let source = local + (source_uv - LIGHT_TEXTURE_CENTRE_UV) * size * Vec2::new(1.0, -1.0);
     let box_min = |bounds: StaticBillboardBounds| Vec2::new(bounds.local_min_x, bounds.local_min_y);
     let box_max = |bounds: StaticBillboardBounds| Vec2::new(bounds.local_max_x, bounds.local_max_y);
-    let target = if client_light_sprite_has_default_offsets(center, key) {
-        let bounds = art.unwrap_or_else(client_light_sprite_tile_bounds);
+    let flame = art.and_then(|art| art.flame).filter(|_| source_uv == LIGHT_TEXTURE_CENTRE_UV);
+    let target = if let Some(flame) = flame {
+        flame
+    } else if client_light_sprite_has_default_offsets(center, key) {
+        let bounds = art.map_or_else(client_light_sprite_tile_bounds, |art| art.bounds);
         (box_min(bounds) + box_max(bounds)) * 0.5
-    } else if let Some(bounds) = art {
-        source.clamp(box_min(bounds), box_max(bounds))
+    } else if let Some(art) = art {
+        source.clamp(box_min(art.bounds), box_max(art.bounds))
     } else {
         source
     };
@@ -554,7 +701,7 @@ pub fn sys_collect_client_light_sprites(
                 );
             }
         }
-        cache_client_light_sprite_art_bounds(&mut cache.art_bounds_by_graphic,
+        cache_client_light_sprite_art(&mut cache.art_by_graphic,
             tex_art_cc_res.as_deref().map(|package| package.0.as_ref()), &tilemeta.0, lit_graphics);
     }
 
@@ -643,7 +790,7 @@ pub fn sys_collect_client_light_sprites(
                 client_light_sprite_quad(client_light_sprite_origin(key.tile_x, key.tile_y, key.z), bounds);
             let size = size * light_scales.scale(key.graphic);
             let center = if centre_on_items {
-                let art = cache.art_bounds_by_graphic.get(&key.graphic).copied().flatten();
+                let art = cache.art_by_graphic.get(&key.graphic).copied().flatten();
                 client_light_sprite_centred(center, size, key, entry, art)
             } else {
                 center
@@ -949,10 +1096,22 @@ mod tests {
         client_light_sprite_art_bounds(rect, 1, (-((width / 2) as i16), 0), height as f32)
     }
 
+    /// The art (`ClientLightSpriteArt`) of `classic_art_bounds`, its flame at `flame` in its pixels from its top left.
+    fn classic_art(width: u32, height: u32, rect: [u32; 4], flame: Option<Vec2>) -> Option<ClientLightSpriteArt> {
+        let draw_offset = (-((width / 2) as i16), 0);
+        Some(ClientLightSpriteArt {
+            bounds: classic_art_bounds(width, height, rect)?,
+            flame: flame.map(|point| client_light_sprite_art_point(point, 1, draw_offset, height as f32)),
+        })
+    }
+
+    /// A lamp post's lit glass, where a flame shows in its art.
+    const LAMP_POST_GLASS: Vec2 = Vec2::new(11.0, 12.0);
+
     /// A 256-pixel light sprite of `light` on its item at the lava's cell, placed by `centre_on_items` over the art
     /// `art`: where its light shows, in Classic pixels right of and above the art's anchor (the cell's near vertex),
     /// as the clients place it and as it is placed; the placed centre and the key.
-    fn shown_light(light: &TileMetaItemLight, art: Option<StaticBillboardBounds>)
+    fn shown_light(light: &TileMetaItemLight, art: Option<ClientLightSpriteArt>)
         -> (Vec2, Vec2, Vec3, ClientLightSpriteKey) {
         let (_, center, key) = glow_distance_from_cell(light, LIGHT_GENERIC_SIDE);
         let origin = client_light_sprite_origin(key.tile_x, key.tile_y, key.z);
@@ -973,38 +1132,169 @@ mod tests {
     const PIXEL_EPSILON: f32 = 0.1;
 
     /// Wall sconce 2562 in the Britain keep: the clients show its glow 15.6 pixels left of and 81.3 above its anchor,
-    /// up and to the left of the sconce, whose art spans -2..11 x 21..44. The glow moves onto the art's nearest
-    /// point, its top left corner, by the flame. Candle 2843 likewise, from 69.6 pixels left of its art.
+    /// up and to the left of the sconce, whose art spans -2..11 x 21..44 and whose flame burns at (1.8, 40.8)
+    /// (`a_sconces_flame_is_found`). The glow moves onto the flame. Candle 2843 likewise, from 69.6 pixels left of its
+    /// art, and wall torch 15764, whose offsets put its glow under its art: onto its flame, not its foot.
     #[test]
-    fn a_sconces_light_moves_onto_its_art() {
+    fn a_sconces_light_moves_onto_its_flame() {
         let sconce =
             TileMetaItemLight { tile_id: 2562, light_texture_entry: 8, scale: 1.5, offset_x: -0.5, offset_y: -1.5 };
-        let (clients, placed, center, key) = shown_light(&sconce, classic_art_bounds(44, 44, [20, 0, 33, 23]));
+        let sconce_art = classic_art(44, 44, [20, 0, 33, 23], Some(Vec2::new(23.8, 3.2)));
+        let (clients, placed, center, key) = shown_light(&sconce, sconce_art);
         assert!(clients.abs_diff_eq(Vec2::new(-15.6, 81.3), PIXEL_EPSILON), "{clients}");
-        assert!(placed.abs_diff_eq(Vec2::new(-2.0, 44.0), PIXEL_EPSILON), "{placed}");
+        assert!(placed.abs_diff_eq(Vec2::new(1.8, 40.8), PIXEL_EPSILON), "{placed}");
         // The move stays in the sprite's upright plane.
         let local = center - client_light_sprite_origin(key.tile_x, key.tile_y, key.z);
         let off_plane = local - billboard_right() * local.dot(billboard_right());
         assert!(off_plane.x.abs() < EPSILON && off_plane.z.abs() < EPSILON, "{center}");
         let candle =
             TileMetaItemLight { tile_id: 2843, light_texture_entry: 7, scale: 1.0, offset_x: -2.0, offset_y: -1.0 };
-        let (clients, placed, _, _) = shown_light(&candle, classic_art_bounds(44, 44, [17, 0, 28, 30]));
+        let (clients, placed, _, _) =
+            shown_light(&candle, classic_art(44, 44, [17, 0, 28, 30], Some(Vec2::new(23.1, 2.9))));
         assert!(clients.abs_diff_eq(Vec2::new(-69.6, 54.2), PIXEL_EPSILON), "{clients}");
-        assert!(placed.abs_diff_eq(Vec2::new(-5.0, 44.0), PIXEL_EPSILON), "{placed}");
+        assert!(placed.abs_diff_eq(Vec2::new(1.1, 41.1), PIXEL_EPSILON), "{placed}");
+        let torch =
+            TileMetaItemLight { tile_id: 15764, light_texture_entry: 1, scale: 2.0, offset_x: 0.0, offset_y: -4.5 };
+        let (clients, placed, _, _) =
+            shown_light(&torch, classic_art(44, 88, [23, 1, 40, 33], Some(Vec2::new(26.0, 6.4))));
+        assert!(clients.abs_diff_eq(Vec2::new(7.3, 30.7), PIXEL_EPSILON), "{clients}");
+        assert!(placed.abs_diff_eq(Vec2::new(4.0, 81.6), PIXEL_EPSILON), "{placed}");
+    }
+
+    /// Art without a flame (a lantern's pale glass; here sconce 2562's art without its flame): the light of the
+    /// item's own offsets goes on the nearest point of the art, the sconce's top left corner.
+    #[test]
+    fn without_a_flame_the_light_moves_onto_its_art() {
+        let sconce =
+            TileMetaItemLight { tile_id: 2562, light_texture_entry: 8, scale: 1.5, offset_x: -0.5, offset_y: -1.5 };
+        let (_, placed, _, _) = shown_light(&sconce, classic_art(44, 44, [20, 0, 33, 23], None));
+        assert!(placed.abs_diff_eq(Vec2::new(-2.0, 44.0), PIXEL_EPSILON), "{placed}");
+    }
+
+    /// The default offsets with a flame (fireplace 1141, flame at (13.6, 50) of art -22..22 x 0..167): the light goes
+    /// on the flame, not the art's centre high on the chimney.
+    #[test]
+    fn the_default_offsets_put_the_light_on_the_flame() {
+        let fireplace =
+            TileMetaItemLight { tile_id: 1141, light_texture_entry: 1, scale: 2.0, offset_x: 1.0, offset_y: -4.0 };
+        let art = classic_art(44, 168, [0, 1, 44, 168], Some(Vec2::new(35.6, 118.0)));
+        let (_, placed, _, _) = shown_light(&fireplace, art);
+        assert!(placed.abs_diff_eq(Vec2::new(13.6, 50.0), PIXEL_EPSILON), "{placed}");
+    }
+
+    /// An art `width` x `height` of `background` texels, with `texels` painted over, as RGBA.
+    fn painted_art(width: u32, height: u32, background: [u8; 4], texels: &[((u32, u32), [u8; 3])]) -> Vec<u8> {
+        let mut rgba = background.repeat((width * height) as usize);
+        for &((x, y), [r, g, b]) in texels {
+            let index = (y * width + x) as usize * RGBA_TEXEL_BYTES;
+            rgba[index..index + RGBA_TEXEL_BYTES].copy_from_slice(&[r, g, b, u8::MAX]);
+        }
+        rgba
+    }
+
+    /// Census colours of the legacy art (5-bit channels times 8).
+    const FLAME_ORANGE: [u8; 3] = [240, 136, 0];
+    const FLAME_YELLOW: [u8; 3] = [248, 200, 0];
+    const FLAME_DIM_ORANGE: [u8; 3] = [200, 104, 8];
+    const FLAME_DIM_YELLOW: [u8; 3] = [216, 152, 16];
+    const FLAME_PALE_CAP: [u8; 3] = [224, 216, 144];
+    const BRASS: [u8; 3] = [208, 152, 40];
+    const GOLD: [u8; 3] = [208, 176, 56];
+    const SANDSTONE: [u8; 3] = [240, 192, 136];
+    const LAVA_RED: [u8; 3] = [200, 0, 0];
+    const IRON: [u8; 4] = [40, 48, 64, u8::MAX];
+
+    /// The flames' pure, bright orange and yellow, dim ones too; not their pale cap, brass, gold, sandstone or red.
+    #[test]
+    fn flame_texels_are_pure_bright_orange_and_yellow() {
+        let flame = |[r, g, b]: [u8; 3]| is_flame_texel(&[r, g, b, u8::MAX]);
+        for colour in [FLAME_ORANGE, FLAME_YELLOW, FLAME_DIM_ORANGE, FLAME_DIM_YELLOW] {
+            assert!(flame(colour), "{colour:?}");
+        }
+        for colour in [FLAME_PALE_CAP, BRASS, GOLD, SANDSTONE, LAVA_RED] {
+            assert!(!flame(colour), "{colour:?}");
+        }
+        let [r, g, b] = FLAME_YELLOW;
+        assert!(!is_flame_texel(&[r, g, b, 0]));
+    }
+
+    /// Wall sconce 2562's art (its top 23 rows): a three-texel flame over a pale cap, on an iron and brass sconce. The
+    /// flame burns at (23.8, 3.2) of the art, (1.8, 40.8) from its anchor, as the census finds it.
+    #[test]
+    fn a_sconces_flame_is_found() {
+        const WIDTH: u32 = 44;
+        const HEIGHT: u32 = 23;
+        let mut texels = vec![((23, 2), FLAME_ORANGE), ((23, 3), FLAME_YELLOW), ((24, 3), FLAME_ORANGE)];
+        texels.extend([((23, 4), FLAME_PALE_CAP), ((21, 13), GOLD), ((22, 15), BRASS), ((22, 16), BRASS)]);
+        let mut rgba = painted_art(WIDTH, HEIGHT, [0; 4], &texels);
+        for y in 0..HEIGHT {
+            rgba[(y * WIDTH + 30) as usize * RGBA_TEXEL_BYTES..][..RGBA_TEXEL_BYTES].copy_from_slice(&IRON);
+        }
+        let rect = art_opaque_rect(&rgba, WIDTH).expect("the sconce has texels");
+        let flame = art_flame_centroid(&rgba, WIDTH, 1, rect).expect("the sconce has a flame");
+        assert!(flame.abs_diff_eq(Vec2::new(23.0 + 1.0 / 3.0 + 0.5, 2.0 + 2.0 / 3.0 + 0.5), EPSILON), "{flame}");
+        let art = client_light_sprite_art(&rgba, WIDTH, 1, (-((WIDTH / 2) as i16), 0), 44.0).expect("art");
+        let anchor_right = std::f32::consts::FRAC_1_SQRT_2;
+        let shown = art.flame.map(|flame| {
+            Vec2::new((flame.x - anchor_right) / CC_WORLD_XZ_PER_PIXEL, flame.y / CC_WORLD_Y_PER_PIXEL)
+        });
+        assert!(shown.is_some_and(|shown| shown.abs_diff_eq(Vec2::new(1.8, 40.8), PIXEL_EPSILON)), "{shown:?}");
+        // Upscaled twice, the same flame burns at the same logical point.
+        let upscaled_texels = texels
+            .iter()
+            .flat_map(|&((x, y), colour)| {
+                [(0, 0), (1, 0), (0, 1), (1, 1)].map(|(dx, dy)| ((2 * x + dx, 2 * y + dy), colour))
+            })
+            .collect::<Vec<_>>();
+        let upscaled = painted_art(2 * WIDTH, 2 * HEIGHT, [0; 4], &upscaled_texels);
+        let upscaled_rect = art_opaque_rect(&upscaled, 2 * WIDTH).expect("texels");
+        let upscaled_flame = art_flame_centroid(&upscaled, 2 * WIDTH, 2, upscaled_rect).expect("flame");
+        assert!(upscaled_flame.abs_diff_eq(flame * 2.0, EPSILON), "{upscaled_flame}");
+    }
+
+    /// No flame: a dim animation frame's flame without a hot core (sconce 2564), warm texels in groups under three
+    /// (a pentagram's ring), and flames that fill the art both ways (lava, a campfire's blaze: the item glows
+    /// whole). A candelabra's three flames burn at their centroid.
+    #[test]
+    fn small_dim_or_whole_glows_are_no_flame() {
+        const WIDTH: u32 = 20;
+        const HEIGHT: u32 = 20;
+        let background = [IRON[0], IRON[1], IRON[2], u8::MAX];
+        let flame_of = |texels: &[((u32, u32), [u8; 3])]| {
+            let rgba = painted_art(WIDTH, HEIGHT, background, texels);
+            art_flame_centroid(&rgba, WIDTH, 1, [0, 0, WIDTH, HEIGHT])
+        };
+        let dim = [((5, 2), FLAME_DIM_ORANGE), ((5, 3), FLAME_DIM_YELLOW), ((6, 3), FLAME_DIM_ORANGE)];
+        assert_eq!(flame_of(&dim), None);
+        let ring = [((2, 2), FLAME_ORANGE), ((3, 3), FLAME_YELLOW), ((10, 15), FLAME_ORANGE), ((17, 8), FLAME_YELLOW)];
+        assert_eq!(flame_of(&ring), None);
+        let blaze = (0..HEIGHT)
+            .flat_map(|y| (0..WIDTH).map(move |x| ((x, y), if (x + y) % 2 == 0 { FLAME_ORANGE } else { FLAME_YELLOW })))
+            .filter(|&((x, y), _)| (2..18).contains(&x) && (3..15).contains(&y))
+            .collect::<Vec<_>>();
+        assert_eq!(flame_of(&blaze), None);
+        let candelabra = [2, 9, 16]
+            .into_iter()
+            .flat_map(|x| [((x, 2), FLAME_ORANGE), ((x, 3), FLAME_YELLOW), ((x + 1, 3), FLAME_ORANGE)])
+            .collect::<Vec<_>>();
+        let flame = flame_of(&candelabra).expect("the candelabra has flames");
+        assert!(flame.abs_diff_eq(Vec2::new(9.0 + 1.0 / 3.0 + 0.5, 2.0 + 2.0 / 3.0 + 0.5), EPSILON), "{flame}");
     }
 
     /// Lights the clients already show on their item stay: window 14's beam, whose pane shows on the window, lamp
-    /// post 2848's light, whose lamp shows on the post's top, and a light of the item's own without art.
+    /// post 2848's light, whose lamp shows on the post's top even where its glass shows as a flame (the textures with
+    /// a source of their own keep it), and a light of the item's own without art.
     #[test]
     fn lights_on_their_art_stay() {
         let window =
             TileMetaItemLight { tile_id: 14, light_texture_entry: 3, scale: 1.0, offset_x: -1.35, offset_y: -3.0 };
-        let (clients, placed, _, _) = shown_light(&window, classic_art_bounds(44, 106, [0, 1, 25, 105]));
+        let (clients, placed, _, _) = shown_light(&window, classic_art(44, 106, [0, 1, 25, 105], None));
         assert!(clients.abs_diff_eq(Vec2::new(-9.1, 46.9), PIXEL_EPSILON), "{clients}");
         assert!(placed.abs_diff_eq(clients, EPSILON), "{placed}");
         let lamp_post =
             TileMetaItemLight { tile_id: 2848, light_texture_entry: 2, scale: 2.0, offset_x: 0.0, offset_y: -5.5 };
-        let (clients, placed, _, _) = shown_light(&lamp_post, classic_art_bounds(22, 100, [1, 0, 20, 100]));
+        let lamp_post_art = classic_art(22, 100, [1, 0, 20, 100], Some(LAMP_POST_GLASS));
+        let (clients, placed, _, _) = shown_light(&lamp_post, lamp_post_art);
         assert!(clients.abs_diff_eq(Vec2::new(-2.9, 88.3), PIXEL_EPSILON), "{clients}");
         assert!(placed.abs_diff_eq(clients, EPSILON), "{placed}");
         let (clients, placed, _, _) = shown_light(&LANTERN_LIGHT, None);
@@ -1018,10 +1308,10 @@ mod tests {
         let lava =
             TileMetaItemLight { tile_id: 4846, light_texture_entry: 1, scale: 2.0, offset_x: -5.0, offset_y: -4.0 };
         // Over window 14's art, -22..3 x 1..105.
-        let (clients, placed, _, _) = shown_light(&lava, classic_art_bounds(44, 106, [0, 1, 25, 105]));
+        let (clients, placed, _, _) = shown_light(&lava, classic_art(44, 106, [0, 1, 25, 105], None));
         assert!(clients.abs_diff_eq(Vec2::new(-148.2, 46.2), PIXEL_EPSILON), "{clients}");
         assert!(placed.abs_diff_eq(Vec2::new(-9.5, 53.0), PIXEL_EPSILON), "{placed}");
-        for art in [None, classic_art_bounds(44, 44, [0, 0, 44, 44])] {
+        for art in [None, classic_art(44, 44, [0, 0, 44, 44], None)] {
             let (_, placed, center, key) = shown_light(&lava, art);
             assert!(placed.abs_diff_eq(Vec2::new(0.0, 22.0), PIXEL_EPSILON), "{placed}");
             let cell = client_light_sprite_cell_centre(key.tile_x, key.tile_y, key.z);
