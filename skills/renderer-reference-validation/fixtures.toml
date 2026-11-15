@@ -1,0 +1,344 @@
+# Fixed views of the screenshot regression harness (scripts/visual_harness.py; see SKILL.md, "Regression harness").
+#
+# Read strictly: an unknown key, a missing required key or a value of the wrong type is an error naming this file,
+# the fixture and the allowed names. Every fixture names the defect it guards against in `guards`, with the commit
+# that fixed it when there is one. Add a fixture for every visual bug you fix, named after what it guards.
+#
+# Fixture keys:
+#   name        required; unique, lower-case words joined by "-", saying what the view guards
+#   guards      required; the defect this view caught or would catch
+#   tier        required; "quick" (the core set, a few minutes) or "full" (only with --tier full)
+#   map, x, y, z  required; the player position the view is taken from
+#   tags        optional; words for --only selection (a fixture also matches its own name)
+#   times       optional; preset periods: "morning", "afternoon", "night", "cave" (default: defaults.times)
+#   styles      optional; "classic", "enhanced", "kr", "painterly" (default: defaults.styles)
+#   sources     optional; "art/land" pairs run in every style of the fixture, art "cc" or "ec", land "cc", "ec"
+#               or "kr" (default: defaults.sources, or defaults.quick_sources in the quick tier, per style)
+#   zoom        optional; camera zoom (default: defaults.zoom)
+#   camera      optional; "orthographic" or "perspective" (default: defaults.camera)
+#   tolerance   optional; { pixel_threshold = <0..255>, changed_pct = <percent> }: a pixel counts as changed when
+#               its largest channel difference is above pixel_threshold, and the capture fails the comparison
+#               when more than changed_pct percent of its pixels changed (default: defaults.tolerance)
+#   settings    optional; overrides written into the run's own settings copy, checked against the tree's files:
+#                 world_rendering = { key = value }   world_rendering.toml ("section.key" for its tables)
+#                 graphics = { key = value }          graphics.toml [graphics]
+#                 style = { key = value }             land.toml [<style>] (light_cover, player_floor_rule, ...);
+#                                                     skipped in a style that lacks the key
+#                 preset = { "table.key" = value }    land.toml [<style>.<time>.<table>] of the slot that renders
+#   reference   optional; { path = "...", note = "...", crop = [x, y, width, height] } an original-client
+#               screenshot shown beside the captures in the sheets (crop optional)
+
+[defaults]
+times = ["afternoon"]
+styles = ["classic", "enhanced", "kr", "painterly"]
+zoom = 1.0
+camera = "orthographic"
+# Two quick-tier runs of one binary (2026-11-15) matched exactly in 39 of 40 captures; the 40th, lava at night in
+# Classic, differed by at most 3 levels in 1.1% of its pixels. A threshold of 4 leaves room for that jitter without
+# hiding a real change.
+tolerance = { pixel_threshold = 4, changed_pct = 0.01 }
+
+[defaults.sources]
+classic = ["cc/cc", "ec/ec"]
+enhanced = ["ec/ec"]
+kr = ["ec/kr", "ec/ec"]
+painterly = ["ec/ec"]
+
+[defaults.quick_sources]
+classic = ["cc/cc"]
+enhanced = ["ec/ec"]
+kr = ["ec/kr"]
+painterly = ["ec/ec"]
+
+# ---------------------------------------------------------------------------------------------------------------
+# Britain (map 1, Trammel): floors, roofs and lights
+# ---------------------------------------------------------------------------------------------------------------
+
+[[fixture]]
+name = "britain-house-z30-zview-kr-rule"
+guards = """The player's-floor view on a ground floor (land 30): under KR-like's and UOD-Painterly's KR rule a ceiling \
+hides the 20-z layers above the player's, counted from the player's cell (22ff5f76, 44e4212a), so the thatch roof \
+over land 20 to the east goes whole; a light downstairs must not shine through the floor (e1bd4f81)."""
+tier = "quick"
+tags = ["z-view", "roofs", "lights", "britain"]
+map = 1
+x = 1409
+y = 1596
+z = 30
+times = ["afternoon", "night"]
+settings = { world_rendering = { show_only_player_floor = true } }
+
+[[fixture]]
+name = "britain-house-z50-zview-roof-ridge"
+guards = """The upper floor (z50) of the same house: the z52 thatch ridge is the only tile above the player and the \
+KR client draws the whole roof; a rule that cuts at the player's z leaves a gap in it (kr-roofs)."""
+tier = "full"
+tags = ["z-view", "roofs", "britain"]
+map = 1
+x = 1409
+y = 1596
+z = 50
+settings = { world_rendering = { show_only_player_floor = true } }
+
+[[fixture]]
+name = "britain-house-e20-zview-slate-roof"
+guards = """A ground floor on land 20 under slate and shingle roofs over land 0: the KR client hides them all, eaves \
+included; the rule once kept a z20 eave strip (kr-roofs)."""
+tier = "full"
+tags = ["z-view", "roofs", "britain"]
+map = 1
+x = 1488
+y = 1686
+z = 20
+settings = { world_rendering = { show_only_player_floor = true } }
+
+[[fixture]]
+name = "britain-windows-light-cover"
+guards = """Night windows and sconces of the house at 1407,1596 under the "uod" light cover: a wall's faces lie on \
+its cell's south and east edges, so a sconce lights the wall it hangs on and a window lights both sides (45bdf7f3); \
+the top of a wall stays dark with the floor it is flush with (8ae02484)."""
+tier = "quick"
+tags = ["lights", "light-cover", "britain"]
+map = 1
+x = 1407
+y = 1596
+z = 30
+times = ["night"]
+
+[[fixture]]
+name = "britain-torch-walkway"
+guards = """Torches along the raised walkway at night: the light sprites centred on their items, which the tileart's \
+default offsets throw off (f8a79b2c), and not hidden by the walkway they stand on (keep-lights)."""
+tier = "quick"
+tags = ["lights", "light-centring", "britain"]
+map = 1
+x = 1392
+y = 1567
+z = 43
+times = ["night"]
+
+[[fixture]]
+name = "britain-lamp-post"
+guards = """A free-standing lamp post at night: one centred glow on the ground around the post, no per-tile \
+rectangles (750b7c91, f8a79b2c); also the shop fronts' floors and counters by day (surface-items)."""
+tier = "full"
+tags = ["lights", "light-centring", "surfaces", "britain"]
+map = 1
+x = 1472
+y = 1714
+z = 0
+times = ["afternoon", "night"]
+
+[[fixture]]
+name = "britain-shop-floors"
+guards = """A shop's built floors and counters: built floors keep their art source over the land, statics that \
+continue the land draw in the land's style whatever the art source (f6b7b590, c75982be)."""
+tier = "full"
+tags = ["surfaces", "art-source", "z-view", "britain"]
+map = 1
+x = 1435
+y = 1687
+z = 0
+sources = ["cc/cc", "ec/ec", "ec/kr", "cc/ec", "ec/cc"]
+settings = { world_rendering = { show_only_player_floor = true } }
+
+[[fixture]]
+name = "britain-door-view"
+guards = """The door view east of Britain at night: lights behind walls and multi parts stay covered (9c1a44f2, \
+1235449b) while the open doorway's light still reaches the ground (keep-lights)."""
+tier = "full"
+tags = ["lights", "light-cover", "britain"]
+map = 1
+x = 1675
+y = 1586
+z = 16
+times = ["night"]
+
+[[fixture]]
+name = "britain-candelabra-light-centring"
+guards = """A candelabra on its own tile at night with the player's-floor view: its light sprite stays centred on the \
+item, which the tileart's default offsets throw off (f8a79b2c; the light-centring rig's item views)."""
+tier = "full"
+tags = ["lights", "light-centring", "z-view", "britain"]
+map = 1
+x = 1488
+y = 1460
+z = 20
+times = ["night"]
+settings = { world_rendering = { show_only_player_floor = true } }
+
+[[fixture]]
+name = "keep-z50-zview-lights"
+guards = """Inside the keep at z50 with the player's-floor view at night: lights in hidden layers go with their \
+items and only drawn layers cover a light (16af57a0); lights under the cut floor come back (47151d86)."""
+tier = "quick"
+tags = ["z-view", "lights", "keep"]
+map = 1
+x = 1333
+y = 1597
+z = 50
+times = ["night"]
+settings = { world_rendering = { show_only_player_floor = true } }
+
+[[fixture]]
+name = "keep-z72-zview-lights"
+guards = """The keep's upper floor (z72) with the player's-floor view at night: the floor below and its lights stay \
+drawn, the battlements above are cut (keep-lights, zview-kr2)."""
+tier = "full"
+tags = ["z-view", "lights", "keep"]
+map = 1
+x = 1333
+y = 1597
+z = 72
+times = ["night"]
+settings = { world_rendering = { show_only_player_floor = true } }
+
+[[fixture]]
+name = "keep-inside-roofs-drawn"
+guards = """Inside the keep at z50 without the player's-floor view, at night: the roofs are drawn and every light \
+they cover is hidden (1235449b), the "uod" cover keeping eave-hung lights lit (cbe9cd87, 88f91cf3)."""
+tier = "full"
+tags = ["lights", "light-cover", "keep"]
+map = 1
+x = 1333
+y = 1597
+z = 50
+times = ["night"]
+
+# ---------------------------------------------------------------------------------------------------------------
+# Minoc
+# ---------------------------------------------------------------------------------------------------------------
+
+[[fixture]]
+name = "minoc-river-water-terrain"
+guards = """The Minoc river (map 0): grass, forest, rock and water land with foam statics and a bridge shadow, not \
+water seams (c86a0642); terrain texture variation on by default (085e2b6c) without a visible grid (c437e74c)."""
+tier = "quick"
+tags = ["water", "terrain", "variation", "minoc"]
+map = 0
+x = 2542
+y = 488
+z = -5
+
+[[fixture]]
+name = "minoc-mine-entrance-zview-cave"
+guards = """At the Minoc mine entrance with the player's-floor view: a cave connected to its mouth is drawn over the \
+map, opening the land above (ebfb9843); under the KR rule the land goes whole while the player is below it \
+(22ff5f76)."""
+tier = "full"
+tags = ["caves", "z-view", "minoc"]
+map = 1
+x = 2556
+y = 496
+z = 0
+settings = { world_rendering = { show_only_player_floor = true } }
+
+[[fixture]]
+name = "minoc-mine-inside-zview-cave"
+guards = """Deeper inside the Minoc mine with the player's-floor view: the cave floor and walls drawn over the map, \
+its lights covered as the cave's own items (08348a65, zview-kr2)."""
+tier = "full"
+tags = ["caves", "z-view", "minoc"]
+map = 1
+x = 2578
+y = 476
+z = 0
+settings = { world_rendering = { show_only_player_floor = true } }
+
+[[fixture]]
+name = "minoc-hall-tables-zview"
+guards = """Inside the Minoc log hall (land 15) with the player's-floor view: tables, counters and display cases \
+stand on the floor, not under it (ba902acd); the hall's and wings' roofs are gone as in the KR client."""
+tier = "quick"
+tags = ["surfaces", "tables", "z-view", "roofs", "minoc"]
+map = 1
+x = 2476
+y = 404
+z = 15
+times = ["afternoon", "night"]
+settings = { world_rendering = { show_only_player_floor = true } }
+[fixture.reference]
+path = "/home/claudio/Immagini/Schermate/uokr/Schermata_20261114_072859.png"
+note = "KR client, night, inside the Minoc log hall at the wing corner"
+
+[[fixture]]
+name = "minoc-grass-land-like-statics"
+guards = """Grass statics on land 15 next to the hall's display cases: statics that continue the land draw in the \
+land's style whatever the art source (f6b7b590), the cases on the floor (ba902acd)."""
+tier = "full"
+tags = ["surfaces", "art-source", "minoc"]
+map = 1
+x = 2461
+y = 445
+z = 15
+sources = ["cc/cc", "ec/ec", "ec/kr", "cc/ec", "ec/cc"]
+
+# ---------------------------------------------------------------------------------------------------------------
+# Other towns
+# ---------------------------------------------------------------------------------------------------------------
+
+[[fixture]]
+name = "trinsic-low-roof-zview"
+guards = """Trinsic edge case: boards at z20 over land 0 under a low tile roof (z19-34) on the next cells; the KR \
+client draws the roof of the same layer and hides the land-20 roofs above (kr-roofs)."""
+tier = "full"
+tags = ["z-view", "roofs", "trinsic"]
+map = 1
+x = 1905
+y = 2810
+z = 20
+settings = { world_rendering = { show_only_player_floor = true } }
+
+# ---------------------------------------------------------------------------------------------------------------
+# Terrain and liquids
+# ---------------------------------------------------------------------------------------------------------------
+
+[[fixture]]
+name = "lava-dirt-local-lights"
+guards = """Dirt and lava fields (map 1): lava's local lights reach farther in KR-like and Enhanced through the light \
+scale file (3ad6fc2e); lava and obsidian repetition broken up (eb71a329); Enhanced art draws lava statics from \
+Classic art over Classic land (dfbd8422). Lava is the one noisy view: up to 3 levels between launches in Classic \
+at night."""
+tier = "quick"
+tags = ["lava", "lights", "terrain", "liquids"]
+map = 1
+x = 4622
+y = 3560
+z = 30
+times = ["afternoon", "night"]
+tolerance = { pixel_threshold = 6, changed_pct = 0.05 }
+
+[[fixture]]
+name = "yew-forest-canopy"
+guards = """Yew forest (map 0): dense foliage statics over forest land; the forest canopy's repetition broken up \
+(eb71a329), shadows of foliage in the styles that draw them."""
+tier = "full"
+tags = ["foliage", "terrain", "variation"]
+map = 0
+x = 620
+y = 1020
+z = 0
+
+[[fixture]]
+name = "acid-pools"
+guards = """Acid statics and acid land (map 0, x 6408): Enhanced art draws water, acid and lava statics from their \
+Classic art over Classic land, matching the Classic land liquids (dfbd8422)."""
+tier = "full"
+tags = ["liquids", "acid", "art-source"]
+map = 0
+x = 6408
+y = 360
+z = -40
+sources = ["cc/cc", "ec/ec", "ec/cc"]
+
+[[fixture]]
+name = "swamp-statics"
+guards = """Swamp statics south of Britain (map 0): liquid swamp tiles over land with their shore transitions, in \
+every art source."""
+tier = "full"
+tags = ["liquids", "swamp", "art-source"]
+map = 0
+x = 1208
+y = 2808
+z = 0
+sources = ["cc/cc", "ec/ec", "ec/kr", "ec/cc"]
