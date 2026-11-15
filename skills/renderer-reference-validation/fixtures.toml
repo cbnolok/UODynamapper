@@ -205,6 +205,20 @@ y = 1597
 z = 50
 times = ["night"]
 
+[[fixture]]
+name = "britain-lamp-posts-night-darkness"
+guards = """Britain's lamp posts and shop windows at night, by day as the control: every style dims the world by the \
+server light level (night 10), Classic by the Classic client's light buffer (a grey of (32 - level) / 32 with the \
+light.mul lights added, multiplying the frame) and UOD-Painterly by KR-like's night composite with its own colour, \
+with the lights readable over it (6542a8c1); Classic's night was almost as bright as its afternoon."""
+tier = "quick"
+tags = ["lights", "night", "darkness", "britain"]
+map = 1
+x = 1476
+y = 1706
+z = 0
+times = ["afternoon", "night"]
+
 # ---------------------------------------------------------------------------------------------------------------
 # Minoc
 # ---------------------------------------------------------------------------------------------------------------
@@ -272,6 +286,19 @@ x = 2461
 y = 445
 z = 15
 sources = ["cc/cc", "ec/ec", "ec/kr", "cc/ec", "ec/cc"]
+
+[[fixture]]
+name = "deceit-cave-candles-darkness"
+guards = """A dungeon (Deceit, map 1) under the cave preset: skulls with candles along a corridor; every style dims \
+by the cave light level 26, Classic by the Classic client's rule with its light.mul lights, UOD-Painterly by KR's \
+night composite with its own colour and its light sprites' glow (6542a8c1)."""
+tier = "quick"
+tags = ["lights", "caves", "darkness"]
+map = 1
+x = 5317
+y = 742
+z = 0
+times = ["cave"]
 
 # ---------------------------------------------------------------------------------------------------------------
 # Other towns
