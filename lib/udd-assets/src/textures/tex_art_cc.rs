@@ -339,6 +339,41 @@ impl TexArtCcPackage {
         )
         .ok()
     }
+
+    /// `get_pixel_data` for several slots, unpacking each atlas page they lie on once: `None` for an absent slot or
+    /// one that fails to decode, in the order of `art_ids`.
+    pub fn get_pixel_data_many(&self, art_ids: &[u32]) -> Vec<Option<Vec<u8>>> {
+        let mut by_page = std::collections::BTreeMap::<u32, Vec<usize>>::new();
+        for (index, art_id) in art_ids.iter().enumerate() {
+            if let Some(slot) = self.present_slot(*art_id) {
+                by_page.entry(slot.page_index).or_default().push(index);
+            }
+        }
+        let mut pixels = vec![None; art_ids.len()];
+        for (page_index, indices) in by_page {
+            let (Some(page), Ok(page_bytes)) = (self.pages.get(page_index as usize), self.read_page_bytes(page_index))
+            else {
+                continue;
+            };
+            for index in indices {
+                let Some(slot) = self.present_slot(art_ids[index]) else { continue };
+                pixels[index] = extract_atlas_subrect_rgba(
+                    &page_bytes,
+                    page.pixel_format,
+                    self.atlas_width,
+                    self.atlas_height,
+                    page.used_width,
+                    page.used_height,
+                    slot.x,
+                    slot.y,
+                    slot.width,
+                    slot.height,
+                )
+                .ok();
+            }
+        }
+        pixels
+    }
 }
 
 fn parse_page_manifest(bytes: &[u8]) -> eyre::Result<(u32, u32, u16, AtlasPackingMode, Vec<TexArtCcPageRecord>)> {
