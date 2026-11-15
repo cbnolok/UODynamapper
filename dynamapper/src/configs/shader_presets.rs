@@ -1,7 +1,8 @@
 use crate::{
     core::render::scene::world::art::light_cover::LightCoverRule,
     core::render::scene::world::effects::client_night::{
-        MAX_CLIENT_LIGHT_LEVEL, MAX_NIGHT_OVERLAY_STRENGTH, MIN_NIGHT_OVERLAY_STRENGTH,
+        CLIENT_NIGHT_OVERLAY_STRENGTH, MAX_CLIENT_LIGHT_LEVEL, MAX_NIGHT_OVERLAY_STRENGTH, MIN_NIGHT_OVERLAY_STRENGTH,
+        NIGHT_MAP_MEAN,
     },
     core::render::scene::world::land::mesh_material::{
         local_light_intensity, ClientLocalLights, ClientNightLighting, GlobalLightingUniforms, LandEffectsUniform,
@@ -39,7 +40,7 @@ const RETIRED_KR_TONEMAP_DEFAULT_GAIN: f64 = 0.9;
 const RETIRED_FOURTH_COMPONENT_KEYS: [&str; 3] = ["grade_warm_color", "grade_cool_color", "gloom_params"];
 const THREE_COMPONENTS: usize = 3;
 
-/// The scene multiplier while the clients' night composite does the dimming: the identity.
+/// The scene multiplier of the styles without one of their own (KR-like and Enhanced): the identity.
 pub const CLIENT_LIT_SCENE_MULTIPLIER: f32 = 1.0;
 
 /// The overlay colour's channels are 8-bit values in 0..1.
@@ -48,10 +49,18 @@ const OVERLAY_COLOR_RANGE: std::ops::RangeInclusive<f32> = 0.0..=1.0;
 /// The preset periods, the second part of a preset key such as "kr.morning".
 const PRESET_PERIODS: [&str; 4] = ["morning", "afternoon", "night", "cave"];
 
-/// KR-like and Enhanced dim at night through the clients' composite (`client_lighting`); Classic and UOD-Painterly
-/// through the scene multiplier (`global_lighting`).
-pub fn preset_group_uses_client_lighting(group: &str) -> bool {
-    matches!(group, KR_PRESET_GROUP | ENHANCED_PRESET_GROUP)
+/// Classic and UOD-Painterly keep a scene multiplier of their own (`global_lighting`), their day look; KR-like and
+/// Enhanced have none, as their clients. Every style dims at night and in caves by its light level
+/// (`client_lighting`).
+pub fn preset_group_has_scene_multiplier(group: &str) -> bool {
+    matches!(group, CLASSIC_PRESET_GROUP | PAINTERLY_PRESET_GROUP)
+}
+
+/// KR-like, Enhanced and UOD-Painterly dim through the KR and Enhanced clients' composite and its night map, whose
+/// overlay they set (`client_lighting.overlay_strength` and `overlay_color`); Classic dims by the Classic client's
+/// rule, which has no night map.
+pub fn preset_group_has_night_map(group: &str) -> bool {
+    group != CLASSIC_PRESET_GROUP
 }
 
 /// KR-like, Enhanced and UOD-Painterly draw the clients' light sprites (`art::client_light_sprites`) and choose their
@@ -92,8 +101,9 @@ pub struct UniformState {
     pub lighting: GlobalLightingUniforms, // global: grading, fog, gloom, tonemap, colors
     pub land_lighting: LandLightingUniforms, // land-specific: fill, rim, bent, diffuse intensities
     pub global_lighting: f32,        // scene-wide brightness scaler (maps to scene.global_lighting);
-                                     // CLIENT_LIT_SCENE_MULTIPLIER while `client_lighting` is set
-    /// The clients' night composite: `Some` in KR-like and Enhanced, which have no `global_lighting`.
+                                     // CLIENT_LIT_SCENE_MULTIPLIER in KR-like and Enhanced, which have none
+    /// The light level and the night composite that dims by it, in every style (`None` only for a slot that lacks it,
+    /// which the loads fill or refuse).
     pub client_lighting: Option<ClientNightLighting>,
     /// The KR client's static shadows on or off: `Some` in KR-like only.
     pub client_shadows: Option<bool>,
@@ -181,9 +191,19 @@ impl UniformState {
         LightCoverRule::of_style(self.light_cover, kr_rules)
     }
 
-    /// Whether the active style draws the clients' light sprites rather than light.mul's decals.
+    /// Whether the active style draws the clients' light sprites rather than light.mul's lights.
     pub fn draws_light_sprites(&self) -> bool {
         preset_key_group(&self.active_preset).is_some_and(preset_group_draws_light_sprites)
+    }
+
+    /// Whether the active style dims by the Classic client's rule rather than the KR and Enhanced clients' composite.
+    pub fn dims_by_classic_rule(&self) -> bool {
+        preset_key_group(&self.active_preset).is_some_and(|group| !preset_group_has_night_map(group))
+    }
+
+    /// Whether the active style keeps a scene multiplier of its own (`global_lighting`).
+    pub fn has_scene_multiplier(&self) -> bool {
+        preset_key_group(&self.active_preset).is_some_and(preset_group_has_scene_multiplier)
     }
 
     /// The rule "Show Only the Player's Floor" follows in the active style: its `player_floor_rule`, ClassicUO's in
@@ -268,20 +288,38 @@ fn preset_slots(presets: &LandShaderModePresets) -> Vec<(&'static str, &'static 
         .collect()
 }
 
-/// The out-of-range parts of a client night lighting setting, described for an error or a warning.
-fn client_lighting_range_problems(lighting: &ClientNightLighting) -> Vec<String> {
+/// The problems of a style's night lighting, described for an error or a warning: the night overlay controls missing
+/// where the style dims through the night map or given where it does not (Classic), and the out-of-range values.
+fn client_lighting_problems(lighting: &ClientNightLighting, group: &str) -> Vec<String> {
     let mut problems = Vec::new();
     if lighting.light_level > MAX_CLIENT_LIGHT_LEVEL {
         problems.push(format!("light_level {} is above {MAX_CLIENT_LIGHT_LEVEL}", lighting.light_level));
     }
-    if !(MIN_NIGHT_OVERLAY_STRENGTH..=MAX_NIGHT_OVERLAY_STRENGTH).contains(&lighting.overlay_strength) {
+    let night_map = preset_group_has_night_map(group);
+    for (key, present) in [
+        ("overlay_strength", lighting.overlay_strength.is_some()),
+        ("overlay_color", lighting.overlay_color.is_some()),
+    ] {
+        match (night_map, present) {
+            (true, false) => problems.push(format!("missing `{key}`")),
+            (false, true) => problems.push(format!(
+                "`{key}` is not a setting there: Classic dims by the Classic client's rule, which has no night map"
+            )),
+            _ => {}
+        }
+    }
+    if let Some(strength) =
+        lighting.overlay_strength.filter(|strength| !(MIN_NIGHT_OVERLAY_STRENGTH..=MAX_NIGHT_OVERLAY_STRENGTH).contains(strength))
+    {
         problems.push(format!(
-            "overlay_strength {} is outside {MIN_NIGHT_OVERLAY_STRENGTH}..={MAX_NIGHT_OVERLAY_STRENGTH}",
-            lighting.overlay_strength
+            "overlay_strength {strength} is outside {MIN_NIGHT_OVERLAY_STRENGTH}..={MAX_NIGHT_OVERLAY_STRENGTH}"
         ));
     }
-    if !lighting.overlay_color.to_array().iter().all(|channel| OVERLAY_COLOR_RANGE.contains(channel)) {
-        problems.push(format!("overlay_color {} is outside 0..=1", lighting.overlay_color));
+    if let Some(color) = lighting
+        .overlay_color
+        .filter(|color| !color.to_array().iter().all(|channel| OVERLAY_COLOR_RANGE.contains(channel)))
+    {
+        problems.push(format!("overlay_color {color} is outside 0..=1"));
     }
     problems
 }
@@ -315,19 +353,34 @@ fn clamp_local_lights(local_lights: ClientLocalLights) -> ClientLocalLights {
     }
 }
 
-/// The client night lighting with every value brought into its range.
-fn clamp_client_lighting(lighting: ClientNightLighting) -> ClientNightLighting {
+/// A style's night lighting brought in line with `client_lighting_problems`: the night overlay controls dropped where
+/// the style has no night map and taken from `default` where it has one and they are missing, every value in range.
+fn normalize_client_lighting(
+    lighting: ClientNightLighting,
+    default: Option<&ClientNightLighting>,
+    group: &str,
+) -> ClientNightLighting {
+    let night_map = preset_group_has_night_map(group);
+    let strength = lighting.overlay_strength.or(default.and_then(|default| default.overlay_strength));
+    let color = lighting.overlay_color.or(default.and_then(|default| default.overlay_color));
     ClientNightLighting {
         light_level: lighting.light_level.min(MAX_CLIENT_LIGHT_LEVEL),
-        overlay_strength: lighting.overlay_strength.clamp(MIN_NIGHT_OVERLAY_STRENGTH, MAX_NIGHT_OVERLAY_STRENGTH),
-        overlay_color: lighting
-            .overlay_color
-            .clamp(Vec3::splat(*OVERLAY_COLOR_RANGE.start()), Vec3::splat(*OVERLAY_COLOR_RANGE.end())),
+        overlay_strength: night_map.then(|| {
+            strength
+                .unwrap_or(CLIENT_NIGHT_OVERLAY_STRENGTH)
+                .clamp(MIN_NIGHT_OVERLAY_STRENGTH, MAX_NIGHT_OVERLAY_STRENGTH)
+        }),
+        overlay_color: night_map.then(|| {
+            color
+                .unwrap_or(NIGHT_MAP_MEAN)
+                .clamp(Vec3::splat(*OVERLAY_COLOR_RANGE.start()), Vec3::splat(*OVERLAY_COLOR_RANGE.end()))
+        }),
     }
 }
 
-/// A hand-written preset file must give KR-like and Enhanced `client_lighting` and no `global_lighting`, and the
-/// other groups the reverse, with every value in range; KR-like, alone, `client_shadows`; KR-like and UOD-Painterly,
+/// A hand-written preset file must give every slot `client_lighting`, with the night overlay controls in every group
+/// but Classic and none in Classic, and Classic and UOD-Painterly alone `global_lighting`, with every value in range;
+/// KR-like, alone, `client_shadows`; KR-like and UOD-Painterly,
 /// alone, `player_floor_rule`; KR-like, Enhanced and UOD-Painterly, alone, their `local_lights`, in range; and every
 /// group but Classic, alone, its `land_texture_variation`.
 fn validate_preset_lighting(presets: &LandShaderModePresets) -> eyre::Result<()> {
@@ -364,25 +417,21 @@ fn validate_preset_lighting(presets: &LandShaderModePresets) -> eyre::Result<()>
     }
     for (group, period, slot) in preset_slots(presets) {
         let key = format!("{group}.{period}");
-        if preset_group_uses_client_lighting(group) {
-            if slot.global_lighting.is_some() {
-                problems.push(format!("`{key}.global_lighting` is not a setting there: it dims through `client_lighting`"));
-            }
-            match &slot.client_lighting {
-                None => problems.push(format!("missing `{key}.client_lighting`")),
-                Some(lighting) => problems.extend(
-                    client_lighting_range_problems(lighting)
-                        .into_iter()
-                        .map(|problem| format!("`{key}.client_lighting`: {problem}")),
-                ),
-            }
-        } else {
-            if slot.client_lighting.is_some() {
-                problems.push(format!("`{key}.client_lighting` is not a setting there: it dims through `global_lighting`"));
-            }
-            if slot.global_lighting.is_none() {
-                problems.push(format!("missing `{key}.global_lighting`"));
-            }
+        match (preset_group_has_scene_multiplier(group), slot.global_lighting) {
+            (true, None) => problems.push(format!("missing `{key}.global_lighting`")),
+            (false, Some(_)) => problems.push(format!(
+                "`{key}.global_lighting` is not a setting there: KR-like and Enhanced have no scene multiplier, as \
+                 their clients"
+            )),
+            _ => {}
+        }
+        match &slot.client_lighting {
+            None => problems.push(format!("missing `{key}.client_lighting`")),
+            Some(lighting) => problems.extend(
+                client_lighting_problems(lighting, group)
+                    .into_iter()
+                    .map(|problem| format!("`{key}.client_lighting`: {problem}")),
+            ),
         }
         match (preset_group_uses_client_shadows(group), slot.client_shadows) {
             (true, None) => problems.push(format!("missing `{key}.client_shadows`")),
@@ -399,11 +448,13 @@ fn validate_preset_lighting(presets: &LandShaderModePresets) -> eyre::Result<()>
     }
 }
 
-/// Bring a leniently read land.toml in line with `validate_preset_lighting`: drop the dimming setting a group does not
-/// use, fill the one it lacks from `defaults` and clamp out-of-range values; likewise `client_shadows`,
+/// Bring a leniently read land.toml in line with `validate_preset_lighting`: drop the dimming settings a group does not
+/// use, fill those it lacks from `defaults` and clamp out-of-range values; likewise `client_shadows`,
 /// `local_lights`, `land_texture_variation` and `player_floor_rule`. Returns a warning per change.
 ///
 /// A land.toml saved before the night composite keeps `global_lighting` in KR-like and Enhanced; it is dropped there.
+/// One saved before Classic and UOD-Painterly dimmed by the light level lacks their `client_lighting`: it is filled
+/// from the defaults, and their own `global_lighting` stays, so their nights and caves then dim by both.
 /// One saved before `local_lights` has a `client_lighting.local_light_source` per slot instead: the lenient load drops
 /// it as an unknown key and fills `local_lights` from the defaults.
 fn normalize_cached_preset_lighting(
@@ -462,34 +513,28 @@ fn normalize_cached_preset_lighting(
         let Some(slot) = get_preset_slot_mut(presets, &key) else {
             continue;
         };
-        if preset_group_uses_client_lighting(group) {
-            if slot.global_lighting.take().is_some() {
-                warnings.push(format!(
-                    "{file_name}: `{key}.global_lighting` dropped: this style dims through `client_lighting`"
-                ));
-            }
-            match slot.client_lighting {
-                None => {
-                    slot.client_lighting = default_slot.client_lighting;
-                    warnings.push(format!("{file_name}: missing key `{key}.client_lighting` filled from the default"));
-                }
-                Some(lighting) => {
-                    let problems = client_lighting_range_problems(&lighting);
-                    if !problems.is_empty() {
-                        slot.client_lighting = Some(clamp_client_lighting(lighting));
-                        warnings.push(format!("{file_name}: `{key}.client_lighting` clamped: {}", problems.join("; ")));
-                    }
-                }
-            }
-        } else {
-            if slot.client_lighting.take().is_some() {
-                warnings.push(format!(
-                    "{file_name}: `{key}.client_lighting` dropped: this style dims through `global_lighting`"
-                ));
-            }
+        if preset_group_has_scene_multiplier(group) {
             if slot.global_lighting.is_none() {
                 slot.global_lighting = default_slot.global_lighting;
                 warnings.push(format!("{file_name}: missing key `{key}.global_lighting` filled from the default"));
+            }
+        } else if slot.global_lighting.take().is_some() {
+            warnings.push(format!(
+                "{file_name}: `{key}.global_lighting` dropped: KR-like and Enhanced have no scene multiplier"
+            ));
+        }
+        match slot.client_lighting {
+            None => {
+                slot.client_lighting = default_slot.client_lighting;
+                warnings.push(format!("{file_name}: missing key `{key}.client_lighting` filled from the default"));
+            }
+            Some(lighting) => {
+                let problems = client_lighting_problems(&lighting, group);
+                if !problems.is_empty() {
+                    slot.client_lighting =
+                        Some(normalize_client_lighting(lighting, default_slot.client_lighting.as_ref(), group));
+                    warnings.push(format!("{file_name}: `{key}.client_lighting` fixed: {}", problems.join("; ")));
+                }
             }
         }
         if preset_group_uses_client_shadows(group) {
@@ -733,8 +778,8 @@ pub fn store_active_preset(presets: &mut LandShaderModePresets, u: &UniformState
         slot.effects = u.effects;
         slot.lighting = u.lighting;
         slot.land_lighting = u.land_lighting;
-        // A slot keeps the dimming setting its style uses: the light level, or the scene multiplier.
-        slot.global_lighting = u.client_lighting.is_none().then_some(u.global_lighting);
+        // A slot keeps the scene multiplier only in the styles that have one; every style keeps its light level.
+        slot.global_lighting = u.has_scene_multiplier().then_some(u.global_lighting);
         slot.client_lighting = u.client_lighting;
         slot.client_shadows = u.client_shadows;
         slot.sun = u.sun;
@@ -928,8 +973,8 @@ fn uniform_state_from_presets(source: &LandShaderModePresets) -> UniformState {
     state
 }
 
-/// The scene multiplier a preset slot applies: its `global_lighting`, or the identity where the clients' night
-/// composite dims instead.
+/// The scene multiplier a preset slot applies: its `global_lighting`, or the identity in the styles without one
+/// (KR-like and Enhanced).
 pub fn preset_scene_multiplier(preset: &LandMaterialUniformsPresets) -> f32 {
     preset.global_lighting.unwrap_or(CLIENT_LIT_SCENE_MULTIPLIER)
 }
@@ -1227,29 +1272,81 @@ mod tests {
         assert!(migrate_cached_kr_to_painterly(BUNDLED_LAND_SETTINGS).is_none());
     }
 
+    /// Every style dims by the light levels ServUO sends: KR-like and Enhanced through the client composite at the
+    /// client's night map, UOD-Painterly through the same composite without the night map's blue (strength 0, its own
+    /// colour), and Classic by the Classic client's rule, with no night map. Classic and UOD-Painterly keep their
+    /// afternoon's scene multiplier at night and in caves: the light level alone dims them.
     #[test]
-    fn bundled_presets_dim_kr_like_and_enhanced_through_the_client_night_lighting() {
-        use crate::core::render::scene::world::effects::client_night::NIGHT_MAP_MEAN;
+    fn bundled_presets_dim_every_style_by_the_light_level() {
         const DAY: u32 = 0;
         const NIGHT: u32 = 10;
         const DUNGEON: u32 = 26;
-        const CLIENT_STRENGTH: f32 = 1.0;
+        const PAINTERLY_STRENGTH: f32 = MIN_NIGHT_OVERLAY_STRENGTH;
         for (name, text) in [("shader_presets.toml", BUNDLED_FACTORY_PRESETS), ("land.toml", BUNDLED_LAND_SETTINGS)] {
             let presets = parse(text).expect("bundled");
             validate_preset_lighting(&presets).unwrap_or_else(|error| panic!("{name}: {error}"));
-            for group in [&presets.kr, &presets.enhanced] {
+            for (group, strength) in [
+                (&presets.kr, Some(CLIENT_NIGHT_OVERLAY_STRENGTH)),
+                (&presets.enhanced, Some(CLIENT_NIGHT_OVERLAY_STRENGTH)),
+                (&presets.painterly, Some(PAINTERLY_STRENGTH)),
+                (&presets.classic, None),
+            ] {
                 for (slot, level) in
                     [(&group.morning, DAY), (&group.afternoon, DAY), (&group.night, NIGHT), (&group.cave, DUNGEON)]
                 {
                     let expected = ClientNightLighting {
                         light_level: level,
-                        overlay_strength: CLIENT_STRENGTH,
-                        overlay_color: NIGHT_MAP_MEAN,
+                        overlay_strength: strength,
+                        overlay_color: strength.map(|_| NIGHT_MAP_MEAN),
                     };
                     assert_eq!(slot.client_lighting, Some(expected), "{name}");
                 }
             }
+            for group in [&presets.classic, &presets.painterly] {
+                for slot in [&group.night, &group.cave] {
+                    assert_eq!(slot.global_lighting, group.afternoon.global_lighting, "{name}");
+                }
+            }
         }
+    }
+
+    /// A Classic `client_lighting` with the night overlay controls, or another style's without them, is refused in a
+    /// hand-written file and fixed in a cached one.
+    #[test]
+    fn the_night_overlay_controls_are_every_style_s_but_classic_s() {
+        let bundled = parse(BUNDLED_LAND_SETTINGS).expect("bundled");
+        let mut presets = clone_presets(&bundled);
+        presets.classic.night.client_lighting.as_mut().unwrap().overlay_strength = Some(CLIENT_NIGHT_OVERLAY_STRENGTH);
+        presets.painterly.cave.client_lighting.as_mut().unwrap().overlay_color = None;
+        let error = validate_preset_lighting(&presets).expect_err("refused").to_string();
+        assert!(error.contains("`classic.night.client_lighting`: `overlay_strength` is not a setting there"), "{error}");
+        assert!(error.contains("`painterly.cave.client_lighting`: missing `overlay_color`"), "{error}");
+
+        let warnings = normalize_cached_preset_lighting(&mut presets, &bundled, "land.toml");
+        assert_eq!(warnings.len(), 2, "{warnings:?}");
+        assert_eq!(presets.classic.night.client_lighting, bundled.classic.night.client_lighting);
+        assert_eq!(presets.painterly.cave.client_lighting, bundled.painterly.cave.client_lighting);
+        validate_preset_lighting(&presets).expect("normalized");
+    }
+
+    /// A cached land.toml from before Classic and UOD-Painterly dimmed by the light level: their `client_lighting` is
+    /// filled from the defaults, and their own `global_lighting` stays.
+    #[test]
+    fn cached_classic_and_painterly_presets_take_the_default_light_levels() {
+        const OLD_NIGHT_GLOBAL_LIGHTING: f32 = 0.82;
+        let bundled = parse(BUNDLED_LAND_SETTINGS).expect("bundled");
+        let mut old = clone_presets(&bundled);
+        old.classic.night.client_lighting = None;
+        old.classic.night.global_lighting = Some(OLD_NIGHT_GLOBAL_LIGHTING);
+        old.painterly.cave.client_lighting = None;
+        let text = toml::to_string_pretty(&old).expect("serialize");
+        let mut load = uocf::utils::config_toml::parse_app_state("land.toml", &text, &bundled).expect("lenient load");
+        assert_eq!(load.warnings.len(), 2, "{:?}", load.warnings);
+        assert!(normalize_cached_preset_lighting(&mut load.value, &bundled, "land.toml").is_empty());
+        assert_eq!(load.value.classic.night.client_lighting, bundled.classic.night.client_lighting);
+        assert_eq!(load.value.classic.night.global_lighting, Some(OLD_NIGHT_GLOBAL_LIGHTING));
+        assert_eq!(load.value.painterly.cave.client_lighting, bundled.painterly.cave.client_lighting);
+        validate_preset_lighting(&load.value).expect("complete");
     }
 
     /// KR-like, Enhanced and UOD-Painterly each have one `local_lights` table, the light sprites at their own
@@ -1604,7 +1701,7 @@ mod tests {
         let error = validate_preset_lighting(&presets).expect_err("mixed dimming").to_string();
         for expected in [
             "`kr.night.global_lighting` is not a setting there",
-            "`classic.cave.client_lighting` is not a setting there",
+            "`classic.cave.client_lighting`: `overlay_strength` is not a setting there",
             "missing `enhanced.morning.client_lighting`",
             "missing `painterly.cave.global_lighting`",
         ] {
@@ -1672,7 +1769,7 @@ mod tests {
         let mut old = clone_presets(&bundled);
         old.kr.night.client_lighting = None;
         old.kr.night.global_lighting = Some(0.5);
-        old.enhanced.cave.client_lighting.as_mut().unwrap().overlay_strength = MAX_NIGHT_OVERLAY_STRENGTH * 2.0;
+        old.enhanced.cave.client_lighting.as_mut().unwrap().overlay_strength = Some(MAX_NIGHT_OVERLAY_STRENGTH * 2.0);
         let text = toml::to_string_pretty(&old).expect("serialize");
         // The lenient merge fills the missing client_lighting and keeps global_lighting, a known key.
         let mut load = uocf::utils::config_toml::parse_app_state("land.toml", &text, &bundled).expect("lenient load");
@@ -1682,14 +1779,14 @@ mod tests {
         assert_eq!(
             warnings,
             [
-                "land.toml: `enhanced.cave.client_lighting` clamped: overlay_strength 4 is outside 0..=2",
-                "land.toml: `kr.night.global_lighting` dropped: this style dims through `client_lighting`",
+                "land.toml: `enhanced.cave.client_lighting` fixed: overlay_strength 4 is outside 0..=2",
+                "land.toml: `kr.night.global_lighting` dropped: KR-like and Enhanced have no scene multiplier",
             ]
         );
         assert_eq!(load.value.kr.night.global_lighting, None);
         assert_eq!(load.value.kr.night.client_lighting, bundled.kr.night.client_lighting);
         assert_eq!(
-            load.value.enhanced.cave.client_lighting.map(|lighting| lighting.overlay_strength),
+            load.value.enhanced.cave.client_lighting.and_then(|lighting| lighting.overlay_strength),
             Some(MAX_NIGHT_OVERLAY_STRENGTH)
         );
         validate_preset_lighting(&load.value).expect("normalized");

@@ -594,9 +594,9 @@ pub fn land_ui_system(
             ui.collapsing("Intensities", |ui| {
                 let mut changed = false;
 
-                // Global scene brightness, in the styles without the client night lighting (KR-like and Enhanced
-                // dim through its Light Level instead, under Whole scene).
-                if u.client_lighting.is_none() {
+                // Global scene brightness, in the styles with a scene multiplier of their own (Classic and
+                // UOD-Painterly; every style dims at night through its Light Level, under Whole scene).
+                if u.has_scene_multiplier() {
                     changed |= slider_s(
                         ui,
                         "Global Lighting (Scene Luminosity)",
@@ -890,8 +890,9 @@ pub fn land_ui_system(
                 ui.strong("Terrain");
                 changed |= toggle_u32(ui, "Land Bump Maps", &mut u.effects.enable_normal_maps, tips::NORMAL_MAPS);
                 changed |= slider_s(ui, "Land Bump Strength", &mut u.effects.land_normal_map_strength, 0.0..=1.0, tips::NORMAL_MAP_STRENGTH);
-                // KR-like and Enhanced draw the lights into the night composite's light buffer, not as decals.
-                let decals = u.client_lighting.is_none();
+                // Classic's light.mul lights and UOD-Painterly's light sprite glow; KR-like and Enhanced show their
+                // lights through the night composite alone.
+                let decals = u.has_scene_multiplier();
                 changed |= slider_en(ui, decals, "Static Light Decals", &mut u.effects.static_light_decal_visibility, 0.0..=2.0, tips::STATIC_LIGHT_DECALS);
                 changed |= slider_en(ui, kr_per_pixel, "KR Land Temperature", &mut u.effects.kr_land_temperature_strength, 0.0..=1.5, tips::KR_LAND_TEMPERATURE);
                 changed |= slider_en(ui, kr_per_pixel, "KR Land Relief Shadow", &mut u.effects.kr_land_relief_shadow_strength, 0.0..=1.5, tips::KR_LAND_RELIEF_SHADOW);
@@ -1116,11 +1117,13 @@ fn whole_scene_controls(ui: &mut egui::Ui, u: &mut UniformState, gates: RenderSt
     });
     ui.columns(2, |columns| {
         let ui = &mut columns[0];
-        // KR-like and Enhanced dim as their clients do, through the light level and the night map; the other
-        // styles through the Brightness multiplier.
-        match u.client_lighting.as_mut() {
-            Some(lighting) => changed |= client_night_controls(ui, lighting),
-            None => changed |= slider_s(ui, "Brightness", &mut u.global_lighting, 0.0..=2.0, tips::BRIGHTNESS),
+        // Every style dims as its client does, through the light level (and the night map but in Classic); Classic
+        // and UOD-Painterly also keep their own Brightness multiplier.
+        if u.has_scene_multiplier() {
+            changed |= slider_s(ui, "Brightness", &mut u.global_lighting, 0.0..=2.0, tips::BRIGHTNESS);
+        }
+        if let Some(lighting) = u.client_lighting.as_mut() {
+            changed |= client_night_controls(ui, lighting);
         }
         // KR's filmic tonemap had its own pre-scale here ("KR Tonemap Brightness"); it multiplied
         // exactly like Exposure, so it is folded into Exposure (Advanced -> Intensities).
@@ -1141,20 +1144,25 @@ fn whole_scene_controls(ui: &mut egui::Ui, u: &mut UniformState, gates: RenderSt
     changed
 }
 
-/// The client night lighting of KR-like and Enhanced: light level, night overlay strength and colour.
+/// A style's night lighting: light level, and the night overlay strength and colour where the style has them (all but
+/// Classic).
 fn client_night_controls(ui: &mut egui::Ui, lighting: &mut ClientNightLighting) -> bool {
     let mut changed = ui
         .add(egui::Slider::new(&mut lighting.light_level, 0..=MAX_CLIENT_LIGHT_LEVEL).text("Light Level"))
         .on_hover_text(tips::CLIENT_LIGHT_LEVEL)
         .changed();
-    changed |= slider_s(
-        ui,
-        "Night Overlay Strength",
-        &mut lighting.overlay_strength,
-        MIN_NIGHT_OVERLAY_STRENGTH..=MAX_NIGHT_OVERLAY_STRENGTH,
-        tips::NIGHT_OVERLAY_STRENGTH,
-    );
-    changed |= night_overlay_color(ui, &mut lighting.overlay_color);
+    if let Some(strength) = lighting.overlay_strength.as_mut() {
+        changed |= slider_s(
+            ui,
+            "Night Overlay Strength",
+            strength,
+            MIN_NIGHT_OVERLAY_STRENGTH..=MAX_NIGHT_OVERLAY_STRENGTH,
+            tips::NIGHT_OVERLAY_STRENGTH,
+        );
+    }
+    if let Some(color) = lighting.overlay_color.as_mut() {
+        changed |= night_overlay_color(ui, color);
+    }
     changed
 }
 
@@ -1681,8 +1689,11 @@ mod tests {
     fn client_lit_presets_load_their_lighting_and_a_neutral_scene_multiplier() {
         const NIGHT_LEVEL: u32 = 10;
         const STRENGTH: f32 = 0.5;
-        let lighting =
-            ClientNightLighting { light_level: NIGHT_LEVEL, overlay_strength: STRENGTH, overlay_color: NIGHT_MAP_MEAN };
+        let lighting = ClientNightLighting {
+            light_level: NIGHT_LEVEL,
+            overlay_strength: Some(STRENGTH),
+            overlay_color: Some(NIGHT_MAP_MEAN),
+        };
         let mut presets = mode_presets();
         presets.kr.night = LandMaterialUniformsPresets {
             global_lighting: None,

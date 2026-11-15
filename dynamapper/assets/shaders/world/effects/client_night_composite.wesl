@@ -1,5 +1,6 @@
 // ============================================================================
-// client_night_composite.wesl — The KR and Enhanced clients' night lighting.
+// client_night_composite.wesl — The clients' night lighting: the KR and Enhanced
+// clients' composite, and the Classic client's darkening.
 //
 // Mirrors `client_composite`, `night_overlay`, `light_buffer_over_night` and
 // `night_map_uv` in src/core/render/scene/world/effects/client_night.rs, which
@@ -15,11 +16,18 @@
 // (art/client_shadow.wesl), and scene' = scene * clamp(S + 1 - s, 0, 1),
 // mirroring `client_shadow_factor`. The pass then writes alpha 1.
 //
-// UOD-Painterly runs the pass at full day with no shadow, for its light sprite
-// glow alone (light_glow above 0, `light_sprite_glow`): the light buffer adds
-// over the frame in linear light, as its light.mul decals added,
+// UOD-Painterly runs the same composite (its overlay strength 0 keeps its own
+// colour) and then adds its light sprite glow (light_glow above 0,
+// `light_sprite_glow`): the light buffer over the composited frame in linear
+// light, as its light.mul decals added,
 //
-//     out = scene + decode_srgb(lights.rgb / lights.a) * lights.a * light_glow
+//     out = composited + decode_srgb(lights.rgb / lights.a) * lights.a * light_glow
+//
+// Classic (rule CLASSIC_RULE) dims by the Classic client's rule instead, with
+// no night map: the light buffer holds light.mul's lights added (values over
+// 31), and level is (32 - L) / 32, mirroring `classic_composite`:
+//
+//     out = scene * clamp(level + lights.rgb * 31 / 32, 0, 1)
 //
 // The frame arrives in linear light (the world camera's sRGB main texture);
 // it is encoded to 8-bit values, composited, and decoded back.
@@ -39,6 +47,7 @@ struct ClientNightCompositeUniform {
     // xy: half the view in map repeats, zw: the focus in repeats.
     night_uv: vec4<f32>,
     light_glow: f32,
+    rule: u32,
 }
 
 @group(0) @binding(0) var scene_texture: texture_2d<f32>;
@@ -59,6 +68,10 @@ const OPAQUE_ALPHA: f32 = 1.0;
 const NO_LIGHT_SPRITE_GLOW: f32 = 0.0;
 const LIGHT_COVERAGE_EPSILON: f32 = 1.0 / 1024.0;
 const NIGHT_OVERLAY_LUMA_WEIGHTS: vec3<f32> = vec3<f32>(0.2126, 0.7152, 0.0722);
+// CLASSIC_RULE, CLASSIC_DARKNESS_STEPS and CLASSIC_LIGHT_MUL_MAX in client_night.rs.
+const CLASSIC_RULE: u32 = 1u;
+const CLASSIC_DARKNESS_STEPS: f32 = 32.0;
+const CLASSIC_LIGHT_MUL_MAX: f32 = 31.0;
 
 fn night_overlay(texel: vec3<f32>) -> vec3<f32> {
     let tinted = texel * night.overlay_color_ratio.rgb;
@@ -82,26 +95,12 @@ fn light_sprite_glow(lights: vec4<f32>) -> vec3<f32> {
     return decode_srgb(colour) * lights.a * night.light_glow;
 }
 
-@fragment
-fn fragment(in: FullscreenVertexOutput) -> @location(0) vec4<f32> {
-    let pixel = vec2<i32>(in.position.xy);
-    let scene = textureLoad(scene_texture, pixel, 0);
-    if night.light_glow > NO_LIGHT_SPRITE_GLOW {
-        return vec4<f32>(scene.rgb + light_sprite_glow(light_buffer_texel(pixel)), scene.a);
-    }
-    let shadows = night.shadow_intensity > NO_CLIENT_SHADOW;
-    if night.level >= CLIENT_FULL_DAY_LEVEL && !shadows {
-        return scene;
-    }
-
-    var encoded = encode_srgb(scene.rgb);
-    var alpha = scene.a;
-    if shadows {
-        encoded = encoded * clamp(scene.a + CLIENT_SHADOW_BUFFER_CLEAR - night.shadow_intensity, 0.0, 1.0);
-        alpha = OPAQUE_ALPHA;
-    }
-    if night.level >= CLIENT_FULL_DAY_LEVEL {
-        return vec4<f32>(decode_srgb(encoded), alpha);
+// The frame's 8-bit values after the night composite of the uniform's rule; `lights` the light buffer texel.
+fn night_composite(in: FullscreenVertexOutput, encoded: vec3<f32>, lights: vec4<f32>) -> vec3<f32> {
+    let level = night.level;
+    if night.rule == CLASSIC_RULE {
+        let lit = vec3<f32>(level) + lights.rgb * (CLASSIC_LIGHT_MUL_MAX / CLASSIC_DARKNESS_STEPS);
+        return encoded * clamp(lit, vec3<f32>(0.0), vec3<f32>(1.0));
     }
 
     var night_texel = night.flat_night_color.rgb;
@@ -109,12 +108,37 @@ fn fragment(in: FullscreenVertexOutput) -> @location(0) vec4<f32> {
         let uv = (in.uv * 2.0 - vec2<f32>(1.0)) * night.night_uv.xy + night.night_uv.zw;
         night_texel = textureSampleLevel(night_map, night_map_sampler, uv, 0.0).rgb;
     }
+    let light_buffer_rgb = lights.rgb + night_overlay(night_texel) * (1.0 - lights.a);
+    let multiplier = CLIENT_COMPOSITE_GAIN * (vec3<f32>(CLIENT_AMBIENT_TERM * level) + light_buffer_rgb * (1.0 - level));
+    return clamp(multiplier * encoded, vec3<f32>(0.0), vec3<f32>(1.0));
+}
+
+@fragment
+fn fragment(in: FullscreenVertexOutput) -> @location(0) vec4<f32> {
+    let pixel = vec2<i32>(in.position.xy);
+    let scene = textureLoad(scene_texture, pixel, 0);
+    let shadows = night.shadow_intensity > NO_CLIENT_SHADOW;
+    let glows = night.light_glow > NO_LIGHT_SPRITE_GLOW;
+    if night.level >= CLIENT_FULL_DAY_LEVEL && !shadows && !glows {
+        return scene;
+    }
 
     let lights = light_buffer_texel(pixel);
-    let light_buffer_rgb = lights.rgb + night_overlay(night_texel) * (1.0 - lights.a);
-
-    let level = night.level;
-    let multiplier = CLIENT_COMPOSITE_GAIN * (vec3<f32>(CLIENT_AMBIENT_TERM * level) + light_buffer_rgb * (1.0 - level));
-    let composited = clamp(multiplier * encoded, vec3<f32>(0.0), vec3<f32>(1.0));
-    return vec4<f32>(decode_srgb(composited), alpha);
+    var rgb = scene.rgb;
+    var alpha = scene.a;
+    if night.level < CLIENT_FULL_DAY_LEVEL || shadows {
+        var encoded = encode_srgb(scene.rgb);
+        if shadows {
+            encoded = encoded * clamp(scene.a + CLIENT_SHADOW_BUFFER_CLEAR - night.shadow_intensity, 0.0, 1.0);
+            alpha = OPAQUE_ALPHA;
+        }
+        if night.level < CLIENT_FULL_DAY_LEVEL {
+            encoded = night_composite(in, encoded, lights);
+        }
+        rgb = decode_srgb(encoded);
+    }
+    if glows {
+        rgb = rgb + light_sprite_glow(lights);
+    }
+    return vec4<f32>(rgb, alpha);
 }

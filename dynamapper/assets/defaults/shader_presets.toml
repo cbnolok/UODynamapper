@@ -82,19 +82,30 @@ default_preset = "classic.morning"
 #                    clients' terrain light, azimuth 180 and elevation 45.
 #
 # === [Scene dimming] ===
-# Each group dims one way, required there and refused elsewhere:
-# global_lighting:   Classic and UOD-Painterly. A scene brightness multiplier (1.0 = unchanged). UOD-Painterly
-#                    adds its light sprites' glow over the frame as the multiplier drops below 1, as Classic's
-#                    light.mul decals show: by static_light_decal_visibility and 1 - global_lighting.
-# [client_lighting]: KR-like and Enhanced. Both clients' night composite, per channel on the 8-bit values:
-#                    out = clamp(4 * (0.25 * level + B * (1 - level)) * scene), level = 1 - light_level / 31,
+# Every group dims the night and caves by the server light level ([client_lighting], required everywhere);
+# Classic and UOD-Painterly also keep a brightness of their own (global_lighting, required there and refused in
+# KR-like and Enhanced).
+# global_lighting:   Classic and UOD-Painterly. A scene brightness multiplier (1.0 = unchanged), their look at every
+#                    time of day; the presets keep the afternoon's at night and in caves, where the light level
+#                    dims. UOD-Painterly adds its light sprites' glow over the frame as the scene darkens: by
+#                    static_light_decal_visibility and 1 - global_lighting times the night composite's dimming.
+# [client_lighting]: The night lighting, as each style's client dims. Light level 0 is the identity: lights and
+#                    the night tint vanish by day.
+#                    KR-like, Enhanced and UOD-Painterly: both clients' night composite, per channel on the 8-bit
+#                    values: out = clamp(4 * (0.25 * level + B * (1 - level)) * scene), level = 1 - light_level / 31,
 #                    B = the night map (TerrainTexture.uop entry 21, in tex_aux_ec.uddp) with the lights lerped
-#                    over it. Light level 0 is the identity: lights and the night tint vanish by day.
+#                    over it. UOD-Painterly takes it at overlay_strength 0: the darkness without the map's blue,
+#                    its own grading colouring the night.
+#                    Classic: the Classic client's rule (client.exe 7.0.103: the 0x4F light level handler and the
+#                    light buffer it multiplies the frame by), per channel on the 8-bit values:
+#                    out = scene * clamp((32 - light_level) / 32 + light.mul lights * 31 / 32), the lights adding
+#                    their light.mul value back up to the day's brightness. No night map, so no overlay keys.
 #   light_level:      The server light level, 0 (full day) to 30. ServUO gives about 0 by day, 9 to 10 at night
 #                     and 26 in dungeons.
-#   overlay_strength: The night map's tint, 0 to 2. 1 is the client; 0 replaces the map by its luminance (the
-#                     same darkening without the blue); above 1 pushes the tint further from that luminance.
-#   overlay_color:    The night map's mean colour as [R, G, B] 8-bit values. The default
+#   overlay_strength: Not in Classic. The night map's tint, 0 to 2. 1 is the client; 0 replaces the map by its
+#                     luminance (the same darkening without the blue); above 1 pushes the tint further from that
+#                     luminance.
+#   overlay_color:    Not in Classic. The night map's mean colour as [R, G, B] 8-bit values. The default
 #                     [0.012604, 0.017285, 0.153818] is the map's exact mean, so the map is the client's; another
 #                     colour scales the map's channels by colour / mean, keeping its cloud pattern.
 #
@@ -177,6 +188,11 @@ default_preset = "classic.morning"
 # ------------------
 # Simplified rendering emulating the original UO client.
 # Key features like grading, gloom, specular, and rim lighting are disabled.
+# The night and caves dim as the Classic client does (see [Scene dimming]): light level 10 at night (the world at
+# 22/32 of its brightness) and 26 in caves (6/32), each light's light.mul value taking that darkness back. They keep
+# the afternoon's global_lighting 1.08 and exposure 1.1, so only the light level darkens them; the former 0.82 and
+# 1.2 at night (0.60 and 0.95 in caves) left the night almost as bright as the afternoon. Their tints, ambient and
+# sun stay their own.
 
 [classic]
 light_cover = "uod"
@@ -184,6 +200,8 @@ light_cover = "uod"
 [classic.morning]
 global_lighting = 1.02
 # Morning: soft warm sun, cool ambient.
+[classic.morning.client_lighting]
+light_level = 0
 [classic.morning.effects]
 shading_mode = 0
 normal_mode = 1
@@ -267,6 +285,8 @@ elevation_degrees = 60.50379
 [classic.afternoon]
 global_lighting = 1.08
 # Afternoon: brighter sun, rich colors.
+[classic.afternoon.client_lighting]
+light_level = 0
 [classic.afternoon.effects]
 shading_mode = 0
 normal_mode = 1
@@ -348,8 +368,10 @@ azimuth_degrees = 315.0
 elevation_degrees = 60.50379
 
 [classic.night]
-global_lighting = 0.82
+global_lighting = 1.08
 # Night: cool light, low ambient.
+[classic.night.client_lighting]
+light_level = 10
 [classic.night.effects]
 shading_mode = 0
 normal_mode = 1
@@ -398,7 +420,7 @@ enable_gloom = 0      # Disabled in Classic mode
 light_color = [0.8, 0.88, 1.05]     # Cool blueish moonlight
 tone_curve = 0
 atmosphere_tint = [0.12, 0.16, 0.24]  # Dark blue ambient
-exposure = 1.2
+exposure = 1.1
 ambient_strength = 0.1
 grade_warm_color = [1.08, 0.98, 0.9]
 grade_cool_color = [0.82, 0.95, 1.05]
@@ -431,8 +453,10 @@ azimuth_degrees = 315.0
 elevation_degrees = 60.50379
 
 [classic.cave]
-global_lighting = 0.60
+global_lighting = 1.08
 # Cave: very low ambient, cool tones.
+[classic.cave.client_lighting]
+light_level = 26
 [classic.cave.effects]
 shading_mode = 0
 normal_mode = 1
@@ -481,7 +505,7 @@ enable_gloom = 0      # Disabled in Classic mode
 light_color = [0.9, 0.95, 1.05]     # Faint cool light
 tone_curve = 0
 atmosphere_tint = [0.1, 0.14, 0.2]    # Very dark blue ambient
-exposure = 0.95
+exposure = 1.1
 ambient_strength = 0.06
 grade_warm_color = [1.08, 0.98, 0.9]
 grade_cool_color = [0.82, 0.95, 1.05]
@@ -1279,7 +1303,14 @@ elevation_degrees = 45.0
 # The vibrance (grade_extra's first value) of the morning and afternoon, once 0.38 and 0.45, turned the desert sand
 # orange: 0.21 and 0.25 bring its chroma down by about a quarter while grass and rock change little.
 # Its lights are KR-like's: the clients' light sprites, centred and scaled as in KR-like, under KR-like's light cover
-# rules, glowing over the frame where Classic draws light.mul's decals (see [Scene dimming]).
+# rules, glowing over the frame where Classic draws light.mul's lights (see [Scene dimming]).
+# Its night and caves take KR-like's darkness, the clients' night composite at light level 10 and 26, at
+# overlay_strength 0: without the night map's blue, so its own grading and atmosphere tint colour the night. They keep
+# the afternoon's global_lighting 1.08 (the former 0.76 at night and 0.56 in caves dimmed instead), and their glow
+# fades in by the composite's dimming as it did by those multipliers. Their exposure is 1.3 times the afternoon's
+# (1.24 at night, 1.076 in caves from 0.954 and 0.828): at the afternoon's exposure the composite left its night 0.85 to
+# 0.88 times as bright as KR-like's, each against its own afternoon in the harness views, and its Deceit crypt
+# (5317,742 on map 1) 0.88 times KR-like's; now the night-to-afternoon ratios of the harness views are within 0.03 of KR-like's and the crypt matches.
 # The sprites' pools are larger than the decals were, so two values bring the lit ground back to the decals' mean
 # brightness (luma of the lit ground at the lamp post at 1472,1714 on map 1): light_sprites_intensity 0.85 (1.0 lit the
 # ground 17% more by day), and static_light_decal_visibility 0.2 at night and in caves, the strength of the glow over
@@ -1299,6 +1330,10 @@ centre_on_items = true
 
 [painterly.morning]
 global_lighting = 1.04
+[painterly.morning.client_lighting]
+light_level = 0
+overlay_strength = 0.0
+overlay_color = [0.012604, 0.017285, 0.153818]
 [painterly.morning.effects]
 shading_mode = 2
 normal_mode = 1
@@ -1381,6 +1416,10 @@ elevation_degrees = 60.50379
 
 [painterly.afternoon]
 global_lighting = 1.08
+[painterly.afternoon.client_lighting]
+light_level = 0
+overlay_strength = 0.0
+overlay_color = [0.012604, 0.017285, 0.153818]
 [painterly.afternoon.effects]
 shading_mode = 2
 normal_mode = 1
@@ -1462,7 +1501,11 @@ azimuth_degrees = 315.0
 elevation_degrees = 60.50379
 
 [painterly.night]
-global_lighting = 0.76
+global_lighting = 1.08
+[painterly.night.client_lighting]
+light_level = 10
+overlay_strength = 0.0
+overlay_color = [0.012604, 0.017285, 0.153818]
 [painterly.night.effects]
 shading_mode = 2
 normal_mode = 1
@@ -1511,7 +1554,7 @@ enable_gloom = 1
 light_color = [0.8, 0.88, 1.05]
 tone_curve = 0
 atmosphere_tint = [0.12, 0.16, 0.24]
-exposure = 0.954
+exposure = 1.24
 ambient_strength = 0.12
 grade_warm_color = [1.08, 0.98, 0.9]
 grade_cool_color = [0.82, 0.95, 1.05]
@@ -1544,7 +1587,11 @@ azimuth_degrees = 315.0
 elevation_degrees = 60.50379
 
 [painterly.cave]
-global_lighting = 0.56
+global_lighting = 1.08
+[painterly.cave.client_lighting]
+light_level = 26
+overlay_strength = 0.0
+overlay_color = [0.012604, 0.017285, 0.153818]
 [painterly.cave.effects]
 shading_mode = 2
 normal_mode = 1
@@ -1593,7 +1640,7 @@ enable_gloom = 1
 light_color = [0.9, 0.95, 1.05]
 tone_curve = 0
 atmosphere_tint = [0.1, 0.14, 0.2]
-exposure = 0.828
+exposure = 1.076
 ambient_strength = 0.07
 grade_warm_color = [1.08, 0.98, 0.9]
 grade_cool_color = [0.82, 0.95, 1.05]

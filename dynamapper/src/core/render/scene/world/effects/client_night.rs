@@ -1,4 +1,5 @@
-// world::effects::client_night — the KR and Enhanced clients' night lighting composite.
+// world::effects::client_night — the KR and Enhanced clients' night lighting composite, and the Classic client's
+// darkening by the light level.
 //
 // Both clients darken and tint the finished frame in one LDR pass (UOKR.exe
 // `UOLightingPostProcessEffect::BuildCompositeQuad` 0x0041f5c0 and `UOLightingShader::SetupTextureStages`
@@ -44,17 +45,33 @@
 //
 // so a shadow darkens by at most 0.25 and overlapping shadows do not darken further. The pass writes alpha 1.
 //
-// UOD-Painterly draws the same light sprites but keeps `global_lighting`, with no client composite: the pass adds its
-// light buffer over the frame instead, as its light.mul decals added their glow, at the decals' strength g
-// (`static_lights::light_sprite_glow_strength`, from the scene multiplier and the decal visibility). In linear light,
-// with L.rgb / L.a the lights' 8-bit colour:
+// UOD-Painterly dims through the same composite, with the same light levels and light sprites, but keeps its own
+// colour: its night overlay strength is 0, so the night map darkens by its luminance alone and Painterly's grading
+// and moonlight tint the scene. It keeps its own scene multiplier (`global_lighting`) for its day look, and adds the
+// light buffer over the composited frame as its light.mul decals added their glow, at the decals' strength g
+// (`static_lights::light_sprite_glow_strength`, from the scene multiplier, the composite's dimming
+// `client_night_dimming` and the decal visibility). In linear light, with L.rgb / L.a the lights' 8-bit colour:
 //
-//     out = scene + decode_srgb(L.rgb / L.a) * L.a * g
+//     out = composited + decode_srgb(L.rgb / L.a) * L.a * g
+//
+// Classic dims by the Classic 2D client's rule (client.exe 7.0.103.0, a software renderer on a 16-bit frame), which
+// has no night map. The client keeps a darkness d per pixel and channel, starting at the light level L (the 0x4F
+// packet's, which the handler 0x00465600 takes only below 31, less the personal light level, 0 here); each light
+// subtracts its signed light.mul value v (5 bits, up to 31) from it under its quad, d = max(0, d - v) (the coloured
+// path 0x00448c80 and its per-light colour routines; the monochrome path 0x00458a40 clamps d to 0..31); and each
+// 5-bit channel c of the frame becomes floor(c * (32 - d) / 32) (the table at 0x00788fd8, built by 0x004571b0).
+// ClassicUO renders the same: a light buffer cleared to (32 - L) / 32, the lights added, multiplying the world. Per
+// channel on the 8-bit (sRGB-encoded) values, with the light.mul quads added into the light buffer (as v / 31:
+// world_lights.uddp stores v as (v << 3 | v >> 2) / 255):
+//
+//     out = scene * clamp((32 - L) / 32 + L.rgb * 31 / 32, 0, 1)
+//
+// so a light brightens only what the night darkened, never past the day, and by day (L = 0) nothing changes. The
+// client's 5-bit quantization is not kept.
 //
 // The composite runs after the fog pass (and tonemapping) and before FXAA and SMAA, on the PlayerCamera only, and
-// only while it changes the frame: while the active preset has `client_lighting` (KR-like and Enhanced) and a light
-// level above 0 or KR-like's client shadows, or while UOD-Painterly's glow is above 0 (its scene multiplier below 1).
-// Classic keeps `global_lighting` and its decals, and never runs it.
+// only while it changes the frame: while the active preset's light level is above 0 or KR-like's client shadows are
+// on, or while UOD-Painterly's glow is above 0.
 
 use crate::configs::shader_presets::UniformState;
 use crate::core::render::scene::camera::{PlayerCamera, RenderZoom, ORTHO_SIZE_FACTOR};
@@ -126,17 +143,28 @@ pub const NO_CLIENT_SHADOW: f32 = 0.0;
 /// The shadow buffer outside every shadow (the client clears S to white).
 pub const CLIENT_SHADOW_BUFFER_CLEAR: f32 = 1.0;
 
+// ---- The Classic client's constants -----------------------------------------------
+
+/// The Classic client's darkness steps: a channel c under darkness d becomes floor(c * (32 - d) / 32) (client.exe
+/// 7.0.103.0, the table at 0x00788fd8 built by 0x004571b0), so light level L multiplies the frame by (32 - L) / 32.
+pub const CLASSIC_DARKNESS_STEPS: f32 = 32.0;
+/// light.mul's brightest value (5 bits), which world_lights.uddp stores as 1: a light of value v takes v steps off
+/// the darkness, so a light buffer value of 1 is `CLASSIC_LIGHT_MUL_MAX / CLASSIC_DARKNESS_STEPS` of the multiplier.
+pub const CLASSIC_LIGHT_MUL_MAX: f32 = 31.0;
+
 // ---- Dynamapper's controls ------------------------------------------------------
 
 /// Night overlay strength bounds: 0 removes the tint, 1 is the client, 2 doubles the tint around the luminance.
 pub const MIN_NIGHT_OVERLAY_STRENGTH: f32 = 0.0;
+/// The night overlay strength that leaves the night map as the client draws it.
+pub const CLIENT_NIGHT_OVERLAY_STRENGTH: f32 = 1.0;
 pub const MAX_NIGHT_OVERLAY_STRENGTH: f32 = 2.0;
 /// The luminance the night overlay keeps at strength 0: Rec. 709 weights on the 8-bit values.
 pub const NIGHT_OVERLAY_LUMA_WEIGHTS: Vec3 = Vec3::new(0.2126, 0.7152, 0.0722);
 
 // ---- Rendering --------------------------------------------------------------------
 
-/// The render layer of the light sprites the light buffer camera draws.
+/// The render layer of the lights the light buffer camera draws: the light sprites, and Classic's light.mul quads.
 pub const LIGHT_BUFFER_LAYER: usize = 1;
 /// The light buffer camera renders before the world camera (order 0), which reads its image in the composite.
 const LIGHT_BUFFER_CAMERA_ORDER: isize = -1;
@@ -194,6 +222,27 @@ pub fn client_composite(scene: Vec3, light_buffer: Vec3, level: f32) -> Vec3 {
     (multiplier * scene).clamp(Vec3::ZERO, Vec3::ONE)
 }
 
+/// The Classic client's multiplier for a light level with no light: (32 - L) / 32, 1 at full day.
+pub fn classic_light_level_multiplier(light_level: u32) -> f32 {
+    (CLASSIC_DARKNESS_STEPS - light_level.min(MAX_CLIENT_LIGHT_LEVEL) as f32) / CLASSIC_DARKNESS_STEPS
+}
+
+/// The Classic client's darkening on 8-bit (sRGB-encoded) values: the lights (light.mul's values over 31, summed)
+/// take their steps off the darkness, never past the day.
+pub fn classic_composite(scene: Vec3, lights: Vec3, multiplier: f32) -> Vec3 {
+    let lit = Vec3::splat(multiplier) + lights * (CLASSIC_LIGHT_MUL_MAX / CLASSIC_DARKNESS_STEPS);
+    scene * lit.clamp(Vec3::ZERO, Vec3::ONE)
+}
+
+/// How much the clients' composite dims a scene with no light over the mean night map, after the overlay controls:
+/// the luminance of its multiplier, 1 at full day. UOD-Painterly's glow takes it as the scene multiplier the night
+/// stands in for (`static_lights::light_sprite_glow_strength`).
+pub fn client_night_dimming(lighting: &ClientNightLighting) -> f32 {
+    let uniform = ClientNightCompositeUniform::new(lighting, NO_CLIENT_SHADOW, true, Vec4::ZERO);
+    let night = night_overlay(NIGHT_MAP_MEAN, uniform.overlay_strength, uniform.overlay_color_ratio.truncate());
+    client_composite(Vec3::ONE, light_buffer_over_night(Vec4::ZERO, night), uniform.level).dot(NIGHT_OVERLAY_LUMA_WEIGHTS)
+}
+
 /// Where the night map sits: xy = half the view in map repeats (x across, y down, both with the horizontal world
 /// units per pixel), zw = the focus along screen right and down in repeats, modulo one repeat so f32 keeps it exact.
 pub fn night_map_placement(focus_xz: DVec2, half_view_world: Vec2) -> Vec4 {
@@ -221,7 +270,8 @@ pub fn night_map_uv(screen_uv: Vec2, placement: Vec4) -> Vec2 {
 #[derive(Component, ExtractComponent, Clone, Copy, ShaderType, Default, Debug, PartialEq)]
 #[extract_app(bevy::render::RenderApp)]
 pub struct ClientNightCompositeUniform {
-    /// The client's `level`, `client_light_level_weight`.
+    /// The clients' `level`, `client_light_level_weight`; under the Classic rule the Classic client's multiplier,
+    /// `classic_light_level_multiplier`. 1 at full day either way.
     pub level: f32,
     pub overlay_strength: f32,
     /// 1 when the night map is bound, 0 when the package lacks it and `flat_night_color` stands in.
@@ -234,28 +284,53 @@ pub struct ClientNightCompositeUniform {
     pub flat_night_color: Vec4,
     /// `night_map_placement`.
     pub night_uv: Vec4,
-    /// UOD-Painterly's light sprite glow strength, `light_sprite_glow`; `NO_LIGHT_SPRITE_GLOW` in KR-like and Enhanced.
+    /// UOD-Painterly's light sprite glow strength, `light_sprite_glow`, added after the composite;
+    /// `NO_LIGHT_SPRITE_GLOW` in the other styles.
     pub light_glow: f32,
+    /// `CLASSIC_RULE` under the Classic client's rule (`classic_composite`), `CLIENTS_RULE` under the KR and Enhanced
+    /// clients' composite.
+    pub rule: u32,
 }
+
+/// `ClientNightCompositeUniform::rule`: the KR and Enhanced clients' composite, with the night map.
+pub const CLIENTS_RULE: u32 = 0;
+/// `ClientNightCompositeUniform::rule`: the Classic client's darkening, with light.mul's lights.
+pub const CLASSIC_RULE: u32 = 1;
 
 impl ClientNightCompositeUniform {
     pub fn new(lighting: &ClientNightLighting, shadow_intensity: f32, night_map_present: bool, night_uv: Vec4) -> Self {
         Self {
             level: client_light_level_weight(lighting.light_level),
-            overlay_strength: lighting.overlay_strength,
+            overlay_strength: lighting.overlay_strength_or_client(),
             night_map_present: u32::from(night_map_present),
             shadow_intensity,
-            overlay_color_ratio: (lighting.overlay_color / NIGHT_MAP_MEAN).extend(0.0),
+            overlay_color_ratio: (lighting.overlay_color_or_client() / NIGHT_MAP_MEAN).extend(0.0),
             flat_night_color: NIGHT_MAP_MEAN.extend(0.0),
             night_uv,
             light_glow: NO_LIGHT_SPRITE_GLOW,
+            rule: CLIENTS_RULE,
         }
     }
 
-    /// UOD-Painterly's pass: no client composite (full day, no shadow, so the night map plays no part), only the
-    /// light sprite glow.
+    /// Classic's pass: the Classic client's darkening for the light level, with no night map and no shadow.
+    pub fn classic(light_level: u32) -> Self {
+        Self {
+            level: classic_light_level_multiplier(light_level),
+            shadow_intensity: NO_CLIENT_SHADOW,
+            rule: CLASSIC_RULE,
+            ..Self::default()
+        }
+    }
+
+    /// UOD-Painterly's pass at full day: no composite (no shadow, so the night map plays no part), only the light
+    /// sprite glow.
     pub fn light_glow_only(light_glow: f32) -> Self {
         Self { level: CLIENT_FULL_DAY_LEVEL, shadow_intensity: NO_CLIENT_SHADOW, light_glow, ..Self::default() }
+    }
+
+    /// This pass with UOD-Painterly's light sprite glow added after the composite.
+    pub fn with_light_glow(self, light_glow: f32) -> Self {
+        Self { light_glow, ..self }
     }
 }
 
@@ -337,7 +412,7 @@ impl Plugin for ClientNightLightingPlugin {
 
 // ---- Main world ------------------------------------------------------------------------
 
-/// The active preset's client lighting when it darkens the frame (KR-like and Enhanced below full day).
+/// The active preset's night lighting when it darkens the frame: below full day.
 fn night_lighting(uniform_state: &UniformState) -> Option<ClientNightLighting> {
     uniform_state.client_lighting.filter(|lighting| lighting.light_level != CLIENT_DAY_LIGHT_LEVEL)
 }
@@ -544,6 +619,9 @@ fn sys_sync_client_night_composite(
         return;
     };
     let uniform = match settings {
+        Some((lighting, _)) if uniform_state.dims_by_classic_rule() => {
+            ClientNightCompositeUniform::classic(lighting.light_level)
+        }
         Some((lighting, shadow_intensity)) => {
             let Some(half_view) = half_view_world(camera, projection, zoom.0) else {
                 return;
@@ -557,7 +635,8 @@ fn sys_sync_client_night_composite(
             )
         }
         None => ClientNightCompositeUniform::light_glow_only(light_glow),
-    };
+    }
+    .with_light_glow(light_glow);
     match current {
         Some(mut current) => {
             if *current != uniform {
@@ -751,7 +830,11 @@ mod tests {
     const TABLE: [(u32, Vec3); 2] = [(10, Vec3::new(0.693, 0.699, 0.874)), (26, Vec3::new(0.201, 0.216, 0.671))];
 
     fn client_settings() -> ClientNightLighting {
-        ClientNightLighting { light_level: 0, overlay_strength: 1.0, overlay_color: NIGHT_MAP_MEAN }
+        ClientNightLighting {
+            light_level: CLIENT_DAY_LIGHT_LEVEL,
+            overlay_strength: Some(CLIENT_NIGHT_OVERLAY_STRENGTH),
+            overlay_color: Some(NIGHT_MAP_MEAN),
+        }
     }
 
     /// The composite of a flat grey scene over a night map of uniform colour `night`, divided by the grey: the scene
@@ -798,7 +881,7 @@ mod tests {
         for (light_level, _) in TABLE {
             let client = flat_grey_multiplier(&ClientNightLighting { light_level, ..client_settings() }, NIGHT_MAP_MEAN);
             let untinted = flat_grey_multiplier(
-                &ClientNightLighting { light_level, overlay_strength: MIN_NIGHT_OVERLAY_STRENGTH, ..client_settings() },
+                &ClientNightLighting { light_level, overlay_strength: Some(MIN_NIGHT_OVERLAY_STRENGTH), ..client_settings() },
                 NIGHT_MAP_MEAN,
             );
             assert!((untinted.x - untinted.z).abs() < f32::EPSILON, "{untinted}");
@@ -845,6 +928,87 @@ mod tests {
         assert_eq!(client.light_glow, NO_LIGHT_SPRITE_GLOW);
         let glow_only = ClientNightCompositeUniform::light_glow_only(STRENGTH);
         assert_eq!((glow_only.level, glow_only.shadow_intensity), (CLIENT_FULL_DAY_LEVEL, NO_CLIENT_SHADOW));
+    }
+
+    /// world_lights.uddp's value for a light.mul value v (5 bits): (v << 3 | v >> 2) / 255.
+    fn packed_light_mul_value(value: u8) -> f32 {
+        f32::from((value << 3) | (value >> 2)) / BYTE_MAX
+    }
+
+    /// The Classic client's rule on 8-bit values: a mid grey (128) floor becomes 128 * 22 / 32 = 88 at night (10) and
+    /// 128 * 6 / 32 = 24 in a dungeon (26), and stays by day.
+    #[test]
+    fn classic_rule_darkens_a_mid_grey_floor_by_the_light_level() {
+        const MID_GREY: f32 = 128.0 / BYTE_MAX;
+        const EXPECTED: [(u32, f32); 3] = [(0, 128.0), (10, 88.0), (26, 24.0)];
+        for (light_level, expected) in EXPECTED {
+            let uniform = ClientNightCompositeUniform::classic(light_level);
+            assert_eq!(uniform.rule, CLASSIC_RULE);
+            assert_eq!(uniform.level, (CLASSIC_DARKNESS_STEPS - light_level as f32) / CLASSIC_DARKNESS_STEPS);
+            let out = classic_composite(Vec3::splat(MID_GREY), Vec3::ZERO, uniform.level) * BYTE_MAX;
+            assert!(out.abs_diff_eq(Vec3::splat(expected), 1e-3), "L{light_level}: {out}");
+        }
+        // Past the darkest level the client applies, the multiplier stays at it.
+        assert_eq!(classic_light_level_multiplier(u32::MAX), classic_light_level_multiplier(MAX_CLIENT_LIGHT_LEVEL));
+    }
+
+    /// A light takes its light.mul value off the darkness, per channel, within one 8-bit step of the client's
+    /// (32 - L + v) / 32, and never brightens past the day: by day lights change nothing.
+    #[test]
+    fn classic_lights_take_their_value_off_the_darkness() {
+        const NIGHT: u32 = 10;
+        const STEP: f32 = 1.0 / BYTE_MAX;
+        let night = classic_light_level_multiplier(NIGHT);
+        for value in [1u8, 8, 16, 21] {
+            let lights = Vec3::splat(packed_light_mul_value(value));
+            let client = (CLASSIC_DARKNESS_STEPS - NIGHT as f32 + f32::from(value)) / CLASSIC_DARKNESS_STEPS;
+            let lit = classic_composite(Vec3::ONE, lights, night);
+            assert!(lit.abs_diff_eq(Vec3::splat(client.min(1.0)), STEP), "v{value}: {lit} vs {client}");
+        }
+        // The brightest light and two overlapping lights stop at the day's brightness.
+        let full = Vec3::splat(packed_light_mul_value(CLASSIC_LIGHT_MUL_MAX as u8));
+        assert_eq!(classic_composite(Vec3::splat(0.5), full, night), Vec3::splat(0.5));
+        assert_eq!(classic_composite(Vec3::splat(0.5), full * 2.0, night), Vec3::splat(0.5));
+        // Day: the identity, lights or not.
+        let day = classic_light_level_multiplier(CLIENT_DAY_LIGHT_LEVEL);
+        assert_eq!(classic_composite(Vec3::splat(0.5), full, day), Vec3::splat(0.5));
+        // A coloured light lifts its channels alone.
+        let red = Vec3::new(packed_light_mul_value(16), 0.0, 0.0);
+        let lit = classic_composite(Vec3::ONE, red, night);
+        assert!(lit.x > night && lit.y == night && lit.z == night, "{lit}");
+    }
+
+    /// UOD-Painterly's composite at strength 0 dims by the luminance of the client's multiplier, about as its former
+    /// scene multipliers did at night (0.76) and in caves (0.56, past which its glow is capped).
+    #[test]
+    fn the_night_dimming_is_the_luminance_of_the_client_multiplier() {
+        const LUMA_TOLERANCE: f32 = 1e-5;
+        let painterly = |light_level| ClientNightLighting {
+            light_level,
+            overlay_strength: Some(MIN_NIGHT_OVERLAY_STRENGTH),
+            ..client_settings()
+        };
+        assert_eq!(client_night_dimming(&painterly(CLIENT_DAY_LIGHT_LEVEL)), CLIENT_FULL_DAY_LEVEL);
+        for (light_level, _) in TABLE {
+            let client = flat_grey_multiplier(&ClientNightLighting { light_level, ..client_settings() }, NIGHT_MAP_MEAN);
+            let dimming = client_night_dimming(&painterly(light_level));
+            assert!((dimming - client.dot(NIGHT_OVERLAY_LUMA_WEIGHTS)).abs() < LUMA_TOLERANCE, "L{light_level}");
+        }
+    }
+
+    /// The glow adds after the composite, whatever the rule: the uniform carries both.
+    #[test]
+    fn the_light_glow_rides_on_every_composite() {
+        const STRENGTH: f32 = 0.03;
+        let night = ClientNightLighting { light_level: TABLE[0].0, ..client_settings() };
+        let uniform = ClientNightCompositeUniform::new(&night, NO_CLIENT_SHADOW, true, Vec4::ZERO).with_light_glow(STRENGTH);
+        assert_eq!((uniform.rule, uniform.light_glow), (CLIENTS_RULE, STRENGTH));
+        assert_eq!(uniform.level, client_light_level_weight(night.light_level));
+        // A style without overlay controls (Classic) reads the client's, unused under its rule.
+        let classic = ClientNightLighting { light_level: TABLE[0].0, overlay_strength: None, overlay_color: None };
+        let as_client = ClientNightCompositeUniform::new(&classic, NO_CLIENT_SHADOW, true, Vec4::ZERO);
+        assert_eq!(as_client.overlay_color_ratio.truncate(), Vec3::ONE);
+        assert_eq!(as_client.overlay_strength, CLIENT_NIGHT_OVERLAY_STRENGTH);
     }
 
     #[test]

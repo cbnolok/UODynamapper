@@ -10,6 +10,8 @@ light_cover = "uod"
 [classic.morning]
 global_lighting = 1.02
 # Morning: soft warm sun, cool ambient.
+[classic.morning.client_lighting]
+light_level = 0
 [classic.morning.effects]
 shading_mode = 0
 normal_mode = 1
@@ -93,6 +95,8 @@ elevation_degrees = 60.50379
 [classic.afternoon]
 global_lighting = 1.08
 # Afternoon: brighter sun, rich colors.
+[classic.afternoon.client_lighting]
+light_level = 0
 [classic.afternoon.effects]
 shading_mode = 0
 normal_mode = 1
@@ -174,8 +178,10 @@ azimuth_degrees = 315.0
 elevation_degrees = 60.50379
 
 [classic.night]
-global_lighting = 0.82
+global_lighting = 1.08
 # Night: cool light, low ambient.
+[classic.night.client_lighting]
+light_level = 10
 [classic.night.effects]
 shading_mode = 0
 normal_mode = 1
@@ -224,7 +230,7 @@ enable_gloom = 0      # Disabled in Classic mode
 light_color = [0.8, 0.88, 1.05]     # Cool blueish moonlight
 tone_curve = 0
 atmosphere_tint = [0.12, 0.16, 0.24]  # Dark blue ambient
-exposure = 1.2
+exposure = 1.1
 ambient_strength = 0.1
 grade_warm_color = [1.08, 0.98, 0.9]
 grade_cool_color = [0.82, 0.95, 1.05]
@@ -257,8 +263,10 @@ azimuth_degrees = 315.0
 elevation_degrees = 60.50379
 
 [classic.cave]
-global_lighting = 0.60
+global_lighting = 1.08
 # Cave: very low ambient, cool tones.
+[classic.cave.client_lighting]
+light_level = 26
 [classic.cave.effects]
 shading_mode = 0
 normal_mode = 1
@@ -307,7 +315,7 @@ enable_gloom = 0      # Disabled in Classic mode
 light_color = [0.9, 0.95, 1.05]     # Faint cool light
 tone_curve = 0
 atmosphere_tint = [0.1, 0.14, 0.2]    # Very dark blue ambient
-exposure = 0.95
+exposure = 1.1
 ambient_strength = 0.06
 grade_warm_color = [1.08, 0.98, 0.9]
 grade_cool_color = [0.82, 0.95, 1.05]
@@ -1118,6 +1126,10 @@ centre_on_items = true
 
 [painterly.morning]
 global_lighting = 1.04
+[painterly.morning.client_lighting]
+light_level = 0
+overlay_strength = 0.0
+overlay_color = [0.012604, 0.017285, 0.153818]
 [painterly.morning.effects]
 shading_mode = 2
 normal_mode = 1
@@ -1200,6 +1212,10 @@ elevation_degrees = 60.50379
 
 [painterly.afternoon]
 global_lighting = 1.08
+[painterly.afternoon.client_lighting]
+light_level = 0
+overlay_strength = 0.0
+overlay_color = [0.012604, 0.017285, 0.153818]
 [painterly.afternoon.effects]
 shading_mode = 2
 normal_mode = 1
@@ -1281,7 +1297,11 @@ azimuth_degrees = 315.0
 elevation_degrees = 60.50379
 
 [painterly.night]
-global_lighting = 0.76
+global_lighting = 1.08
+[painterly.night.client_lighting]
+light_level = 10
+overlay_strength = 0.0
+overlay_color = [0.012604, 0.017285, 0.153818]
 [painterly.night.effects]
 shading_mode = 2
 normal_mode = 1
@@ -1330,7 +1350,7 @@ enable_gloom = 1
 light_color = [0.8, 0.88, 1.05]
 tone_curve = 0
 atmosphere_tint = [0.12, 0.16, 0.24]
-exposure = 0.954
+exposure = 1.24
 ambient_strength = 0.12
 grade_warm_color = [1.08, 0.98, 0.9]
 grade_cool_color = [0.82, 0.95, 1.05]
@@ -1363,7 +1383,11 @@ azimuth_degrees = 315.0
 elevation_degrees = 60.50379
 
 [painterly.cave]
-global_lighting = 0.56
+global_lighting = 1.08
+[painterly.cave.client_lighting]
+light_level = 26
+overlay_strength = 0.0
+overlay_color = [0.012604, 0.017285, 0.153818]
 [painterly.cave.effects]
 shading_mode = 2
 normal_mode = 1
@@ -1412,7 +1436,7 @@ enable_gloom = 1
 light_color = [0.9, 0.95, 1.05]
 tone_curve = 0
 atmosphere_tint = [0.1, 0.14, 0.2]
-exposure = 0.828
+exposure = 1.076
 ambient_strength = 0.07
 grade_warm_color = [1.08, 0.98, 0.9]
 grade_cool_color = [0.82, 0.95, 1.05]

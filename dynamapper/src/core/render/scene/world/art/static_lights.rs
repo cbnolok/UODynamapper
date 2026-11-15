@@ -8,11 +8,16 @@ use crate::configs::light_scale::{ItemLightScales, NEUTRAL_LIGHT_SCALE};
 use crate::configs::{settings::Settings, shader_presets::UniformState};
 use crate::console_logger::{self, LogAbout, LogSev};
 use crate::core::multis::{MultiDefinitionsRes, PlacedMultisRes};
-use crate::core::render::scene::world::land::mesh_material::{ClientLocalLightSource, ClientLocalLights};
+use crate::core::render::scene::world::land::mesh_material::{
+    ClientLocalLightSource, ClientLocalLights, ClientNightLighting,
+};
 use crate::core::render::scene::world::land::{
     CHUNK_STORAGE_BLOCKS_DIM, MAP_STORAGE_BLOCK_TILE_DIM,
 };
 use crate::core::render::scene::world::caves::CavesRes;
+use crate::core::render::scene::world::effects::client_night::{
+    client_night_dimming, CLIENT_FULL_DAY_LEVEL, LIGHT_BUFFER_LAYER,
+};
 use crate::core::render::scene::world::z_view::ZViewLimit;
 use crate::core::render::scene::SceneStateData;
 use crate::core::statics::StaticsStoreRes;
@@ -30,10 +35,11 @@ pub(super) const LIGHT_PIXELS_PER_WORLD_TILE: f32 = 44.0;
 pub(super) const STATIC_LIGHT_Y_BIAS: f32 = 0.012;
 const STATIC_LIGHT_ALPHA: f32 = 0.65;
 const STATIC_LIGHT_DEPTH_BIAS: f32 = 128.0;
-/// The render layer of the scene decals: the world camera's, Bevy's default.
-const SCENE_DECAL_LAYER: usize = 0;
-/// The signature's material alpha where no decal draws (KR-like, Enhanced and UOD-Painterly).
+/// The signature's material alpha where no light.mul quad draws (KR-like, Enhanced and UOD-Painterly).
 const NO_DECAL_ALPHA: f32 = 0.0;
+/// The range of `static_light_decal_visibility` (the Static Light Decals slider's).
+const MIN_DECAL_VISIBILITY: f32 = 0.0;
+const MAX_DECAL_VISIBILITY: f32 = 2.0;
 const STATIC_LIGHT_BILLBOARD_RIGHT: Vec3 = Vec3::new(-0.70710677, 0.0, 0.70710677);
 const STATIC_LIGHT_BILLBOARD_UP: Vec3 = Vec3::new(0.4082483, -0.8164966, 0.4082483);
 const STATIC_LIGHT_BILLBOARD_NORMAL: Vec3 = Vec3::new(0.57735026, 0.57735026, 0.57735026);
@@ -60,12 +66,12 @@ enum StaticLightRenderStyle {
     Kr,
 }
 
-/// Where the lights draw. Classic adds these light.mul quads over the scene as decals, faded by the scene multiplier
-/// and the decal visibility. KR-like, Enhanced and UOD-Painterly draw no decal: they draw the clients' own light
-/// sprites into the light buffer (`client_light_sprites`). In KR-like and Enhanced the sprites lerp over the night map
-/// and show only through the client night composite, so only below full day, as in the clients; UOD-Painterly, which
-/// dims through its scene multiplier, adds the light buffer over the frame at the strength its decals had
-/// (`light_sprite_glow_strength`).
+/// Where the lights draw. Classic adds these light.mul quads into the light buffer, where the Classic client's rule
+/// takes them off the night's darkness (`client_night::classic_composite`), times the decal visibility; they show
+/// only below full day, as in the client. KR-like, Enhanced and UOD-Painterly draw no light.mul quad: they draw the
+/// clients' own light sprites into the light buffer (`client_light_sprites`), which lerp over the night map and show
+/// through the client night composite, so only below full day, as in the clients; UOD-Painterly also adds the light
+/// buffer over the frame at the strength its light.mul decals had (`light_sprite_glow_strength`).
 ///
 /// The instances stay collected for every style: the land and static local lights read them. In KR-like, Enhanced
 /// and UOD-Painterly they are, as the style's `local_lights.source` picks (`local_light_source`), the client light
@@ -73,7 +79,7 @@ enum StaticLightRenderStyle {
 /// (`ClientLocalLights::intensity`) scales them in the shaders, through `LandEffectsUniform::local_light_intensity`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub(super) enum StaticLightTarget {
-    SceneDecal,
+    ClassicLightBuffer,
     ClientLightBuffer,
 }
 
@@ -82,7 +88,7 @@ impl StaticLightTarget {
         if uniform_state.draws_light_sprites() {
             Self::ClientLightBuffer
         } else {
-            Self::SceneDecal
+            Self::ClassicLightBuffer
         }
     }
 }
@@ -90,21 +96,42 @@ impl StaticLightTarget {
 /// The light sprites' glow where the frame takes none from the client night composite.
 pub const NO_LIGHT_SPRITE_GLOW: f32 = 0.0;
 
-/// How strongly UOD-Painterly adds its light sprites over the frame (`effects::client_night`): the alpha its light.mul
-/// decals took, from the scene multiplier and the decal visibility (`static_light_decal_alpha`), so it shows only as
-/// `global_lighting` drops below 1, at night and in caves. `NO_LIGHT_SPRITE_GLOW` in the other styles: Classic draws
-/// decals, and KR-like and Enhanced show their sprites through the client night composite.
+/// How strongly UOD-Painterly adds its light sprites over the composited frame (`effects::client_night`): the alpha
+/// its light.mul decals took (`static_light_decal_alpha`), from the decal visibility and the scene multiplier they
+/// faded by, which the night composite now stands in for: Painterly's own `global_lighting` times the composite's
+/// dimming at its light level (`client_night_dimming`). So it shows only at night and in caves, about as strongly as
+/// before the composite (night 10 dims about as the former 0.76, caves 26 reach the cap as the former 0.56 did).
+/// `NO_LIGHT_SPRITE_GLOW` in the other styles: Classic adds its light.mul lights into the light buffer, and KR-like
+/// and Enhanced show their sprites through the composite alone.
 pub fn light_sprite_glow_strength(uniform_state: &UniformState) -> f32 {
     if StaticLightTarget::for_uniform_state(uniform_state) != StaticLightTarget::ClientLightBuffer
-        || uniform_state.client_lighting.is_some()
+        || !uniform_state.has_scene_multiplier()
     {
         return NO_LIGHT_SPRITE_GLOW;
     }
-    static_light_decal_alpha(
+    light_glow_strength(
         uniform_state.global_lighting,
+        uniform_state.client_lighting.as_ref(),
         uniform_state.effects.static_light_decal_visibility,
         StaticLightRenderStyle::from_shading_mode(uniform_state.effects.shading_mode),
     )
+}
+
+/// `light_sprite_glow_strength` of a style with a scene multiplier: the decal alpha at the scene's dimming, the
+/// multiplier times the night composite's at the light level.
+fn light_glow_strength(
+    global_lighting: f32,
+    client_lighting: Option<&ClientNightLighting>,
+    decal_visibility: f32,
+    style: StaticLightRenderStyle,
+) -> f32 {
+    let night_dimming = client_lighting.map_or(CLIENT_FULL_DAY_LEVEL, client_night_dimming);
+    static_light_decal_alpha(global_lighting * night_dimming, decal_visibility, style)
+}
+
+/// How strongly Classic adds its light.mul lights into the light buffer: the decal visibility, 1 the client's.
+fn classic_light_alpha(decal_visibility: f32) -> f32 {
+    decal_visibility.clamp(MIN_DECAL_VISIBILITY, MAX_DECAL_VISIBILITY)
 }
 
 /// The lights the land light decals and the static local lights take: light.mul's in Classic, which has no
@@ -511,9 +538,10 @@ pub fn sys_sync_static_light_entities(
     };
     let render_style = StaticLightRenderStyle::from_shading_mode(uniform_state.effects.shading_mode);
     let target = StaticLightTarget::for_uniform_state(&uniform_state);
-    // Under the "uod" light cover the decals are clipped to what their light reaches, in the transparent pass.
+    // Under the "uod" light cover the lights are clipped to what their light reaches, drawn into the light buffer after
+    // the world view's light scene (`light_scene::render_deferred_light_sprites`), as the light sprites.
     let clip_mode = if uniform_state.light_cover_rule() == LightCoverRule::Uod {
-        LightClipMode::InPlace
+        LightClipMode::Deferred
     } else {
         LightClipMode::Unclipped
     };
@@ -523,14 +551,9 @@ pub fn sys_sync_static_light_entities(
     }
     let no_decals = RenderStaticLightInstances::default();
     let (instances, material_alpha) = match target {
-        StaticLightTarget::SceneDecal => (
-            &*instances,
-            static_light_decal_alpha(
-                uniform_state.global_lighting,
-                uniform_state.effects.static_light_decal_visibility,
-                render_style,
-            ),
-        ),
+        StaticLightTarget::ClassicLightBuffer => {
+            (&*instances, classic_light_alpha(uniform_state.effects.static_light_decal_visibility))
+        }
         // KR-like, Enhanced and UOD-Painterly draw the clients' light sprites instead (`client_light_sprites`).
         StaticLightTarget::ClientLightBuffer => (&no_decals, NO_DECAL_ALPHA),
     };
@@ -607,14 +630,14 @@ pub fn sys_sync_static_light_entities(
         if let Some(entity) = existing_by_key.get(&instance.key) {
             let _ = commands
                 .entity(*entity)
-                .insert((transform, tag, MeshMaterial3d(material_handle), RenderLayers::layer(SCENE_DECAL_LAYER)));
+                .insert((transform, tag, MeshMaterial3d(material_handle), RenderLayers::layer(LIGHT_BUFFER_LAYER)));
         } else {
             commands.spawn((
                 Mesh3d(mesh_handle.clone()),
                 MeshMaterial3d(material_handle),
                 transform,
                 tag,
-                RenderLayers::layer(SCENE_DECAL_LAYER),
+                RenderLayers::layer(LIGHT_BUFFER_LAYER),
                 NoFrustumCulling,
                 instance.key,
                 StaticLightEntity,
@@ -622,7 +645,7 @@ pub fn sys_sync_static_light_entities(
         }
     }
 
-    if target == StaticLightTarget::SceneDecal && *last_alpha != Some(material_alpha) {
+    if target == StaticLightTarget::ClassicLightBuffer && *last_alpha != Some(material_alpha) {
         for handle in material_cache.materials_by_key.values() {
             if let Some(mut material) = materials.get_mut(handle) {
                 material.base.base_color = static_light_base_color(material_alpha);
@@ -702,9 +725,10 @@ fn static_light_material(
         apply_static_light_style(&mut rgba, slot.width as u32, slot.height as u32, render_style);
     }
 
-    // The decals add sRGB colour over the scene.
+    // The lights add into the light buffer with their 8-bit values unchanged (not sRGB): light.mul's value over 31,
+    // which the Classic rule takes off the darkness (`client_night::classic_composite`).
     let (format, base_color, alpha_mode) =
-        (TextureFormat::Rgba8UnormSrgb, static_light_base_color(material_alpha), AlphaMode::Add);
+        (TextureFormat::Rgba8Unorm, static_light_base_color(material_alpha), AlphaMode::Add);
     let mut image = Image::new(
         Extent3d {
             width: slot.width as u32,
@@ -799,7 +823,7 @@ fn static_light_decal_alpha(
     style: StaticLightRenderStyle,
 ) -> f32 {
     let profile = static_light_style_profile(style);
-    let interaction = decal_visibility.clamp(0.0, 2.0);
+    let interaction = decal_visibility.clamp(MIN_DECAL_VISIBILITY, MAX_DECAL_VISIBILITY);
     let alpha = static_light_alpha_for_global_lighting(global_lighting, style) * interaction;
     alpha.clamp(0.0, (profile.daylight_alpha + profile.max_alpha) * 2.0)
 }
@@ -1323,7 +1347,7 @@ mod tests {
         let base = static_light_sync_signature(
             &instances,
             StaticLightRenderStyle::Classic,
-            StaticLightTarget::SceneDecal,
+            StaticLightTarget::ClassicLightBuffer,
             0.5,
             true,
         );
@@ -1332,7 +1356,7 @@ mod tests {
             static_light_sync_signature(
                 &instances,
                 StaticLightRenderStyle::Classic,
-                StaticLightTarget::SceneDecal,
+                StaticLightTarget::ClassicLightBuffer,
                 0.5,
                 true,
             )
@@ -1346,7 +1370,7 @@ mod tests {
             static_light_sync_signature(
                 &moved_instances,
                 StaticLightRenderStyle::Classic,
-                StaticLightTarget::SceneDecal,
+                StaticLightTarget::ClassicLightBuffer,
                 0.5,
                 true,
             )
@@ -1356,7 +1380,7 @@ mod tests {
             static_light_sync_signature(
                 &instances,
                 StaticLightRenderStyle::Enhanced,
-                StaticLightTarget::SceneDecal,
+                StaticLightTarget::ClassicLightBuffer,
                 0.5,
                 true,
             )
@@ -1366,7 +1390,7 @@ mod tests {
             static_light_sync_signature(
                 &instances,
                 StaticLightRenderStyle::Classic,
-                StaticLightTarget::SceneDecal,
+                StaticLightTarget::ClassicLightBuffer,
                 0.25,
                 true,
             )
@@ -1376,7 +1400,7 @@ mod tests {
             static_light_sync_signature(
                 &instances,
                 StaticLightRenderStyle::Classic,
-                StaticLightTarget::SceneDecal,
+                StaticLightTarget::ClassicLightBuffer,
                 0.5,
                 false,
             )
@@ -1478,6 +1502,29 @@ mod tests {
             static_light_decal_alpha(0.0, 0.5, StaticLightRenderStyle::Kr)
                 < static_light_decal_alpha(0.0, 1.0, StaticLightRenderStyle::Kr)
         );
+    }
+
+    /// UOD-Painterly's glow at its presets (global_lighting 1.08, the light level dimming) is the glow its former
+    /// scene multipliers gave (0.76 at night, 0.56 in caves), within 0.002; none by day.
+    #[test]
+    fn painterly_glow_keeps_its_strength_under_the_light_level() {
+        use crate::core::render::scene::world::effects::client_night::NIGHT_MAP_MEAN;
+        const PRESET_GLOBAL_LIGHTING: f32 = 1.08;
+        const NIGHT_VISIBILITY: f32 = 0.2;
+        const TOLERANCE: f32 = 0.002;
+        const PAINTERLY_STRENGTH: f32 = 0.0;
+        let lighting = |light_level| ClientNightLighting {
+            light_level,
+            overlay_strength: Some(PAINTERLY_STRENGTH),
+            overlay_color: Some(NIGHT_MAP_MEAN),
+        };
+        let style = StaticLightRenderStyle::Kr;
+        for (light_level, former_global_lighting) in [(10, 0.76), (26, 0.56)] {
+            let now = light_glow_strength(PRESET_GLOBAL_LIGHTING, Some(&lighting(light_level)), NIGHT_VISIBILITY, style);
+            let before = static_light_decal_alpha(former_global_lighting, NIGHT_VISIBILITY, style);
+            assert!(now > NO_LIGHT_SPRITE_GLOW && (now - before).abs() < TOLERANCE, "L{light_level}: {now} vs {before}");
+        }
+        assert_eq!(light_glow_strength(PRESET_GLOBAL_LIGHTING, Some(&lighting(0)), 1.0, style), NO_LIGHT_SPRITE_GLOW);
     }
 
     #[test]

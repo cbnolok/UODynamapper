@@ -7,6 +7,7 @@ use bevy::{
 use serde::{self, Deserialize, Serialize};
 
 use crate::configs::land_texture_variation::{LandTextureVariationMaterials, LAND_TEXTURE_VARIATION_MASK_WORDS};
+use crate::core::render::scene::world::effects::client_night::{CLIENT_NIGHT_OVERLAY_STRENGTH, NIGHT_MAP_MEAN};
 
 // ------------- Land material/shader data -------------
 pub type LandCustomMeshMaterial = ExtendedMaterial<StandardMaterial, LandMaterialExtension>;
@@ -530,14 +531,16 @@ pub struct LandRenderStylePresetsPerMode {
 #[derive(Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct LandMaterialUniformsPresets {
-    /// Scene brightness multiplier, in Classic and UOD-Painterly only: KR-like and Enhanced dim through
-    /// `client_lighting` instead, as their clients do.
+    /// Scene brightness multiplier, the style's own look, in Classic and UOD-Painterly only: KR-like and Enhanced have
+    /// none, as their clients. Every style dims at night and in caves through `client_lighting`.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub global_lighting: Option<f32>,
     /// The KR client's static shadows (its showShadows option), in KR-like only: `world::art::client_shadow`.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub client_shadows: Option<bool>,
-    /// The clients' night lighting composite, in KR-like and Enhanced only.
+    /// The server light level and the night composite that dims by it, in every style
+    /// (`world::effects::client_night`). Optional so that a file without it is reported: a hand-written file must
+    /// give it, a cached one takes the default's.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub client_lighting: Option<ClientNightLighting>,
     pub effects: LandEffectsUniform,
@@ -546,9 +549,11 @@ pub struct LandMaterialUniformsPresets {
     pub sun: SunAngles,
 }
 
-/// The KR and Enhanced clients' night lighting: the server light level and Dynamapper's night overlay controls.
+/// A style's night lighting: the server light level and, where the style dims through the KR and Enhanced clients'
+/// night map, Dynamapper's night overlay controls.
 ///
-/// The composite and its formulas are in `world::effects::client_night`.
+/// Classic dims by the Classic client's rule, which has no night map, so it has no overlay controls; the other
+/// styles have both. The composites and their formulas are in `world::effects::client_night`.
 #[derive(Clone, Copy, Debug, PartialEq, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct ClientNightLighting {
@@ -556,11 +561,27 @@ pub struct ClientNightLighting {
     /// `client_night::MAX_CLIENT_LIGHT_LEVEL` (darkest).
     pub light_level: u32,
     /// How strongly the night map tints the scene: 1 is the client, 0 dims by the same amount without the tint
-    /// (the map is replaced by its luminance), above 1 tints more.
-    pub overlay_strength: f32,
+    /// (the map is replaced by its luminance), above 1 tints more. `None` in Classic.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub overlay_strength: Option<f32>,
     /// The night map's colour, in 8-bit (sRGB-encoded) values. The default, the map's mean
-    /// (`client_night::NIGHT_MAP_MEAN`), is the client; another colour keeps the map's cloud pattern.
-    pub overlay_color: Vec3,
+    /// (`client_night::NIGHT_MAP_MEAN`), is the client; another colour keeps the map's cloud pattern. `None` in
+    /// Classic.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub overlay_color: Option<Vec3>,
+}
+
+impl ClientNightLighting {
+    /// The night overlay strength the composite takes: the client's where the style has none (Classic, whose
+    /// composite reads no night map).
+    pub fn overlay_strength_or_client(&self) -> f32 {
+        self.overlay_strength.unwrap_or(CLIENT_NIGHT_OVERLAY_STRENGTH)
+    }
+
+    /// The night overlay colour the composite takes: the night map's mean (the client's) where the style has none.
+    pub fn overlay_color_or_client(&self) -> Vec3 {
+        self.overlay_color.unwrap_or(NIGHT_MAP_MEAN)
+    }
 }
 
 /// The intensities of `ClientLocalLights`: 1 is the lights as they come, 0 turns them off.
