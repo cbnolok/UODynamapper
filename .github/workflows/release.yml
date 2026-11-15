@@ -164,103 +164,104 @@ jobs:
           path: artifact/dynamapper-linux-arm64-tools/*
           retention-days: ${{ github.ref_name == 'prereleases' && 7 || 90 }}
 
-  build-linux-musl-x86_64:
-    name: Build (Linux x86_64 musl - static, CLI tools)
-    runs-on: ubuntu-24.04
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@v6
-        with:
-          fetch-depth: 0
+  # The static musl builds are disabled for now (kept below to re-enable: uncomment, and add both jobs back to the publish needs).
+  # build-linux-musl-x86_64:
+  #   name: Build (Linux x86_64 musl - static, CLI tools)
+  #   runs-on: ubuntu-24.04
+  #   steps:
+  #     - name: Checkout repository
+  #       uses: actions/checkout@v6
+  #       with:
+  #         fetch-depth: 0
 
-      - name: Build release binary
-        run: |
-          docker run --rm \
-            -v "$PWD:/work" \
-            -w /work \
-            -e HOST_UID="$(id -u)" \
-            -e HOST_GID="$(id -g)" \
-            -e CARGO_TARGET_DIR=target \
-            -e RUST_NIGHTLY_TOOLCHAIN \
-            alpine:3.24 \
-            sh -eu -c '
-              apk add --no-cache \
-                bash build-base cmake gcc g++ clang mold \
-                curl ca-certificates pkgconf just
-              curl --proto "=https" --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --profile minimal --default-toolchain "$RUST_NIGHTLY_TOOLCHAIN"
-              . "$HOME/.cargo/env"
-              rustup target add x86_64-unknown-linux-musl
-              rustup component add rust-src
-              chmod +x scripts/build/common/rustc_wrapper.sh
-              export CC=gcc
-              export CXX=g++
-              export CARGO_TARGET_X86_64_UNKNOWN_LINUX_MUSL_LINKER=clang
-              just build-linux-musl-release-nightly x86_64-unknown-linux-musl
-              chown -R "$HOST_UID:$HOST_GID" /work/target
-            '
+  #     - name: Build release binary
+  #       run: |
+  #         docker run --rm \
+  #           -v "$PWD:/work" \
+  #           -w /work \
+  #           -e HOST_UID="$(id -u)" \
+  #           -e HOST_GID="$(id -g)" \
+  #           -e CARGO_TARGET_DIR=target \
+  #           -e RUST_NIGHTLY_TOOLCHAIN \
+  #           alpine:3.24 \
+  #           sh -eu -c '
+  #             apk add --no-cache \
+  #               bash build-base cmake gcc g++ clang mold \
+  #               curl ca-certificates pkgconf just
+  #             curl --proto "=https" --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --profile minimal --default-toolchain "$RUST_NIGHTLY_TOOLCHAIN"
+  #             . "$HOME/.cargo/env"
+  #             rustup target add x86_64-unknown-linux-musl
+  #             rustup component add rust-src
+  #             chmod +x scripts/build/common/rustc_wrapper.sh
+  #             export CC=gcc
+  #             export CXX=g++
+  #             export CARGO_TARGET_X86_64_UNKNOWN_LINUX_MUSL_LINKER=clang
+  #             just build-linux-musl-release-nightly x86_64-unknown-linux-musl
+  #             chown -R "$HOST_UID:$HOST_GID" /work/target
+  #           '
 
-      # The build runs in the Alpine container; packaging runs on the runner, which has no just of its own.
-      - name: Install Just
-        uses: extractions/setup-just@v2
+  #     # The build runs in the Alpine container; packaging runs on the runner, which has no just of its own.
+  #     - name: Install Just
+  #       uses: extractions/setup-just@v2
 
-      - name: Package CLI tools
-        run: just package-release-cli dynamapper-linux-x86_64-musl x86_64-unknown-linux-musl
+  #     - name: Package CLI tools
+  #       run: just package-release-cli dynamapper-linux-x86_64-musl x86_64-unknown-linux-musl
 
-      - name: Upload tools artifact
-        uses: actions/upload-artifact@v6
-        with:
-          name: dynamapper-linux-x86_64-musl-tools
-          path: artifact/dynamapper-linux-x86_64-musl-tools/*
-          retention-days: ${{ github.ref_name == 'prereleases' && 7 || 90 }}
+  #     - name: Upload tools artifact
+  #       uses: actions/upload-artifact@v6
+  #       with:
+  #         name: dynamapper-linux-x86_64-musl-tools
+  #         path: artifact/dynamapper-linux-x86_64-musl-tools/*
+  #         retention-days: ${{ github.ref_name == 'prereleases' && 7 || 90 }}
 
-  build-linux-musl-arm64:
-    name: Build (Linux aarch64 musl - static, CLI tools)
-    runs-on: ubuntu-24.04-arm
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@v6
-        with:
-          fetch-depth: 0
+  # build-linux-musl-arm64:
+  #   name: Build (Linux aarch64 musl - static, CLI tools)
+  #   runs-on: ubuntu-24.04-arm
+  #   steps:
+  #     - name: Checkout repository
+  #       uses: actions/checkout@v6
+  #       with:
+  #         fetch-depth: 0
 
-      - name: Build release binary
-        run: |
-          docker run --rm \
-            -v "$PWD:/work" \
-            -w /work \
-            -e HOST_UID="$(id -u)" \
-            -e HOST_GID="$(id -g)" \
-            -e CARGO_TARGET_DIR=target \
-            -e RUST_NIGHTLY_TOOLCHAIN \
-            alpine:3.24 \
-            sh -eu -c '
-              apk add --no-cache \
-                bash build-base cmake gcc g++ clang mold \
-                curl ca-certificates pkgconf just
-              curl --proto "=https" --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --profile minimal --default-toolchain "$RUST_NIGHTLY_TOOLCHAIN"
-              . "$HOME/.cargo/env"
-              rustup target add aarch64-unknown-linux-musl
-              rustup component add rust-src
-              chmod +x scripts/build/common/rustc_wrapper.sh
-              export CC=gcc
-              export CXX=g++
-              export CARGO_TARGET_AARCH64_UNKNOWN_LINUX_MUSL_LINKER=clang
-              just build-linux-musl-release-nightly aarch64-unknown-linux-musl
-              chown -R "$HOST_UID:$HOST_GID" /work/target
-            '
+  #     - name: Build release binary
+  #       run: |
+  #         docker run --rm \
+  #           -v "$PWD:/work" \
+  #           -w /work \
+  #           -e HOST_UID="$(id -u)" \
+  #           -e HOST_GID="$(id -g)" \
+  #           -e CARGO_TARGET_DIR=target \
+  #           -e RUST_NIGHTLY_TOOLCHAIN \
+  #           alpine:3.24 \
+  #           sh -eu -c '
+  #             apk add --no-cache \
+  #               bash build-base cmake gcc g++ clang mold \
+  #               curl ca-certificates pkgconf just
+  #             curl --proto "=https" --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --profile minimal --default-toolchain "$RUST_NIGHTLY_TOOLCHAIN"
+  #             . "$HOME/.cargo/env"
+  #             rustup target add aarch64-unknown-linux-musl
+  #             rustup component add rust-src
+  #             chmod +x scripts/build/common/rustc_wrapper.sh
+  #             export CC=gcc
+  #             export CXX=g++
+  #             export CARGO_TARGET_AARCH64_UNKNOWN_LINUX_MUSL_LINKER=clang
+  #             just build-linux-musl-release-nightly aarch64-unknown-linux-musl
+  #             chown -R "$HOST_UID:$HOST_GID" /work/target
+  #           '
 
-      # The build runs in the Alpine container; packaging runs on the runner, which has no just of its own.
-      - name: Install Just
-        uses: extractions/setup-just@v2
+  #     # The build runs in the Alpine container; packaging runs on the runner, which has no just of its own.
+  #     - name: Install Just
+  #       uses: extractions/setup-just@v2
 
-      - name: Package CLI tools
-        run: just package-release-cli dynamapper-linux-arm64-musl aarch64-unknown-linux-musl
+  #     - name: Package CLI tools
+  #       run: just package-release-cli dynamapper-linux-arm64-musl aarch64-unknown-linux-musl
 
-      - name: Upload tools artifact
-        uses: actions/upload-artifact@v6
-        with:
-          name: dynamapper-linux-arm64-musl-tools
-          path: artifact/dynamapper-linux-arm64-musl-tools/*
-          retention-days: ${{ github.ref_name == 'prereleases' && 7 || 90 }}
+  #     - name: Upload tools artifact
+  #       uses: actions/upload-artifact@v6
+  #       with:
+  #         name: dynamapper-linux-arm64-musl-tools
+  #         path: artifact/dynamapper-linux-arm64-musl-tools/*
+  #         retention-days: ${{ github.ref_name == 'prereleases' && 7 || 90 }}
 
   build-windows:
     name: Build (Windows x86_64)
@@ -541,7 +542,7 @@ jobs:
 
   publish:
     name: Publish Release
-    needs: [build-linux, build-linux-arm64, build-linux-musl-x86_64, build-linux-musl-arm64, build-windows, build-windows-clang, build-windows-arm64, build-macos-x86_64, build-macos-arm64]
+    needs: [build-linux, build-linux-arm64, build-windows, build-windows-clang, build-windows-arm64, build-macos-x86_64, build-macos-arm64]
     runs-on: ubuntu-24.04
     if: (github.event_name == 'workflow_dispatch' && inputs.publish) || github.ref_type == 'tag' || github.ref_name == 'main'
     permissions:
@@ -552,11 +553,13 @@ jobs:
         with:
           path: artifacts
 
+      # Windows ships as .7z, Linux and macOS as .tar.xz (xz compresses these builds smaller than zstd or zip; bsdtar
+      # and Archive Utility on macOS both open it). Both keep the single top-level folder.
       - name: Create release archives
         shell: bash
         run: |
           sudo apt-get update -qq
-          sudo apt-get install -y --no-install-recommends zip
+          sudo apt-get install -y --no-install-recommends p7zip-full xz-utils
           mkdir -p release-assets
           shopt -s nullglob
 
@@ -568,9 +571,16 @@ jobs:
             for binary in "$artifact_dir"/UODynamapper/dynamapper "$artifact_dir"/UODynamapper-tools/bin/*; do
               if [[ -f "$binary" ]]; then chmod +x "$binary"; fi
             done
+            archive="$PWD/release-assets/${artifact_name}"
             (
               cd "$artifact_dir"
-              zip -r "../../release-assets/${artifact_name}.zip" ./*
+              case "$artifact_name" in
+                dynamapper-windows-*)
+                  7z a -t7z -mx=9 -m0=lzma2 -ms=on "${archive}.7z" ./* ;;
+                *)
+                  # -9e: maximum xz preset; --threads=0 uses every core. Owner and group are not recorded.
+                  tar --owner=0 --group=0 --numeric-owner -cf - ./* | xz -9e --threads=0 > "${archive}.tar.xz" ;;
+              esac
             )
           done
 
@@ -600,7 +610,9 @@ jobs:
           tag_name: ${{ steps.tag_info.outputs.tag }}
           name: ${{ steps.tag_info.outputs.name }}
           prerelease: ${{ steps.tag_info.outputs.is_prerelease == 'true' }}
-          files: release-assets/*.zip
+          files: |
+            release-assets/*.7z
+            release-assets/*.tar.xz
           overwrite_files: true
           generate_release_notes: ${{ steps.tag_info.outputs.is_prerelease == 'false' }}
           body: |
