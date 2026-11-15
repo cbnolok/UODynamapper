@@ -174,8 +174,6 @@ pub struct StaticLightInstance {
     /// Under `LightCover::Uod`, the z of the lowest floor or roof over the light (`static_light_ceiling_z`), which its
     /// glow does not light walls from; `None` under the other covers and with nothing over it.
     pub ceiling: Option<i8>,
-    /// Outside the player's cave, its decal drawn darkened (caves.rs `CaveSurroundings::Dimmed`).
-    pub cave_outside: bool,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Component)]
@@ -263,7 +261,6 @@ fn static_light_sync_signature(
         }
         static_light_sync_hash_u32(&mut hash, u32::from(instance.ceiling.is_some()));
         static_light_sync_hash_u32(&mut hash, u32::from(instance.ceiling.unwrap_or_default() as u8));
-        static_light_sync_hash_u32(&mut hash, u32::from(instance.cave_outside));
     }
 
     StaticLightSyncSignature {
@@ -438,7 +435,8 @@ pub fn sys_collect_visible_static_lights(
                         hue_id: tile.hue,
                     };
                     let land_z = |x: u32, y: u32| static_land_z(map_planes.as_deref(), map_id, (x as i32, y as i32));
-                    // The player's cave hides it, or draws it whatever the view's limit (caves.rs).
+                    // The player's cave hides it, or draws it whatever the view's limit (caves.rs). Outside it the
+                    // light is not darkened itself: the light buffer multiplies the scene, darkened already.
                     let Some(cave_light) = caves.light_view(tile_x, tile_y, tile.z, meta.flags, meta.height,
                         || land_z(tile_x, tile_y).map(i32::from), z_view.0.max_z) else {
                         continue;
@@ -495,7 +493,6 @@ pub fn sys_collect_visible_static_lights(
                         width_world: slot.width as f32 / LIGHT_PIXELS_PER_WORLD_TILE * scale,
                         height_world: slot.height as f32 / LIGHT_PIXELS_PER_WORLD_TILE * scale,
                         ceiling,
-                        cave_outside: cave_light.outside,
                     });
                 }
             }
@@ -624,7 +621,7 @@ pub fn sys_sync_static_light_entities(
             .with_rotation(static_light_billboard_rotation())
             .with_scale(Vec3::new(instance.width_world, instance.height_world, 1.0));
         let key = instance.key;
-        let tag = MeshTag::new(light_clip_tag(key.tile_x, key.tile_y, key.z, instance.ceiling, instance.cave_outside,
+        let tag = MeshTag::new(light_clip_tag(key.tile_x, key.tile_y, key.z, instance.ceiling, false,
             transform.translation));
 
         if let Some(entity) = existing_by_key.get(&instance.key) {
@@ -1337,7 +1334,6 @@ mod tests {
             width_world: 2.0,
             height_world: 3.0,
             ceiling: None,
-            cave_outside: false,
         }
     }
 

@@ -554,8 +554,6 @@ pub(super) fn client_light_sprite_static_light(sprite: &ClientLightSpriteInstanc
         width_world: sprite.size.x / CC_WORLD_XZ_PER_PIXEL / LIGHT_PIXELS_PER_WORLD_TILE,
         height_world: sprite.size.y / CC_WORLD_Y_PER_PIXEL / LIGHT_PIXELS_PER_WORLD_TILE,
         ceiling: sprite.ceiling,
-        // No decal draws it.
-        cave_outside: false,
     }
 }
 

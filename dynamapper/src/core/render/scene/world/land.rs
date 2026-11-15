@@ -520,7 +520,6 @@ mod tests {
             width_world,
             height_world: width_world,
             ceiling: None,
-            cave_outside: false,
         }
     }
 
