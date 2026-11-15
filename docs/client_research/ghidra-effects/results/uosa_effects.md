@@ -1,6 +1,6 @@
 # UOSA.exe effect definitions
 
-The Enhanced Client (`UOSA.exe`, Ghidra project `UOSA`) stores effect definitions in two places:
+The Enhanced Client (`UOSA.exe` 4.0.102.3, Ghidra project `UOSA`) stores effect definitions in two places:
 
 - at the end of every `tileart.uop` record: a u8 count, then that many definitions;
 - in each entry of `EffectDefinitionCollection.uop`: a u32 count, then that many definitions.

@@ -1,6 +1,7 @@
 # Gamebryo 2.6 layouts: members
 
 Program: UOSA.exe
+PE file version: 4.0.102.3
 Mode: --apply
 
 ## Classes

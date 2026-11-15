@@ -1,6 +1,6 @@
 # UOSA.exe animation sequences and definitions
 
-The Enhanced Client (`UOSA.exe`, Ghidra project `UOSA`) drives animations from two asset files:
+The Enhanced Client (`UOSA.exe` 4.0.102.3, Ghidra project `UOSA`) drives animations from two asset files:
 
 - `AnimationSequence.uop`: one entry per mobile body. It holds the action table (frame count, fps, alias),
   per-direction pixel offsets, per-frame effects and skipped frames, and the action groups that map

@@ -24,6 +24,15 @@ repository, for example under `/tmp`. Record conclusions and executable hashes
 in the study's `results/` or in `docs/agent_notes/`; do not commit client binaries
 or extracted proprietary data.
 
+Addresses hold for one build only, so wherever a study or script quotes a hard
+address, name the client version next to the executable: `UOSA.exe 4.0.102.3`,
+`UOKR.exe 2.58.0.6`. Take the version from the executable's PE version resource
+(`exiftool`, or Ghidra's Program Information option `PE Property[FileVersion]`),
+not from folder files such as `buildinfo.txt`: the `UO - Old KR` folder's one says
+2.53.0.2, but its `UOKR.exe` is 2.58.0.6. When an executable has no version
+resource (the UO Gold `client.exe`), say so and give its PE timestamp. The scripts'
+report headers print the version of the program they ran on.
+
 ## PE strings, references and raw data
 
 `pe_inspect.py` uses Python's standard library and handles PE32/PE32+ section

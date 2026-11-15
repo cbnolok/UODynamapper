@@ -336,7 +336,7 @@ bitflags! {
 }
 
 /// The Kingdom Reborn `flags1` bits the Enhanced Client moved above bit 31, as (KR bit, EC flag); every other KR
-/// bit has its EC position. Measured over the 17,086 items both clients' `tileart.uop` define (KR 2.53.0.2 against
+/// bit has its EC position. Measured over the 17,086 items both clients' `tileart.uop` define (KR 2.58.0.6 against
 /// the current EC): of the items setting KR bit 14, 1,593 of 1,604 are EC `Rotated`; bit 15, 448 of 449 `AlphaBlend`;
 /// bit 26, 85 of 85 `NoDraw` (also the KR terrain no-draw bit). KR's shadow test (bit 14 where UOSA tests bit 34)
 /// agrees, see `uokr_atmosphere.md` P3.4. The bits kept in place agree on 98.4-100 % of the items setting them,
