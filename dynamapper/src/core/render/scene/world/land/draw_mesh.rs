@@ -200,7 +200,7 @@ fn mesh_for_scale(handles: &LandMeshHandles, scale: u32, lod: LandMeshLod) -> Ha
 
 use crate::core::render::scene::world::land::tile_atlas::{
     Rg16u, TileAtlas, TERRAIN_SHADER_FLAG_NEVER_BLENDS, TERRAIN_SHADER_FLAG_PLAYER_CAVE,
-    TERRAIN_SHADER_FLAG_REVIEWED_LIQUID, is_black_land,
+    TERRAIN_SHADER_FLAG_REVIEWED_LIQUID, is_black_enhanced_land, is_black_land,
 };
 
 #[derive(Component)]
@@ -823,12 +823,14 @@ pub fn sys_draw_spawned_land_chunks(
                 }
             };
 
-            land_shader_flags_cache[id as usize] = cache_r
-                .routed_enhanced_land(land_id)
+            let enhanced = cache_r.routed_enhanced_land(land_id);
+            land_shader_flags_cache[id as usize] = enhanced
                 .map(|(package, target)| ec_land_shader_flags(package, target))
                 .unwrap_or(0);
-            // Black land, whatever its source, never blends with its neighbours.
-            if is_black_land(cache_r.routes().target(land_id).id) {
+            // Black land, whatever its source, never blends with its neighbours; nor do the cave exit frames drawn
+            // from their black Enhanced or Kingdom Reborn materials.
+            if is_black_land(cache_r.routes().target(land_id).id)
+                || enhanced.is_some_and(|(_, target)| is_black_enhanced_land(target)) {
                 land_shader_flags_cache[id as usize] |= TERRAIN_SHADER_FLAG_NEVER_BLENDS;
             }
         }

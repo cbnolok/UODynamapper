@@ -323,6 +323,26 @@ path = "/home/claudio/Immagini/Schermate/uokr/Schermata_20261114_072948.png"
 note = "KR client in the Minoc mine by its mouth: the cave and its arch on black, the hill's boulders and trees too"
 
 [[fixture]]
+name = "minoc-mine-mouth-kr-land-night"
+guards = """The user's view of the Minoc mine's mouth at night in KR-like with Kingdom Reborn land, in the player's cave: \
+the frame of the black opening, the cave exit land 0x1D3-0x1DA that Kingdom Reborn and the Enhanced Client draw with \
+a black material, stays black, no dirt texture of the land below stretched up the steep face beside the opening."""
+tier = "quick"
+tags = ["caves", "player-cave", "z-view", "minoc"]
+map = 1
+x = 2557
+y = 499
+z = 0
+times = ["night"]
+styles = ["kr"]
+sources = ["ec/kr"]
+settings = { world_rendering = { show_only_player_floor = true, cave_surroundings = "dimmed" } }
+
+[fixture.reference]
+path = "/home/claudio/rust-target/uodynamapper-scratch/visual-baselines/references/minoc-mine-mouth-kr-land-night-2026-11-16.png"
+note = "Dynamapper before the fix (the user's report, 2026-11-16): the stretched dirt beside the black opening"
+
+[[fixture]]
 name = "minoc-north-cave-mouth-player-cave"
 guards = """Another cave's mouth, north of Minoc, with the player's-floor view: the cave's walls drawn, the hill over it \
 not (0e0839cd); its mouth's land, the black opening and the rock over it, drawn whole, the opening's bottom edge \

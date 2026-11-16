@@ -63,7 +63,13 @@ Black land (the cave mouths' openings 0x1AE and 0x1DB and the void 0x244,
 `tile_atlas.rs` `is_black_land`) takes no part in coverage nor in the EC or
 Classic transitions, in any source: its edge stays clean, no dirt or rock fading
 into its black nor its black into them, as the Kingdom Reborn client draws a cave
-floor's jagged edge against the opening.
+floor's jagged edge against the opening. The cave exit frames (0x1D3-0x1DA,
+0x7EC-0x7F1, 0x834-0x839, 0x8C1-0x8C6, `is_black_enhanced_land`), rock around a
+black opening in their Classic texmaps, are black land too when drawn from an
+EC-layout source: the Enhanced Client and Kingdom Reborn draw them with all-black
+materials (44 and 45 "cave exit", 154 "rock hole"), so the dirt below a steep
+frame, as at the Minoc mine's mouth, no longer stretches up its black. Drawn from
+their Classic texmaps they blend as the rock they mostly are.
 
 Texture roles follow the source shader/layer class and item position. Names,
 stretch and visual resemblance do not select the base or establish a role.

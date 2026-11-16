@@ -5,6 +5,7 @@
 //use crate::console_logger::{self, LogAbout, LogSev};
 use bevy::prelude::*;
 use bevy::render::render_resource::ShaderType;
+use std::ops::RangeInclusive;
 
 /// A simple RGBA-like 16-bit unsigned integer pair used for packing tile metadata.
 /// This matches the target texture format (Rg16Uint) in the shader.
@@ -22,8 +23,9 @@ pub struct Rg16u {
 /// A cell's flag, not a land tile's: the land of the player's cave's mouth (caves.rs `PlayerCave::owns_land`), drawn
 /// over the z-view's land cut and not darkened as outside the cave.
 pub const TERRAIN_SHADER_FLAG_PLAYER_CAVE: u16 = 1 << 0;
-/// Black land (`is_black_land`): drawn alone, its edge clean, no neighbour's texture blended into it nor it into a
-/// neighbour (land/transitions.wesl, land/cc_transitions.wesl; nor in the EC coverage, `EcTerrainParams::for_tile`).
+/// Black land (`is_black_land`, `is_black_enhanced_land`): drawn alone, its edge clean, no neighbour's texture blended
+/// into it nor it into a neighbour (land/transitions.wesl, land/cc_transitions.wesl; nor in the EC coverage,
+/// `EcTerrainParams::for_tile`).
 pub const TERRAIN_SHADER_FLAG_NEVER_BLENDS: u16 = 1 << 1;
 /// EC liquid terrain: the TerrainDefinition material is the water layer class (`UOWaterTerrainLayer`). The
 /// EC wetness flag; the `is_wet` bit carries the classic IsWet tiledata flag in classic mode only.
@@ -57,6 +59,18 @@ const BLACK_LAND_IDS: [u32; 3] = [0x1AE, 0x1DB, uocf::classic::maps::world::VOID
 /// into its black nor its black into them.
 pub fn is_black_land(land_id: u32) -> bool {
     BLACK_LAND_IDS.contains(&land_id)
+}
+
+/// The cave exit frames: land ids whose Classic texmaps are rock around a black opening, which the Enhanced Client
+/// and Kingdom Reborn draw all black (their materials 44 and 45 "cave exit", 154 "rock hole"). The Minoc mine's mouth
+/// (map 1, 2556,500) is framed by 0x1D3-0x1DA.
+const CAVE_EXIT_FRAME_LAND_IDS: [RangeInclusive<u32>; 4] = [0x1D3..=0x1DA, 0x7EC..=0x7F1, 0x834..=0x839, 0x8C1..=0x8C6];
+
+/// Whether the land id drawn from an Enhanced or Kingdom Reborn material (a route's target) is black land: black land
+/// in every source (`is_black_land`) or a cave exit frame, whose black material never blends with its neighbours
+/// either. The frames drawn from their Classic texmaps, rock, blend as rock does.
+pub fn is_black_enhanced_land(land_id: u32) -> bool {
+    is_black_land(land_id) || CAVE_EXIT_FRAME_LAND_IDS.iter().any(|frames| frames.contains(&land_id))
 }
 /// Where `Rg16u::pack` stores the texture source mode (`tex_size_bits`) in G: its high byte's low nibble.
 const TEX_SOURCE_SHIFT: u16 = 8;
@@ -913,6 +927,26 @@ mod black_land_tests {
         }
         for id in [MOUTH_ROCK, DIRT, WHITE_VOID, LAND_NODRAW_ID] {
             assert!(!is_black_land(id), "{id:#x}");
+        }
+    }
+
+    /// From an Enhanced or Kingdom Reborn material, the cave exit frames are black land too; the dirt and rock beside
+    /// them are not.
+    #[test]
+    fn cave_exit_frames_are_black_enhanced_land() {
+        const MINOC_MOUTH_FRAMES: [u32; 2] = [0x1D3, 0x1DA];
+        const CAVE_EXITS: [u32; 2] = [0x7EC, 0x839];
+        const NO_NAME_FRAMES: [u32; 2] = [0x8C1, 0x8C6];
+        const MOUTH_ROCK_HOLE: u32 = 0x1DB;
+        const MOUTH_DIRT: u32 = 0x74;
+        const ROCK: u32 = 0x22C;
+        const BEFORE_FRAMES: u32 = 0x1D2;
+        for id in MINOC_MOUTH_FRAMES.into_iter().chain(CAVE_EXITS).chain(NO_NAME_FRAMES) {
+            assert!(is_black_enhanced_land(id) && !is_black_land(id), "{id:#x}");
+        }
+        assert!(is_black_enhanced_land(MOUTH_ROCK_HOLE));
+        for id in [MOUTH_DIRT, ROCK, BEFORE_FRAMES, LAND_NODRAW_ID] {
+            assert!(!is_black_enhanced_land(id), "{id:#x}");
         }
     }
 }
