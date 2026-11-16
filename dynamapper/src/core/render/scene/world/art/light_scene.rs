@@ -21,7 +21,7 @@
 //!   once the light scene is done (`render_deferred_light_sprites`), before the client night composite reads it.
 
 use super::gpu_picking::DrawPixelQuery;
-use super::transparent_order::StaticTransparentBatchOrder;
+use super::transparent_order::{drawn_batches, StaticTransparentBatchOrder};
 use crate::core::render::scene::camera::PlayerCamera;
 use crate::core::render::scene::world::effects::client_night::LightBufferCamera;
 use bevy::camera::CameraUpdateSystems;
@@ -31,12 +31,9 @@ use bevy::mesh::MeshVertexBufferLayoutRef;
 use bevy::pbr::{ExtendedMaterial, MaterialExtension, MaterialExtensionKey, MaterialExtensionPipeline, MaterialPlugin};
 use bevy::prelude::*;
 use bevy::render::diagnostic::RecordDiagnostics;
-use bevy::render::batching::gpu_preprocessing::{
-    IndirectParametersBuffers, IndirectParametersIndexed, IndirectParametersNonIndexed,
-};
 use bevy::render::extract_resource::{ExtractResource, ExtractResourcePlugin};
 use bevy::render::render_asset::RenderAssets;
-use bevy::render::render_phase::{DrawFunctions, PhaseItemExtraIndex, ViewSortedRenderPhases};
+use bevy::render::render_phase::{DrawFunctions, ViewSortedRenderPhases};
 use bevy::render::render_resource::*;
 use bevy::render::sync_world::MainEntity;
 use bevy::render::renderer::{RenderContext, RenderDevice, ViewQuery};
@@ -44,8 +41,6 @@ use bevy::render::texture::GpuImage;
 use bevy::render::view::{ExtractedView, ViewDepthStencilTexture, ViewTarget};
 use bevy::render::RenderApp;
 use bevy::shader::ShaderDefVal;
-use crate::console_logger::{self, LogAbout, LogSev};
-use std::any::TypeId;
 use std::collections::{HashMap, HashSet};
 use std::sync::Mutex;
 use uocf::enhanced::tileart::TaeFlag;
@@ -384,10 +379,8 @@ fn render_light_scene(
     let batches = batches.iter().copied().collect::<HashSet<_>>();
     let items = {
         let mut derived = pipelines.0.lock().unwrap();
-        phase
-            .items
-            .values()
-            .filter(|item| batches.contains(&item.entity.1) && !item.batch_range.is_empty())
+        drawn_batches(phase.items.values())
+            .filter(|item| batches.contains(&item.entity.1))
             .filter_map(|item| {
                 let pipeline = (*derived
                     .entry((item.pipeline, DerivedPipeline::LightScene { multisampled }))
@@ -444,24 +437,11 @@ fn render_light_scene(
 }
 
 /// The light sprites of the light buffer camera's view, clipped by the light scene: drawn into the light buffer
-/// after it, from the world view's graph, as the light buffer camera renders first.
-/// Whether the indirect draw parameters of `item` lie inside this frame's buffers `buffers` (`DrawMesh` reads them
-/// from the buffers of its phase type); an item drawn directly always does.
-fn indirect_parameters_fit(item: &Transparent3d, buffers: Option<&IndirectParametersBuffers>) -> bool {
-    let PhaseItemExtraIndex::IndirectParametersIndex { range, .. } = &item.extra_index else {
-        return true;
-    };
-    let Some(phase_buffers) = buffers.and_then(|buffers| buffers.get(&TypeId::of::<Transparent3d>())) else {
-        return false;
-    };
-    let (buffer, stride) = if item.indexed {
-        (phase_buffers.indexed.data_buffer(), size_of::<IndirectParametersIndexed>())
-    } else {
-        (phase_buffers.non_indexed.data_buffer(), size_of::<IndirectParametersNonIndexed>())
-    };
-    buffer.is_some_and(|buffer| u64::from(range.end) * stride as u64 <= buffer.size())
-}
-
+/// after it, from the world view's graph, as the light buffer camera renders first. Only the first item of each of
+/// their batches draws (`drawn_batches`): the sprites batch, and the items a batch covers keep the batch range and
+/// the indirect parameters index of an earlier frame, which pointed past the end of this frame's buffer in the first
+/// frames of a start, an indirect draw wgpu refuses and Bevy quits on. The batches' first items are the ones the
+/// light buffer camera's own transparent pass draws (drawing nothing there) from the same buffers, unguarded.
 fn render_deferred_light_sprites(
     world: &World,
     _world_view: ViewQuery<&ExtractedView, Without<LightBufferCamera>>,
@@ -483,23 +463,9 @@ fn render_deferred_light_sprites(
     ) else {
         return;
     };
-    let indirect_buffers = world.get_resource::<IndirectParametersBuffers>();
-    if phase.items.values().any(|item| !item.batch_range.is_empty() && !indirect_parameters_fit(item, indirect_buffers)) {
-        // Seen in the first frames of a start: a light sprite's indirect draw past the end of this frame's buffer,
-        // which wgpu refuses and Bevy quits on. The sprites skip the frame.
-        console_logger::one(
-            LogSev::Warn,
-            LogAbout::RenderWorldArt,
-            "Deferred light sprites skip a frame: their indirect draws lie past this frame's buffers.",
-        );
-        return;
-    }
     let items = {
         let mut derived = pipelines.0.lock().unwrap();
-        phase
-            .items
-            .values()
-            .filter(|item| !item.batch_range.is_empty())
+        drawn_batches(phase.items.values())
             .filter_map(|item| {
                 let pipeline = (*derived
                     .entry((item.pipeline, DerivedPipeline::DeferredSprite))

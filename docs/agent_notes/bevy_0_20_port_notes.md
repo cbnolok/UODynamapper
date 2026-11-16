@@ -76,3 +76,15 @@ mattered:
   dialogs) are off by default.
 - `Tonemapping::None` is now a full passthrough, but the camera uses the
   default `TonyMcMapface`, so nothing changes for us.
+- Sorted phases (`Transparent3d`) keep their items from frame to frame in an
+  `IndexMap`, and GPU batching writes `batch_range` and the indirect parameters
+  index into each batch's first item only; the items the batch covers keep
+  stale values (`0..1` from queueing, or an earlier frame's batch). A pass that
+  redraws phase items itself must walk them as `SortedRenderPhase::render_range`
+  does (`art::transparent_order::drawn_batches`), not draw every item with a
+  non-empty `batch_range`: that redrew light sprites hundreds of times a frame
+  and once indexed past the end of the indirect parameters buffer, which wgpu
+  refuses (2026-11-16). The indirect parameters buffers alternate between two
+  sets from frame to frame (`collect_buffers_for_phase` swaps them), each
+  grown only to its own frames' needs, so an index valid last frame can
+  overrun this frame's buffer.

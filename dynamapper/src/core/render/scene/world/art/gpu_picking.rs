@@ -1,6 +1,6 @@
 //! On-demand one-pixel visibility queries. Reuses the drawing shaders, instance
 //! buffers and transparent batch bindings; never writes the main color/depth.
-use super::{statics_collect::{StaticPickTile, StaticChunkBatchKey}, transparent_order::StaticTransparentBatchOrder};
+use super::{statics_collect::{StaticPickTile, StaticChunkBatchKey}, transparent_order::{drawn_batches, StaticTransparentBatchOrder}};
 use crate::core::render::scene::world::effects::client_night;
 use bevy::prelude::*;
 use bevy::core_pipeline::{Core3d, Core3dSystems, core_3d::Transparent3d};
@@ -253,8 +253,9 @@ fn render_query(world: &World,
         .map(|(entity, order)| (*entity, *order)).collect();
     let mut items = Vec::new();
     let mut ready = true;
-    for item in phase.items.values() {
-        if !orders.contains_key(&item.entity.1) || item.batch_range.is_empty() { continue; }
+    // The batches' first items alone carry this frame's batch (`drawn_batches`).
+    for item in drawn_batches(phase.items.values()) {
+        if !orders.contains_key(&item.entity.1) { continue; }
         if cache.get_render_pipeline(item.pipeline).is_none() { ready = false; continue; }
         let opaque = query_pipeline(&cache, &mut state, item.pipeline, false, samples > 1);
         let transparent = query_pipeline(&cache, &mut state, item.pipeline, true, samples > 1);
