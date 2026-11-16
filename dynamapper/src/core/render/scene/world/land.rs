@@ -37,6 +37,9 @@ pub struct LCMesh {
     /// Determines which mesh and AABB are used.
     pub scale: u32,
     /// Last blocks_loaded_version checked from MapPlane. Used to skip is_block_cached polling.
+    /// Recorded only while the chunk misses blocks: those come only with a load, which bumps the version. An eviction
+    /// does not bump it, and need not: it only takes more blocks away, which the recheck after that load finds
+    /// missing and dispatches too.
     pub last_blocks_loaded_version: Option<u64>,
 }
 

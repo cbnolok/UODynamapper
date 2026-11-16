@@ -35,6 +35,7 @@ pub struct MapPlane {
     cached_blocks_arena: Vec<CachedBlock>,
     cached_blocks_free_list: Vec<u32>,
     cached_blocks_bitmask: Vec<u64>,
+    /// Bumped for every block inserted, not by `evict_idle_blocks` (`LCMesh::last_blocks_loaded_version` says why).
     pub blocks_loaded_version: u64,
 }
 
