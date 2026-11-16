@@ -2592,8 +2592,14 @@ fn emit_static_render_tile(
     // Outside the caves, a cave's floor under its cell's land, where that land is drawn, is covered, as the Classic
     // client draws a cell's land after the floors under it: its art, standing upright at one depth, would show through
     // the lower part of a steep land, as teeth along a cave mouth's black opening.
-    let covering_land_z = || covering_land_z(build.own_land.land_z(resources.map_planes, frame.map_id, cell_x, cell_y),
-        frame.z_view.max_ground_z, resources.tile_atlas, cell_x, cell_y);
+    let covering_land_z = || {
+        // The NoDraw test reads the drawn land: its arriving or changing rebuilds the chunk.
+        if let (Ok(x), Ok(y)) = (u32::try_from(cell_x), u32::try_from(cell_y)) {
+            build.read_land(AtlasCells::new(UVec2::new(x, y), UVec2::new(x, y)));
+        }
+        covering_land_z(build.own_land.land_z(resources.map_planes, frame.map_id, cell_x, cell_y),
+            frame.z_view.max_ground_z, resources.tile_atlas, cell_x, cell_y)
+    };
     if player_cave.is_none() && cave == CaveStatic::Outside
         && is_buried_floor(flags, tilemeta.map_or(0, |meta| meta.height), render_tile.z, covering_land_z) {
         return;
