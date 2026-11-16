@@ -170,7 +170,10 @@ settings = { world_rendering = { show_only_player_floor = true } }
 [[fixture]]
 name = "keep-z50-zview-lights"
 guards = """Inside the keep at z50 with the player's-floor view at night: lights in hidden layers go with their \
-items and only drawn layers cover a light (16af57a0); lights under the cut floor come back (47151d86)."""
+items and only drawn layers cover a light (16af57a0); lights under the cut floor come back (47151d86). The KR-like, \
+Enhanced and UOD-Painterly glows are those of a launch that starts here, whichever views the launch visited before \
+(3a1c6bc5: the west wall's pools came and went); Classic's lights darken at their rims as light.mul's negative \
+values say (857e4c1f)."""
 tier = "quick"
 tags = ["z-view", "lights", "keep"]
 map = 1
@@ -183,7 +186,8 @@ settings = { world_rendering = { show_only_player_floor = true } }
 [[fixture]]
 name = "keep-z72-zview-lights"
 guards = """The keep's upper floor (z72) with the player's-floor view at night: the floor below and its lights stay \
-drawn, the battlements above are cut (keep-lights, zview-kr2)."""
+drawn, the battlements above are cut (keep-lights, zview-kr2). Reached from z50 in one launch, its glows are those \
+of a launch that starts here (3a1c6bc5)."""
 tier = "full"
 tags = ["z-view", "lights", "keep"]
 map = 1
@@ -210,7 +214,8 @@ name = "britain-lamp-posts-night-darkness"
 guards = """Britain's lamp posts and shop windows at night, by day as the control: every style dims the world by the \
 server light level (night 10), Classic by the Classic client's light buffer (a grey of (32 - level) / 32 with the \
 light.mul lights added, multiplying the frame) and UOD-Painterly by KR-like's night composite with its own colour, \
-with the lights readable over it (6542a8c1); Classic's night was almost as bright as its afternoon."""
+with the lights readable over it (6542a8c1); Classic's night was almost as bright as its afternoon. The glows do \
+not depend on the views the launch visited before (3a1c6bc5)."""
 tier = "quick"
 tags = ["lights", "night", "darkness", "britain"]
 map = 1
