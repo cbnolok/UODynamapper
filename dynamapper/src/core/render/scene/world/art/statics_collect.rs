@@ -9,7 +9,7 @@ use crate::core::render::scene::world::land::tile_atlas::TileAtlas;
 use crate::core::multis::{
     expanded_multi_part_z, MultiDefinitionsRes, MultiPart, PlacedMulti, PlacedMultisRes,
 };
-use crate::core::render::scene::world::caves::{CaveMap, CaveStatic, CavesRes, PlayerCave};
+use crate::core::render::scene::world::caves::{is_buried_floor, CaveMap, CaveStatic, CavesRes, PlayerCave};
 use crate::core::render::scene::world::z_view::{PackageLand, ZViewCut, ZViewLimit};
 use crate::core::render::scene::SceneStateData;
 use crate::core::statics::{LazyStaticsStore, StaticsStoreRes};
@@ -2521,6 +2521,16 @@ fn emit_static_render_tile(
     let cave = player_cave.unwrap_or_else(|| resources.caves.map_or(CaveStatic::Outside, |caves|
         caves.static_view(cell_x, cell_y, render_tile.z)));
     if cave == CaveStatic::Hidden {
+        return;
+    }
+    // Outside the caves, a cave's floor under its cell's land, where the z-view's cut leaves that land, is covered, as
+    // the Classic client draws a cell's land after the floors under it: its art, standing upright at one depth, would
+    // show through the lower part of a steep land, as teeth along a cave mouth's black opening.
+    let max_ground_z = frame.z_view.max_ground_z;
+    let covering_land_z = || build.own_land.land_z(resources.map_planes, frame.map_id, cell_x, cell_y)
+        .filter(|&land_z| land_z <= max_ground_z);
+    if player_cave.is_none() && cave == CaveStatic::Outside
+        && is_buried_floor(flags, tilemeta.map_or(0, |meta| meta.height), render_tile.z, covering_land_z) {
         return;
     }
     let cave_flags = match cave {

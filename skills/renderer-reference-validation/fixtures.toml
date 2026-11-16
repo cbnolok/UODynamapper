@@ -283,9 +283,9 @@ settings = { world_rendering = { show_only_player_floor = true } }
 name = "minoc-mine-mouth-player-cave-dimmed"
 guards = """Just inside the Minoc mine's mouth with the player's-floor view: the player's cave whole, its floor and \
 rock walls, not the hill's boulders and trees over it nor the tunnel above (0e0839cd); its mouth's land whole, \
-undimmed and over the cave floor behind it: the rock jambs and the black opening between them, no lone strip of rock \
-in a cut-out hole; outside it the land, objects, water and lights under the z+16 cut darkened to a fifth and half \
-greyed, plainly apart from the cave."""
+undimmed and over the cave floor behind it: the frame's rock around the black opening, its bottom edge straight, \
+no grass jambs beside it (the hill's flank), no lone strip of rock in a cut-out hole; outside it the land, objects, \
+water and lights under the z+16 cut darkened to a fifth and half greyed, plainly apart from the cave."""
 tier = "quick"
 tags = ["caves", "player-cave", "z-view", "minoc"]
 map = 1
@@ -319,7 +319,8 @@ note = "KR client in the Minoc mine by its mouth: the cave and its arch on black
 [[fixture]]
 name = "minoc-north-cave-mouth-player-cave"
 guards = """Another cave's mouth, north of Minoc, with the player's-floor view: the cave's walls drawn, the hill over it \
-not (0e0839cd); its mouth's land, the black opening and the rock over it, drawn whole."""
+not (0e0839cd); its mouth's land, the black opening and the rock over it, drawn whole, the opening's bottom edge \
+straight, no teeth of the cave's floor along it (Classic art)."""
 tier = "full"
 tags = ["caves", "player-cave", "z-view", "minoc"]
 map = 1
@@ -329,16 +330,107 @@ z = 0
 settings = { world_rendering = { show_only_player_floor = true, cave_surroundings = "dimmed" } }
 
 [[fixture]]
+name = "minoc-mine-mouth-outside"
+guards = """The Minoc mine's mouth from the land in front of it, no z-view: the black opening framed by the land, its \
+bottom edge straight, no teeth of the mine's floor under the frame (its art, upright at one depth, beat the steep \
+land, which the Classic client draws over it)."""
+tier = "full"
+tags = ["caves", "minoc"]
+map = 1
+x = 2558
+y = 504
+z = 0
+
+[[fixture]]
 name = "britain-north-cave-arch-player-cave"
 guards = """A cave north of Britain whose mouth has the cave entrance art, the mossy rock arch, with the player's-floor \
 view: the arch's pieces standing in the opening drawn as the cave's, in front of the black opening and the mouth's \
-land, not darkened."""
+land, not darkened; no slab of the hill's flank left of the opening, no teeth of the cave's floor along its bottom \
+edge (Classic art)."""
 tier = "full"
 tags = ["caves", "player-cave", "z-view"]
 map = 1
 x = 1259
 y = 1248
 z = 0
+settings = { world_rendering = { show_only_player_floor = true, cave_surroundings = "dimmed" } }
+
+[[fixture]]
+name = "britain-north-cave-arch-mouth-edge-player-cave"
+guards = """Close on the mouth of the cave north of Britain with the player's-floor view: the black opening's bottom edge \
+straight where the mouth's land meets the exits, no teeth of the cave floor under the rock (Classic art: the floor's \
+upright art beat the steep land); no slab of the hill's flank beside the opening (the rock next to the exits framed \
+nothing and stood over the cut); the arch whole and undimmed, its front pieces too."""
+tier = "full"
+tags = ["caves", "player-cave", "z-view"]
+map = 1
+x = 1263
+y = 1250
+z = 0
+zoom = 0.5
+settings = { world_rendering = { show_only_player_floor = true, cave_surroundings = "dimmed" } }
+
+[[fixture]]
+name = "britain-north-cave-arch-outside"
+guards = """The cave north of Britain from the open land in front of it, no z-view: the entrance arch whole over the \
+black opening, in front of the land framing it, with Enhanced and KR art; Classic art has no arch (its pieces are empty \
+there), only the land's opening."""
+tier = "full"
+tags = ["caves"]
+map = 1
+x = 1264
+y = 1257
+z = 0
+
+[[fixture]]
+name = "covetous-west-cave-arch-player-cave"
+guards = """A cave in the hills north-west of Covetous whose mouth faces south under a whole entrance arch (2331..2339, \
+828..832), with the player's-floor view: the arch whole, in front of the black opening and the mouth's land, not cut \
+nor darkened, its front pieces too; the opening's edge straight."""
+tier = "full"
+tags = ["caves", "player-cave", "z-view"]
+map = 1
+x = 2335
+y = 827
+z = 0
+settings = { world_rendering = { show_only_player_floor = true, cave_surroundings = "dimmed" } }
+
+[[fixture]]
+name = "shame-coast-cave-arch-player-cave"
+guards = """A cave on the coast north-west of Shame, under a whole entrance arch at z 1 and 2 (353..361, 1459..1464), with \
+the player's-floor view and nothing drawn outside the cave: the arch whole and in front of the opening, its front \
+pieces three cells out too."""
+tier = "full"
+tags = ["caves", "player-cave", "z-view"]
+map = 1
+x = 357
+y = 1458
+z = 1
+settings = { world_rendering = { show_only_player_floor = true, cave_surroundings = "black" } }
+
+[[fixture]]
+name = "britain-northeast-hills-cave-mouth-player-cave"
+guards = """A cave mouth facing east framed by the land alone, no arch (1823..1824, 1027..1032), with the player's-floor \
+view: the frame's rock around the black opening, its edge straight, no slab of the hill beside it, no cave \
+floor showing in the opening."""
+tier = "full"
+tags = ["caves", "player-cave", "z-view"]
+map = 1
+x = 1822
+y = 1030
+z = 0
+settings = { world_rendering = { show_only_player_floor = true, cave_surroundings = "dimmed" } }
+
+[[fixture]]
+name = "wrong-hills-cave-mouth-player-cave"
+guards = """A cave mouth facing east at z 8 framed by the land alone, no arch (1990..1991, 260..264), with the \
+player's-floor view: the opening's edge straight over a floor above z 0, no slab of the hill beside it."""
+tier = "full"
+tags = ["caves", "player-cave", "z-view"]
+map = 1
+x = 1989
+y = 262
+z = 8
 settings = { world_rendering = { show_only_player_floor = true, cave_surroundings = "dimmed" } }
 
 [[fixture]]

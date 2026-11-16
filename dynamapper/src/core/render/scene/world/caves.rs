@@ -41,8 +41,8 @@
 //! - the cave's mouth is its own: where its floor walks out onto the land of a cell next to it, at most `WALK_STEP_Z`
 //!   from the floor (an exit), the land rising from there over the floor is the rock framing the opening, drawn whole,
 //!   in front of the cave's floor behind it and not darkened (`PlayerCave::owns_land`: the land quads with a corner on
-//!   a buried cell of the cave or of the ring around it next to an exit), and what stands on an exit at the cave's
-//!   level, the cave entrance art of the KR client's arches, is the cave's (`CaveStatic::Lifted`).
+//!   a buried cell of the cave sharing a side with an exit), the floor under that land not drawn, and what stands on
+//!   an exit at the cave's level, the cave entrance art of the KR client's arches, is the cave's (`CaveStatic::Lifted`).
 
 use crate::configs::settings::Settings;
 use crate::console_logger::{self, LogAbout, LogSev};
@@ -150,6 +150,8 @@ const LAND_OUTSIDE_DIMMED: f32 = 1.0;
 
 /// The eight neighbours of a cell.
 const NEIGHBOURS: [(i32, i32); 8] = [(-1, -1), (0, -1), (1, -1), (-1, 0), (1, 0), (-1, 1), (0, 1), (1, 1)];
+/// The four neighbours sharing a side with a cell.
+const SIDES: [(i32, i32); 4] = [(0, -1), (-1, 0), (1, 0), (0, 1)];
 /// A block's cells, `MAP_STORAGE_BLOCK_TILE_DIM` squared, one bit each in a `u64`.
 const BLOCK_CELLS: usize = (MAP_STORAGE_BLOCK_TILE_DIM * MAP_STORAGE_BLOCK_TILE_DIM) as usize;
 /// The cells of a package chunk.
@@ -175,6 +177,12 @@ pub fn surface_top(flags: u64, height: i8, z: i8) -> Option<i32> {
 pub fn cave_floor(land_z: i32, tops: &[i32]) -> Option<i32> {
     let floor = *tops.iter().max()?;
     (land_z - floor >= CAVE_MIN_BURY_DEPTH).then_some(floor)
+}
+
+/// Whether a static with tile flags `flags` and height `height` at `z` is a cave's floor (`surface_top`) at least
+/// `CAVE_MIN_BURY_DEPTH` under its cell's land, `land_z` giving the land z, read only for a floor.
+pub fn is_buried_floor(flags: u64, height: i8, z: i8, land_z: impl FnOnce() -> Option<i32>) -> bool {
+    surface_top(flags, height, z).is_some_and(|top| land_z().is_some_and(|land_z| land_z - top >= CAVE_MIN_BURY_DEPTH))
 }
 
 /// The cells the rule reads.
@@ -489,13 +497,15 @@ impl PlayerCave {
     }
 
     /// The land of the cave's mouth (module docs) among `cells`: the cells whose land quad (its corners the cell and
-    /// its neighbours at +x, +y and both) has a corner on a rim, a buried cell of the cave or next to it beside one of
-    /// the `exits`.
+    /// its neighbours at +x, +y and both) has a corner on a rim, a buried cell of the cave sharing a side with one of
+    /// the `exits`: the face over the opening and the frame's land beside it. The rock beside the opening, a cell of
+    /// the ring next to an exit or a cave cell touching one at a corner only, frames nothing: its quads are the hill's
+    /// flank, which lifted stood over the cut as a slab beside the opening.
     fn mouth_land(cells: &HashMap<(i32, i32), PlayerCaveCell>, exits: &HashSet<(i32, i32)>) -> HashSet<(i32, i32)> {
         let mut mouth = HashSet::new();
         for (&(x, y), cell) in cells {
             let buried = i32::from(cell.land_z) - i32::from(cell.high) >= CAVE_MIN_BURY_DEPTH;
-            if cell.distance > 1 || !buried || !NEIGHBOURS.iter().any(|&(dx, dy)| exits.contains(&(x + dx, y + dy))) {
+            if cell.distance != 0 || !buried || !SIDES.iter().any(|&(dx, dy)| exits.contains(&(x + dx, y + dy))) {
                 continue;
             }
             for quad in [(x, y), (x - 1, y), (x, y - 1), (x - 1, y - 1)] {
@@ -547,6 +557,11 @@ impl PlayerCave {
         };
         let (low, high, land_z) = (i32::from(cell.low), i32::from(cell.high), i32::from(cell.land_z));
         let distance = i32::from(cell.distance);
+        // Under the mouth's land, drawn whole in front of it, the cave's floor is covered, as in the KR client: its art,
+        // standing upright at one depth, would show through the steep land as teeth along the opening's bottom edge.
+        if self.mouth_land.contains(&(x, y)) && is_buried_floor(flags, height, z as i8, || Some(land_z)) {
+            return CaveStatic::Hidden;
+        }
         if distance == 0 {
             return if low - CAVE_LEVEL_HEIGHT <= z && z < high + CAVE_LEVEL_HEIGHT { CaveStatic::Lifted } else { CaveStatic::Hidden };
         }
@@ -558,7 +573,7 @@ impl PlayerCave {
         }
         // Around the cave: a buried floor is another tunnel's, and what stands on one under the cave's floor, or next to
         // one, a level up from it at most: the walls and the bones of a tunnel below.
-        if surface_top(flags, height, z as i8).is_some_and(|top| land_z - top >= CAVE_MIN_BURY_DEPTH) {
+        if is_buried_floor(flags, height, z as i8, || Some(land_z)) {
             return CaveStatic::Hidden;
         }
         let other_level = |cell: (i32, i32)| self.other_floors.get(&cell).is_some_and(|tops|
@@ -1322,9 +1337,9 @@ mod tests {
     }
 
     /// Where the cave's floor walks out onto land at its level, the land rising from there over the floor is its
-    /// mouth's, drawn whole: the face over the opening, the rock one cell into the hill over it and the jambs beside
-    /// it; and what stands at the cave's level on that land is the cave's. A tunnel whose ground outside is a hill
-    /// slope over its level has no mouth.
+    /// mouth's, drawn whole: the face over the opening and the frame beside it, the cave's floor under it not drawn;
+    /// the rock beside the opening frames nothing, it is the hill's flank. What stands at the cave's level on the exits
+    /// is the cave's. A tunnel whose ground outside is a hill slope over its level has no mouth.
     #[test]
     fn the_players_cave_owns_its_mouth() {
         // A tunnel under rock over 0..3 by 0..3, opening east onto land at its floor's level over x = 3..6.
@@ -1333,13 +1348,19 @@ mod tests {
         let cave = player_cave(&cells, 1, 1, 0, CaveSurroundings::Black).unwrap();
         let mouth = (-4..8).flat_map(|y| (-4..8).map(move |x| (x, y))).filter(|&(x, y)| cave.owns_land(x, y))
             .collect::<HashSet<_>>();
-        // The rims, buried corners next to the exits (3, 0..3): the cave's cells (2, 0..3) and the rock (2..4, -1) and
-        // (2..4, 3) beside the opening. Their quads start a cell back and up from them: all of 1..4 by -2..4 but the
-        // exits' own quads (3, 0) and (3, 1), level on the open land.
-        let expected = (-2..4).flat_map(|y| (1..4).map(move |x| (x, y)))
-            .filter(|&cell| cell != (3, 0) && cell != (3, 1)).collect::<HashSet<_>>();
+        // The rims, the cave's cells sharing a side with the exits (3, 0..3): (2, 0..3). Their quads start a cell back
+        // and up from them: 1..3 by -1..3.
+        let expected = (-1..3).flat_map(|y| (1..3).map(move |x| (x, y))).collect::<HashSet<_>>();
         assert_eq!(mouth, expected);
         assert!(cave.has_mouth_land());
+        // The rock beside the opening, (3, -1) and (3, 3), and the cave's corner cells touching an exit only at a corner
+        // are no rims: the hill's flank there, (3, -1) and (2, -2), is not the mouth's.
+        assert!(!cave.owns_land(3, -1) && !cave.owns_land(2, -2) && !cave.owns_land(3, 2));
+        // Under the mouth's land the cave's floor is not drawn, what stands on it is; deeper in, the floor is.
+        let floor = TaeFlag::Surface.bits();
+        assert_eq!(cave.static_view(2, 1, 0, floor, 0, || unreachable!()), CaveStatic::Hidden);
+        assert_eq!(cave.static_view(2, 1, 0, 0, 20, || unreachable!()), CaveStatic::Lifted);
+        assert_eq!(cave.static_view(0, 1, 0, floor, 0, || unreachable!()), CaveStatic::Lifted);
         // On an exit, a rock at the cave's level is the cave's; one a level over it, or water, is not.
         let wall = TaeFlag::Wall.bits();
         assert_eq!(cave.static_view(3, 1, 0, wall, 20, || unreachable!()), CaveStatic::Lifted);
@@ -1352,6 +1373,18 @@ mod tests {
         let cave = player_cave(&slope, 1, 1, 0, CaveSurroundings::Black).unwrap();
         assert!(!cave.has_mouth_land());
         assert_eq!(cave.static_view(3, 1, 0, wall, 20, || unreachable!()), CaveStatic::Hidden);
+    }
+
+    /// A cave's floor is buried at least `CAVE_MIN_BURY_DEPTH` under its cell's land: not a floor nearer it, not what
+    /// is no floor, not under land not known (or cut away).
+    #[test]
+    fn floors_buried_under_their_land() {
+        let floor = TaeFlag::Surface.bits();
+        assert!(is_buried_floor(floor, 0, 0, || Some(CAVE_MIN_BURY_DEPTH)));
+        assert!(!is_buried_floor(floor, 0, 0, || Some(CAVE_MIN_BURY_DEPTH - 1)));
+        assert!(!is_buried_floor(floor, 1, 0, || Some(CAVE_MIN_BURY_DEPTH)));
+        assert!(!is_buried_floor(TaeFlag::Wall.bits(), 0, 0, || unreachable!()));
+        assert!(!is_buried_floor(floor, 0, 0, || None));
     }
 
     /// A light shows with its static: in the cave covered up to its level whatever the view's limit, outside it
