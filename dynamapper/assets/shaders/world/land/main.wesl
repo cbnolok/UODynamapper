@@ -953,7 +953,9 @@ fn fragment(in: VertexOutput) -> @location(0) vec4<f32> {
   var hdr_rgb: vec3<f32>;
   var composed = false;
   let ec_transitions = (effects.terrain_transition_flags & 2u) == 0u;
-  if (ec_transitions && tile.texture_size == 2u && ec_coverage_params(tile.texture_payload).w != 0u) {
+  // A cell that never blends draws alone, no neighbour's coverage over it (coverage.wesl leaves it out of theirs).
+  if (ec_transitions && tile.texture_size == 2u && !terrain_never_blends(tile)
+      && ec_coverage_params(tile.texture_payload).w != 0u) {
     let cache = ec_terrain_cache(in.world_position.xz);
     if (cache.count > 0u) {
       hdr_rgb = compose_ec_terrain(in, tile, world_gradients, surface_normal, client_shade, cache, EcTerrainStack(), true);

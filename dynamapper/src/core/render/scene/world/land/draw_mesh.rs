@@ -199,8 +199,8 @@ fn mesh_for_scale(handles: &LandMeshHandles, scale: u32, lod: LandMeshLod) -> Ha
 }
 
 use crate::core::render::scene::world::land::tile_atlas::{
-    Rg16u, TileAtlas, TERRAIN_SHADER_FLAG_NEVER_BLENDS, TERRAIN_SHADER_FLAG_PLAYER_CAVE,
-    TERRAIN_SHADER_FLAG_REVIEWED_LIQUID, is_black_enhanced_land, is_black_land,
+    Rg16u, TileAtlas, TERRAIN_SHADER_FLAG_NEVER_BLENDS, TERRAIN_SHADER_FLAG_REVIEWED_LIQUID, cell_terrain_flags,
+    is_black_land, is_cave_exit_frame,
 };
 
 #[derive(Component)]
@@ -218,6 +218,9 @@ pub struct LandMeshScratch {
     ids: Vec<u16>,
     texture_lookup_cache: Vec<u32>,
     land_shader_flags_cache: Vec<u16>,
+    /// By lookup row: whether it draws a cave exit frame from its black Enhanced or Kingdom Reborn material
+    /// (tile_atlas.rs `cell_terrain_flags`).
+    cave_exit_frame_rows: Vec<bool>,
     /// Reusable bitmask for deduplicating uncached block coordinates.
     dedup_bits: Vec<u64>,
 }
@@ -230,6 +233,7 @@ impl Default for LandMeshScratch {
             ids: Vec::new(),
             texture_lookup_cache: vec![u32::MAX; LandTextureCache::MAX_TILE_ID],
             land_shader_flags_cache: vec![0; LandTextureCache::MAX_TILE_ID],
+            cave_exit_frame_rows: vec![false; LandTextureCache::MAX_TILE_ID],
             dedup_bits: Vec::new(),
         }
     }
@@ -412,6 +416,7 @@ pub fn sys_draw_spawned_land_chunks(
         scratch.blocks_to_draw.clear();
         scratch.texture_lookup_cache.fill(u32::MAX);
         scratch.land_shader_flags_cache.fill(0);
+        scratch.cave_exit_frame_rows.fill(false);
         scratch.missing_tile_bits.fill(0);
         scratch.ids.clear();
 
@@ -696,6 +701,7 @@ pub fn sys_draw_spawned_land_chunks(
         missing_tile_bits,
         texture_lookup_cache,
         land_shader_flags_cache,
+        cave_exit_frame_rows,
         ids,
         ..
     } = &mut *scratch;
@@ -827,12 +833,12 @@ pub fn sys_draw_spawned_land_chunks(
             land_shader_flags_cache[id as usize] = enhanced
                 .map(|(package, target)| ec_land_shader_flags(package, target))
                 .unwrap_or(0);
-            // Black land, whatever its source, never blends with its neighbours; nor do the cave exit frames drawn
-            // from their black Enhanced or Kingdom Reborn materials.
-            if is_black_land(cache_r.routes().target(land_id).id)
-                || enhanced.is_some_and(|(_, target)| is_black_enhanced_land(target)) {
+            // Black land, whatever its source, never blends with its neighbours; nor, on the player's cave's mouth, do
+            // the cave exit frames drawn from their black Enhanced or Kingdom Reborn materials (`cell_terrain_flags`).
+            if is_black_land(cache_r.routes().target(land_id).id) {
                 land_shader_flags_cache[id as usize] |= TERRAIN_SHADER_FLAG_NEVER_BLENDS;
             }
+            cave_exit_frame_rows[id as usize] = enhanced.is_some_and(|(_, target)| is_cave_exit_frame(target));
         }
         if let Some(warning) = cache_r.missing_land_ids.report(missing_land_ids) {
             console_logger::one(LogSev::Warn, LogAbout::RenderWorldLand, &warning);
@@ -881,6 +887,15 @@ pub fn sys_draw_spawned_land_chunks(
         .and_then(|opt| opt.as_ref())
         .expect("Requested map plane metadata is uncached?");
 
+    let player_cave = frame_pacing.caves.player();
+    let cave_exit_frame_rows: &[bool] = cave_exit_frame_rows;
+    // The cell's terrain flags: its land tile's, and those of the player's cave's mouth (`cell_terrain_flags`).
+    let cell_flags = |row: u16, x: u32, y: u32| cell_terrain_flags(
+        land_shader_flags_cache[row as usize],
+        cave_exit_frame_rows[row as usize],
+        player_cave.is_some_and(|cave| cave.owns_land(x as i32, y as i32)),
+    );
+
     if cache_r.routes().atlas().uses_enhanced_land() {
         let bases = &mut frame_pacing.terrain_bases;
         bases.begin_map(current_map_id);
@@ -893,9 +908,11 @@ pub fn sys_draw_spawned_land_chunks(
                     for bx in gx * CHUNK_STORAGE_BLOCKS_DIM..((gx + 1) * CHUNK_STORAGE_BLOCKS_DIM).min(max_chunk_x as u32) {
                         for by in gy * CHUNK_STORAGE_BLOCKS_DIM..((gy + 1) * CHUNK_STORAGE_BLOCKS_DIM).min(max_chunk_y as u32) {
                             if let Some(block) = plane_ref.block_no_update(MapBlockRelPos { x: bx, y: by }) {
-                                payloads.extend(block.cells.iter().enumerate().map(|(index, cell)| {
+                                // A cell that never blends takes no part in the coverage, nor in the chunk's layers.
+                                payloads.extend(block.cells.iter().enumerate().filter_map(|(index, cell)| {
                                     let (x, y) = cell_tile(bx, by, index);
-                                    land_rows.row(cell.id, x, y)
+                                    let row = land_rows.row(cell.id, x, y);
+                                    (cell_flags(row, x, y) & TERRAIN_SHADER_FLAG_NEVER_BLENDS == 0).then_some(row)
                                 }));
                             } else {
                                 complete = false;
@@ -909,8 +926,7 @@ pub fn sys_draw_spawned_land_chunks(
                 }
             }
         }
-        let LandFramePacing { terrain_bases, images, .. } = &mut frame_pacing;
-        terrain_bases.flush(images);
+        frame_pacing.terrain_bases.flush(&mut frame_pacing.images);
     }
 
     // Struct to hold packed payloads from background threads
@@ -928,7 +944,6 @@ pub fn sys_draw_spawned_land_chunks(
     // Process blocks in parallel using Bevy's ComputeTaskPool
     let pool: &bevy::tasks::ComputeTaskPool = bevy::tasks::ComputeTaskPool::get();
     let caves = frame_pacing.caves.active();
-    let player_cave = frame_pacing.caves.player();
     let thread_results: Vec<SuperChunkResult> = {
         let _span = crate::tracy_span!("worldmap::chunk_draw_build_chunk_payloads");
         pool.scope(|s| {
@@ -936,7 +951,6 @@ pub fn sys_draw_spawned_land_chunks(
                 // Because the lookup caches are populated and read-only, we can share raw
                 // pointers to their data safely across async tasks.
                 let lookup_ptr = texture_lookup_cache.as_ptr() as usize;
-                let land_flags_ptr = land_shader_flags_cache.as_ptr() as usize;
                 let wet_ptr = wet_bits.as_ptr() as usize;
 
                 s.spawn(async move {
@@ -955,12 +969,6 @@ pub fn sys_draw_spawned_land_chunks(
                     let lookup_slice = unsafe {
                         std::slice::from_raw_parts(
                             lookup_ptr as *const u32,
-                            LandTextureCache::MAX_TILE_ID,
-                        )
-                    };
-                    let land_flags_slice = unsafe {
-                        std::slice::from_raw_parts(
-                            land_flags_ptr as *const u16,
                             LandTextureCache::MAX_TILE_ID,
                         )
                     };
@@ -1011,14 +1019,9 @@ pub fn sys_draw_spawned_land_chunks(
                                 // Look up whether this land tile has the IsWet flag.
                                 let is_wet =
                                     wet_slice.get(row as usize).copied().unwrap_or(0) != 0;
-                                let mut land_flags = land_flags_slice
-                                    .get(row as usize)
-                                    .copied()
-                                    .unwrap_or(0);
-                                // The land of the player's cave's mouth is drawn whole and not darkened.
-                                if player_cave.is_some_and(|cave| cave.owns_land(x as i32, y as i32)) {
-                                    land_flags |= TERRAIN_SHADER_FLAG_PLAYER_CAVE;
-                                }
+                                // The land of the player's cave's mouth is drawn whole and not darkened, and a black
+                                // cave exit frame there never blends.
+                                let land_flags = cell_flags(row, x, y);
                                 // The land over a cave drawn over the map opens down to the cave floor.
                                 let z = caves.and_then(|caves| caves.floor_z(x, y)).unwrap_or(cell.z);
                                 texels_local[texel_count] = Rg16u::pack(

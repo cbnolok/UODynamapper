@@ -1,19 +1,22 @@
 //! A bounded native-chunk cache, published only after metadata uploads settle.
-use super::{build_stack_layer, HALO, HEIGHT, SIDE, WIDTH};
+use super::{build_stack_layer, CELL_LIQUID, CELL_NEVER_BLENDS, HALO, HEIGHT, SIDE, WIDTH};
 use super::super::EcTerrainBases;
 use crate::core::texture_cache::land::{cache::LandTextureCache, routing::LandRowMap};
-use crate::core::{maps::MapPlane, render::scene::{player::Player, world::land::{tile_atlas::TileAtlas, LandUploadTelemetry}}, uo_files_loader::MapPlanesRes};
+use crate::core::{maps::MapPlane, render::scene::{player::Player, world::land::{tile_atlas::{Rg16u, TileAtlas, TERRAIN_SHADER_FLAG_NEVER_BLENDS}, LandUploadTelemetry}}, uo_files_loader::MapPlanesRes};
 use bevy::{asset::RenderAssetUsages, prelude::*, render::render_resource::{Extent3d, TextureDimension, TextureFormat, TextureViewDescriptor, TextureViewDimension}};
 use uocf::classic::map::MapBlockRelPos;
 
 pub(crate) const SLOTS: usize = 16;
 const BAKES_PER_FRAME: usize = 2;
+/// The bits of a packed cell's G that make it liquid: the wet bit and the reviewed liquid flag (tile_atlas.rs
+/// `Rg16u::pack`).
+const LIQUID_BITS: u16 = 0xC000;
 
 struct Slot {
     chunk: UVec2,
     limits: [u16; 2],
     raw: Box<[u16; HALO * HALO]>,
-    liquids: Box<[bool; HALO * HALO]>,
+    cells: Box<[u8; HALO * HALO]>,
     checked_revision: Option<u64>,
     resident: bool,
     rebake: bool,
@@ -88,19 +91,28 @@ fn resident_matches(atlas: &TileAtlas, chunk: UVec2, raw: &[u16; HALO * HALO], a
     resident_state(atlas, chunk, raw, available, None).0
 }
 
-fn liquid_halo(atlas: &TileAtlas, chunk: UVec2) -> Box<[bool; HALO * HALO]> {
+/// A packed cell's coverage flags (`CELL_LIQUID`, `CELL_NEVER_BLENDS`).
+fn coverage_cell_flags(cell: Rg16u) -> u8 {
+    let liquid = if cell.g & LIQUID_BITS != 0 { CELL_LIQUID } else { 0 };
+    let never_blends = if cell.terrain_flags() & TERRAIN_SHADER_FLAG_NEVER_BLENDS != 0 { CELL_NEVER_BLENDS } else { 0 };
+    liquid | never_blends
+}
+
+fn cell_flags_halo(atlas: &TileAtlas, chunk: UVec2) -> Box<[u8; HALO * HALO]> {
     Box::new(std::array::from_fn(|index| {
         let x = chunk.x as i32 * 32 + (index % HALO) as i32 - 1;
         let y = chunk.y as i32 * 32 + (index / HALO) as i32 - 1;
-        x >= 0 && y >= 0 && atlas.read_cell(x as u32, y as u32).is_some_and(|p| p.g & 0xC000 != 0)
+        if x < 0 || y < 0 { return 0; }
+        atlas.read_cell(x as u32, y as u32).map_or(0, coverage_cell_flags)
     }))
 }
 
-// Distinguish an unsettled halo from changed wet/reviewed-liquid flags. Only
-// the latter needs a new bake; missing pages can reuse immutable cached data.
+// Distinguish an unsettled halo from changed coverage flags: wet/reviewed-liquid, or never blending, as a black cave
+// exit frame does on the player's cave's mouth, which comes and goes with the player's cave. Only the latter needs a
+// new bake; missing pages can reuse immutable cached data.
 fn resident_state(atlas: &TileAtlas, chunk: UVec2, raw: &[u16; HALO * HALO], available: &[bool],
-    liquids: Option<&[bool; HALO * HALO]>) -> (bool, bool) {
-    let mut changed_liquids = false;
+    cells: Option<&[u8; HALO * HALO]>) -> (bool, bool) {
+    let mut changed_flags = false;
     for y in 0..HALO {
         for x in 0..HALO {
             let point = IVec2::new(chunk.x as i32 * 32 + x as i32 - 1, chunk.y as i32 * 32 + y as i32 - 1);
@@ -108,15 +120,15 @@ fn resident_state(atlas: &TileAtlas, chunk: UVec2, raw: &[u16; HALO * HALO], ava
             let payload = raw[y * HALO + x];
             if available.get(usize::from(payload)).copied().unwrap_or(false) {
                 if !meta.is_some_and(|p| (p.g >> 8) & 15 == 2 && p.r == payload) { return (false, false); }
-                if let Some(liquids) = liquids {
-                    changed_liquids |= (meta.unwrap().g & 0xC000 != 0) != liquids[y * HALO + x];
+                if let Some(cells) = cells {
+                    changed_flags |= coverage_cell_flags(meta.unwrap()) != cells[y * HALO + x];
                 }
             } else if meta.is_some_and(|p| (p.g >> 8) & 15 == 2) {
                 return (false, false);
             }
         }
     }
-    (!changed_liquids, changed_liquids)
+    (!changed_flags, changed_flags)
 }
 
 fn publish(values: &mut [[u16; 4]], dimensions: UVec2, dirty: &mut bool,
@@ -178,7 +190,7 @@ pub(crate) fn sys_prepare(
         for slot in cache.slots.iter_mut().flatten() {
             if slot.checked_revision != Some(atlas.content_revision) {
                 let (resident, rebake) = resident_state(&atlas, slot.chunk, &slot.raw,
-                    &cache.available, Some(slot.liquids.as_ref()));
+                    &cache.available, Some(slot.cells.as_ref()));
                 slot.resident = resident;
                 slot.rebake = rebake;
                 slot.checked_revision = Some(atlas.content_revision);
@@ -198,13 +210,13 @@ pub(crate) fn sys_prepare(
         if baked.len() >= BAKES_PER_FRAME { break; }
         let Some(raw) = raw_halo(plane, chunk, &rows) else { continue; };
         if !resident_matches(&atlas, chunk, &raw, &cache.available) { continue; }
-        let liquids = liquid_halo(&atlas, chunk);
-        let Some(records) = build_stack_layer(chunk, map, &raw, params, &cache.available, &liquids, limits) else { continue; };
+        let cells = cell_flags_halo(&atlas, chunk);
+        let Some(records) = build_stack_layer(chunk, map, &raw, params, &cache.available, &cells, limits) else { continue; };
         let slot = existing.or_else(|| cache.slots.iter().position(Option::is_none))
             .or_else(|| cache.slots.iter().position(|slot| slot.as_ref().is_some_and(|s| !desired.contains(&s.chunk))));
         let Some(slot) = slot else { continue; };
         if let Some(old) = &cache.slots[slot] { publish(values, dimensions, dirty, old.chunk, None, map); }
-        cache.slots[slot] = Some(Slot { chunk, limits, raw, liquids,
+        cache.slots[slot] = Some(Slot { chunk, limits, raw, cells,
             checked_revision: Some(atlas.content_revision), resident: true, rebake: false });
         baked.push((slot, records));
     }
@@ -258,14 +270,15 @@ mod tests {
         let data = vec![Rg16u::pack(2, 0, 2, false, 0); 128 * 128];
         atlas.enqueue_rg16u_block(layer, UVec2::ZERO, UVec2::splat(128), &data);
         assert!(resident_matches(&atlas, UVec2::ONE, &raw, &available));
-        let liquids = liquid_halo(&atlas, UVec2::ONE);
-        assert_eq!(resident_state(&atlas, UVec2::ONE, &raw, &available, Some(&liquids)), (true, false));
-        for (wet, flags) in [(true, 0), (false, 4)] {
+        let cells = cell_flags_halo(&atlas, UVec2::ONE);
+        assert_eq!(resident_state(&atlas, UVec2::ONE, &raw, &available, Some(&cells)), (true, false));
+        // Liquid, and never blending (a black cave exit frame on the player's cave's mouth, flags 2) need a new bake.
+        for (wet, flags) in [(true, 0), (false, 4), (false, 2)] {
             atlas.enqueue_rg16u_block(layer, UVec2::splat(31), UVec2::ONE, &[Rg16u::pack(2, 0, 2, wet, flags)]);
-            assert_eq!(resident_state(&atlas, UVec2::ONE, &raw, &available, Some(&liquids)), (false, true));
+            assert_eq!(resident_state(&atlas, UVec2::ONE, &raw, &available, Some(&cells)), (false, true));
         }
-        atlas.enqueue_rg16u_block(layer, UVec2::splat(31), UVec2::ONE, &[Rg16u::pack(2, 5, 2, false, 3)]);
-        assert_eq!(resident_state(&atlas, UVec2::ONE, &raw, &available, Some(&liquids)), (true, false));
+        atlas.enqueue_rg16u_block(layer, UVec2::splat(31), UVec2::ONE, &[Rg16u::pack(2, 5, 2, false, 1)]);
+        assert_eq!(resident_state(&atlas, UVec2::ONE, &raw, &available, Some(&cells)), (true, false));
         // Checking just the current cell would overlook an unsettled neighbor.
         atlas.enqueue_rg16u_block(layer, UVec2::splat(31), UVec2::ONE, &[Rg16u::pack(1, 0, 2, false, 0)]);
         assert!(!resident_matches(&atlas, UVec2::ONE, &raw, &available));

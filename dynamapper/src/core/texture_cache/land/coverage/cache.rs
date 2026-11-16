@@ -13,6 +13,11 @@ pub(super) const RECORDS_PER_CORNER: usize = 1 + 17 * 2;
 pub(super) const WIDTH: usize = SIDE * RECORDS_PER_CORNER;
 pub(super) const HEIGHT: usize = SIDE + 1;
 pub(super) const NO_MATERIAL: u32 = u32::MAX;
+/// A halo cell's coverage flags (`runtime::cell_flags_halo`): liquid, by the wet bit or the reviewed liquid flag, and
+/// never blending (tile_atlas.rs `TERRAIN_SHADER_FLAG_NEVER_BLENDS`, a black cave exit frame on the player's cave's
+/// mouth): such a cell owns no material, as in land/coverage.wesl.
+pub(super) const CELL_LIQUID: u8 = 1 << 0;
+pub(super) const CELL_NEVER_BLENDS: u8 = 1 << 1;
 
 fn source_params(raw: u16, params: &[Option<EcTerrainParams>], available: &[bool]) -> Option<[u32; 4]> {
     if !available.get(usize::from(raw)).copied().unwrap_or(false) { return None; }
@@ -42,18 +47,19 @@ fn mask_byte(owners: &[u32; SIDE * SIDE], material: u32, x: usize, y: usize, wei
 }
 
 pub(super) fn build_stack_layer(chunk: UVec2, map: u32, raw: &[u16; HALO * HALO],
-    params: &[Option<EcTerrainParams>], available: &[bool], liquids: &[bool; HALO * HALO],
+    params: &[Option<EcTerrainParams>], available: &[bool], cells: &[u8; HALO * HALO],
     limits: [u16; 2]) -> Option<Vec<[u32; 4]>> {
     // Base selection is independent of image residency, just as in the shader.
     let base = params.get(usize::from(limits[0]))?.as_ref()?.0;
     let last_key = params.get(usize::from(limits[1]))?.as_ref()?.0[1] as i32;
     if base[3] == 0 { return None; }
-    let material = |x: usize, y: usize| source_params(raw[y * HALO + x], params, available)
-        .map(|p| p[0]).unwrap_or(NO_MATERIAL);
+    let owning_params = |at: usize| (cells[at] & CELL_NEVER_BLENDS == 0)
+        .then(|| source_params(raw[at], params, available)).flatten();
+    let material = |x: usize, y: usize| owning_params(y * HALO + x).map(|p| p[0]).unwrap_or(NO_MATERIAL);
     let mut owners = [NO_MATERIAL; SIDE * SIDE];
     for y in 0..SIDE {
         for x in 0..SIDE {
-            let Some(p) = source_params(raw[(y + 1) * HALO + x + 1], params, available) else { continue; };
+            let Some(p) = owning_params((y + 1) * HALO + x + 1) else { continue; };
             if p[1] as i32 > last_key { continue; }
             let mut owned = true;
             if p[3] & 8 != 0 {
@@ -110,7 +116,7 @@ pub(super) fn build_stack_layer(chunk: UVec2, map: u32, raw: &[u16; HALO * HALO]
                 // grime-neighbor decisions for each of the four owning cells.
                 cached_layer[1] = [(x, y), (next_x, y), (x, next_y), (next_x, next_y)]
                     .into_iter().enumerate().fold(0, |word, (corner, (px, py))| {
-                        word | (u32::from(grime_mask(raw, available, liquids, layer, px, py)) << (corner * 8))
+                        word | (u32::from(grime_mask(raw, available, cells, layer, px, py)) << (corner * 8))
                     });
                 output[offset + 1 + index * 2] = cached_layer;
                 output[offset + 2 + index * 2] = alpha;
@@ -121,7 +127,7 @@ pub(super) fn build_stack_layer(chunk: UVec2, map: u32, raw: &[u16; HALO * HALO]
     Some(output)
 }
 
-fn grime_mask(raw: &[u16; HALO * HALO], available: &[bool], liquids: &[bool; HALO * HALO],
+fn grime_mask(raw: &[u16; HALO * HALO], available: &[bool], cells: &[u8; HALO * HALO],
     layer: [u32; 4], x: usize, y: usize) -> u8 {
     let flags = layer[3] >> 16;
     let liquid = flags & 7 == 2 || flags & 64 != 0;
@@ -130,7 +136,7 @@ fn grime_mask(raw: &[u16; HALO * HALO], available: &[bool], liquids: &[bool; HAL
         let at = (y as i32 + 1 + dy) as usize * HALO + (x as i32 + 1 + dx) as usize;
         let neighbor = raw[at];
         if u32::from(neighbor) != layer[2] && available.get(usize::from(neighbor)).copied().unwrap_or(false)
-            && liquids[at] == liquid { mask | (1 << bit) } else { mask }
+            && (cells[at] & CELL_LIQUID != 0) == liquid { mask | (1 << bit) } else { mask }
     })
 }
 
@@ -152,7 +158,7 @@ mod tests {
     fn preserves_canonical_base_and_first_nonbase_alias() {
         let (params, available, mut raw) = fixture();
         raw[15 * HALO + 15] = 3; // First candidate for corner (15,15).
-        let output = build_stack_layer(UVec2::new(4, 5), 7, &raw, &params, &available, &[false; HALO * HALO], [1, 2]).unwrap();
+        let output = build_stack_layer(UVec2::new(4, 5), 7, &raw, &params, &available, &[0; HALO * HALO], [1, 2]).unwrap();
         let at = 15 * WIDTH + 15 * RECORDS_PER_CORNER;
         assert_eq!(output[at][0], 2);
         assert_eq!(output[at + 1][2], 1);
@@ -168,29 +174,54 @@ mod tests {
         for x in 0..HALO { raw[x] = 1; }
         for y in 0..HALO { raw[y * HALO] = 1; }
         raw[HALO + 1] = 2;
-        let output = build_stack_layer(UVec2::ZERO, 0, &raw, &params, &available, &[false; HALO * HALO], [1, 2]).unwrap();
+        let output = build_stack_layer(UVec2::ZERO, 0, &raw, &params, &available, &[0; HALO * HALO], [1, 2]).unwrap();
         assert_eq!(output[4][0], 0.0f32.to_bits());
         params[2].as_mut().unwrap().0[3] = 1; // Point mask, no positive exponent.
-        let output = build_stack_layer(UVec2::ZERO, 0, &raw, &params, &available, &[false; HALO * HALO], [1, 2]).unwrap();
+        let output = build_stack_layer(UVec2::ZERO, 0, &raw, &params, &available, &[0; HALO * HALO], [1, 2]).unwrap();
         assert_eq!(output[4][0], 1.0f32.to_bits());
     }
 
     #[test]
     fn grime_neighbors_preserve_raw_aliases_liquids_and_missing_sources() {
         let (params, mut available, mut raw) = fixture();
-        let mut liquids = [false; HALO * HALO];
+        let mut cells = [0; HALO * HALO];
         let center = 16 * HALO + 16;
-        liquids[center - 1] = true;
+        cells[center - 1] = CELL_LIQUID;
         raw[center + 1] = 7;
         available.resize(8, true);
         available[7] = false;
         raw[center - HALO] = 1;
         let layer = packed_layer(1, params[1].unwrap().0);
-        assert_eq!(grime_mask(&raw, &available, &liquids, layer, 15, 15), 0xF8);
+        assert_eq!(grime_mask(&raw, &available, &cells, layer, 15, 15), 0xF8);
         let mut liquid = layer;
         liquid[3] = 2 << 16;
-        assert_eq!(grime_mask(&raw, &available, &liquids, liquid, 15, 15), 1);
+        assert_eq!(grime_mask(&raw, &available, &cells, liquid, 15, 15), 1);
         liquid[3] = (1 | 64) << 16; // Reviewed liquid without the water class.
-        assert_eq!(grime_mask(&raw, &available, &liquids, liquid, 15, 15), 1);
+        assert_eq!(grime_mask(&raw, &available, &cells, liquid, 15, 15), 1);
+    }
+
+    /// A cell that never blends (a black cave exit frame on the player's cave's mouth) owns no material: its material
+    /// spreads over no neighbour and joins no stack, while the same material on a cell that blends does both.
+    #[test]
+    fn a_cell_that_never_blends_owns_no_material() {
+        const FRAME: u16 = 4;
+        const FRAME_MATERIAL: u32 = 4;
+        let (mut params, available, mut raw) = fixture();
+        params[usize::from(FRAME)] = Some(EcTerrainParams([FRAME_MATERIAL, 0, 242 | (153 << 8), 137]));
+        let frame_cell = 16 * HALO + 16;
+        raw[frame_cell] = FRAME;
+        // The corner records of the frame cell (15, 15) and of its neighbours up to (16, 16).
+        let has_frame_layer = |output: &[[u32; 4]], x: usize, y: usize| {
+            let at = y * WIDTH + x * RECORDS_PER_CORNER;
+            (0..output[at][0] as usize).any(|index| output[at + 1 + index * 2][0] == FRAME_MATERIAL)
+        };
+        let blending = build_stack_layer(UVec2::ZERO, 0, &raw, &params, &available, &[0; HALO * HALO], [1, 2]).unwrap();
+        let mut cells = [0; HALO * HALO];
+        cells[frame_cell] = CELL_NEVER_BLENDS;
+        let alone = build_stack_layer(UVec2::ZERO, 0, &raw, &params, &available, &cells, [1, 2]).unwrap();
+        for (x, y) in [(14, 14), (15, 15), (16, 16)] {
+            assert!(has_frame_layer(&blending, x, y), "({x}, {y})");
+            assert!(!has_frame_layer(&alone, x, y), "({x}, {y})");
+        }
     }
 }

@@ -23,9 +23,10 @@ pub struct Rg16u {
 /// A cell's flag, not a land tile's: the land of the player's cave's mouth (caves.rs `PlayerCave::owns_land`), drawn
 /// over the z-view's land cut and not darkened as outside the cave.
 pub const TERRAIN_SHADER_FLAG_PLAYER_CAVE: u16 = 1 << 0;
-/// Black land (`is_black_land`, `is_black_enhanced_land`): drawn alone, its edge clean, no neighbour's texture blended
-/// into it nor it into a neighbour (land/transitions.wesl, land/cc_transitions.wesl; nor in the EC coverage,
-/// `EcTerrainParams::for_tile`).
+/// Black land (`is_black_land`), and on a cell of the player's cave's mouth a cave exit frame drawn from its black
+/// Enhanced or Kingdom Reborn material (`cell_terrain_flags`): drawn alone, its edge clean, no neighbour's texture
+/// blended into it nor it into a neighbour (land/transitions.wesl, land/cc_transitions.wesl; nor in the EC coverage,
+/// `EcTerrainParams::for_tile` for black land, land/coverage.wesl and coverage/cache.rs for the cell's flag).
 pub const TERRAIN_SHADER_FLAG_NEVER_BLENDS: u16 = 1 << 1;
 /// EC liquid terrain: the TerrainDefinition material is the water layer class (`UOWaterTerrainLayer`). The
 /// EC wetness flag; the `is_wet` bit carries the classic IsWet tiledata flag in classic mode only.
@@ -66,15 +67,30 @@ pub fn is_black_land(land_id: u32) -> bool {
 /// (map 1, 2556,500) is framed by 0x1D3-0x1DA.
 const CAVE_EXIT_FRAME_LAND_IDS: [RangeInclusive<u32>; 4] = [0x1D3..=0x1DA, 0x7EC..=0x7F1, 0x834..=0x839, 0x8C1..=0x8C6];
 
-/// Whether the land id drawn from an Enhanced or Kingdom Reborn material (a route's target) is black land: black land
-/// in every source (`is_black_land`) or a cave exit frame, whose black material never blends with its neighbours
-/// either. The frames drawn from their Classic texmaps, rock, blend as rock does.
-pub fn is_black_enhanced_land(land_id: u32) -> bool {
-    is_black_land(land_id) || CAVE_EXIT_FRAME_LAND_IDS.iter().any(|frames| frames.contains(&land_id))
+/// Whether the land id (a route's target) is a cave exit frame (`CAVE_EXIT_FRAME_LAND_IDS`).
+pub fn is_cave_exit_frame(land_id: u32) -> bool {
+    CAVE_EXIT_FRAME_LAND_IDS.iter().any(|frames| frames.contains(&land_id))
+}
+
+/// The terrain flags of a cell drawing land whose tile flags are `tile_flags`: `enhanced_cave_exit_frame` when the
+/// land is a cave exit frame drawn from its black Enhanced or Kingdom Reborn material, `player_cave_mouth` when the
+/// cell's land is the player's cave's mouth (caves.rs `PlayerCave::owns_land`). The mouth's land takes
+/// `TERRAIN_SHADER_FLAG_PLAYER_CAVE`; a black frame there never blends, so in the player's cave the dirt below a steep
+/// frame, as at the Minoc mine's mouth, does not stretch up its black. Elsewhere the frame blends, the black of the
+/// opening fading softly into the rock around it as seen from outside.
+pub fn cell_terrain_flags(tile_flags: u16, enhanced_cave_exit_frame: bool, player_cave_mouth: bool) -> u16 {
+    if !player_cave_mouth {
+        return tile_flags;
+    }
+    let never_blends = if enhanced_cave_exit_frame { TERRAIN_SHADER_FLAG_NEVER_BLENDS } else { 0 };
+    tile_flags | TERRAIN_SHADER_FLAG_PLAYER_CAVE | never_blends
 }
 /// Where `Rg16u::pack` stores the texture source mode (`tex_size_bits`) in G: its high byte's low nibble.
 const TEX_SOURCE_SHIFT: u16 = 8;
 const TEX_SOURCE_MASK: u16 = 0x0F;
+/// Where `Rg16u::pack` stores the land flags (`TERRAIN_SHADER_FLAG_*`) in G: bits 4-6 of its high byte.
+const TERRAIN_FLAGS_SHIFT: u16 = 12;
+const TERRAIN_FLAGS_MASK: u16 = 0x07;
 
 impl Rg16u {
     /// Packs tile ID, height (Z), texture source mode, land flags, and is_wet into Rg16u.
@@ -97,7 +113,7 @@ impl Rg16u {
         // g: high 8 bits: lower nibble = tex_size_bits, bits 4-6 = land flags, bit 7 = is_wet
         let height_biased = (height_i8 as i16 + 128).clamp(0, 255) as u8;
         let wet_bit: u16 = if is_wet { 0x80 } else { 0 };
-        let flags = (land_flags & 0x07) << 4;
+        let flags = (land_flags & TERRAIN_FLAGS_MASK) << 4;
         let g = (height_biased as u16) | (((tex_size_bits & 0x0F) | flags | wet_bit) << 8);
         Self { r: tile_id, g }
     }
@@ -105,6 +121,11 @@ impl Rg16u {
     /// The texture source mode (`LAND_SOURCE_*`) `pack` stored.
     pub fn texture_source(self) -> u32 {
         u32::from((self.g >> TEX_SOURCE_SHIFT) & TEX_SOURCE_MASK)
+    }
+
+    /// The land flags (`TERRAIN_SHADER_FLAG_*`) `pack` stored.
+    pub fn terrain_flags(self) -> u16 {
+        (self.g >> TERRAIN_FLAGS_SHIFT) & TERRAIN_FLAGS_MASK
     }
 }
 
@@ -930,10 +951,9 @@ mod black_land_tests {
         }
     }
 
-    /// From an Enhanced or Kingdom Reborn material, the cave exit frames are black land too; the dirt and rock beside
-    /// them are not.
+    /// The cave exit frames are not black land: drawn from any source, they blend outside the player's cave.
     #[test]
-    fn cave_exit_frames_are_black_enhanced_land() {
+    fn cave_exit_frames_are_not_black_land() {
         const MINOC_MOUTH_FRAMES: [u32; 2] = [0x1D3, 0x1DA];
         const CAVE_EXITS: [u32; 2] = [0x7EC, 0x839];
         const NO_NAME_FRAMES: [u32; 2] = [0x8C1, 0x8C6];
@@ -942,11 +962,25 @@ mod black_land_tests {
         const ROCK: u32 = 0x22C;
         const BEFORE_FRAMES: u32 = 0x1D2;
         for id in MINOC_MOUTH_FRAMES.into_iter().chain(CAVE_EXITS).chain(NO_NAME_FRAMES) {
-            assert!(is_black_enhanced_land(id) && !is_black_land(id), "{id:#x}");
+            assert!(is_cave_exit_frame(id) && !is_black_land(id), "{id:#x}");
         }
-        assert!(is_black_enhanced_land(MOUTH_ROCK_HOLE));
-        for id in [MOUTH_DIRT, ROCK, BEFORE_FRAMES, LAND_NODRAW_ID] {
-            assert!(!is_black_enhanced_land(id), "{id:#x}");
+        for id in [MOUTH_ROCK_HOLE, MOUTH_DIRT, ROCK, BEFORE_FRAMES, LAND_NODRAW_ID] {
+            assert!(!is_cave_exit_frame(id), "{id:#x}");
         }
+    }
+
+    /// A black Enhanced or Kingdom Reborn cave exit frame never blends on the player's cave's mouth only; the frame
+    /// drawn from its Classic texmap, and the land beside it there, blend; black land never blends anywhere.
+    #[test]
+    fn cave_exit_frames_never_blend_only_on_the_player_caves_mouth() {
+        const LIQUID: u16 = TERRAIN_SHADER_FLAG_REVIEWED_LIQUID;
+        const MOUTH: u16 = TERRAIN_SHADER_FLAG_PLAYER_CAVE;
+        const NEVER: u16 = TERRAIN_SHADER_FLAG_NEVER_BLENDS;
+        assert_eq!(cell_terrain_flags(0, true, true), MOUTH | NEVER);
+        assert_eq!(cell_terrain_flags(0, true, false), 0);
+        assert_eq!(cell_terrain_flags(0, false, true), MOUTH);
+        assert_eq!(cell_terrain_flags(LIQUID, false, false), LIQUID);
+        assert_eq!(cell_terrain_flags(NEVER, false, false), NEVER);
+        assert_eq!(cell_terrain_flags(NEVER, false, true), NEVER | MOUTH);
     }
 }

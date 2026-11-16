@@ -3,8 +3,9 @@ import package::shaders::world::land::land_bindings::TileUniform;
 import package::shaders::world::land::atlas::atlas_read_meta;
 
 const TERRAIN_FLAG_REVIEWED_LIQUID: u32 = 0x4u;
-// Black land, a cave mouth's opening or the void (tile_atlas.rs TERRAIN_SHADER_FLAG_NEVER_BLENDS): no neighbour's
-// texture blends into it, nor it into a neighbour, so its edge stays clean.
+// Black land, a cave mouth's opening or the void, and a black cave exit frame on the player's cave's mouth (tile_atlas.rs
+// TERRAIN_SHADER_FLAG_NEVER_BLENDS, cell_terrain_flags): no neighbour's texture blends into it, nor it into a
+// neighbour, so its edge stays clean.
 const TERRAIN_FLAG_NEVER_BLENDS: u32 = 0x2u;
 
 fn terrain_never_blends(tile: TileUniform) -> bool {

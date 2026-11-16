@@ -4,7 +4,7 @@ use bevy::prelude::*;
 use std::collections::BTreeMap;
 use udd_assets::tex_land_ec::TexLandEcPackage;
 use uocf::enhanced::terrain_definition::TerrainLayerClass;
-use crate::core::render::scene::world::land::tile_atlas::is_black_enhanced_land;
+use crate::core::render::scene::world::land::tile_atlas::is_black_land;
 mod cache;
 pub(crate) use cache::sys_prepare as sys_prepare_stack_cache;
 
@@ -30,9 +30,10 @@ pub struct EcTerrainParams(pub [u32; 4]);
 
 impl EcTerrainParams {
     pub fn for_tile(package: &TexLandEcPackage, payload: u32) -> Option<Self> {
-        // Black land, the cave exit frames included, takes no part in the coverage: its material neither spreads over
-        // its neighbours nor theirs over it, and it draws alone (tile_atlas.rs `TERRAIN_SHADER_FLAG_NEVER_BLENDS`).
-        if is_black_enhanced_land(payload) { return None; }
+        // Black land takes no part in the coverage: its material neither spreads over its neighbours nor theirs over
+        // it, and it draws alone (tile_atlas.rs `TERRAIN_SHADER_FLAG_NEVER_BLENDS`). A cell that never blends, as a
+        // black cave exit frame on the player's cave's mouth, is left out by its flag (land/coverage.wesl, cache.rs).
+        if is_black_land(payload) { return None; }
         let id = package.resolve_material_decision(payload).material_id?;
         let source = package.source_material(id)?;
         let class = match source.texture.as_ref()?.layer_class() {

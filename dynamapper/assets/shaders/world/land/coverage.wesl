@@ -6,6 +6,7 @@ import package::shaders::world::land::land_bindings::{
     TileUniform, land_page_lookup, LAND_PAGE_LOOKUP_TILE_CAPACITY, ec_terrain_bases, ec_terrain_stacks,
 };
 import package::shaders::world::land::atlas::atlas_read_meta;
+import package::shaders::world::land::transitions::terrain_never_blends;
 
 const NO_MATERIAL: u32 = 0xffffffffu;
 
@@ -25,7 +26,8 @@ fn ec_coverage_params(payload: u32) -> vec4<u32> {
 
 fn ec_material_at(cell: vec2<i32>) -> u32 {
     let tile = atlas_read_meta(cell.x, cell.y);
-    if (tile.texture_size != 2u) { return NO_MATERIAL; }
+    // A cell that never blends (tile_atlas.rs TERRAIN_SHADER_FLAG_NEVER_BLENDS) owns no material.
+    if (tile.texture_size != 2u || terrain_never_blends(tile)) { return NO_MATERIAL; }
     let params = ec_coverage_params(tile.texture_payload);
     return select(NO_MATERIAL, params.x, params.w != 0u);
 }
@@ -88,7 +90,7 @@ fn ec_terrain_stack_uncached(world: vec2<f32>) -> EcTerrainStack {
         if (any(point < vec2<i32>(0)) || any(point > vec2<i32>(31))) { continue; }
         let cell = origin + point;
         let tile = atlas_read_meta(cell.x, cell.y);
-        if (tile.texture_size != 2u) { continue; }
+        if (tile.texture_size != 2u || terrain_never_blends(tile)) { continue; }
         let record = ec_coverage_params(tile.texture_payload);
         if (record.w == 0u || i32(record.y) > last_key) { continue; }
         var owned = true;

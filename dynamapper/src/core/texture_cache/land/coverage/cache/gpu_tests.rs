@@ -42,8 +42,12 @@ fn cached_layers_and_alpha_match_original_gpu_reconstruction() {
                 if let Some(value) = value { raw[(y + 1) * HALO + x + 1] = value; }
             }
         }
-        let liquids = std::array::from_fn(|index| raw[index] == 5 || (index < HALO && index % 2 != 0));
-        let cached = build_stack_layer(UVec2::ONE, 0, &raw, &params, &available, &liquids, [1, 60]).unwrap();
+        let liquids: [bool; HALO * HALO] = std::array::from_fn(|index| raw[index] == 5 || (index < HALO && index % 2 != 0));
+        // A cell that never blends (a black cave exit frame on the player's cave's mouth) in the point coverage.
+        let never_blends = 17 * HALO + 3;
+        let cells = std::array::from_fn(|index| if liquids[index] { CELL_LIQUID } else { 0 }
+            | if index == never_blends { CELL_NEVER_BLENDS } else { 0 });
+        let cached = build_stack_layer(UVec2::ONE, 0, &raw, &params, &available, &cells, [1, 60]).unwrap();
         let probe_at = 15 * WIDTH + 15 * RECORDS_PER_CORNER;
         assert_eq!(cached[probe_at][0], 17);
 
@@ -150,8 +154,9 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
             for x in 0..HALO {
                 let payload = raw[y * HALO + x];
                 let liquid_bits = if !liquids[y * HALO + x] { 0 } else if (x + y) % 2 == 0 { 1 << 20 } else { 4 << 21 };
+                let never_blends_bits = if y * HALO + x == never_blends { 2 << 21 } else { 0 };
                 cell_data[(31 + y) * 96 + 31 + x] = if available[usize::from(payload)] {
-                    (2u32 << 16) | u32::from(payload) | liquid_bits
+                    (2u32 << 16) | u32::from(payload) | liquid_bits | never_blends_bits
                 } else { 3u32 << 16 };
             }
         }
