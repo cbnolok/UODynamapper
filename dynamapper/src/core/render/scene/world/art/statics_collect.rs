@@ -94,7 +94,8 @@ pub(crate) const STATIC_FLAG_FLAT_ART: u32 = 1 << 11;
 /// (`CaveStatic::Lifted`), drawn in front of the land and statics around it. Kept in sync with art/depth.wesl.
 pub(crate) const STATIC_FLAG_CAVE: u32 = 1 << 12;
 /// `SpriteInstance` and `GroundTileInstance::is_wet_flags` bit: the static is outside the player's cave, drawn
-/// darkened to `CAVE_OUTSIDE_SHADE` (caves.rs `CaveSurroundings::Dimmed`). Kept in sync with art/depth.wesl.
+/// darkened and partly desaturated (art/depth.wesl `cave_outside_tone`, caves.rs `CaveSurroundings::Dimmed`). Kept
+/// in sync with art/depth.wesl.
 pub(crate) const STATIC_FLAG_CAVE_OUTSIDE: u32 = 1 << 15;
 
 #[derive(Clone, Copy, Debug, PartialEq)]

@@ -30,7 +30,7 @@ import package::shaders::world::land::land_bindings::{
 };
 import package::shaders::world::land::atlas::{atlas_read_meta, atlas_read_height, atlas_read_z, atlas_read_terrain_flags,
   chunk_edge_blend_factor};
-import package::shaders::world::art::depth::cave_lifted_clip;
+import package::shaders::world::art::depth::{cave_lifted_clip, cave_outside_tone};
 import package::shaders::world::land::noise::{hash, fbm_billow, domain_warp};
 import package::shaders::world::land::normals::{get_geometric_normal_local, get_bicubic_normal, get_bent_normal, client_vertex_terrain_shade};
 import package::shaders::world::land::bump::{land_derived_bump_tilt, land_bump_light_ratio};
@@ -977,8 +977,9 @@ fn fragment(in: VertexOutput) -> @location(0) vec4<f32> {
       }
     }
   }
-  // Outside the player's cave, which all land is but its mouth's, darkened (caves.rs CaveSurroundings::Dimmed).
+  // Outside the player's cave, which all land is but its mouth's, darkened and partly desaturated as the statics
+  // outside it are (caves.rs CaveSurroundings::Dimmed, art/depth.wesl cave_outside_tone).
   let finished = finish_land(apply_global_lighting_rgb(hdr_rgb, scene.global_lighting));
   let dimming = select(scene.land_outside_dimming, 0.0, cave_mouth);
-  return vec4<f32>(finished.rgb * (1.0 - dimming), finished.a);
+  return vec4<f32>(mix(finished.rgb, cave_outside_tone(finished.rgb), dimming), finished.a);
 }

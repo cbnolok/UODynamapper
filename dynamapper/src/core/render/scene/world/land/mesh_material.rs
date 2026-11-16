@@ -155,8 +155,8 @@ pub struct SceneUniform {
     /// texture filter emulates mip levels. Takes the former `_pad` slot.
     pub client_view_scale: f32,
     pub _reserved: Vec3,
-    /// How much the land is darkened, 0 not at all: outside the player's cave (caves.rs
-    /// `CavesRes::land_outside_dimming`). Only the land shader reads it.
+    /// How far the land takes the tone of what is outside the player's cave (art/depth.wesl `cave_outside_tone`), 0
+    /// not at all, 1 fully (caves.rs `CavesRes::land_outside_dimming`). Only the land shader reads it.
     pub land_outside_dimming: f32,
 }
 

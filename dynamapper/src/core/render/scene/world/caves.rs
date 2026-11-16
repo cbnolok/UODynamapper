@@ -95,7 +95,7 @@ impl CaveView {
 #[serde(rename_all = "snake_case")]
 pub enum CaveSurroundings {
     /// The land and the statics outside the cave under ClassicUO's cut (the player's z + `PLAYER_VIEW_HEADROOM`),
-    /// darkened to `CAVE_OUTSIDE_SHADE`, their lights with them.
+    /// darkened and partly desaturated (art/depth.wesl `cave_outside_tone`), their lights with them.
     #[default]
     Dimmed,
     /// Nothing outside the cave, as the KR client shows a cave.
@@ -141,10 +141,12 @@ const CAVE_WALL_DROP_SLACK_CELLS: i32 = 2;
 /// bound of the flood, held to the chunk grid so the cave found stays while the player walks in a chunk. Seven chunks,
 /// 224 cells, across: the view at the farthest zoom.
 pub const PLAYER_CAVE_REACH_CHUNKS: i32 = 3;
-/// How bright what is outside the player's cave draws with `CaveSurroundings::Dimmed`, a fraction of its own
-/// brightness: the land (`SceneUniform::land_outside_dimming`), the statics (`STATIC_FLAG_CAVE_OUTSIDE`) and their
-/// lights (`light_clip_tag`). Kept in sync with art/depth.wesl and art/light_clip.wesl.
-pub const CAVE_OUTSIDE_SHADE: f32 = 0.35;
+/// `CavesRes::land_outside_dimming` with `CaveSurroundings::Dimmed`: the land takes the tone of what is outside the
+/// player's cave fully. That tone, darkened to `CAVE_OUTSIDE_SHADE` of its brightness and keeping
+/// `CAVE_OUTSIDE_SATURATION` of its colour, is art/depth.wesl's `cave_outside_tone`, the one place it is set: the land
+/// (`SceneUniform::land_outside_dimming`), the statics and water (`STATIC_FLAG_CAVE_OUTSIDE`) and their lights
+/// (`light_clip_tag`) take it in every style.
+const LAND_OUTSIDE_DIMMED: f32 = 1.0;
 
 /// The eight neighbours of a cell.
 const NEIGHBOURS: [(i32, i32); 8] = [(-1, -1), (0, -1), (1, -1), (-1, 0), (1, 0), (-1, 1), (0, 1), (1, 1)];
@@ -854,10 +856,11 @@ impl CavesRes {
         }
     }
 
-    /// How dark the land draws (`SceneUniform::land_outside_dimming`): all of it is outside the player's cave.
+    /// How far the land takes the tone of what is outside the player's cave (`SceneUniform::land_outside_dimming`,
+    /// `LAND_OUTSIDE_DIMMED`): all of it is outside the cave but for its mouth.
     pub fn land_outside_dimming(&self) -> f32 {
         match self.player().map(PlayerCave::surroundings) {
-            Some(CaveSurroundings::Dimmed) => 1.0 - CAVE_OUTSIDE_SHADE,
+            Some(CaveSurroundings::Dimmed) => LAND_OUTSIDE_DIMMED,
             _ => 0.0,
         }
     }
@@ -1365,7 +1368,7 @@ mod tests {
         assert_eq!(light(&caves, 1, 0), Some(CaveLight { max_z: CAVE_LEVEL_HEIGHT, outside: false }));
         assert_eq!(light(&caves, 1, 40), None);
         assert_eq!(light(&caves, 40, 5), Some(CaveLight { max_z, outside: true }));
-        assert_eq!(caves.land_outside_dimming(), 1.0 - CAVE_OUTSIDE_SHADE);
+        assert_eq!(caves.land_outside_dimming(), LAND_OUTSIDE_DIMMED);
         caves.player = player_cave(&cells, 1, 1, 0, CaveSurroundings::Black).map(Arc::new);
         assert_eq!(light(&caves, 40, 5), None);
         assert_eq!(caves.land_outside_dimming(), 0.0);

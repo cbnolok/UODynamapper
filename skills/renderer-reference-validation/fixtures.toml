@@ -284,7 +284,8 @@ name = "minoc-mine-mouth-player-cave-dimmed"
 guards = """Just inside the Minoc mine's mouth with the player's-floor view: the player's cave whole, its floor and \
 rock walls, not the hill's boulders and trees over it nor the tunnel above (0e0839cd); its mouth's land whole, \
 undimmed and over the cave floor behind it: the rock jambs and the black opening between them, no lone strip of rock \
-in a cut-out hole; outside it the land and objects darkened under the z+16 cut."""
+in a cut-out hole; outside it the land, objects, water and lights under the z+16 cut darkened to a fifth and half \
+greyed, plainly apart from the cave."""
 tier = "quick"
 tags = ["caves", "player-cave", "z-view", "minoc"]
 map = 1

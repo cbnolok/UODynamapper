@@ -117,10 +117,25 @@ fn cave_lifted_clip(clip: vec4<f32>) -> vec4<f32> {
 // SpriteInstance and GroundTileInstance is_wet_flags bit: the static is outside the player's cave, drawn darkened
 // (caves.rs CaveSurroundings::Dimmed). Keep in sync with STATIC_FLAG_CAVE_OUTSIDE in statics_collect.rs.
 const STATIC_FLAG_CAVE_OUTSIDE: u32 = 1u << 15u;
-// How bright what is outside the player's cave draws. Keep in sync with CAVE_OUTSIDE_SHADE in caves.rs.
-const CAVE_OUTSIDE_SHADE: f32 = 0.35;
+// How bright what is outside the player's cave draws, and how much of its colour it keeps, the rest going to its
+// luminance: it reads as outside, not as dusk. The one place they are set: land (land/main.wesl), statics, water and
+// lights (art/light_clip.wesl) all take this tone (caves.rs CaveSurroundings::Dimmed).
+const CAVE_OUTSIDE_SHADE: f32 = 0.2;
+const CAVE_OUTSIDE_SATURATION: f32 = 0.5;
+// The luminance weights of linear sRGB (Rec. 709).
+const CAVE_OUTSIDE_LUMA_WEIGHTS: vec3<f32> = vec3<f32>(0.2126, 0.7152, 0.0722);
 
-// The final colour `rgb` of a static, darkened when it is outside the player's cave.
+// The colour `rgb` with only CAVE_OUTSIDE_SATURATION of its colour left, as what is outside the player's cave keeps.
+fn cave_outside_desaturated(rgb: vec3<f32>) -> vec3<f32> {
+    return mix(vec3<f32>(dot(rgb, CAVE_OUTSIDE_LUMA_WEIGHTS)), rgb, CAVE_OUTSIDE_SATURATION);
+}
+
+// The colour `rgb` as it draws outside the player's cave: darkened and partly desaturated, statics and land alike.
+fn cave_outside_tone(rgb: vec3<f32>) -> vec3<f32> {
+    return cave_outside_desaturated(rgb) * CAVE_OUTSIDE_SHADE;
+}
+
+// The final colour `rgb` of a static, darkened and partly desaturated when it is outside the player's cave.
 fn cave_outside_rgb(rgb: vec3<f32>, is_wet_flags: u32) -> vec3<f32> {
-    return select(rgb, rgb * CAVE_OUTSIDE_SHADE, (is_wet_flags & STATIC_FLAG_CAVE_OUTSIDE) != 0u);
+    return select(rgb, cave_outside_tone(rgb), (is_wet_flags & STATIC_FLAG_CAVE_OUTSIDE) != 0u);
 }

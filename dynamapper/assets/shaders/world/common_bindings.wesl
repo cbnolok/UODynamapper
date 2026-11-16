@@ -15,7 +15,8 @@ struct SceneUniform {
     // How many times wider than the KR client's 26-world-unit view the camera shows (client_filter.wesl).
     client_view_scale: f32,
     _reserved: vec3<f32>,
-    // How much the land is darkened, 0 not at all: outside the player's cave (caves.rs). Only land reads it.
+    // How far the land takes the tone of what is outside the player's cave (art/depth.wesl cave_outside_tone), 0 not
+    // at all, 1 fully (caves.rs). Only land reads it.
     land_outside_dimming: f32,
 }
 
