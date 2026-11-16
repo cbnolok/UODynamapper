@@ -28,12 +28,13 @@ By default one launch per map runs fixture after fixture, switching the style, t
 zoom and the whitelisted settings through the control socket as the UI does, for at most --chunk-seconds before it
 closes and the next launch goes on (the preview lock is held per launch). A fixture with an override the socket
 cannot switch, or a binary without the switch commands, gets the --fresh-launch behaviour: one launch per style,
-source, time of day, map and settings set, up to a time budget.
+source, time of day, map and settings set, up to a time budget. A view that fails is recorded as an error and the
+launch goes on; when the app died, a new launch takes the views after it.
 
 Labels live outside the repository (derived from client files), under --root. Each holds manifest.json (tree commit,
 binary hash, fixture definitions, per-capture status) and caps/<fixture>/<style>.<time>.<art>-<land>.<ext>.
 Comparisons write compares/<baseline>--<label>/summary.json and JPEG sheets. Exit status: 0 no change beyond the
-fixtures' tolerances, 1 unexpected changes, 2 errors (failed launches, missing or stale captures).
+fixtures' tolerances, 1 unexpected changes, 2 errors (failed launches or views, missing or stale captures).
 """
 import argparse
 import concurrent.futures
@@ -159,6 +160,10 @@ VERDICTS = ('identical', 'within', 'changed')
 
 class HarnessError(Exception):
     """A user-facing error: the message is printed and the harness exits with status 2."""
+
+
+# What one view's failure raises (a control error, a timeout, a capture that never finished): it loses that view only.
+VIEW_ERRORS = (HarnessError, OSError, RuntimeError, TimeoutError)
 
 
 # ----------------------------------------------------------------------------------------------------------------
@@ -740,7 +745,7 @@ class Launch:
         self.child = None
         self.control = ctx.control
         self.record = {'id': launch_id, 'mode': 'live' if live else 'fresh', 'captures': [c.key for c in captures],
-                       'overrides_applied': self.applied}
+                       'overrides_applied': self.applied, 'failed': {}}
 
     # -- process -------------------------------------------------------------------------------------------------
     def start(self):
@@ -774,6 +779,16 @@ class Launch:
             self.out.close()
         # The app leaves its socket file behind.
         self.socket.unlink(missing_ok=True)
+
+    def responsive(self):
+        """Whether the app still runs and answers its control socket."""
+        if self.child is None or self.child.poll() is not None:
+            return False
+        try:
+            self.request({'command': 'status'})
+        except VIEW_ERRORS:
+            return False
+        return True
 
     def preview_text(self):
         path = self.dir / 'preview.out'
@@ -950,13 +965,60 @@ class Launch:
                                 f'longer has')
         return problems, check
 
+    def capture_view(self, capture):
+        """Bring the app to one capture's view and capture it; returns its result."""
+        began = time.monotonic()
+        f = capture.fixture
+        target = [f.x, f.y, f.z, f.map]
+        switched = False
+        if self.live:
+            switched = self.switch(capture, self.state)
+        elif self.position is not None and self.position != target:
+            self.request({'command': 'teleport', 'x': f.x, 'y': f.y, 'z': f.z, 'map': f.map})
+        self.position = target
+        self.wait_ready(capture)
+        time.sleep(SETTLE_SECONDS)
+        status = self.wait_ready(capture)
+        if switched:
+            # As after a launch: the first frame after a switch may be stale.
+            self.switches += 1
+            self.capture_png(self.staging / f'0_discard.{self.switches}.png')
+        path, attempts, stable, difference = self.capture_stable(capture)
+        problems = self.verify(capture, self.request({'command': 'status'}))
+        reload_check = None
+        if self.ctx.reload_land_check:
+            reload_problems, reload_check = self.reload_land_check(capture, status)
+            problems += reload_problems
+        result = {
+            'png': path, 'attempts': attempts, 'stable': stable, 'unstable_difference': difference,
+            'problems': problems, 'seconds': round(time.monotonic() - began, 2),
+            'reload_land': reload_check,
+            'status': {key: status.get(key) for key in ('position', 'art', 'z_view', 'static_lights',
+                                                         'client_light_sprites')}
+            | {'render': {key: (status.get('render') or {}).get(key) for key in (
+                'preset', 'light_cover', 'light_cover_rule', 'player_floor_rule',
+                'land_texture_variation', 'local_lights')},
+               'window': status.get('window')}}
+        flag = '' if stable else f'  UNSTABLE after {attempts} frames'
+        flag += ''.join(f'  PROBLEM: {problem}' for problem in problems)
+        log(f'  {capture.key}  {result["seconds"]}s{flag}')
+        return result
+
+    def forget_view(self):
+        """After a failed view the app's state is unknown: the next view sends every switch, and its teleport."""
+        self.state = {'sources': None, 'preset': None, 'settings': {}, 'zoom': None, 'position': None}
+        self.position = []
+
     def run(self):
-        """Capture as many of the launch's captures as fit the budget; returns (results, the ones left over)."""
+        """Capture as many of the launch's captures as fit the budget; returns (results, the ones left over).
+
+        A view that fails is recorded in record['failed'] and the launch goes on to the next one; when the app died or
+        stopped answering, the views after it are left over for a new launch."""
         results = {}
         left = []
         timings = {}
         budget = self.ctx.chunk_seconds if self.live else LAUNCH_BUDGET_SECONDS
-        with PreviewLock() as lock:
+        with self.preview_lock() as lock:
             timings['lock_wait'] = lock.waited
             self.start()
             try:
@@ -967,49 +1029,24 @@ class Launch:
                     raise HarnessError(f'{self.id}: the binary has no switch commands; use --fresh-launch')
                 # The first capture of a run may be black or stale.
                 self.capture_png(self.staging / '0_discard.png')
-                position = None
+                self.position = None
                 # The startup settings are the first capture's (write_run_settings).
-                state = live_state(self.ctx.files, first)
-                switches = 0
+                self.state = live_state(self.ctx.files, first)
+                self.switches = 0
                 for index, capture in enumerate(self.captures):
                     if time.monotonic() - self.started > budget:
                         left = self.captures[index:]
                         break
-                    began = time.monotonic()
-                    f = capture.fixture
-                    target = [f.x, f.y, f.z, f.map]
-                    switched = False
-                    if self.live:
-                        switched = self.switch(capture, state)
-                    elif position is not None and position != target:
-                        self.request({'command': 'teleport', 'x': f.x, 'y': f.y, 'z': f.z, 'map': f.map})
-                    position = target
-                    self.wait_ready(capture)
-                    time.sleep(SETTLE_SECONDS)
-                    status = self.wait_ready(capture)
-                    if switched:
-                        # As after a launch: the first frame after a switch may be stale.
-                        switches += 1
-                        self.capture_png(self.staging / f'0_discard.{switches}.png')
-                    path, attempts, stable, difference = self.capture_stable(capture)
-                    problems = self.verify(capture, self.request({'command': 'status'}))
-                    reload_check = None
-                    if self.ctx.reload_land_check:
-                        reload_problems, reload_check = self.reload_land_check(capture, status)
-                        problems += reload_problems
-                    results[capture.key] = {
-                        'png': path, 'attempts': attempts, 'stable': stable, 'unstable_difference': difference,
-                        'problems': problems, 'seconds': round(time.monotonic() - began, 2),
-                        'reload_land': reload_check,
-                        'status': {key: status.get(key) for key in ('position', 'art', 'z_view', 'static_lights',
-                                                                     'client_light_sprites')}
-                        | {'render': {key: (status.get('render') or {}).get(key) for key in (
-                            'preset', 'light_cover', 'light_cover_rule', 'player_floor_rule',
-                            'land_texture_variation', 'local_lights')},
-                           'window': status.get('window')}}
-                    flag = '' if stable else f'  UNSTABLE after {attempts} frames'
-                    flag += ''.join(f'  PROBLEM: {problem}' for problem in problems)
-                    log(f'  {capture.key}  {results[capture.key]["seconds"]}s{flag}')
+                    try:
+                        results[capture.key] = self.capture_view(capture)
+                    except VIEW_ERRORS as error:
+                        self.record['failed'][capture.key] = str(error)
+                        log(f'  {capture.key}  FAILED: {error}')
+                        self.forget_view()
+                        if not self.responsive():
+                            left = self.captures[index + 1:]
+                            log(f'  the app is gone; {len(left)} captures go to a new launch')
+                            break
             finally:
                 self.stop()
         timings['total'] = round(time.monotonic() - self.started, 2)
@@ -1021,6 +1058,9 @@ class Launch:
             raise HarnessError(f'{self.id}: the preview helper did not verify the window placement:\n'
                                f'{self.preview_text()[-2000:]}')
         return results, left
+
+    def preview_lock(self):
+        return PreviewLock()
 
 
 # ----------------------------------------------------------------------------------------------------------------
@@ -1148,12 +1188,15 @@ def record(args, label, captures, fixtures_path):
                 launch = Launch(ctx, launch_id, group, switching)
                 results, left = launch.run()
             except (HarnessError, OSError, RuntimeError, TimeoutError) as error:
-                # One failed launch (a control error, a crashed app) loses its captures, not the whole label.
+                # A launch that fails before its first view (a crashed start, an unverified placement) loses its
+                # captures, not the whole label; a failed view loses only its own (Launch.run).
                 log(f'  FAILED: {error}')
                 manifest['errors'].append(f'{launch_id}: {error}')
                 continue
             if left:
                 pending.insert(0, (left, switching))
+            for key, error in launch.record['failed'].items():
+                manifest['errors'].append(f'{launch_id}: {key}: {error}')
             manifest['launches'].append(launch.record)
             if launch.record['log_errors']:
                 log(f'  {len(launch.record["log_errors"])} error lines in the app log, first: '
@@ -1764,6 +1807,66 @@ settings = { preset = { "effects.light_decal_intensity" = 0.5 } }
         self.assertTrue(supports_switching(binary))
         binary.write_bytes(b'x' * 64)
         self.assertFalse(supports_switching(binary))
+
+    def test_failed_view_keeps_the_launch(self):
+        """A failed view loses only its own capture; once the app is gone, the views after it go to a new launch."""
+        fixtures = load_fixtures(self.write(SAMPLE), self.files)
+        captures = expand(fixtures, self.selection())
+        fail, die = captures[1].key, captures[3].key
+        ctx = argparse.Namespace(chunk_seconds=LIVE_CHUNK_SECONDS, files=self.files)
+
+        class Lock:
+            waited = 0
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *_):
+                pass
+
+        class FakeLaunch(Launch):
+            def __init__(self):
+                self.ctx, self.id, self.captures, self.live = ctx, 'fake', captures, False
+                self.staging = Path('staging')
+                self.record = {'failed': {}}
+                self.alive = True
+
+            def preview_lock(self):
+                return Lock()
+
+            def start(self):
+                self.started = time.monotonic()
+
+            def stop(self):
+                pass
+
+            def wait_ready(self, capture):
+                return {}
+
+            def capture_png(self, path):
+                return path
+
+            def capture_view(self, capture):
+                if capture.key in (fail, die):
+                    self.alive = capture.key != die
+                    raise HarnessError(f'{capture.key} failed')
+                return {'png': capture.key}
+
+            def responsive(self):
+                return self.alive
+
+            def log_errors(self):
+                return []
+
+            def preview_text(self):
+                return 'placement_verified'
+
+        launch = FakeLaunch()
+        results, left = launch.run()
+        self.assertEqual(list(results), [captures[0].key, captures[2].key])
+        self.assertEqual(set(launch.record['failed']), {fail, die})
+        self.assertEqual(left, captures[4:])
+        self.assertTrue(left)
 
     def assert_rejected(self, text, *words):
         with self.assertRaises(HarnessError) as caught:
