@@ -20,7 +20,7 @@ const GPU_LAYER_CLASS_BUMP: u32 = 3;
 /// `UOWaterTerrainLayer::SetMaterialId` 0x004601e0 stores `material × 1000`, so water layers sort after the others.
 const WATER_LAYER_SORT_KEY_SCALE: u32 = 1000;
 /// Added to the material ids of the EC-layout package drawn for the ids the land source's own package lacks
-/// (routing.rs), so a material of tex_land_kr.uddp and one of tex_land_ec.uddp sharing an id stay two coverage
+/// (routing.rs), so a material of the Kingdom Reborn land and one of tex_land_ec.uddp sharing an id stay two coverage
 /// layers. The shaders compare material ids only for equality; the sort keys stay the source's.
 const SECONDARY_PACKAGE_MATERIAL_ID_OFFSET: u32 = 1 << 24;
 

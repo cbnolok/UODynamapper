@@ -74,7 +74,7 @@ impl UddConvApp {
                         } else {
                             ui.colored_label(
                                 egui::Color32::YELLOW,
-                                "Not selected (needed only for Kingdom Reborn Land)",
+                                "Not selected: the Kingdom Reborn data comes from the delta shipped with the tools",
                             );
                         }
                         ui.end_row();

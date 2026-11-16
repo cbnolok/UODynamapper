@@ -283,7 +283,7 @@ impl ClientTextureSource {
     }
 }
 
-/// The package the terrain is drawn from. Kingdom Reborn land (tex_land_kr.uddp) has the Enhanced land layout and is
+/// The package the terrain is drawn from. Kingdom Reborn land (in tex_land_ec.uddp) has the Enhanced land layout and is
 /// drawn by the Enhanced terrain path; the art source stays Classic or Enhanced, since the art packages have no
 /// Kingdom Reborn counterpart. The shader presets never choose it.
 #[derive(Clone, Copy, Debug, Deserialize, Serialize, PartialEq, Eq, Default)]
@@ -304,11 +304,11 @@ impl LandTextureSource {
         match self {
             Self::Cc => "Classic (tex_land_cc.uddp)",
             Self::Ec => "Enhanced (tex_land_ec.uddp)",
-            Self::Kr => "Kingdom Reborn (tex_land_kr.uddp)",
+            Self::Kr => "Kingdom Reborn (in tex_land_ec.uddp)",
         }
     }
 
-    /// Whether the terrain is drawn from a package in the Enhanced land layout (tex_land_ec.uddp or tex_land_kr.uddp).
+    /// Whether the terrain is drawn from a package in the Enhanced land layout (tex_land_ec.uddp or its Kingdom Reborn land).
     pub const fn uses_enhanced_land(self) -> bool {
         matches!(self, Self::Ec | Self::Kr)
     }

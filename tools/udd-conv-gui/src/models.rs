@@ -57,7 +57,8 @@ pub struct AppSettings {
     /// when the Classic folder changes.
     pub classic_client_exe: Option<PathBuf>,
     pub ec_dir: Option<PathBuf>,
-    /// The Kingdom Reborn client folder, read by the Kingdom Reborn Land job only.
+    /// The Kingdom Reborn client folder the Enhanced jobs take the Kingdom Reborn data from; unset, the delta shipped
+    /// with the tools.
     pub kr_dir: Option<PathBuf>,
     pub dynamapper_routing_dir: Option<PathBuf>,
     pub upscale_profile_path: Option<PathBuf>,
@@ -68,7 +69,6 @@ pub struct AppSettings {
     pub opt_tex_land_cc: TextureOptimization,
     pub opt_tex_art_ec: TextureOptimization,
     pub opt_tex_land_ec: TextureOptimization,
-    pub opt_tex_land_kr: TextureOptimization,
     pub opt_mobile_anim_cc: TextureOptimization,
     pub opt_mobile_anim_ec: TextureOptimization,
     pub opt_tex_aux_ec: TextureOptimization,
@@ -76,7 +76,6 @@ pub struct AppSettings {
     pub zstd_tex_land_cc: i32,
     pub zstd_tex_art_ec: i32,
     pub zstd_tex_land_ec: i32,
-    pub zstd_tex_land_kr: i32,
     pub zstd_tilemeta: i32,
     pub zstd_mobile_anim_cc: i32,
     pub zstd_mobile_anim_ec: i32,
@@ -150,7 +149,7 @@ pub struct AppSettings {
     pub zstd_paperdoll_ec: Option<i32>,
     /// The file the Enhanced paperdoll packer writes its dress-layer findings to (`pack-ec-paperdoll --report`).
     pub paperdoll_ec_report: Option<PathBuf>,
-    /// The Kingdom Reborn Land job's source report (`pack-kr-land --report`).
+    /// The Enhanced Land job's Kingdom Reborn source report (`pack-ec-textures --kr-land-report`).
     pub tex_land_kr_report: Option<PathBuf>,
     /// Validate each package a packing job writes, as `tool validate` does, once the job succeeds.
     pub validate_after_packing: bool,
@@ -172,7 +171,6 @@ impl Default for AppSettings {
             opt_tex_land_cc: TextureOptimization::None,
             opt_tex_art_ec: TextureOptimization::None,
             opt_tex_land_ec: TextureOptimization::None,
-            opt_tex_land_kr: TextureOptimization::None,
             opt_mobile_anim_cc: default_mobile_anim_optimization(),
             opt_mobile_anim_ec: default_mobile_anim_optimization(),
             opt_tex_aux_ec: TextureOptimization::None,
@@ -180,7 +178,6 @@ impl Default for AppSettings {
             zstd_tex_land_cc: LOSSLESS_PAGE_ZSTD_LEVEL,
             zstd_tex_art_ec: LOSSLESS_PAGE_ZSTD_LEVEL,
             zstd_tex_land_ec: LOSSLESS_PAGE_ZSTD_LEVEL,
-            zstd_tex_land_kr: LOSSLESS_PAGE_ZSTD_LEVEL,
             zstd_tilemeta: default_zstd_level(),
             zstd_mobile_anim_cc: default_zstd_level(),
             zstd_mobile_anim_ec: default_zstd_level(),
@@ -268,7 +265,6 @@ pub enum AssetPackTask {
     TexLandCc,
     TexArtEc,
     TexLandEc,
-    TexLandKr,
     TexAuxEc,
     MobileAnimCc,
     MobileAnimEc,
@@ -379,10 +375,8 @@ mod tests {
 
         assert_eq!(settings.opt_tex_land_cc, TextureOptimization::None);
         assert_eq!(settings.opt_tex_land_ec, TextureOptimization::None);
-        assert_eq!(settings.opt_tex_land_kr, TextureOptimization::None);
         assert_eq!(settings.zstd_tex_land_cc, LOSSLESS_PAGE_ZSTD_LEVEL);
         assert_eq!(settings.zstd_tex_land_ec, LOSSLESS_PAGE_ZSTD_LEVEL);
-        assert_eq!(settings.zstd_tex_land_kr, LOSSLESS_PAGE_ZSTD_LEVEL);
     }
 
     #[test]

@@ -4,7 +4,8 @@ use std::sync::{Arc, RwLock};
 
 use color_eyre::eyre::{self, WrapErr};
 use bytemuck::{Pod, Zeroable};
-use udd_container::UddpReader;
+use udd_container::uddp::FormatError;
+use udd_container::{UddpReader, UddpReaderOptions};
 
 use crate::bc7::{
     decode_bc7_to_rgba8888, expected_bc7_byte_len, extract_bc7_subrect, extract_rgba8_subrect,
@@ -50,21 +51,30 @@ pub(crate) fn ensure_manifest_version(manifest: &str, version: u32, current: u32
     Ok(())
 }
 
+/// The entry of an Enhanced package (`tex_art_ec.uddp`, `tex_aux_ec.uddp`, `tilemeta.uddp`, `tex_land_ec.uddp`) that
+/// holds the Kingdom Reborn package of the same layout: a whole UDDP package stored uncompressed, read in place
+/// ([`open_kr_section`]). The packers write it from the Kingdom Reborn client files, rebuilt from `kr_delta.uddp` over
+/// the Enhanced Client the package is packed from, or read from a Kingdom Reborn client. A package without it has no
+/// Kingdom Reborn data.
+pub const KR_SECTION_ENTRY_PATH: &str = "kr/package.uddp";
+
+/// The Kingdom Reborn package nested in `package` ([`KR_SECTION_ENTRY_PATH`]), read in place with `options`; `None`
+/// when `package` has none.
+pub fn open_kr_section(package: &UddpReader, options: UddpReaderOptions) -> eyre::Result<Option<UddpReader>> {
+    match package.open_section(udd_container::xxh64_virtual_path(KR_SECTION_ENTRY_PATH), options) {
+        Ok(section) => Ok(Some(section)),
+        Err(FormatError::FileNotFound) => Ok(None),
+        Err(error) => Err(eyre::eyre!("{KR_SECTION_ENTRY_PATH}: {error}; repack with the current udd-cli")),
+    }
+}
+
 /// The table of an overlay package: one that holds only what its client draws differently from the client of the
-/// base package beside it (the Kingdom Reborn `tex_art_kr.uddp` and `tex_aux_kr.uddp` over the Enhanced packages).
-/// A four-byte magic of the package layout and its metadata version, then one [`EcEquivalentRecord`] per id the
-/// overlay leaves to its base package, sorted by unique id. A package without the entry is a full package.
+/// base package (the Kingdom Reborn sections of `tex_art_ec.uddp` and `tex_aux_ec.uddp`, over the package holding
+/// them). A four-byte magic of the package layout and its metadata version, then one [`EcEquivalentRecord`] per id
+/// the overlay leaves to its base package, sorted by unique id. A package without the entry is a full package.
 pub const EC_EQUIVALENTS_ENTRY_PATH: &str = "metadata/ec_equivalents.bin";
 /// Magic and version.
 const EC_EQUIVALENTS_HEADER_SIZE: usize = 8;
-/// The base package an overlay was measured against: magic [`EC_EQUIVALENTS_BASE_MAGIC`], the `u32` metadata version
-/// of the package layout, then the `u64` `package_hash64` of that package (the canonical XXH64 its UDDP header stores,
-/// over every byte of it). Every overlay has it; the base it names is the only one the overlay reads through.
-pub const EC_EQUIVALENTS_BASE_ENTRY_PATH: &str = "metadata/ec_equivalents_base.bin";
-/// Magic of [`EC_EQUIVALENTS_BASE_ENTRY_PATH`].
-pub const EC_EQUIVALENTS_BASE_MAGIC: [u8; 4] = *b"EQBS";
-/// Magic, version and the base package hash.
-const EC_EQUIVALENTS_BASE_SIZE: usize = 16;
 
 /// An id an overlay leaves to its base package ([`EC_EQUIVALENTS_ENTRY_PATH`]).
 #[repr(C)]
@@ -100,60 +110,21 @@ pub fn decode_ec_equivalents(bytes: &[u8], magic: [u8; 4], version: u32) -> eyre
     Ok(records)
 }
 
-/// Bytes of [`EC_EQUIVALENTS_BASE_ENTRY_PATH`] for a package layout at metadata `version`.
-pub fn encode_ec_equivalents_base(version: u32, base_package_hash64: u64) -> Vec<u8> {
-    let mut bytes = Vec::with_capacity(EC_EQUIVALENTS_BASE_SIZE);
-    bytes.extend_from_slice(&EC_EQUIVALENTS_BASE_MAGIC);
-    bytes.extend_from_slice(&version.to_le_bytes());
-    bytes.extend_from_slice(&base_package_hash64.to_le_bytes());
-    bytes
-}
-
-/// The base package hash of [`EC_EQUIVALENTS_BASE_ENTRY_PATH`], after checking its magic, version and size.
-pub fn decode_ec_equivalents_base(bytes: &[u8], version: u32) -> eyre::Result<u64> {
-    eyre::ensure!(
-        bytes.len() == EC_EQUIVALENTS_BASE_SIZE && bytes[0..4] == EC_EQUIVALENTS_BASE_MAGIC,
-        "{EC_EQUIVALENTS_BASE_ENTRY_PATH}: no {} record; repack with the current udd-cli",
-        String::from_utf8_lossy(&EC_EQUIVALENTS_BASE_MAGIC)
-    );
-    let found = u32::from_le_bytes(bytes[4..8].try_into().expect("slice length checked"));
-    ensure_manifest_version(EC_EQUIVALENTS_BASE_ENTRY_PATH, found, version)?;
-    Ok(u64::from_le_bytes(bytes[8..16].try_into().expect("slice length checked")))
-}
-
-/// The table of an overlay package ([`EC_EQUIVALENTS_ENTRY_PATH`], [`EC_EQUIVALENTS_BASE_ENTRY_PATH`]).
+/// The table of an overlay package ([`EC_EQUIVALENTS_ENTRY_PATH`]).
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct EcOverlayTable {
-    /// The `package_hash64` of the base package the overlay was measured against.
-    pub base_package_hash64: u64,
-    /// The ids it leaves to that package, sorted by unique id.
+    /// The ids it leaves to its base package, sorted by unique id.
     pub equivalents: Vec<EcEquivalentRecord>,
 }
 
 impl EcOverlayTable {
-    /// The overlay's entries for a package layout of equivalents `magic` at metadata `version`, by entry path.
-    pub fn encode(&self, magic: [u8; 4], version: u32) -> [(&'static str, Vec<u8>); 2] {
-        [
-            (EC_EQUIVALENTS_ENTRY_PATH, encode_ec_equivalents(magic, version, &self.equivalents)),
-            (EC_EQUIVALENTS_BASE_ENTRY_PATH, encode_ec_equivalents_base(version, self.base_package_hash64)),
-        ]
-    }
-
-    /// Fails unless `base_package_hash64` is the `package_hash64` of the base package this overlay was measured
-    /// against: a base repacked since, or from another client, may draw what the overlay leaves to it differently.
-    pub fn ensure_base(&self, base_package_hash64: u64) -> eyre::Result<()> {
-        eyre::ensure!(
-            base_package_hash64 == self.base_package_hash64,
-            "the overlay was measured against the base package {:#018x}, not this one ({base_package_hash64:#018x}); \
-             repack the overlay against it",
-            self.base_package_hash64
-        );
-        Ok(())
+    /// The overlay's entry for a package layout of equivalents `magic` at metadata `version`, with its path.
+    pub fn encode(&self, magic: [u8; 4], version: u32) -> (&'static str, Vec<u8>) {
+        (EC_EQUIVALENTS_ENTRY_PATH, encode_ec_equivalents(magic, version, &self.equivalents))
     }
 }
 
-/// The overlay table of `package`, `None` for a full package. An overlay without its base entry (packed before
-/// overlays named their base) is refused with the repack message.
+/// The overlay table of `package`, `None` for a full package.
 pub(crate) fn read_ec_overlay_table(package: &UddpReader, magic: [u8; 4], version: u32)
     -> eyre::Result<Option<EcOverlayTable>> {
     if package.find_by_path_hash(udd_container::xxh64_virtual_path(EC_EQUIVALENTS_ENTRY_PATH)).is_none() {
@@ -161,14 +132,7 @@ pub(crate) fn read_ec_overlay_table(package: &UddpReader, magic: [u8; 4], versio
     }
     let equivalents = read_path_entry_cow(package, EC_EQUIVALENTS_ENTRY_PATH)
         .and_then(|bytes| decode_ec_equivalents(bytes.as_ref(), magic, version))?;
-    eyre::ensure!(
-        package.find_by_path_hash(udd_container::xxh64_virtual_path(EC_EQUIVALENTS_BASE_ENTRY_PATH)).is_some(),
-        "overlay without {EC_EQUIVALENTS_BASE_ENTRY_PATH}, the base package it was measured against; repack with the \
-         current udd-cli"
-    );
-    let base_package_hash64 = read_path_entry_cow(package, EC_EQUIVALENTS_BASE_ENTRY_PATH)
-        .and_then(|bytes| decode_ec_equivalents_base(bytes.as_ref(), version))?;
-    Ok(Some(EcOverlayTable { base_package_hash64, equivalents }))
+    Ok(Some(EcOverlayTable { equivalents }))
 }
 
 /// Whether the sorted overlay table `records` lists `id`.
@@ -394,19 +358,40 @@ mod tests {
         assert!(decode_ec_equivalents(&unsorted, MAGIC, VERSION).is_err());
     }
 
-    /// The base record round-trips; other versions and sizes are refused, and only the named base passes.
+    /// A package's Kingdom Reborn section is read in place; a package without one has none, and a section stored
+    /// compressed is refused.
     #[test]
-    fn the_overlay_base_round_trips_and_only_the_named_base_passes() {
-        const VERSION: u32 = 1;
-        const BASE_HASH: u64 = 0x0123_4567_89ab_cdef;
-        let bytes = encode_ec_equivalents_base(VERSION, BASE_HASH);
-        assert_eq!(decode_ec_equivalents_base(&bytes, VERSION).unwrap(), BASE_HASH);
-        assert!(decode_ec_equivalents_base(&bytes, VERSION + 1).is_err());
-        assert!(decode_ec_equivalents_base(&bytes[..bytes.len() - 1], VERSION).is_err());
-        let table = EcOverlayTable { base_package_hash64: BASE_HASH, equivalents: Vec::new() };
-        assert!(table.ensure_base(BASE_HASH).is_ok());
-        let error = table.ensure_base(BASE_HASH + 1).unwrap_err().to_string();
-        assert!(error.contains("repack the overlay"), "{error}");
+    fn the_kr_section_is_read_in_place_and_must_be_stored_uncompressed() {
+        use udd_container::{AddOwnedFileRequest, CompressionFlag, DataType, LookupMode, UddpBuilder};
+        const INNER_PATH: &str = "metadata/inner.bin";
+        let request = |path: &str, compression, data: Vec<u8>| AddOwnedFileRequest {
+            data_type: DataType::Metadata as u8,
+            compression,
+            width: 0,
+            height: 0,
+            virtual_path: Some(path.to_owned()),
+            path_hash64: None,
+            id: None,
+            data,
+        };
+        let package = |entries: Vec<AddOwnedFileRequest>| {
+            let mut builder = UddpBuilder::new(LookupMode::VirtualPathHash);
+            for entry in entries {
+                builder.add_owned_file(entry).unwrap();
+            }
+            builder.into_bytes().unwrap()
+        };
+        let section = package(vec![request(INNER_PATH, CompressionFlag::ZstdNoDict, b"kr".to_vec())]);
+        let outer = UddpReader::open(package(vec![request(KR_SECTION_ENTRY_PATH, CompressionFlag::None, section.clone())]))
+            .unwrap();
+        let opened = open_kr_section(&outer, UddpReaderOptions::disabled()).unwrap().expect("a section");
+        assert_eq!(read_path_entry(&opened, INNER_PATH).unwrap(), b"kr");
+
+        let without = UddpReader::open(package(vec![request(INNER_PATH, CompressionFlag::None, Vec::new())])).unwrap();
+        assert!(open_kr_section(&without, UddpReaderOptions::disabled()).unwrap().is_none());
+        let compressed = UddpReader::open(package(vec![request(KR_SECTION_ENTRY_PATH, CompressionFlag::ZstdNoDict, section)]))
+            .unwrap();
+        assert!(open_kr_section(&compressed, UddpReaderOptions::disabled()).is_err());
     }
 
     #[test]

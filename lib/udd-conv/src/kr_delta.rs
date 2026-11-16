@@ -15,6 +15,7 @@ use std::borrow::Cow;
 use std::fs;
 use std::io::Cursor;
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicUsize, Ordering};
 
 use color_eyre::eyre::{self, WrapErr};
 use log::{info, warn};
@@ -61,6 +62,8 @@ const DDS_MAGIC: &[u8] = b"DDS ";
 const LOGGED_REPLACEMENTS: usize = 10;
 /// The work folder holding a rebuilt client, beside the package being packed.
 const REBUILT_CLIENT_DIR_PREFIX: &str = ".kr_client_rebuilt";
+/// Numbers the rebuilt client folders of this process, so concurrent packers each have their own.
+static REBUILT_CLIENT_SERIAL: AtomicUsize = AtomicUsize::new(0);
 /// The seed of the XXH64 hashes the delta records.
 const HASH_SEED: u64 = 0;
 
@@ -486,6 +489,12 @@ impl Drop for RebuiltKrClient {
     }
 }
 
+/// A rebuilt client folder name no other packer of this or another process uses.
+fn rebuilt_client_dir_name() -> String {
+    let serial = REBUILT_CLIENT_SERIAL.fetch_add(1, Ordering::Relaxed);
+    format!("{REBUILT_CLIENT_DIR_PREFIX}.{}.{serial}", std::process::id())
+}
+
 /// Loads the delta at `path`, or the shipped one.
 pub fn load_kr_delta(path: Option<&Path>) -> eyre::Result<KrDeltaContents> {
     let path = uocf::utils::bundled_files::resolve(path, KR_DELTA)?;
@@ -505,7 +514,7 @@ pub fn prepare_kr_client(source: &KrClientSource, ec_dir: &Path, work_parent: &P
         }
         KrClientSource::Delta(path) => load_kr_delta(path.as_deref())?,
     };
-    let dir = work_parent.join(format!("{REBUILT_CLIENT_DIR_PREFIX}.{}", std::process::id()));
+    let dir = work_parent.join(rebuilt_client_dir_name());
     if dir.exists() {
         fs::remove_dir_all(&dir).wrap_err_with(|| format!("remove the stale {}", dir.display()))?;
     }
@@ -525,7 +534,7 @@ pub fn make_and_write_kr_delta(kr_dir: &Path, ec_dir: &Path, out_file: &Path) ->
     let check = (|| -> eyre::Result<()> {
         let written = KrDeltaPackage::load(&partial)?.into_contents();
         eyre::ensure!(written == contents, "{} does not read back as written", partial.display());
-        let rebuilt = RebuiltKrClient { dir: out_dir.join(format!("{REBUILT_CLIENT_DIR_PREFIX}.{}", std::process::id())) };
+        let rebuilt = RebuiltKrClient { dir: out_dir.join(rebuilt_client_dir_name()) };
         let replaced = rebuild_kr_client(&written, ec_dir, rebuilt.dir())?;
         eyre::ensure!(replaced.is_empty(), "the delta does not rebuild from the Enhanced Client it was made against");
         verify_rebuilt_client(&written, kr_dir, ec_dir, rebuilt.dir())

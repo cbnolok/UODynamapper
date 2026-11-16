@@ -317,6 +317,8 @@ pub enum FormatError {
     Truncated,
     Overflow,
     UnsupportedCodec,
+    /// A package nested in another one ([`super::UddpReader::open_section`]) must be stored uncompressed.
+    CompressedSection,
     Io(std::io::Error),
 }
 
@@ -337,6 +339,7 @@ impl fmt::Display for FormatError {
             Self::Truncated => write!(f, "truncated data"),
             Self::Overflow => write!(f, "integer overflow"),
             Self::UnsupportedCodec => write!(f, "unsupported codec"),
+            Self::CompressedSection => write!(f, "the nested package is stored compressed"),
             Self::Io(e) => write!(f, "{e}"),
         }
     }

@@ -22,11 +22,10 @@
 //! - the light textures the tilemeta's item lights name (`TerrainTexture.uop` entries), under the same
 //!   reserved keys and with the same rules, role Light. Every one is required.
 //!
-//! [`pack_tex_aux_ec_overlay`] packs an overlay (the Kingdom Reborn `tex_aux_kr.uddp`): it decodes the base client's
-//! image of each texture too, and leaves a texture to the base package when that package holds it and the image is
-//! the same within [`TexAuxEcOverlayBase::max_difference`]; the textures it leaves go to
-//! `metadata/ec_equivalents.bin` with their measured difference, and the others are stored as above. The overlay
-//! records the base package's hash ([`TexAuxEcOverlayBase::package_hash64`]) in `metadata/ec_equivalents_base.bin`.
+//! [`pack_tex_aux_ec_overlay`] packs an overlay (the Kingdom Reborn section of `tex_aux_ec.uddp`): it decodes the base
+//! client's image of each texture too, and leaves a texture to the base package when that package holds it and the
+//! image is the same within [`TexAuxEcOverlayBase::max_difference`]; the textures it leaves go to
+//! `metadata/ec_equivalents.bin` with their measured difference, and the others are stored as above.
 
 use std::collections::{BTreeSet, HashMap, HashSet};
 use std::path::{Path, PathBuf};
@@ -141,8 +140,6 @@ pub struct TexAuxEcOverlayBase {
     pub keys: HashSet<u32>,
     /// The largest difference (`crate::kr_items::image_difference`) of an image left to the base.
     pub max_difference: f32,
-    /// The `package_hash64` of the base package, packed from `source_dirs`, that the overlay is read over.
-    pub package_hash64: u64,
 }
 
 /// What [`pack_tex_aux_ec_overlay`] stored and left to the base, by key, with each image's difference from the
@@ -461,11 +458,10 @@ fn pack_tex_aux_ec_with_base(
     })?;
     overlay.equivalents.sort_by_key(|record| record.id);
     overlay.kept.sort_by_key(|(key, _)| *key);
-    let overlay_entries = base.as_ref().map(|base| tex_aux_ec_overlay_entries(&EcOverlayTable {
-        base_package_hash64: base.base.package_hash64,
+    let overlay_entry = base.as_ref().map(|_| tex_aux_ec_overlay_entries(&EcOverlayTable {
         equivalents: overlay.equivalents.clone(),
     }));
-    for (path, data) in overlay_entries.iter().flatten() {
+    if let Some((path, data)) = &overlay_entry {
         package.add_file(AddFileRequest {
             data_type: DataType::Metadata as u8,
             compression: CompressionFlag::ZstdNoDict,

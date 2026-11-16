@@ -20,6 +20,7 @@ pub use upscaling::{upscale_pipeline, upscale_profile};
 
 pub mod conversion_tables;
 pub mod kr_delta;
+pub mod kr_sections;
 pub mod package_progress;
 mod progress;
 pub mod source_paths;

@@ -1047,7 +1047,7 @@ fn kingdom_reborn_static_visual_kind(
         Some(kind.kingdom_reborn())
     } else {
         console_logger::one(LogSev::Info, LogAbout::RenderWorldArt, &format!(
-            "Static {tile_graphic:#06x} continues the land, but the Kingdom Reborn art (tex_art_kr.uddp over \
+            "Static {tile_graphic:#06x} continues the land, but the Kingdom Reborn art (the overlay in \
              tex_art_ec.uddp) lacks it: it keeps the Enhanced item data under the Kingdom Reborn land."));
         None
     };
@@ -3838,9 +3838,10 @@ mod tests {
         let ec = udd_assets::tex_art_ec::TexArtEcPackage::load(root.join("tex_art_ec.uddp")).unwrap();
         let land = udd_assets::tex_land_ec::TexLandEcPackage::load(root.join("tex_land_ec.uddp")).unwrap();
         let meta = udd_assets::tilemeta::TileMetaPackage::load(root.join("tilemeta.uddp")).unwrap();
-        let kr_meta = udd_assets::tilemeta::TileMetaPackage::load(root.join("tilemeta_kr.uddp")).unwrap();
-        let kr_art = udd_assets::tex_art_ec::TexArtEcPackage::load(root.join("tex_art_kr.uddp")).unwrap();
-        let kr_land = udd_assets::tex_land_ec::TexLandEcPackage::load(root.join("tex_land_kr.uddp")).unwrap();
+        let kr_meta = meta.kr_tilemeta().unwrap().expect("the Kingdom Reborn tile data");
+        let kr_art = ec.kr_overlay(udd_assets::AtlasCacheOptions::disabled()).unwrap().expect("the Kingdom Reborn art");
+        let kr_land = land.kr_land(udd_container::UddpReaderOptions::disabled(), udd_assets::AtlasCacheOptions::disabled())
+            .unwrap().expect("the Kingdom Reborn land");
         let kr = KrStaticSources { tilemeta: &kr_meta, art: &kr_art, land: &kr_land };
         let mut cache = StaticSurfaceLikeResolutionCache::default();
         let mut resolve = |graphic: u16| kingdom_reborn_static_visual_kind(graphic, Some(&meta),

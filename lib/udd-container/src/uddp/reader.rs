@@ -112,6 +112,8 @@ impl DecodedEntryCache {
 pub enum UddpData {
     Owned(Vec<u8>),
     Mmap(Mmap),
+    /// A package stored uncompressed in another package: its bytes are that entry's range of the outer image.
+    Section { outer: Arc<UddpData>, start: usize, end: usize },
 }
 
 impl std::ops::Deref for UddpData {
@@ -120,6 +122,7 @@ impl std::ops::Deref for UddpData {
         match self {
             Self::Owned(v) => v,
             Self::Mmap(m) => m,
+            Self::Section { outer, start, end } => &outer[*start..*end],
         }
     }
 }
@@ -219,6 +222,21 @@ impl UddpReader {
         this.read_dictionary_table()?;
         this.read_index()?;
         Ok(this)
+    }
+
+    /// The package stored uncompressed under `path_hash64` in this one, read in place: no copy of its bytes, and
+    /// lookups in it as fast as in a package of its own. `FileNotFound` when there is no such entry.
+    pub fn open_section(&self, path_hash64: u64, options: UddpReaderOptions) -> Result<Self, FormatError> {
+        let resolved = self.find_by_path_hash(path_hash64).ok_or(FormatError::FileNotFound)?;
+        if resolved.codec != Codec::None {
+            return Err(FormatError::CompressedSection);
+        }
+        let start = usize::try_from(resolved.payload_offset).map_err(|_| FormatError::Overflow)?;
+        let end = start.checked_add(resolved.stored_size as usize).ok_or(FormatError::Overflow)?;
+        if end > self.data.len() {
+            return Err(FormatError::Truncated);
+        }
+        Self::open_data(UddpData::Section { outer: Arc::clone(&self.data), start, end }, options)
     }
 
     /// Return the parsed package header exactly as stored on disk.
@@ -466,7 +484,7 @@ impl UddpReader {
         Ok(())
     }
 
-    fn locator_payload(&self, locator: &UddpLocator) -> Result<&[u8], FormatError> {
+    pub(super) fn locator_payload(&self, locator: &UddpLocator) -> Result<&[u8], FormatError> {
         let offset = usize::try_from(unpack_offset40(locator.pos64)).map_err(|_| FormatError::Overflow)?;
         let stored_size = reconstruct_stored_size(locator.raw_size, locator.meta32, locator.pos64) as usize;
         let end = offset.checked_add(stored_size).ok_or(FormatError::Overflow)?;

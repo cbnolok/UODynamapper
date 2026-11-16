@@ -1,4 +1,4 @@
-//! Build-time support for `tex_land_kr.uddp`, the Kingdom Reborn land.
+//! Build-time support for the Kingdom Reborn land, the section `crate::kr_sections` nests in `tex_land_ec.uddp`.
 //!
 //! The package has the `tex_land_ec.uddp` layout and is built by the same packer
 //! ([`crate::textures::tex_land_ec`]); only its inputs differ. Each input comes from the Kingdom Reborn client where
@@ -43,7 +43,7 @@ use crate::textures::tex_land_ec::{
     TexLandEcAtlasOptions, TexLandEcBuildSummary,
 };
 
-/// Default file name of the package.
+/// File name of the package in the Kingdom Reborn work folder, before it is nested in `tex_land_ec.uddp`.
 pub const TEX_LAND_KR_FILE_NAME: &str = "tex_land_kr.uddp";
 /// Texture id of the grunge texture, `build/worldart/01000045.dds` (256x256 grey noise; KR's differs from EC's).
 pub const KR_GRUNGE_TEXTURE_ID: u32 = udd_assets::tilemeta::CLIENT_GRUNGE_TEXTURE_ID;
@@ -473,7 +473,7 @@ fn merge_routes(
     let transcode_route_count = kept.values().map(|ids| ids.len() as u32).sum();
     let file_name = transcode_path.file_name().map_or(source_name.clone(), |name| name.to_string_lossy().into_owned());
     let mut transcode_kdl = format!(
-        "// {file_name} for the Kingdom Reborn land, written by the KR land packer (udd-cli pack-kr-land): its routes\n\
+        "// {file_name} for the Kingdom Reborn land, written by the KR land packer (udd-cli pack-ec-textures): its routes\n\
          // without the {} Classic land ids Kingdom Reborn's facets route, which metadata/legacy_terrain_map.csv carries.\n",
         kr_ids.len()
     );

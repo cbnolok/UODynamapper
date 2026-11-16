@@ -8,7 +8,7 @@
 // with a warning naming the line, until it is fixed.
 //
 //   material <id> [<last id>] rotate=true|false
-//     The material id of the KR and Enhanced terrain (tex_land_kr.uddp and tex_land_ec.uddp number them alike), or
+//     The material id of the KR and Enhanced terrain (tex_land_ec.uddp and its Kingdom Reborn land number them alike), or
 //     every id from <id> to <last id>, 0 to 255. rotate=true also turns each hexagon by a random quarter turn: only
 //     for textures with no direction and no light baked in. A material is listed once.
 //

@@ -50,8 +50,8 @@ pub struct TexArtEcPackageRes(pub Arc<udd_assets::tex_art_ec::TexArtEcPackage>);
 #[derive(Resource)]
 pub struct TexLandEcPackageRes(pub Arc<udd_assets::tex_land_ec::TexLandEcPackage>);
 
-/// Optional prepacked Kingdom Reborn land package (tex_land_kr.uddp), in the EC land layout. Only the terrain draws it,
-/// when the Kingdom Reborn land source is selected; EC art keeps reading [`TexLandEcPackageRes`].
+/// The Kingdom Reborn land tex_land_ec.uddp holds (its Kingdom Reborn section), in the EC land layout. Only the
+/// terrain draws it, when the Kingdom Reborn land source is selected; EC art keeps reading [`TexLandEcPackageRes`].
 #[derive(Resource)]
 pub struct TexLandKrPackageRes(pub Arc<udd_assets::tex_land_ec::TexLandEcPackage>);
 
@@ -59,9 +59,9 @@ pub struct TexLandKrPackageRes(pub Arc<udd_assets::tex_land_ec::TexLandEcPackage
 #[derive(Resource)]
 pub struct TexAuxEcPackageRes(pub Arc<udd_assets::tex_aux_ec::TexAuxEcPackage>);
 
-/// The Kingdom Reborn item packages `pack-kr-land` writes beside tex_land_kr.uddp, in the Enhanced layouts: KR's tileart
-/// (`tilemeta_kr.uddp`), and the item art (`tex_art_kr.uddp`) and material textures (`tex_aux_kr.uddp`) KR draws
-/// differently from the Enhanced Client, overlays over `tex_art_ec.uddp` and `tex_aux_ec.uddp` that the others are read
+/// The Kingdom Reborn items the Enhanced packages hold (their Kingdom Reborn sections), in the Enhanced layouts: KR's
+/// tileart (in `tilemeta.uddp`), and the item art (in `tex_art_ec.uddp`) and material textures (in `tex_aux_ec.uddp`)
+/// KR draws differently from the Enhanced Client, overlays over the packages holding them, which the others are read
 /// from. Under the KR land the statics that continue the land are drawn from them
 /// (`statics_collect::StaticLandStyle::KingdomReborn`).
 #[derive(Resource, Clone)]
@@ -71,83 +71,80 @@ pub struct KrItemPackagesRes {
     pub aux: Arc<udd_assets::tex_aux_ec::TexAuxEcPackage>,
 }
 
-/// The file names of [`KrItemPackagesRes`], as `udd_conv::kr_items` writes them.
-const KR_ITEM_PACKAGE_FILE_NAMES: [&str; 3] = ["tilemeta_kr.uddp", "tex_art_kr.uddp", "tex_aux_kr.uddp"];
-/// The overlays of [`KrItemPackagesRes`] (art, material textures) and the Enhanced packages each is read over.
-const KR_OVERLAY_FILE_NAMES: [(&str, &str); 2] =
-    [("tex_art_kr.uddp", "tex_art_ec.uddp"), ("tex_aux_kr.uddp", "tex_aux_ec.uddp")];
+/// The earlier standalone Kingdom Reborn packages, whose data the Enhanced packages hold now.
+const OBSOLETE_KR_PACKAGE_FILE_NAMES: [&str; 4] =
+    ["tex_land_kr.uddp", "tilemeta_kr.uddp", "tex_art_kr.uddp", "tex_aux_kr.uddp"];
+/// How to get the Kingdom Reborn sections into the Enhanced packages.
+const KR_SECTION_REPACK: &str = "Repack tex_art_ec.uddp, tex_land_ec.uddp, tilemeta.uddp and tex_aux_ec.uddp with the \
+    current udd-cli (pack-ec-textures, pack-ec-tex-aux)";
 
-/// The Enhanced packages loaded beside the Kingdom Reborn overlays, `None` when one is not loaded.
-#[derive(Clone, Copy)]
-struct KrOverlayBases<'a> {
-    art: Option<&'a udd_assets::tex_art_ec::TexArtEcPackage>,
-    aux: Option<&'a udd_assets::tex_aux_ec::TexAuxEcPackage>,
-}
-
-/// Loads [`KrItemPackagesRes`] when all three packages are in `udd_path`. A package that is there but does not load
-/// (an older layout) is an error naming the repack; their absence is one when the KR land is the selected source,
-/// whose land-continuing statics then keep the Enhanced item data. Overlays measured against other Enhanced packages
-/// than the loaded `bases` are left unloaded with a warning naming the repack, as if they were absent, rather than
-/// drawn over a base whose images may differ from the ones they were compared with.
-fn load_kr_item_packages(lg: &impl Fn(&str), lg_warn: &impl Fn(&str), lg_err: &impl Fn(&str), udd_path: &Path,
-    kr_land_selected: bool, bases: KrOverlayBases<'_>) -> Option<KrItemPackagesRes> {
-    let paths = KR_ITEM_PACKAGE_FILE_NAMES.map(|name| resolve_optional_uddp_path(udd_path, name));
-    let [Some(tilemeta_path), Some(art_path), Some(aux_path)] = paths else {
-        let message = format!("No Kingdom Reborn item packages ({}) in udd_path: under the Kingdom Reborn land, the \
-            statics that continue the land keep the Enhanced item data. Pack them with `udd-cli pack pack-kr-land`.",
-            KR_ITEM_PACKAGE_FILE_NAMES.join(", "));
-        if kr_land_selected { lg_err(&message) } else { lg(&message) }
-        return None;
-    };
-    log_source_choice(lg, "Kingdom Reborn item packages", SourceContainerKind::Uddp,
-        &[tilemeta_path.clone(), art_path.clone(), aux_path.clone()]);
-    let loaded = (|| -> color_eyre::eyre::Result<KrItemPackagesRes> {
-        Ok(KrItemPackagesRes {
-            tilemeta: Arc::new(TileMetaPackage::load(&tilemeta_path)?),
-            art: Arc::new(udd_assets::tex_art_ec::TexArtEcPackage::from_uddp_package_with_options(
-                UddpReader::load_with_options(&art_path, UddpReaderOptions::disabled())?, AtlasCacheOptions::disabled())?),
-            aux: Arc::new(udd_assets::tex_aux_ec::TexAuxEcPackage::load(&aux_path)?),
-        })
-        .and_then(|packages| {
-            // The earlier layout held all of Kingdom Reborn's art and material textures, not overlays.
-            color_eyre::eyre::ensure!(packages.art.is_overlay() && packages.aux.is_overlay(),
-                "tex_art_kr.uddp and tex_aux_kr.uddp are not overlays over the Enhanced packages");
-            Ok(packages)
-        })
+/// Loads [`KrItemPackagesRes`] from the Kingdom Reborn sections of the loaded `tilemeta`, `art` and `aux`, read in
+/// place. A section that is missing, or a package that is not loaded, is an error naming the repack when the KR land
+/// is the selected source, whose land-continuing statics then keep the Enhanced item data; a section that does not
+/// read is always one.
+fn load_kr_item_packages(lg: &impl Fn(&str), lg_err: &impl Fn(&str), kr_land_selected: bool, tilemeta: &TileMetaPackage,
+    art: Option<&udd_assets::tex_art_ec::TexArtEcPackage>, aux: Option<&udd_assets::tex_aux_ec::TexAuxEcPackage>)
+    -> Option<KrItemPackagesRes> {
+    let loaded = (|| -> color_eyre::eyre::Result<Option<KrItemPackagesRes>> {
+        let (Some(art), Some(aux)) = (art, aux) else { return Ok(None) };
+        let (Some(tilemeta), Some(art), Some(aux)) =
+            (tilemeta.kr_tilemeta()?, art.kr_overlay(AtlasCacheOptions::disabled())?, aux.kr_overlay()?)
+        else {
+            return Ok(None);
+        };
+        Ok(Some(KrItemPackagesRes { tilemeta: Arc::new(tilemeta), art: Arc::new(art), aux: Arc::new(aux) }))
     })();
-    let packages = loaded.map_err(|error| lg_err(&format!("Kingdom Reborn item packages not loaded: {error:#}; \
-        repack them with `udd-cli pack pack-kr-land`."))).ok()?;
-    let checks = [
-        bases.art.map(|base| packages.art.ensure_overlay_base(base)),
-        bases.aux.map(|base| packages.aux.ensure_overlay_base(base)),
-    ];
-    if let Some(warning) = kr_overlay_base_warning(checks) {
-        lg_warn(&warning);
-        return None;
+    match loaded {
+        Ok(Some(packages)) => {
+            lg("Kingdom Reborn items: the Kingdom Reborn sections of tilemeta.uddp, tex_art_ec.uddp and tex_aux_ec.uddp.");
+            Some(packages)
+        }
+        Ok(None) => {
+            let message = format!("No Kingdom Reborn items: tilemeta.uddp, tex_art_ec.uddp and tex_aux_ec.uddp do not \
+                all hold a Kingdom Reborn section. Under the Kingdom Reborn land, the statics that continue the land \
+                keep the Enhanced item data. {KR_SECTION_REPACK}.");
+            if kr_land_selected { lg_err(&message) } else { lg(&message) }
+            None
+        }
+        Err(error) => {
+            lg_err(&format!("Kingdom Reborn items not loaded: {error:#}. {KR_SECTION_REPACK}."));
+            None
+        }
     }
-    Some(packages)
 }
 
-/// The warning for Kingdom Reborn overlays measured against other Enhanced packages than the ones loaded beside them,
-/// naming the overlays to repack: `checks` are the art and material overlays' `ensure_overlay_base` results, `None`
-/// where the base is not loaded. `None` when every loaded base is the one its overlay names.
-fn kr_overlay_base_warning(checks: [Option<color_eyre::eyre::Result<()>>; 2]) -> Option<String> {
-    let mismatched: Vec<(&str, String)> = KR_OVERLAY_FILE_NAMES.into_iter().zip(checks)
-        .filter_map(|((overlay, base), check)| match check {
-            Some(Err(error)) => Some((overlay, format!("{overlay} was measured against another {base} ({error:#})"))),
-            _ => None,
-        })
+/// The Kingdom Reborn land `tex_land_ec` holds, read in place with `reader_options`; `None`, logged, when it holds
+/// none or it does not read.
+fn load_kr_land(lg: &impl Fn(&str), lg_err: &impl Fn(&str), tex_land_ec: &udd_assets::tex_land_ec::TexLandEcPackage,
+    reader_options: UddpReaderOptions) -> Option<udd_assets::tex_land_ec::TexLandEcPackage> {
+    match tex_land_ec.kr_land(reader_options, AtlasCacheOptions::enabled()) {
+        Ok(Some(package)) => {
+            log_tex_land_ec_coverage(lg, &package, "Kingdom Reborn", "tex_land_ec.uddp (Kingdom Reborn section)");
+            Some(package)
+        }
+        Ok(None) => {
+            lg(&format!("tex_land_ec.uddp holds no Kingdom Reborn land. {KR_SECTION_REPACK}."));
+            None
+        }
+        Err(error) => {
+            lg_err(&format!("The Kingdom Reborn land of tex_land_ec.uddp not loaded: {error:#}. {KR_SECTION_REPACK}."));
+            None
+        }
+    }
+}
+
+/// Warns about the earlier standalone Kingdom Reborn packages in `udd_path`, which are not read.
+fn warn_obsolete_kr_packages(lg_warn: &impl Fn(&str), udd_path: &Path) {
+    let found: Vec<&str> = OBSOLETE_KR_PACKAGE_FILE_NAMES.into_iter()
+        .filter(|name| resolve_optional_uddp_path(udd_path, name).is_some())
         .collect();
-    if mismatched.is_empty() {
-        return None;
+    if !found.is_empty() {
+        lg_warn(&format!("{} in udd_path: an earlier layout, not read; the Enhanced packages hold the Kingdom Reborn \
+            data now. {KR_SECTION_REPACK} if they lack it, and remove these.", found.join(", ")));
     }
-    let (overlays, reasons): (Vec<&str>, Vec<String>) = mismatched.into_iter().unzip();
-    Some(format!("Kingdom Reborn item packages not used: {}. Under the Kingdom Reborn land the statics that continue \
-        the land keep the Enhanced item data, as without the packages. Repack {} with `udd-cli pack pack-kr-land` \
-        against the Enhanced packages in udd_path.", reasons.join("; "), overlays.join(" and ")))
 }
 
-/// Optional prepacked world light mask package from light.mul/lightidx.mul.
+/// Optional prepacked world light mask package from light.mul/lightidx.mul./// Optional prepacked world light mask package from light.mul/lightidx.mul.
 #[derive(Resource)]
 pub struct WorldLightsPackageRes(pub Arc<udd_assets::world_lights::WorldLightsPackage>);
 
@@ -540,7 +537,7 @@ impl Plugin for UOFilesPlugin {
 /// How many unresolved terrain override texture refs the load log names.
 const UNRESOLVED_OVERRIDE_REF_LOG_SAMPLE: usize = 8;
 
-/// Loads an optional land package in the EC land layout (tex_land_ec.uddp or tex_land_kr.uddp) and logs its coverage;
+/// Loads an optional land package in the EC land layout (tex_land_ec.uddp) and logs its coverage;
 /// `None` when the file is not in `udd_path`.
 fn load_optional_enhanced_land_package(
     lg: &impl Fn(&str),
@@ -784,22 +781,16 @@ pub fn sys_setup_uo_data(mut commands: Commands, settings: Res<Settings>) {
     if tex_land_ec_package.is_none() {
         lg_err("No enhanced land package source selected: tex_land_ec.uddp not found in udd_path.");
     }
+    warn_obsolete_kr_packages(&lg_warn, &udd_path);
     // The Kingdom Reborn land is optional: its absence is an error only when it is the selected land source, which
     // then draws from the next source of its chain, tex_land_ec.uddp or Classic (texture_cache/land/routing.rs).
-    let tex_land_kr_package = load_optional_enhanced_land_package(
-        &lg,
-        &udd_path,
-        "tex_land_kr.uddp",
-        "Kingdom Reborn",
-        land_atlas_reader_options,
-    );
-    if tex_land_kr_package.is_none() {
-        let message = "No Kingdom Reborn land package source selected: tex_land_kr.uddp not found in udd_path.";
-        if settings.graphics.land_texture_source == crate::configs::settings::LandTextureSource::Kr {
-            lg_err(message);
-        } else {
-            lg(message);
-        }
+    let kr_land_selected = settings.graphics.land_texture_source == crate::configs::settings::LandTextureSource::Kr;
+    let tex_land_kr_package = tex_land_ec_package.as_ref().and_then(|tex_land_ec| {
+        load_kr_land(&lg, &|text: &str| if kr_land_selected { lg_err(text) } else { lg(text) }, tex_land_ec,
+            land_atlas_reader_options)
+    });
+    if tex_land_kr_package.is_none() && kr_land_selected {
+        lg_err("No Kingdom Reborn land: the selected land source draws from the next one of its chain.");
     }
 
     let tex_aux_ec_path = resolve_optional_uddp_path(&udd_path, "tex_aux_ec.uddp");
@@ -822,9 +813,8 @@ pub fn sys_setup_uo_data(mut commands: Commands, settings: Res<Settings>) {
         None
     };
 
-    let kr_item_packages = load_kr_item_packages(&lg, &lg_warn, &lg_err, &udd_path,
-        settings.graphics.land_texture_source == crate::configs::settings::LandTextureSource::Kr,
-        KrOverlayBases { art: tex_art_ec_package.as_ref(), aux: tex_aux_ec_package.as_ref() });
+    let kr_item_packages = load_kr_item_packages(&lg, &lg_err, kr_land_selected, &tilemeta_package,
+        tex_art_ec_package.as_ref(), tex_aux_ec_package.as_ref());
 
     let world_lights_path = resolve_optional_uddp_path(&udd_path, "world_lights.uddp");
     let world_lights_package = if let Some(world_lights_path) = world_lights_path {
@@ -1244,45 +1234,27 @@ mod tests {
         assert!(differing.is_empty(), "classic land id -> (client material, effective material): {differing:?}");
     }
 
-    /// Only an overlay whose loaded base is not the one it was measured against is warned about, by name.
-    #[test]
-    fn the_overlay_base_warning_names_only_the_mismatched_overlays() {
-        use super::kr_overlay_base_warning;
-        let mismatch = || Some(Err(color_eyre::eyre::eyre!("another base")));
-        assert_eq!(kr_overlay_base_warning([None, None]), None, "no base loaded: nothing to check");
-        assert_eq!(kr_overlay_base_warning([Some(Ok(())), Some(Ok(()))]), None);
-        let warning = kr_overlay_base_warning([Some(Ok(())), mismatch()]).expect("the material overlay mismatches");
-        assert!(warning.contains("tex_aux_kr.uddp was measured against another tex_aux_ec.uddp (another base)"),
-            "{warning}");
-        assert!(warning.contains("Repack tex_aux_kr.uddp with `udd-cli pack pack-kr-land`"), "{warning}");
-        assert!(!warning.contains("tex_art_kr.uddp"), "{warning}");
-        let warning = kr_overlay_base_warning([mismatch(), mismatch()]).expect("both mismatch");
-        assert!(warning.contains("Repack tex_art_kr.uddp and tex_aux_kr.uddp"), "{warning}");
-    }
-
-    /// The canonical Kingdom Reborn overlays load over the Enhanced packages they were packed against, and over
-    /// another base they are left unloaded, with a warning naming the overlay to repack, as if they were absent.
+    /// The canonical Enhanced packages hold the Kingdom Reborn sections, which load in place.
     #[test]
     #[ignore = "requires current canonical packages in DYNAMAPPER_TEST_PACKAGES"]
-    fn canonical_kr_overlays_load_only_over_their_measured_base() {
-        use super::{load_kr_item_packages, KrOverlayBases};
+    fn canonical_enhanced_packages_hold_the_kingdom_reborn_sections() {
+        use super::{load_kr_item_packages, load_kr_land, TileMetaPackage, UddpReaderOptions};
         use std::cell::RefCell;
         let root = PathBuf::from(std::env::var_os("DYNAMAPPER_TEST_PACKAGES")
             .expect("set DYNAMAPPER_TEST_PACKAGES to the matching current package directory"));
+        let tilemeta = TileMetaPackage::load(root.join("tilemeta.uddp")).unwrap();
         let art = udd_assets::tex_art_ec::TexArtEcPackage::load(root.join("tex_art_ec.uddp")).unwrap();
         let aux = udd_assets::tex_aux_ec::TexAuxEcPackage::load(root.join("tex_aux_ec.uddp")).unwrap();
-        // Another base: the overlay itself, a tex_art_ec-layout package with another package hash.
-        let other_art = udd_assets::tex_art_ec::TexArtEcPackage::load(root.join("tex_art_kr.uddp")).unwrap();
-        let warnings = RefCell::new(Vec::new());
+        let land = udd_assets::tex_land_ec::TexLandEcPackage::load(root.join("tex_land_ec.uddp")).unwrap();
         let errors = RefCell::new(Vec::new());
-        let load = |bases| load_kr_item_packages(&|_: &str| {}, &|text: &str| warnings.borrow_mut().push(text.to_owned()),
-            &|text: &str| errors.borrow_mut().push(text.to_owned()), &root, true, bases);
+        let lg_err = |text: &str| errors.borrow_mut().push(text.to_owned());
 
-        assert!(load(KrOverlayBases { art: Some(&art), aux: Some(&aux) }).is_some());
-        assert!(warnings.borrow().is_empty() && errors.borrow().is_empty(), "{warnings:?} {errors:?}");
-        assert!(load(KrOverlayBases { art: Some(&other_art), aux: Some(&aux) }).is_none());
-        assert!(errors.borrow().is_empty(), "{errors:?}");
-        let warnings = warnings.into_inner();
-        assert!(warnings.len() == 1 && warnings[0].contains("Repack tex_art_kr.uddp with"), "{warnings:?}");
+        let items = load_kr_item_packages(&|_: &str| {}, &lg_err, true, &tilemeta, Some(&art), Some(&aux))
+            .expect("the Kingdom Reborn items");
+        assert!(items.art.is_overlay() && items.aux.is_overlay());
+        assert!(load_kr_land(&|_: &str| {}, &lg_err, &land, UddpReaderOptions::disabled()).is_some());
+        assert!(load_kr_item_packages(&|_: &str| {}, &lg_err, true, &tilemeta, None, Some(&aux)).is_none());
+        let errors = errors.into_inner();
+        assert!(errors.len() == 1 && errors[0].contains("do not all hold a Kingdom Reborn section"), "{errors:?}");
     }
 }

@@ -83,9 +83,12 @@ use udd_conv::{
         DEFAULT_ATLAS_PAGE_HEIGHT as EC_LAND_DEFAULT_ATLAS_PAGE_HEIGHT,
         DEFAULT_ATLAS_PAGE_WIDTH as EC_LAND_DEFAULT_ATLAS_PAGE_WIDTH,
     },
-    tex_land_kr::{convert_kr_land_to_tex_land_kr_uddp, TexLandKrPackOptions, TEX_LAND_KR_FILE_NAME},
-    kr_items::{pack_kr_items, KrItemOutputs, KrOverlayBases},
-    kr_delta::make_and_write_kr_delta,
+    tex_land_kr::TexLandKrPackOptions,
+    kr_delta::{make_and_write_kr_delta, KrClientSource},
+    kr_sections::{
+        add_kr_art_and_tilemeta_sections, add_kr_aux_section, add_kr_land_section, add_kr_tilemeta_section,
+        KrSectionWork,
+    },
     tilemeta::{
         build_tilemeta_uddp_from_sources, build_tilemeta_uddp_from_split_sources,
         build_tilemeta_uddp_from_split_sources_with_loaded_ec_sources, TileMetaBuildOptions,
@@ -131,40 +134,23 @@ struct SourceDirArgs {
     ecdir: Option<PathBuf>,
 }
 
-/// The size `pack-kr-land` upscales 64x64, 128x128 and 256x256 land textures to, as `pack-ec-textures` does.
-const LAND_UPSCALE_DEFAULT_TARGET_SIZE: u32 = 256;
-/// The size `pack-kr-land` upscales 512x512 land textures to, as `pack-ec-textures` does.
-const LAND_UPSCALE_512_DEFAULT_TARGET_SIZE: u32 = 512;
+/// Where the Kingdom Reborn data the Enhanced packages hold comes from: the delta shipped with the tools, unless one of
+/// these is given.
+#[derive(Args, Clone, Debug, Default)]
+struct KrSourceArgs {
+    #[arg(long, conflicts_with = "kr_delta", help = "Take the Kingdom Reborn data from this Kingdom Reborn client folder \
+        instead of the delta shipped with the tools; the packages are the same.")]
+    krdir: Option<PathBuf>,
+    #[arg(long, help = "Take the Kingdom Reborn data from this kr_delta.uddp (pack make-kr-delta) instead of the one \
+        shipped with the tools.")]
+    kr_delta: Option<PathBuf>,
+}
 
-/// The per-size land upscale options of `pack-kr-land`, with the defaults and names of `pack-ec-textures`.
-#[derive(Args, Clone, Debug)]
-struct LandUpscaleArgs {
-    #[arg(long, default_value_t = LAND_UPSCALE_DEFAULT_TARGET_SIZE)]
-    upscale_64_size: u32,
-    #[arg(long, value_enum, default_value_t = CliUpscaleFilter::FsrEasu2x)]
-    upscale_64_algo: CliUpscaleFilter,
-    #[arg(long, default_value_t = LAND_UPSCALE_DEFAULT_TARGET_SIZE)]
-    upscale_128_size: u32,
-    #[arg(long, value_enum, default_value_t = CliUpscaleFilter::FsrEasu2x)]
-    upscale_128_algo: CliUpscaleFilter,
-    #[arg(long, default_value_t = LAND_UPSCALE_DEFAULT_TARGET_SIZE)]
-    upscale_256_size: u32,
-    #[arg(long, value_enum, default_value_t = CliUpscaleFilter::None)]
-    upscale_256_algo: CliUpscaleFilter,
-    #[arg(long, default_value_t = LAND_UPSCALE_512_DEFAULT_TARGET_SIZE)]
-    upscale_512_size: u32,
-    #[arg(long, value_enum, default_value_t = CliUpscaleFilter::None)]
-    upscale_512_algo: CliUpscaleFilter,
-    #[arg(long = "upscale-64-pass", value_enum, help = "Add a 64x64 land upscale pass. Repeat to chain filters.")]
-    upscale_64_passes: Vec<CliUpscaleFilter>,
-    #[arg(long = "upscale-128-pass", value_enum, help = "Add a 128x128 land upscale pass. Repeat to chain filters.")]
-    upscale_128_passes: Vec<CliUpscaleFilter>,
-    #[arg(long = "upscale-256-pass", value_enum, help = "Add a 256x256 land upscale pass. Repeat to chain filters.")]
-    upscale_256_passes: Vec<CliUpscaleFilter>,
-    #[arg(long = "upscale-512-pass", value_enum, help = "Add a 512x512 land upscale pass. Repeat to chain filters.")]
-    upscale_512_passes: Vec<CliUpscaleFilter>,
-    #[arg(long = "upscale-profile", help = "TOML or KDL file with per-image-type upscale passes and per-id overrides.")]
-    upscale_profile: Option<PathBuf>,
+impl KrSourceArgs {
+    fn source(&self) -> eyre::Result<KrClientSource> {
+        validate_optional_source_dir(self.krdir.as_ref(), "--krdir")?;
+        Ok(KrClientSource::from_options(self.krdir.as_deref(), self.kr_delta.as_deref()))
+    }
 }
 
 const USE_VERDATA_HELP: &str = "Apply verdata.mul, the patch file only clients of that era ship. It patches only the \
@@ -1028,7 +1014,12 @@ enum Commands {
         upscale_profile: Option<PathBuf>,
     },
     /// Packs EC art and land in one shared source pass into tex_art_ec.uddp and tex_land_ec.uddp. Without a format flag
-    /// art and land pages are lossless RGBA8888 with Zstd 19; BC7 land blocks take Zstd 19 too.
+    /// art and land pages are lossless RGBA8888 with Zstd 19; BC7 land blocks take Zstd 19 too. Each holds its Kingdom
+    /// Reborn section, from the Kingdom Reborn files rebuilt beside the output from --ecdir and the shipped delta (or
+    /// --kr-delta, or a --krdir client): tex_land_ec.uddp the Kingdom Reborn land (KR's TerrainDefinition.uop, Texture.uop
+    /// and facet land routes, with what KR lacks from the Enhanced Client, and KR's grunge texture), packed as the
+    /// Enhanced land; tex_art_ec.uddp the item world art Kingdom Reborn draws differently, lossless; and tilemeta.uddp,
+    /// with --tilemeta-output, KR's tileart.uop with the Classic tiledata.mul.
     #[command(group(ArgGroup::new("output_format").args(["raw", "bc7", "bc7_rdo"])))]
     #[command(group(ArgGroup::new("art_output_format").args(["art_raw", "art_bc7", "art_bc7_rdo"])))]
     #[command(group(ArgGroup::new("land_output_format").args(["land_raw", "land_bc7", "land_bc7_rdo"])))]
@@ -1037,6 +1028,11 @@ enum Commands {
         source_dirs: SourceDirArgs,
         #[command(flatten)]
         classic_patches: ClassicPatchArgs,
+        #[command(flatten)]
+        kr_source: KrSourceArgs,
+        #[arg(long, help = "Write which client every Kingdom Reborn land definition, texture and route came from to this \
+            file, one line each.")]
+        kr_land_report: Option<PathBuf>,
         #[arg(long, default_value = "tex_art_ec.uddp")]
         art_output: PathBuf,
         #[arg(long, default_value = "tex_land_ec.uddp")]
@@ -1119,57 +1115,6 @@ enum Commands {
         upscale_512_passes: Vec<CliUpscaleFilter>,
         #[arg(long = "upscale-profile", help = "TOML or KDL file with per-image-type upscale passes and per-id overrides.")]
         upscale_profile: Option<PathBuf>,
-    },
-    /// Packs the Kingdom Reborn land into tex_land_kr.uddp, in the tex_land_ec.uddp layout: KR's TerrainDefinition.uop,
-    /// Texture.uop and facet land routes, with what KR lacks from the Enhanced Client, and KR's grunge texture. Without
-    /// a format flag the pages are lossless RGBA8888 with Zstd 19; BC7 blocks take Zstd 19 too. Beside it go the KR
-    /// item packages, lossless: tilemeta_kr.uddp (KR's tileart.uop with Classic tiledata.mul), and, as overlays over
-    /// the Enhanced packages beside them, tex_art_kr.uddp (the item world art KR draws differently from the Enhanced
-    /// Client) and tex_aux_kr.uddp (the item material textures KR draws differently). The tex_art_ec.uddp and
-    /// tex_aux_ec.uddp packed from --ecdir must be beside those outputs first: each overlay records the package it was
-    /// measured against, and readers refuse another one.
-    #[command(group(ArgGroup::new("output_format").args(["raw", "bc7", "bc7_rdo"])))]
-    PackKrLand {
-        #[arg(long, help = "Kingdom Reborn client folder (TerrainDefinition.uop, Texture.uop, tileart.uop, string_dictionary.uop, TerrainTexture.uop, SystemTextures.uop).")]
-        krdir: PathBuf,
-        #[arg(long, help = "Enhanced Client folder, for what Kingdom Reborn lacks (TerrainDefinition.uop, Texture.uop, GameData.uop) and what its items share with it (tileart.uop, string_dictionary.uop, Texture.uop, TerrainTexture.uop, SystemTextures.uop).")]
-        ecdir: PathBuf,
-        #[arg(long, help = "Classic Client folder, for the tiledata.mul (and radarcol.mul) of tilemeta_kr.uddp.")]
-        ccdir: PathBuf,
-        #[arg(long, default_value = TEX_LAND_KR_FILE_NAME)]
-        output: PathBuf,
-        #[arg(long, help = "Output of the KR tileart package. Default: tilemeta_kr.uddp beside --output.")]
-        tilemeta_output: Option<PathBuf>,
-        #[arg(long, help = "Output of the KR item world art overlay. Default: tex_art_kr.uddp beside --output.")]
-        art_output: Option<PathBuf>,
-        #[arg(long, help = "Output of the KR item material texture overlay. Default: tex_aux_kr.uddp beside --output.")]
-        aux_output: Option<PathBuf>,
-        #[arg(long, help = "Embed this TerrainTranscode.kdl (the terrain routing table), without the ids Kingdom Reborn routes. Default: the copy shipped with the tools.")]
-        land_transcode_kdl: Option<PathBuf>,
-        #[arg(long, help = "Embed this EcTerrainOverrides.kdl (the reviewed terrain layer substitutions). Default: the copy shipped with the tools.")]
-        land_terrain_overrides_kdl: Option<PathBuf>,
-        #[arg(long, default_value_t = EC_LAND_DEFAULT_ATLAS_PAGE_WIDTH)]
-        atlas_width: u32,
-        #[arg(long, default_value_t = EC_LAND_DEFAULT_ATLAS_PAGE_HEIGHT)]
-        atlas_height: u32,
-        #[arg(long, default_value_t = EC_LAND_DEFAULT_ATLAS_GUTTER)]
-        gutter: u16,
-        #[arg(long, help = "Write uncompressed RGBA8888 atlas pages.")]
-        raw: bool,
-        #[arg(long, num_args = 0..=1, require_equals = true, help = "Zstd level of the land pages (--zstd=LEVEL), which without a format flag are lossless RGBA8888 with Zstd 19, as are BC7 blocks; with --raw, a file-level Zstd pass after that encoding. A bare --zstd keeps level 19.")]
-        zstd: Option<Option<i32>>,
-        #[arg(long, help = "Write BC7 atlas pages without BC7 RDO, with Zstd 19 on the blocks unless --zstd=LEVEL.")]
-        bc7: bool,
-        #[arg(long = "bc7-rdo", help = "Write BC7 atlas pages with BC7 RDO.")]
-        bc7_rdo: bool,
-        #[arg(long, default_value_t = udd_conv::bc7::DEFAULT_BC7_RDO_LAMBDA, help = "BC7 RDO lambda. Use 0 to disable RDO.")]
-        bc7_rdo_lambda: f32,
-        #[arg(long, value_parser = parse_bc7_rdo_lookback_blocks, default_value_t = udd_conv::bc7::DEFAULT_BC7_RDO_LOOKBACK_BLOCKS, help = "BC7 RDO lookback preset in previous BC7 blocks.")]
-        bc7_rdo_lookback_blocks: usize,
-        #[command(flatten)]
-        upscale: LandUpscaleArgs,
-        #[arg(long, help = "Write which client every definition, texture and route came from to this file, one line each.")]
-        report: Option<PathBuf>,
     },
     /// Writes kr_delta.uddp: the Kingdom Reborn client files the packers read (tileart.uop, string_dictionary.uop,
     /// TerrainDefinition.uop, Texture.uop, TerrainTexture.uop, SystemTextures.uop) as a delta over the Enhanced Client,
@@ -1321,12 +1266,16 @@ enum Commands {
     /// Packs non-base WorldArt auxiliary EC texture refs from tilemeta.uddp into tex_aux_ec.uddp, plus the
     /// client's missing-texture fallback (SystemTextures.uop), aliased by every absent source id, and its day, night and
     /// night-sight maps (TerrainTexture.uop, always lossless RGBA8888). Textures are lossless RGBA8888 with Zstd 19
-    /// unless a format is given.
+    /// unless a format is given. It holds its Kingdom Reborn section: the material textures Kingdom Reborn draws
+    /// differently, lossless, from the Kingdom Reborn tile data of --tilemeta (packed by pack-ec-textures) and the
+    /// Kingdom Reborn files rebuilt beside the output, as pack-ec-textures takes them. Requires --ccdir.
     #[command(name = "pack-ec-tex-aux")]
     #[command(group(ArgGroup::new("output_format").args(["raw", "bc7", "bc7_rdo"])))]
     PackEcTexAux {
         #[command(flatten)]
         source_dirs: SourceDirArgs,
+        #[command(flatten)]
+        kr_source: KrSourceArgs,
         #[arg(long)]
         tilemeta: PathBuf,
         #[arg(long, default_value = "tex_aux_ec.uddp")]
@@ -1376,11 +1325,14 @@ enum Commands {
         #[arg(long, help = "Write every finding of the dress-layer measurement to this file, one line each.")]
         report: Option<PathBuf>,
     },
-    /// Packs CC tiledata and EC tileart into tilemeta.uddp.
+    /// Packs CC tiledata and EC tileart into tilemeta.uddp. With both --ccdir and --ecdir it holds its Kingdom Reborn
+    /// section, KR's tileart.uop with the Classic tiledata.mul, as pack-ec-textures --tilemeta-output writes it.
     #[command(name = "pack-tilemeta")]
     PackTilemeta {
         #[command(flatten)]
         source_dirs: SourceDirArgs,
+        #[command(flatten)]
+        kr_source: KrSourceArgs,
         #[command(flatten)]
         classic_patches: ClassicPatchArgs,
         #[arg(long, default_value = "tilemeta.uddp")]
@@ -1850,6 +1802,8 @@ where
         Commands::PackEcTextures {
             source_dirs: source_dir_args,
             classic_patches,
+            kr_source,
+            kr_land_report,
             art_output,
             land_output,
             tilemeta_output,
@@ -1906,6 +1860,8 @@ where
             if tilemeta_out_file.is_some() && source_dir_args.ccdir.is_none() {
                 eyre::bail!("--tilemeta-output requires --ccdir for tiledata.mul");
             }
+            // Before the Enhanced passes, so a missing or foreign Kingdom Reborn source fails the command at once.
+            let kr_work = KrSectionWork::prepare(&kr_source.source()?, &ec_paths[0], &art_out_file)?;
             let shared_sources = load_tex_art_ec_sources(&ec_paths)?;
             let upscale_profile = load_optional_upscale_profile(upscale_profile)?;
             let upscale_filter = UpscaleFilter::from(upscale);
@@ -1958,6 +1914,38 @@ where
                 art_out_file.display()
             );
 
+            let land_options = TexLandEcAtlasOptions {
+                atlas_width: land_atlas_width,
+                atlas_height: land_atlas_height,
+                gutter: land_gutter,
+                compression: land_output_format.compression,
+                upscale_64: udd_conv::upscale::UpscaleConfig {
+                    target_size: upscale_64_size,
+                    filter: upscale_64_algo.into(),
+                },
+                upscale_128: udd_conv::upscale::UpscaleConfig {
+                    target_size: upscale_128_size,
+                    filter: upscale_128_algo.into(),
+                },
+                upscale_256: udd_conv::upscale::UpscaleConfig {
+                    target_size: upscale_256_size,
+                    filter: upscale_256_algo.into(),
+                },
+                upscale_512: udd_conv::upscale::UpscaleConfig {
+                    target_size: upscale_512_size,
+                    filter: upscale_512_algo.into(),
+                },
+                upscale_64_passes: convert_upscale_passes(upscale_64_passes),
+                upscale_128_passes: convert_upscale_passes(upscale_128_passes),
+                upscale_256_passes: convert_upscale_passes(upscale_256_passes),
+                upscale_512_passes: convert_upscale_passes(upscale_512_passes),
+                upscale_profile,
+                pixel_format: land_output_format.pixel_format,
+                bc7_rdo_lambda: land_output_format.bc7_rdo_lambda,
+                bc7_rdo_lookback_blocks: land_output_format.bc7_rdo_lookback_blocks,
+                transcode_kdl_path: Some(land_transcode_kdl),
+                terrain_overrides_kdl_path: Some(land_terrain_overrides_kdl),
+            };
             let land_summary = convert_tex_land_ec_uop_to_tex_land_ec_uddp_from_loaded_sources(
                 &paths,
                 &shared_sources.terrain_definition_path,
@@ -1965,38 +1953,7 @@ where
                 shared_sources.terrain_definition(),
                 Some(&shared_sources.world_textures),
                 &land_out_file,
-                &TexLandEcAtlasOptions {
-                    atlas_width: land_atlas_width,
-                    atlas_height: land_atlas_height,
-                    gutter: land_gutter,
-                    compression: land_output_format.compression,
-                    upscale_64: udd_conv::upscale::UpscaleConfig {
-                        target_size: upscale_64_size,
-                        filter: upscale_64_algo.into(),
-                    },
-                    upscale_128: udd_conv::upscale::UpscaleConfig {
-                        target_size: upscale_128_size,
-                        filter: upscale_128_algo.into(),
-                    },
-                    upscale_256: udd_conv::upscale::UpscaleConfig {
-                        target_size: upscale_256_size,
-                        filter: upscale_256_algo.into(),
-                    },
-                    upscale_512: udd_conv::upscale::UpscaleConfig {
-                        target_size: upscale_512_size,
-                        filter: upscale_512_algo.into(),
-                    },
-                    upscale_64_passes: convert_upscale_passes(upscale_64_passes),
-                    upscale_128_passes: convert_upscale_passes(upscale_128_passes),
-                    upscale_256_passes: convert_upscale_passes(upscale_256_passes),
-                    upscale_512_passes: convert_upscale_passes(upscale_512_passes),
-                    upscale_profile,
-                    pixel_format: land_output_format.pixel_format,
-                    bc7_rdo_lambda: land_output_format.bc7_rdo_lambda,
-                    bc7_rdo_lookback_blocks: land_output_format.bc7_rdo_lookback_blocks,
-                    transcode_kdl_path: Some(land_transcode_kdl),
-                    terrain_overrides_kdl_path: Some(land_terrain_overrides_kdl),
-                },
+                &land_options,
             )?;
             info!(
                 "TerrainDefinition raw texture packing: {} entries, {} alias refs, {} unique alias slots, {} source textures, {} selected textures, {} unique packed textures.",
@@ -2042,87 +1999,19 @@ where
                     tilemeta_out_file.display()
                 );
             }
-        }
-        Commands::PackKrLand {
-            krdir,
-            ecdir,
-            ccdir,
-            output,
-            tilemeta_output,
-            art_output,
-            aux_output,
-            land_transcode_kdl,
-            land_terrain_overrides_kdl,
-            atlas_width,
-            atlas_height,
-            gutter,
-            raw,
-            zstd,
-            bc7,
-            bc7_rdo,
-            bc7_rdo_lambda,
-            bc7_rdo_lookback_blocks,
-            upscale,
-            report,
-        } => {
-            validate_source_dir(&krdir, "--krdir")?;
-            validate_source_dir(&ecdir, "--ecdir")?;
-            validate_source_dir(&ccdir, "--ccdir")?;
-            let out_file = resolve_output_path(&output);
-            let beside = KrItemOutputs::beside(&out_file);
-            let item_outputs = KrItemOutputs {
-                tilemeta: tilemeta_output.map_or(beside.tilemeta, |path| resolve_output_path(&path)),
-                art: art_output.map_or(beside.art, |path| resolve_output_path(&path)),
-                aux: aux_output.map_or(beside.aux, |path| resolve_output_path(&path)),
-            };
-            // The overlays are measured against the Enhanced packages beside them, which must be there before packing.
-            let overlay_bases = KrOverlayBases::beside(&item_outputs)?;
-            let output_format = resolve_land_output_format(
-                TextureOutputFormatArgs { raw, zstd: land_zstd_level(zstd), bc7, bc7_rdo },
-                bc7_rdo_lambda,
-                bc7_rdo_lookback_blocks,
-            )?;
-            let upscale_config = |target_size, filter: CliUpscaleFilter| udd_conv::upscale::UpscaleConfig {
-                target_size,
-                filter: filter.into(),
-            };
-            let summary = convert_kr_land_to_tex_land_kr_uddp(
-                &krdir,
-                &ecdir,
-                &out_file,
-                &TexLandKrPackOptions {
-                    atlas: TexLandEcAtlasOptions {
-                        atlas_width,
-                        atlas_height,
-                        gutter,
-                        compression: output_format.compression,
-                        upscale_64: upscale_config(upscale.upscale_64_size, upscale.upscale_64_algo),
-                        upscale_128: upscale_config(upscale.upscale_128_size, upscale.upscale_128_algo),
-                        upscale_256: upscale_config(upscale.upscale_256_size, upscale.upscale_256_algo),
-                        upscale_512: upscale_config(upscale.upscale_512_size, upscale.upscale_512_algo),
-                        upscale_64_passes: convert_upscale_passes(upscale.upscale_64_passes),
-                        upscale_128_passes: convert_upscale_passes(upscale.upscale_128_passes),
-                        upscale_256_passes: convert_upscale_passes(upscale.upscale_256_passes),
-                        upscale_512_passes: convert_upscale_passes(upscale.upscale_512_passes),
-                        upscale_profile: load_optional_upscale_profile(upscale.upscale_profile)?,
-                        pixel_format: output_format.pixel_format,
-                        bc7_rdo_lambda: output_format.bc7_rdo_lambda,
-                        bc7_rdo_lookback_blocks: output_format.bc7_rdo_lookback_blocks,
-                        transcode_kdl_path: land_transcode_kdl,
-                        terrain_overrides_kdl_path: land_terrain_overrides_kdl,
-                    },
-                    report,
-                },
-            )?;
+
+            let kr_land = add_kr_land_section(&kr_work, &ec_paths[0], &land_out_file,
+                &TexLandKrPackOptions { atlas: land_options, report: kr_land_report }, |_| {}, |_| {})?;
+            let kr_items = add_kr_art_and_tilemeta_sections(&kr_work, &shared_sources, Some(&art_out_file),
+                tilemeta_out_file.as_deref().map(|tilemeta| {
+                    (source_dir_args.ccdir.as_deref().expect("--ccdir validated for tilemeta output"), tilemeta)
+                }))?;
             info!(
-                "Wrote {} pages ({}) for {} populated land slots out of {} total slots to '{}'.",
-                summary.package.page_count,
-                output_format.label,
-                summary.package.populated_slot_count,
-                summary.package.slot_count,
-                out_file.display()
+                "Kingdom Reborn sections: land {} pages, item art {} slots ({} items left to the Enhanced art).",
+                kr_land.package.page_count,
+                kr_items.art.populated_slot_count,
+                kr_items.world_art.equivalents.len()
             );
-            pack_kr_items(&krdir, &ecdir, &ccdir, &item_outputs, &overlay_bases)?;
         }
         Commands::MakeKrDelta { krdir, ecdir, output } => {
             validate_source_dir(&krdir, "--krdir")?;
@@ -2280,6 +2169,7 @@ where
         }
         Commands::PackEcTexAux {
             source_dirs: source_dir_args,
+            kr_source,
             tilemeta,
             output,
             raw,
@@ -2291,7 +2181,13 @@ where
             upscale_passes,
         } => {
             let paths = collect_ec_source_dirs(&source_dir_args)?;
+            let ccdir = source_dir_args
+                .ccdir
+                .clone()
+                .ok_or_else(|| eyre::eyre!("--ccdir is required for the Kingdom Reborn section (tiledata.mul)"))?;
+            validate_source_dir(&ccdir, "--ccdir")?;
             let out_file = resolve_output_path(&output);
+            let kr_work = KrSectionWork::prepare(&kr_source.source()?, &paths[0], &out_file)?;
             let output_format = resolve_art_output_format(
                 raw, zstd, bc7, bc7_rdo, bc7_rdo_lambda, bc7_rdo_lookback_blocks,
             )?;
@@ -2319,6 +2215,12 @@ where
                 summary.excluded_decode_error,
                 summary.excluded_duplicate_id,
                 out_file.display()
+            );
+            let kr_aux = add_kr_aux_section(&kr_work, &paths[0], &ccdir, &tilemeta, &out_file)?;
+            info!(
+                "Kingdom Reborn section: {} material textures ({} left to the Enhanced ones).",
+                kr_aux.kept.len(),
+                kr_aux.equivalents.len()
             );
         }
         Commands::PackEcEffects { source_dirs: source_dir_args, output, bc7, zstd, report, strict } => {
@@ -2349,6 +2251,7 @@ where
         }
         Commands::PackTilemeta {
             source_dirs: source_dir_args,
+            kr_source,
             classic_patches,
             output,
             zstd,
@@ -2363,7 +2266,9 @@ where
             };
             match (source_dir_args.ccdir.as_ref(), source_dir_args.ecdir.as_ref()) {
                 (Some(ccdir), Some(ecdir)) => {
+                    let kr_work = KrSectionWork::prepare(&kr_source.source()?, ecdir, &out_file)?;
                     build_tilemeta_uddp_from_split_sources(ccdir, ecdir, &out_file, &options)?;
+                    add_kr_tilemeta_section(&kr_work, ecdir, ccdir, &out_file)?;
                 }
                 _ => {
                     build_tilemeta_uddp_from_sources(&paths, &out_file, &options)?;
@@ -2860,42 +2765,22 @@ mod tests {
     }
 
     #[test]
-    fn cli_parses_pack_kr_land() {
-        let cli = Cli::try_parse_from([
-            "uddpack",
-            "pack-kr-land",
-            "--krdir",
-            "/kr",
-            "--ecdir",
-            "/ec",
-            "--ccdir",
-            "/cc",
-            "--aux-output",
-            "/out/aux.uddp",
-            "--report",
-            "/out/kr_land.txt",
-            "--upscale-64-algo",
-            "none",
-        ])
-        .expect("parse KR land args");
-
-        match cli.command {
-            Commands::PackKrLand { krdir, ecdir, ccdir, output, tilemeta_output, art_output, aux_output, report, bc7, raw,
-                zstd, upscale, .. } => {
-                assert_eq!((krdir, ecdir, ccdir), (PathBuf::from("/kr"), PathBuf::from("/ec"), PathBuf::from("/cc")));
-                assert_eq!(output, PathBuf::from(TEX_LAND_KR_FILE_NAME));
-                assert_eq!((tilemeta_output, art_output, aux_output), (None, None, Some(PathBuf::from("/out/aux.uddp"))));
-                assert_eq!(report, Some(PathBuf::from("/out/kr_land.txt")));
-                assert!(!bc7 && !raw && zstd.is_none());
-                assert!(matches!(upscale.upscale_64_algo, CliUpscaleFilter::None));
-                assert!(matches!(upscale.upscale_128_algo, CliUpscaleFilter::FsrEasu2x));
-                assert_eq!(upscale.upscale_128_size, LAND_UPSCALE_DEFAULT_TARGET_SIZE);
+    fn the_ec_packers_take_kingdom_reborn_from_the_shipped_delta_unless_told_otherwise() {
+        let source = |args: &[&str]| {
+            let cli = Cli::try_parse_from([&["uddpack", "pack-ec-tex-aux", "--ecdir", "/ec", "--tilemeta", "t.uddp"],
+                args].concat())?;
+            match cli.command {
+                Commands::PackEcTexAux { kr_source, .. } => Ok::<_, clap::Error>(KrClientSource::from_options(
+                    kr_source.krdir.as_deref(), kr_source.kr_delta.as_deref())),
+                _ => panic!("unexpected command parsed"),
             }
-            _ => panic!("unexpected command parsed"),
-        }
-        assert!(Cli::try_parse_from(["uddpack", "pack-kr-land", "--krdir", "/kr"]).is_err(), "--ecdir is required");
+        };
+        assert_eq!(source(&[]).unwrap(), KrClientSource::Delta(None));
+        assert_eq!(source(&["--kr-delta", "/d.uddp"]).unwrap(), KrClientSource::Delta(Some(PathBuf::from("/d.uddp"))));
+        assert_eq!(source(&["--krdir", "/kr"]).unwrap(), KrClientSource::Client(PathBuf::from("/kr")));
+        assert!(source(&["--krdir", "/kr", "--kr-delta", "/d.uddp"]).is_err(), "one Kingdom Reborn source");
         assert!(Cli::try_parse_from(["uddpack", "pack-kr-land", "--krdir", "/kr", "--ecdir", "/ec"]).is_err(),
-            "--ccdir is required");
+            "the Enhanced packers pack the Kingdom Reborn land");
     }
 
     #[test]

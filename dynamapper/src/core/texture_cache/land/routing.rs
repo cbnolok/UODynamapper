@@ -84,7 +84,7 @@ pub struct LandTileAvailability {
 /// The source one land id is drawn from.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum LandTileRoute {
-    /// An EC-layout package: tex_land_ec.uddp (`Ec`) or tex_land_kr.uddp (`Kr`).
+    /// An EC-layout package: tex_land_ec.uddp (`Ec`) or its Kingdom Reborn land (`Kr`).
     Enhanced(LandTextureSource),
     /// The Classic texmap (tex_land_cc.uddp).
     ClassicTexmap,
@@ -502,10 +502,10 @@ mod tests {
         assert_eq!(routes.route(3), LandTileRoute::ClassicTexmap);
         assert_eq!(routes.route(4), LandTileRoute::Missing);
         assert_eq!(routes.route(LAND_ROUTE_TILE_COUNT as u32), LandTileRoute::Missing);
-        assert_eq!(routes.summary(|_| true).unwrap(), "Kingdom Reborn (tex_land_kr.uddp) lacks 3 land id(s): drawing 2 \
+        assert_eq!(routes.summary(|_| true).unwrap(), "Kingdom Reborn (in tex_land_ec.uddp) lacks 3 land id(s): drawing 2 \
             from Enhanced (tex_land_ec.uddp) (e.g. 0x0001, 0x0002); 1 from Classic (tex_land_cc.uddp) (e.g. 0x0003).");
         // Only the ids the maps use count.
-        assert_eq!(routes.summary(|id| id == 3).unwrap(), "Kingdom Reborn (tex_land_kr.uddp) lacks 1 land id(s): \
+        assert_eq!(routes.summary(|id| id == 3).unwrap(), "Kingdom Reborn (in tex_land_ec.uddp) lacks 1 land id(s): \
             drawing 1 from Classic (tex_land_cc.uddp) (e.g. 0x0003).");
         assert_eq!(routes.summary(|id| id > 4), None);
     }
@@ -555,9 +555,9 @@ mod tests {
         assert_eq!(routes.target(2), LandTileTarget { route: LandTileRoute::Enhanced(Ec), id: 2 });
         assert_eq!(routes.target(3), LandTileTarget { route: LandTileRoute::Enhanced(Ec), id: 3 });
         assert_eq!(routes.route_report().unwrap(), "3 land route(s) are not drawn as written: \
-            0x0001 (line 3): Kingdom Reborn (tex_land_kr.uddp) lacks 0x0007, drawn as 0x0007 from Enhanced (tex_land_ec.uddp); \
-            0x0002 (line 4): no source of the Kingdom Reborn (tex_land_kr.uddp) chain has 0x0008, drawn as 0x0002 from Enhanced (tex_land_ec.uddp); \
-            0x0003 (line 5): no land id of Kingdom Reborn (tex_land_kr.uddp) is drawn with terrain 40, drawn as 0x0003 from Enhanced (tex_land_ec.uddp).");
+            0x0001 (line 3): Kingdom Reborn (in tex_land_ec.uddp) lacks 0x0007, drawn as 0x0007 from Enhanced (tex_land_ec.uddp); \
+            0x0002 (line 4): no source of the Kingdom Reborn (in tex_land_ec.uddp) chain has 0x0008, drawn as 0x0002 from Enhanced (tex_land_ec.uddp); \
+            0x0003 (line 5): no land id of Kingdom Reborn (in tex_land_ec.uddp) is drawn with terrain 40, drawn as 0x0003 from Enhanced (tex_land_ec.uddp).");
         // A route counts in the report, not in the summary.
         let lacking = LandRoutes::resolve(Kr, |_| true, |_| LandTileAvailability { kr: false, ..ALL },
             |id| (id == 1).then_some(LandRouteRequest { source: Ec, target: LandRouteTarget::SameId, line: 1 }),
@@ -593,7 +593,7 @@ mod tests {
             id: LAND_ROUTE_ROW_COUNT as u32 });
         // The miss shared by land 3's rows is noted once, with the land id.
         assert_eq!(routes.route_report().unwrap(), "1 land route(s) are not drawn as written: \
-            0x0003 (line 4): no source of the Kingdom Reborn (tex_land_kr.uddp) chain has 0x0008, drawn as 0x0003 from Enhanced (tex_land_ec.uddp).");
+            0x0003 (line 4): no source of the Kingdom Reborn (in tex_land_ec.uddp) chain has 0x0008, drawn as 0x0003 from Enhanced (tex_land_ec.uddp).");
         // The summary counts land ids, not their area rows.
         let lacking = LandRoutes::resolve_rows(Kr, |_| true, |_| LandTileAvailability { kr: false, ..ALL },
             |_| None, |_, _| None, LAND_ROUTE_ROW_COUNT);
@@ -642,7 +642,7 @@ mod tests {
         let folder = std::path::Path::new("/uddp");
         let without_kr = LandRoutes::resolve(Kr, |source| source != Kr, |_| NONE, |_| None, |_, _| None);
         assert_eq!(without_kr.missing_package_notice(folder).unwrap(),
-            "Kingdom Reborn (tex_land_kr.uddp) not found in /uddp: showing Enhanced (tex_land_ec.uddp) land.");
+            "Kingdom Reborn (in tex_land_ec.uddp) not found in /uddp: showing Enhanced (tex_land_ec.uddp) land.");
         let classic_only = LandRoutes::resolve(Kr, |source| source == Cc, |_| NONE, |_| None, |_, _| None);
         assert!(classic_only.missing_package_notice(folder).unwrap().ends_with("showing Classic (tex_land_cc.uddp) land."));
         assert_eq!(LandRoutes::resolve(Kr, |_| true, |_| NONE, |_| None, |_, _| None).missing_package_notice(folder), None);
@@ -653,8 +653,8 @@ mod tests {
         let folder = std::path::Path::new("/uddp");
         assert_eq!(land_source_entry(Kr, true, folder), (Kr.land_label().to_string(), None));
         let (label, hover) = land_source_entry(Kr, false, folder);
-        assert_eq!(label, "Kingdom Reborn (tex_land_kr.uddp) (missing)");
-        assert_eq!(hover.unwrap(), "Kingdom Reborn (tex_land_kr.uddp) was not found in /uddp. It can still be \
+        assert_eq!(label, "Kingdom Reborn (in tex_land_ec.uddp) (missing)");
+        assert_eq!(hover.unwrap(), "Kingdom Reborn (in tex_land_ec.uddp) was not found in /uddp. It can still be \
             selected: land is then drawn from Enhanced (tex_land_ec.uddp), then Classic (tex_land_cc.uddp).");
         assert_eq!(land_source_entry(Cc, false, folder).1.unwrap(), "Classic (tex_land_cc.uddp) was not found in /uddp.");
     }

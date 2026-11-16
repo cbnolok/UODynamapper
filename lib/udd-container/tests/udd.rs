@@ -735,3 +735,61 @@ fn streaming_builder_rejects_dictionary_compression_and_drops_spill() {
     assert!(!output.exists());
     std::fs::remove_dir_all(&dir).expect("remove test dir");
 }
+
+/// A package added uncompressed to another one is read in place, the other's entries stay as they were stored
+/// (dictionary-compressed ones too), and a compressed entry is refused as a section.
+#[test]
+fn an_extended_package_keeps_its_entries_and_opens_the_added_one_in_place() {
+    const SAMPLES: usize = 64;
+    const SAMPLE_LINES: usize = 200;
+    const NESTED_PATH: &str = "nested/package.uddp";
+    let path_request = |path: String, compression, data: Vec<u8>| AddOwnedFileRequest {
+        data_type: DataType::Metadata as u8,
+        compression,
+        width: 0,
+        height: 0,
+        virtual_path: Some(path),
+        path_hash64: None,
+        id: None,
+        data,
+    };
+    let mut nested = UddpBuilder::new(LookupMode::VirtualPathHash);
+    nested.add_owned_file(path_request("inner.bin".into(), CompressionFlag::ZstdNoDict, b"inner payload".to_vec())).unwrap();
+    let nested = nested.into_bytes().unwrap();
+
+    let mut base = UddpBuilder::new(LookupMode::VirtualPathHash);
+    for index in 0..SAMPLES {
+        // Enough similar samples (16 or more, 128 KiB in all) for the builder to train a dictionary.
+        let data: String = (0..SAMPLE_LINES).map(|line| format!("record {index}:{line} value {}\n", line * index % 97)).collect();
+        let data = data.into_bytes();
+        base.add_owned_file(path_request(format!("samples/{index}.bin"), CompressionFlag::ZstdDict, data)).unwrap();
+    }
+    base.add_owned_file(path_request("compressed.bin".into(), CompressionFlag::ZstdNoDict, nested.clone())).unwrap();
+    let base = UddpReader::open(base.into_bytes().unwrap()).unwrap();
+
+    let extended = UddpBuilder::extend_package(
+        &base,
+        vec![(xxh64_virtual_path(NESTED_PATH), DataType::Metadata as u8, nested.clone())],
+    )
+    .unwrap();
+    let extended = UddpReader::open(extended).unwrap();
+    assert_eq!(extended.computed_package_hash64(), extended.stored_package_hash64());
+    assert_eq!(extended.dictionary_records(), base.dictionary_records());
+    for record in base.records() {
+        let FileKey::PathHash(hash) = record.key else { panic!("path package") };
+        assert_eq!(extended.read_file_by_path_hash(hash).unwrap(), base.read_file_by_path_hash(hash).unwrap());
+        let (was, is) = (base.find_by_path_hash(hash).unwrap(), extended.find_by_path_hash(hash).unwrap());
+        assert_eq!((is.codec, is.stored_size), (was.codec, was.stored_size), "stored as it was");
+    }
+
+    let section = extended.open_section(xxh64_virtual_path(NESTED_PATH), UddpReaderOptions::disabled()).unwrap();
+    assert_eq!(section.read_file_by_path_hash(xxh64_virtual_path("inner.bin")).unwrap(), b"inner payload");
+    assert!(matches!(
+        extended.open_section(xxh64_virtual_path("compressed.bin"), UddpReaderOptions::disabled()),
+        Err(udd_container::uddp::FormatError::CompressedSection)
+    ));
+    assert!(matches!(
+        extended.open_section(xxh64_virtual_path("absent.bin"), UddpReaderOptions::disabled()),
+        Err(udd_container::uddp::FormatError::FileNotFound)
+    ));
+}

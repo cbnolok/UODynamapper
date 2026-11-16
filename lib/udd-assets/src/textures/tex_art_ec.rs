@@ -2,10 +2,10 @@ use std::io::{Cursor, Read};
 use std::path::Path;
 use color_eyre::eyre::{self, WrapErr};
 use byteorder::{LittleEndian, ReadBytesExt};
-use udd_container::UddpReader;
+use udd_container::{UddpReader, UddpReaderOptions};
 use crate::common::{
     AtlasCacheOptions, AtlasPageCache, decode_atlas_page_rgba, ensure_manifest_version, lists_equivalent,
-    read_ec_overlay_table, read_path_entry, read_path_entry_cow, EcEquivalentRecord, EcOverlayTable,
+    open_kr_section, read_ec_overlay_table, read_path_entry, read_path_entry_cow, EcEquivalentRecord, EcOverlayTable,
 };
 use crate::tex_art_cc::{upscale_algorithm_name, AtlasPackingMode, PagePixelFormat};
 
@@ -25,8 +25,9 @@ const SLOT_MANIFEST_MAGIC: [u8; 4] = *b"EASL";
 /// Required source-geometry metadata is also part of this package contract.
 pub const TEX_ART_EC_METADATA_VERSION: u32 = 1;
 /// Magic of the overlay table of this layout ([`crate::common::EC_EQUIVALENTS_ENTRY_PATH`]), whose ids are art ids:
-/// an overlay (the Kingdom Reborn `tex_art_kr.uddp`) holds the items whose world art its client draws differently
-/// from the client of the `tex_art_ec.uddp` beside it, and lists the others there ([`TexArtEcPackage::overlay_slot`]).
+/// an overlay (the Kingdom Reborn section of `tex_art_ec.uddp`, [`TexArtEcPackage::kr_overlay`]) holds the items whose
+/// world art its client draws differently from the client of the package holding it, and lists the others there
+/// ([`TexArtEcPackage::overlay_slot`]).
 pub const TEX_ART_EC_EQUIVALENTS_MAGIC: [u8; 4] = *b"AREQ";
 
 /// The original window builder's legacy pixel unit, against which the descriptor scales are given.
@@ -134,7 +135,7 @@ pub struct TexArtEcPackage {
     slots: Vec<TexArtEcSlotRecord>,
     sprite_geometry: std::collections::BTreeMap<u32, TexArtEcSpriteGeometry>,
     page_cache: AtlasPageCache,
-    /// `metadata/ec_equivalents.bin` and `metadata/ec_equivalents_base.bin` of an overlay.
+    /// `metadata/ec_equivalents.bin` of an overlay.
     overlay: Option<EcOverlayTable>,
 }
 
@@ -268,11 +269,15 @@ impl TexArtEcPackage {
         self.overlay.as_ref().map_or(&[], |table| &table.equivalents)
     }
 
-    /// Fails when this is an overlay and `base` is not the package it was measured against (its `package_hash64`
-    /// differs from the one the overlay records): what the overlay leaves to `base` may be drawn differently there.
-    /// Check it before reading through [`Self::overlay_slot`]. A full package passes.
-    pub fn ensure_overlay_base(&self, base: &TexArtEcPackage) -> eyre::Result<()> {
-        self.overlay.as_ref().map_or(Ok(()), |table| table.ensure_base(base.package.stored_package_hash64()))
+    /// The Kingdom Reborn item art this package holds ([`crate::common::KR_SECTION_ENTRY_PATH`]), an overlay over this
+    /// package read in place with `options`; `None` when it holds none.
+    pub fn kr_overlay(&self, options: AtlasCacheOptions) -> eyre::Result<Option<TexArtEcPackage>> {
+        let Some(section) = open_kr_section(&self.package, UddpReaderOptions::disabled())? else {
+            return Ok(None);
+        };
+        let overlay = Self::from_uddp_package_with_options(section, options).wrap_err("the Kingdom Reborn item art")?;
+        eyre::ensure!(overlay.is_overlay(), "the Kingdom Reborn item art is no overlay; repack with the current udd-cli");
+        Ok(Some(overlay))
     }
 
     /// The present slot of `art_id` read through this overlay over `base`, with the package holding it: this

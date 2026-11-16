@@ -119,7 +119,7 @@ pub struct LandTextureCache {
     pub tex_land_cc: Option<Arc<udd_assets::tex_land_cc::TexLandCcPackage>>,
     pub tex_art_ec: Option<Arc<udd_assets::tex_art_ec::TexArtEcPackage>>,
     pub tex_land_ec: Option<Arc<udd_assets::tex_land_ec::TexLandEcPackage>>,
-    /// tex_land_kr.uddp, in the EC land layout; drawn in place of `tex_land_ec` under the Kingdom Reborn land source.
+    /// The Kingdom Reborn land of tex_land_ec.uddp, in the EC land layout; drawn in place of `tex_land_ec` under the Kingdom Reborn land source.
     pub tex_land_kr: Option<Arc<udd_assets::tex_land_ec::TexLandEcPackage>>,
 
     /// What the Classic source holds per land id, fixed at setup: its texmap (`tex_land_cc` slot id) and its land art.
@@ -350,7 +350,7 @@ impl LandTextureCache {
         self.preferred_source
     }
 
-    /// The EC-layout land package the land page atlas holds: tex_land_ec.uddp or tex_land_kr.uddp, the first loaded
+    /// The EC-layout land package the land page atlas holds: tex_land_ec.uddp or its Kingdom Reborn land, the first loaded
     /// one of the preferred source's chain; `None` under the Classic source or when neither is loaded.
     pub fn atlas_enhanced_land(&self) -> Option<&Arc<udd_assets::tex_land_ec::TexLandEcPackage>> {
         self.enhanced_land_for(self.routes.atlas())

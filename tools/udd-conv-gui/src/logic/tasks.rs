@@ -24,8 +24,13 @@ use udd_conv::{
     tex_art_cc::{TexArtCcAtlasOptions, convert_art_mul_to_tex_art_cc_uddp_from_sources_with_patches_and_progress, DEFAULT_ATLAS_GUTTER, DEFAULT_ATLAS_PAGE_WIDTH, DEFAULT_ATLAS_PAGE_HEIGHT},
     tex_art_ec::{TexArtEcAtlasOptions, convert_tex_art_ec_uop_to_tex_art_ec_uddp_from_sources_with_progress},
     tex_land_ec::{TexLandEcAtlasOptions, convert_tex_land_ec_uop_to_tex_land_ec_uddp_from_sources_with_progress},
-    tex_land_kr::{TexLandKrPackOptions, convert_kr_land_to_tex_land_kr_uddp_with_progress, TEX_LAND_KR_FILE_NAME},
-    kr_items::{pack_kr_items, KrItemOutputs, KrOverlayBases},
+    tex_art_ec::load_tex_art_ec_sources,
+    tex_land_kr::TexLandKrPackOptions,
+    kr_delta::KrClientSource,
+    kr_sections::{
+        add_kr_art_and_tilemeta_sections, add_kr_aux_section, add_kr_land_section, add_kr_tilemeta_section,
+        KrSectionWork,
+    },
     tilemeta::{TileMetaBuildOptions, build_tilemeta_uddp_from_sources_with_progress, build_tilemeta_uddp_from_split_sources_with_progress},
     cc_map::convert_map_mul_to_uddp_from_sources_with_patches,
     chunk_compression::ChunkCompression,
@@ -556,6 +561,16 @@ const HUES_UOP_CAPITALIZED_NAME: &str = "Hues.uop";
 
 /// The package codec of the hues and world lights jobs, as `pack-hues` and `pack-lights` map `--no-compression` and
 /// `--zstd[=LEVEL]`: raw, else Zstd at the chosen level, else Zstd at the packer's level.
+/// The progress shown while a job packs its Kingdom Reborn section, after the Enhanced package.
+const KR_SECTION_PROGRESS: f32 = 0.95;
+const KR_SECTION_LABEL: &str = "Packing the Kingdom Reborn section";
+
+/// Where the Enhanced packages take the Kingdom Reborn data from: the Kingdom Reborn folder when one is selected, else
+/// the delta shipped with the tools.
+fn kr_source(settings: &AppSettings) -> KrClientSource {
+    KrClientSource::from_options(settings.kr_dir.as_deref(), None)
+}
+
 fn package_compression(no_compression: bool, zstd_level: Option<i32>) -> CompressionFlag {
     if no_compression {
         CompressionFlag::None
@@ -1020,7 +1035,13 @@ impl UddConvApp {
                 |task_progress| progress.task_progress_with_extract_label(task_progress, extract_label),
                 |build_progress| progress.build_progress(build_progress),
             )?;
-            Ok(format!("Wrote {} pages to {}", summary.page_count, output.display()))
+            progress.set(AssetPackProgressState::Running, KR_SECTION_PROGRESS, KR_SECTION_LABEL);
+            let ec = load_tex_art_ec_sources(&sources)?;
+            let kr_work = KrSectionWork::prepare(&kr_source(&settings), &sources[0], &output)?;
+            let kr = add_kr_art_and_tilemeta_sections(&kr_work, &ec, Some(&output), None)?;
+            Ok(format!("Wrote {} pages to {}, with the Kingdom Reborn item art ({} slots, {} items left to the \
+                Enhanced art)", summary.page_count, output.display(), kr.art.populated_slot_count,
+                kr.world_art.equivalents.len()))
         });
     }
 
@@ -1050,106 +1071,43 @@ impl UddConvApp {
                 "Extracting"
             };
 
+            let land_options = TexLandEcAtlasOptions {
+                atlas_width: DEFAULT_ATLAS_PAGE_WIDTH,
+                atlas_height: DEFAULT_ATLAS_PAGE_HEIGHT,
+                gutter: DEFAULT_ATLAS_GUTTER,
+                compression,
+                upscale_64: settings.upscale_tex_land_ec_64,
+                upscale_128: settings.upscale_tex_land_ec_128,
+                upscale_256: settings.upscale_tex_land_ec_256,
+                upscale_512: settings.upscale_tex_land_ec_512,
+                upscale_64_passes: Vec::new(),
+                upscale_128_passes: Vec::new(),
+                upscale_256_passes: Vec::new(),
+                upscale_512_passes: Vec::new(),
+                upscale_profile,
+                pixel_format: match settings.opt_tex_land_ec {
+                    TextureOptimization::Bc7 | TextureOptimization::Bc7Zstd => PagePixelFormat::Bc7,
+                    _ => PagePixelFormat::Rgba8888,
+                },
+                // The lossy Enhanced land is BC7 without RDO.
+                bc7_rdo_lambda: NO_BC7_RDO_LAMBDA,
+                bc7_rdo_lookback_blocks: bc7_rdo_lookback_blocks(&settings),
+                transcode_kdl_path: Some(transcode_kdl),
+                terrain_overrides_kdl_path: Some(terrain_overrides_kdl),
+            };
             let summary = convert_tex_land_ec_uop_to_tex_land_ec_uddp_from_sources_with_progress(
                 &sources, &output,
-                &TexLandEcAtlasOptions {
-                    atlas_width: DEFAULT_ATLAS_PAGE_WIDTH,
-                    atlas_height: DEFAULT_ATLAS_PAGE_HEIGHT,
-                    gutter: DEFAULT_ATLAS_GUTTER,
-                    compression,
-                    upscale_64: settings.upscale_tex_land_ec_64,
-                    upscale_128: settings.upscale_tex_land_ec_128,
-                    upscale_256: settings.upscale_tex_land_ec_256,
-                    upscale_512: settings.upscale_tex_land_ec_512,
-                    upscale_64_passes: Vec::new(),
-                    upscale_128_passes: Vec::new(),
-                    upscale_256_passes: Vec::new(),
-                    upscale_512_passes: Vec::new(),
-                    upscale_profile,
-                    pixel_format: match settings.opt_tex_land_ec {
-                        TextureOptimization::Bc7 | TextureOptimization::Bc7Zstd => PagePixelFormat::Bc7,
-                        _ => PagePixelFormat::Rgba8888,
-                    },
-                    // The lossy Enhanced land is BC7 without RDO.
-                    bc7_rdo_lambda: NO_BC7_RDO_LAMBDA,
-                    bc7_rdo_lookback_blocks: bc7_rdo_lookback_blocks(&settings),
-                    transcode_kdl_path: Some(transcode_kdl),
-                    terrain_overrides_kdl_path: Some(terrain_overrides_kdl),
-                },
+                &land_options,
                 |task_progress| progress.task_progress_with_extract_label(task_progress, extract_label),
                 |build_progress| progress.build_progress(build_progress),
             )?;
-            Ok(format!("Wrote {} pages to {}", summary.page_count, output.display()))
-        });
-    }
-
-    /// The Kingdom Reborn land: KR's terrain from the Kingdom Reborn folder, what KR lacks from the Enhanced one, with
-    /// the Enhanced Land card's upscale settings and its own encoding. Beside it, the lossless KR item packages (KR's
-    /// tileart with the Classic tiledata, and the item art and material textures KR draws differently from the
-    /// Enhanced Client).
-    pub fn convert_tex_land_kr(&self) {
-        let settings = self.settings.clone();
-        let output = self.get_output_path(TEX_LAND_KR_FILE_NAME);
-        let item_outputs = KrItemOutputs::beside(&output);
-        let outputs = vec![output.clone(), item_outputs.tilemeta.clone(), item_outputs.art.clone(), item_outputs.aux.clone()];
-        self.spawn_asset_task(AssetPackTask::TexLandKr, "KR Land Packing".to_string(), outputs, move |progress| {
-            let Some(kr_dir) = settings.kr_dir.clone() else { eyre::bail!("No Kingdom Reborn source dir") };
-            let Some(ec_dir) = settings.ec_dir.clone() else { eyre::bail!("No Enhanced source dir") };
-            let Some(cc_dir) = settings.cc_dir.clone() else { eyre::bail!("No Classic source dir (tiledata.mul for tilemeta_kr.uddp)") };
-            ensure_output_parent(&output)?;
-            // The overlays are measured against the Enhanced packages beside them, which must be there before packing.
-            let overlay_bases = KrOverlayBases::beside(&item_outputs)?;
-            let terrain_overrides_kdl = conversion_table(&settings, EC_TERRAIN_OVERRIDES_KDL)?;
-            let transcode_kdl = conversion_table(&settings, TERRAIN_TRANSCODE_KDL)?;
-            let upscale_profile = load_upscale_profile(&settings)?;
-            let extract_label = if upscale_config_active(settings.upscale_tex_land_ec_64)
-                || upscale_config_active(settings.upscale_tex_land_ec_128)
-                || upscale_config_active(settings.upscale_tex_land_ec_256)
-                || upscale_config_active(settings.upscale_tex_land_ec_512)
-                || upscale_profile_active(&settings)
-            {
-                "Extracting and upscaling"
-            } else {
-                "Extracting"
-            };
-
-            let summary = convert_kr_land_to_tex_land_kr_uddp_with_progress(
-                &kr_dir, &ec_dir, &output,
-                &TexLandKrPackOptions {
-                    atlas: TexLandEcAtlasOptions {
-                        atlas_width: DEFAULT_ATLAS_PAGE_WIDTH,
-                        atlas_height: DEFAULT_ATLAS_PAGE_HEIGHT,
-                        gutter: DEFAULT_ATLAS_GUTTER,
-                        compression: texture_compression(settings.opt_tex_land_kr, settings.zstd_tex_land_kr),
-                        upscale_64: settings.upscale_tex_land_ec_64,
-                        upscale_128: settings.upscale_tex_land_ec_128,
-                        upscale_256: settings.upscale_tex_land_ec_256,
-                        upscale_512: settings.upscale_tex_land_ec_512,
-                        upscale_64_passes: Vec::new(),
-                        upscale_128_passes: Vec::new(),
-                        upscale_256_passes: Vec::new(),
-                        upscale_512_passes: Vec::new(),
-                        upscale_profile,
-                        pixel_format: match settings.opt_tex_land_kr {
-                            TextureOptimization::Bc7 | TextureOptimization::Bc7Zstd => PagePixelFormat::Bc7,
-                            _ => PagePixelFormat::Rgba8888,
-                        },
-                        // As the lossy Enhanced land: BC7 without RDO.
-                        bc7_rdo_lambda: NO_BC7_RDO_LAMBDA,
-                        bc7_rdo_lookback_blocks: bc7_rdo_lookback_blocks(&settings),
-                        transcode_kdl_path: Some(transcode_kdl),
-                        terrain_overrides_kdl_path: Some(terrain_overrides_kdl),
-                    },
-                    report: settings.tex_land_kr_report.clone(),
-                },
-                |task_progress| progress.task_progress_with_extract_label(task_progress, extract_label),
-                |build_progress| progress.build_progress(build_progress),
-            )?;
-            let items = pack_kr_items(&kr_dir, &ec_dir, &cc_dir, &item_outputs, &overlay_bases)?;
-            Ok(format!("Wrote {} pages to {} ({summary}); KR items: {} art slots ({} items left to tex_art_ec.uddp), {} \
-                material textures ({} left to tex_aux_ec.uddp)", summary.package.page_count, output.display(),
-                items.art.populated_slot_count, items.world_art.equivalents.len(), items.aux.kept.len(),
-                items.aux.equivalents.len()))
+            progress.set(AssetPackProgressState::Running, KR_SECTION_PROGRESS, KR_SECTION_LABEL);
+            let kr_work = KrSectionWork::prepare(&kr_source(&settings), &sources[0], &output)?;
+            let kr = add_kr_land_section(&kr_work, &sources[0], &output,
+                &TexLandKrPackOptions { atlas: land_options, report: settings.tex_land_kr_report.clone() },
+                |_| {}, |_| {})?;
+            Ok(format!("Wrote {} pages to {}, with the Kingdom Reborn land ({kr})", summary.page_count,
+                output.display()))
         });
     }
 
@@ -1171,6 +1129,9 @@ impl UddConvApp {
                         },
                         |build_progress| progress.build_progress(build_progress),
                     )?;
+                    progress.set(AssetPackProgressState::Running, KR_SECTION_PROGRESS, KR_SECTION_LABEL);
+                    let kr_work = KrSectionWork::prepare(&kr_source(&settings), ec_dir, &output)?;
+                    add_kr_tilemeta_section(&kr_work, ec_dir, cc_dir, &output)?;
                 }
                 _ => {
                     let sources = gather_source_dirs(settings.cc_dir.as_ref(), settings.ec_dir.as_ref());
@@ -1311,6 +1272,9 @@ impl UddConvApp {
         self.spawn_asset_task(AssetPackTask::TexAuxEc, "EC Auxiliary Textures Packing".to_string(), vec![output.clone()], move |progress| {
             let sources = gather_ec_source_dirs(settings.ec_dir.as_ref());
             if sources.is_empty() { eyre::bail!("No EC source dir configured"); }
+            let Some(cc_dir) = settings.cc_dir.clone() else {
+                eyre::bail!("No Classic source dir (tiledata.mul, for the Kingdom Reborn material textures)")
+            };
             if !tilemeta_path.exists() {
                 eyre::bail!("tilemeta.uddp not found in input UDDP directory. Pack Tilemeta first!");
             }
@@ -1336,11 +1300,17 @@ impl UddConvApp {
                     upscale_passes: Vec::new(),
                 },
             )?;
+            progress.set(AssetPackProgressState::Running, KR_SECTION_PROGRESS, KR_SECTION_LABEL);
+            let kr_work = KrSectionWork::prepare(&kr_source(&settings), &sources[0], &output)?;
+            let kr = add_kr_aux_section(&kr_work, &sources[0], &cc_dir, &tilemeta_path, &output)?;
             Ok(format!(
-                "Packed {} auxiliary textures ({} refs considered) to {}",
+                "Packed {} auxiliary textures ({} refs considered) to {}, with the Kingdom Reborn material textures ({}, \
+                {} left to the Enhanced ones)",
                 summary.included,
                 summary.refs_considered,
-                output.display()
+                output.display(),
+                kr.kept.len(),
+                kr.equivalents.len()
             ))
         });
     }

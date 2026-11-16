@@ -7,7 +7,7 @@ use std::cell::Cell;
 use std::sync::atomic::{AtomicU64, Ordering};
 use color_eyre::eyre::{self, WrapErr};
 use byteorder::{LittleEndian, ReadBytesExt};
-use udd_container::{xxh64_virtual_path, UddpReader};
+use udd_container::{xxh64_virtual_path, UddpReader, UddpReaderOptions};
 use crate::common::{
     AtlasCacheOptions, AtlasPageCache, decode_atlas_page_rgba, ensure_manifest_version, read_path_entry, read_path_entry_cow,
 };
@@ -33,7 +33,7 @@ pub const UDDP_TERRAIN_OVERRIDES_ENTRY_VPATH: &str = "metadata/terrain_overrides
 pub const UDDP_TRANSCODE_ENTRY_VPATH: &str = "metadata/transcode.bin";
 pub const UDDP_LEGACY_TERRAIN_MAP_ENTRY_VPATH: &str = "metadata/legacy_terrain_map.csv";
 pub const UDDP_SOURCE_MATERIALS_ENTRY_VPATH: &str = "metadata/source_materials.json";
-/// Optional: the client's grunge texture. Only the Kingdom Reborn land (`tex_land_kr.uddp`) carries it, KR's
+/// Optional: the client's grunge texture. Only the Kingdom Reborn land ([`TexLandEcPackage::kr_land`]) carries it, KR's
 /// `build/worldart/01000045.dds`. A header (magic `ELGR`, u32 [`TEX_LAND_EC_GRUNGE_VERSION`], u32 width, u32 height,
 /// u8 [`PagePixelFormat`], always RGBA8888), then the RGBA8888 rows: [`encode_grunge_entry`], [`decode_grunge_entry`].
 pub const UDDP_GRUNGE_ENTRY_VPATH: &str = "textures/grunge.rgba8888";
@@ -551,6 +551,15 @@ impl TexLandEcPackage {
 
     pub fn package(&self) -> &UddpReader {
         &self.package
+    }
+
+    /// The Kingdom Reborn land this package holds ([`crate::common::KR_SECTION_ENTRY_PATH`]), in this layout, read in
+    /// place with `reader_options` and `options`; `None` when it holds none.
+    pub fn kr_land(&self, reader_options: UddpReaderOptions, options: AtlasCacheOptions) -> eyre::Result<Option<Self>> {
+        let Some(section) = crate::common::open_kr_section(&self.package, reader_options)? else {
+            return Ok(None);
+        };
+        Self::from_uddp_package_with_options(section, options).wrap_err("the Kingdom Reborn land").map(Some)
     }
 
     /// The client grunge texture ([`UDDP_GRUNGE_ENTRY_VPATH`]), or `None` when the package has none. An entry without

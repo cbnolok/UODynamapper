@@ -28,7 +28,7 @@ default_preset = "classic.morning"
 #                    1: the KR client's plain bilinear from one level. Zoomed out past the client's 18.4-tile
 #                    view, a box of bilinear taps stands in for the mip levels its textures do not have.
 # enable_client_grunge: If 1, the KR client's grunge on the statics it grunges: their colour times its grunge
-#                    texture (tex_land_kr.uddp, else the Enhanced Client's image of the id in tex_aux_ec.uddp),
+#                    texture (the Kingdom Reborn land of tex_land_ec.uddp, else the Enhanced Client's image of the id in tex_aux_ec.uddp),
 #                    mapped from each static's map position, so CC and EC art get the same. On in KR-like.
 # client_grunge_strength: 0 to 1. 1 is the client's full multiply; 0 leaves the colour as it is.
 #

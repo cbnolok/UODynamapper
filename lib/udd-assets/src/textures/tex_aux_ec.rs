@@ -32,21 +32,22 @@
 //! A package of another version, or without a required entry or slot, fails to load with a message
 //! to repack it.
 //!
-//! An overlay (the Kingdom Reborn `tex_aux_kr.uddp`) has the same layout plus `metadata/ec_equivalents.bin`
-//! ([`crate::common::EC_EQUIVALENTS_ENTRY_PATH`], magic [`TEX_AUX_EC_EQUIVALENTS_MAGIC`]): the textures it leaves to
-//! the `tex_aux_ec.uddp` beside it, whose image is the overlay client's re-encoded. Its slots hold only the other textures, so the reserved slots it lists there are
-//! not required of it; read it through [`TexAuxEcPackage::overlay_slot`]. It also names, in
-//! `metadata/ec_equivalents_base.bin` ([`crate::common::EC_EQUIVALENTS_BASE_ENTRY_PATH`]), the `tex_aux_ec.uddp` it
-//! was measured against, the only base it reads through ([`TexAuxEcPackage::ensure_overlay_base`]).
+//! The package holds the Kingdom Reborn material textures in [`crate::common::KR_SECTION_ENTRY_PATH`]
+//! ([`TexAuxEcPackage::kr_overlay`]): an overlay over the package holding it, of the same layout plus
+//! `metadata/ec_equivalents.bin` ([`crate::common::EC_EQUIVALENTS_ENTRY_PATH`], magic
+//! [`TEX_AUX_EC_EQUIVALENTS_MAGIC`]): the textures it leaves to that package, whose image is the Kingdom Reborn one
+//! re-encoded. Its slots hold only the other textures, so the reserved slots it lists there are not required of it;
+//! read it through [`TexAuxEcPackage::overlay_slot`].
 
 use bytemuck::{Pod, Zeroable};
 use color_eyre::eyre::{self, WrapErr};
 use std::path::Path;
-use udd_container::{xxh64_virtual_path, UddpReader};
+use udd_container::{xxh64_virtual_path, UddpReader, UddpReaderOptions};
 use uot_texture_codecs::bc7::{decode_from_vram, RawImageFormat, VramTextureData, VramTextureFormat};
 
 use crate::common::{
-    ensure_manifest_version, lists_equivalent, read_ec_overlay_table, read_pod_vec, EcEquivalentRecord, EcOverlayTable,
+    ensure_manifest_version, lists_equivalent, open_kr_section, read_ec_overlay_table, read_pod_vec, EcEquivalentRecord,
+    EcOverlayTable,
 };
 use crate::tex_art_cc::PagePixelFormat;
 
@@ -110,8 +111,8 @@ pub fn texture_entry_path(texture_id: u32) -> String {
 /// reserved keys.
 pub const TEX_AUX_EC_EQUIVALENTS_MAGIC: [u8; 4] = *b"AXEQ";
 
-/// The overlay entries of this layout, by entry path.
-pub fn tex_aux_ec_overlay_entries(table: &EcOverlayTable) -> [(&'static str, Vec<u8>); 2] {
+/// The overlay entry of this layout, with its path.
+pub fn tex_aux_ec_overlay_entries(table: &EcOverlayTable) -> (&'static str, Vec<u8>) {
     table.encode(TEX_AUX_EC_EQUIVALENTS_MAGIC, TEX_AUX_EC_METADATA_VERSION)
 }
 
@@ -204,7 +205,7 @@ pub struct TexAuxEcPackage {
     package: UddpReader,
     slots: Vec<TexAuxEcSlotRecord>,
     water_primary_extents: Vec<[u32; 3]>,
-    /// `metadata/ec_equivalents.bin` and `metadata/ec_equivalents_base.bin` of an overlay.
+    /// `metadata/ec_equivalents.bin` of an overlay.
     overlay: Option<EcOverlayTable>,
 }
 
@@ -266,11 +267,16 @@ impl TexAuxEcPackage {
         self.overlay.as_ref().map_or(&[], |table| &table.equivalents)
     }
 
-    /// Fails when this is an overlay and `base` is not the package it was measured against (its `package_hash64`
-    /// differs from the one the overlay records): what the overlay leaves to `base` may be drawn differently there.
-    /// Check it before reading through [`Self::overlay_slot`]. A full package passes.
-    pub fn ensure_overlay_base(&self, base: &TexAuxEcPackage) -> eyre::Result<()> {
-        self.overlay.as_ref().map_or(Ok(()), |table| table.ensure_base(base.package.stored_package_hash64()))
+    /// The Kingdom Reborn material textures this package holds ([`crate::common::KR_SECTION_ENTRY_PATH`]), an overlay
+    /// over this package read in place; `None` when it holds none.
+    pub fn kr_overlay(&self) -> eyre::Result<Option<TexAuxEcPackage>> {
+        let Some(section) = open_kr_section(&self.package, UddpReaderOptions::disabled())? else {
+            return Ok(None);
+        };
+        let overlay = Self::from_uddp_package(section).wrap_err("the Kingdom Reborn material textures")?;
+        eyre::ensure!(overlay.is_overlay(), "the Kingdom Reborn material textures are no overlay; repack with the \
+            current udd-cli");
+        Ok(Some(overlay))
     }
 
     /// The slot of `texture_id` read through this overlay over `base`, with the package holding its payload: this
@@ -386,6 +392,7 @@ impl TexAuxEcPackage {
 mod tests {
     use super::*;
     use udd_container::{AddFileRequest, CompressionFlag, DataType, LookupMode, UddpBuilder};
+    use crate::common::KR_SECTION_ENTRY_PATH;
 
     const WORLD_ART: u8 = crate::tilemeta::EcMaterialLogicalFamily::WorldArt as u8;
     const SYSTEM_TEXTURES: u8 = crate::tilemeta::EcMaterialLogicalFamily::SystemTextures as u8;
@@ -428,6 +435,12 @@ mod tests {
     /// `pixel`.
     fn package_with(slots: &[TexAuxEcSlotRecord], overlay_entries: &[(&str, Vec<u8>)], packed_pixel: [u8; 4])
         -> eyre::Result<TexAuxEcPackage> {
+        TexAuxEcPackage::from_uddp_package(UddpReader::open(package_bytes_with(slots, overlay_entries, packed_pixel)?)?)
+    }
+
+    /// The bytes of [`package_with`]; its extra entries are stored uncompressed.
+    fn package_bytes_with(slots: &[TexAuxEcSlotRecord], overlay_entries: &[(&str, Vec<u8>)], packed_pixel: [u8; 4])
+        -> eyre::Result<Vec<u8>> {
         let mut builder = UddpBuilder::new(LookupMode::VirtualPathHash);
         for (path, data) in overlay_entries {
             builder.add_file(AddFileRequest {
@@ -456,7 +469,7 @@ mod tests {
                 path_hash64: None, id: None, data,
             })?;
         }
-        TexAuxEcPackage::from_uddp_package(UddpReader::open(builder.build()?)?)
+        Ok(builder.build()?)
     }
 
     #[test]
@@ -480,23 +493,25 @@ mod tests {
         Ok(())
     }
 
-    /// An overlay reads its own slots, then the ones it lists from its base; its listed missing-texture image is the
-    /// base's, and it holds none of the textures it leaves.
+    /// The Kingdom Reborn overlay a package holds reads its own slots, then the ones it lists from that package; its
+    /// listed missing-texture image is the base's, and it holds none of the textures it leaves.
     #[test]
     fn an_overlay_reads_through_to_the_textures_it_leaves_to_its_base() -> eyre::Result<()> {
         const OVERLAY_PIXEL: [u8; 4] = [50, 60, 70, 80];
         const LEFT_ID: u32 = 20_002_480;
-        let base = package(&[slot(UNLISTED_ID + 1, WORLD_ART), slot(PACKED_ID, WORLD_ART), slot(LEFT_ID, WORLD_ART)])?;
         let left = [LEFT_ID, TEX_AUX_EC_MISSING_TEXTURE_ID]
             .map(|id| EcEquivalentRecord { id, difference: 0.5 });
         let reserved = reserved_slots();
         let (missing, atmosphere) = reserved.split_last().expect("missing-texture slot");
         let overlay_slots = [&[slot(PACKED_ID, WORLD_ART), alias(ABSENT_ID)][..], atmosphere].concat();
-        let table = EcOverlayTable { base_package_hash64: base.package.stored_package_hash64(), equivalents: left.to_vec() };
-        let overlay = package_with(&overlay_slots, &tex_aux_ec_overlay_entries(&table), OVERLAY_PIXEL)?;
+        let table = EcOverlayTable { equivalents: left.to_vec() };
+        let section = package_bytes_with(&overlay_slots, &[tex_aux_ec_overlay_entries(&table)], OVERLAY_PIXEL)?;
+        let base_slots = [slot(UNLISTED_ID + 1, WORLD_ART), slot(PACKED_ID, WORLD_ART), slot(LEFT_ID, WORLD_ART)];
+        let base = package_with(&[&base_slots[..], &reserved].concat(), &[(KR_SECTION_ENTRY_PATH, section)], PACKED_PIXEL)?;
+        let overlay = base.kr_overlay()?.expect("the Kingdom Reborn section");
         assert!(overlay.is_overlay() && !base.is_overlay());
+        assert!(overlay.kr_overlay()?.is_none() && package(&[])?.kr_overlay()?.is_none());
         assert_eq!(overlay.equivalents().len(), left.len());
-        overlay.ensure_overlay_base(&base)?;
         assert!(overlay.slot_for_texture_id(missing.texture_id).is_none(), "left to the base");
 
         let (holder, packed) = overlay.overlay_slot(&base, PACKED_ID).expect("own slot");
@@ -510,32 +525,6 @@ mod tests {
         assert_eq!(&holder.load_rgba(absent.payload_texture_id)?.expect("missing pixels")[..RGBA_CHANNELS], &MISSING_PIXEL);
         assert!(overlay.overlay_slot(&base, UNLISTED_ID + 1).is_none(), "neither held nor listed");
         assert!(base.overlay_slot(&base, LEFT_ID).is_some(), "a full package reads itself");
-        Ok(())
-    }
-
-    /// An overlay passes only over the base it was measured against: a base repacked since (another package hash)
-    /// is refused with the repack message, and so is an overlay that names no base (packed before overlays did).
-    #[test]
-    fn an_overlay_refuses_a_base_it_was_not_measured_against() -> eyre::Result<()> {
-        const LEFT_ID: u32 = 20_002_480;
-        let base = package(&[slot(LEFT_ID, WORLD_ART)])?;
-        let repacked_base = package(&[slot(PACKED_ID, WORLD_ART), slot(LEFT_ID, WORLD_ART)])?;
-        assert_ne!(base.package.stored_package_hash64(), repacked_base.package.stored_package_hash64());
-        let table = EcOverlayTable {
-            base_package_hash64: base.package.stored_package_hash64(),
-            equivalents: vec![EcEquivalentRecord { id: LEFT_ID, difference: 0.0 }],
-        };
-        let entries = tex_aux_ec_overlay_entries(&table);
-        let overlay_slots = [&[slot(PACKED_ID, WORLD_ART)][..], &reserved_slots()].concat();
-        let overlay = package_with(&overlay_slots, &entries, PACKED_PIXEL)?;
-        overlay.ensure_overlay_base(&base)?;
-        let error = overlay.ensure_overlay_base(&repacked_base).expect_err("another base").to_string();
-        assert!(error.contains("repack"), "{error}");
-        assert!(base.ensure_overlay_base(&repacked_base).is_ok(), "a full package names no base");
-
-        let without_base = package_with(&overlay_slots, &entries[..1], PACKED_PIXEL);
-        let error = format!("{:#}", without_base.err().expect("an overlay naming no base"));
-        assert!(error.contains("repack"), "{error}");
         Ok(())
     }
 

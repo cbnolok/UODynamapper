@@ -159,6 +159,7 @@ const LAND_TILE_ID_COUNT: u32 = 0x4000;
 /// logged for BC7, in its order; the fifth, the animated liquid, is left out.
 const ALPHA_LOGGED_RENDER_ROLES: [&str; 4] = ["base", "detail", "mask", "normal"];
 
+#[derive(Clone)]
 pub struct TexLandEcAtlasOptions {
     pub atlas_width: u32,
     pub atlas_height: u32,

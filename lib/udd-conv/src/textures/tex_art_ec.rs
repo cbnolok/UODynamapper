@@ -466,8 +466,7 @@ fn convert_loaded_sources(
         width: 0, height: 0, virtual_path: Some(SPRITE_GEOMETRY_ENTRY_PATH),
         path_hash64: None, id: None, data: &geometry_manifest,
     })?;
-    for (path, data) in overlay.map(|table| table.encode(TEX_ART_EC_EQUIVALENTS_MAGIC, TEX_ART_EC_METADATA_VERSION))
-        .into_iter().flatten() {
+    if let Some((path, data)) = overlay.map(|table| table.encode(TEX_ART_EC_EQUIVALENTS_MAGIC, TEX_ART_EC_METADATA_VERSION)) {
         package.add_file(AddFileRequest {
             data_type: DataType::Metadata as u8, compression: CompressionFlag::ZstdNoDict,
             width: 0, height: 0, virtual_path: Some(path),

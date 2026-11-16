@@ -46,7 +46,7 @@ fn update_terrain_cursor(
     atlas: Res<TileAtlas>, uploads: Res<LandUploadTelemetry>, maps: Res<MapPlanesRes>,
     land_textures: Option<Res<LandTextureCache>>,
 ) {
-    // The EC-layout land package each cell draws from (tex_land_ec.uddp or tex_land_kr.uddp, routing.rs) decides which
+    // The EC-layout land package each cell draws from (tex_land_ec.uddp or its Kingdom Reborn land, routing.rs) decides which
     // cells bank.
     let land = land_textures.as_deref();
     let inputs = (|| {

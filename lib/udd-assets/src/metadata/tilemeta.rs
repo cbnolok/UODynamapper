@@ -712,6 +712,16 @@ impl TileMetaPackage {
         })
     }
 
+    /// The Kingdom Reborn tile data and tileart this package holds ([`crate::common::KR_SECTION_ENTRY_PATH`]), in this
+    /// layout, read in place; `None` when it holds none.
+    pub fn kr_tilemeta(&self) -> eyre::Result<Option<Self>> {
+        let Some(section) = crate::common::open_kr_section(&self.package, udd_container::UddpReaderOptions::disabled())?
+        else {
+            return Ok(None);
+        };
+        Self::from_uddp_package(section).wrap_err("the Kingdom Reborn tile data").map(Some)
+    }
+
     /// Every `tileart.uop` record the package was built from, byte for byte: the fields the tables above leave out
     /// are read from them.
     pub fn tileart_records(&self) -> &TileMetaTileArtRecords {

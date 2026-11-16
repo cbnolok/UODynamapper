@@ -379,6 +379,45 @@ impl UddpBuilder {
         patch_file_package_hash64(writer, package_hash64)
     }
 
+    /// The package `base` with the files of `added` (path hash, data type, bytes) stored uncompressed after its own.
+    /// `base`'s files and dictionaries are copied as stored, in payload order, not re-encoded: its entries read back
+    /// unchanged and the new image is as deterministic as `base`. A nested package is added this way, to be read in
+    /// place with [`UddpReader::open_section`].
+    pub fn extend_package(base: &UddpReader, added: Vec<(u64, u8, Vec<u8>)>) -> Result<Vec<u8>, BuildError> {
+        let to_build_error = |error: FormatError| BuildError::Io(std::io::Error::other(error.to_string()));
+        let mut dictionaries = Vec::new();
+        for (data_type, codec, _) in base.dictionary_records() {
+            let bytes = base.dictionary_for_type(data_type).ok_or(BuildError::MissingDictionaryForType(data_type))?;
+            dictionaries.push(BuiltDictionary { data_type, codec, bytes: bytes.to_vec() });
+        }
+        let mut records = base.records();
+        records.sort_by_key(|record| unpack_offset40(record.locator.pos64));
+        let mut files = Vec::with_capacity(records.len() + added.len());
+        for record in records {
+            files.push(BuiltFile {
+                key: match record.key {
+                    FileKey::PathHash(hash) => PendingKey::PathHash(hash),
+                    FileKey::Id(id) => PendingKey::Id(id),
+                },
+                data_type: unpack_type(record.locator.meta32),
+                codec: unpack_codec(record.locator.meta32),
+                raw_size: record.locator.raw_size,
+                encoded_payload: base.locator_payload(&record.locator).map_err(to_build_error)?.to_vec(),
+            });
+        }
+        for (path_hash64, data_type, data) in added {
+            let raw_size = u32::try_from(data.len()).map_err(|_| BuildError::FileTooLarge(data.len() as u64))?;
+            files.push(BuiltFile {
+                key: PendingKey::PathHash(path_hash64),
+                data_type,
+                codec: Codec::None,
+                raw_size,
+                encoded_payload: data,
+            });
+        }
+        Self::new(base.lookup_mode()).emit_package(BuildPlan { dictionaries, files })
+    }
+
     fn plan_build(&self) -> Result<BuildPlan, BuildError> {
         self.plan_build_with_progress(|_| {})
     }

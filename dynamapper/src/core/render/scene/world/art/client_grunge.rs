@@ -6,7 +6,8 @@
 //! from tilemeta by item id, whatever art the renderer draws ([`udd_assets::tilemeta::item_refs_have_client_grunge`]),
 //! and the grunge is mapped from the item's map position, so CC and EC art at the same place get the same grunge.
 //!
-//! The texture is KR's: the optional grunge entry of `tex_land_kr.uddp`. Without it the Enhanced Client's image of the
+//! The texture is KR's: the optional grunge entry of the Kingdom Reborn land in
+//! `tex_land_ec.uddp`. Without it the Enhanced Client's image of the
 //! same id in `tex_aux_ec.uddp` stands in (a different picture, mean 0.898 against KR's 0.840); without either, one
 //! warning, and a white texture that leaves the colour as it is.
 
@@ -29,7 +30,7 @@ const NO_GRUNGE_TEXEL: [u8; 4] = [u8::MAX; 4];
 /// Where the grunge texture came from.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum ClientGrungeSource {
-    /// KR's own image, `tex_land_kr.uddp`.
+    /// KR's own image, the Kingdom Reborn land in `tex_land_ec.uddp`.
     KrLand,
     /// The Enhanced Client's image of the same id, `tex_aux_ec.uddp`.
     EcAux,
@@ -58,7 +59,7 @@ pub(crate) fn client_grunge_image(
 ) -> (Image, ClientGrungeSource) {
     if let Some(grunge) = kr_land.and_then(|package| {
         package.0.grunge_rgba()
-            .inspect_err(|error| log::warn!("Cannot read the KR grunge texture from tex_land_kr.uddp: {error:#}"))
+            .inspect_err(|error| log::warn!("Cannot read the KR grunge texture from the Kingdom Reborn land: {error:#}"))
             .ok()
             .flatten()
     }) {
@@ -68,8 +69,8 @@ pub(crate) fn client_grunge_image(
         return (client_grunge_texture(width, height, rgba), ClientGrungeSource::EcAux);
     }
     log::warn!(
-        "No package carries the KR client grunge texture ({CLIENT_GRUNGE_TEXTURE_ID:08}): neither tex_land_kr.uddp \
-         nor tex_aux_ec.uddp. Client Grunge draws nothing; repack tex_land_kr.uddp to get it."
+        "No package carries the KR client grunge texture ({CLIENT_GRUNGE_TEXTURE_ID:08}): neither the Kingdom Reborn \
+         land of tex_land_ec.uddp nor tex_aux_ec.uddp. Client Grunge draws nothing; repack tex_land_ec.uddp to get it."
     );
     (client_grunge_texture(NO_GRUNGE_SIDE, NO_GRUNGE_SIDE, NO_GRUNGE_TEXEL.to_vec()), ClientGrungeSource::None)
 }
@@ -84,7 +85,7 @@ fn ec_aux_grunge(package: &TexAuxEcPackageRes) -> Option<(u32, u32, Vec<u8>)> {
     console_logger::one(
         LogSev::Info,
         LogAbout::RenderWorldArt,
-        &format!("Client Grunge: tex_land_kr.uddp has no grunge texture; using the Enhanced Client's \
+        &format!("Client Grunge: no Kingdom Reborn land grunge texture; using the Enhanced Client's \
             {CLIENT_GRUNGE_TEXTURE_ID:08} from tex_aux_ec.uddp, a different image."),
     );
     Some((u32::from(slot.width), u32::from(slot.height), rgba))

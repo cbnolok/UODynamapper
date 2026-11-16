@@ -59,7 +59,7 @@ pub enum ArtPageKey {
     Classic(u32),
     Enhanced(u32),
     Terrain(u32),
-    /// The pages of the Kingdom Reborn item art (`tex_art_kr.uddp`) and land (`tex_land_kr.uddp`), in the Enhanced
+    /// The pages of the Kingdom Reborn item art and land (the sections of `tex_art_ec.uddp`, `tex_land_ec.uddp`), in the Enhanced
     /// layouts, which the statics that continue the Kingdom Reborn land draw.
     KrEnhanced(u32),
     KrTerrain(u32),
@@ -277,7 +277,7 @@ impl ArtPageAtlas {
     }
 
     /// `resolve_ec` from a package in the Enhanced art layout whose pages are `page_key`: `tex_art_ec.uddp`
-    /// (`ArtPageKey::Enhanced`) or `tex_art_kr.uddp` (`ArtPageKey::KrEnhanced`).
+    /// (`ArtPageKey::Enhanced`) or its Kingdom Reborn art (`ArtPageKey::KrEnhanced`).
     pub fn resolve_ec_pages(&mut self, tex_art_ec: &TexArtEcPackage, art_id: u32, page_key: fn(u32) -> ArtPageKey)
         -> Option<ResolvedArtSprite> {
         let slot = tex_art_ec.present_slot(art_id)?;
@@ -312,7 +312,7 @@ impl ArtPageAtlas {
     }
 
     /// `resolve_tex_land_ec` from a package in the Enhanced land layout whose pages are `page_key`: `tex_land_ec.uddp`
-    /// (`ArtPageKey::Terrain`) or `tex_land_kr.uddp` (`ArtPageKey::KrTerrain`).
+    /// (`ArtPageKey::Terrain`) or its Kingdom Reborn land (`ArtPageKey::KrTerrain`).
     pub fn resolve_tex_land_ec_pages(
         &mut self,
         tex_land_ec: &TexLandEcPackage,

@@ -1,30 +1,32 @@
-//! Build-time support for the Kingdom Reborn item packages, which `pack-kr-land` writes beside `tex_land_kr.uddp`.
+//! Build-time support for the Kingdom Reborn items the Enhanced packages hold (`crate::kr_sections` nests them).
 //!
 //! Most of Kingdom Reborn's item world art is the Enhanced Client's: every entry of KR's `Texture.uop` is in the
 //! Enhanced Client's under the same name, byte-identical or the same image re-encoded (the same extent, DDS format and
-//! header, other DXT blocks), and most KR records sample it as the Enhanced records do. So `pack-kr-land` packs only
-//! what differs, as overlays the renderer reads over the Enhanced packages beside them:
-//! - [`TILEMETA_KR_FILE_NAME`]: the `tilemeta.uddp` layout, Classic `tiledata.mul` with KR's `tileart.uop` (record
-//!   version 3, its flags moved to the EC layout by `uocf`), and every KR tileart record byte for byte. Its sampling
-//!   starts follow the trims of the art each item is drawn from: the KR art for the items `tex_art_kr.uddp` holds,
-//!   the Enhanced art for the others.
-//! - [`TEX_ART_KR_FILE_NAME`]: an overlay over `tex_art_ec.uddp` (`tex_art_ec::convert_tex_art_ec_overlay_from_loaded_sources`):
+//! header, other DXT blocks), and most KR records sample it as the Enhanced records do. The Kingdom Reborn files are
+//! read from a folder `crate::kr_delta` rebuilt, where every texture within [`KR_IMAGE_EQUIVALENCE_THRESHOLD`] of the
+//! Enhanced one is the Enhanced texture already, so those measure a difference of 0. Only what differs is packed:
+//! - [`pack_kr_art_and_tilemeta`] writes the Kingdom Reborn section of `tilemeta.uddp`: the `tilemeta.uddp` layout,
+//!   Classic `tiledata.mul` with KR's `tileart.uop` (record version 3, its flags moved to the EC layout by `uocf`), and
+//!   every KR tileart record byte for byte. Its sampling starts follow the trims of the art each item is drawn from:
+//!   the KR art for the items the art section holds, the Enhanced art for the others. It also writes the section of
+//!   `tex_art_ec.uddp`, an overlay over that package (`tex_art_ec::convert_tex_art_ec_overlay_from_loaded_sources`):
 //!   the items whose world art differs from the Enhanced Client's ([`compare_world_art`]: the Enhanced Client lacks
 //!   the item, its record names another texture, window, draw offset, kind or sprite descriptor, or the image differs
 //!   by more than [`KR_IMAGE_EQUIVALENCE_THRESHOLD`]), lossless RGBA8888 with Zstd. It lists the other items with
-//!   world art, drawn from `tex_art_ec.uddp`, with their image's measured difference.
-//! - [`TEX_AUX_KR_FILE_NAME`]: an overlay over `tex_aux_ec.uddp` (`tex_aux_ec::pack_tex_aux_ec_overlay`): of KR's
-//!   material inputs (masks, noise, water maps), its `missing.tga`, atmosphere maps and light textures, those whose
-//!   image differs from the Enhanced Client's by more than [`KR_IMAGE_EQUIVALENCE_THRESHOLD`] (or that `tex_aux_ec`
-//!   lacks), lossless RGBA8888 with Zstd. The others are read from `tex_aux_ec.uddp`; the overlay lists them with their
-//!   measured difference.
+//!   world art, drawn from `tex_art_ec.uddp`, with their image's measured difference. The items kept for another
+//!   texture, window, kind or descriptor keep Kingdom Reborn's records, offsets and descriptors; their pixels are the
+//!   Enhanced texture's where the Kingdom Reborn one only re-encoded it.
+//! - [`pack_kr_aux`] writes the section of `tex_aux_ec.uddp`, an overlay over that package
+//!   (`tex_aux_ec::pack_tex_aux_ec_overlay`): of KR's material inputs (masks, noise, water maps), its `missing.tga`,
+//!   atmosphere maps and light textures, those whose image differs from the Enhanced Client's by more than
+//!   [`KR_IMAGE_EQUIVALENCE_THRESHOLD`] (or that `tex_aux_ec` lacks), lossless RGBA8888 with Zstd. The others are read
+//!   from `tex_aux_ec.uddp`; the overlay lists them with their measured difference.
 //!
-//! Each overlay names the Enhanced package it was measured against, by the `package_hash64` of the `tex_art_ec.uddp`
-//! or `tex_aux_ec.uddp` beside it at packing time ([`KrOverlayBases`]), which must be packed from the Enhanced Client
-//! the comparisons read; the readers refuse another base, so repacking an Enhanced package means repacking these.
+//! An overlay is nested in the package it is measured against, packed from the same Enhanced Client in the same run,
+//! so it cannot be read over another one.
 
 use std::collections::{HashMap, HashSet};
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
 use color_eyre::eyre::{self, WrapErr};
 use log::info;
@@ -40,22 +42,11 @@ use crate::textures::tex_art_ec::{
     TexArtEcLoadedSources,
 };
 use udd_assets::common::{EcEquivalentRecord, EcOverlayTable};
-use udd_container::UddpReader;
 use uocf::enhanced::tileart::{ArtData, ArtTexture, TaeFlag, TileType};
 
 use crate::textures::tex_aux_ec::{
     pack_tex_aux_ec_overlay, tex_aux_ec_texture_keys, TexAuxEcOverlayBase, TexAuxEcOverlaySummary, TexAuxEcPackOptions,
 };
-
-/// The Kingdom Reborn tileart and tile data, in the `tilemeta.uddp` layout.
-pub const TILEMETA_KR_FILE_NAME: &str = "tilemeta_kr.uddp";
-/// The Kingdom Reborn item world art that differs from the Enhanced Client's, an overlay over `tex_art_ec.uddp`.
-pub const TEX_ART_KR_FILE_NAME: &str = "tex_art_kr.uddp";
-/// The Kingdom Reborn item material inputs that differ from the Enhanced Client's, an overlay over `tex_aux_ec.uddp`.
-pub const TEX_AUX_KR_FILE_NAME: &str = "tex_aux_kr.uddp";
-/// The Enhanced packages the overlays are read over, beside each overlay.
-pub const TEX_ART_EC_FILE_NAME: &str = "tex_art_ec.uddp";
-pub const TEX_AUX_EC_FILE_NAME: &str = "tex_aux_ec.uddp";
 
 /// The largest [`image_difference`], in 8-bit levels, between a Kingdom Reborn image and the Enhanced Client's image
 /// of the same name that still counts as the same image re-encoded. Of the 8,000-odd shared world-art textures, 98%
@@ -89,55 +80,6 @@ pub fn image_difference(a: (u32, u32, &[u8]), b: (u32, u32, &[u8])) -> Option<f3
     let texels = (a.2.len() / RGBA_CHANNELS) as f64;
     let color = if drawn == 0 { 0.0 } else { color_sum as f64 / (drawn as f64 * COLOR_CHANNELS as f64) };
     Some(color.max(alpha_sum as f64 / texels) as f32)
-}
-
-/// Where the Kingdom Reborn item packages go.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct KrItemOutputs {
-    pub tilemeta: PathBuf,
-    pub art: PathBuf,
-    pub aux: PathBuf,
-}
-
-impl KrItemOutputs {
-    /// The packages under their file names, in the folder of `land_output` (the `tex_land_kr.uddp` they go with).
-    pub fn beside(land_output: &Path) -> Self {
-        Self {
-            tilemeta: land_output.with_file_name(TILEMETA_KR_FILE_NAME),
-            art: land_output.with_file_name(TEX_ART_KR_FILE_NAME),
-            aux: land_output.with_file_name(TEX_AUX_KR_FILE_NAME),
-        }
-    }
-}
-
-/// The Enhanced packages the overlays are measured against, by `package_hash64` (the canonical XXH64 in the UDDP
-/// header): the `tex_art_ec.uddp` beside the art overlay and the `tex_aux_ec.uddp` beside the material overlay, where
-/// Dynamapper and `udd-cli tool validate` look for them. The overlays record them, and the readers refuse other bases.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct KrOverlayBases {
-    pub art_package_hash64: u64,
-    pub aux_package_hash64: u64,
-}
-
-impl KrOverlayBases {
-    /// The packages beside `outputs.art` and `outputs.aux`, which must exist, be intact and be packed from the
-    /// Enhanced Client the overlays are compared with.
-    pub fn beside(outputs: &KrItemOutputs) -> eyre::Result<Self> {
-        Ok(Self {
-            art_package_hash64: base_package_hash64(&outputs.art.with_file_name(TEX_ART_EC_FILE_NAME))?,
-            aux_package_hash64: base_package_hash64(&outputs.aux.with_file_name(TEX_AUX_EC_FILE_NAME))?,
-        })
-    }
-}
-
-/// The `package_hash64` of the Enhanced package at `path`, after checking that it matches the package's bytes.
-fn base_package_hash64(path: &Path) -> eyre::Result<u64> {
-    let package = UddpReader::load(path).wrap_err_with(|| format!("open {}, the Enhanced package the Kingdom Reborn \
-        overlay beside it is read over; pack it from the Enhanced Client first", path.display()))?;
-    let stored = package.stored_package_hash64();
-    eyre::ensure!(stored == package.computed_package_hash64(),
-        "{}: the package hash does not match its bytes; repack it", path.display());
-    Ok(stored)
 }
 
 /// Why a Kingdom Reborn item's world art cannot be drawn from the Enhanced Client's.
@@ -280,69 +222,83 @@ fn difference_histogram(differences: impl IntoIterator<Item = Option<f32>>) -> S
     format!("{}, unmeasured: {unmeasured}", bins.join(", "))
 }
 
+/// What [`pack_kr_art_and_tilemeta`] packed.
 #[derive(Debug, Clone)]
-pub struct KrItemBuildSummary {
+pub struct KrArtBuildSummary {
     pub world_art: WorldArtComparison,
     pub art: TexArtEcBuildSummary,
-    pub aux: TexAuxEcOverlaySummary,
 }
 
-/// Builds the Kingdom Reborn item packages from the KR client in `kr_dir` against the Enhanced Client in `ec_dir`, with
-/// the Classic `tiledata.mul` (and `radarcol.mul`) of `cc_dir` as the Enhanced tilemeta takes them (see the module
-/// documentation). The overlays record `bases`, the Enhanced packages packed from `ec_dir`.
-pub fn pack_kr_items(kr_dir: &Path, ec_dir: &Path, cc_dir: &Path, outputs: &KrItemOutputs, bases: &KrOverlayBases)
-    -> eyre::Result<KrItemBuildSummary> {
-    info!("Converting the Kingdom Reborn items to {}, {} and {}", outputs.tilemeta.display(), outputs.art.display(),
-        outputs.aux.display());
+/// Where [`pack_kr_art_and_tilemeta`] writes the Kingdom Reborn tile data: `out`, with the Classic `tiledata.mul` (and
+/// `radarcol.mul`) of `cc_dir` as the Enhanced tilemeta takes them.
+pub struct KrTilemetaOutput<'a> {
+    pub cc_dir: &'a Path,
+    pub out: &'a Path,
+}
+
+/// Writes the Kingdom Reborn item art overlay to `art_out` and, with `tilemeta`, the Kingdom Reborn tile data (see the
+/// module documentation), from the Kingdom Reborn files in `kr_dir`, against `ec`, the Enhanced sources the Enhanced
+/// art is packed from.
+pub fn pack_kr_art_and_tilemeta(kr_dir: &Path, ec: &TexArtEcLoadedSources, art_out: &Path,
+    tilemeta: Option<KrTilemetaOutput>) -> eyre::Result<KrArtBuildSummary> {
+    info!("Converting the Kingdom Reborn items to {}{}", art_out.display(),
+        tilemeta.as_ref().map(|tilemeta| format!(" and {}", tilemeta.out.display())).unwrap_or_default());
     let mut kr = load_tex_art_ec_sources(&[kr_dir.to_path_buf()])
         .wrap_err_with(|| format!("load the Kingdom Reborn tileart and textures from {}", kr_dir.display()))?;
-    let ec = load_tex_art_ec_sources(&[ec_dir.to_path_buf()])
-        .wrap_err_with(|| format!("load the Enhanced Client tileart and textures from {}", ec_dir.display()))?;
 
-    let world_art = compare_world_art(&kr, &ec, KR_IMAGE_EQUIVALENCE_THRESHOLD);
+    let world_art = compare_world_art(&kr, ec, KR_IMAGE_EQUIVALENCE_THRESHOLD);
     log_world_art(&world_art);
 
     // The overlay art: the KR art build of the differing items alone.
     let differing: HashSet<u16> = world_art.differing.iter().map(|&(id, _)| id).collect();
     let full_definition = kr.art_definition.clone();
     kr.art_definition.definitions.retain(|id, _| differing.contains(id));
-    let art_table = EcOverlayTable {
-        base_package_hash64: bases.art_package_hash64,
-        equivalents: world_art.equivalents.clone(),
-    };
-    let art = convert_tex_art_ec_overlay_from_loaded_sources(&kr, &outputs.art, &TexArtEcAtlasOptions::default(),
+    let art_table = EcOverlayTable { equivalents: world_art.equivalents.clone() };
+    let art = convert_tex_art_ec_overlay_from_loaded_sources(&kr, art_out, &TexArtEcAtlasOptions::default(),
         &art_table);
     kr.art_definition = full_definition;
     let art = art?;
 
-    // Each item's sampling starts follow the trims of the art it is drawn from.
-    let ec_crop_adjustments = compute_tex_art_ec_crop_adjustments_from_loaded_sources(&ec)?;
-    let crop_adjustments: Vec<_> = ec_crop_adjustments.iter().zip(&art.ec_crop_adjustments).enumerate()
-        .map(|(id, (&ec, &kr))| if u16::try_from(id).is_ok_and(|id| differing.contains(&id)) { kr } else { ec })
-        .collect();
-    build_tilemeta_uddp_from_split_sources_with_loaded_ec_sources(
-        cc_dir,
-        &kr,
-        &crop_adjustments,
-        &outputs.tilemeta,
-        &TileMetaBuildOptions::default(),
-    )?;
+    if let Some(tilemeta) = tilemeta {
+        // Each item's sampling starts follow the trims of the art it is drawn from.
+        let ec_crop_adjustments = compute_tex_art_ec_crop_adjustments_from_loaded_sources(ec)?;
+        let crop_adjustments: Vec<_> = ec_crop_adjustments.iter().zip(&art.ec_crop_adjustments).enumerate()
+            .map(|(id, (&ec, &kr))| if u16::try_from(id).is_ok_and(|id| differing.contains(&id)) { kr } else { ec })
+            .collect();
+        build_tilemeta_uddp_from_split_sources_with_loaded_ec_sources(
+            tilemeta.cc_dir,
+            &kr,
+            &crop_adjustments,
+            tilemeta.out,
+            &TileMetaBuildOptions::default(),
+        )?;
+    }
+    info!("Kingdom Reborn items: {} art slots on {} pages, {} items left to tex_art_ec.uddp", art.populated_slot_count,
+        art.page_count, world_art.equivalents.len());
+    Ok(KrArtBuildSummary { world_art, art })
+}
 
+/// Writes the Kingdom Reborn material texture overlay to `aux_out` (see the module documentation), from the Kingdom
+/// Reborn files in `kr_dir` and their tile data `kr_tilemeta` ([`pack_kr_art_and_tilemeta`]), against the Enhanced
+/// Client in `ec_dir` and the Classic `tiledata.mul` of `cc_dir` the Enhanced `tex_aux_ec.uddp` is packed from.
+pub fn pack_kr_aux(kr_dir: &Path, ec_dir: &Path, cc_dir: &Path, kr_tilemeta: &Path, aux_out: &Path)
+    -> eyre::Result<TexAuxEcOverlaySummary> {
     info!("Kingdom Reborn items: the Enhanced Client's tables, for the textures tex_aux_ec.uddp holds");
+    let ec = load_tex_art_ec_sources(&[ec_dir.to_path_buf()])
+        .wrap_err_with(|| format!("load the Enhanced Client tileart and textures from {}", ec_dir.display()))?;
+    let ec_crop_adjustments = compute_tex_art_ec_crop_adjustments_from_loaded_sources(&ec)?;
     let (ec_refs, ec_lights) = build_item_texture_refs_and_lights(cc_dir, &ec, &ec_crop_adjustments)?;
     let base = TexAuxEcOverlayBase {
         source_dirs: vec![ec_dir.to_path_buf()],
         keys: tex_aux_ec_texture_keys(&ec_refs, &ec_lights)?,
-        package_hash64: bases.aux_package_hash64,
         max_difference: KR_IMAGE_EQUIVALENCE_THRESHOLD,
     };
-    let aux = pack_tex_aux_ec_overlay(&[kr_dir.to_path_buf()], &outputs.tilemeta, &outputs.aux,
-        &TexAuxEcPackOptions::default(), &base)?;
+    let aux = pack_tex_aux_ec_overlay(&[kr_dir.to_path_buf()], kr_tilemeta, aux_out, &TexAuxEcPackOptions::default(),
+        &base)?;
     log_aux(&aux);
-    info!("Kingdom Reborn items: {} art slots on {} pages, {} items left to tex_art_ec.uddp; {} material textures, {} \
-        left to tex_aux_ec.uddp", art.populated_slot_count, art.page_count, world_art.equivalents.len(), aux.kept.len(),
+    info!("Kingdom Reborn items: {} material textures, {} left to tex_aux_ec.uddp", aux.kept.len(),
         aux.equivalents.len());
-    Ok(KrItemBuildSummary { world_art, art, aux })
+    Ok(aux)
 }
 
 /// Logs the world-art comparison: what the overlay holds and why, and what it leaves to `tex_art_ec.uddp`.
@@ -357,10 +313,10 @@ fn log_world_art(world_art: &WorldArtComparison) {
             None => counts.push((difference.name(), 1)),
         }
     }
-    info!("Kingdom Reborn world art: {} items in tex_art_kr.uddp ({counts:?}), {} left to tex_art_ec.uddp (at most \
+    info!("Kingdom Reborn world art: {} items in the Kingdom Reborn art section ({counts:?}), {} left to tex_art_ec.uddp (at most \
         {KR_IMAGE_EQUIVALENCE_THRESHOLD} levels from the Enhanced Client's)", world_art.differing.len(),
         world_art.equivalents.len());
-    info!("Kingdom Reborn world art in tex_art_kr.uddp (item: why): {:?}", world_art.differing);
+    info!("Kingdom Reborn world art in its section (item: why): {:?}", world_art.differing);
     info!("Kingdom Reborn world-art textures left to tex_art_ec.uddp at {WORLD_ART_LOGGED_DIFFERENCE} levels or more \
         (texture: difference; the others are closer): {:?}", world_art.textures.iter()
         .filter(|(_, difference)| difference.is_some_and(|difference| (WORLD_ART_LOGGED_DIFFERENCE..=KR_IMAGE_EQUIVALENCE_THRESHOLD)
@@ -386,14 +342,6 @@ fn log_aux(aux: &TexAuxEcOverlaySummary) {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn item_packages_go_beside_the_land_package() {
-        let outputs = KrItemOutputs::beside(Path::new("/packages/tex_land_kr.uddp"));
-        assert_eq!(outputs.tilemeta, Path::new("/packages/tilemeta_kr.uddp"));
-        assert_eq!(outputs.art, Path::new("/packages/tex_art_kr.uddp"));
-        assert_eq!(outputs.aux, Path::new("/packages/tex_aux_kr.uddp"));
-    }
 
     #[test]
     fn image_difference_weighs_colour_where_both_draw_and_alpha_everywhere() {
