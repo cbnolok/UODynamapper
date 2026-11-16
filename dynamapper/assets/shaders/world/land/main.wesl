@@ -71,7 +71,7 @@ import package::shaders::world::projection::{camera_relative_world_to_clip, worl
 
 import package::shaders::world::land::transitions::{
   ec_transition_neighbor_weight, ec_transition_diagonal_weight,
-  ec_transition_materials_compatible, ec_transition_boundary_weight,
+  ec_transition_materials_compatible, ec_transition_boundary_weight, terrain_never_blends,
   ec_transition_boundary_weight_from_mask,
 };
 
@@ -149,7 +149,8 @@ fn ec_transition_neighbor_color(
   weight: f32,
   world_gradients: LandGradients,
 ) -> vec4<f32> {
-  if (weight <= 0.0 || neighbor_tile.texture_size != 2u) {
+  // Black land's texture blends into no neighbour.
+  if (weight <= 0.0 || neighbor_tile.texture_size != 2u || terrain_never_blends(neighbor_tile)) {
     return vec4<f32>(base_color, 0.0);
   }
 
@@ -267,7 +268,8 @@ fn blend_ec_terrain_transitions(
   uv_in_tile: vec2<f32>,
   world_gradients: LandGradients,
 ) -> vec3<f32> {
-  if (current_tile.texture_size != 2u) {
+  // Black land draws alone, no neighbour's texture blended into it.
+  if (current_tile.texture_size != 2u || terrain_never_blends(current_tile)) {
     return base_color;
   }
 

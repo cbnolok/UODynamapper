@@ -59,6 +59,11 @@ marked in Preferences. Classic selected never borrows EC-layout terrain.
 EC-layout cells from both packages blend through coverage (their material ids
 stay distinct); a border between EC-layout and Classic or missing cells is a
 hard edge, since coverage and transitions consider EC-layout cells only.
+Black land (the cave mouths' openings 0x1AE and 0x1DB and the void 0x244,
+`tile_atlas.rs` `is_black_land`) takes no part in coverage nor in the EC or
+Classic transitions, in any source: its edge stays clean, no dirt or rock fading
+into its black nor its black into them, as the Kingdom Reborn client draws a cave
+floor's jagged edge against the opening.
 
 Texture roles follow the source shader/layer class and item position. Names,
 stretch and visual resemblance do not select the base or establish a role.

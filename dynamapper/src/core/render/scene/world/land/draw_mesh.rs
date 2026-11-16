@@ -199,7 +199,8 @@ fn mesh_for_scale(handles: &LandMeshHandles, scale: u32, lod: LandMeshLod) -> Ha
 }
 
 use crate::core::render::scene::world::land::tile_atlas::{
-    Rg16u, TileAtlas, TERRAIN_SHADER_FLAG_PLAYER_CAVE, TERRAIN_SHADER_FLAG_REVIEWED_LIQUID,
+    Rg16u, TileAtlas, TERRAIN_SHADER_FLAG_NEVER_BLENDS, TERRAIN_SHADER_FLAG_PLAYER_CAVE,
+    TERRAIN_SHADER_FLAG_REVIEWED_LIQUID, is_black_land,
 };
 
 #[derive(Component)]
@@ -826,6 +827,10 @@ pub fn sys_draw_spawned_land_chunks(
                 .routed_enhanced_land(land_id)
                 .map(|(package, target)| ec_land_shader_flags(package, target))
                 .unwrap_or(0);
+            // Black land, whatever its source, never blends with its neighbours.
+            if is_black_land(cache_r.routes().target(land_id).id) {
+                land_shader_flags_cache[id as usize] |= TERRAIN_SHADER_FLAG_NEVER_BLENDS;
+            }
         }
         if let Some(warning) = cache_r.missing_land_ids.report(missing_land_ids) {
             console_logger::one(LogSev::Warn, LogAbout::RenderWorldLand, &warning);

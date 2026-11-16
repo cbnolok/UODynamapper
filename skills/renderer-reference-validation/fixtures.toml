@@ -284,8 +284,9 @@ name = "minoc-mine-mouth-player-cave-dimmed"
 guards = """Just inside the Minoc mine's mouth with the player's-floor view: the player's cave whole, its floor and \
 rock walls, not the hill's boulders and trees over it nor the tunnel above (0e0839cd); its mouth's land whole, \
 undimmed and over the cave floor behind it: the frame's rock around the black opening, its bottom edge straight, \
-no grass jambs beside it (the hill's flank), no lone strip of rock in a cut-out hole; outside it the land, objects, \
-water and lights under the z+16 cut darkened to three tenths and partly greyed, plainly apart from the cave. At night the \
+no grass jambs beside it (the hill's flank), no lone strip of rock in a cut-out hole; with EC or KR land the black \
+opening's edge clean, no dirt or rock texture fading into its black nor its black into them; outside it the land, \
+objects, water and lights under the z+16 cut darkened to three tenths and partly greyed, plainly apart from the cave. At night the \
 red light among the trees outside, which multiplies the light buffer, is greyed with the scene there, bringing no \
 red back into it (Enhanced, KR-like and UOD-Painterly; Classic has no red light there)."""
 tier = "quick"
@@ -322,7 +323,8 @@ note = "KR client in the Minoc mine by its mouth: the cave and its arch on black
 name = "minoc-north-cave-mouth-player-cave"
 guards = """Another cave's mouth, north of Minoc, with the player's-floor view: the cave's walls drawn, the hill over it \
 not (0e0839cd); its mouth's land, the black opening and the rock over it, drawn whole, the opening's bottom edge \
-straight, no teeth of the cave's floor along it (Classic art)."""
+straight, no teeth of the cave's floor along it (Classic art); with EC or KR land the opening's edge clean, no dirt \
+or rock texture fading into its black nor its black into them."""
 tier = "full"
 tags = ["caves", "player-cave", "z-view", "minoc"]
 map = 1

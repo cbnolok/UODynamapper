@@ -15,13 +15,16 @@ pub struct Rg16u {
     pub g: u16,
 }
 
-// Bit 1 is unused. The old repo `policy "smooth"` (bit 0) had no client basis and no shader
+// The old repo `policy "smooth"` (bit 0) had no client basis and no shader
 // reader; edge softness comes from the TerrainDefinition `coverage_exponent` (coverage params,
 // land/coverage.wesl). The old repo `policy "follow-center"` (bit 1) had no client basis either;
 // water scrolls by the material's tweaks (UOWaterTerrainLayer::Draw, ec_liquid.wesl).
 /// A cell's flag, not a land tile's: the land of the player's cave's mouth (caves.rs `PlayerCave::owns_land`), drawn
 /// over the z-view's land cut and not darkened as outside the cave.
 pub const TERRAIN_SHADER_FLAG_PLAYER_CAVE: u16 = 1 << 0;
+/// Black land (`is_black_land`): drawn alone, its edge clean, no neighbour's texture blended into it nor it into a
+/// neighbour (land/transitions.wesl, land/cc_transitions.wesl; nor in the EC coverage, `EcTerrainParams::for_tile`).
+pub const TERRAIN_SHADER_FLAG_NEVER_BLENDS: u16 = 1 << 1;
 /// EC liquid terrain: the TerrainDefinition material is the water layer class (`UOWaterTerrainLayer`). The
 /// EC wetness flag; the `is_wet` bit carries the classic IsWet tiledata flag in classic mode only.
 pub const TERRAIN_SHADER_FLAG_REVIEWED_LIQUID: u16 = 1 << 2;
@@ -45,6 +48,16 @@ pub const LAND_SOURCE_NODRAW: u32 = 6;
 /// The land id the Classic client 7.0.103.0 never draws from its texmap or land art (tiledata "NODRAW";
 /// `FUN_0044c180` and `FUN_0044fa70` skip it unless a debug flag is set). Ids 0 and 1 are drawn.
 pub const LAND_NODRAW_ID: u32 = 2;
+/// The land ids whose Classic texmaps are pure black: the black openings of the cave mouths (0x1AE, 0x1DB) and the
+/// void (`VOID_LAND_ID`), also the black beside a dungeon's walls.
+const BLACK_LAND_IDS: [u32; 3] = [0x1AE, 0x1DB, uocf::classic::maps::world::VOID_LAND_ID as u32];
+
+/// Whether the land id drawn (a route's target) is black land, which never blends with its neighbours
+/// (`TERRAIN_SHADER_FLAG_NEVER_BLENDS`): a cave mouth's opening keeps a clean edge, no dirt or rock texture fading
+/// into its black nor its black into them.
+pub fn is_black_land(land_id: u32) -> bool {
+    BLACK_LAND_IDS.contains(&land_id)
+}
 /// Where `Rg16u::pack` stores the texture source mode (`tex_size_bits`) in G: its high byte's low nibble.
 const TEX_SOURCE_SHIFT: u16 = 8;
 const TEX_SOURCE_MASK: u16 = 0x0F;
@@ -761,5 +774,27 @@ mod upload_tests {
         assert_eq!(uploads.revision, Some(5));
         assert_eq!(uploads.pending.len(), 1);
         assert_eq!(uploads.pending[0].data, vec![5; 4]);
+    }
+}
+
+#[cfg(test)]
+mod black_land_tests {
+    use super::*;
+
+    /// The cave mouth's black opening and the void never blend; the dirt and rock beside them, and the white-texmap
+    /// void id 1, do.
+    #[test]
+    fn only_black_land_never_blends() {
+        const MOUTH_ROCK_HOLE: u32 = 0x1DB;
+        const MOUTH_BLACK: u32 = 0x1AE;
+        const MOUTH_ROCK: u32 = 0x1DA;
+        const DIRT: u32 = 0x72;
+        const WHITE_VOID: u32 = 1;
+        for id in [MOUTH_ROCK_HOLE, MOUTH_BLACK, uocf::classic::maps::world::VOID_LAND_ID as u32] {
+            assert!(is_black_land(id), "{id:#x}");
+        }
+        for id in [MOUTH_ROCK, DIRT, WHITE_VOID, LAND_NODRAW_ID] {
+            assert!(!is_black_land(id), "{id:#x}");
+        }
     }
 }

@@ -3,9 +3,11 @@
 import package::shaders::world::land::land_bindings::TileUniform;
 import package::shaders::world::land::atlas::atlas_read_meta;
 import package::shaders::world::land::sampling::{LandGradients, sample_tile_albedo_grad};
+import package::shaders::world::land::transitions::terrain_never_blends;
 
+// Black land takes no part in the blend either way (transitions.wesl terrain_never_blends).
 fn cc_transition_dry_material(tile: TileUniform) -> bool {
-  return tile.texture_size == 4u && tile.is_wet == 0u
+  return tile.texture_size == 4u && tile.is_wet == 0u && !terrain_never_blends(tile)
     && (tile.terrain_flags & 4u) == 0u && all(tile.texture_extent > vec2<u32>(0u));
 }
 
