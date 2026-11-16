@@ -1,117 +1,116 @@
 import bevy_pbr::render::mesh_view_bindings::view;
 
-// Equal-priority sprites retain their established draw-order separation.
-// A fixed NDC offset is safe only for the orthographic lens: in perspective
-// it grows quadratically in world distance and can reorder neighboring cells.
-const STATIC_DEPTH_TIE_BREAK_FRAG_EPSILON: f32 = 0.000001;
-// The startup orthographic depth range is 2000 world units, so its existing
-// epsilon corresponds to this small displacement away from the camera.
-const STATIC_DEPTH_TIE_BREAK_VIEW_STEP: f32 = 0.002;
+// ============================================================================
+// The draw order: ClassicUO's (decision of 2026-11-16, pending the user's review), one rule for every style and both
+// cameras. Every fragment that writes depth (land, flat quads, upright sprites, the KR client shadows, the projected
+// shadows, the light scene and the pick pass) takes the depth of one logical point:
+//
+//   L = row + (priority z + tie level / PRIORITY_TIE_LEVELS_PER_Z) / PRIORITY_Z_STEPS_PER_ROW
+//
+// row is the diagonal x + y of the point: a sprite's anchor (its cell + 2: CC art anchors at (1, 1), EC art at
+// (0.5, 1.5)); for the land, a flat quad or a ground art, its cell's anchor (CELL_DEPTH_ANCHOR), the same for every
+// fragment of the cell, as ClassicUO draws a cell's land and statics as whole objects in its row. The priority z is
+// ClassicUO's (statics_collect.rs resolve_priority_z_units; the land's average z - 2). The whole priority z range fits
+// in one row, so the nearer row always wins, whatever the heights; within a row the priority z decides, then the tie
+// level. The point is the cell at a logical
+// height of the priority term in world units: the isometric view runs along (1, 1, 1), so its view z is L / sqrt 3
+// from the camera, and the active camera's projection maps it to the depth, orthographic or perspective alike.
+// statics_collect.rs `logical_draw_distance` is the same function on the CPU (depth_tests.rs checks the two agree).
+// ============================================================================
 
-fn static_priority_depth(clip_position: vec4<f32>, clip_from_view: mat4x4<f32>, ordinal: u32) -> f32 {
-    if (clip_from_view[3][3] == 1.0) {
-        let depth = clamp(clip_position.z / clip_position.w, 0.0, 1.0);
-        return clamp(depth - f32(ordinal) * STATIC_DEPTH_TIE_BREAK_FRAG_EPSILON, 0.0, 1.0);
-    }
-    // Apply only to the priority point, never to sprite placement or logical XYZ.
-    let offset = clip_from_view * vec4<f32>(0.0, 0.0,
-        -f32(ordinal) * STATIC_DEPTH_TIE_BREAK_VIEW_STEP, 0.0);
-    let biased = clip_position + offset;
-    return clamp(biased.z / biased.w, 0.0, 1.0);
+// Priority z steps in one diagonal row: more than the priority z range (UO z -128..127, ClassicUO's -2 for land and
+// up to +2 for statics), so no height crosses a row. The KR client weighs a row as 35.4 z instead; this is the one
+// parameter to change for that.
+const PRIORITY_Z_STEPS_PER_ROW: f32 = 264.0;
+// Tie levels in one priority z: level 0 for land, flat quads and the ground art, the KR client shadow one level
+// behind its caster, and 1..8 for upright sprites (statics_collect.rs assign_sprite_tie_levels). One level is about
+// 2 units in the last place of the orthographic depth, the least that survives its rounding.
+const PRIORITY_TIE_LEVELS_PER_Z: f32 = 9.0;
+// ClassicUO's land priority: z - 1, and - 1 again when the land is added to the cell's list (Map.cs AddGameObject).
+const LAND_PRIORITY_Z_OFFSET: f32 = -2.0;
+// A cell's anchor from its corner: row + 2, the CC art's anchor (statics_collect.rs CELL_DEPTH_ANCHOR_OFFSET). The land
+// and the projected shadows take it here (cell_priority_view_z); the flat quads and the ground art carry it as their
+// instance's tile_x, tile_y.
+const CELL_DEPTH_ANCHOR: vec2<f32> = vec2<f32>(1.0, 1.0);
+
+// The logical height, in world units, of a priority z and a tie level.
+fn priority_logical_height(priority_z: f32, tie_level: f32) -> f32 {
+    return (priority_z + tie_level / PRIORITY_TIE_LEVELS_PER_Z) / PRIORITY_Z_STEPS_PER_ROW;
 }
 
-// Below this, the view direction is too close to the horizontal plane to solve for its depth.
-const HORIZONTAL_PLANE_MIN_VIEW_Y: f32 = 0.000001;
-
-// Depth of the horizontal world plane y = plane_y at a fragment, solved from the fragment's pixel
-// centre under the orthographic camera. Coplanar quads then write bit-identical depth at a pixel
-// they share, so their one-pixel overlaps go to draw order. Rasterised depth differs between the two
-// quads by rounding that depends on where the camera is. Perspective keeps the rasterised depth.
-fn horizontal_plane_frag_depth(frag_position: vec4<f32>, plane_y: f32) -> f32 {
-    let world_from_view = view.world_from_view;
-    if (view.clip_from_view[3][3] != 1.0 || abs(world_from_view[2].y) < HORIZONTAL_PLANE_MIN_VIEW_Y) {
-        return frag_position.z;
-    }
-    let ndc = vec2<f32>(
-        (frag_position.x - view.viewport.x) / view.viewport.z * 2.0 - 1.0,
-        1.0 - (frag_position.y - view.viewport.y) / view.viewport.w * 2.0,
-    );
-    let view_xy = (ndc - view.clip_from_view[3].xy) / vec2<f32>(view.clip_from_view[0].x, view.clip_from_view[1].y);
-    let view_z = (plane_y - world_from_view[3].y - world_from_view[0].y * view_xy.x - world_from_view[1].y * view_xy.y)
-        / world_from_view[2].y;
-    return clamp(view.clip_from_view[2].z * view_z + view.clip_from_view[3].z, 0.0, 1.0);
+// The view z of the logical point at world `world_xz` and logical height `logical_height` from a camera at
+// `camera_position` whose view z axis is `view_z_axis` in the world. Camera-relative, so a far map position keeps the
+// tie levels: one is about 4e-4 world units, a unit in the last place at x 4096.
+fn logical_view_z_from(world_xz: vec2<f32>, logical_height: f32, camera_position: vec3<f32>,
+    view_z_axis: vec3<f32>) -> f32 {
+    let relative = vec3<f32>(world_xz.x - camera_position.x, logical_height - camera_position.y,
+        world_xz.y - camera_position.z);
+    return dot(view_z_axis, relative);
 }
 
-// The depth step that decides a shared pixel: one unit in the last place, the smallest change of the depth.
-const PAINTER_ORDER_DEPTH_STEP_BITS: u32 = 1u;
+// `logical_view_z_from` for the active camera.
+fn logical_view_z(world_xz: vec2<f32>, logical_height: f32) -> f32 {
+    return logical_view_z_from(world_xz, logical_height, view.world_from_view[3].xyz,
+        vec3<f32>(view.view_from_world[0].z, view.view_from_world[1].z, view.view_from_world[2].z));
+}
 
-// `horizontal_plane_frag_depth` with the clients' painter order on the pixels that coplanar quads of neighbouring
-// cells share. The clients paint the cells in map order, a larger x + y later, so the cell nearer the viewer (down
-// the screen, toward +x and +z) covers the shared pixel. Draw order alone decided it only inside one chunk batch:
-// between two batches the winner followed their submission order. A fragment in the near half of its cell, toward
-// +x + z from the cell centre, sits one depth step farther (reverse Z, so lower). On an edge shared by two cells the
-// far cell's fragment is in that half and the near cell's is not, so the near cell wins in either draw order. Two
-// quads of one cell take the same step at a pixel and keep their draw order. Perspective keeps the rasterised depth.
-fn horizontal_plane_painter_depth(frag_position: vec4<f32>, plane_y: f32, frag_world_xz: vec2<f32>,
-    cell_center_xz: vec2<f32>) -> f32 {
-    let depth = horizontal_plane_frag_depth(frag_position, plane_y);
-    let toward_viewer = (frag_world_xz.x - cell_center_xz.x) + (frag_world_xz.y - cell_center_xz.y);
-    if (view.clip_from_view[3][3] != 1.0 || toward_viewer <= 0.0 || depth <= 0.0) {
-        return depth;
+// The depth of view z `view_z` through the active camera's projection, orthographic or perspective.
+fn view_z_depth(view_z: f32) -> f32 {
+    return projected_view_z_depth(view_z, view.clip_from_view);
+}
+
+// The depth of view z `view_z` through `projection`.
+fn projected_view_z_depth(view_z: f32, projection: mat4x4<f32>) -> f32 {
+    let clip_w = projection[2].w * view_z + projection[3].w;
+    if (clip_w <= 0.0) {
+        return 1.0;
     }
-    return bitcast<f32>(bitcast<u32>(depth) - PAINTER_ORDER_DEPTH_STEP_BITS);
+    return clamp((projection[2].z * view_z + projection[3].z) / clip_w, 0.0, 1.0);
+}
+
+// The view z of the depth `depth`: view_z_depth inverted.
+fn depth_view_z(depth: f32) -> f32 {
+    let projection = view.clip_from_view;
+    return (projection[3].z - depth * projection[3].w) / (depth * projection[2].w - projection[2].z);
+}
+
+// An upright sprite's depth: its anchor `tile_xy` at its priority z and tie level, constant over the card. A flat quad's
+// or a ground art's too, at its cell's anchor and tie level 0, constant over its cell.
+fn sprite_priority_view_z(tile_xy: vec2<f32>, priority_z: f32, tie_level: f32) -> f32 {
+    return logical_view_z(tile_xy, priority_logical_height(priority_z, tie_level));
+}
+
+// The view z of a fragment at world `world_xz` of a surface lying over its cell at `priority_z`, as the land and the
+// projected shadows: its cell's anchor at tie level 0, one depth for the whole cell.
+fn cell_priority_view_z(world_xz: vec2<f32>, priority_z: f32) -> f32 {
+    return logical_view_z(floor(world_xz) + CELL_DEPTH_ANCHOR, priority_logical_height(priority_z, 0.0));
 }
 
 // SpriteInstance and GroundTileInstance is_wet_flags bit: the static is part of a cave drawn over the map (caves.rs).
 // Keep in sync with STATIC_FLAG_CAVE in statics_collect.rs.
 const STATIC_FLAG_CAVE: u32 = 1u << 12u;
 // How high the land and statics in front of a cave may rise over it, in world units: the whole UO z range, 256 z units
-// (UO_Z_TO_WORLD_SCALE = 4 / 44).
+// (UO_Z_TO_WORLD_SCALE = 4 / 44). The logical points sit lower than the real ones (the whole z range spans one row),
+// so the lift covers more than they need.
 const CAVE_LIFT_WORLD_HEIGHT: f32 = 256.0 * 4.0 / 44.0;
 // The least rise of the view direction the lift is solved for, so a camera near the horizon keeps a finite lift.
 const CAVE_LIFT_MIN_VIEW_RISE: f32 = 0.1;
 
-// The depth `depth` of a cave static's fragment moved toward the camera along the view ray past anything in front of
-// the cave: the land and statics in front rise at most CAVE_LIFT_WORLD_HEIGHT over it, which is that height divided by
-// the view direction's rise along the ray. A cave drawn over the map then shows through the land around it, while
-// its own statics keep their order. Other fragments keep `depth`. Solved through the projection, so it holds for the
+// The view z `view_z` of a cave static's fragment moved toward the camera along the view ray past anything in front
+// of the cave: the land and statics in front rise at most CAVE_LIFT_WORLD_HEIGHT over it, which is that height
+// divided by the view direction's rise along the ray. A cave drawn over the map then shows through the land around
+// it, while its own statics keep their order. Other fragments keep `view_z`. In view z, so it holds for the
 // orthographic and the perspective camera.
-fn cave_lifted_depth(depth: f32, is_wet_flags: u32) -> f32 {
-    if ((is_wet_flags & STATIC_FLAG_CAVE) == 0u || depth <= 0.0) {
-        return depth;
+fn cave_lifted_view_z(view_z: f32, is_wet_flags: u32) -> f32 {
+    if ((is_wet_flags & STATIC_FLAG_CAVE) == 0u) {
+        return view_z;
     }
-    let projection = view.clip_from_view;
-    let view_z = (projection[3].z - depth * projection[3].w) / (depth * projection[2].w - projection[2].z);
-    let lifted_z = view_z + cave_lift();
-    let clip_w = projection[2].w * lifted_z + projection[3].w;
-    if (clip_w <= 0.0) {
-        return 1.0;
-    }
-    return clamp((projection[2].z * lifted_z + projection[3].z) / clip_w, 0.0, 1.0);
+    return view_z + cave_lift();
 }
 
-// How far toward the camera a cave's fragments move, in view-space z (cave_lifted_depth).
+// How far toward the camera a cave's fragments move, in view-space z (cave_lifted_view_z).
 fn cave_lift() -> f32 {
     return CAVE_LIFT_WORLD_HEIGHT / max(abs(view.world_from_view[2].y), CAVE_LIFT_MIN_VIEW_RISE);
-}
-
-// The clip position `clip` of a vertex of the player's cave's land (land/main.wesl, caves.rs PlayerCave::owns_land)
-// moved toward the camera as cave_lifted_depth moves a cave static's depth: the same screen position, the depth
-// lifted by cave_lift, so the cave's land and statics keep their order. A vertex the lift would bring past the near
-// plane stays on it.
-fn cave_lifted_clip(clip: vec4<f32>) -> vec4<f32> {
-    let projection = view.clip_from_view;
-    // An orthographic projection has no w term (projection[2].w is 0): view z from clip z then.
-    let perspective = projection[2].w != 0.0;
-    let view_z = select((clip.z - projection[3].z) / projection[2].z, (clip.w - projection[3].w) / projection[2].w,
-        perspective);
-    let lifted_z = view_z + cave_lift();
-    let lifted_w = projection[2].w * lifted_z + projection[3].w;
-    if (lifted_w <= 0.0) {
-        return vec4<f32>(clip.xy / clip.w, 1.0, 1.0);
-    }
-    let lifted_depth = clamp((projection[2].z * lifted_z + projection[3].z) / lifted_w, 0.0, 1.0);
-    return vec4<f32>(clip.xy / clip.w * lifted_w, lifted_depth * lifted_w, lifted_w);
 }
 
 // SpriteInstance and GroundTileInstance is_wet_flags bit: the static is outside the player's cave, drawn darkened

@@ -30,7 +30,6 @@
 import bevy_pbr::render::mesh_view_bindings::view;
 import package::shaders::world::art::art_bindings::{SpriteInstance, BILLBOARD_RIGHT_XZ};
 import package::shaders::world::art::client_camera::CLIENT_Z_UNIT;
-import package::shaders::world::art::depth::{STATIC_DEPTH_TIE_BREAK_FRAG_EPSILON, STATIC_DEPTH_TIE_BREAK_VIEW_STEP};
 
 // SpriteInstance.client_shadow_flags; keep in sync with statics_collect.rs.
 const CLIENT_SHADOW_FLAG_CASTS: u32 = 1u;
@@ -38,16 +37,19 @@ const CLIENT_SHADOW_FLAG_WALL: u32 = 2u;
 // The lean θ, 0x00b87170 (= π / 16, 11.25 degrees).
 const CLIENT_SHADOW_LEAN: f32 = 0.19634375;
 // How far behind the caster the quad lies along the view, 0x00b42f48. Its depth is the caster's priority depth
-// half a tie-break step behind (CLIENT_SHADOW_DEPTH_ORDINAL_OFFSET); this only places the rasterised quad.
+// one tie level behind (CLIENT_SHADOW_TIE_LEVEL_OFFSET); this only places the rasterised quad.
 const CLIENT_SHADOW_BEHIND: f32 = 0.0001;
 // Wall branch: both edges drop by 0x00b8716c along the camera's up axis...
 const CLIENT_SHADOW_WALL_DROP: f32 = 1.05;
 // ...and every corner moves by the client's world X -1.0 and Z +1.0 (0x00b4e8bc). The client's Z is -UO y, ours +UO y:
 // one tile west and one tile north.
 const CLIENT_SHADOW_WALL_SHIFT: vec3<f32> = vec3<f32>(-1.0, 0.0, -1.0);
-// The shadow's depth sits this many tie-break steps behind its caster: behind the caster's plane (the caster hides
-// its own shadow, as the client's ε does) and in front of anything sorted behind it, which receives the shadow.
-const CLIENT_SHADOW_DEPTH_ORDINAL_OFFSET: f32 = 0.5;
+// The shadow's depth sits this many tie levels (art/depth.wesl) behind its caster: behind the caster's plane (the
+// caster hides its own shadow, as the client's ε does) and in front of anything sorted behind it, which receives the
+// shadow. A whole level: the former half step of the tie-break (2026-11-16) is under the orthographic depth's
+// rounding at the new scale. The shadow blends without writing depth and passes an equal depth (Bevy's
+// GreaterEqual), so a level-0 floor of the same cell and priority z still receives it.
+const CLIENT_SHADOW_TIE_LEVEL_OFFSET: f32 = 1.0;
 // Upright billboards only: flat quads are surfaces, and the authored EC camera quads are the tileart Rotated items,
 // which the client excludes.
 const CLIENT_SHADOW_BILLBOARD: u32 = 0u;
@@ -110,16 +112,4 @@ fn client_shadow_logical_offset(inst: SpriteInstance) -> vec3<f32> {
         return CLIENT_SHADOW_WALL_SHIFT;
     }
     return vec3<f32>(0.0);
-}
-
-// static_priority_depth (depth.wesl) with the shadow's fractional tie-break step.
-fn client_shadow_priority_depth(clip_position: vec4<f32>, clip_from_view: mat4x4<f32>, ordinal: u32) -> f32 {
-    let steps = f32(ordinal) + CLIENT_SHADOW_DEPTH_ORDINAL_OFFSET;
-    if (clip_from_view[3][3] == 1.0) {
-        let depth = clip_position.z / clip_position.w;
-        return clamp(depth - steps * STATIC_DEPTH_TIE_BREAK_FRAG_EPSILON, 0.0, 1.0);
-    }
-    let offset = clip_from_view * vec4<f32>(0.0, 0.0, -steps * STATIC_DEPTH_TIE_BREAK_VIEW_STEP, 0.0);
-    let biased = clip_position + offset;
-    return clamp(biased.z / biased.w, 0.0, 1.0);
 }

@@ -8,6 +8,9 @@
 // height of the point of its face that shows at the pixel, so a floor over a light cuts the wall it meets. The top of
 // a wall or a solid static, its cap, is a floor at its top z (`light_scene_cap_texel`).
 
+import bevy_pbr::render::mesh_view_bindings::view;
+import package::shaders::world::art::depth::{depth_view_z, PRIORITY_TIE_LEVELS_PER_Z, PRIORITY_Z_STEPS_PER_ROW};
+
 // The texel's code: LIGHT_SCENE_ART on every static, its class, and LIGHT_SCENE_LEFT on the left half of an upright
 // card. Keep in sync with art/light_scene.rs.
 const LIGHT_SCENE_ART: u32 = 1u;
@@ -48,9 +51,11 @@ const LIGHT_SCENE_MIN_VIEW_SLOPE: f32 = 0.001;
 const LIGHT_SCENE_MIN_ALPHA: f32 = 0.0001;
 // The depth of a cell, from its south or east edge to the opposite one, in world units.
 const LIGHT_SCENE_CELL_DEPTH: f32 = 1.0;
-// How far a fragment's depth may lie from the depth drawn at its pixel and still be the static drawn there: the
-// fragments recompute the opaque pass's depth exactly, and the art's tie-break between statics is 1e-6.
-const LIGHT_SCENE_DEPTH_TOLERANCE: f32 = 2.5e-7;
+// How far a fragment's depth may lie from the depth drawn at its pixel and still be the static drawn there, in tie
+// levels of the draw order (art/depth.wesl): the fragments recompute the opaque pass's depth exactly, and two statics
+// of one cell and priority z lie one level apart. Under half a level, so in the orthographic camera, where a level is
+// about 2 units in the last place of the depth, only the depth drawn or the next value passes.
+const LIGHT_SCENE_DEPTH_TOLERANCE_LEVELS: f32 = 0.45;
 
 @if(LIGHT_SCENE && !LIGHT_SCENE_MSAA)
 @group(2) @binding(0) var light_scene_depth: texture_depth_2d;
@@ -114,7 +119,8 @@ fn light_scene_cap_texel(texel: vec4<u32>, top_z: i32) -> vec4<u32> {
 @if(LIGHT_SCENE)
 fn light_scene_drawn(position: vec4<f32>, depth: f32) -> bool {
     let drawn = textureLoad(light_scene_depth, vec2<i32>(position.xy), 0);
-    return abs(depth - drawn) <= LIGHT_SCENE_DEPTH_TOLERANCE;
+    let level_view_z = abs(view.view_from_world[1].z) / (PRIORITY_TIE_LEVELS_PER_Z * PRIORITY_Z_STEPS_PER_ROW);
+    return abs(depth_view_z(depth) - depth_view_z(drawn)) <= LIGHT_SCENE_DEPTH_TOLERANCE_LEVELS * level_view_z;
 }
 
 // The light scene texel of a fragment of the static anchored at `anchor` (client_grunge_anchor), at the UO z `z`, of

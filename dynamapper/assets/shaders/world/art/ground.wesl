@@ -1,6 +1,6 @@
 import package::shaders::world::art::picking::{pick_clip, pick_pass, pick_color};
 import package::shaders::world::art::light_scene::{light_scene_drawn, light_scene_texel, LIGHT_SCENE_CLASS_HEIGHT};
-import package::shaders::world::art::depth::{horizontal_plane_painter_depth, cave_lifted_depth, cave_outside_rgb};
+import package::shaders::world::art::depth::{sprite_priority_view_z, view_z_depth, cave_lifted_view_z, cave_outside_rgb};
 import bevy_pbr::render::{
     forward_io::Vertex,
     view_transformations,
@@ -24,9 +24,7 @@ import package::shaders::world::art::art_ground_bindings::{
     art_atlas_sampler, art_atlas, instances, sprite_params, scene, effects, global_light,
     hue_sampler, hue_texture, land_page_atlas, land_page_lookup, visual_grunge_texture,
     item_liquid_atlas, item_liquid_lookup, liquid_sampler, client_grunge_texture, client_grunge_sampler,
-    HEIGHT_SCALE, DEPTH_CLASS_BACKGROUND, DEPTH_CLASS_FOLIAGE, DEPTH_CLASS_ROOF,
-    PASS_MODE_OPAQUE, PASS_MODE_TRANSPARENT, DEPTH_CLASS_SURFACE_LIKE_FLOOR,
-    SURFACE_LIKE_DEPTH_CLASS_OFFSET, STATIC_DEPTH_TIE_BREAK_FRAG_EPSILON,
+    HEIGHT_SCALE, DEPTH_CLASS_FOLIAGE, DEPTH_CLASS_ROOF, PASS_MODE_OPAQUE, PASS_MODE_TRANSPARENT,
     GROUND_FLAG_EC_WATER_MATERIAL
 };
 import package::shaders::world::art::client_grunge::{client_grunges, client_grunge_uv, apply_client_grunge};
@@ -39,7 +37,6 @@ struct GroundVertexOutput {
     @location(0) uv: vec2<f32>,
     @location(1) uv_b: vec2<f32>,
     @location(2) color: vec4<f32>,
-    @location(3) logical_depth: f32,
     @location(4) @interpolate(flat) is_wet: u32,
     @location(5) world_pos: vec3<f32>,
     @location(6) @interpolate(flat) instance_index: u32,
@@ -53,43 +50,6 @@ struct GroundVertexOutput {
 struct GroundFragmentOutput {
     @location(0) color: vec4<f32>,
     @builtin(frag_depth) depth: f32,
-}
-
-fn clip_depth_to_frag_depth(clip_position: vec4<f32>) -> f32 {
-    return clamp(clip_position.z / clip_position.w, 0.0, 1.0);
-}
-
-fn depth_class_logical_offset(depth_class: u32) -> f32 {
-    if (depth_class == DEPTH_CLASS_SURFACE_LIKE_FLOOR) {
-        return SURFACE_LIKE_DEPTH_CLASS_OFFSET;
-    }
-
-    if (depth_class == DEPTH_CLASS_BACKGROUND) {
-        return -0.001;
-    }
-
-    if (depth_class == DEPTH_CLASS_ROOF) {
-        return 0.002;
-    }
-
-    if (depth_class == DEPTH_CLASS_FOLIAGE) {
-        return 2.0;
-    }
-
-    return 0.0;
-}
-
-fn logical_depth_from_projected_priority(inst: GroundTileInstance) -> f32 {
-    let logical_world_pos = vec3<f32>(
-        inst.tile_x,
-        inst.priority_z_units * HEIGHT_SCALE + depth_class_logical_offset(inst.depth_class),
-        inst.tile_y,
-    );
-    return clip_depth_to_frag_depth(view_transformations::position_world_to_clip(logical_world_pos));
-}
-
-fn apply_sort_bias_to_frag_depth(depth: f32, sort_bias_ordinal: u32) -> f32 {
-    return clamp(depth - f32(sort_bias_ordinal) * STATIC_DEPTH_TIE_BREAK_FRAG_EPSILON, 0.0, 1.0);
 }
 
 @vertex
@@ -109,10 +69,6 @@ fn vertex(vertex: Vertex) -> GroundVertexOutput {
     out.uv = mix(inst.uv_min, inst.uv_max, corner);
     out.uv_b = vec2<f32>(f32(inst.layer), 0.0);
     out.color = inst.color_rgba;
-    out.logical_depth = apply_sort_bias_to_frag_depth(
-        logical_depth_from_projected_priority(inst),
-        inst.sort_bias_ordinal,
-    );
     out.is_wet = inst.is_wet_flags & 1u;
     out.world_pos = world_pos;
     out.instance_index = u32(vertex.uv_b.x + 0.5);
@@ -131,18 +87,13 @@ fn vertex(vertex: Vertex) -> GroundVertexOutput {
 
 fn shade_fragment(in: GroundVertexOutput, sample_index: u32) -> GroundFragmentOutput {
     var out: GroundFragmentOutput;
-    // This is a horizontal world quad, so depth must vary across its surface.
-    // A sprite's constant priority depth intersects the terrain plane and leaves
-    // triangular gaps along otherwise coplanar EC water tiles.
+    // It lies over its cell as the land: its cell's anchor, which the instance carries, at its priority z and tie
+    // level 0, one depth for the whole cell (art/depth.wesl).
     let layer = u32(in.uv_b.x);
     let inst = instances[in.instance_index];
-    out.depth = horizontal_plane_painter_depth(in.position, inst.world_y, in.world_pos.xz,
-        vec2<f32>(inst.world_x, inst.world_z) + (inst.local_min + inst.local_max) * 0.5);
-    // The pick target crops XY, so its pixel is not a screen position.
-    @if(STATIC_PICK)
-    out.depth = in.position.z;
     // A cave drawn over the map shows in front of the land around it.
-    out.depth = cave_lifted_depth(out.depth, inst.is_wet_flags);
+    out.depth = view_z_depth(cave_lifted_view_z(sprite_priority_view_z(vec2<f32>(inst.tile_x, inst.tile_y),
+        inst.priority_z_units, 0.0), inst.is_wet_flags));
     // The light scene keeps the fragment the opaque pass drew at its pixel (light_scene.wesl): a ground static lies
     // flat, a floor with no halves, and fills its diamond, so its depth decides.
     @if(LIGHT_SCENE) {

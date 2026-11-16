@@ -326,11 +326,31 @@ const TILE_FLAG_NO_SHOOT: u64 = 0x2000;
 const TILE_FLAG_WET: u64 = 0x80;
 const STATIC_HUE_FLAG_APPLY: u32 = 1;
 const STATIC_HUE_FLAG_EC_SPRITE: u32 = 2;
-const DEFAULT_PRIORITY_HEIGHT: i8 = 10;
-/// The draw order only (`static_depth_key`): an upright SurfaceLikeFloor sprite's depth takes no offset (art/main.wesl
-/// `depth_class_logical_offset`), as one 44 z down hid the tables and counters under the land and floors they stand on.
-const SURFACE_LIKE_DEPTH_CLASS_OFFSET: f32 = -4.0;
-const STATIC_DEPTH_TIE_BREAK_STEP: f32 = 0.000_001;
+/// MultiMovable (ClassicUO TileFlag 0x10000000000): one more priority z, as ClassicUO's `AddGameObject` gives it.
+const TILE_FLAG_MULTI_MOVABLE: u64 = 0x100_0000_0000;
+/// Priority z steps in one diagonal row (art/depth.wesl PRIORITY_Z_STEPS_PER_ROW): more than the priority z range, so
+/// the nearer row always wins. Keep in sync with the shader.
+const PRIORITY_Z_STEPS_PER_ROW: f64 = 264.0;
+/// Tie levels in one priority z (art/depth.wesl PRIORITY_TIE_LEVELS_PER_Z). Keep in sync with the shader.
+const PRIORITY_TIE_LEVELS_PER_Z: f64 = 9.0;
+/// The tie level of the land, the flat quads and the ground art; the upright sprites take the levels above.
+const FLAT_TIE_LEVEL: u32 = 0;
+const SPRITE_FIRST_TIE_LEVEL: u32 = 1;
+/// `SpriteInstance::flat_quad` of the quads that lie flat over their cell (main.wesl): the CC flat art and the EC item
+/// surfaces. Their depth follows the fragment's row at tie level 0 (art/depth.wesl).
+const FLAT_QUAD_CC_FLAT: u32 = 1;
+const FLAT_QUAD_EC_SURFACE: u32 = 2;
+/// `SpriteInstance::flat_quad` of an authored EC camera quad (main.wesl): a card at the EC art's anchor, constant depth.
+const FLAT_QUAD_EC_CAMERA: u32 = 3;
+/// A cell's draw order anchor from its corner along x and along y (`cell_depth_anchor`; art/depth.wesl
+/// CELL_DEPTH_ANCHOR): the CC art's anchor, (1, 1), row + 2.
+const CELL_DEPTH_ANCHOR_OFFSET: f32 = 1.0;
+/// Ranks of a cell's statics at one priority z that keep their own tie level, in emission order; the later ones
+/// share the last and keep their draw order within the chunk batch. Each rank takes two levels, one per x parity of
+/// the cell, so 4 ranks fill the 8 sprite levels.
+const SPRITE_TIE_CELL_RANKS: u32 = 4;
+/// Tie levels of one cell rank: the cell's x parity.
+const SPRITE_TIE_LEVELS_PER_RANK: u32 = 2;
 
 /// Surface-like: authored SurfaceLike, the Surface flag, or a static that renders wet.
 /// `renders_wet` is `static_tile_renders_wet` for the art mode in use, so Classic mode keeps the IsWet
@@ -420,7 +440,7 @@ pub(crate) fn resolve_static_depth_class(
     }
 
     // Bridge marks walkable volume (stairs and stacked stone blocks), not a
-    // flat floor. Keep its effective height and regular sprite depth priority.
+    // flat floor. Keep it Regular: an upright sprite on the static art bias.
     if static_tile_is_surface_like(tilemeta, renders_wet) && meta.flags & TILE_FLAG_BRIDGE == 0 {
         return StaticDepthClass::SurfaceLikeFloor;
     }
@@ -438,119 +458,58 @@ pub(crate) fn depth_class_y_bias(depth_class: StaticDepthClass) -> f32 {
     }
 }
 
-fn effective_priority_height(tilemeta: Option<&udd_assets::tilemeta::TileMetaItemTile>) -> i8 {
+/// ClassicUO's priority z of a static at `tile_z` (Map.cs `AddGameObject`, 2026-11-16 decision): one less for
+/// Background, one more for a non-zero tiledata height and one more for MultiMovable. Surface takes none (ClassicUO
+/// has that line commented out). It replaces the former effective priority height (the full height, 10 for a flat
+/// Regular item, half for a Bridge), under which a tall static one row behind covered a short one in front.
+pub(crate) fn resolve_priority_z_units(tile_z: i8, tilemeta: Option<&udd_assets::tilemeta::TileMetaItemTile>) -> f32 {
     let Some(meta) = tilemeta else {
-        return 0;
-    };
-
-    let mut height = meta.height;
-    let has_background_or_surface = meta.flags & (TILE_FLAG_BACKGROUND | TILE_FLAG_SURFACE) != 0;
-
-    if height == 0 && !has_background_or_surface {
-        height = DEFAULT_PRIORITY_HEIGHT;
-    }
-
-    if meta.flags & TILE_FLAG_BRIDGE != 0 {
-        height /= 2;
-    }
-
-    height
-}
-
-pub(crate) fn resolve_priority_z_units(
-    tile_z: i8,
-    tilemeta: Option<&udd_assets::tilemeta::TileMetaItemTile>,
-    depth_class: StaticDepthClass,
-) -> f32 {
-    if depth_class == StaticDepthClass::SurfaceLikeFloor {
         return tile_z as f32;
+    };
+    let mut priority_z = i32::from(tile_z);
+    if meta.flags & TILE_FLAG_BACKGROUND != 0 {
+        priority_z -= 1;
     }
-
-    tile_z as f32 + effective_priority_height(tilemeta) as f32
-}
-
-fn depth_class_logical_offset(depth_class: StaticDepthClass) -> f32 {
-    match depth_class {
-        StaticDepthClass::SurfaceLikeFloor => SURFACE_LIKE_DEPTH_CLASS_OFFSET,
-        StaticDepthClass::Background => -0.001,
-        StaticDepthClass::Roof => 0.002,
-        StaticDepthClass::Foliage => 2.0,
-        StaticDepthClass::Regular => 0.0,
+    if meta.height != 0 {
+        priority_z += 1;
     }
-}
-
-fn decode_depth_class(encoded: u32) -> StaticDepthClass {
-    match encoded {
-        1 => StaticDepthClass::Background,
-        2 => StaticDepthClass::Foliage,
-        3 => StaticDepthClass::Roof,
-        4 => StaticDepthClass::SurfaceLikeFloor,
-        _ => StaticDepthClass::Regular,
+    if meta.flags & TILE_FLAG_MULTI_MOVABLE != 0 {
+        priority_z += 1;
     }
+    priority_z as f32
 }
 
-pub(crate) fn static_depth_key(
-    tile_x: f32,
-    tile_y: f32,
-    priority_z_units: f32,
-    depth_class: StaticDepthClass,
-) -> f32 {
-    static_depth_key_with_tie_break(tile_x, tile_y, priority_z_units, depth_class, 0)
+/// The draw order's logical distance (art/depth.wesl): the diagonal row, then the priority z, then the tie level,
+/// each step smaller than the whole range of the next finer one, so the nearer row always wins. The shaders project
+/// the same quantity as a point's logical height; f64 keeps the tie levels at any map position.
+pub(crate) fn logical_draw_distance(row: f64, priority_z: f64, tie_level: u32) -> f64 {
+    row + (priority_z + f64::from(tie_level) / PRIORITY_TIE_LEVELS_PER_Z) / PRIORITY_Z_STEPS_PER_ROW
 }
 
-fn static_depth_key_with_tie_break(
-    tile_x: f32,
-    tile_y: f32,
-    priority_z_units: f32,
-    depth_class: StaticDepthClass,
-    tie_break_ordinal: u32,
-) -> f32 {
-    (tile_x + tile_y)
-        + (127.0 + priority_z_units) * 0.01
-        + depth_class_logical_offset(depth_class)
-        + tie_break_ordinal as f32 * STATIC_DEPTH_TIE_BREAK_STEP
+/// An instance's sort key: `logical_draw_distance` of its anchor and priority z, before its tie level.
+pub(crate) fn static_depth_key(tile_x: f32, tile_y: f32, priority_z_units: f32) -> f64 {
+    logical_draw_distance(f64::from(tile_x) + f64::from(tile_y), f64::from(priority_z_units), 0)
 }
 
-fn assign_sprite_depth_tie_breakers(instances: &mut [SpriteInstance]) {
-    // Chunk batches are concatenated in stable (gy,gx,scale) order, not globally
-    // depth-sorted. Equal-priority sprites can straddle a chunk boundary and
-    // need distinct ordinals even when other depth groups lie between them.
-    let mut next_ordinals = HashMap::<u32, u32>::new();
+/// The tie levels of upright sprites (art/depth.wesl): statics of one cell and priority z take the levels in their
+/// emission order, the later one nearer, as ClassicUO draws a later static of the same priority over an earlier one;
+/// equal statics of neighbouring cells in one row differ by the cell's x parity, so whichever chunk batch draws first,
+/// the same one wins. Assigned over the whole assembled set, as cached chunk batches are concatenated in stable
+/// (gy, gx, scale) order. Replaces the earlier-wins tie-break ordinal (an earlier static drew nearer).
+fn assign_sprite_tie_levels(instances: &mut [SpriteInstance]) {
+    let mut next_ranks = HashMap::<(u32, u32, u32), u32>::new();
 
     for instance in instances.iter_mut() {
-        let base_key = static_depth_key(
-            instance.tile_x,
-            instance.tile_y,
-            instance.priority_z_units,
-            decode_depth_class(instance.depth_class),
-        );
-
-        let ordinal = next_ordinals.entry(base_key.to_bits()).or_insert(0);
-        instance.sort_bias_ordinal = *ordinal;
-        *ordinal = ordinal.saturating_add(1);
-    }
-}
-
-fn assign_ground_depth_tie_breakers(instances: &mut [GroundTileInstance]) {
-    let mut last_base_key: Option<f32> = None;
-    let mut tie_break_ordinal = 0u32;
-
-    for instance in instances.iter_mut() {
-        let base_key = static_depth_key(
-            instance.tile_x,
-            instance.tile_y,
-            instance.priority_z_units,
-            decode_depth_class(instance.depth_class),
-        );
-
-        if last_base_key.is_some_and(|last| last == base_key) {
-            tie_break_ordinal = tie_break_ordinal.saturating_add(1);
-        } else {
-            last_base_key = Some(base_key);
-            tie_break_ordinal = 0;
+        if matches!(instance.flat_quad, FLAT_QUAD_CC_FLAT | FLAT_QUAD_EC_SURFACE) {
+            instance.sort_bias_ordinal = FLAT_TIE_LEVEL;
+            continue;
         }
-
-        instance.sort_bias_ordinal = tie_break_ordinal;
+        let cell = (instance.tile_x.to_bits(), instance.tile_y.to_bits(), instance.priority_z_units.to_bits());
+        let rank = next_ranks.entry(cell).or_insert(0);
+        let parity = (instance.tile_x.floor() as i64).rem_euclid(2) as u32;
+        instance.sort_bias_ordinal =
+            SPRITE_FIRST_TIE_LEVEL + SPRITE_TIE_LEVELS_PER_RANK * (*rank).min(SPRITE_TIE_CELL_RANKS - 1) + parity;
+        *rank = rank.saturating_add(1);
     }
 }
 
@@ -1221,9 +1180,12 @@ pub struct SpriteInstance {
     pub uv_max: [f32; 2],    // normalized UV
     pub local_min: [f32; 2], // local quad bounds from tile origin
     pub local_max: [f32; 2], // local quad bounds from tile origin
+    /// The draw order's anchor (art/depth.wesl): the cell + 2 in x + y for an upright sprite.
     pub tile_x: f32,
     pub tile_y: f32,
+    /// ClassicUO's priority z (`resolve_priority_z_units`).
     pub priority_z_units: f32,
+    /// The draw order's tie level (`assign_sprite_tie_levels`): 1..8 for an upright sprite, 0 for a flat quad.
     pub sort_bias_ordinal: u32,
     /// Tiledata flags packed for the GPU.
     /// Bit 0: is_wet (`static_tile_renders_wet` → animated water UV distortion in sprite shader).
@@ -2160,8 +2122,8 @@ struct StaticChunkBuildState {
     sprite_instances: Vec<SpriteInstance>,
     ground_instances: Vec<GroundTileInstance>,
     pick_tiles: Vec<StaticPickTile>,
-    sprite_pick_indices: Vec<(f32, usize)>,
-    ground_pick_indices: Vec<(f32, usize)>,
+    sprite_pick_indices: Vec<(f64, usize)>,
+    ground_pick_indices: Vec<(f64, usize)>,
     requested_pages: HashSet<u64>,
     stats: CachedStaticChunkStats,
     render_tiles: Vec<StaticRenderTile>,
@@ -2440,7 +2402,7 @@ fn collect_visible_static_chunks_slow(
 
     // Assign after assembling every visible chunk: restarting at each chunk
     // leaves opaque coplanar sprites dependent on GPU batch submission order.
-    assign_sprite_depth_tie_breakers(&mut sprite_output.0);
+    assign_sprite_tie_levels(&mut sprite_output.0);
     slow_stats
 }
 
@@ -2682,11 +2644,11 @@ fn emit_static_render_tile(
             if before.0 < build.sprite_instances.len() {
                 let inst = build.sprite_instances.last().unwrap();
                 build.sprite_pick_indices.push((static_depth_key(inst.tile_x, inst.tile_y,
-                    inst.priority_z_units, decode_depth_class(inst.depth_class)), index));
+                    inst.priority_z_units), index));
             } else {
                 let inst = build.ground_instances.last().unwrap();
                 build.ground_pick_indices.push((static_depth_key(inst.tile_x, inst.tile_y,
-                    inst.priority_z_units, decode_depth_class(inst.depth_class)), index));
+                    inst.priority_z_units), index));
             }
         }
     }
@@ -2791,7 +2753,7 @@ fn emit_dot_static_tile(
         info.base_world_y,
     );
     let priority_z_units =
-        resolve_priority_z_units(info.tile.z, info.tilemeta, info.depth_class);
+        resolve_priority_z_units(info.tile.z, info.tilemeta);
     let bias = depth_class_y_bias(info.depth_class);
     let encoded_depth_class = info.depth_class.encoded();
     let world_y = info.base_world_y + bias;
@@ -2847,7 +2809,7 @@ fn emit_art_static_tile(
     };
     let encoded_depth_class = info.depth_class.encoded();
     let priority_z_units =
-        resolve_priority_z_units(info.tile.z, info.tilemeta, info.depth_class);
+        resolve_priority_z_units(info.tile.z, info.tilemeta);
     let world_y = info.base_world_y + bias;
     let material_item_id = visual_kind.material_item_id(info.tile.graphic);
     let Some((billboard_source, resolved_sprite, texture_stretch)) = resolve_art_static_sprite(
@@ -3060,6 +3022,7 @@ fn emit_ground_static_instance(
     );
     let (material_payload, material_flags) =
         surface_like_ground_material_payload(liquid_payload);
+    let (tile_x, tile_y) = cell_depth_anchor(anchored_world_x, anchored_world_z);
     build.ground_instances.push(GroundTileInstance {
         world_x: anchored_world_x,
         world_z: anchored_world_z,
@@ -3071,8 +3034,8 @@ fn emit_ground_static_instance(
         uv_max: [resolved.uv_max.x, resolved.uv_max.y],
         local_min: [bounds.local_min_x, bounds.local_min_z],
         local_max: [bounds.local_max_x, bounds.local_max_z],
-        tile_x: anchored_world_x,
-        tile_y: anchored_world_z,
+        tile_x,
+        tile_y,
         priority_z_units,
         sort_bias_ordinal: 0,
         is_wet_flags: info.is_wet_flags | info.client_grunge_flag,
@@ -3087,6 +3050,26 @@ fn emit_ground_static_instance(
         local_light_corners,
         color_rgba: [1.0, 1.0, 1.0, 1.0],
     });
+}
+
+/// The draw order's anchor (art/depth.wesl) of the cell whose corner is at `cell_x`, `cell_z`: row + 2, the upright
+/// sprites' convention, for every fragment of the land, a flat quad or a ground art over the cell. A cell's surfaces
+/// then take one depth, as ClassicUO draws a cell's land and statics as whole objects in its row.
+pub(crate) fn cell_depth_anchor(cell_x: f32, cell_z: f32) -> (f32, f32) {
+    (cell_x + CELL_DEPTH_ANCHOR_OFFSET, cell_z + CELL_DEPTH_ANCHOR_OFFSET)
+}
+
+/// The draw order's anchor (art/depth.wesl) of a billboard-path instance laid out at `world_x`, `world_z`: an
+/// authored EC camera quad stands as a card at the EC art's anchor (ec_item_quad.wesl), so it takes that anchor's row,
+/// as an upright EC sprite does; at its cell's corner it would lie two rows behind its own cell's land and lose to it.
+/// A flat quad, laid out from its cell's corner, takes its cell's anchor. An upright sprite keeps its layout position,
+/// already its anchor.
+fn sprite_depth_anchor(flat_quad: u32, world_x: f32, world_z: f32) -> (f32, f32) {
+    match flat_quad {
+        FLAT_QUAD_EC_CAMERA => apply_static_world_anchor_translation(world_x, world_z),
+        FLAT_QUAD_CC_FLAT | FLAT_QUAD_EC_SURFACE => cell_depth_anchor(world_x, world_z),
+        _ => (world_x, world_z),
+    }
 }
 
 fn emit_billboard_static_instance(
@@ -3148,6 +3131,12 @@ fn emit_billboard_static_instance(
             flat_art,
         )
     };
+    let flat_quad = if ec_surface {
+        if ec_static_camera_quad(info.tilemeta) { FLAT_QUAD_EC_CAMERA } else { FLAT_QUAD_EC_SURFACE }
+    } else {
+        0
+    };
+    let (tile_x, tile_y) = sprite_depth_anchor(flat_quad, anchored_world_x, anchored_world_z);
 
     build.sprite_instances.push(SpriteInstance {
         world_x: anchored_world_x,
@@ -3160,14 +3149,14 @@ fn emit_billboard_static_instance(
         uv_max: [resolved.uv_max.x, resolved.uv_max.y],
         local_min: [bounds.local_min_x, bounds.local_min_y],
         local_max: [bounds.local_max_x, bounds.local_max_y],
-        tile_x: anchored_world_x,
-        tile_y: anchored_world_z,
+        tile_x,
+        tile_y,
         priority_z_units,
         sort_bias_ordinal: 0,
         is_wet_flags: info.is_wet_flags | info.client_grunge_flag | if flat_art { STATIC_FLAG_FLAT_ART } else { 0 },
         hue_id,
         hue_flags: hue_flags | if billboard_source == ClientTextureSource::Ec { STATIC_HUE_FLAG_EC_SPRITE } else { 0 },
-        flat_quad: if ec_surface { if ec_static_camera_quad(info.tilemeta) { 3 } else { 2 } } else { 0 },
+        flat_quad,
         texture_stretch,
         material_item_id,
         client_shadow_flags: info.client_shadow_flags,
@@ -3209,9 +3198,9 @@ fn emit_cc_surface_like_flat_static_instance(
     // `cc_surface_like_flat_quad_center_offsets`): for the 44px plain-water sprites this lands
     // exactly on the cell center, so the diagonal basis in main.wesl maps the baked diamond's
     // edge vertices onto the cell corners as before; taller wave sprites extend further
-    // up-screen from the same feet anchor instead of being wrongly re-centered. Depth-sort
-    // keys (tile_x/tile_y below) stay at the cell origin to remain consistent with the EC
-    // ground path.
+    // up-screen from the same feet anchor instead of being wrongly re-centered. The draw
+    // order's anchor (tile_x/tile_y below) is the cell's (`cell_depth_anchor`), as the EC
+    // ground path's.
     let (center_offset_x, center_offset_z) =
         cc_surface_like_flat_quad_center_offsets(resolved.logical_height);
     let centered_world_x = anchored_world_x + center_offset_x;
@@ -3225,6 +3214,7 @@ fn emit_cc_surface_like_flat_static_instance(
         info.base_world_y,
         bounds,
     );
+    let (tile_x, tile_y) = sprite_depth_anchor(FLAT_QUAD_CC_FLAT, anchored_world_x, anchored_world_z);
 
     build.sprite_instances.push(SpriteInstance {
         world_x: centered_world_x,
@@ -3237,14 +3227,14 @@ fn emit_cc_surface_like_flat_static_instance(
         uv_max: [resolved.uv_max.x, resolved.uv_max.y],
         local_min: [bounds.local_min_x, bounds.local_min_z],
         local_max: [bounds.local_max_x, bounds.local_max_z],
-        tile_x: anchored_world_x,
-        tile_y: anchored_world_z,
+        tile_x,
+        tile_y,
         priority_z_units,
         sort_bias_ordinal: 0,
         is_wet_flags: info.is_wet_flags | info.client_grunge_flag,
         hue_id,
         hue_flags,
-        flat_quad: 1,
+        flat_quad: FLAT_QUAD_CC_FLAT,
         texture_stretch: 0.0,
         material_item_id: 0,
         client_shadow_flags: info.client_shadow_flags,
@@ -3261,8 +3251,8 @@ fn finish_rebuilt_static_chunk(
 ) -> CachedStaticChunk {
     sort_static_chunk_instances(&mut build.sprite_instances, &mut build.ground_instances);
     // Match the stable instance sort, including equal-depth emission order.
-    let sorted_indices = |mut indices: Vec<(f32, usize)>| {
-        indices.sort_by(|a, b| a.0.partial_cmp(&b.0).unwrap_or(std::cmp::Ordering::Equal));
+    let sorted_indices = |mut indices: Vec<(f64, usize)>| {
+        indices.sort_by(|a, b| a.0.total_cmp(&b.0));
         indices.into_iter().map(|(_, index)| index).collect()
     };
 
@@ -3287,40 +3277,13 @@ fn sort_static_chunk_instances(
     ground_instances: &mut [GroundTileInstance],
 ) {
     sprite_instances.sort_by(|a, b| {
-        let depth_a = static_depth_key(
-            a.tile_x,
-            a.tile_y,
-            a.priority_z_units,
-            decode_depth_class(a.depth_class),
-        );
-        let depth_b = static_depth_key(
-            b.tile_x,
-            b.tile_y,
-            b.priority_z_units,
-            decode_depth_class(b.depth_class),
-        );
-        depth_a
-            .partial_cmp(&depth_b)
-            .unwrap_or(std::cmp::Ordering::Equal)
+        static_depth_key(a.tile_x, a.tile_y, a.priority_z_units)
+            .total_cmp(&static_depth_key(b.tile_x, b.tile_y, b.priority_z_units))
     });
     ground_instances.sort_by(|a, b| {
-        let depth_a = static_depth_key(
-            a.tile_x,
-            a.tile_y,
-            a.priority_z_units,
-            decode_depth_class(a.depth_class),
-        );
-        let depth_b = static_depth_key(
-            b.tile_x,
-            b.tile_y,
-            b.priority_z_units,
-            decode_depth_class(b.depth_class),
-        );
-        depth_a
-            .partial_cmp(&depth_b)
-            .unwrap_or(std::cmp::Ordering::Equal)
+        static_depth_key(a.tile_x, a.tile_y, a.priority_z_units)
+            .total_cmp(&static_depth_key(b.tile_x, b.tile_y, b.priority_z_units))
     });
-    assign_ground_depth_tie_breakers(ground_instances);
 }
 
 fn append_cached_static_chunk_outputs(
@@ -4104,8 +4067,8 @@ mod tests {
         let mut back = front;
         back.tile_x = 1.0;
         build.sprite_instances = vec![front, back];
-        build.sprite_pick_indices = vec![(static_depth_key(2.0, 0.0, 0.0, StaticDepthClass::Regular), 0),
-            (static_depth_key(1.0, 0.0, 0.0, StaticDepthClass::Regular), 1)];
+        build.sprite_pick_indices = vec![(static_depth_key(2.0, 0.0, 0.0), 0),
+            (static_depth_key(1.0, 0.0, 0.0), 1)];
         build.ground_instances = vec![GroundTileInstance::zeroed()];
         build.ground_pick_indices = vec![(0.0, 2)];
         let chunk = finish_rebuilt_static_chunk(build, 1);
@@ -4586,11 +4549,11 @@ mod tests {
 
     #[test]
     fn bridge_stone_and_stairs_retain_volume_depth_and_height_priority() {
-        // Installed bridge fixture: stone 1872 and stair pieces 1874/1895.
+        // Installed bridge fixture: stone 1872 and stair pieces 1874/1895. ClassicUO's +1 for a non-zero height.
         for (flags, height, priority) in [
-            (0x04002600, 10, 20.0),
-            (0x80002600, 5, 17.0),
-            (0x2600, 5, 17.0),
+            (0x04002600, 10, 16.0),
+            (0x80002600, 5, 16.0),
+            (0x2600, 5, 16.0),
         ] {
             let mut tile = item_tile_with_flags(
                 flags,
@@ -4600,7 +4563,7 @@ mod tests {
             assert!(static_tile_is_surface_like(Some(&tile), tile.is_wet()));
             let class = resolve_static_depth_class(Some(&tile), tile.is_wet());
             assert_eq!(class, StaticDepthClass::Regular);
-            assert_eq!(resolve_priority_z_units(15, Some(&tile), class), priority);
+            assert_eq!(resolve_priority_z_units(15, Some(&tile)), priority);
         }
     }
 
@@ -4702,141 +4665,135 @@ mod tests {
     }
 
     #[test]
-    fn effective_priority_height_defaults_zero_height_regulars_to_ten() {
-        let tile =
-            item_tile_with_flags(0, udd_assets::tilemeta::TileMetaItemVisualKind::RegularArt);
-
-        assert_eq!(effective_priority_height(Some(&tile)), 10);
-    }
-
-    #[test]
-    fn effective_priority_height_keeps_background_zero_height_at_zero() {
-        let tile = item_tile_with_flags(
-            TILE_FLAG_BACKGROUND,
-            udd_assets::tilemeta::TileMetaItemVisualKind::RegularArt,
-        );
-
-        assert_eq!(effective_priority_height(Some(&tile)), 0);
-    }
-
-    #[test]
-    fn effective_priority_height_halves_bridge_height() {
-        let mut tile = item_tile_with_flags(
-            TILE_FLAG_BRIDGE,
-            udd_assets::tilemeta::TileMetaItemVisualKind::RegularArt,
-        );
-        tile.height = 12;
-
-        assert_eq!(effective_priority_height(Some(&tile)), 6);
-    }
-
-    #[test]
-    fn surface_like_priority_z_units_stay_on_base_z() {
-        let priority_z_units =
-            resolve_priority_z_units(7, None, StaticDepthClass::SurfaceLikeFloor);
-
-        assert_eq!(priority_z_units, 7.0);
-    }
-
-    #[test]
-    fn regular_priority_z_units_include_effective_height() {
-        let mut tile =
-            item_tile_with_flags(0, udd_assets::tilemeta::TileMetaItemVisualKind::RegularArt);
-        tile.height = 12;
-
-        let priority_z_units = resolve_priority_z_units(7, Some(&tile), StaticDepthClass::Regular);
-
-        assert_eq!(priority_z_units, 19.0);
-    }
-
-    #[test]
-    fn static_depth_key_applies_background_offset() {
-        let regular = static_depth_key(100.0, 200.0, 19.0, StaticDepthClass::Regular);
-        let background = static_depth_key(100.0, 200.0, 19.0, StaticDepthClass::Background);
-
-        assert!(background < regular);
-    }
-
-    #[test]
-    fn static_depth_key_places_surface_like_floor_below_background() {
-        let surface_like = static_depth_key(100.0, 200.0, 7.0, StaticDepthClass::SurfaceLikeFloor);
-        let background = static_depth_key(100.0, 200.0, 7.0, StaticDepthClass::Background);
-
-        assert!(surface_like < background);
-    }
-
-    #[test]
-    fn tie_breakers_increase_for_equal_depth_sprite_instances() {
-        let base_instance = SpriteInstance {
-            world_x: 0.0,
-            world_z: 0.0,
-            world_y: 0.0,
-            layer: 0,
-            depth_class: StaticDepthClass::Regular.encoded(),
-            base_world_y: 0.0,
-            uv_min: [0.0, 0.0],
-            uv_max: [0.0, 0.0],
-            local_min: [0.0, 0.0],
-            local_max: [0.0, 0.0],
-            tile_x: 10.0,
-            tile_y: 20.0,
-            priority_z_units: 15.0,
-            sort_bias_ordinal: 0,
-            is_wet_flags: 0,
-            hue_id: 0,
-            hue_flags: 0,
-            flat_quad: 0,
-            texture_stretch: 0.0,
-            material_item_id: 0,
-            client_shadow_flags: 0,
-            client_shadow_height: 0.0,
-            client_grunge_anchor: [0.0; 2],
-            local_light_corners: [0; 4],
-            color_rgba: [1.0, 1.0, 1.0, 1.0],
+    fn priority_z_is_classicuo_z_with_its_adjustments() {
+        let regular = |flags, height| {
+            let mut tile = item_tile_with_flags(flags, udd_assets::tilemeta::TileMetaItemVisualKind::RegularArt);
+            tile.height = height;
+            resolve_priority_z_units(7, Some(&tile))
         };
+        assert_eq!(resolve_priority_z_units(7, None), 7.0);
+        // A flat item keeps its z: no default height of 10.
+        assert_eq!(regular(0, 0), 7.0);
+        // Any height adds one, not the height: a 20 z wall and a 1 z rug at one z tie on the z.
+        assert_eq!(regular(0, 20), 8.0);
+        assert_eq!(regular(0, 1), 8.0);
+        assert_eq!(regular(TILE_FLAG_BACKGROUND, 0), 6.0);
+        assert_eq!(regular(TILE_FLAG_BACKGROUND, 20), 7.0);
+        // Bridge is not halved, Surface takes nothing.
+        assert_eq!(regular(TILE_FLAG_BRIDGE, 12), 8.0);
+        assert_eq!(regular(TILE_FLAG_SURFACE, 6), 8.0);
+        assert_eq!(regular(TILE_FLAG_MULTI_MOVABLE, 0), 8.0);
+    }
+
+    #[test]
+    fn surface_like_tables_keep_classicuo_priority() {
+        // A table (Surface, height 6) at z 7 on a floor (Background | Surface, height 0) at z 7: the table in front.
+        let mut table = item_tile_with_flags(TILE_FLAG_SURFACE, udd_assets::tilemeta::TileMetaItemVisualKind::SurfaceLike);
+        table.height = 6;
+        let floor = item_tile_with_flags(TILE_FLAG_BACKGROUND | TILE_FLAG_SURFACE,
+            udd_assets::tilemeta::TileMetaItemVisualKind::SurfaceLike);
+        assert_eq!(resolve_priority_z_units(7, Some(&table)), 8.0);
+        assert_eq!(resolve_priority_z_units(7, Some(&floor)), 6.0);
+    }
+
+    // The highest and lowest priority z: UO z 127 with + 1 height and + 1 MultiMovable, land at -128 - 2.
+    const TEST_PRIORITY_Z_MAX: f64 = 129.0;
+    const TEST_PRIORITY_Z_MIN: f64 = -130.0;
+    const TEST_TIE_LEVEL_MAX: u32 = 8;
+
+    #[test]
+    fn a_nearer_row_beats_any_priority_z() {
+        for row in [0.0, 2.0, 4000.0, 11_262.0] {
+            let far_highest = logical_draw_distance(row, TEST_PRIORITY_Z_MAX, TEST_TIE_LEVEL_MAX);
+            let near_lowest = logical_draw_distance(row + 1.0, TEST_PRIORITY_Z_MIN, FLAT_TIE_LEVEL);
+            assert!(near_lowest > far_highest, "row {row}: {near_lowest} <= {far_highest}");
+        }
+        // The keys of upright sprites (anchors one row apart) at the extremes.
+        assert!(static_depth_key(101.0, 201.0, -128.0) > static_depth_key(100.0, 201.0, 128.0));
+    }
+
+    #[test]
+    fn within_a_row_priority_z_then_tie_level_decide() {
+        let row = 3000.0;
+        assert!(logical_draw_distance(row, 8.0, FLAT_TIE_LEVEL) > logical_draw_distance(row, 7.0, TEST_TIE_LEVEL_MAX));
+        assert!(logical_draw_distance(row, 7.0, 2) > logical_draw_distance(row, 7.0, 1));
+        // Land at z 7 (priority 5) under a floor at z 7 (Background, 6) under a table at z 7 (8).
+        assert!(logical_draw_distance(row, 6.0, FLAT_TIE_LEVEL) > logical_draw_distance(row, 5.0, FLAT_TIE_LEVEL));
+        assert!(logical_draw_distance(row, 8.0, SPRITE_FIRST_TIE_LEVEL) > logical_draw_distance(row, 6.0, 0));
+    }
+
+    fn tie_level_test_sprite(tile_x: f32, tile_y: f32, priority_z_units: f32) -> SpriteInstance {
+        SpriteInstance { tile_x, tile_y, priority_z_units, ..SpriteInstance::zeroed() }
+    }
+
+    #[test]
+    fn later_statics_of_one_cell_and_priority_z_draw_nearer() {
         let mut instances = vec![
-            base_instance,
-            SpriteInstance {
-                tile_x: 10.0,
-                tile_y: 20.0,
-                priority_z_units: 15.0,
-                ..base_instance
-            },
-            SpriteInstance {
-                tile_x: 11.0,
-                tile_y: 20.0,
-                priority_z_units: 15.0,
-                ..base_instance
-            },
+            tie_level_test_sprite(10.0, 20.0, 15.0),
+            tie_level_test_sprite(10.0, 20.0, 15.0),
+            tie_level_test_sprite(10.0, 20.0, 16.0),
+            tie_level_test_sprite(10.0, 20.0, 15.0),
+            tie_level_test_sprite(10.0, 20.0, 15.0),
+            tie_level_test_sprite(10.0, 20.0, 15.0),
         ];
-
-        assign_sprite_depth_tie_breakers(&mut instances);
-
-        assert_eq!(instances[0].sort_bias_ordinal, 0);
-        assert_eq!(instances[1].sort_bias_ordinal, 1);
-        assert_eq!(instances[2].sort_bias_ordinal, 0);
+        assign_sprite_tie_levels(&mut instances);
+        let levels: Vec<u32> = instances.iter().map(|instance| instance.sort_bias_ordinal).collect();
+        // Even x: levels 1, 3, 5, 7, the fifth sharing the last.
+        assert_eq!(levels, [1, 3, 1, 5, 7, 7]);
+        assert!(levels.iter().all(|level| (SPRITE_FIRST_TIE_LEVEL..=TEST_TIE_LEVEL_MAX).contains(level)));
     }
 
     #[test]
-    fn sprite_depth_ties_continue_across_separated_chunk_groups() {
-        // Bridge planks at raw (2820,991) and (2819,992) occupy adjacent
-        // 32-cell chunks. Both formerly restarted their tie ordinal at zero.
-        let plank = SpriteInstance {
-            tile_x: 2820.5,
-            tile_y: 992.5,
-            priority_z_units: 21.0,
-            depth_class: StaticDepthClass::Background.encoded(),
-            ..SpriteInstance::zeroed()
-        };
+    fn equal_statics_of_neighbouring_cells_differ_by_x_parity_across_chunks() {
+        // Bridge planks at raw (2820,991) and (2819,992) occupy adjacent 32-cell chunks: whichever batch draws first,
+        // the odd cell's plank is the nearer.
+        let plank = SpriteInstance { depth_class: StaticDepthClass::Background.encoded(),
+            ..tie_level_test_sprite(2820.5, 992.5, 21.0) };
         let mut instances = [plank,
             SpriteInstance { tile_x: 2821.5, ..plank },
             SpriteInstance { tile_x: 2819.5, tile_y: 993.5, ..plank },
             SpriteInstance { tile_x: 2820.5, tile_y: 993.5, ..plank }];
-        assign_sprite_depth_tie_breakers(&mut instances);
-        assert_eq!(instances.map(|instance| instance.sort_bias_ordinal), [0, 0, 1, 1]);
-        // Reassembling cached chunks must not accumulate the previous ordinals.
-        assign_sprite_depth_tie_breakers(&mut instances);
-        assert_eq!(instances.map(|instance| instance.sort_bias_ordinal), [0, 0, 1, 1]);
+        assign_sprite_tie_levels(&mut instances);
+        assert_eq!(instances.map(|instance| instance.sort_bias_ordinal), [1, 2, 2, 1]);
+        // Reassembling cached chunks must not accumulate the previous levels.
+        assign_sprite_tie_levels(&mut instances);
+        assert_eq!(instances.map(|instance| instance.sort_bias_ordinal), [1, 2, 2, 1]);
+    }
+
+    #[test]
+    fn ec_camera_quads_take_the_ec_art_anchor_row() {
+        let (x, z) = (10.0, 20.0);
+        let (tile_x, tile_y) = sprite_depth_anchor(FLAT_QUAD_EC_CAMERA, x, z);
+        assert_eq!((tile_x, tile_y), apply_static_world_anchor_translation(x, z));
+        // Ahead of every land fragment of its own cell at its land's priority z (z - 2 under a static at z - 1).
+        let land_front = logical_draw_distance(f64::from(x + z) + 2.0, 13.0, FLAT_TIE_LEVEL);
+        assert!(static_depth_key(tile_x, tile_y, 14.0) > land_front);
+        assert_eq!(sprite_depth_anchor(0, x, z), (x, z));
+    }
+
+    #[test]
+    fn a_cells_surfaces_share_its_anchor_row_ahead_of_its_land() {
+        let (x, z) = (10.0, 20.0);
+        let anchor = cell_depth_anchor(x, z);
+        assert_eq!(anchor, (x + 1.0, z + 1.0));
+        for flat_quad in [FLAT_QUAD_CC_FLAT, FLAT_QUAD_EC_SURFACE] {
+            assert_eq!(sprite_depth_anchor(flat_quad, x, z), anchor);
+        }
+        // A Background floor at the land's z (priority z - 1) over its own land (z - 2), and under the next row's land
+        // however low.
+        let floor = static_depth_key(anchor.0, anchor.1, 14.0);
+        assert!(floor > static_depth_key(anchor.0, anchor.1, 13.0));
+        let (next_x, next_z) = cell_depth_anchor(x + 1.0, z);
+        assert!(static_depth_key(next_x, next_z, TEST_PRIORITY_Z_MIN as f32) > floor);
+    }
+
+    #[test]
+    fn flat_quads_keep_tie_level_zero() {
+        let mut instances = [SpriteInstance { flat_quad: FLAT_QUAD_CC_FLAT, ..tie_level_test_sprite(1.0, 2.0, 3.0) },
+            SpriteInstance { flat_quad: FLAT_QUAD_EC_SURFACE, ..tie_level_test_sprite(1.0, 2.0, 3.0) },
+            tie_level_test_sprite(1.0, 2.0, 3.0)];
+        assign_sprite_tie_levels(&mut instances);
+        assert_eq!(instances.map(|instance| instance.sort_bias_ordinal), [FLAT_TIE_LEVEL, FLAT_TIE_LEVEL, 2]);
     }
 
     #[test]

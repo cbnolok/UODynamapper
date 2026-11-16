@@ -1,5 +1,13 @@
 # Static volume and floor depth
 
+> **2026-11-16: superseded by ClassicUO's draw order** (pending the user's review of the sheets). The priority z is
+> now ClassicUO's (z, - 1 Background, + 1 for a non-zero height, + 1 MultiMovable), the nearer row always wins, and
+> land, flat quads, sprites, shadows, picking and the light scene share one logical distance in both cameras. The
+> effective priority height, the depth-class offsets, the tie-break ordinal and its perspective bias described below
+> are gone, and so are the per-pixel plane depth and the painter nudge below: the land, the flat quads and the ground
+> art take one depth per cell. See [the rule and what it removed](../dev_wiki/rendering/DEPTH_SCALE_AND_KR_CLIENT.md#dynamapper-classicuos-draw-order-2026-11-16).
+> The sections below are the history of the cases that rule must keep right; their fixtures stay in the harness.
+
 `statics_collect::resolve_static_depth_class` controls the sprite's logical
 depth, effective height priority, sorting and shading class. Visible-object
 picking uses the same classifier and priority helper.
@@ -77,7 +85,7 @@ come back with them. The CPU key `static_depth_key` keeps -4: it orders the
 draws (flat items first) and finds equal keys, and never reaches the depth.
 Flat quads and ground statics write their plane depth and are unchanged.
 
-### A tall wall over the table in front of it (2026-11-15, open)
+### A tall wall over the table in front of it (2026-11-15, closed 2026-11-16)
 
 In the Minoc hall the back log wall (0x92, z 15, height 20, flags `0x6050`) on
 y 396 covers the back corner of each table (0x0B72/0x0B73, z 15, height 6) on
@@ -117,9 +125,10 @@ and ClassicUO draw the tables in front.
 
   The rest at the same z is mostly foliage's +22 z offset, by design. KR
   client shadows sort at their caster's point, so a capped wall's shadow also
-  reaches less far forward. Not implemented; it needs the user's decision
-  together with the scale question in
-  [DEPTH_SCALE_AND_KR_CLIENT.md](../dev_wiki/rendering/DEPTH_SCALE_AND_KR_CLIENT.md#decision-2026-11-12).
+  reaches less far forward. Not implemented; superseded on 2026-11-16 by
+  ClassicUO's rule (the client's + 1, rows dominating), which draws the tables
+  in front; see
+  [DEPTH_SCALE_AND_KR_CLIENT.md](../dev_wiki/rendering/DEPTH_SCALE_AND_KR_CLIENT.md#decision-2026-11-16-pending-the-users-review-of-the-sheets).
 
 ### Grass edges over the road in Classic (2026-11-15)
 

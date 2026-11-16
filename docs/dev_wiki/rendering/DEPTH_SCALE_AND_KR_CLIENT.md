@@ -1,16 +1,17 @@
 # Depth Scale: Dynamapper and the KR Client
 
-How Dynamapper decides which static, shadow or land surface lies in front, how the Kingdom Reborn client decides it, where the two disagree, and why Dynamapper keeps its own scale (decision of 2026-11-12).
+How Dynamapper decides which static, shadow or land surface lies in front, how the Kingdom Reborn client decides it, where the two disagree, and the rule Dynamapper follows: ClassicUO's (decision of 2026-11-16, pending the user's review of the sheets; it replaces the geometric scale kept on 2026-11-12).
 
 In short:
 
-- Both renderers sort an upright sprite by its cell's diagonal x + y and by its priority z.
-- They weigh the two differently. In Dynamapper one diagonal step is worth about **11** priority z units, which is what the camera geometry gives. In the KR client it is worth **35.4**, because the client adds a fixed bias of its own.
-- KR client shadows sort at their caster's depth in both renderers, so a shadow follows the same scale as the sprites around it.
+- Every renderer here sorts by the cell's diagonal row x + y and by a priority z.
+- Dynamapper follows ClassicUO: the nearer row always wins, whatever the heights; within a row the priority z decides. One rule for every style and for both cameras.
+- The KR client weighs a diagonal step as **35.4** priority z units, so a static more than 35.4 z above a nearer one draws over it there. Dynamapper's earlier geometric depth weighed it as about **11**.
+- KR client shadows sort at their caster's depth in both renderers, so a shadow follows the same rule as the sprites around it.
 
-Related: [KR static shadows](CLIENT_NIGHT_LIGHTING_AND_SHADOWS.md#kr-static-shadows), the client trace in [`uokr_atmosphere.md` P3.4](../../client_research/ghidra-kr-atmosphere/results/uokr_atmosphere.md#p34-sprite-shadow-geometry), and [static depth ordering](../../agent_notes/static_depth_ordering.md) for the depth classes and the perspective tie bias.
+Related: [KR static shadows](CLIENT_NIGHT_LIGHTING_AND_SHADOWS.md#kr-static-shadows), the client trace in [`uokr_atmosphere.md` P3.4](../../client_research/ghidra-kr-atmosphere/results/uokr_atmosphere.md#p34-sprite-shadow-geometry), and [static depth ordering](../../agent_notes/static_depth_ordering.md) for the history of the depth classes and tie-breaks.
 
-## Dynamapper today
+## Dynamapper: ClassicUO's draw order (2026-11-16)
 
 ### World and camera
 
@@ -20,54 +21,50 @@ Related: [KR static shadows](CLIENT_NIGHT_LIGHTING_AND_SHADOWS.md#kr-static-shad
 - The perspective camera orbits along the same `Vec3::ONE` direction (`perspective_offset`).
 - The lens stretches view y on screen to make the 44 × 44 diamond. That changes x and y in clip space, not the view depth.
 
-### Upright sprites: a projected priority point
+### The rule
 
-An upright billboard does not write its rasterised depth. Every fragment of the sprite writes one constant depth: the depth of a synthetic priority point (`art/main.wesl`, `logical_depth_from_projected_priority`).
+ClassicUO (`Map.cs AddGameObject`, `GameScene` draw) draws the cells by diagonal row and, within a cell, by priority z:
+
+- **Statics:** priority z = tile z, - 1 for Background, + 1 when the tiledata height is not 0, + 1 for MultiMovable. Surface adds nothing (ClassicUO has that line commented out). `statics_collect.rs resolve_priority_z_units`.
+- **Land:** its average z - 2 (z - 1 for the tile, - 1 again when it is added to the cell). The average z is `Land.AverageZ`: the mean of the corner pair along the diagonal that rises less; on level ground the cell's z.
+- **Equal priority z in one cell:** the later static draws over the earlier one.
+
+Dynamapper turns that into one logical distance (`statics_collect.rs logical_draw_distance`, `art/depth.wesl`):
 
 ```text
-P = (tile_x, priority_z_units * HEIGHT_SCALE + depth_class_logical_offset(depth_class), tile_y)
-depth = static_priority_depth(position_world_to_clip(P), clip_from_view, sort_bias_ordinal)      art/depth.wesl
+L = row + (priority z + tie level / PRIORITY_TIE_LEVELS_PER_Z) / PRIORITY_Z_STEPS_PER_ROW
+    PRIORITY_Z_STEPS_PER_ROW = 264   (> the priority z range, -130..129: z never crosses a row)
+    PRIORITY_TIE_LEVELS_PER_Z = 9
 ```
 
-- **`tile_x` and `tile_y`** are the sprite's anchored cell position. CC art adds (1, 1) and EC art adds (0.5, 1.5) (`statics_collect.rs`), so both add 2 to x + y.
-- **`priority_z_units`** is `resolve_priority_z_units`: the tile z plus `effective_priority_height`.
-  - A height of 0 counts as 10 unless the tile is Background or Surface.
-  - Bridge halves the height.
-  - `SurfaceLikeFloor` takes the bare z.
+- **The row** is the diagonal x + y of the point: an upright sprite's anchor (CC art anchors at (1, 1), EC art at (0.5, 1.5), so both add 2). The land, the flat quads, the ground art and the projected shadows take their cell's anchor, the cell's corner + (1, 1) (`CELL_DEPTH_ANCHOR`), for every fragment of the cell. ClassicUO draws a cell's land and statics as whole objects in the cell's row; one depth per cell does the same, so a cell's floor covers its own land and the walls below it whatever their real heights.
+- **The authored EC camera quads** (`flat_quad` 3, Rotated in the tileart, such as the EC cobblestones) stand as cards at the EC art's anchor, so they take that anchor (`sprite_depth_anchor`).
+- **The tie level** is 0 for the land, the flat quads (`flat_quad` 1 and 2) and the ground art. Upright sprites take 1..8: 1 + 2 × min(rank, 3) + (x mod 2), with rank the sprite's place among the statics of its cell and priority z in emission order (`assign_sprite_tie_levels`). The later static is nearer, as in ClassicUO; the x parity separates equal statics of neighbouring cells in one row, whichever chunk batch draws first. A KR client shadow takes its caster's level - 1.
+- **Every fragment that writes depth** takes the depth of its logical point: the cell at a logical height of the priority term in world units, `(x, (priority z + level / 9) / 264, y)`. Its view z, `dot(view z axis, P - camera)`, is computed camera-relative, so the levels survive at any map position. The active camera's projection maps it to the depth (`view_z_depth`), orthographic or perspective. The view direction runs along (1, 1, 1), so the view z is L / √3 plus a constant and the depth is monotonic in L in both cameras.
+  - Upright sprites and KR client shadows: one constant depth over the card (vertex shader, `sprite_priority_view_z`).
+  - Land: its cell's depth at the average z - 2, in the fragment shader (`land/main.wesl`, `cell_priority_view_z`, `frag_depth`). The average z takes four reads of the tile atlas.
+  - Flat quads and ground art: one constant depth at their cell's anchor, which the instance carries as `tile_x`, `tile_y` (`cell_depth_anchor`).
+  - Projected shadows: the depth of the cell each fragment falls on, at the caster's base z - 0.5, level 0: in front of the land and the Background floors there, behind the statics standing at that base.
+  - Pick pass and light scene: the same depth. The light scene accepts a drawn depth within 0.45 tie levels of view z (`LIGHT_SCENE_DEPTH_TOLERANCE_LEVELS`).
+  - Caves drawn over the map: lifted toward the camera in view z (`cave_lifted_view_z`), so the lift holds in both cameras.
+- **The CPU sort** (`static_depth_key`, f64) and the GPU take the same function. `depth_tests.rs` checks that every pair the CPU orders the GPU orders the same way, strictly, down to adjacent tie levels, at Britain's map position, in the orthographic camera and in the perspective camera at orbit distances 138 (1080p, zoom 1) and 552.
+- **KR uses one parameter more.** To weigh a row as the KR client does, set `PRIORITY_Z_STEPS_PER_ROW` to 35.4 (shader and CPU together). There is no preset or settings key.
 
-  This is the classic draw priority, as in ClassicUO.
-- **`depth_class_logical_offset`** is in world-y units:
-  - Background: -0.001;
-  - Roof: +0.002;
-  - Foliage: +2.0 (22 z);
-  - SurfaceLikeFloor: none. Its bare-z priority already puts it behind what stands on it. The CPU sort keeps -4.0
-    (-44 z) for the draw order only: on the priority point it sank every upright table, counter, bed and display case
-    under the land or floor it stood on ([static depth ordering](../../agent_notes/static_depth_ordering.md#upright-surface-items-under-the-land)).
-- **`static_priority_depth`** subtracts the tie-break ordinal. In orthographic it subtracts 1e-6 NDC per ordinal. In perspective it moves the point 0.002 view units per ordinal (see [static depth ordering](../../agent_notes/static_depth_ordering.md#perspective-tie-bias)).
-- **The ordinal** comes from `assign_sprite_depth_tie_breakers`. It numbers sprites whose CPU key `static_depth_key_with_tie_break` is equal.
-  - That key, (x + y) + 0.01 (127 + priority z) + class offset, only finds equal keys and orders picking.
-  - Its 0.01 per z is not the GPU's scale.
-- **KR client shadows** take their caster's priority point (`client_shadow_logical_depth`), half a tie-break step behind (`CLIENT_SHADOW_DEPTH_ORDINAL_OFFSET`). A wall's shadow moves with the wall shift (-1, 0, -1) (`client_shadow_logical_offset`).
-- **The projected-shadow pass** (`PASS_MODE_SHADOW`, not KR's) writes its rasterised depth.
+### What the rule removed, and why
 
-### Why one diagonal step is worth about 11 z
-
-Depth runs along the view direction. A point p is nearer to the camera by (p · (1, 1, 1)) / √3, which increases with x + y + world y:
-
-- one step in x or in UO y (world z) adds 1;
-- one UO z unit adds 4/44 of world y.
-
-So a step along the diagonal is worth 1 / (4/44) = **11 z units**. Raising a sprite by 11 priority units brings its point as near as moving it one cell toward the viewer. Nobody chose this ratio; it follows from the 4-pixel z unit, the 44-pixel cell and the (1, 1, 1) camera. This is the depth that the camera and the screen geometry actually give.
-
-### Land and flat quads: real surface depth
-
-- **Terrain** is a real 3D mesh with vertex heights z · 4/44. Its shader writes no `frag_depth`, so it keeps its rasterised depth, which follows the same geometric scale.
-- **Flat quads**, meaning CC surface-like ground and water quads and the EC item surfaces (`flat_quad` 1 and 2), write the depth of their horizontal plane, solved per pixel (`horizontal_plane_frag_depth`). Coplanar quads then write bit-identical depth.
-- **`horizontal_plane_painter_depth`** pushes the near half of each cell one ULP back, so the cell nearer the viewer wins the pixel it shares with its neighbour, as in the clients' painter order.
-- **Authored EC camera quads** (`flat_quad` 3) keep their rasterised depth.
-- **Perspective** keeps the rasterised depth throughout.
-
-Sprites, land and flat quads therefore all live on one geometric scale. That is why a sprite and the slope it stands on agree.
+| Removed | What it did | Why it went |
+|---|---|---|
+| `effective_priority_height` | Full tiledata height (10 for a flat Regular item, half for a Bridge) on the priority. | Not traced from either client. A wall's 20 counted nearly two rows, so it covered the table one row in front (Minoc hall, 2026-11-15). Replaced by ClassicUO's + 1. |
+| The geometric scale (11 z per row) | Sprites' priority points and the land's rasterised depth on the camera's own geometry. | A raised static more than 11 z per row above a nearer one drew over it. Rows now dominate. |
+| Foliage +2.0 world y (22 z) | Trees two rows nearer. | No client has it. Under row dominance it can only cross rows, which the rule forbids. |
+| Background -0.001 and Roof +0.002 world y | Tie nudges between floors, roofs and walls at one priority. | Background is ClassicUO's - 1 priority z; a roof has no special priority in ClassicUO. |
+| SurfaceLikeFloor bare z, and its -4.0 CPU key | Tables and counters at their bare z; the CPU key 44 z down. | ClassicUO gives them z + 1 for their height, like any static. The CPU key now equals the GPU depth. |
+| The tie-break ordinal (1e-6 NDC orthographic, 0.002 view units perspective) | Separated equal keys; the earlier static drew nearer. | Replaced by the tie levels above, a fixed fraction of a priority z in both cameras; the later static is nearer, as in ClassicUO. |
+| The KR shadow's half tie-break step | Shadow just behind its caster. | Half a level is under one unit in the last place of the orthographic depth; a whole level is the least that survives. |
+| Perspective's rasterised land and flat-quad depth | Real geometry in perspective. | One rule in both cameras. |
+| The horizontal plane solved per pixel for flat quads and ground art (`horizontal_plane_frag_depth`) | The real point of a flat surface under the pixel. | A flat surface spanned its cell's rows, from x + y to x + y + 2, while the sprites stand at x + y + 2: a lower wall of the same cell drew over most of the floor laid on its top (the keep's and the castle's upper floors). It takes its cell's depth now. |
+| The painter nudge (`horizontal_plane_painter_depth`) | One unit in the last place in the near half of a flat quad's cell, so the nearer of two coplanar quads of neighbouring cells won the pixels they share. | Neighbouring cells that share an edge are a row apart now. Cells of one row meet only at a corner. |
+| The land's per-vertex depth | The land's real point under the pixel. | As for the flat quads: the land of a cell spanned its rows, so a sprite of the cell behind covered the near half of the nearer land, and the land of a cell covered the far part of the flat art laid on it. |
 
 ## The KR client
 
@@ -122,28 +119,45 @@ Take two upright sprites: a raised sprite A, dz priority units above a sprite B,
 
 | | A in front when |
 |---|---|
-| Dynamapper | dz > 11 d |
+| Dynamapper (ClassicUO, 2026-11-16) | never: d > 0 decides |
+| Dynamapper before 2026-11-16 (geometric) | dz > 11 d |
 | KR client | dz > 35.4 d |
+| ClassicUO exactly | dz > 100 d (its 0.01 per z) |
 
-The two agree when d = 0, when dz < 11 d, and when dz > 35.4 d. They disagree when 11 d < dz < 35.4 d: Dynamapper puts the raised sprite in front, the client the nearer one.
+Dynamapper and the KR client now disagree only when dz > 35.4 d: the client draws a static that much higher over the nearer one, Dynamapper the nearer one. ClassicUO's own key, (x + y) + 0.01 (127 + priority z), lets z cross rows only above 100 z per step; Dynamapper does not.
 
 | Case | dz | d | Result |
 |---|---|---|---|
-| Items on a table, small stacks, a crate on a crate | 0..10 | 0..1 | Same answer in both. |
-| An upper-floor wall against the ground floor's wall one cell nearer | ≈ 20 | 1 | Dynamapper: the upper wall in front. KR: the lower wall in front. |
-| A roof (+30..+40 over the floor walls) | 30..40 | 1..3 | Dynamapper: the roof in front up to dz/11 ≈ 3 steps. KR: at most 1 step. |
-| Towers and battlements (+40 and more) | 40+ | 1..3 | As for roofs, with a longer reach in Dynamapper. |
+| Items on a table, small stacks, a crate on a crate | 0..10 | 0..1 | Same answer everywhere. |
+| An upper-floor wall against the ground floor's wall one cell nearer | ≈ 20 | 1 | Dynamapper and KR: the lower wall in front (before 2026-11-16: the upper wall). |
+| A roof (+30..+40 over the floor walls) | 30..40 | 1..3 | Dynamapper: the nearer row. KR: the roof in front at 1 step when dz > 35.4. |
+| Towers and battlements (+40 and more) | 40+ | 1..3 | KR: the raised sprite in front up to dz / 35.4 steps. Dynamapper: the nearer row. |
 
 Which sprite wins only shows where their art overlaps on screen. A raised sprite is drawn higher up the screen, so many of these pairs never share a pixel.
 
+The land, the flat quads and the ground art follow the same rule: their cell's row and priority z. In the pair survey they count as statics of their cell.
+
+Pair survey, map 1's MUL statics: every pair of statics one or two diagonal steps apart (8,292,065 pairs; `uodynamapper-scratch/cuo-draw-order/py/survey.py`, not in the repository).
+
+| Rule | Disagrees with KR | of them at the same z | Disagrees with ClassicUO | of them at the same z |
+|---|---|---|---|---|
+| Before (full height, foliage +22 z, 11 z per step) | 786,936 | 238,699 | 915,578 | 238,699 |
+| ClassicUO, rows dominate (2026-11-16) | 129,431 | 0 | 609 | 0 |
+
+- 916,183 pairs change winner (238,699 of them at the same z).
+- The 609 left against ClassicUO are its 0.01 per z crossing rows (dz > 100 per step).
+- The largest groups left against KR are raised statics more than 35.4 z per step above a nearer one: Background against Background one step apart with dz 21..40 (22,368 pairs, where KR's 35.4 also lets z win), a roof against Background with dz > 40 (13,792), Background against a wall with dz 21..40 (12,071).
+- Earlier variants of the height term, against KR: capped at 10, 735k (125k at the same z); the client's + 1, 785k (132k).
+- Ties left to the tie levels: groups of statics with one cell and one priority z, of sizes 1: 2,765,200; 2: 71,017; 3: 4,571; 4: 736; 5: 140; 6: 44; 7: 6. 246 statics (0.009 %) lie beyond the 4 ranks and share the last rank's level; they keep their draw order within their chunk batch.
+
 ### Shadow reach
 
-A KR client shadow sorts at its caster's depth. It therefore darkens a receiver dz priority units below the caster that lies up to:
+A KR client shadow sorts at its caster's depth, one tie level behind. It darkens a receiver dz priority units below the caster that lies:
 
-- **dz / 11** diagonal steps in front of the caster in Dynamapper;
-- **dz / 35.4** steps in the client.
+- in Dynamapper, in the caster's own row or behind it, never a row in front (before 2026-11-16: up to dz / 11 rows in front);
+- in the client, up to dz / 35.4 steps in front of the caster.
 
-So a high caster reaches a little further forward onto low receivers in Dynamapper. At the caster's own level (dz = 0) the two match.
+So a high caster's shadow reaches a little less far forward onto low receivers in Dynamapper than in the client. At the caster's own row the two match.
 
 ## The no-z experiment (2026-11-12)
 
@@ -179,32 +193,71 @@ The sheets show the current shader, the no-z variant, and the changed pixels in 
 
 Gain: in KR-like, the shadows' reach and the stacking of raised sprites would match the KR client.
 
-Costs:
+Since 2026-11-16 the land, the flat quads, the sprites and their shadows share one logical distance, so the scale is one parameter, `PRIORITY_Z_STEPS_PER_ROW` (the shader's and the CPU's). The costs left:
 
-- **Only KR's rule is traced.** Classic and UOD-Painterly follow the Classic client. Its painter order, taken from ClassicUO's `priorityZ` and not traced in the binary, is yet another weighting. The Enhanced client's depth rule is untraced. A per-style scale would need its own trace for each client.
-- **Land would need the same bias per terrain vertex.** Otherwise a sprite's priority point and the slope under it would compare on different scales, and sprites would sink into or float over rising terrain. The flat-quad plane depth and its painter nudge would need the same treatment.
-- **Depth would stop following the geometry.** Today the scale falls out of the camera. A fixed bias would have to be redefined for the perspective camera, where the view direction and the depth's non-linearity change with distance.
-- **The tie-break ordinal, the depth-class offsets and the painter nudge** were tuned on the geometric scale. Their seams would need retuning.
-- **Validation:** the change would need a full revalidation of all four styles (Classic, Enhanced, KR-like, UOD-Painterly) against all the art and land sources.
+- **Only KR's rule is traced.** Classic and UOD-Painterly follow the Classic client (ClassicUO's rule). The Enhanced client's depth rule is untraced. A per-style scale would need a per-style parameter (a uniform) and its own trace for each client.
+- **z would cross rows.** At 35.4 the tie levels and the land's z - 2 still order as in KR, but the range check in `depth_tests.rs` and the pair survey would need redoing.
+- **Validation:** a full revalidation of all four styles (Classic, Enhanced, KR-like, UOD-Painterly) against all the art and land sources.
 
-## Decision (2026-11-12)
+## Decision (2026-11-12, superseded)
 
-The user kept the geometric scale: about 11 z per diagonal step, for every style. KR client shadows keep their caster's priority depth, which is the client's rule expressed on Dynamapper's scale.
+The user kept the geometric scale: about 11 z per diagonal step, for every style. KR client shadows kept their caster's priority depth, which is the client's rule expressed on Dynamapper's scale. The section [Where the two disagree](#where-the-two-disagree) gives the old rule's numbers next to the new ones.
 
-Revisit this only if a KR reference screenshot shows a mismatch that this difference explains, for example:
+## Decision (2026-11-16, pending the user's review of the sheets)
 
-- an upper-floor wall drawn over a nearer lower wall;
-- a roof covering something the client shows in front of it;
-- a shadow reaching a receiver the client leaves lit.
+One draw-order rule for every style (Classic, Enhanced, KR-like, UOD-Painterly), identical in the isometric and perspective cameras: ClassicUO's. The nearer row always wins over any height; within a row the priority z decides (tile z, + 1 for a non-zero tiledata height, - 1 for Background, + 1 for MultiMovable; land z - 2); `effective_priority_height` is removed. Delivered on a branch with before/after sheets of every fixture in all four styles and both cameras; nothing is merged before the user has seen them.
 
-If so, run the cheap experiment first:
+### Before/after sheets
 
-1. In KR-like only, scale the priority term in `logical_depth_from_projected_priority` and `client_shadow_logical_depth` by 11 / 35.4. This affects sprites and their shadows; leave land and flat quads untouched.
-2. Capture multi-storey buildings, castles and roofs before and after against the reference.
-3. Watch sprites on slopes: with land untouched, they are where the mismatch would first show.
+Each sheet shows one fixture, before and after for every style and source. The sheets are in a local scratch folder, which is not kept in the repository, under `/home/claudio/rust-target/uodynamapper-scratch/visual-baselines/compares/`:
+
+- `before-cuo-order-ortho--after-cuo-order-ortho/sheets/<fixture>.jpg`: the isometric camera, the full tier;
+- `before-cuo-order-persp--after-cuo-order-persp/sheets/<fixture>.jpg`: the same fixtures in the perspective camera.
+
+The before binary is a23b6e0d. It includes dev 7ba3b49d and the draw-order fixtures. The after binary is this branch.
+
+### Benchmark
+
+The benchmark used a 1900 x 1000 window at zoom 0.5, with no frame limiter and no vsync, in the afternoon. It had two views:
+
+- land-mountains: map 1, (2542, 488), statics off;
+- city-britain: map 1, (1496, 1628).
+
+Each cell is the median of three launches; each launch's figure is the median of 8 s of the app's frame time. The before and after launches alternate.
+
+| Camera | Style | View | Frame ms before (range) | Frame ms after (range) | Change | GPU busy before | GPU busy after |
+|---|---|---|---|---|---|---|---|
+| orthographic | Classic cc/cc | city-britain | 8.22 (8.21-8.23) | 8.34 (8.21-8.40) | +1.5% | 67% | 72% |
+| orthographic | Classic cc/cc | land-mountains | 5.77 (5.76-5.78) | 5.76 (5.74-5.82) | -0.2% | 61% | 70% |
+| orthographic | KR-like ec/kr | city-britain | 22.21 (22.15-22.21) | 23.07 (23.05-23.21) | +3.9% | 99% | 99% |
+| orthographic | KR-like ec/kr | land-mountains | 14.47 (14.46-14.52) | 15.57 (15.51-15.62) | +7.6% | 98% | 98% |
+| perspective | Classic cc/cc | city-britain | 8.27 (8.23-8.29) | 8.33 (8.33-8.36) | +0.8% | 68% | 73% |
+| perspective | Classic cc/cc | land-mountains | 5.73 (5.71-5.79) | 5.76 (5.74-5.77) | +0.5% | 61% | 70% |
+| perspective | KR-like ec/kr | city-britain | 22.00 (21.97-22.00) | 22.84 (22.84-22.85) | +3.9% | 99% | 99% |
+| perspective | KR-like ec/kr | land-mountains | 15.66 (15.49-15.67) | 16.68 (16.65-16.81) | +6.5% | 98% | 98% |
+
+**Classic** is not GPU-bound. Its frame time is unchanged and its GPU busy rises by about 9 points on land.
+
+**KR-like** is GPU-bound and pays about 1 ms:
+
+- 4 to 8% on land-heavy views;
+- about 4% in a city.
+
+The cost is the land's per-fragment depth, which turns off early depth testing, plus the four atlas reads of the average z.
 
 ## Open items
 
+Left by the 2026-11-16 rule, for the user's review:
+
+- **The player cube** keeps its rasterised depth, so at a high z it can draw over statics several rows in front of it.
+- **A free or rotated perspective camera** is row-dominant only near the (1, 1, 1) direction: the logical points are projected along the camera's own view axis.
+- **Statics beyond four ranks** (246 on map 1) share the last tie level and keep their order only within their chunk batch.
+- **KR client shadows** no longer reach rows in front of their caster (see Shadow reach).
+- **Mixed CC and EC anchors** in one row differ by x parity, not by art source; an EC sprite and a CC sprite of one cell and priority z keep their emission order.
+- **The land's depth is written in the fragment shader** (`frag_depth`), which turns off early depth testing for the land and costs the GPU-bound KR-like style 4 to 8% of its frame time on land (see Benchmark). A per-cell flat varying for the average z, or a conservative depth, could recover part of it.
+- **Hairline wall tops in perspective.** An upper floor now covers the walls under it, but in the perspective camera a 1-pixel line of an EC wall's top can show along the floor tiles' edges (britain-house-z50-zview-roof-ridge, classic ec/ec). Before, the whole wall top showed through.
+- **EC cave rock faces** composite differently: they are ordered by row now, no longer by height (minoc-mine-floor-flat-art and the Minoc mine fixtures, all EC styles). Neither order has been checked against an EC client capture.
+- **ClassicUO's non-stretched land.** ClassicUO keeps the bare z for a land with no texmap or a wet land without a texture; Dynamapper stretches every land and takes the average z. They differ only on sloped cells of such land.
 - **UOObject +0x70:** the B tie-break ordinal is unidentified. It could be a serial, a load order or a list index.
 - **Stencil value 1:** whether any pass after the shadow effect reads the 1 that shadows write is not traced.
 - **Render groups 0x00c931a4, 0x00c931ac and 0x00c931a8:** their contents in the main scene pass are not identified.

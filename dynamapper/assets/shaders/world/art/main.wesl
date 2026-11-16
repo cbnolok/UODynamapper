@@ -31,7 +31,7 @@ import package::shaders::world::art::art_bindings::{
     PASS_MODE_TRANSPARENT, PASS_MODE_SHADOW, PASS_MODE_CLIENT_SHADOW
 };
 import package::shaders::world::art::client_shadow::{client_shadow_casts, client_shadow_world_offset,
-    client_shadow_logical_offset, client_shadow_priority_depth};
+    client_shadow_logical_offset, CLIENT_SHADOW_TIE_LEVEL_OFFSET};
 import package::shaders::world::art::client_grunge::{client_grunges, client_grunge_uv, apply_client_grunge};
 import package::shaders::world::art::hue::{apply_static_hue, apply_ec_sprite_hue, STATIC_HUE_FLAG_APPLY, STATIC_HUE_FLAG_EC_SPRITE};
 import package::shaders::world::art::shading::{apply_art_surface_shading, art_local_light_at_corner, STATIC_FLAG_FLAT_ART,
@@ -39,8 +39,8 @@ import package::shaders::world::art::shading::{apply_art_surface_shading, art_lo
 import package::shaders::world::art::surface_blend::static_surface_coverage;
 import package::shaders::world::ec_item_water::{ec_item_is_water, sample_ec_item_water};
 import package::shaders::world::ec_liquid_camera::ec_liquid_camera_reflection_uv;
-import package::shaders::world::art::depth::{static_priority_depth, horizontal_plane_painter_depth, cave_lifted_depth,
-    cave_outside_rgb};
+import package::shaders::world::art::depth::{sprite_priority_view_z, cell_priority_view_z, view_z_depth,
+    cave_lifted_view_z, cave_outside_rgb};
 import package::shaders::world::projection::camera_relative_world_to_clip;
 
 struct ArtVertexOutput {
@@ -48,7 +48,8 @@ struct ArtVertexOutput {
     @location(0) uv: vec2<f32>,
     @location(1) uv_b: vec2<f32>,
     @location(2) color: vec4<f32>,
-    @location(3) logical_depth: f32,
+    // The view z of the fragment's logical point (art/depth.wesl): constant over the instance.
+    @location(3) @interpolate(flat) logical_view_z: f32,
     @location(4) @interpolate(flat) depth_class: u32,
     @location(5) @interpolate(flat) is_wet: u32,
     @location(6) world_pos: vec3<f32>,
@@ -58,6 +59,8 @@ struct ArtVertexOutput {
     @location(9) client_grunge_uv: vec2<f32>,
     // The static local light, interpolated between the quad's corners (`art_local_light_at_corner`).
     @location(10) local_light_rgba: vec4<f32>,
+    // A projected shadow's point on the ground: its cell decides its depth (`shade_fragment`).
+    @location(11) shadow_ground_xz: vec2<f32>,
 }
 
 struct ArtFragmentOutput {
@@ -65,61 +68,22 @@ struct ArtFragmentOutput {
     @builtin(frag_depth) depth: f32,
 }
 
-fn clip_depth_to_frag_depth(clip_position: vec4<f32>) -> f32 {
-    return clamp(clip_position.z / clip_position.w, 0.0, 1.0);
+// A projected shadow lies half a priority z under the base it is cast from: in front of the land (z - 2) and the
+// Background floors (z - 1) there, behind the statics standing at that base (z and up).
+const PROJECTED_SHADOW_PRIORITY_Z_OFFSET: f32 = -0.5;
+
+// The view z of an upright sprite's logical point: its anchor at its priority z and tie level (art/depth.wesl).
+fn sprite_logical_view_z(inst: SpriteInstance) -> f32 {
+    return sprite_priority_view_z(vec2<f32>(inst.tile_x, inst.tile_y), inst.priority_z_units,
+        f32(inst.sort_bias_ordinal));
 }
 
-// An upright SurfaceLikeFloor sprite (a table, counter, bed or display case, a mat or a decal drawn upright) takes no
-// offset: its bare-z priority already sorts it behind what stands on it, and it stays in front of the land and the
-// Background floor it stands on. The draw-order offset of the CPU sort (statics_collect.rs
-// SURFACE_LIKE_DEPTH_CLASS_OFFSET, -4 world y: 44 z) put that point under them here, which hid the sprite wherever
-// land or a floor lay less than 44 z below it.
-fn depth_class_logical_offset(depth_class: u32) -> f32 {
-    if (depth_class == DEPTH_CLASS_BACKGROUND) {
-        return -0.001;
-    }
-
-    if (depth_class == DEPTH_CLASS_ROOF) {
-        return 0.002;
-    }
-
-    if (depth_class == DEPTH_CLASS_FOLIAGE) {
-        return 2.0;
-    }
-
-    return 0.0;
-}
-
-fn logical_depth_from_projected_priority(inst: SpriteInstance) -> f32 {
-    let logical_world_pos = vec3<f32>(
-        inst.tile_x,
-        inst.priority_z_units * HEIGHT_SCALE + depth_class_logical_offset(inst.depth_class),
-        inst.tile_y,
-    );
-    return static_priority_depth(view_transformations::position_world_to_clip(logical_world_pos),
-        view.clip_from_view, inst.sort_bias_ordinal);
-}
-
-// The client shadow's depth: its caster's priority point, moved with a wall's shift and half a tie-break step behind
+// The client shadow's: its caster's anchor, moved with a wall's shift, one tie level behind the caster
 // (client_shadow.wesl).
-fn client_shadow_logical_depth(inst: SpriteInstance) -> f32 {
-    let logical_world_pos = vec3<f32>(
-        inst.tile_x,
-        inst.priority_z_units * HEIGHT_SCALE + depth_class_logical_offset(inst.depth_class),
-        inst.tile_y,
-    ) + client_shadow_logical_offset(inst);
-    return client_shadow_priority_depth(view_transformations::position_world_to_clip(logical_world_pos),
-        view.clip_from_view, inst.sort_bias_ordinal);
-}
-
-// The world XZ centre of a flat quad, laid out as the vertex shader lays it: on the diagonal screen basis for the CC
-// flat art (flat_quad 1), on the axis-aligned cell for the EC item surfaces (flat_quad 2).
-fn flat_quad_center_xz(inst: SpriteInstance) -> vec2<f32> {
-    let mid = (inst.local_min + inst.local_max) * 0.5;
-    if (inst.flat_quad == 1u) {
-        return vec2<f32>(inst.world_x, inst.world_z) + BILLBOARD_RIGHT_XZ * mid.x + FLAT_QUAD_FORWARD_XZ * mid.y;
-    }
-    return vec2<f32>(inst.world_x, inst.world_z) + mid;
+fn client_shadow_logical_view_z(inst: SpriteInstance) -> f32 {
+    let anchor = vec2<f32>(inst.tile_x, inst.tile_y) + client_shadow_logical_offset(inst).xz;
+    return sprite_priority_view_z(anchor, inst.priority_z_units,
+        f32(inst.sort_bias_ordinal) - CLIENT_SHADOW_TIE_LEVEL_OFFSET);
 }
 
 // Every corner of a non-caster lands on this one clip point: zero-area triangles draw nothing.
@@ -212,15 +176,20 @@ fn vertex(vertex: Vertex) -> ArtVertexOutput {
     out.uv = mix(inst.uv_min, inst.uv_max, corner);
     out.uv_b = vec2<f32>(f32(inst.layer), 0.0);
     out.color = inst.color_rgba;
+    out.shadow_ground_xz = vec2<f32>(0.0);
     if (sprite_params.pass_mode == PASS_MODE_SHADOW) {
-        out.logical_depth = clip_depth_to_frag_depth(out.position);
+        // The fragment takes the depth of the cell it falls on (`shade_fragment`).
+        out.shadow_ground_xz = projected_world_pos.xz;
+        out.logical_view_z = 0.0;
     } else if (sprite_params.pass_mode == PASS_MODE_CLIENT_SHADOW) {
-        out.logical_depth = client_shadow_logical_depth(inst);
+        out.logical_view_z = client_shadow_logical_view_z(inst);
     } else {
-        out.logical_depth = logical_depth_from_projected_priority(inst);
+        // An upright card at its anchor; a flat quad (CC water and dry ground diamonds, flat_quad 1; EC item surfaces,
+        // 2) at its cell's anchor, which the instance carries, at tie level 0, as the land under it.
+        out.logical_view_z = sprite_logical_view_z(inst);
     }
     // A cave drawn over the map shows in front of the land around it, its shadows with it.
-    out.logical_depth = cave_lifted_depth(out.logical_depth, inst.is_wet_flags);
+    out.logical_view_z = cave_lifted_view_z(out.logical_view_z, inst.is_wet_flags);
     out.depth_class = inst.depth_class;
     out.is_wet = inst.is_wet_flags & 1u;
     out.world_pos = world_pos;
@@ -238,7 +207,7 @@ fn vertex(vertex: Vertex) -> ArtVertexOutput {
 
 fn shade_fragment(in: ArtVertexOutput, sample_index: u32) -> ArtFragmentOutput {
     var out: ArtFragmentOutput;
-    out.depth = in.logical_depth;
+    out.depth = view_z_depth(in.logical_view_z);
 
     if sprite_params.render_mode == 1u {
         // Dot mode (radarcol)
@@ -273,6 +242,9 @@ fn shade_fragment(in: ArtVertexOutput, sample_index: u32) -> ArtFragmentOutput {
     }
 
     if (sprite_params.pass_mode == PASS_MODE_SHADOW) {
+        // Lying on the land of the cell it falls on, half a priority z over its base.
+        out.depth = view_z_depth(cave_lifted_view_z(cell_priority_view_z(in.shadow_ground_xz,
+            inst.base_world_y / HEIGHT_SCALE + PROJECTED_SHADOW_PRIORITY_Z_OFFSET), inst.is_wet_flags));
         if (inst.flat_quad >= 2u) {
             discard;
         }
@@ -345,36 +317,6 @@ fn shade_fragment(in: ArtVertexOutput, sample_index: u32) -> ArtFragmentOutput {
         return out;
     }
 
-    // Flat CC surface-like water quads lie coplanar with the terrain mesh they overlay.
-    // Every other sprite writes a per-instance CONSTANT logical depth
-    // (logical_depth_from_projected_priority projects a single point at the cell origin,
-    // inst.tile_x/inst.tile_y). That is correct for upright billboards — thin cards that must
-    // sort in classic painter order as a unit — but wrong for a flat quad that spans a whole
-    // tile in the ground plane: a single constant cannot track the terrain's per-fragment depth
-    // gradient across the tile (the terrain's depth varies by ~2 world-units of x+z over one
-    // cell, ~5.8e-4 in NDC, vs. the Background class' 0.001 world-Y logical offset, ~3e-7 NDC —
-    // a ~2000x mismatch). A flat world-space surface therefore needs its own rasterized geometric
-    // depth instead of an upright sprite's synthetic constant priority depth. The quad geometry
-    // is already placed STATIC_ART_Y_BIAS (world-Y) above the terrain, so the two parallel planes
-    // retain a small uniform separation without a depth-gradient mismatch. This also remains
-    // valid for a future perspective camera, unlike ClassicUO's per-sprite synthetic depth.
-    // Authored EC camera quads also use their rasterized plane depth, which is
-    // constant across their camera-facing geometry rather than a horizontal cell.
-    //
-    // This policy prevents coplanar/intersection artifacts without changing authored alpha or
-    // color coverage. Only reached in the opaque/transparent passes; billboards and the shadow
-    // pass are unaffected.
-    if (inst.flat_quad == 3u) {
-        out.depth = in.position.z;
-    } else if (inst.flat_quad != 0u) {
-        out.depth = horizontal_plane_painter_depth(in.position, inst.world_y, in.world_pos.xz, flat_quad_center_xz(inst));
-        // The pick target crops XY, so its pixel is not a screen position.
-        @if(STATIC_PICK)
-        out.depth = in.position.z;
-    }
-    if (inst.flat_quad != 0u) {
-        out.depth = cave_lifted_depth(out.depth, inst.is_wet_flags);
-    }
     // The light scene keeps the fragment the opaque pass drew at its pixel (light_scene.wesl). One unfiltered tap
     // breaks a depth tie with an empty texel; an item surface's coverage is its surface's, so its depth decides.
     @if(LIGHT_SCENE) {

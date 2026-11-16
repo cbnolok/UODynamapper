@@ -2,9 +2,29 @@ use bevy::{asset::{uuid::Uuid, AssetId}, prelude::*,
     shader::{Shader, ShaderCache, ShaderCacheError, ShaderCacheSource}};
 use wgpu::util::DeviceExt;
 
+use super::statics_collect::logical_draw_distance;
+
+// A view far into the map (Britain), where the world coordinates keep the fewest fraction bits.
+const TEST_FOCUS: Vec3 = Vec3::new(1496.0, 0.9, 1628.0);
+// The orthographic camera's offset from its focus along each axis (camera.rs BASE_OFFSET_FROM_PLAYER) and the
+// perspective camera's orbit distances at a 1080-pixel window and zoom 1 and 4 (camera/perspective.rs
+// orbit_distance), all along (1, 1, 1). The farther the camera, the fewer bits of its view z are left for the levels.
+const TEST_ORTHO_OFFSET: f32 = 5.0;
+const TEST_PERSPECTIVE_DISTANCES: [f32; 2] = [138.0, 552.0];
+// The art view's orthographic range (camera.rs ORTHO_NEAR, ORTHO_FAR), the perspective lens (camera/perspective.rs).
+const TEST_ORTHO_NEAR: f32 = -1000.0;
+const TEST_ORTHO_FAR: f32 = 1000.0;
+const TEST_PERSPECTIVE_FOV: f32 = 0.25;
+const TEST_PERSPECTIVE_NEAR: f32 = 0.1;
+// Priority z the cases span: the land's lowest (z -128 - 2) to the highest static's (127 + 2).
+const TEST_PRIORITY_Z: [f32; 9] = [-130.0, -2.0, 0.0, 5.0, 6.0, 7.0, 8.0, 40.0, 129.0];
+const TEST_TIE_LEVELS: [u32; 4] = [0, 1, 2, 8];
+// Cells around the focus: three rows, more than one cell in a row.
+const TEST_CELL_OFFSETS: [(f32, f32); 6] = [(-1.0, 0.0), (0.0, 0.0), (1.0, -1.0), (1.0, 0.0), (2.0, -1.0), (0.0, 2.0)];
+
 #[test]
-#[ignore = "requires a Vulkan adapter; run explicitly for sprite priority changes"]
-fn sprite_tie_bias_stays_local_across_perspective_distances() {
+#[ignore = "requires a Vulkan adapter; run explicitly for draw order changes"]
+fn gpu_depth_follows_the_cpu_draw_order_in_both_cameras() {
     bevy::tasks::block_on(async {
         let instance = wgpu::Instance::new(wgpu::InstanceDescriptor::new_without_display_handle());
         let adapter = instance.request_adapter(&wgpu::RequestAdapterOptions::default()).await.unwrap();
@@ -19,19 +39,21 @@ fn sprite_tie_bias_stays_local_across_perspective_distances() {
         shaders.set_shader(id(1), Shader::from_wesl(
             include_str!("../../../../../../assets/shaders/world/art/depth.wesl"), "shaders/world/art/depth.wesl"));
         shaders.set_shader(id(0), Shader::from_wesl(r#"
-import package::shaders::world::art::depth::static_priority_depth;
-struct DepthCase { projection: mat4x4<f32>, clip: vec4<f32>, ordinal: vec4<u32> }
+import package::shaders::world::art::depth::{priority_logical_height, logical_view_z_from, projected_view_z_depth};
+struct DepthCase { projection: mat4x4<f32>, camera: vec4<f32>, axis: vec4<f32>, cell: vec4<f32> }
 @group(0) @binding(0) var<storage, read> cases: array<DepthCase>;
 @group(0) @binding(1) var<storage, read_write> result: array<f32>;
 @compute @workgroup_size(1)
 fn main(@builtin(global_invocation_id) index: vec3<u32>) {
     let test = cases[index.x];
-    result[index.x] = static_priority_depth(test.clip, test.projection, test.ordinal.x);
+    let view_z = logical_view_z_from(test.cell.xy, priority_logical_height(test.cell.z, test.cell.w),
+        test.camera.xyz, test.axis.xyz);
+    result[index.x] = projected_view_z_depth(view_z, test.projection);
 }
 "#, "shaders/test/art_depth.wesl"));
         let wgsl = shaders.get(0, id(0), &[]).unwrap();
         let module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
-            label: Some("sprite priority depth"), source: wgpu::ShaderSource::Wgsl(wgsl.as_str().into()),
+            label: Some("draw order depth"), source: wgpu::ShaderSource::Wgsl(wgsl.as_str().into()),
         });
         let pipeline = device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
             label: None, layout: None, module: &module, entry_point: Some("main"),
@@ -39,33 +61,36 @@ fn main(@builtin(global_invocation_id) index: vec3<u32>) {
         });
         #[repr(C)]
         #[derive(Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
-        struct DepthCase { projection: [[f32; 4]; 4], clip: [f32; 4], ordinal: [u32; 4] }
+        struct DepthCase { projection: [[f32; 4]; 4], camera: [f32; 4], axis: [f32; 4], cell: [f32; 4] }
         let mut inputs = Vec::new();
+        // Each case's camera, CPU logical distance and cell.
         let mut expected = Vec::new();
-        for perspective in [false, true] {
+        let cameras = [(false, TEST_ORTHO_OFFSET * 3f32.sqrt()), (true, TEST_PERSPECTIVE_DISTANCES[0]),
+            (true, TEST_PERSPECTIVE_DISTANCES[1])];
+        for (camera_index, (perspective, distance)) in cameras.into_iter().enumerate() {
             let mut projection = if perspective {
-                Projection::Perspective(PerspectiveProjection { near: 0.1, ..default() })
+                Projection::Perspective(PerspectiveProjection {
+                    fov: TEST_PERSPECTIVE_FOV, near: TEST_PERSPECTIVE_NEAR, ..default() })
             } else {
                 Projection::Orthographic(OrthographicProjection {
-                    near: -1000.0, far: 1000.0, ..OrthographicProjection::default_3d()
+                    near: TEST_ORTHO_NEAR, far: TEST_ORTHO_FAR, ..OrthographicProjection::default_3d()
                 })
             };
             projection.update(1280.0, 800.0);
             let matrix = projection.get_clip_from_view();
-            for distance in [-5000.0, 1.0, 25.0, 90.0, 250.0, 1000.0, 5000.0] {
-                if perspective && distance <= 0.0 { continue; }
-                for ordinal in [0u32, 1, 4, 16, 32] {
-                    let position = Vec3::new(0.2, -0.4, -distance);
-                    let clip = matrix * position.extend(1.0);
-                    let raw = clip.z / clip.w;
-                    let target = if perspective {
-                        matrix.project_point3(position - Vec3::Z * ordinal as f32 * 0.002).z
-                    } else {
-                        raw.clamp(0.0, 1.0) - ordinal as f32 * 0.000001
-                    }.clamp(0.0, 1.0);
-                    inputs.push(DepthCase { projection: matrix.to_cols_array_2d(),
-                        clip: clip.to_array(), ordinal: [ordinal, 0, 0, 0] });
-                    expected.push((target, raw, perspective, distance, ordinal));
+            let camera = Transform::from_translation(TEST_FOCUS + Vec3::ONE.normalize() * distance)
+                .looking_at(TEST_FOCUS, Vec3::Y);
+            let axis = camera.back();
+            for (dx, dy) in TEST_CELL_OFFSETS {
+                for priority_z in TEST_PRIORITY_Z {
+                    for level in TEST_TIE_LEVELS {
+                        let cell = [TEST_FOCUS.x + dx, TEST_FOCUS.z + dy, priority_z, level as f32];
+                        inputs.push(DepthCase { projection: matrix.to_cols_array_2d(),
+                            camera: camera.translation.extend(0.0).to_array(), axis: axis.extend(0.0).to_array(),
+                            cell });
+                        expected.push((camera_index, logical_draw_distance(f64::from(cell[0] + cell[1]),
+                            f64::from(priority_z), level), cell));
+                    }
                 }
             }
         }
@@ -102,18 +127,19 @@ fn main(@builtin(global_invocation_id) index: vec3<u32>) {
         receiver.recv().unwrap().unwrap();
         let mapped = readback.slice(..).get_mapped_range().unwrap();
         let actual: &[f32] = bytemuck::cast_slice(&mapped);
-        for (&depth, &(target, raw, perspective, distance, ordinal)) in actual.iter().zip(&expected) {
-            let tolerance = target.abs().max(0.000001) * 0.000001;
-            assert!((depth - target).abs() <= tolerance,
-                "perspective={perspective}, distance={distance}, ordinal={ordinal}: {depth} vs {target}");
-            if perspective && ordinal != 0 {
-                assert!(depth < raw, "equal-priority sprites must remain separated");
-                // A half-cell camera-depth neighbor must stay behind this group.
-                let neighbor = 0.1 / (distance + 0.5);
-                assert!(depth > neighbor, "tie bias must not jump to the next cell");
+        // Reverse Z: the nearer case has the larger depth. Every pair the CPU orders, the GPU orders the same way,
+        // strictly, down to adjacent tie levels at Britain's map position.
+        let mut ordered_pairs = 0;
+        for (i, &(camera, distance, cell)) in expected.iter().enumerate() {
+            for (j, &(other_camera, other_distance, other_cell)) in expected.iter().enumerate() {
+                if camera != other_camera || distance <= other_distance {
+                    continue;
+                }
+                ordered_pairs += 1;
+                assert!(actual[i] > actual[j], "camera {:?}: {cell:?} (L {distance}, depth {}) must \
+                    draw over {other_cell:?} (L {other_distance}, depth {})", cameras[camera], actual[i], actual[j]);
             }
         }
-        // The previous fixed offset fails this representative bridge/zoom case.
-        assert!(0.1 / 90.0 - 16.0 * 0.000001 < 0.1 / 90.5);
+        assert!(ordered_pairs > 0);
     });
 }

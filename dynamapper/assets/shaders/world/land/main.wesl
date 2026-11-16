@@ -30,7 +30,8 @@ import package::shaders::world::land::land_bindings::{
 };
 import package::shaders::world::land::atlas::{atlas_read_meta, atlas_read_height, atlas_read_z, atlas_read_terrain_flags,
   chunk_edge_blend_factor};
-import package::shaders::world::art::depth::{cave_lifted_clip, cave_outside_tone};
+import package::shaders::world::art::depth::{cell_priority_view_z, view_z_depth, cave_lift, cave_outside_tone,
+  LAND_PRIORITY_Z_OFFSET};
 import package::shaders::world::land::noise::{hash, fbm_billow, domain_warp};
 import package::shaders::world::land::normals::{get_geometric_normal_local, get_bicubic_normal, get_bent_normal, client_vertex_terrain_shade};
 import package::shaders::world::land::bump::{land_derived_bump_tilt, land_bump_light_ratio};
@@ -409,13 +410,17 @@ fn vertex(in: Vertex, @builtin(vertex_index) vertex_index: u32) -> VertexOutput 
   let local_world_pos = world_from_local * vec4<f32>(flat_local_pos, 0.0);
   out.position = camera_relative_world_to_clip(world_from_local[3].xyz,
       local_world_pos.xyz + vec3<f32>(bank_vertex.x * relax_corner, bank_vertex.y, bank_vertex.z * relax_corner));
-  // A corner of the player's cave's mouth land is lifted toward the camera with the cave's statics (art/depth.wesl
-  // cave_lifted_depth), so the rock over the opening covers the cave floor behind it as it does without the cut.
+  // The depth is the draw order's (art/depth.wesl), the cell's in the fragment (`fragment`). A corner of the player's
+  // cave's mouth land is lifted toward the camera with the cave's statics (art/depth.wesl cave_lifted_view_z), so the
+  // rock over the opening covers the cave floor behind it as it does without the cut. The lift, in view z, rides in
+  // world_position.w, which nothing else reads, and the rasteriser blends it across the triangle.
+  var land_view_z_lift = 0.0;
   let corner_flags = atlas_read_terrain_flags(wx, wz) | atlas_read_terrain_flags(wx - 1, wz)
     | atlas_read_terrain_flags(wx, wz - 1) | atlas_read_terrain_flags(wx - 1, wz - 1);
   if ((corner_flags & TERRAIN_FLAG_PLAYER_CAVE) != 0u) {
-    out.position = cave_lifted_clip(out.position);
+    land_view_z_lift = cave_lift();
   }
+  out.world_position.w = land_view_z_lift;
   // Terrain albedo uses world coordinates; use the otherwise unused UV varying
   // for the original vertex-generated liquid reflection coordinates.
   out.uv = ec_liquid_camera_reflection_uv(final_world_pos.xyz, scene.ec_reflection_camera_distance);
@@ -931,8 +936,38 @@ fn compose_ec_terrain(in: VertexOutput, tile: TileUniform, world_gradients: Land
   return hdr_rgb;
 }
 
+struct LandFragmentOutput {
+  @location(0) color: vec4<f32>,
+  @builtin(frag_depth) depth: f32,
+}
+
+// ClassicUO's Land.AverageZ of the cell `cell`: the mean of the corner pair along the diagonal that rises less, from the
+// cell's own z and its neighbours' toward +x, +y and both (Land.ApplyStretch). The same as the cell's z on level
+// ground. ClassicUO keeps the bare z for a land with no texmap, which Dynamapper stretches anyway.
+fn land_cell_average_z(cell: vec2<i32>) -> i32 {
+  let z_top = atlas_read_z(cell.x, cell.y);
+  let z_right = atlas_read_z(cell.x + 1, cell.y);
+  let z_left = atlas_read_z(cell.x, cell.y + 1);
+  let z_bottom = atlas_read_z(cell.x + 1, cell.y + 1);
+  if (abs(z_top - z_bottom) <= abs(z_left - z_right)) {
+    return (z_top + z_bottom) >> 1u;
+  }
+  return (z_left + z_right) >> 1u;
+}
+
+// The land's colour, and its depth: its cell's at ClassicUO's land priority, the average z - 2 (art/depth.wesl), moved
+// by the cave lift the vertex stage left in world_position.w (`vertex`).
 @fragment
-fn fragment(in: VertexOutput) -> @location(0) vec4<f32> {
+fn fragment(in: VertexOutput) -> LandFragmentOutput {
+  var out: LandFragmentOutput;
+  out.color = land_color(in);
+  let cell = vec2<i32>(floor(in.world_position.xz));
+  out.depth = view_z_depth(cell_priority_view_z(in.world_position.xz,
+    f32(land_cell_average_z(cell)) + LAND_PRIORITY_Z_OFFSET) + in.world_position.w);
+  return out;
+}
+
+fn land_color(in: VertexOutput) -> vec4<f32> {
   // Debug mode: return a flat color immediately to isolate non-fragment bottlenecks.
   if (effects.shading_mode == 3u) {
     return vec4<f32>(0.5, 0.5, 0.5, 1.0);
