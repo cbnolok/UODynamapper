@@ -11,7 +11,7 @@
 // ============================================================================
 
 import bevy_pbr::render::{
-  forward_io::{Vertex, VertexOutput},
+  forward_io::Vertex,
   mesh_functions,
   mesh_view_bindings::{globals, view},
 };
@@ -381,9 +381,23 @@ fn blend_ec_terrain_transitions(
   return accum / max(total_weight, 0.0001);
 }
 
+// The land's vertex output: the fields of Bevy's VertexOutput (forward_io) the land reads, and its depth cell.
+struct LandVertexOutput {
+  @builtin(position) position: vec4<f32>,
+  @location(0) world_position: vec4<f32>,
+  @location(1) world_normal: vec3<f32>,
+  @location(2) uv: vec2<f32>,
+  @location(3) uv_b: vec2<f32>,
+  @location(6) @interpolate(flat) instance_index: u32,
+  // The cell whose (x, y) corner the vertex is and its average z (land_cell_average_z). Flat, from each triangle's
+  // first vertex: the quad's (x, y) corner (setup_base_mesh.rs), so a fragment of that cell reads its average z here
+  // instead of the atlas (`fragment`).
+  @location(7) @interpolate(flat) depth_cell: vec3<i32>,
+}
+
 @vertex
-fn vertex(in: Vertex, @builtin(vertex_index) vertex_index: u32) -> VertexOutput {
-  var out: VertexOutput;
+fn vertex(in: Vertex, @builtin(vertex_index) vertex_index: u32) -> LandVertexOutput {
+  var out: LandVertexOutput;
 
   let shading_mode: u32 = effects.shading_mode;
   let normal_mode:  u32 = effects.normal_mode;
@@ -421,6 +435,7 @@ fn vertex(in: Vertex, @builtin(vertex_index) vertex_index: u32) -> VertexOutput 
     land_view_z_lift = cave_lift();
   }
   out.world_position.w = land_view_z_lift;
+  out.depth_cell = vec3<i32>(wx, wz, land_cell_average_z(vec2<i32>(wx, wz)));
   // Terrain albedo uses world coordinates; use the otherwise unused UV varying
   // for the original vertex-generated liquid reflection coordinates.
   out.uv = ec_liquid_camera_reflection_uv(final_world_pos.xyz, scene.ec_reflection_camera_distance);
@@ -460,7 +475,7 @@ fn vertex(in: Vertex, @builtin(vertex_index) vertex_index: u32) -> VertexOutput 
 
 // Geometry is shared by every material in the ownership stack. Keep its
 // height reconstruction outside the per-layer shading calls.
-fn land_surface_normal(in: VertexOutput) -> vec3<f32> {
+fn land_surface_normal(in: LandVertexOutput) -> vec3<f32> {
   // Classic lighting uses the vertex Lambert, not a fragment normal. Only
   // KR-profile shadow weathering consumes it when those controls are combined.
   let shadow_grunge = effects.enable_grunge == 1u && effects.post_process_profile == 2u
@@ -487,14 +502,14 @@ fn land_surface_normal(in: VertexOutput) -> vec3<f32> {
 
 // The clients' per-vertex terrain grey, computed once per fragment for every
 // material layer. 1 when the per-pixel model or Classic shades the land.
-fn land_client_shade(in: VertexOutput) -> f32 {
+fn land_client_shade(in: LandVertexOutput) -> f32 {
   if (effects.shading_mode == 0u || land_light.terrain_shading_model != TERRAIN_SHADING_CLIENT_PER_VERTEX) {
     return 1.0;
   }
   return client_vertex_terrain_shade(in.world_position.xyz, scene.light_direction);
 }
 
-fn shade_land(in: VertexOutput, tile: TileUniform, ordered_coverage: bool, world_gradients: LandGradients, surface_normal: vec3<f32>, client_shade: f32, grime_mask: u32) -> vec3<f32> {
+fn shade_land(in: LandVertexOutput, tile: TileUniform, ordered_coverage: bool, world_gradients: LandGradients, surface_normal: vec3<f32>, client_shade: f32, grime_mask: u32) -> vec3<f32> {
   let shading_mode   = effects.shading_mode;
   let visual_profile = effects.post_process_profile;
 
@@ -872,7 +887,7 @@ fn ec_composition_grime_mask(cache: EcTerrainCache, material: vec4<u32>, cached:
   return 256u;
 }
 
-fn compose_ec_terrain(in: VertexOutput, tile: TileUniform, world_gradients: LandGradients, surface_normal: vec3<f32>, client_shade: f32,
+fn compose_ec_terrain(in: LandVertexOutput, tile: TileUniform, world_gradients: LandGradients, surface_normal: vec3<f32>, client_shade: f32,
     cache: EcTerrainCache, fallback: EcTerrainStack, cached: bool) -> vec3<f32> {
   var stack = fallback;
   let count = select(stack.count, cache.count, cached);
@@ -956,18 +971,24 @@ fn land_cell_average_z(cell: vec2<i32>) -> i32 {
 }
 
 // The land's colour, and its depth: its cell's at ClassicUO's land priority, the average z - 2 (art/depth.wesl), moved
-// by the cave lift the vertex stage left in world_position.w (`vertex`).
+// by the cave lift the vertex stage left in world_position.w (`vertex`). The average z comes flat from the triangle's
+// first vertex when the fragment lies in that vertex's cell, every fragment of the full-detail mesh off the banks;
+// from the atlas otherwise.
 @fragment
-fn fragment(in: VertexOutput) -> LandFragmentOutput {
+fn fragment(in: LandVertexOutput) -> LandFragmentOutput {
   var out: LandFragmentOutput;
   out.color = land_color(in);
   let cell = vec2<i32>(floor(in.world_position.xz));
-  out.depth = view_z_depth(cell_priority_view_z(in.world_position.xz,
-    f32(land_cell_average_z(cell)) + LAND_PRIORITY_Z_OFFSET) + in.world_position.w);
+  var average_z = in.depth_cell.z;
+  if (any(cell != in.depth_cell.xy)) {
+    average_z = land_cell_average_z(cell);
+  }
+  out.depth = view_z_depth(cell_priority_view_z(in.world_position.xz, f32(average_z) + LAND_PRIORITY_Z_OFFSET)
+    + in.world_position.w);
   return out;
 }
 
-fn land_color(in: VertexOutput) -> vec4<f32> {
+fn land_color(in: LandVertexOutput) -> vec4<f32> {
   // Debug mode: return a flat color immediately to isolate non-fragment bottlenecks.
   if (effects.shading_mode == 3u) {
     return vec4<f32>(0.5, 0.5, 0.5, 1.0);
