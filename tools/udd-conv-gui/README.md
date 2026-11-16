@@ -49,10 +49,10 @@ Two gaps apply to the image jobs, and the rows below leave them out:
 | `pack-art` | Partial: Assets, Classic Art | `--mul` (the GUI reads `artLegacyMUL.uop` first), `--atlas-width`, `--atlas-height`, `--gutter` |
 | `pack-texmaps` | Partial: Assets, Classic Texmaps | `--atlas-width`, `--atlas-height`, `--gutter` |
 | `pack-mobile-anims` | Partial: Assets, Classic Mobile Animations | `--atlas-width`, `--atlas-height`, `--gutter` |
-| `pack-ec-textures` | Partial: Assets, Enhanced Art and Enhanced Land, as two jobs | `--tilemeta-output`, `--tilemeta-use-ec-radarcol`, `--land-transcode-kdl` and `--land-terrain-overrides-kdl` (the GUI reads them from the routing folder, else the bundled copies), the art and land atlas sizes and gutters |
-| `pack-kr-land` | Partial: Assets, Kingdom Reborn Land (Kingdom Reborn and Enhanced folders from the Sources tab; `--report` is the Findings Report cell; the log panel lists each source) | the upscale settings (the job uses the Enhanced Land card's), `--land-transcode-kdl` and `--land-terrain-overrides-kdl` (routing folder or bundled copies), `--bc7-rdo`, the atlas size and gutter |
+| `pack-ec-textures` | Partial: Assets, Enhanced Art and Enhanced Land, as two jobs (`--krdir` is the Sources tab's Kingdom Reborn folder, else the shipped delta; `--kr-land-report` is the Enhanced Land card's Findings Report cell) | `--kr-delta`, `--tilemeta-output`, `--tilemeta-use-ec-radarcol`, `--land-transcode-kdl` and `--land-terrain-overrides-kdl` (the GUI reads them from the routing folder, else the bundled copies), the art and land atlas sizes and gutters |
 | `pack-ec-mobile-anims` | Partial: Assets, Enhanced Mobile Animations | `--tables` and `--ec-mobile-animations-kdl` (routing folder or bundled copy only), `--atlas-width`, `--atlas-height`, `--gutter` |
-| `pack-ec-tex-aux` | Partial: Assets, Enhanced Auxiliary Textures | `--tilemeta` (always the input folder's `tilemeta.uddp`) |
+| `pack-ec-tex-aux` | Partial: Assets, Enhanced Auxiliary Textures | `--tilemeta` (always the input folder's `tilemeta.uddp`), `--kr-delta` |
+| `make-kr-delta` | CLI only | |
 | `pack-gumps` | Yes: Assets, Classic Gumps | |
 | `pack-ec-gumps` | Yes: Assets, Enhanced Gumps (`--share-with` is the output folder's `gumps_cc.uddp`) | |
 | `pack-map` | Partial: World, Map | `--zstd`, `--stored`; `--uop` only in the settings file (`map_preferences`) |
