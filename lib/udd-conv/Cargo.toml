@@ -34,6 +34,7 @@ particle-sim = { path = "../ec-effects/particle-sim" }
 gamebryo-nif = { path = "../ec-effects/gamebryo-nif" }
 udd-assets = { path = "../udd-assets", features = ["bc7-encode"] }
 udd-container = { path = "../udd-container" }
+xxhash-rust = { version = "0.8", default-features = false, features = ["xxh64"] }
 uot-texture-codecs = { path = "../support/uot-texture-codecs", features = ["bc7-encode"] }
 wgpu-types.workspace = true
 ddsfile.workspace = true

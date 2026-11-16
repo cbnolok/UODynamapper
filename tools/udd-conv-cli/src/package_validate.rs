@@ -26,6 +26,7 @@ use color_eyre::eyre::{self, WrapErr};
 use log::info;
 use rayon::prelude::*;
 use udd_assets::gumps::gump_image_hash;
+use udd_assets::kr_delta::KrDeltaPackage;
 use udd_assets::map_metadata::{decode_map_package_metadata, read_statics_package_metadata};
 use udd_assets::tex_aux_ec::{tex_aux_ec_terrain_texture_key, TexAuxEcPackage};
 use udd_assets::{
@@ -85,12 +86,14 @@ pub enum PackageKind {
     EffectsEc,
     PaperdollEc,
     Gumps,
+    /// `kr_delta.uddp`: the Kingdom Reborn client files as a delta over the Enhanced Client.
+    KrDelta,
     Map(u32),
     Statics(u32),
 }
 
 /// UDDP kinds offered, in order, to a package whose file name names no kind.
-const SNIFFED_KINDS: [PackageKind; 13] = [
+const SNIFFED_KINDS: [PackageKind; 14] = [
     PackageKind::TileMeta,
     PackageKind::Hues,
     PackageKind::WorldLights,
@@ -104,6 +107,7 @@ const SNIFFED_KINDS: [PackageKind; 13] = [
     PackageKind::EffectsEc,
     PackageKind::PaperdollEc,
     PackageKind::Gumps,
+    PackageKind::KrDelta,
 ];
 
 impl PackageKind {
@@ -127,6 +131,7 @@ impl PackageKind {
             "mobile_anim_cc" => Self::MobileAnimCc,
             "mobile_anim_ec" => Self::MobileAnimEc,
             "paperdoll_ec" => Self::PaperdollEc,
+            "kr_delta" => Self::KrDelta,
             _ if base == "effects_ec" || base.starts_with("effects_ec_") => Self::EffectsEc,
             _ if base == "gumps" || base.starts_with("gumps_") => Self::Gumps,
             _ => {
@@ -161,6 +166,7 @@ impl PackageKind {
             Self::EffectsEc => "effects_ec".into(),
             Self::PaperdollEc => "paperdoll_ec".into(),
             Self::Gumps => "gumps".into(),
+            Self::KrDelta => "kr_delta".into(),
             Self::Map(map_id) => format!("map{map_id}"),
             Self::Statics(map_id) => format!("statics{map_id}"),
         }
@@ -742,6 +748,16 @@ fn run_package_reader(kind: PackageKind, package: &UddpReader) -> eyre::Result<S
                 reader.tileart_records().len()
             )
         }
+        PackageKind::KrDelta => {
+            let contents = KrDeltaPackage::from_uddp_package(package)?.into_contents();
+            let entries: usize = contents.files.iter().map(|file| file.file.entries.len()).sum();
+            format!(
+                "files={}, entries={entries}, kingdom_reborn={}, enhanced={}",
+                contents.files.len(),
+                contents.kr_client,
+                contents.ec_client
+            )
+        }
         PackageKind::Hues => {
             let reader = HuesPackage::from_uddp_package(package.clone())?;
             format!("slots={}", reader.slots().len())
@@ -870,6 +886,7 @@ mod tests {
         assert_eq!(PackageKind::from_file_name("tilemeta_kr.uddp"), Some(PackageKind::TileMetaKr));
         assert_eq!(PackageKind::from_file_name("tex_art_kr.uddp"), Some(PackageKind::TexArtKr));
         assert_eq!(PackageKind::from_file_name("tex_aux_kr.uddp"), Some(PackageKind::TexAuxKr));
+        assert_eq!(PackageKind::from_file_name("kr_delta.uddp"), Some(PackageKind::KrDelta));
         assert_eq!(PackageKind::from_file_name("effects_ec_bc7.uddp"), Some(PackageKind::EffectsEc));
         assert_eq!(PackageKind::from_file_name("gumps_cc.uddp"), Some(PackageKind::Gumps));
         assert_eq!(PackageKind::from_file_name("paperdoll_ec.uddp"), Some(PackageKind::PaperdollEc));

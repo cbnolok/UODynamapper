@@ -14,6 +14,7 @@ pub use uot_texture_codecs::bc7;
 pub use uot_texture_codecs::premultiplied;
 pub mod effects_ec;
 pub mod gumps;
+pub mod kr_delta;
 
 pub use common::AtlasCacheOptions;
 pub use tex_art_cc::TexArtCcPackage;

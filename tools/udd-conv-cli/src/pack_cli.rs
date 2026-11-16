@@ -19,6 +19,7 @@ use color_eyre::eyre;
 use serde::Serialize;
 use uocf::map_edition::MapEdition;
 use uocf::utils::bundled_files;
+use udd_assets::kr_delta::KR_DELTA_FILE_NAME;
 use udd_conv::conversion_tables::{
     EC_MOBILE_ANIMATIONS_KDL, EC_SURFACE_OVERRIDES_KDL, EC_TERRAIN_OVERRIDES_KDL, TERRAIN_TRANSCODE_KDL,
 };
@@ -84,6 +85,7 @@ use udd_conv::{
     },
     tex_land_kr::{convert_kr_land_to_tex_land_kr_uddp, TexLandKrPackOptions, TEX_LAND_KR_FILE_NAME},
     kr_items::{pack_kr_items, KrItemOutputs, KrOverlayBases},
+    kr_delta::make_and_write_kr_delta,
     tilemeta::{
         build_tilemeta_uddp_from_sources, build_tilemeta_uddp_from_split_sources,
         build_tilemeta_uddp_from_split_sources_with_loaded_ec_sources, TileMetaBuildOptions,
@@ -1169,6 +1171,20 @@ enum Commands {
         #[arg(long, help = "Write which client every definition, texture and route came from to this file, one line each.")]
         report: Option<PathBuf>,
     },
+    /// Writes kr_delta.uddp: the Kingdom Reborn client files the packers read (tileart.uop, string_dictionary.uop,
+    /// TerrainDefinition.uop, Texture.uop, TerrainTexture.uop, SystemTextures.uop) as a delta over the Enhanced Client,
+    /// so the Enhanced packages carry the Kingdom Reborn data without the Kingdom Reborn client. The data files are
+    /// stored whole; a texture that is the Enhanced one, byte for byte or re-encoded within the image threshold, is
+    /// taken from the Enhanced Client; the others are stored. It checks that the delta rebuilds the Kingdom Reborn
+    /// files (the data byte for byte) from --ecdir before writing it. The tools ship the one in lib/uocf/assets/kr.
+    MakeKrDelta {
+        #[arg(long, help = "Kingdom Reborn client folder.")]
+        krdir: PathBuf,
+        #[arg(long, help = "Enhanced Client folder the delta is made against.")]
+        ecdir: PathBuf,
+        #[arg(long, default_value = KR_DELTA_FILE_NAME)]
+        output: PathBuf,
+    },
     /// Audits direct EC material texture references from tileart.uop and TerrainDefinition.uop.
     AuditEcMaterialRefs {
         #[command(flatten)]
@@ -2107,6 +2123,13 @@ where
                 out_file.display()
             );
             pack_kr_items(&krdir, &ecdir, &ccdir, &item_outputs, &overlay_bases)?;
+        }
+        Commands::MakeKrDelta { krdir, ecdir, output } => {
+            validate_source_dir(&krdir, "--krdir")?;
+            validate_source_dir(&ecdir, "--ecdir")?;
+            let out_file = resolve_output_path(&output);
+            make_and_write_kr_delta(&krdir, &ecdir, &out_file)?;
+            info!("Wrote '{}' ({} bytes).", out_file.display(), fs::metadata(&out_file)?.len());
         }
         Commands::AuditEcMaterialRefs {
             source_dirs: source_dir_args,

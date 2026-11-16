@@ -19,6 +19,7 @@ pub use textures::{kr_items, tex_art_cc, tex_art_ec, tex_aux_ec, tex_land_cc, te
 pub use upscaling::{upscale_pipeline, upscale_profile};
 
 pub mod conversion_tables;
+pub mod kr_delta;
 pub mod package_progress;
 mod progress;
 pub mod source_paths;

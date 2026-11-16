@@ -7153,6 +7153,7 @@ dependencies = [
  "uot-texture-codecs",
  "wgpu-types",
  "workspace-hack",
+ "xxhash-rust",
  "zstd",
 ]
 

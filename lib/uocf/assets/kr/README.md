@@ -70,3 +70,37 @@ This is unrelated to the removed .NET BinaryFormatter dictionaries.
 
 For source research and conversion limits, see
 [KR facet mappings](../../src/kr/facet/KR_FACET_MAPPINGS.md).
+
+# KR delta
+
+`kr_delta.uddp` rebuilds the six Kingdom Reborn client files the packers read
+(`tileart.uop`, `string_dictionary.uop`, `TerrainDefinition.uop`, `Texture.uop`,
+`TerrainTexture.uop`, `SystemTextures.uop`) from an Enhanced Client, so packing
+the Enhanced packages carries the Kingdom Reborn data without a Kingdom Reborn
+client. It holds no facet files. The format is described in
+`udd_assets::kr_delta`.
+
+- The data files (`tileart`, `string_dictionary`, `TerrainDefinition`) are
+  stored whole and rebuild byte for byte.
+- A texture identical to the Enhanced one of the same name is referenced by
+  name and hash.
+- A texture whose image is within `KR_IMAGE_EQUIVALENCE_THRESHOLD` (8 levels)
+  of the Enhanced one, mostly DXT re-encodes, stores nothing: the rebuild uses
+  the Enhanced texture. `Texture.uop` therefore does not rebuild byte for byte.
+- Every other texture is stored whole.
+
+The rebuild checks every entry against its recorded hash. An Enhanced Client
+other than the one the delta was made against may hold other textures: the
+rebuild uses them, lists them in one warning and carries on.
+
+Regenerate from the repository root (the command checks the rebuild before it
+writes the file):
+
+```sh
+cargo run --release -p udd-conv-cli --bin udd-cli -- pack make-kr-delta \
+  --krdir '/path/to/UO - Old KR' --ecdir '/path/to/Ultima Online Enhanced' \
+  --output lib/uocf/assets/kr/kr_delta.uddp
+```
+
+The ignored `kr_delta_client` test of `udd-conv` checks that the shipped file is
+the delta of the clients under `UO_CLIENT_ROOTS` and rebuilds them.
