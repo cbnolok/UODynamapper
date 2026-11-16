@@ -43,6 +43,8 @@
 //!   in front of the cave's floor behind it and not darkened (`PlayerCave::owns_land`: the land quads with a corner on
 //!   a buried cell of the cave sharing a side with an exit), the floor under that land not drawn, and what stands on
 //!   an exit at the cave's level, the cave entrance art of the KR client's arches, is the cave's (`CaveStatic::Lifted`).
+//!   Where a built ceiling covers the rim, a floor static on the land's face over the cave's floor, the opening is a
+//!   room's doorway, not a mouth: its land is not the cave's.
 
 use crate::configs::settings::Settings;
 use crate::console_logger::{self, LogAbout, LogSev};
@@ -51,7 +53,7 @@ use crate::core::render::scene::world::land::draw_mesh::PendingTextureBake;
 use crate::core::render::scene::world::land::{LCMesh, MAP_STORAGE_BLOCK_TILE_DIM};
 use crate::core::render::scene::player::Player;
 use crate::core::render::scene::world::art::light_cover::{CLIENT_BAND_HEIGHT, NO_Z_VIEW_LIMIT};
-use crate::core::render::scene::world::z_view::PLAYER_VIEW_HEADROOM;
+use crate::core::render::scene::world::z_view::{PLAYER_CEILING_MIN_RISE, PLAYER_VIEW_HEADROOM};
 use crate::core::render::scene::SceneStateData;
 use crate::core::statics::{read_package_chunk_statics, StaticsStoreRes};
 use crate::core::uo_files_loader::{MapPlanesRes, TileMetaPackageRes};
@@ -483,7 +485,7 @@ impl PlayerCave {
             (!tops.is_empty()).then_some(((x, y), tops))
         }).collect();
         let exits = Self::exits(&found);
-        let mouth_land = Self::mouth_land(&found, &exits);
+        let mouth_land = Self::mouth_land(&found, &exits, cells);
         Self { floor_z, cells: found, other_floors, inside_cells: inside.len(), surroundings, exits, mouth_land }
     }
 
@@ -500,12 +502,22 @@ impl PlayerCave {
     /// its neighbours at +x, +y and both) has a corner on a rim, a buried cell of the cave sharing a side with one of
     /// the `exits`: the face over the opening and the frame's land beside it. The rock beside the opening, a cell of
     /// the ring next to an exit or a cave cell touching one at a corner only, frames nothing: its quads are the hill's
-    /// flank, which lifted stood over the cut as a slab beside the opening.
-    fn mouth_land(cells: &HashMap<(i32, i32), PlayerCaveCell>, exits: &HashSet<(i32, i32)>) -> HashSet<(i32, i32)> {
+    /// flank, which lifted stood over the cut as a slab beside the opening. A rim under a built ceiling, a floor static
+    /// more than `PLAYER_CEILING_MIN_RISE` over the cave's floor that the land does not bury, is a doorway into a room
+    /// set in the hill, not a mouth: its land is no frame, it stood as a slab of rock in the room (the pentagram room
+    /// under its stone roof at map 1, 1362,883).
+    fn mouth_land(cells: &HashMap<(i32, i32), PlayerCaveCell>, exits: &HashSet<(i32, i32)>, map: &impl CaveCells)
+        -> HashSet<(i32, i32)> {
         let mut mouth = HashSet::new();
         for (&(x, y), cell) in cells {
-            let buried = i32::from(cell.land_z) - i32::from(cell.high) >= CAVE_MIN_BURY_DEPTH;
+            let (high, land_z) = (i32::from(cell.high), i32::from(cell.land_z));
+            let buried = land_z - high >= CAVE_MIN_BURY_DEPTH;
             if cell.distance != 0 || !buried || !SIDES.iter().any(|&(dx, dy)| exits.contains(&(x + dx, y + dy))) {
+                continue;
+            }
+            let built_ceiling = map.surface_tops(x, y).iter()
+                .any(|&top| top > high + PLAYER_CEILING_MIN_RISE && land_z - top < CAVE_MIN_BURY_DEPTH);
+            if built_ceiling {
                 continue;
             }
             for quad in [(x, y), (x - 1, y), (x, y - 1), (x - 1, y - 1)] {
@@ -1368,6 +1380,15 @@ mod tests {
         assert_eq!(cave.static_view(3, 1, 0, TaeFlag::Wet.bits(), 0, || unreachable!()), CaveStatic::Hidden);
         // Two cells out, on the open land: outside.
         assert_eq!(cave.static_view(4, 1, 0, wall, 20, || unreachable!()), CaveStatic::Hidden);
+        // A room set in the hill, its front under a built ceiling over the floor on the land's face: a doorway, no
+        // mouth. A floor buried deeper in the hill over the rim, another tunnel's, is no ceiling of the opening.
+        let roof = PLAYER_CEILING_MIN_RISE + 1;
+        let tunnel = || open(Cells::default().tunnel(0, 0, 3, 3, 0));
+        let room = (0..3).fold(tunnel(), |cells, y| cells.with(2, y, CAVE_MIN_BURY_DEPTH, &[0, roof]));
+        assert!(!player_cave(&room, 1, 1, 0, CaveSurroundings::Black).unwrap().has_mouth_land());
+        let upper = ROCK - CAVE_MIN_BURY_DEPTH;
+        let tunnels = (0..3).fold(tunnel(), |cells, y| cells.with(2, y, ROCK, &[0, upper]));
+        assert!(player_cave(&tunnels, 1, 1, 0, CaveSurroundings::Black).unwrap().has_mouth_land());
         // Opening onto a slope a level over the floor: no exit, no mouth.
         let slope = (0..3).fold(Cells::default().tunnel(0, 0, 3, 3, 0), |cells, y| cells.with(3, y, CAVE_MIN_BURY_DEPTH - 1, &[]));
         let cave = player_cave(&slope, 1, 1, 0, CaveSurroundings::Black).unwrap();

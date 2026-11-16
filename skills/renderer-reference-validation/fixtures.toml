@@ -343,6 +343,20 @@ path = "/home/claudio/rust-target/uodynamapper-scratch/visual-baselines/referenc
 note = "Dynamapper before the fix (the user's report, 2026-11-16): the stretched dirt beside the black opening"
 
 [[fixture]]
+name = "pentagram-alcove-player-cave"
+guards = """In the pentagram room built into the hill north of Britain, with the player's-floor view: the room's front, \
+under its stone roof, is no cave mouth, so no strip of the hill's rock is drawn standing in the room over the \
+pentagram."""
+tier = "full"
+tags = ["caves", "player-cave", "z-view"]
+map = 1
+x = 1362
+y = 883
+z = 0
+times = ["afternoon", "night"]
+settings = { world_rendering = { show_only_player_floor = true, cave_surroundings = "dimmed" } }
+
+[[fixture]]
 name = "minoc-north-cave-mouth-player-cave"
 guards = """Another cave's mouth, north of Minoc, with the player's-floor view: the cave's walls drawn, the hill over it \
 not (0e0839cd); its mouth's land, the black opening and the rock over it, drawn whole, the opening's bottom edge \
