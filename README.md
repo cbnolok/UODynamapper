@@ -33,6 +33,25 @@ The application looks for an `assets/` directory in the working directory, the C
 
 Keybindings are configurable; see [the default keybindings](docs/keybindings.md).
 
+To build and run a specific workspace binary from source, use the generic Just recipes so
+the compiler wrapper, linker flags, Cargo flags, and toolchain match the corresponding build:
+
+```sh
+just run-bin-release udd-cli --help
+just run-bin-release-nightly udd-cli --help
+just run-bin-profile dynamapper
+just run-bin-profile-nightly dynamapper
+```
+
+Arguments after the binary name go directly to the program; no extra `--` separator is needed.
+Conversion workflows use the Python or shell wrappers in `scripts/uddconv/`, which launch
+`udd-cli` through `just run-bin-release`:
+
+```sh
+python3 scripts/uddconv/uddconv.py all --ccdir "/path/to/Classic" --ecdir "/path/to/Enhanced" --output-dir /path/to/uddp
+python3 scripts/uddconv/uddconv.py animations --ccdir "/path/to/Classic" --output-dir /path/to/uddp
+```
+
 ## Tools
 
 - `dynamapper` — interactive map renderer.

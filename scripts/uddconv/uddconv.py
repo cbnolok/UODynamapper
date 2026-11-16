@@ -1,4 +1,4 @@
-#!/usr/bin/env python
+#!/usr/bin/env python3
 from __future__ import annotations
 
 import argparse
@@ -7,6 +7,7 @@ import sys
 from pathlib import Path
 
 
+WORKSPACE_JUSTFILE = str(Path(__file__).resolve().parents[2] / "justfile")
 DEFAULT_ZSTD_VALUE = ""
 DEFAULT_ZSTD_ARGS = ["--zstd"]
 # No format flag: the packer's default, lossless Zstd 19 atlas pages.
@@ -31,7 +32,7 @@ def run(command: list[str]) -> None:
 
 def run_pack(*args: str) -> None:
     print()
-    run(["cargo", "run", "-p", "udd-conv-cli", "--bin", "udd-cli", "--", "pack", *args])
+    run(["just", "--justfile", WORKSPACE_JUSTFILE, "run-bin-release", "udd-cli", "pack", *args])
 
 
 def add_format_args(parser: argparse.ArgumentParser, *, prefix: str = "") -> None:
@@ -146,7 +147,7 @@ def require_value(value: str, usage: str) -> str:
     raise SystemExit(2)
 
 
-def parse_map_ids(raw_maps: str, usage: str = "usage: just uddconv-all <ccdir> [ecdir] [output_dir] [maps]") -> list[str]:
+def parse_map_ids(raw_maps: str, usage: str = "usage: python3 scripts/uddconv/uddconv.py all --ccdir CCDIR [--ecdir ECDIR] [--output-dir DIR] [--maps MAPS]") -> list[str]:
     map_ids = [item.strip() for item in raw_maps.split(",") if item.strip()]
     if not map_ids:
         print(usage, file=sys.stderr)
@@ -160,7 +161,7 @@ def ensure_output_dir(path: str) -> None:
 
 def run_animations(ccdir: str, ecdir: str, output_dir: str, cc_format: list[str], ec_format: list[str], tables: str = DEFAULT_TABLES_DIR) -> None:
     if not ccdir and not ecdir:
-        print("usage: just uddconv-animations [ccdir] [ecdir] [output_dir]", file=sys.stderr)
+        print("usage: python3 scripts/uddconv/uddconv.py animations --ccdir CCDIR and/or --ecdir ECDIR [--output-dir DIR]", file=sys.stderr)
         raise SystemExit(2)
     ensure_output_dir(output_dir)
     if ccdir:
@@ -186,7 +187,7 @@ def run_animations(ccdir: str, ecdir: str, output_dir: str, cc_format: list[str]
 
 
 def run_gumps(ccdir: str, output_dir: str, format_args: list[str] | None = None) -> None:
-    require_value(ccdir, "usage: just uddconv-gumps <ccdir> [output_dir]")
+    require_value(ccdir, "usage: python3 scripts/uddconv/uddconv.py gumps --ccdir CCDIR [--output-dir DIR]")
     ensure_output_dir(output_dir)
     run_pack("pack-gumps", *(format_args or DEFAULT_GUMP_ARGS), "--ccdir", ccdir, "--output", f"{output_dir}/{GUMPS_CC_FILE_NAME}")
 
@@ -195,7 +196,7 @@ def run_ec_gumps(ecdir: str, output_dir: str, format_args: list[str] | None = No
     """Packs gumps_ec.uddp. With `share`, the default, it leaves out the Classic gumps the gumps_cc.uddp in the output
     folder draws the same (pack-ec-gumps --share-with), so it needs that package; without one there it packs standalone.
     """
-    require_value(ecdir, "usage: just uddconv-ec-gumps <ecdir> [output_dir]")
+    require_value(ecdir, "usage: python3 scripts/uddconv/uddconv.py ec-gumps --ecdir ECDIR [--output-dir DIR]")
     ensure_output_dir(output_dir)
     share_args: list[str] = []
     classic_gumps = Path(output_dir) / GUMPS_CC_FILE_NAME
@@ -215,9 +216,9 @@ def run_ec_gumps(ecdir: str, output_dir: str, format_args: list[str] | None = No
 
 
 def run_maps_statics(ccdir: str, output_dir: str, maps: str, non_texture_zstd: list[str]) -> None:
-    ccdir = require_value(ccdir, "usage: uddconv.py maps-statics --ccdir CCDIR [--output-dir DIR] [--maps MAPS]")
+    ccdir = require_value(ccdir, "usage: python3 scripts/uddconv/uddconv.py maps-statics --ccdir CCDIR [--output-dir DIR] [--maps MAPS]")
     ensure_output_dir(output_dir)
-    for map_id in parse_map_ids(maps, "usage: uddconv.py maps-statics --ccdir CCDIR [--output-dir DIR] [--maps MAPS]"):
+    for map_id in parse_map_ids(maps, "usage: python3 scripts/uddconv/uddconv.py maps-statics --ccdir CCDIR [--output-dir DIR] [--maps MAPS]"):
         run_pack(
             "pack-map-statics",
             *non_texture_zstd,
@@ -250,7 +251,7 @@ def run_all(
     share_gumps: bool = True,
     paperdoll_zstd: list[str] | None = None,
 ) -> None:
-    ccdir = require_value(ccdir, "usage: just uddconv-all <ccdir> [ecdir] [output_dir] [maps]")
+    ccdir = require_value(ccdir, "usage: python3 scripts/uddconv/uddconv.py all --ccdir CCDIR [--ecdir ECDIR] [--output-dir DIR] [--maps MAPS]")
     ensure_output_dir(output_dir)
     map_ids = parse_map_ids(maps)
 

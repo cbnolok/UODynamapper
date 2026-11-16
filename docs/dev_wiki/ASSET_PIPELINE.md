@@ -57,8 +57,13 @@ For Classic facet packages that need both map and statics data, prefer:
 udd-cli pack pack-map-statics --ccdir /path/to/cc --map-id 0 --map-output map0.uddp --statics-output statics0.uddp
 ```
 
+The conversion workflows live in `scripts/uddconv/` (Python entry points and shell wrappers).
+They launch `udd-cli` through `just run-bin-release`, preserving the workspace's stable release
+compiler and Cargo settings. To run a single packer from source, use
+`just run-bin-release udd-cli pack <command> <arguments>`.
+
 A package of another format version fails to load with a message to repack it. To repack a whole package folder,
-run `scripts/uddconv/uddconv.py all --ccdir CC --ecdir EC --output-dir OUT --no-animations`, or the same packers by
+run `python3 scripts/uddconv/uddconv.py all --ccdir CC --ecdir EC --output-dir OUT --no-animations`, or the same packers by
 hand, in this order (`CC` and `EC` are the client folders, `OUT` the output folder; the formats are the packers'
 lossless defaults; the Kingdom Reborn sections come from the shipped delta, or add `--krdir KR` to
 `pack-ec-textures` and `pack-ec-tex-aux`):

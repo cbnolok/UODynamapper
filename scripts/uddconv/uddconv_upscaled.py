@@ -1,4 +1,4 @@
-#!/usr/bin/env python
+#!/usr/bin/env python3
 from __future__ import annotations
 
 import argparse
@@ -7,6 +7,7 @@ import sys
 from pathlib import Path
 
 
+WORKSPACE_JUSTFILE = str(Path(__file__).resolve().parents[2] / "justfile")
 DEFAULT_ZSTD_VALUE = ""
 DEFAULT_ZSTD_ARGS = ["--zstd"]
 DEFAULT_TABLES_DIR = str(Path(__file__).resolve().parents[2] / "dynamapper/assets/cc_ec_convtables")
@@ -34,7 +35,7 @@ def run(command: list[str]) -> None:
 
 def run_pack(*args: str) -> None:
     print()
-    run(["cargo", "run", "-p", "udd-conv-cli", "--bin", "udd-cli", "--", "pack", *args])
+    run(["just", "--justfile", WORKSPACE_JUSTFILE, "run-bin-release", "udd-cli", "pack", *args])
 
 
 def add_format_args(parser: argparse.ArgumentParser, *, prefix: str = "") -> None:
@@ -175,7 +176,7 @@ def require_value(value: str, usage: str) -> str:
 def parse_map_ids(raw_maps: str) -> list[str]:
     map_ids = [item.strip() for item in raw_maps.split(",") if item.strip()]
     if not map_ids:
-        print("usage: just uddconv-all <ccdir> [ecdir] [output_dir] [maps]", file=sys.stderr)
+        print("usage: python3 scripts/uddconv/uddconv_upscaled.py all --ccdir CCDIR [--ecdir ECDIR] [--output-dir DIR] [--maps MAPS]", file=sys.stderr)
         raise SystemExit(2)
     return map_ids
 
@@ -195,7 +196,7 @@ def run_animations(
     tables: str = DEFAULT_TABLES_DIR,
 ) -> None:
     if not ccdir and not ecdir:
-        print("usage: just uddconv-animations [ccdir] [ecdir] [output_dir]", file=sys.stderr)
+        print("usage: python3 scripts/uddconv/uddconv_upscaled.py animations --ccdir CCDIR and/or --ecdir ECDIR [--output-dir DIR]", file=sys.stderr)
         raise SystemExit(2)
     ensure_output_dir(output_dir)
     if ccdir:
@@ -229,7 +230,7 @@ def run_gumps(
     paperdoll_upscale: list[str] | None = None,
     single_upscale: list[str] | None = None,
 ) -> None:
-    require_value(ccdir, "usage: just uddconv-gumps <ccdir> [output_dir]")
+    require_value(ccdir, "usage: python3 scripts/uddconv/uddconv_upscaled.py gumps --ccdir CCDIR [--output-dir DIR]")
     ensure_output_dir(output_dir)
     run_pack("pack-gumps", "--raw", *(zstd_args or DEFAULT_ZSTD_ARGS), *(paperdoll_upscale or []), *(single_upscale or []), "--ccdir", ccdir, "--output", f"{output_dir}/gumps_cc.uddp")
 
@@ -241,7 +242,7 @@ def run_ec_gumps(
     paperdoll_upscale: list[str] | None = None,
     single_upscale: list[str] | None = None,
 ) -> None:
-    require_value(ecdir, "usage: just uddconv-ec-gumps <ecdir> [output_dir]")
+    require_value(ecdir, "usage: python3 scripts/uddconv/uddconv_upscaled.py ec-gumps --ecdir ECDIR [--output-dir DIR]")
     ensure_output_dir(output_dir)
     run_pack("pack-ec-gumps", "--raw", *(zstd_args or DEFAULT_ZSTD_ARGS), *(paperdoll_upscale or []), *(single_upscale or []), "--ecdir", ecdir, "--output", f"{output_dir}/gumps_ec.uddp")
 
@@ -271,7 +272,7 @@ def run_all(
     ec_gump_paperdoll_upscale: list[str],
     ec_gump_single_upscale: list[str],
 ) -> None:
-    ccdir = require_value(ccdir, "usage: just uddconv-all <ccdir> [ecdir] [output_dir] [maps]")
+    ccdir = require_value(ccdir, "usage: python3 scripts/uddconv/uddconv_upscaled.py all --ccdir CCDIR [--ecdir ECDIR] [--output-dir DIR] [--maps MAPS]")
     ensure_output_dir(output_dir)
     map_ids = parse_map_ids(maps)
 

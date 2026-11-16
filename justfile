@@ -287,6 +287,24 @@ run-dynamapper-profile *args:
     {{cargo_profile_stable}} run --profile profiling --no-default-features --features "profiling,{{build_features}}" \
         --bin dynamapper {{args}}
 
+# Run a named binary with the same flags/features as the workspace build recipes.
+# Arguments after the binary name are passed to the program (no extra -- needed).
+[positional-arguments]
+run-bin-release binary *args:
+    {{cargo_release_stable}} run --release --locked --no-default-features {{features_args}} --bin {{ if is_windows == "true" { '"' + binary + '"' } else { '"$1"' } }} -- {{ if is_windows == "true" { args } else { '"${@:2}"' } }}
+
+[positional-arguments]
+run-bin-release-nightly binary *args:
+    {{cargo_release_nightly}} run --release --locked --no-default-features {{features_args}} {{CARGO_FLAGS_NIGHTLY}} --bin {{ if is_windows == "true" { '"' + binary + '"' } else { '"$1"' } }} -- {{ if is_windows == "true" { args } else { '"${@:2}"' } }}
+
+[positional-arguments]
+run-bin-profile binary *args:
+    {{cargo_profile_stable}} run --profile profiling --locked --no-default-features --features "profiling,{{build_features}}" --bin {{ if is_windows == "true" { '"' + binary + '"' } else { '"$1"' } }} -- {{ if is_windows == "true" { args } else { '"${@:2}"' } }}
+
+[positional-arguments]
+run-bin-profile-nightly binary *args:
+    {{cargo_profile_nightly}} run --profile profiling --locked --no-default-features --features "profiling,{{build_features}}" {{CARGO_FLAGS_NIGHTLY}} --bin {{ if is_windows == "true" { '"' + binary + '"' } else { '"$1"' } }} -- {{ if is_windows == "true" { args } else { '"${@:2}"' } }}
+
 # Validate and package the CLI tools artifact of a CLI-only build (the musl targets).
 [unix]
 package-release-cli name="dynamapper-pkg" target="":
@@ -405,36 +423,6 @@ package-release name="dynamapper-pkg" target="":
     foreach ($item in '{{tool_shared}}'.Split(' ')) { if (Test-Path $item) { Copy-Item -Recurse $item "$toolsDir/shared/" } }
     foreach ($doc in '{{tool_docs}}'.Split(' ')) { if (Test-Path $doc) { Copy-Item $doc "$toolsDir/docs/" } }
     Write-Host "Packaging complete: $appDir and $toolsDir"
-
-# --- UDDP conversion ---
-
-# Convert all supported Classic and Enhanced Client assets into UDDP packages.
-uddconv-all ccdir="" ecdir="" output_dir="target/uddp" maps="0,1,2,3,4,5":
-    @echo "Converting all UO assets to UDDP packages in {{output_dir}}..."
-    @echo "Classic Client: {{ccdir}}"
-    @echo "Enhanced Client: {{ecdir}}"
-    @echo "Maps: {{maps}}"
-    python scripts/uddconv/uddconv.py all --ccdir "{{ccdir}}" --ecdir "{{ecdir}}" --output-dir "{{output_dir}}" --maps "{{maps}}"
-
-# Convert only mobile animation packages into UDDP.
-uddconv-animations ccdir="" ecdir="" output_dir="target/uddp":
-    @echo "Converting mobile animations to UDDP packages in {{output_dir}}..."
-    @echo "Classic Client: {{ccdir}}"
-    @echo "Enhanced Client: {{ecdir}}"
-    python scripts/uddconv/uddconv.py animations --ccdir "{{ccdir}}" --ecdir "{{ecdir}}" --output-dir "{{output_dir}}"
-
-# Convert only Classic Client gumps into UDDP.
-uddconv-gumps ccdir="" output_dir="target/uddp":
-    @echo "Converting Classic Client gumps to UDDP packages in {{output_dir}}..."
-    @echo "Classic Client: {{ccdir}}"
-    python scripts/uddconv/uddconv.py gumps --ccdir "{{ccdir}}" --output-dir "{{output_dir}}"
-
-# Convert only Enhanced Client gumps into UDDP.
-uddconv-ec-gumps ecdir="" output_dir="target/uddp":
-    @echo "Converting Enhanced Client gumps to UDDP packages in {{output_dir}}..."
-    @echo "Enhanced Client: {{ecdir}}"
-    python scripts/uddconv/uddconv.py ec-gumps --ecdir "{{ecdir}}" --output-dir "{{output_dir}}"
-
 
 # --- Maintenance ---
 
