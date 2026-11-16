@@ -529,7 +529,6 @@ fn sys_draw_hovered_static_highlight(
     windows: Query<&Window, With<PrimaryWindow>>,
     injected_pointer: Option<Res<InjectedPointer>>,
     camera_q: Query<(&Camera, &GlobalTransform), With<PlayerCamera>>,
-    tilemeta_res: Option<Res<TileMetaPackageRes>>,
     mut gizmos: Gizmos,
 ) {
     if !settings
@@ -557,7 +556,6 @@ fn sys_draw_hovered_static_highlight(
         camera,
         camera_tf,
         &settings,
-        tilemeta_res.as_deref(),
         map_id,
     ) else {
         return;
@@ -606,7 +604,6 @@ fn describe_hovered_object(
         camera,
         camera_tf,
         settings,
-        tilemeta_res,
         map_id,
     ) else {
         return "Object: none".to_string();
@@ -639,19 +636,17 @@ fn find_hovered_static_object(
     camera: &Camera,
     camera_tf: &GlobalTransform,
     settings: &crate::configs::settings::Settings,
-    tilemeta_res: Option<&TileMetaPackageRes>,
     map_id: u8,
 ) -> Option<HoveredStaticMatch> {
     if !settings.world_rendering.enable_statics { return None; }
     let tile = picking.visible_hit(cursor_pos, camera, camera_tf, u32::from(map_id))?;
-    hovered_static_match(picking, camera, camera_tf, tilemeta_res, tile)
+    hovered_static_match(picking, camera, camera_tf, tile)
 }
 
 fn hovered_static_match(
     picking: &mut StaticPickingResources,
     camera: &Camera,
     camera_tf: &GlobalTransform,
-    tilemeta_res: Option<&TileMetaPackageRes>,
     candidate: crate::core::render::scene::world::art::statics_collect::StaticPickTile,
 ) -> Option<HoveredStaticMatch> {
     let source = candidate.tile;
@@ -659,12 +654,10 @@ fn hovered_static_match(
         xy_packed: (source.world_x as u32 & 7) as u8 | (((source.world_z as u32 & 7) as u8) << 3),
         z: source.z, hue: source.hue };
     let graphic = tile.graphic;
-    let tilemeta = tilemeta_res.and_then(|meta| meta.0.item_tile(graphic as u32));
-    if tilemeta.is_some_and(|meta| meta.is_nodraw()) {
-        return None;
-    }
     let world_x = source.world_x;
     let world_z = source.world_z;
+    // None for a NoDraw static, by the tile data it is drawn by (Kingdom Reborn's for the statics that continue the
+    // Kingdom Reborn land).
     let geometry = picking.resolve(graphic, world_x, world_z, tile.z)?;
     let kind = if geometry.flat_quad == 0 { HoveredObjectKind::Sprite } else { HoveredObjectKind::Ground };
     let corners = geometry.corners(camera, camera_tf);

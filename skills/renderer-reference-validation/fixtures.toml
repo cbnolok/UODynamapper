@@ -624,3 +624,16 @@ x = 1208
 y = 2808
 z = 0
 sources = ["cc/cc", "ec/ec", "ec/kr", "ec/cc"]
+
+[[fixture]]
+name = "deceit-kr-rotated-surfaces"
+guards = """Statics 0x3236 by Deceit (map 1) under Kingdom Reborn land, which only Kingdom Reborn's tileart makes \
+surfaces and Rotated: drawn and picked by Kingdom Reborn's tile data, as the KR client draws its art by its own \
+tileart, they stand as camera quads, not as Enhanced ground quads (kr-tilemeta-drawn)."""
+tier = "full"
+tags = ["surfaces", "kr-land", "kr-art"]
+map = 1
+x = 5183
+y = 727
+z = 0
+sources = ["ec/kr"]
