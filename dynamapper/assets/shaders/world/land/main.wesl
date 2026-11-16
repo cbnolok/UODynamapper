@@ -86,6 +86,8 @@ const TERRAIN_FLAG_REVIEWED_LIQUID: u32 = 0x4u;
 // The land of the player's cave's mouth (tile_atlas.rs TERRAIN_SHADER_FLAG_PLAYER_CAVE): drawn whole, not darkened.
 const TERRAIN_FLAG_PLAYER_CAVE: u32 = 0x1u;
 const EC_TERRAIN_TRANSITION_BASE_WEIGHT: f32 = 0.35;
+// The cells of the KR material micro-contrast's grain along a world tile's edge (apply_kr_material_micro_contrast).
+const KR_MATERIAL_GRAIN_CELLS_PER_TILE: f32 = 2.7;
 
 fn land_cell_is_flat(world_tile: vec2<i32>, tile_height: f32) -> bool {
   let epsilon = 0.0001;
@@ -219,7 +221,9 @@ fn apply_kr_material_micro_contrast(
     return color;
   }
 
-  let grain = hash(floor(world_xz * 2.7) + vec2<f32>(f32(tile.texture_payload & 0xFFu), f32((tile.texture_payload >> 8u) & 0xFFu)));
+  // The grain cell's hash from the world position alone: the tile's texture payload, its former salt, is the texmap
+  // array's cache layer for Classic land under an EC-layout source, so the grain moved with residency (2026-11-16).
+  let grain = hash(floor(world_xz * KR_MATERIAL_GRAIN_CELLS_PER_TILE));
   let contrast = 1.0 + material_strength * material_mask * (0.045 + (grain - 0.5) * 0.025);
   let saturated = vec3<f32>(luma) + (color - vec3<f32>(luma)) * (1.0 + material_strength * material_mask * 0.06);
   let shaped = vec3<f32>(luma) + (saturated - vec3<f32>(luma)) * contrast;
