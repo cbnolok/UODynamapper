@@ -245,7 +245,8 @@ impl UddConvApp {
             "KR terrain definitions, textures and land routes, with what KR lacks from the Enhanced Client \
             (tex_land_kr.uddp); upscaled as Enhanced Land. Beside it, lossless: KR's tileart (tilemeta_kr.uddp), and \
             the item art (tex_art_kr.uddp) and material textures (tex_aux_kr.uddp) KR draws differently from the \
-            Enhanced Client",
+            Enhanced Client, over the Enhanced Art and Enhanced Auxiliary Textures packages in the output folder \
+            (pack them first)",
             Some(&source),
             &progress,
             !is_busy,

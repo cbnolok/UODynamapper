@@ -53,7 +53,7 @@ use crate::package_progress::{
 use crate::page_compression::LOSSLESS_PAGE_COMPRESSION;
 use crate::rgba_bounds::nonzero_alpha_bounds_in_rect;
 use crate::source_paths::{find_first_existing_file, source_path_label};
-use udd_assets::common::{encode_ec_equivalents, EcEquivalentRecord, EC_EQUIVALENTS_ENTRY_PATH};
+use udd_assets::common::EcOverlayTable;
 use udd_assets::tex_art_cc::{page_entry_path, PagePixelFormat};
 use udd_assets::tex_art_ec::{
     TexArtEcCropAdjustment, TexArtEcPageRecord, TexArtEcSlotRecord, MISSING_PAGE_INDEX,
@@ -383,22 +383,22 @@ pub fn convert_tex_art_ec_uop_to_tex_art_ec_uddp_from_loaded_sources_with_progre
 }
 
 /// Packs an overlay (`udd_assets::tex_art_ec::TEX_ART_EC_EQUIVALENTS_MAGIC`): the items of `sources`, whose art
-/// definition holds only the items its client draws differently from the base client, and `equivalents`, the art
-/// ids left to the base package.
+/// definition holds only the items its client draws differently from the base client, and `overlay`, the art ids
+/// left to the base package and that package's hash.
 pub fn convert_tex_art_ec_overlay_from_loaded_sources(
     sources: &TexArtEcLoadedSources,
     out_file: &Path,
     options: &TexArtEcAtlasOptions,
-    equivalents: &[EcEquivalentRecord],
+    overlay: &EcOverlayTable,
 ) -> eyre::Result<TexArtEcBuildSummary> {
-    convert_loaded_sources(sources, out_file, options, Some(equivalents), |_| {}, |_| {})
+    convert_loaded_sources(sources, out_file, options, Some(overlay), |_| {}, |_| {})
 }
 
 fn convert_loaded_sources(
     sources: &TexArtEcLoadedSources,
     out_file: &Path,
     options: &TexArtEcAtlasOptions,
-    equivalents: Option<&[EcEquivalentRecord]>,
+    overlay: Option<&EcOverlayTable>,
     payload_progress: impl Fn(AssetTaskProgress) + Sync,
     mut package_progress: impl FnMut(udd_container::BuildProgress),
 ) -> eyre::Result<TexArtEcBuildSummary> {
@@ -466,12 +466,12 @@ fn convert_loaded_sources(
         width: 0, height: 0, virtual_path: Some(SPRITE_GEOMETRY_ENTRY_PATH),
         path_hash64: None, id: None, data: &geometry_manifest,
     })?;
-    if let Some(equivalents) = equivalents {
+    for (path, data) in overlay.map(|table| table.encode(TEX_ART_EC_EQUIVALENTS_MAGIC, TEX_ART_EC_METADATA_VERSION))
+        .into_iter().flatten() {
         package.add_file(AddFileRequest {
             data_type: DataType::Metadata as u8, compression: CompressionFlag::ZstdNoDict,
-            width: 0, height: 0, virtual_path: Some(EC_EQUIVALENTS_ENTRY_PATH),
-            path_hash64: None, id: None,
-            data: &encode_ec_equivalents(TEX_ART_EC_EQUIVALENTS_MAGIC, TEX_ART_EC_METADATA_VERSION, equivalents),
+            width: 0, height: 0, virtual_path: Some(path),
+            path_hash64: None, id: None, data: &data,
         })?;
     }
 

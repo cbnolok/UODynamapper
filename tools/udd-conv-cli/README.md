@@ -18,7 +18,7 @@ packages consumed by Dynamapper and the other tools at runtime.
 | `pack-mobile-anims` | `mobile_anim_cc.uddp` | Classic `anim*.mul` / `anim*.idx` |
 | `pack-ec-mobile-anims` | `mobile_anim_ec.uddp` | EC `AnimationFrame*.uop` |
 | `pack-ec-textures` | `tex_art_ec.uddp`, `tex_land_ec.uddp` | EC art and land in one pass |
-| `pack-kr-land` | `tex_land_kr.uddp` | Kingdom Reborn `TerrainDefinition.uop` and `Texture.uop` with its facet land routes, with what KR lacks from the EC (`--krdir`, `--ecdir`); `tex_land_ec.uddp` layout, plus KR's grunge texture; `--report` lists each item's client |
+| `pack-kr-land` | `tex_land_kr.uddp` | Kingdom Reborn `TerrainDefinition.uop` and `Texture.uop` with its facet land routes, with what KR lacks from the EC (`--krdir`, `--ecdir`); `tex_land_ec.uddp` layout, plus KR's grunge texture; `--report` lists each item's client. Beside it go `tilemeta_kr.uddp` and the overlays `tex_art_kr.uddp` and `tex_aux_kr.uddp`, over the `tex_art_ec.uddp` and `tex_aux_ec.uddp` beside them, which must be packed (from `--ecdir`) first: each overlay records the `package_hash64` of the one it was measured against, readers refuse another, and repacking either means repacking the overlays |
 | `pack-ec-tex-aux` | `tex_aux_ec.uddp` | EC auxiliary textures named by `tilemeta.uddp`, the missing-texture fallback and the night maps |
 | `pack-ec-effects` | `effects_ec.uddp` | EC particle effects: definitions, Chaos and NIF systems, textures |
 | `pack-ec-paperdoll` | `paperdoll_ec.uddp` | EC 3D paperdoll frames (`Paperdoll.uop`), lossless, and what each dress-layer item takes off (see below); hued with `hues.uddp` |
@@ -148,7 +148,7 @@ Inspects, extracts, and edits `.uddp` and `.uddpi` package files.
 | `export-kdl` | Write what a `paperdoll_ec.uddp` decides beneath each dress-layer item as `PaperdollOverrides.kdl` covers (`<stem>.PaperdollOverrides.kdl` beside it, or `--output`), one cover per item and set of bodies keeping the same garments, with the items' names as comments from the `tilemeta.uddp` beside it (or `--tilemeta`). Used as Dynamapper's `PaperdollOverrides.kdl`, it decides each garment of the decisions' slots as the package does; its slot rules also take off the garments the packer could not measure, which the stored decisions leave on. |
 | `import-csv` | Import edited CSV metadata into a rebuilt package. |
 | `diff` | Compare two packages or two metadata CSV files. |
-| `validate` | Check that packages (or directories of them) open with this build's readers: container, package hash, every entry decoded with its codec and dictionary, and the package's own reader. A `gumps_ec` packed with `--share-with` is also checked, gump by gump, against the `gumps_cc.uddp` in its folder, or noted as depending on one when there is none. Exits non-zero when any fails. |
+| `validate` | Check that packages (or directories of them) open with this build's readers: container, package hash, every entry decoded with its codec and dictionary, and the package's own reader. A `gumps_ec` packed with `--share-with` is also checked, gump by gump, against the `gumps_cc.uddp` in its folder, or noted as depending on one when there is none. A Kingdom Reborn overlay (`tex_art_kr`, `tex_aux_kr`) is checked against the `tex_art_ec.uddp` or `tex_aux_ec.uddp` in its folder: it fails unless that is the package it was measured against and holds every id it leaves to it. Exits non-zero when any fails. |
 
 ## Current Production Status
 

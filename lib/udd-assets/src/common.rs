@@ -57,6 +57,14 @@ pub(crate) fn ensure_manifest_version(manifest: &str, version: u32, current: u32
 pub const EC_EQUIVALENTS_ENTRY_PATH: &str = "metadata/ec_equivalents.bin";
 /// Magic and version.
 const EC_EQUIVALENTS_HEADER_SIZE: usize = 8;
+/// The base package an overlay was measured against: magic [`EC_EQUIVALENTS_BASE_MAGIC`], the `u32` metadata version
+/// of the package layout, then the `u64` `package_hash64` of that package (the canonical XXH64 its UDDP header stores,
+/// over every byte of it). Every overlay has it; the base it names is the only one the overlay reads through.
+pub const EC_EQUIVALENTS_BASE_ENTRY_PATH: &str = "metadata/ec_equivalents_base.bin";
+/// Magic of [`EC_EQUIVALENTS_BASE_ENTRY_PATH`].
+pub const EC_EQUIVALENTS_BASE_MAGIC: [u8; 4] = *b"EQBS";
+/// Magic, version and the base package hash.
+const EC_EQUIVALENTS_BASE_SIZE: usize = 16;
 
 /// An id an overlay leaves to its base package ([`EC_EQUIVALENTS_ENTRY_PATH`]).
 #[repr(C)]
@@ -92,13 +100,75 @@ pub fn decode_ec_equivalents(bytes: &[u8], magic: [u8; 4], version: u32) -> eyre
     Ok(records)
 }
 
-/// The overlay table of `package`, `None` for a full package.
-pub(crate) fn read_ec_equivalents(package: &UddpReader, magic: [u8; 4], version: u32)
-    -> eyre::Result<Option<Vec<EcEquivalentRecord>>> {
-    package.find_by_path_hash(udd_container::xxh64_virtual_path(EC_EQUIVALENTS_ENTRY_PATH))
-        .map(|_| read_path_entry_cow(package, EC_EQUIVALENTS_ENTRY_PATH)
-            .and_then(|bytes| decode_ec_equivalents(bytes.as_ref(), magic, version)))
-        .transpose()
+/// Bytes of [`EC_EQUIVALENTS_BASE_ENTRY_PATH`] for a package layout at metadata `version`.
+pub fn encode_ec_equivalents_base(version: u32, base_package_hash64: u64) -> Vec<u8> {
+    let mut bytes = Vec::with_capacity(EC_EQUIVALENTS_BASE_SIZE);
+    bytes.extend_from_slice(&EC_EQUIVALENTS_BASE_MAGIC);
+    bytes.extend_from_slice(&version.to_le_bytes());
+    bytes.extend_from_slice(&base_package_hash64.to_le_bytes());
+    bytes
+}
+
+/// The base package hash of [`EC_EQUIVALENTS_BASE_ENTRY_PATH`], after checking its magic, version and size.
+pub fn decode_ec_equivalents_base(bytes: &[u8], version: u32) -> eyre::Result<u64> {
+    eyre::ensure!(
+        bytes.len() == EC_EQUIVALENTS_BASE_SIZE && bytes[0..4] == EC_EQUIVALENTS_BASE_MAGIC,
+        "{EC_EQUIVALENTS_BASE_ENTRY_PATH}: no {} record; repack with the current udd-cli",
+        String::from_utf8_lossy(&EC_EQUIVALENTS_BASE_MAGIC)
+    );
+    let found = u32::from_le_bytes(bytes[4..8].try_into().expect("slice length checked"));
+    ensure_manifest_version(EC_EQUIVALENTS_BASE_ENTRY_PATH, found, version)?;
+    Ok(u64::from_le_bytes(bytes[8..16].try_into().expect("slice length checked")))
+}
+
+/// The table of an overlay package ([`EC_EQUIVALENTS_ENTRY_PATH`], [`EC_EQUIVALENTS_BASE_ENTRY_PATH`]).
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct EcOverlayTable {
+    /// The `package_hash64` of the base package the overlay was measured against.
+    pub base_package_hash64: u64,
+    /// The ids it leaves to that package, sorted by unique id.
+    pub equivalents: Vec<EcEquivalentRecord>,
+}
+
+impl EcOverlayTable {
+    /// The overlay's entries for a package layout of equivalents `magic` at metadata `version`, by entry path.
+    pub fn encode(&self, magic: [u8; 4], version: u32) -> [(&'static str, Vec<u8>); 2] {
+        [
+            (EC_EQUIVALENTS_ENTRY_PATH, encode_ec_equivalents(magic, version, &self.equivalents)),
+            (EC_EQUIVALENTS_BASE_ENTRY_PATH, encode_ec_equivalents_base(version, self.base_package_hash64)),
+        ]
+    }
+
+    /// Fails unless `base_package_hash64` is the `package_hash64` of the base package this overlay was measured
+    /// against: a base repacked since, or from another client, may draw what the overlay leaves to it differently.
+    pub fn ensure_base(&self, base_package_hash64: u64) -> eyre::Result<()> {
+        eyre::ensure!(
+            base_package_hash64 == self.base_package_hash64,
+            "the overlay was measured against the base package {:#018x}, not this one ({base_package_hash64:#018x}); \
+             repack the overlay against it",
+            self.base_package_hash64
+        );
+        Ok(())
+    }
+}
+
+/// The overlay table of `package`, `None` for a full package. An overlay without its base entry (packed before
+/// overlays named their base) is refused with the repack message.
+pub(crate) fn read_ec_overlay_table(package: &UddpReader, magic: [u8; 4], version: u32)
+    -> eyre::Result<Option<EcOverlayTable>> {
+    if package.find_by_path_hash(udd_container::xxh64_virtual_path(EC_EQUIVALENTS_ENTRY_PATH)).is_none() {
+        return Ok(None);
+    }
+    let equivalents = read_path_entry_cow(package, EC_EQUIVALENTS_ENTRY_PATH)
+        .and_then(|bytes| decode_ec_equivalents(bytes.as_ref(), magic, version))?;
+    eyre::ensure!(
+        package.find_by_path_hash(udd_container::xxh64_virtual_path(EC_EQUIVALENTS_BASE_ENTRY_PATH)).is_some(),
+        "overlay without {EC_EQUIVALENTS_BASE_ENTRY_PATH}, the base package it was measured against; repack with the \
+         current udd-cli"
+    );
+    let base_package_hash64 = read_path_entry_cow(package, EC_EQUIVALENTS_BASE_ENTRY_PATH)
+        .and_then(|bytes| decode_ec_equivalents_base(bytes.as_ref(), version))?;
+    Ok(Some(EcOverlayTable { base_package_hash64, equivalents }))
 }
 
 /// Whether the sorted overlay table `records` lists `id`.
@@ -322,6 +392,21 @@ mod tests {
         assert!(decode_ec_equivalents(&bytes, MAGIC, VERSION + 1).is_err());
         let unsorted = encode_ec_equivalents(MAGIC, VERSION, &[records[1], records[0]]);
         assert!(decode_ec_equivalents(&unsorted, MAGIC, VERSION).is_err());
+    }
+
+    /// The base record round-trips; other versions and sizes are refused, and only the named base passes.
+    #[test]
+    fn the_overlay_base_round_trips_and_only_the_named_base_passes() {
+        const VERSION: u32 = 1;
+        const BASE_HASH: u64 = 0x0123_4567_89ab_cdef;
+        let bytes = encode_ec_equivalents_base(VERSION, BASE_HASH);
+        assert_eq!(decode_ec_equivalents_base(&bytes, VERSION).unwrap(), BASE_HASH);
+        assert!(decode_ec_equivalents_base(&bytes, VERSION + 1).is_err());
+        assert!(decode_ec_equivalents_base(&bytes[..bytes.len() - 1], VERSION).is_err());
+        let table = EcOverlayTable { base_package_hash64: BASE_HASH, equivalents: Vec::new() };
+        assert!(table.ensure_base(BASE_HASH).is_ok());
+        let error = table.ensure_base(BASE_HASH + 1).unwrap_err().to_string();
+        assert!(error.contains("repack the overlay"), "{error}");
     }
 
     #[test]

@@ -35,7 +35,9 @@
 //! An overlay (the Kingdom Reborn `tex_aux_kr.uddp`) has the same layout plus `metadata/ec_equivalents.bin`
 //! ([`crate::common::EC_EQUIVALENTS_ENTRY_PATH`], magic [`TEX_AUX_EC_EQUIVALENTS_MAGIC`]): the textures it leaves to
 //! the `tex_aux_ec.uddp` beside it, whose image is the overlay client's re-encoded. Its slots hold only the other textures, so the reserved slots it lists there are
-//! not required of it; read it through [`TexAuxEcPackage::overlay_slot`].
+//! not required of it; read it through [`TexAuxEcPackage::overlay_slot`]. It also names, in
+//! `metadata/ec_equivalents_base.bin` ([`crate::common::EC_EQUIVALENTS_BASE_ENTRY_PATH`]), the `tex_aux_ec.uddp` it
+//! was measured against, the only base it reads through ([`TexAuxEcPackage::ensure_overlay_base`]).
 
 use bytemuck::{Pod, Zeroable};
 use color_eyre::eyre::{self, WrapErr};
@@ -44,8 +46,7 @@ use udd_container::{xxh64_virtual_path, UddpReader};
 use uot_texture_codecs::bc7::{decode_from_vram, RawImageFormat, VramTextureData, VramTextureFormat};
 
 use crate::common::{
-    encode_ec_equivalents, ensure_manifest_version, lists_equivalent, read_ec_equivalents, read_pod_vec,
-    EcEquivalentRecord,
+    ensure_manifest_version, lists_equivalent, read_ec_overlay_table, read_pod_vec, EcEquivalentRecord, EcOverlayTable,
 };
 use crate::tex_art_cc::PagePixelFormat;
 
@@ -109,9 +110,9 @@ pub fn texture_entry_path(texture_id: u32) -> String {
 /// reserved keys.
 pub const TEX_AUX_EC_EQUIVALENTS_MAGIC: [u8; 4] = *b"AXEQ";
 
-/// Bytes of the overlay table of this layout.
-pub fn encode_tex_aux_ec_equivalents(records: &[EcEquivalentRecord]) -> Vec<u8> {
-    encode_ec_equivalents(TEX_AUX_EC_EQUIVALENTS_MAGIC, TEX_AUX_EC_METADATA_VERSION, records)
+/// The overlay entries of this layout, by entry path.
+pub fn tex_aux_ec_overlay_entries(table: &EcOverlayTable) -> [(&'static str, Vec<u8>); 2] {
+    table.encode(TEX_AUX_EC_EQUIVALENTS_MAGIC, TEX_AUX_EC_METADATA_VERSION)
 }
 
 /// Binary record stored in `metadata/slots.bin`.
@@ -203,8 +204,8 @@ pub struct TexAuxEcPackage {
     package: UddpReader,
     slots: Vec<TexAuxEcSlotRecord>,
     water_primary_extents: Vec<[u32; 3]>,
-    /// `metadata/ec_equivalents.bin` of an overlay.
-    equivalents: Option<Vec<EcEquivalentRecord>>,
+    /// `metadata/ec_equivalents.bin` and `metadata/ec_equivalents_base.bin` of an overlay.
+    overlay: Option<EcOverlayTable>,
 }
 
 impl From<&TexAuxEcSlotRecord> for SlotInfo {
@@ -234,8 +235,8 @@ impl TexAuxEcPackage {
         let slots = decode_tex_aux_ec_slots(slot_bytes.as_ref())?;
         eyre::ensure!(slots.windows(2).all(|pair| pair[0].texture_id < pair[1].texture_id),
             "{TEX_AUX_EC_SLOT_MANIFEST_ENTRY_PATH} is not sorted by unique texture id");
-        let equivalents = read_ec_equivalents(&package, TEX_AUX_EC_EQUIVALENTS_MAGIC, TEX_AUX_EC_METADATA_VERSION)?;
-        let left_to_base = |key: u32| equivalents.as_deref().is_some_and(|records| lists_equivalent(records, key));
+        let overlay = read_ec_overlay_table(&package, TEX_AUX_EC_EQUIVALENTS_MAGIC, TEX_AUX_EC_METADATA_VERSION)?;
+        let left_to_base = |key: u32| overlay.as_ref().is_some_and(|table| lists_equivalent(&table.equivalents, key));
         let reserved_keys = EC_ATMOSPHERE_MAP_TERRAIN_TEXTURE_ENTRIES.into_iter().map(tex_aux_ec_terrain_texture_key)
             .chain([TEX_AUX_EC_MISSING_TEXTURE_ID])
             .filter(|&key| !left_to_base(key));
@@ -251,18 +252,25 @@ impl TexAuxEcPackage {
         eyre::ensure!(water_primary_extents.windows(2).all(|pair| pair[0][0] < pair[1][0])
             && water_primary_extents.iter().all(|row| row[1] > 0 && row[2] > 0),
             "invalid native water-primary extents");
-        Ok(Self { package, slots, water_primary_extents, equivalents })
+        Ok(Self { package, slots, water_primary_extents, overlay })
     }
 
     /// Whether this is an overlay: a package that holds only the textures its client draws differently from the
     /// client of the base package beside it, and lists the others ([`Self::equivalents`]).
     pub fn is_overlay(&self) -> bool {
-        self.equivalents.is_some()
+        self.overlay.is_some()
     }
 
     /// The textures an overlay leaves to its base package, sorted by key; empty for a full package.
     pub fn equivalents(&self) -> &[EcEquivalentRecord] {
-        self.equivalents.as_deref().unwrap_or_default()
+        self.overlay.as_ref().map_or(&[], |table| &table.equivalents)
+    }
+
+    /// Fails when this is an overlay and `base` is not the package it was measured against (its `package_hash64`
+    /// differs from the one the overlay records): what the overlay leaves to `base` may be drawn differently there.
+    /// Check it before reading through [`Self::overlay_slot`]. A full package passes.
+    pub fn ensure_overlay_base(&self, base: &TexAuxEcPackage) -> eyre::Result<()> {
+        self.overlay.as_ref().map_or(Ok(()), |table| table.ensure_base(base.package.stored_package_hash64()))
     }
 
     /// The slot of `texture_id` read through this overlay over `base`, with the package holding its payload: this
@@ -377,7 +385,6 @@ impl TexAuxEcPackage {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::common::EC_EQUIVALENTS_ENTRY_PATH;
     use udd_container::{AddFileRequest, CompressionFlag, DataType, LookupMode, UddpBuilder};
 
     const WORLD_ART: u8 = crate::tilemeta::EcMaterialLogicalFamily::WorldArt as u8;
@@ -414,18 +421,18 @@ mod tests {
 
     /// `slots` must be sorted; payloads are written for the non-alias slots only.
     fn package_of(slots: &[TexAuxEcSlotRecord]) -> eyre::Result<TexAuxEcPackage> {
-        package_with(slots, None, PACKED_PIXEL)
+        package_with(slots, &[], PACKED_PIXEL)
     }
 
-    /// [`package_of`], an overlay leaving `equivalents` to its base when given, its packed payloads `pixel`.
-    fn package_with(slots: &[TexAuxEcSlotRecord], equivalents: Option<&[EcEquivalentRecord]>, packed_pixel: [u8; 4])
+    /// [`package_of`] with the overlay entries `overlay_entries` (none for a full package), its packed payloads
+    /// `pixel`.
+    fn package_with(slots: &[TexAuxEcSlotRecord], overlay_entries: &[(&str, Vec<u8>)], packed_pixel: [u8; 4])
         -> eyre::Result<TexAuxEcPackage> {
         let mut builder = UddpBuilder::new(LookupMode::VirtualPathHash);
-        let equivalents = equivalents.map(encode_tex_aux_ec_equivalents);
-        if let Some(data) = &equivalents {
+        for (path, data) in overlay_entries {
             builder.add_file(AddFileRequest {
                 data_type: DataType::Metadata as u8, compression: CompressionFlag::None, width: 0, height: 0,
-                virtual_path: Some(EC_EQUIVALENTS_ENTRY_PATH), path_hash64: None, id: None, data,
+                virtual_path: Some(path), path_hash64: None, id: None, data,
             })?;
         }
         builder.add_file(AddFileRequest {
@@ -485,9 +492,11 @@ mod tests {
         let reserved = reserved_slots();
         let (missing, atmosphere) = reserved.split_last().expect("missing-texture slot");
         let overlay_slots = [&[slot(PACKED_ID, WORLD_ART), alias(ABSENT_ID)][..], atmosphere].concat();
-        let overlay = package_with(&overlay_slots, Some(&left), OVERLAY_PIXEL)?;
+        let table = EcOverlayTable { base_package_hash64: base.package.stored_package_hash64(), equivalents: left.to_vec() };
+        let overlay = package_with(&overlay_slots, &tex_aux_ec_overlay_entries(&table), OVERLAY_PIXEL)?;
         assert!(overlay.is_overlay() && !base.is_overlay());
         assert_eq!(overlay.equivalents().len(), left.len());
+        overlay.ensure_overlay_base(&base)?;
         assert!(overlay.slot_for_texture_id(missing.texture_id).is_none(), "left to the base");
 
         let (holder, packed) = overlay.overlay_slot(&base, PACKED_ID).expect("own slot");
@@ -501,6 +510,32 @@ mod tests {
         assert_eq!(&holder.load_rgba(absent.payload_texture_id)?.expect("missing pixels")[..RGBA_CHANNELS], &MISSING_PIXEL);
         assert!(overlay.overlay_slot(&base, UNLISTED_ID + 1).is_none(), "neither held nor listed");
         assert!(base.overlay_slot(&base, LEFT_ID).is_some(), "a full package reads itself");
+        Ok(())
+    }
+
+    /// An overlay passes only over the base it was measured against: a base repacked since (another package hash)
+    /// is refused with the repack message, and so is an overlay that names no base (packed before overlays did).
+    #[test]
+    fn an_overlay_refuses_a_base_it_was_not_measured_against() -> eyre::Result<()> {
+        const LEFT_ID: u32 = 20_002_480;
+        let base = package(&[slot(LEFT_ID, WORLD_ART)])?;
+        let repacked_base = package(&[slot(PACKED_ID, WORLD_ART), slot(LEFT_ID, WORLD_ART)])?;
+        assert_ne!(base.package.stored_package_hash64(), repacked_base.package.stored_package_hash64());
+        let table = EcOverlayTable {
+            base_package_hash64: base.package.stored_package_hash64(),
+            equivalents: vec![EcEquivalentRecord { id: LEFT_ID, difference: 0.0 }],
+        };
+        let entries = tex_aux_ec_overlay_entries(&table);
+        let overlay_slots = [&[slot(PACKED_ID, WORLD_ART)][..], &reserved_slots()].concat();
+        let overlay = package_with(&overlay_slots, &entries, PACKED_PIXEL)?;
+        overlay.ensure_overlay_base(&base)?;
+        let error = overlay.ensure_overlay_base(&repacked_base).expect_err("another base").to_string();
+        assert!(error.contains("repack"), "{error}");
+        assert!(base.ensure_overlay_base(&repacked_base).is_ok(), "a full package names no base");
+
+        let without_base = package_with(&overlay_slots, &entries[..1], PACKED_PIXEL);
+        let error = format!("{:#}", without_base.err().expect("an overlay naming no base"));
+        assert!(error.contains("repack"), "{error}");
         Ok(())
     }
 

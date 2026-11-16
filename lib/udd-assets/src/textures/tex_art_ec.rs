@@ -5,7 +5,7 @@ use byteorder::{LittleEndian, ReadBytesExt};
 use udd_container::UddpReader;
 use crate::common::{
     AtlasCacheOptions, AtlasPageCache, decode_atlas_page_rgba, ensure_manifest_version, lists_equivalent,
-    read_ec_equivalents, read_path_entry, read_path_entry_cow, EcEquivalentRecord,
+    read_ec_overlay_table, read_path_entry, read_path_entry_cow, EcEquivalentRecord, EcOverlayTable,
 };
 use crate::tex_art_cc::{upscale_algorithm_name, AtlasPackingMode, PagePixelFormat};
 
@@ -134,8 +134,8 @@ pub struct TexArtEcPackage {
     slots: Vec<TexArtEcSlotRecord>,
     sprite_geometry: std::collections::BTreeMap<u32, TexArtEcSpriteGeometry>,
     page_cache: AtlasPageCache,
-    /// `metadata/ec_equivalents.bin` of an overlay.
-    equivalents: Option<Vec<EcEquivalentRecord>>,
+    /// `metadata/ec_equivalents.bin` and `metadata/ec_equivalents_base.bin` of an overlay.
+    overlay: Option<EcOverlayTable>,
 }
 
 impl TexArtEcPackage {
@@ -182,8 +182,8 @@ impl TexArtEcPackage {
         let geometry_bytes = read_path_entry_cow(&package, SPRITE_GEOMETRY_ENTRY_PATH)
             .context("tex_art_ec missing source sprite geometry; rebuild tex_art_ec.uddp")?;
         let sprite_geometry = parse_sprite_geometry(&geometry_bytes, &slots)?;
-        let equivalents = read_ec_equivalents(&package, TEX_ART_EC_EQUIVALENTS_MAGIC, TEX_ART_EC_METADATA_VERSION)?;
-        if let Some(listed) = equivalents.as_deref().and_then(|records| records.iter()
+        let overlay = read_ec_overlay_table(&package, TEX_ART_EC_EQUIVALENTS_MAGIC, TEX_ART_EC_METADATA_VERSION)?;
+        if let Some(listed) = overlay.as_ref().and_then(|table| table.equivalents.iter()
             .find(|record| slots.get(record.id as usize).is_some_and(|slot| slot.is_present()))) {
             eyre::bail!("tex_art_ec overlay both holds and leaves to its base art {}; repack it", listed.id);
         }
@@ -205,7 +205,7 @@ impl TexArtEcPackage {
             slots,
             sprite_geometry,
             page_cache: AtlasPageCache::new(options),
-            equivalents,
+            overlay,
         })
     }
 
@@ -260,12 +260,19 @@ impl TexArtEcPackage {
     /// Whether this is an overlay: a package that holds only the items whose world art its client draws differently
     /// from the client of the base package beside it, and lists the others ([`Self::equivalents`]).
     pub fn is_overlay(&self) -> bool {
-        self.equivalents.is_some()
+        self.overlay.is_some()
     }
 
     /// The art ids an overlay leaves to its base package, sorted; empty for a full package.
     pub fn equivalents(&self) -> &[EcEquivalentRecord] {
-        self.equivalents.as_deref().unwrap_or_default()
+        self.overlay.as_ref().map_or(&[], |table| &table.equivalents)
+    }
+
+    /// Fails when this is an overlay and `base` is not the package it was measured against (its `package_hash64`
+    /// differs from the one the overlay records): what the overlay leaves to `base` may be drawn differently there.
+    /// Check it before reading through [`Self::overlay_slot`]. A full package passes.
+    pub fn ensure_overlay_base(&self, base: &TexArtEcPackage) -> eyre::Result<()> {
+        self.overlay.as_ref().map_or(Ok(()), |table| table.ensure_base(base.package.stored_package_hash64()))
     }
 
     /// The present slot of `art_id` read through this overlay over `base`, with the package holding it: this

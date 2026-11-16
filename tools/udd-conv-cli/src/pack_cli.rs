@@ -83,7 +83,7 @@ use udd_conv::{
         DEFAULT_ATLAS_PAGE_WIDTH as EC_LAND_DEFAULT_ATLAS_PAGE_WIDTH,
     },
     tex_land_kr::{convert_kr_land_to_tex_land_kr_uddp, TexLandKrPackOptions, TEX_LAND_KR_FILE_NAME},
-    kr_items::{pack_kr_items, KrItemOutputs},
+    kr_items::{pack_kr_items, KrItemOutputs, KrOverlayBases},
     tilemeta::{
         build_tilemeta_uddp_from_sources, build_tilemeta_uddp_from_split_sources,
         build_tilemeta_uddp_from_split_sources_with_loaded_ec_sources, TileMetaBuildOptions,
@@ -1123,7 +1123,9 @@ enum Commands {
     /// a format flag the pages are lossless RGBA8888 with Zstd 19; BC7 blocks take Zstd 19 too. Beside it go the KR
     /// item packages, lossless: tilemeta_kr.uddp (KR's tileart.uop with Classic tiledata.mul), and, as overlays over
     /// the Enhanced packages beside them, tex_art_kr.uddp (the item world art KR draws differently from the Enhanced
-    /// Client) and tex_aux_kr.uddp (the item material textures KR draws differently).
+    /// Client) and tex_aux_kr.uddp (the item material textures KR draws differently). The tex_art_ec.uddp and
+    /// tex_aux_ec.uddp packed from --ecdir must be beside those outputs first: each overlay records the package it was
+    /// measured against, and readers refuse another one.
     #[command(group(ArgGroup::new("output_format").args(["raw", "bc7", "bc7_rdo"])))]
     PackKrLand {
         #[arg(long, help = "Kingdom Reborn client folder (TerrainDefinition.uop, Texture.uop, tileart.uop, string_dictionary.uop, TerrainTexture.uop, SystemTextures.uop).")]
@@ -2057,6 +2059,8 @@ where
                 art: art_output.map_or(beside.art, |path| resolve_output_path(&path)),
                 aux: aux_output.map_or(beside.aux, |path| resolve_output_path(&path)),
             };
+            // The overlays are measured against the Enhanced packages beside them, which must be there before packing.
+            let overlay_bases = KrOverlayBases::beside(&item_outputs)?;
             let output_format = resolve_land_output_format(
                 TextureOutputFormatArgs { raw, zstd: land_zstd_level(zstd), bc7, bc7_rdo },
                 bc7_rdo_lambda,
@@ -2102,7 +2106,7 @@ where
                 summary.package.slot_count,
                 out_file.display()
             );
-            pack_kr_items(&krdir, &ecdir, &ccdir, &item_outputs)?;
+            pack_kr_items(&krdir, &ecdir, &ccdir, &item_outputs, &overlay_bases)?;
         }
         Commands::AuditEcMaterialRefs {
             source_dirs: source_dir_args,

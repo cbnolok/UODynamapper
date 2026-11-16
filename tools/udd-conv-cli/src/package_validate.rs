@@ -57,8 +57,8 @@ const TILEMETA_FILE_NAME: &str = "tilemeta.uddp";
 /// The tilemeta whose item lights a tex_aux_kr beside it must carry the textures of.
 const TILEMETA_KR_FILE_NAME: &str = udd_conv::kr_items::TILEMETA_KR_FILE_NAME;
 /// The Enhanced packages the Kingdom Reborn overlays (`tex_art_kr`, `tex_aux_kr`) leave what they list to.
-const TEX_ART_EC_FILE_NAME: &str = "tex_art_ec.uddp";
-const TEX_AUX_EC_FILE_NAME: &str = "tex_aux_ec.uddp";
+const TEX_ART_EC_FILE_NAME: &str = udd_conv::kr_items::TEX_ART_EC_FILE_NAME;
+const TEX_AUX_EC_FILE_NAME: &str = udd_conv::kr_items::TEX_AUX_EC_FILE_NAME;
 /// What a Kingdom Reborn package of the earlier layout, all of Kingdom Reborn's art or material textures, fails with.
 const KR_OVERLAY_REPACK: &str = "not an overlay over the Enhanced package (the earlier layout, all of Kingdom \
     Reborn's images): repack it with `udd-cli pack pack-kr-land`";
@@ -503,7 +503,8 @@ fn check_item_light_textures_of(path: &Path, tilemeta_name: &str, aux: &TexAuxEc
     ));
 }
 
-/// A Kingdom Reborn art package: an overlay, whose listed art ids the `tex_art_ec.uddp` beside it holds.
+/// A Kingdom Reborn art package: an overlay measured against the `tex_art_ec.uddp` beside it, which holds its listed
+/// art ids.
 fn check_kr_art_overlay(path: &Path, package: &UddpReader, report: &mut PackageReport) {
     let art = match TexArtEcPackage::from_uddp_package(package.clone()) {
         Ok(art) => art,
@@ -523,14 +524,17 @@ fn check_kr_art_overlay(path: &Path, package: &UddpReader, report: &mut PackageR
         Ok(base) => base,
         Err(error) => return report.failures.push(format!("overlay base: {}: {error:#}", base_path.display())),
     };
+    if !check_overlay_base(art.ensure_overlay_base(&base), &base_path, report) {
+        return;
+    }
     let missing = art.equivalents().iter().map(|record| record.id)
         .filter(|&id| base.present_slot(id).is_none())
         .collect::<Vec<_>>();
     report_overlay_base(&base_path, art.equivalents().len(), &missing, report);
 }
 
-/// A Kingdom Reborn material texture package: an overlay, whose listed keys the `tex_aux_ec.uddp` beside it holds,
-/// with the light textures of the `tilemeta_kr.uddp` beside it.
+/// A Kingdom Reborn material texture package: an overlay measured against the `tex_aux_ec.uddp` beside it, which
+/// holds its listed keys, with the light textures of the `tilemeta_kr.uddp` beside it.
 fn check_kr_aux_overlay(path: &Path, package: &UddpReader, report: &mut PackageReport) {
     let aux = match TexAuxEcPackage::from_uddp_package(package.clone()) {
         Ok(aux) => aux,
@@ -550,11 +554,25 @@ fn check_kr_aux_overlay(path: &Path, package: &UddpReader, report: &mut PackageR
         Ok(base) => base,
         Err(error) => return report.failures.push(format!("overlay base: {}: {error:#}", base_path.display())),
     };
+    if !check_overlay_base(aux.ensure_overlay_base(&base), &base_path, report) {
+        return;
+    }
     let missing = aux.equivalents().iter().map(|record| record.id)
         .filter(|&id| base.slot_for_texture_id(id).is_none())
         .collect::<Vec<_>>();
     report_overlay_base(&base_path, aux.equivalents().len(), &missing, report);
     check_item_light_textures_of(path, TILEMETA_KR_FILE_NAME, &aux, &base, report);
+}
+
+/// Whether the package at `base_path` is the one the overlay was measured against (`measured_against`, from its
+/// reader): a failure naming the repack when it is not.
+fn check_overlay_base(measured_against: eyre::Result<()>, base_path: &Path, report: &mut PackageReport) -> bool {
+    let Err(error) = measured_against else {
+        report.notes.push(format!("measured against {}", base_path.display()));
+        return true;
+    };
+    report.failures.push(format!("overlay base: {}: {error:#} with `udd-cli pack pack-kr-land`", base_path.display()));
+    false
 }
 
 /// Whether the `listed` ids an overlay leaves to the package at `base_path` are all there, but `missing`.

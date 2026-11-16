@@ -25,7 +25,8 @@
 //! [`pack_tex_aux_ec_overlay`] packs an overlay (the Kingdom Reborn `tex_aux_kr.uddp`): it decodes the base client's
 //! image of each texture too, and leaves a texture to the base package when that package holds it and the image is
 //! the same within [`TexAuxEcOverlayBase::max_difference`]; the textures it leaves go to
-//! `metadata/ec_equivalents.bin` with their measured difference, and the others are stored as above.
+//! `metadata/ec_equivalents.bin` with their measured difference, and the others are stored as above. The overlay
+//! records the base package's hash ([`TexAuxEcOverlayBase::package_hash64`]) in `metadata/ec_equivalents_base.bin`.
 
 use std::collections::{BTreeSet, HashMap, HashSet};
 use std::path::{Path, PathBuf};
@@ -35,10 +36,10 @@ use color_eyre::eyre::{self, WrapErr};
 use log::info;
 use rayon::prelude::*;
 
-use udd_assets::common::{EcEquivalentRecord, EC_EQUIVALENTS_ENTRY_PATH};
+use udd_assets::common::{EcEquivalentRecord, EcOverlayTable};
 use udd_assets::tex_art_cc::PagePixelFormat;
 use udd_assets::tex_aux_ec::{
-    encode_tex_aux_ec_equivalents, encode_tex_aux_ec_slots, is_tex_aux_ec_reserved_key, tex_aux_ec_terrain_texture_key,
+    encode_tex_aux_ec_slots, is_tex_aux_ec_reserved_key, tex_aux_ec_overlay_entries, tex_aux_ec_terrain_texture_key,
     texture_entry_path, TexAuxEcSlotRecord, EC_ATMOSPHERE_MAP_TERRAIN_TEXTURE_ENTRIES, TEX_AUX_EC_MISSING_TEXTURE_ID, TEX_AUX_EC_SLOT_FLAG_MISSING_SOURCE,
     TEX_AUX_EC_SLOT_MANIFEST_ENTRY_PATH, TEX_AUX_EC_TERRAIN_TEXTURE_KEY_BASE,
     TEX_AUX_EC_WATER_EXTENTS_ENTRY_PATH,
@@ -140,6 +141,8 @@ pub struct TexAuxEcOverlayBase {
     pub keys: HashSet<u32>,
     /// The largest difference (`crate::kr_items::image_difference`) of an image left to the base.
     pub max_difference: f32,
+    /// The `package_hash64` of the base package, packed from `source_dirs`, that the overlay is read over.
+    pub package_hash64: u64,
 }
 
 /// What [`pack_tex_aux_ec_overlay`] stored and left to the base, by key, with each image's difference from the
@@ -458,14 +461,18 @@ fn pack_tex_aux_ec_with_base(
     })?;
     overlay.equivalents.sort_by_key(|record| record.id);
     overlay.kept.sort_by_key(|(key, _)| *key);
-    if base.is_some() {
+    let overlay_entries = base.as_ref().map(|base| tex_aux_ec_overlay_entries(&EcOverlayTable {
+        base_package_hash64: base.base.package_hash64,
+        equivalents: overlay.equivalents.clone(),
+    }));
+    for (path, data) in overlay_entries.iter().flatten() {
         package.add_file(AddFileRequest {
             data_type: DataType::Metadata as u8,
             compression: CompressionFlag::ZstdNoDict,
             width: 0, height: 0,
-            virtual_path: Some(EC_EQUIVALENTS_ENTRY_PATH),
+            virtual_path: Some(path),
             path_hash64: None, id: None,
-            data: &encode_tex_aux_ec_equivalents(&overlay.equivalents),
+            data,
         })?;
     }
     package.add_file(AddFileRequest {

@@ -25,7 +25,7 @@ use udd_conv::{
     tex_art_ec::{TexArtEcAtlasOptions, convert_tex_art_ec_uop_to_tex_art_ec_uddp_from_sources_with_progress},
     tex_land_ec::{TexLandEcAtlasOptions, convert_tex_land_ec_uop_to_tex_land_ec_uddp_from_sources_with_progress},
     tex_land_kr::{TexLandKrPackOptions, convert_kr_land_to_tex_land_kr_uddp_with_progress, TEX_LAND_KR_FILE_NAME},
-    kr_items::{pack_kr_items, KrItemOutputs},
+    kr_items::{pack_kr_items, KrItemOutputs, KrOverlayBases},
     tilemeta::{TileMetaBuildOptions, build_tilemeta_uddp_from_sources_with_progress, build_tilemeta_uddp_from_split_sources_with_progress},
     cc_map::convert_map_mul_to_uddp_from_sources_with_patches,
     chunk_compression::ChunkCompression,
@@ -1097,6 +1097,8 @@ impl UddConvApp {
             let Some(ec_dir) = settings.ec_dir.clone() else { eyre::bail!("No Enhanced source dir") };
             let Some(cc_dir) = settings.cc_dir.clone() else { eyre::bail!("No Classic source dir (tiledata.mul for tilemeta_kr.uddp)") };
             ensure_output_parent(&output)?;
+            // The overlays are measured against the Enhanced packages beside them, which must be there before packing.
+            let overlay_bases = KrOverlayBases::beside(&item_outputs)?;
             let terrain_overrides_kdl = conversion_table(&settings, EC_TERRAIN_OVERRIDES_KDL)?;
             let transcode_kdl = conversion_table(&settings, TERRAIN_TRANSCODE_KDL)?;
             let upscale_profile = load_upscale_profile(&settings)?;
@@ -1143,7 +1145,7 @@ impl UddConvApp {
                 |task_progress| progress.task_progress_with_extract_label(task_progress, extract_label),
                 |build_progress| progress.build_progress(build_progress),
             )?;
-            let items = pack_kr_items(&kr_dir, &ec_dir, &cc_dir, &item_outputs)?;
+            let items = pack_kr_items(&kr_dir, &ec_dir, &cc_dir, &item_outputs, &overlay_bases)?;
             Ok(format!("Wrote {} pages to {} ({summary}); KR items: {} art slots ({} items left to tex_art_ec.uddp), {} \
                 material textures ({} left to tex_aux_ec.uddp)", summary.package.page_count, output.display(),
                 items.art.populated_slot_count, items.world_art.equivalents.len(), items.aux.kept.len(),
