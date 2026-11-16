@@ -97,6 +97,10 @@ pub(crate) const STATIC_FLAG_CAVE: u32 = 1 << 12;
 /// darkened and partly desaturated (art/depth.wesl `cave_outside_tone`, caves.rs `CaveSurroundings::Dimmed`). Kept
 /// in sync with art/depth.wesl.
 pub(crate) const STATIC_FLAG_CAVE_OUTSIDE: u32 = 1 << 15;
+/// `SpriteInstance::is_wet_flags` bit: the static is a wall with a floor laid on its top in the farther row, a Surface
+/// or Bridge in the cell west or north of it whose top is the wall's (`wall_cap_meets_floor_flag`): the perspective
+/// camera orders its cap in that row (art/depth.wesl `perspective_cap_row_shift`). Kept in sync with art/depth.wesl.
+pub(crate) const STATIC_FLAG_CAP_MEETS_FLOOR: u32 = 1 << 24;
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub(crate) struct StaticBillboardBounds {
@@ -1192,6 +1196,7 @@ pub struct SpriteInstance {
     /// Bit 1: ground surface blend; bits 2..9: NW,N,NE,W,E,SW,S,SE same-material neighbors.
     /// Bit 10: `STATIC_FLAG_CLIENT_GRUNGE`, the KR client grunges the static (art/client_grunge.wesl).
     /// Bit 11: `STATIC_FLAG_FLAT_ART`, the upright card shows flat art (art/shading.wesl).
+    /// Bit 24: `STATIC_FLAG_CAP_MEETS_FLOOR`, a wall with a floor on its top in the farther row (art/depth.wesl).
     pub is_wet_flags: u32,
     pub hue_id: u32,
     pub hue_flags: u32,
@@ -2425,6 +2430,20 @@ fn rebuild_static_chunk(
     for gy in start_gy..end_gy {
         for gx in start_gx..end_gx {
             build.stats.visited_blocks += 1;
+            // The floors of the blocks west and north of this one, in the farther row of its edge walls
+            // (`wall_cap_meets_floor_flag`).
+            let mut neighbour_surface_tops = Vec::new();
+            for (nx, ny) in [(gx.checked_sub(1), Some(gy)), (Some(gx), gy.checked_sub(1))] {
+                let (Some(nx), Some(ny)) = (nx, ny) else {
+                    continue;
+                };
+                if let Ok(tiles) = statics_store.block_tiles(nx, ny) {
+                    neighbour_surface_tops.extend(client_shadow_surface_tops(
+                        tiles.iter().map(|tile| static_cell_tile(nx, ny, *tile)),
+                        resources.tilemeta_package(),
+                    ));
+                }
+            }
             let Ok(tiles) = statics_store.block_tiles(gx, gy) else {
                 continue;
             };
@@ -2439,7 +2458,7 @@ fn rebuild_static_chunk(
             for tile in tiles {
                 emit_static_render_tile_on_surfaces(
                     static_cell_tile(gx, gy, *tile),
-                    &[&block_surface_tops],
+                    &[&block_surface_tops, &neighbour_surface_tops],
                     frame,
                     resources,
                     sprite_atlas,
@@ -2465,7 +2484,7 @@ fn rebuild_static_chunk(
                 for render_tile in &render_tiles {
                     emit_static_render_tile_on_surfaces(
                         *render_tile,
-                        &[&block_surface_tops, &multi_surface_tops],
+                        &[&block_surface_tops, &neighbour_surface_tops, &multi_surface_tops],
                         frame,
                         resources,
                         sprite_atlas,
@@ -2500,7 +2519,8 @@ fn rebuild_static_chunk(
 }
 
 /// Emits `render_tile` over the ground it stands on (`client_shadow_ground_z`): the highest of the `surface_tops` on its
-/// cell within its reach, or the land.
+/// cell within its reach, or the land. The `surface_tops` of the cells west and north of it tell whether a floor lies
+/// on its top in the farther row (`wall_cap_meets_floor_flag`).
 fn emit_static_render_tile_on_surfaces(
     render_tile: StaticRenderTile,
     surface_tops: &[&[((i32, i32), i32)]],
@@ -2512,13 +2532,18 @@ fn emit_static_render_tile_on_surfaces(
     build: &mut StaticChunkBuildState,
 ) {
     let cell = (render_tile.world_x as i32, render_tile.world_z as i32);
+    let all_surface_tops = surface_tops;
     let surface_tops = surface_tops.iter().flat_map(|tops| tops.iter()).filter(|top| top.0 == cell).map(|top| top.1);
     let land_z = build.own_land.land_z(resources.map_planes, frame.map_id, cell.0, cell.1)
         .and_then(|land_z| i8::try_from(land_z).ok());
     let ground_z = client_shadow_ground_z(render_tile.z, land_z, surface_tops);
+    let farther_cells = [(cell.0 - 1, cell.1), (cell.0, cell.1 - 1)];
+    let farther_floor_at = |top_z: i32| all_surface_tops.iter().flat_map(|tops| tops.iter())
+        .any(|top| top.1 == top_z && farther_cells.contains(&top.0));
     emit_static_render_tile(
         render_tile,
         ground_z,
+        farther_floor_at,
         frame,
         resources,
         sprite_atlas,
@@ -2539,6 +2564,7 @@ fn covering_land_z(land_z: Option<i32>, max_ground_z: i32, tile_atlas: &TileAtla
 fn emit_static_render_tile(
     render_tile: StaticRenderTile,
     ground_z: i32,
+    farther_floor_at: impl Fn(i32) -> bool,
     frame: StaticCollectFrameConfig,
     resources: StaticCollectResources<'_>,
     sprite_atlas: &mut SpriteArtPageAtlas,
@@ -2618,7 +2644,8 @@ fn emit_static_render_tile(
         depth_class: resolve_static_depth_class(tilemeta, renders_wet),
         is_wet_flags: u32::from(renders_wet) | cave_flags
             | super::light_scene::static_light_class_flags(tilemeta.map_or(0, |meta| meta.flags),
-                tilemeta.map_or(0, |meta| meta.height)),
+                tilemeta.map_or(0, |meta| meta.height))
+            | wall_cap_meets_floor_flag(flags, render_tile.z, tilemeta.map_or(0, |meta| meta.height), farther_floor_at),
         base_world_y: (render_tile.z as f32) * frame.height_scale,
         client_shadow_flags: client_shadow_flags(tilemeta),
         client_shadow_height: (i32::from(render_tile.z) - ground_z) as f32,
@@ -2652,6 +2679,19 @@ fn emit_static_render_tile(
             }
         }
     }
+}
+
+/// `STATIC_FLAG_CAP_MEETS_FLOOR` for a wall to the light scene (`static_light_class_flags` of its tile `flags`), at `z`
+/// and `height` tall, whose top a floor lies on in the farther row (`farther_floor_at` of the top's z, a Surface's or
+/// Bridge's top in the cell west or north of it): the castles' wall-walks. Else 0: a wall under a roof, or under
+/// another wall stacked on it, keeps its cap in its row, in front of what stands on its top there.
+fn wall_cap_meets_floor_flag(flags: u64, z: i8, height: i8, farther_floor_at: impl Fn(i32) -> bool) -> u32 {
+    let light_class = super::light_scene::static_light_class_flags(flags, height);
+    if light_class & super::light_scene::STATIC_FLAG_LIGHT_WALL == 0 || height <= 0
+        || !farther_floor_at(i32::from(z) + i32::from(height)) {
+        return 0;
+    }
+    STATIC_FLAG_CAP_MEETS_FLOOR
 }
 
 /// A packed static's cell as a render tile, for the ground lookup.
@@ -3551,6 +3591,24 @@ mod tests {
         assert_eq!(client_shadow_ground_z(CASTER_Z, Some(5), [10, 18, 2].into_iter()), 18);
         // While the land block is not loaded the caster stands on the ground.
         assert_eq!(client_shadow_ground_z(CASTER_Z, None, std::iter::empty()), 20);
+    }
+
+    #[test]
+    fn only_a_wall_with_a_floor_on_its_top_in_the_farther_row_moves_its_cap() {
+        use uocf::enhanced::tileart::TaeFlag;
+        // Britain castle's wall-walk (1321,1618): a wall at z 72, 22 tall, under cobblestones at z 94 in (1320,1618).
+        const WALL_Z: i8 = 72;
+        const WALL_HEIGHT: i8 = 22;
+        const TOP_Z: i32 = WALL_Z as i32 + WALL_HEIGHT as i32;
+        let wall = TaeFlag::Wall.bits();
+        let floor_on_top = |top_z: i32| top_z == TOP_Z;
+        assert_eq!(wall_cap_meets_floor_flag(wall, WALL_Z, WALL_HEIGHT, floor_on_top), STATIC_FLAG_CAP_MEETS_FLOOR);
+        // A wall under a roof or under another wall stacked on it: no floor at its top.
+        assert_eq!(wall_cap_meets_floor_flag(wall, WALL_Z, WALL_HEIGHT, |_| false), 0);
+        // Not walls to the light scene, or with no top.
+        assert_eq!(wall_cap_meets_floor_flag(wall | TaeFlag::Roof.bits(), WALL_Z, WALL_HEIGHT, floor_on_top), 0);
+        assert_eq!(wall_cap_meets_floor_flag(TaeFlag::Impassable.bits(), WALL_Z, WALL_HEIGHT, floor_on_top), 0);
+        assert_eq!(wall_cap_meets_floor_flag(wall, TOP_Z as i8, 0, floor_on_top), 0);
     }
 
     #[test]

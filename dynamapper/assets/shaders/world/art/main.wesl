@@ -40,7 +40,8 @@ import package::shaders::world::art::surface_blend::static_surface_coverage;
 import package::shaders::world::ec_item_water::{ec_item_is_water, sample_ec_item_water};
 import package::shaders::world::ec_liquid_camera::ec_liquid_camera_reflection_uv;
 import package::shaders::world::art::depth::{sprite_priority_view_z, cell_priority_view_z, view_z_depth,
-    cave_lifted_view_z, cave_outside_rgb};
+    cave_lifted_view_z, cave_outside_rgb, perspective_cap_may_move, perspective_cap_row_shift,
+    perspective_cap_priority_z, PERSPECTIVE_CAP_TIE_LEVEL};
 import package::shaders::world::projection::camera_relative_world_to_clip;
 
 struct ArtVertexOutput {
@@ -220,6 +221,19 @@ fn shade_fragment(in: ArtVertexOutput, sample_index: u32) -> ArtFragmentOutput {
 
     let layer = u32(in.uv_b.x);
     let inst = instances[in.instance_index];
+    let cap_height_z = light_scene_height(inst.is_wet_flags);
+    if (cap_height_z > 0 && perspective_cap_may_move(inst.is_wet_flags) && inst.flat_quad == 0u
+        && sprite_params.pass_mode != PASS_MODE_SHADOW && sprite_params.pass_mode != PASS_MODE_CLIENT_SHADOW) {
+        // A wall's cap in the row the perspective shows it in (art/depth.wesl).
+        let row_shift = perspective_cap_row_shift(in.world_pos,
+            inst.base_world_y + f32(cap_height_z) * HEIGHT_SCALE, round(inst.tile_x + inst.tile_y));
+        if (row_shift != 0.0) {
+            let top_z = round(inst.base_world_y / HEIGHT_SCALE) + f32(cap_height_z);
+            out.depth = view_z_depth(cave_lifted_view_z(sprite_priority_view_z(
+                vec2<f32>(inst.tile_x + row_shift, inst.tile_y),
+                perspective_cap_priority_z(inst.priority_z_units, top_z), PERSPECTIVE_CAP_TIE_LEVEL), inst.is_wet_flags));
+        }
+    }
     var uv = in.uv;
     let atlas_extent = max(inst.uv_max - inst.uv_min, vec2<f32>(0.000001));
     let uv_in_tile_for_shading = clamp((uv - inst.uv_min) / atlas_extent, vec2<f32>(0.0), vec2<f32>(1.0));

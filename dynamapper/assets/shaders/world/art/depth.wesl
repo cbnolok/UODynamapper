@@ -86,6 +86,70 @@ fn cell_priority_view_z(world_xz: vec2<f32>, priority_z: f32) -> f32 {
     return logical_view_z(floor(world_xz) + CELL_DEPTH_ANCHOR, priority_logical_height(priority_z, 0.0));
 }
 
+// The rows by which a cap fragment of a wall moves back in the perspective camera. The fragment is at `card_point` on
+// its upright card, whose anchor lies in row `anchor_row`, and the wall's top is at `top_world_y`.
+//
+// The card is drawn for the isometric view. A cap pixel's line of sight there meets the top's plane inside the
+// wall's own cell, so the floor laid on that top, in the farther row behind it, never reaches the pixel. A
+// perspective ray diverges from the isometric one. Off the screen's centre it can meet the plane up to a pixel or
+// two past the cell's far edge, in the farther row. The cap is then ordered in that row, where its pixel shows, just
+// under its top (perspective_cap_priority_z): the floor laid on the top covers it as in the isometric view, and what
+// stands below the top in that row, the wall's own neighbours among them, stays under it as before; a static rising
+// over the top there, as over a floor, covers it. Without this, a hairline of the wall's top shows along the edge of
+// the floor laid on it. Only walls move their caps: their art is a slab whose top fills the cell, where a solid
+// static's (a tree's trunk, a boulder) is no flat top.
+//
+// Of those, only the walls with a floor on their top in the farther row move their caps (STATIC_FLAG_CAP_MEETS_FLOOR,
+// set on the CPU). A wall standing on the top there, or a roof over it, rises over the moved cap's z and would cover
+// it, as would the lower half of a wall stacked on its own, whose art reaches over the upper half's cap: dashes along
+// the eaves and the palisades' tops.
+//
+// The isometric line is the camera's own view axis, so an orthographic camera never moves a cap. The shift applies
+// only to fragments above the top whose isometric line meets the plane in the cell's row: art drawn above its height
+// (a bookcase's crest) keeps its anchor. A cap the perspective pulls nearer keeps its row too: the nearer row's surfaces
+// cover it as in the isometric view.
+fn perspective_cap_row_shift(card_point: vec3<f32>, top_world_y: f32, anchor_row: f32) -> f32 {
+    let view_axis = -view.world_from_view[2].xyz;
+    let rise = card_point.y - top_world_y;
+    if (rise <= 0.0 || view.clip_from_view[3][3] == 1.0 || view_axis.y >= 0.0) {
+        return 0.0;
+    }
+    let sight = card_point - view.world_from_view[3].xyz;
+    if (sight.y >= 0.0) {
+        return 0.0;
+    }
+    let isometric_hit = card_point - view_axis * (rise / view_axis.y);
+    let perspective_hit = card_point - sight * (rise / sight.y);
+    let isometric_row = floor(isometric_hit.x) + floor(isometric_hit.z);
+    if (isometric_row < anchor_row - (CELL_DEPTH_ANCHOR.x + CELL_DEPTH_ANCHOR.y)) {
+        return 0.0;
+    }
+    return min(floor(perspective_hit.x) + floor(perspective_hit.z) - isometric_row, 0.0);
+}
+
+// SpriteInstance is_wet_flags bit: the static is a wall with a floor laid on its top in the farther row, whose cap
+// the perspective camera orders in that row (perspective_cap_row_shift). Keep in sync with STATIC_FLAG_CAP_MEETS_FLOOR
+// in statics_collect.rs.
+const STATIC_FLAG_CAP_MEETS_FLOOR: u32 = 1u << 24u;
+
+// Whether a static's cap may move back a row in the perspective camera (perspective_cap_row_shift), by its
+// is_wet_flags.
+fn perspective_cap_may_move(is_wet_flags: u32) -> bool {
+    return (is_wet_flags & STATIC_FLAG_CAP_MEETS_FLOOR) != 0u;
+}
+
+// How far under its top's z a cap moved back a row (perspective_cap_row_shift) is ordered: a floor laid on the top
+// takes its z, or its z - 1 as a Background (ClassicUO's priority z), and covers the cap; the statics standing below
+// the top in that row, the wall's neighbours at their z + 1 among them, stay under it.
+const PERSPECTIVE_CAP_PRIORITY_Z_BELOW_TOP: f32 = 2.0;
+// A moved cap's tie level: the highest, over the other statics of its priority z in that row.
+const PERSPECTIVE_CAP_TIE_LEVEL: f32 = PRIORITY_TIE_LEVELS_PER_Z - 1.0;
+
+// The priority z of a cap moved back a row, of a static of priority z `priority_z` whose top is at z `top_z`.
+fn perspective_cap_priority_z(priority_z: f32, top_z: f32) -> f32 {
+    return max(priority_z, top_z - PERSPECTIVE_CAP_PRIORITY_Z_BELOW_TOP);
+}
+
 // SpriteInstance and GroundTileInstance is_wet_flags bit: the static is part of a cave drawn over the map (caves.rs).
 // Keep in sync with STATIC_FLAG_CAVE in statics_collect.rs.
 const STATIC_FLAG_CAVE: u32 = 1u << 12u;

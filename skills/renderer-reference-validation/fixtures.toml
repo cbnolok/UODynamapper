@@ -254,6 +254,38 @@ y = 1620
 z = 50
 
 [[fixture]]
+name = "britain-castle-wall-walk-perspective-wall-tops"
+guards = """The castle's wall-walks in the perspective camera, EC art: the floors laid on the walls' tops cover the caps. \
+Under ClassicUO's draw order a wall's cap pixel off the screen's centre, whose line of sight meets the top in the \
+farther row, drew over that row's floor: a 1-px line of every covered wall top along the floor tiles' edges \
+(art/depth.wesl perspective_cap_row_shift, 2026-11-16). The isometric view never showed it."""
+tier = "quick"
+tags = ["draw-order", "perspective", "britain"]
+map = 1
+x = 1330
+y = 1620
+z = 50
+camera = "perspective"
+sources = ["ec/ec"]
+
+[[fixture]]
+name = "britain-house-gable-palisade-perspective"
+guards = """The gable walls stacked over the house walls at 1477,1685, under shingles, in the perspective camera, EC art: \
+the caps keep their row, the upper pieces in front of the lower ones and of the walls standing on their tops. Moving \
+every wall's cap back a row, for the wall-walks' floors (britain-castle-wall-walk-perspective-wall-tops), let the \
+lower piece's art and the next piece up cover it: dashes along the palisade's tops and the eaves (2026-11-17). Only \
+a wall with a floor on its top in the farther row moves its cap."""
+tier = "quick"
+tags = ["draw-order", "perspective", "britain"]
+map = 1
+x = 1488
+y = 1686
+z = 20
+camera = "perspective"
+sources = ["ec/ec"]
+settings = { world_rendering = { show_only_player_floor = true } }
+
+[[fixture]]
 name = "britain-stacked-stairs"
 guards = """Stacked stone stairs and blocks on a raised wooden floor (1334,1741): Bridge volume keeps its own order \
 over the floor and the land (static_depth_ordering.md), steps over steps one row nearer."""
