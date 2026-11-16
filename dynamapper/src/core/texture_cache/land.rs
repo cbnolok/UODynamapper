@@ -8,6 +8,7 @@ pub(crate) mod aux_layers;
 mod liquid_sampling_tests;
 
 use crate::core::render::scene::world::land::mesh_material::LandCustomMeshMaterial;
+use crate::core::render::scene::world::land::CHUNK_STORAGE_BLOCKS_DIM;
 use crate::core::system_sets::*;
 use crate::core::texture_cache::{
     resolve_layer_allocations, TextureResidencyGroupLayers, TextureResidencyStrategy,
@@ -1198,6 +1199,25 @@ impl Plugin for LandTextureCachePlugin {
     }
 }
 
+/// The ring of map blocks around a land chunk that its edge cells read: `draw_mesh` loads it and writes it to the tile
+/// atlas with the chunk.
+const CHUNK_BORDER_BLOCKS: i32 = 1;
+
+/// The map blocks, in block units, that the land chunk at (`gx`, `gy`) in chunk units, `scale` chunks a side, reads: its
+/// own `CHUNK_STORAGE_BLOCKS_DIM` blocks per chunk and the `CHUNK_BORDER_BLOCKS` ring around them. May reach past the
+/// map's edges.
+fn chunk_read_blocks(gx: u32, gy: u32, scale: u32) -> (std::ops::RangeInclusive<i32>, std::ops::RangeInclusive<i32>) {
+    let blocks_per_chunk = CHUNK_STORAGE_BLOCKS_DIM as i32;
+    let span = scale as i32 * blocks_per_chunk;
+    let range = |origin: u32| {
+        let first = origin as i32 * blocks_per_chunk;
+        first - CHUNK_BORDER_BLOCKS..=first + span - 1 + CHUNK_BORDER_BLOCKS
+    };
+    (range(gx), range(gy))
+}
+
+/// Pins the land textures of the visible chunks' map blocks, which it touches as well: a block in view is never idle,
+/// so `sys_evict_idle_land_cache` keeps it.
 fn sys_pin_active_textures(
     mut cache_r: ResMut<cache::LandTextureCache>,
     mut map_planes_r: ResMut<crate::core::uo_files_loader::MapPlanesRes>,
@@ -1213,14 +1233,9 @@ fn sys_pin_active_textures(
         .expect("Uncached Map in sys_pin_active_textures");
 
     for mesh in chunk_q.iter() {
-        let gx = mesh.gx as i32;
-        let gy = mesh.gy as i32;
-        let scale = mesh.scale as i32;
-
-        for sx in -1..=scale {
-            for sz in -1..=scale {
-                let bx = gx + sx;
-                let bz = gy + sz;
+        let (blocks_x, blocks_y) = chunk_read_blocks(mesh.gx, mesh.gy, mesh.scale);
+        for bx in blocks_x {
+            for bz in blocks_y.clone() {
                 if bx >= 0
                     && bx < plane.size_blocks.width as i32
                     && bz >= 0
@@ -1931,6 +1946,30 @@ fn sys_apply_tile_atlas_expansion(
 mod tests {
     use super::*;
     use bevy::asset::{uuid::Uuid, AssetId};
+
+    /// The pin covers the map blocks under a visible chunk, in block units, and the ring its edges read: before
+    /// 2026-11-16 it took the chunk's coordinates for block coordinates, so the blocks in view went idle and were
+    /// evicted after 60 seconds.
+    #[test]
+    fn the_pin_covers_the_blocks_under_the_chunk_and_their_ring() {
+        use crate::core::render::scene::world::land::{MAP_STORAGE_BLOCK_TILE_DIM, TILE_NUM_PER_CHUNK_DIM};
+        const GX: u32 = 10;
+        const GY: u32 = 23;
+        for scale in [1, 2, 4] {
+            let (blocks_x, blocks_y) = chunk_read_blocks(GX, GY, scale);
+            let side = (scale * CHUNK_STORAGE_BLOCKS_DIM) as i32 + 2 * CHUNK_BORDER_BLOCKS;
+            assert_eq!(blocks_x.clone().count() as i32, side);
+            assert_eq!(blocks_y.clone().count() as i32, side);
+            // Every tile of the chunk and the tile ring around it lies in a pinned block.
+            let tiles = |origin: u32| {
+                let first = (origin * TILE_NUM_PER_CHUNK_DIM) as i32;
+                first - 1..=first + (scale * TILE_NUM_PER_CHUNK_DIM) as i32
+            };
+            let block = |tile: i32| tile.div_euclid(MAP_STORAGE_BLOCK_TILE_DIM as i32);
+            assert!(tiles(GX).all(|tile| blocks_x.contains(&block(tile))), "scale {scale}");
+            assert!(tiles(GY).all(|tile| blocks_y.contains(&block(tile))), "scale {scale}");
+        }
+    }
 
     /// A BC7 land layer is the atlas extent's block bytes: whole-extent pages pass through, used-extent pages have their
     /// block rows placed, and any other length is an error.
