@@ -837,9 +837,11 @@ fn apply_sharpening(color: vec3<f32>, uv: vec2<f32>, tile: TileUniform, amount: 
   return color + (color - neighbor_avg) * amount;
 }
 
-// Cheap per-tile random in [0,1) for blur kernel decorrelation.
-fn rand01_from_tile(ix: i32, iz: i32, layer: u32) -> f32 {
-  let p = vec2<f32>(f32(ix) + f32(layer) * 0.618, f32(iz) + f32(layer) * 1.732);
+// Cheap per-tile random in [0,1) for blur kernel decorrelation, from the world tile alone: the layer a texture lies on
+// (its land atlas page or texmap array layer) depends on the package's layout and the residency order, and seeding
+// from it turned UOD-Painterly's blur differently when only the Kingdom Reborn land's layout changed (2026-11-16).
+fn rand01_from_tile(ix: i32, iz: i32) -> f32 {
+  let p = vec2<f32>(f32(ix), f32(iz));
   return fract(sin(dot(p, vec2<f32>(12.9898, 78.233))) * 43758.5453);
 }
 
@@ -864,8 +866,8 @@ fn blurred_albedo(uv: vec2<f32>, tile: TileUniform, radius_in_pixels: f32, world
   if (tile.texture_size == 2u) { ddx_uv = gradients.dx; ddy_uv = gradients.dy; }
   else { ddx_uv = dpdx(uv); ddy_uv = dpdy(uv); }
 
-  // Decorrelation: derive a tiny rotation per tile/layer (+tiny world jitter)
-  let jitter = rand01_from_tile(i32(floor(world_xz.x)), i32(floor(world_xz.y)), tile.texture_layer)
+  // Decorrelation: derive a tiny rotation per tile (+tiny world jitter)
+  let jitter = rand01_from_tile(i32(floor(world_xz.x)), i32(floor(world_xz.y)))
              + fract(world_xz.x * 0.173 + world_xz.y * 0.271) * 0.125;
   let ang = (jitter * 6.2831853); // 2π
   let ca = cos(ang);

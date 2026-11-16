@@ -586,6 +586,22 @@ y = 1020
 z = 0
 
 [[fixture]]
+name = "painterly-kr-land-blur-layout"
+guards = """The Minoc river's grass, forest and rock land under UOD-Painterly with Kingdom Reborn land: the blur's kernel \
+turns by the world tile alone, not by the atlas page its texture lies on, so packing the Kingdom Reborn land as an \
+overlay or whole draws the same pixels, within 2 levels. Before 2026-11-16 the overlay (0b308d79) moved 0.13% of the \
+pixels by more than 4 levels, up to 15 (up to 21 in the Yew forest). Record it with --packages of the two layouts and \
+compare."""
+tier = "full"
+tags = ["terrain", "kr-land", "painterly"]
+map = 0
+x = 2542
+y = 488
+z = -5
+styles = ["painterly"]
+sources = ["ec/kr", "cc/kr"]
+
+[[fixture]]
 name = "acid-pools"
 guards = """Acid statics and acid land (map 0, x 6408): Enhanced art draws water, acid and lava statics from their \
 Classic art over Classic land, matching the Classic land liquids (dfbd8422)."""
