@@ -1,6 +1,6 @@
-# Encryption and KR handshake
+# Client encryption and login handshakes
 
-The login cipher, game ciphers and KR handshake have three independent controls in the GUI and CLI:
+Enhanced Client and Kingdom Reborn have three independent controls in the GUI and CLI:
 
 | CLI flag | Patch edit | Effect |
 |---|---|---|
@@ -21,12 +21,29 @@ shared-cipher explanation. There is no KR handshake in these clients. The patch 
 queueing and cipher-state updates remain intact. `exe show --crypt-keys` extracts the actual constants and
 identifies the old rotation or special 1.25.36 algorithm. These clients send a raw four-byte seed, without 0xEF;
 their filenames and absent PE version resources are not used to guess keys. See
-[early Classic cipher evidence and Sphere compatibility](research/classic-rotation-cipher.md).
+[the detailed rotation-cipher reference](research/classic-rotation-cipher.md).
+
+**Coverage correction for original 1.23 and 1.25:** both also have a separate incoming rotation cipher. The
+completed shared patch disables their outgoing XOR only; it leaves incoming decryption active. The reported
+`removed` state describes the outgoing site currently located by the patcher, and must not be interpreted as
+complete plaintext support for those two executables. Their audited receive paths frame decrypted packets
+directly, without the later Huffman stage. The supplied 1.25.34–1.25.36 group instead uses Huffman on the game
+receive route without that incoming rotation cipher. The algorithms, initialization, exact evidence and remaining
+patch requirements are recorded in the cipher reference.
+
+The native login messages also differ: original 1.23 builds a two-byte `91 00` continuation; original 1.25 and the
+later supplied builds construct the 65-byte game login. The earlier 65-byte Sphere vectors were constructed
+cipher probes, not captures of original 1.23's packet assembly. They validate outgoing rotation and Sphere's
+65-byte decoder, rather than original 1.23's complete login. See
+[native early Classic login sequences](research/early-classic-login.md) for framing, packet layouts and connection
+state, and [Sphere/Classic compatibility](SPHERE_CLASSIC_COMPATIBILITY.md) for current server behavior and remaining work.
 
 These early executables predate the patcher's supported facet tables. They can be inspected and patched for
 encryption, and use the Classic configuration-file login destination tools; facet editing and data validation
 are unavailable. Later Classic encryption layouts remain unsupported unless their network code matches a
 validated early layout.
+
+## EC/KR transforms and connection setup
 
 - **Login cipher** (both families): the login connection's client-to-server LFSR cipher, installed after the login
   seed (0xEF in the modern builds; four raw bytes in the supplied pre-2.48 KR builds). The patch writes NOPs over
@@ -55,7 +72,7 @@ Each selected site is located by its instruction pattern and must match exactly 
 refused, naming the cipher and its match count. Unrecognized Classic ciphers are refused. `exe show` prints the state (on, removed or
 partly removed) and each site; the manifest records it (`values.encryption`: `encrypted`, `removed`, `partial`).
 
-With all controls selected, a server must read the login seed (0xEF or the earlier four-byte form), 0x80 and
+For EC/KR with all controls selected, a server must read the login seed (0xEF or the earlier four-byte form), 0x80 and
 the game 0x91 unencrypted, and send game packets
 Huffman-compressed, not encrypted. Patched Kingdom Reborn sends the relay auth key as the game seed and 0x91
 immediately, with Huffman already installed; it needs no 0xE3 / 0xE4 support from the server. This also avoids
@@ -93,6 +110,71 @@ and only the newly introduced handshake site is stock.
 - `uocf-cli exe patch <exe> --output <copy> [--dry-run]` accepts the independent flags above, or the combined
   `--no-encryption` shortcut. The input is read only; the copy and its manifest record the selected changes.
 - Login destinations are configured separately; see [Login server](LOGIN_SERVER.md).
+
+## Later Classic eras: Sphere source context
+
+This table describes the inspected Source-X configuration and dispatch code, not additional executable audits.
+The supplied Classic executable corpus ends at 1.25.36. In particular, server key-table entries are not proof that
+the current patcher recognizes a later client or that all of that client's packet formats were tested.
+
+| Classic versions named in Sphere's table | Login connection, client to server | Configured game mode | Evidence boundary |
+| --- | --- | --- | --- |
+| 1.25.37 | Modern rotation step | `ENC_LOGIN`: continue using rotation for game input | Source only; no supplied 1.25.37 executable |
+| 1.26.0–1.26.4 | Modern rotation step | `ENC_BFISH` | Source only |
+| 2.0.0 | Modern rotation step | `ENC_BFISH` | Source only; distinguished in the table from 2.0.0x |
+| 2.0.0x, 2.0.1–2.0.3 | Modern rotation step | `ENC_BTFISH` | Source only |
+| 2.0.4 and the listed later 2.x/3.x/4.x rows | Modern rotation step | `ENC_TFISH` | Source only; not a new patcher support claim |
+
+`CCrypto::Decrypt` selects `DecryptLogin` whenever the connection is `CONNECT_LOGIN`, even when the table's
+configured game mode is Blowfish or Twofish. `ENC_LOGIN` means that this same rotation decoder is also selected
+for game traffic. It is not a name for a Diffie–Hellman exchange or a separate game seed format. The modern
+rotation branch in `CCryptoLogin.cpp` is selected at numeric version `1253700`; its high word advances twice per
+byte, unlike the earlier single-rotation branch. The special `1253600` branch uses the multikey arithmetic.
+
+For game input, `ENC_BFISH` calls `DecryptBlowFish`, `ENC_TFISH` calls `DecryptTwoFish`, and `ENC_BTFISH`
+decrypts with Twofish first and then Blowfish. These are observed server dispatch orders. Their server-to-client
+paths and complete client lifecycles were not tested by the early rotation work; see the server compatibility
+report before treating source configuration as a runtime guarantee.
+
+The source table and the key calculator are not interchangeable descriptions of every historical version.
+`CCryptoKeyCalc::GetEncryptionTypeForClient` explicitly handles early rotation, 1.26, 2.0.0/2.0.0x and revisions
+through 2.0.3, then falls back to Blowfish. The table selects Twofish for the later rows above. A calculated key
+pair and a default cipher selection therefore need separate verification. Likewise, applying the modern key
+formula to the labels `1.23` or `1.25.0` does not reproduce the fixed pair extracted from the original binaries.
+
+### Server route for the later packet vocabulary
+
+The normal Source-X route using the later packet vocabulary is:
+
+```mermaid
+sequenceDiagram
+    participant C as Classic client
+    participant L as Login connection
+    participant G as Fresh game connection
+    C->>L: Connection seed (raw four bytes, or supported 0xEF form)
+    C->>L: 0x80 account login through login rotation
+    L->>C: 0xA8 server list
+    C->>L: 0xA0 server selection through the same outgoing stream
+    L->>C: 0x8C address, port and relay auth ID
+    C->>G: Fresh connection seed
+    C->>G: 0x91 through the selected game cipher
+    G->>C: 0xB9 features and 0xA9 character list
+```
+
+This diagram summarizes the server's existing message route. It is not a recovered native sequence for every
+row in the table, and it does not apply to original 1.23/1.25, which lack A8/A9. The new-seed form's introduction
+is also not assigned to a client version here. Supported version requests and other messages can be interleaved;
+the diagram is not an exhaustive wire transcript. On a fresh connection the decoder is initialized for its seed;
+within a connection the cipher state persists across packet boundaries.
+
+Retaining the same socket is a distinct route. `CCrypto::RelayGameCryptStart` contains a combined login/game
+decoding path and assumes that versions below 2.0.4 do not use double encryption. Its comments explicitly call
+that cutoff an assumption and cite a gap between 2.0.3.0 and 6.0.1.6 observations. The early-client documentation
+does not promote that server heuristic into verified behavior for every intervening client.
+
+Primary local sources: Source-X `src/sphereCrypt.ini`, `src/common/crypto/CCryptoLogin.cpp`,
+`CCrypto.cpp`, `CCryptoKeyCalc.cpp`, `src/network/CNetworkInput.cpp`, `src/network/send.cpp`, and
+`src/game/clients/CClientLog.cpp`. These paths are relative to the separate Source-X checkout, not this repository.
 
 ## KR build coverage and upgrades
 
@@ -139,11 +221,16 @@ login stalls.
 uocf-cli exe show /path/to/UOKR.exe --crypt-keys
 ```
 
-This reads the actual login transform immediates and 0xEF version instructions, supports stock and NOP-patched
+For EC/KR this reads the actual login transform immediates and 0xEF version instructions, supports stock and NOP-patched
 login XORs, and compares the vCrypter version formula. It never substitutes the PE resource version or silently
 guesses keys for unknown code. Missing/ambiguous version instructions are reported separately from real keys.
 Login master keys are separate from the transmitted seed and the DH-derived game keys. Keeping login encryption
 on does not enable Sphere to implement KR's AES game cipher; configure and test the game path separately.
+
+For a recognized early Classic executable, the same option reports the actual outgoing master high/low pair,
+the single-rotation or multikey algorithm, and the outgoing XOR state. Absence of a 0xEF writer is expected and
+no wire version is invented. It does not currently report or patch original 1.23/1.25's separate incoming pair;
+those receive constants and their seed initialization are documented in the rotation reference.
 
 For the audited KR files, the extracted wire versions and login keys can be written in Sphere's existing
 `[SPHERECRYPT]` format as follows (leading zero denotes a hexadecimal key):

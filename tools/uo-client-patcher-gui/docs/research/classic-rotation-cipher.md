@@ -6,6 +6,89 @@ These clients share one client-to-server cipher implementation across their logi
 and game connections. Disabling its byte XOR removes both uses together. They do
 not have KR's 0xE3/0xE4 exchange.
 
+**Scope correction from the subsequent protocol audit:** the completed patch
+removes the shared **outgoing** cipher. The supplied bare `1.23` and `1.25`
+clients also have a separate incoming rotation cipher, which this patch does
+not remove and Sphere's present `ENC_LOGIN` output does not reproduce. Their
+full connections therefore cannot yet be described as bidirectionally plaintext
+or fully compatible with Sphere. The later supplied `1.25.34`–`1.25.36` clients
+have a different receive path. Details and evidence are below.
+
+The implemented patcher phase is commit `6a741e57` (`Support early Classic
+encryption patching`); its separate Source-X counterpart is `94534efe`, detailed
+below. This report explains the cipher already implemented and tested. The
+[early Classic login sequence reference](early-classic-login.md) explains the
+client packet handlers and selection screens. The
+[Sphere compatibility plan](../SPHERE_CLASSIC_COMPATIBILITY.md) distinguishes
+that completed cipher work from the older protocol work still required before
+claiming a complete login and playable session.
+
+## Seed, master keys and stream state are different values
+
+| Value | Where it comes from | Lifetime and purpose |
+| --- | --- | --- |
+| Connection seed | A four-byte value sent openly before ciphered traffic | Initializes a new connection's state; a game reconnect takes its seed from the relay auth ID. |
+| Master high / master low | Immediate constants in the executable's cipher instructions | Identify the byte transform used by that build; remain fixed while the connection is running. |
+| Current outgoing high / low masks | Calculated initially from the seed, then updated after every outgoing byte | Form the changing C2S stream state; must stay synchronized between client output and server input. |
+| Separate incoming high / low masks in bare `1.23`/`1.25` | Initialized by connection setup, then stepped by their receive loop | Form an independent S2C stream; they are not the outgoing masks and remain active after the completed send-only patch. |
+| Current byte position | Implicit in how many bytes have already passed through the state updates | Continues across packets and socket read boundaries on the same connection. |
+
+The early clients do not send the master keys in the seed. Knowing the seed
+alone does not select the right transform; knowing the keys alone does not tell
+the server the current stream position. The server needs the algorithm, its
+actual constants, the connection seed, and the correct state lifecycle.
+
+The commonly used version formula predicts many later master-key pairs. It is
+not the connection-seed formula, and these clients need not calculate their
+embedded constants from a version at runtime. The supplied bare `1.23` and
+`1.25` executables demonstrate why direct extraction matters: their common
+fixed pair differs from the later formula's result for those version labels.
+The `g`, `h` and `i` suffixes on the supplied `1.25.35` builds do not change
+that group's embedded cipher keys.
+
+The name "rotation cipher" refers to its state update: bits shift right
+through two 32-bit words, with bits from one word carried into the other.
+The byte itself is XORed with the low eight bits of the current low mask; its
+bits are not individually rotated. This is also why "remove the encryption"
+means bypassing the byte XOR while preserving the surrounding packet writer.
+
+## Where the cipher sits in the connection
+
+The cipher implemented by the completed patcher phase is client-to-server. The login request (`0x80`), game
+login (`0x91`) and following outbound packets reach the same cipher-append
+function. It does not stop after credentials or run only once per login.
+The raw seed goes directly to the socket before these packets, outside the byte
+XOR loop. Its four bytes therefore do not advance the cipher state.
+
+```mermaid
+flowchart LR
+    Seed[Raw seed: four network-order bytes] --> Socket[Socket]
+    Packet[Client packet bytes] --> XOR[XOR each byte with current low mask]
+    XOR --> Queue[Output queue]
+    Queue --> Socket
+    XOR --> Step[Update both masks once per byte]
+    Step --> XOR
+    Server[Server packet bytes] --> Receive[Separate receive pipeline]
+    Receive --> OldRX[Incoming rotation in bare 1.23 and 1.25]
+    Receive --> LaterRX[Later supplied receive path]
+```
+
+The server reverses client output with the same XOR and state updates. Server
+responses do not use this outgoing rotation stream, and must not advance the
+server's C2S receive state. In Sphere, `ENC_LOGIN` selects `DecryptLogin` for
+incoming client bytes even after the connection changes to the game phase;
+`CCrypto::Encrypt` currently copies server output without rotation encryption.
+That existing server behavior is tested, but it does not match the separate
+incoming cipher found in the bare `1.23` and `1.25` executables.
+
+Huffman compression and packet framing are separate concerns. Removing an
+outgoing byte XOR changes neither. The precise receive/compression route must
+be checked per native protocol group; the outgoing cipher tests do not establish
+that all eight supplied clients expect the same server-output pipeline.
+
+There is no Diffie-Hellman/AES setup or `0xE3`/`0xE4` handshake in these early
+Classic paths. KR's handshake bypass addresses a different connection design.
+
 ## Patcher usage
 
 ```sh
@@ -17,6 +100,30 @@ The GUI exposes the same shared control in the Login server section. A different
 the source; the source executable is never overwritten. Individual login/game cipher flags are refused for
 these shared routines. Configure the destination with the Classic `login.cfg` tools. Facet editing and data
 validation remain unavailable because these executables predate the supported facet tables.
+
+`exe show --crypt-keys` is useful with encryption retained: it reports the
+principal constants from the real code, the recognized algorithm and the XOR's
+stock/patched state. It does not generate a connection seed or edit Sphere's
+crypt table. The keys remain readable after a NOP patch because the state-update
+instructions are retained.
+
+### Why early Classic has one control
+
+The supplied Classic clients have one outgoing cipher function used by both
+connection phases. A two-byte edit there necessarily affects outgoing login and
+game traffic. "Shared" describes the phases, not both network directions; the
+bare clients' separate incoming cipher is still outside this control.
+The shared control describes that actual effect. Separate phase controls would
+require additional phase-dependent dispatch or connection-setup changes; this
+implementation does not pretend that the same XOR belongs to two independent
+sites.
+
+The inspected EC/KR clients have separate login and game transform objects or
+adapters, so their patcher controls can select those groups independently. KR
+also has the independent handshake control. See the
+[encryption controls reference](../ENCRYPTION.md) for those builds; the presence
+of a rotation-based login transform in two client families does not imply an
+identical game connection or seed protocol.
 
 ## Executable identities and patch sites
 
@@ -55,9 +162,35 @@ to `1.23.0` or `1.25.0`.
 | `client_1.25.35`, `g`, `h`, `i` | Single rotation | `383477bc` | `02345cc6` |
 | `client_1.25.36` | Multikey | `387fc5cc` | `021510c6` |
 
-Each output byte is `input ^ uint8_t(lo)`. Both algorithms are symmetric: the
-server applies the same XOR to decrypt client traffic. Use unsigned 32-bit
-wrapping arithmetic throughout; `lo` and `hi` below denote the pre-step values.
+### One byte, in order
+
+For every byte, including zero bytes in padded fields:
+
+1. Read the old `lo` and `hi` state words.
+2. Calculate `output = input ^ (lo & 0xff)` using the old low byte.
+3. Calculate both next state words with the algorithm below.
+4. Store the next state and continue with the next input byte.
+
+For example, seed `12345678` produces initial masks `lo=bad0fcd2` and
+`hi=46065115`. Before any updates, plaintext `80` becomes `52` because
+`80 ^ d2 = 52`; a first plaintext byte `91` instead becomes `43`.
+These examples describe fresh streams. The same packet bytes later in a stream
+need not produce the same ciphertext.
+
+The XOR is symmetric: `(input ^ mask) ^ mask = input`. The state update depends
+on the previous state and constants, not on whether the byte is plaintext or
+ciphertext. The server therefore executes the same state update while decoding.
+A packet split across two reads gives the same result as one contiguous read
+provided the state is carried forward. Resetting at every packet or every read
+would decode the first segment and then lose synchronization.
+
+All arithmetic below uses unsigned 32-bit words: additions, subtractions,
+multiplications and left shifts discard bits above bit 31, and right shifts are
+logical. In the single rotation equations, both right-hand sides use the old
+state. In the multikey equations, `next_lo` deliberately uses the newly computed
+`next_hi`. Applying these steps in a different order changes the stream.
+
+### Single rotation, verified in seven supplied files
 
 Single rotation:
 
@@ -65,6 +198,16 @@ Single rotation:
 next_lo = ((lo >> 1) | (hi << 31)) ^ master_low
 next_hi = ((hi >> 1) | (lo << 31)) ^ master_high
 ```
+
+### Multikey, verified in the supplied 1.25.36 file
+
+The special implementation contains six principal arithmetic constants: the two
+master values shown above, and the four additional coefficients below. The
+server table stores the first pair because the other four belong to its
+version-specific algorithm branch. The patcher's public `LoginMasterKeys` also
+reports that pair; the dynamic signature validates the retained special
+coefficient instructions rather than treating an unrelated rotation loop as
+multikey.
 
 The 1.25.36 multikey step:
 
@@ -84,7 +227,102 @@ The multikey client also checks a separate global copy of `hi` at each byte and
 updates it after the step. That integrity check stays active under the XOR-only
 patch; the patch leaves mask evolution untouched.
 
-## Seed and connection lifecycle
+### Later rotation variants: source coverage differs from binary coverage
+
+Sphere's current `CCryptoLogin.cpp` chooses the following algorithm for client
+version IDs `>= 1253700` (`1.25.37`):
+
+```text
+next_lo = ((lo >> 1) | (hi << 31)) ^ master_low
+intermediate_hi = ((hi >> 1) | (lo << 31)) ^ master_high
+next_hi = ((intermediate_hi >> 1) | (lo << 31)) ^ master_high
+```
+
+The second high-word update uses the old `lo` again. This explains why sharing
+the seed-initialization formula and a master-key table is insufficient to select
+the right algorithm. It is distinct from both the older single rotation and the
+1.25.36 multiplication/variable-shift branch.
+
+This boundary is supported by the local server source and table, not by a
+`1.25.37` executable examined in this phase. `sphereCrypt.ini` assigns
+`ENC_LOGIN` through `1.25.37`, then `ENC_BFISH` at `1.26.0`: its intended policy
+is rotation for client-to-server game traffic before that transition and a
+separate game algorithm afterward. This is a server compatibility policy, not
+new binary coverage. None of those later Classic versions is added to the
+patcher's accepted layouts by this report. EC/KR's already supported modern
+login transforms are described separately in [ENCRYPTION.md](../ENCRYPTION.md).
+
+## Separate incoming cipher in bare 1.23 and 1.25
+
+Later protocol tracing found active server-to-client decryption in the two bare
+clients, independent of the outgoing masks and master keys above:
+
+| Client | Receive evidence | State fields and step constants |
+| --- | --- | --- |
+| Bare `1.23` | Socket `recv` at `0x498ac9`; cipher-enable check at `0x498afd`; byte XOR at `0x498b3a` | Object fields `0x20018`/`0x2001c`; constants `af572d13`/`fa7d5231` at `0x498bcb`/`0x498ba5`. |
+| Bare `1.25` (`client_1.25.0.exe`) | Receive-loop mask load at `0x46a4e0`; the following output XOR uses this mask byte | Same fields; constants `af572d13`/`fa7d5231` at `0x46a52d`/`0x46a516`. |
+
+Connection setup initializes those fields. Its nibble-mask expressions simplify
+to the following, with the same native numeric seed:
+
+```text
+receive_lo = seed ^ 0xa8612ae5
+receive_hi = seed ^ 0x044cc16d
+```
+
+Each incoming byte is XORed with the low byte of the old `receive_lo`, and the
+state steps left rather than right:
+
+```text
+next_receive_lo = ((receive_lo << 1) | (receive_hi >> 31)) ^ 0xaf572d13
+next_receive_hi = ((receive_hi << 1) | (receive_lo >> 31)) ^ 0xfa7d5231
+```
+
+Both right-hand sides use the old receive state. These equations are supported
+by the native initialization and receive disassembly; they have not been added
+to Sphere or covered by the completed outgoing-cipher execution tests. The same
+`0x20020` enable flag tested by the outgoing code gates this receive loop, and
+connection setup enables it. NOPing only the outgoing XOR leaves that flag and
+the incoming XOR active.
+
+For the bare `1.23` binary, the original initialization is visible as split
+nibble expressions at the stores `0x498772` and `0x49879e`:
+
+```text
+receive_lo = ((seed & 0xf0f0f0f0) ^ 0xa06020e0)
+             | (((~seed) & 0x0f0f0f0f) ^ 0x070e050a)
+receive_hi = (((~seed) & 0xf0f0f0f0) ^ 0xf0b03090)
+             | ((seed & 0x0f0f0f0f) ^ 0x040c010d)
+```
+
+Each XOR constant occupies its selected nibbles, so the OR combines disjoint
+fields; simplifying gives the two seed-XOR equations above. This is arithmetic
+interpretation of the initialization, not an executed validation of the receive
+routine.
+
+The bare `1.23` route goes from receive function `0x4988eb`, through its optional
+incoming rotation, to direct packet framing at `0x498d9b` and dispatch at
+`0x49922e`. Bare `1.25` similarly follows `0x46a3a0` through optional incoming
+rotation to framing at `0x46a6b0` and dispatch at `0x46a920`. No Huffman decoder
+or decoding bit walk occurs on these audited routes; that statement does not
+assert that no compression-related code exists elsewhere in either executable.
+
+The supplied `1.25.34`, `1.25.35` (including `g`/`h`/`i`) and `1.25.36`
+setup functions retain stores to the old receive-state offsets, but their traced
+receive paths use the compression/Huffman branch rather than the bare clients'
+left-rotation loop. Retained initialization is not proof that an active
+cipher exists. This change in native receive behavior is another reason to
+separate the bare clients from the later `1.25.x` group in the protocol plan.
+The exact per-group receive and compression evidence is maintained in
+[early-classic-login.md](early-classic-login.md).
+
+Sphere's existing `Encrypt` comment suggests that early clients do not decrypt
+server output. That comment is not authoritative for these two supplied bare
+binaries: their active receive code provides contrary evidence. Implementing
+that direction or removing it requires a separate validated change; neither was
+part of commit `6a741e57` or `94534efe`.
+
+## Seed and outgoing-state lifecycle
 
 The initial masks derive from the connection seed, with wrapping 32-bit values:
 
@@ -97,6 +335,33 @@ The executable sends the seed as four big-endian raw bytes and then queues
 ciphered packets. There is no 0xEF version-bearing seed writer in these paths.
 The seed defaults to the local host address if no existing seed was supplied;
 it is not derived from the client version.
+
+The client builds the masks from the native numeric seed, then calls `htonl`
+before writing the four seed bytes. For the example numeric seed `12345678`, the
+wire prefix is `12 34 56 78`, not the little-endian in-memory representation
+`78 56 34 12`. The relay's auth ID is converted from network order before it
+becomes the native seed. The 65-byte `0x91` writers in the supplied `1.25` and
+later builds write that auth ID in network order again. Bare `1.23` instead
+writes `91 00`, with no auth-ID or credential field in that packet.
+Confusing these representations produces different masks even with the right
+master keys.
+
+| Event | Rotation-state behavior |
+| --- | --- |
+| Initial connection is opened | Initialize `lo` and `hi` from its seed. |
+| Raw seed is sent | Leave state unchanged; this write bypasses the cipher queue. |
+| `0x80` and later login bytes are queued | XOR and step once per byte, keeping state across packets. |
+| Relay opens a new game socket | Initialize a fresh state from the relay auth ID, send that raw seed, then cipher `0x91`. |
+| Relay retains the existing socket | Continue the old stream; the presence of an auth ID or `0x91` alone does not reset masks. |
+| Server sends a reply | Leave the client-output/server-input state unchanged; the bare clients advance their separate incoming masks while receiving those bytes. |
+| XOR is patched to NOPs | Queue plaintext bytes while the same state updates still execute. |
+
+A connection's role changing from login to game is therefore not sufficient
+reason to reset the rotation state. Follow the actual socket/setup route. In
+Sphere's existing `ENC_LOGIN` path, incoming game bytes still use
+`DecryptLogin`; its `InitFast` relay setup updates connection metadata without
+reinitializing the two rotation masks. The public-API regression tests exercise
+this distinction as well as fresh game connection initialization.
 
 Confirmed `1.23` call graph:
 
@@ -129,8 +394,14 @@ Do not reinitialize the stream between packets on an existing connection.
 There are relay branches which retain the existing socket rather than reconnect;
 those branches retain its current mask state. A newly opened game connection
 uses freshly initialized masks for the relay auth ID. The functions also contain
-a pre-existing global switch which disables encryption entirely; the patcher
-changes only the verified byte XOR and does not repurpose that global.
+a pre-existing global branch which bypasses the encryption setup; it cannot be
+used as a transparent encryption-only control. In bare `1.23`, the check of
+`0x006b1fa0` at `0x4986be` branches directly to `0x4987d1`, skipping both mask
+initialization **and the raw four-byte seed send**, then sets `0x20020` to zero.
+Using that route would change the wire framing as well as both cipher directions.
+The verified XOR-only patch deliberately preserves seed transmission and queue
+behavior; the separate active incoming cipher is its explicitly documented
+remaining limitation.
 
 ## Dynamic patch acceptance
 
@@ -144,7 +415,7 @@ call to the candidate function. The multikey layout additionally validates both
 copies of each master key, its writable integrity global, and the failure call's
 code target. Unknown or ambiguous layouts are refused.
 
-The shared control replaces only the two-byte byte XOR with `90 90`:
+The shared control replaces only the two-byte outgoing XOR with `90 90`:
 
 | Shape | Function-relative patch | Original | Replacement |
 | --- | --- | --- | --- |
@@ -153,7 +424,41 @@ The shared control replaces only the two-byte byte XOR with `90 90`:
 | Multikey | `0x48` | `32 ca` (`XOR CL,DL`) | `90 90` |
 
 The byte store, queue length, mask updates and socket setup still execute.
-Huffman compression of server-to-client game traffic is independent.
+Server-to-client handling is independent: the bare clients' incoming rotation
+cipher remains active, and any compression expected by a native protocol group
+is left unchanged.
+
+## Implementation map
+
+The completed implementation keeps byte discovery, executable capabilities,
+patch planning and user-facing output separate:
+
+| Source | Responsibility and contract |
+| --- | --- |
+| [`classic_login.rs`](../../../../lib/uocf/src/client/classic_login.rs) | Internal `locate(bytes, pe)` returns validated candidates with XOR offset, original instruction bytes, removal state, extracted keys and algorithm. It searches the three instruction layouts and validates the seed/writer edges. |
+| [`encryption.rs`](../../../../lib/uocf/src/client/encryption.rs) | `CipherSiteKind::SharedLoginGameCipher` belongs to `EncryptionPart::SharedLoginGame`. A uniquely supported Classic graph exposes one shared outgoing site; unknown Classic layouts gain no claimed encryption capability. |
+| [`crypt_keys.rs`](../../../../lib/uocf/src/client/crypt_keys.rs) | Public `inspect_login_crypt` returns `LoginCryptInfo`, `LoginMasterKeys` and `LoginCipherAlgorithm`. Early variants report `ClassicRotation` or `ClassicMultiKey12536`; `protocol_version` is `None`, with zero 0xEF writer matches. |
+| [`facet_dimensions.rs`](../../../../lib/uocf/src/client/facet_dimensions.rs) | `ClientExeInspection` accepts the recognized early cipher graph without fabricating a supported facet table. Cipher support does not imply facet patch/data-validation support. |
+| [`patch.rs`](../../../../lib/uocf/src/client/patch.rs) | `ExeEdit::NoEncryption` plans the shared edit and existing PE checksum/manifest handling. Independent phase edits are refused on these Classic shared sites. |
+| [`tools/uocf-cli/src/exe.rs`](../../../../tools/uocf-cli/src/exe.rs) and the GUI's Login server logic | Expose the actual shared behavior and key extraction, while preserving the source-copy output policy. |
+
+For early clients, the public `keys.key_1` field means master high, `keys.key_2`
+means master low, and `keys.first_round` repeats master high for compatibility
+with the existing result type. It is not a third independent early-client key.
+For modern login layouts, the extra first-round immediate is separately
+extracted and can matter to reproducing their transform.
+
+`EncryptionState::Removed` describes the set of sites known to this patcher.
+For these clients, that set currently contains the outgoing shared XOR only.
+It must not be read as proof that the bare clients' separate incoming cipher
+was removed. The flag's name predates this later receive-path finding.
+
+There is no new runtime version/hash profile for the early clients. The complete
+opcode templates contain variable operands where keys or addresses may move;
+the resolver checks their relationships and the PE section bounds. A version
+not included in the eight fixtures may work only if it has one of these verified
+layouts and passes all checks. A different algorithm, modified instruction or
+ambiguous graph must be researched before it can be patched.
 
 ## Executed validation
 
@@ -206,7 +511,7 @@ Golden output below uses seed `12345678`, initial `lo=bad0fcd2`,
 These checks prove the byte transform and patch ABI. They do not prove a full
 interactive login, character creation, or every older packet-format detail.
 Research harnesses and disassembly are kept in `/tmp/early-uo-crypto`, outside
-source; no executable bytes or patched binaries are checked in.
+source; no complete executable files or patched binaries are checked in.
 
 ## Server compatibility beyond encryption
 
@@ -225,6 +530,27 @@ IDs, so sending an unsupported packet can desynchronize parsing before the
 handler switch is reached. Sphere must avoid requesting a client-version packet
 from these old builds during login; its existing game-stage version checks alone
 do not protect the earlier login-stage send.
+
+## Why Sphere needed changes
+
+The original server implementation already had the old single rotation branch,
+the 1.25.36 branch, and `ENC_LOGIN` handling for both connection phases. The
+completed work corrected the mismatches below without adding a new outgoing
+encryption family:
+
+| Mismatch | Observable consequence | Completed correction |
+| --- | --- | --- |
+| The fixed `f1a372d5 / 3a1fd527` pair was absent from the crypt table | Correctly encrypted bare `1.23`/`1.25` credentials could not be recognized using the supplied table. | Add the observed pair as an old `ENC_LOGIN` entry without replacing the existing formula-based `1250000` entry. |
+| 1.25.36 shifts of 32 or more were forced to zero | Server mask evolution diverged from the real x86 routine after the initial bytes, even with the right seed and master keys. | Mask the count with `0x1f`, matching `SHR r32,CL`. |
+| Plaintext copy rejected `inLen == outLen` | A correctly sized separate output buffer could be refused for an unencrypted login. | Reject only lengths greater than the output capacity. |
+| The login stage sent `0xBD` before its existing game-stage version gate applied | A correctly decrypted old client could still receive an unsupported protocol packet. | Gate the earlier version request for recognized old clients. |
+
+The entry number `1230000` is Sphere's algorithm/version selector for the fixed
+pair. It does not prove that both identical streams came from a literal
+`1.23.0` binary, nor identify which of the bare `1.23` and `1.25` clients is
+connected. The crypt table and the packet-version policy solve related but
+separate problems. Plaintext has no master-key identity to recover, and these
+old clients cannot answer a later `0xBD` query to fill that gap.
 
 ## Sphere implementation and remaining protocol work
 
@@ -248,11 +574,18 @@ their dispatch ranges end before 0xA8 server lists, 0xA9 character lists and 0xB
 feature flags. Supporting these earliest clients through a complete interactive
 session therefore also requires their older packet layouts, independently of the
 cipher fixes. A plaintext patched old executable has no cryptographic version
-identity, and cannot answer a 0xBD request. The identical 62-byte login and
-65-byte game-login packet shapes do not identify its exact old protocol release.
-Do not infer that release or claim a full interactive login from cipher tests.
+identity, and cannot answer a 0xBD request. The 62-byte login packet alone does not identify its exact old protocol
+release. The later supplied clients use a 65-byte game-login request, while the
+bare `1.23` native constructor emits a two-byte `91 00` instead. These are
+separate protocol paths, not interchangeable cipher probes. Do not infer an
+exact release or claim a full interactive login from the cipher tests.
 
 ## Sphere regression and build evidence
+
+The protocol changes required for native old selection screens are documented
+in [early-classic-login.md](early-classic-login.md), with staged server work in
+[SPHERE_CLASSIC_COMPATIBILITY.md](../SPHERE_CLASSIC_COMPATIBILITY.md). They are
+not implemented by the cipher commit.
 
 The complete reviewable Source-X diff is
 [sphere-classic-rotation.patch](sphere-classic-rotation.patch). It includes the
@@ -260,16 +593,22 @@ public-API tests and their CMake registration, and does not modify the running
 server's configuration or executable.
 The local Source-X phase is committed as `94534efe` (`Fix early Classic rotation encryption compatibility`).
 
-`tests/src/t_CCrypto.cpp` uses ciphertexts captured by executing the four distinct
-original client send routines with valid 62-byte login and 65-byte game-login
-payloads, seed `12345678`, a shard-selection packet and a following ping. The
-shared-key letter builds do not require duplicate vectors. The tests cover:
+`tests/src/t_CCrypto.cpp` uses ciphertexts obtained by executing the four
+distinct original client **send cipher routines** on constructed test buffers:
+a conventional 62-byte `0x80` request, a conventional 65-byte `0x91` request,
+seed `12345678`, a shard-selection-shaped buffer and a following ping. The
+shared-key letter builds do not require duplicate vectors. These are transform
+probes, not packet-writer captures. In particular, the constructed 65-byte probe
+is not the native bare `1.23` game request: its `0x482a83` constructor emits
+`91 00`, and its packet-length table declares a two-byte `0x91`. This limitation
+does not change the cipher test results, but prevents treating them as proof of
+native game-login compatibility. The tests cover:
 
-- Automatic rotation-key detection for fresh login and game connections.
+- Automatic rotation-key detection for the constructed fresh login/game probes.
 - Exact output-buffer sizes, split input, in-place decryption and later packets.
 - Retaining the rotation stream on a socket across `InitFast` relay setup.
 - Plaintext fresh login/game connections and subsequent in-place packets.
-- Plaintext server output for `ENC_LOGIN`, without advancing the receive stream.
+- Sphere's current plaintext server output for `ENC_LOGIN`, without advancing its C2S receive stream; this does not validate the bare clients' separate S2C cipher.
 
 A clean isolated Clang 22 Debug build with `UNIT_TESTING=ON` completed. Its focused
 runner passed all **4 new cases / 192 assertions**, exit status 0. Linking the same
@@ -309,3 +648,25 @@ Debug objects with all test objects removed. The resulting review build is
 `/tmp/sphere-early-crypto/SphereSvrX64_early_rotation_debug`; it was inspected as an
 ELF x86-64 executable and **not started or deployed**. No interactive Windows
 client login or live-server packet sequence was tested by these checks.
+
+## Reading the evidence without extending its claim
+
+The three kinds of evidence answer different questions:
+
+- **Disassembly and graph validation** identify where each supplied client seeds,
+  queues and transforms bytes, and which instruction layouts the patcher accepts.
+- **Executed original and patched routines** establish the exact cipher output,
+  ABI, state progression and identity-byte patch behavior for the tested inputs.
+  They include actual production CLI output files, not only synthetic routines.
+- **Sphere public-API regressions** establish key detection and decryption of
+  the constructed login/game probes, chunking, in-place buffers and continuation.
+  They do not establish that the native bare `1.23` two-byte game packet is
+  recognized, or implement the bare clients' incoming cipher. The isolated build
+  establishes that the separate source patch compiles.
+
+None of these alone drives an original Windows UI through a live Sphere world.
+Correct ciphering does not make an unsupported server-list, character-list,
+world-entry or gameplay packet acceptable. The server protocol plan must retain
+that boundary when reporting progress. The review binary was not deployed, the
+running server was not changed, and original executable fixtures were not
+modified by this work.

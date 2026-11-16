@@ -21,6 +21,15 @@ BackupLoginServer=host,port
 takes the new lines). Host names are accepted (Gold ships one). Edit with `uocf-cli login set`; the executable holds no
 address to patch.
 
+The early `client_1.*` executables also use the configuration-file route, but changing their destination does
+not select a cipher or change their native login vocabulary. Original 1.23/1.25 use the old 0x81 list format,
+have a separate incoming rotation cipher and do not use Huffman on the audited receive route; original 1.23
+also sends a two-byte game continuation. The supplied 1.25.34–1.25.36 group has the later A8/A9 vocabulary
+and a game Huffman stage. See [early Classic login sequences](research/early-classic-login.md) and
+[Sphere/Classic compatibility](SPHERE_CLASSIC_COMPATIBILITY.md) before treating a correct address or successful
+outgoing cipher probe as a verified login. No additional old-protocol compatibility changes are implemented by
+the login destination editor.
+
 ## Enhanced Client (`UOSA.exe`) and Kingdom Reborn (`UOKR.exe`)
 
 **The `LoginServers*.xml` files are not read.** In every traced EC and KR build the XML loader (`LoadLoginServers`)
