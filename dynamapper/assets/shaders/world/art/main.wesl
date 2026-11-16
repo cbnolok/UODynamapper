@@ -34,7 +34,8 @@ import package::shaders::world::art::client_shadow::{client_shadow_casts, client
     client_shadow_logical_offset, client_shadow_priority_depth};
 import package::shaders::world::art::client_grunge::{client_grunges, client_grunge_uv, apply_client_grunge};
 import package::shaders::world::art::hue::{apply_static_hue, apply_ec_sprite_hue, STATIC_HUE_FLAG_APPLY, STATIC_HUE_FLAG_EC_SPRITE};
-import package::shaders::world::art::shading::{apply_art_surface_shading, art_local_light_at_corner, STATIC_FLAG_FLAT_ART};
+import package::shaders::world::art::shading::{apply_art_surface_shading, art_local_light_at_corner, STATIC_FLAG_FLAT_ART,
+    ART_FLAT_SHADING_UV};
 import package::shaders::world::art::surface_blend::static_surface_coverage;
 import package::shaders::world::ec_item_water::{ec_item_is_water, sample_ec_item_water};
 import package::shaders::world::ec_liquid_camera::ec_liquid_camera_reflection_uv;
@@ -569,8 +570,11 @@ fn shade_fragment(in: ArtVertexOutput, sample_index: u32) -> ArtFragmentOutput {
         shaded = vec4<f32>(apply_texture_visual_grunge(shaded.rgb, in.world_pos.xz, effects.grunge_strength, effects.post_process_profile, visual_grunge), shaded.a);
     }
 
+    // Flat art has no foot to shade more: the wash reads its centre, as apply_art_surface_shading does.
+    let flat_art = inst.flat_quad != 0u || (inst.is_wet_flags & STATIC_FLAG_FLAT_ART) != 0u;
+    let color_wash_uv = select(uv_in_tile_for_shading, ART_FLAT_SHADING_UV, flat_art);
     let object_color_wash_shadow = clamp(
-        smoothstep(0.42, 1.0, uv_in_tile_for_shading.y) * 0.40
+        smoothstep(0.42, 1.0, color_wash_uv.y) * 0.40
         + select(0.0, 0.14, in.depth_class == DEPTH_CLASS_FOLIAGE)
         + select(0.0, 0.10, in.depth_class == DEPTH_CLASS_ROOF),
         0.0,

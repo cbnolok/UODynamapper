@@ -253,6 +253,19 @@ z = 0
 settings = { world_rendering = { show_only_player_floor = true } }
 
 [[fixture]]
+name = "minoc-mine-floor-flat-art"
+guards = """The Minoc mine's floor statics east of the entrance with the player's-floor view: flat art (ground art, \
+floors, flat roofs) is shaded as at its centre, evenly, so UOD-Painterly's art shading (fake normals, top catch, \
+contact and colour-wash shadow) no longer draws a light step at every tile edge, diagonal stripes over the floor."""
+tier = "quick"
+tags = ["caves", "surfaces", "minoc"]
+map = 1
+x = 2565
+y = 487
+z = 0
+settings = { world_rendering = { show_only_player_floor = true } }
+
+[[fixture]]
 name = "minoc-mine-inside-zview-cave"
 guards = """Deeper inside the Minoc mine with the player's-floor view: the cave floor and walls drawn over the map, \
 its lights covered as the cave's own items (08348a65, zview-kr2). Since 0e0839cd the player's cave replaces it: the \

@@ -31,7 +31,7 @@ import package::shaders::world::art::art_ground_bindings::{
 };
 import package::shaders::world::art::client_grunge::{client_grunges, client_grunge_uv, apply_client_grunge};
 import package::shaders::world::art::hue::apply_static_hue;
-import package::shaders::world::art::shading::{apply_art_surface_shading, art_local_light_at_corner};
+import package::shaders::world::art::shading::{apply_art_surface_shading, art_local_light_at_corner, ART_FLAT_SHADING_UV};
 import package::shaders::world::projection::camera_relative_world_to_clip;
 
 struct GroundVertexOutput {
@@ -255,8 +255,9 @@ fn shade_fragment(in: GroundVertexOutput, sample_index: u32) -> GroundFragmentOu
         let visual_grunge = textureSample(visual_grunge_texture, art_atlas_sampler, visual_grunge_uv(in.world_pos.xz, effects.post_process_profile)).rgb;
         shaded = vec4<f32>(apply_texture_visual_grunge(shaded.rgb, in.world_pos.xz, effects.grunge_strength, effects.post_process_profile, visual_grunge), shaded.a);
     }
+    // The ground art lies flat: the wash reads its centre, as apply_art_surface_shading does, not a foot per tile.
     let color_wash_shadow = select(clamp(
-        smoothstep(0.48, 1.0, uv_in_tile.y) * 0.28
+        smoothstep(0.48, 1.0, ART_FLAT_SHADING_UV.y) * 0.28
         + select(0.0, 0.10, inst.depth_class == DEPTH_CLASS_FOLIAGE)
         + select(0.0, 0.08, inst.depth_class == DEPTH_CLASS_ROOF),
         0.0,
