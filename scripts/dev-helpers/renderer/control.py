@@ -34,7 +34,7 @@ def scene_fingerprint(status):
     art = status.get('art') or {}
     control = status.get('control') or {}
     return (tuple(status.get('position') or ()), (status.get('terrain') or {}).get('metadata_revision'),
-            art.get('emitted_instances'), art.get('visible_chunks'),
+            art.get('emitted_instances'), art.get('visible_chunks'), art.get('digest'),
             (status.get('static_lights') or {}).get('instances'),
             (status.get('client_light_sprites') or {}).get('instances'),
             json.dumps(status.get('z_view'), sort_keys=True), control.get('switch_serial'))
@@ -171,6 +171,8 @@ def main():
     sources = actions.add_parser('sources', help='Switch the art and land texture sources, as the preferences do')
     sources.add_argument('art', help='cc or ec')
     sources.add_argument('land', help='cc, ec or kr')
+    actions.add_parser('reload-land', help='Drop the cached map blocks and statics chunks; the statics digest must '
+                       'not change after wait-ready')
     setting = actions.add_parser('set', help='Set one whitelisted setting, for example set show_only_player_floor true')
     setting.add_argument('key')
     setting.add_argument('value', help='a JSON value such as true or 1.5; a bare word such as black is a string')
@@ -192,6 +194,8 @@ def main():
         command.update(button=args.button, state=args.state)
     if args.command == 'reset-input':
         command['command'] = 'reset_input'
+    if args.command == 'reload-land':
+        command['command'] = 'reload_land'
     if args.command == 'preset':
         command.update(style=args.style, time=args.time)
     if args.command == 'sources':

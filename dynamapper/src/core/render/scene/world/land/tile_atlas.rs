@@ -221,6 +221,38 @@ fn coalesce_dirty_regions(regions: &mut Vec<LayerDirtyRegion>) {
     }
 }
 
+/// How many changed cell rectangles `TileAtlas::changed_cells_after` keeps: a consumer further behind treats every
+/// cell as changed. A frame of land loading writes one rectangle per 8x8 block, far fewer than this.
+const CHANGED_CELLS_LOG_CAPACITY: usize = 8192;
+
+/// A rectangle of world cells, both corners included.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct AtlasCells {
+    pub min: UVec2,
+    pub max: UVec2,
+}
+
+impl AtlasCells {
+    /// The cells from `min` to `max`, both included.
+    pub fn new(min: UVec2, max: UVec2) -> Self {
+        Self { min: min.min(max), max: min.max(max) }
+    }
+
+    /// The `size` cells from `origin`; `size` is at least one cell along each axis.
+    fn from_origin_size(origin: UVec2, size: UVec2) -> Self {
+        Self::new(origin, origin + size.max(UVec2::ONE) - UVec2::ONE)
+    }
+
+    /// These cells grown to hold `other` too.
+    pub fn union(self, other: Self) -> Self {
+        Self { min: self.min.min(other.min), max: self.max.max(other.max) }
+    }
+
+    pub fn intersects(&self, other: &Self) -> bool {
+        self.min.cmple(other.max).all() && other.min.cmple(self.max).all()
+    }
+}
+
 /// Resource managing the paged metadata atlas.
 /// It maintains a CPU-side cache and tracks pending uploads to the GPU.
 #[derive(Resource)]
@@ -242,6 +274,12 @@ pub struct TileAtlas {
     pub cpu_mirror: Vec<Option<Vec<Rg16u>>>,
     /// Invalidates CPU consumers whose cached geometry depends on map data.
     pub content_revision: u64,
+    /// The world cells whose `read_cell` may have changed, each with the `content_revision` it changed at, oldest first
+    /// (`changed_cells_after`), at most `CHANGED_CELLS_LOG_CAPACITY` of them.
+    changed_cells: std::collections::VecDeque<(u64, AtlasCells)>,
+    /// The revision `changed_cells` holds every change after: an older one dropped out of the log, or
+    /// `clear_all_mappings` changed every cell.
+    changed_cells_since: u64,
     /// Tracks modified regions per layer.
     ///
     /// We keep multiple rectangles and coalesce only overlapping or edge-sharing ones so the
@@ -283,6 +321,30 @@ impl TileAtlas {
         self.read_cell(x, y).is_some_and(|cell| cell.texture_source() == LAND_SOURCE_NODRAW)
     }
 
+    /// The cells whose `read_cell` may have changed after `content_revision` was `revision`, so a consumer that read cells
+    /// at that revision rebuilds only what read them; `None` when every cell may have changed (the log no longer
+    /// reaches back to `revision`, or the mappings were cleared since).
+    pub(crate) fn changed_cells_after(&self, revision: u64) -> Option<impl Iterator<Item = AtlasCells> + '_> {
+        (revision >= self.changed_cells_since).then(|| self.changed_cells.iter()
+            .skip_while(move |(changed, _)| *changed <= revision).map(|(_, cells)| *cells))
+    }
+
+    /// Bumps `content_revision` for a change of `cells`.
+    fn record_changed_cells(&mut self, cells: AtlasCells) {
+        self.content_revision = self.content_revision.wrapping_add(1);
+        if self.changed_cells.len() == CHANGED_CELLS_LOG_CAPACITY {
+            if let Some((dropped, _)) = self.changed_cells.pop_front() {
+                self.changed_cells_since = dropped;
+            }
+        }
+        self.changed_cells.push_back((self.content_revision, cells));
+    }
+
+    /// The world cells of `page`.
+    fn page_cells(&self, page: IVec2) -> AtlasCells {
+        AtlasCells::from_origin_size(page.as_uvec2() * self.params.page_texels, self.params.page_texels)
+    }
+
     pub(crate) fn has_pending_uploads(&self) -> bool {
         self.pending_dirty_write_count != 0 || !self.extract_staging.is_empty()
     }
@@ -297,6 +359,8 @@ impl TileAtlas {
             current_tick: 0,
             cpu_mirror: vec![None; max_layers],
             content_revision: 0,
+            changed_cells: std::collections::VecDeque::new(),
+            changed_cells_since: 0,
             dirty_regions: vec![Vec::new(); max_layers],
             pending_dirty_write_count: 0,
             extract_staging: Vec::new(),
@@ -367,7 +431,11 @@ impl TileAtlas {
             .binary_search_by_key(&page_u64, |(p, _)| *p)
             .unwrap_err();
         self.page_to_layer.insert(insert_pos, (page_u64, layer));
-        self.content_revision = self.content_revision.wrapping_add(1);
+        // The layer still holds the evicted page's cells until the new page's are written.
+        self.record_changed_cells(self.page_cells(page));
+        if let Some(old_page) = evicted_page {
+            self.record_changed_cells(self.page_cells(old_page));
+        }
         self.layer_to_page[layer as usize] = page;
         self.layer_access_tick[layer as usize] = self.current_tick;
 
@@ -439,7 +507,8 @@ impl TileAtlas {
         if !any_changed {
             return;
         }
-        self.content_revision = self.content_revision.wrapping_add(1);
+        let page = self.layer_to_page[layer_idx].as_uvec2();
+        self.record_changed_cells(AtlasCells::from_origin_size(page * self.params.page_texels + offset, size));
 
         /*
         console_logger::one(
@@ -467,6 +536,8 @@ impl TileAtlas {
     /// by the mesh renderer.
     pub fn clear_all_mappings(&mut self) {
         self.content_revision = self.content_revision.wrapping_add(1);
+        self.changed_cells.clear();
+        self.changed_cells_since = self.content_revision;
         self.page_to_layer.clear();
         self.layer_to_page.fill(IVec2::ZERO);
         self.layer_access_tick.fill(0);
@@ -745,6 +816,53 @@ pub fn sys_render_upload_tile_atlas(
 #[cfg(test)]
 mod upload_tests {
     use super::*;
+
+    fn cells(min: (u32, u32), max: (u32, u32)) -> AtlasCells {
+        AtlasCells::new(UVec2::new(min.0, min.1), UVec2::new(max.0, max.1))
+    }
+
+    fn changed_after(atlas: &TileAtlas, revision: u64) -> Option<Vec<AtlasCells>> {
+        atlas.changed_cells_after(revision).map(Iterator::collect)
+    }
+
+    #[test]
+    fn the_atlas_names_the_cells_changed_since_a_revision() {
+        let mut atlas = TileAtlas::new(AtlasParams { page_texels: UVec2::splat(16), max_layers: 1, world_pages_x: 4,
+            ..Default::default() }, 1);
+        let start = atlas.content_revision;
+        // Mapping a page changes its cells: they read the layer's former contents until written.
+        let (layer, _) = atlas.ensure_layer_for_page(IVec2::new(1, 0));
+        assert_eq!(changed_after(&atlas, start), Some(vec![cells((16, 0), (31, 15))]));
+        let mapped = atlas.content_revision;
+        atlas.enqueue_rg16u_block(layer, UVec2::new(8, 0), UVec2::splat(8), &[Rg16u::pack(3, 0, 4, false, 0); 64]);
+        assert_eq!(changed_after(&atlas, mapped), Some(vec![cells((24, 0), (31, 7))]));
+        // An identical write changes nothing.
+        let written = atlas.content_revision;
+        atlas.enqueue_rg16u_block(layer, UVec2::new(8, 0), UVec2::splat(8), &[Rg16u::pack(3, 0, 4, false, 0); 64]);
+        assert_eq!(changed_after(&atlas, written), Some(Vec::new()));
+        assert_eq!(changed_after(&atlas, start).map(|changed| changed.len()), Some(2));
+        // Evicting the page for another changes both.
+        atlas.ensure_layer_for_page(IVec2::new(0, 1));
+        assert_eq!(changed_after(&atlas, written), Some(vec![cells((0, 16), (15, 31)), cells((16, 0), (31, 15))]));
+        // Cleared mappings change every cell, for whoever read before.
+        let before_clear = atlas.content_revision;
+        atlas.clear_all_mappings();
+        assert_eq!(changed_after(&atlas, before_clear), None);
+        assert_eq!(changed_after(&atlas, atlas.content_revision), Some(Vec::new()));
+    }
+
+    #[test]
+    fn a_reader_behind_the_change_log_takes_every_cell_as_changed() {
+        let mut atlas = TileAtlas::new(AtlasParams { page_texels: UVec2::splat(16), max_layers: 1, world_pages_x: 1,
+            ..Default::default() }, 1);
+        let (layer, _) = atlas.ensure_layer_for_page(IVec2::ZERO);
+        let start = atlas.content_revision;
+        for value in 0..=CHANGED_CELLS_LOG_CAPACITY as u16 {
+            atlas.enqueue_rg16u_block(layer, UVec2::ZERO, UVec2::ONE, &[Rg16u { r: value + 1, g: 0 }]);
+        }
+        assert_eq!(changed_after(&atlas, start), None);
+        assert_eq!(changed_after(&atlas, atlas.content_revision - 1), Some(vec![cells((0, 0), (0, 0))]));
+    }
 
     #[test]
     fn uploads_follow_the_staged_revision_and_never_cross_image_generations() {

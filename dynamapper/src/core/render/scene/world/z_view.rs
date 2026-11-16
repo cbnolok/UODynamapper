@@ -385,29 +385,8 @@ pub struct ZViewInputs {
     y: u16,
     z: i8,
     show_hidden_multi_parts: bool,
-    land_known: bool,
     /// `CavesRes::revision`: the player's cave.
     caves_revision: u64,
-}
-
-/// The land z ClassicUO tests on the player's cell: the average of the two diagonals' ends that differ least, which a
-/// flat cell's own z equals (`Land.AverageZ`). `None` while a corner's block is not loaded.
-fn player_cell_land_z(map_planes: Option<&MapPlanesRes>, map_id: u32, x: i32, y: i32) -> Option<i32> {
-    let land_z = |cell_x: i32, cell_y: i32| -> Option<i32> {
-        use uocf::classic::map::{MapCell, MapCellCoords};
-        let plane = map_planes?.0.get(usize::try_from(map_id).ok()?)?.as_ref()?;
-        let coords = MapCellCoords { x: u32::try_from(cell_x).ok()?, y: u32::try_from(cell_y).ok()? };
-        let rel = MapCell::coords_in_block(&coords);
-        let block = plane.block_no_update(MapCell::coords_of_parent_block(&coords))?;
-        Some(i32::from(block.cell(rel.x, rel.y).ok()?.z))
-    };
-    cell_average_land_z(land_z, x, y)
-}
-
-/// The averaged land z of the cell (`x`, `y`) (`average_land_z`), `land_z` giving each cell's raw land z; `None` while
-/// a corner is not known.
-fn cell_average_land_z(land_z: impl Fn(i32, i32) -> Option<i32>, x: i32, y: i32) -> Option<i32> {
-    Some(average_land_z(land_z(x, y)?, land_z(x + 1, y)?, land_z(x + 1, y + 1)?, land_z(x, y + 1)?))
 }
 
 /// ClassicUO's `Land.AverageZ` from the cell's corners (`top` its own z, then east, south-east and south).
@@ -464,7 +443,9 @@ impl PackageLand {
 }
 
 /// Recomputes `ZViewLimit` when the player's cell, z or map, the setting, or the style's rule
-/// (`UniformState::effective_player_floor_rule`) changes.
+/// (`UniformState::effective_player_floor_rule`) changes. The land ClassicUO tests on the player's cell, the average of
+/// the two diagonals' ends that differ least (`Land.AverageZ`), is read from the map package, so the cut does not
+/// depend on which map blocks are loaded, or were evicted while the player stood still.
 pub fn sys_update_z_view_limit(
     settings: Res<Settings>,
     uniforms: Option<Res<UniformState>>,
@@ -488,7 +469,8 @@ pub fn sys_update_z_view_limit(
     };
     let map_id = scene_state.map_id;
     let (x, y, z) = (i32::from(pos.x), i32::from(pos.y), i32::from(pos.z));
-    let land_z = player_cell_land_z(map_planes.as_deref(), map_id, x, y);
+    // At most the four package chunks of the cell's corners, read once per change of the player's cell or z.
+    let land_z = PackageLand::default().averaged_land_z(map_planes.as_deref(), map_id, x, y);
     let rule = uniforms.map_or(PlayerFloorRule::ClassicUo, |uniforms| uniforms.effective_player_floor_rule());
     let inputs = ZViewInputs {
         rule,
@@ -497,7 +479,6 @@ pub fn sys_update_z_view_limit(
         y: pos.y,
         z: pos.z,
         show_hidden_multi_parts: settings.world_rendering.show_hidden_multi_parts,
-        land_known: land_z.is_some(),
         caves_revision: caves.revision(),
     };
     if *last_inputs == Some(inputs) {

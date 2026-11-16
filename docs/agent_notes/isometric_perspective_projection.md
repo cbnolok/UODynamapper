@@ -49,6 +49,11 @@ when map data changes or mappings clear. Identical block uploads leave the
 revision unchanged. The dependency also serves EC static/map boundary coverage.
 It prevents a launch/teleport race from permanently retaining an unresolved
 ground classification. No per-frame material mutation or package read is added.
+Since 2026-11-16 a change no longer drops every cached chunk: the atlas logs the
+cells each revision changed (`TileAtlas::changed_cells_after`), each cached chunk
+records the cells it read, and only the chunks whose cells changed are rebuilt
+(`StaticChunkRenderCache::invalidate_changed_land`, counted in
+`status.art.land_invalidated_chunks`).
 
 Native `perspective-ground-resident-enhanced-cc-` captures demonstrate continuous
 roads, bridge and town controls. Temporary routing instrumentation was removed.

@@ -8,7 +8,8 @@ main ECS thread in `MovementActions`.
 
 Commands include `teleport`, `status`, `capture` and app-only keyboard/pointer
 input (`key`, `text`, `pointer`, `click`, `scroll`, `reset_input`), and the typed
-runtime switches `preset`, `sources` and `set` (see below). There is no shell/code
+runtime switches `preset`, `sources` and `set` and the `reload_land` check (see
+below). There is no shell/code
 execution or generic settings setter. The owner-only socket refuses occupied
 paths; normal resource cleanup only removes the bound inode. Forced termination
 may leave a socket, so isolate each run in its own temporary directory.
@@ -24,7 +25,14 @@ frames counted over the last 500 ms window as `fps` and `frame_ms`, and the runn
 the rate from outside the app. Rendered
 position equality does not establish completion of texture streaming. The
 `art` snapshot reports the collector's map/chunk/instance counts, atlas misses
-and pending sprite/ground pages. A terrain-only wait captured an empty bridge
+and pending sprite/ground pages. Its `digest` hashes every collected static
+instance in output order without its art page placement, so two runs that
+collected the same statics report the same digest however the land and the art
+loaded: compare it between a fresh launch and a live switch, or two teleport
+orders, to catch a statics cache that kept a chunk built from stale land.
+`land_invalidated_chunks` counts the cached statics chunks rebuilt so far
+because tile atlas cells they read changed (the cost of land arriving after the
+statics; a full flush shows as every cached chunk at once). A terrain-only wait captured an empty bridge
 while its sprite pages were still loading. `control.py wait-ready` now requires
 position agreement, submitted metadata and settled art over three stable
 snapshots. It has a bounded timeout; it does not fence GPU completion or shader
@@ -142,8 +150,17 @@ files, so one preview can visit several styles, times and sources
   instead). An unknown key, a wrong type or an out-of-range value is an error
   naming the allowed keys or the expected type.
 
+- `{"command":"reload_land"}`: drops every cached map block, the state 60
+  idle seconds reach (`sys_evict_idle_land_cache`), and every cached statics
+  chunk, so the statics are collected again from the land loaded now. It changes
+  nothing a correct cache shows: `status.art.digest` after the scene settles
+  again must equal the one before (the harness's `--reload-land-check`). Before
+  2026-11-16 the KR client shadows read their ground from those blocks, so a
+  rebuild after idling lost the land under them (the river-bank wall of the
+  Britain house at 1409,1596).
+
 Each reply has `changed` (false when the value was already in force; no switch
-is counted then), `applied` and `switch_serial`. Freezes in the startup land.toml
+is counted then; always true for `reload_land`), `applied` and `switch_serial`. Freezes in the startup land.toml
 (water animation, fog drift) stay in force: every preset slot is loaded frozen
 and a preset switch keeps the current water-animation flag.
 

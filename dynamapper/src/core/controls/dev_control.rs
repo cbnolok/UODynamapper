@@ -40,6 +40,9 @@ enum ControlCommand {
     Sources { art: ClientTextureSource, land: LandTextureSource },
     /// One whitelisted setting (`settings::ControlSetting`), its value typed by the key.
     Set { key: String, value: Value },
+    /// Drops the cached map blocks, as 60 seconds of idling does, and the cached statics chunks, so the statics are
+    /// collected again from the land loaded now: a correct cache reports the same `status.art.digest` after it.
+    ReloadLand {},
 }
 
 /// The last accepted runtime switch (preset, sources or setting): readiness after a switch counts frames from it.
@@ -146,10 +149,12 @@ fn poll_control(
         Option<Res<crate::core::render::scene::world::land::picking::TerrainCursor>>,
         Option<Res<crate::core::render::scene::world::art::client_light_sprites::RenderClientLightSprites>>,
         Option<Res<crate::core::render::scene::world::z_view::ZViewLimit>>,
-        Option<Res<crate::core::render::scene::world::caves::CavesRes>>),
+        Option<Res<crate::core::render::scene::world::caves::CavesRes>>,
+        (Option<Res<crate::core::render::scene::world::art::statics_collect::RenderStaticInstances>>,
+            Option<Res<crate::core::render::scene::world::art::statics_collect::RenderStaticLandInstances>>)),
 ) {
     let (static_lights, art_stats, sprite_atlas, ground_atlas, picking, terrain_cursor, light_sprites, z_view,
-        caves) = render_state;
+        caves, static_instances) = render_state;
     let (windows, inspect_text, land_chunks) = view;
     let (mut capture_pending, mut switch) = locals;
     if capture_pending.as_ref().is_some_and(|(path, started)|
@@ -198,11 +203,16 @@ fn poll_control(
                     let settings = control_settings.settings();
                     // Terrain metadata can settle before sprite pages and
                     // collection retries. Capture clients must wait for both.
+                    let land_invalidated_chunks = art_stats.as_ref().map_or(0, |state| state.land_invalidated_chunks);
                     let art = art_stats.as_ref().and_then(|state| state.last.as_ref()).map(|stats| json!({
                         "map_id": stats.map_id, "visible_chunks": stats.visible_chunks,
+                        "land_invalidated_chunks": land_invalidated_chunks,
                         "atlas_misses": stats.atlas_misses, "emitted_instances": stats.emitted_instances,
                         "pending_pages": sprite_atlas.as_ref().map_or(0, |a| a.pending_page_count())
                             + ground_atlas.as_ref().map_or(0, |a| a.pending_page_count()),
+                        "digest": static_instances.0.as_ref().zip(static_instances.1.as_ref()).map(|(sprites, ground)|
+                            format!("{:016x}", crate::core::render::scene::world::art::statics_collect::
+                                static_instances_digest(&sprites.0, &ground.0))),
                     }));
                     Ok(json!({"ok": true, "position": position, "rendered_position": rendered,
                         "elapsed_seconds": time.elapsed_secs_f64(),
@@ -269,6 +279,22 @@ fn poll_control(
                     let setting = ControlSetting::parse(&key, value)?;
                     let changed = control_settings.set(setting, &mut recompute)?;
                     Ok(switched(&mut switch, changed, frame_rate.total_frames(), json!({"key": key})))
+                }
+                ControlCommand::ReloadLand {} => {
+                    commands.queue(|world: &mut World| {
+                        let mut evicted = 0;
+                        if let Some(mut planes) = world.get_resource_mut::<crate::core::uo_files_loader::MapPlanesRes>() {
+                            for plane in planes.0.iter_mut().flatten() {
+                                evicted += plane.evict_idle_blocks(std::time::Duration::ZERO);
+                            }
+                        }
+                        if let Some(mut cache) = world.get_resource_mut::<
+                            crate::core::render::scene::world::art::statics_collect::StaticChunkRenderCache>() {
+                            cache.rebuild_all();
+                        }
+                        log::info!("Control reload_land: evicted {evicted} map blocks; rebuilding the statics");
+                    });
+                    Ok(switched(&mut switch, true, frame_rate.total_frames(), json!({"reload_land": true})))
                 }
                 command => {
                     let (entity, window) = windows.single().map_err(|error| error.to_string())?;

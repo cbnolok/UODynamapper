@@ -5,7 +5,7 @@ use crate::core::render::scene::camera::{PlayerCamera, RenderZoom};
 use crate::core::render::scene::world::land::{
     CHUNK_STORAGE_BLOCKS_DIM, MAP_STORAGE_BLOCK_TILE_DIM,
 };
-use crate::core::render::scene::world::land::tile_atlas::TileAtlas;
+use crate::core::render::scene::world::land::tile_atlas::{AtlasCells, TileAtlas};
 use crate::core::multis::{
     expanded_multi_part_z, MultiDefinitionsRes, MultiPart, PlacedMulti, PlacedMultisRes,
 };
@@ -1273,6 +1273,23 @@ pub struct RenderStaticInstances(pub Vec<SpriteInstance>);
 #[derive(Resource, Default)]
 pub struct RenderStaticLandInstances(pub Vec<GroundTileInstance>);
 
+/// A hash of every collected static instance in output order, without its art page placement (`layer`, `uv_min`,
+/// `uv_max`, which follow the order the pages arrived in): two runs that collected the same statics report the same
+/// digest, however the land and the art loaded (`status.art.digest` on the control socket).
+pub(crate) fn static_instances_digest(sprites: &[SpriteInstance], ground: &[GroundTileInstance]) -> u64 {
+    use std::hash::Hasher;
+    let mut hasher = std::hash::DefaultHasher::new();
+    for instance in sprites {
+        let unplaced = SpriteInstance { layer: 0, uv_min: [0.0; 2], uv_max: [0.0; 2], ..*instance };
+        hasher.write(bytemuck::bytes_of(&unplaced));
+    }
+    for instance in ground {
+        let unplaced = GroundTileInstance { layer: 0, uv_min: [0.0; 2], uv_max: [0.0; 2], ..*instance };
+        hasher.write(bytemuck::bytes_of(&unplaced));
+    }
+    hasher.finish()
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct StaticChunkBatchKey {
     pub map_id: u32,
@@ -1315,7 +1332,8 @@ struct StaticChunkCacheConfig {
     land_style: StaticLandStyle,
     sprite_atlas_mapping_revision: u64,
     ground_atlas_mapping_revision: u64,
-    land_metadata_revision: u64,
+    // The land the chunks read from the tile atlas is not here: a change rebuilds only the chunks that read the
+    // changed cells (`StaticChunkRenderCache::invalidate_changed_land`).
     static_art_local_light_signature: Option<u64>,
     show_hidden_multi_parts: bool,
     /// The statics store's item routes (`LazyStaticsStore::item_routes_revision`).
@@ -1345,6 +1363,8 @@ struct CachedStaticChunk {
     ground_pick_indices: Vec<usize>,
     stats: CachedStaticChunkStats,
     last_visible_tick: u64,
+    /// The cells of the tile atlas the chunk read (`StaticChunkBuildState::land_cells`).
+    land_cells: Option<AtlasCells>,
 }
 
 #[derive(Resource, Default)]
@@ -1354,6 +1374,8 @@ pub struct StaticChunkRenderCache {
     chunks: HashMap<StaticChunkBatchKey, CachedStaticChunk>,
     last_visible_chunk_keys: Vec<StaticChunkBatchKey>,
     last_incomplete_retry_atlas_signature: Option<StaticAtlasRetrySignature>,
+    /// The tile atlas's `content_revision` the cached chunks were checked against (`invalidate_changed_land`).
+    land_revision: Option<u64>,
 }
 
 impl StaticChunkRenderCache {
@@ -1379,6 +1401,12 @@ impl StaticChunkRenderCache {
         self.current_tick
     }
 
+    /// Drops every cached chunk on the next collection, as a change of the configuration does (the control socket's
+    /// `reload_land`).
+    pub(crate) fn rebuild_all(&mut self) {
+        self.config = None;
+    }
+
     fn sync_config(&mut self, config: StaticChunkCacheConfig) -> bool {
         let changed = self.config != Some(config);
         if changed {
@@ -1388,6 +1416,26 @@ impl StaticChunkRenderCache {
             self.last_incomplete_retry_atlas_signature = None;
         }
         changed
+    }
+
+    /// Drops the cached chunks that read tile atlas cells changed since the last call: the land loading, a neighbouring
+    /// chunk's land arriving after the chunk, a texture bake or the land of a cave. Every chunk goes when the atlas no
+    /// longer says which cells changed (`TileAtlas::changed_cells_after`). Returns how many chunks went.
+    fn invalidate_changed_land(&mut self, atlas: &TileAtlas) -> usize {
+        let seen = self.land_revision.replace(atlas.content_revision);
+        if seen == Some(atlas.content_revision) {
+            return 0;
+        }
+        let before = self.chunks.len();
+        match seen.and_then(|seen| atlas.changed_cells_after(seen)) {
+            Some(changed) => {
+                let changed = changed.collect::<Vec<_>>();
+                self.chunks.retain(|_, chunk| chunk.land_cells
+                    .is_none_or(|read| !changed.iter().any(|cells| cells.intersects(&read))));
+            }
+            None => self.chunks.clear(),
+        }
+        before - self.chunks.len()
     }
 
     fn prune_stale(&mut self, visible_tick: u64) {
@@ -1784,6 +1832,8 @@ pub struct StaticArtCollectStats {
 pub struct StaticArtCollectDebugState {
     pub last: Option<StaticArtCollectStats>,
     pub path_counters: StaticArtCollectPathCounters,
+    /// The cached chunks dropped so far because the land they read changed (`invalidate_changed_land`).
+    pub land_invalidated_chunks: u64,
 }
 
 #[derive(Resource, Default)]
@@ -2092,8 +2142,18 @@ struct StaticChunkBuildState {
     requested_pages: HashSet<u64>,
     stats: CachedStaticChunkStats,
     render_tiles: Vec<StaticRenderTile>,
-    /// The land the roofs under KR's cut are counted from (`ZViewCut::roof_layer`).
+    /// The land the roofs under KR's cut are counted from (`ZViewCut::roof_layer`), and the client shadow's ground: the
+    /// map package's, which every cell has whether or not its land is loaded.
     own_land: PackageLand,
+    /// The cells of the tile atlas, the land as drawn, the chunk read, so a change of them rebuilds the chunk.
+    land_cells: Option<AtlasCells>,
+}
+
+impl StaticChunkBuildState {
+    /// Records a read of the tile atlas's `cells`.
+    fn read_land(&mut self, cells: AtlasCells) {
+        self.land_cells = Some(self.land_cells.map_or(cells, |read| read.union(cells)));
+    }
 }
 
 #[derive(Default)]
@@ -2163,7 +2223,6 @@ fn static_chunk_cache_config(
     sprite_atlas: &SpriteArtPageAtlas,
     ground_atlas: &GroundArtPageAtlas,
     static_lights: &super::static_lights::RenderStaticLightInstances,
-    tile_atlas: &TileAtlas,
 ) -> StaticChunkCacheConfig {
     StaticChunkCacheConfig {
         map_id: frame.map_id,
@@ -2172,7 +2231,6 @@ fn static_chunk_cache_config(
         land_style: frame.land_style,
         sprite_atlas_mapping_revision: sprite_atlas.0.mapping_revision(),
         ground_atlas_mapping_revision: ground_atlas.0.mapping_revision(),
-        land_metadata_revision: tile_atlas.content_revision,
         static_art_local_light_signature: frame
             .static_art_local_lights
             .then(|| static_light_signature(static_lights, frame.map_id)),
@@ -2444,11 +2502,13 @@ fn rebuild_static_chunk(
     };
     if !frame.is_dot_mode && draws_enhanced_surfaces {
         if let (Some(tilemeta), Some(art)) = (resources.tilemeta_package(), resources.tex_art_ec_package()) {
-            super::static_surface::apply_boundary_coverage(
+            if let Some(cells) = super::static_surface::apply_boundary_coverage(
                 &mut build.sprite_instances, chunk_key, frame.height_scale,
                 statics_store, tilemeta, art, resources.kingdom_reborn.map(|kr| (kr.tilemeta, kr.art)),
                 resources.tile_atlas,
-            );
+            ) {
+                build.read_land(cells);
+            }
         }
     }
     finish_rebuilt_static_chunk(build, visible_tick)
@@ -2468,11 +2528,9 @@ fn emit_static_render_tile_on_surfaces(
 ) {
     let cell = (render_tile.world_x as i32, render_tile.world_z as i32);
     let surface_tops = surface_tops.iter().flat_map(|tops| tops.iter()).filter(|top| top.0 == cell).map(|top| top.1);
-    let ground_z = client_shadow_ground_z(
-        render_tile.z,
-        static_land_z(resources.map_planes, frame.map_id, cell),
-        surface_tops,
-    );
+    let land_z = build.own_land.land_z(resources.map_planes, frame.map_id, cell.0, cell.1)
+        .and_then(|land_z| i8::try_from(land_z).ok());
+    let ground_z = client_shadow_ground_z(render_tile.z, land_z, surface_tops);
     emit_static_render_tile(
         render_tile,
         ground_z,
@@ -2783,6 +2841,8 @@ fn emit_art_static_tile(
     // Separately admit tile-sized dry diamonds only on a resident, level map cell.
     let cc_surface_like_flat = matches!(billboard_source, ClientTextureSource::Cc)
         && resolved_sprite.as_ref().is_some_and(|sprite| {
+            let cell = UVec2::new(info.world_x as u32, info.world_z as u32);
+            build.read_land(AtlasCells::new(cell, cell + UVec2::ONE));
             cc_static_uses_flat_geometry(info.tilemeta, sprite.logical_width, sprite.logical_height,
                 info.world_x, info.world_z, info.tile.z, resources.tile_atlas)
         });
@@ -3190,6 +3250,7 @@ fn finish_rebuilt_static_chunk(
         ground_pick_indices: sorted_indices(build.ground_pick_indices),
         stats: build.stats,
         last_visible_tick: visible_tick,
+        land_cells: build.land_cells,
     }
 }
 
@@ -3406,9 +3467,10 @@ pub fn sys_collect_visible_statics(
         kr_packages.sources().filter(|_| frame.land_style == StaticLandStyle::KingdomReborn),
     );
     let cache_config =
-        static_chunk_cache_config(frame, &sprite_atlas, &ground_atlas, &static_lights, &tile_atlas);
+        static_chunk_cache_config(frame, &sprite_atlas, &ground_atlas, &static_lights);
     let visible_tick = outputs.3.begin_frame();
     let config_changed = outputs.3.sync_config(cache_config);
+    debug_state.land_invalidated_chunks += outputs.3.invalidate_changed_land(&tile_atlas) as u64;
 
     let visible_chunk_keys = collect_visible_static_chunk_keys(map_id, &chunks_q);
     let atlas_retry_signature = static_atlas_retry_signature(&sprite_atlas, &ground_atlas);
@@ -4756,7 +4818,6 @@ mod tests {
             land_style: StaticLandStyle::Unknown,
             sprite_atlas_mapping_revision: 0,
             ground_atlas_mapping_revision: 0,
-            land_metadata_revision: 0,
             static_art_local_light_signature: None,
             show_hidden_multi_parts: false,
             item_routes_revision: 0,
@@ -4780,7 +4841,6 @@ mod tests {
             land_style: StaticLandStyle::Unknown,
             sprite_atlas_mapping_revision: 1,
             ground_atlas_mapping_revision: 0,
-            land_metadata_revision: 0,
             static_art_local_light_signature: None,
             show_hidden_multi_parts: false,
             item_routes_revision: 0,
@@ -4801,7 +4861,6 @@ mod tests {
             land_style: StaticLandStyle::Unknown,
             sprite_atlas_mapping_revision: 0,
             ground_atlas_mapping_revision: 0,
-            land_metadata_revision: 0,
             static_art_local_light_signature: None,
             show_hidden_multi_parts: false,
             item_routes_revision: 0,
@@ -4826,7 +4885,6 @@ mod tests {
             land_style: StaticLandStyle::Unknown,
             sprite_atlas_mapping_revision: 0,
             ground_atlas_mapping_revision: 0,
-            land_metadata_revision: 0,
             static_art_local_light_signature: None,
             show_hidden_multi_parts: false,
             item_routes_revision: 0,
@@ -4847,7 +4905,6 @@ mod tests {
             land_style: StaticLandStyle::Unknown,
             sprite_atlas_mapping_revision: 0,
             ground_atlas_mapping_revision: 0,
-            land_metadata_revision: 0,
             static_art_local_light_signature: Some(0),
             show_hidden_multi_parts: false,
             item_routes_revision: 0,
@@ -4871,7 +4928,6 @@ mod tests {
             land_style: StaticLandStyle::Unknown,
             sprite_atlas_mapping_revision: 0,
             ground_atlas_mapping_revision: 0,
-            land_metadata_revision: 0,
             static_art_local_light_signature: Some(1),
             show_hidden_multi_parts: false,
             item_routes_revision: 0,
@@ -5130,6 +5186,45 @@ mod tests {
         let corners = static_art_cc_flat_local_light_corners(true, &lights, 1, 0.0, 0.0, 0.0, bounds)
             .map(|corner| unpack_local_light(corner)[3]);
         assert!(corners[1] > corners[0] && corners[1] > corners[2] && corners[1] > corners[3]);
+    }
+
+    #[test]
+    fn static_chunk_cache_rebuilds_only_the_chunks_that_read_changed_land() {
+        use crate::core::render::scene::world::land::tile_atlas::{AtlasParams, Rg16u};
+        let mut atlas = TileAtlas::new(AtlasParams { page_texels: UVec2::splat(64), max_layers: 1, world_pages_x: 1,
+            ..Default::default() }, 1);
+        let (layer, _) = atlas.ensure_layer_for_page(IVec2::ZERO);
+        let key = |gx| StaticChunkBatchKey { map_id: 1, gx, gy: 0, scale: 1 };
+        let read = |min: (u32, u32), max: (u32, u32)| CachedStaticChunk {
+            land_cells: Some(AtlasCells::new(UVec2::new(min.0, min.1), UVec2::new(max.0, max.1))),
+            ..Default::default()
+        };
+        let mut cache = StaticChunkRenderCache::default();
+        // The first check has nothing to compare with: the chunks built before it go.
+        cache.chunks.insert(key(0), CachedStaticChunk::default());
+        assert_eq!(cache.invalidate_changed_land(&atlas), 1);
+        // The chunk at x 0..31 read the cells up to x 32, one cell into its east neighbour's land (a Classic ground
+        // diamond on its last column); the chunk at x 32..63 read its own; the third read no land.
+        cache.chunks.insert(key(0), read((0, 0), (32, 31)));
+        cache.chunks.insert(key(1), read((32, 0), (63, 31)));
+        cache.chunks.insert(key(2), CachedStaticChunk::default());
+        assert_eq!(cache.invalidate_changed_land(&atlas), 0);
+        // The east neighbour's land loads after both: both read it.
+        atlas.enqueue_rg16u_block(layer, UVec2::new(32, 8), UVec2::splat(8), &[Rg16u::pack(3, 0, 4, false, 0); 64]);
+        assert_eq!(cache.invalidate_changed_land(&atlas), 2);
+        assert_eq!(cache.chunks.keys().copied().collect::<Vec<_>>(), vec![key(2)]);
+        // Land only the second read.
+        cache.chunks.insert(key(0), read((0, 0), (32, 31)));
+        cache.chunks.insert(key(1), read((32, 0), (63, 31)));
+        atlas.enqueue_rg16u_block(layer, UVec2::new(40, 8), UVec2::splat(8), &[Rg16u::pack(3, 0, 4, false, 0); 64]);
+        assert_eq!(cache.invalidate_changed_land(&atlas), 1);
+        assert!(cache.chunks.contains_key(&key(0)) && !cache.chunks.contains_key(&key(1)));
+        // Nothing changed: nothing goes.
+        assert_eq!(cache.invalidate_changed_land(&atlas), 0);
+        // Every cell changed: every chunk goes, the one that read no land too.
+        atlas.clear_all_mappings();
+        assert_eq!(cache.invalidate_changed_land(&atlas), 2);
+        assert!(cache.chunks.is_empty());
     }
 
     #[test]

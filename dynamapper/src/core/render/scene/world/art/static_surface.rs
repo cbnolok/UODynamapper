@@ -2,7 +2,8 @@
 //! smoothly at patch boundaries. Neighbor flags are built only on chunk rebuild.
 use super::statics_collect::{SpriteInstance, StaticChunkBatchKey, TILE_FLAG_SURFACE};
 use crate::core::texture_cache::ec_item_surface::KR_ITEM_RECORD_BASE;
-use crate::core::{statics::LazyStaticsStore, render::scene::world::land::{tile_atlas::TileAtlas, CHUNK_STORAGE_BLOCKS_DIM, MAP_STORAGE_BLOCK_TILE_DIM}};
+use crate::core::{statics::LazyStaticsStore, render::scene::world::land::{tile_atlas::{AtlasCells, TileAtlas}, CHUNK_STORAGE_BLOCKS_DIM, MAP_STORAGE_BLOCK_TILE_DIM}};
+use bevy::math::UVec2;
 use std::collections::{HashMap, HashSet};
 use udd_assets::{tex_art_ec::TexArtEcPackage, tilemeta::{EcMaterialStableRole, TileMetaItemTextureRef, TileMetaItemTile, TileMetaPackage}};
 
@@ -68,13 +69,13 @@ fn neighbor_mask(cells: &HashSet<SurfaceCell>, closing: &ClosingStatics, cell: S
 
 /// `kingdom_reborn` is the Kingdom Reborn tile data and art (an overlay over `art`) the instances with a
 /// `material_item_id` from `KR_ITEM_RECORD_BASE` were drawn from; the source statics take both their Enhanced and their
-/// Kingdom Reborn keys.
+/// Kingdom Reborn keys. Returns the cells of `atlas` it read, if any, which a change of rebuilds the chunk.
 pub(super) fn apply_boundary_coverage(
     instances: &mut [SpriteInstance], chunk: StaticChunkBatchKey, height_scale: f32,
     statics: &mut LazyStaticsStore, tilemeta: &TileMetaPackage, art: &TexArtEcPackage,
     kingdom_reborn: Option<(&TileMetaPackage, &TexArtEcPackage)>,
     atlas: &TileAtlas,
-) {
+) -> Option<AtlasCells> {
     let mut keys: HashMap<u32, Option<MaterialKey>> = HashMap::new();
     let mut key_for = |item: u32| *keys.entry(item).or_insert_with(|| {
         let (tilemeta, slot, id) = match kingdom_reborn {
@@ -89,15 +90,18 @@ pub(super) fn apply_boundary_coverage(
         source_key(tilemeta.item_tile(id)?, tilemeta.item_texture_refs(id))
     });
     let mut candidates = Vec::new();
+    let mut read: Option<AtlasCells> = None;
     for (index, instance) in instances.iter().enumerate() {
         if instance.flat_quad < 2 { continue; }
         let Some(key) = key_for(instance.material_item_id) else { continue; };
         let (x, y) = (instance.world_x as u32, instance.world_z as u32);
+        let cell = AtlasCells::new(UVec2::new(x, y), UVec2::new(x, y));
+        read = Some(read.map_or(cell, |read| read.union(cell)));
         let Some(z) = map_height(atlas, x, y) else { continue; };
         if (instance.base_world_y - f32::from(z) * height_scale).abs() > 0.001 { continue; }
         candidates.push((index, (x, y, z, key)));
     }
-    if candidates.is_empty() { return; }
+    if candidates.is_empty() { return read; }
 
     // A one-cell halo crosses both native-block and cached-chunk boundaries.
     // Read source statics, not just the currently visible instances, so panning
@@ -129,6 +133,7 @@ pub(super) fn apply_boundary_coverage(
         if !cells.contains(&cell) { continue; }
         instances[index].is_wet_flags |= BLEND_ENABLED | (neighbor_mask(&cells, &closing, cell) << NEIGHBOR_SHIFT);
     }
+    read
 }
 
 #[cfg(test)]

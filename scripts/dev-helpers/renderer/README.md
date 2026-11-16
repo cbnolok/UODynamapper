@@ -52,7 +52,9 @@ object reports CPU/submitted metadata revisions, pending metadata uploads and th
 number of published terrain-cache chunks. Equal revisions with no pending writes
 establish metadata submission. Its `art` object reports the last collected map,
 visible chunk and emitted-instance counts, atlas misses, and queued sprite/ground
-pages. Terrain can be ready while the bridge's sprites are still streaming.
+pages, a `digest` of the collected static instances that does not depend on the
+loading order (equal digests: the same statics), and `land_invalidated_chunks`,
+the cached statics chunks rebuilt because the land they read changed. Terrain can be ready while the bridge's sprites are still streaming.
 
 Run `wait-ready` after teleporting and before capturing. It requires current and
 rendered positions to agree, submitted terrain metadata, and art with no misses
@@ -115,7 +117,12 @@ python3 scripts/dev-helpers/renderer/control.py --socket /tmp/my-preview/control
 python3 scripts/dev-helpers/renderer/control.py --socket /tmp/my-preview/control.sock set light_cover clients
 python3 scripts/dev-helpers/renderer/control.py --socket /tmp/my-preview/control.sock set zoom 1.5
 python3 scripts/dev-helpers/renderer/control.py --socket /tmp/my-preview/control.sock wait-ready
+python3 scripts/dev-helpers/renderer/control.py --socket /tmp/my-preview/control.sock reload-land
 ```
+
+`reload-land` drops the cached map blocks (as 60 idle seconds do) and the cached
+statics chunks; after `wait-ready`, `status.art.digest` must be unchanged, or the
+statics cache depended on land it no longer has.
 
 `set` takes a JSON value; a bare word is a string. Its keys are an allowlist:
 `show_only_player_floor`, `caves`, `cave_surroundings`, `enable_statics`,
