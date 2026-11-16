@@ -35,8 +35,9 @@ def scene_fingerprint(status):
     control = status.get('control') or {}
     return (tuple(status.get('position') or ()), (status.get('terrain') or {}).get('metadata_revision'),
             art.get('emitted_instances'), art.get('visible_chunks'), art.get('digest'),
-            (status.get('static_lights') or {}).get('instances'),
+            (status.get('static_lights') or {}).get('instances'), (status.get('static_lights') or {}).get('digest'),
             (status.get('client_light_sprites') or {}).get('instances'),
+            (status.get('client_light_sprites') or {}).get('digest'),
             json.dumps(status.get('z_view'), sort_keys=True), control.get('switch_serial'))
 
 

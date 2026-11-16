@@ -18,7 +18,7 @@ use crate::core::render::scene::world::caves::CavesRes;
 use crate::core::render::scene::world::effects::client_night::{
     client_night_dimming, CLIENT_FULL_DAY_LEVEL, LIGHT_BUFFER_LAYER,
 };
-use crate::core::render::scene::world::z_view::ZViewLimit;
+use crate::core::render::scene::world::z_view::{PackageLand, ZViewLimit};
 use crate::core::render::scene::SceneStateData;
 use crate::core::statics::StaticsStoreRes;
 use crate::core::uo_files_loader::{HuesPackageRes, MapPlanesRes, TileMetaPackageRes, WorldLightsPackageRes};
@@ -28,6 +28,7 @@ use bevy::camera::visibility::{NoFrustumCulling, RenderLayers};
 use bevy::mesh::MeshTag;
 use bevy::prelude::*;
 use bevy::render::render_resource::{Extent3d, PrimitiveTopology, TextureDimension, TextureFormat};
+use std::cell::RefCell;
 use std::collections::{HashMap, HashSet};
 use std::hash::{Hash, Hasher};
 
@@ -212,6 +213,25 @@ impl Hash for StaticLightKey {
 
 #[derive(Resource, Default)]
 pub struct RenderStaticLightInstances(pub Vec<StaticLightInstance>);
+
+impl RenderStaticLightInstances {
+    /// A hash of every light's key, colour, placement, size, ceiling and cave, in collection order: two runs that
+    /// collected the same lights report the same digest (`status.static_lights.digest` on the control socket).
+    pub fn digest(&self) -> u64 {
+        let mut hasher = std::hash::DefaultHasher::new();
+        for light in &self.0 {
+            light.key.hash(&mut hasher);
+            let values = light.color_rgb.into_iter().chain([light.world_x, light.world_z, light.world_y,
+                light.width_world, light.height_world]);
+            for value in values {
+                value.to_bits().hash(&mut hasher);
+            }
+            light.ceiling.hash(&mut hasher);
+            light.cave_outside.hash(&mut hasher);
+        }
+        hasher.finish()
+    }
+}
 
 #[derive(Resource, Default)]
 pub struct StaticLightDrawDebugState {
@@ -399,6 +419,8 @@ pub fn sys_collect_visible_static_lights(
     let light_cover = uniform_state.light_cover_rule();
 
     let mut seen = HashSet::new();
+    // The land z the covers count from, read from the map package: the same whatever map blocks are loaded.
+    let land = RefCell::new(PackageLand::default());
     for chunk_key in visible_chunk_keys {
         let start_gx = chunk_key.gx * CHUNK_STORAGE_BLOCKS_DIM;
         let start_gy = chunk_key.gy * CHUNK_STORAGE_BLOCKS_DIM;
@@ -443,7 +465,8 @@ pub fn sys_collect_visible_static_lights(
                         light_id,
                         hue_id: tile.hue,
                     };
-                    let land_z = |x: u32, y: u32| static_land_z(map_planes.as_deref(), map_id, (x as i32, y as i32));
+                    let land_z =
+                        |x: u32, y: u32| static_land_z(&land, map_planes.as_deref(), map_id, (x as i32, y as i32));
                     // The player's cave hides it, or draws it whatever the view's limit (caves.rs). Outside it the
                     // light is not darkened itself, the light buffer multiplying the scene, darkened already, but its
                     // colour fades as the scene's (`cave_outside`).

@@ -12,10 +12,11 @@ The views are the fixtures of ../fixtures.toml (read strictly). Commands:
 
 Selection: --tier quick|full, --only NAME_OR_TAG (glob, repeatable), --style, --source ART/LAND, --time.
 
-Each capture stores the collected statics' digest (status.art.digest), which does not depend on the loading order:
-compare marks a capture changed when two labels of one binary (live and --fresh-launch) collected different statics.
+Each capture stores the digests of the collected statics, static lights and light sprites (status.art.digest,
+status.static_lights.digest, status.client_light_sprites.digest), which do not depend on the loading order: compare
+marks a capture changed when two labels of one binary (live and --fresh-launch) collected different ones.
 --reload-land-check also drops the loaded map blocks and the cached statics after each capture (the control
-command reload_land, the state 60 idle seconds reach) and requires the same digest after the rebuild.
+command reload_land, the state 60 idle seconds reach) and requires the same digests after the rebuild.
 
 Every GUI run follows the repository's preview rules itself: KDE "Desktop 4" through the exact-PID preview helper,
 a private working directory with copies of the tree's assets/ and a fresh cache/, never the user's settings; the
@@ -131,6 +132,9 @@ SUN_PATH_MAX = 107
 CONTROL_REPLY_SUFFIX = len('/dynamapper-ctl-xxxxxxxx/reply.sock')
 LOG_ERROR_WORDS = ('ERROR', 'panicked', 'Validation Error', 'wgpu error')
 LOG_TAIL_LINES = 40
+# The collections whose digests (status.<key>.digest) must not depend on the loading order: (name, status key).
+DIGESTS = (('statics', 'art'), ('static lights', 'static_lights'), ('light sprites', 'client_light_sprites'))
+RELOAD_CHANGED = 'changed after reload_land'
 ENCODE_WORKERS = 4
 ENCODE_NICE = 10
 
@@ -931,17 +935,20 @@ class Launch:
 
     # -- run -----------------------------------------------------------------------------------------------------
     def reload_land_check(self, capture, status):
-        """Problems when the statics rebuilt from scratch after reload_land differ from the cached ones."""
-        before = (status.get('art') or {}).get('digest')
+        """Problems when the statics or lights rebuilt from scratch after reload_land differ from the cached ones."""
         reply = self.request({'command': 'reload_land'})
         if not reply.get('ok'):
             return [f'reload_land: {reply.get("error")}'], None
-        after = (self.wait_ready(capture).get('art') or {}).get('digest')
-        check = {'before': before, 'after': after}
-        if before != after:
-            return [f'the statics changed after reload_land ({before} -> {after}): the cache kept land it no longer '
-                    f'has'], check
-        return [], check
+        rebuilt = self.wait_ready(capture)
+        check = {}
+        problems = []
+        for name, status_key in DIGESTS:
+            before, after = (status_digest(snapshot, status_key) for snapshot in (status, rebuilt))
+            check[status_key] = {'before': before, 'after': after}
+            if before != after:
+                problems.append(f'the {name} {RELOAD_CHANGED} ({before} -> {after}): they read land the cache no '
+                                f'longer has')
+        return problems, check
 
     def run(self):
         """Capture as many of the launch's captures as fit the budget; returns (results, the ones left over)."""
@@ -1208,6 +1215,11 @@ def verdict(stats, tolerance):
     return 'within' if stats['changed_pct'] <= tolerance.changed_pct else 'changed'
 
 
+def status_digest(status, key):
+    """A collection's digest in a control status (DIGESTS); None when the binary does not report it."""
+    return ((status or {}).get(key) or {}).get('digest')
+
+
 def compare(args, baseline, label, fixtures, fixtures_path):
     root = args.root
     base = load_manifest(root, baseline)
@@ -1263,12 +1275,13 @@ def compare(args, baseline, label, fixtures, fixtures_path):
                 row['verdict'] = verdict(row['stats'], fixture.tolerance)
             row['unstable'] = not (entry['stable'] and other['stable'])
             row['problems'] = other.get('problems', [])
-            # One binary collects the same statics however it got to the view (live or --fresh-launch).
-            digests = [((capture.get('status') or {}).get('art') or {}).get('digest') for capture in (entry, other)]
-            if same_binary and None not in digests and digests[0] != digests[1]:
-                row['verdict'] = 'changed'
-                row['statics_digest'] = digests
-            if any(problem.startswith('the statics changed after reload_land') for problem in row['problems']):
+            # One binary collects the same statics and lights however it got to the view (live or --fresh-launch).
+            for name, status_key in DIGESTS:
+                digests = [status_digest(capture.get('status'), status_key) for capture in (entry, other)]
+                if same_binary and None not in digests and digests[0] != digests[1]:
+                    row['verdict'] = 'changed'
+                    row.setdefault('digests', {})[name] = digests
+            if any(RELOAD_CHANGED in problem for problem in row['problems']):
                 row['verdict'] = 'changed'
             row['files'] = [str(label_dir(root, baseline) / entry['file']), str(current_dir / other['file'])]
         rows[key] = row
@@ -1316,8 +1329,7 @@ def print_compare(rows):
                   f'max {stats.get("max_delta", 0):3d}  (allowed {row["tolerance"]["changed_pct"]}%)'
                   if 'changed_pct' in stats else '')
         mark = {'identical': ' ', 'within': '~', 'changed': '!'}.get(row['verdict'], 'E')
-        statics = f'  statics {row["statics_digest"][0]} -> {row["statics_digest"][1]}' \
-            if row.get('statics_digest') else ''
+        statics = ''.join(f'  {name} {pair[0]} -> {pair[1]}' for name, pair in row.get('digests', {}).items())
         problems = ''.join(f'  PROBLEM: {problem}' for problem in row.get('problems', []))
         log(f'{mark} {key:<{width}}  {row["verdict"]:<9} {detail}{"  unstable" if row.get("unstable") else ""}'
             f'{statics}{problems}')

@@ -280,8 +280,8 @@ fn multi_parts_on_cells(
 /// and the multi parts `multi_parts` holds; `LightCoverRule::Uod` reads nothing and hides only a light at or above the
 /// z limit `max_z`, whose item is not drawn. `land_z` gives the raw
 /// land z of a cell, which the clients' bands start from: the Enhanced client's the light cell's own, the KR client's
-/// each cell's average (`kr_cell_land_z`). While the light cell's is not known (its map block is not loaded) the
-/// light's own z stands in for it, and while the cover cell's is not known, the light cell's. A cell the store cannot
+/// each cell's average (`kr_cell_land_z`). While the light cell's is not known (off the map) the light's own z stands
+/// in for it, and while the cover cell's is not known, the light cell's. A cell the store cannot
 /// read covers nothing. Only the statics drawn cover (`drawn_cell_statics`): under KR's cut, `roof_layer`, its roofs
 /// by their own cell's layer.
 pub fn static_light_is_hidden(

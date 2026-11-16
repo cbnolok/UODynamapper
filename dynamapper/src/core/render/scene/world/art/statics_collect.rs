@@ -2700,14 +2700,13 @@ fn client_shadow_surface_tops(
         .collect()
 }
 
-/// The land z of a cell, while its map block is loaded.
-pub(super) fn static_land_z(map_planes: Option<&MapPlanesRes>, map_id: u32, cell: (i32, i32)) -> Option<i8> {
-    use uocf::classic::map::{MapCell, MapCellCoords};
-    let plane = map_planes?.0.get(usize::try_from(map_id).ok()?)?.as_ref()?;
-    let coords = MapCellCoords { x: u32::try_from(cell.0).ok()?, y: u32::try_from(cell.1).ok()? };
-    let rel = MapCell::coords_in_block(&coords);
-    let block = plane.block_no_update(MapCell::coords_of_parent_block(&coords))?;
-    Some(block.cell(rel.x, rel.y).ok()?.z)
+/// The land z of a cell, its own corner's, read from the map package through `land` (`PackageLand`), which holds every
+/// cell whether or not its map block is loaded, or was evicted: the lights read the same land however it loaded.
+/// `None` off the map, or while the map is not open.
+pub(super) fn static_land_z(land: &std::cell::RefCell<PackageLand>, map_planes: Option<&MapPlanesRes>, map_id: u32,
+    cell: (i32, i32)) -> Option<i8> {
+    let land_z = land.borrow_mut().land_z(map_planes, map_id, cell.0, cell.1)?;
+    i8::try_from(land_z).ok()
 }
 
 /// The client's ground under a shadow caster at `z` (0x00587770): the land z capped at `z`, or the top of a Surface or

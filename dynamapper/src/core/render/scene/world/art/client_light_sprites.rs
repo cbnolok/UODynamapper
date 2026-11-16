@@ -27,7 +27,7 @@ use super::light_scene::{
     light_clip_material, light_clip_tag, set_light_clip_mode, LightClipMaterial, LightClipMode, LightScene,
 };
 use crate::core::render::scene::world::caves::CavesRes;
-use crate::core::render::scene::world::z_view::{ZViewCut, ZViewLimit};
+use crate::core::render::scene::world::z_view::{PackageLand, ZViewCut, ZViewLimit};
 use super::static_lights::{StaticLightInstance, StaticLightKey, StaticLightTarget, LIGHT_PIXELS_PER_WORLD_TILE,
     STATIC_LIGHT_Y_BIAS};
 use super::statics_collect::{
@@ -50,7 +50,7 @@ use bevy::camera::visibility::{NoFrustumCulling, RenderLayers};
 use bevy::mesh::MeshTag;
 use bevy::prelude::*;
 use bevy::render::render_resource::{Extent3d, PrimitiveTopology, TextureDimension, TextureFormat};
-use std::cell::Cell;
+use std::cell::RefCell;
 use std::collections::{BTreeSet, HashMap, HashSet};
 use std::hash::{Hash, Hasher};
 use udd_assets::tex_art_cc::TexArtCcPackage;
@@ -157,10 +157,9 @@ pub struct RenderClientLightSprites {
     pub instances: Vec<ClientLightSpriteInstance>,
     /// What the last scan covered, whether it centred the sprites on their items, and the rule, z-view cut and multi
     /// parts it hid covered lights by (`light_cover`), and the caves drawn over the map (`CavesRes::revision`); the scan
-    /// reruns only when it changes. The last field is the map plane's `blocks_loaded_version` when the scan read the
-    /// land z of a cell whose block was not loaded yet: the scan reruns once more land loads, so a scan made before the
-    /// land does not keep its stand-in land z.
-    last_scan: Option<(u32, Vec<StaticChunkBatchKey>, bool, LightCoverRule, ZViewCut, bool, u64, Option<u64>)>,
+    /// reruns only when it changes. The land z the covers count from is the map package's (`static_land_z`), which
+    /// does not change as the map blocks load or are evicted.
+    last_scan: Option<(u32, Vec<StaticChunkBatchKey>, bool, LightCoverRule, ZViewCut, bool, u64)>,
 }
 
 impl RenderClientLightSprites {
@@ -662,16 +661,11 @@ pub fn sys_collect_client_light_sprites(
     let (z_view, caves) = view_cuts;
     let z_cut = z_view.0;
     let show_hidden_multi_parts = settings.world_rendering.show_hidden_multi_parts;
-    let land_version = map_planes
-        .as_deref()
-        .and_then(|planes| planes.0.get(map_id as usize)?.as_ref())
-        .map(|plane| plane.blocks_loaded_version);
     if output.last_scan.as_ref().is_some_and(
-        |(last_map, last_keys, last_centred, last_cover, last_cut, last_hidden, last_caves, land_wait)| {
+        |(last_map, last_keys, last_centred, last_cover, last_cut, last_hidden, last_caves)| {
             *last_map == map_id && *last_keys == visible_chunk_keys && *last_centred == centre_on_items
                 && *last_cover == light_cover && *last_cut == z_cut && *last_hidden == show_hidden_multi_parts
                 && *last_caves == caves.revision()
-                && land_wait.is_none_or(|version| Some(version) == land_version)
         },
     ) {
         return;
@@ -730,7 +724,7 @@ pub fn sys_collect_client_light_sprites(
 
     let mut instances = Vec::new();
     let mut seen = HashSet::new();
-    let land_missed = Cell::new(false);
+    let land = RefCell::new(PackageLand::default());
     for (gy, gx) in blocks {
         let Ok(tiles) = statics_store.block_tiles(gx, gy) else {
             continue;
@@ -763,11 +757,7 @@ pub fn sys_collect_client_light_sprites(
                 z: tile.z,
                 graphic: tile.graphic,
             };
-            let land_z = |x: u32, y: u32| {
-                let land_z = static_land_z(map_planes.as_deref(), map_id, (x as i32, y as i32));
-                land_missed.set(land_missed.get() || land_z.is_none());
-                land_z
-            };
+            let land_z = |x: u32, y: u32| static_land_z(&land, map_planes.as_deref(), map_id, (x as i32, y as i32));
             if !seen.insert(key) {
                 continue;
             }
@@ -842,9 +832,8 @@ pub fn sys_collect_client_light_sprites(
         );
     }
     output.instances = instances;
-    let land_wait = land_version.filter(|_| land_missed.get());
     output.last_scan = Some((map_id, visible_chunk_keys, centre_on_items, light_cover, z_cut, show_hidden_multi_parts,
-        caves.revision(), land_wait));
+        caves.revision()));
 }
 
 pub fn sys_sync_client_light_sprites(
