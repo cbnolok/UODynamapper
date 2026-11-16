@@ -173,7 +173,8 @@ guards = """Inside the keep at z50 with the player's-floor view at night: lights
 items and only drawn layers cover a light (16af57a0); lights under the cut floor come back (47151d86). The KR-like, \
 Enhanced and UOD-Painterly glows are those of a launch that starts here, whichever views the launch visited before \
 (3a1c6bc5: the west wall's pools came and went); Classic's lights darken at their rims as light.mul's negative \
-values say (857e4c1f)."""
+values say (857e4c1f). The long table's west end holds no pool: the z85 sconces over it hang on the cut floor \
+above and go with it (the pool recorded before 3a1c6bc5 matched the sconce at 1338,1610,85 lit through the floor)."""
 tier = "quick"
 tags = ["z-view", "lights", "keep"]
 map = 1
