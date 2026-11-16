@@ -45,6 +45,9 @@ pub const LAND_SOURCE_NODRAW: u32 = 6;
 /// The land id the Classic client 7.0.103.0 never draws from its texmap or land art (tiledata "NODRAW";
 /// `FUN_0044c180` and `FUN_0044fa70` skip it unless a debug flag is set). Ids 0 and 1 are drawn.
 pub const LAND_NODRAW_ID: u32 = 2;
+/// Where `Rg16u::pack` stores the texture source mode (`tex_size_bits`) in G: its high byte's low nibble.
+const TEX_SOURCE_SHIFT: u16 = 8;
+const TEX_SOURCE_MASK: u16 = 0x0F;
 
 impl Rg16u {
     /// Packs tile ID, height (Z), texture source mode, land flags, and is_wet into Rg16u.
@@ -70,6 +73,11 @@ impl Rg16u {
         let flags = (land_flags & 0x07) << 4;
         let g = (height_biased as u16) | (((tex_size_bits & 0x0F) | flags | wet_bit) << 8);
         Self { r: tile_id, g }
+    }
+
+    /// The texture source mode (`LAND_SOURCE_*`) `pack` stored.
+    pub fn texture_source(self) -> u32 {
+        u32::from((self.g >> TEX_SOURCE_SHIFT) & TEX_SOURCE_MASK)
     }
 }
 
@@ -254,6 +262,12 @@ impl TileAtlas {
         let layer = p.page_to_layer[(index / 4) as usize][(index % 4) as usize];
         let data = self.cpu_mirror.get(layer as usize)?.as_ref()?;
         data.get(((y % p.page_texels.y) * p.page_texels.x + x % p.page_texels.x) as usize).copied()
+    }
+
+    /// Whether the land of the cell (`x`, `y`) is land the renderer does not draw, as the Classic client does not
+    /// (`LAND_SOURCE_NODRAW`); false while the atlas does not hold the cell.
+    pub(crate) fn land_is_nodraw(&self, x: u32, y: u32) -> bool {
+        self.read_cell(x, y).is_some_and(|cell| cell.texture_source() == LAND_SOURCE_NODRAW)
     }
 
     pub(crate) fn has_pending_uploads(&self) -> bool {

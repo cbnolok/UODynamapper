@@ -2485,6 +2485,14 @@ fn emit_static_render_tile_on_surfaces(
     );
 }
 
+/// The z of the land that covers a floor buried under it on the cell (`x`, `y`) (`caves::is_buried_floor`): the cell's
+/// own corner's `land_z`, where the renderer draws that land. Land the z-view's cut leaves out (over `max_ground_z`)
+/// and land never drawn (`TileAtlas::land_is_nodraw`, the Classic client's NoDraw land) cover nothing.
+fn covering_land_z(land_z: Option<i32>, max_ground_z: i32, tile_atlas: &TileAtlas, x: i32, y: i32) -> Option<i32> {
+    let nodraw = || matches!((u32::try_from(x), u32::try_from(y)), (Ok(x), Ok(y)) if tile_atlas.land_is_nodraw(x, y));
+    land_z.filter(|&land_z| land_z <= max_ground_z && !nodraw())
+}
+
 fn emit_static_render_tile(
     render_tile: StaticRenderTile,
     ground_z: i32,
@@ -2523,12 +2531,11 @@ fn emit_static_render_tile(
     if cave == CaveStatic::Hidden {
         return;
     }
-    // Outside the caves, a cave's floor under its cell's land, where the z-view's cut leaves that land, is covered, as
-    // the Classic client draws a cell's land after the floors under it: its art, standing upright at one depth, would
-    // show through the lower part of a steep land, as teeth along a cave mouth's black opening.
-    let max_ground_z = frame.z_view.max_ground_z;
-    let covering_land_z = || build.own_land.land_z(resources.map_planes, frame.map_id, cell_x, cell_y)
-        .filter(|&land_z| land_z <= max_ground_z);
+    // Outside the caves, a cave's floor under its cell's land, where that land is drawn, is covered, as the Classic
+    // client draws a cell's land after the floors under it: its art, standing upright at one depth, would show through
+    // the lower part of a steep land, as teeth along a cave mouth's black opening.
+    let covering_land_z = || covering_land_z(build.own_land.land_z(resources.map_planes, frame.map_id, cell_x, cell_y),
+        frame.z_view.max_ground_z, resources.tile_atlas, cell_x, cell_y);
     if player_cave.is_none() && cave == CaveStatic::Outside
         && is_buried_floor(flags, tilemeta.map_or(0, |meta| meta.height), render_tile.z, covering_land_z) {
         return;
@@ -3687,6 +3694,34 @@ mod tests {
         assert!(!flat(&tile, &atlas));
         tile.flags |= TILE_FLAG_WET;
         assert!(flat(&tile, &atlas));
+    }
+
+    /// A floor buried under its cell's land is covered only by land the renderer draws: not by land over the z-view's
+    /// cut, nor by NoDraw land, whose fragments are discarded.
+    #[test]
+    fn only_drawn_land_covers_a_buried_floor() {
+        use crate::core::render::scene::world::caves::CAVE_MIN_BURY_DEPTH;
+        use crate::core::render::scene::world::land::tile_atlas::{AtlasParams, Rg16u, LAND_SOURCE_CC_ATLAS,
+            LAND_SOURCE_NODRAW, LAND_NODRAW_ID};
+        use crate::core::render::scene::world::art::light_cover::NO_Z_VIEW_LIMIT;
+        use uocf::enhanced::tileart::TaeFlag;
+        const DRAWN_LAND_ID: u16 = 3;
+        let floor = TaeFlag::Surface.bits();
+        let land_z = CAVE_MIN_BURY_DEPTH;
+        let mut atlas = TileAtlas::new(AtlasParams { page_texels: UVec2::splat(2),
+            max_layers: 1, world_pages_x: 1, ..Default::default() }, 1);
+        let (layer, _) = atlas.ensure_layer_for_page(IVec2::ZERO);
+        let drawn = Rg16u::pack(DRAWN_LAND_ID, land_z as i8, LAND_SOURCE_CC_ATLAS as u16, false, 0);
+        let nodraw = Rg16u::pack(LAND_NODRAW_ID as u16, land_z as i8, LAND_SOURCE_NODRAW as u16, false, 0);
+        atlas.cpu_mirror[layer as usize] = Some(vec![drawn, nodraw, drawn, drawn]);
+        let buried = |atlas: &TileAtlas, max_ground_z: i32, x: i32| is_buried_floor(floor, 0, 0,
+            || covering_land_z(Some(land_z), max_ground_z, atlas, x, 0));
+        assert!(buried(&atlas, NO_Z_VIEW_LIMIT, 0));
+        assert!(!buried(&atlas, NO_Z_VIEW_LIMIT, 1));
+        assert!(!buried(&atlas, land_z - 1, 0));
+        // A cell the atlas does not hold yet is taken as drawn; the chunk is built again once it does
+        // (`StaticChunkCacheConfig::land_metadata_revision`).
+        assert!(buried(&TileAtlas::new(AtlasParams::default(), 1), NO_Z_VIEW_LIMIT, 1));
     }
 
     #[test]
