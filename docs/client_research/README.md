@@ -16,7 +16,9 @@ in Ghidra. Each `ghidra-<topic>/` folder holds one study:
 decompilation, `ApplyVariableSpecs.java`, the read-only Ghidra query), described
 below. [`water/`](water/README.md) holds the EC water and terrain-material
 investigation: the original material, item and scene inspectors and the coverage
-and mask-edge checks.
+and mask-edge checks. [`kr-facet-statics/`](kr-facet-statics/README.md) compares
+Kingdom Reborn's facet statics and land with the Classic and Enhanced ones: the
+cave arches only KR's facets hold (the Minoc mine's) and how far KR's world differs.
 
 These tools inspect local inputs without executing or patching the original
 client. Keep generated dumps, extracted bytes and Ghidra projects outside the
