@@ -83,7 +83,7 @@ TMPDIR=/home/claudio/test/uop/<date> UO_EC_CLIENT_DIR="$C/_Ultima Online Enhance
 | tileart | records (37,756 / 17,086) | typed, both dialects | editor | writer, RT EC (`tileart_client_records::tileart_reencodes_every_client_record`) and KR (`kr_client_files::kr_tileart_records_reencode_identically`), edit RT | Tile metadata, tileart editor (every field, appearance filters and texture blocks too, the effects as KDL text; save) | `tileart.rs` 38705ade, 938dc6e7 |
 | waypoint | waypoints (1 / 1) | typed | editor | writer, RT EC (`waypoints_client_file::waypoints_reencode_identically`) and KR (`kr_client_files::kr_waypoints_reencode_identically`) | UOP explorer (waypoint editor) | `waypoints.rs` c368a4f0, 38705ade |
 | StaticChunk (KR) | static chunks (145) | typed | editor (`apply_to_package`) | writer, RT (`kr_facet_client_files::kr_static_chunks_reencode_identically`) | none | `kr/facet/static_chunk.rs` 7fd85a38 |
-| TileArtLegacy (KR) | TGA (16,383), placeholder (1) | typed (image crate) | replace (parse-checked); an image converted to the entry's convention | TGA writer, RT KR, every entry | UOP explorer (image; "Replace file..." converts a PNG) | |
+| TileArtLegacy (KR; the TGA sources, never mounted by UOKR.exe, which reads the legacy art from LegacyTexture) | TGA (16,383), placeholder (1) | typed (image crate) | replace (parse-checked); an image converted to the entry's convention | TGA writer, RT KR, every entry | UOP explorer (image; "Replace file..." converts a PNG) | |
 
 Summary: in the 40 EC packages, every entry can be replaced or added with content checks. 36 packages have a typed
 reader for all their entries but stray files; raw text and binary remain in Interface, MainMisc and Shaders,
