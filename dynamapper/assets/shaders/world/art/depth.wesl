@@ -121,8 +121,8 @@ const STATIC_FLAG_CAVE_OUTSIDE: u32 = 1u << 15u;
 // luminance: it reads as outside, not as dusk. The one place they are set: land (land/main.wesl), statics and water all
 // take this tone, and the lights (art/light_clip.wesl) its colour, the light buffer multiplying the darkened scene
 // (caves.rs CaveSurroundings::Dimmed).
-const CAVE_OUTSIDE_SHADE: f32 = 0.2;
-const CAVE_OUTSIDE_SATURATION: f32 = 0.5;
+const CAVE_OUTSIDE_SHADE: f32 = 0.3;
+const CAVE_OUTSIDE_SATURATION: f32 = 0.6;
 // The luminance weights of linear sRGB (Rec. 709).
 const CAVE_OUTSIDE_LUMA_WEIGHTS: vec3<f32> = vec3<f32>(0.2126, 0.7152, 0.0722);
 
