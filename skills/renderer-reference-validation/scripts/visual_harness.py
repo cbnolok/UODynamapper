@@ -12,6 +12,11 @@ The views are the fixtures of ../fixtures.toml (read strictly). Commands:
 
 Selection: --tier quick|full, --only NAME_OR_TAG (glob, repeatable), --style, --source ART/LAND, --time.
 
+Each capture stores the collected statics' digest (status.art.digest), which does not depend on the loading order:
+compare marks a capture changed when two labels of one binary (live and --fresh-launch) collected different statics.
+--reload-land-check also drops the loaded map blocks and the cached statics after each capture (the control
+command reload_land, the state 60 idle seconds reach) and requires the same digest after the rebuild.
+
 Every GUI run follows the repository's preview rules itself: KDE "Desktop 4" through the exact-PID preview helper,
 a private working directory with copies of the tree's assets/ and a fresh cache/, never the user's settings; the
 shared preview lock held around each launch only; the control socket for positioning and capture; the first capture
@@ -925,6 +930,19 @@ class Launch:
         return changed
 
     # -- run -----------------------------------------------------------------------------------------------------
+    def reload_land_check(self, capture, status):
+        """Problems when the statics rebuilt from scratch after reload_land differ from the cached ones."""
+        before = (status.get('art') or {}).get('digest')
+        reply = self.request({'command': 'reload_land'})
+        if not reply.get('ok'):
+            return [f'reload_land: {reply.get("error")}'], None
+        after = (self.wait_ready(capture).get('art') or {}).get('digest')
+        check = {'before': before, 'after': after}
+        if before != after:
+            return [f'the statics changed after reload_land ({before} -> {after}): the cache kept land it no longer '
+                    f'has'], check
+        return [], check
+
     def run(self):
         """Capture as many of the launch's captures as fit the budget; returns (results, the ones left over)."""
         results = {}
@@ -968,10 +986,15 @@ class Launch:
                         self.capture_png(self.staging / f'0_discard.{switches}.png')
                     path, attempts, stable, difference = self.capture_stable(capture)
                     problems = self.verify(capture, self.request({'command': 'status'}))
+                    reload_check = None
+                    if self.ctx.reload_land_check:
+                        reload_problems, reload_check = self.reload_land_check(capture, status)
+                        problems += reload_problems
                     results[capture.key] = {
                         'png': path, 'attempts': attempts, 'stable': stable, 'unstable_difference': difference,
                         'problems': problems, 'seconds': round(time.monotonic() - began, 2),
-                        'status': {key: status.get(key) for key in ('position', 'z_view', 'static_lights',
+                        'reload_land': reload_check,
+                        'status': {key: status.get(key) for key in ('position', 'art', 'z_view', 'static_lights',
                                                                      'client_light_sprites')}
                         | {'render': {key: (status.get('render') or {}).get(key) for key in (
                             'preset', 'light_cover', 'light_cover_rule', 'player_floor_rule',
@@ -1061,6 +1084,7 @@ class Context:
         self.sockets = self.root / 'sk'
         self.control = load_control()
         self.chunk_seconds = getattr(args, 'chunk_seconds', LIVE_CHUNK_SECONDS)
+        self.reload_land_check = getattr(args, 'reload_land_check', False)
 
 
 def record(args, label, captures, fixtures_path):
@@ -1093,7 +1117,7 @@ def record(args, label, captures, fixtures_path):
         'tree': git_state(ctx.tree), 'packages': str(ctx.packages), 'note': args.note,
         'fixtures_file': {'path': str(fixtures_path), 'sha256': file_sha256(fixtures_path)},
         'window': list(ctx.window), 'format': args.format, 'mode': 'live' if live else 'fresh',
-        'chunk_seconds': ctx.chunk_seconds if live else None,
+        'chunk_seconds': ctx.chunk_seconds if live else None, 'reload_land_check': ctx.reload_land_check,
         'selection': {'tier': args.tier, 'only': args.only, 'style': args.style, 'source': args.source,
                       'time': args.time},
         'frozen': ['enable_water_animation = 0 in every preset slot', 'fog_params.w = 0 in every preset slot'],
@@ -1156,6 +1180,9 @@ def record(args, label, captures, fixtures_path):
         if (ctx.dir / 'caps').exists() else 0
     (ctx.dir / 'manifest.json').write_text(json.dumps(manifest, indent=1, default=str))
     unstable = [key for key, value in manifest['captures'].items() if not value['stable']]
+    for key, value in manifest['captures'].items():
+        for problem in value.get('problems', []):
+            log(f'PROBLEM: {key}: {problem}')
     log(f'{label}: {len(manifest["captures"])} captures in {manifest["launch_count"]} launches, '
         f'{manifest["bytes"] / 1e6:.1f} MB, {manifest["wall_seconds"]} s; {len(unstable)} unstable, '
         f'{len(manifest["errors"])} errors')
@@ -1213,6 +1240,7 @@ def compare(args, baseline, label, fixtures, fixtures_path):
         errors.append(f'baseline fixtures no longer in the fixtures file: {gone}')
     if base['format'] not in LOSSLESS_FORMATS or current['format'] not in LOSSLESS_FORMATS:
         log('note: a jpeg label; equal frames stay equal, but a change also spreads over its 8x8 blocks')
+    same_binary = base['binary']['sha256'] == current['binary']['sha256']
     for key, entry in sorted(selected.items()):
         fixture = by_name[entry['fixture']]
         other = current['captures'].get(key)
@@ -1234,6 +1262,14 @@ def compare(args, baseline, label, fixtures, fixtures_path):
                 row['stats'] = diff_stats(a, b, fixture.tolerance.pixel_threshold)
                 row['verdict'] = verdict(row['stats'], fixture.tolerance)
             row['unstable'] = not (entry['stable'] and other['stable'])
+            row['problems'] = other.get('problems', [])
+            # One binary collects the same statics however it got to the view (live or --fresh-launch).
+            digests = [((capture.get('status') or {}).get('art') or {}).get('digest') for capture in (entry, other)]
+            if same_binary and None not in digests and digests[0] != digests[1]:
+                row['verdict'] = 'changed'
+                row['statics_digest'] = digests
+            if any(problem.startswith('the statics changed after reload_land') for problem in row['problems']):
+                row['verdict'] = 'changed'
             row['files'] = [str(label_dir(root, baseline) / entry['file']), str(current_dir / other['file'])]
         rows[key] = row
     counts = {name: sum(1 for row in rows.values() if row['verdict'] == name)
@@ -1280,7 +1316,11 @@ def print_compare(rows):
                   f'max {stats.get("max_delta", 0):3d}  (allowed {row["tolerance"]["changed_pct"]}%)'
                   if 'changed_pct' in stats else '')
         mark = {'identical': ' ', 'within': '~', 'changed': '!'}.get(row['verdict'], 'E')
-        log(f'{mark} {key:<{width}}  {row["verdict"]:<9} {detail}{"  unstable" if row.get("unstable") else ""}')
+        statics = f'  statics {row["statics_digest"][0]} -> {row["statics_digest"][1]}' \
+            if row.get('statics_digest') else ''
+        problems = ''.join(f'  PROBLEM: {problem}' for problem in row.get('problems', []))
+        log(f'{mark} {key:<{width}}  {row["verdict"]:<9} {detail}{"  unstable" if row.get("unstable") else ""}'
+            f'{statics}{problems}')
 
 
 # ----------------------------------------------------------------------------------------------------------------
@@ -1528,6 +1568,9 @@ def parser():
     capture.add_argument('--keep-work', action='store_true', help='keep the run folders (settings, logs)')
     capture.add_argument('--fresh-launch', action='store_true',
                          help='one launch per startup settings set instead of switching them at runtime')
+    capture.add_argument('--reload-land-check', action='store_true',
+                         help='after each capture, drop the loaded land and the cached statics (reload_land) and '
+                              'require the same statics digest after the rebuild')
     capture.add_argument('--chunk-seconds', type=float, default=LIVE_CHUNK_SECONDS,
                          help=f'how long a switching launch holds the preview lock before the next launch goes on '
                               f'(default {LIVE_CHUNK_SECONDS})')

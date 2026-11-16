@@ -58,9 +58,12 @@ painterly = ["ec/ec"]
 name = "britain-house-z30-zview-kr-rule"
 guards = """The player's-floor view on a ground floor (land 30): under KR-like's and UOD-Painterly's KR rule a ceiling \
 hides the 20-z layers above the player's, counted from the player's cell (22ff5f76, 44e4212a), so the thatch roof \
-over land 20 to the east goes whole; a light downstairs must not shine through the floor (e1bd4f81)."""
+over land 20 to the east goes whole; a light downstairs must not shine through the floor (e1bd4f81). With \
+--reload-land-check the statics must not change once the map blocks are evicted: the KR client shadows read their \
+ground from the evictable block cache, so a rebuild after 60 idle seconds changed the west wall on the river bank \
+(statics-cache fix, 2026-11-16)."""
 tier = "quick"
-tags = ["z-view", "roofs", "lights", "britain"]
+tags = ["z-view", "roofs", "lights", "britain", "statics-cache"]
 map = 1
 x = 1409
 y = 1596
