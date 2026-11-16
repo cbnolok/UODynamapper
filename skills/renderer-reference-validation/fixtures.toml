@@ -228,6 +228,42 @@ y = 1706
 z = 0
 times = ["afternoon", "night"]
 
+[[fixture]]
+name = "britain-upper-floors-flat-roofs"
+guards = """Britain's two-storey houses at 1496,1628: the upper floors' walls and eaves against the ground floor's walls \
+one cell nearer, and the flat roofs over the lower walls. Under the full priority height (be44e69c) an upper wall \
+covered the lower wall in front of it and lower wall tops poked through the flat roofs; ClassicUO's draw order \
+(2026-11-16) lets the nearer row win whatever its height."""
+tier = "full"
+tags = ["draw-order", "roofs", "britain"]
+map = 1
+x = 1496
+y = 1628
+z = 10
+
+[[fixture]]
+name = "britain-castle-wall-walk-kr-shadows"
+guards = """Lord British's castle (map 1): wall-walks, battlements and towers, and in KR-like the client shadows of \
+the walls on the wall-walks and terraces, which sort at their caster's priority depth (a no-z variant sank them \
+under the floors, 2026-11-12). Guards the draw order of tall raised statics and their shadows."""
+tier = "full"
+tags = ["draw-order", "shadows", "britain"]
+map = 1
+x = 1330
+y = 1620
+z = 50
+
+[[fixture]]
+name = "britain-stacked-stairs"
+guards = """Stacked stone stairs and blocks on a raised wooden floor (1334,1741): Bridge volume keeps its own order \
+over the floor and the land (static_depth_ordering.md), steps over steps one row nearer."""
+tier = "full"
+tags = ["draw-order", "stairs", "britain"]
+map = 1
+x = 1334
+y = 1741
+z = 20
+
 # ---------------------------------------------------------------------------------------------------------------
 # Minoc
 # ---------------------------------------------------------------------------------------------------------------
@@ -501,7 +537,10 @@ settings = { world_rendering = { show_only_player_floor = true, cave_surrounding
 [[fixture]]
 name = "minoc-hall-tables-zview"
 guards = """Inside the Minoc log hall (land 15) with the player's-floor view: tables, counters and display cases \
-stand on the floor, not under it (ba902acd); the hall's and wings' roofs are gone as in the KR client."""
+stand on the floor, not under it (ba902acd); the hall's and wings' roofs are gone as in the KR client. The back \
+log wall (y 396, height 20) must not cover the back corners of the tables one row nearer (y 397) in a stair-step, \
+as the full priority height made it do; the KR client and ClassicUO draw the tables in front (draw order, \
+2026-11-16)."""
 tier = "quick"
 tags = ["surfaces", "tables", "z-view", "roofs", "minoc"]
 map = 1
@@ -584,6 +623,29 @@ map = 0
 x = 620
 y = 1020
 z = 0
+
+[[fixture]]
+name = "hill-tree-line-rising-ground"
+guards = """Trees, rocks and grasses on a hill rising from 0 to 39 (map 1, 792,1607): the trees and their leaves \
+against the land rising in front of them, and the nearer trees over the farther ones. Land and statics share one \
+logical depth (draw order, 2026-11-16): a tree must neither sink into nor float over the slope."""
+tier = "full"
+tags = ["draw-order", "foliage", "terrain"]
+map = 1
+x = 792
+y = 1607
+z = 13
+
+[[fixture]]
+name = "slope-fallen-logs"
+guards = """Fallen logs, rocks and saplings on land sloping from 15 to 25 (map 1, 2767,302): items standing on \
+sloped cells against the land of the nearer cells (draw order, 2026-11-16), sinking or floating."""
+tier = "full"
+tags = ["draw-order", "terrain"]
+map = 1
+x = 2767
+y = 302
+z = 17
 
 [[fixture]]
 name = "painterly-kr-land-blur-layout"
