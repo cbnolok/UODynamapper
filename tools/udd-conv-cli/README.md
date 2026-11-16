@@ -36,7 +36,9 @@ packages consumed by Dynamapper and the other tools at runtime.
 
 `tex_art_ec.uddp`, `tex_land_ec.uddp`, `tilemeta.uddp` and `tex_aux_ec.uddp` each hold the Kingdom Reborn package of
 their layout as one nested entry, `kr/package.uddp` (`docs/dev_wiki/UDDP_FORMATS.md`): the land, the tile data, and
-the item art and material textures KR draws differently, as overlays over the package holding them. The packers
+the item art and material textures. The land, item art and material texture sections are overlays over the package
+holding them: they store only the textures KR draws differently from the Enhanced Client (by more than
+`KR_IMAGE_EQUIVALENCE_THRESHOLD`) and list the others, which are drawn from that package. The packers
 rebuild the Kingdom Reborn client files from the shipped `kr_delta.uddp` over `--ecdir`; `--krdir` takes it from a Kingdom Reborn client folder instead, and `--kr-delta` from another `kr_delta.uddp`; the packages are the same.
 The rebuild works in a folder beside the output, removed afterwards. `pack-ec-textures --kr-land-report FILE` writes
 the client of every Kingdom Reborn terrain definition, texture and route. Packages of the earlier layout,
@@ -159,7 +161,7 @@ Inspects, extracts, and edits `.uddp` and `.uddpi` package files.
 | `export-kdl` | Write what a `paperdoll_ec.uddp` decides beneath each dress-layer item as `PaperdollOverrides.kdl` covers (`<stem>.PaperdollOverrides.kdl` beside it, or `--output`), one cover per item and set of bodies keeping the same garments, with the items' names as comments from the `tilemeta.uddp` beside it (or `--tilemeta`). Used as Dynamapper's `PaperdollOverrides.kdl`, it decides each garment of the decisions' slots as the package does; its slot rules also take off the garments the packer could not measure, which the stored decisions leave on. |
 | `import-csv` | Import edited CSV metadata into a rebuilt package. |
 | `diff` | Compare two packages or two metadata CSV files. |
-| `validate` | Check that packages (or directories of them) open with this build's readers: container, package hash, every entry decoded with its codec and dictionary, and the package's own reader. A `gumps_ec` packed with `--share-with` is also checked, gump by gump, against the `gumps_cc.uddp` in its folder, or noted as depending on one when there is none. The Kingdom Reborn section of `tex_art_ec`, `tex_land_ec` and `tex_aux_ec` is read too, and fails when missing (a `tilemeta` without one is noted); each overlay must find every id it leaves to the package holding it, and the Kingdom Reborn item lights their textures. A package of the earlier standalone Kingdom Reborn layout fails with the repack message. Exits non-zero when any fails. |
+| `validate` | Check that packages (or directories of them) open with this build's readers: container, package hash, every entry decoded with its codec and dictionary, and the package's own reader. A `gumps_ec` packed with `--share-with` is also checked, gump by gump, against the `gumps_cc.uddp` in its folder, or noted as depending on one when there is none. The Kingdom Reborn section of `tex_art_ec`, `tex_land_ec` and `tex_aux_ec` is read too, and fails when missing (a `tilemeta` without one is noted); each overlay must find every id it leaves to the package holding it (the land section also at that package's slot), and the Kingdom Reborn item lights their textures. A package of the earlier standalone Kingdom Reborn layout fails with the repack message. Exits non-zero when any fails. |
 
 ## Current Production Status
 
