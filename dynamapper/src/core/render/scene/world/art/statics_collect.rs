@@ -4998,6 +4998,7 @@ mod tests {
             width_world: 2.0,
             height_world: 2.0,
             ceiling: None,
+            cave_outside: false,
         }
     }
 

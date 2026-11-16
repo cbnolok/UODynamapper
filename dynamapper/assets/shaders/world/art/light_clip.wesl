@@ -8,7 +8,7 @@ import bevy_pbr::render::{
     pbr_functions::{alpha_discard, main_pass_post_lighting_processing},
     mesh_functions::{get_tag, get_world_from_local},
 };
-import package::shaders::world::art::depth::{CAVE_OUTSIDE_SHADE, cave_outside_desaturated};
+import package::shaders::world::art::depth::cave_outside_desaturated;
 import package::shaders::world::art::light_scene::{LIGHT_SCENE_ART, LIGHT_SCENE_CLASS_SHIFT, LIGHT_SCENE_CLASS_MASK,
     LIGHT_SCENE_CLASS_HEIGHT, LIGHT_SCENE_LEFT, LIGHT_SCENE_Z_BIAS};
 
@@ -21,8 +21,8 @@ const LIGHT_CLIP_DY_SHIFT: u32 = 6u;
 const LIGHT_CLIP_Z_SHIFT: u32 = 12u;
 const LIGHT_CLIP_CEILING_SHIFT: u32 = 20u;
 const LIGHT_CLIP_Z_BITS: u32 = 8u;
-// The tag's bit of a glow outside the player's cave (caves.rs), which draws darkened to CAVE_OUTSIDE_SHADE and partly
-// desaturated (art/depth.wesl). Keep in sync with LIGHT_CLIP_CAVE_OUTSIDE in art/light_scene.rs.
+// The tag's bit of a light outside the player's cave (caves.rs), whose colour fades as the scene's there (art/depth.wesl
+// cave_outside_desaturated). Keep in sync with LIGHT_CLIP_CAVE_OUTSIDE in art/light_scene.rs.
 const LIGHT_CLIP_CAVE_OUTSIDE: u32 = 1u << 28u;
 // The ceiling of a light with nothing over it.
 const LIGHT_CLIP_NO_CEILING: i32 = -128;
@@ -100,10 +100,12 @@ fn fragment(in: VertexOutput, @builtin(front_facing) is_front: bool) -> Fragment
     var pbr_input = pbr_input_from_standard_material(in, is_front);
     pbr_input.material.base_color = alpha_discard(pbr_input.material.flags, pbr_input.material.alpha_cutoff,
         pbr_input.material.base_color);
-    // Outside the player's cave, darkened: less of the glow is added or blended, and its colour fades as the scene's.
+    // Outside the player's cave its colour fades as the scene's there, so a coloured light does not bring colour back
+    // into the greyed scene. It is not darkened: the light buffer it draws into multiplies the scene, darkened already
+    // (art/depth.wesl cave_outside_tone), and darkened once more its pool would be darkened twice.
     if ((get_tag(in.instance_index) & LIGHT_CLIP_CAVE_OUTSIDE) != 0u) {
         pbr_input.material.base_color = vec4<f32>(cave_outside_desaturated(pbr_input.material.base_color.rgb),
-            pbr_input.material.base_color.a * CAVE_OUTSIDE_SHADE);
+            pbr_input.material.base_color.a);
     }
     var out: FragmentOutput;
     out.color = main_pass_post_lighting_processing(pbr_input, pbr_input.material.base_color);

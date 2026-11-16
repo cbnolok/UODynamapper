@@ -76,8 +76,9 @@ const LIGHT_CLIP_DY_SHIFT: u32 = LIGHT_CLIP_CELL_BITS;
 const LIGHT_CLIP_Z_SHIFT: u32 = 2 * LIGHT_CLIP_CELL_BITS;
 const LIGHT_CLIP_CEILING_SHIFT: u32 = LIGHT_CLIP_Z_SHIFT + u8::BITS;
 const LIGHT_CLIP_CELL_MASK: u32 = (1 << LIGHT_CLIP_CELL_BITS) - 1;
-/// The light clip tag's bit of a glow outside the player's cave, which draws darkened and partly desaturated
-/// (art/depth.wesl `CAVE_OUTSIDE_SHADE`, `cave_outside_desaturated`).
+/// The light clip tag's bit of a light outside the player's cave, whose colour fades as the scene's there (art/depth.wesl
+/// `cave_outside_desaturated`). It is not darkened: the light buffer it draws into multiplies the scene, darkened to
+/// `CAVE_OUTSIDE_SHADE` already.
 const LIGHT_CLIP_CAVE_OUTSIDE: u32 = 1 << (LIGHT_CLIP_CEILING_SHIFT + u8::BITS);
 /// The farthest a light's cell may lie from the cell under its quad's origin, along each axis: the sprites the
 /// tileart's offsets throw farthest land about 5 cells away.

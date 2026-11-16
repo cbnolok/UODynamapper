@@ -146,6 +146,9 @@ pub struct ClientLightSpriteInstance {
     /// Under `LightCover::Uod`, the z of the lowest floor or roof over the light (`static_light_ceiling_z`), which its
     /// glow does not light walls from; `None` under the other covers and with nothing over it.
     pub ceiling: Option<i8>,
+    /// Outside the player's cave (caves.rs `CaveSurroundings::Dimmed`): its colour fades as the scene's there
+    /// (`light_scene::light_clip_tag`).
+    pub cave_outside: bool,
 }
 
 /// The light sprites of the statics in and around the visible chunks.
@@ -161,7 +164,7 @@ pub struct RenderClientLightSprites {
 }
 
 impl RenderClientLightSprites {
-    /// A hash of every sprite's key, texture, quad and ceiling, in scan order: two runs that collected the same
+    /// A hash of every sprite's key, texture, quad, ceiling and cave, in scan order: two runs that collected the same
     /// sprites report the same digest (`status.client_light_sprites.digest` on the control socket).
     pub fn digest(&self) -> u64 {
         let mut hasher = std::hash::DefaultHasher::new();
@@ -172,6 +175,7 @@ impl RenderClientLightSprites {
                 value.to_bits().hash(&mut hasher);
             }
             instance.ceiling.hash(&mut hasher);
+            instance.cave_outside.hash(&mut hasher);
         }
         hasher.finish()
     }
@@ -572,6 +576,7 @@ pub(super) fn client_light_sprite_static_light(sprite: &ClientLightSpriteInstanc
         width_world: sprite.size.x / CC_WORLD_XZ_PER_PIXEL / LIGHT_PIXELS_PER_WORLD_TILE,
         height_world: sprite.size.y / CC_WORLD_Y_PER_PIXEL / LIGHT_PIXELS_PER_WORLD_TILE,
         ceiling: sprite.ceiling,
+        cave_outside: sprite.cave_outside,
     }
 }
 
@@ -767,7 +772,8 @@ pub fn sys_collect_client_light_sprites(
                 continue;
             }
             // The player's cave hides it, or draws it whatever the view's limit (caves.rs). Outside it the sprite is
-            // not darkened itself: the light buffer multiplies the scene, darkened already.
+            // not darkened itself, the light buffer multiplying the scene, darkened already, but its colour fades as
+            // the scene's (`cave_outside`).
             let flags_height = tilemeta.0.item_tile(u32::from(key.graphic)).map_or((0, 0), |meta| (meta.flags, meta.height));
             let Some(cave_light) = caves.light_view(key.tile_x, key.tile_y, key.z, flags_height.0, flags_height.1,
                 || land_z(key.tile_x, key.tile_y).map(i32::from), z_cut.max_z) else {
@@ -823,7 +829,8 @@ pub fn sys_collect_client_light_sprites(
             } else {
                 center
             };
-            instances.push(ClientLightSpriteInstance { key, texture_entry: entry, center, size, glow_rgb, ceiling });
+            instances.push(ClientLightSpriteInstance { key, texture_entry: entry, center, size, glow_rgb, ceiling,
+                cave_outside: cave_light.outside });
         }
     }
 
@@ -943,10 +950,11 @@ fn client_light_sprite_material(
     })
 }
 
-/// The light clip tag of a sprite (`light_scene::light_clip_tag`): its static's cell, z and ceiling.
+/// The light clip tag of a sprite (`light_scene::light_clip_tag`): its static's cell, z and ceiling, and whether it is
+/// outside the player's cave.
 fn client_light_sprite_tag(instance: &ClientLightSpriteInstance) -> MeshTag {
     let key = instance.key;
-    MeshTag::new(light_clip_tag(key.tile_x, key.tile_y, key.z, instance.ceiling, false, instance.center))
+    MeshTag::new(light_clip_tag(key.tile_x, key.tile_y, key.z, instance.ceiling, instance.cave_outside, instance.center))
 }
 
 /// A unit quad centred on the origin, texture row 0 at the top (+y): the sprite stands upright, as the EC statics.
@@ -1044,7 +1052,8 @@ mod tests {
         let origin = client_light_sprite_origin(key.tile_x, key.tile_y, key.z);
         let (center, size) = client_light_sprite_quad(origin, bounds);
         let glow_rgb = [1.0, 0.5, 0.25];
-        let sprite = ClientLightSpriteInstance { key, texture_entry: LANTERN_LIGHT.light_texture_entry, center, size, glow_rgb, ceiling: None };
+        let sprite = ClientLightSpriteInstance { key, texture_entry: LANTERN_LIGHT.light_texture_entry, center, size, glow_rgb, ceiling: None,
+            cave_outside: false };
         let light = client_light_sprite_static_light(&sprite);
         // The centre, 0.697 above the base, shows over the ground 0.697 back along the (1, 1, 1) view ray.
         let lift = center.y - origin.y;
@@ -1358,6 +1367,7 @@ mod tests {
             size,
             glow_rgb: [1.0; 3],
             ceiling: None,
+            cave_outside: false,
         };
         let light = client_light_sprite_static_light(&sprite);
         assert!((light.world_x - (key.tile_x as f32 + TILE_CENTRE_OFFSET)).abs() < EPSILON, "{light:?}");

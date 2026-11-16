@@ -144,8 +144,8 @@ pub const PLAYER_CAVE_REACH_CHUNKS: i32 = 3;
 /// `CavesRes::land_outside_dimming` with `CaveSurroundings::Dimmed`: the land takes the tone of what is outside the
 /// player's cave fully. That tone, darkened to `CAVE_OUTSIDE_SHADE` of its brightness and keeping
 /// `CAVE_OUTSIDE_SATURATION` of its colour, is art/depth.wesl's `cave_outside_tone`, the one place it is set: the land
-/// (`SceneUniform::land_outside_dimming`), the statics and water (`STATIC_FLAG_CAVE_OUTSIDE`) and their lights
-/// (`light_clip_tag`) take it in every style.
+/// (`SceneUniform::land_outside_dimming`), the statics and water (`STATIC_FLAG_CAVE_OUTSIDE`) take it in every style,
+/// and their lights (`light_clip_tag`) its colour: the light buffer they draw into multiplies the darkened scene.
 const LAND_OUTSIDE_DIMMED: f32 = 1.0;
 
 /// The eight neighbours of a cell.

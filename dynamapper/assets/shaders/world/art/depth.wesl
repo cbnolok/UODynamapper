@@ -118,8 +118,9 @@ fn cave_lifted_clip(clip: vec4<f32>) -> vec4<f32> {
 // (caves.rs CaveSurroundings::Dimmed). Keep in sync with STATIC_FLAG_CAVE_OUTSIDE in statics_collect.rs.
 const STATIC_FLAG_CAVE_OUTSIDE: u32 = 1u << 15u;
 // How bright what is outside the player's cave draws, and how much of its colour it keeps, the rest going to its
-// luminance: it reads as outside, not as dusk. The one place they are set: land (land/main.wesl), statics, water and
-// lights (art/light_clip.wesl) all take this tone (caves.rs CaveSurroundings::Dimmed).
+// luminance: it reads as outside, not as dusk. The one place they are set: land (land/main.wesl), statics and water all
+// take this tone, and the lights (art/light_clip.wesl) its colour, the light buffer multiplying the darkened scene
+// (caves.rs CaveSurroundings::Dimmed).
 const CAVE_OUTSIDE_SHADE: f32 = 0.2;
 const CAVE_OUTSIDE_SATURATION: f32 = 0.5;
 // The luminance weights of linear sRGB (Rec. 709).

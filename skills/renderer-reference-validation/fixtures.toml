@@ -285,7 +285,9 @@ guards = """Just inside the Minoc mine's mouth with the player's-floor view: the
 rock walls, not the hill's boulders and trees over it nor the tunnel above (0e0839cd); its mouth's land whole, \
 undimmed and over the cave floor behind it: the frame's rock around the black opening, its bottom edge straight, \
 no grass jambs beside it (the hill's flank), no lone strip of rock in a cut-out hole; outside it the land, objects, \
-water and lights under the z+16 cut darkened to a fifth and half greyed, plainly apart from the cave."""
+water and lights under the z+16 cut darkened to a fifth and half greyed, plainly apart from the cave. At night the \
+red light among the trees outside, which multiplies the light buffer, is greyed with the scene there, bringing no \
+red back into it (Enhanced, KR-like and UOD-Painterly; Classic has no red light there)."""
 tier = "quick"
 tags = ["caves", "player-cave", "z-view", "minoc"]
 map = 1
