@@ -1,8 +1,12 @@
 //! Build-time support for the Kingdom Reborn land, the section `crate::kr_sections` nests in `tex_land_ec.uddp`.
 //!
 //! The package has the `tex_land_ec.uddp` layout and is built by the same packer
-//! ([`crate::textures::tex_land_ec`]); only its inputs differ. Each input comes from the Kingdom Reborn client where
-//! it has one and from the Enhanced Client where it does not:
+//! ([`crate::textures::tex_land_ec`]) with the Enhanced land's options; only its inputs differ. It is an overlay over the
+//! Enhanced land it is nested in ([`TexLandEcPackage::kr_land`]): of the textures it uses, it packs only those whose
+//! image differs from the Enhanced Client's of the same id by more than [`KR_IMAGE_EQUIVALENCE_THRESHOLD`], or that
+//! the Enhanced land lacks. The others it lists in `metadata/ec_equivalents.bin` with their measured difference, and
+//! their slots are the Enhanced land's ([`SLOT_FLAG_BASE_PAGE`]). Its definitions, provenance and routes are all its own.
+//! Each input comes from the Kingdom Reborn client where it has one and from the Enhanced Client where it does not:
 //! - definitions: KR's `TerrainDefinition.uop` (alias flags moved to the EC layout), plus the EC materials KR lacks;
 //! - textures: an id a KR definition uses from KR's `Texture.uop`, an id only EC definitions use from EC's; an id
 //!   missing there comes from the other client;
@@ -11,7 +15,8 @@
 //!   `metadata/legacy_terrain_map.csv` and leave `metadata/transcode.bin` (TerrainTranscode.kdl, which the runtime
 //!   reads over the csv), which keeps only the ids KR does not route;
 //! - KR's grunge texture, `build/worldart/01000045.dds`, as the optional entry
-//!   [`UDDP_GRUNGE_ENTRY_VPATH`], which Dynamapper's Client Grunge multiplies onto the statics.
+//!   [`UDDP_GRUNGE_ENTRY_VPATH`], which Dynamapper's Client Grunge multiplies onto the statics; left out when it is
+//!   within the threshold of the Enhanced Client's image, which Dynamapper then reads from `tex_aux_ec.uddp`.
 //!
 //! Every definition, texture and route is logged with the client it came from, and written to the report when one
 //! is asked for.
@@ -23,9 +28,14 @@ use std::path::{Path, PathBuf};
 
 use color_eyre::eyre::{self, WrapErr};
 use log::{info, warn};
+use rayon::prelude::*;
+use udd_assets::common::{EcEquivalentRecord, EcOverlayTable};
 use udd_assets::eckr_terrain_kdl::EckrTerrainRouting;
-use udd_assets::tex_land_ec::{encode_grunge_entry, UDDP_GRUNGE_ENTRY_VPATH};
-use udd_container::DataType;
+use udd_assets::tex_land_ec::{
+    encode_grunge_entry, tex_land_ec_overlay_entry, TexLandEcPackage, TexLandEcSlotRecord, SLOT_FLAG_BASE_PAGE,
+    UDDP_GRUNGE_ENTRY_VPATH,
+};
+use udd_container::{CompressionFlag, DataType};
 use uocf::enhanced::client_dialect::ClientDialect;
 use uocf::enhanced::legacy_terrain_map::{LegacyTerrainMap, LegacyTerrainRoute};
 use uocf::enhanced::terrain_definition::{
@@ -35,6 +45,7 @@ use uocf::enhanced::textures::Textures;
 use uocf::kr::facet::kr_land_map::KrLandMap;
 use uocf::uop_container::package::UopPackage;
 
+use crate::kr_items::{image_difference, KR_IMAGE_EQUIVALENCE_THRESHOLD};
 use crate::package_progress::AssetTaskProgress;
 use crate::source_paths::find_first_existing_file;
 use crate::textures::tex_land_ec::{
@@ -97,7 +108,10 @@ pub struct TexLandKrBuildSummary {
     /// TerrainTranscode.kdl routes kept, and those dropped for ids Kingdom Reborn routes.
     pub transcode_route_count: u32,
     pub transcode_routes_dropped: u32,
-    /// Width and height of the grunge texture, when Kingdom Reborn has one.
+    /// The textures left to the Enhanced land, with their measured difference, sorted by id.
+    pub ec_equivalents: Vec<EcEquivalentRecord>,
+    /// Width and height of the grunge texture the section holds: Kingdom Reborn's, when it has one that differs from
+    /// the Enhanced Client's.
     pub grunge_size: Option<(u32, u32)>,
 }
 
@@ -107,8 +121,8 @@ impl fmt::Display for TexLandKrBuildSummary {
             f,
             "definitions: {} Kingdom Reborn ({} differ from the Enhanced Client's), {} Enhanced Client; \
              textures: {} Kingdom Reborn, {} Enhanced Client ({} for KR definitions), {} conflicting; \
-             routes: {} Kingdom Reborn ({} change the Enhanced Client's), {} Enhanced Client csv, {} TerrainTranscode.kdl \
-             ({} dropped); grunge: {}; {} pages, {} of {} slots populated",
+             {} left to the Enhanced land; routes: {} Kingdom Reborn ({} change the Enhanced Client's), {} Enhanced Client \
+             csv, {} TerrainTranscode.kdl ({} dropped); grunge: {}; {} pages, {} of {} slots populated",
             self.kr_definition_count,
             self.kr_definitions_differing_from_ec,
             self.ec_definition_count,
@@ -116,6 +130,7 @@ impl fmt::Display for TexLandKrBuildSummary {
             self.ec_texture_count,
             self.kr_textures_from_ec.len(),
             self.conflicting_texture_ids.len(),
+            self.ec_equivalents.len(),
             self.kr_route_count,
             self.kr_routes_changing_ec,
             self.ec_route_count,
@@ -135,17 +150,20 @@ impl fmt::Display for TexLandKrBuildSummary {
 pub fn convert_kr_land_to_tex_land_kr_uddp(
     kr_dir: &Path,
     ec_dir: &Path,
+    ec_land: &Path,
     out_file: &Path,
     options: &TexLandKrPackOptions,
 ) -> eyre::Result<TexLandKrBuildSummary> {
-    convert_kr_land_to_tex_land_kr_uddp_with_progress(kr_dir, ec_dir, out_file, options, |_| {}, |_| {})
+    convert_kr_land_to_tex_land_kr_uddp_with_progress(kr_dir, ec_dir, ec_land, out_file, options, |_| {}, |_| {})
 }
 
 /// Builds `out_file` from the Kingdom Reborn client in `kr_dir`, taking what it lacks from the Enhanced Client in
-/// `ec_dir` (see the module documentation).
+/// `ec_dir`, as an overlay over `ec_land`, the `tex_land_ec.uddp` packed from `ec_dir` with the same options (see the
+/// module documentation).
 pub fn convert_kr_land_to_tex_land_kr_uddp_with_progress(
     kr_dir: &Path,
     ec_dir: &Path,
+    ec_land: &Path,
     out_file: &Path,
     options: &TexLandKrPackOptions,
     payload_progress: impl Fn(AssetTaskProgress) + Sync,
@@ -202,8 +220,21 @@ pub fn convert_kr_land_to_tex_land_kr_uddp_with_progress(
         &mut report,
     )?;
 
-    let grunge = read_grunge(&kr_textures, &options.atlas, &mut report)?;
+    let ec_land_package = TexLandEcPackage::load(ec_land).wrap_err_with(|| format!("load {}", ec_land.display()))?;
+    let left_to_ec = textures_left_to_ec(&textures.pool, &ec_textures, &ec_land_package, &mut report)?;
+    let ec_equivalents = left_to_ec.equivalents.clone();
+    let (overlay_path, overlay_bytes) = tex_land_ec_overlay_entry(&EcOverlayTable { equivalents: left_to_ec.equivalents });
+
+    let grunge = read_grunge(&kr_textures, &ec_textures, &options.atlas, &mut report)?;
     let grunge_size = grunge.as_ref().map(|entry| (entry.width, entry.height));
+    let overlay_entry = ExtraLandEntry {
+        virtual_path: overlay_path,
+        data_type: DataType::Metadata,
+        compression: CompressionFlag::ZstdNoDict,
+        width: 0,
+        height: 0,
+        data: overlay_bytes,
+    };
 
     let terrain_definition = TerrainDefinitionPackage {
         entries: definitions.iter().map(|(entry, _)| entry.clone()).collect(),
@@ -215,7 +246,8 @@ pub fn convert_kr_land_to_tex_land_kr_uddp_with_progress(
             transcode: (routing.transcode_label, routing.transcode_kdl.into_bytes()),
             legacy_terrain_map_csv: Some(routing.legacy_terrain_map_csv),
             terrain_overrides,
-            extra_entries: grunge.into_iter().collect(),
+            extra_entries: grunge.into_iter().chain([overlay_entry]).collect(),
+            base_slots: left_to_ec.base_slots,
         },
         out_file,
         &options.atlas,
@@ -246,6 +278,7 @@ pub fn convert_kr_land_to_tex_land_kr_uddp_with_progress(
         ec_route_count: routing.ec_route_count,
         transcode_route_count: routing.transcode_route_count,
         transcode_routes_dropped: routing.transcode_routes_dropped,
+        ec_equivalents,
         grunge_size,
         package,
     };
@@ -410,6 +443,63 @@ fn choose_textures<'a>(
     Ok(chosen)
 }
 
+/// The textures the Kingdom Reborn land leaves to the Enhanced land: their base slots and the overlay's records.
+struct LeftToEc {
+    base_slots: HashMap<u32, TexLandEcSlotRecord>,
+    equivalents: Vec<EcEquivalentRecord>,
+}
+
+/// Of the textures in `pool`, those the Enhanced land `ec_land` (packed from `ec_textures`) holds and whose image is the
+/// Enhanced Client's within [`KR_IMAGE_EQUIVALENCE_THRESHOLD`] ([`image_difference`]), with `ec_land`'s slot of each:
+/// a texture taken from the Enhanced Client is its image there; one from Kingdom Reborn is decoded and compared.
+fn textures_left_to_ec(
+    pool: &HashMap<u32, &Textures>,
+    ec_textures: &Textures,
+    ec_land: &TexLandEcPackage,
+    report: &mut Vec<String>,
+) -> eyre::Result<LeftToEc> {
+    let ec_slot_ids = ec_land.texture_slot_ids();
+    let mut texture_ids = pool.keys().copied().collect::<Vec<_>>();
+    texture_ids.sort_unstable();
+    // Width, height and RGBA8888 texels.
+    let decode = |textures: &Textures, texture_id: u32| -> eyre::Result<Option<(u32, u32, Vec<u8>)>> {
+        let image = find_layer_texture_file(texture_id, textures)?.map(|file| file.decode_to_rgba8()).transpose()
+            .wrap_err_with(|| format!("decode land texture {texture_id:08}"))?;
+        Ok(image.map(|image| (image.width(), image.height(), image.into_raw())))
+    };
+    // `None`: the Enhanced land has no slot of it; else the measured difference (`None` for other extents).
+    let measured = texture_ids
+        .par_iter()
+        .map(|&texture_id| -> eyre::Result<Option<(TexLandEcSlotRecord, Option<f32>)>> {
+            let Some(ec_slot) = ec_slot_ids.get(&texture_id).and_then(|&slot_id| ec_land.present_slot(slot_id)) else {
+                return Ok(None);
+            };
+            let textures = pool[&texture_id];
+            if std::ptr::eq(textures, ec_textures) {
+                return Ok(Some((*ec_slot, Some(0.0))));
+            }
+            let difference = decode(textures, texture_id)?.zip(decode(ec_textures, texture_id)?)
+                .and_then(|(kr, ec)| image_difference((kr.0, kr.1, &kr.2), (ec.0, ec.1, &ec.2)));
+            Ok(Some((*ec_slot, difference)))
+        })
+        .collect::<Vec<_>>();
+    let mut left = LeftToEc { base_slots: HashMap::new(), equivalents: Vec::new() };
+    for (texture_id, measured) in texture_ids.into_iter().zip(measured) {
+        let decision = match measured? {
+            None => "packed (the Enhanced land does not hold it)".to_owned(),
+            Some((ec_slot, Some(difference))) if difference <= KR_IMAGE_EQUIVALENCE_THRESHOLD => {
+                left.base_slots.insert(texture_id, ec_slot);
+                left.equivalents.push(EcEquivalentRecord { id: texture_id, difference });
+                format!("left to the Enhanced land (image difference {difference:.2})")
+            }
+            Some((_, Some(difference))) => format!("packed (image difference {difference:.2})"),
+            Some((_, None)) => "packed (another extent than the Enhanced Client's)".to_owned(),
+        };
+        record(report, format!("texture {texture_id:08}: {decision}"));
+    }
+    Ok(left)
+}
+
 struct MergedRouting {
     legacy_terrain_map_csv: Vec<u8>,
     transcode_label: PathBuf,
@@ -508,9 +598,11 @@ fn merge_routes(
 }
 
 /// Kingdom Reborn's grunge texture as an RGBA8888 entry behind its version header ([`encode_grunge_entry`]),
-/// compressed as the pages are.
+/// compressed as the pages are; `None` when it is within [`KR_IMAGE_EQUIVALENCE_THRESHOLD`] of the Enhanced Client's
+/// image of the id, which the runtime reads from `tex_aux_ec.uddp` without the entry.
 fn read_grunge(
     kr_textures: &Textures,
+    ec_textures: &Textures,
     atlas: &TexLandEcAtlasOptions,
     report: &mut Vec<String>,
 ) -> eyre::Result<Option<ExtraLandEntry>> {
@@ -520,9 +612,18 @@ fn read_grunge(
     };
     let image = file.decode_to_rgba8().wrap_err("decode the Kingdom Reborn grunge texture")?;
     let (width, height) = image.dimensions();
+    let ec_image = ec_textures.get_from_id(KR_GRUNGE_TEXTURE_ID)?.map(|file| file.decode_to_rgba8()).transpose()
+        .wrap_err("decode the Enhanced Client grunge texture")?;
+    let difference = ec_image.and_then(|ec| image_difference((width, height, image.as_raw()), (ec.width(), ec.height(), ec.as_raw())));
+    if let Some(difference) = difference.filter(|&difference| difference <= KR_IMAGE_EQUIVALENCE_THRESHOLD) {
+        record(report, format!("grunge: texture {KR_GRUNGE_TEXTURE_ID:08} left to the Enhanced Client's (image difference {difference:.2})"));
+        return Ok(None);
+    }
     record(
         report,
-        format!("grunge: texture {KR_GRUNGE_TEXTURE_ID:08} {width}x{height}, {} -> {UDDP_GRUNGE_ENTRY_VPATH}", LandSourceClient::KingdomReborn.label()),
+        format!("grunge: texture {KR_GRUNGE_TEXTURE_ID:08} {width}x{height}, {} -> {UDDP_GRUNGE_ENTRY_VPATH} (image \
+            difference from the Enhanced Client's: {})", LandSourceClient::KingdomReborn.label(),
+            difference.map_or("another extent or none".to_owned(), |difference| format!("{difference:.2}"))),
     );
     Ok(Some(ExtraLandEntry {
         virtual_path: UDDP_GRUNGE_ENTRY_VPATH,

@@ -126,7 +126,7 @@ pub fn add_kr_land_section(
     package_progress: impl FnMut(BuildProgress),
 ) -> eyre::Result<TexLandKrBuildSummary> {
     let section = work.section_path(KR_LAND_SECTION_FILE_NAME);
-    let summary = convert_kr_land_to_tex_land_kr_uddp_with_progress(work.kr_dir(), ec_dir, &section, options,
+    let summary = convert_kr_land_to_tex_land_kr_uddp_with_progress(work.kr_dir(), ec_dir, land_package, &section, options,
         payload_progress, package_progress)?;
     info!("Kingdom Reborn land: {summary}");
     embed_kr_section(land_package, &section)?;

@@ -543,7 +543,25 @@ fn kr_land_section(package: &UddpReader) -> eyre::Result<Option<String>> {
     let Some(kr) = base.kr_land(UddpReaderOptions::disabled(), AtlasCacheOptions::disabled())? else {
         return Ok(None);
     };
-    Ok(Some(land_summary(&kr)?))
+    // A texture left to this package must be here, and the section's slot of it must be this package's.
+    let (kr_slot_ids, base_slot_ids) = (kr.texture_slot_ids(), base.texture_slot_ids());
+    let base_rect = |texture_id: &u32| base_slot_ids.get(texture_id).and_then(|&slot_id| base.present_slot(slot_id))
+        .map(|slot| (Some(slot.page_index), slot.x, slot.y, slot.width, slot.height));
+    let missing = kr.equivalents().iter().map(|record| record.id)
+        .filter(|id| base_rect(id).is_none())
+        .collect::<Vec<_>>();
+    ensure_left_ids_present(kr.equivalents().len(), &missing)?;
+    let elsewhere = kr.equivalents().iter().map(|record| record.id)
+        .filter(|id| {
+            let kr_rect = kr_slot_ids.get(id).and_then(|&slot_id| kr.present_slot(slot_id))
+                .map(|slot| (kr.base_page_index(slot.page_index), slot.x, slot.y, slot.width, slot.height));
+            kr_rect != base_rect(id)
+        })
+        .collect::<Vec<_>>();
+    eyre::ensure!(elsewhere.is_empty(), "{} of the {} textures it leaves to the package holding it are not drawn from \
+        their slot there ({elsewhere:?}): {KR_SECTION_REPACK}", elsewhere.len(), kr.equivalents().len());
+    Ok(Some(format!("{}, own pages={}, textures left to this package={}", land_summary(&kr)?, kr.own_page_count(),
+        kr.equivalents().len())))
 }
 
 fn kr_tilemeta_section(package: &UddpReader) -> eyre::Result<Option<String>> {

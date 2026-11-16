@@ -53,7 +53,7 @@ use uocf::utils::bundled_files;
 use udd_assets::tex_land_ec::{
     TexLandEcPageRecord, TexLandEcSlotRecord, TexLandEcTerrainProvenanceRecord,
     MISSING_PAGE_INDEX, MISSING_PAGE_TILE_INDEX, MISSING_SLOT_ID, MISSING_TERRAIN_LAYER_INDEX,
-    MISSING_TEXTURE_ID, TERRAIN_LAYER_ROLE_NONE,
+    MISSING_TEXTURE_ID, OVERLAY_SLOT_MANIFEST_MAGIC, SLOT_FLAG_BASE_PAGE, TERRAIN_LAYER_ROLE_NONE,
     TERRAIN_OVERRIDES_SCHEMA, TERRAIN_OVERRIDES_SCHEMA_VERSION, TEX_LAND_EC_METADATA_VERSION,
     TEX_LAND_EC_TERRAIN_PROVENANCE_VERSION,
     UDDP_PAGE_MANIFEST_ENTRY_VPATH, UDDP_SLOT_MANIFEST_ENTRY_VPATH,
@@ -249,6 +249,8 @@ pub struct TexLandEcBuildSummary {
     pub slot_count: u32,
     pub populated_slot_count: u32,
     pub page_count: u32,
+    /// Textures whose slots lie on the base package's pages ([`LandPackageInputs::base_slots`]), not packed here.
+    pub base_texture_count: u32,
     pub atlas_width: u32,
     pub atlas_height: u32,
 }
@@ -443,6 +445,7 @@ pub fn convert_tex_land_ec_uop_to_tex_land_ec_uddp_from_loaded_sources_with_prog
             legacy_terrain_map_csv,
             terrain_overrides,
             extra_entries: Vec::new(),
+            base_slots: HashMap::new(),
         },
         out_file,
         options,
@@ -489,6 +492,10 @@ pub(crate) struct LandPackageInputs<'a> {
     pub legacy_terrain_map_csv: Option<Vec<u8>>,
     pub terrain_overrides: LoadedTerrainOverrides,
     pub extra_entries: Vec<ExtraLandEntry>,
+    /// The textures left to the base package (the Enhanced land under the Kingdom Reborn overlay), each with the base
+    /// package's slot: they are not decoded or packed, and their slots, and the land slots aliasing them, are the base
+    /// slot with [`SLOT_FLAG_BASE_PAGE`]. Empty for a full package.
+    pub base_slots: HashMap<u32, TexLandEcSlotRecord>,
 }
 
 /// Builds a package in the `tex_land_ec.uddp` layout: the Enhanced land and the Kingdom Reborn land
@@ -507,6 +514,7 @@ pub(crate) fn build_land_package(
         legacy_terrain_map_csv,
         terrain_overrides,
         extra_entries,
+        base_slots,
     } = inputs;
     let payload_progress_reporter = AssetProgressReporter::new(payload_progress);
     let payload_progress = |progress| payload_progress_reporter.report(progress);
@@ -539,11 +547,12 @@ pub(crate) fn build_land_package(
         .collect::<Vec<_>>();
     let unique_source_texture_count = source_texture_ids.len() as u32;
     let unique_texture_selection_count = selections.len() as u32;
-    let (decoded_tiles, aliases, texture_slot_by_texture_id, ignored_source_texture_ids) =
+    let (decoded_tiles, base_slot_records, aliases, texture_slot_by_texture_id, ignored_source_texture_ids) =
         decode_present_tiles(
             &textures,
             terrain_definition,
             &terrain_override_texture_ids,
+            &base_slots,
             options,
             &payload_progress,
         )?;
@@ -551,13 +560,18 @@ pub(crate) fn build_land_package(
         .iter()
         .copied()
         .chain(decoded_tiles.iter().map(|tile| tile.art_id))
+        .chain(base_slot_records.iter().map(|slot| slot.art_id))
         .max()
         .map(|max_id| max_id + 1)
         .unwrap_or(0);
     let unique_packed_texture_count = decoded_tiles.len() as u32;
+    let base_texture_count = base_slot_records.len() as u32;
 
     let (pages, mut slot_records) =
         pack_tiles_into_pages(decoded_tiles, slot_count, options, &payload_progress)?;
+    for base_slot in base_slot_records {
+        slot_records[base_slot.art_id as usize] = base_slot;
+    }
     apply_slot_aliases(&mut slot_records, &aliases)?;
     let populated_slot_count = slot_records.iter().filter(|slot| slot.is_present()).count() as u32;
 
@@ -885,6 +899,7 @@ pub(crate) fn build_land_package(
         slot_count,
         populated_slot_count,
         page_count: pages.len() as u32,
+        base_texture_count,
         atlas_width: options.atlas_width,
         atlas_height: options.atlas_height,
     })
@@ -947,7 +962,8 @@ fn log_translucent_texels_per_render_role(out_file: &Path, pages: &[BuiltPage]) 
         let rects = slots
             .iter()
             .filter_map(|&slot_id| package.slots().get(slot_id as usize))
-            .filter(|slot| slot.is_present())
+            // A slot on the base package's pages is counted with that package.
+            .filter(|slot| slot.is_present() && !slot.is_base_page())
             .map(|slot| (slot.page_index, slot.x, slot.y, slot.width, slot.height))
             .collect::<BTreeSet<_>>();
         let mut tally = TranslucentTexelTally::default();
@@ -1263,14 +1279,18 @@ fn terrain_primary_provenance(entry: &TerrainDefinitionEntry) -> TerrainPrimaryP
     }
 }
 
+/// The decoded textures to pack, the slots of the textures left to the base package (`base_slots`, each given its own
+/// slot id as a packed one would be), the land slot aliases, the slot of each texture and the textures found nowhere.
 fn decode_present_tiles(
     textures: &LandTexturePool<'_>,
     terrain_definition: &TerrainDefinitionPackage,
     override_texture_ids: &BTreeSet<u32>,
+    base_slots: &HashMap<u32, TexLandEcSlotRecord>,
     options: &TexLandEcAtlasOptions,
     task_progress: &(impl Fn(AssetTaskProgress) + Sync),
 ) -> eyre::Result<(
     Vec<DecodedArtTile>,
+    Vec<TexLandEcSlotRecord>,
     Vec<SlotAlias>,
     HashMap<u32, u32>,
     Vec<u32>,
@@ -1279,6 +1299,7 @@ fn decode_present_tiles(
     // decide how to combine them later; build-time packing should not flatten
     // layered materials into one representative image.
     let mut decoded_tiles: Vec<DecodedArtTile> = Vec::new();
+    let mut base_slot_records = Vec::new();
     let mut aliases = Vec::new();
     let mut texture_slot_by_texture_id = HashMap::new();
     let mut ignored_source_texture_ids = Vec::new();
@@ -1312,8 +1333,11 @@ fn decode_present_tiles(
         .par_iter()
         .map(
             |&texture_id| -> eyre::Result<(u32, Option<DecodedLayerTexture>)> {
-                let decoded =
-                    decode_layer_texture_rgba(texture_id, textures.textures_for(texture_id))?;
+                let decoded = if base_slots.contains_key(&texture_id) {
+                    None
+                } else {
+                    decode_layer_texture_rgba(texture_id, textures.textures_for(texture_id))?
+                };
                 texture_pb.inc(1);
                 let completed = texture_completed
                     .fetch_add(1, Ordering::Relaxed)
@@ -1334,6 +1358,18 @@ fn decode_present_tiles(
     for (&texture_id, decoded_texture) in texture_ids.iter().zip(decoded_textures) {
         let (decoded_texture_id, decoded) = decoded_texture?;
         debug_assert_eq!(texture_id, decoded_texture_id);
+        // Slot ids go in texture order whichever package holds the pixels, so they match a full package's.
+        if let Some(base_slot) = base_slots.get(&texture_id) {
+            let slot_id = next_synthetic_slot_id;
+            next_synthetic_slot_id += 1;
+            texture_slot_by_texture_id.insert(texture_id, slot_id);
+            base_slot_records.push(TexLandEcSlotRecord {
+                art_id: slot_id,
+                flags: base_slot.flags | SLOT_FLAG_BASE_PAGE,
+                ..*base_slot
+            });
+            continue;
+        }
         let Some(mut decoded) = decoded else {
             ignored_source_texture_ids.push(texture_id);
             continue;
@@ -1453,6 +1489,7 @@ fn decode_present_tiles(
 
     Ok((
         decoded_tiles,
+        base_slot_records,
         aliases,
         texture_slot_by_texture_id,
         ignored_source_texture_ids,
@@ -1835,7 +1872,9 @@ pub fn serialize_slot_manifest(
     options: &TexLandEcAtlasOptions,
 ) -> eyre::Result<Vec<u8>> {
     let mut bytes = Vec::with_capacity(25 + slots.len() * 20);
-    bytes.extend_from_slice(&SLOT_MANIFEST_MAGIC);
+    // A table with slots on base pages has its own magic, which a reader unaware of them refuses.
+    let base_page_layout = slots.iter().any(|slot| slot.is_base_page());
+    bytes.extend_from_slice(if base_page_layout { &OVERLAY_SLOT_MANIFEST_MAGIC } else { &SLOT_MANIFEST_MAGIC });
     bytes.write_u32::<LittleEndian>(TEX_LAND_EC_METADATA_VERSION)?;
     bytes.write_u32::<LittleEndian>(options.atlas_width)?;
     bytes.write_u32::<LittleEndian>(options.atlas_height)?;
@@ -2230,5 +2269,71 @@ terrain 52 {
         let error = read_terrain_overrides_kdl(Some(&invalid)).err().expect("an invalid table").to_string();
         let _ = std::fs::remove_dir_all(&dir);
         assert!(error.contains("unknown node `row`"), "{error}");
+    }
+
+    /// The textures left to the base package take the slot ids a full package gives them, in texture order, with the
+    /// base slot's page and rect, and the land slots aliasing them copy that slot; they are not decoded.
+    #[test]
+    fn textures_left_to_the_base_keep_their_slot_ids_and_the_base_slot() {
+        const LAND_SLOT: u32 = 581;
+        const FIRST_TEXTURE: u32 = 2_000_130;
+        const SECOND_TEXTURE: u32 = 2_000_131;
+        const BASE_PAGE: u32 = 4;
+        const BASE_X: u16 = 64;
+        const BASE_SIDE: u16 = 128;
+        let terrain_definition = TerrainDefinitionPackage {
+            entries: vec![TerrainDefinitionEntry {
+                id: 13,
+                name_index: 0,
+                aliases: vec![TerrainDefinitionTileAlias { subtype: 0, legacy_land_id: LAND_SLOT, tile_flags: 0 }],
+                texture: Some(TerrainDefinitionTexture {
+                    layers: [FIRST_TEXTURE, SECOND_TEXTURE].into_iter()
+                        .map(|texture_id| TerrainDefinitionTextureLayer {
+                            texture_id: Some(texture_id), texture_repetition: 1.0, ..Default::default()
+                        })
+                        .collect(),
+                    ..Default::default()
+                }),
+                ..Default::default()
+            }],
+        };
+        let base_slot = |texture_index: u16| TexLandEcSlotRecord {
+            art_id: 0,
+            page_index: BASE_PAGE,
+            page_tile_index: texture_index,
+            flags: SLOT_FLAG_PRESENT | SLOT_FLAG_LAND,
+            x: BASE_X * texture_index,
+            y: 0,
+            width: BASE_SIDE,
+            height: BASE_SIDE,
+        };
+        let base_slots = HashMap::from([(FIRST_TEXTURE, base_slot(0)), (SECOND_TEXTURE, base_slot(1))]);
+
+        // No textures to read from: a texture the base does not hold would be found nowhere.
+        let (decoded, base_records, aliases, slot_by_texture, ignored) = decode_present_tiles(
+            &LandTexturePool::Single(None), &terrain_definition, &BTreeSet::new(), &base_slots,
+            &TexLandEcAtlasOptions::default(), &|_| {},
+        )
+        .unwrap();
+
+        assert!(decoded.is_empty() && ignored.is_empty());
+        let first_slot = LAND_SLOT + 1;
+        assert_eq!(slot_by_texture, HashMap::from([(FIRST_TEXTURE, first_slot), (SECOND_TEXTURE, first_slot + 1)]));
+        assert_eq!(base_records.len(), 2);
+        for (record, texture_index) in base_records.iter().zip(0..) {
+            assert_eq!(*record, TexLandEcSlotRecord {
+                art_id: first_slot + u32::from(texture_index),
+                flags: SLOT_FLAG_PRESENT | SLOT_FLAG_LAND | SLOT_FLAG_BASE_PAGE,
+                ..base_slot(texture_index)
+            });
+        }
+
+        let mut slots = (0..first_slot + 2).map(TexLandEcSlotRecord::absent).collect::<Vec<_>>();
+        for record in &base_records {
+            slots[record.art_id as usize] = *record;
+        }
+        apply_slot_aliases(&mut slots, &aliases).unwrap();
+        assert_eq!(slots[LAND_SLOT as usize], TexLandEcSlotRecord { art_id: LAND_SLOT, ..base_records[0] });
+        assert!(slots[LAND_SLOT as usize].is_base_page());
     }
 }

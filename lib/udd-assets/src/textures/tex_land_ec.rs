@@ -9,7 +9,8 @@ use color_eyre::eyre::{self, WrapErr};
 use byteorder::{LittleEndian, ReadBytesExt};
 use udd_container::{xxh64_virtual_path, UddpReader, UddpReaderOptions};
 use crate::common::{
-    AtlasCacheOptions, AtlasPageCache, decode_atlas_page_rgba, ensure_manifest_version, read_path_entry, read_path_entry_cow,
+    AtlasCacheOptions, AtlasPageCache, decode_atlas_page_rgba, ensure_manifest_version, read_ec_overlay_table, read_path_entry,
+    read_path_entry_cow, EcEquivalentRecord, EcOverlayTable,
 };
 use crate::ec_terrain_overrides::EcTerrainOverrides;
 use crate::tex_art_cc::{AtlasPackingMode, PagePixelFormat};
@@ -17,6 +18,9 @@ use uocf::enhanced::terrain_definition::{TerrainLayerClass, TerrainLayerRole};
 
 const PAGE_MANIFEST_MAGIC: [u8; 4] = *b"ELPG";
 const SLOT_MANIFEST_MAGIC: [u8; 4] = *b"ELSL";
+/// The slot table's magic when slots lie on base pages ([`SLOT_FLAG_BASE_PAGE`], an overlay): a reader that does not
+/// know the flag refuses the table, rather than drawing those slots from pages the overlay does not hold.
+pub const OVERLAY_SLOT_MANIFEST_MAGIC: [u8; 4] = *b"ELSO";
 const TERRAIN_PROVENANCE_MAGIC: [u8; 4] = *b"ELTP";
 const GRUNGE_MAGIC: [u8; 4] = *b"ELGR";
 /// The version of the page and slot manifests, which stands for the package's metadata as a whole.
@@ -48,6 +52,12 @@ pub const TERRAIN_OVERRIDES_SCHEMA_VERSION: u32 = 1;
 pub const SLOT_FLAG_PRESENT: u16 = 1 << 0;
 pub const SLOT_FLAG_LAND: u16 = 1 << 1;
 pub const SLOT_FLAG_STATIC: u16 = 1 << 2;
+/// Only in an overlay ([`TexLandEcPackage::is_overlay`]): the slot's page, position and extent are those of the base
+/// package's slot of the same texture, whose page `page_index` is in the base package. [`TexLandEcPackage::kr_land`]
+/// appends the base pages to the overlay's own and clears the flag.
+pub const SLOT_FLAG_BASE_PAGE: u16 = 1 << 3;
+/// Magic of the overlay table of this layout ([`TexLandEcPackage::is_overlay`]), whose ids are land texture ids.
+pub const TEX_LAND_EC_EQUIVALENTS_MAGIC: [u8; 4] = *b"ELEQ";
 pub const MISSING_PAGE_INDEX: u32 = u32::MAX;
 pub const MISSING_PAGE_TILE_INDEX: u16 = u16::MAX;
 pub const MISSING_TEXTURE_ID: u32 = u32::MAX;
@@ -280,6 +290,24 @@ impl TexLandEcSlotRecord {
     pub fn is_static(self) -> bool {
         (self.flags & SLOT_FLAG_STATIC) != 0
     }
+
+    /// Whether the slot lies on a page of the base package ([`SLOT_FLAG_BASE_PAGE`]).
+    pub fn is_base_page(self) -> bool {
+        (self.flags & SLOT_FLAG_BASE_PAGE) != 0
+    }
+}
+
+/// The overlay entry of this layout, with its path.
+pub fn tex_land_ec_overlay_entry(table: &EcOverlayTable) -> (&'static str, Vec<u8>) {
+    table.encode(TEX_LAND_EC_EQUIVALENTS_MAGIC, TEX_LAND_EC_METADATA_VERSION)
+}
+
+/// The base package's pages an overlay's slots lie on, appended after the overlay's own pages
+/// ([`TexLandEcPackage::kr_land`]).
+struct BasePages {
+    package: UddpReader,
+    /// The base package's page index of each appended page, in order.
+    pages: Vec<u32>,
 }
 
 pub struct TexLandEcPackage {
@@ -298,6 +326,11 @@ pub struct TexLandEcPackage {
     source_materials: HashMap<u32, uocf::enhanced::terrain_definition::TerrainDefinitionEntry>,
     pub transcode: HashMap<u32, u32>,
     page_cache: AtlasPageCache,
+    /// `metadata/ec_equivalents.bin` of an overlay.
+    overlay: Option<EcOverlayTable>,
+    /// The pages the package holds; `pages` continues with the base package's ones of `base_pages`.
+    own_page_count: u32,
+    base_pages: Option<BasePages>,
 }
 
 impl TexLandEcPackage {
@@ -345,7 +378,7 @@ impl TexLandEcPackage {
 
         let (page_width, page_height, page_gutter, page_packing_mode, pages) =
             parse_page_manifest(&page_manifest)?;
-        let (slot_width, slot_height, slot_gutter, slot_packing_mode, slots) =
+        let (slot_width, slot_height, slot_gutter, slot_packing_mode, base_page_layout, slots) =
             parse_slot_manifest(&slot_manifest)?;
         let terrain_provenance = parse_terrain_provenance_manifest(&terrain_provenance_manifest)?;
 
@@ -378,6 +411,18 @@ impl TexLandEcPackage {
             terrain_override_details,
             terrain_override_texture_refs,
         ) = read_terrain_overrides_metadata_maps_from_package(&package)?;
+        let overlay = read_ec_overlay_table(&package, TEX_LAND_EC_EQUIVALENTS_MAGIC, TEX_LAND_EC_METADATA_VERSION)?;
+        let has_base_page_slots = slots.iter().any(|slot| slot.is_base_page());
+        if has_base_page_slots != base_page_layout {
+            eyre::bail!(
+                "the tex_land_ec slot table's magic does not match its slots (slots on base pages: {has_base_page_slots}); \
+                 repack with the current udd-cli"
+            );
+        }
+        if overlay.is_none() && has_base_page_slots {
+            eyre::bail!("tex_land_ec slots lie on base pages, but the package is no overlay; repack with the current udd-cli");
+        }
+        let own_page_count = pages.len() as u32;
         Ok(Self {
             package,
             atlas_width: page_width,
@@ -394,6 +439,9 @@ impl TexLandEcPackage {
             source_materials,
             transcode,
             page_cache: AtlasPageCache::new(options),
+            overlay,
+            own_page_count,
+            base_pages: None,
         })
     }
 
@@ -554,12 +602,98 @@ impl TexLandEcPackage {
     }
 
     /// The Kingdom Reborn land this package holds ([`crate::common::KR_SECTION_ENTRY_PATH`]), in this layout, read in
-    /// place with `reader_options` and `options`; `None` when it holds none.
+    /// place with `reader_options` and `options`; `None` when it holds none. It is an overlay over this package: its
+    /// slots of the textures it leaves to this package lie on this package's pages, which it reads as its own
+    /// ([`Self::over_base`]), so a lookup through it is one slot read, as in any package.
     pub fn kr_land(&self, reader_options: UddpReaderOptions, options: AtlasCacheOptions) -> eyre::Result<Option<Self>> {
         let Some(section) = crate::common::open_kr_section(&self.package, reader_options)? else {
             return Ok(None);
         };
-        Self::from_uddp_package_with_options(section, options).wrap_err("the Kingdom Reborn land").map(Some)
+        let mut land = Self::from_uddp_package_with_options(section, options).wrap_err("the Kingdom Reborn land")?;
+        eyre::ensure!(land.is_overlay(), "the Kingdom Reborn land is no overlay; repack with the current udd-cli");
+        land.over_base(self).wrap_err("the Kingdom Reborn land")?;
+        Ok(Some(land))
+    }
+
+    /// Whether this is an overlay: a package that holds only the land textures its client draws differently from the
+    /// client of the base package holding it, and lists the others ([`Self::equivalents`]), whose slots
+    /// ([`SLOT_FLAG_BASE_PAGE`]) lie on the base package's pages.
+    pub fn is_overlay(&self) -> bool {
+        self.overlay.is_some()
+    }
+
+    /// The land texture ids an overlay leaves to its base package, sorted; empty for a full package.
+    pub fn equivalents(&self) -> &[EcEquivalentRecord] {
+        self.overlay.as_ref().map_or(&[], |table| &table.equivalents)
+    }
+
+    /// The pages the package holds itself; [`Self::pages`] continues with the base pages an overlay reads.
+    pub fn own_page_count(&self) -> u32 {
+        self.own_page_count
+    }
+
+    /// The base package's index of page `page_index`, for a base page an overlay reads ([`Self::kr_land`]); `None`
+    /// for one of its own pages.
+    pub fn base_page_index(&self, page_index: u32) -> Option<u32> {
+        let appended = page_index.checked_sub(self.own_page_count)?;
+        self.base_pages.as_ref()?.pages.get(appended as usize).copied()
+    }
+
+    /// The slot each packed land texture id was given, from the terrain provenance: the canonical slot of every
+    /// texture a material item or override selects.
+    pub fn texture_slot_ids(&self) -> HashMap<u32, u32> {
+        self.terrain_provenance
+            .iter()
+            .filter(|record| record.selected_texture_id != MISSING_TEXTURE_ID && record.canonical_slot_id != MISSING_SLOT_ID)
+            .map(|record| (record.selected_texture_id, record.canonical_slot_id))
+            .collect()
+    }
+
+    /// Reads this overlay's base-page slots through `base`: the base pages they lie on are appended after the
+    /// package's own, in ascending base order, and the slots point at them, so the runtime lookups stay one slot
+    /// read. The pages must share the atlas extent, gutter, packing mode and pixel format.
+    fn over_base(&mut self, base: &Self) -> eyre::Result<()> {
+        if (self.atlas_width, self.atlas_height, self.gutter, self.packing_mode)
+            != (base.atlas_width, base.atlas_height, base.gutter, base.packing_mode)
+        {
+            eyre::bail!(
+                "its atlas ({}x{}, gutter {}, {:?}) is not the base package's ({}x{}, gutter {}, {:?}); repack with the \
+                 current udd-cli",
+                self.atlas_width, self.atlas_height, self.gutter, self.packing_mode,
+                base.atlas_width, base.atlas_height, base.gutter, base.packing_mode
+            );
+        }
+        let base_page_indexes = self
+            .slots
+            .iter()
+            .filter(|slot| slot.is_base_page())
+            .map(|slot| slot.page_index)
+            .collect::<std::collections::BTreeSet<_>>()
+            .into_iter()
+            .collect::<Vec<_>>();
+        let own_format = self.pages.first().map(|page| page.pixel_format);
+        let mut appended = HashMap::with_capacity(base_page_indexes.len());
+        for &base_page_index in &base_page_indexes {
+            let page = *base
+                .pages
+                .get(base_page_index as usize)
+                .ok_or_else(|| eyre::eyre!("a slot lies on base page {base_page_index}, which the base package lacks"))?;
+            if let Some(own_format) = own_format.filter(|&format| format != page.pixel_format) {
+                eyre::bail!(
+                    "its pages are {own_format:?}, the base package's {:?}; repack with the current udd-cli",
+                    page.pixel_format
+                );
+            }
+            let page_index = self.pages.len() as u32;
+            appended.insert(base_page_index, page_index);
+            self.pages.push(TexLandEcPageRecord { page_index, ..page });
+        }
+        for slot in self.slots.iter_mut().filter(|slot| slot.is_base_page()) {
+            slot.page_index = appended[&slot.page_index];
+            slot.flags &= !SLOT_FLAG_BASE_PAGE;
+        }
+        self.base_pages = Some(BasePages { package: base.package.clone(), pages: base_page_indexes });
+        Ok(())
     }
 
     /// The client grunge texture ([`UDDP_GRUNGE_ENTRY_VPATH`]), or `None` when the package has none. An entry without
@@ -1067,7 +1201,16 @@ impl TexLandEcPackage {
             .map(|p| p.pixel_format)
             .unwrap_or(PagePixelFormat::Rgba8888);
         self.page_cache.read_page_bytes(page_index, || {
-            read_path_entry(&self.package, &crate::tex_art_cc::page_entry_path(page_index, fmt))
+            // An overlay's pages past its own are the base package's ([`Self::over_base`]).
+            let (package, entry_page_index) = match (page_index < self.own_page_count, &self.base_pages) {
+                (true, _) => (&self.package, page_index),
+                (false, Some(base)) => (
+                    &base.package,
+                    self.base_page_index(page_index).ok_or_else(|| eyre::eyre!("missing atlas page {page_index}"))?,
+                ),
+                (false, None) => (&self.package, page_index),
+            };
+            read_path_entry(package, &crate::tex_art_cc::page_entry_path(entry_page_index, fmt))
                 .wrap_err_with(|| format!("unpack atlas page {page_index}"))
         })
     }
@@ -1121,11 +1264,16 @@ fn parse_page_manifest(bytes: &[u8]) -> eyre::Result<(u32, u32, u16, AtlasPackin
     Ok((w, h, g, packing_mode, pages))
 }
 
-fn parse_slot_manifest(bytes: &[u8]) -> eyre::Result<(u32, u32, u16, AtlasPackingMode, Vec<TexLandEcSlotRecord>)> {
+/// The atlas header, whether the table has the base-page layout ([`OVERLAY_SLOT_MANIFEST_MAGIC`]) and the slots.
+fn parse_slot_manifest(bytes: &[u8]) -> eyre::Result<(u32, u32, u16, AtlasPackingMode, bool, Vec<TexLandEcSlotRecord>)> {
     let mut cursor = Cursor::new(bytes);
     let mut magic = [0u8; 4];
     cursor.read_exact(&mut magic)?;
-    if magic != SLOT_MANIFEST_MAGIC { eyre::bail!("invalid magic"); }
+    let base_page_layout = match magic {
+        SLOT_MANIFEST_MAGIC => false,
+        OVERLAY_SLOT_MANIFEST_MAGIC => true,
+        _ => eyre::bail!("invalid tex_land_ec slot table magic {magic:?}; repack with the current udd-cli"),
+    };
     let version = cursor.read_u32::<LittleEndian>()?;
     ensure_manifest_version("tex_land_ec slot manifest", version, TEX_LAND_EC_METADATA_VERSION)?;
     let w = cursor.read_u32::<LittleEndian>()?;
@@ -1147,7 +1295,7 @@ fn parse_slot_manifest(bytes: &[u8]) -> eyre::Result<(u32, u32, u16, AtlasPackin
             height: cursor.read_u16::<LittleEndian>()?,
         });
     }
-    Ok((w, h, g, packing_mode, slots))
+    Ok((w, h, g, packing_mode, base_page_layout, slots))
 }
 
 fn parse_terrain_provenance_manifest(bytes: &[u8]) -> eyre::Result<Vec<TexLandEcTerrainProvenanceRecord>> {
@@ -2131,5 +2279,228 @@ terrain 52 {
         assert_eq!(refs[2].layer_index, None);
         assert_eq!(refs[3].role, "base");
         assert_eq!(refs[3].layer_index, None);
+    }
+
+    mod overlay {
+        use super::*;
+        use crate::common::KR_SECTION_ENTRY_PATH;
+        use crate::tex_art_cc::page_entry_path;
+
+        const ATLAS_SIDE: u32 = 64;
+        const OTHER_ATLAS_SIDE: u32 = 128;
+        const GUTTER: u32 = 1;
+        const TILE_SIDE: u16 = 16;
+        /// The base package's pages: the overlay's slots lie on the second and the third, not the first.
+        const BASE_PAGE_BYTES: [&[u8]; 3] = [b"base page 0", b"base page 1", b"base page 2"];
+        const OWN_PAGE_BYTES: &[u8] = b"kr page 0";
+        const OWN_TEXTURE: u32 = 2_000_010;
+        const LEFT_TEXTURE: u32 = 2_000_020;
+        const OTHER_LEFT_TEXTURE: u32 = 2_000_030;
+        const OWN_SLOT: u32 = 5;
+        const LEFT_SLOT: u32 = 6;
+        const OTHER_LEFT_SLOT: u32 = 7;
+        /// A land id slot aliasing the left texture's slot, as `apply_slot_aliases` copies it.
+        const ALIAS_SLOT: u32 = 3;
+        const SLOT_COUNT: u32 = 8;
+        const LEFT_DIFFERENCE: f32 = 0.5;
+        const TEST_MATERIAL_ID: u32 = 1;
+        const TEST_REPETITION: f32 = 1.0;
+
+        fn page_manifest(side: u32, page_count: u32) -> Vec<u8> {
+            let mut bytes = PAGE_MANIFEST_MAGIC.to_vec();
+            for value in [TEX_LAND_EC_METADATA_VERSION, side, side, GUTTER] {
+                bytes.write_u32::<LittleEndian>(value).unwrap();
+            }
+            bytes.write_u8(PagePixelFormat::Rgba8888 as u8).unwrap();
+            bytes.write_u8(AtlasPackingMode::MaximumPacking as u8).unwrap();
+            bytes.write_u32::<LittleEndian>(page_count).unwrap();
+            for page_index in 0..page_count {
+                for value in [page_index, 1, side, side] {
+                    bytes.write_u32::<LittleEndian>(value).unwrap();
+                }
+            }
+            bytes
+        }
+
+        fn slot(art_id: u32, page_index: u32, x: u16, flags: u16) -> TexLandEcSlotRecord {
+            TexLandEcSlotRecord {
+                art_id, page_index, page_tile_index: 0, flags: SLOT_FLAG_PRESENT | SLOT_FLAG_LAND | flags, x, y: 0,
+                width: TILE_SIDE, height: TILE_SIDE,
+            }
+        }
+
+        fn slot_manifest(side: u32, slots: &[TexLandEcSlotRecord]) -> Vec<u8> {
+            let magic = if slots.iter().any(|slot| slot.is_base_page()) { OVERLAY_SLOT_MANIFEST_MAGIC } else { SLOT_MANIFEST_MAGIC };
+            slot_manifest_with_magic(magic, side, slots)
+        }
+
+        fn slot_manifest_with_magic(magic: [u8; 4], side: u32, slots: &[TexLandEcSlotRecord]) -> Vec<u8> {
+            let mut bytes = magic.to_vec();
+            for value in [TEX_LAND_EC_METADATA_VERSION, side, side, GUTTER] {
+                bytes.write_u32::<LittleEndian>(value).unwrap();
+            }
+            bytes.write_u8(AtlasPackingMode::MaximumPacking as u8).unwrap();
+            bytes.write_u32::<LittleEndian>(SLOT_COUNT).unwrap();
+            for art_id in 0..SLOT_COUNT {
+                let slot = slots.iter().find(|slot| slot.art_id == art_id).copied()
+                    .unwrap_or_else(|| TexLandEcSlotRecord::absent(art_id));
+                bytes.write_u32::<LittleEndian>(slot.art_id).unwrap();
+                bytes.write_u32::<LittleEndian>(slot.page_index).unwrap();
+                bytes.write_u16::<LittleEndian>(slot.page_tile_index).unwrap();
+                for value in [slot.flags, slot.x, slot.y, slot.width, slot.height] {
+                    bytes.write_u16::<LittleEndian>(value).unwrap();
+                }
+            }
+            bytes
+        }
+
+        /// One provenance record per texture, selecting it into its slot.
+        fn provenance(textures: &[(u32, u32)]) -> Vec<u8> {
+            let mut bytes = TERRAIN_PROVENANCE_MAGIC.to_vec();
+            bytes.write_u32::<LittleEndian>(TEX_LAND_EC_TERRAIN_PROVENANCE_VERSION).unwrap();
+            bytes.write_u32::<LittleEndian>(textures.len() as u32).unwrap();
+            for &(texture_id, slot_id) in textures {
+                for value in [TEST_MATERIAL_ID, 0, 0, slot_id] {
+                    bytes.write_u32::<LittleEndian>(value).unwrap();
+                }
+                bytes.write_u64::<LittleEndian>(0).unwrap();
+                for value in [texture_id, slot_id, 0] {
+                    bytes.write_u32::<LittleEndian>(value).unwrap();
+                }
+                bytes.write_f32::<LittleEndian>(TEST_REPETITION).unwrap();
+                bytes.write_u32::<LittleEndian>(texture_id).unwrap();
+                bytes.write_u32::<LittleEndian>(0).unwrap();
+                bytes.write_u8(TerrainLayerClass::Default as u8).unwrap();
+                bytes.write_u8(TerrainLayerRole::ColourA as u8).unwrap();
+            }
+            bytes
+        }
+
+        fn package(side: u32, pages: &[&[u8]], slots: &[TexLandEcSlotRecord], textures: &[(u32, u32)],
+            equivalents: Option<&[EcEquivalentRecord]>) -> Vec<u8> {
+            let mut builder = UddpBuilder::new(LookupMode::VirtualPathHash);
+            add_metadata_file(&mut builder, UDDP_PAGE_MANIFEST_ENTRY_VPATH, &page_manifest(side, pages.len() as u32));
+            add_metadata_file(&mut builder, UDDP_SLOT_MANIFEST_ENTRY_VPATH, &slot_manifest(side, slots));
+            add_metadata_file(&mut builder, UDDP_TERRAIN_PROVENANCE_ENTRY_VPATH, &provenance(textures));
+            add_metadata_file(&mut builder, UDDP_TERRAIN_OVERRIDES_ENTRY_VPATH, &terrain_overrides_json());
+            add_metadata_file(&mut builder, UDDP_TRANSCODE_ENTRY_VPATH, EMPTY_TRANSCODE_KDL);
+            add_metadata_file(&mut builder, UDDP_SOURCE_MATERIALS_ENTRY_VPATH, EMPTY_SOURCE_MATERIALS_JSON);
+            for (page_index, bytes) in pages.iter().enumerate() {
+                add_metadata_file(&mut builder, &page_entry_path(page_index as u32, PagePixelFormat::Rgba8888), bytes);
+            }
+            if let Some(equivalents) = equivalents {
+                let (path, bytes) = tex_land_ec_overlay_entry(&EcOverlayTable { equivalents: equivalents.to_vec() });
+                add_metadata_file(&mut builder, path, &bytes);
+            }
+            builder.build().expect("build test package")
+        }
+
+        fn base_bytes() -> Vec<u8> {
+            let slots = [slot(OWN_SLOT, 0, 0, 0), slot(LEFT_SLOT, 2, TILE_SIDE, 0), slot(OTHER_LEFT_SLOT, 1, 2 * TILE_SIDE, 0)];
+            package(ATLAS_SIDE, &BASE_PAGE_BYTES, &slots, &[(OWN_TEXTURE, OWN_SLOT), (LEFT_TEXTURE, LEFT_SLOT),
+                (OTHER_LEFT_TEXTURE, OTHER_LEFT_SLOT)], None)
+        }
+
+        /// The Kingdom Reborn section: its own texture on its page, the two others on the base's pages.
+        fn section_bytes(side: u32, equivalents: Option<&[EcEquivalentRecord]>) -> Vec<u8> {
+            let slots = [
+                slot(OWN_SLOT, 0, 0, 0),
+                slot(LEFT_SLOT, 2, TILE_SIDE, SLOT_FLAG_BASE_PAGE),
+                slot(ALIAS_SLOT, 2, TILE_SIDE, SLOT_FLAG_BASE_PAGE),
+                slot(OTHER_LEFT_SLOT, 1, 2 * TILE_SIDE, SLOT_FLAG_BASE_PAGE),
+            ];
+            package(side, &[OWN_PAGE_BYTES], &slots, &[(OWN_TEXTURE, OWN_SLOT), (LEFT_TEXTURE, LEFT_SLOT),
+                (OTHER_LEFT_TEXTURE, OTHER_LEFT_SLOT)], equivalents)
+        }
+
+        fn left() -> [EcEquivalentRecord; 2] {
+            [
+                EcEquivalentRecord { id: LEFT_TEXTURE, difference: LEFT_DIFFERENCE },
+                EcEquivalentRecord { id: OTHER_LEFT_TEXTURE, difference: 0.0 },
+            ]
+        }
+
+        fn base_with_section(section: Vec<u8>) -> TexLandEcPackage {
+            let base = UddpReader::open(base_bytes()).expect("open base");
+            let bytes = UddpBuilder::extend_package(&base,
+                vec![(xxh64_virtual_path(KR_SECTION_ENTRY_PATH), DataType::Metadata as u8, section)]).expect("nest");
+            TexLandEcPackage::from_uddp_package(UddpReader::open(bytes).expect("open")).expect("load base")
+        }
+
+        fn kr_land(base: &TexLandEcPackage) -> eyre::Result<Option<TexLandEcPackage>> {
+            base.kr_land(UddpReaderOptions::disabled(), AtlasCacheOptions::disabled())
+        }
+
+        #[test]
+        fn the_kr_land_reads_the_textures_it_leaves_from_the_base_pages_appended_after_its_own() {
+            let base = base_with_section(section_bytes(ATLAS_SIDE, Some(&left())));
+            let land = kr_land(&base).unwrap().expect("a section");
+
+            assert!(land.is_overlay() && !base.is_overlay());
+            assert_eq!(land.equivalents(), &left());
+            // Its own page, then base pages 1 and 2 in ascending order.
+            assert_eq!(land.own_page_count(), 1);
+            assert_eq!(land.pages().iter().map(|page| page.page_index).collect::<Vec<_>>(), [0, 1, 2]);
+            assert_eq!((land.base_page_index(0), land.base_page_index(1), land.base_page_index(2)), (None, Some(1), Some(2)));
+            assert_eq!(land.read_page_bytes(0).unwrap(), OWN_PAGE_BYTES);
+            assert_eq!(land.read_page_bytes(1).unwrap(), BASE_PAGE_BYTES[1]);
+            assert_eq!(land.read_page_bytes(2).unwrap(), BASE_PAGE_BYTES[2]);
+
+            // Every slot is an ordinary present slot: a lookup reads it as in a full package.
+            let resolved = |slot_id| *land.present_slot(slot_id).expect("present");
+            assert_eq!(resolved(OWN_SLOT), slot(OWN_SLOT, 0, 0, 0));
+            assert_eq!(resolved(LEFT_SLOT), slot(LEFT_SLOT, 2, TILE_SIDE, 0));
+            assert_eq!(resolved(ALIAS_SLOT), slot(ALIAS_SLOT, 2, TILE_SIDE, 0));
+            assert_eq!(resolved(OTHER_LEFT_SLOT), slot(OTHER_LEFT_SLOT, 1, 2 * TILE_SIDE, 0));
+            assert!(land.slots().iter().all(|slot| !slot.is_base_page()));
+            // The texture each slot draws is the base's.
+            for texture_id in [LEFT_TEXTURE, OTHER_LEFT_TEXTURE] {
+                let kr = resolved(land.texture_slot_ids()[&texture_id]);
+                let ec = *base.present_slot(base.texture_slot_ids()[&texture_id]).unwrap();
+                assert_eq!((land.base_page_index(kr.page_index), kr.x, kr.width), (Some(ec.page_index), ec.x, ec.width));
+            }
+        }
+
+        #[test]
+        fn a_kr_land_that_is_no_overlay_or_has_another_atlas_asks_for_a_repack() {
+            let full = base_with_section(section_bytes(ATLAS_SIDE, None));
+            let error = format!("{:#}", kr_land(&full).err().expect("refused"));
+            assert!(error.contains("repack"), "{error}");
+
+            let other_atlas = base_with_section(section_bytes(OTHER_ATLAS_SIDE, Some(&left())));
+            let error = format!("{:#}", kr_land(&other_atlas).err().expect("refused"));
+            assert!(error.contains("not the base package's") && error.contains("repack"), "{error}");
+        }
+
+        /// A reader that predates the base-page flag trips on the overlay's slot table magic instead of reading its
+        /// slots as lying on pages it lacks; this one refuses either magic on the other layout's slots.
+        #[test]
+        fn a_slot_table_whose_magic_does_not_match_its_slots_asks_for_a_repack() {
+            let refusal = |slot_table: Vec<u8>, pages: &[&[u8]]| {
+                let mut builder = UddpBuilder::new(LookupMode::VirtualPathHash);
+                add_metadata_file(&mut builder, UDDP_PAGE_MANIFEST_ENTRY_VPATH, &page_manifest(ATLAS_SIDE, pages.len() as u32));
+                add_metadata_file(&mut builder, UDDP_SLOT_MANIFEST_ENTRY_VPATH, &slot_table);
+                add_metadata_file(&mut builder, UDDP_TERRAIN_PROVENANCE_ENTRY_VPATH, &provenance(&[]));
+                add_metadata_file(&mut builder, UDDP_TERRAIN_OVERRIDES_ENTRY_VPATH, &terrain_overrides_json());
+                add_metadata_file(&mut builder, UDDP_TRANSCODE_ENTRY_VPATH, EMPTY_TRANSCODE_KDL);
+                add_metadata_file(&mut builder, UDDP_SOURCE_MATERIALS_ENTRY_VPATH, EMPTY_SOURCE_MATERIALS_JSON);
+                let (path, bytes) = tex_land_ec_overlay_entry(&EcOverlayTable { equivalents: left().to_vec() });
+                add_metadata_file(&mut builder, path, &bytes);
+                let package = UddpReader::open(builder.build().unwrap()).unwrap();
+                format!("{:#}", TexLandEcPackage::from_uddp_package(package).err().expect("refused"))
+            };
+            let on_base = [slot(LEFT_SLOT, 2, TILE_SIDE, SLOT_FLAG_BASE_PAGE)];
+            let error = refusal(slot_manifest_with_magic(SLOT_MANIFEST_MAGIC, ATLAS_SIDE, &on_base), &[OWN_PAGE_BYTES]);
+            assert!(error.contains("magic") && error.contains("repack"), "{error}");
+            let own = [slot(OWN_SLOT, 0, 0, 0)];
+            let error = refusal(slot_manifest_with_magic(OVERLAY_SLOT_MANIFEST_MAGIC, ATLAS_SIDE, &own), &[OWN_PAGE_BYTES]);
+            assert!(error.contains("magic") && error.contains("repack"), "{error}");
+        }
+
+        #[test]
+        fn a_package_without_a_section_has_no_kr_land() {
+            let base = TexLandEcPackage::from_uddp_package(UddpReader::open(base_bytes()).unwrap()).unwrap();
+            assert!(kr_land(&base).unwrap().is_none());
+        }
     }
 }

@@ -1252,7 +1252,12 @@ mod tests {
         let items = load_kr_item_packages(&|_: &str| {}, &lg_err, true, &tilemeta, Some(&art), Some(&aux))
             .expect("the Kingdom Reborn items");
         assert!(items.art.is_overlay() && items.aux.is_overlay());
-        assert!(load_kr_land(&|_: &str| {}, &lg_err, &land, UddpReaderOptions::disabled()).is_some());
+        let kr_land = load_kr_land(&|_: &str| {}, &lg_err, &land, UddpReaderOptions::disabled()).expect("the KR land");
+        // The textures it leaves to the Enhanced land read from that package's pages, appended after its own.
+        assert!(kr_land.is_overlay() && !kr_land.equivalents().is_empty());
+        assert!(kr_land.pages().len() as u32 > kr_land.own_page_count());
+        let last_page = kr_land.pages().len() as u32 - 1;
+        assert!(kr_land.base_page_index(last_page).is_some() && kr_land.read_page_bytes(last_page).is_ok());
         assert!(load_kr_item_packages(&|_: &str| {}, &lg_err, true, &tilemeta, None, Some(&aux)).is_none());
         let errors = errors.into_inner();
         assert!(errors.len() == 1 && errors[0].contains("do not all hold a Kingdom Reborn section"), "{errors:?}");
