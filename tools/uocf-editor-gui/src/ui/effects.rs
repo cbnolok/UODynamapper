@@ -385,10 +385,9 @@ impl Lookups {
         entries.binary_search_by_key(&tile_id, |file| file.entry.tile_id).ok().map(|index| &entries[index])
     }
 
-    /// The tile name: the string dictionary index of the record, shifted like particle names.
+    /// The tile name: the string dictionary index of the record, as particle names.
     fn tile_name(&self, entry: &TileArtFileEntry) -> Option<String> {
-        let index = entry.entry.string_dict_off.checked_sub(1)?;
-        self.strings.as_ref()?.get_string(index as usize).map(str::to_owned)
+        self.strings.as_ref()?.named_string(entry.entry.string_dict_off).map(str::to_owned)
     }
 
     /// The loaded client's two effect packages: never overwritten.

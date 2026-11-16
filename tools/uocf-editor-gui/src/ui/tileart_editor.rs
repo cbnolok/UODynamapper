@@ -755,7 +755,7 @@ impl Fields<'_> {
 
     fn texture_block(&mut self, ui: &mut egui::Ui, index: usize, block: &TaeTexture, strings: Option<&UoStringDictionary>) {
         let field = "texture_blocks";
-        let text_of = |offset: u32| strings.and_then(|strings| strings.get_string(offset.checked_sub(1)? as usize));
+        let text_of = |offset: u32| strings.and_then(|strings| strings.named_string(offset));
         ui.horizontal_wrapped(|ui| {
             ui.label("Shader name").on_hover_text(STRING_INDEX_HOVER);
             self.inline_number(ui, field, block.type_string_off, move |entry, value| {

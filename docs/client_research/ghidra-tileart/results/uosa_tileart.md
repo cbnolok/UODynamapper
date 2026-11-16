@@ -298,7 +298,8 @@ Not applied; files are read-only for this task.
 1. `TaeSittingAnimation`: 6 x u32, not 4.
 2. Parse the tail: u8 effect count, then effect definitions (u32 type key + effect body). Records with
    effects currently leave bytes unparsed.
-3. String dictionary: header is u64 stamp, u32 count, u16 max length (14 bytes); string 0 is empty and the
+3. String dictionary (applied 2026-11-16: `UoStringDictionary` reads the 14-byte header and every string, and its
+   users index directly): header is u64 stamp, u32 count, u16 max length (14 bytes); string 0 is empty and the
    client indexes directly. Skipping string 0 and subtracting 1 from every index (UOETE's 16-byte header
    swallows the empty string's length) gives the same strings, but indexing directly with all `count`
    strings matches the client and also handles index 0 (empty name) without `checked_sub(1)`.

@@ -274,8 +274,7 @@ pub(super) fn tileart_preview(app: &mut UocfEditorApp, ctx: &egui::Context, ui: 
             let shader = entry
                 .texture_vector
                 .get(usize::from(first.block_index))
-                .and_then(|block| block.type_string_off.checked_sub(1))
-                .and_then(|offset| dictionary.get_string(offset as usize));
+                .and_then(|block| dictionary.named_string(block.type_string_off));
             let primary = primary_texture_position(shader);
             let view_right = ui.clip_rect().right();
             pinned_to_view(ui, view_right, |ui| {

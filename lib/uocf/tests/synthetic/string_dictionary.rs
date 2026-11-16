@@ -65,12 +65,16 @@ fn logger_lock() -> &'static Mutex<()> {
     LOCK.get_or_init(|| Mutex::new(()))
 }
 
+/// The declared longest length of the test payloads.
+const MAX_LENGTH: u16 = 0x48;
+
+/// A payload declaring `declared_count` strings and holding the empty string 0 and `strings`.
 fn serialize_dictionary_payload(declared_count: u32, strings: &[&str]) -> Vec<u8> {
     let mut bytes = Vec::new();
     bytes.extend_from_slice(&0x0123_4567_89AB_CDEFu64.to_le_bytes());
     bytes.extend_from_slice(&declared_count.to_le_bytes());
-    bytes.extend_from_slice(&0x48u32.to_le_bytes());
-    for string in strings {
+    bytes.extend_from_slice(&MAX_LENGTH.to_le_bytes());
+    for string in std::iter::once(&"").chain(strings) {
         let string_bytes = string.as_bytes();
         bytes.extend_from_slice(&(string_bytes.len() as u16).to_le_bytes());
         bytes.extend_from_slice(string_bytes);
@@ -106,24 +110,24 @@ fn string_dictionary_warns_and_clamps_when_declared_count_runs_past_eof() {
     let logger = test_logger();
     logger.clear();
 
-    let payload = serialize_dictionary_payload(3, &["alpha", "beta"]);
+    let payload = serialize_dictionary_payload(4, &["alpha", "beta"]);
     let dictionary = UoStringDictionary::from_payload_bytes(&payload, "test-dictionary")
         .expect("parse dictionary with eof mismatch");
 
-    assert_eq!(dictionary.get_string(0), Some("alpha"));
-    assert_eq!(dictionary.get_string(1), Some("beta"));
+    assert_eq!(dictionary.get_string(1), Some("alpha"));
+    assert_eq!(dictionary.get_string(2), Some("beta"));
 
     let messages = logger.snapshot();
     assert!(messages.iter().any(|message| {
         message.contains("test-dictionary")
-            && message.contains("declared 3 strings")
-            && message.contains("EOF after 2 complete entries")
+            && message.contains("declared 4 strings")
+            && message.contains("EOF after 3 complete entries")
     }));
 }
 
 #[test]
 fn string_dictionary_rejects_truncated_string_payload() {
-    let mut payload = serialize_dictionary_payload(1, &["alpha"]);
+    let mut payload = serialize_dictionary_payload(2, &["alpha"]);
     payload.pop();
 
     let error = UoStringDictionary::from_payload_bytes(&payload, "truncated-dictionary")
@@ -136,13 +140,15 @@ fn string_dictionary_rejects_truncated_string_payload() {
 
 #[test]
 fn string_dictionary_load_reads_single_nonzero_hash_payload_package() {
-    let payload = serialize_dictionary_payload(2, &["build/tileart/00000001.dat", "UOSpriteShader"]);
+    let payload = serialize_dictionary_payload(3, &["build/tileart/00000001.dat", "UOSpriteShader"]);
     let path = write_dictionary_uop("string_dictionary_single_entry", &payload);
 
     let dictionary = UoStringDictionary::load(&path).expect("load dictionary package");
 
-    assert_eq!(dictionary.get_string(0), Some("build/tileart/00000001.dat"));
-    assert_eq!(dictionary.get_string(1), Some("UOSpriteShader"));
+    assert_eq!(dictionary.get_string(0), Some(""));
+    assert_eq!(dictionary.named_string(0), None);
+    assert_eq!(dictionary.get_string(1), Some("build/tileart/00000001.dat"));
+    assert_eq!(dictionary.named_string(2), Some("UOSpriteShader"));
 
     let _ = fs::remove_file(path);
 }
@@ -151,8 +157,8 @@ fn string_dictionary_load_reads_single_nonzero_hash_payload_package() {
 const STRING_DICTIONARY_UOP_NAME: &str = "string_dictionary.uop";
 const STRING_DICTIONARY_ENTRY: &str = "build/stringdictionary/string_dictionary.bin";
 
-/// The client dictionary keeps its declared count, which exceeds the stored strings, and writes its payload back
-/// byte for byte; replacing the entry with that payload leaves it untouched.
+/// The client dictionary holds the strings it declares, the empty string 0 first, and writes its payload back byte
+/// for byte; replacing the entry with that payload leaves it untouched.
 #[test]
 #[ignore = "needs a real client: set UO_EC_CLIENT_DIR and/or UO_CC_CLIENT_DIR and run with --ignored"]
 fn client_string_dictionary_writes_back_byte_for_byte() {
@@ -172,6 +178,10 @@ fn client_string_dictionary_writes_back_byte_for_byte() {
             "{env}"
         );
         assert_eq!(dictionary.len(), UoStringDictionary::load(&path).expect("load").len(), "{env}");
+        assert_eq!(dictionary.len(), dictionary.declared_count() as usize, "{env}");
+        assert_eq!(dictionary.get_string(0), Some(""), "{env}");
+        let longest = dictionary.iter().map(|(_, string)| string.len()).max().unwrap_or(0);
+        assert_eq!(usize::from(dictionary.max_length()), longest, "{env}");
         println!(
             "{env}: {} strings declared, {} stored; the {}-byte payload is written back byte for byte",
             dictionary.declared_count(),

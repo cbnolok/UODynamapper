@@ -61,8 +61,6 @@ pub const EDGE_BAND_TEXELS: usize = 16;
 pub const LARGE_REMOVED_AREA_TEXELS: usize = 1600;
 /// Everything is measured unhued: a hue changes colours, not where a frame is opaque.
 const NO_HUE: u16 = 0;
-/// A tileart record's `string_dict_off` is one past the index of its name in `string_dictionary.uop` (EC 2024 data).
-const TILEART_NAME_STRING_SHIFT: usize = 1;
 const RGBA_BYTES: usize = 4;
 const ALPHA_BYTE: usize = 3;
 const OPAQUE: u8 = u8::MAX;
@@ -73,8 +71,7 @@ const LOGGED_KEPT_GARMENTS: usize = 8;
 
 /// The name of a `tileart.uop` record in `string_dictionary.uop`.
 pub fn tileart_name(record: &TileArtEntry, strings: &UoStringDictionary) -> Option<String> {
-    let index = (record.string_dict_off as usize).checked_sub(TILEART_NAME_STRING_SHIFT)?;
-    strings.get_string(index).filter(|name| !name.is_empty()).map(str::to_string)
+    strings.named_string(record.string_dict_off).filter(|name| !name.is_empty()).map(str::to_string)
 }
 
 /// The largest garment of a slot on one body: the one the slot rule decides the slot after.

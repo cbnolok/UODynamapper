@@ -248,9 +248,8 @@ fn dictionary_string(
     string_dictionary: &UoStringDictionary,
     offset: u32,
 ) -> Option<String> {
-    offset
-        .checked_sub(1)
-        .and_then(|index| string_dictionary.get_string(index as usize))
+    string_dictionary
+        .named_string(offset)
         .map(str::to_string)
 }
 

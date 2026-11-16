@@ -51,9 +51,8 @@ use super::{
     DirectionOffset, EarthquakeEffect, EffectDefinition, EffectMapEntry, LodEffect, ParticleEffect,
     PositionOffsetEffect, PropertyFlagEffect, PropertyFlagMode, RandomEffect, RandomEffectEntry, RoundRobinEffect,
     SoundEffect, UserPreferenceEffect, WaitEffect, MAX_EFFECT_NESTING_DEPTH, POSITION_OFFSET_DIRECTION_COUNT,
-    STRING_DICTIONARY_INDEX_SHIFT,
 };
-use crate::enhanced::string_dictionary::UoStringDictionary;
+use crate::enhanced::string_dictionary::{UoStringDictionary, EMPTY_STRING_INDEX};
 
 const ENTRY_NODE: &str = "entry";
 const HASH_PROPERTY: &str = "hash";
@@ -567,7 +566,7 @@ impl<'a> Reader<'a> {
             ([index], _) => {
                 let index: u32 = value_int(index, "name index")?;
                 if let (Some(strings), Some((value, name))) = (self.strings, name) {
-                    let expected = index.checked_sub(STRING_DICTIONARY_INDEX_SHIFT).and_then(|i| strings.get_string(i as usize));
+                    let expected = strings.named_string(index);
                     if expected != Some(name) {
                         let expected = expected.map_or_else(|| "no string".to_owned(), quoted);
                         let message = format!("name {} does not match name index {index}: expected {expected}", quoted(name));
@@ -606,8 +605,8 @@ impl<'a> Reader<'a> {
         let strings = self.strings?;
         let indices = self.indices.get_or_insert_with(|| {
             let mut indices = HashMap::new();
-            for (index, text) in strings.iter() {
-                indices.entry(text).or_insert(index as u32 + STRING_DICTIONARY_INDEX_SHIFT);
+            for (index, text) in strings.iter().filter(|&(index, _)| index != EMPTY_STRING_INDEX) {
+                indices.entry(text).or_insert(index as u32);
             }
             indices
         });
@@ -950,16 +949,9 @@ entry hash=0x0123456789ABCDEF
         }
     }
 
+    /// A dictionary naming `strings` by the indices 1 on.
     fn dictionary(strings: &[&str]) -> UoStringDictionary {
-        let mut payload = Vec::new();
-        payload.extend_from_slice(&0u64.to_le_bytes());
-        payload.extend_from_slice(&(strings.len() as u32).to_le_bytes());
-        payload.extend_from_slice(&0u32.to_le_bytes());
-        for value in strings {
-            payload.extend_from_slice(&(value.len() as u16).to_le_bytes());
-            payload.extend_from_slice(value.as_bytes());
-        }
-        UoStringDictionary::from_payload_bytes(&payload, "test dictionary").unwrap()
+        UoStringDictionary::from_strings(strings.iter().copied())
     }
 
     #[test]

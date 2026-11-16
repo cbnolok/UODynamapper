@@ -169,10 +169,6 @@ const MIN_EFFECT_ELEMENT_SIZE: u64 = 8;
 const STRICT_FLAG_FALSE: u8 = 0;
 const STRICT_FLAG_TRUE: u8 = 1;
 
-/// The repo's string dictionary starts one string after the client's (its 16-byte header
-/// swallows the client's empty string 0), so client index `n` is dictionary index `n - 1`.
-const STRING_DICTIONARY_INDEX_SHIFT: u32 = 1;
-
 /// One effect definition, by type key.
 #[derive(Debug, Clone, PartialEq)]
 pub enum EffectDefinition {
@@ -404,11 +400,9 @@ impl EffectDefinition {
 }
 
 impl ParticleEffect {
-    /// Resolves `name_index` in the repo's string dictionary.
+    /// Resolves `name_index` in the string dictionary.
     pub fn name<'a>(&self, string_dictionary: &'a UoStringDictionary) -> Option<&'a str> {
-        self.name_index
-            .checked_sub(STRING_DICTIONARY_INDEX_SHIFT)
-            .and_then(|index| string_dictionary.get_string(index as usize))
+        string_dictionary.named_string(self.name_index)
     }
 }
 
@@ -964,14 +958,7 @@ mod tests {
 
     #[test]
     fn particle_name_resolves_through_the_string_dictionary() {
-        let strings = ["first.nif", "second.ems"];
-        let mut payload = EffectWriter::default();
-        payload.u64(0).u32(strings.len() as u32).u32(0);
-        for value in strings {
-            payload.0.extend_from_slice(&(value.len() as u16).to_le_bytes());
-            payload.0.extend_from_slice(value.as_bytes());
-        }
-        let dictionary = UoStringDictionary::from_payload_bytes(&payload.0, "test dictionary").unwrap();
+        let dictionary = UoStringDictionary::from_strings(["first.nif", "second.ems"]);
         let particle = |name_index| ParticleEffect {
             name_index, offset_x: 0.0, offset_y: 0.0, camera_offset: 0.0, scale: 1.0,
             attach_mode: 1, duration: 0.0, looping: false, field_3c: 0, hued: false,

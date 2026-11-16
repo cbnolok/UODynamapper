@@ -82,8 +82,7 @@ fn main() -> Result<()> {
                     entry.tile_id, art.tile_type, art.flags, art.ec_texture);
                 for (index, block) in entry.texture_vector.iter().enumerate() {
                     if block.has_texture == 0 { continue; }
-                    let shader = block.type_string_off.checked_sub(1)
-                        .and_then(|offset| dictionary.get_string(offset as usize));
+                    let shader = dictionary.named_string(block.type_string_off);
                     println!("  block={index} shader={shader:?} Technique={:?} Tweaks={:?}",
                         block.technique, block.tweaks);
                 }

@@ -14,7 +14,7 @@ use uocf::enhanced::effect_definition::{
     RandomEffectEntry, RoundRobinEffect, SoundEffect, UserPreferenceEffect, WaitEffect, EFFECT_ID_LIGHTNING,
     EXPLOSION_ITEM_ID, EXPLOSION_TICKS, POSITION_OFFSET_DIRECTION_COUNT, RANDOM_WEIGHT_TOTAL,
 };
-use uocf::enhanced::string_dictionary::UoStringDictionary;
+use uocf::enhanced::string_dictionary::{UoStringDictionary, EMPTY_STRING_INDEX};
 
 /// Undo snapshots kept per document; older ones are dropped.
 pub const EFFECTS_UNDO_DEPTH: usize = 100;
@@ -36,9 +36,6 @@ pub const NEW_EARTHQUAKE_DURATION_S: f64 = 1.0;
 pub const NEW_EARTHQUAKE_FREQUENCY_HZ: f64 = 10.0;
 /// First key of a new LOD level (UI Low).
 pub const FIRST_LOD_LEVEL: u32 = 1;
-/// The client's string dictionary index `n` is the repo dictionary's string `n - 1` (its header swallows the
-/// client's empty string 0); see `ParticleEffect::name`.
-pub const STRING_DICTIONARY_INDEX_SHIFT: u32 = 1;
 /// Marker of a Chaos particle name: the client plays a name containing `.ems` with `UOParticleEffectChaos`.
 pub const CHAOS_NAME_MARKER: &str = ".ems";
 
@@ -767,9 +764,9 @@ pub struct NameIndex {
 impl NameIndex {
     pub fn new(strings: &UoStringDictionary) -> Self {
         let mut by_name = HashMap::new();
-        for (index, text) in strings.iter() {
-            let Some(name_index) = u32::try_from(index).ok().and_then(|index| index.checked_add(STRING_DICTIONARY_INDEX_SHIFT))
-            else {
+        // Index 0, the empty string, names no string.
+        for (index, text) in strings.iter().filter(|&(index, _)| index != EMPTY_STRING_INDEX) {
+            let Ok(name_index) = u32::try_from(index) else {
                 continue;
             };
             by_name.entry(text.to_ascii_lowercase()).or_insert(name_index);
@@ -1519,16 +1516,7 @@ pub(crate) mod tests {
 
     #[test]
     fn name_index_resolves_like_the_particle_reader() {
-        let strings = ["first.nif", "Second.EMS"];
-        let mut payload = Vec::new();
-        payload.extend_from_slice(&0u64.to_le_bytes());
-        payload.extend_from_slice(&(strings.len() as u32).to_le_bytes());
-        payload.extend_from_slice(&0u32.to_le_bytes());
-        for value in strings {
-            payload.extend_from_slice(&(value.len() as u16).to_le_bytes());
-            payload.extend_from_slice(value.as_bytes());
-        }
-        let dictionary = UoStringDictionary::from_payload_bytes(&payload, "test dictionary").unwrap();
+        let dictionary = UoStringDictionary::from_strings(["first.nif", "Second.EMS"]);
         let index = NameIndex::new(&dictionary);
         let name_index = index.name_index("second.ems").unwrap();
         let EffectDefinition::Particle(mut particle) = DefinitionKind::Particle.new_definition() else { panic!() };

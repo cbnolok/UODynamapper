@@ -970,9 +970,7 @@ impl TileArtEntry {
             .filter(|(_, block)| block.has_texture == 1)
             .map(|(index, block)| ArtMaterial {
                 block_index: index as u8,
-                shader_name: block.type_string_off.checked_sub(1)
-                    .and_then(|offset| string_dictionary.get_string(offset as usize))
-                    .map(str::to_owned),
+                shader_name: string_dictionary.named_string(block.type_string_off).map(str::to_owned),
                 technique: block.technique.clone(),
                 tweaks: block.tweaks.clone(),
                 field_04: block.field_04,
@@ -1031,11 +1029,7 @@ impl TileArtEntry {
             if texture.has_texture == 1 {
                 let mut items = Vec::new();
                 for (item_index, texture_item) in texture.texture_items.iter().enumerate() {
-                    if let Some(str) = texture_item
-                        .name_string_off
-                        .checked_sub(1)
-                        .and_then(|offset| string_dictionary.get_string(offset as usize))
-                    {
+                    if let Some(str) = string_dictionary.named_string(texture_item.name_string_off) {
                         let raw_path = str.to_string();
                         // normalized_path: lowercased, backslash converted to forward slash
                         let normalized_path = str.to_ascii_lowercase().replace('\\', "/");
@@ -1070,11 +1064,7 @@ impl TileArtEntry {
         texture_block: &TaeTexture,
         string_dictionary: &UoStringDictionary,
     ) -> TileType {
-        if let Some(shader_name) = texture_block
-            .type_string_off
-            .checked_sub(1)
-            .and_then(|offset| string_dictionary.get_string(offset as usize))
-        {
+        if let Some(shader_name) = string_dictionary.named_string(texture_block.type_string_off) {
             match shader_name {
                 WATER_SHADER_NAME => TileType::Liquid,
                 STATIC_TERRAIN_SHADER_NAME => TileType::Solid,
@@ -1136,7 +1126,7 @@ impl TileArtEntry {
         string_dictionary: &UoStringDictionary,
     ) -> Option<u32> {
         string_dictionary
-            .get_string((offset - 1) as usize)
+            .named_string(offset)
             .and_then(crate::utils::path::extract_texture_id_from_path)
     }
 
@@ -1148,10 +1138,9 @@ impl TileArtEntry {
         texture_block: &TaeTexture,
         string_dictionary: &UoStringDictionary,
     ) -> Option<u32> {
-        let shader_name = texture_block.type_string_off.checked_sub(1)
-            .and_then(|offset| string_dictionary.get_string(offset as usize));
+        let shader_name = string_dictionary.named_string(texture_block.type_string_off);
         let item = texture_block.texture_items.get(primary_texture_position(shader_name) as usize)?;
-        let path = string_dictionary.get_string(item.name_string_off.checked_sub(1)? as usize)?;
+        let path = string_dictionary.named_string(item.name_string_off)?;
         crate::utils::path::extract_texture_id_from_path(path)
     }
 }
@@ -1298,18 +1287,9 @@ mod tests {
     use super::*;
     use crate::enhanced::effect_definition::{SoundEffect, EFFECT_TYPE_SOUND, POSITION_OFFSET_DIRECTION_COUNT};
 
+    /// A dictionary naming `values` by the indices 1 on.
     fn dictionary_with_strings(values: &[&str]) -> UoStringDictionary {
-        let mut payload = Vec::new();
-        payload.extend_from_slice(&0u64.to_le_bytes());
-        payload.extend_from_slice(&(values.len() as u32).to_le_bytes());
-        payload.extend_from_slice(&0u32.to_le_bytes());
-        for value in values {
-            payload.extend_from_slice(&(value.len() as u16).to_le_bytes());
-            payload.extend_from_slice(value.as_bytes());
-        }
-
-        UoStringDictionary::from_payload_bytes(&payload, "test dictionary")
-            .expect("build test dictionary")
+        UoStringDictionary::from_strings(values.iter().copied())
     }
 
     fn dictionary_with_single_string(value: &str) -> UoStringDictionary {

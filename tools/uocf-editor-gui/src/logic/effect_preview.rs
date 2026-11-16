@@ -1148,16 +1148,7 @@ pub(crate) mod tests {
     const TEST_HUE_COLOR: [f32; 4] = [0.25, 0.5, 0.75, 1.0];
 
     pub(crate) fn dictionary() -> UoStringDictionary {
-        let strings = [SCRIPT_NAME, NIF_NAME];
-        let mut payload = Vec::new();
-        payload.extend_from_slice(&0u64.to_le_bytes());
-        payload.extend_from_slice(&(strings.len() as u32).to_le_bytes());
-        payload.extend_from_slice(&0u32.to_le_bytes());
-        for value in strings {
-            payload.extend_from_slice(&(value.len() as u16).to_le_bytes());
-            payload.extend_from_slice(value.as_bytes());
-        }
-        UoStringDictionary::from_payload_bytes(&payload, "test").unwrap()
+        UoStringDictionary::from_strings([SCRIPT_NAME, NIF_NAME])
     }
 
     fn particle(name_index: u32) -> EffectDefinition {

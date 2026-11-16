@@ -515,7 +515,7 @@ fn ec_tileart(
                 let dictionary = app.uo_string_dictionary.clone();
                 let name = dictionary
                     .as_deref()
-                    .and_then(|dictionary| dictionary.get_string((file.entry.string_dict_off as usize).checked_sub(1)?));
+                    .and_then(|dictionary| dictionary.named_string(file.entry.string_dict_off));
                 let editable = app.tileart_editor.enabled;
                 tileart_editor::record_panel(ui, file, name, dictionary.as_deref(), &mut app.tileart_editor.effects_draft, editable, &mut edits);
             });

@@ -26,8 +26,8 @@
 //! drawn material without a null check, so a definition without one crashes the client
 //! ([`TerrainDefinitionEntry::validate`], [`check_terrain_references`]).
 //!
-//! String indices are 1-based into the strings `UoStringDictionary` stores (index 0 is no string): the shipped
-//! record 0 names index 110548, the dictionary's string 110547, `void_no_draw`.
+//! String indices name `UoStringDictionary` strings directly (index 0, the empty string, is no string): the shipped
+//! record 0 names string 110548, `void_no_draw`.
 //!
 //! The package is also authoritative for the land tile ids owned by terrain materials, the world/legacy texture ids
 //! that must be excluded from `tex_art_ec` and the primary terrain texture packed into `tex_land_ec`.
@@ -64,9 +64,6 @@ pub const BASE_SUBTYPE: u32 = 0;
 pub const DEFAULT_TERRAIN_LAYER_SHADER: &str = "UODefaultTerrainLayer";
 pub const WATER_TERRAIN_LAYER_SHADER: &str = "UOWaterTerrainLayer";
 pub const BUMP_MAP_TERRAIN_LAYER_SHADER: &str = "UOBumpMapTerrainLayer";
-/// String index meaning "no string"; string `index` is the dictionary's string `index - 1`.
-const NO_STRING_INDEX: u32 = 0;
-
 // region: --- Alias flags
 
 /// Alias flag bits, in the tiledata / `TaeFlag` layout of the Enhanced Client (u64). The client reads only
@@ -1036,11 +1033,8 @@ fn resolve_dictionary_string(
     string_dictionary: Option<&UoStringDictionary>,
     string_index: u32,
 ) -> Option<String> {
-    if string_index == NO_STRING_INDEX {
-        return None;
-    }
     string_dictionary
-        .and_then(|dict| dict.get_string((string_index - 1) as usize))
+        .and_then(|dict| dict.named_string(string_index))
         .map(str::to_owned)
 }
 

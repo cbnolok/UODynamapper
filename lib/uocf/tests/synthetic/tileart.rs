@@ -2,19 +2,9 @@ use uocf::enhanced::tileart::*;
 use uocf::enhanced::string_dictionary::UoStringDictionary;
 use uocf::utils::path::extract_texture_id_from_path;
 
+/// A dictionary naming `strings` by the indices 1 on, as tileart records name them.
 fn test_dictionary(strings: &[&str]) -> UoStringDictionary {
-    let mut payload = Vec::new();
-    payload.extend_from_slice(&0u64.to_le_bytes());
-    payload.extend_from_slice(&(strings.len() as u32).to_le_bytes());
-    payload.extend_from_slice(&0u32.to_le_bytes());
-    for string in strings {
-        let bytes = string.as_bytes();
-        payload.extend_from_slice(&(bytes.len() as u16).to_le_bytes());
-        payload.extend_from_slice(bytes);
-    }
-
-    UoStringDictionary::from_payload_bytes(&payload, "tileart-tests")
-        .expect("build test string dictionary")
+    UoStringDictionary::from_strings(strings.iter().copied())
 }
 
 #[test]

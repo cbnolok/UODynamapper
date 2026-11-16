@@ -163,7 +163,7 @@ mod tests {
 
     #[test]
     fn static_assets_use_entry_names_and_keep_the_stored_source_id() {
-        let strings = UoStringDictionary::from_payload_bytes(&[0; 16], "empty test dictionary").unwrap();
+        let strings = UoStringDictionary::from_strings::<&str>([]);
         let mut package = UopPackage::new_default();
         let creature = 10_000_001u32;
         let wrapped = creature as u16;
@@ -188,7 +188,7 @@ mod tests {
 
     #[test]
     fn malformed_named_static_is_reported_instead_of_silently_missing() {
-        let strings = UoStringDictionary::from_payload_bytes(&[0; 16], "empty test dictionary").unwrap();
+        let strings = UoStringDictionary::from_strings::<&str>([]);
         let mut package = UopPackage::new_default();
         package.add_file_from_memory(&[0, 0], &tileart_entry_path(43957), CompressionFlag::Zlib).unwrap();
         let error = ArtDefinition::from_package(&package, &strings).unwrap_err();

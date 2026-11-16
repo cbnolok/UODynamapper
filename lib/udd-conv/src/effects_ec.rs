@@ -1727,15 +1727,9 @@ mod tests {
         assert!(finding.message.ends_with("named by 3 (tile 1 [0], tile 2 [0], system fire.ems MESH)"), "{finding}");
     }
 
+    /// A dictionary naming `strings` by the indices 1 on.
     fn dictionary(strings: &[&str]) -> UoStringDictionary {
-        let mut payload = vec![0u8; size_of::<u64>()];
-        payload.extend(u32::try_from(strings.len()).unwrap().to_le_bytes());
-        payload.extend(0u32.to_le_bytes());
-        for string in strings {
-            payload.extend(u16::try_from(string.len()).unwrap().to_le_bytes());
-            payload.extend(string.as_bytes());
-        }
-        UoStringDictionary::from_payload_bytes(&payload, "test").unwrap()
+        UoStringDictionary::from_strings(strings.iter().copied())
     }
 
     fn particle(name_index: u32) -> EffectDefinition {

@@ -5,17 +5,11 @@ use byteorder::{LittleEndian, WriteBytesExt};
 use std::time::{SystemTime, UNIX_EPOCH};
 use std::path::PathBuf;
 
+/// A dictionary payload naming `strings` by the indices 1 on, as terrain definitions name them.
 fn serialize_dictionary_payload(strings: &[&str]) -> Vec<u8> {
-    let mut bytes = Vec::new();
-    bytes.extend_from_slice(&0x0123_4567_89AB_CDEFu64.to_le_bytes());
-    bytes.extend_from_slice(&(strings.len() as u32).to_le_bytes());
-    bytes.extend_from_slice(&0x48u32.to_le_bytes());
-    for string in strings {
-        let string_bytes = string.as_bytes();
-        bytes.extend_from_slice(&(string_bytes.len() as u16).to_le_bytes());
-        bytes.extend_from_slice(string_bytes);
-    }
-    bytes
+    uocf::enhanced::string_dictionary::UoStringDictionary::from_strings(strings.iter().copied())
+        .to_payload_bytes()
+        .expect("dictionary payload")
 }
 
 fn serialize_entry_payload(

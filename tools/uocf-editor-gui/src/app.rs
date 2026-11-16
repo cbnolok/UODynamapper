@@ -1088,7 +1088,6 @@ pub struct TileArtDisplayRow {
 #[derive(Clone)]
 pub struct StringDictionaryRow {
     pub index: String,
-    pub offset: String,
     pub value: String,
     pub search_text: String,
 }
@@ -1348,7 +1347,7 @@ pub(crate) fn collect_tileart_display_rows(
             let entry = &file.entry;
             let tile_id = entry.tile_id.to_string();
             let name = string_dictionary
-                .and_then(|strings| strings.get_string((entry.string_dict_off as usize).checked_sub(1)?))
+                .and_then(|strings| strings.named_string(entry.string_dict_off))
                 .unwrap_or_default()
                 .to_owned();
             let old_id = if entry.old_id == TILEART_NO_OLD_ID { String::new() } else { entry.old_id.to_string() };
@@ -1580,19 +1579,10 @@ fn tileart_appearance_summary(appearance: &[TaeAppearanceFilter]) -> String {
 pub(crate) fn collect_string_dictionary_rows(dictionary: &UoStringDictionary) -> Vec<StringDictionaryRow> {
     dictionary
         .iter()
-        .map(|(index, value)| {
-            let offset = index + 1;
-            StringDictionaryRow {
-                index: index.to_string(),
-                offset: offset.to_string(),
-                value: value.to_string(),
-                search_text: format!(
-                    "{} {} {}",
-                    index,
-                    offset,
-                    value.to_lowercase()
-                ),
-            }
+        .map(|(index, value)| StringDictionaryRow {
+            index: index.to_string(),
+            value: value.to_string(),
+            search_text: format!("{} {}", index, value.to_lowercase()),
         })
         .collect()
 }

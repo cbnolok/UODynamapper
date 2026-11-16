@@ -7,7 +7,7 @@ use eframe::egui;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use uocf::enhanced::entry_edit::EntryTarget;
-use uocf::enhanced::string_dictionary::UoStringDictionary;
+use uocf::enhanced::string_dictionary::{UoStringDictionary, EMPTY_STRING_INDEX};
 
 const PACKAGE_NAME: &str = "string_dictionary.uop";
 const ROW_HEIGHT: f32 = 20.0;
@@ -80,13 +80,16 @@ fn edit_dictionary(app: &mut UocfEditorApp, edit: impl FnOnce(&mut UoStringDicti
     edit(Arc::make_mut(dictionary));
 }
 
-/// Stores `text` as the string `index`, when it differs.
+/// Stores `text` as the string `index`, when it differs. String 0 stays empty: index 0 names no string.
 fn set_string(app: &mut UocfEditorApp, index: usize, text: String) {
+    if index == EMPTY_STRING_INDEX {
+        return;
+    }
     let current = app.uo_string_dictionary.as_ref().and_then(|dictionary| dictionary.get_string(index).map(str::to_owned));
     if current.is_none_or(|current| current == text) {
         return;
     }
-    let search_text = format!("{} {} {}", index, index + 1, text.to_lowercase());
+    let search_text = format!("{} {}", index, text.to_lowercase());
     if let Some(row) = app.string_dictionary_rows.as_mut().and_then(|rows| Arc::make_mut(rows).get_mut(index)) {
         row.value.clone_from(&text);
         row.search_text = search_text;
@@ -118,7 +121,7 @@ fn select_string(app: &mut UocfEditorApp, index: Option<usize>) {
 fn editing_controls(app: &mut UocfEditorApp, ui: &mut egui::Ui) {
     let editor = &mut app.string_dictionary_editor;
     let dirty = editor.opened.is_some();
-    let hover = "Change a string or add one, and save a copy of the package. Other files name a string by its index, so strings keep their places and none can be removed.";
+    let hover = "Change a string or add one, and save a copy of the package. Other files name a string by its index, so strings keep their places and none can be removed; string 0 is the empty string index 0 names, and stays empty.";
     let action = ui.horizontal(|ui| editor_bar(ui, &mut editor.enabled, hover, dirty, "Save string_dictionary.uop...", &mut editor.error)).inner;
     match action {
         Some(BarAction::Revert) => revert(app),
@@ -211,8 +214,8 @@ pub fn ui_string_dictionary(app: &mut UocfEditorApp, _ctx: &egui::Context, ui: &
             ui.label("unk1");
             ui.label(format!("0x{:016X}", dictionary.unk1()));
             ui.end_row();
-            ui.label("unk2");
-            ui.label(format!("0x{:08X}", dictionary.unk2()));
+            ui.label("Longest string (bytes)");
+            ui.label(dictionary.max_length().to_string());
             ui.end_row();
         });
 
@@ -221,14 +224,13 @@ pub fn ui_string_dictionary(app: &mut UocfEditorApp, _ctx: &egui::Context, ui: &
             ui.text_edit_singleline(&mut app.searches.string_dictionary);
         });
         let go_to = go_to_field(ui, "string_dictionary_rows");
-        let sort = list_sort_controls(ui, "string_dictionary_rows", &["Index", "Offset", "String"], 0);
+        let sort = list_sort_controls(ui, "string_dictionary_rows", &["Index", "String"], 0);
         ui.separator();
 
         let query = app.searches.string_dictionary.to_lowercase();
         let sorted_indices = sorted_indices_by(&rows, sort.ordering(), |left, right| {
             match sort.option_index {
-                1 => string_number(&left.offset).cmp(&string_number(&right.offset)),
-                2 => left.value.to_ascii_lowercase().cmp(&right.value.to_ascii_lowercase()),
+                1 => left.value.to_ascii_lowercase().cmp(&right.value.to_ascii_lowercase()),
                 _ => string_number(&left.index).cmp(&string_number(&right.index)),
             }
         });
@@ -245,7 +247,6 @@ pub fn ui_string_dictionary(app: &mut UocfEditorApp, _ctx: &egui::Context, ui: &
             .striped(true)
             .show(ui, |ui| {
                 ui.label("Index");
-                ui.label("Offset");
                 ui.label("String");
                 ui.end_row();
             });
@@ -274,7 +275,6 @@ pub fn ui_string_dictionary(app: &mut UocfEditorApp, _ctx: &egui::Context, ui: &
                         } else {
                             ui.label(&row.index);
                         }
-                        ui.label(&row.offset);
                         ui.monospace(&row.value);
                         ui.end_row();
                     }
@@ -301,11 +301,16 @@ mod tests {
     const CHANGED: &str = "changed";
     const ADDED: &str = "added";
 
+    /// The strings of the test dictionary: the empty string 0, then two.
+    const STRINGS: [&str; 3] = ["", "alpha", "beta"];
+    /// The declared longest length of the test dictionary.
+    const MAX_LENGTH: u16 = 5;
+
     fn payload() -> Vec<u8> {
         let mut payload = vec![0u8; 8];
-        payload.extend_from_slice(&2u32.to_le_bytes());
-        payload.extend_from_slice(&0u32.to_le_bytes());
-        for text in ["alpha", "beta"] {
+        payload.extend_from_slice(&(STRINGS.len() as u32).to_le_bytes());
+        payload.extend_from_slice(&MAX_LENGTH.to_le_bytes());
+        for text in STRINGS {
             payload.extend_from_slice(&(text.len() as u16).to_le_bytes());
             payload.extend_from_slice(text.as_bytes());
         }
@@ -327,26 +332,28 @@ mod tests {
     #[test]
     fn a_string_left_as_it_was_is_no_change() {
         let mut app = app_with_dictionary();
-        set_string(&mut app, 0, "alpha".to_owned());
+        set_string(&mut app, 1, "alpha".to_owned());
+        assert!(!(TAB_EDITOR.is_dirty)(&app));
+        set_string(&mut app, EMPTY_STRING_INDEX, CHANGED.to_owned());
         assert!(!(TAB_EDITOR.is_dirty)(&app));
     }
 
     #[test]
     fn a_changed_and_an_added_string_show_and_discarding_takes_them_back() {
         let mut app = app_with_dictionary();
-        set_string(&mut app, 0, CHANGED.to_owned());
+        set_string(&mut app, 1, CHANGED.to_owned());
         add_string(&mut app, ADDED.to_owned());
         assert!((TAB_EDITOR.is_dirty)(&app));
-        assert_eq!(text_of(&app, 0), CHANGED);
-        assert_eq!(text_of(&app, 2), ADDED);
+        assert_eq!(text_of(&app, 1), CHANGED);
+        assert_eq!(text_of(&app, 3), ADDED);
         let rows = app.string_dictionary_rows.clone().unwrap();
-        assert_eq!((rows.len(), rows[0].value.as_str(), rows[0].search_text.contains(CHANGED)), (3, CHANGED, true));
-        assert_eq!(app.string_dictionary_editor.selected, Some(2));
+        assert_eq!((rows.len(), rows[1].value.as_str(), rows[1].search_text.contains(CHANGED)), (4, CHANGED, true));
+        assert_eq!(app.string_dictionary_editor.selected, Some(3));
 
         (TAB_EDITOR.discard)(&mut app);
         assert!(!(TAB_EDITOR.is_dirty)(&app));
         assert_eq!(app.uo_string_dictionary.as_ref().unwrap().to_payload_bytes().unwrap(), payload());
-        assert_eq!(app.string_dictionary_rows.as_ref().unwrap().len(), 2);
+        assert_eq!(app.string_dictionary_rows.as_ref().unwrap().len(), STRINGS.len());
     }
 
     #[test]
@@ -366,11 +373,12 @@ mod tests {
             assert!(std::fs::read(&output).unwrap() == std::fs::read(&source).unwrap(), "{}: a save without changes differs", root.display());
 
             let count = dictionary.len();
-            assert!(dictionary.set_string(0, CHANGED.to_owned()));
+            const EDITED: usize = 1;
+            assert!(dictionary.set_string(EDITED, CHANGED.to_owned()));
             let added = dictionary.push_string(ADDED.to_owned());
             write_copy(&dictionary, &source, hash, &output).unwrap();
             let reopened = UoStringDictionary::load(&output).unwrap();
-            assert_eq!(reopened.get_string(0), Some(CHANGED));
+            assert_eq!(reopened.get_string(EDITED), Some(CHANGED));
             assert_eq!(reopened.get_string(added), Some(ADDED));
             assert_eq!(reopened.len(), count + 1);
             std::fs::remove_file(&output).unwrap();

@@ -61,15 +61,21 @@ Editing `.uop` packages (`uop_container::package`):
 `string_dictionary.uop`:
 
 - Stores strings used by many EC records.
-- Most source records store 1-based string offsets. The parser resolves offset
-  `n` through dictionary index `n - 1`.
+- Records name a string by its index, which the client uses directly; string
+  0 is empty, so index 0 names no string (`UoStringDictionary::named_string`).
 - Typical values are virtual paths such as `Data\WorldArt\02000130_...tga`,
   shader names such as `UOStaticTerrainShader`, or material names.
 - One entry, `build/stringdictionary/string_dictionary.bin`: `u64` (looks like a
-  FILETIME), `u32` declared count, `u32`, then `u16` length + UTF-8 strings. The
-  client file declares 110856 strings and stores 110855. `UoStringDictionary`
-  keeps both counts (`declared_count`, `len`), and `to_payload_bytes` writes the
-  client payload back byte for byte.
+  FILETIME), `u32` count, `u16` length of the longest string, then `count`
+  strings of `u16` length + UTF-8 bytes, as `UOStringDictionary::Load` reads it
+  (`docs/client_research/ghidra-tileart/results/uosa_tileart.md`). The Enhanced
+  Client's file holds 110856 strings (longest 72 bytes), Kingdom Reborn's 30221
+  (longest 59), string 0 empty in both. A `u32` after the count (UOETE's 16-byte
+  header) swallows string 0's length and shifts every index down by one, which
+  read as one string fewer than declared until 2026-11-16. `UoStringDictionary`
+  keeps the header (`declared_count`, `max_length`), raises the longest length
+  when an edit makes a longer string, and `to_payload_bytes` writes the client
+  payload back byte for byte.
 
 `LocalizedStrings.uop` (`localized_strings.rs`):
 
@@ -307,8 +313,8 @@ Facet sizes in the executable (`client::facet_dimensions`,
   `{u32 path index, u8 source_kind, f32 stretch, u32 sampler_index, u32
   uv_set}`, u32 + i32 techniques, u32 + f32 tweaks (4 each in every record).
   Nothing follows; trailing bytes are rejected.
-- String indices are 1-based: index N is the dictionary's string N - 1
-  (record 0 names index 110548, string 110547 `void_no_draw`).
+- String indices name dictionary strings directly, 0 none (record 0 names
+  string 110548, `void_no_draw`).
 - A square names `(material, subtype)` (Kingdom Reborn sectors directly, EC
   sectors through `legacyterrainmap.csv`); the alias with that subtype
   supplies the cell flags. Subtype equals the alias position in every
@@ -503,7 +509,7 @@ Facet sizes in the executable (`client::facet_dimensions`,
   required: no other file lists the tile ids, and `precachelist.dat` only
   preloads.
   A new name needs a `string_dictionary.uop` string (the record stores its
-  1-based index) and new art needs `Texture.uop` / `LegacyTexture.uop`
+  index) and new art needs `Texture.uop` / `LegacyTexture.uop`
   entries for the texture paths; a copy can keep the source's name and
   textures. The client also reads a loose
   `Data/Definitions/TileArt/%08d.tileart` override. Servers send item graphics
