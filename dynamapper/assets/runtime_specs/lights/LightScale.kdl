@@ -1,6 +1,6 @@
-// How large KR-like and Enhanced draw the local lights of chosen items: their light sprites (on top of the tileart's
-// light scale) and the lights on the ground taken from them, or their light.mul lights when the style's Local Lights
-// take light.mul. Classic and UOD-Painterly draw every light as the client does. Dynamapper reads your copy,
+// How large the light sprite styles (KR-like, Enhanced and UOD-Painterly) draw the local lights of chosen items: their
+// light sprites (on top of the tileart's light scale) and the lights on the ground taken from them, or their light.mul
+// lights when the style's Local Lights take light.mul. Classic draws every light as the client does. Dynamapper reads your copy,
 // cache/runtime_specs/lights/LightScale.kdl beside the assets folder, in place of this file when it exists, at startup:
 // copy this file there and edit the copy. A copy that does not read leaves this file in force, with a warning naming
 // the line, until it is fixed.
