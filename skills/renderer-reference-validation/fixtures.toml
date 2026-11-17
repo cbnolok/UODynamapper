@@ -673,16 +673,65 @@ settings = { world_rendering = { show_only_player_floor = true } }
 name = "lava-dirt-local-lights"
 guards = """Dirt and lava fields (map 1): lava's local lights reach farther in KR-like and Enhanced through the light \
 scale file (3ad6fc2e); lava and obsidian repetition broken up (eb71a329); Enhanced art draws lava statics from \
-Classic art over Classic land (dfbd8422). Lava is the one noisy view: up to 3 levels between launches in Classic \
-at night."""
+Classic art over Classic land (dfbd8422). The lava's edge pieces are surface-like from Kingdom Reborn's Surface flag \
+(TilemetaOverrides.kdl, 2026-11-17): without it they stand as upright items and the pools' rims break up. Lava is \
+the one noisy view: up to 3 levels between launches in Classic at night."""
 tier = "quick"
-tags = ["lava", "lights", "terrain", "liquids"]
+tags = ["lava", "lights", "terrain", "liquids", "tilemeta-overrides"]
 map = 1
 x = 4622
 y = 3560
 z = 30
 times = ["afternoon", "night"]
 tolerance = { pixel_threshold = 6, changed_pct = 0.05 }
+
+[[fixture]]
+name = "deceit-swamp-surface"
+guards = """The swamp pieces by Deceit (map 1) are surface-like from Kingdom Reborn's Surface flag \
+(TilemetaOverrides.kdl, 2026-11-17): in Enhanced art they take the terrain-texture surface path and blend into the \
+swamp land; without it they stand as item art with hard edges."""
+tier = "full"
+tags = ["terrain", "surfaces", "liquids", "tilemeta-overrides"]
+map = 1
+x = 5219
+y = 744
+z = -20
+
+[[fixture]]
+name = "deceit-swamp-rotated"
+guards = """The swamp pieces 0x3236-0x323F by Deceit (map 1) take Kingdom Reborn's Surface and Rotated \
+(TilemetaOverrides.kdl, 2026-11-17): surface-like, drawn as the client's camera quad."""
+tier = "full"
+tags = ["terrain", "surfaces", "tilemeta-overrides"]
+map = 1
+x = 5183
+y = 727
+z = 0
+
+[[fixture]]
+name = "deceit-swamp-rotated-perspective"
+guards = """The Rotated swamp pieces of deceit-swamp-rotated in the perspective camera, where the camera quad of a \
+Rotated surface differs from the ground quad (TilemetaOverrides.kdl, 2026-11-17)."""
+tier = "full"
+tags = ["terrain", "surfaces", "perspective", "tilemeta-overrides"]
+map = 1
+x = 5183
+y = 727
+z = 0
+camera = "perspective"
+
+[[fixture]]
+name = "ankh-of-sacrifice-light"
+guards = """The ankh of sacrifice 0x1D97/0x1D98 (map 0) glows at night: Kingdom Reborn's LightSource flag and light \
+sprite (TilemetaOverrides.kdl, 2026-11-17), which the Enhanced tileart lacks; Classic draws its light.mul light from \
+the same flag."""
+tier = "full"
+tags = ["lights", "night", "tilemeta-overrides"]
+map = 0
+x = 6939
+y = 1021
+z = -15
+times = ["afternoon", "night"]
 
 [[fixture]]
 name = "yew-forest-canopy"
