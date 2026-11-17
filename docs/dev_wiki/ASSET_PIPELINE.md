@@ -98,7 +98,7 @@ Common commands:
 - `hash-path`: compute the `xxh64` hash used by path-addressed packages.
 - `export-csv`: export editable package metadata.
 - `export-kdl`: write the dress-layer decisions of `paperdoll_ec.uddp` as `PaperdollOverrides.kdl` covers, named from `tilemeta.uddp`.
-- `apply-tilemeta-overrides`: apply `TilemetaOverrides.kdl` (the developers' corrections to the Enhanced item flags and lights, `cc_ec_convtables/`) to a packed `tilemeta.uddp`, taking the Kingdom Reborn lights from its own Kingdom Reborn section. The packers apply the bundled file whenever they nest that section.
+- `apply-tilemeta-overrides`: apply `TilemetaOverrides.kdl` (the developers' corrections to the Enhanced item flags and lights, `cc_ec_convtables/`) to a packed `tilemeta.uddp`, taking the Kingdom Reborn lights from its own Kingdom Reborn section. The packers apply the bundled file whenever they nest that section. The renderer applies the corrections to the items drawn with Enhanced or Kingdom Reborn art only; an item drawn with Classic art keeps the clients' values.
 - `import-csv`: import controlled metadata edits after invariant checks.
 - `validate`: decode every entry and run each package's own reader; exits non-zero on any failure.
 

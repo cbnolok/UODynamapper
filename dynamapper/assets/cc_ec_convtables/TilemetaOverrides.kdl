@@ -1,13 +1,16 @@
 // TilemetaOverrides.kdl
 //
-// Corrections to the Enhanced tables of tilemeta.uddp, which Enhanced, KR-like and UOD-Painterly read. udd-cli and the
-// converter GUI apply this file when they pack tilemeta.uddp with its Kingdom Reborn section, after the conversion
-// pass; `udd-cli tool apply-tilemeta-overrides tilemeta.uddp` applies it to a packed package, reading the Kingdom
-// Reborn section the package holds (no client folder needed). The package records the digest of the file and the
-// values it replaced, and `udd-cli tool validate` reports a package built from another version of this file.
+// Corrections to the Enhanced tables of tilemeta.uddp. udd-cli and the converter GUI apply this file when they pack
+// tilemeta.uddp with its Kingdom Reborn section, after the conversion pass; `udd-cli tool apply-tilemeta-overrides
+// tilemeta.uddp` applies it to a packed package, reading the Kingdom Reborn section the package holds (no client folder
+// needed). The package records the digest of the file and the values it replaced, and `udd-cli tool validate` reports
+// a package built from another version of this file.
 //
-// Note: the item flags are one table, the Classic tiledata flags merged with the Enhanced tileart flags, so Classic
-// reads the flags set here too (its depth classes and its light.mul lights).
+// The corrections were measured against the Enhanced and Kingdom Reborn art, so the renderer applies them only to the
+// items drawn with that art, in every style. An item drawn with Classic art keeps the clients' flags and lights, which
+// the renderer rebuilds from the recorded values: the item flags are one table, the Classic tiledata flags merged with
+// the Enhanced tileart flags, and Classic art would otherwise read them too (its depth classes, flat geometry and
+// light.mul lights).
 //
 //     items <id> "<id>..<id>" ... {
 //         add "<TaeFlag>" <bit> ...      set flags, by TaeFlag name or bit number
@@ -49,7 +52,8 @@ items "0x3236..0x323F" {
 
 // Ankh of sacrifice: the Kingdom Reborn tileart sets LightSource and gives it a light sprite (texture 1, scale 2.0,
 // offset -5.0, -4.0); the Enhanced tileart has neither, so the ankh stayed dark at night in Enhanced, KR-like and
-// UOD-Painterly. Classic reads LightSource too: its light.mul light, from the item's tiledata quality.
+// UOD-Painterly. Drawn with Enhanced art in the Classic style, LightSource gives it the light.mul light of its tiledata
+// quality too; drawn with Classic art it stays unlit, as in the Classic client.
 items 0x1D97 0x1D98 {
     add "LightSource"
     kr-light

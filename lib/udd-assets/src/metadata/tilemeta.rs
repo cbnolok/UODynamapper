@@ -849,6 +849,17 @@ impl TileMetaPackage {
         TileMetaOverridesRecord::from_bytes(&bytes).map(Some)
     }
 
+    /// This package with the tilemeta overrides undone: its item flags and lights as the clients' files define them
+    /// ([`TileMetaOverridesRecord::restore`]), every other table the same. `None` when it was built without them.
+    pub fn without_overrides(&self) -> eyre::Result<Option<Self>> {
+        let Some(record) = self.overrides_record()? else {
+            return Ok(None);
+        };
+        let mut package = Self::from_uddp_package(self.package.clone())?;
+        record.restore(&mut package.item_tiles, &mut package.item_lights)?;
+        Ok(Some(package))
+    }
+
     /// Every `tileart.uop` record the package was built from, byte for byte: the fields the tables above leave out
     /// are read from them.
     pub fn tileart_records(&self) -> &TileMetaTileArtRecords {
@@ -1443,6 +1454,54 @@ mod tests {
         assert!(message(Some(&current[TILEMETA_ITEM_LIGHT_HEADER_SIZE..])).contains("repack with the current udd-cli"));
         assert!(message(Some(&wrong_count)).contains("the header says 3"));
         assert!(message(Some(&unsorted)).contains("not sorted"));
+    }
+
+    /// Undoing the overrides puts back the flags and lights their record keeps and leaves the package's own tables
+    /// alone; a package built without them has nothing to undo.
+    #[test]
+    fn the_overrides_are_undone_from_their_record() {
+        const SURFACE: u64 = uocf::enhanced::tileart::TaeFlag::Surface.bits();
+        const LIT: u32 = 1;
+        const SURFACED: u32 = 2;
+        let mut items: Vec<TileMetaItemTile> = (0..3).map(|tile_id| TileMetaItemTile { tile_id,
+            ..bytemuck::Zeroable::zeroed() }).collect();
+        items[SURFACED as usize].flags = SURFACE;
+        let light = TileMetaItemLight { tile_id: LIT, light_texture_entry: 1, scale: 2.0, ..Default::default() };
+        let record = TileMetaOverridesRecord { digest: 7, original_flags: vec![(SURFACED, 0)],
+            original_lights: vec![(LIT, None)] };
+        let package = |record: Option<&TileMetaOverridesRecord>| {
+            let mut builder = udd_container::UddpBuilder::new(udd_container::LookupMode::VirtualPathHash);
+            let (refs, lights) = (encode_item_texture_refs(&[]), encode_item_lights(&[light]));
+            let tileart = TileMetaTileArtRecords::default().to_bytes();
+            let record = record.map(TileMetaOverridesRecord::to_bytes);
+            let entries = [
+                (TILEMETA_LAND_ENTRY_PATH, b"".as_slice()),
+                (TILEMETA_ITEM_ENTRY_PATH, bytemuck::cast_slice(&items)),
+                (TILEMETA_ITEM_TEXTURE_REF_INDEX_ENTRY_PATH, b"".as_slice()),
+                (TILEMETA_ITEM_TEXTURE_REF_ENTRY_PATH, refs.as_slice()),
+                (TILEMETA_ITEM_MATERIAL_ENTRY_PATH, b"{}".as_slice()),
+                (TILEMETA_ITEM_DEFINITION_ENTRY_PATH, EMPTY_DEFINITIONS.as_slice()),
+                (TILEMETA_ITEM_LIGHT_ENTRY_PATH, lights.as_slice()),
+                (TILEMETA_TILEART_RECORD_ENTRY_PATH, tileart.as_slice()),
+            ];
+            for (path, data) in entries.into_iter().chain(record.as_deref().map(|record|
+                (TILEMETA_OVERRIDES_ENTRY_PATH, record))) {
+                builder.add_file(udd_container::AddFileRequest {
+                    data_type: udd_container::DataType::Metadata as u8,
+                    compression: udd_container::CompressionFlag::ZstdNoDict,
+                    width: 0, height: 0, virtual_path: Some(path), path_hash64: None, id: None, data,
+                }).expect("add test metadata");
+            }
+            TileMetaPackage::from_uddp_package(UddpReader::open(builder.build().expect("build test metadata"))
+                .expect("open test metadata")).expect("package")
+        };
+        let overridden = package(Some(&record));
+        let undone = overridden.without_overrides().expect("undo").expect("a record to undo");
+        assert_eq!(undone.item_tile(SURFACED).map(|item| item.flags), Some(0));
+        assert_eq!(undone.item_light(LIT), None);
+        assert_eq!(overridden.item_tile(SURFACED).map(|item| item.flags), Some(SURFACE));
+        assert_eq!(overridden.item_light(LIT), Some(&light));
+        assert!(package(None).without_overrides().expect("no record").is_none());
     }
 
     #[test]

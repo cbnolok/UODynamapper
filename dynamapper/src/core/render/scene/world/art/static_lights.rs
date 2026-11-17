@@ -3,7 +3,7 @@ use super::light_cover::{static_light_ceiling_z, static_light_is_hidden, LightCo
 use super::light_scene::{
     light_clip_material, light_clip_tag, set_light_clip_mode, LightClipMaterial, LightClipMode, LightScene,
 };
-use super::statics_collect::{static_land_z, StaticChunkBatchKey};
+use super::statics_collect::{static_land_z, StaticArtSourceState, StaticChunkBatchKey};
 use crate::configs::light_scale::{ItemLightScales, NEUTRAL_LIGHT_SCALE};
 use crate::configs::{settings::Settings, shader_presets::UniformState};
 use crate::console_logger::{self, LogAbout, LogSev};
@@ -351,7 +351,7 @@ pub fn sys_collect_visible_static_lights(
     uniform_state: Res<UniformState>,
     client_light_sprites: Res<RenderClientLightSprites>,
     light_scales: Res<ItemLightScales>,
-    scene_state: Res<SceneStateData>,
+    (scene_state, art_source): (Res<SceneStateData>, Res<StaticArtSourceState>),
     view_cuts: (Res<ZViewLimit>, Res<CavesRes>),
     chunks_q: Query<&crate::core::render::scene::world::land::LCMesh>,
     mut material_cache: ResMut<StaticLightMaterialCache>,
@@ -371,9 +371,11 @@ pub fn sys_collect_visible_static_lights(
         return;
     }
 
-    let Some(tilemeta) = tilemeta_res else {
+    let Some(tilemeta_res) = tilemeta_res else {
         return;
     };
+    // The tile data of the art the statics are drawn with: an item drawn with Classic art keeps the clients' LightSource.
+    let tilemeta = tilemeta_res.for_art(art_source.active_source).as_ref();
     let Some(world_lights) = world_lights_res else {
         return;
     };
@@ -408,7 +410,7 @@ pub fn sys_collect_visible_static_lights(
         first * CHUNK_STORAGE_BLOCKS_DIM..end
     };
     let multi_parts = MultiCoverParts::read(
-        &tilemeta.0,
+        tilemeta,
         multis.0.as_deref(),
         &multis.1,
         settings.world_rendering.show_hidden_multi_parts,
@@ -437,12 +439,12 @@ pub fn sys_collect_visible_static_lights(
                     .iter()
                     .copied()
                     .filter(|tile| {
-                        tilemeta.0.item_tile(tile.graphic as u32).is_some_and(|meta| meta.flags & TILE_FLAG_LIGHT_SOURCE != 0)
+                        tilemeta.item_tile(tile.graphic as u32).is_some_and(|meta| meta.flags & TILE_FLAG_LIGHT_SOURCE != 0)
                     })
                     .collect::<Vec<_>>();
 
                 for tile in lit_tiles {
-                    let Some(meta) = tilemeta.0.item_tile(tile.graphic as u32) else {
+                    let Some(meta) = tilemeta.item_tile(tile.graphic as u32) else {
                         continue;
                     };
 
@@ -478,7 +480,7 @@ pub fn sys_collect_visible_static_lights(
                     if !seen.insert(key)
                         || static_light_is_hidden(
                             &mut statics_store,
-                            &tilemeta.0,
+                            tilemeta,
                             &multi_parts,
                             light_cover,
                             &land_z,
@@ -495,7 +497,7 @@ pub fn sys_collect_visible_static_lights(
                         .then(|| {
                             static_light_ceiling_z(
                                 &mut statics_store,
-                                &tilemeta.0,
+                                tilemeta,
                                 &multi_parts,
                                 &land_z,
                                 tile_x,

@@ -1,6 +1,6 @@
 #![allow(unused)]
 
-use crate::configs::settings::{GumpClient, Settings};
+use crate::configs::settings::{ClientTextureSource, GumpClient, Settings};
 use crate::core::maps::MapPlane;
 use crate::core::multis::MultiDefinitionsRes;
 use crate::core::statics::{LazyStaticsStore, StaticsStoreRes};
@@ -29,9 +29,29 @@ pub struct UoFilesSettingsRes(pub Arc<UoFilesSettings>);
 #[derive(Resource)]
 pub struct MapPlanesRes(pub Vec<Option<MapPlane>>);
 
-/// Preferred runtime metadata package for static/item rendering.
+/// Preferred runtime metadata package for static/item rendering: the Enhanced tables (`0`), which the tilemeta
+/// overrides (`TilemetaOverrides.kdl`) correct, and the tables of the items drawn with Classic art (`for_art`).
 #[derive(Resource)]
-pub struct TileMetaPackageRes(pub Arc<TileMetaPackage>);
+pub struct TileMetaPackageRes(pub Arc<TileMetaPackage>, Arc<TileMetaPackage>);
+
+impl TileMetaPackageRes {
+    /// `package`, with its tables as the clients' files define them (`TileMetaPackage::without_overrides`) for the
+    /// items drawn with Classic art; the same package when it was built without the overrides.
+    pub fn new(package: Arc<TileMetaPackage>) -> color_eyre::eyre::Result<Self> {
+        let cc_art = package.without_overrides()?.map_or_else(|| package.clone(), Arc::new);
+        Ok(Self(package, cc_art))
+    }
+
+    /// The tables an item drawn from `art` is drawn by: the overrides were measured against the Enhanced and Kingdom
+    /// Reborn art, so an item drawn with Classic art keeps the clients' flags and lights. The Enhanced tables without
+    /// an art source (the dot mode).
+    pub fn for_art(&self, art: Option<ClientTextureSource>) -> &Arc<TileMetaPackage> {
+        match art {
+            Some(ClientTextureSource::Cc) => &self.1,
+            Some(ClientTextureSource::Ec) | None => &self.0,
+        }
+    }
+}
 
 /// Arc: cloned into the chunk-loader OS thread (via LoadRequest.texmap_2d)
 /// and passed to texture cache systems that warm pixel data off-thread.
@@ -939,7 +959,8 @@ pub fn sys_setup_uo_data(mut commands: Commands, settings: Res<Settings>) {
         udd_folder: udd_path,
     })));
     commands.insert_resource(MapPlanesRes(map_planes));
-    commands.insert_resource(TileMetaPackageRes(tilemeta_package.clone()));
+    commands.insert_resource(TileMetaPackageRes::new(tilemeta_package.clone())
+        .unwrap_or_else(|error| panic!("Error loading the tilemeta overrides of {}: {error:#}", tilemeta_path.display())));
     commands.insert_resource(TexMap2DRes(Arc::new(texmap_2d)));
     if let Some(tex_art_cc_package) = tex_art_cc_package {
         commands.insert_resource(TexArtCcPackageRes(Arc::new(tex_art_cc_package)));

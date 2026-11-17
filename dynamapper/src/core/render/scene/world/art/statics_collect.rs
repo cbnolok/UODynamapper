@@ -1026,16 +1026,19 @@ pub(super) fn kingdom_reborn_static_visual_kind(
 
 /// The tile data a static of `graphic` drawn as `kind` is drawn and picked by, the package and its item: Kingdom
 /// Reborn's (`kr`) for a kind drawn from the Kingdom Reborn packages, as the KR client draws its art by its own tileart
-/// (its NoDraw, Surface and Rotated flags differ from the Enhanced ones on some of the statics that continue the land),
-/// else the Enhanced `enhanced`.
+/// (its NoDraw, Surface and Rotated flags differ from the Enhanced ones on some of the statics that continue the land);
+/// `cc_art`, the clients' tables without the tilemeta overrides (`TileMetaPackageRes::for_art`), for one drawn with
+/// Classic art, which the overrides were not measured against; else the Enhanced `enhanced`.
 pub(super) fn drawn_tile_data<'a>(
     kind: Option<StaticVisualKind>,
     graphic: u16,
     enhanced: Option<&'a udd_assets::tilemeta::TileMetaPackage>,
+    cc_art: Option<&'a udd_assets::tilemeta::TileMetaPackage>,
     kr: Option<KrStaticSources<'a>>,
 ) -> (Option<&'a udd_assets::tilemeta::TileMetaPackage>, Option<&'a udd_assets::tilemeta::TileMetaItemTile>) {
-    let package = match kr {
-        Some(kr) if kind.is_some_and(StaticVisualKind::is_kingdom_reborn) => Some(kr.tilemeta),
+    let package = match (kind, kr) {
+        (Some(kind), Some(kr)) if kind.is_kingdom_reborn() => Some(kr.tilemeta),
+        (Some(StaticVisualKind::CcRegular { .. }), _) => cc_art,
         _ => enhanced,
     };
     (package, package.and_then(|package| package.item_tile(u32::from(graphic))))
@@ -2101,6 +2104,12 @@ impl<'a> StaticCollectResources<'a> {
         self.tilemeta.map(|package| package.0.as_ref())
     }
 
+    /// The tile data of the statics drawn from `art` (`TileMetaPackageRes::for_art`).
+    fn tilemeta_package_for_art(self, art: Option<ClientTextureSource>)
+        -> Option<&'a udd_assets::tilemeta::TileMetaPackage> {
+        self.tilemeta.map(|package| package.for_art(art).as_ref())
+    }
+
     fn tex_aux_ec_package(self) -> Option<&'a udd_assets::tex_aux_ec::TexAuxEcPackage> {
         self.tex_aux_ec.map(|package| package.0.as_ref())
     }
@@ -2440,7 +2449,7 @@ fn rebuild_static_chunk(
                 if let Ok(tiles) = statics_store.block_tiles(nx, ny) {
                     neighbour_surface_tops.extend(client_shadow_surface_tops(
                         tiles.iter().map(|tile| static_cell_tile(nx, ny, *tile)),
-                        resources.tilemeta_package(),
+                        resources.tilemeta_package_for_art(frame.art_source),
                     ));
                 }
             }
@@ -2451,7 +2460,7 @@ fn rebuild_static_chunk(
             build.stats.source_tiles += tiles.len();
             let block_surface_tops = client_shadow_surface_tops(
                 tiles.iter().map(|tile| static_cell_tile(gx, gy, *tile)),
-                resources.tilemeta_package(),
+                resources.tilemeta_package_for_art(frame.art_source),
             );
 
             // Every static draws as itself, whatever its graphic: map statics are never multis (`core::multis`).
@@ -2480,7 +2489,8 @@ fn rebuild_static_chunk(
                 collect_multi_render_tiles(placed_multi, parts, &mut render_tiles);
                 // A multi's own parts are the surfaces under its parts; a plain static sits on the block's statics.
                 let multi_surface_tops =
-                    client_shadow_surface_tops(render_tiles.iter().copied(), resources.tilemeta_package());
+                    client_shadow_surface_tops(render_tiles.iter().copied(),
+                        resources.tilemeta_package_for_art(frame.art_source));
                 for render_tile in &render_tiles {
                     emit_static_render_tile_on_surfaces(
                         *render_tile,
@@ -2589,7 +2599,8 @@ fn emit_static_render_tile(
     });
     // From here on the static is drawn by the tile data of the art it is drawn from (`drawn_tile_data`).
     let (tilemeta_package, tilemeta) =
-        drawn_tile_data(visual_kind, render_tile.graphic, enhanced_package, resources.kingdom_reborn);
+        drawn_tile_data(visual_kind, render_tile.graphic, enhanced_package,
+            resources.tilemeta_package_for_art(Some(ClientTextureSource::Cc)), resources.kingdom_reborn);
     if !frame.is_dot_mode && tilemeta.is_some_and(|meta| meta.is_nodraw()) {
         return;
     }
@@ -3578,6 +3589,63 @@ mod tests {
         tile
     }
 
+    /// A tilemeta package of `items`, with no light, and the tilemeta overrides `record` when given.
+    fn tilemeta_package(items: &[udd_assets::tilemeta::TileMetaItemTile],
+        record: Option<&udd_assets::tilemeta::TileMetaOverridesRecord>) -> udd_assets::tilemeta::TileMetaPackage {
+        use udd_assets::tilemeta::*;
+        let refs = encode_item_texture_refs(&[]);
+        let lights = encode_item_lights(&[]);
+        let definitions = TileMetaItemDefinitions::default().to_bytes().unwrap();
+        let tileart = TileMetaTileArtRecords::default().to_bytes();
+        let record = record.map(TileMetaOverridesRecord::to_bytes);
+        let mut builder = udd_container::UddpBuilder::new(udd_container::LookupMode::VirtualPathHash);
+        for (path, data) in [
+            (TILEMETA_LAND_ENTRY_PATH, b"".as_slice()),
+            (TILEMETA_ITEM_ENTRY_PATH, bytemuck::cast_slice(items)),
+            (TILEMETA_ITEM_TEXTURE_REF_INDEX_ENTRY_PATH, b"".as_slice()),
+            (TILEMETA_ITEM_TEXTURE_REF_ENTRY_PATH, refs.as_slice()),
+            (TILEMETA_ITEM_MATERIAL_ENTRY_PATH, b"{}".as_slice()),
+            (TILEMETA_ITEM_DEFINITION_ENTRY_PATH, definitions.as_slice()),
+            (TILEMETA_ITEM_LIGHT_ENTRY_PATH, lights.as_slice()),
+            (TILEMETA_TILEART_RECORD_ENTRY_PATH, tileart.as_slice()),
+        ].into_iter().chain(record.as_deref().map(|record| (TILEMETA_OVERRIDES_ENTRY_PATH, record))) {
+            builder.add_file(udd_container::AddFileRequest {
+                data_type: udd_container::DataType::Metadata as u8,
+                compression: udd_container::CompressionFlag::ZstdNoDict,
+                width: 0, height: 0, virtual_path: Some(path), path_hash64: None, id: None, data,
+            }).unwrap();
+        }
+        TileMetaPackage::from_uddp_package(udd_container::UddpReader::open(builder.build().unwrap()).unwrap()).unwrap()
+    }
+
+    /// The tilemeta overrides were measured against the Enhanced and Kingdom Reborn art: a static drawn with Classic
+    /// art is drawn by the clients' flags, one drawn with Enhanced art, or as a dot, by the overridden ones.
+    #[test]
+    fn statics_drawn_with_classic_art_keep_the_clients_tile_data() {
+        const SWAMP: u16 = 0x3236;
+        let mut items = (0..=u32::from(SWAMP))
+            .map(|tile_id| udd_assets::tilemeta::TileMetaItemTile { tile_id, ..Zeroable::zeroed() })
+            .collect::<Vec<_>>();
+        items[usize::from(SWAMP)].flags = TILE_FLAG_SURFACE;
+        let record = udd_assets::tilemeta::TileMetaOverridesRecord { digest: 1,
+            original_flags: vec![(u32::from(SWAMP), 0)], original_lights: Vec::new() };
+        let tables = TileMetaPackageRes::new(std::sync::Arc::new(tilemeta_package(&items, Some(&record)))).unwrap();
+        let surface = |kind| drawn_tile_data(kind, SWAMP, Some(tables.0.as_ref()),
+            Some(tables.for_art(Some(ClientTextureSource::Cc)).as_ref()), None)
+            .1.map(|item| item.flags & TILE_FLAG_SURFACE != 0);
+        assert_eq!(surface(Some(classic_static_visual_kind(SWAMP, None))), Some(false));
+        for kind in [Some(StaticVisualKind::EcSurface { art_id: u32::from(SWAMP) }),
+            Some(StaticVisualKind::EcRegular { art_id: u32::from(SWAMP) }), Some(StaticVisualKind::Missing), None] {
+            assert_eq!(surface(kind), Some(true), "{kind:?}");
+        }
+        for art in [Some(ClientTextureSource::Ec), None] {
+            assert!(std::sync::Arc::ptr_eq(tables.for_art(art), &tables.0));
+        }
+        // A package built without the overrides has one set of tables.
+        let plain = TileMetaPackageRes::new(std::sync::Arc::new(tilemeta_package(&items, None))).unwrap();
+        assert!(std::sync::Arc::ptr_eq(plain.for_art(Some(ClientTextureSource::Cc)), &plain.0));
+    }
+
     #[test]
     fn the_client_shadow_ground_is_the_land_or_a_surface_within_reach() {
         const CASTER_Z: i8 = 20;
@@ -4001,17 +4069,20 @@ mod tests {
         assert_eq!(resolve(KR_SPRITE_WATER), Some(StaticVisualKind::EcRegular { art_id: base(KR_SPRITE_WATER) }));
         assert_eq!(resolve(TABLE), None);
         // Drawn from the Kingdom Reborn packages, by Kingdom Reborn's tile data: this surface is Rotated (a camera
-        // quad) in KR's tileart, not in the Enhanced one; the KR water sprite is not Rotated in KR's.
+        // quad) in KR's tileart, and in the Enhanced one by the tilemeta overrides, not in the clients' Enhanced
+        // tables Classic art is drawn by; the KR water sprite is not Rotated in KR's.
+        let clients = meta.without_overrides().unwrap().expect("the tilemeta overrides");
         let rotated = |data: (Option<&udd_assets::tilemeta::TileMetaPackage>,
             Option<&udd_assets::tilemeta::TileMetaItemTile>)| ec_static_camera_quad(data.1);
-        assert!(rotated(drawn_tile_data(resolve(KR_ONLY_ROTATED_SURFACE), KR_ONLY_ROTATED_SURFACE, Some(&meta),
-            Some(kr))));
-        assert!(!rotated(drawn_tile_data(resolve(KR_ONLY_ROTATED_SURFACE), KR_ONLY_ROTATED_SURFACE, Some(&meta),
+        let drawn = |kind, graphic, kr| drawn_tile_data(kind, graphic, Some(&meta), Some(&clients), kr);
+        assert!(rotated(drawn(resolve(KR_ONLY_ROTATED_SURFACE), KR_ONLY_ROTATED_SURFACE, Some(kr))));
+        assert!(rotated(drawn(resolve(KR_ONLY_ROTATED_SURFACE), KR_ONLY_ROTATED_SURFACE, None)));
+        assert!(!rotated(drawn(Some(classic_static_visual_kind(KR_ONLY_ROTATED_SURFACE, None)), KR_ONLY_ROTATED_SURFACE,
             None)));
-        assert!(!rotated(drawn_tile_data(resolve(KR_SPRITE_WATER), KR_SPRITE_WATER, Some(&meta), Some(kr))));
-        assert!(rotated(drawn_tile_data(resolve(KR_SPRITE_WATER), KR_SPRITE_WATER, Some(&meta), None)));
+        assert!(!rotated(drawn(resolve(KR_SPRITE_WATER), KR_SPRITE_WATER, Some(kr))));
+        assert!(rotated(drawn(resolve(KR_SPRITE_WATER), KR_SPRITE_WATER, None)));
         // A static that does not continue the land keeps the Enhanced tile data under the Kingdom Reborn land.
-        assert!(std::ptr::eq(drawn_tile_data(resolve(TABLE), TABLE, Some(&meta), Some(kr)).0.unwrap(), &meta));
+        assert!(std::ptr::eq(drawn(resolve(TABLE), TABLE, Some(kr)).0.unwrap(), &meta));
         let mut kinds = std::collections::BTreeMap::<String, Vec<String>>::new();
         let mut enhanced_cache = StaticSurfaceLikeResolutionCache::default();
         for tile in meta.item_tiles().iter().filter(|t| !t.is_nodraw()) {

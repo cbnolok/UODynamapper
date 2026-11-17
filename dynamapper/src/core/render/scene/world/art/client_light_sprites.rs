@@ -32,12 +32,13 @@ use super::static_lights::{StaticLightInstance, StaticLightKey, StaticLightTarge
     STATIC_LIGHT_Y_BIAS};
 use super::statics_collect::{
     apply_cc_static_world_anchor_translation, apply_static_world_anchor_translation, classic_static_visual_kind,
-    resolve_static_billboard_bounds, static_land_z, StaticBillboardBounds, StaticChunkBatchKey, StaticVisualKind,
+    resolve_static_billboard_bounds, static_land_z, StaticArtSourceState, StaticBillboardBounds, StaticChunkBatchKey,
+    StaticVisualKind,
     CC_TILE_PIXEL_WIDTH, CC_WORLD_XZ_PER_PIXEL, CC_WORLD_Y_PER_PIXEL, STATIC_BILLBOARD_RIGHT_XZ,
     STATIC_WORLD_Y_PER_XZ_PIXEL,
 };
 use crate::core::render::scene::camera::PlayerCamera;
-use crate::configs::{light_scale::ItemLightScales, settings::Settings, shader_presets::UniformState};
+use crate::configs::{light_scale::ItemLightScales, settings::{ClientTextureSource, Settings}, shader_presets::UniformState};
 use crate::console_logger::{self, LogAbout, LogSev};
 use crate::core::multis::{MultiDefinitionsRes, PlacedMultisRes};
 use crate::core::render::scene::world::effects::client_night::LIGHT_BUFFER_LAYER;
@@ -156,10 +157,11 @@ pub struct ClientLightSpriteInstance {
 pub struct RenderClientLightSprites {
     pub instances: Vec<ClientLightSpriteInstance>,
     /// What the last scan covered, whether it centred the sprites on their items, and the rule, z-view cut and multi
-    /// parts it hid covered lights by (`light_cover`), and the caves drawn over the map (`CavesRes::revision`); the scan
-    /// reruns only when it changes. The land z the covers count from is the map package's (`static_land_z`), which
+    /// parts it hid covered lights by (`light_cover`), the caves drawn over the map (`CavesRes::revision`), and the art
+    /// source whose tile data it read (`TileMetaPackageRes::for_art`); the scan reruns only when it changes. The land z the covers count from is the map package's (`static_land_z`), which
     /// does not change as the map blocks load or are evicted.
-    last_scan: Option<(u32, Vec<StaticChunkBatchKey>, bool, LightCoverRule, ZViewCut, bool, u64)>,
+    last_scan: Option<(u32, Vec<StaticChunkBatchKey>, bool, LightCoverRule, ZViewCut, bool, u64,
+        Option<ClientTextureSource>)>,
 }
 
 impl RenderClientLightSprites {
@@ -624,7 +626,7 @@ pub fn sys_collect_client_light_sprites(
     settings: Res<Settings>,
     uniform_state: Res<UniformState>,
     light_scales: Res<ItemLightScales>,
-    scene_state: Res<SceneStateData>,
+    (scene_state, art_source): (Res<SceneStateData>, Res<StaticArtSourceState>),
     chunks_q: Query<&LCMesh>,
     view_cuts: (Res<ZViewLimit>, Res<CavesRes>),
     mut cache: ResMut<ClientLightSpriteCache>,
@@ -632,7 +634,7 @@ pub fn sys_collect_client_light_sprites(
 ) {
     let drawn = settings.world_rendering.enable_static_lights
         && StaticLightTarget::for_uniform_state(&uniform_state) == StaticLightTarget::ClientLightBuffer;
-    let (Some(tilemeta), true) = (tilemeta_res, drawn) else {
+    let (Some(tilemeta_res), true) = (tilemeta_res, drawn) else {
         if !output.instances.is_empty() || output.last_scan.is_some() {
             output.instances.clear();
             output.last_scan = None;
@@ -662,10 +664,10 @@ pub fn sys_collect_client_light_sprites(
     let z_cut = z_view.0;
     let show_hidden_multi_parts = settings.world_rendering.show_hidden_multi_parts;
     if output.last_scan.as_ref().is_some_and(
-        |(last_map, last_keys, last_centred, last_cover, last_cut, last_hidden, last_caves)| {
+        |(last_map, last_keys, last_centred, last_cover, last_cut, last_hidden, last_caves, last_art)| {
             *last_map == map_id && *last_keys == visible_chunk_keys && *last_centred == centre_on_items
                 && *last_cover == light_cover && *last_cut == z_cut && *last_hidden == show_hidden_multi_parts
-                && *last_caves == caves.revision()
+                && *last_caves == caves.revision() && *last_art == art_source.active_source
         },
     ) {
         return;
@@ -677,7 +679,9 @@ pub fn sys_collect_client_light_sprites(
     let mut statics_store = statics_store.lock();
     let reach_blocks = *cache
         .reach_blocks
-        .get_or_insert_with(|| client_light_sprite_reach_blocks(&tilemeta, &tex_aux, &light_scales));
+        .get_or_insert_with(|| client_light_sprite_reach_blocks(&tilemeta_res, &tex_aux, &light_scales));
+    // The tile data of the art the statics are drawn with: an item drawn with Classic art keeps the clients' lights.
+    let tilemeta = tilemeta_res.for_art(art_source.active_source).as_ref();
 
     let mut blocks = BTreeSet::new();
     for chunk_key in &visible_chunk_keys {
@@ -698,7 +702,7 @@ pub fn sys_collect_client_light_sprites(
     };
     let (blocks_x, blocks_y) = (block_range(|&(_, gx)| gx), block_range(|&(gy, _)| gy));
     let multi_parts = MultiCoverParts::read(
-        &tilemeta.0,
+        tilemeta,
         multis.0.as_deref(),
         &multis.1,
         show_hidden_multi_parts,
@@ -713,13 +717,13 @@ pub fn sys_collect_client_light_sprites(
             if let Ok(tiles) = statics_store.block_tiles(gx, gy) {
                 lit_graphics.extend(
                     tiles.iter().map(|tile| tile.graphic).filter(|graphic| {
-                        tilemeta.0.item_light(u32::from(*graphic)).is_some()
+                        tilemeta.item_light(u32::from(*graphic)).is_some()
                     }),
                 );
             }
         }
         cache_client_light_sprite_art(&mut cache.art_by_graphic,
-            tex_art_cc_res.as_deref().map(|package| package.0.as_ref()), &tilemeta.0, lit_graphics);
+            tex_art_cc_res.as_deref().map(|package| package.0.as_ref()), tilemeta, lit_graphics);
     }
 
     let mut instances = Vec::new();
@@ -733,10 +737,10 @@ pub fn sys_collect_client_light_sprites(
         let lit_tiles = tiles
             .iter()
             .copied()
-            .filter(|tile| tilemeta.0.item_light(u32::from(tile.graphic)).is_some())
+            .filter(|tile| tilemeta.item_light(u32::from(tile.graphic)).is_some())
             .collect::<Vec<_>>();
         for tile in lit_tiles {
-            let Some(light) = tilemeta.0.item_light(u32::from(tile.graphic)) else {
+            let Some(light) = tilemeta.item_light(u32::from(tile.graphic)) else {
                 continue;
             };
             if !has_drawable_scale(light) {
@@ -764,7 +768,7 @@ pub fn sys_collect_client_light_sprites(
             // The player's cave hides it, or draws it whatever the view's limit (caves.rs). Outside it the sprite is
             // not darkened itself, the light buffer multiplying the scene, darkened already, but its colour fades as
             // the scene's (`cave_outside`).
-            let flags_height = tilemeta.0.item_tile(u32::from(key.graphic)).map_or((0, 0), |meta| (meta.flags, meta.height));
+            let flags_height = tilemeta.item_tile(u32::from(key.graphic)).map_or((0, 0), |meta| (meta.flags, meta.height));
             let Some(cave_light) = caves.light_view(key.tile_x, key.tile_y, key.z, flags_height.0, flags_height.1,
                 || land_z(key.tile_x, key.tile_y).map(i32::from), z_cut.max_z) else {
                 continue;
@@ -772,7 +776,7 @@ pub fn sys_collect_client_light_sprites(
             let light_max_z = cave_light.max_z;
             if static_light_is_hidden(
                 &mut statics_store,
-                &tilemeta.0,
+                tilemeta,
                 &multi_parts,
                 light_cover,
                 &land_z,
@@ -788,7 +792,7 @@ pub fn sys_collect_client_light_sprites(
                 .then(|| {
                     static_light_ceiling_z(
                         &mut statics_store,
-                        &tilemeta.0,
+                        tilemeta,
                         &multi_parts,
                         &land_z,
                         key.tile_x,
@@ -833,7 +837,7 @@ pub fn sys_collect_client_light_sprites(
     }
     output.instances = instances;
     output.last_scan = Some((map_id, visible_chunk_keys, centre_on_items, light_cover, z_cut, show_hidden_multi_parts,
-        caves.revision()));
+        caves.revision(), art_source.active_source));
 }
 
 pub fn sys_sync_client_light_sprites(

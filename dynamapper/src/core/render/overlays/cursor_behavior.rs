@@ -781,18 +781,26 @@ fn describe_static_tile_line(
     route: Option<StaticArtRoute>,
     art_source: Option<crate::configs::settings::ClientTextureSource>,
 ) -> String {
+    use crate::configs::settings::ClientTextureSource;
     let graphic = tile.graphic;
-    let meta = tilemeta_res.and_then(|meta| meta.0.item_tile(graphic as u32));
+    // The tile data of the art the tile is drawn with (`TileMetaPackageRes::for_art`).
+    let drawn_art = match route {
+        Some(StaticArtRoute::CcArt(_)) => Some(ClientTextureSource::Cc),
+        Some(StaticArtRoute::EcArt(_) | StaticArtRoute::EcLand(_)) => Some(ClientTextureSource::Ec),
+        _ => art_source,
+    };
+    let package = tilemeta_res.map(|package| package.for_art(drawn_art).as_ref());
+    let meta = package.and_then(|package| package.item_tile(graphic as u32));
     let name = meta
         .map(|item| item.name_ascii())
         .filter(|name| !name.is_empty())
         .unwrap_or("<unnamed>");
     let selected_source = match route {
-        Some(StaticArtRoute::CcArt(_)) => Some(crate::configs::settings::ClientTextureSource::Cc),
+        Some(StaticArtRoute::CcArt(_)) => Some(ClientTextureSource::Cc),
         _ => art_source,
     };
     let renders_wet = !matches!(route, Some(StaticArtRoute::MissingArt)) &&
-        static_tile_renders_wet(meta, tilemeta_res.map(|package| package.0.as_ref()), u32::from(graphic), selected_source);
+        static_tile_renders_wet(meta, package, u32::from(graphic), selected_source);
     format_static_tile_line(
         graphic,
         tile.z,

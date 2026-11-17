@@ -107,6 +107,7 @@ impl<'w> StaticPickingResources<'w> {
             aux: self.aux.as_ref().map(|package| package.0.as_ref()),
             land: self.land.as_ref().map(|package| package.0.as_ref()),
             meta: self.meta.as_ref().map(|package| package.0.as_ref()),
+            cc_art_meta: self.meta.as_ref().map(|package| package.for_art(Some(ClientTextureSource::Cc)).as_ref()),
             // As statics collection: under the Kingdom Reborn land only.
             kr: self.kr.sources().filter(|_| self.source.land_style == StaticLandStyle::KingdomReborn),
         };
@@ -123,6 +124,8 @@ struct StaticPickPackages<'a> {
     aux: Option<&'a udd_assets::tex_aux_ec::TexAuxEcPackage>,
     land: Option<&'a udd_assets::tex_land_ec::TexLandEcPackage>,
     meta: Option<&'a udd_assets::tilemeta::TileMetaPackage>,
+    /// The tile data of the statics drawn with Classic art (`TileMetaPackageRes::for_art`).
+    cc_art_meta: Option<&'a udd_assets::tilemeta::TileMetaPackage>,
     /// The Kingdom Reborn packages, when the land is Kingdom Reborn's.
     kr: Option<statics_collect::KrStaticSources<'a>>,
 }
@@ -133,13 +136,14 @@ struct StaticPickPackages<'a> {
 fn resolve_static_art_geometry(packages: StaticPickPackages<'_>, source: ClientTextureSource,
     land_style: StaticLandStyle, atlas: &TileAtlas, cache: &mut StaticSurfaceLikeResolutionCache, graphic: u16, x: f32,
     y: f32, z: i8) -> Option<StaticArtGeometry> {
-    let StaticPickPackages { cc, ec, aux, land, meta: enhanced_package, kr } = packages;
+    let StaticPickPackages { cc, ec, aux, land, meta: enhanced_package, cc_art_meta, kr } = packages;
     let enhanced_meta = enhanced_package.and_then(|package| package.item_tile(u32::from(graphic)));
     let kind = statics_collect::resolve_static_visual_kind_cached(source, land_style, graphic, enhanced_package,
         enhanced_meta, cc, ec, land, cache);
     let kind = kr.and_then(|kr| statics_collect::kingdom_reborn_static_visual_kind(graphic, enhanced_package,
         enhanced_meta, ec, land, kr, cache)).unwrap_or(kind);
-    let (package, meta) = statics_collect::drawn_tile_data(Some(kind), graphic, enhanced_package, kr);
+    let (package, meta) = statics_collect::drawn_tile_data(Some(kind), graphic, enhanced_package, cc_art_meta,
+        kr);
     if meta.is_some_and(|tile| tile.is_nodraw()) { return None; }
     let renders_wet = statics_collect::static_visual_renders_wet(kind, meta, package, u32::from(graphic));
     let depth_class = statics_collect::resolve_static_depth_class(meta, renders_wet);
@@ -300,7 +304,7 @@ mod tests {
         let kr = statics_collect::KrStaticSources { tilemeta: &kr_meta, art: &kr_art, land: &kr_land };
         let atlas = TileAtlas::new(Default::default(), 0);
         let packages = StaticPickPackages { cc: None, ec: Some(&ec), aux: None, land: Some(&land), meta: Some(&meta),
-            kr: None };
+            cc_art_meta: Some(&meta), kr: None };
         let resolve = |packages: StaticPickPackages<'_>, land_style, graphic| resolve_static_art_geometry(packages,
             ClientTextureSource::Ec, land_style, &atlas, &mut StaticSurfaceLikeResolutionCache::default(), graphic,
             0.0, 0.0, 0).expect("drawn");
