@@ -20,9 +20,11 @@ use udd_container::uddp::FormatError;
 use udd_container::{xxh64_virtual_path, BuildProgress, DataType, UddpBuilder, UddpReader};
 
 use crate::kr_delta::{prepare_kr_client, KrClientSource, RebuiltKrClient};
-use crate::kr_items::{pack_kr_art_and_tilemeta, pack_kr_aux, KrArtBuildSummary, KrTilemetaOutput};
+use crate::kr_items::{
+    load_ec_sources_with_kr_windows, pack_kr_art_and_tilemeta, pack_kr_aux, KrArtBuildSummary, KrTilemetaOutput,
+};
 use crate::package_progress::AssetTaskProgress;
-use crate::tex_art_ec::{load_tex_art_ec_sources, TexArtEcLoadedSources};
+use crate::tex_art_ec::TexArtEcLoadedSources;
 use crate::tex_aux_ec::TexAuxEcOverlaySummary;
 use crate::tex_land_kr::{convert_kr_land_to_tex_land_kr_uddp_with_progress, TexLandKrBuildSummary, TexLandKrPackOptions};
 
@@ -64,6 +66,12 @@ impl KrSectionWork {
     pub fn section_path(&self, file_name: &str) -> PathBuf {
         self.client.dir().join(file_name)
     }
+
+    /// The Enhanced sources in `ec_dirs` the packages with a Kingdom Reborn section are packed from, with the Kingdom
+    /// Reborn world-art windows they adopt (`crate::kr_items::load_ec_sources_with_kr_windows`).
+    pub fn load_ec_sources(&self, ec_dirs: &[PathBuf]) -> eyre::Result<TexArtEcLoadedSources> {
+        load_ec_sources_with_kr_windows(ec_dirs, self.kr_dir())
+    }
 }
 
 /// Adds the package `section` to `package` at [`KR_SECTION_ENTRY_PATH`], stored uncompressed; `package` must not hold
@@ -88,9 +96,10 @@ pub fn embed_kr_section(package: &Path, section: &Path) -> eyre::Result<()> {
     Ok(())
 }
 
-/// Packs the Kingdom Reborn item art against `ec` and nests it in `art_package`, the `tex_art_ec.uddp` packed from
-/// `ec`; with `tilemeta` (the Classic folder and the `tilemeta.uddp` packed from `ec`), also the Kingdom Reborn tile
-/// data, nested in that `tilemeta.uddp`. Without `art_package` the art is packed for the tile data alone.
+/// Packs the Kingdom Reborn item art against `ec` ([`KrSectionWork::load_ec_sources`]) and nests it in `art_package`,
+/// the `tex_art_ec.uddp` packed from `ec`; with `tilemeta` (the Classic folder and the `tilemeta.uddp` packed from
+/// `ec`), also the Kingdom Reborn tile data, nested in that `tilemeta.uddp`. Without `art_package` the art is packed for
+/// the tile data alone.
 pub fn add_kr_art_and_tilemeta_sections(work: &KrSectionWork, ec: &TexArtEcLoadedSources, art_package: Option<&Path>,
     tilemeta: Option<(&Path, &Path)>) -> eyre::Result<KrArtBuildSummary> {
     let art_section = work.section_path(KR_ART_SECTION_FILE_NAME);
@@ -104,15 +113,6 @@ pub fn add_kr_art_and_tilemeta_sections(work: &KrSectionWork, ec: &TexArtEcLoade
         embed_kr_section(tilemeta_package, &tilemeta_section)?;
     }
     Ok(summary)
-}
-
-/// Packs the Kingdom Reborn tile data and nests it in `tilemeta_package`, the `tilemeta.uddp` packed from the Classic
-/// Client in `cc_dir` and the Enhanced Client in `ec_dir`.
-pub fn add_kr_tilemeta_section(work: &KrSectionWork, ec_dir: &Path, cc_dir: &Path, tilemeta_package: &Path)
-    -> eyre::Result<KrArtBuildSummary> {
-    let ec = load_tex_art_ec_sources(&[ec_dir.to_path_buf()])
-        .wrap_err_with(|| format!("load the Enhanced Client tileart and textures from {}", ec_dir.display()))?;
-    add_kr_art_and_tilemeta_sections(work, &ec, None, Some((cc_dir, tilemeta_package)))
 }
 
 /// Packs the Kingdom Reborn land with `options` (those of the Enhanced land) and nests it in `land_package`, the

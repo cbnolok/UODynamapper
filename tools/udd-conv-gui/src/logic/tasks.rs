@@ -22,16 +22,20 @@ use udd_conv::{
         DEFAULT_ATLAS_PAGE_WIDTH as EC_MOBILE_ANIM_DEFAULT_ATLAS_PAGE_WIDTH,
     },
     tex_art_cc::{TexArtCcAtlasOptions, convert_art_mul_to_tex_art_cc_uddp_from_sources_with_patches_and_progress, DEFAULT_ATLAS_GUTTER, DEFAULT_ATLAS_PAGE_WIDTH, DEFAULT_ATLAS_PAGE_HEIGHT},
-    tex_art_ec::{TexArtEcAtlasOptions, convert_tex_art_ec_uop_to_tex_art_ec_uddp_from_sources_with_progress},
+    tex_art_ec::{
+        TexArtEcAtlasOptions, compute_tex_art_ec_crop_adjustments_from_loaded_sources,
+        convert_tex_art_ec_uop_to_tex_art_ec_uddp_from_loaded_sources_with_progress,
+    },
     tex_land_ec::{TexLandEcAtlasOptions, convert_tex_land_ec_uop_to_tex_land_ec_uddp_from_sources_with_progress},
-    tex_art_ec::load_tex_art_ec_sources,
     tex_land_kr::TexLandKrPackOptions,
     kr_delta::KrClientSource,
     kr_sections::{
-        add_kr_art_and_tilemeta_sections, add_kr_aux_section, add_kr_land_section, add_kr_tilemeta_section,
-        KrSectionWork,
+        add_kr_art_and_tilemeta_sections, add_kr_aux_section, add_kr_land_section, KrSectionWork,
     },
-    tilemeta::{TileMetaBuildOptions, build_tilemeta_uddp_from_sources_with_progress, build_tilemeta_uddp_from_split_sources_with_progress},
+    tilemeta::{
+        TileMetaBuildOptions, build_tilemeta_uddp_from_sources_with_progress,
+        build_tilemeta_uddp_from_split_sources_with_loaded_ec_sources_with_progress,
+    },
     cc_map::convert_map_mul_to_uddp_from_sources_with_patches,
     chunk_compression::ChunkCompression,
     cc_statics::convert_statics_mul_to_uddp_from_sources_with_patches,
@@ -1015,8 +1019,11 @@ impl UddConvApp {
                 "Extracting"
             };
 
-            let summary = convert_tex_art_ec_uop_to_tex_art_ec_uddp_from_sources_with_progress(
-                &sources, &output,
+            // Before the Enhanced pass, so a missing or foreign Kingdom Reborn source fails the task at once.
+            let kr_work = KrSectionWork::prepare(&kr_source(&settings), &sources[0], &output)?;
+            let ec = kr_work.load_ec_sources(&sources)?;
+            let summary = convert_tex_art_ec_uop_to_tex_art_ec_uddp_from_loaded_sources_with_progress(
+                &ec, &output,
                 &TexArtEcAtlasOptions {
                     atlas_width: DEFAULT_ATLAS_PAGE_WIDTH,
                     atlas_height: DEFAULT_ATLAS_PAGE_HEIGHT,
@@ -1036,8 +1043,6 @@ impl UddConvApp {
                 |build_progress| progress.build_progress(build_progress),
             )?;
             progress.set(AssetPackProgressState::Running, KR_SECTION_PROGRESS, KR_SECTION_LABEL);
-            let ec = load_tex_art_ec_sources(&sources)?;
-            let kr_work = KrSectionWork::prepare(&kr_source(&settings), &sources[0], &output)?;
             let kr = add_kr_art_and_tilemeta_sections(&kr_work, &ec, Some(&output), None)?;
             Ok(format!("Wrote {} pages to {}, with the Kingdom Reborn item art ({} slots, {} items left to the \
                 Enhanced art)", summary.page_count, output.display(), kr.art.populated_slot_count,
@@ -1118,9 +1123,13 @@ impl UddConvApp {
             ensure_output_parent(&output)?;
             match (settings.cc_dir.as_ref(), settings.ec_dir.as_ref()) {
                 (Some(cc_dir), Some(ec_dir)) => {
-                    build_tilemeta_uddp_from_split_sources_with_progress(
+                    let kr_work = KrSectionWork::prepare(&kr_source(&settings), ec_dir, &output)?;
+                    let ec = kr_work.load_ec_sources(std::slice::from_ref(ec_dir))?;
+                    let ec_crop_adjustments = compute_tex_art_ec_crop_adjustments_from_loaded_sources(&ec)?;
+                    build_tilemeta_uddp_from_split_sources_with_loaded_ec_sources_with_progress(
                         cc_dir,
-                        ec_dir,
+                        &ec,
+                        &ec_crop_adjustments,
                         &output,
                         &TileMetaBuildOptions {
                             use_ec_radarcol: false,
@@ -1130,8 +1139,7 @@ impl UddConvApp {
                         |build_progress| progress.build_progress(build_progress),
                     )?;
                     progress.set(AssetPackProgressState::Running, KR_SECTION_PROGRESS, KR_SECTION_LABEL);
-                    let kr_work = KrSectionWork::prepare(&kr_source(&settings), ec_dir, &output)?;
-                    add_kr_tilemeta_section(&kr_work, ec_dir, cc_dir, &output)?;
+                    add_kr_art_and_tilemeta_sections(&kr_work, &ec, None, Some((cc_dir.as_path(), output.as_path())))?;
                 }
                 _ => {
                     let sources = gather_source_dirs(settings.cc_dir.as_ref(), settings.ec_dir.as_ref());

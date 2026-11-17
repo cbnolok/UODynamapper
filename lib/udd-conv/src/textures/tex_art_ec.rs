@@ -68,7 +68,7 @@ use udd_container::{
 use uocf::enhanced::{
     terrain_definition::TerrainDefinitionPackage,
     textures::{TextureFile, Textures},
-    tile_database::ArtDefinition,
+    tile_database::{ArtDefinition, ArtSpriteDescriptor},
     tileart::{ArtData, ArtTexture, TaeFlag, TileType},
 };
 
@@ -789,6 +789,7 @@ fn selected_art_source(art: &ArtData) -> Option<(TextureSourceKey, &ArtTexture)>
     art.ec_texture.as_ref().map(|texture| (TextureSourceKey::World(texture.texture_id), texture))
 }
 
+/// The texels of `texture` an item's slot is cut from (`normalized_source_clip_rect` of it), from its record's window.
 pub(crate) fn selected_art_window(art: &ArtData, texture: &ArtTexture) -> ArtTexture {
     let mut window = texture.clone();
     // The original ordinary world-art descriptor includes both end pixels.
@@ -800,6 +801,54 @@ pub(crate) fn selected_art_window(art: &ArtData, texture: &ArtTexture) -> ArtTex
         window.end_y = window.end_y.saturating_add(1);
     }
     window
+}
+
+/// The largest share of a borrowed world-art image's alpha that an item's copied window may leave out and still get a
+/// slot ([`copied_window_cut_share`]): the share above which `docs/client_research/world-art-windows` counts a window as
+/// cutting the figure. Of the Enhanced items it applies to, the four glow pieces 0xA1FE-0xA201 (the lantern 2597) leave
+/// out nothing and keep theirs; the ship 0xA432/0xA440 (15996, 30.6 %) and the orchid 0xA645-0xA648 (Campion Flowers
+/// 3209, 52.9 %) get none. Without Kingdom Reborn's windows (`crate::kr_items::adopt_kr_world_windows`) so do six
+/// whose Kingdom Reborn records have their own (0x25A6, 0x25F8-0x25FC, 9.5 to 23 %).
+pub const COPIED_WINDOW_MAX_CUT_SHARE: f32 = 0.02;
+
+/// The share of the alpha of `file`, the world-art image of `art` (the item `art_id`), that `window`
+/// ([`selected_art_window`]) leaves out, for an item whose window no client reads ([`has_unread_copied_window`]).
+/// `None` for the other items and for an image without alpha.
+fn copied_window_cut_share(art_id: u16, art: &ArtData, descriptor: Option<&ArtSpriteDescriptor>, window: &ArtTexture,
+    file: &TextureFile) -> eyre::Result<Option<f32>> {
+    if !has_unread_copied_window(art_id, art, descriptor) {
+        return Ok(None);
+    }
+    let rgba = file.decode_to_rgba8().wrap_err_with(|| format!("decode the world art of item {art_id:#06x}"))?;
+    Ok(alpha_share_outside(rgba.width() as u16, rgba.height() as u16, rgba.as_raw(), window))
+}
+
+/// Whether the sprite `art` (the item `art_id`) has a world-art window no client reads: it borrows another item's image
+/// (its block-0 texture is not its own id), its enhanced window is a copy of its legacy window, and it lacks
+/// `UseNewArt`, so the Enhanced Client draws its legacy art instead (`docs/client_research/world-art-windows`).
+fn has_unread_copied_window(art_id: u16, art: &ArtData, descriptor: Option<&ArtSpriteDescriptor>) -> bool {
+    art.ec_texture.as_ref().is_some_and(|texture| texture.texture_id != u32::from(art_id))
+        && descriptor.is_some_and(|descriptor| descriptor.world_window == descriptor.legacy_window)
+        && !art.flags2.contains(TaeFlag::UseNewArt)
+        && art_tile_kind_for_tileart(art.tile_type, art.flags) == ArtTileKind::Static
+}
+
+/// The share of the alpha of an RGBA image that `window` leaves out (as the slot is cut: [`normalized_source_clip_rect`],
+/// `None` there taking the whole image); `None` for an image without alpha.
+fn alpha_share_outside(width: u16, height: u16, rgba: &[u8], window: &ArtTexture) -> Option<f32> {
+    const ALPHA: usize = 3;
+    const RGBA_BYTES: usize = 4;
+    let alpha = |x: usize, y: usize| u64::from(rgba[(y * usize::from(width) + x) * RGBA_BYTES + ALPHA]);
+    let total: u64 = rgba.chunks_exact(RGBA_BYTES).map(|texel| u64::from(texel[ALPHA])).sum();
+    if total == 0 {
+        return None;
+    }
+    let Some(clip) = normalized_source_clip_rect(width, height, window) else { return Some(0.0) };
+    let inside: u64 = (usize::from(clip.top)..usize::from(clip.bottom))
+        .flat_map(|y| (usize::from(clip.left)..usize::from(clip.right)).map(move |x| (x, y)))
+        .map(|(x, y)| alpha(x, y))
+        .sum();
+    Some(1.0 - inside as f32 / total as f32)
 }
 
 fn build_sprite_geometry(slots: &[TexArtEcSlotRecord], art: &ArtDefinition)
@@ -874,6 +923,7 @@ fn decode_present_tiles(
     let mut liquid_unknown_role_count = 0u32;
     let mut no_world_art_count = 0u32;
     let mut world_art_source_absent_count = 0u32;
+    let mut copied_window_cuts = Vec::new();
 
     for (index, art_id) in art_ids.into_iter().enumerate() {
         resolve_pb.inc(1);
@@ -919,6 +969,25 @@ fn decode_present_tiles(
 
         if let Some((source_key, texture_bounds)) = resolved {
             let texture_bounds = selected_art_window(art_data, texture_bounds);
+            let file = if let Some(file) = texture_files_by_source.get(&source_key) {
+                file.clone()
+            } else {
+                let TextureSourceKey::World(texture_id) = source_key;
+                let file = world_textures.get_from_id(texture_id)?.map(Arc::new);
+                texture_files_by_source.insert(source_key, file.clone());
+                file
+            };
+            let Some(file) = file else {
+                world_art_source_absent_count += 1;
+                continue;
+            };
+            if let Some(cut) = copied_window_cut_share(art_id, art_data,
+                art_definition.sprite_descriptors.get(&art_id), &texture_bounds, &file)?
+                .filter(|&cut| cut > COPIED_WINDOW_MAX_CUT_SHARE) {
+                copied_window_cuts.push((art_id, cut));
+                continue;
+            }
+
             // Tileart ownership is authoritative for tex_art_ec packing.
             // A source texture id may legitimately appear in both terrain and tileart
             // metadata, and shared ids should survive in both packages.
@@ -934,19 +1003,6 @@ fn decode_present_tiles(
                     .push((art_id as u32, draw_offset_x, draw_offset_y));
                 continue;
             }
-
-            let file = if let Some(file) = texture_files_by_source.get(&source_key) {
-                file.clone()
-            } else {
-                let TextureSourceKey::World(texture_id) = source_key;
-                let file = world_textures.get_from_id(texture_id)?.map(Arc::new);
-                texture_files_by_source.insert(source_key, file.clone());
-                file
-            };
-            let Some(file) = file else {
-                world_art_source_absent_count += 1;
-                continue;
-            };
 
             if should_skip_terrain_material_static(
                 art_data,
@@ -975,6 +1031,11 @@ fn decode_present_tiles(
         "tex_art_ec: {no_world_art_count} included tileart owners name no block-0 WorldArt image and \
          {world_art_source_absent_count} canonical sources are absent from Texture.uop; those owners get no \
          slot (their Classic art comes from tex_art_cc)"
+    );
+    tracing::info!(
+        "tex_art_ec: {} items whose copied window cuts more than {COPIED_WINDOW_MAX_CUT_SHARE} of the borrowed \
+         world-art image get no slot (their Classic art comes from tex_art_cc) (item: share cut): {copied_window_cuts:?}",
+        copied_window_cuts.len()
     );
 
     let liquid_excluded_count = liquid_no_base_count + liquid_unknown_role_count;
@@ -2169,6 +2230,43 @@ mod tests {
         assert_eq!((window.end_x, window.end_y), (2, 2));
         let empty = selected_art_window(&art, &ArtTexture::default());
         assert_eq!(requested_source_window(&empty), requested_source_window(&ArtTexture::default()));
+    }
+
+    #[test]
+    fn a_borrowed_image_through_a_copied_window_is_unread_unless_the_record_uses_new_art() {
+        const ITEM: u16 = 0xA645;
+        const BORROWED: u32 = 3209;
+        let copied = ArtSpriteDescriptor { source_tile_id: u32::from(ITEM), world_art_scale: 1.0, legacy_art_scale: 1.5,
+            world_window: [0, 0, 44, 44, 0, 0], legacy_window: [0, 0, 44, 44, 0, 0] };
+        let art = ArtData { ec_texture: Some(ArtTexture { texture_id: BORROWED, ..ArtTexture::default() }),
+            ..ArtData::default() };
+        assert!(has_unread_copied_window(ITEM, &art, Some(&copied)));
+        let own = ArtData { ec_texture: Some(ArtTexture { texture_id: u32::from(ITEM), ..ArtTexture::default() }),
+            ..art.clone() };
+        assert!(!has_unread_copied_window(ITEM, &own, Some(&copied)), "its own image");
+        let authored = ArtSpriteDescriptor { world_window: [0, 0, 60, 80, -8, -20], ..copied.clone() };
+        assert!(!has_unread_copied_window(ITEM, &art, Some(&authored)), "a window of its own");
+        let new_art = ArtData { flags2: TaeFlag::UseNewArt, ..art.clone() };
+        assert!(!has_unread_copied_window(ITEM, &new_art, Some(&copied)), "the Enhanced Client reads it");
+        let quad = ArtData { flags: TaeFlag::Rotated, ..art.clone() };
+        assert!(!has_unread_copied_window(ITEM, &quad, Some(&copied)), "a camera quad, not a sprite window");
+        assert!(!has_unread_copied_window(ITEM, &art, None));
+    }
+
+    #[test]
+    fn the_cut_share_is_the_alpha_outside_the_cut_window() {
+        const SIDE: u16 = 4;
+        const OPAQUE: u8 = 255;
+        // Full alpha in the left half, a quarter of it in the right.
+        let rgba: Vec<u8> = (0..SIDE * SIDE)
+            .flat_map(|texel| [0, 0, 0, if texel % SIDE < SIDE / 2 { OPAQUE } else { OPAQUE / 4 }]).collect();
+        let window = |end_x, end_y| ArtTexture { end_x, end_y, ..ArtTexture::default() };
+        let total = 8.0 * f32::from(OPAQUE) + 8.0 * f32::from(OPAQUE / 4);
+        let share = alpha_share_outside(SIDE, SIDE, &rgba, &window(2, 4)).unwrap();
+        assert!((share - 8.0 * f32::from(OPAQUE / 4) / total).abs() < 1e-6, "{share}");
+        assert_eq!(alpha_share_outside(SIDE, SIDE, &rgba, &window(4, 4)), Some(0.0), "the whole image");
+        assert_eq!(alpha_share_outside(SIDE, SIDE, &rgba, &window(0, 0)), Some(0.0), "no window: the whole image");
+        assert_eq!(alpha_share_outside(SIDE, SIDE, &vec![0; rgba.len()], &window(2, 4)), None, "no alpha");
     }
 
     #[test]

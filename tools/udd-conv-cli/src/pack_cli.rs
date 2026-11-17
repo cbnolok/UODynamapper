@@ -66,8 +66,9 @@ use udd_conv::{
         DEFAULT_ATLAS_PAGE_WIDTH as CC_DEFAULT_ATLAS_PAGE_WIDTH,
     },
     tex_art_ec::{
-        convert_tex_art_ec_uop_to_tex_art_ec_uddp_from_loaded_sources, load_tex_art_ec_sources,
-        TexArtEcAtlasOptions, DEFAULT_ATLAS_GUTTER as EC_ART_DEFAULT_ATLAS_GUTTER,
+        compute_tex_art_ec_crop_adjustments_from_loaded_sources,
+        convert_tex_art_ec_uop_to_tex_art_ec_uddp_from_loaded_sources, TexArtEcAtlasOptions,
+        DEFAULT_ATLAS_GUTTER as EC_ART_DEFAULT_ATLAS_GUTTER,
         DEFAULT_ATLAS_PAGE_HEIGHT as EC_ART_DEFAULT_ATLAS_PAGE_HEIGHT,
         DEFAULT_ATLAS_PAGE_WIDTH as EC_ART_DEFAULT_ATLAS_PAGE_WIDTH,
     },
@@ -86,12 +87,11 @@ use udd_conv::{
     tex_land_kr::TexLandKrPackOptions,
     kr_delta::{make_and_write_kr_delta, KrClientSource},
     kr_sections::{
-        add_kr_art_and_tilemeta_sections, add_kr_aux_section, add_kr_land_section, add_kr_tilemeta_section,
-        KrSectionWork,
+        add_kr_art_and_tilemeta_sections, add_kr_aux_section, add_kr_land_section, KrSectionWork,
     },
     tilemeta::{
-        build_tilemeta_uddp_from_sources, build_tilemeta_uddp_from_split_sources,
-        build_tilemeta_uddp_from_split_sources_with_loaded_ec_sources, TileMetaBuildOptions,
+        build_tilemeta_uddp_from_sources, build_tilemeta_uddp_from_split_sources_with_loaded_ec_sources,
+        TileMetaBuildOptions,
     },
     upscale::{EnhancementFilter, UpscaleFilter, UpscalePass},
     world_lights::{convert_client_lights_to_world_lights_uddp, WorldLightsOptions},
@@ -1862,7 +1862,7 @@ where
             }
             // Before the Enhanced passes, so a missing or foreign Kingdom Reborn source fails the command at once.
             let kr_work = KrSectionWork::prepare(&kr_source.source()?, &ec_paths[0], &art_out_file)?;
-            let shared_sources = load_tex_art_ec_sources(&ec_paths)?;
+            let shared_sources = kr_work.load_ec_sources(&ec_paths)?;
             let upscale_profile = load_optional_upscale_profile(upscale_profile)?;
             let upscale_filter = UpscaleFilter::from(upscale);
             let shared_output_format = TextureOutputFormatArgs {
@@ -2267,8 +2267,11 @@ where
             match (source_dir_args.ccdir.as_ref(), source_dir_args.ecdir.as_ref()) {
                 (Some(ccdir), Some(ecdir)) => {
                     let kr_work = KrSectionWork::prepare(&kr_source.source()?, ecdir, &out_file)?;
-                    build_tilemeta_uddp_from_split_sources(ccdir, ecdir, &out_file, &options)?;
-                    add_kr_tilemeta_section(&kr_work, ecdir, ccdir, &out_file)?;
+                    let ec_sources = kr_work.load_ec_sources(std::slice::from_ref(ecdir))?;
+                    let ec_crop_adjustments = compute_tex_art_ec_crop_adjustments_from_loaded_sources(&ec_sources)?;
+                    build_tilemeta_uddp_from_split_sources_with_loaded_ec_sources(ccdir, &ec_sources,
+                        &ec_crop_adjustments, &out_file, &options)?;
+                    add_kr_art_and_tilemeta_sections(&kr_work, &ec_sources, None, Some((ccdir, &out_file)))?;
                 }
                 _ => {
                     build_tilemeta_uddp_from_sources(&paths, &out_file, &options)?;

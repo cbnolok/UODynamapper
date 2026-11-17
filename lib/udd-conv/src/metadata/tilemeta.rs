@@ -497,6 +497,26 @@ pub fn build_tilemeta_uddp_from_split_sources_with_loaded_ec_sources(
     out_file: &Path,
     options: &TileMetaBuildOptions,
 ) -> eyre::Result<()> {
+    build_tilemeta_uddp_from_split_sources_with_loaded_ec_sources_with_progress(
+        cc_source_dir,
+        ec_sources,
+        ec_crop_adjustments,
+        out_file,
+        options,
+        |_| {},
+    )
+}
+
+/// [`build_tilemeta_uddp_from_split_sources_with_loaded_ec_sources`], reporting the package write to
+/// `package_progress`.
+pub fn build_tilemeta_uddp_from_split_sources_with_loaded_ec_sources_with_progress(
+    cc_source_dir: &Path,
+    ec_sources: &TexArtEcLoadedSources,
+    ec_crop_adjustments: &[Option<TexArtEcCropAdjustment>],
+    out_file: &Path,
+    options: &TileMetaBuildOptions,
+    package_progress: impl FnMut(udd_container::BuildProgress),
+) -> eyre::Result<()> {
     let built = build_tilemeta_tables_with_ec_sources(
         &[cc_source_dir.to_path_buf()],
         ec_sources,
@@ -505,7 +525,7 @@ pub fn build_tilemeta_uddp_from_split_sources_with_loaded_ec_sources(
         "unifying tiledata",
     )?;
 
-    write_tilemeta_uddp(out_file, built)
+    write_tilemeta_uddp_with_progress(out_file, built, package_progress)
 }
 
 /// The item texture refs and item lights of the `tilemeta.uddp` these sources build, without writing it: what the

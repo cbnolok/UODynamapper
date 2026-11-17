@@ -12,9 +12,11 @@
 //!   the KR art for the items the art section holds, the Enhanced art for the others. It also writes the section of
 //!   `tex_art_ec.uddp`, an overlay over that package (`tex_art_ec::convert_tex_art_ec_overlay_from_loaded_sources`):
 //!   the items whose world art differs from the Enhanced Client's ([`compare_world_art`]: the Enhanced Client lacks
-//!   the item, its record names another texture, window, draw offset, kind or sprite descriptor, or the image differs
-//!   where the item draws it beyond its [`TextureUse::threshold`]), lossless RGBA8888 with Zstd. It lists the other
-//!   items with
+//!   the item, its record names another texture, window, draw offset, kind or sprite descriptor (but for the legacy
+//!   window, which the slot never draws), or the image differs where the item draws it beyond its
+//!   [`TextureUse::threshold`]), lossless RGBA8888 with Zstd. The Enhanced records it is compared with have taken
+//!   Kingdom Reborn's world-art window where both name the same image at the same scale
+//!   ([`adopt_kr_world_windows`]), so those windows are not differences. It lists the other items with
 //!   world art, drawn from `tex_art_ec.uddp`, with their image's measured difference. The items kept for another
 //!   texture, window, kind or descriptor keep Kingdom Reborn's records, offsets and descriptors; their pixels are the
 //!   Enhanced texture's where the Kingdom Reborn one only re-encoded it.
@@ -28,7 +30,7 @@
 //! so it cannot be read over another one.
 
 use std::collections::{BTreeMap, HashMap, HashSet};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use color_eyre::eyre::{self, WrapErr};
 use log::info;
@@ -46,7 +48,7 @@ use crate::textures::tex_art_ec::{
 use udd_assets::common::{EcEquivalentRecord, EcOverlayTable};
 use uocf::uop_container::hash::hash_file_name_single;
 use uocf::ec_material_axes::EcPhysicalPackage;
-use uocf::enhanced::tile_database::ArtDefinition;
+use uocf::enhanced::tile_database::{ArtDefinition, ArtSpriteDescriptor};
 use uocf::enhanced::tileart::{ArtData, ArtTexture, TaeFlag, TileType, TILEART_UOP_NAME};
 
 use crate::textures::tex_aux_ec::{
@@ -309,7 +311,8 @@ pub enum WorldArtDifference {
     /// Another tile type or rotation (which make the art slot land or static), or a liquid's primary-texture role
     /// (which decides whether it has a slot).
     OtherKind,
-    /// Another authored sprite descriptor (scales and windows of the sprite geometry).
+    /// Another authored sprite descriptor (the source tile, scales and world window of the sprite geometry; not the
+    /// legacy window, see [`drawn_descriptor`]).
     OtherSpriteDescriptor,
     /// The same texture, whose image differs where the item draws it beyond its [`TextureUse::threshold`] (`None`:
     /// another extent, or one client lacks it).
@@ -344,6 +347,14 @@ pub struct WorldArtComparison {
     pub equivalents: Vec<EcEquivalentRecord>,
 }
 
+/// The fields of `descriptor` the item's world art is drawn by, all but its legacy window: that is the window of the
+/// item's legacy art (the record's `cc_img_offset`), which the world-art slot never draws, and Kingdom Reborn authored
+/// its own over its own legacy art. The record that holds it stays exact in the Kingdom Reborn tile data section, so an
+/// item whose descriptors differ in it alone draws the Enhanced Client's world art and is left to it.
+fn drawn_descriptor(descriptor: &ArtSpriteDescriptor) -> (u32, f32, f32, [i32; 6]) {
+    (descriptor.source_tile_id, descriptor.world_art_scale, descriptor.legacy_art_scale, descriptor.world_window)
+}
+
 /// Compares each Kingdom Reborn item's world art with the Enhanced Client's: what decides its `tex_art_ec` slot (its
 /// record's primary block-0 texture with its window and draw offset, its kind and sprite descriptor) and that
 /// texture's image where the item draws it ([`TextureUse::sprites`] of the item's window).
@@ -372,7 +383,7 @@ pub fn compare_world_art(kr: &TexArtEcLoadedSources, ec: &TexArtEcLoadedSources)
             comparison.differing.push((id, WorldArtDifference::OtherGeometry { kr: geometry(kr_texture), ec: geometry(ec_texture) }));
         } else if slot_kind(kr_data) != slot_kind(ec_data) {
             comparison.differing.push((id, WorldArtDifference::OtherKind));
-        } else if kr_descriptor != ec_descriptor {
+        } else if kr_descriptor.map(drawn_descriptor) != ec_descriptor.map(drawn_descriptor) {
             comparison.differing.push((id, WorldArtDifference::OtherSpriteDescriptor));
         } else {
             shared.push((id, kr_texture.texture_id, selected_art_window(kr_data, kr_texture)));
@@ -420,6 +431,48 @@ pub fn compare_world_art(kr: &TexArtEcLoadedSources, ec: &TexArtEcLoadedSources)
 fn slot_kind(data: &ArtData) -> (TileType, bool, Option<u8>) {
     (data.tile_type, data.flags.contains(TaeFlag::Rotated),
         (data.tile_type == TileType::Liquid).then(|| primary_texture_stable_role(data) as u8))
+}
+
+/// Gives the Enhanced records of `ec` Kingdom Reborn's world-art window where theirs was never authored, and returns
+/// their ids.
+///
+/// For 215 items (the creature statuettes, the desert ostard, a bird, the blank wisp and death vortex) the Enhanced
+/// record names the same block-0 texture at the same `world_art_scale` as Kingdom Reborn's but another enhanced window:
+/// a copy of its legacy window, sometimes with one or two of Kingdom Reborn's values, which the Enhanced Client never
+/// reads (those records lack `UseNewArt`, so it draws their legacy art). Kingdom Reborn, which draws that art, reads its
+/// own window, and that window fits the figure (`docs/client_research/world-art-windows`). Each such item takes Kingdom
+/// Reborn's window and draw offsets, in `ArtData::ec_texture` and `ArtSpriteDescriptor::world_window`; the rest of its
+/// record stays the Enhanced Client's.
+pub fn adopt_kr_world_windows(ec: &mut ArtDefinition, kr: &ArtDefinition) -> Vec<u16> {
+    let window = |t: &ArtTexture| [t.start_x, t.start_y, t.end_x, t.end_y, t.offset_x, t.offset_y];
+    let mut adopted = Vec::new();
+    for (id, ec_data) in &mut ec.definitions {
+        let (Some(ec_texture), Some(kr_texture)) = (ec_data.ec_texture.as_mut(),
+            kr.definitions.get(id).and_then(|kr_data| kr_data.ec_texture.as_ref())) else { continue };
+        let (Some(ec_descriptor), Some(kr_descriptor)) =
+            (ec.sprite_descriptors.get_mut(id), kr.sprite_descriptors.get(id)) else { continue };
+        if ec_texture.texture_id != kr_texture.texture_id
+            || ec_descriptor.world_art_scale != kr_descriptor.world_art_scale
+            || window(ec_texture) == window(kr_texture) {
+            continue;
+        }
+        *ec_texture = kr_texture.clone();
+        ec_descriptor.world_window = kr_descriptor.world_window;
+        adopted.push(*id);
+    }
+    adopted.sort_unstable();
+    adopted
+}
+
+/// [`load_tex_art_ec_sources`] of `ec_dirs`, with the world-art windows of the Kingdom Reborn records in `kr_dir`
+/// adopted ([`adopt_kr_world_windows`]): the Enhanced sources every package with a Kingdom Reborn section is packed
+/// from.
+pub fn load_ec_sources_with_kr_windows(ec_dirs: &[PathBuf], kr_dir: &Path) -> eyre::Result<TexArtEcLoadedSources> {
+    let mut ec = load_tex_art_ec_sources(ec_dirs)?;
+    let kr = load_art_definition(kr_dir)?;
+    let adopted = adopt_kr_world_windows(&mut ec.art_definition, &kr);
+    info!("Enhanced items with Kingdom Reborn's world-art window ({}): {:x?}", adopted.len(), adopted);
+    Ok(ec)
 }
 
 /// The smallest difference, in 8-bit levels, of the world-art textures left to `tex_art_ec.uddp` the log lists one by
@@ -704,8 +757,8 @@ mod tests {
         }
     }
 
-    fn descriptor(scale: f32, window: [i32; 6]) -> uocf::enhanced::tile_database::ArtSpriteDescriptor {
-        uocf::enhanced::tile_database::ArtSpriteDescriptor { source_tile_id: 0, world_art_scale: scale,
+    fn descriptor(scale: f32, window: [i32; 6]) -> ArtSpriteDescriptor {
+        ArtSpriteDescriptor { source_tile_id: 0, world_art_scale: scale,
             legacy_art_scale: 1.5, world_window: window, legacy_window: [0, 0, 44, 44, 0, 0] }
     }
 
@@ -713,6 +766,27 @@ mod tests {
         ArtDefinition {
             definitions: records.iter().map(|&(id, texture, _, window)| (id, sprite_record(texture, window))).collect(),
             sprite_descriptors: records.iter().map(|&(id, _, scale, window)| (id, descriptor(scale, window))).collect(),
+        }
+    }
+
+    #[test]
+    fn an_enhanced_record_takes_the_kingdom_reborn_window_of_the_same_image_and_scale() {
+        // 0x20D5 Dog Frame: the legacy window copied in the Enhanced record, the figure's bounds in Kingdom Reborn's.
+        const COPIED: [i32; 6] = [0, 0, 44, 44, 0, 0];
+        const FIGURE: [i32; 6] = [0, 0, 28, 65, 21, -9];
+        const SCALE: f32 = 0.8;
+        let mut ec = definition(&[(0x20D5, 8405, SCALE, COPIED), (1, 1, SCALE, COPIED), (2, 2, SCALE, COPIED),
+            (3, 3, SCALE, COPIED), (4, 4, SCALE, COPIED)]);
+        let kr = definition(&[(0x20D5, 8405, SCALE, FIGURE), (1, 10, SCALE, FIGURE), (2, 2, SCALE / 2.0, FIGURE),
+            (3, 3, SCALE, COPIED)]);
+        assert_eq!(adopt_kr_world_windows(&mut ec, &kr), [0x20D5]);
+        let dog = &ec.definitions[&0x20D5];
+        assert_eq!(dog.ec_texture.as_ref().map(|t| [t.start_x, t.start_y, t.end_x, t.end_y, t.offset_x, t.offset_y]),
+            Some(FIGURE));
+        assert_eq!(ec.sprite_descriptors[&0x20D5].world_window, FIGURE);
+        assert_eq!(ec.sprite_descriptors[&0x20D5].legacy_window, [0, 0, 44, 44, 0, 0], "the rest stays the Enhanced");
+        for (id, why) in [(1, "another texture"), (2, "another scale"), (3, "the same window"), (4, "no KR record")] {
+            assert_eq!(ec.sprite_descriptors[&id].world_window, COPIED, "{why}");
         }
     }
 
