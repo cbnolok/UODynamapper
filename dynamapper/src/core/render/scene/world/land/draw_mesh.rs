@@ -218,8 +218,7 @@ pub struct LandMeshScratch {
     ids: Vec<u16>,
     texture_lookup_cache: Vec<u32>,
     land_shader_flags_cache: Vec<u16>,
-    /// By lookup row: whether it draws a cave exit frame from its black Enhanced or Kingdom Reborn material
-    /// (tile_atlas.rs `cell_terrain_flags`).
+    /// By lookup row: whether it draws a cave exit frame, from any source (tile_atlas.rs `cell_terrain_flags`).
     cave_exit_frame_rows: Vec<bool>,
     /// Reusable bitmask for deduplicating uncached block coordinates.
     dedup_bits: Vec<u64>,
@@ -834,11 +833,12 @@ pub fn sys_draw_spawned_land_chunks(
                 .map(|(package, target)| ec_land_shader_flags(package, target))
                 .unwrap_or(0);
             // Black land, whatever its source, never blends with its neighbours; nor, on the player's cave's mouth, do
-            // the cave exit frames drawn from their black Enhanced or Kingdom Reborn materials (`cell_terrain_flags`).
-            if is_black_land(cache_r.routes().target(land_id).id) {
+            // the cave exit frames, whatever their source (`cell_terrain_flags`).
+            let target = cache_r.routes().target(land_id).id;
+            if is_black_land(target) {
                 land_shader_flags_cache[id as usize] |= TERRAIN_SHADER_FLAG_NEVER_BLENDS;
             }
-            cave_exit_frame_rows[id as usize] = enhanced.is_some_and(|(_, target)| is_cave_exit_frame(target));
+            cave_exit_frame_rows[id as usize] = is_cave_exit_frame(target);
         }
         if let Some(warning) = cache_r.missing_land_ids.report(missing_land_ids) {
             console_logger::one(LogSev::Warn, LogAbout::RenderWorldLand, &warning);

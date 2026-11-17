@@ -416,8 +416,9 @@ name = "minoc-mine-mouth-opening-see-through-perspective"
 guards = """Inside the Minoc mine by its mouth with the player's-floor view, in the perspective camera: the black opening \
 (0x1DB, and with Enhanced or KR land its black frame 0x1D3-0x1DA) is see-through, the cave's floor and the clear \
 colour behind it showing darkened, no longer an opaque black slab; its edge where the land's is, no gap nor darker \
-seam along its quads (the veil's quads are the chunk mesh's); a frame drawn from its Classic texmap stays opaque \
-(cave mouth veil)."""
+seam along its quads (the veil's quads are the chunk mesh's); a frame drawn from its Classic texmap keeps its \
+painted rock opaque, no black ring around the opening, its painted black see-through (cave mouth veil's darkness \
+key)."""
 tier = "full"
 tags = ["caves", "player-cave", "z-view", "minoc", "perspective"]
 map = 1
@@ -431,8 +432,9 @@ settings = { world_rendering = { show_only_player_floor = true, cave_surrounding
 [[fixture]]
 name = "minoc-north-cave-mouth-opening-see-through-close"
 guards = """Close on the mouth of the cave north of Minoc with the player's-floor view: the black opening is see-through, \
-the cave's floor behind it darkened, its bottom edge straight, no seam where the veil's quads meet the land's \
-(cave mouth veil)."""
+the cave's floor behind it darkened, its bottom edge straight, no seam where the veil's quads meet the land's; with \
+Classic land, where most of the opening is the frames' texmaps, their rock opaque and their black see-through, no \
+black ring (cave mouth veil)."""
 tier = "full"
 tags = ["caves", "player-cave", "z-view", "minoc"]
 map = 1

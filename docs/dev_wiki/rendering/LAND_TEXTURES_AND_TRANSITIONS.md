@@ -67,20 +67,25 @@ floor's jagged edge against the opening. The cave exit frames (0x1D3-0x1DA,
 0x7EC-0x7F1, 0x834-0x839, 0x8C1-0x8C6, `is_cave_exit_frame`), rock around a
 black opening in their Classic texmaps, are drawn by the Enhanced Client and
 Kingdom Reborn with all-black materials (44 and 45 "cave exit", 154 "rock hole").
-From an EC-layout source they never blend on the land of the player's cave's
-mouth only (`cell_terrain_flags`, a cell's `TERRAIN_SHADER_FLAG_NEVER_BLENDS`,
-which the coverage in `land/coverage.wesl` and `coverage/cache.rs` honours per
-cell): there the dirt below a steep frame, as at the Minoc mine's mouth, does not
-stretch up its black. Everywhere else, and from their Classic texmaps, they blend:
+From any source they never blend on the land of the player's cave's mouth only
+(`cell_terrain_flags`, a cell's `TERRAIN_SHADER_FLAG_NEVER_BLENDS`, which the
+coverage in `land/coverage.wesl` and `coverage/cache.rs` and the Classic
+transitions honour per cell): there the dirt below a steep frame, as at the
+Minoc mine's mouth, does not stretch up its black. Everywhere else they blend:
 seen from outside, the opening's black fades softly into the rock around it.
 In the player's cave the opening is see-through: on its mouth's land the cells
-that never blend, the black openings and those black frames (`land/main.wesl`
+that never blend, the black openings and the frames (`land/main.wesl`
 `cave_mouth_opening`), are left out of the land and drawn by the cave mouth veil
-(`land/cave_mouth_veil.rs`), the land material blended at
-`CAVE_MOUTH_OPENING_OPACITY` (one half) over what lies behind it, the cave's
-floor or the dimmed land outside, and under what stands in front of it, the
-entrance arches. A frame drawn from its Classic texmap stays opaque, the black
-of its texture with it. Seen from outside, and in other caves, nothing changes.
+(`land/cave_mouth_veil.rs`), the land material blended over what lies behind it,
+the cave's floor or the dimmed land outside, and under what stands in front of
+it, the entrance arches. A darkness key over its texture's linear luminance
+(`cave_mouth_veil_opacity`) draws the black at `CAVE_MOUTH_OPENING_OPACITY`
+(0.65) and the rock opaque, ramping between `CAVE_MOUTH_KEY_BLACK_LUMINANCE`
+(0.006) and `CAVE_MOUTH_KEY_ROCK_LUMINANCE` (0.02): the Classic frame texmaps
+paint their opening at most 0.003 and their rock from 0.02, almost nothing
+between, so a Classic frame's rock stays solid around a see-through opening;
+the Enhanced and Kingdom Reborn frames are black throughout. Seen from outside,
+and in other caves, nothing changes.
 
 Texture roles follow the source shader/layer class and item position. Names,
 stretch and visual resemblance do not select the base or establish a role.

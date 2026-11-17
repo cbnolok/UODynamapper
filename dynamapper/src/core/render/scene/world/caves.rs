@@ -41,11 +41,12 @@
 //! - the cave's mouth is its own: where its floor walks out onto the land of a cell next to it, at most `WALK_STEP_Z`
 //!   from the floor (an exit), the land rising from there over the floor is the rock framing the opening, drawn whole,
 //!   in front of the cave's floor behind it and not darkened (`PlayerCave::owns_land`: the land quads with a corner on
-//!   a buried cell of the cave sharing a side with an exit; a cave exit frame there drawn from its black Enhanced or
-//!   Kingdom Reborn material never blends, tile_atlas.rs `cell_terrain_flags`), the floor under that land not drawn,
+//!   a buried cell of the cave sharing a side with an exit; a cave exit frame there never blends, tile_atlas.rs
+//!   `cell_terrain_flags`), the floor under that land not drawn,
 //!   and what stands on an exit at the cave's level, the cave entrance art of the KR client's arches, is the cave's
-//!   (`CaveStatic::Lifted`). Its black opening, the black land and that black frame, is see-through: what lies behind
-//!   it, the cave's floor or the land outside, shows darkened through it (land/cave_mouth_veil.rs).
+//!   (`CaveStatic::Lifted`). Its black opening, the black land and the black of that frame (all of an Enhanced or
+//!   Kingdom Reborn frame, the opening painted in a Classic texmap's), is see-through: what lies behind it, the cave's
+//!   floor or the land outside, shows darkened through it (land/cave_mouth_veil.rs).
 //!   Where a built ceiling covers the rim, a floor static on the land's face over the cave's floor, the opening is a
 //!   room's doorway, not a mouth: its land is not the cave's.
 

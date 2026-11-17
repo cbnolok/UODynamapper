@@ -88,7 +88,18 @@ const TERRAIN_FLAG_REVIEWED_LIQUID: u32 = 0x4u;
 const TERRAIN_FLAG_PLAYER_CAVE: u32 = 0x1u;
 // How opaque the black opening of the player's cave's mouth is (`cave_mouth_opening`), drawn by the cave mouth veil
 // (land/cave_mouth_veil.rs) over what lies behind it, the cave's floor or the land outside.
-const CAVE_MOUTH_OPENING_OPACITY: f32 = 0.5;
+const CAVE_MOUTH_OPENING_OPACITY: f32 = 0.65;
+// The veil's darkness key (`cave_mouth_veil_opacity`), over the linear luminance of the land's own texture: black up to
+// the first, the opening's opacity; rock from the second, opaque. The Classic texmaps of the cave exit frames
+// (0x1D3-0x1DA, 0x7EC-0x7F1, 0x834-0x839, 0x8C1-0x8C6) paint their opening at most 0.003 (black, or the darkest
+// 5-bit grey) and their rock from 0.02, almost no texel between; the Enhanced and Kingdom Reborn frames, and the black
+// land, are all black.
+const CAVE_MOUTH_KEY_BLACK_LUMINANCE: f32 = 0.006;
+const CAVE_MOUTH_KEY_ROCK_LUMINANCE: f32 = 0.02;
+const CAVE_MOUTH_KEY_LUMA_WEIGHTS: vec3<f32> = vec3<f32>(0.2126, 0.7152, 0.0722);
+// The linear luminance of the land's texture at the fragment, as `shade_land` last sampled it, before any lighting:
+// the cave mouth veil's darkness key.
+var<private> land_albedo_luminance: f32 = 0.0;
 const EC_TERRAIN_TRANSITION_BASE_WEIGHT: f32 = 0.35;
 // The cells of the KR material micro-contrast's grain along a world tile's edge (apply_kr_material_micro_contrast).
 const KR_MATERIAL_GRAIN_CELLS_PER_TILE: f32 = 2.7;
@@ -676,6 +687,7 @@ fn shade_land(in: LandVertexOutput, tile: TileUniform, ordered_coverage: bool, w
   if (use_classic_flat_wet_land_art) {
     base_albedo = sample_classic_land_art(uv_in_tile, tile.texture_payload);
   }
+  land_albedo_luminance = dot(base_albedo, CAVE_MOUTH_KEY_LUMA_WEIGHTS);
 
   // TODO Phase 10G — post-lighting extra-pass effects (not yet implemented):
   // FoamHighlight, WaterfallSupport, LavaBubbleSupport, RefractionDistortionLike.
@@ -974,16 +986,25 @@ fn land_cell_average_z(cell: vec2<i32>) -> i32 {
 }
 
 // The black opening of the player's cave's mouth: on the mouth's land, the cells that never blend, black land and the
-// cave exit frames drawn from their black Enhanced or Kingdom Reborn materials (tile_atlas.rs cell_terrain_flags).
+// cave exit frames (tile_atlas.rs cell_terrain_flags), whatever their source.
 fn cave_mouth_opening(tile: TileUniform) -> bool {
   return (tile.terrain_flags & TERRAIN_FLAG_PLAYER_CAVE) != 0u && terrain_never_blends(tile);
+}
+
+// How opaque the cave mouth veil draws the fragment whose land colour `land_color` just shaded: its texture's black
+// at CAVE_MOUTH_OPENING_OPACITY, its rock opaque, so that a Classic frame's painted rock stays solid around the
+// see-through opening.
+fn cave_mouth_veil_opacity() -> f32 {
+  let rock = smoothstep(CAVE_MOUTH_KEY_BLACK_LUMINANCE, CAVE_MOUTH_KEY_ROCK_LUMINANCE, land_albedo_luminance);
+  return mix(CAVE_MOUTH_OPENING_OPACITY, 1.0, rock);
 }
 
 // The land's colour, and its depth: its cell's at ClassicUO's land priority, the average z - 2 (art/depth.wesl), moved
 // by the cave lift the vertex stage left in world_position.w (`vertex`). The average z comes flat from the triangle's
 // first vertex when the fragment lies in that vertex's cell, every fragment of the full-detail mesh off the banks;
 // from the atlas otherwise. The black opening of the player's cave's mouth (`cave_mouth_opening`) is the cave mouth
-// veil's alone, drawn see-through at CAVE_MOUTH_OPENING_OPACITY over what lies behind it; the land leaves it out.
+// veil's alone, its black drawn see-through at CAVE_MOUTH_OPENING_OPACITY over what lies behind it, its painted rock
+// opaque (`cave_mouth_veil_opacity`); the land leaves it out.
 @fragment
 fn fragment(in: LandVertexOutput) -> LandFragmentOutput {
   var out: LandFragmentOutput;
@@ -994,7 +1015,7 @@ fn fragment(in: LandVertexOutput) -> LandFragmentOutput {
   }
   out.color = land_color(in);
   if (veil) {
-    out.color.a = CAVE_MOUTH_OPENING_OPACITY;
+    out.color.a = cave_mouth_veil_opacity();
   }
   var average_z = in.depth_cell.z;
   if (any(cell != in.depth_cell.xy)) {
