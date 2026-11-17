@@ -1717,7 +1717,8 @@ pub fn sys_setup_terrain_cache(
                     ec_reflection_camera_distance:
                         crate::core::render::scene::camera::PlayerCamera::BASE_OFFSET_FROM_PLAYER.length(),
                     client_view_scale: 1.0,
-                    _reserved: Vec3::ZERO,
+                    cave_mouth_veil: 0.0,
+                    _reserved: Vec2::ZERO,
                     land_outside_dimming: 0.0,
                 },
                 effects_uniform: Default::default(),

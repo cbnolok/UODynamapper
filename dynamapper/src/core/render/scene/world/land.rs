@@ -1,3 +1,4 @@
+pub mod cave_mouth_veil;
 pub mod chunk_loader;
 pub mod draw_mesh;
 pub mod mesh_material;
@@ -610,6 +611,13 @@ impl Plugin for DrawLandChunkMeshPlugin {
                     sys_apply_land_shader_simplification_override
                         .run_if(in_state(AppState::InGame))
                         .after(sys_update_shared_land_material),
+                    cave_mouth_veil::sys_sync_cave_mouth_veil_material
+                        .run_if(in_state(AppState::InGame))
+                        .after(sys_apply_land_shader_simplification_override),
+                    cave_mouth_veil::sys_sync_cave_mouth_veils
+                        .after(SceneRenderLandSysSet::RenderLandChunks)
+                        .after(cave_mouth_veil::sys_sync_cave_mouth_veil_material)
+                        .run_if(in_state(AppState::InGame)),
                 ),
             )
             .add_systems(First, tile_atlas::sys_clear_atlas_uploads)

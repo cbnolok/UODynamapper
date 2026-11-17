@@ -73,6 +73,14 @@ which the coverage in `land/coverage.wesl` and `coverage/cache.rs` honours per
 cell): there the dirt below a steep frame, as at the Minoc mine's mouth, does not
 stretch up its black. Everywhere else, and from their Classic texmaps, they blend:
 seen from outside, the opening's black fades softly into the rock around it.
+In the player's cave the opening is see-through: on its mouth's land the cells
+that never blend, the black openings and those black frames (`land/main.wesl`
+`cave_mouth_opening`), are left out of the land and drawn by the cave mouth veil
+(`land/cave_mouth_veil.rs`), the land material blended at
+`CAVE_MOUTH_OPENING_OPACITY` (one half) over what lies behind it, the cave's
+floor or the dimmed land outside, and under what stands in front of it, the
+entrance arches. A frame drawn from its Classic texmap stays opaque, the black
+of its texture with it. Seen from outside, and in other caves, nothing changes.
 
 Texture roles follow the source shader/layer class and item position. Names,
 stretch and visual resemblance do not select the base or establish a role.

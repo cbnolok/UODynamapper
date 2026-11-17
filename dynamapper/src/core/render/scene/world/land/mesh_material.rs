@@ -1,7 +1,10 @@
 use bevy::{
-    pbr::{ExtendedMaterial, MaterialExtension},
+    mesh::MeshVertexBufferLayoutRef,
+    pbr::{ExtendedMaterial, MaterialExtension, MaterialExtensionKey, MaterialExtensionPipeline},
     prelude::*,
-    render::render_resource::{AsBindGroup, ShaderType},
+    render::render_resource::{
+        AsBindGroup, DepthBiasState, RenderPipelineDescriptor, ShaderType, SpecializedMeshPipelineError,
+    },
     shader::ShaderRef,
 };
 use serde::{self, Deserialize, Serialize};
@@ -119,6 +122,20 @@ impl MaterialExtension for LandMaterialExtension {
     fn enable_shadows() -> bool {
         false
     }
+
+    /// The land writes its own depth, the draw order's (land/main.wesl `fragment`): no depth bias. The cave mouth
+    /// veil's `depth_bias` only sorts it last (land/cave_mouth_veil.rs `VEIL_SORT_BIAS`).
+    fn specialize(
+        _pipeline: &MaterialExtensionPipeline,
+        descriptor: &mut RenderPipelineDescriptor,
+        _layout: &MeshVertexBufferLayoutRef,
+        _key: MaterialExtensionKey<Self>,
+    ) -> Result<(), SpecializedMeshPipelineError> {
+        if let Some(depth_stencil) = descriptor.depth_stencil.as_mut() {
+            depth_stencil.bias = DepthBiasState::default();
+        }
+        Ok(())
+    }
 }
 
 // Uniform buffer -> just a fancy name for a struct that is passed to the shader, has
@@ -154,7 +171,11 @@ pub struct SceneUniform {
     /// How many times wider than the KR client's view the camera shows (`client_view_scale`); above 1 the client
     /// texture filter emulates mip levels. Takes the former `_pad` slot.
     pub client_view_scale: f32,
-    pub _reserved: Vec3,
+    /// 1 in the cave mouth veil's material (land/cave_mouth_veil.rs), which draws only the black opening of the
+    /// player's cave's mouth, see-through; 0 in the land's own, which draws all but it. Only the land shader reads it.
+    /// Takes a former `_reserved` slot.
+    pub cave_mouth_veil: f32,
+    pub _reserved: Vec2,
     /// How far the land takes the tone of what is outside the player's cave (art/depth.wesl `cave_outside_tone`), 0
     /// not at all, 1 fully (caves.rs `CavesRes::land_outside_dimming`). Only the land shader reads it.
     pub land_outside_dimming: f32,

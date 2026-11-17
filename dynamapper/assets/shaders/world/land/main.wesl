@@ -86,6 +86,9 @@ import package::shaders::world::land::transitions::{
 const TERRAIN_FLAG_REVIEWED_LIQUID: u32 = 0x4u;
 // The land of the player's cave's mouth (tile_atlas.rs TERRAIN_SHADER_FLAG_PLAYER_CAVE): drawn whole, not darkened.
 const TERRAIN_FLAG_PLAYER_CAVE: u32 = 0x1u;
+// How opaque the black opening of the player's cave's mouth is (`cave_mouth_opening`), drawn by the cave mouth veil
+// (land/cave_mouth_veil.rs) over what lies behind it, the cave's floor or the land outside.
+const CAVE_MOUTH_OPENING_OPACITY: f32 = 0.5;
 const EC_TERRAIN_TRANSITION_BASE_WEIGHT: f32 = 0.35;
 // The cells of the KR material micro-contrast's grain along a world tile's edge (apply_kr_material_micro_contrast).
 const KR_MATERIAL_GRAIN_CELLS_PER_TILE: f32 = 2.7;
@@ -970,15 +973,29 @@ fn land_cell_average_z(cell: vec2<i32>) -> i32 {
   return (z_left + z_right) >> 1u;
 }
 
+// The black opening of the player's cave's mouth: on the mouth's land, the cells that never blend, black land and the
+// cave exit frames drawn from their black Enhanced or Kingdom Reborn materials (tile_atlas.rs cell_terrain_flags).
+fn cave_mouth_opening(tile: TileUniform) -> bool {
+  return (tile.terrain_flags & TERRAIN_FLAG_PLAYER_CAVE) != 0u && terrain_never_blends(tile);
+}
+
 // The land's colour, and its depth: its cell's at ClassicUO's land priority, the average z - 2 (art/depth.wesl), moved
 // by the cave lift the vertex stage left in world_position.w (`vertex`). The average z comes flat from the triangle's
 // first vertex when the fragment lies in that vertex's cell, every fragment of the full-detail mesh off the banks;
-// from the atlas otherwise.
+// from the atlas otherwise. The black opening of the player's cave's mouth (`cave_mouth_opening`) is the cave mouth
+// veil's alone, drawn see-through at CAVE_MOUTH_OPENING_OPACITY over what lies behind it; the land leaves it out.
 @fragment
 fn fragment(in: LandVertexOutput) -> LandFragmentOutput {
   var out: LandFragmentOutput;
-  out.color = land_color(in);
   let cell = vec2<i32>(floor(in.world_position.xz));
+  let veil = scene.cave_mouth_veil != 0.0;
+  if (cave_mouth_opening(atlas_read_meta(cell.x, cell.y)) != veil) {
+    discard;
+  }
+  out.color = land_color(in);
+  if (veil) {
+    out.color.a = CAVE_MOUTH_OPENING_OPACITY;
+  }
   var average_z = in.depth_cell.z;
   if (any(cell != in.depth_cell.xy)) {
     average_z = land_cell_average_z(cell);

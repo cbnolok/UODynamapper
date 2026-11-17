@@ -9,6 +9,11 @@ use crate::util_lib::tracked_plugin::log_system_add_startup;
 use crate::core::system_sets::StartupSysSet;
 use crate::fname;
 
+/// A grid quad's two triangles, by its corners: 0 at its origin, 1 one step along x, 2 one step along z, 3 both. The
+/// diagonal runs from 0 to 3; the cave mouth veil's quads (`build_cell_quads_mesh`) cut theirs the same way, so they
+/// lie exactly over the chunk mesh's.
+const QUAD_TRIANGLES: [u32; 6] = [0, 3, 1, 0, 2, 3];
+
 fn build_chunk_mesh(chunk_tiles: usize, step_tiles: usize) -> Mesh {
     let core_w: usize = chunk_tiles;
     let core_h: usize = chunk_tiles;
@@ -44,12 +49,37 @@ fn build_chunk_mesh(chunk_tiles: usize, step_tiles: usize) -> Mesh {
             let v1 = v0 + 1;
             let v2 = ((ty + 1) * grid_w + tx) as u32;
             let v3 = v2 + 1;
-            indices.extend_from_slice(&[v0, v3, v1, v0, v2, v3]);
+            let corners = [v0, v1, v2, v3];
+            indices.extend(QUAD_TRIANGLES.map(|corner| corners[corner as usize]));
         }
     }
 
-    let dummy_normals = vec![[0.0, 1.0, 0.0]; estimated_vertex_count];
-    let dummy_uv1s = vec![[0.0, 0.0]; estimated_vertex_count];
+    grid_mesh(positions, uvs, indices)
+}
+
+/// A mesh of the quads of a chunk mesh with `span` tiles a side and `step` tiles a quad, each quad named by its origin
+/// in the chunk, a multiple of `step`: the same vertices and triangles as the chunk mesh's there (`build_chunk_mesh`),
+/// which the land vertex shader lifts the same.
+pub(super) fn build_cell_quads_mesh(span: u32, step: u32, quads: impl ExactSizeIterator<Item = UVec2>) -> Mesh {
+    let mut positions = Vec::with_capacity(quads.len() * 4);
+    let mut uvs = Vec::with_capacity(quads.len() * 4);
+    let mut indices = Vec::with_capacity(quads.len() * QUAD_TRIANGLES.len());
+    for quad in quads {
+        let first = positions.len() as u32;
+        for corner in [UVec2::ZERO, UVec2::X, UVec2::Y, UVec2::ONE] {
+            let (x, z) = ((quad.x + corner.x * step) as f32, (quad.y + corner.y * step) as f32);
+            positions.push([x, 0.0, z]);
+            uvs.push([x / span as f32, z / span as f32]);
+        }
+        indices.extend(QUAD_TRIANGLES.map(|corner| first + corner));
+    }
+    grid_mesh(positions, uvs, indices)
+}
+
+/// The land mesh of a flat grid's `positions`, their `uvs` and the triangles `indices`.
+fn grid_mesh(positions: Vec<[f32; 3]>, uvs: Vec<[f32; 2]>, indices: Vec<u32>) -> Mesh {
+    let dummy_normals = vec![[0.0, 1.0, 0.0]; positions.len()];
+    let dummy_uv1s = vec![[0.0, 0.0]; positions.len()];
 
     let mut mesh = Mesh::new(
         PrimitiveTopology::TriangleList,

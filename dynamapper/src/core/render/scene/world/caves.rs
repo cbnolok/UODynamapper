@@ -44,7 +44,8 @@
 //!   a buried cell of the cave sharing a side with an exit; a cave exit frame there drawn from its black Enhanced or
 //!   Kingdom Reborn material never blends, tile_atlas.rs `cell_terrain_flags`), the floor under that land not drawn,
 //!   and what stands on an exit at the cave's level, the cave entrance art of the KR client's arches, is the cave's
-//!   (`CaveStatic::Lifted`).
+//!   (`CaveStatic::Lifted`). Its black opening, the black land and that black frame, is see-through: what lies behind
+//!   it, the cave's floor or the land outside, shows darkened through it (land/cave_mouth_veil.rs).
 //!   Where a built ceiling covers the rim, a floor static on the land's face over the cave's floor, the opening is a
 //!   room's doorway, not a mouth: its land is not the cave's.
 
@@ -553,6 +554,11 @@ impl PlayerCave {
     /// Whether the cave has a mouth whose land it draws (`owns_land`).
     pub fn has_mouth_land(&self) -> bool {
         !self.mouth_land.is_empty()
+    }
+
+    /// The cells whose land is the cave's mouth (`owns_land`).
+    pub fn mouth_land_cells(&self) -> impl Iterator<Item = (i32, i32)> + '_ {
+        self.mouth_land.iter().copied()
     }
 
     /// What the cave does to a static at `z` with tile flags `flags` and height `height` on the cell (`x`, `y`),
