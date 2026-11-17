@@ -16,6 +16,8 @@ What was built differs from the proposal in these points:
 - **No interim fallback:** §5.3 is dropped. KR-like and Enhanced always draw the client sprites, and the light.mul
   quads remain only in Classic and UOD-Painterly. A light whose texture is absent from `tex_aux_ec.uddp` (a package
   packed against another tilemeta) draws nothing, with one warning per texture.
+- **Later (33fa5dd4, 2026-11-14):** UOD-Painterly draws the client sprites too, centred and scaled, under KR's light
+  cover; only Classic keeps the light.mul quads.
 - **Counts:** the shipped EC tileart gives 1,042 records (not 1,040) and 29 textures (25 of 256x256, 4 of 128x128).
 - **Q2:** yes. No hue on the sprites, and the flag-only items get no light, in KR-like and Enhanced.
 - **Q3:** EC's entry 17 only. The placement comes from the map and the tileart alone, so it is the same under CC

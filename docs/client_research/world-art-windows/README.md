@@ -2,8 +2,9 @@
 
 For 215 items, most of them creature statuettes ("... Frame", monsters, horses: 0x20D5 Dog Frame, 0x210D Elf Female,
 0x2108 mountain goat), the Enhanced Client's tileart record gives a smaller world-art window and another draw offset
-than Kingdom Reborn's for the same texture, so Dynamapper's Enhanced style draws them cut off where KR-like draws the
-whole figure. Does the real Enhanced Client draw them cut off, or do we read the wrong field?
+than Kingdom Reborn's for the same texture, so Dynamapper's EC art source drew them cut off where the KR client draws
+the whole figure (until 70e54459, [§7](#7-fix-implemented-in-70e54459)). Does the real Enhanced Client draw them cut
+off, or do we read the wrong field?
 
 **Answer.** Neither. The Enhanced Client never draws these items' world art: their records lack `UseNewArt`, so it
 draws the TileArtLegacy (Classic) image with the legacy window, which holds the whole statuette. Their enhanced
@@ -84,10 +85,12 @@ the enhanced window; `ArtDefinition::from_package` (`tile_database.rs`) stores t
 `ArtSpriteDescriptor::world_window`. The `tex_art_ec` converter (`lib/udd-conv/src/textures/tex_art_ec.rs`,
 `selected_art_source`, `selected_art_window`, `build_sprite_geometry`) crops the block-0 image to that window (ends
 +1) and takes its offsets as the slot's draw offset, and `world_art_scale` as the pixel scale: the client's mode 1,
-exactly. The Enhanced style draws every item with a `tex_art_ec` slot this way whatever `UseNewArt` says (a
-deliberate project choice, `docs/dev_wiki/ASSET_PIPELINE.md`: the slot is the KR art). The KR-like style takes the
-slot of the KR section instead when the KR records differ (`lib/udd-conv/src/textures/kr_items.rs`,
-`compare_world_art`), which is why the 211 statuettes look whole there.
+exactly. The EC art source draws every item with a `tex_art_ec` slot this way, in every style, whatever `UseNewArt` says (a
+deliberate project choice, `docs/dev_wiki/ASSET_PIPELINE.md`: the slot is the KR art). No style chooses the KR
+section: in every style, only the statics that continue the land under the KR land are drawn from it, where the KR
+records differ (`lib/udd-conv/src/textures/kr_items.rs`, `compare_world_art`; `kingdom_reborn_static_visual_kind` in
+`dynamapper/src/core/render/scene/world/art/statics_collect.rs`). Since 70e54459 the EC records take KR's windows
+(§7), so the statuettes draw whole from the EC art in every style.
 
 ## 3. What the clients' code does
 
@@ -153,15 +156,23 @@ compared from the images and windows above, not from captures.
 
 Not in the code: the Enhanced Client draws these items whole, from their Classic image. The cut windows are dead data
 in its tileart, harmless to it; they only matter to a reader that draws the world art the Enhanced Client never
-draws, as Dynamapper's Enhanced style does. Someone who turned `UseNewArt` on for these records (the way KR art is
+draws, as Dynamapper's EC art source does. Someone who turned `UseNewArt` on for these records (the way KR art is
 enabled in the EC) would see them cut: a data defect of the EC's tileart, not a rule to copy.
 
-## 7. Proposed fix (not implemented)
+## 7. Fix (implemented in 70e54459)
 
 Take the window and draw offset of the art from the client that draws that art. For an item whose EC record lacks
 `UseNewArt`, the EC never draws its world art; KR does, with KR's window. So when Kingdom Reborn's record names the
 same block-0 texture with the same `world_art_scale` and another enhanced window, the Enhanced packages use KR's
 enhanced window. The records with `UseNewArt` keep EC's (the EC draws those; none of them differs from KR's anyway).
+
+Implemented as proposed below in 70e54459: `adopt_kr_world_windows` and `load_ec_sources_with_kr_windows`
+(`lib/udd-conv/src/textures/kr_items.rs`) run in every packer with a KR source, and the KR art section no longer
+holds the statuettes. For the borrowed images, an item whose copied window cuts more than `COPIED_WINDOW_MAX_CUT_SHARE`
+(2 %) of the image's alpha gets no slot and draws its Classic art: the ship 0xA432/0xA440 and the orchids
+0xA645-0xA648 (`has_unread_copied_window`, `lib/udd-conv/src/textures/tex_art_ec.rs`). Guards: the udd-conv
+integration test `the_enhanced_records_take_the_215_kingdom_reborn_windows` and the unit tests named in
+`docs/dev_wiki/rendering/STYLE_RULES.md` §2. The plan as written before the change follows.
 
 - Where: one step that patches the loaded EC sources right after `load_tex_art_ec_sources`, before anything is
   decoded, for example `adopt_kr_world_windows(ec: &mut TexArtEcLoadedSources, kr: &TexArtEcLoadedSources)` in
@@ -179,7 +190,7 @@ enhanced window. The records with `UseNewArt` keep EC's (the EC draws those; non
   shared records already have KR's window, and the 2,163 without a KR record keep theirs.
 - Side effect: `compare_world_art` then finds the 211 statuettes identical to EC's (same pixels, window and
   descriptor), and probably the bird and the ostard too (their textures are the same), so the KR section of
-  `tex_art_ec` loses 211 to 213 slots and the KR-like style draws the same pixels
+  `tex_art_ec` loses 211 to 213 slots and the statics drawn from it draw the same pixels
   from the outer package. No format change (the descriptor values change, not the layout); `tex_art_ec` and
   `tilemeta` need repacking together.
 - Not covered: the 10 EC-only records that borrow another item's world art with a copied window (glow, ship,

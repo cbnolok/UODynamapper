@@ -161,7 +161,7 @@ Art draw offsets are package-local metadata in `tex_art_cc.uddp` and `tex_art_ec
 Future work is expected to keep the original source texture intact for EC art and let runtime sampling windows handle subrect selection, so cropped packing here should be understood as the current behavior, not the final target.
 When the schema is eventually widened, the CC texture coordinates, EC texture coordinates, and the CC/EC flags should be split into explicit fields rather than compressed into one mixed record layout.
 
-The Classic and UOD-Painterly static lights use this item metadata: `flags & 0x00800000` marks a light-source static, `quality` is interpreted as the world light id, and the placed static hue id can tint the light mask through the configured runtime hue source. KR-like and Enhanced draw the clients' light sprites of §2.3 instead.
+The Classic static lights use this item metadata: `flags & 0x00800000` marks a light-source static, `quality` is interpreted as the world light id, and the placed static hue id can tint the light mask through the configured runtime hue source. KR-like, Enhanced and UOD-Painterly draw the clients' light sprites of §2.3 instead.
 
 ### 2.3 `TileMetaItemLight` Struct (20 Bytes)
 
@@ -356,7 +356,7 @@ Contents:
   - The packer rejects a tilemeta ref on any reserved key (`is_tex_aux_ec_reserved_key`: ids from `0x80000000`).
 - **The light textures**: every `TerrainTexture.uop` entry the tilemeta's item lights name (§2.3), stored like the atmosphere maps: the same reserved keys, family `Textures` (4), lossless RGBA8888 at native size, but role `Light` (10). The shipped client gives 29 (1 to 4, 6 to 15, 17, 23, 25 to 29, 32 to 35, 37 to 40), 25 of 256x256 and 4 of 128x128.
   - They are required: the packer fails when one is missing, and `udd-cli tool validate` checks them against the `tilemeta.uddp` beside the package.
-  - KR-like and Enhanced draw them as the light sprites; a package packed against another tilemeta may lack some, and Dynamapper then warns once per texture and draws those lights without a sprite.
+  - KR-like, Enhanced and UOD-Painterly draw them as the light sprites; a package packed against another tilemeta may lack some, and Dynamapper then warns once per texture and draws those lights without a sprite.
 
 **Virtual Files:**
 
