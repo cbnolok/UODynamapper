@@ -114,6 +114,7 @@ Executable names sometimes differ from Cargo crate names. Command details are av
 ## Related Documentation
 
 - [Engineering guide](../../ENGINEERING.md): workspace conventions and build commands.
+- [Render style rules](rendering/STYLE_RULES.md): the hard rules of Classic, Enhanced, KR-like and UOD-Painterly, each with its source, code and guard; check it first.
 - [Land textures and transitions](rendering/LAND_TEXTURES_AND_TRANSITIONS.md): terrain rendering guidance.
 - [Client night lighting, static shadows and sun](rendering/CLIENT_NIGHT_LIGHTING_AND_SHADOWS.md): the KR and Enhanced clients' effects KR-like and Enhanced reproduce.
 - [Depth scale: Dynamapper and the KR client](rendering/DEPTH_SCALE_AND_KR_CLIENT.md): how statics, shadows and land are depth-sorted, against the KR client's rule.
