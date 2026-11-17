@@ -65,6 +65,7 @@ import package::shaders::world::effects::surface_effects::{apply_water_animation
 import package::shaders::world::ec_liquid::{sample_ec_liquid, ec_liquid_world_uv};
 import package::shaders::world::ec_liquid_camera::ec_liquid_camera_reflection_uv;
 import package::shaders::world::texture_data::texture_color_rgb;
+import package::shaders::world::uo_coords::UO_Z_TO_WORLD_SCALE;
 import package::shaders::world::land::coverage::{EcTerrainStack, EcTerrainCache, EcTerrainLayer, ec_coverage_params, ec_terrain_cache, ec_cache_layer, ec_cache_grime_mask, ec_terrain_stack_uncached, ec_layer_tile};
 import package::shaders::world::land::liquid_bank::{ec_liquid_bank, ec_bank_vertex};
 import package::shaders::world::land::cc_transitions::{blend_cc_terrain_transitions, cc_transition_dry_material};
@@ -72,7 +73,7 @@ import package::shaders::world::projection::{camera_relative_world_to_clip, worl
 
 import package::shaders::world::land::transitions::{
   ec_transition_neighbor_weight, ec_transition_diagonal_weight,
-  ec_transition_materials_compatible, ec_transition_boundary_weight, terrain_never_blends,
+  ec_transition_materials_compatible, ec_transition_boundary_weight, terrain_never_blends, TERRAIN_FLAG_NEVER_BLENDS,
   ec_transition_boundary_weight_from_mask,
 };
 
@@ -100,6 +101,22 @@ const CAVE_MOUTH_KEY_LUMA_WEIGHTS: vec3<f32> = vec3<f32>(0.2126, 0.7152, 0.0722)
 // The linear luminance of the land's texture at the fragment, as `shade_land` last sampled it, before any lighting:
 // the cave mouth veil's darkness key.
 var<private> land_albedo_luminance: f32 = 0.0;
+// SceneUniform::cave_mouth_veil of the veil's backdrop (land/cave_mouth_veil.rs BACKDROP_SHADER_MODE), which draws
+// the opening black behind all else, so that where nothing lies behind the opening it shows black, not the clear colour.
+const CAVE_MOUTH_BACKDROP_MODE: f32 = 2.0;
+// The far plane's depth (reversed z): the backdrop lies behind all else.
+const CAVE_MOUTH_BACKDROP_DEPTH: f32 = 0.0;
+// How far into the opening, in tiles, its black fades in from nothing at its border with the land around it, so that
+// the opening has no straight edge.
+const CAVE_MOUTH_FEATHER_TILES: f32 = 0.5;
+// The opening's black, like a tunnel's: this opaque toward the cave's interior, below the z-view's land cut
+// (SceneUniform::land_max_z), and this opaque toward the outside, above it, over CAVE_MOUTH_TUNNEL_Z_SPAN z either side
+// of the cut. CAVE_MOUTH_OPENING_OPACITY is the black at the cut.
+const CAVE_MOUTH_TUNNEL_INSIDE_OPACITY: f32 = 0.35;
+const CAVE_MOUTH_TUNNEL_OUTSIDE_OPACITY: f32 = 0.9;
+const CAVE_MOUTH_TUNNEL_Z_SPAN: f32 = 12.0;
+// A land cut at or above this z, over any UO z (an i8), is no cut (LAND_NO_Z_LIMIT).
+const CAVE_MOUTH_UNCUT_Z: f32 = 128.0;
 const EC_TERRAIN_TRANSITION_BASE_WEIGHT: f32 = 0.35;
 // The cells of the KR material micro-contrast's grain along a world tile's edge (apply_kr_material_micro_contrast).
 const KR_MATERIAL_GRAIN_CELLS_PER_TILE: f32 = 2.7;
@@ -991,12 +1008,54 @@ fn cave_mouth_opening(tile: TileUniform) -> bool {
   return (tile.terrain_flags & TERRAIN_FLAG_PLAYER_CAVE) != 0u && terrain_never_blends(tile);
 }
 
-// How opaque the cave mouth veil draws the fragment whose land colour `land_color` just shaded: its texture's black
-// at CAVE_MOUTH_OPENING_OPACITY, its rock opaque, so that a Classic frame's painted rock stays solid around the
-// see-through opening.
-fn cave_mouth_veil_opacity() -> f32 {
+// Whether a cell of terrain flags `flags` is the black opening of the player's cave's mouth (`cave_mouth_opening`).
+fn cave_mouth_opening_flags(flags: u32) -> bool {
+  let opening = TERRAIN_FLAG_PLAYER_CAVE | TERRAIN_FLAG_NEVER_BLENDS;
+  return (flags & opening) == opening;
+}
+
+// How far, in tiles and at most one, the point `world_xz` of the opening's cell `cell` lies from the land around the
+// opening: the nearest of its eight neighbours that is not the opening.
+fn cave_mouth_edge_distance(world_xz: vec2<f32>, cell: vec2<i32>) -> f32 {
+  let f = world_xz - vec2<f32>(cell);
+  var nearest = 1.0;
+  for (var dz = -1; dz <= 1; dz++) {
+    for (var dx = -1; dx <= 1; dx++) {
+      if ((dx == 0 && dz == 0) || cave_mouth_opening_flags(atlas_read_terrain_flags(cell.x + dx, cell.y + dz))) {
+        continue;
+      }
+      let gap_x = select(select(0.0, 1.0 - f.x, dx > 0), f.x, dx < 0);
+      let gap_z = select(select(0.0, 1.0 - f.y, dz > 0), f.y, dz < 0);
+      nearest = min(nearest, length(vec2<f32>(gap_x, gap_z)));
+    }
+  }
+  return nearest;
+}
+
+// How far the opening's black has faded in at `world` in `cell`: from nothing at its border with the land around it to
+// whole CAVE_MOUTH_FEATHER_TILES in.
+fn cave_mouth_feather(world: vec3<f32>, cell: vec2<i32>) -> f32 {
+  return smoothstep(0.0, CAVE_MOUTH_FEATHER_TILES, cave_mouth_edge_distance(world.xz, cell));
+}
+
+// How opaque the opening's black is at `world`, like a tunnel's: CAVE_MOUTH_TUNNEL_INSIDE_OPACITY toward the cave's
+// interior, below the z-view's land cut, CAVE_MOUTH_OPENING_OPACITY at the cut, CAVE_MOUTH_TUNNEL_OUTSIDE_OPACITY
+// toward the outside, above it; CAVE_MOUTH_OPENING_OPACITY throughout while nothing cuts the land.
+fn cave_mouth_tunnel_opacity(world: vec3<f32>) -> f32 {
+  if (scene.land_max_z >= CAVE_MOUTH_UNCUT_Z) {
+    return CAVE_MOUTH_OPENING_OPACITY;
+  }
+  let toward_outside = clamp((world.y / UO_Z_TO_WORLD_SCALE - scene.land_max_z) / CAVE_MOUTH_TUNNEL_Z_SPAN, -1.0, 1.0);
+  let inside = mix(CAVE_MOUTH_TUNNEL_INSIDE_OPACITY, CAVE_MOUTH_OPENING_OPACITY, smoothstep(-1.0, 0.0, toward_outside));
+  return mix(inside, CAVE_MOUTH_TUNNEL_OUTSIDE_OPACITY, smoothstep(0.0, 1.0, toward_outside));
+}
+
+// How opaque the cave mouth veil draws the fragment at `world` in `cell` whose land colour `land_color` just shaded:
+// its texture's black see-through as `cave_mouth_tunnel_opacity`, fading in from its border (`cave_mouth_feather`), its
+// rock opaque, so that a Classic frame's painted rock stays solid around the see-through opening.
+fn cave_mouth_veil_opacity(world: vec3<f32>, cell: vec2<i32>) -> f32 {
   let rock = smoothstep(CAVE_MOUTH_KEY_BLACK_LUMINANCE, CAVE_MOUTH_KEY_ROCK_LUMINANCE, land_albedo_luminance);
-  return mix(CAVE_MOUTH_OPENING_OPACITY, 1.0, rock);
+  return mix(cave_mouth_tunnel_opacity(world) * cave_mouth_feather(world, cell), 1.0, rock);
 }
 
 // The land's colour, and its depth: its cell's at ClassicUO's land priority, the average z - 2 (art/depth.wesl), moved
@@ -1013,9 +1072,14 @@ fn fragment(in: LandVertexOutput) -> LandFragmentOutput {
   if (cave_mouth_opening(atlas_read_meta(cell.x, cell.y)) != veil) {
     discard;
   }
+  if (scene.cave_mouth_veil == CAVE_MOUTH_BACKDROP_MODE) {
+    out.color = vec4<f32>(0.0, 0.0, 0.0, cave_mouth_feather(in.world_position.xyz, cell));
+    out.depth = CAVE_MOUTH_BACKDROP_DEPTH;
+    return out;
+  }
   out.color = land_color(in);
   if (veil) {
-    out.color.a = cave_mouth_veil_opacity();
+    out.color.a = cave_mouth_veil_opacity(in.world_position.xyz, cell);
   }
   var average_z = in.depth_cell.z;
   if (any(cell != in.depth_cell.xy)) {

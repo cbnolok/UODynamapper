@@ -2,12 +2,17 @@
 //! opening, the black land and the black cave exit frames over its mouth (land/main.wesl `cave_mouth_opening`), stood
 //! as an opaque black slab over the cave's floor and the land outside behind it. The land leaves it out, and the veil,
 //! the land's material drawn blended (`veil_material`) over the mouth's quads alone (`sys_sync_cave_mouth_veils`),
-//! draws it over what lies behind, at land/main.wesl's `CAVE_MOUTH_OPENING_OPACITY`.
+//! draws it over what lies behind like a tunnel's dark, more opaque toward the outside and less toward the cave, fading
+//! in from the opening's border (land/main.wesl `cave_mouth_veil_opacity`).
 //!
 //! The veil's quads are those of the chunk meshes under the mouth, the same vertices and triangles
 //! (setup_base_mesh.rs `build_cell_quads_mesh`), drawn as children of their chunks: the land vertex shader lifts them
 //! the same, and the land fragment shader gives them the land's depth. They draw after everything else (`VEIL_SORT_BIAS`)
 //! with the depth test: the opening darkens what lies behind it and leaves what stands in front of it, the arches.
+//!
+//! Under each veil its backdrop, the same quads drawn in black at the far plane before every other blended draw
+//! (`backdrop_material`), fills what nothing else draws behind the opening, so that the veil shows black there and not
+//! the clear colour.
 
 use super::draw_mesh::{LandMeshHandles, SharedLandMaterial};
 use super::mesh_material::LandCustomMeshMaterial;
@@ -23,10 +28,21 @@ use std::collections::BTreeSet;
 /// after every blended static and shadow, which then lie behind it darkened as the opaque ones do. The land material
 /// clears it from the pipeline's depth bias (`LandMaterialExtension::specialize`): it only orders the draw.
 const VEIL_SORT_BIAS: f32 = 1.0e6;
+/// The backdrop's sort distance bias in the transparent phase: less than any view's depth, so it draws first, under
+/// every blended static and shadow behind the opening.
+const BACKDROP_SORT_BIAS: f32 = -VEIL_SORT_BIAS;
+/// `SceneUniform::cave_mouth_veil` in the veil's material: the land shader draws the opening alone, blended.
+const VEIL_SHADER_MODE: f32 = 1.0;
+/// `SceneUniform::cave_mouth_veil` in the backdrop's material: the land shader draws the opening alone, black, at the
+/// far plane.
+const BACKDROP_SHADER_MODE: f32 = 2.0;
 
-/// The cave mouth veil's material, the land's (`SharedLandMaterial`) drawn blended.
+/// The cave mouth veil's materials: the land's (`SharedLandMaterial`) drawn blended, and its backdrop's.
 #[derive(Resource)]
-pub struct CaveMouthVeilMaterial(Handle<LandCustomMeshMaterial>);
+pub struct CaveMouthVeilMaterial {
+    veil: Handle<LandCustomMeshMaterial>,
+    backdrop: Handle<LandCustomMeshMaterial>,
+}
 
 /// A veil entity, child of the land chunk whose mouth quads it draws, built from the chunk's mesh `chunk_mesh`.
 #[derive(Component)]
@@ -39,11 +55,21 @@ fn veil_material(land: &LandCustomMeshMaterial) -> LandCustomMeshMaterial {
     let mut veil = land.clone();
     veil.base.alpha_mode = AlphaMode::Blend;
     veil.base.depth_bias = VEIL_SORT_BIAS;
-    veil.extension.scene_uniform.cave_mouth_veil = 1.0;
+    veil.extension.scene_uniform.cave_mouth_veil = VEIL_SHADER_MODE;
     veil
 }
 
-/// Keeps the veil's material a blended copy of the land's, made again whenever the land's changes.
+/// The land material `land` as the veil's backdrop draws it: blended, sorted first, its shader drawing only the
+/// opening, black, at the far plane, where the depth test leaves it only what nothing else drew.
+fn backdrop_material(land: &LandCustomMeshMaterial) -> LandCustomMeshMaterial {
+    let mut backdrop = land.clone();
+    backdrop.base.alpha_mode = AlphaMode::Blend;
+    backdrop.base.depth_bias = BACKDROP_SORT_BIAS;
+    backdrop.extension.scene_uniform.cave_mouth_veil = BACKDROP_SHADER_MODE;
+    backdrop
+}
+
+/// Keeps the veil's materials, a blended copy of the land's and its backdrop's, made again whenever the land's changes.
 pub fn sys_sync_cave_mouth_veil_material(
     mut commands: Commands,
     land_material: Option<Res<SharedLandMaterial>>,
@@ -59,14 +85,21 @@ pub fn sys_sync_cave_mouth_veil_material(
     if veil_material_r.is_some() && !land_changed {
         return;
     }
-    let Some(veil) = materials.get(&land_material.0).map(veil_material) else {
+    let Some((veil, backdrop)) = materials.get(&land_material.0).map(|land| (veil_material(land), backdrop_material(land)))
+    else {
         return;
     };
     match veil_material_r {
-        None => commands.insert_resource(CaveMouthVeilMaterial(materials.add(veil))),
+        None => commands.insert_resource(CaveMouthVeilMaterial {
+            veil: materials.add(veil),
+            backdrop: materials.add(backdrop),
+        }),
         Some(veil_material_r) => {
-            if let Some(mut current) = materials.get_mut(&veil_material_r.0) {
+            if let Some(mut current) = materials.get_mut(&veil_material_r.veil) {
                 *current = veil;
+            }
+            if let Some(mut current) = materials.get_mut(&veil_material_r.backdrop) {
+                *current = backdrop;
             }
         }
     }
@@ -123,14 +156,23 @@ pub fn sys_sync_cave_mouth_veils(
         let veil_mesh = meshes.add(build_cell_quads_mesh(span, step, quads.into_iter().map(|(x, y)| UVec2::new(x, y))));
         let veil = commands.spawn((
             CaveMouthVeil { chunk_mesh: mesh.id() },
-            Mesh3d(veil_mesh),
-            MeshMaterial3d(veil_material.0.clone()),
+            Mesh3d(veil_mesh.clone()),
+            MeshMaterial3d(veil_material.veil.clone()),
             Transform::IDENTITY,
             // The vertex shader lifts the flat quads to the land: the chunk's bounds hold them.
             NoAutoAabb,
             *aabb,
             ChildOf(chunk),
         )).id();
+        // The backdrop goes with its veil.
+        commands.spawn((
+            Mesh3d(veil_mesh),
+            MeshMaterial3d(veil_material.backdrop.clone()),
+            Transform::IDENTITY,
+            NoAutoAabb,
+            *aabb,
+            ChildOf(veil),
+        ));
         kept.push(veil);
     }
     for (veil, ..) in &veils {

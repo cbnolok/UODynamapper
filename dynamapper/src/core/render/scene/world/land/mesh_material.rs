@@ -172,8 +172,8 @@ pub struct SceneUniform {
     /// texture filter emulates mip levels. Takes the former `_pad` slot.
     pub client_view_scale: f32,
     /// 1 in the cave mouth veil's material (land/cave_mouth_veil.rs), which draws only the black opening of the
-    /// player's cave's mouth, see-through; 0 in the land's own, which draws all but it. Only the land shader reads it.
-    /// Takes a former `_reserved` slot.
+    /// player's cave's mouth, see-through; 2 in its backdrop's, which draws the opening black at the far plane; 0 in
+    /// the land's own, which draws all but it. Only the land shader reads it. Takes a former `_reserved` slot.
     pub cave_mouth_veil: f32,
     pub _reserved: Vec2,
     /// How far the land takes the tone of what is outside the player's cave (art/depth.wesl `cave_outside_tone`), 0
