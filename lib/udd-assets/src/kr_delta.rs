@@ -7,7 +7,7 @@
 //! bytes compressed as the client stores them (`uocf::uop_container::codec::encode_payload` reproduces every client
 //! zlib stream). An entry's bytes are stored here, or taken from the Enhanced entry of the same name
 //! ([`KrDeltaSource`]): a texture that is the Enhanced one, byte for byte or re-encoded (within
-//! `udd_conv::textures::kr_items::KR_IMAGE_EQUIVALENCE_THRESHOLD`), is the Enhanced entry. So the rebuilt data files
+//! `udd_conv::textures::kr_items::TextureUse::threshold` where Kingdom Reborn draws it), is the Enhanced entry. So the rebuilt data files
 //! (tileart, string dictionary, terrain definitions) are the Kingdom Reborn ones byte for byte, and a texture file is
 //! too unless it held textures Kingdom Reborn only re-encoded, which become the Enhanced Client's.
 //!

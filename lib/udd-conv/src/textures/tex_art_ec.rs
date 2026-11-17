@@ -789,7 +789,7 @@ fn selected_art_source(art: &ArtData) -> Option<(TextureSourceKey, &ArtTexture)>
     art.ec_texture.as_ref().map(|texture| (TextureSourceKey::World(texture.texture_id), texture))
 }
 
-fn selected_art_window(art: &ArtData, texture: &ArtTexture) -> ArtTexture {
+pub(crate) fn selected_art_window(art: &ArtData, texture: &ArtTexture) -> ArtTexture {
     let mut window = texture.clone();
     // The original ordinary world-art descriptor includes both end pixels.
     // Material/camera quads have a different window contract; retain their

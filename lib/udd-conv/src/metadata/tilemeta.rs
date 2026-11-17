@@ -969,7 +969,7 @@ fn is_primary_selected_texture_item(item: &TextureItem, primary_item: Option<(u8
 /// Returns `(block_index, item_index)` of the item `ec_texture_id` was taken from: the item at the
 /// primary position of block 0 (`uocf::enhanced::tileart::primary_texture_position`), when it names
 /// that id.
-fn primary_ec_texture_item(ec_data: &ArtData, ec_texture_id: u32) -> Option<(u8, u8)> {
+pub(crate) fn primary_ec_texture_item(ec_data: &ArtData, ec_texture_id: u32) -> Option<(u8, u8)> {
     if ec_texture_id == 0 {
         return None;
     }

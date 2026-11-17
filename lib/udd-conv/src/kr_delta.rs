@@ -4,8 +4,9 @@
 //! The Enhanced packages carry the Kingdom Reborn data, packed from a Kingdom Reborn client folder that is either the
 //! real client or one rebuilt from the delta in the git checkout ([`KrClientSource`]). Both go through the same
 //! rebuild ([`prepare_kr_client`]): a real client is turned into a delta in memory first. So a texture Kingdom Reborn
-//! only re-encoded (its image within [`KR_IMAGE_EQUIVALENCE_THRESHOLD`] of the Enhanced one of the same name) is the
-//! Enhanced Client's texture either way, and the packages are the same from either source.
+//! only re-encoded (its image within [`TextureUse::threshold`] of the Enhanced one of the same name where Kingdom
+//! Reborn draws it, [`WorldArtTextureUses`]) is the Enhanced Client's texture either way, and the packages are the same
+//! from either source.
 //!
 //! An entry the rebuild takes from the Enhanced Client is checked against the hash the delta recorded. Another
 //! Enhanced Client may hold another texture there, or none: the rebuild takes that Enhanced entry (or leaves the
@@ -37,7 +38,7 @@ use uocf::uop_container::package::{LoadMode, UopPackage};
 use uocf::uop_container::encode_payload;
 use uocf::utils::bundled_files::BundledFile;
 
-use crate::kr_items::{image_difference, KR_IMAGE_EQUIVALENCE_THRESHOLD};
+use crate::kr_items::{TextureUse, WorldArtTextureUses};
 use crate::package_progress::build_and_write_package;
 
 /// The delta in the source checkout (`lib/uocf/assets/kr`, beside the other shipped Kingdom Reborn data), and in the
@@ -56,6 +57,8 @@ const EC_CLIENT_EXE: &str = "UOSA.exe";
 const KR_DELTA_ZSTD_LEVEL: i32 = 19;
 /// The data block header timestamp of an entry the rebuild replaced, fixed so that rebuilds are byte-identical.
 const REPLACED_ENTRY_FILETIME: u64 = 0;
+/// The client file holding the world-art textures, whose items' windows [`WorldArtTextureUses`] gives.
+const WORLD_ART_TEXTURE_FILE: &str = "Texture.uop";
 /// The magic of a DDS file.
 const DDS_MAGIC: &[u8] = b"DDS ";
 /// How many replaced entries the warning names one by one.
@@ -95,11 +98,11 @@ fn decode_texture(bytes: &[u8]) -> Option<(u32, u32, Vec<u8>)> {
     Some((image.width(), image.height(), image.into_raw()))
 }
 
-/// How far the Kingdom Reborn and Enhanced textures are apart ([`image_difference`]); `None` when either is no image
-/// or their extents differ.
-fn texture_difference(kr: &[u8], ec: &[u8]) -> Option<f32> {
+/// How far the Kingdom Reborn and Enhanced textures are apart where they are drawn ([`TextureUse::difference`]); `None`
+/// when either is no image or their extents differ.
+fn texture_difference(kr: &[u8], ec: &[u8], texture_use: TextureUse) -> Option<f32> {
     let (kr, ec) = (decode_texture(kr)?, decode_texture(ec)?);
-    image_difference((kr.0, kr.1, &kr.2), (ec.0, ec.1, &ec.2))
+    texture_use.difference((kr.0, kr.1, &kr.2), (ec.0, ec.1, &ec.2))
 }
 
 fn uop_compression(payload: &UopPayload) -> eyre::Result<UopCompressionFlag> {
@@ -137,6 +140,9 @@ struct MadeEntry {
 pub fn make_kr_delta(kr_dir: &Path, ec_dir: &Path) -> eyre::Result<(KrDeltaContents, Vec<KrDeltaFileSummary>)> {
     let mut files = Vec::new();
     let mut summaries = Vec::new();
+    let world_art_uses = WorldArtTextureUses::load(kr_dir)?;
+    info!("Kingdom Reborn delta: {} world-art textures drawn only as items' sprites, compared where they are drawn",
+        world_art_uses.sprite_texture_count());
     for (name, kind) in KR_DELTA_CLIENT_FILES {
         let path = kr_dir.join(name);
         let bytes = fs::read(&path).wrap_err_with(|| format!("read {}", path.display()))?;
@@ -147,8 +153,9 @@ pub fn make_kr_delta(kr_dir: &Path, ec_dir: &Path) -> eyre::Result<(KrDeltaConte
             }
             KrDeltaFileKind::Data => None,
         };
-        let (contents, summary) =
-            make_file_delta(name, &bytes, enhanced.as_ref()).wrap_err_with(|| format!("make the delta of {}", path.display()))?;
+        let uses = (name == WORLD_ART_TEXTURE_FILE).then_some(&world_art_uses);
+        let (contents, summary) = make_file_delta(name, &bytes, enhanced.as_ref(), uses)
+            .wrap_err_with(|| format!("make the delta of {}", path.display()))?;
         files.push(contents);
         summaries.push(summary);
     }
@@ -161,11 +168,13 @@ pub fn make_kr_delta(kr_dir: &Path, ec_dir: &Path) -> eyre::Result<(KrDeltaConte
     Ok((contents, summaries))
 }
 
-/// The delta of one client file, its textures compared with `enhanced`, the Enhanced file of the same name.
+/// The delta of one client file, its textures compared with `enhanced`, the Enhanced file of the same name, where
+/// `uses` says they are drawn (all whole without it).
 fn make_file_delta(
     name: &str,
     bytes: &[u8],
     enhanced: Option<&UopPackage>,
+    uses: Option<&WorldArtTextureUses>,
 ) -> eyre::Result<(KrDeltaFileContents, KrDeltaFileSummary)> {
     let payloads = uop_payloads(bytes)?;
     let made = payloads
@@ -190,8 +199,13 @@ fn make_file_delta(
                 return Ok(MadeEntry { entry: KrDeltaEntry { source: KrDeltaSource::EcCopy, hash64: hash64(&content) },
                     stored: Vec::new(), difference: None });
             }
-            let difference = if ec_content == content { Some(0.0) } else { texture_difference(&content, &ec_content) };
-            if difference.is_some_and(|difference| difference <= KR_IMAGE_EQUIVALENCE_THRESHOLD) {
+            let texture_use = uses.map_or(TextureUse::Whole, |uses| uses.texture_use(payload.name_hash));
+            let difference = if ec_content == content {
+                Some(0.0)
+            } else {
+                texture_difference(&content, &ec_content, texture_use)
+            };
+            if difference.is_some_and(|difference| difference <= texture_use.threshold()) {
                 return Ok(MadeEntry {
                     entry: KrDeltaEntry { source: KrDeltaSource::EcSubstitute, hash64: hash64(&ec_content) },
                     stored: Vec::new(),
@@ -578,6 +592,8 @@ pub fn verify_rebuilt_client(contents: &KrDeltaContents, kr_dir: &Path, ec_dir: 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use uocf::enhanced::strings::string_dictionary::UoStringDictionary;
+    use uocf::enhanced::tileart::TILEART_UOP_NAME;
     use uocf::uop_container::hash::hash_file_name_single;
 
     /// The UOP version of the Kingdom Reborn client files.
@@ -604,6 +620,8 @@ mod tests {
     const REDRAWN: &str = "build/worldart/redrawn.tga";
     const KR_ONLY: &str = "build/worldart/kr_only.tga";
     const RECORD: &str = "build/tileart/00000001.dat";
+    const STRING_DICTIONARY: &str = "string_dictionary.uop";
+    const STRINGS: &str = "data/string_dictionary.bin";
 
     fn temp_dir(test: &str) -> PathBuf {
         let dir = std::env::temp_dir().join(format!("udd_conv_kr_delta_{test}_{}", std::process::id()));
@@ -642,6 +660,10 @@ mod tests {
         fs::create_dir_all(&ec).unwrap();
         for (name, kind) in KR_DELTA_CLIENT_FILES {
             match kind {
+                // The tileart has no records and the string dictionary no strings: every texture is measured whole.
+                KrDeltaFileKind::Data if name == TILEART_UOP_NAME => write_uop(&kr.join(name), &[]),
+                KrDeltaFileKind::Data if name == STRING_DICTIONARY => write_uop(&kr.join(name),
+                    &[(STRINGS, UoStringDictionary::from_strings::<&str>([]).to_payload_bytes().unwrap())]),
                 KrDeltaFileKind::Data => {
                     write_uop(&kr.join(name), &[(RECORD, format!("{name} record").repeat(RECORD_REPEATS).into_bytes())])
                 }
@@ -728,7 +750,7 @@ mod tests {
         assert_eq!(texture(&rebuilt, REDRAWN), Some(tga(OTHER_GREY)), "the Enhanced texture in its place");
 
         let mut data = contents;
-        damage(&mut data, "tileart.uop");
+        damage(&mut data, "TerrainDefinition.uop");
         let error = format!("{:?}", rebuild_kr_client(&data, &ec, &dir.join("data")).unwrap_err());
         assert!(error.contains("damaged"), "{error}");
         let _ = fs::remove_dir_all(&dir);

@@ -84,9 +84,13 @@ client. It holds no facet files. The format is described in
   stored whole and rebuild byte for byte.
 - A texture identical to the Enhanced one of the same name is referenced by
   name and hash.
-- A texture whose image is within `KR_IMAGE_EQUIVALENCE_THRESHOLD` (8 levels)
-  of the Enhanced one, mostly DXT re-encodes, stores nothing: the rebuild uses
-  the Enhanced texture. `Texture.uop` therefore does not rebuild byte for byte.
+- A texture whose image is the Enhanced one re-encoded (mostly DXT re-encodes)
+  stores nothing: the rebuild uses the Enhanced texture. A texture items draw
+  only as world-art sprites is compared through their windows with
+  `visible_difference`, within `KR_SPRITE_EQUIVALENCE_THRESHOLD` (17 levels);
+  any other within `KR_IMAGE_EQUIVALENCE_THRESHOLD` (8 levels) over the whole
+  image (`udd_conv::textures::kr_items::TextureUse`). `Texture.uop` therefore
+  does not rebuild byte for byte.
 - Every other texture is stored whole.
 
 The rebuild checks every entry against its recorded hash. An Enhanced Client

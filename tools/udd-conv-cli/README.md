@@ -37,8 +37,9 @@ packages consumed by Dynamapper and the other tools at runtime.
 `tex_art_ec.uddp`, `tex_land_ec.uddp`, `tilemeta.uddp` and `tex_aux_ec.uddp` each hold the Kingdom Reborn package of
 their layout as one nested entry, `kr/package.uddp` (`docs/dev_wiki/UDDP_FORMATS.md`): the land, the tile data, and
 the item art and material textures. The land, item art and material texture sections are overlays over the package
-holding them: they store only the textures KR draws differently from the Enhanced Client (by more than
-`KR_IMAGE_EQUIVALENCE_THRESHOLD`) and list the others, which are drawn from that package. The packers
+holding them: they store only the textures KR draws differently from the Enhanced Client (beyond
+`kr_items::TextureUse::threshold`: 17 levels through the windows of a texture drawn only as sprites, 8 over the whole
+of any other) and list the others, which are drawn from that package. The packers
 rebuild the Kingdom Reborn client files from the shipped `kr_delta.uddp` over `--ecdir`; `--krdir` takes it from a Kingdom Reborn client folder instead, and `--kr-delta` from another `kr_delta.uddp`; the packages are the same.
 The rebuild works in a folder beside the output, removed afterwards. `pack-ec-textures --kr-land-report FILE` writes
 the client of every Kingdom Reborn terrain definition, texture and route. Packages of the earlier layout,
