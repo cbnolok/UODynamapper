@@ -84,8 +84,18 @@ it, the entrance arches. A darkness key over its texture's linear luminance
 (0.006) and `CAVE_MOUTH_KEY_ROCK_LUMINANCE` (0.02): the Classic frame texmaps
 paint their opening at most 0.003 and their rock from 0.02, almost nothing
 between, so a Classic frame's rock stays solid around a see-through opening;
-the Enhanced and Kingdom Reborn frames are black throughout. Seen from outside,
-and in other caves, nothing changes.
+the Enhanced and Kingdom Reborn frames are black throughout. The black reads as
+a tunnel (`cave_mouth_tunnel_opacity`): `CAVE_MOUTH_OPENING_OPACITY` at the
+z-view's land cut (`SceneUniform::land_max_z`), `CAVE_MOUTH_TUNNEL_INSIDE_OPACITY`
+(0.35) toward the cave below it and `CAVE_MOUTH_TUNNEL_OUTSIDE_OPACITY` (0.9)
+toward the outside above it, over `CAVE_MOUTH_TUNNEL_Z_SPAN` (12) z either side.
+It fades in from nothing at the opening's border with the land around it over
+`CAVE_MOUTH_FEATHER_TILES` (half a tile; `cave_mouth_feather`, from the eight
+neighbours' terrain flags), so the opening has no straight cut. Under each veil
+its backdrop draws the same quads black at the far plane before every other
+blended draw, with the same feather: where nothing lies behind the opening it
+shows black, not the clear colour. This holds in every style, Classic too. Seen
+from outside, and in other caves, nothing changes.
 
 Texture roles follow the source shader/layer class and item position. Names,
 stretch and visual resemblance do not select the base or establish a role.
