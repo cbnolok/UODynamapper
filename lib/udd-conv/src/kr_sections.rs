@@ -26,6 +26,7 @@ use crate::kr_items::{
 use crate::package_progress::AssetTaskProgress;
 use crate::tex_art_ec::TexArtEcLoadedSources;
 use crate::tex_aux_ec::TexAuxEcOverlaySummary;
+use crate::tilemeta_overrides::apply_bundled_tilemeta_overrides;
 use crate::tex_land_kr::{convert_kr_land_to_tex_land_kr_uddp_with_progress, TexLandKrBuildSummary, TexLandKrPackOptions};
 
 /// The work file of the Kingdom Reborn land section.
@@ -98,8 +99,8 @@ pub fn embed_kr_section(package: &Path, section: &Path) -> eyre::Result<()> {
 
 /// Packs the Kingdom Reborn item art against `ec` ([`KrSectionWork::load_ec_sources`]) and nests it in `art_package`,
 /// the `tex_art_ec.uddp` packed from `ec`; with `tilemeta` (the Classic folder and the `tilemeta.uddp` packed from
-/// `ec`), also the Kingdom Reborn tile data, nested in that `tilemeta.uddp`. Without `art_package` the art is packed for
-/// the tile data alone.
+/// `ec`), also the Kingdom Reborn tile data, nested in that `tilemeta.uddp`, and then the bundled tilemeta overrides,
+/// which read it (`crate::tilemeta_overrides`). Without `art_package` the art is packed for the tile data alone.
 pub fn add_kr_art_and_tilemeta_sections(work: &KrSectionWork, ec: &TexArtEcLoadedSources, art_package: Option<&Path>,
     tilemeta: Option<(&Path, &Path)>) -> eyre::Result<KrArtBuildSummary> {
     let art_section = work.section_path(KR_ART_SECTION_FILE_NAME);
@@ -111,6 +112,7 @@ pub fn add_kr_art_and_tilemeta_sections(work: &KrSectionWork, ec: &TexArtEcLoade
     }
     if let Some((_, tilemeta_package)) = tilemeta {
         embed_kr_section(tilemeta_package, &tilemeta_section)?;
+        apply_bundled_tilemeta_overrides(tilemeta_package)?;
     }
     Ok(summary)
 }

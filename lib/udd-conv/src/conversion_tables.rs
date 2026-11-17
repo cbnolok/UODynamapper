@@ -25,10 +25,13 @@ pub const EC_TERRAIN_OVERRIDES_KDL: BundledFile = conversion_table("EcTerrainOve
 pub const EC_SURFACE_OVERRIDES_KDL: BundledFile = conversion_table("EcSurfaceOverrides.kdl");
 /// EC mobile animation item metadata.
 pub const EC_MOBILE_ANIMATIONS_KDL: BundledFile = conversion_table("EcMobileAnimations.kdl");
+/// Reviewed corrections to the Enhanced tile data of `tilemeta.uddp` (`udd_assets::tilemeta_overrides`).
+pub const TILEMETA_OVERRIDES_KDL: BundledFile =
+    conversion_table(udd_assets::tilemeta_overrides::TILEMETA_OVERRIDES_FILE_NAME);
 
 /// Every table above, for the checks that the source checkout holds them.
-pub const ALL_CONVERSION_TABLES: &[BundledFile] =
-    &[TERRAIN_TRANSCODE_KDL, EC_TERRAIN_OVERRIDES_KDL, EC_SURFACE_OVERRIDES_KDL, EC_MOBILE_ANIMATIONS_KDL];
+pub const ALL_CONVERSION_TABLES: &[BundledFile] = &[TERRAIN_TRANSCODE_KDL, EC_TERRAIN_OVERRIDES_KDL,
+    EC_SURFACE_OVERRIDES_KDL, EC_MOBILE_ANIMATIONS_KDL, TILEMETA_OVERRIDES_KDL];
 
 #[cfg(test)]
 mod tests {

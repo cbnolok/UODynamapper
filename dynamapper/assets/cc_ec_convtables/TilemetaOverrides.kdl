@@ -1,0 +1,56 @@
+// TilemetaOverrides.kdl
+//
+// Corrections to the Enhanced tables of tilemeta.uddp, which Enhanced, KR-like and UOD-Painterly read. udd-cli and the
+// converter GUI apply this file when they pack tilemeta.uddp with its Kingdom Reborn section, after the conversion
+// pass; `udd-cli tool apply-tilemeta-overrides tilemeta.uddp` applies it to a packed package, reading the Kingdom
+// Reborn section the package holds (no client folder needed). The package records the digest of the file and the
+// values it replaced, and `udd-cli tool validate` reports a package built from another version of this file.
+//
+// Note: the item flags are one table, the Classic tiledata flags merged with the Enhanced tileart flags, so Classic
+// reads the flags set here too (its depth classes and its light.mul lights).
+//
+//     items <id> "<id>..<id>" ... {
+//         add "<TaeFlag>" <bit> ...      set flags, by TaeFlag name or bit number
+//         remove "<TaeFlag>" <bit> ...   clear flags
+//         kr-light                       the item's light as the Kingdom Reborn tile data defines it
+//     }
+//
+// Ids are integers (0x1D97) or strings holding an id or an inclusive range ("0x3236..0x323F"; KDL v1 has no bare
+// range). The operations run in order on each item. Every entry needs its reason in the comment above it. The file is
+// read strictly: an unknown node, operation, flag or bit, an id outside the item table, or `kr-light` on an item with
+// no Kingdom Reborn light is an error; an operation that changes none of its items is a warning.
+
+// Lava edge pieces (the 230 items named "lava" whose tileart differs only in this flag): the Kingdom Reborn tileart
+// sets Surface on them and the Enhanced tileart dropped it. Without it the renderer draws them as upright items
+// instead of surface-like ground cover, and the rims of the lava pools break up (KR-values comparison, 2026-11-17).
+items "0x12EE..0x12F2" "0x12F4..0x12FE" "0x1300..0x1304" "0x1306..0x130A" "0x130C..0x1310" "0x1312..0x1316" \
+      "0x1318..0x131C" "0x131E..0x134D" 0x136E 0x137E 0x1380 0x1382 0x1A75 0x1A7C 0x2B3E 0x2B40 0x2B42 \
+      "0x2B44..0x2B45" "0x2B47..0x2B49" 0x2B4B 0x2B4D "0x2B4F..0x2B50" "0x2B52..0x2B54" 0x2B56 0x2B58 0x2B5C 0x2B5E \
+      "0x2B60..0x2B65" "0x3286..0x32B1" "0x343B..0x3445" "0x3447..0x344C" "0x344E..0x3457" 0x3459 "0x3462..0x3466" \
+      "0x3468..0x346C" "0x3546..0x3561" {
+    add "Surface"
+}
+
+// Swamp pieces: as the lava edges, the Kingdom Reborn tileart sets Surface and the Enhanced tileart dropped it.
+// Surface-like, they take the terrain-texture surface path and blend into the swamp land around them, as the KR
+// client draws them; without it they stand as item art with hard edges (KR-values comparison, 2026-11-17).
+items "0x320D..0x3211" "0x3213..0x3218" "0x321A..0x321E" "0x3220..0x3224" "0x3226..0x322A" "0x3241..0x324A" \
+      "0x3252..0x3257" "0x3266..0x3269" "0x3270..0x3285" {
+    add "Surface"
+}
+
+// Swamp pieces 0x3236-0x323F (by Deceit): the Kingdom Reborn tileart sets Surface and Rotated on them (Rotated: KR
+// flags1 bit 14, moved to the Enhanced Rotated bit), the Enhanced tileart neither. Surface makes them surface-like as
+// the other swamp pieces; Rotated draws them as the client's camera quad, as KR-like already does when it draws them
+// from the Kingdom Reborn art and tile data.
+items "0x3236..0x323F" {
+    add "Surface" "Rotated"
+}
+
+// Ankh of sacrifice: the Kingdom Reborn tileart sets LightSource and gives it a light sprite (texture 1, scale 2.0,
+// offset -5.0, -4.0); the Enhanced tileart has neither, so the ankh stayed dark at night in Enhanced, KR-like and
+// UOD-Painterly. Classic reads LightSource too: its light.mul light, from the item's tiledata quality.
+items 0x1D97 0x1D98 {
+    add "LightSource"
+    kr-light
+}

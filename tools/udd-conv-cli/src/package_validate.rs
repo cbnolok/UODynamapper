@@ -32,6 +32,9 @@ use udd_assets::gumps::gump_image_hash;
 use udd_assets::kr_delta::KrDeltaPackage;
 use udd_assets::map_metadata::{decode_map_package_metadata, read_statics_package_metadata};
 use udd_assets::tex_aux_ec::{tex_aux_ec_terrain_texture_key, TexAuxEcPackage};
+use udd_assets::tilemeta::TileMetaOverridesRecord;
+use udd_assets::tilemeta_overrides::TilemetaOverrides;
+use udd_conv::conversion_tables::TILEMETA_OVERRIDES_KDL;
 use udd_assets::{
     AtlasCacheOptions, EffectsEcPackage, GumpsPackage, HuesPackage, MobileAnimCcPackage, MobileAnimEcPackage,
     PaperdollEcPackage, TexArtCcPackage, TexArtEcPackage, TexLandCcPackage, TexLandEcPackage, TileMetaPackage,
@@ -387,6 +390,9 @@ pub fn validate_package(path: &Path) -> PackageReport {
                 if kind == PackageKind::TexAuxEc {
                     check_item_light_textures(path, &package, &mut report);
                 }
+                if kind == PackageKind::TileMeta {
+                    check_tilemeta_overrides(path, &package, &mut report);
+                }
                 check_kr_section(kind, &package, &mut report);
             }
             Err(error) => report.failures.push(format!("{} reader: {error:#}", kind.name())),
@@ -562,6 +568,44 @@ fn kr_land_section(package: &UddpReader) -> eyre::Result<Option<String>> {
         their slot there ({elsewhere:?}): {KR_SECTION_REPACK}", elsewhere.len(), kr.equivalents().len());
     Ok(Some(format!("{}, own pages={}, textures left to this package={}", land_summary(&kr)?, kr.own_page_count(),
         kr.equivalents().len())))
+}
+
+/// The tilemeta overrides a `tilemeta` package was built with, against `TilemetaOverrides.kdl` of this build
+/// (`udd_conv::conversion_tables::TILEMETA_OVERRIDES_KDL`): a package with a Kingdom Reborn section must record the
+/// digest of that file. Without the file, or without the section the overrides read, a note.
+fn check_tilemeta_overrides(path: &Path, package: &UddpReader, report: &mut PackageReport) {
+    let reapply = format!("run `udd-cli tool apply-tilemeta-overrides {0} --output {0}`", path.display());
+    let checked = (|| -> eyre::Result<(Option<TileMetaOverridesRecord>, bool)> {
+        let tilemeta = TileMetaPackage::from_uddp_package(package.clone())?;
+        Ok((tilemeta.overrides_record()?, tilemeta.kr_tilemeta()?.is_some()))
+    })();
+    let (record, has_kr_section) = match checked {
+        Ok(checked) => checked,
+        Err(error) => return report.failures.push(format!("tilemeta overrides: {error:#}")),
+    };
+    let overrides_path = match uocf::utils::bundled_files::resolve(None, TILEMETA_OVERRIDES_KDL) {
+        Ok(overrides_path) => overrides_path,
+        Err(error) => return report.notes.push(format!("tilemeta overrides not checked: {error:#}")),
+    };
+    let expected = fs::read_to_string(&overrides_path)
+        .wrap_err_with(|| format!("read {}", overrides_path.display()))
+        .and_then(|text| TilemetaOverrides::parse(&overrides_path.display().to_string(), &text));
+    let expected = match expected {
+        Ok(expected) => expected,
+        Err(error) => return report.failures.push(format!("tilemeta overrides: {error:#}")),
+    };
+    let label = overrides_path.display();
+    match (record, has_kr_section) {
+        (Some(record), _) if record.digest == expected.digest() => report.notes.push(format!(
+            "tilemeta overrides: {label} (digest {:016x}): flags of {} items, lights of {} items",
+            record.digest, record.original_flags.len(), record.original_lights.len())),
+        (Some(record), _) => report.failures.push(format!(
+            "tilemeta overrides: built with digest {:016x}, {label} is {:016x}: {reapply}",
+            record.digest, expected.digest())),
+        (None, true) => report.failures.push(format!("tilemeta overrides of {label} not applied: {reapply}")),
+        (None, false) => report.notes.push(
+            "no tilemeta overrides: they read the Kingdom Reborn section, which this package lacks".into()),
+    }
 }
 
 fn kr_tilemeta_section(package: &UddpReader) -> eyre::Result<Option<String>> {

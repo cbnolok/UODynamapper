@@ -15,7 +15,9 @@ use udd_assets::tex_art_cc::TexArtCcSlotRecord;
 use udd_assets::tex_art_ec::TexArtEcSlotRecord;
 use udd_assets::tex_land_ec::{TexLandEcSlotRecord, TexLandEcTerrainProvenanceRecord};
 use uocf::enhanced::terrain_definition::{TerrainLayerClass, TerrainLayerRole};
+use udd_conv::conversion_tables::TILEMETA_OVERRIDES_KDL;
 use udd_conv::tex_art_cc::encode_slot_manifest as encode_cc_slot_manifest;
+use udd_conv::tilemeta_overrides::apply_tilemeta_overrides;
 use udd_assets::tex_art_cc::SLOT_MANIFEST_ENTRY_PATH as CC_SLOT_MANIFEST_ENTRY_PATH;
 use udd_conv::tex_art_ec::encode_slot_manifest as encode_tex_art_ec_slot_manifest;
 use udd_assets::tex_art_ec::SLOT_MANIFEST_ENTRY_PATH as TEX_ART_EC_SLOT_MANIFEST_ENTRY_PATH;
@@ -92,6 +94,18 @@ enum Commands {
         #[arg(long)]
         output: Option<PathBuf>,
     },
+    /// Apply TilemetaOverrides.kdl to a packed tilemeta.uddp: its Enhanced item flags and lights, with the Kingdom
+    /// Reborn lights of the package's own Kingdom Reborn section (no client folder needed). A package the overrides
+    /// were applied to before gets the clients' values back first, so only this file's overrides remain.
+    ApplyTilemetaOverrides {
+        file: PathBuf,
+        /// The overrides file; by default the bundled TilemetaOverrides.kdl (cc_ec_convtables).
+        #[arg(long)]
+        overrides: Option<PathBuf>,
+        /// By default `<package stem>.overridden.uddp` beside the package; may be the package itself.
+        #[arg(long)]
+        output: Option<PathBuf>,
+    },
     /// Import edited CSV metadata into a rebuilt package.
     ImportCsv {
         file: PathBuf,
@@ -120,6 +134,8 @@ enum Commands {
 
 /// The name the packers give tilemeta.uddp, looked for beside a package.
 const TILEMETA_PACKAGE_NAME: &str = "tilemeta.uddp";
+/// The suffix of the default output of `apply-tilemeta-overrides`.
+const OVERRIDDEN_SUFFIX: &str = "overridden";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum, Default)]
 enum CsvKind {
@@ -284,6 +300,13 @@ where
         },
         Commands::ExportKdl { file, tilemeta, output } => {
             info!("{}", export_kdl_report(&file, tilemeta.as_deref(), output.as_deref())?);
+        }
+        Commands::ApplyTilemetaOverrides { file, overrides, output } => {
+            let overrides = uocf::utils::bundled_files::resolve(overrides.as_deref(), TILEMETA_OVERRIDES_KDL)?;
+            let output = output.unwrap_or_else(|| derived_output_path(&file, OVERRIDDEN_SUFFIX));
+            if apply_tilemeta_overrides(&file, &output, &overrides)?.is_none() {
+                eyre::bail!("{} holds no Kingdom Reborn tile data: nothing written", file.display());
+            }
         }
         Commands::ImportCsv {
             file,

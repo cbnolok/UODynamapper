@@ -186,7 +186,8 @@ app_docs := "docs/keybindings.md docs/USER_TROUBLESHOOTING.md"
 # empty goes too.
 app_assets_unread := "regression_fixtures shaders/postprocess_ec_doc shaders/postprocess_kr_doc" +\
     " cc_ec_convtables/TerrainTranscode.kdl cc_ec_convtables/EcTerrainOverrides.kdl" +\
-    " cc_ec_convtables/EcSurfaceOverrides.kdl cc_ec_convtables/EcMobileAnimations.kdl"
+    " cc_ec_convtables/EcSurfaceOverrides.kdl cc_ec_convtables/EcMobileAnimations.kdl" +\
+    " cc_ec_convtables/TilemetaOverrides.kdl"
 app_assets_unread_ext := "md"
 tool_docs := "README.md docs/USER_TROUBLESHOOTING.md tools/udd-conv-cli/UPSCALE_PROFILES.md"
 # The end-user tools. uocf-devtools-cli and udd-devtools-cli stay out: opt-in research and diagnostics.

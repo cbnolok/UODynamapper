@@ -36,6 +36,12 @@ const TILEMETA_TILEART_RECORD_HEADER_SIZE: usize = TILEMETA_TILEART_RECORD_MAGIC
 /// `TileMetaTileArtRecordIndex::entry_id` of a record whose entry name is not one of the ids the client looks up.
 pub const TILEMETA_TILEART_RECORD_UNNAMED: u32 = u32::MAX;
 
+/// The tilemeta overrides the package was built with ([`TileMetaOverridesRecord`]): their digest and the values they
+/// replaced. Optional: a package packed before the overrides, or without its Kingdom Reborn section, has none.
+pub const TILEMETA_OVERRIDES_ENTRY_PATH: &str = "metadata/overrides.bin";
+/// Magic of the `TILEMETA_OVERRIDES_ENTRY_PATH` header: magic, `u32` `TILEMETA_FORMAT_VERSION`.
+pub const TILEMETA_OVERRIDES_MAGIC: [u8; 4] = *b"TMOV";
+
 /// The item is not at its block's primary position (`uocf::enhanced::tileart::primary_texture_position`).
 pub const TILEMETA_ITEM_TEXTURE_FLAG_AUXILIARY: u8 = 1 << 0;
 /// Block 0: the item `ec_texture_id` was taken from (its primary position). Blocks 1 and 2: an item
@@ -621,6 +627,117 @@ pub fn decode_item_lights(bytes: &[u8]) -> eyre::Result<Vec<TileMetaItemLight>> 
     Ok(lights)
 }
 
+/// What the tilemeta overrides (`udd_assets::tilemeta_overrides`, `TilemetaOverrides.kdl`) did to the Enhanced
+/// tables of a package: the digest of the overrides file it was built with, and the value each item had before them,
+/// so the overrides can be applied again, from another file, to the tables as the clients define them.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct TileMetaOverridesRecord {
+    /// `TilemetaOverrides::digest` of the overrides applied.
+    pub digest: u64,
+    /// The items whose `TileMetaItemTile::flags` the overrides changed, with the flags they had, sorted by unique id.
+    pub original_flags: Vec<(u32, u64)>,
+    /// The items whose light (`TILEMETA_ITEM_LIGHT_ENTRY_PATH`) the overrides changed, with the light they had (`None`
+    /// for none), sorted by unique id.
+    pub original_lights: Vec<(u32, Option<TileMetaItemLight>)>,
+}
+
+/// Size of the `TILEMETA_OVERRIDES_ENTRY_PATH` header: magic and version.
+const TILEMETA_OVERRIDES_HEADER_SIZE: usize = TILEMETA_OVERRIDES_MAGIC.len() + std::mem::size_of::<u32>();
+/// `TileMetaOverridesRecord::original_lights` presence word: the item had no light.
+const TILEMETA_OVERRIDES_NO_LIGHT: u32 = 0;
+/// `TileMetaOverridesRecord::original_lights` presence word: the item had the light that follows.
+const TILEMETA_OVERRIDES_LIGHT: u32 = 1;
+
+impl TileMetaOverridesRecord {
+    /// The `TILEMETA_OVERRIDES_ENTRY_PATH` entry, little-endian: the header, `u64` digest, `u32` count and one
+    /// (`u32` tile id, `u64` flags) per original flags, `u32` count and one (`u32` presence, 0 or 1, then a
+    /// `TileMetaItemLight`, zero without one) per original light.
+    pub fn to_bytes(&self) -> Vec<u8> {
+        let mut bytes = Vec::new();
+        bytes.extend_from_slice(&TILEMETA_OVERRIDES_MAGIC);
+        bytes.extend_from_slice(&TILEMETA_FORMAT_VERSION.to_le_bytes());
+        bytes.extend_from_slice(&self.digest.to_le_bytes());
+        bytes.extend_from_slice(&u32::try_from(self.original_flags.len()).expect("item count fits u32").to_le_bytes());
+        for &(tile_id, flags) in &self.original_flags {
+            bytes.extend_from_slice(&tile_id.to_le_bytes());
+            bytes.extend_from_slice(&flags.to_le_bytes());
+        }
+        bytes.extend_from_slice(&u32::try_from(self.original_lights.len()).expect("item count fits u32").to_le_bytes());
+        for &(tile_id, light) in &self.original_lights {
+            let presence = if light.is_some() { TILEMETA_OVERRIDES_LIGHT } else { TILEMETA_OVERRIDES_NO_LIGHT };
+            bytes.extend_from_slice(&presence.to_le_bytes());
+            let light = light.unwrap_or(TileMetaItemLight { tile_id, ..TileMetaItemLight::default() });
+            bytes.extend_from_slice(bytemuck::bytes_of(&light));
+        }
+        bytes
+    }
+
+    /// Reads [`Self::to_bytes`], refusing another magic or version, a truncated or longer entry, or unsorted records.
+    pub fn from_bytes(bytes: &[u8]) -> eyre::Result<Self> {
+        let path = TILEMETA_OVERRIDES_ENTRY_PATH;
+        eyre::ensure!(bytes.len() >= TILEMETA_OVERRIDES_HEADER_SIZE && bytes.starts_with(&TILEMETA_OVERRIDES_MAGIC),
+            "{path}: no TMOV header; repack with the current udd-cli");
+        let mut cursor = &bytes[TILEMETA_OVERRIDES_MAGIC.len()..];
+        let mut take = |count: usize| -> eyre::Result<&[u8]> {
+            eyre::ensure!(cursor.len() >= count, "{path}: truncated; repack with the current udd-cli");
+            let (taken, rest) = cursor.split_at(count);
+            cursor = rest;
+            Ok(taken)
+        };
+        let u32_at = |bytes: &[u8]| u32::from_le_bytes(bytes.try_into().expect("four bytes taken"));
+        let u64_at = |bytes: &[u8]| u64::from_le_bytes(bytes.try_into().expect("eight bytes taken"));
+        ensure_manifest_version(path, u32_at(take(size_of::<u32>())?), TILEMETA_FORMAT_VERSION)?;
+        let digest = u64_at(take(size_of::<u64>())?);
+        let flag_count = u32_at(take(size_of::<u32>())?) as usize;
+        let mut original_flags = Vec::new();
+        for _ in 0..flag_count {
+            original_flags.push((u32_at(take(size_of::<u32>())?), u64_at(take(size_of::<u64>())?)));
+        }
+        let light_count = u32_at(take(size_of::<u32>())?) as usize;
+        let mut original_lights = Vec::new();
+        for _ in 0..light_count {
+            let presence = u32_at(take(size_of::<u32>())?);
+            let light: TileMetaItemLight = bytemuck::pod_read_unaligned(take(TILEMETA_ITEM_LIGHT_SIZE)?);
+            let tile_id = light.tile_id;
+            let light = match presence {
+                TILEMETA_OVERRIDES_NO_LIGHT => None,
+                TILEMETA_OVERRIDES_LIGHT => Some(light),
+                _ => eyre::bail!("{path}: item {tile_id:#06X} light presence {presence} is not 0 or 1"),
+            };
+            original_lights.push((tile_id, light));
+        }
+        eyre::ensure!(cursor.is_empty(), "{path}: {} bytes after the records", cursor.len());
+        eyre::ensure!(original_flags.windows(2).all(|pair| pair[0].0 < pair[1].0)
+            && original_lights.windows(2).all(|pair| pair[0].0 < pair[1].0), "{path}: not sorted by unique tile id");
+        Ok(Self { digest, original_flags, original_lights })
+    }
+
+    /// Puts back into `items` and `lights` (sorted by tile id) the values the overrides replaced.
+    pub fn restore(&self, items: &mut [TileMetaItemTile], lights: &mut Vec<TileMetaItemLight>) -> eyre::Result<()> {
+        for &(tile_id, flags) in &self.original_flags {
+            let item = items.get_mut(tile_id as usize)
+                .ok_or_else(|| eyre::eyre!("{TILEMETA_OVERRIDES_ENTRY_PATH}: item {tile_id:#06X} is outside the table"))?;
+            item.flags = flags;
+        }
+        for &(tile_id, light) in &self.original_lights {
+            set_item_light(lights, tile_id, light);
+        }
+        Ok(())
+    }
+}
+
+/// Sets the light of `tile_id` in `lights`, sorted by unique tile id, or removes it for `None`.
+pub fn set_item_light(lights: &mut Vec<TileMetaItemLight>, tile_id: u32, light: Option<TileMetaItemLight>) {
+    match (lights.binary_search_by_key(&tile_id, |light| light.tile_id), light) {
+        (Ok(index), Some(light)) => lights[index] = light,
+        (Ok(index), None) => {
+            lights.remove(index);
+        }
+        (Err(index), Some(light)) => lights.insert(index, light),
+        (Err(_), None) => {}
+    }
+}
+
 impl TileMetaItemTextureRef {
     pub fn is_auxiliary(&self) -> bool {
         self.flags & TILEMETA_ITEM_TEXTURE_FLAG_AUXILIARY != 0
@@ -720,6 +837,16 @@ impl TileMetaPackage {
             return Ok(None);
         };
         Self::from_uddp_package(section).wrap_err("the Kingdom Reborn tile data").map(Some)
+    }
+
+    /// What the tilemeta overrides did to this package's tables ([`TILEMETA_OVERRIDES_ENTRY_PATH`]); `None` when it
+    /// was built without them.
+    pub fn overrides_record(&self) -> eyre::Result<Option<TileMetaOverridesRecord>> {
+        if self.package.find_by_path_hash(udd_container::xxh64_virtual_path(TILEMETA_OVERRIDES_ENTRY_PATH)).is_none() {
+            return Ok(None);
+        }
+        let bytes = read_path_entry_cow(&self.package, TILEMETA_OVERRIDES_ENTRY_PATH)?;
+        TileMetaOverridesRecord::from_bytes(&bytes).map(Some)
     }
 
     /// Every `tileart.uop` record the package was built from, byte for byte: the fields the tables above leave out
