@@ -412,13 +412,6 @@ pub fn sys_draw_spawned_land_chunks(
     let mut scratch = land_mesh_scratch_r;
     let mut targets: Vec<LandChunkConstructionData> = {
         let _span = crate::tracy_span!("worldmap::chunk_draw_collect_targets");
-        scratch.blocks_to_draw.clear();
-        scratch.texture_lookup_cache.fill(u32::MAX);
-        scratch.land_shader_flags_cache.fill(0);
-        scratch.cave_exit_frame_rows.fill(false);
-        scratch.missing_tile_bits.fill(0);
-        scratch.ids.clear();
-
         chunk_q
             .iter()
             .map(|(entity, chunk_data, has_mesh)| LandChunkConstructionData {
@@ -445,19 +438,18 @@ pub fn sys_draw_spawned_land_chunks(
     if targets.is_empty() {
         return;
     }
+    // Cleared only on frames with targets: about 456 KB, which an idle frame would zero for nothing.
+    scratch.blocks_to_draw.clear();
+    scratch.texture_lookup_cache.fill(u32::MAX);
+    scratch.land_shader_flags_cache.fill(0);
+    scratch.cave_exit_frame_rows.fill(false);
+    scratch.missing_tile_bits.fill(0);
+    scratch.ids.clear();
 
     let current_camera_chunk = camera_q
         .single()
         .ok()
-        .map(|(_, camera_tf)| {
-            let cam_translation = camera_tf.translation();
-            // OPTIMIZATION: Using bitshift (>> 3) as a faster equivalent to
-            // .div_euclid(8) for the tile-to-chunk coordinate conversion.
-            (
-                (cam_translation.x.floor() as i32) >> 3,
-                (cam_translation.z.floor() as i32) >> 3,
-            )
-        })
+        .map(|(_, camera_tf)| chunk_of_world_position(camera_tf.translation()))
         .unwrap_or((0, 0));
     sort_construction_targets(&mut targets, current_camera_chunk);
 
@@ -1220,6 +1212,15 @@ fn cell_tile(block_x: u32, block_y: u32, index: usize) -> (u32, u32) {
     (block_x * MAP_STORAGE_BLOCK_TILE_DIM + local_x, block_y * MAP_STORAGE_BLOCK_TILE_DIM + local_y)
 }
 
+/// The chunk of a world position, in the construction targets' units: chunks of `TILE_NUM_PER_CHUNK_DIM` tiles, as
+/// the chunk sync orders its spawns.
+fn chunk_of_world_position(translation: Vec3) -> (i32, i32) {
+    (
+        (translation.x.floor() as i32).div_euclid(TILE_NUM_PER_CHUNK_DIM as i32),
+        (translation.z.floor() as i32).div_euclid(TILE_NUM_PER_CHUNK_DIM as i32),
+    )
+}
+
 fn sort_construction_targets(chunks: &mut [LandChunkConstructionData], camera_chunk: (i32, i32)) {
     let cx = camera_chunk.0;
     let cy = camera_chunk.1;
@@ -1239,4 +1240,27 @@ fn ec_land_shader_flags(
     tile_id: u32,
 ) -> u16 {
     crate::core::texture_cache::land::coverage::ec_land_shader_flags(package, tile_id)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The chunk under the camera is built first: the camera's chunk is counted in the targets' 32-tile chunks, not
+    /// in 8-tile blocks, which put it four times farther out.
+    #[test]
+    fn construction_starts_at_the_chunk_under_the_camera() {
+        let target = |gx, gy| LandChunkConstructionData {
+            entity: Some(Entity::PLACEHOLDER),
+            chunk_origin_chunk_units_x: gx,
+            chunk_origin_chunk_units_z: gy,
+            chunk_scale: 1,
+            has_mesh: false,
+        };
+        let camera = Vec3::new(100.5, 40.0, 200.5);
+        let mut targets = [target(0, 0), target(12, 25), target(3, 6)];
+        sort_construction_targets(&mut targets, chunk_of_world_position(camera));
+        assert_eq!(chunk_of_world_position(camera), (3, 6));
+        assert_eq!((targets[0].chunk_origin_chunk_units_x, targets[0].chunk_origin_chunk_units_z), (3, 6));
+    }
 }
