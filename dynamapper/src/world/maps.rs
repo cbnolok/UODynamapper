@@ -255,16 +255,21 @@ pub fn load_blocks_from_package(
     positions: &[MapBlockRelPos],
     size_blocks_height: u32,
 ) -> eyre::Result<Vec<MapBlock>> {
+    let package_height_chunks = size_blocks_height.div_ceil(PACKAGE_CHUNK_BLOCK_DIM);
+    // A package chunk holds PACKAGE_CHUNK_BLOCK_DIM x PACKAGE_CHUNK_BLOCK_DIM blocks: each is decompressed once.
+    let mut chunks = std::collections::HashMap::new();
     let mut blocks = Vec::with_capacity(positions.len());
     for &pos in positions {
-        let package_height_chunks = size_blocks_height.div_ceil(PACKAGE_CHUNK_BLOCK_DIM);
         let package_index = (pos.x / PACKAGE_CHUNK_BLOCK_DIM) * package_height_chunks
             + (pos.y / PACKAGE_CHUNK_BLOCK_DIM);
-        let bytes = package
-            .read_file_by_dense_id(package_index)
-            .map_err(|error| eyre::eyre!("{error}"))
-            .wrap_err_with(|| format!("read map chunk {package_index}"))?;
-        blocks.push(decode_map_block_from_chunk(&bytes, pos)?);
+        let bytes = match chunks.entry(package_index) {
+            std::collections::hash_map::Entry::Occupied(entry) => entry.into_mut(),
+            std::collections::hash_map::Entry::Vacant(entry) => entry.insert(package
+                .read_file_by_dense_id(package_index)
+                .map_err(|error| eyre::eyre!("{error}"))
+                .wrap_err_with(|| format!("read map chunk {package_index}"))?),
+        };
+        blocks.push(decode_map_block_from_chunk(bytes, pos)?);
     }
     Ok(blocks)
 }
@@ -391,4 +396,50 @@ fn decode_map_block_from_chunk(bytes: &[u8], block_pos: MapBlockRelPos) -> eyre:
         internal_coords: block_pos,
         cells,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use udd_container::{AddFileRequest, CompressionFlag, LookupMode, UddpBuilder};
+
+    /// The tile id each cell of the test map carries: its own coordinates.
+    fn tile_id(x: u32, y: u32) -> u16 {
+        (x * 256 + y) as u16
+    }
+
+    #[test]
+    fn blocks_load_from_shared_chunks_in_any_order() {
+        const CHUNKS: u32 = 2;
+        let size_blocks_height = CHUNKS * PACKAGE_CHUNK_BLOCK_DIM;
+        let chunk_cells = PACKAGE_CHUNK_TILE_DIM as u32;
+        let mut builder = UddpBuilder::new(LookupMode::DenseId);
+        // Chunks run down each column of chunks first.
+        let chunks = (0..CHUNKS).flat_map(|column| (0..CHUNKS).map(move |row| (column, row))).map(|(column, row)| {
+            (0..PACKAGE_CHUNK_TEXEL_COUNT as u32).map(|index| PackedMapTexel {
+                tile_id: tile_id(column * chunk_cells + index % chunk_cells, row * chunk_cells + index / chunk_cells),
+                packed_meta: 128 + (index % 7) as u16,
+            }).collect::<Vec<_>>()
+        }).collect::<Vec<_>>();
+        for texels in &chunks {
+            builder.add_file(AddFileRequest {
+                data_type: DataType::Metadata as u8, compression: CompressionFlag::ZstdNoDict,
+                width: 0, height: 0, virtual_path: None, path_hash64: None, id: None, data: bytemuck::cast_slice(texels),
+            }).unwrap();
+        }
+        let package = UddpReader::open(builder.build().unwrap()).unwrap();
+
+        // Blocks of different chunks interleaved, one block twice.
+        let positions = [(0, 0), (5, 1), (1, 0), (2, 7), (7, 7), (0, 0), (4, 4)]
+            .map(|(x, y)| MapBlockRelPos { x, y });
+        let blocks = load_blocks_from_package(&package, &positions, size_blocks_height).unwrap();
+        assert_eq!(blocks.len(), positions.len());
+        for (block, position) in blocks.iter().zip(positions) {
+            assert_eq!((block.internal_coords.x, block.internal_coords.y), (position.x, position.y));
+            for (index, cell) in block.cells.iter().enumerate() {
+                let (x, y) = (position.x * 8 + index as u32 % 8, position.y * 8 + index as u32 / 8);
+                assert_eq!(cell.id, tile_id(x, y), "block {},{} cell {index}", position.x, position.y);
+            }
+        }
+    }
 }
