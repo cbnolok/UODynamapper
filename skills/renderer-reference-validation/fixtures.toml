@@ -778,6 +778,20 @@ y = 2810
 z = 20
 settings = { world_rendering = { show_only_player_floor = true } }
 
+[[fixture]]
+name = "ter-mur-statuettes-kr-windows"
+guards = """Ter Mur's trophy hall (map 5): the ettin 0x20C8, lizardman 0x20CA, ogre 0x20CB, troll 0x20CC and terathan \
+matriarch 0x212C statuettes, five of the 215 EC records whose copied legacy window cuts 13 to 74 % of their figure \
+(world-art windows README): drawn whole through Kingdom Reborn's windows in every style with EC art (70e54459)."""
+tier = "full"
+tags = ["statuettes", "art-windows", "ec-art", "z-view", "ter-mur"]
+map = 5
+x = 664
+y = 3427
+z = 15
+zoom = 0.75
+settings = { world_rendering = { show_only_player_floor = true } }
+
 # ---------------------------------------------------------------------------------------------------------------
 # Terrain and liquids
 # ---------------------------------------------------------------------------------------------------------------
