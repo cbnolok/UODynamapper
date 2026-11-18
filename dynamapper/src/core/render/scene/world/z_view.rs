@@ -469,8 +469,6 @@ pub fn sys_update_z_view_limit(
     };
     let map_id = scene_state.map_id;
     let (x, y, z) = (i32::from(pos.x), i32::from(pos.y), i32::from(pos.z));
-    // At most the four package chunks of the cell's corners, read once per change of the player's cell or z.
-    let land_z = PackageLand::default().averaged_land_z(map_planes.as_deref(), map_id, x, y);
     let rule = uniforms.map_or(PlayerFloorRule::ClassicUo, |uniforms| uniforms.effective_player_floor_rule());
     let inputs = ZViewInputs {
         rule,
@@ -492,6 +490,8 @@ pub fn sys_update_z_view_limit(
     let Some(statics_store) = statics_res.0.get(map_id as usize).and_then(|x| x.as_ref()) else {
         return;
     };
+    // At most the four package chunks of the cell's corners, read once per change of the inputs: after their gate.
+    let land_z = PackageLand::default().averaged_land_z(map_planes.as_deref(), map_id, x, y);
     let region = ZViewRegion::read(
         &mut statics_store.lock(),
         tilemeta.for_world_analyses(),
