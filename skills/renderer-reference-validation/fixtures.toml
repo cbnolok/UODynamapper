@@ -638,6 +638,21 @@ path = "/home/claudio/Immagini/Schermate/uokr/Schermata_20261114_072859.png"
 note = "KR client, night, inside the Minoc log hall at the wing corner"
 
 [[fixture]]
+name = "minoc-signpost-cobblestones"
+guards = """The Minoc street's cobblestones (2448,416, land 15) beside a wooden signpost (0x0B98 at 2448,415, \
+Transparent, no Wall flag) and the doors along the street: doors, gates and Transparent fixtures close a ground \
+patch's side as walls do, so the cobblestones reach them without the map's grass fading in between (static_surface.rs \
+`CLOSING_STATIC_FLAGS`, 2026-11-18)."""
+tier = "full"
+tags = ["terrain", "surfaces", "static-patches", "z-view", "minoc"]
+map = 1
+x = 2448
+y = 417
+z = 15
+zoom = 0.6
+settings = { world_rendering = { show_only_player_floor = true } }
+
+[[fixture]]
 name = "minoc-grass-land-like-statics"
 guards = """Grass statics on land 15 next to the hall's display cases: statics that continue the land draw in the \
 land's style whatever the art source (f6b7b590), the cases on the floor (ba902acd)."""
@@ -687,7 +702,8 @@ name = "lava-dirt-local-lights"
 guards = """Dirt and lava fields (map 1): lava's local lights reach farther in KR-like and Enhanced through the light \
 scale file (3ad6fc2e); lava and obsidian repetition broken up (eb71a329); Enhanced art draws lava statics from \
 Classic art over Classic land (dfbd8422). The lava's edge pieces are surface-like from Kingdom Reborn's Surface flag \
-(TilemetaOverrides.kdl, 2026-11-17): without it they stand as upright items and the pools' rims break up. Lava is \
+(TilemetaOverrides.kdl, 2026-11-17): without it they stand as upright items and the pools' rims break up. Being \
+impassable, they are no ground patches and draw their whole cell (lava-rim-crust, 2026-11-18). Lava is \
 the one noisy view: up to 3 levels between launches in Classic at night."""
 tier = "quick"
 tags = ["lava", "lights", "terrain", "liquids", "tilemeta-overrides"]
@@ -696,6 +712,21 @@ x = 4622
 y = 3560
 z = 30
 times = ["afternoon", "night"]
+tolerance = { pixel_threshold = 6, changed_pct = 0.05 }
+
+[[fixture]]
+name = "lava-rim-crust"
+guards = """The lava stream's rim (map 1), close: the impassable rim pieces 0x1327..0x134D draw their whole cell, gray \
+crust and lava mixed by their mask up to the trench's dirt, as the KR client draws its lava trenches (Schermata \
+20261114_073402, elsewhere). As ground patches they faded into the dirt beside them, which showed through between \
+the lava and the crust in every style with Enhanced art (static_surface.rs `source_key`, 2026-11-18)."""
+tier = "full"
+tags = ["lava", "terrain", "surfaces", "static-patches"]
+map = 1
+x = 4622
+y = 3560
+z = 30
+zoom = 0.6
 tolerance = { pixel_threshold = 6, changed_pct = 0.05 }
 
 [[fixture]]

@@ -10,24 +10,38 @@ use udd_assets::{tex_art_ec::TexArtEcPackage, tilemeta::{EcMaterialStableRole, T
 const BLEND_ENABLED: u32 = 1 << 1;
 const NEIGHBOR_SHIFT: u32 = 2;
 const OFFSETS: [(i32, i32); 8] = [(-1, -1), (0, -1), (1, -1), (-1, 0), (1, 0), (-1, 1), (0, 1), (1, 1)];
-/// Tiledata Wall flag. With `TILE_FLAG_SURFACE` it marks the statics that close a patch's side (`ClosingStatics`):
-/// walls (with their posts, windows and door frames) and surfaces (floors, boards, steps and tables).
+/// Tiledata Wall flag. With `TILE_FLAG_SURFACE`, `TILE_FLAG_DOOR` and `TILE_FLAG_TRANSPARENT` it marks the statics
+/// that close a patch's side (`CLOSING_STATIC_FLAGS`): walls (with their posts, windows and door frames) and surfaces
+/// (floors, boards, steps and tables).
 const TILE_FLAG_WALL: u64 = 0x10;
+/// Tiledata Door flag: the doors and gates, a third of which (the gates, the bar doors, 0x241F..) carry no Wall flag.
+const TILE_FLAG_DOOR: u64 = 0x2000_0000;
+/// Tiledata Transparent flag: the fixtures set at a building's edge or along a fence, which the flag lets one see
+/// past: the signposts and the signs they hold, banners, sconces and torch holders, lantern posts, rails and
+/// banisters. A signpost at a house corner stands on the land beside the street's cobblestones.
+const TILE_FLAG_TRANSPARENT: u64 = 0x4;
+/// Tiledata Impassable flag. A Rotated ground piece with it is not a patch (`source_key`): the lava rims fade no more
+/// into the land beside them, which showed the dirt between the lava and the crust (fixture `lava-rim-crust`).
+const TILE_FLAG_IMPASSABLE: u64 = 0x40;
+/// The tiledata flags of the statics that close a patch's side (`ClosingStatics`).
+const CLOSING_STATIC_FLAGS: u64 = TILE_FLAG_WALL | TILE_FLAG_SURFACE | TILE_FLAG_DOOR | TILE_FLAG_TRANSPARENT;
 /// How far, in Z units, a closing static may start above a patch and still close its side: a building's floor or
 /// foundation often sits a step above the street it meets.
 const CLOSING_STATIC_Z_REACH: i16 = 2;
 type MaterialKey = (u32, u32);
 type SurfaceCell = (u32, u32, i8, MaterialKey);
 
-/// The Z spans (bottom, top) of the walls and surfaces of each cell that are not patches themselves.
-/// The clients draw a floor right up to the wall or floor beside it (the KR yard at Minoc 2476,408), so a patch side
-/// against one is not exposed: fading it revealed a band of the map along the wall, as if the floor stopped short.
+/// The Z spans (bottom, top) of the walls, surfaces, doors and edge fixtures (`CLOSING_STATIC_FLAGS`) of each cell
+/// that are not patches themselves. The clients draw a floor right up to the wall or floor beside it (the KR yard at
+/// Minoc 2476,408), so a patch side against one is not exposed: fading it revealed a band of the map along the wall,
+/// as if the floor stopped short. A door or a gate without the Wall flag, or a signpost (Minoc 2448,415), left the
+/// same band beside it.
 #[derive(Default)]
 struct ClosingStatics(HashMap<(u32, u32), Vec<(i16, i16)>>);
 
 impl ClosingStatics {
     fn insert(&mut self, x: u32, y: u32, z: i8, tile: &TileMetaItemTile) {
-        if tile.flags & (TILE_FLAG_WALL | TILE_FLAG_SURFACE) == 0 || tile.is_nodraw() { return; }
+        if tile.flags & CLOSING_STATIC_FLAGS == 0 || tile.is_nodraw() { return; }
         let bottom = i16::from(z);
         self.0.entry((x, y)).or_default().push((bottom, bottom + i16::from(tile.height)));
     }
@@ -42,8 +56,10 @@ impl ClosingStatics {
 fn source_key(tile: &TileMetaItemTile, refs: &[TileMetaItemTextureRef]) -> Option<MaterialKey> {
     // The camera-plane terrain-item flag is source-backed. Exclude volumes,
     // roofs, foliage, water and local/clamped art such as rugs or decals.
+    // Impassable pieces are no walkable ground continuing the land either: the lava rims (0x1327..0x134D) draw their
+    // whole cell as authored, crust up to the trench wall in the KR client (`TILE_FLAG_IMPASSABLE`).
     if tile.height != 0 || tile.flags & (1u64 << 34) == 0
-        || tile.flags & (0x400 | 0x80 | 0x20000 | 0x10000000) != 0 || tile.is_nodraw() {
+        || tile.flags & (0x400 | 0x80 | 0x20000 | 0x10000000 | TILE_FLAG_IMPASSABLE) != 0 || tile.is_nodraw() {
         return None;
     }
     let base = refs.iter().find(|r| r.block_index == 0 && r.is_primary_selected() && r.is_world_art())?;
@@ -161,6 +177,19 @@ mod tests {
     }
 
     #[test]
+    fn impassable_lava_rims_are_not_patches() {
+        // The lava rim 0x132A: Background, Impassable, Rotated, its crust Lava_Grey (2000103) repeated every 4 cells.
+        let mut rim = TileMetaItemTile::zeroed();
+        rim.flags = 0x400000001 | TILE_FLAG_IMPASSABLE;
+        let crust = TileMetaItemTextureRef { texture_id: 2000103, flags: 2,
+            texture_type: 1, stable_role: EcMaterialStableRole::Base as u8,
+            texture_stretch: 4.0, uv_set: 1, ..Default::default() };
+        assert_eq!(source_key(&rim, &[crust]), None);
+        rim.flags &= !TILE_FLAG_IMPASSABLE;
+        assert_eq!(source_key(&rim, &[crust]), Some((2000103, 4.0f32.to_bits())));
+    }
+
+    #[test]
     fn neighbor_coverage_crosses_chunk_edges_and_distinguishes_height_and_material() {
         let key = (2000090, 8.0f32.to_bits());
         let center = (31, 31, 0, key);
@@ -194,10 +223,30 @@ mod tests {
         closing.insert(2474, 405, -10, &wall);
         // Bits: NW 0, N 1, NE 2, W 3, E 4, SW 5, S 6, SE 7.
         assert_eq!(neighbor_mask(&cells, &closing, center), (1 << 0) | (1 << 2) | (1 << 3) | (1 << 6));
-        // Statics with neither flag (a sign, a plant) leave the side exposed.
+        // Statics with none of the closing flags (a plant, a barrel) leave the side exposed.
         let mut plain = ClosingStatics::default();
         plain.insert(2472, 405, 15, &TileMetaItemTile::zeroed());
         assert_eq!(neighbor_mask(&cells, &plain, center), 0);
+    }
+
+    #[test]
+    fn doors_gates_and_signposts_beside_a_patch_close_its_side() {
+        let key = (2000090, 8.0f32.to_bits());
+        // The Minoc street cell (2448,416) at Z 15, with the wooden signpost 0x0B98 (Transparent, height 0) north of it.
+        let center = (2448, 416, 15, key);
+        let cells = HashSet::from([center]);
+        let mut signpost = TileMetaItemTile::zeroed();
+        signpost.flags = TILE_FLAG_TRANSPARENT;
+        // An iron gate (0x0824: Door and Impassable, no Wall flag) on both sides.
+        let mut gate = TileMetaItemTile::zeroed();
+        gate.flags = TILE_FLAG_DOOR | TILE_FLAG_IMPASSABLE;
+        gate.height = 20;
+        let mut closing = ClosingStatics::default();
+        closing.insert(2448, 415, 15, &signpost);
+        closing.insert(2447, 416, 15, &gate);
+        closing.insert(2449, 416, 15, &gate);
+        // Bits: NW 0, N 1, NE 2, W 3, E 4, SW 5, S 6, SE 7.
+        assert_eq!(neighbor_mask(&cells, &closing, center), (1 << 1) | (1 << 3) | (1 << 4));
     }
 
     #[test]

@@ -21,14 +21,20 @@ Enhanced and KR styling now fade eligible ground patches into the retained map
 at exposed boundaries. This is an intentional rendering improvement; it does
 not claim to reconstruct an original static-neighbor mask generator. The
 source art, repetition, authored geometry, masks and depth remain in their
-existing paths. Classic styling keeps its previous coverage.
+existing paths. Every style that draws Enhanced art (or Classic art under
+Enhanced land) fades them, Classic included (`draws_enhanced_surfaces`,
+`art/statics_collect.rs`).
 The independently saved EC terrain-transition control can disable this added
 fade; see [terrain_transition_controls.md](terrain_transition_controls.md).
 
 Eligibility requires a packed item-owned material slot, zero tile height,
 the authored terrain-item flag, a selected WorldArt Base with world UVs and a
 finite positive repetition. Bridge volume, wet tiles, roofs, foliage, NoDraw
-and local-UV art are excluded. The emitted base must equal the resident map's
+and local-UV art are excluded, and so are impassable pieces: the lava rims
+(0x1327–0x134D, Impassable) draw their whole cell as the KR client does, crust
+and lava up to the trench's dirt (KR `Schermata_20261114_073402.png`); faded
+as patches they let the dirt show between the lava and the crust (fixture
+`lava-rim-crust`). The emitted base must equal the resident map's
 raw height. Missing/unmapped map sources cannot qualify. Raised floors and
 multi-only objects are therefore not made transparent by this policy.
 
@@ -48,6 +54,17 @@ walls, so the floor seemed to stop short of the building; the KR client draws
 the cobblestones up to the walls (Minoc yard 2476,408, KR reference
 `Schermata_20261114_072854.png`), as Classic art and the renderer with the
 EC transitions off do. Other terrain patches still fade into each other.
+
+Doors (Door 0x20000000) and Transparent (0x4) statics close a side the same
+way (`CLOSING_STATIC_FLAGS`). A third of the doors and gates carry no Wall
+flag (the gates 0x824–0x86D, the bar doors, 0x241F–0x2426), and Transparent
+marks the fixtures set at a building's edge or along a fence: signposts and
+their signs, banners, sconces, torch holders, lantern posts, rails and
+banisters. The street cobblestones beside a signpost (Minoc 2448,416 beside
+0x0B98 at 2448,415) showed the same green band. Plants, barrels and other
+decorations still leave the side exposed. A doorway with no door static
+(Minoc 2476,404, wooden-floor land, the KR client showing a server-placed
+door) has nothing to key on and stays exposed.
 
 `art/surface_blend.wesl` fades exposed borders over 0.82 local cell, matching
 the existing terrain edge-transition reach. When both sides of an axis are
