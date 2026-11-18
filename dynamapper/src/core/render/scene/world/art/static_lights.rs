@@ -118,7 +118,8 @@ pub const NO_LIGHT_SPRITE_GLOW: f32 = 0.0;
 /// its light.mul decals took (`static_light_decal_alpha`), from the decal visibility and the scene multiplier they
 /// faded by, which the night composite now stands in for: Painterly's own `global_lighting` times the composite's
 /// dimming at its light level (`client_night_dimming`). So it shows only at night and in caves, about as strongly as
-/// before the composite (night 10 dims about as the former 0.76, caves 26 reach the cap as the former 0.56 did).
+/// before the composite (L 10 dims about as the former 0.76, caves 26 reach the cap as the former 0.56 did; the
+/// night's L 12, darker, glows a little more).
 /// `NO_LIGHT_SPRITE_GLOW` in the other styles: Classic adds its light.mul lights into the light buffer, and KR-like
 /// and Enhanced show their sprites through the composite alone.
 pub fn light_sprite_glow_strength(uniform_state: &UniformState) -> f32 {

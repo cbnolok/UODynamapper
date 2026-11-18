@@ -182,7 +182,7 @@ global_lighting = 1.08
 # Night: the afternoon's light colour, tint, ambient and sun; the light level alone darkens it (the
 # Classic client's rule, [Scene dimming]).
 [classic.night.client_lighting]
-light_level = 10
+light_level = 12
 [classic.night.effects]
 shading_mode = 0
 normal_mode = 1
@@ -359,7 +359,7 @@ elevation_degrees = 60.50379
 # specular, bent normals, sharpening, the warm light colour, highlights, depth tint, grunge and the light decals.
 # exposure stays as brightness. The night and caves dim as in the client, through the night composite
 # (client_lighting) in place of global_lighting: light level 0 by day (the client's identity; the former
-# global_lighting 1.08 and 1.14 are gone), 10 at night and 26 in caves, the levels ServUO sends, with the night
+# global_lighting 1.08 and 1.14 are gone), 12 at night and 26 in caves, the levels ServUO sends, with the night
 # map at the client's strength and colour. Land shades per vertex like the client (terrain_shading_model 1,
 # the same code as the KR client's), which reads none of the per-pixel land terms. The Land Shading option can
 # still switch Enhanced to per pixel (terrain_shading_model 0, shading_mode 1): that path reads the headroom
@@ -552,7 +552,7 @@ elevation_degrees = 45.0
 
 [enhanced.night]
 [enhanced.night.client_lighting]
-light_level = 10
+light_level = 12
 overlay_strength = 1.0
 overlay_color = [0.012604, 0.017285, 0.153818]
 [enhanced.night.effects]
@@ -730,7 +730,7 @@ elevation_degrees = 45.0
 # depth tint, relief shadows, mottle, grunge, transition grime, colour wash and the light decals. exposure
 # stays as brightness. The night and caves dim as in the client, through the night composite (client_lighting)
 # in place of global_lighting: light level 0 by day (the client's identity; the former global_lighting 1.04 and
-# 1.08 are gone), 10 at night and 26 in caves, the levels ServUO sends, with the night map at the client's
+# 1.08 are gone), 12 at night and 26 in caves, the levels ServUO sends, with the night map at the client's
 # strength and colour. The light decals draw into the composite's light buffer, so they light only at night.
 # Land shades per vertex like the client (terrain_shading_model 1).
 # Switched to per-pixel, the land diffuse is still the client's half-Lambert: wrap 0.5 gives
@@ -934,7 +934,7 @@ elevation_degrees = 45.0
 [kr.night]
 client_shadows = true
 [kr.night.client_lighting]
-light_level = 10
+light_level = 12
 overlay_strength = 1.0
 overlay_color = [0.012604, 0.017285, 0.153818]
 [kr.night.effects]
@@ -1301,7 +1301,7 @@ elevation_degrees = 60.50379
 [painterly.night]
 global_lighting = 1.08
 [painterly.night.client_lighting]
-light_level = 10
+light_level = 12
 overlay_strength = 0.0
 overlay_color = [0.012604, 0.017285, 0.153818]
 [painterly.night.effects]

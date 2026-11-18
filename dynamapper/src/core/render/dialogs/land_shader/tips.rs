@@ -44,7 +44,7 @@ pub(super) const KR_COLOR_WASH_SCALE: &str =
 // --- Client night lighting and shadows (every style; the night overlay and shadows KR-like, Enhanced, UOD-Painterly) ---
 
 pub(super) const CLIENT_LIGHT_LEVEL: &str =
-    "The server's light level: 0 is full day (no change), about 10 a night, 26 a dungeon. Every style dims by it as its client does: Classic as the Classic client, multiplying by (32 - level) / 32 with the light.mul lights taking that darkness back; the others through the KR and Enhanced clients' night map, with their light sprites.";
+    "The server's light level: 0 is full day (no change), 12 a night (ServUO's), 26 a dungeon. Every style dims by it as its client does: Classic as the Classic client, multiplying by (32 - level) / 32 with the light.mul lights taking that darkness back; the others through the KR and Enhanced clients' night map, with their light sprites.";
 pub(super) const NIGHT_OVERLAY_STRENGTH: &str =
     "The night map's tint. 1 is the client; 0 darkens as much without the blue, as UOD-Painterly, which colours its night itself; above 1 tints more. Needs a Light Level above 0; not in Classic, whose client has no night map.";
 pub(super) const NIGHT_OVERLAY_COLOR: &str =

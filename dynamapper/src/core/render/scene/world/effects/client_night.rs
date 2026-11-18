@@ -935,12 +935,12 @@ mod tests {
         f32::from((value << 3) | (value >> 2)) / BYTE_MAX
     }
 
-    /// The Classic client's rule on 8-bit values: a mid grey (128) floor becomes 128 * 22 / 32 = 88 at night (10) and
+    /// The Classic client's rule on 8-bit values: a mid grey (128) floor becomes 128 * 20 / 32 = 80 at night (12) and
     /// 128 * 6 / 32 = 24 in a dungeon (26), and stays by day.
     #[test]
     fn classic_rule_darkens_a_mid_grey_floor_by_the_light_level() {
         const MID_GREY: f32 = 128.0 / BYTE_MAX;
-        const EXPECTED: [(u32, f32); 3] = [(0, 128.0), (10, 88.0), (26, 24.0)];
+        const EXPECTED: [(u32, f32); 3] = [(0, 128.0), (12, 80.0), (26, 24.0)];
         for (light_level, expected) in EXPECTED {
             let uniform = ClientNightCompositeUniform::classic(light_level);
             assert_eq!(uniform.rule, CLASSIC_RULE);
@@ -956,7 +956,7 @@ mod tests {
     /// (32 - L + v) / 32, and never brightens past the day: by day lights change nothing.
     #[test]
     fn classic_lights_take_their_value_off_the_darkness() {
-        const NIGHT: u32 = 10;
+        const NIGHT: u32 = 12;
         const STEP: f32 = 1.0 / BYTE_MAX;
         let night = classic_light_level_multiplier(NIGHT);
         for value in [1u8, 8, 16, 21] {

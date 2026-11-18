@@ -191,13 +191,14 @@ default_preset = "classic.morning"
 # ------------------
 # Simplified rendering emulating the original UO client.
 # Key features like grading, gloom, specular, and rim lighting are disabled.
-# The night and caves dim as the Classic client does (see [Scene dimming]): light level 10 at night (the world at
-# 22/32 of its brightness) and 26 in caves (6/32), each light's light.mul value taking that darkness back. They keep
+# The night and caves dim as the Classic client does (see [Scene dimming]): light level 12 at night (the world at
+# 20/32 of its brightness) and 26 in caves (6/32), each light's light.mul value taking that darkness back. They keep
 # the afternoon's global_lighting 1.08 and exposure 1.1, so only the light level darkens them; the former 0.82 and
 # 1.2 at night (0.60 and 0.95 in caves) left the night almost as bright as the afternoon. The night also keeps the
 # afternoon's light colour, atmosphere tint, ambient and sun strength, so the client's rule alone sets its
-# darkness: unlit paving at 0.69 of the afternoon (22/32); its former cool tint, ambient 0.1 and sun 0.7 took it
-# down to 0.57. The caves keep them too: unlit ground at 0.19 of the afternoon (6/32) with the lights added.
+# darkness: unlit paving at 0.625 of the afternoon (20/32; 0.69 at the former night level 10); its former cool
+# tint, ambient 0.1 and sun 0.7 took it down to 0.57 at level 10. The caves keep them too: unlit ground at 0.19 of
+# the afternoon (6/32) with the lights added.
 
 [classic]
 light_cover = "uod"
@@ -377,7 +378,7 @@ global_lighting = 1.08
 # Night: the afternoon's light colour, tint, ambient and sun; the light level alone darkens it (the
 # Classic client's rule, [Scene dimming]).
 [classic.night.client_lighting]
-light_level = 10
+light_level = 12
 [classic.night.effects]
 shading_mode = 0
 normal_mode = 1
@@ -554,7 +555,7 @@ elevation_degrees = 60.50379
 # specular, bent normals, sharpening, the warm light colour, highlights, depth tint, grunge and the light decals.
 # exposure stays as brightness. The night and caves dim as in the client, through the night composite
 # (client_lighting) in place of global_lighting: light level 0 by day (the client's identity; the former
-# global_lighting 1.08 and 1.14 are gone), 10 at night and 26 in caves, the levels ServUO sends, with the night
+# global_lighting 1.08 and 1.14 are gone), 12 at night and 26 in caves, the levels ServUO sends, with the night
 # map at the client's strength and colour. Land shades per vertex like the client (terrain_shading_model 1,
 # the same code as the KR client's), which reads none of the per-pixel land terms. The Land Shading option can
 # still switch Enhanced to per pixel (terrain_shading_model 0, shading_mode 1): that path reads the headroom
@@ -747,7 +748,7 @@ elevation_degrees = 45.0
 
 [enhanced.night]
 [enhanced.night.client_lighting]
-light_level = 10
+light_level = 12
 overlay_strength = 1.0
 overlay_color = [0.012604, 0.017285, 0.153818]
 [enhanced.night.effects]
@@ -925,7 +926,7 @@ elevation_degrees = 45.0
 # depth tint, relief shadows, mottle, grunge, transition grime, colour wash and the light decals. exposure
 # stays as brightness. The night and caves dim as in the client, through the night composite (client_lighting)
 # in place of global_lighting: light level 0 by day (the client's identity; the former global_lighting 1.04 and
-# 1.08 are gone), 10 at night and 26 in caves, the levels ServUO sends, with the night map at the client's
+# 1.08 are gone), 12 at night and 26 in caves, the levels ServUO sends, with the night map at the client's
 # strength and colour. The light decals draw into the composite's light buffer, so they light only at night.
 # Land shades per vertex like the client (terrain_shading_model 1).
 # Switched to per-pixel, the land diffuse is still the client's half-Lambert: wrap 0.5 gives
@@ -1131,7 +1132,7 @@ elevation_degrees = 45.0
 [kr.night]
 client_shadows = true
 [kr.night.client_lighting]
-light_level = 10
+light_level = 12
 overlay_strength = 1.0
 overlay_color = [0.012604, 0.017285, 0.153818]
 [kr.night.effects]
@@ -1313,7 +1314,7 @@ elevation_degrees = 45.0
 # orange: 0.21 and 0.25 bring its chroma down by about a quarter while grass and rock change little.
 # Its lights are KR-like's: the clients' light sprites, centred and scaled as in KR-like, under KR-like's light cover
 # rules, glowing over the frame where Classic draws light.mul's lights (see [Scene dimming]).
-# Its night and caves take KR-like's darkness, the clients' night composite at light level 10 and 26, at
+# Its night and caves take KR-like's darkness, the clients' night composite at light level 12 and 26, at
 # overlay_strength 0: without the night map's blue, so its own grading and atmosphere tint colour the night. They keep
 # the afternoon's global_lighting 1.08 (the former 0.76 at night and 0.56 in caves dimmed instead), and their glow
 # fades in by the composite's dimming as it did by those multipliers. Their exposure is 1.3 times the afternoon's
@@ -1512,7 +1513,7 @@ elevation_degrees = 60.50379
 [painterly.night]
 global_lighting = 1.08
 [painterly.night.client_lighting]
-light_level = 10
+light_level = 12
 overlay_strength = 0.0
 overlay_color = [0.012604, 0.017285, 0.153818]
 [painterly.night.effects]

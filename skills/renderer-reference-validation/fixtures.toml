@@ -164,7 +164,7 @@ settings = { world_rendering = { show_only_player_floor = true } }
 [[fixture]]
 name = "britain-slate-roofs-kr-night-level-22"
 guards = """KR-like's night at the light level of the KR client's night screenshots (about 22, not the night preset's \
-10): the night map's blue turns the grey marble, the slate roofs and the plaster blue-purple, as in the client \
+12): the night map's blue turns the grey marble, the slate roofs and the plaster blue-purple, as in the client \
 (blue over red about 2 on the slate). The client applies the server level and nothing else; the purple is that \
 level, not a tint of its own (KR atmosphere research §1)."""
 tier = "quick"
@@ -266,7 +266,7 @@ times = ["night"]
 [[fixture]]
 name = "britain-lamp-posts-night-darkness"
 guards = """Britain's lamp posts and shop windows at night, by day as the control: every style dims the world by the \
-server light level (night 10), Classic by the Classic client's light buffer (a grey of (32 - level) / 32 with the \
+server light level (night 12), Classic by the Classic client's light buffer (a grey of (32 - level) / 32 with the \
 light.mul lights added, multiplying the frame) and UOD-Painterly by KR-like's night composite with its own colour, \
 with the lights readable over it (6542a8c1); Classic's night was almost as bright as its afternoon. The glows do \
 not depend on the views the launch visited before (3a1c6bc5)."""

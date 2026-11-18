@@ -1279,7 +1279,7 @@ mod tests {
     #[test]
     fn bundled_presets_dim_every_style_by_the_light_level() {
         const DAY: u32 = 0;
-        const NIGHT: u32 = 10;
+        const NIGHT: u32 = 12;
         const DUNGEON: u32 = 26;
         const PAINTERLY_STRENGTH: f32 = MIN_NIGHT_OVERLAY_STRENGTH;
         for (name, text) in [("shader_presets.toml", BUNDLED_FACTORY_PRESETS), ("land.toml", BUNDLED_LAND_SETTINGS)] {
