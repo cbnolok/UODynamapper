@@ -4,7 +4,10 @@
 this document. The target is a guide, not a requirement to create every file on
 day one. Recheck the current tree and the [architecture audit](2026-11-08-dynamapper-architecture-audit.md)
 before each phase; its findings are mostly static observations, not a blanket
-claim that every conditional failure has been reproduced.
+claim that every conditional failure has been reproduced. Phase 1 was done on
+2026-11-18: the [revalidation](2026-11-18-dynamapper-audit-revalidation.md)
+gives each finding's current status, new findings NEW1–NEW36 and revised
+priorities.
 
 ## Objective and boundaries
 
