@@ -92,7 +92,7 @@ const TERRAIN_FLAG_PLAYER_CAVE: u32 = 0x1u;
 const CAVE_MOUTH_OPENING_OPACITY: f32 = 0.65;
 // The veil's darkness key (`cave_mouth_veil_opacity`), over the linear luminance of the land's own texture: black up to
 // the first, the opening's opacity; rock from the second, opaque. The Classic texmaps of the cave exit frames
-// (0x1D3-0x1DA, 0x7EC-0x7F1, 0x834-0x839, 0x8C1-0x8C6) paint their opening at most 0.003 (black, or the darkest
+// (0x1D3-0x1DA, 0x7EC-0x7F1, 0x834-0x839, 0x8C1-0x8C6) paint their opening at most 0.0044 (black, or the darkest
 // 5-bit grey) and their rock from 0.02, almost no texel between; the Enhanced and Kingdom Reborn frames, and the black
 // land, are all black.
 const CAVE_MOUTH_KEY_BLACK_LUMINANCE: f32 = 0.006;
