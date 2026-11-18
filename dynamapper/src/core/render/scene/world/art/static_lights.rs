@@ -46,9 +46,21 @@ const NO_DECAL_ALPHA: f32 = 0.0;
 /// The range of `static_light_decal_visibility` (the Static Light Decals slider's).
 const MIN_DECAL_VISIBILITY: f32 = 0.0;
 const MAX_DECAL_VISIBILITY: f32 = 2.0;
-const STATIC_LIGHT_BILLBOARD_RIGHT: Vec3 = Vec3::new(-0.70710677, 0.0, 0.70710677);
-const STATIC_LIGHT_BILLBOARD_UP: Vec3 = Vec3::new(0.4082483, -0.8164966, 0.4082483);
+/// The light quad faces the camera with its right and up the screen's, so that the light.mul image shows unmirrored,
+/// its first column on the screen's left and its first row on top, as the client copies it (0x00457f70). The former
+/// axes, the screen's left and down, with the first row at the billboard's -up, mirrored it left to right.
+const STATIC_LIGHT_BILLBOARD_RIGHT: Vec3 = Vec3::new(0.70710677, 0.0, -0.70710677);
+const STATIC_LIGHT_BILLBOARD_UP: Vec3 = Vec3::new(-0.4082483, 0.8164966, -0.4082483);
 const STATIC_LIGHT_BILLBOARD_NORMAL: Vec3 = Vec3::new(0.57735026, 0.57735026, 0.57735026);
+/// The billboard's world units per tile width (`LIGHT_PIXELS_PER_WORLD_TILE` light pixels) along its right and up
+/// axes. The Classic client draws a light.mul image at its pixel size on the screen (0x00457f70), where a tile's
+/// diamond is 44 pixels wide and 44 tall: across, its horizontal ground diagonal (1, 0, -1), √2 world units along
+/// the billboard's right; up, its vertical ground diagonal (-1, 0, -1), which spans √(2/3) world units of the
+/// billboard's up. Unit world sizes drew the lights at 1/√2 of their width and √(3/2) of their height.
+const STATIC_LIGHT_BILLBOARD_WORLD_PER_TILE: Vec2 = Vec2::new(
+    std::f32::consts::SQRT_2,
+    -(STATIC_LIGHT_BILLBOARD_UP.x + STATIC_LIGHT_BILLBOARD_UP.z),
+);
 const CLASSICUO_LIGHT_CURVES: [[u8; 32]; 6] = [
     [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31],
     [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 2, 3, 4, 6, 8, 10, 12, 14, 16, 18, 20, 22, 24, 26, 28],
@@ -175,6 +187,8 @@ pub struct StaticLightInstance {
     pub world_x: f32,
     pub world_z: f32,
     pub world_y: f32,
+    /// The light image's size in tile widths of `LIGHT_PIXELS_PER_WORLD_TILE` of its pixels, times its item light
+    /// scale; its quad's world size is this by `STATIC_LIGHT_BILLBOARD_WORLD_PER_TILE`.
     pub width_world: f32,
     pub height_world: f32,
     /// Under `LightCover::Uod`, the z of the lowest floor or roof over the light (`static_light_ceiling_z`), which its
@@ -324,12 +338,19 @@ pub fn build_static_light_mesh() -> Mesh {
         ],
     );
     mesh.insert_attribute(Mesh::ATTRIBUTE_NORMAL, vec![[0.0, 0.0, 1.0]; 4]);
+    // The image's first row (v 0) on top, at the billboard's +up.
     mesh.insert_attribute(
         Mesh::ATTRIBUTE_UV_0,
-        vec![[0.0, 0.0], [1.0, 0.0], [0.0, 1.0], [1.0, 1.0]],
+        vec![[0.0, 1.0], [1.0, 1.0], [0.0, 0.0], [1.0, 0.0]],
     );
     mesh.insert_indices(Indices::U32(vec![0, 2, 1, 1, 2, 3]));
     mesh
+}
+
+/// The light quad's scale along the billboard's right and up: the light image at its pixel size on the screen.
+fn static_light_quad_scale(instance: &StaticLightInstance) -> Vec3 {
+    let size = Vec2::new(instance.width_world, instance.height_world) * STATIC_LIGHT_BILLBOARD_WORLD_PER_TILE;
+    size.extend(1.0)
 }
 
 fn static_light_billboard_rotation() -> Quat {
@@ -655,7 +676,7 @@ pub fn sys_sync_static_light_entities(
 
         let transform = Transform::from_xyz(instance.world_x, instance.world_y, instance.world_z)
             .with_rotation(static_light_billboard_rotation())
-            .with_scale(Vec3::new(instance.width_world, instance.height_world, 1.0));
+            .with_scale(static_light_quad_scale(instance));
         let key = instance.key;
         let tag = MeshTag::new(light_clip_tag(key.tile_x, key.tile_y, key.z, instance.ceiling, instance.cave_outside,
             transform.translation));
@@ -1403,6 +1424,46 @@ mod tests {
             height_world: 3.0,
             ceiling: None,
             cave_outside: false,
+        }
+    }
+
+    /// A light image one tile width square covers a tile's diamond on the screen, as the Classic client draws it at
+    /// its pixel size: the quad faces the camera, so the screen's axes are the billboard's right and up, along which
+    /// the ground's diagonals measure a tile's 44 pixels across and down.
+    #[test]
+    fn a_tile_sized_light_covers_a_tile_diamond_on_screen() {
+        const EPSILON: f32 = 1e-5;
+        let across = Vec3::new(1.0, 0.0, -1.0);
+        let down = Vec3::new(1.0, 0.0, 1.0);
+        let camera = crate::core::render::scene::camera::PlayerCamera::BASE_OFFSET_FROM_PLAYER.normalize();
+        assert!(STATIC_LIGHT_BILLBOARD_NORMAL.abs_diff_eq(camera, EPSILON));
+        assert!(across.dot(STATIC_LIGHT_BILLBOARD_UP).abs() < EPSILON && down.dot(STATIC_LIGHT_BILLBOARD_RIGHT).abs() < EPSILON);
+        let tile = StaticLightInstance { width_world: 1.0, height_world: 1.0, ..test_static_light_instance() };
+        let scale = static_light_quad_scale(&tile);
+        assert!((scale.x - across.dot(STATIC_LIGHT_BILLBOARD_RIGHT).abs()).abs() < EPSILON, "{scale}");
+        assert!((scale.y - down.dot(STATIC_LIGHT_BILLBOARD_UP).abs()).abs() < EPSILON, "{scale}");
+        assert_eq!(scale.z, 1.0);
+    }
+
+    /// The light.mul image shows as the client copies it, unmirrored: its first column (u 0) on the screen's left and
+    /// its first row (v 0) on top, the screen's axes taken from the player camera's own placement.
+    #[test]
+    fn the_light_image_is_not_mirrored_on_screen() {
+        use bevy::mesh::VertexAttributeValues;
+        let camera = Transform::from_translation(crate::core::render::scene::camera::PlayerCamera::BASE_OFFSET_FROM_PLAYER)
+            .looking_at(Vec3::ZERO, Vec3::Y);
+        let mesh = build_static_light_mesh();
+        let Some(VertexAttributeValues::Float32x3(positions)) = mesh.attribute(Mesh::ATTRIBUTE_POSITION) else {
+            panic!("positions");
+        };
+        let Some(VertexAttributeValues::Float32x2(uvs)) = mesh.attribute(Mesh::ATTRIBUTE_UV_0) else {
+            panic!("uvs");
+        };
+        for (position, [u, v]) in positions.iter().zip(uvs) {
+            let world = static_light_billboard_rotation() * Vec3::from_array(*position);
+            let (screen_x, screen_y) = (world.dot(*camera.right()), world.dot(*camera.up()));
+            assert_eq!(screen_x < 0.0, *u == 0.0, "{position:?} uv ({u}, {v})");
+            assert_eq!(screen_y > 0.0, *v == 0.0, "{position:?} uv ({u}, {v})");
         }
     }
 

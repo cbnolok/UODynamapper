@@ -762,6 +762,27 @@ y = 742
 z = 0
 times = ["afternoon", "cave"]
 
+[[fixture]]
+name = "deceit-wall-torches-classic-light-level-16"
+guards = """Deceit's wall torches 2567 (light.mul 8) at 5184,631,15 and 5186,637,12 in Classic at light level 16, where \
+the user's Classic client screenshot was taken (at 1.5 times its pixels), under the "clients" light cover, which \
+clips nothing, as the client: each pool is its light.mul image at its pixel size on the screen, unmirrored, about the \
+torch's cell centre, wider than the narrow, tall pools left of the torches the quads drew before; its colour is the \
+client's colour 30, red and green back to the day's and blue left at the level's."""
+tier = "quick"
+tags = ["lights", "caves", "darkness", "classic"]
+map = 1
+x = 5185
+y = 634
+z = 15
+times = ["cave"]
+styles = ["classic"]
+sources = ["cc/cc"]
+settings = { preset = { "client_lighting.light_level" = 16 }, style = { light_cover = "clients" } }
+[fixture.reference]
+path = "/home/claudio/Immagini/Schermate/Schermata_20261118_193728.png"
+note = "Classic client in Deceit at about level 16, 1.5 times: the wall torches' yellow pools"
+
 # ---------------------------------------------------------------------------------------------------------------
 # Other towns
 # ---------------------------------------------------------------------------------------------------------------
