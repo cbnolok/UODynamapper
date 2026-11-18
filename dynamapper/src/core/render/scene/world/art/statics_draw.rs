@@ -193,10 +193,12 @@ pub struct StaticArtDrawDebugState {
     pub last_uploaded_ground_instances: Option<usize>,
 }
 
+/// Instances changed since their last upload: the collector takes its outputs mutably only when it rebuilds them, and
+/// an upload waits while the material is not loaded yet.
 #[derive(Resource, Default)]
 pub struct StaticArtUploadCache {
-    pub sprite_instances: Vec<SpriteInstance>,
-    pub ground_instances: Vec<GroundTileInstance>,
+    sprite_pending: bool,
+    ground_pending: bool,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -1590,6 +1592,9 @@ pub fn sys_update_sprite_instance_buffer(
     mut upload_cache: ResMut<StaticArtUploadCache>,
     mut debug_state: ResMut<StaticArtDrawDebugState>,
 ) {
+    if instances.is_changed() && !upload_cache.sprite_pending {
+        upload_cache.sprite_pending = true;
+    }
     if instances.0.is_empty() {
         return;
     }
@@ -1601,41 +1606,41 @@ pub fn sys_update_sprite_instance_buffer(
         .map(|meta| (meta.width as f32, meta.height as f32))
         .unwrap_or((1.0, 1.0));
 
-    let opaque_buffer_handle = {
-        let Some(mut material) = materials.get_mut(&render_assets.opaque_material) else {
-            return;
-        };
-        material.extension.params.render_mode = render_mode;
-        material.extension.params.map_width_tiles = map_width_tiles;
-        material.extension.params.map_height_tiles = map_height_tiles;
-        material.extension.instances.clone()
+    // Taken mutably only when a parameter differs: a mutable access re-extracts the material for the GPU.
+    let stale = |material: &ArtSpriteMaterial| {
+        let params = &material.extension.params;
+        params.render_mode != render_mode
+            || params.map_width_tiles != map_width_tiles
+            || params.map_height_tiles != map_height_tiles
     };
-
-    {
-        let Some(mut transparent_material) = materials.get_mut(&render_assets.transparent_material)
-        else {
+    for handle in [
+        &render_assets.opaque_material,
+        &render_assets.transparent_material,
+        &render_assets.shadow_material,
+    ] {
+        let Some(material) = materials.get(handle) else {
             return;
         };
-        transparent_material.extension.params.render_mode = render_mode;
-        transparent_material.extension.params.map_width_tiles = map_width_tiles;
-        transparent_material.extension.params.map_height_tiles = map_height_tiles;
-    }
-    {
-        let Some(mut shadow_material) = materials.get_mut(&render_assets.shadow_material) else {
-            return;
-        };
-        shadow_material.extension.params.render_mode = render_mode;
-        shadow_material.extension.params.map_width_tiles = map_width_tiles;
-        shadow_material.extension.params.map_height_tiles = map_height_tiles;
+        if stale(material) {
+            let Some(mut material) = materials.get_mut(handle) else {
+                return;
+            };
+            material.extension.params.render_mode = render_mode;
+            material.extension.params.map_width_tiles = map_width_tiles;
+            material.extension.params.map_height_tiles = map_height_tiles;
+        }
     }
 
-    let upload_changed = upload_cache.sprite_instances != instances.0;
+    let upload_changed = upload_cache.sprite_pending;
     if upload_changed {
+        let Some(opaque_material) = materials.get(&render_assets.opaque_material) else {
+            return;
+        };
         let _ = storage_buffers.insert(
-            &opaque_buffer_handle,
+            &opaque_material.extension.instances,
             ShaderBuffer::from(instances.0.clone()),
         );
-        upload_cache.sprite_instances.clone_from(&instances.0);
+        upload_cache.sprite_pending = false;
     }
 
     if upload_changed || debug_state.last_uploaded_instances != Some(instances.0.len()) {
@@ -1663,6 +1668,9 @@ pub fn sys_update_ground_instance_buffer(
     mut upload_cache: ResMut<StaticArtUploadCache>,
     mut debug_state: ResMut<StaticArtDrawDebugState>,
 ) {
+    if instances.is_changed() && !upload_cache.ground_pending {
+        upload_cache.ground_pending = true;
+    }
     if instances.0.is_empty() {
         return;
     }
@@ -1673,31 +1681,31 @@ pub fn sys_update_ground_instance_buffer(
         .map(|meta| (meta.width as f32, meta.height as f32))
         .unwrap_or((1.0, 1.0));
 
-    let opaque_buffer_handle = {
-        let Some(mut material) = materials.get_mut(&render_assets.opaque_material) else {
+    // Taken mutably only when a parameter differs: a mutable access re-extracts the material for the GPU.
+    for handle in [&render_assets.opaque_material, &render_assets.transparent_material] {
+        let Some(material) = materials.get(handle) else {
             return;
         };
-        material.extension.params.map_width_tiles = map_width_tiles;
-        material.extension.params.map_height_tiles = map_height_tiles;
-        material.extension.instances.clone()
-    };
-
-    {
-        let Some(mut transparent_material) = materials.get_mut(&render_assets.transparent_material)
-        else {
-            return;
-        };
-        transparent_material.extension.params.map_width_tiles = map_width_tiles;
-        transparent_material.extension.params.map_height_tiles = map_height_tiles;
+        let params = &material.extension.params;
+        if params.map_width_tiles != map_width_tiles || params.map_height_tiles != map_height_tiles {
+            let Some(mut material) = materials.get_mut(handle) else {
+                return;
+            };
+            material.extension.params.map_width_tiles = map_width_tiles;
+            material.extension.params.map_height_tiles = map_height_tiles;
+        }
     }
 
-    let upload_changed = upload_cache.ground_instances != instances.0;
+    let upload_changed = upload_cache.ground_pending;
     if upload_changed {
+        let Some(opaque_material) = materials.get(&render_assets.opaque_material) else {
+            return;
+        };
         let _ = storage_buffers.insert(
-            &opaque_buffer_handle,
+            &opaque_material.extension.instances,
             ShaderBuffer::from(instances.0.clone()),
         );
-        upload_cache.ground_instances.clone_from(&instances.0);
+        upload_cache.ground_pending = false;
     }
 
     if upload_changed || debug_state.last_uploaded_ground_instances != Some(instances.0.len()) {
@@ -1901,7 +1909,97 @@ fn update_art_material_uniforms_ground(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use bevy::render::storage::ShaderBufferData;
     use std::sync::Arc;
+
+    /// A map size no map has: the system's first frame sets the scene's.
+    const UNSET_MAP_TILES: f32 = 0.0;
+
+    fn test_ground_material(instances: Handle<ShaderBuffer>) -> ArtGroundMaterial {
+        ArtGroundMaterial {
+            base: StandardMaterial::default(),
+            extension: ArtGroundMaterialExtension {
+                atlas: Handle::default(),
+                instances,
+                params: SpriteParams {
+                    render_mode: 0,
+                    alpha_cutoff: 0.5,
+                    pass_mode: PASS_MODE_OPAQUE,
+                    hue_enabled: 0,
+                    map_width_tiles: UNSET_MAP_TILES,
+                    map_height_tiles: UNSET_MAP_TILES,
+                    _pad_sp: UVec2::ZERO,
+                },
+                scene_uniform: world::land::mesh_material::SceneUniform::default(),
+                effects_uniform: world::land::mesh_material::LandEffectsUniform::default(),
+                global_lighting_uniform: world::land::mesh_material::GlobalLightingUniforms::default(),
+                hues: Handle::default(),
+                land_page_atlas: Handle::default(),
+                land_page_lookup: Handle::default(),
+                visual_grunge_texture: Handle::default(),
+                item_liquid_atlas: Handle::default(),
+                item_liquid_lookup: Handle::default(),
+                client_grunge_texture: Handle::default(),
+            },
+        }
+    }
+
+    #[derive(Resource, Default)]
+    struct GroundMaterialsTouched(bool);
+
+    fn record_ground_materials_touched(
+        materials: Res<Assets<ArtGroundMaterial>>,
+        mut touched: ResMut<GroundMaterialsTouched>,
+    ) {
+        touched.0 = materials.is_changed();
+    }
+
+    /// The ground instances are uploaded when the collector changed them, not on every frame, and the materials are
+    /// taken mutably, which re-extracts them for the GPU, only when a parameter differs.
+    #[test]
+    fn ground_instances_upload_only_when_the_collector_changed_them() {
+        let mut app = App::new();
+        let mut buffers = Assets::<ShaderBuffer>::default();
+        let buffer = buffers.add(ShaderBuffer::from(Vec::<GroundTileInstance>::new()));
+        let mut materials = Assets::<ArtGroundMaterial>::default();
+        let render_assets = ArtGroundRenderAssets {
+            mesh: Handle::default(),
+            opaque_material: materials.add(test_ground_material(buffer.clone())),
+            transparent_material: materials.add(test_ground_material(buffer.clone())),
+        };
+        app.insert_resource(buffers)
+            .insert_resource(materials)
+            .insert_resource(render_assets)
+            .insert_resource(RenderStaticLandInstances(vec![bytemuck::Zeroable::zeroed()]))
+            .insert_resource(crate::core::render::scene::SceneStateData { map_id: 0 })
+            .init_resource::<world::WorldGeoData>()
+            .init_resource::<StaticArtUploadCache>()
+            .init_resource::<StaticArtDrawDebugState>()
+            .init_resource::<GroundMaterialsTouched>()
+            .add_systems(Update, (sys_update_ground_instance_buffer, record_ground_materials_touched).chain());
+        let materials_touched = |app: &App| app.world().resource::<GroundMaterialsTouched>().0;
+        // An upload replaces the buffer with initialized data.
+        let uploaded = |app: &App| {
+            let buffers = app.world().resource::<Assets<ShaderBuffer>>();
+            matches!(buffers.get(&buffer).map(|b| &b.data), Some(ShaderBufferData::Initialized { .. }))
+        };
+        let replace_with_marker = |app: &mut App| {
+            let marker = ShaderBuffer::with_size(1, bevy::asset::RenderAssetUsages::default());
+            app.world_mut().resource_mut::<Assets<ShaderBuffer>>().insert(&buffer, marker).unwrap();
+        };
+        app.update();
+        assert!(uploaded(&app), "the first frame uploads the instances");
+        assert!(materials_touched(&app), "the map size is set");
+
+        replace_with_marker(&mut app);
+        app.update();
+        assert!(!uploaded(&app), "an unchanged frame uploaded the instances again");
+        assert!(!materials_touched(&app), "unchanged materials taken mutably");
+
+        app.world_mut().resource_mut::<RenderStaticLandInstances>().set_changed();
+        app.update();
+        assert!(uploaded(&app), "changed instances were not uploaded");
+    }
 
     #[test]
     fn kingdom_reborn_pages_widen_the_enhanced_atlas() {

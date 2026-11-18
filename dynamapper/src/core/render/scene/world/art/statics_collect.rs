@@ -3500,7 +3500,12 @@ pub fn sys_collect_visible_statics(
     let (multis_res, placed_multis) = multis;
     if !settings.world_rendering.enable_statics {
         let (sprite_output, ground_output, batches, cache, _) = &mut outputs;
-        clear_static_collect_outputs(sprite_output, ground_output, batches);
+        // Cleared once: clearing them on every frame would flag them changed, and upload them, on every frame.
+        if !(sprite_output.0.is_empty() && ground_output.0.is_empty() && batches.sprite.is_empty()
+            && batches.ground.is_empty())
+        {
+            clear_static_collect_outputs(sprite_output, ground_output, batches);
+        }
         // Re-enabling must rebuild the output lists, even if the visible chunks
         // and their cached instances are unchanged.
         cache.last_visible_chunk_keys.clear();
