@@ -1,7 +1,5 @@
-pub mod array;
 pub mod math;
 pub mod image;
-//pub mod rect;
 pub mod uo_coords;
 #[cfg(test)]
 pub mod wesl_source;

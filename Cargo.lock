@@ -2870,7 +2870,6 @@ dependencies = [
  "nohash-hasher",
  "paris",
  "parking_lot",
- "regex",
  "serde",
  "serde_json",
  "spin_sleep",

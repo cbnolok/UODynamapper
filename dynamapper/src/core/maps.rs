@@ -1,7 +1,7 @@
 use bevy::ecs::resource::Resource;
 use bytemuck::{Pod, Zeroable};
 use color_eyre::eyre::{self, WrapErr};
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 use udd_assets::map_metadata::{decode_map_package_metadata, MapPackageMetadata};
@@ -29,7 +29,6 @@ struct PackedMapTexel {
 pub struct MapPlane {
     pub index: u32,
     pub size_blocks: MapSizeBlocks,
-    package_path: PathBuf,
     package: Arc<UddpReader>,
     cached_block_indices: Vec<u32>,
     cached_blocks_arena: Vec<CachedBlock>,
@@ -84,7 +83,6 @@ impl MapPlane {
         Ok(Self {
             index: map_index,
             size_blocks,
-            package_path,
             package,
             cached_block_indices,
             cached_blocks_arena: Vec::new(),
@@ -103,10 +101,6 @@ impl MapPlane {
 
     pub fn package(&self) -> Arc<UddpReader> {
         self.package.clone()
-    }
-
-    pub fn package_path(&self) -> &Path {
-        &self.package_path
     }
 
     /// Which of the land ids below `id_count` the map uses: the cells of every package chunk, read in parallel.

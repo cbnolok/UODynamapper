@@ -44,10 +44,6 @@ paris = { version = "1.5", default-features = false, features = [
   "no_logger",
 ] } # log formatting
 parking_lot = "0.12"
-regex = { version = "1", default-features = false, features = [
-  "std",
-  "unicode",
-] }
 serde = { version = "1", default-features = false, features = ["derive"] }
 serde_json.workspace = true
 spin_sleep = "1.3"

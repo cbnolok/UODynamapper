@@ -249,11 +249,6 @@ impl Plugin for ShaderPresetsPlugin {
     }
 }
 
-pub fn load_from_file() -> eyre::Result<LandShaderModePresets> {
-    let factory_presets = load_factory_presets()?;
-    load_effective_presets(&factory_presets)
-}
-
 fn load_effective_presets(factory_presets: &LandShaderModePresets) -> eyre::Result<LandShaderModePresets> {
     Ok(load_shader_settings(factory_presets)?.unwrap_or_else(|| clone_presets(factory_presets)))
 }

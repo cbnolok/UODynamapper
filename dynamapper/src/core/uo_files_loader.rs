@@ -1,5 +1,3 @@
-#![allow(unused)]
-
 use crate::configs::settings::{ClientTextureSource, GumpClient, Settings};
 use crate::core::maps::MapPlane;
 use crate::core::multis::MultiDefinitionsRes;
@@ -9,7 +7,6 @@ use crate::prelude::*;
 use bevy::prelude::*;
 use parking_lot::Mutex;
 use std::collections::HashSet;
-use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
@@ -485,6 +482,7 @@ impl GumpMapRes {
 
 /// Optional Classic Client bitmap fonts.
 #[derive(Resource)]
+#[allow(dead_code)] // Loaded ahead of the Classic text rendering; nothing draws with it yet.
 pub struct ClassicFontsRes(pub Arc<uocf::classic::fonts::ClassicFonts>);
 
 /// Optional packed hue lookup texture and metadata.
@@ -498,14 +496,12 @@ pub struct UoFilesSettings {
 #[derive(Clone, Copy)]
 enum SourceContainerKind {
     Uddp,
-    Uop,
 }
 
 impl SourceContainerKind {
     const fn label(self) -> &'static str {
         match self {
             Self::Uddp => "uddp",
-            Self::Uop => "uop",
         }
     }
 }

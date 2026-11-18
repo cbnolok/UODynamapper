@@ -1,5 +1,3 @@
-#![allow(dead_code)]
-
 use std::ops::{Deref, DerefMut};
 
 use bevy::prelude::*;
@@ -32,8 +30,6 @@ pub struct ResolvedArtSprite {
     pub layer: u32,
     pub uv_min: Vec2,
     pub uv_max: Vec2,
-    pub pixel_width: u16,
-    pub pixel_height: u16,
     pub logical_width: f32,
     pub logical_height: f32,
     pub offset_x: i16,
@@ -119,17 +115,6 @@ impl ArtPageAtlas {
             pixel_format,
             requested_resize_to: None,
         }
-    }
-
-    pub fn clear(&mut self) {
-        self.page_to_layer.clear();
-        self.layer_to_page.fill(None);
-        self.layer_access_tick.fill(0);
-        self.current_tick = 0;
-        self.mapping_revision = self.mapping_revision.saturating_add(1);
-        self.pending_uploads.clear();
-        self.extract_staging.clear();
-        self.requested_resize_to = None;
     }
 
     pub fn request_growth(&mut self) -> Option<u32> {
@@ -272,11 +257,7 @@ impl ArtPageAtlas {
         Some(resolved)
     }
 
-    pub fn resolve_ec(&mut self, tex_art_ec: &TexArtEcPackage, art_id: u32) -> Option<ResolvedArtSprite> {
-        self.resolve_ec_pages(tex_art_ec, art_id, ArtPageKey::Enhanced)
-    }
-
-    /// `resolve_ec` from a package in the Enhanced art layout whose pages are `page_key`: `tex_art_ec.uddp`
+    /// Resolves `art_id` from a package in the Enhanced art layout whose pages are `page_key`: `tex_art_ec.uddp`
     /// (`ArtPageKey::Enhanced`) or its Kingdom Reborn art (`ArtPageKey::KrEnhanced`).
     pub fn resolve_ec_pages(&mut self, tex_art_ec: &TexArtEcPackage, art_id: u32, page_key: fn(u32) -> ArtPageKey)
         -> Option<ResolvedArtSprite> {
@@ -303,15 +284,7 @@ impl ArtPageAtlas {
         Some(resolved)
     }
 
-    pub fn resolve_tex_land_ec(
-        &mut self,
-        tex_land_ec: &TexLandEcPackage,
-        art_id: u32,
-    ) -> Option<ResolvedArtSprite> {
-        self.resolve_tex_land_ec_pages(tex_land_ec, art_id, ArtPageKey::Terrain)
-    }
-
-    /// `resolve_tex_land_ec` from a package in the Enhanced land layout whose pages are `page_key`: `tex_land_ec.uddp`
+    /// Resolves `art_id` from a package in the Enhanced land layout whose pages are `page_key`: `tex_land_ec.uddp`
     /// (`ArtPageKey::Terrain`) or its Kingdom Reborn land (`ArtPageKey::KrTerrain`).
     pub fn resolve_tex_land_ec_pages(
         &mut self,
@@ -470,8 +443,6 @@ impl ArtPageAtlas {
             layer,
             uv_min: Vec2::new(x as f32 / self.page_width as f32, y as f32 / self.page_height as f32),
             uv_max: Vec2::new((x + width) as f32 / self.page_width as f32, (y + height) as f32 / self.page_height as f32),
-            pixel_width: width,
-            pixel_height: height,
             logical_width,
             logical_height,
             offset_x,

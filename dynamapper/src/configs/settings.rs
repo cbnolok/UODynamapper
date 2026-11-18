@@ -268,13 +268,6 @@ pub enum ClientTextureSource {
 impl ClientTextureSource {
     pub const ALL: [Self; 2] = [Self::Cc, Self::Ec];
 
-    pub const fn label(self) -> &'static str {
-        match self {
-            Self::Cc => "Classic",
-            Self::Ec => "Enhanced",
-        }
-    }
-
     pub const fn art_label(self) -> &'static str {
         match self {
             Self::Cc => "Classic (tex_art_cc.uddp)",

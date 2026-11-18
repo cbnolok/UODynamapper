@@ -3,7 +3,6 @@ use bevy::color::Srgba;
 use bevy::diagnostic::DiagnosticsStore;
 use bevy::prelude::*;
 use bevy::text::LineHeight;
-//use bevy::time::common_conditions::on_timer;
 use sysinfo::{ProcessRefreshKind, ProcessesToUpdate, System};
 use uocf::classic::land_texture::LandTextureSize;
 
@@ -167,12 +166,6 @@ fn query_process_vram_mib_windows_dxgi(_pid: sysinfo::Pid) -> Option<f32> {
 
         best_mib
     }
-}
-
-#[cfg(not(target_os = "windows"))]
-#[allow(dead_code)]
-fn query_process_vram_mib_windows_dxgi(_pid: sysinfo::Pid) -> Option<f32> {
-    None
 }
 
 fn query_process_vram_mib_native(pid: sysinfo::Pid) -> Option<f32> {

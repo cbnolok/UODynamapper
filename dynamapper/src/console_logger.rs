@@ -1,7 +1,5 @@
 use chrono::Timelike;
-use regex::Regex;
 use serde::{Deserialize, Serialize};
-use strum::VariantNames; // For the trait.
 use strum_macros::{Display, EnumString, VariantNames};
 //use std::io::Write; // for flush().
 use std::sync::{OnceLock, RwLock};
@@ -60,48 +58,6 @@ pub enum LogAbout {
     BevyBackends,
 }
 
-//type MsgData = (Severity, About);
-
-#[allow(unused)]
-fn enum_severity_str_vals() -> &'static Regex {
-    static ENUM_SEVERITY: OnceLock<Regex> = OnceLock::new();
-    ENUM_SEVERITY.get_or_init(|| {
-        // Piece together the expression from enum's variant names.
-        let expr_str = LogSev::VARIANTS.join("|");
-        Regex::new(&expr_str).unwrap()
-    })
-}
-
-#[allow(unused)]
-fn enum_about_str_vals() -> &'static Regex {
-    static ENUM_ABOUT: OnceLock<Regex> = OnceLock::new();
-    ENUM_ABOUT.get_or_init(|| {
-        // Piece together the expression from enum's variant names.
-        let expr_str = LogAbout::VARIANTS.join("|");
-        Regex::new(&expr_str).unwrap()
-    })
-}
-
-#[allow(unused)]
-fn enum_about_variant_name_validate(val: &str) -> bool {
-    /*
-       if let Some(captures) = ENUM_ABOUT.captures(val) {
-
-           // Get the substring that matched one of the variants.
-           let variant_name = &captures[0];
-
-           // Convert the string to the actual variant.
-           let variant = Thing::from_str(variant_name).unwrap();
-
-           println!("variant name: {:<8} --  variant: {:?}",
-                    variant_name, variant);
-       }
-    */
-
-    true
-}
-
-#[allow(unused)]
 fn can_show_msg(severity: &LogSev, about: &LogAbout) -> bool {
     let settings_guard = LOG_SETTINGS
         .get_or_init(|| RwLock::new(LogSettings::default()))

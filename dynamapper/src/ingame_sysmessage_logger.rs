@@ -55,10 +55,6 @@ pub fn error(msg: impl Into<String>) {
     push("✘", msg, Color::srgb(1.0, 0.0, 0.0)); // Red
 }
 
-pub fn custom(msg: impl Into<String>, color: Color) {
-    push("•", msg, color);
-}
-
 fn push(symbol: &'static str, msg: impl Into<String>, color: Color) {
     let mut logs = IN_GAME_LOGS.get_or_init(|| RwLock::new(VecDeque::new())).write().unwrap();
     logs.push_back(InGameLog {

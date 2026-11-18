@@ -24,9 +24,6 @@ pub const MAP_STORAGE_BLOCK_TILE_TOTAL: usize =
 pub const TILE_NUM_PER_CHUNK_DIM: u32 = 32;
 /// How many native 8x8 map blocks fit in one logical chunk row/column?
 pub const CHUNK_STORAGE_BLOCKS_DIM: u32 = TILE_NUM_PER_CHUNK_DIM / MAP_STORAGE_BLOCK_TILE_DIM;
-/// How many tiles in one logical chunk total?
-pub const TILE_NUM_PER_CHUNK_TOTAL: usize =
-    (TILE_NUM_PER_CHUNK_DIM * TILE_NUM_PER_CHUNK_DIM) as usize;
 
 /// Tag component: Marks entities which are Land Chunk Meshes, allows queries for those entities.
 #[derive(Component)]

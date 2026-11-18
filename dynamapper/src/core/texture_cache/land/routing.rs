@@ -291,10 +291,6 @@ impl LandRoutes {
     }
 
     /// Whether any id is drawn through `route`.
-    pub fn draws_from(&self, route: LandTileRoute) -> bool {
-        self.targets.iter().any(|target| target.route == route)
-    }
-
     /// The lookup rows drawn through `route`, with their targets.
     pub fn ids_drawn_from(&self, route: LandTileRoute) -> impl Iterator<Item = (u32, LandTileTarget)> + '_ {
         self.targets.iter().enumerate().filter(move |(_, target)| target.route == route)

@@ -68,8 +68,6 @@ pub fn valid_cache_dir() -> PathBuf {
 #[cfg(test)]
 const TEST_CACHE_DIR_PREFIX: &str = "dynamapper-test-cache-";
 
-pub const ASSET_FOLDER: &str = "assets/";
-
 //------------------------------------
 // World light
 //------------------------------------

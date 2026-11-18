@@ -506,13 +506,6 @@ impl LandTextureVariationUniform {
     }
 }
 
-#[derive(Clone, Copy, Debug)]
-pub enum LandShaderMode {
-    Classic2D = 0,
-    Enhanced2D = 1,
-    KR = 2,
-}
-
 #[derive(Resource, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct LandShaderModePresets {

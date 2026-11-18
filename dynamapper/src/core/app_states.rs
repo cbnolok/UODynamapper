@@ -8,7 +8,6 @@ pub enum AppState {
     #[default]
     StartupSetup,
     InGame,
-    Stop,
 }
 
 #[track_caller]

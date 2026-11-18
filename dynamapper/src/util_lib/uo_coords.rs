@@ -47,9 +47,6 @@ impl UOVec4 {
     pub const fn new(x: u16, y: u16, z: i8, m: u8) -> Self {
         Self { x, y, z, m }
     }
-    pub fn to_bevy_vec3(&self) -> (Vec3, u8) {
-        (Vec3::new(self.x as f32, scale_uo_z_to_bevy_units(self.z as f32), self.y as f32), self.m)
-    }
     pub fn to_bevy_vec3_ignore_map(&self) -> Vec3 {
         Vec3::new(self.x as f32, scale_uo_z_to_bevy_units(self.z as f32), self.y as f32)
     }

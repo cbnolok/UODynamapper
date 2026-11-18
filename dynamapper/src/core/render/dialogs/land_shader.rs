@@ -31,7 +31,6 @@ use crate::{
     prelude::*,
     util_lib::tracked_plugin::*,
 };
-use bevy::pbr::MeshMaterial3d;
 use bevy::prelude::*;
 use bevy_egui::{egui, EguiContexts, EguiPrimaryContextPass};
 
@@ -1036,7 +1035,6 @@ pub fn land_ui_system(
 // (fixes "stale lighting when moving" problem).
 fn push_uniforms_if_dirty(
     mut mats: ResMut<Assets<LandCustomMeshMaterial>>,
-    _q_mat_handles: Query<&MeshMaterial3d<LandCustomMeshMaterial>>, // kept for parity; unused
     mut u: ResMut<UniformState>,
     settings: Res<Settings>,
 ) {
