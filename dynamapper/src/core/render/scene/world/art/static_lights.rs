@@ -5,7 +5,7 @@ use super::light_scene::{
 };
 use super::statics_collect::{static_land_z, StaticArtSourceState, StaticChunkBatchKey};
 use crate::configs::light_scale::{ItemLightScales, NEUTRAL_LIGHT_SCALE};
-use crate::configs::{settings::Settings, shader_presets::UniformState};
+use crate::configs::{settings::{ClientTextureSource, Settings}, shader_presets::UniformState};
 use crate::console_logger::{self, LogAbout, LogSev};
 use crate::core::multis::{MultiDefinitionsRes, PlacedMultisRes};
 use crate::core::render::scene::world::land::mesh_material::{
@@ -18,7 +18,7 @@ use crate::core::render::scene::world::caves::CavesRes;
 use crate::core::render::scene::world::effects::client_night::{
     client_night_dimming, CLIENT_FULL_DAY_LEVEL, LIGHT_BUFFER_LAYER,
 };
-use crate::core::render::scene::world::z_view::{PackageLand, ZViewLimit};
+use crate::core::render::scene::world::z_view::{PackageLand, ZViewCut, ZViewLimit};
 use crate::core::render::scene::SceneStateData;
 use crate::core::statics::StaticsStoreRes;
 use crate::core::uo_files_loader::{HuesPackageRes, MapPlanesRes, TileMetaPackageRes, WorldLightsPackageRes};
@@ -248,6 +248,25 @@ impl RenderStaticLightInstances {
     }
 }
 
+/// What `sys_collect_visible_static_lights` collected its lights from, besides the resources it watches for changes.
+#[derive(Clone, PartialEq)]
+pub struct StaticLightScanKey {
+    enabled: bool,
+    source: ClientLocalLightSource,
+    target: StaticLightTarget,
+    light_cover: LightCoverRule,
+    show_hidden_multi_parts: bool,
+    art_source: Option<ClientTextureSource>,
+    map_id: u32,
+    visible_chunk_keys: Vec<StaticChunkBatchKey>,
+    z_cut: ZViewCut,
+    caves_revision: u64,
+    /// `StaticsStore::item_routes_revision`: the graphics the store's statics are routed to.
+    item_routes_revision: Option<u64>,
+    /// Which of the optional packages the scan reads are loaded: one leaving is no change of the others.
+    packages_present: [bool; 5],
+}
+
 #[derive(Resource, Default)]
 pub struct StaticLightDrawDebugState {
     last_instance_count: Option<usize>,
@@ -378,16 +397,71 @@ pub fn sys_collect_visible_static_lights(
     chunks_q: Query<&crate::core::render::scene::world::land::LCMesh>,
     mut material_cache: ResMut<StaticLightMaterialCache>,
     mut output: ResMut<RenderStaticLightInstances>,
-    mut debug_state: ResMut<StaticLightDrawDebugState>,
+    (mut debug_state, mut last_scan): (ResMut<StaticLightDrawDebugState>, Local<Option<StaticLightScanKey>>),
 ) {
-    output.0.clear();
     let (z_view, caves) = view_cuts;
+    let map_id = scene_state.map_id;
+    let mut visible_chunk_keys = chunks_q
+        .iter()
+        .filter(|chunk| chunk.parent_map_id == map_id)
+        .map(|chunk| StaticChunkBatchKey {
+            map_id,
+            gx: chunk.gx,
+            gy: chunk.gy,
+            scale: chunk.scale,
+        })
+        .collect::<Vec<_>>();
+    visible_chunk_keys.sort_by_key(|key| (key.gy, key.gx, key.scale));
 
-    if !settings.world_rendering.enable_static_lights {
+    // The lights are scanned again only when what they are collected from changes: the scan reads every visible
+    // block's statics and the multis' cover parts.
+    let scan_key = StaticLightScanKey {
+        enabled: settings.world_rendering.enable_static_lights,
+        source: local_light_source(uniform_state.local_lights.as_ref()),
+        target: StaticLightTarget::for_uniform_state(&uniform_state),
+        light_cover: uniform_state.light_cover_rule(),
+        show_hidden_multi_parts: settings.world_rendering.show_hidden_multi_parts,
+        art_source: art_source.active_source,
+        map_id,
+        visible_chunk_keys,
+        z_cut: z_view.0,
+        caves_revision: caves.revision(),
+        item_routes_revision: statics_res
+            .0
+            .get(map_id as usize)
+            .and_then(|store| store.as_ref())
+            .map(|store| store.lock().item_routes_revision()),
+        packages_present: [
+            tilemeta_res.is_some(),
+            world_lights_res.is_some(),
+            hues_package_res.is_some(),
+            map_planes.is_some(),
+            multis.0.is_some(),
+        ],
+    };
+    // Not the map planes' change: land drawing changes their loaded blocks, while the lights read the land z from the
+    // map package (`PackageLand`), whatever blocks are loaded.
+    let changed = |resource: Option<bool>| resource.unwrap_or(false);
+    let resources_changed = statics_res.is_changed()
+        || changed(tilemeta_res.as_ref().map(|res| res.is_changed()))
+        || changed(world_lights_res.as_ref().map(|res| res.is_changed()))
+        || changed(hues_package_res.as_ref().map(|res| res.is_changed()))
+        || changed(multis.0.as_ref().map(|res| res.is_changed()))
+        || multis.1.is_changed()
+        || light_scales.is_changed()
+        || client_light_sprites.is_changed();
+    if !resources_changed && last_scan.as_ref() == Some(&scan_key) {
+        return;
+    }
+    let StaticLightScanKey { enabled, source, target, light_cover, visible_chunk_keys, .. } =
+        last_scan.insert(scan_key).clone();
+
+    output.0.clear();
+    if !enabled {
         return;
     }
 
-    if local_light_source(uniform_state.local_lights.as_ref()) == ClientLocalLightSource::LightSprites {
+    if source == ClientLocalLightSource::LightSprites {
         output.0.extend(client_light_sprites.instances.iter().map(client_light_sprite_static_light));
         log_static_light_instance_count(&output, &mut debug_state);
         return;
@@ -402,25 +476,12 @@ pub fn sys_collect_visible_static_lights(
         return;
     };
 
-    let map_id = scene_state.map_id;
     let Some(statics_store) = statics_res.0.get(map_id as usize).and_then(|x| x.as_ref()) else {
         return;
     };
     let mut statics_store = statics_store.lock();
     // The light sprite styles enlarge the items LightScale.kdl lists; Classic draws light.mul as it is.
-    let scaled = StaticLightTarget::for_uniform_state(&uniform_state) == StaticLightTarget::ClientLightBuffer;
-
-    let mut visible_chunk_keys = chunks_q
-        .iter()
-        .filter(|chunk| chunk.parent_map_id == map_id)
-        .map(|chunk| StaticChunkBatchKey {
-            map_id,
-            gx: chunk.gx,
-            gy: chunk.gy,
-            scale: chunk.scale,
-        })
-        .collect::<Vec<_>>();
-    visible_chunk_keys.sort_by_key(|key| (key.gy, key.gx, key.scale));
+    let scaled = target == StaticLightTarget::ClientLightBuffer;
 
     let block_range = |start: fn(&StaticChunkBatchKey) -> u32| {
         let first = visible_chunk_keys.iter().map(start).min().unwrap_or(0);
@@ -440,7 +501,6 @@ pub fn sys_collect_visible_static_lights(
         block_range(|key| key.gx),
         block_range(|key| key.gy),
     );
-    let light_cover = uniform_state.light_cover_rule();
 
     let mut seen = HashSet::new();
     // The land z the covers count from, read from the map package: the same whatever map blocks are loaded.
@@ -1361,6 +1421,74 @@ mod tests {
         let mut hasher = DefaultHasher::new();
         key.hash(&mut hasher);
         hasher.finish()
+    }
+
+    #[derive(Resource, Default)]
+    struct LightsRescanned(bool);
+
+    fn record_lights_rescanned(lights: Res<RenderStaticLightInstances>, mut seen: ResMut<LightsRescanned>) {
+        seen.0 = lights.is_changed();
+    }
+
+    /// The collection scans the statics again only when what it collects from changes, not on every frame.
+    #[test]
+    fn static_lights_are_collected_again_only_when_an_input_changes() {
+        use crate::core::render::scene::world::land::mesh_material::{
+            GlobalLightingUniforms, LandEffectsUniform, LandLightingUniforms, LightCover, SunAngles,
+        };
+        let mut settings = crate::configs::settings::bundled_settings();
+        settings.world_rendering.enable_static_lights = true;
+        let uniform_state = UniformState {
+            effects: LandEffectsUniform::default(),
+            lighting: GlobalLightingUniforms::default(),
+            land_lighting: LandLightingUniforms::default(),
+            global_lighting: 1.0,
+            client_lighting: None,
+            client_shadows: None,
+            local_lights: Some(ClientLocalLights {
+                source: ClientLocalLightSource::LightSprites,
+                light_sprites_intensity: 1.0,
+                light_mul_intensity: 1.0,
+                centre_on_items: true,
+            }),
+            land_texture_variation: None,
+            light_cover: LightCover::ClassicUo,
+            player_floor_rule: None,
+            sun: SunAngles::default(),
+            dirty: false,
+            saved_snapshot: None,
+            active_preset: String::new(),
+        };
+        let mut app = App::new();
+        app.insert_resource(settings)
+            .insert_resource(uniform_state)
+            .insert_resource(StaticsStoreRes(Vec::new()))
+            .insert_resource(SceneStateData { map_id: 0 })
+            .init_resource::<RenderClientLightSprites>()
+            .init_resource::<ItemLightScales>()
+            .init_resource::<StaticArtSourceState>()
+            .init_resource::<ZViewLimit>()
+            .init_resource::<CavesRes>()
+            .init_resource::<PlacedMultisRes>()
+            .init_resource::<StaticLightMaterialCache>()
+            .init_resource::<RenderStaticLightInstances>()
+            .init_resource::<StaticLightDrawDebugState>()
+            .init_resource::<LightsRescanned>()
+            .add_systems(Update, (sys_collect_visible_static_lights, record_lights_rescanned).chain());
+        let rescanned = |app: &mut App| {
+            app.update();
+            app.world().resource::<LightsRescanned>().0
+        };
+        assert!(rescanned(&mut app), "the first frame collects the lights");
+        assert!(!rescanned(&mut app), "an unchanged frame collected the lights again");
+
+        app.world_mut().resource_mut::<Settings>().world_rendering.show_hidden_multi_parts ^= true;
+        assert!(rescanned(&mut app), "a changed setting did not collect the lights again");
+        assert!(!rescanned(&mut app));
+
+        app.world_mut().resource_mut::<RenderClientLightSprites>().set_changed();
+        assert!(rescanned(&mut app), "changed light sprites were not taken again");
+        assert!(!rescanned(&mut app));
     }
 
     /// Classic (no local lights setting) always takes light.mul; the light sprite styles what they pick.
