@@ -8,6 +8,11 @@ a 1900 x 1000 window at zoom 0.5, no frame limiter, no vsync, the afternoon pres
   land-mountains   map 1, 2542, 488, z -5, statics off: the land's fragment cost alone
   city-britain     map 1, 1496, 1628, z 10: a dense city, land and statics
 
+Each view runs in one or more motions: `still` (the default) keeps the player in place, which isolates the GPU cost;
+`walk` holds the move-north key through warmup and sampling (20 tiles a second, so about 220 tiles), which adds
+the CPU paths a still camera never runs: chunk streaming, statics collection, light collection, texture pinning and
+uploads.
+
 For each repetition, camera, style and binary, one launch through the visual harness's Launch (Desktop 4, the
 exact-PID preview helper, isolated settings, the preview lock held for that launch only) visits both views and samples
 the app's measured frame time (status.frame_ms, one sample per SAMPLE_INTERVAL_SECONDS, new frames only) and the
@@ -16,6 +21,7 @@ repetition, so none always runs first. Each launch's figure is the median of its
 median of the launches.
 
   frame_benchmark.py run OUT.json --binary NAME=BINARY[@TREE] ... [--repetitions N] [--camera ...] [--style ...]
+                                   [--motion still|walk ...]
   frame_benchmark.py table OUT.json
 
 `run` appends to OUT.json, so runs can be split and resumed; `table` prints the Markdown table, the first binary
@@ -47,6 +53,9 @@ VIEWS = (('land-mountains', 1, 2542, 488, -5, False), ('city-britain', 1, 1496, 
 STYLE_SOURCES = {'classic': ('cc', 'cc'), 'enhanced': ('ec', 'ec'), 'kr': ('ec', 'kr'), 'painterly': ('ec', 'ec')}
 DEFAULT_STYLES = ('classic', 'kr')
 STYLE_LABELS = {'classic': 'Classic', 'enhanced': 'Enhanced', 'kr': 'KR-like', 'painterly': 'UOD-Painterly'}
+MOTIONS = ('still', 'walk')
+# The key the walk holds; player_movement.rs moves north while it is pressed, one tile per step at 20 steps a second.
+WALK_KEY = 'KeyW'
 
 
 def view_fixture(camera, view):
@@ -59,8 +68,9 @@ def view_fixture(camera, view):
 class BenchLaunch(vh.Launch):
     """A live launch, uncapped: no frame limiter, no vsync."""
 
-    def __init__(self, ctx, launch_id, captures):
+    def __init__(self, ctx, launch_id, captures, motion):
         super().__init__(ctx, launch_id, captures, live=True)
+        self.motion = motion
         prefs = self.dir / 'assets/settings/user_preferences.toml'
         prefs.write_text(vh.toml_set(prefs.read_text(), 'performance', 'frame_limit_enabled', False)[0])
         graphics = self.dir / 'assets/settings/graphics.toml'
@@ -93,8 +103,15 @@ class BenchLaunch(vh.Launch):
                 for capture in self.captures:
                     self.switch(capture, state)
                     self.wait_ready(capture)
-                    time.sleep(WARMUP_SECONDS)
-                    frames, busy = self.sample()
+                    walking = self.motion == 'walk'
+                    if walking:
+                        self.request({'command': 'key', 'key': WALK_KEY, 'state': 'press'})
+                    try:
+                        time.sleep(WARMUP_SECONDS)
+                        frames, busy = self.sample()
+                    finally:
+                        if walking:
+                            self.request({'command': 'key', 'key': WALK_KEY, 'state': 'release'})
                     if not frames:
                         raise vh.HarnessError(f'{capture.key}: no frame time sampled')
                     results[capture.fixture.name] = {'frame_ms': frames, 'gpu_busy': busy}
@@ -139,21 +156,23 @@ def run(args):
     styles = args.style or DEFAULT_STYLES
     cameras = args.camera or vh.CAMERAS
     first = max((row['repetition'] for row in rows), default=-1) + 1
+    motions = args.motion or MOTIONS[:1]
     for repetition in range(first, first + args.repetitions):
         shift = repetition % len(args.binary)
         for camera in cameras:
             for style in styles:
                 art, land = STYLE_SOURCES[style]
-                for name, binary, tree in args.binary[shift:] + args.binary[:shift]:
-                    ctx = vh.Context(LaunchArgs(args.root, args.packages, binary, tree), f'bench-{name}')
-                    captures = [vh.Capture(view_fixture(camera, view), style, TIME_OF_DAY, art, land)
-                                for view in VIEWS]
-                    launch_id = f'r{repetition}-{camera}-{style}-{name}'
-                    vh.log(launch_id)
-                    for view, data in BenchLaunch(ctx, launch_id, captures).bench().items():
-                        rows.append({'repetition': repetition, 'camera': camera, 'style': style, 'art': art,
-                                     'land': land, 'binary': name, 'view': view, **data})
-                    args.out.write_text(json.dumps(rows, indent=1))
+                for motion in motions:
+                    for name, binary, tree in args.binary[shift:] + args.binary[:shift]:
+                        ctx = vh.Context(LaunchArgs(args.root, args.packages, binary, tree), f'bench-{name}')
+                        captures = [vh.Capture(view_fixture(camera, view), style, TIME_OF_DAY, art, land)
+                                    for view in VIEWS]
+                        launch_id = f'r{repetition}-{camera}-{style}-{motion}-{name}'
+                        vh.log(launch_id)
+                        for view, data in BenchLaunch(ctx, launch_id, captures, motion).bench().items():
+                            rows.append({'repetition': repetition, 'camera': camera, 'style': style, 'art': art,
+                                         'land': land, 'motion': motion, 'binary': name, 'view': view, **data})
+                        args.out.write_text(json.dumps(rows, indent=1))
 
 
 def table(args):
@@ -161,20 +180,21 @@ def table(args):
     binaries = list(dict.fromkeys(row['binary'] for row in rows))
     cells = {}
     for row in rows:
-        cell = cells.setdefault((row['camera'], row['style'], row['view'], row['binary']), {'frame': [], 'busy': []})
+        key = (row['camera'], row['style'], row['view'], row.get('motion', 'still'), row['binary'])
+        cell = cells.setdefault(key, {'frame': [], 'busy': []})
         cell['frame'].append(statistics.median(row['frame_ms']))
         if row['gpu_busy']:
             cell['busy'].append(statistics.median(row['gpu_busy']))
     base = binaries[0]
-    header = ['Camera', 'Style', 'View'] + [f'Frame ms {name} (range)' for name in binaries]
+    header = ['Camera', 'Style', 'View', 'Motion'] + [f'Frame ms {name} (range)' for name in binaries]
     header += [f'{name} vs {base}' for name in binaries[1:]] + ['GPU busy ' + ' / '.join(binaries)]
     print('| ' + ' | '.join(header) + ' |')
     print('|' + '---|' * len(header))
     sources = {row['style']: f"{row['art']}/{row['land']}" for row in rows}
-    for camera, style, view in sorted({key[:3] for key in cells}):
-        found = [cells.get((camera, style, view, name)) for name in binaries]
+    for camera, style, view, motion in sorted({key[:4] for key in cells}):
+        found = [cells.get((camera, style, view, motion, name)) for name in binaries]
         medians = [statistics.median(cell['frame']) if cell else None for cell in found]
-        line = [camera, f'{STYLE_LABELS[style]} {sources[style]}', view]
+        line = [camera, f'{STYLE_LABELS[style]} {sources[style]}', view, motion]
         line += [f"{median:.2f} ({min(cell['frame']):.2f}-{max(cell['frame']):.2f})" if cell else '-'
                  for median, cell in zip(medians, found)]
         line += [f'{(median - medians[0]) / medians[0] * 100:+.1f}%' if median and medians[0] else '-'
@@ -194,6 +214,7 @@ def main(argv=None):
     run_parser.add_argument('--repetitions', type=int, default=DEFAULT_REPETITIONS)
     run_parser.add_argument('--camera', action='append', choices=vh.CAMERAS)
     run_parser.add_argument('--style', action='append', choices=tuple(STYLE_SOURCES))
+    run_parser.add_argument('--motion', action='append', choices=MOTIONS, help='still (default) and/or walk')
     run_parser.add_argument('--packages', type=Path, default=vh.DEFAULT_PACKAGES)
     run_parser.add_argument('--root', type=Path, default=DEFAULT_ROOT, help=f'work folders (default {DEFAULT_ROOT})')
     table_parser = commands.add_parser('table', help='the Markdown table of OUT.json')
