@@ -225,7 +225,7 @@ The benchmark used a 1900 x 1000 window at zoom 0.5, with no frame limiter and n
 - land-mountains: map 1, (2542, 488), statics off;
 - city-britain: map 1, (1496, 1628).
 
-Each cell is the median of three launches; each launch's figure is the median of 8 s of the app's frame time. dev is a23b6e0d (the geometric scale), v1 fc8c31db (ClassicUO's order, the land's average z read from the atlas per fragment), v3 this branch (the average z as a flat varying). dev and v1 ran together, their launches rotating; v1 and v3 ran together later, on v3's binary with v1's shaders for v1 (its Rust differs only by the wall-cap flag). The two runs of v1 agree within 1%, so the v3 vs dev column compares across them.
+Each cell is the median of three launches; each launch's figure is the median of 8 s of the app's frame time. dev is a23b6e0d (the geometric scale), v1 fc8c31db (ClassicUO's order, the land's average z read from the atlas per fragment), v3 this branch (the average z as a flat varying). dev and v1 ran together, their launches rotating; v1 and v3 ran together later, on v3's binary with v1's shaders for v1 (its Rust differs only by the wall-cap flag). The two runs of v1 agree within 1%, so the v3 vs dev column compares across them. The same measure is rerun with [`frame_benchmark.py`](../../../skills/renderer-reference-validation/SKILL.md#frame-time-benchmark) (2026-11-18), its views and timings these.
 
 | Camera | Style | View | Frame ms dev (range) | v1 (range) | v1 rerun (range) | v3 (range) | v3 vs v1 rerun | v3 vs dev | GPU busy dev / v1 / v3 |
 |---|---|---|---|---|---|---|---|---|---|

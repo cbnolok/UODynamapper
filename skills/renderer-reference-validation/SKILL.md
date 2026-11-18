@@ -57,6 +57,18 @@ Each capture stores the digests of the collected statics, static lights and ligh
 
 Labels default to `/home/claudio/rust-target/uodynamapper-scratch/visual-baselines/`, outside the repository. A label stores the tree commit, the binary hash and a hash of each fixture's view. A fixture edited after the baseline reports `stale` instead of a diff. Captures are lossless WebP by default; `--format jpeg` is leaner for throwaway runs.
 
+### Frame time benchmark
+
+[`scripts/frame_benchmark.py`](scripts/frame_benchmark.py) measures what the screenshots cannot: the GPU cost of a change, such as the land's `frag_depth`, which turns off its early depth test ([draw order benchmark](../../docs/dev_wiki/rendering/DEPTH_SCALE_AND_KR_CLIENT.md#benchmark)). It is a measure, not a test: timings follow the machine's clocks and load. It launches each binary through the harness's `Launch` (same preview rules, the lock held per launch) in a 1900 x 1000 window at zoom 0.5, uncapped (no frame limiter, no vsync), visits a land view with statics off and Britain, and samples the app's frame time and the amdgpu busy percentage for 8 s each. The binaries' order rotates with the repetition.
+
+```sh
+python3 -I -B scripts/frame_benchmark.py run OUT.json --binary before=<old dynamapper>@<old tree> \
+    --binary after=<new dynamapper> --repetitions 3
+python3 -I -B scripts/frame_benchmark.py table OUT.json
+```
+
+`@TREE` names the checkout whose shaders the binary runs with (the script's own by default). `--camera` and `--style` narrow a run (default both cameras, Classic cc/cc and KR-like ec/kr; about 25 s per launch). `run` appends to `OUT.json`, so a run can be split or resumed; `table` prints the medians, their ranges and each binary against the first. Build every binary in the same profile and keep the default repetitions: one repetition of two identical debug builds, with other agents capturing, differed by 10 to 67 %.
+
 ## Compare and diagnose
 
 View the baseline, changed capture, and relevant original reference images. Compare the affected content, not just overall color or aesthetic similarity. Useful independent dimensions include:
