@@ -415,7 +415,13 @@ fn blend_ec_terrain_transitions(
 // The land's vertex output: the fields of Bevy's VertexOutput (forward_io) the land reads, and its depth cell.
 struct LandVertexOutput {
   @builtin(position) position: vec4<f32>,
-  @location(0) world_position: vec4<f32>,
+  // Centroid: under MSAA a pixel on a triangle's edge is shaded once for the samples the triangle covers, and at the
+  // pixel's centre that point can lie outside the triangle, in the next cell. The fragment takes its cell, its height
+  // and its depth from this position (`fragment`), so a land triangle shaded there drew the next cell's colour at the
+  // next cell's depth over its own samples: where the next cell is a row nearer, that depth beat the water static of
+  // the triangle's own cell along the cell's edge, a line of the seabed along the water tiles.
+  // At the centroid the point lies inside the covered samples. Without MSAA it is the pixel's centre.
+  @location(0) @interpolate(perspective, centroid) world_position: vec4<f32>,
   @location(1) world_normal: vec3<f32>,
   @location(2) uv: vec2<f32>,
   @location(3) uv_b: vec2<f32>,

@@ -312,6 +312,19 @@ y = 488
 z = -5
 
 [[fixture]]
+name = "minoc-river-water-msaa"
+guards = """The Minoc river at twice the scale with MSAA 4x: no lines of the seabed along the water statics' cell \
+edges, nor light dots along the grass bank's edge (the land's world position at the centroid)."""
+tier = "full"
+tags = ["water", "terrain", "msaa", "minoc"]
+map = 0
+x = 2542
+y = 488
+z = -5
+zoom = 0.5
+settings = { graphics = { anti_aliasing = "msaa_4x" } }
+
+[[fixture]]
 name = "minoc-mine-entrance-zview-cave"
 guards = """At the Minoc mine entrance with the player's-floor view: a cave connected to its mouth is drawn over the \
 map, opening the land above (ebfb9843); under the KR rule the land goes whole while the player is below it \
