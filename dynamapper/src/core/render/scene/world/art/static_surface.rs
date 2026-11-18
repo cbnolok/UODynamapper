@@ -1,8 +1,9 @@
 //! Ground-level, world-textured art keeps its own pixels, but exposes the map
 //! smoothly at patch boundaries. Neighbor flags are built only on chunk rebuild.
 use super::statics_collect::{SpriteInstance, StaticChunkBatchKey, TILE_FLAG_SURFACE};
-use crate::core::texture_cache::ec_item_surface::KR_ITEM_RECORD_BASE;
-use crate::core::{statics::LazyStaticsStore, render::scene::world::land::{tile_atlas::{AtlasCells, TileAtlas}, CHUNK_STORAGE_BLOCKS_DIM, MAP_STORAGE_BLOCK_TILE_DIM}};
+use crate::core::texture_cache::{ec_item_surface::KR_ITEM_RECORD_BASE, land::coverage::EcTerrainParams};
+use crate::core::{statics::LazyStaticsStore, render::scene::world::land::{tile_atlas::{AtlasCells, TileAtlas,
+    LAND_SOURCE_EC_ATLAS, TERRAIN_SHADER_FLAG_NEVER_BLENDS}, CHUNK_STORAGE_BLOCKS_DIM, MAP_STORAGE_BLOCK_TILE_DIM}};
 use bevy::math::UVec2;
 use std::collections::{HashMap, HashSet};
 use udd_assets::{tex_art_ec::TexArtEcPackage, tilemeta::{EcMaterialStableRole, TileMetaItemTextureRef, TileMetaItemTile, TileMetaPackage}};
@@ -74,23 +75,45 @@ pub(super) fn map_height(atlas: &TileAtlas, x: u32, y: u32) -> Option<i8> {
     Some(((texel.g & 255) as i16 - 128) as i8)
 }
 
-fn neighbor_mask(cells: &HashSet<SurfaceCell>, closing: &ClosingStatics, cell: SurfaceCell) -> u32 {
+/// The EC terrain parameters of the land the cell draws, as the land coverage takes them: `terrain` is
+/// `EcTerrainBases::params`, built from the EC-layout package the land source routes each row to (Enhanced or Kingdom
+/// Reborn land), indexed by the cell's payload. None for land outside the coverage: Classic land, land missing, black
+/// land and a cell that never blends (`TERRAIN_SHADER_FLAG_NEVER_BLENDS`).
+fn land_terrain(atlas: &TileAtlas, terrain: &[Option<EcTerrainParams>], x: u32, y: u32) -> Option<EcTerrainParams> {
+    let texel = atlas.read_cell(x, y)?;
+    if texel.texture_source() != LAND_SOURCE_EC_ATLAS || texel.terrain_flags() & TERRAIN_SHADER_FLAG_NEVER_BLENDS != 0 {
+        return None;
+    }
+    *terrain.get(usize::from(texel.r))?
+}
+
+/// `hard_land(x, y)` tells whether the land of the cell (`x`, `y`) meets the patch cell's land with a hard edge.
+fn neighbor_mask(cells: &HashSet<SurfaceCell>, closing: &ClosingStatics, hard_land: impl Fn(u32, u32) -> bool,
+    cell: SurfaceCell) -> u32 {
     let mut mask = 0;
     for (bit, (dx, dy)) in OFFSETS.into_iter().enumerate() {
         let (Some(x), Some(y)) = (cell.0.checked_add_signed(dx), cell.1.checked_add_signed(dy)) else { continue; };
-        if cells.contains(&(x, y, cell.2, cell.3)) || closing.closes(x, y, cell.2) { mask |= 1 << bit; }
+        if cells.contains(&(x, y, cell.2, cell.3)) || closing.closes(x, y, cell.2) || hard_land(x, y) {
+            mask |= 1 << bit;
+        }
     }
     mask
 }
 
 /// `kingdom_reborn` is the Kingdom Reborn tile data and art (an overlay over `art`) the instances with a
 /// `material_item_id` from `KR_ITEM_RECORD_BASE` were drawn from; the source statics take both their Enhanced and their
-/// Kingdom Reborn keys. Returns the cells of `atlas` it read, if any, which a change of rebuilds the chunk.
+/// Kingdom Reborn keys. `terrain` is the land coverage's terrain parameters (`land_terrain`), when the land draws
+/// them. Returns the cells of `atlas` it read, if any, which a change of rebuilds the chunk.
+///
+/// A patch side is also closed where the land beside it meets the patch cell's land with a hard edge
+/// (`EcTerrainParams::meets_with_hard_edge`): the wooden floor of a doorway with no door static (Minoc 2476,404), or
+/// the stone floor inside a hall whose walls stand on cobblestones. Fading it showed a band of the patch cell's own land, grass under cobblestones, which the land
+/// itself never shows there.
 pub(super) fn apply_boundary_coverage(
     instances: &mut [SpriteInstance], chunk: StaticChunkBatchKey, height_scale: f32,
     statics: &mut LazyStaticsStore, tilemeta: &TileMetaPackage, art: &TexArtEcPackage,
     kingdom_reborn: Option<(&TileMetaPackage, &TexArtEcPackage)>,
-    atlas: &TileAtlas,
+    atlas: &TileAtlas, terrain: Option<&[Option<EcTerrainParams>]>,
 ) -> Option<AtlasCells> {
     let mut keys: HashMap<u32, Option<MaterialKey>> = HashMap::new();
     let mut key_for = |item: u32| *keys.entry(item).or_insert_with(|| {
@@ -111,7 +134,11 @@ pub(super) fn apply_boundary_coverage(
         if instance.flat_quad < 2 { continue; }
         let Some(key) = key_for(instance.material_item_id) else { continue; };
         let (x, y) = (instance.world_x as u32, instance.world_z as u32);
-        let cell = AtlasCells::new(UVec2::new(x, y), UVec2::new(x, y));
+        // With the land's terrain read, the land of the cells around the patch decides its sides too.
+        let cell = match terrain {
+            Some(_) => AtlasCells::new(UVec2::new(x.saturating_sub(1), y.saturating_sub(1)), UVec2::new(x + 1, y + 1)),
+            None => AtlasCells::new(UVec2::new(x, y), UVec2::new(x, y)),
+        };
         read = Some(read.map_or(cell, |read| read.union(cell)));
         let Some(z) = map_height(atlas, x, y) else { continue; };
         if (instance.base_world_y - f32::from(z) * height_scale).abs() > 0.001 { continue; }
@@ -147,7 +174,10 @@ pub(super) fn apply_boundary_coverage(
         // Multis/raised floors must not become ground blends just because their
         // emitted sprite resembles a raw background static.
         if !cells.contains(&cell) { continue; }
-        instances[index].is_wet_flags |= BLEND_ENABLED | (neighbor_mask(&cells, &closing, cell) << NEIGHBOR_SHIFT);
+        let own = terrain.and_then(|terrain| land_terrain(atlas, terrain, cell.0, cell.1).map(|own| (terrain, own)));
+        let hard_land = |x, y| own.is_some_and(|(terrain, own)|
+            land_terrain(atlas, terrain, x, y).is_some_and(|other| own.meets_with_hard_edge(other)));
+        instances[index].is_wet_flags |= BLEND_ENABLED | (neighbor_mask(&cells, &closing, hard_land, cell) << NEIGHBOR_SHIFT);
     }
     read
 }
@@ -156,6 +186,50 @@ pub(super) fn apply_boundary_coverage(
 mod tests {
     use super::*;
     use bytemuck::Zeroable;
+
+    fn no_hard_land(_: u32, _: u32) -> bool { false }
+
+    #[test]
+    fn floor_land_meeting_a_patch_with_a_hard_edge_closes_its_side() {
+        use crate::core::render::scene::world::land::tile_atlas::{AtlasParams, Rg16u, LAND_SOURCE_CC_ATLAS};
+        use crate::core::texture_cache::land::coverage::COVERAGE_FLAG_LINEAR_FILTERING;
+        // The Minoc yard's grass (land 0x3, a soft material) under the cobblestones, and the wooden floor of the north
+        // doorway and of the house east of the yard (land 0x406, material 11, coverage exponent 0).
+        const GRASS: u16 = 0x3;
+        const FLOOR: u16 = 0x406;
+        const PAGE_CELLS: u32 = 4;
+        /// coverage.rs `GPU_LAYER_CLASS_DEFAULT`.
+        const DEFAULT_LAYER_CLASS: u32 = 1;
+        let mut terrain = vec![None; usize::from(FLOOR) + 1];
+        terrain[usize::from(GRASS)] = Some(EcTerrainParams([3, 3, 242 | (153 << 8),
+            DEFAULT_LAYER_CLASS | COVERAGE_FLAG_LINEAR_FILTERING]));
+        terrain[usize::from(FLOOR)] = Some(EcTerrainParams([11, 11, 0, DEFAULT_LAYER_CLASS]));
+        let mut atlas = TileAtlas::new(AtlasParams::default(), 1);
+        atlas.params.page_texels = UVec2::splat(PAGE_CELLS);
+        atlas.params.world_pages_x = 1;
+        atlas.params.page_to_layer[0][0] = 0;
+        let mut texels = vec![Rg16u::pack(GRASS, 15, LAND_SOURCE_EC_ATLAS as u16, false, 0); (PAGE_CELLS * PAGE_CELLS) as usize];
+        let at = |x: u32, y: u32| (y * PAGE_CELLS + x) as usize;
+        // Floor east and south-east of the patch at (1,1) closes those sides.
+        texels[at(2, 1)] = Rg16u::pack(FLOOR, 15, LAND_SOURCE_EC_ATLAS as u16, false, 0);
+        texels[at(2, 2)] = texels[at(2, 1)];
+        // Floor drawn from a Classic texmap, or a cell that never blends, is outside the coverage: its side stays open.
+        texels[at(0, 1)] = Rg16u::pack(FLOOR, 15, LAND_SOURCE_CC_ATLAS as u16, false, 0);
+        texels[at(1, 0)] = Rg16u::pack(FLOOR, 15, LAND_SOURCE_EC_ATLAS as u16, false, TERRAIN_SHADER_FLAG_NEVER_BLENDS);
+        atlas.cpu_mirror.push(Some(texels));
+
+        let key = (2000090, 8.0f32.to_bits());
+        let center = (1, 1, 15, key);
+        let cells = HashSet::from([center]);
+        let own = land_terrain(&atlas, &terrain, 1, 1).unwrap();
+        let hard_land = |x, y| land_terrain(&atlas, &terrain, x, y).is_some_and(|other| own.meets_with_hard_edge(other));
+        // Bits: NW 0, N 1, NE 2, W 3, E 4, SW 5, S 6, SE 7.
+        assert_eq!(neighbor_mask(&cells, &ClosingStatics::default(), hard_land, center), (1 << 4) | (1 << 7));
+        // Grass beside grass, the patch cell's own land, has no edge.
+        assert_eq!(land_terrain(&atlas, &terrain, 0, 0), Some(own));
+        assert_eq!(land_terrain(&atlas, &terrain, 0, 1), None);
+        assert_eq!(land_terrain(&atlas, &terrain, 1, 0), None);
+    }
 
     #[test]
     fn surface_policy_uses_source_world_color_and_excludes_authored_local_art_and_volumes() {
@@ -195,11 +269,11 @@ mod tests {
         let center = (31, 31, 0, key);
         let mut cells = HashSet::from([center, (32, 31, 0, key), (31, 32, 0, key),
             (32, 32, 5, key), (30, 31, 0, (2000010, 10.0f32.to_bits()))]);
-        assert_eq!(neighbor_mask(&cells, &ClosingStatics::default(), center), (1 << 4) | (1 << 6));
+        assert_eq!(neighbor_mask(&cells, &ClosingStatics::default(), no_hard_land, center), (1 << 4) | (1 << 6));
         for (dx, dy) in OFFSETS {
             cells.insert(((31i32 + dx) as u32, (31i32 + dy) as u32, 0, key));
         }
-        assert_eq!(neighbor_mask(&cells, &ClosingStatics::default(), center), 255);
+        assert_eq!(neighbor_mask(&cells, &ClosingStatics::default(), no_hard_land, center), 255);
     }
 
     #[test]
@@ -222,11 +296,11 @@ mod tests {
         closing.insert(2474, 406, 30, &floor);
         closing.insert(2474, 405, -10, &wall);
         // Bits: NW 0, N 1, NE 2, W 3, E 4, SW 5, S 6, SE 7.
-        assert_eq!(neighbor_mask(&cells, &closing, center), (1 << 0) | (1 << 2) | (1 << 3) | (1 << 6));
+        assert_eq!(neighbor_mask(&cells, &closing, no_hard_land, center), (1 << 0) | (1 << 2) | (1 << 3) | (1 << 6));
         // Statics with none of the closing flags (a plant, a barrel) leave the side exposed.
         let mut plain = ClosingStatics::default();
         plain.insert(2472, 405, 15, &TileMetaItemTile::zeroed());
-        assert_eq!(neighbor_mask(&cells, &plain, center), 0);
+        assert_eq!(neighbor_mask(&cells, &plain, no_hard_land, center), 0);
     }
 
     #[test]
@@ -246,7 +320,7 @@ mod tests {
         closing.insert(2447, 416, 15, &gate);
         closing.insert(2449, 416, 15, &gate);
         // Bits: NW 0, N 1, NE 2, W 3, E 4, SW 5, S 6, SE 7.
-        assert_eq!(neighbor_mask(&cells, &closing, center), (1 << 1) | (1 << 3) | (1 << 4));
+        assert_eq!(neighbor_mask(&cells, &closing, no_hard_land, center), (1 << 1) | (1 << 3) | (1 << 4));
     }
 
     #[test]

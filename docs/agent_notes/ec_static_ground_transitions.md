@@ -62,9 +62,22 @@ marks the fixtures set at a building's edge or along a fence: signposts and
 their signs, banners, sconces, torch holders, lantern posts, rails and
 banisters. The street cobblestones beside a signpost (Minoc 2448,416 beside
 0x0B98 at 2448,415) showed the same green band. Plants, barrels and other
-decorations still leave the side exposed. A doorway with no door static
+decorations still leave the side exposed.
+
+A side is also closed where the land beside the patch meets the patch cell's
+own land with a hard edge, as the EC land coverage draws it
+(`EcTerrainParams::meets_with_hard_edge`): of the two materials the upper
+layer (higher sort key) has coverage exponent 0 (flags bit 7 clear), so its
+point-filtered mask stops at the cell edge. The materials are the coverage's
+own (`EcTerrainBases::params`, indexed by the cell's atlas payload), built from
+the package the land source routes each id to, Enhanced or Kingdom Reborn
+land, so the rule follows the land on screen. A doorway with no door static
 (Minoc 2476,404, wooden-floor land, the KR client showing a server-placed
-door) has nothing to key on and stays exposed.
+door), the street doorways of Minoc's houses and the stone hall's floor
+inside its walls (2471,y) showed a band of grass, the cobblestones' own land,
+against the floor; they now draw the cobblestones up to it. Land outside the coverage
+(Classic texmaps, black land, a cell that never blends) leaves the side as the
+statics decide it. Grass, dirt and cobblestone land meet softly and still fade.
 
 `art/surface_blend.wesl` fades exposed borders over 0.82 local cell, matching
 the existing terrain edge-transition reach. When both sides of an axis are

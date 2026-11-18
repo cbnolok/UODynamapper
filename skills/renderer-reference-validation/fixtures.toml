@@ -703,6 +703,40 @@ zoom = 0.6
 settings = { world_rendering = { show_only_player_floor = true } }
 
 [[fixture]]
+name = "minoc-yard-floor-land-edges"
+guards = """The Minoc yard's cobblestones (land 15, grass under them) against the wooden-floor land of the north \
+doorway (2476-2477,404, no door static): where the land beside a ground patch meets the patch cell's land with a \
+hard edge (upper material's coverage exponent 0), the side is closed, so the cobblestones reach the floor without a \
+band of grass between (static_surface.rs, `EcTerrainParams::meets_with_hard_edge`, 2026-11-18). The house east of \
+the yard (floor land from 2481) changes nothing visible: its walls stand on the patch cells and hide those sides."""
+tier = "full"
+tags = ["terrain", "surfaces", "static-patches", "z-view", "minoc"]
+map = 1
+x = 2478
+y = 408
+z = 15
+zoom = 0.6
+settings = { world_rendering = { show_only_player_floor = true } }
+[fixture.reference]
+path = "/home/claudio/Immagini/Schermate/uokr/Schermata_20261114_072854.png"
+note = "KR client, the Minoc yard: cobblestones up to the walls and the doorway's floor"
+
+[[fixture]]
+name = "minoc-hall-wall-feet-floor-land"
+guards = """The cobblestones under the walls of the Minoc stone hall south of the yard (west wall at x 2471, north \
+wall at y 423) facing the hall's stone-floor land (0x436-0x439): the hard land edge closes their side, so no strip of \
+grass shows at the inner foot of the walls (static_surface.rs, `EcTerrainParams::meets_with_hard_edge`, 2026-11-18). \
+The moss along the north wall's inner foot is the wall art's own."""
+tier = "full"
+tags = ["terrain", "surfaces", "static-patches", "z-view", "minoc"]
+map = 1
+x = 2479
+y = 425
+z = 15
+zoom = 0.6
+settings = { world_rendering = { show_only_player_floor = true } }
+
+[[fixture]]
 name = "minoc-grass-land-like-statics"
 guards = """Grass statics on land 15 next to the hall's display cases: statics that continue the land draw in the \
 land's style whatever the art source (f6b7b590), the cases on the floor (ba902acd)."""

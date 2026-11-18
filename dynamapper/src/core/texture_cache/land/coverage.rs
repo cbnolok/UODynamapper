@@ -24,6 +24,9 @@ const WATER_LAYER_SORT_KEY_SCALE: u32 = 1000;
 /// (routing.rs), so a material of the Kingdom Reborn land and one of tex_land_ec.uddp sharing an id stay two coverage
 /// layers. The shaders compare material ids only for equality; the sort keys stay the source's.
 const SECONDARY_PACKAGE_MATERIAL_ID_OFFSET: u32 = 1 << 24;
+/// Bit 7 of the flags word: the material's coverage exponent is not 0, so its mask is filtered linearly and its edge
+/// soft. Clear, the mask is point filtered and the edge hard (land/coverage.wesl).
+pub(crate) const COVERAGE_FLAG_LINEAR_FILTERING: u32 = 1 << 7;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct EcTerrainParams(pub [u32; 4]);
@@ -47,8 +50,18 @@ impl EcTerrainParams {
         let key = if class == GPU_LAYER_CLASS_WATER { id.checked_mul(WATER_LAYER_SORT_KEY_SCALE)? } else { id };
         let flags = class | (u32::from(b > 0.0) << 3)
             | (u32::from(ec_land_shader_flags(package, payload)) << 4)
-            | (u32::from(b != 0.0) << 7);
+            | (if b != 0.0 { COVERAGE_FLAG_LINEAR_FILTERING } else { 0 });
         Some(Self([id, key, u32::from(weights[0]) | (u32::from(weights[1]) << 8), flags]))
+    }
+
+    /// Whether land of these parameters meets land of `other` with a hard edge, as the coverage draws it: of two
+    /// materials the upper layer (the higher sort key, then material id, as `layer_limits` orders them) covers its own
+    /// cells only, and with coverage exponent 0 its point-filtered mask stops at their edge. One material has no edge.
+    pub fn meets_with_hard_edge(self, other: Self) -> bool {
+        if self.0[0] == other.0[0] { return false; }
+        let order = |params: Self| (params.0[1] as i32, params.0[0]);
+        let upper = if order(self) > order(other) { self } else { other };
+        upper.0[3] & COVERAGE_FLAG_LINEAR_FILTERING == 0
     }
 
     /// These parameters as the second EC-layout package of the land page atlas has them.
@@ -122,6 +135,9 @@ pub struct EcTerrainBases {
     map: Option<u32>,
     values: Vec<[u16; 4]>,
     dirty: bool,
+    /// Counts the `set_sources` calls: what the statics read of `params` (art/static_surface.rs) is redrawn when it
+    /// changes.
+    sources_revision: u64,
 }
 
 impl EcTerrainBases {
@@ -135,8 +151,11 @@ impl EcTerrainBases {
             bevy::asset::RenderAssetUsages::MAIN_WORLD | bevy::asset::RenderAssetUsages::RENDER_WORLD,
         ));
         let cache = cache::StackCache::new(images, sources.available);
-        Self { image, params: sources.params, cache, dimensions, map: None, values, dirty: false }
+        Self { image, params: sources.params, cache, dimensions, map: None, values, dirty: false, sources_revision: 0 }
     }
+
+    /// The revision of `params`, which changes with the land source drawn.
+    pub fn sources_revision(&self) -> u64 { self.sources_revision }
 
     pub fn stack_image(&self) -> Handle<Image> { self.cache.image.clone() }
 
@@ -145,6 +164,7 @@ impl EcTerrainBases {
     /// pass republishes them; the image handles stay bound to the land material.
     pub fn set_sources(&mut self, sources: EcTerrainSources) {
         self.params = sources.params;
+        self.sources_revision += 1;
         self.cache.set_available(sources.available);
         self.map = None;
         self.values.fill([u16::MAX; 4]);
@@ -229,6 +249,26 @@ mod tests {
             params[2000 + id] = params[1000 + id];
         }
         assert_eq!(layer_limits((1001..=1060).chain(2001..=2060), &params), Some([1001, 1049]));
+    }
+
+    #[test]
+    fn the_upper_material_decides_whether_an_edge_is_hard() {
+        let soft = |id: u32| EcTerrainParams([id, id, 242 | (153 << 8),
+            GPU_LAYER_CLASS_DEFAULT | COVERAGE_FLAG_LINEAR_FILTERING]);
+        let hard = |id: u32| EcTerrainParams([id, id, 0, GPU_LAYER_CLASS_DEFAULT]);
+        // Grass (3) beside a wooden floor (11, exponent 0): the floor is the upper layer and stops at its cells.
+        assert!(soft(3).meets_with_hard_edge(hard(11)));
+        assert!(hard(11).meets_with_hard_edge(soft(3)));
+        // A soft upper layer covers a hard lower one softly; land of one material has no edge.
+        assert!(!hard(3).meets_with_hard_edge(soft(11)));
+        assert!(!soft(3).meets_with_hard_edge(soft(11)));
+        assert!(!hard(11).meets_with_hard_edge(hard(11)));
+        // Water sorts by its scaled key, above a solid of a higher id.
+        let hard_water = EcTerrainParams([5, 5 * WATER_LAYER_SORT_KEY_SCALE, 0, GPU_LAYER_CLASS_WATER]);
+        let soft_water = EcTerrainParams([5, 5 * WATER_LAYER_SORT_KEY_SCALE, 0,
+            GPU_LAYER_CLASS_WATER | COVERAGE_FLAG_LINEAR_FILTERING]);
+        assert!(soft(70).meets_with_hard_edge(hard_water));
+        assert!(!hard(70).meets_with_hard_edge(soft_water));
     }
 
     #[test]

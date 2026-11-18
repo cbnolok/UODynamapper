@@ -1364,6 +1364,9 @@ struct StaticChunkCacheConfig {
     z_view: ZViewCut,
     /// The caves drawn over the map (`CavesRes::revision`).
     caves_revision: u64,
+    /// The land's EC terrain parameters (`EcTerrainBases::sources_revision`), whose hard edges close ground patch sides
+    /// (static_surface.rs).
+    terrain_sources_revision: u64,
 }
 
 #[derive(Clone, Debug, Default)]
@@ -2094,6 +2097,7 @@ struct StaticCollectFrameConfig {
     item_routes_revision: u64,
     z_view: ZViewCut,
     caves_revision: u64,
+    terrain_sources_revision: u64,
 }
 
 #[derive(Clone, Copy)]
@@ -2107,6 +2111,8 @@ struct StaticCollectResources<'a> {
     placed_multis: &'a PlacedMultisRes,
     static_lights: &'a super::static_lights::RenderStaticLightInstances,
     tile_atlas: &'a TileAtlas,
+    /// The EC terrain parameters of the land drawn, per atlas payload (`EcTerrainBases::params`).
+    terrain: Option<&'a [Option<crate::core::texture_cache::land::coverage::EcTerrainParams>]>,
     map_planes: Option<&'a MapPlanesRes>,
     /// The caves drawn over the map, if any.
     caves: Option<&'a CaveMap>,
@@ -2225,6 +2231,7 @@ fn static_collect_resources<'a>(
     placed_multis: &'a PlacedMultisRes,
     static_lights: &'a super::static_lights::RenderStaticLightInstances,
     tile_atlas: &'a TileAtlas,
+    terrain_bases: &'a Option<Res<crate::core::texture_cache::land::coverage::EcTerrainBases>>,
     map_planes: &'a Option<Res<MapPlanesRes>>,
     caves: &'a CavesRes,
     kingdom_reborn: Option<KrStaticSources<'a>>,
@@ -2239,6 +2246,7 @@ fn static_collect_resources<'a>(
         placed_multis,
         static_lights,
         tile_atlas,
+        terrain: terrain_bases.as_ref().map(|bases| bases.params.as_slice()),
         map_planes: map_planes.as_ref().map(|res| &**res),
         caves: caves.active(),
         player_cave: caves.player(),
@@ -2266,6 +2274,7 @@ fn static_chunk_cache_config(
         item_routes_revision: frame.item_routes_revision,
         z_view: frame.z_view,
         caves_revision: frame.caves_revision,
+        terrain_sources_revision: frame.terrain_sources_revision,
     }
 }
 
@@ -2548,7 +2557,7 @@ fn rebuild_static_chunk(
             if let Some(cells) = super::static_surface::apply_boundary_coverage(
                 &mut build.sprite_instances, chunk_key, frame.height_scale,
                 statics_store, tilemeta, art, resources.kingdom_reborn.map(|kr| (kr.tilemeta, kr.art)),
-                resources.tile_atlas,
+                resources.tile_atlas, resources.terrain,
             ) {
                 build.read_land(cells);
             }
@@ -3479,10 +3488,14 @@ pub fn sys_collect_visible_statics(
     static_lights: Res<super::static_lights::RenderStaticLightInstances>,
     // TODO: Need a way to get the currently visible chunks from the terrain system.
     // We can iterate over existing land chunk entities to find which blocks to draw.
-    terrain: (Query<&crate::core::render::scene::world::land::LCMesh>, Res<TileAtlas>),
+    terrain: (
+        Query<&crate::core::render::scene::world::land::LCMesh>,
+        Res<TileAtlas>,
+        Option<Res<crate::core::texture_cache::land::coverage::EcTerrainBases>>,
+    ),
 ) {
     let (tex_art_cc_res, tex_art_ec_res, tex_land_ec_res, tilemeta_res, tex_aux_ec_res, kr_packages) = packages;
-    let (chunks_q, tile_atlas) = terrain;
+    let (chunks_q, tile_atlas, terrain_bases) = terrain;
     let (z_view, caves) = view_cuts;
     let (multis_res, placed_multis) = multis;
     if !settings.world_rendering.enable_statics {
@@ -3525,6 +3538,7 @@ pub fn sys_collect_visible_statics(
             .map_or(0, |store| store.lock().item_routes_revision()),
         z_view: z_view.0,
         caves_revision: caves.revision(),
+        terrain_sources_revision: terrain_bases.as_ref().map_or(0, |bases| bases.sources_revision()),
     };
     let resources = static_collect_resources(
         &tex_art_cc_res,
@@ -3536,6 +3550,7 @@ pub fn sys_collect_visible_statics(
         &placed_multis,
         &static_lights,
         &tile_atlas,
+        &terrain_bases,
         &map_planes,
         &caves,
         kr_packages.sources().filter(|_| frame.land_style == StaticLandStyle::KingdomReborn),
@@ -4991,6 +5006,7 @@ mod tests {
             item_routes_revision: 0,
             z_view: ZViewCut::NONE,
             caves_revision: 0,
+            terrain_sources_revision: 0,
         });
         cache.chunks.insert(
             StaticChunkBatchKey {
@@ -5014,6 +5030,7 @@ mod tests {
             item_routes_revision: 0,
             z_view: ZViewCut::NONE,
             caves_revision: 0,
+            terrain_sources_revision: 0,
         });
 
         assert!(cache.chunks.is_empty());
@@ -5034,6 +5051,7 @@ mod tests {
             item_routes_revision: 0,
             z_view: ZViewCut::NONE,
             caves_revision: 0,
+            terrain_sources_revision: 0,
         });
 
         cache.chunks.insert(
@@ -5058,6 +5076,7 @@ mod tests {
             item_routes_revision: 0,
             z_view: ZViewCut::NONE,
             caves_revision: 0,
+            terrain_sources_revision: 0,
         }));
 
         assert!(!cache.chunks.is_empty());
@@ -5078,6 +5097,7 @@ mod tests {
             item_routes_revision: 0,
             z_view: ZViewCut::NONE,
             caves_revision: 0,
+            terrain_sources_revision: 0,
         });
         cache.chunks.insert(
             StaticChunkBatchKey {
@@ -5101,6 +5121,7 @@ mod tests {
             item_routes_revision: 0,
             z_view: ZViewCut::NONE,
             caves_revision: 0,
+            terrain_sources_revision: 0,
         }));
 
         assert!(cache.chunks.is_empty());
