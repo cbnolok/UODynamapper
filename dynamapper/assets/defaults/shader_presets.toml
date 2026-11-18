@@ -64,8 +64,8 @@ default_preset = "classic.morning"
 #                    c = (max - min) / max of its RGB channels above this knee becomes
 #                    knee + (c - knee) * grade_chroma_slope, by moving the colour toward its Rec. 709 luma as
 #                    Saturation does, so luma and hue stay. Only vivid colours change. 0 to 1; 1 is off. It
-#                    softens the land and the statics that continue it (grass, liquids) only; furniture, walls
-#                    and the other statics keep their own colour.
+#                    softens the land, the statics that continue it (grass, liquids) and the foliage only;
+#                    furniture, walls, trunks and the other statics keep their own colour.
 # grade_chroma_slope: The slope above the knee, 0 to 1. 1 changes nothing; 0 caps relative chroma at the knee.
 # gloom_params:      Vector of gloom parameters: [Amount, Height_Falloff, Shadow_Bias].
 # fog_params:        Vector of fog parameters: [Distance_Density, Height_Density, Noise_Scale, Noise_Strength].
@@ -936,8 +936,9 @@ elevation_degrees = 45.0
 # - grading, which the client lacks, is on with the chroma knee alone (knee 0.55, slope 0; saturation 1, vibrance 0,
 #   contrast 1, split tone 0): the screenshots' grass and foliage are about 0.33 saturated, the KR textures and art
 #   0.5 to 0.65, while stone, wood and ground already match. The knee lowers only the vivid colours, where a lower
-#   saturation (0.8 before) also greyed stone, wood and water. It acts before the night composite, on the land and
-#   the statics that continue it alone: the furniture, walls, trees and other statics keep their own colour.
+#   saturation (0.8 before) also greyed stone, wood and water. It acts before the night composite, on the land, the
+#   statics that continue it and the foliage (tile data Foliage) alone: the furniture, walls, trunks and other
+#   statics keep their own colour.
 # - ambient_strength 0.146 lights only water under per-vertex land: with the sun at 45 degrees it lifts the water's
 #   wrapped Lambert 0.854 to 1, the client's unlit water (its water layer never modulates by the vertex light).
 #   Switched to per-pixel land, it also adds that ambient to the land.

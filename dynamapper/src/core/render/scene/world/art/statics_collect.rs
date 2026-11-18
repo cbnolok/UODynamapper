@@ -102,8 +102,8 @@ pub(crate) const STATIC_FLAG_CAVE_OUTSIDE: u32 = 1 << 15;
 /// camera orders its cap in that row (art/depth.wesl `perspective_cap_row_shift`). Kept in sync with art/depth.wesl.
 pub(crate) const STATIC_FLAG_CAP_MEETS_FLOOR: u32 = 1 << 24;
 /// `SpriteInstance` and `GroundTileInstance::is_wet_flags` bit: the static continues the land
-/// (`static_continues_land`), so it takes the land's colour grading, KR-like's chroma knee included; the other statics
-/// keep their own colour (`land_grade_flag`). Kept in sync with art/shading.wesl.
+/// (`static_continues_land`) or is foliage, so it takes the land's colour grading, KR-like's chroma knee included; the
+/// other statics keep their own colour (`land_grade_flag`). Kept in sync with art/shading.wesl.
 pub(crate) const STATIC_FLAG_LAND_GRADE: u32 = 1 << 25;
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -1071,10 +1071,13 @@ fn static_continues_land(
 
 /// `STATIC_FLAG_LAND_GRADE` for a static of `tile_graphic` drawn as `visual_kind`: set when it continues the land by
 /// the Enhanced data (`static_continues_land`, whatever the art source and land), or is drawn from the Kingdom Reborn
-/// packages, which only the statics that continue the KR land are (`kingdom_reborn_static_visual_kind`).
+/// packages, which only the statics that continue the KR land are (`kingdom_reborn_static_visual_kind`), or is foliage
+/// by the tile data it is drawn by (`drawn_flags`, `drawn_tile_data`): the leaves take the knee tuned for the grass, as
+/// without it they stood out of the KR screenshots' foliage, while trunks without the Foliage flag keep their colour.
 fn land_grade_flag(
     visual_kind: StaticVisualKind,
     tile_graphic: u16,
+    drawn_flags: u64,
     tilemeta_package: Option<&udd_assets::tilemeta::TileMetaPackage>,
     tilemeta: Option<&udd_assets::tilemeta::TileMetaItemTile>,
     tex_art_ec: Option<&udd_assets::tex_art_ec::TexArtEcPackage>,
@@ -1082,6 +1085,7 @@ fn land_grade_flag(
     cache: &mut StaticSurfaceLikeResolutionCache,
 ) -> u32 {
     let continues = visual_kind.is_kingdom_reborn()
+        || drawn_flags & TILE_FLAG_FOLIAGE != 0
         || enhanced_static_visual_kind(tile_graphic, tilemeta_package, tilemeta, tex_art_ec, tex_land_ec, cache)
             .is_some_and(|kind| static_continues_land(kind, tilemeta,
                 cache.landlike_item_texture(tile_graphic, tilemeta_package, tex_land_ec)));
@@ -2682,7 +2686,7 @@ fn emit_static_render_tile(
             | super::light_scene::static_light_class_flags(tilemeta.map_or(0, |meta| meta.flags),
                 tilemeta.map_or(0, |meta| meta.height))
             | wall_cap_meets_floor_flag(flags, render_tile.z, tilemeta.map_or(0, |meta| meta.height), farther_floor_at)
-            | visual_kind.map_or(0, |kind| land_grade_flag(kind, render_tile.graphic, enhanced_package,
+            | visual_kind.map_or(0, |kind| land_grade_flag(kind, render_tile.graphic, flags, enhanced_package,
                 enhanced_tilemeta, resources.tex_art_ec_package(), resources.tex_land_ec_package(),
                 surface_resolution_cache)),
         base_world_y: (render_tile.z as f32) * frame.height_scale,
@@ -4202,10 +4206,13 @@ mod tests {
                 assert_eq!(classic_art_enhanced_land, classic, "{graphic:#x}");
                 assert_eq!(enhanced_art_classic_land, enhanced, "{graphic:#x}");
             }
-            // They take the land's grading under either art source; the other statics keep their own colour.
-            let land_grade = if continues { STATIC_FLAG_LAND_GRADE } else { 0 };
+            // They and the foliage take the land's grading under either art source; the other statics keep their own
+            // colour.
+            let foliage = tile.flags & TILE_FLAG_FOLIAGE != 0;
+            let land_grade = if continues || foliage { STATIC_FLAG_LAND_GRADE } else { 0 };
             for kind in [enhanced, classic] {
-                assert_eq!(land_grade_flag(kind, graphic, Some(&meta), Some(tile), Some(&ec), Some(&land), &mut cache),
+                assert_eq!(land_grade_flag(kind, graphic, tile.flags, Some(&meta), Some(tile), Some(&ec), Some(&land),
+                    &mut cache),
                     land_grade, "{graphic:#x}");
             }
         }

@@ -207,7 +207,7 @@ pub(super) const VIBRANCE: &str =
 pub(super) const SATURATION: &str =
     "Strength of all colours; 1 leaves them unchanged. Needs Color Grading on.";
 pub(super) const CHROMA_KNEE: &str =
-    "Tones down only the vivid colours: a colour more saturated than the knee is pulled toward grey, keeping its brightness and hue, while duller colours stay as they are. It acts on the land and the statics that continue it (grass, liquids) only: furniture, walls and the other statics keep their own colour. 1 is off; KR-like uses it in place of a lower Saturation to bring its greens to the KR screenshots without greying stone and wood. Needs Color Grading on.";
+    "Tones down only the vivid colours: a colour more saturated than the knee is pulled toward grey, keeping its brightness and hue, while duller colours stay as they are. It acts on the land, the statics that continue it (grass, liquids) and the foliage only: furniture, walls, trunks and the other statics keep their own colour. 1 is off; KR-like uses it in place of a lower Saturation to bring its greens to the KR screenshots without greying stone and wood. Needs Color Grading on.";
 pub(super) const CHROMA_KNEE_SLOPE: &str =
     "How much saturation above the Chroma Knee is kept: 1 keeps it all (no effect), 0 caps every colour at the knee. Needs Color Grading on and a Chroma Knee below 1.";
 pub(super) const CONTRAST: &str =
