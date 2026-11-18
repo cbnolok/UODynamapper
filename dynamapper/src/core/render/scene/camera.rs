@@ -1,6 +1,7 @@
 use crate::configs::settings::{AntiAliasingMode, SectGraphics, Settings};
 use crate::core::render::scene::player::Player;
-use crate::core::render::scene::RecomputeVisibleChunksEvent;
+use crate::core::render::scene::{camera_ground_footprint, FreeCameraFootprint, RecomputeVisibleChunksEvent};
+use crate::core::render::scene::world::land::draw_mesh::scale_from_zoom;
 use crate::core::export_job::ExportJob;
 use crate::core::system_sets::*;
 use crate::prelude::*;
@@ -110,6 +111,10 @@ impl Plugin for CameraPlugin {
                     sys_camera_follow_player
                         .run_if(not(|s: Res<Settings>| s.app.window.free_camera)),
                     sys_free_camera_movement.run_if(|s: Res<Settings>| s.app.window.free_camera),
+                    sys_stream_free_camera_view
+                        .after(sys_camera_zoom)
+                        .after(sys_free_camera_movement)
+                        .after(sys_update_camera_projection_to_view),
                 )
                     .run_if(not(resource_exists::<ExportJob>))
                     .in_set(MovementSysSet::UpdateCamera),
@@ -536,12 +541,48 @@ fn sys_camera_zoom(
     }
 }
 
+/// While the free camera is on, keeps `FreeCameraFootprint` on the tiles its view covers, and asks for a recompute
+/// only when that changes: the land chunks follow the camera's view, not the player. Turning it off removes the
+/// footprint, and the chunks go back to the player's.
+fn sys_stream_free_camera_view(
+    mut commands: Commands,
+    settings: Res<Settings>,
+    camera_q: Query<(&Transform, &Projection), With<PlayerCamera>>,
+    windows: Query<&Window>,
+    render_zoom: Res<RenderZoom>,
+    footprint: Option<Res<FreeCameraFootprint>>,
+    mut chunk_recompute_writer: MessageWriter<RecomputeVisibleChunksEvent>,
+) {
+    if !settings.app.window.free_camera {
+        if footprint.is_some() {
+            commands.remove_resource::<FreeCameraFootprint>();
+            chunk_recompute_writer.write(RecomputeVisibleChunksEvent {});
+        }
+        return;
+    }
+    let (Ok((transform, projection)), Ok(window)) = (camera_q.single(), windows.single()) else {
+        return;
+    };
+    let zoom = render_zoom.0.clamp(MIN_ZOOM, MAX_ZOOM);
+    let viewport = Vec2::new(window.width(), window.height());
+    let current = FreeCameraFootprint(camera_ground_footprint(
+        projection,
+        transform,
+        viewport,
+        zoom,
+        scale_from_zoom(zoom),
+    ));
+    if footprint.as_deref() != Some(&current) {
+        commands.insert_resource(current);
+        chunk_recompute_writer.write(RecomputeVisibleChunksEvent {});
+    }
+}
+
 fn sys_free_camera_movement(
     time: Res<Time>,
     keyboard: Res<ButtonInput<KeyCode>>,
     mut camera_q: Query<&mut Transform, With<PlayerCamera>>,
     mut egui_contexts: EguiContexts,
-    mut chunk_recompute_writer: MessageWriter<RecomputeVisibleChunksEvent>,
 ) {
     let ctx = match egui_contexts.ctx_mut() {
         Ok(c) => c,
@@ -613,37 +654,83 @@ fn sys_free_camera_movement(
         }
     }
 
-    let mut camera_changed = false;
-
     if move_vec != Vec3::ZERO {
         transform.translation += move_vec.normalize() * move_speed;
-        camera_changed = true;
     }
 
     if y_delta != 0.0 {
         transform.translation.y += y_delta * move_speed;
-        camera_changed = true;
-    }
-
-    if keyboard.pressed(KeyCode::ShiftRight)
-        && (keyboard.pressed(KeyCode::KeyA)
-            || keyboard.pressed(KeyCode::KeyD)
-            || keyboard.pressed(KeyCode::KeyW)
-            || keyboard.pressed(KeyCode::KeyS)
-            || keyboard.pressed(KeyCode::KeyQ)
-            || keyboard.pressed(KeyCode::KeyE))
-    {
-        camera_changed = true;
-    }
-
-    if camera_changed {
-        chunk_recompute_writer.write(RecomputeVisibleChunksEvent {});
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    const TEST_MAP_SIZE: (u32, u32) = (7168, 4096);
+    const TEST_VIEWPORT: Vec2 = Vec2::new(1900.0, 1000.0);
+
+    fn follow_orthographic_projection(viewport: Vec2, zoom: f32) -> Projection {
+        Projection::Orthographic(OrthographicProjection {
+            near: ORTHO_NEAR,
+            far: ORTHO_FAR,
+            scaling_mode: ScalingMode::Fixed {
+                width: viewport.x / ORTHO_SIZE_FACTOR,
+                height: viewport.y / ORTHO_WIDTH_SCALE_FACTOR / ORTHO_SIZE_FACTOR,
+            },
+            scale: zoom,
+            ..OrthographicProjection::default_3d()
+        })
+    }
+
+    /// The free camera left at the follow camera's pose streams at least the chunks the follow view does.
+    #[test]
+    fn free_camera_footprint_covers_the_follow_view_at_the_follow_pose() {
+        let focus = Vec3::new(1500.0, 0.0, 1600.0);
+        for zoom in [MIN_ZOOM, 1.0, 4.0] {
+            let scale = scale_from_zoom(zoom);
+            let transform = Transform::from_translation(focus + PlayerCamera::BASE_OFFSET_FROM_PLAYER)
+                .looking_at(focus, Vec3::Y);
+            let footprint = camera_ground_footprint(
+                &follow_orthographic_projection(TEST_VIEWPORT, zoom),
+                &transform,
+                TEST_VIEWPORT,
+                zoom,
+                scale,
+            );
+            let streamed = super::super::chunks_in_tile_rect(&footprint, TEST_MAP_SIZE.0, TEST_MAP_SIZE.1, scale);
+            let followed = super::super::compute_visible_chunks(
+                focus, zoom, TEST_VIEWPORT.x, TEST_VIEWPORT.y, TEST_MAP_SIZE.0, TEST_MAP_SIZE.1, scale,
+            );
+            let missing: Vec<_> = followed.iter().filter(|chunk| streamed.binary_search(chunk).is_err()).collect();
+            assert!(missing.is_empty(), "zoom {zoom}: the free footprint misses the follow view's chunks {missing:?}");
+        }
+    }
+
+    /// A free perspective camera looking at the horizon streams up to its reach, not to the map's edge, and its
+    /// footprint lies on the chunk grid, so moving within a chunk asks for no recompute.
+    #[test]
+    fn free_camera_footprint_at_the_horizon_stops_at_the_reach() {
+        let zoom = 1.0;
+        let scale = scale_from_zoom(zoom);
+        let mut projection = perspective::projection();
+        projection.update(TEST_VIEWPORT.x, TEST_VIEWPORT.y);
+        let position = Vec3::new(2000.0, 50.0, 2000.0);
+        let transform = Transform::from_translation(position).looking_to(Vec3::new(1.0, 0.0, 1.0), Vec3::Y);
+        let footprint = camera_ground_footprint(&projection, &transform, TEST_VIEWPORT, zoom, scale);
+        let span = super::super::world::land::TILE_NUM_PER_CHUNK_DIM * scale;
+        for edge in [footprint.tile_x0, footprint.tile_y0, footprint.tile_x1, footprint.tile_y1] {
+            assert_eq!(edge % span, 0, "{footprint:?} is off the chunk grid");
+        }
+        let half_view = super::super::orthographic_ground_half_extent(zoom, TEST_VIEWPORT.x, TEST_VIEWPORT.y);
+        let bound = 2.0 * (super::super::FREE_CAMERA_REACH_HALF_VIEWS * half_view
+            + super::super::chunk_edge_pad_tiles(scale)
+            + span as f32);
+        assert!((footprint.tile_x1 - footprint.tile_x0) as f32 <= bound, "{footprint:?} wider than {bound}");
+        assert!((footprint.tile_y1 - footprint.tile_y0) as f32 <= bound, "{footprint:?} taller than {bound}");
+        let nudged = Transform { translation: position + Vec3::new(0.01, 0.0, 0.01), ..transform };
+        assert_eq!(camera_ground_footprint(&projection, &nudged, TEST_VIEWPORT, zoom, scale), footprint);
+    }
 
     /// Settings change for reasons unrelated to AA (the player's position on every step): the cameras' AA components
     /// are inserted again only when the mode itself changes.

@@ -9,6 +9,7 @@ use crate::prelude::*;
 use bevy::ecs::message::{MessageReader, MessageWriter};
 use bevy::prelude::*;
 use bevy::window::{Window, WindowResized};
+use crate::util_lib::uo_coords::scale_uo_z_to_bevy_units;
 use camera::{PlayerCamera, RenderZoom, MAX_ZOOM, MIN_ZOOM};
 use player::Player;
 use world::land::draw_mesh::{scale_from_zoom, ChunkScale};
@@ -50,6 +51,16 @@ pub struct ExportChunkFootprint {
     pub tile_x1: u32,
     pub tile_y1: u32,
 }
+
+/// Free camera only: the tiles the camera sees on the ground (`camera_ground_footprint`), on the chunk grid of the
+/// current scale. Like `ExportChunkFootprint` it replaces the player-derived chunk set; the camera updates it, and asks
+/// for a recompute, only when the view covers other chunks.
+#[derive(Resource, Clone, Copy, Debug, PartialEq, Eq)]
+pub struct FreeCameraFootprint(pub ExportChunkFootprint);
+
+/// How far the free camera streams: its footprint ends this many orthographic half views from the ground point at the
+/// centre of its view, so a view towards the horizon does not stream the map up to it.
+const FREE_CAMERA_REACH_HALF_VIEWS: f32 = 3.0;
 
 /// Plugin for scene setup, worldmap chunk management, and dynamic updates/despawns.
 /// Now robust against map-plane switches and duplicated logic in chunk range handling.
@@ -159,6 +170,101 @@ fn log_chunk_despawn(gx: u32, gy: u32, map: u32) {
     );
 }
 
+/// Half the side of the ground square the fixed isometric orthographic view covers, in tiles.
+fn orthographic_ground_half_extent(zoom: f32, window_width: f32, window_height: f32) -> f32 {
+    // Compute orthographic half-extents in world/tile units, matching
+    // sys_update_camera_projection_to_view exactly.
+    let ortho_width = window_width / camera::ORTHO_SIZE_FACTOR;
+    let ortho_height =
+        (window_height / camera::ORTHO_WIDTH_SCALE_FACTOR) / camera::ORTHO_SIZE_FACTOR;
+    let hw = ortho_width * zoom / 2.0;
+    let hh = ortho_height * zoom / 2.0;
+
+    // Camera basis vectors for the fixed isometric angle
+    // (Transform::from_translation(player + (5,5,5)).looking_at(player, Vec3::Y)):
+    //   right = (-1/√2,  0,     1/√2)      → only XZ component
+    //   up    = ( 1/√6, -2/√6,  1/√6)
+    //   fwd   = (-1/√3, -1/√3, -1/√3)
+    //
+    // For an ortho frustum corner at camera-local (u, v):
+    //   P = cam_pos + u*right + v*up
+    //   Ray along fwd hits Y=0 at:  hit = P - P.y * (1, 1, 1)
+    //     ⟹ hit.x = P.x - P.y = (cam.x - cam.y) + u*(-1/√2) + v*(3/√6)
+    //     ⟹ hit.z = P.z - P.y = (cam.z - cam.y) + u*( 1/√2) + v*(3/√6)
+    //
+    // AABB half-extent = hw/√2 + hh * 3/√6
+    let inv_sqrt2: f32 = std::f32::consts::FRAC_1_SQRT_2;
+    let three_over_sqrt6: f32 = 3.0 / 6.0_f32.sqrt();
+    hw * inv_sqrt2 + hh * three_over_sqrt6
+}
+
+/// The tiles a chunk set reaches past its footprint, so its edges never show a gap.
+fn chunk_edge_pad_tiles(chunk_scale: u32) -> f32 {
+    // Safety pad: at least 2 base chunks, with a small extra cushion at
+    // wider scales to avoid edge gaps.
+    let scaled_pad = if chunk_scale <= 2 {
+        2
+    } else {
+        chunk_scale + (chunk_scale / 4).max(1)
+    };
+    (TILE_NUM_PER_CHUNK_DIM * scaled_pad) as f32
+}
+
+/// The tiles the camera sees on the ground, whatever its pose and projection: the box around where its view's corners
+/// and centre meet the lowest and the highest land, padded like the follow view (`chunk_edge_pad_tiles`) and rounded
+/// out to the chunk grid of `chunk_scale`, so it changes only when the view covers other chunks. Computed from this
+/// frame's projection and transform, not from the camera's matrices, which are a frame late in `Update`.
+pub(crate) fn camera_ground_footprint(
+    projection: &Projection,
+    camera_transform: &Transform,
+    viewport: Vec2,
+    zoom: f32,
+    chunk_scale: u32,
+) -> ExportChunkFootprint {
+    /// Normalized device depths of two points on each view ray: Bevy's reverse-z puts the near plane at 1, and 0.5 is
+    /// finite for both projections (twice the near distance in an infinite perspective).
+    const NEAR_DEPTH: f32 = 1.0;
+    const FAR_DEPTH: f32 = 0.5;
+    const VIEW_POINTS: [Vec2; 5] =
+        [Vec2::ZERO, Vec2::new(-1.0, -1.0), Vec2::new(1.0, -1.0), Vec2::new(-1.0, 1.0), Vec2::new(1.0, 1.0)];
+    let mut projection = projection.clone();
+    projection.update(viewport.x, viewport.y);
+    let world_from_clip = camera_transform.to_matrix() * projection.get_clip_from_view().inverse();
+    let ground_levels = [i8::MIN, i8::MAX].map(|z| scale_uo_z_to_bevy_units(f32::from(z)));
+    let reach = FREE_CAMERA_REACH_HALF_VIEWS * orthographic_ground_half_extent(zoom, viewport.x, viewport.y);
+    // A view ray: its point on the near plane (behind the orthographic camera) and its direction.
+    let view_ray = |ndc: Vec2| {
+        let near = world_from_clip.project_point3(ndc.extend(NEAR_DEPTH));
+        (near, (world_from_clip.project_point3(ndc.extend(FAR_DEPTH)) - near).normalize_or_zero())
+    };
+    // Where a view ray meets a ground level, if it goes down to it.
+    let ground_hit = |(near, direction): (Vec3, Vec3), level: f32| {
+        (direction.y < -f32::EPSILON).then(|| (near + direction * ((level - near.y) / direction.y).max(0.0)).xz())
+    };
+    let centre = ground_hit(view_ray(Vec2::ZERO), ground_levels[0]).unwrap_or(camera_transform.translation.xz());
+    let (mut min, mut max) = (Vec2::splat(f32::MAX), Vec2::splat(f32::MIN));
+    for ndc in VIEW_POINTS {
+        let ray = view_ray(ndc);
+        for level in ground_levels {
+            // A ray above the ground reaches as far as the reach, towards where it looks; every point stays within
+            // the reach around the view's centre on the ground.
+            let point = ground_hit(ray, level).unwrap_or(centre + ray.1.xz().normalize_or_zero() * reach);
+            let point = centre + (point - centre).clamp_length_max(reach);
+            min = min.min(point);
+            max = max.max(point);
+        }
+    }
+    let pad = chunk_edge_pad_tiles(chunk_scale);
+    let span = (TILE_NUM_PER_CHUNK_DIM * chunk_scale) as f32;
+    let to_grid = |tiles: f32, round: fn(f32) -> f32| (round(tiles / span) * span).max(0.0) as u32;
+    ExportChunkFootprint {
+        tile_x0: to_grid(min.x - pad, f32::floor),
+        tile_y0: to_grid(min.y - pad, f32::floor),
+        tile_x1: to_grid(max.x + pad, f32::ceil),
+        tile_y1: to_grid(max.y + pad, f32::ceil),
+    }
+}
+
 /// Calculates the visible chunk set from current-frame parameters only.
 ///
 /// Computes the orthographic camera footprint on the Y=0 ground plane
@@ -183,44 +289,11 @@ fn compute_visible_chunks(
     let map_base_chunks_x = (map_width / base_chunk_size) as i32;
     let map_base_chunks_y = (map_height / base_chunk_size) as i32;
 
-    // Compute orthographic half-extents in world/tile units, matching
-    // sys_update_camera_projection_to_view exactly.
-    let ortho_width = window_width / camera::ORTHO_SIZE_FACTOR;
-    let ortho_height =
-        (window_height / camera::ORTHO_WIDTH_SCALE_FACTOR) / camera::ORTHO_SIZE_FACTOR;
-    let hw = ortho_width * zoom / 2.0;
-    let hh = ortho_height * zoom / 2.0;
-
-    // Camera basis vectors for the fixed isometric angle
-    // (Transform::from_translation(player + (5,5,5)).looking_at(player, Vec3::Y)):
-    //   right = (-1/√2,  0,     1/√2)      → only XZ component
-    //   up    = ( 1/√6, -2/√6,  1/√6)
-    //   fwd   = (-1/√3, -1/√3, -1/√3)
-    //
-    // For an ortho frustum corner at camera-local (u, v):
-    //   P = cam_pos + u*right + v*up
-    //   Ray along fwd hits Y=0 at:  hit = P - P.y * (1, 1, 1)
-    //     ⟹ hit.x = P.x - P.y = (cam.x - cam.y) + u*(-1/√2) + v*(3/√6)
-    //     ⟹ hit.z = P.z - P.y = (cam.z - cam.y) + u*( 1/√2) + v*(3/√6)
-    //
-    // AABB half-extent = hw/√2 + hh * 3/√6
-    let inv_sqrt2: f32 = std::f32::consts::FRAC_1_SQRT_2;
-    let three_over_sqrt6: f32 = 3.0 / 6.0_f32.sqrt();
-
     let cam_pos = player_translation + camera::PlayerCamera::BASE_OFFSET_FROM_PLAYER;
     let center_x = cam_pos.x - cam_pos.y;
     let center_z = cam_pos.z - cam_pos.y;
-
-    let half_extent = hw * inv_sqrt2 + hh * three_over_sqrt6;
-
-    // Safety pad: at least 2 base chunks, with a small extra cushion at
-    // wider scales to avoid edge gaps.
-    let scaled_pad = if chunk_scale <= 2 {
-        2
-    } else {
-        chunk_scale + (chunk_scale / 4).max(1)
-    };
-    let edge_pad_tiles = (TILE_NUM_PER_CHUNK_DIM * scaled_pad) as f32;
+    let half_extent = orthographic_ground_half_extent(zoom, window_width, window_height);
+    let edge_pad_tiles = chunk_edge_pad_tiles(chunk_scale);
 
     let tile_x0 = (center_x - half_extent - edge_pad_tiles).floor() as i32;
     let tile_x1 = (center_x + half_extent + edge_pad_tiles).ceil() as i32;
@@ -385,7 +458,7 @@ fn sys_update_worldmap_chunks_to_render(
     mut player_q: Query<(&mut Player, &Transform)>,
     existing_chunks_q: Query<(Entity, &land::LCMesh, Has<Mesh3d>)>,
     mut locals: Local<ChunkRenderLocals>,
-    export_footprint: Option<Res<ExportChunkFootprint>>,
+    (export_footprint, free_camera_footprint): (Option<Res<ExportChunkFootprint>>, Option<Res<FreeCameraFootprint>>),
 ) {
     /// Maximum number of chunk entities spawned per frame to avoid burst stalls.
     const MAX_SPAWNS_PER_FRAME: usize = 512;
@@ -414,7 +487,9 @@ fn sys_update_worldmap_chunks_to_render(
         old_map_id.is_none() || (new_map_id != old_map_id.unwrap().m as u32)
     };
 
-    let has_recompute_event = event.read().next().is_some();
+    // Every request of the frame is consumed: one recompute serves them all, where reading one would leave the others
+    // to recompute again on the next frames.
+    let has_recompute_event = event.read().count() > 0;
     // Detect a large position jump (teleport without an explicit event, e.g. cursor-click
     // teleport that forgot to send the event, or any future path).  Any move of more than
     // 256 tiles in one frame is unambiguously a teleport, not normal walking.
@@ -446,10 +521,17 @@ fn sys_update_worldmap_chunks_to_render(
         let window: &Window = windows_q.single().unwrap();
         let zoom: f32 = render_zoom_res.0.clamp(MIN_ZOOM, MAX_ZOOM);
         let cam_pos = player_transform.translation + PlayerCamera::BASE_OFFSET_FROM_PLAYER;
-        let current_camera_chunk: (i32, i32) = (
-            (cam_pos.x.floor() as i32).div_euclid(TILE_NUM_PER_CHUNK_DIM as i32),
-            (cam_pos.z.floor() as i32).div_euclid(TILE_NUM_PER_CHUNK_DIM as i32),
-        );
+        // The chunks stream in from the centre of the view: the free camera's footprint's, else the follow camera's.
+        let current_camera_chunk: (i32, i32) = match free_camera_footprint.as_deref() {
+            Some(FreeCameraFootprint(footprint)) => (
+                (footprint.tile_x0.midpoint(footprint.tile_x1) / TILE_NUM_PER_CHUNK_DIM) as i32,
+                (footprint.tile_y0.midpoint(footprint.tile_y1) / TILE_NUM_PER_CHUNK_DIM) as i32,
+            ),
+            None => (
+                (cam_pos.x.floor() as i32).div_euclid(TILE_NUM_PER_CHUNK_DIM as i32),
+                (cam_pos.z.floor() as i32).div_euclid(TILE_NUM_PER_CHUNK_DIM as i32),
+            ),
+        };
 
         let new_map_plane_metadata: &MapPlaneMetadata = world_geo_data_res
             .maps
@@ -467,7 +549,8 @@ fn sys_update_worldmap_chunks_to_render(
 
         // Compute the visible chunk set for the desired scale and, if a handoff is active,
         // also maintain the committed scale as a fallback until the target scale is ready.
-        let visible_chunks = |scale: u32| match export_footprint.as_deref() {
+        let footprint = export_footprint.as_deref().or(free_camera_footprint.as_deref().map(|free| &free.0));
+        let visible_chunks = |scale: u32| match footprint {
             Some(footprint) => chunks_in_tile_rect(
                 footprint,
                 new_map_plane_metadata.width,
