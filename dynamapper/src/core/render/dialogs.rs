@@ -81,14 +81,3 @@ pub fn get_egui_context_ready_mut<'a>(
     egui_contexts.ctx_mut().ok()
 }
 
-/*
-// No significant speed gain by using the immutable context (which is also discouraged in the bevy_egui code comments)
-
-pub fn get_egui_context_ready<'a>(
-    egui_contexts: &'a EguiContexts,
-    _egui_ui_camera: &Res<UiCameraResource>,
-) -> Option<&'a bevy_egui::egui::Context> {
-    // Reverted to standard egui: use the primary window context.
-    egui_contexts.ctx().ok()
-}
-*/

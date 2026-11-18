@@ -16,7 +16,7 @@ use bevy::{
 use color_eyre::eyre;
 use serde::{Deserialize, Serialize};
 
-#[derive(Asset, Clone, Deserialize, Serialize, Resource, TypePath)]
+#[derive(Clone, Deserialize, Serialize, Resource, TypePath)]
 pub struct Settings {
     pub core: SectCore,
     pub graphics: SectGraphics,
@@ -856,10 +856,7 @@ impl_tracked_plugin!(SettingsPlugin);
 impl Plugin for SettingsPlugin {
     fn build(&self, app: &mut App) {
         log_plugin_build(self);
-        app.init_asset::<Settings>()
-            //.init_asset::<SettingsAsset>()
-            //.init_asset_loader::<SettingsAssetLoader>() // Register custom loader
-            .add_message::<ToggleWireframe>()
+        app.add_message::<ToggleWireframe>()
             .add_systems(PreStartup, sys_startup_load_file)
             .add_systems(Startup, sys_apply)
             .insert_resource(SettingsSaveTimer({
@@ -1008,79 +1005,6 @@ fn sys_apply(
 
     zoom_res.write_val(settings_res.session_state.window.zoom);
 }
-
-// ----
-
-/*
-
-// Wrappers
-#[derive(Asset, TypePath, Debug, Clone)]
-pub struct SettingsAsset(pub Settings);
-
-#[derive(Resource, Clone)]
-pub struct SettingsHandle(pub Handle<Settings>);
-
-fn sys_settings_watcher_loader(
-    mut commands: Commands,
-    asset_server: Res<AssetServer>,
-) {
-    // Ttrack for changes and update it asynchronously.
-    let handle: Handle<Settings> = asset_server.load(CONFIG_FILE_NAME);
-    commands.insert_resource(SettingsHandle(handle));
-}
-
-#[derive(Default)]
-pub struct SettingsAssetLoader;
-
-impl AssetLoader for SettingsAssetLoader {
-    type Asset = Settings;
-    type Settings = ();
-    type Error = anyhow::Error;
-
-    async fn load(
-        &self,
-        reader: &mut dyn Reader,
-        _settings: &(),
-        _load_context: &mut LoadContext<'_>,
-    ) -> Result<Self::Asset, Self::Error> {
-        let mut bytes = Vec::new();
-        reader.read_to_end(&mut bytes).await?;
-        let s = std::str::from_utf8(&bytes)?;
-        let config = toml::from_str(s)?;
-        Ok(config)
-    }
-
-    fn extensions(&self) -> &[&str] {
-        &["toml"]
-    }
-}
-
-fn sys_settings_reloaded(
-    mut commands: Commands,
-    mut events: EventReader<AssetEvent<Settings>>,
-    handles: Res<SettingsHandle>,
-    assets: Res<Assets<Settings>>,
-) {
-    for event in events.read() {
-        match event {
-            AssetEvent::LoadedWithDependencies { id } if id == &handles.0.id() => {
-                if let Some(settings) = assets.get(&handles.0) {
-                    println!("Settings loaded (or hot reloaded): {settings:#?}");
-                    commands.insert_resource(settings.clone());
-                }
-            }
-            AssetEvent::Modified { id } if id == &handles.0.id() => {
-                if let Some(settings) = assets.get(&handles.0) {
-                    println!("Settings hot reloaded: {settings:#?}");
-                    commands.insert_resource(settings.clone());
-                }
-            }
-            _ => {}
-        }
-    }
-}
-
-*/
 
 // ----
 

@@ -107,15 +107,6 @@ impl MaterialExtension for LandMaterialExtension {
         "shaders/world/land/main.wesl".into()
     }
 
-    /*
-    fn deferred_vertex_shader() -> ShaderRef {
-        "shaders/world/land/main.wesl".into()
-    }
-    fn deferred_fragment_shader() -> ShaderRef {
-        "shaders/world/land/main.wesl".into()
-    }
-    */
-
     fn enable_prepass() -> bool {
         false
     }

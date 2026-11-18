@@ -341,20 +341,6 @@ fn apply_world_camera_graphics_settings(
 // World light
 //------------------------------------
 
-// We won't use a world light source, we'll bake the light in the material and the shader.
-// We use it now just to light the "player" cube.
-/*
-// Set up a directional light (sun)
-commands.spawn((
-    DirectionalLight {
-        shadows_enabled: false, // Disable shadows if not needed
-        ..default()
-    },
-    Transform::from_xyz(8.0, 50.0, 8.0).looking_at(Vec3::new(8.0, 0.0, 8.0), Vec3::Y),
-    GlobalTransform::default(), // Needed for transforming the light in world space
-));
-*/
-
 fn sys_update_camera_projection_to_view(
     mut camera_q: Query<&mut Projection, With<PlayerCamera>>,
     windows: Query<&Window>,

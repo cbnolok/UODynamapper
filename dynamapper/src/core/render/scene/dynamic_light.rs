@@ -57,20 +57,6 @@ pub fn sys_spawn_dynamic_light(
         GlobalTransform::default(), // Needed for transforming the light in world space
         light_component,
     ));
-
-    /*
-    commands.spawn((
-        PointLight {
-            shadows_enabled: true,
-            intensity: 10_000_000.,
-            range: 100.0,
-            shadow_depth_bias: 0.2,
-            ..default()
-        },
-        Transform::from_xyz(camera_pos.x, camera_pos.y, camera_pos.z)
-            .looking_at(player_start_pos, Vec3::Y),
-    ));
-    */
 }
 
 //scene_update_data_res: Option<Res<SceneUpdateData>>,

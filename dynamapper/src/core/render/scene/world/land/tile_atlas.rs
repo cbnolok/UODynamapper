@@ -545,15 +545,6 @@ impl TileAtlas {
         let page = self.layer_to_page[layer_idx].as_uvec2();
         self.record_changed_cells(AtlasCells::from_origin_size(page * self.params.page_texels + offset, size));
 
-        /*
-        console_logger::one(
-            None,
-            LogSev::Info,
-            LogAbout::Performance,
-            &format!("[DBG-Atlas] upload: layer {} offset {:?}", layer, offset),
-        );
-        */
-
         self.pending_dirty_write_count = self.pending_dirty_write_count.saturating_add(1);
 
         let regions = &mut self.dirty_regions[layer_idx];
@@ -644,15 +635,6 @@ pub fn sys_extract_atlas_uploads(
         &diagnostics,
         crate::core::diagnostics::WorldmapCrossAppTimedSystem::AtlasExtract,
     );
-    /*
-    let count = tile_atlas.extract_staging.len();
-    console_logger::one(
-        None,
-        LogSev::Debug,
-        LogAbout::Performance,
-        &format!("[DBG-extract] Extracting {count} texture array uploads"),
-    );
-    */
     render_uploads.capture(&tile_atlas, (**atlas_image).0.id());
 }
 
@@ -750,16 +732,6 @@ pub fn sys_render_upload_tile_atlas(
         &diagnostics,
         crate::core::diagnostics::WorldmapCrossAppTimedSystem::AtlasUpload,
     );
-
-    /*
-    let count = uploads.pending.len();
-    console_logger::one(
-        None,
-        LogSev::Debug,
-        LogAbout::Performance,
-        &format!("[DBG-render] Processing {count} texture array uploads"),
-    );
-    */
 
     let gpu_image = gpu_images.get(&atlas_handle.0)
         .filter(|_| uploads.image == Some(atlas_handle.0.id()));

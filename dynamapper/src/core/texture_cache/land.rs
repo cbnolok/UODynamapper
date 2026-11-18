@@ -1269,7 +1269,6 @@ fn sys_pin_active_textures(
 fn sys_evict_idle_land_cache(
     mut cache_r: ResMut<cache::LandTextureCache>,
     mut map_planes_r: ResMut<crate::core::uo_files_loader::MapPlanesRes>,
-    _texmap_2d_r: Res<crate::core::uo_files_loader::TexMap2DRes>,
     scene_state_r: Res<crate::core::render::scene::SceneStateData>,
     mut tile_atlas: ResMut<crate::core::render::scene::world::land::tile_atlas::TileAtlas>,
     time: Res<Time<Real>>,
@@ -1288,21 +1287,6 @@ fn sys_evict_idle_land_cache(
                 ),
             );
         }
-
-        /*
-        // 2. Evict idle pixel data from the raw TexMap2D cache (CPU RAM)
-        let evicted_pixel_buffers = texmap_2d_r.0.evict_idle_textures(Duration::from_secs(60));
-        if evicted_pixel_buffers > 0 {
-            console_logger::one(
-                LogSev::Info,
-                LogAbout::Performance,
-                &format!(
-                    "Evicted {} idle pixel buffers from TexMap2D cache.",
-                    evicted_pixel_buffers
-                ),
-            );
-        }
-        */
     }
 
     // 3. Evict idle map blocks from the active map plane (CPU RAM)

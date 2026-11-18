@@ -423,17 +423,6 @@ pub fn sys_draw_spawned_land_chunks(
             .collect()
     };
 
-    /*
-    if targets.len() > 0 {
-        console_logger::one(
-            None,
-            LogSev::Info,
-            LogAbout::Performance,
-            &format!("[DBG-Queue] sys_draw_spawned_land_chunks: {} targets", targets.len()),
-        );
-    }
-    */
-
     if targets.is_empty() {
         return;
     }

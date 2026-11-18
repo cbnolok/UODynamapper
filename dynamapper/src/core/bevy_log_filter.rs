@@ -119,32 +119,6 @@ pub fn init_bevy_logging() {
     });
 }
 
-// --- OLD LOG INTERCEPTOR IMPLEMENTATION (Commented out after move to Targets-based implementation) ---
-/*
-pub fn custom_bevy_log_config() -> bevy::log::LogPlugin {
-    bevy::log::LogPlugin {
-        // Suppress benign calloop warnings on Linux (e.g. "Received an event for non-existence source")
-        filter: "calloop=error,bevy_framepace=warn".into(),
-        // Return a no-op fmt layer that writes to /dev/null.
-        // Returning None would make Bevy fall back to its default stderr formatter,
-        // causing double logging alongside our InterceptLogLayer.
-        fmt_layer: |_| {
-            Some(Box::new(
-                tracing_subscriber::fmt::Layer::default().with_writer(std::io::sink),
-            ))
-        },
-        // Add the InterceptLogLayer on top (intercepts log events from Bevy or Uocf crates).
-        custom_layer: bevy_logging_custom_layer,
-        ..Default::default()
-    }
-}
-
-pub fn bevy_logging_custom_layer(_app: &mut bevy::prelude::App) -> Option<bevy::log::BoxedLayer> {
-    // (Old implementation used to be nested here, but was moved to top-level structs for the Targets-based init)
-    Some(InterceptLogLayer.boxed())
-}
-*/
-
 fn classify_log_target(target: &str, module_path: &str, msg: &str) -> LogAbout {
     if target.starts_with("uocf") || module_path.starts_with("uocf") {
         return LogAbout::UoFiles;

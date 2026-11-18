@@ -45,33 +45,6 @@ struct SpriteInstance {
     color_rgba: vec4<f32>,
 }
 
-struct GroundTileInstance {
-    world_x: f32,
-    world_z: f32,
-    world_y: f32,
-    layer: u32,
-    depth_class: u32,
-    base_world_y: f32,
-    uv_min: vec2<f32>,
-    uv_max: vec2<f32>,
-    local_min: vec2<f32>,
-    local_max: vec2<f32>,
-    tile_x: f32,
-    tile_y: f32,
-    priority_z_units: f32,
-    sort_bias_ordinal: u32,
-    // Tiledata flags: bit 0 = is_wet (animated water UV distortion).
-    is_wet_flags: u32,
-    texture_stretch: f32,
-    hue_id: u32,
-    hue_flags: u32,
-    _pad_hue: vec2<u32>,
-    // The static local lights at the quad's corners (unit quad corner (x, z) at index x + 2 z), RGBA8 packed for
-    // unpack4x8unorm; the vertex shader picks its corner's and the rasterizer interpolates them.
-    local_light_corners: array<u32, 4>,
-    color_rgba: vec4<f32>,
-}
-
 struct SpriteParams {
     render_mode: u32,
     alpha_cutoff: f32,

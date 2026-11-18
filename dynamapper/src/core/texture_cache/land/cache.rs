@@ -697,12 +697,6 @@ impl LandTextureCache {
         let sender = self.upload_sender.clone();
         let generation = self.upload_generation;
 
-        /*
-                let tex_art_cc = self.tex_art_cc.clone();
-                let tex_art_ec = self.tex_art_ec.clone();
-                let tex_land_ec = self.tex_land_ec.clone();
-        */
-
         let task = pool.spawn(async move {
             let (tile_bytes, upload_layout) = if let Some((_, bytes, layout)) = package_source {
                 (bytes, layout)
@@ -1183,44 +1177,6 @@ impl LandTextureCache {
         (small, big)
     }
 }
-
-/*
-use image::{ImageBuffer, RgbaImage};
-use std::path::Path;
-fn dump_texture_array_layer(
-    images: &ResMut<Assets<Image>>,
-    array_handle: &Handle<Image>,
-    layer_index: u32,
-    tile_size: u32, // e.g. 44
-    output_file: &str,
-) {
-    // Get the bevy Image (texture array)
-    if let Some(array_img) = images.get(array_handle) {
-        let pixel_data = array_img.data.as_ref().unwrap();
-        let depth = array_img.texture_descriptor.size.depth_or_array_layers;
-        assert!(
-            layer_index < depth,
-            "Requested layer {} out of bounds",
-            layer_index
-        );
-
-        let layer_size = (tile_size * tile_size * 4) as usize; // RGBA8
-        let layer_offset = layer_index as usize * layer_size;
-
-        // Make an ImageBuffer from the raw data
-        let layer_data = &pixel_data[layer_offset..layer_offset + layer_size];
-        let img_buf: RgbaImage = ImageBuffer::from_raw(tile_size, tile_size, layer_data.to_vec())
-            .expect("Failed to create buffer from raw tile data.");
-
-        // Save as PNG
-        img_buf.save(Path::new(output_file)).unwrap();
-
-        println!("Dumped layer {layer_index} to {output_file}");
-    } else {
-        eprintln!("Couldn't find texture array handle");
-    }
-}
-*/
 
 pub fn sys_extract_texture_array_uploads(
     cache: Extract<Res<LandTextureCache>>,

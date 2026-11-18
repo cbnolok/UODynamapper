@@ -361,21 +361,6 @@ pub fn sys_update_shared_land_material(
         || land_outside_dimming_changed
     {
         if let Some(mut mat) = materials.get_mut(&shared_mat.0) {
-            /*
-            console_logger::one(
-                None,
-                LogSev::Info,
-                LogAbout::Performance,
-                &format!(
-                    "[DBG-Mat] atlas={} lighting={} (diff={:.4}) zoom={} (diff={:.4})",
-                    atlas_changed,
-                    lighting_meaningfully_changed,
-                    (current_global_lighting - *last_global_lighting).abs(),
-                    zoom_changed,
-                    (current_render_zoom - *last_render_zoom).abs()
-                ),
-            );
-            */
             if lighting_meaningfully_changed {
                 mat.extension.scene_uniform.global_lighting = current_global_lighting;
                 *last_global_lighting = current_global_lighting;
@@ -619,12 +604,6 @@ impl Plugin for DrawLandChunkMeshPlugin {
             )
             .add_systems(First, tile_atlas::sys_clear_atlas_uploads)
             .add_systems(Startup, setup_base_mesh::setup_land_mesh);
-        // Redundant AABB enforcement removed to save CPU/GPU cycles.
-        // .add_systems(
-        //     PostUpdate,
-        //     draw_mesh::sys_enforce_land_chunk_aabb
-        //         .run_if(in_state(crate::core::AppState::InGame)),
-        // );
 
         let Some(render_app) = app.get_sub_app_mut(bevy::render::RenderApp) else {
             return;

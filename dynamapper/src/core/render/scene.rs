@@ -122,12 +122,6 @@ impl Plugin for ScenePlugin {
 
 pub fn sys_setup_scene(mut writer: MessageWriter<RecomputeVisibleChunksEvent>) {
     log_system_add_startup::<ScenePlugin>(StartupSysSet::SetupSceneStage2, fname!());
-    /*
-        // Always clear out anything previously spawned!
-        for (entity, _) in existing_chunks_q.iter() {
-            commands.entity(entity).despawn();
-        }
-    */
     writer.write(RecomputeVisibleChunksEvent {});
 }
 
