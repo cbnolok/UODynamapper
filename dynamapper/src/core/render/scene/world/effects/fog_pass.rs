@@ -7,10 +7,11 @@
 //
 // Architecture:
 // - Uses Bevy's `FullscreenMaterial` trait to register the pass.
-// - `FogPostProcessUniform` is a `ShaderType` component attached to the
-//   `PlayerCamera` entity and extracted to the GPU each frame.
-// - `sys_sync_fog_uniform` reads from `UniformState` each frame and
-//   writes to `FogPostProcessUniform`, keeping them in sync.
+// - `FogPostProcessUniform` is a `ShaderType` component on the `PlayerCamera`
+//   entity, extracted to the GPU each frame, while the fog is on: without it
+//   the pass does not run.
+// - `sys_sync_fog_uniform` inserts it from `UniformState`, keeps it in sync,
+//   and removes it when the fog is off.
 
 use crate::configs::shader_presets::UniformState;
 use crate::core::render::scene::camera::PlayerCamera;
@@ -46,7 +47,7 @@ impl Plugin for FogPostProcessPlugin {
 // ---- Uniform ---------------------------------------------------------------
 
 /// Fog parameters passed to the fullscreen fog shader.
-/// Kept in sync each frame with `UniformState.lighting` by `sys_sync_fog_uniform`.
+/// Kept in sync with `UniformState.lighting` by `sys_sync_fog_uniform`, on the player camera only while the fog is on.
 ///
 /// Must match the `FogPostProcessUniform` struct layout in `fog_pass.wesl` exactly.
 /// All fields must be aligned to 16 bytes per WGSL/encase rules.
@@ -92,34 +93,48 @@ impl FullscreenMaterial for FogPostProcessUniform {
 // ---- System ----------------------------------------------------------------
 
 /// Syncs `UniformState.lighting` fog fields into the `FogPostProcessUniform`
-/// component on the `PlayerCamera` entity so the GPU gets updated values.
+/// component on the `PlayerCamera` entity so the GPU gets updated values. With the fog off the component is removed,
+/// so the fullscreen pass, which would pass every pixel through unchanged, does not run.
 fn sys_sync_fog_uniform(
+    mut commands: Commands,
     uniform_state: Res<UniformState>,
     time: Res<Time>,
     windows: Query<&Window>,
-    mut camera_q: Query<&mut FogPostProcessUniform, With<PlayerCamera>>,
+    mut camera_q: Query<(Entity, Option<&mut FogPostProcessUniform>), With<PlayerCamera>>,
 ) {
-    let lighting = &uniform_state.lighting;
-    let dynamic_fog = lighting.enable_fog != 0
-        && lighting.fog_params.z > 0.001
-        && lighting.fog_params.w > 0.001;
-    if !uniform_state.is_changed() && !dynamic_fog {
-        return;
-    }
-    let Ok(mut fog_uniform) = camera_q.single_mut() else {
+    let Ok((camera, fog_uniform)) = camera_q.single_mut() else {
         return;
     };
+    let lighting = &uniform_state.lighting;
+    if lighting.enable_fog == 0 {
+        if fog_uniform.is_some() {
+            commands.entity(camera).remove::<FogPostProcessUniform>();
+        }
+        return;
+    }
+    let dynamic_fog = lighting.fog_params.z > 0.001 && lighting.fog_params.w > 0.001;
+    if fog_uniform.is_some() && !uniform_state.is_changed() && !dynamic_fog {
+        return;
+    }
 
     let screen_size = windows
         .iter()
         .next()
         .map(|w| Vec2::new(w.resolution.width(), w.resolution.height()))
         .unwrap_or(Vec2::ONE);
-
-    fog_uniform.enable_fog = lighting.enable_fog;
-    fog_uniform.fog_color = lighting.fog_color;
-    fog_uniform.fog_night_color = lighting.fog_night_color;
-    fog_uniform.fog_params = lighting.fog_params;
-    fog_uniform.screen_size = screen_size;
-    fog_uniform.time_seconds = time.elapsed_secs();
+    let uniform = FogPostProcessUniform {
+        enable_fog: lighting.enable_fog,
+        fog_color: lighting.fog_color,
+        fog_night_color: lighting.fog_night_color,
+        fog_params: lighting.fog_params,
+        screen_size,
+        time_seconds: time.elapsed_secs(),
+        ..default()
+    };
+    match fog_uniform {
+        Some(mut fog_uniform) => *fog_uniform = uniform,
+        None => {
+            commands.entity(camera).insert(uniform);
+        }
+    }
 }
