@@ -1,6 +1,6 @@
 //! Opt-in local test control. No socket or polling system exists unless the
 //! caller supplies DYNAMAPPER_CONTROL_SOCKET. The protocol never executes code.
-use super::teleport::teleport_player;
+use crate::world::teleport::teleport_player;
 use super::InjectedPointer;
 mod input;
 mod settings;

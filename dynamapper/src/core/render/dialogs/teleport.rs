@@ -1,5 +1,5 @@
 use crate::core::controls::input_actions::{ActionCloseActiveDialog, ActionToggleTeleportDialog};
-use crate::core::controls::teleport::teleport_player;
+use crate::world::teleport::teleport_player;
 use crate::core::render::scene::player::Player;
 use crate::core::render::scene::world::WorldGeoData;
 use crate::core::render::scene::RecomputeVisibleChunksEvent;

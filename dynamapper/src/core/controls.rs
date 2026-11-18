@@ -1,7 +1,5 @@
 pub mod window_controls;
 pub mod input_actions;
-pub mod player_movement;
-pub(crate) mod teleport;
 #[cfg(unix)]
 mod dev_control;
 
@@ -26,7 +24,7 @@ impl Plugin for ControlsPlugin {
     fn build(&self, app: &mut App) {
         log_plugin_build(self);
         app.add_plugins((
-            player_movement::PlayerMovementPlugin {
+            crate::world::player_movement::PlayerMovementPlugin {
                 registered_by: "ControlsPlugin",
             },
             window_controls::WindowControlsPlugin {

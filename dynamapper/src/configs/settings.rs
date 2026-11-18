@@ -6,9 +6,7 @@ use crate::core::render::scene::camera::RenderZoom;
 use crate::core::render::scene::player::Player;
 use crate::prelude::*;
 use crate::util_lib::tracked_plugin::set_plugin_log_toggles;
-use crate::util_lib::uo_coords::*;
 use bevy::{
-    //asset::{AssetLoader, LoadContext, io::Reader},
     pbr::wireframe::WireframeConfig,
     prelude::*,
     window::WindowResolution,

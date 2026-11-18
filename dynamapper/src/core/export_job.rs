@@ -8,7 +8,7 @@
 use crate::configs::shader_presets::{UniformState, CLASSIC_PRESET_GROUP, PAINTERLY_PRESET_GROUP};
 use crate::console_logger::{self, LogAbout, LogSev};
 use crate::core::app_states::AppState;
-use crate::core::controls::teleport::teleport_player;
+use crate::world::teleport::teleport_player;
 use crate::core::render::scene::{
     camera::{ORTHO_SIZE_FACTOR, ORTHO_WIDTH_SCALE_FACTOR, PlayerCamera},
     chunks_in_tile_rect,

@@ -11,4 +11,4 @@ pub use crate::{
 pub use crate::{fname, impl_tracked_plugin, util_lib::tracked_plugin::*};
 
 #[doc(hidden)]
-pub use crate::util_lib::uo_coords::*;
+pub use crate::world::coords::*;

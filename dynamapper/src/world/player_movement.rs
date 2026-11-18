@@ -3,9 +3,9 @@ use crate::core::render::scene::player::Player;
 use crate::core::render::scene::world::WorldGeoData;
 use crate::core::render::scene::RecomputeVisibleChunksEvent;
 use crate::core::system_sets::*;
-use super::{InjectedPointer, effective_cursor_position};
+use crate::core::controls::{InjectedPointer, effective_cursor_position};
 use crate::prelude::*;
-use crate::util_lib::uo_coords::UOVec4;
+use crate::world::coords::UOVec4;
 use bevy::prelude::*;
 use bevy::window::PrimaryWindow;
 
@@ -268,7 +268,7 @@ fn sys_player_move(
                     .unwrap_or_else(|| UOVec4::new(0, 0, 0, 0));
                 // Adjust height. Use the scale utility if available or a standard step.
                 // In UO a height step is often 1, but we scale it for Bevy.
-                let delta_y = crate::util_lib::uo_coords::scale_uo_z_to_bevy_units(
+                let delta_y = crate::world::coords::scale_uo_z_to_bevy_units(
                     move_dir.vertical_dir as f32,
                 );
                 if !smooth_movement {

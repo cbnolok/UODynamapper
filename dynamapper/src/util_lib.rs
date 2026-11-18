@@ -1,6 +1,7 @@
 pub mod math;
 pub mod image;
-pub mod uo_coords;
+// Temporary: hot files still import the old path (docs/reviews/2026-11-18-dynamapper-module-map.md, Order 3).
+pub use crate::world::coords as uo_coords;
 #[cfg(test)]
 pub mod wesl_source;
 

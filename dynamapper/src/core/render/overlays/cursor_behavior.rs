@@ -931,7 +931,7 @@ fn sys_teleport_on_click(
     if let Ok((mut player, mut transform)) = player_q.single_mut() {
         let Some(map) = cursor_map_id(Some(&player), &settings) else { return; };
         if hit.logical.m != map { return; }
-        if crate::core::controls::teleport::teleport_player(&mut player, &mut transform, hit.logical, &world_geo_data).is_err() { return; }
+        if crate::world::teleport::teleport_player(&mut player, &mut transform, hit.logical, &world_geo_data).is_err() { return; }
         // Always force a full recompute so the new visible area loads immediately.
         chunk_recompute_writer.write(RecomputeVisibleChunksEvent {});
         ingame_sysmessage_logger::normal(format!(

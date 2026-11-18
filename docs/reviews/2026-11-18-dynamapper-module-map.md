@@ -53,11 +53,11 @@ terrain, statics, lighting, picking, postprocess}`, `ui/`, `export/`, `diagnosti
 
 | Now | Lines | Churn | Notes |
 |---|---:|---:|---|
-| `util_lib/uo_coords.rs` | 121 | 1 | UO coordinates and their Bevy conversions. |
-| `core/maps.rs`, `core/statics.rs`, `core/multis.rs` | 908 | 12 | Map, statics and multi stores. |
+| `world/coords.rs` | 121 | 1 | Moved 2026-11-18 from `util_lib/uo_coords.rs`, which re-exports it for its hot importers. |
+| `world/{maps, statics, multis}.rs` | 908 | 12 | Moved 2026-11-18 from `core/`, which re-exports them for their hot importers. |
 | `rsw.rs` (`core/render/scene/world.rs`) | 100 | 4 | The map catalog half; its plugin wiring stays with render. |
 | `core/render/scene/player.rs` | 107 | 0 | Logical position → `world/player`; the rendered entity stays with `render/scene`. |
-| `core/controls/player_movement.rs`, `core/controls/teleport.rs` | 362 | 0 | Player operations. |
+| `world/{player_movement, teleport}.rs` | 362 | 0 | Moved 2026-11-18 from `core/controls/`. |
 | `rsw/caves.rs`, `rsw/z_view.rs` | 2211 | 24 | World analysis (cave membership, floor-view cut, cell queries) that render consumes. |
 
 ### content

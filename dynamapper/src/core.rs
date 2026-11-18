@@ -3,16 +3,14 @@ mod bevy_log_filter;
 pub mod constants;
 pub mod controls;
 pub mod export_job;
-pub mod maps;
-pub mod multis;
 pub mod render;
-pub mod statics;
 pub mod system_sets;
 mod texture_cache;
 mod uo_files_loader;
 
 // Temporary: hot files still import the old path (docs/reviews/2026-11-18-dynamapper-module-map.md, Order 3).
 pub use crate::diagnostics;
+pub use crate::world::{maps, multis, statics};
 
 use crate::{
     configs::{settings, ExternalDataPlugin},

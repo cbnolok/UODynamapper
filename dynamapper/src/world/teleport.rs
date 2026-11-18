@@ -23,7 +23,7 @@ pub(crate) fn teleport_player(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::core::maps::MapPlaneMetadata;
+    use crate::world::maps::MapPlaneMetadata;
 
     #[test]
     fn teleport_validates_before_changing_player_or_transform() {
