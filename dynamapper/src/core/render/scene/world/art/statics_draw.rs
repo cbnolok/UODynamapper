@@ -9,12 +9,12 @@ use crate::core::render::scene::world::art::statics_collect::{
 };
 use crate::core::system_sets::StartupSysSet;
 use crate::core::texture_cache::art::{
-    ArtPageAtlas, ArtPageSources, GroundArtPageAtlas, GroundArtPageAtlasHandle, SpriteArtPageAtlas,
+    ArtPageAtlas, GroundArtPageAtlas, GroundArtPageAtlasHandle, SpriteArtPageAtlas,
     SpriteArtPageAtlasHandle,
 };
 use crate::core::uo_files_loader::{
     HuesPackageRes, TexArtCcPackageRes, TexArtEcPackageRes, TexLandEcPackageRes,
-    TileMetaPackageRes, TexAuxEcPackageRes,
+    TileMetaPackageRes,
 };
 use crate::prelude::*;
 use bevy::camera::visibility::NoFrustumCulling;
@@ -29,7 +29,6 @@ use bevy::render::render_resource::{
 use bevy::render::storage::ShaderBuffer;
 use std::collections::HashMap;
 use udd_assets::tex_art_cc::PagePixelFormat;
-use udd_assets::bc7::{ImageExtent, VramTextureFormat};
 
 #[derive(ShaderType, Clone)]
 pub struct SpriteParams {
@@ -563,25 +562,20 @@ fn create_art_atlas_image(
     layers: u32,
     pixel_format: PagePixelFormat,
 ) -> Handle<Image> {
-    use bevy::render::render_resource::{Extent3d, TextureDimension, TextureUsages};
+    use bevy::render::render_resource::{Extent3d, TextureDimension};
 
-    let extent = ImageExtent::new(page_width.max(1), page_height.max(1)).unwrap();
-    let byte_len = match pixel_format {
-        PagePixelFormat::Rgba8888 => VramTextureFormat::Rgba8UnormSrgb.expected_byte_len(extent),
-        PagePixelFormat::Bc7 => VramTextureFormat::Bc7RgbaUnormSrgb.expected_byte_len(extent),
-    } * layers as usize;
-    let mut image = Image::new(
+    // No CPU data: the GPU zero-fills the layers, and a growth copies the resident ones from the image it replaces
+    // (`ArtPageAtlas::apply_resize`), which `new_uninit`'s COPY_SRC usage allows.
+    let mut image = Image::new_uninit(
         Extent3d {
             width: page_width,
             height: page_height,
             depth_or_array_layers: layers,
         },
         TextureDimension::D2,
-        vec![0; byte_len],
         atlas_texture_format(pixel_format),
         bevy::asset::RenderAssetUsages::RENDER_WORLD,
     );
-    image.texture_descriptor.usage |= TextureUsages::COPY_DST | TextureUsages::TEXTURE_BINDING;
     image.texture_view_descriptor = Some(bevy::render::render_resource::TextureViewDescriptor {
         dimension: Some(bevy::render::render_resource::TextureViewDimension::D2Array),
         ..Default::default()
@@ -698,10 +692,6 @@ fn apply_sprite_art_atlas_resize(
     render_assets: &ArtSpriteRenderAssets,
     atlas: &mut ArtPageAtlas,
     atlas_handle: &mut Handle<Image>,
-    tex_art_cc_res: Option<&Res<TexArtCcPackageRes>>,
-    tex_art_ec_res: Option<&Res<TexArtEcPackageRes>>,
-    tex_aux_ec_res: Option<&Res<TexAuxEcPackageRes>>,
-    kingdom_reborn: Option<KrStaticSources>,
 ) {
     let Some(new_layers) = atlas.take_resize_request() else {
         return;
@@ -710,7 +700,6 @@ fn apply_sprite_art_atlas_resize(
         return;
     }
 
-    let resident_pages = atlas.resident_page_layers();
     let new_handle = create_art_atlas_image(
         images,
         atlas.page_width,
@@ -719,16 +708,6 @@ fn apply_sprite_art_atlas_resize(
         atlas.pixel_format,
     );
     atlas.apply_resize(new_handle.clone(), new_layers);
-
-    for (key, layer) in resident_pages {
-        atlas.requeue_page(key, layer, ArtPageSources {
-            cc: tex_art_cc_res.map(|p| p.0.as_ref()),
-            ec: tex_art_ec_res.map(|p| p.0.as_ref()),
-            kr_art: kingdom_reborn.map(|kr| kr.art),
-            aux: tex_aux_ec_res.map(|p| p.0.as_ref()),
-            ..ArtPageSources::default()
-        });
-    }
 
     *atlas_handle = new_handle.clone();
 
@@ -749,8 +728,6 @@ fn apply_ground_art_atlas_resize(
     render_assets: &ArtGroundRenderAssets,
     atlas: &mut ArtPageAtlas,
     atlas_handle: &mut Handle<Image>,
-    tex_land_ec_res: Option<&Res<TexLandEcPackageRes>>,
-    kingdom_reborn: Option<KrStaticSources>,
 ) {
     let Some(new_layers) = atlas.take_resize_request() else {
         return;
@@ -759,7 +736,6 @@ fn apply_ground_art_atlas_resize(
         return;
     }
 
-    let resident_pages = atlas.resident_page_layers();
     let new_handle = create_art_atlas_image(
         images,
         atlas.page_width,
@@ -768,14 +744,6 @@ fn apply_ground_art_atlas_resize(
         atlas.pixel_format,
     );
     atlas.apply_resize(new_handle.clone(), new_layers);
-
-    for (key, layer) in resident_pages {
-        atlas.requeue_page(key, layer, ArtPageSources {
-            terrain: tex_land_ec_res.map(|p| p.0.as_ref()),
-            kr_terrain: kingdom_reborn.map(|kr| kr.land),
-            ..ArtPageSources::default()
-        });
-    }
 
     *atlas_handle = new_handle.clone();
 
@@ -1203,23 +1171,13 @@ pub fn sys_apply_pending_art_page_atlas_resizes(
     mut sprite_atlas_handle: ResMut<SpriteArtPageAtlasHandle>,
     mut ground_atlas: ResMut<GroundArtPageAtlas>,
     mut ground_atlas_handle: ResMut<GroundArtPageAtlasHandle>,
-    tex_art_cc_res: Option<Res<TexArtCcPackageRes>>,
-    tex_art_ec_res: Option<Res<TexArtEcPackageRes>>,
-    tex_aux_ec_res: Option<Res<TexAuxEcPackageRes>>,
-    tex_land_ec_res: Option<Res<TexLandEcPackageRes>>,
-    (binding_state, kr_packages): (Res<ActiveArtAtlasBindingState>, KrStaticPackages),
 ) {
-    let kingdom_reborn = kr_packages.sources().filter(|_| binding_state.kingdom_reborn);
     apply_sprite_art_atlas_resize(
         &mut images,
         &mut materials,
         &render_assets,
         &mut sprite_atlas,
         &mut sprite_atlas_handle.0,
-        tex_art_cc_res.as_ref(),
-        tex_art_ec_res.as_ref(),
-        tex_aux_ec_res.as_ref(),
-        kingdom_reborn,
     );
     apply_ground_art_atlas_resize(
         &mut images,
@@ -1227,8 +1185,6 @@ pub fn sys_apply_pending_art_page_atlas_resizes(
         &ground_render_assets,
         &mut ground_atlas,
         &mut ground_atlas_handle.0,
-        tex_land_ec_res.as_ref(),
-        kingdom_reborn,
     );
 }
 

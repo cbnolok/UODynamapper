@@ -20,7 +20,7 @@ use udd_assets::{
 use std::collections::HashMap;
 use bevy::render::extract_resource::ExtractResource;
 use bevy::render::render_asset::RenderAssets;
-use bevy::render::renderer::RenderQueue;
+use bevy::render::renderer::{RenderDevice, RenderQueue};
 use bevy::render::texture::GpuImage;
 use bevy::render::Extract;
 
@@ -48,6 +48,15 @@ pub struct ArtPageUpload {
     pub upload_height: u32,
 }
 
+/// The resident layers of an atlas that grew, copied on the GPU from the image it replaced (`ArtPageAtlas::apply_resize`).
+/// Holding `source` keeps the old image alive until the render world has copied it.
+#[derive(Clone)]
+pub struct ArtLayerCopy {
+    pub source: Handle<Image>,
+    pub destination: Handle<Image>,
+    pub layers: u32,
+}
+
 /// A layer's source survives growth/reupload; equal page numbers from different
 /// packages must never alias when Enhanced artwork falls back to Classic art.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -62,17 +71,6 @@ pub enum ArtPageKey {
     Missing,
 }
 
-/// The packages whose pages an atlas re-uploads after it grows (`ArtPageAtlas::requeue_page`).
-#[derive(Clone, Copy, Default)]
-pub struct ArtPageSources<'a> {
-    pub cc: Option<&'a TexArtCcPackage>,
-    pub ec: Option<&'a TexArtEcPackage>,
-    pub terrain: Option<&'a TexLandEcPackage>,
-    pub kr_art: Option<&'a TexArtEcPackage>,
-    pub kr_terrain: Option<&'a TexLandEcPackage>,
-    pub aux: Option<&'a TexAuxEcPackage>,
-}
-
 pub struct ArtPageAtlas {
     pub gpu_handle: Handle<Image>,
     page_to_layer: HashMap<ArtPageKey, u32>,
@@ -82,6 +80,8 @@ pub struct ArtPageAtlas {
     mapping_revision: u64,
     pub pending_uploads: Vec<ArtPageUpload>,
     pub extract_staging: Vec<ArtPageUpload>,
+    pending_layer_copies: Vec<ArtLayerCopy>,
+    extract_layer_copies: Vec<ArtLayerCopy>,
     pub page_width: u32,
     pub page_height: u32,
     pub active_layers: u32,
@@ -108,6 +108,8 @@ impl ArtPageAtlas {
             mapping_revision: 0,
             pending_uploads: Vec::new(),
             extract_staging: Vec::new(),
+            pending_layer_copies: Vec::new(),
+            extract_layer_copies: Vec::new(),
             page_width,
             page_height,
             active_layers,
@@ -135,13 +137,6 @@ impl ArtPageAtlas {
 
     pub fn take_resize_request(&mut self) -> Option<u32> {
         self.requested_resize_to.take()
-    }
-
-    pub fn resident_page_layers(&self) -> Vec<(ArtPageKey, u32)> {
-        self.page_to_layer
-            .iter()
-            .map(|(&page_index, &layer)| (page_index, layer))
-            .collect()
     }
 
     pub fn queue_page_upload<F>(
@@ -200,6 +195,11 @@ impl ArtPageAtlas {
         let old_layers = self.active_layers;
         if new_layers > old_layers {
             let staged_uploads = std::mem::take(&mut self.extract_staging);
+            self.pending_layer_copies.push(ArtLayerCopy {
+                source: self.gpu_handle.clone(),
+                destination: new_handle.clone(),
+                layers: old_layers,
+            });
             self.gpu_handle = new_handle;
             self.active_layers = new_layers;
             self.layer_to_page.resize(new_layers as usize, None);
@@ -225,9 +225,19 @@ impl ArtPageAtlas {
         self.page_to_layer.clear();
         self.pending_uploads.clear();
         self.extract_staging.clear();
+        self.pending_layer_copies.clear();
+        self.extract_layer_copies.clear();
         self.current_tick = 0;
         self.mapping_revision = self.mapping_revision.saturating_add(1);
         self.requested_resize_to = None;
+    }
+
+    /// Hands this frame's uploads and layer copies to the extraction, in place of the last frame's.
+    fn stage_for_extract(&mut self) {
+        self.extract_staging.clear();
+        let mut pending = std::mem::take(&mut self.pending_uploads);
+        self.extract_staging.append(&mut pending);
+        self.extract_layer_copies = std::mem::take(&mut self.pending_layer_copies);
     }
 
     pub fn mapping_revision(&self) -> u64 {
@@ -319,43 +329,6 @@ impl ArtPageAtlas {
             u32::from(slot.width), u32::from(slot.height), u32::from(slot.width), u32::from(slot.height),
             PagePixelFormat::Rgba8888, || aux.load_rgba(slot.payload_texture_id)?
                 .ok_or_else(|| eyre::eyre!("missing-texture payload is unavailable")))
-    }
-
-    pub fn requeue_page(&mut self, key: ArtPageKey, layer: u32, sources: ArtPageSources) {
-        let ArtPageSources { cc, ec, terrain, kr_art, kr_terrain, aux } = sources;
-        let (ec, terrain) = match key {
-            ArtPageKey::KrEnhanced(_) => (kr_art, terrain),
-            ArtPageKey::KrTerrain(_) => (ec, kr_terrain),
-            _ => (ec, terrain),
-        };
-        match key {
-            ArtPageKey::Classic(index) => {
-                let Some(package) = cc else { return; };
-                let Some(page) = package.pages().get(index as usize) else { return; };
-                self.queue_page_upload(key, layer, package.atlas_width(), package.atlas_height(),
-                    page.used_width, page.used_height, page.pixel_format, || package.read_page_bytes(index));
-            }
-            ArtPageKey::Enhanced(index) | ArtPageKey::KrEnhanced(index) => {
-                let Some(package) = ec else { return; };
-                let Some(page) = package.pages().get(index as usize) else { return; };
-                self.queue_page_upload(key, layer, package.atlas_width(), package.atlas_height(),
-                    page.used_width, page.used_height, page.pixel_format, || package.read_page_bytes(index));
-            }
-            ArtPageKey::Terrain(index) | ArtPageKey::KrTerrain(index) => {
-                let Some(package) = terrain else { return; };
-                let Some(page) = package.pages().get(index as usize) else { return; };
-                self.queue_page_upload(key, layer, package.atlas_width(), package.atlas_height(),
-                    page.used_width, page.used_height, page.pixel_format, || package.read_page_bytes(index));
-            }
-            ArtPageKey::Missing => {
-                let Some(package) = aux else { return; };
-                let slot = package.missing_texture_slot();
-                self.queue_page_upload(key, layer, u32::from(slot.width), u32::from(slot.height),
-                    u32::from(slot.width), u32::from(slot.height), PagePixelFormat::Rgba8888,
-                    || package.load_rgba(slot.payload_texture_id)?
-                        .ok_or_else(|| eyre::eyre!("missing-texture payload is unavailable")));
-            }
-        }
     }
 
     fn resolve_slot<F>(
@@ -551,7 +524,7 @@ mod tests {
         assert_ne!(atlas.pending_uploads[0].layer, atlas.pending_uploads[1].layer);
         assert_eq!(atlas.pending_uploads[0].bytes, vec![31; 64]);
         assert_eq!(atlas.pending_uploads[1].bytes, vec![127; 64]);
-        let keys = atlas.resident_page_layers();
+        let keys = atlas.page_to_layer.clone();
         atlas.apply_resize(Handle::default(), 3);
         assert_eq!(atlas.page_to_layer.len(), 2);
         for (key, layer) in keys { assert_eq!(atlas.page_to_layer[&key], layer); }
@@ -641,9 +614,13 @@ mod tests {
             upload_height: 1,
         });
 
-        atlas.apply_resize(Handle::default(), 3);
+        let (old, grown) = (atlas.gpu_handle.clone(), bevy::asset::uuid_handle!("6d1a2f0e-58c4-4b7e-9f3a-0c2b7e91d4a5"));
+        atlas.apply_resize(grown.clone(), 3);
 
         assert_eq!(atlas.active_layers, 3);
+        assert_eq!(atlas.pending_layer_copies.len(), 1);
+        let copy = &atlas.pending_layer_copies[0];
+        assert_eq!((&copy.source, &copy.destination, copy.layers), (&old, &grown, 2));
         assert_eq!(atlas.page_to_layer.get(&ArtPageKey::Enhanced(7)), Some(&1));
         assert_eq!(atlas.layer_to_page[1], Some(ArtPageKey::Enhanced(7)));
         assert_eq!(atlas.layer_to_page[2], None);
@@ -732,40 +709,46 @@ fn sys_warn_art_page_format_mismatch(
     }
 }
 
-#[derive(Resource, Default)]
-pub struct RenderSpriteArtPageUploads(pub Vec<ArtPageUpload>);
+/// The render world's share of an atlas: the layer copies of its growths, then the page uploads.
+#[derive(Default)]
+pub struct RenderArtPageWork {
+    uploads: Vec<ArtPageUpload>,
+    layer_copies: Vec<ArtLayerCopy>,
+}
+
+impl RenderArtPageWork {
+    fn extend_from(&mut self, atlas: &ArtPageAtlas) {
+        self.uploads.extend(atlas.extract_staging.iter().cloned());
+        self.layer_copies.extend(atlas.extract_layer_copies.iter().cloned());
+    }
+}
 
 #[derive(Resource, Default)]
-pub struct RenderGroundArtPageUploads(pub Vec<ArtPageUpload>);
+pub struct RenderSpriteArtPageUploads(pub RenderArtPageWork);
+
+#[derive(Resource, Default)]
+pub struct RenderGroundArtPageUploads(pub RenderArtPageWork);
 
 pub fn sys_stage_sprite_art_page_uploads(mut atlas: ResMut<SpriteArtPageAtlas>) {
-    atlas.extract_staging.clear();
-    let mut pending = std::mem::take(&mut atlas.pending_uploads);
-    atlas.extract_staging.append(&mut pending);
+    atlas.stage_for_extract();
 }
 
 pub fn sys_stage_ground_art_page_uploads(mut atlas: ResMut<GroundArtPageAtlas>) {
-    atlas.extract_staging.clear();
-    let mut pending = std::mem::take(&mut atlas.pending_uploads);
-    atlas.extract_staging.append(&mut pending);
+    atlas.stage_for_extract();
 }
 
 pub fn sys_extract_sprite_art_page_uploads(
     atlas: Extract<Res<SpriteArtPageAtlas>>,
     mut render_uploads: ResMut<RenderSpriteArtPageUploads>,
 ) {
-    if !atlas.extract_staging.is_empty() {
-        render_uploads.0.extend(atlas.extract_staging.clone());
-    }
+    render_uploads.0.extend_from(&atlas);
 }
 
 pub fn sys_extract_ground_art_page_uploads(
     atlas: Extract<Res<GroundArtPageAtlas>>,
     mut render_uploads: ResMut<RenderGroundArtPageUploads>,
 ) {
-    if !atlas.extract_staging.is_empty() {
-        render_uploads.0.extend(atlas.extract_staging.clone());
-    }
+    render_uploads.0.extend_from(&atlas);
 }
 
 #[derive(Resource, Clone, ExtractResource)]
@@ -780,18 +763,63 @@ pub fn sys_render_upload_sprite_art_pages(
     mut uploads: ResMut<RenderSpriteArtPageUploads>,
     atlas_handle: Option<Res<SpriteArtPageAtlasHandle>>,
     gpu_images: Res<RenderAssets<GpuImage>>,
+    render_device: Res<RenderDevice>,
     render_queue: Res<RenderQueue>,
 ) {
-    render_art_page_uploads(&mut uploads.0, atlas_handle.as_ref().map(|handle| &handle.0), &gpu_images, &render_queue);
+    let work = &mut uploads.0;
+    if copy_grown_art_layers(&mut work.layer_copies, &gpu_images, &render_device, &render_queue) {
+        render_art_page_uploads(&mut work.uploads, atlas_handle.as_ref().map(|handle| &handle.0), &gpu_images,
+            &render_queue);
+    }
 }
 
 pub fn sys_render_upload_ground_art_pages(
     mut uploads: ResMut<RenderGroundArtPageUploads>,
     atlas_handle: Option<Res<GroundArtPageAtlasHandle>>,
     gpu_images: Res<RenderAssets<GpuImage>>,
+    render_device: Res<RenderDevice>,
     render_queue: Res<RenderQueue>,
 ) {
-    render_art_page_uploads(&mut uploads.0, atlas_handle.as_ref().map(|handle| &handle.0), &gpu_images, &render_queue);
+    let work = &mut uploads.0;
+    if copy_grown_art_layers(&mut work.layer_copies, &gpu_images, &render_device, &render_queue) {
+        render_art_page_uploads(&mut work.uploads, atlas_handle.as_ref().map(|handle| &handle.0), &gpu_images,
+            &render_queue);
+    }
+}
+
+/// Copies the resident layers of each grown atlas from the image it replaced, in growth order, and says whether all are
+/// done. The page uploads wait for them: a page staged before a growth targets a layer the copy would overwrite.
+fn copy_grown_art_layers(
+    copies: &mut Vec<ArtLayerCopy>,
+    gpu_images: &RenderAssets<GpuImage>,
+    render_device: &RenderDevice,
+    render_queue: &RenderQueue,
+) -> bool {
+    use bevy::render::render_resource::{CommandEncoderDescriptor, Extent3d, Origin3d, TexelCopyTextureInfo, TextureAspect};
+
+    let mut encoder = None;
+    let mut copied = 0;
+    for copy in copies.iter() {
+        let (Some(source), Some(destination)) = (gpu_images.get(&copy.source), gpu_images.get(&copy.destination)) else {
+            break;
+        };
+        let encoder = encoder.get_or_insert_with(|| render_device.create_command_encoder(&CommandEncoderDescriptor {
+            label: Some("art_atlas_growth_copy"),
+        }));
+        let size = source.texture_descriptor.size;
+        let layer_start = |texture| TexelCopyTextureInfo { texture, mip_level: 0, origin: Origin3d::ZERO, aspect: TextureAspect::All };
+        encoder.copy_texture_to_texture(
+            layer_start(&*source.texture),
+            layer_start(&*destination.texture),
+            Extent3d { width: size.width, height: size.height, depth_or_array_layers: copy.layers },
+        );
+        copied += 1;
+    }
+    if let Some(encoder) = encoder {
+        render_queue.submit([encoder.finish()]);
+    }
+    copies.drain(..copied);
+    copies.is_empty()
 }
 
 fn render_art_page_uploads(
