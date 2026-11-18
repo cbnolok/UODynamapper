@@ -265,7 +265,8 @@ elevation_degrees = 60.50379
 
 [classic.cave]
 global_lighting = 1.08
-# Cave: very low ambient, cool tones.
+# Cave: the afternoon's light colour, tint, ambient and sun; the light level alone darkens it (the
+# Classic client's rule, [Scene dimming]).
 [classic.cave.client_lighting]
 light_level = 26
 [classic.cave.effects]
@@ -313,11 +314,11 @@ enable_fog = 0
 enable_tonemap = 1
 enable_grading = 0    # Disabled in Classic mode
 enable_gloom = 0      # Disabled in Classic mode
-light_color = [0.9, 0.95, 1.05]     # Faint cool light
+light_color = [1.08, 0.99, 0.9]    # Bright warm white, as the afternoon
 tone_curve = 0
-atmosphere_tint = [0.1, 0.14, 0.2]    # Very dark blue ambient
+atmosphere_tint = [0.18, 0.22, 0.28]  # Neutral cool, as the afternoon
 exposure = 1.1
-ambient_strength = 0.06
+ambient_strength = 0.18
 grade_warm_color = [1.08, 0.98, 0.9]
 grade_cool_color = [0.82, 0.95, 1.05]
 grade_params = [1.05, 0.2, 0.38, 1.0]
@@ -333,7 +334,7 @@ fog_night_color = [0.0, 0.0, 0.0, 0.0]
 [classic.cave.land_lighting]
 enable_bent = 1
 terrain_shading_model = 0
-diffuse_strength = 0.85
+diffuse_strength = 1.0
 specular_strength = 0.0 # Disabled in Classic mode
 rim_strength = 0.0      # Disabled in Classic mode
 fill_strength = 0.0     # Disabled in Classic mode

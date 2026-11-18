@@ -704,14 +704,15 @@ sources = ["cc/cc", "ec/ec", "ec/kr", "cc/ec", "ec/cc"]
 name = "deceit-cave-candles-darkness"
 guards = """A dungeon (Deceit, map 1) under the cave preset: skulls with candles along a corridor; every style dims \
 by the cave light level 26, Classic by the Classic client's rule with its light.mul lights, UOD-Painterly by KR's \
-night composite with its own colour and its light sprites' glow (6542a8c1)."""
+night composite with its own colour and its light sprites' glow (6542a8c1). The afternoon is the control: Classic's \
+unlit floor in the cave is 6/32 of it, as it keeps the afternoon's tint, ambient and sun."""
 tier = "quick"
 tags = ["lights", "caves", "darkness"]
 map = 1
 x = 5317
 y = 742
 z = 0
-times = ["cave"]
+times = ["afternoon", "cave"]
 
 # ---------------------------------------------------------------------------------------------------------------
 # Other towns

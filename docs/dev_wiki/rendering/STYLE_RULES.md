@@ -197,7 +197,7 @@ Details: [`LAND_TEXTURES_AND_TRANSITIONS.md`](LAND_TEXTURES_AND_TRANSITIONS.md).
 
 | | Classic | Enhanced, KR-like | UOD-Painterly |
 |---|---|---|---|
-| Dimming | `(32 − L) / 32` + lights × 31/32 (`classic_composite`, `ClientNightCompositeUniform::classic`); the night keeps the afternoon's light colour, tint, ambient and sun, so the rule alone sets its darkness (unlit paving 0.69 of the afternoon) | `clamp(4 (0.25 level + B (1 − level)) scene)`, level = 1 − L/31, B = light sprites over the night map | the same composite at `overlay_strength` 0, then the sprites added once more as a glow (`light_sprite_glow`) |
+| Dimming | `(32 − L) / 32` + lights × 31/32 (`classic_composite`, `ClientNightCompositeUniform::classic`); the night and the caves keep the afternoon's light colour, tint, ambient and sun, so the rule alone sets their darkness (unlit ground 0.69 and 0.19 of the afternoon) | `clamp(4 (0.25 level + B (1 − level)) scene)`, level = 1 − L/31, B = light sprites over the night map | the same composite at `overlay_strength` 0, then the sprites added once more as a glow (`light_sprite_glow`) |
 | Source | CC client 0x00465600, 0x00448c80, 0x004571b0; CUO `IsometricLevel` | KR client `UOLightingPostProcessEffect::BuildCompositeQuad` 0x0041f5c0 (§1, P3.3) | user (UOD-Painterly look) |
 | Lights | light.mul decals (`art/static_lights.rs`) from `world_lights.uddp`, signed | tileart block 3 light sprites (`art/client_light_sprites.rs`); LightSource alone gives no light | as Enhanced/KR-like |
 
