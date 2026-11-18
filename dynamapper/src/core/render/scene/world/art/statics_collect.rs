@@ -101,6 +101,10 @@ pub(crate) const STATIC_FLAG_CAVE_OUTSIDE: u32 = 1 << 15;
 /// or Bridge in the cell west or north of it whose top is the wall's (`wall_cap_meets_floor_flag`): the perspective
 /// camera orders its cap in that row (art/depth.wesl `perspective_cap_row_shift`). Kept in sync with art/depth.wesl.
 pub(crate) const STATIC_FLAG_CAP_MEETS_FLOOR: u32 = 1 << 24;
+/// `SpriteInstance` and `GroundTileInstance::is_wet_flags` bit: the static continues the land
+/// (`static_continues_land`), so it takes the land's colour grading, KR-like's chroma knee included; the other statics
+/// keep their own colour (`land_grade_flag`). Kept in sync with art/shading.wesl.
+pub(crate) const STATIC_FLAG_LAND_GRADE: u32 = 1 << 25;
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub(crate) struct StaticBillboardBounds {
@@ -1065,6 +1069,25 @@ fn static_continues_land(
     }
 }
 
+/// `STATIC_FLAG_LAND_GRADE` for a static of `tile_graphic` drawn as `visual_kind`: set when it continues the land by
+/// the Enhanced data (`static_continues_land`, whatever the art source and land), or is drawn from the Kingdom Reborn
+/// packages, which only the statics that continue the KR land are (`kingdom_reborn_static_visual_kind`).
+fn land_grade_flag(
+    visual_kind: StaticVisualKind,
+    tile_graphic: u16,
+    tilemeta_package: Option<&udd_assets::tilemeta::TileMetaPackage>,
+    tilemeta: Option<&udd_assets::tilemeta::TileMetaItemTile>,
+    tex_art_ec: Option<&udd_assets::tex_art_ec::TexArtEcPackage>,
+    tex_land_ec: Option<&udd_assets::tex_land_ec::TexLandEcPackage>,
+    cache: &mut StaticSurfaceLikeResolutionCache,
+) -> u32 {
+    let continues = visual_kind.is_kingdom_reborn()
+        || enhanced_static_visual_kind(tile_graphic, tilemeta_package, tilemeta, tex_art_ec, tex_land_ec, cache)
+            .is_some_and(|kind| static_continues_land(kind, tilemeta,
+                cache.landlike_item_texture(tile_graphic, tilemeta_package, tex_land_ec)));
+    if continues { STATIC_FLAG_LAND_GRADE } else { 0 }
+}
+
 /// Whether one of the visible Enhanced textures of item `tile_id` (its world-art base layers) is a texture a terrain
 /// material of the EC land package draws.
 fn item_draws_terrain_texture(
@@ -1200,6 +1223,7 @@ pub struct SpriteInstance {
     /// Bit 10: `STATIC_FLAG_CLIENT_GRUNGE`, the KR client grunges the static (art/client_grunge.wesl).
     /// Bit 11: `STATIC_FLAG_FLAT_ART`, the upright card shows flat art (art/shading.wesl).
     /// Bit 24: `STATIC_FLAG_CAP_MEETS_FLOOR`, a wall with a floor on its top in the farther row (art/depth.wesl).
+    /// Bit 25: `STATIC_FLAG_LAND_GRADE`, the static continues the land and takes its grading (art/shading.wesl).
     pub is_wet_flags: u32,
     pub hue_id: u32,
     pub hue_flags: u32,
@@ -1243,6 +1267,7 @@ pub struct GroundTileInstance {
     /// Tiledata flags packed for the GPU.
     /// Bit 0: is_wet (IsWet tiledata flag → animated water UV distortion in ground shader).
     /// Bit 10: `STATIC_FLAG_CLIENT_GRUNGE`, the KR client grunges the static (art/client_grunge.wesl).
+    /// Bit 25: `STATIC_FLAG_LAND_GRADE`, the static continues the land and takes its grading (art/shading.wesl).
     pub is_wet_flags: u32,
     pub texture_stretch: f32,
     pub hue_id: u32,
@@ -2656,7 +2681,10 @@ fn emit_static_render_tile(
         is_wet_flags: u32::from(renders_wet) | cave_flags
             | super::light_scene::static_light_class_flags(tilemeta.map_or(0, |meta| meta.flags),
                 tilemeta.map_or(0, |meta| meta.height))
-            | wall_cap_meets_floor_flag(flags, render_tile.z, tilemeta.map_or(0, |meta| meta.height), farther_floor_at),
+            | wall_cap_meets_floor_flag(flags, render_tile.z, tilemeta.map_or(0, |meta| meta.height), farther_floor_at)
+            | visual_kind.map_or(0, |kind| land_grade_flag(kind, render_tile.graphic, enhanced_package,
+                enhanced_tilemeta, resources.tex_art_ec_package(), resources.tex_land_ec_package(),
+                surface_resolution_cache)),
         base_world_y: (render_tile.z as f32) * frame.height_scale,
         client_shadow_flags: client_shadow_flags(tilemeta),
         client_shadow_height: (i32::from(render_tile.z) - ground_z) as f32,
@@ -4173,6 +4201,12 @@ mod tests {
             } else {
                 assert_eq!(classic_art_enhanced_land, classic, "{graphic:#x}");
                 assert_eq!(enhanced_art_classic_land, enhanced, "{graphic:#x}");
+            }
+            // They take the land's grading under either art source; the other statics keep their own colour.
+            let land_grade = if continues { STATIC_FLAG_LAND_GRADE } else { 0 };
+            for kind in [enhanced, classic] {
+                assert_eq!(land_grade_flag(kind, graphic, Some(&meta), Some(tile), Some(&ec), Some(&land), &mut cache),
+                    land_grade, "{graphic:#x}");
             }
         }
         println!("statics that continue the land: {} ({liquids} land liquids, {surfaces} terrain-textured surfaces)",

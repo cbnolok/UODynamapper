@@ -42,7 +42,9 @@ fn apply_chroma_knee(col: vec3<f32>, luma: f32, knee: f32, slope: f32) -> vec3<f
   return mix(vec3<f32>(luma), col, target_c / c);
 }
 
-fn grade_color_vibrant(color_in: vec3<f32>, global_light: GlobalLightingUniforms) -> vec3<f32> {
+// `land_grade`: the land and the statics that continue it (art/shading.wesl `static_takes_land_grade`) take the
+// chroma knee, KR-like's softening tuned for the grass; furniture, walls and the other statics keep their own colour.
+fn grade_color_vibrant(color_in: vec3<f32>, global_light: GlobalLightingUniforms, land_grade: bool) -> vec3<f32> {
   let strength    = global_light.grade_params.x;
   let vibrance    = global_light.grade_extra.x;
   let saturation  = global_light.grade_extra.y;
@@ -52,7 +54,8 @@ fn grade_color_vibrant(color_in: vec3<f32>, global_light: GlobalLightingUniforms
   let l = color_grading_luminance(color_in);
   let sat_col = mix(vec3<f32>(l), color_in, saturation);
   // After saturation, as the mock-up: saturation keeps the luma l, so the knee mixes toward the same grey.
-  let knee_col = apply_chroma_knee(sat_col, l, global_light.grade_chroma_knee, global_light.grade_chroma_slope);
+  let knee = select(CHROMA_KNEE_OFF, global_light.grade_chroma_knee, land_grade);
+  let knee_col = apply_chroma_knee(sat_col, l, knee, global_light.grade_chroma_slope);
 
   let chroma = knee_col - vec3<f32>(l);
   let sat_mag = max(max(abs(chroma.r), abs(chroma.g)), abs(chroma.b));

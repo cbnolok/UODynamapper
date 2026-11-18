@@ -35,6 +35,7 @@ import package::shaders::world::art::client_shadow::{client_shadow_casts, client
 import package::shaders::world::art::client_grunge::{client_grunges, client_grunge_uv, apply_client_grunge};
 import package::shaders::world::art::hue::{apply_static_hue, apply_ec_sprite_hue, STATIC_HUE_FLAG_APPLY, STATIC_HUE_FLAG_EC_SPRITE};
 import package::shaders::world::art::shading::{apply_art_surface_shading, art_local_light_at_corner, STATIC_FLAG_FLAT_ART,
+    static_takes_land_grade,
     ART_FLAT_SHADING_UV};
 import package::shaders::world::art::surface_blend::static_surface_coverage;
 import package::shaders::world::ec_item_water::{ec_item_is_water, sample_ec_item_water};
@@ -557,7 +558,7 @@ fn shade_fragment(in: ArtVertexOutput, sample_index: u32) -> ArtFragmentOutput {
 
     var final_rgb = shaded.rgb;
     if (global_light.enable_grading == 1u) {
-        final_rgb = grade_color_vibrant(final_rgb, global_light);
+        final_rgb = grade_color_vibrant(final_rgb, global_light, static_takes_land_grade(inst.is_wet_flags));
     }
     if (global_light.enable_tonemap == 1u) {
         final_rgb = tonemap_with_curve(max(final_rgb, vec3<f32>(0.0)), global_light.exposure, effects.post_process_profile, global_light.tone_curve);

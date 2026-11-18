@@ -901,7 +901,7 @@ fn finish_land(hdr_rgb: vec3<f32>) -> vec4<f32> {
   // ============================================================================
   var post = hdr_rgb;
   if (enable_grading == 1u) {
-    post = grade_color_vibrant(post, global_light);
+    post = grade_color_vibrant(post, global_light, true);
   }
   var final_rgb = post;
   if (enable_tonemap == 1u) {

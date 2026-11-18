@@ -45,6 +45,14 @@ UOD-Painterly share shading mode 2 and the KR post-process profile and differ on
 | Land texture variation | none | on | on | on |
 | Client texture filter, grunge, chroma knee | off | off | on | off |
 
+- **The chroma knee softens the land alone.** KR-like's knee (0.55, slope 0), tuned to bring the KR textures' grass
+  to the KR screenshots, acts on the land and on the statics that continue it (`static_continues_land`: grass,
+  liquids, swamp, lava fields); furniture, walls, trees and the other statics keep their own colour. Source: user,
+  2026-11-18 (the knee on every material turned the shops' counters and the Minoc tables the grey-brown of their
+  floors). Code: `STATIC_FLAG_LAND_GRADE`, `land_grade_flag` (`art/statics_collect.rs`), `grade_color_vibrant`'s
+  `land_grade` (`postprocess/color_grading.wesl`). Test: `canonical_statics_that_continue_the_land_take_its_style`.
+  Fixtures: `britain-shop-counter-keeps-its-colour`, `minoc-hall-tables-zview`, `minoc-grass-land-like-statics`.
+
 - Source: user decisions recorded in [`CLIENT_NIGHT_LIGHTING_AND_SHADOWS.md`](CLIENT_NIGHT_LIGHTING_AND_SHADOWS.md);
   KR client trace [`uokr_atmosphere.md`](../../client_research/ghidra-kr-atmosphere/results/uokr_atmosphere.md).
 - Code: `RENDER_STYLE_PRESETS` (`dynamapper/src/core/render/dialogs/land_shader.rs`); the `preset_group_*` predicates

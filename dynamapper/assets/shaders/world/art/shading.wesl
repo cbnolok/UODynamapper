@@ -41,6 +41,14 @@ const ART_FLAT_SHADING_UV: vec2<f32> = vec2<f32>(0.5, 0.5);
 // SpriteInstance is_wet_flags bit: the upright card shows flat art, a floor or a flat roof. Keep in sync with
 // STATIC_FLAG_FLAT_ART in statics_collect.rs.
 const STATIC_FLAG_FLAT_ART: u32 = 1u << 11u;
+// SpriteInstance and GroundTileInstance is_wet_flags bit: the static continues the land and takes its grading, the
+// chroma knee included (postprocess/color_grading.wesl). Keep in sync with STATIC_FLAG_LAND_GRADE in
+// statics_collect.rs.
+const STATIC_FLAG_LAND_GRADE: u32 = 1u << 25u;
+
+fn static_takes_land_grade(is_wet_flags: u32) -> bool {
+    return (is_wet_flags & STATIC_FLAG_LAND_GRADE) != 0u;
+}
 
 // The static local light at a unit quad corner (x, z), from the instance's four packed corners
 // (statics_collect.rs `static_local_light_corners`); the vertex shaders pass it on for the rasterizer to interpolate.

@@ -351,4 +351,21 @@ blue overlay, applied after the grading, dominates as before.
     from 0.57 to 0.69.
 
   Any global setting therefore trades the land tuning for the furniture. Options: a knee on land only, or a softer
-  knee at night only. Undecided. Sheets: `uodynamapper-scratch/surface-items/sheets/issue1-*`.
+  knee at night only. Sheets: `uodynamapper-scratch/surface-items/sheets/issue1-*`.
+
+  **Decided (user, 2026-11-18): the knee on the land only**, and on the statics that continue it
+  (`STATIC_FLAG_LAND_GRADE`; STYLE_RULES.md §1). The land is unchanged. The counter (CC art, KR land) measures
+  (74, 47, 14) in the afternoon, as with the knee off. In the tuning views at the client zoom (1024 x 768, KR land,
+  EC art, afternoon; mean HSV saturation, luma within 1 level):
+
+  | Region | Before | After | References |
+  |---|---|---|---|
+  | Yew trees | 0.364 | 0.587 | foliage 0.330 |
+  | Britain trees | 0.367 | 0.550 | foliage 0.330 |
+  | Britain brick wall | 0.280 | 0.286 | stone 0.337 |
+  | Trinsic sandstone wall | 0.244 | 0.267 | stone 0.337 |
+  | Trinsic bridge wood | 0.347 | 0.373 | wood 0.381 |
+  | grass (land), three views | 0.32 to 0.36 | the same | grass 0.334 |
+
+  Walls and wood move toward the references; the trees' foliage, whose EC art is 0.5 to 0.65 saturated, leaves them.
+  Whether foliage statics should keep the knee is open.

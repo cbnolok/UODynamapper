@@ -146,6 +146,22 @@ sources = ["cc/cc", "ec/ec", "ec/kr", "cc/ec", "ec/cc"]
 settings = { world_rendering = { show_only_player_floor = true } }
 
 [[fixture]]
+name = "britain-shop-counter-keeps-its-colour"
+guards = """KR-like's chroma knee, tuned for the grass, softens the land and the statics that continue it only: the \
+shop's orange L-counter, its walls and the furniture keep their own colour under both art sources, by day and at \
+night. The knee on every material turned the counter the grey-brown of the floor (2026-11-15)."""
+tier = "quick"
+tags = ["colour", "knee", "britain"]
+map = 1
+x = 1435
+y = 1687
+z = 0
+times = ["afternoon", "night"]
+styles = ["kr"]
+sources = ["cc/kr", "ec/kr"]
+settings = { world_rendering = { show_only_player_floor = true } }
+
+[[fixture]]
 name = "britain-slate-roofs-kr-night-level-22"
 guards = """KR-like's night at the light level of the KR client's night screenshots (about 22, not the night preset's \
 10): the night map's blue turns the grey marble, the slate roofs and the plaster blue-purple, as in the client \

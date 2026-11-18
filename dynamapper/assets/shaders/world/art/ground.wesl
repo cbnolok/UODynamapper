@@ -29,7 +29,8 @@ import package::shaders::world::art::art_ground_bindings::{
 };
 import package::shaders::world::art::client_grunge::{client_grunges, client_grunge_uv, apply_client_grunge};
 import package::shaders::world::art::hue::apply_static_hue;
-import package::shaders::world::art::shading::{apply_art_surface_shading, art_local_light_at_corner, ART_FLAT_SHADING_UV};
+import package::shaders::world::art::shading::{apply_art_surface_shading, art_local_light_at_corner, ART_FLAT_SHADING_UV,
+    static_takes_land_grade};
 import package::shaders::world::projection::camera_relative_world_to_clip;
 
 struct GroundVertexOutput {
@@ -230,7 +231,7 @@ fn shade_fragment(in: GroundVertexOutput, sample_index: u32) -> GroundFragmentOu
 
     var final_rgb = shaded.rgb;
     if (global_light.enable_grading == 1u) {
-        final_rgb = grade_color_vibrant(final_rgb, global_light);
+        final_rgb = grade_color_vibrant(final_rgb, global_light, static_takes_land_grade(inst.is_wet_flags));
     }
     if (global_light.enable_tonemap == 1u) {
         final_rgb = tonemap_with_curve(max(final_rgb, vec3<f32>(0.0)), global_light.exposure, effects.post_process_profile, global_light.tone_curve);
