@@ -268,9 +268,16 @@ fn sys_apply_world_camera_graphics_settings(
     camera_q: Query<Entity, With<PlayerCamera>>,
     ui_camera: Res<UiCameraResource>,
     settings: Res<Settings>,
+    mut applied_mode: Local<Option<AntiAliasingMode>>,
 ) {
     log_system_add_update::<CameraPlugin>(fname!());
+    // Settings change for unrelated reasons, the player's position among them on every step: re-insert the
+    // cameras' AA components only when the mode itself changes.
+    if *applied_mode == Some(settings.graphics.anti_aliasing) {
+        return;
+    }
     if let Some(camera_entity) = camera_q.iter().next() {
+        *applied_mode = Some(settings.graphics.anti_aliasing);
         apply_world_camera_graphics_settings(
             &mut commands,
             camera_entity,
@@ -641,6 +648,32 @@ fn sys_free_camera_movement(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Settings change for reasons unrelated to AA (the player's position on every step): the cameras' AA components
+    /// are inserted again only when the mode itself changes.
+    #[test]
+    fn camera_aa_components_are_reapplied_only_when_the_mode_changes() {
+        let mut settings = crate::configs::settings::bundled_settings();
+        settings.graphics.anti_aliasing = AntiAliasingMode::Msaa4x;
+        let mut app = App::new();
+        let camera = app.world_mut().spawn(PlayerCamera).id();
+        app.insert_resource(settings)
+            .insert_resource(UiCameraResource(None))
+            .add_systems(Update, sys_apply_world_camera_graphics_settings);
+        app.update();
+        assert_eq!(app.world().get::<Msaa>(camera), Some(&Msaa::Sample4));
+
+        // Same mode, settings touched: nothing is inserted again.
+        app.world_mut().entity_mut(camera).remove::<Msaa>();
+        app.world_mut().resource_mut::<Settings>().session_state.window.zoom += 1.0;
+        app.update();
+        assert_eq!(app.world().get::<Msaa>(camera), None);
+
+        app.world_mut().resource_mut::<Settings>().graphics.anti_aliasing = AntiAliasingMode::Fxaa;
+        app.update();
+        assert_eq!(app.world().get::<Msaa>(camera), Some(&Msaa::Off));
+        assert!(app.world().get::<Fxaa>(camera).is_some());
+    }
 
     /// Both cameras sit on the isometric diagonal (1, 1, 1) of their focus and look back along it, whatever the window
     /// and the zoom: the orthographic one at BASE_OFFSET_FROM_PLAYER, the perspective one at its orbit distance. The

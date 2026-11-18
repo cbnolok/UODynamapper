@@ -554,6 +554,25 @@ fn gumps_and_paperdoll_of_preset(preset: &str) -> GumpClient {
     }
 }
 
+/// The bundled settings alone, without any cache copy: a complete `Settings` for tests.
+#[cfg(test)]
+pub(crate) fn bundled_settings() -> Settings {
+    fn bundled<T: serde::de::DeserializeOwned>(rel: &str) -> T {
+        load_bundled_settings(rel).unwrap_or_else(|error| panic!("{error:#}"))
+    }
+    let core_data: CoreFile = bundled(CORE_CONFIG_FILE);
+    Settings {
+        core: core_data.core,
+        graphics: bundled::<GraphicsFile>(GRAPHICS_CONFIG_FILE).graphics,
+        runtime_assets: bundled(RUNTIME_ASSETS_CONFIG_FILE),
+        app: bundled(USER_PREFERENCES_CONFIG_FILE),
+        session_state: bundled(SESSION_STATE_CONFIG_FILE),
+        logging: core_data.logging,
+        keybindings: bundled(KEYBINDINGS_CONFIG_FILE),
+        world_rendering: bundled(WORLD_RENDERING_CONFIG_FILE),
+    }
+}
+
 pub fn load_from_files() -> eyre::Result<Settings> {
     // Every file: the bundled default under assets/, then the cache copy the app saved, if any.
     let core_data: CoreFile = load_user_settings(CORE_CONFIG_FILE)?;
@@ -869,18 +888,23 @@ impl Plugin for SettingsPlugin {
 }
 
 /// Syncs runtime resources back to Settings so they can be persisted by sys_debounced_save.
+/// Writes through `bypass_change_detection` and flags `Settings` changed only when a value differs: a mutable
+/// dereference alone would flag it every tick and run every `resource_changed::<Settings>` system each frame.
 fn sys_sync_resources_to_settings(
     zoom: Res<RenderZoom>,
     mut settings: ResMut<Settings>,
     windows: Query<&Window>,
     player_q: Query<&Player>,
 ) {
-    sync_runtime_resources_to_settings(
-        &mut settings,
+    let changed = sync_runtime_resources_to_settings(
+        settings.bypass_change_detection(),
         Some(zoom.0),
         first_window_size(&windows),
         first_player_position(&player_q),
     );
+    if changed {
+        settings.set_changed();
+    }
 }
 
 fn sys_flush_settings_on_exit(
@@ -921,32 +945,39 @@ fn first_player_position(player_q: &Query<&Player>) -> Option<UOVec4> {
     player_q.iter().next().and_then(|player| player.current_pos)
 }
 
+/// Returns whether any value changed, so the caller can flag `Settings` changed only then.
 fn sync_runtime_resources_to_settings(
     settings: &mut Settings,
     zoom: Option<f32>,
     window_size: Option<(f32, f32)>,
     player_pos: Option<UOVec4>,
-) {
+) -> bool {
+    let mut changed = false;
     if let Some(zoom) = zoom {
         if (settings.session_state.window.zoom - zoom).abs() > 0.001 {
             settings.session_state.window.zoom = zoom;
+            changed = true;
         }
     }
 
     if let Some((width, height)) = window_size {
         if (settings.session_state.window.width - width).abs() > 1.0 {
             settings.session_state.window.width = width;
+            changed = true;
         }
         if (settings.session_state.window.height - height).abs() > 1.0 {
             settings.session_state.window.height = height;
+            changed = true;
         }
     }
 
     if let Some(pos) = player_pos {
         if settings.session_state.world.last_p != pos {
             settings.session_state.world.last_p = pos;
+            changed = true;
         }
     }
+    changed
 }
 
 fn sys_startup_load_file(mut commands: Commands, export_job: Option<Res<ExportJob>>) {
@@ -1572,5 +1603,38 @@ mod tests {
             parse_strict(WORLD_RENDERING_CONFIG_FILE, &text).expect("parse world rendering settings");
 
         assert!(settings.enable_static_art_local_lights);
+    }
+
+    #[derive(Resource, Default)]
+    struct SettingsSeenChanged(bool);
+
+    fn record_settings_changed(settings: Res<Settings>, mut seen: ResMut<SettingsSeenChanged>) {
+        seen.0 = settings.is_changed();
+    }
+
+    /// The runtime sync runs every fixed tick: it must flag `Settings` changed only when a synced value differs, or
+    /// every `resource_changed::<Settings>` system runs on every frame.
+    #[test]
+    fn runtime_sync_flags_settings_changed_only_when_a_value_differs() {
+        let settings = bundled_settings();
+        let zoom = settings.session_state.window.zoom;
+        let mut app = App::new();
+        app.insert_resource(settings)
+            .insert_resource(RenderZoom(zoom))
+            .init_resource::<SettingsSeenChanged>()
+            .add_systems(Update, (sys_sync_resources_to_settings, record_settings_changed).chain());
+        let seen_changed = |app: &mut App| {
+            app.update();
+            app.world().resource::<SettingsSeenChanged>().0
+        };
+        // The first run sees the resource as added.
+        seen_changed(&mut app);
+        assert!(!seen_changed(&mut app), "an unchanged zoom flagged Settings changed");
+
+        let new_zoom = zoom + 1.0;
+        app.world_mut().resource_mut::<RenderZoom>().0 = new_zoom;
+        assert!(seen_changed(&mut app), "a changed zoom did not flag Settings changed");
+        assert_eq!(app.world().resource::<Settings>().session_state.window.zoom, new_zoom);
+        assert!(!seen_changed(&mut app), "the synced zoom kept flagging Settings changed");
     }
 }

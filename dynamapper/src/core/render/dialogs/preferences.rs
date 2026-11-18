@@ -184,7 +184,9 @@ fn sys_sync_settings_to_state(
         state.caves = settings.world_rendering.caves;
         state.cave_surroundings = settings.world_rendering.cave_surroundings;
 
-        wireframe_config.global = settings.app.debug.map_render_wireframe;
+        if wireframe_config.global != settings.app.debug.map_render_wireframe {
+            wireframe_config.global = settings.app.debug.map_render_wireframe;
+        }
 
         *initialized = true;
     }
@@ -381,8 +383,9 @@ pub fn sys_render_preferences_dialog(
 
                         // ---- FPS combobox ----
                         ui.add_enabled_ui(state.frame_limit_enabled, |ui| {
-                            let current_fps = FPS_PRESETS[state.fps_preset_idx];
-                            let res = egui::ComboBox::from_label("Target FPS")
+                            let previous_idx = state.fps_preset_idx;
+                            let current_fps = FPS_PRESETS[previous_idx];
+                            egui::ComboBox::from_label("Target FPS")
                                 .selected_text(format!("{} fps", current_fps))
                                 .show_ui(ui, |ui| {
                                     for (idx, &fps) in FPS_PRESETS.iter().enumerate() {
@@ -390,7 +393,8 @@ pub fn sys_render_preferences_dialog(
                                         ui.selectable_value(&mut state.fps_preset_idx, idx, label);
                                     }
                                 });
-                            if res.response.changed() {
+                            // The combo box's own response never reports a selection as changed: compare the index.
+                            if state.fps_preset_idx != previous_idx {
                                 state.apply_timer.reset();
                                 state.apply_timer.unpause();
                             }
