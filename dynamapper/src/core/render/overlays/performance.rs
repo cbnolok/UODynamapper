@@ -336,7 +336,7 @@ pub fn sys_refresh_process_metrics(
 /// Updates the on-screen text widget with latest metrics.
 pub fn update_performance_text(
     diagnostics: Res<DiagnosticsStore>,
-    frame_rate: Res<crate::core::frame_rate::MeasuredFrameRate>,
+    frame_rate: Res<crate::diagnostics::frame_rate::MeasuredFrameRate>,
     settings: Res<Settings>,
     metrics: Res<ProcessMetrics>,
     land_upload_telemetry: Res<crate::core::render::scene::world::land::LandUploadTelemetry>,

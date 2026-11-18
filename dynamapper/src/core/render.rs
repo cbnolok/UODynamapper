@@ -13,7 +13,7 @@ impl Plugin for RenderPlugin {
     fn build(&self, app: &mut App) {
         log_plugin_build(self);
         #[cfg(feature = "gpu-profiling")]
-        app.add_plugins(scene::world::land::profiling::LandProfilingPlugin {
+        app.add_plugins(crate::diagnostics::gpu_profiling::LandProfilingPlugin {
             registered_by: "RenderPlugin",
         });
         app.add_plugins((

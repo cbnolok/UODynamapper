@@ -2,7 +2,6 @@ pub mod cave_mouth_veil;
 pub mod chunk_loader;
 pub mod draw_mesh;
 pub mod mesh_material;
-pub mod profiling;
 pub(crate) mod picking;
 pub mod setup_base_mesh;
 pub mod tile_atlas;

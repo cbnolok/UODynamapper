@@ -115,8 +115,7 @@ terrain, statics, lighting, picking, postprocess}`, `ui/`, `export/`, `diagnosti
 | Now | Lines | Churn | Owner |
 |---|---:|---:|---|
 | `core/export_job.rs` | 881 | 4 | `export/`: job lifecycle, readiness, capture and spool, provenance. |
-| `core/diagnostics.rs`, `core/frame_rate.rs`, `core/frame_limiter.rs` | 949 | 1 | `diagnostics/`. |
-| `rsw/land/profiling.rs` | 204 | 0 | `diagnostics/`. |
+| `diagnostics.rs`, `diagnostics/{frame_rate, frame_limiter, gpu_profiling}.rs` | 1153 | 1 | Moved 2026-11-18. `core::diagnostics` re-exports it until `scene.rs`, `draw_mesh.rs`, `tile_atlas.rs` and `texture_cache/land/cache.rs` move. |
 
 ## Order
 

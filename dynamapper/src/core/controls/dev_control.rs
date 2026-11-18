@@ -128,7 +128,7 @@ fn poll_control(
     mut player_query: Query<(&mut Player, &mut Transform)>,
     world: Res<WorldGeoData>,
     mut recompute: MessageWriter<RecomputeVisibleChunksEvent>,
-    frame_rate: Res<crate::core::frame_rate::MeasuredFrameRate>,
+    frame_rate: Res<crate::diagnostics::frame_rate::MeasuredFrameRate>,
     atlas: Option<Res<TileAtlas>>,
     uploads: Option<Res<LandUploadTelemetry>>,
     terrain_bases: Option<Res<EcTerrainBases>>,

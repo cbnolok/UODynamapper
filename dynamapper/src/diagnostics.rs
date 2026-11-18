@@ -1,3 +1,10 @@
+//! Runtime diagnostics: the frame rate and its limiter, the timed land and texture systems, Bevy's diagnostic
+//! plugins and, with the `gpu-profiling` feature, the GPU pass profiler.
+
+pub mod frame_limiter;
+pub mod frame_rate;
+pub mod gpu_profiling;
+
 use std::{
     sync::Arc,
     time::{Duration, Instant},
@@ -550,7 +557,7 @@ fn sys_dump_configurable_diagnostics(
     time: Res<Time<Real>>,
     settings: Res<Settings>,
     diagnostics: Res<DiagnosticsStore>,
-    frame_rate: Res<crate::core::frame_rate::MeasuredFrameRate>,
+    frame_rate: Res<frame_rate::MeasuredFrameRate>,
     runtime: Res<WorldmapRuntimeDiagnostics>,
     system_timers: Res<WorldmapSystemDiagnostics>,
     cross_app_timers: Res<WorldmapCrossAppDiagnostics>,

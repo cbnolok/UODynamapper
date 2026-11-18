@@ -2,10 +2,7 @@ pub mod app_states;
 mod bevy_log_filter;
 pub mod constants;
 pub mod controls;
-mod diagnostics;
 pub mod export_job;
-pub mod frame_limiter;
-pub mod frame_rate;
 pub mod maps;
 pub mod multis;
 pub mod render;
@@ -14,13 +11,16 @@ pub mod system_sets;
 mod texture_cache;
 mod uo_files_loader;
 
+// Temporary: hot files still import the old path (docs/reviews/2026-11-18-dynamapper-module-map.md, Order 3).
+pub use crate::diagnostics;
+
 use crate::{
     configs::{settings, ExternalDataPlugin},
+    diagnostics::{add_diagnostics_plugins, frame_limiter, frame_rate, LogGpuPreprocessingModePlugin},
     console_logger::{self, LogAbout, LogSev},
     core::{
         app_states::*,
         bevy_log_filter::init_bevy_logging,
-        diagnostics::{add_diagnostics_plugins, LogGpuPreprocessingModePlugin},
         render::scene::camera::UO_TILE_PIXEL_SIZE,
     },
     util_lib::tracked_plugin::{set_plugin_log_toggles, sys_log_plugin_registry_tree},
