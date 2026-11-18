@@ -77,10 +77,31 @@ UOD-Painterly takes the composite at `overlay_strength` 0, the night map's lumin
 | Period | Default L | Why |
 |---|---|---|
 | morning, afternoon | 0 | the client's full day: the composite is the identity |
-| night | 10 | ServUO's night level; the research gives (0.69, 0.70, 0.87) as the multiplier at L 10 |
+| night | 10 | a moderate night; the research gives (0.69, 0.70, 0.87) as the multiplier at L 10. ServUO's and RunUO's `NightLevel` is 12, (0.63, 0.64, 0.85) |
 | cave | 26 | ServUO's dungeon level; the multiplier at L 26 is (0.20, 0.22, 0.67) |
 
 The unit tests check those two research values within 0.0015. KR-like's and Enhanced's former daytime `global_lighting` (1.04 to 1.14) is gone.
+
+### The KR client's purple nights
+
+In the user's KR client night screenshots (`~/Immagini/Schermate/uokr/`, 2026-11-14) the grey floors, slate roofs and plaster are blue-purple; KR-like's night preset keeps them grey-brown. The cause is the server light level, not a client rule (2026-11-18):
+
+- **The client applies the level and nothing else.** `OnGlobalLightLevel` (0x0056e8a0) → `UOAtmosphere::SetLightLevel` (0x0041eef0) → `UOLightingPostProcessEffect::SetLightLevel` (0x0041f2e0) → `BuildCompositeQuad` (0x0041f5c0): the level is clamped and stored, and the composite's only other terms are the gamma constant c and B. No tint, colour or region term (KR atmosphere research §1).
+- **The composite caps the blue.** On a neutral grey the blue over red of the multiplier is 1.26 at L 10, 1.35 at L 12, 1.94 at L 20 and 2.23 at L 22. The screenshot `073120` measures 2.04 on its grey marble and 2.11 on its slate roof; no level below about 20 reaches that, whatever the art or the gamma slider (gamma 0 gives 1.43 at L 10).
+- **KR-like at the screenshot's level matches.** Britain at 1488,1686 (the same marble, cobbles, plaster and slate) in KR-like on the KR land, by light level, mean sRGB of the slate roof:
+
+  | L | slate roof | blue / red |
+  |---|---|---|
+  | 10 | (53, 55, 67) | 1.27 |
+  | 16 | (43, 46, 66) | 1.55 |
+  | 20 | (36, 40, 65) | 1.82 |
+  | 22 | (33, 37, 65) | 2.00 |
+  | 24 | (29, 34, 65) | 2.22 |
+  | client, 073120 | (38, 41, 81) | 2.11 |
+
+  The screenshots were taken at about L 22 (the shard's night, not ServUO's 12). Trinsic's warm brick paving turns purple-brown by the same rule (blue over red 0.88 at L 10, 1.60 at L 22).
+
+The night preset keeps L 10; a darker, bluer night is the `light_level` setting. Fixture: `britain-slate-roofs-kr-night-level-22` (KR-like at L 22 beside the screenshot).
 
 ### Packaging
 

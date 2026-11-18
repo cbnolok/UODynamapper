@@ -132,8 +132,16 @@ c = 0.25 + 0.2 * (gamma - 0.5)   floats 0x00b86fac = 0.25, 0x00b86f94 = 0.2, 0x0
 - Before the first packet the level is 0.75: `UOAtmosphere::InitPostProcessEffects` 0x0041ecd0, global
   0x00c4a018. The effect's constructor (0x0041f190) uses 0.5.
 - House customisation forces full light (0x005fcc30, 0x006008b0).
-- The light level is server data. Typical emulator cycles (for example ServUO's `LightCycle`) are about 0 by
-  day, about 9 to 10 at night and 26 in dungeons. Check the server you target; the client does not decide this.
+- The light level is server data. ServUO's and RunUO's `LightCycle` (Scripts/Misc/LightCycle.cs) send `DayLevel`
+  0 from 6:00 to 22:00, `NightLevel` 12 from 0:00 to 4:00 with a linear two-hour ramp on either side, `DungeonLevel`
+  26 and `JailLevel` 9. Shards change these; the client does not decide them.
+- The level is the only input: `OnGlobalLightLevel` → `UOAtmosphere::SetLightLevel` 0x0041eef0 (clamped to 0..1,
+  global 0x00c4a018) → `UOLightingPostProcessEffect::SetLightLevel` 0x0041f2e0 (+0x214, clamped again) →
+  `BuildCompositeQuad` (diffuse alpha). No tint, colour or region term reaches the composite on the way (checked
+  2026-11-18). The purple floors of the user's KR night screenshots (2026-11-14) are the night map's blue at a high
+  level, about 22 by the blue over red of their grey materials (marble 2.04, slate 2.11; the composite gives 2.23 on
+  a neutral grey at L 22, 1.35 at ServUO's 12, 1.26 at 10): docs/dev_wiki/rendering/CLIENT_NIGHT_LIGHTING_AND_SHADOWS.md,
+  "The KR client's purple nights".
 
 **Night sight** (*confirmed*): `UOAtmosphere::OnNightSight` 0x0056e940 → `SetNightSight` (+0x218). A weight of 0
 draws the night map into B; any other value draws the night-sight map.

@@ -100,8 +100,9 @@ default_preset = "classic.morning"
 #                    light buffer it multiplies the frame by), per channel on the 8-bit values:
 #                    out = scene * clamp((32 - light_level) / 32 + light.mul lights * 31 / 32), the lights adding
 #                    their light.mul value back up to the day's brightness. No night map, so no overlay keys.
-#   light_level:      The server light level, 0 (full day) to 30. ServUO gives about 0 by day, 9 to 10 at night
-#                     and 26 in dungeons.
+#   light_level:      The server light level, 0 (full day) to 30. ServUO gives 0 by day, 12 at night and 26 in
+#                     dungeons. The level alone sets the night's blue: the user's KR client night screenshots,
+#                     whose grey floors and slate roofs are purple, were taken at about 22.
 #   overlay_strength: Not in Classic. The night map's tint, 0 to 2. 1 is the client; 0 replaces the map by its
 #                     luminance (the same darkening without the blue); above 1 pushes the tint further from that
 #                     luminance.
