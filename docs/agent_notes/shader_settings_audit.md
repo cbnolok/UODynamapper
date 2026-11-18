@@ -570,7 +570,7 @@ Numbers are mean / share over 4 levels in the worst view of each condition, unle
 
 - `kr_tonemap_params` y, z, w: never read; only x reaches the tone curve.
 - `gloom_params.w` (Adv Gloom "Fog Height Bias"):
-  - no compiled shader reads it (only `legacy/world/fog.wesl`);
+  - no compiled shader reads it (only the legacy fog shader read it, deleted 2026-11-18);
   - the label also places it under fog, though it sits in the gloom vector.
 - `blur_radius`:
   - the factory values (0.0025 in Classic and Enhanced, 0.005 in KR) are below the shader's 0.5-pixel floor;

@@ -317,7 +317,7 @@ brightest, not the darkest, and "facing the light" in the table below means faci
   - that helper has no code reference and no pointer in the image (a byte search for `00 13 6f 00` finds none);
   - even if reached, the `Shaders.uop` BrightPass constants (LumaScale 0.1, Luminance 2.0, BloomScale 2.0,
     fMiddleGray 0.18, fWhiteCutoff 0.8) give zero bloom for LDR input.
-  - The claim in `dynamapper/assets/shaders/visual_atmosphere_implementation_plan.md` that KR "crushes ambient
+  - The claim in `docs/agent_notes/proposals/visual_atmosphere_implementation_plan.md` that KR "crushes ambient
     light by ~90%" through this tonemap is therefore not supported.
 - **Vignette, desaturation, colour grading** (*confirmed* absent from the UO post-process classes): the UO
   effects are Lighting, Shadow and Death only (RTTI scan of `*PostProcessEffect`). Desaturation happens only in

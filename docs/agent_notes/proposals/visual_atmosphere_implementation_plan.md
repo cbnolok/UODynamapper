@@ -99,8 +99,8 @@ By breaking the visual styles down into specific "atmospheric components," we ca
     *   Current tonemapping is still applied in material shaders, not as a single fullscreen post-process after the whole scene is composed.
     *   Bloom, bright-pass extraction, downscale, blur, and final additive bloom composite are not implemented in the Bevy render graph yet.
     *   Reference shaders remain in:
-        *   `dynamapper/assets/shaders/postprocess_ec_doc/`
-        *   `dynamapper/assets/shaders/postprocess_kr_doc/`
+        *   `docs/client_research/client-shader-translations/ec/`
+        *   `docs/client_research/client-shader-translations/kr/`
 
 2.  **Official texture-backed grunge provenance**
     *   Current grunge uses a generated repeatable texture blended with procedural variation.

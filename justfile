@@ -184,7 +184,7 @@ app_docs := "docs/keybindings.md docs/USER_TROUBLESHOOTING.md"
 # conversion tables are read by the packers, which embed what the app needs in the .uddp files; the tools package
 # ships them in shared/), and the notes (the files with this extension, beside the shaders). A folder they leave
 # empty goes too.
-app_assets_unread := "regression_fixtures shaders/postprocess_ec_doc shaders/postprocess_kr_doc" +\
+app_assets_unread := "regression_fixtures" +\
     " cc_ec_convtables/TerrainTranscode.kdl cc_ec_convtables/EcTerrainOverrides.kdl" +\
     " cc_ec_convtables/EcSurfaceOverrides.kdl cc_ec_convtables/EcMobileAnimations.kdl" +\
     " cc_ec_convtables/TilemetaOverrides.kdl"

@@ -1,7 +1,7 @@
 # EC Post-Processing & Sprite Shaders — WGSL Translation Reference
 
 Translated from the Mythic Package Editor EC shader dump (`Shaders.uop_B0_F*.txt`).
-All files live in `dynamapper/assets/shaders/postprocess/`.
+The files sit beside this note; none is compiled into Dynamapper.
 
 ---
 

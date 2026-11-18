@@ -1,7 +1,7 @@
 # KR Post-Processing & Sprite Shaders — WGSL Translation Reference
 
 Translated from the Mythic Package Editor KR shader dump (`Shaders.uop_B0_F*.txt` and `data/shaders/`).
-All files live in `dynamapper/assets/shaders/postprocess_kr/`.
+The files sit beside this note; none is compiled into Dynamapper.
 
 ---
 
@@ -9,9 +9,9 @@ All files live in `dynamapper/assets/shaders/postprocess_kr/`.
 
 | File | Source shader(s) | Applied on |
 |------|-----------------|-----------|
-| [kr_bloom_pipeline.wgsl](file:///mnt/dati/__cloud/mega/_proj/_Rust/UODynamapper/dynamapper/assets/shaders/postprocess_kr/kr_bloom_pipeline.wgsl) | F0 (all techniques) | Full screen — after main render |
-| [kr_sprite_hue.wgsl](file:///mnt/dati/__cloud/mega/_proj/_Rust/UODynamapper/dynamapper/assets/shaders/postprocess_kr/kr_sprite_hue.wgsl) | uosprite.psh / uospriteui.psh | Per-sprite fragment (hued entities & UI) |
-| [kr_sprite_base.wgsl](file:///mnt/dati/__cloud/mega/_proj/_Rust/UODynamapper/dynamapper/assets/shaders/postprocess_kr/kr_sprite_base.wgsl) | F1, uosprite.vsh, uospriteui.vsh | Per-sprite vertex (all sprites + UI) |
+| [kr_bloom_pipeline.wgsl](kr_bloom_pipeline.wgsl) | F0 (all techniques) | Full screen — after main render |
+| [kr_sprite_hue.wgsl](kr_sprite_hue.wgsl) | uosprite.psh / uospriteui.psh | Per-sprite fragment (hued entities & UI) |
+| [kr_sprite_base.wgsl](kr_sprite_base.wgsl) | F1, uosprite.vsh, uospriteui.vsh | Per-sprite vertex (all sprites + UI) |
 
 ---
 
