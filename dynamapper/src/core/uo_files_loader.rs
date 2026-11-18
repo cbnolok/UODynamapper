@@ -51,6 +51,14 @@ impl TileMetaPackageRes {
             Some(ClientTextureSource::Ec) | None => &self.0,
         }
     }
+
+    /// The tables the world analyses read, the z-view (`z_view.rs` `sys_update_z_view_limit`) and the caves
+    /// (`caves.rs`): the overridden Enhanced tables, whatever the art source. An open item (STYLE_RULES §7): with
+    /// Classic art they still see, say, a swamp piece's restored Surface, which the items drawn keep without; no
+    /// visible effect has been found. Test `the_world_analyses_read_the_overridden_tables_whatever_the_art`.
+    pub fn for_world_analyses(&self) -> &Arc<TileMetaPackage> {
+        &self.0
+    }
 }
 
 /// Arc: cloned into the chunk-loader OS thread (via LoadRequest.texmap_2d)

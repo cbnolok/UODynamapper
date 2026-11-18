@@ -637,3 +637,33 @@ fn sys_free_camera_movement(
         chunk_recompute_writer.write(RecomputeVisibleChunksEvent {});
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Both cameras sit on the isometric diagonal (1, 1, 1) of their focus and look back along it, whatever the window
+    /// and the zoom: the orthographic one at BASE_OFFSET_FROM_PLAYER, the perspective one at its orbit distance. The
+    /// pixel scale of that view (the 44 x 44 diamond, 4 px per z unit) is guarded by uo_coords.rs
+    /// `default_camera_matches_legacy_tile_pixel_and_height_steps`, the orbit distance's by perspective.rs
+    /// `orbit_distance_gives_the_focus_the_orthographic_scale_at_any_window_and_zoom`.
+    #[test]
+    fn both_cameras_look_along_the_isometric_diagonal() {
+        const DIRECTION_TOLERANCE: f32 = 1e-6;
+        const WINDOW_HEIGHTS: [f32; 3] = [600.0, 1000.0, 1692.0];
+        let isometric = Vec3::ONE.normalize();
+        let ortho = PlayerCamera::BASE_OFFSET_FROM_PLAYER;
+        assert!((ortho.normalize() - isometric).length() < DIRECTION_TOLERANCE, "{ortho:?}");
+        // The focus lies inside the orthographic depth range the depth (art/depth.wesl) is projected through.
+        assert!(ortho.length() < ORTHO_FAR && -ortho.length() > ORTHO_NEAR);
+        let forward = Transform::from_translation(ortho).looking_at(Vec3::ZERO, Vec3::Y).forward();
+        assert!((*forward + isometric).length() < DIRECTION_TOLERANCE, "{forward:?}");
+        for height in WINDOW_HEIGHTS {
+            for zoom in [MIN_ZOOM, DEFAULT_ZOOM, MAX_ZOOM] {
+                let offset = PlayerCamera::perspective_offset(height, zoom);
+                assert!((offset.normalize() - isometric).length() < DIRECTION_TOLERANCE,
+                    "window height {height}, zoom {zoom}: {offset:?}");
+            }
+        }
+    }
+}

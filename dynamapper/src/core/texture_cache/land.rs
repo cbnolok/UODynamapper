@@ -2114,6 +2114,40 @@ mod tests {
         );
     }
 
+    /// KR-like's land grain is seeded by the world position alone (STYLE_RULES §5, d49b3366): the tile's texture
+    /// payload, its former salt, is the texmap array's cache layer for Classic land under an EC-layout source, so the
+    /// grain moved with residency. Of the tile it reads only whether the land is liquid, which it leaves alone. The
+    /// land shader cannot be composed in a test, so the guard reads its source.
+    #[test]
+    fn the_kr_land_grain_is_seeded_by_the_world_position_alone() {
+        const LAND_MAIN_WESL: &str = include_str!("../../../assets/shaders/world/land/main.wesl");
+        const GRAIN_SEED: &str = "hash(floor(world_xz * KR_MATERIAL_GRAIN_CELLS_PER_TILE))";
+        const LIQUID_TILE_TEST: &str =
+            "tile.is_wet == 1u || (tile.terrain_flags & TERRAIN_FLAG_REVIEWED_LIQUID) != 0u";
+        let body = crate::util_lib::wesl_source::wesl_fn_body(LAND_MAIN_WESL, "apply_kr_material_micro_contrast");
+        let hashes = body.matches("hash(").count();
+        assert_eq!(hashes, 1, "the grain is one hash");
+        assert!(body.contains(&format!("let grain = {GRAIN_SEED};")), "the grain hashes its world cell alone");
+        assert_eq!(body.matches("tile.").count(), 2, "the tile only says whether the land is liquid");
+        assert!(body.contains(LIQUID_TILE_TEST));
+        // The caller passes the fragment's world position.
+        let call = LAND_MAIN_WESL.split("apply_kr_material_micro_contrast(").nth(2).expect("one call");
+        let arguments = call.split(')').next().unwrap().split(',').map(str::trim).collect::<Vec<_>>();
+        assert_eq!(arguments[2], "in.world_position.xz", "{arguments:?}");
+    }
+
+    /// The land blur's per-tile kernel rotation is seeded by the world tile alone (STYLE_RULES §5, 84b61085), not by
+    /// the layer its texture lies on, which follows the package layout and the residency order.
+    #[test]
+    fn the_land_blur_rotation_is_seeded_by_the_world_tile_alone() {
+        const SAMPLING_WESL: &str = include_str!("../../../assets/shaders/world/land/sampling.wesl");
+        const TILE_SEED: &str = "rand01_from_tile(i32(floor(world_xz.x)), i32(floor(world_xz.y)))";
+        assert!(SAMPLING_WESL.contains("fn rand01_from_tile(ix: i32, iz: i32) -> f32 {"), "a tile's seed is its cell");
+        let blur = crate::util_lib::wesl_source::wesl_fn_body(SAMPLING_WESL, "blurred_albedo");
+        assert_eq!(blur.matches("rand01_from_tile(").count(), 1);
+        assert!(blur.contains(&format!("let jitter = {TILE_SEED}")), "the rotation's seed is the world tile");
+    }
+
     #[test]
     fn world_entry_points_discover_shader_dependencies() {
         // Bevy returns no imports when WESL parsing fails, e.g. an import after

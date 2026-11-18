@@ -1464,6 +1464,14 @@ mod tests {
         }
     }
 
+    /// The bundled transitions (STYLE_RULES §5): EC blending on, CC transitions off, the shader word's zero.
+    #[test]
+    fn bundled_terrain_transitions_blend_ec_land_and_leave_cc_land_hard() {
+        let settings = parse_graphics_settings(BUNDLED_GRAPHICS);
+        assert!(settings.ec_terrain_transitions && !settings.cc_terrain_transitions);
+        assert_eq!(settings.terrain_transition_flags(), 0);
+    }
+
     #[test]
     fn runtime_assets_settings_require_explicit_gump_loading_opt_in() {
         let settings: SectRuntimeAssets =

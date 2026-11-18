@@ -494,7 +494,7 @@ pub fn sys_update_z_view_limit(
     };
     let region = ZViewRegion::read(
         &mut statics_store.lock(),
-        &tilemeta.0,
+        tilemeta.for_world_analyses(),
         multis.0.as_deref(),
         &multis.1,
         inputs.show_hidden_multi_parts,

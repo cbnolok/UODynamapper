@@ -1649,6 +1649,31 @@ mod tests {
         assert!(u.dirty);
     }
 
+    /// Transitions follow the land source, not the style (STYLE_RULES §5): every style and period keeps them as set,
+    /// whatever its preset's effects carry.
+    #[test]
+    fn every_style_keeps_the_terrain_transitions_as_set() {
+        const TRANSITION_FLAG_WORDS: [u32; 4] = [0, 1, 2, 3];
+        const PRESET_FLAGS: u32 = 2;
+        let mut presets = mode_presets();
+        for group in [&mut presets.classic, &mut presets.enhanced, &mut presets.kr, &mut presets.painterly] {
+            for preset in [&mut group.morning, &mut group.afternoon, &mut group.night, &mut group.cave] {
+                preset.effects.terrain_transition_flags = PRESET_FLAGS;
+            }
+        }
+        for style in RENDER_STYLE_PRESETS {
+            for period in [ShaderPresetPeriod::Morning, ShaderPresetPeriod::Afternoon, ShaderPresetPeriod::Night,
+                ShaderPresetPeriod::Cave] {
+                for flags in TRANSITION_FLAG_WORDS {
+                    let mut u = uniform_state();
+                    u.effects.terrain_transition_flags = flags;
+                    apply_render_preset(&mut u, &presets, style, period);
+                    assert_eq!(u.effects.terrain_transition_flags, flags, "{} {period:?}", style.preset_group);
+                }
+            }
+        }
+    }
+
     #[test]
     fn render_style_changes_keep_the_active_time_period() {
         let period = ShaderPresetPeriod::from_active_key("kr.cave");

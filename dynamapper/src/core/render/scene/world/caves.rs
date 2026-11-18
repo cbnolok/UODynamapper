@@ -940,7 +940,7 @@ pub fn sys_update_player_cave(
                     (Some(plane), Some(statics), Some(tilemeta)) => {
                         let size = plane.size_cells();
                         Some(PlayerCaveFinder::new(map_id, size.width, size.height, plane.package(),
-                            statics.lock().package(), &tilemeta.0))
+                            statics.lock().package(), tilemeta.for_world_analyses()))
                     }
                     // Tried again on the next move.
                     _ => return,
@@ -1019,7 +1019,7 @@ pub fn sys_update_caves(
                     height: size.height,
                     map: plane.package(),
                     statics: statics.lock().package(),
-                    tilemeta: tilemeta.0.clone(),
+                    tilemeta: tilemeta.for_world_analyses().clone(),
                 };
                 let spawned = std::thread::Builder::new().name("caves".to_owned()).spawn(move || {
                     let started = Instant::now();

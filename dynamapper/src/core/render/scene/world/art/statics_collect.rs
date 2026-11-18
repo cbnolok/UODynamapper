@@ -3693,6 +3693,32 @@ mod tests {
         assert!(std::sync::Arc::ptr_eq(plain.for_art(Some(ClientTextureSource::Cc)), &plain.0));
     }
 
+    /// Pins an open item (STYLE_RULES §7), not a rule: the z-view and the caves read the overridden Enhanced tables
+    /// whatever the art source, so with Classic art a swamp piece the clients' tables leave without Surface is still a
+    /// floor to them. When the item is settled, this test changes with it.
+    #[test]
+    fn the_world_analyses_read_the_overridden_tables_whatever_the_art() {
+        const SWAMP: u16 = 0x3236;
+        const SWAMP_Z: i8 = 0;
+        let mut items = (0..=u32::from(SWAMP))
+            .map(|tile_id| udd_assets::tilemeta::TileMetaItemTile { tile_id, ..Zeroable::zeroed() })
+            .collect::<Vec<_>>();
+        items[usize::from(SWAMP)].flags = TILE_FLAG_SURFACE;
+        let record = udd_assets::tilemeta::TileMetaOverridesRecord { digest: 1,
+            original_flags: vec![(u32::from(SWAMP), 0)], original_lights: Vec::new() };
+        let tables = TileMetaPackageRes::new(std::sync::Arc::new(tilemeta_package(&items, Some(&record)))).unwrap();
+        let floor = |tables: &udd_assets::tilemeta::TileMetaPackage| {
+            let item = &tables.item_tiles()[usize::from(SWAMP)];
+            crate::core::render::scene::world::caves::surface_top(item.flags, item.height, SWAMP_Z)
+        };
+        for art in [Some(ClientTextureSource::Ec), None] {
+            assert!(std::sync::Arc::ptr_eq(tables.for_world_analyses(), tables.for_art(art)));
+        }
+        assert!(!std::sync::Arc::ptr_eq(tables.for_world_analyses(), tables.for_art(Some(ClientTextureSource::Cc))));
+        assert_eq!(floor(tables.for_art(Some(ClientTextureSource::Cc))), None, "drawn with Classic art: no floor");
+        assert_eq!(floor(tables.for_world_analyses()), Some(i32::from(SWAMP_Z)), "the z-view and caves: a floor");
+    }
+
     #[test]
     fn the_client_shadow_ground_is_the_land_or_a_surface_within_reach() {
         const CASTER_Z: i8 = 20;
