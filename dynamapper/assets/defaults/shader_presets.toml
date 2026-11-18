@@ -194,8 +194,10 @@ default_preset = "classic.morning"
 # The night and caves dim as the Classic client does (see [Scene dimming]): light level 10 at night (the world at
 # 22/32 of its brightness) and 26 in caves (6/32), each light's light.mul value taking that darkness back. They keep
 # the afternoon's global_lighting 1.08 and exposure 1.1, so only the light level darkens them; the former 0.82 and
-# 1.2 at night (0.60 and 0.95 in caves) left the night almost as bright as the afternoon. Their tints, ambient and
-# sun stay their own.
+# 1.2 at night (0.60 and 0.95 in caves) left the night almost as bright as the afternoon. The night also keeps the
+# afternoon's light colour, atmosphere tint, ambient and sun strength, so the client's rule alone sets its
+# darkness: unlit paving at 0.69 of the afternoon (22/32); its former cool tint, ambient 0.1 and sun 0.7 took it
+# down to 0.57. The caves keep their own.
 
 [classic]
 light_cover = "uod"
@@ -372,7 +374,8 @@ elevation_degrees = 60.50379
 
 [classic.night]
 global_lighting = 1.08
-# Night: cool light, low ambient.
+# Night: the afternoon's light colour, tint, ambient and sun; the light level alone darkens it (the
+# Classic client's rule, [Scene dimming]).
 [classic.night.client_lighting]
 light_level = 10
 [classic.night.effects]
@@ -420,11 +423,11 @@ enable_fog = 0
 enable_tonemap = 1
 enable_grading = 0    # Disabled in Classic mode
 enable_gloom = 0      # Disabled in Classic mode
-light_color = [0.8, 0.88, 1.05]     # Cool blueish moonlight
+light_color = [1.08, 0.99, 0.9]    # Bright warm white, as the afternoon
 tone_curve = 0
-atmosphere_tint = [0.12, 0.16, 0.24]  # Dark blue ambient
+atmosphere_tint = [0.18, 0.22, 0.28]  # Neutral cool, as the afternoon
 exposure = 1.1
-ambient_strength = 0.1
+ambient_strength = 0.18
 grade_warm_color = [1.08, 0.98, 0.9]
 grade_cool_color = [0.82, 0.95, 1.05]
 grade_params = [1.1, 0.18, 0.45, 1.0]
@@ -440,7 +443,7 @@ fog_night_color = [0.0, 0.0, 0.0, 0.0]
 [classic.night.land_lighting]
 enable_bent = 1
 terrain_shading_model = 0
-diffuse_strength = 0.7
+diffuse_strength = 1.0
 specular_strength = 0.0 # Disabled in Classic mode
 rim_strength = 0.0      # Disabled in Classic mode
 fill_strength = 0.0     # Disabled in Classic mode
