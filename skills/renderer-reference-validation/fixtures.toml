@@ -182,6 +182,20 @@ path = "/home/claudio/Immagini/Schermate/uokr/Schermata_20261114_073120.png"
 note = "KR client, night: grey marble, cobbles, a plaster house and a slate roof"
 
 [[fixture]]
+name = "britain-shop-floor-ec-perspective"
+guards = """A shop's Enhanced-art stone floor in the perspective camera: its tiles meet edge to edge, with no crosses of \
+the land and art under the floor along the cell edges (the 1.5-pixel surface fade only on the orthographic camera \
+quads, which overlap)."""
+tier = "full"
+tags = ["surfaces", "perspective", "britain"]
+map = 1
+x = 1435
+y = 1687
+z = 0
+camera = "perspective"
+sources = ["ec/ec", "ec/kr"]
+
+[[fixture]]
 name = "britain-door-view"
 guards = """The door view east of Britain at night: lights behind walls and multi parts stay covered (9c1a44f2, \
 1235449b) while the open doorway's light still reaches the ground (keep-lights)."""

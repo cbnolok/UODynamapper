@@ -992,7 +992,12 @@ geometry. Ordinary sprites and CC shoreline geometry are unchanged.
 Enhanced/KR styling filters authored coverage independently of nearest albedo
 and applies a 1.5-screen-pixel fade at the quad boundary. The source's overlap
 margin allows the fade without imposing a grid of holes. This is a deliberate
-styling improvement, not a claim that UOSA added the same fade. Classic styling
+styling improvement, not a claim that UOSA added the same fade. The fade applies
+only where that quad is drawn: other EC surfaces, and these in perspective and
+rotated views, lie on their horizontal cell, abutting their neighbours with no
+margin, and a fade there
+let the land and items under an EC floor show along every cell edge (a grid of
+crosses on the Britain shop's stone floor, items 1309-1312). Classic styling
 retains its point coverage choice. Fractional coverage remains straight alpha
 through the blended pass, without legacy sprite RGB scaling.
 

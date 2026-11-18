@@ -91,6 +91,17 @@ fn client_shadow_logical_view_z(inst: SpriteInstance) -> f32 {
 // Every corner of a non-caster lands on this one clip point: zero-area triangles draw nothing.
 const CLIENT_SHADOW_CULLED_POSITION: vec4<f32> = vec4<f32>(0.0, 0.0, 0.0, 1.0);
 
+// The default isometric view looks along -(1, 1, 1) / sqrt(3): the camera's backward axis against this direction.
+const ISOMETRIC_VIEW_BACKWARD_COMPONENT: f32 = 0.577350269;
+const ISOMETRIC_VIEW_MIN_ALIGNMENT: f32 = 0.999999;
+
+// An EC camera quad (flat_quad 3) takes UOSA 0x45a080's screen quad, with its overlap margin, only in the
+// orthographic default isometric view; perspective and rotated views keep the horizontal cell.
+fn ec_camera_quad_geometry(flat_quad: u32) -> bool {
+    return flat_quad == 3u && view.clip_from_view[3][3] == 1.0
+        && dot(view.world_from_view[2].xyz, vec3<f32>(ISOMETRIC_VIEW_BACKWARD_COMPONENT)) >= ISOMETRIC_VIEW_MIN_ALIGNMENT;
+}
+
 @vertex
 fn vertex(vertex: Vertex) -> ArtVertexOutput {
     let inst = instances[u32(vertex.uv_b.x + 0.5)];
@@ -132,8 +143,7 @@ fn vertex(vertex: Vertex) -> ArtVertexOutput {
     }
     var projected_world_pos = world_pos;
     var projected_local_pos = local_world_pos;
-    if (inst.flat_quad == 3u && view.clip_from_view[3][3] == 1.0
-        && dot(view.world_from_view[2].xyz, vec3<f32>(0.577350269)) >= 0.999999) {
+    if (ec_camera_quad_geometry(inst.flat_quad)) {
         let pixel_aspect = (view.clip_from_view[0][0] * view.viewport.z)
             / (view.clip_from_view[1][1] * view.viewport.w);
         projected_local_pos = ec_item_quad_world(vec3<f32>(0.0), corner,
@@ -413,9 +423,12 @@ fn shade_fragment(in: ArtVertexOutput, sample_index: u32) -> ArtFragmentOutput {
                 effects.enable_linear_filtering == 1u, true);
         }
     }
-    if (surface_header.x != 0u && !use_ec_item_water) {
+    if (surface_header.x != 0u && !use_ec_item_water && ec_camera_quad_geometry(inst.flat_quad)) {
         // The authored overlap margin allows a 1.5-pixel coverage fade at the
         // quad boundary without drawing a hard cutout over the liquid below.
+        // Only the camera quad has that margin: a surface on its horizontal cell (every other EC surface, and the
+        // camera quads in perspective and rotated views) meets its neighbours edge to edge, and a fade there
+        // showed what lies under the surface along every cell edge (EC floors in perspective).
         let edge = min(uv_in_tile_for_shading, vec2<f32>(1.0) - uv_in_tile_for_shading);
         color.a *= smoothstep(0.0, 1.5, min(edge.x / surface_footprint.x, edge.y / surface_footprint.y));
     }
