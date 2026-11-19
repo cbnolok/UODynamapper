@@ -172,6 +172,21 @@ their size and upscaled 2× with Lanczos3 over the whole page, which stands in f
 - **RGBA 2× is out of reach lossless:** an Enhanced page grows to 70 MiB and 312 ms. Upscaled pages need a block format.
 - RDO λ 1 saves 8–13 % under Zstd for the same decode time.
 
+**Classic art page 0 upscaled with MMPX** (the filter chosen for Classic's pixel art, which adds no colours), 2×:
+
+| Format | Raw | zstd 19, one frame | Decode | Strips | 8 threads | lz4 hc 12 | Decode |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| RGBA 2× (lossless) | 62.5 MiB | 1.97 MiB | 20 ms | +19.9 % | 3.6 ms | 4.30 MiB | 13 ms |
+| BC7 2× | 15.6 MiB | 1.99 MiB | 9.0 ms | +42.2 % | 2.1 ms | 3.67 MiB | 3.9 ms |
+| BC7 2×, RDO 1 | 15.6 MiB | 2.39 MiB | 13.6 ms | +21.3 % | 1.9 ms | 3.65 MiB | 3.9 ms |
+| BC1 2× | 7.8 MiB | 1.28 MiB | 6.7 ms | +39.3 % | 1.5 ms | 2.34 MiB | 2.5 ms |
+
+- **MMPX keeps Classic lossless at 2×:** 1.5× the 1× page on disk (1.97 against 1.31 MiB) and 20 ms, against
+  15.3 MiB and 70 ms after Lanczos. BC7 is no smaller, so an MMPX-upscaled Classic page has no reason to be lossy.
+- **RDO makes MMPX pages larger** (+20 %): the upscale repeats identical blocks, which plain BC7 encodes identically
+  and RDO's choices break apart.
+- BC1 has no RDO in our encoder (`dds`), so BC1 with RDO was not measured.
+
 `tex_art_ec.uddp` and `tex_land_ec.uddp` repacked in 128-row strips hold byte-identical pages and grow by 8.5 %
 (60.2 to 65.4 MB and 21.1 to 23.0 MB). Read through `udd-container`, which decodes the frames of a payload of 1 MiB or
 more in parallel, an art page takes 8–9 ms instead of 62–86 ms, and a land page about 4 ms instead of 25–31 ms.
@@ -205,5 +220,5 @@ CARGO_TARGET_DIR=/path/to/scratch cargo run --release -- /path/to/uddp
 ```
 
 It runs every codec and the 128-row strips. `--bin strip_levels` runs the levels and codecs in strips (it reads
-`tex_land_ec.uddp` too), and `--bin block_pages` the BC1 and BC7 pages. The PNG filter, the other strip heights and
+`tex_land_ec.uddp` too), and `--bin block_pages <dir> [lanczos|mmpx] [ec|cc|both]` the BC1 and BC7 pages. The PNG filter, the other strip heights and
 the dictionaries were one-off runs with the numbers above.

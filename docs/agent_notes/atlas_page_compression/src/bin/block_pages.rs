@@ -1,5 +1,6 @@
 //! Block-compressed atlas pages (BC1, BC7, BC7 with RDO), at 1x and 2x (Lanczos3), through Zstd levels and LZ4 HC,
 //! as one frame and as 16 strips: size, one-thread decode, and decode on an 8-thread pool.
+//! Usage: block_pages <uddp dir> [lanczos|mmpx] [ec|cc|both]. MMPX is the filter for Classic's pixel art.
 use rayon::prelude::*;
 use std::time::Instant;
 use udd_assets::{TexArtCcPackage, TexArtEcPackage};
@@ -42,14 +43,14 @@ fn sweep(label: &str, data: &[u8], row_bytes: usize, rows: usize, pool: &rayon::
     }
 }
 
-fn study(name: &str, raw: Vec<u8>, width: usize, pool: &rayon::ThreadPool) {
+fn study(name: &str, raw: Vec<u8>, width: usize, upscale: UpscalePass, pool: &rayon::ThreadPool) {
     let height = raw.len() / (width * 4);
     let (w, h) = (width & !3, height & !3);
     let mut rgba = Vec::with_capacity(w * h * 4);
     for y in 0..h { rgba.extend_from_slice(&raw[y * width * 4..][..w * 4]); }
     let t = Instant::now();
-    let (w2, h2, rgba2, _, _) = apply_upscale_passes_owned(w as u32, h as u32, rgba.clone(), &[UpscalePass::Upscale(UpscaleFilter::Lanczos3_2x)]);
-    println!("{name}: {w}x{h}; Lanczos3 2x to {w2}x{h2} in {:.1} s", t.elapsed().as_secs_f64());
+    let (w2, h2, rgba2, _, _) = apply_upscale_passes_owned(w as u32, h as u32, rgba.clone(), &[upscale]);
+    println!("{name}: {w}x{h}; {upscale:?} to {w2}x{h2} in {:.1} s", t.elapsed().as_secs_f64());
     for (scale, (w, h, px)) in [(1, (w, h, &rgba)), (2, (w2 as usize, h2 as usize, &rgba2))] {
         let extent = ImageExtent::new(w as u32, h as u32).unwrap();
         if scale == 2 { sweep(&format!("RGBA {scale}x"), px, w * 4, h, pool); }
@@ -67,10 +68,21 @@ fn study(name: &str, raw: Vec<u8>, width: usize, pool: &rayon::ThreadPool) {
 }
 
 fn main() {
-    let dir = std::env::args().nth(1).unwrap();
+    let mut args = std::env::args().skip(1);
+    let dir = args.next().unwrap();
+    let upscale = match args.next().as_deref() {
+        None | Some("lanczos") => UpscalePass::Upscale(UpscaleFilter::Lanczos3_2x),
+        Some("mmpx") => UpscalePass::Upscale(UpscaleFilter::Mmpx2x),
+        Some(other) => panic!("unknown filter {other}"),
+    };
+    let pages = args.next().unwrap_or_else(|| "both".into());
     let pool = rayon::ThreadPoolBuilder::new().num_threads(THREADS).build().unwrap();
-    let ec = TexArtEcPackage::load(format!("{dir}/tex_art_ec.uddp")).unwrap();
-    study("EC art page 0", ec.read_page_bytes(0).unwrap(), ec.pages()[0].used_width as usize, &pool);
-    let cc = TexArtCcPackage::load(format!("{dir}/tex_art_cc.uddp")).unwrap();
-    study("CC art page 0", cc.read_page_bytes(0).unwrap(), cc.pages()[0].used_width as usize, &pool);
+    if pages != "cc" {
+        let ec = TexArtEcPackage::load(format!("{dir}/tex_art_ec.uddp")).unwrap();
+        study("EC art page 0", ec.read_page_bytes(0).unwrap(), ec.pages()[0].used_width as usize, upscale, &pool);
+    }
+    if pages != "ec" {
+        let cc = TexArtCcPackage::load(format!("{dir}/tex_art_cc.uddp")).unwrap();
+        study("CC art page 0", cc.read_page_bytes(0).unwrap(), cc.pages()[0].used_width as usize, upscale, &pool);
+    }
 }
