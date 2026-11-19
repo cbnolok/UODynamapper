@@ -267,7 +267,7 @@ mod tests {
         let tilemeta = udd_assets::tilemeta::TileMetaPackage::load(root.join("tilemeta.uddp")).unwrap();
         let texmaps = udd_assets::tex_land_cc::TexLandCcPackage::load(root.join("tex_land_cc.uddp")).unwrap();
         let mut frames = 0;
-        for land_id in (0..LAND_ID_COUNT).filter(|&id| super::super::tile_atlas::is_cave_exit_frame(id)) {
+        for land_id in (0..LAND_ID_COUNT).filter(|&id| crate::core::render::assets::tile_atlas::is_cave_exit_frame(id)) {
             let Some(tile) = tilemeta.land_tile(land_id) else { continue };
             let Some(rgba) = texmaps.get_pixel_data(u32::from(tile.texture_id)) else { continue };
             // The key's luminance: the texture's linear colour (it is sampled sRGB) under the key's weights.

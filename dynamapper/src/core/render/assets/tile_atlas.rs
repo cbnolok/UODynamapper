@@ -6,6 +6,156 @@
 use bevy::prelude::*;
 use bevy::render::render_resource::ShaderType;
 use std::ops::RangeInclusive;
+use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
+use std::sync::Arc;
+
+/// Runtime terrain upload limits copied from developer-facing worldmap settings.
+///
+/// The same resource is used in both worlds:
+/// - Main world: caps how much terrain preparation work `draw_mesh` can schedule.
+/// - Render world: caps how many atlas writes can be flushed in a single Queue pass.
+///
+/// Keeping the values in one explicit resource makes the upload path easier to inspect
+/// and avoids hiding frame-pacing behavior behind scattered constants.
+#[derive(Resource, Clone, Copy, Debug, PartialEq, Eq, ExtractResource)]
+#[extract_app(bevy::render::RenderApp)]
+pub struct LandUploadBudget {
+    pub prepare_max_blocks_per_frame: usize,
+    pub upload_max_ops_per_frame: usize,
+    pub upload_max_bytes_per_frame: usize,
+}
+
+impl Default for LandUploadBudget {
+    fn default() -> Self {
+        Self {
+            prepare_max_blocks_per_frame: 32_768,
+            upload_max_ops_per_frame: 8,
+            upload_max_bytes_per_frame: 16 * 1024 * 1024,
+        }
+    }
+}
+
+impl LandUploadBudget {
+    pub fn from_settings(settings: &crate::configs::settings::Settings) -> Self {
+        let land_streaming = &settings.world_rendering.land_streaming;
+        Self {
+            prepare_max_blocks_per_frame: land_streaming.prepare_max_blocks_per_frame,
+            upload_max_ops_per_frame: land_streaming.upload_max_ops_per_frame,
+            upload_max_bytes_per_frame: land_streaming.upload_max_bytes_per_frame,
+        }
+    }
+
+    pub fn effective_prepare_max_blocks_per_frame(&self) -> usize {
+        if self.prepare_max_blocks_per_frame == 0 {
+            usize::MAX
+        } else {
+            self.prepare_max_blocks_per_frame
+        }
+    }
+
+    pub fn effective_upload_max_ops_per_frame(&self) -> usize {
+        if self.upload_max_ops_per_frame == 0 {
+            usize::MAX
+        } else {
+            self.upload_max_ops_per_frame
+        }
+    }
+
+    pub fn effective_upload_max_bytes_per_frame(&self) -> usize {
+        if self.upload_max_bytes_per_frame == 0 {
+            usize::MAX
+        } else {
+            self.upload_max_bytes_per_frame
+        }
+    }
+}
+
+#[derive(Default)]
+struct LandUploadTelemetryShared {
+    dirty_block_updates: AtomicU32,
+    queued_ops: AtomicU32,
+    queued_bytes: AtomicU64,
+    submitted_ops: AtomicU32,
+    submitted_bytes: AtomicU64,
+    pending_ops: AtomicU32,
+    pending_bytes: AtomicU64,
+    submitted_metadata_revision: AtomicU64,
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct LandUploadTelemetrySnapshot {
+    pub dirty_block_updates: u32,
+    pub queued_ops: u32,
+    pub queued_bytes: u64,
+    pub submitted_ops: u32,
+    pub submitted_bytes: u64,
+    pub pending_ops: u32,
+    pub pending_bytes: u64,
+    /// Last CPU metadata revision fully issued to the render queue.
+    pub submitted_metadata_revision: u64,
+}
+
+/// Shared telemetry for the land metadata-atlas upload path.
+///
+/// The main world populates the queued counters after dirty regions are gathered, while the
+/// render world updates the submitted and backlog counters after applying the per-frame caps.
+/// We store the counters in an `Arc` so both worlds see the same numbers without introducing
+/// a bespoke cross-world messaging path.
+#[derive(Resource, Clone, Default, ExtractResource)]
+#[extract_app(bevy::render::RenderApp)]
+pub struct LandUploadTelemetry {
+    shared: Arc<LandUploadTelemetryShared>,
+}
+
+impl LandUploadTelemetry {
+    pub fn snapshot(&self) -> LandUploadTelemetrySnapshot {
+        LandUploadTelemetrySnapshot {
+            dirty_block_updates: self.shared.dirty_block_updates.load(Ordering::Relaxed),
+            queued_ops: self.shared.queued_ops.load(Ordering::Relaxed),
+            queued_bytes: self.shared.queued_bytes.load(Ordering::Relaxed),
+            submitted_ops: self.shared.submitted_ops.load(Ordering::Relaxed),
+            submitted_bytes: self.shared.submitted_bytes.load(Ordering::Relaxed),
+            pending_ops: self.shared.pending_ops.load(Ordering::Relaxed),
+            pending_bytes: self.shared.pending_bytes.load(Ordering::Relaxed),
+            submitted_metadata_revision: self.shared.submitted_metadata_revision.load(Ordering::Acquire),
+        }
+    }
+
+    pub fn record_stage(&self, dirty_block_updates: u32, queued_ops: u32, queued_bytes: u64) {
+        self.shared
+            .dirty_block_updates
+            .store(dirty_block_updates, Ordering::Relaxed);
+        self.shared.queued_ops.store(queued_ops, Ordering::Relaxed);
+        self.shared
+            .queued_bytes
+            .store(queued_bytes, Ordering::Relaxed);
+    }
+
+    pub fn record_metadata_submission(&self, revision: u64) {
+        self.shared.submitted_metadata_revision.store(revision, Ordering::Release);
+    }
+
+    pub fn record_submit(
+        &self,
+        submitted_ops: u32,
+        submitted_bytes: u64,
+        pending_ops: u32,
+        pending_bytes: u64,
+    ) {
+        self.shared
+            .submitted_ops
+            .store(submitted_ops, Ordering::Relaxed);
+        self.shared
+            .submitted_bytes
+            .store(submitted_bytes, Ordering::Relaxed);
+        self.shared
+            .pending_ops
+            .store(pending_ops, Ordering::Relaxed);
+        self.shared
+            .pending_bytes
+            .store(pending_bytes, Ordering::Relaxed);
+    }
+}
 
 /// A simple RGBA-like 16-bit unsigned integer pair used for packing tile metadata.
 /// This matches the target texture format (Rg16Uint) in the shader.
@@ -641,7 +791,7 @@ pub fn sys_extract_atlas_uploads(
 pub fn sys_clear_atlas_uploads(
     mut tile_atlas: ResMut<TileAtlas>,
     atlas_image: Res<TileAtlasImageHandle>,
-    telemetry: Res<super::LandUploadTelemetry>,
+    telemetry: Res<LandUploadTelemetry>,
     diagnostics: Res<crate::diagnostics::WorldmapCrossAppDiagnostics>,
 ) {
     let _trace_span = crate::tracy_span!("worldmap::atlas_stage_uploads");
@@ -721,8 +871,8 @@ pub fn sys_clear_atlas_uploads(
 pub fn sys_render_upload_tile_atlas(
     mut uploads: ResMut<RenderAtlasUploads>,
     atlas_handle: Res<TileAtlasImageHandle>,
-    upload_budget: Res<super::LandUploadBudget>,
-    telemetry: Res<super::LandUploadTelemetry>,
+    upload_budget: Res<LandUploadBudget>,
+    telemetry: Res<LandUploadTelemetry>,
     diagnostics: Res<crate::diagnostics::WorldmapCrossAppDiagnostics>,
     gpu_images: Res<RenderAssets<GpuImage>>,
     render_queue: Res<RenderQueue>,

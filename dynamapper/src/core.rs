@@ -4,7 +4,6 @@ pub mod constants;
 pub mod export_job;
 pub mod render;
 pub mod system_sets;
-pub(crate) mod texture_cache;
 pub(crate) mod uo_files_loader;
 
 use crate::{
@@ -391,7 +390,7 @@ pub fn run_bevy_app() -> ExitCode {
         render::RenderPlugin {
             registered_by: "Core",
         },
-        texture_cache::TextureCachePlugin {
+        render::assets::TextureCachePlugin {
             registered_by: "Core",
         },
         uo_files_loader::UOFilesPlugin {

@@ -49,7 +49,7 @@ not loose KDL files. Preserve the original route and subtype even when an
 explicit overlay selects another material.
 
 Missing terrain follows an explicit, logged chain
-(`dynamapper/src/core/texture_cache/land/routing.rs`). A land id the selected
+(`dynamapper/src/core/render/assets/land/routing.rs`). A land id the selected
 EC-layout source lacks is drawn from the other one (Kingdom Reborn and Enhanced
 stand in for each other), then from Classic: its texmap or, as the Classic
 client does, its land art. An id no source has draws a magenta and black

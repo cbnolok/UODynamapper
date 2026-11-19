@@ -4,7 +4,7 @@
 use crate::configs::settings::ClientTextureSource;
 use crate::configs::settings::{LandTextureSource, Settings};
 use crate::console_logger::{self, LogAbout, LogSev};
-use crate::core::texture_cache::ec_item_surface::KR_ITEM_RECORD_BASE;
+use crate::core::render::assets::ec_item_surface::KR_ITEM_RECORD_BASE;
 use crate::core::uo_files_loader::{
     KrItemPackagesRes, TexLandKrPackageRes, TexArtCcPackageRes, TexArtEcPackageRes, TexLandEcPackageRes, TileMetaPackageRes,
 };
@@ -884,7 +884,7 @@ pub fn sys_sync_static_art_source(
     tex_art_ec_res: Option<Res<TexArtEcPackageRes>>,
     tex_land_ec_res: Option<Res<TexLandEcPackageRes>>,
     tilemeta_res: Option<Res<TileMetaPackageRes>>,
-    land_cache: Option<Res<crate::core::texture_cache::land::cache::LandTextureCache>>,
+    land_cache: Option<Res<crate::core::render::assets::land::cache::LandTextureCache>>,
     mut source_state: ResMut<StaticArtSourceState>,
 ) {
     let land_style = land_cache.map_or(StaticLandStyle::Unknown,

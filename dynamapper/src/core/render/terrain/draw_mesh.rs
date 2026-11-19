@@ -35,8 +35,8 @@ use crate::{
         render::scene::{
             camera::PlayerCamera, player::Player, world::WorldGeoData, SceneStateData,
         },
-        texture_cache::land::cache::*,
-        texture_cache::land::routing::land_id_of_row,
+        render::assets::land::cache::*,
+        render::assets::land::routing::land_id_of_row,
         uo_files_loader::{MapPlanesRes, TexMap2DRes, TileMetaPackageRes},
     },
     prelude::*,
@@ -197,7 +197,7 @@ fn mesh_for_scale(handles: &LandMeshHandles, scale: u32, lod: LandMeshLod) -> Ha
     }
 }
 
-use crate::core::render::terrain::tile_atlas::{
+use crate::core::render::assets::tile_atlas::{
     Rg16u, TileAtlas, TERRAIN_SHADER_FLAG_NEVER_BLENDS, TERRAIN_SHADER_FLAG_REVIEWED_LIQUID, cell_terrain_flags,
     is_black_land, is_cave_exit_frame,
 };
@@ -325,7 +325,7 @@ pub struct LandFramePacing<'w> {
     /// Optional tile metadata (tilemeta.uddp); used to determine the IsWet flag per tile.
     /// Optional because the package may not have been converted/loaded yet.
     pub tilemeta: Option<Res<'w, TileMetaPackageRes>>,
-    pub terrain_bases: ResMut<'w, crate::core::texture_cache::land::coverage::EcTerrainBases>,
+    pub terrain_bases: ResMut<'w, crate::core::render::assets::land::coverage::EcTerrainBases>,
     pub images: ResMut<'w, Assets<Image>>,
     /// The caves drawn over the map, whose land is lowered to their floors (`CaveMap::floor_z`).
     pub caves: Res<'w, crate::world::caves::CavesRes>,
@@ -752,11 +752,11 @@ pub fn sys_draw_spawned_land_chunks(
 
     // `ids` contains textures dynamically required. Pinned tracking continues async.
     {
-        use crate::core::render::terrain::tile_atlas::{
+        use crate::core::render::assets::tile_atlas::{
             LAND_NODRAW_ID, LAND_SOURCE_CC_ATLAS, LAND_SOURCE_CC_BIG, LAND_SOURCE_CC_SMALL, LAND_SOURCE_CLASSIC_ART,
             LAND_SOURCE_EC_ATLAS, LAND_SOURCE_MISSING, LAND_SOURCE_NODRAW,
         };
-        use crate::core::texture_cache::land::routing::LandTileRoute;
+        use crate::core::render::assets::land::routing::LandTileRoute;
         // Each id draws from its route (routing.rs): the land page atlas holds the first loaded source of the selected
         // source's chain, plus the other EC-layout package's pages for the ids routed to it. Under an EC-layout atlas,
         // the ids routed to Classic texmaps draw from the texmap arrays. An id draws the texmap, art or EC lookup row
@@ -846,7 +846,7 @@ pub fn sys_draw_spawned_land_chunks(
                 .map(|id| {
                     let target = cache_r.routes().target(id as u32);
                     let classic_land = !matches!(target.route,
-                        crate::core::texture_cache::land::routing::LandTileRoute::Enhanced(_));
+                        crate::core::render::assets::land::routing::LandTileRoute::Enhanced(_));
                     land_tiles.get(target.id as usize).filter(|_| classic_land).map_or(0u8, |t| {
                         if t.flags & TILEMETA_FLAG_WET != 0 {
                             1
@@ -899,7 +899,7 @@ pub fn sys_draw_spawned_land_chunks(
                         }
                     }
                     if complete {
-                        let limits = crate::core::texture_cache::land::coverage::layer_limits(payloads.iter().copied(), &bases.params);
+                        let limits = crate::core::render::assets::land::coverage::layer_limits(payloads.iter().copied(), &bases.params);
                         bases.set(UVec2::new(gx, gy), limits.unwrap_or([u16::MAX; 2]));
                     }
                 }
@@ -1226,7 +1226,7 @@ fn ec_land_shader_flags(
     package: &udd_assets::tex_land_ec::TexLandEcPackage,
     tile_id: u32,
 ) -> u16 {
-    crate::core::texture_cache::land::coverage::ec_land_shader_flags(package, tile_id)
+    crate::core::render::assets::land::coverage::ec_land_shader_flags(package, tile_id)
 }
 
 #[cfg(test)]

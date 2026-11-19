@@ -1,6 +1,6 @@
 //! The route file, `runtime_specs/land/LandRoutes.kdl` (the user's design, 2026-11-12): which source and which id each
 //! land id is drawn from, and which item art each static draws, in front of the automatic land fallback chain
-//! (`texture_cache::land::routing`). A `routes` block always applies; one named `profile` (a season) may be chosen at
+//! (`render::assets::land::routing`). A `routes` block always applies; one named `profile` (a season) may be chosen at
 //! run time on top of it. The file is hand-written and read strictly (`uot_kdl::strict`): every error names its line.
 //!
 //! ```kdl

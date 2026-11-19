@@ -17,7 +17,7 @@ use crate::world::caves::{CaveSurroundings, CaveView};
 use crate::core::render::lighting::light_cover::LightCover;
 use crate::core::render::terrain::mesh_material::{LandShaderModePresets, PlayerFloorRule};
 use crate::core::render::scene::RecomputeVisibleChunksEvent;
-use crate::core::texture_cache::land::cache::LandTextureCache;
+use crate::core::render::assets::land::cache::LandTextureCache;
 use bevy::{ecs::system::SystemParam, prelude::*};
 use serde::Deserialize;
 use serde_json::{json, Value};

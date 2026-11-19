@@ -1,9 +1,9 @@
 //! A bounded native-chunk cache, published only after metadata uploads settle.
 use super::{build_stack_layer, CELL_LIQUID, CELL_NEVER_BLENDS, HALO, HEIGHT, SIDE, WIDTH};
 use super::super::EcTerrainBases;
-use crate::core::texture_cache::land::{cache::LandTextureCache, routing::LandRowMap};
+use crate::core::render::assets::land::{cache::LandTextureCache, routing::LandRowMap};
 use crate::world::maps::MapPlane;
-use crate::core::{render::{scene::player::Player, terrain::{tile_atlas::{Rg16u, TileAtlas, TERRAIN_SHADER_FLAG_NEVER_BLENDS}, LandUploadTelemetry}}, uo_files_loader::MapPlanesRes};
+use crate::core::{render::{scene::player::Player, assets::tile_atlas::{LandUploadTelemetry, Rg16u, TileAtlas, TERRAIN_SHADER_FLAG_NEVER_BLENDS}}, uo_files_loader::MapPlanesRes};
 use bevy::{asset::RenderAssetUsages, prelude::*, render::render_resource::{Extent3d, TextureDimension, TextureFormat, TextureViewDescriptor, TextureViewDimension}};
 use uocf::classic::map::MapBlockRelPos;
 
@@ -255,7 +255,7 @@ pub(crate) fn sys_prepare(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::core::render::terrain::tile_atlas::{AtlasParams, Rg16u};
+    use crate::core::render::assets::tile_atlas::{AtlasParams, Rg16u};
 
     #[test]
     fn residency_requires_matching_ec_halo_and_rejects_eviction_and_source_changes() {

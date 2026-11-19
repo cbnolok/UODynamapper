@@ -4,7 +4,7 @@ use bevy::prelude::*;
 use std::collections::BTreeMap;
 use udd_assets::tex_land_ec::TexLandEcPackage;
 use uocf::enhanced::terrain_definition::TerrainLayerClass;
-use crate::core::render::terrain::tile_atlas::is_black_land;
+use crate::core::render::assets::tile_atlas::is_black_land;
 mod cache;
 pub(crate) use cache::sys_prepare as sys_prepare_stack_cache;
 
@@ -114,7 +114,7 @@ fn coverage_weights(b: f32) -> [u8; 2] {
 }
 
 pub fn ec_land_shader_flags(package: &TexLandEcPackage, tile_id: u32) -> u16 {
-    use crate::core::render::terrain::tile_atlas::TERRAIN_SHADER_FLAG_REVIEWED_LIQUID;
+    use crate::core::render::assets::tile_atlas::TERRAIN_SHADER_FLAG_REVIEWED_LIQUID;
     let Some(material_id) = package.resolve_material_decision(tile_id).material_id else {
         return 0;
     };

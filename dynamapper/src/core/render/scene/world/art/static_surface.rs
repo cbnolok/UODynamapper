@@ -2,10 +2,10 @@
 //! smoothly at patch boundaries. Neighbor flags are built only on chunk rebuild.
 use super::static_batches::{SpriteInstance, StaticChunkBatchKey};
 use super::static_source::TILE_FLAG_SURFACE;
-use crate::core::texture_cache::{ec_item_surface::KR_ITEM_RECORD_BASE, land::coverage::EcTerrainParams};
+use crate::core::render::assets::{ec_item_surface::KR_ITEM_RECORD_BASE, land::coverage::EcTerrainParams};
 use crate::world::statics::LazyStaticsStore;
-use crate::core::{render::terrain::{tile_atlas::{AtlasCells, TileAtlas,
-    LAND_SOURCE_EC_ATLAS, TERRAIN_SHADER_FLAG_NEVER_BLENDS}, CHUNK_STORAGE_BLOCKS_DIM, MAP_STORAGE_BLOCK_TILE_DIM}};
+use crate::core::render::{assets::tile_atlas::{AtlasCells, TileAtlas,
+    LAND_SOURCE_EC_ATLAS, TERRAIN_SHADER_FLAG_NEVER_BLENDS}, terrain::{CHUNK_STORAGE_BLOCKS_DIM, MAP_STORAGE_BLOCK_TILE_DIM}};
 use bevy::math::UVec2;
 use std::collections::{HashMap, HashSet};
 use udd_assets::{tex_art_ec::TexArtEcPackage, tilemeta::{EcMaterialStableRole, TileMetaItemTextureRef, TileMetaItemTile, TileMetaPackage}};
@@ -193,8 +193,8 @@ mod tests {
 
     #[test]
     fn floor_land_meeting_a_patch_with_a_hard_edge_closes_its_side() {
-        use crate::core::render::terrain::tile_atlas::{AtlasParams, Rg16u, LAND_SOURCE_CC_ATLAS};
-        use crate::core::texture_cache::land::coverage::COVERAGE_FLAG_LINEAR_FILTERING;
+        use crate::core::render::assets::tile_atlas::{AtlasParams, Rg16u, LAND_SOURCE_CC_ATLAS};
+        use crate::core::render::assets::land::coverage::COVERAGE_FLAG_LINEAR_FILTERING;
         // The Minoc yard's grass (land 0x3, a soft material) under the cobblestones, and the wooden floor of the north
         // doorway and of the house east of the yard (land 0x406, material 11, coverage exponent 0).
         const GRASS: u16 = 0x3;
@@ -327,7 +327,7 @@ mod tests {
 
     #[test]
     fn ground_height_requires_a_resident_nonmissing_map_page() {
-        use crate::core::render::terrain::tile_atlas::{AtlasParams, Rg16u};
+        use crate::core::render::assets::tile_atlas::{AtlasParams, Rg16u};
         use bevy::math::UVec2;
         let mut atlas = TileAtlas::new(AtlasParams::default(), 1);
         assert_eq!(map_height(&atlas, 0, 0), None);
@@ -344,7 +344,7 @@ mod tests {
 
     #[test]
     fn map_dependency_changes_when_data_arrives_but_not_for_identical_uploads() {
-        use crate::core::render::terrain::tile_atlas::{AtlasParams, Rg16u};
+        use crate::core::render::assets::tile_atlas::{AtlasParams, Rg16u};
         use bevy::math::UVec2;
         let mut atlas = TileAtlas::new(AtlasParams { page_texels: UVec2::splat(2),
             max_layers: 1, world_pages_x: 1, ..Default::default() }, 1);

@@ -2,9 +2,9 @@
 //! signatures that retry a chunk whose atlas pages or lights were incomplete.
 
 use crate::configs::settings::ClientTextureSource;
-use crate::core::render::terrain::tile_atlas::{AtlasCells, TileAtlas};
+use crate::core::render::assets::tile_atlas::{AtlasCells, TileAtlas};
 use crate::world::z_view::ZViewCut;
-use crate::core::texture_cache::art::{GroundArtPageAtlas, SpriteArtPageAtlas};
+use crate::core::render::assets::art::{GroundArtPageAtlas, SpriteArtPageAtlas};
 use bevy::prelude::*;
 use std::collections::HashMap;
 use super::static_source::StaticLandStyle;

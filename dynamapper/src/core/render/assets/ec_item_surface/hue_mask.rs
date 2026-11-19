@@ -1,6 +1,6 @@
 //! UOSprite's source-2 hue coverage, cropped in native source-pixel coordinates.
 use super::{ITEM_CAPACITY, LOOKUP_WIDTH};
-use crate::core::texture_cache::land::aux_layers::{AuxImage, AuxLayers};
+use crate::core::render::assets::land::aux_layers::{AuxImage, AuxLayers};
 use bevy::prelude::*;
 use color_eyre::eyre;
 use std::collections::HashMap;
@@ -143,7 +143,7 @@ pub(crate) fn append(lookup: &mut Image, source: super::ItemRecordSource, includ
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::core::texture_cache::land::aux_layers::AuxLayerFormat;
+    use crate::core::render::assets::land::aux_layers::AuxLayerFormat;
 
     #[test]
     fn cropped_masks_keep_native_offsets_upscale_and_cross_layer_seams() {

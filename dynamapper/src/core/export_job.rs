@@ -19,10 +19,9 @@ use crate::core::render::scene::{
     },
     ExportChunkFootprint, RecomputeVisibleChunksEvent,
 };
-use crate::core::render::terrain::{
-    LCMesh, LandUploadTelemetry, draw_mesh::ChunkScale, mesh_material::LandShaderModePresets, tile_atlas::TileAtlas,
-};
-use crate::core::texture_cache::art::{GroundArtPageAtlas, SpriteArtPageAtlas};
+use crate::core::render::assets::tile_atlas::{LandUploadTelemetry, TileAtlas};
+use crate::core::render::terrain::{LCMesh, draw_mesh::ChunkScale, mesh_material::LandShaderModePresets};
+use crate::core::render::assets::art::{GroundArtPageAtlas, SpriteArtPageAtlas};
 use crate::prelude::*;
 use bevy::prelude::*;
 use bevy::{

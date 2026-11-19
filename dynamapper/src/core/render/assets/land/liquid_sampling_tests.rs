@@ -19,7 +19,7 @@ fn liquid_sampling_gpu_preserves_data_and_source_edges() {
         });
         let shader_id = |value| AssetId::<Shader>::Uuid { uuid: Uuid::from_u128(value) };
         shaders.set_shader(shader_id(16), Shader::from_wesl(
-            include_str!("../../../../assets/shaders/world/projection.wesl"),
+            include_str!("../../../../../assets/shaders/world/projection.wesl"),
             "shaders/world/projection.wesl",
         ));
         // A large camera anchor with identity rotation/projection isolates the
@@ -34,39 +34,39 @@ struct ProjectionView {
 @group(0) @binding(5) var<uniform> view: ProjectionView;
 "#, "embedded://bevy_pbr/render/mesh_view_bindings.wesl"));
         shaders.set_shader(shader_id(14), Shader::from_wesl(
-            include_str!("../../../../assets/shaders/world/uo_coords.wesl"),
+            include_str!("../../../../../assets/shaders/world/uo_coords.wesl"),
             "shaders/world/uo_coords.wesl",
         ));
         shaders.set_shader(shader_id(1), Shader::from_wesl(
-            include_str!("../../../../assets/shaders/world/texture_data.wesl"),
+            include_str!("../../../../../assets/shaders/world/texture_data.wesl"),
             "shaders/world/texture_data.wesl",
         ));
         shaders.set_shader(shader_id(2), Shader::from_wesl(
-            include_str!("../../../../assets/shaders/world/ec_liquid.wesl"),
+            include_str!("../../../../../assets/shaders/world/ec_liquid.wesl"),
             "shaders/world/ec_liquid.wesl",
         ));
         shaders.set_shader(shader_id(3), Shader::from_wesl(
-            include_str!("../../../../assets/shaders/world/ec_item_surface.wesl"),
+            include_str!("../../../../../assets/shaders/world/ec_item_surface.wesl"),
             "shaders/world/ec_item_surface.wesl",
         ));
         shaders.set_shader(shader_id(4), Shader::from_wesl(
-            include_str!("../../../../assets/shaders/world/ec_item_liquid.wesl"),
+            include_str!("../../../../../assets/shaders/world/ec_item_liquid.wesl"),
             "shaders/world/ec_item_liquid.wesl",
         ));
         shaders.set_shader(shader_id(15), Shader::from_wesl(
-            include_str!("../../../../assets/shaders/world/ec_item_water.wesl"),
+            include_str!("../../../../../assets/shaders/world/ec_item_water.wesl"),
             "shaders/world/ec_item_water.wesl",
         ));
         shaders.set_shader(shader_id(5), Shader::from_wesl(
-            include_str!("../../../../assets/shaders/world/ec_item_quad.wesl"),
+            include_str!("../../../../../assets/shaders/world/ec_item_quad.wesl"),
             "shaders/world/ec_item_quad.wesl",
         ));
         shaders.set_shader(shader_id(6), Shader::from_wesl(
-            include_str!("../../../../assets/shaders/world/common_bindings.wesl"),
+            include_str!("../../../../../assets/shaders/world/common_bindings.wesl"),
             "shaders/world/common_bindings.wesl",
         ));
         shaders.set_shader(shader_id(7), Shader::from_wesl(
-            include_str!("../../../../assets/shaders/world/land/land_bindings.wesl"),
+            include_str!("../../../../../assets/shaders/world/land/land_bindings.wesl"),
             "shaders/world/land/land_bindings.wesl",
         ));
         // Synthetic metadata isolates the real bank-selection algorithm from
@@ -113,11 +113,11 @@ fn ec_coverage_params(payload: u32) -> vec4<u32> {
 }
 "#, "shaders/world/land/coverage.wesl"));
         shaders.set_shader(shader_id(10), Shader::from_wesl(
-            include_str!("../../../../assets/shaders/world/land/liquid_bank.wesl"),
+            include_str!("../../../../../assets/shaders/world/land/liquid_bank.wesl"),
             "shaders/world/land/liquid_bank.wesl",
         ));
         shaders.set_shader(shader_id(11), Shader::from_wesl(
-            include_str!("../../../../assets/shaders/world/art/surface_blend.wesl"),
+            include_str!("../../../../../assets/shaders/world/art/surface_blend.wesl"),
             "shaders/world/art/surface_blend.wesl",
         ));
         // Constant colors isolate production CC interpolation/eligibility.
@@ -134,7 +134,7 @@ fn sample_tile_albedo_grad(uv: vec2<f32>, tile: TileUniform, dx: vec2<f32>, dy: 
 }
 "#, "shaders/world/land/sampling.wesl"));
         shaders.set_shader(shader_id(13), Shader::from_wesl(
-            include_str!("../../../../assets/shaders/world/land/cc_transitions.wesl"),
+            include_str!("../../../../../assets/shaders/world/land/cc_transitions.wesl"),
             "shaders/world/land/cc_transitions.wesl",
         ));
         shaders.set_shader(shader_id(0), Shader::from_wesl(r#"

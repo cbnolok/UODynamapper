@@ -51,7 +51,7 @@ pub struct LandMaterialExtension {
     /// Configuration for the metadata atlas paging system.
     /// Maps logical 2048x2048 world pages to physical GPU array layers.
     #[uniform(104, visibility(vertex, fragment))]
-    pub atlas_params: crate::core::render::terrain::tile_atlas::AtlasParams,
+    pub atlas_params: crate::core::render::assets::tile_atlas::AtlasParams,
 
     /// Global camera and lighting direction state.
     #[uniform(105, visibility(vertex, fragment))]

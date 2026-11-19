@@ -1254,7 +1254,7 @@ fn sys_evict_idle_land_cache(
     mut cache_r: ResMut<cache::LandTextureCache>,
     mut map_planes_r: ResMut<crate::core::uo_files_loader::MapPlanesRes>,
     scene_state_r: Res<crate::core::render::scene::SceneStateData>,
-    mut tile_atlas: ResMut<crate::core::render::terrain::tile_atlas::TileAtlas>,
+    mut tile_atlas: ResMut<crate::core::render::assets::tile_atlas::TileAtlas>,
     time: Res<Time<Real>>,
 ) {
     let now = time.last_update().unwrap_or_else(Instant::now);
@@ -1516,8 +1516,8 @@ pub fn sys_setup_terrain_cache(
     use crate::core::render::terrain::{
         draw_mesh::SharedLandMaterial,
         mesh_material::{LandMaterialExtension, SceneUniform},
-        tile_atlas::{AtlasParams, TileAtlas, TileAtlasImageHandle},
     };
+    use crate::core::render::assets::tile_atlas::{AtlasParams, TileAtlas, TileAtlasImageHandle};
     use bevy::render::render_resource::{Extent3d, TextureDimension, TextureFormat, TextureUsages};
 
     let shader_images = create_land_shader_images(&mut images, land_shader_source_from_cache(&land_texture_cache))
@@ -1782,9 +1782,9 @@ fn sys_apply_texture_array_expansion(
 /// has been set by the LRU paging logic (or when the shrink heuristic fires).
 fn sys_apply_tile_atlas_expansion(
     mut images: ResMut<Assets<Image>>,
-    mut tile_atlas: ResMut<crate::core::render::terrain::tile_atlas::TileAtlas>,
+    mut tile_atlas: ResMut<crate::core::render::assets::tile_atlas::TileAtlas>,
     mut atlas_handle: ResMut<
-        crate::core::render::terrain::tile_atlas::TileAtlasImageHandle,
+        crate::core::render::assets::tile_atlas::TileAtlasImageHandle,
     >,
     mut materials: ResMut<Assets<LandCustomMeshMaterial>>,
     shared_mat: Res<crate::core::render::terrain::draw_mesh::SharedLandMaterial>,
@@ -2047,7 +2047,7 @@ mod tests {
     /// land shader cannot be composed in a test, so the guard reads its source.
     #[test]
     fn the_kr_land_grain_is_seeded_by_the_world_position_alone() {
-        const LAND_MAIN_WESL: &str = include_str!("../../../assets/shaders/world/land/main.wesl");
+        const LAND_MAIN_WESL: &str = include_str!("../../../../assets/shaders/world/land/main.wesl");
         const GRAIN_SEED: &str = "hash(floor(world_xz * KR_MATERIAL_GRAIN_CELLS_PER_TILE))";
         const LIQUID_TILE_TEST: &str =
             "tile.is_wet == 1u || (tile.terrain_flags & TERRAIN_FLAG_REVIEWED_LIQUID) != 0u";
@@ -2067,7 +2067,7 @@ mod tests {
     /// the layer its texture lies on, which follows the package layout and the residency order.
     #[test]
     fn the_land_blur_rotation_is_seeded_by_the_world_tile_alone() {
-        const SAMPLING_WESL: &str = include_str!("../../../assets/shaders/world/land/sampling.wesl");
+        const SAMPLING_WESL: &str = include_str!("../../../../assets/shaders/world/land/sampling.wesl");
         const TILE_SEED: &str = "rand01_from_tile(i32(floor(world_xz.x)), i32(floor(world_xz.y)))";
         assert!(SAMPLING_WESL.contains("fn rand01_from_tile(ix: i32, iz: i32) -> f32 {"), "a tile's seed is its cell");
         let blur = crate::util_lib::wesl_source::wesl_fn_body(SAMPLING_WESL, "blurred_albedo");
@@ -2080,9 +2080,9 @@ mod tests {
         // Bevy returns no imports when WESL parsing fails, e.g. an import after
         // a struct. Library-only composition cannot catch that entry-point bug.
         for (source, path) in [
-            (include_str!("../../../assets/shaders/world/land/main.wesl"), "shaders/world/land/main.wesl"),
-            (include_str!("../../../assets/shaders/world/art/main.wesl"), "shaders/world/art/main.wesl"),
-            (include_str!("../../../assets/shaders/world/art/ground.wesl"), "shaders/world/art/ground.wesl"),
+            (include_str!("../../../../assets/shaders/world/land/main.wesl"), "shaders/world/land/main.wesl"),
+            (include_str!("../../../../assets/shaders/world/art/main.wesl"), "shaders/world/art/main.wesl"),
+            (include_str!("../../../../assets/shaders/world/art/ground.wesl"), "shaders/world/art/ground.wesl"),
         ] {
             let shader = Shader::from_wesl(source, path);
             assert!(shader.imports.iter().any(|import| matches!(import,
@@ -2100,67 +2100,67 @@ mod tests {
 
         let shaders = [
             Shader::from_wesl(
-                include_str!("../../../assets/shaders/world/uo_coords.wesl"),
+                include_str!("../../../../assets/shaders/world/uo_coords.wesl"),
                 "shaders/world/uo_coords.wesl",
             ),
             Shader::from_wesl(
-                include_str!("../../../assets/shaders/world/common_bindings.wesl"),
+                include_str!("../../../../assets/shaders/world/common_bindings.wesl"),
                 "shaders/world/common_bindings.wesl",
             ),
             Shader::from_wesl(
-                include_str!("../../../assets/shaders/world/land/land_bindings.wesl"),
+                include_str!("../../../../assets/shaders/world/land/land_bindings.wesl"),
                 "shaders/world/land/land_bindings.wesl",
             ),
             Shader::from_wesl(
-                include_str!("../../../assets/shaders/world/pixel_art_filters.wesl"),
+                include_str!("../../../../assets/shaders/world/pixel_art_filters.wesl"),
                 "shaders/world/pixel_art_filters.wesl",
             ),
             Shader::from_wesl(
-                include_str!("../../../assets/shaders/world/client_filter.wesl"),
+                include_str!("../../../../assets/shaders/world/client_filter.wesl"),
                 "shaders/world/client_filter.wesl",
             ),
             Shader::from_wesl(
-                include_str!("../../../assets/shaders/world/texture_data.wesl"),
+                include_str!("../../../../assets/shaders/world/texture_data.wesl"),
                 "shaders/world/texture_data.wesl",
             ),
             Shader::from_wesl(
-                include_str!("../../../assets/shaders/world/ec_liquid.wesl"),
+                include_str!("../../../../assets/shaders/world/ec_liquid.wesl"),
                 "shaders/world/ec_liquid.wesl",
             ),
             Shader::from_wesl(
-                include_str!("../../../assets/shaders/world/ec_item_liquid.wesl"),
+                include_str!("../../../../assets/shaders/world/ec_item_liquid.wesl"),
                 "shaders/world/ec_item_liquid.wesl",
             ),
             Shader::from_wesl(
-                include_str!("../../../assets/shaders/world/ec_item_surface.wesl"),
+                include_str!("../../../../assets/shaders/world/ec_item_surface.wesl"),
                 "shaders/world/ec_item_surface.wesl",
             ),
             Shader::from_wesl(
-                include_str!("../../../assets/shaders/world/land/sampling.wesl"),
+                include_str!("../../../../assets/shaders/world/land/sampling.wesl"),
                 "shaders/world/land/sampling.wesl",
             ),
             Shader::from_wesl(
-                include_str!("../../../assets/shaders/world/land/atlas.wesl"),
+                include_str!("../../../../assets/shaders/world/land/atlas.wesl"),
                 "shaders/world/land/atlas.wesl",
             ),
             Shader::from_wesl(
-                include_str!("../../../assets/shaders/world/land/coverage.wesl"),
+                include_str!("../../../../assets/shaders/world/land/coverage.wesl"),
                 "shaders/world/land/coverage.wesl",
             ),
             Shader::from_wesl(
-                include_str!("../../../assets/shaders/world/land/liquid_bank.wesl"),
+                include_str!("../../../../assets/shaders/world/land/liquid_bank.wesl"),
                 "shaders/world/land/liquid_bank.wesl",
             ),
             Shader::from_wesl(
-                include_str!("../../../assets/shaders/world/land/normals.wesl"),
+                include_str!("../../../../assets/shaders/world/land/normals.wesl"),
                 "shaders/world/land/normals.wesl",
             ),
             Shader::from_wesl(
-                include_str!("../../../assets/shaders/world/land/lighting.wesl"),
+                include_str!("../../../../assets/shaders/world/land/lighting.wesl"),
                 "shaders/world/land/lighting.wesl",
             ),
             Shader::from_wesl(
-                include_str!("../../../assets/shaders/world/land/bump.wesl"),
+                include_str!("../../../../assets/shaders/world/land/bump.wesl"),
                 "shaders/world/land/bump.wesl",
             ),
         ];

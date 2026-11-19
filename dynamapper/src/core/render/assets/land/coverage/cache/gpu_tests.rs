@@ -3,7 +3,7 @@ use super::*;
 use bevy::{asset::{uuid::Uuid, AssetId}, shader::{Shader, ShaderCache, ShaderCacheError, ShaderCacheSource}};
 
 /// The land page lookup's rows per role and its texels per row (`LAND_PAGE_LOOKUP_TILE_CAPACITY`, land.rs).
-const LOOKUP_CAPACITY: usize = crate::core::texture_cache::land::routing::LAND_ROUTE_ROW_COUNT;
+const LOOKUP_CAPACITY: usize = crate::core::render::assets::land::routing::LAND_ROUTE_ROW_COUNT;
 const LOOKUP_WIDTH: usize = 256;
 const LOOKUP_ROLES: usize = 7;
 const COVERAGE_ROLE: usize = 6;
@@ -61,14 +61,14 @@ fn cached_layers_and_alpha_match_original_gpu_reconstruction() {
         });
         let id = |value| AssetId::<Shader>::Uuid { uuid: Uuid::from_u128(value) };
         shaders.set_shader(id(1), Shader::from_wesl(
-            include_str!("../../../../../../assets/shaders/world/common_bindings.wesl"), "shaders/world/common_bindings.wesl"));
+            include_str!("../../../../../../../assets/shaders/world/common_bindings.wesl"), "shaders/world/common_bindings.wesl"));
         shaders.set_shader(id(2), Shader::from_wesl(
-            include_str!("../../../../../../assets/shaders/world/land/land_bindings.wesl")
+            include_str!("../../../../../../../assets/shaders/world/land/land_bindings.wesl")
                 .replace("@group(3)", "@group(0)").replace("@binding(110)", "@binding(1)")
                 .replace("@binding(117)", "@binding(2)").replace("@binding(118)", "@binding(3)"),
             "shaders/world/land/land_bindings.wesl"));
         shaders.set_shader(id(3), Shader::from_wesl(
-            include_str!("../../../../../../assets/shaders/world/land/coverage.wesl"), "shaders/world/land/coverage.wesl"));
+            include_str!("../../../../../../../assets/shaders/world/land/coverage.wesl"), "shaders/world/land/coverage.wesl"));
         shaders.set_shader(id(4), Shader::from_wesl(r#"
 import package::shaders::world::land::land_bindings::TileUniform;
 @group(0) @binding(0) var cells: texture_2d<u32>;
@@ -79,7 +79,7 @@ fn atlas_read_meta(x: i32, y: i32) -> TileUniform {
 }
 "#, "shaders/world/land/atlas.wesl"));
         shaders.set_shader(id(5), Shader::from_wesl(
-            include_str!("../../../../../../assets/shaders/world/land/transitions.wesl"), "shaders/world/land/transitions.wesl"));
+            include_str!("../../../../../../../assets/shaders/world/land/transitions.wesl"), "shaders/world/land/transitions.wesl"));
         shaders.set_shader(id(0), Shader::from_wesl(r#"
 import package::shaders::world::land::coverage::{EcTerrainStack, ec_terrain_cache, ec_cache_layer, ec_cache_grime_mask, ec_layer_tile, ec_terrain_stack_uncached};
 import package::shaders::world::land::transitions::{ec_transition_boundary_weight, ec_transition_boundary_weight_from_mask};

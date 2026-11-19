@@ -4,7 +4,7 @@ use crate::core::render::scene::camera::{PlayerCamera, RenderZoom};
 use crate::core::render::terrain::{
     CHUNK_STORAGE_BLOCKS_DIM, MAP_STORAGE_BLOCK_TILE_DIM,
 };
-use crate::core::render::terrain::tile_atlas::{AtlasCells, TileAtlas};
+use crate::core::render::assets::tile_atlas::{AtlasCells, TileAtlas};
 use crate::world::multis::{
     expanded_multi_part_z, MultiDefinitionsRes, MultiPart, PlacedMulti, PlacedMultisRes,
 };
@@ -12,9 +12,9 @@ use crate::world::caves::{is_buried_floor, CaveMap, CaveStatic, CavesRes, Player
 use crate::world::z_view::{PackageLand, ZViewCut, ZViewLimit};
 use crate::core::render::scene::SceneStateData;
 use crate::world::statics::{LazyStaticsStore, StaticsStoreRes};
-use crate::core::texture_cache::art::{GroundArtPageAtlas, ResolvedArtSprite, SpriteArtPageAtlas};
-use crate::core::texture_cache::art::ArtPageKey;
-use crate::core::texture_cache::ec_item_surface::KR_ITEM_RECORD_BASE;
+use crate::core::render::assets::art::{GroundArtPageAtlas, ResolvedArtSprite, SpriteArtPageAtlas};
+use crate::core::render::assets::art::ArtPageKey;
+use crate::core::render::assets::ec_item_surface::KR_ITEM_RECORD_BASE;
 use crate::core::uo_files_loader::{
     MapPlanesRes, TexArtCcPackageRes, TexArtEcPackageRes, TexLandEcPackageRes, TileMetaPackageRes, TexAuxEcPackageRes,
 };
@@ -408,7 +408,7 @@ struct StaticCollectResources<'a> {
     static_lights: &'a super::static_lights::RenderStaticLightInstances,
     tile_atlas: &'a TileAtlas,
     /// The EC terrain parameters of the land drawn, per atlas payload (`EcTerrainBases::params`).
-    terrain: Option<&'a [Option<crate::core::texture_cache::land::coverage::EcTerrainParams>]>,
+    terrain: Option<&'a [Option<crate::core::render::assets::land::coverage::EcTerrainParams>]>,
     map_planes: Option<&'a MapPlanesRes>,
     /// The caves drawn over the map, if any.
     caves: Option<&'a CaveMap>,
@@ -527,7 +527,7 @@ fn static_collect_resources<'a>(
     placed_multis: &'a PlacedMultisRes,
     static_lights: &'a super::static_lights::RenderStaticLightInstances,
     tile_atlas: &'a TileAtlas,
-    terrain_bases: &'a Option<Res<crate::core::texture_cache::land::coverage::EcTerrainBases>>,
+    terrain_bases: &'a Option<Res<crate::core::render::assets::land::coverage::EcTerrainBases>>,
     map_planes: &'a Option<Res<MapPlanesRes>>,
     caves: &'a CavesRes,
     kingdom_reborn: Option<KrStaticSources<'a>>,
@@ -1767,7 +1767,7 @@ pub fn sys_collect_visible_statics(
     terrain: (
         Query<&crate::core::render::terrain::LCMesh>,
         Res<TileAtlas>,
-        Option<Res<crate::core::texture_cache::land::coverage::EcTerrainBases>>,
+        Option<Res<crate::core::render::assets::land::coverage::EcTerrainBases>>,
     ),
 ) {
     let (tex_art_cc_res, tex_art_ec_res, tex_land_ec_res, tilemeta_res, tex_aux_ec_res, kr_packages) = packages;
@@ -2216,7 +2216,7 @@ mod tests {
 
     #[test]
     fn dry_cc_picking_and_rendering_require_all_four_resident_level_corners() {
-        use crate::core::render::terrain::tile_atlas::{AtlasParams, Rg16u};
+        use crate::core::render::assets::tile_atlas::{AtlasParams, Rg16u};
         let mut tile = item_tile_with_flags(TILE_FLAG_BACKGROUND | TILE_FLAG_SURFACE,
             udd_assets::tilemeta::TileMetaItemVisualKind::RegularArt);
         tile.height = 0;
@@ -2240,7 +2240,7 @@ mod tests {
     #[test]
     fn only_drawn_land_covers_a_buried_floor() {
         use crate::world::caves::CAVE_MIN_BURY_DEPTH;
-        use crate::core::render::terrain::tile_atlas::{AtlasParams, Rg16u, LAND_SOURCE_CC_ATLAS,
+        use crate::core::render::assets::tile_atlas::{AtlasParams, Rg16u, LAND_SOURCE_CC_ATLAS,
             LAND_SOURCE_NODRAW, LAND_NODRAW_ID};
         use crate::world::z_view::NO_Z_VIEW_LIMIT;
         use uocf::enhanced::tileart::TaeFlag;
@@ -2851,10 +2851,10 @@ mod tests {
         world.init_resource::<PlacedMultisRes>();
         world.insert_resource(TileAtlas::new(Default::default(), 0));
         world.insert_resource(RenderZoom::default());
-        world.insert_resource(SpriteArtPageAtlas(crate::core::texture_cache::art::ArtPageAtlas::new(
+        world.insert_resource(SpriteArtPageAtlas(crate::core::render::assets::art::ArtPageAtlas::new(
             Handle::default(), 64, 64, 1, 1, PagePixelFormat::Rgba8888,
         )));
-        world.insert_resource(GroundArtPageAtlas(crate::core::texture_cache::art::ArtPageAtlas::new(
+        world.insert_resource(GroundArtPageAtlas(crate::core::render::assets::art::ArtPageAtlas::new(
             Handle::default(), 64, 64, 1, 1, PagePixelFormat::Rgba8888,
         )));
         world.insert_resource(RenderStaticInstances(vec![SpriteInstance::zeroed()]));
@@ -3692,7 +3692,7 @@ mod tests {
 
     #[test]
     fn static_chunk_cache_rebuilds_only_the_chunks_that_read_changed_land() {
-        use crate::core::render::terrain::tile_atlas::{AtlasParams, Rg16u};
+        use crate::core::render::assets::tile_atlas::{AtlasParams, Rg16u};
         let mut atlas = TileAtlas::new(AtlasParams { page_texels: UVec2::splat(64), max_layers: 1, world_pages_x: 1,
             ..Default::default() }, 1);
         let (layer, _) = atlas.ensure_layer_for_page(IVec2::ZERO);

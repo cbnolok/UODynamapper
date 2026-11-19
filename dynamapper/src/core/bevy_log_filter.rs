@@ -255,7 +255,7 @@ mod tests {
     /// Records of the workspace's crates keep their level; a dependency's uncategorized records don't.
     #[test]
     fn workspace_targets_keep_their_level() {
-        assert!(is_workspace_target("dynamapper::core::texture_cache::land", ""));
+        assert!(is_workspace_target("dynamapper::core::render::assets::land", ""));
         assert!(is_workspace_target("udd_assets::tex_aux_ec", ""));
         assert!(is_workspace_target("uot_image_postprocess::palette", ""));
         assert!(is_workspace_target("log", "particle_sim::emitter"));

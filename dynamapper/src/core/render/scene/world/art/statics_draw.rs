@@ -10,7 +10,7 @@ use crate::core::render::scene::world::art::static_batches::{
 };
 use crate::core::render::scene::world::art::static_source::{KrStaticPackages, KrStaticSources, StaticLandStyle};
 use crate::core::system_sets::StartupSysSet;
-use crate::core::texture_cache::art::{
+use crate::core::render::assets::art::{
     ArtPageAtlas, GroundArtPageAtlas, GroundArtPageAtlasHandle, SpriteArtPageAtlas,
     SpriteArtPageAtlasHandle,
 };
@@ -821,8 +821,8 @@ pub fn sys_setup_art_page_atlas(
     hues_package_res: Option<Res<HuesPackageRes>>,
     // One tuple: a system takes at most 16 parameters.
     (item_liquid_images, item_surface_images): (
-        Res<crate::core::texture_cache::ec_item_liquid::EcItemLiquidImages>,
-        Res<crate::core::texture_cache::ec_item_surface::EcItemSurfaceImages>,
+        Res<crate::core::render::assets::ec_item_liquid::EcItemLiquidImages>,
+        Res<crate::core::render::assets::ec_item_surface::EcItemSurfaceImages>,
     ),
     client_grunge_packages: super::client_grunge::ClientGrungePackages,
 ) {
