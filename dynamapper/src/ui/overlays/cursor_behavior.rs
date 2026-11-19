@@ -8,10 +8,10 @@ use crate::render::picking::static_geometry::{StaticArtRoute, StaticPickingResou
 use crate::render::scene::player::Player;
 use crate::render::picking::terrain_cursor::{TerrainCursor, TerrainCursorQuery};
 use crate::render::{
-    scene::{world::WorldGeoData, RecomputeVisibleChunksEvent},
+    scene::RecomputeVisibleChunksEvent,
     view::camera::{PlayerCamera, UiCameraResource},
 };
-use crate::world::statics::StaticsStoreRes;
+use crate::world::{maps::WorldGeoData, statics::StaticsStoreRes};
 use crate::content::{
     TexArtCcPackageRes, TexArtEcPackageRes, TexLandEcPackageRes, MapPlanesRes, TileMetaPackageRes,
 };

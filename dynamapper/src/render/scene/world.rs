@@ -1,22 +1,16 @@
 
 use crate::render::terrain;
 
-use nohash_hasher::BuildNoHashHasher;
-use indexmap::IndexMap;
 use bevy::prelude::*;
 use crate::prelude::*;
-use crate::world::maps::MapPlaneMetadata;
+use crate::world::maps::{sys_populate_world_geo_data, WorldGeoData};
 use crate::world::{caves, z_view};
 
 
-use crate::content::MapPlanesRes;
 use crate::app::system_sets::{MovementSysSet, SceneRenderArtSysSet, StartupSysSet};
 
-#[derive(Resource, Default)]
-pub struct WorldGeoData {
-    pub maps: IndexMap<u32, MapPlaneMetadata, BuildNoHashHasher<u32>>,
-}
-
+/// Wires the world into the frame: the map catalog, the world analyses (caves, floor-view cut) and the land and
+/// statics draw plugins.
 pub struct WorldPlugin {
     pub registered_by: &'static str,
 }
@@ -67,32 +61,5 @@ impl Plugin for WorldPlugin
                 terrain::DrawLandChunkMeshPlugin { registered_by: "WorldPlugin" },
                 crate::render::statics::DrawStaticSpritesPlugin { registered_by: "WorldPlugin" },
             ));
-    }
-}
-
-fn sys_populate_world_geo_data(
-    map_planes_res: Option<Res<MapPlanesRes>>,
-    mut world_geo_data_res: ResMut<WorldGeoData>,
-) {
-    log_system_add_startup::<WorldPlugin>(StartupSysSet::SetupSceneStage1, fname!());
-    let Some(map_planes_res) = map_planes_res else {
-        return;
-    };
-    if world_geo_data_res.maps.is_empty() {
-        for (id, plane) in map_planes_res.0.iter().enumerate() {
-            // MapPlanesRes now contains Option<MapPlane> indexed by map ID.
-            let Some(plane) = plane else { continue; };
-            let id = id as u32;
-            world_geo_data_res.maps.insert(id, MapPlaneMetadata {
-                id: id as u8,
-                width: plane.size_blocks.width * 8,
-                height: plane.size_blocks.height * 8,
-            });
-            console_logger::one(
-                LogSev::Info,
-                LogAbout::RenderWorldLand,
-                &format!("Populated WorldGeoData for map {id} ({}x{} tiles).", plane.size_blocks.width * 8, plane.size_blocks.height * 8),
-            );
-        }
     }
 }

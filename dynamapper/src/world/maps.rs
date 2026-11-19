@@ -19,6 +19,43 @@ pub struct MapPlaneMetadata {
     pub height: u32,
 }
 
+/// The catalog of the loaded maps: each plane's size in tiles, by map id.
+#[derive(Resource, Default)]
+pub struct WorldGeoData {
+    pub maps: indexmap::IndexMap<u32, MapPlaneMetadata, nohash_hasher::BuildNoHashHasher<u32>>,
+}
+
+/// Fills the catalog from the loaded map planes, once, at startup.
+pub(crate) fn sys_populate_world_geo_data(
+    map_planes_res: Option<bevy::prelude::Res<crate::content::MapPlanesRes>>,
+    mut world_geo_data_res: bevy::prelude::ResMut<WorldGeoData>,
+) {
+    crate::util_lib::tracked_plugin::log_system_add_startup::<crate::render::scene::world::WorldPlugin>(
+        crate::app::system_sets::StartupSysSet::SetupSceneStage1,
+        crate::fname!(),
+    );
+    let Some(map_planes_res) = map_planes_res else {
+        return;
+    };
+    if world_geo_data_res.maps.is_empty() {
+        for (id, plane) in map_planes_res.0.iter().enumerate() {
+            // MapPlanesRes now contains Option<MapPlane> indexed by map ID.
+            let Some(plane) = plane else { continue; };
+            let id = id as u32;
+            world_geo_data_res.maps.insert(id, MapPlaneMetadata {
+                id: id as u8,
+                width: plane.size_blocks.width * 8,
+                height: plane.size_blocks.height * 8,
+            });
+            crate::console_logger::one(
+                crate::console_logger::LogSev::Info,
+                crate::console_logger::LogAbout::RenderWorldLand,
+                &format!("Populated WorldGeoData for map {id} ({}x{} tiles).", plane.size_blocks.width * 8, plane.size_blocks.height * 8),
+            );
+        }
+    }
+}
+
 #[repr(C)]
 #[derive(Clone, Copy, Pod, Zeroable)]
 struct PackedMapTexel {

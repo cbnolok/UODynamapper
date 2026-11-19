@@ -1,6 +1,6 @@
 use crate::render::view::camera::{PlayerCamera, UiCameraResource};
 use crate::render::scene::player::Player;
-use crate::render::scene::world::WorldGeoData;
+use crate::world::maps::WorldGeoData;
 use crate::render::scene::RecomputeVisibleChunksEvent;
 use crate::app::system_sets::*;
 use crate::input::{InjectedPointer, effective_cursor_position};

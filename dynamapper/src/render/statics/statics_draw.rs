@@ -1545,7 +1545,7 @@ pub fn sys_update_sprite_instance_buffer(
     mut storage_buffers: ResMut<Assets<ShaderBuffer>>,
     zoom: Res<crate::render::view::camera::RenderZoom>,
     scene_state: Res<crate::render::scene::SceneStateData>,
-    world_geo: Res<crate::render::scene::world::WorldGeoData>,
+    world_geo: Res<crate::world::maps::WorldGeoData>,
     mut upload_cache: ResMut<StaticArtUploadCache>,
     mut debug_state: ResMut<StaticArtDrawDebugState>,
 ) {
@@ -1621,7 +1621,7 @@ pub fn sys_update_ground_instance_buffer(
     mut materials: ResMut<Assets<ArtGroundMaterial>>,
     mut storage_buffers: ResMut<Assets<ShaderBuffer>>,
     scene_state: Res<crate::render::scene::SceneStateData>,
-    world_geo: Res<crate::render::scene::world::WorldGeoData>,
+    world_geo: Res<crate::world::maps::WorldGeoData>,
     mut upload_cache: ResMut<StaticArtUploadCache>,
     mut debug_state: ResMut<StaticArtDrawDebugState>,
 ) {
@@ -1929,7 +1929,7 @@ mod tests {
             .insert_resource(render_assets)
             .insert_resource(RenderStaticLandInstances(vec![bytemuck::Zeroable::zeroed()]))
             .insert_resource(crate::render::scene::SceneStateData { map_id: 0 })
-            .init_resource::<crate::render::scene::world::WorldGeoData>()
+            .init_resource::<crate::world::maps::WorldGeoData>()
             .init_resource::<StaticArtUploadCache>()
             .init_resource::<StaticArtDrawDebugState>()
             .init_resource::<GroundMaterialsTouched>()

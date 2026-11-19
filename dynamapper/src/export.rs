@@ -9,7 +9,8 @@ use crate::settings::shader_presets::{UniformState, CLASSIC_PRESET_GROUP, PAINTE
 use crate::console_logger::{self, LogAbout, LogSev};
 use crate::app::app_states::AppState;
 use crate::world::teleport::teleport_player;
-use crate::render::scene::{player::Player, world::WorldGeoData, RecomputeVisibleChunksEvent};
+use crate::render::scene::{player::Player, RecomputeVisibleChunksEvent};
+use crate::world::maps::WorldGeoData;
 use crate::render::view::{
     camera::{ORTHO_SIZE_FACTOR, ORTHO_WIDTH_SCALE_FACTOR, PlayerCamera},
     footprint::{chunks_in_tile_rect, ExportChunkFootprint},

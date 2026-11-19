@@ -55,7 +55,7 @@ terrain, statics, lighting, picking, postprocess}`, `ui/`, `export/`, `diagnosti
 |---|---:|---:|---|
 | `world/coords.rs` | 121 | 1 | Moved 2026-11-18 from `util_lib/uo_coords.rs`; its importers took the new path 2026-11-19. |
 | `world/{maps, statics, multis}.rs` | 908 | 12 | Moved 2026-11-18 from `core/`; their importers took the new path 2026-11-19. |
-| `rsw.rs` (`render/scene/world.rs`) | 100 | 4 | The map catalog half; its plugin wiring stays with render. |
+| `world/maps.rs` (`WorldGeoData`) | | | The map catalog: moved 2026-11-19 from `render/scene/world.rs`, with the startup system that fills it. `WorldPlugin` (wiring, 70 lines) stays in `render/scene/world.rs` and still registers it. |
 | `render/scene/player.rs` | 107 | 0 | Logical position → `world/player`; the rendered entity stays with `render/scene`. |
 | `world/{player_movement, teleport}.rs` | 362 | 0 | Moved 2026-11-18 from `core/controls/`. |
 | `world/caves.rs`, `world/z_view.rs` | 2211 | 24 | Moved 2026-11-19 from `rsw/`, whole: their systems write the analyses' private state. World analysis (cave membership, floor-view cut, cell queries) that render consumes. They still read the render side: the chunks they send to be baked (`LCMesh`, `PendingTextureBake`), the map block size in `land`, the player and scene state, and `PlayerFloorRule` and `LAND_NO_Z_LIMIT` in `mesh_material`. The KR z bands (`client_light_band`, `kr_light_layer`, their constants and `NO_Z_VIEW_LIMIT`) moved here from `light_cover` 2026-11-19. |
@@ -83,7 +83,7 @@ terrain, statics, lighting, picking, postprocess}`, `ui/`, `export/`, `diagnosti
 |---|---:|---:|---|
 | `render.rs`, `render/scene.rs` | 824 | 2 | `render/scene`: chunk lifecycle. View selection (the follow, free and export footprints) left for `view/footprint.rs` 2026-11-19. |
 | `render/view.rs`, `view/{camera, footprint}.rs`, `camera/perspective.rs` | 1090 | 5 | `render/view`: the camera moved 2026-11-19 from `render/scene/`, and the footprints from `scene.rs`. `ScenePlugin` still adds `CameraPlugin`. |
-| `render/terrain/chunk_loader.rs` | 201 | 0 | `render/scene` (streaming loads); came to `terrain/` with `land/` and stays until the scene move. |
+| `render/terrain/chunk_loader.rs` | 201 | 0 | Stays in `render/terrain`: only `terrain/draw_mesh` uses it, and it owns the loader thread. It goes to `render/scene` if streaming loads ever move there. |
 | `render/terrain.rs`, `terrain/{draw_mesh, mesh_material, setup_base_mesh, cave_mouth_veil}.rs` | 3013 | 50 | `render/terrain`: moved 2026-11-19 from `rsw/land`. Its light enums moved 2026-11-19: `LightCover` to `light_cover.rs`, `ClientLocalLightSource` to `static_lights.rs`. |
 | `render/terrain/coverage.rs` (+ `cache.rs`, `runtime.rs`, `gpu_tests.rs`) | 1057 | 17 | `render/terrain`: moved 2026-11-19 from `assets/land/`. `assets::land` still builds its bases and registers its stack cache system, in the same order; `assets::land` already read `terrain` (the shared material, `LCMesh`), so the move adds no new dependency direction. |
 | `render/assets/land/liquid_sampling_tests.rs` | 574 | 0 | `render/assets`: it samples the EC aux atlas and tests `assets::land`'s aux padding, so it stays with `land.rs`. |

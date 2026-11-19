@@ -13,7 +13,7 @@ use player::Player;
 use crate::render::terrain::draw_mesh::{scale_from_zoom, ChunkScale};
 use crate::render::terrain::TILE_NUM_PER_CHUNK_DIM;
 use crate::render::terrain;
-use world::WorldGeoData;
+use crate::world::maps::WorldGeoData;
 
 #[derive(Resource)]
 pub struct SceneStateData {
