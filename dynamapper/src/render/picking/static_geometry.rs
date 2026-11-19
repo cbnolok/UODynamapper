@@ -10,7 +10,7 @@ use crate::render::assets::ec_item_surface::KR_ITEM_RECORD_BASE;
 use crate::configs::settings::ClientTextureSource;
 use crate::render::view::camera::RenderZoom;
 use crate::render::assets::tile_atlas::TileAtlas;
-use crate::core::uo_files_loader::{
+use crate::content::{
     TexArtCcPackageRes, TexArtEcPackageRes, TexLandEcPackageRes, TileMetaPackageRes, TexAuxEcPackageRes,
 };
 use crate::prelude::*;

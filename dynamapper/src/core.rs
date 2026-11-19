@@ -2,7 +2,6 @@ pub mod app_states;
 mod bevy_log_filter;
 pub mod constants;
 pub mod system_sets;
-pub(crate) mod uo_files_loader;
 
 use crate::{
     configs::{settings, ExternalDataPlugin},
@@ -391,7 +390,7 @@ pub fn run_bevy_app() -> ExitCode {
         crate::render::assets::TextureCachePlugin {
             registered_by: "Core",
         },
-        uo_files_loader::UOFilesPlugin {
+        crate::content::UOFilesPlugin {
             registered_by: "Core",
         },
     ))

@@ -290,7 +290,7 @@ fn poll_control(
                 ControlCommand::ReloadLand {} => {
                     commands.queue(|world: &mut World| {
                         let mut evicted = 0;
-                        if let Some(mut planes) = world.get_resource_mut::<crate::core::uo_files_loader::MapPlanesRes>() {
+                        if let Some(mut planes) = world.get_resource_mut::<crate::content::MapPlanesRes>() {
                             for plane in planes.0.iter_mut().flatten() {
                                 evicted += plane.evict_idle_blocks(std::time::Duration::ZERO);
                             }

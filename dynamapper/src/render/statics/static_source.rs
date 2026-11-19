@@ -5,7 +5,7 @@ use crate::configs::settings::ClientTextureSource;
 use crate::configs::settings::{LandTextureSource, Settings};
 use crate::console_logger::{self, LogAbout, LogSev};
 use crate::render::assets::ec_item_surface::KR_ITEM_RECORD_BASE;
-use crate::core::uo_files_loader::{
+use crate::content::{
     KrItemPackagesRes, TexLandKrPackageRes, TexArtCcPackageRes, TexArtEcPackageRes, TexLandEcPackageRes, TileMetaPackageRes,
 };
 use crate::prelude::*;

@@ -60,7 +60,7 @@ use crate::world::z_view::{CLIENT_BAND_HEIGHT, NO_Z_VIEW_LIMIT};
 use crate::world::z_view::{PLAYER_CEILING_MIN_RISE, PLAYER_VIEW_HEADROOM};
 use crate::render::scene::SceneStateData;
 use crate::world::statics::{read_package_chunk_statics, StaticsStoreRes};
-use crate::core::uo_files_loader::{MapPlanesRes, TileMetaPackageRes};
+use crate::content::{MapPlanesRes, TileMetaPackageRes};
 use bevy::prelude::*;
 use color_eyre::eyre;
 use serde::{Deserialize, Serialize};

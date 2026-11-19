@@ -9,7 +9,7 @@ use crate::world::maps::MapPlaneMetadata;
 use crate::world::{caves, z_view};
 
 
-use crate::core::uo_files_loader::MapPlanesRes;
+use crate::content::MapPlanesRes;
 use crate::core::system_sets::{MovementSysSet, SceneRenderArtSysSet, StartupSysSet};
 
 #[derive(Resource, Default)]

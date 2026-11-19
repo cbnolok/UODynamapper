@@ -3,7 +3,7 @@ use super::{build_stack_layer, CELL_LIQUID, CELL_NEVER_BLENDS, HALO, HEIGHT, SID
 use super::super::EcTerrainBases;
 use crate::render::assets::land::{cache::LandTextureCache, routing::LandRowMap};
 use crate::world::maps::MapPlane;
-use crate::core::uo_files_loader::MapPlanesRes;
+use crate::content::MapPlanesRes;
 use crate::render::{scene::player::Player, assets::tile_atlas::{LandUploadTelemetry, Rg16u, TileAtlas, TERRAIN_SHADER_FLAG_NEVER_BLENDS}};
 use bevy::{asset::RenderAssetUsages, prelude::*, render::render_resource::{Extent3d, TextureDimension, TextureFormat, TextureViewDescriptor, TextureViewDimension}};
 use uocf::classic::map::MapBlockRelPos;

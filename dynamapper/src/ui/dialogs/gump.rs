@@ -11,7 +11,7 @@ use crate::ui::dialogs::paperdoll_overrides::{
 use crate::configs::runtime_specs::SpecFiles;
 use crate::render::view::camera::UiCameraResource;
 use crate::configs::settings::GumpClient;
-use crate::core::uo_files_loader::{GumpMapRes, HuesPackageRes, PaperdollEcPackageRes, TileMetaPackageRes};
+use crate::content::{GumpMapRes, HuesPackageRes, PaperdollEcPackageRes, TileMetaPackageRes};
 use udd_assets::tilemeta::{TileMetaItemDefinitions, TileMetaItemTile};
 use crate::ingame_sysmessage_logger;
 use crate::{

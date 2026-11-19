@@ -12,7 +12,7 @@
 //! warning, and a white texture that leaves the colour as it is.
 
 use crate::console_logger::{self, LogAbout, LogSev};
-use crate::core::uo_files_loader::{TexAuxEcPackageRes, TexLandKrPackageRes};
+use crate::content::{TexAuxEcPackageRes, TexLandKrPackageRes};
 use bevy::asset::RenderAssetUsages;
 use bevy::ecs::system::SystemParam;
 use bevy::image::{ImageAddressMode, ImageFilterMode, ImageSampler, ImageSamplerDescriptor};

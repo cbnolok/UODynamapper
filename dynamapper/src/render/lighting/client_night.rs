@@ -79,7 +79,7 @@ use crate::render::lighting::static_lights::{light_sprite_glow_strength, NO_LIGH
 use crate::render::postprocess::fog_pass::FogPassSystems;
 use crate::render::terrain::mesh_material::ClientNightLighting;
 use crate::core::system_sets::StartupSysSet;
-use crate::core::uo_files_loader::TexAuxEcPackageRes;
+use crate::content::TexAuxEcPackageRes;
 use crate::prelude::*;
 use bevy::anti_alias::{fxaa::fxaa, smaa::smaa};
 use bevy::asset::RenderAssetUsages;

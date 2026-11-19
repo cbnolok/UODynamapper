@@ -225,7 +225,7 @@ fn create_aux_atlas_images(
     tex_aux_ec: Option<&TexAuxEcPackage>,
     tilemeta: Option<&TileMetaPackage>,
     tex_art_ec: Option<&udd_assets::tex_art_ec::TexArtEcPackage>,
-    kr_items: Option<&crate::core::uo_files_loader::KrItemPackagesRes>,
+    kr_items: Option<&crate::content::KrItemPackagesRes>,
 ) -> LandAuxAtlasImages {
     use super::ec_item_surface::{ItemRecordSource, KR_ITEM_RECORD_BASE};
     use bevy::render::render_resource::{
@@ -1126,7 +1126,7 @@ impl Plugin for LandTextureCachePlugin {
                     route_file::sys_select_route_profile,
                     route_file::sys_apply_item_routes,
                     sys_setup_terrain_cache
-                        .run_if(resource_exists::<crate::core::uo_files_loader::TexMap2DRes>),
+                        .run_if(resource_exists::<crate::content::TexMap2DRes>),
                 )
                     .chain()
                     .in_set(StartupSysSet::SetupSceneStage1)
@@ -1204,7 +1204,7 @@ fn chunk_read_blocks(gx: u32, gy: u32, scale: u32) -> (std::ops::RangeInclusive<
 /// so `sys_evict_idle_land_cache` keeps it.
 fn sys_pin_active_textures(
     mut cache_r: ResMut<cache::LandTextureCache>,
-    mut map_planes_r: ResMut<crate::core::uo_files_loader::MapPlanesRes>,
+    mut map_planes_r: ResMut<crate::content::MapPlanesRes>,
     scene_state_r: Res<crate::render::scene::SceneStateData>,
     chunk_q: Query<&crate::render::terrain::LCMesh>,
 ) {
@@ -1252,7 +1252,7 @@ fn sys_pin_active_textures(
 
 fn sys_evict_idle_land_cache(
     mut cache_r: ResMut<cache::LandTextureCache>,
-    mut map_planes_r: ResMut<crate::core::uo_files_loader::MapPlanesRes>,
+    mut map_planes_r: ResMut<crate::content::MapPlanesRes>,
     scene_state_r: Res<crate::render::scene::SceneStateData>,
     mut tile_atlas: ResMut<crate::render::assets::tile_atlas::TileAtlas>,
     time: Res<Time<Real>>,
@@ -1348,7 +1348,7 @@ fn sys_apply_land_texture_source_changes(
     mut commands: Commands,
     settings: Res<crate::configs::settings::Settings>,
     route_file: Res<route_file::RouteFileRes>,
-    texmap_2d_r: Res<crate::core::uo_files_loader::TexMap2DRes>,
+    texmap_2d_r: Res<crate::content::TexMap2DRes>,
     mut cache_r: ResMut<cache::LandTextureCache>,
     mut images: ResMut<Assets<Image>>,
     mut materials: ResMut<Assets<LandCustomMeshMaterial>>,
@@ -1458,16 +1458,16 @@ pub fn sys_setup_terrain_cache(
     mut images: ResMut<Assets<Image>>,
     mut materials: ResMut<Assets<LandCustomMeshMaterial>>,
     settings: Res<crate::configs::settings::Settings>,
-    texmap_2d_r: Res<crate::core::uo_files_loader::TexMap2DRes>,
-    tilemeta_r: Option<Res<crate::core::uo_files_loader::TileMetaPackageRes>>,
-    tex_art_cc_r: Option<Res<crate::core::uo_files_loader::TexArtCcPackageRes>>,
-    tex_art_ec_r: Option<Res<crate::core::uo_files_loader::TexArtEcPackageRes>>,
-    tex_land_ec_r: Option<Res<crate::core::uo_files_loader::TexLandEcPackageRes>>,
-    tex_land_kr_r: Option<Res<crate::core::uo_files_loader::TexLandKrPackageRes>>,
-    item_packages: (Option<Res<crate::core::uo_files_loader::TexAuxEcPackageRes>>,
-        Option<Res<crate::core::uo_files_loader::KrItemPackagesRes>>),
-    map_planes: Res<crate::core::uo_files_loader::MapPlanesRes>,
-    uo_files_settings: Res<crate::core::uo_files_loader::UoFilesSettingsRes>,
+    texmap_2d_r: Res<crate::content::TexMap2DRes>,
+    tilemeta_r: Option<Res<crate::content::TileMetaPackageRes>>,
+    tex_art_cc_r: Option<Res<crate::content::TexArtCcPackageRes>>,
+    tex_art_ec_r: Option<Res<crate::content::TexArtEcPackageRes>>,
+    tex_land_ec_r: Option<Res<crate::content::TexLandEcPackageRes>>,
+    tex_land_kr_r: Option<Res<crate::content::TexLandKrPackageRes>>,
+    item_packages: (Option<Res<crate::content::TexAuxEcPackageRes>>,
+        Option<Res<crate::content::KrItemPackagesRes>>),
+    map_planes: Res<crate::content::MapPlanesRes>,
+    uo_files_settings: Res<crate::content::UoFilesSettingsRes>,
     shader_presets: Res<crate::render::terrain::mesh_material::LandShaderModePresets>,
     route_file: Res<route_file::RouteFileRes>,
     texture_variation: Res<crate::configs::land_texture_variation::LandTextureVariationMaterials>,
@@ -1670,7 +1670,7 @@ pub fn sys_setup_terrain_cache(
 
 /// The land ids the loaded maps use, for the rerouting summary and the secondary EC-layout pages; `None`, every id
 /// counting, when a map cannot be read.
-fn used_land_ids(map_planes: &crate::core::uo_files_loader::MapPlanesRes) -> Option<Vec<bool>> {
+fn used_land_ids(map_planes: &crate::content::MapPlanesRes) -> Option<Vec<bool>> {
     let started = Instant::now();
     let mut used = vec![false; routing::LAND_ROUTE_TILE_COUNT];
     for plane in map_planes.0.iter().flatten() {
@@ -1695,7 +1695,7 @@ fn sys_apply_texture_array_expansion(
     mut handles_r: ResMut<cache::TextureArrayImageHandles>,
     mut materials: ResMut<Assets<LandCustomMeshMaterial>>,
     shared_mat: Res<crate::render::terrain::draw_mesh::SharedLandMaterial>,
-    texmap_2d_r: Res<crate::core::uo_files_loader::TexMap2DRes>,
+    texmap_2d_r: Res<crate::content::TexMap2DRes>,
     _settings: Res<crate::configs::settings::Settings>,
     time: Res<Time<Real>>,
 ) {

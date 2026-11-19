@@ -21,7 +21,7 @@ use crate::render::lighting::client_night::{
 use crate::world::z_view::{PackageLand, ZViewCut, ZViewLimit};
 use crate::render::scene::SceneStateData;
 use crate::world::statics::StaticsStoreRes;
-use crate::core::uo_files_loader::{HuesPackageRes, MapPlanesRes, TileMetaPackageRes, WorldLightsPackageRes};
+use crate::content::{HuesPackageRes, MapPlanesRes, TileMetaPackageRes, WorldLightsPackageRes};
 use crate::world::coords::scale_uo_z_to_bevy_units;
 use udd_assets::world_lights::LIGHT_FULL_INTENSITY;
 use bevy::camera::visibility::{NoFrustumCulling, RenderLayers};

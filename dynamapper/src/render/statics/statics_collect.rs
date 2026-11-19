@@ -15,7 +15,7 @@ use crate::world::statics::{LazyStaticsStore, StaticsStoreRes};
 use crate::render::assets::art::{GroundArtPageAtlas, ResolvedArtSprite, SpriteArtPageAtlas};
 use crate::render::assets::art::ArtPageKey;
 use crate::render::assets::ec_item_surface::KR_ITEM_RECORD_BASE;
-use crate::core::uo_files_loader::{
+use crate::content::{
     MapPlanesRes, TexArtCcPackageRes, TexArtEcPackageRes, TexLandEcPackageRes, TileMetaPackageRes, TexAuxEcPackageRes,
 };
 use crate::prelude::*;

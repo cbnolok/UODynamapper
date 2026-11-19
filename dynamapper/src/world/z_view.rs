@@ -65,7 +65,7 @@ use crate::render::terrain::MAP_STORAGE_BLOCK_TILE_DIM;
 use crate::render::scene::SceneStateData;
 use crate::configs::shader_presets::UniformState;
 use crate::world::statics::{LazyStaticsStore, StaticsStoreRes};
-use crate::core::uo_files_loader::{MapPlanesRes, TileMetaPackageRes};
+use crate::content::{MapPlanesRes, TileMetaPackageRes};
 use bevy::prelude::*;
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;

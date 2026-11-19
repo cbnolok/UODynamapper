@@ -47,7 +47,7 @@ use crate::render::lighting::client_night::LIGHT_BUFFER_LAYER;
 use crate::render::terrain::{LCMesh, CHUNK_STORAGE_BLOCKS_DIM, MAP_STORAGE_BLOCK_TILE_DIM};
 use crate::render::scene::SceneStateData;
 use crate::world::statics::StaticsStoreRes;
-use crate::core::uo_files_loader::{MapPlanesRes, TexArtCcPackageRes, TexAuxEcPackageRes, TileMetaPackageRes};
+use crate::content::{MapPlanesRes, TexArtCcPackageRes, TexAuxEcPackageRes, TileMetaPackageRes};
 use crate::world::coords::scale_uo_z_to_bevy_units;
 use bevy::camera::visibility::{NoFrustumCulling, RenderLayers};
 use bevy::mesh::MeshTag;

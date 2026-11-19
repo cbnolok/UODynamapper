@@ -4,10 +4,8 @@ use bevy::prelude::*;
 use color_eyre::eyre;
 
 use crate::{
-    core::{
-        system_sets::StartupSysSet,
-        uo_files_loader::{TexArtCcPackageRes, TexArtEcPackageRes},
-    },
+    content::{TexArtCcPackageRes, TexArtEcPackageRes},
+    core::system_sets::StartupSysSet,
     prelude::*,
 };
 use udd_assets::bc7::{self, ImageExtent, TextureUploadLayout, VramTextureFormat};

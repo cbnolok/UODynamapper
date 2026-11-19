@@ -13,7 +13,7 @@ use crate::render::assets::art::{
     ArtPageAtlas, GroundArtPageAtlas, GroundArtPageAtlasHandle, SpriteArtPageAtlas,
     SpriteArtPageAtlasHandle,
 };
-use crate::core::uo_files_loader::{
+use crate::content::{
     HuesPackageRes, TexArtCcPackageRes, TexArtEcPackageRes, TexLandEcPackageRes,
     TileMetaPackageRes,
 };

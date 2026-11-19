@@ -64,7 +64,7 @@ terrain, statics, lighting, picking, postprocess}`, `ui/`, `export/`, `diagnosti
 
 | Now | Lines | Churn | Notes |
 |---|---:|---:|---|
-| `core/uo_files_loader.rs` | 1290 | 13 | Split package discovery from the runtime gump provider. |
+| `content.rs` | 1290 | 13 | Moved 2026-11-19 from `core/uo_files_loader.rs`, whole. Split package discovery from the runtime gump provider. |
 | `configs/land_routes.rs`, `render/assets/land/route_file.rs` | 1122 | 6 | The land route table and its file. |
 | `configs/land_texture_variation.rs` | 237 | 1 | |
 | `ui/dialogs/paperdoll_overrides.rs` (+ `measure.rs`) | 605 | 0 | Composition and override policy; its window goes to `ui/`. |

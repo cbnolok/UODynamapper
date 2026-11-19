@@ -231,7 +231,7 @@ night lighting, light sprites, lights under a roof or a floor, KR static shadows
 ## 7. Tile data
 
 The tile data a static is drawn and picked by follows the art it is drawn from, not the style
-(`drawn_tile_data`, `art/statics_collect.rs`; `TileMetaPackageRes::for_art`, `dynamapper/src/core/uo_files_loader.rs`).
+(`drawn_tile_data`, `render/statics/statics_collect.rs`; `TileMetaPackageRes::for_art`, `dynamapper/src/content.rs`).
 
 | Drawn from | Tables | Note |
 |---|---|---|

@@ -2,6 +2,7 @@ use std::process::ExitCode;
 
 pub mod configs;
 pub mod console_logger;
+pub(crate) mod content;
 pub mod core;
 pub mod diagnostics;
 pub mod export;

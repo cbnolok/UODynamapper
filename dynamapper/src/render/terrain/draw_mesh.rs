@@ -30,10 +30,8 @@ use super::{
 };
 use crate::world::maps::{MapPlane, MapPlaneMetadata};
 use crate::{
-    core::{
-        constants,
-        uo_files_loader::{MapPlanesRes, TexMap2DRes, TileMetaPackageRes},
-    },
+    content::{MapPlanesRes, TexMap2DRes, TileMetaPackageRes},
+    core::constants,
     render::scene::{player::Player, world::WorldGeoData, SceneStateData},
     render::view::camera::PlayerCamera,
     render::assets::land::cache::*,

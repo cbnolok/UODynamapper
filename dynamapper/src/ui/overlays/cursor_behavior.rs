@@ -12,7 +12,7 @@ use crate::render::{
     view::camera::{PlayerCamera, UiCameraResource},
 };
 use crate::world::statics::StaticsStoreRes;
-use crate::core::uo_files_loader::{
+use crate::content::{
     TexArtCcPackageRes, TexArtEcPackageRes, TexLandEcPackageRes, MapPlanesRes, TileMetaPackageRes,
 };
 use crate::ingame_sysmessage_logger;
