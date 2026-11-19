@@ -1,6 +1,7 @@
 pub(crate) mod assets;
 pub mod lighting;
 pub mod terrain;
+pub mod postprocess;
 pub mod scene;
 
 use crate::prelude::*;
@@ -27,7 +28,7 @@ impl Plugin for RenderPlugin {
             crate::ui::dialogs::DialogsPlugin {
                 registered_by: "RenderPlugin",
             },
-            scene::world::effects::fog_pass::FogPostProcessPlugin {
+            postprocess::fog_pass::FogPostProcessPlugin {
                 registered_by: "RenderPlugin",
             },
             lighting::client_night::ClientNightLightingPlugin {

@@ -29,7 +29,7 @@ Instead:
 
 ## Where this repo touches it
 
-- `core/render/scene/world/effects/fog_pass.rs` — implements
+- `core/render/postprocess/fog_pass.rs` — implements
   `FullscreenMaterial`. The trait's `node_edges()` / `sub_graph()` /
   `node_label()` methods were replaced by `schedule()` and
   `schedule_configs(ScheduleConfigs<BoxedSystem>)`. The fog pass wants to run

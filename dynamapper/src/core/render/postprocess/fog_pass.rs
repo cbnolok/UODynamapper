@@ -1,4 +1,4 @@
-// world::effects::fog_pass — Fullscreen fog post-processing pass plugin.
+// render::postprocess::fog_pass — Fullscreen fog post-processing pass plugin.
 //
 // Implements fog as a fullscreen pass that runs after the main 3D render,
 // covering both land terrain and art/sprite tiles uniformly. This solves

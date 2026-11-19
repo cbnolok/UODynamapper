@@ -1,7 +1,6 @@
 pub mod art;
 
 use crate::core::render::terrain;
-pub mod effects;
 
 use nohash_hasher::BuildNoHashHasher;
 use indexmap::IndexMap;

@@ -76,7 +76,7 @@
 use crate::configs::shader_presets::UniformState;
 use crate::core::render::scene::camera::{PlayerCamera, RenderZoom, ORTHO_SIZE_FACTOR};
 use crate::core::render::lighting::static_lights::{light_sprite_glow_strength, NO_LIGHT_SPRITE_GLOW};
-use crate::core::render::scene::world::effects::fog_pass::FogPassSystems;
+use crate::core::render::postprocess::fog_pass::FogPassSystems;
 use crate::core::render::terrain::mesh_material::ClientNightLighting;
 use crate::core::system_sets::StartupSysSet;
 use crate::core::uo_files_loader::TexAuxEcPackageRes;

@@ -95,7 +95,7 @@ terrain, statics, lighting, picking, postprocess}`, `ui/`, `export/`, `diagnosti
 | `art/{client_grunge, depth_tests, shading_tests}.rs` | 609 | 9 | `render/statics`. |
 | `core/render/lighting.rs`, `lighting/{static_lights, client_light_sprites, light_cover, light_scene, light_scene_tests, client_night, dynamic_light, light_scale}.rs` | 5998 | 93 | Moved 2026-11-19 from `art/`, `rsw/effects/`, `scene/` and `configs/`: one owner for lighting. It reads the statics' placement, source and land z, the picking query and the transparent draw order (`pub(crate)` in `art/`); it moves under `render/` with the rest of `core/render`. |
 | `art/gpu_picking.rs` (+ `tests.rs`), `terrain/picking.rs` (+ `tests.rs`) | 898 | 7 | `render/picking`. |
-| `rsw/effects.rs`, `effects/fog_pass.rs` | 143 | 3 | `render/postprocess`. |
+| `core/render/postprocess.rs`, `postprocess/fog_pass.rs` | 143 | 3 | `render/postprocess`: moved 2026-11-19 from `rsw/effects`. Its shader stays at `shaders/world/effects/fog_pass.wesl`, beside the surface effects the art and land import. |
 
 ### ui
 
