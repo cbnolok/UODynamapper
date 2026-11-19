@@ -2,11 +2,8 @@ use crate::ui::dialogs;
 use crate::input::input_actions::{ActionCloseActiveDialog, ActionTogglePreferences};
 use crate::{
     settings::{AntiAliasingMode, ClientTextureSource, GumpClient, LandTextureSource},
-    diagnostics::frame_limiter::FrameLimiterSettings,
-    app::{
-        frame_limiter_for_options, frame_limiter_for_settings,
-        present_mode_for_vsync,
-    },
+    diagnostics::frame_limiter::{frame_limiter_for_options, FrameLimiterSettings},
+    app::present_mode_for_vsync,
     render::view::camera::UiCameraResource,
     prelude::*,
     world::caves::{CaveSurroundings, CaveView},
@@ -135,7 +132,7 @@ impl Plugin for PreferencesDialogPlugin {
                 Update,
                 (
                     sys_sync_settings_to_state.run_if(in_state(AppState::InGame)),
-                    sys_apply_performance_settings.run_if(in_state(AppState::InGame)),
+                    crate::diagnostics::frame_limiter::sys_apply_performance_settings.run_if(in_state(AppState::InGame)),
                 ),
             )
             .add_systems(EguiPrimaryContextPass, sys_render_preferences_dialog);
@@ -811,15 +808,5 @@ pub fn sys_render_preferences_dialog(
     // Bevy's change detection on every frame, which can be expensive.
     if state.open != window_open {
         state.open = window_open;
-    }
-}
-
-pub fn sys_apply_performance_settings(
-    settings: Res<Settings>,
-    mut frame_limiter: ResMut<FrameLimiterSettings>,
-) {
-    if settings.is_changed() {
-        log_system_add_update::<PreferencesDialogPlugin>(fname!());
-        frame_limiter.limiter = frame_limiter_for_settings(settings.as_ref());
     }
 }

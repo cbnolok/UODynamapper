@@ -22,6 +22,35 @@ impl Limiter {
     }
 }
 
+/// The limiter the performance settings ask for: off while vsync paces the frames.
+pub fn frame_limiter_for_options(frame_limit_enabled: bool, target_fps: u32, vsync: bool) -> Limiter {
+    if frame_limit_enabled && !vsync {
+        Limiter::from_framerate(target_fps as f64)
+    } else {
+        Limiter::Off
+    }
+}
+
+pub fn frame_limiter_for_settings(settings: &crate::settings::Settings) -> Limiter {
+    frame_limiter_for_options(
+        settings.app.performance.frame_limit_enabled,
+        settings.app.performance.target_fps,
+        settings.graphics.vsync,
+    )
+}
+
+/// Applies the saved performance settings to the limiter whenever the settings change. The preferences dialog
+/// registers it.
+pub fn sys_apply_performance_settings(
+    settings: Res<crate::settings::Settings>,
+    mut frame_limiter: ResMut<FrameLimiterSettings>,
+) {
+    if settings.is_changed() {
+        log_system_add_update::<crate::ui::dialogs::preferences::PreferencesDialogPlugin>(fname!());
+        frame_limiter.limiter = frame_limiter_for_settings(settings.as_ref());
+    }
+}
+
 #[derive(Resource)]
 pub struct FrameLimiterSettings {
     pub limiter: Limiter,

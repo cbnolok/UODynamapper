@@ -48,26 +48,6 @@ pub fn present_mode_for_vsync(vsync: bool) -> PresentMode {
     }
 }
 
-pub fn frame_limiter_for_options(
-    frame_limit_enabled: bool,
-    target_fps: u32,
-    vsync: bool,
-) -> frame_limiter::Limiter {
-    if frame_limit_enabled && !vsync {
-        frame_limiter::Limiter::from_framerate(target_fps as f64)
-    } else {
-        frame_limiter::Limiter::Off
-    }
-}
-
-pub fn frame_limiter_for_settings(settings: &settings::Settings) -> frame_limiter::Limiter {
-    frame_limiter_for_options(
-        settings.app.performance.frame_limit_enabled,
-        settings.app.performance.target_fps,
-        settings.graphics.vsync,
-    )
-}
-
 fn custom_threadpool_settings() -> TaskPoolPlugin {
     TaskPoolPlugin {
         task_pool_options: TaskPoolOptions {
@@ -370,7 +350,7 @@ pub fn run_bevy_app() -> ExitCode {
         registered_by: "Core",
     })
     .insert_resource(frame_limiter::FrameLimiterSettings {
-        limiter: frame_limiter_for_settings(&settings_data),
+        limiter: frame_limiter::frame_limiter_for_settings(&settings_data),
     })
     .insert_resource(bevy_egui::EguiGlobalSettings {
         auto_create_primary_context: false, // We manually spawn PrimaryEguiContext on the UI camera
