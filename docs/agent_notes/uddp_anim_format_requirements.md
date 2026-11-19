@@ -607,7 +607,23 @@ expanded for VRAM; ms are all drawable, each the best of the timing runs, in the
 | Enhanced, largest creatures, 121.7 Mpx | both planes in row spans, zstd 19 | 35.0 | 179.2 | 47.6 / 12.5 | 27.7 / 8.0 |
 | | both planes in row spans, LZ4 HC | 42.0 | 63.9 | 18.1 / 5.0 | 12.7 / 3.3 |
 
-- **zstd 19 passes with room to spare:** 48 ms on 4 threads in the worst version, a fifth of the 250 ms line, and
+A busier area, the user's second case: 30 creatures and 20 players wearing 15 equipment pieces each
+(`MOBILE_ANIM_CODEC_TM_CROWD=30,20,15`), each distinct pair once, as a loader decodes a shared piece once: 337–338 pairs,
+about 300 of them distinct equipment pieces.
+
+| Crowd | Coder | Disk read MB | 1 thread ms | 4 threads, five / faced | 8 threads, five / faced |
+|---|---|---:|---:|---:|---:|
+| Classic, uniform creatures, 17.1 Mpx | row spans, zstd 19 | 5.5 | 33.3 | 8.5 / 1.8 | 4.3 / 1.0 |
+| | row spans, LZ4 HC | 6.9 | 12.5 | 3.3 / 0.7 | 1.7 / 0.5 |
+| Classic, largest creatures, 123.1 Mpx | row spans, zstd 19 | 29.0 | 137.4 | 37.1 / 9.2 | 19.0 / 4.9 |
+| | row spans, LZ4 HC | 35.2 | 44.3 | 12.2 / 3.2 | 6.7 / 1.9 |
+| Enhanced, uniform creatures, 28.3 Mpx | both planes in row spans, zstd 19 | 12.6 | 76.5 | 20.0 / 4.2 | 10.0 / 2.2 |
+| | both planes in row spans, LZ4 HC | 15.4 | 28.2 | 7.6 / 1.7 | 4.0 / 1.0 |
+| Enhanced, largest creatures, 155.8 Mpx | both planes in row spans, zstd 19 | 47.5 | 244.4 | 63.9 / 15.7 | 34.1 / 8.5 |
+| | both planes in row spans, LZ4 HC | 57.3 | 87.3 | 25.0 / 6.1 | 15.1 / 4.2 |
+
+- **zstd 19 passes with room to spare:** 48 ms on 4 threads in the worst version of the median area and 64 ms in the
+  worst version of the busier one, a fifth of the 250 ms line, and
   10 ms in the uniform one. LZ4 HC is still 2.6–3× as fast, but both are far inside the line.
 - **At 2× upscaled art,** about 4× the pixels, the worst version would be about 190 ms on 4 threads for zstd 19 (scaled,
   not measured), still inside.

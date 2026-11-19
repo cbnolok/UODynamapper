@@ -3125,17 +3125,23 @@ fn town_pairs(pairs: &[Pair], kinds: &BodyKinds, bodies: &[BodySource]) -> Vec<P
 
 /// The town, from what says a body is human and what says it is equipment.
 fn town_of(pairs: &[Pair], is_human: &dyn Fn(usize) -> bool, is_equipment: &dyn Fn(usize) -> bool) -> Vec<Pair> {
+    town_sized(pairs, is_human, is_equipment, TOWN_NPCS, TOWN_EQUIPMENT_PER_NPC)
+}
+
+/// `npcs` NPCs of a human body and `per_npc` equipment bodies each, in `TOWN_ACTION`; equipment repeats only when the
+/// action has too few pieces.
+fn town_sized(pairs: &[Pair], is_human: &dyn Fn(usize) -> bool, is_equipment: &dyn Fn(usize) -> bool, npcs: usize, per_npc: usize) -> Vec<Pair> {
     let of = |wanted: &dyn Fn(usize) -> bool| -> Vec<Pair> {
         let list: Vec<Pair> = pairs.iter().copied().filter(|p| p.action() == TOWN_ACTION && wanted(p.body())).collect();
         crowd::pick_uniform(&list, list.len())
     };
     let (humans, equipment) = (of(is_human), of(is_equipment));
     assert!(!humans.is_empty() && !equipment.is_empty(), "a town needs human and equipment bodies in action {TOWN_ACTION}");
-    let mut out = Vec::with_capacity(TOWN_NPCS * (TOWN_EQUIPMENT_PER_NPC + 1));
-    for npc in 0..TOWN_NPCS {
+    let mut out = Vec::with_capacity(npcs * (per_npc + 1));
+    for npc in 0..npcs {
         out.push(humans[npc % humans.len()]);
-        for piece in 0..TOWN_EQUIPMENT_PER_NPC {
-            out.push(equipment[(npc * TOWN_EQUIPMENT_PER_NPC + piece) % equipment.len()]);
+        for piece in 0..per_npc {
+            out.push(equipment[(npc * per_npc + piece) % equipment.len()]);
         }
     }
     out
@@ -3308,6 +3314,8 @@ pub(super) fn part_tc(sources: &Sources, bodies: &[BodySource], present: &[(Clie
 const MEDIAN_AREA_NPCS: usize = 16;
 /// Distinct creatures in the median crowded area.
 const MEDIAN_AREA_CREATURES: usize = 20;
+/// `creatures,npcs,equipment per NPC`: another crowd than the median area's.
+const MEDIAN_AREA_SIZE_ENV: &str = "MOBILE_ANIM_CODEC_TM_CROWD";
 /// The thread count timed beside `WORKER_THREADS`: the most a decode pool should take.
 const MEDIAN_AREA_MORE_THREADS: usize = 8;
 
@@ -3320,23 +3328,31 @@ fn distinct_creatures(pairs: &[Pair], is_creature: &dyn Fn(usize) -> bool, count
 }
 
 /// Part tm: the median crowded area, `MEDIAN_AREA_CREATURES` distinct creatures and `MEDIAN_AREA_NPCS` dressed NPCs
-/// (a human and `TOWN_EQUIPMENT_PER_NPC` distinct equipment pieces each), on `WORKER_THREADS` and
-/// `MEDIAN_AREA_MORE_THREADS` threads. Choose the coders with `MOBILE_ANIM_CODEC_TINY_ONLY`.
+/// (a human and `TOWN_EQUIPMENT_PER_NPC` distinct equipment pieces each), or the sizes in `MEDIAN_AREA_SIZE_ENV`, on
+/// `WORKER_THREADS` and `MEDIAN_AREA_MORE_THREADS` threads. Choose the coders with `MOBILE_ANIM_CODEC_TINY_ONLY`.
 pub(super) fn part_tm(sources: &Sources, bodies: &[BodySource], present: &[(Client, u64, usize)], cc_dir: &Path) {
     let kinds = BodyKinds::load(cc_dir);
     let rule = classes::BodyRule::load(&kinds, cc_dir);
+    let (creatures, npcs, per_npc) = match std::env::var(MEDIAN_AREA_SIZE_ENV) {
+        Ok(text) => {
+            let n: Vec<usize> = text.split(',').map(|n| n.trim().parse().expect("creatures,npcs,equipment per NPC")).collect();
+            (n[0], n[1], n[2])
+        }
+        Err(_) => (MEDIAN_AREA_CREATURES, MEDIAN_AREA_NPCS, TOWN_EQUIPMENT_PER_NPC),
+    };
     let state = cpu_state();
     println!("\n### tm: the median crowded area; CPU {state}; load average {}", load_average());
     for client in [Client::Cc, Client::Ec] {
         let pairs = crowd::all_pairs(sources, bodies, present, client);
         let schemes = chosen_schemes(client);
         let is_creature = |body: usize| rule.group(&bodies[body]) == Group::Creature;
-        let mut town = town_of(&pairs, &|body| rule.is_person(&bodies[body]), &|body| rule.group(&bodies[body]) == Group::Equipment);
-        town.truncate(MEDIAN_AREA_NPCS * (TOWN_EQUIPMENT_PER_NPC + 1));
+        let town = town_sized(&pairs, &|body| rule.is_person(&bodies[body]), &|body| rule.group(&bodies[body]) == Group::Equipment, npcs, per_npc);
         for (name, largest) in [("drawn uniformly", false), ("the largest", true)] {
-            let mut crowd = distinct_creatures(&pairs, &is_creature, MEDIAN_AREA_CREATURES, largest);
+            let mut crowd = distinct_creatures(&pairs, &is_creature, creatures, largest);
             crowd.extend_from_slice(&town);
-            let label = format!("{}, {MEDIAN_AREA_CREATURES} creatures {name} + {MEDIAN_AREA_NPCS} NPCs x (human + {TOWN_EQUIPMENT_PER_NPC} equipment), action {TOWN_ACTION}", client.label());
+            // A loader decodes a pair once, however many NPCs wear it.
+            let crowd = distinct_pairs(&crowd);
+            let label = format!("{}, {creatures} creatures {name} + {npcs} NPCs x (human + {per_npc} equipment), action {TOWN_ACTION}, each distinct pair once", client.label());
             tiny_crowd(&label, &crowd, sources, bodies, &schemes, Some(MEDIAN_AREA_MORE_THREADS));
             println!("  load average after this crowd {}", load_average());
         }
