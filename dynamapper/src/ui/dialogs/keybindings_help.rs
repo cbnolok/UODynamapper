@@ -1,7 +1,7 @@
 use crate::ui::dialogs;
 use crate::input::input_actions::{ActionCloseActiveDialog, ActionToggleKeybindingsHelp};
 use crate::{
-    core::render::scene::camera::UiCameraResource,
+    core::render::view::camera::UiCameraResource,
     prelude::*,
 };
 use bevy::prelude::*;

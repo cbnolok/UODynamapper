@@ -23,7 +23,7 @@ use crate::{
         lighting::client_night::{
             MAX_CLIENT_LIGHT_LEVEL, MAX_NIGHT_OVERLAY_STRENGTH, MIN_NIGHT_OVERLAY_STRENGTH, NIGHT_MAP_MEAN,
         },
-        scene::camera::UiCameraResource,
+        view::camera::UiCameraResource,
     },
     impl_tracked_plugin,
     prelude::*,

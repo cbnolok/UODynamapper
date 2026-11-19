@@ -6,7 +6,7 @@ use crate::{
     core::{
         frame_limiter_for_options, frame_limiter_for_settings,
         present_mode_for_vsync,
-        render::scene::camera::UiCameraResource,
+        render::view::camera::UiCameraResource,
     },
     prelude::*,
     world::caves::{CaveSurroundings, CaveView},

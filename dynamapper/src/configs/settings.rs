@@ -2,7 +2,7 @@ use crate::console_logger::{self, LogAbout, LogSev};
 use crate::core::export_job::ExportJob;
 use crate::ui::dialogs::image_background::ImageBackground;
 use crate::ui::dialogs::paperdoll_ec::EnhancedPaperdoll;
-use crate::core::render::scene::camera::RenderZoom;
+use crate::core::render::view::camera::RenderZoom;
 use crate::core::render::scene::player::Player;
 use crate::prelude::*;
 use crate::util_lib::tracked_plugin::set_plugin_log_toggles;

@@ -140,7 +140,7 @@ pub(crate) fn install(app: &mut App) {
     }
 }
 
-fn enable_depth_sampling(mut cameras: Query<&mut Camera3d, With<crate::core::render::scene::camera::PlayerCamera>>) {
+fn enable_depth_sampling(mut cameras: Query<&mut Camera3d, With<crate::core::render::view::camera::PlayerCamera>>) {
     for mut camera in &mut cameras {
         let usage = TextureUsages::from(camera.depth_texture_usages);
         if !usage.contains(TextureUsages::TEXTURE_BINDING) {

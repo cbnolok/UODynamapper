@@ -4,7 +4,7 @@ use crate::core::render::terrain::{draw_mesh::LandMeshHandles, LCMesh};
 use crate::core::render::assets::tile_atlas::{LandUploadTelemetry, TileAtlas};
 use crate::input::{InjectedPointer, effective_cursor_position};
 use crate::core::{app_states::AppState,
-    render::scene::{camera::PlayerCamera, player::Player}, system_sets::{MovementSysSet, SceneRenderLandSysSet},
+    render::scene::player::Player, render::view::camera::PlayerCamera, system_sets::{MovementSysSet, SceneRenderLandSysSet},
     render::assets::land::cache::LandTextureCache, uo_files_loader::MapPlanesRes};
 use crate::configs::settings::LandTextureSource;
 use crate::world::coords::{UOVec4, UO_Z_TO_WORLD_SCALE};

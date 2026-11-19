@@ -8,7 +8,7 @@ pub mod preferences;
 pub mod teleport;
 pub mod land_shader;
 
-use crate::core::render::scene::camera::UiCameraResource;
+use crate::core::render::view::camera::UiCameraResource;
 use crate::impl_tracked_plugin;
 use crate::prelude::*;
 use crate::util_lib::tracked_plugin::*;

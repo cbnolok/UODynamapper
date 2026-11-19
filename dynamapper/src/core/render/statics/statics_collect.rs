@@ -1,6 +1,6 @@
 use crate::configs::settings::ClientTextureSource;
 use crate::console_logger::{self, LogAbout, LogSev};
-use crate::core::render::scene::camera::{PlayerCamera, RenderZoom};
+use crate::core::render::view::camera::{PlayerCamera, RenderZoom};
 use crate::core::render::terrain::{
     CHUNK_STORAGE_BLOCKS_DIM, MAP_STORAGE_BLOCK_TILE_DIM,
 };
@@ -2127,7 +2127,7 @@ mod tests {
     #[test]
     fn upright_art_projects_square_pixels_and_four_pixels_per_z_unit() {
         let vertical_projection = (2.0f32 / 3.0).sqrt()
-            * crate::core::render::scene::camera::ORTHO_WIDTH_SCALE_FACTOR;
+            * crate::core::render::view::camera::ORTHO_WIDTH_SCALE_FACTOR;
         for ratio in [1.0, 2.0 / 3.0, 0.8 / 1.5, 1.2 / 1.5] {
             approx_eq(static_world_y_per_pixel(ratio) * vertical_projection,
                 static_world_xz_per_pixel(ratio));

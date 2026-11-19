@@ -142,7 +142,7 @@ fn publish(values: &mut [[u16; 4]], dimensions: UVec2, dirty: &mut bool,
 
 pub(crate) fn sys_prepare(
     land: Res<LandTextureCache>, maps: Res<MapPlanesRes>, player: Query<&Player>,
-    camera: Query<(&Camera, &GlobalTransform), With<crate::core::render::scene::camera::PlayerCamera>>,
+    camera: Query<(&Camera, &GlobalTransform), With<crate::core::render::view::camera::PlayerCamera>>,
     atlas: Res<TileAtlas>, telemetry: Res<LandUploadTelemetry>,
     mut bases: ResMut<EcTerrainBases>, mut images: ResMut<Assets<Image>>,
     mut materials: ResMut<Assets<crate::core::render::terrain::mesh_material::LandCustomMeshMaterial>>,

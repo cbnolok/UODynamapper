@@ -1628,7 +1628,7 @@ pub fn sys_setup_terrain_cache(
                     // Not read by the land shader: it takes the view direction from Bevy's per-frame view uniform
                     // (`world_view_direction` in shaders/world/projection.wesl), which follows the camera.
                     camera_position:
-                        crate::core::render::scene::camera::PlayerCamera::BASE_OFFSET_FROM_PLAYER,
+                        crate::core::render::view::camera::PlayerCamera::BASE_OFFSET_FROM_PLAYER,
                     land_max_z: crate::core::render::terrain::mesh_material::LAND_NO_Z_LIMIT,
                     // The active preset's sun; the shader panel pushes the live one whenever it changes.
                     light_direction: crate::configs::shader_presets::get_preset_slot(
@@ -1642,7 +1642,7 @@ pub fn sys_setup_terrain_cache(
                     render_zoom: 1.0,
                     adaptive_zoom_simplification: 0.0,
                     ec_reflection_camera_distance:
-                        crate::core::render::scene::camera::PlayerCamera::BASE_OFFSET_FROM_PLAYER.length(),
+                        crate::core::render::view::camera::PlayerCamera::BASE_OFFSET_FROM_PLAYER.length(),
                     client_view_scale: 1.0,
                     cave_mouth_veil: 0.0,
                     _reserved: Vec2::ZERO,

@@ -1,4 +1,4 @@
-use crate::core::render::scene::camera::{PlayerCamera, UiCameraResource};
+use crate::core::render::view::camera::{PlayerCamera, UiCameraResource};
 use crate::core::render::scene::player::Player;
 use crate::core::render::scene::world::WorldGeoData;
 use crate::core::render::scene::RecomputeVisibleChunksEvent;

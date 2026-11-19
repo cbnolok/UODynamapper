@@ -143,12 +143,12 @@ impl_tracked_plugin!(DrawLandChunkMeshPlugin);
 pub fn sys_update_shared_land_material(
     mut materials: ResMut<Assets<LandCustomMeshMaterial>>,
     shared_mat: Option<Res<draw_mesh::SharedLandMaterial>>,
-    render_zoom: Res<crate::core::render::scene::camera::RenderZoom>,
+    render_zoom: Res<crate::core::render::view::camera::RenderZoom>,
     tile_atlas: Res<tile_atlas::TileAtlas>,
     uniform_state: Res<crate::configs::shader_presets::UniformState>,
     static_lights: Option<Res<crate::core::render::lighting::static_lights::RenderStaticLightInstances>>,
     player_q: Query<&Transform, With<crate::core::render::scene::player::Player>>,
-    camera_q: Query<&Projection, With<crate::core::render::scene::camera::PlayerCamera>>,
+    camera_q: Query<&Projection, With<crate::core::render::view::camera::PlayerCamera>>,
     view_cuts: (
         Res<crate::world::z_view::ZViewLimit>,
         Res<crate::world::caves::CavesRes>,

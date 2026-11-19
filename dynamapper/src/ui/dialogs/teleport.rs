@@ -6,7 +6,7 @@ use crate::core::render::scene::world::WorldGeoData;
 use crate::core::render::scene::RecomputeVisibleChunksEvent;
 use crate::ingame_sysmessage_logger;
 use crate::{
-    core::render::scene::camera::UiCameraResource,
+    core::render::view::camera::UiCameraResource,
     prelude::*,
 };
 use bevy::prelude::*;

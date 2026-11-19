@@ -1543,7 +1543,7 @@ pub fn sys_update_sprite_instance_buffer(
     render_assets: Res<ArtSpriteRenderAssets>,
     mut materials: ResMut<Assets<ArtSpriteMaterial>>,
     mut storage_buffers: ResMut<Assets<ShaderBuffer>>,
-    zoom: Res<crate::core::render::scene::camera::RenderZoom>,
+    zoom: Res<crate::core::render::view::camera::RenderZoom>,
     scene_state: Res<crate::core::render::scene::SceneStateData>,
     world_geo: Res<crate::core::render::scene::world::WorldGeoData>,
     mut upload_cache: ResMut<StaticArtUploadCache>,
@@ -1686,10 +1686,10 @@ pub fn sys_update_art_materials(
     sprite_assets: Option<Res<ArtSpriteRenderAssets>>,
     ground_assets: Option<Res<ArtGroundRenderAssets>>,
     shared_land_material: Option<Res<terrain::draw_mesh::SharedLandMaterial>>,
-    render_zoom: Res<crate::core::render::scene::camera::RenderZoom>,
+    render_zoom: Res<crate::core::render::view::camera::RenderZoom>,
     player_q: Query<&Transform, With<crate::core::render::scene::player::Player>>,
     uniform_state: Res<crate::configs::shader_presets::UniformState>,
-    camera_q: Query<&Projection, With<crate::core::render::scene::camera::PlayerCamera>>,
+    camera_q: Query<&Projection, With<crate::core::render::view::camera::PlayerCamera>>,
     mut last_global_lighting: Local<f32>,
     mut last_render_zoom: Local<f32>,
     mut last_uniform_snapshot: Local<Option<UniformSnapshot>>,
@@ -1832,7 +1832,7 @@ fn update_art_material_uniforms(
     mat.extension.scene_uniform.render_zoom = render_zoom;
     mat.extension.scene_uniform.camera_position = camera_pos;
     mat.extension.scene_uniform.ec_reflection_camera_distance =
-        crate::core::render::scene::camera::PlayerCamera::BASE_OFFSET_FROM_PLAYER.length();
+        crate::core::render::view::camera::PlayerCamera::BASE_OFFSET_FROM_PLAYER.length();
     mat.extension.scene_uniform.light_direction = uniform_state.sun.light_direction();
     mat.extension.effects_uniform = uniform_state.effects;
     mat.extension.global_lighting_uniform = uniform_state.lighting;
@@ -1855,7 +1855,7 @@ fn update_art_material_uniforms_ground(
     mat.extension.scene_uniform.render_zoom = render_zoom;
     mat.extension.scene_uniform.camera_position = camera_pos;
     mat.extension.scene_uniform.ec_reflection_camera_distance =
-        crate::core::render::scene::camera::PlayerCamera::BASE_OFFSET_FROM_PLAYER.length();
+        crate::core::render::view::camera::PlayerCamera::BASE_OFFSET_FROM_PLAYER.length();
     mat.extension.scene_uniform.light_direction = uniform_state.sun.light_direction();
     mat.extension.effects_uniform = uniform_state.effects;
     mat.extension.global_lighting_uniform = uniform_state.lighting;

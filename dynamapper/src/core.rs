@@ -13,7 +13,7 @@ use crate::{
     core::{
         app_states::*,
         bevy_log_filter::init_bevy_logging,
-        render::scene::camera::UO_TILE_PIXEL_SIZE,
+        render::view::camera::UO_TILE_PIXEL_SIZE,
     },
     util_lib::tracked_plugin::{set_plugin_log_toggles, sys_log_plugin_registry_tree},
 };

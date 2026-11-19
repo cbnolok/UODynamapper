@@ -32,9 +32,8 @@ use crate::world::maps::{MapPlane, MapPlaneMetadata};
 use crate::{
     core::{
         constants,
-        render::scene::{
-            camera::PlayerCamera, player::Player, world::WorldGeoData, SceneStateData,
-        },
+        render::scene::{player::Player, world::WorldGeoData, SceneStateData},
+        render::view::camera::PlayerCamera,
         render::assets::land::cache::*,
         render::assets::land::routing::land_id_of_row,
         uo_files_loader::{MapPlanesRes, TexMap2DRes, TileMetaPackageRes},
@@ -238,7 +237,7 @@ impl Default for LandMeshScratch {
 }
 
 pub fn sys_update_existing_chunk_mesh_lod(
-    render_zoom: Res<crate::core::render::scene::camera::RenderZoom>,
+    render_zoom: Res<crate::core::render::view::camera::RenderZoom>,
     land_mesh_handles_r: Res<LandMeshHandles>,
     mut current_lod: ResMut<LandMeshLod>,
     current_scale: Res<ChunkScale>,

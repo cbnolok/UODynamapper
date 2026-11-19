@@ -5,6 +5,7 @@ pub mod postprocess;
 pub(crate) mod picking;
 pub mod scene;
 pub mod statics;
+pub mod view;
 
 use crate::prelude::*;
 use bevy::prelude::*;

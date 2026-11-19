@@ -8,11 +8,8 @@ use crate::core::render::picking::static_geometry::{StaticArtRoute, StaticPickin
 use crate::core::render::scene::player::Player;
 use crate::core::render::picking::terrain_cursor::{TerrainCursor, TerrainCursorQuery};
 use crate::core::render::{
-    scene::{
-        camera::{PlayerCamera, UiCameraResource},
-        world::WorldGeoData,
-        RecomputeVisibleChunksEvent,
-    },
+    scene::{world::WorldGeoData, RecomputeVisibleChunksEvent},
+    view::camera::{PlayerCamera, UiCameraResource},
 };
 use crate::world::statics::StaticsStoreRes;
 use crate::core::uo_files_loader::{

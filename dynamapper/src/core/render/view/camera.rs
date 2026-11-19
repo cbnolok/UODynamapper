@@ -1,6 +1,7 @@
 use crate::configs::settings::{AntiAliasingMode, SectGraphics, Settings};
 use crate::core::render::scene::player::Player;
-use crate::core::render::scene::{camera_ground_footprint, FreeCameraFootprint, RecomputeVisibleChunksEvent};
+use crate::core::render::scene::RecomputeVisibleChunksEvent;
+use super::footprint::{camera_ground_footprint, FreeCameraFootprint};
 use crate::core::render::terrain::draw_mesh::scale_from_zoom;
 use crate::core::export_job::ExportJob;
 use crate::core::system_sets::*;
@@ -467,7 +468,7 @@ fn sys_camera_zoom(
     mut scroll_events: MessageReader<MouseWheel>,
     mut kbd_events: MessageReader<KeyboardInput>,
     mut egui_contexts: EguiContexts,
-    mut chunk_recompute_writer: MessageWriter<super::RecomputeVisibleChunksEvent>,
+    mut chunk_recompute_writer: MessageWriter<RecomputeVisibleChunksEvent>,
     settings: Res<Settings>,
     mut camera_q: Query<&mut Transform, With<PlayerCamera>>,
     windows: Query<&Window>,
@@ -523,7 +524,7 @@ fn sys_camera_zoom(
                 transform.translation += backward * distance;
             }
         }
-        chunk_recompute_writer.write(super::RecomputeVisibleChunksEvent {});
+        chunk_recompute_writer.write(RecomputeVisibleChunksEvent {});
     }
 }
 
@@ -684,8 +685,8 @@ mod tests {
                 zoom,
                 scale,
             );
-            let streamed = super::super::chunks_in_tile_rect(&footprint, TEST_MAP_SIZE.0, TEST_MAP_SIZE.1, scale);
-            let followed = super::super::compute_visible_chunks(
+            let streamed = super::super::footprint::chunks_in_tile_rect(&footprint, TEST_MAP_SIZE.0, TEST_MAP_SIZE.1, scale);
+            let followed = super::super::footprint::compute_visible_chunks(
                 focus, zoom, TEST_VIEWPORT.x, TEST_VIEWPORT.y, TEST_MAP_SIZE.0, TEST_MAP_SIZE.1, scale,
             );
             let missing: Vec<_> = followed.iter().filter(|chunk| streamed.binary_search(chunk).is_err()).collect();
@@ -708,9 +709,9 @@ mod tests {
         for edge in [footprint.tile_x0, footprint.tile_y0, footprint.tile_x1, footprint.tile_y1] {
             assert_eq!(edge % span, 0, "{footprint:?} is off the chunk grid");
         }
-        let half_view = super::super::orthographic_ground_half_extent(zoom, TEST_VIEWPORT.x, TEST_VIEWPORT.y);
-        let bound = 2.0 * (super::super::FREE_CAMERA_REACH_HALF_VIEWS * half_view
-            + super::super::chunk_edge_pad_tiles(scale)
+        let half_view = super::super::footprint::orthographic_ground_half_extent(zoom, TEST_VIEWPORT.x, TEST_VIEWPORT.y);
+        let bound = 2.0 * (super::super::footprint::FREE_CAMERA_REACH_HALF_VIEWS * half_view
+            + super::super::footprint::chunk_edge_pad_tiles(scale)
             + span as f32);
         assert!((footprint.tile_x1 - footprint.tile_x0) as f32 <= bound, "{footprint:?} wider than {bound}");
         assert!((footprint.tile_y1 - footprint.tile_y0) as f32 <= bound, "{footprint:?} taller than {bound}");

@@ -1580,7 +1580,7 @@ mod tests {
         const EPSILON: f32 = 1e-5;
         let across = Vec3::new(1.0, 0.0, -1.0);
         let down = Vec3::new(1.0, 0.0, 1.0);
-        let camera = crate::core::render::scene::camera::PlayerCamera::BASE_OFFSET_FROM_PLAYER.normalize();
+        let camera = crate::core::render::view::camera::PlayerCamera::BASE_OFFSET_FROM_PLAYER.normalize();
         assert!(STATIC_LIGHT_BILLBOARD_NORMAL.abs_diff_eq(camera, EPSILON));
         assert!(across.dot(STATIC_LIGHT_BILLBOARD_UP).abs() < EPSILON && down.dot(STATIC_LIGHT_BILLBOARD_RIGHT).abs() < EPSILON);
         let tile = StaticLightInstance { width_world: 1.0, height_world: 1.0, ..test_static_light_instance() };
@@ -1595,7 +1595,7 @@ mod tests {
     #[test]
     fn the_light_image_is_not_mirrored_on_screen() {
         use bevy::mesh::VertexAttributeValues;
-        let camera = Transform::from_translation(crate::core::render::scene::camera::PlayerCamera::BASE_OFFSET_FROM_PLAYER)
+        let camera = Transform::from_translation(crate::core::render::view::camera::PlayerCamera::BASE_OFFSET_FROM_PLAYER)
             .looking_at(Vec3::ZERO, Vec3::Y);
         let mesh = build_static_light_mesh();
         let Some(VertexAttributeValues::Float32x3(positions)) = mesh.attribute(Mesh::ATTRIBUTE_POSITION) else {

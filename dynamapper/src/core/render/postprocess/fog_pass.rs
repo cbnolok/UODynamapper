@@ -14,7 +14,7 @@
 //   and removes it when the fog is off.
 
 use crate::configs::shader_presets::UniformState;
-use crate::core::render::scene::camera::PlayerCamera;
+use crate::core::render::view::camera::PlayerCamera;
 use crate::prelude::*;
 use bevy::core_pipeline::{
     fullscreen_material::{FullscreenMaterial, FullscreenMaterialPlugin},

@@ -38,7 +38,7 @@ use crate::core::render::statics::static_placement::{
 use crate::core::render::statics::static_source::{classic_static_visual_kind, StaticArtSourceState, StaticVisualKind};
 use crate::core::render::statics::statics_collect::static_land_z;
 use crate::core::render::statics::static_batches::StaticChunkBatchKey;
-use crate::core::render::scene::camera::PlayerCamera;
+use crate::core::render::view::camera::PlayerCamera;
 use crate::configs::{settings::{ClientTextureSource, Settings}, shader_presets::UniformState};
 use super::light_scale::ItemLightScales;
 use crate::console_logger::{self, LogAbout, LogSev};

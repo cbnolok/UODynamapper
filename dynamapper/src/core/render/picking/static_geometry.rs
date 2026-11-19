@@ -8,7 +8,7 @@ use crate::core::render::statics::static_chunk_cache::StaticChunkRenderCache;
 use crate::core::render::statics::static_batches::{StaticPickTile, RenderStaticInstances, RenderStaticLandInstances};
 use crate::core::render::assets::ec_item_surface::KR_ITEM_RECORD_BASE;
 use crate::configs::settings::ClientTextureSource;
-use crate::core::render::scene::camera::RenderZoom;
+use crate::core::render::view::camera::RenderZoom;
 use crate::core::render::assets::tile_atlas::TileAtlas;
 use crate::core::uo_files_loader::{
     TexArtCcPackageRes, TexArtEcPackageRes, TexLandEcPackageRes, TileMetaPackageRes, TexAuxEcPackageRes,

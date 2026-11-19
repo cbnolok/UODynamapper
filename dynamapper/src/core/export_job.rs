@@ -9,12 +9,10 @@ use crate::configs::shader_presets::{UniformState, CLASSIC_PRESET_GROUP, PAINTER
 use crate::console_logger::{self, LogAbout, LogSev};
 use crate::core::app_states::AppState;
 use crate::world::teleport::teleport_player;
-use crate::core::render::scene::{
+use crate::core::render::scene::{player::Player, world::WorldGeoData, RecomputeVisibleChunksEvent};
+use crate::core::render::view::{
     camera::{ORTHO_SIZE_FACTOR, ORTHO_WIDTH_SCALE_FACTOR, PlayerCamera},
-    chunks_in_tile_rect,
-    player::Player,
-    world::WorldGeoData,
-    ExportChunkFootprint, RecomputeVisibleChunksEvent,
+    footprint::{chunks_in_tile_rect, ExportChunkFootprint},
 };
 use crate::core::render::statics::statics_collect::StaticArtCollectDebugState;
 use crate::core::render::assets::tile_atlas::{LandUploadTelemetry, TileAtlas};

@@ -22,7 +22,7 @@
 
 use crate::core::render::picking::gpu_picking::DrawPixelQuery;
 use crate::core::render::statics::transparent_order::{drawn_batches, StaticTransparentBatchOrder};
-use crate::core::render::scene::camera::PlayerCamera;
+use crate::core::render::view::camera::PlayerCamera;
 use crate::core::render::lighting::client_night::LightBufferCamera;
 use bevy::camera::CameraUpdateSystems;
 use bevy::core_pipeline::core_3d::{main_opaque_pass_3d, main_transparent_pass_3d, Transparent3d};
