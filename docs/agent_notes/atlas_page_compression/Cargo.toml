@@ -1,5 +1,6 @@
 # Reproduces the measurements in ../atlas_page_compression.md. Standalone: build it outside the workspace's target, e.g.
-#   CARGO_TARGET_DIR=/path/to/scratch cargo run --release -- /path/to/uddp
+#   CARGO_TARGET_DIR=/path/to/scratch cargo run --release --bin atlas-page-compression-bench -- /path/to/uddp
+# and the binaries in src/bin the same way (strip_levels, block_pages).
 [package]
 name = "atlas-page-compression-bench"
 version = "0.1.0"
@@ -8,12 +9,15 @@ publish = false
 
 [dependencies]
 udd-assets = { path = "../../../lib/udd-assets" }
-zstd = "0.13"
+zstd = { version = "0.13", features = ["experimental"] }
 lz4 = "1"
 flate2 = { version = "1", default-features = false, features = ["zlib-ng"] }
 libdeflater = "1"
 liblzma = "0.4"
 brotli = "8"
 bzip2 = "0.5"
+rayon = "1"
+uot-texture-codecs = { path = "../../../lib/support/uot-texture-codecs", features = ["bc7-encode"] }
+uot-image-postprocess = { path = "../../../lib/support/uot-image-postprocess" }
 
 [workspace]
