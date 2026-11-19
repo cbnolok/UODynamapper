@@ -193,6 +193,8 @@ pub struct ClientLightSpriteCache {
     glow_rgb_by_entry: HashMap<u32, Option<[f32; 3]>>,
     /// Each lit item's Classic art (`cache_client_light_sprite_art`), `None` for an item without one.
     art_by_graphic: HashMap<u16, Option<ClientLightSpriteArt>>,
+    /// `art_by_graphic` for every lit item, read on its own thread (`warm_client_light_sprite_art`).
+    art_warmup: ArtWarmup,
     mesh: Option<Handle<Mesh>>,
     reach_blocks: Option<u32>,
     warned_entries: HashSet<u32>,
@@ -481,6 +483,82 @@ fn cache_client_light_sprite_art(
     }
 }
 
+/// The Classic art of all the lit items, read ahead of the scans that meet them.
+#[derive(Default)]
+enum ArtWarmup {
+    #[default]
+    NotStarted,
+    /// Reading with the tile data of the art source `source`; the thread leaves its art in `art`.
+    Running {
+        source: Option<ClientTextureSource>,
+        art: std::sync::Arc<parking_lot::Mutex<Option<HashMap<u16, Option<ClientLightSpriteArt>>>>>,
+    },
+    Done,
+}
+
+/// The thread reading the lit items' art ahead (`ArtWarmup`).
+const ART_WARMUP_THREAD_NAME: &str = "light-art-warmup";
+
+/// Starts reading the Classic art (`cache_client_light_sprite_art`) of every item the tile data lights, on its own
+/// thread, then folds it into `art_by_graphic` once it is read, unless the art source has changed meanwhile. The scans
+/// cache the art of the items they meet first themselves, as before: reading an item's art page in the frame cost
+/// 10-60 ms a scan in the Britain walk (2026-11-19), so the warm-up spares the frames all but the first scans'.
+fn warm_client_light_sprite_art(
+    cache: &mut ClientLightSpriteCache,
+    tex_art_cc: Option<&std::sync::Arc<TexArtCcPackage>>,
+    tilemeta: &std::sync::Arc<TileMetaPackage>,
+    source: Option<ClientTextureSource>,
+) {
+    match &cache.art_warmup {
+        ArtWarmup::NotStarted => {
+            let Some(tex_art_cc) = tex_art_cc else {
+                cache.art_warmup = ArtWarmup::Done;
+                return;
+            };
+            let art = std::sync::Arc::new(parking_lot::Mutex::new(None));
+            let (tex_art_cc, tilemeta, read) =
+                (std::sync::Arc::clone(tex_art_cc), std::sync::Arc::clone(tilemeta), std::sync::Arc::clone(&art));
+            let spawned = std::thread::Builder::new().name(ART_WARMUP_THREAD_NAME.to_owned()).spawn(move || {
+                let lit_graphics = (0..=u16::MAX).filter(|graphic| tilemeta.item_light(u32::from(*graphic)).is_some());
+                let mut art_by_graphic = HashMap::new();
+                cache_client_light_sprite_art(&mut art_by_graphic, Some(&tex_art_cc), &tilemeta, lit_graphics);
+                *read.lock() = Some(art_by_graphic);
+            });
+            cache.art_warmup = match spawned {
+                Ok(_) => ArtWarmup::Running { source, art },
+                Err(err) => {
+                    log::warn!("Cannot start the {ART_WARMUP_THREAD_NAME} thread, the scans read the lit items' art: {err}");
+                    ArtWarmup::Done
+                }
+            };
+        }
+        ArtWarmup::Running { source: read_source, art } => {
+            let Some(art_by_graphic) = art.lock().take() else {
+                return;
+            };
+            fold_warmed_art(&mut cache.art_by_graphic, art_by_graphic, *read_source, source);
+            cache.art_warmup = ArtWarmup::Done;
+        }
+        ArtWarmup::Done => {}
+    }
+}
+
+/// Folds the art the warm-up read with the tile data of `read_source` into `art_by_graphic`, unless the art source is
+/// now `source`, another: the scans' own entries stay, read from the same art.
+fn fold_warmed_art(
+    art_by_graphic: &mut HashMap<u16, Option<ClientLightSpriteArt>>,
+    warmed: HashMap<u16, Option<ClientLightSpriteArt>>,
+    read_source: Option<ClientTextureSource>,
+    source: Option<ClientTextureSource>,
+) {
+    if read_source != source {
+        return;
+    }
+    for (graphic, art) in warmed {
+        art_by_graphic.entry(graphic).or_insert(art);
+    }
+}
+
 /// A tile's Classic art bounds, the 44-pixel diamond over the cell: where a light without art goes when its offsets
 /// are the tileart's defaults, its centre the cell centre's.
 fn client_light_sprite_tile_bounds() -> StaticBillboardBounds {
@@ -715,6 +793,8 @@ pub fn sys_collect_client_light_sprites(
     );
 
     if centre_on_items {
+        warm_client_light_sprite_art(&mut cache, tex_art_cc_res.as_deref().map(|package| &package.0),
+            tilemeta_res.for_art(art_source.active_source), art_source.active_source);
         let mut lit_graphics = BTreeSet::new();
         for &(gy, gx) in &blocks {
             if let Ok(tiles) = statics_store.block_tiles(gx, gy) {
@@ -977,6 +1057,20 @@ fn client_light_sprite_rotation() -> Quat {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The warm-up's art joins the scans' unless the art source changed while it read; the scans' entries stay.
+    #[test]
+    fn warmed_art_folds_in_for_the_art_source_it_was_read_with() {
+        let art = |x: f32| Some(ClientLightSpriteArt { bounds: client_light_sprite_tile_bounds(), flame: Some(Vec2::splat(x)) });
+        let scanned = HashMap::from([(1, art(1.0))]);
+        let warmed = HashMap::from([(1, art(9.0)), (2, art(2.0)), (3, None)]);
+        let mut folded = scanned.clone();
+        fold_warmed_art(&mut folded, warmed.clone(), Some(ClientTextureSource::Cc), Some(ClientTextureSource::Cc));
+        assert_eq!(folded, HashMap::from([(1, art(1.0)), (2, art(2.0)), (3, None)]));
+        let mut switched = scanned.clone();
+        fold_warmed_art(&mut switched, warmed, Some(ClientTextureSource::Cc), Some(ClientTextureSource::Ec));
+        assert_eq!(switched, scanned);
+    }
 
     const EPSILON: f32 = 1e-3;
     /// Lantern 2594: light_generic, TerrainTexture.uop entry 1, 256 x 256, at scale 2 with offsets (0, -4.5).
