@@ -3,11 +3,11 @@ use crate::input::input_actions::{
     ActionToggleCursorInspectPanel, ActionToggleCursorTeleportMode,
 };
 use crate::input::{InjectedPointer, effective_cursor_position};
-use crate::core::render::statics::static_source::{static_tile_is_surface_like, static_tile_renders_wet};
-use crate::core::render::picking::static_geometry::{StaticArtRoute, StaticPickingResources};
-use crate::core::render::scene::player::Player;
-use crate::core::render::picking::terrain_cursor::{TerrainCursor, TerrainCursorQuery};
-use crate::core::render::{
+use crate::render::statics::static_source::{static_tile_is_surface_like, static_tile_renders_wet};
+use crate::render::picking::static_geometry::{StaticArtRoute, StaticPickingResources};
+use crate::render::scene::player::Player;
+use crate::render::picking::terrain_cursor::{TerrainCursor, TerrainCursorQuery};
+use crate::render::{
     scene::{world::WorldGeoData, RecomputeVisibleChunksEvent},
     view::camera::{PlayerCamera, UiCameraResource},
 };
@@ -642,7 +642,7 @@ fn hovered_static_match(
     picking: &mut StaticPickingResources,
     camera: &Camera,
     camera_tf: &GlobalTransform,
-    candidate: crate::core::render::statics::static_batches::StaticPickTile,
+    candidate: crate::render::statics::static_batches::StaticPickTile,
 ) -> Option<HoveredStaticMatch> {
     let source = candidate.tile;
     let tile = uocf::classic::statics::PackedStaticTile { graphic: source.graphic,

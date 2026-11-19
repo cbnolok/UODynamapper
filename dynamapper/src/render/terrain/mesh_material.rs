@@ -1,0 +1,691 @@
+use bevy::{
+    mesh::MeshVertexBufferLayoutRef,
+    pbr::{ExtendedMaterial, MaterialExtension, MaterialExtensionKey, MaterialExtensionPipeline},
+    prelude::*,
+    render::render_resource::{
+        AsBindGroup, DepthBiasState, RenderPipelineDescriptor, ShaderType, SpecializedMeshPipelineError,
+    },
+    shader::ShaderRef,
+};
+use serde::{self, Deserialize, Serialize};
+
+use crate::configs::land_texture_variation::{LandTextureVariationMaterials, LAND_TEXTURE_VARIATION_MASK_WORDS};
+use crate::render::lighting::client_night::{CLIENT_NIGHT_OVERLAY_STRENGTH, NIGHT_MAP_MEAN};
+use crate::render::lighting::{light_cover::LightCover, static_lights::ClientLocalLightSource};
+
+// ------------- Land material/shader data -------------
+pub type LandCustomMeshMaterial = ExtendedMaterial<StandardMaterial, LandMaterialExtension>;
+
+/// The primary Bevy Material extension for terrain rendering.
+/// This struct defines the BindGroup layout for the land shader, mapping Rust fields
+/// to WGSL @binding indices.
+#[derive(AsBindGroup, Asset, TypePath, Clone)]
+pub struct LandMaterialExtension {
+    /// 2D Array containing all 64x64 Classic Client land textures.
+    #[texture(101, dimension = "2d_array", visibility(vertex, fragment))]
+    #[sampler(100, visibility(vertex, fragment))]
+    pub texarray_small: Handle<Image>,
+
+    /// 2D Array containing all 128x128 Classic Client land textures.
+    #[texture(102, dimension = "2d_array", visibility(vertex, fragment))]
+    pub texarray_big: Handle<Image>,
+
+    /// 2D Array containing the currently selected land atlas pages.
+    #[texture(109, dimension = "2d_array", visibility(vertex, fragment))]
+    pub land_page_atlas: Handle<Image>,
+
+    /// Lookup texture for mapping land texture ids to physical atlas coordinates.
+    #[texture(110, sample_type = "u_int", visibility(vertex, fragment))]
+    pub land_page_lookup: Handle<Image>,
+
+    /// The paged metadata atlas. Each texel (4 bytes) represents one world tile.
+    /// Format: Rg16Uint (R=GraphicID/Layer, G=Packed Height/Flags).
+    #[texture(
+        103,
+        dimension = "2d_array",
+        sample_type = "u_int",
+        visibility(vertex, fragment)
+    )]
+    pub tile_meta_atlas: Handle<Image>,
+
+    /// Configuration for the metadata atlas paging system.
+    /// Maps logical 2048x2048 world pages to physical GPU array layers.
+    #[uniform(104, visibility(vertex, fragment))]
+    pub atlas_params: crate::render::assets::tile_atlas::AtlasParams,
+
+    /// Global camera and lighting direction state.
+    #[uniform(105, visibility(vertex, fragment))]
+    pub scene_uniform: SceneUniform,
+
+    /// Feature toggles and intensity parameters (blur, filtering, water animation).
+    #[uniform(106, visibility(vertex, fragment))]
+    pub effects_uniform: LandEffectsUniform,
+
+    /// Shared lighting parameters (fog, grading, tonemap) used across all shaders.
+    #[uniform(107, visibility(vertex, fragment))]
+    pub global_lighting_uniform: GlobalLightingUniforms,
+
+    /// Terrain-specific lighting (bent normals, rim, specular, fill).
+    #[uniform(108, visibility(vertex, fragment))]
+    pub land_lighting_uniform: LandLightingUniforms,
+
+    /// Small visible static-light set for KR-style terrain light catch.
+    #[uniform(111, visibility(fragment))]
+    pub static_light_uniform: LandStaticLightUniform,
+
+    /// Shared generated grunge/noise texture for EC/KR weathering overlays.
+    #[texture(112, visibility(fragment))]
+    pub visual_grunge_texture: Handle<Image>,
+
+    /// The KR and Enhanced materials the land texture variation breaks up, and which of them turn
+    /// (`configs::land_texture_variation`).
+    #[uniform(113, visibility(fragment))]
+    pub texture_variation_uniform: LandTextureVariationUniform,
+
+    /// Compact Classic `art.mul` land diamonds used only by flat wet terrain.
+    #[texture(115, dimension = "2d_array", visibility(fragment))]
+    pub classic_land_art_atlas: Handle<Image>,
+
+    /// Maps a Classic land graphic id to `[layer, width, height, upscale]` in
+    /// `classic_land_art_atlas`; layer 0 means absent.
+    #[texture(116, sample_type = "u_int", visibility(fragment))]
+    pub classic_land_art_lookup: Handle<Image>,
+
+    /// First/last sorted EC material payloads within the original 49-pass limit.
+    #[texture(117, sample_type = "u_int", visibility(fragment))]
+    pub ec_terrain_bases: Handle<Image>,
+
+    /// Exact sorted ownership layers and normalized masks for resident EC chunks.
+    #[texture(118, dimension = "2d_array", sample_type = "u_int", visibility(fragment))]
+    pub ec_terrain_stacks: Handle<Image>,
+}
+
+impl MaterialExtension for LandMaterialExtension {
+    fn vertex_shader() -> ShaderRef {
+        "shaders/world/land/main.wesl".into()
+    }
+    fn fragment_shader() -> ShaderRef {
+        "shaders/world/land/main.wesl".into()
+    }
+
+    fn enable_prepass() -> bool {
+        false
+    }
+    fn enable_shadows() -> bool {
+        false
+    }
+
+    /// The land writes its own depth, the draw order's (land/main.wesl `fragment`): no depth bias. The cave mouth
+    /// veil's `depth_bias` only sorts it last (terrain/cave_mouth_veil.rs `VEIL_SORT_BIAS`).
+    fn specialize(
+        _pipeline: &MaterialExtensionPipeline,
+        descriptor: &mut RenderPipelineDescriptor,
+        _layout: &MeshVertexBufferLayoutRef,
+        _key: MaterialExtensionKey<Self>,
+    ) -> Result<(), SpecializedMeshPipelineError> {
+        if let Some(depth_stencil) = descriptor.depth_stencil.as_mut() {
+            depth_stencil.bias = DepthBiasState::default();
+        }
+        Ok(())
+    }
+}
+
+// Uniform buffer -> just a fancy name for a struct that is passed to the shader, has
+//  global scope and is passed per draw call (so for each chunk mesh).
+// Uniform Buffer Size Limitations:
+//    Most GPUs limit uniform buffers to 64KB (sometimes less!).
+//    u32[2048] is 8192 bytes, twice is 16KB—OK, but you need to watch out if you want to add lots of fields.
+
+// Uniform buffer layouts:
+//  Most APIs demand 16-byte (not bit!) alignment per field.
+//  For a field to be valid in a uniform buffer, each element of an array must be treated as a “vec4” (i.e., 16 bytes each), not simply a u32 (or f32)!
+//  It’s a GPU shader hardware limitation—and applies to both WGSL and to Bevy encase/Buffer.
+
+// In order to have 16-bytes (not bit!) alignment, we can use some packing helpers.
+// UVec4 (from glam crate, used by Bevy) is a struct holding four unsigned 32-bit integers (u32 values), used as a “vector of four elements”:
+
+/// `SceneUniform::land_max_z` while nothing caps the land.
+pub const LAND_NO_Z_LIMIT: f32 = f32::MAX;
+
+#[repr(C, align(16))]
+#[derive(Clone, Copy, ShaderType, bytemuck::Pod, bytemuck::Zeroable, Default)]
+#[allow(dead_code)] // ShaderType derive generates internal `check` functions that appear unused
+pub struct SceneUniform {
+    pub camera_position: Vec3,
+    /// Land above this z is not drawn (the z-view limit, `z_view.rs`); `LAND_NO_Z_LIMIT` draws all. Only the land
+    /// shader reads it. Takes the former `_pad_cam` slot.
+    pub land_max_z: f32,
+    pub light_direction: Vec3,
+    pub global_lighting: f32,
+    pub render_zoom: f32,
+    pub adaptive_zoom_simplification: f32,
+    pub ec_reflection_camera_distance: f32,
+    /// How many times wider than the KR client's view the camera shows (`client_view_scale`); above 1 the client
+    /// texture filter emulates mip levels. Takes the former `_pad` slot.
+    pub client_view_scale: f32,
+    /// 1 in the cave mouth veil's material (terrain/cave_mouth_veil.rs), which draws only the black opening of the
+    /// player's cave's mouth, see-through; 2 in its backdrop's, which draws the opening black at the far plane; 0 in
+    /// the land's own, which draws all but it. Only the land shader reads it. Takes a former `_reserved` slot.
+    pub cave_mouth_veil: f32,
+    pub _reserved: Vec2,
+    /// How far the land takes the tone of what is outside the player's cave (art/depth.wesl `cave_outside_tone`), 0
+    /// not at all, 1 fully (caves.rs `CavesRes::land_outside_dimming`). Only the land shader reads it.
+    pub land_outside_dimming: f32,
+}
+
+#[repr(C, align(16))]
+#[derive(Clone, Copy, PartialEq, ShaderType, Deserialize, Serialize, Default)]
+#[serde(deny_unknown_fields)]
+#[allow(dead_code)] // ShaderType derive generates internal `check` functions that appear unused
+pub struct LandEffectsUniform {
+    // Non-lighting rendering controls only.  Lighting toggles and intensities
+    // live in GlobalLightingUniforms / LandLightingUniforms so they can be
+    // shared with future art-tile shaders (2D sprites that don't have a 3D
+    // mesh but still need global lighting, grading, fog, etc.).
+
+    // --- Modes & texture blur toggle (vec4 slot 0) ---
+    pub shading_mode: u32,
+    pub normal_mode: u32,
+    /// Optional pre-shade blur of base albedo at fragment level.
+    pub enable_blur: u32,
+    pub enable_linear_filtering: u32,
+
+    // --- Graphics controls (vec4 slot 1) ---
+    /// Fake per-art vertical/occlusion shading strength.
+    pub art_shadow_strength: f32,
+    pub sharpening_amount: f32,
+    /// Mix factor (0..1) with blurred albedo.
+    pub blur_strength: f32,
+    /// Blur radius in screen pixels, `BLUR_RADIUS_MIN_PIXELS..=BLUR_RADIUS_MAX_PIXELS`.
+    pub blur_radius: f32,
+
+    // --- Animated water (vec4 slot 2) ---
+    /// 1 = apply sin/cos UV distortion to IsWet tiles; 0 = disable.
+    /// Automatically suppressed at high zoom (> 10) in the shader.
+    pub enable_water_animation: u32,
+    /// 0 = neutral/current, 1 = Enhanced Client, 2 = Kingdom Reborn.
+    pub post_process_profile: u32,
+    /// Procedural world-space grunge/weathering multiplier.
+    pub enable_grunge: u32,
+    /// Source-wide controls from Graphics settings, not a style/time preset.
+    /// Bit 0 enables CC transitions; bit 1 disables EC transitions.
+    #[serde(skip)]
+    pub terrain_transition_flags: u32,
+
+    // --- Atmosphere controls (vec4 slot 3) ---
+    /// Strength of procedural grunge/weathering on terrain and art.
+    pub grunge_strength: f32,
+    /// Reserved for future additive light decals.
+    pub light_decal_intensity: f32,
+    /// Fake per-art light catch strength.
+    pub art_highlight_strength: f32,
+    /// Fake atmosphere/depth tint on art sprites and ground statics.
+    pub art_depth_tint_strength: f32,
+
+    // --- Reserved future controls (vec4 slot 4) ---
+    /// 1 = land bump: a material's bump map where it has one (Enhanced and KR snow), else the bump derived from the
+    /// texture's luminance, in every shading mode (land/bump.wesl). Liquids stay flat.
+    pub enable_normal_maps: u32,
+    /// 1 = use KR-style fake normal lighting on 2D art sprites/ground art.
+    pub enable_art_fake_normals: u32,
+    /// KR-style contact darkening for static art bases, walls, foliage, and ground art.
+    pub art_contact_shadow_strength: f32,
+    /// Strength of procedural variation applied to art shading and roof repetition.
+    pub art_mottle_strength: f32,
+
+    // --- KR style controls (vec4 slot 5) ---
+    /// 0 disables KR land warm/cool split; 1 preserves the preset strength.
+    pub kr_land_temperature_strength: f32,
+    /// 0 disables KR land relief/crease darkening; 1 preserves the preset strength.
+    pub kr_land_relief_shadow_strength: f32,
+    /// 0 disables KR land shadow mottling; 1 preserves the preset strength.
+    pub kr_land_shadow_mottle_strength: f32,
+    /// 0 disables KR art warm/cool split; 1 preserves the preset strength.
+    pub kr_art_temperature_strength: f32,
+
+    // --- Texture normal / art projected shadow controls (vec4 slot 6) ---
+    /// Land bump strength, 0..1: the blend towards a bump map's normal, or the derived bump's depth.
+    pub land_normal_map_strength: f32,
+    /// 1 = render KR-style projected bounds shadows for tall art sprites.
+    pub enable_art_projected_shadows: u32,
+    /// Opacity multiplier for projected art shadows.
+    pub art_projected_shadow_strength: f32,
+    /// Directional projection length in world tiles per sprite height unit.
+    pub art_projected_shadow_length: f32,
+
+    // --- Art projected shadow softness (vec4 slot 7) ---
+    /// Edge softness for bounds-projected art shadows.
+    pub art_projected_shadow_softness: f32,
+    /// 0 disables KR material-family micro contrast; 1 preserves preset strength.
+    pub kr_land_material_contrast_strength: f32,
+    /// Visible static-light mask opacity independent from local light response.
+    pub static_light_decal_visibility: f32,
+    /// 1 = add KR-style edge grime where textured land materials meet.
+    pub enable_kr_transition_grime: u32,
+
+    // --- KR transition grime controls (vec4 slot 8) ---
+    /// Strength of KR material-boundary grime/dirt accumulation.
+    pub kr_transition_grime_strength: f32,
+    /// 1 = add low-frequency KR-style uneven color wash over land and art.
+    pub enable_kr_color_wash: u32,
+    /// Strength of KR low-frequency painted tint/illumination variation.
+    pub kr_color_wash_strength: f32,
+    /// World-tile wavelength for the broad KR color wash.
+    pub kr_color_wash_scale: f32,
+
+    // --- Texture filter, land texture variation and client grunge (vec4 slot 9); local lights (slot 10) ---
+    /// `TEXTURE_FILTER_PIXEL_ART` or `TEXTURE_FILTER_CLIENT_BILINEAR`, for land and sprite textures.
+    pub texture_filter: u32,
+    /// 1 = break up the repetition of the listed KR and Enhanced terrain materials (land/sampling.wesl), 0 = their
+    /// plain tiling. A per-style setting, not a slot value: `UniformState` keeps it in line with its
+    /// `land_texture_variation`.
+    #[serde(skip)]
+    pub land_texture_variation: u32,
+    /// 1 = the KR client's grunge on the statics it grunges (art/client_grunge.wesl), in any style.
+    pub enable_client_grunge: u32,
+    /// The client grunge's strength, 0..1: 1 is the client's full multiply, 0 leaves the colour as it is.
+    pub client_grunge_strength: f32,
+    /// What multiplies the land light decals and static local lights besides `light_decal_intensity`: the
+    /// intensity of the source the local lights of KR-like, Enhanced and UOD-Painterly take
+    /// (`ClientLocalLights::intensity`), the neutral 1 in Classic. A per-style setting, not a slot value: `UniformState` keeps it in
+    /// line with its `local_lights`.
+    #[serde(skip)]
+    pub local_light_intensity: f32,
+}
+
+/// Global lighting parameters shared across all shader types (land, art tiles, etc.).
+/// Art tiles are 2D sprites with a predefined bounding box — no 3D mesh — so they
+/// don't need view/normal–dependent lighting, but they share grading, fog, gloom,
+/// tonemapping, and base light/ambient colors with the land shader.
+#[repr(C, align(16))]
+#[derive(Clone, Copy, PartialEq, ShaderType, Deserialize, Serialize, Default)]
+#[serde(deny_unknown_fields)]
+#[allow(dead_code)]
+pub struct GlobalLightingUniforms {
+    // --- Toggles (vec4 slot 0) ---
+    pub enable_fog: u32,
+    pub enable_tonemap: u32,
+    pub enable_grading: u32,
+    pub enable_gloom: u32,
+
+    // --- Colors ---
+    pub light_color: Vec3,
+    /// The tone stage `enable_tonemap` switches on: `TONE_CURVE_PROFILE` or `TONE_CURVE_IDENTITY`.
+    /// Takes the former `_pad0_` slot after `light_color`.
+    pub tone_curve: u32,
+    pub atmosphere_tint: Vec3,
+    #[serde(skip)]
+    pub _pad1_: f32,
+
+    // --- Exposure / ambient ---
+    pub exposure: f32,
+    pub ambient_strength: f32,
+    #[serde(skip)]
+    pub _pad2_: Vec2,
+
+    // --- Grading ---
+    //   The split-tone colours: highlights tint toward warm, shadows toward cool. RGB only.
+    pub grade_warm_color: Vec3,
+    #[serde(skip)]
+    pub _pad3_: f32,
+    pub grade_cool_color: Vec3,
+    #[serde(skip)]
+    pub _pad4_: f32,
+    //   grade_params  = [strength, headroom_reserve, chroma_tint, headroom_on]
+    pub grade_params: Vec4,
+    //   grade_extra   = [vibrance, saturation, contrast, split_tone_strength]
+    pub grade_extra: Vec4,
+    //   The chroma knee, after saturation (postprocess/color_grading.wesl): relative chroma (max − min) / max above
+    //   `grade_chroma_knee` becomes knee + (c − knee) · `grade_chroma_slope`. `CHROMA_KNEE_OFF` is off.
+    pub grade_chroma_knee: f32,
+    pub grade_chroma_slope: f32,
+    #[serde(skip)]
+    pub _pad6_: Vec2,
+
+    // --- Gloom ---
+    //   gloom_params  = [amount, falloff_height, shadow_bias]
+    pub gloom_params: Vec3,
+    #[serde(skip)]
+    pub _pad5_: f32,
+
+    // --- Fog ---
+    //   fog_color     = [r, g, b, max_mix]
+    pub fog_color: Vec4,
+    //   fog_params    = [distance_density, height_density, noise_scale, noise_strength]
+    pub fog_params: Vec4,
+
+    // --- KR-style enhancements ---
+    //   gloom_color   = [r, g, b, desaturation_amount]
+    //   RGB: dedicated gloom tint (replaces auto-derive from ambient when non-zero).
+    //   A: how much to desaturate in gloomy areas (0.0 = none, 1.0 = full grayscale).
+    pub gloom_color: Vec4,
+    //   fog_night_color = [r, g, b, blend_factor]
+    //   Blends fog_color toward this darker tint. At blend=0: fog_color as-is.
+    //   At blend=1: fully replaces fog_color with this (e.g. deep blue-black night fog).
+    pub fog_night_color: Vec4,
+    // The KR profile curve's former separate pre-scale, `kr_tonemap_params.x`, was the same multiplier as
+    // `exposure`; it is folded into the presets' exposure (see `migrate_cached_retired_lighting` in
+    // configs/shader_presets.rs for cached files). Its trailing vec4 slot is gone.
+}
+
+/// The smallest texture blur radius in screen pixels: the shader blurs a smaller one exactly as this one
+/// (`BLUR_RADIUS_MIN_PIXELS` in land/sampling.wesl).
+pub const BLUR_RADIUS_MIN_PIXELS: f32 = 0.5;
+/// The largest texture blur radius the Blur Radius slider offers, in screen pixels.
+pub const BLUR_RADIUS_MAX_PIXELS: f32 = 8.0;
+
+/// `grade_chroma_knee` at or above which the chroma knee leaves every colour as it is. Matches `CHROMA_KNEE_OFF` in
+/// `postprocess/color_grading.wesl`.
+pub const CHROMA_KNEE_OFF: f32 = 1.0;
+
+/// `tone_curve`: the visual profile's curve (Reinhard, EC filmic or KR filmic), with `exposure` inside it.
+pub const TONE_CURVE_PROFILE: u32 = 0;
+/// `tone_curve`: no curve. `exposure` scales the color as plain brightness, clamped to [0, 1] like the clients'
+/// 8-bit target. Matches `TONE_CURVE_IDENTITY` in `postprocess/tonemapping.wesl`.
+pub const TONE_CURVE_IDENTITY: u32 = 1;
+
+/// `terrain_shading_model`: the fragment shading paths (`shading_mode` 1 and 2) with a per-pixel normal.
+pub const TERRAIN_SHADING_SMOOTH_PER_PIXEL: u32 = 0;
+/// `terrain_shading_model`: the KR and Enhanced clients' terrain shade. One half-Lambert grey per cell corner from
+/// the client's vertex normal, interpolated over the client's two triangles per cell, times the material colour.
+/// Matches `TERRAIN_SHADING_CLIENT_PER_VERTEX` in `world/land/land_bindings.wesl`.
+pub const TERRAIN_SHADING_CLIENT_PER_VERTEX: u32 = 1;
+
+/// `texture_filter`: pixel-art sampling, nearest, or with `enable_linear_filtering` a bilinear that only softens
+/// the texel seams.
+pub const TEXTURE_FILTER_PIXEL_ART: u32 = 0;
+/// `texture_filter`: the KR client's plain bilinear from a single level, on land and sprites. Zoomed out past the
+/// client's view, a box of bilinear taps stands in for the mip levels its textures do not have.
+/// Matches `TEXTURE_FILTER_CLIENT_BILINEAR` in `world/client_filter.wesl`.
+pub const TEXTURE_FILTER_CLIENT_BILINEAR: u32 = 1;
+
+/// The KR client's default view width in world units, where a cell edge is 1: `UOWorldViewer` +0x6c, the
+/// orthographic half-width, is 13, so the view is about 18.4 tiles across at any window size
+/// (results/uokr_atmosphere.md).
+pub const CLIENT_VIEW_WIDTH_WORLD_UNITS: f32 = 26.0;
+/// Smallest `client_view_scale` change worth re-uploading the material uniforms for.
+pub const CLIENT_VIEW_SCALE_EPSILON: f32 = 0.001;
+
+/// How many times wider than the KR client's view a camera shows: `SceneUniform::client_view_scale`.
+pub fn client_view_scale(projection: &Projection) -> f32 {
+    match projection {
+        Projection::Orthographic(ortho) => ortho.area.width() / CLIENT_VIEW_WIDTH_WORLD_UNITS,
+        // The perspective camera has no single view width; it samples one level everywhere.
+        _ => 1.0,
+    }
+}
+
+/// Land-specific lighting: parameters that require a 3D mesh with surface normals
+/// and a view vector, so they only apply to the terrain (not to flat art tiles).
+#[repr(C, align(16))]
+#[derive(Clone, Copy, PartialEq, ShaderType, Deserialize, Serialize, Default)]
+#[serde(deny_unknown_fields)]
+#[allow(dead_code)]
+pub struct LandLightingUniforms {
+    // --- Toggle ---
+    pub enable_bent: u32,
+    /// How the fragment paths shade land: `TERRAIN_SHADING_SMOOTH_PER_PIXEL` or
+    /// `TERRAIN_SHADING_CLIENT_PER_VERTEX`. Classic (`shading_mode` 0) ignores it. Takes the former `_pad0_` slot.
+    pub terrain_shading_model: u32,
+    #[serde(skip)]
+    pub _pad1_: u32,
+    #[serde(skip)]
+    pub _pad2_: u32,
+
+    // --- Intensities ---
+    pub diffuse_strength: f32,
+    pub specular_strength: f32,
+    pub rim_strength: f32,
+    pub fill_strength: f32,
+
+    pub sharpness_factor: f32,
+    pub sharpness_mix: f32,
+    /// Half-Lambert wrap factor: 0.0 = standard Lambert, 0.3–0.5 = KR-style soft shadow terminator.
+    pub diffuse_wrap: f32,
+    #[serde(skip)]
+    pub _pad4_: f32,
+
+    // --- Hemisphere fill & rim colors (need N / V) ---
+    pub fill_sky_color: Vec4,
+    pub fill_ground_color: Vec4,
+    pub rim_color: Vec4,
+}
+
+pub const LAND_STATIC_LIGHT_MAX: usize = 16;
+
+#[repr(C, align(16))]
+#[derive(Clone, Copy, PartialEq, ShaderType)]
+#[allow(dead_code)]
+pub struct LandStaticLightUniform {
+    /// xyz = world position, w = radius in world tiles.
+    pub lights: [Vec4; LAND_STATIC_LIGHT_MAX],
+    /// rgb = light response color, a reserved.
+    pub colors: [Vec4; LAND_STATIC_LIGHT_MAX],
+    /// x = active light count, remaining lanes reserved.
+    pub params: UVec4,
+}
+
+impl Default for LandStaticLightUniform {
+    fn default() -> Self {
+        Self {
+            lights: [Vec4::ZERO; LAND_STATIC_LIGHT_MAX],
+            colors: [Vec4::ZERO; LAND_STATIC_LIGHT_MAX],
+            params: UVec4::ZERO,
+        }
+    }
+}
+
+/// The 32-bit words of the land texture variation bitmask in one `UVec4` of the uniform array.
+const LAND_TEXTURE_VARIATION_WORDS_PER_VEC4: usize = 4;
+
+/// The materials the land texture variation breaks up (land/sampling.wesl `land_texture_variation_bits`): the bits of
+/// `LandTextureVariationMaterials::bitmask`, four words to a `UVec4`, as uniform arrays need 16-byte elements.
+#[repr(C, align(16))]
+#[derive(Clone, Copy, PartialEq, ShaderType)]
+#[allow(dead_code)]
+pub struct LandTextureVariationUniform {
+    pub materials: [UVec4; LAND_TEXTURE_VARIATION_MASK_WORDS / LAND_TEXTURE_VARIATION_WORDS_PER_VEC4],
+}
+
+impl LandTextureVariationUniform {
+    pub fn from_materials(materials: &LandTextureVariationMaterials) -> Self {
+        let words = materials.bitmask();
+        Self {
+            materials: std::array::from_fn(|index| {
+                UVec4::from_slice(&words[index * LAND_TEXTURE_VARIATION_WORDS_PER_VEC4..][..LAND_TEXTURE_VARIATION_WORDS_PER_VEC4])
+            }),
+        }
+    }
+}
+
+#[derive(Resource, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct LandShaderModePresets {
+    pub classic: LandRenderStylePresetsPerMode,
+    pub enhanced: LandRenderStylePresetsPerMode,
+    /// The faithful KR client look (KR content, shading_mode 2, post_process_profile 2).
+    pub kr: LandRenderStylePresetsPerMode,
+    /// Dynamapper's painterly look on the same KR content and shader paths as `kr`; only the values differ.
+    pub painterly: LandRenderStylePresetsPerMode,
+    pub default_preset: String,
+}
+
+#[derive(Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct LandRenderStylePresetsPerMode {
+    /// Break up the texture repetition of the KR and Enhanced terrain materials `LandTextureVariation.kdl` lists, in
+    /// KR-like, Enhanced and UOD-Painterly, one setting for the style rather than per time of day; Classic has no such
+    /// materials. Placed before the tables so that it serializes as a plain key of the style's table.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub land_texture_variation: Option<bool>,
+    /// Which rule hides the lights a roof or an upper floor covers, one setting for the style in all four styles
+    /// (`lighting::light_cover`).
+    pub light_cover: LightCover,
+    /// Which rule "Show Only the Player's Floor" follows, in KR-like and UOD-Painterly only, one setting for the style
+    /// (`world::z_view`); the other styles follow ClassicUO's.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub player_floor_rule: Option<PlayerFloorRule>,
+    /// The local lights of KR-like, Enhanced and UOD-Painterly, one setting for the style rather than per time of
+    /// day: which lights the land light decals and static local lights take, and how strongly.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub local_lights: Option<ClientLocalLights>,
+    pub morning: LandMaterialUniformsPresets,
+    pub afternoon: LandMaterialUniformsPresets,
+    pub night: LandMaterialUniformsPresets,
+    pub cave: LandMaterialUniformsPresets,
+}
+#[derive(Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct LandMaterialUniformsPresets {
+    /// Scene brightness multiplier, the style's own look, in Classic and UOD-Painterly only: KR-like and Enhanced have
+    /// none, as their clients. Every style dims at night and in caves through `client_lighting`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub global_lighting: Option<f32>,
+    /// The KR client's static shadows (its showShadows option), in KR-like only: `world::art::client_shadow`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub client_shadows: Option<bool>,
+    /// The server light level and the night composite that dims by it, in every style
+    /// (`lighting::client_night`). Optional so that a file without it is reported: a hand-written file must
+    /// give it, a cached one takes the default's.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub client_lighting: Option<ClientNightLighting>,
+    pub effects: LandEffectsUniform,
+    pub lighting: GlobalLightingUniforms,
+    pub land_lighting: LandLightingUniforms,
+    pub sun: SunAngles,
+}
+
+/// A style's night lighting: the server light level and, where the style dims through the KR and Enhanced clients'
+/// night map, Dynamapper's night overlay controls.
+///
+/// Classic dims by the Classic client's rule, which has no night map, so it has no overlay controls; the other
+/// styles have both. The composites and their formulas are in `lighting::client_night`.
+#[derive(Clone, Copy, Debug, PartialEq, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct ClientNightLighting {
+    /// The light level a server sends, 0 (full day: the composite is the identity) to
+    /// `client_night::MAX_CLIENT_LIGHT_LEVEL` (darkest).
+    pub light_level: u32,
+    /// How strongly the night map tints the scene: 1 is the client, 0 dims by the same amount without the tint
+    /// (the map is replaced by its luminance), above 1 tints more. `None` in Classic.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub overlay_strength: Option<f32>,
+    /// The night map's colour, in 8-bit (sRGB-encoded) values. The default, the map's mean
+    /// (`client_night::NIGHT_MAP_MEAN`), is the client; another colour keeps the map's cloud pattern. `None` in
+    /// Classic.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub overlay_color: Option<Vec3>,
+}
+
+impl ClientNightLighting {
+    /// The night overlay strength the composite takes: the client's where the style has none (Classic, whose
+    /// composite reads no night map).
+    pub fn overlay_strength_or_client(&self) -> f32 {
+        self.overlay_strength.unwrap_or(CLIENT_NIGHT_OVERLAY_STRENGTH)
+    }
+
+    /// The night overlay colour the composite takes: the night map's mean (the client's) where the style has none.
+    pub fn overlay_color_or_client(&self) -> Vec3 {
+        self.overlay_color.unwrap_or(NIGHT_MAP_MEAN)
+    }
+}
+
+/// The intensities of `ClientLocalLights`: 1 is the lights as they come, 0 turns them off.
+pub const LOCAL_LIGHT_INTENSITY_RANGE: std::ops::RangeInclusive<f32> = 0.0..=4.0;
+/// The intensity that leaves the local lights as they come, and the one of the styles without `ClientLocalLights`.
+pub const NEUTRAL_LOCAL_LIGHT_INTENSITY: f32 = 1.0;
+
+/// The optional land light decals and static local lights (Light/Static Interaction) of KR-like, Enhanced and
+/// UOD-Painterly, and where the client light sprites in the light buffer sit: one setting per style,
+/// `[<group>.local_lights]`. The source and intensities leave the light sprites as they are.
+///
+/// Each source keeps its own intensity, so switching sources keeps each one's calibration: at one, light.mul lights
+/// as brightly as the light sprites at a light's centre but fewer statics and smaller pools (none at some lanterns the
+/// sprites light), so it lights less overall.
+#[derive(Clone, Copy, Debug, PartialEq, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct ClientLocalLights {
+    /// The lights they take.
+    pub source: ClientLocalLightSource,
+    /// The multiplier of their contribution while they take the light sprites, in `LOCAL_LIGHT_INTENSITY_RANGE`.
+    pub light_sprites_intensity: f32,
+    /// The multiplier of their contribution while they take light.mul, in `LOCAL_LIGHT_INTENSITY_RANGE`.
+    pub light_mul_intensity: f32,
+    /// Put each light sprite's light where its item is drawn, and the local lights taken from them with them
+    /// (`client_light_sprites::client_light_sprite_centred`). False is the clients' placement.
+    /// The light.mul lights sit on their item's cell either way.
+    pub centre_on_items: bool,
+}
+
+impl ClientLocalLights {
+    /// The intensity of the source they take.
+    pub fn intensity(&self) -> f32 {
+        match self.source {
+            ClientLocalLightSource::LightSprites => self.light_sprites_intensity,
+            ClientLocalLightSource::LightMul => self.light_mul_intensity,
+        }
+    }
+
+    /// The intensity of the source they take, to edit.
+    pub fn intensity_mut(&mut self) -> &mut f32 {
+        match self.source {
+            ClientLocalLightSource::LightSprites => &mut self.light_sprites_intensity,
+            ClientLocalLightSource::LightMul => &mut self.light_mul_intensity,
+        }
+    }
+}
+
+/// The multiplier of the local lights a style draws with (`LandEffectsUniform::local_light_intensity`): its source's
+/// intensity, or the neutral one in the styles without `ClientLocalLights`.
+pub fn local_light_intensity(local_lights: Option<&ClientLocalLights>) -> f32 {
+    local_lights.map_or(NEUTRAL_LOCAL_LIGHT_INTENSITY, ClientLocalLights::intensity)
+}
+
+/// The rule "Show Only the Player's Floor" (`world_rendering.show_only_player_floor`) hides what is above the player
+/// by (`world::z_view`), chosen in KR-like; the other styles follow ClassicUO's.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Deserialize, Serialize)]
+pub enum PlayerFloorRule {
+    /// ClassicUO's: a ceiling over the player caps the statics at its z and hides the roofs; land over the player
+    /// caps the land and the statics a little above the player.
+    #[serde(rename = "classicuo")]
+    ClassicUo,
+    /// The KR client's: a ceiling over the player hides the statics in the 20-z layers above the player's, every
+    /// layer counted from the land under the player's cell (KR counts each from its own cell's); the land goes whole
+    /// while the player is below the land.
+    #[serde(rename = "kr")]
+    Kr,
+}
+
+/// A preset's sun: one static light direction for land, art and the sprite shadows, as compass angles.
+///
+/// The world axes are x = UO x (east), z = UO y (south) and y up, so azimuth 0 is north (-z) and 90 east (+x).
+#[derive(Clone, Copy, Debug, PartialEq, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct SunAngles {
+    /// Compass bearing of the sun in degrees, clockwise from north: 90 east, 180 south, 270 west.
+    pub azimuth_degrees: f32,
+    /// Height of the sun above the horizon in degrees: 0 on the horizon, 90 overhead.
+    pub elevation_degrees: f32,
+}
+
+impl SunAngles {
+    /// The unit vector towards the sun: the shaders' `scene.light_direction`.
+    ///
+    /// The trigonometry runs in f64, so the default sun gives `BAKED_GLOBAL_LIGHT.normalize()` bit for bit.
+    pub fn light_direction(self) -> Vec3 {
+        let azimuth = f64::from(self.azimuth_degrees).to_radians();
+        let elevation = f64::from(self.elevation_degrees).to_radians();
+        let horizontal = elevation.cos();
+        bevy::math::DVec3::new(horizontal * azimuth.sin(), elevation.sin(), -horizontal * azimuth.cos()).as_vec3()
+    }
+}
+
+impl Default for SunAngles {
+    /// `BAKED_GLOBAL_LIGHT`, the light of every preset before the sun was a setting.
+    fn default() -> Self {
+        Self {
+            azimuth_degrees: crate::core::constants::BAKED_SUN_AZIMUTH_DEGREES,
+            elevation_degrees: crate::core::constants::BAKED_SUN_ELEVATION_DEGREES,
+        }
+    }
+}

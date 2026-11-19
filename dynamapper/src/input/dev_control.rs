@@ -7,9 +7,10 @@ mod settings;
 use input::{ControlInput, InputState, PointerButton, inject_control_input, focus_control_context};
 use settings::{ControlSetting, ControlSettings};
 use crate::configs::settings::{ClientTextureSource, LandTextureSource};
-use crate::core::render::terrain::{LCMesh, draw_mesh::PendingTextureBake};
-use crate::core::render::assets::{land::coverage::EcTerrainBases, tile_atlas::{LandUploadTelemetry, TileAtlas}};
-use crate::core::{app_states::AppState, render::scene::{player::Player, world::WorldGeoData, RecomputeVisibleChunksEvent}, system_sets::MovementSysSet};
+use crate::render::terrain::{LCMesh, draw_mesh::PendingTextureBake};
+use crate::render::assets::{land::coverage::EcTerrainBases, tile_atlas::{LandUploadTelemetry, TileAtlas}};
+use crate::core::{app_states::AppState, system_sets::MovementSysSet};
+use crate::render::scene::{player::Player, world::WorldGeoData, RecomputeVisibleChunksEvent};
 use crate::prelude::*;
 use bevy::{input::{InputSystems, keyboard::KeyCode}, prelude::*, render::view::screenshot::{Screenshot, save_to_disk}, window::PrimaryWindow};
 use bevy_egui::EguiPreUpdateSet;
@@ -141,17 +142,17 @@ fn poll_control(
     time: Res<Time<Real>>,
     mut control_settings: ControlSettings,
     render_state: (
-        Option<Res<crate::core::render::lighting::static_lights::RenderStaticLightInstances>>,
-        Option<Res<crate::core::render::statics::statics_collect::StaticArtCollectDebugState>>,
-        Option<Res<crate::core::render::assets::art::SpriteArtPageAtlas>>,
-        Option<Res<crate::core::render::assets::art::GroundArtPageAtlas>>,
-        Option<Res<crate::core::render::picking::gpu_picking::VisibleStaticPick>>,
-        Option<Res<crate::core::render::picking::terrain_cursor::TerrainCursor>>,
-        Option<Res<crate::core::render::lighting::client_light_sprites::RenderClientLightSprites>>,
+        Option<Res<crate::render::lighting::static_lights::RenderStaticLightInstances>>,
+        Option<Res<crate::render::statics::statics_collect::StaticArtCollectDebugState>>,
+        Option<Res<crate::render::assets::art::SpriteArtPageAtlas>>,
+        Option<Res<crate::render::assets::art::GroundArtPageAtlas>>,
+        Option<Res<crate::render::picking::gpu_picking::VisibleStaticPick>>,
+        Option<Res<crate::render::picking::terrain_cursor::TerrainCursor>>,
+        Option<Res<crate::render::lighting::client_light_sprites::RenderClientLightSprites>>,
         Option<Res<crate::world::z_view::ZViewLimit>>,
         Option<Res<crate::world::caves::CavesRes>>,
-        (Option<Res<crate::core::render::statics::static_batches::RenderStaticInstances>>,
-            Option<Res<crate::core::render::statics::static_batches::RenderStaticLandInstances>>)),
+        (Option<Res<crate::render::statics::static_batches::RenderStaticInstances>>,
+            Option<Res<crate::render::statics::static_batches::RenderStaticLandInstances>>)),
 ) {
     let (static_lights, art_stats, sprite_atlas, ground_atlas, picking, terrain_cursor, light_sprites, z_view,
         caves, static_instances) = render_state;
@@ -211,7 +212,7 @@ fn poll_control(
                         "pending_pages": sprite_atlas.as_ref().map_or(0, |a| a.pending_page_count())
                             + ground_atlas.as_ref().map_or(0, |a| a.pending_page_count()),
                         "digest": static_instances.0.as_ref().zip(static_instances.1.as_ref()).map(|(sprites, ground)|
-                            format!("{:016x}", crate::core::render::statics::static_batches::
+                            format!("{:016x}", crate::render::statics::static_batches::
                                 static_instances_digest(&sprites.0, &ground.0))),
                     }));
                     Ok(json!({"ok": true, "position": position, "rendered_position": rendered,
@@ -295,7 +296,7 @@ fn poll_control(
                             }
                         }
                         if let Some(mut cache) = world.get_resource_mut::<
-                            crate::core::render::statics::static_chunk_cache::StaticChunkRenderCache>() {
+                            crate::render::statics::static_chunk_cache::StaticChunkRenderCache>() {
                             cache.rebuild_all();
                         }
                         log::info!("Control reload_land: evicted {evicted} map blocks; rebuilding the statics");

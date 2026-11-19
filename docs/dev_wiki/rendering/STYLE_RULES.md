@@ -10,8 +10,8 @@ Where the styles differ, a table shows them side by side; a rule stated once hol
 
 | Short | Meaning |
 |---|---|
-| `art/` | `dynamapper/src/core/render/statics/` |
-| `world/` | `dynamapper/src/core/render/scene/world/` |
+| `art/` | `dynamapper/src/render/statics/` |
+| `world/` | `dynamapper/src/render/scene/world/` |
 | `sh/` | `dynamapper/assets/shaders/world/` |
 | `conv/` | `lib/udd-conv/src/textures/` |
 | CC client | Classic `client.exe` 7.0.103.0 (PE FileVersion) |
@@ -101,7 +101,7 @@ the style.
 | Rule | Source | Code | Guard |
 |---|---|---|---|
 | A cell is the 44 × 44 px Classic diamond; one z unit is 4 px, `UO_Z_TO_WORLD_SCALE` = 4/44 world units. | CC art grid | `dynamapper/src/util_lib/uo_coords.rs`, `sh/uo_coords.wesl`; `CC_TILE_PIXEL_WIDTH` (`art/statics_collect.rs`) | Test `upright_art_projects_square_pixels_and_four_pixels_per_z_unit` |
-| World axes: x = UO x, z = UO y, y up. The isometric camera is orthographic at `PlayerCamera::BASE_OFFSET_FROM_PLAYER` (5, 5, 5), looking along (-1, -1, -1); the lens stretches view y to make the diamond. | CC view | `dynamapper/src/core/render/view/camera.rs` | Tests `both_cameras_look_along_the_isometric_diagonal`, `default_camera_matches_legacy_tile_pixel_and_height_steps` |
+| World axes: x = UO x, z = UO y, y up. The isometric camera is orthographic at `PlayerCamera::BASE_OFFSET_FROM_PLAYER` (5, 5, 5), looking along (-1, -1, -1); the lens stretches view y to make the diamond. | CC view | `dynamapper/src/render/view/camera.rs` | Tests `both_cameras_look_along_the_isometric_diagonal`, `default_camera_matches_legacy_tile_pixel_and_height_steps` |
 | The perspective camera (`graphics.perspective_camera`) orbits along the same `Vec3::ONE` direction at the distance that matches the orthographic framing, with the same lens stretch; no sprite-only scale. | Dynamapper ([isometric perspective notes](../../agent_notes/isometric_perspective_projection.md)) | `PlayerCamera::perspective_offset` | Tests `both_cameras_look_along_the_isometric_diagonal`, `orbit_distance_gives_the_focus_the_orthographic_scale_at_any_window_and_zoom`; fixtures `*-perspective` (e.g. `britain-castle-wall-walk-perspective-wall-tops`) |
 | The land quad of a cell splits along its NW–SE diagonal (corner 0 to 3), in every style and LOD; the cave mouth veil and the picking mesh cut theirs the same way. | Dynamapper | `QUAD_TRIANGLES` (`terrain/setup_base_mesh.rs`), `build_cell_quads_mesh` | Test `mouth_quads_lie_in_their_chunk_on_its_mesh_grid` |
 | Sprite anchors: CC art stands at (x + 1, y + 1), EC art at (x + 0.5, y + 1.5), the KR client's sprite base point. Both add 2 to the row. | KR client `UOSprite::PlaceSprite` 0x004422b0; CC symmetric centring | `CC_STATIC_TILE_TRANSLATION_X/Z`, `EC_STATIC_TILE_TRANSLATION_X/Z` | Tests `enhanced_sprites_stand_where_the_clients_place_world_art`, `regular_static_art_keeps_sprite_world_anchor` |
@@ -180,7 +180,7 @@ comments of `world/caves.rs` and `world/z_view.rs`.
 
 | Rule | Source | Code | Guard |
 |---|---|---|---|
-| Each land id is drawn from the selected land source, else the other EC-layout source (EC and KR stand in for each other), else Classic (its texmap, else its land art as the CC client does); an id no source has draws the magenta and black checker. Classic selected never borrows EC-layout terrain. | user, 2026-11-12; CC `LandView.Draw` | `dynamapper/src/core/render/assets/land/routing.rs` | Tests `a_missing_id_comes_from_the_other_enhanced_source_then_classic`, `classic_land_without_a_texmap_draws_its_art`, `classic_never_borrows_enhanced_terrain`, `nothing_has_it_draws_the_missing_pattern` |
+| Each land id is drawn from the selected land source, else the other EC-layout source (EC and KR stand in for each other), else Classic (its texmap, else its land art as the CC client does); an id no source has draws the magenta and black checker. Classic selected never borrows EC-layout terrain. | user, 2026-11-12; CC `LandView.Draw` | `dynamapper/src/render/assets/land/routing.rs` | Tests `a_missing_id_comes_from_the_other_enhanced_source_then_classic`, `classic_land_without_a_texmap_draws_its_art`, `classic_never_borrows_enhanced_terrain`, `nothing_has_it_draws_the_missing_pattern` |
 | The route file (`LandRoutes.kdl`) and its profiles stand in front of that chain; a route its source cannot draw falls back with a warning. | user | `configs::land_routes`, `routing.rs` | Tests `a_route_draws_the_id_it_names_from_its_source`, `a_route_its_source_cannot_draw_falls_back_with_a_warning`, `classic_selected_skips_enhanced_routes` |
 | EC land routes Classic ids through `legacyterrainmap.csv` and the `TerrainTranscode.kdl` overlay embedded in `tex_land_ec.uddp`. KR land routes the ids measured on KR's facets. | EC `GameData.uop`; KR facets | `conv/tex_land_kr.rs` (`KrLandMap`) | Tests `kingdom_reborn_routes_replace_the_csv_ones_and_leave_the_routing_table` |
 | The KR land is an overlay over the EC land: only the textures that differ from the EC client's by more than `KR_IMAGE_EQUIVALENCE_THRESHOLD` (8 levels) are packed; the rest are the EC land's slots. | 0b308d79 | `TexLandEcPackage::kr_land`, `conv/tex_land_kr.rs` | Test `kingdom_reborn_definitions_come_first_and_the_enhanced_client_fills_the_rest`; fixture `painterly-kr-land-blur-layout` |

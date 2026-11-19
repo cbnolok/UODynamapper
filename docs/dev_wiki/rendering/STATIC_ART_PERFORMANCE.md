@@ -5,15 +5,15 @@ This is a June 2026 profiling record of static art performance pitfalls and the 
 The main affected runtime path is:
 
 ```text
-dynamapper/src/core/render/statics/statics_collect.rs
+dynamapper/src/render/statics/statics_collect.rs
 ```
 
 Related draw and asset paths:
 
 ```text
-dynamapper/src/core/render/statics/statics_draw.rs
-dynamapper/src/core/render/lighting/static_lights.rs
-dynamapper/src/core/render/assets/art.rs
+dynamapper/src/render/statics/statics_draw.rs
+dynamapper/src/render/lighting/static_lights.rs
+dynamapper/src/render/assets/art.rs
 lib/udd-assets/src/metadata/hues.rs
 ```
 

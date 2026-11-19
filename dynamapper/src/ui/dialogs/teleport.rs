@@ -1,12 +1,12 @@
 use crate::ui::dialogs;
 use crate::input::input_actions::{ActionCloseActiveDialog, ActionToggleTeleportDialog};
 use crate::world::teleport::teleport_player;
-use crate::core::render::scene::player::Player;
-use crate::core::render::scene::world::WorldGeoData;
-use crate::core::render::scene::RecomputeVisibleChunksEvent;
+use crate::render::scene::player::Player;
+use crate::render::scene::world::WorldGeoData;
+use crate::render::scene::RecomputeVisibleChunksEvent;
 use crate::ingame_sysmessage_logger;
 use crate::{
-    core::render::view::camera::UiCameraResource,
+    render::view::camera::UiCameraResource,
     prelude::*,
 };
 use bevy::prelude::*;

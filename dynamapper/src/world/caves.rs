@@ -53,12 +53,12 @@
 use crate::configs::settings::Settings;
 use crate::console_logger::{self, LogAbout, LogSev};
 use crate::world::maps::{package_chunk_cell, read_package_chunk_land_z, PACKAGE_CHUNK_CELL_DIM};
-use crate::core::render::terrain::draw_mesh::PendingTextureBake;
-use crate::core::render::terrain::{LCMesh, MAP_STORAGE_BLOCK_TILE_DIM};
-use crate::core::render::scene::player::Player;
+use crate::render::terrain::draw_mesh::PendingTextureBake;
+use crate::render::terrain::{LCMesh, MAP_STORAGE_BLOCK_TILE_DIM};
+use crate::render::scene::player::Player;
 use crate::world::z_view::{CLIENT_BAND_HEIGHT, NO_Z_VIEW_LIMIT};
 use crate::world::z_view::{PLAYER_CEILING_MIN_RISE, PLAYER_VIEW_HEADROOM};
-use crate::core::render::scene::SceneStateData;
+use crate::render::scene::SceneStateData;
 use crate::world::statics::{read_package_chunk_statics, StaticsStoreRes};
 use crate::core::uo_files_loader::{MapPlanesRes, TileMetaPackageRes};
 use bevy::prelude::*;

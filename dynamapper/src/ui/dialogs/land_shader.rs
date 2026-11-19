@@ -10,8 +10,8 @@
 //   shading mode 2 and the KR content; only their preset values differ.
 
 use crate::ui::dialogs;
-use crate::core::render::terrain::mesh_material::*;
-use crate::core::render::lighting::{light_cover::LightCover, static_lights::ClientLocalLightSource};
+use crate::render::terrain::mesh_material::*;
+use crate::render::lighting::{light_cover::LightCover, static_lights::ClientLocalLightSource};
 use crate::input::input_actions::ActionToggleShaderSettings;
 use crate::{
     configs::shader_presets::{
@@ -19,7 +19,7 @@ use crate::{
         save_shader_settings, store_active_preset, FactoryShaderPresets, UniformState,
         CLASSIC_PRESET_GROUP, ENHANCED_PRESET_GROUP, KR_PRESET_GROUP, PAINTERLY_PRESET_GROUP,
     },
-    core::render::{
+    render::{
         lighting::client_night::{
             MAX_CLIENT_LIGHT_LEVEL, MAX_NIGHT_OVERLAY_STRENGTH, MIN_NIGHT_OVERLAY_STRENGTH, NIGHT_MAP_MEAN,
         },

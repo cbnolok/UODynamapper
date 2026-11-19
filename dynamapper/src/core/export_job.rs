@@ -9,15 +9,15 @@ use crate::configs::shader_presets::{UniformState, CLASSIC_PRESET_GROUP, PAINTER
 use crate::console_logger::{self, LogAbout, LogSev};
 use crate::core::app_states::AppState;
 use crate::world::teleport::teleport_player;
-use crate::core::render::scene::{player::Player, world::WorldGeoData, RecomputeVisibleChunksEvent};
-use crate::core::render::view::{
+use crate::render::scene::{player::Player, world::WorldGeoData, RecomputeVisibleChunksEvent};
+use crate::render::view::{
     camera::{ORTHO_SIZE_FACTOR, ORTHO_WIDTH_SCALE_FACTOR, PlayerCamera},
     footprint::{chunks_in_tile_rect, ExportChunkFootprint},
 };
-use crate::core::render::statics::statics_collect::StaticArtCollectDebugState;
-use crate::core::render::assets::tile_atlas::{LandUploadTelemetry, TileAtlas};
-use crate::core::render::terrain::{LCMesh, draw_mesh::ChunkScale, mesh_material::LandShaderModePresets};
-use crate::core::render::assets::art::{GroundArtPageAtlas, SpriteArtPageAtlas};
+use crate::render::statics::statics_collect::StaticArtCollectDebugState;
+use crate::render::assets::tile_atlas::{LandUploadTelemetry, TileAtlas};
+use crate::render::terrain::{LCMesh, draw_mesh::ChunkScale, mesh_material::LandShaderModePresets};
+use crate::render::assets::art::{GroundArtPageAtlas, SpriteArtPageAtlas};
 use crate::prelude::*;
 use bevy::prelude::*;
 use bevy::{

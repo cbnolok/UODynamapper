@@ -17,7 +17,7 @@ Related: [KR static shadows](CLIENT_NIGHT_LIGHTING_AND_SHADOWS.md#kr-static-shad
 
 - The world axes are: x = UO x, z = UO y, and y is up.
 - A UO z unit is `UO_Z_TO_WORLD_SCALE` = 4/44 world units (`util_lib/uo_coords.rs`, mirrored in `world/uo_coords.wesl` and used in the art shaders as `HEIGHT_SCALE`). That is four classic pixels in the 44-pixel grid.
-- The orthographic camera sits at `PlayerCamera::BASE_OFFSET_FROM_PLAYER` = (5, 5, 5) from the player and looks at the player (`core/render/view/camera.rs`). The view direction is therefore (-1, -1, -1) / √3.
+- The orthographic camera sits at `PlayerCamera::BASE_OFFSET_FROM_PLAYER` = (5, 5, 5) from the player and looks at the player (`render/view/camera.rs`). The view direction is therefore (-1, -1, -1) / √3.
 - The perspective camera orbits along the same `Vec3::ONE` direction (`perspective_offset`).
 - The lens stretches view y on screen to make the 44 × 44 diamond. That changes x and y in clip space, not the view depth.
 

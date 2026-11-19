@@ -1,4 +1,4 @@
-use crate::core::render::scene::{player::Player, world::WorldGeoData};
+use crate::render::scene::{player::Player, world::WorldGeoData};
 use crate::prelude::UOVec4;
 use bevy::prelude::Transform;
 

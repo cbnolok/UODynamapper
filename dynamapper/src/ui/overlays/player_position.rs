@@ -1,5 +1,5 @@
-use crate::core::render::view::camera::RenderZoom;
-use crate::{core::render::scene::player::Player, prelude::*};
+use crate::render::view::camera::RenderZoom;
+use crate::{render::scene::player::Player, prelude::*};
 use bevy::prelude::*;
 use bevy::text::{FontSmoothing, LineHeight};
 use bevy::window::Window;
@@ -151,7 +151,7 @@ pub fn update_player_position_text(
             if let Some((window_w, window_h)) = window_size {
                 // Optimization: Use direct isometric math instead of 8 raycasts.
                 // Logic mirrored from view::footprint::compute_visible_chunks.
-                use crate::core::render::view::camera::{ORTHO_SIZE_FACTOR, ORTHO_WIDTH_SCALE_FACTOR};
+                use crate::render::view::camera::{ORTHO_SIZE_FACTOR, ORTHO_WIDTH_SCALE_FACTOR};
                 let inv_sqrt2: f32 = std::f32::consts::FRAC_1_SQRT_2;
                 let three_over_sqrt6: f32 = 3.0 / 6.0_f32.sqrt();
 

@@ -5,6 +5,7 @@ pub mod console_logger;
 pub mod core;
 pub mod diagnostics;
 pub mod input;
+pub mod render;
 pub mod ui;
 pub mod world;
 pub mod ingame_sysmessage_logger;

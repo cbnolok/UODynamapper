@@ -87,7 +87,7 @@ mod tests {
     #[test]
     fn default_camera_matches_legacy_tile_pixel_and_height_steps() {
         use bevy::{camera::CameraProjection, prelude::*};
-        use crate::core::render::view::camera::{ORTHO_SIZE_FACTOR, ORTHO_WIDTH_SCALE_FACTOR, PlayerCamera};
+        use crate::render::view::camera::{ORTHO_SIZE_FACTOR, ORTHO_WIDTH_SCALE_FACTOR, PlayerCamera};
         let width = 1280.0;
         let height = 800.0;
         let mut projection = OrthographicProjection {

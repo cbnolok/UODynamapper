@@ -9,7 +9,7 @@ use crate::ui::dialogs::paperdoll_overrides::{
     measured_garment, taken_off, PaperdollOrder, PaperdollOverrides, TakenOff, PAPERDOLL_OVERRIDES_FILE_NAME,
 };
 use crate::configs::runtime_specs::SpecFiles;
-use crate::core::render::view::camera::UiCameraResource;
+use crate::render::view::camera::UiCameraResource;
 use crate::configs::settings::GumpClient;
 use crate::core::uo_files_loader::{GumpMapRes, HuesPackageRes, PaperdollEcPackageRes, TileMetaPackageRes};
 use udd_assets::tilemeta::{TileMetaItemDefinitions, TileMetaItemTile};

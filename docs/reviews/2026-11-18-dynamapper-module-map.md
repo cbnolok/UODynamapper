@@ -27,7 +27,7 @@ that date. Update a row when its file moves, and drop the "now" column when ever
 
 Owners are the plan's: `app/`, `settings/`, `world/`, `content/`, `input/`, `render/{view, scene, assets,
 terrain, statics, lighting, picking, postprocess}`, `ui/`, `export/`, `diagnostics/`. Paths are relative to
-`dynamapper/src/`; `rsw/` abbreviates `core/render/scene/world/`.
+`dynamapper/src/`; `rsw/` abbreviates `render/scene/world/`. `core/render/` moved to the top-level `render/` 2026-11-19; every path below, the "from" paths of earlier moves included, is written without its former `core/` prefix.
 
 ### app
 
@@ -55,8 +55,8 @@ terrain, statics, lighting, picking, postprocess}`, `ui/`, `export/`, `diagnosti
 |---|---:|---:|---|
 | `world/coords.rs` | 121 | 1 | Moved 2026-11-18 from `util_lib/uo_coords.rs`; its importers took the new path 2026-11-19. |
 | `world/{maps, statics, multis}.rs` | 908 | 12 | Moved 2026-11-18 from `core/`; their importers took the new path 2026-11-19. |
-| `rsw.rs` (`core/render/scene/world.rs`) | 100 | 4 | The map catalog half; its plugin wiring stays with render. |
-| `core/render/scene/player.rs` | 107 | 0 | Logical position → `world/player`; the rendered entity stays with `render/scene`. |
+| `rsw.rs` (`render/scene/world.rs`) | 100 | 4 | The map catalog half; its plugin wiring stays with render. |
+| `render/scene/player.rs` | 107 | 0 | Logical position → `world/player`; the rendered entity stays with `render/scene`. |
 | `world/{player_movement, teleport}.rs` | 362 | 0 | Moved 2026-11-18 from `core/controls/`. |
 | `world/caves.rs`, `world/z_view.rs` | 2211 | 24 | Moved 2026-11-19 from `rsw/`, whole: their systems write the analyses' private state. World analysis (cave membership, floor-view cut, cell queries) that render consumes. They still read the render side: the chunks they send to be baked (`LCMesh`, `PendingTextureBake`), the map block size in `land`, the player and scene state, and `PlayerFloorRule` and `LAND_NO_Z_LIMIT` in `mesh_material`. The KR z bands (`client_light_band`, `kr_light_layer`, their constants and `NO_Z_VIEW_LIMIT`) moved here from `light_cover` 2026-11-19. |
 
@@ -65,7 +65,7 @@ terrain, statics, lighting, picking, postprocess}`, `ui/`, `export/`, `diagnosti
 | Now | Lines | Churn | Notes |
 |---|---:|---:|---|
 | `core/uo_files_loader.rs` | 1290 | 13 | Split package discovery from the runtime gump provider. |
-| `configs/land_routes.rs`, `core/render/assets/land/route_file.rs` | 1122 | 6 | The land route table and its file. |
+| `configs/land_routes.rs`, `render/assets/land/route_file.rs` | 1122 | 6 | The land route table and its file. |
 | `configs/land_texture_variation.rs` | 237 | 1 | |
 | `ui/dialogs/paperdoll_overrides.rs` (+ `measure.rs`) | 605 | 0 | Composition and override policy; its window goes to `ui/`. |
 
@@ -75,33 +75,33 @@ terrain, statics, lighting, picking, postprocess}`, `ui/`, `export/`, `diagnosti
 |---|---:|---:|---|
 | `input.rs`, `input/{input_actions, window_controls}.rs` | 158 | 0 | Moved 2026-11-19 from `core/controls`. Actions, bindings, dispatch. |
 | `input/dev_control.rs` (+ `input.rs`, `settings.rs`) | 913 | 14 | Moved 2026-11-19. Renderer control socket. |
-| keyboard and mouse handling in `core/render/view/camera.rs` | | | Zoom, free camera and Shift+arrow input leave the camera. |
+| keyboard and mouse handling in `render/view/camera.rs` | | | Zoom, free camera and Shift+arrow input leave the camera. |
 
 ### render
 
 | Now | Lines | Churn | Owner |
 |---|---:|---:|---|
-| `core/render.rs`, `core/render/scene.rs` | 824 | 2 | `render/scene`: chunk lifecycle. View selection (the follow, free and export footprints) left for `view/footprint.rs` 2026-11-19. |
-| `core/render/view.rs`, `view/{camera, footprint}.rs`, `camera/perspective.rs` | 1090 | 5 | `render/view`: the camera moved 2026-11-19 from `core/render/scene/`, and the footprints from `scene.rs`. `ScenePlugin` still adds `CameraPlugin`. |
-| `core/render/terrain/chunk_loader.rs` | 201 | 0 | `render/scene` (streaming loads); came to `terrain/` with `land/` and stays until the scene move. |
-| `core/render/terrain.rs`, `terrain/{draw_mesh, mesh_material, setup_base_mesh, cave_mouth_veil}.rs` | 3013 | 50 | `render/terrain`: moved 2026-11-19 from `rsw/land`. Its light enums moved 2026-11-19: `LightCover` to `light_cover.rs`, `ClientLocalLightSource` to `static_lights.rs`. |
-| `core/render/assets/land/coverage.rs` (+ `cache.rs`, `runtime.rs`, `gpu_tests.rs`) | 1057 | 17 | `render/terrain`, with the split of `assets/land`: `assets::land` builds and registers it, and it reads that module's cache and routing, so moving it alone would make the two import each other. |
-| `core/render/assets/land/liquid_sampling_tests.rs` | 574 | 0 | `render/terrain`. |
-| `core/render/assets/tile_atlas.rs` | 958 | 9 | `render/assets`: moved 2026-11-19 from `rsw/land`, with the atlas upload budget and telemetry it reads (`LandUploadBudget`, `LandUploadTelemetry`, from `terrain.rs`). The terrain plugin still registers its systems. |
-| `core/render/assets.rs`, `art.rs` | 1073 | 4 | `render/assets`: moved 2026-11-19 from `core/texture_cache`. The unused full-preload `residency.rs` was deleted 2026-11-19. Its pages are read and decoded on the async compute pool since 2026-11-19, from the `Arc` packages; a page waits as pending until it is uploaded. |
-| `core/render/assets/land.rs` (+ `cache.rs`, `texture_array.rs`, `aux_layers.rs`, `routing.rs`) | 4783 | 25 | `render/assets`; the shared EC item auxiliary setup leaves terrain. |
-| `core/render/assets/ec_item_liquid.rs`, `ec_item_surface.rs` (+ `hue_mask`, `water`) | 856 | 9 | `render/assets`. |
-| `core/render/statics.rs`, `statics/{statics_collect, static_source, static_placement, static_chunk_cache, static_batches, statics_draw, static_surface, transparent_order}.rs` | 8624 | 73 | `render/statics`: moved 2026-11-19 from `rsw/art`; `WorldPlugin` still adds its plugin. Its shaders stay under `shaders/world/art/`. `statics_collect.rs` (5470 lines) split 2026-11-19: source policy (`static_source`), anchors, bounds and draw order (`static_placement`), the chunk cache (`static_chunk_cache`), the instances and batches (`static_batches`); collection, its stats and local-light sampling stay, with the tests of all five, which share their fixtures. |
+| `render.rs`, `render/scene.rs` | 824 | 2 | `render/scene`: chunk lifecycle. View selection (the follow, free and export footprints) left for `view/footprint.rs` 2026-11-19. |
+| `render/view.rs`, `view/{camera, footprint}.rs`, `camera/perspective.rs` | 1090 | 5 | `render/view`: the camera moved 2026-11-19 from `render/scene/`, and the footprints from `scene.rs`. `ScenePlugin` still adds `CameraPlugin`. |
+| `render/terrain/chunk_loader.rs` | 201 | 0 | `render/scene` (streaming loads); came to `terrain/` with `land/` and stays until the scene move. |
+| `render/terrain.rs`, `terrain/{draw_mesh, mesh_material, setup_base_mesh, cave_mouth_veil}.rs` | 3013 | 50 | `render/terrain`: moved 2026-11-19 from `rsw/land`. Its light enums moved 2026-11-19: `LightCover` to `light_cover.rs`, `ClientLocalLightSource` to `static_lights.rs`. |
+| `render/assets/land/coverage.rs` (+ `cache.rs`, `runtime.rs`, `gpu_tests.rs`) | 1057 | 17 | `render/terrain`, with the split of `assets/land`: `assets::land` builds and registers it, and it reads that module's cache and routing, so moving it alone would make the two import each other. |
+| `render/assets/land/liquid_sampling_tests.rs` | 574 | 0 | `render/terrain`. |
+| `render/assets/tile_atlas.rs` | 958 | 9 | `render/assets`: moved 2026-11-19 from `rsw/land`, with the atlas upload budget and telemetry it reads (`LandUploadBudget`, `LandUploadTelemetry`, from `terrain.rs`). The terrain plugin still registers its systems. |
+| `render/assets.rs`, `art.rs` | 1073 | 4 | `render/assets`: moved 2026-11-19 from `core/texture_cache`. The unused full-preload `residency.rs` was deleted 2026-11-19. Its pages are read and decoded on the async compute pool since 2026-11-19, from the `Arc` packages; a page waits as pending until it is uploaded. |
+| `render/assets/land.rs` (+ `cache.rs`, `texture_array.rs`, `aux_layers.rs`, `routing.rs`) | 4783 | 25 | `render/assets`; the shared EC item auxiliary setup leaves terrain. |
+| `render/assets/ec_item_liquid.rs`, `ec_item_surface.rs` (+ `hue_mask`, `water`) | 856 | 9 | `render/assets`. |
+| `render/statics.rs`, `statics/{statics_collect, static_source, static_placement, static_chunk_cache, static_batches, statics_draw, static_surface, transparent_order}.rs` | 8624 | 73 | `render/statics`: moved 2026-11-19 from `rsw/art`; `WorldPlugin` still adds its plugin. Its shaders stay under `shaders/world/art/`. `statics_collect.rs` (5470 lines) split 2026-11-19: source policy (`static_source`), anchors, bounds and draw order (`static_placement`), the chunk cache (`static_chunk_cache`), the instances and batches (`static_batches`); collection, its stats and local-light sampling stay, with the tests of all five, which share their fixtures. |
 | `statics/{client_grunge, depth_tests, shading_tests}.rs` | 609 | 9 | `render/statics`: moved 2026-11-19 from `rsw/art`. |
-| `core/render/lighting.rs`, `lighting/{static_lights, client_light_sprites, light_cover, light_scene, light_scene_tests, client_night, dynamic_light, light_scale}.rs` | 5998 | 93 | Moved 2026-11-19 from `art/`, `rsw/effects/`, `scene/` and `configs/`: one owner for lighting. It reads the statics' placement, source and land z, the picking query and the transparent draw order (`pub(crate)` in `statics/`); it moves under `render/` with the rest of `core/render`. |
-| `core/render/picking.rs`, `picking/{gpu_picking, static_geometry, terrain_cursor}.rs` (+ their `tests.rs`) | 1258 | 7 | `render/picking`: moved 2026-11-19 from `art/` (`gpu_picking`, and `static_geometry`, the statics' pick and highlight geometry) and `terrain/` (`picking.rs`, now `terrain_cursor.rs`). The art and terrain plugins still install them, in the same order. They read the statics' source, placement and batches and the land mesh (`pub(crate)` in `statics/` and `terrain/`). |
-| `core/render/postprocess.rs`, `postprocess/fog_pass.rs` | 143 | 3 | `render/postprocess`: moved 2026-11-19 from `rsw/effects`. Its shader stays at `shaders/world/effects/fog_pass.wesl`, beside the surface effects the art and land import. |
+| `render/lighting.rs`, `lighting/{static_lights, client_light_sprites, light_cover, light_scene, light_scene_tests, client_night, dynamic_light, light_scale}.rs` | 5998 | 93 | Moved 2026-11-19 from `art/`, `rsw/effects/`, `scene/` and `configs/`: one owner for lighting. It reads the statics' placement, source and land z, the picking query and the transparent draw order (`pub(crate)` in `statics/`); it moves under `render/` with the rest of `render`. |
+| `render/picking.rs`, `picking/{gpu_picking, static_geometry, terrain_cursor}.rs` (+ their `tests.rs`) | 1258 | 7 | `render/picking`: moved 2026-11-19 from `art/` (`gpu_picking`, and `static_geometry`, the statics' pick and highlight geometry) and `terrain/` (`picking.rs`, now `terrain_cursor.rs`). The art and terrain plugins still install them, in the same order. They read the statics' source, placement and batches and the land mesh (`pub(crate)` in `statics/` and `terrain/`). |
+| `render/postprocess.rs`, `postprocess/fog_pass.rs` | 143 | 3 | `render/postprocess`: moved 2026-11-19 from `rsw/effects`. Its shader stays at `shaders/world/effects/fog_pass.wesl`, beside the surface effects the art and land import. |
 
 ### ui
 
 | Now | Lines | Churn | Notes |
 |---|---:|---:|---|
-| `ui/dialogs.rs`, `dialogs/{image_background, keybindings_help, teleport}.rs` | 507 | 0 | Moved 2026-11-19 with `overlays/` from `core/render/`; `RenderPlugin` still adds both plugins, in the same order. |
+| `ui/dialogs.rs`, `dialogs/{image_background, keybindings_help, teleport}.rs` | 507 | 0 | Moved 2026-11-19 with `overlays/` from `render/`; `RenderPlugin` still adds both plugins, in the same order. |
 | `dialogs/gump.rs` (+ `robe_edges.rs`), `paperdoll_ec.rs`, `paperdoll_menu.rs` | 3260 | 7 | |
 | `dialogs/preferences.rs` | 822 | 11 | The frame limiter settings leave for `diagnostics/`. |
 | `dialogs/land_shader.rs` (+ `tips.rs`) | 2184 | 52 | The per-frame uniform push leaves for `render/`. |

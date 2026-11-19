@@ -2,7 +2,6 @@ pub mod app_states;
 mod bevy_log_filter;
 pub mod constants;
 pub mod export_job;
-pub mod render;
 pub mod system_sets;
 pub(crate) mod uo_files_loader;
 
@@ -13,8 +12,8 @@ use crate::{
     core::{
         app_states::*,
         bevy_log_filter::init_bevy_logging,
-        render::view::camera::UO_TILE_PIXEL_SIZE,
     },
+    render::view::camera::UO_TILE_PIXEL_SIZE,
     util_lib::tracked_plugin::{set_plugin_log_toggles, sys_log_plugin_registry_tree},
 };
 use bevy::{
@@ -387,10 +386,10 @@ pub fn run_bevy_app() -> ExitCode {
         crate::input::ControlsPlugin {
             registered_by: "Core",
         },
-        render::RenderPlugin {
+        crate::render::RenderPlugin {
             registered_by: "Core",
         },
-        render::assets::TextureCachePlugin {
+        crate::render::assets::TextureCachePlugin {
             registered_by: "Core",
         },
         uo_files_loader::UOFilesPlugin {

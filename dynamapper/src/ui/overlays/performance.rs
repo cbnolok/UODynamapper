@@ -21,7 +21,7 @@ const METRICS_REFRESH_INTERVAL_SEC: f32 = 1.0 / 4.0;
 const TEXT_REFRESH_INTERVAL_SEC: f32 = 1.0;
 const BYTES_PER_MIB: f32 = 1024.0 * 1024.0;
 
-use crate::core::render::assets::land::texture_array as tex_consts;
+use crate::render::assets::land::texture_array as tex_consts;
 
 /// Holds the cached sysinfo `System` instance and a cooldown timer for polling.
 /// We reuse the same `System` instead of re-creating it each frame — sysinfo reads
@@ -279,8 +279,8 @@ pub fn setup_overlay_performance(
 pub fn sys_refresh_process_metrics(
     _settings: Res<Settings>,
     mut metrics: ResMut<ProcessMetrics>,
-    tex_cache: Res<crate::core::render::assets::land::cache::LandTextureCache>,
-    tile_atlas: Res<crate::core::render::assets::tile_atlas::TileAtlas>,
+    tex_cache: Res<crate::render::assets::land::cache::LandTextureCache>,
+    tile_atlas: Res<crate::render::assets::tile_atlas::TileAtlas>,
 ) {
     let pid = metrics.pid;
     // 1. Refresh global CPU usage. This is required on Windows to update the system time baseline
@@ -339,9 +339,9 @@ pub fn update_performance_text(
     frame_rate: Res<crate::diagnostics::frame_rate::MeasuredFrameRate>,
     settings: Res<Settings>,
     metrics: Res<ProcessMetrics>,
-    land_upload_telemetry: Res<crate::core::render::assets::tile_atlas::LandUploadTelemetry>,
+    land_upload_telemetry: Res<crate::render::assets::tile_atlas::LandUploadTelemetry>,
     entities: &bevy::ecs::entity::Entities,
-    land_chunk_count: Res<crate::core::render::scene::LandChunkCount>,
+    land_chunk_count: Res<crate::render::scene::LandChunkCount>,
     mut text_query: Query<
         (&mut Text, &mut TextFont, &mut LineHeight),
         With<OverlayPerformanceText>,

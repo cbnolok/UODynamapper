@@ -1,6 +1,6 @@
 //! The logical world: UO coordinates, the map, statics and multi stores, the player's movement and teleport, and the
 //! world analyses the renderer draws by: the caves and the floor-view cut (z-view).
-//! The render tree draws from it (`core::render::scene::world` is the rendered world, not this one).
+//! The render tree draws from it (`render::scene::world` is the rendered world, not this one).
 
 pub mod caves;
 pub mod coords;

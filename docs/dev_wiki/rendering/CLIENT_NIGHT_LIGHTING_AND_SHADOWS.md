@@ -19,7 +19,7 @@ Two other places carry user-facing descriptions of the same settings, and they m
 
 Code:
 
-- `dynamapper/src/core/render/lighting/client_night.rs`: its module comment gives the formulas with their client addresses, the constants and a Rust mirror of the maths with unit tests.
+- `dynamapper/src/render/lighting/client_night.rs`: its module comment gives the formulas with their client addresses, the constants and a Rust mirror of the maths with unit tests.
 - `dynamapper/assets/shaders/world/effects/client_night_composite.wesl`.
 
 The settings are `[<group>.<period>.client_lighting]` (`ClientNightLighting`). The dialog shows them under Whole scene as "Light Level", "Night Overlay Strength" and "Night Overlay Colour". Next to them, "Local Lights" and its intensity slider are one setting per style, `[<group>.local_lights]` (`ClientLocalLights`, see Terrain and statics below).
@@ -215,7 +215,7 @@ Code:
 
 - `dynamapper/assets/shaders/world/art/client_shadow.wesl`: the quad formulas and constants with their addresses;
 - the `PASS_MODE_CLIENT_SHADOW` branches in `art/main.wesl`;
-- `client_shadow_flags` and `client_shadow_ground_z` in `core/render/statics/statics_collect.rs`;
+- `client_shadow_flags` and `client_shadow_ground_z` in `render/statics/statics_collect.rs`;
 - the material specialisation in `art/statics_draw.rs`;
 - the composite term in `client_night.rs`.
 

@@ -6,8 +6,8 @@ use crate::{
     core::{
         frame_limiter_for_options, frame_limiter_for_settings,
         present_mode_for_vsync,
-        render::view::camera::UiCameraResource,
     },
+    render::view::camera::UiCameraResource,
     prelude::*,
     world::caves::{CaveSurroundings, CaveView},
 };
@@ -228,8 +228,8 @@ pub fn sys_render_preferences_dialog(
     mut settings: ResMut<Settings>,
     mut windows_q: Query<&mut Window>,
     time: Res<Time>,
-    land_textures: Option<Res<crate::core::render::assets::land::cache::LandTextureCache>>,
-    mut route_file: Option<ResMut<crate::core::render::assets::land::route_file::RouteFileRes>>,
+    land_textures: Option<Res<crate::render::assets::land::cache::LandTextureCache>>,
+    mut route_file: Option<ResMut<crate::render::assets::land::route_file::RouteFileRes>>,
     placed_multis: Option<Res<crate::world::multis::PlacedMultisRes>>,
 ) {
     state.apply_timer.tick(time.delta());
@@ -468,7 +468,7 @@ pub fn sys_render_preferences_dialog(
                     // A source whose package is missing stays selectable, marked, with where it was looked for and
                     // what is drawn instead (routing.rs).
                     let land_source_entry = |source: LandTextureSource| match land_textures.as_deref() {
-                        Some(land) => crate::core::render::assets::land::routing::land_source_entry(
+                        Some(land) => crate::render::assets::land::routing::land_source_entry(
                             source, land.land_source_loaded(source), &land.udd_folder),
                         None => (source.land_label().to_string(), None),
                     };
@@ -494,7 +494,7 @@ pub fn sys_render_preferences_dialog(
                     // The route file's profiles, such as the seasons (route_file.rs); switching one rebuilds the land
                     // and statics it routes.
                     if let Some(route_file) = route_file.as_deref_mut() {
-                        use crate::core::render::assets::land::route_file::route_profile_entries;
+                        use crate::render::assets::land::route_file::route_profile_entries;
                         let entries = route_profile_entries(route_file.profile_names(), &state.route_profile);
                         let selected_label = entries.iter().find(|(value, _)| *value == state.route_profile)
                             .map(|(_, label)| label.clone()).unwrap_or_default();
