@@ -58,7 +58,7 @@ terrain, statics, lighting, picking, postprocess}`, `ui/`, `export/`, `diagnosti
 | `rsw.rs` (`core/render/scene/world.rs`) | 100 | 4 | The map catalog half; its plugin wiring stays with render. |
 | `core/render/scene/player.rs` | 107 | 0 | Logical position → `world/player`; the rendered entity stays with `render/scene`. |
 | `world/{player_movement, teleport}.rs` | 362 | 0 | Moved 2026-11-18 from `core/controls/`. |
-| `rsw/caves.rs`, `rsw/z_view.rs` | 2211 | 24 | World analysis (cave membership, floor-view cut, cell queries) that render consumes. |
+| `world/caves.rs`, `world/z_view.rs` | 2211 | 24 | Moved 2026-11-19 from `rsw/`, whole: their systems write the analyses' private state. World analysis (cave membership, floor-view cut, cell queries) that render consumes. They still read the render side: the chunks they send to be baked (`LCMesh`, `PendingTextureBake`), the KR bands in `light_cover`, the map block size in `land`, the player and scene state, and `PlayerFloorRule` and `LAND_NO_Z_LIMIT` in `mesh_material`; the bands go to `world/` with the lighting owner. |
 
 ### content
 

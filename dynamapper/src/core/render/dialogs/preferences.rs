@@ -5,9 +5,10 @@ use crate::{
     core::{
         frame_limiter_for_options, frame_limiter_for_settings,
         present_mode_for_vsync,
-        render::{dialogs, scene::{camera::UiCameraResource, world::caves::{CaveSurroundings, CaveView}}},
+        render::{dialogs, scene::camera::UiCameraResource},
     },
     prelude::*,
+    world::caves::{CaveSurroundings, CaveView},
 };
 use bevy::{pbr::wireframe::WireframeConfig, prelude::*};
 use bevy_egui::{egui, EguiContexts, EguiPrimaryContextPass};

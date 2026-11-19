@@ -18,7 +18,7 @@ use super::draw_mesh::{LandMeshHandles, SharedLandMaterial};
 use super::mesh_material::LandCustomMeshMaterial;
 use super::setup_base_mesh::build_cell_quads_mesh;
 use super::{LCMesh, TILE_NUM_PER_CHUNK_DIM};
-use crate::core::render::scene::world::caves::CavesRes;
+use crate::world::caves::CavesRes;
 use bevy::camera::primitives::Aabb;
 use bevy::camera::visibility::NoAutoAabb;
 use bevy::prelude::*;

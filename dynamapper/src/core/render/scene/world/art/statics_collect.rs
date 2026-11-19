@@ -9,8 +9,8 @@ use crate::core::render::scene::world::land::tile_atlas::{AtlasCells, TileAtlas}
 use crate::world::multis::{
     expanded_multi_part_z, MultiDefinitionsRes, MultiPart, PlacedMulti, PlacedMultisRes,
 };
-use crate::core::render::scene::world::caves::{is_buried_floor, CaveMap, CaveStatic, CavesRes, PlayerCave};
-use crate::core::render::scene::world::z_view::{PackageLand, ZViewCut, ZViewLimit};
+use crate::world::caves::{is_buried_floor, CaveMap, CaveStatic, CavesRes, PlayerCave};
+use crate::world::z_view::{PackageLand, ZViewCut, ZViewLimit};
 use crate::core::render::scene::SceneStateData;
 use crate::world::statics::{LazyStaticsStore, StaticsStoreRes};
 use crate::core::texture_cache::art::{GroundArtPageAtlas, ResolvedArtSprite, SpriteArtPageAtlas};
@@ -3714,7 +3714,7 @@ mod tests {
         let tables = TileMetaPackageRes::new(std::sync::Arc::new(tilemeta_package(&items, Some(&record)))).unwrap();
         let floor = |tables: &udd_assets::tilemeta::TileMetaPackage| {
             let item = &tables.item_tiles()[usize::from(SWAMP)];
-            crate::core::render::scene::world::caves::surface_top(item.flags, item.height, SWAMP_Z)
+            crate::world::caves::surface_top(item.flags, item.height, SWAMP_Z)
         };
         for art in [Some(ClientTextureSource::Ec), None] {
             assert!(std::sync::Arc::ptr_eq(tables.for_world_analyses(), tables.for_art(art)));
@@ -3957,7 +3957,7 @@ mod tests {
     /// cut, nor by NoDraw land, whose fragments are discarded.
     #[test]
     fn only_drawn_land_covers_a_buried_floor() {
-        use crate::core::render::scene::world::caves::CAVE_MIN_BURY_DEPTH;
+        use crate::world::caves::CAVE_MIN_BURY_DEPTH;
         use crate::core::render::scene::world::land::tile_atlas::{AtlasParams, Rg16u, LAND_SOURCE_CC_ATLAS,
             LAND_SOURCE_NODRAW, LAND_NODRAW_ID};
         use crate::core::render::scene::world::art::light_cover::NO_Z_VIEW_LIMIT;

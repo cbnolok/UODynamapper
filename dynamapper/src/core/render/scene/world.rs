@@ -1,14 +1,13 @@
 pub mod land;
 pub mod art;
 pub mod effects;
-pub mod z_view;
-pub mod caves;
 
 use nohash_hasher::BuildNoHashHasher;
 use indexmap::IndexMap;
 use bevy::prelude::*;
 use crate::prelude::*;
 use crate::world::maps::MapPlaneMetadata;
+use crate::world::{caves, z_view};
 
 
 use crate::core::uo_files_loader::MapPlanesRes;

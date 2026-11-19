@@ -14,11 +14,11 @@ use crate::core::render::scene::world::land::mesh_material::{
 use crate::core::render::scene::world::land::{
     CHUNK_STORAGE_BLOCKS_DIM, MAP_STORAGE_BLOCK_TILE_DIM,
 };
-use crate::core::render::scene::world::caves::CavesRes;
+use crate::world::caves::CavesRes;
 use crate::core::render::scene::world::effects::client_night::{
     client_night_dimming, CLIENT_FULL_DAY_LEVEL, LIGHT_BUFFER_LAYER,
 };
-use crate::core::render::scene::world::z_view::{PackageLand, ZViewCut, ZViewLimit};
+use crate::world::z_view::{PackageLand, ZViewCut, ZViewLimit};
 use crate::core::render::scene::SceneStateData;
 use crate::world::statics::StaticsStoreRes;
 use crate::core::uo_files_loader::{HuesPackageRes, MapPlanesRes, TileMetaPackageRes, WorldLightsPackageRes};

@@ -148,8 +148,8 @@ fn poll_control(
         Option<Res<crate::core::render::scene::world::art::gpu_picking::VisibleStaticPick>>,
         Option<Res<crate::core::render::scene::world::land::picking::TerrainCursor>>,
         Option<Res<crate::core::render::scene::world::art::client_light_sprites::RenderClientLightSprites>>,
-        Option<Res<crate::core::render::scene::world::z_view::ZViewLimit>>,
-        Option<Res<crate::core::render::scene::world::caves::CavesRes>>,
+        Option<Res<crate::world::z_view::ZViewLimit>>,
+        Option<Res<crate::world::caves::CavesRes>>,
         (Option<Res<crate::core::render::scene::world::art::statics_collect::RenderStaticInstances>>,
             Option<Res<crate::core::render::scene::world::art::statics_collect::RenderStaticLandInstances>>)),
 ) {

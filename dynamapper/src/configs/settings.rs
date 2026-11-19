@@ -134,11 +134,11 @@ pub struct SectWorldRendering {
     /// How the caves buried under the land show: hidden until the player enters one (with `show_only_player_floor`),
     /// as the client does, or drawn over the map, those connected to a cave mouth (caves.rs). A view setting shared by
     /// every render style.
-    pub caves: crate::core::render::scene::world::caves::CaveView,
+    pub caves: crate::world::caves::CaveView,
     /// What shows around the player's cave, with `show_only_player_floor` and the player in one: what is outside the
     /// cave darkened under ClassicUO's cut, or nothing, as the KR client shows a cave (caves.rs). A view setting shared
     /// by every render style.
-    pub cave_surroundings: crate::core::render::scene::world::caves::CaveSurroundings,
+    pub cave_surroundings: crate::world::caves::CaveSurroundings,
     pub land_streaming: SectLandStreaming,
     pub diagnostics: SectWorldRenderingDiagnostics,
     pub shader_simplification: SectWorldRenderingShaderSimplification,
@@ -1129,7 +1129,7 @@ fn sys_debounced_save(
 mod tests {
     use super::*;
     use uocf::utils::config_toml::{parse_app_state, parse_strict};
-    use crate::core::render::scene::world::caves::{CaveSurroundings, CaveView};
+    use crate::world::caves::{CaveSurroundings, CaveView};
 
     const BUNDLED_GRAPHICS: &str = include_str!("../../assets/settings/graphics.toml");
     const BUNDLED_USER_PREFERENCES: &str = include_str!("../../assets/settings/user_preferences.toml");

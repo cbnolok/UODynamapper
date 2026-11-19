@@ -302,8 +302,8 @@ pub fn sys_update_shared_land_material(
     player_q: Query<&Transform, With<crate::core::render::scene::player::Player>>,
     camera_q: Query<&Projection, With<crate::core::render::scene::camera::PlayerCamera>>,
     view_cuts: (
-        Res<crate::core::render::scene::world::z_view::ZViewLimit>,
-        Res<crate::core::render::scene::world::caves::CavesRes>,
+        Res<crate::world::z_view::ZViewLimit>,
+        Res<crate::world::caves::CavesRes>,
     ),
     mut last_atlas_params: Local<Option<tile_atlas::AtlasParams>>,
     mut last_global_lighting: Local<f32>,

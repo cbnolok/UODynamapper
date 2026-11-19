@@ -26,8 +26,8 @@ use super::light_cover::{static_light_ceiling_z, static_light_is_hidden, LightCo
 use super::light_scene::{
     light_clip_material, light_clip_tag, set_light_clip_mode, LightClipMaterial, LightClipMode, LightScene,
 };
-use crate::core::render::scene::world::caves::CavesRes;
-use crate::core::render::scene::world::z_view::{PackageLand, ZViewCut, ZViewLimit};
+use crate::world::caves::CavesRes;
+use crate::world::z_view::{PackageLand, ZViewCut, ZViewLimit};
 use super::static_lights::{StaticLightInstance, StaticLightKey, StaticLightTarget, LIGHT_PIXELS_PER_WORLD_TILE,
     STATIC_LIGHT_Y_BIAS};
 use super::statics_collect::{

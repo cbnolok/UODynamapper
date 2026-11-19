@@ -328,7 +328,7 @@ pub struct LandFramePacing<'w> {
     pub terrain_bases: ResMut<'w, crate::core::texture_cache::land::coverage::EcTerrainBases>,
     pub images: ResMut<'w, Assets<Image>>,
     /// The caves drawn over the map, whose land is lowered to their floors (`CaveMap::floor_z`).
-    pub caves: Res<'w, crate::core::render::scene::world::caves::CavesRes>,
+    pub caves: Res<'w, crate::world::caves::CavesRes>,
 }
 
 /// Main system: finds visible land map chunks and ensures their mesh is generated and rendered.

@@ -41,7 +41,7 @@
 use crate::world::multis::{expanded_multi_part_z, MultiDefinitionsRes, MultiPart, PlacedMultisRes};
 use crate::core::render::scene::world::land::mesh_material::LightCover;
 use crate::core::render::scene::world::land::MAP_STORAGE_BLOCK_TILE_DIM;
-use crate::core::render::scene::world::z_view::{average_land_z, kr_roof_is_hidden, MULTI_PART_MAX_REACH};
+use crate::world::z_view::{average_land_z, kr_roof_is_hidden, MULTI_PART_MAX_REACH};
 use crate::world::statics::LazyStaticsStore;
 use std::collections::HashMap;
 use std::ops::Range;
@@ -401,7 +401,7 @@ fn cell_statics(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::core::render::scene::world::z_view::kr_layer_cut_z;
+    use crate::world::z_view::kr_layer_cut_z;
 
     const OPAQUE: u64 = TaeFlag::Surface.bits();
     const ROOF: u64 = TaeFlag::Roof.bits();

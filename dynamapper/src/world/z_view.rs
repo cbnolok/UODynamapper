@@ -50,7 +50,7 @@
 //! land is read from the map package (`PackageLand`), so every roof in the view finds it whether or not its map block
 //! is loaded; the lights follow the same roofs (`light_cover::static_light_is_hidden`).
 //!
-//! In a cave, under either rule and in every style, the player's cave is drawn whole instead (caves.rs `PlayerCave`):
+//! In a cave, under either rule and in every style, the player's cave is drawn whole instead (`caves::PlayerCave`):
 //! its statics whatever the cut, and outside it ClassicUO's cut at the player's z + `PLAYER_VIEW_HEADROOM`, land with
 //! it or none (`player_cave_z_view_cut`).
 
@@ -58,7 +58,7 @@ use crate::configs::settings::Settings;
 use crate::world::maps::{package_chunk_cell, read_package_chunk_land_z};
 use crate::world::multis::{expanded_multi_part_z, MultiDefinitionsRes, PlacedMultisRes};
 use crate::core::render::scene::player::Player;
-use crate::core::render::scene::world::caves::{CaveSurroundings, CavesRes};
+use crate::world::caves::{CaveSurroundings, CavesRes};
 use crate::core::render::scene::world::art::light_cover::{
     kr_light_layer, CLIENT_BAND_BASE, CLIENT_BAND_HEIGHT, KR_LIGHT_TOP_LAYER, NO_Z_VIEW_LIMIT,
 };
@@ -233,7 +233,7 @@ pub fn kr_roof_is_hidden(z: i8, own_land_z: i32, player_layer: i32) -> bool {
     kr_light_layer(z, clamp_to_i8(own_land_z)) > player_layer
 }
 
-/// The cut with the player in a cave (caves.rs `PlayerCave`) at `z`, under either rule: the cave's own statics are
+/// The cut with the player in a cave (`caves::PlayerCave`) at `z`, under either rule: the cave's own statics are
 /// drawn whatever it says, and what is outside the cave is under ClassicUO's cap at the player's z +
 /// `PLAYER_VIEW_HEADROOM`, the land with it while it shows (`CaveSurroundings::Dimmed`), and none of the land
 /// otherwise.
