@@ -1,4 +1,4 @@
-use crate::core::controls::input_actions::{ActionCloseActiveDialog, ActionToggleGumpDialog};
+use crate::input::input_actions::{ActionCloseActiveDialog, ActionToggleGumpDialog};
 use crate::core::render::dialogs::image_background::{image_background_control, ImageBackground};
 use crate::core::render::dialogs::paperdoll_ec::{paperdoll_drawing, EnhancedPaperdoll, PaperdollCanvas, PaperdollItem};
 use crate::core::render::dialogs::paperdoll_menu::{

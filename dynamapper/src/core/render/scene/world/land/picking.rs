@@ -1,7 +1,8 @@
 //! Terrain-only cursor query. Rendered triangles determine the visible cell;
 //! original map Z remains separate from bank relief and interpolated height.
 use super::{draw_mesh::LandMeshHandles, tile_atlas::TileAtlas, LCMesh, LandUploadTelemetry};
-use crate::core::{app_states::AppState, controls::{InjectedPointer, effective_cursor_position},
+use crate::input::{InjectedPointer, effective_cursor_position};
+use crate::core::{app_states::AppState,
     render::scene::{camera::PlayerCamera, player::Player}, system_sets::{MovementSysSet, SceneRenderLandSysSet},
     texture_cache::land::cache::LandTextureCache, uo_files_loader::MapPlanesRes};
 use crate::configs::settings::LandTextureSource;

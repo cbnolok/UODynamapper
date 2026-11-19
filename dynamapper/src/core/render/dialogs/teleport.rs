@@ -1,4 +1,4 @@
-use crate::core::controls::input_actions::{ActionCloseActiveDialog, ActionToggleTeleportDialog};
+use crate::input::input_actions::{ActionCloseActiveDialog, ActionToggleTeleportDialog};
 use crate::world::teleport::teleport_player;
 use crate::core::render::scene::player::Player;
 use crate::core::render::scene::world::WorldGeoData;

@@ -10,7 +10,7 @@
 //   shading mode 2 and the KR content; only their preset values differ.
 
 use super::super::scene::world::land::mesh_material::*;
-use crate::core::controls::input_actions::ActionToggleShaderSettings;
+use crate::input::input_actions::ActionToggleShaderSettings;
 use crate::{
     configs::shader_presets::{
         build_save_presets, get_preset_group, get_preset_slot, preset_scene_multiplier, reset_preset_to_factory,

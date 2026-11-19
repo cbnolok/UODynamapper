@@ -1,12 +1,11 @@
 pub mod app_states;
 mod bevy_log_filter;
 pub mod constants;
-pub mod controls;
 pub mod export_job;
 pub mod render;
 pub mod system_sets;
-mod texture_cache;
-mod uo_files_loader;
+pub(crate) mod texture_cache;
+pub(crate) mod uo_files_loader;
 
 use crate::{
     configs::{settings, ExternalDataPlugin},
@@ -386,7 +385,7 @@ pub fn run_bevy_app() -> ExitCode {
         ExternalDataPlugin {
             registered_by: "Core",
         },
-        controls::ControlsPlugin {
+        crate::input::ControlsPlugin {
             registered_by: "Core",
         },
         render::RenderPlugin {

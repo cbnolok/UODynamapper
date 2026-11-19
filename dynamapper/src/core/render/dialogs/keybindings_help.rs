@@ -1,4 +1,4 @@
-use crate::core::controls::input_actions::{ActionCloseActiveDialog, ActionToggleKeybindingsHelp};
+use crate::input::input_actions::{ActionCloseActiveDialog, ActionToggleKeybindingsHelp};
 use crate::{
     core::render::{dialogs, scene::camera::UiCameraResource},
     prelude::*,

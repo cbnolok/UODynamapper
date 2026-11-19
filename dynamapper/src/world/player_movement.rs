@@ -3,7 +3,7 @@ use crate::core::render::scene::player::Player;
 use crate::core::render::scene::world::WorldGeoData;
 use crate::core::render::scene::RecomputeVisibleChunksEvent;
 use crate::core::system_sets::*;
-use crate::core::controls::{InjectedPointer, effective_cursor_position};
+use crate::input::{InjectedPointer, effective_cursor_position};
 use crate::prelude::*;
 use crate::world::coords::UOVec4;
 use bevy::prelude::*;

@@ -1,4 +1,4 @@
-use crate::core::controls::input_actions::ActionToggleFullscreen;
+use crate::input::input_actions::ActionToggleFullscreen;
 use crate::prelude::*;
 use bevy::prelude::*;
 use bevy::window::WindowMode;

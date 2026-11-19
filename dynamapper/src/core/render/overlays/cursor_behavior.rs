@@ -1,7 +1,7 @@
-use crate::core::controls::input_actions::{
+use crate::input::input_actions::{
     ActionToggleCursorInspectPanel, ActionToggleCursorTeleportMode,
 };
-use crate::core::controls::{InjectedPointer, effective_cursor_position};
+use crate::input::{InjectedPointer, effective_cursor_position};
 use crate::core::render::scene::world::art::statics_collect::{
     static_tile_is_surface_like, static_tile_renders_wet,
 };

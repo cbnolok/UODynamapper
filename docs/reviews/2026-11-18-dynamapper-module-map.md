@@ -73,8 +73,8 @@ terrain, statics, lighting, picking, postprocess}`, `ui/`, `export/`, `diagnosti
 
 | Now | Lines | Churn | Notes |
 |---|---:|---:|---|
-| `core/controls.rs`, `controls/input_actions.rs`, `controls/window_controls.rs` | 158 | 0 | Actions, bindings, dispatch. |
-| `core/controls/dev_control.rs` (+ `input.rs`, `settings.rs`) | 913 | 14 | Renderer control socket. |
+| `input.rs`, `input/{input_actions, window_controls}.rs` | 158 | 0 | Moved 2026-11-19 from `core/controls`. Actions, bindings, dispatch. |
+| `input/dev_control.rs` (+ `input.rs`, `settings.rs`) | 913 | 14 | Moved 2026-11-19. Renderer control socket. |
 | keyboard and mouse handling in `core/render/scene/camera.rs` | | | Zoom, free camera and Shift+arrow input leave the camera. |
 
 ### render

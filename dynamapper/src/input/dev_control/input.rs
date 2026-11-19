@@ -1,6 +1,6 @@
 //! Ordered input for the app's primary window; no OS input/focus APIs are used.
 use super::ControlCommand;
-use crate::core::controls::InjectedPointer;
+use crate::input::InjectedPointer;
 use bevy::{prelude::*, input::{ButtonState, keyboard::{Key, KeyCode, KeyboardInput, NativeKey, NativeKeyCode},
     mouse::{MouseButtonInput, MouseMotion, MouseScrollUnit, MouseWheel}}, window::{CursorMoved, WindowEvent}};
 use bevy_egui::{EguiInput, PrimaryEguiContext};

@@ -1,4 +1,4 @@
-use crate::core::controls::input_actions::{ActionCloseActiveDialog, ActionTogglePreferences};
+use crate::input::input_actions::{ActionCloseActiveDialog, ActionTogglePreferences};
 use crate::{
     configs::settings::{AntiAliasingMode, ClientTextureSource, GumpClient, LandTextureSource},
     diagnostics::frame_limiter::FrameLimiterSettings,
