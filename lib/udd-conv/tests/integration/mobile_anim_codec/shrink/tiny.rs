@@ -3154,7 +3154,8 @@ fn describe_crowd(label: &str, pairs: &[Pair]) {
 }
 
 /// One crowd through this part's coders: all five directions and only the faced one, on one and four threads.
-fn tiny_crowd(label: &str, pairs: &[Pair], sources: &Sources, bodies: &[BodySource], schemes: &[Scheme]) {
+/// `more_threads` also times each row on that many threads.
+fn tiny_crowd(label: &str, pairs: &[Pair], sources: &Sources, bodies: &[BodySource], schemes: &[Scheme], more_threads: Option<usize>) {
     describe_crowd(label, pairs);
     print_crowd_header();
     let distinct: Vec<usize> = pairs.iter().map(|p| p.body()).collect::<BTreeSet<usize>>().into_iter().collect();
@@ -3218,6 +3219,12 @@ fn tiny_crowd(label: &str, pairs: &[Pair], sources: &Sources, bodies: &[BodySour
         let (whole, cut) = area_of(faced);
         println!("  atlas area, {name}: {:.2} Mpx in one box per frame, {:.2} Mpx with frames cut, {:.1} % saved", whole as f64 / PIXELS_PER_MEGAPIXEL, cut as f64 / PIXELS_PER_MEGAPIXEL, (whole - cut) as f64 * PERCENT / whole.max(1) as f64);
     }
+    let report = |name: &str, unit: &str, read: u64, jobs: &[Job]| {
+        crowd::print_jobs(name, unit, mb(read), jobs);
+        if let Some(threads) = more_threads {
+            println!("  {name}, {unit}: {threads} threads {:.1} ms", ms(crowd::run_jobs(jobs, threads).0));
+        }
+    };
     let mut atoms: Vec<Atoms> = prepared.iter().map(|_| Atoms::default()).collect();
     for scheme in schemes {
         let started = Instant::now();
@@ -3241,17 +3248,17 @@ fn tiny_crowd(label: &str, pairs: &[Pair], sources: &Sources, bodies: &[BodySour
             (list, read)
         };
         let (five, read) = jobs(false, false);
-        crowd::print_jobs(scheme.name, "five directions", mb(read), &five);
+        report(scheme.name, "five directions", read, &five);
         drop(five);
         let (faced, read) = jobs(true, false);
-        crowd::print_jobs(scheme.name, "faced direction only", mb(read), &faced);
+        report(scheme.name, "faced direction only", read, &faced);
         drop(faced);
         if cached.iter().any(Option::is_some) {
             let (five, read) = jobs(false, true);
-            crowd::print_jobs(scheme.name, "five directions, dictionaries already loaded", mb(read), &five);
+            report(scheme.name, "five directions, dictionaries already loaded", read, &five);
             drop(five);
             let (faced, read) = jobs(true, true);
-            crowd::print_jobs(scheme.name, "faced direction only, dictionaries already loaded", mb(read), &faced);
+            report(scheme.name, "faced direction only, dictionaries already loaded", read, &faced);
             drop(faced);
             let loads = fastest(|| coded.iter().filter(|c| !c.index.dictionary.is_empty()).map(|c| DecoderDictionary::copy(&c.index.dictionary)).count());
             println!("  {}: every body's dictionary loaded once, one thread, {:.2} ms for {} bodies", scheme.name, ms(loads.as_secs_f64()), cached.iter().flatten().count());
@@ -3287,13 +3294,56 @@ pub(super) fn part_tc(sources: &Sources, bodies: &[BodySource], present: &[(Clie
             ]
         };
         for (label, list) in &lists {
-            tiny_crowd(label, list, sources, bodies, &schemes);
+            tiny_crowd(label, list, sources, bodies, &schemes, None);
             println!("  load average after this crowd {}", load_average());
         }
     }
     let end = cpu_state();
     if end != state {
         println!("\nThe CPU state changed during this part ({state} at the start, {end} at the end): discard its timings");
+    }
+}
+
+/// NPCs in the median crowded area (the user, 2026-11-19): equipment pieces over this many dressed NPCs.
+const MEDIAN_AREA_NPCS: usize = 16;
+/// Distinct creatures in the median crowded area.
+const MEDIAN_AREA_CREATURES: usize = 20;
+/// The thread count timed beside `WORKER_THREADS`: the most a decode pool should take.
+const MEDIAN_AREA_MORE_THREADS: usize = 8;
+
+/// One pair for each of `count` distinct creature bodies: drawn uniformly, or each body's largest action from the largest bodies.
+fn distinct_creatures(pairs: &[Pair], is_creature: &dyn Fn(usize) -> bool, count: usize, largest: bool) -> Vec<Pair> {
+    let of: Vec<Pair> = pairs.iter().copied().filter(|p| is_creature(p.body())).collect();
+    let ordered = if largest { crowd::pick_largest(&of, of.len()) } else { crowd::pick_uniform(&of, of.len()) };
+    let mut seen = HashSet::new();
+    ordered.into_iter().filter(|p| seen.insert(p.body())).take(count).collect()
+}
+
+/// Part tm: the median crowded area, `MEDIAN_AREA_CREATURES` distinct creatures and `MEDIAN_AREA_NPCS` dressed NPCs
+/// (a human and `TOWN_EQUIPMENT_PER_NPC` distinct equipment pieces each), on `WORKER_THREADS` and
+/// `MEDIAN_AREA_MORE_THREADS` threads. Choose the coders with `MOBILE_ANIM_CODEC_TINY_ONLY`.
+pub(super) fn part_tm(sources: &Sources, bodies: &[BodySource], present: &[(Client, u64, usize)], cc_dir: &Path) {
+    let kinds = BodyKinds::load(cc_dir);
+    let rule = classes::BodyRule::load(&kinds, cc_dir);
+    let state = cpu_state();
+    println!("\n### tm: the median crowded area; CPU {state}; load average {}", load_average());
+    for client in [Client::Cc, Client::Ec] {
+        let pairs = crowd::all_pairs(sources, bodies, present, client);
+        let schemes = chosen_schemes(client);
+        let is_creature = |body: usize| rule.group(&bodies[body]) == Group::Creature;
+        let mut town = town_of(&pairs, &|body| rule.is_person(&bodies[body]), &|body| rule.group(&bodies[body]) == Group::Equipment);
+        town.truncate(MEDIAN_AREA_NPCS * (TOWN_EQUIPMENT_PER_NPC + 1));
+        for (name, largest) in [("drawn uniformly", false), ("the largest", true)] {
+            let mut crowd = distinct_creatures(&pairs, &is_creature, MEDIAN_AREA_CREATURES, largest);
+            crowd.extend_from_slice(&town);
+            let label = format!("{}, {MEDIAN_AREA_CREATURES} creatures {name} + {MEDIAN_AREA_NPCS} NPCs x (human + {TOWN_EQUIPMENT_PER_NPC} equipment), action {TOWN_ACTION}", client.label());
+            tiny_crowd(&label, &crowd, sources, bodies, &schemes, Some(MEDIAN_AREA_MORE_THREADS));
+            println!("  load average after this crowd {}", load_average());
+        }
+    }
+    let end = cpu_state();
+    if end != state {
+        println!("\nThe CPU state changed during part tm ({state} at the start, {end} at the end): discard its timings");
     }
 }
 

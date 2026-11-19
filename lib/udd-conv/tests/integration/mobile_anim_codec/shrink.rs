@@ -3153,4 +3153,7 @@ pub(super) fn run(sources: &Sources, bodies: &[BodySource], present: &[(Client, 
     if runs("ts") {
         tiny::part_ts(sources, bodies, present, cc_dir, &only);
     }
+    if runs("tm") {
+        tiny::part_tm(sources, bodies, present, cc_dir);
+    }
 }

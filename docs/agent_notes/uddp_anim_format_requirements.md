@@ -588,6 +588,32 @@ TLP used to re-apply boost and `balance_performance` during timed runs. `/etc/tl
 `balance_power` on mains, so new timings are in that state and don't compare in absolute terms with the older EPP
 `power` tables. Each run carries its own zstd 19 baseline, so ratios still hold.
 
+### The median crowded area (2026-11-19)
+
+The user's measure for the lossless compressor: a crowded area has, as a median, no more than 20 different creatures
+and 80 or more equipment pieces, and zstd is acceptable if that crowd loads within the line on 4 to 8 threads. Part
+`tm` builds it as 20 distinct creatures (one pair each: drawn uniformly, or each of the 20 largest bodies' largest
+action) plus 16 NPCs of a human and 5 distinct equipment pieces in action 0, 116 pairs. Layouts are the chosen ones,
+expanded for VRAM; ms are all drawable, each the best of the timing runs, in the same quiet state as section 6.
+
+| Crowd | Coder | Disk read MB | 1 thread ms | 4 threads, five / faced | 8 threads, five / faced |
+|---|---|---:|---:|---:|---:|
+| Classic, uniform creatures, 9.3 Mpx | row spans, zstd 19 | 2.8 | 15.7 | 4.1 / 0.9 | 2.2 / 0.6 |
+| | row spans, LZ4 HC | 3.6 | 5.9 | 1.6 / 0.4 | 1.0 / 0.4 |
+| Classic, largest creatures, 99.1 Mpx | row spans, zstd 19 | 22.2 | 103.4 | 27.5 / 7.5 | 15.9 / 5.1 |
+| | row spans, LZ4 HC | 26.9 | 33.9 | 9.6 / 2.5 | 5.3 / 1.6 |
+| Enhanced, uniform creatures, 15.3 Mpx | both planes in row spans, zstd 19 | 6.4 | 38.4 | 10.3 / 2.2 | 5.3 / 1.2 |
+| | both planes in row spans, LZ4 HC | 7.9 | 14.6 | 4.0 / 0.8 | 2.1 / 0.5 |
+| Enhanced, largest creatures, 121.7 Mpx | both planes in row spans, zstd 19 | 35.0 | 179.2 | 47.6 / 12.5 | 27.7 / 8.0 |
+| | both planes in row spans, LZ4 HC | 42.0 | 63.9 | 18.1 / 5.0 | 12.7 / 3.3 |
+
+- **zstd 19 passes with room to spare:** 48 ms on 4 threads in the worst version, a fifth of the 250 ms line, and
+  10 ms in the uniform one. LZ4 HC is still 2.6–3× as fast, but both are far inside the line.
+- **At 2× upscaled art,** about 4× the pixels, the worst version would be about 190 ms on 4 threads for zstd 19 (scaled,
+  not measured), still inside.
+- **No strips:** the slowest single job, one of the largest creatures' five directions, takes 20 ms with zstd 19.
+  Splitting it would spread its decode, not shorten the crowd, whose threads are all busy.
+
 ## 7. Never-drawn art: how it was determined, and how far to trust it
 
 **Method.** Static only: nothing ran.
@@ -677,7 +703,10 @@ the same day ([`bc7_alpha_plane_search.md`](bc7_alpha_plane_search.md)). The use
   branch. A package holding two, such as a low-end mix or custom BC7 art beside indexed frames, needs both paths live, and there
   a shared shader with a branch was level with grouped pipelines at 100/0 and 90/10 (proposal, section 15).
 - **The 60 fps bar for integrated GPUs applies at fullscreen.** See `renderer_release_performance.md` for where this stands.
-- **The lossless compressor is LZ4 HC.** On the chosen layouts, expanded for VRAM, with the creature crowd on 4 threads, five directions /
+- **The lossless compressor is zstd 19, no longer LZ4 HC** (2026-11-19). The user's rule: keep LZ4 HC only if zstd misses the
+  median crowded area on 4 to 8 threads, and it passes it in 48 ms at worst on 4 threads (section 6, "The median crowded area").
+  zstd 19 saves 155 MB on Classic and 387 MB on Enhanced. The 2026-11-05 choice of LZ4 HC follows, for its numbers.
+- **2026-11-05: the lossless compressor was LZ4 HC.** On the chosen layouts, expanded for VRAM, with the creature crowd on 4 threads, five directions /
   faced: Enhanced is 2268.0 MB before duplicates at 36.4 / 7.5 ms and 169.5 / 34.9 ms in the worst crowd, against zstd 19's 1881.1 MB
   at 100.3 / 20.5 ms and 451.1 / 92.2 ms, so 2.75× as fast for 21 % more disk. Classic is 888.4 MB at 12.6 / 2.7 ms against zstd 19's
   733.4 MB at 37.0 / 7.5 ms, about 2.9× as fast. The gap reaches 3–4× only if LZ4 HC's frames stay as spans in VRAM.

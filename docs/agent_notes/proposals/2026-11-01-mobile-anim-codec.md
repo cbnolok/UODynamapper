@@ -388,7 +388,7 @@ MOBILE_ANIM_CODEC_PASSES=shrink MOBILE_ANIM_CODEC_SHRINK_PARTS=b,k2 MOBILE_ANIM_
   cargo test --release -p udd-conv --test integration mobile_anim_codec:: -- --ignored --nocapture
 ```
 
-- `MOBILE_ANIM_CODEC_SHRINK_PARTS` picks the parts: `a1,a2,a2p,b,w,c,c7,d,e,f,g,k,k1..k8,r,s1,s3,s4,s4q,s5,s6`, and `t0,t1,tt,tc,tu,ts,t9,tk0,tk` (sections 9 and 10).
+- `MOBILE_ANIM_CODEC_SHRINK_PARTS` picks the parts: `a1,a2,a2p,b,w,c,c7,d,e,f,g,k,k1..k8,r,s1,s3,s4,s4q,s5,s6`, and `t0,t1,tt,tc,tu,ts,t9,tk0,tk` (sections 9 and 10), and `tm`, the median crowded area (`uddp_anim_format_requirements.md`, section 6).
 - `MOBILE_ANIM_CODEC_SHRINK_ONLY` keeps candidates by name; `MOBILE_ANIM_CODEC_SHRINK_TIME=1` times them.
 - "Every 10th body" means bodies sorted by pixel count: 103 Classic bodies (250 Mpx, 78.6 MB of BC7 + zstd 7) and 93
   Enhanced bodies (480 Mpx, 175.3 MB). Those sample ratios are only as good as the spread by size. `w` rows are the
