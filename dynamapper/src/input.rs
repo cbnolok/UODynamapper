@@ -1,3 +1,4 @@
+pub(crate) mod camera_input;
 pub mod window_controls;
 pub mod input_actions;
 #[cfg(unix)]

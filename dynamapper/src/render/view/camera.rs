@@ -5,17 +5,14 @@ use super::footprint::{camera_ground_footprint, FreeCameraFootprint};
 use crate::render::terrain::draw_mesh::scale_from_zoom;
 use crate::export::ExportJob;
 use crate::app::system_sets::*;
+use crate::input::camera_input::{sys_camera_zoom, sys_free_camera_movement};
 use crate::prelude::*;
 use crate::util_lib::math::Between;
 use bevy::anti_alias::{fxaa::Fxaa, smaa::Smaa};
 use bevy::camera::ScalingMode;
-use bevy::ecs::message::{MessageReader, MessageWriter};
-use bevy::input::keyboard::{Key, KeyboardInput};
-use bevy::input::mouse::MouseWheel;
 use bevy::prelude::*;
 use bevy::ui::IsDefaultUiCamera;
 use bevy::window::Window;
-use bevy_egui::EguiContexts;
 
 pub const UO_TILE_PIXEL_SIZE: f32 = 44.0;
 
@@ -23,7 +20,7 @@ pub const UO_TILE_PIXEL_SIZE: f32 = 44.0;
 pub const DEFAULT_ZOOM: f32 = 1.0;
 pub const MIN_ZOOM: f32 = 0.25;
 pub const MAX_ZOOM: f32 = 50.0;
-mod perspective;
+pub(crate) mod perspective;
 
 #[derive(Resource, Default)]
 pub struct UiCameraResource(pub Option<Entity>);
@@ -463,71 +460,6 @@ fn sys_camera_follow_player(
     }
 }
 
-fn sys_camera_zoom(
-    mut zoom_res: ResMut<RenderZoom>,
-    mut scroll_events: MessageReader<MouseWheel>,
-    mut kbd_events: MessageReader<KeyboardInput>,
-    mut egui_contexts: EguiContexts,
-    mut chunk_recompute_writer: MessageWriter<RecomputeVisibleChunksEvent>,
-    settings: Res<Settings>,
-    mut camera_q: Query<&mut Transform, With<PlayerCamera>>,
-    windows: Query<&Window>,
-) {
-    // If egui is using the mouse/keyboard, don't zoom
-    let ctx = match egui_contexts.ctx_mut() {
-        Ok(c) => c,
-        Err(_) => return,
-    };
-    if ctx.egui_wants_pointer_input() || ctx.egui_wants_keyboard_input() {
-        return;
-    }
-
-    let mut zoom_delta = 0.0;
-
-    // Mouse scroll
-    for event in scroll_events.read() {
-        zoom_delta -= event.y; // Accumulate raw scroll ticks (typically ±1)
-    }
-
-    // Keyboard +/-
-    for ev in kbd_events.read() {
-        if ev.state != bevy::input::ButtonState::Pressed {
-            continue;
-        }
-        if let Key::Character(input) = &ev.logical_key {
-            match input.as_str() {
-                "+" | "=" => zoom_delta -= 1.0,
-                "-" | "_" => zoom_delta += 1.0,
-                _ => {}
-            }
-        }
-    }
-
-    if zoom_delta != 0.0 {
-        // Exponential zoom: each scroll tick multiplies/divides by a constant factor.
-        // This gives perceptually uniform zoom steps — big jumps when zoomed out,
-        // fine control when zoomed in. ~25 ticks to go from 1× to 50×.
-        let factor = 1.15_f32; // ~15% per tick
-        let multiplier = factor.powf(zoom_delta);
-        let previous_zoom = zoom_res.0;
-        let new_zoom = previous_zoom * multiplier;
-        zoom_res.write_val(new_zoom);
-        if settings.app.window.free_camera && settings.app.window.perspective_camera {
-            if let (Ok(mut transform), Ok(window)) = (camera_q.single_mut(), windows.single()) {
-                // Follow perspective applies zoom to its orbit distance. Free
-                // perspective uses the same dolly distance along its current
-                // viewing direction, preserving any manual pan and rotation.
-                let window_height = window.resolution.height();
-                let distance = perspective::orbit_distance(window_height, zoom_res.0)
-                    - perspective::orbit_distance(window_height, previous_zoom);
-                let backward = *transform.back();
-                transform.translation += backward * distance;
-            }
-        }
-        chunk_recompute_writer.write(RecomputeVisibleChunksEvent {});
-    }
-}
-
 /// While the free camera is on, keeps `FreeCameraFootprint` on the tiles its view covers, and asks for a recompute
 /// only when that changes: the land chunks follow the camera's view, not the player. Turning it off removes the
 /// footprint, and the chunks go back to the player's.
@@ -562,91 +494,6 @@ fn sys_stream_free_camera_view(
     if footprint.as_deref() != Some(&current) {
         commands.insert_resource(current);
         chunk_recompute_writer.write(RecomputeVisibleChunksEvent {});
-    }
-}
-
-fn sys_free_camera_movement(
-    time: Res<Time>,
-    keyboard: Res<ButtonInput<KeyCode>>,
-    mut camera_q: Query<&mut Transform, With<PlayerCamera>>,
-    mut egui_contexts: EguiContexts,
-) {
-    let ctx = match egui_contexts.ctx_mut() {
-        Ok(c) => c,
-        Err(_) => return,
-    };
-    if ctx.egui_wants_keyboard_input() {
-        return;
-    }
-
-    let Some(mut transform) = camera_q.single_mut().ok() else {
-        return;
-    };
-
-    let move_speed = 10.0 * time.delta_secs();
-    // Reduced from 1.0 to 0.15 for finer-grained rotation control (~8.6°/s).
-    let rotate_speed = 0.15 * time.delta_secs();
-    let mut move_vec = Vec3::ZERO;
-
-    if keyboard.pressed(KeyCode::ArrowUp) {
-        move_vec.z -= 1.0;
-        move_vec.x -= 1.0;
-    }
-    if keyboard.pressed(KeyCode::ArrowDown) {
-        move_vec.z += 1.0;
-        move_vec.x += 1.0;
-    }
-    if keyboard.pressed(KeyCode::ArrowLeft) {
-        move_vec.x -= 1.0;
-        move_vec.z += 1.0;
-    }
-    if keyboard.pressed(KeyCode::ArrowRight) {
-        move_vec.x += 1.0;
-        move_vec.z -= 1.0;
-    }
-
-    // Altitude
-    let mut y_delta = 0.0;
-    if keyboard.pressed(KeyCode::ShiftLeft) || keyboard.pressed(KeyCode::ShiftRight) {
-        if keyboard.pressed(KeyCode::ArrowUp) {
-            y_delta += 1.0;
-        }
-        if keyboard.pressed(KeyCode::ArrowDown) {
-            y_delta -= 1.0;
-        }
-    }
-
-    // Rotation (Yaw, Pitch, Roll) - Only active when Right Shift is held
-    if keyboard.pressed(KeyCode::ShiftRight) {
-        // Yaw (A/D)
-        if keyboard.pressed(KeyCode::KeyA) {
-            transform.rotate_local_y(rotate_speed);
-        }
-        if keyboard.pressed(KeyCode::KeyD) {
-            transform.rotate_local_y(-rotate_speed);
-        }
-        // Pitch (W/S)
-        if keyboard.pressed(KeyCode::KeyW) {
-            transform.rotate_local_x(rotate_speed);
-        }
-        if keyboard.pressed(KeyCode::KeyS) {
-            transform.rotate_local_x(-rotate_speed);
-        }
-        // Roll (Q/E)
-        if keyboard.pressed(KeyCode::KeyQ) {
-            transform.rotate_local_z(rotate_speed);
-        }
-        if keyboard.pressed(KeyCode::KeyE) {
-            transform.rotate_local_z(-rotate_speed);
-        }
-    }
-
-    if move_vec != Vec3::ZERO {
-        transform.translation += move_vec.normalize() * move_speed;
-    }
-
-    if y_delta != 0.0 {
-        transform.translation.y += y_delta * move_speed;
     }
 }
 

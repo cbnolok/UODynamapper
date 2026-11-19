@@ -75,14 +75,14 @@ terrain, statics, lighting, picking, postprocess}`, `ui/`, `export/`, `diagnosti
 |---|---:|---:|---|
 | `input.rs`, `input/{input_actions, window_controls}.rs` | 158 | 0 | Moved 2026-11-19 from `core/controls`. Actions, bindings, dispatch. |
 | `input/dev_control.rs` (+ `input.rs`, `settings.rs`) | 913 | 14 | Moved 2026-11-19. Renderer control socket. |
-| keyboard and mouse handling in `render/view/camera.rs` | | | Zoom, free camera and Shift+arrow input leave the camera. |
+| `input/camera_input.rs` | 170 | 0 | The camera's controls (wheel and +/- zoom, the free camera's keys): moved 2026-11-19 from `render/view/camera.rs`. `CameraPlugin` still registers them, in the same order and under the same conditions. |
 
 ### render
 
 | Now | Lines | Churn | Owner |
 |---|---:|---:|---|
 | `render.rs`, `render/scene.rs` | 824 | 2 | `render/scene`: chunk lifecycle. View selection (the follow, free and export footprints) left for `view/footprint.rs` 2026-11-19. |
-| `render/view.rs`, `view/{camera, footprint}.rs`, `camera/perspective.rs` | 1090 | 5 | `render/view`: the camera moved 2026-11-19 from `render/scene/`, and the footprints from `scene.rs`. `ScenePlugin` still adds `CameraPlugin`. |
+| `render/view.rs`, `view/{camera, footprint}.rs`, `camera/perspective.rs` | 937 | 5 | `render/view`: the camera moved 2026-11-19 from `render/scene/`, and the footprints from `scene.rs`. `ScenePlugin` still adds `CameraPlugin`. |
 | `render/terrain/chunk_loader.rs` | 201 | 0 | Stays in `render/terrain`: only `terrain/draw_mesh` uses it, and it owns the loader thread. It goes to `render/scene` if streaming loads ever move there. |
 | `render/terrain.rs`, `terrain/{draw_mesh, mesh_material, setup_base_mesh, cave_mouth_veil}.rs` | 3013 | 50 | `render/terrain`: moved 2026-11-19 from `rsw/land`. Its light enums moved 2026-11-19: `LightCover` to `light_cover.rs`, `ClientLocalLightSource` to `static_lights.rs`. |
 | `render/terrain/coverage.rs` (+ `cache.rs`, `runtime.rs`, `gpu_tests.rs`) | 1057 | 17 | `render/terrain`: moved 2026-11-19 from `assets/land/`. `assets::land` still builds its bases and registers its stack cache system, in the same order; `assets::land` already read `terrain` (the shared material, `LCMesh`), so the move adds no new dependency direction. |

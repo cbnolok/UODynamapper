@@ -20,7 +20,7 @@ pub(super) fn projection() -> Projection {
 /// Distance from the camera to its focus at which a world unit there covers as many pixels as in
 /// the orthographic view at the same zoom. A fixed FOV shows a fixed world height at a given
 /// distance, so the distance has to grow with the window for tiles to keep their pixel size.
-pub(super) fn orbit_distance(window_height: f32, zoom: f32) -> f32 {
+pub(crate) fn orbit_distance(window_height: f32, zoom: f32) -> f32 {
     window_height * zoom / (2.0 * (VERTICAL_FOV_RADIANS / 2.0).tan() * ORTHO_SIZE_FACTOR)
 }
 
