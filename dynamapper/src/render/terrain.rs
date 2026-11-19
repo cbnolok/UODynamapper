@@ -148,7 +148,7 @@ pub fn sys_update_shared_land_material(
     tile_atlas: Res<tile_atlas::TileAtlas>,
     uniform_state: Res<crate::settings::shader_presets::UniformState>,
     static_lights: Option<Res<crate::render::lighting::static_lights::RenderStaticLightInstances>>,
-    player_q: Query<&Transform, With<crate::render::scene::player::Player>>,
+    player_q: Query<&Transform, With<crate::world::player::Player>>,
     camera_q: Query<&Projection, With<crate::render::view::camera::PlayerCamera>>,
     view_cuts: (
         Res<crate::world::z_view::ZViewLimit>,

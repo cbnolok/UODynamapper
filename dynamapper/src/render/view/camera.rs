@@ -1,5 +1,5 @@
 use crate::settings::{AntiAliasingMode, SectGraphics, Settings};
-use crate::render::scene::player::Player;
+use crate::world::player::Player;
 use crate::render::scene::RecomputeVisibleChunksEvent;
 use super::footprint::{camera_ground_footprint, FreeCameraFootprint};
 use crate::render::terrain::draw_mesh::scale_from_zoom;

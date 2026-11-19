@@ -1,5 +1,5 @@
 use crate::render::view::camera::{PlayerCamera, UiCameraResource};
-use crate::render::scene::player::Player;
+use crate::world::player::Player;
 use crate::world::maps::WorldGeoData;
 use crate::render::scene::RecomputeVisibleChunksEvent;
 use crate::app::system_sets::*;

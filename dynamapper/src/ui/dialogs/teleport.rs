@@ -1,7 +1,7 @@
 use crate::ui::dialogs;
 use crate::input::input_actions::{ActionCloseActiveDialog, ActionToggleTeleportDialog};
 use crate::world::teleport::teleport_player;
-use crate::render::scene::player::Player;
+use crate::world::player::Player;
 use crate::world::maps::WorldGeoData;
 use crate::render::scene::RecomputeVisibleChunksEvent;
 use crate::ingame_sysmessage_logger;

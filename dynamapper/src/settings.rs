@@ -7,7 +7,7 @@ use crate::export::ExportJob;
 use crate::ui::dialogs::image_background::ImageBackground;
 use crate::ui::dialogs::paperdoll_ec::EnhancedPaperdoll;
 use crate::render::view::camera::RenderZoom;
-use crate::render::scene::player::Player;
+use crate::world::player::Player;
 use crate::prelude::*;
 use crate::util_lib::tracked_plugin::set_plugin_log_toggles;
 use bevy::{

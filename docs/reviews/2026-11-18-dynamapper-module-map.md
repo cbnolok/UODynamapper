@@ -56,7 +56,7 @@ terrain, statics, lighting, picking, postprocess}`, `ui/`, `export/`, `diagnosti
 | `world/coords.rs` | 121 | 1 | Moved 2026-11-18 from `util_lib/uo_coords.rs`; its importers took the new path 2026-11-19. |
 | `world/{maps, statics, multis}.rs` | 908 | 12 | Moved 2026-11-18 from `core/`; their importers took the new path 2026-11-19. |
 | `world/maps.rs` (`WorldGeoData`) | | | The map catalog: moved 2026-11-19 from `render/scene/world.rs`, with the startup system that fills it. `WorldPlugin` (wiring, 70 lines) stays in `render/scene/world.rs` and still registers it. |
-| `render/scene/player.rs` | 107 | 0 | Logical position → `world/player`; the rendered entity stays with `render/scene`. |
+| `world/player.rs`, `render/scene/player.rs` | 107 | 0 | The `Player` component moved 2026-11-19 to `world/player.rs`. The entity's spawn and marker cube stay in `render/scene/player.rs`. Its `prev_rendered_pos` is the scene's checkpoint and would move to a component of the scene's own if the two are ever split, which would change the queries in `scene`, `export`, `dev_control` and `teleport`. |
 | `world/{player_movement, teleport}.rs` | 362 | 0 | Moved 2026-11-18 from `core/controls/`. |
 | `world/caves.rs`, `world/z_view.rs` | 2211 | 24 | Moved 2026-11-19 from `rsw/`, whole: their systems write the analyses' private state. World analysis (cave membership, floor-view cut, cell queries) that render consumes. They still read the render side: the chunks they send to be baked (`LCMesh`, `PendingTextureBake`), the map block size in `land`, the player and scene state, and `PlayerFloorRule` and `LAND_NO_Z_LIMIT` in `mesh_material`. The KR z bands (`client_light_band`, `kr_light_layer`, their constants and `NO_Z_VIEW_LIMIT`) moved here from `light_cover` 2026-11-19. |
 

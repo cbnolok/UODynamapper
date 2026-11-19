@@ -1,13 +1,9 @@
+//! The player's entity: spawned at the saved position, with a marker cube unless the settings hide it.
 use crate::settings::Settings;
+use crate::world::player::Player;
 use crate::app::system_sets::*;
 use crate::prelude::*;
 use bevy::{color, prelude::*};
-
-#[derive(Component)]
-pub struct Player {
-    pub current_pos: Option<UOVec4>,
-    pub prev_rendered_pos: Option<UOVec4>,
-}
 
 pub struct PlayerPlugin {
     pub registered_by: &'static str,

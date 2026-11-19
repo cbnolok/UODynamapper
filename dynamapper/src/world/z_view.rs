@@ -57,7 +57,7 @@
 use crate::settings::Settings;
 use crate::world::maps::{package_chunk_cell, read_package_chunk_land_z};
 use crate::world::multis::{expanded_multi_part_z, MultiDefinitionsRes, PlacedMultisRes};
-use crate::render::scene::player::Player;
+use crate::world::player::Player;
 use crate::world::caves::{CaveSurroundings, CavesRes};
 use crate::render::terrain::mesh_material::PlayerFloorRule;
 use crate::render::terrain::mesh_material::LAND_NO_Z_LIMIT;

@@ -1687,7 +1687,7 @@ pub fn sys_update_art_materials(
     ground_assets: Option<Res<ArtGroundRenderAssets>>,
     shared_land_material: Option<Res<terrain::draw_mesh::SharedLandMaterial>>,
     render_zoom: Res<crate::render::view::camera::RenderZoom>,
-    player_q: Query<&Transform, With<crate::render::scene::player::Player>>,
+    player_q: Query<&Transform, With<crate::world::player::Player>>,
     uniform_state: Res<crate::settings::shader_presets::UniformState>,
     camera_q: Query<&Projection, With<crate::render::view::camera::PlayerCamera>>,
     mut last_global_lighting: Local<f32>,

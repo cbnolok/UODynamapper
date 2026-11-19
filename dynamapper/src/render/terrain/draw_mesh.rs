@@ -32,7 +32,8 @@ use crate::world::maps::{MapPlane, MapPlaneMetadata};
 use crate::{
     content::{MapPlanesRes, TexMap2DRes, TileMetaPackageRes},
     app::constants,
-    render::scene::{player::Player, SceneStateData},
+    render::scene::SceneStateData,
+    world::player::Player,
     world::maps::WorldGeoData,
     render::view::camera::PlayerCamera,
     render::assets::land::cache::*,

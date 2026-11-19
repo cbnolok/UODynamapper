@@ -5,7 +5,7 @@ use crate::input::input_actions::{
 use crate::input::{InjectedPointer, effective_cursor_position};
 use crate::render::statics::static_source::{static_tile_is_surface_like, static_tile_renders_wet};
 use crate::render::picking::static_geometry::{StaticArtRoute, StaticPickingResources};
-use crate::render::scene::player::Player;
+use crate::world::player::Player;
 use crate::render::picking::terrain_cursor::{TerrainCursor, TerrainCursorQuery};
 use crate::render::{
     scene::RecomputeVisibleChunksEvent,

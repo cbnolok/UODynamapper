@@ -1,5 +1,5 @@
 use crate::render::view::camera::RenderZoom;
-use crate::{render::scene::player::Player, prelude::*};
+use crate::{world::player::Player, prelude::*};
 use bevy::prelude::*;
 use bevy::text::{FontSmoothing, LineHeight};
 use bevy::window::Window;

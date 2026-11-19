@@ -9,7 +9,7 @@ use bevy::prelude::*;
 use bevy::window::{Window, WindowResized};
 use crate::render::view::camera::{self, PlayerCamera, RenderZoom, MAX_ZOOM, MIN_ZOOM};
 use crate::render::view::footprint::{compute_visible_chunks, chunks_in_tile_rect, ExportChunkFootprint, FreeCameraFootprint};
-use player::Player;
+use crate::world::player::Player;
 use crate::render::terrain::draw_mesh::{scale_from_zoom, ChunkScale};
 use crate::render::terrain::TILE_NUM_PER_CHUNK_DIM;
 use crate::render::terrain;
