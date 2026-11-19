@@ -5,11 +5,11 @@ struct PickQuery {
     pass_origin_samples: vec4<u32>,
 }
 @if(STATIC_PICK)
-@group(2) @binding(0) var<uniform> pick_query: PickQuery;
+@group(4) @binding(0) var<uniform> pick_query: PickQuery;
 @if(STATIC_PICK && !STATIC_PICK_MSAA)
-@group(2) @binding(1) var opaque_depth: texture_depth_2d;
+@group(4) @binding(1) var opaque_depth: texture_depth_2d;
 @if(STATIC_PICK && STATIC_PICK_MSAA)
-@group(2) @binding(1) var opaque_depth: texture_depth_multisampled_2d;
+@group(4) @binding(1) var opaque_depth: texture_depth_multisampled_2d;
 
 @if(STATIC_PICK)
 fn pick_clip(position: vec4<f32>) -> vec4<f32> {

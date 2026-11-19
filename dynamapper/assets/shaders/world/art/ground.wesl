@@ -3,6 +3,7 @@ import package::shaders::world::art::light_scene::{light_scene_drawn, light_scen
 import package::shaders::world::art::depth::{sprite_priority_view_z, view_z_depth, cave_lifted_view_z, cave_outside_rgb};
 import bevy_pbr::render::{
     forward_io::Vertex,
+    mesh_functions::get_tag,
     view_transformations,
     mesh_view_bindings::globals,
 };
@@ -55,7 +56,10 @@ struct GroundFragmentOutput {
 
 @vertex
 fn vertex(vertex: Vertex) -> GroundVertexOutput {
-    let inst = instances[u32(vertex.uv_b.x + 0.5)];
+    // The batch's first instance rides in its tag, the quad's index within the batch in uv_b.x
+    // (`ArtBatchMeshes`, statics_draw.rs).
+    let instance_index = get_tag(vertex.instance_index) + u32(vertex.uv_b.x + 0.5);
+    let inst = instances[instance_index];
 
     let corner = vec2<f32>(vertex.position.x, vertex.position.z);
     let local = mix(inst.local_min, inst.local_max, corner);
@@ -72,7 +76,7 @@ fn vertex(vertex: Vertex) -> GroundVertexOutput {
     out.color = inst.color_rgba;
     out.is_wet = inst.is_wet_flags & 1u;
     out.world_pos = world_pos;
-    out.instance_index = u32(vertex.uv_b.x + 0.5);
+    out.instance_index = instance_index;
     out.reflection_uv = ec_liquid_camera_reflection_uv(world_pos, scene.ec_reflection_camera_distance);
     out.local_light_rgba = art_local_light_at_corner(inst.local_light_corners, corner);
     out.client_grunge_uv = vec2<f32>(0.0);

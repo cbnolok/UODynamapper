@@ -72,7 +72,7 @@ fn pixel_query_uses_opaque_depth_and_resolves_discrete_msaa_ids() {
     bevy::tasks::block_on(async {
         let instance = wgpu::Instance::new(wgpu::InstanceDescriptor::new_without_display_handle());
         let adapter = instance.request_adapter(&wgpu::RequestAdapterOptions::default()).await.unwrap();
-        let (device, queue) = adapter.request_device(&wgpu::DeviceDescriptor::default()).await.unwrap();
+        let (device, queue) = adapter.request_device(&wgpu::DeviceDescriptor { required_limits: adapter.limits(), ..Default::default() }).await.unwrap();
         let mut shaders = ShaderCache::<String, ()>::new((), |_, source, _| {
             let ShaderCacheSource::Wgsl(source) = source else { return Err(ShaderCacheError::CreateShaderModule("expected WGSL".into())); };
             Ok(source)
@@ -126,8 +126,9 @@ import package::shaders::world::art::picking::{pick_clip, pick_color};
             queue.write_buffer(&query, 0, bytemuck::cast_slice(&query_words));
             let group = device.create_bind_group(&wgpu::BindGroupDescriptor { label: None,
                 layout: &pipeline.get_bind_group_layout(0), entries: &[wgpu::BindGroupEntry { binding: 0, resource: uniform.as_entire_binding() }] });
-            let empty = device.create_bind_group(&wgpu::BindGroupDescriptor { label: None, layout: &pipeline.get_bind_group_layout(1), entries: &[] });
-            let resources = device.create_bind_group(&wgpu::BindGroupDescriptor { label: None, layout: &pipeline.get_bind_group_layout(2), entries: &[
+            let empty = (1..super::PICK_QUERY_GROUP).map(|group| device.create_bind_group(&wgpu::BindGroupDescriptor { label: None,
+                layout: &pipeline.get_bind_group_layout(group), entries: &[] })).collect::<Vec<_>>();
+            let resources = device.create_bind_group(&wgpu::BindGroupDescriptor { label: None, layout: &pipeline.get_bind_group_layout(super::PICK_QUERY_GROUP), entries: &[
                 wgpu::BindGroupEntry { binding: 0, resource: query.as_entire_binding() },
                 wgpu::BindGroupEntry { binding: 1, resource: wgpu::BindingResource::TextureView(&opaque_view) },
             ] });
@@ -157,7 +158,8 @@ import package::shaders::world::art::picking::{pick_clip, pick_color};
                             resolve_target: None, ops: wgpu::Operations { load: wgpu::LoadOp::Clear(wgpu::Color::TRANSPARENT), store: wgpu::StoreOp::Store } })],
                         depth_stencil_attachment: None, timestamp_writes: None, occlusion_query_set: None, multiview_mask: None });
                     pass.set_pipeline(&pipeline); pass.set_bind_group(0, &group, &[]);
-                    pass.set_bind_group(1, &empty, &[]); pass.set_bind_group(2, &resources, &[]); pass.draw(0..3, 0..1);
+                    for (group, empty) in (1..).zip(&empty) { pass.set_bind_group(group, empty, &[]); }
+                    pass.set_bind_group(super::PICK_QUERY_GROUP, &resources, &[]); pass.draw(0..3, 0..1);
                 }
                 if samples > 1 {
                     {

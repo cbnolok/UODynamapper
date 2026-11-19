@@ -4,6 +4,7 @@ import package::shaders::world::art::light_scene::{light_scene_drawn, light_scen
     LIGHT_SCENE_MIN_ALPHA, LIGHT_SCENE_CAP_MIN_ALPHA, LIGHT_SCENE_CLASS_HEIGHT};
 import bevy_pbr::render::{
     forward_io::Vertex,
+    mesh_functions::get_tag,
     view_transformations,
     mesh_view_bindings::view,
     mesh_view_bindings::globals,
@@ -104,7 +105,10 @@ fn ec_camera_quad_geometry(flat_quad: u32) -> bool {
 
 @vertex
 fn vertex(vertex: Vertex) -> ArtVertexOutput {
-    let inst = instances[u32(vertex.uv_b.x + 0.5)];
+    // The batch's first instance rides in its tag, the quad's index within the batch in uv_b.x
+    // (`ArtBatchMeshes`, statics_draw.rs).
+    let instance_index = get_tag(vertex.instance_index) + u32(vertex.uv_b.x + 0.5);
+    let inst = instances[instance_index];
 
     let corner = vec2<f32>(vertex.position.x, vertex.position.z);
     var world_pos: vec3<f32>;
@@ -205,7 +209,7 @@ fn vertex(vertex: Vertex) -> ArtVertexOutput {
     out.depth_class = inst.depth_class;
     out.is_wet = inst.is_wet_flags & 1u;
     out.world_pos = world_pos;
-    out.instance_index = u32(vertex.uv_b.x + 0.5);
+    out.instance_index = instance_index;
     out.reflection_uv = vec2<f32>(0.0);
     if (inst.flat_quad >= 2u && (inst.is_wet_flags & 1u) != 0u) {
         // Fixed-function reflection is generated at vertices. Ordinary sprites

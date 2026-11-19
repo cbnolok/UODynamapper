@@ -19,7 +19,7 @@ use crate::content::{
 };
 use crate::prelude::*;
 use bevy::camera::visibility::NoFrustumCulling;
-use bevy::mesh::MeshVertexBufferLayoutRef;
+use bevy::mesh::{MeshTag, MeshVertexBufferLayoutRef};
 use bevy::pbr::{ExtendedMaterial, MaterialExtension, MaterialExtensionKey, MaterialExtensionPipeline};
 use bevy::prelude::*;
 use bevy::render::render_resource::TextureFormat;
@@ -323,7 +323,55 @@ fn static_batch_sync_hash_u32(hash: &mut u64, value: u32) {
     *hash = hash.wrapping_mul(0x100000001b3);
 }
 
-fn build_art_batch_mesh(start: u32, count: u32) -> Mesh {
+/// The batch meshes, one per instance count, which the batches of that many instances share: each quad carries its
+/// index within the batch (`uv_b.x`), and the batch entity's `MeshTag` its first instance, the art shaders reading
+/// instance tag + index. A batch whose first instance moves, as the chunks before it come and go, keeps its mesh.
+/// Before, the mesh carried the absolute index: every such move rebuilt and re-uploaded the meshes of all the batches
+/// after it, twice for the sprites with their shadows, 10-18 ms a frame in the Britain walk (2026-11-19).
+#[derive(Resource, Default)]
+pub struct ArtBatchMeshes {
+    by_count: HashMap<u32, Handle<Mesh>>,
+}
+
+impl ArtBatchMeshes {
+    /// The mesh of `count` instances, built at the first batch of that size.
+    fn get(&mut self, meshes: &mut Assets<Mesh>, count: u32) -> Handle<Mesh> {
+        self.by_count.entry(count).or_insert_with(|| meshes.add(build_art_batch_mesh(count))).clone()
+    }
+
+    /// Drops the meshes no batch entity holds any longer, which only this cache keeps alive.
+    fn drop_unused(&mut self) {
+        self.by_count.retain(|_, handle| match handle {
+            Handle::Strong(strong) => std::sync::Arc::strong_count(strong) > 1,
+            Handle::Uuid(..) => false,
+        });
+    }
+}
+
+/// Points the batch entity `entity`, drawn as `current`, at `batch`: a batch that moved takes its new first instance
+/// in its tag, one that changed size the mesh of its new size.
+fn retarget_batch_entity(
+    commands: &mut Commands,
+    entity: Entity,
+    current: StaticChunkBatchEntity,
+    batch: &StaticChunkBatch,
+    batch_meshes: &mut ArtBatchMeshes,
+    meshes: &mut Assets<Mesh>,
+) {
+    if current.start == batch.start && current.count == batch.count {
+        return;
+    }
+    let mut entity = commands.entity(entity);
+    entity.insert((
+        MeshTag::new(batch.start),
+        StaticChunkBatchEntity { key: batch.key, start: batch.start, count: batch.count },
+    ));
+    if current.count != batch.count {
+        entity.insert(Mesh3d(batch_meshes.get(meshes, batch.count)));
+    }
+}
+
+fn build_art_batch_mesh(count: u32) -> Mesh {
     use bevy::mesh::Indices;
 
     let quad_count = count as usize;
@@ -336,7 +384,6 @@ fn build_art_batch_mesh(start: u32, count: u32) -> Mesh {
     let mut indices = Vec::with_capacity(quad_count * 6);
 
     for local_index in 0..count {
-        let instance_index = start + local_index;
         let vertex_base = local_index * 4;
         positions.extend_from_slice(&[
             [0.0, 0.0, 0.0],
@@ -346,7 +393,7 @@ fn build_art_batch_mesh(start: u32, count: u32) -> Mesh {
         ]);
         normals.extend_from_slice(&[[0.0, 1.0, 0.0]; 4]);
         uv0.extend_from_slice(&[[0.0, 0.0], [1.0, 0.0], [0.0, 1.0], [1.0, 1.0]]);
-        uv1.extend_from_slice(&[[instance_index as f32, 0.0]; 4]);
+        uv1.extend_from_slice(&[[local_index as f32, 0.0]; 4]);
         colors.extend_from_slice(&[[1.0, 1.0, 1.0, 1.0]; 4]);
         indices.extend_from_slice(&[
             vertex_base,
@@ -1194,6 +1241,7 @@ pub fn sys_sync_static_sprite_entities(
     chunk_batches: Res<RenderStaticChunkBatches>,
     render_assets: Res<ArtSpriteRenderAssets>,
     mut meshes: ResMut<Assets<Mesh>>,
+    mut batch_meshes: ResMut<ArtBatchMeshes>,
     mut debug_state: ResMut<StaticArtDrawDebugState>,
     mut sync_state: ResMut<StaticBatchEntitySyncState>,
     existing_q: Query<(Entity, &StaticChunkBatchEntity), With<StaticsDrawEntity>>,
@@ -1202,6 +1250,7 @@ pub fn sys_sync_static_sprite_entities(
     if sync_state.sprite == Some(signature) {
         return;
     }
+    batch_meshes.drop_unused();
 
     let desired_count = chunk_batches.sprite.len();
     let existing_count = existing_q.iter().count();
@@ -1212,21 +1261,11 @@ pub fn sys_sync_static_sprite_entities(
 
     for batch in &chunk_batches.sprite {
         if let Some((entity, current_batch)) = existing_by_key.get(&batch.key) {
-            if current_batch.start != batch.start || current_batch.count != batch.count {
-                let mesh_handle = meshes.add(build_art_batch_mesh(batch.start, batch.count));
-                let _ = commands.entity(*entity).insert((
-                    Mesh3d(mesh_handle),
-                    StaticChunkBatchEntity {
-                        key: batch.key,
-                        start: batch.start,
-                        count: batch.count,
-                    },
-                ));
-            }
+            retarget_batch_entity(&mut commands, *entity, *current_batch, batch, &mut batch_meshes, &mut meshes);
         } else {
-            let mesh_handle = meshes.add(build_art_batch_mesh(batch.start, batch.count));
             commands.spawn((
-                Mesh3d(mesh_handle),
+                Mesh3d(batch_meshes.get(&mut meshes, batch.count)),
+                MeshTag::new(batch.start),
                 MeshMaterial3d(render_assets.opaque_material.clone()),
                 Transform::IDENTITY,
                 NoFrustumCulling,
@@ -1270,6 +1309,7 @@ pub fn sys_sync_static_sprite_shadow_entities(
     chunk_batches: Res<RenderStaticChunkBatches>,
     render_assets: Res<ArtSpriteRenderAssets>,
     mut meshes: ResMut<Assets<Mesh>>,
+    mut batch_meshes: ResMut<ArtBatchMeshes>,
     mut sync_state: ResMut<StaticBatchEntitySyncState>,
     existing_q: Query<(Entity, &StaticChunkBatchEntity), With<StaticsShadowDrawEntity>>,
 ) {
@@ -1277,6 +1317,7 @@ pub fn sys_sync_static_sprite_shadow_entities(
     if sync_state.sprite_shadow == Some(signature) {
         return;
     }
+    batch_meshes.drop_unused();
 
     let existing_by_key: HashMap<_, _> = existing_q
         .iter()
@@ -1285,21 +1326,11 @@ pub fn sys_sync_static_sprite_shadow_entities(
 
     for batch in &chunk_batches.sprite {
         if let Some((entity, current_batch)) = existing_by_key.get(&batch.key) {
-            if current_batch.start != batch.start || current_batch.count != batch.count {
-                let mesh_handle = meshes.add(build_art_batch_mesh(batch.start, batch.count));
-                let _ = commands.entity(*entity).insert((
-                    Mesh3d(mesh_handle),
-                    StaticChunkBatchEntity {
-                        key: batch.key,
-                        start: batch.start,
-                        count: batch.count,
-                    },
-                ));
-            }
+            retarget_batch_entity(&mut commands, *entity, *current_batch, batch, &mut batch_meshes, &mut meshes);
         } else {
-            let mesh_handle = meshes.add(build_art_batch_mesh(batch.start, batch.count));
             commands.spawn((
-                Mesh3d(mesh_handle),
+                Mesh3d(batch_meshes.get(&mut meshes, batch.count)),
+                MeshTag::new(batch.start),
                 MeshMaterial3d(render_assets.shadow_material.clone()),
                 Transform::IDENTITY,
                 NoFrustumCulling,
@@ -1331,6 +1362,7 @@ pub fn sys_sync_static_sprite_transparent_entities(
     chunk_batches: Res<RenderStaticChunkBatches>,
     render_assets: Res<ArtSpriteRenderAssets>,
     mut meshes: ResMut<Assets<Mesh>>,
+    mut batch_meshes: ResMut<ArtBatchMeshes>,
     mut debug_state: ResMut<StaticArtDrawDebugState>,
     mut sync_state: ResMut<StaticBatchEntitySyncState>,
     existing_q: Query<(Entity, &StaticChunkBatchEntity), With<StaticsTransparentDrawEntity>>,
@@ -1339,6 +1371,7 @@ pub fn sys_sync_static_sprite_transparent_entities(
     if sync_state.sprite_transparent == Some(signature) {
         return;
     }
+    batch_meshes.drop_unused();
 
     let desired_count = chunk_batches.sprite.len();
     let existing_by_key: HashMap<_, _> = existing_q
@@ -1348,21 +1381,11 @@ pub fn sys_sync_static_sprite_transparent_entities(
 
     for batch in &chunk_batches.sprite {
         if let Some((entity, current_batch)) = existing_by_key.get(&batch.key) {
-            if current_batch.start != batch.start || current_batch.count != batch.count {
-                let mesh_handle = meshes.add(build_art_batch_mesh(batch.start, batch.count));
-                let _ = commands.entity(*entity).insert((
-                    Mesh3d(mesh_handle),
-                    StaticChunkBatchEntity {
-                        key: batch.key,
-                        start: batch.start,
-                        count: batch.count,
-                    },
-                ));
-            }
+            retarget_batch_entity(&mut commands, *entity, *current_batch, batch, &mut batch_meshes, &mut meshes);
         } else {
-            let mesh_handle = meshes.add(build_art_batch_mesh(batch.start, batch.count));
             commands.spawn((
-                Mesh3d(mesh_handle),
+                Mesh3d(batch_meshes.get(&mut meshes, batch.count)),
+                MeshTag::new(batch.start),
                 MeshMaterial3d(render_assets.transparent_material.clone()),
                 Transform::IDENTITY,
                 NoFrustumCulling,
@@ -1399,6 +1422,7 @@ pub fn sys_sync_static_ground_entities(
     chunk_batches: Res<RenderStaticChunkBatches>,
     render_assets: Res<ArtGroundRenderAssets>,
     mut meshes: ResMut<Assets<Mesh>>,
+    mut batch_meshes: ResMut<ArtBatchMeshes>,
     mut debug_state: ResMut<StaticArtDrawDebugState>,
     mut sync_state: ResMut<StaticBatchEntitySyncState>,
     existing_q: Query<(Entity, &StaticChunkBatchEntity), With<StaticsGroundDrawEntity>>,
@@ -1407,6 +1431,7 @@ pub fn sys_sync_static_ground_entities(
     if sync_state.ground == Some(signature) {
         return;
     }
+    batch_meshes.drop_unused();
 
     let desired_count = chunk_batches.ground.len();
     let existing_count = existing_q.iter().count();
@@ -1417,21 +1442,11 @@ pub fn sys_sync_static_ground_entities(
 
     for batch in &chunk_batches.ground {
         if let Some((entity, current_batch)) = existing_by_key.get(&batch.key) {
-            if current_batch.start != batch.start || current_batch.count != batch.count {
-                let mesh_handle = meshes.add(build_art_batch_mesh(batch.start, batch.count));
-                let _ = commands.entity(*entity).insert((
-                    Mesh3d(mesh_handle),
-                    StaticChunkBatchEntity {
-                        key: batch.key,
-                        start: batch.start,
-                        count: batch.count,
-                    },
-                ));
-            }
+            retarget_batch_entity(&mut commands, *entity, *current_batch, batch, &mut batch_meshes, &mut meshes);
         } else {
-            let mesh_handle = meshes.add(build_art_batch_mesh(batch.start, batch.count));
             commands.spawn((
-                Mesh3d(mesh_handle),
+                Mesh3d(batch_meshes.get(&mut meshes, batch.count)),
+                MeshTag::new(batch.start),
                 MeshMaterial3d(render_assets.opaque_material.clone()),
                 Transform::IDENTITY,
                 NoFrustumCulling,
@@ -1475,6 +1490,7 @@ pub fn sys_sync_static_ground_transparent_entities(
     chunk_batches: Res<RenderStaticChunkBatches>,
     render_assets: Res<ArtGroundRenderAssets>,
     mut meshes: ResMut<Assets<Mesh>>,
+    mut batch_meshes: ResMut<ArtBatchMeshes>,
     mut debug_state: ResMut<StaticArtDrawDebugState>,
     mut sync_state: ResMut<StaticBatchEntitySyncState>,
     existing_q: Query<(Entity, &StaticChunkBatchEntity), With<StaticsGroundTransparentDrawEntity>>,
@@ -1483,6 +1499,7 @@ pub fn sys_sync_static_ground_transparent_entities(
     if sync_state.ground_transparent == Some(signature) {
         return;
     }
+    batch_meshes.drop_unused();
 
     let desired_count = chunk_batches.ground.len();
     let existing_by_key: HashMap<_, _> = existing_q
@@ -1492,21 +1509,11 @@ pub fn sys_sync_static_ground_transparent_entities(
 
     for batch in &chunk_batches.ground {
         if let Some((entity, current_batch)) = existing_by_key.get(&batch.key) {
-            if current_batch.start != batch.start || current_batch.count != batch.count {
-                let mesh_handle = meshes.add(build_art_batch_mesh(batch.start, batch.count));
-                let _ = commands.entity(*entity).insert((
-                    Mesh3d(mesh_handle),
-                    StaticChunkBatchEntity {
-                        key: batch.key,
-                        start: batch.start,
-                        count: batch.count,
-                    },
-                ));
-            }
+            retarget_batch_entity(&mut commands, *entity, *current_batch, batch, &mut batch_meshes, &mut meshes);
         } else {
-            let mesh_handle = meshes.add(build_art_batch_mesh(batch.start, batch.count));
             commands.spawn((
-                Mesh3d(mesh_handle),
+                Mesh3d(batch_meshes.get(&mut meshes, batch.count)),
+                MeshTag::new(batch.start),
                 MeshMaterial3d(render_assets.transparent_material.clone()),
                 Transform::IDENTITY,
                 NoFrustumCulling,

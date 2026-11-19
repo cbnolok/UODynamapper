@@ -9,7 +9,7 @@ use bevy::render::{RenderApp, Render, RenderSystems, extract_resource::{ExtractR
     renderer::{RenderContext, RenderDevice, ViewQuery},
     sync_world::MainEntity, view::{ExtractedView, ViewDepthStencilTexture}};
 use bevy::shader::ShaderDefVal;
-use bevy::pbr::{DrawMesh, SetMeshViewBindGroup, SetMeshViewBindingArrayBindGroup, SetMaterialBindGroup};
+use bevy::pbr::{DrawMesh, SetMeshBindGroup, SetMeshViewBindGroup, SetMeshViewBindingArrayBindGroup, SetMaterialBindGroup};
 use std::{collections::HashMap, sync::{Arc, Mutex, mpsc, atomic::{AtomicU64, AtomicUsize, Ordering}}};
 
 #[derive(Clone, PartialEq)]
@@ -31,12 +31,14 @@ impl PickSignature {
 }
 
 type Targets = Arc<[Vec<StaticPickTile>; 2]>;
-// Art vertices already carry the global instance index and reconstruct their
-// world positions. Their normal mesh bind group is unused, so query resources
-// can occupy group 2 without increasing the renderer's bind-group requirement.
-// The light scene draws with it too (light_scene.rs).
+// The art pipelines' groups, the mesh's among them (the batch's first instance is its tag, `ArtBatchMeshes`), with
+// the query resources in a group past the material's, `PICK_QUERY_GROUP`. The light scene draws with it too
+// (light_scene.rs), its depth in the same group.
 pub(crate) type DrawPixelQuery = (SetItemPipeline, SetMeshViewBindGroup<0>, SetMeshViewBindingArrayBindGroup<1>,
-    SetMaterialBindGroup<3>, DrawMesh);
+    SetMeshBindGroup<2>, SetMaterialBindGroup<3>, DrawMesh);
+/// The group of the pixel query's resources (picking.wesl), and of the light scene's depth (light_scene.wesl): the one
+/// after the material's, within the 8 groups of the desktop adapters, whose limits Bevy requests.
+pub(crate) const PICK_QUERY_GROUP: u32 = 4;
 #[derive(Clone)]
 struct Request {
     serial: u64,
@@ -216,7 +218,8 @@ fn query_pipeline(cache: &PipelineCache, state: &mut QueryGpuState,
     *state.pipelines.entry((original, transparent, multisampled)).or_insert_with(|| {
         let mut descriptor = cache.get_render_pipeline_descriptor(original).clone();
         descriptor.label = Some("static pixel visibility".into());
-        descriptor.layout[2] = query_layout(multisampled);
+        assert_eq!(descriptor.layout.len(), PICK_QUERY_GROUP as usize, "the art pipelines end at the material group");
+        descriptor.layout.push(query_layout(multisampled));
         descriptor.vertex.shader_defs.push(ShaderDefVal::Bool("STATIC_PICK".into(), true));
         descriptor.vertex.shader_defs.push(ShaderDefVal::Bool("STATIC_PICK_MSAA".into(), multisampled));
         let fragment = descriptor.fragment.as_mut().unwrap();
@@ -299,7 +302,7 @@ fn render_query(world: &World,
                 depth_ops: Some(Operations { load: if pass_index == 0 { LoadOp::Clear(0.0) } else { LoadOp::Load }, store: StoreOp::Store }), stencil_ops: None }),
             timestamp_writes: None, occlusion_query_set: None, multiview_mask: None,
         });
-        pass.set_bind_group(2, &groups[pass_index], &[]);
+        pass.set_bind_group(PICK_QUERY_GROUP as usize, &groups[pass_index], &[]);
         for (original, pipelines) in &items {
             let item = Transparent3d { pipeline: pipelines[pass_index],
                 sorting_info: original.sorting_info, distance: original.distance, entity: original.entity,

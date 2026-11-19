@@ -20,7 +20,7 @@
 //!   pipelines draw nothing there (`LightClipMode::Deferred`), and the world view draws them into the light buffer
 //!   once the light scene is done (`render_deferred_light_sprites`), before the client night composite reads it.
 
-use crate::render::picking::gpu_picking::DrawPixelQuery;
+use crate::render::picking::gpu_picking::{DrawPixelQuery, PICK_QUERY_GROUP};
 use crate::render::statics::transparent_order::{drawn_batches, StaticTransparentBatchOrder};
 use crate::render::view::camera::PlayerCamera;
 use crate::render::lighting::client_night::LightBufferCamera;
@@ -303,7 +303,7 @@ fn light_scene_layout(multisampled: bool) -> BindGroupLayoutDescriptor {
 }
 
 /// An art pipeline as the light scene draws it: its light scene entry into `LIGHT_SCENE_FORMAT`, single-sampled, the
-/// view's depth bound in group 2 (which art leaves unused) in place of a depth attachment.
+/// view's depth bound in the picking query's group (`PICK_QUERY_GROUP`) in place of a depth attachment.
 fn light_scene_pipeline(
     cache: &PipelineCache,
     original: CachedRenderPipelineId,
@@ -311,7 +311,8 @@ fn light_scene_pipeline(
 ) -> Option<CachedRenderPipelineId> {
     let mut descriptor = cache.get_render_pipeline_descriptor(original).clone();
     descriptor.label = Some("light scene".into());
-    descriptor.layout[2] = light_scene_layout(multisampled);
+    assert_eq!(descriptor.layout.len(), PICK_QUERY_GROUP as usize, "the art pipelines end at the material group");
+    descriptor.layout.push(light_scene_layout(multisampled));
     let defs = [
         ShaderDefVal::Bool("LIGHT_SCENE".into(), true),
         ShaderDefVal::Bool("LIGHT_SCENE_MSAA".into(), multisampled),
@@ -411,7 +412,7 @@ fn render_light_scene(
         multiview_mask: None,
     });
     let pass_span = diagnostics.pass_span(&mut pass, "light_scene");
-    pass.set_bind_group(2, &depth_group, &[]);
+    pass.set_bind_group(PICK_QUERY_GROUP as usize, &depth_group, &[]);
     for (original, pipeline) in items {
         let item = Transparent3d {
             pipeline,

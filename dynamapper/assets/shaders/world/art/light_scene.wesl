@@ -58,9 +58,9 @@ const LIGHT_SCENE_CELL_DEPTH: f32 = 1.0;
 const LIGHT_SCENE_DEPTH_TOLERANCE_LEVELS: f32 = 0.45;
 
 @if(LIGHT_SCENE && !LIGHT_SCENE_MSAA)
-@group(2) @binding(0) var light_scene_depth: texture_depth_2d;
+@group(4) @binding(0) var light_scene_depth: texture_depth_2d;
 @if(LIGHT_SCENE && LIGHT_SCENE_MSAA)
-@group(2) @binding(0) var light_scene_depth: texture_depth_multisampled_2d;
+@group(4) @binding(0) var light_scene_depth: texture_depth_multisampled_2d;
 
 // The light scene class of a static from its is_wet_flags; flat art and flat quads are floors.
 fn light_scene_class(is_wet_flags: u32, lies_flat: bool) -> u32 {
