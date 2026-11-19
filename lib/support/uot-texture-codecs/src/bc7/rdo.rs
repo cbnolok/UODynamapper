@@ -17,13 +17,13 @@ use std::cmp::max;
 
 // ─── ERT constants (matching bc7enc_rdo ert.cpp) ─────────────────────────────
 /// Bits charged per literal byte when estimating match cost.
-const LITERAL_BITS: f32 = 13.0;
+pub(crate) const LITERAL_BITS: f32 = 13.0;
 /// Reduced cost for a match that continues directly from the previous one.
-const MATCH_CONTINUE_BITS: f32 = 1.0;
+pub(crate) const MATCH_CONTINUE_BITS: f32 = 1.0;
 /// Reduced cost for a REP0 match (re-using the previous match distance).
-const MATCH_REP0_BITS: f32 = 4.0;
+pub(crate) const MATCH_REP0_BITS: f32 = 4.0;
 
-const PARALLEL_RDO_BLOCK_THRESHOLD: usize = 2048;
+pub(crate) const PARALLEL_RDO_BLOCK_THRESHOLD: usize = 2048;
 const PARALLEL_RDO_MIN_CHUNK_BLOCKS: usize = 2048;
 const RDO_PROGRESS_BLOCK_BATCH: usize = 256;
 const ULTRASMOOTH_DARK_THRESHOLD: f64 = 13.0;
@@ -35,7 +35,7 @@ const FIXED_RATE_SKIP_OFFSETS_THROUGH_LEN: [u64; 17] = fixed_rate_skip_offsets_t
 const MODE1_PIXEL_DESCS: [[u16; 16]; 64] = mode1_pixel_descs();
 const MODE7_PIXEL_DESCS: [[u16; 16]; 64] = mode7_pixel_descs();
 
-type RgbaBlock = [[u8; 4]; 16];
+pub(crate) type RgbaBlock = [[u8; 4]; 16];
 
 macro_rules! stat_add {
     ($collect:expr, $stats:ident, $field:ident, $value:expr) => {{
@@ -616,7 +616,7 @@ fn reduce_entropy_bc7_parallel_impl(
         .sum()
 }
 
-fn parallel_rdo_chunk_blocks(
+pub(crate) fn parallel_rdo_chunk_blocks(
     num_blocks: usize,
     blocks_x: usize,
     lookback_blocks: usize,
@@ -1365,7 +1365,7 @@ fn bc7_block_bits(block: [u8; 16]) -> u128 {
 }
 
 #[inline(always)]
-fn rgba_block_at(rgba_blocks: &[[u8; 4]], block_index: usize) -> &RgbaBlock {
+pub(crate) fn rgba_block_at(rgba_blocks: &[[u8; 4]], block_index: usize) -> &RgbaBlock {
     let start = block_index * 16;
     debug_assert!(start + 16 <= rgba_blocks.len());
     // SAFETY: `RgbaBlock` is exactly 16 contiguous RGBA pixels with the same
@@ -1386,7 +1386,7 @@ fn bc7_copy_segment_bits_from_segment(
 }
 
 #[inline(always)]
-fn max_trial_error_scale(smooth_block_error_scale: f32) -> f32 {
+pub(crate) fn max_trial_error_scale(smooth_block_error_scale: f32) -> f32 {
     if smooth_block_error_scale <= 0.0 {
         0.0
     } else {
@@ -1395,7 +1395,7 @@ fn max_trial_error_scale(smooth_block_error_scale: f32) -> f32 {
 }
 
 #[inline(always)]
-fn max_trial_error(best_t: f32, trial_bits_times_lambda: f32, max_trial_error_scale: f32) -> u64 {
+pub(crate) fn max_trial_error(best_t: f32, trial_bits_times_lambda: f32, max_trial_error_scale: f32) -> u64 {
     if max_trial_error_scale <= 0.0 {
         return u64::MAX;
     }
@@ -1405,7 +1405,7 @@ fn max_trial_error(best_t: f32, trial_bits_times_lambda: f32, max_trial_error_sc
 }
 
 #[inline(always)]
-fn smooth_block_error_scale_from_pixels(
+pub(crate) fn smooth_block_error_scale_from_pixels(
     pixels: &RgbaBlock,
     max_smooth_block_std_dev: f32,
     smooth_block_max_mse_scale: f32,
@@ -2434,7 +2434,7 @@ fn hash_hsieh_bc7_segment_variable(segment: u128, len: usize, salt: u32) -> u32 
 }
 
 #[inline]
-fn rdo_hash_seen(hash_table: &mut [u64], hash_mask: usize, hash_epoch: u64, hs: u32) -> bool {
+pub(crate) fn rdo_hash_seen(hash_table: &mut [u64], hash_mask: usize, hash_epoch: u64, hs: u32) -> bool {
     let entry = hash_epoch | ((hs >> 8) as u64);
     let slot = &mut hash_table[hs as usize & hash_mask];
     let seen = *slot == entry;
@@ -2469,7 +2469,7 @@ fn bc7_first_byte_has_mode(first_byte: u8, mode: u8) -> bool {
     first_byte & ((mode_bit << 1) - 1) == mode_bit
 }
 
-fn lerp(a: f32, b: f32, s: f32) -> f32 {
+pub(crate) fn lerp(a: f32, b: f32, s: f32) -> f32 {
     a + (b - a) * s
 }
 
@@ -2493,7 +2493,7 @@ fn compute_block_max_std_dev(pixels: &RgbaBlock) -> f32 {
 }
 
 #[inline(always)]
-fn compute_match_len_cost(match_len: u32) -> u32 {
+pub(crate) fn compute_match_len_cost(match_len: u32) -> u32 {
     if match_len >= 12 {
         9
     } else if match_len >= 8 {
@@ -2506,7 +2506,7 @@ fn compute_match_len_cost(match_len: u32) -> u32 {
 }
 
 #[inline(always)]
-fn compute_dist_cost_estimate(dist: u32) -> u32 {
+pub(crate) fn compute_dist_cost_estimate(dist: u32) -> u32 {
     let mut dist_cost = 5;
     if dist < 512 {
         dist_cost += SMALL_DIST_EXTRA[dist as usize & 511] as u32;
@@ -2575,7 +2575,7 @@ const LARGE_DIST_EXTRA: [u8; 128] = [
     13, 13, 13, 13, 13, 13,
 ];
 
-fn compute_block_mse_scales(
+pub(crate) fn compute_block_mse_scales(
     rgba_blocks: &[[u8; 4]],
     blocks_x: usize,
     blocks_y: usize,

@@ -1416,7 +1416,7 @@ fn bc7_rdo_lookback_window_size(blocks: usize) -> usize {
 }
 
 #[cfg(feature = "bc7-encode")]
-fn rgba_pixels_to_block_order(rgba_pixels: &[u8], extent: ImageExtent) -> Vec<[u8; 4]> {
+pub(crate) fn rgba_pixels_to_block_order(rgba_pixels: &[u8], extent: ImageExtent) -> Vec<[u8; 4]> {
     let blocks_x = extent.blocks_wide();
     let blocks_y = extent.blocks_high();
     let mut rgba_blocks = Vec::with_capacity((blocks_x * blocks_y * 16) as usize);

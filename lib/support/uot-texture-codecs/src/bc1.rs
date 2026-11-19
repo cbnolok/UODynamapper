@@ -11,6 +11,9 @@ use std::io::Cursor;
 
 use crate::bc7::{ImageExtent, RawImageFormat, TextureError};
 
+#[cfg(feature = "bc7-encode")]
+pub mod rdo;
+
 /// Pixels per side of a BC1 block, and bytes per block.
 pub const BC1_BLOCK_EDGE: u32 = 4;
 pub const BC1_BLOCK_BYTES: usize = 8;
@@ -45,6 +48,15 @@ pub fn encode_bc1(rgba: &[u8], extent: ImageExtent) -> Result<Vec<u8>, TextureEr
     if blocks.len() != expected_bc1_byte_len(extent) {
         return Err(TextureError::InvalidBc1Length { expected: expected_bc1_byte_len(extent), actual: blocks.len() });
     }
+    Ok(blocks)
+}
+
+/// Encodes like [`encode_bc1`], then trades error for runs an LZ coder matches (see [`rdo`]); lambda 0 is plain BC1.
+#[cfg(feature = "bc7-encode")]
+pub fn encode_bc1_with_rdo(rgba: &[u8], extent: ImageExtent, params: &rdo::Bc1RdoParams) -> Result<Vec<u8>, TextureError> {
+    let mut blocks = encode_bc1(rgba, extent)?;
+    let rgba_blocks = crate::bc7::rgba_pixels_to_block_order(rgba, extent);
+    rdo::reduce_entropy_bc1(&mut blocks, &rgba_blocks, extent.blocks_wide() as usize, extent.blocks_high() as usize, params);
     Ok(blocks)
 }
 

@@ -185,7 +185,7 @@ their size and upscaled 2× with Lanczos3 over the whole page, which stands in f
   15.3 MiB and 70 ms after Lanczos. BC7 is no smaller, so an MMPX-upscaled Classic page has no reason to be lossy.
 - **RDO makes MMPX pages larger** (+20 %): the upscale repeats identical blocks, which plain BC7 encodes identically
   and RDO's choices break apart.
-- BC1 has no RDO in our encoder (`dds`), so BC1 with RDO was not measured.
+- BC1 with RDO was measured later, on the upscaled pages: see "BC1 with RDO" below.
 
 Every page in 128-row strips makes `tex_art_ec.uddp` and `tex_land_ec.uddp` 8.5 % larger (60.2 to 65.4 MB and 21.1 to
 23.0 MB). The converter keeps strips only where they pay (`PAGE_STRIPS_WORTH` in `udd-conv`, from the rule below):
@@ -235,7 +235,7 @@ pages and 5–24 % on RGBA (Classic land the most).
   about 570 MB at 2× RGBA and 2 GB at 4×; `tex_land_ec` from 21 MB to 165 / 580 MB.
 - **BC7 with RDO 1 is the smallest BC7 on every interpolated page,** 12–29 % below plain BC7 from 2× on. `tex_art_ec`
   would be about 155 MB at 2×, 320 MB at 3×, 500 MB at 4×; `tex_land_ec` 48 / 97 / 154 MB. BC1 halves that again, but
-  has one-bit alpha and no RDO in our encoder.
+  has one-bit alpha, and RDO gains it little (below).
 - **MMPX keeps Classic art cheap at every scale:** 1.34× at 2× and 1.91× at 4× as lossless RGBA, so a 4× `tex_art_cc`
   would be about 93 MB on disk. BC7 is smaller only at 4× (1.36×), where it saves VRAM too. xBRZ invents colours and
   costs 8× at 3×.
@@ -258,6 +258,34 @@ whole pages:
 
 The writer decides this for itself (`CompressionFlag::ZstdStripsWhenWorthLevel`): it compresses the strips (in
 parallel, so cheap beside the one frame) and keeps them when the page is large and they cost less than the limit.
+
+### BC1 with RDO
+
+`uot_texture_codecs::bc1::rdo` ports the entropy reduction transform of bc7enc_rdo (`ert.cpp`) to BC1's 8-byte blocks,
+with the BC7 port's cost model, `rdo_bc_encoder.cpp`'s BC1 smooth-block scale (λ / 8), 64 blocks of look-back, and
+the error over RGBA rather than RGB, since our BC1 uses punch-through alpha. The same bands, Zstd 19 one frame, MiB
+and PSNR over the opaque texels:
+
+| Atlas | Scale | BC1 | RDO 0.5 | RDO 1 | RDO 2 |
+|---|---|---|---|---|---|
+| Enhanced art | 1× | 0.68, 35.7 dB | 0.65, 35.3 | 0.63, 34.4 | 0.60, 32.7 |
+| | 2× | 2.25, 37.5 | 2.20, 37.1 | 2.14, 36.3 | 2.04, 34.7 |
+| | 4× | 7.48, 41.1 | 7.18, 40.6 | 6.92, 39.9 | 6.53, 38.5 |
+| Enhanced land | 4× | 3.06, 41.2 | 2.91, 40.7 | 2.82, 40.1 | 2.68, 39.1 |
+| Classic art | 1× | 0.20, 33.2 | 0.18, 32.6 | 0.17, 31.8 | 0.15, 30.3 |
+| | 2× MMPX | 0.40, 38.0 | 0.41, 37.3 | 0.41, 36.3 | 0.40, 34.5 |
+| | 4× MMPX | 0.48, 51.2 | 0.55, 49.8 | 0.56, 49.2 | 0.57, 48.3 |
+| Classic land | 2× | 1.03, 37.2 | 1.03, 36.9 | 1.03, 36.5 | 1.01, 35.6 |
+| | 4× | 3.42, 41.3 | 3.43, 40.8 | 3.34, 40.2 | 3.20, 39.3 |
+
+- **Not worth it.** RDO 1 saves 4–8 % on interpolated pages (Enhanced art 4×: 7.5 %) for 0.8–1.3 dB; RDO 2 saves
+  9–13 % for 2–3 dB. BC7 RDO 1 saves 12–29 % against plain BC7. An 8-byte block has half the bytes a BC7 block has
+  for a run to replace, and its endpoints and indices are denser, so a run from a nearby block costs more error.
+- **It makes MMPX pages larger** (up to +19 % at 4×), as BC7 RDO does: the runs it picks from nearby blocks break the
+  longer runs of identical blocks the upscale left.
+- It is slow: 28–38 s on rayon's whole pool for a 4× band of Enhanced art, so about 2 minutes a page.
+
+The converter does not use it; plain BC1 stays the BC1 form. `upscaled_pages <dir> [ec|cc|both] bc1` reruns these rows.
 
 ## Trained dictionaries
 
@@ -285,5 +313,5 @@ CARGO_TARGET_DIR=/path/to/scratch cargo run --release -- /path/to/uddp
 
 It runs every codec and the 128-row strips. `--bin strip_levels` runs the levels and codecs in strips (it reads
 `tex_land_ec.uddp` too), `--bin block_pages <dir> [lanczos|mmpx] [ec|cc|both]` the BC1 and BC7 pages, and `--bin upscaled_pages <dir>
-[ec|cc|both]` the pages at 1× to 4×. The PNG filter, the other strip heights and
+[ec|cc|both] [all|bc1]` the pages at 1× to 4× (`bc1` only BC1 and BC1 with RDO). The PNG filter, the other strip heights and
 the dictionaries were one-off runs with the numbers above.
