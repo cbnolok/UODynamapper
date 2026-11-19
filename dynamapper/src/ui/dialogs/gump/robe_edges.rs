@@ -7,7 +7,7 @@
 //! (docs/agent_notes/ec_paperdoll_robe_override.md).
 
 use super::*;
-use crate::content::ClassicGumpSource;
+use crate::content::gumps::ClassicGumpSource;
 use std::collections::HashSet;
 use std::path::PathBuf;
 use udd_assets::tilemeta::TileMetaPackage;

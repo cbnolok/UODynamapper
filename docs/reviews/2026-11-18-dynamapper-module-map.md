@@ -64,7 +64,7 @@ terrain, statics, lighting, picking, postprocess}`, `ui/`, `export/`, `diagnosti
 
 | Now | Lines | Churn | Notes |
 |---|---:|---:|---|
-| `content.rs` | 1290 | 13 | Moved 2026-11-19 from `core/uo_files_loader.rs`, whole. Split package discovery from the runtime gump provider. |
+| `content.rs`, `content/gumps.rs` | 1290 | 13 | Moved 2026-11-19 from `core/uo_files_loader.rs`. Package discovery and the package resources stay in `content.rs`; the gump provider (source choice, shared-gump check, `GumpMapRes`) split 2026-11-19 into `gumps.rs`, with its tests. |
 | `content/land_routes.rs`, `render/assets/land/route_file.rs` | 1122 | 6 | The land route table (moved 2026-11-19 from `configs/`) and its file. |
 | `content/land_texture_variation.rs` | 237 | 1 | Moved 2026-11-19 from `configs/`. |
 | `ui/dialogs/paperdoll_overrides.rs` (+ `measure.rs`) | 605 | 0 | Composition and override policy; its window goes to `ui/`. |
