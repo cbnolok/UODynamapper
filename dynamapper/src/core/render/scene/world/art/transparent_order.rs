@@ -10,7 +10,7 @@ use bevy::render::render_phase::{PhaseItem, ViewSortedRenderPhases};
 use bevy::render::sync_world::MainEntity;
 use bevy::math::FloatOrd;
 use std::collections::HashMap;
-use super::statics_collect::StaticChunkBatchKey;
+use super::static_batches::StaticChunkBatchKey;
 
 #[derive(Component, Clone, Copy, ExtractComponent)]
 #[extract_app(bevy::render::RenderApp)]

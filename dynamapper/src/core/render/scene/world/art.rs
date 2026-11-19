@@ -7,6 +7,10 @@ use crate::prelude::*;
 use crate::util_lib::tracked_plugin::TrackedPlugin;
 
 pub mod statics_collect;
+pub mod static_placement;
+pub mod static_source;
+pub mod static_batches;
+pub mod static_chunk_cache;
 pub mod statics_draw;
 pub mod static_lights;
 pub mod client_light_sprites;
@@ -32,13 +36,13 @@ impl_tracked_plugin!(DrawStaticSpritesPlugin);
 impl Plugin for DrawStaticSpritesPlugin {
     fn build(&self, app: &mut App) {
         log_plugin_build(self);
-        app.init_resource::<statics_collect::RenderStaticInstances>();
-        app.init_resource::<statics_collect::RenderStaticLandInstances>();
-        app.init_resource::<statics_collect::RenderStaticChunkBatches>();
-        app.init_resource::<statics_collect::StaticChunkRenderCache>();
-        app.init_resource::<statics_collect::StaticSurfaceLikeResolutionCache>();
+        app.init_resource::<static_batches::RenderStaticInstances>();
+        app.init_resource::<static_batches::RenderStaticLandInstances>();
+        app.init_resource::<static_batches::RenderStaticChunkBatches>();
+        app.init_resource::<static_chunk_cache::StaticChunkRenderCache>();
+        app.init_resource::<static_source::StaticSurfaceLikeResolutionCache>();
         app.init_resource::<statics_collect::StaticArtCollectDebugState>();
-        app.init_resource::<statics_collect::StaticArtSourceState>();
+        app.init_resource::<static_source::StaticArtSourceState>();
         gpu_picking::install(app);
         light_scene::install(app);
         app.init_resource::<statics_draw::StaticArtDrawDebugState>();
@@ -69,7 +73,7 @@ impl Plugin for DrawStaticSpritesPlugin {
                .after(crate::core::texture_cache::land::sys_setup_terrain_cache)
                .after(StartupSysSet::LoadStartupUOFiles))
            .add_systems(Update, (
-               statics_collect::sys_sync_static_art_source,
+               static_source::sys_sync_static_art_source,
                statics_draw::sys_sync_active_art_page_atlases,
                statics_draw::sys_apply_pending_art_page_atlas_resizes,
                crate::core::texture_cache::art::sys_stage_sprite_art_page_uploads,

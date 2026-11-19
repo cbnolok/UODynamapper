@@ -1,5 +1,5 @@
 use super::*;
-use super::super::statics_collect::StaticRenderTile;
+use super::super::static_batches::StaticRenderTile;
 
 fn signature() -> PickSignature {
     PickSignature { pixel: UVec2::new(640, 400), viewport: UVec4::new(0, 0, 1280, 800),

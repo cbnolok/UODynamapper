@@ -1,6 +1,7 @@
 //! Ground-level, world-textured art keeps its own pixels, but exposes the map
 //! smoothly at patch boundaries. Neighbor flags are built only on chunk rebuild.
-use super::statics_collect::{SpriteInstance, StaticChunkBatchKey, TILE_FLAG_SURFACE};
+use super::static_batches::{SpriteInstance, StaticChunkBatchKey};
+use super::static_source::TILE_FLAG_SURFACE;
 use crate::core::texture_cache::{ec_item_surface::KR_ITEM_RECORD_BASE, land::coverage::EcTerrainParams};
 use crate::world::statics::LazyStaticsStore;
 use crate::core::{render::scene::world::land::{tile_atlas::{AtlasCells, TileAtlas,

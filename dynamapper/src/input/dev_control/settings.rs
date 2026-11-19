@@ -12,7 +12,7 @@ use crate::configs::shader_presets::UniformState;
 use crate::core::export_job::WaitingRenderPipelines;
 use crate::core::render::dialogs::land_shader::switch_render_preset;
 use crate::core::render::scene::camera::{RenderZoom, MAX_ZOOM, MIN_ZOOM};
-use crate::core::render::scene::world::art::statics_collect::StaticArtSourceState;
+use crate::core::render::scene::world::art::static_source::StaticArtSourceState;
 use crate::world::caves::{CaveSurroundings, CaveView};
 use crate::core::render::scene::world::land::mesh_material::{LandShaderModePresets, LightCover, PlayerFloorRule};
 use crate::core::render::scene::RecomputeVisibleChunksEvent;

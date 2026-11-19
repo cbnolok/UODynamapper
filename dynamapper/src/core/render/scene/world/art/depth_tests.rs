@@ -2,7 +2,8 @@ use bevy::{asset::{uuid::Uuid, AssetId}, prelude::*,
     shader::{Shader, ShaderCache, ShaderCacheError, ShaderCacheSource}};
 use wgpu::util::DeviceExt;
 
-use super::statics_collect::{logical_draw_distance, STATIC_FLAG_CAVE_OUTSIDE};
+use super::static_placement::logical_draw_distance;
+use super::static_batches::STATIC_FLAG_CAVE_OUTSIDE;
 use crate::util_lib::wesl_source::{wesl_const, wesl_f32_const};
 
 // A view far into the map (Britain), where the world coordinates keep the fewest fraction bits.

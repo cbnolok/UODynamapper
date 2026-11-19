@@ -3,7 +3,9 @@ use super::light_cover::{static_light_ceiling_z, static_light_is_hidden, LightCo
 use super::light_scene::{
     light_clip_material, light_clip_tag, set_light_clip_mode, LightClipMaterial, LightClipMode, LightScene,
 };
-use super::statics_collect::{static_land_z, StaticArtSourceState, StaticChunkBatchKey};
+use super::statics_collect::static_land_z;
+use super::static_source::StaticArtSourceState;
+use super::static_batches::StaticChunkBatchKey;
 use crate::configs::light_scale::{ItemLightScales, NEUTRAL_LIGHT_SCALE};
 use crate::configs::{settings::{ClientTextureSource, Settings}, shader_presets::UniformState};
 use crate::console_logger::{self, LogAbout, LogSev};

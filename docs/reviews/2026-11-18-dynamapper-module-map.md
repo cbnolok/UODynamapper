@@ -91,7 +91,7 @@ terrain, statics, lighting, picking, postprocess}`, `ui/`, `export/`, `diagnosti
 | `core/texture_cache.rs`, `art.rs` | 1073 | 4 | `render/assets`. The unused full-preload `residency.rs` was deleted 2026-11-19. |
 | `core/texture_cache/land.rs` (+ `cache.rs`, `texture_array.rs`, `aux_layers.rs`, `routing.rs`) | 4783 | 25 | `render/assets`; the shared EC item auxiliary setup leaves terrain. |
 | `core/texture_cache/ec_item_liquid.rs`, `ec_item_surface.rs` (+ `hue_mask`, `water`) | 856 | 9 | `render/assets`. |
-| `rsw/art.rs`, `art/{statics_collect, statics_draw, static_geometry, static_surface, transparent_order}.rs` | 8624 | 73 | `render/statics`; `statics_collect.rs` (5470 lines) splits into source policy, geometry, chunk cache, collection and batches. |
+| `rsw/art.rs`, `art/{statics_collect, static_source, static_placement, static_chunk_cache, static_batches, statics_draw, static_geometry, static_surface, transparent_order}.rs` | 8624 | 73 | `render/statics`. `statics_collect.rs` (5470 lines) split 2026-11-19: source policy (`static_source`), anchors, bounds and draw order (`static_placement`), the chunk cache (`static_chunk_cache`), the instances and batches (`static_batches`); collection, its stats and local-light sampling stay, with the tests of all five, which share their fixtures. |
 | `art/{client_grunge, depth_tests, shading_tests}.rs` | 609 | 9 | `render/statics`. |
 | `art/{static_lights, client_light_sprites, light_cover, light_scene, light_scene_tests}.rs` | 4686 | 82 | `render/lighting`. |
 | `rsw/effects/client_night.rs`, `core/render/scene/dynamic_light.rs`, `configs/light_scale.rs` | 1307 | 11 | `render/lighting`. |

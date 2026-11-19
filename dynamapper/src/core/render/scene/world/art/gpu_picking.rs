@@ -1,6 +1,6 @@
 //! On-demand one-pixel visibility queries. Reuses the drawing shaders, instance
 //! buffers and transparent batch bindings; never writes the main color/depth.
-use super::{statics_collect::{StaticPickTile, StaticChunkBatchKey}, transparent_order::{drawn_batches, StaticTransparentBatchOrder}};
+use super::{static_batches::{StaticPickTile, StaticChunkBatchKey}, transparent_order::{drawn_batches, StaticTransparentBatchOrder}};
 use crate::core::render::scene::world::effects::client_night;
 use bevy::prelude::*;
 use bevy::core_pipeline::{Core3d, Core3dSystems, core_3d::Transparent3d};

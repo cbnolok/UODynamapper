@@ -3,10 +3,11 @@ use crate::configs::settings::{ClientTextureSource, Settings};
 use crate::configs::shader_presets::{UniformSnapshot, UniformState};
 use crate::console_logger::{self, LogAbout, LogSev};
 use crate::core::render::scene::world;
-use crate::core::render::scene::world::art::statics_collect::{
-    GroundTileInstance, RenderStaticChunkBatches, RenderStaticInstances, RenderStaticLandInstances,
-    KrStaticPackages, KrStaticSources, SpriteInstance, StaticChunkBatch, StaticChunkBatchKey, StaticLandStyle,
+use crate::core::render::scene::world::art::static_batches::{
+    GroundTileInstance, RenderStaticChunkBatches, RenderStaticInstances, RenderStaticLandInstances, SpriteInstance,
+    StaticChunkBatch, StaticChunkBatchKey,
 };
+use crate::core::render::scene::world::art::static_source::{KrStaticPackages, KrStaticSources, StaticLandStyle};
 use crate::core::system_sets::StartupSysSet;
 use crate::core::texture_cache::art::{
     ArtPageAtlas, GroundArtPageAtlas, GroundArtPageAtlasHandle, SpriteArtPageAtlas,
@@ -431,7 +432,7 @@ fn art_atlas_source(
 }
 
 /// The Kingdom Reborn packages the Enhanced atlases hold the pages of: under the Kingdom Reborn land, when the statics
-/// that continue it are drawn from them (`statics_collect::kingdom_reborn_static_visual_kind`).
+/// that continue it are drawn from them (`static_source::kingdom_reborn_static_visual_kind`).
 fn atlas_kingdom_reborn_sources<'a>(
     atlas_source: Option<ClientTextureSource>,
     land_style: StaticLandStyle,
@@ -1122,7 +1123,7 @@ pub fn sys_sync_active_art_page_atlases(
     mut sprite_atlas_handle: ResMut<SpriteArtPageAtlasHandle>,
     mut ground_atlas: ResMut<GroundArtPageAtlas>,
     mut ground_atlas_handle: ResMut<GroundArtPageAtlasHandle>,
-    source_state: Res<world::art::statics_collect::StaticArtSourceState>,
+    source_state: Res<world::art::static_source::StaticArtSourceState>,
     mut binding_state: ResMut<ActiveArtAtlasBindingState>,
     tex_art_cc_res: Option<Res<TexArtCcPackageRes>>,
     tex_art_ec_res: Option<Res<TexArtEcPackageRes>>,

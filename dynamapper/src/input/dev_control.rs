@@ -150,8 +150,8 @@ fn poll_control(
         Option<Res<crate::core::render::scene::world::art::client_light_sprites::RenderClientLightSprites>>,
         Option<Res<crate::world::z_view::ZViewLimit>>,
         Option<Res<crate::world::caves::CavesRes>>,
-        (Option<Res<crate::core::render::scene::world::art::statics_collect::RenderStaticInstances>>,
-            Option<Res<crate::core::render::scene::world::art::statics_collect::RenderStaticLandInstances>>)),
+        (Option<Res<crate::core::render::scene::world::art::static_batches::RenderStaticInstances>>,
+            Option<Res<crate::core::render::scene::world::art::static_batches::RenderStaticLandInstances>>)),
 ) {
     let (static_lights, art_stats, sprite_atlas, ground_atlas, picking, terrain_cursor, light_sprites, z_view,
         caves, static_instances) = render_state;
@@ -211,7 +211,7 @@ fn poll_control(
                         "pending_pages": sprite_atlas.as_ref().map_or(0, |a| a.pending_page_count())
                             + ground_atlas.as_ref().map_or(0, |a| a.pending_page_count()),
                         "digest": static_instances.0.as_ref().zip(static_instances.1.as_ref()).map(|(sprites, ground)|
-                            format!("{:016x}", crate::core::render::scene::world::art::statics_collect::
+                            format!("{:016x}", crate::core::render::scene::world::art::static_batches::
                                 static_instances_digest(&sprites.0, &ground.0))),
                     }));
                     Ok(json!({"ok": true, "position": position, "rendered_position": rendered,
@@ -290,7 +290,7 @@ fn poll_control(
                             }
                         }
                         if let Some(mut cache) = world.get_resource_mut::<
-                            crate::core::render::scene::world::art::statics_collect::StaticChunkRenderCache>() {
+                            crate::core::render::scene::world::art::static_chunk_cache::StaticChunkRenderCache>() {
                             cache.rebuild_all();
                         }
                         log::info!("Control reload_land: evicted {evicted} map blocks; rebuilding the statics");

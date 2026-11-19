@@ -87,7 +87,7 @@ pub struct TexAuxEcPackageRes(pub Arc<udd_assets::tex_aux_ec::TexAuxEcPackage>);
 /// tileart (in `tilemeta.uddp`), and the item art (in `tex_art_ec.uddp`) and material textures (in `tex_aux_ec.uddp`)
 /// KR draws differently from the Enhanced Client, overlays over the packages holding them, which the others are read
 /// from. Under the KR land the statics that continue the land are drawn from them
-/// (`statics_collect::StaticLandStyle::KingdomReborn`).
+/// (`static_source::StaticLandStyle::KingdomReborn`).
 #[derive(Resource, Clone)]
 pub struct KrItemPackagesRes {
     pub tilemeta: Arc<TileMetaPackage>,

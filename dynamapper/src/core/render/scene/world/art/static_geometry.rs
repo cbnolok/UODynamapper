@@ -1,13 +1,17 @@
 //! Highlight geometry uses the same source routing, anchors and bounds as static collection.
 //! These are visual bounds only; logical XYZ and movement metadata stay on the tile.
-use super::statics_collect::{
-    self, KrStaticPackages, StaticArtSourceState, StaticLandStyle, StaticSurfaceLikeResolutionCache, StaticVisualKind,
-    StaticChunkRenderCache, StaticPickTile, RenderStaticInstances, RenderStaticLandInstances,
+use super::{static_batches, static_placement, static_source};
+use super::static_source::{
+    KrStaticPackages, StaticArtSourceState, StaticLandStyle, StaticSurfaceLikeResolutionCache, StaticVisualKind,
 };
+use super::static_chunk_cache::StaticChunkRenderCache;
+use super::static_batches::{StaticPickTile, RenderStaticInstances, RenderStaticLandInstances};
 use crate::core::texture_cache::ec_item_surface::KR_ITEM_RECORD_BASE;
 use crate::configs::settings::ClientTextureSource;
 use crate::core::render::scene::{camera::RenderZoom, world::land::tile_atlas::TileAtlas};
-use crate::core::uo_files_loader::{TexArtCcPackageRes, TexArtEcPackageRes, TexLandEcPackageRes, TileMetaPackageRes, TexAuxEcPackageRes};
+use crate::core::uo_files_loader::{
+    TexArtCcPackageRes, TexArtEcPackageRes, TexLandEcPackageRes, TileMetaPackageRes, TexAuxEcPackageRes,
+};
 use crate::prelude::*;
 use bevy::{ecs::system::SystemParam, prelude::*};
 
@@ -27,7 +31,7 @@ pub(crate) struct StaticPickingResources<'w> {
     chunks: Res<'w, StaticChunkRenderCache>,
     sprites: Res<'w, RenderStaticInstances>,
     ground: Res<'w, RenderStaticLandInstances>,
-    batches: Res<'w, statics_collect::RenderStaticChunkBatches>,
+    batches: Res<'w, static_batches::RenderStaticChunkBatches>,
     gpu_pick: ResMut<'w, super::gpu_picking::VisibleStaticPick>,
     gpu_request: ResMut<'w, super::gpu_picking::PickRequest>,
     uniforms: Res<'w, crate::configs::shader_presets::UniformState>,
@@ -127,28 +131,28 @@ struct StaticPickPackages<'a> {
     /// The tile data of the statics drawn with Classic art (`TileMetaPackageRes::for_art`).
     cc_art_meta: Option<&'a udd_assets::tilemeta::TileMetaPackage>,
     /// The Kingdom Reborn packages, when the land is Kingdom Reborn's.
-    kr: Option<statics_collect::KrStaticSources<'a>>,
+    kr: Option<static_source::KrStaticSources<'a>>,
 }
 
 /// The highlight geometry of a static of `graphic` at `x`, `y`, `z`, drawn with art `source` over land `land_style`,
 /// as statics collection draws it (`emit_static_render_tile`): from the art and by the tile data it is drawn from,
-/// Kingdom Reborn's for the statics that continue the Kingdom Reborn land (`statics_collect::drawn_tile_data`).
+/// Kingdom Reborn's for the statics that continue the Kingdom Reborn land (`static_source::drawn_tile_data`).
 fn resolve_static_art_geometry(packages: StaticPickPackages<'_>, source: ClientTextureSource,
     land_style: StaticLandStyle, atlas: &TileAtlas, cache: &mut StaticSurfaceLikeResolutionCache, graphic: u16, x: f32,
     y: f32, z: i8) -> Option<StaticArtGeometry> {
     let StaticPickPackages { cc, ec, aux, land, meta: enhanced_package, cc_art_meta, kr } = packages;
     let enhanced_meta = enhanced_package.and_then(|package| package.item_tile(u32::from(graphic)));
-    let kind = statics_collect::resolve_static_visual_kind_cached(source, land_style, graphic, enhanced_package,
+    let kind = static_source::resolve_static_visual_kind_cached(source, land_style, graphic, enhanced_package,
         enhanced_meta, cc, ec, land, cache);
-    let kind = kr.and_then(|kr| statics_collect::kingdom_reborn_static_visual_kind(graphic, enhanced_package,
+    let kind = kr.and_then(|kr| static_source::kingdom_reborn_static_visual_kind(graphic, enhanced_package,
         enhanced_meta, ec, land, kr, cache)).unwrap_or(kind);
-    let (package, meta) = statics_collect::drawn_tile_data(Some(kind), graphic, enhanced_package, cc_art_meta,
+    let (package, meta) = static_source::drawn_tile_data(Some(kind), graphic, enhanced_package, cc_art_meta,
         kr);
     if meta.is_some_and(|tile| tile.is_nodraw()) { return None; }
-    let renders_wet = statics_collect::static_visual_renders_wet(kind, meta, package, u32::from(graphic));
-    let depth_class = statics_collect::resolve_static_depth_class(meta, renders_wet);
-    let height = scale_uo_z_to_bevy_units(f32::from(z)) + statics_collect::depth_class_y_bias(depth_class);
-    let (anchor_x, anchor_y) = statics_collect::surface_like_static_world_anchor(kind, x, y);
+    let renders_wet = static_source::static_visual_renders_wet(kind, meta, package, u32::from(graphic));
+    let depth_class = static_placement::resolve_static_depth_class(meta, renders_wet);
+    let height = scale_uo_z_to_bevy_units(f32::from(z)) + static_placement::depth_class_y_bias(depth_class);
+    let (anchor_x, anchor_y) = static_placement::surface_like_static_world_anchor(kind, x, y);
     let mut geometry = StaticArtGeometry { origin: Vec3::new(anchor_x, height, anchor_y),
         local_min: Vec2::ZERO, local_max: Vec2::ONE, flat_quad: 2,
         route: StaticArtRoute::EcArt(u32::from(graphic)) };
@@ -187,18 +191,18 @@ fn resolve_static_art_geometry(packages: StaticPickPackages<'_>, source: ClientT
         }
     };
     if matches!(kind, StaticVisualKind::EcSurface { .. }) {
-        geometry.flat_quad = if statics_collect::ec_static_camera_quad(meta) { 3 } else { 2 };
+        geometry.flat_quad = if static_placement::ec_static_camera_quad(meta) { 3 } else { 2 };
     } else if matches!(kind, StaticVisualKind::CcRegular { .. })
-        && statics_collect::cc_static_uses_flat_geometry(meta, width, height, x, y, z, atlas) {
-        let bounds = statics_collect::resolve_cc_surface_like_flat_quad_bounds(width, height);
-        let (dx, dy) = statics_collect::cc_surface_like_flat_quad_center_offsets(height);
+        && static_placement::cc_static_uses_flat_geometry(meta, width, height, x, y, z, atlas) {
+        let bounds = static_placement::resolve_cc_surface_like_flat_quad_bounds(width, height);
+        let (dx, dy) = static_placement::cc_surface_like_flat_quad_center_offsets(height);
         geometry.origin.x = x + dx;
         geometry.origin.z = y + dy;
         geometry.local_min = Vec2::new(bounds.local_min_x, bounds.local_min_z);
         geometry.local_max = Vec2::new(bounds.local_max_x, bounds.local_max_z);
         geometry.flat_quad = 1;
     } else {
-        let bounds = statics_collect::resolve_static_billboard_bounds(pixel_ratio,
+        let bounds = static_placement::resolve_static_billboard_bounds(pixel_ratio,
             offset_x, offset_y, width, height);
         geometry.local_min = Vec2::new(bounds.local_min_x, bounds.local_min_y);
         geometry.local_max = Vec2::new(bounds.local_max_x, bounds.local_max_y);
@@ -301,7 +305,7 @@ mod tests {
         let kr_art = ec.kr_overlay(udd_assets::AtlasCacheOptions::disabled()).unwrap().expect("the Kingdom Reborn art");
         let kr_land = land.kr_land(udd_container::UddpReaderOptions::disabled(), udd_assets::AtlasCacheOptions::disabled())
             .unwrap().expect("the Kingdom Reborn land");
-        let kr = statics_collect::KrStaticSources { tilemeta: &kr_meta, art: &kr_art, land: &kr_land };
+        let kr = static_source::KrStaticSources { tilemeta: &kr_meta, art: &kr_art, land: &kr_land };
         let atlas = TileAtlas::new(Default::default(), 0);
         let packages = StaticPickPackages { cc: None, ec: Some(&ec), aux: None, land: Some(&land), meta: Some(&meta),
             cc_art_meta: Some(&meta), kr: None };
@@ -316,7 +320,7 @@ mod tests {
         let water = kingdom_reborn(KR_SPRITE_WATER);
         let (art, slot) = kr.art_slot(Some(&ec), u32::from(KR_SPRITE_WATER)).expect("the Kingdom Reborn water");
         assert!(std::ptr::eq(art, &kr_art));
-        let bounds = statics_collect::resolve_static_billboard_bounds(
+        let bounds = static_placement::resolve_static_billboard_bounds(
             art.sprite_geometry(slot.art_id).unwrap().legacy_pixel_ratio(), slot.draw_offset_x, slot.draw_offset_y,
             slot.logical_width(), slot.logical_height());
         assert_eq!((water.flat_quad, water.local_min, water.local_max), (0,
