@@ -70,6 +70,7 @@ pub use self::support::{
     unpack_delta32,
     unpack_delta_hi8,
     unpack_delta_lo24,
+    unpack_independent_frames,
     unpack_offset40,
     unpack_type,
     write_package,
@@ -185,6 +186,11 @@ pub enum CompressionFlag {
     /// Force plain Zstd compression at an explicit level.
     ZstdNoDictLevel(i32),
 
+    /// Force plain Zstd compression at an explicit level, as independent frames of `strip_bytes` raw bytes each (the
+    /// last one shorter), which the reader decodes in parallel. It is stored as plain Zstd: the frames follow one
+    /// another, and a decoder that does not split them reads them in order.
+    ZstdStripsLevel { level: i32, strip_bytes: u32 },
+
     /// Force Zstd compression with the implicit type dictionary.
     ZstdDict,
 }
@@ -226,7 +232,8 @@ pub enum DataType {
 /// - bits  0..= 5 : type (6 bits)
 /// - bits  6..= 7 : codec (2 bits)
 /// - bits  8..=15 : high 8 bits of the compression delta
-/// - bits 16..=31 : reserved
+/// - bit  16      : independent frames: a Zstd payload stored as several frames that decode in parallel
+/// - bits 17..=31 : reserved
 ///
 /// `delta = raw_size - stored_size`
 pub type Meta32 = u32;

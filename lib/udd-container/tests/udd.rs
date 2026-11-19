@@ -493,6 +493,71 @@ fn uddpi_patch_replaces_target_file_and_recomputes_hash() {
     assert_eq!(canonical_package_hash64(&rebuilt), canonical_package_hash64(&new_bytes));
 }
 
+/// A patch keeps a payload of independent Zstd frames (strips) as strips, with the same strip size and Meta32 flag.
+/// The patcher writes payloads again at the default level and checks the result's hash, so only a package written at
+/// that level patches; this one is.
+#[test]
+fn uddpi_patch_keeps_strips_of_untouched_payloads() {
+    /// The level a patch writes payloads at.
+    const DEFAULT_ZSTD_LEVEL: i32 = 7;
+    const STRIP_BYTES: u32 = 64 * 1024;
+    const STRIPS: usize = 4;
+    let replaced = "metadata/replaced.bin";
+    let striped = "metadata/striped.bin";
+    let striped_payload: Vec<u8> = (0..STRIPS * STRIP_BYTES as usize).map(|index| (index * 7 / 5 + index / 4096) as u8).collect();
+    let package = |replaced_payload: &[u8]| {
+        let mut builder = UddpBuilder::new(LookupMode::VirtualPathHash);
+        for (path, compression, data) in [
+            (replaced, CompressionFlag::ZstdNoDict, replaced_payload),
+            (striped, CompressionFlag::ZstdStripsLevel { level: DEFAULT_ZSTD_LEVEL, strip_bytes: STRIP_BYTES }, striped_payload.as_slice()),
+        ] {
+            builder
+                .add_file(AddFileRequest {
+                    data_type: DataType::Metadata as u8,
+                    compression,
+                    width: 0, height: 0,
+                    virtual_path: Some(path),
+                    path_hash64: None,
+                    id: None,
+                    data,
+                })
+                .expect("add payload");
+        }
+        builder.build().expect("build package")
+    };
+    let (old_payload, new_payload) = (b"old payload".as_slice(), b"new payload".as_slice());
+    let base_bytes = package(old_payload);
+    let new_bytes = package(new_payload);
+    let mut patch_builder = UddpiBuilder::new(
+        LookupMode::VirtualPathHash,
+        canonical_package_hash64(&base_bytes),
+        canonical_package_hash64(&new_bytes),
+    );
+    patch_builder.add_path_replacement(
+        xxh64_virtual_path(replaced),
+        xxh64(old_payload, 0),
+        xxh64(new_payload, 0),
+        new_payload.to_vec(),
+        DataType::Metadata as u8,
+    );
+    let patch_bytes = patch_builder.build().expect("build patch");
+    let rebuilt = UddpReader::open(UddpiApplier::apply_patch(&base_bytes, &patch_bytes).expect("apply patch")).expect("open rebuilt");
+
+    assert_eq!(rebuilt.read_file_by_path_hash(xxh64_virtual_path(striped)).expect("read striped"), striped_payload);
+    let record = rebuilt.records().into_iter().find(|record| record.key == FileKey::PathHash(xxh64_virtual_path(striped))).expect("striped record");
+    assert!(unpack_independent_frames(record.locator.meta32));
+    let file = rebuilt.find_by_path_hash(xxh64_virtual_path(striped)).expect("striped file");
+    let mut stored = vec![0u8; file.stored_size as usize];
+    rebuilt.read_entry(file.payload_offset, &mut stored).expect("read stored payload");
+    let mut frames = 0;
+    let mut rest = stored.as_slice();
+    while !rest.is_empty() {
+        rest = &rest[zstd::zstd_safe::find_frame_compressed_size(rest).expect("frame")..];
+        frames += 1;
+    }
+    assert_eq!(frames, STRIPS);
+}
+
 #[test]
 fn uddf_roundtrip_preserves_flags_and_payload() {
     let payload = b"single wrapped payload";

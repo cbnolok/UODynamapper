@@ -21,13 +21,29 @@ use super::*;
 
 const ZSTD_LEVEL: i32 = 7;
 
+/// The level of payloads written without an explicit one.
+pub(crate) const fn zstd_default_level() -> i32 {
+    ZSTD_LEVEL
+}
+
+
+/// The Meta32 bit of a Zstd payload stored as independent frames ([`zstd_compress_strips`]), which the reader decodes
+/// in parallel. Without it a payload decodes as one stream, whatever frames it holds.
+const META32_INDEPENDENT_FRAMES: Meta32 = 1 << 16;
 
 /// Pack the public metadata word stored in every file locator.
-pub fn pack_meta32(data_type: u8, codec: Codec, delta32: u32) -> Meta32 {
+pub fn pack_meta32(data_type: u8, codec: Codec, delta32: u32, independent_frames: bool) -> Meta32 {
     let ty = (data_type as u32) & 0x3F;
     let co = ((codec as u32) & 0x03) << 6;
     let delta_hi = ((delta32 >> 24) & 0xFF) << 8;
-    ty | co | delta_hi
+    let frames = if independent_frames { META32_INDEPENDENT_FRAMES } else { 0 };
+    ty | co | delta_hi | frames
+}
+
+/// Whether a packed metadata word marks its payload as independent Zstd frames.
+#[inline(always)]
+pub fn unpack_independent_frames(meta32: Meta32) -> bool {
+    meta32 & META32_INDEPENDENT_FRAMES != 0
 }
 
 /// Extract the 6-bit type id from a packed metadata word.
@@ -161,6 +177,21 @@ pub(crate) fn zstd_compress_with_dict_parallel(data: &[u8], dict: &[u8]) -> std:
     encoder.finish()
 }
 
+/// Zstd at `level` as independent frames of `strip_bytes` raw bytes each (the last one shorter), compressed in
+/// parallel and stored one after another. Its payload is marked with [`META32_INDEPENDENT_FRAMES`], so that
+/// [`zstd_decompress`] decodes the frames in parallel.
+pub(crate) fn zstd_compress_strips(data: &[u8], level: i32, strip_bytes: u32) -> std::io::Result<Vec<u8>> {
+    use rayon::prelude::*;
+    if strip_bytes == 0 {
+        return Err(std::io::Error::new(std::io::ErrorKind::InvalidInput, "Zstd strips of 0 bytes"));
+    }
+    let frames = data
+        .par_chunks(strip_bytes as usize)
+        .map(|strip| zstd_compress_level(strip, level))
+        .collect::<std::io::Result<Vec<_>>>()?;
+    Ok(frames.concat())
+}
+
 fn zstd_worker_count() -> u32 {
     std::thread::available_parallelism()
         .map(|threads| threads.get().saturating_sub(1).max(1) as u32)
@@ -174,13 +205,38 @@ thread_local! {
         std::cell::RefCell::new(zstd::zstd_safe::DCtx::create());
 }
 
+/// The most threads one payload's frames decode on. More would take cores from the renderer and the other loaders
+/// for a few milliseconds less on a page.
+const FRAME_DECODE_THREADS_MAX: usize = 8;
+
+/// The pool that decodes a payload's frames: its own, so the cap holds whatever else uses rayon's global pool, and
+/// built once, on the first parallel decode, so no decode pays for starting threads.
+fn frame_decode_pool() -> &'static rayon::ThreadPool {
+    static POOL: std::sync::OnceLock<rayon::ThreadPool> = std::sync::OnceLock::new();
+    POOL.get_or_init(|| {
+        let threads = std::thread::available_parallelism().map_or(1, |threads| threads.get()).min(FRAME_DECODE_THREADS_MAX);
+        rayon::ThreadPoolBuilder::new()
+            .num_threads(threads)
+            .thread_name(|index| format!("uddp-frame-decode-{index}"))
+            .build()
+            .expect("the frame decode pool starts")
+    })
+}
+
 /// Zstd-decompresses one payload of `raw_size` bytes on this thread's reused context, with the
-/// type's prepared dictionary when the payload has one.
+/// type's prepared dictionary when the payload has one. A payload marked as `independent_frames` decodes its frames in
+/// parallel, each straight into its part of the output; the writer decides which payloads are worth it.
 pub(crate) fn zstd_decompress(
     data: &[u8],
     raw_size: usize,
     dictionary: Option<&DecoderDictionary<'static>>,
+    independent_frames: bool,
 ) -> std::io::Result<Vec<u8>> {
+    if independent_frames && dictionary.is_none() {
+        if let Some(frames) = independent_zstd_frames(data, raw_size) {
+            return zstd_decompress_frames(&frames, raw_size);
+        }
+    }
     DECOMPRESSION_CONTEXT.with(|context| {
         let mut context = context.borrow_mut();
         let mut decoded = Vec::with_capacity(raw_size);
@@ -191,6 +247,53 @@ pub(crate) fn zstd_decompress(
         result.map_err(|code| std::io::Error::other(zstd::zstd_safe::get_error_name(code)))?;
         Ok(decoded)
     })
+}
+
+/// The frames of `data` with the raw size each declares, when there are several and the sizes add up to `raw_size`.
+/// `None` sends the payload to the single-stream decoder, which also reports any damage.
+fn independent_zstd_frames(data: &[u8], raw_size: usize) -> Option<Vec<(&[u8], usize)>> {
+    let mut frames = Vec::new();
+    let mut rest = data;
+    let mut total = 0usize;
+    while !rest.is_empty() {
+        let compressed = zstd::zstd_safe::find_frame_compressed_size(rest).ok()?;
+        if compressed == 0 || compressed > rest.len() || (frames.is_empty() && compressed == rest.len()) {
+            return None;
+        }
+        let (frame, tail) = rest.split_at(compressed);
+        let decoded = usize::try_from(zstd::zstd_safe::get_frame_content_size(frame).ok()??).ok()?;
+        total = total.checked_add(decoded)?;
+        frames.push((frame, decoded));
+        rest = tail;
+    }
+    (total == raw_size).then_some(frames)
+}
+
+/// Decodes `frames` in parallel, each on its worker's reused context into its own part of the output.
+fn zstd_decompress_frames(frames: &[(&[u8], usize)], raw_size: usize) -> std::io::Result<Vec<u8>> {
+    use rayon::prelude::*;
+    let mut decoded = vec![0u8; raw_size];
+    let mut parts = Vec::with_capacity(frames.len());
+    let mut rest = decoded.as_mut_slice();
+    for &(_, size) in frames {
+        let (part, tail) = rest.split_at_mut(size);
+        parts.push(part);
+        rest = tail;
+    }
+    frame_decode_pool().install(|| frames.par_iter().zip(parts).try_for_each(|(&(frame, size), part)| {
+        DECOMPRESSION_CONTEXT.with(|context| {
+            let written = context
+                .borrow_mut()
+                .decompress(part, frame)
+                .map_err(|code| std::io::Error::other(zstd::zstd_safe::get_error_name(code)))?;
+            if written == size {
+                Ok(())
+            } else {
+                Err(std::io::Error::other(format!("Zstd frame decoded to {written} bytes, not the {size} it declares")))
+            }
+        })
+    }))?;
+    Ok(decoded)
 }
 
 /// Compute the canonical XXH64 package hash.

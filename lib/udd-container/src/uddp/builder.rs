@@ -17,7 +17,7 @@ use xxhash_rust::xxh64::Xxh64;
 
 use super::support::{
     patch_header_package_hash64, zstd_compress, zstd_compress_level, zstd_compress_level_parallel,
-    zstd_compress_parallel, zstd_compress_with_dict, zstd_compress_with_dict_parallel,
+    zstd_compress_parallel, zstd_compress_strips, zstd_default_level, zstd_compress_with_dict, zstd_compress_with_dict_parallel,
 };
 use super::*;
 
@@ -59,6 +59,8 @@ pub(super) struct BuiltFile {
     key: PendingKey,
     data_type: u8,
     codec: Codec,
+    /// A Zstd payload stored as independent frames, marked in its Meta32.
+    independent_frames: bool,
     raw_size: u32,
     pub(super) encoded_payload: Vec<u8>,
 }
@@ -69,6 +71,7 @@ impl BuiltFile {
             key: self.key,
             data_type: self.data_type,
             codec: self.codec,
+            independent_frames: self.independent_frames,
             raw_size: self.raw_size,
             stored_size: self.encoded_payload.len() as u32,
         }
@@ -81,6 +84,7 @@ pub(super) struct FileLayout {
     key: PendingKey,
     data_type: u8,
     codec: Codec,
+    independent_frames: bool,
     raw_size: u32,
     pub(super) stored_size: u32,
 }
@@ -161,9 +165,9 @@ impl CompressionSummary {
     pub(super) fn add(&mut self, compression: CompressionFlag) {
         match compression {
             CompressionFlag::None => self.raw += 1,
-            CompressionFlag::ZstdNoDict | CompressionFlag::ZstdNoDictLevel(_) => {
-                self.zstd_no_dict += 1
-            }
+            CompressionFlag::ZstdNoDict
+            | CompressionFlag::ZstdNoDictLevel(_)
+            | CompressionFlag::ZstdStripsLevel { .. } => self.zstd_no_dict += 1,
             CompressionFlag::ZstdDict => self.zstd_dict += 1,
             CompressionFlag::Auto => self.auto += 1,
         }
@@ -401,6 +405,7 @@ impl UddpBuilder {
                 },
                 data_type: unpack_type(record.locator.meta32),
                 codec: unpack_codec(record.locator.meta32),
+                independent_frames: unpack_independent_frames(record.locator.meta32),
                 raw_size: record.locator.raw_size,
                 encoded_payload: base.locator_payload(&record.locator).map_err(to_build_error)?.to_vec(),
             });
@@ -411,6 +416,7 @@ impl UddpBuilder {
                 key: PendingKey::PathHash(path_hash64),
                 data_type,
                 codec: Codec::None,
+                independent_frames: false,
                 raw_size,
                 encoded_payload: data,
             });
@@ -565,7 +571,7 @@ pub(super) fn serialize_package_head(
     for file in files {
         let stored_size = file.stored_size;
         let delta = file.raw_size - stored_size;
-        let meta32 = pack_meta32(file.data_type, file.codec, delta);
+        let meta32 = pack_meta32(file.data_type, file.codec, delta, file.independent_frames);
         let pos64 = pack_pos64(blob_cursor, delta);
         locator_records.push((
             file.key,
@@ -723,6 +729,25 @@ pub(crate) fn codec_to_compression_flag(codec: Codec) -> CompressionFlag {
         Codec::None => CompressionFlag::None,
         Codec::ZstdNoDict => CompressionFlag::ZstdNoDict,
         Codec::ZstdTypeDict => CompressionFlag::ZstdDict,
+    }
+}
+
+/// The builder preference that stores a payload again as it is stored now: [`codec_to_compression_flag`], and strips
+/// of the first frame's raw size for a payload of independent frames. The level isn't recorded, so strips take the
+/// default level, as plain Zstd payloads do.
+pub(crate) fn stored_compression_flag(meta32: Meta32, stored: &[u8]) -> CompressionFlag {
+    let codec = unpack_codec(meta32);
+    if codec != Codec::ZstdNoDict || !unpack_independent_frames(meta32) {
+        return codec_to_compression_flag(codec);
+    }
+    let first_frame = zstd::zstd_safe::find_frame_compressed_size(stored)
+        .ok()
+        .and_then(|size| zstd::zstd_safe::get_frame_content_size(&stored[..size]).ok().flatten())
+        .and_then(|raw| u32::try_from(raw).ok())
+        .filter(|&raw| raw > 0);
+    match first_frame {
+        Some(strip_bytes) => CompressionFlag::ZstdStripsLevel { level: zstd_default_level(), strip_bytes },
+        None => CompressionFlag::ZstdNoDict,
     }
 }
 
@@ -1133,6 +1158,9 @@ fn compress_file(
             };
             (Codec::ZstdNoDict, encoded)
         }
+        CompressionFlag::ZstdStripsLevel { level, strip_bytes } => {
+            (Codec::ZstdNoDict, zstd_compress_strips(data_to_compress, level, strip_bytes).map_err(BuildError::Io)?)
+        }
         CompressionFlag::ZstdDict => {
             let dict = dicts_by_type
                 .get(&file.data_type)
@@ -1163,6 +1191,7 @@ fn compress_file(
     Ok(BuiltFile {
         key: file.key,
         data_type: file.data_type,
+        independent_frames: codec == Codec::ZstdNoDict && matches!(file.compression, CompressionFlag::ZstdStripsLevel { .. }),
         codec,
         raw_size: file.raw_data.len() as u32,
         encoded_payload,
@@ -1182,6 +1211,7 @@ fn compress_file_owned(
             key,
             data_type,
             codec: Codec::None,
+            independent_frames: false,
             raw_size,
             encoded_payload: file.raw_data,
         });
@@ -1192,6 +1222,7 @@ fn compress_file_owned(
     }
 
     let data_to_compress = &file.raw_data;
+    let striped = matches!(file.compression, CompressionFlag::ZstdStripsLevel { .. });
     let (codec, encoded_payload) = match file.compression {
         CompressionFlag::None | CompressionFlag::Auto => unreachable!("handled above"),
         CompressionFlag::ZstdNoDict => {
@@ -1209,6 +1240,9 @@ fn compress_file_owned(
                 zstd_compress_level(data_to_compress, level).map_err(BuildError::Io)?
             };
             (Codec::ZstdNoDict, encoded)
+        }
+        CompressionFlag::ZstdStripsLevel { level, strip_bytes } => {
+            (Codec::ZstdNoDict, zstd_compress_strips(data_to_compress, level, strip_bytes).map_err(BuildError::Io)?)
         }
         CompressionFlag::ZstdDict => {
             let dict = dicts_by_type
@@ -1233,6 +1267,7 @@ fn compress_file_owned(
     Ok(BuiltFile {
         key,
         data_type,
+        independent_frames: codec == Codec::ZstdNoDict && striped,
         codec,
         raw_size,
         encoded_payload,
@@ -1361,6 +1396,7 @@ fn choose_auto_compression_owned(
             key,
             data_type,
             codec: Codec::None,
+            independent_frames: false,
             raw_size,
             encoded_payload: file.raw_data,
         });
@@ -1374,6 +1410,7 @@ fn choose_auto_compression_owned(
                     key,
                     data_type,
                     codec: Codec::ZstdTypeDict,
+                    independent_frames: false,
                     raw_size,
                     encoded_payload: compressed,
                 });
@@ -1386,6 +1423,7 @@ fn choose_auto_compression_owned(
                 key,
                 data_type,
                 codec: Codec::ZstdNoDict,
+                independent_frames: false,
                 raw_size,
                 encoded_payload: compressed,
             });
@@ -1395,6 +1433,7 @@ fn choose_auto_compression_owned(
             key,
             data_type,
             codec: Codec::None,
+            independent_frames: false,
             raw_size,
             encoded_payload: file.raw_data,
         });
@@ -1410,6 +1449,7 @@ fn choose_auto_compression_owned(
             key,
             data_type,
             codec: Codec::ZstdNoDict,
+            independent_frames: false,
             raw_size,
             encoded_payload: compressed,
         })
@@ -1418,6 +1458,7 @@ fn choose_auto_compression_owned(
             key,
             data_type,
             codec: Codec::None,
+            independent_frames: false,
             raw_size,
             encoded_payload: file.raw_data,
         })
@@ -1607,5 +1648,74 @@ mod tests {
             assert_eq!(stored, zstd_compress_level_parallel(&payload(id), LEVEL).unwrap());
             assert_eq!(package.read_file_by_dense_id(id).expect("read payload"), payload(id));
         }
+    }
+
+    /// A payload compressed in strips is stored as one Zstd frame per strip, marked as independent frames in its
+    /// Meta32, and reads back whole through the parallel frame decoder. A payload at one explicit level is not marked.
+    #[test]
+    fn zstd_strips_store_one_frame_per_strip_and_read_back() {
+        const LEVEL: i32 = 3;
+        const STRIP_BYTES: u32 = 256 * 1024;
+        const LARGE_ID: u32 = 0;
+        const SMALL_ID: u32 = 1;
+        // Not a multiple of the strip, so the last strip is short.
+        const LARGE_BYTES: usize = 5 * STRIP_BYTES as usize + 1000;
+        const SMALL_BYTES: usize = 3 * 1024 * 16;
+        let payload = |len: usize| -> Vec<u8> { (0..len).map(|index| (index * 7 / 5 + index / 4096) as u8).collect() };
+        let mut builder = UddpBuilder::new(LookupMode::DenseId);
+        for (id, len, strip_bytes) in [(LARGE_ID, LARGE_BYTES, STRIP_BYTES), (SMALL_ID, SMALL_BYTES, 16 * 1024)] {
+            builder
+                .add_owned_file(AddOwnedFileRequest {
+                    data_type: DataType::Texture as u8,
+                    compression: CompressionFlag::ZstdStripsLevel { level: LEVEL, strip_bytes },
+                    width: 0,
+                    height: 0,
+                    virtual_path: None,
+                    path_hash64: None,
+                    id: Some(id),
+                    data: payload(len),
+                })
+                .expect("add striped payload");
+        }
+        let package = UddpReader::open(builder.into_bytes().expect("build package")).expect("open package");
+
+        for (id, len, strips) in [(LARGE_ID, LARGE_BYTES, 6), (SMALL_ID, SMALL_BYTES, 3)] {
+            let file = package.find_by_dense_id(id).expect("payload record");
+            let mut stored = vec![0u8; file.stored_size as usize];
+            package.read_entry(file.payload_offset, &mut stored).expect("read stored payload");
+            let mut frames = 0;
+            let mut rest = stored.as_slice();
+            while !rest.is_empty() {
+                rest = &rest[zstd::zstd_safe::find_frame_compressed_size(rest).expect("frame")..];
+                frames += 1;
+            }
+            assert_eq!(frames, strips);
+            assert_eq!(package.read_file_by_dense_id(id).expect("read payload"), payload(len));
+        }
+        let marked: Vec<(u32, bool)> = package
+            .records()
+            .iter()
+            .map(|record| match record.key {
+                FileKey::Id(id) => (id, unpack_independent_frames(record.locator.meta32)),
+                FileKey::PathHash(_) => unreachable!("dense ids only"),
+            })
+            .collect();
+        assert!(marked.iter().all(|&(_, framed)| framed), "{marked:?}");
+
+        let mut plain = UddpBuilder::new(LookupMode::DenseId);
+        plain
+            .add_owned_file(AddOwnedFileRequest {
+                data_type: DataType::Texture as u8,
+                compression: CompressionFlag::ZstdNoDictLevel(LEVEL),
+                width: 0,
+                height: 0,
+                virtual_path: None,
+                path_hash64: None,
+                id: Some(LARGE_ID),
+                data: payload(LARGE_BYTES),
+            })
+            .expect("add plain payload");
+        let plain = UddpReader::open(plain.into_bytes().expect("build package")).expect("open package");
+        assert!(!unpack_independent_frames(plain.records()[0].locator.meta32));
     }
 }

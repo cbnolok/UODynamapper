@@ -41,6 +41,7 @@ pub use uddp::{
     reconstruct_stored_size,
     unpack_codec,
     unpack_delta_hi8,
+    unpack_independent_frames,
     unpack_offset40,
     unpack_type,
     xxh64_virtual_path,

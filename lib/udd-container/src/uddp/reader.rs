@@ -504,7 +504,8 @@ impl UddpReader {
 
             let decoded = match unpack_codec(locator.meta32) {
                 Codec::None => data.to_vec(),
-                Codec::ZstdNoDict => zstd_decompress(data, locator.raw_size as usize, None).map_err(FormatError::Io)?,
+                Codec::ZstdNoDict => zstd_decompress(data, locator.raw_size as usize, None, unpack_independent_frames(locator.meta32))
+                    .map_err(FormatError::Io)?,
                 Codec::ZstdTypeDict => {
                     let data_type = unpack_type(locator.meta32);
                     let dict = self
@@ -512,7 +513,7 @@ impl UddpReader {
                         .get(data_type as usize)
                         .and_then(Option::as_ref)
                         .ok_or(FormatError::MissingDictionary(data_type))?;
-                    zstd_decompress(data, locator.raw_size as usize, Some(dict)).map_err(FormatError::Io)?
+                    zstd_decompress(data, locator.raw_size as usize, Some(dict), false).map_err(FormatError::Io)?
                 }
             };
 

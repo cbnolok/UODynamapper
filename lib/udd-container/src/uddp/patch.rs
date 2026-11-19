@@ -10,7 +10,7 @@ use std::collections::BTreeMap;
 
 use xxhash_rust::xxh64::xxh64;
 
-use super::builder::codec_to_compression_flag;
+use super::builder::stored_compression_flag;
 use super::support::{patch_header_magic, patch_header_package_hash64};
 use super::*;
 
@@ -289,7 +289,8 @@ impl UddpiApplier {
 
             let old_hash64 = xxh64(&old_raw, 0);
             let data_type = unpack_type(record.locator.meta32);
-            let original_flag = codec_to_compression_flag(unpack_codec(record.locator.meta32));
+            let stored = base_reader.locator_payload(&record.locator).map_err(PatchError::Format)?;
+            let original_flag = stored_compression_flag(record.locator.meta32, stored);
 
             let payload = replacements.get(&record.key).map(|replacement| replacement.raw.as_slice()).unwrap_or(&old_raw);
 
