@@ -1,0 +1,19 @@
+# Reproduces the measurements in ../atlas_page_compression.md. Standalone: build it outside the workspace's target, e.g.
+#   CARGO_TARGET_DIR=/path/to/scratch cargo run --release -- /path/to/uddp
+[package]
+name = "atlas-page-compression-bench"
+version = "0.1.0"
+edition = "2024"
+publish = false
+
+[dependencies]
+udd-assets = { path = "../../../lib/udd-assets" }
+zstd = "0.13"
+lz4 = "1"
+flate2 = { version = "1", default-features = false, features = ["zlib-ng"] }
+libdeflater = "1"
+liblzma = "0.4"
+brotli = "8"
+bzip2 = "0.5"
+
+[workspace]
