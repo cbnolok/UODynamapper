@@ -3,6 +3,8 @@ use bevy::color::Srgba;
 use bevy::diagnostic::DiagnosticsStore;
 use bevy::prelude::*;
 use bevy::text::LineHeight;
+use std::sync::Arc;
+use std::sync::atomic::{AtomicU32, Ordering};
 use sysinfo::{ProcessRefreshKind, ProcessesToUpdate, System};
 use uocf::classic::land_texture::LandTextureSize;
 
@@ -46,6 +48,36 @@ pub struct ProcessMetrics {
     pub process_vram_tracked_mib: f32,
     /// Number of logical CPU cores.
     pub core_count: usize,
+    /// The thread sampling `process_vram_tracked_mib`, started by the first refresh.
+    vram_probe: Option<VramProbe>,
+}
+
+/// The process's VRAM, sampled on its own thread at the refresh interval: reading a DRM fd's fdinfo makes the driver
+/// walk every buffer object of the client, which took 11 ms a read on amdgpu in a city walk (2026-11-19), a long frame
+/// four times a second when it ran in the frame.
+struct VramProbe(Arc<AtomicU32>);
+
+impl VramProbe {
+    const THREAD_NAME: &str = "vram-probe";
+
+    fn spawn(pid: sysinfo::Pid) -> Self {
+        let mib = Arc::new(AtomicU32::new(0.0_f32.to_bits()));
+        let published = Arc::clone(&mib);
+        let spawned = std::thread::Builder::new().name(Self::THREAD_NAME.to_owned()).spawn(move || loop {
+            let sample = query_process_vram_mib_native(pid).unwrap_or(0.0);
+            published.store(sample.to_bits(), Ordering::Relaxed);
+            std::thread::sleep(Duration::from_secs_f32(METRICS_REFRESH_INTERVAL_SEC));
+        });
+        if let Err(err) = spawned {
+            warn!("Cannot start the {} thread, the tracked process VRAM stays 0: {err}", Self::THREAD_NAME);
+        }
+        Self(mib)
+    }
+
+    /// The latest sample, in MiB.
+    fn mib(&self) -> f32 {
+        f32::from_bits(self.0.load(Ordering::Relaxed))
+    }
 }
 
 impl Default for ProcessMetrics {
@@ -63,6 +95,7 @@ impl Default for ProcessMetrics {
             estimated_texture_vram_mib: 0.0,
             estimated_atlas_vram_mib: 0.0,
             process_vram_tracked_mib: 0.0,
+            vram_probe: None,
         }
     }
 }
@@ -329,7 +362,7 @@ pub fn sys_refresh_process_metrics(
 
         // Cross-platform tracked process VRAM: app-owned persistent GPU allocations.
         // Includes terrain texture arrays + tile metadata atlas.
-        metrics.process_vram_tracked_mib = query_process_vram_mib_native(pid).unwrap_or(0.0);
+        metrics.process_vram_tracked_mib = metrics.vram_probe.get_or_insert_with(|| VramProbe::spawn(pid)).mib();
     }
 }
 
