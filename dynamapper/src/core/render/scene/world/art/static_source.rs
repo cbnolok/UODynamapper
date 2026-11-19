@@ -35,7 +35,7 @@ pub(crate) fn classic_static_visual_kind(graphic: u16,
     }
 }
 
-pub(super) fn static_visual_renders_wet(kind: StaticVisualKind,
+pub(crate) fn static_visual_renders_wet(kind: StaticVisualKind,
     tilemeta: Option<&udd_assets::tilemeta::TileMetaItemTile>,
     package: Option<&udd_assets::tilemeta::TileMetaPackage>, graphic: u32) -> bool {
     match kind {
@@ -268,11 +268,11 @@ pub(super) fn valid_texture_repetition(repetition: f32) -> f32 {
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub(crate) struct SurfaceLikeTexLandEcResolution {
-    pub(super) runtime_slot_id: u32,
+    pub(crate) runtime_slot_id: u32,
     pub(super) texture_repetition: f32,
     pub(super) liquid_payload: Option<u32>,
     /// A slot of the Kingdom Reborn land package (`kingdom_reborn_static_visual_kind`), not of the Enhanced one.
-    pub(super) kingdom_reborn: bool,
+    pub(crate) kingdom_reborn: bool,
 }
 
 fn surface_like_tex_land_ec_resolution(
@@ -398,7 +398,7 @@ impl StaticLandStyle {
 /// `land_style`: the statics that continue the land take its style (`static_continues_land`). Under Classic land
 /// Enhanced art draws them from their Classic art, as Classic art mode does; under Enhanced or KR land Classic art draws
 /// them the Enhanced way, as Enhanced art mode does.
-pub(super) fn resolve_static_visual_kind_cached(
+pub(crate) fn resolve_static_visual_kind_cached(
     art_source: ClientTextureSource,
     land_style: StaticLandStyle,
     tile_graphic: u16,
@@ -483,13 +483,13 @@ pub struct KrStaticPackages<'w> {
 
 impl KrStaticPackages<'_> {
     /// The packages, when the item packages and the land package are all there.
-    pub(super) fn sources(&self) -> Option<KrStaticSources<'_>> {
+    pub(crate) fn sources(&self) -> Option<KrStaticSources<'_>> {
         let (items, land) = (self.items.as_deref()?, self.land.as_deref()?);
         Some(KrStaticSources { tilemeta: &items.tilemeta, art: &items.art, land: &land.0 })
     }
 
     /// Whether a package arrived or changed.
-    pub(super) fn is_changed(&self) -> bool {
+    pub(crate) fn is_changed(&self) -> bool {
         self.items.as_ref().is_some_and(|items| items.is_changed())
             || self.land.as_ref().is_some_and(|land| land.is_changed())
     }
@@ -497,17 +497,17 @@ impl KrStaticPackages<'_> {
 
 /// The Kingdom Reborn tile data, item art (in the Enhanced layouts) and land.
 #[derive(Clone, Copy)]
-pub(super) struct KrStaticSources<'a> {
-    pub(super) tilemeta: &'a udd_assets::tilemeta::TileMetaPackage,
+pub(crate) struct KrStaticSources<'a> {
+    pub(crate) tilemeta: &'a udd_assets::tilemeta::TileMetaPackage,
     /// An overlay over the Enhanced art: the items whose world art Kingdom Reborn draws differently ([`Self::art_slot`]).
-    pub(super) art: &'a std::sync::Arc<udd_assets::tex_art_ec::TexArtEcPackage>,
-    pub(super) land: &'a std::sync::Arc<udd_assets::tex_land_ec::TexLandEcPackage>,
+    pub(crate) art: &'a std::sync::Arc<udd_assets::tex_art_ec::TexArtEcPackage>,
+    pub(crate) land: &'a std::sync::Arc<udd_assets::tex_land_ec::TexLandEcPackage>,
 }
 
 impl<'a> KrStaticSources<'a> {
     /// The present Kingdom Reborn art slot of `graphic`, read through the overlay over the Enhanced art `enhanced`, with
     /// the package holding it.
-    pub(super) fn art_slot(self, enhanced: Option<&'a udd_assets::tex_art_ec::TexArtEcPackage>, graphic: u32)
+    pub(crate) fn art_slot(self, enhanced: Option<&'a udd_assets::tex_art_ec::TexArtEcPackage>, graphic: u32)
         -> Option<(&'a udd_assets::tex_art_ec::TexArtEcPackage, &'a udd_assets::tex_art_ec::TexArtEcSlotRecord)> {
         self.art.overlay_slot(enhanced.unwrap_or(self.art.as_ref()), graphic)
     }
@@ -546,7 +546,7 @@ impl StaticVisualKind {
 /// art, material and land textures, so it matches the land under and around it (the grass, liquids, lava and swamp, and
 /// the water 0x34D2, a sprite in KR). `None` keeps the kind of `resolve_static_visual_kind_cached`: a static that does
 /// not continue the land, or one the Kingdom Reborn art lacks (logged once).
-pub(super) fn kingdom_reborn_static_visual_kind(
+pub(crate) fn kingdom_reborn_static_visual_kind(
     tile_graphic: u16,
     tilemeta_package: Option<&udd_assets::tilemeta::TileMetaPackage>,
     tilemeta: Option<&udd_assets::tilemeta::TileMetaItemTile>,
@@ -591,7 +591,7 @@ pub(super) fn kingdom_reborn_static_visual_kind(
 /// (its NoDraw, Surface and Rotated flags differ from the Enhanced ones on some of the statics that continue the land);
 /// `cc_art`, the clients' tables without the tilemeta overrides (`TileMetaPackageRes::for_art`), for one drawn with
 /// Classic art, which the overrides were not measured against; else the Enhanced `enhanced`.
-pub(super) fn drawn_tile_data<'a>(
+pub(crate) fn drawn_tile_data<'a>(
     kind: Option<StaticVisualKind>,
     graphic: u16,
     enhanced: Option<&'a udd_assets::tilemeta::TileMetaPackage>,

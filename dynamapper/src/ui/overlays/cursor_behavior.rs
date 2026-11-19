@@ -4,9 +4,9 @@ use crate::input::input_actions::{
 };
 use crate::input::{InjectedPointer, effective_cursor_position};
 use crate::core::render::scene::world::art::static_source::{static_tile_is_surface_like, static_tile_renders_wet};
-use crate::core::render::scene::world::art::static_geometry::{StaticArtRoute, StaticPickingResources};
+use crate::core::render::picking::static_geometry::{StaticArtRoute, StaticPickingResources};
 use crate::core::render::scene::player::Player;
-use crate::core::render::terrain::picking::{TerrainCursor, TerrainCursorQuery};
+use crate::core::render::picking::terrain_cursor::{TerrainCursor, TerrainCursorQuery};
 use crate::core::render::{
     scene::{
         camera::{PlayerCamera, UiCameraResource},

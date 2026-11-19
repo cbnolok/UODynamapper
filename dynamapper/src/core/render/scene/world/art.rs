@@ -15,9 +15,7 @@ pub mod static_chunk_cache;
 pub mod statics_draw;
 pub mod client_grunge;
 mod static_surface;
-pub(crate) mod static_geometry;
 pub(crate) mod transparent_order;
-pub(crate) mod gpu_picking;
 #[cfg(test)]
 mod shading_tests;
 #[cfg(test)]
@@ -38,7 +36,7 @@ impl Plugin for DrawStaticSpritesPlugin {
         app.init_resource::<static_source::StaticSurfaceLikeResolutionCache>();
         app.init_resource::<statics_collect::StaticArtCollectDebugState>();
         app.init_resource::<static_source::StaticArtSourceState>();
-        gpu_picking::install(app);
+        crate::core::render::picking::gpu_picking::install(app);
         light_scene::install(app);
         app.init_resource::<statics_draw::StaticArtDrawDebugState>();
         app.init_resource::<statics_draw::StaticArtUploadCache>();

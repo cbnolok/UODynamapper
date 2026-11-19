@@ -1,6 +1,6 @@
 //! On-demand one-pixel visibility queries. Reuses the drawing shaders, instance
 //! buffers and transparent batch bindings; never writes the main color/depth.
-use super::{static_batches::{StaticPickTile, StaticChunkBatchKey}, transparent_order::{drawn_batches, StaticTransparentBatchOrder}};
+use crate::core::render::scene::world::art::{static_batches::{StaticPickTile, StaticChunkBatchKey}, transparent_order::{drawn_batches, StaticTransparentBatchOrder}};
 use crate::core::render::lighting::client_night;
 use bevy::prelude::*;
 use bevy::core_pipeline::{Core3d, Core3dSystems, core_3d::Transparent3d};
@@ -127,7 +127,7 @@ fn poll_query_replies(mut pick: ResMut<VisibleStaticPick>) {
     }
 }
 
-pub(super) fn install(app: &mut App) {
+pub(crate) fn install(app: &mut App) {
     app.init_resource::<VisibleStaticPick>().init_resource::<PickRequest>()
         .add_plugins(ExtractResourcePlugin::<PickRequest>::default())
         .add_systems(Update, poll_query_replies.before(crate::core::system_sets::SceneRenderArtSysSet::CollectVisibleStatics))
@@ -193,7 +193,7 @@ fn query_target(device: &RenderDevice, samples: u32) -> QueryTarget {
     let resolve = (samples > 1).then(|| {
         let module = device.wgpu_device().create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("resolve static pixel IDs"), source: wgpu::ShaderSource::Wgsl(
-                include_str!("../../../../../../assets/shaders/world/art/pick_resolve.wgsl").into()),
+                include_str!("../../../../assets/shaders/world/art/pick_resolve.wgsl").into()),
         });
         let pipeline = device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
             label: Some("resolve static pixel IDs"), layout: None, module: &module, entry_point: Some("resolve"),

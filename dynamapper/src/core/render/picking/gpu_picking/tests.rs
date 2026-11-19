@@ -1,5 +1,5 @@
 use super::*;
-use super::super::static_batches::StaticRenderTile;
+use crate::core::render::scene::world::art::static_batches::StaticRenderTile;
 
 fn signature() -> PickSignature {
     PickSignature { pixel: UVec2::new(640, 400), viewport: UVec4::new(0, 0, 1280, 800),
@@ -78,7 +78,7 @@ fn pixel_query_uses_opaque_depth_and_resolves_discrete_msaa_ids() {
             Ok(source)
         });
         let id = |value| AssetId::<Shader>::Uuid { uuid: Uuid::from_u128(value) };
-        shaders.set_shader(id(1), Shader::from_wesl(include_str!("../../../../../../../assets/shaders/world/art/picking.wesl"),
+        shaders.set_shader(id(1), Shader::from_wesl(include_str!("../../../../../assets/shaders/world/art/picking.wesl"),
             "shaders/world/art/picking.wesl"));
         shaders.set_shader(id(0), Shader::from_wesl(r#"
 import package::shaders::world::art::picking::{pick_clip, pick_color};
@@ -94,7 +94,7 @@ import package::shaders::world::art::picking::{pick_clip, pick_color};
 }
 "#, "shaders/test/static_query.wesl"));
         let resolve_module = device.create_shader_module(wgpu::ShaderModuleDescriptor { label: None,
-            source: wgpu::ShaderSource::Wgsl(include_str!("../../../../../../../assets/shaders/world/art/pick_resolve.wgsl").into()) });
+            source: wgpu::ShaderSource::Wgsl(include_str!("../../../../../assets/shaders/world/art/pick_resolve.wgsl").into()) });
         let resolve = device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor { label: None,
             layout: None, module: &resolve_module, entry_point: Some("resolve"), compilation_options: Default::default(), cache: None });
         for samples in [1, 4] {

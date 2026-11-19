@@ -73,7 +73,7 @@ fn terrain_cursor_bank_relaxation_is_view_facing_and_keeps_liquid_level() {
 fn terrain_cursor_mesh_grids_match_all_generated_mesh_dimensions() {
     use bevy::mesh::VertexAttributeValues;
     let mut app = App::new();
-    app.init_resource::<Assets<Mesh>>().add_systems(Startup, super::super::setup_base_mesh::setup_land_mesh);
+    app.init_resource::<Assets<Mesh>>().add_systems(Startup, crate::core::render::terrain::setup_base_mesh::setup_land_mesh);
     app.update();
     let handles = app.world().resource::<LandMeshHandles>();
     let meshes = app.world().resource::<Assets<Mesh>>();

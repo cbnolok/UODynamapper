@@ -120,7 +120,7 @@ pub(crate) fn resolve_surface_like_ground_quad_bounds() -> GroundQuadBounds {
 /// exactly on the cell corners and seam with the terrain water beneath. A 44px-wide tile maps
 /// to a half-extent of `44 * 0.5 * (sqrt(2)/44) = sqrt(2)/2` along each diagonal axis, i.e. the
 /// visible diamond spans a full 1x1 world cell.
-pub(super) fn resolve_cc_surface_like_flat_quad_bounds(
+pub(crate) fn resolve_cc_surface_like_flat_quad_bounds(
     logical_width: f32,
     logical_height: f32,
 ) -> GroundQuadBounds {
@@ -147,7 +147,7 @@ pub(super) fn resolve_cc_surface_like_flat_quad_bounds(
 /// 45px/89px `wave` sets 0x1fa3-0x1fca, whose crest content is deliberately off-center in the
 /// bitmap) get the anchor classic art actually assumes, instead of a hardcoded cell-center
 /// that silently assumed `h == 44` and pushed the ~89px breaking waves ~one cell up-screen.
-pub(super) fn cc_surface_like_flat_quad_center_offsets(logical_height: f32) -> (f32, f32) {
+pub(crate) fn cc_surface_like_flat_quad_center_offsets(logical_height: f32) -> (f32, f32) {
     let forward_half_height =
         logical_height * CC_WORLD_XZ_PER_PIXEL * std::f32::consts::FRAC_1_SQRT_2 * 0.5;
     (
@@ -170,7 +170,7 @@ pub(crate) fn apply_cc_static_world_anchor_translation(world_x: f32, world_z: f3
     )
 }
 
-pub(super) fn surface_like_static_world_anchor(
+pub(crate) fn surface_like_static_world_anchor(
     visual_kind: StaticVisualKind,
     world_x: f32,
     world_z: f32,
@@ -263,7 +263,7 @@ pub(super) fn cc_ground_diamond(tilemeta: Option<&udd_assets::tilemeta::TileMeta
 }
 
 // Picking and drawing must make the same residency/height decision for dry diamonds.
-pub(super) fn cc_static_uses_flat_geometry(
+pub(crate) fn cc_static_uses_flat_geometry(
     tilemeta: Option<&udd_assets::tilemeta::TileMetaItemTile>, width: f32, height: f32,
     world_x: f32, world_z: f32, z: i8, atlas: &TileAtlas,
 ) -> bool {
@@ -275,7 +275,7 @@ pub(super) fn cc_static_uses_flat_geometry(
             }))
 }
 
-pub(super) fn ec_static_camera_quad(tilemeta: Option<&udd_assets::tilemeta::TileMetaItemTile>) -> bool {
+pub(crate) fn ec_static_camera_quad(tilemeta: Option<&udd_assets::tilemeta::TileMetaItemTile>) -> bool {
     tilemeta.is_some_and(|meta| meta.flags & EC_CAMERA_QUAD_FLAG != 0)
 }
 

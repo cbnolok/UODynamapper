@@ -2,7 +2,6 @@ pub mod cave_mouth_veil;
 pub mod chunk_loader;
 pub mod draw_mesh;
 pub mod mesh_material;
-pub(crate) mod picking;
 pub mod setup_base_mesh;
 
 use crate::core::system_sets::*;
@@ -408,7 +407,7 @@ use std::time::Duration;
 
 impl Plugin for DrawLandChunkMeshPlugin {
     fn build(&self, app: &mut App) {
-        picking::install(app);
+        crate::core::render::picking::terrain_cursor::install(app);
         app.init_resource::<draw_mesh::LandMeshScratch>()
             .init_resource::<LandUploadBudget>()
             .init_resource::<LandUploadTelemetry>()

@@ -543,7 +543,7 @@ fn main() {
             [33.0, 33.0, 0.001 * 32768.0, 32768.0]]);
         // Cursor geometry must keep matching the production bank shader. The
         // synthetic atlas above deliberately includes missing and Classic cells.
-        use crate::core::render::terrain::picking::{bank_vertex, TerrainSample};
+        use crate::core::render::picking::terrain_cursor::{bank_vertex, TerrainSample};
         use bevy::math::{IVec2, Vec2, Vec3};
         let tile = |height, ec_present, liquid| TerrainSample { height, ec_present, liquid };
         let fixture = |cell: IVec2| match (cell.x, cell.y) {

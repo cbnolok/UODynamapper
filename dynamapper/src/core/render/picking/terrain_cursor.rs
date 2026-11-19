@@ -1,6 +1,6 @@
 //! Terrain-only cursor query. Rendered triangles determine the visible cell;
 //! original map Z remains separate from bank relief and interpolated height.
-use super::{draw_mesh::LandMeshHandles, LCMesh};
+use crate::core::render::terrain::{draw_mesh::LandMeshHandles, LCMesh};
 use crate::core::render::assets::tile_atlas::{LandUploadTelemetry, TileAtlas};
 use crate::input::{InjectedPointer, effective_cursor_position};
 use crate::core::{app_states::AppState,
@@ -34,7 +34,7 @@ struct Signature {
 #[derive(SystemSet, Debug, Clone, PartialEq, Eq, Hash)]
 pub(crate) struct TerrainCursorQuery;
 
-pub(super) fn install(app: &mut App) {
+pub(crate) fn install(app: &mut App) {
     app.init_resource::<TerrainCursor>().add_systems(Update, update_terrain_cursor.in_set(TerrainCursorQuery)
         .after(SceneRenderLandSysSet::RenderLandChunks).after(MovementSysSet::UpdateCamera)
         .run_if(in_state(AppState::InGame)));
@@ -60,7 +60,7 @@ fn update_terrain_cursor(
         if !viewport.contains((pointer * scale).floor().as_uvec2()) { return None; }
         let mut grids: Vec<_> = chunks.iter().filter(|(chunk, _, visible)| chunk.parent_map_id == u32::from(map) && visible.get())
             .filter_map(|(chunk, mesh, _)| handles.grid(mesh).map(|(span, step)| Grid {
-                origin: UVec2::new(chunk.gx, chunk.gy) * super::TILE_NUM_PER_CHUNK_DIM, span, step })).collect();
+                origin: UVec2::new(chunk.gx, chunk.gy) * crate::core::render::terrain::TILE_NUM_PER_CHUNK_DIM, span, step })).collect();
         grids.sort_unstable_by_key(|g| (g.origin.x, g.origin.y, g.span, g.step));
         let telemetry = uploads.snapshot();
         let submitted = !atlas.has_pending_uploads() && telemetry.pending_ops == 0
