@@ -188,12 +188,73 @@ their size and upscaled 2× with Lanczos3 over the whole page, which stands in f
 - BC1 has no RDO in our encoder (`dds`), so BC1 with RDO was not measured.
 
 `tex_art_ec.uddp` and `tex_land_ec.uddp` repacked in 128-row strips hold byte-identical pages and grow by 8.5 %
-(60.2 to 65.4 MB and 21.1 to 23.0 MB). Read through `udd-container`, which decodes the frames of a payload of 1 MiB or
-more in parallel, an art page takes 8–9 ms instead of 62–86 ms, and a land page about 4 ms instead of 25–31 ms.
+(60.2 to 65.4 MB and 21.1 to 23.0 MB). Read through `udd-container`, which decodes the frames of a payload marked as independent frames in
+parallel, an art page takes 8–9 ms instead of 62–86 ms, and a land page about 4 ms instead of 25–31 ms.
 
 The strip height is a multiple of 8 rows, so a strip holds whole block rows of BC7 and of 4×4 and 8×8 ASTC pages, and a
 decoded strip could go straight to its rows of a block-compressed texture. The frames are stored one after another as
-plain Zstd, so the package format does not change, and a reader that does not split them decodes them in order.
+plain Zstd, and a reader that does not split them decodes them in order. Bit 16 of the payload's Meta32 marks them
+(the user, 2026-11-19), so the reader splits only the payloads the writer chose to store in strips, and a patch stores
+them in strips again.
+
+## Upscaled pages, 1× to 4×
+
+Page 0 of each atlas, cut to its first 512 rows so the 4× page fits in memory (a quarter of an art page's rows,
+0.26–0.28 of a land page's), upscaled and stored four ways. Enhanced art, both land atlases: Lanczos3. Classic art:
+MMPX at 2× and 4×, xBRZ at 3×, which has no MMPX. Zstd 19 one frame and 128-pixel-row strips, LZ4 HC 12, best of 3.
+"× 1×" is the size against the 1× RGBA page in one Zstd 19 frame; times are for the band, so a whole page takes about
+4× (Enhanced land 3.5×).
+
+| Atlas | Form | 2×: × 1×, 1 thread ms, strips | 3× | 4× |
+|---|---|---|---|---|
+| Enhanced art | RGBA | 9.5, 96, +3.6 % | 18.9, 225, +3.4 % | 33.2, 374, +3.0 % |
+| | BC1 | 1.20, 8, +4.7 % | 2.46, 22, +5.6 % | 4.00, 40, +6.0 % |
+| | BC7 | 3.00, 16, +4.0 % | 6.36, 51, +6.2 % | 10.6, 91, +7.2 % |
+| | BC7 RDO 1 | 2.60, 15, +2.0 % | 5.29, 45, +3.2 % | 8.35, 86, +3.7 % |
+| Enhanced land | RGBA | 7.8, 39, +6.3 % | 15.8, 101, +6.9 % | 27.4, 171, +6.8 % |
+| | BC1 | 0.90, 3, +5.6 % | 1.83, 8, +7.5 % | 3.01, 14, +8.3 % |
+| | BC7 | 2.68, 7, +4.3 % | 5.58, 20, +8.3 % | 9.35, 43, +10.2 % |
+| | BC7 RDO 1 | 2.28, 6, +2.1 % | 4.59, 16, +4.7 % | 7.27, 34, +5.9 % |
+| Classic art | RGBA | 1.34, 5, +12.7 % | 8.02 (xBRZ), 27, +11.9 % | 1.91, 12, +6.9 % |
+| | BC1 | 1.05, 2, +14.6 % | 3.37, 5, +10.4 % | 1.24, 4, +25.6 % |
+| | BC7 | 1.62, 3, +20.3 % | 6.21, 9, +12.2 % | 1.36, 6, +18.7 % |
+| | BC7 RDO 1 | 1.73, 3, +10.7 % | 6.08, 10, +7.4 % | 1.40, 6, +18.0 % |
+| Classic land | RGBA | 11.5, 35, +19.2 % | 24.2, 87, +13.2 % | 44.7, 174, +11.1 % |
+| | BC1 | 1.67, 4, +21.0 % | 4.17, 11, +7.7 % | 5.56, 16, +26.4 % |
+| | BC7 | 3.93, 7, +18.6 % | 9.53, 21, +8.7 % | 14.2, 37, +17.4 % |
+| | BC7 RDO 1 | 3.44, 7, +12.9 % | 7.34, 17, +4.2 % | 10.0, 31, +8.2 % |
+
+At 1×, against the same RGBA page: BC1 0.26–0.56, BC7 0.69–1.20, BC7 RDO 1 0.59–1.10; strips cost 1–6 % on block
+pages and 5–24 % on RGBA (Classic land the most).
+
+- **Interpolated upscales can't stay lossless.** Lanczos makes Enhanced art 9.5× larger at 2× and 33× at 4×, and its
+  4× page takes about 1.5 s on one thread. Extrapolated from the bands, a whole `tex_art_ec` would grow from 60 MB to
+  about 570 MB at 2× RGBA and 2 GB at 4×; `tex_land_ec` from 21 MB to 165 / 580 MB.
+- **BC7 with RDO 1 is the smallest BC7 on every interpolated page,** 12–29 % below plain BC7 from 2× on. `tex_art_ec`
+  would be about 155 MB at 2×, 320 MB at 3×, 500 MB at 4×; `tex_land_ec` 48 / 97 / 154 MB. BC1 halves that again, but
+  has one-bit alpha and no RDO in our encoder.
+- **MMPX keeps Classic art cheap at every scale:** 1.34× at 2× and 1.91× at 4× as lossless RGBA, so a 4× `tex_art_cc`
+  would be about 93 MB on disk. BC7 is smaller only at 4× (1.36×), where it saves VRAM too. xBRZ invents colours and
+  costs 8× at 3×.
+- **Classic land suffers most from Lanczos,** 11.5× at 2×, since its flat 44 × 44 tiles compress well at 1×; BC7 RDO
+  1 keeps it at 3.4–10×.
+- **LZ4 HC suits block pages:** on Enhanced art 4× BC7 RDO 1 it is 20 % larger than Zstd 19 (18.7 against 15.6 MiB)
+  and decodes on one thread in 11 ms, as fast as Zstd 19 in strips on 8 threads (11.2 ms) and 8× as fast as Zstd 19 on
+  one. The codec value 3 is free in Meta32 if a block package wants it.
+
+### When strips pay
+
+Strips help where a page takes over about 25 ms on one thread and cost under about 10 %. From the table, scaled to
+whole pages:
+
+- **Yes:** Enhanced art and land RGBA at every scale (1×: 31–76 ms, +5–7 %); every Enhanced page from 2× on, RGBA or
+  BC (BC7 RDO 1 at 2×: 21–60 ms, +2 %); Classic land BC7 RDO 1 from 3× on.
+- **No:** every 1× block page (at most 14 ms); Classic art at every scale and form but xBRZ (at most 48 ms with MMPX,
+  for +7–26 %); Classic land RGBA at 1× (14 ms, +24 %).
+- **Costly but needed:** Classic land RGBA upscaled (132–660 ms) pays 11–19 % for strips; BC7 RDO 1 avoids both.
+
+A writer can decide this for itself: compress the strips (in parallel, so cheap beside the one frame) and keep them
+when the page is large and they cost less than the limit.
 
 ## Trained dictionaries
 
@@ -220,5 +281,6 @@ CARGO_TARGET_DIR=/path/to/scratch cargo run --release -- /path/to/uddp
 ```
 
 It runs every codec and the 128-row strips. `--bin strip_levels` runs the levels and codecs in strips (it reads
-`tex_land_ec.uddp` too), and `--bin block_pages <dir> [lanczos|mmpx] [ec|cc|both]` the BC1 and BC7 pages. The PNG filter, the other strip heights and
+`tex_land_ec.uddp` too), `--bin block_pages <dir> [lanczos|mmpx] [ec|cc|both]` the BC1 and BC7 pages, and `--bin upscaled_pages <dir>
+[ec|cc|both]` the pages at 1× to 4×. The PNG filter, the other strip heights and
 the dictionaries were one-off runs with the numbers above.
