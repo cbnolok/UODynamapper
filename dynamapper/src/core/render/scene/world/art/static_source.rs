@@ -500,8 +500,8 @@ impl KrStaticPackages<'_> {
 pub(super) struct KrStaticSources<'a> {
     pub(super) tilemeta: &'a udd_assets::tilemeta::TileMetaPackage,
     /// An overlay over the Enhanced art: the items whose world art Kingdom Reborn draws differently ([`Self::art_slot`]).
-    pub(super) art: &'a udd_assets::tex_art_ec::TexArtEcPackage,
-    pub(super) land: &'a udd_assets::tex_land_ec::TexLandEcPackage,
+    pub(super) art: &'a std::sync::Arc<udd_assets::tex_art_ec::TexArtEcPackage>,
+    pub(super) land: &'a std::sync::Arc<udd_assets::tex_land_ec::TexLandEcPackage>,
 }
 
 impl<'a> KrStaticSources<'a> {
@@ -509,7 +509,7 @@ impl<'a> KrStaticSources<'a> {
     /// the package holding it.
     pub(super) fn art_slot(self, enhanced: Option<&'a udd_assets::tex_art_ec::TexArtEcPackage>, graphic: u32)
         -> Option<(&'a udd_assets::tex_art_ec::TexArtEcPackage, &'a udd_assets::tex_art_ec::TexArtEcSlotRecord)> {
-        self.art.overlay_slot(enhanced.unwrap_or(self.art), graphic)
+        self.art.overlay_slot(enhanced.unwrap_or(self.art.as_ref()), graphic)
     }
 }
 
@@ -567,7 +567,7 @@ pub(super) fn kingdom_reborn_static_visual_kind(
         tile_graphic,
         slot.is_static(),
         slot.is_land() && tileart_surface_has_visible_primary(kr.tilemeta.item_texture_refs(graphic)),
-        resolve_surface_like_tex_land_ec_slot_id(graphic, Some(kr.tilemeta), kr_tilemeta, Some(kr.land)),
+        resolve_surface_like_tex_land_ec_slot_id(graphic, Some(kr.tilemeta), kr_tilemeta, Some(kr.land.as_ref())),
     ));
     let kr_terrain_textures = cache.kingdom_reborn_terrain_textures.get_or_insert_with(|| terrain_texture_ids(kr.land));
     let kr_continues = kr_kind.is_some_and(|kind| static_continues_land(kind, kr_tilemeta,

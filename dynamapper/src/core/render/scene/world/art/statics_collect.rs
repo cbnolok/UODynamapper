@@ -440,10 +440,6 @@ impl<'a> StaticCollectResources<'a> {
         -> Option<&'a udd_assets::tilemeta::TileMetaPackage> {
         self.tilemeta.map(|package| package.for_art(art).as_ref())
     }
-
-    fn tex_aux_ec_package(self) -> Option<&'a udd_assets::tex_aux_ec::TexAuxEcPackage> {
-        self.tex_aux_ec.map(|package| package.0.as_ref())
-    }
 }
 
 #[derive(Clone, Copy)]
@@ -852,7 +848,7 @@ fn rebuild_static_chunk(
         if let (Some(tilemeta), Some(art)) = (resources.tilemeta_package(), resources.tex_art_ec_package()) {
             if let Some(cells) = super::static_surface::apply_boundary_coverage(
                 &mut build.sprite_instances, chunk_key, frame.height_scale,
-                statics_store, tilemeta, art, resources.kingdom_reborn.map(|kr| (kr.tilemeta, kr.art)),
+                statics_store, tilemeta, art, resources.kingdom_reborn.map(|kr| (kr.tilemeta, kr.art.as_ref())),
                 resources.tile_atlas, resources.terrain,
             ) {
                 build.read_land(cells);
@@ -1310,7 +1306,7 @@ fn resolve_art_static_sprite(
             art_id,
             fallback_art_id,
         } => {
-            let tex_art_cc = resources.tex_art_cc_package()?;
+            let tex_art_cc = &resources.tex_art_cc?.0;
             let resolved_sprite = if let Some(slot) = tex_art_cc.present_slot(art_id as u32) {
                 requested_pages.insert(slot.page_index as u64);
                 sprite_atlas.resolve_cc(tex_art_cc, art_id)
@@ -1329,7 +1325,7 @@ fn resolve_art_static_sprite(
             let (tex_land_ec, page_key, page_flag): (_, fn(u32) -> ArtPageKey, _) = if resolution.kingdom_reborn {
                 (resources.kingdom_reborn?.land, ArtPageKey::KrTerrain, KR_TERRAIN_REQUESTED_PAGE_FLAG)
             } else {
-                (resources.tex_land_ec_package()?, ArtPageKey::Terrain, 1u64 << 63)
+                (&resources.tex_land_ec?.0, ArtPageKey::Terrain, 1u64 << 63)
             };
 
             if let Some(slot) = tex_land_ec.present_slot(resolution.runtime_slot_id) {
@@ -1349,12 +1345,12 @@ fn resolve_art_static_sprite(
                     let kr = resources.kingdom_reborn?;
                     let art_id = art_id - KR_ITEM_RECORD_BASE;
                     match kr.art_slot(resources.tex_art_ec_package(), art_id) {
-                        Some((art, _)) if !std::ptr::eq(art, kr.art) =>
-                            (art, Some(kr.tilemeta), art_id, ArtPageKey::Enhanced, 1u64 << 62),
+                        Some((art, _)) if !std::ptr::eq(art, kr.art.as_ref()) =>
+                            (&resources.tex_art_ec?.0, Some(kr.tilemeta), art_id, ArtPageKey::Enhanced, 1u64 << 62),
                         _ => (kr.art, Some(kr.tilemeta), art_id, ArtPageKey::KrEnhanced, KR_ART_REQUESTED_PAGE_FLAG),
                     }
                 } else {
-                    (resources.tex_art_ec_package()?, resources.tilemeta_package(), art_id, ArtPageKey::Enhanced,
+                    (&resources.tex_art_ec?.0, resources.tilemeta_package(), art_id, ArtPageKey::Enhanced,
                         1u64 << 62)
                 };
 
@@ -1375,7 +1371,7 @@ fn resolve_art_static_sprite(
         }
         StaticVisualKind::Missing => {
             requested_pages.insert(1u64 << 61);
-            Some((ClientTextureSource::Ec, sprite_atlas.resolve_missing(resources.tex_aux_ec_package()?), 0.0))
+            Some((ClientTextureSource::Ec, sprite_atlas.resolve_missing(&resources.tex_aux_ec?.0), 0.0))
         }
     }
 }
@@ -2414,9 +2410,9 @@ mod tests {
         let land = udd_assets::tex_land_ec::TexLandEcPackage::load(root.join("tex_land_ec.uddp")).unwrap();
         let meta = udd_assets::tilemeta::TileMetaPackage::load(root.join("tilemeta.uddp")).unwrap();
         let kr_meta = meta.kr_tilemeta().unwrap().expect("the Kingdom Reborn tile data");
-        let kr_art = ec.kr_overlay(udd_assets::AtlasCacheOptions::disabled()).unwrap().expect("the Kingdom Reborn art");
-        let kr_land = land.kr_land(udd_container::UddpReaderOptions::disabled(), udd_assets::AtlasCacheOptions::disabled())
-            .unwrap().expect("the Kingdom Reborn land");
+        let kr_art = std::sync::Arc::new(ec.kr_overlay(udd_assets::AtlasCacheOptions::disabled()).unwrap().expect("the Kingdom Reborn art"));
+        let kr_land = std::sync::Arc::new(land.kr_land(udd_container::UddpReaderOptions::disabled(), udd_assets::AtlasCacheOptions::disabled())
+            .unwrap().expect("the Kingdom Reborn land"));
         let kr = KrStaticSources { tilemeta: &kr_meta, art: &kr_art, land: &kr_land };
         let mut cache = StaticSurfaceLikeResolutionCache::default();
         let mut resolve = |graphic: u16| kingdom_reborn_static_visual_kind(graphic, Some(&meta),

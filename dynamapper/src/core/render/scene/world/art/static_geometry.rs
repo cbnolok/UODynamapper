@@ -303,9 +303,10 @@ mod tests {
         let land = udd_assets::tex_land_ec::TexLandEcPackage::load(root.join("tex_land_ec.uddp")).unwrap();
         let meta = udd_assets::tilemeta::TileMetaPackage::load(root.join("tilemeta.uddp")).unwrap();
         let kr_meta = meta.kr_tilemeta().unwrap().expect("the Kingdom Reborn tile data");
-        let kr_art = ec.kr_overlay(udd_assets::AtlasCacheOptions::disabled()).unwrap().expect("the Kingdom Reborn art");
-        let kr_land = land.kr_land(udd_container::UddpReaderOptions::disabled(), udd_assets::AtlasCacheOptions::disabled())
-            .unwrap().expect("the Kingdom Reborn land");
+        let kr_art = std::sync::Arc::new(ec.kr_overlay(udd_assets::AtlasCacheOptions::disabled()).unwrap()
+            .expect("the Kingdom Reborn art"));
+        let kr_land = std::sync::Arc::new(land.kr_land(udd_container::UddpReaderOptions::disabled(),
+            udd_assets::AtlasCacheOptions::disabled()).unwrap().expect("the Kingdom Reborn land"));
         let kr = static_source::KrStaticSources { tilemeta: &kr_meta, art: &kr_art, land: &kr_land };
         let atlas = TileAtlas::new(Default::default(), 0);
         let packages = StaticPickPackages { cc: None, ec: Some(&ec), aux: None, land: Some(&land), meta: Some(&meta),
@@ -320,7 +321,7 @@ mod tests {
         assert_eq!(resolve(packages, StaticLandStyle::Enhanced, KR_ONLY_ROTATED_SURFACE).flat_quad, 0);
         let water = kingdom_reborn(KR_SPRITE_WATER);
         let (art, slot) = kr.art_slot(Some(&ec), u32::from(KR_SPRITE_WATER)).expect("the Kingdom Reborn water");
-        assert!(std::ptr::eq(art, &kr_art));
+        assert!(std::ptr::eq(art, kr_art.as_ref()));
         let bounds = static_placement::resolve_static_billboard_bounds(
             art.sprite_geometry(slot.art_id).unwrap().legacy_pixel_ratio(), slot.draw_offset_x, slot.draw_offset_y,
             slot.logical_width(), slot.logical_height());

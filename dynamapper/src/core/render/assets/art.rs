@@ -17,7 +17,9 @@ use udd_assets::{
     tex_aux_ec::TexAuxEcPackage,
     tex_land_ec::TexLandEcPackage,
 };
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
+use std::sync::{mpsc, Arc, Mutex};
+use bevy::tasks::{AsyncComputeTaskPool, TaskPool};
 use bevy::render::extract_resource::ExtractResource;
 use bevy::render::render_asset::RenderAssets;
 use bevy::render::renderer::{RenderDevice, RenderQueue};
@@ -88,6 +90,20 @@ pub struct ArtPageAtlas {
     pub max_layers: u32,
     pub pixel_format: PagePixelFormat,
     pub requested_resize_to: Option<u32>,
+    /// The pages being read and decoded off the frame (`queue_page_upload`); they wait like a staged upload.
+    decoding: HashSet<ArtPageKey>,
+    /// Bumped when the atlas drops its pages (`apply_resize` shrinking it), so the pages decoded for the old layers
+    /// are dropped.
+    decode_generation: u64,
+    decoded_sender: mpsc::Sender<DecodedArtPage>,
+    decoded_receiver: Mutex<mpsc::Receiver<DecodedArtPage>>,
+}
+
+/// A page decoded off the frame: its upload, or `None` when it could not be read.
+struct DecodedArtPage {
+    generation: u64,
+    page_index: ArtPageKey,
+    upload: Option<ArtPageUpload>,
 }
 
 impl ArtPageAtlas {
@@ -99,6 +115,7 @@ impl ArtPageAtlas {
         max_layers: u32,
         pixel_format: PagePixelFormat,
     ) -> Self {
+        let (decoded_sender, decoded_receiver) = mpsc::channel();
         Self {
             gpu_handle,
             page_to_layer: HashMap::new(),
@@ -116,6 +133,10 @@ impl ArtPageAtlas {
             max_layers,
             pixel_format,
             requested_resize_to: None,
+            decoding: HashSet::new(),
+            decode_generation: 0,
+            decoded_sender,
+            decoded_receiver: Mutex::new(decoded_receiver),
         }
     }
 
@@ -139,6 +160,8 @@ impl ArtPageAtlas {
         self.requested_resize_to.take()
     }
 
+    /// Reads and decodes the page off the frame, on the async compute pool: it waits in `decoding` until
+    /// `receive_decoded_pages` takes it, so a sprite on it resolves only once it is uploaded.
     pub fn queue_page_upload<F>(
         &mut self,
         page_index: ArtPageKey,
@@ -150,39 +173,69 @@ impl ArtPageAtlas {
         pixel_format: PagePixelFormat,
         read_page_bytes: F,
     ) where
-        F: FnOnce() -> eyre::Result<Vec<u8>>,
+        F: FnOnce() -> eyre::Result<Vec<u8>> + Send + 'static,
     {
-        let page_upload_pending = self
-            .pending_uploads
-            .iter()
-            .any(|upload| upload.page_index == page_index)
-            || self
-                .extract_staging
-                .iter()
-                .any(|upload| upload.page_index == page_index);
-        if page_upload_pending {
+        if self.page_upload_pending(page_index) {
             return;
         }
 
-        if let Ok(page_data) = read_page_bytes() {
-            if let Some((bytes, upload_layout, upload_width, upload_height)) = prepare_compatible_page_upload(
+        self.decoding.insert(page_index);
+        let (sender, generation, atlas_pixel_format) = (self.decoded_sender.clone(), self.decode_generation, self.pixel_format);
+        AsyncComputeTaskPool::get_or_init(TaskPool::default).spawn(async move {
+            let upload = read_page_bytes().ok().and_then(|page_data| prepare_compatible_page_upload(
                 &page_data,
                 atlas_width,
                 atlas_height,
                 used_width,
                 used_height,
                 pixel_format,
-                self.pixel_format,
-            ) {
-                self.pending_uploads.push(ArtPageUpload {
-                    page_index,
-                    layer,
-                    bytes,
-                    upload_layout,
-                    upload_width,
-                    upload_height,
-                });
-            }
+                atlas_pixel_format,
+            )).map(|(bytes, upload_layout, upload_width, upload_height)| ArtPageUpload {
+                page_index,
+                layer,
+                bytes,
+                upload_layout,
+                upload_width,
+                upload_height,
+            });
+            let _ = sender.send(DecodedArtPage { generation, page_index, upload });
+        }).detach();
+    }
+
+    /// Whether `page_index` is being decoded, or waits to be uploaded.
+    fn page_upload_pending(&self, page_index: ArtPageKey) -> bool {
+        self.decoding.contains(&page_index)
+            || self.pending_uploads.iter().any(|upload| upload.page_index == page_index)
+            || self.extract_staging.iter().any(|upload| upload.page_index == page_index)
+    }
+
+    /// Takes the pages decoded since the last call: each is uploaded when its layer is still its own; one decoded
+    /// for layers the atlas dropped, or whose layer went to another page meanwhile, is dropped.
+    fn receive_decoded_pages(&mut self) {
+        let decoded: Vec<DecodedArtPage> = self.decoded_receiver.lock().unwrap().try_iter().collect();
+        for page in decoded {
+            self.accept_decoded_page(page);
+        }
+    }
+
+    fn accept_decoded_page(&mut self, page: DecodedArtPage) {
+        if page.generation != self.decode_generation {
+            return;
+        }
+        self.decoding.remove(&page.page_index);
+        if let Some(upload) = page.upload
+            && self.layer_to_page.get(upload.layer as usize) == Some(&Some(page.page_index))
+        {
+            self.pending_uploads.push(upload);
+        }
+    }
+
+    /// Waits for every page being decoded (tests only: the frame never waits).
+    #[cfg(test)]
+    fn finish_decodes(&mut self) {
+        while !self.decoding.is_empty() {
+            let page = self.decoded_receiver.lock().unwrap().recv().expect("the atlas holds a sender");
+            self.accept_decoded_page(page);
         }
     }
 
@@ -227,6 +280,8 @@ impl ArtPageAtlas {
         self.extract_staging.clear();
         self.pending_layer_copies.clear();
         self.extract_layer_copies.clear();
+        self.decoding.clear();
+        self.decode_generation = self.decode_generation.wrapping_add(1);
         self.current_tick = 0;
         self.mapping_revision = self.mapping_revision.saturating_add(1);
         self.requested_resize_to = None;
@@ -234,6 +289,7 @@ impl ArtPageAtlas {
 
     /// Hands this frame's uploads and layer copies to the extraction, in place of the last frame's.
     fn stage_for_extract(&mut self) {
+        self.receive_decoded_pages();
         self.extract_staging.clear();
         let mut pending = std::mem::take(&mut self.pending_uploads);
         self.extract_staging.append(&mut pending);
@@ -244,7 +300,7 @@ impl ArtPageAtlas {
         self.mapping_revision
     }
 
-    pub fn resolve_cc(&mut self, tex_art_cc: &TexArtCcPackage, art_id: u32) -> Option<ResolvedArtSprite> {
+    pub fn resolve_cc(&mut self, tex_art_cc: &Arc<TexArtCcPackage>, art_id: u32) -> Option<ResolvedArtSprite> {
         let slot = tex_art_cc.present_slot(art_id)?;
         let mut resolved = self.resolve_slot(
             ArtPageKey::Classic(slot.page_index),
@@ -261,7 +317,7 @@ impl ArtPageAtlas {
             tex_art_cc.pages().get(slot.page_index as usize)?.used_width,
             tex_art_cc.pages().get(slot.page_index as usize)?.used_height,
             tex_art_cc.pages().get(slot.page_index as usize)?.pixel_format,
-            || tex_art_cc.read_page_bytes(slot.page_index),
+            read_page_off_frame(tex_art_cc, slot.page_index, |package, page| package.read_page_bytes(page)),
         )?;
         resolved.legacy_art = true;
         Some(resolved)
@@ -269,7 +325,7 @@ impl ArtPageAtlas {
 
     /// Resolves `art_id` from a package in the Enhanced art layout whose pages are `page_key`: `tex_art_ec.uddp`
     /// (`ArtPageKey::Enhanced`) or its Kingdom Reborn art (`ArtPageKey::KrEnhanced`).
-    pub fn resolve_ec_pages(&mut self, tex_art_ec: &TexArtEcPackage, art_id: u32, page_key: fn(u32) -> ArtPageKey)
+    pub fn resolve_ec_pages(&mut self, tex_art_ec: &Arc<TexArtEcPackage>, art_id: u32, page_key: fn(u32) -> ArtPageKey)
         -> Option<ResolvedArtSprite> {
         let slot = tex_art_ec.present_slot(art_id)?;
         let mut resolved = self.resolve_slot(
@@ -287,7 +343,7 @@ impl ArtPageAtlas {
             tex_art_ec.pages().get(slot.page_index as usize)?.used_width,
             tex_art_ec.pages().get(slot.page_index as usize)?.used_height,
             tex_art_ec.pages().get(slot.page_index as usize)?.pixel_format,
-            || tex_art_ec.read_page_bytes(slot.page_index),
+            read_page_off_frame(tex_art_ec, slot.page_index, |package, page| package.read_page_bytes(page)),
         )?;
         let geometry = tex_art_ec.sprite_geometry(art_id)?;
         resolved.source_pixel_ratio = geometry.legacy_pixel_ratio();
@@ -298,7 +354,7 @@ impl ArtPageAtlas {
     /// (`ArtPageKey::Terrain`) or its Kingdom Reborn land (`ArtPageKey::KrTerrain`).
     pub fn resolve_tex_land_ec_pages(
         &mut self,
-        tex_land_ec: &TexLandEcPackage,
+        tex_land_ec: &Arc<TexLandEcPackage>,
         art_id: u32,
         page_key: fn(u32) -> ArtPageKey,
     ) -> Option<ResolvedArtSprite> {
@@ -318,17 +374,17 @@ impl ArtPageAtlas {
             tex_land_ec.pages().get(slot.page_index as usize)?.used_width,
             tex_land_ec.pages().get(slot.page_index as usize)?.used_height,
             tex_land_ec.pages().get(slot.page_index as usize)?.pixel_format,
-            || tex_land_ec.read_page_bytes(slot.page_index),
+            read_page_off_frame(tex_land_ec, slot.page_index, |package, page| package.read_page_bytes(page)),
         )
     }
 
-    pub fn resolve_missing(&mut self, aux: &TexAuxEcPackage) -> Option<ResolvedArtSprite> {
+    pub fn resolve_missing(&mut self, aux: &Arc<TexAuxEcPackage>) -> Option<ResolvedArtSprite> {
         let slot = aux.missing_texture_slot();
         self.resolve_slot(ArtPageKey::Missing, 0, 0, slot.width, slot.height,
             f32::from(slot.width), f32::from(slot.height), -(slot.width as i32 / 2) as i16, 0,
             u32::from(slot.width), u32::from(slot.height), u32::from(slot.width), u32::from(slot.height),
-            PagePixelFormat::Rgba8888, || aux.load_rgba(slot.payload_texture_id)?
-                .ok_or_else(|| eyre::eyre!("missing-texture payload is unavailable")))
+            PagePixelFormat::Rgba8888, read_page_off_frame(aux, slot.payload_texture_id, |aux, id| aux.load_rgba(id)?
+                .ok_or_else(|| eyre::eyre!("missing-texture payload is unavailable"))))
     }
 
     fn resolve_slot<F>(
@@ -350,20 +406,13 @@ impl ArtPageAtlas {
         read_page_bytes: F,
     ) -> Option<ResolvedArtSprite>
     where
-        F: FnOnce() -> eyre::Result<Vec<u8>>,
+        F: FnOnce() -> eyre::Result<Vec<u8>> + Send + 'static,
     {
         if atlas_width > self.page_width || atlas_height > self.page_height {
             return None;
         }
 
-        let page_upload_pending = self
-            .pending_uploads
-            .iter()
-            .any(|upload| upload.page_index == page_index)
-            || self
-                .extract_staging
-                .iter()
-                .any(|upload| upload.page_index == page_index);
+        let page_upload_pending = self.page_upload_pending(page_index);
 
         self.current_tick += 1;
 
@@ -429,9 +478,20 @@ impl ArtPageAtlas {
         self.page_to_layer.len()
     }
 
+    /// The pages being decoded or waiting to be uploaded.
     pub fn pending_page_count(&self) -> usize {
-        self.pending_uploads.len() + self.extract_staging.len()
+        self.decoding.len() + self.pending_uploads.len() + self.extract_staging.len()
     }
+}
+
+/// The read of page `page` of `package`, to run on the async compute pool (`ArtPageAtlas::queue_page_upload`).
+fn read_page_off_frame<P: Send + Sync + 'static, K: Send + 'static>(
+    package: &Arc<P>,
+    page: K,
+    read: fn(&P, K) -> eyre::Result<Vec<u8>>,
+) -> impl FnOnce() -> eyre::Result<Vec<u8>> + Send + 'static {
+    let package = Arc::clone(package);
+    move || read(&package, page)
 }
 
 fn page_pixel_vram_format(pixel_format: PagePixelFormat) -> VramTextureFormat {
@@ -518,9 +578,11 @@ mod tests {
         let mut atlas = ArtPageAtlas::new(Handle::default(), 4, 4, 2, 4, PagePixelFormat::Rgba8888);
         for (key, value) in [(ArtPageKey::Classic(0), 31), (ArtPageKey::Enhanced(0), 127)] {
             assert!(atlas.resolve_slot(key, 0, 0, 4, 4, 4.0, 4.0, 0, 0,
-                4, 4, 4, 4, PagePixelFormat::Rgba8888, || Ok(vec![value; 64])).is_none());
+                4, 4, 4, 4, PagePixelFormat::Rgba8888, move || Ok(vec![value; 64])).is_none());
         }
+        atlas.finish_decodes();
         assert_eq!(atlas.pending_uploads.len(), 2);
+        atlas.pending_uploads.sort_by_key(|upload| upload.bytes[0]);
         assert_ne!(atlas.pending_uploads[0].layer, atlas.pending_uploads[1].layer);
         assert_eq!(atlas.pending_uploads[0].bytes, vec![31; 64]);
         assert_eq!(atlas.pending_uploads[1].bytes, vec![127; 64]);
@@ -528,6 +590,29 @@ mod tests {
         atlas.apply_resize(Handle::default(), 3);
         assert_eq!(atlas.page_to_layer.len(), 2);
         for (key, layer) in keys { assert_eq!(atlas.page_to_layer[&key], layer); }
+    }
+
+    #[test]
+    fn page_reads_leave_the_frame_and_a_reset_drops_their_pages() {
+        let mut atlas = ArtPageAtlas::new(Handle::default(), 4, 4, 2, 4, PagePixelFormat::Rgba8888);
+        let (release, wait) = mpsc::channel::<()>();
+        let resolve = |atlas: &mut ArtPageAtlas, key, wait: mpsc::Receiver<()>| atlas.resolve_slot(key, 0, 0, 4, 4,
+            4.0, 4.0, 0, 0, 4, 4, 4, 4, PagePixelFormat::Rgba8888, move || { let _ = wait.recv(); Ok(vec![7; 64]) });
+        // The read blocks until released, yet the resolve returns: the page waits as pending, not on the frame.
+        assert!(resolve(&mut atlas, ArtPageKey::Enhanced(0), wait).is_none());
+        assert_eq!(atlas.pending_page_count(), 1);
+        release.send(()).unwrap();
+        atlas.finish_decodes();
+        assert_eq!((atlas.pending_uploads.len(), atlas.pending_page_count()), (1, 1));
+
+        // A page still decoding when the atlas drops its pages is not uploaded into the new layers.
+        let (release, wait) = mpsc::channel::<()>();
+        assert!(resolve(&mut atlas, ArtPageKey::Enhanced(1), wait).is_none());
+        atlas.apply_resize(Handle::default(), 1);
+        release.send(()).unwrap();
+        let page = atlas.decoded_receiver.lock().unwrap().recv().expect("the atlas holds a sender");
+        atlas.accept_decoded_page(page);
+        assert_eq!(atlas.pending_page_count(), 0);
     }
 
     #[test]
