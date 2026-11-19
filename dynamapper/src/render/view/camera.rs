@@ -3,7 +3,7 @@ use crate::render::scene::player::Player;
 use crate::render::scene::RecomputeVisibleChunksEvent;
 use super::footprint::{camera_ground_footprint, FreeCameraFootprint};
 use crate::render::terrain::draw_mesh::scale_from_zoom;
-use crate::core::export_job::ExportJob;
+use crate::export::ExportJob;
 use crate::core::system_sets::*;
 use crate::prelude::*;
 use crate::util_lib::math::Between;

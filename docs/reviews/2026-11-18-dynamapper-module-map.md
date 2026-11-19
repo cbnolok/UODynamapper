@@ -113,7 +113,7 @@ terrain, statics, lighting, picking, postprocess}`, `ui/`, `export/`, `diagnosti
 
 | Now | Lines | Churn | Owner |
 |---|---:|---:|---|
-| `core/export_job.rs` | 881 | 4 | `export/`: job lifecycle, readiness, capture and spool, provenance. |
+| `export.rs` | 881 | 4 | `export/`: moved 2026-11-19 from `core/export_job.rs`, whole. Split into job lifecycle, readiness, capture and spool, provenance. |
 | `diagnostics.rs`, `diagnostics/{frame_rate, frame_limiter, gpu_profiling}.rs` | 1153 | 1 | Moved 2026-11-18; its importers took the new path 2026-11-19. |
 
 ## Order

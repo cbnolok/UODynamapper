@@ -1,5 +1,5 @@
 use crate::console_logger::{self, LogAbout, LogSev};
-use crate::core::export_job::ExportJob;
+use crate::export::ExportJob;
 use crate::ui::dialogs::image_background::ImageBackground;
 use crate::ui::dialogs::paperdoll_ec::EnhancedPaperdoll;
 use crate::render::view::camera::RenderZoom;
@@ -971,7 +971,7 @@ fn sync_runtime_resources_to_settings(
 fn sys_startup_load_file(mut commands: Commands, export_job: Option<Res<ExportJob>>) {
     let mut data = load_from_files().unwrap_or_else(|error| exit_on_startup_config_error(&error));
     if let Some(job) = export_job {
-        crate::core::export_job::apply_settings_overrides(&mut data, &job);
+        crate::export::apply_settings_overrides(&mut data, &job);
     }
 
     // Initialize logger settings

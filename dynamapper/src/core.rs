@@ -1,7 +1,6 @@
 pub mod app_states;
 mod bevy_log_filter;
 pub mod constants;
-pub mod export_job;
 pub mod system_sets;
 pub(crate) mod uo_files_loader;
 
@@ -245,13 +244,13 @@ pub fn run_bevy_app() -> ExitCode {
         assets_folder.as_os_str().to_str().unwrap_or("N/A")
     ));
 
-    let export_job = match export_job::load_requested_job() {
+    let export_job = match crate::export::load_requested_job() {
         Ok(job) => job,
         Err(error) => {
             console_logger::one(
                 LogSev::Error,
                 LogAbout::Startup,
-                &format!("{} is not a usable export job: {error:?}", export_job::EXPORT_JOB_ENV),
+                &format!("{} is not a usable export job: {error:?}", crate::export::EXPORT_JOB_ENV),
             );
             return ExitCode::from(settings::STARTUP_CONFIG_ERROR_EXIT_CODE);
         }
@@ -264,7 +263,7 @@ pub fn run_bevy_app() -> ExitCode {
         }
     };
     if let Some(job) = &export_job {
-        export_job::apply_settings_overrides(&mut settings_data, job);
+        crate::export::apply_settings_overrides(&mut settings_data, job);
     }
     settings::apply_logging_settings(&settings_data.logging);
     // Configure plugin log toggles (controls flat per-plugin lines and tree dump)
@@ -396,7 +395,7 @@ pub fn run_bevy_app() -> ExitCode {
             registered_by: "Core",
         },
     ))
-    .add_plugins(export_job::ExportJobPlugin {
+    .add_plugins(crate::export::ExportJobPlugin {
         registered_by: "Core",
         job: export_job,
     })
