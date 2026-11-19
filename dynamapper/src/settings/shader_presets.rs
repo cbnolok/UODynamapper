@@ -428,7 +428,7 @@ fn normalize_cached_preset_lighting(
 pub fn load_shader_settings(
     factory_presets: &LandShaderModePresets,
 ) -> eyre::Result<Option<LandShaderModePresets>> {
-    let bundled_path = crate::app::constants::valid_asset_dir().join(SHADER_SETTINGS_FILE_NAME);
+    let bundled_path = crate::app::paths::valid_asset_dir().join(SHADER_SETTINGS_FILE_NAME);
     let bundled = if bundled_path.exists() {
         let bundled =
             crate::settings::load_bundled_settings::<LandShaderModePresets>(SHADER_SETTINGS_FILE_NAME)?;
@@ -438,7 +438,7 @@ pub fn load_shader_settings(
         None
     };
 
-    let cache_path = crate::app::constants::valid_cache_dir().join(SHADER_SETTINGS_FILE_NAME);
+    let cache_path = crate::app::paths::valid_cache_dir().join(SHADER_SETTINGS_FILE_NAME);
     let Ok(contents) = std::fs::read_to_string(&cache_path) else {
         return Ok(bundled);
     };
@@ -501,7 +501,7 @@ pub fn load_shader_settings(
 /// The preset the app saved as selected, `default_preset` of the cached land.toml; `None` when there is no cache copy
 /// (the shipped default preset is selected) or it names none.
 pub fn saved_preset_key() -> Option<String> {
-    let cache_path = crate::app::constants::valid_cache_dir().join(SHADER_SETTINGS_FILE_NAME);
+    let cache_path = crate::app::paths::valid_cache_dir().join(SHADER_SETTINGS_FILE_NAME);
     let table: toml::Table = toml::from_str(&std::fs::read_to_string(cache_path).ok()?).ok()?;
     table.get(DEFAULT_PRESET_KEY)?.as_str().map(str::to_owned)
 }
@@ -587,7 +587,7 @@ fn toml_number(value: &toml::Value) -> Option<f64> {
 /// (never the read-only asset tree — the bundled `assets/` copy is the fallback default).
 /// Overwrites the full preset structure (all modes × time-of-day) plus the active preset key.
 pub fn save_shader_settings(presets: &LandShaderModePresets) {
-    let path = crate::app::constants::valid_cache_dir().join(SHADER_SETTINGS_FILE_NAME);
+    let path = crate::app::paths::valid_cache_dir().join(SHADER_SETTINGS_FILE_NAME);
 
     // Ensure parent directory exists
     if let Some(parent) = path.parent() {
@@ -1740,7 +1740,7 @@ mod tests {
     fn default_sun_is_the_former_baked_light() {
         assert_eq!(
             SunAngles::default().light_direction(),
-            crate::app::constants::BAKED_GLOBAL_LIGHT.normalize()
+            crate::render::terrain::mesh_material::BAKED_GLOBAL_LIGHT.normalize()
         );
     }
 

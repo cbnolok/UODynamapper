@@ -36,7 +36,7 @@ terrain, statics, lighting, picking, postprocess}`, `ui/`, `export/`, `diagnosti
 | `main.rs`, `prelude.rs` | 41 | 0 | Stay at the root. |
 | `app.rs` | 464 | 0 | App construction and plugin wiring: `core.rs` renamed 2026-11-19, once export and content had left `core/`. |
 | `app/app_states.rs`, `app/system_sets.rs` | 52 | 1 | States and schedule sets. |
-| `app/constants.rs` | 88 | 2 | Split by user: world light constants to `render/lighting`, paths to `app/`. |
+| `app/paths.rs` | 70 | 2 | The asset and cache directories. Split 2026-11-19 from `core/constants.rs`: the baked sun constants went beside `SunAngles` in `render/terrain/mesh_material.rs`, their only user. |
 | `console_logger.rs`, `app/bevy_log_filter.rs` | 453 | 1 | Logging. |
 | `util_lib.rs`, `util_lib/tracked_plugin.rs` | 352 | 2 | Plugin tracking and the `fname!` macro. |
 | `util_lib/image.rs`, `util_lib/math.rs`, `util_lib/wesl_source.rs` | 156 | 3 | Small shared helpers; stay in `util_lib/`. |

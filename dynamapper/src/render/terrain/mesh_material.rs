@@ -656,6 +656,14 @@ pub enum PlayerFloorRule {
     Kr,
 }
 
+/// The light direction every preset had before the sun was a setting; the default sun reproduces it.
+#[cfg(test)]
+pub const BAKED_GLOBAL_LIGHT: Vec3 = Vec3::new(-1.0, 2.5, -1.0);
+/// `BAKED_GLOBAL_LIGHT` as the compass bearing of a preset's sun: north-west.
+pub const BAKED_SUN_AZIMUTH_DEGREES: f32 = 315.0;
+/// `BAKED_GLOBAL_LIGHT` as the height of a preset's sun: atan2(2.5, sqrt(2)) = 60.5038 degrees.
+pub const BAKED_SUN_ELEVATION_DEGREES: f32 = 60.50379;
+
 /// A preset's sun: one static light direction for land, art and the sprite shadows, as compass angles.
 ///
 /// The world axes are x = UO x (east), z = UO y (south) and y up, so azimuth 0 is north (-z) and 90 east (+x).
@@ -684,8 +692,8 @@ impl Default for SunAngles {
     /// `BAKED_GLOBAL_LIGHT`, the light of every preset before the sun was a setting.
     fn default() -> Self {
         Self {
-            azimuth_degrees: crate::app::constants::BAKED_SUN_AZIMUTH_DEGREES,
-            elevation_degrees: crate::app::constants::BAKED_SUN_ELEVATION_DEGREES,
+            azimuth_degrees: BAKED_SUN_AZIMUTH_DEGREES,
+            elevation_degrees: BAKED_SUN_ELEVATION_DEGREES,
         }
     }
 }

@@ -447,7 +447,7 @@ pub fn exit_on_startup_config_error(error: &eyre::Report) -> ! {
 
 /// Reads and strictly parses a hand-written file under `assets/`: unknown and missing keys are errors.
 pub(crate) fn load_bundled_settings<T: serde::de::DeserializeOwned>(rel: &str) -> eyre::Result<T> {
-    let path = crate::app::constants::valid_asset_dir().join(rel);
+    let path = crate::app::paths::valid_asset_dir().join(rel);
     let contents =
         std::fs::read_to_string(&path).map_err(|error| eyre::eyre!("{}: cannot read: {error}", path.display()))?;
     uocf::utils::config_toml::parse_strict(&path.display().to_string(), &contents)
@@ -472,7 +472,7 @@ where
     T: Serialize + serde::de::DeserializeOwned,
 {
     let bundled: T = load_bundled_settings(rel)?;
-    let cache_path = crate::app::constants::valid_cache_dir().join(rel);
+    let cache_path = crate::app::paths::valid_cache_dir().join(rel);
     let Ok(contents) = std::fs::read_to_string(&cache_path) else {
         return Ok(bundled);
     };
@@ -577,7 +577,7 @@ pub fn load_from_files() -> eyre::Result<Settings> {
     let session_state: SectSessionState = load_user_settings(SESSION_STATE_CONFIG_FILE)?;
     // Gumps and paperdoll the saved shader preset drew before they were a preference of their own.
     let saved_preset = crate::settings::shader_presets::saved_preset_key();
-    let graphics_cached = crate::app::constants::valid_cache_dir().join(GRAPHICS_CONFIG_FILE).is_file();
+    let graphics_cached = crate::app::paths::valid_cache_dir().join(GRAPHICS_CONFIG_FILE).is_file();
     let mut kept_gumps = None;
     let mut graphics = load_user_settings_migrated::<GraphicsFile>(GRAPHICS_CONFIG_FILE, |contents| {
         let (migrated, client) = migrate_cached_gumps_and_paperdoll(contents, saved_preset.as_deref()?)?;
@@ -638,7 +638,7 @@ pub fn apply_logging_settings(logging: &SectLogging) {
 
 pub fn save_app_settings(settings: &Settings) {
     // User settings: written to the cache dir, never the read-only asset tree.
-    let user_path = crate::app::constants::valid_cache_dir().join(USER_PREFERENCES_CONFIG_FILE);
+    let user_path = crate::app::paths::valid_cache_dir().join(USER_PREFERENCES_CONFIG_FILE);
     if let Some(parent) = user_path.parent() {
         let _ = std::fs::create_dir_all(parent);
     }
@@ -671,7 +671,7 @@ pub fn save_app_settings(settings: &Settings) {
 
 pub fn save_session_state_settings(settings: &Settings) {
     // Session state: written to the cache dir, never the read-only asset tree.
-    let path = crate::app::constants::valid_cache_dir().join(SESSION_STATE_CONFIG_FILE);
+    let path = crate::app::paths::valid_cache_dir().join(SESSION_STATE_CONFIG_FILE);
     if let Some(parent) = path.parent() {
         let _ = std::fs::create_dir_all(parent);
     }
@@ -715,7 +715,7 @@ fn save_cache_copy<T>(rel: &str, value: &T)
 where
     T: Serialize + serde::de::DeserializeOwned + PartialEq,
 {
-    let path = crate::app::constants::valid_cache_dir().join(rel);
+    let path = crate::app::paths::valid_cache_dir().join(rel);
     let saved = cache_copy_contents(rel, value).and_then(|contents| {
         let Some(contents) = contents else {
             return match std::fs::remove_file(&path) {
@@ -744,7 +744,7 @@ pub fn save_keybindings(settings: &Settings) {
 
 pub fn save_graphics_settings(settings: &Settings) {
     // User graphics prefs: written to the cache dir, never the read-only asset tree.
-    let graphics_path = crate::app::constants::valid_cache_dir().join(GRAPHICS_CONFIG_FILE);
+    let graphics_path = crate::app::paths::valid_cache_dir().join(GRAPHICS_CONFIG_FILE);
     if let Some(parent) = graphics_path.parent() {
         let _ = std::fs::create_dir_all(parent);
     }

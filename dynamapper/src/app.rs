@@ -1,6 +1,6 @@
 pub mod app_states;
 mod bevy_log_filter;
-pub mod constants;
+pub mod paths;
 pub mod system_sets;
 
 use crate::{
@@ -209,7 +209,7 @@ fn resilient_asset_source_builder(file_path: &Path) -> bevy::asset::io::AssetSou
 
 pub fn run_bevy_app() -> ExitCode {
     let cwd = std::env::current_dir().unwrap();
-    let assets_folder = constants::valid_asset_dir();
+    let assets_folder = paths::valid_asset_dir();
 
     // Current working directory.
     console_logger::system(&format!("CWD: {cwd:?}"));

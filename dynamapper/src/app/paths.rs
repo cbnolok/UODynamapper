@@ -1,3 +1,4 @@
+//! Where the app reads its bundled assets and writes its cache (the settings and spec files the user saves).
 use std::path::PathBuf;
 
 /// Determines the default directory for assets.
@@ -67,22 +68,3 @@ pub fn valid_cache_dir() -> PathBuf {
 /// The tests' cache directory, `<temp dir>/<prefix><process id>`.
 #[cfg(test)]
 const TEST_CACHE_DIR_PREFIX: &str = "dynamapper-test-cache-";
-
-//------------------------------------
-// World light
-//------------------------------------
-
-// /// Used by shaders to calculate lighting.
-
-//#[derive(Resource, Deref)]
-//pub struct LightDir(pub Vec3);
-
-// Hardcoded light direction vector.
-// The presets' sun (`SunAngles` in render/terrain/mesh_material.rs) replaced it; it stays as the
-// reference the default sun reproduces.
-#[cfg(test)]
-pub const BAKED_GLOBAL_LIGHT: bevy::prelude::Vec3 = bevy::prelude::Vec3::new(-1.0, 2.5, -1.0);
-/// `BAKED_GLOBAL_LIGHT` as the compass bearing of a preset's sun: north-west.
-pub const BAKED_SUN_AZIMUTH_DEGREES: f32 = 315.0;
-/// `BAKED_GLOBAL_LIGHT` as the height of a preset's sun: atan2(2.5, sqrt(2)) = 60.5038 degrees.
-pub const BAKED_SUN_ELEVATION_DEGREES: f32 = 60.50379;

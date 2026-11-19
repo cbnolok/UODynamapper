@@ -15,7 +15,7 @@ use crate::content::{GumpMapRes, HuesPackageRes, PaperdollEcPackageRes, TileMeta
 use udd_assets::tilemeta::{TileMetaItemDefinitions, TileMetaItemTile};
 use crate::ingame_sysmessage_logger;
 use crate::{
-    app::constants,
+    app::paths,
     prelude::*,
 };
 use bevy::prelude::*;
@@ -771,7 +771,7 @@ fn sys_load_paperdoll_order(
 
 /// Where the paperdoll windows wrote the user's `PaperdollOverrides.kdl` before the runtime specs had user copies.
 fn old_user_overrides_path() -> std::path::PathBuf {
-    constants::valid_cache_dir().join(OLD_USER_OVERRIDES_DIR).join(PAPERDOLL_OVERRIDES_FILE_NAME)
+    paths::valid_cache_dir().join(OLD_USER_OVERRIDES_DIR).join(PAPERDOLL_OVERRIDES_FILE_NAME)
 }
 
 /// `WearableRules::decode`, its errors naming the file read.

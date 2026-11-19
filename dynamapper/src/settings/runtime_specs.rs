@@ -13,7 +13,7 @@ use std::path::{Path, PathBuf};
 use color_eyre::eyre;
 
 use crate::console_logger::{self, LogAbout, LogSev};
-use crate::app::constants;
+use crate::app::paths;
 use crate::ingame_sysmessage_logger;
 
 /// The folder of the runtime specs under the assets dir, and of the user's copies under the cache dir.
@@ -54,7 +54,7 @@ pub fn read_text(path: &Path) -> eyre::Result<String> {
 impl SpecFiles {
     /// `<folder>/<file_name>` of the runtime specs, under the app's assets and cache dirs.
     pub fn of(folder: &str, file_name: &str) -> Self {
-        Self::under(&constants::valid_asset_dir(), &constants::valid_cache_dir(), folder, file_name)
+        Self::under(&paths::valid_asset_dir(), &paths::valid_cache_dir(), folder, file_name)
     }
 
     /// `<folder>/<file_name>` of the runtime specs, under `asset_dir` and `cache_dir`.
