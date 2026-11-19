@@ -1,6 +1,7 @@
 pub(crate) mod assets;
 pub mod lighting;
 pub mod terrain;
+pub mod uniform_state;
 pub mod postprocess;
 pub(crate) mod picking;
 pub mod scene;

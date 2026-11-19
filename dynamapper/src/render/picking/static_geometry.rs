@@ -35,7 +35,7 @@ pub(crate) struct StaticPickingResources<'w> {
     batches: Res<'w, static_batches::RenderStaticChunkBatches>,
     gpu_pick: ResMut<'w, super::gpu_picking::VisibleStaticPick>,
     gpu_request: ResMut<'w, super::gpu_picking::PickRequest>,
-    uniforms: Res<'w, crate::settings::shader_presets::UniformState>,
+    uniforms: Res<'w, crate::render::uniform_state::UniformState>,
     time: Res<'w, Time>,
 }
 

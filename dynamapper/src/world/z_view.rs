@@ -63,7 +63,7 @@ use crate::render::terrain::mesh_material::PlayerFloorRule;
 use crate::render::terrain::mesh_material::LAND_NO_Z_LIMIT;
 use crate::render::terrain::MAP_STORAGE_BLOCK_TILE_DIM;
 use crate::render::scene::SceneStateData;
-use crate::settings::shader_presets::UniformState;
+use crate::render::uniform_state::UniformState;
 use crate::world::statics::{LazyStaticsStore, StaticsStoreRes};
 use crate::content::{MapPlanesRes, TileMetaPackageRes};
 use bevy::prelude::*;

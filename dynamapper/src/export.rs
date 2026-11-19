@@ -5,7 +5,8 @@
 //! RGBA8 pixels first, then the sidecar, each written as `*.tmp` and renamed. The contract is
 //! `docs/agent_notes/proposals/2026-11-01-web-map-export.md`; the tool's side is `tools/webmap-export-cli`.
 //! No interactive state is touched: settings are overridden in memory only and never saved.
-use crate::settings::shader_presets::{UniformState, CLASSIC_PRESET_GROUP, PAINTERLY_PRESET_GROUP};
+use crate::render::uniform_state::UniformState;
+use crate::settings::shader_presets::{CLASSIC_PRESET_GROUP, PAINTERLY_PRESET_GROUP};
 use crate::console_logger::{self, LogAbout, LogSev};
 use crate::app::app_states::AppState;
 use crate::world::teleport::teleport_player;

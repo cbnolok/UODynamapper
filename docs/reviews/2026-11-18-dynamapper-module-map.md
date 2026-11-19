@@ -46,7 +46,7 @@ terrain, statics, lighting, picking, postprocess}`, `ui/`, `export/`, `diagnosti
 | Now | Lines | Churn | Notes |
 |---|---:|---:|---|
 | `settings.rs` | 1590 | 17 | Model, loading, saving: moved 2026-11-19 from `configs/settings.rs`, with `ExternalDataPlugin` from `configs.rs`. Runtime appliers leave for their systems. |
-| `settings/shader_presets.rs` | 2028 | 26 | Preset model and persistence; `UniformState` (runtime render state) moves to `render/`. |
+| `settings/shader_presets.rs` | 1901 | 26 | Preset model and persistence, and the conversions between a preset and the live state. `UniformState` and `UniformSnapshot` (the live uniforms) moved 2026-11-19 to `render/uniform_state.rs`. |
 | `settings/runtime_specs.rs` | 209 | 1 | |
 
 ### world

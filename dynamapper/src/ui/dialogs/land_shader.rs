@@ -16,10 +16,11 @@ use crate::input::input_actions::ActionToggleShaderSettings;
 use crate::{
     settings::shader_presets::{
         build_save_presets, get_preset_group, get_preset_slot, preset_scene_multiplier, reset_preset_to_factory,
-        save_shader_settings, store_active_preset, FactoryShaderPresets, UniformState,
+        save_shader_settings, store_active_preset, FactoryShaderPresets,
         CLASSIC_PRESET_GROUP, ENHANCED_PRESET_GROUP, KR_PRESET_GROUP, PAINTERLY_PRESET_GROUP,
     },
     render::{
+        uniform_state::UniformState,
         lighting::client_night::{
             MAX_CLIENT_LIGHT_LEVEL, MAX_NIGHT_OVERLAY_STRENGTH, MIN_NIGHT_OVERLAY_STRENGTH, NIGHT_MAP_MEAN,
         },

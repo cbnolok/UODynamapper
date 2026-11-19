@@ -57,7 +57,7 @@ fn sys_sync_land_upload_budget(
 
 fn sys_apply_land_shader_simplification_override(
     settings: Res<crate::settings::Settings>,
-    uniform_state: Res<crate::settings::shader_presets::UniformState>,
+    uniform_state: Res<crate::render::uniform_state::UniformState>,
     shared_mat: Option<Res<draw_mesh::SharedLandMaterial>>,
     mut materials: ResMut<Assets<LandCustomMeshMaterial>>,
     mut last_override: Local<Option<crate::settings::SectWorldRenderingShaderSimplification>>,
@@ -147,7 +147,7 @@ impl_tracked_plugin!(DrawLandChunkMeshPlugin);
 /// The land shader panel registers it.
 pub fn sys_push_land_uniforms_if_dirty(
     mut mats: ResMut<Assets<LandCustomMeshMaterial>>,
-    mut u: ResMut<crate::settings::shader_presets::UniformState>,
+    mut u: ResMut<crate::render::uniform_state::UniformState>,
     settings: Res<crate::settings::Settings>,
 ) {
     let transitions = settings.graphics.terrain_transition_flags();
@@ -188,7 +188,7 @@ pub fn sys_update_shared_land_material(
     shared_mat: Option<Res<draw_mesh::SharedLandMaterial>>,
     render_zoom: Res<crate::render::view::camera::RenderZoom>,
     tile_atlas: Res<tile_atlas::TileAtlas>,
-    uniform_state: Res<crate::settings::shader_presets::UniformState>,
+    uniform_state: Res<crate::render::uniform_state::UniformState>,
     static_lights: Option<Res<crate::render::lighting::static_lights::RenderStaticLightInstances>>,
     player_q: Query<&Transform, With<crate::world::player::Player>>,
     camera_q: Query<&Projection, With<crate::render::view::camera::PlayerCamera>>,

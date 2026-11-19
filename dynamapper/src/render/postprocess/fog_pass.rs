@@ -13,7 +13,7 @@
 // - `sys_sync_fog_uniform` inserts it from `UniformState`, keeps it in sync,
 //   and removes it when the fog is off.
 
-use crate::settings::shader_presets::UniformState;
+use crate::render::uniform_state::UniformState;
 use crate::render::view::camera::PlayerCamera;
 use crate::prelude::*;
 use bevy::core_pipeline::{
