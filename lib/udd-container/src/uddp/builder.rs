@@ -167,7 +167,8 @@ impl CompressionSummary {
             CompressionFlag::None => self.raw += 1,
             CompressionFlag::ZstdNoDict
             | CompressionFlag::ZstdNoDictLevel(_)
-            | CompressionFlag::ZstdStripsLevel { .. } => self.zstd_no_dict += 1,
+            | CompressionFlag::ZstdStripsLevel { .. }
+            | CompressionFlag::ZstdStripsWhenWorthLevel { .. } => self.zstd_no_dict += 1,
             CompressionFlag::ZstdDict => self.zstd_dict += 1,
             CompressionFlag::Auto => self.auto += 1,
         }
@@ -1134,12 +1135,36 @@ fn uses_parallel_zstd_compression(file: &PendingFile) -> bool {
         )
 }
 
+/// Zstd at `level` as `ZstdNoDictLevel` stores it: one frame, on several threads when the payload is large.
+fn zstd_level_one_frame(data: &[u8], level: i32) -> std::io::Result<Vec<u8>> {
+    if data.len() >= PARALLEL_ZSTD_MIN_BYTES {
+        zstd_compress_level_parallel(data, level)
+    } else {
+        zstd_compress_level(data, level)
+    }
+}
+
+/// Zstd at `level` in strips of `strip_bytes` when they pay by `worth`, and otherwise in one frame. Returns the payload
+/// and whether it is in strips.
+fn zstd_strips_when_worth(data: &[u8], level: i32, strip_bytes: u32, worth: StripsWorth) -> std::io::Result<(Vec<u8>, bool)> {
+    const PERCENT: u64 = 100;
+    if (data.len() as u64) < u64::from(worth.min_raw_bytes) {
+        return Ok((zstd_level_one_frame(data, level)?, false));
+    }
+    let (one, strips) = rayon::join(|| zstd_level_one_frame(data, level), || zstd_compress_strips(data, level, strip_bytes));
+    let (one, strips) = (one?, strips?);
+    let pays = one.len() as u64 >= u64::from(worth.min_frame_bytes)
+        && strips.len() as u64 * PERCENT <= one.len() as u64 * (PERCENT + u64::from(worth.max_growth_percent));
+    Ok(if pays { (strips, true) } else { (one, false) })
+}
+
 fn compress_file(
     file: &PendingFile,
     dicts_by_type: &HashMap<u8, Vec<u8>>,
 ) -> Result<BuiltFile, BuildError> {
     let data_to_compress = &file.raw_data;
 
+    let mut in_strips = false;
     let (codec, encoded_payload) = match file.compression {
         CompressionFlag::None => (Codec::None, data_to_compress.to_vec()),
         CompressionFlag::ZstdNoDict => {
@@ -1159,7 +1184,14 @@ fn compress_file(
             (Codec::ZstdNoDict, encoded)
         }
         CompressionFlag::ZstdStripsLevel { level, strip_bytes } => {
+            in_strips = true;
             (Codec::ZstdNoDict, zstd_compress_strips(data_to_compress, level, strip_bytes).map_err(BuildError::Io)?)
+        }
+        CompressionFlag::ZstdStripsWhenWorthLevel { level, strip_bytes, worth } => {
+            let (encoded, strips) =
+                zstd_strips_when_worth(data_to_compress, level, strip_bytes, worth).map_err(BuildError::Io)?;
+            in_strips = strips;
+            (Codec::ZstdNoDict, encoded)
         }
         CompressionFlag::ZstdDict => {
             let dict = dicts_by_type
@@ -1191,7 +1223,7 @@ fn compress_file(
     Ok(BuiltFile {
         key: file.key,
         data_type: file.data_type,
-        independent_frames: codec == Codec::ZstdNoDict && matches!(file.compression, CompressionFlag::ZstdStripsLevel { .. }),
+        independent_frames: codec == Codec::ZstdNoDict && in_strips,
         codec,
         raw_size: file.raw_data.len() as u32,
         encoded_payload,
@@ -1222,7 +1254,7 @@ fn compress_file_owned(
     }
 
     let data_to_compress = &file.raw_data;
-    let striped = matches!(file.compression, CompressionFlag::ZstdStripsLevel { .. });
+    let mut in_strips = false;
     let (codec, encoded_payload) = match file.compression {
         CompressionFlag::None | CompressionFlag::Auto => unreachable!("handled above"),
         CompressionFlag::ZstdNoDict => {
@@ -1242,7 +1274,14 @@ fn compress_file_owned(
             (Codec::ZstdNoDict, encoded)
         }
         CompressionFlag::ZstdStripsLevel { level, strip_bytes } => {
+            in_strips = true;
             (Codec::ZstdNoDict, zstd_compress_strips(data_to_compress, level, strip_bytes).map_err(BuildError::Io)?)
+        }
+        CompressionFlag::ZstdStripsWhenWorthLevel { level, strip_bytes, worth } => {
+            let (encoded, strips) =
+                zstd_strips_when_worth(data_to_compress, level, strip_bytes, worth).map_err(BuildError::Io)?;
+            in_strips = strips;
+            (Codec::ZstdNoDict, encoded)
         }
         CompressionFlag::ZstdDict => {
             let dict = dicts_by_type
@@ -1267,7 +1306,7 @@ fn compress_file_owned(
     Ok(BuiltFile {
         key,
         data_type,
-        independent_frames: codec == Codec::ZstdNoDict && striped,
+        independent_frames: codec == Codec::ZstdNoDict && in_strips,
         codec,
         raw_size,
         encoded_payload,
@@ -1717,5 +1756,54 @@ mod tests {
             .expect("add plain payload");
         let plain = UddpReader::open(plain.into_bytes().expect("build package")).expect("open package");
         assert!(!unpack_independent_frames(plain.records()[0].locator.meta32));
+    }
+
+    /// Strips "when worth" are kept only for a payload large enough whose strips add little: noise is about as large
+    /// in strips as in one frame; a repeated block costs each strip its own copy; a small payload isn't tried.
+    #[test]
+    fn zstd_strips_are_kept_only_when_they_pay() {
+        const LEVEL: i32 = 3;
+        const STRIP_BYTES: u32 = 256 * 1024;
+        const LARGE_BYTES: usize = 16 * STRIP_BYTES as usize;
+        const SMALL_BYTES: usize = 2 * STRIP_BYTES as usize;
+        const REPEATED_BLOCK_BYTES: usize = 64 * 1024;
+        const WORTH: StripsWorth =
+            StripsWorth { min_raw_bytes: (4 * STRIP_BYTES), min_frame_bytes: 0, max_growth_percent: 10 };
+        // Sixteen values: it compresses by entropy alone, with nothing for a strip to lose by not seeing the others.
+        const NOISE_VALUES: u64 = 16;
+        let noise = |len: usize| -> Vec<u8> {
+            let mut state = 0x9E37_79B9_7F4A_7C15u64;
+            (0..len)
+                .map(|_| {
+                    state ^= state << 13;
+                    state ^= state >> 7;
+                    state ^= state << 17;
+                    (state % NOISE_VALUES) as u8
+                })
+                .collect()
+        };
+        let repeated: Vec<u8> = noise(REPEATED_BLOCK_BYTES).iter().copied().cycle().take(LARGE_BYTES).collect();
+        let cases = [(0u32, noise(LARGE_BYTES), true), (1, repeated, false), (2, noise(SMALL_BYTES), false)];
+        let mut builder = UddpBuilder::new(LookupMode::DenseId);
+        for (id, data, _) in &cases {
+            builder
+                .add_owned_file(AddOwnedFileRequest {
+                    data_type: DataType::Texture as u8,
+                    compression: CompressionFlag::ZstdStripsWhenWorthLevel { level: LEVEL, strip_bytes: STRIP_BYTES, worth: WORTH },
+                    width: 0,
+                    height: 0,
+                    virtual_path: None,
+                    path_hash64: None,
+                    id: Some(*id),
+                    data: data.clone(),
+                })
+                .expect("add payload");
+        }
+        let package = UddpReader::open(builder.into_bytes().expect("build package")).expect("open package");
+        for (id, data, striped) in &cases {
+            let record = package.records().into_iter().find(|record| record.key == FileKey::Id(*id)).expect("record");
+            assert_eq!(unpack_independent_frames(record.locator.meta32), *striped, "payload {id}");
+            assert_eq!(&package.read_file_by_dense_id(*id).expect("read payload"), data);
+        }
     }
 }

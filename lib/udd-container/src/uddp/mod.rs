@@ -191,8 +191,24 @@ pub enum CompressionFlag {
     /// another, and a decoder that does not split them reads them in order.
     ZstdStripsLevel { level: i32, strip_bytes: u32 },
 
+    /// As [`CompressionFlag::ZstdStripsLevel`] when the strips pay by `worth`, and otherwise as
+    /// [`CompressionFlag::ZstdNoDictLevel`]: the builder compresses both and keeps one.
+    ZstdStripsWhenWorthLevel { level: i32, strip_bytes: u32, worth: StripsWorth },
+
     /// Force Zstd compression with the implicit type dictionary.
     ZstdDict,
+}
+
+/// When a payload is worth storing in strips: when it is large enough to decode slowly as one frame, and the strips
+/// add little to its size. Sizes stand in for decode time so that the same input always packs the same way.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct StripsWorth {
+    /// Payloads with fewer raw bytes stay one frame without trying strips.
+    pub min_raw_bytes: u32,
+    /// Payloads whose one frame is smaller than this stay one frame.
+    pub min_frame_bytes: u32,
+    /// The most the strips may add to the one frame's size, in percent.
+    pub max_growth_percent: u32,
 }
 
 /// Convenience starter type ids.

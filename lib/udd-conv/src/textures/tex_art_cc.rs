@@ -48,7 +48,7 @@ use crate::package_progress::{
     AssetProgressReporter, AssetTaskProgressStage,
     build_and_write_package_with_progress,
 };
-use crate::page_compression::LOSSLESS_PAGE_COMPRESSION;
+use crate::page_compression::{page_compression_in_strips, LOSSLESS_PAGE_COMPRESSION};
 use crate::source_paths::{find_first_existing_file, source_path_label};
 use crate::upscale_profile::{UpscaleImageType, UpscaleProfile, UpscaleTarget};
 use udd_container::xxh64_virtual_path;
@@ -615,7 +615,7 @@ pub fn convert_art_mul_to_tex_art_cc_uddp_from_sources_with_patches_and_progress
     for (page_path, encoded, width, height) in encoded_pages {
         package.add_owned_file(AddOwnedFileRequest {
             data_type: DataType::Texture as u8,
-            compression,
+            compression: page_compression_in_strips(compression, pixel_format, width),
             width,
             height,
             virtual_path: Some(page_path),

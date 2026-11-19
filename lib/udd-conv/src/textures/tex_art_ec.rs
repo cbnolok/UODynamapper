@@ -50,7 +50,7 @@ use crate::package_progress::{
     AssetProgressReporter, AssetTaskProgressStage,
     build_and_write_package_with_progress,
 };
-use crate::page_compression::LOSSLESS_PAGE_COMPRESSION;
+use crate::page_compression::{page_compression_in_strips, LOSSLESS_PAGE_COMPRESSION};
 use crate::rgba_bounds::nonzero_alpha_bounds_in_rect;
 use crate::source_paths::{find_first_existing_file, source_path_label};
 use udd_assets::common::EcOverlayTable;
@@ -649,7 +649,7 @@ fn convert_loaded_sources(
     for (page_path, encoded, width, height) in encoded_pages {
         package.add_owned_file(AddOwnedFileRequest {
             data_type: DataType::Texture as u8,
-            compression,
+            compression: page_compression_in_strips(compression, pixel_format, width),
             width,
             height,
             virtual_path: Some(page_path),

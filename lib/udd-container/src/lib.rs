@@ -12,6 +12,7 @@ pub use uddp::{
     Codec,
     CompressionSummary,
     CompressionFlag,
+    StripsWorth,
     DataType,
     FileKey,
     FileRecord,

@@ -158,6 +158,8 @@ fn phase_message(phase: BuildProgressPhase, compression_summary: CompressionSumm
 fn active_file_message(file: BuildProgressFile) -> String {
     let compression = match file.compression {
         CompressionFlag::ZstdNoDict | CompressionFlag::ZstdNoDictLevel(_) => "Zstd",
+        CompressionFlag::ZstdStripsLevel { .. } => "Zstd strips",
+        CompressionFlag::ZstdStripsWhenWorthLevel { .. } => "Zstd, in strips if they pay",
         CompressionFlag::ZstdDict => "Zstd dictionary",
         CompressionFlag::Auto => "auto",
         CompressionFlag::None => "raw",
@@ -208,6 +210,8 @@ pub fn atlas_payload_progress_message(
             CompressionFlag::None => format!("registering uncompressed {subject}"),
             CompressionFlag::ZstdNoDict
             | CompressionFlag::ZstdNoDictLevel(_)
+            | CompressionFlag::ZstdStripsLevel { .. }
+            | CompressionFlag::ZstdStripsWhenWorthLevel { .. }
             | CompressionFlag::ZstdDict
             | CompressionFlag::Auto => format!("registering {subject} for package compression"),
         }
@@ -231,6 +235,8 @@ pub fn atlas_payload_finish_message(
             CompressionFlag::None => format!("{subject} registered uncompressed"),
             CompressionFlag::ZstdNoDict
             | CompressionFlag::ZstdNoDictLevel(_)
+            | CompressionFlag::ZstdStripsLevel { .. }
+            | CompressionFlag::ZstdStripsWhenWorthLevel { .. }
             | CompressionFlag::ZstdDict
             | CompressionFlag::Auto => format!("{subject} registered for package compression"),
         }

@@ -5,7 +5,8 @@ use crate::progress::{ProgressBar, ProgressStyle};
 use udd_container::{AddFileRequest, AddOwnedFileRequest, CompressionFlag, DataType, UddpBuilder};
 
 use crate::package_progress::{AssetTaskProgress, AssetTaskProgressStage};
-use crate::page_compression::LOSSLESS_PAGE_COMPRESSION;
+use crate::page_compression::{page_compression_in_strips, LOSSLESS_PAGE_COMPRESSION};
+use udd_assets::tex_art_cc::PagePixelFormat;
 use crate::rgba_bounds::nonzero_alpha_bounds;
 use crate::tex_art_cc::crop_rgba_page;
 use crate::{merge_unplaced_tiles, resolve_packing_axis, AtlasPackingMode};
@@ -188,7 +189,11 @@ pub fn add_gump_atlas_files_with_progress(
         );
         builder.add_owned_file(AddOwnedFileRequest {
             data_type: DataType::Texture as u8,
-            compression: options.compression,
+            compression: page_compression_in_strips(
+                options.compression,
+                PagePixelFormat::Rgba8888,
+                page.record.used_width,
+            ),
             width: page.record.used_width,
             height: page.record.used_height,
             virtual_path: None,

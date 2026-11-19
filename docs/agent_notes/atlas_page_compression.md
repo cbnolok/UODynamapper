@@ -187,9 +187,12 @@ their size and upscaled 2× with Lanczos3 over the whole page, which stands in f
   and RDO's choices break apart.
 - BC1 has no RDO in our encoder (`dds`), so BC1 with RDO was not measured.
 
-`tex_art_ec.uddp` and `tex_land_ec.uddp` repacked in 128-row strips hold byte-identical pages and grow by 8.5 %
-(60.2 to 65.4 MB and 21.1 to 23.0 MB). Read through `udd-container`, which decodes the frames of a payload marked as independent frames in
-parallel, an art page takes 8–9 ms instead of 62–86 ms, and a land page about 4 ms instead of 25–31 ms.
+Every page in 128-row strips makes `tex_art_ec.uddp` and `tex_land_ec.uddp` 8.5 % larger (60.2 to 65.4 MB and 21.1 to
+23.0 MB). The converter keeps strips only where they pay (`PAGE_STRIPS_WORTH` in `udd-conv`, from the rule below):
+a page of at least 12 MiB raw whose one frame is at least 3 MiB and whose strips add at most 10 %. That puts 5 of the
+9 art pages and 1 of the 6 land pages in strips; the packages grow by 4.3 % and 2.2 % (62.8 and 21.6 MB), with
+byte-identical pages. Read through `udd-container`, all art pages take 367 ms instead of 759, all land pages 130 ms
+instead of 159; a page in strips takes 8–9 ms instead of 62–86. Classic pages and gumps stay one frame.
 
 The strip height is a multiple of 8 rows, so a strip holds whole block rows of BC7 and of 4×4 and 8×8 ASTC pages, and a
 decoded strip could go straight to its rows of a block-compressed texture. The frames are stored one after another as
@@ -253,8 +256,8 @@ whole pages:
   for +7–26 %); Classic land RGBA at 1× (14 ms, +24 %).
 - **Costly but needed:** Classic land RGBA upscaled (132–660 ms) pays 11–19 % for strips; BC7 RDO 1 avoids both.
 
-A writer can decide this for itself: compress the strips (in parallel, so cheap beside the one frame) and keep them
-when the page is large and they cost less than the limit.
+The writer decides this for itself (`CompressionFlag::ZstdStripsWhenWorthLevel`): it compresses the strips (in
+parallel, so cheap beside the one frame) and keeps them when the page is large and they cost less than the limit.
 
 ## Trained dictionaries
 
