@@ -88,7 +88,7 @@ terrain, statics, lighting, picking, postprocess}`, `ui/`, `export/`, `diagnosti
 | `core/texture_cache/land/coverage.rs` (+ `cache.rs`, `runtime.rs`, `gpu_tests.rs`) | 1057 | 17 | `render/terrain`. |
 | `core/texture_cache/land/liquid_sampling_tests.rs` | 574 | 0 | `render/terrain`. |
 | `rsw/land/tile_atlas.rs` | 958 | 9 | `render/assets`. |
-| `core/texture_cache.rs`, `art.rs`, `residency.rs` | 1073 | 4 | `render/assets`. |
+| `core/texture_cache.rs`, `art.rs` | 1073 | 4 | `render/assets`. The unused full-preload `residency.rs` was deleted 2026-11-19. |
 | `core/texture_cache/land.rs` (+ `cache.rs`, `texture_array.rs`, `aux_layers.rs`, `routing.rs`) | 4783 | 25 | `render/assets`; the shared EC item auxiliary setup leaves terrain. |
 | `core/texture_cache/ec_item_liquid.rs`, `ec_item_surface.rs` (+ `hue_mask`, `water`) | 856 | 9 | `render/assets`. |
 | `rsw/art.rs`, `art/{statics_collect, statics_draw, static_geometry, static_surface, transparent_order}.rs` | 8624 | 73 | `render/statics`; `statics_collect.rs` (5470 lines) splits into source policy, geometry, chunk cache, collection and batches. |

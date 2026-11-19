@@ -1,11 +1,5 @@
-#![allow(unused)]
 
-use crate::{
-    core::texture_cache::TextureResidencyPlan,
-    core::uo_files_loader::TexMap2DRes,
-    prelude::*,
-    util_lib::image::*,
-};
+use crate::prelude::*;
 use bevy::{
     image::{ImageSampler, ImageSamplerDescriptor},
     prelude::*,
@@ -13,7 +7,6 @@ use bevy::{
         AddressMode, Extent3d, FilterMode, TextureDimension, TextureFormat, TextureUsages,
     },
 };
-use std::sync::OnceLock;
 use udd_assets::bc7::{ImageExtent, VramTextureFormat};
 use uocf::classic::land_texture::LandTextureSize;
 
@@ -65,20 +58,6 @@ pub const RESOURCE_SHRINK_TIMEOUT_SECS: u64 = 120;
 /// Fraction of capacity below which we consider shrinking.
 pub const RESOURCE_SHRINK_THRESHOLD: f32 = 0.40;
 
-pub fn build_texture_residency_plan(
-    texmap_2d_res: &udd_assets::tex_land_cc::TexLandCcPackage,
-) -> TextureResidencyPlan<LandTextureSize> {
-    let mut plan = TextureResidencyPlan::new();
-
-    for texture_id in 0..texmap_2d_res.len() {
-        if let Some(size) = texmap_2d_res.get_texture_size(texture_id as u32) {
-            plan.push(size, texture_id as u16);
-        }
-    }
-
-    plan
-}
-
 pub fn texture_extent(tex_size: LandTextureSize) -> ImageExtent {
     let (width, height) = tex_size.dimensions();
     ImageExtent::new(width, height).expect("terrain textures must have valid size")
@@ -116,7 +95,7 @@ pub fn create_gpu_texture_array(
     // even for layers that haven't been populated yet.
     let data_bytes = bytes_per_layer(tex_size) * layers as usize;
 
-    let mut array = Image {
+    let array = Image {
         data: Some(vec![0u8; data_bytes]),
         // RENDER_WORLD only: Bevy uploads the zeroed data to the GPU, then frees the CPU
         // copy. This saves ~160 MB of RAM. We don't need the CPU copy because all
@@ -147,9 +126,6 @@ pub fn create_gpu_texture_array(
         }),
         ..default()
     };
-    // Make sure the image view is consistent with array sizing
-    array.reinterpret_size(array.texture_descriptor.size);
-
     image_assets.add(array)
 }
 
@@ -157,10 +133,6 @@ pub fn create_gpu_texture_array(
 // 2. Loading an Image for a Specific Art ID and Texture Size
 ////////////////////////////////////////////////////////////////////////////////
 
-//const DEFAULT_ERROR_TEXTURE_SIZE: LandTextureSize = LandTextureSize::Small;
-//const DEFAULT_ERROR_TEXTURE_ID: u32 = TEXTURE_UNUSED_ID;
-
-const DEFAULT_ERROR_TEXTURE_SIZE: LandTextureSize = LandTextureSize::Big;
 pub const DEFAULT_ERROR_TEXTURE_ID: u16 = 0x4C; // Sea floor
 
 /// Try to get actual texture for provided texture_id.

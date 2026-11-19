@@ -593,7 +593,6 @@ pub fn sys_draw_spawned_land_chunks(
                 map_package: plane_ref.package(),
                 size_blocks_height: plane_ref.size_blocks.height,
                 blocks_to_load: uncached_blocks,
-                texmap_2d: texmap_2d_r.0.clone(),
             });
         locals.pending = true;
     }

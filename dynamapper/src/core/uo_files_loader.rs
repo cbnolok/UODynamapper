@@ -58,8 +58,7 @@ impl TileMetaPackageRes {
     }
 }
 
-/// Arc: cloned into the chunk-loader OS thread (via LoadRequest.texmap_2d)
-/// and passed to texture cache systems that warm pixel data off-thread.
+/// Arc: passed to the texture cache systems that warm pixel data off-thread.
 #[derive(Resource)]
 pub struct TexMap2DRes(pub Arc<udd_assets::tex_land_cc::TexLandCcPackage>);
 

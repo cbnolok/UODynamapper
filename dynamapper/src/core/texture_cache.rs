@@ -2,21 +2,9 @@ pub mod art;
 pub mod ec_item_liquid;
 pub mod ec_item_surface;
 pub mod land;
-pub mod residency;
 
 use bevy::prelude::*;
 use crate::prelude::*;
-
-// Shared abstractions live here; individual collections such as land texmaps build on
-// them by providing their own grouping rules, byte loading path, and GPU upload logic.
-pub use residency::{
-    TextureResidencyGroupLayers,
-    TextureResidencyPlan,
-    TextureResidencyStrategy,
-    resolve_layer_allocations,
-    visit_grouped_layer_assignments,
-    visit_grouped_texture_ids,
-};
 
 pub struct TextureCachePlugin {
     pub registered_by: &'static str,

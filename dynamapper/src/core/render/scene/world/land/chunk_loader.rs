@@ -1,12 +1,11 @@
 //! Background chunk-data loader thread.
 //!
-//! Offloads map-block I/O **and** texture-cache warming to a dedicated OS thread,
-//! keeping the main (Bevy) thread free from disk stalls during large zoom-outs.
+//! Offloads map-block I/O to a dedicated OS thread, keeping the main (Bevy) thread free from disk stalls during large zoom-outs.
 //!
 //! ## Protocol
 //!
 //! 1. The main-thread draw system sends a [`LoadRequest`] with the list of
-//!    uncached block coordinates, the map package reader, and an `Arc<TexLandCcPackage>`.
+//!    uncached block coordinates and the map package reader.
 //! 2. This thread breaks the request into sub-batches of `SUB_BATCH_SIZE`
 //!    blocks, loading each batch and sending a [`LoadResult`] back immediately.
 //!    This lets the main thread start rendering deferred chunks progressively
@@ -17,7 +16,6 @@
 use std::sync::{mpsc, Arc};
 use std::time::Instant;
 
-use udd_assets::tex_land_cc::TexLandCcPackage;
 use uocf::classic::map::{MapBlock, MapBlockRelPos};
 use udd_container::UddpReader;
 
@@ -37,9 +35,6 @@ pub struct LoadRequest {
     pub map_package: Arc<UddpReader>,
     pub size_blocks_height: u32,
     pub blocks_to_load: Vec<MapBlockRelPos>,
-    /// Shared handle used to warm the texture pixel-data cache on this thread
-    /// so the main thread's `precache_textures_parallel` hits only cache lookups.
-    pub texmap_2d: Arc<TexLandCcPackage>,
 }
 
 pub struct LoadResult {
@@ -117,25 +112,6 @@ fn loader_thread_main(rx: mpsc::Receiver<LoadRequest>, tx: mpsc::Sender<LoadResu
         let mut batch_idx = 0usize;
         let mut total_loaded = 0usize;
 
-        // Deduplication bitmask: one bit per possible u16 tile ID (0..65535).
-        // 1024 u64 words × 64 bits = 65,536 bits = 8 KB on the stack-ish heap.
-        //
-        // For a given tile ID `id`:
-        //   word index = id >> 6   (id / 64)
-        //   bit  index = id & 63   (id % 64)
-        //
-        // Why a bitmask instead of a HashSet<u16> or Vec<u16>?
-        //  • Fixed 8 KB footprint — no allocator churn from bucket resizing.
-        //  • O(1) test-and-set with bit ops (shift + mask + OR), zero hashing overhead.
-        //  • Cache-friendly: 8 KB fits in L1; a HashSet would scatter across many cache lines.
-        //
-        //
-        // This ensures each unique tile ID is preloaded exactly once per request,
-        // even though the same ID may appear in thousands of cells across hundreds
-        // of map blocks.
-        let mut seen_count = 0usize;
-        let mut seen_ids = Box::new([0u64; 1024]);
-
         for batch_slice in chunks_iter {
             batch_idx += 1;
             let is_final = batch_idx == num_sub_batches;
@@ -156,19 +132,6 @@ fn loader_thread_main(rx: mpsc::Receiver<LoadRequest>, tx: mpsc::Sender<LoadResu
                 Vec::new()
             });
             total_loaded += loaded_blocks.len();
-
-            // Warm texture cache for this sub-batch's tile IDs.
-            for block in &loaded_blocks {
-                for cell in &block.cells {
-                    let word = (cell.id as usize) >> 6;
-                    let bit = (cell.id as usize) & 63;
-                    if (seen_ids[word] & (1u64 << bit)) == 0 {
-                        seen_ids[word] |= 1u64 << bit;
-                        seen_count += 1;
-                        // Pre-warm UDDP page if needed? For now we just track it.
-                    }
-                }
-            }
 
             // Send this sub-batch to the main thread immediately.
             let _ = tx.send(LoadResult {
@@ -191,8 +154,8 @@ fn loader_thread_main(rx: mpsc::Receiver<LoadRequest>, tx: mpsc::Sender<LoadResu
                 LogSev::Debug,
                 LogAbout::Performance,
                 format!(
-                    "Perf: Slow land chunk-loader run: loaded {} blocks ({} sub-batches) + warmed {} textures in {} µs",
-                    total_loaded, num_sub_batches, seen_count, elapsed_us,
+                    "Perf: Slow land chunk-loader run: loaded {} blocks ({} sub-batches) in {} µs",
+                    total_loaded, num_sub_batches, elapsed_us,
                 )
                 .as_str(),
             );

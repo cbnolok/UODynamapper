@@ -138,8 +138,6 @@ pub enum LightClipMode {
     /// As Bevy's unlit StandardMaterial: the "classicuo" and "clients" light covers.
     #[default]
     Unclipped,
-    /// Clipped, in its own pass with no depth test: the decals in the world view's transparent pass.
-    InPlace,
     /// Clipped, drawn by `render_deferred_light_sprites` and nothing in its own pass: the light sprites.
     Deferred,
 }
@@ -181,7 +179,6 @@ impl MaterialExtension for LightClipExtension {
     ) -> Result<(), SpecializedMeshPipelineError> {
         let depth_compare = match key.bind_group_data.mode {
             LightClipMode::Unclipped => return Ok(()),
-            LightClipMode::InPlace => CompareFunction::Always,
             LightClipMode::Deferred => CompareFunction::Never,
         };
         if let Some(fragment) = descriptor.fragment.as_mut() {
@@ -256,7 +253,6 @@ fn sys_sync_light_scene_image(
     let active = glows.iter().any(|material| {
         materials.get(material).is_some_and(|material| match material.extension.mode {
             LightClipMode::Unclipped => false,
-            LightClipMode::InPlace => true,
             LightClipMode::Deferred => light_buffer_drawn,
         })
     });
