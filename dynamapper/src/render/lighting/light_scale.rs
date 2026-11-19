@@ -2,7 +2,7 @@
 //! lights in KR-like, Enhanced and UOD-Painterly, the light sprites (on top of their tileart scale) and the light.mul
 //! lights alike. Classic draws the lights as the client does. The file is hand-written and read strictly
 //! (`uot_kdl::strict`): every error names its line. It is read at startup; a user copy under the cache dir takes the
-//! bundled file's place (`configs::runtime_specs`).
+//! bundled file's place (`settings::runtime_specs`).
 
 use std::ops::RangeInclusive;
 
@@ -12,7 +12,7 @@ use uot_kdl::ast::{Node, Value};
 use uot_kdl::span::LineSpan;
 use uot_kdl::strict::{self, NodeSchema};
 
-use crate::configs::runtime_specs::SpecFiles;
+use crate::settings::runtime_specs::SpecFiles;
 
 /// The folder of the file under `runtime_specs`, and its name.
 pub const LIGHT_SCALE_SPECS_FOLDER: &str = "lights";
@@ -50,7 +50,7 @@ impl ItemLightScales {
     pub fn load() -> Self {
         let loaded = SpecFiles::of(LIGHT_SCALE_SPECS_FOLDER, LIGHT_SCALE_FILE_NAME)
             .load(Self::decode)
-            .unwrap_or_else(|error| crate::configs::settings::exit_on_startup_config_error(&error));
+            .unwrap_or_else(|error| crate::settings::exit_on_startup_config_error(&error));
         loaded.report(LIGHT_SCALE_WHAT);
         loaded.value
     }

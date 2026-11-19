@@ -1,4 +1,4 @@
-use crate::configs::settings::{AntiAliasingMode, SectGraphics, Settings};
+use crate::settings::{AntiAliasingMode, SectGraphics, Settings};
 use crate::render::scene::player::Player;
 use crate::render::scene::RecomputeVisibleChunksEvent;
 use super::footprint::{camera_ground_footprint, FreeCameraFootprint};
@@ -723,7 +723,7 @@ mod tests {
     /// are inserted again only when the mode itself changes.
     #[test]
     fn camera_aa_components_are_reapplied_only_when_the_mode_changes() {
-        let mut settings = crate::configs::settings::bundled_settings();
+        let mut settings = crate::settings::bundled_settings();
         settings.graphics.anti_aliasing = AntiAliasingMode::Msaa4x;
         let mut app = App::new();
         let camera = app.world_mut().spawn(PlayerCamera).id();

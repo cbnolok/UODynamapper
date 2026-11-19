@@ -3,7 +3,7 @@
 //! which of them it may also turn by quarter turns (land/sampling.wesl). Materials it does not list keep their plain
 //! world-space tiling: masonry, planks, tiles and furrows must line up, and cliffs and baked light have a direction.
 //! The file is hand-written and read strictly (`uot_kdl::strict`): every error names its line. It is read at
-//! startup; a user copy under the cache dir takes the bundled file's place (`configs::runtime_specs`).
+//! startup; a user copy under the cache dir takes the bundled file's place (`settings::runtime_specs`).
 
 use bevy::prelude::Resource;
 use color_eyre::eyre;
@@ -11,7 +11,7 @@ use uot_kdl::ast::{Literal, Node, Value};
 use uot_kdl::span::LineSpan;
 use uot_kdl::strict::{self, NodeSchema};
 
-use crate::configs::runtime_specs::SpecFiles;
+use crate::settings::runtime_specs::SpecFiles;
 
 /// The folder of the file under `runtime_specs`, and its name.
 pub const LAND_TEXTURE_VARIATION_SPECS_FOLDER: &str = "land";
@@ -55,7 +55,7 @@ impl LandTextureVariationMaterials {
     pub fn load() -> Self {
         let loaded = SpecFiles::of(LAND_TEXTURE_VARIATION_SPECS_FOLDER, LAND_TEXTURE_VARIATION_FILE_NAME)
             .load(Self::decode)
-            .unwrap_or_else(|error| crate::configs::settings::exit_on_startup_config_error(&error));
+            .unwrap_or_else(|error| crate::settings::exit_on_startup_config_error(&error));
         loaded.report(LAND_TEXTURE_VARIATION_WHAT);
         loaded.value
     }

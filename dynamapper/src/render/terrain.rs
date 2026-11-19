@@ -42,7 +42,7 @@ pub struct LCMesh {
 /// render-world atlas uploads, so we update it whenever settings change instead of making
 /// those systems reach into the full Settings resource directly.
 fn sys_sync_land_upload_budget(
-    settings: Res<crate::configs::settings::Settings>,
+    settings: Res<crate::settings::Settings>,
     mut upload_budget: ResMut<LandUploadBudget>,
 ) {
     if !settings.is_changed() && !upload_budget.is_added() {
@@ -55,11 +55,11 @@ fn sys_sync_land_upload_budget(
 }
 
 fn sys_apply_land_shader_simplification_override(
-    settings: Res<crate::configs::settings::Settings>,
-    uniform_state: Res<crate::configs::shader_presets::UniformState>,
+    settings: Res<crate::settings::Settings>,
+    uniform_state: Res<crate::settings::shader_presets::UniformState>,
     shared_mat: Option<Res<draw_mesh::SharedLandMaterial>>,
     mut materials: ResMut<Assets<LandCustomMeshMaterial>>,
-    mut last_override: Local<Option<crate::configs::settings::SectWorldRenderingShaderSimplification>>,
+    mut last_override: Local<Option<crate::settings::SectWorldRenderingShaderSimplification>>,
 ) {
     let override_config = settings.world_rendering.shader_simplification.clone();
     let force_changed = *last_override != Some(override_config.clone());
@@ -145,7 +145,7 @@ pub fn sys_update_shared_land_material(
     shared_mat: Option<Res<draw_mesh::SharedLandMaterial>>,
     render_zoom: Res<crate::render::view::camera::RenderZoom>,
     tile_atlas: Res<tile_atlas::TileAtlas>,
-    uniform_state: Res<crate::configs::shader_presets::UniformState>,
+    uniform_state: Res<crate::settings::shader_presets::UniformState>,
     static_lights: Option<Res<crate::render::lighting::static_lights::RenderStaticLightInstances>>,
     player_q: Query<&Transform, With<crate::render::scene::player::Player>>,
     camera_q: Query<&Projection, With<crate::render::view::camera::PlayerCamera>>,

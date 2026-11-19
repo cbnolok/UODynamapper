@@ -2,7 +2,7 @@
 
 #[doc(hidden)]
 pub use crate::{
-    configs::settings::*,
+    settings::*,
     console_logger::{self, LogAbout, LogSev},
     app::app_states::*,
 };

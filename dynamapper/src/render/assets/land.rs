@@ -1089,10 +1089,10 @@ fn land_shader_source_from_cache<'a>(
 ) -> Option<LandShaderAtlasSource<'a>> {
     // The atlas holds the first loaded source of the preferred source's chain (routing.rs).
     match cache.routes().atlas() {
-        crate::configs::settings::LandTextureSource::Cc => {
+        crate::settings::LandTextureSource::Cc => {
             cache.tex_land_cc.as_deref().map(LandShaderAtlasSource::Cc)
         }
-        crate::configs::settings::LandTextureSource::Ec | crate::configs::settings::LandTextureSource::Kr => {
+        crate::settings::LandTextureSource::Ec | crate::settings::LandTextureSource::Kr => {
             let primary = cache.atlas_enhanced_land()?.as_ref();
             // A row drawn from the atlas package is written from the land id its route names.
             let atlas = routing::LandTileRoute::Enhanced(cache.routes().atlas());
@@ -1116,7 +1116,7 @@ impl Plugin for LandTextureCachePlugin {
         // The route file, in front of each land id's source chain and of the static graphics (route_file.rs).
         app.insert_resource(route_file::RouteFileRes::load());
         // The terrain materials the land texture variation breaks up, bound in the land material.
-        app.insert_resource(crate::configs::land_texture_variation::LandTextureVariationMaterials::load());
+        app.insert_resource(crate::content::land_texture_variation::LandTextureVariationMaterials::load());
         app.add_plugins(bevy::render::extract_resource::ExtractResourcePlugin::<
             cache::TextureArrayImageHandles,
         >::default())
@@ -1346,7 +1346,7 @@ fn sys_evict_idle_land_cache(
 
 fn sys_apply_land_texture_source_changes(
     mut commands: Commands,
-    settings: Res<crate::configs::settings::Settings>,
+    settings: Res<crate::settings::Settings>,
     route_file: Res<route_file::RouteFileRes>,
     texmap_2d_r: Res<crate::content::TexMap2DRes>,
     mut cache_r: ResMut<cache::LandTextureCache>,
@@ -1457,7 +1457,7 @@ pub fn sys_setup_terrain_cache(
     mut cmd: Commands,
     mut images: ResMut<Assets<Image>>,
     mut materials: ResMut<Assets<LandCustomMeshMaterial>>,
-    settings: Res<crate::configs::settings::Settings>,
+    settings: Res<crate::settings::Settings>,
     texmap_2d_r: Res<crate::content::TexMap2DRes>,
     tilemeta_r: Option<Res<crate::content::TileMetaPackageRes>>,
     tex_art_cc_r: Option<Res<crate::content::TexArtCcPackageRes>>,
@@ -1470,7 +1470,7 @@ pub fn sys_setup_terrain_cache(
     uo_files_settings: Res<crate::content::UoFilesSettingsRes>,
     shader_presets: Res<crate::render::terrain::mesh_material::LandShaderModePresets>,
     route_file: Res<route_file::RouteFileRes>,
-    texture_variation: Res<crate::configs::land_texture_variation::LandTextureVariationMaterials>,
+    texture_variation: Res<crate::content::land_texture_variation::LandTextureVariationMaterials>,
 ) {
     log_system_add_startup::<LandTextureCachePlugin>(StartupSysSet::SetupSceneStage1, fname!());
     let (tex_aux_ec_r, kr_items_r) = item_packages;
@@ -1631,7 +1631,7 @@ pub fn sys_setup_terrain_cache(
                         crate::render::view::camera::PlayerCamera::BASE_OFFSET_FROM_PLAYER,
                     land_max_z: crate::render::terrain::mesh_material::LAND_NO_Z_LIMIT,
                     // The active preset's sun; the shader panel pushes the live one whenever it changes.
-                    light_direction: crate::configs::shader_presets::get_preset_slot(
+                    light_direction: crate::settings::shader_presets::get_preset_slot(
                         &shader_presets,
                         &shader_presets.default_preset,
                     )
@@ -1696,7 +1696,7 @@ fn sys_apply_texture_array_expansion(
     mut materials: ResMut<Assets<LandCustomMeshMaterial>>,
     shared_mat: Res<crate::render::terrain::draw_mesh::SharedLandMaterial>,
     texmap_2d_r: Res<crate::content::TexMap2DRes>,
-    _settings: Res<crate::configs::settings::Settings>,
+    _settings: Res<crate::settings::Settings>,
     time: Res<Time<Real>>,
 ) {
     let now = time.last_update().unwrap_or_else(Instant::now);

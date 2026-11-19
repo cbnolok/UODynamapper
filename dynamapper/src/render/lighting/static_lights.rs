@@ -7,7 +7,7 @@ use crate::render::statics::statics_collect::static_land_z;
 use crate::render::statics::static_source::StaticArtSourceState;
 use crate::render::statics::static_batches::StaticChunkBatchKey;
 use crate::render::lighting::light_scale::{ItemLightScales, NEUTRAL_LIGHT_SCALE};
-use crate::configs::{settings::{ClientTextureSource, Settings}, shader_presets::UniformState};
+use crate::settings::{shader_presets::UniformState, ClientTextureSource, Settings};
 use crate::console_logger::{self, LogAbout, LogSev};
 use crate::world::multis::{MultiDefinitionsRes, PlacedMultisRes};
 use crate::render::terrain::mesh_material::{ClientLocalLights, ClientNightLighting};
@@ -1452,7 +1452,7 @@ mod tests {
             GlobalLightingUniforms, LandEffectsUniform, LandLightingUniforms, SunAngles,
         };
         use crate::render::lighting::light_cover::LightCover;
-        let mut settings = crate::configs::settings::bundled_settings();
+        let mut settings = crate::settings::bundled_settings();
         settings.world_rendering.enable_static_lights = true;
         let uniform_state = UniformState {
             effects: LandEffectsUniform::default(),

@@ -50,7 +50,7 @@
 //!   Where a built ceiling covers the rim, a floor static on the land's face over the cave's floor, the opening is a
 //!   room's doorway, not a mouth: its land is not the cave's.
 
-use crate::configs::settings::Settings;
+use crate::settings::Settings;
 use crate::console_logger::{self, LogAbout, LogSev};
 use crate::world::maps::{package_chunk_cell, read_package_chunk_land_z, PACKAGE_CHUNK_CELL_DIM};
 use crate::render::terrain::draw_mesh::PendingTextureBake;

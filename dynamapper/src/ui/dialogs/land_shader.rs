@@ -14,7 +14,7 @@ use crate::render::terrain::mesh_material::*;
 use crate::render::lighting::{light_cover::LightCover, static_lights::ClientLocalLightSource};
 use crate::input::input_actions::ActionToggleShaderSettings;
 use crate::{
-    configs::shader_presets::{
+    settings::shader_presets::{
         build_save_presets, get_preset_group, get_preset_slot, preset_scene_multiplier, reset_preset_to_factory,
         save_shader_settings, store_active_preset, FactoryShaderPresets, UniformState,
         CLASSIC_PRESET_GROUP, ENHANCED_PRESET_GROUP, KR_PRESET_GROUP, PAINTERLY_PRESET_GROUP,
@@ -1757,7 +1757,7 @@ mod tests {
 
         store_active_and_apply_render_preset(&mut u, &mut presets, kr_like, ShaderPresetPeriod::Night);
         assert_eq!(u.client_lighting, Some(lighting));
-        assert_eq!(u.global_lighting, crate::configs::shader_presets::CLIENT_LIT_SCENE_MULTIPLIER);
+        assert_eq!(u.global_lighting, crate::settings::shader_presets::CLIENT_LIT_SCENE_MULTIPLIER);
 
         // Live edits go back to the client-lit slot without a global_lighting.
         u.client_lighting.as_mut().unwrap().light_level = MAX_CLIENT_LIGHT_LEVEL;
@@ -1912,6 +1912,6 @@ mod tests {
             .filter(|style| style.post_process_profile == KR_PROFILE)
             .map(|style| style.preset_group)
             .collect();
-        assert_eq!(groups, crate::configs::shader_presets::KR_PROFILE_PRESET_GROUPS);
+        assert_eq!(groups, crate::settings::shader_presets::KR_PROFILE_PRESET_GROUPS);
     }
 }

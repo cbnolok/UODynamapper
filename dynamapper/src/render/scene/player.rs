@@ -1,4 +1,4 @@
-use crate::configs::settings::Settings;
+use crate::settings::Settings;
 use crate::app::system_sets::*;
 use crate::prelude::*;
 use bevy::{color, prelude::*};

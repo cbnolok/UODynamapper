@@ -6,7 +6,7 @@ mod input;
 mod settings;
 use input::{ControlInput, InputState, PointerButton, inject_control_input, focus_control_context};
 use settings::{ControlSetting, ControlSettings};
-use crate::configs::settings::{ClientTextureSource, LandTextureSource};
+use crate::settings::{ClientTextureSource, LandTextureSource};
 use crate::render::terrain::{LCMesh, draw_mesh::PendingTextureBake};
 use crate::render::assets::{land::coverage::EcTerrainBases, tile_atlas::{LandUploadTelemetry, TileAtlas}};
 use crate::app::{app_states::AppState, system_sets::MovementSysSet};

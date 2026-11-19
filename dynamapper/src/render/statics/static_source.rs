@@ -1,8 +1,8 @@
 //! Which client's art, terrain texture and tile data draws a static (the source policy): its visual kind by style
 //! and source, the surface-like statics' Enhanced terrain textures, the tile flags it reads, and the art source in effect.
 
-use crate::configs::settings::ClientTextureSource;
-use crate::configs::settings::{LandTextureSource, Settings};
+use crate::settings::ClientTextureSource;
+use crate::settings::{LandTextureSource, Settings};
 use crate::console_logger::{self, LogAbout, LogSev};
 use crate::render::assets::ec_item_surface::KR_ITEM_RECORD_BASE;
 use crate::content::{

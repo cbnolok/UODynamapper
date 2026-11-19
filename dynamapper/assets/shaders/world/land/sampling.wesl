@@ -220,7 +220,7 @@ const LAND_PAGE_LOOKUP_ROLE_COVERAGE_PARAMS: u32 = 6u;
 // The package-local material id: the secondary EC-layout package's ids carry 1 << 24 on top
 // (SECONDARY_PACKAGE_MATERIAL_ID_OFFSET in texture_cache/land/coverage.rs), and both packages number alike.
 const LAND_MATERIAL_ID_MASK: u32 = 0xFFFFFFu;
-// The bitmask's layout (configs/land_texture_variation.rs): two bits per material, sixteen materials per word.
+// The bitmask's layout (content/land_texture_variation.rs): two bits per material, sixteen materials per word.
 const LAND_VARIATION_BITS_PER_MATERIAL: u32 = 2u;
 const LAND_VARIATION_MATERIALS_PER_WORD: u32 = 16u;
 const LAND_VARIATION_WORDS_PER_VEC4: u32 = 4u;

@@ -17,7 +17,7 @@ use bevy::{
 use parking_lot::Mutex;
 
 use crate::{
-    configs::settings::{SectWorldRenderingDiagnostics, Settings},
+    settings::{SectWorldRenderingDiagnostics, Settings},
     console_logger::{self, LogAbout, LogSev},
     app::app_states::AppState,
 };

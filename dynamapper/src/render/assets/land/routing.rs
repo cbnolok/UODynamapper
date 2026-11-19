@@ -6,12 +6,12 @@
 //! the Classic client does (`LandView.Draw` falls back to the art when the texmap is missing). An id no source has
 //! draws the missing-texture pattern. Classic selected stays Classic: it never borrows EC-layout terrain.
 //!
-//! The route file (`configs::land_routes`, LandRoutes.kdl) stands in front of the chain: a route names the source and
+//! The route file (`content::land_routes`, LandRoutes.kdl) stands in front of the chain: a route names the source and
 //! the id within it that draws a land id. A route its source cannot draw falls back, with a warning: to the chain of
 //! its source on the id it names, then, when no source of that chain holds the id, to the selected source's chain on
 //! the routed id itself.
 //!
-//! A route profile with areas (`configs::land_routes::RouteAreas`) routes a land id one way inside them and another
+//! A route profile with areas (`content::land_routes::RouteAreas`) routes a land id one way inside them and another
 //! outside, so a map cell draws a lookup row rather than its land id: the row of its land id, or inside the areas the
 //! area row `LAND_ROUTE_TILE_COUNT + id` of a land id the profile routes otherwise there ([`LandRowMap`]). Each row
 //! has its route and target here, as each land id did, and its own rows in the land page lookup.
@@ -20,8 +20,8 @@
 
 use std::sync::Arc;
 
-use crate::configs::land_routes::{LandRouteTarget, MapRouteAreas};
-use crate::configs::settings::LandTextureSource;
+use crate::content::land_routes::{LandRouteTarget, MapRouteAreas};
+use crate::settings::LandTextureSource;
 
 /// Land ids the routes cover.
 pub const LAND_ROUTE_TILE_COUNT: usize = 16_384;
@@ -599,7 +599,7 @@ mod tests {
     /// Inside the areas, a land id with an area row draws that row; elsewhere, and any other land id, its own.
     #[test]
     fn cells_draw_their_area_row_inside_the_areas() {
-        let file = crate::configs::land_routes::LandRoutesFile::decode("LandRoutes.kdl",
+        let file = crate::content::land_routes::LandRoutesFile::decode("LandRoutes.kdl",
             "profile \"a\" {\n    apply-in x1=0 y1=0 x2=0x17FF y2=0xFFFF\n    skip-in x1=10 y1=10 x2=19 y2=19 map=1\n}\n")
             .unwrap_or_else(|error| panic!("{error:#}"));
         let areas = &file.profile("a").unwrap().areas;

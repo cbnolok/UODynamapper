@@ -1,3 +1,7 @@
+//! The settings: their model, loading and saving, the shader presets and the runtime spec files.
+pub mod runtime_specs;
+pub mod shader_presets;
+
 use crate::console_logger::{self, LogAbout, LogSev};
 use crate::export::ExportJob;
 use crate::ui::dialogs::image_background::ImageBackground;
@@ -538,7 +542,7 @@ fn gumps_and_paperdoll_without_a_cache_copy(saved_preset: Option<&str>) -> Optio
 /// The gumps and paperdoll a shader preset drew when the preset picked them: the Classic client's for the Classic
 /// presets, the Enhanced client's for every other.
 fn gumps_and_paperdoll_of_preset(preset: &str) -> GumpClient {
-    if preset.split('.').next() == Some(crate::configs::shader_presets::CLASSIC_PRESET_GROUP) {
+    if preset.split('.').next() == Some(crate::settings::shader_presets::CLASSIC_PRESET_GROUP) {
         GumpClient::Classic
     } else {
         GumpClient::Enhanced
@@ -572,7 +576,7 @@ pub fn load_from_files() -> eyre::Result<Settings> {
     let user_app: SectApp = load_user_settings(USER_PREFERENCES_CONFIG_FILE)?;
     let session_state: SectSessionState = load_user_settings(SESSION_STATE_CONFIG_FILE)?;
     // Gumps and paperdoll the saved shader preset drew before they were a preference of their own.
-    let saved_preset = crate::configs::shader_presets::saved_preset_key();
+    let saved_preset = crate::settings::shader_presets::saved_preset_key();
     let graphics_cached = crate::app::constants::valid_cache_dir().join(GRAPHICS_CONFIG_FILE).is_file();
     let mut kept_gumps = None;
     let mut graphics = load_user_settings_migrated::<GraphicsFile>(GRAPHICS_CONFIG_FILE, |contents| {
@@ -1131,10 +1135,10 @@ mod tests {
     use uocf::utils::config_toml::{parse_app_state, parse_strict};
     use crate::world::caves::{CaveSurroundings, CaveView};
 
-    const BUNDLED_GRAPHICS: &str = include_str!("../../assets/settings/graphics.toml");
-    const BUNDLED_USER_PREFERENCES: &str = include_str!("../../assets/settings/user_preferences.toml");
-    const BUNDLED_WORLD_RENDERING: &str = include_str!("../../assets/settings/world_rendering.toml");
-    const BUNDLED_CORE: &str = include_str!("../../assets/settings/core.toml");
+    const BUNDLED_GRAPHICS: &str = include_str!("../assets/settings/graphics.toml");
+    const BUNDLED_USER_PREFERENCES: &str = include_str!("../assets/settings/user_preferences.toml");
+    const BUNDLED_WORLD_RENDERING: &str = include_str!("../assets/settings/world_rendering.toml");
+    const BUNDLED_CORE: &str = include_str!("../assets/settings/core.toml");
 
     fn parse_graphics_settings(contents: &str) -> SectGraphics {
         parse_strict::<GraphicsFile>(GRAPHICS_CONFIG_FILE, contents).unwrap_or_else(|error| panic!("{error}")).graphics
@@ -1551,5 +1555,26 @@ mod tests {
         assert!(seen_changed(&mut app), "a changed zoom did not flag Settings changed");
         assert_eq!(app.world().resource::<Settings>().session_state.window.zoom, new_zoom);
         assert!(!seen_changed(&mut app), "the synced zoom kept flagging Settings changed");
+    }
+}
+
+/// Loads the settings and the shader presets.
+pub struct ExternalDataPlugin {
+    pub registered_by: &'static str,
+}
+
+crate::impl_tracked_plugin!(ExternalDataPlugin);
+
+impl Plugin for ExternalDataPlugin {
+    fn build(&self, app: &mut App) {
+        crate::util_lib::tracked_plugin::log_plugin_build(self);
+        app.add_plugins((
+            SettingsPlugin {
+                registered_by: "ExternalDataPlugin",
+            },
+            shader_presets::ShaderPresetsPlugin {
+                registered_by: "ExternalDataPlugin",
+            },
+        ));
     }
 }

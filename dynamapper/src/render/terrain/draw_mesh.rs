@@ -317,7 +317,7 @@ pub struct DrawMeshLocals {
 #[derive(SystemParam)]
 pub struct LandFramePacing<'w> {
     pub upload_budget: Res<'w, LandUploadBudget>,
-    pub settings: Res<'w, crate::configs::settings::Settings>,
+    pub settings: Res<'w, crate::settings::Settings>,
     pub time: Res<'w, Time<Real>>,
     /// Optional tile metadata (tilemeta.uddp); used to determine the IsWet flag per tile.
     /// Optional because the package may not have been converted/loaded yet.

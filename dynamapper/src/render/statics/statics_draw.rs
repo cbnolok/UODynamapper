@@ -1,6 +1,6 @@
 use super::DrawStaticSpritesPlugin;
-use crate::configs::settings::{ClientTextureSource, Settings};
-use crate::configs::shader_presets::{UniformSnapshot, UniformState};
+use crate::settings::{ClientTextureSource, Settings};
+use crate::settings::shader_presets::{UniformSnapshot, UniformState};
 use crate::console_logger::{self, LogAbout, LogSev};
 use crate::render::terrain;
 use crate::render::statics::static_batches::{
@@ -1688,7 +1688,7 @@ pub fn sys_update_art_materials(
     shared_land_material: Option<Res<terrain::draw_mesh::SharedLandMaterial>>,
     render_zoom: Res<crate::render::view::camera::RenderZoom>,
     player_q: Query<&Transform, With<crate::render::scene::player::Player>>,
-    uniform_state: Res<crate::configs::shader_presets::UniformState>,
+    uniform_state: Res<crate::settings::shader_presets::UniformState>,
     camera_q: Query<&Projection, With<crate::render::view::camera::PlayerCamera>>,
     mut last_global_lighting: Local<f32>,
     mut last_render_zoom: Local<f32>,

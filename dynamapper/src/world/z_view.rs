@@ -54,7 +54,7 @@
 //! its statics whatever the cut, and outside it ClassicUO's cut at the player's z + `PLAYER_VIEW_HEADROOM`, land with
 //! it or none (`player_cave_z_view_cut`).
 
-use crate::configs::settings::Settings;
+use crate::settings::Settings;
 use crate::world::maps::{package_chunk_cell, read_package_chunk_land_z};
 use crate::world::multis::{expanded_multi_part_z, MultiDefinitionsRes, PlacedMultisRes};
 use crate::render::scene::player::Player;
@@ -63,7 +63,7 @@ use crate::render::terrain::mesh_material::PlayerFloorRule;
 use crate::render::terrain::mesh_material::LAND_NO_Z_LIMIT;
 use crate::render::terrain::MAP_STORAGE_BLOCK_TILE_DIM;
 use crate::render::scene::SceneStateData;
-use crate::configs::shader_presets::UniformState;
+use crate::settings::shader_presets::UniformState;
 use crate::world::statics::{LazyStaticsStore, StaticsStoreRes};
 use crate::content::{MapPlanesRes, TileMetaPackageRes};
 use bevy::prelude::*;

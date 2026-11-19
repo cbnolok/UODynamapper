@@ -7,7 +7,7 @@ use crate::render::statics::static_source::{
 use crate::render::statics::static_chunk_cache::StaticChunkRenderCache;
 use crate::render::statics::static_batches::{StaticPickTile, RenderStaticInstances, RenderStaticLandInstances};
 use crate::render::assets::ec_item_surface::KR_ITEM_RECORD_BASE;
-use crate::configs::settings::ClientTextureSource;
+use crate::settings::ClientTextureSource;
 use crate::render::view::camera::RenderZoom;
 use crate::render::assets::tile_atlas::TileAtlas;
 use crate::content::{
@@ -35,7 +35,7 @@ pub(crate) struct StaticPickingResources<'w> {
     batches: Res<'w, static_batches::RenderStaticChunkBatches>,
     gpu_pick: ResMut<'w, super::gpu_picking::VisibleStaticPick>,
     gpu_request: ResMut<'w, super::gpu_picking::PickRequest>,
-    uniforms: Res<'w, crate::configs::shader_presets::UniformState>,
+    uniforms: Res<'w, crate::settings::shader_presets::UniformState>,
     time: Res<'w, Time>,
 }
 

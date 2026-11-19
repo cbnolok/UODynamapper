@@ -8,9 +8,9 @@ use crate::ui::dialogs::paperdoll_menu::{
 use crate::ui::dialogs::paperdoll_overrides::{
     measured_garment, taken_off, PaperdollOrder, PaperdollOverrides, TakenOff, PAPERDOLL_OVERRIDES_FILE_NAME,
 };
-use crate::configs::runtime_specs::SpecFiles;
+use crate::settings::runtime_specs::SpecFiles;
 use crate::render::view::camera::UiCameraResource;
-use crate::configs::settings::GumpClient;
+use crate::settings::GumpClient;
 use crate::content::{GumpMapRes, HuesPackageRes, PaperdollEcPackageRes, TileMetaPackageRes};
 use udd_assets::tilemeta::{TileMetaItemDefinitions, TileMetaItemTile};
 use crate::ingame_sysmessage_logger;
@@ -160,7 +160,7 @@ struct PaperdollOverridesFilesRes {
 }
 
 /// The folder of the paperdoll specs among the runtime specs, bundled (`assets/runtime_specs/`) and the user's copies
-/// (`cache/runtime_specs/`, `configs::runtime_specs`).
+/// (`cache/runtime_specs/`, `settings::runtime_specs`).
 const PAPERDOLL_SPECS_FOLDER: &str = "paperdoll";
 const PAPERDOLL_PROFILES_FILE_NAME: &str = "PaperdollProfiles.kdl";
 /// The folder of the cache dir the paperdoll windows wrote the user's `PaperdollOverrides.kdl` in before the runtime
@@ -697,12 +697,12 @@ mod tests {
 }
 
 impl PaperdollProfilesRes {
-    /// The user's copy of the profiles when it exists and reads (`configs::runtime_specs`), else the bundled profiles,
+    /// The user's copy of the profiles when it exists and reads (`settings::runtime_specs`), else the bundled profiles,
     /// which are required: a missing or invalid file stops the app.
     fn load() -> Self {
         let loaded = SpecFiles::of(PAPERDOLL_SPECS_FOLDER, PAPERDOLL_PROFILES_FILE_NAME)
             .load(Self::load_from_str)
-            .unwrap_or_else(|error| crate::configs::settings::exit_on_startup_config_error(&error));
+            .unwrap_or_else(|error| crate::settings::exit_on_startup_config_error(&error));
         loaded.report("the paperdoll profiles");
         loaded.value
     }
@@ -744,7 +744,7 @@ impl Plugin for GumpDialogPlugin {
 }
 
 /// The wearable rules and paperdoll overrides: the user's copy of each when it exists and reads
-/// (`configs::runtime_specs`), else the bundled file, which is required: a missing or invalid one stops the app. The
+/// (`settings::runtime_specs`), else the bundled file, which is required: a missing or invalid one stops the app. The
 /// paperdoll windows write the user's copy of the overrides (`paperdoll_menu`); a copy that does not read leaves the
 /// bundled file in force, with a warning, and the windows write nothing to it until it is fixed. A copy of the
 /// overrides the windows wrote in `cache/settings/` before moves to its place first.
@@ -765,7 +765,7 @@ fn sys_load_paperdoll_order(
             order_res.0 = PaperdollOrder { rules: rules.value, overrides: overrides.value };
             *files_res = PaperdollOverridesFilesRes { files: overrides_files, user_error };
         }
-        Err(error) => crate::configs::settings::exit_on_startup_config_error(&error),
+        Err(error) => crate::settings::exit_on_startup_config_error(&error),
     }
 }
 
@@ -782,7 +782,7 @@ fn decode_wearable_rules(source_name: &str, text: &str) -> color_eyre::eyre::Res
 
 fn sys_gump_toggle(
     _trigger: On<ActionToggleGumpDialog>,
-    settings: Res<crate::configs::settings::Settings>,
+    settings: Res<crate::settings::Settings>,
     mut state: ResMut<GumpDialogState>,
 ) {
     log_system_add_one_shot::<GumpDialogPlugin>("Observer", "ActionToggleGumpDialog", fname!());

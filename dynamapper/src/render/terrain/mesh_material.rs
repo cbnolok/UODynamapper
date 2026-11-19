@@ -9,7 +9,7 @@ use bevy::{
 };
 use serde::{self, Deserialize, Serialize};
 
-use crate::configs::land_texture_variation::{LandTextureVariationMaterials, LAND_TEXTURE_VARIATION_MASK_WORDS};
+use crate::content::land_texture_variation::{LandTextureVariationMaterials, LAND_TEXTURE_VARIATION_MASK_WORDS};
 use crate::render::lighting::client_night::{CLIENT_NIGHT_OVERLAY_STRENGTH, NIGHT_MAP_MEAN};
 use crate::render::lighting::{light_cover::LightCover, static_lights::ClientLocalLightSource};
 
@@ -78,7 +78,7 @@ pub struct LandMaterialExtension {
     pub visual_grunge_texture: Handle<Image>,
 
     /// The KR and Enhanced materials the land texture variation breaks up, and which of them turn
-    /// (`configs::land_texture_variation`).
+    /// (`content::land_texture_variation`).
     #[uniform(113, visibility(fragment))]
     pub texture_variation_uniform: LandTextureVariationUniform,
 
@@ -365,7 +365,7 @@ pub struct GlobalLightingUniforms {
     pub fog_night_color: Vec4,
     // The KR profile curve's former separate pre-scale, `kr_tonemap_params.x`, was the same multiplier as
     // `exposure`; it is folded into the presets' exposure (see `migrate_cached_retired_lighting` in
-    // configs/shader_presets.rs for cached files). Its trailing vec4 slot is gone.
+    // settings/shader_presets.rs for cached files). Its trailing vec4 slot is gone.
 }
 
 /// The smallest texture blur radius in screen pixels: the shader blurs a smaller one exactly as this one

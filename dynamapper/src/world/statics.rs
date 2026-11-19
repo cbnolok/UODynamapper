@@ -8,7 +8,7 @@ use uocf::classic::statics::{PackedStaticTile, StaticTile};
 use udd_assets::map_metadata::read_statics_package_metadata;
 use udd_container::UddpReader;
 
-use crate::configs::land_routes::{AreaRoutes, MapRouteAreas};
+use crate::content::land_routes::{AreaRoutes, MapRouteAreas};
 
 const PACKAGE_CHUNK_BLOCK_DIM: u32 = 4;
 const PACKAGE_CHUNK_TILE_DIM: u8 = 32;
@@ -215,7 +215,7 @@ mod tests {
     use super::*;
 
     fn routes_of(text: &str, profile: &str) -> AreaRoutes<Vec<u16>> {
-        crate::configs::land_routes::LandRoutesFile::decode("LandRoutes.kdl", text)
+        crate::content::land_routes::LandRoutesFile::decode("LandRoutes.kdl", text)
             .unwrap_or_else(|error| panic!("{error:#}")).item_routes_by_area(Some(profile)).unwrap()
     }
 

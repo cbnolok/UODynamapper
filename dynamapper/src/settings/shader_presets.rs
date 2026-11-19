@@ -240,7 +240,7 @@ impl_tracked_plugin!(ShaderPresetsPlugin);
 impl Plugin for ShaderPresetsPlugin {
     fn build(&self, app: &mut App) {
         log_plugin_build(self);
-        let exit = |error: eyre::Report| crate::configs::settings::exit_on_startup_config_error(&error);
+        let exit = |error: eyre::Report| crate::settings::exit_on_startup_config_error(&error);
         let factory_presets = load_factory_presets().unwrap_or_else(exit);
         let effective_presets = load_effective_presets(&factory_presets).unwrap_or_else(exit);
 
@@ -256,7 +256,7 @@ fn load_effective_presets(factory_presets: &LandShaderModePresets) -> eyre::Resu
 
 /// The factory presets: hand-written and required, read strictly.
 fn load_factory_presets() -> eyre::Result<LandShaderModePresets> {
-    let presets = crate::configs::settings::load_bundled_settings(SHADER_PRESETS_FILE_NAME)?;
+    let presets = crate::settings::load_bundled_settings(SHADER_PRESETS_FILE_NAME)?;
     validate_preset_lighting(&presets).map_err(|error| eyre::eyre!("{SHADER_PRESETS_FILE_NAME}: {error}"))?;
     Ok(presets)
 }
@@ -563,7 +563,7 @@ pub fn load_shader_settings(
     let bundled_path = crate::app::constants::valid_asset_dir().join(SHADER_SETTINGS_FILE_NAME);
     let bundled = if bundled_path.exists() {
         let bundled =
-            crate::configs::settings::load_bundled_settings::<LandShaderModePresets>(SHADER_SETTINGS_FILE_NAME)?;
+            crate::settings::load_bundled_settings::<LandShaderModePresets>(SHADER_SETTINGS_FILE_NAME)?;
         validate_preset_lighting(&bundled).map_err(|error| eyre::eyre!("{SHADER_SETTINGS_FILE_NAME}: {error}"))?;
         Some(bundled)
     } else {

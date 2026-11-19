@@ -1,7 +1,7 @@
 //! The per-chunk cache of collected statics: what a cached chunk keeps, when it is reused or rebuilt, and the
 //! signatures that retry a chunk whose atlas pages or lights were incomplete.
 
-use crate::configs::settings::ClientTextureSource;
+use crate::settings::ClientTextureSource;
 use crate::render::assets::tile_atlas::{AtlasCells, TileAtlas};
 use crate::world::z_view::ZViewCut;
 use crate::render::assets::art::{GroundArtPageAtlas, SpriteArtPageAtlas};

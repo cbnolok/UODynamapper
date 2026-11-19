@@ -4,7 +4,7 @@ pub mod constants;
 pub mod system_sets;
 
 use crate::{
-    configs::{settings, ExternalDataPlugin},
+    settings::{self, ExternalDataPlugin},
     diagnostics::{add_diagnostics_plugins, frame_limiter, frame_rate, LogGpuPreprocessingModePlugin},
     console_logger::{self, LogAbout, LogSev},
     app::{

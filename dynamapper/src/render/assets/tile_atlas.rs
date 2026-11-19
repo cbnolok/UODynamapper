@@ -36,7 +36,7 @@ impl Default for LandUploadBudget {
 }
 
 impl LandUploadBudget {
-    pub fn from_settings(settings: &crate::configs::settings::Settings) -> Self {
+    pub fn from_settings(settings: &crate::settings::Settings) -> Self {
         let land_streaming = &settings.world_rendering.land_streaming;
         Self {
             prepare_max_blocks_per_frame: land_streaming.prepare_max_blocks_per_frame,

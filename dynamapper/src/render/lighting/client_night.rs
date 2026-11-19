@@ -73,7 +73,7 @@
 // only while it changes the frame: while the active preset's light level is above 0 or KR-like's client shadows are
 // on, or while UOD-Painterly's glow is above 0.
 
-use crate::configs::shader_presets::UniformState;
+use crate::settings::shader_presets::UniformState;
 use crate::render::view::camera::{PlayerCamera, RenderZoom, ORTHO_SIZE_FACTOR};
 use crate::render::lighting::static_lights::{light_sprite_glow_strength, NO_LIGHT_SPRITE_GLOW};
 use crate::render::postprocess::fog_pass::FogPassSystems;

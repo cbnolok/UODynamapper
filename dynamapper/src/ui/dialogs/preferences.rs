@@ -1,7 +1,7 @@
 use crate::ui::dialogs;
 use crate::input::input_actions::{ActionCloseActiveDialog, ActionTogglePreferences};
 use crate::{
-    configs::settings::{AntiAliasingMode, ClientTextureSource, GumpClient, LandTextureSource},
+    settings::{AntiAliasingMode, ClientTextureSource, GumpClient, LandTextureSource},
     diagnostics::frame_limiter::FrameLimiterSettings,
     app::{
         frame_limiter_for_options, frame_limiter_for_settings,

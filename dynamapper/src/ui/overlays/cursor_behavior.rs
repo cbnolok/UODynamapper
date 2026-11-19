@@ -73,7 +73,7 @@ pub struct OverlayCursorInspectText;
 
 #[derive(SystemParam)]
 pub struct CursorInspectResources<'w> {
-    settings: Res<'w, crate::configs::settings::Settings>,
+    settings: Res<'w, crate::settings::Settings>,
     inspect_state: Res<'w, CursorInspectOverlayState>,
     map_planes_r: Res<'w, MapPlanesRes>,
     terrain: Res<'w, TerrainCursor>,
@@ -120,7 +120,7 @@ impl Plugin for CursorBehaviorOverlayPlugin {
 pub fn setup_overlay_cursor_behavior(
     mut commands: Commands,
     asset_server: Res<AssetServer>,
-    settings: Res<crate::configs::settings::Settings>,
+    settings: Res<crate::settings::Settings>,
 ) {
     crate::util_lib::tracked_plugin::log_system_add_one_shot::<CursorBehaviorOverlayPlugin>(
         "OnEnter(InGame)",
@@ -204,7 +204,7 @@ pub fn setup_overlay_cursor_behavior(
 }
 
 pub(crate) fn update_cursor_behavior_text(
-    settings: Res<crate::configs::settings::Settings>,
+    settings: Res<crate::settings::Settings>,
     cursor: Res<CursorBehavior>,
     player_q: Query<&Player>,
     windows: (Query<&Window, With<PrimaryWindow>>, Option<Res<InjectedPointer>>),
@@ -451,7 +451,7 @@ fn build_cursor_inspect_label(
     cursor_pos: Option<Vec2>,
     camera: Option<(&Camera, &GlobalTransform)>,
     player: Option<&Player>,
-    settings: &crate::configs::settings::Settings,
+    settings: &crate::settings::Settings,
     terrain: &TerrainCursor,
     map_planes_r: &MapPlanesRes,
     statics_res: &StaticsStoreRes,
@@ -519,7 +519,7 @@ struct HoveredStaticMatch {
 
 fn sys_draw_hovered_static_highlight(
     mut picking: StaticPickingResources,
-    settings: Res<crate::configs::settings::Settings>,
+    settings: Res<crate::settings::Settings>,
     player_q: Query<&Player>,
     windows: Query<&Window, With<PrimaryWindow>>,
     injected_pointer: Option<Res<InjectedPointer>>,
@@ -579,7 +579,7 @@ fn describe_hovered_object(
     picking: &mut StaticPickingResources,
     cursor_pos: Option<Vec2>,
     camera: Option<(&Camera, &GlobalTransform)>,
-    settings: &crate::configs::settings::Settings,
+    settings: &crate::settings::Settings,
     tex_art_cc_res: Option<&TexArtCcPackageRes>,
     tex_art_ec_res: Option<&TexArtEcPackageRes>,
     tex_land_ec_res: Option<&TexLandEcPackageRes>,
@@ -630,7 +630,7 @@ fn find_hovered_static_object(
     cursor_pos: Vec2,
     camera: &Camera,
     camera_tf: &GlobalTransform,
-    settings: &crate::configs::settings::Settings,
+    settings: &crate::settings::Settings,
     map_id: u8,
 ) -> Option<HoveredStaticMatch> {
     if !settings.world_rendering.enable_statics { return None; }
@@ -670,7 +670,7 @@ fn hovered_static_match(
     })
 }
 
-fn cursor_map_id(player: Option<&Player>, settings: &crate::configs::settings::Settings) -> Option<u8> {
+fn cursor_map_id(player: Option<&Player>, settings: &crate::settings::Settings) -> Option<u8> {
     Some(player?.current_pos.map(|p| p.m).unwrap_or(settings.session_state.world.last_p.m))
 }
 
@@ -774,9 +774,9 @@ fn describe_static_tile_line(
     tilemeta_res: Option<&TileMetaPackageRes>,
     tile: uocf::classic::statics::PackedStaticTile,
     route: Option<StaticArtRoute>,
-    art_source: Option<crate::configs::settings::ClientTextureSource>,
+    art_source: Option<crate::settings::ClientTextureSource>,
 ) -> String {
-    use crate::configs::settings::ClientTextureSource;
+    use crate::settings::ClientTextureSource;
     let graphic = tile.graphic;
     // The tile data of the art the tile is drawn with (`TileMetaPackageRes::for_art`).
     let drawn_art = match route {
@@ -891,7 +891,7 @@ fn sys_teleport_on_click(
     injected_pointer: Option<Res<InjectedPointer>>,
     mut player_q: Query<(&mut Player, &mut Transform)>,
     cursor: Res<CursorBehavior>,
-    settings: Res<crate::configs::settings::Settings>,
+    settings: Res<crate::settings::Settings>,
     mut egui_contexts: EguiContexts,
     egui_ui_camera: Res<UiCameraResource>,
     mut chunk_recompute_writer: MessageWriter<RecomputeVisibleChunksEvent>,

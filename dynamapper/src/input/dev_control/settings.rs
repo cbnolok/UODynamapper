@@ -7,8 +7,8 @@
 //! closes), and a change of `Settings` reaches the cache copies through the app's debounced save, as a preference
 //! picked in the window does. The cache folder is the one of the process's working directory, the run's own copy in
 //! a harness or preview run.
-use crate::configs::settings::{ClientTextureSource, LandTextureSource, Settings};
-use crate::configs::shader_presets::UniformState;
+use crate::settings::{ClientTextureSource, LandTextureSource, Settings};
+use crate::settings::shader_presets::UniformState;
 use crate::export::WaitingRenderPipelines;
 use crate::ui::dialogs::land_shader::switch_render_preset;
 use crate::render::view::camera::{RenderZoom, MAX_ZOOM, MIN_ZOOM};

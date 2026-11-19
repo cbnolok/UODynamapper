@@ -36,7 +36,7 @@ pub struct OverlayPlayerPositionText;
 pub fn setup_overlay_player_position(
     mut commands: Commands,
     asset_server: Res<AssetServer>,
-    settings: Res<crate::configs::settings::Settings>,
+    settings: Res<crate::settings::Settings>,
 ) {
     crate::util_lib::tracked_plugin::log_system_add_one_shot::<PlayerPositionOverlayPlugin>(
         "OnEnter(InGame)",
@@ -81,7 +81,7 @@ pub fn setup_overlay_player_position(
 }
 
 pub fn update_player_position_text(
-    settings: Res<crate::configs::settings::Settings>,
+    settings: Res<crate::settings::Settings>,
     player_query: Query<&Transform, With<Player>>,
     mut text_query: Query<
         (&mut Text, &mut TextFont, &mut LineHeight),

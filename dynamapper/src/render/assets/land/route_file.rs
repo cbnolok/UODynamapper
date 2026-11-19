@@ -1,4 +1,4 @@
-//! The route file at run time (`configs::land_routes`, LandRoutes.kdl): read at startup, read again when the user's
+//! The route file at run time (`content::land_routes`, LandRoutes.kdl): read at startup, read again when the user's
 //! copy is saved or Preferences asks for it, with the profile Preferences > Graphics names in force. A profile with
 //! areas applies to the land tiles and statics inside them (`RouteAreas`), the `routes` block alone elsewhere: the
 //! routes are split by area once (`AreaRoutes`), and the player's position plays no part. Each change of the file in
@@ -7,17 +7,17 @@
 //! the item routes changed (`sys_apply_item_routes`).
 //!
 //! A user copy that does not read leaves the bundled file in force, with the error in the log and in the window, until
-//! it is fixed (`configs::runtime_specs`).
+//! it is fixed (`settings::runtime_specs`).
 
 use std::sync::Arc;
 use std::time::{Duration, SystemTime};
 
 use bevy::prelude::*;
 
-use crate::configs::land_routes::{
+use crate::content::land_routes::{
     AreaRoutes, LandRoute, LandRoutesFile, LAND_ROUTES_FILE_NAME, LAND_ROUTES_SPECS_FOLDER,
 };
-use crate::configs::runtime_specs::{LoadedSpec, SpecFiles};
+use crate::settings::runtime_specs::{LoadedSpec, SpecFiles};
 use crate::console_logger::{self, LogAbout, LogSev};
 use crate::world::statics::StaticsStoreRes;
 
@@ -66,7 +66,7 @@ impl RouteFileRes {
         let files = SpecFiles::of(LAND_ROUTES_SPECS_FOLDER, LAND_ROUTES_FILE_NAME);
         let user_modified = modified(&files.user);
         let loaded = files.load(LandRoutesFile::decode)
-            .unwrap_or_else(|error| crate::configs::settings::exit_on_startup_config_error(&error));
+            .unwrap_or_else(|error| crate::settings::exit_on_startup_config_error(&error));
         let pending_notices = report(&loaded).into_iter().collect();
         Self {
             files,
@@ -177,7 +177,7 @@ pub fn sys_watch_route_file(mut routes: ResMut<RouteFileRes>, time: Res<Time<Rea
 
 /// Puts the profile the settings name in force (Preferences > Graphics > "Season / profile"), also after the file is
 /// read again: a profile may appear in it or leave it.
-pub fn sys_select_route_profile(settings: Res<crate::configs::settings::Settings>, mut routes: ResMut<RouteFileRes>) {
+pub fn sys_select_route_profile(settings: Res<crate::settings::Settings>, mut routes: ResMut<RouteFileRes>) {
     if settings.is_changed() || routes.is_changed() {
         // The revision tells the systems that apply the routes what changed; the change flag stays the file's.
         routes.bypass_change_detection().select_profile(&settings.graphics.route_profile);

@@ -1,8 +1,8 @@
 use std::process::ExitCode;
 
-pub mod configs;
+pub mod settings;
 pub mod console_logger;
-pub(crate) mod content;
+pub mod content;
 pub mod app;
 pub mod diagnostics;
 pub mod export;

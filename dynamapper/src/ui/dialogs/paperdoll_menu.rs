@@ -2,7 +2,7 @@
 //! drawn on top under the pointer, by the alpha of each drawn item's texels. While a dress-layer item is drawn, the
 //! menu offers "Show under this robe", "Hide under this robe" and "Back to measured" for a garment drawn beneath it,
 //! and lists the garments taken off beneath it, each to be brought back. A choice goes to the user's copy of
-//! `PaperdollOverrides.kdl` (`cache/runtime_specs/paperdoll/`, `configs::runtime_specs`), never to the bundled file:
+//! `PaperdollOverrides.kdl` (`cache/runtime_specs/paperdoll/`, `settings::runtime_specs`), never to the bundled file:
 //! `udd_assets::paperdoll_overrides::set_garment_rule` edits it in place, keeping its comments and other covers, for
 //! the covering item on the body frame drawn, and the paperdolls are drawn again. Both the 3D and the gump paperdolls
 //! take the menu; egui draws it as a popup of the window, no viewport of its own.
@@ -16,7 +16,7 @@ use udd_assets::paperdoll_overrides::{
 use uocf::enhanced::paperdoll::slot_layer;
 
 use super::paperdoll_overrides::TakenOff;
-use crate::configs::runtime_specs::{read_text, SpecFiles};
+use crate::settings::runtime_specs::{read_text, SpecFiles};
 
 /// A texel at least this opaque picks its item; fainter ones (antialiased edges, shadows) let the item beneath it be
 /// picked, and only where no item is that opaque does the faintest texel drawn pick its item.

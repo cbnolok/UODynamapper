@@ -45,9 +45,9 @@ terrain, statics, lighting, picking, postprocess}`, `ui/`, `export/`, `diagnosti
 
 | Now | Lines | Churn | Notes |
 |---|---:|---:|---|
-| `configs.rs`, `configs/settings.rs` | 1590 | 17 | Model, loading, saving. Runtime appliers leave for their systems. |
-| `configs/shader_presets.rs` | 2028 | 26 | Preset model and persistence; `UniformState` (runtime render state) moves to `render/`. |
-| `configs/runtime_specs.rs` | 209 | 1 | |
+| `settings.rs` | 1590 | 17 | Model, loading, saving: moved 2026-11-19 from `configs/settings.rs`, with `ExternalDataPlugin` from `configs.rs`. Runtime appliers leave for their systems. |
+| `settings/shader_presets.rs` | 2028 | 26 | Preset model and persistence; `UniformState` (runtime render state) moves to `render/`. |
+| `settings/runtime_specs.rs` | 209 | 1 | |
 
 ### world
 
@@ -65,8 +65,8 @@ terrain, statics, lighting, picking, postprocess}`, `ui/`, `export/`, `diagnosti
 | Now | Lines | Churn | Notes |
 |---|---:|---:|---|
 | `content.rs` | 1290 | 13 | Moved 2026-11-19 from `core/uo_files_loader.rs`, whole. Split package discovery from the runtime gump provider. |
-| `configs/land_routes.rs`, `render/assets/land/route_file.rs` | 1122 | 6 | The land route table and its file. |
-| `configs/land_texture_variation.rs` | 237 | 1 | |
+| `content/land_routes.rs`, `render/assets/land/route_file.rs` | 1122 | 6 | The land route table (moved 2026-11-19 from `configs/`) and its file. |
+| `content/land_texture_variation.rs` | 237 | 1 | Moved 2026-11-19 from `configs/`. |
 | `ui/dialogs/paperdoll_overrides.rs` (+ `measure.rs`) | 605 | 0 | Composition and override policy; its window goes to `ui/`. |
 
 ### input

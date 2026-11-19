@@ -73,7 +73,7 @@ struct LandStaticLightUniform {
 };
 
 // The KR and Enhanced materials the land texture variation breaks up (LandTextureVariationUniform in mesh_material.rs,
-// configs/land_texture_variation.rs): two bits per material id, sixteen materials to a word, four words to a vec4.
+// content/land_texture_variation.rs): two bits per material id, sixteen materials to a word, four words to a vec4.
 const LAND_TEXTURE_VARIATION_MATERIAL_CAPACITY: u32 = 256u;
 const LAND_TEXTURE_VARIATION_VEC4_COUNT: u32 = 4u;
 struct LandTextureVariationUniform {

@@ -8,7 +8,8 @@ use super::routing::{
 };
 use super::texture_array;
 use crate::{
-    configs::{land_routes::{AreaRoutes, LandRoute}, settings::LandTextureSource},
+    content::land_routes::{AreaRoutes, LandRoute},
+    settings::LandTextureSource,
     console_logger::{self, LogAbout, LogSev},
 };
 use bevy::prelude::*;

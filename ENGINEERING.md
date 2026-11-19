@@ -83,7 +83,7 @@ Every TOML or KDL file a user or developer writes by hand (bundled settings, sha
 
 Only files an app writes itself and nobody edits (dynamapper's cache `settings/*.toml`, the udd-conv-gui config) are lenient, through `config_toml::parse_app_state`: a missing key is filled from the defaults, an unknown key is dropped and a key whose value the struct rejects (an enum variant only another build knows, a value of the wrong type) takes its default alone, each with a logged warning, and the app rewrites the file complete on its next save, so a file from another version still loads.
 
-Dynamapper's hand-written specs under `assets/runtime_specs/` (KDL) have user copies at the same path under `cache/runtime_specs/`, read in place of the bundled file when they exist (`configs::runtime_specs::SpecFiles`): the bundled file is required, the copy is strict too, and a copy that does not read leaves the bundled file in force with a warning in the log and in game; whatever writes the copy (the paperdoll menu) reads it again first and leaves an invalid one as it is. Use `SpecFiles` for every runtime spec rather than reading `assets/runtime_specs/` directly.
+Dynamapper's hand-written specs under `assets/runtime_specs/` (KDL) have user copies at the same path under `cache/runtime_specs/`, read in place of the bundled file when they exist (`settings::runtime_specs::SpecFiles`): the bundled file is required, the copy is strict too, and a copy that does not read leaves the bundled file in force with a warning in the log and in game; whatever writes the copy (the paperdoll menu) reads it again first and leaves an invalid one as it is. Use `SpecFiles` for every runtime spec rather than reading `assets/runtime_specs/` directly.
 
 ### Dynamapper rendering and UI
 

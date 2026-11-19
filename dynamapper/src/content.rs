@@ -1,4 +1,7 @@
-use crate::configs::settings::{ClientTextureSource, GumpClient, Settings};
+pub mod land_routes;
+pub mod land_texture_variation;
+
+use crate::settings::{ClientTextureSource, GumpClient, Settings};
 use crate::world::maps::MapPlane;
 use crate::world::multis::MultiDefinitionsRes;
 use crate::world::statics::{LazyStaticsStore, StaticsStoreRes};
@@ -807,7 +810,7 @@ pub fn sys_setup_uo_data(mut commands: Commands, settings: Res<Settings>) {
     warn_obsolete_kr_packages(&lg_warn, &udd_path);
     // The Kingdom Reborn land is optional: its absence is an error only when it is the selected land source, which
     // then draws from the next source of its chain, tex_land_ec.uddp or Classic (texture_cache/land/routing.rs).
-    let kr_land_selected = settings.graphics.land_texture_source == crate::configs::settings::LandTextureSource::Kr;
+    let kr_land_selected = settings.graphics.land_texture_source == crate::settings::LandTextureSource::Kr;
     let tex_land_kr_package = tex_land_ec_package.as_ref().and_then(|tex_land_ec| {
         load_kr_land(&lg, &|text: &str| if kr_land_selected { lg_err(text) } else { lg(text) }, tex_land_ec,
             land_atlas_reader_options)

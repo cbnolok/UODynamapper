@@ -1,4 +1,4 @@
-use crate::configs::settings::ClientTextureSource;
+use crate::settings::ClientTextureSource;
 use crate::console_logger::{self, LogAbout, LogSev};
 use crate::render::view::camera::{PlayerCamera, RenderZoom};
 use crate::render::terrain::{
@@ -1742,7 +1742,7 @@ pub fn sys_collect_visible_statics(
         KrStaticPackages),
     mut sprite_atlas: ResMut<SpriteArtPageAtlas>,
     mut ground_atlas: ResMut<GroundArtPageAtlas>,
-    settings: Res<crate::configs::settings::Settings>,
+    settings: Res<crate::settings::Settings>,
     scene_state: Res<SceneStateData>,
     view_cuts: (Res<ZViewLimit>, Res<CavesRes>),
     zoom: Res<RenderZoom>,
@@ -1898,7 +1898,7 @@ pub fn sys_collect_visible_statics(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::configs::settings::LandTextureSource;
+    use crate::settings::LandTextureSource;
     use bytemuck::Zeroable;
     use super::super::static_placement::*;
     use super::super::static_source::*;
@@ -2832,7 +2832,7 @@ mod tests {
         use bevy::ecs::system::RunSystemOnce;
         use udd_assets::tex_art_cc::PagePixelFormat;
         let mut world = World::new();
-        let mut settings = crate::configs::settings::load_from_files().expect("settings load");
+        let mut settings = crate::settings::load_from_files().expect("settings load");
         settings.world_rendering.enable_statics = false;
         let key = StaticChunkBatchKey { map_id: 0, gx: 1, gy: 2, scale: 1 };
         let batch = StaticChunkBatch { key, start: 0, count: 1 };

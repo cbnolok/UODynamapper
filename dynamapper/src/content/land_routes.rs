@@ -37,9 +37,9 @@ use uot_kdl::ast::{Literal, Node, SpannedNode, Value};
 use uot_kdl::span::LineSpan;
 use uot_kdl::strict::{self, NodeSchema};
 
-use crate::configs::settings::LandTextureSource;
+use crate::settings::LandTextureSource;
 
-/// The folder of the route file under the runtime specs (`configs::runtime_specs`).
+/// The folder of the route file under the runtime specs (`settings::runtime_specs`).
 pub const LAND_ROUTES_SPECS_FOLDER: &str = "land";
 pub const LAND_ROUTES_FILE_NAME: &str = "LandRoutes.kdl";
 
