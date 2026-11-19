@@ -201,7 +201,7 @@ mod tests {
         assert!(chunk_mouth_quads(1, 2, TILE_NUM_PER_CHUNK_DIM, 1, &[]).is_empty());
     }
 
-    const LAND_MAIN_WESL: &str = include_str!("../../../../../../assets/shaders/world/land/main.wesl");
+    const LAND_MAIN_WESL: &str = include_str!("../../../../assets/shaders/world/land/main.wesl");
 
     /// The veil draws after every blended static and shadow, its backdrop before them, whatever the view's depth; the
     /// land shader tells the two apart by the mode each material sets, the backdrop's black at the far plane.

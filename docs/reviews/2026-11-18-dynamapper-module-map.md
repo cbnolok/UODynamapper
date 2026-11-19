@@ -83,18 +83,18 @@ terrain, statics, lighting, picking, postprocess}`, `ui/`, `export/`, `diagnosti
 |---|---:|---:|---|
 | `core/render.rs`, `core/render/scene.rs` | 1023 | 2 | `render/scene`: chunk lifecycle; view selection (the follow, free and export footprints) to `render/view`. |
 | `core/render/scene/camera.rs` (+ `perspective.rs`) | 880 | 5 | `render/view`. |
-| `rsw/land/chunk_loader.rs` | 201 | 0 | `render/scene` (streaming loads). |
-| `rsw/land.rs`, `land/{draw_mesh, mesh_material, setup_base_mesh, cave_mouth_veil}.rs` | 3013 | 50 | `render/terrain`. Its light enums moved 2026-11-19: `LightCover` to `light_cover.rs`, `ClientLocalLightSource` to `static_lights.rs`. |
-| `core/texture_cache/land/coverage.rs` (+ `cache.rs`, `runtime.rs`, `gpu_tests.rs`) | 1057 | 17 | `render/terrain`. |
+| `core/render/terrain/chunk_loader.rs` | 201 | 0 | `render/scene` (streaming loads); came to `terrain/` with `land/` and stays until the scene move. |
+| `core/render/terrain.rs`, `terrain/{draw_mesh, mesh_material, setup_base_mesh, cave_mouth_veil}.rs` | 3013 | 50 | `render/terrain`: moved 2026-11-19 from `rsw/land`. Its light enums moved 2026-11-19: `LightCover` to `light_cover.rs`, `ClientLocalLightSource` to `static_lights.rs`. |
+| `core/texture_cache/land/coverage.rs` (+ `cache.rs`, `runtime.rs`, `gpu_tests.rs`) | 1057 | 17 | `render/terrain`, with the `texture_cache` split: `texture_cache::land` builds and registers it, and it reads that module's cache and routing, so moving it alone would make the two import each other. |
 | `core/texture_cache/land/liquid_sampling_tests.rs` | 574 | 0 | `render/terrain`. |
-| `rsw/land/tile_atlas.rs` | 958 | 9 | `render/assets`. |
+| `core/render/terrain/tile_atlas.rs` | 958 | 9 | `render/assets`; under `terrain/` until then. |
 | `core/texture_cache.rs`, `art.rs` | 1073 | 4 | `render/assets`. The unused full-preload `residency.rs` was deleted 2026-11-19. |
 | `core/texture_cache/land.rs` (+ `cache.rs`, `texture_array.rs`, `aux_layers.rs`, `routing.rs`) | 4783 | 25 | `render/assets`; the shared EC item auxiliary setup leaves terrain. |
 | `core/texture_cache/ec_item_liquid.rs`, `ec_item_surface.rs` (+ `hue_mask`, `water`) | 856 | 9 | `render/assets`. |
 | `rsw/art.rs`, `art/{statics_collect, static_source, static_placement, static_chunk_cache, static_batches, statics_draw, static_geometry, static_surface, transparent_order}.rs` | 8624 | 73 | `render/statics`. `statics_collect.rs` (5470 lines) split 2026-11-19: source policy (`static_source`), anchors, bounds and draw order (`static_placement`), the chunk cache (`static_chunk_cache`), the instances and batches (`static_batches`); collection, its stats and local-light sampling stay, with the tests of all five, which share their fixtures. |
 | `art/{client_grunge, depth_tests, shading_tests}.rs` | 609 | 9 | `render/statics`. |
 | `core/render/lighting.rs`, `lighting/{static_lights, client_light_sprites, light_cover, light_scene, light_scene_tests, client_night, dynamic_light, light_scale}.rs` | 5998 | 93 | Moved 2026-11-19 from `art/`, `rsw/effects/`, `scene/` and `configs/`: one owner for lighting. It reads the statics' placement, source and land z, the picking query and the transparent draw order (`pub(crate)` in `art/`); it moves under `render/` with the rest of `core/render`. |
-| `art/gpu_picking.rs` (+ `tests.rs`), `land/picking.rs` (+ `tests.rs`) | 898 | 7 | `render/picking`. |
+| `art/gpu_picking.rs` (+ `tests.rs`), `terrain/picking.rs` (+ `tests.rs`) | 898 | 7 | `render/picking`. |
 | `rsw/effects.rs`, `effects/fog_pass.rs` | 143 | 3 | `render/postprocess`. |
 
 ### ui

@@ -4,7 +4,7 @@ use crate::{
         CLIENT_NIGHT_OVERLAY_STRENGTH, MAX_CLIENT_LIGHT_LEVEL, MAX_NIGHT_OVERLAY_STRENGTH, MIN_NIGHT_OVERLAY_STRENGTH,
         NIGHT_MAP_MEAN,
     },
-    core::render::scene::world::land::mesh_material::{
+    core::render::terrain::mesh_material::{
         local_light_intensity, ClientLocalLights, ClientNightLighting, GlobalLightingUniforms, LandEffectsUniform,
         LandLightingUniforms, LandMaterialUniformsPresets, LandRenderStylePresetsPerMode, LandShaderModePresets,
         PlayerFloorRule, SunAngles, LOCAL_LIGHT_INTENSITY_RANGE, TONE_CURVE_PROFILE,
@@ -1351,7 +1351,7 @@ mod tests {
     #[test]
     fn bundled_presets_give_the_light_sprite_styles_their_local_lights() {
         use crate::core::render::lighting::static_lights::ClientLocalLightSource;
-        use crate::core::render::scene::world::land::mesh_material::NEUTRAL_LOCAL_LIGHT_INTENSITY;
+        use crate::core::render::terrain::mesh_material::NEUTRAL_LOCAL_LIGHT_INTENSITY;
         const PAINTERLY_LIGHT_SPRITES_INTENSITY: f32 = 0.85;
         let expected = ClientLocalLights {
             source: ClientLocalLightSource::LightSprites,
@@ -1897,7 +1897,7 @@ mod tests {
 
     #[test]
     fn only_kr_like_takes_the_client_texture_filter() {
-        use crate::core::render::scene::world::land::mesh_material::{
+        use crate::core::render::terrain::mesh_material::{
             TEXTURE_FILTER_CLIENT_BILINEAR, TEXTURE_FILTER_PIXEL_ART,
         };
         for text in [BUNDLED_FACTORY_PRESETS, BUNDLED_LAND_SETTINGS] {
@@ -1937,7 +1937,7 @@ mod tests {
     /// KR-like keeps saturation at 1 so the two do not compound.
     #[test]
     fn only_kr_like_has_the_chroma_knee_on() {
-        use crate::core::render::scene::world::land::mesh_material::CHROMA_KNEE_OFF;
+        use crate::core::render::terrain::mesh_material::CHROMA_KNEE_OFF;
         const NEUTRAL_SLOPE: f32 = 1.0;
         const NEUTRAL_SATURATION: f32 = 1.0;
         for text in [BUNDLED_FACTORY_PRESETS, BUNDLED_LAND_SETTINGS] {
@@ -1961,7 +1961,7 @@ mod tests {
 
     #[test]
     fn bundled_blur_radius_is_on_the_slider_from_the_shader_floor() {
-        use crate::core::render::scene::world::land::mesh_material::{BLUR_RADIUS_MAX_PIXELS, BLUR_RADIUS_MIN_PIXELS};
+        use crate::core::render::terrain::mesh_material::{BLUR_RADIUS_MAX_PIXELS, BLUR_RADIUS_MIN_PIXELS};
         for text in [BUNDLED_FACTORY_PRESETS, BUNDLED_LAND_SETTINGS] {
             let presets = parse(text).expect("bundled");
             for group in [&presets.classic, &presets.enhanced, &presets.kr, &presets.painterly] {
@@ -1983,7 +1983,7 @@ mod tests {
 
     #[test]
     fn enhanced_leaves_off_the_terms_and_static_shadows_the_client_lacks() {
-        use crate::core::render::scene::world::land::mesh_material::{
+        use crate::core::render::terrain::mesh_material::{
             TERRAIN_SHADING_CLIENT_PER_VERTEX, TONE_CURVE_IDENTITY,
         };
         for text in [BUNDLED_FACTORY_PRESETS, BUNDLED_LAND_SETTINGS] {

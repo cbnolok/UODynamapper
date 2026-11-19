@@ -7,8 +7,8 @@ pub(crate) mod aux_layers;
 #[cfg(test)]
 mod liquid_sampling_tests;
 
-use crate::core::render::scene::world::land::mesh_material::LandCustomMeshMaterial;
-use crate::core::render::scene::world::land::CHUNK_STORAGE_BLOCKS_DIM;
+use crate::core::render::terrain::mesh_material::LandCustomMeshMaterial;
+use crate::core::render::terrain::CHUNK_STORAGE_BLOCKS_DIM;
 use crate::core::system_sets::*;
 use crate::prelude::*;
 use bevy::prelude::*;
@@ -1206,7 +1206,7 @@ fn sys_pin_active_textures(
     mut cache_r: ResMut<cache::LandTextureCache>,
     mut map_planes_r: ResMut<crate::core::uo_files_loader::MapPlanesRes>,
     scene_state_r: Res<crate::core::render::scene::SceneStateData>,
-    chunk_q: Query<&crate::core::render::scene::world::land::LCMesh>,
+    chunk_q: Query<&crate::core::render::terrain::LCMesh>,
 ) {
     cache_r.clear_pinned_textures();
 
@@ -1254,7 +1254,7 @@ fn sys_evict_idle_land_cache(
     mut cache_r: ResMut<cache::LandTextureCache>,
     mut map_planes_r: ResMut<crate::core::uo_files_loader::MapPlanesRes>,
     scene_state_r: Res<crate::core::render::scene::SceneStateData>,
-    mut tile_atlas: ResMut<crate::core::render::scene::world::land::tile_atlas::TileAtlas>,
+    mut tile_atlas: ResMut<crate::core::render::terrain::tile_atlas::TileAtlas>,
     time: Res<Time<Real>>,
 ) {
     let now = time.last_update().unwrap_or_else(Instant::now);
@@ -1352,10 +1352,10 @@ fn sys_apply_land_texture_source_changes(
     mut cache_r: ResMut<cache::LandTextureCache>,
     mut images: ResMut<Assets<Image>>,
     mut materials: ResMut<Assets<LandCustomMeshMaterial>>,
-    shared_mat: Res<crate::core::render::scene::world::land::draw_mesh::SharedLandMaterial>,
+    shared_mat: Res<crate::core::render::terrain::draw_mesh::SharedLandMaterial>,
     mut terrain_bases: ResMut<coverage::EcTerrainBases>,
     time: Res<Time<Real>>,
-    chunks: Query<Entity, With<crate::core::render::scene::world::land::LCMesh>>,
+    chunks: Query<Entity, With<crate::core::render::terrain::LCMesh>>,
 ) {
     let desired_source = settings.graphics.land_texture_source;
     let routes_changed = cache_r.land_routes_revision != route_file.revision();
@@ -1421,7 +1421,7 @@ fn sys_apply_land_texture_source_changes(
     for entity in chunks.iter() {
         commands
             .entity(entity)
-            .insert(crate::core::render::scene::world::land::draw_mesh::PendingTextureBake);
+            .insert(crate::core::render::terrain::draw_mesh::PendingTextureBake);
     }
 }
 
@@ -1468,7 +1468,7 @@ pub fn sys_setup_terrain_cache(
         Option<Res<crate::core::uo_files_loader::KrItemPackagesRes>>),
     map_planes: Res<crate::core::uo_files_loader::MapPlanesRes>,
     uo_files_settings: Res<crate::core::uo_files_loader::UoFilesSettingsRes>,
-    shader_presets: Res<crate::core::render::scene::world::land::mesh_material::LandShaderModePresets>,
+    shader_presets: Res<crate::core::render::terrain::mesh_material::LandShaderModePresets>,
     route_file: Res<route_file::RouteFileRes>,
     texture_variation: Res<crate::configs::land_texture_variation::LandTextureVariationMaterials>,
 ) {
@@ -1513,7 +1513,7 @@ pub fn sys_setup_terrain_cache(
     land_texture_cache.set_land_routes(route_file.land_routes(), route_file.revision());
     resolve_land_routes(&mut land_texture_cache);
 
-    use crate::core::render::scene::world::land::{
+    use crate::core::render::terrain::{
         draw_mesh::SharedLandMaterial,
         mesh_material::{LandMaterialExtension, SceneUniform},
         tile_atlas::{AtlasParams, TileAtlas, TileAtlasImageHandle},
@@ -1612,7 +1612,7 @@ pub fn sys_setup_terrain_cache(
     let visual_grunge_texture = images.add(crate::util_lib::image::visual_grunge_image(128));
 
     let shared_mat =
-        crate::core::render::scene::world::land::mesh_material::LandCustomMeshMaterial {
+        crate::core::render::terrain::mesh_material::LandCustomMeshMaterial {
             base: StandardMaterial {
                 unlit: true,
                 ..Default::default()
@@ -1629,7 +1629,7 @@ pub fn sys_setup_terrain_cache(
                     // (`world_view_direction` in shaders/world/projection.wesl), which follows the camera.
                     camera_position:
                         crate::core::render::scene::camera::PlayerCamera::BASE_OFFSET_FROM_PLAYER,
-                    land_max_z: crate::core::render::scene::world::land::mesh_material::LAND_NO_Z_LIMIT,
+                    land_max_z: crate::core::render::terrain::mesh_material::LAND_NO_Z_LIMIT,
                     // The active preset's sun; the shader panel pushes the live one whenever it changes.
                     light_direction: crate::configs::shader_presets::get_preset_slot(
                         &shader_presets,
@@ -1654,7 +1654,7 @@ pub fn sys_setup_terrain_cache(
                 static_light_uniform: Default::default(),
                 visual_grunge_texture,
                 texture_variation_uniform:
-                    crate::core::render::scene::world::land::mesh_material::LandTextureVariationUniform::from_materials(
+                    crate::core::render::terrain::mesh_material::LandTextureVariationUniform::from_materials(
                         &texture_variation,
                     ),
                 classic_land_art_atlas: classic_land_art_images.atlas,
@@ -1694,7 +1694,7 @@ fn sys_apply_texture_array_expansion(
     mut cache_r: ResMut<cache::LandTextureCache>,
     mut handles_r: ResMut<cache::TextureArrayImageHandles>,
     mut materials: ResMut<Assets<LandCustomMeshMaterial>>,
-    shared_mat: Res<crate::core::render::scene::world::land::draw_mesh::SharedLandMaterial>,
+    shared_mat: Res<crate::core::render::terrain::draw_mesh::SharedLandMaterial>,
     texmap_2d_r: Res<crate::core::uo_files_loader::TexMap2DRes>,
     _settings: Res<crate::configs::settings::Settings>,
     time: Res<Time<Real>>,
@@ -1782,14 +1782,14 @@ fn sys_apply_texture_array_expansion(
 /// has been set by the LRU paging logic (or when the shrink heuristic fires).
 fn sys_apply_tile_atlas_expansion(
     mut images: ResMut<Assets<Image>>,
-    mut tile_atlas: ResMut<crate::core::render::scene::world::land::tile_atlas::TileAtlas>,
+    mut tile_atlas: ResMut<crate::core::render::terrain::tile_atlas::TileAtlas>,
     mut atlas_handle: ResMut<
-        crate::core::render::scene::world::land::tile_atlas::TileAtlasImageHandle,
+        crate::core::render::terrain::tile_atlas::TileAtlasImageHandle,
     >,
     mut materials: ResMut<Assets<LandCustomMeshMaterial>>,
-    shared_mat: Res<crate::core::render::scene::world::land::draw_mesh::SharedLandMaterial>,
+    shared_mat: Res<crate::core::render::terrain::draw_mesh::SharedLandMaterial>,
     mut commands: Commands,
-    chunks: Query<Entity, With<crate::core::render::scene::world::land::LCMesh>>,
+    chunks: Query<Entity, With<crate::core::render::terrain::LCMesh>>,
 ) {
     let Some(new_layers) = tile_atlas.requested_expansion else {
         return;
@@ -1841,7 +1841,7 @@ fn sys_apply_tile_atlas_expansion(
     for e in chunks.iter() {
         commands
             .entity(e)
-            .insert(crate::core::render::scene::world::land::draw_mesh::PendingTextureBake);
+            .insert(crate::core::render::terrain::draw_mesh::PendingTextureBake);
     }
 
     // Update the shared material so the shader sees the new texture.
@@ -1880,7 +1880,7 @@ mod tests {
     /// evicted after 60 seconds.
     #[test]
     fn the_pin_covers_the_blocks_under_the_chunk_and_their_ring() {
-        use crate::core::render::scene::world::land::{MAP_STORAGE_BLOCK_TILE_DIM, TILE_NUM_PER_CHUNK_DIM};
+        use crate::core::render::terrain::{MAP_STORAGE_BLOCK_TILE_DIM, TILE_NUM_PER_CHUNK_DIM};
         const GX: u32 = 10;
         const GY: u32 = 23;
         for scale in [1, 2, 4] {

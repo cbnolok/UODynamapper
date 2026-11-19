@@ -14,7 +14,7 @@ struct SceneUniform {
     ec_reflection_camera_distance: f32,
     // How many times wider than the KR client's 26-world-unit view the camera shows (client_filter.wesl).
     client_view_scale: f32,
-    // 1 in the cave mouth veil's material (land/cave_mouth_veil.rs), which draws only the black opening of the player's
+    // 1 in the cave mouth veil's material (terrain/cave_mouth_veil.rs), which draws only the black opening of the player's
     // cave's mouth, see-through; 2 in its backdrop's, which draws the opening black at the far plane; 0 in the land's
     // own, which draws all but it. Only land reads it.
     cave_mouth_veil: f32,

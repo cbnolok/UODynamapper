@@ -1,10 +1,10 @@
 use crate::configs::settings::ClientTextureSource;
 use crate::console_logger::{self, LogAbout, LogSev};
 use crate::core::render::scene::camera::{PlayerCamera, RenderZoom};
-use crate::core::render::scene::world::land::{
+use crate::core::render::terrain::{
     CHUNK_STORAGE_BLOCKS_DIM, MAP_STORAGE_BLOCK_TILE_DIM,
 };
-use crate::core::render::scene::world::land::tile_atlas::{AtlasCells, TileAtlas};
+use crate::core::render::terrain::tile_atlas::{AtlasCells, TileAtlas};
 use crate::world::multis::{
     expanded_multi_part_z, MultiDefinitionsRes, MultiPart, PlacedMulti, PlacedMultisRes,
 };
@@ -576,7 +576,7 @@ fn static_chunk_cache_config(
 
 fn collect_visible_static_chunk_keys(
     map_id: u32,
-    chunks_q: &Query<&crate::core::render::scene::world::land::LCMesh>,
+    chunks_q: &Query<&crate::core::render::terrain::LCMesh>,
 ) -> Vec<StaticChunkBatchKey> {
     let mut visible_chunk_keys = chunks_q
         .iter()
@@ -1765,7 +1765,7 @@ pub fn sys_collect_visible_statics(
     // TODO: Need a way to get the currently visible chunks from the terrain system.
     // We can iterate over existing land chunk entities to find which blocks to draw.
     terrain: (
-        Query<&crate::core::render::scene::world::land::LCMesh>,
+        Query<&crate::core::render::terrain::LCMesh>,
         Res<TileAtlas>,
         Option<Res<crate::core::texture_cache::land::coverage::EcTerrainBases>>,
     ),
@@ -2216,7 +2216,7 @@ mod tests {
 
     #[test]
     fn dry_cc_picking_and_rendering_require_all_four_resident_level_corners() {
-        use crate::core::render::scene::world::land::tile_atlas::{AtlasParams, Rg16u};
+        use crate::core::render::terrain::tile_atlas::{AtlasParams, Rg16u};
         let mut tile = item_tile_with_flags(TILE_FLAG_BACKGROUND | TILE_FLAG_SURFACE,
             udd_assets::tilemeta::TileMetaItemVisualKind::RegularArt);
         tile.height = 0;
@@ -2240,7 +2240,7 @@ mod tests {
     #[test]
     fn only_drawn_land_covers_a_buried_floor() {
         use crate::world::caves::CAVE_MIN_BURY_DEPTH;
-        use crate::core::render::scene::world::land::tile_atlas::{AtlasParams, Rg16u, LAND_SOURCE_CC_ATLAS,
+        use crate::core::render::terrain::tile_atlas::{AtlasParams, Rg16u, LAND_SOURCE_CC_ATLAS,
             LAND_SOURCE_NODRAW, LAND_NODRAW_ID};
         use crate::world::z_view::NO_Z_VIEW_LIMIT;
         use uocf::enhanced::tileart::TaeFlag;
@@ -3692,7 +3692,7 @@ mod tests {
 
     #[test]
     fn static_chunk_cache_rebuilds_only_the_chunks_that_read_changed_land() {
-        use crate::core::render::scene::world::land::tile_atlas::{AtlasParams, Rg16u};
+        use crate::core::render::terrain::tile_atlas::{AtlasParams, Rg16u};
         let mut atlas = TileAtlas::new(AtlasParams { page_texels: UVec2::splat(64), max_layers: 1, world_pages_x: 1,
             ..Default::default() }, 1);
         let (layer, _) = atlas.ensure_layer_for_page(IVec2::ZERO);

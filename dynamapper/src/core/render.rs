@@ -1,5 +1,6 @@
 pub mod dialogs;
 pub mod lighting;
+pub mod terrain;
 pub mod overlays;
 pub mod scene;
 

@@ -41,7 +41,7 @@
 use serde::{Deserialize, Serialize};
 
 use crate::world::multis::{expanded_multi_part_z, MultiDefinitionsRes, MultiPart, PlacedMultisRes};
-use crate::core::render::scene::world::land::MAP_STORAGE_BLOCK_TILE_DIM;
+use crate::core::render::terrain::MAP_STORAGE_BLOCK_TILE_DIM;
 use crate::world::z_view::{
     average_land_z, client_light_band, kr_light_layer, kr_roof_is_hidden, MULTI_PART_MAX_REACH, NO_Z_VIEW_LIMIT,
 };

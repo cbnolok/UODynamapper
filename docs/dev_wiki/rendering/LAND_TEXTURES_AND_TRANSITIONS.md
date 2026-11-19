@@ -76,7 +76,7 @@ seen from outside, the opening's black fades softly into the rock around it.
 In the player's cave the opening is see-through: on its mouth's land the cells
 that never blend, the black openings and the frames (`land/main.wesl`
 `cave_mouth_opening`), are left out of the land and drawn by the cave mouth veil
-(`land/cave_mouth_veil.rs`), the land material blended over what lies behind it,
+(`terrain/cave_mouth_veil.rs`), the land material blended over what lies behind it,
 the cave's floor or the dimmed land outside, and under what stands in front of
 it, the entrance arches. A darkness key over its texture's linear luminance
 (`cave_mouth_veil_opacity`) draws the black at `CAVE_MOUTH_OPENING_OPACITY`

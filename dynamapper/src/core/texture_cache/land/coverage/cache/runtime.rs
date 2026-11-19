@@ -3,7 +3,7 @@ use super::{build_stack_layer, CELL_LIQUID, CELL_NEVER_BLENDS, HALO, HEIGHT, SID
 use super::super::EcTerrainBases;
 use crate::core::texture_cache::land::{cache::LandTextureCache, routing::LandRowMap};
 use crate::world::maps::MapPlane;
-use crate::core::{render::scene::{player::Player, world::land::{tile_atlas::{Rg16u, TileAtlas, TERRAIN_SHADER_FLAG_NEVER_BLENDS}, LandUploadTelemetry}}, uo_files_loader::MapPlanesRes};
+use crate::core::{render::{scene::player::Player, terrain::{tile_atlas::{Rg16u, TileAtlas, TERRAIN_SHADER_FLAG_NEVER_BLENDS}, LandUploadTelemetry}}, uo_files_loader::MapPlanesRes};
 use bevy::{asset::RenderAssetUsages, prelude::*, render::render_resource::{Extent3d, TextureDimension, TextureFormat, TextureViewDescriptor, TextureViewDimension}};
 use uocf::classic::map::MapBlockRelPos;
 
@@ -145,8 +145,8 @@ pub(crate) fn sys_prepare(
     camera: Query<(&Camera, &GlobalTransform), With<crate::core::render::scene::camera::PlayerCamera>>,
     atlas: Res<TileAtlas>, telemetry: Res<LandUploadTelemetry>,
     mut bases: ResMut<EcTerrainBases>, mut images: ResMut<Assets<Image>>,
-    mut materials: ResMut<Assets<crate::core::render::scene::world::land::mesh_material::LandCustomMeshMaterial>>,
-    shared_material: Res<crate::core::render::scene::world::land::draw_mesh::SharedLandMaterial>,
+    mut materials: ResMut<Assets<crate::core::render::terrain::mesh_material::LandCustomMeshMaterial>>,
+    shared_material: Res<crate::core::render::terrain::draw_mesh::SharedLandMaterial>,
 ) {
     // The EC-layout land page atlas is the only one with coverage stacks.
     if !land.routes().atlas().uses_enhanced_land() { return; }
@@ -255,7 +255,7 @@ pub(crate) fn sys_prepare(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::core::render::scene::world::land::tile_atlas::{AtlasParams, Rg16u};
+    use crate::core::render::terrain::tile_atlas::{AtlasParams, Rg16u};
 
     #[test]
     fn residency_requires_matching_ec_halo_and_rejects_eviction_and_source_changes() {

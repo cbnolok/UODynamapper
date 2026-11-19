@@ -1,7 +1,7 @@
 use crate::configs::settings::{AntiAliasingMode, SectGraphics, Settings};
 use crate::core::render::scene::player::Player;
 use crate::core::render::scene::{camera_ground_footprint, FreeCameraFootprint, RecomputeVisibleChunksEvent};
-use crate::core::render::scene::world::land::draw_mesh::scale_from_zoom;
+use crate::core::render::terrain::draw_mesh::scale_from_zoom;
 use crate::core::export_job::ExportJob;
 use crate::core::system_sets::*;
 use crate::prelude::*;
@@ -451,9 +451,9 @@ fn sys_camera_follow_player(
         let cam_translation = camera_transform.translation;
         let current_camera_chunk = (
             (cam_translation.x.floor() as i32)
-                .div_euclid(crate::core::render::scene::world::land::TILE_NUM_PER_CHUNK_DIM as i32),
+                .div_euclid(crate::core::render::terrain::TILE_NUM_PER_CHUNK_DIM as i32),
             (cam_translation.z.floor() as i32)
-                .div_euclid(crate::core::render::scene::world::land::TILE_NUM_PER_CHUNK_DIM as i32),
+                .div_euclid(crate::core::render::terrain::TILE_NUM_PER_CHUNK_DIM as i32),
         );
         if *last_camera_chunk != Some(current_camera_chunk) {
             *last_camera_chunk = Some(current_camera_chunk);
@@ -704,7 +704,7 @@ mod tests {
         let position = Vec3::new(2000.0, 50.0, 2000.0);
         let transform = Transform::from_translation(position).looking_to(Vec3::new(1.0, 0.0, 1.0), Vec3::Y);
         let footprint = camera_ground_footprint(&projection, &transform, TEST_VIEWPORT, zoom, scale);
-        let span = super::super::world::land::TILE_NUM_PER_CHUNK_DIM * scale;
+        let span = crate::core::render::terrain::TILE_NUM_PER_CHUNK_DIM * scale;
         for edge in [footprint.tile_x0, footprint.tile_y0, footprint.tile_x1, footprint.tile_y1] {
             assert_eq!(edge % span, 0, "{footprint:?} is off the chunk grid");
         }

@@ -280,7 +280,7 @@ pub fn sys_refresh_process_metrics(
     _settings: Res<Settings>,
     mut metrics: ResMut<ProcessMetrics>,
     tex_cache: Res<crate::core::texture_cache::land::cache::LandTextureCache>,
-    tile_atlas: Res<crate::core::render::scene::world::land::tile_atlas::TileAtlas>,
+    tile_atlas: Res<crate::core::render::terrain::tile_atlas::TileAtlas>,
 ) {
     let pid = metrics.pid;
     // 1. Refresh global CPU usage. This is required on Windows to update the system time baseline
@@ -339,7 +339,7 @@ pub fn update_performance_text(
     frame_rate: Res<crate::diagnostics::frame_rate::MeasuredFrameRate>,
     settings: Res<Settings>,
     metrics: Res<ProcessMetrics>,
-    land_upload_telemetry: Res<crate::core::render::scene::world::land::LandUploadTelemetry>,
+    land_upload_telemetry: Res<crate::core::render::terrain::LandUploadTelemetry>,
     entities: &bevy::ecs::entity::Entities,
     land_chunk_count: Res<crate::core::render::scene::LandChunkCount>,
     mut text_query: Query<

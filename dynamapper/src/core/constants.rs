@@ -78,7 +78,7 @@ const TEST_CACHE_DIR_PREFIX: &str = "dynamapper-test-cache-";
 //pub struct LightDir(pub Vec3);
 
 // Hardcoded light direction vector.
-// The presets' sun (`SunAngles` in render/scene/world/land/mesh_material.rs) replaced it; it stays as the
+// The presets' sun (`SunAngles` in render/terrain/mesh_material.rs) replaced it; it stays as the
 // reference the default sun reproduces.
 #[cfg(test)]
 pub const BAKED_GLOBAL_LIGHT: bevy::prelude::Vec3 = bevy::prelude::Vec3::new(-1.0, 2.5, -1.0);

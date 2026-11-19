@@ -561,7 +561,7 @@ fn sys_dump_configurable_diagnostics(
     runtime: Res<WorldmapRuntimeDiagnostics>,
     system_timers: Res<WorldmapSystemDiagnostics>,
     cross_app_timers: Res<WorldmapCrossAppDiagnostics>,
-    land_upload_telemetry: Res<crate::core::render::scene::world::land::LandUploadTelemetry>,
+    land_upload_telemetry: Res<crate::core::render::terrain::LandUploadTelemetry>,
     mut dump_state: ResMut<DiagnosticDumpState>,
 ) {
     let config = &settings.world_rendering.diagnostics;

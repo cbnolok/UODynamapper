@@ -88,7 +88,7 @@ const TERRAIN_FLAG_REVIEWED_LIQUID: u32 = 0x4u;
 // The land of the player's cave's mouth (tile_atlas.rs TERRAIN_SHADER_FLAG_PLAYER_CAVE): drawn whole, not darkened.
 const TERRAIN_FLAG_PLAYER_CAVE: u32 = 0x1u;
 // How opaque the black opening of the player's cave's mouth is (`cave_mouth_opening`), drawn by the cave mouth veil
-// (land/cave_mouth_veil.rs) over what lies behind it, the cave's floor or the land outside.
+// (terrain/cave_mouth_veil.rs) over what lies behind it, the cave's floor or the land outside.
 const CAVE_MOUTH_OPENING_OPACITY: f32 = 0.65;
 // The veil's darkness key (`cave_mouth_veil_opacity`), over the linear luminance of the land's own texture: black up to
 // the first, the opening's opacity; rock from the second, opaque. The Classic texmaps of the cave exit frames
@@ -101,7 +101,7 @@ const CAVE_MOUTH_KEY_LUMA_WEIGHTS: vec3<f32> = vec3<f32>(0.2126, 0.7152, 0.0722)
 // The linear luminance of the land's texture at the fragment, as `shade_land` last sampled it, before any lighting:
 // the cave mouth veil's darkness key.
 var<private> land_albedo_luminance: f32 = 0.0;
-// SceneUniform::cave_mouth_veil of the veil's backdrop (land/cave_mouth_veil.rs BACKDROP_SHADER_MODE), which draws
+// SceneUniform::cave_mouth_veil of the veil's backdrop (terrain/cave_mouth_veil.rs BACKDROP_SHADER_MODE), which draws
 // the opening black behind all else, so that where nothing lies behind the opening it shows black, not the clear colour.
 const CAVE_MOUTH_BACKDROP_MODE: f32 = 2.0;
 // The far plane's depth (reversed z): the backdrop lies behind all else.

@@ -46,15 +46,15 @@
 //!   and what stands on an exit at the cave's level, the cave entrance art of the KR client's arches, is the cave's
 //!   (`CaveStatic::Lifted`). Its black opening, the black land and the black of that frame (all of an Enhanced or
 //!   Kingdom Reborn frame, the opening painted in a Classic texmap's), is see-through: what lies behind it, the cave's
-//!   floor or the land outside, shows darkened through it (land/cave_mouth_veil.rs).
+//!   floor or the land outside, shows darkened through it (terrain/cave_mouth_veil.rs).
 //!   Where a built ceiling covers the rim, a floor static on the land's face over the cave's floor, the opening is a
 //!   room's doorway, not a mouth: its land is not the cave's.
 
 use crate::configs::settings::Settings;
 use crate::console_logger::{self, LogAbout, LogSev};
 use crate::world::maps::{package_chunk_cell, read_package_chunk_land_z, PACKAGE_CHUNK_CELL_DIM};
-use crate::core::render::scene::world::land::draw_mesh::PendingTextureBake;
-use crate::core::render::scene::world::land::{LCMesh, MAP_STORAGE_BLOCK_TILE_DIM};
+use crate::core::render::terrain::draw_mesh::PendingTextureBake;
+use crate::core::render::terrain::{LCMesh, MAP_STORAGE_BLOCK_TILE_DIM};
 use crate::core::render::scene::player::Player;
 use crate::world::z_view::{CLIENT_BAND_HEIGHT, NO_Z_VIEW_LIMIT};
 use crate::world::z_view::{PLAYER_CEILING_MIN_RISE, PLAYER_VIEW_HEADROOM};

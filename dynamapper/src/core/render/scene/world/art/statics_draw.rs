@@ -3,6 +3,7 @@ use crate::configs::settings::{ClientTextureSource, Settings};
 use crate::configs::shader_presets::{UniformSnapshot, UniformState};
 use crate::console_logger::{self, LogAbout, LogSev};
 use crate::core::render::scene::world;
+use crate::core::render::terrain;
 use crate::core::render::scene::world::art::static_batches::{
     GroundTileInstance, RenderStaticChunkBatches, RenderStaticInstances, RenderStaticLandInstances, SpriteInstance,
     StaticChunkBatch, StaticChunkBatchKey,
@@ -96,11 +97,11 @@ pub struct ArtSpriteMaterialExtension {
     #[uniform(103, visibility(vertex, fragment))]
     pub params: SpriteParams,
     #[uniform(105, visibility(vertex, fragment))]
-    pub scene_uniform: world::land::mesh_material::SceneUniform,
+    pub scene_uniform: terrain::mesh_material::SceneUniform,
     #[uniform(106, visibility(vertex, fragment))]
-    pub effects_uniform: world::land::mesh_material::LandEffectsUniform,
+    pub effects_uniform: terrain::mesh_material::LandEffectsUniform,
     #[uniform(107, visibility(vertex, fragment))]
-    pub global_lighting_uniform: world::land::mesh_material::GlobalLightingUniforms,
+    pub global_lighting_uniform: terrain::mesh_material::GlobalLightingUniforms,
     #[texture(109, visibility(fragment))]
     #[sampler(108, visibility(fragment))]
     pub hues: Handle<Image>,
@@ -127,11 +128,11 @@ pub struct ArtGroundMaterialExtension {
     #[uniform(103, visibility(vertex, fragment))]
     pub params: SpriteParams,
     #[uniform(105, visibility(vertex, fragment))]
-    pub scene_uniform: world::land::mesh_material::SceneUniform,
+    pub scene_uniform: terrain::mesh_material::SceneUniform,
     #[uniform(106, visibility(vertex, fragment))]
-    pub effects_uniform: world::land::mesh_material::LandEffectsUniform,
+    pub effects_uniform: terrain::mesh_material::LandEffectsUniform,
     #[uniform(107, visibility(vertex, fragment))]
-    pub global_lighting_uniform: world::land::mesh_material::GlobalLightingUniforms,
+    pub global_lighting_uniform: terrain::mesh_material::GlobalLightingUniforms,
     #[texture(109, visibility(fragment))]
     #[sampler(108, visibility(fragment))]
     pub hues: Handle<Image>,
@@ -659,8 +660,8 @@ fn create_blank_land_page_binding_images(images: &mut Assets<Image>) -> LandPage
 }
 
 fn land_page_binding_handles(
-    shared_land_material: Option<&world::land::draw_mesh::SharedLandMaterial>,
-    land_materials: &Assets<world::land::mesh_material::LandCustomMeshMaterial>,
+    shared_land_material: Option<&terrain::draw_mesh::SharedLandMaterial>,
+    land_materials: &Assets<terrain::mesh_material::LandCustomMeshMaterial>,
 ) -> Option<LandPageBindingHandles> {
     let material = land_materials.get(&shared_land_material?.0)?;
     Some(LandPageBindingHandles {
@@ -808,11 +809,11 @@ pub fn sys_setup_art_page_atlas(
     mut images: ResMut<Assets<Image>>,
     mut materials: ResMut<Assets<ArtSpriteMaterial>>,
     mut ground_materials: ResMut<Assets<ArtGroundMaterial>>,
-    land_materials: Res<Assets<world::land::mesh_material::LandCustomMeshMaterial>>,
+    land_materials: Res<Assets<terrain::mesh_material::LandCustomMeshMaterial>>,
     mut meshes: ResMut<Assets<Mesh>>,
     mut storage_buffers: ResMut<Assets<ShaderBuffer>>,
     settings: Res<Settings>,
-    shared_land_material: Option<Res<world::land::draw_mesh::SharedLandMaterial>>,
+    shared_land_material: Option<Res<terrain::draw_mesh::SharedLandMaterial>>,
     tex_art_cc_res: Option<Res<TexArtCcPackageRes>>,
     tex_art_ec_res: Option<Res<TexArtEcPackageRes>>,
     tex_land_ec_res: Option<Res<TexLandEcPackageRes>>,
@@ -907,9 +908,9 @@ pub fn sys_setup_art_page_atlas(
                 map_height_tiles: 1.0,
                 _pad_sp: UVec2::ZERO,
             },
-            scene_uniform: world::land::mesh_material::SceneUniform::default(),
-            effects_uniform: world::land::mesh_material::LandEffectsUniform::default(),
-            global_lighting_uniform: world::land::mesh_material::GlobalLightingUniforms::default(),
+            scene_uniform: terrain::mesh_material::SceneUniform::default(),
+            effects_uniform: terrain::mesh_material::LandEffectsUniform::default(),
+            global_lighting_uniform: terrain::mesh_material::GlobalLightingUniforms::default(),
             hues: hue_lookup_handle.clone(),
             visual_grunge_texture: visual_grunge_texture.clone(),
             item_surface_atlas: item_surface_images.atlas.clone(),
@@ -937,9 +938,9 @@ pub fn sys_setup_art_page_atlas(
                 map_height_tiles: 1.0,
                 _pad_sp: UVec2::ZERO,
             },
-            scene_uniform: world::land::mesh_material::SceneUniform::default(),
-            effects_uniform: world::land::mesh_material::LandEffectsUniform::default(),
-            global_lighting_uniform: world::land::mesh_material::GlobalLightingUniforms::default(),
+            scene_uniform: terrain::mesh_material::SceneUniform::default(),
+            effects_uniform: terrain::mesh_material::LandEffectsUniform::default(),
+            global_lighting_uniform: terrain::mesh_material::GlobalLightingUniforms::default(),
             hues: hue_lookup_handle.clone(),
             visual_grunge_texture: visual_grunge_texture.clone(),
             item_surface_atlas: item_surface_images.atlas.clone(),
@@ -962,9 +963,9 @@ pub fn sys_setup_art_page_atlas(
                 map_height_tiles: 1.0,
                 _pad_sp: UVec2::ZERO,
             },
-            scene_uniform: world::land::mesh_material::SceneUniform::default(),
-            effects_uniform: world::land::mesh_material::LandEffectsUniform::default(),
-            global_lighting_uniform: world::land::mesh_material::GlobalLightingUniforms::default(),
+            scene_uniform: terrain::mesh_material::SceneUniform::default(),
+            effects_uniform: terrain::mesh_material::LandEffectsUniform::default(),
+            global_lighting_uniform: terrain::mesh_material::GlobalLightingUniforms::default(),
             hues: hue_lookup_handle.clone(),
             visual_grunge_texture: visual_grunge_texture.clone(),
             item_surface_atlas: item_surface_images.atlas.clone(),
@@ -1023,9 +1024,9 @@ pub fn sys_setup_art_page_atlas(
                 map_height_tiles: 1.0,
                 _pad_sp: UVec2::ZERO,
             },
-            scene_uniform: world::land::mesh_material::SceneUniform::default(),
-            effects_uniform: world::land::mesh_material::LandEffectsUniform::default(),
-            global_lighting_uniform: world::land::mesh_material::GlobalLightingUniforms::default(),
+            scene_uniform: terrain::mesh_material::SceneUniform::default(),
+            effects_uniform: terrain::mesh_material::LandEffectsUniform::default(),
+            global_lighting_uniform: terrain::mesh_material::GlobalLightingUniforms::default(),
             hues: hue_lookup_handle.clone(),
             land_page_atlas: land_page_bindings.atlas.clone(),
             land_page_lookup: land_page_bindings.lookup.clone(),
@@ -1055,9 +1056,9 @@ pub fn sys_setup_art_page_atlas(
                 map_height_tiles: 1.0,
                 _pad_sp: UVec2::ZERO,
             },
-            scene_uniform: world::land::mesh_material::SceneUniform::default(),
-            effects_uniform: world::land::mesh_material::LandEffectsUniform::default(),
-            global_lighting_uniform: world::land::mesh_material::GlobalLightingUniforms::default(),
+            scene_uniform: terrain::mesh_material::SceneUniform::default(),
+            effects_uniform: terrain::mesh_material::LandEffectsUniform::default(),
+            global_lighting_uniform: terrain::mesh_material::GlobalLightingUniforms::default(),
             hues: hue_lookup_handle,
             land_page_atlas: land_page_bindings.atlas,
             land_page_lookup: land_page_bindings.lookup,
@@ -1682,10 +1683,10 @@ pub fn sys_update_ground_instance_buffer(
 pub fn sys_update_art_materials(
     mut materials: ResMut<Assets<ArtSpriteMaterial>>,
     mut ground_materials: ResMut<Assets<ArtGroundMaterial>>,
-    land_materials: Res<Assets<world::land::mesh_material::LandCustomMeshMaterial>>,
+    land_materials: Res<Assets<terrain::mesh_material::LandCustomMeshMaterial>>,
     sprite_assets: Option<Res<ArtSpriteRenderAssets>>,
     ground_assets: Option<Res<ArtGroundRenderAssets>>,
-    shared_land_material: Option<Res<world::land::draw_mesh::SharedLandMaterial>>,
+    shared_land_material: Option<Res<terrain::draw_mesh::SharedLandMaterial>>,
     render_zoom: Res<crate::core::render::scene::camera::RenderZoom>,
     player_q: Query<&Transform, With<crate::core::render::scene::player::Player>>,
     uniform_state: Res<crate::configs::shader_presets::UniformState>,
@@ -1699,13 +1700,13 @@ pub fn sys_update_art_materials(
     let current_render_zoom = render_zoom.0;
     let current_uniform_snapshot = uniform_state.snapshot();
     let current_client_view_scale =
-        camera_q.iter().next().map_or(1.0, world::land::mesh_material::client_view_scale);
+        camera_q.iter().next().map_or(1.0, terrain::mesh_material::client_view_scale);
 
     let lighting_meaningfully_changed =
         (current_global_lighting - *last_global_lighting).abs() > 0.01;
     let zoom_changed = (current_render_zoom - *last_render_zoom).abs() > 0.1;
     let client_view_scale_changed = (current_client_view_scale - *last_client_view_scale).abs()
-        > world::land::mesh_material::CLIENT_VIEW_SCALE_EPSILON;
+        > terrain::mesh_material::CLIENT_VIEW_SCALE_EPSILON;
     let uniforms_changed = last_uniform_snapshot.is_none_or(|snapshot| {
         snapshot.effects != current_uniform_snapshot.effects
             || snapshot.lighting != current_uniform_snapshot.lighting
@@ -1887,9 +1888,9 @@ mod tests {
                     map_height_tiles: UNSET_MAP_TILES,
                     _pad_sp: UVec2::ZERO,
                 },
-                scene_uniform: world::land::mesh_material::SceneUniform::default(),
-                effects_uniform: world::land::mesh_material::LandEffectsUniform::default(),
-                global_lighting_uniform: world::land::mesh_material::GlobalLightingUniforms::default(),
+                scene_uniform: terrain::mesh_material::SceneUniform::default(),
+                effects_uniform: terrain::mesh_material::LandEffectsUniform::default(),
+                global_lighting_uniform: terrain::mesh_material::GlobalLightingUniforms::default(),
                 hues: Handle::default(),
                 land_page_atlas: Handle::default(),
                 land_page_lookup: Handle::default(),
@@ -2079,9 +2080,9 @@ mod tests {
     #[test]
     fn the_shadow_material_draws_the_client_shadow_only_where_it_is_on() {
         let mut u = UniformState {
-            effects: world::land::mesh_material::LandEffectsUniform::default(),
-            lighting: world::land::mesh_material::GlobalLightingUniforms::default(),
-            land_lighting: world::land::mesh_material::LandLightingUniforms::default(),
+            effects: terrain::mesh_material::LandEffectsUniform::default(),
+            lighting: terrain::mesh_material::GlobalLightingUniforms::default(),
+            land_lighting: terrain::mesh_material::LandLightingUniforms::default(),
             global_lighting: 1.0,
             client_lighting: None,
             client_shadows: None,
@@ -2089,7 +2090,7 @@ mod tests {
             land_texture_variation: None,
             light_cover: crate::core::render::lighting::light_cover::LightCover::ClassicUo,
             player_floor_rule: None,
-            sun: world::land::mesh_material::SunAngles::default(),
+            sun: terrain::mesh_material::SunAngles::default(),
             dirty: false,
             saved_snapshot: None,
             active_preset: String::new(),

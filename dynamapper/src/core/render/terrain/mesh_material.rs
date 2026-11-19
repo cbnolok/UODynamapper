@@ -51,7 +51,7 @@ pub struct LandMaterialExtension {
     /// Configuration for the metadata atlas paging system.
     /// Maps logical 2048x2048 world pages to physical GPU array layers.
     #[uniform(104, visibility(vertex, fragment))]
-    pub atlas_params: crate::core::render::scene::world::land::tile_atlas::AtlasParams,
+    pub atlas_params: crate::core::render::terrain::tile_atlas::AtlasParams,
 
     /// Global camera and lighting direction state.
     #[uniform(105, visibility(vertex, fragment))]
@@ -116,7 +116,7 @@ impl MaterialExtension for LandMaterialExtension {
     }
 
     /// The land writes its own depth, the draw order's (land/main.wesl `fragment`): no depth bias. The cave mouth
-    /// veil's `depth_bias` only sorts it last (land/cave_mouth_veil.rs `VEIL_SORT_BIAS`).
+    /// veil's `depth_bias` only sorts it last (terrain/cave_mouth_veil.rs `VEIL_SORT_BIAS`).
     fn specialize(
         _pipeline: &MaterialExtensionPipeline,
         descriptor: &mut RenderPipelineDescriptor,
@@ -163,7 +163,7 @@ pub struct SceneUniform {
     /// How many times wider than the KR client's view the camera shows (`client_view_scale`); above 1 the client
     /// texture filter emulates mip levels. Takes the former `_pad` slot.
     pub client_view_scale: f32,
-    /// 1 in the cave mouth veil's material (land/cave_mouth_veil.rs), which draws only the black opening of the
+    /// 1 in the cave mouth veil's material (terrain/cave_mouth_veil.rs), which draws only the black opening of the
     /// player's cave's mouth, see-through; 2 in its backdrop's, which draws the opening black at the far plane; 0 in
     /// the land's own, which draws all but it. Only the land shader reads it. Takes a former `_reserved` slot.
     pub cave_mouth_veil: f32,

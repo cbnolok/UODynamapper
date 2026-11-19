@@ -9,7 +9,7 @@
 //   look) and UOD-Painterly (the painterly KR look). KR-like and UOD-Painterly both use
 //   shading mode 2 and the KR content; only their preset values differ.
 
-use super::super::scene::world::land::mesh_material::*;
+use super::super::terrain::mesh_material::*;
 use crate::core::render::lighting::{light_cover::LightCover, static_lights::ClientLocalLightSource};
 use crate::input::input_actions::ActionToggleShaderSettings;
 use crate::{

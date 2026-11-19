@@ -76,7 +76,7 @@ pub fn is_cave_exit_frame(land_id: u32) -> bool {
 /// cave exit frame, from any source, `player_cave_mouth` when the cell's land is the player's cave's mouth (caves.rs
 /// `PlayerCave::owns_land`). The mouth's land takes `TERRAIN_SHADER_FLAG_PLAYER_CAVE`; a frame there never blends, so
 /// in the player's cave the dirt below a steep frame, as at the Minoc mine's mouth, does not stretch up its black, and
-/// the cave mouth veil draws it (land/cave_mouth_veil.rs), its black see-through. Elsewhere the frame blends, the black
+/// the cave mouth veil draws it (terrain/cave_mouth_veil.rs), its black see-through. Elsewhere the frame blends, the black
 /// of the opening fading softly into the rock around it as seen from outside.
 pub fn cell_terrain_flags(tile_flags: u16, cave_exit_frame: bool, player_cave_mouth: bool) -> u16 {
     if !player_cave_mouth {

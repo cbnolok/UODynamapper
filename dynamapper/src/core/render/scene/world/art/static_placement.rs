@@ -1,7 +1,7 @@
 //! Where a static's quad goes and in what order it draws: the world anchors and bounds of billboards, flat
 //! and ground quads, the depth classes, and the draw-order keys and tie levels.
 
-use crate::core::render::scene::world::land::tile_atlas::TileAtlas;
+use crate::core::render::terrain::tile_atlas::TileAtlas;
 use crate::prelude::*;
 use bevy::prelude::*;
 use std::collections::HashMap;

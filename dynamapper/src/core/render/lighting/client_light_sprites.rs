@@ -44,7 +44,7 @@ use super::light_scale::ItemLightScales;
 use crate::console_logger::{self, LogAbout, LogSev};
 use crate::world::multis::{MultiDefinitionsRes, PlacedMultisRes};
 use crate::core::render::lighting::client_night::LIGHT_BUFFER_LAYER;
-use crate::core::render::scene::world::land::{LCMesh, CHUNK_STORAGE_BLOCKS_DIM, MAP_STORAGE_BLOCK_TILE_DIM};
+use crate::core::render::terrain::{LCMesh, CHUNK_STORAGE_BLOCKS_DIM, MAP_STORAGE_BLOCK_TILE_DIM};
 use crate::core::render::scene::SceneStateData;
 use crate::world::statics::StaticsStoreRes;
 use crate::core::uo_files_loader::{MapPlanesRes, TexArtCcPackageRes, TexAuxEcPackageRes, TileMetaPackageRes};

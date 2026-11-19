@@ -10,8 +10,8 @@ use crate::core::render::lighting::light_scale::{ItemLightScales, NEUTRAL_LIGHT_
 use crate::configs::{settings::{ClientTextureSource, Settings}, shader_presets::UniformState};
 use crate::console_logger::{self, LogAbout, LogSev};
 use crate::world::multis::{MultiDefinitionsRes, PlacedMultisRes};
-use crate::core::render::scene::world::land::mesh_material::{ClientLocalLights, ClientNightLighting};
-use crate::core::render::scene::world::land::{
+use crate::core::render::terrain::mesh_material::{ClientLocalLights, ClientNightLighting};
+use crate::core::render::terrain::{
     CHUNK_STORAGE_BLOCKS_DIM, MAP_STORAGE_BLOCK_TILE_DIM,
 };
 use crate::world::caves::CavesRes;
@@ -409,7 +409,7 @@ pub fn sys_collect_visible_static_lights(
     light_scales: Res<ItemLightScales>,
     (scene_state, art_source): (Res<SceneStateData>, Res<StaticArtSourceState>),
     view_cuts: (Res<ZViewLimit>, Res<CavesRes>),
-    chunks_q: Query<&crate::core::render::scene::world::land::LCMesh>,
+    chunks_q: Query<&crate::core::render::terrain::LCMesh>,
     mut material_cache: ResMut<StaticLightMaterialCache>,
     mut output: ResMut<RenderStaticLightInstances>,
     (mut debug_state, mut last_scan): (ResMut<StaticLightDrawDebugState>, Local<Option<StaticLightScanKey>>),
@@ -1448,7 +1448,7 @@ mod tests {
     /// The collection scans the statics again only when what it collects from changes, not on every frame.
     #[test]
     fn static_lights_are_collected_again_only_when_an_input_changes() {
-        use crate::core::render::scene::world::land::mesh_material::{
+        use crate::core::render::terrain::mesh_material::{
             GlobalLightingUniforms, LandEffectsUniform, LandLightingUniforms, SunAngles,
         };
         use crate::core::render::lighting::light_cover::LightCover;

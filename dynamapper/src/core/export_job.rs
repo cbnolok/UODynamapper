@@ -16,9 +16,11 @@ use crate::core::render::scene::{
     world::{
         WorldGeoData,
         art::statics_collect::StaticArtCollectDebugState,
-        land::{LCMesh, LandUploadTelemetry, draw_mesh::ChunkScale, mesh_material::LandShaderModePresets, tile_atlas::TileAtlas},
     },
     ExportChunkFootprint, RecomputeVisibleChunksEvent,
+};
+use crate::core::render::terrain::{
+    LCMesh, LandUploadTelemetry, draw_mesh::ChunkScale, mesh_material::LandShaderModePresets, tile_atlas::TileAtlas,
 };
 use crate::core::texture_cache::art::{GroundArtPageAtlas, SpriteArtPageAtlas};
 use crate::prelude::*;

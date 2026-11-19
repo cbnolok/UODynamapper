@@ -11,9 +11,10 @@ use bevy::window::{Window, WindowResized};
 use crate::world::coords::scale_uo_z_to_bevy_units;
 use camera::{PlayerCamera, RenderZoom, MAX_ZOOM, MIN_ZOOM};
 use player::Player;
-use world::land::draw_mesh::{scale_from_zoom, ChunkScale};
-use world::land::TILE_NUM_PER_CHUNK_DIM;
-use world::{land, WorldGeoData};
+use crate::core::render::terrain::draw_mesh::{scale_from_zoom, ChunkScale};
+use crate::core::render::terrain::TILE_NUM_PER_CHUNK_DIM;
+use crate::core::render::terrain;
+use world::WorldGeoData;
 
 #[derive(Resource)]
 pub struct SceneStateData {
@@ -449,7 +450,7 @@ fn sys_update_worldmap_chunks_to_render(
     mut chunk_scale_res: ResMut<ChunkScale>,
     windows_q: Query<&Window>,
     mut player_q: Query<(&mut Player, &Transform)>,
-    existing_chunks_q: Query<(Entity, &land::LCMesh, Has<Mesh3d>)>,
+    existing_chunks_q: Query<(Entity, &terrain::LCMesh, Has<Mesh3d>)>,
     mut locals: Local<ChunkRenderLocals>,
     (export_footprint, free_camera_footprint): (Option<Res<ExportChunkFootprint>>, Option<Res<FreeCameraFootprint>>),
 ) {
@@ -890,10 +891,10 @@ fn sys_update_worldmap_chunks_to_render(
     for spawn in locals.pending_spawns[..batch_size].iter().copied() {
         let gx = spawn.gx;
         let gy = spawn.gy;
-        let chunk_origin_tile_units_x = gx * land::TILE_NUM_PER_CHUNK_DIM;
-        let chunk_origin_tile_units_z = gy * land::TILE_NUM_PER_CHUNK_DIM;
+        let chunk_origin_tile_units_x = gx * terrain::TILE_NUM_PER_CHUNK_DIM;
+        let chunk_origin_tile_units_z = gy * terrain::TILE_NUM_PER_CHUNK_DIM;
         commands.spawn((
-            land::LCMesh {
+            terrain::LCMesh {
                 parent_map_id: new_map_id,
                 gx,
                 gy,

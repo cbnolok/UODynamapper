@@ -7,8 +7,8 @@ mod settings;
 use input::{ControlInput, InputState, PointerButton, inject_control_input, focus_control_context};
 use settings::{ControlSetting, ControlSettings};
 use crate::configs::settings::{ClientTextureSource, LandTextureSource};
-use crate::core::render::scene::world::land::{LCMesh, draw_mesh::PendingTextureBake};
-use crate::core::{render::scene::world::land::{tile_atlas::TileAtlas, LandUploadTelemetry}, texture_cache::land::coverage::EcTerrainBases};
+use crate::core::render::terrain::{LCMesh, draw_mesh::PendingTextureBake};
+use crate::core::{render::terrain::{tile_atlas::TileAtlas, LandUploadTelemetry}, texture_cache::land::coverage::EcTerrainBases};
 use crate::core::{app_states::AppState, render::scene::{player::Player, world::WorldGeoData, RecomputeVisibleChunksEvent}, system_sets::MovementSysSet};
 use crate::prelude::*;
 use bevy::{input::{InputSystems, keyboard::KeyCode}, prelude::*, render::view::screenshot::{Screenshot, save_to_disk}, window::PrimaryWindow};
@@ -146,7 +146,7 @@ fn poll_control(
         Option<Res<crate::core::texture_cache::art::SpriteArtPageAtlas>>,
         Option<Res<crate::core::texture_cache::art::GroundArtPageAtlas>>,
         Option<Res<crate::core::render::scene::world::art::gpu_picking::VisibleStaticPick>>,
-        Option<Res<crate::core::render::scene::world::land::picking::TerrainCursor>>,
+        Option<Res<crate::core::render::terrain::picking::TerrainCursor>>,
         Option<Res<crate::core::render::lighting::client_light_sprites::RenderClientLightSprites>>,
         Option<Res<crate::world::z_view::ZViewLimit>>,
         Option<Res<crate::world::caves::CavesRes>>,

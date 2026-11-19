@@ -1,5 +1,6 @@
-pub mod land;
 pub mod art;
+
+use crate::core::render::terrain;
 pub mod effects;
 
 use nohash_hasher::BuildNoHashHasher;
@@ -44,7 +45,7 @@ impl Plugin for WorldPlugin
                     .before(SceneRenderArtSysSet::CollectVisibleStatics)
                     .before(crate::core::render::lighting::static_lights::sys_collect_visible_static_lights)
                     .before(crate::core::render::lighting::client_light_sprites::sys_collect_client_light_sprites)
-                    .before(land::sys_update_shared_land_material)
+                    .before(terrain::sys_update_shared_land_material)
                     .run_if(in_state(AppState::InGame)),
             )
             .add_systems(
@@ -61,11 +62,11 @@ impl Plugin for WorldPlugin
                     .before(SceneRenderArtSysSet::CollectVisibleStatics)
                     .before(crate::core::render::lighting::static_lights::sys_collect_visible_static_lights)
                     .before(crate::core::render::lighting::client_light_sprites::sys_collect_client_light_sprites)
-                    .before(land::draw_mesh::sys_draw_spawned_land_chunks)
+                    .before(terrain::draw_mesh::sys_draw_spawned_land_chunks)
                     .run_if(in_state(AppState::InGame)),
             )
             .add_plugins((
-                land::DrawLandChunkMeshPlugin { registered_by: "WorldPlugin" },
+                terrain::DrawLandChunkMeshPlugin { registered_by: "WorldPlugin" },
                 art::DrawStaticSpritesPlugin { registered_by: "WorldPlugin" },
             ));
     }

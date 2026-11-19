@@ -197,7 +197,7 @@ fn mesh_for_scale(handles: &LandMeshHandles, scale: u32, lod: LandMeshLod) -> Ha
     }
 }
 
-use crate::core::render::scene::world::land::tile_atlas::{
+use crate::core::render::terrain::tile_atlas::{
     Rg16u, TileAtlas, TERRAIN_SHADER_FLAG_NEVER_BLENDS, TERRAIN_SHADER_FLAG_REVIEWED_LIQUID, cell_terrain_flags,
     is_black_land, is_cave_exit_frame,
 };
@@ -752,7 +752,7 @@ pub fn sys_draw_spawned_land_chunks(
 
     // `ids` contains textures dynamically required. Pinned tracking continues async.
     {
-        use crate::core::render::scene::world::land::tile_atlas::{
+        use crate::core::render::terrain::tile_atlas::{
             LAND_NODRAW_ID, LAND_SOURCE_CC_ATLAS, LAND_SOURCE_CC_BIG, LAND_SOURCE_CC_SMALL, LAND_SOURCE_CLASSIC_ART,
             LAND_SOURCE_EC_ATLAS, LAND_SOURCE_MISSING, LAND_SOURCE_NODRAW,
         };
