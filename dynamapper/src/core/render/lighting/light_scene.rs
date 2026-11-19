@@ -20,10 +20,10 @@
 //!   pipelines draw nothing there (`LightClipMode::Deferred`), and the world view draws them into the light buffer
 //!   once the light scene is done (`render_deferred_light_sprites`), before the client night composite reads it.
 
-use super::gpu_picking::DrawPixelQuery;
-use super::transparent_order::{drawn_batches, StaticTransparentBatchOrder};
+use crate::core::render::scene::world::art::gpu_picking::DrawPixelQuery;
+use crate::core::render::scene::world::art::transparent_order::{drawn_batches, StaticTransparentBatchOrder};
 use crate::core::render::scene::camera::PlayerCamera;
-use crate::core::render::scene::world::effects::client_night::LightBufferCamera;
+use crate::core::render::lighting::client_night::LightBufferCamera;
 use bevy::camera::CameraUpdateSystems;
 use bevy::core_pipeline::core_3d::{main_opaque_pass_3d, main_transparent_pass_3d, Transparent3d};
 use bevy::core_pipeline::Core3d;
@@ -212,7 +212,7 @@ pub(crate) fn set_light_clip_mode<'a>(
     }
 }
 
-pub(super) fn install(app: &mut App) {
+pub(crate) fn install(app: &mut App) {
     app.add_plugins((
         MaterialPlugin::<LightClipMaterial>::default(),
         ExtractResourcePlugin::<LightScene>::default(),

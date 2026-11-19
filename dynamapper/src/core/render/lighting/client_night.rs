@@ -1,4 +1,4 @@
-// world::effects::client_night — the KR and Enhanced clients' night lighting composite, and the Classic client's
+// lighting::client_night — the KR and Enhanced clients' night lighting composite, and the Classic client's
 // darkening by the light level.
 //
 // Both clients darken and tint the finished frame in one LDR pass (UOKR.exe
@@ -31,7 +31,7 @@
 // luminance; the composite is affine in B, so the night then dims by the luminance of the client's multiplier,
 // without the tint. Another colour rescales the map's channels, keeping its cloud pattern.
 //
-// Lights: the clients' light sprites (`art::client_light_sprites`) are drawn on `LIGHT_BUFFER_LAYER` by an
+// Lights: the clients' light sprites (`lighting::client_light_sprites`) are drawn on `LIGHT_BUFFER_LAYER` by an
 // offscreen camera into the light buffer image, with straight alpha blending from a transparent clear. That leaves
 // L, the lights lerped over black with L.a their coverage, so B = L.rgb + N' * (1 - L.a) is the client's sequential
 // lerp of the sprites over the night map.
@@ -75,7 +75,7 @@
 
 use crate::configs::shader_presets::UniformState;
 use crate::core::render::scene::camera::{PlayerCamera, RenderZoom, ORTHO_SIZE_FACTOR};
-use crate::core::render::scene::world::art::static_lights::{light_sprite_glow_strength, NO_LIGHT_SPRITE_GLOW};
+use crate::core::render::lighting::static_lights::{light_sprite_glow_strength, NO_LIGHT_SPRITE_GLOW};
 use crate::core::render::scene::world::effects::fog_pass::FogPassSystems;
 use crate::core::render::scene::world::land::mesh_material::ClientNightLighting;
 use crate::core::system_sets::StartupSysSet;

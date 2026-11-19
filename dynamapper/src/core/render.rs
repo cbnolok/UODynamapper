@@ -1,4 +1,5 @@
 pub mod dialogs;
+pub mod lighting;
 pub mod overlays;
 pub mod scene;
 
@@ -29,7 +30,7 @@ impl Plugin for RenderPlugin {
             scene::world::effects::fog_pass::FogPostProcessPlugin {
                 registered_by: "RenderPlugin",
             },
-            scene::world::effects::client_night::ClientNightLightingPlugin {
+            lighting::client_night::ClientNightLightingPlugin {
                 registered_by: "RenderPlugin",
             },
         ));

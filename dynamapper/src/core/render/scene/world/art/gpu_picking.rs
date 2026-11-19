@@ -1,7 +1,7 @@
 //! On-demand one-pixel visibility queries. Reuses the drawing shaders, instance
 //! buffers and transparent batch bindings; never writes the main color/depth.
 use super::{static_batches::{StaticPickTile, StaticChunkBatchKey}, transparent_order::{drawn_batches, StaticTransparentBatchOrder}};
-use crate::core::render::scene::world::effects::client_night;
+use crate::core::render::lighting::client_night;
 use bevy::prelude::*;
 use bevy::core_pipeline::{Core3d, Core3dSystems, core_3d::Transparent3d};
 use bevy::render::{RenderApp, Render, RenderSystems, extract_resource::{ExtractResource, ExtractResourcePlugin},
@@ -35,7 +35,7 @@ type Targets = Arc<[Vec<StaticPickTile>; 2]>;
 // world positions. Their normal mesh bind group is unused, so query resources
 // can occupy group 2 without increasing the renderer's bind-group requirement.
 // The light scene draws with it too (light_scene.rs).
-pub(super) type DrawPixelQuery = (SetItemPipeline, SetMeshViewBindGroup<0>, SetMeshViewBindingArrayBindGroup<1>,
+pub(crate) type DrawPixelQuery = (SetItemPipeline, SetMeshViewBindGroup<0>, SetMeshViewBindingArrayBindGroup<1>,
     SetMaterialBindGroup<3>, DrawMesh);
 #[derive(Clone)]
 struct Request {

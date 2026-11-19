@@ -12,11 +12,11 @@ use super::static_source::{
 use super::static_batches::SpriteInstance;
 
 pub(super) const ISO_TILE_SCREEN_DIAGONAL_WORLD_UNITS: f32 = std::f32::consts::SQRT_2;
-pub(super) const CC_TILE_PIXEL_WIDTH: f32 = 44.0;
+pub(crate) const CC_TILE_PIXEL_WIDTH: f32 = 44.0;
 // Original legacy art projects four square sprite pixels per raw Z unit.
-pub(super) const STATIC_WORLD_Y_PER_XZ_PIXEL: f32 = UO_Z_TO_WORLD_SCALE / (4.0 * CC_WORLD_XZ_PER_PIXEL);
-pub(super) const CC_WORLD_XZ_PER_PIXEL: f32 = ISO_TILE_SCREEN_DIAGONAL_WORLD_UNITS / CC_TILE_PIXEL_WIDTH;
-pub(super) const CC_WORLD_Y_PER_PIXEL: f32 = STATIC_WORLD_Y_PER_XZ_PIXEL * CC_WORLD_XZ_PER_PIXEL;
+pub(crate) const STATIC_WORLD_Y_PER_XZ_PIXEL: f32 = UO_Z_TO_WORLD_SCALE / (4.0 * CC_WORLD_XZ_PER_PIXEL);
+pub(crate) const CC_WORLD_XZ_PER_PIXEL: f32 = ISO_TILE_SCREEN_DIAGONAL_WORLD_UNITS / CC_TILE_PIXEL_WIDTH;
+pub(crate) const CC_WORLD_Y_PER_PIXEL: f32 = STATIC_WORLD_Y_PER_XZ_PIXEL * CC_WORLD_XZ_PER_PIXEL;
 pub(super) const STATIC_ART_Y_BIAS: f32 = 0.002;
 // Ground quads use rasterized depth and need the same small geometric separation
 // from terrain as flat sprite quads to avoid coplanar depth fighting.
@@ -42,7 +42,7 @@ const EC_STATIC_TILE_TRANSLATION_Z: f32 = 1.5;
 // tuned earlier for the same billboards. EC keeps its own value above (its real offsets rely on it).
 pub(super) const CC_STATIC_TILE_TRANSLATION_X: f32 = 1.0;
 pub(super) const CC_STATIC_TILE_TRANSLATION_Z: f32 = 1.0;
-pub(super) const STATIC_BILLBOARD_RIGHT_XZ: Vec2 =
+pub(crate) const STATIC_BILLBOARD_RIGHT_XZ: Vec2 =
     Vec2::new(std::f32::consts::FRAC_1_SQRT_2, -std::f32::consts::FRAC_1_SQRT_2);
 /// The CC flat art's second axis, on-screen down: main.wesl's `FLAT_QUAD_FORWARD_XZ`.
 pub(super) const CC_FLAT_QUAD_FORWARD_XZ: Vec2 =
@@ -156,14 +156,14 @@ pub(super) fn cc_surface_like_flat_quad_center_offsets(logical_height: f32) -> (
     )
 }
 
-pub(super) fn apply_static_world_anchor_translation(world_x: f32, world_z: f32) -> (f32, f32) {
+pub(crate) fn apply_static_world_anchor_translation(world_x: f32, world_z: f32) -> (f32, f32) {
     (
         world_x + EC_STATIC_TILE_TRANSLATION_X,
         world_z + EC_STATIC_TILE_TRANSLATION_Z,
     )
 }
 
-pub(super) fn apply_cc_static_world_anchor_translation(world_x: f32, world_z: f32) -> (f32, f32) {
+pub(crate) fn apply_cc_static_world_anchor_translation(world_x: f32, world_z: f32) -> (f32, f32) {
     (
         world_x + CC_STATIC_TILE_TRANSLATION_X,
         world_z + CC_STATIC_TILE_TRANSLATION_Z,

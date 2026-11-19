@@ -1,5 +1,5 @@
 //! The Enhanced and KR clients' light sprites, drawn by KR-like, Enhanced and UOD-Painterly into the light buffer
-//! (`effects::client_night`). KR-like and Enhanced show it through the client night composite; UOD-Painterly, which
+//! (`lighting::client_night`). KR-like and Enhanced show it through the client night composite; UOD-Painterly, which
 //! dims through its scene multiplier, adds it over the frame as a glow (`static_lights::light_sprite_glow_strength`).
 //!
 //! A static draws a sprite when its tileart names a light texture (tilemeta `item_lights`); the LightSource flag plays
@@ -14,7 +14,7 @@
 //! sprite's light where its item is drawn: on the flame of the item's Classic art where it has one, else the sprites
 //! the tileart's default offsets throw far from their item on the art's centre, the others on the nearest point of
 //! that art (`client_light_sprite_centred`).
-//! `configs::light_scale` (LightScale.kdl) enlarges chosen items' sprites.
+//! `lighting::light_scale` (LightScale.kdl) enlarges chosen items' sprites.
 //!
 //! The clients light the terrain and the statics through the composite alone: their sprites are unlit and their
 //! terrain has no other light. The optional land light decals and static local lights (Light/Static Interaction,
@@ -30,19 +30,20 @@ use crate::world::caves::CavesRes;
 use crate::world::z_view::{PackageLand, ZViewCut, ZViewLimit};
 use super::static_lights::{StaticLightInstance, StaticLightKey, StaticLightTarget, LIGHT_PIXELS_PER_WORLD_TILE,
     STATIC_LIGHT_Y_BIAS};
-use super::static_placement::{
+use crate::core::render::scene::world::art::static_placement::{
     apply_cc_static_world_anchor_translation, apply_static_world_anchor_translation, resolve_static_billboard_bounds,
     StaticBillboardBounds, CC_TILE_PIXEL_WIDTH, CC_WORLD_XZ_PER_PIXEL, CC_WORLD_Y_PER_PIXEL, STATIC_BILLBOARD_RIGHT_XZ,
     STATIC_WORLD_Y_PER_XZ_PIXEL,
 };
-use super::static_source::{classic_static_visual_kind, StaticArtSourceState, StaticVisualKind};
-use super::statics_collect::static_land_z;
-use super::static_batches::StaticChunkBatchKey;
+use crate::core::render::scene::world::art::static_source::{classic_static_visual_kind, StaticArtSourceState, StaticVisualKind};
+use crate::core::render::scene::world::art::statics_collect::static_land_z;
+use crate::core::render::scene::world::art::static_batches::StaticChunkBatchKey;
 use crate::core::render::scene::camera::PlayerCamera;
-use crate::configs::{light_scale::ItemLightScales, settings::{ClientTextureSource, Settings}, shader_presets::UniformState};
+use crate::configs::{settings::{ClientTextureSource, Settings}, shader_presets::UniformState};
+use super::light_scale::ItemLightScales;
 use crate::console_logger::{self, LogAbout, LogSev};
 use crate::world::multis::{MultiDefinitionsRes, PlacedMultisRes};
-use crate::core::render::scene::world::effects::client_night::LIGHT_BUFFER_LAYER;
+use crate::core::render::lighting::client_night::LIGHT_BUFFER_LAYER;
 use crate::core::render::scene::world::land::{LCMesh, CHUNK_STORAGE_BLOCKS_DIM, MAP_STORAGE_BLOCK_TILE_DIM};
 use crate::core::render::scene::SceneStateData;
 use crate::world::statics::StaticsStoreRes;

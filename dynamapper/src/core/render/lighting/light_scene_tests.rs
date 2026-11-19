@@ -57,7 +57,7 @@ fn a_walls_faces_read_their_height_and_its_top_reads_as_its_cap() {
         });
         let id = |value| AssetId::<Shader>::Uuid { uuid: Uuid::from_u128(value) };
         shaders.set_shader(id(1), Shader::from_wesl(
-            include_str!("../../../../../../assets/shaders/world/art/light_scene.wesl"),
+            include_str!("../../../../assets/shaders/world/art/light_scene.wesl"),
             "shaders/world/art/light_scene.wesl"));
         shaders.set_shader(id(0), Shader::from_wesl(r#"
 import package::shaders::world::art::light_scene::{light_scene_texel, light_scene_cell_rise, light_scene_may_be_cap};

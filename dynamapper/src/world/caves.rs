@@ -56,7 +56,7 @@ use crate::world::maps::{package_chunk_cell, read_package_chunk_land_z, PACKAGE_
 use crate::core::render::scene::world::land::draw_mesh::PendingTextureBake;
 use crate::core::render::scene::world::land::{LCMesh, MAP_STORAGE_BLOCK_TILE_DIM};
 use crate::core::render::scene::player::Player;
-use crate::core::render::scene::world::art::light_cover::{CLIENT_BAND_HEIGHT, NO_Z_VIEW_LIMIT};
+use crate::world::z_view::{CLIENT_BAND_HEIGHT, NO_Z_VIEW_LIMIT};
 use crate::world::z_view::{PLAYER_CEILING_MIN_RISE, PLAYER_VIEW_HEADROOM};
 use crate::core::render::scene::SceneStateData;
 use crate::world::statics::{read_package_chunk_statics, StaticsStoreRes};
@@ -366,7 +366,7 @@ impl CaveMap {
         }
     }
 
-    /// The z limit of the light cover (art/light_cover.rs) for a light on the cell (`x`, `y`) under the view's limit
+    /// The z limit of the light cover (lighting/light_cover.rs) for a light on the cell (`x`, `y`) under the view's limit
     /// `max_z`: a shown cell caps it at its ceiling, as the z-view does for a player standing on its floor.
     pub fn light_max_z(&self, x: u32, y: u32, max_z: i32) -> i32 {
         match self.cell(x, y) {
@@ -614,7 +614,7 @@ impl PlayerCave {
         }
     }
 
-    /// The z limit of the light cover (art/light_cover.rs) of a light the cave draws (`CaveStatic::Lifted`) on the cell
+    /// The z limit of the light cover (lighting/light_cover.rs) of a light the cave draws (`CaveStatic::Lifted`) on the cell
     /// (`x`, `y`): over its floors' level, what is not drawn covers nothing.
     fn light_max_z(&self, x: i32, y: i32) -> i32 {
         self.cells.get(&(x, y)).map_or(NO_Z_VIEW_LIMIT, |cell| i32::from(cell.high) + CAVE_LEVEL_HEIGHT)
@@ -624,7 +624,7 @@ impl PlayerCave {
 /// How a light shows (`CavesRes::light_view`).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct CaveLight {
-    /// The z limit of its cover (art/light_cover.rs).
+    /// The z limit of its cover (lighting/light_cover.rs).
     pub max_z: i32,
     /// Outside the player's cave, darkened with what is around it (`CaveSurroundings::Dimmed`).
     pub outside: bool,

@@ -17,7 +17,7 @@
 //!
 //! `LightCover::Clients` is the Enhanced and KR clients' rule (`UOObjectComponentLighting`, Enhanced 0x00449f60, KR
 //! 0x004391d0; see `CLIENT_NIGHT_LIGHTING_AND_SHADOWS.md`): a light sprite is culled when an object of its cover cell
-//! sits in a higher 20-z band above the land than the light (`client_light_band`), or when its own item is not drawn.
+//! sits in a higher 20-z band above the land than the light (`z_view::client_light_band`), or when its own item is not drawn.
 //! The clients draw the sprites that are left with no depth test. The two clients count the bands differently, and
 //! each style follows one of them (`LightCoverRule`): KR-like and UOD-Painterly the KR client's 16 clamped layers,
 //! each object's from the average land z of its own cell (`kr_light_is_hidden`), the other styles the Enhanced
@@ -38,30 +38,41 @@
 //! A cell's objects are its statics, each as itself whatever its graphic (map statics are never multis:
 //! `world::multis`), and the parts the renderer draws there of the multis placed around it (`MultiCoverParts`).
 
+use serde::{Deserialize, Serialize};
+
 use crate::world::multis::{expanded_multi_part_z, MultiDefinitionsRes, MultiPart, PlacedMultisRes};
-use crate::core::render::scene::world::land::mesh_material::LightCover;
 use crate::core::render::scene::world::land::MAP_STORAGE_BLOCK_TILE_DIM;
-use crate::world::z_view::{average_land_z, kr_roof_is_hidden, MULTI_PART_MAX_REACH};
+use crate::world::z_view::{
+    average_land_z, client_light_band, kr_light_layer, kr_roof_is_hidden, MULTI_PART_MAX_REACH, NO_Z_VIEW_LIMIT,
+};
 use crate::world::statics::LazyStaticsStore;
 use std::collections::HashMap;
 use std::ops::Range;
 use udd_assets::tilemeta::TileMetaPackage;
 use uocf::enhanced::tileart::TaeFlag;
 
+/// The rule that hides the lights a roof or an upper floor covers (`lighting::light_cover`), per style: to the
+/// light.mul decals of Classic, to the light sprites of KR-like, Enhanced and UOD-Painterly, and to the local
+/// lights taken from them. The clients' and ClassicUO's rules hide a whole light by the cell in front of it, (x + 1,
+/// y + 1); Dynamapper's keeps every light and clips each glow pixel by pixel (`lighting::light_scene`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Deserialize, Serialize)]
+pub enum LightCover {
+    /// Dynamapper's: no light is hidden for being covered. Its glow does not light the floors, roofs and other
+    /// statics at least 5 z above it, nor the camera-facing side of the walls and solid statics past it toward the
+    /// camera; it lights the ground and floors at or below it on both sides of a wall, and the walls facing it.
+    #[serde(rename = "uod")]
+    Uod,
+    /// ClassicUO's: an opaque static at least 5 z above the light, in the cell in front of it, covers it.
+    #[serde(rename = "classicuo")]
+    ClassicUo,
+    /// The Enhanced and KR clients': any object in a higher 20-z band above the land covers it.
+    #[serde(rename = "clients")]
+    Clients,
+}
+
 /// How far above a light a static must start to cover it, in z units: ClassicUO's `obj.Z + 5`. The floor a light
 /// stands on and the wall it hangs on start at or below the light, so they never cover it.
 pub const LIGHT_COVER_MIN_RISE: i32 = 5;
-
-/// The z limit while there is no z-view limit: every static is drawn.
-pub const NO_Z_VIEW_LIMIT: i32 = i32::MAX;
-
-/// The clients' z bands: an object covers a light from the band above the light's, the bands `CLIENT_BAND_HEIGHT`
-/// z high and counted from `CLIENT_BAND_BASE` below the land (Enhanced 0x00449f60, KR 0x0043c950).
-pub const CLIENT_BAND_HEIGHT: i32 = 20;
-/// See `CLIENT_BAND_HEIGHT`.
-pub const CLIENT_BAND_BASE: i32 = 140;
-/// The KR client's top height layer: it clamps the bands to its 16 layers, 0 to 15 (0x0043c5b0).
-pub const KR_LIGHT_TOP_LAYER: i32 = 15;
 
 /// Statics that never cover a light under ClassicUO's rule: the see-through (tiledata Transparent) and the never
 /// drawn (NoDraw).
@@ -124,12 +135,6 @@ pub fn light_is_hidden(light_z: i8, cover_cell: impl IntoIterator<Item = (u64, i
         || cover_cell.into_iter().any(|(flags, static_z)| static_covers_light(flags, static_z, light_z, max_z))
 }
 
-/// The clients' z band of `z` above the land z `land_z`: `(z - land_z + CLIENT_BAND_BASE) / CLIENT_BAND_HEIGHT`,
-/// truncated toward zero as the clients' integer division.
-pub fn client_light_band(z: i8, land_z: i8) -> i32 {
-    (i32::from(z) - i32::from(land_z) + CLIENT_BAND_BASE) / CLIENT_BAND_HEIGHT
-}
-
 /// Whether `LightCover::Clients` hides a light at `light_z` over the land z `land_z` of its own cell: it is at or
 /// above the z limit `max_z`, as its item is then not drawn, or a static of its cover cell, given by z, drawn below
 /// the limit, sits in a higher band (`client_light_band`, both from `land_z`). The clients count every object there,
@@ -140,12 +145,6 @@ pub fn client_light_is_hidden(light_z: i8, land_z: i8, cover_cell: impl IntoIter
         || cover_cell
             .into_iter()
             .any(|static_z| i32::from(static_z) < max_z && client_light_band(static_z, land_z) > light_band)
-}
-
-/// The KR client's height layer of `z` over the land z `land_z` of its own cell: the clients' band
-/// (`client_light_band`) clamped to 0 to `KR_LIGHT_TOP_LAYER` (0x0043c950 → 0x0043c5b0).
-pub fn kr_light_layer(z: i8, land_z: i8) -> i32 {
-    client_light_band(z, land_z).clamp(0, KR_LIGHT_TOP_LAYER)
 }
 
 /// Whether a floor or roof of the cover cell `cover_cell` covers a light at `light_z` under ClassicUO's rule
@@ -457,16 +456,6 @@ mod tests {
     }
 
     #[test]
-    fn the_client_bands_count_twenty_z_above_the_land() {
-        assert_eq!(client_light_band(0, 0), 7);
-        assert_eq!(client_light_band(19, 0), 7);
-        assert_eq!(client_light_band(20, 0), 8);
-        assert_eq!(client_light_band(30, -15), 9);
-        // Truncated toward zero, as the clients' integer division, far below the land.
-        assert_eq!(client_light_band(-128, 40), -1);
-    }
-
-    #[test]
     fn the_clients_hide_a_light_under_a_higher_band() {
         // Britain 1407,1595 over land -15: the light at 30 in band 9, the boards at 50 in band 10.
         assert!(client_light_is_hidden(30, -15, [50, 70], NO_Z_VIEW_LIMIT));
@@ -506,17 +495,6 @@ mod tests {
     fn without_placed_multis_no_part_covers() {
         let none = MultiCoverParts::default();
         assert!(none.cell(11, 11).is_empty());
-    }
-
-    #[test]
-    fn the_kr_layers_are_the_bands_clamped_to_sixteen() {
-        assert_eq!(kr_light_layer(0, 0), 7);
-        assert_eq!(kr_light_layer(20, 0), 8);
-        // Far below the land the layer stays 0, far above it stops at the top layer.
-        assert_eq!(kr_light_layer(-128, 40), 0);
-        assert_eq!(kr_light_layer(-128, 0), 0);
-        assert_eq!(kr_light_layer(100, -100), KR_LIGHT_TOP_LAYER);
-        assert_eq!(kr_light_layer(127, -128), KR_LIGHT_TOP_LAYER);
     }
 
     #[test]

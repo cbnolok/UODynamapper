@@ -3,7 +3,7 @@
 // clients' composite, and the Classic client's darkening.
 //
 // Mirrors `client_composite`, `night_overlay`, `light_buffer_over_night` and
-// `night_map_uv` in src/core/render/scene/world/effects/client_night.rs, which
+// `night_map_uv` in src/core/render/lighting/client_night.rs, which
 // documents the formulas and their sources in the clients. Per channel, on the
 // 8-bit (sRGB-encoded) values the clients work on:
 //

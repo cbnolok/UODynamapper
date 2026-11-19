@@ -14,7 +14,7 @@ use super::static_batches::StaticChunkBatchKey;
 
 #[derive(Component, Clone, Copy, ExtractComponent)]
 #[extract_app(bevy::render::RenderApp)]
-pub(super) struct StaticTransparentBatchOrder {
+pub(crate) struct StaticTransparentBatchOrder {
     pub key: StaticChunkBatchKey,
     // Ground before upright art when their stock transparent distances tie.
     pub kind: u8,
@@ -49,7 +49,7 @@ pub(super) fn stabilize_equal_depth_batches(
 /// to the most batches of its own frames, so in the first frames of a start an index from the frame before can
 /// overrun this one's, an indirect draw wgpu refuses and Bevy quits on. The light sprites batch (one mesh, a material
 /// per light texture).
-pub(super) fn drawn_batches<'a, I: PhaseItem>(items: impl IntoIterator<Item = &'a I>) -> impl Iterator<Item = &'a I> {
+pub(crate) fn drawn_batches<'a, I: PhaseItem>(items: impl IntoIterator<Item = &'a I>) -> impl Iterator<Item = &'a I> {
     let mut covered = 0usize;
     items.into_iter().filter(move |item| {
         if covered > 0 {

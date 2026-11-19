@@ -53,7 +53,7 @@ const ART_PROJECTED_SHADOW_DEPTH_BIAS: f32 = 64.0;
 /// (`UOSpriteShaderShadow` into a white target with multiplicative blending). Dynamapper keeps S in the main
 /// target's alpha, which the opaque and translucent art and the land leave at 1 (masked art at 0.5 or more, which the
 /// composite cannot tell from 1): `S = S * (1 - a)`, with the colour untouched. The client night composite then
-/// darkens by `clamp(S + 1 - s)` (`world::effects::client_night`).
+/// darkens by `clamp(S + 1 - s)` (`lighting::client_night`).
 const CLIENT_SHADOW_BUFFER_BLEND: BlendState = BlendState {
     color: BlendComponent::REPLACE,
     alpha: BlendComponent {
@@ -2087,7 +2087,7 @@ mod tests {
             client_shadows: None,
             local_lights: None,
             land_texture_variation: None,
-            light_cover: world::land::mesh_material::LightCover::ClassicUo,
+            light_cover: crate::core::render::lighting::light_cover::LightCover::ClassicUo,
             player_floor_rule: None,
             sun: world::land::mesh_material::SunAngles::default(),
             dirty: false,

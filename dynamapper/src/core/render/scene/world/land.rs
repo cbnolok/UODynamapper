@@ -298,7 +298,7 @@ pub fn sys_update_shared_land_material(
     render_zoom: Res<crate::core::render::scene::camera::RenderZoom>,
     tile_atlas: Res<tile_atlas::TileAtlas>,
     uniform_state: Res<crate::configs::shader_presets::UniformState>,
-    static_lights: Option<Res<crate::core::render::scene::world::art::static_lights::RenderStaticLightInstances>>,
+    static_lights: Option<Res<crate::core::render::lighting::static_lights::RenderStaticLightInstances>>,
     player_q: Query<&Transform, With<crate::core::render::scene::player::Player>>,
     camera_q: Query<&Projection, With<crate::core::render::scene::camera::PlayerCamera>>,
     view_cuts: (
@@ -393,7 +393,7 @@ pub fn sys_update_shared_land_material(
 }
 
 fn build_land_static_light_uniform(
-    static_lights: Option<&crate::core::render::scene::world::art::static_lights::RenderStaticLightInstances>,
+    static_lights: Option<&crate::core::render::lighting::static_lights::RenderStaticLightInstances>,
     focus_xz: Option<Vec2>,
 ) -> LandStaticLightUniform {
     let mut uniform = LandStaticLightUniform::default();
@@ -431,13 +431,13 @@ fn build_land_static_light_uniform(
 }
 
 fn land_static_light_radius(
-    light: &crate::core::render::scene::world::art::static_lights::StaticLightInstance,
+    light: &crate::core::render::lighting::static_lights::StaticLightInstance,
 ) -> f32 {
     light.width_world.max(light.height_world).max(1.0) * 0.62 + 1.25
 }
 
 fn land_static_light_selection_score(
-    light: &crate::core::render::scene::world::art::static_lights::StaticLightInstance,
+    light: &crate::core::render::lighting::static_lights::StaticLightInstance,
     focus_xz: Option<Vec2>,
 ) -> f32 {
     let radius = land_static_light_radius(light);
@@ -481,7 +481,7 @@ fn land_static_light_signature(uniform: &LandStaticLightUniform) -> u64 {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::core::render::scene::world::art::static_lights::{
+    use crate::core::render::lighting::static_lights::{
         RenderStaticLightInstances, StaticLightInstance, StaticLightKey,
     };
 

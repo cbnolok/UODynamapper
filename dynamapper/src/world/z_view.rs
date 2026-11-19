@@ -59,9 +59,6 @@ use crate::world::maps::{package_chunk_cell, read_package_chunk_land_z};
 use crate::world::multis::{expanded_multi_part_z, MultiDefinitionsRes, PlacedMultisRes};
 use crate::core::render::scene::player::Player;
 use crate::world::caves::{CaveSurroundings, CavesRes};
-use crate::core::render::scene::world::art::light_cover::{
-    kr_light_layer, CLIENT_BAND_BASE, CLIENT_BAND_HEIGHT, KR_LIGHT_TOP_LAYER, NO_Z_VIEW_LIMIT,
-};
 use crate::core::render::scene::world::land::mesh_material::PlayerFloorRule;
 use crate::core::render::scene::world::land::mesh_material::LAND_NO_Z_LIMIT;
 use crate::core::render::scene::world::land::MAP_STORAGE_BLOCK_TILE_DIM;
@@ -76,6 +73,29 @@ use udd_assets::tilemeta::TileMetaPackage;
 use udd_container::UddpReader;
 use uocf::classic::map::MapSizeCells;
 use uocf::enhanced::tileart::TaeFlag;
+
+/// The z limit while there is no z-view limit: every static is drawn.
+pub const NO_Z_VIEW_LIMIT: i32 = i32::MAX;
+
+/// The clients' z bands: an object covers a light from the band above the light's, the bands `CLIENT_BAND_HEIGHT`
+/// z high and counted from `CLIENT_BAND_BASE` below the land (Enhanced 0x00449f60, KR 0x0043c950).
+pub const CLIENT_BAND_HEIGHT: i32 = 20;
+/// See `CLIENT_BAND_HEIGHT`.
+pub const CLIENT_BAND_BASE: i32 = 140;
+/// The KR client's top height layer: it clamps the bands to its 16 layers, 0 to 15 (0x0043c5b0).
+pub const KR_LIGHT_TOP_LAYER: i32 = 15;
+
+/// The clients' z band of `z` above the land z `land_z`: `(z - land_z + CLIENT_BAND_BASE) / CLIENT_BAND_HEIGHT`,
+/// truncated toward zero as the clients' integer division.
+pub fn client_light_band(z: i8, land_z: i8) -> i32 {
+    (i32::from(z) - i32::from(land_z) + CLIENT_BAND_BASE) / CLIENT_BAND_HEIGHT
+}
+
+/// The KR client's height layer of `z` over the land z `land_z` of its own cell: the clients' band
+/// (`client_light_band`) clamped to 0 to `KR_LIGHT_TOP_LAYER` (0x0043c950 → 0x0043c5b0).
+pub fn kr_light_layer(z: i8, land_z: i8) -> i32 {
+    client_light_band(z, land_z).clamp(0, KR_LIGHT_TOP_LAYER)
+}
 
 /// How far above the player a ceiling must start, in z units: ClassicUO's `playerZ + 14`.
 pub const PLAYER_CEILING_MIN_RISE: i32 = 14;
@@ -513,6 +533,27 @@ pub fn sys_update_z_view_limit(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_client_bands_count_twenty_z_above_the_land() {
+        assert_eq!(client_light_band(0, 0), 7);
+        assert_eq!(client_light_band(19, 0), 7);
+        assert_eq!(client_light_band(20, 0), 8);
+        assert_eq!(client_light_band(30, -15), 9);
+        // Truncated toward zero, as the clients' integer division, far below the land.
+        assert_eq!(client_light_band(-128, 40), -1);
+    }
+
+    #[test]
+    fn the_kr_layers_are_the_bands_clamped_to_sixteen() {
+        assert_eq!(kr_light_layer(0, 0), 7);
+        assert_eq!(kr_light_layer(20, 0), 8);
+        // Far below the land the layer stays 0, far above it stops at the top layer.
+        assert_eq!(kr_light_layer(-128, 40), 0);
+        assert_eq!(kr_light_layer(-128, 0), 0);
+        assert_eq!(kr_light_layer(100, -100), KR_LIGHT_TOP_LAYER);
+        assert_eq!(kr_light_layer(127, -128), KR_LIGHT_TOP_LAYER);
+    }
 
     const FLOOR: u64 = TaeFlag::Surface.bits() | TaeFlag::Background.bits();
     const ROOF: u64 = TaeFlag::Roof.bits();

@@ -10,7 +10,8 @@ use bevy::{
 use serde::{self, Deserialize, Serialize};
 
 use crate::configs::land_texture_variation::{LandTextureVariationMaterials, LAND_TEXTURE_VARIATION_MASK_WORDS};
-use crate::core::render::scene::world::effects::client_night::{CLIENT_NIGHT_OVERLAY_STRENGTH, NIGHT_MAP_MEAN};
+use crate::core::render::lighting::client_night::{CLIENT_NIGHT_OVERLAY_STRENGTH, NIGHT_MAP_MEAN};
+use crate::core::render::lighting::{light_cover::LightCover, static_lights::ClientLocalLightSource};
 
 // ------------- Land material/shader data -------------
 pub type LandCustomMeshMaterial = ExtendedMaterial<StandardMaterial, LandMaterialExtension>;
@@ -518,7 +519,7 @@ pub struct LandRenderStylePresetsPerMode {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub land_texture_variation: Option<bool>,
     /// Which rule hides the lights a roof or an upper floor covers, one setting for the style in all four styles
-    /// (`world::art::light_cover`).
+    /// (`lighting::light_cover`).
     pub light_cover: LightCover,
     /// Which rule "Show Only the Player's Floor" follows, in KR-like and UOD-Painterly only, one setting for the style
     /// (`world::z_view`); the other styles follow ClassicUO's.
@@ -544,7 +545,7 @@ pub struct LandMaterialUniformsPresets {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub client_shadows: Option<bool>,
     /// The server light level and the night composite that dims by it, in every style
-    /// (`world::effects::client_night`). Optional so that a file without it is reported: a hand-written file must
+    /// (`lighting::client_night`). Optional so that a file without it is reported: a hand-written file must
     /// give it, a cached one takes the default's.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub client_lighting: Option<ClientNightLighting>,
@@ -558,7 +559,7 @@ pub struct LandMaterialUniformsPresets {
 /// night map, Dynamapper's night overlay controls.
 ///
 /// Classic dims by the Classic client's rule, which has no night map, so it has no overlay controls; the other
-/// styles have both. The composites and their formulas are in `world::effects::client_night`.
+/// styles have both. The composites and their formulas are in `lighting::client_night`.
 #[derive(Clone, Copy, Debug, PartialEq, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct ClientNightLighting {
@@ -638,39 +639,6 @@ impl ClientLocalLights {
 /// intensity, or the neutral one in the styles without `ClientLocalLights`.
 pub fn local_light_intensity(local_lights: Option<&ClientLocalLights>) -> f32 {
     local_lights.map_or(NEUTRAL_LOCAL_LIGHT_INTENSITY, ClientLocalLights::intensity)
-}
-
-/// Where KR-like, Enhanced and UOD-Painterly take the land light decals and static local lights from
-/// (`static_lights`). Classic always takes light.mul's.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Deserialize, Serialize)]
-pub enum ClientLocalLightSource {
-    /// The client light sprites: a light on the ground under each sprite's glow, sized like the sprite and coloured
-    /// by its texture (`client_light_sprites::client_light_sprite_static_light`).
-    #[serde(rename = "light_sprites")]
-    LightSprites,
-    /// light.mul, as Classic: the statics with the LightSource flag, their `quality` as the light.mul id, the light's
-    /// size and its colour (the static's hue, the ClassicUO light shader or the light.mul mask's).
-    #[serde(rename = "light_mul")]
-    LightMul,
-}
-
-/// The rule that hides the lights a roof or an upper floor covers (`world::art::light_cover`), per style: to the
-/// light.mul decals of Classic, to the light sprites of KR-like, Enhanced and UOD-Painterly, and to the local
-/// lights taken from them. The clients' and ClassicUO's rules hide a whole light by the cell in front of it, (x + 1,
-/// y + 1); Dynamapper's keeps every light and clips each glow pixel by pixel (`world::art::light_scene`).
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Deserialize, Serialize)]
-pub enum LightCover {
-    /// Dynamapper's: no light is hidden for being covered. Its glow does not light the floors, roofs and other
-    /// statics at least 5 z above it, nor the camera-facing side of the walls and solid statics past it toward the
-    /// camera; it lights the ground and floors at or below it on both sides of a wall, and the walls facing it.
-    #[serde(rename = "uod")]
-    Uod,
-    /// ClassicUO's: an opaque static at least 5 z above the light, in the cell in front of it, covers it.
-    #[serde(rename = "classicuo")]
-    ClassicUo,
-    /// The Enhanced and KR clients': any object in a higher 20-z band above the land covers it.
-    #[serde(rename = "clients")]
-    Clients,
 }
 
 /// The rule "Show Only the Player's Floor" (`world_rendering.show_only_player_floor`) hides what is above the player

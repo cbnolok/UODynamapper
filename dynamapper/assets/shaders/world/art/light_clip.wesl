@@ -1,4 +1,4 @@
-// The light glows' fragment shader (art/light_scene.rs, LightClipMaterial): the light.mul decals of Classic and
+// The light glows' fragment shader (lighting/light_scene.rs, LightClipMaterial): the light.mul decals of Classic and
 // UOD-Painterly and the light sprites of KR-like and Enhanced. Bevy's unlit StandardMaterial path, and under
 // LIGHT_CLIP the "uod" light cover: a glow lights only the pixels whose static the light reaches
 // (`light_reaches`), read from the light scene (light_scene.wesl).
@@ -15,19 +15,19 @@ import package::shaders::world::art::light_scene::{LIGHT_SCENE_ART, LIGHT_SCENE_
 @group(3) @binding(100) var light_scene: texture_2d<u32>;
 
 // The light's MeshTag: its cell from the cell under the quad's origin, then its z and its ceiling. Keep in sync with
-// `light_clip_tag` in art/light_scene.rs.
+// `light_clip_tag` in lighting/light_scene.rs.
 const LIGHT_CLIP_CELL_BITS: u32 = 6u;
 const LIGHT_CLIP_DY_SHIFT: u32 = 6u;
 const LIGHT_CLIP_Z_SHIFT: u32 = 12u;
 const LIGHT_CLIP_CEILING_SHIFT: u32 = 20u;
 const LIGHT_CLIP_Z_BITS: u32 = 8u;
 // The tag's bit of a light outside the player's cave (caves.rs), whose colour fades as the scene's there (art/depth.wesl
-// cave_outside_desaturated). Keep in sync with LIGHT_CLIP_CAVE_OUTSIDE in art/light_scene.rs.
+// cave_outside_desaturated). Keep in sync with LIGHT_CLIP_CAVE_OUTSIDE in lighting/light_scene.rs.
 const LIGHT_CLIP_CAVE_OUTSIDE: u32 = 1u << 28u;
 // The ceiling of a light with nothing over it.
 const LIGHT_CLIP_NO_CEILING: i32 = -128;
 // How far above a light a static must start to be over it, in z units. Keep in sync with LIGHT_COVER_MIN_RISE in
-// art/light_cover.rs.
+// lighting/light_cover.rs.
 const LIGHT_COVER_MIN_RISE: i32 = 5;
 // How far from a glow's pixel, in pixels, the clip also reads the light scene. A static's filtered edge fades its
 // coverage, and the transparent pass blends that fade over what lies behind without writing depth, so the light

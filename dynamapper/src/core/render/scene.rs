@@ -1,5 +1,4 @@
 pub mod camera;
-pub mod dynamic_light;
 pub mod player;
 pub mod world;
 
@@ -77,7 +76,7 @@ impl Plugin for ScenePlugin {
             world::WorldPlugin {
                 registered_by: "ScenePlugin",
             },
-            dynamic_light::PlayerDynamicLightPlugin {
+            crate::core::render::lighting::dynamic_light::PlayerDynamicLightPlugin {
                 registered_by: "ScenePlugin",
             },
             camera::CameraPlugin {

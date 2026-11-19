@@ -5,6 +5,7 @@ use crate::core::system_sets::{StartupSysSet, SceneRenderLandSysSet, SceneRender
 use crate::core::app_states::AppState;
 use crate::prelude::*;
 use crate::util_lib::tracked_plugin::TrackedPlugin;
+use crate::core::render::lighting::{client_light_sprites, light_scene, static_lights};
 
 pub mod statics_collect;
 pub mod static_placement;
@@ -12,21 +13,15 @@ pub mod static_source;
 pub mod static_batches;
 pub mod static_chunk_cache;
 pub mod statics_draw;
-pub mod static_lights;
-pub mod client_light_sprites;
-pub mod light_cover;
-pub(crate) mod light_scene;
 pub mod client_grunge;
 mod static_surface;
 pub(crate) mod static_geometry;
-mod transparent_order;
+pub(crate) mod transparent_order;
 pub(crate) mod gpu_picking;
 #[cfg(test)]
 mod shading_tests;
 #[cfg(test)]
 mod depth_tests;
-#[cfg(test)]
-mod light_scene_tests;
 
 pub struct DrawStaticSpritesPlugin {
     pub registered_by: &'static str,
@@ -52,7 +47,7 @@ impl Plugin for DrawStaticSpritesPlugin {
         app.init_resource::<static_lights::StaticLightDrawDebugState>();
         app.init_resource::<client_light_sprites::RenderClientLightSprites>();
         app.init_resource::<client_light_sprites::ClientLightSpriteCache>();
-        app.insert_resource(crate::configs::light_scale::ItemLightScales::load());
+        app.insert_resource(crate::core::render::lighting::light_scale::ItemLightScales::load());
         app.add_plugins(bevy::render::extract_component::ExtractComponentPlugin::<
             transparent_order::StaticTransparentBatchOrder,
         >::default());

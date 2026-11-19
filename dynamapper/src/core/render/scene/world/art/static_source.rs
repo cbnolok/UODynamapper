@@ -18,7 +18,7 @@ pub(super) const CLASSIC_STATIC_ART_ID_OFFSET: u32 = 0x4000;
 const CLASSIC_WATER_LAND_TILE_ID: u32 = 168;
 const EC_WATER_BASE_LAYER_INDEX: u32 = 0;
 #[derive(Clone, Copy, Debug, PartialEq)]
-pub(super) enum StaticVisualKind {
+pub(crate) enum StaticVisualKind {
     CcRegular { art_id: u32, fallback_art_id: u32 },
     EcRegular { art_id: u32 },
     EcSurface { art_id: u32 },
@@ -26,7 +26,7 @@ pub(super) enum StaticVisualKind {
     Missing,
 }
 
-pub(super) fn classic_static_visual_kind(graphic: u16,
+pub(crate) fn classic_static_visual_kind(graphic: u16,
     tilemeta: Option<&udd_assets::tilemeta::TileMetaItemTile>) -> StaticVisualKind {
     StaticVisualKind::CcRegular {
         art_id: u32::from(graphic) + CLASSIC_STATIC_ART_ID_OFFSET,
@@ -267,7 +267,7 @@ pub(super) fn valid_texture_repetition(repetition: f32) -> f32 {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
-pub(super) struct SurfaceLikeTexLandEcResolution {
+pub(crate) struct SurfaceLikeTexLandEcResolution {
     pub(super) runtime_slot_id: u32,
     pub(super) texture_repetition: f32,
     pub(super) liquid_payload: Option<u32>,

@@ -1076,7 +1076,7 @@ fn client_shadow_surface_tops(
 /// The land z of a cell, its own corner's, read from the map package through `land` (`PackageLand`), which holds every
 /// cell whether or not its map block is loaded, or was evicted: the lights read the same land however it loaded.
 /// `None` off the map, or while the map is not open.
-pub(super) fn static_land_z(land: &std::cell::RefCell<PackageLand>, map_planes: Option<&MapPlanesRes>, map_id: u32,
+pub(crate) fn static_land_z(land: &std::cell::RefCell<PackageLand>, map_planes: Option<&MapPlanesRes>, map_id: u32,
     cell: (i32, i32)) -> Option<i8> {
     let land_z = land.borrow_mut().land_z(map_planes, map_id, cell.0, cell.1)?;
     i8::try_from(land_z).ok()
@@ -2242,7 +2242,7 @@ mod tests {
         use crate::world::caves::CAVE_MIN_BURY_DEPTH;
         use crate::core::render::scene::world::land::tile_atlas::{AtlasParams, Rg16u, LAND_SOURCE_CC_ATLAS,
             LAND_SOURCE_NODRAW, LAND_NODRAW_ID};
-        use crate::core::render::scene::world::art::light_cover::NO_Z_VIEW_LIMIT;
+        use crate::world::z_view::NO_Z_VIEW_LIMIT;
         use uocf::enhanced::tileart::TaeFlag;
         const DRAWN_LAND_ID: u16 = 3;
         let floor = TaeFlag::Surface.bits();

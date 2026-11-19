@@ -3,21 +3,19 @@ use super::light_cover::{static_light_ceiling_z, static_light_is_hidden, LightCo
 use super::light_scene::{
     light_clip_material, light_clip_tag, set_light_clip_mode, LightClipMaterial, LightClipMode, LightScene,
 };
-use super::statics_collect::static_land_z;
-use super::static_source::StaticArtSourceState;
-use super::static_batches::StaticChunkBatchKey;
-use crate::configs::light_scale::{ItemLightScales, NEUTRAL_LIGHT_SCALE};
+use crate::core::render::scene::world::art::statics_collect::static_land_z;
+use crate::core::render::scene::world::art::static_source::StaticArtSourceState;
+use crate::core::render::scene::world::art::static_batches::StaticChunkBatchKey;
+use crate::core::render::lighting::light_scale::{ItemLightScales, NEUTRAL_LIGHT_SCALE};
 use crate::configs::{settings::{ClientTextureSource, Settings}, shader_presets::UniformState};
 use crate::console_logger::{self, LogAbout, LogSev};
 use crate::world::multis::{MultiDefinitionsRes, PlacedMultisRes};
-use crate::core::render::scene::world::land::mesh_material::{
-    ClientLocalLightSource, ClientLocalLights, ClientNightLighting,
-};
+use crate::core::render::scene::world::land::mesh_material::{ClientLocalLights, ClientNightLighting};
 use crate::core::render::scene::world::land::{
     CHUNK_STORAGE_BLOCKS_DIM, MAP_STORAGE_BLOCK_TILE_DIM,
 };
 use crate::world::caves::CavesRes;
-use crate::core::render::scene::world::effects::client_night::{
+use crate::core::render::lighting::client_night::{
     client_night_dimming, CLIENT_FULL_DAY_LEVEL, LIGHT_BUFFER_LAYER,
 };
 use crate::world::z_view::{PackageLand, ZViewCut, ZViewLimit};
@@ -29,10 +27,25 @@ use udd_assets::world_lights::LIGHT_FULL_INTENSITY;
 use bevy::camera::visibility::{NoFrustumCulling, RenderLayers};
 use bevy::mesh::MeshTag;
 use bevy::prelude::*;
+use serde::{Deserialize, Serialize};
 use bevy::render::render_resource::{Extent3d, PrimitiveTopology, TextureDimension, TextureFormat};
 use std::cell::RefCell;
 use std::collections::{HashMap, HashSet};
 use std::hash::{Hash, Hasher};
+
+/// Where KR-like, Enhanced and UOD-Painterly take the land light decals and static local lights from
+/// (`static_lights`). Classic always takes light.mul's.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Deserialize, Serialize)]
+pub enum ClientLocalLightSource {
+    /// The client light sprites: a light on the ground under each sprite's glow, sized like the sprite and coloured
+    /// by its texture (`client_light_sprites::client_light_sprite_static_light`).
+    #[serde(rename = "light_sprites")]
+    LightSprites,
+    /// light.mul, as Classic: the statics with the LightSource flag, their `quality` as the light.mul id, the light's
+    /// size and its colour (the static's hue, the ClassicUO light shader or the light.mul mask's).
+    #[serde(rename = "light_mul")]
+    LightMul,
+}
 
 const TILE_FLAG_LIGHT_SOURCE: u64 = 0x00800000;
 pub(super) const LIGHT_PIXELS_PER_WORLD_TILE: f32 = 44.0;
@@ -116,7 +129,7 @@ impl StaticLightTarget {
 /// The light sprites' glow where the frame takes none from the client night composite.
 pub const NO_LIGHT_SPRITE_GLOW: f32 = 0.0;
 
-/// How strongly UOD-Painterly adds its light sprites over the composited frame (`effects::client_night`): the alpha
+/// How strongly UOD-Painterly adds its light sprites over the composited frame (`lighting::client_night`): the alpha
 /// its light.mul decals took (`static_light_decal_alpha`), from the decal visibility and the scene multiplier they
 /// faded by, which the night composite now stands in for: Painterly's own `global_lighting` times the composite's
 /// dimming at its light level (`client_night_dimming`). So it shows only at night and in caves, about as strongly as
@@ -1436,8 +1449,9 @@ mod tests {
     #[test]
     fn static_lights_are_collected_again_only_when_an_input_changes() {
         use crate::core::render::scene::world::land::mesh_material::{
-            GlobalLightingUniforms, LandEffectsUniform, LandLightingUniforms, LightCover, SunAngles,
+            GlobalLightingUniforms, LandEffectsUniform, LandLightingUniforms, SunAngles,
         };
+        use crate::core::render::lighting::light_cover::LightCover;
         let mut settings = crate::configs::settings::bundled_settings();
         settings.world_rendering.enable_static_lights = true;
         let uniform_state = UniformState {
@@ -1765,7 +1779,7 @@ mod tests {
     /// scene multipliers gave (0.76 at night, 0.56 in caves), within 0.002; none by day.
     #[test]
     fn painterly_glow_keeps_its_strength_under_the_light_level() {
-        use crate::core::render::scene::world::effects::client_night::NIGHT_MAP_MEAN;
+        use crate::core::render::lighting::client_night::NIGHT_MAP_MEAN;
         const PRESET_GLOBAL_LIGHTING: f32 = 1.08;
         const NIGHT_VISIBILITY: f32 = 0.2;
         const TOLERANCE: f32 = 0.002;

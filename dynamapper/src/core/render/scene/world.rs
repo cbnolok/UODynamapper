@@ -42,8 +42,8 @@ impl Plugin for WorldPlugin
                 z_view::sys_update_z_view_limit
                     .after(MovementSysSet::MovementActions)
                     .before(SceneRenderArtSysSet::CollectVisibleStatics)
-                    .before(art::static_lights::sys_collect_visible_static_lights)
-                    .before(art::client_light_sprites::sys_collect_client_light_sprites)
+                    .before(crate::core::render::lighting::static_lights::sys_collect_visible_static_lights)
+                    .before(crate::core::render::lighting::client_light_sprites::sys_collect_client_light_sprites)
                     .before(land::sys_update_shared_land_material)
                     .run_if(in_state(AppState::InGame)),
             )
@@ -59,8 +59,8 @@ impl Plugin for WorldPlugin
                 Update,
                 caves::sys_update_caves
                     .before(SceneRenderArtSysSet::CollectVisibleStatics)
-                    .before(art::static_lights::sys_collect_visible_static_lights)
-                    .before(art::client_light_sprites::sys_collect_client_light_sprites)
+                    .before(crate::core::render::lighting::static_lights::sys_collect_visible_static_lights)
+                    .before(crate::core::render::lighting::client_light_sprites::sys_collect_client_light_sprites)
                     .before(land::draw_mesh::sys_draw_spawned_land_chunks)
                     .run_if(in_state(AppState::InGame)),
             )

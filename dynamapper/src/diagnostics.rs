@@ -609,7 +609,7 @@ fn sys_dump_configurable_diagnostics(
         );
         let upscaling_frag =
             find_diag_value(&diagnostics, "render/upscaling/fragment_shader_invocations");
-        // The "uod" light cover's passes (art/light_scene.rs).
+        // The "uod" light cover's passes (lighting/light_scene.rs).
         let light_scene_gpu = find_diag_value(&diagnostics, "render/light_scene/elapsed_gpu");
         let light_sprites_gpu = find_diag_value(&diagnostics, "render/deferred_light_sprites/elapsed_gpu");
 

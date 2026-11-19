@@ -163,7 +163,7 @@ mod tests {
     #[test]
     fn the_bundled_file_reads_and_scales_the_lava() {
         const LAVA: u16 = 4846;
-        let text = include_str!("../../assets/runtime_specs/lights/LightScale.kdl");
+        let text = include_str!("../../../../assets/runtime_specs/lights/LightScale.kdl");
         let scales = decode(text);
         assert!(scales.scale(LAVA) > NEUTRAL_LIGHT_SCALE);
     }

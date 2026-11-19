@@ -1,4 +1,4 @@
-// The light scene of the "uod" light cover (art/light_scene.rs): for each screen pixel, the static drawn there, read
+// The light scene of the "uod" light cover (lighting/light_scene.rs): for each screen pixel, the static drawn there, read
 // back by the light glows (light_clip.wesl) to clip themselves. The art shaders write it in a pass of their own, under
 // LIGHT_SCENE, after the opaque pass: a fragment that draws the pixel's depth writes its texel, the others discard.
 // They test the depth as soon as they know it, before any texture work: most fragments of a redraw are hidden.
@@ -12,7 +12,7 @@ import bevy_pbr::render::mesh_view_bindings::view;
 import package::shaders::world::art::depth::{depth_view_z, PRIORITY_TIE_LEVELS_PER_Z, PRIORITY_Z_STEPS_PER_ROW};
 
 // The texel's code: LIGHT_SCENE_ART on every static, its class, and LIGHT_SCENE_LEFT on the left half of an upright
-// card. Keep in sync with art/light_scene.rs.
+// card. Keep in sync with lighting/light_scene.rs.
 const LIGHT_SCENE_ART: u32 = 1u;
 const LIGHT_SCENE_CLASS_SHIFT: u32 = 1u;
 const LIGHT_SCENE_CLASS_MASK: u32 = 3u;
@@ -30,11 +30,11 @@ const LIGHT_SCENE_Z_BIAS: i32 = 128;
 const LIGHT_SCENE_Z_TOP: i32 = 255;
 
 // SpriteInstance and GroundTileInstance is_wet_flags bits: the static's light scene class. Keep in sync with
-// STATIC_FLAG_LIGHT_WALL and STATIC_FLAG_LIGHT_BLOCK in art/light_scene.rs.
+// STATIC_FLAG_LIGHT_WALL and STATIC_FLAG_LIGHT_BLOCK in lighting/light_scene.rs.
 const STATIC_FLAG_LIGHT_WALL: u32 = 1u << 13u;
 const STATIC_FLAG_LIGHT_BLOCK: u32 = 1u << 14u;
 // SpriteInstance is_wet_flags bits of a wall or a solid static: its tiledata height. Keep in sync with
-// STATIC_LIGHT_HEIGHT_SHIFT and STATIC_LIGHT_HEIGHT_MASK in art/light_scene.rs.
+// STATIC_LIGHT_HEIGHT_SHIFT and STATIC_LIGHT_HEIGHT_MASK in lighting/light_scene.rs.
 const STATIC_LIGHT_HEIGHT_SHIFT: u32 = 16u;
 const STATIC_LIGHT_HEIGHT_MASK: u32 = 0xffu;
 // The least alpha of the art's texel a static's height under a pixel for the pixel to be on the static's cap.

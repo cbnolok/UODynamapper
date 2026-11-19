@@ -1,14 +1,15 @@
 use crate::{
-    core::render::scene::world::art::light_cover::LightCoverRule,
-    core::render::scene::world::effects::client_night::{
+    core::render::lighting::light_cover::LightCoverRule,
+    core::render::lighting::client_night::{
         CLIENT_NIGHT_OVERLAY_STRENGTH, MAX_CLIENT_LIGHT_LEVEL, MAX_NIGHT_OVERLAY_STRENGTH, MIN_NIGHT_OVERLAY_STRENGTH,
         NIGHT_MAP_MEAN,
     },
     core::render::scene::world::land::mesh_material::{
         local_light_intensity, ClientLocalLights, ClientNightLighting, GlobalLightingUniforms, LandEffectsUniform,
         LandLightingUniforms, LandMaterialUniformsPresets, LandRenderStylePresetsPerMode, LandShaderModePresets,
-        LightCover, PlayerFloorRule, SunAngles, LOCAL_LIGHT_INTENSITY_RANGE, TONE_CURVE_PROFILE,
+        PlayerFloorRule, SunAngles, LOCAL_LIGHT_INTENSITY_RANGE, TONE_CURVE_PROFILE,
     },
+    core::render::lighting::light_cover::LightCover,
     core::system_sets::StartupSysSet,
     prelude::*,
     util_lib::tracked_plugin::*,
@@ -63,8 +64,8 @@ pub fn preset_group_has_night_map(group: &str) -> bool {
     group != CLASSIC_PRESET_GROUP
 }
 
-/// KR-like, Enhanced and UOD-Painterly draw the clients' light sprites (`art::client_light_sprites`) and choose their
-/// local lights (`local_lights`); Classic draws light.mul's decals (`art::static_lights`).
+/// KR-like, Enhanced and UOD-Painterly draw the clients' light sprites (`lighting::client_light_sprites`) and choose their
+/// local lights (`local_lights`); Classic draws light.mul's decals (`lighting::static_lights`).
 pub fn preset_group_draws_light_sprites(group: &str) -> bool {
     matches!(group, KR_PRESET_GROUP | ENHANCED_PRESET_GROUP | PAINTERLY_PRESET_GROUP)
 }
@@ -1102,7 +1103,7 @@ mod tests {
     /// The shader window shows a style's local lights with the slot's values, so resetting a slot resets them too.
     #[test]
     fn resetting_a_preset_restores_its_style_local_lights() {
-        use crate::core::render::scene::world::land::mesh_material::ClientLocalLightSource;
+        use crate::core::render::lighting::static_lights::ClientLocalLightSource;
         let local_lights = |source, light_mul_intensity| ClientLocalLights {
             source,
             light_sprites_intensity: 1.0,
@@ -1349,9 +1350,8 @@ mod tests {
     /// ground at 0.85, where they match the mean brightness its light.mul decals gave the lit ground.
     #[test]
     fn bundled_presets_give_the_light_sprite_styles_their_local_lights() {
-        use crate::core::render::scene::world::land::mesh_material::{
-            ClientLocalLightSource, NEUTRAL_LOCAL_LIGHT_INTENSITY,
-        };
+        use crate::core::render::lighting::static_lights::ClientLocalLightSource;
+        use crate::core::render::scene::world::land::mesh_material::NEUTRAL_LOCAL_LIGHT_INTENSITY;
         const PAINTERLY_LIGHT_SPRITES_INTENSITY: f32 = 0.85;
         let expected = ClientLocalLights {
             source: ClientLocalLightSource::LightSprites,
@@ -1605,7 +1605,7 @@ mod tests {
     /// dropped or clamped, and a pick of light.mul with its intensities is written and read back.
     #[test]
     fn cached_local_lights_drop_the_per_slot_source_and_fill_clamp_or_drop_the_style_setting() {
-        use crate::core::render::scene::world::land::mesh_material::ClientLocalLightSource;
+        use crate::core::render::lighting::static_lights::ClientLocalLightSource;
         let bundled = parse(BUNDLED_LAND_SETTINGS).expect("bundled");
         let mut older: toml::Table = toml::from_str(BUNDLED_LAND_SETTINGS).expect("bundled");
         for group in [ENHANCED_PRESET_GROUP, KR_PRESET_GROUP] {
