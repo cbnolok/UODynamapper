@@ -1,11 +1,11 @@
 //! Highlight geometry uses the same source routing, anchors and bounds as static collection.
 //! These are visual bounds only; logical XYZ and movement metadata stay on the tile.
-use crate::core::render::scene::world::art::{static_batches, static_placement, static_source};
-use crate::core::render::scene::world::art::static_source::{
+use crate::core::render::statics::{static_batches, static_placement, static_source};
+use crate::core::render::statics::static_source::{
     KrStaticPackages, StaticArtSourceState, StaticLandStyle, StaticSurfaceLikeResolutionCache, StaticVisualKind,
 };
-use crate::core::render::scene::world::art::static_chunk_cache::StaticChunkRenderCache;
-use crate::core::render::scene::world::art::static_batches::{StaticPickTile, RenderStaticInstances, RenderStaticLandInstances};
+use crate::core::render::statics::static_chunk_cache::StaticChunkRenderCache;
+use crate::core::render::statics::static_batches::{StaticPickTile, RenderStaticInstances, RenderStaticLandInstances};
 use crate::core::render::assets::ec_item_surface::KR_ITEM_RECORD_BASE;
 use crate::configs::settings::ClientTextureSource;
 use crate::core::render::scene::camera::RenderZoom;

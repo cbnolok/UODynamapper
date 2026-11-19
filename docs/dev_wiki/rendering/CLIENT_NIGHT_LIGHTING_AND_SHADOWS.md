@@ -215,7 +215,7 @@ Code:
 
 - `dynamapper/assets/shaders/world/art/client_shadow.wesl`: the quad formulas and constants with their addresses;
 - the `PASS_MODE_CLIENT_SHADOW` branches in `art/main.wesl`;
-- `client_shadow_flags` and `client_shadow_ground_z` in `core/render/scene/world/art/statics_collect.rs`;
+- `client_shadow_flags` and `client_shadow_ground_z` in `core/render/statics/statics_collect.rs`;
 - the material specialisation in `art/statics_draw.rs`;
 - the composite term in `client_night.rs`.
 

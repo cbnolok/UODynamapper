@@ -16,8 +16,8 @@ fn run_art_shading(source: &'static str, label: &str, results: u64) -> Vec<[f32;
         });
         let id = |value| AssetId::<Shader>::Uuid { uuid: Uuid::from_u128(value) };
         for (index, (path, source)) in [
-            ("shaders/world/art/shading.wesl", include_str!("../../../../../../assets/shaders/world/art/shading.wesl")),
-            ("shaders/world/land/noise.wesl", include_str!("../../../../../../assets/shaders/world/land/noise.wesl")),
+            ("shaders/world/art/shading.wesl", include_str!("../../../../assets/shaders/world/art/shading.wesl")),
+            ("shaders/world/land/noise.wesl", include_str!("../../../../assets/shaders/world/land/noise.wesl")),
         ].into_iter().enumerate() {
             shaders.set_shader(id(index as u128 + 1), Shader::from_wesl(source, path));
         }

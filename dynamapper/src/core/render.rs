@@ -4,6 +4,7 @@ pub mod terrain;
 pub mod postprocess;
 pub(crate) mod picking;
 pub mod scene;
+pub mod statics;
 
 use crate::prelude::*;
 use bevy::prelude::*;

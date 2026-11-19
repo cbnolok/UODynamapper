@@ -1,4 +1,3 @@
-pub mod art;
 
 use crate::core::render::terrain;
 
@@ -66,7 +65,7 @@ impl Plugin for WorldPlugin
             )
             .add_plugins((
                 terrain::DrawLandChunkMeshPlugin { registered_by: "WorldPlugin" },
-                art::DrawStaticSpritesPlugin { registered_by: "WorldPlugin" },
+                crate::core::render::statics::DrawStaticSpritesPlugin { registered_by: "WorldPlugin" },
             ));
     }
 }

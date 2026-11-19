@@ -30,14 +30,14 @@ use crate::world::caves::CavesRes;
 use crate::world::z_view::{PackageLand, ZViewCut, ZViewLimit};
 use super::static_lights::{StaticLightInstance, StaticLightKey, StaticLightTarget, LIGHT_PIXELS_PER_WORLD_TILE,
     STATIC_LIGHT_Y_BIAS};
-use crate::core::render::scene::world::art::static_placement::{
+use crate::core::render::statics::static_placement::{
     apply_cc_static_world_anchor_translation, apply_static_world_anchor_translation, resolve_static_billboard_bounds,
     StaticBillboardBounds, CC_TILE_PIXEL_WIDTH, CC_WORLD_XZ_PER_PIXEL, CC_WORLD_Y_PER_PIXEL, STATIC_BILLBOARD_RIGHT_XZ,
     STATIC_WORLD_Y_PER_XZ_PIXEL,
 };
-use crate::core::render::scene::world::art::static_source::{classic_static_visual_kind, StaticArtSourceState, StaticVisualKind};
-use crate::core::render::scene::world::art::statics_collect::static_land_z;
-use crate::core::render::scene::world::art::static_batches::StaticChunkBatchKey;
+use crate::core::render::statics::static_source::{classic_static_visual_kind, StaticArtSourceState, StaticVisualKind};
+use crate::core::render::statics::statics_collect::static_land_z;
+use crate::core::render::statics::static_batches::StaticChunkBatchKey;
 use crate::core::render::scene::camera::PlayerCamera;
 use crate::configs::{settings::{ClientTextureSource, Settings}, shader_presets::UniformState};
 use super::light_scale::ItemLightScales;

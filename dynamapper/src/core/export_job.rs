@@ -13,12 +13,10 @@ use crate::core::render::scene::{
     camera::{ORTHO_SIZE_FACTOR, ORTHO_WIDTH_SCALE_FACTOR, PlayerCamera},
     chunks_in_tile_rect,
     player::Player,
-    world::{
-        WorldGeoData,
-        art::statics_collect::StaticArtCollectDebugState,
-    },
+    world::WorldGeoData,
     ExportChunkFootprint, RecomputeVisibleChunksEvent,
 };
+use crate::core::render::statics::statics_collect::StaticArtCollectDebugState;
 use crate::core::render::assets::tile_atlas::{LandUploadTelemetry, TileAtlas};
 use crate::core::render::terrain::{LCMesh, draw_mesh::ChunkScale, mesh_material::LandShaderModePresets};
 use crate::core::render::assets::art::{GroundArtPageAtlas, SpriteArtPageAtlas};

@@ -1,5 +1,5 @@
 use super::*;
-use crate::core::render::scene::world::art::static_batches::StaticRenderTile;
+use crate::core::render::statics::static_batches::StaticRenderTile;
 
 fn signature() -> PickSignature {
     PickSignature { pixel: UVec2::new(640, 400), viewport: UVec4::new(0, 0, 1280, 800),

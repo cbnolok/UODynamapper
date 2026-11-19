@@ -21,7 +21,7 @@
 //!   once the light scene is done (`render_deferred_light_sprites`), before the client night composite reads it.
 
 use crate::core::render::picking::gpu_picking::DrawPixelQuery;
-use crate::core::render::scene::world::art::transparent_order::{drawn_batches, StaticTransparentBatchOrder};
+use crate::core::render::statics::transparent_order::{drawn_batches, StaticTransparentBatchOrder};
 use crate::core::render::scene::camera::PlayerCamera;
 use crate::core::render::lighting::client_night::LightBufferCamera;
 use bevy::camera::CameraUpdateSystems;

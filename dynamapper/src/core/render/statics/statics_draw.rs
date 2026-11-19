@@ -2,13 +2,12 @@ use super::DrawStaticSpritesPlugin;
 use crate::configs::settings::{ClientTextureSource, Settings};
 use crate::configs::shader_presets::{UniformSnapshot, UniformState};
 use crate::console_logger::{self, LogAbout, LogSev};
-use crate::core::render::scene::world;
 use crate::core::render::terrain;
-use crate::core::render::scene::world::art::static_batches::{
+use crate::core::render::statics::static_batches::{
     GroundTileInstance, RenderStaticChunkBatches, RenderStaticInstances, RenderStaticLandInstances, SpriteInstance,
     StaticChunkBatch, StaticChunkBatchKey,
 };
-use crate::core::render::scene::world::art::static_source::{KrStaticPackages, KrStaticSources, StaticLandStyle};
+use crate::core::render::statics::static_source::{KrStaticPackages, KrStaticSources, StaticLandStyle};
 use crate::core::system_sets::StartupSysSet;
 use crate::core::render::assets::art::{
     ArtPageAtlas, GroundArtPageAtlas, GroundArtPageAtlasHandle, SpriteArtPageAtlas,
@@ -1124,7 +1123,7 @@ pub fn sys_sync_active_art_page_atlases(
     mut sprite_atlas_handle: ResMut<SpriteArtPageAtlasHandle>,
     mut ground_atlas: ResMut<GroundArtPageAtlas>,
     mut ground_atlas_handle: ResMut<GroundArtPageAtlasHandle>,
-    source_state: Res<world::art::static_source::StaticArtSourceState>,
+    source_state: Res<crate::core::render::statics::static_source::StaticArtSourceState>,
     mut binding_state: ResMut<ActiveArtAtlasBindingState>,
     tex_art_cc_res: Option<Res<TexArtCcPackageRes>>,
     tex_art_ec_res: Option<Res<TexArtEcPackageRes>>,
@@ -1930,7 +1929,7 @@ mod tests {
             .insert_resource(render_assets)
             .insert_resource(RenderStaticLandInstances(vec![bytemuck::Zeroable::zeroed()]))
             .insert_resource(crate::core::render::scene::SceneStateData { map_id: 0 })
-            .init_resource::<world::WorldGeoData>()
+            .init_resource::<crate::core::render::scene::world::WorldGeoData>()
             .init_resource::<StaticArtUploadCache>()
             .init_resource::<StaticArtDrawDebugState>()
             .init_resource::<GroundMaterialsTouched>()

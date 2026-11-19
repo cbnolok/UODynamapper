@@ -39,7 +39,7 @@ fn gpu_depth_follows_the_cpu_draw_order_in_both_cameras() {
         });
         let id = |value| AssetId::<Shader>::Uuid { uuid: Uuid::from_u128(value) };
         shaders.set_shader(id(1), Shader::from_wesl(
-            include_str!("../../../../../../assets/shaders/world/art/depth.wesl"), "shaders/world/art/depth.wesl"));
+            include_str!("../../../../assets/shaders/world/art/depth.wesl"), "shaders/world/art/depth.wesl"));
         shaders.set_shader(id(0), Shader::from_wesl(r#"
 import package::shaders::world::art::depth::{priority_logical_height, logical_view_z_from, projected_view_z_depth};
 struct DepthCase { projection: mat4x4<f32>, camera: vec4<f32>, axis: vec4<f32>, cell: vec4<f32> }
@@ -146,9 +146,9 @@ fn main(@builtin(global_invocation_id) index: vec3<u32>) {
     });
 }
 
-const DEPTH_WESL: &str = include_str!("../../../../../../assets/shaders/world/art/depth.wesl");
-const ART_MAIN_WESL: &str = include_str!("../../../../../../assets/shaders/world/art/main.wesl");
-const CLIENT_SHADOW_WESL: &str = include_str!("../../../../../../assets/shaders/world/art/client_shadow.wesl");
+const DEPTH_WESL: &str = include_str!("../../../../assets/shaders/world/art/depth.wesl");
+const ART_MAIN_WESL: &str = include_str!("../../../../assets/shaders/world/art/main.wesl");
+const CLIENT_SHADOW_WESL: &str = include_str!("../../../../assets/shaders/world/art/client_shadow.wesl");
 
 /// Where the two kinds of static shadow sort (STYLE_RULES §3), with the offsets the art shader gives them, through
 /// the CPU's draw order (`logical_draw_distance`, which `gpu_depth_follows_the_cpu_draw_order_in_both_cameras` ties to

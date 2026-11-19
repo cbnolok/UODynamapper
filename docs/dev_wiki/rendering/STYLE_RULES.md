@@ -10,7 +10,7 @@ Where the styles differ, a table shows them side by side; a rule stated once hol
 
 | Short | Meaning |
 |---|---|
-| `art/` | `dynamapper/src/core/render/scene/world/art/` |
+| `art/` | `dynamapper/src/core/render/statics/` |
 | `world/` | `dynamapper/src/core/render/scene/world/` |
 | `sh/` | `dynamapper/assets/shaders/world/` |
 | `conv/` | `lib/udd-conv/src/textures/` |
