@@ -1311,14 +1311,18 @@ struct Scaled {
 }
 
 fn upscale_body(body: &Body, filter: Upscaler) -> Vec<Vec<Scaled>> {
+    upscale_body_by(body, filter, UPSCALE)
+}
+
+fn upscale_body_by(body: &Body, filter: Upscaler, scale: u32) -> Vec<Vec<Scaled>> {
     body.directions
         .iter()
         .map(|direction| {
             direction
                 .iter()
                 .map(|frame| {
-                    let (width, height, rgba) = filter(frame.width, frame.height, &frame.rgba, UPSCALE);
-                    Scaled { width, height, left: frame.left * UPSCALE as i32, top: frame.top * UPSCALE as i32, rgba }
+                    let (width, height, rgba) = filter(frame.width, frame.height, &frame.rgba, scale);
+                    Scaled { width, height, left: frame.left * scale as i32, top: frame.top * scale as i32, rgba }
                 })
                 .collect()
         })

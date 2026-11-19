@@ -3175,10 +3175,19 @@ fn tiny_crowd(label: &str, pairs: &[Pair], sources: &Sources, bodies: &[BodySour
     let need_plain_pick = schemes.iter().any(|s| s.index == IndexForm::DictBest);
     let need_spans_pick = schemes.iter().any(|s| s.index == IndexForm::SpansDictBest);
     // Dictionaries train on the whole body, and the best one is picked over it; only the streams of the wanted actions are coded.
-    let prepared: Vec<(StreamPlanes, Dictionaries)> = distinct
+    // Upscaled, only the wanted actions are upscaled, on a few threads so the bodies in flight fit in memory.
+    let scale = crowd_upscale();
+    assert!(scale.is_none() || !(need_master || need_dictionaries), "upscaled crowds take coders without dictionaries or the master palette");
+    let prepare_threads = if scale.is_some() { UPSCALE_PREPARE_THREADS } else { rayon::current_num_threads() };
+    let prepare_pool = rayon::ThreadPoolBuilder::new().num_threads(prepare_threads).build().expect("the prepare pool");
+    let prepared: Vec<(StreamPlanes, Dictionaries)> = prepare_pool.install(|| distinct
         .par_iter()
         .zip(&wanted_actions)
         .map(|(&i, actions)| {
+            if let Some(scale) = scale {
+                let planes = mmpx_planes(&body_of_actions(load_body(sources, &bodies[i]), actions), scale);
+                return (StreamPlanes::of(&planes, None, None, Unit::ActionDirection), Dictionaries::none());
+            }
             let planes = Planes::from_body(&load_body(sources, &bodies[i]));
             let dictionaries = if need_dictionaries {
                 let whole = StreamPlanes::of(&planes, None, None, Unit::ActionDirection);
@@ -3197,7 +3206,7 @@ fn tiny_crowd(label: &str, pairs: &[Pair], sources: &Sources, bodies: &[BodySour
             let small_master = master.as_ref().map(|m| crowd::restricted(m, actions));
             (StreamPlanes::of(&small, Some(&small_luma), small_master.as_ref(), Unit::ActionDirection), dictionaries)
         })
-        .collect();
+        .collect());
     let rgba_of = |n: usize, wanted: &[usize]| wanted.iter().map(|&s| prepared[n].0.layout[s].pixels as u64 * RGBA_CHANNELS as u64).sum::<u64>();
     let stored_of = |n: usize, wanted: &[usize]| -> u64 {
         let palettes: BTreeSet<usize> = wanted.iter().flat_map(|&s| prepared[n].0.layout[s].palettes.iter().copied()).collect();
@@ -3353,13 +3362,182 @@ pub(super) fn part_tm(sources: &Sources, bodies: &[BodySource], present: &[(Clie
             // A loader decodes a pair once, however many NPCs wear it.
             let crowd = distinct_pairs(&crowd);
             let label = format!("{}, {creatures} creatures {name} + {npcs} NPCs x (human + {per_npc} equipment), action {TOWN_ACTION}, each distinct pair once", client.label());
-            tiny_crowd(&label, &crowd, sources, bodies, &schemes, Some(MEDIAN_AREA_MORE_THREADS));
+            let scale = crowd_upscale();
+            if scale.is_none_or(|scale| MMPX_SCALES.contains(&scale)) {
+                let label = match scale { Some(scale) => format!("{label}, MMPX {scale}x"), None => label.clone() };
+                tiny_crowd(&label, &crowd, sources, bodies, &schemes, Some(MEDIAN_AREA_MORE_THREADS));
+            }
+            if let Some(scale) = scale {
+                block_crowd(&format!("{label}, xBRZ {scale}x"), &crowd, sources, bodies, client, scale);
+            }
+            print_whole_bodies(&pairs, &crowd, client);
             println!("  load average after this crowd {}", load_average());
         }
     }
     let end = cpu_state();
     if end != state {
         println!("\nThe CPU state changed during part tm ({state} at the start, {end} at the end): discard its timings");
+    }
+}
+
+/// Scales the reservation estimate covers.
+const RESERVED_SCALES: [u32; 4] = [1, 2, 3, 4];
+const MEGABYTE: f64 = 1_000_000.0;
+
+/// What reserving every (action, direction) of the crowd's bodies would hold in VRAM: trimmed boxes, from frame
+/// metadata only, as indexed frames (R8 / RG8) and as BC7 (1 byte a pixel) and BC1 (half a byte), before block padding.
+fn print_whole_bodies(all: &[Pair], crowd: &[Pair], client: Client) {
+    let bodies: BTreeSet<usize> = crowd.iter().map(|p| p.body()).collect();
+    let whole: u64 = all.iter().filter(|p| bodies.contains(&p.body())).map(|p| p.pixels()).sum();
+    let drawn: u64 = crowd.iter().map(|p| p.pixels()).sum();
+    let indexed_bytes = match client {
+        Client::Cc => 1.0,
+        Client::Ec => 2.0,
+    };
+    let per_scale: Vec<String> = RESERVED_SCALES
+        .iter()
+        .map(|&scale| {
+            let pixels = whole as f64 * f64::from(scale * scale);
+            format!("{scale}x {:.0} / {:.0} / {:.0}", pixels * indexed_bytes / MEGABYTE, pixels / MEGABYTE, pixels / 2.0 / MEGABYTE)
+        })
+        .collect();
+    println!(
+        "  every stream of these {} bodies: {:.1} Mpx, {:.1}x the drawn action's five directions; VRAM MB indexed / BC7 / BC1: {}",
+        bodies.len(),
+        whole as f64 / PIXELS_PER_MEGAPIXEL,
+        whole as f64 / drawn as f64,
+        per_scale.join(", ")
+    );
+}
+
+/// `MOBILE_ANIM_CODEC_TM_UPSCALE`: part tm's crowds upscaled this many times. MMPX (2x and 4x) goes through the
+/// chosen coders, and xBRZ (2x to 4x) as blocks through [`block_crowd`].
+const UPSCALE_ENV: &str = "MOBILE_ANIM_CODEC_TM_UPSCALE";
+/// The scales MMPX has.
+const MMPX_SCALES: [u32; 2] = [2, 4];
+/// Bodies upscaled at once: each holds its frames at 1x and upscaled, up to about 1 GB for the largest at 4x.
+const UPSCALE_PREPARE_THREADS: usize = 4;
+/// Pairs encoded to blocks at once; each block encode runs on rayon's pool itself.
+const BLOCK_PREPARE_THREADS: usize = 4;
+const BLOCK_RDO_LAMBDA: f32 = 1.0;
+
+fn crowd_upscale() -> Option<u32> {
+    std::env::var(UPSCALE_ENV).ok().map(|text| text.trim().parse().expect("an upscale factor"))
+}
+
+/// The body with only the frames of `actions`; the directions stay in place, empty where none is left.
+fn body_of_actions(body: Body, actions: &BTreeSet<u16>) -> Body {
+    let Body { label, client, palettes, directions } = body;
+    let directions = directions.into_iter().map(|frames| frames.into_iter().filter(|f| actions.contains(&f.action)).collect()).collect();
+    Body { label, client, palettes, directions }
+}
+
+/// The planes of `body` upscaled `scale` times with MMPX, which adds no colours, so every pixel maps back to an index.
+fn mmpx_planes(body: &Body, scale: u32) -> Planes {
+    let (mapped, unmapped) = reindexed(body, &upscale_body_by(body, apply_mmpx, scale));
+    assert_eq!(unmapped, 0, "{}: MMPX made a colour the palette lacks", body.label);
+    Planes::from_body(&mapped)
+}
+
+#[derive(Clone, Copy, PartialEq)]
+enum BlockForm {
+    Bc1,
+    Bc7,
+    Bc7Rdo,
+}
+
+impl BlockForm {
+    fn name(self) -> &'static str {
+        match self {
+            BlockForm::Bc1 => "BC1",
+            BlockForm::Bc7 => "BC7",
+            BlockForm::Bc7Rdo => "BC7 RDO 1",
+        }
+    }
+
+    /// Enhanced keeps soft edges, which BC1's one-bit alpha would lose.
+    fn forms(client: Client) -> &'static [BlockForm] {
+        match client {
+            Client::Cc => &[BlockForm::Bc1, BlockForm::Bc7, BlockForm::Bc7Rdo],
+            Client::Ec => &[BlockForm::Bc7, BlockForm::Bc7Rdo],
+        }
+    }
+
+    fn encode(self, rgba: &[u8], width: u32, height: u32) -> Vec<u8> {
+        let extent = ImageExtent::new(width, height).expect("extent");
+        match self {
+            BlockForm::Bc1 => uot_texture_codecs::bc1::encode_bc1(rgba, extent).expect("BC1 encode"),
+            BlockForm::Bc7 => encode_bc7(rgba, width, height, Bc7EncoderBackend::AnalyticalWide),
+            BlockForm::Bc7Rdo => uot_texture_codecs::bc7::encode_to_bc7_with_rdo_lambda(rgba, extent, RawImageFormat::Rgba8888, Bc7EncoderBackend::AnalyticalWide, BLOCK_RDO_LAMBDA)
+                .expect("BC7 RDO encode")
+                .into_blocks(),
+        }
+    }
+}
+
+/// One pair's faced (action, direction) in one block form: the blocks in zstd 19 and in LZ4 HC.
+struct BlockStream {
+    zstd: Vec<u8>,
+    lz4: Vec<u8>,
+    blocks: usize,
+    rgba: u64,
+}
+
+thread_local! {
+    static BLOCK_DECOMPRESSOR: RefCell<Decompressor<'static>> = RefCell::new(Decompressor::new().expect("a zstd context"));
+}
+
+/// Part tm's crowd upscaled `scale` times with xBRZ, which adds colours, so it is stored as blocks: each pair's faced
+/// (action, direction) only, as the encode is slow; the five directions read and decode about five times as much.
+/// Frames are encoded as they are, with no colour under transparent pixels (fix C).
+fn block_crowd(label: &str, pairs: &[Pair], sources: &Sources, bodies: &[BodySource], client: Client, scale: u32) {
+    describe_crowd(label, pairs);
+    let started = Instant::now();
+    let forms = BlockForm::forms(client);
+    let pool = rayon::ThreadPoolBuilder::new().num_threads(BLOCK_PREPARE_THREADS).build().expect("the block pool");
+    let streams: Vec<Vec<BlockStream>> = pool.install(|| {
+        pairs
+            .par_iter()
+            .enumerate()
+            .map(|(position, pair)| {
+                let body = body_of_actions(load_body(sources, &bodies[pair.body()]), &BTreeSet::from([pair.action()]));
+                let directions: Vec<usize> = (0..body.directions.len()).filter(|&d| !body.directions[d].is_empty()).collect();
+                let faced = &body.directions[crowd::facing_unit(position, &directions)];
+                let scaled: Vec<(u32, u32, Vec<u8>)> = faced.iter().map(|f| apply_xbrz(f.width, f.height, &f.rgba, scale)).collect();
+                let rgba: u64 = scaled.iter().map(|f| f.2.len() as u64).sum();
+                forms
+                    .iter()
+                    .map(|form| {
+                        let blocks: Vec<u8> = scaled.iter().flat_map(|(w, h, data)| form.encode(data, *w, *h)).collect();
+                        let zstd = zstd::bulk::compress(&blocks, LEVEL_19).expect("zstd 19");
+                        BlockStream { zstd, lz4: crowd::lz4_compress(&blocks), blocks: blocks.len(), rgba }
+                    })
+                    .collect()
+            })
+            .collect()
+    });
+    println!("  encoded in {:.0} s", started.elapsed().as_secs_f64());
+    print_crowd_header();
+    for (f, form) in forms.iter().enumerate() {
+        for codec in ["zstd 19", "LZ4 HC"] {
+            let lz4 = codec == "LZ4 HC";
+            let jobs: Vec<Job> = streams
+                .iter()
+                .map(|s| {
+                    let s = &s[f];
+                    let run: Box<dyn Fn() -> usize + Sync> = if lz4 {
+                        Box::new(move || crowd::lz4_decompress(&s.lz4, s.blocks).len())
+                    } else {
+                        Box::new(move || BLOCK_DECOMPRESSOR.with(|d| d.borrow_mut().decompress(&s.zstd, s.blocks).expect("zstd decode").len()))
+                    };
+                    Job { run, stored: s.blocks as u64, rgba: s.rgba }
+                })
+                .collect();
+            let read: u64 = streams.iter().map(|s| if lz4 { s[f].lz4.len() } else { s[f].zstd.len() } as u64).sum();
+            let name = format!("xBRZ {scale}x, {}, {codec}", form.name());
+            crowd::print_jobs(&name, "faced direction only", mb(read), &jobs);
+            println!("  {name}, faced direction only: {MEDIAN_AREA_MORE_THREADS} threads {:.1} ms", ms(crowd::run_jobs(&jobs, MEDIAN_AREA_MORE_THREADS).0));
+        }
     }
 }
 

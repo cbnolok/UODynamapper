@@ -625,10 +625,87 @@ about 300 of them distinct equipment pieces.
 - **zstd 19 passes with room to spare:** 48 ms on 4 threads in the worst version of the median area and 64 ms in the
   worst version of the busier one, a fifth of the 250 ms line, and
   10 ms in the uniform one. LZ4 HC is still 2.6–3× as fast, but both are far inside the line.
-- **At 2× upscaled art,** about 4× the pixels, the worst version would be about 190 ms on 4 threads for zstd 19 (scaled,
-  not measured), still inside.
+- **At 2× upscaled art,** about 4× the pixels, the worst version takes 168 ms on 4 threads for zstd 19 (measured below),
+  still inside.
 - **No strips:** the slowest single job, one of the largest creatures' five directions, takes 20 ms with zstd 19.
   Splitting it would spread its decode, not shorten the crowd, whose threads are all busy.
+
+### The busier area upscaled, 2× to 4× (2026-11-19)
+
+The busier area again, with its art upscaled before conversion, as section 8 decides (`MOBILE_ANIM_CODEC_TM_UPSCALE=2|3|4`).
+MMPX adds no colours, so its frames stay indexed and go through the chosen row-span coders; it has 2× and 4× only. xBRZ
+adds colours, so its frames are stored as blocks: BC1 (Classic only), BC7, and BC7 with RDO at λ 1, each in zstd 19
+and in LZ4 HC. Block encoding is slow (up to 10 minutes a crowd at 4×), so block rows cover each pair's faced direction
+only. ms are all drawable on 4 threads, one run each, EPP `balance_power`; VRAM is what the decoded frames hold.
+
+| Scale, crowd | Form | Disk read MB, faced (five) | 4 threads ms, five / faced | VRAM MB, faced (five) |
+|---|---|---:|---:|---:|
+| 2×, Classic uniform | MMPX, row spans, zstd 19 | 1.9 (9.0) | 20.6 / 4.3 | 14.3 (69.9) |
+| | xBRZ, BC1, zstd 19 | 2.6 | — / 3.1 | 7.1 |
+| | xBRZ, BC7 RDO, zstd 19 | 4.3 | — / 4.5 | 14.3 |
+| 2×, Classic largest | MMPX, row spans, zstd 19 | 9.5 (42.1) | 95.9 / 23.4 | 118.3 (494.0) |
+| | xBRZ, BC1, zstd 19 | 13.7 | — / 14.8 | 59.3 |
+| | xBRZ, BC7 RDO, zstd 19 | 23.2 | — / 24.2 | 118.6 |
+| 2×, Enhanced uniform | MMPX, both planes in row spans, zstd 19 | 4.0 (20.3) | 46.2 / 9.5 | 46.7 (227.0) |
+| | xBRZ, BC7 RDO, zstd 19 | 7.5 | — / 7.0 | 23.6 |
+| 2×, Enhanced largest | MMPX, both planes in row spans, zstd 19 | 15.1 (68.2) | 168.3 / 40.6 | 285.3 (1246.6) |
+| | xBRZ, BC7 RDO, zstd 19 | 32.8 | — / 32.0 | 143.3 |
+| 3×, Classic largest | xBRZ, BC1, zstd 19 | 28.6 | — / 33.6 | 133.4 |
+| | xBRZ, BC7 RDO, zstd 19 | 48.8 | — / 64.6 | 266.9 |
+| 3×, Enhanced uniform | xBRZ, BC7 RDO, zstd 19 | 16.0 | — / 14.3 | 53.1 |
+| 3×, Enhanced largest | xBRZ, BC7 RDO, zstd 19 | 69.6 | — / 83.2 | 322.3 |
+| 4×, Classic uniform | MMPX, row spans, zstd 19 | 1.9 (9.4) | 52.7 / 11.3 | 56.1 (275.1) |
+| | xBRZ, BC1, zstd 19 | 6.0 | — / 8.0 | 27.9 |
+| 4×, Classic largest | MMPX, row spans, zstd 19 | 11.7 (50.9) | 310.3 / 87.8 | 472.0 (1971.8) |
+| | xBRZ, BC1, zstd 19 | 29.7 | — / 44.7 | 235.8 |
+| | xBRZ, BC7, zstd 19 | 41.3 | — / 79.2 | 471.7 |
+| 4×, Enhanced uniform | MMPX, both planes in row spans, zstd 19 | 3.9 (20.0) | 117.1 / 23.5 | 185.8 (907.0) |
+| | xBRZ, BC7, zstd 19 | 18.5 | — / 18.5 | 92.7 |
+| 4×, Enhanced largest | MMPX, both planes in row spans, zstd 19 | 17.3 (76.3) | 582.0 / 163.5 | 1140.1 (4985.2) |
+| | MMPX, both planes in row spans, LZ4 HC | 33.2 (147.5) | 470.6 / 136.3 | 1140.1 (4985.2) |
+| | xBRZ, BC7, zstd 19 | 68.3 | — / 110.7 | 569.9 |
+| | xBRZ, BC7, LZ4 HC | 101.8 | — / 56.6 | 569.9 |
+
+The full tables, with every form in both codecs and 8 threads, come from the command in the proposal's harness section.
+
+- **MMPX barely grows on disk:** Classic uniform reads 5.5 MB at 1×, 9.0 at 2× and 9.4 at 4×. Decode time and VRAM grow
+  with the pixels instead, 4× and 16×.
+- **Up to 3×, zstd 19 loads the busier area in time.** The largest Enhanced creatures' faced directions take 41 ms at 2×
+  (MMPX) and 83 ms at 3× (BC7 RDO); their five directions at 2× take 168 ms.
+- **At 4× the largest creatures meet a wall that isn't the codec.** One action's five directions hold 5.0 GB as indexed
+  frames, the faced ones 1.14 GB, and decoding them is bound by writing that much memory: on those indexed frames LZ4 HC,
+  about 3× as fast as zstd 19 at 1×, is only 1.2× as fast, and 8 threads gain little over 4. The uniform crowd still fits (23.5 ms
+  faced, Enhanced MMPX).
+- **LZ4 HC against zstd 19, in bytes, by crowd:** blocks +14–28 % at 2×, +15–31 % at 3×, +25–59 % at 4×; MMPX row spans
+  +36–47 % at 2× and +90–94 % at 4×. Under the user's rule (LZ4 HC only within 20 % of zstd 19, chosen per payload by the
+  writer), row spans always stay on zstd 19 and so do the largest bodies' blocks, which set a crowd's time; the uniform
+  crowds' blocks at 2× and 3× (+14–17 %) would partly go to LZ4 HC.
+- **BC7 RDO at λ 1** is 7–12 % smaller than plain BC7 at 2× and 3×, at the same decode time, but at 4× it is as large or
+  0–18 % larger: xBRZ's smooth 4× gradients already code well as plain blocks, as BC1 RDO did on MMPX pages
+  (`atlas_page_compression.md`).
+- **BC1 at half BC7's VRAM** reads 0.5–0.7× BC7's bytes on Classic and decodes in 0.55–0.75× the time.
+
+Reserving every stream of a body when it first appears was considered and set aside. The crowd's bodies hold 10–35× the
+drawn action's five directions; from frame metadata (trimmed boxes, before block padding), in MB:
+
+| Crowd | Bodies, Mpx at 1× | 1× indexed / BC7 / BC1 | 2× indexed / BC7 | 4× indexed / BC7 |
+|---|---:|---:|---:|---:|
+| Classic uniform | 336, 400.5 | 400 / 400 / 200 | 1602 / 1602 | 6407 / 6407 |
+| Classic largest | 338, 1209.6 | 1210 / 1210 / 605 | 4838 / 4838 | 19353 / 19353 |
+| Enhanced uniform | 333, 989.8 | 1980 / 990 / 495 | 7918 / 3959 | 31673 / 15837 |
+| Enhanced largest | 337, 2154.5 | 4309 / 2155 / 1077 | 17236 / 8618 | 68944 / 34472 |
+
+The loader the user chose instead (2026-11-19):
+
+- 144 fps is the floor at peak load, many animations requested on one frame, and higher is better. Decoding runs on a
+  pool of 4 threads, and uploads are capped per frame; a busy crowd may appear over about 1 to 6 frames if nothing
+  stutters. A mobile appears as soon as its own stream is in, never after the whole crowd.
+- On appearance: the movement set (stand, walk, run, and the mounted ones when mounted), faced direction first, the
+  other directions over the following frames. Attack, hit, casting and death load on first request, faced direction
+  first.
+- Everything lives in one LRU cache with a VRAM budget and an idle timer of 5 to 10 minutes; what a mobile in view is
+  drawing is never evicted. Death is released after it plays, except its last frame while a corpse shows it.
+- Still unmeasured: the cost of an upload per MB, which sets the per-frame cap.
 
 ## 7. Never-drawn art: how it was determined, and how far to trust it
 
