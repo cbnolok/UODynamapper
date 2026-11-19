@@ -4,7 +4,7 @@
 use crate::render::assets::tile_atlas::TileAtlas;
 use crate::prelude::*;
 use bevy::prelude::*;
-use std::collections::HashMap;
+use bevy::platform::collections::HashMap;
 use super::static_source::{
     StaticVisualKind, TILE_FLAG_BACKGROUND, TILE_FLAG_BRIDGE, TILE_FLAG_FOLIAGE, TILE_FLAG_MULTI_MOVABLE,
     TILE_FLAG_ROOF, TILE_FLAG_SURFACE, TILE_FLAG_WET, static_tile_is_surface_like,
@@ -358,7 +358,7 @@ pub(crate) fn static_depth_key(tile_x: f32, tile_y: f32, priority_z_units: f32) 
 /// the same one wins. Assigned over the whole assembled set, as cached chunk batches are concatenated in stable
 /// (gy, gx, scale) order. Replaces the earlier-wins tie-break ordinal (an earlier static drew nearer).
 pub(super) fn assign_sprite_tie_levels(instances: &mut [SpriteInstance]) {
-    let mut next_ranks = HashMap::<(u32, u32, u32), u32>::new();
+    let mut next_ranks = HashMap::<(u32, u32, u32), u32>::with_capacity(instances.len());
 
     for instance in instances.iter_mut() {
         if matches!(instance.flat_quad, FLAT_QUAD_CC_FLAT | FLAT_QUAD_EC_SURFACE) {

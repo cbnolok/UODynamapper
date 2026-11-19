@@ -21,7 +21,7 @@ use crate::content::{
 use crate::prelude::*;
 use super::client_grunge::STATIC_FLAG_CLIENT_GRUNGE;
 use bevy::prelude::*;
-use std::collections::HashSet;
+use bevy::platform::collections::HashSet;
 use super::static_placement::{
     ART_QUAD_CORNERS, CC_FLAT_QUAD_FORWARD_XZ, FLAT_QUAD_CC_FLAT, FLAT_QUAD_EC_CAMERA, FLAT_QUAD_EC_SURFACE,
     GROUND_ART_Y_BIAS, GroundQuadBounds, STATIC_BILLBOARD_RIGHT_XZ, StaticBillboardBounds, StaticDepthClass,

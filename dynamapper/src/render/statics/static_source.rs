@@ -10,7 +10,8 @@ use crate::content::{
 };
 use crate::prelude::*;
 use bevy::prelude::*;
-use std::collections::{BTreeSet, HashMap, HashSet};
+use bevy::platform::collections::{HashMap, HashSet};
+use std::collections::BTreeSet;
 use super::static_placement::CC_TILE_PIXEL_WIDTH;
 use super::static_batches::STATIC_FLAG_LAND_GRADE;
 

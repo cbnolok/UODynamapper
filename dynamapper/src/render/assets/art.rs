@@ -15,7 +15,7 @@ use udd_assets::{
     tex_aux_ec::TexAuxEcPackage,
     tex_land_ec::TexLandEcPackage,
 };
-use std::collections::{HashMap, HashSet};
+use bevy::platform::collections::{HashMap, HashSet};
 use std::sync::{mpsc, Arc, Mutex};
 use bevy::tasks::{AsyncComputeTaskPool, TaskPool};
 use bevy::render::extract_resource::ExtractResource;
