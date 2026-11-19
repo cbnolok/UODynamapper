@@ -55,8 +55,8 @@
 //! it or none (`player_cave_z_view_cut`).
 
 use crate::configs::settings::Settings;
-use crate::core::maps::{package_chunk_cell, read_package_chunk_land_z};
-use crate::core::multis::{expanded_multi_part_z, MultiDefinitionsRes, PlacedMultisRes};
+use crate::world::maps::{package_chunk_cell, read_package_chunk_land_z};
+use crate::world::multis::{expanded_multi_part_z, MultiDefinitionsRes, PlacedMultisRes};
 use crate::core::render::scene::player::Player;
 use crate::core::render::scene::world::caves::{CaveSurroundings, CavesRes};
 use crate::core::render::scene::world::art::light_cover::{
@@ -67,7 +67,7 @@ use crate::core::render::scene::world::land::mesh_material::LAND_NO_Z_LIMIT;
 use crate::core::render::scene::world::land::MAP_STORAGE_BLOCK_TILE_DIM;
 use crate::core::render::scene::SceneStateData;
 use crate::configs::shader_presets::UniformState;
-use crate::core::statics::{LazyStaticsStore, StaticsStoreRes};
+use crate::world::statics::{LazyStaticsStore, StaticsStoreRes};
 use crate::core::uo_files_loader::{MapPlanesRes, TileMetaPackageRes};
 use bevy::prelude::*;
 use std::collections::{HashMap, HashSet};

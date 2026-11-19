@@ -16,7 +16,7 @@ use crate::core::render::{
         RecomputeVisibleChunksEvent,
     },
 };
-use crate::core::statics::StaticsStoreRes;
+use crate::world::statics::StaticsStoreRes;
 use crate::core::uo_files_loader::{
     TexArtCcPackageRes, TexArtEcPackageRes, TexLandEcPackageRes, MapPlanesRes, TileMetaPackageRes,
 };

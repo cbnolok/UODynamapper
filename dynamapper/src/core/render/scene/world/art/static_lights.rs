@@ -7,7 +7,7 @@ use super::statics_collect::{static_land_z, StaticArtSourceState, StaticChunkBat
 use crate::configs::light_scale::{ItemLightScales, NEUTRAL_LIGHT_SCALE};
 use crate::configs::{settings::{ClientTextureSource, Settings}, shader_presets::UniformState};
 use crate::console_logger::{self, LogAbout, LogSev};
-use crate::core::multis::{MultiDefinitionsRes, PlacedMultisRes};
+use crate::world::multis::{MultiDefinitionsRes, PlacedMultisRes};
 use crate::core::render::scene::world::land::mesh_material::{
     ClientLocalLightSource, ClientLocalLights, ClientNightLighting,
 };
@@ -20,9 +20,9 @@ use crate::core::render::scene::world::effects::client_night::{
 };
 use crate::core::render::scene::world::z_view::{PackageLand, ZViewCut, ZViewLimit};
 use crate::core::render::scene::SceneStateData;
-use crate::core::statics::StaticsStoreRes;
+use crate::world::statics::StaticsStoreRes;
 use crate::core::uo_files_loader::{HuesPackageRes, MapPlanesRes, TileMetaPackageRes, WorldLightsPackageRes};
-use crate::util_lib::uo_coords::scale_uo_z_to_bevy_units;
+use crate::world::coords::scale_uo_z_to_bevy_units;
 use udd_assets::world_lights::LIGHT_FULL_INTENSITY;
 use bevy::camera::visibility::{NoFrustumCulling, RenderLayers};
 use bevy::mesh::MeshTag;

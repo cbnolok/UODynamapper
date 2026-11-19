@@ -5,7 +5,7 @@ use crate::core::{app_states::AppState, controls::{InjectedPointer, effective_cu
     render::scene::{camera::PlayerCamera, player::Player}, system_sets::{MovementSysSet, SceneRenderLandSysSet},
     texture_cache::land::cache::LandTextureCache, uo_files_loader::MapPlanesRes};
 use crate::configs::settings::LandTextureSource;
-use crate::util_lib::uo_coords::{UOVec4, UO_Z_TO_WORLD_SCALE};
+use crate::world::coords::{UOVec4, UO_Z_TO_WORLD_SCALE};
 use bevy::{prelude::*, window::PrimaryWindow};
 use std::collections::HashMap;
 use uocf::classic::map::{MapCell, MapCellCoords};

@@ -6,13 +6,13 @@ use crate::core::render::scene::world::land::{
     CHUNK_STORAGE_BLOCKS_DIM, MAP_STORAGE_BLOCK_TILE_DIM,
 };
 use crate::core::render::scene::world::land::tile_atlas::{AtlasCells, TileAtlas};
-use crate::core::multis::{
+use crate::world::multis::{
     expanded_multi_part_z, MultiDefinitionsRes, MultiPart, PlacedMulti, PlacedMultisRes,
 };
 use crate::core::render::scene::world::caves::{is_buried_floor, CaveMap, CaveStatic, CavesRes, PlayerCave};
 use crate::core::render::scene::world::z_view::{PackageLand, ZViewCut, ZViewLimit};
 use crate::core::render::scene::SceneStateData;
-use crate::core::statics::{LazyStaticsStore, StaticsStoreRes};
+use crate::world::statics::{LazyStaticsStore, StaticsStoreRes};
 use crate::core::texture_cache::art::{GroundArtPageAtlas, ResolvedArtSprite, SpriteArtPageAtlas};
 use crate::core::texture_cache::art::ArtPageKey;
 use crate::core::texture_cache::ec_item_surface::KR_ITEM_RECORD_BASE;
@@ -2501,7 +2501,7 @@ fn rebuild_static_chunk(
                 resources.tilemeta_package_for_art(frame.art_source),
             );
 
-            // Every static draws as itself, whatever its graphic: map statics are never multis (`core::multis`).
+            // Every static draws as itself, whatever its graphic: map statics are never multis (`world::multis`).
             for tile in tiles {
                 emit_static_render_tile_on_surfaces(
                     static_cell_tile(gx, gy, *tile),
@@ -4681,7 +4681,7 @@ mod tests {
                 x: 0,
                 y: 0,
                 z: 0,
-                flags: crate::core::multis::MULTI_PART_VISIBLE_FLAG,
+                flags: crate::world::multis::MULTI_PART_VISIBLE_FLAG,
             },
             uocf::classic::multi::MultiPart {
                 item_id: 11,
@@ -4711,14 +4711,14 @@ mod tests {
                 x: -1,
                 y: 2,
                 z: 3,
-                flags: crate::core::multis::MULTI_PART_VISIBLE_FLAG,
+                flags: crate::world::multis::MULTI_PART_VISIBLE_FLAG,
             },
             uocf::classic::multi::MultiPart {
                 item_id: 11,
                 x: 9,
                 y: -4,
                 z: -2,
-                flags: crate::core::multis::MULTI_PART_VISIBLE_FLAG,
+                flags: crate::world::multis::MULTI_PART_VISIBLE_FLAG,
             },
         ]]);
         let multi = PlacedMulti { multi_id: 0, x: 19, y: 28, z: 5, hue: 9 };

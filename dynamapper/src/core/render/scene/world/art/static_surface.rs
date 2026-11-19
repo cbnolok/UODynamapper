@@ -2,7 +2,8 @@
 //! smoothly at patch boundaries. Neighbor flags are built only on chunk rebuild.
 use super::statics_collect::{SpriteInstance, StaticChunkBatchKey, TILE_FLAG_SURFACE};
 use crate::core::texture_cache::{ec_item_surface::KR_ITEM_RECORD_BASE, land::coverage::EcTerrainParams};
-use crate::core::{statics::LazyStaticsStore, render::scene::world::land::{tile_atlas::{AtlasCells, TileAtlas,
+use crate::world::statics::LazyStaticsStore;
+use crate::core::{render::scene::world::land::{tile_atlas::{AtlasCells, TileAtlas,
     LAND_SOURCE_EC_ATLAS, TERRAIN_SHADER_FLAG_NEVER_BLENDS}, CHUNK_STORAGE_BLOCKS_DIM, MAP_STORAGE_BLOCK_TILE_DIM}};
 use bevy::math::UVec2;
 use std::collections::{HashMap, HashSet};

@@ -52,14 +52,14 @@
 
 use crate::configs::settings::Settings;
 use crate::console_logger::{self, LogAbout, LogSev};
-use crate::core::maps::{package_chunk_cell, read_package_chunk_land_z, PACKAGE_CHUNK_CELL_DIM};
+use crate::world::maps::{package_chunk_cell, read_package_chunk_land_z, PACKAGE_CHUNK_CELL_DIM};
 use crate::core::render::scene::world::land::draw_mesh::PendingTextureBake;
 use crate::core::render::scene::world::land::{LCMesh, MAP_STORAGE_BLOCK_TILE_DIM};
 use crate::core::render::scene::player::Player;
 use crate::core::render::scene::world::art::light_cover::{CLIENT_BAND_HEIGHT, NO_Z_VIEW_LIMIT};
 use crate::core::render::scene::world::z_view::{PLAYER_CEILING_MIN_RISE, PLAYER_VIEW_HEADROOM};
 use crate::core::render::scene::SceneStateData;
-use crate::core::statics::{read_package_chunk_statics, StaticsStoreRes};
+use crate::world::statics::{read_package_chunk_statics, StaticsStoreRes};
 use crate::core::uo_files_loader::{MapPlanesRes, TileMetaPackageRes};
 use bevy::prelude::*;
 use color_eyre::eyre;

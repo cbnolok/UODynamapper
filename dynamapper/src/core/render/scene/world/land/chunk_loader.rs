@@ -20,7 +20,7 @@ use uocf::classic::map::{MapBlock, MapBlockRelPos};
 use udd_container::UddpReader;
 
 use crate::console_logger::{self, LogAbout, LogSev};
-use crate::core::maps;
+use crate::world::maps;
 
 /// Number of blocks per sub-batch.  Tuned so each sub-batch takes ~10-30 ms,
 /// giving the main thread frequent opportunities to poll and render while

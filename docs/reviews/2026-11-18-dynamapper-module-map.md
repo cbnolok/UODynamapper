@@ -53,8 +53,8 @@ terrain, statics, lighting, picking, postprocess}`, `ui/`, `export/`, `diagnosti
 
 | Now | Lines | Churn | Notes |
 |---|---:|---:|---|
-| `world/coords.rs` | 121 | 1 | Moved 2026-11-18 from `util_lib/uo_coords.rs`, which re-exports it for its hot importers. |
-| `world/{maps, statics, multis}.rs` | 908 | 12 | Moved 2026-11-18 from `core/`, which re-exports them for their hot importers. |
+| `world/coords.rs` | 121 | 1 | Moved 2026-11-18 from `util_lib/uo_coords.rs`; its importers took the new path 2026-11-19. |
+| `world/{maps, statics, multis}.rs` | 908 | 12 | Moved 2026-11-18 from `core/`; their importers took the new path 2026-11-19. |
 | `rsw.rs` (`core/render/scene/world.rs`) | 100 | 4 | The map catalog half; its plugin wiring stays with render. |
 | `core/render/scene/player.rs` | 107 | 0 | Logical position → `world/player`; the rendered entity stays with `render/scene`. |
 | `world/{player_movement, teleport}.rs` | 362 | 0 | Moved 2026-11-18 from `core/controls/`. |
@@ -115,7 +115,7 @@ terrain, statics, lighting, picking, postprocess}`, `ui/`, `export/`, `diagnosti
 | Now | Lines | Churn | Owner |
 |---|---:|---:|---|
 | `core/export_job.rs` | 881 | 4 | `export/`: job lifecycle, readiness, capture and spool, provenance. |
-| `diagnostics.rs`, `diagnostics/{frame_rate, frame_limiter, gpu_profiling}.rs` | 1153 | 1 | Moved 2026-11-18. `core::diagnostics` re-exports it until `scene.rs`, `draw_mesh.rs`, `tile_atlas.rs` and `texture_cache/land/cache.rs` move. |
+| `diagnostics.rs`, `diagnostics/{frame_rate, frame_limiter, gpu_profiling}.rs` | 1153 | 1 | Moved 2026-11-18; its importers took the new path 2026-11-19. |
 
 ## Order
 

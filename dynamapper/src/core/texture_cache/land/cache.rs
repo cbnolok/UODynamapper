@@ -1026,12 +1026,12 @@ impl LandTextureCache {
 pub fn sys_extract_texture_array_uploads(
     cache: Extract<Res<LandTextureCache>>,
     mut render_uploads: ResMut<RenderTextureArrayUploads>,
-    diagnostics: Res<crate::core::diagnostics::WorldmapCrossAppDiagnostics>,
+    diagnostics: Res<crate::diagnostics::WorldmapCrossAppDiagnostics>,
 ) {
     let _trace_span = crate::tracy_span!("worldmap::texarray_extract_uploads");
-    let _timer = crate::core::diagnostics::scoped_worldmap_cross_app_timer(
+    let _timer = crate::diagnostics::scoped_worldmap_cross_app_timer(
         &diagnostics,
-        crate::core::diagnostics::WorldmapCrossAppTimedSystem::TextureArrayExtract,
+        crate::diagnostics::WorldmapCrossAppTimedSystem::TextureArrayExtract,
     );
 
     if !cache.pending_uploads.is_empty() {
@@ -1058,13 +1058,13 @@ pub fn sys_render_upload_texture_array(
     gpu_images: Res<RenderAssets<GpuImage>>,
     render_queue: Res<RenderQueue>,
     render_device: Res<RenderDevice>,
-    diagnostics: Res<crate::core::diagnostics::WorldmapCrossAppDiagnostics>,
+    diagnostics: Res<crate::diagnostics::WorldmapCrossAppDiagnostics>,
     mut staging: Local<PersistentStaging>,
 ) {
     let _trace_span = crate::tracy_span!("worldmap::texarray_render_uploads");
-    let _timer = crate::core::diagnostics::scoped_worldmap_cross_app_timer(
+    let _timer = crate::diagnostics::scoped_worldmap_cross_app_timer(
         &diagnostics,
-        crate::core::diagnostics::WorldmapCrossAppTimedSystem::TextureArrayUpload,
+        crate::diagnostics::WorldmapCrossAppTimedSystem::TextureArrayUpload,
     );
 
     if uploads.0.is_empty() {

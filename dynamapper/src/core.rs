@@ -8,10 +8,6 @@ pub mod system_sets;
 mod texture_cache;
 mod uo_files_loader;
 
-// Temporary: hot files still import the old path (docs/reviews/2026-11-18-dynamapper-module-map.md, Order 3).
-pub use crate::diagnostics;
-pub use crate::world::{maps, multis, statics};
-
 use crate::{
     configs::{settings, ExternalDataPlugin},
     diagnostics::{add_diagnostics_plugins, frame_limiter, frame_rate, LogGpuPreprocessingModePlugin},

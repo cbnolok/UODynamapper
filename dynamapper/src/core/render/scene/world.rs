@@ -8,7 +8,7 @@ use nohash_hasher::BuildNoHashHasher;
 use indexmap::IndexMap;
 use bevy::prelude::*;
 use crate::prelude::*;
-use crate::core::maps::MapPlaneMetadata;
+use crate::world::maps::MapPlaneMetadata;
 
 
 use crate::core::uo_files_loader::MapPlanesRes;
@@ -31,7 +31,7 @@ impl Plugin for WorldPlugin
             .init_resource::<WorldGeoData>()
             .init_resource::<z_view::ZViewLimit>()
             .init_resource::<caves::CavesRes>()
-            .init_resource::<crate::core::multis::PlacedMultisRes>()
+            .init_resource::<crate::world::multis::PlacedMultisRes>()
             .add_systems(
                 Startup,
                 sys_populate_world_geo_data

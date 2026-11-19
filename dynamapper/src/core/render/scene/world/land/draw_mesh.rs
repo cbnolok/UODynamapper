@@ -28,10 +28,10 @@ use super::{
     mesh_material::*, LCMesh, LandUploadBudget, CHUNK_STORAGE_BLOCKS_DIM,
     MAP_STORAGE_BLOCK_TILE_DIM, MAP_STORAGE_BLOCK_TILE_TOTAL, TILE_NUM_PER_CHUNK_DIM,
 };
+use crate::world::maps::{MapPlane, MapPlaneMetadata};
 use crate::{
     core::{
         constants,
-        maps::{MapPlane, MapPlaneMetadata},
         render::scene::{
             camera::PlayerCamera, player::Player, world::WorldGeoData, SceneStateData,
         },
@@ -350,15 +350,15 @@ pub fn sys_draw_spawned_land_chunks(
     current_lod: Res<LandMeshLod>,
     shared_land_material_r: Res<SharedLandMaterial>,
     mut frame_pacing: LandFramePacing,
-    mut system_diagnostics: ResMut<crate::core::diagnostics::WorldmapSystemDiagnostics>,
+    mut system_diagnostics: ResMut<crate::diagnostics::WorldmapSystemDiagnostics>,
     mut locals: Local<DrawMeshLocals>,
 ) {
     // NOTE: Briefly-used variables (map_meta, targets, uncached_blocks) are
     // scoped or dropped early to reduce peak memory and improve clarity.
 
-    let _timer = crate::core::diagnostics::scoped_worldmap_timer(
+    let _timer = crate::diagnostics::scoped_worldmap_timer(
         &mut system_diagnostics,
-        crate::core::diagnostics::WorldmapTimedSystem::ChunkDraw,
+        crate::diagnostics::WorldmapTimedSystem::ChunkDraw,
     );
     let _trace_span = crate::tracy_span!("worldmap::chunk_draw");
 

@@ -40,13 +40,13 @@ use super::statics_collect::{
 use crate::core::render::scene::camera::PlayerCamera;
 use crate::configs::{light_scale::ItemLightScales, settings::{ClientTextureSource, Settings}, shader_presets::UniformState};
 use crate::console_logger::{self, LogAbout, LogSev};
-use crate::core::multis::{MultiDefinitionsRes, PlacedMultisRes};
+use crate::world::multis::{MultiDefinitionsRes, PlacedMultisRes};
 use crate::core::render::scene::world::effects::client_night::LIGHT_BUFFER_LAYER;
 use crate::core::render::scene::world::land::{LCMesh, CHUNK_STORAGE_BLOCKS_DIM, MAP_STORAGE_BLOCK_TILE_DIM};
 use crate::core::render::scene::SceneStateData;
-use crate::core::statics::StaticsStoreRes;
+use crate::world::statics::StaticsStoreRes;
 use crate::core::uo_files_loader::{MapPlanesRes, TexArtCcPackageRes, TexAuxEcPackageRes, TileMetaPackageRes};
-use crate::util_lib::uo_coords::scale_uo_z_to_bevy_units;
+use crate::world::coords::scale_uo_z_to_bevy_units;
 use bevy::camera::visibility::{NoFrustumCulling, RenderLayers};
 use bevy::mesh::MeshTag;
 use bevy::prelude::*;

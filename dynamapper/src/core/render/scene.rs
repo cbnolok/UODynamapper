@@ -3,13 +3,13 @@ pub mod dynamic_light;
 pub mod player;
 pub mod world;
 
-use crate::core::maps::MapPlaneMetadata;
+use crate::world::maps::MapPlaneMetadata;
 use crate::core::system_sets::*;
 use crate::prelude::*;
 use bevy::ecs::message::{MessageReader, MessageWriter};
 use bevy::prelude::*;
 use bevy::window::{Window, WindowResized};
-use crate::util_lib::uo_coords::scale_uo_z_to_bevy_units;
+use crate::world::coords::scale_uo_z_to_bevy_units;
 use camera::{PlayerCamera, RenderZoom, MAX_ZOOM, MIN_ZOOM};
 use player::Player;
 use world::land::draw_mesh::{scale_from_zoom, ChunkScale};
@@ -443,8 +443,8 @@ fn sys_update_worldmap_chunks_to_render(
     world_geo_data_res: Res<WorldGeoData>,
     render_zoom_res: Res<RenderZoom>,
     mut scene_state_data_res: ResMut<SceneStateData>,
-    mut runtime_diagnostics: ResMut<crate::core::diagnostics::WorldmapRuntimeDiagnostics>,
-    mut system_diagnostics: ResMut<crate::core::diagnostics::WorldmapSystemDiagnostics>,
+    mut runtime_diagnostics: ResMut<crate::diagnostics::WorldmapRuntimeDiagnostics>,
+    mut system_diagnostics: ResMut<crate::diagnostics::WorldmapSystemDiagnostics>,
     mut land_chunk_count: ResMut<LandChunkCount>,
     mut visible_chunk_targets: ResMut<VisibleLandChunkTargets>,
     mut chunk_scale_res: ResMut<ChunkScale>,
@@ -459,9 +459,9 @@ fn sys_update_worldmap_chunks_to_render(
     /// Maximum number of obsolete chunk entities retired per frame.
     const MAX_DESPAWNS_PER_FRAME: usize = 1024;
 
-    let _timer = crate::core::diagnostics::scoped_worldmap_timer(
+    let _timer = crate::diagnostics::scoped_worldmap_timer(
         &mut system_diagnostics,
-        crate::core::diagnostics::WorldmapTimedSystem::ChunkSync,
+        crate::diagnostics::WorldmapTimedSystem::ChunkSync,
     );
     let _trace_span = crate::tracy_span!("worldmap::chunk_sync");
 

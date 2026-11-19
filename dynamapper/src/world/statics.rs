@@ -199,7 +199,7 @@ pub fn read_package_chunk_statics(package: &UddpReader, chunk_index: u32) -> eyr
 
 /// The graphic a static at the tile `x`, `y` draws under `item_routes`: their inside table where `areas` (the
 /// route profile's areas on its map) contain the tile, else their outside table. Every static is an item, whatever its
-/// graphic (map statics are never multis: `core::multis`).
+/// graphic (map statics are never multis: `world::multis`).
 fn route_static_graphic(item_routes: Option<&AreaRoutes<Vec<u16>>>, areas: &MapRouteAreas, graphic: u16, x: u32, y: u32)
     -> u16 {
     let Some(routes) = item_routes else { return graphic };

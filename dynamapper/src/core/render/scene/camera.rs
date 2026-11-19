@@ -746,7 +746,7 @@ mod tests {
 
     /// Both cameras sit on the isometric diagonal (1, 1, 1) of their focus and look back along it, whatever the window
     /// and the zoom: the orthographic one at BASE_OFFSET_FROM_PLAYER, the perspective one at its orbit distance. The
-    /// pixel scale of that view (the 44 x 44 diamond, 4 px per z unit) is guarded by uo_coords.rs
+    /// pixel scale of that view (the 44 x 44 diamond, 4 px per z unit) is guarded by world/coords.rs
     /// `default_camera_matches_legacy_tile_pixel_and_height_steps`, the orbit distance's by perspective.rs
     /// `orbit_distance_gives_the_focus_the_orthographic_scale_at_any_window_and_zoom`.
     #[test]

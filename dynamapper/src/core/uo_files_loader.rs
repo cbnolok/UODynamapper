@@ -1,7 +1,7 @@
 use crate::configs::settings::{ClientTextureSource, GumpClient, Settings};
-use crate::core::maps::MapPlane;
-use crate::core::multis::MultiDefinitionsRes;
-use crate::core::statics::{LazyStaticsStore, StaticsStoreRes};
+use crate::world::maps::MapPlane;
+use crate::world::multis::MultiDefinitionsRes;
+use crate::world::statics::{LazyStaticsStore, StaticsStoreRes};
 use crate::core::system_sets::StartupSysSet;
 use crate::prelude::*;
 use bevy::prelude::*;

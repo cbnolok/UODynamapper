@@ -19,7 +19,7 @@ use crate::configs::land_routes::{
 };
 use crate::configs::runtime_specs::{LoadedSpec, SpecFiles};
 use crate::console_logger::{self, LogAbout, LogSev};
-use crate::core::statics::StaticsStoreRes;
+use crate::world::statics::StaticsStoreRes;
 
 /// How often the user's copy is checked for a save.
 const ROUTE_FILE_CHECK_INTERVAL: Duration = Duration::from_secs(1);

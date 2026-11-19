@@ -483,7 +483,7 @@ fn main() {
         let (sin_roll, cos_roll) = 0.05f64.sin_cos();
         let original_uv = |x: f64, height: f64, map_y: f64| {
             let right = sin_tilt * x - cos_tilt * map_y;
-            let raw_z = height / f64::from(crate::util_lib::uo_coords::UO_Z_TO_WORLD_SCALE);
+            let raw_z = height / f64::from(crate::world::coords::UO_Z_TO_WORLD_SCALE);
             let up = -cos_tilt * cos_roll * x - sin_tilt * cos_roll * map_y + raw_z * 0.12856454;
             let forward = 10.0 - cos_tilt * sin_roll * x - sin_tilt * sin_roll * map_y;
             let length = (right * right + up * up + forward * forward).sqrt();

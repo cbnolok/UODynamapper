@@ -36,13 +36,13 @@
 //! own cell's land (`ZViewCut::roof_layer`), and covers while it is (`drawn_cell_statics`).
 //!
 //! A cell's objects are its statics, each as itself whatever its graphic (map statics are never multis:
-//! `core::multis`), and the parts the renderer draws there of the multis placed around it (`MultiCoverParts`).
+//! `world::multis`), and the parts the renderer draws there of the multis placed around it (`MultiCoverParts`).
 
-use crate::core::multis::{expanded_multi_part_z, MultiDefinitionsRes, MultiPart, PlacedMultisRes};
+use crate::world::multis::{expanded_multi_part_z, MultiDefinitionsRes, MultiPart, PlacedMultisRes};
 use crate::core::render::scene::world::land::mesh_material::LightCover;
 use crate::core::render::scene::world::land::MAP_STORAGE_BLOCK_TILE_DIM;
 use crate::core::render::scene::world::z_view::{average_land_z, kr_roof_is_hidden, MULTI_PART_MAX_REACH};
-use crate::core::statics::LazyStaticsStore;
+use crate::world::statics::LazyStaticsStore;
 use std::collections::HashMap;
 use std::ops::Range;
 use udd_assets::tilemeta::TileMetaPackage;

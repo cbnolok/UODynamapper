@@ -228,7 +228,7 @@ pub fn sys_render_preferences_dialog(
     time: Res<Time>,
     land_textures: Option<Res<crate::core::texture_cache::land::cache::LandTextureCache>>,
     mut route_file: Option<ResMut<crate::core::texture_cache::land::route_file::RouteFileRes>>,
-    placed_multis: Option<Res<crate::core::multis::PlacedMultisRes>>,
+    placed_multis: Option<Res<crate::world::multis::PlacedMultisRes>>,
 ) {
     state.apply_timer.tick(time.delta());
 
