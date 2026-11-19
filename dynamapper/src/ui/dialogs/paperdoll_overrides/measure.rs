@@ -7,7 +7,7 @@
 //! beneath each dress the same way (`udd_conv::paperdoll_ec_dress`); these outfits check the result as it is drawn.
 
 use super::*;
-use crate::core::render::dialogs::paperdoll_ec::{paperdoll_drawing, PaperdollCanvas, PaperdollItem};
+use crate::ui::dialogs::paperdoll_ec::{paperdoll_drawing, PaperdollCanvas, PaperdollItem};
 use std::collections::{HashMap, HashSet};
 use std::hash::{Hash, Hasher};
 use std::path::{Path, PathBuf};
@@ -189,11 +189,11 @@ fn the_stored_decisions_take_away_little_outside_the_dress() {
     let package = PaperdollEcPackage::load(env_path("UDD_PAPERDOLL_EC")).unwrap();
     let tilemeta = TileMetaPackage::load(env_path("UDD_TILEMETA")).unwrap();
     let hues = HuesPackage::load(env_path("UDD_HUES")).unwrap();
-    let rules = WearableRules::decode(include_str!("../../../../../assets/runtime_specs/paperdoll/WearableRules.kdl"))
+    let rules = WearableRules::decode(include_str!("../../../../assets/runtime_specs/paperdoll/WearableRules.kdl"))
         .unwrap();
     let overrides_text = match std::env::var_os("UDD_PAPERDOLL_OVERRIDES") {
         Some(path) => std::fs::read_to_string(&path).unwrap_or_else(|error| panic!("{}: {error}", path.display())),
-        None => include_str!("../../../../../assets/runtime_specs/paperdoll/PaperdollOverrides.kdl").to_string(),
+        None => include_str!("../../../../assets/runtime_specs/paperdoll/PaperdollOverrides.kdl").to_string(),
     };
     let overrides = PaperdollOverrides::decode(PAPERDOLL_OVERRIDES_FILE_NAME, &overrides_text).unwrap();
     let canvas = PaperdollCanvas::for_sets(package.sets());

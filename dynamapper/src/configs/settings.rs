@@ -1,7 +1,7 @@
 use crate::console_logger::{self, LogAbout, LogSev};
 use crate::core::export_job::ExportJob;
-use crate::core::render::dialogs::image_background::ImageBackground;
-use crate::core::render::dialogs::paperdoll_ec::EnhancedPaperdoll;
+use crate::ui::dialogs::image_background::ImageBackground;
+use crate::ui::dialogs::paperdoll_ec::EnhancedPaperdoll;
 use crate::core::render::scene::camera::RenderZoom;
 use crate::core::render::scene::player::Player;
 use crate::prelude::*;
@@ -1364,7 +1364,7 @@ mod tests {
 
         let mut picked = bundled.clone();
         picked.window.gump_background =
-            ImageBackground::Color(crate::core::render::dialogs::image_background::MAGENTA_BACKGROUND);
+            ImageBackground::Color(crate::ui::dialogs::image_background::MAGENTA_BACKGROUND);
         let written = toml::to_string_pretty(&picked).expect("serialize");
         let load = parse_app_state("user_preferences.toml", &written, &bundled).expect("lenient load");
         assert!(load.warnings.is_empty(), "{:?}", load.warnings);

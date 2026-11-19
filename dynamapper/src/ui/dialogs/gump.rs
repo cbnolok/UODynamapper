@@ -1,10 +1,11 @@
+use crate::ui::dialogs;
 use crate::input::input_actions::{ActionCloseActiveDialog, ActionToggleGumpDialog};
-use crate::core::render::dialogs::image_background::{image_background_control, ImageBackground};
-use crate::core::render::dialogs::paperdoll_ec::{paperdoll_drawing, EnhancedPaperdoll, PaperdollCanvas, PaperdollItem};
-use crate::core::render::dialogs::paperdoll_menu::{
+use crate::ui::dialogs::image_background::{image_background_control, ImageBackground};
+use crate::ui::dialogs::paperdoll_ec::{paperdoll_drawing, EnhancedPaperdoll, PaperdollCanvas, PaperdollItem};
+use crate::ui::dialogs::paperdoll_menu::{
     menu_ui, write_choice, ChosenRule, MenuAction, PaperdollDrawn, PaperdollMenu, PickLayer,
 };
-use crate::core::render::dialogs::paperdoll_overrides::{
+use crate::ui::dialogs::paperdoll_overrides::{
     measured_garment, taken_off, PaperdollOrder, PaperdollOverrides, TakenOff, PAPERDOLL_OVERRIDES_FILE_NAME,
 };
 use crate::configs::runtime_specs::SpecFiles;
@@ -15,7 +16,6 @@ use udd_assets::tilemeta::{TileMetaItemDefinitions, TileMetaItemTile};
 use crate::ingame_sysmessage_logger;
 use crate::{
     core::constants,
-    core::render::dialogs,
     prelude::*,
 };
 use bevy::prelude::*;
@@ -187,13 +187,13 @@ mod tests {
     fn bundled_profiles() -> PaperdollProfilesRes {
         PaperdollProfilesRes::load_from_str(
             "PaperdollProfiles.kdl",
-            include_str!("../../../../assets/runtime_specs/paperdoll/PaperdollProfiles.kdl"),
+            include_str!("../../../assets/runtime_specs/paperdoll/PaperdollProfiles.kdl"),
         )
         .unwrap_or_else(|error| panic!("profiles parse: {error}"))
     }
 
     fn bundled_rules() -> WearableRules {
-        WearableRules::decode(include_str!("../../../../assets/runtime_specs/paperdoll/WearableRules.kdl"))
+        WearableRules::decode(include_str!("../../../assets/runtime_specs/paperdoll/WearableRules.kdl"))
             .unwrap_or_else(|error| panic!("wearable rules parse: {error:?}"))
     }
 
@@ -201,7 +201,7 @@ mod tests {
     fn bundled_order() -> PaperdollOrder {
         let overrides = PaperdollOverrides::decode(
             PAPERDOLL_OVERRIDES_FILE_NAME,
-            include_str!("../../../../assets/runtime_specs/paperdoll/PaperdollOverrides.kdl"),
+            include_str!("../../../assets/runtime_specs/paperdoll/PaperdollOverrides.kdl"),
         )
         .unwrap();
         PaperdollOrder { rules: bundled_rules(), overrides }
@@ -577,7 +577,7 @@ mod tests {
     /// trimmed and upscaled one at its offset and scale too; the body is no item.
     #[test]
     fn the_gump_paperdoll_picks_the_item_drawn_on_top() {
-        use crate::core::render::dialogs::paperdoll_menu::PaperdollDrawn;
+        use crate::ui::dialogs::paperdoll_menu::PaperdollDrawn;
         use udd_assets::gumps::GumpRect;
         const BODY: [u8; 4] = [90, 60, 40, 255];
         const SHIRT_TEXEL: [u8; 4] = [30, 120, 200, 255];

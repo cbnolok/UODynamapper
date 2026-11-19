@@ -1,3 +1,4 @@
+use crate::ui::dialogs;
 use crate::input::input_actions::{
     ActionToggleCursorInspectPanel, ActionToggleCursorTeleportMode,
 };
@@ -7,7 +8,6 @@ use crate::core::render::scene::world::art::static_geometry::{StaticArtRoute, St
 use crate::core::render::scene::player::Player;
 use crate::core::render::terrain::picking::{TerrainCursor, TerrainCursorQuery};
 use crate::core::render::{
-    dialogs,
     scene::{
         camera::{PlayerCamera, UiCameraResource},
         world::WorldGeoData,

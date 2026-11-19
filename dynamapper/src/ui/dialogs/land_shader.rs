@@ -9,7 +9,8 @@
 //   look) and UOD-Painterly (the painterly KR look). KR-like and UOD-Painterly both use
 //   shading mode 2 and the KR content; only their preset values differ.
 
-use super::super::terrain::mesh_material::*;
+use crate::ui::dialogs;
+use crate::core::render::terrain::mesh_material::*;
 use crate::core::render::lighting::{light_cover::LightCover, static_lights::ClientLocalLightSource};
 use crate::input::input_actions::ActionToggleShaderSettings;
 use crate::{
@@ -19,7 +20,6 @@ use crate::{
         CLASSIC_PRESET_GROUP, ENHANCED_PRESET_GROUP, KR_PRESET_GROUP, PAINTERLY_PRESET_GROUP,
     },
     core::render::{
-        dialogs,
         lighting::client_night::{
             MAX_CLIENT_LIGHT_LEVEL, MAX_NIGHT_OVERLAY_STRENGTH, MIN_NIGHT_OVERLAY_STRENGTH, NIGHT_MAP_MEAN,
         },
@@ -1853,8 +1853,8 @@ mod tests {
 
     #[test]
     fn bundled_gloom_fade_heights_and_rim_powers_are_on_their_sliders() {
-        let factory = include_str!("../../../../assets/defaults/shader_presets.toml");
-        let shipped = include_str!("../../../../assets/settings/shaders/land.toml");
+        let factory = include_str!("../../../assets/defaults/shader_presets.toml");
+        let shipped = include_str!("../../../assets/settings/shaders/land.toml");
         for text in [factory, shipped] {
             let presets: LandShaderModePresets =
                 uocf::utils::config_toml::parse_strict("shader_presets.toml", text).expect("bundled");
@@ -1873,7 +1873,7 @@ mod tests {
     /// switched to per pixel enables them but not the KR-only ones.
     #[test]
     fn per_pixel_land_controls_follow_the_style_and_its_land_shading() {
-        let factory = include_str!("../../../../assets/defaults/shader_presets.toml");
+        let factory = include_str!("../../../assets/defaults/shader_presets.toml");
         let presets: LandShaderModePresets =
             uocf::utils::config_toml::parse_strict("shader_presets.toml", factory).expect("bundled");
         let gates_of = |slot: &LandMaterialUniformsPresets, terrain_shading_model: u32| {

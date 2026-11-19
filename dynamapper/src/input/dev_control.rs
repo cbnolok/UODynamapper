@@ -133,7 +133,7 @@ fn poll_control(
     uploads: Option<Res<LandUploadTelemetry>>,
     terrain_bases: Option<Res<EcTerrainBases>>,
     view: (Query<(Entity, &Window), With<PrimaryWindow>>,
-        Query<&Text, With<crate::core::render::overlays::cursor_behavior::OverlayCursorInspectText>>,
+        Query<&Text, With<crate::ui::overlays::cursor_behavior::OverlayCursorInspectText>>,
         Query<(Has<Mesh3d>, Has<PendingTextureBake>), With<LCMesh>>),
     mut input: ResMut<ControlInput>,
     pointer: Res<InjectedPointer>,

@@ -1,3 +1,4 @@
+use crate::ui::dialogs;
 use crate::input::input_actions::{ActionCloseActiveDialog, ActionTogglePreferences};
 use crate::{
     configs::settings::{AntiAliasingMode, ClientTextureSource, GumpClient, LandTextureSource},
@@ -5,7 +6,7 @@ use crate::{
     core::{
         frame_limiter_for_options, frame_limiter_for_settings,
         present_mode_for_vsync,
-        render::{dialogs, scene::camera::UiCameraResource},
+        render::scene::camera::UiCameraResource,
     },
     prelude::*,
     world::caves::{CaveSurroundings, CaveView},

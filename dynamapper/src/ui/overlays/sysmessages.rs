@@ -1,6 +1,7 @@
+use crate::ui::dialogs;
 use crate::ingame_sysmessage_logger::{self, InGameLog};
 use crate::{
-    core::render::{dialogs, scene::camera::UiCameraResource},
+    core::render::scene::camera::UiCameraResource,
     prelude::*,
 };
 use bevy::prelude::*;

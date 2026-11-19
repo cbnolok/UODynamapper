@@ -364,7 +364,7 @@ mod tests {
         const CLIENT_RULES_OVERRIDES: &str = "cover \"dress\" items=\"any\"\n";
         const ROBE_OUTFIT: &str = "human_male_robe_lantern";
         const SHIRT: u32 = 0x1517;
-        let rules = WearableRules::decode(include_str!("../../../../assets/runtime_specs/paperdoll/WearableRules.kdl"))
+        let rules = WearableRules::decode(include_str!("../../../assets/runtime_specs/paperdoll/WearableRules.kdl"))
             .unwrap();
         let stored_order = PaperdollOrder { rules: rules.clone(), overrides: PaperdollOverrides::default() };
         let client_order = PaperdollOrder {

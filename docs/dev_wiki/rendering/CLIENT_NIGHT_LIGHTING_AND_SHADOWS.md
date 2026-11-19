@@ -13,7 +13,7 @@ The client evidence is the KR atmosphere research, [`uokr_atmosphere.md`](../../
 Two other places carry user-facing descriptions of the same settings, and they must stay in line with this page:
 
 - the comments in `dynamapper/assets/defaults/shader_presets.toml` (the legend and the group headers);
-- the dialog tooltips in `dynamapper/src/core/render/dialogs/land_shader.rs`.
+- the dialog tooltips in `dynamapper/src/ui/dialogs/land_shader.rs`.
 
 ## Night lighting composite
 

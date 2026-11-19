@@ -437,7 +437,7 @@ pub fn add_diagnostics_plugins(app: &mut App, config: &SectWorldRenderingDiagnos
             // `SystemInformationDiagnosticsPlugin` is intentionally NOT used here:
             // it fails to initialize with dynamic_linking enabled (emits a 'not supported'
             // warning and returns no data). We read CPU/RAM directly via `sysinfo` instead
-            // (see `core/render/overlays/performance.rs`).
+            // (see `ui/overlays/performance.rs`).
 
             // GPU pipeline statistics (vertex/fragment invocations, clipper primitives).
             // On Vulkan/DX12 also provides GPU elapsed time per pass.

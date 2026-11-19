@@ -1,8 +1,6 @@
 pub(crate) mod assets;
-pub mod dialogs;
 pub mod lighting;
 pub mod terrain;
-pub mod overlays;
 pub mod scene;
 
 use crate::prelude::*;
@@ -23,10 +21,10 @@ impl Plugin for RenderPlugin {
             scene::ScenePlugin {
                 registered_by: "RenderPlugin",
             },
-            overlays::OverlaysPlugin {
+            crate::ui::overlays::OverlaysPlugin {
                 registered_by: "RenderPlugin",
             },
-            dialogs::DialogsPlugin {
+            crate::ui::dialogs::DialogsPlugin {
                 registered_by: "RenderPlugin",
             },
             scene::world::effects::fog_pass::FogPostProcessPlugin {

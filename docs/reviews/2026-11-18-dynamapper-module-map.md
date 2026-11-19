@@ -67,7 +67,7 @@ terrain, statics, lighting, picking, postprocess}`, `ui/`, `export/`, `diagnosti
 | `core/uo_files_loader.rs` | 1290 | 13 | Split package discovery from the runtime gump provider. |
 | `configs/land_routes.rs`, `core/render/assets/land/route_file.rs` | 1122 | 6 | The land route table and its file. |
 | `configs/land_texture_variation.rs` | 237 | 1 | |
-| `core/render/dialogs/paperdoll_overrides.rs` (+ `measure.rs`) | 605 | 0 | Composition and override policy; its window goes to `ui/`. |
+| `ui/dialogs/paperdoll_overrides.rs` (+ `measure.rs`) | 605 | 0 | Composition and override policy; its window goes to `ui/`. |
 
 ### input
 
@@ -101,11 +101,11 @@ terrain, statics, lighting, picking, postprocess}`, `ui/`, `export/`, `diagnosti
 
 | Now | Lines | Churn | Notes |
 |---|---:|---:|---|
-| `core/render/dialogs.rs`, `dialogs/{image_background, keybindings_help, teleport}.rs` | 507 | 0 | |
+| `ui/dialogs.rs`, `dialogs/{image_background, keybindings_help, teleport}.rs` | 507 | 0 | Moved 2026-11-19 with `overlays/` from `core/render/`; `RenderPlugin` still adds both plugins, in the same order. |
 | `dialogs/gump.rs` (+ `robe_edges.rs`), `paperdoll_ec.rs`, `paperdoll_menu.rs` | 3260 | 7 | |
 | `dialogs/preferences.rs` | 822 | 11 | The frame limiter settings leave for `diagnostics/`. |
 | `dialogs/land_shader.rs` (+ `tips.rs`) | 2184 | 52 | The per-frame uniform push leaves for `render/`. |
-| `core/render/overlays.rs`, `overlays/{player_position, sysmessages}.rs`, `ingame_sysmessage_logger.rs` | 426 | 1 | |
+| `ui/overlays.rs`, `overlays/{player_position, sysmessages}.rs`, `ingame_sysmessage_logger.rs` | 426 | 1 | |
 | `overlays/performance.rs` | 525 | 1 | |
 | `overlays/cursor_behavior.rs` | 971 | 2 | Presentation here; dispatch to `input/`, teleport to `world/`, picking to `render/picking`. |
 

@@ -194,11 +194,11 @@ fn what_the_gump_paperdolls_show_beneath_a_robe() {
     let package = udd_assets::PaperdollEcPackage::load(env_path("UDD_PAPERDOLL_EC")).unwrap();
     let profiles = PaperdollProfilesRes::load_from_str(
         PAPERDOLL_PROFILES_FILE_NAME,
-        include_str!("../../../../../assets/runtime_specs/paperdoll/PaperdollProfiles.kdl"),
+        include_str!("../../../../assets/runtime_specs/paperdoll/PaperdollProfiles.kdl"),
     )
     .unwrap();
     let rules =
-        WearableRules::decode(include_str!("../../../../../assets/runtime_specs/paperdoll/WearableRules.kdl")).unwrap();
+        WearableRules::decode(include_str!("../../../../assets/runtime_specs/paperdoll/WearableRules.kdl")).unwrap();
     let client_order = PaperdollOrder {
         rules: rules.clone(),
         overrides: PaperdollOverrides::decode(PAPERDOLL_OVERRIDES_FILE_NAME, CLIENT_RULES_OVERRIDES).unwrap(),
