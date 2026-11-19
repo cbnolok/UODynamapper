@@ -104,7 +104,7 @@ terrain, statics, lighting, picking, postprocess}`, `ui/`, `export/`, `diagnosti
 | `ui/dialogs.rs`, `dialogs/{image_background, keybindings_help, teleport}.rs` | 507 | 0 | Moved 2026-11-19 with `overlays/` from `render/`; `RenderPlugin` still adds both plugins, in the same order. |
 | `dialogs/gump.rs` (+ `robe_edges.rs`), `paperdoll_ec.rs`, `paperdoll_menu.rs` | 3260 | 7 | |
 | `dialogs/preferences.rs` | 822 | 11 | The frame limiter settings leave for `diagnostics/`. |
-| `dialogs/land_shader.rs` (+ `tips.rs`) | 2184 | 52 | The per-frame uniform push leaves for `render/`. |
+| `dialogs/land_shader.rs` (+ `tips.rs`) | 2184 | 52 | The per-frame uniform push moved 2026-11-19 to `render/terrain.rs` (`sys_push_land_uniforms_if_dirty`); the panel still registers it, in the same place. |
 | `ui/overlays.rs`, `overlays/{player_position, sysmessages}.rs`, `ingame_sysmessage_logger.rs` | 426 | 1 | |
 | `overlays/performance.rs` | 525 | 1 | |
 | `overlays/cursor_behavior.rs` | 971 | 2 | Presentation here; dispatch to `input/`, teleport to `world/`, picking to `render/picking`. |

@@ -141,6 +141,48 @@ pub struct DrawLandChunkMeshPlugin {
 }
 impl_tracked_plugin!(DrawLandChunkMeshPlugin);
 
+/// Writes the shader controls' uniforms (`UniformState`) into every land material when they changed, so a material
+/// not drawn this frame does not keep stale lighting. It first brings in line the values edited apart from the
+/// effects: the transition flags from the settings, the local light intensity and the land texture variation flag.
+/// The land shader panel registers it.
+pub fn sys_push_land_uniforms_if_dirty(
+    mut mats: ResMut<Assets<LandCustomMeshMaterial>>,
+    mut u: ResMut<crate::settings::shader_presets::UniformState>,
+    settings: Res<crate::settings::Settings>,
+) {
+    let transitions = settings.graphics.terrain_transition_flags();
+    if u.effects.terrain_transition_flags != transitions {
+        u.effects.terrain_transition_flags = transitions;
+        u.dirty = true;
+    }
+    // The local lights are edited apart from the effects: bring the intensity the shaders read in line.
+    if u.effects.local_light_intensity != mesh_material::local_light_intensity(u.local_lights.as_ref()) {
+        u.sync_local_light_intensity();
+        u.dirty = true;
+    }
+    // So is the land texture variation: bring the flag the shaders read in line.
+    if u.effects.land_texture_variation != u.land_texture_variation_flag() {
+        u.sync_land_texture_variation();
+        u.dirty = true;
+    }
+    if !u.dirty {
+        return;
+    }
+
+    for (_handle, mat) in mats.iter_mut() {
+        // Overwrite the embedded uniforms used by the material extension.
+        mat.extension.effects_uniform = u.effects;
+        mat.extension.global_lighting_uniform = u.lighting;
+        mat.extension.land_lighting_uniform = u.land_lighting;
+        mat.extension.scene_uniform.light_direction = u.sun.light_direction();
+
+        // The land shaders read the global lighting from the scene uniform.
+        mat.extension.scene_uniform.global_lighting = u.global_lighting;
+    }
+
+    u.dirty = false;
+}
+
 pub fn sys_update_shared_land_material(
     mut materials: ResMut<Assets<LandCustomMeshMaterial>>,
     shared_mat: Option<Res<draw_mesh::SharedLandMaterial>>,

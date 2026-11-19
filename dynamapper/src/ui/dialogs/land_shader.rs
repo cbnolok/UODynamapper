@@ -55,7 +55,7 @@ impl Plugin for LandUiPlugin {
             .add_observer(sys_shader_ui_toggle)
             .add_systems(EguiPrimaryContextPass, land_ui_system)
             // Push "dirty" values into GPU materials
-            .add_systems(Update, push_uniforms_if_dirty);
+            .add_systems(Update, crate::render::terrain::sys_push_land_uniforms_if_dirty);
     }
 }
 
@@ -1009,48 +1009,6 @@ pub fn land_ui_system(
         u.saved_snapshot = Some(u.snapshot());
     }
     *was_open = ui_state.open;
-}
-
-// push_uniforms_if_dirty updates ALL LandCustomMaterial assets.
-// That guarantees that materials not referenced this frame still get the new values
-// (fixes "stale lighting when moving" problem).
-fn push_uniforms_if_dirty(
-    mut mats: ResMut<Assets<LandCustomMeshMaterial>>,
-    mut u: ResMut<UniformState>,
-    settings: Res<Settings>,
-) {
-    let transitions = settings.graphics.terrain_transition_flags();
-    if u.effects.terrain_transition_flags != transitions {
-        u.effects.terrain_transition_flags = transitions;
-        u.dirty = true;
-    }
-    // The local lights are edited apart from the effects: bring the intensity the shaders read in line.
-    if u.effects.local_light_intensity != local_light_intensity(u.local_lights.as_ref()) {
-        u.sync_local_light_intensity();
-        u.dirty = true;
-    }
-    // So is the land texture variation: bring the flag the shaders read in line.
-    if u.effects.land_texture_variation != u.land_texture_variation_flag() {
-        u.sync_land_texture_variation();
-        u.dirty = true;
-    }
-    if !u.dirty {
-        return;
-    }
-
-    for (_handle, mat) in mats.iter_mut() {
-        // Overwrite the embedded uniforms used by the material extension.
-        mat.extension.effects_uniform = u.effects;
-        mat.extension.global_lighting_uniform = u.lighting;
-        mat.extension.land_lighting_uniform = u.land_lighting;
-        mat.extension.scene_uniform.light_direction = u.sun.light_direction();
-
-        // NEW: write global lighting into the land uniform so shader sees it
-        // NOTE: adjust the path if your extension uses a different name for the land UBO.
-        mat.extension.scene_uniform.global_lighting = u.global_lighting;
-    }
-
-    u.dirty = false;
 }
 
 // ============================ UI HELPERS =================================
