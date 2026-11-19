@@ -46,7 +46,7 @@ use crate::package_progress::{
     build_and_write_package_with_progress,
 };
 use crate::conversion_tables::{EC_TERRAIN_OVERRIDES_KDL, TERRAIN_TRANSCODE_KDL};
-use crate::page_compression::{page_compression_in_strips, LOSSLESS_PAGE_COMPRESSION};
+use crate::page_compression::{atlas_page_compression, LOSSLESS_PAGE_COMPRESSION};
 use crate::source_paths::{find_first_existing_file, source_path_label_from_dirs};
 use udd_assets::tex_art_cc::{page_entry_path, PagePixelFormat};
 use uocf::utils::bundled_files;
@@ -854,7 +854,7 @@ pub(crate) fn build_land_package(
     for (page_path, encoded, width, height) in encoded_pages {
         package.add_owned_file(AddOwnedFileRequest {
             data_type: DataType::Texture as u8,
-            compression: page_compression_in_strips(compression, pixel_format, width),
+            compression: atlas_page_compression(compression, pixel_format, width),
             width,
             height,
             virtual_path: Some(page_path),

@@ -158,7 +158,14 @@ pub enum Codec {
 
     /// Zstd with dictionary resolved implicitly from the file type.
     ZstdTypeDict = 2,
+
+    /// One LZ4 block compressed at [`LZ4_HC_LEVEL`]: larger than Zstd, and about four times as fast to decode.
+    Lz4Hc = 3,
 }
+
+/// The LZ4 HC level the builder compresses at, the library's highest. Decoding doesn't depend on it, but patching
+/// stores a payload again at this level, so it must not change while packages built with it are patched.
+pub const LZ4_HC_LEVEL: i32 = 12;
 
 impl Codec {
     pub fn from_u8(v: u8) -> Result<Self, FormatError> {
@@ -166,6 +173,7 @@ impl Codec {
             0 => Ok(Self::None),
             1 => Ok(Self::ZstdNoDict),
             2 => Ok(Self::ZstdTypeDict),
+            3 => Ok(Self::Lz4Hc),
             _ => Err(FormatError::InvalidCodec(v)),
         }
     }
@@ -197,6 +205,14 @@ pub enum CompressionFlag {
 
     /// Force Zstd compression with the implicit type dictionary.
     ZstdDict,
+
+    /// Force LZ4 HC at [`LZ4_HC_LEVEL`].
+    Lz4Hc,
+
+    /// LZ4 HC when it is at most `lz4_hc_max_growth_percent` larger than one Zstd frame at `level`, and otherwise Zstd
+    /// as [`CompressionFlag::ZstdStripsWhenWorthLevel`] stores it: the builder compresses each way and keeps one.
+    /// LZ4 HC payloads are one block, never in strips.
+    ZstdOrLz4HcLevel { level: i32, strip_bytes: u32, strips: StripsWorth, lz4_hc_max_growth_percent: u32 },
 }
 
 /// When a payload is worth storing in strips: when it is large enough to decode slowly as one frame, and the strips
@@ -246,7 +262,7 @@ pub enum DataType {
 ///
 /// Layout:
 /// - bits  0..= 5 : type (6 bits)
-/// - bits  6..= 7 : codec (2 bits)
+/// - bits  6..= 7 : codec (2 bits, all four values in use: see [`Codec`])
 /// - bits  8..=15 : high 8 bits of the compression delta
 /// - bit  16      : independent frames: a Zstd payload stored as several frames that decode in parallel
 /// - bits 17..=31 : reserved

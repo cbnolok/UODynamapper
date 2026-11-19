@@ -36,7 +36,7 @@ use crate::package_progress::{
     AssetProgressReporter, AssetTaskProgressStage,
     build_and_write_package_with_progress,
 };
-use crate::page_compression::{page_compression_in_strips, LOSSLESS_PAGE_COMPRESSION};
+use crate::page_compression::{atlas_page_compression, LOSSLESS_PAGE_COMPRESSION};
 use crate::source_paths::{find_first_existing_file, source_path_label};
 use udd_assets::tex_art_cc::PagePixelFormat;
 use udd_assets::tex_land_cc::{
@@ -396,7 +396,7 @@ pub fn convert_texmaps_mul_to_tex_land_cc_uddp_with_patches_and_progress(
     for (page_path, encoded, width, height) in encoded_pages {
         package.add_owned_file(AddOwnedFileRequest {
             data_type: DataType::Texture as u8,
-            compression: page_compression_in_strips(options.compression, pixel_format, width),
+            compression: atlas_page_compression(options.compression, pixel_format, width),
             width,
             height,
             virtual_path: Some(page_path),

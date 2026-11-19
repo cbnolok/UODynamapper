@@ -10,7 +10,7 @@ use std::collections::HashMap;
 
 use std::sync::{Arc, RwLock};
 
-use super::support::{checked_region, unpack_codec_id, zstd_decompress, Cursor};
+use super::support::{checked_region, lz4_decompress, zstd_decompress, Cursor};
 use zstd::dict::DecoderDictionary;
 use memmap2::Mmap;
 use super::*;
@@ -456,7 +456,6 @@ impl UddpReader {
                 for _ in 0..count {
                     entries.push(UddpLocator::read_from(&mut cur)?);
                 }
-                check_locator_codecs(entries.iter())?;
                 self.dense_index = Some(entries);
             }
             LookupMode::VirtualPathHash => {
@@ -466,7 +465,6 @@ impl UddpReader {
                 for _ in 0..count {
                     entries.push(UddpPathEntry::read_from(&mut cur)?);
                 }
-                check_locator_codecs(entries.iter().map(|entry| &entry.locator))?;
                 self.path_index = Some(entries);
             }
             LookupMode::SparseId => {
@@ -476,7 +474,6 @@ impl UddpReader {
                 for _ in 0..count {
                     entries.push(UddpSparseIdEntry::read_from(&mut cur)?);
                 }
-                check_locator_codecs(entries.iter().map(|entry| &entry.locator))?;
                 self.sparse_index = Some(entries);
             }
         }
@@ -494,7 +491,7 @@ impl UddpReader {
     fn decode_locator_cow(&self, locator: &UddpLocator) -> Result<Cow<'_, [u8]>, FormatError> {
         match unpack_codec(locator.meta32) {
             Codec::None => Ok(Cow::Borrowed(self.locator_payload(locator)?)),
-            Codec::ZstdNoDict | Codec::ZstdTypeDict => self.decode_locator(locator).map(Cow::Owned),
+            Codec::ZstdNoDict | Codec::ZstdTypeDict | Codec::Lz4Hc => self.decode_locator(locator).map(Cow::Owned),
         }
     }
 
@@ -515,6 +512,7 @@ impl UddpReader {
                         .ok_or(FormatError::MissingDictionary(data_type))?;
                     zstd_decompress(data, locator.raw_size as usize, Some(dict), false).map_err(FormatError::Io)?
                 }
+                Codec::Lz4Hc => lz4_decompress(data, locator.raw_size as usize).map_err(FormatError::Io)?,
             };
 
             Ok(decoded)
@@ -522,11 +520,4 @@ impl UddpReader {
     }
 }
 
-/// Refuses a package whose index names an unknown codec, so the decoders and [`unpack_codec`] only ever meet current
-/// codecs.
-fn check_locator_codecs<'a>(locators: impl Iterator<Item = &'a UddpLocator>) -> Result<(), FormatError> {
-    for locator in locators {
-        Codec::from_u8(unpack_codec_id(locator.meta32))?;
-    }
-    Ok(())
-}
+

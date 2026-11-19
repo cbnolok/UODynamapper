@@ -153,6 +153,7 @@ fn codec_compression(codec: Codec) -> CompressionFlag {
         Codec::None => CompressionFlag::None,
         Codec::ZstdNoDict => CompressionFlag::ZstdNoDict,
         Codec::ZstdTypeDict => CompressionFlag::ZstdDict,
+        Codec::Lz4Hc => CompressionFlag::Lz4Hc,
     }
 }
 

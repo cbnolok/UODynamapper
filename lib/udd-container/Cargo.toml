@@ -16,6 +16,8 @@ too_many_arguments = "allow"
 [dependencies]
 xxhash-rust = { version = "0.8", default-features = false, features = ["xxh64"] }
 zstd.workspace = true
+# LZ4 HC (codec 3): lz4_flex has no high-compression encoder, and the C library's level is what the measurements used.
+lz4 = "1.28"
 byteorder.workspace = true
 rayon.workspace = true
 memmap2 = "0.9"

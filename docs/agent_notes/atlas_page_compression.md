@@ -192,7 +192,8 @@ Every page in 128-row strips makes `tex_art_ec.uddp` and `tex_land_ec.uddp` 8.5 
 a page of at least 12 MiB raw whose one frame is at least 3 MiB and whose strips add at most 10 %. That puts 5 of the
 9 art pages and 1 of the 6 land pages in strips; the packages grow by 4.3 % and 2.2 % (62.8 and 21.6 MB), with
 byte-identical pages. Read through `udd-container`, all art pages take 367 ms instead of 759, all land pages 130 ms
-instead of 159; a page in strips takes 8–9 ms instead of 62–86. Classic pages and gumps stay one frame.
+instead of 159; a page in strips takes 8–9 ms instead of 62–86. Classic pages and gumps stay one frame, but for the
+densest Classic land page (4.07 MiB in one frame, +9.8 % in strips, repacked on 2026-11-19).
 
 The strip height is a multiple of 8 rows, so a strip holds whole block rows of BC7 and of 4×4 and 8×8 ASTC pages, and a
 decoded strip could go straight to its rows of a block-compressed texture. The frames are stored one after another as
@@ -243,7 +244,7 @@ pages and 5–24 % on RGBA (Classic land the most).
   1 keeps it at 3.4–10×.
 - **LZ4 HC suits block pages:** on Enhanced art 4× BC7 RDO 1 it is 20 % larger than Zstd 19 (18.7 against 15.6 MiB)
   and decodes on one thread in 11 ms, as fast as Zstd 19 in strips on 8 threads (11.2 ms) and 8× as fast as Zstd 19 on
-  one. The codec value 3 is free in Meta32 if a block package wants it.
+  one. It became codec 3 (see "LZ4 HC within 20 %" below).
 
 ### When strips pay
 
@@ -258,6 +259,30 @@ whole pages:
 
 The writer decides this for itself (`CompressionFlag::ZstdStripsWhenWorthLevel`): it compresses the strips (in
 parallel, so cheap beside the one frame) and keeps them when the page is large and they cost less than the limit.
+
+### LZ4 HC within 20 %
+
+LZ4 HC is Meta32 codec 3 (`Codec::Lz4Hc`, the `lz4` crate's level 12, `LZ4_HC_LEVEL`): one LZ4 block with no size
+prefix, the raw size from the locator. The writer stores a page as LZ4 HC when that is at most 20 % larger than the page
+in one Zstd frame, and otherwise as Zstd, in strips when they pay (`CompressionFlag::ZstdOrLz4HcLevel`; the converter's
+`atlas_page_compression`, `PAGE_LZ4_HC_MAX_GROWTH_PERCENT`; the user, 2026-11-19: "let's use 20% as threshold"). It
+compresses both side by side. A patch re-stores an LZ4 HC payload as LZ4 HC; LZ4 HC is deterministic at a fixed
+level, so the rebuilt package is byte for byte the one patched to.
+
+Every page of the 2026-11-19 repack, one thread, best of 5 (Zstd 19 one frame against LZ4 HC 12):
+
+| Package | Pages | LZ4 HC larger by | Decode, Zstd 19 → LZ4 HC | LZ4 HC kept |
+|---|---:|---:|---:|---:|
+| `tex_art_ec`, BC7 (`--bc7`), 8 MiB pages | 10 | +16.6–32.4 % | 9.5–13.0 → 2.9–3.7 ms | 1 |
+| `tex_land_ec`, BC7, 4 MiB pages | 6 | +25.5–49.7 % | 2.3–6.4 → 0.8–1.8 ms | 0 |
+| `tex_art_ec`, RGBA (default) | 9 | +52.3–73.1 % | 28–83 → 10–34 ms | 0 |
+| `tex_art_cc`, RGBA (default) | 46 | +43.8–130.5 % | 5.1–12.3 → 3.0–6.0 ms | 0 |
+
+- **Only one page is LZ4 HC at 1×:** the default packages are lossless RGBA, where LZ4 HC costs 44–131 %, so they come
+  out byte for byte as before (`tex_land_cc` and `gumps_ec` changed only by the strips rule and the gump packer, which
+  they predated). Of the BC7 pages, most of the art lands just above the limit (+21–25 %), and the land further.
+- **The rule pays on upscaled block pages,** where LZ4 HC was +20 % on 4× Enhanced BC7 RDO 1 (above), and on the
+  animation blocks (`uddp_anim_format_requirements.md`: +14–17 % for the uniform crowds at 2× and 3×).
 
 ### BC1 with RDO
 

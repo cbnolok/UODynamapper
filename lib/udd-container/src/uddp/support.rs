@@ -52,16 +52,15 @@ pub fn unpack_type(meta32: Meta32) -> u8 {
     (meta32 & 0x3F) as u8
 }
 
-/// Extract the raw 2-bit codec id from a packed metadata word, which may be a removed codec's id.
+/// Extract the raw 2-bit codec id from a packed metadata word.
 #[inline(always)]
 pub(crate) fn unpack_codec_id(meta32: Meta32) -> u8 {
     ((meta32 >> 6) & 0x03) as u8
 }
 
-/// Extract the 2-bit codec from a packed metadata word of an opened package. The reader refuses a package with a
-/// removed codec's id when it opens it, so every locator it hands out has a current codec.
+/// Extract the 2-bit codec from a packed metadata word. Every value of the field names a codec.
 pub fn unpack_codec(meta32: Meta32) -> Codec {
-    Codec::from_u8(unpack_codec_id(meta32)).expect("the reader refuses removed codec ids at open")
+    Codec::from_u8(unpack_codec_id(meta32)).expect("all four 2-bit codec ids are codecs")
 }
 
 /// Extract the high 8 bits of the 32-bit compression delta.
@@ -99,7 +98,7 @@ pub fn unpack_delta32(meta32: Meta32, pos64: Pos64) -> u32 {
 pub fn reconstruct_stored_size(raw_size: u32, meta32: Meta32, pos64: Pos64) -> u32 {
     match unpack_codec(meta32) {
         Codec::None => raw_size,
-        Codec::ZstdNoDict | Codec::ZstdTypeDict => raw_size - unpack_delta32(meta32, pos64),
+        Codec::ZstdNoDict | Codec::ZstdTypeDict | Codec::Lz4Hc => raw_size - unpack_delta32(meta32, pos64),
     }
 }
 
@@ -180,6 +179,22 @@ pub(crate) fn zstd_compress_with_dict_parallel(data: &[u8], dict: &[u8]) -> std:
 /// Zstd at `level` as independent frames of `strip_bytes` raw bytes each (the last one shorter), compressed in
 /// parallel and stored one after another. Its payload is marked with [`META32_INDEPENDENT_FRAMES`], so that
 /// [`zstd_decompress`] decodes the frames in parallel.
+/// One LZ4 block of `data` at [`LZ4_HC_LEVEL`], with no size prefix: the locator holds the raw size.
+pub(crate) fn lz4_hc_compress(data: &[u8]) -> std::io::Result<Vec<u8>> {
+    lz4::block::compress(data, Some(lz4::block::CompressionMode::HIGHCOMPRESSION(LZ4_HC_LEVEL)), false)
+}
+
+/// The `raw_size` bytes of one LZ4 block; anything else is damage.
+pub(crate) fn lz4_decompress(data: &[u8], raw_size: usize) -> std::io::Result<Vec<u8>> {
+    let declared = i32::try_from(raw_size).map_err(|_| std::io::Error::other("LZ4 payload too large"))?;
+    let mut decoded = vec![0u8; raw_size];
+    let written = lz4::block::decompress_to_buffer(data, Some(declared), &mut decoded)?;
+    if written != raw_size {
+        return Err(std::io::Error::other("LZ4 payload decodes to the wrong size"));
+    }
+    Ok(decoded)
+}
+
 pub(crate) fn zstd_compress_strips(data: &[u8], level: i32, strip_bytes: u32) -> std::io::Result<Vec<u8>> {
     use rayon::prelude::*;
     if strip_bytes == 0 {

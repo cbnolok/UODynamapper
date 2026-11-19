@@ -134,6 +134,12 @@ fn compression_message(summary: CompressionSummary) -> String {
     if zstd > 0 {
         parts.push(format!("Zstd payload pass: {zstd} files"));
     }
+    if summary.lz4_hc > 0 {
+        parts.push(format!("LZ4 HC payload pass: {} files", summary.lz4_hc));
+    }
+    if summary.zstd_or_lz4_hc > 0 {
+        parts.push(format!("Zstd or LZ4 HC payload pass: {} files", summary.zstd_or_lz4_hc));
+    }
     if summary.auto > 0 {
         parts.push(format!("auto compression evaluation: {} files", summary.auto));
     }
@@ -161,6 +167,8 @@ fn active_file_message(file: BuildProgressFile) -> String {
         CompressionFlag::ZstdStripsLevel { .. } => "Zstd strips",
         CompressionFlag::ZstdStripsWhenWorthLevel { .. } => "Zstd, in strips if they pay",
         CompressionFlag::ZstdDict => "Zstd dictionary",
+        CompressionFlag::Lz4Hc => "LZ4 HC",
+        CompressionFlag::ZstdOrLz4HcLevel { .. } => "Zstd or LZ4 HC",
         CompressionFlag::Auto => "auto",
         CompressionFlag::None => "raw",
     };
@@ -213,6 +221,8 @@ pub fn atlas_payload_progress_message(
             | CompressionFlag::ZstdStripsLevel { .. }
             | CompressionFlag::ZstdStripsWhenWorthLevel { .. }
             | CompressionFlag::ZstdDict
+            | CompressionFlag::Lz4Hc
+            | CompressionFlag::ZstdOrLz4HcLevel { .. }
             | CompressionFlag::Auto => format!("registering {subject} for package compression"),
         }
     }
@@ -238,6 +248,8 @@ pub fn atlas_payload_finish_message(
             | CompressionFlag::ZstdStripsLevel { .. }
             | CompressionFlag::ZstdStripsWhenWorthLevel { .. }
             | CompressionFlag::ZstdDict
+            | CompressionFlag::Lz4Hc
+            | CompressionFlag::ZstdOrLz4HcLevel { .. }
             | CompressionFlag::Auto => format!("{subject} registered for package compression"),
         }
     }

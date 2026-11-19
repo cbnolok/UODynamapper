@@ -7112,6 +7112,7 @@ name = "udd-container"
 version = "0.1.0"
 dependencies = [
  "byteorder",
+ "lz4",
  "memmap2",
  "rayon",
  "workspace-hack",

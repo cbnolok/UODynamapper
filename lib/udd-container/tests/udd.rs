@@ -275,48 +275,6 @@ fn decoded_entry_cache_reads_repeated_compressed_entry() {
     );
 }
 
-/// Where a path-hash index entry keeps its locator's `meta32`: after the u64 path hash and the u32 raw size.
-const PATH_ENTRY_META32_OFFSET: usize = 8 + 4;
-/// The 2-bit codec field of `meta32`.
-const META32_CODEC_SHIFT: u32 = 6;
-const META32_CODEC_MASK: u32 = 0x03;
-
-/// The codec id no current codec uses, which the 2-bit codec field can still hold.
-const UNKNOWN_CODEC_ID: u32 = 3;
-
-/// A package whose one entry names [`UNKNOWN_CODEC_ID`].
-fn package_with_unknown_codec() -> Vec<u8> {
-    let mut builder = UddpBuilder::new(LookupMode::VirtualPathHash);
-    builder
-        .add_file(AddFileRequest {
-            data_type: DataType::Texture as u8,
-            compression: CompressionFlag::ZstdNoDict,
-            width: 0,
-            height: 0,
-            virtual_path: Some("pages/0000.rgba8888"),
-            path_hash64: None,
-            id: None,
-            data: &[0x11; 4096],
-        })
-        .expect("add page");
-    let mut bytes = builder.build().expect("build package");
-    let index_offset = UddpReader::open(bytes.clone()).expect("open package").header().index_offset as usize;
-    let meta32_at = index_offset + PATH_ENTRY_META32_OFFSET;
-    let meta32 = u32::from_le_bytes(bytes[meta32_at..meta32_at + 4].try_into().expect("meta32 bytes"));
-    let meta32 = (meta32 & !(META32_CODEC_MASK << META32_CODEC_SHIFT)) | (UNKNOWN_CODEC_ID << META32_CODEC_SHIFT);
-    bytes[meta32_at..meta32_at + 4].copy_from_slice(&meta32.to_le_bytes());
-    bytes
-}
-
-#[test]
-fn a_package_with_an_unknown_codec_fails_to_open() {
-    let error = UddpReader::open(package_with_unknown_codec()).err().expect("the unknown codec is refused");
-    assert!(
-        matches!(error, udd_container::uddp::FormatError::InvalidCodec(codec) if u32::from(codec) == UNKNOWN_CODEC_ID),
-        "{error:?}"
-    );
-}
-
 #[test]
 fn dense_id_package_roundtrip_reads_entries() {
     let mut builder = UddpBuilder::new(LookupMode::DenseId);
@@ -556,6 +514,59 @@ fn uddpi_patch_keeps_strips_of_untouched_payloads() {
         frames += 1;
     }
     assert_eq!(frames, STRIPS);
+}
+
+/// A patch stores LZ4 HC payloads again as LZ4 HC, replaced or untouched, at the level the builder used: the rebuilt
+/// package matches the new one byte for byte, which `apply_patch` checks through the package hash.
+#[test]
+fn uddpi_patch_keeps_lz4_hc_payloads() {
+    const PAYLOAD_BYTES: usize = 256 * 1024;
+    let replaced = "metadata/replaced.bin";
+    let untouched = "metadata/untouched.bin";
+    let payload = |seed: usize| -> Vec<u8> { (0..PAYLOAD_BYTES).map(|index| (index * 7 / 5 + index / 4096 + seed) as u8).collect() };
+    let untouched_payload = payload(0);
+    let package = |replaced_payload: &[u8]| {
+        let mut builder = UddpBuilder::new(LookupMode::VirtualPathHash);
+        for (path, data) in [(replaced, replaced_payload), (untouched, untouched_payload.as_slice())] {
+            builder
+                .add_file(AddFileRequest {
+                    data_type: DataType::Texture as u8,
+                    compression: CompressionFlag::Lz4Hc,
+                    width: 0, height: 0,
+                    virtual_path: Some(path),
+                    path_hash64: None,
+                    id: None,
+                    data,
+                })
+                .expect("add payload");
+        }
+        builder.build().expect("build package")
+    };
+    let (old_payload, new_payload) = (payload(1), payload(2));
+    let base_bytes = package(&old_payload);
+    let new_bytes = package(&new_payload);
+    let mut patch_builder = UddpiBuilder::new(
+        LookupMode::VirtualPathHash,
+        canonical_package_hash64(&base_bytes),
+        canonical_package_hash64(&new_bytes),
+    );
+    patch_builder.add_path_replacement(
+        xxh64_virtual_path(replaced),
+        xxh64(&old_payload, 0),
+        xxh64(&new_payload, 0),
+        new_payload.clone(),
+        DataType::Texture as u8,
+    );
+    let patch_bytes = patch_builder.build().expect("build patch");
+    let rebuilt_bytes = UddpiApplier::apply_patch(&base_bytes, &patch_bytes).expect("apply patch");
+
+    assert_eq!(rebuilt_bytes, new_bytes);
+    let rebuilt = UddpReader::open(rebuilt_bytes).expect("open rebuilt");
+    for (path, data) in [(replaced, &new_payload), (untouched, &untouched_payload)] {
+        let record = rebuilt.records().into_iter().find(|record| record.key == FileKey::PathHash(xxh64_virtual_path(path))).expect("record");
+        assert_eq!(unpack_codec(record.locator.meta32), Codec::Lz4Hc, "{path}");
+        assert_eq!(&rebuilt.read_file_by_path_hash(xxh64_virtual_path(path)).expect("read payload"), data);
+    }
 }
 
 #[test]

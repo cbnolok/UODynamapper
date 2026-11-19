@@ -16,7 +16,7 @@ use rayon::prelude::*;
 use xxhash_rust::xxh64::Xxh64;
 
 use super::support::{
-    patch_header_package_hash64, zstd_compress, zstd_compress_level, zstd_compress_level_parallel,
+    lz4_hc_compress, patch_header_package_hash64, zstd_compress, zstd_compress_level, zstd_compress_level_parallel,
     zstd_compress_parallel, zstd_compress_strips, zstd_default_level, zstd_compress_with_dict, zstd_compress_with_dict_parallel,
 };
 use super::*;
@@ -157,6 +157,8 @@ pub struct CompressionSummary {
     pub raw: usize,
     pub zstd_no_dict: usize,
     pub zstd_dict: usize,
+    pub lz4_hc: usize,
+    pub zstd_or_lz4_hc: usize,
     pub auto: usize,
 }
 
@@ -170,6 +172,8 @@ impl CompressionSummary {
             | CompressionFlag::ZstdStripsLevel { .. }
             | CompressionFlag::ZstdStripsWhenWorthLevel { .. } => self.zstd_no_dict += 1,
             CompressionFlag::ZstdDict => self.zstd_dict += 1,
+            CompressionFlag::Lz4Hc => self.lz4_hc += 1,
+            CompressionFlag::ZstdOrLz4HcLevel { .. } => self.zstd_or_lz4_hc += 1,
             CompressionFlag::Auto => self.auto += 1,
         }
     }
@@ -730,6 +734,7 @@ pub(crate) fn codec_to_compression_flag(codec: Codec) -> CompressionFlag {
         Codec::None => CompressionFlag::None,
         Codec::ZstdNoDict => CompressionFlag::ZstdNoDict,
         Codec::ZstdTypeDict => CompressionFlag::ZstdDict,
+        Codec::Lz4Hc => CompressionFlag::Lz4Hc,
     }
 }
 
@@ -1144,18 +1149,45 @@ fn zstd_level_one_frame(data: &[u8], level: i32) -> std::io::Result<Vec<u8>> {
     }
 }
 
-/// Zstd at `level` in strips of `strip_bytes` when they pay by `worth`, and otherwise in one frame. Returns the payload
-/// and whether it is in strips.
-fn zstd_strips_when_worth(data: &[u8], level: i32, strip_bytes: u32, worth: StripsWorth) -> std::io::Result<(Vec<u8>, bool)> {
-    const PERCENT: u64 = 100;
+const PERCENT: u64 = 100;
+
+/// Whether `size` is at most `max_growth_percent` larger than `base`.
+fn within_growth(size: usize, base: usize, max_growth_percent: u32) -> bool {
+    size as u64 * PERCENT <= base as u64 * (PERCENT + u64::from(max_growth_percent))
+}
+
+/// Zstd at `level` in strips of `strip_bytes` when they pay by `worth`, and otherwise in one frame. Returns the payload,
+/// whether it is in strips, and the size of the one frame.
+fn zstd_strips_when_worth(data: &[u8], level: i32, strip_bytes: u32, worth: StripsWorth) -> std::io::Result<(Vec<u8>, bool, usize)> {
     if (data.len() as u64) < u64::from(worth.min_raw_bytes) {
-        return Ok((zstd_level_one_frame(data, level)?, false));
+        let one = zstd_level_one_frame(data, level)?;
+        let one_bytes = one.len();
+        return Ok((one, false, one_bytes));
     }
     let (one, strips) = rayon::join(|| zstd_level_one_frame(data, level), || zstd_compress_strips(data, level, strip_bytes));
     let (one, strips) = (one?, strips?);
-    let pays = one.len() as u64 >= u64::from(worth.min_frame_bytes)
-        && strips.len() as u64 * PERCENT <= one.len() as u64 * (PERCENT + u64::from(worth.max_growth_percent));
-    Ok(if pays { (strips, true) } else { (one, false) })
+    let one_bytes = one.len();
+    let pays = one_bytes as u64 >= u64::from(worth.min_frame_bytes) && within_growth(strips.len(), one_bytes, worth.max_growth_percent);
+    Ok(if pays { (strips, true, one_bytes) } else { (one, false, one_bytes) })
+}
+
+/// [`CompressionFlag::ZstdOrLz4HcLevel`]: LZ4 HC when it is within `lz4_hc_max_growth_percent` of one Zstd frame at
+/// `level`, and otherwise Zstd as [`zstd_strips_when_worth`] stores it. Returns the codec, the payload and whether it
+/// is in strips.
+fn zstd_or_lz4_hc(
+    data: &[u8],
+    level: i32,
+    strip_bytes: u32,
+    strips: StripsWorth,
+    lz4_hc_max_growth_percent: u32,
+) -> std::io::Result<(Codec, Vec<u8>, bool)> {
+    let (zstd, lz4) = rayon::join(|| zstd_strips_when_worth(data, level, strip_bytes, strips), || lz4_hc_compress(data));
+    let ((zstd, in_strips, one_frame_bytes), lz4) = (zstd?, lz4?);
+    Ok(if within_growth(lz4.len(), one_frame_bytes, lz4_hc_max_growth_percent) {
+        (Codec::Lz4Hc, lz4, false)
+    } else {
+        (Codec::ZstdNoDict, zstd, in_strips)
+    })
 }
 
 fn compress_file(
@@ -1188,10 +1220,17 @@ fn compress_file(
             (Codec::ZstdNoDict, zstd_compress_strips(data_to_compress, level, strip_bytes).map_err(BuildError::Io)?)
         }
         CompressionFlag::ZstdStripsWhenWorthLevel { level, strip_bytes, worth } => {
-            let (encoded, strips) =
+            let (encoded, strips, _) =
                 zstd_strips_when_worth(data_to_compress, level, strip_bytes, worth).map_err(BuildError::Io)?;
             in_strips = strips;
             (Codec::ZstdNoDict, encoded)
+        }
+        CompressionFlag::Lz4Hc => (Codec::Lz4Hc, lz4_hc_compress(data_to_compress).map_err(BuildError::Io)?),
+        CompressionFlag::ZstdOrLz4HcLevel { level, strip_bytes, strips, lz4_hc_max_growth_percent } => {
+            let (codec, encoded, striped) =
+                zstd_or_lz4_hc(data_to_compress, level, strip_bytes, strips, lz4_hc_max_growth_percent).map_err(BuildError::Io)?;
+            in_strips = striped;
+            (codec, encoded)
         }
         CompressionFlag::ZstdDict => {
             let dict = dicts_by_type
@@ -1278,10 +1317,17 @@ fn compress_file_owned(
             (Codec::ZstdNoDict, zstd_compress_strips(data_to_compress, level, strip_bytes).map_err(BuildError::Io)?)
         }
         CompressionFlag::ZstdStripsWhenWorthLevel { level, strip_bytes, worth } => {
-            let (encoded, strips) =
+            let (encoded, strips, _) =
                 zstd_strips_when_worth(data_to_compress, level, strip_bytes, worth).map_err(BuildError::Io)?;
             in_strips = strips;
             (Codec::ZstdNoDict, encoded)
+        }
+        CompressionFlag::Lz4Hc => (Codec::Lz4Hc, lz4_hc_compress(data_to_compress).map_err(BuildError::Io)?),
+        CompressionFlag::ZstdOrLz4HcLevel { level, strip_bytes, strips, lz4_hc_max_growth_percent } => {
+            let (codec, encoded, striped) =
+                zstd_or_lz4_hc(data_to_compress, level, strip_bytes, strips, lz4_hc_max_growth_percent).map_err(BuildError::Io)?;
+            in_strips = striped;
+            (codec, encoded)
         }
         CompressionFlag::ZstdDict => {
             let dict = dicts_by_type
@@ -1802,6 +1848,68 @@ mod tests {
         let package = UddpReader::open(builder.into_bytes().expect("build package")).expect("open package");
         for (id, data, striped) in &cases {
             let record = package.records().into_iter().find(|record| record.key == FileKey::Id(*id)).expect("record");
+            assert_eq!(unpack_independent_frames(record.locator.meta32), *striped, "payload {id}");
+            assert_eq!(&package.read_file_by_dense_id(*id).expect("read payload"), data);
+        }
+    }
+
+    /// "Zstd or LZ4 HC" keeps LZ4 HC only within its growth limit of one Zstd frame. A random block repeated a few
+    /// times codes to about one copy either way, so LZ4 HC is kept; sixteen-valued noise compresses by entropy alone, which LZ4 lacks,
+    /// so Zstd is kept, in strips when they pay; a forced LZ4 HC payload is LZ4 HC.
+    #[test]
+    fn zstd_or_lz4_hc_keeps_lz4_hc_only_within_its_growth() {
+        const LEVEL: i32 = 19;
+        const STRIP_BYTES: u32 = 256 * 1024;
+        const LARGE_BYTES: usize = 16 * STRIP_BYTES as usize;
+        // Inside LZ4's 64 KiB match window, and repeated a few times only: LZ4 spends a byte on every 255 of a match.
+        const REPEATED_BLOCK_BYTES: usize = 32 * 1024;
+        const REPEATS: usize = 4;
+        const STRIPS: StripsWorth = StripsWorth { min_raw_bytes: 4 * STRIP_BYTES, min_frame_bytes: 0, max_growth_percent: 10 };
+        const LZ4_HC_MAX_GROWTH_PERCENT: u32 = 20;
+        const NOISE_VALUES: u64 = 16;
+        const BYTE_VALUES: u64 = 256;
+        let noise = |len: usize, values: u64| -> Vec<u8> {
+            let mut state = 0x9E37_79B9_7F4A_7C15u64;
+            (0..len)
+                .map(|_| {
+                    state ^= state << 13;
+                    state ^= state >> 7;
+                    state ^= state << 17;
+                    (state % values) as u8
+                })
+                .collect()
+        };
+        let repeated: Vec<u8> = noise(REPEATED_BLOCK_BYTES, BYTE_VALUES).repeat(REPEATS);
+        let rule = CompressionFlag::ZstdOrLz4HcLevel {
+            level: LEVEL,
+            strip_bytes: STRIP_BYTES,
+            strips: STRIPS,
+            lz4_hc_max_growth_percent: LZ4_HC_MAX_GROWTH_PERCENT,
+        };
+        let cases = [
+            (0u32, rule, repeated.clone(), Codec::Lz4Hc, false),
+            (1, rule, noise(LARGE_BYTES, NOISE_VALUES), Codec::ZstdNoDict, true),
+            (2, CompressionFlag::Lz4Hc, repeated, Codec::Lz4Hc, false),
+        ];
+        let mut builder = UddpBuilder::new(LookupMode::DenseId);
+        for (id, compression, data, _, _) in &cases {
+            builder
+                .add_owned_file(AddOwnedFileRequest {
+                    data_type: DataType::Texture as u8,
+                    compression: *compression,
+                    width: 0,
+                    height: 0,
+                    virtual_path: None,
+                    path_hash64: None,
+                    id: Some(*id),
+                    data: data.clone(),
+                })
+                .expect("add payload");
+        }
+        let package = UddpReader::open(builder.into_bytes().expect("build package")).expect("open package");
+        for (id, _, data, codec, striped) in &cases {
+            let record = package.records().into_iter().find(|record| record.key == FileKey::Id(*id)).expect("record");
+            assert_eq!(unpack_codec(record.locator.meta32), *codec, "payload {id}");
             assert_eq!(unpack_independent_frames(record.locator.meta32), *striped, "payload {id}");
             assert_eq!(&package.read_file_by_dense_id(*id).expect("read payload"), data);
         }

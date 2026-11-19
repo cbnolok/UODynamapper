@@ -6,8 +6,10 @@
 //!
 //! A gump or texture atlas page that decodes slowly as one frame is stored in strips of [`PAGE_STRIP_ROWS`] rows, each
 //! an independent Zstd frame, so a reader decodes it on several threads (2026-11-19). [`PAGE_STRIPS_WORTH`] decides which:
-//! at 1x that is the Enhanced art and land pages. The codec comparison that kept Zstd and the strip measurements are in
-//! `docs/agent_notes/atlas_page_compression.md`.
+//! at 1x that is the Enhanced art and land pages. A page is stored as one LZ4 HC block instead when that is at most
+//! [`PAGE_LZ4_HC_MAX_GROWTH_PERCENT`] larger than one Zstd frame (the user, 2026-11-19): LZ4 HC decodes about four
+//! times as fast; at 1x only the densest block-compressed pages pass, and no lossless RGBA page. The codec
+//! comparisons and the strip measurements are in `docs/agent_notes/atlas_page_compression.md`.
 
 use udd_assets::tex_art_cc::PagePixelFormat;
 use udd_container::{CompressionFlag, StripsWorth};
@@ -39,10 +41,14 @@ pub const PAGE_STRIPS_WORTH: StripsWorth = StripsWorth {
     max_growth_percent: 10,
 };
 
-/// `compression` for an atlas page `width` pixels wide stored in `pixel_format`: an explicit Zstd level becomes the same
-/// level in strips of [`PAGE_STRIP_ROWS`] rows when they pay by [`PAGE_STRIPS_WORTH`]. Other choices are kept as they are.
-pub fn page_compression_in_strips(compression: CompressionFlag, pixel_format: PagePixelFormat, width: u32)
-    -> CompressionFlag {
+/// The most an LZ4 HC page may add to the page's size in one Zstd frame and still be stored as LZ4 HC (the user,
+/// 2026-11-19). Measured at 1x: Enhanced BC7 art pages add 17–32 %, lossless RGBA pages 44–131 %.
+pub const PAGE_LZ4_HC_MAX_GROWTH_PERCENT: u32 = 20;
+
+/// `compression` for an atlas page `width` pixels wide stored in `pixel_format`: an explicit Zstd level becomes LZ4 HC
+/// within [`PAGE_LZ4_HC_MAX_GROWTH_PERCENT`] of that level, and otherwise the same level, in strips of
+/// [`PAGE_STRIP_ROWS`] rows when they pay by [`PAGE_STRIPS_WORTH`]. Other choices are kept as they are.
+pub fn atlas_page_compression(compression: CompressionFlag, pixel_format: PagePixelFormat, width: u32) -> CompressionFlag {
     let CompressionFlag::ZstdNoDictLevel(level) = compression else {
         return compression;
     };
@@ -51,7 +57,12 @@ pub fn page_compression_in_strips(compression: CompressionFlag, pixel_format: Pa
         // One row of blocks covers BC7_BLOCK_EDGE rows of pixels.
         PagePixelFormat::Bc7 => width.div_ceil(BC7_BLOCK_EDGE) * BC7_BLOCK_BYTES as u32 / BC7_BLOCK_EDGE,
     };
-    CompressionFlag::ZstdStripsWhenWorthLevel { level, strip_bytes: row_bytes * PAGE_STRIP_ROWS, worth: PAGE_STRIPS_WORTH }
+    CompressionFlag::ZstdOrLz4HcLevel {
+        level,
+        strip_bytes: row_bytes * PAGE_STRIP_ROWS,
+        strips: PAGE_STRIPS_WORTH,
+        lz4_hc_max_growth_percent: PAGE_LZ4_HC_MAX_GROWTH_PERCENT,
+    }
 }
 
 #[cfg(test)]
@@ -60,10 +71,11 @@ mod tests {
 
     #[test]
     fn page_strips_hold_whole_pixel_and_block_rows() {
-        let strip = |format, width| match page_compression_in_strips(LOSSLESS_PAGE_COMPRESSION, format, width) {
-            CompressionFlag::ZstdStripsWhenWorthLevel { level, strip_bytes, worth } => {
+        let strip = |format, width| match atlas_page_compression(LOSSLESS_PAGE_COMPRESSION, format, width) {
+            CompressionFlag::ZstdOrLz4HcLevel { level, strip_bytes, strips, lz4_hc_max_growth_percent } => {
                 assert_eq!(level, LOSSLESS_PAGE_ZSTD_LEVEL);
-                assert_eq!(worth, PAGE_STRIPS_WORTH);
+                assert_eq!(strips, PAGE_STRIPS_WORTH);
+                assert_eq!(lz4_hc_max_growth_percent, PAGE_LZ4_HC_MAX_GROWTH_PERCENT);
                 strip_bytes
             }
             other => panic!("not in strips: {other:?}"),
@@ -72,6 +84,6 @@ mod tests {
         // 1024 blocks of 16 bytes per block row, 32 block rows per strip.
         assert_eq!(strip(PagePixelFormat::Bc7, 4096), 1024 * 16 * (PAGE_STRIP_ROWS / 4));
         assert_eq!(strip(PagePixelFormat::Bc7, 4094), strip(PagePixelFormat::Bc7, 4096));
-        assert_eq!(page_compression_in_strips(CompressionFlag::None, PagePixelFormat::Rgba8888, 64), CompressionFlag::None);
+        assert_eq!(atlas_page_compression(CompressionFlag::None, PagePixelFormat::Rgba8888, 64), CompressionFlag::None);
     }
 }
