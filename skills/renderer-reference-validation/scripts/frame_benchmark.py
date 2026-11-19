@@ -18,7 +18,8 @@ exact-PID preview helper, isolated settings, the preview lock held for that laun
 the app's measured frame time (status.frame_ms, one sample per SAMPLE_INTERVAL_SECONDS, new frames only) and the
 amdgpu busy percentage for SAMPLE_SECONDS each, after WARMUP_SECONDS. The binaries' order rotates with the
 repetition, so none always runs first. Each launch's figure is the median of its samples; each cell of the table, the
-median of the launches.
+median of the launches. It also counts the hitches (status.long_frames: the frames longer than 33, 66 and 100 ms) from
+the press of the walk key to the end of the sampling, summed over the launches, with the longest frame sampled.
 
   frame_benchmark.py run OUT.json --binary NAME=BINARY[@TREE] ... [--repetitions N] [--camera ...] [--style ...]
                                    [--motion still|walk ...]
@@ -77,7 +78,7 @@ class BenchLaunch(vh.Launch):
         graphics.write_text(vh.toml_set(graphics.read_text(), 'graphics', 'vsync', False)[0])
 
     def sample(self):
-        frames, busy = [], []
+        frames, busy, longest = [], [], []
         end = time.monotonic() + SAMPLE_SECONDS
         last = None
         while time.monotonic() < end:
@@ -85,13 +86,15 @@ class BenchLaunch(vh.Launch):
             total = status.get('total_frames')
             if status.get('frame_ms') and total != last:
                 frames.append(status['frame_ms'])
+                if status.get('longest_frame_ms'):
+                    longest.append(status['longest_frame_ms'])
                 last = total
             try:
                 busy.append(int(GPU_BUSY.read_text()))
             except (OSError, ValueError):
                 pass
             time.sleep(SAMPLE_INTERVAL_SECONDS)
-        return frames, busy
+        return frames, busy, longest
 
     def bench(self):
         results = {}
@@ -104,19 +107,25 @@ class BenchLaunch(vh.Launch):
                     self.switch(capture, state)
                     self.wait_ready(capture)
                     walking = self.motion == 'walk'
+                    long_before = self.request({'command': 'status'}).get('long_frames') or {}
                     if walking:
                         self.request({'command': 'key', 'key': WALK_KEY, 'state': 'press'})
                     try:
                         time.sleep(WARMUP_SECONDS)
-                        frames, busy = self.sample()
+                        frames, busy, longest = self.sample()
                     finally:
                         if walking:
                             self.request({'command': 'key', 'key': WALK_KEY, 'state': 'release'})
                     if not frames:
                         raise vh.HarnessError(f'{capture.key}: no frame time sampled')
-                    results[capture.fixture.name] = {'frame_ms': frames, 'gpu_busy': busy}
+                    long_after = self.request({'command': 'status'}).get('long_frames') or {}
+                    # The hitches from the press of the walk key to the end of the sampling, warmup included.
+                    long_frames = {key: count - long_before.get(key, 0) for key, count in long_after.items()}
+                    results[capture.fixture.name] = {'frame_ms': frames, 'gpu_busy': busy,
+                                                     'long_frames': long_frames, 'longest_ms': longest}
                     vh.log(f'  {capture.key}: frame {statistics.median(frames):.2f} ms, '
-                           f'gpu busy {statistics.median(busy) if busy else "-"}%')
+                           f'gpu busy {statistics.median(busy) if busy else "-"}%, long frames {long_frames}, '
+                           f'longest {max(longest, default=0):.1f} ms')
             finally:
                 self.stop()
         return results
@@ -175,19 +184,28 @@ def run(args):
                         args.out.write_text(json.dumps(rows, indent=1))
 
 
+def threshold_ms(key):
+    """The milliseconds of a `long_frames` key (`over_66ms`), for ordering them."""
+    return int(key.removeprefix('over_').removesuffix('ms'))
+
+
 def table(args):
     rows = json.loads(args.out.read_text())
     binaries = list(dict.fromkeys(row['binary'] for row in rows))
     cells = {}
     for row in rows:
         key = (row['camera'], row['style'], row['view'], row.get('motion', 'still'), row['binary'])
-        cell = cells.setdefault(key, {'frame': [], 'busy': []})
+        cell = cells.setdefault(key, {'frame': [], 'busy': [], 'long': {}, 'longest': []})
         cell['frame'].append(statistics.median(row['frame_ms']))
+        for threshold, count in row.get('long_frames', {}).items():
+            cell['long'][threshold] = cell['long'].get(threshold, 0) + count
+        cell['longest'] += row.get('longest_ms', [])
         if row['gpu_busy']:
             cell['busy'].append(statistics.median(row['gpu_busy']))
     base = binaries[0]
     header = ['Camera', 'Style', 'View', 'Motion'] + [f'Frame ms {name} (range)' for name in binaries]
     header += [f'{name} vs {base}' for name in binaries[1:]] + ['GPU busy ' + ' / '.join(binaries)]
+    header += [f'Frames over 33/66/100 ms {name} (longest ms)' for name in binaries]
     print('| ' + ' | '.join(header) + ' |')
     print('|' + '---|' * len(header))
     sources = {row['style']: f"{row['art']}/{row['land']}" for row in rows}
@@ -201,6 +219,9 @@ def table(args):
                  for median in medians[1:]]
         line.append(' / '.join(f"{statistics.median(cell['busy']):.0f}%" if cell and cell['busy'] else '-'
                                for cell in found))
+        line += [f"{'/'.join(str(cell['long'][key]) for key in sorted(cell['long'], key=threshold_ms))} "
+                 f"({max(cell['longest']):.0f})"
+                 if cell and cell['long'] and cell['longest'] else '-' for cell in found]
         print('| ' + ' | '.join(line) + ' |')
 
 

@@ -218,6 +218,11 @@ fn poll_control(
                         "elapsed_seconds": time.elapsed_secs_f64(),
                         "fps": frame_rate.frames_per_second(),
                         "frame_ms": frame_rate.frame_ms(), "total_frames": frame_rate.total_frames(),
+                        "longest_frame_ms": frame_rate.longest_frame_ms(),
+                        "long_frames": crate::diagnostics::frame_rate::LONG_FRAME_THRESHOLDS.iter()
+                            .zip(frame_rate.long_frames())
+                            .map(|(threshold, count)| (format!("over_{}ms", threshold.as_millis()), json!(count)))
+                            .collect::<serde_json::Map<_, _>>(),
                         "terrain": terrain, "art": art,
                         "picking": picking.as_ref().map(|p| {
                             let (serial, pending, ready, pixel, render_seen, encoded) = p.status();

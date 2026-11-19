@@ -14,6 +14,9 @@ use std::time::{Duration, Instant};
 /// also accurate below two frames per second.
 const FRAME_RATE_WINDOW: Duration = Duration::from_millis(500);
 const MILLISECONDS_PER_SECOND: f64 = 1000.0;
+/// The frame lengths a frame counts as a hitch from: two, four and six frames at 60 frames per second.
+pub const LONG_FRAME_THRESHOLDS: [Duration; 3] =
+    [Duration::from_millis(33), Duration::from_millis(66), Duration::from_millis(100)];
 
 #[derive(Resource, Default)]
 pub struct MeasuredFrameRate {
@@ -21,6 +24,11 @@ pub struct MeasuredFrameRate {
     frames_in_window: u32,
     frames_per_second: Option<f64>,
     total_frames: u64,
+    last_frame: Option<Instant>,
+    /// The frames longer than each of `LONG_FRAME_THRESHOLDS`, counted since the start.
+    long_frames: [u64; LONG_FRAME_THRESHOLDS.len()],
+    longest_in_window: Duration,
+    longest_frame: Option<Duration>,
 }
 
 impl MeasuredFrameRate {
@@ -39,8 +47,26 @@ impl MeasuredFrameRate {
         self.total_frames
     }
 
+    /// The frames longer than each of `LONG_FRAME_THRESHOLDS` since the start: a client reads the hitches of a span
+    /// as the difference of two readings, wherever the windows fall.
+    pub fn long_frames(&self) -> [u64; LONG_FRAME_THRESHOLDS.len()] {
+        self.long_frames
+    }
+
+    /// The longest frame of the last closed window, in milliseconds.
+    pub fn longest_frame_ms(&self) -> Option<f64> {
+        self.longest_frame.map(|frame| frame.as_secs_f64() * MILLISECONDS_PER_SECOND)
+    }
+
     fn record_frame(&mut self, now: Instant) {
         self.total_frames += 1;
+        if let Some(last_frame) = self.last_frame.replace(now) {
+            let frame = now.saturating_duration_since(last_frame);
+            self.longest_in_window = self.longest_in_window.max(frame);
+            for (count, threshold) in self.long_frames.iter_mut().zip(LONG_FRAME_THRESHOLDS) {
+                *count += u64::from(frame > threshold);
+            }
+        }
         let Some(window_start) = self.window_start else {
             self.window_start = Some(now);
             return;
@@ -49,6 +75,7 @@ impl MeasuredFrameRate {
         let elapsed = now.saturating_duration_since(window_start);
         if elapsed >= FRAME_RATE_WINDOW {
             self.frames_per_second = Some(f64::from(self.frames_in_window) / elapsed.as_secs_f64());
+            self.longest_frame = Some(std::mem::take(&mut self.longest_in_window));
             self.window_start = Some(now);
             self.frames_in_window = 0;
         }
@@ -117,6 +144,18 @@ mod tests {
         assert!((measured - MILLISECONDS_PER_SECOND / FRAME_MS as f64).abs() < 1e-9);
         assert!((frame_rate.frame_ms().unwrap() - FRAME_MS as f64).abs() < 1e-6);
         assert_eq!(frame_rate.total_frames(), 3);
+    }
+
+    #[test]
+    fn long_frames_count_per_threshold_and_the_window_keeps_its_longest() {
+        const FRAMES_MS: [u64; 6] = [10, 40, 10, 70, 120, 400];
+        let mut frame_rate = MeasuredFrameRate::default();
+        let start = Instant::now();
+        frame_rate.record_frame(start);
+        run_frames(&mut frame_rate, start, &FRAMES_MS);
+        assert_eq!(frame_rate.long_frames(), [4, 3, 2]);
+        // The 400 ms frame closed the first window, which also held the 120 ms one.
+        assert_eq!(frame_rate.longest_frame_ms(), Some(400.0));
     }
 
     #[test]
