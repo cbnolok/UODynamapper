@@ -15,7 +15,7 @@ use crate::content::{GumpMapRes, HuesPackageRes, PaperdollEcPackageRes, TileMeta
 use udd_assets::tilemeta::{TileMetaItemDefinitions, TileMetaItemTile};
 use crate::ingame_sysmessage_logger;
 use crate::{
-    core::constants,
+    app::constants,
     prelude::*,
 };
 use bevy::prelude::*;

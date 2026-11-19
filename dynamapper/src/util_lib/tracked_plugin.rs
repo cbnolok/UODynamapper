@@ -1,6 +1,6 @@
 use crate::{
     console_logger::{self, LogAbout, LogSev},
-    core::system_sets::StartupSysSet,
+    app::system_sets::StartupSysSet,
 };
 use bevy::app::Plugin;
 use std::{
@@ -203,7 +203,7 @@ pub fn log_plugin_build<T: TrackedPlugin>(plugin: &T) {
 pub fn sys_log_plugin_registry_tree() {
     log_system_add_base(
         "sys_log_plugin_registry_tree",
-        "crate::core::RenderPlugin",
+        "crate::app::RenderPlugin",
         "Startup",
         "Done",
     );

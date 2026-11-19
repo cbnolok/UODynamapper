@@ -107,9 +107,9 @@ impl Plugin for CursorBehaviorOverlayPlugin {
                 Update,
                 (
                     update_cursor_behavior_text.after(TerrainCursorQuery).run_if(in_state(AppState::InGame)),
-                    update_cursor_inspect_text.after(TerrainCursorQuery).after(crate::core::system_sets::SceneRenderArtSysSet::CollectVisibleStatics)
+                    update_cursor_inspect_text.after(TerrainCursorQuery).after(crate::app::system_sets::SceneRenderArtSysSet::CollectVisibleStatics)
                         .run_if(in_state(AppState::InGame)),
-                    sys_draw_hovered_static_highlight.after(crate::core::system_sets::SceneRenderArtSysSet::CollectVisibleStatics)
+                    sys_draw_hovered_static_highlight.after(crate::app::system_sets::SceneRenderArtSysSet::CollectVisibleStatics)
                         .run_if(in_state(AppState::InGame)),
                     sys_teleport_on_click.after(TerrainCursorQuery).run_if(in_state(AppState::InGame)),
                 ),

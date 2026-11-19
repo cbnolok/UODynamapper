@@ -9,7 +9,7 @@ mod liquid_sampling_tests;
 
 use crate::render::terrain::mesh_material::LandCustomMeshMaterial;
 use crate::render::terrain::CHUNK_STORAGE_BLOCKS_DIM;
-use crate::core::system_sets::*;
+use crate::app::system_sets::*;
 use crate::prelude::*;
 use bevy::prelude::*;
 use bevy::time::common_conditions::on_timer;
@@ -1140,7 +1140,7 @@ impl Plugin for LandTextureCachePlugin {
         ).chain().before(sys_apply_land_texture_source_changes)
             .before(SceneRenderLandSysSet::RenderLandChunks));
         app.add_systems(Update, route_file::sys_show_route_file_notices
-            .run_if(in_state(crate::core::app_states::AppState::InGame))
+            .run_if(in_state(crate::app::app_states::AppState::InGame))
             .run_if(|routes: Res<route_file::RouteFileRes>| routes.has_pending_notices()));
 
         // Clear pending uploads at the start of each frame (First schedule), which runs BEFORE Update.
@@ -1152,11 +1152,11 @@ impl Plugin for LandTextureCachePlugin {
         app.add_systems(Update, sys_apply_land_texture_source_changes);
         app.add_systems(Update, sys_show_land_source_notice
             .after(sys_apply_land_texture_source_changes)
-            .run_if(in_state(crate::core::app_states::AppState::InGame))
+            .run_if(in_state(crate::app::app_states::AppState::InGame))
             .run_if(|cache: Option<Res<cache::LandTextureCache>>| cache.is_some_and(|cache| !cache.pending_land_notices.is_empty())));
         app.add_systems(Update, coverage::sys_prepare_stack_cache
             .after(SceneRenderLandSysSet::RenderLandChunks)
-            .run_if(in_state(crate::core::app_states::AppState::InGame)));
+            .run_if(in_state(crate::app::app_states::AppState::InGame)));
 
         let Some(render_app) = app.get_sub_app_mut(bevy::render::RenderApp) else {
             return;

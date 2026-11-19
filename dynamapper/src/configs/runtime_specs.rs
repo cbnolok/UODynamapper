@@ -13,7 +13,7 @@ use std::path::{Path, PathBuf};
 use color_eyre::eyre;
 
 use crate::console_logger::{self, LogAbout, LogSev};
-use crate::core::constants;
+use crate::app::constants;
 use crate::ingame_sysmessage_logger;
 
 /// The folder of the runtime specs under the assets dir, and of the user's copies under the cache dir.

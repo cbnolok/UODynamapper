@@ -3,7 +3,7 @@ use std::process::ExitCode;
 pub mod configs;
 pub mod console_logger;
 pub(crate) mod content;
-pub mod core;
+pub mod app;
 pub mod diagnostics;
 pub mod export;
 pub mod input;
@@ -30,5 +30,5 @@ fn main() -> ExitCode {
         .expect("Can't install color_eyre?");
 
     console_logger::system("Starting Bevy app.");
-    core::run_bevy_app()
+    app::run_bevy_app()
 }

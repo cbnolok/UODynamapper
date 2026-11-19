@@ -5,7 +5,7 @@ use color_eyre::eyre;
 
 use crate::{
     content::{TexArtCcPackageRes, TexArtEcPackageRes},
-    core::system_sets::StartupSysSet,
+    app::system_sets::StartupSysSet,
     prelude::*,
 };
 use udd_assets::bc7::{self, ImageExtent, TextureUploadLayout, VramTextureFormat};

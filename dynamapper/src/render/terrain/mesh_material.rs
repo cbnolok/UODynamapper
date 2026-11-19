@@ -684,8 +684,8 @@ impl Default for SunAngles {
     /// `BAKED_GLOBAL_LIGHT`, the light of every preset before the sun was a setting.
     fn default() -> Self {
         Self {
-            azimuth_degrees: crate::core::constants::BAKED_SUN_AZIMUTH_DEGREES,
-            elevation_degrees: crate::core::constants::BAKED_SUN_ELEVATION_DEGREES,
+            azimuth_degrees: crate::app::constants::BAKED_SUN_AZIMUTH_DEGREES,
+            elevation_degrees: crate::app::constants::BAKED_SUN_ELEVATION_DEGREES,
         }
     }
 }

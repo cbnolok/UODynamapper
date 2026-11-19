@@ -7,7 +7,7 @@
 //! No interactive state is touched: settings are overridden in memory only and never saved.
 use crate::configs::shader_presets::{UniformState, CLASSIC_PRESET_GROUP, PAINTERLY_PRESET_GROUP};
 use crate::console_logger::{self, LogAbout, LogSev};
-use crate::core::app_states::AppState;
+use crate::app::app_states::AppState;
 use crate::world::teleport::teleport_player;
 use crate::render::scene::{player::Player, world::WorldGeoData, RecomputeVisibleChunksEvent};
 use crate::render::view::{

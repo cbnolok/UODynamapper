@@ -9,7 +9,7 @@ use settings::{ControlSetting, ControlSettings};
 use crate::configs::settings::{ClientTextureSource, LandTextureSource};
 use crate::render::terrain::{LCMesh, draw_mesh::PendingTextureBake};
 use crate::render::assets::{land::coverage::EcTerrainBases, tile_atlas::{LandUploadTelemetry, TileAtlas}};
-use crate::core::{app_states::AppState, system_sets::MovementSysSet};
+use crate::app::{app_states::AppState, system_sets::MovementSysSet};
 use crate::render::scene::{player::Player, world::WorldGeoData, RecomputeVisibleChunksEvent};
 use crate::prelude::*;
 use bevy::{input::{InputSystems, keyboard::KeyCode}, prelude::*, render::view::screenshot::{Screenshot, save_to_disk}, window::PrimaryWindow};

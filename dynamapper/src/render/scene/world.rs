@@ -10,7 +10,7 @@ use crate::world::{caves, z_view};
 
 
 use crate::content::MapPlanesRes;
-use crate::core::system_sets::{MovementSysSet, SceneRenderArtSysSet, StartupSysSet};
+use crate::app::system_sets::{MovementSysSet, SceneRenderArtSysSet, StartupSysSet};
 
 #[derive(Resource, Default)]
 pub struct WorldGeoData {

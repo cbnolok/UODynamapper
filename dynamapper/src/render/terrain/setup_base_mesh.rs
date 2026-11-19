@@ -6,7 +6,7 @@ use bevy::{
     asset::RenderAssetUsages,
 };
 use crate::util_lib::tracked_plugin::log_system_add_startup;
-use crate::core::system_sets::StartupSysSet;
+use crate::app::system_sets::StartupSysSet;
 use crate::fname;
 
 /// A grid quad's two triangles, by its corners: 0 at its origin, 1 one step along x, 2 one step along z, 3 both. The

@@ -78,7 +78,7 @@ use crate::render::view::camera::{PlayerCamera, RenderZoom, ORTHO_SIZE_FACTOR};
 use crate::render::lighting::static_lights::{light_sprite_glow_strength, NO_LIGHT_SPRITE_GLOW};
 use crate::render::postprocess::fog_pass::FogPassSystems;
 use crate::render::terrain::mesh_material::ClientNightLighting;
-use crate::core::system_sets::StartupSysSet;
+use crate::app::system_sets::StartupSysSet;
 use crate::content::TexAuxEcPackageRes;
 use crate::prelude::*;
 use bevy::anti_alias::{fxaa::fxaa, smaa::smaa};

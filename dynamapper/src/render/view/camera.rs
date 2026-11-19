@@ -4,7 +4,7 @@ use crate::render::scene::RecomputeVisibleChunksEvent;
 use super::footprint::{camera_ground_footprint, FreeCameraFootprint};
 use crate::render::terrain::draw_mesh::scale_from_zoom;
 use crate::export::ExportJob;
-use crate::core::system_sets::*;
+use crate::app::system_sets::*;
 use crate::prelude::*;
 use crate::util_lib::math::Between;
 use bevy::anti_alias::{fxaa::Fxaa, smaa::Smaa};

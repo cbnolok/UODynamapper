@@ -130,7 +130,7 @@ fn poll_query_replies(mut pick: ResMut<VisibleStaticPick>) {
 pub(crate) fn install(app: &mut App) {
     app.init_resource::<VisibleStaticPick>().init_resource::<PickRequest>()
         .add_plugins(ExtractResourcePlugin::<PickRequest>::default())
-        .add_systems(Update, poll_query_replies.before(crate::core::system_sets::SceneRenderArtSysSet::CollectVisibleStatics))
+        .add_systems(Update, poll_query_replies.before(crate::app::system_sets::SceneRenderArtSysSet::CollectVisibleStatics))
         .add_systems(PostUpdate, enable_depth_sampling);
     if let Some(render) = app.get_sub_app_mut(RenderApp) {
         render.init_resource::<QueryState>()

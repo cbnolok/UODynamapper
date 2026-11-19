@@ -1,4 +1,4 @@
-use crate::{core::system_sets::StartupSysSet, prelude::*};
+use crate::{app::system_sets::StartupSysSet, prelude::*};
 use bevy::color::Srgba;
 use bevy::diagnostic::DiagnosticsStore;
 use bevy::prelude::*;

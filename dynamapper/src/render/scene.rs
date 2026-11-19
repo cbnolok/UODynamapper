@@ -2,7 +2,7 @@ pub mod player;
 pub mod world;
 
 use crate::world::maps::MapPlaneMetadata;
-use crate::core::system_sets::*;
+use crate::app::system_sets::*;
 use crate::prelude::*;
 use bevy::ecs::message::{MessageReader, MessageWriter};
 use bevy::prelude::*;

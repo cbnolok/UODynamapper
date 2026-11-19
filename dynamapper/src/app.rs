@@ -7,7 +7,7 @@ use crate::{
     configs::{settings, ExternalDataPlugin},
     diagnostics::{add_diagnostics_plugins, frame_limiter, frame_rate, LogGpuPreprocessingModePlugin},
     console_logger::{self, LogAbout, LogSev},
-    core::{
+    app::{
         app_states::*,
         bevy_log_filter::init_bevy_logging,
     },
@@ -413,7 +413,7 @@ pub fn run_bevy_app() -> ExitCode {
         Update,
         (MovementSysSet::UpdateCamera
             .after(MovementSysSet::MovementActions)
-            .before(crate::core::system_sets::SceneRenderLandSysSet::ListenSyncRequests),),
+            .before(crate::app::system_sets::SceneRenderLandSysSet::ListenSyncRequests),),
     )
     .add_systems(
         PreStartup,

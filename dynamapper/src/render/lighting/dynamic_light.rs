@@ -1,5 +1,5 @@
 use crate::configs::settings::Settings;
-use crate::core::system_sets::*;
+use crate::app::system_sets::*;
 use crate::prelude::*;
 use bevy::prelude::*;
 

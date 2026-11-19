@@ -1,8 +1,8 @@
 use bevy::prelude::*;
 use bevy::render::RenderApp;
 use bevy::render::ExtractSchedule;
-use crate::core::system_sets::{StartupSysSet, SceneRenderLandSysSet, SceneRenderArtSysSet};
-use crate::core::app_states::AppState;
+use crate::app::system_sets::{StartupSysSet, SceneRenderLandSysSet, SceneRenderArtSysSet};
+use crate::app::app_states::AppState;
 use crate::prelude::*;
 use crate::util_lib::tracked_plugin::TrackedPlugin;
 use crate::render::lighting::{client_light_sprites, light_scene, static_lights};

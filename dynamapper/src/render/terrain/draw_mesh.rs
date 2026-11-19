@@ -31,7 +31,7 @@ use super::{
 use crate::world::maps::{MapPlane, MapPlaneMetadata};
 use crate::{
     content::{MapPlanesRes, TexMap2DRes, TileMetaPackageRes},
-    core::constants,
+    app::constants,
     render::scene::{player::Player, world::WorldGeoData, SceneStateData},
     render::view::camera::PlayerCamera,
     render::assets::land::cache::*,

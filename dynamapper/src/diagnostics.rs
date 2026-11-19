@@ -19,7 +19,7 @@ use parking_lot::Mutex;
 use crate::{
     configs::settings::{SectWorldRenderingDiagnostics, Settings},
     console_logger::{self, LogAbout, LogSev},
-    core::app_states::AppState,
+    app::app_states::AppState,
 };
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

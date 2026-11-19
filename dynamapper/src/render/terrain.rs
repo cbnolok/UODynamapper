@@ -4,7 +4,7 @@ pub mod draw_mesh;
 pub mod mesh_material;
 pub mod setup_base_mesh;
 
-use crate::core::system_sets::*;
+use crate::app::system_sets::*;
 use crate::prelude::*;
 use bevy::prelude::*;
 use mesh_material::{LandCustomMeshMaterial, LandStaticLightUniform, LAND_STATIC_LIGHT_MAX};

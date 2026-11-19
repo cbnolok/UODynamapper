@@ -8,7 +8,7 @@ use crate::render::statics::static_batches::{
     StaticChunkBatch, StaticChunkBatchKey,
 };
 use crate::render::statics::static_source::{KrStaticPackages, KrStaticSources, StaticLandStyle};
-use crate::core::system_sets::StartupSysSet;
+use crate::app::system_sets::StartupSysSet;
 use crate::render::assets::art::{
     ArtPageAtlas, GroundArtPageAtlas, GroundArtPageAtlasHandle, SpriteArtPageAtlas,
     SpriteArtPageAtlasHandle,

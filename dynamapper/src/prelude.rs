@@ -4,7 +4,7 @@
 pub use crate::{
     configs::settings::*,
     console_logger::{self, LogAbout, LogSev},
-    core::app_states::*,
+    app::app_states::*,
 };
 
 #[doc(hidden)]

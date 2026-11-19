@@ -3,7 +3,7 @@ use crate::input::input_actions::{ActionCloseActiveDialog, ActionTogglePreferenc
 use crate::{
     configs::settings::{AntiAliasingMode, ClientTextureSource, GumpClient, LandTextureSource},
     diagnostics::frame_limiter::FrameLimiterSettings,
-    core::{
+    app::{
         frame_limiter_for_options, frame_limiter_for_settings,
         present_mode_for_vsync,
     },
