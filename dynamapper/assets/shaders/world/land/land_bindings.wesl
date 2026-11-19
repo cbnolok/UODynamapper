@@ -91,7 +91,7 @@ struct LandTextureVariationUniform {
 @group(3) @binding(109) var land_page_atlas: texture_2d_array<f32>;
 @group(3) @binding(110) var land_page_lookup: texture_2d<u32>;
 // Rows per role of land_page_lookup: a row per land id, then an area row per
-// land id (LAND_PAGE_LOOKUP_TILE_CAPACITY in texture_cache/land.rs).
+// land id (LAND_PAGE_LOOKUP_TILE_CAPACITY in render/assets/land.rs).
 const LAND_PAGE_LOOKUP_TILE_CAPACITY: u32 = 32768u;
 @group(3) @binding(104) var<uniform> ATLAS:        AtlasParams;
 @group(3) @binding(105) var<uniform> scene:        SceneUniform;

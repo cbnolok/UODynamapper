@@ -218,7 +218,7 @@ const LAND_SOURCE_EC_ATLAS: u32 = 2u;
 // The coverage parameters' lookup role (coverage.wesl), whose x is the material id.
 const LAND_PAGE_LOOKUP_ROLE_COVERAGE_PARAMS: u32 = 6u;
 // The package-local material id: the secondary EC-layout package's ids carry 1 << 24 on top
-// (SECONDARY_PACKAGE_MATERIAL_ID_OFFSET in texture_cache/land/coverage.rs), and both packages number alike.
+// (SECONDARY_PACKAGE_MATERIAL_ID_OFFSET in render/terrain/coverage.rs), and both packages number alike.
 const LAND_MATERIAL_ID_MASK: u32 = 0xFFFFFFu;
 // The bitmask's layout (content/land_texture_variation.rs): two bits per material, sixteen materials per word.
 const LAND_VARIATION_BITS_PER_MATERIAL: u32 = 2u;

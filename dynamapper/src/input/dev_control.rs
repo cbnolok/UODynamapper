@@ -8,7 +8,8 @@ use input::{ControlInput, InputState, PointerButton, inject_control_input, focus
 use settings::{ControlSetting, ControlSettings};
 use crate::settings::{ClientTextureSource, LandTextureSource};
 use crate::render::terrain::{LCMesh, draw_mesh::PendingTextureBake};
-use crate::render::assets::{land::coverage::EcTerrainBases, tile_atlas::{LandUploadTelemetry, TileAtlas}};
+use crate::render::assets::tile_atlas::{LandUploadTelemetry, TileAtlas};
+use crate::render::terrain::coverage::EcTerrainBases;
 use crate::app::{app_states::AppState, system_sets::MovementSysSet};
 use crate::render::scene::{player::Player, world::WorldGeoData, RecomputeVisibleChunksEvent};
 use crate::prelude::*;

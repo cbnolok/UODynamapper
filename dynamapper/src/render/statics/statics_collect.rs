@@ -408,7 +408,7 @@ struct StaticCollectResources<'a> {
     static_lights: &'a super::static_lights::RenderStaticLightInstances,
     tile_atlas: &'a TileAtlas,
     /// The EC terrain parameters of the land drawn, per atlas payload (`EcTerrainBases::params`).
-    terrain: Option<&'a [Option<crate::render::assets::land::coverage::EcTerrainParams>]>,
+    terrain: Option<&'a [Option<crate::render::terrain::coverage::EcTerrainParams>]>,
     map_planes: Option<&'a MapPlanesRes>,
     /// The caves drawn over the map, if any.
     caves: Option<&'a CaveMap>,
@@ -523,7 +523,7 @@ fn static_collect_resources<'a>(
     placed_multis: &'a PlacedMultisRes,
     static_lights: &'a super::static_lights::RenderStaticLightInstances,
     tile_atlas: &'a TileAtlas,
-    terrain_bases: &'a Option<Res<crate::render::assets::land::coverage::EcTerrainBases>>,
+    terrain_bases: &'a Option<Res<crate::render::terrain::coverage::EcTerrainBases>>,
     map_planes: &'a Option<Res<MapPlanesRes>>,
     caves: &'a CavesRes,
     kingdom_reborn: Option<KrStaticSources<'a>>,
@@ -1763,7 +1763,7 @@ pub fn sys_collect_visible_statics(
     terrain: (
         Query<&crate::render::terrain::LCMesh>,
         Res<TileAtlas>,
-        Option<Res<crate::render::assets::land::coverage::EcTerrainBases>>,
+        Option<Res<crate::render::terrain::coverage::EcTerrainBases>>,
     ),
 ) {
     let (tex_art_cc_res, tex_art_ec_res, tex_land_ec_res, tilemeta_res, tex_aux_ec_res, kr_packages) = packages;

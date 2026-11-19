@@ -322,7 +322,7 @@ pub struct LandFramePacing<'w> {
     /// Optional tile metadata (tilemeta.uddp); used to determine the IsWet flag per tile.
     /// Optional because the package may not have been converted/loaded yet.
     pub tilemeta: Option<Res<'w, TileMetaPackageRes>>,
-    pub terrain_bases: ResMut<'w, crate::render::assets::land::coverage::EcTerrainBases>,
+    pub terrain_bases: ResMut<'w, crate::render::terrain::coverage::EcTerrainBases>,
     pub images: ResMut<'w, Assets<Image>>,
     /// The caves drawn over the map, whose land is lowered to their floors (`CaveMap::floor_z`).
     pub caves: Res<'w, crate::world::caves::CavesRes>,
@@ -896,7 +896,7 @@ pub fn sys_draw_spawned_land_chunks(
                         }
                     }
                     if complete {
-                        let limits = crate::render::assets::land::coverage::layer_limits(payloads.iter().copied(), &bases.params);
+                        let limits = crate::render::terrain::coverage::layer_limits(payloads.iter().copied(), &bases.params);
                         bases.set(UVec2::new(gx, gy), limits.unwrap_or([u16::MAX; 2]));
                     }
                 }
@@ -1223,7 +1223,7 @@ fn ec_land_shader_flags(
     package: &udd_assets::tex_land_ec::TexLandEcPackage,
     tile_id: u32,
 ) -> u16 {
-    crate::render::assets::land::coverage::ec_land_shader_flags(package, tile_id)
+    crate::render::terrain::coverage::ec_land_shader_flags(package, tile_id)
 }
 
 #[cfg(test)]

@@ -2,7 +2,8 @@
 //! smoothly at patch boundaries. Neighbor flags are built only on chunk rebuild.
 use super::static_batches::{SpriteInstance, StaticChunkBatchKey};
 use super::static_source::TILE_FLAG_SURFACE;
-use crate::render::assets::{ec_item_surface::KR_ITEM_RECORD_BASE, land::coverage::EcTerrainParams};
+use crate::render::assets::ec_item_surface::KR_ITEM_RECORD_BASE;
+use crate::render::terrain::coverage::EcTerrainParams;
 use crate::world::statics::LazyStaticsStore;
 use crate::render::{assets::tile_atlas::{AtlasCells, TileAtlas,
     LAND_SOURCE_EC_ATLAS, TERRAIN_SHADER_FLAG_NEVER_BLENDS}, terrain::{CHUNK_STORAGE_BLOCKS_DIM, MAP_STORAGE_BLOCK_TILE_DIM}};
@@ -194,7 +195,7 @@ mod tests {
     #[test]
     fn floor_land_meeting_a_patch_with_a_hard_edge_closes_its_side() {
         use crate::render::assets::tile_atlas::{AtlasParams, Rg16u, LAND_SOURCE_CC_ATLAS};
-        use crate::render::assets::land::coverage::COVERAGE_FLAG_LINEAR_FILTERING;
+        use crate::render::terrain::coverage::COVERAGE_FLAG_LINEAR_FILTERING;
         // The Minoc yard's grass (land 0x3, a soft material) under the cobblestones, and the wooden floor of the north
         // doorway and of the house east of the yard (land 0x406, material 11, coverage exponent 0).
         const GRASS: u16 = 0x3;

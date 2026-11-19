@@ -1,5 +1,6 @@
 pub mod cave_mouth_veil;
 pub mod chunk_loader;
+pub mod coverage;
 pub mod draw_mesh;
 pub mod mesh_material;
 pub mod setup_base_mesh;

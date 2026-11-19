@@ -1,12 +1,12 @@
 pub mod cache;
 pub mod texture_array;
-pub mod coverage;
 pub mod routing;
 pub mod route_file;
 pub(crate) mod aux_layers;
 #[cfg(test)]
 mod liquid_sampling_tests;
 
+use crate::render::terrain::coverage;
 use crate::render::terrain::mesh_material::LandCustomMeshMaterial;
 use crate::render::terrain::CHUNK_STORAGE_BLOCKS_DIM;
 use crate::app::system_sets::*;

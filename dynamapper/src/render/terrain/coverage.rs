@@ -81,15 +81,15 @@ pub struct EcTerrainSources {
 
 impl EcTerrainSources {
     pub fn none() -> Self {
-        Self { params: vec![None; super::routing::LAND_ROUTE_ROW_COUNT],
-            available: vec![false; super::routing::LAND_ROUTE_ROW_COUNT] }
+        Self { params: vec![None; crate::render::assets::land::routing::LAND_ROUTE_ROW_COUNT],
+            available: vec![false; crate::render::assets::land::routing::LAND_ROUTE_ROW_COUNT] }
     }
 
-    pub fn from_cache(cache: &super::cache::LandTextureCache) -> Self {
+    pub fn from_cache(cache: &crate::render::assets::land::cache::LandTextureCache) -> Self {
         let Some(primary) = cache.atlas_enhanced_land() else { return Self::none() };
         let secondary = cache.secondary_enhanced_land().map(|(_, package)| package);
         let row_count = cache.routes().row_count() as u32;
-        let (params, available) = (0..super::routing::LAND_ROUTE_ROW_COUNT as u32).map(|id| {
+        let (params, available) = (0..crate::render::assets::land::routing::LAND_ROUTE_ROW_COUNT as u32).map(|id| {
             if id >= row_count {
                 return (None, false);
             }
@@ -101,7 +101,7 @@ impl EcTerrainSources {
                 (Some((package, target)), _) if std::sync::Arc::ptr_eq(package, primary) => {
                     (EcTerrainParams::for_tile(primary, target), true)
                 }
-                _ => (EcTerrainParams::for_tile(primary, super::routing::land_id_of_row(id)), routed.is_some()),
+                _ => (EcTerrainParams::for_tile(primary, crate::render::assets::land::routing::land_id_of_row(id)), routed.is_some()),
             }
         }).unzip();
         Self { params, available }
