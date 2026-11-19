@@ -38,11 +38,17 @@ pub struct ResolvedArtSprite {
     pub legacy_art: bool,
 }
 
+/// The page bytes uploaded in one frame, past the first page: an Enhanced page (32 MiB), whose copy into the queue
+/// costs 6-10 ms. The pages decoded together, as a walk enters a town, came to 17-20 ms in one frame (2026-11-19).
+const MAX_PAGE_UPLOAD_BYTES_PER_FRAME: usize = 32 << 20;
+
 #[derive(Debug, Clone)]
 pub struct ArtPageUpload {
     pub page_index: ArtPageKey,
     pub layer: u32,
-    pub bytes: Vec<u8>,
+    /// Shared, so that the extraction hands the render world the page without copying it: an Enhanced page is
+    /// 32 MiB, whose copy cost 15-19 ms in the frame (2026-11-19).
+    pub bytes: Arc<Vec<u8>>,
     pub upload_layout: TextureUploadLayout,
     pub upload_width: u32,
     pub upload_height: u32,
@@ -191,7 +197,7 @@ impl ArtPageAtlas {
             )).map(|(bytes, upload_layout, upload_width, upload_height)| ArtPageUpload {
                 page_index,
                 layer,
-                bytes,
+                bytes: Arc::new(bytes),
                 upload_layout,
                 upload_width,
                 upload_height,
@@ -285,12 +291,23 @@ impl ArtPageAtlas {
         self.requested_resize_to = None;
     }
 
-    /// Hands this frame's uploads and layer copies to the extraction, in place of the last frame's.
+    /// Hands this frame's uploads and layer copies to the extraction, in place of the last frame's: the uploads in
+    /// the order they came, up to `MAX_PAGE_UPLOAD_BYTES_PER_FRAME` (always the first), the rest waiting for the next
+    /// frames. An upload whose layer went to another page meanwhile is dropped.
     fn stage_for_extract(&mut self) {
         self.receive_decoded_pages();
         self.extract_staging.clear();
-        let mut pending = std::mem::take(&mut self.pending_uploads);
-        self.extract_staging.append(&mut pending);
+        let layer_to_page = &self.layer_to_page;
+        self.pending_uploads.retain(|upload| layer_to_page.get(upload.layer as usize) == Some(&Some(upload.page_index)));
+        let mut staged_bytes = 0;
+        let staged = self.pending_uploads.iter()
+            .take_while(|upload| {
+                let first = staged_bytes == 0;
+                staged_bytes += upload.bytes.len();
+                first || staged_bytes <= MAX_PAGE_UPLOAD_BYTES_PER_FRAME
+            })
+            .count();
+        self.extract_staging.extend(self.pending_uploads.drain(..staged));
         self.extract_layer_copies = std::mem::take(&mut self.pending_layer_copies);
     }
 
@@ -582,8 +599,8 @@ mod tests {
         assert_eq!(atlas.pending_uploads.len(), 2);
         atlas.pending_uploads.sort_by_key(|upload| upload.bytes[0]);
         assert_ne!(atlas.pending_uploads[0].layer, atlas.pending_uploads[1].layer);
-        assert_eq!(atlas.pending_uploads[0].bytes, vec![31; 64]);
-        assert_eq!(atlas.pending_uploads[1].bytes, vec![127; 64]);
+        assert_eq!(*atlas.pending_uploads[0].bytes, vec![31; 64]);
+        assert_eq!(*atlas.pending_uploads[1].bytes, vec![127; 64]);
         let keys = atlas.page_to_layer.clone();
         atlas.apply_resize(Handle::default(), 3);
         assert_eq!(atlas.page_to_layer.len(), 2);
@@ -687,7 +704,7 @@ mod tests {
         atlas.extract_staging.push(ArtPageUpload {
             page_index: ArtPageKey::Enhanced(7),
             layer: 1,
-            bytes: vec![1, 2, 3, 4],
+            bytes: vec![1, 2, 3, 4].into(),
             upload_layout: TextureUploadLayout {
                 bytes_per_row: 4,
                 rows_per_image: 1,
@@ -711,6 +728,34 @@ mod tests {
         assert_eq!(atlas.current_tick, 23);
         assert_eq!(atlas.pending_uploads.len(), 1);
         assert!(atlas.extract_staging.is_empty());
+    }
+
+    #[test]
+    fn staging_uploads_a_frame_budget_in_order_and_drops_evicted_layers() {
+        let mut atlas = ArtPageAtlas::new(Handle::default(), 64, 64, 4, 4, PagePixelFormat::Rgba8888);
+        let upload = |page: u32, layer: u32, bytes: usize| ArtPageUpload {
+            page_index: ArtPageKey::Enhanced(page),
+            layer,
+            bytes: vec![0; bytes].into(),
+            upload_layout: TextureUploadLayout { bytes_per_row: 4, rows_per_image: 1, format: wgpu::TextureFormat::Rgba8UnormSrgb },
+            upload_width: 1,
+            upload_height: 1,
+        };
+        let half = MAX_PAGE_UPLOAD_BYTES_PER_FRAME / 2;
+        for layer in 0..4 {
+            atlas.layer_to_page[layer as usize] = Some(ArtPageKey::Enhanced(layer));
+        }
+        // Layer 1 went to page 9 after its upload was queued; a page over the budget alone still goes.
+        atlas.layer_to_page[1] = Some(ArtPageKey::Enhanced(9));
+        atlas.pending_uploads = vec![upload(0, 0, half), upload(1, 1, half), upload(2, 2, half), upload(3, 3, 3 * half)];
+
+        let staged_pages = |atlas: &ArtPageAtlas| atlas.extract_staging.iter().map(|upload| upload.page_index).collect::<Vec<_>>();
+        atlas.stage_for_extract();
+        assert_eq!(staged_pages(&atlas), [ArtPageKey::Enhanced(0), ArtPageKey::Enhanced(2)]);
+        atlas.stage_for_extract();
+        assert_eq!(staged_pages(&atlas), [ArtPageKey::Enhanced(3)]);
+        atlas.stage_for_extract();
+        assert!(staged_pages(&atlas).is_empty());
     }
 
     #[test]
