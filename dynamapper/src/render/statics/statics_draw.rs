@@ -10,8 +10,8 @@ use crate::render::statics::static_batches::{
 use crate::render::statics::static_source::{KrStaticPackages, KrStaticSources, StaticLandStyle};
 use crate::app::system_sets::StartupSystems;
 use crate::render::assets::art::{
-    ArtPageAtlas, GroundArtPageAtlas, GroundArtPageAtlasHandle, SpriteArtPageAtlas,
-    SpriteArtPageAtlasHandle,
+    ART_ATLAS_SLOTS, ArtPageAtlas, ArtPageAtlasSet, CLASSIC_ATLAS_SLOT, ENHANCED_ATLAS_SLOT, GroundArtPageAtlas,
+    GroundArtPageAtlasHandles, SpriteArtPageAtlas, SpriteArtPageAtlasHandles,
 };
 use crate::content::{
     HuesPackageRes, TexArtCcPackageRes, TexArtEcPackageRes, TexLandEcPackageRes,
@@ -88,9 +88,12 @@ impl From<&ArtSpriteMaterialExtension> for ArtSpriteMaterialKey {
 #[derive(Asset, AsBindGroup, TypePath, Clone)]
 #[bind_group_data(ArtSpriteMaterialKey)]
 pub struct ArtSpriteMaterialExtension {
+    /// The Classic pages' atlas, whose sampler samples `atlas_enhanced` too (art/atlas_pages.wesl).
     #[texture(101, dimension = "2d_array", visibility(vertex, fragment))]
     #[sampler(100, visibility(vertex, fragment))]
     pub atlas: Handle<Image>,
+    #[texture(104, dimension = "2d_array", visibility(vertex, fragment))]
+    pub atlas_enhanced: Handle<Image>,
     #[storage(102, read_only, visibility(vertex, fragment))]
     pub instances: Handle<ShaderBuffer>,
     #[uniform(103, visibility(vertex, fragment))]
@@ -119,9 +122,12 @@ pub struct ArtSpriteMaterialExtension {
 
 #[derive(Asset, AsBindGroup, TypePath, Clone)]
 pub struct ArtGroundMaterialExtension {
+    /// The Classic pages' atlas, whose sampler samples `atlas_enhanced` too (art/atlas_pages.wesl).
     #[texture(101, dimension = "2d_array", visibility(vertex, fragment))]
     #[sampler(100, visibility(vertex, fragment))]
     pub atlas: Handle<Image>,
+    #[texture(104, dimension = "2d_array", visibility(vertex, fragment))]
+    pub atlas_enhanced: Handle<Image>,
     #[storage(102, read_only, visibility(vertex, fragment))]
     pub instances: Handle<ShaderBuffer>,
     #[uniform(103, visibility(vertex, fragment))]
@@ -225,7 +231,7 @@ pub struct ActiveArtAtlasBindingState {
     pub kingdom_reborn: bool,
 }
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 struct AtlasAllocationSpec {
     page_width: u32,
     page_height: u32,
@@ -489,18 +495,75 @@ fn atlas_kingdom_reborn_sources<'a>(
         && land_style == StaticLandStyle::KingdomReborn)
 }
 
-impl AtlasAllocationSpec {
-    /// Room for `pages` more pages of `width`×`height` in `format` (lossless RGBA8888 when the formats differ).
-    fn with_pages(self, pages: usize, width: u32, height: u32, format: PagePixelFormat) -> Self {
-        let max_layers = self.max_layers + pages as u32;
-        Self {
-            page_width: self.page_width.max(width),
-            page_height: self.page_height.max(height),
-            initial_layers: self.initial_layers.min(max_layers),
-            max_layers,
-            pixel_format: if self.pixel_format == format { format } else { PagePixelFormat::Rgba8888 },
+/// The layers each atlas of a set starts with, by slot (`art_atlas_slot`), unless it holds fewer pages. Starting at
+/// what the frame benchmark's Britain walks made resident (frame_benchmark.py: 21 Classic layers in the Classic view, 9
+/// and 9 in the Enhanced ones) took their growth copies off the walks, but cost the Kingdom Reborn view 7-8% on every
+/// frame, while the growths it spared hitched no frame past 66 ms.
+const ART_ATLAS_INITIAL_LAYERS: [u32; ART_ATLAS_SLOTS] = [4, 4];
+
+/// The page the Enhanced views' Classic sprite atlas keeps for the missing texture (`ArtPageKey::Missing`), which
+/// fits in it.
+const MISSING_TEXTURE_PAGES: usize = 1;
+const MISSING_TEXTURE_PAGE_SIZE: u32 = 256;
+
+/// The atlases of a set, as its packages fill them (`ArtPageAtlasSet`): each as large as its largest pages, in their
+/// format. The packages of an atlas share their format (the Kingdom Reborn sections take their Enhanced packages');
+/// one that does not, packed before that rule, makes its atlas lossless RGBA8888 (`mixed_format_slots`). An atlas no
+/// package fills stays `None`.
+#[derive(Clone, Copy, Default)]
+struct AtlasSetSpec {
+    slots: [Option<AtlasAllocationSpec>; ART_ATLAS_SLOTS],
+    formats: [Option<PagePixelFormat>; ART_ATLAS_SLOTS],
+    mixed_formats: [bool; ART_ATLAS_SLOTS],
+}
+
+impl AtlasSetSpec {
+    /// Room in the atlas `slot` for `pages` more pages of `width`×`height`, stored in `pixel_format`; `None` for pages
+    /// that take the atlas's format on upload, as the missing texture's.
+    fn with_pages(mut self, slot: usize, pages: usize, width: u32, height: u32, pixel_format: Option<PagePixelFormat>)
+        -> Self {
+        if pages == 0 {
+            return self;
         }
+        let spec = self.slots[slot].get_or_insert(AtlasAllocationSpec {
+            page_width: width,
+            page_height: height,
+            initial_layers: 0,
+            max_layers: 0,
+            pixel_format: PagePixelFormat::Rgba8888,
+        });
+        spec.page_width = spec.page_width.max(width);
+        spec.page_height = spec.page_height.max(height);
+        spec.max_layers += pages as u32;
+        match (self.formats[slot], pixel_format) {
+            (None, format) => self.formats[slot] = format,
+            (Some(atlas_format), Some(format)) if atlas_format != format => self.mixed_formats[slot] = true,
+            _ => {}
+        }
+        self
     }
+
+    /// The atlases whose packages' formats differ.
+    fn mixed_format_slots(&self) -> impl Iterator<Item = usize> + '_ {
+        (0..ART_ATLAS_SLOTS).filter(|&slot| self.mixed_formats[slot])
+    }
+
+    /// Each atlas's allocation, starting with `ART_ATLAS_INITIAL_LAYERS`; an atlas no package fills is a blank one.
+    fn allocations(self) -> [AtlasAllocationSpec; ART_ATLAS_SLOTS] {
+        std::array::from_fn(|slot| self.slots[slot].map_or_else(blank_atlas_spec, |spec| AtlasAllocationSpec {
+            initial_layers: ART_ATLAS_INITIAL_LAYERS[slot].min(spec.max_layers),
+            pixel_format: match (self.mixed_formats[slot], self.formats[slot]) {
+                (false, Some(format)) => format,
+                _ => PagePixelFormat::Rgba8888,
+            },
+            ..spec
+        }))
+    }
+}
+
+/// A package's pages' format: its first page's, RGBA8888 without pages.
+fn package_pixel_format<T>(pages: &[T], get_pixel_format: impl Fn(&T) -> PagePixelFormat) -> PagePixelFormat {
+    pages.first().map_or(PagePixelFormat::Rgba8888, get_pixel_format)
 }
 
 fn blank_atlas_spec() -> AtlasAllocationSpec {
@@ -513,60 +576,34 @@ fn blank_atlas_spec() -> AtlasAllocationSpec {
     }
 }
 
-fn package_pixel_format<T>(
-    pages: &[T],
-    get_pixel_format: impl Fn(&T) -> PagePixelFormat,
-) -> PagePixelFormat {
-    pages
-        .first()
-        .map(get_pixel_format)
-        .unwrap_or(PagePixelFormat::Rgba8888)
-}
-
 /// `kingdom_reborn` adds the pages of the Kingdom Reborn item art to the Enhanced atlas (`atlas_kingdom_reborn_sources`).
 fn sprite_atlas_spec(
     active_source: Option<ClientTextureSource>,
     tex_art_cc_res: Option<&Res<TexArtCcPackageRes>>,
     tex_art_ec_res: Option<&Res<TexArtEcPackageRes>>,
     kingdom_reborn: Option<KrStaticSources>,
-) -> AtlasAllocationSpec {
+) -> AtlasSetSpec {
+    let classic = |spec: AtlasSetSpec| match tex_art_cc_res {
+        Some(package) => spec.with_pages(CLASSIC_ATLAS_SLOT, package.0.pages().len(), package.0.atlas_width(),
+            package.0.atlas_height(), Some(package_pixel_format(package.0.pages(), |page| page.pixel_format))),
+        None => spec,
+    };
     match active_source {
-        Some(ClientTextureSource::Cc) => tex_art_cc_res
-            .map(|package| AtlasAllocationSpec {
-                page_width: package.0.atlas_width().max(1),
-                page_height: package.0.atlas_height().max(1),
-                initial_layers: (package.0.pages().len().max(1) as u32).min(4),
-                max_layers: package.0.pages().len().max(1) as u32,
-                pixel_format: package_pixel_format(package.0.pages(), |page| page.pixel_format),
-            })
-            .unwrap_or_else(blank_atlas_spec),
+        Some(ClientTextureSource::Cc) => classic(AtlasSetSpec::default()),
         Some(ClientTextureSource::Ec) => {
-            let enhanced = tex_art_ec_res.map(|p| p.0.as_ref());
-            let classic = tex_art_cc_res.map(|p| p.0.as_ref());
-            let layers = enhanced.map_or(0, |p| p.pages().len()) + classic.map_or(0, |p| p.pages().len()) + 1;
-            let format = enhanced.map(|p| package_pixel_format(p.pages(), |p| p.pixel_format))
-                .or_else(|| classic.map(|p| package_pixel_format(p.pages(), |p| p.pixel_format)))
-                .unwrap_or(PagePixelFormat::Rgba8888);
-            // Keep compressed uploads when both sources share BC7. Mixed
-            // storage formats need a common lossless runtime representation.
-            let format = if classic.is_some_and(|p|
-                package_pixel_format(p.pages(), |p| p.pixel_format) != format) {
-                PagePixelFormat::Rgba8888
-            } else { format };
-            let spec = AtlasAllocationSpec {
-                page_width: enhanced.map_or(0, |p| p.atlas_width()).max(classic.map_or(0, |p| p.atlas_width())).max(256),
-                page_height: enhanced.map_or(0, |p| p.atlas_height()).max(classic.map_or(0, |p| p.atlas_height())).max(256),
-                initial_layers: (layers as u32).min(4),
-                max_layers: layers as u32,
-                pixel_format: format,
-            };
+            let mut spec = classic(AtlasSetSpec::default()).with_pages(CLASSIC_ATLAS_SLOT, MISSING_TEXTURE_PAGES,
+                MISSING_TEXTURE_PAGE_SIZE, MISSING_TEXTURE_PAGE_SIZE, None);
+            if let Some(package) = tex_art_ec_res {
+                spec = spec.with_pages(ENHANCED_ATLAS_SLOT, package.0.pages().len(), package.0.atlas_width(),
+                    package.0.atlas_height(), Some(package_pixel_format(package.0.pages(), |page| page.pixel_format)));
+            }
             match kingdom_reborn {
-                Some(kr) => spec.with_pages(kr.art.pages().len(), kr.art.atlas_width(), kr.art.atlas_height(),
-                    package_pixel_format(kr.art.pages(), |p| p.pixel_format)),
+                Some(kr) => spec.with_pages(ENHANCED_ATLAS_SLOT, kr.art.pages().len(), kr.art.atlas_width(),
+                    kr.art.atlas_height(), Some(package_pixel_format(kr.art.pages(), |page| page.pixel_format))),
                 None => spec,
             }
         }
-        None => blank_atlas_spec(),
+        None => AtlasSetSpec::default(),
     }
 }
 
@@ -575,23 +612,21 @@ fn ground_atlas_spec(
     active_source: Option<ClientTextureSource>,
     tex_land_ec_res: Option<&Res<TexLandEcPackageRes>>,
     kingdom_reborn: Option<KrStaticSources>,
-) -> AtlasAllocationSpec {
+) -> AtlasSetSpec {
+    let empty = AtlasSetSpec::default();
     if active_source != Some(ClientTextureSource::Ec) {
-        return blank_atlas_spec();
+        return empty;
     }
 
-    let spec = tex_land_ec_res
-        .map(|package| AtlasAllocationSpec {
-            page_width: package.0.atlas_width().max(1),
-            page_height: package.0.atlas_height().max(1),
-            initial_layers: (package.0.pages().len().max(1) as u32).min(4),
-            max_layers: package.0.pages().len().max(1) as u32,
-            pixel_format: package_pixel_format(package.0.pages(), |page| page.pixel_format),
-        })
-        .unwrap_or_else(blank_atlas_spec);
+    let spec = match tex_land_ec_res {
+        Some(package) => empty.with_pages(ENHANCED_ATLAS_SLOT, package.0.pages().len(),
+            package.0.atlas_width(), package.0.atlas_height(),
+            Some(package_pixel_format(package.0.pages(), |page| page.pixel_format))),
+        None => empty,
+    };
     match kingdom_reborn {
-        Some(kr) => spec.with_pages(kr.land.pages().len(), kr.land.atlas_width(), kr.land.atlas_height(),
-            package_pixel_format(kr.land.pages(), |page| page.pixel_format)),
+        Some(kr) => spec.with_pages(ENHANCED_ATLAS_SLOT, kr.land.pages().len(), kr.land.atlas_width(),
+            kr.land.atlas_height(), Some(package_pixel_format(kr.land.pages(), |page| page.pixel_format))),
         None => spec,
     }
 }
@@ -734,7 +769,21 @@ fn build_art_atlas(images: &mut Assets<Image>, spec: AtlasAllocationSpec) -> Art
     )
 }
 
+fn build_art_atlas_set(images: &mut Assets<Image>, atlas_name: &str, spec: AtlasSetSpec) -> ArtPageAtlasSet {
+    for slot in spec.mixed_format_slots() {
+        warn!(
+            "The {} {atlas_name} art atlas holds pages in different formats, so it is lossless RGBA8888 and the BC7 \
+             pages are decoded on loading: repack the Kingdom Reborn sections with their Enhanced packages.",
+            ART_ATLAS_CONTENT_NAMES[slot]
+        );
+    }
+    ArtPageAtlasSet { atlases: spec.allocations().map(|allocation| build_art_atlas(images, allocation)) }
+}
+
 const BYTES_PER_MB: u64 = 1024 * 1024;
+
+/// The pages each atlas of a set holds, by slot, for the logs.
+const ART_ATLAS_CONTENT_NAMES: [&str; ART_ATLAS_SLOTS] = ["Classic", "Enhanced"];
 
 /// A growth allocates the whole new array and copies the resident layers into it, a stall that grows with the atlas.
 fn log_art_atlas_growth(atlas_name: &str, atlas: &ArtPageAtlas, new_layers: u32) {
@@ -756,74 +805,63 @@ fn log_art_atlas_growth(atlas_name: &str, atlas: &ArtPageAtlas, new_layers: u32)
     );
 }
 
-fn apply_sprite_art_atlas_resize(
+/// Grows the atlases of `atlases` that asked to, each into a new image (`ArtPageAtlas::apply_resize`), and says whether
+/// any did.
+fn apply_art_atlas_set_resizes(
     images: &mut Assets<Image>,
+    atlas_name: &str,
+    atlases: &mut ArtPageAtlasSet,
+    atlas_handles: &mut [Handle<Image>; ART_ATLAS_SLOTS],
+) -> bool {
+    let mut grown = false;
+    for ((atlas, atlas_handle), content) in atlases.atlases.iter_mut().zip(atlas_handles).zip(ART_ATLAS_CONTENT_NAMES) {
+        let Some(new_layers) = atlas.take_resize_request() else {
+            continue;
+        };
+        if new_layers <= atlas.active_layers {
+            continue;
+        }
+
+        log_art_atlas_growth(&format!("{content} {atlas_name}"), atlas, new_layers);
+        let new_handle = create_art_atlas_image(
+            images,
+            atlas.page_width,
+            atlas.page_height,
+            new_layers,
+            atlas.pixel_format,
+        );
+        atlas.apply_resize(new_handle.clone(), new_layers);
+        *atlas_handle = new_handle;
+        grown = true;
+    }
+    grown
+}
+
+/// Binds the sprite atlases' images to the sprite materials.
+fn bind_sprite_art_atlases(
     materials: &mut Assets<ArtSpriteMaterial>,
     render_assets: &ArtSpriteRenderAssets,
-    atlas: &mut ArtPageAtlas,
-    atlas_handle: &mut Handle<Image>,
+    [atlas, atlas_enhanced]: &[Handle<Image>; ART_ATLAS_SLOTS],
 ) {
-    let Some(new_layers) = atlas.take_resize_request() else {
-        return;
-    };
-    if new_layers <= atlas.active_layers {
-        return;
-    }
-
-    log_art_atlas_growth("sprite", atlas, new_layers);
-    let new_handle = create_art_atlas_image(
-        images,
-        atlas.page_width,
-        atlas.page_height,
-        new_layers,
-        atlas.pixel_format,
-    );
-    atlas.apply_resize(new_handle.clone(), new_layers);
-
-    *atlas_handle = new_handle.clone();
-
-    if let Some(mut material) = materials.get_mut(&render_assets.opaque_material) {
-        material.extension.atlas = new_handle.clone();
-    }
-    if let Some(mut material) = materials.get_mut(&render_assets.transparent_material) {
-        material.extension.atlas = new_handle.clone();
-    }
-    if let Some(mut material) = materials.get_mut(&render_assets.shadow_material) {
-        material.extension.atlas = new_handle;
+    for material in [&render_assets.opaque_material, &render_assets.transparent_material, &render_assets.shadow_material] {
+        if let Some(mut material) = materials.get_mut(material) {
+            material.extension.atlas = atlas.clone();
+            material.extension.atlas_enhanced = atlas_enhanced.clone();
+        }
     }
 }
 
-fn apply_ground_art_atlas_resize(
-    images: &mut Assets<Image>,
+/// Binds the ground atlases' images to the ground materials.
+fn bind_ground_art_atlases(
     materials: &mut Assets<ArtGroundMaterial>,
     render_assets: &ArtGroundRenderAssets,
-    atlas: &mut ArtPageAtlas,
-    atlas_handle: &mut Handle<Image>,
+    [atlas, atlas_enhanced]: &[Handle<Image>; ART_ATLAS_SLOTS],
 ) {
-    let Some(new_layers) = atlas.take_resize_request() else {
-        return;
-    };
-    if new_layers <= atlas.active_layers {
-        return;
-    }
-
-    log_art_atlas_growth("ground", atlas, new_layers);
-    let new_handle = create_art_atlas_image(
-        images,
-        atlas.page_width,
-        atlas.page_height,
-        new_layers,
-        atlas.pixel_format,
-    );
-    atlas.apply_resize(new_handle.clone(), new_layers);
-
-    *atlas_handle = new_handle.clone();
-
-    if let Some(mut material) = materials.get_mut(&render_assets.opaque_material) {
-        material.extension.atlas = new_handle.clone();
-    }
-    if let Some(mut material) = materials.get_mut(&render_assets.transparent_material) {
-        material.extension.atlas = new_handle;
+    for material in [&render_assets.opaque_material, &render_assets.transparent_material] {
+        if let Some(mut material) = materials.get_mut(material) {
+            material.extension.atlas = atlas.clone();
+            material.extension.atlas_enhanced = atlas_enhanced.clone();
+        }
     }
 }
 
@@ -834,9 +872,9 @@ fn rebind_active_art_atlases(
     render_assets: &ArtSpriteRenderAssets,
     ground_render_assets: &ArtGroundRenderAssets,
     sprite_atlas: &mut SpriteArtPageAtlas,
-    sprite_atlas_handle: &mut SpriteArtPageAtlasHandle,
+    sprite_atlas_handles: &mut SpriteArtPageAtlasHandles,
     ground_atlas: &mut GroundArtPageAtlas,
-    ground_atlas_handle: &mut GroundArtPageAtlasHandle,
+    ground_atlas_handles: &mut GroundArtPageAtlasHandles,
     active_source: Option<ClientTextureSource>,
     tex_art_cc_res: Option<&Res<TexArtCcPackageRes>>,
     tex_art_ec_res: Option<&Res<TexArtEcPackageRes>>,
@@ -846,32 +884,13 @@ fn rebind_active_art_atlases(
     let sprite_spec = sprite_atlas_spec(active_source, tex_art_cc_res, tex_art_ec_res, kingdom_reborn);
     let ground_spec = ground_atlas_spec(active_source, tex_land_ec_res, kingdom_reborn);
 
-    let next_sprite_atlas = build_art_atlas(images, sprite_spec);
-    let next_sprite_handle = next_sprite_atlas.gpu_handle.clone();
-    sprite_atlas.0 = next_sprite_atlas;
-    sprite_atlas_handle.0 = next_sprite_handle.clone();
+    sprite_atlas.0 = build_art_atlas_set(images, "sprite", sprite_spec);
+    sprite_atlas_handles.0 = sprite_atlas.handles();
+    bind_sprite_art_atlases(materials, render_assets, &sprite_atlas_handles.0);
 
-    if let Some(mut material) = materials.get_mut(&render_assets.opaque_material) {
-        material.extension.atlas = next_sprite_handle.clone();
-    }
-    if let Some(mut material) = materials.get_mut(&render_assets.transparent_material) {
-        material.extension.atlas = next_sprite_handle.clone();
-    }
-    if let Some(mut material) = materials.get_mut(&render_assets.shadow_material) {
-        material.extension.atlas = next_sprite_handle;
-    }
-
-    let next_ground_atlas = build_art_atlas(images, ground_spec);
-    let next_ground_handle = next_ground_atlas.gpu_handle.clone();
-    ground_atlas.0 = next_ground_atlas;
-    ground_atlas_handle.0 = next_ground_handle.clone();
-
-    if let Some(mut material) = ground_materials.get_mut(&ground_render_assets.opaque_material) {
-        material.extension.atlas = next_ground_handle.clone();
-    }
-    if let Some(mut material) = ground_materials.get_mut(&ground_render_assets.transparent_material) {
-        material.extension.atlas = next_ground_handle;
-    }
+    ground_atlas.0 = build_art_atlas_set(images, "ground", ground_spec);
+    ground_atlas_handles.0 = ground_atlas.handles();
+    bind_ground_art_atlases(ground_materials, ground_render_assets, &ground_atlas_handles.0);
 }
 
 pub fn sys_setup_art_page_atlas(
@@ -914,10 +933,10 @@ pub fn sys_setup_art_page_atlas(
     );
     let ground_spec = ground_atlas_spec(active_source, tex_land_ec_res.as_ref(), None);
 
-    let sprite_atlas = build_art_atlas(&mut images, sprite_spec);
-    let sprite_atlas_handle = sprite_atlas.gpu_handle.clone();
-    let ground_atlas = build_art_atlas(&mut images, ground_spec);
-    let ground_atlas_handle = ground_atlas.gpu_handle.clone();
+    let sprite_atlas = build_art_atlas_set(&mut images, "sprite", sprite_spec);
+    let [sprite_atlas_handle, sprite_atlas_enhanced_handle] = sprite_atlas.handles();
+    let ground_atlas = build_art_atlas_set(&mut images, "ground", ground_spec);
+    let [ground_atlas_handle, ground_atlas_enhanced_handle] = ground_atlas.handles();
     let (hue_lookup_handle, hue_enabled) =
         create_hue_lookup_image(&mut images, hues_package_res.as_deref());
     let land_page_bindings =
@@ -968,6 +987,7 @@ pub fn sys_setup_art_page_atlas(
         },
         extension: ArtSpriteMaterialExtension {
             atlas: opaque_sprite_atlas_handle,
+            atlas_enhanced: sprite_atlas_enhanced_handle.clone(),
             instances: buffer_handle.clone(),
             params: SpriteParams {
                 render_mode: 0,
@@ -998,6 +1018,7 @@ pub fn sys_setup_art_page_atlas(
         },
         extension: ArtSpriteMaterialExtension {
             atlas: transparent_sprite_atlas_handle,
+            atlas_enhanced: sprite_atlas_enhanced_handle.clone(),
             instances: buffer_handle.clone(),
             params: SpriteParams {
                 render_mode: 0,
@@ -1023,6 +1044,7 @@ pub fn sys_setup_art_page_atlas(
         base: projected_art_shadow_base_material(),
         extension: ArtSpriteMaterialExtension {
             atlas: sprite_atlas_handle.clone(),
+            atlas_enhanced: sprite_atlas_enhanced_handle.clone(),
             instances: buffer_handle.clone(),
             params: SpriteParams {
                 render_mode: 0,
@@ -1084,6 +1106,7 @@ pub fn sys_setup_art_page_atlas(
         },
         extension: ArtGroundMaterialExtension {
             atlas: opaque_ground_atlas_handle,
+            atlas_enhanced: ground_atlas_enhanced_handle.clone(),
             instances: ground_buffer_handle.clone(),
             params: SpriteParams {
                 render_mode: 0,
@@ -1116,6 +1139,7 @@ pub fn sys_setup_art_page_atlas(
         },
         extension: ArtGroundMaterialExtension {
             atlas: transparent_ground_atlas_handle,
+            atlas_enhanced: ground_atlas_enhanced_handle.clone(),
             instances: ground_buffer_handle.clone(),
             params: SpriteParams {
                 render_mode: 0,
@@ -1174,10 +1198,10 @@ pub fn sys_setup_art_page_atlas(
         opaque_material: ground_material_handle,
         transparent_material: transparent_ground_material_handle,
     });
+    commands.insert_resource(SpriteArtPageAtlasHandles(sprite_atlas.handles()));
     commands.insert_resource(SpriteArtPageAtlas(sprite_atlas));
-    commands.insert_resource(SpriteArtPageAtlasHandle(sprite_atlas_handle.clone()));
+    commands.insert_resource(GroundArtPageAtlasHandles(ground_atlas.handles()));
     commands.insert_resource(GroundArtPageAtlas(ground_atlas));
-    commands.insert_resource(GroundArtPageAtlasHandle(ground_atlas_handle.clone()));
     commands.insert_resource(ActiveArtAtlasBindingState {
         configured_source: active_source,
         kingdom_reborn: false,
@@ -1191,9 +1215,9 @@ pub fn sys_sync_active_art_page_atlases(
     render_assets: Res<ArtSpriteRenderAssets>,
     ground_render_assets: Res<ArtGroundRenderAssets>,
     mut sprite_atlas: ResMut<SpriteArtPageAtlas>,
-    mut sprite_atlas_handle: ResMut<SpriteArtPageAtlasHandle>,
+    mut sprite_atlas_handles: ResMut<SpriteArtPageAtlasHandles>,
     mut ground_atlas: ResMut<GroundArtPageAtlas>,
-    mut ground_atlas_handle: ResMut<GroundArtPageAtlasHandle>,
+    mut ground_atlas_handles: ResMut<GroundArtPageAtlasHandles>,
     source_state: Res<crate::render::statics::static_source::StaticArtSourceState>,
     mut binding_state: ResMut<ActiveArtAtlasBindingState>,
     tex_art_cc_res: Option<Res<TexArtCcPackageRes>>,
@@ -1219,9 +1243,9 @@ pub fn sys_sync_active_art_page_atlases(
         &render_assets,
         &ground_render_assets,
         &mut sprite_atlas,
-        &mut sprite_atlas_handle,
+        &mut sprite_atlas_handles,
         &mut ground_atlas,
-        &mut ground_atlas_handle,
+        &mut ground_atlas_handles,
         atlas_source,
         tex_art_cc_res.as_ref(),
         tex_art_ec_res.as_ref(),
@@ -1240,24 +1264,16 @@ pub fn sys_apply_pending_art_page_atlas_resizes(
     render_assets: Res<ArtSpriteRenderAssets>,
     ground_render_assets: Res<ArtGroundRenderAssets>,
     mut sprite_atlas: ResMut<SpriteArtPageAtlas>,
-    mut sprite_atlas_handle: ResMut<SpriteArtPageAtlasHandle>,
+    mut sprite_atlas_handles: ResMut<SpriteArtPageAtlasHandles>,
     mut ground_atlas: ResMut<GroundArtPageAtlas>,
-    mut ground_atlas_handle: ResMut<GroundArtPageAtlasHandle>,
+    mut ground_atlas_handles: ResMut<GroundArtPageAtlasHandles>,
 ) {
-    apply_sprite_art_atlas_resize(
-        &mut images,
-        &mut materials,
-        &render_assets,
-        &mut sprite_atlas,
-        &mut sprite_atlas_handle.0,
-    );
-    apply_ground_art_atlas_resize(
-        &mut images,
-        &mut ground_materials,
-        &ground_render_assets,
-        &mut ground_atlas,
-        &mut ground_atlas_handle.0,
-    );
+    if apply_art_atlas_set_resizes(&mut images, "sprite", &mut sprite_atlas.0, &mut sprite_atlas_handles.0) {
+        bind_sprite_art_atlases(&mut materials, &render_assets, &sprite_atlas_handles.0);
+    }
+    if apply_art_atlas_set_resizes(&mut images, "ground", &mut ground_atlas.0, &mut ground_atlas_handles.0) {
+        bind_ground_art_atlases(&mut ground_materials, &ground_render_assets, &ground_atlas_handles.0);
+    }
 }
 
 pub fn sys_sync_static_sprite_entities(
@@ -1908,6 +1924,7 @@ mod tests {
             base: StandardMaterial::default(),
             extension: ArtGroundMaterialExtension {
                 atlas: Handle::default(),
+                atlas_enhanced: Handle::default(),
                 instances,
                 params: SpriteParams {
                     render_mode: 0,
@@ -1991,19 +2008,39 @@ mod tests {
 
     #[test]
     fn kingdom_reborn_pages_widen_the_enhanced_atlas() {
-        const EC_PAGES: u32 = 10;
+        use PagePixelFormat::{Bc7, Rgba8888};
+        const CC_PAGES: usize = 5;
+        const EC_PAGES: usize = 10;
         const KR_PAGES: usize = 3;
-        const EC_DIM: u32 = 2048;
-        const KR_DIM: u32 = 4096;
-        let enhanced = AtlasAllocationSpec { page_width: EC_DIM, page_height: EC_DIM, initial_layers: 4,
-            max_layers: EC_PAGES, pixel_format: PagePixelFormat::Bc7 };
-        let widened = enhanced.with_pages(KR_PAGES, KR_DIM, EC_DIM, PagePixelFormat::Rgba8888);
-        assert_eq!((widened.page_width, widened.page_height), (KR_DIM, EC_DIM));
-        assert_eq!((widened.initial_layers, widened.max_layers), (4, EC_PAGES + KR_PAGES as u32));
-        // Mixed storage formats share lossless RGBA8888; matching ones keep theirs.
-        assert_eq!(widened.pixel_format, PagePixelFormat::Rgba8888);
-        assert_eq!(enhanced.with_pages(KR_PAGES, EC_DIM, EC_DIM, PagePixelFormat::Bc7).pixel_format,
-            PagePixelFormat::Bc7);
+        const CC_DIM: u32 = 2048;
+        const EC_DIM: u32 = 4096;
+        let spec = AtlasSetSpec::default()
+            .with_pages(CLASSIC_ATLAS_SLOT, CC_PAGES, CC_DIM, CC_DIM, Some(Rgba8888))
+            .with_pages(ENHANCED_ATLAS_SLOT, EC_PAGES, EC_DIM, CC_DIM, Some(Bc7));
+        let [classic, enhanced] = spec.with_pages(ENHANCED_ATLAS_SLOT, KR_PAGES, CC_DIM, EC_DIM, Some(Bc7)).allocations();
+        // The Classic pages keep their size and format; the Enhanced atlas is as large as its largest pages.
+        assert_eq!(classic, AtlasAllocationSpec { page_width: CC_DIM, page_height: CC_DIM,
+            initial_layers: ART_ATLAS_INITIAL_LAYERS[CLASSIC_ATLAS_SLOT], max_layers: CC_PAGES as u32,
+            pixel_format: Rgba8888 });
+        assert_eq!(enhanced, AtlasAllocationSpec { page_width: EC_DIM, page_height: EC_DIM,
+            initial_layers: ART_ATLAS_INITIAL_LAYERS[ENHANCED_ATLAS_SLOT], max_layers: (EC_PAGES + KR_PAGES) as u32,
+            pixel_format: Bc7 });
+        // Mixed storage formats share lossless RGBA8888, and say so.
+        let mixed = spec.with_pages(ENHANCED_ATLAS_SLOT, KR_PAGES, EC_DIM, EC_DIM, Some(Rgba8888));
+        assert_eq!(mixed.mixed_format_slots().collect::<Vec<_>>(), [ENHANCED_ATLAS_SLOT]);
+        assert_eq!(mixed.allocations()[ENHANCED_ATLAS_SLOT].pixel_format, Rgba8888);
+        assert_eq!(spec.mixed_format_slots().count(), 0);
+        // The missing texture's page takes the format of its atlas, a BC7 one included.
+        let [classic, _] = AtlasSetSpec::default().with_pages(CLASSIC_ATLAS_SLOT, CC_PAGES, CC_DIM, CC_DIM, Some(Bc7))
+            .with_pages(CLASSIC_ATLAS_SLOT, MISSING_TEXTURE_PAGES, MISSING_TEXTURE_PAGE_SIZE, MISSING_TEXTURE_PAGE_SIZE,
+                None)
+            .allocations();
+        assert_eq!((classic.pixel_format, classic.max_layers), (Bc7, CC_PAGES as u32 + 1));
+        // An atlas no package fills is a blank one; one with fewer pages than its start has just them.
+        let [classic, enhanced] = AtlasSetSpec::default().with_pages(CLASSIC_ATLAS_SLOT, 1, CC_DIM, CC_DIM, Some(Rgba8888))
+            .allocations();
+        assert_eq!((classic.initial_layers, classic.max_layers), (1, 1));
+        assert_eq!(enhanced, blank_atlas_spec());
     }
 
     #[test]

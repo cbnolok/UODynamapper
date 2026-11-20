@@ -13,7 +13,7 @@ use crate::world::z_view::{PackageLand, ZViewCut, ZViewLimit};
 use crate::render::scene::SceneStateData;
 use crate::world::statics::{LazyStaticsStore, StaticsStoreRes};
 use super::static_chunk_builder::{ChunkMultis, StaticBuildShared, StaticChunkBuilder, StaticChunkJob};
-use crate::render::assets::art::{ArtPageAtlas, GroundArtPageAtlas, ResolvedArtSprite, SpriteArtPageAtlas};
+use crate::render::assets::art::{ArtPageAtlasSet, GroundArtPageAtlas, ResolvedArtSprite, SpriteArtPageAtlas};
 use crate::render::assets::art::{ArtPageGeometry, ArtPageKey, ArtPageSources};
 use crate::render::assets::ec_item_surface::KR_ITEM_RECORD_BASE;
 use crate::content::{
@@ -663,8 +663,8 @@ fn try_finish_cached_visible_static_collect(
             unique_requested_pages,
             resident_pages: sprite_atlas.resident_page_count() + ground_atlas.resident_page_count(),
             pending_pages: sprite_atlas.pending_page_count() + ground_atlas.pending_page_count(),
-            atlas_capacity_pages: sprite_atlas.active_layers as usize
-                + ground_atlas.active_layers as usize,
+            atlas_capacity_pages: sprite_atlas.active_layers() as usize
+                + ground_atlas.active_layers() as usize,
             atlas_hits,
             atlas_misses,
             emitted_instances: sprite_output.0.len() + ground_output.0.len(),
@@ -1698,7 +1698,7 @@ fn art_page_sources(resources: StaticCollectResources<'_>) -> ArtPageSources<'_>
 }
 
 /// The atlas layer of each page slot of a chunk (`art_page_slot`), `None` for a page not yet resident.
-fn bind_chunk_pages(pages: &[ArtPageKey], atlas: &mut ArtPageAtlas, sources: ArtPageSources<'_>) -> Vec<Option<u32>> {
+fn bind_chunk_pages(pages: &[ArtPageKey], atlas: &mut ArtPageAtlasSet, sources: ArtPageSources<'_>) -> Vec<Option<u32>> {
     std::iter::once(Some(0)).chain(pages.iter().map(|&page| atlas.bind_page(page, sources))).collect()
 }
 
@@ -1834,8 +1834,8 @@ fn finish_static_collect_slow_path(
             unique_requested_pages: slow_stats.unique_requested_pages.len(),
             resident_pages: sprite_atlas.resident_page_count() + ground_atlas.resident_page_count(),
             pending_pages: sprite_atlas.pending_page_count() + ground_atlas.pending_page_count(),
-            atlas_capacity_pages: sprite_atlas.active_layers as usize
-                + ground_atlas.active_layers as usize,
+            atlas_capacity_pages: sprite_atlas.active_layers() as usize
+                + ground_atlas.active_layers() as usize,
             atlas_hits: slow_stats.atlas_hits,
             atlas_misses: slow_stats.atlas_misses,
             emitted_instances: sprite_output.0.len() + ground_output.0.len(),
@@ -2952,7 +2952,6 @@ mod tests {
     #[test]
     fn disabling_statics_clears_draw_batches_and_invalidates_output_reuse() {
         use bevy::ecs::system::RunSystemOnce;
-        use udd_assets::tex_art_cc::PagePixelFormat;
         let mut world = World::new();
         let mut settings = crate::settings::load_from_files().expect("settings load");
         settings.world_rendering.enable_statics = false;
@@ -2969,12 +2968,8 @@ mod tests {
         world.init_resource::<PlacedMultisRes>();
         world.insert_resource(TileAtlas::new(Default::default(), 0));
         world.insert_resource(RenderZoom::default());
-        world.insert_resource(SpriteArtPageAtlas(crate::render::assets::art::ArtPageAtlas::new(
-            Handle::default(), 64, 64, 1, 1, PagePixelFormat::Rgba8888,
-        )));
-        world.insert_resource(GroundArtPageAtlas(crate::render::assets::art::ArtPageAtlas::new(
-            Handle::default(), 64, 64, 1, 1, PagePixelFormat::Rgba8888,
-        )));
+        world.insert_resource(SpriteArtPageAtlas(ArtPageAtlasSet::blank_for_tests()));
+        world.insert_resource(GroundArtPageAtlas(ArtPageAtlasSet::blank_for_tests()));
         world.insert_resource(RenderStaticInstances(vec![SpriteInstance::zeroed()]));
         world.insert_resource(RenderStaticLandInstances(vec![GroundTileInstance::zeroed()]));
         world.insert_resource(RenderStaticChunkBatches { sprite: vec![batch], ground: vec![batch] });

@@ -18,11 +18,13 @@ import package::shaders::postprocess::grunge::{apply_texture_visual_grunge, visu
 import package::shaders::postprocess::kr_color_wash::apply_kr_color_wash;
 import package::shaders::postprocess::tonemapping::{tonemap_with_curve};
 import package::shaders::world::pixel_art_filters::{pixel_art_atlas_uv_iq};
-import package::shaders::world::client_filter::{client_filtered_atlas_rect, TEXTURE_FILTER_CLIENT_BILINEAR};
+import package::shaders::world::client_filter::TEXTURE_FILTER_CLIENT_BILINEAR;
+import package::shaders::world::art::atlas_pages::{art_page, art_page_varying, art_page_sample, art_page_atlas_size,
+    art_page_client_filtered};
 
 import package::shaders::world::art::art_ground_bindings::{
     GroundTileInstance, SpriteParams, SceneUniform, LandEffectsUniform, GlobalLightingUniforms,
-    art_atlas_sampler, art_atlas, instances, sprite_params, scene, effects, global_light,
+    art_atlas_sampler, art_atlas, art_atlas_enhanced, instances, sprite_params, scene, effects, global_light,
     hue_sampler, hue_texture, land_page_atlas, land_page_lookup, visual_grunge_texture,
     item_liquid_atlas, item_liquid_lookup, liquid_sampler, client_grunge_texture, client_grunge_sampler,
     HEIGHT_SCALE, DEPTH_CLASS_FOLIAGE, DEPTH_CLASS_ROOF, PASS_MODE_OPAQUE, PASS_MODE_TRANSPARENT,
@@ -72,7 +74,7 @@ fn vertex(vertex: Vertex) -> GroundVertexOutput {
     out.position = camera_relative_world_to_clip(vec3<f32>(inst.world_x, inst.world_y, inst.world_z),
         vec3<f32>(local.x, 0.0, local.y));
     out.uv = mix(inst.uv_min, inst.uv_max, corner);
-    out.uv_b = vec2<f32>(f32(inst.layer), 0.0);
+    out.uv_b = art_page_varying(inst.layer);
     out.color = inst.color_rgba;
     out.is_wet = inst.is_wet_flags & 1u;
     out.world_pos = world_pos;
@@ -94,7 +96,7 @@ fn shade_fragment(in: GroundVertexOutput, sample_index: u32) -> GroundFragmentOu
     var out: GroundFragmentOutput;
     // It lies over its cell as the land: its cell's anchor, which the instance carries, at its priority z and tie
     // level 0, one depth for the whole cell (art/depth.wesl).
-    let layer = u32(in.uv_b.x);
+    let page = art_page(in.uv_b);
     let inst = instances[in.instance_index];
     // A cave drawn over the map shows in front of the land around it.
     out.depth = view_z_depth(cave_lifted_view_z(sprite_priority_view_z(vec2<f32>(inst.tile_x, inst.tile_y),
@@ -136,14 +138,14 @@ fn shade_fragment(in: GroundVertexOutput, sample_index: u32) -> GroundFragmentOu
             uv_in_tile = apply_water_animation(uv_in_tile, vec2<f32>(0.5, 0.5));
         }
         let uv = inst.uv_min + uv_in_tile * atlas_extent;
-        let atlas_size = vec2<f32>(textureDimensions(art_atlas).xy);
+        let atlas_size = art_page_atlas_size(art_atlas, art_atlas_enhanced, page);
         if (effects.texture_filter == TEXTURE_FILTER_CLIENT_BILINEAR) {
             // A world-stretched texture repeats, so the client's taps wrap.
-            color = client_filtered_atlas_rect(art_atlas, i32(layer), uv, inst.uv_min, inst.uv_max,
+            color = art_page_client_filtered(art_atlas, art_atlas_enhanced, page, uv, inst.uv_min, inst.uv_max,
                 inst.texture_stretch > 0.0, ground_uv_dx, ground_uv_dy, scene.client_view_scale);
         } else {
             let sample_uv = pixel_art_atlas_uv_iq(uv, inst.uv_min, inst.uv_max, atlas_size);
-            color = textureSample(art_atlas, art_atlas_sampler, sample_uv, i32(layer));
+            color = art_page_sample(art_atlas, art_atlas_enhanced, art_atlas_sampler, page, sample_uv);
         }
     }
     // Blend authored partial-alpha coverage instead of making half-opaque masks

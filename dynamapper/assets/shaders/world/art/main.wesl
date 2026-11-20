@@ -17,14 +17,16 @@ import package::shaders::postprocess::kr_color_wash::apply_kr_color_wash;
 import package::shaders::postprocess::tonemapping::{tonemap_with_curve};
 import package::shaders::world::land::noise::noise_2d;
 import package::shaders::world::pixel_art_filters::pixel_art_atlas_uv_iq;
-import package::shaders::world::client_filter::{client_filtered_atlas_rect, TEXTURE_FILTER_CLIENT_BILINEAR};
+import package::shaders::world::client_filter::TEXTURE_FILTER_CLIENT_BILINEAR;
+import package::shaders::world::art::atlas_pages::{ArtPage, art_page, art_page_varying, art_page_sample,
+    art_page_atlas_size, art_page_client_filtered};
 import package::shaders::world::ec_item_quad::ec_item_quad_world;
 import package::shaders::world::ec_item_surface::{apply_ec_item_surface, ec_item_surface_record};
 import package::shaders::world::ec_liquid::{ec_liquid_texture_uv, ec_liquid_world_uv};
 
 import package::shaders::world::art::art_bindings::{
     SpriteInstance, SpriteParams, SceneUniform, LandEffectsUniform, GlobalLightingUniforms,
-    art_atlas_sampler, art_atlas, instances, sprite_params, scene, effects, global_light,
+    art_atlas_sampler, art_atlas, art_atlas_enhanced, instances, sprite_params, scene, effects, global_light,
     hue_sampler, hue_texture, visual_grunge_texture, client_grunge_texture, client_grunge_sampler,
     item_surface_atlas, item_surface_lookup, item_surface_sampler,
     INV_SQRT_2, BILLBOARD_RIGHT_XZ, FLAT_QUAD_FORWARD_XZ, HEIGHT_SCALE, DEPTH_CLASS_REGULAR, DEPTH_CLASS_BACKGROUND,
@@ -190,7 +192,7 @@ fn vertex(vertex: Vertex) -> ArtVertexOutput {
         out.position = CLIENT_SHADOW_CULLED_POSITION;
     }
     out.uv = mix(inst.uv_min, inst.uv_max, corner);
-    out.uv_b = vec2<f32>(f32(inst.layer), 0.0);
+    out.uv_b = art_page_varying(inst.layer);
     out.color = inst.color_rgba;
     out.shadow_ground_xz = vec2<f32>(0.0);
     if (sprite_params.pass_mode == PASS_MODE_SHADOW) {
@@ -221,6 +223,18 @@ fn vertex(vertex: Vertex) -> ArtVertexOutput {
     return out;
 }
 
+// One tap of the sprite's page, from its atlas (art/atlas_pages.wesl).
+fn sprite_page_tap(page: ArtPage, uv: vec2<f32>) -> vec4<f32> {
+    return art_page_sample(art_atlas, art_atlas_enhanced, art_atlas_sampler, page, uv);
+}
+
+// The client's filter on the sprite's rectangle of its page (art/atlas_pages.wesl).
+fn sprite_page_client_filtered(page: ArtPage, uv: vec2<f32>, uv_min: vec2<f32>, uv_max: vec2<f32>, wrap: bool,
+    uv_dx: vec2<f32>, uv_dy: vec2<f32>, client_view_scale: f32) -> vec4<f32> {
+    return art_page_client_filtered(art_atlas, art_atlas_enhanced, page, uv, uv_min, uv_max, wrap, uv_dx, uv_dy,
+        client_view_scale);
+}
+
 fn shade_fragment(in: ArtVertexOutput, sample_index: u32) -> ArtFragmentOutput {
     var out: ArtFragmentOutput;
     out.depth = view_z_depth(in.logical_view_z);
@@ -234,7 +248,7 @@ fn shade_fragment(in: ArtVertexOutput, sample_index: u32) -> ArtFragmentOutput {
         return out;
     }
 
-    let layer = u32(in.uv_b.x);
+    let page = art_page(in.uv_b);
     let inst = instances[in.instance_index];
     let cap_height_z = light_scene_height(inst.is_wet_flags);
     if (cap_height_z > 0 && perspective_cap_may_move(inst.is_wet_flags) && inst.flat_quad == 0u
@@ -261,7 +275,7 @@ fn shade_fragment(in: ArtVertexOutput, sample_index: u32) -> ArtFragmentOutput {
         // UOSpriteShaderShadow: black, with the caster texel's alpha. The pipeline writes only the target's alpha,
         // S = S (1 - a), and the client night composite darkens by clamp(S + 1 - s). The client filters the shadow
         // bilinear whatever the caster's filter (client_shadow.wesl), so its leaning edges stay smooth.
-        let shadow_alpha = client_filtered_atlas_rect(art_atlas, i32(layer), uv, inst.uv_min, inst.uv_max, false,
+        let shadow_alpha = sprite_page_client_filtered(page, uv, inst.uv_min, inst.uv_max, false,
             sprite_uv_dx, sprite_uv_dy, scene.client_view_scale).a;
         if (shadow_alpha <= 0.0) {
             discard;
@@ -317,18 +331,18 @@ fn shade_fragment(in: ArtVertexOutput, sample_index: u32) -> ArtFragmentOutput {
         let alpha_d2 = clamp(uv + vec2<f32>(alpha_blur_radius.x, -alpha_blur_radius.y), inst.uv_min, inst.uv_max);
         let alpha_d3 = clamp(uv + vec2<f32>(-alpha_blur_radius.x, alpha_blur_radius.y), inst.uv_min, inst.uv_max);
         let blurred_alpha =
-            textureSample(art_atlas, art_atlas_sampler, alpha_center, i32(layer)).a * 0.28 +
+            sprite_page_tap(page, alpha_center).a * 0.28 +
             (
-                textureSample(art_atlas, art_atlas_sampler, alpha_x0, i32(layer)).a +
-                textureSample(art_atlas, art_atlas_sampler, alpha_x1, i32(layer)).a +
-                textureSample(art_atlas, art_atlas_sampler, alpha_y0, i32(layer)).a +
-                textureSample(art_atlas, art_atlas_sampler, alpha_y1, i32(layer)).a
+                sprite_page_tap(page, alpha_x0).a +
+                sprite_page_tap(page, alpha_x1).a +
+                sprite_page_tap(page, alpha_y0).a +
+                sprite_page_tap(page, alpha_y1).a
             ) * 0.11 +
             (
-                textureSample(art_atlas, art_atlas_sampler, alpha_d0, i32(layer)).a +
-                textureSample(art_atlas, art_atlas_sampler, alpha_d1, i32(layer)).a +
-                textureSample(art_atlas, art_atlas_sampler, alpha_d2, i32(layer)).a +
-                textureSample(art_atlas, art_atlas_sampler, alpha_d3, i32(layer)).a
+                sprite_page_tap(page, alpha_d0).a +
+                sprite_page_tap(page, alpha_d1).a +
+                sprite_page_tap(page, alpha_d2).a +
+                sprite_page_tap(page, alpha_d3).a
             ) * 0.08;
         let silhouette = smoothstep(0.03, 0.44, blurred_alpha);
         var family_breakup = 1.0;
@@ -352,8 +366,8 @@ fn shade_fragment(in: ArtVertexOutput, sample_index: u32) -> ArtFragmentOutput {
         if (!light_scene_drawn(in.position, out.depth)) {
             discard;
         }
-        if (inst.flat_quad < 2u && textureSampleLevel(art_atlas, art_atlas_sampler,
-            clamp(uv, inst.uv_min, inst.uv_max), i32(layer), 0.0).a < LIGHT_SCENE_MIN_ALPHA) {
+        if (inst.flat_quad < 2u && sprite_page_tap(page,
+            clamp(uv, inst.uv_min, inst.uv_max)).a < LIGHT_SCENE_MIN_ALPHA) {
             discard;
         }
         let lies_flat = inst.flat_quad != 0u || (inst.is_wet_flags & STATIC_FLAG_FLAT_ART) != 0u;
@@ -368,9 +382,8 @@ fn shade_fragment(in: ArtVertexOutput, sample_index: u32) -> ArtFragmentOutput {
             light_scene_cell_rise(view.world_from_view[2].xyz, HEIGHT_SCALE))) {
             let v = light_scene_cap_probe_v((uv.y - inst.uv_min.y) / (inst.uv_max.y - inst.uv_min.y),
                 f32(height) * HEIGHT_SCALE, inst.local_max.y - inst.local_min.y);
-            if (v <= 1.0 && textureSampleLevel(art_atlas, art_atlas_sampler,
-                vec2<f32>(clamp(uv.x, inst.uv_min.x, inst.uv_max.x), mix(inst.uv_min.y, inst.uv_max.y, v)),
-                i32(layer), 0.0).a >= LIGHT_SCENE_CAP_MIN_ALPHA) {
+            if (v <= 1.0 && sprite_page_tap(page,
+                vec2<f32>(clamp(uv.x, inst.uv_min.x, inst.uv_max.x), mix(inst.uv_min.y, inst.uv_max.y, v))).a >= LIGHT_SCENE_CAP_MIN_ALPHA) {
                 texel = light_scene_cap_texel(texel, z + height);
             }
         }
@@ -401,7 +414,7 @@ fn shade_fragment(in: ArtVertexOutput, sample_index: u32) -> ArtFragmentOutput {
         let uv_in_tile = (uv - inst.uv_min) / atlas_extent;
         uv = inst.uv_min + apply_water_animation(uv_in_tile, vec2<f32>(0.5, 0.5)) * atlas_extent;
     }
-    let atlas_size = vec2<f32>(textureDimensions(art_atlas).xy);
+    let atlas_size = art_page_atlas_size(art_atlas, art_atlas_enhanced, page);
     let sample_uv = pixel_art_atlas_uv_iq(uv, inst.uv_min, inst.uv_max, atlas_size);
     var color: vec4<f32>;
     if (use_ec_item_water) {
@@ -413,10 +426,10 @@ fn shade_fragment(in: ArtVertexOutput, sample_index: u32) -> ArtFragmentOutput {
             effects.enable_linear_filtering == 1u, energy);
     } else {
         if (effects.texture_filter == TEXTURE_FILTER_CLIENT_BILINEAR) {
-            color = client_filtered_atlas_rect(art_atlas, i32(layer), uv, inst.uv_min, inst.uv_max,
+            color = sprite_page_client_filtered(page, uv, inst.uv_min, inst.uv_max,
                 surface_repeats, sprite_uv_dx, sprite_uv_dy, scene.client_view_scale);
         } else {
-            color = textureSample(art_atlas, art_atlas_sampler, sample_uv, i32(layer));
+            color = sprite_page_tap(page, sample_uv);
         }
         // Item surfaces (flat_quad 2 and 3) and their boundary coverage below come only from the Enhanced art
         // package, so they follow the art source, never the preset: every preset draws the authored coverage masks

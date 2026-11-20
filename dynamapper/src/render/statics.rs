@@ -55,10 +55,10 @@ impl Plugin for DrawStaticSpritesPlugin {
         >::default());
         app.init_resource::<static_lights::StaticLightMaterialCache>();
         app.add_plugins(bevy::render::extract_resource::ExtractResourcePlugin::<
-            crate::render::assets::art::SpriteArtPageAtlasHandle,
+            crate::render::assets::art::SpriteArtPageAtlasHandles,
         >::default());
         app.add_plugins(bevy::render::extract_resource::ExtractResourcePlugin::<
-            crate::render::assets::art::GroundArtPageAtlasHandle,
+            crate::render::assets::art::GroundArtPageAtlasHandles,
         >::default());
 
         app.add_plugins((

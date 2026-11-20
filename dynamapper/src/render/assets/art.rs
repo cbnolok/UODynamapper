@@ -3,11 +3,6 @@ use std::ops::{Deref, DerefMut};
 use bevy::prelude::*;
 use color_eyre::eyre;
 
-use crate::{
-    content::{TexArtCcPackageRes, TexArtEcPackageRes},
-    app::system_sets::StartupSystems,
-    prelude::*,
-};
 use udd_assets::bc7::{self, ImageExtent, TextureUploadLayout, VramTextureFormat};
 use udd_assets::{
     tex_art_cc::{TexArtCcPackage, PagePixelFormat},
@@ -154,6 +149,87 @@ fn art_page_request(page: ArtPageKey, sources: ArtPageSources<'_>) -> Option<Art
     }
 }
 
+/// The atlases of a set (`ArtPageAtlasSet`), one per page content: the Classic art pages, then the Enhanced ones
+/// (the Enhanced art and land, and their Kingdom Reborn sections), each at its packages' page size and format.
+pub const ART_ATLAS_SLOTS: usize = 2;
+pub const CLASSIC_ATLAS_SLOT: usize = 0;
+pub const ENHANCED_ATLAS_SLOT: usize = 1;
+
+/// Set on the layer `ArtPageAtlasSet::bind_page` gives a page of the Enhanced atlas; the shaders read it as
+/// `ART_LAYER_ENHANCED_ATLAS_BIT` (art/atlas_pages.wesl).
+pub const ART_LAYER_ENHANCED_ATLAS_BIT: u32 = 1 << 31;
+
+/// The atlas of a set that holds `page`. The missing texture's small page joins the Classic pages.
+pub fn art_atlas_slot(page: ArtPageKey) -> usize {
+    match page {
+        ArtPageKey::Classic(_) | ArtPageKey::Missing => CLASSIC_ATLAS_SLOT,
+        ArtPageKey::Enhanced(_) | ArtPageKey::Terrain(_) | ArtPageKey::KrEnhanced(_) | ArtPageKey::KrTerrain(_) => {
+            ENHANCED_ATLAS_SLOT
+        }
+    }
+}
+
+/// The art pages one material draws from, in an atlas per page content (`art_atlas_slot`). One atlas for both had
+/// the largest package's page size and, with formats that differ, held every page in RGBA8: a Classic page, which
+/// the Enhanced views draw where the Enhanced art lacks a sprite, took an RGBA layer as large as an Enhanced page,
+/// 32 MiB for its 16, and every BC7 page was decoded on the CPU at four times its size.
+pub struct ArtPageAtlasSet {
+    pub atlases: [ArtPageAtlas; ART_ATLAS_SLOTS],
+}
+
+impl ArtPageAtlasSet {
+    /// The layer of `page` in its atlas, with `ART_LAYER_ENHANCED_ATLAS_BIT` for the Enhanced one: an instance's
+    /// `layer` (`ArtPageAtlas::bind_page`).
+    pub fn bind_page(&mut self, page: ArtPageKey, sources: ArtPageSources<'_>) -> Option<u32> {
+        let slot = art_atlas_slot(page);
+        let layer = self.atlases[slot].bind_page(page, sources)?;
+        Some(if slot == ENHANCED_ATLAS_SLOT { layer | ART_LAYER_ENHANCED_ATLAS_BIT } else { layer })
+    }
+
+    /// The size of each atlas's pages, which places the sprites on them.
+    pub fn geometry(&self) -> ArtPageGeometry {
+        ArtPageGeometry { page_sizes: self.atlases.each_ref().map(|atlas| UVec2::new(atlas.page_width, atlas.page_height)) }
+    }
+
+    pub fn handles(&self) -> [Handle<Image>; ART_ATLAS_SLOTS] {
+        self.atlases.each_ref().map(|atlas| atlas.gpu_handle.clone())
+    }
+
+    /// Changes whenever a page of any of the atlases loses its layer (`ArtPageAtlas::mapping_revision`).
+    pub fn mapping_revision(&self) -> u64 {
+        self.atlases.iter().map(ArtPageAtlas::mapping_revision).fold(0, u64::wrapping_add)
+    }
+
+    pub fn resident_page_count(&self) -> usize {
+        self.atlases.iter().map(ArtPageAtlas::resident_page_count).sum()
+    }
+
+    pub fn pending_page_count(&self) -> usize {
+        self.atlases.iter().map(ArtPageAtlas::pending_page_count).sum()
+    }
+
+    /// The layers of all the atlases.
+    pub fn active_layers(&self) -> u32 {
+        self.atlases.iter().map(|atlas| atlas.active_layers).sum()
+    }
+
+    fn stage_for_extract(&mut self) {
+        for atlas in &mut self.atlases {
+            atlas.stage_for_extract();
+        }
+    }
+}
+
+#[cfg(test)]
+impl ArtPageAtlasSet {
+    /// Atlases of one small RGBA layer each, holding no page.
+    pub fn blank_for_tests() -> Self {
+        const PAGE_SIZE: u32 = 64;
+        Self { atlases: std::array::from_fn(|_| ArtPageAtlas::new(Handle::default(), PAGE_SIZE, PAGE_SIZE, 1, 1,
+            PagePixelFormat::Rgba8888)) }
+    }
+}
+
 pub struct ArtPageAtlas {
     pub gpu_handle: Handle<Image>,
     page_to_layer: HashMap<ArtPageKey, u32>,
@@ -264,7 +340,7 @@ impl ArtPageAtlas {
         let (sender, generation, atlas_pixel_format) = (self.decoded_sender.clone(), self.decode_generation, self.pixel_format);
         AsyncComputeTaskPool::get_or_init(TaskPool::default).spawn(async move {
             let upload = read_page_bytes().ok().and_then(|page_data| prepare_compatible_page_upload(
-                &page_data,
+                page_data,
                 atlas_width,
                 atlas_height,
                 used_width,
@@ -391,19 +467,13 @@ impl ArtPageAtlas {
     pub fn mapping_revision(&self) -> u64 {
         self.mapping_revision
     }
-
-    /// The size of the atlas's pages, which places the sprites on them.
-    pub fn geometry(&self) -> ArtPageGeometry {
-        ArtPageGeometry { page_width: self.page_width, page_height: self.page_height }
-    }
 }
 
-/// The size of an atlas's pages (`ArtPageAtlas::geometry`): the sprites' places on them, read without the atlas, as a
-/// build off the main thread does.
+/// The size of the pages of a set's atlases, by slot (`ArtPageAtlasSet::geometry`): the sprites' places on them, read
+/// without the atlases, as a build off the main thread does.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct ArtPageGeometry {
-    pub page_width: u32,
-    pub page_height: u32,
+    pub page_sizes: [UVec2; ART_ATLAS_SLOTS],
 }
 
 impl ArtPageGeometry {
@@ -482,6 +552,8 @@ impl ArtPageGeometry {
             u32::from(slot.width), u32::from(slot.height))
     }
 
+    /// The sprite at (`x`, `y`) of `page`, placed on the pages of its atlas (`art_atlas_slot`); `None` when its
+    /// package's pages (`atlas_width`×`atlas_height`) are larger.
     fn slot_sprite(
         &self,
         page: ArtPageKey,
@@ -496,13 +568,15 @@ impl ArtPageGeometry {
         atlas_width: u32,
         atlas_height: u32,
     ) -> Option<ResolvedArtSprite> {
-        if atlas_width > self.page_width || atlas_height > self.page_height {
+        let page_size = self.page_sizes[art_atlas_slot(page)];
+        if atlas_width > page_size.x || atlas_height > page_size.y {
             return None;
         }
+        let page_size = page_size.as_vec2();
         Some(ResolvedArtSprite {
             page,
-            uv_min: Vec2::new(x as f32 / self.page_width as f32, y as f32 / self.page_height as f32),
-            uv_max: Vec2::new((x + width) as f32 / self.page_width as f32, (y + height) as f32 / self.page_height as f32),
+            uv_min: Vec2::new(f32::from(x), f32::from(y)) / page_size,
+            uv_max: Vec2::new(f32::from(x + width), f32::from(y + height)) / page_size,
             logical_width,
             logical_height,
             offset_x,
@@ -527,6 +601,10 @@ impl ArtPageAtlas {
             return None;
         }
         let request = art_page_request(page, sources)?;
+        // A page larger than the atlas's never binds (`ArtPageGeometry::slot_sprite` places no sprite on it).
+        if request.atlas_width > self.page_width || request.atlas_height > self.page_height {
+            return None;
+        }
         self.page_layer(page, request.atlas_width, request.atlas_height, request.used_width, request.used_height,
             request.pixel_format, request.read)
     }
@@ -617,65 +695,45 @@ fn page_pixel_vram_format(pixel_format: PagePixelFormat) -> VramTextureFormat {
     }
 }
 
+/// The page's upload as stored: its bytes, layout and extent, the part used of an RGBA page, a BC7 page whole.
 fn prepare_page_upload_bytes(
-    page_data: &[u8],
+    page_data: Vec<u8>,
     atlas_width: u32,
     atlas_height: u32,
     used_width: u32,
     used_height: u32,
     pixel_format: PagePixelFormat,
-) -> Option<(Vec<u8>, TextureUploadLayout)> {
-    let extent = match pixel_format {
-        PagePixelFormat::Rgba8888 => ImageExtent::new(used_width.max(1), used_height.max(1)).ok()?,
-        PagePixelFormat::Bc7 => ImageExtent::new(atlas_width.max(1), atlas_height.max(1)).ok()?,
+) -> Option<(Vec<u8>, TextureUploadLayout, u32, u32)> {
+    let (width, height) = match pixel_format {
+        PagePixelFormat::Rgba8888 => (used_width.max(1), used_height.max(1)),
+        PagePixelFormat::Bc7 => (atlas_width.max(1), atlas_height.max(1)),
     };
+    let extent = ImageExtent::new(width, height).ok()?;
     let format = page_pixel_vram_format(pixel_format);
     if page_data.len() != format.expected_byte_len(extent) {
         return None;
     }
 
-    Some((page_data.to_vec(), format.upload_layout(extent)))
+    Some((page_data, format.upload_layout(extent), width, height))
 }
 
-/// The Enhanced and KR-like views draw Classic and Enhanced art from one sprite atlas of one page format. When the
-/// packages' formats differ, the atlas falls back to RGBA8 and `prepare_compatible_page_upload` decodes every BC7 page
-/// on the CPU as it uploads; this names both packages, their formats and how to repack them to match.
-fn art_page_format_mismatch_warning(
-    classic: Option<PagePixelFormat>,
-    enhanced: Option<PagePixelFormat>,
-) -> Option<String> {
-    let (Some(classic), Some(enhanced)) = (classic, enhanced) else { return None };
-    let name = |format| match format {
-        PagePixelFormat::Rgba8888 => "lossless RGBA8888",
-        PagePixelFormat::Bc7 => "BC7",
-    };
-    (classic != enhanced).then(|| format!(
-        "tex_art_cc.uddp pages are {} but tex_art_ec.uddp pages are {}. The Enhanced and KR-like views draw both from \
-         one sprite atlas, so it falls back to RGBA8 and every BC7 page is decoded on the CPU as it uploads, at four \
-         times the VRAM of BC7. Repack both packages in one format: lossless with `udd-cli pack pack-art` and \
-         `udd-cli pack pack-ec-textures` (their default), or BC7 with `pack-art --bc7` and `pack-ec-textures --art-bc7` \
-         (in udd-conv-gui, the same compression for Classic Art and Enhanced Art).",
-        name(classic),
-        name(enhanced),
-    ))
-}
-
-fn prepare_compatible_page_upload(data: &[u8], atlas_width: u32, atlas_height: u32,
+/// The page's upload into an atlas of `target` format: as stored when it matches, else decoded to RGBA8 (and encoded
+/// to BC7 for a BC7 atlas), as when a package and its Kingdom Reborn section, or a BC7 Classic package and the
+/// missing texture, share an atlas in different formats (`ArtPageAtlasSet`).
+fn prepare_compatible_page_upload(data: Vec<u8>, atlas_width: u32, atlas_height: u32,
     used_width: u32, used_height: u32, source: PagePixelFormat, target: PagePixelFormat,
 ) -> Option<(Vec<u8>, TextureUploadLayout, u32, u32)> {
+    if source == target {
+        return prepare_page_upload_bytes(data, atlas_width, atlas_height, used_width, used_height, source);
+    }
     let (width, height) = match source {
         PagePixelFormat::Rgba8888 => (used_width, used_height),
         PagePixelFormat::Bc7 => (atlas_width, atlas_height),
     };
-    if source == target {
-        let (bytes, layout) = prepare_page_upload_bytes(data, atlas_width, atlas_height,
-            used_width, used_height, source)?;
-        return Some((bytes, layout, width, height));
-    }
     let extent = ImageExtent::new(width, height).ok()?;
     let rgba = match source {
-        PagePixelFormat::Rgba8888 => data.to_vec(),
-        PagePixelFormat::Bc7 => bc7::decode_bc7_to_rgba8888(data, extent).ok()?,
+        PagePixelFormat::Rgba8888 => data,
+        PagePixelFormat::Bc7 => bc7::decode_bc7_to_rgba8888(&data, extent).ok()?,
     };
     let encoding = match target {
         PagePixelFormat::Rgba8888 => bc7::VramTextureEncoding::Rgba8UnormSrgb,
@@ -728,48 +786,6 @@ mod tests {
         let page = atlas.decoded_receiver.lock().unwrap().recv().expect("the atlas holds a sender");
         atlas.accept_decoded_page(page);
         assert_eq!(atlas.pending_page_count(), 0);
-    }
-
-    #[test]
-    fn mixed_formats_decode_losslessly_and_native_bc7_uploads_stay_compressed() {
-        let extent = ImageExtent::new(8, 8).unwrap();
-        let rgba: Vec<_> = (0..64).flat_map(|i| [i * 3, i, 117, 255]).collect();
-        let encoded = bc7::encode_for_vram(&rgba, extent, bc7::RawImageFormat::Rgba8888,
-            bc7::VramTextureEncoding::Bc7(bc7::preferred_bc7_encoder_backend())).unwrap();
-        let (native, layout, width, height) = prepare_compatible_page_upload(encoded.bytes(),
-            8, 8, 5, 7, PagePixelFormat::Bc7, PagePixelFormat::Bc7).unwrap();
-        assert_eq!(native, encoded.bytes());
-        assert_eq!((width, height), (8, 8));
-        assert_eq!(layout.format, wgpu::TextureFormat::Bc7RgbaUnormSrgb);
-        let (decoded, layout, _, _) = prepare_compatible_page_upload(encoded.bytes(),
-            8, 8, 5, 7, PagePixelFormat::Bc7, PagePixelFormat::Rgba8888).unwrap();
-        assert_eq!(decoded, bc7::decode_bc7_to_rgba8888(encoded.bytes(), extent).unwrap());
-        assert_eq!(layout.format, wgpu::TextureFormat::Rgba8UnormSrgb);
-        let (missing, layout, _, _) = prepare_compatible_page_upload(&rgba,
-            8, 8, 8, 8, PagePixelFormat::Rgba8888, PagePixelFormat::Bc7).unwrap();
-        assert_eq!(missing, encoded.bytes());
-        assert_eq!(layout.format, wgpu::TextureFormat::Bc7RgbaUnormSrgb);
-    }
-
-    /// Art packages of different page formats get one warning naming both, their formats and the repack flags; packages
-    /// that match, or a missing one, get none.
-    #[test]
-    fn art_page_format_mismatch_names_both_packages_and_the_repack() {
-        use PagePixelFormat::{Bc7, Rgba8888};
-        for (classic, enhanced, opening) in [
-            (Rgba8888, Bc7, "tex_art_cc.uddp pages are lossless RGBA8888 but tex_art_ec.uddp pages are BC7."),
-            (Bc7, Rgba8888, "tex_art_cc.uddp pages are BC7 but tex_art_ec.uddp pages are lossless RGBA8888."),
-        ] {
-            let warning = art_page_format_mismatch_warning(Some(classic), Some(enhanced)).expect("mismatch warning");
-            assert!(warning.starts_with(opening), "{warning:?}");
-            for repack in ["`udd-cli pack pack-art`", "`udd-cli pack pack-ec-textures`", "pack-art --bc7", "pack-ec-textures --art-bc7"] {
-                assert!(warning.contains(repack), "{repack:?} missing from {warning:?}");
-            }
-        }
-        for (classic, enhanced) in [(Some(Bc7), Some(Bc7)), (Some(Rgba8888), Some(Rgba8888)), (Some(Bc7), None),
-            (None, Some(Rgba8888)), (None, None)] {
-            assert_eq!(art_page_format_mismatch_warning(classic, enhanced), None);
-        }
     }
 
     #[test]
@@ -863,19 +879,57 @@ mod tests {
         let extent = ImageExtent::new(8, 8).unwrap();
         let bytes = vec![0; VramTextureFormat::Bc7RgbaUnormSrgb.expected_byte_len(extent)];
 
-        let (_, layout) = prepare_page_upload_bytes(&bytes, 8, 8, 8, 8, PagePixelFormat::Bc7).unwrap();
+        let (_, layout, width, height) = prepare_page_upload_bytes(bytes, 8, 8, 5, 7, PagePixelFormat::Bc7).unwrap();
 
+        assert_eq!((width, height), (8, 8));
         assert_eq!(layout.bytes_per_row, 32);
         assert_eq!(layout.rows_per_image, 2);
+        assert_eq!(layout.format, wgpu::TextureFormat::Bc7RgbaUnormSrgb);
+    }
+
+    /// A sprite lands on the pages of its page's atlas, its uv over their size; a package of larger pages has none.
+    #[test]
+    fn sprites_are_placed_on_their_atlas_pages() {
+        let geometry = ArtPageGeometry { page_sizes: [UVec2::new(2048, 2048), UVec2::new(4096, 2048)] };
+        let place = |page, x, atlas_width| geometry.slot_sprite(page, x, 0, 16, 16, 16.0, 16.0, 0, 0, atlas_width, 2048)
+            .map(|sprite| sprite.uv_min.x);
+        assert_eq!(place(ArtPageKey::KrEnhanced(0), 2048, 4096), Some(0.5));
+        assert_eq!(place(ArtPageKey::Classic(0), 1024, 2048), Some(0.5));
+        assert_eq!(place(ArtPageKey::Classic(0), 0, 4096), None);
+        for (page, slot) in [(ArtPageKey::Classic(3), CLASSIC_ATLAS_SLOT), (ArtPageKey::Missing, CLASSIC_ATLAS_SLOT),
+            (ArtPageKey::Enhanced(3), ENHANCED_ATLAS_SLOT), (ArtPageKey::Terrain(3), ENHANCED_ATLAS_SLOT),
+            (ArtPageKey::KrEnhanced(3), ENHANCED_ATLAS_SLOT), (ArtPageKey::KrTerrain(3), ENHANCED_ATLAS_SLOT)] {
+            assert_eq!(art_atlas_slot(page), slot, "{page:?}");
+        }
+    }
+
+    #[test]
+    fn mixed_formats_decode_losslessly_and_native_bc7_uploads_stay_compressed() {
+        let extent = ImageExtent::new(8, 8).unwrap();
+        let rgba: Vec<_> = (0..64).flat_map(|i| [i * 3, i, 117, 255]).collect();
+        let encoded = bc7::encode_for_vram(&rgba, extent, bc7::RawImageFormat::Rgba8888,
+            bc7::VramTextureEncoding::Bc7(bc7::preferred_bc7_encoder_backend())).unwrap();
+        let (native, layout, width, height) = prepare_compatible_page_upload(encoded.bytes().to_vec(),
+            8, 8, 5, 7, PagePixelFormat::Bc7, PagePixelFormat::Bc7).unwrap();
+        assert_eq!(native, encoded.bytes());
+        assert_eq!((width, height), (8, 8));
+        assert_eq!(layout.format, wgpu::TextureFormat::Bc7RgbaUnormSrgb);
+        let (decoded, layout, _, _) = prepare_compatible_page_upload(encoded.bytes().to_vec(),
+            8, 8, 5, 7, PagePixelFormat::Bc7, PagePixelFormat::Rgba8888).unwrap();
+        assert_eq!(decoded, bc7::decode_bc7_to_rgba8888(encoded.bytes(), extent).unwrap());
+        assert_eq!(layout.format, wgpu::TextureFormat::Rgba8UnormSrgb);
+        let (missing, layout, _, _) = prepare_compatible_page_upload(rgba,
+            8, 8, 8, 8, PagePixelFormat::Rgba8888, PagePixelFormat::Bc7).unwrap();
+        assert_eq!(missing, encoded.bytes());
         assert_eq!(layout.format, wgpu::TextureFormat::Bc7RgbaUnormSrgb);
     }
 }
 
 #[derive(Resource)]
-pub struct SpriteArtPageAtlas(pub ArtPageAtlas);
+pub struct SpriteArtPageAtlas(pub ArtPageAtlasSet);
 
 impl Deref for SpriteArtPageAtlas {
-    type Target = ArtPageAtlas;
+    type Target = ArtPageAtlasSet;
 
     fn deref(&self) -> &Self::Target {
         &self.0
@@ -889,10 +943,10 @@ impl DerefMut for SpriteArtPageAtlas {
 }
 
 #[derive(Resource)]
-pub struct GroundArtPageAtlas(pub ArtPageAtlas);
+pub struct GroundArtPageAtlas(pub ArtPageAtlasSet);
 
 impl Deref for GroundArtPageAtlas {
-    type Target = ArtPageAtlas;
+    type Target = ArtPageAtlasSet;
 
     fn deref(&self) -> &Self::Target {
         &self.0
@@ -905,39 +959,7 @@ impl DerefMut for GroundArtPageAtlas {
     }
 }
 
-/// Checks at startup that both art packages share a page format (see [`art_page_format_mismatch_warning`]).
-pub struct ArtPageFormatCheckPlugin {
-    pub registered_by: &'static str,
-}
-impl_tracked_plugin!(ArtPageFormatCheckPlugin);
-
-impl Plugin for ArtPageFormatCheckPlugin {
-    fn build(&self, app: &mut App) {
-        log_plugin_build(self);
-        app.add_systems(
-            Startup,
-            sys_warn_art_page_format_mismatch
-                .in_set(StartupSystems::SetupSceneStage1)
-                .after(StartupSystems::LoadStartupUOFiles),
-        );
-    }
-}
-
-fn sys_warn_art_page_format_mismatch(
-    tex_art_cc_r: Option<Res<TexArtCcPackageRes>>,
-    tex_art_ec_r: Option<Res<TexArtEcPackageRes>>,
-) {
-    // A startup system, so the warning comes once per run however many pages convert later. A package's format is its
-    // first page's, RGBA8888 without pages, as `sprite_atlas_spec` reads it.
-    if let Some(warning) = art_page_format_mismatch_warning(
-        tex_art_cc_r.as_ref().map(|r| r.0.pages().first().map_or(PagePixelFormat::Rgba8888, |page| page.pixel_format)),
-        tex_art_ec_r.as_ref().map(|r| r.0.pages().first().map_or(PagePixelFormat::Rgba8888, |page| page.pixel_format)),
-    ) {
-        console_logger::one(LogSev::Warn, LogAbout::RenderWorldArt, &warning);
-    }
-}
-
-/// The render world's share of an atlas: the layer copies of its growths, then the page uploads.
+/// The render world's share of an atlas of a set: the layer copies of its growths, then the page uploads.
 #[derive(Default)]
 pub struct RenderArtPageWork {
     uploads: Vec<ArtPageUpload>,
@@ -949,13 +971,20 @@ impl RenderArtPageWork {
         self.uploads.extend(atlas.extract_staging.iter().cloned());
         self.layer_copies.extend(atlas.extract_layer_copies.iter().cloned());
     }
+
+    /// The share of each atlas of `set`, by slot.
+    fn extend_from_set(works: &mut [Self; ART_ATLAS_SLOTS], set: &ArtPageAtlasSet) {
+        for (work, atlas) in works.iter_mut().zip(&set.atlases) {
+            work.extend_from(atlas);
+        }
+    }
 }
 
 #[derive(Resource, Default)]
-pub struct RenderSpriteArtPageUploads(pub RenderArtPageWork);
+pub struct RenderSpriteArtPageUploads(pub [RenderArtPageWork; ART_ATLAS_SLOTS]);
 
 #[derive(Resource, Default)]
-pub struct RenderGroundArtPageUploads(pub RenderArtPageWork);
+pub struct RenderGroundArtPageUploads(pub [RenderArtPageWork; ART_ATLAS_SLOTS]);
 
 pub fn sys_stage_sprite_art_page_uploads(mut atlas: ResMut<SpriteArtPageAtlas>) {
     atlas.stage_for_extract();
@@ -969,49 +998,61 @@ pub fn sys_extract_sprite_art_page_uploads(
     atlas: Extract<Res<SpriteArtPageAtlas>>,
     mut render_uploads: ResMut<RenderSpriteArtPageUploads>,
 ) {
-    render_uploads.0.extend_from(&atlas);
+    RenderArtPageWork::extend_from_set(&mut render_uploads.0, &atlas);
 }
 
 pub fn sys_extract_ground_art_page_uploads(
     atlas: Extract<Res<GroundArtPageAtlas>>,
     mut render_uploads: ResMut<RenderGroundArtPageUploads>,
 ) {
-    render_uploads.0.extend_from(&atlas);
+    RenderArtPageWork::extend_from_set(&mut render_uploads.0, &atlas);
 }
 
+/// The images of the sprite atlases, by slot (`ArtPageAtlasSet::handles`).
 #[derive(Resource, Clone, ExtractResource)]
 #[extract_app(bevy::render::RenderApp)]
-pub struct SpriteArtPageAtlasHandle(pub Handle<Image>);
+pub struct SpriteArtPageAtlasHandles(pub [Handle<Image>; ART_ATLAS_SLOTS]);
 
+/// The images of the ground atlases, by slot (`ArtPageAtlasSet::handles`).
 #[derive(Resource, Clone, ExtractResource)]
 #[extract_app(bevy::render::RenderApp)]
-pub struct GroundArtPageAtlasHandle(pub Handle<Image>);
+pub struct GroundArtPageAtlasHandles(pub [Handle<Image>; ART_ATLAS_SLOTS]);
 
 pub fn sys_render_upload_sprite_art_pages(
     mut uploads: ResMut<RenderSpriteArtPageUploads>,
-    atlas_handle: Option<Res<SpriteArtPageAtlasHandle>>,
+    atlas_handles: Option<Res<SpriteArtPageAtlasHandles>>,
     gpu_images: Res<RenderAssets<GpuImage>>,
     render_device: Res<RenderDevice>,
     render_queue: Res<RenderQueue>,
 ) {
-    let work = &mut uploads.0;
-    if copy_grown_art_layers(&mut work.layer_copies, &gpu_images, &render_device, &render_queue) {
-        render_art_page_uploads(&mut work.uploads, atlas_handle.as_ref().map(|handle| &handle.0), &gpu_images,
-            &render_queue);
-    }
+    render_art_page_work(&mut uploads.0, atlas_handles.as_ref().map(|handles| &handles.0), &gpu_images,
+        &render_device, &render_queue);
 }
 
 pub fn sys_render_upload_ground_art_pages(
     mut uploads: ResMut<RenderGroundArtPageUploads>,
-    atlas_handle: Option<Res<GroundArtPageAtlasHandle>>,
+    atlas_handles: Option<Res<GroundArtPageAtlasHandles>>,
     gpu_images: Res<RenderAssets<GpuImage>>,
     render_device: Res<RenderDevice>,
     render_queue: Res<RenderQueue>,
 ) {
-    let work = &mut uploads.0;
-    if copy_grown_art_layers(&mut work.layer_copies, &gpu_images, &render_device, &render_queue) {
-        render_art_page_uploads(&mut work.uploads, atlas_handle.as_ref().map(|handle| &handle.0), &gpu_images,
-            &render_queue);
+    render_art_page_work(&mut uploads.0, atlas_handles.as_ref().map(|handles| &handles.0), &gpu_images,
+        &render_device, &render_queue);
+}
+
+/// Each atlas's layer copies, then its page uploads once they are done.
+fn render_art_page_work(
+    works: &mut [RenderArtPageWork; ART_ATLAS_SLOTS],
+    atlas_handles: Option<&[Handle<Image>; ART_ATLAS_SLOTS]>,
+    gpu_images: &RenderAssets<GpuImage>,
+    render_device: &RenderDevice,
+    render_queue: &RenderQueue,
+) {
+    for (slot, work) in works.iter_mut().enumerate() {
+        if copy_grown_art_layers(&mut work.layer_copies, gpu_images, render_device, render_queue) {
+            render_art_page_uploads(&mut work.uploads, atlas_handles.map(|handles| &handles[slot]), gpu_images,
+                render_queue);
+        }
     }
 }
 

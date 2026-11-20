@@ -59,6 +59,8 @@ struct SpriteParams {
 @group(3) @binding(101) var art_atlas: texture_2d_array<f32>;
 @group(3) @binding(102) var<storage, read> instances: array<SpriteInstance>;
 @group(3) @binding(103) var<uniform> sprite_params: SpriteParams;
+// The Enhanced pages' atlas, beside the Classic pages' `art_atlas` (art/atlas_pages.wesl).
+@group(3) @binding(104) var art_atlas_enhanced: texture_2d_array<f32>;
 @group(3) @binding(105) var<uniform> scene: SceneUniform;
 @group(3) @binding(106) var<uniform> effects: LandEffectsUniform;
 @group(3) @binding(107) var<uniform> global_light: GlobalLightingUniforms;

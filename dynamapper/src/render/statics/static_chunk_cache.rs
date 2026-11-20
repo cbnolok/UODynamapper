@@ -264,8 +264,8 @@ pub(super) fn static_atlas_retry_signature(
         ground_resident_pages: ground_atlas.resident_page_count(),
         sprite_pending_pages: sprite_atlas.pending_page_count(),
         ground_pending_pages: ground_atlas.pending_page_count(),
-        sprite_active_layers: sprite_atlas.active_layers,
-        ground_active_layers: ground_atlas.active_layers,
+        sprite_active_layers: sprite_atlas.active_layers(),
+        ground_active_layers: ground_atlas.active_layers(),
     }
 }
 
