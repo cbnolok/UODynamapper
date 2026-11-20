@@ -1,13 +1,13 @@
-//! The builds of the static chunks, off the main thread: a thread of their own (`StaticChunkBuilder`) builds each chunk
+//! The builds of the static chunks, off the main thread: a lane of the background pool (`StaticChunkBuilder`) builds each chunk
 //! from a copy of what it reads (`StaticChunkJob`), while the chunks built before keep drawing, and the collection
 //! takes the chunks into its cache as they come back (`StaticChunkBuilder::receive`). A chunk entering the view draws
 //! once built; a chunk whose settings or land changed draws as it was until built again.
 
 use std::collections::{HashMap, HashSet};
 use std::sync::{mpsc, Arc};
-use std::thread::JoinHandle;
 use bevy::prelude::*;
 use parking_lot::Mutex;
+use crate::app::background::{background_pool, Lane, Priority};
 use crate::content::{TexArtCcPackageRes, TexArtEcPackageRes, TexAuxEcPackageRes, TexLandEcPackageRes, TileMetaPackageRes};
 use crate::render::assets::art::ArtPageGeometry;
 use crate::render::assets::tile_atlas::{LandSnapshot, TileAtlas};
@@ -22,7 +22,7 @@ use super::static_lights::RenderStaticLightInstances;
 use super::static_source::{KrStaticShared, StaticSurfaceLikeResolutionCache};
 use super::statics_collect::{StaticCollectFrameConfig, build_static_chunk};
 
-/// The builds sent to the thread and not back yet, at most: the others wait in the collection, which sends the chunks
+/// The builds sent to the lane and not back yet, at most: the others wait in the collection, which sends the chunks
 /// nearest the view's centre first, so few builds are spent on chunks the view has left.
 const MAX_STATIC_CHUNK_BUILDS_IN_FLIGHT: usize = 8;
 
@@ -73,7 +73,7 @@ struct StaticChunkBuilt {
     chunk: CachedStaticChunk,
 }
 
-/// What builds the chunks keeps from build to build, on the thread or, in the tests, on the collection's.
+/// What builds the chunks keeps from build to build, in the lane or, in the tests, on the collection's thread.
 #[derive(Default)]
 struct StaticChunkWorker {
     /// The statics stores, by map (`LazyStaticsStore::fork`).
@@ -100,19 +100,21 @@ impl StaticChunkWorker {
     }
 }
 
+/// A build's chunk, or the panic it ended in, which `receive` raises on the main thread.
+type BuildOutcome = Result<StaticChunkBuilt, Box<dyn std::any::Any + Send>>;
+
 enum StaticChunkRunner {
-    Thread {
-        /// Dropped first, which ends the thread.
-        jobs: Option<mpsc::Sender<StaticChunkJob>>,
-        built: Mutex<mpsc::Receiver<StaticChunkBuilt>>,
-        thread: Option<JoinHandle<()>>,
+    Lane {
+        lane: Lane<StaticChunkWorker>,
+        built_sender: mpsc::Sender<BuildOutcome>,
+        built: Mutex<mpsc::Receiver<BuildOutcome>>,
     },
     /// Builds as the jobs are sent, for the tests.
     #[cfg(test)]
     Inline { worker: Mutex<StaticChunkWorker>, built: Vec<StaticChunkBuilt> },
 }
 
-/// Builds the static chunks on a thread of its own.
+/// Builds the static chunks on a lane of the background pool, one at a time, in the order sent.
 #[derive(Resource)]
 pub struct StaticChunkBuilder {
     runner: StaticChunkRunner,
@@ -128,20 +130,9 @@ pub struct StaticChunkBuilder {
 
 impl StaticChunkBuilder {
     pub fn spawn() -> Self {
-        let (jobs, job_receiver) = mpsc::channel::<StaticChunkJob>();
         let (built_sender, built) = mpsc::channel();
-        let thread = std::thread::Builder::new()
-            .name("static-chunk-builds".into())
-            .spawn(move || {
-                let mut worker = StaticChunkWorker::default();
-                while let Ok(job) = job_receiver.recv() {
-                    if built_sender.send(worker.build(job)).is_err() {
-                        break;
-                    }
-                }
-            })
-            .expect("the static chunk build thread starts");
-        Self::with_runner(StaticChunkRunner::Thread { jobs: Some(jobs), built: Mutex::new(built), thread: Some(thread) })
+        let lane = Lane::new("static chunk build", StaticChunkWorker::default());
+        Self::with_runner(StaticChunkRunner::Lane { lane, built_sender, built: Mutex::new(built) })
     }
 
     #[cfg(test)]
@@ -210,9 +201,12 @@ impl StaticChunkBuilder {
             }
             self.in_flight.insert(key);
             match &mut self.runner {
-                StaticChunkRunner::Thread { jobs, .. } => {
-                    // A closed channel is a stopped thread, which `receive` reports.
-                    let _ = jobs.as_ref().map(|jobs| jobs.send(job));
+                StaticChunkRunner::Lane { lane, built_sender, .. } => {
+                    let built_sender = built_sender.clone();
+                    lane.submit(background_pool(), Priority::Visible, move |worker| {
+                        let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| worker.build(job)));
+                        let _ = built_sender.send(outcome);
+                    });
                 }
                 #[cfg(test)]
                 StaticChunkRunner::Inline { worker, built } => built.push(worker.get_mut().build(job)),
@@ -229,32 +223,15 @@ impl StaticChunkBuilder {
             }
         };
         match &mut self.runner {
-            StaticChunkRunner::Thread { built, thread, .. } => loop {
-                match built.get_mut().try_recv() {
+            // The runner holds a sender, so the channel never disconnects.
+            StaticChunkRunner::Lane { built, .. } => while let Ok(outcome) = built.get_mut().try_recv() {
+                match outcome {
                     Ok(chunk) => take(chunk),
-                    Err(mpsc::TryRecvError::Empty) => break,
-                    Err(mpsc::TryRecvError::Disconnected) => {
-                        if let Some(Err(panic)) = thread.take().map(JoinHandle::join) {
-                            std::panic::resume_unwind(panic);
-                        }
-                        panic!("the static chunk build thread stopped");
-                    }
+                    Err(panic) => std::panic::resume_unwind(panic),
                 }
             },
             #[cfg(test)]
             StaticChunkRunner::Inline { built, .. } => built.drain(..).for_each(take),
-        }
-    }
-}
-
-impl Drop for StaticChunkBuilder {
-    fn drop(&mut self) {
-        #[cfg_attr(not(test), expect(irrefutable_let_patterns, reason = "the tests build inline too"))]
-        if let StaticChunkRunner::Thread { jobs, thread, .. } = &mut self.runner {
-            jobs.take();
-            if let Some(thread) = thread.take() {
-                let _ = thread.join();
-            }
         }
     }
 }

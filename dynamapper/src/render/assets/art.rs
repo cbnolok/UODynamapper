@@ -12,7 +12,7 @@ use udd_assets::{
 };
 use bevy::platform::collections::{HashMap, HashSet};
 use std::sync::{mpsc, Arc, Mutex};
-use bevy::tasks::{AsyncComputeTaskPool, TaskPool};
+use crate::app::background::{background_pool, Priority};
 use bevy::render::extract_resource::ExtractResource;
 use bevy::render::render_asset::RenderAssets;
 use bevy::render::renderer::{RenderDevice, RenderQueue};
@@ -318,7 +318,7 @@ impl ArtPageAtlas {
         self.requested_resize_to.take()
     }
 
-    /// Reads and decodes the page off the frame, on the async compute pool: it waits in `decoding` until
+    /// Reads and decodes the page off the frame, on the background pool: it waits in `decoding` until
     /// `receive_decoded_pages` takes it, so a sprite on it resolves only once it is uploaded.
     pub fn queue_page_upload<F>(
         &mut self,
@@ -339,7 +339,7 @@ impl ArtPageAtlas {
 
         self.decoding.insert(page_index);
         let (sender, generation, atlas_pixel_format) = (self.decoded_sender.clone(), self.decode_generation, self.pixel_format);
-        AsyncComputeTaskPool::get_or_init(TaskPool::default).spawn(async move {
+        background_pool().spawn(Priority::Visible, "art page", move || {
             let upload = read_page_bytes().ok().and_then(|page_data| prepare_compatible_page_upload(
                 page_data,
                 atlas_width,
@@ -682,7 +682,7 @@ impl ArtPageAtlas {
     }
 }
 
-/// The read of page `page` of `package`, to run on the async compute pool (`ArtPageAtlas::queue_page_upload`).
+/// The read of page `page` of `package`, to run on the background pool (`ArtPageAtlas::queue_page_upload`).
 fn read_page_off_frame<P: Send + Sync + 'static, K: Send + 'static>(
     package: &Arc<P>,
     page: K,

@@ -23,7 +23,7 @@ use bevy::render::renderer::RenderDevice;
 use bevy::render::renderer::RenderQueue;
 use bevy::render::texture::GpuImage;
 use bevy::render::Extract;
-use bevy::tasks::AsyncComputeTaskPool;
+use crate::app::background::{background_pool, Priority};
 use std::{
     collections::VecDeque,
     sync::Arc,
@@ -556,13 +556,12 @@ impl LandTextureCache {
             return (texture_size, FALLBACK_BLACK_LAYER);
         };
 
-        let pool = AsyncComputeTaskPool::get();
         // Clone the Arc only on the slow (cache-miss) path.
         let texmap_2d_arc = texmap_2d.clone();
         let sender = self.upload_sender.clone();
         let generation = self.upload_generation;
 
-        let task = pool.spawn(async move {
+        let task = background_pool().spawn(Priority::Visible, "land texture", move || {
             let (tile_bytes, upload_layout) = if let Some((_, bytes, layout)) = package_source {
                 (bytes, layout)
             } else {
@@ -595,7 +594,6 @@ impl LandTextureCache {
         texmap_2d: Arc<udd_assets::tex_land_cc::TexLandCcPackage>,
         now: Instant,
     ) {
-        let pool = AsyncComputeTaskPool::get();
         let generation = self.upload_generation;
 
         let mut to_upload: Vec<(u16, LandTextureSize, u32)> = Vec::new();
@@ -633,7 +631,7 @@ impl LandTextureCache {
             let chunk: Vec<(u16, LandTextureSize, u32)> = chunk.to_vec();
             let texmap_2d_arc = texmap_2d.clone();
             let sender = self.upload_sender.clone();
-            let task = pool.spawn(async move {
+            let task = background_pool().spawn(Priority::Ahead, "land texture precache", move || {
                 for (id, size, layer) in chunk {
                     let (_, rgba8) =
                         super::texture_array::get_texmap_raw_data(id, &texmap_2d_arc, now);
@@ -830,7 +828,6 @@ impl LandTextureCache {
         texmap_2d: Arc<udd_assets::tex_land_cc::TexLandCcPackage>,
         now: Instant,
     ) {
-        let pool = AsyncComputeTaskPool::get();
         let generation = self.upload_generation;
         let ids_to_restore: Vec<(u16, u32)> = self
             .entry_by_id
@@ -851,7 +848,7 @@ impl LandTextureCache {
             let texmap_2d_arc = texmap_2d.clone();
             let sender = self.upload_sender.clone();
 
-            let task = pool.spawn(async move {
+            let task = background_pool().spawn(Priority::Visible, "land texture restore", move || {
                 for (texture_id, layer) in chunk {
                     let (_, raw_rgba8) =
                         texture_array::get_texmap_raw_data(texture_id, &texmap_2d_arc, now);
@@ -875,7 +872,6 @@ impl LandTextureCache {
         texmap_2d: Arc<udd_assets::tex_land_cc::TexLandCcPackage>,
         now: Instant,
     ) {
-        let pool = AsyncComputeTaskPool::get();
         let generation = self.upload_generation;
         let preferred_source = self.preferred_source;
         let tex_art_cc = self.tex_art_cc.clone();
@@ -897,7 +893,7 @@ impl LandTextureCache {
             let tex_art_cc = tex_art_cc.clone();
             let tex_land_ec = tex_land_ec.clone();
 
-            let task = pool.spawn(async move {
+            let task = background_pool().spawn(Priority::Visible, "land texture restore", move || {
                 for (texture_id, size, layer) in chunk {
                     let (tile_bytes, upload_layout) = if let Some((_, bytes, layout)) =
                         try_load_tile_from_packages_with_sources(

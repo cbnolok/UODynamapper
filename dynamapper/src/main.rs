@@ -29,6 +29,8 @@ fn main() -> ExitCode {
     color_eyre::install() // colored panic and backtrace
         .expect("Can't install color_eyre?");
 
+    // Before any package decodes: udd's parallel decodes share the background pool's threads.
+    app::background::install_udd_executor();
     console_logger::system("Starting Bevy app.");
     app::run_bevy_app()
 }

@@ -50,6 +50,7 @@
 //!   Where a built ceiling covers the rim, a floor static on the land's face over the cave's floor, the opening is a
 //!   room's doorway, not a mouth: its land is not the cave's.
 
+use crate::app::background::{background_pool, Priority, Task, TaskPoll};
 use crate::settings::Settings;
 use crate::console_logger::{self, LogAbout, LogSev};
 use crate::world::maps::{package_chunk_cell, read_package_chunk_land_z, PACKAGE_CHUNK_CELL_DIM};
@@ -66,7 +67,6 @@ use color_eyre::eyre;
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
-use std::thread::JoinHandle;
 use std::time::Instant;
 use udd_assets::tilemeta::TileMetaPackage;
 use udd_container::UddpReader;
@@ -857,8 +857,8 @@ pub struct CavesRes {
     revision: u64,
     /// The caves found so far, by map.
     found: HashMap<u32, Arc<CaveMap>>,
-    /// The map whose caves a background thread is finding, and the thread.
-    finding: Option<(u32, JoinHandle<eyre::Result<CaveMap>>)>,
+    /// The map whose caves a background job is finding, and the job.
+    finding: Option<(u32, Task<eyre::Result<CaveMap>>)>,
 }
 
 impl CavesRes {
@@ -997,9 +997,12 @@ pub fn sys_update_caves(
     mut caves: ResMut<CavesRes>,
 ) {
     let caves = caves.bypass_change_detection();
-    if caves.finding.as_ref().is_some_and(|(_, thread)| thread.is_finished()) {
-        let (map_id, thread) = caves.finding.take().expect("a finished cave scan");
-        let result = thread.join().unwrap_or_else(|_| Err(eyre::eyre!("the cave scan thread panicked")));
+    if caves.finding.as_ref().is_some_and(|(_, task)| task.is_finished()) {
+        let (map_id, mut task) = caves.finding.take().expect("a finished cave scan");
+        let result = match task.poll() {
+            TaskPoll::Ready(result) => result,
+            TaskPoll::Pending | TaskPoll::Failed => Err(eyre::eyre!("the cave scan panicked")),
+        };
         let found = result.unwrap_or_else(|error| {
             console_logger::one(LogSev::Warn, LogAbout::RenderWorldLand,
                 &format!("Caves of map {map_id} are not drawn over the map: {error:#}"));
@@ -1026,7 +1029,7 @@ pub fn sys_update_caves(
                     statics: statics.lock().package(),
                     tilemeta: tilemeta.for_world_analyses().clone(),
                 };
-                let spawned = std::thread::Builder::new().name("caves".to_owned()).spawn(move || {
+                let task = background_pool().spawn(Priority::Idle, "cave scan", move || {
                     let started = Instant::now();
                     let result = find_map_caves(&input);
                     if let Ok(found) = &result {
@@ -1036,14 +1039,7 @@ pub fn sys_update_caves(
                     }
                     result
                 });
-                match spawned {
-                    Ok(thread) => caves.finding = Some((map_id, thread)),
-                    Err(error) => {
-                        console_logger::one(LogSev::Warn, LogAbout::RenderWorldLand,
-                            &format!("Caves of map {map_id} are not drawn over the map: {error}"));
-                        caves.found.insert(map_id, Arc::new(CaveMap::default()));
-                    }
-                }
+                caves.finding = Some((map_id, task));
             }
             // Without the map's statics or the tile data no cave is found.
             _ => {

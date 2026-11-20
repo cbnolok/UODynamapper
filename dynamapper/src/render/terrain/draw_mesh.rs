@@ -300,7 +300,7 @@ struct LandChunkConstructionData {
 /// Local state for the background chunk-data loader.
 #[derive(Default)]
 pub struct DrawMeshLocals {
-    loader: Option<chunk_loader::ChunkLoaderThread>,
+    loader: Option<chunk_loader::ChunkLoader>,
     pending: bool,
     /// Expanded block coordinates needed for a pending background load.
     /// Kept alive so we can skip re-expanded on the poll frame.
@@ -366,9 +366,9 @@ pub fn sys_draw_spawned_land_chunks(
         .unwrap_or_else(Instant::now);
     let current_map_id = scene_state_data_r.map_id;
 
-    // ── Initialize background loader thread (once) ─────────────────────
+    // ── Initialize the background loader (once) ─────────────────────
     if locals.loader.is_none() {
-        locals.loader = Some(chunk_loader::ChunkLoaderThread::new());
+        locals.loader = Some(chunk_loader::ChunkLoader::new());
     }
 
     // ── Detect scale / map changes ─────────────────────────────────

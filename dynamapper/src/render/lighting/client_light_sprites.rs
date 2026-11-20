@@ -22,6 +22,7 @@
 //! (`client_light_sprite_static_light`), unless the style's `local_lights.source` picks light.mul, as Classic
 //! (`static_lights`).
 
+use crate::app::background::{background_pool, Priority};
 use super::light_cover::{static_light_ceiling_z, static_light_is_hidden, LightCoverRule, MultiCoverParts};
 use super::light_scene::{
     light_clip_material, light_clip_tag, set_light_clip_mode, LightClipMaterial, LightClipMode, LightScene,
@@ -193,7 +194,7 @@ pub struct ClientLightSpriteCache {
     glow_rgb_by_entry: HashMap<u32, Option<[f32; 3]>>,
     /// Each lit item's Classic art (`cache_client_light_sprite_art`), `None` for an item without one.
     art_by_graphic: HashMap<u16, Option<ClientLightSpriteArt>>,
-    /// `art_by_graphic` for every lit item, read on its own thread (`warm_client_light_sprite_art`).
+    /// `art_by_graphic` for every lit item, read by a background job (`warm_client_light_sprite_art`).
     art_warmup: ArtWarmup,
     mesh: Option<Handle<Mesh>>,
     reach_blocks: Option<u32>,
@@ -488,7 +489,7 @@ fn cache_client_light_sprite_art(
 enum ArtWarmup {
     #[default]
     NotStarted,
-    /// Reading with the tile data of the art source `source`; the thread leaves its art in `art`.
+    /// Reading with the tile data of the art source `source`; the job leaves its art in `art`.
     Running {
         source: Option<ClientTextureSource>,
         art: std::sync::Arc<parking_lot::Mutex<Option<HashMap<u16, Option<ClientLightSpriteArt>>>>>,
@@ -496,11 +497,11 @@ enum ArtWarmup {
     Done,
 }
 
-/// The thread reading the lit items' art ahead (`ArtWarmup`).
-const ART_WARMUP_THREAD_NAME: &str = "light-art-warmup";
+/// The background job reading the lit items' art ahead (`ArtWarmup`).
+const ART_WARMUP_JOB_NAME: &str = "light art warmup";
 
-/// Starts reading the Classic art (`cache_client_light_sprite_art`) of every item the tile data lights, on its own
-/// thread, then folds it into `art_by_graphic` once it is read, unless the art source has changed meanwhile. The scans
+/// Starts reading the Classic art (`cache_client_light_sprite_art`) of every item the tile data lights, as a
+/// background job, then folds it into `art_by_graphic` once it is read, unless the art source has changed meanwhile. The scans
 /// cache the art of the items they meet first themselves, as before: reading an item's art page in the frame cost
 /// 10-60 ms a scan in the Britain walk (2026-11-19), so the warm-up spares the frames all but the first scans'.
 fn warm_client_light_sprite_art(
@@ -518,19 +519,16 @@ fn warm_client_light_sprite_art(
             let art = std::sync::Arc::new(parking_lot::Mutex::new(None));
             let (tex_art_cc, tilemeta, read) =
                 (std::sync::Arc::clone(tex_art_cc), std::sync::Arc::clone(tilemeta), std::sync::Arc::clone(&art));
-            let spawned = std::thread::Builder::new().name(ART_WARMUP_THREAD_NAME.to_owned()).spawn(move || {
-                let lit_graphics = (0..=u16::MAX).filter(|graphic| tilemeta.item_light(u32::from(*graphic)).is_some());
-                let mut art_by_graphic = HashMap::new();
-                cache_client_light_sprite_art(&mut art_by_graphic, Some(&tex_art_cc), &tilemeta, lit_graphics);
-                *read.lock() = Some(art_by_graphic);
-            });
-            cache.art_warmup = match spawned {
-                Ok(_) => ArtWarmup::Running { source, art },
-                Err(err) => {
-                    log::warn!("Cannot start the {ART_WARMUP_THREAD_NAME} thread, the scans read the lit items' art: {err}");
-                    ArtWarmup::Done
-                }
-            };
+            background_pool()
+                .spawn(Priority::Ahead, ART_WARMUP_JOB_NAME, move || {
+                    let lit_graphics =
+                        (0..=u16::MAX).filter(|graphic| tilemeta.item_light(u32::from(*graphic)).is_some());
+                    let mut art_by_graphic = HashMap::new();
+                    cache_client_light_sprite_art(&mut art_by_graphic, Some(&tex_art_cc), &tilemeta, lit_graphics);
+                    *read.lock() = Some(art_by_graphic);
+                })
+                .detach();
+            cache.art_warmup = ArtWarmup::Running { source, art };
         }
         ArtWarmup::Running { source: read_source, art } => {
             let Some(art_by_graphic) = art.lock().take() else {

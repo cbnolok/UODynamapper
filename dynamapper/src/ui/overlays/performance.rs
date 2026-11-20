@@ -1,4 +1,5 @@
 use crate::{app::system_sets::StartupSystems, prelude::*};
+use crate::app::background::{background_pool, Priority, Task};
 use bevy::color::Srgba;
 use bevy::diagnostic::DiagnosticsStore;
 use bevy::prelude::*;
@@ -48,35 +49,35 @@ pub struct ProcessMetrics {
     pub process_vram_tracked_mib: f32,
     /// Number of logical CPU cores.
     pub core_count: usize,
-    /// The thread sampling `process_vram_tracked_mib`, started by the first refresh.
-    vram_probe: Option<VramProbe>,
+    /// The background reads of `process_vram_tracked_mib`.
+    vram_probe: VramProbe,
 }
 
-/// The process's VRAM, sampled on its own thread at the refresh interval: reading a DRM fd's fdinfo makes the driver
+/// The process's VRAM, read by a background job at each refresh, unless the last read still runs: reading a DRM fd's fdinfo makes the driver
 /// walk every buffer object of the client, which took 11 ms a read on amdgpu in a city walk (2026-11-19), a long frame
 /// four times a second when it ran in the frame.
-struct VramProbe(Arc<AtomicU32>);
+#[derive(Default)]
+struct VramProbe {
+    mib: Arc<AtomicU32>,
+    reading: Option<Task<()>>,
+}
 
 impl VramProbe {
-    const THREAD_NAME: &str = "vram-probe";
-
-    fn spawn(pid: sysinfo::Pid) -> Self {
-        let mib = Arc::new(AtomicU32::new(0.0_f32.to_bits()));
-        let published = Arc::clone(&mib);
-        let spawned = std::thread::Builder::new().name(Self::THREAD_NAME.to_owned()).spawn(move || loop {
+    /// Starts a read of the process's VRAM, unless one still runs.
+    fn refresh(&mut self, pid: sysinfo::Pid) {
+        if self.reading.as_ref().is_some_and(|read| !read.is_finished()) {
+            return;
+        }
+        let published = Arc::clone(&self.mib);
+        self.reading = Some(background_pool().spawn(Priority::Idle, "vram probe", move || {
             let sample = query_process_vram_mib_native(pid).unwrap_or(0.0);
             published.store(sample.to_bits(), Ordering::Relaxed);
-            std::thread::sleep(Duration::from_secs_f32(METRICS_REFRESH_INTERVAL_SEC));
-        });
-        if let Err(err) = spawned {
-            warn!("Cannot start the {} thread, the tracked process VRAM stays 0: {err}", Self::THREAD_NAME);
-        }
-        Self(mib)
+        }));
     }
 
     /// The latest sample, in MiB.
     fn mib(&self) -> f32 {
-        f32::from_bits(self.0.load(Ordering::Relaxed))
+        f32::from_bits(self.mib.load(Ordering::Relaxed))
     }
 }
 
@@ -95,7 +96,7 @@ impl Default for ProcessMetrics {
             estimated_texture_vram_mib: 0.0,
             estimated_atlas_vram_mib: 0.0,
             process_vram_tracked_mib: 0.0,
-            vram_probe: None,
+            vram_probe: VramProbe::default(),
         }
     }
 }
@@ -362,7 +363,8 @@ pub fn sys_refresh_process_metrics(
 
         // Cross-platform tracked process VRAM: app-owned persistent GPU allocations.
         // Includes terrain texture arrays + tile metadata atlas.
-        metrics.process_vram_tracked_mib = metrics.vram_probe.get_or_insert_with(|| VramProbe::spawn(pid)).mib();
+        metrics.vram_probe.refresh(pid);
+        metrics.process_vram_tracked_mib = metrics.vram_probe.mib();
     }
 }
 

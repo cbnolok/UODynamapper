@@ -1,4 +1,5 @@
 pub mod app_states;
+pub mod background;
 mod bevy_log_filter;
 mod span_trace;
 pub mod paths;
