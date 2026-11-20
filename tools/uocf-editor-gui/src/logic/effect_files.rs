@@ -175,15 +175,17 @@ impl EffectFiles {
         if let Some(strings) = strings {
             package.resolve_names_from_string_dictionary(strings);
         }
-        package.harvest_names_from_payloads().map_err(|error| format!("{error:#}"))?;
+        let mut payloads = HashMap::new();
+        package
+            .harvest_names_handing_payloads_to(|hash, payload| {
+                payloads.insert(hash, payload);
+            })
+            .map_err(|error| format!("{error:#}"))?;
         let mut rows = Vec::new();
         let mut scripts = HashMap::new();
         for entry in package.entries() {
-            let payload = if entry.has_payload() {
-                package.read_by_hash(entry.hash).map_err(|error| format!("{error:#}"))?.unwrap_or_default()
-            } else {
-                Vec::new()
-            };
+            // The harvest skips the entries without a payload.
+            let payload = payloads.remove(&entry.hash).unwrap_or_default();
             let name = entry.file_name().map(str::to_owned);
             let row = FileRow::from_payload(entry.hash, name, &payload, FileStatus::Original);
             if row.kind == FileKind::Chaos {

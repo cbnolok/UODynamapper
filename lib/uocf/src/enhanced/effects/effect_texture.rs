@@ -200,6 +200,11 @@ impl EffectTexturePackage {
     /// Resolves names from the file names the payloads mention (texture names in models and scripts, model
     /// names in scripts), each tried with every [`EFFECT_FILE_EXTENSIONS`] extension. Reads every payload.
     pub fn harvest_names_from_payloads(&mut self) -> eyre::Result<usize> {
+        self.harvest_names_handing_payloads_to(|_, _| ())
+    }
+
+    /// [`Self::harvest_names_from_payloads`] for a caller that needs the payloads too: `take` gets each with its hash.
+    pub fn harvest_names_handing_payloads_to(&mut self, mut take: impl FnMut(u64, Vec<u8>)) -> eyre::Result<usize> {
         let mut reader = self.package.open_payload_reader()?;
         let hashes = self.package.iter_files().filter(|file| file.has_size()).map(|file| file.filename_hash());
         let mut candidates = Vec::new();
@@ -210,6 +215,7 @@ impl EffectTexturePackage {
                 .wrap_err_with(|| format!("failed to read entry {hash:016X}"))?
                 .unwrap_or_default();
             candidates.extend(harvest_candidates(&payload));
+            take(hash, payload);
         }
         candidates.sort_unstable();
         candidates.dedup();
