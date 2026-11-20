@@ -734,6 +734,28 @@ fn build_art_atlas(images: &mut Assets<Image>, spec: AtlasAllocationSpec) -> Art
     )
 }
 
+const BYTES_PER_MB: u64 = 1024 * 1024;
+
+/// A growth allocates the whole new array and copies the resident layers into it, a stall that grows with the atlas.
+fn log_art_atlas_growth(atlas_name: &str, atlas: &ArtPageAtlas, new_layers: u32) {
+    let format = atlas_texture_format(atlas.pixel_format);
+    let (block_width, block_height) = format.block_dimensions();
+    let block_bytes = u64::from(format.block_copy_size(None).unwrap_or(0));
+    let layer_bytes = u64::from(atlas.page_width.div_ceil(block_width)) * u64::from(atlas.page_height.div_ceil(block_height))
+        * block_bytes;
+    console_logger::one(
+        LogSev::Info,
+        LogAbout::Performance,
+        &format!(
+            "Growing the {atlas_name} art atlas: {} → {new_layers} layers of {}x{} {format:?} ({} MB).",
+            atlas.active_layers,
+            atlas.page_width,
+            atlas.page_height,
+            layer_bytes * u64::from(new_layers) / BYTES_PER_MB,
+        ),
+    );
+}
+
 fn apply_sprite_art_atlas_resize(
     images: &mut Assets<Image>,
     materials: &mut Assets<ArtSpriteMaterial>,
@@ -748,6 +770,7 @@ fn apply_sprite_art_atlas_resize(
         return;
     }
 
+    log_art_atlas_growth("sprite", atlas, new_layers);
     let new_handle = create_art_atlas_image(
         images,
         atlas.page_width,
@@ -784,6 +807,7 @@ fn apply_ground_art_atlas_resize(
         return;
     }
 
+    log_art_atlas_growth("ground", atlas, new_layers);
     let new_handle = create_art_atlas_image(
         images,
         atlas.page_width,
