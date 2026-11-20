@@ -12,6 +12,7 @@ use crate::common::{
     AtlasCacheOptions, AtlasPageCache,
 };
 use crate::tex_art_cc::{AtlasPackingMode, PagePixelFormat};
+pub use uocf::animation_sequence::{GROUP_MOUNTED, GROUP_PEACE, GROUP_WAR, MOVE_RUN, MOVE_STAND, MOVE_WALK};
 pub use uocf::enhanced::hues::ShadowPaletteStats;
 
 pub const PAGE_MANIFEST_ENTRY_PATH: &str = "metadata/pages.bin";
@@ -79,6 +80,19 @@ pub const FIRST_STORED_DIRECTION: u8 = uocf::animation_sequence::FIRST_STORED_DI
 /// A mirrored direction `d` shows direction `MIRROR_DIRECTION_SUM - d` flipped horizontally.
 pub const MIRROR_DIRECTION_SUM: u8 = uocf::animation_sequence::MIRROR_DIRECTION_SUM;
 
+/// Sequence groups whose move actions a body record keeps: war, peace and mounted
+/// (`uocf::animation_sequence::GROUP_WAR` ..= `GROUP_MOUNTED`), in that order.
+pub const MOVE_ACTION_GROUPS: [i8; MOVE_ACTION_GROUP_COUNT] = [GROUP_WAR, GROUP_PEACE, GROUP_MOUNTED];
+pub const MOVE_ACTION_GROUP_COUNT: usize = 3;
+/// Movements of a group: stand, walk and run (`uocf::animation_sequence::MOVE_*`), in that order.
+pub const MOVE_ACTION_MOVEMENTS: [u8; MOVE_ACTION_MOVEMENT_COUNT] = [MOVE_STAND, MOVE_WALK, MOVE_RUN];
+pub const MOVE_ACTION_MOVEMENT_COUNT: usize = 3;
+/// `MobileAnimEcBodyRecord::move_actions` entry of a group the sequence does not have.
+pub const NO_MOVE_ACTION: u16 = u16::MAX;
+/// Y offset the client adds to every layer of a mobile (`UOObjectComponentAnimationMob::UpdateFrame`
+/// 0x00436d40, "- 15" in every placement branch; confirmed).
+pub const MOBILE_LAYER_SHIFT_Y: i32 = -15;
+
 const PAGE_MANIFEST_MAGIC: [u8; 4] = *b"MEPG";
 const ANIMATION_MANIFEST_MAGIC: [u8; 4] = *b"MEAN";
 const FRAME_MANIFEST_MAGIC: [u8; 4] = *b"MEFR";
@@ -133,6 +147,12 @@ pub struct MobileAnimEcBodyRecord {
     pub race: u8,
     /// props1 key 10 with `BODY_FLAG_HAS_GENDER` (see [`Self::gender`]).
     pub gender: u8,
+    /// Movement actions of the sequence by group (`MOVE_ACTION_GROUPS`) and movement
+    /// (`MOVE_ACTION_MOVEMENTS`), as `FrameSetLookup::GetMoveAction` gives them with the alternate
+    /// variant off (the parent chain, then the default action of its last group);
+    /// `NO_MOVE_ACTION` for a group the sequence does not have, and for every entry of a body with
+    /// `BODY_FLAG_NO_SEQUENCE`.
+    pub move_actions: [[u16; MOVE_ACTION_MOVEMENT_COUNT]; MOVE_ACTION_GROUP_COUNT],
 }
 
 impl MobileAnimEcBodyRecord {
@@ -152,6 +172,22 @@ impl MobileAnimEcBodyRecord {
     /// equipment appearance filters by owner gender and the equipment layer order.
     pub fn gender(&self) -> Option<u8> {
         (self.flags & BODY_FLAG_HAS_GENDER != 0).then_some(self.gender)
+    }
+
+    /// Action the client plays for `movement` (`MOVE_STAND`, `MOVE_WALK`, `MOVE_RUN`) in sequence
+    /// group `group` (`GROUP_WAR`, `GROUP_PEACE`, `GROUP_MOUNTED`); `None` when the sequence has
+    /// no such group or the arguments are outside those sets.
+    pub fn move_action(&self, group: i8, movement: u8) -> Option<u16> {
+        let group = MOVE_ACTION_GROUPS.iter().position(|&known| known == group)?;
+        let movement = MOVE_ACTION_MOVEMENTS.iter().position(|&known| known == movement)?;
+        Some(self.move_actions[group][movement]).filter(|&action| action != NO_MOVE_ACTION)
+    }
+
+    /// Action of this body for `movement` when it is a mount: the client gives the mount group
+    /// `GROUP_MOUNTED` when the mount's own sequence has it, else `GROUP_PEACE`, and the rider's
+    /// movement (`UpdateFrame` 0x00436d40, `HasGroup` on the mount sequence; confirmed).
+    pub fn mount_move_action(&self, movement: u8) -> Option<u16> {
+        self.move_action(GROUP_MOUNTED, movement).or_else(|| self.move_action(GROUP_PEACE, movement))
     }
 }
 
@@ -191,6 +227,17 @@ pub struct MobileAnimEcAnimationRecord {
     /// Bit `i` set: the player passes over frame `i` of the direction (the sequence skipped
     /// frames of `action_id`).
     pub skipped_frame_mask: u32,
+    /// Where the client puts the rider's layers when this body is a mount playing `action_id`,
+    /// relative to the mount's layer: the action's i8 offset of `direction`
+    /// (`GetOffsetX/Y`), or the sequence's when that is `UNSET_BYTE_OFFSET` (confirmed; the
+    /// action is the frame set's, the requested one: probable). See [`mobile_layer_offsets`].
+    pub rider_offset_x: i8,
+    pub rider_offset_y: i8,
+    /// Offset the client adds to the layers of a mobile showing this record: the action's i16
+    /// offset of `direction` (`GetExtraOffsetX/Y`), or the sequence's when that is
+    /// `UNSET_SHORT_OFFSET` (confirmed). See [`mobile_layer_offsets`].
+    pub extra_offset_x: i16,
+    pub extra_offset_y: i16,
 }
 
 impl MobileAnimEcAnimationRecord {
@@ -204,6 +251,38 @@ impl MobileAnimEcAnimationRecord {
 
     pub fn is_frame_skipped(&self, frame_index: u32) -> bool {
         frame_index < SKIPPED_FRAME_MASK_BITS && self.skipped_frame_mask & (1 << frame_index) != 0
+    }
+}
+
+/// Positions of a mobile's layers relative to its anchor, as `UOObjectComponentAnimationMob::UpdateFrame`
+/// (0x00436d40) sets them; the same units and axes as the frame anchors.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct MobileLayerOffsets {
+    /// The body and its equipment layers.
+    pub body: (i32, i32),
+    /// The mount layer, for a mounted mobile.
+    pub mount: Option<(i32, i32)>,
+}
+
+/// Layer positions of a mobile showing `body` (the record of its own action and direction), riding
+/// a mount that shows `mount` (the mount body's record of its move action and the same direction).
+/// Every layer gets the body's extra offset and `MOBILE_LAYER_SHIFT_Y`; a mounted mobile adds the
+/// mount's extra offset to every layer, and the mount's rider offset to the body and equipment
+/// layers only (confirmed at instruction level). A PositionOffset frame effect of the mount's frame
+/// would replace the rider offset; no data has one.
+pub fn mobile_layer_offsets(
+    body: &MobileAnimEcAnimationRecord,
+    mount: Option<&MobileAnimEcAnimationRecord>,
+) -> MobileLayerOffsets {
+    let mut base = (i32::from(body.extra_offset_x), i32::from(body.extra_offset_y) + MOBILE_LAYER_SHIFT_Y);
+    let Some(mount) = mount else {
+        return MobileLayerOffsets { body: base, mount: None };
+    };
+    base.0 += i32::from(mount.extra_offset_x);
+    base.1 += i32::from(mount.extra_offset_y);
+    MobileLayerOffsets {
+        body: (base.0 + i32::from(mount.rider_offset_x), base.1 + i32::from(mount.rider_offset_y)),
+        mount: Some(base),
     }
 }
 
@@ -440,6 +519,11 @@ impl MobileAnimEcPackage {
             .map(|index| &self.bodies[index])
     }
 
+    /// Move action of a server body (see [`MobileAnimEcBodyRecord::move_action`]).
+    pub fn move_action(&self, body_id: u32, group: i8, movement: u8) -> Option<u16> {
+        self.body(body_id)?.move_action(group, movement)
+    }
+
     /// Record of exactly (body, action, direction); `None` when the sequence has no such action.
     pub fn animation(&self, body_id: u32, action_id: u16, direction: u8) -> Option<&MobileAnimEcAnimationRecord> {
         self.animation_lookup
@@ -669,6 +753,10 @@ fn parse_animation_manifest(bytes: &[u8]) -> eyre::Result<Vec<MobileAnimEcAnimat
             fps: cursor.read_f32::<LittleEndian>()?,
             fps_no_flying: cursor.read_f32::<LittleEndian>()?,
             skipped_frame_mask: cursor.read_u32::<LittleEndian>()?,
+            rider_offset_x: cursor.read_i8()?,
+            rider_offset_y: cursor.read_i8()?,
+            extra_offset_x: cursor.read_i16::<LittleEndian>()?,
+            extra_offset_y: cursor.read_i16::<LittleEndian>()?,
         });
     }
     Ok(animations)
@@ -794,6 +882,13 @@ fn parse_body_manifest(bytes: &[u8]) -> eyre::Result<Vec<MobileAnimEcBodyRecord>
             sequence_stored_id: cursor.read_u32::<LittleEndian>()?,
             race: cursor.read_u8()?,
             gender: cursor.read_u8()?,
+            move_actions: {
+                let mut move_actions = [[NO_MOVE_ACTION; MOVE_ACTION_MOVEMENT_COUNT]; MOVE_ACTION_GROUP_COUNT];
+                for action in move_actions.iter_mut().flatten() {
+                    *action = cursor.read_u16::<LittleEndian>()?;
+                }
+                move_actions
+            },
         });
     }
     if !bodies.windows(2).all(|pair| pair[0].body_id < pair[1].body_id) {
@@ -836,11 +931,16 @@ mod tests {
         }));
     }
 
-    fn body_manifest_bytes(version: u32, records: &[(u32, u16, u32, u8, u8)]) -> Vec<u8> {
+    type MoveActions = [[u16; MOVE_ACTION_MOVEMENT_COUNT]; MOVE_ACTION_GROUP_COUNT];
+
+    /// No group: a body without a sequence.
+    const NO_MOVE_ACTIONS: MoveActions = [[NO_MOVE_ACTION; MOVE_ACTION_MOVEMENT_COUNT]; MOVE_ACTION_GROUP_COUNT];
+
+    fn body_manifest_bytes(version: u32, records: &[(u32, u16, u32, u8, u8, MoveActions)]) -> Vec<u8> {
         let mut bytes = BODY_MANIFEST_MAGIC.to_vec();
         bytes.extend_from_slice(&version.to_le_bytes());
         bytes.extend_from_slice(&(records.len() as u32).to_le_bytes());
-        for &(body_id, flags, sequence_stored_id, race, gender) in records {
+        for &(body_id, flags, sequence_stored_id, race, gender, move_actions) in records {
             for value in [body_id, body_id, body_id, body_id] {
                 bytes.extend_from_slice(&value.to_le_bytes());
             }
@@ -848,6 +948,9 @@ mod tests {
             bytes.extend_from_slice(&flags.to_le_bytes());
             bytes.extend_from_slice(&sequence_stored_id.to_le_bytes());
             bytes.extend_from_slice(&[race, gender]);
+            for action in move_actions.iter().flatten() {
+                bytes.extend_from_slice(&action.to_le_bytes());
+            }
         }
         bytes
     }
@@ -859,13 +962,105 @@ mod tests {
         let elf_race = 2;
         let female_gender = 1;
         let bytes = body_manifest_bytes(MOBILE_ANIM_EC_METADATA_VERSION, &[
-            (creature, 0, creature, 0, 0),
-            (human_female, BODY_FLAG_HAS_RACE | BODY_FLAG_HAS_GENDER, 400, elf_race, female_gender),
+            (creature, 0, creature, 0, 0, NO_MOVE_ACTIONS),
+            (human_female, BODY_FLAG_HAS_RACE | BODY_FLAG_HAS_GENDER, 400, elf_race, female_gender, NO_MOVE_ACTIONS),
         ]);
         let bodies = parse_body_manifest(&bytes).unwrap();
         assert_eq!((bodies[0].race(), bodies[0].gender()), (None, None));
         assert_eq!(bodies[1].sequence_stored_id, 400);
         assert_eq!((bodies[1].race(), bodies[1].gender()), (Some(elf_race), Some(female_gender)));
+    }
+
+    #[test]
+    fn body_move_actions_take_the_mounted_group_only_when_the_sequence_has_it() {
+        let (stand, walk, run) = (25, 22, 24);
+        let war = [7, 15, 24];
+        let horse = 200;
+        let human = 400;
+        let without_mounted = [war, [stand, walk, run], [NO_MOVE_ACTION; MOVE_ACTION_MOVEMENT_COUNT]];
+        let with_mounted = [war, [4, 0, 2], [stand, walk, run]];
+        let bytes = body_manifest_bytes(MOBILE_ANIM_EC_METADATA_VERSION, &[
+            (horse, 0, horse, 0, 0, without_mounted),
+            (human, 0, human, 0, 0, with_mounted),
+        ]);
+        let bodies = parse_body_manifest(&bytes).unwrap();
+        let (horse, human) = (&bodies[0], &bodies[1]);
+
+        assert_eq!(horse.move_action(GROUP_WAR, MOVE_WALK), Some(15));
+        assert_eq!(horse.move_action(GROUP_PEACE, MOVE_RUN), Some(run));
+        assert_eq!(horse.move_action(GROUP_MOUNTED, MOVE_WALK), None);
+        assert_eq!(horse.mount_move_action(MOVE_WALK), Some(walk));
+        assert_eq!(human.move_action(GROUP_PEACE, MOVE_STAND), Some(4));
+        assert_eq!(human.mount_move_action(MOVE_STAND), Some(stand));
+        let unknown_group = 6;
+        let unknown_movement = 3;
+        assert_eq!(human.move_action(unknown_group, MOVE_STAND), None);
+        assert_eq!(human.move_action(GROUP_PEACE, unknown_movement), None);
+    }
+
+    fn animation_record(extra_offset: (i16, i16), rider_offset: (i8, i8)) -> MobileAnimEcAnimationRecord {
+        MobileAnimEcAnimationRecord {
+            body_id: 0,
+            action_id: 0,
+            direction: 0,
+            frame_start: 0,
+            frame_count: 0,
+            flags: 0,
+            source_body_id: 0,
+            resolved_action_id: 0,
+            alias_action_id: NO_ALIAS_ACTION,
+            resolved_action_id_no_flying: 0,
+            fps: 0.0,
+            fps_no_flying: 0.0,
+            skipped_frame_mask: 0,
+            rider_offset_x: rider_offset.0,
+            rider_offset_y: rider_offset.1,
+            extra_offset_x: extra_offset.0,
+            extra_offset_y: extra_offset.1,
+        }
+    }
+
+    #[test]
+    fn layer_offsets_add_the_mount_rider_offset_to_the_body_layers_only() {
+        let rider = animation_record((1, 2), (5, 5));
+        let mount = animation_record((10, 20), (-3, -30));
+
+        assert_eq!(
+            mobile_layer_offsets(&rider, None),
+            MobileLayerOffsets { body: (1, 2 + MOBILE_LAYER_SHIFT_Y), mount: None }
+        );
+        let base = (1 + 10, 2 + 20 + MOBILE_LAYER_SHIFT_Y);
+        assert_eq!(
+            mobile_layer_offsets(&rider, Some(&mount)),
+            MobileLayerOffsets { body: (base.0 - 3, base.1 - 30), mount: Some(base) }
+        );
+    }
+
+    #[test]
+    fn animation_manifest_reads_the_layer_offsets() {
+        let record = animation_record((-7, 300), (-12, 34));
+        let mut bytes = ANIMATION_MANIFEST_MAGIC.to_vec();
+        bytes.extend_from_slice(&MOBILE_ANIM_EC_METADATA_VERSION.to_le_bytes());
+        bytes.extend_from_slice(&1u32.to_le_bytes());
+        bytes.extend_from_slice(&record.body_id.to_le_bytes());
+        bytes.extend_from_slice(&record.action_id.to_le_bytes());
+        bytes.push(record.direction);
+        bytes.extend_from_slice(&record.frame_start.to_le_bytes());
+        bytes.extend_from_slice(&record.frame_count.to_le_bytes());
+        bytes.extend_from_slice(&record.flags.to_le_bytes());
+        bytes.extend_from_slice(&record.source_body_id.to_le_bytes());
+        bytes.extend_from_slice(&record.resolved_action_id.to_le_bytes());
+        bytes.extend_from_slice(&record.alias_action_id.to_le_bytes());
+        bytes.extend_from_slice(&record.resolved_action_id_no_flying.to_le_bytes());
+        bytes.extend_from_slice(&record.fps.to_le_bytes());
+        bytes.extend_from_slice(&record.fps_no_flying.to_le_bytes());
+        bytes.extend_from_slice(&record.skipped_frame_mask.to_le_bytes());
+        bytes.extend_from_slice(&record.rider_offset_x.to_le_bytes());
+        bytes.extend_from_slice(&record.rider_offset_y.to_le_bytes());
+        bytes.extend_from_slice(&record.extra_offset_x.to_le_bytes());
+        bytes.extend_from_slice(&record.extra_offset_y.to_le_bytes());
+
+        assert_eq!(parse_animation_manifest(&bytes).unwrap(), vec![record]);
     }
 
     #[test]

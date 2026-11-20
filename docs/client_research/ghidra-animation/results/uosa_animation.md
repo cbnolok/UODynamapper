@@ -101,8 +101,8 @@ group_count x {                                    // FrameSetLookup
 | `alias` | record +0x24 | redirect to another action of the same body (`ResolveAction`) | confirmed |
 | base frame | record +0x28 | not in the file: assigned by `NextBaseFrame` 0x00836d13 | confirmed |
 | `fps` | record +0x2c | frame interval = 1 / fps; 0.0 in every alias record | confirmed |
-| action i8 pairs | record +0x48 (x[8]), +0x68 (y[8]) | per-direction pixel offset of what rides on the body (rider on a mount); -128 -> 0 | probable |
-| action i16 pairs | record +0x88 (x[8]), +0xa8 (y[8]) | extra per-direction offset added to the i8 one; -0x8000 -> header value | probable |
+| action i8 pairs | record +0x48 (x[8]), +0x68 (y[8]) | per-direction pixel offset of what rides on the body (rider on a mount); -128 -> header i8 value (0 in the data) | confirmed (`UpdateFrame`) |
+| action i16 pairs | record +0x88 (x[8]), +0xa8 (y[8]) | extra per-direction offset of every layer (rider's plus mount's when mounted); -0x8000 -> header value | confirmed (`UpdateFrame`) |
 | effect frames | record +0x30 (`map<u32, collection>`) | effects started when the frame is shown (sounds in the data) | confirmed |
 | skipped frames | record +0x3c (`map<u32, bool>`) | frame time is advanced past these frames (`Update` 0x00434c90) | confirmed (code), probable (index base) |
 | group `key` / `parent` | group map +4 (`map<i8, FrameSetLookup>`), lookup +0x28 | group chain searched by every lookup | confirmed |
@@ -557,10 +557,21 @@ Examples:
   box.
 - Equipment layers come from the item's appearance, filtered by the wearer's body (appearance filters
   0/1/2), and their edges blend over the body.
-- Mount: `BuildLayers` gives the mount item's animation the rider's state, with group 2 when the rider
-  sequence has it (else group 1), then `GetMoveAction` and `PlayAction`. The rider's sequence offsets
-  (per direction, overridden per action by `GetOffsetX/Y` unless -0x80, plus `GetExtraOffsetX/Y` unless
-  -0x8000) place the attachments.
+- Mount (`UpdateFrame` 0x00436d40, confirmed at instruction level):
+  - The mount's animation gets the rider's movement (component 1 +0x20: 1 walk, 2 run, else stand).
+  - Its group is 2 when `HasGroup` (0x0083710b) finds group 2 in the mount's own sequence (component
+    +0x94), else 1. The action is `GetMoveAction(group, move, false)`.
+  - Every layer starts at E_r: the rider sequence's i16 offset of the direction, overridden by
+    `GetExtraOffsetX/Y(rider sequence, rider frame set action, dir)` unless -0x8000.
+  - When mounted (component +0x84, +0x8c and +0x94 set), E_m is added: the same lookup on the mount
+    sequence and the mount's action.
+  - A is the mount sequence's i8 offset, overridden by `GetOffsetX/Y(mount sequence, mount action,
+    dir)` unless -0x80. A PositionOffset (type 7) effect of the mount's frame replaces A.
+  - A layer whose flag (node +0x2c) is set is placed at (A.x + x, A.y + y - 15). Otherwise it goes at
+    the seat offsets when seated, else at (x, y - 15).
+  - `BuildLayers` (0x004387f0) sets the flag on the body and equipment layers when mounted. It leaves
+    it clear on the mount layer, which it pushes to the front.
+  - The frame set action is keyed by the requested action (probable).
 - Frame effects (`UpdateFrame`, effect type 7 PositionOffset checked at 0x0043725c) are placed at: (x +
   offset, y + offset - 15) when the effect has offsets (+0x2c); else, when seated on a chair (component
   +0xb4), at the chair definition's negated seat offsets (`GetSeatOffsetX/Y`, definition vtable +0xec /

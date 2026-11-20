@@ -53,7 +53,8 @@ use udd_assets::mobile_anim_cc::{
     BODY_RESOLVE_MANIFEST_ENTRY_PATH, BODY_TYPE_MANIFEST_ENTRY_PATH, FRAME_MANIFEST_ENTRY_PATH,
     MISSING_PAGE_FRAME_INDEX, MISSING_PAGE_INDEX, PAGE_MANIFEST_ENTRY_PATH,
     ANIMATION_MANIFEST_MAGIC, BODY_RESOLVE_MANIFEST_MAGIC, BODY_TYPE_MANIFEST_MAGIC, FRAME_MANIFEST_MAGIC,
-    MOBILE_ANIM_CC_METADATA_VERSION, PAGE_MANIFEST_MAGIC,
+    MOBILE_ANIM_CC_METADATA_VERSION, MOB_TYPE_GROUP_ANIMAL, MOB_TYPE_GROUP_EQUIPMENT, MOB_TYPE_GROUP_HUMAN,
+    MOB_TYPE_GROUP_MONSTER, MOB_TYPE_GROUP_SEA_MONSTER, PAGE_MANIFEST_MAGIC,
 };
 use udd_assets::tex_art_cc::PagePixelFormat;
 
@@ -583,11 +584,11 @@ fn parse_mobtypes_txt(text: &str) -> eyre::Result<Vec<MobileAnimCcBodyTypeRecord
 
 fn mob_type_group(type_name: &str) -> Option<u8> {
     match type_name.to_ascii_lowercase().as_str() {
-        "monster" => Some(0),
-        "sea_monster" => Some(1),
-        "animal" => Some(2),
-        "human" => Some(3),
-        "equipment" => Some(4),
+        "monster" => Some(MOB_TYPE_GROUP_MONSTER),
+        "sea_monster" => Some(MOB_TYPE_GROUP_SEA_MONSTER),
+        "animal" => Some(MOB_TYPE_GROUP_ANIMAL),
+        "human" => Some(MOB_TYPE_GROUP_HUMAN),
+        "equipment" => Some(MOB_TYPE_GROUP_EQUIPMENT),
         _ => None,
     }
 }

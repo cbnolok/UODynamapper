@@ -20,7 +20,7 @@ use udd_container::{
 };
 use uocf::animation_sequence::{
     AnimationSequence, SequenceAction, FIRST_FRAME_NUMBER, FIRST_STORED_DIRECTION, MIRROR_DIRECTION_SUM,
-    MISSING_ACTION_FPS, STORED_DIRECTION_COUNT,
+    MISSING_ACTION_FPS, STORED_DIRECTION_COUNT, UNSET_BYTE_OFFSET, UNSET_SHORT_OFFSET,
 };
 use uocf::enhanced::animationframe::{AnimationFrame, AnimationFrameMetadata, DecodedFrame, FrameEntry};
 use uocf::enhanced::hues::ShadowPaletteStats;
@@ -54,8 +54,9 @@ use udd_assets::mobile_anim_ec::{
     BODY_FLAG_NO_PLACEHOLDER, BODY_FLAG_NO_SEQUENCE,
     BODY_MANIFEST_ENTRY_PATH, DIRECTION_COUNT, FRAME_HUE_ALL, FRAME_HUE_MASKED, FRAME_HUE_NONE,
     FRAME_MANIFEST_ENTRY_PATH, HUE_MASK_HUEABLE, ITEM_MANIFEST_ENTRY_PATH, MISSING_PAGE_FRAME_INDEX,
-    MISSING_PAGE_INDEX, MISSING_SOURCE_FRAME_INDEX, MOBILE_ANIM_EC_METADATA_VERSION,
-    NO_ALIAS_ACTION, NO_FORCED_HUE, PAGE_FLAG_HUE_MASK, PAGE_MANIFEST_ENTRY_PATH,
+    MISSING_PAGE_INDEX, MISSING_SOURCE_FRAME_INDEX, MOBILE_ANIM_EC_METADATA_VERSION, MOVE_ACTION_GROUPS,
+    MOVE_ACTION_GROUP_COUNT, MOVE_ACTION_MOVEMENTS, MOVE_ACTION_MOVEMENT_COUNT, NO_ALIAS_ACTION, NO_FORCED_HUE,
+    NO_MOVE_ACTION, PAGE_FLAG_HUE_MASK, PAGE_MANIFEST_ENTRY_PATH,
     SKIPPED_FRAME_MASK_BITS, SOURCE_HINT_MANIFEST_ENTRY_PATH,
 };
 use udd_assets::tex_art_cc::PagePixelFormat;
@@ -77,8 +78,12 @@ const PAGE_MANIFEST_HEADER_SIZE: usize = 26;
 const PAGE_RECORD_SIZE: usize = 25;
 /// 31 bytes up to `hue_mode`, then the three shadow palette statistics.
 const FRAME_RECORD_SIZE: usize = 34;
-/// 20 bytes up to `flags`, then `sequence_stored_id` (u32), `race` and `gender` (u8 each).
-const BODY_RECORD_SIZE: usize = 26;
+/// 37 bytes up to `skipped_frame_mask`, then the rider offset (i8 x, y) and the extra offset
+/// (i16 x, y).
+const ANIMATION_RECORD_SIZE: usize = 43;
+/// 20 bytes up to `flags`, then `sequence_stored_id` (u32), `race` and `gender` (u8 each), then the
+/// move actions (u16 each).
+const BODY_RECORD_SIZE: usize = 26 + MOVE_ACTION_GROUP_COUNT * MOVE_ACTION_MOVEMENT_COUNT * 2;
 const TILEART_UOP_NAMES: [&str; 2] = ["tileart.uop", "TileArt.uop"];
 const RGBA_CHANNELS: usize = 4;
 const RGBA_ALPHA_CHANNEL: usize = 3;
@@ -1417,6 +1422,49 @@ fn load_animation_sequences(client_dir: &Path) -> eyre::Result<(BTreeMap<u32, An
     Ok((sequences, parse_error_count))
 }
 
+/// Move actions of a body record: `GetMoveAction(group, movement, false)` of `sequence` for each
+/// group and movement, `NO_MOVE_ACTION` where the group is missing or there is no sequence.
+fn move_actions(
+    sequence: Option<&AnimationSequence>,
+) -> eyre::Result<[[u16; MOVE_ACTION_MOVEMENT_COUNT]; MOVE_ACTION_GROUP_COUNT]> {
+    let mut actions = [[NO_MOVE_ACTION; MOVE_ACTION_MOVEMENT_COUNT]; MOVE_ACTION_GROUP_COUNT];
+    let Some(sequence) = sequence else {
+        return Ok(actions);
+    };
+    for (group_actions, &group) in actions.iter_mut().zip(&MOVE_ACTION_GROUPS) {
+        for (action, &movement) in group_actions.iter_mut().zip(&MOVE_ACTION_MOVEMENTS) {
+            if let Some(move_action) = sequence.move_action(group, movement, false) {
+                *action = action_id_u16(move_action)?;
+            }
+        }
+    }
+    Ok(actions)
+}
+
+/// `template` with the layer offsets of `record`'s `direction` as `UpdateFrame` reads them: the
+/// action's offset unless unset, else the sequence's (`GetOffsetX/Y`, `GetExtraOffsetX/Y`).
+fn with_layer_offsets(
+    template: MobileAnimEcAnimationRecord,
+    sequence: &AnimationSequence,
+    record: &SequenceAction,
+    direction: u8,
+) -> MobileAnimEcAnimationRecord {
+    let direction = usize::from(direction);
+    let byte = |action: i8, default: i8| if action == UNSET_BYTE_OFFSET { default } else { action };
+    let short = |action: i16, default: i16| if action == UNSET_SHORT_OFFSET { default } else { action };
+    let (rider_x, rider_y) = record.offsets[direction];
+    let (default_rider_x, default_rider_y) = sequence.offsets[direction];
+    let (extra_x, extra_y) = record.extra_offsets[direction];
+    let (default_extra_x, default_extra_y) = sequence.extra_offsets[direction];
+    MobileAnimEcAnimationRecord {
+        rider_offset_x: byte(rider_x, default_rider_x),
+        rider_offset_y: byte(rider_y, default_rider_y),
+        extra_offset_x: short(extra_x, default_extra_x),
+        extra_offset_y: short(extra_y, default_extra_y),
+        ..template
+    }
+}
+
 fn action_id_u16(action: u32) -> eyre::Result<u16> {
     u16::try_from(action)
         .ok()
@@ -1537,6 +1585,7 @@ impl AnimationLayout {
             sequence_stored_id: sequence.map_or(definition.sequence_id, |sequence| sequence.stored_id),
             race: race.unwrap_or_default(),
             gender: gender.unwrap_or_default(),
+            move_actions: move_actions(sequence)?,
         });
         Ok(())
     }
@@ -1572,6 +1621,7 @@ impl AnimationLayout {
             sequence_stored_id: sequence.map_or(body_id, |sequence| sequence.stored_id),
             race: 0,
             gender: 0,
+            move_actions: move_actions(sequence)?,
         });
         Ok(())
     }
@@ -1657,8 +1707,13 @@ impl AnimationLayout {
                 fps: sequence.action_fps(action, true),
                 fps_no_flying: sequence.action_fps(action, false),
                 skipped_frame_mask: self.skipped_frame_mask(record),
+                rider_offset_x: 0,
+                rider_offset_y: 0,
+                extra_offset_x: 0,
+                extra_offset_y: 0,
             };
             for direction in 0..DIRECTION_COUNT {
+                let template = with_layer_offsets(template, sequence, record, direction);
                 let direction_frames = sequence
                     .direction_frames(resolved, direction)
                     .ok_or_else(|| eyre::eyre!("EC sequence {sequence_id} action {resolved} has no direction {direction}"))?;
@@ -1760,6 +1815,10 @@ impl AnimationLayout {
                 fps: MISSING_ACTION_FPS,
                 fps_no_flying: MISSING_ACTION_FPS,
                 skipped_frame_mask: 0,
+                rider_offset_x: 0,
+                rider_offset_y: 0,
+                extra_offset_x: 0,
+                extra_offset_y: 0,
             };
             for direction in 0..DIRECTION_COUNT {
                 if span.directional {
@@ -3333,7 +3392,7 @@ fn serialize_page_record_manifest(
 pub fn serialize_animation_manifest(
     animations: &[MobileAnimEcAnimationRecord],
 ) -> eyre::Result<Vec<u8>> {
-    let mut bytes = Vec::with_capacity(12 + animations.len() * 37);
+    let mut bytes = Vec::with_capacity(MANIFEST_HEADER_SIZE + animations.len() * ANIMATION_RECORD_SIZE);
     bytes.extend_from_slice(&ANIMATION_MANIFEST_MAGIC);
     bytes.write_u32::<LittleEndian>(MOBILE_ANIM_EC_METADATA_VERSION)?;
     bytes.write_u32::<LittleEndian>(animations.len() as u32)?;
@@ -3351,6 +3410,10 @@ pub fn serialize_animation_manifest(
         bytes.write_f32::<LittleEndian>(animation.fps)?;
         bytes.write_f32::<LittleEndian>(animation.fps_no_flying)?;
         bytes.write_u32::<LittleEndian>(animation.skipped_frame_mask)?;
+        bytes.write_i8(animation.rider_offset_x)?;
+        bytes.write_i8(animation.rider_offset_y)?;
+        bytes.write_i16::<LittleEndian>(animation.extra_offset_x)?;
+        bytes.write_i16::<LittleEndian>(animation.extra_offset_y)?;
     }
     Ok(bytes)
 }
@@ -3445,6 +3508,9 @@ pub fn serialize_body_manifest(bodies: &[MobileAnimEcBodyRecord]) -> eyre::Resul
         bytes.write_u32::<LittleEndian>(body.sequence_stored_id)?;
         bytes.push(body.race);
         bytes.push(body.gender);
+        for &action in body.move_actions.iter().flatten() {
+            bytes.write_u16::<LittleEndian>(action)?;
+        }
     }
     Ok(bytes)
 }
@@ -3788,6 +3854,11 @@ mod tests {
         )])
     }
 
+    /// Move actions of the sample sequence: its only group is peace, whose stand action 4 is also the
+    /// default of the walk and run.
+    const SAMPLE_MOVE_ACTIONS: [[u16; MOVE_ACTION_MOVEMENT_COUNT]; MOVE_ACTION_GROUP_COUNT] =
+        [[NO_MOVE_ACTION; MOVE_ACTION_MOVEMENT_COUNT], [4; MOVE_ACTION_MOVEMENT_COUNT], [NO_MOVE_ACTION; MOVE_ACTION_MOVEMENT_COUNT]];
+
     fn sample_sequence_frames() -> BTreeMap<u32, Vec<SourceFrameIdentity>> {
         let mut frames = Vec::new();
         push_sources(&mut frames, 3, 1..=5);
@@ -3852,6 +3923,7 @@ mod tests {
                     sequence_stored_id: SEQUENCE_STORED_ID,
                     race: 0,
                     gender: 0,
+                    move_actions: SAMPLE_MOVE_ACTIONS,
                 },
                 MobileAnimEcBodyRecord {
                     body_id: SEQUENCE_BODY,
@@ -3863,6 +3935,7 @@ mod tests {
                     sequence_stored_id: SEQUENCE_STORED_ID,
                     race: 0,
                     gender: 0,
+                    move_actions: SAMPLE_MOVE_ACTIONS,
                 },
             ]
         );
@@ -3913,6 +3986,57 @@ mod tests {
         assert_eq!((flying.resolved_action_id, flying.resolved_action_id_no_flying), (19, 3));
         assert_eq!((flying.fps, flying.fps_no_flying), (9.0, 9.0));
         assert_eq!(flying.alias_action_id, NO_ALIAS_ACTION);
+    }
+
+    #[test]
+    fn layer_offsets_take_the_action_value_unless_it_is_unset() {
+        const SOUTH: u8 = 4;
+        const WEST: u8 = 6;
+        let mut sequences = sample_sequences();
+        let sequence = sequences.get_mut(&SEQUENCE_ID).unwrap();
+        let sequence_rider_offset = (2, -3);
+        let sequence_extra_offset = (40, -50);
+        sequence.offsets[usize::from(WEST)] = sequence_rider_offset;
+        sequence.extra_offsets[usize::from(WEST)] = sequence_extra_offset;
+        let stand = sequence.actions.get_mut(&4).unwrap();
+        stand.offsets[usize::from(SOUTH)] = (-6, -42);
+        stand.extra_offsets[usize::from(SOUTH)] = (300, -1);
+        stand.offsets[usize::from(WEST)] = (UNSET_BYTE_OFFSET, 7);
+        stand.extra_offsets[usize::from(WEST)] = (UNSET_SHORT_OFFSET, UNSET_SHORT_OFFSET);
+        let layout = build_animation_layout(&sample_sequence_frames(), &sequences, &sample_body_map()).unwrap();
+
+        let (_, south) = record(&layout, SEQUENCE_BODY, 4, SOUTH);
+        assert_eq!((south.rider_offset_x, south.rider_offset_y), (-6, -42));
+        assert_eq!((south.extra_offset_x, south.extra_offset_y), (300, -1));
+        let (_, west) = record(&layout, SEQUENCE_BODY, 4, WEST);
+        assert_eq!((west.rider_offset_x, west.rider_offset_y), (sequence_rider_offset.0, 7));
+        assert_eq!((west.extra_offset_x, west.extra_offset_y), sequence_extra_offset);
+        // An alias record reads its own action's offsets, not those of the action it shows.
+        let (_, alias) = record(&layout, SEQUENCE_BODY, 0, SOUTH);
+        assert_eq!((alias.rider_offset_x, alias.extra_offset_x), (0, 0));
+    }
+
+    #[test]
+    fn body_move_actions_follow_the_group_chain_and_mark_missing_groups() {
+        let mut sequence = sample_sequences().remove(&SEQUENCE_ID).unwrap();
+        assert_eq!(move_actions(Some(&sequence)).unwrap(), SAMPLE_MOVE_ACTIONS);
+        let (mounted_walk, mounted_stand) = (3, 19);
+        let mounted = uocf::animation_sequence::ActionGroup {
+            parent: Some(uocf::animation_sequence::GROUP_PEACE),
+            default_action: mounted_stand,
+            transitions: BTreeMap::new(),
+            moves: BTreeMap::from([(
+                uocf::animation_sequence::MOVE_WALK,
+                uocf::animation_sequence::MoveActions { action: mounted_walk, alternate: mounted_walk },
+            )]),
+            typed: BTreeMap::new(),
+        };
+        sequence.groups.insert(uocf::animation_sequence::GROUP_MOUNTED, mounted);
+
+        let actions = move_actions(Some(&sequence)).unwrap();
+        // Stand comes from the peace parent; run from the default action of the chain's last group.
+        assert_eq!(actions[2], [4, mounted_walk as u16, 4]);
+        assert_eq!(move_actions(None).unwrap(), [[NO_MOVE_ACTION; MOVE_ACTION_MOVEMENT_COUNT]; MOVE_ACTION_GROUP_COUNT]);
     }
 
     #[test]

@@ -394,6 +394,18 @@ Tilemeta refs keep their true source ids; nothing is substituted at build time.
 
 `mobile_anim_cc.uddp` and `mobile_anim_ec.uddp` always trim fully transparent frame borders before atlas packing. The frame payload keeps only the non-empty visual bounds, while the existing frame `center_x`/`center_y` fields are shifted by the removed left/top transparent border so the original animation pivot remains stable. BC7 output still uses the existing 4x4-oriented allocation path, so trimmed frame rectangles reduce atlas occupancy without breaking block alignment.
 
+`mobile_anim_ec.uddp` also carries what drawing a moving, mounted mobile needs, in its v1 layout (record layouts in [`lib/udd-assets/README.md`](../../lib/udd-assets/README.md)):
+
+- Body records (44 bytes) end with `u16 move_actions[3][3]`: the `GetMoveAction` result for groups war, peace and mounted and movements stand, walk and run. `NO_MOVE_ACTION` (0xFFFF) marks a group the sequence lacks.
+- Animation records (43 bytes) end with `i8 rider_offset_x, i8 rider_offset_y, i16 extra_offset_x, i16 extra_offset_y`: the client's per-direction attachment and layer offsets, with the sequence defaults applied.
+
+`mobile_anim_cc.uddp` keeps its layout. Its reader resolves server bodies itself:
+
+- `frames_body` applies `Body.def` once, then `Bodyconv.def` (a body and its `anim*.mul` file), or the UOP route for `mobtypes.txt` 0x10000 bodies.
+- `server_body_animation` looks the frames up in that file.
+- `movement_action` gives ClassicUO's peace-mode stand, walk and run actions from the `mobtypes.txt` type and flags.
+- `classic_stored_direction` maps the 8 directions to the 5 stored ones plus mirroring.
+
 Mobile animation atlas pages store edge-extruded allocation gutters, including BC7 alignment padding, so linear previewers and block compression do not sample transparent-black padding around frame edges. This is an on-disk package invariant, not a runtime repair step.
 
 ---

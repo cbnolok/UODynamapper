@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use std::io::{Cursor, Read};
 use std::path::Path;
 
@@ -10,6 +11,7 @@ use crate::common::{
     AtlasCacheOptions, AtlasPageCache,
 };
 use crate::tex_art_cc::{AtlasPackingMode, PagePixelFormat};
+pub use uocf::animation_sequence::{MOVE_RUN, MOVE_STAND, MOVE_WALK};
 
 pub const PAGE_MANIFEST_ENTRY_PATH: &str = "metadata/pages.bin";
 pub const ANIMATION_MANIFEST_ENTRY_PATH: &str = "metadata/animations.bin";
@@ -28,6 +30,59 @@ pub const MOBILE_ANIM_CC_FLAG_UOP_SOURCE: u16 = 1 << 14;
 /// any other body, or one with no row, takes the MUL path.
 pub const MOB_TYPE_FLAG_USES_UOP_FRAMES: u32 = 0x10000;
 pub const MOB_TYPE_BODY_IDS: std::ops::RangeInclusive<u16> = 1..=0x7FF;
+/// `mobtypes.txt` flags read by the movement action (ClassicUO `AnimationFlags`): a monster idles on
+/// action 8 when it has it.
+pub const MOB_TYPE_FLAG_IDLE_AT_8_FRAME: u32 = 0x4;
+/// The monster runs with action 19 when it has it.
+pub const MOB_TYPE_FLAG_CAN_FLY: u32 = 0x8;
+/// An animal takes the monster movement actions.
+pub const MOB_TYPE_FLAG_LOW_GROUP_EXTENDED: u32 = 0x20;
+/// A monster takes the animal movement actions.
+pub const MOB_TYPE_FLAG_LOW_GROUP: u32 = 0x40;
+/// A monster with the people action layout: every movement plays action 0.
+pub const MOB_TYPE_FLAG_PEOPLE_GROUP: u32 = 0x400;
+
+/// `MobileAnimCcBodyTypeRecord::group_type`: the `mobtypes.txt` type name.
+pub const MOB_TYPE_GROUP_MONSTER: u8 = 0;
+pub const MOB_TYPE_GROUP_SEA_MONSTER: u8 = 1;
+pub const MOB_TYPE_GROUP_ANIMAL: u8 = 2;
+pub const MOB_TYPE_GROUP_HUMAN: u8 = 3;
+pub const MOB_TYPE_GROUP_EQUIPMENT: u8 = 4;
+
+/// Movement actions (ClassicUO `GetGroupForAnimation`, peace, nothing in the hands, not flying).
+const CLASSIC_ACTION_WALK: u16 = 0;
+const CLASSIC_ACTION_ANIMAL_RUN: u16 = 1;
+const CLASSIC_ACTION_MONSTER_STAND: u16 = 1;
+const CLASSIC_ACTION_ANIMAL_STAND: u16 = 2;
+const CLASSIC_ACTION_PEOPLE_RUN: u16 = 2;
+const CLASSIC_ACTION_EQUIPMENT_UOP_RUN: u16 = 3;
+const CLASSIC_ACTION_EQUIPMENT_UOP_WALK: u16 = 1;
+const CLASSIC_ACTION_PEOPLE_STAND: u16 = 4;
+const CLASSIC_ACTION_MONSTER_IDLE: u16 = 8;
+const CLASSIC_ACTION_FLY: u16 = 19;
+const CLASSIC_ACTION_UOP_WALK: u16 = 22;
+const CLASSIC_ACTION_MOUNTED_WALK: u16 = 23;
+const CLASSIC_ACTION_UOP_RUN: u16 = 24;
+const CLASSIC_ACTION_MOUNTED_RUN: u16 = 24;
+const CLASSIC_ACTION_UOP_STAND: u16 = 25;
+const CLASSIC_ACTION_MOUNTED_STAND: u16 = 25;
+const CLASSIC_ACTION_EQUIPMENT_UOP_STAND: u16 = 37;
+
+/// Directions of a mobile, in UO order (0 north .. 7 north-west).
+pub const DIRECTION_COUNT: u8 = 8;
+/// Classic stores world direction `FIRST_STORED_DIRECTION + k` at stored direction `k`.
+pub const FIRST_STORED_DIRECTION: u8 = uocf::animation_sequence::FIRST_STORED_DIRECTION;
+/// A world direction below `FIRST_STORED_DIRECTION` shows world direction `MIRROR_DIRECTION_SUM - d` mirrored.
+pub const MIRROR_DIRECTION_SUM: u8 = uocf::animation_sequence::MIRROR_DIRECTION_SUM;
+
+/// Body ids below this one take the low (monster) layout when `mobtypes.txt` has no row (ClassicUO
+/// `CalculateTypeByGraphic`); ids from it to `PEOPLE_LAYOUT_FIRST_BODY` the animal layout, the rest the people
+/// layout. `anim3.mul` moves the animal/monster split to `ANIM3_MONSTER_FIRST_BODY`.
+const ANIMAL_LAYOUT_FIRST_BODY: u16 = 200;
+const ANIM3_MONSTER_FIRST_BODY: u16 = 300;
+const PEOPLE_LAYOUT_FIRST_BODY: u16 = 400;
+const ANIM2_FILE_INDEX: u8 = 1;
+const ANIM3_FILE_INDEX: u8 = 2;
 
 pub const PAGE_MANIFEST_MAGIC: [u8; 4] = *b"MAPG";
 pub const ANIMATION_MANIFEST_MAGIC: [u8; 4] = *b"MAAN";
@@ -90,6 +145,33 @@ pub struct MobileAnimCcBodyTypeRecord {
     pub flags: u32,
 }
 
+/// Where a server body's frames are: the body id within its source and the `anim*.mul` file, or UOP.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ClassicFramesBody {
+    /// Body id of the animation records.
+    pub body_id: u16,
+    /// `anim.mul` 0, `anim2.mul` 1, ...; meaningless with `uop`.
+    pub file_index: u8,
+    /// The client draws the body from `AnimationFrame*.uop`.
+    pub uop: bool,
+    /// The body whose `mobtypes.txt` row gives the action layout and flags: the server body, or its
+    /// `Body.def` graphic.
+    pub type_body_id: u16,
+}
+
+/// Stored direction (0..=4) and mirroring of world direction `direction` (0 north .. 7
+/// north-west): world `FIRST_STORED_DIRECTION + k` is stored at `k`; world 0, 1 and 2 show world 6, 5 and 4
+/// mirrored horizontally about the frame anchor (ClassicUO `GetAnimDirection`; the original client's mapping is not
+/// traced). `None` outside 0..`DIRECTION_COUNT`.
+pub fn classic_stored_direction(direction: u8) -> Option<(u8, bool)> {
+    if direction >= DIRECTION_COUNT {
+        return None;
+    }
+    let mirrored = direction < FIRST_STORED_DIRECTION;
+    let world = if mirrored { MIRROR_DIRECTION_SUM - direction } else { direction };
+    Some((world - FIRST_STORED_DIRECTION, mirrored))
+}
+
 pub struct MobileAnimCcPackage {
     package: UddpReader,
     atlas_width: u32,
@@ -101,6 +183,8 @@ pub struct MobileAnimCcPackage {
     frames: Vec<MobileAnimCcFrameRecord>,
     body_resolve: Vec<MobileAnimCcBodyResolveRecord>,
     body_types: Vec<MobileAnimCcBodyTypeRecord>,
+    /// Indices of the animation records of each (body, action, direction).
+    animation_lookup: HashMap<(u16, u16, u8), Vec<usize>>,
     page_cache: AtlasPageCache,
 }
 
@@ -140,6 +224,13 @@ impl MobileAnimCcPackage {
         let frames = parse_frame_manifest(&frame_manifest)?;
         let body_resolve = parse_body_resolve_manifest(&body_resolve_manifest)?;
         let body_types = parse_body_type_manifest(&body_type_manifest)?;
+        let mut animation_lookup = HashMap::<(u16, u16, u8), Vec<usize>>::new();
+        for (index, animation) in animations.iter().enumerate() {
+            animation_lookup
+                .entry((animation.body_id, animation.action_id, animation.direction))
+                .or_default()
+                .push(index);
+        }
 
         Ok(Self {
             package,
@@ -152,6 +243,7 @@ impl MobileAnimCcPackage {
             frames,
             body_resolve,
             body_types,
+            animation_lookup,
             page_cache: AtlasPageCache::new(options),
         })
     }
@@ -215,17 +307,176 @@ impl MobileAnimCcPackage {
                 .is_some_and(|record| record.flags & MOB_TYPE_FLAG_USES_UOP_FRAMES != 0)
     }
 
-    /// The animation of a mobile's own body, from the source the client would use. A package can hold both a MUL and
-    /// a UOP entry for one action, as when a shard replaces a body in the MUL; the other source only fills in when that
-    /// one has none. Layer items and mounts don't follow this rule: the client tests the wearer, not the requested id
-    /// (`docs/client_research/ghidra-classic-frames/results/uop_reachability.md`).
+    /// The animation of record body `body_id` in any animation file, from the source the client would use. A package
+    /// can hold both a MUL and a UOP entry for one action, as when a shard replaces a body in the MUL; the other source
+    /// only fills in when that one has none. Layer items and mounts don't follow this rule: the client tests the
+    /// wearer, not the requested id (`docs/client_research/ghidra-classic-frames/results/uop_reachability.md`). For a
+    /// server body, whose MUL frames can sit under another id in another file, use [`Self::server_body_animation`].
     pub fn animation(&self, body_id: u16, action_id: u16, direction: u8) -> Option<&MobileAnimCcAnimationRecord> {
-        let matching = self.animations.iter().filter(|animation| {
-            animation.body_id == body_id
-                && animation.action_id == action_id
-                && animation.direction == direction
-        });
-        animation_from_source(matching, self.body_uses_uop_frames(body_id))
+        animation_from_source(self.matching_animations(body_id, action_id, direction), self.body_uses_uop_frames(body_id))
+    }
+
+    fn matching_animations(
+        &self,
+        body_id: u16,
+        action_id: u16,
+        direction: u8,
+    ) -> impl Iterator<Item = &MobileAnimCcAnimationRecord> {
+        self.animation_lookup
+            .get(&(body_id, action_id, direction))
+            .into_iter()
+            .flatten()
+            .map(|&index| &self.animations[index])
+    }
+
+    /// Where the client takes the frames of server body `body_id`. A body `mobtypes.txt` flags for UOP draws its own
+    /// id from UOP. Otherwise `Body.def` gives the body another id unless `Bodyconv.def` moves the body to another
+    /// `anim*.mul`; the resulting id then goes through UOP or `Bodyconv.def` the same way (ClassicUO
+    /// `ConvertBodyIfNeeded`, `GetIndices`; the client applies `body.def`, then the bodyconv table, on the MUL side
+    /// only: `uop_reachability.md`).
+    pub fn frames_body(&self, body_id: u16) -> ClassicFramesBody {
+        let type_body_id = match self.body_resolve_record(body_id) {
+            Some(record)
+                if !self.body_uses_uop_frames(body_id)
+                    && record.flags & BODY_RESOLVE_FLAG_BODYCONV_DEF == 0
+                    && record.flags & BODY_RESOLVE_FLAG_BODY_DEF != 0 =>
+            {
+                record.resolved_body_id
+            }
+            _ => body_id,
+        };
+        let (frames_body_id, file_index, uop) = if self.body_uses_uop_frames(type_body_id) {
+            (type_body_id, 0, true)
+        } else {
+            match self.body_resolve_record(type_body_id) {
+                Some(record) if record.flags & BODY_RESOLVE_FLAG_BODYCONV_DEF != 0 => {
+                    (record.resolved_body_id, record.file_index, false)
+                }
+                _ => (type_body_id, 0, false),
+            }
+        };
+        ClassicFramesBody { body_id: frames_body_id, file_index, uop, type_body_id }
+    }
+
+    /// The animation the client draws for server body `body_id`, `action_id` and stored direction `direction`
+    /// (see [`classic_stored_direction`]): the records of [`Self::frames_body`], from its `anim*.mul` file on the MUL
+    /// side. The other source fills in when the client's has none, as in [`Self::animation`].
+    pub fn server_body_animation(
+        &self,
+        body_id: u16,
+        action_id: u16,
+        direction: u8,
+    ) -> Option<&MobileAnimCcAnimationRecord> {
+        let frames = self.frames_body(body_id);
+        let matching = self.matching_animations(frames.body_id, action_id, direction);
+        if frames.uop {
+            return animation_from_source(matching, true);
+        }
+        animation_from_source(matching.filter(|animation| animation.file_index == frames.file_index), false)
+    }
+
+    /// Action layout of server body `body_id` (`MOB_TYPE_GROUP_*`) and its `mobtypes.txt` flags: those of the
+    /// `Body.def` graphic when it has one. Without a row, the layout follows the id and file of its frames (ClassicUO
+    /// `CalculateTypeByGraphic`) and the flags are 0.
+    pub fn body_layout(&self, body_id: u16) -> (u8, u32) {
+        let frames = self.frames_body(body_id);
+        if let Some(record) = self.body_type_record(frames.type_body_id) {
+            return (record.group_type, record.flags);
+        }
+        let group_type = match (frames.file_index, frames.body_id) {
+            (ANIM2_FILE_INDEX, id) if id < ANIMAL_LAYOUT_FIRST_BODY => MOB_TYPE_GROUP_MONSTER,
+            (ANIM2_FILE_INDEX, _) => MOB_TYPE_GROUP_ANIMAL,
+            (ANIM3_FILE_INDEX, id) if id < ANIM3_MONSTER_FIRST_BODY => MOB_TYPE_GROUP_ANIMAL,
+            (ANIM3_FILE_INDEX, id) if id < PEOPLE_LAYOUT_FIRST_BODY => MOB_TYPE_GROUP_MONSTER,
+            (_, id) if id < ANIMAL_LAYOUT_FIRST_BODY => MOB_TYPE_GROUP_MONSTER,
+            (_, id) if id < PEOPLE_LAYOUT_FIRST_BODY => MOB_TYPE_GROUP_ANIMAL,
+            _ => MOB_TYPE_GROUP_HUMAN,
+        };
+        (group_type, 0)
+    }
+
+    /// Action the Classic client plays for server body `body_id` standing, walking or running (`MOVE_STAND`,
+    /// `MOVE_WALK`, `MOVE_RUN`) in peace mode, `mounted` when a human or equipment body rides a mount (other layouts
+    /// ignore it; a mount's own body takes its layout's actions). It follows ClassicUO `GetGroupForAnimation` with no
+    /// server animation, nothing in the hands and no flight (the original client's choice is not traced):
+    ///
+    /// - human / equipment: walk 0, run 2, stand 4; mounted walk 23, run 24, stand 25; UOP-flagged: run 24 when the
+    ///   body has it, equipment walk 1 / run 3 without 0 / 2, equipment stand 37 when it has it.
+    /// - animal: walk 0, run 1 (2 without 1), stand 2; UOP-flagged walk 22, run 24, stand 25. With
+    ///   `MOB_TYPE_FLAG_LOW_GROUP_EXTENDED`, the monster rules.
+    /// - monster: walk 0, run 0, stand 1; stand 8 with `MOB_TYPE_FLAG_IDLE_AT_8_FRAME` when the body has it, run 19
+    ///   with `MOB_TYPE_FLAG_CAN_FLY` when it has it; UOP-flagged walk 22, run 24, stand 25.
+    ///   `MOB_TYPE_FLAG_PEOPLE_GROUP`: 0 for all; `MOB_TYPE_FLAG_LOW_GROUP`: the animal actions 0, 1, 2.
+    /// - sea monster: walk 0, run 1, stand 2.
+    ///
+    /// "Has it" tests stored direction 0 of [`Self::server_body_animation`]. `None` for another movement.
+    pub fn movement_action(&self, body_id: u16, movement: u8, mounted: bool) -> Option<u16> {
+        if ![MOVE_STAND, MOVE_WALK, MOVE_RUN].contains(&movement) {
+            return None;
+        }
+        let (group_type, flags) = self.body_layout(body_id);
+        let has = |action: u16| self.server_body_animation(body_id, action, 0).is_some();
+        let uop = flags & MOB_TYPE_FLAG_USES_UOP_FRAMES != 0;
+        let monster = |movement: u8| {
+            if flags & MOB_TYPE_FLAG_PEOPLE_GROUP != 0 {
+                return CLASSIC_ACTION_WALK;
+            }
+            if flags & MOB_TYPE_FLAG_LOW_GROUP != 0 {
+                return match movement {
+                    MOVE_WALK => CLASSIC_ACTION_WALK,
+                    MOVE_RUN => CLASSIC_ACTION_ANIMAL_RUN,
+                    _ => CLASSIC_ACTION_ANIMAL_STAND,
+                };
+            }
+            match movement {
+                MOVE_WALK if uop => CLASSIC_ACTION_UOP_WALK,
+                MOVE_WALK => CLASSIC_ACTION_WALK,
+                MOVE_RUN if flags & MOB_TYPE_FLAG_CAN_FLY != 0 && has(CLASSIC_ACTION_FLY) => CLASSIC_ACTION_FLY,
+                MOVE_RUN if uop => CLASSIC_ACTION_UOP_RUN,
+                MOVE_RUN => CLASSIC_ACTION_WALK,
+                _ if flags & MOB_TYPE_FLAG_IDLE_AT_8_FRAME != 0 && has(CLASSIC_ACTION_MONSTER_IDLE) => {
+                    CLASSIC_ACTION_MONSTER_IDLE
+                }
+                _ if uop => CLASSIC_ACTION_UOP_STAND,
+                _ => CLASSIC_ACTION_MONSTER_STAND,
+            }
+        };
+        let action = match group_type {
+            MOB_TYPE_GROUP_ANIMAL if flags & MOB_TYPE_FLAG_LOW_GROUP_EXTENDED != 0 => monster(movement),
+            MOB_TYPE_GROUP_ANIMAL => match movement {
+                MOVE_WALK if uop => CLASSIC_ACTION_UOP_WALK,
+                MOVE_WALK => CLASSIC_ACTION_WALK,
+                MOVE_RUN if uop => CLASSIC_ACTION_UOP_RUN,
+                MOVE_RUN if has(CLASSIC_ACTION_ANIMAL_RUN) => CLASSIC_ACTION_ANIMAL_RUN,
+                MOVE_RUN => CLASSIC_ACTION_ANIMAL_STAND,
+                _ if uop => CLASSIC_ACTION_UOP_STAND,
+                _ => CLASSIC_ACTION_ANIMAL_STAND,
+            },
+            MOB_TYPE_GROUP_MONSTER => monster(movement),
+            MOB_TYPE_GROUP_SEA_MONSTER => match movement {
+                MOVE_WALK => CLASSIC_ACTION_WALK,
+                MOVE_RUN => CLASSIC_ACTION_ANIMAL_RUN,
+                _ => CLASSIC_ACTION_ANIMAL_STAND,
+            },
+            _ if mounted => match movement {
+                MOVE_WALK => CLASSIC_ACTION_MOUNTED_WALK,
+                MOVE_RUN => CLASSIC_ACTION_MOUNTED_RUN,
+                _ => CLASSIC_ACTION_MOUNTED_STAND,
+            },
+            group_type => {
+                let uop_equipment = uop && group_type == MOB_TYPE_GROUP_EQUIPMENT;
+                match movement {
+                    MOVE_WALK if uop_equipment && !has(CLASSIC_ACTION_WALK) => CLASSIC_ACTION_EQUIPMENT_UOP_WALK,
+                    MOVE_WALK => CLASSIC_ACTION_WALK,
+                    MOVE_RUN if uop && has(CLASSIC_ACTION_UOP_RUN) => CLASSIC_ACTION_UOP_RUN,
+                    MOVE_RUN if uop_equipment && !has(CLASSIC_ACTION_PEOPLE_RUN) => CLASSIC_ACTION_EQUIPMENT_UOP_RUN,
+                    MOVE_RUN => CLASSIC_ACTION_PEOPLE_RUN,
+                    _ if uop_equipment && has(CLASSIC_ACTION_EQUIPMENT_UOP_STAND) => CLASSIC_ACTION_EQUIPMENT_UOP_STAND,
+                    _ => CLASSIC_ACTION_PEOPLE_STAND,
+                }
+            }
+        };
+        Some(action)
     }
 
     pub fn animation_frames(&self, animation: &MobileAnimCcAnimationRecord) -> &[MobileAnimCcFrameRecord] {
@@ -553,6 +804,183 @@ mod tests {
             package.read_frame_rgba(frame).unwrap().len(),
             2 * 2 * 4
         );
+    }
+
+    fn manifest(magic: [u8; 4], count: usize) -> Vec<u8> {
+        let mut bytes = magic.to_vec();
+        bytes.extend_from_slice(&MOBILE_ANIM_CC_METADATA_VERSION.to_le_bytes());
+        bytes.extend_from_slice(&(count as u32).to_le_bytes());
+        bytes
+    }
+
+    /// A package of `animations` (no frames), `body_resolve` and `body_types` (sorted by body as the packer writes
+    /// them), with no pages.
+    fn package_from(
+        animations: &[MobileAnimCcAnimationRecord],
+        body_resolve: &[MobileAnimCcBodyResolveRecord],
+        body_types: &[MobileAnimCcBodyTypeRecord],
+    ) -> MobileAnimCcPackage {
+        let mut pages = PAGE_MANIFEST_MAGIC.to_vec();
+        pages.extend_from_slice(&MOBILE_ANIM_CC_METADATA_VERSION.to_le_bytes());
+        for value in [8u32, 8, 4] {
+            pages.extend_from_slice(&value.to_le_bytes());
+        }
+        pages.extend_from_slice(&[PagePixelFormat::Rgba8888 as u8, AtlasPackingMode::Bc7Oriented as u8]);
+        pages.extend_from_slice(&0u32.to_le_bytes());
+        let mut animation_bytes = manifest(ANIMATION_MANIFEST_MAGIC, animations.len());
+        for animation in animations {
+            animation_bytes.extend_from_slice(&animation.body_id.to_le_bytes());
+            animation_bytes.extend_from_slice(&animation.action_id.to_le_bytes());
+            animation_bytes.extend_from_slice(&[animation.direction, animation.file_index]);
+            animation_bytes.extend_from_slice(&animation.source_index.to_le_bytes());
+            animation_bytes.extend_from_slice(&animation.frame_start.to_le_bytes());
+            animation_bytes.extend_from_slice(&animation.frame_count.to_le_bytes());
+            animation_bytes.extend_from_slice(&animation.flags.to_le_bytes());
+        }
+        let frames = manifest(FRAME_MANIFEST_MAGIC, 0);
+        let mut resolve_bytes = manifest(BODY_RESOLVE_MANIFEST_MAGIC, body_resolve.len());
+        let mut body_resolve = body_resolve.to_vec();
+        body_resolve.sort_by_key(|record| record.body_id);
+        for record in &body_resolve {
+            resolve_bytes.extend_from_slice(&record.body_id.to_le_bytes());
+            resolve_bytes.extend_from_slice(&record.resolved_body_id.to_le_bytes());
+            resolve_bytes.extend_from_slice(&record.hue.to_le_bytes());
+            resolve_bytes.extend_from_slice(&[record.file_index, record.mount_height as u8]);
+            resolve_bytes.extend_from_slice(&record.flags.to_le_bytes());
+        }
+        let mut type_bytes = manifest(BODY_TYPE_MANIFEST_MAGIC, body_types.len());
+        let mut body_types = body_types.to_vec();
+        body_types.sort_by_key(|record| record.body_id);
+        for record in &body_types {
+            type_bytes.extend_from_slice(&record.body_id.to_le_bytes());
+            type_bytes.push(record.group_type);
+            type_bytes.extend_from_slice(&record.flags.to_le_bytes());
+        }
+        let mut builder = UddpBuilder::new(LookupMode::VirtualPathHash);
+        for (path, data) in [
+            (PAGE_MANIFEST_ENTRY_PATH, pages.as_slice()),
+            (ANIMATION_MANIFEST_ENTRY_PATH, animation_bytes.as_slice()),
+            (FRAME_MANIFEST_ENTRY_PATH, frames.as_slice()),
+            (BODY_RESOLVE_MANIFEST_ENTRY_PATH, resolve_bytes.as_slice()),
+            (BODY_TYPE_MANIFEST_ENTRY_PATH, type_bytes.as_slice()),
+        ] {
+            builder.add_file(AddFileRequest {
+                data_type: DataType::Metadata as u8,
+                compression: CompressionFlag::ZstdNoDict,
+                width: 0,
+                height: 0,
+                virtual_path: Some(path),
+                path_hash64: None,
+                id: None,
+                data,
+            }).unwrap();
+        }
+        MobileAnimCcPackage::from_uddp_package(UddpReader::open(builder.build().unwrap()).unwrap()).unwrap()
+    }
+
+    fn animation(body_id: u16, action_id: u16, file_index: u8, flags: u16) -> MobileAnimCcAnimationRecord {
+        MobileAnimCcAnimationRecord {
+            body_id,
+            action_id,
+            direction: 0,
+            file_index,
+            source_index: u32::from(body_id),
+            frame_start: 0,
+            frame_count: 0,
+            flags,
+        }
+    }
+
+    fn resolve(body_id: u16, resolved_body_id: u16, file_index: u8, flags: u16) -> MobileAnimCcBodyResolveRecord {
+        MobileAnimCcBodyResolveRecord { body_id, resolved_body_id, hue: 0, file_index, mount_height: 0, flags }
+    }
+
+    fn body_type(body_id: u16, group_type: u8, flags: u32) -> MobileAnimCcBodyTypeRecord {
+        MobileAnimCcBodyTypeRecord { body_id, group_type, flags: MOB_TYPE_FLAG_FOUND | flags }
+    }
+
+    /// `mobtypes.txt` rows carry this flag (the packer's "found" bit).
+    const MOB_TYPE_FLAG_FOUND: u32 = 0x8000_0000;
+
+    #[test]
+    fn server_bodies_take_body_def_then_bodyconv_and_their_own_file() {
+        const ANIM4: u8 = 3;
+        let (bodyconv_body, body_def_body, chained_body, uop_body) = (250, 9, 8, 700);
+        let package = package_from(
+            &[
+                animation(bodyconv_body, 0, 0, 0),
+                animation(17, 0, ANIM4, 0),
+                animation(17, 0, 0, 0),
+                animation(42, 0, 0, 0),
+                animation(uop_body, 0, ANIM4, MOBILE_ANIM_CC_FLAG_UOP_SOURCE),
+            ],
+            &[
+                resolve(chained_body, body_def_body, 0, BODY_RESOLVE_FLAG_BODY_DEF),
+                resolve(body_def_body, 42, 0, BODY_RESOLVE_FLAG_BODY_DEF),
+                resolve(bodyconv_body, 17, ANIM4, BODY_RESOLVE_FLAG_BODYCONV_DEF),
+            ],
+            &[body_type(uop_body, MOB_TYPE_GROUP_MONSTER, MOB_TYPE_FLAG_USES_UOP_FRAMES)],
+        );
+
+        let converted = package.frames_body(bodyconv_body);
+        assert_eq!((converted.body_id, converted.file_index, converted.uop), (17, ANIM4, false));
+        // The id 17 also exists in anim.mul: the lookup takes the record of the body's file.
+        assert_eq!(package.server_body_animation(bodyconv_body, 0, 0).unwrap().file_index, ANIM4);
+        // Body.def applies once: 8 -> 9, and 9's own Body.def row is not followed.
+        let renamed = package.frames_body(chained_body);
+        assert_eq!((renamed.body_id, renamed.type_body_id), (body_def_body, body_def_body));
+        assert_eq!(package.frames_body(body_def_body).body_id, 42);
+        assert_eq!(package.server_body_animation(body_def_body, 0, 0).unwrap().body_id, 42);
+        let uop = package.frames_body(uop_body);
+        assert_eq!((uop.body_id, uop.uop), (uop_body, true));
+        assert!(package.server_body_animation(uop_body, 0, 0).is_some());
+        assert!(package.server_body_animation(uop_body, 1, 0).is_none());
+    }
+
+    #[test]
+    fn movement_actions_follow_the_body_layout() {
+        let (human, horse, uop_animal, monster, idle_monster, people_monster, sea_monster, unlisted_animal) =
+            (400, 204, 277, 1, 2, 3, 150, 220);
+        let package = package_from(
+            &[animation(horse, 1, 0, 0), animation(idle_monster, 8, 0, 0)],
+            &[],
+            &[
+                body_type(human, MOB_TYPE_GROUP_HUMAN, 0),
+                body_type(horse, MOB_TYPE_GROUP_ANIMAL, 0),
+                body_type(uop_animal, MOB_TYPE_GROUP_ANIMAL, MOB_TYPE_FLAG_USES_UOP_FRAMES),
+                body_type(monster, MOB_TYPE_GROUP_MONSTER, 0),
+                body_type(idle_monster, MOB_TYPE_GROUP_MONSTER, MOB_TYPE_FLAG_IDLE_AT_8_FRAME),
+                body_type(people_monster, MOB_TYPE_GROUP_MONSTER, MOB_TYPE_FLAG_PEOPLE_GROUP),
+                body_type(sea_monster, MOB_TYPE_GROUP_SEA_MONSTER, 0),
+            ],
+        );
+        let actions = |body: u16, mounted: bool| {
+            [MOVE_STAND, MOVE_WALK, MOVE_RUN].map(|movement| package.movement_action(body, movement, mounted).unwrap())
+        };
+
+        assert_eq!(actions(human, false), [4, 0, 2]);
+        assert_eq!(actions(human, true), [25, 23, 24]);
+        assert_eq!(actions(horse, true), [2, 0, 1]);
+        assert_eq!(actions(uop_animal, false), [25, 22, 24]);
+        assert_eq!(actions(monster, false), [1, 0, 0]);
+        assert_eq!(actions(idle_monster, false), [8, 0, 0]);
+        assert_eq!(actions(people_monster, false), [0, 0, 0]);
+        assert_eq!(actions(sea_monster, false), [2, 0, 1]);
+        // No row: the id range gives the animal layout; without action 1 it runs with 2.
+        assert_eq!(package.body_layout(unlisted_animal), (MOB_TYPE_GROUP_ANIMAL, 0));
+        assert_eq!(actions(unlisted_animal, false), [2, 0, 2]);
+        let unknown_movement = 3;
+        assert_eq!(package.movement_action(human, unknown_movement, false), None);
+    }
+
+    #[test]
+    fn world_directions_map_to_five_stored_directions_with_mirrors() {
+        let mapped = (0..DIRECTION_COUNT).map(|direction| classic_stored_direction(direction).unwrap()).collect::<Vec<_>>();
+        assert_eq!(
+            mapped,
+            [(3, true), (2, true), (1, true), (0, false), (1, false), (2, false), (3, false), (4, false)]
+        );
+        assert_eq!(classic_stored_direction(DIRECTION_COUNT), None);
     }
 
     #[test]

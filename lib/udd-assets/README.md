@@ -56,9 +56,9 @@ accepts only version 1 and asks for a repack with the current `udd-cli` otherwis
 | Entry | Magic | Content |
 |---|---|---|
 | `metadata/pages.bin` | `MEPG` | atlas pages; each page record ends with `u8 flags` |
-| `metadata/animations.bin` | `MEAN` | `u32 count`, then `count` animation records (37 bytes) |
+| `metadata/animations.bin` | `MEAN` | `u32 count`, then `count` animation records (43 bytes) |
 | `metadata/frames.bin` | `MEFR` | `u32 count`, then `count` frame records (34 bytes) |
-| `metadata/bodies.bin` | `MEBD` | `u32 count`, then `count` body records (26 bytes), sorted by body |
+| `metadata/bodies.bin` | `MEBD` | `u32 count`, then `count` body records (44 bytes), sorted by body |
 | `metadata/items.bin` | `MEIT` | `EcMobileAnimations.kdl` items (unchanged) |
 | `metadata/source_hints.bin` | `MESH` | `EcMobileAnimations.kdl` source hints (unchanged) |
 | `pages/NNNNN.{rgba8888,bc7}` | | atlas page payloads |
@@ -66,14 +66,16 @@ accepts only version 1 and asks for a repack with the current `udd-cli` otherwis
 
 Animation record: `u32 body_id, u16 action_id, u8 direction, u32 frame_start, u16 frame_count,
 u16 flags, u32 source_body_id, u16 resolved_action_id, u16 alias_action_id,
-u16 resolved_action_id_no_flying, f32 fps, f32 fps_no_flying, u32 skipped_frame_mask`.
+u16 resolved_action_id_no_flying, f32 fps, f32 fps_no_flying, u32 skipped_frame_mask,
+i8 rider_offset_x, i8 rider_offset_y, i16 extra_offset_x, i16 extra_offset_y`.
 
 Frame record: `u32 animation_index, u16 frame_index, u16 source_frame_index, u16 source_action,
 u16 source_frame_number, u32 page_index, u16 page_frame_index, u16 x, u16 y, u16 width, u16 height,
 i16 center_x, i16 center_y, u8 hue_mode, u8 shadow_min, u8 shadow_mean, u8 shadow_max`.
 
 Body record: `u32 body_id, u32 sequence_id, u32 frames_body_id, u32 appearance_body_id,
-u16 forced_hue, u16 flags, u32 sequence_stored_id, u8 race, u8 gender`.
+u16 forced_hue, u16 flags, u32 sequence_stored_id, u8 race, u8 gender, u16 move_actions[3][3]`
+(groups war, peace, mounted; movements stand, walk, run).
 
 Both records are fixed-size; nothing in them is variable-length.
 
@@ -102,6 +104,13 @@ Creature fields:
   `BODY_FLAG_HAS_GENDER` is set (`race()` / `gender()` return `None` otherwise; the client then
   uses race 1 and gender 0). The client orders the equipment layers by them and filters item
   appearances by the owner's gender.
+- `move_actions`: the action `FrameSetLookup::GetMoveAction(group, movement, false)` gives for
+  groups war (0), peace (1) and mounted (2) and movements stand (0), walk (1) and run (2): the
+  movement entry of the first group of the parent chain that has one, else the default action of
+  the chain's last group. `NO_MOVE_ACTION` marks a group the sequence does not have (and every
+  entry of a no-sequence body); `move_action(group, movement)` returns `None` there.
+  `mount_move_action(movement)` is the action of the body as a mount: the client gives a mount
+  the mounted group when the mount's own sequence has it, else peace, with the rider's movement.
 - `tests/mobile_anim_ec_package_client.rs` (ignored) checks a built package against the client
   files: set `UO_EC_CLIENT_DIR` and `UDD_MOBILE_ANIM_EC_UDDP` and run with `--ignored`.
 
@@ -152,10 +161,26 @@ Resolving "body, action, direction" (`MobileAnimEcPackage::animation` /
   into directions like a sequence action of `highest / 5` frames; otherwise every direction shows
   all frames in number order (`ANIMATION_FLAG_UNDIRECTED`).
 
-Not carried: sequence frame effects (footstep sounds), per-direction rider offsets, and the action
-groups (move, typed 0xE2 and transition lookups that choose the action). A consumer that needs to
-pick actions from movement or packets must read them from `AnimationSequence.uop` with
-`uocf::animation_sequence` for now.
+Layer offsets (`UOObjectComponentAnimationMob::UpdateFrame` 0x00436d40, confirmed at instruction
+level):
+
+- `rider_offset_x/y`: the action's i8 offset of the direction (`GetOffsetX/Y`), or the sequence's
+  when it is -128. It places a rider on this body when the body is a mount.
+- `extra_offset_x/y`: the action's i16 offset (`GetExtraOffsetX/Y`), or the sequence's when it is
+  -0x8000. The sequence values are zero in the shipped data.
+- The offsets are those of the record's own action (an alias reads its own record). That the
+  client reads the requested action, not the resolved one, is probable.
+- On foot, every layer sits at `(extra.x, extra.y - 15)` from the anchor.
+- Mounted, the mount layer sits at `(rider extra + mount extra, y - 15)`, using the mount record
+  of its move action and the same direction. The rider's body and equipment layers add the mount
+  record's rider offset.
+- `mobile_layer_offsets(body, mount)` computes these positions; `MOBILE_LAYER_SHIFT_Y` is the -15.
+- A PositionOffset frame effect on the mount's frame would replace the rider offset. No shipped
+  data has one.
+
+Not carried: sequence frame effects (footstep sounds), and the typed 0xE2 and transition lookups.
+A consumer that needs those must read them from `AnimationSequence.uop` with
+`uocf::animation_sequence`.
 
 ## `effects_ec.uddp` (metadata version 1)
 

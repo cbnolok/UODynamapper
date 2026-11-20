@@ -86,7 +86,7 @@ pub const FIRST_BASE_FRAME: u32 = 1;
 /// First local frame number of an `AnimationFrame` entry (`FrameEntry::frame_number`).
 pub const FIRST_FRAME_NUMBER: u32 = 1;
 
-/// Action i8 offset value meaning "unset"; the client uses 0 instead.
+/// Action i8 offset value meaning "unset"; the client uses the sequence i8 offset instead (0 in the data).
 pub const UNSET_BYTE_OFFSET: i8 = -128;
 /// Action i16 offset value meaning "unset"; the client uses the sequence extra offset instead.
 pub const UNSET_SHORT_OFFSET: i16 = -0x8000;
@@ -168,10 +168,11 @@ pub struct AnimationSequence {
     /// key: `AnimationFrame` entries are keyed by the frame body of the tileart placeholder
     /// (`crate::enhanced::mobile_body`).
     pub stored_id: u32,
-    /// Sequence i8 offsets; all zero in the data, no reader found besides the copy (unknown).
+    /// Sequence i8 offsets: default of an action i8 offset equal to `UNSET_BYTE_OFFSET` (`UpdateFrame`,
+    /// confirmed); all zero in the data.
     pub offsets: ByteOffsets,
     /// Sequence i16 offsets: default of an action i16 offset equal to `UNSET_SHORT_OFFSET`
-    /// (probable); all zero in the data.
+    /// (`UpdateFrame`, confirmed); all zero in the data.
     pub extra_offsets: ShortOffsets,
     /// Actions by id (confirmed).
     pub actions: BTreeMap<u32, SequenceAction>,
@@ -204,10 +205,10 @@ pub struct SequenceAction {
     /// Frames per second; the frame interval is `1 / fps` (confirmed); 0.0 in every alias record.
     pub fps: f32,
     /// Per-direction offset of what rides on the body (a rider on a mount); `UNSET_BYTE_OFFSET`
-    /// means 0 (probable).
+    /// means the sequence `offsets` value (`UpdateFrame`, confirmed).
     pub offsets: ByteOffsets,
-    /// Extra per-direction offset added to `offsets`; `UNSET_SHORT_OFFSET` means the sequence
-    /// `extra_offsets` value (probable).
+    /// Extra per-direction offset of every layer of the mobile (a mount's adds to its rider's);
+    /// `UNSET_SHORT_OFFSET` means the sequence `extra_offsets` value (`UpdateFrame`, confirmed).
     pub extra_offsets: ShortOffsets,
     /// Effects started when the frame is shown, keyed by the frame index within the direction
     /// (confirmed); sounds (footsteps) in the data.
