@@ -336,7 +336,7 @@ fn main() {
             let offset = (16 + (1 + i / 2) * 4 + 1 + i % 2) * 4;
             bytes[offset..offset + 4].copy_from_slice(pixel);
         }
-        let padded = super::pad_aux_rgba(bytemuck::cast_slice(&pixels), 2, 2, 4, 4);
+        let padded = super::aux_atlas::pad_aux_rgba(bytemuck::cast_slice(&pixels), 2, 2, 4, 4);
         bytes[32 * 4..].copy_from_slice(&padded);
         queue.write_texture(atlas.as_image_copy(), &bytes, wgpu::TexelCopyBufferLayout {
             offset: 0, bytes_per_row: Some(16), rows_per_image: Some(4),

@@ -6,7 +6,7 @@ use color_eyre::eyre;
 use udd_assets::bc7::{self, expected_bc7_byte_len, ImageExtent, VramTextureData, BC7_BLOCK_BYTES, BC7_BLOCK_EDGE};
 use udd_assets::tex_aux_ec::{TexAuxEcPackage, TexAuxEcSlotRecord};
 
-use super::{pad_aux_rgba, AUX_ATLAS_TILE_SIZE};
+use super::aux_atlas::{pad_aux_rgba, AUX_ATLAS_TILE_SIZE};
 use crate::console_logger::{self, LogAbout, LogSev};
 
 const RGBA_BYTES: usize = 4;
