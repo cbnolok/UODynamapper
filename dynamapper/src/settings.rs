@@ -38,6 +38,8 @@ pub struct SectKeybindings {
     pub keybindings_help: KeyCode,
     pub increase_z: KeyCode,
     pub decrease_z: KeyCode,
+    /// Held with the movement keys: the player runs.
+    pub run: KeyCode,
 }
 
 #[derive(Clone, Deserialize, Serialize, PartialEq)]
@@ -120,6 +122,10 @@ pub struct SectWindow {
 pub struct SectWorld {
     pub start_p: UOVec4,
     pub hide_player: bool,
+    /// The server body the player is drawn as, animated as it moves; 0 draws the marker cube.
+    pub player_body: u16,
+    /// The server body of the creature the player rides; 0 rides none.
+    pub player_mount_body: u16,
 }
 
 #[derive(Clone, Deserialize, Serialize, PartialEq)]
@@ -1309,7 +1315,7 @@ mod tests {
 
         let core = BUNDLED_CORE.replace("hide_player", "hide_players");
         let error = parse_strict::<CoreFile>(CORE_CONFIG_FILE, &core).err().expect("unknown key").to_string();
-        assert!(error.contains("unknown field `hide_players`, expected `start_p` or `hide_player`"), "{error}");
+        assert!(error.contains("unknown field `hide_players`, expected one of `start_p`, `hide_player`, `player_body`, `player_mount_body`"), "{error}");
     }
 
     #[test]

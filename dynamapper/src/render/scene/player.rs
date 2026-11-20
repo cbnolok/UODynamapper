@@ -1,4 +1,5 @@
-//! The player's entity: spawned at the saved position, with a marker cube unless the settings hide it.
+//! The player's entity: spawned at the saved position, with a marker cube unless the settings hide it or draw it as
+//! a body (`render::mobiles`).
 use crate::settings::Settings;
 use crate::world::player::Player;
 use crate::app::system_sets::*;
@@ -54,7 +55,7 @@ pub fn sys_spawn_player_entity(
         },
     ));
 
-    if !settings.core.world.hide_player {
+    if shows_marker(&settings) {
         player_entity.insert((Mesh3d(mesh_handle), MeshMaterial3d(material_handle)));
     }
 
@@ -65,6 +66,12 @@ pub fn sys_spawn_player_entity(
     );
 }
 
+/// The marker cube shows a player neither hidden nor drawn as a body.
+fn shows_marker(settings: &Settings) -> bool {
+    let world = &settings.core.world;
+    !world.hide_player && world.player_body == 0
+}
+
 pub fn sys_update_player_visibility(
     mut commands: Commands,
     settings: Res<Settings>,
@@ -73,7 +80,7 @@ pub fn sys_update_player_visibility(
     player_q: Query<Entity, With<Player>>,
     render_q: Query<Entity, (With<Player>, With<Mesh3d>)>,
 ) {
-    let hide = settings.core.world.hide_player;
+    let hide = !shows_marker(&settings);
     let is_rendered = !render_q.is_empty();
 
     if hide && is_rendered {

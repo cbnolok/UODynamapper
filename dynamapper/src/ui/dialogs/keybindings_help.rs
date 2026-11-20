@@ -103,8 +103,12 @@ pub fn sys_render_keybindings_help(
                 .spacing([40.0, 4.0])
                 .striped(true)
                 .show(ui, |ui| {
-                    ui.label("Walk/Run");
+                    ui.label("Walk");
                     ui.label("W, A, S, D");
+                    ui.end_row();
+
+                    ui.label("Run");
+                    ui.label(format!("{:?} + W, A, S, D", settings.keybindings.run));
                     ui.end_row();
 
                     ui.label("Move to Cursor");

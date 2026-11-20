@@ -377,7 +377,7 @@ fn retarget_batch_entity(
     }
 }
 
-fn build_art_batch_mesh(count: u32) -> Mesh {
+pub(crate) fn build_art_batch_mesh(count: u32) -> Mesh {
     use bevy::mesh::Indices;
 
     let quad_count = count as usize;

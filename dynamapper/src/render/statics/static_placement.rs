@@ -17,7 +17,7 @@ pub(crate) const CC_TILE_PIXEL_WIDTH: f32 = 44.0;
 pub(crate) const STATIC_WORLD_Y_PER_XZ_PIXEL: f32 = UO_Z_TO_WORLD_SCALE / (4.0 * CC_WORLD_XZ_PER_PIXEL);
 pub(crate) const CC_WORLD_XZ_PER_PIXEL: f32 = ISO_TILE_SCREEN_DIAGONAL_WORLD_UNITS / CC_TILE_PIXEL_WIDTH;
 pub(crate) const CC_WORLD_Y_PER_PIXEL: f32 = STATIC_WORLD_Y_PER_XZ_PIXEL * CC_WORLD_XZ_PER_PIXEL;
-pub(super) const STATIC_ART_Y_BIAS: f32 = 0.002;
+pub(crate) const STATIC_ART_Y_BIAS: f32 = 0.002;
 // Ground quads use rasterized depth and need the same small geometric separation
 // from terrain as flat sprite quads to avoid coplanar depth fighting.
 pub(super) const GROUND_ART_Y_BIAS: f32 = STATIC_ART_Y_BIAS;
@@ -201,7 +201,7 @@ pub(crate) enum StaticDepthClass {
 }
 
 impl StaticDepthClass {
-    pub(super) fn encoded(self) -> u32 {
+    pub(crate) fn encoded(self) -> u32 {
         match self {
             StaticDepthClass::Regular => 0,
             StaticDepthClass::Background => 1,

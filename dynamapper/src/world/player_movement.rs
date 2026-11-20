@@ -6,6 +6,7 @@ use crate::app::system_sets::*;
 use crate::input::{InjectedPointer, effective_cursor_position};
 use crate::prelude::*;
 use crate::world::coords::UOVec4;
+use crate::world::mobile_motion::{step_secs, MobileMotion, Movement};
 use bevy::prelude::*;
 use bevy::window::PrimaryWindow;
 
@@ -46,6 +47,8 @@ pub struct MoveDirection {
     pub dir: Option<IVec2>,
     pub vertical_dir: i32,
     pub speed_multiplier: f32,
+    /// The run key is held, or the cursor is far: a drawn body runs.
+    pub run: bool,
 }
 impl Default for MoveDirection {
     fn default() -> Self {
@@ -53,8 +56,22 @@ impl Default for MoveDirection {
             dir: None,
             vertical_dir: 0,
             speed_multiplier: 1.0,
+            run: false,
         }
     }
+}
+
+/// The cells a drawn body slides at most to its position; farther, it is placed there at once.
+const MAX_SLIDE_CELLS: f32 = 2.0;
+
+/// The mouse's speed multiplier from which a drawn body runs (`parse_mouse_movement`).
+const MOUSE_RUN_SPEED_MULTIPLIER: f32 = 2.0;
+
+/// Whether the player is drawn as a body, and whether it rides: then it moves at the client's pace
+/// (`mobile_motion::step_secs`) instead of the free speed of the marker.
+fn drawn_body(settings: &Settings) -> Option<bool> {
+    let world = &settings.core.world;
+    (world.player_body != 0 && !world.hide_player).then_some(world.player_mount_body != 0)
 }
 
 // Reads WASD and Mouse "intent" and stores it
@@ -96,10 +113,12 @@ fn sys_player_input(
     {
         move_dir.dir = Some(mouse_dir);
         move_dir.speed_multiplier = mouse_speed;
+        move_dir.run = mouse_speed >= MOUSE_RUN_SPEED_MULTIPLIER;
     } else {
         // Fallback to WASD.
         move_dir.dir = parse_wasd_movement(&keyboard_input);
         move_dir.speed_multiplier = 1.0;
+        move_dir.run = keyboard_input.pressed(settings.keybindings.run);
     }
 
     move_dir.vertical_dir = parse_vertical_movement(&keyboard_input, &settings);
@@ -201,7 +220,7 @@ fn parse_mouse_movement(
     }
 
     // UO Speed logic: >= 3 tiles away = Run (2x speed)
-    let speed_multiplier = if dist >= 3.0 { 2.0 } else { 1.0 };
+    let speed_multiplier = if dist >= 3.0 { MOUSE_RUN_SPEED_MULTIPLIER } else { 1.0 };
     Some((snapped_dir, speed_multiplier))
 }
 
@@ -220,19 +239,36 @@ fn sys_player_move(
     time: Res<Time>,
     mut cooldown: ResMut<MoveCooldown>,
     move_dir: Res<MoveDirection>,
-    mut query: Query<(&mut Transform, &mut Player)>,
+    mut query: Query<(&mut Transform, &mut Player, Option<&mut MobileMotion>)>,
     settings: Res<Settings>,
     mut chunk_recompute_writer: MessageWriter<RecomputeVisibleChunksEvent>,
     world_geo_data: Res<WorldGeoData>,
 ) {
-    let multiplier = settings.app.input.movement_speed_multiplier * move_dir.speed_multiplier;
-    cooldown.0.tick(time.delta().mul_f32(multiplier));
+    let body = drawn_body(&settings);
+    if let Some(mounted) = body {
+        // A drawn body steps at the client's pace for its movement.
+        let movement = if move_dir.run { Movement::Run } else { Movement::Walk };
+        let duration = std::time::Duration::from_secs_f32(step_secs(movement, mounted));
+        if cooldown.0.duration() != duration {
+            cooldown.0.set_duration(duration);
+        }
+        cooldown.0.tick(time.delta());
+    } else {
+        if cooldown.0.duration().as_secs_f32() != BASE_MOVE_COOLDOWN {
+            cooldown.0.set_duration(std::time::Duration::from_secs_f32(BASE_MOVE_COOLDOWN));
+        }
+        let multiplier = settings.app.input.movement_speed_multiplier * move_dir.speed_multiplier;
+        cooldown.0.tick(time.delta().mul_f32(multiplier));
+    }
 
     // Only move if cooldown finished and a direction is pressed
     if cooldown.0.just_finished() {
         let smooth_movement = settings.app.input.smooth_movement;
         if let Some(dir) = move_dir.dir {
-            for (mut transform, mut player) in query.iter_mut() {
+            for (mut transform, mut player, motion) in query.iter_mut() {
+                if let (Some(mut motion), Some(mounted)) = (motion, body) {
+                    motion.step(dir, move_dir.run, mounted);
+                }
                 let current_pos = player
                     .current_pos
                     .unwrap_or_else(|| UOVec4::new(0, 0, 0, 0));
@@ -262,7 +298,7 @@ fn sys_player_move(
         }
 
         if move_dir.vertical_dir != 0 {
-            for (mut transform, mut player) in query.iter_mut() {
+            for (mut transform, mut player, _) in query.iter_mut() {
                 let current_pos = player
                     .current_pos
                     .unwrap_or_else(|| UOVec4::new(0, 0, 0, 0));
@@ -290,15 +326,22 @@ fn sys_player_move(
 fn sys_smooth_player_transform(
     time: Res<Time>,
     settings: Res<Settings>,
-    mut query: Query<(&mut Transform, &Player)>,
+    mut query: Query<(&mut Transform, &Player, Option<&mut MobileMotion>)>,
 ) {
+    let Ok((mut transform, player, motion)) = query.single_mut() else {
+        return;
+    };
+    // A drawn body's step time: it crosses a cell in it at an even pace, as the client slides a walking mobile.
+    let body_step_secs = match (motion, drawn_body(&settings)) {
+        (Some(mut motion), Some(mounted)) => {
+            motion.tick(time.delta_secs());
+            Some(motion.step_secs(mounted))
+        }
+        _ => None,
+    };
     if !settings.app.input.smooth_movement {
         return;
     }
-
-    let Ok((mut transform, player)) = query.single_mut() else {
-        return;
-    };
 
     let Some(current_pos) = player.current_pos else {
         return;
@@ -308,6 +351,20 @@ fn sys_smooth_player_transform(
     let delta = target - transform.translation;
     if delta.length_squared() <= 0.000_001 {
         transform.translation = target;
+        return;
+    }
+
+    if let Some(step_secs) = body_step_secs {
+        // More than a step away (a teleport, a map change): there at once.
+        if delta.x.abs() > MAX_SLIDE_CELLS || delta.z.abs() > MAX_SLIDE_CELLS {
+            transform.translation = target;
+            return;
+        }
+        let max_cells = time.delta_secs() / step_secs.max(f32::EPSILON);
+        let towards = |from: f32, to: f32| from + (to - from).clamp(-max_cells, max_cells);
+        transform.translation.x = towards(transform.translation.x, target.x);
+        transform.translation.z = towards(transform.translation.z, target.z);
+        transform.translation.y = target.y;
         return;
     }
 

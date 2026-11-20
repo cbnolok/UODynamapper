@@ -1,5 +1,7 @@
 [core.world]
 hide_player = true
+player_body = 0
+player_mount_body = 0
 
 [core.world.start_p]
 x = 5722

@@ -7,6 +7,7 @@ pub mod coords;
 pub mod maps;
 pub mod multis;
 pub mod player;
+pub mod mobile_motion;
 pub mod player_movement;
 pub mod statics;
 pub(crate) mod teleport;

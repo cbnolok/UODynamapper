@@ -214,6 +214,10 @@ pub struct PaperdollEcPackageRes(pub Arc<udd_assets::PaperdollEcPackage>);
 
 const PAPERDOLL_EC_FILE_NAME: &str = "paperdoll_ec.uddp";
 
+/// The optional mobile animation packages: without either, the player draws as the marker cube.
+const MOBILE_ANIM_CC_FILE_NAME: &str = "mobile_anim_cc.uddp";
+const MOBILE_ANIM_EC_FILE_NAME: &str = "mobile_anim_ec.uddp";
+
 /// Optional Classic Client bitmap fonts.
 #[derive(Resource)]
 #[allow(dead_code)] // Loaded ahead of the Classic text rendering; nothing draws with it yet.
@@ -686,6 +690,22 @@ pub fn sys_setup_uo_data(mut commands: Commands, settings: Res<Settings>) {
         }
     };
 
+    let load_mobile_anim = |file_name: &str, label: &str| {
+        let Some(path) = resolve_optional_uddp_path(&udd_path, file_name) else {
+            lg(&format!("No {label} mobile animation package selected: {file_name} not found in udd_path."));
+            return None;
+        };
+        log_source_choice(&lg, &format!("{label} mobile animations"), SourceContainerKind::Uddp,
+            std::slice::from_ref(&path));
+        Some(path)
+    };
+    let mobile_anim_cc = load_mobile_anim(MOBILE_ANIM_CC_FILE_NAME, "Classic").and_then(|path|
+        udd_assets::animation::mobile_anim_cc::MobileAnimCcPackage::load(&path)
+            .map_err(|error| lg_err(&format!("Failed to load {}: {error:#}", path.display()))).ok());
+    let mobile_anim_ec = load_mobile_anim(MOBILE_ANIM_EC_FILE_NAME, "Enhanced").and_then(|path|
+        udd_assets::animation::mobile_anim_ec::MobileAnimEcPackage::load(&path)
+            .map_err(|error| lg_err(&format!("Failed to load {}: {error:#}", path.display()))).ok());
+
     lg("Done loading UO Data.");
 
     // The CC-EC land routing table (TerrainTranscode.kdl) and the terrain overrides (EcTerrainOverrides.kdl) are
@@ -727,6 +747,8 @@ pub fn sys_setup_uo_data(mut commands: Commands, settings: Res<Settings>) {
     if let Some(paperdoll_ec_package) = paperdoll_ec_package {
         commands.insert_resource(PaperdollEcPackageRes(Arc::new(paperdoll_ec_package)));
     }
+    commands.insert_resource(crate::render::mobiles::anim_packages(
+        mobile_anim_cc.map(Arc::new), mobile_anim_ec.map(Arc::new)));
     if let Some(multis) = multi_definitions {
         commands.insert_resource(multis);
     }

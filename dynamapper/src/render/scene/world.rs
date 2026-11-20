@@ -60,6 +60,7 @@ impl Plugin for WorldPlugin
             .add_plugins((
                 terrain::DrawLandChunkMeshPlugin { registered_by: "WorldPlugin" },
                 crate::render::statics::DrawStaticSpritesPlugin { registered_by: "WorldPlugin" },
+                crate::render::mobiles::MobileSpritesPlugin { registered_by: "WorldPlugin" },
             ));
     }
 }

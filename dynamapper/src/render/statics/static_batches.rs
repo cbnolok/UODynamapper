@@ -45,7 +45,7 @@ pub(crate) struct StaticPickTile {
 }
 
 pub(super) const STATIC_HUE_FLAG_APPLY: u32 = 1;
-pub(super) const STATIC_HUE_FLAG_EC_SPRITE: u32 = 2;
+pub(crate) const STATIC_HUE_FLAG_EC_SPRITE: u32 = 2;
 pub(super) fn static_hue_payload(hue_id: u16) -> (u32, u32) {
     if hue_id == 0 {
         (0, 0)

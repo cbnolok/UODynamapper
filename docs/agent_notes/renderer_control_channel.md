@@ -141,7 +141,8 @@ files, so one preview can visit several styles, times and sources
   terrain chunk's bake follow through `sys_apply_land_texture_source_changes`,
   the statics through `sys_sync_static_art_source`, as after a click.
 - `{"command":"set","key":K,"value":V}` for an allowlist with typed values:
-  `show_only_player_floor`, `caves`, `cave_surroundings`, `enable_statics`,
+  `hide_player`, `player_body`, `player_mount_body` (core, the player's drawn
+  body and mount; 0 for none); `show_only_player_floor`, `caves`, `cave_surroundings`, `enable_statics`,
   `enable_static_lights`, `show_hidden_multi_parts` (world_rendering);
   `cc_terrain_transitions`, `ec_terrain_transitions` (graphics);
   `light_cover`, `player_floor_rule`, `land_texture_variation` (the active

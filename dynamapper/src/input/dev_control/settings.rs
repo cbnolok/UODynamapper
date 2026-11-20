@@ -26,6 +26,10 @@ use serde_json::{json, Value};
 #[derive(Clone, Copy, Debug, PartialEq, Deserialize)]
 #[serde(tag = "key", content = "value", rename_all = "snake_case", deny_unknown_fields)]
 pub(super) enum ControlSetting {
+    /// The player: core.toml `[core.world]`.
+    HidePlayer(bool),
+    PlayerBody(u16),
+    PlayerMountBody(u16),
     /// Preferences, world: world_rendering.toml.
     ShowOnlyPlayerFloor(bool),
     PlayerFloorBuildingOnly(bool),
@@ -111,7 +115,8 @@ impl ControlSettings<'_> {
         recompute: &mut MessageWriter<RecomputeVisibleChunksEvent>) -> Result<bool, String> {
         use ControlSetting as S;
         match setting {
-            S::ShowOnlyPlayerFloor(_) | S::PlayerFloorBuildingOnly(_) | S::Caves(_) | S::CaveSurroundings(_) | S::EnableStatics(_)
+            S::HidePlayer(_) | S::PlayerBody(_) | S::PlayerMountBody(_)
+            | S::ShowOnlyPlayerFloor(_) | S::PlayerFloorBuildingOnly(_) | S::Caves(_) | S::CaveSurroundings(_) | S::EnableStatics(_)
             | S::EnableStaticLights(_) | S::ShowHiddenMultiParts(_) | S::CcTerrainTransitions(_)
             | S::EcTerrainTransitions(_) => {
                 let settings = self.settings.as_mut().ok_or("the settings are not loaded yet")?;
@@ -120,8 +125,12 @@ impl ControlSettings<'_> {
                     return Ok(false);
                 }
                 let settings = &mut **settings;
-                let (world, graphics) = (&mut settings.world_rendering, &mut settings.graphics);
+                let (world, graphics, player) =
+                    (&mut settings.world_rendering, &mut settings.graphics, &mut settings.core.world);
                 match setting {
+                    S::HidePlayer(value) => player.hide_player = value,
+                    S::PlayerBody(value) => player.player_body = value,
+                    S::PlayerMountBody(value) => player.player_mount_body = value,
                     S::ShowOnlyPlayerFloor(value) => world.show_only_player_floor = value,
                     S::PlayerFloorBuildingOnly(value) => world.player_floor_building_only = value,
                     S::Caves(value) => world.caves = value,
@@ -180,8 +189,11 @@ impl ControlSettings<'_> {
     }
 
     fn differs(settings: &Settings, setting: ControlSetting) -> bool {
-        let (world, graphics) = (&settings.world_rendering, &settings.graphics);
+        let (world, graphics, player) = (&settings.world_rendering, &settings.graphics, &settings.core.world);
         match setting {
+            ControlSetting::HidePlayer(value) => player.hide_player != value,
+            ControlSetting::PlayerBody(value) => player.player_body != value,
+            ControlSetting::PlayerMountBody(value) => player.player_mount_body != value,
             ControlSetting::ShowOnlyPlayerFloor(value) => world.show_only_player_floor != value,
             ControlSetting::PlayerFloorBuildingOnly(value) => world.player_floor_building_only != value,
             ControlSetting::Caves(value) => world.caves != value,
@@ -200,7 +212,10 @@ impl ControlSettings<'_> {
     pub(super) fn status(&self) -> Value {
         let settings = self.settings.as_deref().map(|settings| {
             let (world, graphics, window) = (&settings.world_rendering, &settings.graphics, &settings.app.window);
+            let player = &settings.core.world;
             json!({
+                "hide_player": player.hide_player, "player_body": player.player_body,
+                "player_mount_body": player.player_mount_body,
                 "art_texture_source": graphics.art_texture_source, "land_texture_source": graphics.land_texture_source,
                 "show_only_player_floor": world.show_only_player_floor,
                 "player_floor_building_only": world.player_floor_building_only, "caves": world.caves,
