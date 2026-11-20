@@ -570,9 +570,12 @@ fn static_chunk_cache_config(
     }
 }
 
+/// The chunks whose land is drawn: `sys_draw_spawned_land_chunks` gives a chunk its mesh in the frame it writes the
+/// chunk's land to the tile atlas, which the statics read (`StaticChunkBuildState::land_cells`). A chunk collected
+/// before that would be built twice, the second time when its land arrives (`invalidate_changed_land`).
 fn collect_visible_static_chunk_keys(
     map_id: u32,
-    chunks_q: &Query<&crate::render::terrain::LCMesh>,
+    chunks_q: &Query<&crate::render::terrain::LCMesh, With<Mesh3d>>,
 ) -> Vec<StaticChunkBatchKey> {
     let mut visible_chunk_keys = chunks_q
         .iter()
@@ -1758,10 +1761,9 @@ pub fn sys_collect_visible_statics(
     mut debug_state: ResMut<StaticArtCollectDebugState>,
     source_state: Res<StaticArtSourceState>,
     static_lights: Res<super::static_lights::RenderStaticLightInstances>,
-    // TODO: Need a way to get the currently visible chunks from the terrain system.
-    // We can iterate over existing land chunk entities to find which blocks to draw.
+    // The land chunks drawn are the chunks whose statics are drawn (`collect_visible_static_chunk_keys`).
     terrain: (
-        Query<&crate::render::terrain::LCMesh>,
+        Query<&crate::render::terrain::LCMesh, With<Mesh3d>>,
         Res<TileAtlas>,
         Option<Res<crate::render::terrain::coverage::EcTerrainBases>>,
     ),
