@@ -40,8 +40,8 @@ pub(super) struct StaticChunkCacheConfig {
     pub(super) show_hidden_multi_parts: bool,
     /// The statics store's item routes (`LazyStaticsStore::item_routes_revision`).
     pub(super) item_routes_revision: u64,
-    /// The z-view limit: a change rebuilds the cached chunks without the statics it hides.
-    pub(super) z_view: ZViewCut,
+    // The z-view's cut is not here: the chunks keep what it reads of their statics (`StaticCut`), and assembling them
+    // leaves out what it hides.
     /// The caves drawn over the map (`CavesRes::revision`).
     pub(super) caves_revision: u64,
     /// The land's EC terrain parameters (`EcTerrainBases::sources_revision`), whose hard edges close ground patch sides
@@ -65,6 +65,30 @@ pub(super) struct StaticAssembly {
     /// The instances drawn, and those left out for want of their pages.
     pub(super) atlas_hits: usize,
     pub(super) atlas_misses: usize,
+    /// The z-view's cut it left out statics by.
+    pub(super) z_view: ZViewCut,
+}
+
+/// What the z-view's cut (`ZViewCut`) reads of a static, which assembling its chunk tests (`hides`).
+#[derive(Clone, Copy, Debug, Default)]
+pub(super) struct StaticCut {
+    /// The static's tile flags and z.
+    pub(super) flags: u64,
+    pub(super) z: i8,
+    /// A roof's averaged land z of its own cell, which KR's cut counts its layer from (`ZViewCut::roof_layer`).
+    pub(super) own_land_z: Option<i32>,
+    /// Drawn whatever the cut: the player's cave lifts it (`CaveStatic::Lifted`).
+    pub(super) uncut: bool,
+    /// For a cave's floor buried under its cell's land outside the caves, that land's z: the floor is covered while the
+    /// cut draws that land (`max_ground_z`), and shows when the cut leaves the land out (`caves::is_buried_floor`).
+    pub(super) buried_by_land_z: Option<i32>,
+}
+
+impl StaticCut {
+    pub(super) fn hides(&self, cut: &ZViewCut) -> bool {
+        (!self.uncut && cut.hides_static_over_land(self.flags, self.z, || self.own_land_z))
+            || self.buried_by_land_z.is_some_and(|land_z| land_z <= cut.max_ground_z)
+    }
 }
 
 #[derive(Clone, Debug, Default)]
@@ -72,6 +96,8 @@ pub(super) struct CachedStaticChunk {
     pub(super) sprite_instances: Vec<SpriteInstance>,
     pub(super) ground_instances: Vec<GroundTileInstance>,
     pub(super) pick_tiles: Vec<StaticPickTile>,
+    /// What the z-view's cut reads of each of the `pick_tiles`, the statics of the chunk's instances.
+    pub(super) cuts: Vec<StaticCut>,
     pub(super) sprite_pick_indices: Vec<usize>,
     pub(super) ground_pick_indices: Vec<usize>,
     /// The pages of the sprites' and the ground instances' page slots (`StaticChunkBuildState::sprite_pages`).

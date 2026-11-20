@@ -45,7 +45,7 @@ use super::static_batches::{
     StaticChunkBatchKey, StaticPickTile, StaticRenderTile, static_hue_payload, static_sprite_opacity,
 };
 use super::static_chunk_cache::{
-    CachedStaticChunk, CachedStaticChunkStats, StaticAssembly, StaticAtlasRetrySignature, StaticChunkCacheConfig,
+    CachedStaticChunk, CachedStaticChunkStats, StaticAssembly, StaticCut, StaticAtlasRetrySignature, StaticChunkCacheConfig,
     StaticChunkRenderCache, aggregate_cached_visible_static_stats, should_skip_unchanged_incomplete_static_retry,
     static_atlas_retry_signature, static_light_signature,
 };
@@ -464,6 +464,8 @@ struct StaticChunkBuildState {
     sprite_instances: Vec<SpriteInstance>,
     ground_instances: Vec<GroundTileInstance>,
     pick_tiles: Vec<StaticPickTile>,
+    /// What the z-view's cut reads of each of the `pick_tiles`, which assembling the chunk tests.
+    cuts: Vec<StaticCut>,
     sprite_pick_indices: Vec<(f64, usize)>,
     ground_pick_indices: Vec<(f64, usize)>,
     /// The art pages of the sprites and of the ground instances: an instance's `layer` holds its page's slot here
@@ -575,7 +577,6 @@ fn static_chunk_cache_config(
             .then(|| static_light_signature(static_lights, frame.map_id)),
         show_hidden_multi_parts: frame.show_hidden_multi_parts,
         item_routes_revision: frame.item_routes_revision,
-        z_view: frame.z_view,
         caves_revision: frame.caves_revision,
         terrain_sources_revision: frame.terrain_sources_revision,
     }
@@ -606,10 +607,12 @@ fn evaluate_static_collect_cache_decision(
     cache: &StaticChunkRenderCache,
     visible_chunk_keys: &[StaticChunkBatchKey],
     config_changed: bool,
+    z_view: ZViewCut,
     atlas_retry_signature: StaticAtlasRetrySignature,
 ) -> StaticCollectCacheDecision {
-    let visible_set_unchanged =
-        !config_changed && cache.last_visible_chunk_keys == visible_chunk_keys;
+    // A change of the z-view's cut assembles the chunks again, without the statics it hides.
+    let visible_set_unchanged = !config_changed && cache.last_visible_chunk_keys == visible_chunk_keys
+        && cache.last_assembly.is_some_and(|assembly| assembly.z_view == z_view);
     let all_visible_chunks_present = visible_chunk_keys
         .iter()
         .all(|chunk_key| cache.chunks.contains_key(chunk_key));
@@ -753,6 +756,7 @@ fn collect_visible_static_chunks_slow(
         append_cached_static_chunk_outputs(
             chunk_key,
             chunk,
+            &frame.z_view,
             (&mut *sprite_atlas, &mut *ground_atlas),
             sources,
             (sprite_output, ground_output),
@@ -912,11 +916,11 @@ fn emit_static_render_tile_on_surfaces(
 }
 
 /// The z of the land that covers a floor buried under it on the cell (`x`, `y`) (`caves::is_buried_floor`): the cell's
-/// own corner's `land_z`, where the renderer draws that land. Land the z-view's cut leaves out (over `max_ground_z`)
-/// and land never drawn (`TileAtlas::land_is_nodraw`, the Classic client's NoDraw land) cover nothing.
-fn covering_land_z(land_z: Option<i32>, max_ground_z: i32, tile_atlas: &TileAtlas, x: i32, y: i32) -> Option<i32> {
+/// own corner's `land_z`, where the renderer draws that land. Land never drawn (`TileAtlas::land_is_nodraw`, the
+/// Classic client's NoDraw land) covers nothing, nor does land the z-view's cut leaves out (`StaticCut::hides`).
+fn covering_land_z(land_z: Option<i32>, tile_atlas: &TileAtlas, x: i32, y: i32) -> Option<i32> {
     let nodraw = || matches!((u32::try_from(x), u32::try_from(y)), (Ok(x), Ok(y)) if tile_atlas.land_is_nodraw(x, y));
-    land_z.filter(|&land_z| land_z <= max_ground_z && !nodraw())
+    land_z.filter(|_| !nodraw())
 }
 
 fn emit_static_render_tile(
@@ -959,12 +963,11 @@ fn emit_static_render_tile(
         let land_z = || build.own_land.land_z(resources.map_planes, frame.map_id, cell_x, cell_y);
         cave.static_view(cell_x, cell_y, render_tile.z, flags, tilemeta.map_or(0, |meta| meta.height), land_z)
     });
-    // Above the player's floor, with the z-view limit on; picking skips them too, as they are never emitted. A roof
-    // under KR's cut reads its own cell's land.
-    let own_land_z = || build.own_land.averaged_land_z(resources.map_planes, frame.map_id, cell_x, cell_y);
-    if player_cave != Some(CaveStatic::Lifted) && frame.z_view.hides_static_over_land(flags, render_tile.z, own_land_z) {
-        return;
-    }
+    // Above the player's floor, with the z-view limit on, the static is left out when the chunk is assembled, and
+    // picking skips it too (`StaticCut`). A roof under KR's cut reads its own cell's land.
+    let own_land_z = (flags & uocf::enhanced::tileart::TaeFlag::Roof.bits() != 0)
+        .then(|| build.own_land.averaged_land_z(resources.map_planes, frame.map_id, cell_x, cell_y))
+        .flatten();
     // Over a cave drawn over the map, and in it (caves.rs).
     let cave = player_cave.unwrap_or_else(|| resources.caves.map_or(CaveStatic::Outside, |caves|
         caves.static_view(cell_x, cell_y, render_tile.z)));
@@ -974,18 +977,29 @@ fn emit_static_render_tile(
     // Outside the caves, a cave's floor under its cell's land, where that land is drawn, is covered, as the Classic
     // client draws a cell's land after the floors under it: its art, standing upright at one depth, would show through
     // the lower part of a steep land, as teeth along a cave mouth's black opening.
-    let covering_land_z = || {
+    let mut covering_land_z = || {
         // The NoDraw test reads the drawn land: its arriving or changing rebuilds the chunk.
         if let (Ok(x), Ok(y)) = (u32::try_from(cell_x), u32::try_from(cell_y)) {
             build.read_land(AtlasCells::new(UVec2::new(x, y), UVec2::new(x, y)));
         }
         covering_land_z(build.own_land.land_z(resources.map_planes, frame.map_id, cell_x, cell_y),
-            frame.z_view.max_ground_z, resources.tile_atlas, cell_x, cell_y)
+            resources.tile_atlas, cell_x, cell_y)
     };
-    if player_cave.is_none() && cave == CaveStatic::Outside
-        && is_buried_floor(flags, tilemeta.map_or(0, |meta| meta.height), render_tile.z, covering_land_z) {
-        return;
-    }
+    // Read only for a floor, as a read of the drawn land rebuilds the chunk when that land changes.
+    let mut covering = None;
+    let buried = player_cave.is_none() && cave == CaveStatic::Outside
+        && is_buried_floor(flags, tilemeta.map_or(0, |meta| meta.height), render_tile.z, || {
+            covering = covering_land_z();
+            covering
+        });
+    let buried_by_land_z = covering.filter(|_| buried);
+    let cut = StaticCut {
+        flags,
+        z: render_tile.z,
+        own_land_z,
+        uncut: player_cave == Some(CaveStatic::Lifted),
+        buried_by_land_z,
+    };
     let cave_flags = match cave {
         CaveStatic::Lifted => STATIC_FLAG_CAVE,
         CaveStatic::Outside if player_cave.is_some() => STATIC_FLAG_CAVE_OUTSIDE,
@@ -1014,10 +1028,10 @@ fn emit_static_render_tile(
         client_grunge_flag: client_grunge_flag(tilemeta_package, render_tile.graphic),
     };
 
+    let before = (build.sprite_instances.len(), build.ground_instances.len());
     if frame.is_dot_mode {
         emit_dot_static_tile(info, frame, resources, build);
     } else if let Some(visual_kind) = visual_kind {
-        let before = (build.sprite_instances.len(), build.ground_instances.len());
         emit_art_static_tile(
             info,
             frame,
@@ -1027,18 +1041,20 @@ fn emit_static_render_tile(
             ground_atlas,
             build,
         );
-        if before != (build.sprite_instances.len(), build.ground_instances.len()) {
-            let index = build.pick_tiles.len();
-            build.pick_tiles.push(StaticPickTile { tile: render_tile, is_wet: info.is_wet_flags & 1 != 0 });
-            if before.0 < build.sprite_instances.len() {
-                let inst = build.sprite_instances.last().unwrap();
-                build.sprite_pick_indices.push((static_depth_key(inst.tile_x, inst.tile_y,
-                    inst.priority_z_units), index));
-            } else {
-                let inst = build.ground_instances.last().unwrap();
-                build.ground_pick_indices.push((static_depth_key(inst.tile_x, inst.tile_y,
-                    inst.priority_z_units), index));
-            }
+    }
+    // Every instance has its pick tile and its cut, the dots' too.
+    if before != (build.sprite_instances.len(), build.ground_instances.len()) {
+        let index = build.pick_tiles.len();
+        build.pick_tiles.push(StaticPickTile { tile: render_tile, is_wet: info.is_wet_flags & 1 != 0 });
+        build.cuts.push(cut);
+        if before.0 < build.sprite_instances.len() {
+            let inst = build.sprite_instances.last().unwrap();
+            build.sprite_pick_indices.push((static_depth_key(inst.tile_x, inst.tile_y,
+                inst.priority_z_units), index));
+        } else {
+            let inst = build.ground_instances.last().unwrap();
+            build.ground_pick_indices.push((static_depth_key(inst.tile_x, inst.tile_y,
+                inst.priority_z_units), index));
         }
     }
 }
@@ -1621,6 +1637,7 @@ fn finish_rebuilt_static_chunk(
         sprite_instances: build.sprite_instances,
         ground_instances: build.ground_instances,
         pick_tiles: build.pick_tiles,
+        cuts: build.cuts,
         sprite_pick_indices: sorted_indices(build.sprite_pick_indices),
         ground_pick_indices: sorted_indices(build.ground_pick_indices),
         sprite_pages: build.sprite_pages,
@@ -1662,41 +1679,45 @@ fn bind_chunk_pages(pages: &[ArtPageKey], atlas: &mut ArtPageAtlas, sources: Art
     std::iter::once(Some(0)).chain(pages.iter().map(|&page| atlas.bind_page(page, sources))).collect()
 }
 
-/// Appends `instances` to `output` with their page slots replaced by the layers `layers` binds them to. Returns the
-/// indices of the instances appended when some were left out, their pages not resident; `None` when all were.
-fn append_bound_instances<T: Copy>(
+/// Appends the `instances` `drawn` (by index) to `output`, their page slots replaced by the layers `layers` binds them
+/// to. Returns the indices of the instances appended when some were left out, by `drawn` or for want of their pages
+/// (`None` when none were), and how many lacked their pages.
+fn append_drawn_instances<T: Copy>(
     instances: &[T],
     layers: &[Option<u32>],
     layer: fn(&mut T) -> &mut u32,
+    drawn: impl Fn(usize) -> bool,
     output: &mut Vec<T>,
-) -> Option<Vec<u32>> {
-    let start = output.len();
-    if let Some(layers) = layers.iter().copied().collect::<Option<Vec<u32>>>() {
-        output.extend_from_slice(instances);
-        for instance in &mut output[start..] {
-            let slot = layer(instance);
-            *slot = layers[*slot as usize];
-        }
-        return None;
-    }
-    let mut kept = Vec::new();
+) -> (Option<Vec<u32>>, usize) {
+    let mut kept: Option<Vec<u32>> = None;
+    let mut unbound = 0;
     for (index, instance) in instances.iter().enumerate() {
         let mut instance = *instance;
         let slot = layer(&mut instance);
-        if let Some(bound) = layers[*slot as usize] {
-            *slot = bound;
-            output.push(instance);
-            kept.push(index as u32);
+        let bound = layers[*slot as usize];
+        match bound.filter(|_| drawn(index)) {
+            Some(bound) => {
+                *slot = bound;
+                output.push(instance);
+                if let Some(kept) = &mut kept {
+                    kept.push(index as u32);
+                }
+            }
+            None => {
+                unbound += usize::from(bound.is_none());
+                kept.get_or_insert_with(|| (0..index as u32).collect());
+            }
         }
     }
-    Some(kept)
+    (kept, unbound)
 }
 
-/// Appends the chunk's instances to the outputs, on the atlas layers of their pages: an instance whose page is not
-/// resident yet is left out, its page requested, until an assembly after the page arrives.
+/// Appends the chunk's instances to the outputs, on the atlas layers of their pages, but those `z_view` cuts: an
+/// instance whose page is not resident yet is left out, its page requested, until an assembly after the page arrives.
 fn append_cached_static_chunk_outputs(
     chunk_key: StaticChunkBatchKey,
     chunk: &CachedStaticChunk,
+    z_view: &ZViewCut,
     (sprite_atlas, ground_atlas): (&mut SpriteArtPageAtlas, &mut GroundArtPageAtlas),
     sources: ArtPageSources<'_>,
     (sprite_output, ground_output): (&mut RenderStaticInstances, &mut RenderStaticLandInstances),
@@ -1707,12 +1728,13 @@ fn append_cached_static_chunk_outputs(
     if !chunk.sprite_instances.is_empty() {
         let start = sprite_output.0.len() as u32;
         let layers = bind_chunk_pages(&chunk.sprite_pages, sprite_atlas, sources);
-        let kept = append_bound_instances(&chunk.sprite_instances, &layers, |instance| &mut instance.layer,
-            &mut sprite_output.0);
+        let drawn = |index: usize| !chunk.cuts[chunk.sprite_pick_indices[index]].hides(z_view);
+        let (kept, unbound) = append_drawn_instances(&chunk.sprite_instances, &layers, |instance| &mut instance.layer,
+            drawn, &mut sprite_output.0);
         let count = sprite_output.0.len() as u32 - start;
         slow_stats.copied_sprite_instances += count as usize;
         slow_stats.atlas_hits += count as usize;
-        slow_stats.atlas_misses += chunk.sprite_instances.len() - count as usize;
+        slow_stats.atlas_misses += unbound;
         if let Some(kept) = kept {
             assembled_picks[0].insert(chunk_key, kept);
         }
@@ -1724,12 +1746,13 @@ fn append_cached_static_chunk_outputs(
     if !chunk.ground_instances.is_empty() {
         let start = ground_output.0.len() as u32;
         let layers = bind_chunk_pages(&chunk.ground_pages, ground_atlas, sources);
-        let kept = append_bound_instances(&chunk.ground_instances, &layers, |instance| &mut instance.layer,
-            &mut ground_output.0);
+        let drawn = |index: usize| !chunk.cuts[chunk.ground_pick_indices[index]].hides(z_view);
+        let (kept, unbound) = append_drawn_instances(&chunk.ground_instances, &layers, |instance| &mut instance.layer,
+            drawn, &mut ground_output.0);
         let count = ground_output.0.len() as u32 - start;
         slow_stats.copied_ground_instances += count as usize;
         slow_stats.atlas_hits += count as usize;
-        slow_stats.atlas_misses += chunk.ground_instances.len() - count as usize;
+        slow_stats.atlas_misses += unbound;
         if let Some(kept) = kept {
             assembled_picks[1].insert(chunk_key, kept);
         }
@@ -1760,6 +1783,7 @@ fn finish_static_collect_slow_path(
         },
         atlas_hits: slow_stats.atlas_hits,
         atlas_misses: slow_stats.atlas_misses,
+        z_view: frame.z_view,
     });
     cache.prune_stale(visible_tick);
     let visible_chunks = visible_chunk_keys.len();
@@ -1903,6 +1927,7 @@ pub fn sys_collect_visible_statics(
         &outputs.3,
         &visible_chunk_keys,
         config_changed,
+        frame.z_view,
         atlas_retry_signature,
     );
     if try_finish_cached_visible_static_collect(
@@ -2308,8 +2333,12 @@ mod tests {
         let drawn = Rg16u::pack(DRAWN_LAND_ID, land_z as i8, LAND_SOURCE_CC_ATLAS as u16, false, 0);
         let nodraw = Rg16u::pack(LAND_NODRAW_ID as u16, land_z as i8, LAND_SOURCE_NODRAW as u16, false, 0);
         atlas.cpu_mirror[layer as usize] = Some(vec![drawn, nodraw, drawn, drawn]);
-        let buried = |atlas: &TileAtlas, max_ground_z: i32, x: i32| is_buried_floor(floor, 0, 0,
-            || covering_land_z(Some(land_z), max_ground_z, atlas, x, 0));
+        // Hidden at assembly, the z-view's cut leaving the land over `max_ground_z` out (`StaticCut::hides`).
+        let buried = |atlas: &TileAtlas, max_ground_z: i32, x: i32| {
+            let covering = covering_land_z(Some(land_z), atlas, x, 0);
+            let buried_by_land_z = covering.filter(|_| is_buried_floor(floor, 0, 0, || covering));
+            StaticCut { buried_by_land_z, ..Default::default() }.hides(&ZViewCut { max_ground_z, ..ZViewCut::NONE })
+        };
         assert!(buried(&atlas, NO_Z_VIEW_LIMIT, 0));
         assert!(!buried(&atlas, NO_Z_VIEW_LIMIT, 1));
         assert!(!buried(&atlas, land_z - 1, 0));
@@ -3370,7 +3399,6 @@ mod tests {
             static_art_local_light_signature: None,
             show_hidden_multi_parts: false,
             item_routes_revision: 0,
-            z_view: ZViewCut::NONE,
             caves_revision: 0,
             terrain_sources_revision: 0,
         });
@@ -3392,7 +3420,6 @@ mod tests {
             static_art_local_light_signature: None,
             show_hidden_multi_parts: false,
             item_routes_revision: 1,
-            z_view: ZViewCut::NONE,
             caves_revision: 0,
             terrain_sources_revision: 0,
         });
@@ -3411,7 +3438,6 @@ mod tests {
             static_art_local_light_signature: None,
             show_hidden_multi_parts: false,
             item_routes_revision: 0,
-            z_view: ZViewCut::NONE,
             caves_revision: 0,
             terrain_sources_revision: 0,
         });
@@ -3434,7 +3460,6 @@ mod tests {
             static_art_local_light_signature: None,
             show_hidden_multi_parts: false,
             item_routes_revision: 0,
-            z_view: ZViewCut::NONE,
             caves_revision: 0,
             terrain_sources_revision: 0,
         }));
@@ -3453,7 +3478,6 @@ mod tests {
             static_art_local_light_signature: Some(0),
             show_hidden_multi_parts: false,
             item_routes_revision: 0,
-            z_view: ZViewCut::NONE,
             caves_revision: 0,
             terrain_sources_revision: 0,
         });
@@ -3475,7 +3499,6 @@ mod tests {
             static_art_local_light_signature: Some(1),
             show_hidden_multi_parts: false,
             item_routes_revision: 0,
-            z_view: ZViewCut::NONE,
             caves_revision: 0,
             terrain_sources_revision: 0,
         }));
@@ -3504,7 +3527,8 @@ mod tests {
         let mut cache = StaticChunkRenderCache::default();
         cache.chunks.insert(chunk_key, CachedStaticChunk::default());
         cache.last_visible_chunk_keys = vec![chunk_key];
-        cache.last_assembly = Some(StaticAssembly { signature: retry_signature, atlas_hits: 0, atlas_misses: 1 });
+        cache.last_assembly = Some(StaticAssembly { signature: retry_signature, atlas_hits: 0, atlas_misses: 1,
+            z_view: ZViewCut::NONE });
 
         assert!(should_skip_unchanged_incomplete_static_retry(
             &cache,
@@ -3527,8 +3551,8 @@ mod tests {
         ));
     }
 
-    /// An assembly that drew everything is complete until the atlas moves a page: then the chunks assemble again,
-    /// without being rebuilt.
+    /// An assembly that drew everything is complete until the atlas moves a page, or the z-view's cut changes: then the
+    /// chunks assemble again, without being rebuilt.
     #[test]
     fn an_atlas_page_moving_assembles_the_chunks_again() {
         let chunk_key = StaticChunkBatchKey { map_id: 1, gx: 0, gy: 0, scale: 1 };
@@ -3545,31 +3569,41 @@ mod tests {
         let mut cache = StaticChunkRenderCache::default();
         cache.chunks.insert(chunk_key, CachedStaticChunk::default());
         cache.last_visible_chunk_keys = vec![chunk_key];
-        cache.last_assembly = Some(StaticAssembly { signature, atlas_hits: 1, atlas_misses: 0 });
+        cache.last_assembly = Some(StaticAssembly { signature, atlas_hits: 1, atlas_misses: 0, z_view: ZViewCut::NONE });
 
-        let decision = evaluate_static_collect_cache_decision(&cache, &[chunk_key], false, signature);
+        let decide = |signature, z_view| evaluate_static_collect_cache_decision(&cache, &[chunk_key], false, z_view,
+            signature);
+        let decision = decide(signature, ZViewCut::NONE);
         assert!(decision.visible_set_unchanged && decision.all_visible_chunks_complete);
         let moved = StaticAtlasRetrySignature { sprite_mapping_revision: 4, ..signature };
-        let decision = evaluate_static_collect_cache_decision(&cache, &[chunk_key], false, moved);
+        let decision = decide(moved, ZViewCut::NONE);
         assert!(!decision.all_visible_chunks_complete && !decision.skip_unchanged_incomplete_retry);
+        // So does a change of the z-view's cut.
+        let decision = decide(signature, ZViewCut { max_z: 20, ..ZViewCut::NONE });
+        assert!(!decision.visible_set_unchanged && !decision.skip_unchanged_incomplete_retry);
         assert_eq!(cache.chunks.len(), 1);
     }
 
-    /// Assembling replaces the page slots with the pages' layers, leaves out the instances of pages not resident, and
-    /// says which instances it kept, which picking follows.
+    /// Assembling replaces the page slots with the pages' layers, leaves out the instances of pages not resident and
+    /// those cut, and says which instances it kept, which picking follows.
     #[test]
-    fn assembly_binds_page_slots_and_leaves_out_unresident_pages() {
+    fn assembly_binds_page_slots_and_leaves_out_unresident_pages_and_cut_statics() {
         let instance = |layer, tile_x| SpriteInstance { layer, tile_x, ..SpriteInstance::zeroed() };
         let instances = [instance(NO_ART_PAGE_SLOT, 0.0), instance(1, 1.0), instance(2, 2.0), instance(1, 3.0)];
+        fn layer(instance: &mut SpriteInstance) -> &mut u32 { &mut instance.layer }
         let mut output = vec![instance(9, -1.0)];
-        assert_eq!(append_bound_instances(&instances, &[Some(0), Some(7), Some(5)], |i| &mut i.layer, &mut output),
-            None);
+        assert_eq!(append_drawn_instances(&instances, &[Some(0), Some(7), Some(5)], layer, |_| true, &mut output),
+            (None, 0));
         assert_eq!(output.iter().map(|i| i.layer).collect::<Vec<_>>(), [9, 0, 7, 5, 7]);
 
         let mut output = Vec::new();
-        let kept = append_bound_instances(&instances, &[Some(0), Some(7), None], |i| &mut i.layer, &mut output);
-        assert_eq!(kept, Some(vec![0, 1, 3]));
+        let (kept, unbound) = append_drawn_instances(&instances, &[Some(0), Some(7), None], layer, |_| true,
+            &mut output);
+        assert_eq!((kept.clone(), unbound), (Some(vec![0, 1, 3]), 1));
         assert_eq!(output.iter().map(|i| (i.layer, i.tile_x)).collect::<Vec<_>>(), [(0, 0.0), (7, 1.0), (7, 3.0)]);
+        let mut cut_output = Vec::new();
+        assert_eq!(append_drawn_instances(&instances, &[Some(0), Some(7), Some(5)], layer, |index| index != 0,
+            &mut cut_output), (Some(vec![1, 2, 3]), 0));
 
         let key = StaticChunkBatchKey { map_id: 0, gx: 0, gy: 0, scale: 1 };
         let pick = |graphic| StaticPickTile { tile: StaticRenderTile { graphic, world_x: 0.0, world_z: 0.0, z: 0,
