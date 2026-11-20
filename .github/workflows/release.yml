@@ -25,8 +25,6 @@ env:
   CARGO_TARGET_DIR: target
   CARGO_INCREMENTAL: 0
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
-  SCCACHE_GHA_ENABLED: "true"
-  SCCACHE_NO_DAEMON: "1"
   # Dated nightly for every nightly build (the justfile reads it too). Bump it on purpose: nightly-2026-10-31 fails to
   # compile wesl 0.6.0 ("cycle detected when computing when `error::ResolveError` needs async drop").
   RUST_NIGHTLY_TOOLCHAIN: nightly-2026-10-29
@@ -36,9 +34,6 @@ jobs:
     name: Build (Linux x86_64)
     # The gnu binaries need at least the build image's glibc (22.04: 2.35; 24.04 would raise it to 2.39).
     runs-on: ubuntu-22.04
-    env:
-      SCCACHE_GHA_ENABLED: "true"
-      SCCACHE_DIR: /tmp/sccache
     steps:
       - name: Checkout repository
         uses: actions/checkout@v6
@@ -59,9 +54,6 @@ jobs:
           toolchain: ${{ env.RUST_NIGHTLY_TOOLCHAIN }}
           components: rust-src
 
-      - name: Run sccache-cache
-        uses: mozilla-actions/sccache-action@v0.0.11
-
       - name: Install Just
         uses: extractions/setup-just@v2
 
@@ -69,7 +61,7 @@ jobs:
         uses: Swatinem/rust-cache@v2
         with:
           workspaces: "."
-          key: "linux-x86_64-nightly-sccache"
+          key: "linux-x86_64-nightly"
 
       # Cargo can't pin a dependency to "the version bevy_egui uses": this fails when a bevy or bevy_egui bump
       # leaves egui, glam or another shared crate on two versions.
@@ -107,9 +99,6 @@ jobs:
     name: Build (Linux aarch64)
     # Same image generation as the x86_64 job, so both gnu builds need the same glibc (2.35).
     runs-on: ubuntu-22.04-arm
-    env:
-      SCCACHE_GHA_ENABLED: "true"
-      SCCACHE_DIR: /tmp/sccache
     steps:
       - name: Checkout repository
         uses: actions/checkout@v6
@@ -129,9 +118,6 @@ jobs:
           toolchain: ${{ env.RUST_NIGHTLY_TOOLCHAIN }}
           components: rust-src
 
-      - name: Run sccache-cache
-        uses: mozilla-actions/sccache-action@v0.0.11
-
       - name: Install Just
         uses: extractions/setup-just@v2
 
@@ -139,7 +125,7 @@ jobs:
         uses: Swatinem/rust-cache@v2
         with:
           workspaces: "."
-          key: "linux-arm64-nightly-sccache"
+          key: "linux-arm64-nightly"
 
       - name: Build release binary
         env:
@@ -192,7 +178,6 @@ jobs:
   #             . "$HOME/.cargo/env"
   #             rustup target add x86_64-unknown-linux-musl
   #             rustup component add rust-src
-  #             chmod +x scripts/build/common/rustc_wrapper.sh
   #             export CC=gcc
   #             export CXX=g++
   #             export CARGO_TARGET_X86_64_UNKNOWN_LINUX_MUSL_LINKER=clang
@@ -241,7 +226,6 @@ jobs:
   #             . "$HOME/.cargo/env"
   #             rustup target add aarch64-unknown-linux-musl
   #             rustup component add rust-src
-  #             chmod +x scripts/build/common/rustc_wrapper.sh
   #             export CC=gcc
   #             export CXX=g++
   #             export CARGO_TARGET_AARCH64_UNKNOWN_LINUX_MUSL_LINKER=clang
@@ -278,14 +262,6 @@ jobs:
           toolchain: ${{ env.RUST_NIGHTLY_TOOLCHAIN }}
           components: rust-src
 
-      # Pinned: sccache 0.17+ expands cargo's @argfile and spawns rustc with every argument, which passes Windows'
-      # 32767-character command line limit (os error 206). 0.16 forwards an oversized argfile to rustc and leaves
-      # just that call uncached. Remove once https://github.com/mozilla/sccache/issues/2397 is fixed in a release.
-      - name: Run sccache-cache
-        uses: mozilla-actions/sccache-action@v0.0.11
-        with:
-          version: "v0.16.0"
-
       - name: Install Just
         uses: extractions/setup-just@v2
 
@@ -293,7 +269,7 @@ jobs:
         uses: Swatinem/rust-cache@v2
         with:
           workspaces: "."
-          key: "windows-x86_64-nightly-sccache"
+          key: "windows-x86_64-nightly"
 
       - name: Build release binary
         run: just build-ci-workspace
@@ -342,12 +318,6 @@ jobs:
           targets: x86_64-pc-windows-gnu
           components: rust-src
 
-      # No sccache here, so the justfile runs cargo without a wrapper. This job cross-compiles: the nightly's per-crate
-      # build directories give rustc one `-L` per host and per target dependency, under the longer
-      # target\x86_64-pc-windows-gnu\ path, so many commands come close to Windows' 32767-character limit. sccache
-      # rewrites a command it caches (`--emit=x` split in two, quoted feature cfgs), so one cargo left just under the
-      # limit came out over it (os error 206, bevy_winit on 2026-11-06). Without the wrapper, cargo's own @argfile
-      # fallback covers every length. rust-cache below still keeps the compiled dependencies.
       - name: Install Just
         uses: extractions/setup-just@v2
 
@@ -401,14 +371,6 @@ jobs:
           targets: aarch64-pc-windows-msvc
           components: rust-src
 
-      # Pinned: sccache 0.17+ expands cargo's @argfile and spawns rustc with every argument, which passes Windows'
-      # 32767-character command line limit (os error 206). 0.16 forwards an oversized argfile to rustc and leaves
-      # just that call uncached. Remove once https://github.com/mozilla/sccache/issues/2397 is fixed in a release.
-      - name: Run sccache-cache
-        uses: mozilla-actions/sccache-action@v0.0.11
-        with:
-          version: "v0.16.0"
-
       - name: Install Just
         run: cargo install just --locked
 
@@ -416,7 +378,7 @@ jobs:
         uses: Swatinem/rust-cache@v2
         with:
           workspaces: "."
-          key: "windows-arm64-nightly-sccache"
+          key: "windows-arm64-nightly"
 
       - name: Build release binary
         run: just build-ci-workspace --target aarch64-pc-windows-msvc
@@ -460,9 +422,6 @@ jobs:
           targets: x86_64-apple-darwin
           components: rust-src
 
-      - name: Run sccache-cache
-        uses: mozilla-actions/sccache-action@v0.0.11
-
       - name: Install Just
         uses: extractions/setup-just@v2
 
@@ -470,7 +429,7 @@ jobs:
         uses: Swatinem/rust-cache@v2
         with:
           workspaces: "."
-          key: "macos-x86_64-nightly-sccache"
+          key: "macos-x86_64-nightly"
 
       - name: Build release binary
         run: just build-ci-workspace --target x86_64-apple-darwin
@@ -508,9 +467,6 @@ jobs:
           targets: aarch64-apple-darwin
           components: rust-src
 
-      - name: Run sccache-cache
-        uses: mozilla-actions/sccache-action@v0.0.11
-
       - name: Install Just
         uses: extractions/setup-just@v2
 
@@ -518,7 +474,7 @@ jobs:
         uses: Swatinem/rust-cache@v2
         with:
           workspaces: "."
-          key: "macos-arm64-nightly-sccache"
+          key: "macos-arm64-nightly"
 
       - name: Build release binary
         run: just build-ci-workspace --target aarch64-apple-darwin

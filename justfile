@@ -5,13 +5,10 @@
 #
 # --- Architecture Summary ---
 # 1. Task Runner: 'just' handles OS detection, environment variable exports, and task orchestration.
-# 2. Environment: All recipes export RUSTFLAGS and RUSTC_WRAPPER to ensure consistent behavior.
-# 3. Wrapper Scripts (scripts/build/common/): These small scripts are necessary because
-#    RUSTC_WRAPPER requires an executable/script to wrap rustc. They serve as a pass-through
-#    when sccache is disabled, allowing for potential future interception logic (e.g. for specific crates).
-# 4. Toolchains: We support both Stable and Nightly toolchains. Nightly is used for aggressive
+# 2. Environment: All recipes export RUSTFLAGS to ensure consistent behavior.
+# 3. Toolchains: We support both Stable and Nightly toolchains. Nightly is used for aggressive
 #    optimizations like 'build-std' which recompiles the standard library for the target.
-# 5. Linkers: On Linux, we automatically detect and use 'lld', 'mold', or 'wild' for
+# 4. Linkers: On Linux, we automatically detect and use 'lld', 'mold', or 'wild' for
 #    significantly faster link times.
 
 set shell := ["bash", "-c"]
@@ -22,21 +19,11 @@ os := os()
 is_windows := if os == "windows" { "true" } else { "false" }
 is_linux := if os == "linux" { "true" } else { "false" }
 is_macos := if os == "macos" { "true" } else { "false" }
-is_ci := env_var_or_default("GITHUB_ACTIONS", "false")
 # The toolchain the nightly recipes use. CI pins a dated nightly (RUST_NIGHTLY_TOOLCHAIN in release.yml), so a broken
 # nightly can't fail the release builds; locally it is the current nightly.
 nightly_toolchain := env_var_or_default("RUST_NIGHTLY_TOOLCHAIN", "nightly")
 
-# --- Features ---
-# Enable sccache explicitly. If "true", it will bypass the wrapper and use sccache directly.
-sccache := "false"
-
 # --- Tool Detection ---
-has_sccache := if is_windows == "true" {
-    `powershell -NoProfile -Command "if (Get-Command sccache -ErrorAction SilentlyContinue) { (Get-Command sccache).Source }"`
-} else {
-    `command -v sccache || echo ""`
-}
 has_lld  := if is_linux == "true" { `command -v ld.lld || echo ""` } else { "" }
 has_mold := if is_linux == "true" { `command -v mold || echo ""` } else { "" }
 rust_llvm_major_stable := if is_linux == "true" {
@@ -57,20 +44,6 @@ lld_llvm_major := if has_lld != "" {
 }
 
 # --- Build Configuration ---
-
-# RUSTC_WRAPPER logic (needed for sccache)
-wrapper_path := "scripts/build/common/rustc_wrapper.sh"
-
-# Determine if sccache should be used: on CI by default. The native Windows CI jobs pin sccache 0.16, since later releases
-#   expand cargo's @argfile past Windows' command line limit; the MinGW job runs without it (see release.yml).
-sccache_requested := if sccache == "true" { "true" } else { is_ci }
-sccache_available := if has_sccache != "" { "true" } else { "false" }
-sccache_effective := if sccache_requested == "true" { sccache_available } else { "false" }
-
-# Windows runs without a wrapper unless sccache is on: its pass-through wrapper goes through PowerShell's -File
-#   argument binding, which splits `--remap-path-prefix=D:\…=.` at the drive colon, and starts pwsh for every rustc
-#   call. Cargo treats an empty RUSTC_WRAPPER as no wrapper.
-export RUSTC_WRAPPER := if sccache_effective == "true" { "sccache" } else if is_windows == "true" { "" } else { wrapper_path }
 
 # lld can only read Rust LLVM bitcode for linker-plugin LTO when both use the same LLVM major version.
 lld_plugin_lto_stable := if lld_llvm_major == "" {
@@ -459,13 +432,11 @@ check-shell:
 
 # Check that the workspace's dependencies, direct and transitive, resolve to the versions bevy and bevy_egui use
 # (e.g. egui pulled by eframe), so no crate is compiled twice. Fails on a mismatch; CI runs it.
-# Both recipes run cargo without RUSTC_WRAPPER: they compile nothing, and on CI the wrapper is sccache, whose server
-# would start inside the pipe, inherit it and keep it open, so python3 would wait for the end of input forever.
 check-dep-alignment *args:
     @echo "Checking workspace dependency alignment against bevy and bevy_egui..."
-    RUSTC_WRAPPER= cargo metadata --format-version 1 | RUSTC_WRAPPER= python3 scripts/dev-helpers/check_dep_alignment.py {{args}}
+    cargo metadata --format-version 1 | python3 scripts/dev-helpers/check_dep_alignment.py {{args}}
 
 # Check workspace direct dependency versions against a selected reference crate.
 check-dep-alignment-ref ref *args:
     @echo "Checking workspace dependency alignment against {{ref}}..."
-    RUSTC_WRAPPER= cargo metadata --format-version 1 | RUSTC_WRAPPER= python3 scripts/dev-helpers/check_dep_alignment.py --reference {{ref}} {{args}}
+    cargo metadata --format-version 1 | python3 scripts/dev-helpers/check_dep_alignment.py --reference {{ref}} {{args}}
