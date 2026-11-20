@@ -27,7 +27,8 @@ use bevy::render::Extract;
 
 #[derive(Clone, Copy, Debug)]
 pub struct ResolvedArtSprite {
-    pub layer: u32,
+    /// The page the sprite is on, which gets its layer when the sprite is drawn (`ArtPageAtlas::bind_page`).
+    pub page: ArtPageKey,
     pub uv_min: Vec2,
     pub uv_max: Vec2,
     pub logical_width: f32,
@@ -75,6 +76,82 @@ pub enum ArtPageKey {
     KrEnhanced(u32),
     KrTerrain(u32),
     Missing,
+}
+
+/// The packages the pages of `ArtPageKey` are read from (`ArtPageAtlas::bind_page`).
+#[derive(Clone, Copy, Default)]
+pub struct ArtPageSources<'a> {
+    pub classic: Option<&'a Arc<TexArtCcPackage>>,
+    pub enhanced: Option<&'a Arc<TexArtEcPackage>>,
+    pub kr_enhanced: Option<&'a Arc<TexArtEcPackage>>,
+    pub terrain: Option<&'a Arc<TexLandEcPackage>>,
+    pub kr_terrain: Option<&'a Arc<TexLandEcPackage>>,
+    pub missing: Option<&'a Arc<TexAuxEcPackage>>,
+}
+
+/// What uploading a page takes: its package's page size, the part of it used, its format and its read.
+struct ArtPageRequest {
+    atlas_width: u32,
+    atlas_height: u32,
+    used_width: u32,
+    used_height: u32,
+    pixel_format: PagePixelFormat,
+    read: Box<dyn FnOnce() -> eyre::Result<Vec<u8>> + Send>,
+}
+
+fn art_page_request(page: ArtPageKey, sources: ArtPageSources<'_>) -> Option<ArtPageRequest> {
+    match page {
+        ArtPageKey::Classic(index) => {
+            let package = sources.classic?;
+            let record = package.pages().get(index as usize)?;
+            Some(ArtPageRequest {
+                atlas_width: package.atlas_width(),
+                atlas_height: package.atlas_height(),
+                used_width: record.used_width,
+                used_height: record.used_height,
+                pixel_format: record.pixel_format,
+                read: Box::new(read_page_off_frame(package, index, |package, page| package.read_page_bytes(page))),
+            })
+        }
+        ArtPageKey::Enhanced(index) | ArtPageKey::KrEnhanced(index) => {
+            let package = if matches!(page, ArtPageKey::Enhanced(_)) { sources.enhanced? } else { sources.kr_enhanced? };
+            let record = package.pages().get(index as usize)?;
+            Some(ArtPageRequest {
+                atlas_width: package.atlas_width(),
+                atlas_height: package.atlas_height(),
+                used_width: record.used_width,
+                used_height: record.used_height,
+                pixel_format: record.pixel_format,
+                read: Box::new(read_page_off_frame(package, index, |package, page| package.read_page_bytes(page))),
+            })
+        }
+        ArtPageKey::Terrain(index) | ArtPageKey::KrTerrain(index) => {
+            let package = if matches!(page, ArtPageKey::Terrain(_)) { sources.terrain? } else { sources.kr_terrain? };
+            let record = package.pages().get(index as usize)?;
+            Some(ArtPageRequest {
+                atlas_width: package.atlas_width(),
+                atlas_height: package.atlas_height(),
+                used_width: record.used_width,
+                used_height: record.used_height,
+                pixel_format: record.pixel_format,
+                read: Box::new(read_page_off_frame(package, index, |package, page| package.read_page_bytes(page))),
+            })
+        }
+        ArtPageKey::Missing => {
+            let aux = sources.missing?;
+            let slot = aux.missing_texture_slot();
+            let (width, height) = (u32::from(slot.width), u32::from(slot.height));
+            Some(ArtPageRequest {
+                atlas_width: width,
+                atlas_height: height,
+                used_width: width,
+                used_height: height,
+                pixel_format: PagePixelFormat::Rgba8888,
+                read: Box::new(read_page_off_frame(aux, slot.payload_texture_id, |aux, id| aux.load_rgba(id)?
+                    .ok_or_else(|| eyre::eyre!("missing-texture payload is unavailable")))),
+            })
+        }
+    }
 }
 
 pub struct ArtPageAtlas {
@@ -315,9 +392,10 @@ impl ArtPageAtlas {
         self.mapping_revision
     }
 
-    pub fn resolve_cc(&mut self, tex_art_cc: &Arc<TexArtCcPackage>, art_id: u32) -> Option<ResolvedArtSprite> {
+    /// The sprite of `art_id` in `tex_art_cc`, its page not yet bound to a layer (`bind_page`).
+    pub fn sprite_cc(&self, tex_art_cc: &TexArtCcPackage, art_id: u32) -> Option<ResolvedArtSprite> {
         let slot = tex_art_cc.present_slot(art_id)?;
-        let mut resolved = self.resolve_slot(
+        let mut resolved = self.slot_sprite(
             ArtPageKey::Classic(slot.page_index),
             slot.x,
             slot.y,
@@ -329,21 +407,17 @@ impl ArtPageAtlas {
             slot.draw_offset_y,
             tex_art_cc.atlas_width(),
             tex_art_cc.atlas_height(),
-            tex_art_cc.pages().get(slot.page_index as usize)?.used_width,
-            tex_art_cc.pages().get(slot.page_index as usize)?.used_height,
-            tex_art_cc.pages().get(slot.page_index as usize)?.pixel_format,
-            read_page_off_frame(tex_art_cc, slot.page_index, |package, page| package.read_page_bytes(page)),
         )?;
         resolved.legacy_art = true;
         Some(resolved)
     }
 
-    /// Resolves `art_id` from a package in the Enhanced art layout whose pages are `page_key`: `tex_art_ec.uddp`
+    /// The sprite of `art_id` in a package in the Enhanced art layout whose pages are `page_key`: `tex_art_ec.uddp`
     /// (`ArtPageKey::Enhanced`) or its Kingdom Reborn art (`ArtPageKey::KrEnhanced`).
-    pub fn resolve_ec_pages(&mut self, tex_art_ec: &Arc<TexArtEcPackage>, art_id: u32, page_key: fn(u32) -> ArtPageKey)
+    pub fn sprite_ec_pages(&self, tex_art_ec: &TexArtEcPackage, art_id: u32, page_key: fn(u32) -> ArtPageKey)
         -> Option<ResolvedArtSprite> {
         let slot = tex_art_ec.present_slot(art_id)?;
-        let mut resolved = self.resolve_slot(
+        let mut resolved = self.slot_sprite(
             page_key(slot.page_index),
             slot.x,
             slot.y,
@@ -355,26 +429,22 @@ impl ArtPageAtlas {
             slot.draw_offset_y,
             tex_art_ec.atlas_width(),
             tex_art_ec.atlas_height(),
-            tex_art_ec.pages().get(slot.page_index as usize)?.used_width,
-            tex_art_ec.pages().get(slot.page_index as usize)?.used_height,
-            tex_art_ec.pages().get(slot.page_index as usize)?.pixel_format,
-            read_page_off_frame(tex_art_ec, slot.page_index, |package, page| package.read_page_bytes(page)),
         )?;
         let geometry = tex_art_ec.sprite_geometry(art_id)?;
         resolved.source_pixel_ratio = geometry.legacy_pixel_ratio();
         Some(resolved)
     }
 
-    /// Resolves `art_id` from a package in the Enhanced land layout whose pages are `page_key`: `tex_land_ec.uddp`
+    /// The sprite of `art_id` in a package in the Enhanced land layout whose pages are `page_key`: `tex_land_ec.uddp`
     /// (`ArtPageKey::Terrain`) or its Kingdom Reborn land (`ArtPageKey::KrTerrain`).
-    pub fn resolve_tex_land_ec_pages(
-        &mut self,
-        tex_land_ec: &Arc<TexLandEcPackage>,
+    pub fn sprite_tex_land_ec_pages(
+        &self,
+        tex_land_ec: &TexLandEcPackage,
         art_id: u32,
         page_key: fn(u32) -> ArtPageKey,
     ) -> Option<ResolvedArtSprite> {
         let slot = tex_land_ec.present_slot(art_id)?;
-        self.resolve_slot(
+        self.slot_sprite(
             page_key(slot.page_index),
             slot.x,
             slot.y,
@@ -386,25 +456,20 @@ impl ArtPageAtlas {
             0,
             tex_land_ec.atlas_width(),
             tex_land_ec.atlas_height(),
-            tex_land_ec.pages().get(slot.page_index as usize)?.used_width,
-            tex_land_ec.pages().get(slot.page_index as usize)?.used_height,
-            tex_land_ec.pages().get(slot.page_index as usize)?.pixel_format,
-            read_page_off_frame(tex_land_ec, slot.page_index, |package, page| package.read_page_bytes(page)),
         )
     }
 
-    pub fn resolve_missing(&mut self, aux: &Arc<TexAuxEcPackage>) -> Option<ResolvedArtSprite> {
+    /// The missing texture's sprite (`TexAuxEcPackage::missing_texture_slot`).
+    pub fn sprite_missing(&self, aux: &TexAuxEcPackage) -> Option<ResolvedArtSprite> {
         let slot = aux.missing_texture_slot();
-        self.resolve_slot(ArtPageKey::Missing, 0, 0, slot.width, slot.height,
+        self.slot_sprite(ArtPageKey::Missing, 0, 0, slot.width, slot.height,
             f32::from(slot.width), f32::from(slot.height), -(slot.width as i32 / 2) as i16, 0,
-            u32::from(slot.width), u32::from(slot.height), u32::from(slot.width), u32::from(slot.height),
-            PagePixelFormat::Rgba8888, read_page_off_frame(aux, slot.payload_texture_id, |aux, id| aux.load_rgba(id)?
-                .ok_or_else(|| eyre::eyre!("missing-texture payload is unavailable"))))
+            u32::from(slot.width), u32::from(slot.height))
     }
 
-    fn resolve_slot<F>(
-        &mut self,
-        page_index: ArtPageKey,
+    fn slot_sprite(
+        &self,
+        page: ArtPageKey,
         x: u16,
         y: u16,
         width: u16,
@@ -415,69 +480,12 @@ impl ArtPageAtlas {
         offset_y: i16,
         atlas_width: u32,
         atlas_height: u32,
-        used_width: u32,
-        used_height: u32,
-        pixel_format: PagePixelFormat,
-        read_page_bytes: F,
-    ) -> Option<ResolvedArtSprite>
-    where
-        F: FnOnce() -> eyre::Result<Vec<u8>> + Send + 'static,
-    {
+    ) -> Option<ResolvedArtSprite> {
         if atlas_width > self.page_width || atlas_height > self.page_height {
             return None;
         }
-
-        let page_upload_pending = self.page_upload_pending(page_index);
-
-        self.current_tick += 1;
-
-        let layer = if let Some(&layer) = self.page_to_layer.get(&page_index) {
-            self.layer_access_tick[layer as usize] = self.current_tick;
-            if page_upload_pending {
-                return None;
-            }
-            layer
-        } else {
-            // Need to allocate a layer for this page. Check if we already requested it.
-            if page_upload_pending {
-                return None; // Still uploading
-            }
-
-            // Find free layer or evict LRU
-            let layer = if let Some(free_layer) = self.layer_to_page.iter().position(|p| p.is_none()) {
-                free_layer as u32
-            } else if self.active_layers < self.max_layers {
-                self.request_growth();
-                return None;
-            } else {
-                let lru_layer = self.layer_access_tick.iter().enumerate().min_by_key(|&(_, &tick)| tick).map(|(i, _)| i).unwrap() as u32;
-                if let Some(evicted_page) = self.layer_to_page[lru_layer as usize] {
-                    self.page_to_layer.remove(&evicted_page);
-                    self.mapping_revision = self.mapping_revision.saturating_add(1);
-                }
-                lru_layer
-            };
-
-            self.queue_page_upload(
-                page_index,
-                layer,
-                atlas_width,
-                atlas_height,
-                used_width,
-                used_height,
-                pixel_format,
-                read_page_bytes,
-            );
-
-            self.page_to_layer.insert(page_index, layer);
-            self.layer_to_page[layer as usize] = Some(page_index);
-            self.layer_access_tick[layer as usize] = self.current_tick;
-
-            return None; // Wait for upload
-        };
-
         Some(ResolvedArtSprite {
-            layer,
+            page,
             uv_min: Vec2::new(x as f32 / self.page_width as f32, y as f32 / self.page_height as f32),
             uv_max: Vec2::new((x + width) as f32 / self.page_width as f32, (y + height) as f32 / self.page_height as f32),
             logical_width,
@@ -487,6 +495,82 @@ impl ArtPageAtlas {
             source_pixel_ratio: 1.0,
             legacy_art: false,
         })
+    }
+
+    /// The layer of `page`, for a sprite drawn on it now (marked used, for the LRU eviction); `None` while the page is
+    /// read, decoded or uploaded, which this starts when the page has no layer yet: in a free layer, else by growing
+    /// the atlas, else in the least recently used page's layer. `None` also when `sources` lack the page's package.
+    pub fn bind_page(&mut self, page: ArtPageKey, sources: ArtPageSources<'_>) -> Option<u32> {
+        if let Some(&layer) = self.page_to_layer.get(&page) {
+            self.current_tick += 1;
+            self.layer_access_tick[layer as usize] = self.current_tick;
+            return (!self.page_upload_pending(page)).then_some(layer);
+        }
+        if self.page_upload_pending(page) {
+            return None;
+        }
+        let request = art_page_request(page, sources)?;
+        self.page_layer(page, request.atlas_width, request.atlas_height, request.used_width, request.used_height,
+            request.pixel_format, request.read)
+    }
+
+    fn page_layer<F>(
+        &mut self,
+        page_index: ArtPageKey,
+        atlas_width: u32,
+        atlas_height: u32,
+        used_width: u32,
+        used_height: u32,
+        pixel_format: PagePixelFormat,
+        read_page_bytes: F,
+    ) -> Option<u32>
+    where
+        F: FnOnce() -> eyre::Result<Vec<u8>> + Send + 'static,
+    {
+        let page_upload_pending = self.page_upload_pending(page_index);
+
+        self.current_tick += 1;
+
+        if let Some(&layer) = self.page_to_layer.get(&page_index) {
+            self.layer_access_tick[layer as usize] = self.current_tick;
+            return (!page_upload_pending).then_some(layer);
+        }
+        // Need to allocate a layer for this page. Check if we already requested it.
+        if page_upload_pending {
+            return None; // Still uploading
+        }
+
+        // Find free layer or evict LRU
+        let layer = if let Some(free_layer) = self.layer_to_page.iter().position(|p| p.is_none()) {
+            free_layer as u32
+        } else if self.active_layers < self.max_layers {
+            self.request_growth();
+            return None;
+        } else {
+            let lru_layer = self.layer_access_tick.iter().enumerate().min_by_key(|&(_, &tick)| tick).map(|(i, _)| i).unwrap() as u32;
+            if let Some(evicted_page) = self.layer_to_page[lru_layer as usize] {
+                self.page_to_layer.remove(&evicted_page);
+                self.mapping_revision = self.mapping_revision.saturating_add(1);
+            }
+            lru_layer
+        };
+
+        self.queue_page_upload(
+            page_index,
+            layer,
+            atlas_width,
+            atlas_height,
+            used_width,
+            used_height,
+            pixel_format,
+            read_page_bytes,
+        );
+
+        self.page_to_layer.insert(page_index, layer);
+        self.layer_to_page[layer as usize] = Some(page_index);
+        self.layer_access_tick[layer as usize] = self.current_tick;
+
+        None // Wait for upload
     }
 
     pub fn resident_page_count(&self) -> usize {
@@ -592,8 +676,7 @@ mod tests {
     fn mixed_sprite_pages_do_not_alias_and_keep_source_keys_after_growth() {
         let mut atlas = ArtPageAtlas::new(Handle::default(), 4, 4, 2, 4, PagePixelFormat::Rgba8888);
         for (key, value) in [(ArtPageKey::Classic(0), 31), (ArtPageKey::Enhanced(0), 127)] {
-            assert!(atlas.resolve_slot(key, 0, 0, 4, 4, 4.0, 4.0, 0, 0,
-                4, 4, 4, 4, PagePixelFormat::Rgba8888, move || Ok(vec![value; 64])).is_none());
+            assert!(atlas.page_layer(key, 4, 4, 4, 4, PagePixelFormat::Rgba8888, move || Ok(vec![value; 64])).is_none());
         }
         atlas.finish_decodes();
         assert_eq!(atlas.pending_uploads.len(), 2);
@@ -611,8 +694,8 @@ mod tests {
     fn page_reads_leave_the_frame_and_a_reset_drops_their_pages() {
         let mut atlas = ArtPageAtlas::new(Handle::default(), 4, 4, 2, 4, PagePixelFormat::Rgba8888);
         let (release, wait) = mpsc::channel::<()>();
-        let resolve = |atlas: &mut ArtPageAtlas, key, wait: mpsc::Receiver<()>| atlas.resolve_slot(key, 0, 0, 4, 4,
-            4.0, 4.0, 0, 0, 4, 4, 4, 4, PagePixelFormat::Rgba8888, move || { let _ = wait.recv(); Ok(vec![7; 64]) });
+        let resolve = |atlas: &mut ArtPageAtlas, key, wait: mpsc::Receiver<()>| atlas.page_layer(key, 4, 4, 4, 4,
+            PagePixelFormat::Rgba8888, move || { let _ = wait.recv(); Ok(vec![7; 64]) });
         // The read blocks until released, yet the resolve returns: the page waits as pending, not on the frame.
         assert!(resolve(&mut atlas, ArtPageKey::Enhanced(0), wait).is_none());
         assert_eq!(atlas.pending_page_count(), 1);

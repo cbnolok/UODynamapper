@@ -12,8 +12,8 @@ use crate::world::caves::{is_buried_floor, CaveMap, CaveStatic, CavesRes, Player
 use crate::world::z_view::{PackageLand, ZViewCut, ZViewLimit};
 use crate::render::scene::SceneStateData;
 use crate::world::statics::{LazyStaticsStore, StaticsStoreRes};
-use crate::render::assets::art::{GroundArtPageAtlas, ResolvedArtSprite, SpriteArtPageAtlas};
-use crate::render::assets::art::ArtPageKey;
+use crate::render::assets::art::{ArtPageAtlas, GroundArtPageAtlas, ResolvedArtSprite, SpriteArtPageAtlas};
+use crate::render::assets::art::{ArtPageKey, ArtPageSources};
 use crate::render::assets::ec_item_surface::KR_ITEM_RECORD_BASE;
 use crate::content::{
     MapPlanesRes, TexArtCcPackageRes, TexArtEcPackageRes, TexLandEcPackageRes, TileMetaPackageRes, TexAuxEcPackageRes,
@@ -22,6 +22,7 @@ use crate::prelude::*;
 use super::client_grunge::STATIC_FLAG_CLIENT_GRUNGE;
 use bevy::prelude::*;
 use bevy::platform::collections::HashSet;
+use std::collections::HashMap;
 use super::static_placement::{
     ART_QUAD_CORNERS, CC_FLAT_QUAD_FORWARD_XZ, FLAT_QUAD_CC_FLAT, FLAT_QUAD_EC_CAMERA, FLAT_QUAD_EC_SURFACE,
     GROUND_ART_Y_BIAS, GroundQuadBounds, STATIC_BILLBOARD_RIGHT_XZ, StaticBillboardBounds, StaticDepthClass,
@@ -44,7 +45,7 @@ use super::static_batches::{
     StaticChunkBatchKey, StaticPickTile, StaticRenderTile, static_hue_payload, static_sprite_opacity,
 };
 use super::static_chunk_cache::{
-    CachedStaticChunk, CachedStaticChunkStats, StaticAtlasRetrySignature, StaticChunkCacheConfig,
+    CachedStaticChunk, CachedStaticChunkStats, StaticAssembly, StaticAtlasRetrySignature, StaticChunkCacheConfig,
     StaticChunkRenderCache, aggregate_cached_visible_static_stats, should_skip_unchanged_incomplete_static_retry,
     static_atlas_retry_signature, static_light_signature,
 };
@@ -465,7 +466,10 @@ struct StaticChunkBuildState {
     pick_tiles: Vec<StaticPickTile>,
     sprite_pick_indices: Vec<(f64, usize)>,
     ground_pick_indices: Vec<(f64, usize)>,
-    requested_pages: HashSet<u64>,
+    /// The art pages of the sprites and of the ground instances: an instance's `layer` holds its page's slot here
+    /// (`art_page_slot`) until the chunk is assembled into the outputs, which binds the pages to atlas layers.
+    sprite_pages: Vec<ArtPageKey>,
+    ground_pages: Vec<ArtPageKey>,
     stats: CachedStaticChunkStats,
     render_tiles: Vec<StaticRenderTile>,
     /// The land the roofs under KR's cut are counted from (`ZViewCut::roof_layer`), and the client shadow's ground: the
@@ -473,6 +477,18 @@ struct StaticChunkBuildState {
     own_land: PackageLand,
     /// The cells of the tile atlas, the land as drawn, the chunk read, so a change of them rebuilds the chunk.
     land_cells: Option<AtlasCells>,
+}
+
+/// The `layer` of an instance on no art page (dot mode), which assembling keeps as layer 0.
+const NO_ART_PAGE_SLOT: u32 = 0;
+
+/// The slot of `page` in a chunk's `pages`, from 1 (`NO_ART_PAGE_SLOT` is no page), which it joins when new.
+fn art_page_slot(pages: &mut Vec<ArtPageKey>, page: ArtPageKey) -> u32 {
+    let index = pages.iter().position(|&known| known == page).unwrap_or_else(|| {
+        pages.push(page);
+        pages.len() - 1
+    });
+    index as u32 + 1
 }
 
 impl StaticChunkBuildState {
@@ -489,9 +505,11 @@ struct StaticCollectSlowStats {
     ground_land_tiles: usize,
     atlas_hits: usize,
     atlas_misses: usize,
-    unique_requested_pages: HashSet<u64>,
+    unique_requested_pages: HashSet<ArtPageKey>,
     copied_sprite_instances: usize,
     copied_ground_instances: usize,
+    /// The atlases' mapping revisions before the assembly (`StaticAssembly::signature`).
+    mapping_revisions_before: (u64, u64),
 }
 
 impl StaticCollectSlowStats {
@@ -499,10 +517,7 @@ impl StaticCollectSlowStats {
         self.visited_blocks += chunk.stats.visited_blocks;
         self.source_tiles += chunk.stats.source_tiles;
         self.ground_land_tiles += chunk.stats.ground_land_tiles;
-        self.atlas_hits += chunk.stats.atlas_hits;
-        self.atlas_misses += chunk.stats.atlas_misses;
-        self.unique_requested_pages
-            .extend(chunk.stats.requested_pages.iter().copied());
+        self.unique_requested_pages.extend(chunk.sprite_pages.iter().chain(&chunk.ground_pages).copied());
     }
 }
 
@@ -548,8 +563,6 @@ fn static_collect_resources<'a>(
 
 fn static_chunk_cache_config(
     frame: StaticCollectFrameConfig,
-    sprite_atlas: &SpriteArtPageAtlas,
-    ground_atlas: &GroundArtPageAtlas,
     static_lights: &super::static_lights::RenderStaticLightInstances,
 ) -> StaticChunkCacheConfig {
     StaticChunkCacheConfig {
@@ -557,8 +570,6 @@ fn static_chunk_cache_config(
         dot_mode: frame.is_dot_mode,
         art_source: frame.art_source,
         land_style: frame.land_style,
-        sprite_atlas_mapping_revision: sprite_atlas.0.mapping_revision(),
-        ground_atlas_mapping_revision: ground_atlas.0.mapping_revision(),
         static_art_local_light_signature: frame
             .static_art_local_lights
             .then(|| static_light_signature(static_lights, frame.map_id)),
@@ -602,13 +613,11 @@ fn evaluate_static_collect_cache_decision(
     let all_visible_chunks_present = visible_chunk_keys
         .iter()
         .all(|chunk_key| cache.chunks.contains_key(chunk_key));
+    // Complete: the last assembly drew every instance, and the atlases kept the pages it bound.
     let all_visible_chunks_complete = all_visible_chunks_present
-        && visible_chunk_keys.iter().all(|chunk_key| {
-            cache
-                .chunks
-                .get(chunk_key)
-                .is_some_and(|chunk| chunk.stats.atlas_misses == 0)
-        });
+        && cache.last_assembly.is_some_and(|assembly| assembly.atlas_misses == 0
+            && assembly.signature.sprite_mapping_revision == atlas_retry_signature.sprite_mapping_revision
+            && assembly.signature.ground_mapping_revision == atlas_retry_signature.ground_mapping_revision);
     let skip_unchanged_incomplete_retry = should_skip_unchanged_incomplete_static_retry(
         cache,
         visible_chunk_keys,
@@ -642,15 +651,14 @@ fn try_finish_cached_visible_static_collect(
         return false;
     }
 
-    let aggregate = aggregate_cached_visible_static_stats(cache, visible_chunk_keys, visible_tick);
+    let (aggregate, unique_requested_pages) = aggregate_cached_visible_static_stats(cache, visible_chunk_keys, visible_tick);
+    let (atlas_hits, atlas_misses) = cache.last_assembly
+        .map_or((0, 0), |assembly| (assembly.atlas_hits, assembly.atlas_misses));
     let path = if decision.skip_unchanged_incomplete_retry {
         StaticArtCollectPath::IncompleteWaitFastPath
     } else {
         StaticArtCollectPath::CompleteFastPath
     };
-    if decision.all_visible_chunks_complete {
-        cache.last_incomplete_retry_atlas_signature = None;
-    }
     record_static_collect_path(debug_state, path, 0, 0);
     log_static_collect_stats(
         debug_state,
@@ -662,13 +670,13 @@ fn try_finish_cached_visible_static_collect(
             visited_blocks: aggregate.visited_blocks,
             source_tiles: aggregate.source_tiles,
             ground_land_tiles: aggregate.ground_land_tiles,
-            unique_requested_pages: aggregate.requested_pages.len(),
+            unique_requested_pages,
             resident_pages: sprite_atlas.resident_page_count() + ground_atlas.resident_page_count(),
             pending_pages: sprite_atlas.pending_page_count() + ground_atlas.pending_page_count(),
             atlas_capacity_pages: sprite_atlas.active_layers as usize
                 + ground_atlas.active_layers as usize,
-            atlas_hits: aggregate.atlas_hits,
-            atlas_misses: aggregate.atlas_misses,
+            atlas_hits,
+            atlas_misses,
             emitted_instances: sprite_output.0.len() + ground_output.0.len(),
             copied_sprite_instances: 0,
             copied_ground_instances: 0,
@@ -695,7 +703,7 @@ fn reuse_cached_static_chunk(
 ) -> bool {
     if let Some(chunk) = cache.chunks.get_mut(&chunk_key) {
         chunk.last_visible_tick = visible_tick;
-        chunk.stats.atlas_misses == 0
+        true
     } else {
         false
     }
@@ -715,7 +723,12 @@ fn collect_visible_static_chunks_slow(
     cache: &mut StaticChunkRenderCache,
     surface_resolution_cache: &mut StaticSurfaceLikeResolutionCache,
 ) -> StaticCollectSlowStats {
-    let mut slow_stats = StaticCollectSlowStats::default();
+    let mut slow_stats = StaticCollectSlowStats {
+        mapping_revisions_before: (sprite_atlas.0.mapping_revision(), ground_atlas.0.mapping_revision()),
+        ..default()
+    };
+    cache.assembled_picks.iter_mut().for_each(HashMap::clear);
+    let sources = art_page_sources(resources);
 
     for chunk_key in visible_chunk_keys.iter().copied() {
         if !reuse_cached_static_chunk(cache, chunk_key, visible_tick) {
@@ -740,9 +753,11 @@ fn collect_visible_static_chunks_slow(
         append_cached_static_chunk_outputs(
             chunk_key,
             chunk,
-            sprite_output,
-            ground_output,
+            (&mut *sprite_atlas, &mut *ground_atlas),
+            sources,
+            (sprite_output, ground_output),
             batches,
+            &mut cache.assembled_picks,
             &mut slow_stats,
         );
     }
@@ -759,8 +774,8 @@ fn rebuild_static_chunk(
     frame: StaticCollectFrameConfig,
     resources: StaticCollectResources<'_>,
     statics_store: &mut LazyStaticsStore,
-    sprite_atlas: &mut SpriteArtPageAtlas,
-    ground_atlas: &mut GroundArtPageAtlas,
+    sprite_atlas: &SpriteArtPageAtlas,
+    ground_atlas: &GroundArtPageAtlas,
     surface_resolution_cache: &mut StaticSurfaceLikeResolutionCache,
 ) -> CachedStaticChunk {
     let mut build = StaticChunkBuildState::default();
@@ -869,8 +884,8 @@ fn emit_static_render_tile_on_surfaces(
     surface_tops: &[&[((i32, i32), i32)]],
     frame: StaticCollectFrameConfig,
     resources: StaticCollectResources<'_>,
-    sprite_atlas: &mut SpriteArtPageAtlas,
-    ground_atlas: &mut GroundArtPageAtlas,
+    sprite_atlas: &SpriteArtPageAtlas,
+    ground_atlas: &GroundArtPageAtlas,
     surface_resolution_cache: &mut StaticSurfaceLikeResolutionCache,
     build: &mut StaticChunkBuildState,
 ) {
@@ -910,8 +925,8 @@ fn emit_static_render_tile(
     farther_floor_at: impl Fn(i32) -> bool,
     frame: StaticCollectFrameConfig,
     resources: StaticCollectResources<'_>,
-    sprite_atlas: &mut SpriteArtPageAtlas,
-    ground_atlas: &mut GroundArtPageAtlas,
+    sprite_atlas: &SpriteArtPageAtlas,
+    ground_atlas: &GroundArtPageAtlas,
     surface_resolution_cache: &mut StaticSurfaceLikeResolutionCache,
     build: &mut StaticChunkBuildState,
 ) {
@@ -1150,7 +1165,7 @@ fn emit_dot_static_tile(
         world_x: info.world_x,
         world_z: info.world_z,
         world_y,
-        layer: 0,
+        layer: NO_ART_PAGE_SLOT,
         depth_class: encoded_depth_class,
         base_world_y: info.base_world_y,
         uv_min: [0.0, 0.0],
@@ -1185,8 +1200,8 @@ fn emit_art_static_tile(
     frame: StaticCollectFrameConfig,
     resources: StaticCollectResources<'_>,
     visual_kind: StaticVisualKind,
-    sprite_atlas: &mut SpriteArtPageAtlas,
-    ground_atlas: &mut GroundArtPageAtlas,
+    sprite_atlas: &SpriteArtPageAtlas,
+    ground_atlas: &GroundArtPageAtlas,
     build: &mut StaticChunkBuildState,
 ) {
     let bias = if matches!(visual_kind, StaticVisualKind::TexLandEc { .. }) {
@@ -1204,7 +1219,6 @@ fn emit_art_static_tile(
         resources,
         sprite_atlas,
         ground_atlas,
-        &mut build.requested_pages,
     ) else {
         return;
     };
@@ -1232,7 +1246,6 @@ fn emit_art_static_tile(
     };
 
     if let Some(resolved) = resolved_sprite {
-        build.stats.atlas_hits += 1;
         let (hue_id, hue_flags) = static_hue_payload(info.tile.hue);
         if matches!(visual_kind, StaticVisualKind::TexLandEc { .. }) {
             emit_ground_static_instance(
@@ -1287,22 +1300,14 @@ fn emit_art_static_tile(
                 build,
             );
         }
-    } else {
-        build.stats.atlas_misses += 1;
     }
 }
-
-/// `requested_pages` flags of the Kingdom Reborn item art and land pages, beside the Enhanced art (1 << 62), land
-/// (1 << 63) and missing texture (1 << 61) ones.
-const KR_ART_REQUESTED_PAGE_FLAG: u64 = 1 << 60;
-const KR_TERRAIN_REQUESTED_PAGE_FLAG: u64 = 1 << 59;
 
 fn resolve_art_static_sprite(
     visual_kind: StaticVisualKind,
     resources: StaticCollectResources<'_>,
-    sprite_atlas: &mut SpriteArtPageAtlas,
-    ground_atlas: &mut GroundArtPageAtlas,
-    requested_pages: &mut HashSet<u64>,
+    sprite_atlas: &SpriteArtPageAtlas,
+    ground_atlas: &GroundArtPageAtlas,
 ) -> Option<(ClientTextureSource, Option<ResolvedArtSprite>, f32)> {
     match visual_kind {
         StaticVisualKind::CcRegular {
@@ -1310,14 +1315,10 @@ fn resolve_art_static_sprite(
             fallback_art_id,
         } => {
             let tex_art_cc = &resources.tex_art_cc?.0;
-            let resolved_sprite = if let Some(slot) = tex_art_cc.present_slot(art_id as u32) {
-                requested_pages.insert(slot.page_index as u64);
-                sprite_atlas.resolve_cc(tex_art_cc, art_id)
+            let resolved_sprite = if tex_art_cc.present_slot(art_id as u32).is_some() {
+                sprite_atlas.sprite_cc(tex_art_cc, art_id)
             } else if fallback_art_id != art_id {
-                if let Some(slot) = tex_art_cc.present_slot(fallback_art_id as u32) {
-                    requested_pages.insert(slot.page_index as u64);
-                }
-                sprite_atlas.resolve_cc(tex_art_cc, fallback_art_id)
+                sprite_atlas.sprite_cc(tex_art_cc, fallback_art_id)
             } else {
                 None
             };
@@ -1325,41 +1326,32 @@ fn resolve_art_static_sprite(
             Some((ClientTextureSource::Cc, resolved_sprite, 0.0))
         }
         StaticVisualKind::TexLandEc { resolution } => {
-            let (tex_land_ec, page_key, page_flag): (_, fn(u32) -> ArtPageKey, _) = if resolution.kingdom_reborn {
-                (resources.kingdom_reborn?.land, ArtPageKey::KrTerrain, KR_TERRAIN_REQUESTED_PAGE_FLAG)
+            let (tex_land_ec, page_key): (_, fn(u32) -> ArtPageKey) = if resolution.kingdom_reborn {
+                (resources.kingdom_reborn?.land, ArtPageKey::KrTerrain)
             } else {
-                (&resources.tex_land_ec?.0, ArtPageKey::Terrain, 1u64 << 63)
+                (&resources.tex_land_ec?.0, ArtPageKey::Terrain)
             };
-
-            if let Some(slot) = tex_land_ec.present_slot(resolution.runtime_slot_id) {
-                requested_pages.insert(page_flag | slot.page_index as u64);
-            }
 
             Some((
                 ClientTextureSource::Ec,
-                ground_atlas.resolve_tex_land_ec_pages(tex_land_ec, resolution.runtime_slot_id, page_key),
+                ground_atlas.sprite_tex_land_ec_pages(tex_land_ec, resolution.runtime_slot_id, page_key),
                 resolution.texture_repetition,
             ))
         }
         StaticVisualKind::EcRegular { art_id } | StaticVisualKind::EcSurface { art_id } => {
-            let (tex_art_ec, tilemeta_package, art_id, page_key, page_flag): (_, _, _, fn(u32) -> ArtPageKey, _) =
+            let (tex_art_ec, tilemeta_package, art_id, page_key): (_, _, _, fn(u32) -> ArtPageKey) =
                 if art_id >= KR_ITEM_RECORD_BASE {
                     // The Kingdom Reborn records, drawn from the Kingdom Reborn art or the Enhanced art it leaves them to.
                     let kr = resources.kingdom_reborn?;
                     let art_id = art_id - KR_ITEM_RECORD_BASE;
                     match kr.art_slot(resources.tex_art_ec_package(), art_id) {
                         Some((art, _)) if !std::ptr::eq(art, kr.art.as_ref()) =>
-                            (&resources.tex_art_ec?.0, Some(kr.tilemeta), art_id, ArtPageKey::Enhanced, 1u64 << 62),
-                        _ => (kr.art, Some(kr.tilemeta), art_id, ArtPageKey::KrEnhanced, KR_ART_REQUESTED_PAGE_FLAG),
+                            (&resources.tex_art_ec?.0, Some(kr.tilemeta), art_id, ArtPageKey::Enhanced),
+                        _ => (kr.art, Some(kr.tilemeta), art_id, ArtPageKey::KrEnhanced),
                     }
                 } else {
-                    (&resources.tex_art_ec?.0, resources.tilemeta_package(), art_id, ArtPageKey::Enhanced,
-                        1u64 << 62)
+                    (&resources.tex_art_ec?.0, resources.tilemeta_package(), art_id, ArtPageKey::Enhanced)
                 };
-
-            if let Some(slot) = tex_art_ec.present_slot(art_id) {
-                requested_pages.insert(page_flag | u64::from(slot.page_index));
-            }
 
             let texture_stretch = if matches!(visual_kind, StaticVisualKind::EcSurface { .. }) {
                 tilemeta_package
@@ -1370,11 +1362,10 @@ fn resolve_art_static_sprite(
             } else {
                 0.0
             };
-            Some((ClientTextureSource::Ec, sprite_atlas.resolve_ec_pages(tex_art_ec, art_id, page_key), texture_stretch))
+            Some((ClientTextureSource::Ec, sprite_atlas.sprite_ec_pages(tex_art_ec, art_id, page_key), texture_stretch))
         }
         StaticVisualKind::Missing => {
-            requested_pages.insert(1u64 << 61);
-            Some((ClientTextureSource::Ec, sprite_atlas.resolve_missing(&resources.tex_aux_ec?.0), 0.0))
+            Some((ClientTextureSource::Ec, sprite_atlas.sprite_missing(&resources.tex_aux_ec?.0), 0.0))
         }
     }
 }
@@ -1410,11 +1401,12 @@ fn emit_ground_static_instance(
     let (material_payload, material_flags) =
         surface_like_ground_material_payload(liquid_payload);
     let (tile_x, tile_y) = cell_depth_anchor(anchored_world_x, anchored_world_z);
+    let layer = art_page_slot(&mut build.ground_pages, resolved.page);
     build.ground_instances.push(GroundTileInstance {
         world_x: anchored_world_x,
         world_z: anchored_world_z,
         world_y,
-        layer: resolved.layer,
+        layer,
         depth_class: encoded_depth_class,
         base_world_y: info.base_world_y,
         uv_min: [resolved.uv_min.x, resolved.uv_min.y],
@@ -1505,11 +1497,12 @@ fn emit_billboard_static_instance(
     };
     let (tile_x, tile_y) = sprite_depth_anchor(flat_quad, anchored_world_x, anchored_world_z);
 
+    let layer = art_page_slot(&mut build.sprite_pages, resolved.page);
     build.sprite_instances.push(SpriteInstance {
         world_x: anchored_world_x,
         world_z: anchored_world_z,
         world_y,
-        layer: resolved.layer,
+        layer,
         depth_class: encoded_depth_class,
         base_world_y: info.base_world_y,
         uv_min: [resolved.uv_min.x, resolved.uv_min.y],
@@ -1583,11 +1576,12 @@ fn emit_cc_surface_like_flat_static_instance(
     );
     let (tile_x, tile_y) = sprite_depth_anchor(FLAT_QUAD_CC_FLAT, anchored_world_x, anchored_world_z);
 
+    let layer = art_page_slot(&mut build.sprite_pages, resolved.page);
     build.sprite_instances.push(SpriteInstance {
         world_x: centered_world_x,
         world_z: centered_world_z,
         world_y,
-        layer: resolved.layer,
+        layer,
         depth_class: encoded_depth_class,
         base_world_y: info.base_world_y,
         uv_min: [resolved.uv_min.x, resolved.uv_min.y],
@@ -1623,16 +1617,14 @@ fn finish_rebuilt_static_chunk(
         indices.into_iter().map(|(_, index)| index).collect()
     };
 
-    let mut requested_pages = build.requested_pages.into_iter().collect::<Vec<_>>();
-    requested_pages.sort_unstable();
-    build.stats.requested_pages = requested_pages;
-
     CachedStaticChunk {
         sprite_instances: build.sprite_instances,
         ground_instances: build.ground_instances,
         pick_tiles: build.pick_tiles,
         sprite_pick_indices: sorted_indices(build.sprite_pick_indices),
         ground_pick_indices: sorted_indices(build.ground_pick_indices),
+        sprite_pages: build.sprite_pages,
+        ground_pages: build.ground_pages,
         stats: build.stats,
         last_visible_tick: visible_tick,
         land_cells: build.land_cells,
@@ -1653,36 +1645,97 @@ fn sort_static_chunk_instances(
     });
 }
 
+/// The packages the statics' art pages are read from.
+fn art_page_sources(resources: StaticCollectResources<'_>) -> ArtPageSources<'_> {
+    ArtPageSources {
+        classic: resources.tex_art_cc.map(|res| &res.0),
+        enhanced: resources.tex_art_ec.map(|res| &res.0),
+        kr_enhanced: resources.kingdom_reborn.map(|kr| kr.art),
+        terrain: resources.tex_land_ec.map(|res| &res.0),
+        kr_terrain: resources.kingdom_reborn.map(|kr| kr.land),
+        missing: resources.tex_aux_ec.map(|res| &res.0),
+    }
+}
+
+/// The atlas layer of each page slot of a chunk (`art_page_slot`), `None` for a page not yet resident.
+fn bind_chunk_pages(pages: &[ArtPageKey], atlas: &mut ArtPageAtlas, sources: ArtPageSources<'_>) -> Vec<Option<u32>> {
+    std::iter::once(Some(0)).chain(pages.iter().map(|&page| atlas.bind_page(page, sources))).collect()
+}
+
+/// Appends `instances` to `output` with their page slots replaced by the layers `layers` binds them to. Returns the
+/// indices of the instances appended when some were left out, their pages not resident; `None` when all were.
+fn append_bound_instances<T: Copy>(
+    instances: &[T],
+    layers: &[Option<u32>],
+    layer: fn(&mut T) -> &mut u32,
+    output: &mut Vec<T>,
+) -> Option<Vec<u32>> {
+    let start = output.len();
+    if let Some(layers) = layers.iter().copied().collect::<Option<Vec<u32>>>() {
+        output.extend_from_slice(instances);
+        for instance in &mut output[start..] {
+            let slot = layer(instance);
+            *slot = layers[*slot as usize];
+        }
+        return None;
+    }
+    let mut kept = Vec::new();
+    for (index, instance) in instances.iter().enumerate() {
+        let mut instance = *instance;
+        let slot = layer(&mut instance);
+        if let Some(bound) = layers[*slot as usize] {
+            *slot = bound;
+            output.push(instance);
+            kept.push(index as u32);
+        }
+    }
+    Some(kept)
+}
+
+/// Appends the chunk's instances to the outputs, on the atlas layers of their pages: an instance whose page is not
+/// resident yet is left out, its page requested, until an assembly after the page arrives.
 fn append_cached_static_chunk_outputs(
     chunk_key: StaticChunkBatchKey,
     chunk: &CachedStaticChunk,
-    sprite_output: &mut RenderStaticInstances,
-    ground_output: &mut RenderStaticLandInstances,
+    (sprite_atlas, ground_atlas): (&mut SpriteArtPageAtlas, &mut GroundArtPageAtlas),
+    sources: ArtPageSources<'_>,
+    (sprite_output, ground_output): (&mut RenderStaticInstances, &mut RenderStaticLandInstances),
     batches: &mut RenderStaticChunkBatches,
+    assembled_picks: &mut [HashMap<StaticChunkBatchKey, Vec<u32>>; 2],
     slow_stats: &mut StaticCollectSlowStats,
 ) {
     if !chunk.sprite_instances.is_empty() {
         let start = sprite_output.0.len() as u32;
-        let count = chunk.sprite_instances.len() as u32;
-        sprite_output.0.extend_from_slice(&chunk.sprite_instances);
+        let layers = bind_chunk_pages(&chunk.sprite_pages, sprite_atlas, sources);
+        let kept = append_bound_instances(&chunk.sprite_instances, &layers, |instance| &mut instance.layer,
+            &mut sprite_output.0);
+        let count = sprite_output.0.len() as u32 - start;
         slow_stats.copied_sprite_instances += count as usize;
-        batches.sprite.push(StaticChunkBatch {
-            key: chunk_key,
-            start,
-            count,
-        });
+        slow_stats.atlas_hits += count as usize;
+        slow_stats.atlas_misses += chunk.sprite_instances.len() - count as usize;
+        if let Some(kept) = kept {
+            assembled_picks[0].insert(chunk_key, kept);
+        }
+        if count > 0 {
+            batches.sprite.push(StaticChunkBatch { key: chunk_key, start, count });
+        }
     }
 
     if !chunk.ground_instances.is_empty() {
         let start = ground_output.0.len() as u32;
-        let count = chunk.ground_instances.len() as u32;
-        ground_output.0.extend_from_slice(&chunk.ground_instances);
+        let layers = bind_chunk_pages(&chunk.ground_pages, ground_atlas, sources);
+        let kept = append_bound_instances(&chunk.ground_instances, &layers, |instance| &mut instance.layer,
+            &mut ground_output.0);
+        let count = ground_output.0.len() as u32 - start;
         slow_stats.copied_ground_instances += count as usize;
-        batches.ground.push(StaticChunkBatch {
-            key: chunk_key,
-            start,
-            count,
-        });
+        slow_stats.atlas_hits += count as usize;
+        slow_stats.atlas_misses += chunk.ground_instances.len() - count as usize;
+        if let Some(kept) = kept {
+            assembled_picks[1].insert(chunk_key, kept);
+        }
+        if count > 0 {
+            batches.ground.push(StaticChunkBatch { key: chunk_key, start, count });
+        }
     }
 }
 
@@ -1698,11 +1751,16 @@ fn finish_static_collect_slow_path(
     cache: &mut StaticChunkRenderCache,
     debug_state: &mut StaticArtCollectDebugState,
 ) {
-    cache.last_incomplete_retry_atlas_signature = if slow_stats.atlas_misses > 0 {
-        Some(static_atlas_retry_signature(sprite_atlas, ground_atlas))
-    } else {
-        None
-    };
+    let (sprite_mapping_revision, ground_mapping_revision) = slow_stats.mapping_revisions_before;
+    cache.last_assembly = Some(StaticAssembly {
+        signature: StaticAtlasRetrySignature {
+            sprite_mapping_revision,
+            ground_mapping_revision,
+            ..static_atlas_retry_signature(sprite_atlas, ground_atlas)
+        },
+        atlas_hits: slow_stats.atlas_hits,
+        atlas_misses: slow_stats.atlas_misses,
+    });
     cache.prune_stale(visible_tick);
     let visible_chunks = visible_chunk_keys.len();
     cache.last_visible_chunk_keys = visible_chunk_keys;
@@ -1783,7 +1841,7 @@ pub fn sys_collect_visible_statics(
         // Re-enabling must rebuild the output lists, even if the visible chunks
         // and their cached instances are unchanged.
         cache.last_visible_chunk_keys.clear();
-        cache.last_incomplete_retry_atlas_signature = None;
+        cache.last_assembly = None;
         debug_state.last = None;
         return;
     }
@@ -1834,8 +1892,7 @@ pub fn sys_collect_visible_statics(
         &caves,
         kr_packages.sources().filter(|_| frame.land_style == StaticLandStyle::KingdomReborn),
     );
-    let cache_config =
-        static_chunk_cache_config(frame, &sprite_atlas, &ground_atlas, &static_lights);
+    let cache_config = static_chunk_cache_config(frame, &static_lights);
     let visible_tick = outputs.3.begin_frame();
     let config_changed = outputs.3.sync_config(cache_config);
     debug_state.land_invalidated_chunks += outputs.3.invalidate_changed_land(&tile_atlas) as u64;
@@ -3310,8 +3367,6 @@ mod tests {
             dot_mode: false,
             art_source: Some(ClientTextureSource::Cc),
             land_style: StaticLandStyle::Unknown,
-            sprite_atlas_mapping_revision: 0,
-            ground_atlas_mapping_revision: 0,
             static_art_local_light_signature: None,
             show_hidden_multi_parts: false,
             item_routes_revision: 0,
@@ -3334,11 +3389,9 @@ mod tests {
             dot_mode: false,
             art_source: Some(ClientTextureSource::Cc),
             land_style: StaticLandStyle::Unknown,
-            sprite_atlas_mapping_revision: 1,
-            ground_atlas_mapping_revision: 0,
             static_art_local_light_signature: None,
             show_hidden_multi_parts: false,
-            item_routes_revision: 0,
+            item_routes_revision: 1,
             z_view: ZViewCut::NONE,
             caves_revision: 0,
             terrain_sources_revision: 0,
@@ -3355,8 +3408,6 @@ mod tests {
             dot_mode: false,
             art_source: Some(ClientTextureSource::Cc),
             land_style: StaticLandStyle::Unknown,
-            sprite_atlas_mapping_revision: 0,
-            ground_atlas_mapping_revision: 0,
             static_art_local_light_signature: None,
             show_hidden_multi_parts: false,
             item_routes_revision: 0,
@@ -3380,8 +3431,6 @@ mod tests {
             dot_mode: false,
             art_source: Some(ClientTextureSource::Cc),
             land_style: StaticLandStyle::Unknown,
-            sprite_atlas_mapping_revision: 0,
-            ground_atlas_mapping_revision: 0,
             static_art_local_light_signature: None,
             show_hidden_multi_parts: false,
             item_routes_revision: 0,
@@ -3401,8 +3450,6 @@ mod tests {
             dot_mode: false,
             art_source: Some(ClientTextureSource::Cc),
             land_style: StaticLandStyle::Unknown,
-            sprite_atlas_mapping_revision: 0,
-            ground_atlas_mapping_revision: 0,
             static_art_local_light_signature: Some(0),
             show_hidden_multi_parts: false,
             item_routes_revision: 0,
@@ -3425,8 +3472,6 @@ mod tests {
             dot_mode: false,
             art_source: Some(ClientTextureSource::Cc),
             land_style: StaticLandStyle::Unknown,
-            sprite_atlas_mapping_revision: 0,
-            ground_atlas_mapping_revision: 0,
             static_art_local_light_signature: Some(1),
             show_hidden_multi_parts: false,
             item_routes_revision: 0,
@@ -3457,18 +3502,9 @@ mod tests {
             ground_active_layers: 4,
         };
         let mut cache = StaticChunkRenderCache::default();
-        cache.chunks.insert(
-            chunk_key,
-            CachedStaticChunk {
-                stats: CachedStaticChunkStats {
-                    atlas_misses: 1,
-                    ..Default::default()
-                },
-                ..Default::default()
-            },
-        );
+        cache.chunks.insert(chunk_key, CachedStaticChunk::default());
         cache.last_visible_chunk_keys = vec![chunk_key];
-        cache.last_incomplete_retry_atlas_signature = Some(retry_signature);
+        cache.last_assembly = Some(StaticAssembly { signature: retry_signature, atlas_hits: 0, atlas_misses: 1 });
 
         assert!(should_skip_unchanged_incomplete_static_retry(
             &cache,
@@ -3489,6 +3525,62 @@ mod tests {
             false,
             changed_retry_signature,
         ));
+    }
+
+    /// An assembly that drew everything is complete until the atlas moves a page: then the chunks assemble again,
+    /// without being rebuilt.
+    #[test]
+    fn an_atlas_page_moving_assembles_the_chunks_again() {
+        let chunk_key = StaticChunkBatchKey { map_id: 1, gx: 0, gy: 0, scale: 1 };
+        let signature = StaticAtlasRetrySignature {
+            sprite_mapping_revision: 3,
+            ground_mapping_revision: 0,
+            sprite_resident_pages: 1,
+            ground_resident_pages: 0,
+            sprite_pending_pages: 0,
+            ground_pending_pages: 0,
+            sprite_active_layers: 4,
+            ground_active_layers: 4,
+        };
+        let mut cache = StaticChunkRenderCache::default();
+        cache.chunks.insert(chunk_key, CachedStaticChunk::default());
+        cache.last_visible_chunk_keys = vec![chunk_key];
+        cache.last_assembly = Some(StaticAssembly { signature, atlas_hits: 1, atlas_misses: 0 });
+
+        let decision = evaluate_static_collect_cache_decision(&cache, &[chunk_key], false, signature);
+        assert!(decision.visible_set_unchanged && decision.all_visible_chunks_complete);
+        let moved = StaticAtlasRetrySignature { sprite_mapping_revision: 4, ..signature };
+        let decision = evaluate_static_collect_cache_decision(&cache, &[chunk_key], false, moved);
+        assert!(!decision.all_visible_chunks_complete && !decision.skip_unchanged_incomplete_retry);
+        assert_eq!(cache.chunks.len(), 1);
+    }
+
+    /// Assembling replaces the page slots with the pages' layers, leaves out the instances of pages not resident, and
+    /// says which instances it kept, which picking follows.
+    #[test]
+    fn assembly_binds_page_slots_and_leaves_out_unresident_pages() {
+        let instance = |layer, tile_x| SpriteInstance { layer, tile_x, ..SpriteInstance::zeroed() };
+        let instances = [instance(NO_ART_PAGE_SLOT, 0.0), instance(1, 1.0), instance(2, 2.0), instance(1, 3.0)];
+        let mut output = vec![instance(9, -1.0)];
+        assert_eq!(append_bound_instances(&instances, &[Some(0), Some(7), Some(5)], |i| &mut i.layer, &mut output),
+            None);
+        assert_eq!(output.iter().map(|i| i.layer).collect::<Vec<_>>(), [9, 0, 7, 5, 7]);
+
+        let mut output = Vec::new();
+        let kept = append_bound_instances(&instances, &[Some(0), Some(7), None], |i| &mut i.layer, &mut output);
+        assert_eq!(kept, Some(vec![0, 1, 3]));
+        assert_eq!(output.iter().map(|i| (i.layer, i.tile_x)).collect::<Vec<_>>(), [(0, 0.0), (7, 1.0), (7, 3.0)]);
+
+        let key = StaticChunkBatchKey { map_id: 0, gx: 0, gy: 0, scale: 1 };
+        let pick = |graphic| StaticPickTile { tile: StaticRenderTile { graphic, world_x: 0.0, world_z: 0.0, z: 0,
+            hue: 0 }, is_wet: false };
+        let mut cache = StaticChunkRenderCache::default();
+        cache.chunks.insert(key, CachedStaticChunk { pick_tiles: (0..4).map(pick).collect(),
+            sprite_pick_indices: vec![3, 2, 1, 0], ..Default::default() });
+        cache.assembled_picks[0].insert(key, kept.unwrap());
+        let batches = RenderStaticChunkBatches { sprite: vec![StaticChunkBatch { key, start: 0, count: 3 }],
+            ..Default::default() };
+        assert_eq!(cache.gpu_pick_targets(&batches)[0], [pick(3), pick(2), pick(0)]);
     }
 
     #[test]

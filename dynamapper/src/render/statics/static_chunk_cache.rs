@@ -1,10 +1,11 @@
 //! The per-chunk cache of collected statics: what a cached chunk keeps, when it is reused or rebuilt, and the
-//! signatures that retry a chunk whose atlas pages or lights were incomplete.
+//! signatures that assemble the chunks again when their atlas pages arrive or move, or rebuild them when their lights
+//! change.
 
 use crate::settings::ClientTextureSource;
 use crate::render::assets::tile_atlas::{AtlasCells, TileAtlas};
 use crate::world::z_view::ZViewCut;
-use crate::render::assets::art::{GroundArtPageAtlas, SpriteArtPageAtlas};
+use crate::render::assets::art::{ArtPageKey, GroundArtPageAtlas, SpriteArtPageAtlas};
 use bevy::prelude::*;
 use std::collections::HashMap;
 use super::static_source::StaticLandStyle;
@@ -32,8 +33,7 @@ pub(super) struct StaticChunkCacheConfig {
     pub(super) art_source: Option<ClientTextureSource>,
     /// `StaticArtSourceState::land_style`: a change redraws the statics that continue the land from the other art.
     pub(super) land_style: StaticLandStyle,
-    pub(super) sprite_atlas_mapping_revision: u64,
-    pub(super) ground_atlas_mapping_revision: u64,
+    // The art pages' atlas layers are not here: the chunks keep their pages, which assembling them binds to layers.
     // The land the chunks read from the tile atlas is not here: a change rebuilds only the chunks that read the
     // changed cells (`StaticChunkRenderCache::invalidate_changed_land`).
     pub(super) static_art_local_light_signature: Option<u64>,
@@ -54,9 +54,17 @@ pub(super) struct CachedStaticChunkStats {
     pub(super) visited_blocks: usize,
     pub(super) source_tiles: usize,
     pub(super) ground_land_tiles: usize,
+}
+
+/// The last assembly of the cached chunks into the outputs.
+#[derive(Clone, Copy, Debug)]
+pub(super) struct StaticAssembly {
+    /// The atlases after it, with their mapping revisions from before it: a page evicted while it bound the pages
+    /// leaves a revision behind, which assembles again.
+    pub(super) signature: StaticAtlasRetrySignature,
+    /// The instances drawn, and those left out for want of their pages.
     pub(super) atlas_hits: usize,
     pub(super) atlas_misses: usize,
-    pub(super) requested_pages: Vec<u64>,
 }
 
 #[derive(Clone, Debug, Default)]
@@ -66,6 +74,9 @@ pub(super) struct CachedStaticChunk {
     pub(super) pick_tiles: Vec<StaticPickTile>,
     pub(super) sprite_pick_indices: Vec<usize>,
     pub(super) ground_pick_indices: Vec<usize>,
+    /// The pages of the sprites' and the ground instances' page slots (`StaticChunkBuildState::sprite_pages`).
+    pub(super) sprite_pages: Vec<ArtPageKey>,
+    pub(super) ground_pages: Vec<ArtPageKey>,
     pub(super) stats: CachedStaticChunkStats,
     pub(super) last_visible_tick: u64,
     /// The cells of the tile atlas the chunk read (`StaticChunkBuildState::land_cells`).
@@ -78,7 +89,10 @@ pub struct StaticChunkRenderCache {
     current_tick: u64,
     pub(super) chunks: HashMap<StaticChunkBatchKey, CachedStaticChunk>,
     pub(super) last_visible_chunk_keys: Vec<StaticChunkBatchKey>,
-    pub(super) last_incomplete_retry_atlas_signature: Option<StaticAtlasRetrySignature>,
+    pub(super) last_assembly: Option<StaticAssembly>,
+    /// The chunk instances in the outputs, by chunk, of the sprites and the ground, where the last assembly left some
+    /// out: their order in the batch's output range.
+    pub(super) assembled_picks: [HashMap<StaticChunkBatchKey, Vec<u32>>; 2],
     /// The tile atlas's `content_revision` the cached chunks were checked against (`invalidate_changed_land`).
     land_revision: Option<u64>,
 }
@@ -95,8 +109,14 @@ impl StaticChunkRenderCache {
             for batch in batches {
                 let Some(chunk) = self.chunks.get(&batch.key) else { return Vec::new(); };
                 let indices = if kind == 0 { &chunk.sprite_pick_indices } else { &chunk.ground_pick_indices };
-                if targets.len() != batch.start as usize || indices.len() != batch.count as usize { return Vec::new(); }
-                targets.extend(indices.iter().map(|&index| chunk.pick_tiles[index]));
+                let kept = self.assembled_picks[kind].get(&batch.key);
+                if targets.len() != batch.start as usize || kept.map_or(indices.len(), Vec::len) != batch.count as usize {
+                    return Vec::new();
+                }
+                match kept {
+                    Some(kept) => targets.extend(kept.iter().map(|&kept| chunk.pick_tiles[indices[kept as usize]])),
+                    None => targets.extend(indices.iter().map(|&index| chunk.pick_tiles[index])),
+                }
             }
             targets
         })
@@ -118,7 +138,7 @@ impl StaticChunkRenderCache {
             self.config = Some(config);
             self.chunks.clear();
             self.last_visible_chunk_keys.clear();
-            self.last_incomplete_retry_atlas_signature = None;
+            self.last_assembly = None;
         }
         changed
     }
@@ -167,12 +187,14 @@ pub(super) fn static_atlas_retry_signature(
     }
 }
 
+/// The visible chunks' stats, and how many art pages they draw from.
 pub(super) fn aggregate_cached_visible_static_stats(
     cache: &mut StaticChunkRenderCache,
     visible_chunk_keys: &[StaticChunkBatchKey],
     visible_tick: u64,
-) -> CachedStaticChunkStats {
+) -> (CachedStaticChunkStats, usize) {
     let mut aggregate = CachedStaticChunkStats::default();
+    let mut pages = std::collections::HashSet::new();
 
     for chunk_key in visible_chunk_keys {
         let Some(chunk) = cache.chunks.get_mut(chunk_key) else {
@@ -182,16 +204,10 @@ pub(super) fn aggregate_cached_visible_static_stats(
         aggregate.visited_blocks += chunk.stats.visited_blocks;
         aggregate.source_tiles += chunk.stats.source_tiles;
         aggregate.ground_land_tiles += chunk.stats.ground_land_tiles;
-        aggregate.atlas_hits += chunk.stats.atlas_hits;
-        aggregate.atlas_misses += chunk.stats.atlas_misses;
-        aggregate
-            .requested_pages
-            .extend(chunk.stats.requested_pages.iter().copied());
+        pages.extend(chunk.sprite_pages.iter().chain(&chunk.ground_pages).copied());
     }
 
-    aggregate.requested_pages.sort_unstable();
-    aggregate.requested_pages.dedup();
-    aggregate
+    (aggregate, pages.len())
 }
 
 pub(super) fn should_skip_unchanged_incomplete_static_retry(
@@ -206,7 +222,7 @@ pub(super) fn should_skip_unchanged_incomplete_static_retry(
         && visible_chunk_keys
             .iter()
             .all(|chunk_key| cache.chunks.contains_key(chunk_key))
-        && cache.last_incomplete_retry_atlas_signature == Some(atlas_retry_signature)
+        && cache.last_assembly.is_some_and(|assembly| assembly.signature == atlas_retry_signature)
 }
 
 pub(super) fn static_light_signature(
