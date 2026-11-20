@@ -13,6 +13,17 @@ use bevy_egui::{egui, EguiContexts, EguiPrimaryContextPass};
 
 const FPS_PRESETS: &[u32] = &[15, 30, 60, 75, 120, 144, 165, 240];
 const DEFAULT_FPS_LIMIT: u32 = 60;
+/// Where the dialog opens, and the width of each of its columns.
+const PREFERENCES_POS: [f32; 2] = [200.0, 80.0];
+const PREFERENCES_COLUMN_WIDTH: f32 = 320.0;
+const PREFERENCES_COLUMN_GAP: f32 = 16.0;
+/// The dialog's tabs (`PreferencesState::selected_tab`).
+const GRAPHICS_TAB: usize = 0;
+const UI_TAB: usize = 1;
+/// The title bar, the tab bar and the window's margins, above and below the scrolled contents.
+const PREFERENCES_CHROME_HEIGHT: f32 = 90.0;
+/// The scrolled contents keep this height however small the screen.
+const PREFERENCES_MIN_SCROLL_HEIGHT: f32 = 160.0;
 /// Hover text of the "Season / profile" choice.
 const ROUTE_PROFILE_HOVER: &str = "The profile of the land and item routes (LandRoutes.kdl) in force, on top of its \
     routes block: the Classic client's seasons, or your copy's profiles. A profile's `apply-in` and `skip-in` areas \
@@ -32,7 +43,7 @@ const HIDDEN_MULTI_PARTS_UNAVAILABLE_HOVER: &str = "No multis are placed: the ma
 #[derive(Resource)]
 pub struct PreferencesDialogState {
     pub open: bool,
-    /// Currently selected tab (0 = Graphics, 1 = UI).
+    /// Currently selected tab (`GRAPHICS_TAB` or `UI_TAB`).
     pub selected_tab: usize,
     pub frame_limit_enabled: bool,
     pub fps_preset_idx: usize,
@@ -79,7 +90,7 @@ impl Default for PreferencesDialogState {
             .unwrap_or(0);
         Self {
             open: false,
-            selected_tab: 0,
+            selected_tab: GRAPHICS_TAB,
             frame_limit_enabled: true,
             fps_preset_idx,
             movement_speed_multiplier: 1.0,
@@ -347,479 +358,500 @@ pub fn sys_render_preferences_dialog(
         settings.as_ref().keybindings.user_settings
     );
 
+    let max_scroll_height = (ctx.content_rect().height() - PREFERENCES_POS[1] - PREFERENCES_CHROME_HEIGHT)
+        .max(PREFERENCES_MIN_SCROLL_HEIGHT);
+    let max_width = match state.selected_tab {
+        GRAPHICS_TAB => 2.0 * PREFERENCES_COLUMN_WIDTH + PREFERENCES_COLUMN_GAP,
+        _ => PREFERENCES_COLUMN_WIDTH,
+    };
+
     let _response = egui::Window::new(title)
-        .default_pos([200.0, 80.0])
-        .fixed_size([320.0, 420.0])
+        .default_pos(PREFERENCES_POS)
         .collapsible(false)
-        .resizable(false)
+        // Sized by its contents, not egui's default window size: the scrolled contents stop at the screen's bottom.
+        .auto_sized()
+        // The separators take the width available: no wider than the tab's columns.
+        .max_width(max_width)
         .open(&mut window_open)
         .show(ctx, |ui| {
             // ---- Tab bar ----
             ui.horizontal(|ui| {
                 if ui
-                    .selectable_label(state.selected_tab == 0, "⚙ Graphics")
+                    .selectable_label(state.selected_tab == GRAPHICS_TAB, "⚙ Graphics")
                     .clicked()
                 {
-                    state.selected_tab = 0;
+                    state.selected_tab = GRAPHICS_TAB;
                 }
                 if ui
-                    .selectable_label(state.selected_tab == 1, "🖥 UI")
+                    .selectable_label(state.selected_tab == UI_TAB, "🖥 UI")
                     .clicked()
                 {
-                    state.selected_tab = 1;
+                    state.selected_tab = UI_TAB;
                 }
             });
             ui.separator();
 
-            match state.selected_tab {
-                // ==================== GRAPHICS TAB ====================
-                0 => {
-                    ui.heading("Performance");
-                    ui.separator();
+            egui::ScrollArea::vertical().max_height(max_scroll_height).show(ui, |ui| {
+                match state.selected_tab {
+                    // ==================== GRAPHICS TAB ====================
+                    GRAPHICS_TAB => {
+                        // Two columns: in one, the tab ran past the bottom of an 800-pixel-high window.
+                        ui.horizontal_top(|ui| {
+                            ui.vertical(|ui| {
+                                ui.set_width(PREFERENCES_COLUMN_WIDTH);
+                                ui.heading("Performance");
+                                ui.separator();
 
-                    ui.add_enabled_ui(!state.vsync, |ui| {
-                        // ---- Frame limiter toggle ----
-                        if ui
-                            .checkbox(&mut state.frame_limit_enabled, "Enable frame limiter")
-                            .changed()
-                        {
-                            state.apply_timer.reset();
-                            state.apply_timer.unpause();
-                        }
+                                ui.add_enabled_ui(!state.vsync, |ui| {
+                                    // ---- Frame limiter toggle ----
+                                    if ui
+                                        .checkbox(&mut state.frame_limit_enabled, "Enable frame limiter")
+                                        .changed()
+                                    {
+                                        state.apply_timer.reset();
+                                        state.apply_timer.unpause();
+                                    }
 
-                        // ---- FPS combobox ----
-                        ui.add_enabled_ui(state.frame_limit_enabled, |ui| {
-                            let previous_idx = state.fps_preset_idx;
-                            let current_fps = FPS_PRESETS[previous_idx];
-                            egui::ComboBox::from_label("Target FPS")
-                                .selected_text(format!("{} fps", current_fps))
-                                .show_ui(ui, |ui| {
-                                    for (idx, &fps) in FPS_PRESETS.iter().enumerate() {
-                                        let label = format!("{} fps", fps);
-                                        ui.selectable_value(&mut state.fps_preset_idx, idx, label);
+                                    // ---- FPS combobox ----
+                                    ui.add_enabled_ui(state.frame_limit_enabled, |ui| {
+                                        let previous_idx = state.fps_preset_idx;
+                                        let current_fps = FPS_PRESETS[previous_idx];
+                                        egui::ComboBox::from_label("Target FPS")
+                                            .selected_text(format!("{} fps", current_fps))
+                                            .show_ui(ui, |ui| {
+                                                for (idx, &fps) in FPS_PRESETS.iter().enumerate() {
+                                                    let label = format!("{} fps", fps);
+                                                    ui.selectable_value(&mut state.fps_preset_idx, idx, label);
+                                                }
+                                            });
+                                        // The combo box's own response never reports a selection as changed: compare the index.
+                                        if state.fps_preset_idx != previous_idx {
+                                            state.apply_timer.reset();
+                                            state.apply_timer.unpause();
+                                        }
+                                    });
+                                });
+
+                                // Apply frame limiter changes immediately to frame limiter resource
+                                let desired_limiter = frame_limiter_for_options(
+                                    state.frame_limit_enabled,
+                                    FPS_PRESETS[state.fps_preset_idx],
+                                    state.vsync,
+                                );
+                                if frame_limiter.limiter != desired_limiter {
+                                    frame_limiter.limiter = desired_limiter;
+                                }
+
+                                ui.label(
+                                    egui::RichText::new("Frame limiting is disabled while VSync is enabled.")
+                                        .small()
+                                        .weak(),
+                                );
+
+                                ui.add_space(8.0);
+
+                                // ---- VSync ----
+                                if ui.checkbox(&mut state.vsync, "VSync").changed() {
+                                    settings.graphics.vsync = state.vsync;
+                                    // Apply immediately to the window's present mode
+                                    if let Ok(mut window) = windows_q.single_mut() {
+                                        window.present_mode = present_mode_for_vsync(state.vsync);
+                                    }
+                                    let desired_limiter = frame_limiter_for_options(
+                                        state.frame_limit_enabled,
+                                        FPS_PRESETS[state.fps_preset_idx],
+                                        state.vsync,
+                                    );
+                                    if frame_limiter.limiter != desired_limiter {
+                                        frame_limiter.limiter = desired_limiter;
+                                    }
+                                }
+
+                                egui::ComboBox::from_label("Anti-Aliasing")
+                                    .selected_text(state.anti_aliasing.label())
+                                    .show_ui(ui, |ui| {
+                                        for mode in AntiAliasingMode::ALL {
+                                            ui.selectable_value(&mut state.anti_aliasing, mode, mode.label());
+                                        }
+                                    });
+                                if settings.graphics.anti_aliasing != state.anti_aliasing {
+                                    settings.graphics.anti_aliasing = state.anti_aliasing;
+                                }
+
+                                egui::ComboBox::from_label("Art Texture Source")
+                                    .selected_text(state.art_texture_source.art_label())
+                                    .show_ui(ui, |ui| {
+                                        for source in ClientTextureSource::ALL {
+                                            ui.selectable_value(
+                                                &mut state.art_texture_source,
+                                                source,
+                                                source.art_label(),
+                                            );
+                                        }
+                                    });
+                                if settings.graphics.art_texture_source != state.art_texture_source {
+                                    settings.graphics.art_texture_source = state.art_texture_source;
+                                }
+
+                                // A source whose package is missing stays selectable, marked, with where it was looked for and
+                                // what is drawn instead (routing.rs).
+                                let land_source_entry = |source: LandTextureSource| match land_textures.as_deref() {
+                                    Some(land) => crate::render::assets::land::routing::land_source_entry(
+                                        source, land.land_source_loaded(source), &land.udd_folder),
+                                    None => (source.land_label().to_string(), None),
+                                };
+                                let (selected_label, selected_hover) = land_source_entry(state.land_texture_source);
+                                let combo = egui::ComboBox::from_label("Land Texture Source")
+                                    .selected_text(selected_label)
+                                    .show_ui(ui, |ui| {
+                                        for source in LandTextureSource::ALL {
+                                            let (label, hover) = land_source_entry(source);
+                                            let entry = ui.selectable_value(&mut state.land_texture_source, source, label);
+                                            if let Some(hover) = hover {
+                                                entry.on_hover_text(hover);
+                                            }
+                                        }
+                                    });
+                                if let Some(hover) = selected_hover {
+                                    combo.response.on_hover_text(hover);
+                                }
+                                if settings.graphics.land_texture_source != state.land_texture_source {
+                                    settings.graphics.land_texture_source = state.land_texture_source;
+                                }
+
+                                // The route file's profiles, such as the seasons (route_file.rs); switching one rebuilds the land
+                                // and statics it routes.
+                                if let Some(route_file) = route_file.as_deref_mut() {
+                                    use crate::render::assets::land::route_file::route_profile_entries;
+                                    let entries = route_profile_entries(route_file.profile_names(), &state.route_profile);
+                                    let selected_label = entries.iter().find(|(value, _)| *value == state.route_profile)
+                                        .map(|(_, label)| label.clone()).unwrap_or_default();
+                                    ui.horizontal(|ui| {
+                                        egui::ComboBox::from_label("Season / profile")
+                                            .selected_text(selected_label)
+                                            .show_ui(ui, |ui| {
+                                                for (value, label) in entries {
+                                                    ui.selectable_value(&mut state.route_profile, value, label);
+                                                }
+                                            })
+                                            .response
+                                            .on_hover_text(ROUTE_PROFILE_HOVER);
+                                        if ui.button("Reload").on_hover_text(format!("{ROUTE_FILE_RELOAD_HOVER} Your copy: {}",
+                                            route_file.user_path().display())).clicked() {
+                                            route_file.reload_requested = true;
+                                        }
+                                    });
+                                }
+                                if settings.graphics.route_profile != state.route_profile {
+                                    settings.graphics.route_profile.clone_from(&state.route_profile);
+                                }
+
+                                // Open gump and paperdoll windows are redrawn in place from the new choice.
+                                egui::ComboBox::from_label("Gumps and paperdoll")
+                                    .selected_text(state.gumps_and_paperdoll.label())
+                                    .show_ui(ui, |ui| {
+                                        for client in GumpClient::ALL {
+                                            ui.selectable_value(&mut state.gumps_and_paperdoll, client, client.label())
+                                                .on_hover_text(client.hover_text());
+                                        }
+                                    })
+                                    .response
+                                    .on_hover_text(GUMPS_AND_PAPERDOLL_HOVER);
+                                if settings.graphics.gumps_and_paperdoll != state.gumps_and_paperdoll {
+                                    settings.graphics.gumps_and_paperdoll = state.gumps_and_paperdoll;
+                                }
+
+                                ui.add_space(4.0);
+                                ui.heading("Texture");
+                                ui.separator();
+                                ui.label("Smooth terrain transitions");
+                                if ui.checkbox(&mut state.cc_terrain_transitions, "Classic (CC)")
+                                    .on_hover_text("Blend adjacent dry Classic terrain textures. Water keeps its authored edges.")
+                                    .changed() {
+                                    settings.graphics.cc_terrain_transitions = state.cc_terrain_transitions;
+                                }
+                                if ui.checkbox(&mut state.ec_terrain_transitions, "Enhanced (EC / KR)")
+                                    .on_hover_text("Blend Enhanced terrain and ground patches. Item artwork masks and liquid-bank placement stay active.")
+                                    .changed() {
+                                    settings.graphics.ec_terrain_transitions = state.ec_terrain_transitions;
+                                }
+                            });
+                            // A gap, not a separator: a separator takes the height available, the screen's.
+                            ui.add_space(PREFERENCES_COLUMN_GAP);
+                            ui.vertical(|ui| {
+                                ui.set_width(PREFERENCES_COLUMN_WIDTH);
+                                ui.heading("World & Input");
+                                ui.separator();
+
+                                // ---- Movement Speed ----
+                                ui.horizontal(|ui| {
+                                    ui.label("Move Speed:");
+                                    if ui
+                                        .add(egui::Slider::new(
+                                            &mut state.movement_speed_multiplier,
+                                            0.1..=500.0,
+                                        ))
+                                        .changed()
+                                    {
+                                        state.apply_timer.reset();
+                                        state.apply_timer.unpause();
                                     }
                                 });
-                            // The combo box's own response never reports a selection as changed: compare the index.
-                            if state.fps_preset_idx != previous_idx {
+
+                                if ui
+                                    .checkbox(&mut state.smooth_movement, "Smooth movement")
+                                    .changed()
+                                {
+                                    state.apply_timer.reset();
+                                    state.apply_timer.unpause();
+                                }
+                                ui.label(
+                                    egui::RichText::new("Interpolates the player between integer tile steps.")
+                                        .small()
+                                        .weak(),
+                                );
+
+                                // ---- Visibility ----
+                                if ui
+                                    .checkbox(&mut state.hide_player, "Hide Player Object")
+                                    .changed()
+                                {
+                                    state.apply_timer.reset();
+                                    state.apply_timer.unpause();
+                                }
+                                if ui
+                                    .checkbox(&mut state.show_overlay, "Show Performance Overlay")
+                                    .changed()
+                                {
+                                    state.apply_timer.reset();
+                                    state.apply_timer.unpause();
+                                }
+                                // Per-overlay toggles, gated behind the master above: greyed out and
+                                // ineffective while the master is off (each overlay's visibility is
+                                // `show_overlay && <this flag>`, see SectPerformance).
+                                let master_on = state.show_overlay;
+                                ui.indent("overlay_toggles", |ui| {
+                                    let mut any_changed = false;
+                                    any_changed |= ui
+                                        .add_enabled(
+                                            master_on,
+                                            egui::Checkbox::new(
+                                                &mut state.show_perf_stats_overlay,
+                                                "Performance stats",
+                                            ),
+                                        )
+                                        .changed();
+                                    any_changed |= ui
+                                        .add_enabled(
+                                            master_on,
+                                            egui::Checkbox::new(
+                                                &mut state.show_player_position_overlay,
+                                                "Player position",
+                                            ),
+                                        )
+                                        .changed();
+                                    any_changed |= ui
+                                        .add_enabled(
+                                            master_on,
+                                            egui::Checkbox::new(
+                                                &mut state.show_cursor_inspect_overlay,
+                                                "Tile inspector",
+                                            ),
+                                        )
+                                        .changed();
+                                    if any_changed {
+                                        state.apply_timer.reset();
+                                        state.apply_timer.unpause();
+                                    }
+                                });
+
+                                ui.add_space(4.0);
+                                if ui
+                                    .checkbox(&mut state.free_camera, "Free Camera Mode")
+                                    .changed()
+                                {
+                                    state.apply_timer.reset();
+                                    state.apply_timer.unpause();
+                                }
+                                ui.label(
+                                    egui::RichText::new("Arrows to pan, Shift+Arrows to elevation.")
+                                        .small()
+                                        .weak(),
+                                );
+
+                                ui.add_space(4.0);
+                                if ui
+                                    .checkbox(&mut state.perspective_camera, "Perspective Camera Mode")
+                                    .changed()
+                                {
+                                    state.apply_timer.reset();
+                                    state.apply_timer.unpause();
+                                }
+                                if ui
+                                    .checkbox(&mut state.enable_statics, "Render Static Items")
+                                    .changed()
+                                {
+                                    state.apply_timer.reset();
+                                    state.apply_timer.unpause();
+                                }
+                                if ui
+                                    .checkbox(&mut state.enable_static_lights, "Render Static Light Decals")
+                                    .changed()
+                                {
+                                    state.apply_timer.reset();
+                                    state.apply_timer.unpause();
+                                }
+                                // Greyed out while nothing places a multi; enabled again as soon as a source places one.
+                                let multis_placed = placed_multis.as_ref().is_some_and(|placed| !placed.is_empty());
+                                if ui
+                                    .add_enabled(multis_placed,
+                                        egui::Checkbox::new(&mut state.show_hidden_multi_parts, "Show Hidden Multi Parts"))
+                                    .on_hover_text(HIDDEN_MULTI_PARTS_HOVER)
+                                    .on_disabled_hover_text(HIDDEN_MULTI_PARTS_UNAVAILABLE_HOVER)
+                                    .changed()
+                                {
+                                    state.apply_timer.reset();
+                                    state.apply_timer.unpause();
+                                }
+                                if ui
+                                    .checkbox(&mut state.show_only_player_floor, "Show Only the Player's Floor")
+                                    .on_hover_text(
+                                        "Hide what is above the player as the client does: the floors and roof over the player \
+                                         inside a building, and the land over the player inside a cave.",
+                                    )
+                                    .changed()
+                                {
+                                    state.apply_timer.reset();
+                                    state.apply_timer.unpause();
+                                }
+                                ui.indent("preferences_player_floor_building_only", |ui| {
+                                    if ui
+                                        .add_enabled(state.show_only_player_floor,
+                                            egui::Checkbox::new(&mut state.player_floor_building_only, "Only the Player's Building"))
+                                        .on_hover_text(
+                                            "Hide the floors and roof over the player only on the building the player is in: \
+                                             the buildings around keep their roofs.",
+                                        )
+                                        .changed()
+                                    {
+                                        state.apply_timer.reset();
+                                        state.apply_timer.unpause();
+                                    }
+                                });
+                                ui.horizontal(|ui| {
+                                    ui.label("Caves:");
+                                    let mut changed = false;
+                                    egui::ComboBox::from_id_salt("preferences_caves")
+                                        .selected_text(state.caves.label())
+                                        .show_ui(ui, |ui| {
+                                            for view in CaveView::ALL {
+                                                changed |= ui.selectable_value(&mut state.caves, view, view.label()).changed();
+                                            }
+                                        })
+                                        .response
+                                        .on_hover_text(
+                                            "Hidden Until Entered: caves stay under the land, as in the client; with \"Show Only the \
+                                             Player's Floor\" a cave shows with the player inside. Drawn Over the Map: the caves \
+                                             connected to a cave mouth open through the land above them.",
+                                        );
+                                    if changed {
+                                        state.apply_timer.reset();
+                                        state.apply_timer.unpause();
+                                    }
+                                });
+                                ui.horizontal(|ui| {
+                                    ui.label("Around the Player's Cave:");
+                                    let mut changed = false;
+                                    egui::ComboBox::from_id_salt("preferences_cave_surroundings")
+                                        .selected_text(state.cave_surroundings.label())
+                                        .show_ui(ui, |ui| {
+                                            for surroundings in CaveSurroundings::ALL {
+                                                changed |= ui
+                                                    .selectable_value(&mut state.cave_surroundings, surroundings, surroundings.label())
+                                                    .changed();
+                                            }
+                                        })
+                                        .response
+                                        .on_hover_text(
+                                            "With \"Show Only the Player's Floor\" and the player in a cave, the cave shows whole: \
+                                             its floor, what stands on it and its rock walls, not the hill over it or the tunnels \
+                                             above and below. Dimmed: the land and objects outside the cave show darkened, cut over \
+                                             the player as in ClassicUO. Black: nothing outside the cave shows, as in the KR client.",
+                                        );
+                                    if changed {
+                                        state.apply_timer.reset();
+                                        state.apply_timer.unpause();
+                                    }
+                                });
+                            });
+                        });
+                    }
+
+                    // ====================== UI TAB ========================
+                    UI_TAB => {
+                        ui.set_width(PREFERENCES_COLUMN_WIDTH);
+                        ui.heading("UI Scale");
+                        ui.separator();
+
+                        ui.horizontal(|ui| {
+                            ui.label("UI Scale:");
+                            let res = ui.add(egui::Slider::new(&mut state.ui_scale, 0.5..=3.0));
+                            if res.drag_stopped() || (res.changed() && !res.dragged()) {
                                 state.apply_timer.reset();
                                 state.apply_timer.unpause();
                             }
                         });
-                    });
 
-                    // Apply frame limiter changes immediately to frame limiter resource
-                    let desired_limiter = frame_limiter_for_options(
-                        state.frame_limit_enabled,
-                        FPS_PRESETS[state.fps_preset_idx],
-                        state.vsync,
-                    );
-                    if frame_limiter.limiter != desired_limiter {
-                        frame_limiter.limiter = desired_limiter;
-                    }
+                        ui.add_space(8.0);
+                        ui.heading("Overlay Scales");
+                        ui.separator();
 
-                    ui.label(
-                        egui::RichText::new("Frame limiting is disabled while VSync is enabled.")
-                            .small()
-                            .weak(),
-                    );
-
-                    ui.add_space(8.0);
-
-                    // ---- VSync ----
-                    if ui.checkbox(&mut state.vsync, "VSync").changed() {
-                        settings.graphics.vsync = state.vsync;
-                        // Apply immediately to the window's present mode
-                        if let Ok(mut window) = windows_q.single_mut() {
-                            window.present_mode = present_mode_for_vsync(state.vsync);
-                        }
-                        let desired_limiter = frame_limiter_for_options(
-                            state.frame_limit_enabled,
-                            FPS_PRESETS[state.fps_preset_idx],
-                            state.vsync,
-                        );
-                        if frame_limiter.limiter != desired_limiter {
-                            frame_limiter.limiter = desired_limiter;
-                        }
-                    }
-
-                    egui::ComboBox::from_label("Anti-Aliasing")
-                        .selected_text(state.anti_aliasing.label())
-                        .show_ui(ui, |ui| {
-                            for mode in AntiAliasingMode::ALL {
-                                ui.selectable_value(&mut state.anti_aliasing, mode, mode.label());
-                            }
-                        });
-                    if settings.graphics.anti_aliasing != state.anti_aliasing {
-                        settings.graphics.anti_aliasing = state.anti_aliasing;
-                    }
-
-                    egui::ComboBox::from_label("Art Texture Source")
-                        .selected_text(state.art_texture_source.art_label())
-                        .show_ui(ui, |ui| {
-                            for source in ClientTextureSource::ALL {
-                                ui.selectable_value(
-                                    &mut state.art_texture_source,
-                                    source,
-                                    source.art_label(),
-                                );
-                            }
-                        });
-                    if settings.graphics.art_texture_source != state.art_texture_source {
-                        settings.graphics.art_texture_source = state.art_texture_source;
-                    }
-
-                    // A source whose package is missing stays selectable, marked, with where it was looked for and
-                    // what is drawn instead (routing.rs).
-                    let land_source_entry = |source: LandTextureSource| match land_textures.as_deref() {
-                        Some(land) => crate::render::assets::land::routing::land_source_entry(
-                            source, land.land_source_loaded(source), &land.udd_folder),
-                        None => (source.land_label().to_string(), None),
-                    };
-                    let (selected_label, selected_hover) = land_source_entry(state.land_texture_source);
-                    let combo = egui::ComboBox::from_label("Land Texture Source")
-                        .selected_text(selected_label)
-                        .show_ui(ui, |ui| {
-                            for source in LandTextureSource::ALL {
-                                let (label, hover) = land_source_entry(source);
-                                let entry = ui.selectable_value(&mut state.land_texture_source, source, label);
-                                if let Some(hover) = hover {
-                                    entry.on_hover_text(hover);
-                                }
-                            }
-                        });
-                    if let Some(hover) = selected_hover {
-                        combo.response.on_hover_text(hover);
-                    }
-                    if settings.graphics.land_texture_source != state.land_texture_source {
-                        settings.graphics.land_texture_source = state.land_texture_source;
-                    }
-
-                    // The route file's profiles, such as the seasons (route_file.rs); switching one rebuilds the land
-                    // and statics it routes.
-                    if let Some(route_file) = route_file.as_deref_mut() {
-                        use crate::render::assets::land::route_file::route_profile_entries;
-                        let entries = route_profile_entries(route_file.profile_names(), &state.route_profile);
-                        let selected_label = entries.iter().find(|(value, _)| *value == state.route_profile)
-                            .map(|(_, label)| label.clone()).unwrap_or_default();
                         ui.horizontal(|ui| {
-                            egui::ComboBox::from_label("Season / profile")
-                                .selected_text(selected_label)
-                                .show_ui(ui, |ui| {
-                                    for (value, label) in entries {
-                                        ui.selectable_value(&mut state.route_profile, value, label);
-                                    }
-                                })
-                                .response
-                                .on_hover_text(ROUTE_PROFILE_HOVER);
-                            if ui.button("Reload").on_hover_text(format!("{ROUTE_FILE_RELOAD_HOVER} Your copy: {}",
-                                route_file.user_path().display())).clicked() {
-                                route_file.reload_requested = true;
+                            ui.label("Player Position:");
+                            let res = ui.add(egui::Slider::new(
+                                &mut state.player_position_scale,
+                                0.5..=3.0,
+                            ));
+                            if res.drag_stopped() || (res.changed() && !res.dragged()) {
+                                state.apply_timer.reset();
+                                state.apply_timer.unpause();
+                            }
+                        });
+                        ui.horizontal(|ui| {
+                            ui.label("System Messages:");
+                            let res =
+                                ui.add(egui::Slider::new(&mut state.sysmessages_scale, 0.5..=3.0));
+                            if res.drag_stopped() || (res.changed() && !res.dragged()) {
+                                state.apply_timer.reset();
+                                state.apply_timer.unpause();
+                            }
+                        });
+                        ui.horizontal(|ui| {
+                            ui.label("Performance Overlay:");
+                            let res = ui.add(egui::Slider::new(
+                                &mut state.performance_overlay_scale,
+                                0.5..=3.0,
+                            ));
+                            if res.drag_stopped() || (res.changed() && !res.dragged()) {
+                                state.apply_timer.reset();
+                                state.apply_timer.unpause();
+                            }
+                        });
+                        ui.horizontal(|ui| {
+                            ui.label("Cursor Position:");
+                            let res = ui.add(egui::Slider::new(
+                                &mut state.cursor_position_scale,
+                                0.5..=3.0,
+                            ));
+                            if res.drag_stopped() || (res.changed() && !res.dragged()) {
+                                state.apply_timer.reset();
+                                state.apply_timer.unpause();
                             }
                         });
                     }
-                    if settings.graphics.route_profile != state.route_profile {
-                        settings.graphics.route_profile.clone_from(&state.route_profile);
-                    }
-
-                    // Open gump and paperdoll windows are redrawn in place from the new choice.
-                    egui::ComboBox::from_label("Gumps and paperdoll")
-                        .selected_text(state.gumps_and_paperdoll.label())
-                        .show_ui(ui, |ui| {
-                            for client in GumpClient::ALL {
-                                ui.selectable_value(&mut state.gumps_and_paperdoll, client, client.label())
-                                    .on_hover_text(client.hover_text());
-                            }
-                        })
-                        .response
-                        .on_hover_text(GUMPS_AND_PAPERDOLL_HOVER);
-                    if settings.graphics.gumps_and_paperdoll != state.gumps_and_paperdoll {
-                        settings.graphics.gumps_and_paperdoll = state.gumps_and_paperdoll;
-                    }
-
-                    ui.add_space(4.0);
-                    ui.heading("Texture");
-                    ui.separator();
-                    ui.label("Smooth terrain transitions");
-                    if ui.checkbox(&mut state.cc_terrain_transitions, "Classic (CC)")
-                        .on_hover_text("Blend adjacent dry Classic terrain textures. Water keeps its authored edges.")
-                        .changed() {
-                        settings.graphics.cc_terrain_transitions = state.cc_terrain_transitions;
-                    }
-                    if ui.checkbox(&mut state.ec_terrain_transitions, "Enhanced (EC / KR)")
-                        .on_hover_text("Blend Enhanced terrain and ground patches. Item artwork masks and liquid-bank placement stay active.")
-                        .changed() {
-                        settings.graphics.ec_terrain_transitions = state.ec_terrain_transitions;
-                    }
-
-                    ui.add_space(8.0);
-                    ui.heading("World & Input");
-                    ui.separator();
-
-                    // ---- Movement Speed ----
-                    ui.horizontal(|ui| {
-                        ui.label("Move Speed:");
-                        if ui
-                            .add(egui::Slider::new(
-                                &mut state.movement_speed_multiplier,
-                                0.1..=500.0,
-                            ))
-                            .changed()
-                        {
-                            state.apply_timer.reset();
-                            state.apply_timer.unpause();
-                        }
-                    });
-
-                    if ui
-                        .checkbox(&mut state.smooth_movement, "Smooth movement")
-                        .changed()
-                    {
-                        state.apply_timer.reset();
-                        state.apply_timer.unpause();
-                    }
-                    ui.label(
-                        egui::RichText::new("Interpolates the player between integer tile steps.")
-                            .small()
-                            .weak(),
-                    );
-
-                    // ---- Visibility ----
-                    if ui
-                        .checkbox(&mut state.hide_player, "Hide Player Object")
-                        .changed()
-                    {
-                        state.apply_timer.reset();
-                        state.apply_timer.unpause();
-                    }
-                    if ui
-                        .checkbox(&mut state.show_overlay, "Show Performance Overlay")
-                        .changed()
-                    {
-                        state.apply_timer.reset();
-                        state.apply_timer.unpause();
-                    }
-                    // Per-overlay toggles, gated behind the master above: greyed out and
-                    // ineffective while the master is off (each overlay's visibility is
-                    // `show_overlay && <this flag>`, see SectPerformance).
-                    let master_on = state.show_overlay;
-                    ui.indent("overlay_toggles", |ui| {
-                        let mut any_changed = false;
-                        any_changed |= ui
-                            .add_enabled(
-                                master_on,
-                                egui::Checkbox::new(
-                                    &mut state.show_perf_stats_overlay,
-                                    "Performance stats",
-                                ),
-                            )
-                            .changed();
-                        any_changed |= ui
-                            .add_enabled(
-                                master_on,
-                                egui::Checkbox::new(
-                                    &mut state.show_player_position_overlay,
-                                    "Player position",
-                                ),
-                            )
-                            .changed();
-                        any_changed |= ui
-                            .add_enabled(
-                                master_on,
-                                egui::Checkbox::new(
-                                    &mut state.show_cursor_inspect_overlay,
-                                    "Tile inspector",
-                                ),
-                            )
-                            .changed();
-                        if any_changed {
-                            state.apply_timer.reset();
-                            state.apply_timer.unpause();
-                        }
-                    });
-
-                    ui.add_space(4.0);
-                    if ui
-                        .checkbox(&mut state.free_camera, "Free Camera Mode")
-                        .changed()
-                    {
-                        state.apply_timer.reset();
-                        state.apply_timer.unpause();
-                    }
-                    ui.label(
-                        egui::RichText::new("Arrows to pan, Shift+Arrows to elevation.")
-                            .small()
-                            .weak(),
-                    );
-
-                    ui.add_space(4.0);
-                    if ui
-                        .checkbox(&mut state.perspective_camera, "Perspective Camera Mode")
-                        .changed()
-                    {
-                        state.apply_timer.reset();
-                        state.apply_timer.unpause();
-                    }
-                    if ui
-                        .checkbox(&mut state.enable_statics, "Render Static Items")
-                        .changed()
-                    {
-                        state.apply_timer.reset();
-                        state.apply_timer.unpause();
-                    }
-                    if ui
-                        .checkbox(&mut state.enable_static_lights, "Render Static Light Decals")
-                        .changed()
-                    {
-                        state.apply_timer.reset();
-                        state.apply_timer.unpause();
-                    }
-                    // Greyed out while nothing places a multi; enabled again as soon as a source places one.
-                    let multis_placed = placed_multis.as_ref().is_some_and(|placed| !placed.is_empty());
-                    if ui
-                        .add_enabled(multis_placed,
-                            egui::Checkbox::new(&mut state.show_hidden_multi_parts, "Show Hidden Multi Parts"))
-                        .on_hover_text(HIDDEN_MULTI_PARTS_HOVER)
-                        .on_disabled_hover_text(HIDDEN_MULTI_PARTS_UNAVAILABLE_HOVER)
-                        .changed()
-                    {
-                        state.apply_timer.reset();
-                        state.apply_timer.unpause();
-                    }
-                    if ui
-                        .checkbox(&mut state.show_only_player_floor, "Show Only the Player's Floor")
-                        .on_hover_text(
-                            "Hide what is above the player as the client does: the floors and roof over the player \
-                             inside a building, and the land over the player inside a cave.",
-                        )
-                        .changed()
-                    {
-                        state.apply_timer.reset();
-                        state.apply_timer.unpause();
-                    }
-                    ui.indent("preferences_player_floor_building_only", |ui| {
-                        if ui
-                            .add_enabled(state.show_only_player_floor,
-                                egui::Checkbox::new(&mut state.player_floor_building_only, "Only the Player's Building"))
-                            .on_hover_text(
-                                "Hide the floors and roof over the player only on the building the player is in: \
-                                 the buildings around keep their roofs.",
-                            )
-                            .changed()
-                        {
-                            state.apply_timer.reset();
-                            state.apply_timer.unpause();
-                        }
-                    });
-                    ui.horizontal(|ui| {
-                        ui.label("Caves:");
-                        let mut changed = false;
-                        egui::ComboBox::from_id_salt("preferences_caves")
-                            .selected_text(state.caves.label())
-                            .show_ui(ui, |ui| {
-                                for view in CaveView::ALL {
-                                    changed |= ui.selectable_value(&mut state.caves, view, view.label()).changed();
-                                }
-                            })
-                            .response
-                            .on_hover_text(
-                                "Hidden Until Entered: caves stay under the land, as in the client; with \"Show Only the \
-                                 Player's Floor\" a cave shows with the player inside. Drawn Over the Map: the caves \
-                                 connected to a cave mouth open through the land above them.",
-                            );
-                        if changed {
-                            state.apply_timer.reset();
-                            state.apply_timer.unpause();
-                        }
-                    });
-                    ui.horizontal(|ui| {
-                        ui.label("Around the Player's Cave:");
-                        let mut changed = false;
-                        egui::ComboBox::from_id_salt("preferences_cave_surroundings")
-                            .selected_text(state.cave_surroundings.label())
-                            .show_ui(ui, |ui| {
-                                for surroundings in CaveSurroundings::ALL {
-                                    changed |= ui
-                                        .selectable_value(&mut state.cave_surroundings, surroundings, surroundings.label())
-                                        .changed();
-                                }
-                            })
-                            .response
-                            .on_hover_text(
-                                "With \"Show Only the Player's Floor\" and the player in a cave, the cave shows whole: \
-                                 its floor, what stands on it and its rock walls, not the hill over it or the tunnels \
-                                 above and below. Dimmed: the land and objects outside the cave show darkened, cut over \
-                                 the player as in ClassicUO. Black: nothing outside the cave shows, as in the KR client.",
-                            );
-                        if changed {
-                            state.apply_timer.reset();
-                            state.apply_timer.unpause();
-                        }
-                    });
+                    _ => {}
                 }
-
-                // ====================== UI TAB ========================
-                1 => {
-                    ui.heading("UI Scale");
-                    ui.separator();
-
-                    ui.horizontal(|ui| {
-                        ui.label("UI Scale:");
-                        let res = ui.add(egui::Slider::new(&mut state.ui_scale, 0.5..=3.0));
-                        if res.drag_stopped() || (res.changed() && !res.dragged()) {
-                            state.apply_timer.reset();
-                            state.apply_timer.unpause();
-                        }
-                    });
-
-                    ui.add_space(8.0);
-                    ui.heading("Overlay Scales");
-                    ui.separator();
-
-                    ui.horizontal(|ui| {
-                        ui.label("Player Position:");
-                        let res = ui.add(egui::Slider::new(
-                            &mut state.player_position_scale,
-                            0.5..=3.0,
-                        ));
-                        if res.drag_stopped() || (res.changed() && !res.dragged()) {
-                            state.apply_timer.reset();
-                            state.apply_timer.unpause();
-                        }
-                    });
-                    ui.horizontal(|ui| {
-                        ui.label("System Messages:");
-                        let res =
-                            ui.add(egui::Slider::new(&mut state.sysmessages_scale, 0.5..=3.0));
-                        if res.drag_stopped() || (res.changed() && !res.dragged()) {
-                            state.apply_timer.reset();
-                            state.apply_timer.unpause();
-                        }
-                    });
-                    ui.horizontal(|ui| {
-                        ui.label("Performance Overlay:");
-                        let res = ui.add(egui::Slider::new(
-                            &mut state.performance_overlay_scale,
-                            0.5..=3.0,
-                        ));
-                        if res.drag_stopped() || (res.changed() && !res.dragged()) {
-                            state.apply_timer.reset();
-                            state.apply_timer.unpause();
-                        }
-                    });
-                    ui.horizontal(|ui| {
-                        ui.label("Cursor Position:");
-                        let res = ui.add(egui::Slider::new(
-                            &mut state.cursor_position_scale,
-                            0.5..=3.0,
-                        ));
-                        if res.drag_stopped() || (res.changed() && !res.dragged()) {
-                            state.apply_timer.reset();
-                            state.apply_timer.unpause();
-                        }
-                    });
-                }
-                _ => {}
-            }
+            });
 
             // (Removed immediate sync block, now handled by debounced timer at the top of the system)
         });
