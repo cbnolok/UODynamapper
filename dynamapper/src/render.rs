@@ -4,6 +4,7 @@ pub mod terrain;
 pub mod uniform_state;
 pub mod postprocess;
 pub(crate) mod picking;
+pub mod pipeline_readiness;
 pub mod scene;
 pub mod statics;
 pub mod view;

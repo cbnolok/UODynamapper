@@ -101,7 +101,7 @@ impl Plugin for DevControlPlugin {
             .unwrap_or_else(|error| panic!("Cannot bind development control socket: {error}"));
         log::info!("Development control socket: {}", socket.path.display());
         // Readiness after a switch includes the render pipelines it makes Bevy compile.
-        crate::export::count_waiting_render_pipelines(app);
+        crate::render::pipeline_readiness::count_waiting_render_pipelines(app);
         app.insert_resource(socket)
             .init_resource::<ControlInput>()
             .init_resource::<InjectedPointer>()

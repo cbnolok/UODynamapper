@@ -113,7 +113,7 @@ terrain, statics, lighting, picking, postprocess}`, `ui/`, `export/`, `diagnosti
 
 | Now | Lines | Churn | Owner |
 |---|---:|---:|---|
-| `export.rs` | 881 | 4 | `export/`: moved 2026-11-19 from `core/export_job.rs`, whole. Split into job lifecycle, readiness, capture and spool, provenance. |
+| `export.rs`, `export/{job, placement, readiness, capture, spool}.rs` | 927 | 4 | Moved 2026-11-19 from `core/export_job.rs`; split 2026-11-20: the job file and its settings, the frame's placement, its readiness, its capture, and the spool with the packages it records. `export.rs` keeps the plugin and the frames' run through those steps. The pipelines still compiling, which the control socket reads too, went to `render/pipeline_readiness.rs`. A four-frame export gives the same 340 tiles, byte for byte. |
 | `diagnostics.rs`, `diagnostics/{frame_rate, frame_limiter, gpu_profiling}.rs` | 1153 | 1 | Moved 2026-11-18; its importers took the new path 2026-11-19. |
 
 ## Order
