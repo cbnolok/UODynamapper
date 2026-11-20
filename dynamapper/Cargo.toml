@@ -255,6 +255,9 @@ linux_wayland = ["bevy/wayland"]
 linux_x11 = ["bevy/x11"]
 profiling = ["uocf/profiling"]
 trace_tracy = ["bevy/trace_tracy", "bevy/trace_tracy_memory"]
+# Bevy's per-system spans for the span trace (app/span_trace.rs, enabled at run time by DYNAMAPPER_SPAN_TRACE);
+# they cost every frame, so builds stay without them unless asked.
+span_trace = ["bevy/trace"]
 # --
 # Keep dynamic linking enabled by default for local/dev builds (faster compile)
 # but allow CI to disable it by building with `--no-default-features`.

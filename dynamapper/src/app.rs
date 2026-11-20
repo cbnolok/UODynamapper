@@ -1,5 +1,6 @@
 pub mod app_states;
 mod bevy_log_filter;
+mod span_trace;
 pub mod paths;
 pub mod system_sets;
 

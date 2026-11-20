@@ -255,6 +255,12 @@ per fragment. This is an optional driver diagnostic, independent of the portable
 runtime rendering path. Reused pipeline cache entries can omit compiler output;
 keep a timing result usable even when its optional compiler statistics are absent.
 
+## Span trace
+
+[span_trace/](span_trace/README.md) finds where a hitch's time goes: a per-span trace of a benchmark walk
+(`DYNAMAPPER_SPAN_TRACE`, with Bevy's system spans from the `span_trace` cargo feature), the long frames and spikes in
+it, and the perf callees under a span.
+
 ## Temporary artifacts
 
 After each completed task, remove superseded captures, obsolete test fixtures and

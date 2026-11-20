@@ -106,14 +106,22 @@ pub fn init_bevy_logging() {
 
         // Use static target-prefix filters rather than EnvFilter so filtered-out
         // Bevy/backend events do not pay regex matching costs at runtime.
-        let subscriber = tracing_subscriber::registry()
-            .with(bevy_log_targets())
-            .with(
-                tracing_subscriber::fmt::Layer::default().with_writer(std::io::sink),
-            )
-            .with(InterceptLogLayer);
-
-        if let Err(err) = set_global_default(subscriber) {
+        let result = match super::span_trace::layer() {
+            // The span trace sees every span; the log layers filter for themselves.
+            Some(span_trace) => set_global_default(
+                tracing_subscriber::registry()
+                    .with(span_trace)
+                    .with(tracing_subscriber::fmt::Layer::default().with_writer(std::io::sink).with_filter(bevy_log_targets()))
+                    .with(InterceptLogLayer.with_filter(bevy_log_targets())),
+            ),
+            None => set_global_default(
+                tracing_subscriber::registry()
+                    .with(bevy_log_targets())
+                    .with(tracing_subscriber::fmt::Layer::default().with_writer(std::io::sink))
+                    .with(InterceptLogLayer),
+            ),
+        };
+        if let Err(err) = result {
             eprintln!("failed to initialize tracing subscriber: {err}");
         }
     });
