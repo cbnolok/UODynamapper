@@ -1889,21 +1889,22 @@ where
                 bc7_rdo_lambda,
                 bc7_rdo_lookback_blocks,
             )?;
+            let art_options = TexArtEcAtlasOptions {
+                atlas_width: art_atlas_width,
+                atlas_height: art_atlas_height,
+                gutter: art_gutter,
+                compression: art_output_format.compression,
+                upscale: upscale_filter,
+                upscale_passes: convert_upscale_passes(art_upscale_passes),
+                upscale_profile: upscale_profile.clone(),
+                pixel_format: art_output_format.pixel_format,
+                bc7_rdo_lambda: art_output_format.bc7_rdo_lambda,
+                bc7_rdo_lookback_blocks: art_output_format.bc7_rdo_lookback_blocks,
+            };
             let art_summary = convert_tex_art_ec_uop_to_tex_art_ec_uddp_from_loaded_sources(
                 &shared_sources,
                 &art_out_file,
-                &TexArtEcAtlasOptions {
-                    atlas_width: art_atlas_width,
-                    atlas_height: art_atlas_height,
-                    gutter: art_gutter,
-                    compression: art_output_format.compression,
-                    upscale: upscale_filter,
-                    upscale_passes: convert_upscale_passes(art_upscale_passes),
-                    upscale_profile: upscale_profile.clone(),
-                    pixel_format: art_output_format.pixel_format,
-                    bc7_rdo_lambda: art_output_format.bc7_rdo_lambda,
-                    bc7_rdo_lookback_blocks: art_output_format.bc7_rdo_lookback_blocks,
-                },
+                &art_options,
             )?;
             info!(
                 "Wrote {} pages ({}) for {} populated art slots out of {} total slots to '{}'.",
@@ -2002,8 +2003,8 @@ where
 
             let kr_land = add_kr_land_section(&kr_work, &ec_paths[0], &land_out_file,
                 &TexLandKrPackOptions { atlas: land_options, report: kr_land_report }, |_| {}, |_| {})?;
-            let kr_items = add_kr_art_and_tilemeta_sections(&kr_work, &shared_sources, Some(&art_out_file),
-                tilemeta_out_file.as_deref().map(|tilemeta| {
+            let kr_items = add_kr_art_and_tilemeta_sections(&kr_work, &shared_sources,
+                Some((&art_out_file, &art_options)), tilemeta_out_file.as_deref().map(|tilemeta| {
                     (source_dir_args.ccdir.as_deref().expect("--ccdir validated for tilemeta output"), tilemeta)
                 }))?;
             info!(

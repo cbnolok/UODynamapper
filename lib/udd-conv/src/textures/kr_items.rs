@@ -509,6 +509,19 @@ pub struct KrArtBuildSummary {
     pub art: TexArtEcBuildSummary,
 }
 
+/// The Kingdom Reborn item art's options: the encoding of the Enhanced art's `ec_art_options` (pixel format,
+/// compression and BC7 tuning), so the two share the Enhanced art atlas as stored, with the default page layout and no
+/// upscaling.
+pub fn kr_art_options(ec_art_options: &TexArtEcAtlasOptions) -> TexArtEcAtlasOptions {
+    TexArtEcAtlasOptions {
+        compression: ec_art_options.compression,
+        pixel_format: ec_art_options.pixel_format,
+        bc7_rdo_lambda: ec_art_options.bc7_rdo_lambda,
+        bc7_rdo_lookback_blocks: ec_art_options.bc7_rdo_lookback_blocks,
+        ..TexArtEcAtlasOptions::default()
+    }
+}
+
 /// Where [`pack_kr_art_and_tilemeta`] writes the Kingdom Reborn tile data: `out`, with the Classic `tiledata.mul` (and
 /// `radarcol.mul`) of `cc_dir` as the Enhanced tilemeta takes them.
 pub struct KrTilemetaOutput<'a> {
@@ -518,9 +531,9 @@ pub struct KrTilemetaOutput<'a> {
 
 /// Writes the Kingdom Reborn item art overlay to `art_out` and, with `tilemeta`, the Kingdom Reborn tile data (see the
 /// module documentation), from the Kingdom Reborn files in `kr_dir`, against `ec`, the Enhanced sources the Enhanced
-/// art is packed from.
+/// art is packed from. The art takes the encoding of `ec_art_options`, the Enhanced art's ([`kr_art_options`]).
 pub fn pack_kr_art_and_tilemeta(kr_dir: &Path, ec: &TexArtEcLoadedSources, art_out: &Path,
-    tilemeta: Option<KrTilemetaOutput>) -> eyre::Result<KrArtBuildSummary> {
+    ec_art_options: &TexArtEcAtlasOptions, tilemeta: Option<KrTilemetaOutput>) -> eyre::Result<KrArtBuildSummary> {
     info!("Converting the Kingdom Reborn items to {}{}", art_out.display(),
         tilemeta.as_ref().map(|tilemeta| format!(" and {}", tilemeta.out.display())).unwrap_or_default());
     let mut kr = load_tex_art_ec_sources(&[kr_dir.to_path_buf()])
@@ -534,7 +547,7 @@ pub fn pack_kr_art_and_tilemeta(kr_dir: &Path, ec: &TexArtEcLoadedSources, art_o
     let full_definition = kr.art_definition.clone();
     kr.art_definition.definitions.retain(|id, _| differing.contains(id));
     let art_table = EcOverlayTable { equivalents: world_art.equivalents.clone() };
-    let art = convert_tex_art_ec_overlay_from_loaded_sources(&kr, art_out, &TexArtEcAtlasOptions::default(),
+    let art = convert_tex_art_ec_overlay_from_loaded_sources(&kr, art_out, &kr_art_options(ec_art_options),
         &art_table);
     kr.art_definition = full_definition;
     let art = art?;

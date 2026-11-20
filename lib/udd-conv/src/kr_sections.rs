@@ -24,7 +24,7 @@ use crate::kr_items::{
     load_ec_sources_with_kr_windows, pack_kr_art_and_tilemeta, pack_kr_aux, KrArtBuildSummary, KrTilemetaOutput,
 };
 use crate::package_progress::AssetTaskProgress;
-use crate::tex_art_ec::TexArtEcLoadedSources;
+use crate::tex_art_ec::{TexArtEcAtlasOptions, TexArtEcLoadedSources};
 use crate::tex_aux_ec::TexAuxEcOverlaySummary;
 use crate::tilemeta_overrides::apply_bundled_tilemeta_overrides;
 use crate::tex_land_kr::{convert_kr_land_to_tex_land_kr_uddp_with_progress, TexLandKrBuildSummary, TexLandKrPackOptions};
@@ -98,16 +98,20 @@ pub fn embed_kr_section(package: &Path, section: &Path) -> eyre::Result<()> {
 }
 
 /// Packs the Kingdom Reborn item art against `ec` ([`KrSectionWork::load_ec_sources`]) and nests it in `art_package`,
-/// the `tex_art_ec.uddp` packed from `ec`; with `tilemeta` (the Classic folder and the `tilemeta.uddp` packed from
-/// `ec`), also the Kingdom Reborn tile data, nested in that `tilemeta.uddp`, and then the bundled tilemeta overrides,
-/// which read it (`crate::tilemeta_overrides`). Without `art_package` the art is packed for the tile data alone.
-pub fn add_kr_art_and_tilemeta_sections(work: &KrSectionWork, ec: &TexArtEcLoadedSources, art_package: Option<&Path>,
-    tilemeta: Option<(&Path, &Path)>) -> eyre::Result<KrArtBuildSummary> {
+/// the `tex_art_ec.uddp` packed from `ec` with the options beside it, whose encoding the Kingdom Reborn art takes; with
+/// `tilemeta` (the Classic folder and the `tilemeta.uddp` packed from `ec`), also the Kingdom Reborn tile data, nested
+/// in that `tilemeta.uddp`, and then the bundled tilemeta overrides, which read it (`crate::tilemeta_overrides`).
+/// Without `art_package` the art is packed for the tile data alone.
+pub fn add_kr_art_and_tilemeta_sections(work: &KrSectionWork, ec: &TexArtEcLoadedSources,
+    art_package: Option<(&Path, &TexArtEcAtlasOptions)>, tilemeta: Option<(&Path, &Path)>)
+    -> eyre::Result<KrArtBuildSummary> {
     let art_section = work.section_path(KR_ART_SECTION_FILE_NAME);
     let tilemeta_section = work.section_path(KR_TILEMETA_SECTION_FILE_NAME);
-    let summary = pack_kr_art_and_tilemeta(work.kr_dir(), ec, &art_section,
+    let default_art_options = TexArtEcAtlasOptions::default();
+    let ec_art_options = art_package.map_or(&default_art_options, |(_, options)| options);
+    let summary = pack_kr_art_and_tilemeta(work.kr_dir(), ec, &art_section, ec_art_options,
         tilemeta.map(|(cc_dir, _)| KrTilemetaOutput { cc_dir, out: &tilemeta_section }))?;
-    if let Some(art_package) = art_package {
+    if let Some((art_package, _)) = art_package {
         embed_kr_section(art_package, &art_section)?;
     }
     if let Some((_, tilemeta_package)) = tilemeta {

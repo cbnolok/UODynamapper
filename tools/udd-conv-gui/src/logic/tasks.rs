@@ -1022,28 +1022,28 @@ impl UddConvApp {
             // Before the Enhanced pass, so a missing or foreign Kingdom Reborn source fails the task at once.
             let kr_work = KrSectionWork::prepare(&kr_source(&settings), &sources[0], &output)?;
             let ec = kr_work.load_ec_sources(&sources)?;
-            let summary = convert_tex_art_ec_uop_to_tex_art_ec_uddp_from_loaded_sources_with_progress(
-                &ec, &output,
-                &TexArtEcAtlasOptions {
-                    atlas_width: DEFAULT_ATLAS_PAGE_WIDTH,
-                    atlas_height: DEFAULT_ATLAS_PAGE_HEIGHT,
-                    gutter: DEFAULT_ATLAS_GUTTER,
-                    compression,
-                    upscale: settings.upscale_tex_art_ec,
-                    upscale_passes: Vec::new(),
-                    upscale_profile,
-                    pixel_format: match settings.opt_tex_art_ec {
-                        TextureOptimization::Bc7 | TextureOptimization::Bc7Zstd => PagePixelFormat::Bc7,
-                        _ => PagePixelFormat::Rgba8888,
-                    },
-                    bc7_rdo_lambda: bc7_rdo_lambda(&settings, settings.opt_tex_art_ec),
-                    bc7_rdo_lookback_blocks: bc7_rdo_lookback_blocks(&settings),
+            let art_options = TexArtEcAtlasOptions {
+                atlas_width: DEFAULT_ATLAS_PAGE_WIDTH,
+                atlas_height: DEFAULT_ATLAS_PAGE_HEIGHT,
+                gutter: DEFAULT_ATLAS_GUTTER,
+                compression,
+                upscale: settings.upscale_tex_art_ec,
+                upscale_passes: Vec::new(),
+                upscale_profile,
+                pixel_format: match settings.opt_tex_art_ec {
+                    TextureOptimization::Bc7 | TextureOptimization::Bc7Zstd => PagePixelFormat::Bc7,
+                    _ => PagePixelFormat::Rgba8888,
                 },
+                bc7_rdo_lambda: bc7_rdo_lambda(&settings, settings.opt_tex_art_ec),
+                bc7_rdo_lookback_blocks: bc7_rdo_lookback_blocks(&settings),
+            };
+            let summary = convert_tex_art_ec_uop_to_tex_art_ec_uddp_from_loaded_sources_with_progress(
+                &ec, &output, &art_options,
                 |task_progress| progress.task_progress_with_extract_label(task_progress, extract_label),
                 |build_progress| progress.build_progress(build_progress),
             )?;
             progress.set(AssetPackProgressState::Running, KR_SECTION_PROGRESS, KR_SECTION_LABEL);
-            let kr = add_kr_art_and_tilemeta_sections(&kr_work, &ec, Some(&output), None)?;
+            let kr = add_kr_art_and_tilemeta_sections(&kr_work, &ec, Some((&output, &art_options)), None)?;
             Ok(format!("Wrote {} pages to {}, with the Kingdom Reborn item art ({} slots, {} items left to the \
                 Enhanced art)", summary.page_count, output.display(), kr.art.populated_slot_count,
                 kr.world_art.equivalents.len()))
