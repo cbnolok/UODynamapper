@@ -853,7 +853,8 @@ pub fn sys_collect_client_light_sprites(
             // the scene's (`cave_outside`).
             let flags_height = tilemeta.item_tile(u32::from(key.graphic)).map_or((0, 0), |meta| (meta.flags, meta.height));
             let Some(cave_light) = caves.light_view(key.tile_x, key.tile_y, key.z, flags_height.0, flags_height.1,
-                || land_z(key.tile_x, key.tile_y).map(i32::from), z_cut.max_z) else {
+                || land_z(key.tile_x, key.tile_y).map(i32::from), z_cut.max_z_at(key.tile_x as i32, key.tile_y as i32))
+            else {
                 continue;
             };
             let light_max_z = cave_light.max_z;
@@ -867,7 +868,7 @@ pub fn sys_collect_client_light_sprites(
                 key.tile_y,
                 key.z,
                 light_max_z,
-                z_cut.roof_layer,
+                z_cut.roof_layer_at(key.tile_x as i32, key.tile_y as i32),
             ) {
                 continue;
             }
@@ -882,7 +883,7 @@ pub fn sys_collect_client_light_sprites(
                         key.tile_y,
                         key.z,
                         light_max_z,
-                        z_cut.roof_layer,
+                        z_cut.roof_layer_at(key.tile_x as i32, key.tile_y as i32),
                     )
                 })
                 .flatten();

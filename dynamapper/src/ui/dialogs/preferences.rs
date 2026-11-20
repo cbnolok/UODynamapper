@@ -64,6 +64,7 @@ pub struct PreferencesDialogState {
     pub enable_static_lights: bool,
     pub show_hidden_multi_parts: bool,
     pub show_only_player_floor: bool,
+    pub player_floor_building_only: bool,
     pub caves: CaveView,
     pub cave_surroundings: CaveSurroundings,
     /// Timer used to debounce applying settings that cause UI layout shifts (like UI scale).
@@ -107,6 +108,7 @@ impl Default for PreferencesDialogState {
             enable_static_lights: false,
             show_hidden_multi_parts: false,
             show_only_player_floor: false,
+            player_floor_building_only: false,
             caves: CaveView::HiddenUntilEntered,
             cave_surroundings: CaveSurroundings::Dimmed,
             apply_timer: {
@@ -181,6 +183,7 @@ fn sys_sync_settings_to_state(
         state.enable_static_lights = settings.world_rendering.enable_static_lights;
         state.show_hidden_multi_parts = settings.world_rendering.show_hidden_multi_parts;
         state.show_only_player_floor = settings.world_rendering.show_only_player_floor;
+        state.player_floor_building_only = settings.world_rendering.player_floor_building_only;
         state.caves = settings.world_rendering.caves;
         state.cave_surroundings = settings.world_rendering.cave_surroundings;
 
@@ -293,6 +296,9 @@ pub fn sys_render_preferences_dialog(
         }
         if settings.as_ref().world_rendering.show_only_player_floor != state.show_only_player_floor {
             settings.world_rendering.show_only_player_floor = state.show_only_player_floor;
+        }
+        if settings.as_ref().world_rendering.player_floor_building_only != state.player_floor_building_only {
+            settings.world_rendering.player_floor_building_only = state.player_floor_building_only;
         }
         if settings.as_ref().world_rendering.caves != state.caves {
             settings.world_rendering.caves = state.caves;
@@ -690,6 +696,20 @@ pub fn sys_render_preferences_dialog(
                         state.apply_timer.reset();
                         state.apply_timer.unpause();
                     }
+                    ui.indent("preferences_player_floor_building_only", |ui| {
+                        if ui
+                            .add_enabled(state.show_only_player_floor,
+                                egui::Checkbox::new(&mut state.player_floor_building_only, "Only the Player's Building"))
+                            .on_hover_text(
+                                "Hide the floors and roof over the player only on the building the player is in: \
+                                 the buildings around keep their roofs.",
+                            )
+                            .changed()
+                        {
+                            state.apply_timer.reset();
+                            state.apply_timer.unpause();
+                        }
+                    });
                     ui.horizontal(|ui| {
                         ui.label("Caves:");
                         let mut changed = false;

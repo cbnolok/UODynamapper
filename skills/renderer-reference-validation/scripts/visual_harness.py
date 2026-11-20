@@ -100,8 +100,8 @@ LIVE_CHUNK_SECONDS = 60
 # The overrides the control socket switches at runtime (dynamapper's dev_control/settings.rs): a fixture whose
 # overrides are all here shares the switching launches; any other override needs launches of its own.
 LIVE_SETTINGS = {
-    'world_rendering': ('show_only_player_floor', 'caves', 'cave_surroundings', 'enable_statics',
-                        'enable_static_lights', 'show_hidden_multi_parts'),
+    'world_rendering': ('show_only_player_floor', 'player_floor_building_only', 'caves', 'cave_surroundings',
+                        'enable_statics', 'enable_static_lights', 'show_hidden_multi_parts'),
     'graphics': ('cc_terrain_transitions', 'ec_terrain_transitions'),
     'style': ('light_cover', 'player_floor_rule', 'land_texture_variation'),
 }

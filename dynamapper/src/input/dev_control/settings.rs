@@ -28,6 +28,7 @@ use serde_json::{json, Value};
 pub(super) enum ControlSetting {
     /// Preferences, world: world_rendering.toml.
     ShowOnlyPlayerFloor(bool),
+    PlayerFloorBuildingOnly(bool),
     Caves(CaveView),
     CaveSurroundings(CaveSurroundings),
     EnableStatics(bool),
@@ -110,7 +111,7 @@ impl ControlSettings<'_> {
         recompute: &mut MessageWriter<RecomputeVisibleChunksEvent>) -> Result<bool, String> {
         use ControlSetting as S;
         match setting {
-            S::ShowOnlyPlayerFloor(_) | S::Caves(_) | S::CaveSurroundings(_) | S::EnableStatics(_)
+            S::ShowOnlyPlayerFloor(_) | S::PlayerFloorBuildingOnly(_) | S::Caves(_) | S::CaveSurroundings(_) | S::EnableStatics(_)
             | S::EnableStaticLights(_) | S::ShowHiddenMultiParts(_) | S::CcTerrainTransitions(_)
             | S::EcTerrainTransitions(_) => {
                 let settings = self.settings.as_mut().ok_or("the settings are not loaded yet")?;
@@ -122,6 +123,7 @@ impl ControlSettings<'_> {
                 let (world, graphics) = (&mut settings.world_rendering, &mut settings.graphics);
                 match setting {
                     S::ShowOnlyPlayerFloor(value) => world.show_only_player_floor = value,
+                    S::PlayerFloorBuildingOnly(value) => world.player_floor_building_only = value,
                     S::Caves(value) => world.caves = value,
                     S::CaveSurroundings(value) => world.cave_surroundings = value,
                     S::EnableStatics(value) => world.enable_statics = value,
@@ -181,6 +183,7 @@ impl ControlSettings<'_> {
         let (world, graphics) = (&settings.world_rendering, &settings.graphics);
         match setting {
             ControlSetting::ShowOnlyPlayerFloor(value) => world.show_only_player_floor != value,
+            ControlSetting::PlayerFloorBuildingOnly(value) => world.player_floor_building_only != value,
             ControlSetting::Caves(value) => world.caves != value,
             ControlSetting::CaveSurroundings(value) => world.cave_surroundings != value,
             ControlSetting::EnableStatics(value) => world.enable_statics != value,
@@ -199,7 +202,8 @@ impl ControlSettings<'_> {
             let (world, graphics, window) = (&settings.world_rendering, &settings.graphics, &settings.app.window);
             json!({
                 "art_texture_source": graphics.art_texture_source, "land_texture_source": graphics.land_texture_source,
-                "show_only_player_floor": world.show_only_player_floor, "caves": world.caves,
+                "show_only_player_floor": world.show_only_player_floor,
+                "player_floor_building_only": world.player_floor_building_only, "caves": world.caves,
                 "cave_surroundings": world.cave_surroundings, "enable_statics": world.enable_statics,
                 "enable_static_lights": world.enable_static_lights,
                 "show_hidden_multi_parts": world.show_hidden_multi_parts,
@@ -228,6 +232,8 @@ mod tests {
     fn settings_parse_typed_values_and_refuse_unknown_keys_types_and_ranges() {
         assert_eq!(ControlSetting::parse("show_only_player_floor", json!(true)).unwrap(),
             ControlSetting::ShowOnlyPlayerFloor(true));
+        assert_eq!(ControlSetting::parse("player_floor_building_only", json!(true)).unwrap(),
+            ControlSetting::PlayerFloorBuildingOnly(true));
         assert_eq!(ControlSetting::parse("caves", json!("drawn_over_map")).unwrap(),
             ControlSetting::Caves(CaveView::DrawnOverMap));
         assert_eq!(ControlSetting::parse("cave_surroundings", json!("black")).unwrap(),

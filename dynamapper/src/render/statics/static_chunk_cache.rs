@@ -90,6 +90,9 @@ pub(super) struct StaticCut {
     pub(super) own_land_z: Option<i32>,
     /// Drawn whatever the cut: the player's cave lifts it (`CaveStatic::Lifted`).
     pub(super) uncut: bool,
+    /// The static's cell, which the building-only cut keeps to (`ZViewCut::cuts_cell`).
+    pub(super) x: i32,
+    pub(super) y: i32,
     /// For a cave's floor buried under its cell's land outside the caves, that land's z: the floor is covered while the
     /// cut draws that land (`max_ground_z`), and shows when the cut leaves the land out (`caves::is_buried_floor`).
     pub(super) buried_by_land_z: Option<i32>,
@@ -97,7 +100,8 @@ pub(super) struct StaticCut {
 
 impl StaticCut {
     pub(super) fn hides(&self, cut: &ZViewCut) -> bool {
-        (!self.uncut && cut.hides_static_over_land(self.flags, self.z, || self.own_land_z))
+        (!self.uncut && cut.cuts_cell(self.x, self.y)
+            && cut.hides_static_over_land(self.flags, self.z, || self.own_land_z))
             || self.buried_by_land_z.is_some_and(|land_z| land_z <= cut.max_ground_z)
     }
 }

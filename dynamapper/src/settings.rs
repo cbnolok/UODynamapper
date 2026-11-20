@@ -135,6 +135,10 @@ pub struct SectWorldRendering {
     /// cell sets (a ceiling, a roof one cell south-east, or land over the player in a cave) are not drawn, and roofs are
     /// not drawn while the player is under one. A view setting shared by every render style.
     pub show_only_player_floor: bool,
+    /// With `show_only_player_floor`, the floors and roofs over the player are hidden only on the building the player
+    /// is in (`z_view::building_area`): the multi's footprint, or the cells covered over the player connected to the
+    /// player's. The buildings around keep their roofs. Off: hidden over the whole view, as the client does.
+    pub player_floor_building_only: bool,
     /// How the caves buried under the land show: hidden until the player enters one (with `show_only_player_floor`),
     /// as the client does, or drawn over the map, those connected to a cave mouth (caves.rs). A view setting shared by
     /// every render style.
@@ -1445,6 +1449,7 @@ mod tests {
         assert!(!settings.enable_static_art_local_lights);
         assert!(!settings.show_hidden_multi_parts);
         assert!(!settings.show_only_player_floor);
+        assert!(!settings.player_floor_building_only);
         assert_eq!(settings.caves, CaveView::HiddenUntilEntered);
         assert_eq!(settings.cave_surroundings, CaveSurroundings::Dimmed);
     }

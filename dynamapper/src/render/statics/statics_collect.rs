@@ -1017,6 +1017,8 @@ fn emit_static_render_tile(
         z: render_tile.z,
         own_land_z,
         uncut: player_cave == Some(CaveStatic::Lifted),
+        x: cell_x,
+        y: cell_y,
         buried_by_land_z,
     };
     let cave_flags = match cave {

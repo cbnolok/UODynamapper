@@ -252,7 +252,8 @@ fn poll_control(
                             "digest": format!("{:016x}", sprites.digest())})),
                         "z_view": z_view.as_ref().map(|limit| json!({"max_z": limit.0.max_z,
                             "max_ground_z": limit.0.max_ground_z, "hide_roofs": limit.0.hide_roofs,
-                            "roof_layer": limit.0.roof_layer})),
+                            "roof_layer": limit.0.roof_layer,
+                            "area_cells": limit.0.area.map(|area| area.len())})),
                         "cave_surroundings": settings.map(|settings| settings.world_rendering.cave_surroundings),
                         "control": control_settings.status().as_object().cloned().map(|mut control| {
                             control.insert("switch_serial".into(), switch.serial.into());

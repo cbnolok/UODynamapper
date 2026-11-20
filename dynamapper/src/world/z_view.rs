@@ -50,6 +50,12 @@
 //! land is read from the map package (`PackageLand`), so every roof in the view finds it whether or not its map block
 //! is loaded; the lights follow the same roofs (`light_cover::static_light_is_hidden`).
 //!
+//! With `world_rendering.player_floor_building_only`, a ceiling's cut, under either rule, keeps to the player's
+//! building (`building_area`, `ZViewCut::area`): the footprint of the multi the player stands in, or the cells covered
+//! over the player connected to the player's, each grown by a cell for the eaves and the walls above. The roofs and
+//! upper floors of the buildings around stay, and so do their lights. The cut under the land, in a mountain or a
+//! cave, still holds on the whole view. No client does this; it is off by default.
+//!
 //! In a cave, under either rule and in every style, the player's cave is drawn whole instead (`caves::PlayerCave`):
 //! its statics whatever the cut, and outside it ClassicUO's cut at the player's z + `PLAYER_VIEW_HEADROOM`, land with
 //! it or none (`player_cave_z_view_cut`).
@@ -118,6 +124,12 @@ const ROOF_SKIP_FLAGS: u64 = TaeFlag::Transparent.bits() | TaeFlag::Surface.bits
 const NEVER_DRAWN_FLAGS: u64 = TaeFlag::NoDraw.bits();
 /// `ZViewCut::max_ground_z` when every land cell is hidden, below the lowest land z.
 pub const ALL_LAND_HIDDEN_Z: i32 = i8::MIN as i32 - 1;
+/// The cells a side of the building-only cut's area (`ZViewArea`): the region read around the player.
+const Z_VIEW_AREA_DIM: usize = (2 * Z_VIEW_REGION_RADIUS + 1) as usize;
+const Z_VIEW_AREA_WORDS: usize = (Z_VIEW_AREA_DIM * Z_VIEW_AREA_DIM).div_ceil(u64::BITS as usize);
+/// The cells the building's area reaches past the cells covered over the player, or past a multi's parts: the eaves
+/// and the walls of the storey above stand on the cells around the room.
+const Z_VIEW_AREA_MARGIN: i32 = 1;
 
 /// What the z-view limit hides.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -131,12 +143,32 @@ pub struct ZViewCut {
     /// Under KR's rule with a ceiling, the player's layer (`kr_light_layer`): a roof is hidden when its own layer,
     /// counted from the averaged land z of its own cell, is above it (`kr_roof_is_hidden`), not at `max_z`.
     pub roof_layer: Option<i32>,
+    /// With the building-only cut (`world_rendering.player_floor_building_only`), the cells of the player's building
+    /// (`building_area`): `max_z`, the roofs and `roof_layer` hide only on them (`cuts_cell`). `max_ground_z` holds
+    /// everywhere.
+    pub area: Option<ZViewArea>,
 }
 
 impl ZViewCut {
     /// Nothing is hidden.
     pub const NONE: Self =
-        Self { max_z: NO_Z_VIEW_LIMIT, max_ground_z: NO_Z_VIEW_LIMIT, hide_roofs: false, roof_layer: None };
+        Self { max_z: NO_Z_VIEW_LIMIT, max_ground_z: NO_Z_VIEW_LIMIT, hide_roofs: false, roof_layer: None, area: None };
+
+    /// Whether the ceiling's part of the cut (`max_z`, the roofs, `roof_layer`) holds on the cell (`x`, `y`): on every
+    /// cell but those outside the building-only cut's `area`.
+    pub fn cuts_cell(&self, x: i32, y: i32) -> bool {
+        self.area.as_ref().is_none_or(|area| area.contains(x, y))
+    }
+
+    /// `max_z` on the cell (`x`, `y`) (`cuts_cell`).
+    pub fn max_z_at(&self, x: i32, y: i32) -> i32 {
+        if self.cuts_cell(x, y) { self.max_z } else { NO_Z_VIEW_LIMIT }
+    }
+
+    /// `roof_layer` on the cell (`x`, `y`) (`cuts_cell`).
+    pub fn roof_layer_at(&self, x: i32, y: i32) -> Option<i32> {
+        self.roof_layer.filter(|_| self.cuts_cell(x, y))
+    }
 
     /// Whether a static or multi part with tile flags `flags` at `z` is hidden, its cell's land not known: a roof
     /// under `roof_layer` goes at `max_z` like the rest.
@@ -168,9 +200,115 @@ impl Default for ZViewCut {
     }
 }
 
+/// The cells of the building the player is in, around the player's (`building_area`), which the building-only cut hides
+/// above the player on (`ZViewCut::area`): at most `Z_VIEW_REGION_RADIUS` from the player's cell either way.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub struct ZViewArea {
+    center: (i32, i32),
+    cells: [u64; Z_VIEW_AREA_WORDS],
+}
+
+impl ZViewArea {
+    fn new(center: (i32, i32)) -> Self {
+        Self { center, cells: [0; Z_VIEW_AREA_WORDS] }
+    }
+
+    fn index(&self, x: i32, y: i32) -> Option<usize> {
+        let dim = Z_VIEW_AREA_DIM as i32;
+        let (column, row) = (x - self.center.0 + Z_VIEW_REGION_RADIUS, y - self.center.1 + Z_VIEW_REGION_RADIUS);
+        ((0..dim).contains(&column) && (0..dim).contains(&row)).then(|| (row * dim + column) as usize)
+    }
+
+    fn bit(index: usize) -> (usize, u64) {
+        (index / u64::BITS as usize, 1 << (index % u64::BITS as usize))
+    }
+
+    /// Adds the cell (`x`, `y`), if within reach; returns whether it is new.
+    fn insert(&mut self, x: i32, y: i32) -> bool {
+        let Some((word, bit)) = self.index(x, y).map(Self::bit) else {
+            return false;
+        };
+        let new = self.cells[word] & bit == 0;
+        self.cells[word] |= bit;
+        new
+    }
+
+    pub fn contains(&self, x: i32, y: i32) -> bool {
+        self.index(x, y).map(Self::bit).is_some_and(|(word, bit)| self.cells[word] & bit != 0)
+    }
+
+    /// The cells in it.
+    pub fn len(&self) -> u32 {
+        self.cells.iter().map(|word| word.count_ones()).sum()
+    }
+
+    /// It with every cell within `margin` of one of its cells.
+    fn grown(&self, margin: i32) -> Self {
+        let mut grown = *self;
+        let dim = Z_VIEW_AREA_DIM as i32;
+        for index in (0..Z_VIEW_AREA_DIM * Z_VIEW_AREA_DIM).filter(|&index| {
+            let (word, bit) = Self::bit(index);
+            self.cells[word] & bit != 0
+        }) {
+            let x = self.center.0 - Z_VIEW_REGION_RADIUS + index as i32 % dim;
+            let y = self.center.1 - Z_VIEW_REGION_RADIUS + index as i32 / dim;
+            for dy in -margin..=margin {
+                for dx in -margin..=margin {
+                    grown.insert(x + dx, y + dy);
+                }
+            }
+        }
+        grown
+    }
+}
+
+impl std::fmt::Debug for ZViewArea {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("ZViewArea").field("center", &self.center).field("cells", &self.len()).finish()
+    }
+}
+
 /// The statics and multi parts the rule reads, as (tile flags, z), per cell.
 pub trait ZViewCells {
     fn objects(&self, x: i32, y: i32) -> &[(u64, i8)];
+
+    /// The cells of the multis among them, each the bounds of its parts.
+    fn multi_footprints(&self) -> &[IRect] {
+        &[]
+    }
+}
+
+/// The building-only cut's cells for the player on (`x`, `y`) at `z` (`ZViewCut::area`): the footprint of the smallest
+/// multi the player's cell is in, or else the cells covered above the player, by a static more than
+/// `PLAYER_CEILING_MIN_RISE` above the player neither foliage nor see-through, connected over the four neighbours to
+/// the player's cell or to the cell south-east, the two cells the ceiling is found on; either grown by
+/// `Z_VIEW_AREA_MARGIN`, and within `Z_VIEW_REGION_RADIUS` of the player's cell.
+pub fn building_area(x: i32, y: i32, z: i32, cells: &impl ZViewCells) -> ZViewArea {
+    let mut area = ZViewArea::new((x, y));
+    let player = IVec2::new(x, y);
+    let multi = cells.multi_footprints().iter().filter(|footprint| footprint.contains(player))
+        .min_by_key(|footprint| (footprint.size() + IVec2::ONE).element_product());
+    if let Some(footprint) = multi {
+        for cell_y in footprint.min.y..=footprint.max.y {
+            for cell_x in footprint.min.x..=footprint.max.x {
+                area.insert(cell_x, cell_y);
+            }
+        }
+        return area.grown(Z_VIEW_AREA_MARGIN);
+    }
+    let ceiling_min = z + PLAYER_CEILING_MIN_RISE;
+    let covered = |cell_x, cell_y| {
+        cells.objects(cell_x, cell_y).iter()
+            .any(|&(flags, object_z)| i32::from(object_z) > ceiling_min && flags & CEILING_SKIP_FLAGS == 0)
+    };
+    let mut stack = vec![(x, y), (x + 1, y + 1)];
+    while let Some((cell_x, cell_y)) = stack.pop() {
+        if area.contains(cell_x, cell_y) || !covered(cell_x, cell_y) || !area.insert(cell_x, cell_y) {
+            continue;
+        }
+        stack.extend([(cell_x + 1, cell_y), (cell_x - 1, cell_y), (cell_x, cell_y + 1), (cell_x, cell_y - 1)]);
+    }
+    area.grown(Z_VIEW_AREA_MARGIN)
 }
 
 /// The cut for a player on (`x`, `y`) at `z`, over land `player_land_z` (the cell's average z where it is stretched;
@@ -217,7 +355,7 @@ pub fn compute_z_view_cut(x: i32, y: i32, z: i32, player_land_z: Option<i32>, ce
     if roof_cap < headroom {
         max_z = headroom;
     }
-    ZViewCut { max_z, max_ground_z, hide_roofs, roof_layer: None }
+    ZViewCut { max_z, max_ground_z, hide_roofs, roof_layer: None, area: None }
 }
 
 /// The KR client's cut for a player on (`x`, `y`) at `z`, over the averaged land z `player_land_z` of the cell (`None`
@@ -244,6 +382,7 @@ pub fn compute_kr_z_view_cut(x: i32, y: i32, z: i32, player_land_z: Option<i32>,
         max_ground_z: if below_land { ALL_LAND_HIDDEN_Z } else { NO_Z_VIEW_LIMIT },
         hide_roofs: false,
         roof_layer: (max_z != NO_Z_VIEW_LIMIT).then(|| kr_light_layer(clamp_to_i8(z), clamp_to_i8(land_z))),
+        area: None,
     }
 }
 
@@ -263,7 +402,7 @@ pub fn player_cave_z_view_cut(z: i32, surroundings: CaveSurroundings) -> ZViewCu
         CaveSurroundings::Dimmed => headroom,
         CaveSurroundings::Black => ALL_LAND_HIDDEN_Z,
     };
-    ZViewCut { max_z: headroom, max_ground_z, hide_roofs: false, roof_layer: None }
+    ZViewCut { max_z: headroom, max_ground_z, hide_roofs: false, roof_layer: None, area: None }
 }
 
 /// The z from which KR's cut hides the view for a player at `z` over the averaged land z `land_z`: the bottom of the
@@ -320,11 +459,16 @@ pub fn near_roof_z(cells: &impl ZViewCells, default_z: i32, x: i32, y: i32, z: i
 #[derive(Default)]
 pub struct ZViewRegion {
     cells: HashMap<(i32, i32), Vec<(u64, i8)>>,
+    multi_footprints: Vec<IRect>,
 }
 
 impl ZViewCells for ZViewRegion {
     fn objects(&self, x: i32, y: i32) -> &[(u64, i8)] {
         self.cells.get(&(x, y)).map_or(&[], Vec::as_slice)
+    }
+
+    fn multi_footprints(&self) -> &[IRect] {
+        &self.multi_footprints
     }
 }
 
@@ -374,6 +518,10 @@ impl ZViewRegion {
                 continue;
             };
             let (x, y) = (multi.x as i32, multi.y as i32);
+            let footprint = parts.iter().map(|part| IVec2::new(x + i32::from(part.x), y + i32::from(part.y)))
+                .fold(None, |bounds: Option<IRect>, cell| Some(bounds.map_or(IRect::from_corners(cell, cell),
+                    |bounds| bounds.union_point(cell))));
+            region.multi_footprints.extend(footprint);
             for part in parts {
                 let (part_x, part_y) = (x + i32::from(part.x), y + i32::from(part.y));
                 if in_region(part_x, part_y) {
@@ -405,6 +553,7 @@ pub struct ZViewInputs {
     y: u16,
     z: i8,
     show_hidden_multi_parts: bool,
+    building_only: bool,
     /// `CavesRes::revision`: the player's cave.
     caves_revision: u64,
 }
@@ -505,6 +654,7 @@ pub fn sys_update_z_view_limit(
         y: pos.y,
         z: pos.z,
         show_hidden_multi_parts: settings.world_rendering.show_hidden_multi_parts,
+        building_only: settings.world_rendering.player_floor_building_only,
         caves_revision: caves.revision(),
     };
     if *last_inputs == Some(inputs) {
@@ -531,10 +681,14 @@ pub fn sys_update_z_view_limit(
         y,
     );
     *last_inputs = Some(inputs);
-    let cut = match rule {
+    let mut cut = match rule {
         PlayerFloorRule::ClassicUo => compute_z_view_cut(x, y, z, land_z, &region),
         PlayerFloorRule::Kr => compute_kr_z_view_cut(x, y, z, land_z, &region),
     };
+    // Only a ceiling's cut keeps to the building: under the land (`max_ground_z`) it is the mountain's, everywhere.
+    if inputs.building_only && (cut.hide_roofs || cut.roof_layer.is_some()) {
+        cut.area = Some(building_area(x, y, z, &region));
+    }
     limit.set_if_neq(ZViewLimit(cut));
 }
 
@@ -590,7 +744,7 @@ mod tests {
         // The Britain cell (map 1, 1413,1595): wooden floor land at 30, a table, boards at 50, pavers at 70.
         let cells = Cells::default().with(10, 10, 0, 30).with(10, 10, FLOOR, 50).with(10, 10, FLOOR, 70);
         let cut = compute_z_view_cut(10, 10, 30, Some(30), &cells);
-        assert_eq!(cut, ZViewCut { max_z: 50, max_ground_z: NO_Z_VIEW_LIMIT, hide_roofs: true, roof_layer: None });
+        assert_eq!(cut, ZViewCut { max_z: 50, max_ground_z: NO_Z_VIEW_LIMIT, hide_roofs: true, roof_layer: None, area: None });
         assert!(cut.hides_static(FLOOR, 50) && cut.hides_static(WALL, 70) && cut.hides_static(ROOF, 40));
         assert!(!cut.hides_static(WALL, 49));
     }
@@ -605,7 +759,7 @@ mod tests {
             .with(11, 11, ROOF, 60)
             .with(12, 12, ROOF, 63);
         let cut = compute_z_view_cut(10, 10, 20, Some(0), &cells);
-        assert_eq!(cut, ZViewCut { max_z: 40, max_ground_z: NO_Z_VIEW_LIMIT, hide_roofs: true, roof_layer: None });
+        assert_eq!(cut, ZViewCut { max_z: 40, max_ground_z: NO_Z_VIEW_LIMIT, hide_roofs: true, roof_layer: None, area: None });
         let upstairs = compute_z_view_cut(10, 10, 40, Some(0), &cells);
         assert_eq!(upstairs.max_z, 60, "the roof one cell south-east caps the top storey");
         assert!(upstairs.hide_roofs && !upstairs.hides_static(FLOOR, 40));
@@ -622,7 +776,7 @@ mod tests {
             // A separate roof more than `NEAR_ROOF_MAX_STEP` lower is not part of it.
             .with(15, 11, ROOF, 5);
         let cut = compute_z_view_cut(10, 10, 0, Some(0), &cells);
-        assert_eq!(cut, ZViewCut { max_z: 21, max_ground_z: NO_Z_VIEW_LIMIT, hide_roofs: true, roof_layer: None });
+        assert_eq!(cut, ZViewCut { max_z: 21, max_ground_z: NO_Z_VIEW_LIMIT, hide_roofs: true, roof_layer: None, area: None });
     }
 
     /// A cap below the player's headroom is raised to it.
@@ -656,7 +810,7 @@ mod tests {
         // The Minoc mine: rock land at 79, cave floor statics at 0.
         let cells = Cells::default().with(10, 10, FLOOR, 0).with(10, 10, WALL, 40);
         let cut = compute_z_view_cut(10, 10, 0, Some(79), &cells);
-        assert_eq!(cut, ZViewCut { max_z: 16, max_ground_z: 16, hide_roofs: false, roof_layer: None });
+        assert_eq!(cut, ZViewCut { max_z: 16, max_ground_z: 16, hide_roofs: false, roof_layer: None, area: None });
         assert!(cut.hides_static(WALL, 40) && !cut.hides_static(FLOOR, 0));
         let entrance = Cells::default().with(10, 10, FLOOR, 0);
         assert_eq!(compute_z_view_cut(10, 10, 0, Some(15), &entrance), ZViewCut::NONE);
@@ -776,11 +930,57 @@ mod tests {
     fn the_players_cave_cuts_outside_it_at_the_headroom() {
         let headroom = PLAYER_VIEW_HEADROOM;
         let cut = player_cave_z_view_cut(-20, CaveSurroundings::Dimmed);
-        let expected = ZViewCut { max_z: headroom - 20, max_ground_z: headroom - 20, hide_roofs: false, roof_layer: None };
+        let expected = ZViewCut { max_z: headroom - 20, max_ground_z: headroom - 20, hide_roofs: false, roof_layer: None, area: None };
         assert_eq!(cut, expected);
         let cut = player_cave_z_view_cut(0, CaveSurroundings::Black);
         assert_eq!((cut.max_z, cut.max_ground_z), (headroom, ALL_LAND_HIDDEN_Z));
         assert!(cut.land_max_z() < f32::from(i8::MIN));
+    }
+
+    /// The building-only cut keeps to the cells covered over the player connected to the player's, and the cells
+    /// around them: the next house's roof, one cell of open ground away, stays.
+    #[test]
+    fn the_building_only_cut_keeps_to_the_covered_cells() {
+        // A room x 8..=12, y 8..=12 under a roof at 50; the next house's roof at x 14..=16; foliage above the gap.
+        let mut cells = Cells::default();
+        for cell_y in 8..=12 {
+            for cell_x in (8..=12).chain(14..=16) {
+                cells = cells.with(cell_x, cell_y, ROOF, 50);
+            }
+            cells = cells.with(13, cell_y, FOLIAGE, 50);
+        }
+        let area = building_area(10, 10, 30, &cells);
+        assert!(area.contains(8, 8) && area.contains(12, 12));
+        assert!(area.contains(7, 10) && area.contains(13, 10), "the margin");
+        assert!(!area.contains(14, 10) && !area.contains(6, 10));
+        assert_eq!(area.len(), 7 * 7);
+        let cut = ZViewCut { area: Some(area), ..compute_z_view_cut(10, 10, 30, Some(30), &cells) };
+        assert!(cut.hide_roofs && cut.cuts_cell(12, 12) && !cut.cuts_cell(14, 10));
+        assert_eq!((cut.max_z_at(14, 10), cut.max_z_at(10, 10)), (NO_Z_VIEW_LIMIT, cut.max_z));
+        // Nothing over the player: nothing to cut.
+        assert_eq!(building_area(30, 30, 30, &cells).len(), 0);
+    }
+
+    /// In a multi, the building-only cut takes its footprint, the smallest the player stands in.
+    #[test]
+    fn the_building_only_cut_takes_the_players_multi() {
+        struct Multis(Vec<IRect>);
+        impl ZViewCells for Multis {
+            fn objects(&self, _: i32, _: i32) -> &[(u64, i8)] {
+                &[]
+            }
+            fn multi_footprints(&self) -> &[IRect] {
+                &self.0
+            }
+        }
+        let area = building_area(10, 10, 0, &Multis(vec![IRect::new(0, 0, 40, 40), IRect::new(8, 9, 11, 12),
+            IRect::new(20, 20, 24, 24)]));
+        assert_eq!(area.len(), 6 * 6);
+        assert!(area.contains(7, 8) && area.contains(12, 13) && !area.contains(13, 13));
+        // The area reaches `Z_VIEW_REGION_RADIUS` from the player, and no farther.
+        let area = building_area(10, 10, 0, &Multis(vec![IRect::new(-100, 10, 100, 10)]));
+        assert!(area.contains(10 - Z_VIEW_REGION_RADIUS, 10) && !area.contains(9 - Z_VIEW_REGION_RADIUS, 10));
+        assert_eq!(area.len(), Z_VIEW_AREA_DIM as u32 * 3);
     }
 
     #[test]

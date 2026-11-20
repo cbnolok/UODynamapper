@@ -72,6 +72,20 @@ times = ["afternoon", "night"]
 settings = { world_rendering = { show_only_player_floor = true } }
 
 [[fixture]]
+name = "britain-house-z30-zview-building-only"
+guards = """The player's-floor view kept to the player's building (world_rendering.player_floor_building_only): on \
+the same ground floor the house's roof and upper floor go, under either rule, and the houses around keep theirs, \
+their lights with them."""
+tier = "quick"
+tags = ["z-view", "roofs", "lights", "britain"]
+map = 1
+x = 1409
+y = 1596
+z = 30
+times = ["afternoon", "night"]
+settings = { world_rendering = { show_only_player_floor = true, player_floor_building_only = true } }
+
+[[fixture]]
 name = "britain-house-z50-zview-roof-ridge"
 guards = """The upper floor (z50) of the same house: the z52 thatch ridge is the only tile above the player and the \
 KR client draws the whole roof; a rule that cuts at the player's z leaves a gap in it (kr-roofs)."""

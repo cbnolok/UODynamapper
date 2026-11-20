@@ -571,7 +571,8 @@ pub fn sys_collect_visible_static_lights(
                     // light is not darkened itself, the light buffer multiplying the scene, darkened already, but its
                     // colour fades as the scene's (`cave_outside`).
                     let Some(cave_light) = caves.light_view(tile_x, tile_y, tile.z, meta.flags, meta.height,
-                        || land_z(tile_x, tile_y).map(i32::from), z_view.0.max_z) else {
+                        || land_z(tile_x, tile_y).map(i32::from), z_view.0.max_z_at(tile_x as i32, tile_y as i32))
+                    else {
                         continue;
                     };
                     let max_z = cave_light.max_z;
@@ -586,7 +587,7 @@ pub fn sys_collect_visible_static_lights(
                             tile_y,
                             tile.z,
                             max_z,
-                            z_view.0.roof_layer,
+                            z_view.0.roof_layer_at(tile_x as i32, tile_y as i32),
                         )
                     {
                         continue;
@@ -602,7 +603,7 @@ pub fn sys_collect_visible_static_lights(
                                 tile_y,
                                 tile.z,
                                 max_z,
-                                z_view.0.roof_layer,
+                                z_view.0.roof_layer_at(tile_x as i32, tile_y as i32),
                             )
                         })
                         .flatten();
