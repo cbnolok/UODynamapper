@@ -119,8 +119,12 @@ pub fn select_tex_art_cc_metadata_source(
     )
 }
 
-pub const DEFAULT_ATLAS_PAGE_WIDTH: u32 = 2048;
-pub const DEFAULT_ATLAS_PAGE_HEIGHT: u32 = 2048;
+/// The art pages' default size. The renderer keeps whole pages resident, and a scene draws sprites from most pages,
+/// so smaller pages make what stays resident follow the scene: 1024x1024 pages took the frame benchmark's Kingdom
+/// Reborn walk in Britain from 432 MB of sprite atlases to 248 MB, its spill into system memory away, at no cost in
+/// frame time, for 2-3% more page area.
+pub const DEFAULT_ATLAS_PAGE_WIDTH: u32 = 1024;
+pub const DEFAULT_ATLAS_PAGE_HEIGHT: u32 = 1024;
 pub const DEFAULT_ATLAS_GUTTER: u16 = 1;
 const CLASSIC_STATIC_ART_ID_OFFSET: u16 = 0x4000;
 
