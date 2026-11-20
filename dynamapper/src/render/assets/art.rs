@@ -169,10 +169,11 @@ pub fn art_atlas_slot(page: ArtPageKey) -> usize {
     }
 }
 
-/// The art pages one material draws from, in an atlas per page content (`art_atlas_slot`). One atlas for both had
-/// the largest package's page size and, with formats that differ, held every page in RGBA8: a Classic page, which
-/// the Enhanced views draw where the Enhanced art lacks a sprite, took an RGBA layer as large as an Enhanced page,
-/// 32 MiB for its 16, and every BC7 page was decoded on the CPU at four times its size.
+/// The art pages one material draws from, in an atlas per page content (`art_atlas_slot`), each in its packages'
+/// format, so a lossless Classic package and BC7 Enhanced ones each upload as stored. One atlas for both had the
+/// largest package's page size and, with formats that differ, held every page in RGBA8: a Classic page, which the
+/// Enhanced views draw where the Enhanced art lacks a sprite, took an RGBA layer as large as an Enhanced page, 32 MiB
+/// for its 16, and every BC7 page was decoded on the CPU at four times its size.
 pub struct ArtPageAtlasSet {
     pub atlases: [ArtPageAtlas; ART_ATLAS_SLOTS],
 }
@@ -601,8 +602,11 @@ impl ArtPageAtlas {
             return None;
         }
         let request = art_page_request(page, sources)?;
-        // A page larger than the atlas's never binds (`ArtPageGeometry::slot_sprite` places no sprite on it).
-        if request.atlas_width > self.page_width || request.atlas_height > self.page_height {
+        // A page larger than the atlas's never binds (`ArtPageGeometry::slot_sprite` places no sprite on it), nor a
+        // package page in another format: a Kingdom Reborn section packed apart from its Enhanced package does not load
+        // (`content::kr_section_format_mismatch`). The missing texture takes the atlas's format.
+        if request.atlas_width > self.page_width || request.atlas_height > self.page_height
+            || (request.pixel_format != self.pixel_format && page != ArtPageKey::Missing) {
             return None;
         }
         self.page_layer(page, request.atlas_width, request.atlas_height, request.used_width, request.used_height,
@@ -717,30 +721,22 @@ fn prepare_page_upload_bytes(
     Some((page_data, format.upload_layout(extent), width, height))
 }
 
-/// The page's upload into an atlas of `target` format: as stored when it matches, else decoded to RGBA8 (and encoded
-/// to BC7 for a BC7 atlas), as when a package and its Kingdom Reborn section, or a BC7 Classic package and the
-/// missing texture, share an atlas in different formats (`ArtPageAtlasSet`).
+/// The page's upload into an atlas of `target` format: as stored, the format of every package page its atlas binds
+/// (`ArtPageAtlas::bind_page`), or for the missing texture, which has none, its RGBA8 encoded to the atlas's BC7.
 fn prepare_compatible_page_upload(data: Vec<u8>, atlas_width: u32, atlas_height: u32,
     used_width: u32, used_height: u32, source: PagePixelFormat, target: PagePixelFormat,
 ) -> Option<(Vec<u8>, TextureUploadLayout, u32, u32)> {
-    if source == target {
-        return prepare_page_upload_bytes(data, atlas_width, atlas_height, used_width, used_height, source);
+    match (source, target) {
+        _ if source == target => prepare_page_upload_bytes(data, atlas_width, atlas_height, used_width, used_height,
+            source),
+        (PagePixelFormat::Rgba8888, PagePixelFormat::Bc7) => {
+            let extent = ImageExtent::new(used_width, used_height).ok()?;
+            let texture = bc7::encode_for_vram(&data, extent, bc7::RawImageFormat::Rgba8888,
+                bc7::VramTextureEncoding::Bc7(bc7::preferred_bc7_encoder_backend())).ok()?;
+            Some((texture.bytes().to_vec(), texture.upload_layout(), used_width, used_height))
+        }
+        _ => None,
     }
-    let (width, height) = match source {
-        PagePixelFormat::Rgba8888 => (used_width, used_height),
-        PagePixelFormat::Bc7 => (atlas_width, atlas_height),
-    };
-    let extent = ImageExtent::new(width, height).ok()?;
-    let rgba = match source {
-        PagePixelFormat::Rgba8888 => data,
-        PagePixelFormat::Bc7 => bc7::decode_bc7_to_rgba8888(&data, extent).ok()?,
-    };
-    let encoding = match target {
-        PagePixelFormat::Rgba8888 => bc7::VramTextureEncoding::Rgba8UnormSrgb,
-        PagePixelFormat::Bc7 => bc7::VramTextureEncoding::Bc7(bc7::preferred_bc7_encoder_backend()),
-    };
-    let texture = bc7::encode_for_vram(&rgba, extent, bc7::RawImageFormat::Rgba8888, encoding).ok()?;
-    Some((texture.bytes().to_vec(), texture.upload_layout(), width, height))
 }
 
 #[cfg(test)]
@@ -904,7 +900,7 @@ mod tests {
     }
 
     #[test]
-    fn mixed_formats_decode_losslessly_and_native_bc7_uploads_stay_compressed() {
+    fn pages_upload_as_stored_and_only_the_missing_texture_is_encoded() {
         let extent = ImageExtent::new(8, 8).unwrap();
         let rgba: Vec<_> = (0..64).flat_map(|i| [i * 3, i, 117, 255]).collect();
         let encoded = bc7::encode_for_vram(&rgba, extent, bc7::RawImageFormat::Rgba8888,
@@ -914,10 +910,9 @@ mod tests {
         assert_eq!(native, encoded.bytes());
         assert_eq!((width, height), (8, 8));
         assert_eq!(layout.format, wgpu::TextureFormat::Bc7RgbaUnormSrgb);
-        let (decoded, layout, _, _) = prepare_compatible_page_upload(encoded.bytes().to_vec(),
-            8, 8, 5, 7, PagePixelFormat::Bc7, PagePixelFormat::Rgba8888).unwrap();
-        assert_eq!(decoded, bc7::decode_bc7_to_rgba8888(encoded.bytes(), extent).unwrap());
-        assert_eq!(layout.format, wgpu::TextureFormat::Rgba8UnormSrgb);
+        // No BC7 page is decoded into an RGBA atlas.
+        assert!(prepare_compatible_page_upload(encoded.bytes().to_vec(), 8, 8, 5, 7, PagePixelFormat::Bc7,
+            PagePixelFormat::Rgba8888).is_none());
         let (missing, layout, _, _) = prepare_compatible_page_upload(rgba,
             8, 8, 8, 8, PagePixelFormat::Rgba8888, PagePixelFormat::Bc7).unwrap();
         assert_eq!(missing, encoded.bytes());

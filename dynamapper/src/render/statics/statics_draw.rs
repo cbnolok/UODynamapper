@@ -507,14 +507,12 @@ const MISSING_TEXTURE_PAGES: usize = 1;
 const MISSING_TEXTURE_PAGE_SIZE: u32 = 256;
 
 /// The atlases of a set, as its packages fill them (`ArtPageAtlasSet`): each as large as its largest pages, in their
-/// format. The packages of an atlas share their format (the Kingdom Reborn sections take their Enhanced packages');
-/// one that does not, packed before that rule, makes its atlas lossless RGBA8888 (`mixed_format_slots`). An atlas no
-/// package fills stays `None`.
+/// format, which the packages of an atlas share (a Kingdom Reborn section in another format than its Enhanced
+/// package's does not load: `content::kr_section_format_mismatch`). An atlas no package fills stays `None`.
 #[derive(Clone, Copy, Default)]
 struct AtlasSetSpec {
     slots: [Option<AtlasAllocationSpec>; ART_ATLAS_SLOTS],
     formats: [Option<PagePixelFormat>; ART_ATLAS_SLOTS],
-    mixed_formats: [bool; ART_ATLAS_SLOTS],
 }
 
 impl AtlasSetSpec {
@@ -535,27 +533,17 @@ impl AtlasSetSpec {
         spec.page_width = spec.page_width.max(width);
         spec.page_height = spec.page_height.max(height);
         spec.max_layers += pages as u32;
-        match (self.formats[slot], pixel_format) {
-            (None, format) => self.formats[slot] = format,
-            (Some(atlas_format), Some(format)) if atlas_format != format => self.mixed_formats[slot] = true,
-            _ => {}
+        if self.formats[slot].is_none() {
+            self.formats[slot] = pixel_format;
         }
         self
-    }
-
-    /// The atlases whose packages' formats differ.
-    fn mixed_format_slots(&self) -> impl Iterator<Item = usize> + '_ {
-        (0..ART_ATLAS_SLOTS).filter(|&slot| self.mixed_formats[slot])
     }
 
     /// Each atlas's allocation, starting with `ART_ATLAS_INITIAL_LAYERS`; an atlas no package fills is a blank one.
     fn allocations(self) -> [AtlasAllocationSpec; ART_ATLAS_SLOTS] {
         std::array::from_fn(|slot| self.slots[slot].map_or_else(blank_atlas_spec, |spec| AtlasAllocationSpec {
             initial_layers: ART_ATLAS_INITIAL_LAYERS[slot].min(spec.max_layers),
-            pixel_format: match (self.mixed_formats[slot], self.formats[slot]) {
-                (false, Some(format)) => format,
-                _ => PagePixelFormat::Rgba8888,
-            },
+            pixel_format: self.formats[slot].unwrap_or(PagePixelFormat::Rgba8888),
             ..spec
         }))
     }
@@ -769,14 +757,7 @@ fn build_art_atlas(images: &mut Assets<Image>, spec: AtlasAllocationSpec) -> Art
     )
 }
 
-fn build_art_atlas_set(images: &mut Assets<Image>, atlas_name: &str, spec: AtlasSetSpec) -> ArtPageAtlasSet {
-    for slot in spec.mixed_format_slots() {
-        warn!(
-            "The {} {atlas_name} art atlas holds pages in different formats, so it is lossless RGBA8888 and the BC7 \
-             pages are decoded on loading: repack the Kingdom Reborn sections with their Enhanced packages.",
-            ART_ATLAS_CONTENT_NAMES[slot]
-        );
-    }
+fn build_art_atlas_set(images: &mut Assets<Image>, spec: AtlasSetSpec) -> ArtPageAtlasSet {
     ArtPageAtlasSet { atlases: spec.allocations().map(|allocation| build_art_atlas(images, allocation)) }
 }
 
@@ -884,11 +865,11 @@ fn rebind_active_art_atlases(
     let sprite_spec = sprite_atlas_spec(active_source, tex_art_cc_res, tex_art_ec_res, kingdom_reborn);
     let ground_spec = ground_atlas_spec(active_source, tex_land_ec_res, kingdom_reborn);
 
-    sprite_atlas.0 = build_art_atlas_set(images, "sprite", sprite_spec);
+    sprite_atlas.0 = build_art_atlas_set(images, sprite_spec);
     sprite_atlas_handles.0 = sprite_atlas.handles();
     bind_sprite_art_atlases(materials, render_assets, &sprite_atlas_handles.0);
 
-    ground_atlas.0 = build_art_atlas_set(images, "ground", ground_spec);
+    ground_atlas.0 = build_art_atlas_set(images, ground_spec);
     ground_atlas_handles.0 = ground_atlas.handles();
     bind_ground_art_atlases(ground_materials, ground_render_assets, &ground_atlas_handles.0);
 }
@@ -933,9 +914,9 @@ pub fn sys_setup_art_page_atlas(
     );
     let ground_spec = ground_atlas_spec(active_source, tex_land_ec_res.as_ref(), None);
 
-    let sprite_atlas = build_art_atlas_set(&mut images, "sprite", sprite_spec);
+    let sprite_atlas = build_art_atlas_set(&mut images, sprite_spec);
     let [sprite_atlas_handle, sprite_atlas_enhanced_handle] = sprite_atlas.handles();
-    let ground_atlas = build_art_atlas_set(&mut images, "ground", ground_spec);
+    let ground_atlas = build_art_atlas_set(&mut images, ground_spec);
     let [ground_atlas_handle, ground_atlas_enhanced_handle] = ground_atlas.handles();
     let (hue_lookup_handle, hue_enabled) =
         create_hue_lookup_image(&mut images, hues_package_res.as_deref());
@@ -2025,11 +2006,6 @@ mod tests {
         assert_eq!(enhanced, AtlasAllocationSpec { page_width: EC_DIM, page_height: EC_DIM,
             initial_layers: ART_ATLAS_INITIAL_LAYERS[ENHANCED_ATLAS_SLOT], max_layers: (EC_PAGES + KR_PAGES) as u32,
             pixel_format: Bc7 });
-        // Mixed storage formats share lossless RGBA8888, and say so.
-        let mixed = spec.with_pages(ENHANCED_ATLAS_SLOT, KR_PAGES, EC_DIM, EC_DIM, Some(Rgba8888));
-        assert_eq!(mixed.mixed_format_slots().collect::<Vec<_>>(), [ENHANCED_ATLAS_SLOT]);
-        assert_eq!(mixed.allocations()[ENHANCED_ATLAS_SLOT].pixel_format, Rgba8888);
-        assert_eq!(spec.mixed_format_slots().count(), 0);
         // The missing texture's page takes the format of its atlas, a BC7 one included.
         let [classic, _] = AtlasSetSpec::default().with_pages(CLASSIC_ATLAS_SLOT, CC_PAGES, CC_DIM, CC_DIM, Some(Bc7))
             .with_pages(CLASSIC_ATLAS_SLOT, MISSING_TEXTURE_PAGES, MISSING_TEXTURE_PAGE_SIZE, MISSING_TEXTURE_PAGE_SIZE,

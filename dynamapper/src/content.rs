@@ -15,6 +15,7 @@ use parking_lot::Mutex;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use udd_assets::AtlasCacheOptions;
+use udd_assets::tex_art_cc::PagePixelFormat;
 use udd_assets::tilemeta::TileMetaPackage;
 use udd_container::{UddpReader, UddpReaderOptions};
 
@@ -115,11 +116,15 @@ fn load_kr_item_packages(lg: &impl Fn(&str), lg_err: &impl Fn(&str), kr_land_sel
     -> Option<KrItemPackagesRes> {
     let loaded = (|| -> color_eyre::eyre::Result<Option<KrItemPackagesRes>> {
         let (Some(art), Some(aux)) = (art, aux) else { return Ok(None) };
-        let (Some(tilemeta), Some(art), Some(aux)) =
+        let (Some(tilemeta), Some(kr_art), Some(aux)) =
             (tilemeta.kr_tilemeta()?, art.kr_overlay(AtlasCacheOptions::disabled())?, aux.kr_overlay()?)
         else {
             return Ok(None);
         };
+        if let Some(mismatch) = kr_section_format_mismatch(art.pages(), kr_art.pages(), |page| page.pixel_format) {
+            color_eyre::eyre::bail!("the art of the Kingdom Reborn section of tex_art_ec.uddp {mismatch}");
+        }
+        let art = kr_art;
         Ok(Some(KrItemPackagesRes { tilemeta: Arc::new(tilemeta), art: Arc::new(art), aux: Arc::new(aux) }))
     })();
     match loaded {
@@ -147,6 +152,12 @@ fn load_kr_land(lg: &impl Fn(&str), lg_err: &impl Fn(&str), tex_land_ec: &udd_as
     reader_options: UddpReaderOptions) -> Option<udd_assets::tex_land_ec::TexLandEcPackage> {
     match tex_land_ec.kr_land(reader_options, AtlasCacheOptions::enabled()) {
         Ok(Some(package)) => {
+            if let Some(mismatch) =
+                kr_section_format_mismatch(tex_land_ec.pages(), package.pages(), |page| page.pixel_format) {
+                lg_err(&format!("The Kingdom Reborn land of tex_land_ec.uddp not loaded: it {mismatch}. \
+                    {KR_SECTION_REPACK}."));
+                return None;
+            }
             log_tex_land_ec_coverage(lg, &package, "Kingdom Reborn", "tex_land_ec.uddp (Kingdom Reborn section)");
             Some(package)
         }
@@ -159,6 +170,15 @@ fn load_kr_land(lg: &impl Fn(&str), lg_err: &impl Fn(&str), tex_land_ec: &udd_as
             None
         }
     }
+}
+
+/// How the pages of a Kingdom Reborn `section` differ in format from those of its Enhanced package `base`, which their
+/// atlas holds as stored (`render::assets::art::ArtPageAtlasSet`): the packer gives a section its package's format.
+fn kr_section_format_mismatch<T>(base: &[T], section: &[T], pixel_format: impl Fn(&T) -> PagePixelFormat)
+    -> Option<String> {
+    let base_format = pixel_format(base.first()?);
+    let section_format = section.iter().map(&pixel_format).find(|&format| format != base_format)?;
+    Some(format!("holds {section_format:?} pages, its package {base_format:?} ones, which share an atlas"))
 }
 
 /// Warns about the earlier standalone Kingdom Reborn packages in `udd_path`, which are not read.
@@ -769,6 +789,18 @@ fn load_multi_definitions(
 mod tests {
     use std::collections::BTreeMap;
     use std::path::PathBuf;
+
+    /// A Kingdom Reborn section joins its package's atlas only in the package's format.
+    #[test]
+    fn kr_sections_in_another_format_than_their_package_are_refused() {
+        use super::{kr_section_format_mismatch, PagePixelFormat::{Bc7, Rgba8888}};
+        let mismatch = |base: &[_], section: &[_]| kr_section_format_mismatch(base, section, |&format| format);
+        assert_eq!(mismatch(&[Bc7, Bc7], &[Bc7]), None);
+        assert_eq!(mismatch(&[Rgba8888], &[Rgba8888, Rgba8888]), None);
+        assert!(mismatch(&[Bc7], &[Bc7, Rgba8888]).is_some_and(|message| message.contains("Rgba8888 pages")));
+        assert!(mismatch(&[Rgba8888], &[Bc7]).is_some());
+        assert_eq!(mismatch(&[], &[Bc7]), None);
+    }
 
     #[test]
     #[ignore = "requires current canonical packages in DYNAMAPPER_TEST_PACKAGES"]
