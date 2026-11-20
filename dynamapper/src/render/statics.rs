@@ -12,6 +12,7 @@ pub mod static_placement;
 pub mod static_source;
 pub mod static_batches;
 pub mod static_chunk_cache;
+mod static_chunk_builder;
 pub mod statics_draw;
 pub mod client_grunge;
 mod static_surface;
@@ -33,6 +34,7 @@ impl Plugin for DrawStaticSpritesPlugin {
         app.init_resource::<static_batches::RenderStaticLandInstances>();
         app.init_resource::<static_batches::RenderStaticChunkBatches>();
         app.init_resource::<static_chunk_cache::StaticChunkRenderCache>();
+        app.insert_resource(static_chunk_builder::StaticChunkBuilder::spawn());
         app.init_resource::<static_source::StaticSurfaceLikeResolutionCache>();
         app.init_resource::<statics_collect::StaticArtCollectDebugState>();
         app.init_resource::<static_source::StaticArtSourceState>();

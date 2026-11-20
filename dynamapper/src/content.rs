@@ -31,7 +31,7 @@ pub struct MapPlanesRes(pub Vec<Option<MapPlane>>);
 
 /// Preferred runtime metadata package for static/item rendering: the Enhanced tables (`0`), which the tilemeta
 /// overrides (`TilemetaOverrides.kdl`) correct, and the tables of the items drawn with Classic art (`for_art`).
-#[derive(Resource)]
+#[derive(Resource, Clone)]
 pub struct TileMetaPackageRes(pub Arc<TileMetaPackage>, Arc<TileMetaPackage>);
 
 impl TileMetaPackageRes {
@@ -66,15 +66,15 @@ impl TileMetaPackageRes {
 pub struct TexMap2DRes(pub Arc<udd_assets::tex_land_cc::TexLandCcPackage>);
 
 /// Optional prepacked atlas package for static and land art.
-#[derive(Resource)]
+#[derive(Resource, Clone)]
 pub struct TexArtCcPackageRes(pub Arc<udd_assets::tex_art_cc::TexArtCcPackage>);
 
 /// Optional prepacked atlas package for EC static art.
-#[derive(Resource)]
+#[derive(Resource, Clone)]
 pub struct TexArtEcPackageRes(pub Arc<udd_assets::tex_art_ec::TexArtEcPackage>);
 
 /// Optional prepacked atlas package for EC land art.
-#[derive(Resource)]
+#[derive(Resource, Clone)]
 pub struct TexLandEcPackageRes(pub Arc<udd_assets::tex_land_ec::TexLandEcPackage>);
 
 /// The Kingdom Reborn land tex_land_ec.uddp holds (its Kingdom Reborn section), in the EC land layout. Only the
@@ -83,7 +83,7 @@ pub struct TexLandEcPackageRes(pub Arc<udd_assets::tex_land_ec::TexLandEcPackage
 pub struct TexLandKrPackageRes(pub Arc<udd_assets::tex_land_ec::TexLandEcPackage>);
 
 /// Optional auxiliary texture package: the non-primary tileart textures that item liquids and item surfaces sample.
-#[derive(Resource)]
+#[derive(Resource, Clone)]
 pub struct TexAuxEcPackageRes(pub Arc<udd_assets::tex_aux_ec::TexAuxEcPackage>);
 
 /// The Kingdom Reborn items the Enhanced packages hold (their Kingdom Reborn sections), in the Enhanced layouts: KR's

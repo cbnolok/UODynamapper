@@ -5,7 +5,7 @@
 use crate::settings::ClientTextureSource;
 use crate::render::assets::tile_atlas::{AtlasCells, TileAtlas};
 use crate::world::z_view::ZViewCut;
-use crate::render::assets::art::{ArtPageKey, GroundArtPageAtlas, SpriteArtPageAtlas};
+use crate::render::assets::art::{ArtPageGeometry, ArtPageKey, GroundArtPageAtlas, SpriteArtPageAtlas};
 use bevy::prelude::*;
 use std::collections::HashMap;
 use super::static_source::StaticLandStyle;
@@ -34,6 +34,8 @@ pub(super) struct StaticChunkCacheConfig {
     /// `StaticArtSourceState::land_style`: a change redraws the statics that continue the land from the other art.
     pub(super) land_style: StaticLandStyle,
     // The art pages' atlas layers are not here: the chunks keep their pages, which assembling them binds to layers.
+    /// The sprite and the ground atlases' pages, which the instances are placed on (`ArtPageGeometry`).
+    pub(super) art_pages: (ArtPageGeometry, ArtPageGeometry),
     // The land the chunks read from the tile atlas is not here: a change rebuilds only the chunks that read the
     // changed cells (`StaticChunkRenderCache::invalidate_changed_land`).
     pub(super) static_art_local_light_signature: Option<u64>,
@@ -47,6 +49,15 @@ pub(super) struct StaticChunkCacheConfig {
     /// The land's EC terrain parameters (`EcTerrainBases::sources_revision`), whose hard edges close ground patch sides
     /// (static_surface.rs).
     pub(super) terrain_sources_revision: u64,
+}
+
+impl StaticChunkCacheConfig {
+    /// Whether the chunks built for `self` can draw under `other` until built again: their instances' pages are of the
+    /// same art, in pages of the same size. Under another art they would bind pages the atlases no longer hold.
+    fn same_art(&self, other: &Self) -> bool {
+        (self.dot_mode, self.art_source, self.land_style, self.art_pages)
+            == (other.dot_mode, other.art_source, other.land_style, other.art_pages)
+    }
 }
 
 #[derive(Clone, Debug, Default)]
@@ -107,11 +118,20 @@ pub(super) struct CachedStaticChunk {
     pub(super) last_visible_tick: u64,
     /// The cells of the tile atlas the chunk read (`StaticChunkBuildState::land_cells`).
     pub(super) land_cells: Option<AtlasCells>,
+    /// The cache's generation the chunk was built for (`StaticChunkRenderCache::generation`).
+    pub(super) generation: u64,
+    /// Whether the land the chunk read changed since (`StaticChunkRenderCache::invalidate_changed_land`).
+    pub(super) land_stale: bool,
 }
 
 #[derive(Resource, Default)]
 pub struct StaticChunkRenderCache {
     config: Option<StaticChunkCacheConfig>,
+    /// Counts the changes of `config`: a chunk built for an earlier one draws until built again, under the same art
+    /// (`StaticChunkCacheConfig::same_art`).
+    generation: u64,
+    /// Whether chunks were built since the last assembly (`insert_built`).
+    pub(super) chunks_arrived: bool,
     current_tick: u64,
     pub(super) chunks: HashMap<StaticChunkBatchKey, CachedStaticChunk>,
     pub(super) last_visible_chunk_keys: Vec<StaticChunkBatchKey>,
@@ -121,6 +141,13 @@ pub struct StaticChunkRenderCache {
     pub(super) assembled_picks: [HashMap<StaticChunkBatchKey, Vec<u32>>; 2],
     /// The tile atlas's `content_revision` the cached chunks were checked against (`invalidate_changed_land`).
     land_revision: Option<u64>,
+}
+
+/// Whether the land a chunk read (`CachedStaticChunk::land_cells`) changed after the tile atlas's `content_revision`
+/// was `revision`: every land did when the atlas no longer says which cells changed (`TileAtlas::changed_cells_after`).
+fn land_changed_after(atlas: &TileAtlas, revision: u64, read: Option<AtlasCells>) -> bool {
+    read.is_some_and(|read| atlas.changed_cells_after(revision)
+        .is_none_or(|mut changed| changed.any(|cells| cells.intersects(&read))))
 }
 
 impl StaticChunkRenderCache {
@@ -152,41 +179,66 @@ impl StaticChunkRenderCache {
         self.current_tick
     }
 
-    /// Drops every cached chunk on the next collection, as a change of the configuration does (the control socket's
-    /// `reload_land`).
+    /// Builds every cached chunk again from the next collection, as a change of the configuration does (the control
+    /// socket's `reload_land`).
     pub(crate) fn rebuild_all(&mut self) {
         self.config = None;
     }
 
+    /// A change of the configuration starts a generation: every chunk is built again, the chunks built for the last
+    /// one drawing meanwhile.
     pub(super) fn sync_config(&mut self, config: StaticChunkCacheConfig) -> bool {
         let changed = self.config != Some(config);
         if changed {
+            if !self.config.is_some_and(|old| old.same_art(&config)) {
+                self.chunks.clear();
+            }
             self.config = Some(config);
-            self.chunks.clear();
+            self.generation += 1;
             self.last_visible_chunk_keys.clear();
             self.last_assembly = None;
         }
         changed
     }
 
-    /// Drops the cached chunks that read tile atlas cells changed since the last call: the land loading, a neighbouring
-    /// chunk's land arriving after the chunk, a texture bake or the land of a cave. Every chunk goes when the atlas no
-    /// longer says which cells changed (`TileAtlas::changed_cells_after`). Returns how many chunks went.
+    pub(super) fn generation(&self) -> u64 {
+        self.generation
+    }
+
+    /// Whether the chunk `key` is cached, built for this generation from the land as it is.
+    pub(super) fn is_current(&self, key: &StaticChunkBatchKey) -> bool {
+        self.chunks.get(key).is_some_and(|chunk| chunk.generation == self.generation && !chunk.land_stale)
+    }
+
+    /// Caches `chunk`, built for this generation from the land at the tile atlas's `land_revision`: stale already when
+    /// that land changed since (`land_changed_after`).
+    pub(super) fn insert_built(&mut self, key: StaticChunkBatchKey, mut chunk: CachedStaticChunk, land_revision: u64,
+        atlas: &TileAtlas, visible_tick: u64) {
+        chunk.generation = self.generation;
+        chunk.land_stale = land_changed_after(atlas, land_revision, chunk.land_cells);
+        chunk.last_visible_tick = visible_tick;
+        self.chunks.insert(key, chunk);
+        self.chunks_arrived = true;
+    }
+
+    /// Marks stale the cached chunks that read tile atlas cells changed since the last call: the land loading, a
+    /// neighbouring chunk's land arriving after the chunk, a texture bake or the land of a cave. They draw until built
+    /// again. Returns how many chunks it marked.
     pub(super) fn invalidate_changed_land(&mut self, atlas: &TileAtlas) -> usize {
-        let seen = self.land_revision.replace(atlas.content_revision);
-        if seen == Some(atlas.content_revision) {
+        let Some(seen) = self.land_revision.replace(atlas.content_revision) else {
+            return 0;
+        };
+        if seen == atlas.content_revision {
             return 0;
         }
-        let before = self.chunks.len();
-        match seen.and_then(|seen| atlas.changed_cells_after(seen)) {
-            Some(changed) => {
-                let changed = changed.collect::<Vec<_>>();
-                self.chunks.retain(|_, chunk| chunk.land_cells
-                    .is_none_or(|read| !changed.iter().any(|cells| cells.intersects(&read))));
+        let mut marked = 0;
+        for chunk in self.chunks.values_mut().filter(|chunk| !chunk.land_stale) {
+            if land_changed_after(atlas, seen, chunk.land_cells) {
+                chunk.land_stale = true;
+                marked += 1;
             }
-            None => self.chunks.clear(),
         }
-        before - self.chunks.len()
+        marked
     }
 
     pub(super) fn prune_stale(&mut self, visible_tick: u64) {
@@ -236,18 +288,16 @@ pub(super) fn aggregate_cached_visible_static_stats(
     (aggregate, pages.len())
 }
 
+/// Whether the last assembly stands though it was incomplete: no chunk arrived and no page moved since (the chunks
+/// still building arrive in `chunks_arrived`).
 pub(super) fn should_skip_unchanged_incomplete_static_retry(
     cache: &StaticChunkRenderCache,
-    visible_chunk_keys: &[StaticChunkBatchKey],
     visible_set_unchanged: bool,
     all_visible_chunks_complete: bool,
     atlas_retry_signature: StaticAtlasRetrySignature,
 ) -> bool {
     visible_set_unchanged
         && !all_visible_chunks_complete
-        && visible_chunk_keys
-            .iter()
-            .all(|chunk_key| cache.chunks.contains_key(chunk_key))
         && cache.last_assembly.is_some_and(|assembly| assembly.signature == atlas_retry_signature)
 }
 

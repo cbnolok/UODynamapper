@@ -425,6 +425,14 @@ pub struct PackageLand {
 }
 
 impl PackageLand {
+    /// Reads the map `map_id`, opened now: a reader without `map_planes`, off the main thread, passes `None` to the
+    /// other calls.
+    pub fn opened(map_planes: Option<&MapPlanesRes>, map_id: u32) -> Self {
+        let mut land = Self::default();
+        land.open(map_planes, map_id);
+        land
+    }
+
     /// The averaged land z of the cell (`x`, `y`) of the map `map_id`; `None` on the map's last row or column, or
     /// while the map is not open.
     pub fn averaged_land_z(&mut self, map_planes: Option<&MapPlanesRes>, map_id: u32, x: i32, y: i32) -> Option<i32> {

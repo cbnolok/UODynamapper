@@ -874,6 +874,11 @@ impl CavesRes {
         self.player.as_deref()
     }
 
+    /// The caves drawn over the map and the player's cave (`active`, `player`), for a reader off the main thread.
+    pub fn shared(&self) -> (Option<Arc<CaveMap>>, Option<Arc<PlayerCave>>) {
+        (self.active.clone(), self.player.clone())
+    }
+
     /// How a light on the static at `z` with tile flags `flags` and height `height` on the cell (`x`, `y`) shows under
     /// the view's limit `max_z`, `land_z` giving the cell's land z: `None` when the player's cave hides its static
     /// (`PlayerCave::static_view`); else the cover limit, `max_z` or the caves' (`CaveMap::light_max_z`,

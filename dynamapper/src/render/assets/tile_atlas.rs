@@ -438,6 +438,51 @@ impl AtlasCells {
     }
 }
 
+/// The drawn land's cells as the tile atlas holds them: the atlas itself, or a copy of some of its cells
+/// (`LandSnapshot`).
+pub(crate) trait LandCells {
+    /// The cell (`x`, `y`); `None` while it is not held.
+    fn read_cell(&self, x: u32, y: u32) -> Option<Rg16u>;
+
+    /// Whether the land of the cell (`x`, `y`) is land the renderer does not draw, as the Classic client does not
+    /// (`LAND_SOURCE_NODRAW`); false while the cell is not held.
+    fn land_is_nodraw(&self, x: u32, y: u32) -> bool {
+        self.read_cell(x, y).is_some_and(|cell| cell.texture_source() == LAND_SOURCE_NODRAW)
+    }
+}
+
+impl LandCells for TileAtlas {
+    fn read_cell(&self, x: u32, y: u32) -> Option<Rg16u> {
+        TileAtlas::read_cell(self, x, y)
+    }
+}
+
+/// Some cells of the tile atlas, copied for a reader off the main thread; a cell outside them is not held.
+#[derive(Clone, Debug)]
+pub(crate) struct LandSnapshot {
+    cells: AtlasCells,
+    texels: Vec<Option<Rg16u>>,
+}
+
+impl LandSnapshot {
+    pub(crate) fn new(atlas: &TileAtlas, cells: AtlasCells) -> Self {
+        let texels = (cells.min.y..=cells.max.y)
+            .flat_map(|y| (cells.min.x..=cells.max.x).map(move |x| atlas.read_cell(x, y)))
+            .collect();
+        Self { cells, texels }
+    }
+}
+
+impl LandCells for LandSnapshot {
+    fn read_cell(&self, x: u32, y: u32) -> Option<Rg16u> {
+        let AtlasCells { min, max } = self.cells;
+        if x < min.x || y < min.y || x > max.x || y > max.y {
+            return None;
+        }
+        self.texels[((y - min.y) * (max.x - min.x + 1) + x - min.x) as usize]
+    }
+}
+
 /// Resource managing the paged metadata atlas.
 /// It maintains a CPU-side cache and tracks pending uploads to the GPU.
 #[derive(Resource)]
@@ -498,12 +543,6 @@ impl TileAtlas {
         let layer = p.page_to_layer[(index / 4) as usize][(index % 4) as usize];
         let data = self.cpu_mirror.get(layer as usize)?.as_ref()?;
         data.get(((y % p.page_texels.y) * p.page_texels.x + x % p.page_texels.x) as usize).copied()
-    }
-
-    /// Whether the land of the cell (`x`, `y`) is land the renderer does not draw, as the Classic client does not
-    /// (`LAND_SOURCE_NODRAW`); false while the atlas does not hold the cell.
-    pub(crate) fn land_is_nodraw(&self, x: u32, y: u32) -> bool {
-        self.read_cell(x, y).is_some_and(|cell| cell.texture_source() == LAND_SOURCE_NODRAW)
     }
 
     /// The cells whose `read_cell` may have changed after `content_revision` was `revision`, so a consumer that read cells
@@ -980,6 +1019,24 @@ mod upload_tests {
 
     fn changed_after(atlas: &TileAtlas, revision: u64) -> Option<Vec<AtlasCells>> {
         atlas.changed_cells_after(revision).map(Iterator::collect)
+    }
+
+    /// A snapshot reads its cells as the atlas does, and holds no cell outside them.
+    #[test]
+    fn a_land_snapshot_reads_its_cells_as_the_atlas() {
+        let mut atlas = TileAtlas::new(AtlasParams { page_texels: UVec2::splat(16), max_layers: 1, world_pages_x: 1,
+            ..Default::default() }, 1);
+        let (layer, _) = atlas.ensure_layer_for_page(IVec2::ZERO);
+        let texels = (0..64).map(|z| Rg16u::pack(3, z - 32, 2, false, 0)).collect::<Vec<_>>();
+        atlas.enqueue_rg16u_block(layer, UVec2::new(4, 4), UVec2::splat(8), &texels);
+        let snapshot = LandSnapshot::new(&atlas, AtlasCells::new(UVec2::new(3, 5), UVec2::new(9, 20)));
+        for y in 0..24 {
+            for x in 0..16 {
+                let inside = (3..=9).contains(&x) && (5..=20).contains(&y);
+                let expected = if inside { atlas.read_cell(x, y) } else { None };
+                assert_eq!(LandCells::read_cell(&snapshot, x, y), expected, "({x}, {y})");
+            }
+        }
     }
 
     #[test]

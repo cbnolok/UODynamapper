@@ -4,7 +4,7 @@ use crate::render::view::camera::{PlayerCamera, RenderZoom};
 use crate::render::terrain::{
     CHUNK_STORAGE_BLOCKS_DIM, MAP_STORAGE_BLOCK_TILE_DIM,
 };
-use crate::render::assets::tile_atlas::{AtlasCells, TileAtlas};
+use crate::render::assets::tile_atlas::{AtlasCells, LandCells, LandSnapshot, TileAtlas};
 use crate::world::multis::{
     expanded_multi_part_z, MultiDefinitionsRes, MultiPart, PlacedMulti, PlacedMultisRes,
 };
@@ -12,8 +12,9 @@ use crate::world::caves::{is_buried_floor, CaveMap, CaveStatic, CavesRes, Player
 use crate::world::z_view::{PackageLand, ZViewCut, ZViewLimit};
 use crate::render::scene::SceneStateData;
 use crate::world::statics::{LazyStaticsStore, StaticsStoreRes};
+use super::static_chunk_builder::{ChunkMultis, StaticBuildShared, StaticChunkBuilder, StaticChunkJob};
 use crate::render::assets::art::{ArtPageAtlas, GroundArtPageAtlas, ResolvedArtSprite, SpriteArtPageAtlas};
-use crate::render::assets::art::{ArtPageKey, ArtPageSources};
+use crate::render::assets::art::{ArtPageGeometry, ArtPageKey, ArtPageSources};
 use crate::render::assets::ec_item_surface::KR_ITEM_RECORD_BASE;
 use crate::content::{
     MapPlanesRes, TexArtCcPackageRes, TexArtEcPackageRes, TexLandEcPackageRes, TileMetaPackageRes, TexAuxEcPackageRes,
@@ -371,18 +372,20 @@ pub struct StaticArtCollectStats {
     pub emitted_instances: usize,
     pub copied_sprite_instances: usize,
     pub copied_ground_instances: usize,
+    /// The visible chunks still building (`StaticCollectCacheDecision::pending_chunk_builds`).
+    pub pending_chunk_builds: usize,
 }
 
 #[derive(Resource, Default)]
 pub struct StaticArtCollectDebugState {
     pub last: Option<StaticArtCollectStats>,
     pub path_counters: StaticArtCollectPathCounters,
-    /// The cached chunks dropped so far because the land they read changed (`invalidate_changed_land`).
+    /// The cached chunks built again so far because the land they read changed (`invalidate_changed_land`).
     pub land_invalidated_chunks: u64,
 }
 
 #[derive(Clone, Copy)]
-struct StaticCollectFrameConfig {
+pub(super) struct StaticCollectFrameConfig {
     map_id: u32,
     art_source: Option<ClientTextureSource>,
     /// `StaticArtSourceState::land_style`.
@@ -404,13 +407,11 @@ struct StaticCollectResources<'a> {
     tex_land_ec: Option<&'a TexLandEcPackageRes>,
     tilemeta: Option<&'a TileMetaPackageRes>,
     tex_aux_ec: Option<&'a TexAuxEcPackageRes>,
-    multis: Option<&'a MultiDefinitionsRes>,
-    placed_multis: &'a PlacedMultisRes,
     static_lights: &'a super::static_lights::RenderStaticLightInstances,
-    tile_atlas: &'a TileAtlas,
+    /// The drawn land (`LandSnapshot`), which the tile atlas holds.
+    land: &'a dyn LandCells,
     /// The EC terrain parameters of the land drawn, per atlas payload (`EcTerrainBases::params`).
     terrain: Option<&'a [Option<crate::render::terrain::coverage::EcTerrainParams>]>,
-    map_planes: Option<&'a MapPlanesRes>,
     /// The caves drawn over the map, if any.
     caves: Option<&'a CaveMap>,
     /// The player's cave, with the player in one.
@@ -528,53 +529,40 @@ struct StaticCollectCacheDecision {
     visible_set_unchanged: bool,
     all_visible_chunks_complete: bool,
     skip_unchanged_incomplete_retry: bool,
+    /// The visible chunks not built yet, or built for an earlier generation or land (`StaticChunkRenderCache::is_current`).
+    pending_chunk_builds: usize,
 }
 
-fn static_collect_resources<'a>(
-    tex_art_cc_res: &'a Option<Res<TexArtCcPackageRes>>,
-    tex_art_ec_res: &'a Option<Res<TexArtEcPackageRes>>,
-    tex_land_ec_res: &'a Option<Res<TexLandEcPackageRes>>,
-    tilemeta_res: &'a Option<Res<TileMetaPackageRes>>,
-    tex_aux_ec_res: &'a Option<Res<TexAuxEcPackageRes>>,
-    multis_res: &'a Option<Res<MultiDefinitionsRes>>,
-    placed_multis: &'a PlacedMultisRes,
-    static_lights: &'a super::static_lights::RenderStaticLightInstances,
-    tile_atlas: &'a TileAtlas,
-    terrain_bases: &'a Option<Res<crate::render::terrain::coverage::EcTerrainBases>>,
-    map_planes: &'a Option<Res<MapPlanesRes>>,
-    caves: &'a CavesRes,
-    kingdom_reborn: Option<KrStaticSources<'a>>,
-) -> StaticCollectResources<'a> {
+/// The resources of a build, read from `shared` and the drawn land `land`.
+fn shared_resources<'a>(shared: &'a StaticBuildShared, land: &'a dyn LandCells) -> StaticCollectResources<'a> {
     StaticCollectResources {
-        tex_art_cc: tex_art_cc_res.as_ref().map(|res| &**res),
-        tex_art_ec: tex_art_ec_res.as_ref().map(|res| &**res),
-        tex_land_ec: tex_land_ec_res.as_ref().map(|res| &**res),
-        tilemeta: tilemeta_res.as_ref().map(|res| &**res),
-        tex_aux_ec: tex_aux_ec_res.as_ref().map(|res| &**res),
-        multis: multis_res.as_ref().map(|res| &**res),
-        placed_multis,
-        static_lights,
-        tile_atlas,
-        terrain: terrain_bases.as_ref().map(|bases| bases.params.as_slice()),
-        map_planes: map_planes.as_ref().map(|res| &**res),
-        caves: caves.active(),
-        player_cave: caves.player(),
-        kingdom_reborn,
+        tex_art_cc: shared.tex_art_cc.as_ref(),
+        tex_art_ec: shared.tex_art_ec.as_ref(),
+        tex_land_ec: shared.tex_land_ec.as_ref(),
+        tilemeta: shared.tilemeta.as_ref(),
+        tex_aux_ec: shared.tex_aux_ec.as_ref(),
+        static_lights: &shared.static_lights,
+        land,
+        terrain: shared.terrain.as_deref(),
+        caves: shared.caves.as_deref(),
+        player_cave: shared.player_cave.as_deref(),
+        kingdom_reborn: shared.kingdom_reborn.as_ref().map(|kr| kr.sources()),
     }
 }
 
+/// `static_art_local_light_signature` is the lights' `static_light_signature` with the local lights on.
 fn static_chunk_cache_config(
     frame: StaticCollectFrameConfig,
-    static_lights: &super::static_lights::RenderStaticLightInstances,
+    static_art_local_light_signature: Option<u64>,
+    art_pages: (ArtPageGeometry, ArtPageGeometry),
 ) -> StaticChunkCacheConfig {
     StaticChunkCacheConfig {
         map_id: frame.map_id,
         dot_mode: frame.is_dot_mode,
         art_source: frame.art_source,
         land_style: frame.land_style,
-        static_art_local_light_signature: frame
-            .static_art_local_lights
-            .then(|| static_light_signature(static_lights, frame.map_id)),
+        art_pages,
+        static_art_local_light_signature,
         show_hidden_multi_parts: frame.show_hidden_multi_parts,
         item_routes_revision: frame.item_routes_revision,
         caves_revision: frame.caves_revision,
@@ -610,20 +598,18 @@ fn evaluate_static_collect_cache_decision(
     z_view: ZViewCut,
     atlas_retry_signature: StaticAtlasRetrySignature,
 ) -> StaticCollectCacheDecision {
-    // A change of the z-view's cut assembles the chunks again, without the statics it hides.
-    let visible_set_unchanged = !config_changed && cache.last_visible_chunk_keys == visible_chunk_keys
+    // A change of the z-view's cut assembles the chunks again, without the statics it hides, and so do chunks built.
+    let visible_set_unchanged = !config_changed && !cache.chunks_arrived
+        && cache.last_visible_chunk_keys == visible_chunk_keys
         && cache.last_assembly.is_some_and(|assembly| assembly.z_view == z_view);
-    let all_visible_chunks_present = visible_chunk_keys
-        .iter()
-        .all(|chunk_key| cache.chunks.contains_key(chunk_key));
-    // Complete: the last assembly drew every instance, and the atlases kept the pages it bound.
-    let all_visible_chunks_complete = all_visible_chunks_present
+    let pending_chunk_builds = visible_chunk_keys.iter().filter(|chunk_key| !cache.is_current(chunk_key)).count();
+    // Complete: every chunk is built, the last assembly drew every instance, and the atlases kept the pages it bound.
+    let all_visible_chunks_complete = pending_chunk_builds == 0
         && cache.last_assembly.is_some_and(|assembly| assembly.atlas_misses == 0
             && assembly.signature.sprite_mapping_revision == atlas_retry_signature.sprite_mapping_revision
             && assembly.signature.ground_mapping_revision == atlas_retry_signature.ground_mapping_revision);
     let skip_unchanged_incomplete_retry = should_skip_unchanged_incomplete_static_retry(
         cache,
-        visible_chunk_keys,
         visible_set_unchanged,
         all_visible_chunks_complete,
         atlas_retry_signature,
@@ -633,6 +619,7 @@ fn evaluate_static_collect_cache_decision(
         visible_set_unchanged,
         all_visible_chunks_complete,
         skip_unchanged_incomplete_retry,
+        pending_chunk_builds,
     }
 }
 
@@ -683,6 +670,7 @@ fn try_finish_cached_visible_static_collect(
             emitted_instances: sprite_output.0.len() + ground_output.0.len(),
             copied_sprite_instances: 0,
             copied_ground_instances: 0,
+            pending_chunk_builds: decision.pending_chunk_builds,
         },
     );
     true
@@ -712,42 +700,29 @@ fn reuse_cached_static_chunk(
     }
 }
 
+/// Assembles the visible chunks built so far into the outputs (`append_cached_static_chunk_outputs`).
 fn collect_visible_static_chunks_slow(
     visible_chunk_keys: &[StaticChunkBatchKey],
     visible_tick: u64,
     frame: StaticCollectFrameConfig,
-    resources: StaticCollectResources<'_>,
-    statics_store: &mut LazyStaticsStore,
+    sources: ArtPageSources<'_>,
     sprite_atlas: &mut SpriteArtPageAtlas,
     ground_atlas: &mut GroundArtPageAtlas,
     sprite_output: &mut RenderStaticInstances,
     ground_output: &mut RenderStaticLandInstances,
     batches: &mut RenderStaticChunkBatches,
     cache: &mut StaticChunkRenderCache,
-    surface_resolution_cache: &mut StaticSurfaceLikeResolutionCache,
 ) -> StaticCollectSlowStats {
     let mut slow_stats = StaticCollectSlowStats {
         mapping_revisions_before: (sprite_atlas.0.mapping_revision(), ground_atlas.0.mapping_revision()),
         ..default()
     };
     cache.assembled_picks.iter_mut().for_each(HashMap::clear);
-    let sources = art_page_sources(resources);
 
     for chunk_key in visible_chunk_keys.iter().copied() {
         if !reuse_cached_static_chunk(cache, chunk_key, visible_tick) {
-            let chunk = rebuild_static_chunk(
-                chunk_key,
-                visible_tick,
-                frame,
-                resources,
-                statics_store,
-                sprite_atlas,
-                ground_atlas,
-                surface_resolution_cache,
-            );
-            cache.chunks.insert(chunk_key, chunk);
+            continue;
         }
-
         let Some(chunk) = cache.chunks.get(&chunk_key) else {
             continue;
         };
@@ -772,17 +747,21 @@ fn collect_visible_static_chunks_slow(
     slow_stats
 }
 
-fn rebuild_static_chunk(
+/// Builds the chunk `chunk_key` off the main thread (`StaticChunkJob`): from its statics in `statics_store`, the drawn
+/// land `land`, its `multis` and its map's land `own_land`.
+pub(super) fn build_static_chunk(
     chunk_key: StaticChunkBatchKey,
-    visible_tick: u64,
     frame: StaticCollectFrameConfig,
-    resources: StaticCollectResources<'_>,
+    shared: &StaticBuildShared,
+    land: &LandSnapshot,
+    multis: &ChunkMultis,
+    own_land: PackageLand,
     statics_store: &mut LazyStaticsStore,
-    sprite_atlas: &SpriteArtPageAtlas,
-    ground_atlas: &GroundArtPageAtlas,
     surface_resolution_cache: &mut StaticSurfaceLikeResolutionCache,
 ) -> CachedStaticChunk {
-    let mut build = StaticChunkBuildState::default();
+    let resources = shared_resources(shared, land);
+    let (sprite_atlas, ground_atlas) = (&shared.art_pages.0, &shared.art_pages.1);
+    let mut build = StaticChunkBuildState { own_land, ..default() };
     let start_gx = chunk_key.gx * CHUNK_STORAGE_BLOCKS_DIM;
     let start_gy = chunk_key.gy * CHUNK_STORAGE_BLOCKS_DIM;
     let end_gx = start_gx + chunk_key.scale * CHUNK_STORAGE_BLOCKS_DIM;
@@ -832,12 +811,9 @@ fn rebuild_static_chunk(
             // The multis placed in the block draw as their parts.
             let mut render_tiles = std::mem::take(&mut build.render_tiles);
             let block_cells = |block: u32| block * MAP_STORAGE_BLOCK_TILE_DIM..(block + 1) * MAP_STORAGE_BLOCK_TILE_DIM;
-            for placed_multi in resources.placed_multis.anchored_in(frame.map_id, block_cells(gx), block_cells(gy)) {
-                let Some(parts) = resources.multis
-                    .and_then(|multis| multis.parts(placed_multi.multi_id, frame.show_hidden_multi_parts))
-                else {
-                    continue;
-                };
+            let (block_x, block_y) = (block_cells(gx), block_cells(gy));
+            for (placed_multi, parts) in multis.iter()
+                .filter(|(multi, _)| block_x.contains(&multi.x) && block_y.contains(&multi.y)) {
                 collect_multi_render_tiles(placed_multi, parts, &mut render_tiles);
                 // A multi's own parts are the surfaces under its parts; a plain static sits on the block's statics.
                 let multi_surface_tops =
@@ -871,13 +847,56 @@ fn rebuild_static_chunk(
             if let Some(cells) = super::static_surface::apply_boundary_coverage(
                 &mut build.sprite_instances, chunk_key, frame.height_scale,
                 statics_store, tilemeta, art, resources.kingdom_reborn.map(|kr| (kr.tilemeta, kr.art.as_ref())),
-                resources.tile_atlas, resources.terrain,
+                resources.land, resources.terrain,
             ) {
                 build.read_land(cells);
             }
         }
     }
-    finish_rebuilt_static_chunk(build, visible_tick)
+    // The collection marks it visible as it takes it (`StaticChunkRenderCache::insert_built`).
+    finish_rebuilt_static_chunk(build, 0)
+}
+
+/// The build of the chunk `key` for the cache's `generation`, with copies of the cells of `tile_atlas` it reads, its
+/// multis (`multis`) and the land of its map (`map_planes`).
+fn static_chunk_job(
+    key: StaticChunkBatchKey,
+    generation: u64,
+    frame: StaticCollectFrameConfig,
+    shared: &std::sync::Arc<StaticBuildShared>,
+    tile_atlas: &TileAtlas,
+    (definitions, placed): (Option<&MultiDefinitionsRes>, &PlacedMultisRes),
+    map_planes: Option<&MapPlanesRes>,
+) -> StaticChunkJob {
+    const CHUNK_CELLS_DIM: u32 = CHUNK_STORAGE_BLOCKS_DIM * MAP_STORAGE_BLOCK_TILE_DIM;
+    let (xs, ys) = (key.gx * CHUNK_CELLS_DIM..(key.gx + key.scale) * CHUNK_CELLS_DIM,
+        key.gy * CHUNK_CELLS_DIM..(key.gy + key.scale) * CHUNK_CELLS_DIM);
+    let multis: ChunkMultis = placed.anchored_in(key.map_id, xs.clone(), ys.clone())
+        .filter_map(|multi| Some((*multi, definitions?.parts(multi.multi_id, frame.show_hidden_multi_parts)?.to_vec())))
+        .collect();
+    let mut cells = AtlasCells::new(UVec2::new(xs.start, ys.start), UVec2::new(xs.end - 1, ys.end - 1));
+    for (multi, parts) in &multis {
+        for part in parts {
+            let cell = (i64::from(multi.x) + i64::from(part.x), i64::from(multi.y) + i64::from(part.y));
+            if let (Ok(x), Ok(y)) = (u32::try_from(cell.0), u32::try_from(cell.1)) {
+                cells = cells.union(AtlasCells::new(UVec2::new(x, y), UVec2::new(x, y)));
+            }
+        }
+    }
+    // And the cells around them: a ground patch reads its neighbours' land (`apply_boundary_coverage`), a Classic dry
+    // diamond the cells east and south (`cc_static_uses_flat_geometry`).
+    let cells = AtlasCells::new(cells.min.saturating_sub(UVec2::ONE), cells.max + UVec2::ONE);
+    StaticChunkJob {
+        key,
+        generation,
+        land_revision: tile_atlas.content_revision,
+        frame,
+        shared: shared.clone(),
+        land: LandSnapshot::new(tile_atlas, cells),
+        multis,
+        own_land: PackageLand::opened(map_planes, key.map_id),
+        store: None,
+    }
 }
 
 /// Emits `render_tile` over the ground it stands on (`client_shadow_ground_z`): the highest of the `surface_tops` on its
@@ -888,15 +907,15 @@ fn emit_static_render_tile_on_surfaces(
     surface_tops: &[&[((i32, i32), i32)]],
     frame: StaticCollectFrameConfig,
     resources: StaticCollectResources<'_>,
-    sprite_atlas: &SpriteArtPageAtlas,
-    ground_atlas: &GroundArtPageAtlas,
+    sprite_atlas: &ArtPageGeometry,
+    ground_atlas: &ArtPageGeometry,
     surface_resolution_cache: &mut StaticSurfaceLikeResolutionCache,
     build: &mut StaticChunkBuildState,
 ) {
     let cell = (render_tile.world_x as i32, render_tile.world_z as i32);
     let all_surface_tops = surface_tops;
     let surface_tops = surface_tops.iter().flat_map(|tops| tops.iter()).filter(|top| top.0 == cell).map(|top| top.1);
-    let land_z = build.own_land.land_z(resources.map_planes, frame.map_id, cell.0, cell.1)
+    let land_z = build.own_land.land_z(None, frame.map_id, cell.0, cell.1)
         .and_then(|land_z| i8::try_from(land_z).ok());
     let ground_z = client_shadow_ground_z(render_tile.z, land_z, surface_tops);
     let farther_cells = [(cell.0 - 1, cell.1), (cell.0, cell.1 - 1)];
@@ -916,10 +935,10 @@ fn emit_static_render_tile_on_surfaces(
 }
 
 /// The z of the land that covers a floor buried under it on the cell (`x`, `y`) (`caves::is_buried_floor`): the cell's
-/// own corner's `land_z`, where the renderer draws that land. Land never drawn (`TileAtlas::land_is_nodraw`, the
+/// own corner's `land_z`, where the renderer draws that land. Land never drawn (`LandCells::land_is_nodraw`, the
 /// Classic client's NoDraw land) covers nothing, nor does land the z-view's cut leaves out (`StaticCut::hides`).
-fn covering_land_z(land_z: Option<i32>, tile_atlas: &TileAtlas, x: i32, y: i32) -> Option<i32> {
-    let nodraw = || matches!((u32::try_from(x), u32::try_from(y)), (Ok(x), Ok(y)) if tile_atlas.land_is_nodraw(x, y));
+fn covering_land_z(land_z: Option<i32>, land: &dyn LandCells, x: i32, y: i32) -> Option<i32> {
+    let nodraw = || matches!((u32::try_from(x), u32::try_from(y)), (Ok(x), Ok(y)) if land.land_is_nodraw(x, y));
     land_z.filter(|_| !nodraw())
 }
 
@@ -929,8 +948,8 @@ fn emit_static_render_tile(
     farther_floor_at: impl Fn(i32) -> bool,
     frame: StaticCollectFrameConfig,
     resources: StaticCollectResources<'_>,
-    sprite_atlas: &SpriteArtPageAtlas,
-    ground_atlas: &GroundArtPageAtlas,
+    sprite_atlas: &ArtPageGeometry,
+    ground_atlas: &ArtPageGeometry,
     surface_resolution_cache: &mut StaticSurfaceLikeResolutionCache,
     build: &mut StaticChunkBuildState,
 ) {
@@ -960,13 +979,13 @@ fn emit_static_render_tile(
     let flags = tilemeta.map_or(0, |meta| meta.flags);
     // In the player's cave, and outside it (caves.rs): the cave's statics are drawn whole, whatever the z-view limit.
     let player_cave = resources.player_cave.map(|cave| {
-        let land_z = || build.own_land.land_z(resources.map_planes, frame.map_id, cell_x, cell_y);
+        let land_z = || build.own_land.land_z(None, frame.map_id, cell_x, cell_y);
         cave.static_view(cell_x, cell_y, render_tile.z, flags, tilemeta.map_or(0, |meta| meta.height), land_z)
     });
     // Above the player's floor, with the z-view limit on, the static is left out when the chunk is assembled, and
     // picking skips it too (`StaticCut`). A roof under KR's cut reads its own cell's land.
     let own_land_z = (flags & uocf::enhanced::tileart::TaeFlag::Roof.bits() != 0)
-        .then(|| build.own_land.averaged_land_z(resources.map_planes, frame.map_id, cell_x, cell_y))
+        .then(|| build.own_land.averaged_land_z(None, frame.map_id, cell_x, cell_y))
         .flatten();
     // Over a cave drawn over the map, and in it (caves.rs).
     let cave = player_cave.unwrap_or_else(|| resources.caves.map_or(CaveStatic::Outside, |caves|
@@ -982,8 +1001,8 @@ fn emit_static_render_tile(
         if let (Ok(x), Ok(y)) = (u32::try_from(cell_x), u32::try_from(cell_y)) {
             build.read_land(AtlasCells::new(UVec2::new(x, y), UVec2::new(x, y)));
         }
-        covering_land_z(build.own_land.land_z(resources.map_planes, frame.map_id, cell_x, cell_y),
-            resources.tile_atlas, cell_x, cell_y)
+        covering_land_z(build.own_land.land_z(None, frame.map_id, cell_x, cell_y),
+            resources.land, cell_x, cell_y)
     };
     // Read only for a floor, as a read of the drawn land rebuilds the chunk when that land changes.
     let mut covering = None;
@@ -1216,8 +1235,8 @@ fn emit_art_static_tile(
     frame: StaticCollectFrameConfig,
     resources: StaticCollectResources<'_>,
     visual_kind: StaticVisualKind,
-    sprite_atlas: &SpriteArtPageAtlas,
-    ground_atlas: &GroundArtPageAtlas,
+    sprite_atlas: &ArtPageGeometry,
+    ground_atlas: &ArtPageGeometry,
     build: &mut StaticChunkBuildState,
 ) {
     let bias = if matches!(visual_kind, StaticVisualKind::TexLandEc { .. }) {
@@ -1251,7 +1270,7 @@ fn emit_art_static_tile(
             let cell = UVec2::new(info.world_x as u32, info.world_z as u32);
             build.read_land(AtlasCells::new(cell, cell + UVec2::ONE));
             cc_static_uses_flat_geometry(info.tilemeta, sprite.logical_width, sprite.logical_height,
-                info.world_x, info.world_z, info.tile.z, resources.tile_atlas)
+                info.world_x, info.world_z, info.tile.z, resources.land)
         });
 
     let (anchored_world_x, anchored_world_z) = if cc_surface_like_flat {
@@ -1322,8 +1341,8 @@ fn emit_art_static_tile(
 fn resolve_art_static_sprite(
     visual_kind: StaticVisualKind,
     resources: StaticCollectResources<'_>,
-    sprite_atlas: &SpriteArtPageAtlas,
-    ground_atlas: &GroundArtPageAtlas,
+    sprite_atlas: &ArtPageGeometry,
+    ground_atlas: &ArtPageGeometry,
 ) -> Option<(ClientTextureSource, Option<ResolvedArtSprite>, f32)> {
     match visual_kind {
         StaticVisualKind::CcRegular {
@@ -1645,6 +1664,8 @@ fn finish_rebuilt_static_chunk(
         stats: build.stats,
         last_visible_tick: visible_tick,
         land_cells: build.land_cells,
+        generation: 0,
+        land_stale: false,
     }
 }
 
@@ -1767,6 +1788,7 @@ fn finish_static_collect_slow_path(
     visible_chunk_keys: Vec<StaticChunkBatchKey>,
     visible_tick: u64,
     slow_stats: StaticCollectSlowStats,
+    pending_chunk_builds: usize,
     sprite_atlas: &SpriteArtPageAtlas,
     ground_atlas: &GroundArtPageAtlas,
     sprite_output: &RenderStaticInstances,
@@ -1785,6 +1807,7 @@ fn finish_static_collect_slow_path(
         atlas_misses: slow_stats.atlas_misses,
         z_view: frame.z_view,
     });
+    cache.chunks_arrived = false;
     cache.prune_stale(visible_tick);
     let visible_chunks = visible_chunk_keys.len();
     cache.last_visible_chunk_keys = visible_chunk_keys;
@@ -1816,6 +1839,7 @@ fn finish_static_collect_slow_path(
             emitted_instances: sprite_output.0.len() + ground_output.0.len(),
             copied_sprite_instances: slow_stats.copied_sprite_instances,
             copied_ground_instances: slow_stats.copied_ground_instances,
+            pending_chunk_builds,
         },
     );
 }
@@ -1838,7 +1862,7 @@ pub fn sys_collect_visible_statics(
         ResMut<RenderStaticLandInstances>,
         ResMut<RenderStaticChunkBatches>,
         ResMut<StaticChunkRenderCache>,
-        ResMut<StaticSurfaceLikeResolutionCache>,
+        ResMut<StaticChunkBuilder>,
     ),
     mut debug_state: ResMut<StaticArtCollectDebugState>,
     source_state: Res<StaticArtSourceState>,
@@ -1901,30 +1925,41 @@ pub fn sys_collect_visible_statics(
         caves_revision: caves.revision(),
         terrain_sources_revision: terrain_bases.as_ref().map_or(0, |bases| bases.sources_revision()),
     };
-    let resources = static_collect_resources(
-        &tex_art_cc_res,
-        &tex_art_ec_res,
-        &tex_land_ec_res,
-        &tilemeta_res,
-        &tex_aux_ec_res,
-        &multis_res,
-        &placed_multis,
-        &static_lights,
-        &tile_atlas,
-        &terrain_bases,
-        &map_planes,
-        &caves,
-        kr_packages.sources().filter(|_| frame.land_style == StaticLandStyle::KingdomReborn),
-    );
-    let cache_config = static_chunk_cache_config(frame, &static_lights);
-    let visible_tick = outputs.3.begin_frame();
-    let config_changed = outputs.3.sync_config(cache_config);
-    debug_state.land_invalidated_chunks += outputs.3.invalidate_changed_land(&tile_atlas) as u64;
+    let (sprite_output, ground_output, batches, cache, builder) = &mut outputs;
+    let static_art_local_light_signature =
+        frame.static_art_local_lights.then(|| static_light_signature(&static_lights, frame.map_id));
+    let art_pages = (sprite_atlas.geometry(), ground_atlas.geometry());
+    let (active_caves, player_cave) = caves.shared();
+    let shared = std::sync::Arc::new(StaticBuildShared {
+        tex_art_cc: tex_art_cc_res.as_deref().cloned(),
+        tex_art_ec: tex_art_ec_res.as_deref().cloned(),
+        tex_land_ec: tex_land_ec_res.as_deref().cloned(),
+        tilemeta: tilemeta_res.as_deref().cloned(),
+        tex_aux_ec: tex_aux_ec_res.as_deref().cloned(),
+        kingdom_reborn: kr_packages.shared().filter(|_| frame.land_style == StaticLandStyle::KingdomReborn),
+        static_lights: builder.lights(static_art_local_light_signature, &static_lights),
+        terrain: builder.terrain(terrain_bases.as_deref()),
+        caves: active_caves,
+        player_cave,
+        art_pages,
+    });
+    let cache_config = static_chunk_cache_config(frame, static_art_local_light_signature, art_pages);
+    let visible_tick = cache.begin_frame();
+    let config_changed = cache.sync_config(cache_config);
+    debug_state.land_invalidated_chunks += cache.invalidate_changed_land(&tile_atlas) as u64;
 
     let visible_chunk_keys = collect_visible_static_chunk_keys(map_id, &chunks_q);
+    let statics_store = statics_res.0.get(map_id as usize).and_then(|x| x.as_ref());
+    if let Some(statics_store) = statics_store {
+        let generation = cache.generation();
+        builder.send(cache, &visible_chunk_keys, statics_store, frame.item_routes_revision, |key| static_chunk_job(
+            key, generation, frame, &shared, &tile_atlas, (multis_res.as_deref(), &placed_multis), map_planes.as_deref()));
+    }
+    builder.receive(cache, &tile_atlas, visible_tick);
+
     let atlas_retry_signature = static_atlas_retry_signature(&sprite_atlas, &ground_atlas);
     let cache_decision = evaluate_static_collect_cache_decision(
-        &outputs.3,
+        cache,
         &visible_chunk_keys,
         config_changed,
         frame.z_view,
@@ -1937,44 +1972,41 @@ pub fn sys_collect_visible_statics(
         cache_decision,
         &sprite_atlas,
         &ground_atlas,
-        &outputs.0,
-        &outputs.1,
-        &mut outputs.3,
+        sprite_output,
+        ground_output,
+        cache,
         &mut debug_state,
     ) {
         return;
     }
 
-    clear_static_collect_outputs(&mut outputs.0, &mut outputs.1, &mut outputs.2);
-
-    let Some(statics_store) = statics_res.0.get(map_id as usize).and_then(|x| x.as_ref()) else {
+    clear_static_collect_outputs(sprite_output, ground_output, batches);
+    if statics_store.is_none() {
         return;
-    };
-    let mut statics_store = statics_store.lock();
+    }
     let slow_stats = collect_visible_static_chunks_slow(
         &visible_chunk_keys,
         visible_tick,
         frame,
-        resources,
-        &mut statics_store,
+        art_page_sources(shared_resources(&shared, &*tile_atlas)),
         &mut sprite_atlas,
         &mut ground_atlas,
-        &mut outputs.0,
-        &mut outputs.1,
-        &mut outputs.2,
-        &mut outputs.3,
-        &mut outputs.4,
+        sprite_output,
+        ground_output,
+        batches,
+        cache,
     );
     finish_static_collect_slow_path(
         frame,
         visible_chunk_keys,
         visible_tick,
         slow_stats,
+        cache_decision.pending_chunk_builds,
         &sprite_atlas,
         &ground_atlas,
-        &outputs.0,
-        &outputs.1,
-        &mut outputs.3,
+        sprite_output,
+        ground_output,
+        cache,
         &mut debug_state,
     );
 }
@@ -2945,7 +2977,7 @@ mod tests {
         world.insert_resource(RenderStaticLandInstances(vec![GroundTileInstance::zeroed()]));
         world.insert_resource(RenderStaticChunkBatches { sprite: vec![batch], ground: vec![batch] });
         world.insert_resource(cache);
-        world.init_resource::<StaticSurfaceLikeResolutionCache>();
+        world.insert_resource(super::super::static_chunk_builder::StaticChunkBuilder::inline());
         world.init_resource::<StaticArtCollectDebugState>();
         world.init_resource::<StaticArtSourceState>();
         world.init_resource::<super::super::static_lights::RenderStaticLightInstances>();
@@ -3388,10 +3420,14 @@ mod tests {
         assert_eq!(std::mem::size_of::<GroundTileInstance>(), 144);
     }
 
+    /// A change of the settings starts a generation: the chunks built for the last one draw until built again.
     #[test]
-    fn static_chunk_cache_invalidates_when_config_changes() {
+    fn static_chunk_cache_builds_again_when_config_changes() {
+        let key = StaticChunkBatchKey { map_id: 1, gx: 0, gy: 0, scale: 1 };
+        let atlas = TileAtlas::new(Default::default(), 0);
         let mut cache = StaticChunkRenderCache::default();
         cache.sync_config(StaticChunkCacheConfig {
+            art_pages: Default::default(),
             map_id: 1,
             dot_mode: false,
             art_source: Some(ClientTextureSource::Cc),
@@ -3402,17 +3438,11 @@ mod tests {
             caves_revision: 0,
             terrain_sources_revision: 0,
         });
-        cache.chunks.insert(
-            StaticChunkBatchKey {
-                map_id: 1,
-                gx: 0,
-                gy: 0,
-                scale: 1,
-            },
-            CachedStaticChunk::default(),
-        );
+        cache.insert_built(key, CachedStaticChunk::default(), atlas.content_revision, &atlas, 1);
+        assert!(cache.is_current(&key));
 
-        cache.sync_config(StaticChunkCacheConfig {
+        assert!(cache.sync_config(StaticChunkCacheConfig {
+            art_pages: Default::default(),
             map_id: 1,
             dot_mode: false,
             art_source: Some(ClientTextureSource::Cc),
@@ -3422,8 +3452,24 @@ mod tests {
             item_routes_revision: 1,
             caves_revision: 0,
             terrain_sources_revision: 0,
-        });
+        }));
 
+        assert!(cache.chunks.contains_key(&key) && !cache.is_current(&key));
+        cache.insert_built(key, CachedStaticChunk::default(), atlas.content_revision, &atlas, 2);
+        assert!(cache.is_current(&key));
+        // Under another art, it goes at once.
+        assert!(cache.sync_config(StaticChunkCacheConfig {
+            art_pages: Default::default(),
+            map_id: 1,
+            dot_mode: false,
+            art_source: Some(ClientTextureSource::Ec),
+            land_style: StaticLandStyle::Unknown,
+            static_art_local_light_signature: None,
+            show_hidden_multi_parts: false,
+            item_routes_revision: 1,
+            caves_revision: 0,
+            terrain_sources_revision: 0,
+        }));
         assert!(cache.chunks.is_empty());
     }
 
@@ -3431,6 +3477,7 @@ mod tests {
     fn static_chunk_cache_ignores_static_light_changes_when_local_lights_disabled() {
         let mut cache = StaticChunkRenderCache::default();
         cache.sync_config(StaticChunkCacheConfig {
+            art_pages: Default::default(),
             map_id: 1,
             dot_mode: false,
             art_source: Some(ClientTextureSource::Cc),
@@ -3442,17 +3489,12 @@ mod tests {
             terrain_sources_revision: 0,
         });
 
-        cache.chunks.insert(
-            StaticChunkBatchKey {
-                map_id: 1,
-                gx: 0,
-                gy: 0,
-                scale: 1,
-            },
-            CachedStaticChunk::default(),
-        );
+        let key = StaticChunkBatchKey { map_id: 1, gx: 0, gy: 0, scale: 1 };
+        let atlas = TileAtlas::new(Default::default(), 0);
+        cache.insert_built(key, CachedStaticChunk::default(), atlas.content_revision, &atlas, 1);
 
         assert!(!cache.sync_config(StaticChunkCacheConfig {
+            art_pages: Default::default(),
             map_id: 1,
             dot_mode: false,
             art_source: Some(ClientTextureSource::Cc),
@@ -3464,13 +3506,14 @@ mod tests {
             terrain_sources_revision: 0,
         }));
 
-        assert!(!cache.chunks.is_empty());
+        assert!(cache.is_current(&key));
     }
 
     #[test]
     fn static_chunk_cache_tracks_static_light_changes_when_local_lights_enabled() {
         let mut cache = StaticChunkRenderCache::default();
         cache.sync_config(StaticChunkCacheConfig {
+            art_pages: Default::default(),
             map_id: 1,
             dot_mode: false,
             art_source: Some(ClientTextureSource::Cc),
@@ -3481,17 +3524,12 @@ mod tests {
             caves_revision: 0,
             terrain_sources_revision: 0,
         });
-        cache.chunks.insert(
-            StaticChunkBatchKey {
-                map_id: 1,
-                gx: 0,
-                gy: 0,
-                scale: 1,
-            },
-            CachedStaticChunk::default(),
-        );
+        let key = StaticChunkBatchKey { map_id: 1, gx: 0, gy: 0, scale: 1 };
+        let atlas = TileAtlas::new(Default::default(), 0);
+        cache.insert_built(key, CachedStaticChunk::default(), atlas.content_revision, &atlas, 1);
 
         assert!(cache.sync_config(StaticChunkCacheConfig {
+            art_pages: Default::default(),
             map_id: 1,
             dot_mode: false,
             art_source: Some(ClientTextureSource::Cc),
@@ -3503,7 +3541,7 @@ mod tests {
             terrain_sources_revision: 0,
         }));
 
-        assert!(cache.chunks.is_empty());
+        assert!(!cache.is_current(&key));
     }
 
     #[test]
@@ -3532,7 +3570,6 @@ mod tests {
 
         assert!(should_skip_unchanged_incomplete_static_retry(
             &cache,
-            &[chunk_key],
             true,
             false,
             retry_signature,
@@ -3544,7 +3581,6 @@ mod tests {
         };
         assert!(!should_skip_unchanged_incomplete_static_retry(
             &cache,
-            &[chunk_key],
             true,
             false,
             changed_retry_signature,
@@ -3814,6 +3850,8 @@ mod tests {
         assert!(corners[1] > corners[0] && corners[1] > corners[2] && corners[1] > corners[3]);
     }
 
+    /// The chunks that read changed land are stale: they draw until built again. A chunk built from land that changed
+    /// before it arrived is stale from the start.
     #[test]
     fn static_chunk_cache_rebuilds_only_the_chunks_that_read_changed_land() {
         use crate::render::assets::tile_atlas::{AtlasParams, Rg16u};
@@ -3825,32 +3863,43 @@ mod tests {
             land_cells: Some(AtlasCells::new(UVec2::new(min.0, min.1), UVec2::new(max.0, max.1))),
             ..Default::default()
         };
+        let stale = |cache: &StaticChunkRenderCache| {
+            let mut stale = cache.chunks.iter().filter(|(_, chunk)| chunk.land_stale).map(|(key, _)| key.gx)
+                .collect::<Vec<_>>();
+            stale.sort();
+            stale
+        };
         let mut cache = StaticChunkRenderCache::default();
-        // The first check has nothing to compare with: the chunks built before it go.
-        cache.chunks.insert(key(0), CachedStaticChunk::default());
-        assert_eq!(cache.invalidate_changed_land(&atlas), 1);
+        // The first check has nothing to compare with.
+        assert_eq!(cache.invalidate_changed_land(&atlas), 0);
         // The chunk at x 0..31 read the cells up to x 32, one cell into its east neighbour's land (a Classic ground
         // diamond on its last column); the chunk at x 32..63 read its own; the third read no land.
-        cache.chunks.insert(key(0), read((0, 0), (32, 31)));
-        cache.chunks.insert(key(1), read((32, 0), (63, 31)));
-        cache.chunks.insert(key(2), CachedStaticChunk::default());
+        let built_at = atlas.content_revision;
+        cache.insert_built(key(0), read((0, 0), (32, 31)), built_at, &atlas, 1);
+        cache.insert_built(key(1), read((32, 0), (63, 31)), built_at, &atlas, 1);
+        cache.insert_built(key(2), CachedStaticChunk::default(), built_at, &atlas, 1);
         assert_eq!(cache.invalidate_changed_land(&atlas), 0);
-        // The east neighbour's land loads after both: both read it.
+        // The east neighbour's land loads after both: both read it, and draw until built again.
         atlas.enqueue_rg16u_block(layer, UVec2::new(32, 8), UVec2::splat(8), &[Rg16u::pack(3, 0, 4, false, 0); 64]);
         assert_eq!(cache.invalidate_changed_land(&atlas), 2);
-        assert_eq!(cache.chunks.keys().copied().collect::<Vec<_>>(), vec![key(2)]);
-        // Land only the second read.
-        cache.chunks.insert(key(0), read((0, 0), (32, 31)));
-        cache.chunks.insert(key(1), read((32, 0), (63, 31)));
+        assert_eq!(stale(&cache), [0, 1]);
+        assert_eq!(cache.chunks.len(), 3);
+        // Built again; then land only the second read.
+        let built_at = atlas.content_revision;
+        cache.insert_built(key(0), read((0, 0), (32, 31)), built_at, &atlas, 1);
+        cache.insert_built(key(1), read((32, 0), (63, 31)), built_at, &atlas, 1);
         atlas.enqueue_rg16u_block(layer, UVec2::new(40, 8), UVec2::splat(8), &[Rg16u::pack(3, 0, 4, false, 0); 64]);
         assert_eq!(cache.invalidate_changed_land(&atlas), 1);
-        assert!(cache.chunks.contains_key(&key(0)) && !cache.chunks.contains_key(&key(1)));
-        // Nothing changed: nothing goes.
+        assert_eq!(stale(&cache), [1]);
+        // Nothing changed: nothing more.
         assert_eq!(cache.invalidate_changed_land(&atlas), 0);
-        // Every cell changed: every chunk goes, the one that read no land too.
+        // Built from the land before that change, it arrives stale.
+        cache.insert_built(key(1), read((32, 0), (63, 31)), built_at, &atlas, 1);
+        assert_eq!(stale(&cache), [1]);
+        // Every cell changed: every chunk that read land is stale.
         atlas.clear_all_mappings();
-        assert_eq!(cache.invalidate_changed_land(&atlas), 2);
-        assert!(cache.chunks.is_empty());
+        assert_eq!(cache.invalidate_changed_land(&atlas), 1);
+        assert_eq!(stale(&cache), [0, 1]);
     }
 
     #[test]

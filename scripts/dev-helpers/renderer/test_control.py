@@ -33,9 +33,11 @@ class SceneReadinessTests(unittest.TestCase):
         missing['art']['atlas_misses'] = 2
         pending = copy.deepcopy(ready)
         pending['art']['pending_pages'] = 1
+        building = copy.deepcopy(ready)
+        building['art']['pending_chunk_builds'] = 3
         changed = copy.deepcopy(ready)
         changed['art']['emitted_instances'] = 99
-        sequence = [missing, pending, changed, ready, ready, ready]
+        sequence = [missing, pending, building, changed, ready, ready, ready]
         with patch.object(control, 'request', side_effect=sequence) as request, patch.object(control.time, 'sleep'):
             self.assertEqual(control.wait_for_scene('/unused', 10, ready['position']), ready)
             self.assertEqual(request.call_count, len(sequence))

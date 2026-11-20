@@ -5,7 +5,7 @@ use super::static_source::TILE_FLAG_SURFACE;
 use crate::render::assets::ec_item_surface::KR_ITEM_RECORD_BASE;
 use crate::render::terrain::coverage::EcTerrainParams;
 use crate::world::statics::LazyStaticsStore;
-use crate::render::{assets::tile_atlas::{AtlasCells, TileAtlas,
+use crate::render::{assets::tile_atlas::{AtlasCells, LandCells,
     LAND_SOURCE_EC_ATLAS, TERRAIN_SHADER_FLAG_NEVER_BLENDS}, terrain::{CHUNK_STORAGE_BLOCKS_DIM, MAP_STORAGE_BLOCK_TILE_DIM}};
 use bevy::math::UVec2;
 use std::collections::{HashMap, HashSet};
@@ -72,7 +72,7 @@ fn source_key(tile: &TileMetaItemTile, refs: &[TileMetaItemTextureRef]) -> Optio
     Some((base.texture_id, base.texture_stretch.to_bits()))
 }
 
-pub(super) fn map_height(atlas: &TileAtlas, x: u32, y: u32) -> Option<i8> {
+pub(super) fn map_height(atlas: &(impl LandCells + ?Sized), x: u32, y: u32) -> Option<i8> {
     let texel = atlas.read_cell(x, y)?;
     if !matches!((texel.g >> 8) & 15, 2 | 4) { return None; }
     Some(((texel.g & 255) as i16 - 128) as i8)
@@ -82,7 +82,8 @@ pub(super) fn map_height(atlas: &TileAtlas, x: u32, y: u32) -> Option<i8> {
 /// `EcTerrainBases::params`, built from the EC-layout package the land source routes each row to (Enhanced or Kingdom
 /// Reborn land), indexed by the cell's payload. None for land outside the coverage: Classic land, land missing, black
 /// land and a cell that never blends (`TERRAIN_SHADER_FLAG_NEVER_BLENDS`).
-fn land_terrain(atlas: &TileAtlas, terrain: &[Option<EcTerrainParams>], x: u32, y: u32) -> Option<EcTerrainParams> {
+fn land_terrain(atlas: &(impl LandCells + ?Sized), terrain: &[Option<EcTerrainParams>], x: u32, y: u32)
+    -> Option<EcTerrainParams> {
     let texel = atlas.read_cell(x, y)?;
     if texel.texture_source() != LAND_SOURCE_EC_ATLAS || texel.terrain_flags() & TERRAIN_SHADER_FLAG_NEVER_BLENDS != 0 {
         return None;
@@ -116,7 +117,7 @@ pub(super) fn apply_boundary_coverage(
     instances: &mut [SpriteInstance], chunk: StaticChunkBatchKey, height_scale: f32,
     statics: &mut LazyStaticsStore, tilemeta: &TileMetaPackage, art: &TexArtEcPackage,
     kingdom_reborn: Option<(&TileMetaPackage, &TexArtEcPackage)>,
-    atlas: &TileAtlas, terrain: Option<&[Option<EcTerrainParams>]>,
+    atlas: &(impl LandCells + ?Sized), terrain: Option<&[Option<EcTerrainParams>]>,
 ) -> Option<AtlasCells> {
     let mut keys: HashMap<u32, Option<MaterialKey>> = HashMap::new();
     let mut key_for = |item: u32| *keys.entry(item).or_insert_with(|| {
@@ -188,6 +189,7 @@ pub(super) fn apply_boundary_coverage(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::render::assets::tile_atlas::TileAtlas;
     use bytemuck::Zeroable;
 
     fn no_hard_land(_: u32, _: u32) -> bool { false }

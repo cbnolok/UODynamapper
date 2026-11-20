@@ -392,7 +392,22 @@ impl ArtPageAtlas {
         self.mapping_revision
     }
 
-    /// The sprite of `art_id` in `tex_art_cc`, its page not yet bound to a layer (`bind_page`).
+    /// The size of the atlas's pages, which places the sprites on them.
+    pub fn geometry(&self) -> ArtPageGeometry {
+        ArtPageGeometry { page_width: self.page_width, page_height: self.page_height }
+    }
+}
+
+/// The size of an atlas's pages (`ArtPageAtlas::geometry`): the sprites' places on them, read without the atlas, as a
+/// build off the main thread does.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct ArtPageGeometry {
+    pub page_width: u32,
+    pub page_height: u32,
+}
+
+impl ArtPageGeometry {
+    /// The sprite of `art_id` in `tex_art_cc`, its page not yet bound to a layer (`ArtPageAtlas::bind_page`).
     pub fn sprite_cc(&self, tex_art_cc: &TexArtCcPackage, art_id: u32) -> Option<ResolvedArtSprite> {
         let slot = tex_art_cc.present_slot(art_id)?;
         let mut resolved = self.slot_sprite(
@@ -496,7 +511,9 @@ impl ArtPageAtlas {
             legacy_art: false,
         })
     }
+}
 
+impl ArtPageAtlas {
     /// The layer of `page`, for a sprite drawn on it now (marked used, for the LRU eviction); `None` while the page is
     /// read, decoded or uploaded, which this starts when the page has no layer yet: in a free layer, else by growing
     /// the atlas, else in the least recently used page's layer. `None` also when `sources` lack the page's package.

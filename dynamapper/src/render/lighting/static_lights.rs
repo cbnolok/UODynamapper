@@ -242,7 +242,7 @@ impl Hash for StaticLightKey {
     }
 }
 
-#[derive(Resource, Default)]
+#[derive(Resource, Clone, Default)]
 pub struct RenderStaticLightInstances(pub Vec<StaticLightInstance>);
 
 impl RenderStaticLightInstances {

@@ -212,6 +212,7 @@ fn poll_control(
                         "map_id": stats.map_id, "visible_chunks": stats.visible_chunks,
                         "land_invalidated_chunks": land_invalidated_chunks,
                         "atlas_misses": stats.atlas_misses, "emitted_instances": stats.emitted_instances,
+                        "pending_chunk_builds": stats.pending_chunk_builds,
                         "pending_pages": sprite_atlas.as_ref().map_or(0, |a| a.pending_page_count())
                             + ground_atlas.as_ref().map_or(0, |a| a.pending_page_count()),
                         "digest": static_instances.0.as_ref().zip(static_instances.1.as_ref()).map(|(sprites, ground)|

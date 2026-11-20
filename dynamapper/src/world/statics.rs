@@ -84,6 +84,23 @@ impl LazyStaticsStore {
         self.cached_blocks.fill(None);
     }
 
+    /// A store of the same package read through the same item routes, with no block read yet: a reader on another
+    /// thread keeps its own.
+    pub fn fork(&self) -> Self {
+        Self {
+            package: self.package.clone(),
+            map_id: self.map_id,
+            block_width: self.block_width,
+            block_height: self.block_height,
+            package_chunk_height: self.package_chunk_height,
+            loaded_package_chunks: vec![false; self.loaded_package_chunks.len()],
+            cached_blocks: std::iter::repeat_with(|| None).take(self.cached_blocks.len()).collect(),
+            item_routes: self.item_routes.clone(),
+            item_route_areas: self.item_route_areas.clone(),
+            item_routes_revision: self.item_routes_revision,
+        }
+    }
+
     pub fn item_routes_revision(&self) -> u64 {
         self.item_routes_revision
     }

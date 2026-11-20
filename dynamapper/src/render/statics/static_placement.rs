@@ -1,7 +1,7 @@
 //! Where a static's quad goes and in what order it draws: the world anchors and bounds of billboards, flat
 //! and ground quads, the depth classes, and the draw-order keys and tie levels.
 
-use crate::render::assets::tile_atlas::TileAtlas;
+use crate::render::assets::tile_atlas::LandCells;
 use crate::prelude::*;
 use bevy::prelude::*;
 use bevy::platform::collections::HashMap;
@@ -265,7 +265,7 @@ pub(super) fn cc_ground_diamond(tilemeta: Option<&udd_assets::tilemeta::TileMeta
 // Picking and drawing must make the same residency/height decision for dry diamonds.
 pub(crate) fn cc_static_uses_flat_geometry(
     tilemeta: Option<&udd_assets::tilemeta::TileMetaItemTile>, width: f32, height: f32,
-    world_x: f32, world_z: f32, z: i8, atlas: &TileAtlas,
+    world_x: f32, world_z: f32, z: i8, atlas: &(impl LandCells + ?Sized),
 ) -> bool {
     cc_static_tile_renders_flat(tilemeta)
         || (cc_ground_diamond(tilemeta, width, height)

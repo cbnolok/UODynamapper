@@ -95,7 +95,9 @@ def wait_for_scene(endpoint, timeout, position=None):
                 and not terrain['metadata_pending']
                 and terrain['metadata_revision'] == terrain['submitted_metadata_revision']
                 and art['map_id'] == position[3] and art['visible_chunks'] > 0
-                and art['atlas_misses'] == 0 and art['pending_pages'] == 0 and switch_settled(status)):
+                and art['atlas_misses'] == 0 and art['pending_pages'] == 0
+                # The chunks still building off the frame; a binary from before those builds reports none.
+                and art.get('pending_chunk_builds', 0) == 0 and switch_settled(status)):
             fingerprint = scene_fingerprint(status)
             stable = stable + 1 if fingerprint == previous else 1
             previous = fingerprint

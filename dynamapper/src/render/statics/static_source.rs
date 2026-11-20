@@ -489,10 +489,30 @@ impl KrStaticPackages<'_> {
         Some(KrStaticSources { tilemeta: &items.tilemeta, art: &items.art, land: &land.0 })
     }
 
+    /// The packages of `sources`, for a reader off the main thread.
+    pub(crate) fn shared(&self) -> Option<KrStaticShared> {
+        let (items, land) = (self.items.as_deref()?, self.land.as_deref()?);
+        Some(KrStaticShared { tilemeta: items.tilemeta.clone(), art: items.art.clone(), land: land.0.clone() })
+    }
+
     /// Whether a package arrived or changed.
     pub(crate) fn is_changed(&self) -> bool {
         self.items.as_ref().is_some_and(|items| items.is_changed())
             || self.land.as_ref().is_some_and(|land| land.is_changed())
+    }
+}
+
+/// The packages of [`KrStaticSources`], owned (`KrStaticPackages::shared`).
+#[derive(Clone)]
+pub(crate) struct KrStaticShared {
+    tilemeta: std::sync::Arc<udd_assets::tilemeta::TileMetaPackage>,
+    art: std::sync::Arc<udd_assets::tex_art_ec::TexArtEcPackage>,
+    land: std::sync::Arc<udd_assets::tex_land_ec::TexLandEcPackage>,
+}
+
+impl KrStaticShared {
+    pub(crate) fn sources(&self) -> KrStaticSources<'_> {
+        KrStaticSources { tilemeta: &self.tilemeta, art: &self.art, land: &self.land }
     }
 }
 
