@@ -7,7 +7,7 @@ use crate::settings::{ClientTextureSource, Settings};
 use crate::world::maps::MapPlane;
 use crate::world::multis::MultiDefinitionsRes;
 use crate::world::statics::{LazyStaticsStore, StaticsStoreRes};
-use crate::app::system_sets::StartupSysSet;
+use crate::app::system_sets::StartupSystems;
 use gumps::{ClassicGumpSource, GumpMapRes, GUMPS_CC_FILE_NAME, GUMPS_EC_FILE_NAME};
 use crate::prelude::*;
 use bevy::prelude::*;
@@ -256,7 +256,7 @@ impl Plugin for UOFilesPlugin {
         log_plugin_build(self);
         app.add_systems(
             Startup,
-            sys_setup_uo_data.in_set(StartupSysSet::LoadStartupUOFiles),
+            sys_setup_uo_data.in_set(StartupSystems::LoadStartupUOFiles),
         );
     }
 }
@@ -345,7 +345,7 @@ fn log_tex_land_ec_coverage(
 }
 
 pub fn sys_setup_uo_data(mut commands: Commands, settings: Res<Settings>) {
-    log_system_add_startup::<UOFilesPlugin>(StartupSysSet::LoadStartupUOFiles, fname!());
+    log_system_add_startup::<UOFilesPlugin>(StartupSystems::LoadStartupUOFiles, fname!());
     let lg = |text: &str| {
         console_logger::one(
             console_logger::LogSev::Info,

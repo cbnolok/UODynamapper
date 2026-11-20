@@ -14,7 +14,7 @@ impl Plugin for PlayerPlugin {
         log_plugin_build(self);
         app.add_systems(
             Startup,
-            sys_spawn_player_entity.in_set(StartupSysSet::SetupSceneStage1),
+            sys_spawn_player_entity.in_set(StartupSystems::SetupSceneStage1),
         )
         .add_systems(
             Update,
@@ -29,7 +29,7 @@ pub fn sys_spawn_player_entity(
     mut materials: ResMut<Assets<StandardMaterial>>,
     settings: Res<Settings>,
 ) {
-    log_system_add_startup::<PlayerPlugin>(StartupSysSet::SetupSceneStage1, fname!());
+    log_system_add_startup::<PlayerPlugin>(StartupSystems::SetupSceneStage1, fname!());
 
     // A cube, to mimic the player position and to have another rendered object to have a visual comparison.
     let mesh_handle = meshes.add(Mesh::from(Cuboid {

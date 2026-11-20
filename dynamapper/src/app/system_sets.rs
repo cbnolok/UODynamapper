@@ -2,7 +2,7 @@ use bevy::ecs::schedule::SystemSet;
 
 
 #[derive(strum_macros::AsRefStr, SystemSet, Debug, Clone, Hash, PartialEq, Eq)]
-pub enum StartupSysSet {
+pub enum StartupSystems {
     First,
     LoadStartupUOFiles,
     SetupSceneStage1,
@@ -11,19 +11,19 @@ pub enum StartupSysSet {
 }
 
 #[derive(strum_macros::AsRefStr, SystemSet, Debug, Clone, Hash, PartialEq, Eq)]
-pub enum SceneRenderLandSysSet {
+pub enum SceneRenderLandSystems {
     ListenSyncRequests,
     SyncLandChunks,
     RenderLandChunks,
 }
 #[derive(strum_macros::AsRefStr, SystemSet, Debug, Clone, Hash, PartialEq, Eq)]
-pub enum SceneRenderArtSysSet {
+pub enum SceneRenderArtSystems {
     CollectVisibleStatics,
     RenderStaticSprites,
 }
 
 #[derive(strum_macros::AsRefStr, SystemSet, Debug, Clone, Hash, PartialEq, Eq)]
-pub enum MovementSysSet {
+pub enum MovementSystems {
     MovementActions,
     UpdateCamera,
 }

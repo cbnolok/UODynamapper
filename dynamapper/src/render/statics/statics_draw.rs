@@ -8,7 +8,7 @@ use crate::render::statics::static_batches::{
     StaticChunkBatch, StaticChunkBatchKey,
 };
 use crate::render::statics::static_source::{KrStaticPackages, KrStaticSources, StaticLandStyle};
-use crate::app::system_sets::StartupSysSet;
+use crate::app::system_sets::StartupSystems;
 use crate::render::assets::art::{
     ArtPageAtlas, GroundArtPageAtlas, GroundArtPageAtlasHandle, SpriteArtPageAtlas,
     SpriteArtPageAtlasHandle,
@@ -872,7 +872,7 @@ pub fn sys_setup_art_page_atlas(
     ),
     client_grunge_packages: super::client_grunge::ClientGrungePackages,
 ) {
-    log_system_add_startup::<DrawStaticSpritesPlugin>(StartupSysSet::SetupSceneStage1, fname!());
+    log_system_add_startup::<DrawStaticSpritesPlugin>(StartupSystems::SetupSceneStage1, fname!());
     let active_source = resolve_effective_art_source(
         settings.graphics.art_texture_source,
         tex_art_cc_res.as_ref(),

@@ -18,7 +18,7 @@ impl Plugin for PlayerDynamicLightPlugin {
         log_plugin_build(self);
         app.add_systems(
             Startup,
-            sys_spawn_dynamic_light.in_set(StartupSysSet::SetupSceneStage2),
+            sys_spawn_dynamic_light.in_set(StartupSystems::SetupSceneStage2),
         );
     }
 }
@@ -28,7 +28,7 @@ pub fn sys_spawn_dynamic_light(
     //camera_q: Query<&PlayerDynamicLight>,
     settings: Res<Settings>,
 ) {
-    log_system_add_startup::<PlayerDynamicLightPlugin>(StartupSysSet::SetupSceneStage2, fname!());
+    log_system_add_startup::<PlayerDynamicLightPlugin>(StartupSystems::SetupSceneStage2, fname!());
     // Camera position relative to the player: a little south east and higher than the player.
     let camera_player_rel_pos = Vec3::new(10.0, 50.0, 8.0);
     let light_component = PlayerDynamicLight {

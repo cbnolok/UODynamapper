@@ -8,7 +8,7 @@ use crate::render::picking::cursor_map_id;
 use crate::render::picking::hovered_static::{HoveredStaticKind, hovered_static};
 use crate::render::picking::static_geometry::{StaticArtRoute, StaticPickingResources};
 use crate::world::player::Player;
-use crate::render::picking::terrain_cursor::{TerrainCursor, TerrainCursorQuery};
+use crate::render::picking::terrain_cursor::{TerrainCursor, TerrainCursorSystems};
 use crate::render::view::camera::PlayerCamera;
 use crate::world::statics::StaticsStoreRes;
 use crate::content::{
@@ -88,8 +88,8 @@ impl Plugin for CursorOverlayPlugin {
             .add_systems(
                 Update,
                 (
-                    update_cursor_behavior_text.after(TerrainCursorQuery).run_if(in_state(AppState::InGame)),
-                    update_cursor_inspect_text.after(TerrainCursorQuery).after(crate::app::system_sets::SceneRenderArtSysSet::CollectVisibleStatics)
+                    update_cursor_behavior_text.after(TerrainCursorSystems).run_if(in_state(AppState::InGame)),
+                    update_cursor_inspect_text.after(TerrainCursorSystems).after(crate::app::system_sets::SceneRenderArtSystems::CollectVisibleStatics)
                         .run_if(in_state(AppState::InGame)),
                 ),
             );

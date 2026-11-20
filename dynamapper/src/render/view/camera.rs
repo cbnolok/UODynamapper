@@ -89,13 +89,13 @@ impl Plugin for CameraPlugin {
             .insert_resource(RenderZoom::default())
             .add_systems(
                 Startup,
-                sys_setup_cam.in_set(StartupSysSet::SetupSceneStage1),
+                sys_setup_cam.in_set(StartupSystems::SetupSceneStage1),
             )
             .add_systems(
                 Update,
                 sys_apply_world_camera_graphics_settings
                     .run_if(resource_changed::<Settings>)
-                    .in_set(MovementSysSet::UpdateCamera), // or some appropriate set
+                    .in_set(MovementSystems::UpdateCamera), // or some appropriate set
             )
             // In export mode the export job owns the world camera: its target, projection and placement.
             .add_systems(
@@ -115,7 +115,7 @@ impl Plugin for CameraPlugin {
                         .after(sys_update_camera_projection_to_view),
                 )
                     .run_if(not(resource_exists::<ExportJob>))
-                    .in_set(MovementSysSet::UpdateCamera),
+                    .in_set(MovementSystems::UpdateCamera),
             );
     }
 }
@@ -126,7 +126,7 @@ fn sys_setup_cam(
     render_zoom: Res<RenderZoom>,
     settings: Res<Settings>,
 ) {
-    log_system_add_startup::<CameraPlugin>(StartupSysSet::SetupSceneStage1, fname!());
+    log_system_add_startup::<CameraPlugin>(StartupSystems::SetupSceneStage1, fname!());
     let main_window = windows.single().unwrap();
     let window_width = main_window.resolution.width();
     let window_height = main_window.resolution.height() / ORTHO_WIDTH_SCALE_FACTOR;

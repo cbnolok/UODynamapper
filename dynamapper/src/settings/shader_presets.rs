@@ -8,7 +8,7 @@ use crate::{
         ClientLocalLights, ClientNightLighting, LandMaterialUniformsPresets, LandRenderStylePresetsPerMode,
         LandShaderModePresets, LOCAL_LIGHT_INTENSITY_RANGE, TONE_CURVE_PROFILE,
     },
-    app::system_sets::StartupSysSet,
+    app::system_sets::StartupSystems,
     prelude::*,
     util_lib::tracked_plugin::*,
 };
@@ -790,7 +790,7 @@ fn clone_slot(s: &LandMaterialUniformsPresets) -> LandMaterialUniformsPresets {
 // ---------------------------------------------------------------------------
 
 fn setup_uniform_state(mut commands: Commands, shader_presets: Res<LandShaderModePresets>) {
-    log_system_add_startup::<ShaderPresetsPlugin>(StartupSysSet::LoadStartupUOFiles, fname!());
+    log_system_add_startup::<ShaderPresetsPlugin>(StartupSystems::LoadStartupUOFiles, fname!());
 
     let state = uniform_state_from_presets(&shader_presets);
 

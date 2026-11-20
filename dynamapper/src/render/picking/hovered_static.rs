@@ -2,7 +2,7 @@
 //! outline (`highlight_hovered_static_object`). The cursor inspector describes the same static.
 use super::cursor_map_id;
 use super::static_geometry::{StaticArtRoute, StaticPickingResources};
-use crate::app::{app_states::AppState, system_sets::SceneRenderArtSysSet};
+use crate::app::{app_states::AppState, system_sets::SceneRenderArtSystems};
 use crate::input::{InjectedPointer, effective_cursor_position};
 use crate::render::statics::static_batches::StaticPickTile;
 use crate::render::view::camera::PlayerCamera;
@@ -30,7 +30,7 @@ pub(crate) struct HoveredStatic {
 }
 
 pub(crate) fn install(app: &mut App) {
-    app.add_systems(Update, draw_hovered_static_highlight.after(SceneRenderArtSysSet::CollectVisibleStatics)
+    app.add_systems(Update, draw_hovered_static_highlight.after(SceneRenderArtSystems::CollectVisibleStatics)
         .run_if(in_state(AppState::InGame)));
 }
 

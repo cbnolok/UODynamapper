@@ -384,30 +384,30 @@ pub fn run_bevy_app() -> ExitCode {
     .configure_sets(
         Startup,
         (
-            StartupSysSet::LoadStartupUOFiles.after(StartupSysSet::First),
-            StartupSysSet::SetupSceneStage1.after(StartupSysSet::LoadStartupUOFiles),
-            StartupSysSet::SetupSceneStage2.after(StartupSysSet::SetupSceneStage1),
-            StartupSysSet::Done.after(StartupSysSet::SetupSceneStage2),
+            StartupSystems::LoadStartupUOFiles.after(StartupSystems::First),
+            StartupSystems::SetupSceneStage1.after(StartupSystems::LoadStartupUOFiles),
+            StartupSystems::SetupSceneStage2.after(StartupSystems::SetupSceneStage1),
+            StartupSystems::Done.after(StartupSystems::SetupSceneStage2),
         ),
     )
     .configure_sets(
         Update,
-        (MovementSysSet::UpdateCamera
-            .after(MovementSysSet::MovementActions)
-            .before(crate::app::system_sets::SceneRenderLandSysSet::ListenSyncRequests),),
+        (MovementSystems::UpdateCamera
+            .after(MovementSystems::MovementActions)
+            .before(crate::app::system_sets::SceneRenderLandSystems::ListenSyncRequests),),
     )
     .add_systems(
         PreStartup,
-        sys_advance_state_after_init_core.in_set(StartupSysSet::First),
+        sys_advance_state_after_init_core.in_set(StartupSystems::First),
     )
     .add_systems(
         Startup,
-        sys_advance_state_after_scene_setup_stage_2.after(StartupSysSet::SetupSceneStage2),
+        sys_advance_state_after_scene_setup_stage_2.after(StartupSystems::SetupSceneStage2),
     );
 
     app.add_systems(
         Startup,
-        sys_log_plugin_registry_tree.in_set(StartupSysSet::Done),
+        sys_log_plugin_registry_tree.in_set(StartupSystems::Done),
     );
 
     // One-shot startup log: report whether Bevy uses GPU preprocessing / indirect draw.

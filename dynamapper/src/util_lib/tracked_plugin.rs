@@ -1,6 +1,6 @@
 use crate::{
     console_logger::{self, LogAbout, LogSev},
-    app::system_sets::StartupSysSet,
+    app::system_sets::StartupSystems,
 };
 use bevy::app::Plugin;
 use std::{
@@ -237,7 +237,7 @@ fn log_system_add_base<'a>(
 }
 
 #[track_caller]
-pub fn log_system_add_startup<T: TrackedPlugin>(sys_set: StartupSysSet, _myname: &'static str) {
+pub fn log_system_add_startup<T: TrackedPlugin>(sys_set: StartupSystems, _myname: &'static str) {
     log_system_add_base(
         _myname,
         std::any::type_name::<T>(),

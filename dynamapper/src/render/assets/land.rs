@@ -920,8 +920,8 @@ impl Plugin for LandTextureCachePlugin {
                         .run_if(resource_exists::<crate::content::TexMap2DRes>),
                 )
                     .chain()
-                    .in_set(StartupSysSet::SetupSceneStage1)
-                    .after(StartupSysSet::LoadStartupUOFiles),
+                    .in_set(StartupSystems::SetupSceneStage1)
+                    .after(StartupSystems::LoadStartupUOFiles),
             );
         // The routes change before the land and statics of the frame are built.
         app.add_systems(Update, (
@@ -929,7 +929,7 @@ impl Plugin for LandTextureCachePlugin {
             route_file::sys_select_route_profile,
             route_file::sys_apply_item_routes,
         ).chain().before(sys_apply_land_texture_source_changes)
-            .before(SceneRenderLandSysSet::RenderLandChunks));
+            .before(SceneRenderLandSystems::RenderLandChunks));
         app.add_systems(Update, route_file::sys_show_route_file_notices
             .run_if(in_state(crate::app::app_states::AppState::InGame))
             .run_if(|routes: Res<route_file::RouteFileRes>| routes.has_pending_notices()));
@@ -946,7 +946,7 @@ impl Plugin for LandTextureCachePlugin {
             .run_if(in_state(crate::app::app_states::AppState::InGame))
             .run_if(|cache: Option<Res<cache::LandTextureCache>>| cache.is_some_and(|cache| !cache.pending_land_notices.is_empty())));
         app.add_systems(Update, coverage::sys_prepare_stack_cache
-            .after(SceneRenderLandSysSet::RenderLandChunks)
+            .after(SceneRenderLandSystems::RenderLandChunks)
             .run_if(in_state(crate::app::app_states::AppState::InGame)));
 
         let Some(render_app) = app.get_sub_app_mut(bevy::render::RenderApp) else {
@@ -1263,7 +1263,7 @@ pub fn sys_setup_terrain_cache(
     route_file: Res<route_file::RouteFileRes>,
     texture_variation: Res<crate::content::land_texture_variation::LandTextureVariationMaterials>,
 ) {
-    log_system_add_startup::<LandTextureCachePlugin>(StartupSysSet::SetupSceneStage1, fname!());
+    log_system_add_startup::<LandTextureCachePlugin>(StartupSystems::SetupSceneStage1, fname!());
     let (tex_aux_ec_r, kr_items_r) = item_packages;
 
     let small_layers = texture_array::TEXARRAY_SMALL_INITIAL_TILE_LAYERS;

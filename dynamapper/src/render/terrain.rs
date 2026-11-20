@@ -469,15 +469,15 @@ impl Plugin for DrawLandChunkMeshPlugin {
             .add_systems(
                 Update,
                 (
-                    sys_sync_land_upload_budget.before(SceneRenderLandSysSet::RenderLandChunks),
+                    sys_sync_land_upload_budget.before(SceneRenderLandSystems::RenderLandChunks),
                     draw_mesh::sys_update_existing_chunk_mesh_lod
-                        .in_set(SceneRenderLandSysSet::RenderLandChunks)
-                        .after(SceneRenderLandSysSet::SyncLandChunks)
+                        .in_set(SceneRenderLandSystems::RenderLandChunks)
+                        .after(SceneRenderLandSystems::SyncLandChunks)
                         .run_if(in_state(AppState::InGame))
                         .run_if(on_real_timer(Duration::from_secs_f32(1.0 / 4.0))),
                     draw_mesh::sys_draw_spawned_land_chunks
-                        .in_set(SceneRenderLandSysSet::RenderLandChunks)
-                        .after(SceneRenderLandSysSet::SyncLandChunks)
+                        .in_set(SceneRenderLandSystems::RenderLandChunks)
+                        .after(SceneRenderLandSystems::SyncLandChunks)
                         .run_if(in_state(AppState::InGame)),
                     sys_update_shared_land_material.run_if(in_state(AppState::InGame)),
                     sys_apply_land_shader_simplification_override
@@ -487,7 +487,7 @@ impl Plugin for DrawLandChunkMeshPlugin {
                         .run_if(in_state(AppState::InGame))
                         .after(sys_apply_land_shader_simplification_override),
                     cave_mouth_veil::sys_sync_cave_mouth_veils
-                        .after(SceneRenderLandSysSet::RenderLandChunks)
+                        .after(SceneRenderLandSystems::RenderLandChunks)
                         .after(cave_mouth_veil::sys_sync_cave_mouth_veil_material)
                         .run_if(in_state(AppState::InGame)),
                 ),

@@ -78,7 +78,7 @@ use crate::render::view::camera::{PlayerCamera, RenderZoom, ORTHO_SIZE_FACTOR};
 use crate::render::lighting::static_lights::{light_sprite_glow_strength, NO_LIGHT_SPRITE_GLOW};
 use crate::render::postprocess::fog_pass::FogPassSystems;
 use crate::render::terrain::mesh_material::ClientNightLighting;
-use crate::app::system_sets::StartupSysSet;
+use crate::app::system_sets::StartupSystems;
 use crate::content::TexAuxEcPackageRes;
 use crate::prelude::*;
 use bevy::anti_alias::{fxaa::fxaa, smaa::smaa};
@@ -380,8 +380,8 @@ impl Plugin for ClientNightLightingPlugin {
         .add_systems(
             Startup,
             sys_setup_client_night_resources
-                .in_set(StartupSysSet::SetupSceneStage1)
-                .after(StartupSysSet::LoadStartupUOFiles),
+                .in_set(StartupSystems::SetupSceneStage1)
+                .after(StartupSystems::LoadStartupUOFiles),
         )
         .add_systems(Update, sys_spawn_light_buffer_camera)
         .add_systems(
@@ -474,7 +474,7 @@ fn sys_setup_client_night_resources(
     tex_aux: Option<Res<TexAuxEcPackageRes>>,
     mut images: ResMut<Assets<Image>>,
 ) {
-    log_system_add_startup::<ClientNightLightingPlugin>(StartupSysSet::SetupSceneStage1, fname!());
+    log_system_add_startup::<ClientNightLightingPlugin>(StartupSystems::SetupSceneStage1, fname!());
     let night_map = match tex_aux.as_deref() {
         None => Err("there is no tex_aux_ec.uddp".to_string()),
         Some(package) => package.0.load_terrain_texture_rgba(EC_NIGHT_MAP_TERRAIN_TEXTURE_ENTRY)

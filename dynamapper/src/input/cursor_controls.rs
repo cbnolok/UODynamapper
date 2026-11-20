@@ -3,7 +3,7 @@
 use crate::input::input_actions::ActionToggleCursorTeleportMode;
 use crate::input::{InjectedPointer, effective_cursor_position};
 use crate::render::picking::cursor_map_id;
-use crate::render::picking::terrain_cursor::{TerrainCursor, TerrainCursorQuery};
+use crate::render::picking::terrain_cursor::{TerrainCursor, TerrainCursorSystems};
 use crate::render::scene::RecomputeVisibleChunksEvent;
 use crate::world::{maps::WorldGeoData, player::Player};
 use crate::ingame_sysmessage_logger;
@@ -44,7 +44,7 @@ impl Plugin for CursorControlsPlugin {
         log_plugin_build(self);
         app.init_resource::<CursorBehavior>()
             .add_observer(sys_toggle_cursor_mode)
-            .add_systems(Update, sys_teleport_on_click.after(TerrainCursorQuery).run_if(in_state(AppState::InGame)));
+            .add_systems(Update, sys_teleport_on_click.after(TerrainCursorSystems).run_if(in_state(AppState::InGame)));
     }
 }
 

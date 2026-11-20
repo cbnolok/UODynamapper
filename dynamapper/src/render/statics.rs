@@ -1,7 +1,7 @@
 use bevy::prelude::*;
 use bevy::render::RenderApp;
 use bevy::render::ExtractSchedule;
-use crate::app::system_sets::{StartupSysSet, SceneRenderLandSysSet, SceneRenderArtSysSet};
+use crate::app::system_sets::{StartupSystems, SceneRenderLandSystems, SceneRenderArtSystems};
 use crate::app::app_states::AppState;
 use crate::prelude::*;
 use crate::util_lib::tracked_plugin::TrackedPlugin;
@@ -66,9 +66,9 @@ impl Plugin for DrawStaticSpritesPlugin {
                MaterialPlugin::<statics_draw::ArtGroundMaterial>::default(),
            ))
            .add_systems(Startup, statics_draw::sys_setup_art_page_atlas
-               .in_set(StartupSysSet::SetupSceneStage1)
+               .in_set(StartupSystems::SetupSceneStage1)
                .after(crate::render::assets::land::sys_setup_terrain_cache)
-               .after(StartupSysSet::LoadStartupUOFiles))
+               .after(StartupSystems::LoadStartupUOFiles))
            .add_systems(Update, (
                static_source::sys_sync_static_art_source,
                statics_draw::sys_sync_active_art_page_atlases,
@@ -76,34 +76,34 @@ impl Plugin for DrawStaticSpritesPlugin {
                crate::render::assets::art::sys_stage_sprite_art_page_uploads,
                crate::render::assets::art::sys_stage_ground_art_page_uploads,
                static_lights::sys_collect_visible_static_lights
-                   .after(SceneRenderLandSysSet::RenderLandChunks)
+                   .after(SceneRenderLandSystems::RenderLandChunks)
                    .after(client_light_sprites::sys_collect_client_light_sprites),
                statics_collect::sys_collect_visible_statics
-                   .in_set(SceneRenderArtSysSet::CollectVisibleStatics)
+                   .in_set(SceneRenderArtSystems::CollectVisibleStatics)
                    .after(static_lights::sys_collect_visible_static_lights),
                statics_draw::sys_sync_static_sprite_entities
-                   .after(SceneRenderArtSysSet::CollectVisibleStatics),
+                   .after(SceneRenderArtSystems::CollectVisibleStatics),
                statics_draw::sys_sync_static_sprite_shadow_entities
-                   .after(SceneRenderArtSysSet::CollectVisibleStatics),
+                   .after(SceneRenderArtSystems::CollectVisibleStatics),
                statics_draw::sys_sync_static_sprite_transparent_entities
-                   .after(SceneRenderArtSysSet::CollectVisibleStatics),
+                   .after(SceneRenderArtSystems::CollectVisibleStatics),
                statics_draw::sys_sync_static_ground_entities
-                   .after(SceneRenderArtSysSet::CollectVisibleStatics),
+                   .after(SceneRenderArtSystems::CollectVisibleStatics),
                statics_draw::sys_sync_static_ground_transparent_entities
-                   .after(SceneRenderArtSysSet::CollectVisibleStatics),
+                   .after(SceneRenderArtSystems::CollectVisibleStatics),
                static_lights::sys_sync_static_light_entities
                    .after(static_lights::sys_collect_visible_static_lights),
                statics_draw::sys_update_sprite_instance_buffer
-                   .in_set(SceneRenderArtSysSet::RenderStaticSprites)
-                   .after(SceneRenderArtSysSet::CollectVisibleStatics),
+                   .in_set(SceneRenderArtSystems::RenderStaticSprites)
+                   .after(SceneRenderArtSystems::CollectVisibleStatics),
                statics_draw::sys_update_ground_instance_buffer
-                   .in_set(SceneRenderArtSysSet::RenderStaticSprites)
-                   .after(SceneRenderArtSysSet::CollectVisibleStatics),
+                   .in_set(SceneRenderArtSystems::RenderStaticSprites)
+                   .after(SceneRenderArtSystems::CollectVisibleStatics),
                statics_draw::sys_update_art_materials,
            ).chain().run_if(in_state(AppState::InGame)));
         app.add_systems(Update, (
                client_light_sprites::sys_collect_client_light_sprites
-                   .after(SceneRenderLandSysSet::RenderLandChunks),
+                   .after(SceneRenderLandSystems::RenderLandChunks),
                client_light_sprites::sys_sync_client_light_sprites,
            ).chain().run_if(in_state(AppState::InGame)));
 

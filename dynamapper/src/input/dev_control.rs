@@ -10,7 +10,7 @@ use crate::settings::{ClientTextureSource, LandTextureSource};
 use crate::render::terrain::{LCMesh, draw_mesh::PendingTextureBake};
 use crate::render::assets::tile_atlas::{LandUploadTelemetry, TileAtlas};
 use crate::render::terrain::coverage::EcTerrainBases;
-use crate::app::{app_states::AppState, system_sets::MovementSysSet};
+use crate::app::{app_states::AppState, system_sets::MovementSystems};
 use crate::render::scene::RecomputeVisibleChunksEvent;
 use crate::world::player::Player;
 use crate::world::maps::WorldGeoData;
@@ -109,7 +109,7 @@ impl Plugin for DevControlPlugin {
             .add_systems(PreUpdate, focus_control_context.after(EguiPreUpdateSet::ProcessInput)
                 .before(EguiPreUpdateSet::BeginPass).run_if(in_state(AppState::InGame)))
             .add_systems(Update,
-            poll_control.in_set(MovementSysSet::MovementActions).run_if(in_state(AppState::InGame)));
+            poll_control.in_set(MovementSystems::MovementActions).run_if(in_state(AppState::InGame)));
     }
 }
 

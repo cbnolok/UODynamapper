@@ -1,4 +1,4 @@
-use crate::{app::system_sets::StartupSysSet, prelude::*};
+use crate::{app::system_sets::StartupSystems, prelude::*};
 use bevy::color::Srgba;
 use bevy::diagnostic::DiagnosticsStore;
 use bevy::prelude::*;
@@ -241,7 +241,7 @@ impl Plugin for PerformanceOverlayPlugin {
         app.init_resource::<ProcessMetrics>()
             .add_systems(
                 Startup,
-                setup_overlay_performance.in_set(StartupSysSet::SetupSceneStage2),
+                setup_overlay_performance.in_set(StartupSystems::SetupSceneStage2),
             )
             .add_systems(
                 Update,
@@ -269,7 +269,7 @@ pub fn setup_overlay_performance(
     asset_server: Res<AssetServer>,
     settings: Res<Settings>,
 ) {
-    log_system_add_startup::<PerformanceOverlayPlugin>(StartupSysSet::SetupSceneStage2, fname!());
+    log_system_add_startup::<PerformanceOverlayPlugin>(StartupSystems::SetupSceneStage2, fname!());
     let font: Handle<Font> = asset_server.load("fonts/fira/FiraMono-Medium.ttf");
     commands
         .spawn((

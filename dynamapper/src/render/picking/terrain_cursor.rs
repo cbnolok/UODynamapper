@@ -4,7 +4,7 @@ use crate::render::terrain::{draw_mesh::LandMeshHandles, LCMesh};
 use crate::render::assets::tile_atlas::{LandUploadTelemetry, TileAtlas};
 use crate::input::{InjectedPointer, effective_cursor_position};
 use crate::content::MapPlanesRes;
-use crate::app::{app_states::AppState, system_sets::{MovementSysSet, SceneRenderLandSysSet}};
+use crate::app::{app_states::AppState, system_sets::{MovementSystems, SceneRenderLandSystems}};
 use crate::render::{view::camera::PlayerCamera, assets::land::cache::LandTextureCache};
 use crate::world::player::Player;
 use crate::settings::LandTextureSource;
@@ -33,11 +33,11 @@ struct Signature {
 }
 
 #[derive(SystemSet, Debug, Clone, PartialEq, Eq, Hash)]
-pub(crate) struct TerrainCursorQuery;
+pub(crate) struct TerrainCursorSystems;
 
 pub(crate) fn install(app: &mut App) {
-    app.init_resource::<TerrainCursor>().add_systems(Update, update_terrain_cursor.in_set(TerrainCursorQuery)
-        .after(SceneRenderLandSysSet::RenderLandChunks).after(MovementSysSet::UpdateCamera)
+    app.init_resource::<TerrainCursor>().add_systems(Update, update_terrain_cursor.in_set(TerrainCursorSystems)
+        .after(SceneRenderLandSystems::RenderLandChunks).after(MovementSystems::UpdateCamera)
         .run_if(in_state(AppState::InGame)));
 }
 

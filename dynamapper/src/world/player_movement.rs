@@ -32,7 +32,7 @@ impl Plugin for PlayerMovementPlugin {
                 sys_smooth_player_transform,
             )
                 .chain()
-                .in_set(MovementSysSet::MovementActions)
+                .in_set(MovementSystems::MovementActions)
                 .run_if(not(|s: Res<Settings>| s.app.window.free_camera)),
         );
     }

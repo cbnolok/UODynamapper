@@ -75,32 +75,32 @@ impl Plugin for ScenePlugin {
         .configure_sets(
             Update,
             (
-                SceneRenderLandSysSet::SyncLandChunks
-                    .after(SceneRenderLandSysSet::ListenSyncRequests),
-                SceneRenderLandSysSet::RenderLandChunks
-                    .after(SceneRenderLandSysSet::SyncLandChunks),
+                SceneRenderLandSystems::SyncLandChunks
+                    .after(SceneRenderLandSystems::ListenSyncRequests),
+                SceneRenderLandSystems::RenderLandChunks
+                    .after(SceneRenderLandSystems::SyncLandChunks),
             ),
         )
         .add_systems(
             Startup,
-            sys_setup_scene.in_set(StartupSysSet::SetupSceneStage2),
+            sys_setup_scene.in_set(StartupSystems::SetupSceneStage2),
         )
         .add_systems(
             FixedUpdate,
             sys_update_scene_on_window_resize
-                .in_set(SceneRenderLandSysSet::ListenSyncRequests)
+                .in_set(SceneRenderLandSystems::ListenSyncRequests)
                 .run_if(in_state(AppState::InGame)),
         )
         .add_systems(
             Update,
-            (sys_update_worldmap_chunks_to_render.in_set(SceneRenderLandSysSet::SyncLandChunks),)
+            (sys_update_worldmap_chunks_to_render.in_set(SceneRenderLandSystems::SyncLandChunks),)
                 .run_if(in_state(AppState::InGame)),
         );
     }
 }
 
 pub fn sys_setup_scene(mut writer: MessageWriter<RecomputeVisibleChunksEvent>) {
-    log_system_add_startup::<ScenePlugin>(StartupSysSet::SetupSceneStage2, fname!());
+    log_system_add_startup::<ScenePlugin>(StartupSystems::SetupSceneStage2, fname!());
     writer.write(RecomputeVisibleChunksEvent {});
 }
 

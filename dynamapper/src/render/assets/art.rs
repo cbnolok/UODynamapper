@@ -5,7 +5,7 @@ use color_eyre::eyre;
 
 use crate::{
     content::{TexArtCcPackageRes, TexArtEcPackageRes},
-    app::system_sets::StartupSysSet,
+    app::system_sets::StartupSystems,
     prelude::*,
 };
 use udd_assets::bc7::{self, ImageExtent, TextureUploadLayout, VramTextureFormat};
@@ -917,8 +917,8 @@ impl Plugin for ArtPageFormatCheckPlugin {
         app.add_systems(
             Startup,
             sys_warn_art_page_format_mismatch
-                .in_set(StartupSysSet::SetupSceneStage1)
-                .after(StartupSysSet::LoadStartupUOFiles),
+                .in_set(StartupSystems::SetupSceneStage1)
+                .after(StartupSystems::LoadStartupUOFiles),
         );
     }
 }

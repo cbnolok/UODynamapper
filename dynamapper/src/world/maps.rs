@@ -31,7 +31,7 @@ pub(crate) fn sys_populate_world_geo_data(
     mut world_geo_data_res: bevy::prelude::ResMut<WorldGeoData>,
 ) {
     crate::util_lib::tracked_plugin::log_system_add_startup::<crate::render::scene::world::WorldPlugin>(
-        crate::app::system_sets::StartupSysSet::SetupSceneStage1,
+        crate::app::system_sets::StartupSystems::SetupSceneStage1,
         crate::fname!(),
     );
     let Some(map_planes_res) = map_planes_res else {

@@ -6,7 +6,7 @@ use bevy::{
     asset::RenderAssetUsages,
 };
 use crate::util_lib::tracked_plugin::log_system_add_startup;
-use crate::app::system_sets::StartupSysSet;
+use crate::app::system_sets::StartupSystems;
 use crate::fname;
 
 /// A grid quad's two triangles, by its corners: 0 at its origin, 1 one step along x, 2 one step along z, 3 both. The
@@ -95,7 +95,7 @@ fn grid_mesh(positions: Vec<[f32; 3]>, uvs: Vec<[f32; 2]>, indices: Vec<u32>) ->
 
 /// This startup system generates shared terrain meshes for multiple LODs and scales.
 pub fn setup_land_mesh(mut commands: Commands, mut meshes: ResMut<Assets<Mesh>>) {
-    log_system_add_startup::<super::DrawLandChunkMeshPlugin>(StartupSysSet::SetupSceneStage1, fname!());
+    log_system_add_startup::<super::DrawLandChunkMeshPlugin>(StartupSystems::SetupSceneStage1, fname!());
     // Standard 32×32 tile meshes at three vertex-density LODs:
     let high = meshes.add(build_chunk_mesh(32, 1));   // 1089 verts (zoom < 4)
     let medium = meshes.add(build_chunk_mesh(32, 2)); // 289 verts  (zoom 4–10)
