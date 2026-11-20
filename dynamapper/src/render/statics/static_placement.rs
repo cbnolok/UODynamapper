@@ -115,7 +115,9 @@ pub(crate) fn resolve_surface_like_ground_quad_bounds() -> GroundQuadBounds {
 /// it a second time, collapsing the visible water to a half-size inscribed blob — the reported
 /// "too small" symptom. Instead we size the quad in world units from the sprite's real pixel
 /// dimensions via `CC_WORLD_XZ_PER_PIXEL` (the same per-pixel scale the billboard path uses)
-/// and center it on the origin. Combined with the diagonal `BILLBOARD_RIGHT_XZ` /
+/// and center it on the origin, its left edge on a whole pixel as the Classic client draws its art (`-(width >> 1)`):
+/// an odd-width sprite centred exactly would put every screen pixel on the edge between two texels at 1:1, and which
+/// one it showed would follow the sprite's place in its atlas page. Combined with the diagonal `BILLBOARD_RIGHT_XZ` /
 /// `FLAT_QUAD_FORWARD_XZ` basis applied in main.wesl, the sprite's diamond vertices then land
 /// exactly on the cell corners and seam with the terrain water beneath. A 44px-wide tile maps
 /// to a half-extent of `44 * 0.5 * (sqrt(2)/44) = sqrt(2)/2` along each diagonal axis, i.e. the
@@ -124,11 +126,11 @@ pub(crate) fn resolve_cc_surface_like_flat_quad_bounds(
     logical_width: f32,
     logical_height: f32,
 ) -> GroundQuadBounds {
-    let half_width = logical_width * 0.5 * CC_WORLD_XZ_PER_PIXEL;
+    let local_min_x = -(logical_width * 0.5).floor() * CC_WORLD_XZ_PER_PIXEL;
     let half_height = logical_height * 0.5 * CC_WORLD_XZ_PER_PIXEL;
     GroundQuadBounds {
-        local_min_x: -half_width,
-        local_max_x: half_width,
+        local_min_x,
+        local_max_x: local_min_x + logical_width * CC_WORLD_XZ_PER_PIXEL,
         local_min_z: -half_height,
         local_max_z: half_height,
     }
@@ -391,5 +393,20 @@ pub(super) fn sprite_depth_anchor(flat_quad: u32, world_x: f32, world_z: f32) ->
         FLAT_QUAD_EC_CAMERA => apply_static_world_anchor_translation(world_x, world_z),
         FLAT_QUAD_CC_FLAT | FLAT_QUAD_EC_SURFACE => cell_depth_anchor(world_x, world_z),
         _ => (world_x, world_z),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn classic_flat_quads_start_on_a_whole_pixel() {
+        for (width, left_pixels) in [(44.0, -22.0), (45.0, -22.0), (47.0, -23.0)] {
+            let bounds = resolve_cc_surface_like_flat_quad_bounds(width, 44.0);
+            assert!((bounds.local_min_x / CC_WORLD_XZ_PER_PIXEL - left_pixels).abs() < 1e-4, "width {width}");
+            assert!(((bounds.local_max_x - bounds.local_min_x) / CC_WORLD_XZ_PER_PIXEL - width).abs() < 1e-4,
+                "width {width}");
+        }
     }
 }

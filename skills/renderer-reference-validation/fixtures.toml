@@ -838,7 +838,9 @@ scale file (3ad6fc2e); lava and obsidian repetition broken up (eb71a329); Enhanc
 Classic art over Classic land (dfbd8422). The lava's edge pieces are surface-like from Kingdom Reborn's Surface flag \
 (TilemetaOverrides.kdl, 2026-11-17): without it they stand as upright items and the pools' rims break up. Being \
 impassable, they are no ground patches and draw their whole cell (lava-rim-crust, 2026-11-18). Lava is \
-the one noisy view: up to 3 levels between launches in Classic at night."""
+the one noisy view: up to 3 levels between launches in Classic at night. The walkway's odd-width blood decals start \
+on a whole pixel, as the Classic client draws art (2026-11-20): centred exactly, every pixel fell between two texels \
+and the drips changed with the art's page size."""
 tier = "quick"
 tags = ["lava", "lights", "terrain", "liquids", "tilemeta-overrides"]
 map = 1
