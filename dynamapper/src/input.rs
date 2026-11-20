@@ -1,4 +1,5 @@
 pub(crate) mod camera_input;
+pub mod cursor_controls;
 pub mod window_controls;
 pub mod input_actions;
 #[cfg(unix)]
@@ -29,6 +30,9 @@ impl Plugin for ControlsPlugin {
                 registered_by: "ControlsPlugin",
             },
             window_controls::WindowControlsPlugin {
+                registered_by: "ControlsPlugin",
+            },
+            cursor_controls::CursorControlsPlugin {
                 registered_by: "ControlsPlugin",
             },
         ));

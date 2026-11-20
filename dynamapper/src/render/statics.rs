@@ -39,6 +39,7 @@ impl Plugin for DrawStaticSpritesPlugin {
         app.init_resource::<statics_collect::StaticArtCollectDebugState>();
         app.init_resource::<static_source::StaticArtSourceState>();
         crate::render::picking::gpu_picking::install(app);
+        crate::render::picking::hovered_static::install(app);
         light_scene::install(app);
         app.init_resource::<statics_draw::StaticArtDrawDebugState>();
         app.init_resource::<statics_draw::StaticArtUploadCache>();

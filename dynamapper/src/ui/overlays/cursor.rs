@@ -1,60 +1,44 @@
-use crate::ui::dialogs;
-use crate::input::input_actions::{
-    ActionToggleCursorInspectPanel, ActionToggleCursorTeleportMode,
-};
+//! The cursor overlay: the click mode, the terrain cell under the cursor and, with `I`, the inspector describing that
+//! cell's land and statics and the static drawn under the cursor.
+use crate::input::cursor_controls::{CursorBehavior, CursorMode};
+use crate::input::input_actions::ActionToggleCursorInspectPanel;
 use crate::input::{InjectedPointer, effective_cursor_position};
 use crate::render::statics::static_source::{static_tile_is_surface_like, static_tile_renders_wet};
+use crate::render::picking::cursor_map_id;
+use crate::render::picking::hovered_static::{HoveredStaticKind, hovered_static};
 use crate::render::picking::static_geometry::{StaticArtRoute, StaticPickingResources};
 use crate::world::player::Player;
 use crate::render::picking::terrain_cursor::{TerrainCursor, TerrainCursorQuery};
-use crate::render::{
-    scene::RecomputeVisibleChunksEvent,
-    view::camera::{PlayerCamera, UiCameraResource},
-};
-use crate::world::{maps::WorldGeoData, statics::StaticsStoreRes};
+use crate::render::view::camera::PlayerCamera;
+use crate::world::statics::StaticsStoreRes;
 use crate::content::{
     TexArtCcPackageRes, TexArtEcPackageRes, TexLandEcPackageRes, MapPlanesRes, TileMetaPackageRes,
 };
 use crate::ingame_sysmessage_logger;
 use crate::prelude::*;
-use bevy::ecs::message::MessageWriter;
 use bevy::ecs::system::SystemParam;
 use bevy::prelude::*;
 use bevy::text::{FontSmoothing, LineHeight};
 use bevy::window::PrimaryWindow;
-use bevy_egui::EguiContexts;
 use uocf::classic::map::{MapCell, MapCellCoords};
 
 const FONT_SIZE: f32 = 13.0;
 const CLASSIC_STATIC_ART_ID_OFFSET: u16 = 0x4000;
-const HOVERED_STATIC_HIGHLIGHT_Y_LIFT: f32 = 0.01;
 // The inspector stays a compact panel in the corner: long values wrap inside this width.
 const CURSOR_INSPECT_MAX_WIDTH_PX: f32 = 400.0;
 const CURSOR_INSPECT_MAX_STATICS: usize = 3;
 const CURSOR_INSPECT_NAME_CHARS: usize = 20;
 const CURSOR_INSPECT_NAME_ELLIPSIS: &str = "..";
 
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub enum CursorMode {
-    #[default]
-    Select,
-    Teleport,
-}
-
-#[derive(Resource, Default)]
-pub struct CursorBehavior {
-    pub mode: CursorMode,
-}
-
 #[derive(Resource, Default)]
 pub struct CursorInspectOverlayState {
     pub enabled: bool,
 }
 
-pub struct CursorBehaviorOverlayPlugin {
+pub struct CursorOverlayPlugin {
     pub registered_by: &'static str,
 }
-impl_tracked_plugin!(CursorBehaviorOverlayPlugin);
+impl_tracked_plugin!(CursorOverlayPlugin);
 
 #[derive(Component)]
 pub struct OverlayCursorBehaviorContainer;
@@ -95,12 +79,10 @@ pub struct CursorInspectLocals<'w, 's> {
     _marker: std::marker::PhantomData<&'w ()>,
 }
 
-impl Plugin for CursorBehaviorOverlayPlugin {
+impl Plugin for CursorOverlayPlugin {
     fn build(&self, app: &mut App) {
         log_plugin_build(self);
-        app.init_resource::<CursorBehavior>()
-            .init_resource::<CursorInspectOverlayState>()
-            .add_observer(sys_toggle_cursor_mode)
+        app.init_resource::<CursorInspectOverlayState>()
             .add_observer(sys_toggle_cursor_inspect_panel)
             .add_systems(OnEnter(AppState::InGame), setup_overlay_cursor_behavior)
             .add_systems(
@@ -109,9 +91,6 @@ impl Plugin for CursorBehaviorOverlayPlugin {
                     update_cursor_behavior_text.after(TerrainCursorQuery).run_if(in_state(AppState::InGame)),
                     update_cursor_inspect_text.after(TerrainCursorQuery).after(crate::app::system_sets::SceneRenderArtSysSet::CollectVisibleStatics)
                         .run_if(in_state(AppState::InGame)),
-                    sys_draw_hovered_static_highlight.after(crate::app::system_sets::SceneRenderArtSysSet::CollectVisibleStatics)
-                        .run_if(in_state(AppState::InGame)),
-                    sys_teleport_on_click.after(TerrainCursorQuery).run_if(in_state(AppState::InGame)),
                 ),
             );
     }
@@ -122,7 +101,7 @@ pub fn setup_overlay_cursor_behavior(
     asset_server: Res<AssetServer>,
     settings: Res<crate::settings::Settings>,
 ) {
-    crate::util_lib::tracked_plugin::log_system_add_one_shot::<CursorBehaviorOverlayPlugin>(
+    crate::util_lib::tracked_plugin::log_system_add_one_shot::<CursorOverlayPlugin>(
         "OnEnter(InGame)",
         "None",
         crate::fname!(),
@@ -264,13 +243,7 @@ pub(crate) fn update_cursor_behavior_text(
 
     if *last_mode != Some(cursor.mode) {
         if let Ok((mut mode_text, _, _)) = mode_text_q.single_mut() {
-            let next_text = format!(
-                "Cursor mode: {}",
-                match cursor.mode {
-                    CursorMode::Select => "Select",
-                    CursorMode::Teleport => "Teleport",
-                }
-            );
+            let next_text = format!("Cursor mode: {}", cursor.mode.label());
             if mode_text.0 != next_text {
                 mode_text.0 = next_text;
             }
@@ -418,23 +391,6 @@ pub(crate) fn update_cursor_inspect_text(
 }
 
 
-fn sys_toggle_cursor_mode(
-    _trigger: On<ActionToggleCursorTeleportMode>,
-    mut cursor: ResMut<CursorBehavior>,
-) {
-    cursor.mode = match cursor.mode {
-        CursorMode::Select => CursorMode::Teleport,
-        CursorMode::Teleport => CursorMode::Select,
-    };
-    ingame_sysmessage_logger::normal(format!(
-        "Cursor mode: {}",
-        match cursor.mode {
-            CursorMode::Select => "Select",
-            CursorMode::Teleport => "Teleport",
-        }
-    ));
-}
-
 fn sys_toggle_cursor_inspect_panel(
     _trigger: On<ActionToggleCursorInspectPanel>,
     mut inspect: ResMut<CursorInspectOverlayState>,
@@ -501,80 +457,6 @@ fn build_cursor_inspect_label(
     )
 }
 
-#[derive(Clone, Copy, Debug)]
-enum HoveredObjectKind {
-    Sprite,
-    Ground,
-}
-
-#[derive(Clone)]
-struct HoveredStaticMatch {
-    tile: uocf::classic::statics::PackedStaticTile,
-    kind: HoveredObjectKind,
-    corners: [Vec3; 4],
-    global_x: u16,
-    global_y: u16,
-    route: StaticArtRoute,
-}
-
-fn sys_draw_hovered_static_highlight(
-    mut picking: StaticPickingResources,
-    settings: Res<crate::settings::Settings>,
-    player_q: Query<&Player>,
-    windows: Query<&Window, With<PrimaryWindow>>,
-    injected_pointer: Option<Res<InjectedPointer>>,
-    camera_q: Query<(&Camera, &GlobalTransform), With<PlayerCamera>>,
-    mut gizmos: Gizmos,
-) {
-    if !settings
-        .world_rendering
-        .diagnostics
-        .highlight_hovered_static_object
-    {
-        return;
-    }
-
-    let Some(cursor_pos) = windows.single().ok().and_then(|window| effective_cursor_position(window, injected_pointer.as_deref())) else {
-        return;
-    };
-    let Some((camera, camera_tf)) = camera_q.single().ok() else {
-        return;
-    };
-    let Some(player) = player_q.single().ok() else {
-        return;
-    };
-    let Some(map_id) = cursor_map_id(Some(player), &settings) else { return; };
-
-    let Some(best_match) = find_hovered_static_object(
-        &mut picking,
-        cursor_pos,
-        camera,
-        camera_tf,
-        &settings,
-        map_id,
-    ) else {
-        return;
-    };
-
-    let color = match best_match.kind {
-        HoveredObjectKind::Sprite => Color::srgb(0.1, 1.0, 0.2),
-        HoveredObjectKind::Ground => Color::srgb(1.0, 0.85, 0.2),
-    };
-    let lift = Vec3::new(0.0, HOVERED_STATIC_HIGHLIGHT_Y_LIFT, 0.0);
-    let [corner0, corner1, corner2, corner3] = best_match.corners;
-    let corner0 = corner0 + lift;
-    let corner1 = corner1 + lift;
-    let corner2 = corner2 + lift;
-    let corner3 = corner3 + lift;
-
-    gizmos.line(corner0, corner1, color);
-    gizmos.line(corner1, corner3, color);
-    gizmos.line(corner3, corner2, color);
-    gizmos.line(corner2, corner0, color);
-    gizmos.line(corner0, corner3, color);
-    gizmos.line(corner1, corner2, color);
-}
-
 fn describe_hovered_object(
     picking: &mut StaticPickingResources,
     cursor_pos: Option<Vec2>,
@@ -593,20 +475,13 @@ fn describe_hovered_object(
         return "Object: [no camera]".to_string();
     };
 
-    let Some(best_match) = find_hovered_static_object(
-        picking,
-        cursor_pos,
-        camera,
-        camera_tf,
-        settings,
-        map_id,
-    ) else {
+    let Some(best_match) = hovered_static(picking, cursor_pos, camera, camera_tf, settings, map_id) else {
         return "Object: none".to_string();
     };
 
     let kind = match best_match.kind {
-        HoveredObjectKind::Sprite => "sprite",
-        HoveredObjectKind::Ground => "ground",
+        HoveredStaticKind::Sprite => "sprite",
+        HoveredStaticKind::Ground => "ground",
     };
     format!(
         "Object: {}\n  at {},{} {}\n  {}",
@@ -623,55 +498,6 @@ fn describe_hovered_object(
             Some(best_match.route),
         ),
     )
-}
-
-fn find_hovered_static_object(
-    picking: &mut StaticPickingResources,
-    cursor_pos: Vec2,
-    camera: &Camera,
-    camera_tf: &GlobalTransform,
-    settings: &crate::settings::Settings,
-    map_id: u8,
-) -> Option<HoveredStaticMatch> {
-    if !settings.world_rendering.enable_statics { return None; }
-    let tile = picking.visible_hit(cursor_pos, camera, camera_tf, u32::from(map_id))?;
-    hovered_static_match(picking, camera, camera_tf, tile)
-}
-
-fn hovered_static_match(
-    picking: &mut StaticPickingResources,
-    camera: &Camera,
-    camera_tf: &GlobalTransform,
-    candidate: crate::render::statics::static_batches::StaticPickTile,
-) -> Option<HoveredStaticMatch> {
-    let source = candidate.tile;
-    let tile = uocf::classic::statics::PackedStaticTile { graphic: source.graphic,
-        xy_packed: (source.world_x as u32 & 7) as u8 | (((source.world_z as u32 & 7) as u8) << 3),
-        z: source.z, hue: source.hue };
-    let graphic = tile.graphic;
-    let world_x = source.world_x;
-    let world_z = source.world_z;
-    // None for a NoDraw static, by the tile data it is drawn by (Kingdom Reborn's for the statics that continue the
-    // Kingdom Reborn land).
-    let geometry = picking.resolve(graphic, world_x, world_z, tile.z)?;
-    let kind = if geometry.flat_quad == 0 { HoveredObjectKind::Sprite } else { HoveredObjectKind::Ground };
-    let corners = geometry.corners(camera, camera_tf);
-
-    // Visibility is the GPU material/depth result. Reconstruct only the logical
-    // owner and its highlight; do not re-reject it with a different CPU sampler.
-
-    Some(HoveredStaticMatch {
-        tile,
-        kind,
-        corners,
-        global_x: world_x as u16,
-        global_y: world_z as u16,
-        route: geometry.route,
-    })
-}
-
-fn cursor_map_id(player: Option<&Player>, settings: &crate::settings::Settings) -> Option<u8> {
-    Some(player?.current_pos.map(|p| p.m).unwrap_or(settings.session_state.world.last_p.m))
 }
 
 fn describe_land_tile(
@@ -883,57 +709,6 @@ fn describe_static_tile_sources(
         sources.push_str(&format!("; no {}", missing.join(", ")));
     }
     sources
-}
-
-fn sys_teleport_on_click(
-    mouse: Res<ButtonInput<MouseButton>>,
-    windows: Query<&Window, With<PrimaryWindow>>,
-    injected_pointer: Option<Res<InjectedPointer>>,
-    mut player_q: Query<(&mut Player, &mut Transform)>,
-    cursor: Res<CursorBehavior>,
-    settings: Res<crate::settings::Settings>,
-    mut egui_contexts: EguiContexts,
-    egui_ui_camera: Res<UiCameraResource>,
-    mut chunk_recompute_writer: MessageWriter<RecomputeVisibleChunksEvent>,
-    world_geo_data: Res<WorldGeoData>,
-    terrain: Res<TerrainCursor>,
-) {
-    if cursor.mode != CursorMode::Teleport {
-        return;
-    }
-
-    // If egui wants pointer input, don't teleport
-    if let Some(ctx) = dialogs::get_egui_context_ready_mut(&mut egui_contexts, &egui_ui_camera) {
-        if ctx.egui_wants_pointer_input() {
-            return;
-        }
-    }
-
-    if !mouse.just_pressed(MouseButton::Left) {
-        return;
-    }
-
-    let Some(window) = windows.single().ok() else {
-        return;
-    };
-
-    let cursor_pos = match effective_cursor_position(window, injected_pointer.as_deref()) {
-        Some(pos) => pos,
-        None => return,
-    };
-
-    let Some(hit) = terrain.hit.filter(|_| terrain.pointer == Some(cursor_pos)) else { return; };
-    if let Ok((mut player, mut transform)) = player_q.single_mut() {
-        let Some(map) = cursor_map_id(Some(&player), &settings) else { return; };
-        if hit.logical.m != map { return; }
-        if crate::world::teleport::teleport_player(&mut player, &mut transform, hit.logical, &world_geo_data).is_err() { return; }
-        // Always force a full recompute so the new visible area loads immediately.
-        chunk_recompute_writer.write(RecomputeVisibleChunksEvent {});
-        ingame_sysmessage_logger::normal(format!(
-            "Teleported to [{}, {}, {}, {}] via cursor",
-            hit.logical.x, hit.logical.y, hit.logical.z, hit.logical.m
-        ));
-    }
 }
 
 #[cfg(test)]
