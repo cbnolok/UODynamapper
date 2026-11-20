@@ -220,24 +220,6 @@ thread_local! {
         std::cell::RefCell::new(zstd::zstd_safe::DCtx::create());
 }
 
-/// The most threads one payload's frames decode on. More would take cores from the renderer and the other loaders
-/// for a few milliseconds less on a page.
-const FRAME_DECODE_THREADS_MAX: usize = 8;
-
-/// The pool that decodes a payload's frames: its own, so the cap holds whatever else uses rayon's global pool, and
-/// built once, on the first parallel decode, so no decode pays for starting threads.
-fn frame_decode_pool() -> &'static rayon::ThreadPool {
-    static POOL: std::sync::OnceLock<rayon::ThreadPool> = std::sync::OnceLock::new();
-    POOL.get_or_init(|| {
-        let threads = std::thread::available_parallelism().map_or(1, |threads| threads.get()).min(FRAME_DECODE_THREADS_MAX);
-        rayon::ThreadPoolBuilder::new()
-            .num_threads(threads)
-            .thread_name(|index| format!("uddp-frame-decode-{index}"))
-            .build()
-            .expect("the frame decode pool starts")
-    })
-}
-
 /// Zstd-decompresses one payload of `raw_size` bytes on this thread's reused context, with the
 /// type's prepared dictionary when the payload has one. A payload marked as `independent_frames` decodes its frames in
 /// parallel, each straight into its part of the output; the writer decides which payloads are worth it.
@@ -284,31 +266,41 @@ fn independent_zstd_frames(data: &[u8], raw_size: usize) -> Option<Vec<(&[u8], u
     (total == raw_size).then_some(frames)
 }
 
-/// Decodes `frames` in parallel, each on its worker's reused context into its own part of the output.
+/// Decodes `frames` in parallel on the parallel executor (`crate::executor`), each on its thread's reused context into its
+/// own part of the output.
 fn zstd_decompress_frames(frames: &[(&[u8], usize)], raw_size: usize) -> std::io::Result<Vec<u8>> {
-    use rayon::prelude::*;
     let mut decoded = vec![0u8; raw_size];
     let mut parts = Vec::with_capacity(frames.len());
     let mut rest = decoded.as_mut_slice();
     for &(_, size) in frames {
         let (part, tail) = rest.split_at_mut(size);
-        parts.push(part);
+        parts.push(std::sync::Mutex::new(part));
         rest = tail;
     }
-    frame_decode_pool().install(|| frames.par_iter().zip(parts).try_for_each(|(&(frame, size), part)| {
-        DECOMPRESSION_CONTEXT.with(|context| {
+    let first_error = std::sync::Mutex::new(None);
+    crate::executor::parallel_executor().for_each_index(frames.len(), &|index| {
+        let (frame, size) = frames[index];
+        let mut part = parts[index].lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        let result = DECOMPRESSION_CONTEXT.with(|context| {
             let written = context
                 .borrow_mut()
-                .decompress(part, frame)
+                .decompress(&mut **part, frame)
                 .map_err(|code| std::io::Error::other(zstd::zstd_safe::get_error_name(code)))?;
             if written == size {
                 Ok(())
             } else {
                 Err(std::io::Error::other(format!("Zstd frame decoded to {written} bytes, not the {size} it declares")))
             }
-        })
-    }))?;
-    Ok(decoded)
+        });
+        if let Err(err) = result {
+            first_error.lock().unwrap_or_else(std::sync::PoisonError::into_inner).get_or_insert(err);
+        }
+    });
+    drop(parts);
+    match first_error.into_inner().unwrap_or_else(std::sync::PoisonError::into_inner) {
+        Some(err) => Err(err),
+        None => Ok(decoded),
+    }
 }
 
 /// Compute the canonical XXH64 package hash.
