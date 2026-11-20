@@ -121,7 +121,8 @@ fn load_kr_item_packages(lg: &impl Fn(&str), lg_err: &impl Fn(&str), kr_land_sel
         else {
             return Ok(None);
         };
-        if let Some(mismatch) = kr_section_format_mismatch(art.pages(), kr_art.pages(), |page| page.pixel_format) {
+        if let Some(mismatch) = kr_section_page_mismatch((art.pages(), art.atlas_width(), art.atlas_height()),
+            (kr_art.pages(), kr_art.atlas_width(), kr_art.atlas_height()), |page| page.pixel_format) {
             color_eyre::eyre::bail!("the art of the Kingdom Reborn section of tex_art_ec.uddp {mismatch}");
         }
         let art = kr_art;
@@ -152,8 +153,9 @@ fn load_kr_land(lg: &impl Fn(&str), lg_err: &impl Fn(&str), tex_land_ec: &udd_as
     reader_options: UddpReaderOptions) -> Option<udd_assets::tex_land_ec::TexLandEcPackage> {
     match tex_land_ec.kr_land(reader_options, AtlasCacheOptions::enabled()) {
         Ok(Some(package)) => {
-            if let Some(mismatch) =
-                kr_section_format_mismatch(tex_land_ec.pages(), package.pages(), |page| page.pixel_format) {
+            if let Some(mismatch) = kr_section_page_mismatch(
+                (tex_land_ec.pages(), tex_land_ec.atlas_width(), tex_land_ec.atlas_height()),
+                (package.pages(), package.atlas_width(), package.atlas_height()), |page| page.pixel_format) {
                 lg_err(&format!("The Kingdom Reborn land of tex_land_ec.uddp not loaded: it {mismatch}. \
                     {KR_SECTION_REPACK}."));
                 return None;
@@ -172,12 +174,21 @@ fn load_kr_land(lg: &impl Fn(&str), lg_err: &impl Fn(&str), tex_land_ec: &udd_as
     }
 }
 
-/// How the pages of a Kingdom Reborn `section` differ in format from those of its Enhanced package `base`, which their
-/// atlas holds as stored (`render::assets::art::ArtPageAtlasSet`): the packer gives a section its package's format.
-fn kr_section_format_mismatch<T>(base: &[T], section: &[T], pixel_format: impl Fn(&T) -> PagePixelFormat)
-    -> Option<String> {
-    let base_format = pixel_format(base.first()?);
-    let section_format = section.iter().map(&pixel_format).find(|&format| format != base_format)?;
+/// The pages of a Kingdom Reborn section and of its Enhanced package, with their page width and height.
+type KrSectionPages<'a, T> = (&'a [T], u32, u32);
+
+/// How the pages of a Kingdom Reborn `section` differ in size or format from those of its Enhanced package `base`,
+/// whose atlas holds them as stored, at its largest page size (`render::assets::art::ArtPageAtlasSet`): the packer
+/// gives a section its package's page layout and format.
+fn kr_section_page_mismatch<T>(base: KrSectionPages<'_, T>, section: KrSectionPages<'_, T>,
+    pixel_format: impl Fn(&T) -> PagePixelFormat) -> Option<String> {
+    let ((base_pages, base_width, base_height), (section_pages, section_width, section_height)) = (base, section);
+    if (section_width, section_height) != (base_width, base_height) {
+        return Some(format!("has {section_width}x{section_height} pages, its package {base_width}x{base_height} \
+            ones, which share an atlas"));
+    }
+    let base_format = pixel_format(base_pages.first()?);
+    let section_format = section_pages.iter().map(&pixel_format).find(|&format| format != base_format)?;
     Some(format!("holds {section_format:?} pages, its package {base_format:?} ones, which share an atlas"))
 }
 
@@ -790,11 +801,15 @@ mod tests {
     use std::collections::BTreeMap;
     use std::path::PathBuf;
 
-    /// A Kingdom Reborn section joins its package's atlas only in the package's format.
+    /// A Kingdom Reborn section joins its package's atlas only in the package's page size and format.
     #[test]
-    fn kr_sections_in_another_format_than_their_package_are_refused() {
-        use super::{kr_section_format_mismatch, PagePixelFormat::{Bc7, Rgba8888}};
-        let mismatch = |base: &[_], section: &[_]| kr_section_format_mismatch(base, section, |&format| format);
+    fn kr_sections_in_another_page_layout_than_their_package_are_refused() {
+        use super::{kr_section_page_mismatch, PagePixelFormat::{Bc7, Rgba8888}};
+        const PAGE: u32 = 1024;
+        let mismatch = |base: &[_], section: &[_]| kr_section_page_mismatch((base, PAGE, PAGE), (section, PAGE, PAGE),
+            |&format| format);
+        assert!(kr_section_page_mismatch((&[Bc7], PAGE, PAGE), (&[Bc7], 4 * PAGE, 2 * PAGE), |&format| format)
+            .is_some_and(|message| message.contains("4096x2048 pages")));
         assert_eq!(mismatch(&[Bc7, Bc7], &[Bc7]), None);
         assert_eq!(mismatch(&[Rgba8888], &[Rgba8888, Rgba8888]), None);
         assert!(mismatch(&[Bc7], &[Bc7, Rgba8888]).is_some_and(|message| message.contains("Rgba8888 pages")));

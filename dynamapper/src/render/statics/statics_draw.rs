@@ -508,7 +508,7 @@ const MISSING_TEXTURE_PAGE_SIZE: u32 = 256;
 
 /// The atlases of a set, as its packages fill them (`ArtPageAtlasSet`): each as large as its largest pages, in their
 /// format, which the packages of an atlas share (a Kingdom Reborn section in another format than its Enhanced
-/// package's does not load: `content::kr_section_format_mismatch`). An atlas no package fills stays `None`.
+/// package's does not load: `content::kr_section_page_mismatch`). An atlas no package fills stays `None`.
 #[derive(Clone, Copy, Default)]
 struct AtlasSetSpec {
     slots: [Option<AtlasAllocationSpec>; ART_ATLAS_SLOTS],

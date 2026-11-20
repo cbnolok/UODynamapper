@@ -604,7 +604,7 @@ impl ArtPageAtlas {
         let request = art_page_request(page, sources)?;
         // A page larger than the atlas's never binds (`ArtPageGeometry::slot_sprite` places no sprite on it), nor a
         // package page in another format: a Kingdom Reborn section packed apart from its Enhanced package does not load
-        // (`content::kr_section_format_mismatch`). The missing texture takes the atlas's format.
+        // (`content::kr_section_page_mismatch`). The missing texture takes the atlas's format.
         if request.atlas_width > self.page_width || request.atlas_height > self.page_height
             || (request.pixel_format != self.pixel_format && page != ArtPageKey::Missing) {
             return None;

@@ -509,11 +509,14 @@ pub struct KrArtBuildSummary {
     pub art: TexArtEcBuildSummary,
 }
 
-/// The Kingdom Reborn item art's options: the encoding of the Enhanced art's `ec_art_options` (pixel format,
-/// compression and BC7 tuning), so the two share the Enhanced art atlas as stored, with the default page layout and no
-/// upscaling.
+/// The Kingdom Reborn item art's options: the page layout and encoding of the Enhanced art's `ec_art_options` (page
+/// size, gutter, pixel format, compression and BC7 tuning), so the two share the Enhanced art atlas as stored, with
+/// pages of one size, without upscaling.
 pub fn kr_art_options(ec_art_options: &TexArtEcAtlasOptions) -> TexArtEcAtlasOptions {
     TexArtEcAtlasOptions {
+        atlas_width: ec_art_options.atlas_width,
+        atlas_height: ec_art_options.atlas_height,
+        gutter: ec_art_options.gutter,
         compression: ec_art_options.compression,
         pixel_format: ec_art_options.pixel_format,
         bc7_rdo_lambda: ec_art_options.bc7_rdo_lambda,
