@@ -421,10 +421,11 @@ clippy:
     @echo "Running Clippy across all workspace targets..."
     cargo clippy --workspace --all-targets -- -D warnings
 
-# Lint the Bevy app with bevy_cli.
+# Lint the Bevy app with bevy_cli. The workspace has several binaries; dynamapper is the one Bevy crate.
+# Needs `bevy lint install main`: the latest release (v0.6.0) targets Bevy 0.18, and this app is on 0.20.
 bevy-lint:
     @echo "Running Bevy lints..."
-    bevy lint
+    bevy lint --package dynamapper
 
 # Check that the standalone shell scripts are portable POSIX sh (ENGINEERING.md, "Shell scripts").
 check-shell:
