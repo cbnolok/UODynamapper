@@ -4,7 +4,7 @@
 //! `uocf::enhanced::paperdoll`, which the uocf editor runs on the client files; the item definitions are the
 //! `tileart.uop` records of tilemeta.uddp.
 //! What a robe covers is then taken off: the decisions paperdoll_ec.uddp stores, under the user's
-//! `PaperdollOverrides.kdl` ([`super::paperdoll_overrides`]).
+//! `PaperdollOverrides.kdl` ([`crate::content::paperdoll`]).
 //!
 //! Every paperdoll is drawn on the same canvas ([`PaperdollCanvas`]): the client's paperdoll window around the frames'
 //! anchor, widened to the frame box of both sets, so its size does not change with what is worn and no frame (the lit
@@ -21,7 +21,7 @@ use uocf::enhanced::hues::{EcHueLookup, EcHueTables};
 use uocf::enhanced::paperdoll::{compose_on, PlacedFrame, WornItem, SLOT_NAMES};
 
 use super::paperdoll_menu::{PaperdollDrawn, PickLayer};
-use super::paperdoll_overrides::{measured_garment, plan_taking_off, FrameNumber, PaperdollOrder, TakenOff};
+use crate::content::paperdoll::{measured_garment, plan_taking_off, FrameNumber, PaperdollOrder, TakenOff};
 
 /// What Enhanced gumps and paperdoll (`graphics.gumps_and_paperdoll`) draw for a paperdoll. Kept in the user settings
 /// as `window.enhanced_paperdoll`; Classic gumps and paperdoll always draw the gump paperdoll.
@@ -207,6 +207,9 @@ pub fn paperdoll_drawing(
 }
 
 #[cfg(test)]
+mod measure;
+
+#[cfg(test)]
 mod tests {
     use super::*;
     use uocf::enhanced::animationframe::AnimationBounds;
@@ -358,7 +361,7 @@ mod tests {
         let named = NamedTileArt::read(&UopPackage::load(client_file(&client, TILEART_UOP_NAME)).unwrap());
         let sets = FrameSets::load(&client_file(&client, PAPERDOLL_UOP_NAME)).unwrap();
         let hues_package = UopPackage::load_with_mode(client_file(&client, HUES_UOP_NAME), LoadMode::Lazy).unwrap();
-        use super::super::paperdoll_overrides::{PaperdollOverrides, PAPERDOLL_OVERRIDES_FILE_NAME};
+        use crate::content::paperdoll::{PaperdollOverrides, PAPERDOLL_OVERRIDES_FILE_NAME};
         use uocf::enhanced::paperdoll::WearableRules;
         /// Keeps everything beneath any robe: the client's rules.
         const CLIENT_RULES_OVERRIDES: &str = "cover \"dress\" items=\"any\"\n";

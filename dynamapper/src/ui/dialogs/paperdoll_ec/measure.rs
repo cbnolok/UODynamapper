@@ -6,14 +6,14 @@
 //! garment in plain view, and the decision hides something the player would see. The packer measures each garment
 //! beneath each dress the same way (`udd_conv::paperdoll_ec_dress`); these outfits check the result as it is drawn.
 
-use super::*;
-use crate::ui::dialogs::paperdoll_ec::{paperdoll_drawing, PaperdollCanvas, PaperdollItem};
+use super::{paperdoll_drawing, PaperdollCanvas, PaperdollItem};
+use crate::content::paperdoll::*;
 use std::collections::{HashMap, HashSet};
 use std::hash::{Hash, Hasher};
 use std::path::{Path, PathBuf};
 use udd_assets::tilemeta::TileMetaPackage;
 use udd_assets::{HuesPackage, PaperdollEcPackage};
-use uocf::enhanced::paperdoll::{item_layer, slot_layer, PlacedFrame};
+use uocf::enhanced::paperdoll::{item_layer, slot_layer, PlacedFrame, WearableRules};
 
 /// How far from the dress, in texels across or down, a texel taken away still counts as an edge showing past it, as
 /// the packer's `EDGE_BAND_TEXELS`. At 16 the robes' edges fall inside it: what the reviewed rule took away beyond it,

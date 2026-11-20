@@ -1,6 +1,7 @@
 pub mod gumps;
 pub mod land_routes;
 pub mod land_texture_variation;
+pub mod paperdoll;
 
 use crate::settings::{ClientTextureSource, Settings};
 use crate::world::maps::MapPlane;

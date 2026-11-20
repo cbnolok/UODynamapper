@@ -15,7 +15,7 @@ use udd_assets::paperdoll_overrides::{
 };
 use uocf::enhanced::paperdoll::slot_layer;
 
-use super::paperdoll_overrides::TakenOff;
+use crate::content::paperdoll::TakenOff;
 use crate::settings::runtime_specs::{read_text, SpecFiles};
 
 /// A texel at least this opaque picks its item; fainter ones (antialiased edges, shadows) let the item beneath it be

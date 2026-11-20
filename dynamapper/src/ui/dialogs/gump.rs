@@ -5,7 +5,7 @@ use crate::ui::dialogs::paperdoll_ec::{paperdoll_drawing, EnhancedPaperdoll, Pap
 use crate::ui::dialogs::paperdoll_menu::{
     menu_ui, write_choice, ChosenRule, MenuAction, PaperdollDrawn, PaperdollMenu, PickLayer,
 };
-use crate::ui::dialogs::paperdoll_overrides::{
+use crate::content::paperdoll::{
     measured_garment, taken_off, PaperdollOrder, PaperdollOverrides, TakenOff, PAPERDOLL_OVERRIDES_FILE_NAME,
 };
 use crate::settings::runtime_specs::SpecFiles;
@@ -1474,7 +1474,7 @@ impl<'a> StoredDressDecisions<'a> {
 /// The layers of the gump paperdoll, bottom first: the body gump, then the gump of each worn item in the paperdoll draw
 /// order of `WearableRules.kdl` (`WearableRules::paperdoll_order`), which hides some layers under others, without what
 /// a robe covers, as on the 3D paperdoll: `order`'s overrides, else `stored`, decide what an item takes off beneath it
-/// (`paperdoll_overrides::taken_off`); a taken-off item counts as not worn and the order is taken again. Classic gumps
+/// (`content::paperdoll::taken_off`); a taken-off item counts as not worn and the order is taken again. Classic gumps
 /// find an item's layer in tiledata; Enhanced gumps, as the 3D paperdoll does, in the item's `tileart.uop`
 /// record first. The overrides of the draw order follow the race of the profile's body.
 /// `item_tile` gives an item's tiledata record; `definitions` are the `tileart.uop` records of tilemeta.uddp.

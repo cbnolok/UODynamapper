@@ -3,7 +3,6 @@ pub mod gump;
 pub mod image_background;
 pub mod paperdoll_ec;
 pub mod paperdoll_menu;
-pub mod paperdoll_overrides;
 pub mod preferences;
 pub mod teleport;
 pub mod land_shader;

@@ -1,5 +1,5 @@
 //! Whether the gump paperdolls show the garments beneath a robe at its edges, as the 3D paperdoll does
-//! (`paperdoll_overrides`), and what the decisions measured on the 3D frames take off there: every garment of the
+//! (`content::paperdoll`), and what the decisions measured on the 3D frames take off there: every garment of the
 //! slots the 3D paperdoll takes off beneath a robe is drawn under every dress-layer item, on each bundled profile, from
 //! the Classic gumps and from the Enhanced gumps the old-style Enhanced paperdoll draws, and the
 //! garment texels left showing are counted. They do: the cloth lines up, a shirt showing at most at a robe's open

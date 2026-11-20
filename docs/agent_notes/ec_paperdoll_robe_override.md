@@ -42,7 +42,7 @@ item is taken off unless kept; a garment drawn beneath it only in another outfit
 (its draw order changed by the other items) was never measured and is taken off
 too. A garment the packer cannot measure on the body stays: one without a
 `tileart.uop` Layer (worn on its tiledata layer) or without a 3D frame for the
-body (`paperdoll_overrides::measured_garment`); the gump paperdolls draw many of
+body (`content::paperdoll::measured_garment`); the gump paperdolls draw many of
 those, such as the chainmail tunic 0x13BD and the leather leggings 0x13C9. The packing log has one line per item and body, naming the garments kept
 (the first 8, the most in view first); `--report` writes one line per garment.
 
@@ -97,7 +97,7 @@ them.
 
 ## Dynamapper
 
-`core/render/dialogs/paperdoll_overrides.rs` applies the decisions to both of
+`dynamapper/src/content/paperdoll.rs` applies the decisions to both of
 Dynamapper's paperdolls, under the user's `PaperdollOverrides.kdl`
 (`udd_assets::paperdoll_overrides`, strict schema; the bundled file holds
 comments only). A cover decides for its covering items, on its `bodies=` (body
@@ -172,7 +172,7 @@ colours, which matches the Enhanced table for 2,635 hues with the linear ramp an
 apart from the editor; a hues.uddp packed from `hues.mul` colours the 365 (linear)
 hues whose ramp differs as the Classic client does.
 
-The ignored test `paperdoll_overrides::measure::the_stored_decisions_take_away_little_outside_the_dress`
+The ignored test `ui::dialogs::paperdoll_ec::measure::the_stored_decisions_take_away_little_outside_the_dress`
 (`UDD_PAPERDOLL_EC`, `UDD_TILEMETA`, `UDD_HUES`, `TMPDIR`; `UDD_PAPERDOLL_OVERRIDES` measures
 another file) draws every dress over cloth and armour outfits and over each
 garment alone, and writes the ranked list and contact sheets' data. With the

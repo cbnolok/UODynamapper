@@ -140,9 +140,6 @@ where
 }
 
 #[cfg(test)]
-mod measure;
-
-#[cfg(test)]
 mod tests {
     use super::*;
     use uocf::enhanced::paperdoll::{slot_layer, FrameSets, SortedTileArt, MALE_SET};
@@ -154,8 +151,8 @@ mod tests {
     const SASH: u32 = 5441;
     const PLATE_LEGS: u32 = 0x1411;
     const SHOES: u32 = 0x170F;
-    const BUNDLED_OVERRIDES: &str = include_str!("../../../assets/runtime_specs/paperdoll/PaperdollOverrides.kdl");
-    const BUNDLED_RULES: &str = include_str!("../../../assets/runtime_specs/paperdoll/WearableRules.kdl");
+    const BUNDLED_OVERRIDES: &str = include_str!("../../assets/runtime_specs/paperdoll/PaperdollOverrides.kdl");
+    const BUNDLED_RULES: &str = include_str!("../../assets/runtime_specs/paperdoll/WearableRules.kdl");
 
     fn overrides(content: &str) -> PaperdollOverrides {
         PaperdollOverrides::decode(PAPERDOLL_OVERRIDES_FILE_NAME, content).unwrap()
