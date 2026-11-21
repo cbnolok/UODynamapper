@@ -1,6 +1,7 @@
 //! Package-level edits for frame imports: read or write one `AnimationFrame*.uop` entry, and set an action's frame
-//! count in `AnimationSequence.uop` when an import changes it. Writers never overwrite their source: they write a
-//! copy to a new path, with the edited entry under a fresh timestamp header (`uop_entries`).
+//! count in `AnimationSequence.uop` when an import changes it, or write a whole edited sequence entry. Writers never
+//! overwrite their source: they write a copy to a new path, with the edited entry under a fresh timestamp header
+//! (`uop_entries`).
 
 use std::path::Path;
 
@@ -78,7 +79,8 @@ pub fn sequence_frame_count(
 
 /// Writes a copy of the `source` `AnimationSequence.uop` to `output` with `action` of the `sequence_id` entry set
 /// to `frame_count` frames per direction; returns the previous count. Fails on a missing entry or action, an
-/// alias action (it owns no frames), and frame effects or skipped frames at or past the new count.
+/// alias action (it owns no frames), and frame effects or skipped frames at or past the new count
+/// ([`AnimationSequence::set_frame_count`]).
 pub fn write_sequence_frame_count(
     source: impl AsRef<Path>,
     output: impl AsRef<Path>,
@@ -93,19 +95,46 @@ pub fn write_sequence_frame_count(
     let path = AnimationSequence::entry_path(sequence_id);
     let mut sequence = read_sequence(&package, sequence_id, dialect)?
         .ok_or_else(|| eyre::eyre!("{} has no {path}", source.display()))?;
-    let record = sequence.actions.get_mut(&action).ok_or_else(|| eyre::eyre!("{path} has no action {action}"))?;
-    eyre::ensure!(record.alias.is_none(), "{path} action {action} is an alias: it owns no frames");
-    if let Some(frame) = record.frame_effects.keys().chain(&record.skipped_frames).find(|&&frame| frame >= frame_count) {
-        eyre::bail!("{path} action {action} has effects or a skipped frame at frame {frame}, past {frame_count} frames");
-    }
-    let previous = std::mem::replace(&mut record.frame_count, frame_count);
-    let payload = sequence.to_bytes_dialect(dialect).wrap_err_with(|| format!("failed to encode {path}"))?;
-    put(&mut package, crate::uop_container::hash::hash_file_name_single(&path), &payload)?;
+    let previous = sequence.set_frame_count(action, frame_count).wrap_err_with(|| path.clone())?;
+    put_sequence(&mut package, sequence_id, &sequence, dialect)?;
     uop_entries::save_package_as(&mut package, source, output)?;
     Ok(previous)
 }
 
-fn read_sequence(package: &UopPackage, sequence_id: u32, dialect: ClientDialect) -> eyre::Result<Option<AnimationSequence>> {
+/// Writes a copy of the `source` `AnimationSequence.uop` to `output` with `sequence` as the `sequence_id` entry,
+/// encoded in `dialect` (replaced keeping its compression, or added). Refuses a sequence with
+/// [`AnimationSequence::edit_errors`] or one the dialect's layout cannot hold. `output` must not be `source`.
+pub fn write_sequence(
+    source: impl AsRef<Path>,
+    output: impl AsRef<Path>,
+    sequence_id: u32,
+    sequence: &AnimationSequence,
+    dialect: ClientDialect,
+) -> eyre::Result<EntryChange> {
+    let (source, output) = (source.as_ref(), output.as_ref());
+    uop_entries::refuse_to_overwrite(source, output)?;
+    let mut package = UopPackage::load(source).wrap_err_with(|| format!("failed to load {}", source.display()))?;
+    let change = put_sequence(&mut package, sequence_id, sequence, dialect)?;
+    uop_entries::save_package_as(&mut package, source, output)?;
+    Ok(change)
+}
+
+/// Checks and encodes `sequence`, and puts it in `package` as the `sequence_id` entry.
+fn put_sequence(
+    package: &mut UopPackage,
+    sequence_id: u32,
+    sequence: &AnimationSequence,
+    dialect: ClientDialect,
+) -> eyre::Result<EntryChange> {
+    let path = AnimationSequence::entry_path(sequence_id);
+    let errors = sequence.edit_errors();
+    eyre::ensure!(errors.is_empty(), "{path}: {}", errors.join("; "));
+    let payload = sequence.to_bytes_dialect(dialect).wrap_err_with(|| format!("failed to encode {path}"))?;
+    put(package, crate::uop_container::hash::hash_file_name_single(&path), &payload)
+}
+
+/// The `sequence_id` entry of an `AnimationSequence.uop` package, parsed in `dialect`; `None` when it is missing.
+pub fn read_sequence(package: &UopPackage, sequence_id: u32, dialect: ClientDialect) -> eyre::Result<Option<AnimationSequence>> {
     let path = AnimationSequence::entry_path(sequence_id);
     let payload = package
         .unpack_file_by_hash(crate::uop_container::hash::hash_file_name_single(&path))

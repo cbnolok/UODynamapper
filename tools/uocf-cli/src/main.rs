@@ -12,6 +12,7 @@ mod legacy_mul;
 mod login;
 mod mul_convert;
 mod multimap;
+mod sequence;
 mod sound;
 mod strings;
 mod uop;
@@ -137,6 +138,10 @@ enum Commands {
     /// body/action as PNGs plus KDL, and import such a folder back into a copy of the files.
     #[command(subcommand)]
     Classicanim(classicanim::ClassicanimCmd),
+    /// AnimationSequence.uop (mobile action timing and groups, Classic, Enhanced Client and Kingdom Reborn): dump
+    /// an entry, write a copy with one action edited, check a client folder against its frame packages.
+    #[command(subcommand)]
+    Sequence(sequence::SequenceCmd),
     /// String tables (LocalizedStrings.uop of the Enhanced Client and Kingdom Reborn, Classic Cliloc.<lang>):
     /// export as KDL, and import KDL back into a copy.
     #[command(subcommand)]
@@ -212,6 +217,7 @@ fn main() -> eyre::Result<()> {
         Commands::Animdef(cmd) => animdef::run(cmd)?,
         Commands::Animframe(cmd) => animframe::run(cmd)?,
         Commands::Classicanim(cmd) => classicanim::run(cmd)?,
+        Commands::Sequence(cmd) => sequence::run(cmd)?,
         Commands::Strings(cmd) => strings::run(cmd)?,
     }
 

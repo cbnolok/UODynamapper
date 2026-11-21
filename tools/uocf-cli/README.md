@@ -17,6 +17,28 @@
   (anchors, frame numbers, palettes), and back into copies of the files (absolute output
   paths; MUL: `--output` idx and `--mul-output`, changed entries appended; UOP: a changed
   frames-per-direction needs `--sequence` and `--sequence-output`). Alpha 0 or 255 only.
+- `sequence dump <AnimationSequence.uop> <body> [--json]`: one sequence entry (Classic,
+  Enhanced Client, or Kingdom Reborn next to `UOKR.exe`; `--dialect` to force). Each action
+  shows what it plays: the resolved action's frame count and fps, the cycle (shown frames /
+  fps, skipped frames passed over), alias, skipped frames, frame effects and non-zero
+  offsets. Then the groups with their stand/walk/run actions, parent, default action,
+  transitions and typed actions.
+- `sequence set <in.uop> <out.uop> <body> <action> [--fps F] [--frame-count N]
+  [--alias A|none] [--skip i,j|none]`: write a copy with one action edited (absolute paths,
+  never the source; the entry keeps its dialect and compression). A frame count is refused
+  on an alias, or below a frame effect or skipped frame. The frame file's numbering depends
+  on it: direction d holds frames (d - 3) * N + 1 onwards.
+- `sequence scan <client dir> <report.md>`: check `AnimationSequence.uop` against the
+  `AnimationFrame*.uop` packages. It reports frame counts against the frames stored, aliases
+  the client resolves to the lowest plain action, plain actions without a frame file, frame
+  bodies without a sequence, and rider / mount cycle mismatches. A markdown report is written,
+  with a TSV beside it (`report.tsv`). Sequences pair with frame bodies through the
+  `tileart.uop` creature placeholders when the folder has them. Each finding is marked `own`,
+  `placeholder` (another body drawn with the sequence: it plays only the actions it has frames
+  for) or `fallback` (body 0). Riders are the race placeholders' sequences with a mounted
+  group (or 400 without placeholders). Mounts are horses 200 and 204, ostard 210, llama 220,
+  and every other sequence with a mounted group. The report must be outside the client
+  folder.
 - `classic-image export` / `classic-image import`: one Classic art (statics: item id +
   0x4000) or gump id as a PNG, from `artidx.mul`/`art.mul`, `artLegacyMUL.uop`,
   `gumpidx.mul`/`gumpart.mul` or `gumpartLegacyMUL.uop` (`--container` when both are

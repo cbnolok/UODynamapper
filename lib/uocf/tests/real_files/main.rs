@@ -9,6 +9,7 @@ mod common;
 mod animation_client_entries;
 mod animation_definition_editing;
 mod animation_frame_encoding;
+mod animation_sequence_editing;
 mod audio_client_files;
 mod audio_writers;
 mod classic_animation_frame_encoding;

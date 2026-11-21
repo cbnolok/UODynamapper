@@ -74,7 +74,7 @@ pub enum DialectArg {
 }
 
 impl DialectArg {
-    fn resolve(self, uop: &Path) -> ClientDialect {
+    pub(crate) fn resolve(self, uop: &Path) -> ClientDialect {
         match self {
             Self::Auto => ClientDialect::of_package_path(uop),
             Self::Enhanced => ClientDialect::Enhanced,

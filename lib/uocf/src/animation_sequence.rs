@@ -71,6 +71,9 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::io::Cursor;
 use std::ops::RangeInclusive;
 
+pub mod scan;
+pub mod summary;
+
 /// Directions of a mobile, in UO order (0 north, 1 north-east, 2 east, 3 south-east, 4 south,
 /// 5 south-west, 6 west, 7 north-west). Offsets are stored for all of them.
 pub const DIRECTION_COUNT: usize = 8;
@@ -809,7 +812,7 @@ mod tests {
         writer.0
     }
 
-    fn parsed() -> AnimationSequence {
+    pub(super) fn parsed() -> AnimationSequence {
         AnimationSequence::parse(&sample()).expect("sample parses")
     }
 
