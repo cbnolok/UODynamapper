@@ -1,8 +1,9 @@
 //! How a body moves as the client animates it: the direction it faces and whether it stands, walks or runs. A step
 //! turns the body toward the step and sets the movement; the body stands once a step's time has passed with no other
-//! step after it.
+//! step after it, as [`MobileStop`] picks.
 
 use bevy::prelude::*;
+use serde::{Deserialize, Serialize};
 
 /// The client's facings: 0 north (UO y - 1), then clockwise to 7 north-west.
 pub const DIRECTION_COUNT: u8 = 8;
@@ -17,6 +18,31 @@ pub const STEP_SECS_MOUNTED_RUN: f32 = 0.1;
 /// How many of its step times a body keeps moving after its last step before it stands: past one, so that the next
 /// step of a held key comes before it stops.
 const STAND_AFTER_STEPS: f32 = 1.5;
+/// The same with [`MobileStop::AtOnce`] and no step held: the end of the last step.
+const STAND_AT_ONCE_AFTER_STEPS: f32 = 1.0;
+
+/// When a body whose steps end stands. Kept in the app-written world rendering settings as
+/// `world_rendering.mobile_stop`.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum MobileStop {
+    /// Half a step time after its last step ends, its legs moving on meanwhile.
+    #[default]
+    HalfStepLater,
+    /// As its last step ends, when no further step is held.
+    AtOnce,
+}
+
+impl MobileStop {
+    pub const ALL: [Self; 2] = [Self::HalfStepLater, Self::AtOnce];
+
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::HalfStepLater => "Half a step later",
+            Self::AtOnce => "At once",
+        }
+    }
+}
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
 pub enum Movement {
@@ -94,11 +120,16 @@ impl MobileMotion {
         }
     }
 
-    /// Advances the clock by `delta_secs`: the body stands once its last step is long past.
-    pub fn tick(&mut self, delta_secs: f32) {
+    /// Advances the clock by `delta_secs`: the body stands once its last step is past as `stop` picks, the next
+    /// step held (`step_held`) or not.
+    pub fn tick(&mut self, delta_secs: f32, stop: MobileStop, step_held: bool) {
         self.since_step += delta_secs;
         self.clip_secs += delta_secs;
-        if self.movement != Movement::Stand && self.since_step > self.step_secs * STAND_AFTER_STEPS {
+        let stand_after_steps = match stop {
+            MobileStop::AtOnce if !step_held => STAND_AT_ONCE_AFTER_STEPS,
+            _ => STAND_AFTER_STEPS,
+        };
+        if self.movement != Movement::Stand && self.since_step > self.step_secs * stand_after_steps {
             self.set_movement(Movement::Stand);
         }
     }
@@ -122,19 +153,30 @@ mod tests {
         let mut motion = MobileMotion::default();
         motion.step(IVec2::new(1, 0), true, false);
         assert_eq!((motion.facing, motion.movement), (2, Movement::Run));
-        motion.tick(STEP_SECS_RUN);
+        motion.tick(STEP_SECS_RUN, MobileStop::HalfStepLater, false);
         assert_eq!(motion.movement, Movement::Run);
-        motion.tick(STEP_SECS_RUN);
+        motion.tick(STEP_SECS_RUN, MobileStop::HalfStepLater, false);
         assert_eq!(motion.movement, Movement::Stand);
         assert_eq!(motion.facing, 2);
         assert_eq!(motion.clip_secs(), 0.0);
     }
 
     #[test]
+    fn a_body_stopping_at_once_stands_as_its_step_ends_unless_a_step_is_held() {
+        const PAST_THE_STEP_SECS: f32 = STEP_SECS_WALK * 1.1;
+        let mut motion = MobileMotion::default();
+        motion.step(IVec2::new(1, 0), false, false);
+        motion.tick(PAST_THE_STEP_SECS, MobileStop::AtOnce, true);
+        assert_eq!(motion.movement, Movement::Walk);
+        motion.tick(0.0, MobileStop::AtOnce, false);
+        assert_eq!(motion.movement, Movement::Stand);
+    }
+
+    #[test]
     fn steps_of_one_movement_keep_its_clip_running() {
         let mut motion = MobileMotion::default();
         motion.step(IVec2::new(0, 1), false, false);
-        motion.tick(STEP_SECS_WALK);
+        motion.tick(STEP_SECS_WALK, MobileStop::HalfStepLater, false);
         motion.step(IVec2::new(1, 1), false, false);
         assert_eq!(motion.facing, 3);
         assert_eq!(motion.clip_secs(), STEP_SECS_WALK);

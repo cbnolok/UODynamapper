@@ -7,6 +7,7 @@ player_floor_building_only = false
 caves = "hidden_until_entered"
 cave_surroundings = "dimmed"
 mobile_in_between_frames = "crossfade"
+mobile_stop = "half_step_later"
 
 [land_streaming]
 prepare_max_blocks_per_frame = 32768

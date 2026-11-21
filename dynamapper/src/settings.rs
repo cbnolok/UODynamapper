@@ -156,6 +156,9 @@ pub struct SectWorldRendering {
     /// What the mobiles show between two frames of their animations: each frame until the next, as the clients do,
     /// or the two crossfaded (render/mobiles/in_between.rs).
     pub mobile_in_between_frames: crate::render::mobiles::in_between::MobileInBetweenFrames,
+    /// When a mobile whose steps end stands: half a step time later, its legs moving on, or as the last step ends
+    /// (world/mobile_motion.rs).
+    pub mobile_stop: crate::world::mobile_motion::MobileStop,
     pub land_streaming: SectLandStreaming,
     pub diagnostics: SectWorldRenderingDiagnostics,
     pub shader_simplification: SectWorldRenderingShaderSimplification,
@@ -1148,6 +1151,7 @@ mod tests {
     use uocf::utils::config_toml::{parse_app_state, parse_strict};
     use crate::world::caves::{CaveSurroundings, CaveView};
     use crate::render::mobiles::in_between::MobileInBetweenFrames;
+    use crate::world::mobile_motion::MobileStop;
 
     const BUNDLED_GRAPHICS: &str = include_str!("../assets/settings/graphics.toml");
     const BUNDLED_USER_PREFERENCES: &str = include_str!("../assets/settings/user_preferences.toml");
@@ -1463,6 +1467,7 @@ mod tests {
         assert_eq!(settings.caves, CaveView::HiddenUntilEntered);
         assert_eq!(settings.cave_surroundings, CaveSurroundings::Dimmed);
         assert_eq!(settings.mobile_in_between_frames, MobileInBetweenFrames::Crossfade);
+        assert_eq!(settings.mobile_stop, MobileStop::HalfStepLater);
     }
 
     /// A cache copy written before the player-floor view existed loads with it off, and a saved opt-in round-trips.
@@ -1550,6 +1555,28 @@ mod tests {
         let load = parse_app_state(WORLD_RENDERING_CONFIG_FILE, &written, &bundled).expect("lenient load");
         assert!(load.warnings.is_empty(), "{:?}", load.warnings);
         assert_eq!(load.value.mobile_in_between_frames, MobileInBetweenFrames::Off);
+    }
+
+    /// A cache copy written before the mobiles' stop existed loads it half a step later, and at once round-trips.
+    #[test]
+    fn world_rendering_cache_without_mobile_stop_loads_it_half_a_step_later() {
+        let bundled: SectWorldRendering =
+            parse_strict(WORLD_RENDERING_CONFIG_FILE, BUNDLED_WORLD_RENDERING).expect("bundled");
+        let older = BUNDLED_WORLD_RENDERING
+            .lines()
+            .filter(|line| !line.starts_with("mobile_stop"))
+            .collect::<Vec<_>>()
+            .join("\n");
+        let load = parse_app_state(WORLD_RENDERING_CONFIG_FILE, &older, &bundled).expect("lenient load");
+        assert_eq!(load.value.mobile_stop, MobileStop::HalfStepLater);
+
+        let mut picked = bundled.clone();
+        picked.mobile_stop = MobileStop::AtOnce;
+        let written = toml::to_string_pretty(&picked).expect("serialize");
+        assert!(written.contains("mobile_stop = \"at_once\""), "{written}");
+        let load = parse_app_state(WORLD_RENDERING_CONFIG_FILE, &written, &bundled).expect("lenient load");
+        assert!(load.warnings.is_empty(), "{:?}", load.warnings);
+        assert_eq!(load.value.mobile_stop, MobileStop::AtOnce);
     }
 
     #[test]

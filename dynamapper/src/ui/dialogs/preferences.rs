@@ -5,6 +5,7 @@ use crate::{
     diagnostics::frame_limiter::{frame_limiter_for_options, FrameLimiterSettings},
     app::present_mode_for_vsync,
     render::{mobiles::in_between::MobileInBetweenFrames, view::camera::UiCameraResource},
+    world::mobile_motion::MobileStop,
     prelude::*,
     world::caves::{CaveSurroundings, CaveView},
 };
@@ -79,6 +80,7 @@ pub struct PreferencesDialogState {
     pub caves: CaveView,
     pub cave_surroundings: CaveSurroundings,
     pub mobile_in_between_frames: MobileInBetweenFrames,
+    pub mobile_stop: MobileStop,
     /// Timer used to debounce applying settings that cause UI layout shifts (like UI scale).
     pub apply_timer: Timer,
 }
@@ -124,6 +126,7 @@ impl Default for PreferencesDialogState {
             caves: CaveView::HiddenUntilEntered,
             cave_surroundings: CaveSurroundings::Dimmed,
             mobile_in_between_frames: MobileInBetweenFrames::Crossfade,
+            mobile_stop: MobileStop::HalfStepLater,
             apply_timer: {
                 let mut t = Timer::from_seconds(0.3, TimerMode::Once);
                 t.pause();
@@ -200,6 +203,7 @@ fn sys_sync_settings_to_state(
         state.caves = settings.world_rendering.caves;
         state.cave_surroundings = settings.world_rendering.cave_surroundings;
         state.mobile_in_between_frames = settings.world_rendering.mobile_in_between_frames;
+        state.mobile_stop = settings.world_rendering.mobile_stop;
 
         if wireframe_config.global != settings.app.debug.map_render_wireframe {
             wireframe_config.global = settings.app.debug.map_render_wireframe;
@@ -322,6 +326,9 @@ pub fn sys_render_preferences_dialog(
         }
         if settings.as_ref().world_rendering.mobile_in_between_frames != state.mobile_in_between_frames {
             settings.world_rendering.mobile_in_between_frames = state.mobile_in_between_frames;
+        }
+        if settings.as_ref().world_rendering.mobile_stop != state.mobile_stop {
+            settings.world_rendering.mobile_stop = state.mobile_stop;
         }
         if (settings.as_ref().app.window.ui_scale - state.ui_scale).abs() > 0.001 {
             settings.app.window.ui_scale = state.ui_scale;
@@ -643,6 +650,29 @@ pub fn sys_render_preferences_dialog(
                                              until the next, as the clients show them. Crossfade: the two frames blended by \
                                              the time between them, smoother on a fast display, with a faint double image \
                                              of what moves.",
+                                        );
+                                    if changed {
+                                        state.apply_timer.reset();
+                                        state.apply_timer.unpause();
+                                    }
+                                });
+                                ui.horizontal(|ui| {
+                                    ui.label("Mobile Stop:");
+                                    let mut changed = false;
+                                    egui::ComboBox::from_id_salt("preferences_mobile_stop")
+                                        .selected_text(state.mobile_stop.label())
+                                        .show_ui(ui, |ui| {
+                                            for stop in MobileStop::ALL {
+                                                changed |= ui
+                                                    .selectable_value(&mut state.mobile_stop, stop, stop.label())
+                                                    .changed();
+                                            }
+                                        })
+                                        .response
+                                        .on_hover_text(
+                                            "When a mobile whose steps end stands. Half a step later: its legs move on \
+                                             for half a step time first. At once: it stands as its last step ends, unless \
+                                             a further step is held.",
                                         );
                                     if changed {
                                         state.apply_timer.reset();

@@ -372,6 +372,7 @@ impl GroundData<'_> {
 fn sys_smooth_player_transform(
     time: Res<Time>,
     settings: Res<Settings>,
+    move_dir: Res<MoveDirection>,
     mut query: Query<(&mut Transform, &Player, Option<&mut MobileMotion>)>,
 ) {
     let Ok((mut transform, player, motion)) = query.single_mut() else {
@@ -380,7 +381,7 @@ fn sys_smooth_player_transform(
     // A drawn body's step time: it crosses a cell in it at an even pace, as the client slides a walking mobile.
     let body_step_secs = match (motion, drawn_body(&settings)) {
         (Some(mut motion), Some(mounted)) => {
-            motion.tick(time.delta_secs());
+            motion.tick(time.delta_secs(), settings.world_rendering.mobile_stop, move_dir.dir.is_some());
             Some(motion.step_secs(mounted))
         }
         _ => None,

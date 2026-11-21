@@ -126,7 +126,7 @@ statics cache depended on land it no longer has.
 
 `set` takes a JSON value; a bare word is a string. Its keys are an allowlist:
 `show_only_player_floor`, `caves`, `cave_surroundings`, `enable_statics`,
-`enable_static_lights`, `show_hidden_multi_parts`, `mobile_in_between_frames`, `cc_terrain_transitions`,
+`enable_static_lights`, `show_hidden_multi_parts`, `mobile_in_between_frames`, `mobile_stop`, `cc_terrain_transitions`,
 `ec_terrain_transitions`, the active style's `light_cover`, `player_floor_rule` and
 `land_texture_variation`, and `zoom` (not with the free perspective camera). Other
 keys, types or ranges are refused with the allowed keys or the expected type. A
