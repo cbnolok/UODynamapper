@@ -7,8 +7,7 @@
 - ClassicUO: "zlib_bwt" codec.  
 - KR facet format from ManawydanMapConverter.
 - Lots of EC file formats from [Kons' wiki](https://code.google.com/archive/p/kprojects/wikis).
-- Stefanomerotta's proof of concept [UO Client](https://github.com/stefanomerotta/UOClient/) for guidance on animated land textures shaders.
-- UO-EC-Super-Viewer: xml source data for AnimationsCollection, AudioCollection, MultiCollection.
+- Stefanomerotta's proof of concept [UO Client](https://github.com/stefanomerotta/UOClient/) for initial guidance on animated land textures shaders.
 - UOFiddler: audio, fonts.
 
 ### Algorithms
