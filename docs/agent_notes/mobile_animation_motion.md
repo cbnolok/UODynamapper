@@ -80,6 +80,12 @@ the body's travel; summed over the cycle and divided by the tile's screen length
 away from the camera and all small creatures (dogs, rats, cats) give unusable numbers, which the clamp absorbs. So the
 strides are measured offline over every body into a table, not guessed per frame at run time.
 
+A rider and its mount keep one shared cycle, paced by the mount's stride. The sequences already aim for this: mounts'
+mounted move actions run at 12 fps instead of 9 so that the mount's bounce stays in step with the rider (UOP animation
+editor's remark, 2026-11-21; the package has 709 mounted walks/runs at 12 fps). A sequence frame count can exceed the
+stored frames (the package fills the gap with empty placeholders); the app drops empty frames, so neither the
+in-betweens nor the stride sum see them.
+
 ## Upscaling when zoomed
 
 - **Classic**: no neural upscaler — those models are trained on photos/anime, and Classic's hard one-pixel art is what
