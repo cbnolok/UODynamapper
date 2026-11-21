@@ -9,10 +9,11 @@
 //! opaque pixels (alpha over one half) in the lowest fifth of the silhouette, the most backward motion along the
 //! facing's direction of travel (its 10th percentile) is the body's travel for the pair. Summed over the cycle and
 //! divided by the screen pixels of a tile in that direction, it is the stride in tiles per cycle. Only the side facings
-//! (south, south-west, west) measure well, toward and away from the camera the feet barely move on screen; their
-//! median is the stride, and a clip whose facings disagree by more than [`MAX_FACING_SPREAD`] of it, or whose stride is
-//! not positive or shorter than [`MIN_STRIDE_TILES`], gets none (its clip keeps its own timing). The method was chosen
-//! on a PyTorch prototype of the same steps.
+//! (south, south-west, west) measure well, toward and away from the camera the feet barely move on screen. The median
+//! of those that measured is the stride, even when they disagree (the run-time clamp to half and twice the clip's own
+//! cycle bounds a poor measurement); a clip with fewer than [`MIN_FACINGS`] of them, or whose stride is not positive or
+//! shorter than [`MIN_STRIDE_TILES`], gets none (its clip keeps its own timing). The report lists each facing's stride
+//! and their spread for inspection. The method was chosen on a PyTorch prototype of the same steps.
 //!
 //! Run, with the packages' folder (holding `mobile_anim_cc.uddp` and `mobile_anim_ec.uddp`) and optionally a folder
 //! for the per-facing report:
@@ -48,8 +49,6 @@ const REPORT_FILE: &str = "mobile_strides_report.tsv";
 const SIDE_FACINGS: [u8; 3] = [4, 5, 6];
 /// Facings that must measure for a stride.
 const MIN_FACINGS: usize = 2;
-/// The most the facings' strides may spread (largest minus smallest) as a fraction of their median.
-const MAX_FACING_SPREAD: f32 = 0.6;
 /// The shortest stride taken. Bodies without planted feet (floating, slithering) measure from a few thousandths to a
 /// tenth or two of a tile, as do small creatures whose feet are a few pixels; paced by that, they would play their
 /// clips at the fastest the clamp allows, twice their own speed. Most walking bodies measure half a tile to three.
@@ -255,6 +254,8 @@ impl Measurer {
 /// A clip's measurement: the stride of each side facing that measured, and the verdict.
 struct Measurement {
     facings: [Option<f32>; SIDE_FACINGS.len()],
+    /// How far the facings' strides spread (largest minus smallest) as a fraction of their median, for the report.
+    spread: Option<f32>,
     stride: Result<f32, &'static str>,
 }
 
@@ -268,23 +269,19 @@ fn measure(measurer: &mut Measurer, clips: &[Option<DecodedClip>; SIDE_FACINGS.l
         measurer.travel_px(clip, ux, uy).map(|travel| travel / px_per_tile)
     });
     let mut strides: Vec<f32> = facings.iter().flatten().copied().collect();
-    let stride = if strides.len() < MIN_FACINGS {
-        Err("too few facings")
+    if strides.len() < MIN_FACINGS {
+        return Measurement { facings, spread: None, stride: Err("too few facings") };
+    }
+    let median = percentile(&mut strides, PERCENT / 2.0);
+    let spread = (median > 0.0).then(|| (strides[strides.len() - 1] - strides[0]) / median);
+    let stride = if median <= 0.0 {
+        Err("not positive")
+    } else if median < MIN_STRIDE_TILES {
+        Err("too short")
     } else {
-        strides.sort_unstable_by(f32::total_cmp);
-        let median = percentile(&mut strides, PERCENT / 2.0);
-        let spread = strides[strides.len() - 1] - strides[0];
-        if median <= 0.0 {
-            Err("not positive")
-        } else if median < MIN_STRIDE_TILES {
-            Err("too short")
-        } else if spread > MAX_FACING_SPREAD * median {
-            Err("facings disagree")
-        } else {
-            Ok(median)
-        }
+        Ok(median)
     };
-    Measurement { facings, stride }
+    Measurement { facings, spread, stride }
 }
 
 /// A hash of the clips' frames: bodies and actions showing the same frames share one measurement.
@@ -358,7 +355,7 @@ fn write_the_stride_table() {
     let mut measurer = Measurer { gpu, model, workspaces: Vec::new() };
 
     let mut table = String::new();
-    let mut report = String::from("source\tbody\taction\tsouth\tsouth-west\twest\tstride\tverdict\n");
+    let mut report = String::from("source\tbody\taction\tsouth\tsouth-west\twest\tspread\tstride\tverdict\n");
     let mut summary = Vec::new();
     for (source, name) in SOURCE_NAMES {
         let source_started = Instant::now();
@@ -390,7 +387,8 @@ fn write_the_stride_table() {
                     ("-".to_string(), reason)
                 }
             };
-            let row = format!("{name}\t{body}\t{action}\t{}\t{stride}\t{verdict}", facings.join("\t"));
+            let spread = measurement.spread.map_or("-".to_string(), |spread| format!("{spread:.2}"));
+            let row = format!("{name}\t{body}\t{action}\t{}\t{spread}\t{stride}\t{verdict}", facings.join("\t"));
             println!("{row}");
             writeln!(report, "{row}").unwrap();
         }
