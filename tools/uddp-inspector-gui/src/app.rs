@@ -4,6 +4,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use serde::{Deserialize, Serialize};
 use udd_assets::{AtlasCacheOptions, GumpsPackage, MobileAnimCcPackage, MobileAnimEcPackage};
+use udd_assets::animation::mobile_strides::MobileAnimClips;
 use udd_assets::tilemeta::{
     TileMetaItemTile, TileMetaLandTile, TILEMETA_ITEM_ENTRY_PATH, TILEMETA_LAND_ENTRY_PATH,
 };
@@ -64,6 +65,8 @@ pub struct InspectorApp {
     pub mobile_anim_ec_package: Option<Arc<MobileAnimEcPackage>>,
     /// The viewer of an `effects_ec.uddp` package.
     pub effects_viewer: Option<crate::ui::effects::EffectsViewer>,
+    /// The measured strides of the mobile animation package.
+    pub strides_panel: Option<crate::ui::strides::StridesPanel>,
     pub gumps_package: Option<Arc<GumpsPackage>>,
     pub selected_mobile_anim_index: usize,
     pub selected_mobile_anim_frame_index: usize,
@@ -126,6 +129,7 @@ impl InspectorApp {
             mobile_anim_cc_package: None,
             mobile_anim_ec_package: None,
             effects_viewer: None,
+            strides_panel: None,
             gumps_package: None,
             selected_mobile_anim_index: 0,
             selected_mobile_anim_frame_index: 0,
@@ -593,6 +597,14 @@ impl InspectorApp {
                 )
                 .ok()
                 .map(Arc::new);
+                let stride_package: Option<Arc<dyn MobileAnimClips + Send + Sync>> =
+                    match (&self.mobile_anim_cc_package, &self.mobile_anim_ec_package) {
+                        (Some(package), _) => Some(package.clone()),
+                        (None, Some(package)) => Some(package.clone()),
+                        (None, None) => None,
+                    };
+                self.strides_panel = stride_package
+                    .map(|package| crate::ui::strides::StridesPanel::new(path.clone(), package));
                 self.gumps_package = GumpsPackage::from_uddp_package(reader.clone())
                     .ok()
                     .filter(|package| !package.available_gump_ids().is_empty())
@@ -1848,6 +1860,7 @@ mod tests {
             mobile_anim_cc_package: None,
             mobile_anim_ec_package: None,
             effects_viewer: None,
+            strides_panel: None,
             gumps_package: None,
             selected_mobile_anim_index: 0,
             selected_mobile_anim_frame_index: 0,
@@ -2200,6 +2213,7 @@ mod tests {
             mobile_anim_cc_package: None,
             mobile_anim_ec_package: None,
             effects_viewer: None,
+            strides_panel: None,
             gumps_package: None,
             selected_mobile_anim_index: 0,
             selected_mobile_anim_frame_index: 0,
@@ -2317,6 +2331,7 @@ mod tests {
             mobile_anim_cc_package: None,
             mobile_anim_ec_package: None,
             effects_viewer: None,
+            strides_panel: None,
             gumps_package: None,
             selected_mobile_anim_index: 0,
             selected_mobile_anim_frame_index: 0,
@@ -2397,6 +2412,7 @@ mod tests {
             mobile_anim_cc_package: None,
             mobile_anim_ec_package: None,
             effects_viewer: None,
+            strides_panel: None,
             gumps_package: None,
             selected_mobile_anim_index: 0,
             selected_mobile_anim_frame_index: 0,
@@ -2714,6 +2730,7 @@ mod tests {
             mobile_anim_cc_package: None,
             mobile_anim_ec_package: None,
             effects_viewer: None,
+            strides_panel: None,
             gumps_package: None,
             selected_mobile_anim_index: 0,
             selected_mobile_anim_frame_index: 0,

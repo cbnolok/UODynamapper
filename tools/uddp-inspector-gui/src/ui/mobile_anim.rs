@@ -243,6 +243,9 @@ pub fn ui_mobile_anim_cc(app: &mut InspectorApp, ctx: &egui::Context, ui: &mut e
             });
 
         ui.separator();
+        crate::ui::strides::ui_selected_clip_strides(app, ctx, ui, u32::from(selected_animation.body_id),
+            selected_animation.action_id);
+        ui.separator();
         if let Some(frame) = frames.get(app.selected_mobile_anim_frame_index).copied() {
             let page_size = cc_frame_page_size(&package, frame);
             show_frame_playback_preview_row(ui, app, |ui, app| {
@@ -557,6 +560,9 @@ pub fn ui_mobile_anim_ec(app: &mut InspectorApp, ctx: &egui::Context, ui: &mut e
                 ui.end_row();
             });
 
+        ui.separator();
+        crate::ui::strides::ui_selected_clip_strides(app, ctx, ui, selected_animation.body_id,
+            selected_animation.action_id);
         ui.separator();
         if let Some(frame) = frames.get(app.selected_mobile_anim_frame_index).copied() {
             let page_size = ec_frame_page_size(&package, frame);

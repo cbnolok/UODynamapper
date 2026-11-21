@@ -38,7 +38,14 @@ fn main() -> eyre::Result<()> {
             min_height: APP_MIN_VIEWPORT_HEIGHT,
         },
         false,
-        |cc| Ok(Box::new(InspectorApp::new(cc))),
+        |cc| {
+            let mut app = InspectorApp::new(cc);
+            // The package given as the argument, as the README says.
+            if let Some(path) = std::env::args_os().nth(1) {
+                app.open_package(path.into());
+            }
+            Ok(Box::new(app))
+        },
     )
     .map_err(|e| eyre::eyre!("eframe error: {}", e))?;
 
@@ -126,6 +133,7 @@ impl eframe::App for InspectorApp {
         if self.image_window_open {
             self.ui_texture_viewer_window(&ctx);
         }
+        ui::strides::ui_strides_window(self, &ctx);
     }
 
     fn save(&mut self, storage: &mut dyn eframe::Storage) {
