@@ -34,9 +34,22 @@ impl MobileInBetweenFrames {
     }
 }
 
-/// The points between two frames an in-between is composed for: a pick's `t` is floored to one of them, and the
-/// first, 0, shows the frame itself. At 64 a step changes a blended channel by at most 4 of 255.
+/// The blend weights an in-between is composed for: a pick's weight (`crossfade_weight`) is floored to one of them,
+/// and the first, 0, shows the frame itself. At 64 a step changes a blended channel by at most 4 of 255.
 const IN_BETWEEN_T_STEPS: u32 = 64;
+/// The middle part of the time between two frames that blends them: before it the first frame shows as it is, after
+/// it the next one, and the blend eases in and out (smoothstep) across it. A blend over the whole time leaves a moving
+/// leg as two half-transparent copies for long, so thin and washed out; a shorter one keeps that state brief. Chosen
+/// by eye on the Enhanced horse's walk.
+const CROSSFADE_SPAN: f32 = 0.5;
+
+/// The blend weight of the next frame at `t` (0..1) between two frames: 0 to 1 across `CROSSFADE_SPAN`, eased.
+fn crossfade_weight(t: f32) -> f32 {
+    let start = (1.0 - CROSSFADE_SPAN) / 2.0;
+    let x = ((t - start) / CROSSFADE_SPAN).clamp(0.0, 1.0);
+    x * x * (3.0 - 2.0 * x)
+}
+
 /// The fixed-point scale of the blend weight.
 const BLEND_WEIGHT_ONE: u32 = 256;
 
@@ -192,13 +205,13 @@ impl MobileInBetweens {
     /// The frame to draw as the mobile frame of `slot` for `pick` of `clip` (`key`), as its atlas rectangle and its
     /// placement: an in-between when `mode` asks for one and `pick` lies between two frames, composed and staged in
     /// `atlas` unless the slot shows it already. None draws the picked frame: with `mode` off, a clip of one frame,
-    /// `t` under the first step, or frames whose union does not fit a slot.
+    /// `t` before the blend (`crossfade_weight` under the first step), or frames whose union does not fit a slot.
     pub fn frame(&mut self, slot: usize, mode: MobileInBetweenFrames, key: ClipKey, clip: &Clip, pick: FramePick,
         atlas: &mut MobileFrameAtlas<ClipKey>) -> Option<(AtlasRect, FramePlacement)> {
         if mode == MobileInBetweenFrames::Off || clip.frames.len() < 2 {
             return None;
         }
-        let t_step = (pick.t * IN_BETWEEN_T_STEPS as f32) as u32;
+        let t_step = (crossfade_weight(pick.t) * IN_BETWEEN_T_STEPS as f32) as u32;
         if t_step == 0 {
             return None;
         }
@@ -309,6 +322,16 @@ mod tests {
         let pick = FramePick { index: 0, next: 0, t: 0.5 };
         assert!(in_betweens.frame(0, MobileInBetweenFrames::Crossfade, key, &single, pick, &mut atlas).is_none());
         assert_eq!(atlas.staged_uploads(), 2);
+    }
+
+    #[test]
+    fn the_blend_spans_the_middle_of_the_time_between_frames() {
+        let start = (1.0 - CROSSFADE_SPAN) / 2.0;
+        assert_eq!(crossfade_weight(0.0), 0.0);
+        assert_eq!(crossfade_weight(start), 0.0);
+        assert!((crossfade_weight(0.5) - 0.5).abs() < 1e-6);
+        assert_eq!(crossfade_weight(1.0 - start), 1.0);
+        assert_eq!(crossfade_weight(1.0), 1.0);
     }
 
     #[test]
