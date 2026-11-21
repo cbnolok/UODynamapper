@@ -7,6 +7,7 @@ pub mod frame_atlas;
 pub mod in_between;
 pub mod placement;
 pub mod rife;
+pub mod upscale;
 
 use std::sync::Arc;
 use bevy::prelude::*;
