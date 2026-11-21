@@ -1,0 +1,92 @@
+# Mobile animation motion: decisions and reasons (2026-11-21)
+
+The client animations are short (Classic animals 5 walk frames at 80 ms, Enhanced 6–12 at 9 fps), so on a 60–255 Hz
+display each pose stays on screen for 5–28 frames. This note records what was chosen to make them move smoothly, what
+was rejected, and why. The user judged every visual choice from videos and stills; the scripts that made them are in
+[`mobile_animation_motion/`](mobile_animation_motion/) (they read clip dumps from the scratch dumper
+`anim-interp/rs/src/bin/dump.rs` and need PyTorch; paths inside are the 2026-11-21 scratch layout).
+
+Evidence priority for animation behaviour: visuals first, then the official Classic client for UOP bodies and ClassicUO
+for MUL bodies, the Enhanced client last. A bigger animation package is acceptable only if the benefit is clearly
+visible.
+
+## Stopping
+
+`MobileStop` (`world_rendering.mobile_stop`): **half a step later** (default) or **at once**. A walk keeps playing for
+half a step after the last step, so tapping a direction doesn't snap to standing between steps; "at once" stands as the
+step ends unless a direction is still held. The user asked for both as a run-time switch after comparing them.
+
+## Between frames
+
+| Method | Verdict | Why |
+|---|---|---|
+| No blend (hold) | rejected as default | pops between poses; "doesn't look so bad", but the fade is smoother |
+| Crossfade over the whole gap | rejected | thin limbs look ghosted/doubled (the "thin horse leg" was this, not the art) |
+| **Crossfade over the middle 50% of the gap** (smoothstep, `CROSSFADE_SPAN`) | **kept, default** | user: "cleaner, with less halo"; poses stay solid longer |
+| DIS / Farnebäck optical flow warp | rejected | limbs bend and smear: "extremely weird, movement extremely unnatural" |
+| Block matching | rejected | no better than the fade in the measurement study |
+| **RIFE v4.25** (Practical-RIFE, MIT) | **kept as options ×2 / ×4** | single solid limbs at believable halfway positions, no doubling; "convinces me very much" |
+
+The crossfade runs in the art sprite shader (both frames sampled on one card, blended premultiplied in sRGB like the
+CPU version it replaced): no CPU cost or uploads at any refresh rate.
+
+### RIFE: generated at run time on the GPU, not stored
+
+- Stored in-betweens would double the packages for ×2 (Classic 0.9 → ~1.8 GB, Enhanced 2.7 → ~5.4 GB) and quadruple
+  them for ×4. The run-time cost is small, so files don't grow.
+- wgpu compute shaders on Bevy's own device (Vulkan/DX12/Metal), not OpenCL (patchy, deprecated on macOS), not ncnn or
+  ONNX Runtime (separate devices and thread pools), not burn/CubeCL (its own wgpu version).
+- Weights embedded as fp16, 11.3 MB; fp16 vs fp32 changes the output by at most 0.64/255. The port matches PyTorch
+  within 0.00025 px of flow and 0.014/255 of colour.
+- Cost on a Radeon 880M per in-between: 2.8 ms (64²), 3.7 (128²), 9.2 (256²), 35 ms (576×512). PyTorch on one CPU
+  thread: 19 / 49 / 145 / 618 ms — the CPU is a fallback at best.
+- Work is rationed per frame; a clip plays as the 50% fade until its in-betweens are ready.
+- The 50% fade still runs between the shorter frames. Expected visible change per display rate: at 30 fps ×2 adds
+  ~1 blended frame per pose change, at 144 fps ~6–8.
+
+### RIFE details
+
+- **Nearest sampling at the final warp** (keeping RIFE's flow): bilinear made the in-betweens of small sprites softer
+  than the real frames; nearest keeps dithering and pixel outlines crisp (`rife_crisp_warp.py`).
+- **Classic alpha snapped at 50%**: Classic art has binary alpha, so a half-transparent pixel is always an artefact.
+- **Known limit**: when a thin limb changes shape completely between frames (Classic horse's foreleg curled →
+  extended), RIFE finds no correspondence and the leg turns thin and half transparent. A finer last scale, 2× input and
+  taking each pixel whole from one frame do not fix it (`rife_leg_fixes.py`), and a whole-sprite ghost score does not
+  single out the bad pairs (the failure is local). Generative in-betweening (ToonCrafter, FCVG, ARVFI) is too slow and
+  inconsistent for this; large motion and occlusion are still open problems in the literature.
+
+## Walk pace
+
+The original clients pace walk cycles by time, whatever the walking speed: Classic shows a frame every 80 ms
+(ClassicUO `Mobile.ProcessAnimation`), Enhanced plays at 9 fps. Classic's art was made for that (a 5-frame animal cycle
+is one 0.4 s step), but big Enhanced creatures skate visibly, and in-betweens make it more visible because the feet
+never plant.
+
+Choice (user, from `pace_compare.py` videos): **measured stride** over the Enhanced clip timing and over borrowing the
+Classic body's cycle. A walk/run cycle lasts stride_tiles × step_secs, clamped to 0.5–2× the clip's own cycle speed;
+"client timing" stays as a setting.
+
+Measuring the stride (`stride_measure.py`): RIFE flow between consecutive frames at t = 0.5; in the lowest 20% of the
+silhouette, the most backward motion (10th percentile) along the facing's screen direction is the planted foot, i.e.
+the body's travel; summed over the cycle and divided by the tile's screen length in that facing. Only the side facings
+(server directions 4, 5, 6) agree with each other (within ~25% on horses, wyrms, ogres, daemons); facings toward or
+away from the camera and all small creatures (dogs, rats, cats) give unusable numbers, which the clamp absorbs. So the
+strides are measured offline over every body into a table, not guessed per frame at run time.
+
+## Upscaling when zoomed
+
+- **Classic**: no neural upscaler — those models are trained on photos/anime, and Classic's hard one-pixel art is what
+  the pixel-art scalers (xBR, MMPX, … see CREDITS.md) are built for.
+- **Enhanced/KR**: Real-ESRGAN's compact models (realesr-animevideov3, realesr-general-x4v3, BSD-3) were rejected:
+  painted look and a maze pattern on fine texture; bicubic looked better (`upscale_realesrgan.py`). Their
+  real-world degradation + GAN training invents detail. Faithful models trained on pixel loss (SPAN 4xpix /
+  4xmssim pretrains, 2.2 M parameters, CC-BY-4.0, `upscale_span.py`) look like a sharper bicubic without invented
+  texture; the user's verdict on them is pending.
+- If adopted: 4× frames cost 16× the atlas memory (tight on a 4 GB card), so store 2× results, only for clips on screen
+  while zoomed above ~1.5×.
+
+## Sharpening
+
+The CPU FSR 1.1 EASU and RCAS are in `lib/support/uot-image-postprocess/src/upscaling/fsr.rs`; a WESL port of EASU
+(unwired) is in [`proposals/fsr-upscaling/`](proposals/fsr-upscaling/). There is no GPU RCAS; the land shader has its
+own unsharp mask (`apply_sharpening`).
