@@ -36,6 +36,7 @@ use crate::extract;
 use crate::package_edit;
 use crate::package_info;
 use crate::package_validate;
+use crate::strides_cli;
 
 /// Inspect and edit UODynamapper package files.
 #[derive(Parser)]
@@ -122,6 +123,11 @@ enum Commands {
     Validate {
         #[arg(required = true)]
         paths: Vec<PathBuf>,
+    },
+    /// The mobiles' measured strides of a mobile_anim_cc.uddp or mobile_anim_ec.uddp.
+    Strides {
+        #[command(subcommand)]
+        command: strides_cli::StridesCommand,
     },
     /// Compare two packages or two metadata CSV files.
     Diff {
@@ -322,6 +328,7 @@ where
         },
         Commands::Diff { left, right, kind } => diff_paths(&left, &right, kind)?,
         Commands::Validate { paths } => package_validate::run_validate(&paths)?,
+        Commands::Strides { command } => strides_cli::run(command)?,
     }
 
     Ok(())

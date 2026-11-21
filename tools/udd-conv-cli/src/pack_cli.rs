@@ -978,6 +978,8 @@ enum Commands {
         upscale_passes: Vec<CliUpscaleFilter>,
         #[arg(long = "upscale-profile", help = "TOML or KDL file with per-image-type upscale passes and per-id overrides.")]
         upscale_profile: Option<PathBuf>,
+        #[arg(long = "strides-from", help = "An earlier package whose measured strides to keep where its clips' frames hash the same in the new one. The package replaced at --output is looked at in any case.")]
+        strides_from: Option<PathBuf>,
     },
     /// Packs EC AnimationFrame.uop mobile animations into mobile_anim_ec.uddp atlas pages.
     #[command(group(ArgGroup::new("output_format").args(["raw", "bc7", "bc7_rdo"])))]
@@ -1012,6 +1014,8 @@ enum Commands {
         upscale_passes: Vec<CliUpscaleFilter>,
         #[arg(long = "upscale-profile", help = "TOML or KDL file with per-image-type upscale passes and per-id overrides.")]
         upscale_profile: Option<PathBuf>,
+        #[arg(long = "strides-from", help = "An earlier package whose measured strides to keep where its clips' frames hash the same in the new one. The package replaced at --output is looked at in any case.")]
+        strides_from: Option<PathBuf>,
     },
     /// Packs EC art and land in one shared source pass into tex_art_ec.uddp and tex_land_ec.uddp. Without a format flag
     /// art and land pages are lossless RGBA8888 with Zstd 19; BC7 land blocks take Zstd 19 too. Each holds its Kingdom
@@ -1649,6 +1653,7 @@ where
             bc7_rdo_lookback_blocks,
             upscale_passes,
             upscale_profile,
+            strides_from,
         } => {
             let paths = collect_source_dirs(&source_dir_args)?;
             let out_file = resolve_output_path(&output);
@@ -1677,6 +1682,11 @@ where
                     upscale_profile,
                 },
             )?;
+            if let Some(strides_from) = strides_from {
+                let previous = udd_assets::animation::mobile_strides::read_package_strides(&strides_from)?;
+                udd_conv::animation::mobile_strides::keep_matching_strides(&out_file,
+                    |path| udd_assets::MobileAnimCcPackage::load(path), &previous)?;
+            }
             info!(
                 "Wrote {} pages ({}) for {} packed frames out of {} total frames across {} animations to '{}'.",
                 summary.page_count,
@@ -1718,6 +1728,7 @@ where
             ec_mobile_animations_kdl,
             upscale_passes,
             upscale_profile,
+            strides_from,
         } => {
             let paths = collect_ec_source_dirs(&source_dir_args)?;
             let out_file = resolve_output_path(&output);
@@ -1748,6 +1759,11 @@ where
                     allow_missing_metadata: false,
                 },
             )?;
+            if let Some(strides_from) = strides_from {
+                let previous = udd_assets::animation::mobile_strides::read_package_strides(&strides_from)?;
+                udd_conv::animation::mobile_strides::keep_matching_strides(&out_file,
+                    |path| udd_assets::MobileAnimEcPackage::load(path), &previous)?;
+            }
             info!(
                 "Wrote {} pages ({}) from {} EC animation UOPs for {} packed frames out of {} logical frames across {} EC animations from {} bodies with {} metadata items and {} source hints to '{}'.",
                 summary.page_count,

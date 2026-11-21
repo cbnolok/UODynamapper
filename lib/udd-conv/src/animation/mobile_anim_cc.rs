@@ -447,7 +447,10 @@ pub fn convert_anim_mul_to_mobile_anim_cc_uddp_from_sources_with_progress(
     stage_timings.manifests = stage_timer.elapsed();
 
     let package_timer = Instant::now();
+    let previous_strides = super::mobile_strides::strides_before_repack(out_file);
     build_and_write_package_with_progress(package, out_file, &mut package_progress)?;
+    super::mobile_strides::keep_matching_strides(out_file, |path| udd_assets::MobileAnimCcPackage::load(path),
+        &previous_strides)?;
     stage_timings.package_write = package_timer.elapsed();
     info!(
         "CC mobile animation package build and write completed in {:.3}s",

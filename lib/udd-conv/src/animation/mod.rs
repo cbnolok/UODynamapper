@@ -4,5 +4,6 @@
 mod animation_sequences;
 pub mod mobile_anim_cc;
 pub mod mobile_anim_ec;
+pub mod mobile_strides;
 pub mod paperdoll_ec;
 pub mod paperdoll_ec_dress;

@@ -490,6 +490,7 @@ pub fn convert_animationframe_uop_to_mobile_anim_ec_uddp_from_sources_with_progr
         planned_frames.len(),
         planning_timer.elapsed().as_secs_f64()
     );
+    let previous_strides = super::mobile_strides::strides_before_repack(out_file);
     let mut package = UddpStreamingBuilder::create(LookupMode::VirtualPathHash, out_file)
         .wrap_err_with(|| format!("create payload spill file for {}", out_file.display()))?;
     let pack_timer = Instant::now();
@@ -536,6 +537,8 @@ pub fn convert_animationframe_uop_to_mobile_anim_ec_uddp_from_sources_with_progr
 
     let package_timer = Instant::now();
     finish_streaming_package_with_progress(package, &mut package_progress)?;
+    super::mobile_strides::keep_matching_strides(out_file, |path| udd_assets::MobileAnimEcPackage::load(path),
+        &previous_strides)?;
     stage_timings.package_write = package_timer.elapsed();
     info!(
         "EC mobile animation package build and write completed in {:.3}s",
