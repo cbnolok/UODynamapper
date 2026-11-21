@@ -1,8 +1,8 @@
 //! GPU block compression of frames, for a BC7 or BC1 frame atlas such as Dynamapper's mobiles' (evaluated in
-//! `tests.rs`; not wired to the atlas yet). BC7 keeps soft alpha (Enhanced, KR); BC1 keeps one bit of it, which is all
-//! Classic art and its in-betweens have. The encoding is block_compression's (a WGSL port of Intel's ISPC Texture
-//! Compressor kernels, MIT): its BC7 as it is, its BC1 followed by [`PUNCH_THROUGH_SHADER`], since that kernel encodes
-//! colour only.
+//! `tests.rs`; Dynamapper's BC7 frame atlas encodes its RIFE in-betweens with it, at UltraFast). BC7 keeps soft alpha
+//! (Enhanced, KR); BC1 keeps one bit of it, which is all Classic art and its in-betweens have. The encoding is
+//! block_compression's (a WGSL port of Intel's ISPC Texture Compressor kernels, MIT): its BC7 as it is, its BC1
+//! followed by [`PUNCH_THROUGH_SHADER`], since that kernel encodes colour only.
 //!
 //! A frame to encode lies at the top-left corner of a texture whose view is a non-sRGB RGBA8 format (`Rgba8Unorm`)
 //! holding the frame's sRGB-encoded, straight-alpha bytes: an `Rgba8UnormSrgb` texture needs `Rgba8Unorm` among its
@@ -171,9 +171,20 @@ impl MobileBlockEncoder {
     /// multiple of 4).
     pub fn add_frame(&mut self, format: MobileBlockFormat, source: &wgpu::TextureView, width: u32, height: u32,
         output: &wgpu::Buffer, offset: u64) {
+        self.add_frame_at(format, source, 0, width, height, output, offset);
+    }
+
+    /// [`MobileBlockEncoder::add_frame`] for a frame at row `y` (a multiple of [`BLOCK_SIDE`]) of `source`'s left
+    /// edge, so frames stacked in one texture encode in one [`MobileBlockEncoder::record`]. BC7 only:
+    /// block_compression's BC1 kernel, and the punch-through pass after it, read from the texture's corner.
+    #[allow(clippy::too_many_arguments)]
+    pub fn add_frame_at(&mut self, format: MobileBlockFormat, source: &wgpu::TextureView, y: u32, width: u32,
+        height: u32, output: &wgpu::Buffer, offset: u64) {
+        assert!(y == 0 || format != MobileBlockFormat::Bc1, "a BC1 frame lies at its texture's corner");
         let (width, height) = padded_size(width, height);
         let blocks_offset = u32::try_from(offset).expect("block offsets fit u32");
-        self.compressor.add_compression_task(format.variant(), source, width, height, output, None, Some(blocks_offset));
+        self.compressor.add_compression_task(format.variant(), source, width, height, output, Some(y),
+            Some(blocks_offset));
         if format != MobileBlockFormat::Bc1 {
             return;
         }

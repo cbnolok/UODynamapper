@@ -845,3 +845,50 @@ fn evaluate_block_formats() {
     println!("{summary}");
     std::fs::write(output.join(SUMMARY_FILE), summary).unwrap();
 }
+
+/// A frame encodes to the same blocks at a row of its texture below other frames (`add_frame_at`, as Dynamapper's
+/// in-betweens wait in their scratch texture) as at the corner of its own, both in one record.
+#[test]
+#[ignore = "requires a GPU adapter; run explicitly for block encoder changes"]
+fn a_frame_below_others_encodes_as_at_its_own_corner() {
+    const SIDE: u32 = 24;
+    const ROW: u32 = 12;
+    const FORMAT: MobileBlockFormat = MobileBlockFormat::Bc7(Bc7Quality::UltraFast);
+    let Some(gpu) = gpu() else {
+        println!("skipped: no GPU adapter");
+        return;
+    };
+    let texel = |x: u32, y: u32| {
+        let alpha = if (x + y) % 3 == 0 { 0 } else { u8::MAX };
+        [(x * 10) as u8, (y * 10) as u8, ((x + y) * 5) as u8, alpha]
+    };
+    let rgba = (0..SIDE).flat_map(|y| (0..SIDE).flat_map(move |x| texel(x, y))).collect::<Vec<_>>();
+    // Another frame above it, then the frame at row ROW.
+    let mut stacked = rgba.iter().map(|byte| byte.wrapping_mul(7)).take((ROW * SIDE) as usize * RGBA_BYTES)
+        .collect::<Vec<_>>();
+    stacked.extend_from_slice(&rgba);
+    let sample = |rgba: Vec<u8>, height| Sample { name: String::new(), group: String::new(), classic: false,
+        width: SIDE, height, rgba, sheet: false };
+    let (frame, stacked) = (sample(rgba, SIDE), sample(stacked, ROW + SIDE));
+    let (own, below) = (upload(&gpu, &frame), upload(&gpu, &stacked));
+    let bytes = FORMAT.encoded_bytes(SIDE, SIDE);
+    let output = gpu.device.create_buffer(&wgpu::BufferDescriptor {
+        label: None, size: 2 * bytes, mapped_at_creation: false,
+        usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_SRC,
+    });
+    let mut encoder = MobileBlockEncoder::new(&gpu.device, &gpu.queue);
+    let mut commands = gpu.device.create_command_encoder(&Default::default());
+    {
+        let mut pass = commands.begin_compute_pass(&Default::default());
+        encoder.add_frame(FORMAT, &own.view, SIDE, SIDE, &output, 0);
+        encoder.add_frame_at(FORMAT, &below.view, ROW, SIDE, SIDE, &output, bytes);
+        encoder.record(&mut pass);
+    }
+    let readback = readback_buffer(&gpu, 2 * bytes);
+    commands.copy_buffer_to_buffer(&output, 0, &readback, 0, 2 * bytes);
+    gpu.queue.submit([commands.finish()]);
+    let blocks = read_back(&gpu, &readback);
+    let (at_corner, at_row) = blocks.split_at(bytes as usize);
+    assert!(at_corner.iter().any(|&byte| byte != 0));
+    assert_eq!(at_corner, at_row);
+}
