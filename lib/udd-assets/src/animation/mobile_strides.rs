@@ -23,6 +23,7 @@ use udd_container::{DataType, UddpBuilder, UddpReader};
 use xxhash_rust::xxh64::Xxh64;
 
 use crate::common::{ensure_manifest_version, read_path_entry_cow};
+use crate::tex_art_cc::PagePixelFormat;
 
 pub const STRIDE_MANIFEST_ENTRY_PATH: &str = "metadata/strides.bin";
 pub const STRIDE_MANIFEST_MAGIC: [u8; 4] = *b"MOST";
@@ -55,10 +56,10 @@ pub struct MobileStrideRecord {
 }
 
 /// A clip: the frames of an action of a body in one direction, as the clients show them (empty and skipped frames
-/// dropped).
+/// dropped). Its frames are [`MobileClipFrame`]s, decoded, or [`MobileClipStoredFrame`]s, as the pages store them.
 #[derive(Debug, Clone, PartialEq)]
-pub struct MobileClip {
-    pub frames: Vec<MobileClipFrame>,
+pub struct MobileClip<F = MobileClipFrame> {
+    pub frames: Vec<F>,
     /// Drawn mirrored horizontally about the anchor.
     pub mirrored: bool,
     /// The clip's frames per second, 0 when the client keeps its own frame time (Classic MUL bodies).
@@ -77,6 +78,28 @@ pub struct MobileClipFrame {
     pub anchor_x: i32,
     pub anchor_y: i32,
     pub rgba: Vec<u8>,
+}
+
+/// A frame of a clip with its pixels as its package's pages store them ([`MobileAnimClips::stored_clip`]): its size and
+/// anchor as [`MobileClipFrame`]'s.
+#[derive(Debug, Clone, PartialEq)]
+pub struct MobileClipStoredFrame {
+    pub width: u16,
+    pub height: u16,
+    pub anchor_x: i32,
+    pub anchor_y: i32,
+    pub pixels: StoredFramePixels,
+}
+
+/// A frame's pixels as its package's pages store them ([`MobileAnimClips::page_pixel_format`]).
+#[derive(Debug, Clone, PartialEq)]
+pub enum StoredFramePixels {
+    /// Straight-alpha RGBA8, `width` by `height`, rows top down: a [`PagePixelFormat::Rgba8888`] package's.
+    Rgba8(Vec<u8>),
+    /// The BC7 blocks of the frame's rectangle padded to whole 4x4 blocks: rows of blocks top down, 16 bytes a block.
+    /// A [`PagePixelFormat::Bc7`] package's, whose frames start on a block corner (`Bc7Oriented` packing); the padding
+    /// texels are what the page holds there, the frame's edge extruded.
+    Bc7Blocks(Vec<u8>),
 }
 
 /// The hash a stride is keyed to: of each of [`STRIDE_FACINGS`] in order, whether it has frames, its mirroring, and
@@ -173,6 +196,12 @@ pub trait MobileAnimClips {
     fn stride_clips(&self) -> Vec<(u32, u16)>;
     /// The clip of `action` of server `body` facing `direction` (0 north, clockwise); `None` without frames.
     fn clip(&self, body: u32, action: u16, direction: u8) -> eyre::Result<Option<MobileClip>>;
+    /// The pixel format of every page of the package (its page manifest names one).
+    fn page_pixel_format(&self) -> PagePixelFormat;
+    /// [`Self::clip`] with each frame's pixels as the pages store them, not decoded: RGBA8 from an `Rgba8888` package,
+    /// BC7 blocks from a `Bc7` one ([`StoredFramePixels`]). The frames of a clip read each page once.
+    fn stored_clip(&self, body: u32, action: u16, direction: u8)
+        -> eyre::Result<Option<MobileClip<MobileClipStoredFrame>>>;
 
     fn stride_record(&self, body: u32, action: u16) -> Option<&MobileStrideRecord> {
         let records = self.stride_records();

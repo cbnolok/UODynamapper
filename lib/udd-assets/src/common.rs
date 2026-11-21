@@ -11,6 +11,7 @@ use crate::bc7::{
     decode_bc7_to_rgba8888, expected_bc7_byte_len, extract_bc7_subrect, extract_rgba8_subrect,
     ImageExtent,
 };
+use crate::animation::mobile_strides::StoredFramePixels;
 use crate::tex_art_cc::PagePixelFormat;
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -285,6 +286,47 @@ pub(crate) fn extract_atlas_subrect_rgba(
     }
 }
 
+/// The texels per side of a BC7 block.
+const BC7_BLOCK_SIDE: u32 = 4;
+
+/// A frame's pixels as the page stores them ([`StoredFramePixels`]): RGBA8 as [`extract_atlas_subrect_rgba`] gives
+/// them, or the BC7 blocks of the rectangle padded to whole blocks, which must start on a block corner.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn extract_atlas_subrect_stored(
+    page_bytes: &[u8],
+    pixel_format: PagePixelFormat,
+    atlas_width: u32,
+    atlas_height: u32,
+    used_width: u32,
+    used_height: u32,
+    x: u16,
+    y: u16,
+    width: u16,
+    height: u16,
+) -> eyre::Result<StoredFramePixels> {
+    if pixel_format == PagePixelFormat::Rgba8888 {
+        return extract_atlas_subrect_rgba(page_bytes, pixel_format, atlas_width, atlas_height, used_width,
+            used_height, x, y, width, height).map(StoredFramePixels::Rgba8);
+    }
+    if width == 0 || height == 0 {
+        return Ok(StoredFramePixels::Bc7Blocks(Vec::new()));
+    }
+    let (x, y) = (u32::from(x), u32::from(y));
+    if x % BC7_BLOCK_SIDE != 0 || y % BC7_BLOCK_SIDE != 0 {
+        eyre::bail!("slot rect at {x},{y} does not start on a BC7 block corner: the package needs Bc7Oriented packing");
+    }
+    let page_extent = bc7_payload_extent(page_bytes, atlas_width, atlas_height, used_width, used_height)?;
+    let padded_width = u32::from(width).next_multiple_of(BC7_BLOCK_SIDE);
+    let padded_height = u32::from(height).next_multiple_of(BC7_BLOCK_SIDE);
+    if x + padded_width > page_extent.width() || y + padded_height > page_extent.height() {
+        eyre::bail!("BC7 slot rect {padded_width}x{padded_height} at {x},{y} exceeds page extent {}x{}",
+            page_extent.width(), page_extent.height());
+    }
+    let extent = ImageExtent::new(padded_width, padded_height)
+        .map_err(|error| eyre::eyre!("invalid BC7 slot rect {padded_width}x{padded_height}: {error}"))?;
+    Ok(StoredFramePixels::Bc7Blocks(extract_bc7_subrect(page_bytes, page_extent, x, y, extent)))
+}
+
 fn bc7_payload_extent(
     page_bytes: &[u8],
     atlas_width: u32,
@@ -546,5 +588,41 @@ mod tests {
 
         assert_eq!(decoded.len(), (used_width * used_height * 4) as usize);
         assert_eq!(actual.len(), 2 * 2 * 4);
+    }
+
+    /// A BC7 page of `blocks_wide` by `blocks_high` blocks, each block's 16 bytes its index.
+    fn numbered_bc7_page(blocks_wide: u32, blocks_high: u32) -> Vec<u8> {
+        (0..blocks_wide * blocks_high).flat_map(|block| [block as u8; 16]).collect()
+    }
+
+    /// A stored BC7 frame is the blocks of its rectangle padded to whole blocks, copied as they are; a frame off a
+    /// block corner or reaching past the page is refused.
+    #[test]
+    fn stored_bc7_frames_are_the_padded_rect_blocks() {
+        const BLOCKS_WIDE: u32 = 3;
+        const BLOCKS_HIGH: u32 = 4;
+        const PAGE_WIDTH: u32 = BLOCKS_WIDE * BC7_BLOCK_SIDE;
+        const PAGE_HEIGHT: u32 = BLOCKS_HIGH * BC7_BLOCK_SIDE;
+        let page = numbered_bc7_page(BLOCKS_WIDE, BLOCKS_HIGH);
+        let stored = |x, y, width, height| extract_atlas_subrect_stored(&page, PagePixelFormat::Bc7, PAGE_WIDTH,
+            PAGE_HEIGHT, PAGE_WIDTH, PAGE_HEIGHT, x, y, width, height);
+        // 5x6 at block (1, 1) pads to 2x2 blocks: 4, 5, 7, 8.
+        let StoredFramePixels::Bc7Blocks(blocks) = stored(4, 4, 5, 6).unwrap() else { panic!("not BC7 blocks") };
+        let indices: Vec<u8> = blocks.chunks_exact(16).map(|block| block[0]).collect();
+        assert_eq!(indices, [4, 5, 7, 8]);
+        assert!(blocks.chunks_exact(16).all(|block| block.iter().all(|&byte| byte == block[0])));
+        assert_eq!(stored(4, 4, 0, 6).unwrap(), StoredFramePixels::Bc7Blocks(Vec::new()));
+        assert!(stored(2, 4, 4, 4).is_err(), "off a block corner");
+        assert!(stored(8, 12, 5, 4).is_err(), "past the page");
+    }
+
+    /// An RGBA8888 page's stored frames are its RGBA crop.
+    #[test]
+    fn stored_rgba_frames_are_the_rgba_crop() {
+        const SIDE: u32 = 4;
+        let page: Vec<u8> = (0..SIDE * SIDE * 4).map(|byte| byte as u8).collect();
+        let stored = extract_atlas_subrect_stored(&page, PagePixelFormat::Rgba8888, SIDE, SIDE, SIDE, SIDE, 1, 2, 2,
+            1).unwrap();
+        assert_eq!(stored, StoredFramePixels::Rgba8(extract_rgba8_subrect(&page, SIDE, 1, 2, 2, 1)));
     }
 }

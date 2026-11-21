@@ -8,12 +8,12 @@ use knuffel::Decode;
 use udd_container::UddpReader;
 
 use crate::common::{
-    decode_atlas_page_rgba, ensure_manifest_version, extract_atlas_subrect_rgba, read_path_entry, read_path_entry_cow,
-    AtlasCacheOptions, AtlasPageCache,
+    decode_atlas_page_rgba, ensure_manifest_version, extract_atlas_subrect_rgba, extract_atlas_subrect_stored,
+    read_path_entry, read_path_entry_cow, AtlasCacheOptions, AtlasPageCache,
 };
 use crate::animation::mobile_strides::{
-    read_stride_records, MobileAnimClips, MobileClip, MobileClipFrame, MobileStrideRecord, PageMemo, StrideSource,
-    STRIDE_FACINGS, STRIDE_FACING_COUNT,
+    read_stride_records, MobileAnimClips, MobileClip, MobileClipFrame, MobileClipStoredFrame, MobileStrideRecord,
+    PageMemo, StoredFramePixels, StrideSource, STRIDE_FACINGS, STRIDE_FACING_COUNT,
 };
 use crate::tex_art_cc::{AtlasPackingMode, PagePixelFormat};
 pub use crate::animation::move_actions::{
@@ -418,6 +418,7 @@ pub struct MobileAnimEcPackage {
     atlas_height: u32,
     gutter: u16,
     packing_mode: AtlasPackingMode,
+    pixel_format: PagePixelFormat,
     pages: Vec<MobileAnimEcPageRecord>,
     bodies: Vec<MobileAnimEcBodyRecord>,
     animations: Vec<MobileAnimEcAnimationRecord>,
@@ -462,7 +463,7 @@ impl MobileAnimEcPackage {
         let body_manifest = read_path_entry_cow(&package, BODY_MANIFEST_ENTRY_PATH)
             .context("mobile_anim_ec.uddp missing metadata/bodies.bin; rebuild mobile_anim_ec.uddp")?;
 
-        let (atlas_width, atlas_height, gutter, packing_mode, pages) =
+        let (atlas_width, atlas_height, gutter, pixel_format, packing_mode, pages) =
             parse_page_manifest(&page_manifest)?;
         let animations = parse_animation_manifest(&animation_manifest)?;
         let frames = parse_frame_manifest(&frame_manifest)?;
@@ -486,6 +487,7 @@ impl MobileAnimEcPackage {
             atlas_height,
             gutter,
             packing_mode,
+            pixel_format,
             pages,
             bodies,
             animations,
@@ -503,6 +505,8 @@ impl MobileAnimEcPackage {
     pub fn atlas_height(&self) -> u32 { self.atlas_height }
     pub fn gutter(&self) -> u16 { self.gutter }
     pub fn packing_mode(&self) -> AtlasPackingMode { self.packing_mode }
+    /// The pixel format of every page, as the page manifest names it.
+    pub fn pixel_format(&self) -> PagePixelFormat { self.pixel_format }
     pub fn pages(&self) -> &[MobileAnimEcPageRecord] { &self.pages }
     pub fn bodies(&self) -> &[MobileAnimEcBodyRecord] { &self.bodies }
     pub fn animations(&self) -> &[MobileAnimEcAnimationRecord] { &self.animations }
@@ -602,22 +606,18 @@ impl MobileAnimEcPackage {
         self.read_frame_rgba_in(frame, &mut PageMemo::default())
     }
 
+    /// A frame's pixels as its page stores them, not decoded ([`StoredFramePixels`]).
+    pub fn read_frame_stored(&self, frame: &MobileAnimEcFrameRecord) -> eyre::Result<StoredFramePixels> {
+        self.read_frame_stored_in(frame, &mut PageMemo::default())
+    }
+
     /// [`Self::read_frame_rgba`], the atlas page read through `pages`: the frames of a clip, which mostly share a
     /// page, read it once.
     fn read_frame_rgba_in(&self, frame: &MobileAnimEcFrameRecord, pages: &mut PageMemo) -> eyre::Result<Vec<u8>> {
         if frame.page_index == MISSING_PAGE_INDEX || frame.width == 0 || frame.height == 0 {
             return Ok(Vec::new());
         }
-        let page = self
-            .pages
-            .iter()
-            .find(|page| page.page_index == frame.page_index)
-            .ok_or_else(|| {
-                eyre::eyre!(
-                    "missing EC mobile animation atlas page metadata for {}",
-                    frame.page_index
-                )
-            })?;
+        let page = self.frame_page(frame)?;
         let page_bytes = pages.page(frame.page_index, |page_index| self.read_page_bytes(page_index))?;
         extract_atlas_subrect_rgba(
             page_bytes,
@@ -631,6 +631,35 @@ impl MobileAnimEcPackage {
             frame.width,
             frame.height,
         )
+    }
+
+    /// [`Self::read_frame_stored`], the atlas page read through `pages`.
+    fn read_frame_stored_in(&self, frame: &MobileAnimEcFrameRecord, pages: &mut PageMemo)
+        -> eyre::Result<StoredFramePixels> {
+        if frame.page_index == MISSING_PAGE_INDEX || frame.width == 0 || frame.height == 0 {
+            return Ok(match self.pixel_format {
+                PagePixelFormat::Rgba8888 => StoredFramePixels::Rgba8(Vec::new()),
+                PagePixelFormat::Bc7 => StoredFramePixels::Bc7Blocks(Vec::new()),
+            });
+        }
+        let page = self.frame_page(frame)?;
+        let page_bytes = pages.page(frame.page_index, |page_index| self.read_page_bytes(page_index))?;
+        extract_atlas_subrect_stored(page_bytes, page.pixel_format, page.atlas_width, page.atlas_height,
+            page.used_width, page.used_height, frame.x, frame.y, frame.width, frame.height)
+    }
+
+    /// The page record of `frame`'s page.
+    fn frame_page(&self, frame: &MobileAnimEcFrameRecord) -> eyre::Result<&MobileAnimEcPageRecord> {
+        self
+            .pages
+            .iter()
+            .find(|page| page.page_index == frame.page_index)
+            .ok_or_else(|| {
+                eyre::eyre!(
+                    "missing EC mobile animation atlas page metadata for {}",
+                    frame.page_index
+                )
+            })
     }
 }
 
@@ -660,35 +689,50 @@ impl MobileAnimClips for MobileAnimEcPackage {
     /// The package holds every direction, a mirrored one sharing the frames of its stored twin; flying animations
     /// on. A frame's anchor is its centre from its top-left corner; the frames are those the sequence does not skip.
     fn clip(&self, body: u32, action: u16, direction: u8) -> eyre::Result<Option<MobileClip>> {
-        self.clip_in(body, action, direction, &mut PageMemo::default())
+        let mut pages = PageMemo::default();
+        self.clip_in(body, action, direction, |frame, anchor_x, anchor_y| Ok(MobileClipFrame {
+            width: frame.width, height: frame.height, anchor_x, anchor_y,
+            rgba: self.read_frame_rgba_in(frame, &mut pages)?,
+        }))
     }
 
     fn side_clips(&self, body: u32, action: u16) -> eyre::Result<[Option<MobileClip>; STRIDE_FACING_COUNT]> {
         let mut pages = PageMemo::default();
         let mut clips: [Option<MobileClip>; STRIDE_FACING_COUNT] = Default::default();
         for (clip, direction) in clips.iter_mut().zip(STRIDE_FACINGS) {
-            *clip = self.clip_in(body, action, direction, &mut pages)?;
+            *clip = self.clip_in(body, action, direction, |frame, anchor_x, anchor_y| Ok(MobileClipFrame {
+                width: frame.width, height: frame.height, anchor_x, anchor_y,
+                rgba: self.read_frame_rgba_in(frame, &mut pages)?,
+            }))?;
         }
         Ok(clips)
+    }
+
+    fn page_pixel_format(&self) -> PagePixelFormat {
+        self.pixel_format
+    }
+
+    fn stored_clip(&self, body: u32, action: u16, direction: u8)
+        -> eyre::Result<Option<MobileClip<MobileClipStoredFrame>>> {
+        let mut pages = PageMemo::default();
+        self.clip_in(body, action, direction, |frame, anchor_x, anchor_y| Ok(MobileClipStoredFrame {
+            width: frame.width, height: frame.height, anchor_x, anchor_y,
+            pixels: self.read_frame_stored_in(frame, &mut pages)?,
+        }))
     }
 }
 
 impl MobileAnimEcPackage {
-    /// [`MobileAnimClips::clip`], the atlas pages read through `pages`.
-    fn clip_in(&self, body: u32, action: u16, direction: u8, pages: &mut PageMemo)
-        -> eyre::Result<Option<MobileClip>> {
+    /// [`MobileAnimClips::clip`], each frame made by `frame` from its record and its anchor.
+    fn clip_in<F>(&self, body: u32, action: u16, direction: u8,
+        mut frame: impl FnMut(&MobileAnimEcFrameRecord, i32, i32) -> eyre::Result<F>)
+        -> eyre::Result<Option<MobileClip<F>>> {
         const FLYING_ANIMATIONS: bool = true;
         let Some(resolved) = self.resolve_animation(body, action, direction, FLYING_ANIMATIONS) else { return Ok(None) };
         let record = resolved.record;
         let frames = self.animation_frames(record).iter().enumerate()
-            .filter(|(index, frame)| !record.is_frame_skipped(*index as u32) && frame.width > 0 && frame.height > 0)
-            .map(|(_, frame)| Ok(MobileClipFrame {
-                width: frame.width,
-                height: frame.height,
-                anchor_x: i32::from(frame.center_x),
-                anchor_y: i32::from(frame.center_y),
-                rgba: self.read_frame_rgba_in(frame, pages)?,
-            }))
+            .filter(|(index, stored)| !record.is_frame_skipped(*index as u32) && stored.width > 0 && stored.height > 0)
+            .map(|(_, stored)| frame(stored, i32::from(stored.center_x), i32::from(stored.center_y)))
             .collect::<eyre::Result<Vec<_>>>()?;
         Ok((!frames.is_empty()).then_some(MobileClip { frames, mirrored: record.is_mirrored(), fps: resolved.fps,
             stored: record.frame_start }))
@@ -764,7 +808,9 @@ impl MobileAnimEcPackage {
 const RGBA_CHANNELS: usize = 4;
 const RGBA_ALPHA_CHANNEL: usize = 3;
 
-fn parse_page_manifest(bytes: &[u8]) -> eyre::Result<(u32, u32, u16, AtlasPackingMode, Vec<MobileAnimEcPageRecord>)> {
+#[allow(clippy::type_complexity)]
+fn parse_page_manifest(bytes: &[u8])
+    -> eyre::Result<(u32, u32, u16, PagePixelFormat, AtlasPackingMode, Vec<MobileAnimEcPageRecord>)> {
     let mut cursor = Cursor::new(bytes);
     let mut magic = [0u8; 4];
     cursor.read_exact(&mut magic)?;
@@ -792,7 +838,7 @@ fn parse_page_manifest(bytes: &[u8]) -> eyre::Result<(u32, u32, u16, AtlasPackin
             flags: cursor.read_u8()?,
         });
     }
-    Ok((width, height, gutter, packing_mode, pages))
+    Ok((width, height, gutter, pixel_format, packing_mode, pages))
 }
 
 fn parse_animation_manifest(bytes: &[u8]) -> eyre::Result<Vec<MobileAnimEcAnimationRecord>> {
