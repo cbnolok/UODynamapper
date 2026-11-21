@@ -38,6 +38,16 @@ pub(crate) fn own_device() -> eyre::Result<(Gpu, String)> {
     })
 }
 
+/// Where a frame lies in a source texture array (an atlas): its layer, and its texels on the layer.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct SourceRect {
+    pub layer: u32,
+    pub x: u32,
+    pub y: u32,
+    pub width: u32,
+    pub height: u32,
+}
+
 /// Compiles a compute shader of the networks (RIFE, the upscaler) without the loop counters naga adds by default to
 /// end infinite loops: they keep the driver from unrolling the convolutions' constant loops, which turns each
 /// multiply-add into a counter update and a branch and makes the networks several times slower

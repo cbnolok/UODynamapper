@@ -284,8 +284,8 @@ fn frame_steps_match_cpu() {
     let (_texture, source) = atlas_texture(&gpu, TEST_ATLAS_SIZE, &atlas);
     let (width, height) = TEST_CANVAS;
     let workspace = UpscaleWorkspace::new(&model, &gpu.device, &source, width, height).unwrap();
-    assert!(workspace.set_frame(&gpu.queue, TEST_SLOT, SourceRect { width, ..frame }).is_err());
-    workspace.set_frame(&gpu.queue, TEST_SLOT, frame).unwrap();
+    assert!(workspace.set_frame(&gpu.queue, TEST_SLOT, SourceRect { width, ..frame }, false).is_err());
+    workspace.set_frame(&gpu.queue, TEST_SLOT, frame, false).unwrap();
 
     let plane_bytes = (width * height) as u64 * F32_BYTES;
     let input_bytes = INPUT_PLANES as u64 * plane_bytes;
@@ -421,10 +421,11 @@ fn benchmark() {
     for (frame_width, frame_height) in BENCHMARK_FRAMES {
         let (width, height) = upscale_canvas_size(frame_width, frame_height);
         let workspace = UpscaleWorkspace::new(&model, &gpu.device, &source, width, height).unwrap();
-        workspace.set_frame(&gpu.queue, 0, SourceRect { layer: 0, x: 0, y: 0, width: frame_width, height: frame_height })
+        workspace.set_frame(&gpu.queue, 0, SourceRect { layer: 0, x: 0, y: 0, width: frame_width, height: frame_height },
+            false)
             .unwrap();
         let stages: Vec<Vec<&UpscaleDispatch>> = vec![
-            workspace.prepare(0).iter().collect(), workspace.network().iter().collect(), workspace.finish().iter().collect(),
+            workspace.prepare(0).iter().collect(), workspace.network().iter().collect(), workspace.finish(0).iter().collect(),
             workspace.upscale(0).collect(),
         ];
         let (stage, wall) = time_passes(&gpu, &stages);

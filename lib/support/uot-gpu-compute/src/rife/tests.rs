@@ -268,3 +268,170 @@ fn benchmark() {
         }
     }
 }
+
+/// The frame steps (frames.rs) against the CPU: two frames of a texture packed onto a card at their offsets, a frame
+/// copied as it is, and an in-between stored with its alpha snapped.
+#[test]
+#[ignore = "requires a GPU adapter; run explicitly for frame step changes"]
+fn frame_steps_carry_frames_between_a_texture_and_a_workspace() {
+    use frames::{rife_frame_step_stride, rife_output_bytes_per_row, CardFrame, RifeFrameStep};
+    use crate::SourceRect;
+    const SOURCE_SIDE: u32 = 40;
+    const SOURCE_LAYERS: u32 = 2;
+    const TEXEL_BYTES: u32 = 4;
+    const SIDE: u32 = RIFE_SIZE_MULTIPLE;
+    const PREMULTIPLIED: usize = 3;
+    const COLOR_CHANNELS: usize = 3;
+    const GREY: f32 = 0.5;
+    const SNAP: f32 = 0.5;
+    const ALPHAS: [u8; 3] = [0, 128, 255];
+    /// An sRGB texel loads linear and the steps encode it again: within a step of 8 bits and a half.
+    const TOLERANCE: f32 = 1.5 / 255.0;
+    let Some(gpu) = gpu() else {
+        println!("skipped: no GPU adapter");
+        return;
+    };
+    let device = &gpu.device;
+    let model = RifeModel::new(device).unwrap();
+    let workspace = RifeWorkspace::new(&model, device, SIDE, SIDE).unwrap();
+    // Every texel its own; a third of them transparent, a third half covered.
+    let texel = |layer: u32, x: u32, y: u32| -> [u8; 4] {
+        let seed = layer * 7919 + y * 131 + x * 17;
+        [(seed % 251) as u8, (seed * 3 % 241) as u8, (seed * 5 % 239) as u8, ALPHAS[(seed % 3) as usize]]
+    };
+    let mut pixels = Vec::new();
+    for layer in 0..SOURCE_LAYERS {
+        for y in 0..SOURCE_SIDE {
+            for x in 0..SOURCE_SIDE {
+                pixels.extend(texel(layer, x, y));
+            }
+        }
+    }
+    let texture = device.create_texture(&wgpu::TextureDescriptor {
+        label: None,
+        size: wgpu::Extent3d { width: SOURCE_SIDE, height: SOURCE_SIDE, depth_or_array_layers: SOURCE_LAYERS },
+        mip_level_count: 1, sample_count: 1, dimension: wgpu::TextureDimension::D2,
+        format: wgpu::TextureFormat::Rgba8UnormSrgb,
+        usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST, view_formats: &[],
+    });
+    gpu.queue.write_texture(texture.as_image_copy(), &pixels, wgpu::TexelCopyBufferLayout {
+        offset: 0, bytes_per_row: Some(SOURCE_SIDE * TEXEL_BYTES), rows_per_image: Some(SOURCE_SIDE),
+    }, texture.size());
+    let view = texture.create_view(&wgpu::TextureViewDescriptor {
+        dimension: Some(wgpu::TextureViewDimension::D2Array), ..Default::default()
+    });
+
+    let first = CardFrame { source: SourceRect { layer: 1, x: 3, y: 5, width: 20, height: 18 }, offset: (2, 1) };
+    let next = CardFrame { source: SourceRect { layer: 0, x: 10, y: 12, width: 16, height: 20 }, offset: (0, 0) };
+    let card = (24, 22);
+    // A merged frame: premultiplied colour and coverage per pixel.
+    let plane = (SIDE * SIDE) as usize;
+    let coverage = |index: usize| (index % 10) as f32 / 9.0;
+    let premultiplied = |index: usize, channel: usize| coverage(index) * ((index * (channel + 3)) % 97) as f32 / 96.0;
+    let mut merged = vec![0f32; RIFE_IMAGE_CHANNELS as usize * plane];
+    for index in 0..plane {
+        for channel in 0..COLOR_CHANNELS {
+            merged[(PREMULTIPLIED + channel) * plane + index] = premultiplied(index, channel);
+        }
+        merged[RIFE_ALPHA_CHANNEL as usize * plane + index] = coverage(index);
+    }
+    gpu.queue.write_buffer(workspace.merged(), 0, bytemuck::cast_slice(&merged));
+
+    let steps = [
+        RifeFrameStep::pack((SIDE, SIDE), first, next),
+        RifeFrameStep::copy_frame((SIDE, SIDE), first.source),
+        RifeFrameStep::store((SIDE, SIDE), card, true),
+    ];
+    let stride = rife_frame_step_stride(device);
+    let uniforms = device.create_buffer(&wgpu::BufferDescriptor {
+        label: None, size: stride * steps.len() as u64, mapped_at_creation: false,
+        usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+    });
+    for (index, step) in steps.iter().enumerate() {
+        gpu.queue.write_buffer(&uniforms, index as u64 * stride, step.uniform());
+    }
+    let output_bytes = u64::from(rife_output_bytes_per_row(card.0)) * u64::from(card.1);
+    let buffer = |size, usage| device.create_buffer(&wgpu::BufferDescriptor {
+        label: None, size, usage, mapped_at_creation: false,
+    });
+    let outputs = [(); 2].map(|_| buffer(output_bytes, wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_SRC));
+    let readbacks = [(); 2].map(|_| buffer(output_bytes, wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST));
+    let input_bytes = workspace.input().size();
+    let input_readback = buffer(input_bytes, wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST);
+    let bind_groups =
+        outputs.each_ref().map(|output| model.frame_bind_group(device, &workspace, output, &uniforms, &view));
+    let mut encoder = device.create_command_encoder(&Default::default());
+    {
+        let mut pass = encoder.begin_compute_pass(&Default::default());
+        steps[0].record(&model, &mut pass, &bind_groups[0], 0);
+        steps[1].record(&model, &mut pass, &bind_groups[0], stride as u32);
+        steps[2].record(&model, &mut pass, &bind_groups[1], 2 * stride as u32);
+    }
+    encoder.copy_buffer_to_buffer(workspace.input(), 0, &input_readback, 0, input_bytes);
+    for (output, readback) in outputs.iter().zip(&readbacks) {
+        encoder.copy_buffer_to_buffer(output, 0, readback, 0, output_bytes);
+    }
+    gpu.queue.submit([encoder.finish()]);
+    let input = read_back(&gpu, &input_readback);
+    let bytes = |readback: &wgpu::Buffer| bytemuck::cast_slice::<f32, u8>(&read_back(&gpu, readback)).to_vec();
+    let (copied, stored) = (bytes(&readbacks[0]), bytes(&readbacks[1]));
+
+    let unit = |byte: u8| f32::from(byte) / 255.0;
+    let near = |actual: f32, expected: f32, what: &str| {
+        assert!((actual - expected).abs() <= TOLERANCE, "{what}: {actual} for {expected}");
+    };
+    // The card's images: each frame's texel at its place, transparent around it, colour over grey and premultiplied.
+    for (image, frame) in [first, next].iter().enumerate() {
+        let base = image * RIFE_IMAGE_CHANNELS as usize;
+        let (offset_x, offset_y) = frame.offset;
+        for y in 0..SIDE {
+            for x in 0..SIDE {
+                let inside = x >= offset_x && y >= offset_y && x < offset_x + frame.source.width
+                    && y < offset_y + frame.source.height;
+                let rgba = if inside {
+                    texel(frame.source.layer, frame.source.x + x - offset_x, frame.source.y + y - offset_y).map(unit)
+                } else {
+                    [0.0; 4]
+                };
+                let index = (y * SIDE + x) as usize;
+                let alpha = rgba[3];
+                for channel in 0..COLOR_CHANNELS {
+                    near(input[(base + channel) * plane + index], rgba[channel] * alpha + GREY * (1.0 - alpha),
+                        "over grey");
+                    near(input[(base + PREMULTIPLIED + channel) * plane + index], rgba[channel] * alpha,
+                        "premultiplied");
+                }
+                near(input[(base + RIFE_ALPHA_CHANNEL as usize) * plane + index], alpha, "alpha");
+            }
+        }
+    }
+    let pitch = rife_output_bytes_per_row(card.0) as usize;
+    let texel_bytes = TEXEL_BYTES as usize;
+    // The copy: the frame as it is, at the rows' corner.
+    for y in 0..first.source.height {
+        for x in 0..first.source.width {
+            let at = y as usize * pitch + x as usize * texel_bytes;
+            let expected = texel(first.source.layer, first.source.x + x, first.source.y + y);
+            for channel in 0..texel_bytes {
+                near(unit(copied[at + channel]), unit(expected[channel]), "copy");
+            }
+        }
+    }
+    // The store: straight colour, alpha snapped.
+    for y in 0..card.1 {
+        for x in 0..card.0 {
+            let index = (y * SIDE + x) as usize;
+            let at = y as usize * pitch + x as usize * texel_bytes;
+            let alpha = if coverage(index) >= SNAP { 1.0 } else { 0.0 };
+            near(unit(stored[at + COLOR_CHANNELS]), alpha, "snapped alpha");
+            for channel in 0..COLOR_CHANNELS {
+                let expected = if alpha > 0.0 {
+                    (premultiplied(index, channel) / coverage(index)).clamp(0.0, 1.0)
+                } else {
+                    0.0
+                };
+                near(unit(stored[at + channel]), expected, "stored colour");
+            }
+        }
+    }
+}

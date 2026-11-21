@@ -19,6 +19,8 @@ const CUBIC_TAPS: u32 = 4u;
 const MIN_ALPHA: f32 = 1.0 / 512.0;
 // The atlas's 8-bit steps: the load's sRGB decode, encoded again, rounds back to the stored byte.
 const BYTE_MAX: f32 = 255.0;
+// Where a snapped alpha turns opaque.
+const SNAP_ALPHA: f32 = 0.5;
 
 struct Pixel {
     // The canvas the network runs on.
@@ -37,6 +39,8 @@ struct Pixel {
     network_base: u32,
     // The output's row pitch, in texels.
     row_texels: u32,
+    // 1: the output's alpha snaps to 0 or 1 at SNAP_ALPHA (art with one bit of alpha).
+    snap_alpha: u32,
 }
 
 @group(0) @binding(0) var<uniform> pixel: Pixel;
@@ -151,6 +155,9 @@ fn finish(@builtin(global_invocation_id) id: vec3<u32>) {
     if (coverage > 0.0) {
         color = srgb_encode(premultiplied / coverage);
     }
-    let alpha = coverage / f32(BOX_SIDE * BOX_SIDE);
+    var alpha = coverage / f32(BOX_SIDE * BOX_SIDE);
+    if (pixel.snap_alpha != 0u) {
+        alpha = select(0.0, 1.0, alpha >= SNAP_ALPHA);
+    }
     output[out_y * pixel.row_texels + out_x] = pack4x8unorm(vec4<f32>(color, alpha));
 }

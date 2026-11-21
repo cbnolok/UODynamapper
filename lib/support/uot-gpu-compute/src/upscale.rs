@@ -9,7 +9,7 @@
 //! ([`UpscaleWorkspace::prepare`]), the 22 convolutions ([`UpscaleWorkspace::network`]) and the output
 //! ([`UpscaleWorkspace::finish`]). Dispatches of one frame must run in order, and one frame must end (its output
 //! copied away) before the next starts on the same workspace, since they share the buffers; each frame slot has its
-//! own source rectangle, so several frames can be recorded in one submission.
+//! own source rectangle and alpha snap, so several frames can be recorded in one submission.
 //!
 //! The network sees colour premultiplied over 50% grey; alpha does not go through it but is upscaled bicubically and
 //! takes the grey matte off the network's colour (see shaders/upscale/pixel.wgsl). The frame sits on a canvas with a
@@ -31,20 +31,13 @@ use crate::warm_up::CompileReport;
 pub const UPSCALE_BORDER: u32 = 2;
 /// The output's scale: the network's 4x, averaged 2x2.
 pub const UPSCALE_OUTPUT_SCALE: u32 = NETWORK_SCALE / BOX_SIDE;
-/// Frame slots, each with its own source rectangle, so several frames can be recorded in one submission.
+/// Frame slots, each with its own source rectangle and alpha snap, so several frames can be recorded in one
+/// submission.
 pub const UPSCALE_FRAME_SLOTS: usize = 4;
 /// Bytes of one output texel (RGBA8).
 pub const UPSCALE_OUTPUT_TEXEL_BYTES: u32 = 4;
 
-/// Where a frame lies in the source atlas: its layer, and its texels on the layer.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct SourceRect {
-    pub layer: u32,
-    pub x: u32,
-    pub y: u32,
-    pub width: u32,
-    pub height: u32,
-}
+pub use crate::SourceRect;
 
 const NETWORK_SCALE: u32 = 4;
 const BOX_SIDE: u32 = 2;
@@ -154,6 +147,8 @@ struct PixelUniform {
     alpha_base: u32,
     network_base: u32,
     row_texels: u32,
+    snap_alpha: u32,
+    _pad: [u32; 3],
 }
 
 /// The compiles [`UpscalePipelines::new`] reports: a convolution variant and tile each, then the per-pixel steps.
@@ -395,12 +390,13 @@ fn entry(binding: u32, buffer: &wgpu::Buffer) -> wgpu::BindGroupEntry<'_> {
 }
 
 /// The per-pixel steps' parameters for a canvas and a frame on it.
-fn pixel_uniform(width: u32, height: u32, frame: SourceRect) -> PixelUniform {
+fn pixel_uniform(width: u32, height: u32, frame: SourceRect, snap_alpha: bool) -> PixelUniform {
     let pixels = width * height;
     PixelUniform {
         width, height, pixels, layer: frame.layer, source_x: frame.x, source_y: frame.y, frame_width: frame.width,
         frame_height: frame.height, border: UPSCALE_BORDER, alpha_base: ALPHA_PLANE * pixels,
         network_base: NETWORK_OUTPUT_PLANE * pixels, row_texels: output_bytes_per_row(width) / UPSCALE_OUTPUT_TEXEL_BYTES,
+        snap_alpha: snap_alpha as u32, _pad: [0; 3],
     }
 }
 
@@ -418,8 +414,9 @@ pub struct UpscaleWorkspace {
     /// The 2x canvas, RGBA8 rows [`UpscaleWorkspace::output_bytes_per_row`] apart.
     output: wgpu::Buffer,
     uniforms: wgpu::Buffer,
-    /// Where each slot's source rectangle sits in the uniform buffer.
+    /// Where each slot's parameters sit in the uniform buffer, read by its prepare and its finish.
     slot_offsets: Vec<u64>,
+    /// A prepare and a finish per slot.
     prepare: Vec<UpscaleDispatch>,
     network: Vec<UpscaleDispatch>,
     finish: Vec<UpscaleDispatch>,
@@ -473,19 +470,16 @@ impl UpscaleWorkspace {
         let network_count = planner.pending.len();
 
         let (out_width, out_height) = (width * UPSCALE_OUTPUT_SCALE, height * UPSCALE_OUTPUT_SCALE);
-        let pixel_uniform = pixel_uniform(width, height, SourceRect { layer: 0, x: 0, y: 0, width: 0, height: 0 });
+        let pixel_uniform =
+            pixel_uniform(width, height, SourceRect { layer: 0, x: 0, y: 0, width: 0, height: 0 }, false);
         let mut pending = planner.pending;
+        // A slot's prepare holds its parameters; its finish reads them there too.
         for _ in 0..UPSCALE_FRAME_SLOTS {
             pending.push(PendingDispatch {
                 pipeline: model.prepare_pipeline.clone(), uniform: bytemuck::bytes_of(&pixel_uniform).to_vec(),
                 workgroups: [pixels.div_ceil(PIXEL_THREADS), 1, 1], multiply_adds: 0, name: "prepare".into(),
             });
         }
-        pending.push(PendingDispatch {
-            pipeline: model.finish_pipeline.clone(), uniform: bytemuck::bytes_of(&pixel_uniform).to_vec(),
-            workgroups: [(out_width * out_height).div_ceil(PIXEL_THREADS), 1, 1], multiply_adds: 0,
-            name: "finish".into(),
-        });
 
         let storage = wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_SRC | wgpu::BufferUsages::COPY_DST;
         let buffer = |label, bytes: u64| device.create_buffer(&wgpu::BufferDescriptor {
@@ -508,30 +502,37 @@ impl UpscaleWorkspace {
             label: Some("upscale dispatch parameters"), contents: &uniform_bytes,
             usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
         });
+        let uniform_entry = |offset: usize, bytes: usize| wgpu::BindGroupEntry {
+            binding: 0,
+            resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
+                buffer: &uniforms, offset: offset as u64, size: wgpu::BufferSize::new(bytes as u64),
+            }),
+        };
+        let slot_offsets: Vec<u64> = offsets[network_count..network_count + UPSCALE_FRAME_SLOTS].iter()
+            .map(|&offset| offset as u64).collect();
+        let finish = slot_offsets.iter().map(|&offset| UpscaleDispatch {
+            pipeline: model.finish_pipeline.clone(),
+            bind_group: device.create_bind_group(&wgpu::BindGroupDescriptor {
+                label: Some("upscale finish"), layout: &model.finish_layout,
+                entries: &[uniform_entry(offset as usize, std::mem::size_of::<PixelUniform>()), entry(2, &arena),
+                    entry(3, &output)],
+            }),
+            workgroups: [(out_width * out_height).div_ceil(PIXEL_THREADS), 1, 1], multiply_adds: 0,
+            name: "finish".into(),
+        }).collect();
         let mut dispatches: Vec<UpscaleDispatch> = pending.into_iter().zip(&offsets).enumerate()
             .map(|(index, (dispatch, &offset))| {
-                let uniform = wgpu::BindGroupEntry {
-                    binding: 0,
-                    resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
-                        buffer: &uniforms, offset: offset as u64,
-                        size: wgpu::BufferSize::new(dispatch.uniform.len() as u64),
-                    }),
-                };
+                let uniform = uniform_entry(offset, dispatch.uniform.len());
                 let bind_group = if index < network_count {
                     device.create_bind_group(&wgpu::BindGroupDescriptor {
                         label: Some("upscale convolution"), layout: &model.conv_layout,
                         entries: &[uniform, entry(1, &model.params), entry(2, &arena)],
                     })
-                } else if index < network_count + UPSCALE_FRAME_SLOTS {
+                } else {
                     device.create_bind_group(&wgpu::BindGroupDescriptor {
                         label: Some("upscale prepare"), layout: &model.prepare_layout,
                         entries: &[uniform, wgpu::BindGroupEntry { binding: 1, resource: wgpu::BindingResource::TextureView(source) },
                             entry(2, &arena)],
-                    })
-                } else {
-                    device.create_bind_group(&wgpu::BindGroupDescriptor {
-                        label: Some("upscale finish"), layout: &model.finish_layout,
-                        entries: &[uniform, entry(2, &arena), entry(3, &output)],
                     })
                 };
                 UpscaleDispatch {
@@ -539,10 +540,7 @@ impl UpscaleWorkspace {
                     multiply_adds: dispatch.multiply_adds, name: dispatch.name,
                 }
             }).collect();
-        let finish = dispatches.split_off(network_count + UPSCALE_FRAME_SLOTS);
         let prepare = dispatches.split_off(network_count);
-        let slot_offsets = offsets[network_count..network_count + UPSCALE_FRAME_SLOTS].iter()
-            .map(|&offset| offset as u64).collect();
         Ok(Self { width, height, arena, output, uniforms, slot_offsets, prepare, network: dispatches, finish })
     }
 
@@ -551,15 +549,18 @@ impl UpscaleWorkspace {
         (self.width, self.height)
     }
 
-    /// Sets the frame a slot's [`UpscaleWorkspace::prepare`] reads from the atlas; it takes effect with the next
-    /// queue submission. The frame's top left lands at ([`UPSCALE_BORDER`], [`UPSCALE_BORDER`]) on the canvas.
-    pub fn set_frame(&self, queue: &wgpu::Queue, slot: usize, frame: SourceRect) -> Result<(), String> {
+    /// Sets the frame a slot's [`UpscaleWorkspace::prepare`] reads from the atlas, and whether the slot's
+    /// [`UpscaleWorkspace::finish`] snaps the output's alpha to 0 or 1 at one half (art with one bit of alpha, such as
+    /// the Classic client's); it takes effect with the next queue submission. The frame's top left lands at
+    /// ([`UPSCALE_BORDER`], [`UPSCALE_BORDER`]) on the canvas.
+    pub fn set_frame(&self, queue: &wgpu::Queue, slot: usize, frame: SourceRect, snap_alpha: bool)
+        -> Result<(), String> {
         let (needed_width, needed_height) = upscale_canvas_size(frame.width, frame.height);
         if needed_width > self.width || needed_height > self.height {
             return Err(format!("upscale: a {}x{} frame needs a {needed_width}x{needed_height} canvas, this one is {}x{}",
                 frame.width, frame.height, self.width, self.height));
         }
-        let uniform = pixel_uniform(self.width, self.height, frame);
+        let uniform = pixel_uniform(self.width, self.height, frame, snap_alpha);
         queue.write_buffer(&self.uniforms, self.slot_offsets[slot], bytemuck::bytes_of(&uniform));
         Ok(())
     }
@@ -574,14 +575,14 @@ impl UpscaleWorkspace {
         &self.network
     }
 
-    /// The 2x canvas into [`UpscaleWorkspace::output`].
-    pub fn finish(&self) -> &[UpscaleDispatch] {
-        &self.finish
+    /// The 2x canvas into [`UpscaleWorkspace::output`], with the slot's alpha snap.
+    pub fn finish(&self, slot: usize) -> &[UpscaleDispatch] {
+        std::slice::from_ref(&self.finish[slot])
     }
 
     /// Everything for one frame of a slot, in order.
     pub fn upscale(&self, slot: usize) -> impl Iterator<Item = &UpscaleDispatch> {
-        self.prepare(slot).iter().chain(&self.network).chain(&self.finish)
+        self.prepare(slot).iter().chain(&self.network).chain(self.finish(slot))
     }
 
     /// The 2x canvas: RGBA8 texels, sRGB colour and straight alpha like the atlas, rows

@@ -7,8 +7,10 @@
 //! Head encoding of both frames ([`RifeWorkspace::encode`]), which does not depend on t and is shared by every t of
 //! the pair, then for each t the five IFBlocks ([`RifeWorkspace::block`]) and the blend ([`RifeWorkspace::merge`]).
 //! Dispatches of one inference must run in order, and one inference must end before the next t starts, since they
-//! share the flow buffers; each t has its own timestep slot, so several can be recorded at once.
+//! share the flow buffers; each t has its own timestep slot, so several can be recorded at once. [`frames`] holds the
+//! steps between a texture of frames and a workspace.
 
+pub mod frames;
 mod weights;
 #[cfg(test)]
 mod tests;
@@ -18,6 +20,7 @@ use wgpu::util::DeviceExt;
 use weights::{PackedParams, WEIGHTS_FILE};
 use crate::network_shader_module;
 use crate::warm_up::CompileReport;
+use frames::{FramePipelines, FRAME_STEP_COMPILES};
 
 /// Frame sides are padded (zeros, right and bottom) to a multiple of this: block 0 works at 1/16 of the frame and
 /// halves it twice more.
@@ -173,8 +176,8 @@ struct PixelUniform {
 }
 
 /// The compiles [`RifePipelines::new`] reports: a convolution variant and tile each (its tiled pass and its
-/// reduction), then the per-pixel steps.
-pub const RIFE_COMPILES: usize = CONV_VARIANTS.len() * TILES.len() + PIXEL_STEPS.len();
+/// reduction), the per-pixel steps, then the frame steps ([`frames`]).
+pub const RIFE_COMPILES: usize = CONV_VARIANTS.len() * TILES.len() + PIXEL_STEPS.len() + FRAME_STEP_COMPILES;
 
 /// The pipelines, once per device, without the weights: what [`crate::warm_up`] compiles ahead.
 pub struct RifePipelines {
@@ -182,6 +185,7 @@ pub struct RifePipelines {
     pixel_layout: wgpu::BindGroupLayout,
     conv_pipelines: Vec<((ConvKind, Epilogue, Tile), [wgpu::ComputePipeline; 2])>,
     pixel_pipelines: Vec<(PixelStep, wgpu::ComputePipeline)>,
+    frames: FramePipelines,
 }
 
 /// The weights and pipelines, once per device.
@@ -193,6 +197,7 @@ pub struct RifeModel {
     /// The tiled pass and the split sums' reduction of each variant.
     conv_pipelines: Vec<((ConvKind, Epilogue, Tile), [wgpu::ComputePipeline; 2])>,
     pixel_pipelines: Vec<(PixelStep, wgpu::ComputePipeline)>,
+    frames: FramePipelines,
 }
 
 fn storage_entry(binding: u32, read_only: bool) -> wgpu::BindGroupLayoutEntry {
@@ -211,10 +216,10 @@ fn uniform_entry() -> wgpu::BindGroupLayoutEntry {
     }
 }
 
-/// Compiles conv.wgsl or pixel.wgsl without naga's loop bounding ([`network_shader_module`]).
+/// Compiles conv.wgsl, pixel.wgsl or frames.wgsl without naga's loop bounding ([`network_shader_module`]).
 fn shader_module(device: &wgpu::Device, label: &str, source: String) -> wgpu::ShaderModule {
-    // SAFETY: every loop in conv.wgsl and pixel.wgsl ends: each runs to a compile-time constant or to a uniform's
-    // value, counting up by a positive step.
+    // SAFETY: every loop in conv.wgsl, pixel.wgsl and frames.wgsl ends: each runs to a compile-time constant or to a
+    // uniform's value, counting up by a positive step.
     unsafe { network_shader_module(device, label, source) }
 }
 
@@ -278,7 +283,8 @@ impl RifePipelines {
                 cache: None,
             })))
         }).collect();
-        Self { conv_layout, pixel_layout, conv_pipelines, pixel_pipelines }
+        let frames = FramePipelines::new(device, report);
+        Self { conv_layout, pixel_layout, conv_pipelines, pixel_pipelines, frames }
     }
 }
 
@@ -296,8 +302,8 @@ impl RifeModel {
             label: Some("rife weights"), contents: bytemuck::cast_slice(&packed.halves),
             usage: wgpu::BufferUsages::STORAGE,
         });
-        let RifePipelines { conv_layout, pixel_layout, conv_pipelines, pixel_pipelines } = pipelines;
-        Ok(Self { params, packed, conv_layout, pixel_layout, conv_pipelines, pixel_pipelines })
+        let RifePipelines { conv_layout, pixel_layout, conv_pipelines, pixel_pipelines, frames } = pipelines;
+        Ok(Self { params, packed, conv_layout, pixel_layout, conv_pipelines, pixel_pipelines, frames })
     }
 
     /// The model with Practical-RIFE's bilinear blend, as the PyTorch reference computes it and the stride
@@ -680,7 +686,7 @@ impl RifeWorkspace {
     }
 
     /// The two frames, [`RIFE_INPUT_CHANNELS`] planes; the padding is zero as PyTorch pads, or the frames' own
-    /// background, as the mobiles' in-betweens give it (atlas.wgsl).
+    /// background, as [`frames::RifeFrameStep::pack`] gives it.
     pub fn input(&self) -> &wgpu::Buffer {
         self.buffer(Buf::Images)
     }

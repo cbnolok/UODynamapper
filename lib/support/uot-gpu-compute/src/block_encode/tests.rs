@@ -48,7 +48,7 @@ const RUNS: usize = 5;
 const IN_BETWEEN_SIZES: [u32; 3] = [64, 128, 256];
 const IN_BETWEEN_T: f32 = 0.5;
 const IN_BETWEEN_SLOT: usize = 0;
-/// RIFE's backdrop and the Classic alpha snap, as rife/atlas.wgsl gives them.
+/// RIFE's backdrop and the Classic alpha snap, as rife/frames.wgsl gives them.
 const BACKDROP_GREY: f32 = 0.5;
 const CLASSIC_ALPHA_SNAP: f32 = 0.5;
 #[cfg(feature = "bc1")]
@@ -622,7 +622,7 @@ fn canvas_pair(clip: &MobileClip, side: u32) -> Option<[Vec<u8>; 2]> {
     }))
 }
 
-/// A RIFE in-between at t = 1/2 of two `side` square canvases, as rife/atlas.wgsl stores it: straight alpha, a
+/// A RIFE in-between at t = 1/2 of two `side` square canvases, as rife/frames.wgsl stores it: straight alpha, a
 /// Classic one's alpha snapped.
 fn in_between(gpu: &Gpu, model: &RifeModel, side: u32, canvases: &[Vec<u8>; 2], classic: bool) -> Vec<u8> {
     let workspace = RifeWorkspace::new(model, &gpu.device, side, side).unwrap();

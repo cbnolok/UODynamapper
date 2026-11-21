@@ -32,8 +32,8 @@ loops end.
 
 ## RIFE
 
-The RIFE modules (conv.wgsl, pixel.wgsl, atlas.wgsl) use it too since 2026-11-21. One t went from 2.83 / 3.77 /
-9.22 / 35.3 ms to 1.41 / 2.01 / 4.80 / 17.2 ms at 64² / 128² / 256² / 576×512, about 2x rather than the upscaler's
-3.5x: the small sizes are mostly fixed per-dispatch cost, and the pixel steps did not change (the block inputs of blocks
-2 to 4, which warp the frames, take 2.6 ms of the 15 at 576×512). Split-K is still needed: without it one t at 64²
-takes 8.6 ms; doubling `TARGET_WORKGROUPS` to 192 was 2-10% slower at 128² and up.
+The RIFE modules (conv.wgsl, pixel.wgsl, and the frame steps now in uot-gpu-compute's rife/frames.wgsl) use it too since
+2026-11-21. One t went from 2.83 / 3.77 / 9.22 / 35.3 ms to 1.41 / 2.01 / 4.80 / 17.2 ms at 64² / 128² / 256² / 576×512,
+about 2x rather than the upscaler's 3.5x: the small sizes are mostly fixed per-dispatch cost, and the pixel steps did
+not change (the block inputs of blocks 2 to 4, which warp the frames, take 2.6 ms of the 15 at 576×512). Split-K is
+still needed: without it one t at 64² takes 8.6 ms; doubling `TARGET_WORKGROUPS` to 192 was 2-10% slower at 128² and up.
