@@ -4,6 +4,7 @@ use crate::app::{
 use crate::ui::animation_frames::{self, ActionFrames, FramesViewState};
 use crate::ui::animation_hue::{self, AnimationHueState};
 use crate::ui::animation_list::{self, ActionKey, ActionSource, AnimationListState};
+use crate::ui::animation_sequence_panel::{self, SequencePanelState, SEQUENCE_PANEL_HEIGHT};
 use crate::ui::{
     enhanced_files_availability, folder_files_availability, source_choice, ClientSource,
     CLASSIC_FOLDER,
@@ -33,9 +34,8 @@ pub(crate) struct AnimationsView {
     pub(super) list: AnimationListState,
     pub(super) frames: FramesViewState,
     pub(super) hue: AnimationHueState,
-    /// The body type and the loaded package count of the last `AnimationSequence` lookup, so a missing entry is
-    /// looked up once.
-    sequence_lookup: Option<(u32, usize)>,
+    /// The `AnimationSequence` entry of the shown body: its package, edits and panel.
+    pub(super) sequence: SequencePanelState,
     /// The source the controls showed last, so a switch from any tab resets what belongs to the old source.
     shown_source: Option<ArtSource>,
 }
@@ -43,7 +43,7 @@ pub(crate) struct AnimationsView {
 const ANIMATION_CONTROLS_PANEL_WIDTH: f32 = 280.0;
 const ANIMATION_ACTIONS_PANEL_WIDTH: f32 = 260.0;
 /// Client default of the `flying_animations` setting, used to resolve sequence actions.
-const FLYING_ANIMATIONS_ENABLED: bool = true;
+pub(super) const FLYING_ANIMATIONS_ENABLED: bool = true;
 const NO_FRAME_HUE: &str = "No hue is chosen: the frames are drawn as stored.";
 /// The bulk entries of the frame export menu.
 const EXPORT_ACTION_ENTRY: usize = 0;
@@ -54,6 +54,9 @@ const ANIM_MUL_FILES: &str = "anim*.mul and anim*.idx";
 const ANIMATION_FRAME_UOP_FILES: &str = "AnimationFrame*.uop";
 
 pub fn ui_animations(app: &mut UocfEditorApp, ctx: &egui::Context, ui: &mut egui::Ui) {
+    if app.client_data.is_some() {
+        animation_sequence_panel::load_selected_sequence(app);
+    }
     egui::Panel::left("anim_controls")
         .resizable(true)
         .default_size(ANIMATION_CONTROLS_PANEL_WIDTH)
@@ -161,6 +164,13 @@ pub fn ui_animations(app: &mut UocfEditorApp, ctx: &egui::Context, ui: &mut egui
             show_animation_action_column(app, ui);
         });
 
+    if app.client_data.is_some() {
+        egui::Panel::bottom("anim_sequence")
+            .resizable(true)
+            .default_size(SEQUENCE_PANEL_HEIGHT)
+            .show(ui, |ui| animation_sequence_panel::show_sequence_panel(app, ui));
+    }
+
     egui::CentralPanel::default().show(ui, |ui| {
         if app.client_data.is_none() {
             ui.centered_and_justified(|ui| {
@@ -168,31 +178,6 @@ pub fn ui_animations(app: &mut UocfEditorApp, ctx: &egui::Context, ui: &mut egui
             });
             return;
         }
-        let body_type = selected_sequence_id(app);
-
-        // Try to load AnimationSequence if not already loaded for this body type
-        let lookup = (body_type, app.uop_cache.loaded_uops.len());
-        if app.animations_view.sequence_lookup != Some(lookup) {
-            app.animations_view.sequence_lookup = Some(lookup);
-            let mut found_seq = None;
-            for loaded in &app.uop_cache.loaded_uops {
-                if loaded.path.file_name().unwrap_or_default().to_string_lossy().contains("AnimationSequence") {
-                    let hash = hash_file_name_single(&AnimationSequence::entry_path(body_type));
-                    // The package is loaded lazily: its entries are read from the file on demand.
-                    match loaded.package.unpack_file_by_hash(hash).map(|data| data.map(|data| AnimationSequence::parse(&data))) {
-                        Ok(Some(Ok(seq))) => {
-                            found_seq = Some((body_type, seq));
-                            break;
-                        }
-                        Ok(Some(Err(error))) => log::warn!("AnimationSequence {body_type}: {error:#}"),
-                        Err(error) => log::warn!("AnimationSequence {body_type}: {error}"),
-                        Ok(None) => {}
-                    }
-                }
-            }
-            app.selected_anim_sequence = found_seq;
-        }
-
         let ActionTarget { key, sequence } = match action_target(app) {
             Ok(target) => target,
             Err(message) => {
@@ -238,7 +223,9 @@ pub fn ui_animations(app: &mut UocfEditorApp, ctx: &egui::Context, ui: &mut egui
         let name = format!("{}_body_{}_action_{}", animation_source_label(app.selected_legacy_source), key.body, key.action);
         let hue = animation_hue::frame_hue(app, is_ec);
         let menu = frame_export_menu(key, matches!(hue.0, animation_hue::FrameHue::None), is_ec);
-        let bulk = animation_frames::show_player(app, ctx, ui, &frames, &hue, &name, (key.body, key.action), &menu);
+        let timing = animation_sequence_panel::playback_timing(app, key);
+        let bulk =
+            animation_frames::show_player(app, ctx, ui, &frames, &hue, &name, (key.body, key.action), &menu, timing.as_ref());
         let export_hue = app.image_export.takes_hue(&menu).then(|| hue.0.clone());
         match bulk {
             Some(EXPORT_ACTION_ENTRY) => export_action(app, &frames, key, export_hue),
@@ -410,8 +397,9 @@ fn action_target(app: &mut UocfEditorApp) -> Result<ActionTarget, String> {
 /// Hash of everything the frames of `key` are decoded from.
 fn action_decode_key(app: &UocfEditorApp, key: ActionKey, sequence: Option<u32>) -> u64 {
     let sequence_loaded = app.selected_anim_sequence.as_ref().is_some_and(|(id, _)| Some(*id) == sequence);
+    let edits = app.animations_view.sequence.frames_generation;
     let mut hasher = std::collections::hash_map::DefaultHasher::new();
-    (app.selected_legacy_source as u8, key, sequence, sequence_loaded, app.uop_cache.loaded_uops.len()).hash(&mut hasher);
+    (app.selected_legacy_source as u8, key, sequence, sequence_loaded, edits, app.uop_cache.loaded_uops.len()).hash(&mut hasher);
     hasher.finish()
 }
 
@@ -569,8 +557,8 @@ fn show_action_file_controls(app: &mut UocfEditorApp, ui: &mut egui::Ui, key: Ac
 }
 
 /// Name of the sequence package searched next to an AnimationFrame package.
-const ANIMATION_SEQUENCE_UOP_NAME: &str = "AnimationSequence.uop";
-const UOP_FILE_FILTER: (&str, &[&str]) = ("UOP package", &["uop"]);
+pub(super) const ANIMATION_SEQUENCE_UOP_NAME: &str = "AnimationSequence.uop";
+pub(super) const UOP_FILE_FILTER: (&str, &[&str]) = ("UOP package", &["uop"]);
 
 /// "Replace frames": export the entry as PNGs plus `animationframe.kdl`, or encode such a folder back into a copy
 /// of the package (and of `AnimationSequence.uop` when the frames per direction change).
@@ -1435,13 +1423,18 @@ fn animationframe_package_group_id(path: &Path) -> Option<u8> {
 
 /// Creature placeholder `10000000 + body` of the selected server body, when `tileart.uop` is
 /// loaded.
-fn selected_body_definition(app: &UocfEditorApp) -> Option<MobileBodyDefinition> {
+pub(super) fn selected_body_definition(app: &UocfEditorApp) -> Option<MobileBodyDefinition> {
     // An entry picked in the list is stored under its frames body: no placeholder applies.
     if app.selected_animationframe_file_hash.is_some() {
         return None;
     }
+    body_definition(app, app.selected_anim_id)
+}
+
+/// Creature placeholder `10000000 + body` of a server body, when `tileart.uop` is loaded.
+pub(super) fn body_definition(app: &UocfEditorApp, body: u32) -> Option<MobileBodyDefinition> {
     let entries = app.ec_tileart_entries.as_ref()?;
-    let tile_id = MOBILE_DEFINITION_BASE.checked_add(app.selected_anim_id)?;
+    let tile_id = MOBILE_DEFINITION_BASE.checked_add(body)?;
     let index = entries.binary_search_by_key(&tile_id, |file| file.entry.tile_id).ok()?;
     MobileBodyDefinition::from_tileart_entry(&entries[index].entry)
 }
@@ -1512,13 +1505,13 @@ fn animation_source_selector(app: &mut UocfEditorApp, ui: &mut egui::Ui) {
 
 /// `AnimationSequence.uop` entry of the selected server body: its placeholder body type, else
 /// the body itself.
-fn selected_sequence_id(app: &UocfEditorApp) -> u32 {
+pub(super) fn selected_sequence_id(app: &UocfEditorApp) -> u32 {
     selected_body_definition(app).map_or(app.selected_anim_id, |definition| definition.sequence_id)
 }
 
 /// Body under which the frames of the selected server body are stored: for EC sources the
 /// placeholder appearance (body 0 is tried when it has no frames), else the selected id.
-fn selected_frames_body_id(app: &UocfEditorApp) -> u32 {
+pub(super) fn selected_frames_body_id(app: &UocfEditorApp) -> u32 {
     if !is_ec_source(app.selected_legacy_source) {
         return app.selected_anim_id;
     }

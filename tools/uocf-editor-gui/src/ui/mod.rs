@@ -11,6 +11,7 @@ pub mod animations;
 mod animation_frames;
 mod animation_hue;
 mod animation_list;
+mod animation_sequence_panel;
 pub mod animated_items;
 pub mod animdata;
 pub mod animdata_editor;

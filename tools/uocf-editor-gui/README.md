@@ -13,7 +13,7 @@ UO asset data during development and research.
 | CC Art | Classic Client art tiles (`art.mul` / `artidx.mul`). |
 | CC Tiledata | Classic Client `tiledata.mul` land and item tile metadata. |
 | Tile Metadata | Combined CC tiledata and EC tileart metadata (switchable source): the table on top and the record below, in groups of editable fields and flag checkboxes, with `Edit` to change them. Saves a copy of `tiledata.mul` or `tileart.uop`. A tileart record's fields include its appearance filters, texture blocks and effects (as KDL text), and it ends with its textures and their bounding boxes, which follow the image windows. |
-| Animations | Mobile animations from CC `anim*.mul`, CC or EC `AnimationFrame*.uop`; per action, Export frames (PNGs plus KDL) and Replace frames (into copies of the files). |
+| Animations | Mobile animations from CC `anim*.mul`, CC or EC `AnimationFrame*.uop`; per action, Export frames (PNGs plus KDL) and Replace frames (into copies of the files). The Sequence panel shows and edits the body's `AnimationSequence.uop` entry (see [Animation sequences](#animation-sequences)). |
 | Animated items | One tab with a switch: `AnimationDefinition.uop` (Enhanced Client, Kingdom Reborn) and `animdata.mul` (Classic), with the frames played in the chosen art source and hue. `Edit` changes an `animdata.mul` record and saves a copy. |
 | Gumps | CC or EC gump art (switchable source), and the Enhanced Client's own interface images: the DDS and TGA files of `Interface.uop` outside `gumpart`, by folder, with export and replace. |
 | Multis | Multi-tile structures from CC or EC sources. `Edit` on the `multi.mul` view changes, adds or deletes parts, adds a multi, and saves a copy of `multi.mul` and its index. |
@@ -86,6 +86,45 @@ build/animationlegacyframe/{body_id:06}/{action_id:02}.bin   (CC inside Animatio
 ```
 
 Because both `body_id` and `action_id` are encoded in the virtual path, both values are recovered by hash enumeration: `uocf::enhanced::animationframe::AnimationFrame::animationframe_hash(body_id, action_id)` is computed for all `body_id` in `0..2048` and `action_id` in `0..100` and matched against hashes present in each package. This is the same approach used for the Classic Client (`uocf::classic::animationframe_cc::AnimationFrameCc::animationframe_hash`). No external XML or dictionary file is required.
+
+### Animation sequences
+
+The Sequence panel below the Animations frames shows the shown body's `AnimationSequence.uop`
+entry. The entry comes from the selected source's folder: the Classic folder for MUL and CC UOP,
+the Enhanced or KR folder for the others. It is read in that folder's format (Enhanced layout, or
+Kingdom Reborn next to `UOKR.exe`). The panel has four tabs:
+
+- **Actions**: one row per action, with:
+  - frame count, and the frames per direction its frame file stores;
+  - fps, and cycle seconds (shown frames / fps; skipped frames take no time);
+  - alias, and the action it plays;
+  - skipped frames, frame effects and offsets (in tooltips).
+
+  Rows are highlighted when:
+  - the stored frames differ from the frame count (yellow);
+  - an alias points at another alias or at a missing action (orange): the client plays the lowest
+    plain action instead;
+  - a plain action has no frame file (red).
+
+  Clicking a row selects that action. The editor beside the table changes the fps, the frame count
+  (with a warning: the frame file's numbering depends on it), the alias and the skipped frames.
+- **Groups**: war 0, peace 1, mounted 2, flying 3, 4, 5 and seated 6, each with:
+  - stand, walk and run actions (editable) and their alternates;
+  - default action, parent chain and transitions;
+  - typed actions (collapsible).
+- **Rider / mount**: the shown body as a rider (group 2) beside a mount body (the brown horse 200
+  at first). The mount uses group 2 when its sequence has one, else group 1. For each movement it
+  shows actions, frames, fps and cycle, and flags cycles that differ.
+- **Client scan**: the same whole-client check as `uocf-cli sequence scan`, run in the background
+  on the source's folder. It writes a markdown report and a TSV beside it (outside the client
+  folder) and shows the summary.
+
+For UOP sources with the entry loaded, the player plays at the requested action's sequence timing:
+the resolved action's fps, passing over skipped frames. MUL sources keep the fixed preview rate.
+
+Edits are kept per entry until reverted. `Save sequence...` writes a copy of the source package
+with the shown entry, in the source's format, through the same code as `uocf-cli sequence set`.
+The source package is refused as the target.
 
 ### Reference XML files
 

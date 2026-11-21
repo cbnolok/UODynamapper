@@ -5,7 +5,7 @@ use crate::app::UocfEditorApp;
 use crate::ui::animation_hue::{apply_frame_hue, classic_hued_colour, FrameHue};
 use crate::ui::image_export::{export_menu, save_image, save_status, ExportClicked, ExportImage, ExportMenu};
 use eframe::egui;
-use std::collections::HashMap;
+use std::collections::{BTreeSet, HashMap};
 use std::hash::{Hash, Hasher};
 use std::ops::RangeInclusive;
 use std::sync::Arc;
@@ -29,7 +29,7 @@ const PLAYER_HEIGHT_SHARE: f32 = 0.45;
 const ROW_LABEL_WIDTH: f32 = 96.0;
 /// Frames are shown numbered from 1, in the player and the grid.
 const DISPLAYED_FIRST_FRAME: usize = 1;
-/// Seconds a frame shows at speed 1, as the player always did.
+/// Seconds a frame shows at speed 1 without a sequence timing, as the player always did.
 const BASE_FRAME_SECONDS: f64 = 0.1;
 const CELL_ROUNDING: f32 = 2.0;
 const SELECTED_STROKE_WIDTH: f32 = 2.0;
@@ -407,19 +407,56 @@ fn paint_bottom_centred(ui: &egui::Ui, texture: &egui::TextureHandle, slot: egui
     image.paint_at(ui, rect);
 }
 
-/// Advances the player while it plays, over `frame_count` frames.
-fn advance_playback(app: &mut UocfEditorApp, ctx: &egui::Context, frame_count: usize) {
+/// How the sequence plays an action: the client shows a frame for `1 / fps` seconds and passes over the skipped
+/// frames (0-based within a direction) without spending time on them.
+pub(super) struct PlaybackTiming {
+    pub fps: f32,
+    pub skipped: BTreeSet<u32>,
+}
+
+impl PlaybackTiming {
+    fn is_skipped(&self, frame: usize) -> bool {
+        u32::try_from(frame).is_ok_and(|frame| self.skipped.contains(&frame))
+    }
+}
+
+/// The frame after `frame` that is not skipped, wrapping when looping; `None` past the last one.
+fn next_shown_frame(frame: usize, frame_count: usize, looping: bool, timing: Option<&PlaybackTiming>) -> Option<usize> {
+    let skipped = |frame: usize| timing.is_some_and(|timing| timing.is_skipped(frame));
+    let mut next = frame;
+    for _ in 0..frame_count {
+        next += 1;
+        if next >= frame_count {
+            if !looping {
+                return None;
+            }
+            next = 0;
+        }
+        if !skipped(next) {
+            return Some(next);
+        }
+    }
+    None
+}
+
+/// Advances the player while it plays, over `frame_count` frames, at the sequence's `timing` when given (scaled by
+/// the speed slider), else one frame per `BASE_FRAME_SECONDS`.
+fn advance_playback(app: &mut UocfEditorApp, ctx: &egui::Context, frame_count: usize, timing: Option<&PlaybackTiming>) {
     if !app.is_playing || frame_count == 0 {
         return;
     }
+    let frame_seconds = match timing {
+        Some(timing) if timing.fps > 0.0 => 1.0 / f64::from(timing.fps),
+        // 0 fps: the client never advances.
+        Some(_) => return,
+        None => BASE_FRAME_SECONDS,
+    };
     let time = ctx.input(|input| input.time);
-    let frame_delay = BASE_FRAME_SECONDS / f64::from(app.playback_speed);
+    let frame_delay = frame_seconds / f64::from(app.playback_speed);
     if time - app.last_frame_time > frame_delay {
-        app.current_frame_idx += 1;
-        if app.current_frame_idx >= frame_count {
-            if app.loop_animation {
-                app.current_frame_idx = 0;
-            } else {
+        match next_shown_frame(app.current_frame_idx, frame_count, app.loop_animation, timing) {
+            Some(next) => app.current_frame_idx = next,
+            None => {
                 app.current_frame_idx = frame_count - 1;
                 app.is_playing = false;
             }
@@ -449,8 +486,8 @@ pub(super) fn action_files(frames: &ActionFrames, body: u32, action: u16, hue: O
     files
 }
 
-/// The selected direction's frames, one at a time, at the player zoom; `name` labels the preview, `ids` (body,
-/// action) name exported files. Returns the bulk entry of `menu` clicked.
+/// The selected direction's frames, one at a time, at the player zoom and at the sequence's `timing` when given;
+/// `name` labels the preview, `ids` (body, action) name exported files. Returns the bulk entry of `menu` clicked.
 pub(super) fn show_player(
     app: &mut UocfEditorApp,
     ctx: &egui::Context,
@@ -460,13 +497,14 @@ pub(super) fn show_player(
     name: &str,
     ids: (u32, u16),
     menu: &ExportMenu,
+    timing: Option<&PlaybackTiming>,
 ) -> Option<usize> {
     let Some((row_index, mirrored)) = row_of_direction(frames.is_ec, app.selected_direction).filter(|(row, _)| *row < frames.rows.len()) else {
         ui.label(format!("Direction {} is not one of this source's directions.", app.selected_direction));
         return None;
     };
     let row = &frames.rows[row_index];
-    advance_playback(app, ctx, row.frames.len());
+    advance_playback(app, ctx, row.frames.len(), timing);
     let frame_count = row.frames.len();
     if frame_count == 0 {
         ui.label(format!("Direction {}: {}", direction_label(frames.is_ec, row.direction), row.error.as_deref().unwrap_or("no frames")));
@@ -482,6 +520,17 @@ pub(super) fn show_player(
             direction_label(frames.is_ec, row.direction),
             frame_index + DISPLAYED_FIRST_FRAME
         ));
+        match timing {
+            Some(timing) => {
+                ui.label(format!("· {} fps (sequence)", timing.fps));
+                if timing.is_skipped(frame_index) {
+                    ui.colored_label(egui::Color32::YELLOW, "· skipped: playback passes over it");
+                }
+            }
+            None => {
+                ui.weak(format!("· {} fps (fixed preview rate)", 1.0 / BASE_FRAME_SECONDS));
+            }
+        }
         if let Some(image) = image_index.map(|index| &frames.images[index]) {
             ui.label(format!("· {}x{}, center {},{}", image.width, image.height, image.center_x, image.center_y));
             if let Some(number) = image.number {
@@ -649,5 +698,16 @@ mod tests {
         // The content point under the pointer was (120, 60); at twice the size it is at (240, 120).
         assert_eq!(zoomed + pointer, egui::vec2(240.0, 120.0));
         assert_eq!(anchored_offset(pointer, egui::Vec2::ZERO, 0.5), egui::Vec2::ZERO, "the offset never goes negative");
+    }
+
+    #[test]
+    fn playback_passes_over_skipped_frames() {
+        let timing = PlaybackTiming { fps: 12.0, skipped: BTreeSet::from([0, 3]) };
+        assert_eq!(next_shown_frame(2, 5, true, Some(&timing)), Some(4));
+        assert_eq!(next_shown_frame(4, 5, true, Some(&timing)), Some(1), "frame 0 is skipped on the wrap");
+        assert_eq!(next_shown_frame(4, 5, false, Some(&timing)), None);
+        assert_eq!(next_shown_frame(4, 5, true, None), Some(0));
+        let all = PlaybackTiming { fps: 12.0, skipped: (0..3).collect() };
+        assert_eq!(next_shown_frame(0, 3, true, Some(&all)), None, "nothing left to show");
     }
 }
