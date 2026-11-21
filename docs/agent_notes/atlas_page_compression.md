@@ -465,6 +465,49 @@ Same 20 Classic pages, Radeon 880M (RADV), against the parallel AVX2 CPU RDO on 
 
   With RDO off by default, it pays only for someone who opts in at λ 1 or more.
 
+### The BC7 packages without RDO, and their strides
+
+The test packages repacked with the code above (`pack-mobile-anims` / `pack-ec-mobile-anims --bc7 --zstd=9`, RDO
+off, 2026-11-21):
+
+| Package | Pack before (`--bc7-rdo`, λ 0.05, look-back 64) | Pack now | Size before | Size now |
+|---|---|---|---|---|
+| Classic | 983 s | 80 s (page encode 28 s) | 868.9 MB | 867.4 MB |
+| Enhanced | 2048 s | 170 s (page encode 68 s) | 1932.4 MB | 1939.4 MB |
+
+The stage log's BC7 input, encode, RDO and flatten times are now thread time summed over the pages encoded at once (398
+s of encode inside Classic's 28 s), and the log says so.
+
+`udd-cli tool strides measure changed` on the two new packages measured every clip, since a repack keeps no strides:
+
+| Package | Clips | Measured | Sharing another's frames | With a stride | Without | Time |
+|---|---|---|---|---|---|---|
+| Classic | 1914 | 1706 | 208 | 880 | 1034 | 128 s |
+| Enhanced | 4125 | 3498 | 627 | 1617 | 2508 | 261 s |
+
+Hashing took 1–2 s, and the whole run took 398 s on the Radeon 880M.
+
+Against the strides of the RGBA8888 packages (`tool strides export` of both, joined on body and action;
+[`compare_strides.py`](atlas_page_compression/compare_strides.py)):
+
+| Package | Strides in both | Median | p90 | p99 | > 10 % | > 25 % | Largest | Only RGBA / only BC7 |
+|---|---|---|---|---|---|---|---|---|
+| Classic | 877 | 0.81 % (0.007 tiles) | 3.8 % | 11.4 % | 11 | 5 | 47 % | 5 / 3 |
+| Enhanced | 1613 | 1.24 % (0.014 tiles) | 4.7 % | 14.5 % | 44 | 6 | 65 % | 14 / 4 |
+
+- **The measurement itself barely moves.** Per facing, over the clips with a stride in both, the median difference is
+  0.76 % (Classic) and 1.27 % (Enhanced), and p90 is 3.5 % and 5.7 %. The mean signed difference is −0.001 and −0.005
+  tiles, so BC7 does not bias the strides.
+- **The RGBA strides are rounded.** Those packages store their strides to 0.01 tiles; the new ones keep the facings'
+  median exactly. That rounding accounts for part of the small differences.
+- **The worst cases are clips whose facings disagree.** The median of three facings that differ by two or three times
+  flips to another facing on a small change. For example, Classic body 875 action 0 has south 0.54, south-west 1.11
+  and west 0.15. BC7 moved south to 0.29, and the stride went from 0.54 to 0.29. Enhanced bodies 33, 35 and 36
+  action 22 went from 0.59 to 0.35 when south-west dropped from 0.59 to 0.25. The run-time clamp (half to twice the
+  clip's own cycle) bounds what such a clip does on screen.
+- **A few clips cross the acceptance tests.** About 1 % of the strides exist in only one package: a facing measured or
+  not, or a stride near the 0.25-tile minimum.
+
 ## Reproducing
 
 [`atlas_page_compression/`](atlas_page_compression/) is the benchmark, a standalone crate that reads its pages from a

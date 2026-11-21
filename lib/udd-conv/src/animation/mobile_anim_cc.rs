@@ -234,7 +234,7 @@ impl MobileAnimCcStageTimings {
         info!(
             "CC mobile animation stage timing: load sources {:.3}s, plan {:.3}s, trim {:.3}s, upscale {:.3}s, body records {:.3}s, \
              bucket selection {:.3}s, frame decode {:.3}s, page build/blit {:.3}s, page encode {:.3}s \
-             (BC7 input {:.3}s, encode {:.3}s, RDO {:.3}s, flatten {:.3}s), page registration {:.3}s, manifests {:.3}s, \
+             (thread time over the pages encoded at once: BC7 input {:.3}s, encode {:.3}s, RDO {:.3}s, flatten {:.3}s), page registration {:.3}s, manifests {:.3}s, \
              package compression and write {:.3}s, total {:.3}s",
             seconds(self.load_sources),
             seconds(self.plan),
@@ -1831,7 +1831,7 @@ fn pack_frames_into_package(
 
     pb.finish_with_message(format!("Mobile animation atlas pages created ({page_index} pages)"));
     info!(
-        "CC mobile animation decoded atlas timing: pages {}, atlas build/blit {:.3}s, BC7 input {:.3}s, BC7 encode {:.3}s, BC7 RDO {:.3}s, BC7 flatten {:.3}s, page registration {:.3}s",
+        "CC mobile animation decoded atlas timing: pages {}, atlas build/blit {:.3}s, BC7 thread time: input {:.3}s, encode {:.3}s, RDO {:.3}s, flatten {:.3}s, page registration {:.3}s",
         page_index,
         atlas_build_time.as_secs_f64(),
         encode_timings.bc7.input.as_secs_f64(),
@@ -1979,7 +1979,7 @@ fn pack_planned_frames_into_package(
 
     pb.finish_with_message(format!("Mobile animation atlas pages created ({page_index} pages)"));
     info!(
-        "CC mobile animation planned atlas timing: pages {}, atlas build/blit {:.3}s, BC7 input {:.3}s, BC7 encode {:.3}s, BC7 RDO {:.3}s, BC7 flatten {:.3}s, page registration {:.3}s",
+        "CC mobile animation planned atlas timing: pages {}, atlas build/blit {:.3}s, BC7 thread time: input {:.3}s, encode {:.3}s, RDO {:.3}s, flatten {:.3}s, page registration {:.3}s",
         page_index,
         atlas_build_time.as_secs_f64(),
         encode_timings.bc7.input.as_secs_f64(),
