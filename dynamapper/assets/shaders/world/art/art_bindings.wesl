@@ -45,6 +45,26 @@ struct SpriteInstance {
     color_rgba: vec4<f32>,
 }
 
+// A mobile frame's crossfade (`FrameCrossfade`, render/mobiles/in_between.rs), in the 0..1 coordinates of an atlas
+// page. While the frames blend, the card holds both and the sprite's uv_min..uv_max span it in the first frame's
+// coordinates; the next frame lies next_uv_offset from them, on the same page. Each frame shows inside its own
+// rectangle (art/mobile_frames.wesl). A weight of 0 draws the sprite's frame alone.
+struct FrameCrossfade {
+    frame_uv_min: vec2<f32>,
+    frame_uv_max: vec2<f32>,
+    next_uv_min: vec2<f32>,
+    next_uv_max: vec2<f32>,
+    next_uv_offset: vec2<f32>,
+    next_weight: f32,
+    _pad: f32,
+}
+
+// A mobile frame's instance (`MobileSpriteInstance`, render/mobiles/draw.rs): a sprite and its crossfade.
+struct MobileSpriteInstance {
+    sprite: SpriteInstance,
+    crossfade: FrameCrossfade,
+}
+
 struct SpriteParams {
     render_mode: u32,
     alpha_cutoff: f32,
@@ -57,7 +77,11 @@ struct SpriteParams {
 
 @group(3) @binding(100) var art_atlas_sampler: sampler;
 @group(3) @binding(101) var art_atlas: texture_2d_array<f32>;
+@if(!MOBILE_FRAMES)
 @group(3) @binding(102) var<storage, read> instances: array<SpriteInstance>;
+// The mobiles' pipelines read their instances with the crossfades (`MOBILE_FRAMES_SHADER_DEF`, statics_draw.rs).
+@if(MOBILE_FRAMES)
+@group(3) @binding(102) var<storage, read> mobile_instances: array<MobileSpriteInstance>;
 @group(3) @binding(103) var<uniform> sprite_params: SpriteParams;
 // The Enhanced pages' atlas, beside the Classic pages' `art_atlas` (art/atlas_pages.wesl).
 @group(3) @binding(104) var art_atlas_enhanced: texture_2d_array<f32>;

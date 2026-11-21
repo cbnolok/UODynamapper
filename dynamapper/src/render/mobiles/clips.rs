@@ -43,14 +43,11 @@ pub struct DecodedClip {
     pub frame_secs: f32,
 }
 
-/// A frame of a resident clip: where it lies in the atlas, and its pixels as decoded, kept for the in-betweens
-/// (in_between.rs).
-#[derive(Clone, Debug)]
+/// A frame of a resident clip.
+#[derive(Clone, Copy, Debug)]
 pub struct ClipFrame {
     pub rect: AtlasRect,
     pub placement: FramePlacement,
-    /// Straight-alpha RGBA8, `placement.width` by `placement.height`, rows top down.
-    pub rgba: Arc<[u8]>,
 }
 
 /// The point of a clip shown at a time: the frame `index`, the frame after it, `next` (the first after the last, as
@@ -152,7 +149,7 @@ impl MobileClips {
                     evicted.extend(page_evicted);
                     ClipState::Resident(Clip {
                         frames: rects.into_iter().zip(&decoded.frames)
-                            .map(|(rect, frame)| ClipFrame { rect, placement: frame.placement, rgba: frame.rgba.clone() })
+                            .map(|(rect, frame)| ClipFrame { rect, placement: frame.placement })
                             .collect(),
                         mirrored: decoded.mirrored,
                         frame_secs: decoded.frame_secs,
@@ -243,7 +240,6 @@ mod tests {
         ClipFrame {
             rect: AtlasRect { layer: 0, x: 0, y: 0, width: 1, height: 1 },
             placement: FramePlacement { width: 1.0, height: 1.0, anchor_x: 0.0, anchor_y: 0.0 },
-            rgba: Arc::from([0u8; 4].as_slice()),
         }
     }
 

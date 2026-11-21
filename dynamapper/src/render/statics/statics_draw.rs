@@ -28,6 +28,7 @@ use bevy::render::render_resource::{
     PrimitiveTopology, RenderPipelineDescriptor, ShaderType, SpecializedMeshPipelineError,
 };
 use bevy::render::storage::ShaderBuffer;
+use bevy::shader::ShaderDefVal;
 use std::collections::HashMap;
 use udd_assets::tex_art_cc::PagePixelFormat;
 
@@ -72,18 +73,24 @@ fn shadow_pass_mode(uniform_state: &UniformState) -> u32 {
 pub type ArtSpriteMaterial = ExtendedMaterial<StandardMaterial, ArtSpriteMaterialExtension>;
 pub type ArtGroundMaterial = ExtendedMaterial<StandardMaterial, ArtGroundMaterialExtension>;
 
-/// The pipeline variant of an art sprite material: the client shadow pass writes only the shadow buffer.
+/// The pipeline variant of an art sprite material: the client shadow pass writes only the shadow buffer, and the
+/// mobiles' materials read their instances' crossfades (`MOBILE_FRAMES_SHADER_DEF`).
 #[repr(C)]
 #[derive(Copy, Clone, PartialEq, Eq, Hash)]
 pub struct ArtSpriteMaterialKey {
     client_shadow: bool,
+    mobile_frames: bool,
 }
 
 impl From<&ArtSpriteMaterialExtension> for ArtSpriteMaterialKey {
     fn from(material: &ArtSpriteMaterialExtension) -> Self {
-        Self { client_shadow: material.params.pass_mode == PASS_MODE_CLIENT_SHADOW }
+        Self { client_shadow: material.params.pass_mode == PASS_MODE_CLIENT_SHADOW, mobile_frames: material.mobile_frames }
     }
 }
+
+/// The shader def of the mobiles' art sprite pipelines: their instances are `MobileSpriteInstance`s, each a sprite and
+/// the crossfade of its frames (art/art_bindings.wesl, art/mobile_frames.wesl). The statics' pipelines go without it.
+const MOBILE_FRAMES_SHADER_DEF: &str = "MOBILE_FRAMES";
 
 #[derive(Asset, AsBindGroup, TypePath, Clone)]
 #[bind_group_data(ArtSpriteMaterialKey)]
@@ -118,6 +125,9 @@ pub struct ArtSpriteMaterialExtension {
     #[texture(114, visibility(fragment))]
     #[sampler(115, visibility(fragment))]
     pub client_grunge_texture: Handle<Image>,
+    /// Whether `instances` are the mobiles' (`MobileSpriteInstance`, render/mobiles/draw.rs), whose frames crossfade:
+    /// the pipeline compiles the shader with `MOBILE_FRAMES_SHADER_DEF`. Not a binding.
+    pub mobile_frames: bool,
 }
 
 #[derive(Asset, AsBindGroup, TypePath, Clone)]
@@ -254,6 +264,13 @@ impl MaterialExtension for ArtSpriteMaterialExtension {
         _layout: &MeshVertexBufferLayoutRef,
         key: MaterialExtensionKey<Self>,
     ) -> Result<(), SpecializedMeshPipelineError> {
+        if key.bind_group_data.mobile_frames {
+            let def = ShaderDefVal::Bool(MOBILE_FRAMES_SHADER_DEF.into(), true);
+            descriptor.vertex.shader_defs.push(def.clone());
+            if let Some(fragment) = descriptor.fragment.as_mut() {
+                fragment.shader_defs.push(def);
+            }
+        }
         if !key.bind_group_data.client_shadow {
             return Ok(());
         }
@@ -987,6 +1004,7 @@ pub fn sys_setup_art_page_atlas(
             item_surface_atlas: item_surface_images.atlas.clone(),
             item_surface_lookup: item_surface_images.lookup.clone(),
             client_grunge_texture: client_grunge_texture.clone(),
+            mobile_frames: false,
         },
     });
 
@@ -1018,6 +1036,7 @@ pub fn sys_setup_art_page_atlas(
             item_surface_atlas: item_surface_images.atlas.clone(),
             item_surface_lookup: item_surface_images.lookup.clone(),
             client_grunge_texture: client_grunge_texture.clone(),
+            mobile_frames: false,
         },
     });
 
@@ -1044,6 +1063,7 @@ pub fn sys_setup_art_page_atlas(
             item_surface_atlas: item_surface_images.atlas.clone(),
             item_surface_lookup: item_surface_images.lookup.clone(),
             client_grunge_texture: client_grunge_texture.clone(),
+            mobile_frames: false,
         },
     });
 

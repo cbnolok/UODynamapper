@@ -26,7 +26,8 @@ import package::shaders::world::ec_liquid::{ec_liquid_texture_uv, ec_liquid_worl
 
 import package::shaders::world::art::art_bindings::{
     SpriteInstance, SpriteParams, SceneUniform, LandEffectsUniform, GlobalLightingUniforms,
-    art_atlas_sampler, art_atlas, art_atlas_enhanced, instances, sprite_params, scene, effects, global_light,
+    art_atlas_sampler, art_atlas, art_atlas_enhanced, instances, mobile_instances, sprite_params, scene, effects,
+    global_light,
     hue_sampler, hue_texture, visual_grunge_texture, client_grunge_texture, client_grunge_sampler,
     item_surface_atlas, item_surface_lookup, item_surface_sampler,
     INV_SQRT_2, BILLBOARD_RIGHT_XZ, FLAT_QUAD_FORWARD_XZ, HEIGHT_SCALE, DEPTH_CLASS_REGULAR, DEPTH_CLASS_BACKGROUND,
@@ -35,6 +36,8 @@ import package::shaders::world::art::art_bindings::{
 };
 import package::shaders::world::art::client_shadow::{client_shadow_casts, client_shadow_world_offset,
     client_shadow_logical_offset, CLIENT_SHADOW_TIE_LEVEL_OFFSET};
+import package::shaders::world::art::mobile_frames::{mobile_frames_blend, mobile_frames_tap,
+    mobile_frames_client_filtered};
 import package::shaders::world::art::client_grunge::{client_grunges, client_grunge_uv, apply_client_grunge};
 import package::shaders::world::art::hue::{apply_static_hue, apply_ec_sprite_hue, STATIC_HUE_FLAG_APPLY, STATIC_HUE_FLAG_EC_SPRITE};
 import package::shaders::world::art::shading::{apply_art_surface_shading, art_local_light_at_corner, STATIC_FLAG_FLAT_ART,
@@ -110,7 +113,10 @@ fn vertex(vertex: Vertex) -> ArtVertexOutput {
     // The batch's first instance rides in its tag, the quad's index within the batch in uv_b.x
     // (`ArtBatchMeshes`, statics_draw.rs).
     let instance_index = get_tag(vertex.instance_index) + u32(vertex.uv_b.x + 0.5);
+    @if(!MOBILE_FRAMES)
     let inst = instances[instance_index];
+    @if(MOBILE_FRAMES)
+    let inst = mobile_instances[instance_index].sprite;
 
     let corner = vec2<f32>(vertex.position.x, vertex.position.z);
     var world_pos: vec3<f32>;
@@ -223,14 +229,29 @@ fn vertex(vertex: Vertex) -> ArtVertexOutput {
     return out;
 }
 
-// One tap of the sprite's page, from its atlas (art/atlas_pages.wesl).
-fn sprite_page_tap(page: ArtPage, uv: vec2<f32>) -> vec4<f32> {
+// One tap of the sprite's page, from its atlas (art/atlas_pages.wesl). A mobile's two frames, blended while they
+// crossfade (art/mobile_frames.wesl): the mobiles bind their one frame atlas as both atlases.
+fn sprite_page_tap(page: ArtPage, uv: vec2<f32>, instance_index: u32) -> vec4<f32> {
+    @if(MOBILE_FRAMES) {
+        let crossfade = mobile_instances[instance_index].crossfade;
+        if (mobile_frames_blend(crossfade)) {
+            return mobile_frames_tap(art_atlas, art_atlas_sampler, page.layer, uv, crossfade);
+        }
+    }
     return art_page_sample(art_atlas, art_atlas_enhanced, art_atlas_sampler, page, uv);
 }
 
-// The client's filter on the sprite's rectangle of its page (art/atlas_pages.wesl).
+// The client's filter on the sprite's rectangle of its page (art/atlas_pages.wesl). A mobile's two frames on its
+// card, as sprite_page_tap.
 fn sprite_page_client_filtered(page: ArtPage, uv: vec2<f32>, uv_min: vec2<f32>, uv_max: vec2<f32>, wrap: bool,
-    uv_dx: vec2<f32>, uv_dy: vec2<f32>, client_view_scale: f32) -> vec4<f32> {
+    uv_dx: vec2<f32>, uv_dy: vec2<f32>, client_view_scale: f32, instance_index: u32) -> vec4<f32> {
+    @if(MOBILE_FRAMES) {
+        let crossfade = mobile_instances[instance_index].crossfade;
+        if (mobile_frames_blend(crossfade)) {
+            return mobile_frames_client_filtered(art_atlas, page.layer, uv, uv_min, uv_max, crossfade, uv_dx, uv_dy,
+                client_view_scale);
+        }
+    }
     return art_page_client_filtered(art_atlas, art_atlas_enhanced, page, uv, uv_min, uv_max, wrap, uv_dx, uv_dy,
         client_view_scale);
 }
@@ -249,7 +270,10 @@ fn shade_fragment(in: ArtVertexOutput, sample_index: u32) -> ArtFragmentOutput {
     }
 
     let page = art_page(in.uv_b);
+    @if(!MOBILE_FRAMES)
     let inst = instances[in.instance_index];
+    @if(MOBILE_FRAMES)
+    let inst = mobile_instances[in.instance_index].sprite;
     let cap_height_z = light_scene_height(inst.is_wet_flags);
     if (cap_height_z > 0 && perspective_cap_may_move(inst.is_wet_flags) && inst.flat_quad == 0u
         && sprite_params.pass_mode != PASS_MODE_SHADOW && sprite_params.pass_mode != PASS_MODE_CLIENT_SHADOW) {
@@ -276,7 +300,7 @@ fn shade_fragment(in: ArtVertexOutput, sample_index: u32) -> ArtFragmentOutput {
         // S = S (1 - a), and the client night composite darkens by clamp(S + 1 - s). The client filters the shadow
         // bilinear whatever the caster's filter (client_shadow.wesl), so its leaning edges stay smooth.
         let shadow_alpha = sprite_page_client_filtered(page, uv, inst.uv_min, inst.uv_max, false,
-            sprite_uv_dx, sprite_uv_dy, scene.client_view_scale).a;
+            sprite_uv_dx, sprite_uv_dy, scene.client_view_scale, in.instance_index).a;
         if (shadow_alpha <= 0.0) {
             discard;
         }
@@ -331,18 +355,18 @@ fn shade_fragment(in: ArtVertexOutput, sample_index: u32) -> ArtFragmentOutput {
         let alpha_d2 = clamp(uv + vec2<f32>(alpha_blur_radius.x, -alpha_blur_radius.y), inst.uv_min, inst.uv_max);
         let alpha_d3 = clamp(uv + vec2<f32>(-alpha_blur_radius.x, alpha_blur_radius.y), inst.uv_min, inst.uv_max);
         let blurred_alpha =
-            sprite_page_tap(page, alpha_center).a * 0.28 +
+            sprite_page_tap(page, alpha_center, in.instance_index).a * 0.28 +
             (
-                sprite_page_tap(page, alpha_x0).a +
-                sprite_page_tap(page, alpha_x1).a +
-                sprite_page_tap(page, alpha_y0).a +
-                sprite_page_tap(page, alpha_y1).a
+                sprite_page_tap(page, alpha_x0, in.instance_index).a +
+                sprite_page_tap(page, alpha_x1, in.instance_index).a +
+                sprite_page_tap(page, alpha_y0, in.instance_index).a +
+                sprite_page_tap(page, alpha_y1, in.instance_index).a
             ) * 0.11 +
             (
-                sprite_page_tap(page, alpha_d0).a +
-                sprite_page_tap(page, alpha_d1).a +
-                sprite_page_tap(page, alpha_d2).a +
-                sprite_page_tap(page, alpha_d3).a
+                sprite_page_tap(page, alpha_d0, in.instance_index).a +
+                sprite_page_tap(page, alpha_d1, in.instance_index).a +
+                sprite_page_tap(page, alpha_d2, in.instance_index).a +
+                sprite_page_tap(page, alpha_d3, in.instance_index).a
             ) * 0.08;
         let silhouette = smoothstep(0.03, 0.44, blurred_alpha);
         var family_breakup = 1.0;
@@ -367,7 +391,7 @@ fn shade_fragment(in: ArtVertexOutput, sample_index: u32) -> ArtFragmentOutput {
             discard;
         }
         if (inst.flat_quad < 2u && sprite_page_tap(page,
-            clamp(uv, inst.uv_min, inst.uv_max)).a < LIGHT_SCENE_MIN_ALPHA) {
+            clamp(uv, inst.uv_min, inst.uv_max), in.instance_index).a < LIGHT_SCENE_MIN_ALPHA) {
             discard;
         }
         let lies_flat = inst.flat_quad != 0u || (inst.is_wet_flags & STATIC_FLAG_FLAT_ART) != 0u;
@@ -383,7 +407,8 @@ fn shade_fragment(in: ArtVertexOutput, sample_index: u32) -> ArtFragmentOutput {
             let v = light_scene_cap_probe_v((uv.y - inst.uv_min.y) / (inst.uv_max.y - inst.uv_min.y),
                 f32(height) * HEIGHT_SCALE, inst.local_max.y - inst.local_min.y);
             if (v <= 1.0 && sprite_page_tap(page,
-                vec2<f32>(clamp(uv.x, inst.uv_min.x, inst.uv_max.x), mix(inst.uv_min.y, inst.uv_max.y, v))).a >= LIGHT_SCENE_CAP_MIN_ALPHA) {
+                vec2<f32>(clamp(uv.x, inst.uv_min.x, inst.uv_max.x), mix(inst.uv_min.y, inst.uv_max.y, v)),
+                in.instance_index).a >= LIGHT_SCENE_CAP_MIN_ALPHA) {
                 texel = light_scene_cap_texel(texel, z + height);
             }
         }
@@ -427,9 +452,9 @@ fn shade_fragment(in: ArtVertexOutput, sample_index: u32) -> ArtFragmentOutput {
     } else {
         if (effects.texture_filter == TEXTURE_FILTER_CLIENT_BILINEAR) {
             color = sprite_page_client_filtered(page, uv, inst.uv_min, inst.uv_max,
-                surface_repeats, sprite_uv_dx, sprite_uv_dy, scene.client_view_scale);
+                surface_repeats, sprite_uv_dx, sprite_uv_dy, scene.client_view_scale, in.instance_index);
         } else {
-            color = sprite_page_tap(page, sample_uv);
+            color = sprite_page_tap(page, sample_uv, in.instance_index);
         }
         // Item surfaces (flat_quad 2 and 3) and their boundary coverage below come only from the Enhanced art
         // package, so they follow the art source, never the preset: every preset draws the authored coverage masks

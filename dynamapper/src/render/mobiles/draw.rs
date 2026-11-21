@@ -1,12 +1,13 @@
 //! The mobiles' sprites: each frame drawn an instance of the statics' art sprite shader, from the mobiles' own frame
 //! atlas and instance buffer. Three material instances copy the statics' opaque, transparent and projected-shadow
-//! ones, so a mobile takes the same lighting, hues and shadows as the art around it.
+//! ones, so a mobile takes the same lighting, hues and shadows as the art around it; theirs compile the shader with
+//! `MOBILE_FRAMES`, which reads each instance's crossfade beside it (in_between.rs).
 
 use bevy::camera::visibility::NoFrustumCulling;
 use bevy::mesh::MeshTag;
 use bevy::prelude::*;
 use bevy::render::storage::ShaderBuffer;
-use bytemuck::Zeroable;
+use bytemuck::{Pod, Zeroable};
 use crate::render::statics::static_batches::{SpriteInstance, CLIENT_SHADOW_FLAG_CASTS, STATIC_HUE_FLAG_EC_SPRITE};
 use crate::render::lighting::static_lights::RenderStaticLightInstances;
 use crate::render::scene::SceneStateData;
@@ -18,7 +19,7 @@ use crate::render::statics::statics_draw::{build_art_batch_mesh, ArtSpriteMateri
 use crate::world::mobile_motion::MobileMotion;
 use super::clips::{AnimSource, ClipKey, MobileClips};
 use super::frame_atlas::MobileFrameAtlas;
-use super::in_between::MobileInBetweens;
+use super::in_between::{layer_frames, FrameCrossfade, LayerFrames};
 use super::placement::mobile_card_bounds;
 use super::{MobileClipChoice, MountedCycle};
 
@@ -33,6 +34,15 @@ const RIDER_TIE_LEVEL: u32 = 8;
 /// The pixels of the frames per Classic screen pixel: the packages hold them at the client's size.
 const MOBILE_PIXEL_RATIO: f32 = 1.0;
 const OPAQUE_COLOR: [f32; 4] = [1.0, 1.0, 1.0, 1.0];
+
+/// A mobile frame's instance, as the art sprite shader reads it with `MOBILE_FRAMES` (art/art_bindings.wesl): the
+/// statics' sprite instance, then the crossfade of its frames.
+#[repr(C)]
+#[derive(Clone, Copy, Debug, Pod, Zeroable)]
+pub struct MobileSpriteInstance {
+    pub sprite: SpriteInstance,
+    pub crossfade: FrameCrossfade,
+}
 
 /// What a mobile looks like: its body, and the body of its mount, if it rides one, and the actions they show.
 #[derive(Component, Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -75,12 +85,13 @@ pub fn sys_setup_mobile_draw(
     }
     let Some(art_assets) = art_assets else { return };
     let atlas = MobileFrameAtlas::<ClipKey>::new(&mut images);
-    let instances = storage_buffers.add(ShaderBuffer::from(vec![SpriteInstance::zeroed(); MAX_MOBILE_INSTANCES as usize]));
+    let instances = storage_buffers.add(ShaderBuffer::from(vec![MobileSpriteInstance::zeroed(); MAX_MOBILE_INSTANCES as usize]));
     let mut copy = |handle: &Handle<ArtSpriteMaterial>| {
         let mut material = materials.get(handle).expect("the statics' sprite materials exist").clone();
         material.extension.atlas = atlas.image().clone();
         material.extension.atlas_enhanced = atlas.image().clone();
         material.extension.instances = instances.clone();
+        material.extension.mobile_frames = true;
         materials.add(material)
     };
     let assets = MobileDrawAssets {
@@ -117,6 +128,7 @@ pub fn sys_sync_mobile_materials(
         synced.extension.atlas = current.extension.atlas.clone();
         synced.extension.atlas_enhanced = current.extension.atlas_enhanced.clone();
         synced.extension.instances = current.extension.instances.clone();
+        synced.extension.mobile_frames = current.extension.mobile_frames;
         if let Some(mut target) = materials.get_mut(target) {
             *target = synced;
         }
@@ -160,7 +172,6 @@ pub fn sys_draw_mobiles(
     draw_assets: Option<ResMut<MobileDrawAssets>>,
     atlas: Option<ResMut<MobileFrameAtlas<ClipKey>>>,
     mut clips: ResMut<MobileClips>,
-    mut in_betweens: ResMut<MobileInBetweens>,
     packages: Res<super::MobileAnimPackages>,
     mut storage_buffers: ResMut<Assets<ShaderBuffer>>,
     mut meshes: ResMut<Assets<Mesh>>,
@@ -212,15 +223,11 @@ pub fn sys_draw_mobiles(
                 Some(cycle_secs) => clip.frame_in_cycle(motion.clip_secs(), cycle_secs),
                 None => clip.frame_at(motion.clip_secs()),
             };
-            let Some(pick) = pick else { continue };
-            let Some(frame) = clip.frames.get(pick.index) else { continue };
-            atlas.touch(frame.rect.layer, now);
+            let Some(frames) = pick.and_then(|pick| layer_frames(in_between_mode, clip, pick)) else { continue };
+            atlas.touch(frames.layer, now);
             // Both frames of an in-between come from the clip, so they share its mirroring.
-            let (rect, placement) = in_betweens
-                .frame(instances.len(), in_between_mode, drawn.key, clip, pick, &mut atlas)
-                .unwrap_or((frame.rect, frame.placement));
-            instances.push(mobile_instance(transform.translation, rect, placement, clip.mirrored,
-                drawn.offset_px, drawn.tie_level, source, local_lights));
+            instances.push(mobile_instance(transform.translation, frames, clip.mirrored, drawn.offset_px,
+                drawn.tie_level, source, local_lights));
         }
     }
 
@@ -247,33 +254,30 @@ pub fn sys_draw_mobiles(
     }
 }
 
-/// The instance of a frame at a mobile's position `translation` (world x and z the UO x and y, world y its z), lit by
+/// The instance of `frames` at a mobile's position `translation` (world x and z the UO x and y, world y its z), lit by
 /// `local_lights` of a map when given.
-#[allow(clippy::too_many_arguments)]
 fn mobile_instance(
     translation: Vec3,
-    rect: super::frame_atlas::AtlasRect,
-    placement: super::placement::FramePlacement,
+    frames: LayerFrames,
     mirrored: bool,
     offset_px: (f32, f32),
     tie_level: u32,
     source: AnimSource,
     local_lights: Option<(&RenderStaticLightInstances, u32)>,
-) -> SpriteInstance {
+) -> MobileSpriteInstance {
     let (world_x, world_z) = apply_cc_static_world_anchor_translation(translation.x, translation.z);
-    let bounds = mobile_card_bounds(placement, mirrored, offset_px, MOBILE_PIXEL_RATIO);
-    let (uv_min, uv_max) = rect.uv();
+    let bounds = mobile_card_bounds(frames.placement, mirrored, offset_px, MOBILE_PIXEL_RATIO);
     let priority_z_units = crate::world::coords::scale_bevy_units_to_uo_z(translation.y).round()
         + MOBILE_PRIORITY_Z_OFFSET;
-    SpriteInstance {
+    let sprite = SpriteInstance {
         world_x,
         world_z,
         world_y: translation.y + STATIC_ART_Y_BIAS,
-        layer: rect.layer,
+        layer: frames.layer,
         depth_class: StaticDepthClass::Regular.encoded(),
         base_world_y: translation.y,
-        uv_min: uv_min.to_array(),
-        uv_max: uv_max.to_array(),
+        uv_min: frames.uv_min.to_array(),
+        uv_max: frames.uv_max.to_array(),
         local_min: [bounds.local_min_x, bounds.local_min_y],
         local_max: [bounds.local_max_x, bounds.local_max_y],
         tile_x: world_x,
@@ -292,5 +296,20 @@ fn mobile_instance(
         local_light_corners: local_lights.map_or([0; 4], |(lights, map_id)| static_art_billboard_local_light_corners(
             true, lights, map_id, world_x, world_z, translation.y, bounds, false)),
         color_rgba: OPAQUE_COLOR,
+    };
+    MobileSpriteInstance { sprite, crossfade: frames.crossfade }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn the_shader_reads_a_mobile_instance_as_wgsl_lays_it_out() {
+        // A SpriteInstance (144 bytes, aligned to its vec4) then a FrameCrossfade (48), on a 16-byte stride.
+        const WGSL_SPRITE_INSTANCE_SIZE: usize = 144;
+        const WGSL_MOBILE_SPRITE_INSTANCE_SIZE: usize = 192;
+        assert_eq!(std::mem::size_of::<SpriteInstance>(), WGSL_SPRITE_INSTANCE_SIZE);
+        assert_eq!(std::mem::size_of::<MobileSpriteInstance>(), WGSL_MOBILE_SPRITE_INSTANCE_SIZE);
     }
 }
