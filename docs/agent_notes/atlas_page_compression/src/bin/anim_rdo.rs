@@ -5,10 +5,15 @@
 //! `stats` adds the RDO's counters for the first lambda and look-back, run on one thread over the first sampled page.
 //! `parallel` runs the pages' RDO at once, one task per page, as the mobile packers do, instead of one after another;
 //! a page's RDO still splits by rows on its own.
+//! `ANIM_RDO_SIMD=scalar|avx2|avx512` sets the RDO's highest instruction set, AVX2 when unset (the blocks are the same
+//! at every level).
 use rayon::prelude::*;
 use std::time::Instant;
 use udd_assets::{MobileAnimCcPackage, MobileAnimEcPackage};
-use uot_texture_codecs::bc7::rdo::{reduce_entropy_bc7_parallel, reduce_entropy_bc7_with_stats, Bc7RdoParams, Bc7RdoStats};
+use uot_texture_codecs::bc7::rdo::{
+    bc7_rdo_simd, limit_bc7_rdo_simd, reduce_entropy_bc7_parallel, reduce_entropy_bc7_with_stats, Bc7RdoParams, Bc7RdoSimd,
+    Bc7RdoStats,
+};
 use uot_texture_codecs::bc7::{decode_bc7_to_rgba8888, encode_to_bc7, Bc7EncoderBackend, ImageExtent, RawImageFormat};
 
 const ZSTD_LEVEL: i32 = 9;
@@ -115,9 +120,16 @@ fn main() {
     let lookbacks: Vec<usize> = list(args.get(4), &DEFAULT_LOOKBACKS);
     let with_stats = args.get(5).is_some_and(|a| a == "stats");
     let pages_in_parallel = args.get(5).is_some_and(|a| a == "parallel");
+    match std::env::var("ANIM_RDO_SIMD").as_deref() {
+        Ok("scalar") => limit_bc7_rdo_simd(Bc7RdoSimd::Scalar),
+        Ok("avx2") => limit_bc7_rdo_simd(Bc7RdoSimd::Avx2),
+        Ok("avx512") => limit_bc7_rdo_simd(Bc7RdoSimd::Avx512),
+        Err(_) => {}
+        Ok(other) => panic!("unknown ANIM_RDO_SIMD {other}"),
+    }
     let pages = sample_pages(dir, source, count);
     let texels: usize = pages.iter().map(|p| p.width * p.height).sum();
-    println!("{source}: {} pages, {:.1} Mpx, {} threads", pages.len(), texels as f64 / 1e6, rayon::current_num_threads());
+    println!("{source}: {} pages, {:.1} Mpx, {} threads, RDO {:?}", pages.len(), texels as f64 / 1e6, rayon::current_num_threads(), bc7_rdo_simd());
 
     // Plain BC7, and what the blocks are.
     let mut plain = Vec::new();

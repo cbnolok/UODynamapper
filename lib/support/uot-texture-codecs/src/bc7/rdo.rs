@@ -15,6 +15,11 @@ use super::tables::{
 use rayon::prelude::*;
 use std::cmp::max;
 
+#[path = "rdo_simd.rs"]
+mod simd;
+pub use simd::{bc7_rdo_simd, limit_bc7_rdo_simd, Bc7RdoSimd};
+use simd::{SIMD_AVX2, SIMD_AVX512, SIMD_SCALAR};
+
 // ─── ERT constants (matching bc7enc_rdo ert.cpp) ─────────────────────────────
 /// Bits charged per literal byte when estimating match cost.
 pub(crate) const LITERAL_BITS: f32 = 13.0;
@@ -60,7 +65,7 @@ macro_rules! stat_array_add {
 macro_rules! decode_bc7_error_bounded_for_stats {
     ($stats:ident, $block_bits:expr, $source:expr, $mode_hint:expr, $trust_mode_hint:expr, $max_error:expr) => {{
         if COLLECT_STATS {
-            decode_bc7_error_bounded::<true>(
+            decode_bc7_error_bounded_at::<true, SIMD>(
                 $block_bits,
                 $source,
                 $mode_hint,
@@ -69,7 +74,7 @@ macro_rules! decode_bc7_error_bounded_for_stats {
                 $stats.as_deref_mut(),
             )
         } else {
-            decode_bc7_error_bounded::<false>(
+            decode_bc7_error_bounded_at::<false, SIMD>(
                 $block_bits,
                 $source,
                 $mode_hint,
@@ -632,7 +637,129 @@ pub(crate) fn parallel_rdo_chunk_blocks(
     chunk_rows * blocks_x
 }
 
+/// Runs the RDO with the instruction set [`bc7_rdo_simd`] picks: the whole loop compiled for it, and its mode 6 and
+/// mode 4 decode trials in vectors. Every level writes the same blocks.
 fn reduce_entropy_bc7_impl_with_progress<const COLLECT_STATS: bool>(
+    blocks: &mut [[u8; 16]],
+    rgba_blocks: &[[u8; 4]],
+    blocks_x: usize,
+    blocks_y: usize,
+    params: &Bc7RdoParams,
+    stats: Option<&mut Bc7RdoStats>,
+    progress: Option<&dyn Fn(usize)>,
+) -> u32 {
+    reduce_entropy_bc7_at::<COLLECT_STATS>(
+        bc7_rdo_simd(),
+        blocks,
+        rgba_blocks,
+        blocks_x,
+        blocks_y,
+        params,
+        stats,
+        progress,
+    )
+}
+
+fn reduce_entropy_bc7_at<const COLLECT_STATS: bool>(
+    simd: Bc7RdoSimd,
+    blocks: &mut [[u8; 16]],
+    rgba_blocks: &[[u8; 4]],
+    blocks_x: usize,
+    blocks_y: usize,
+    params: &Bc7RdoParams,
+    stats: Option<&mut Bc7RdoStats>,
+    progress: Option<&dyn Fn(usize)>,
+) -> u32 {
+    match simd {
+        #[cfg(target_arch = "x86_64")]
+        Bc7RdoSimd::Avx512 => {
+            // SAFETY: `bc7_rdo_simd` (or a test that checked) found AVX-512 F, BW and VL, AVX2 and BMI2.
+            unsafe {
+                reduce_entropy_bc7_avx512::<COLLECT_STATS>(
+                    blocks,
+                    rgba_blocks,
+                    blocks_x,
+                    blocks_y,
+                    params,
+                    stats,
+                    progress,
+                )
+            }
+        }
+        #[cfg(target_arch = "x86_64")]
+        Bc7RdoSimd::Avx2 => {
+            // SAFETY: `bc7_rdo_simd` (or a test that checked) found AVX2 and BMI2.
+            unsafe {
+                reduce_entropy_bc7_avx2::<COLLECT_STATS>(
+                    blocks,
+                    rgba_blocks,
+                    blocks_x,
+                    blocks_y,
+                    params,
+                    stats,
+                    progress,
+                )
+            }
+        }
+        _ => reduce_entropy_bc7_body::<COLLECT_STATS, SIMD_SCALAR>(
+            blocks,
+            rgba_blocks,
+            blocks_x,
+            blocks_y,
+            params,
+            stats,
+            progress,
+        ),
+    }
+}
+
+#[cfg(target_arch = "x86_64")]
+#[target_feature(enable = "avx512f,avx512bw,avx512vl,avx2,bmi2")]
+fn reduce_entropy_bc7_avx512<const COLLECT_STATS: bool>(
+    blocks: &mut [[u8; 16]],
+    rgba_blocks: &[[u8; 4]],
+    blocks_x: usize,
+    blocks_y: usize,
+    params: &Bc7RdoParams,
+    stats: Option<&mut Bc7RdoStats>,
+    progress: Option<&dyn Fn(usize)>,
+) -> u32 {
+    reduce_entropy_bc7_body::<COLLECT_STATS, SIMD_AVX512>(
+        blocks,
+        rgba_blocks,
+        blocks_x,
+        blocks_y,
+        params,
+        stats,
+        progress,
+    )
+}
+
+#[cfg(target_arch = "x86_64")]
+#[target_feature(enable = "avx2,bmi2")]
+fn reduce_entropy_bc7_avx2<const COLLECT_STATS: bool>(
+    blocks: &mut [[u8; 16]],
+    rgba_blocks: &[[u8; 4]],
+    blocks_x: usize,
+    blocks_y: usize,
+    params: &Bc7RdoParams,
+    stats: Option<&mut Bc7RdoStats>,
+    progress: Option<&dyn Fn(usize)>,
+) -> u32 {
+    reduce_entropy_bc7_body::<COLLECT_STATS, SIMD_AVX2>(
+        blocks,
+        rgba_blocks,
+        blocks_x,
+        blocks_y,
+        params,
+        stats,
+        progress,
+    )
+}
+
+/// The RDO loop, inlined into each instruction-set wrapper above so that it compiles for that set.
+#[inline(always)]
+fn reduce_entropy_bc7_body<const COLLECT_STATS: bool, const SIMD: u8>(
     blocks: &mut [[u8; 16]],
     rgba_blocks: &[[u8; 4]],
     blocks_x: usize,
@@ -958,7 +1085,7 @@ fn reduce_entropy_bc7_impl_with_progress<const COLLECT_STATS: bool>(
                     if !continuation_possible && !rep0_possible {
                         macro_rules! reduce_len {
                             ($len:literal) => {
-                                reduce_fixed_normal_len::<$len, COLLECT_STATS>(
+                                reduce_fixed_normal_len::<$len, COLLECT_STATS, SIMD>(
                                     prev_bits,
                                     orig_bits,
                                     p_pixels,
@@ -1254,7 +1381,7 @@ fn flush_progress(progress: Option<&dyn Fn(usize)>, pending_progress: &mut usize
 }
 
 #[inline(always)]
-fn reduce_fixed_normal_len<const LEN: usize, const COLLECT_STATS: bool>(
+fn reduce_fixed_normal_len<const LEN: usize, const COLLECT_STATS: bool, const SIMD: u8>(
     prev_bits: u128,
     orig_bits: u128,
     p_pixels: &RgbaBlock,
@@ -1414,6 +1541,44 @@ pub(crate) fn smooth_block_error_scale_from_pixels(
     let mut yl = (max_std_dev / max_smooth_block_std_dev).clamp(0.0, 1.0);
     yl = yl * yl;
     lerp(smooth_block_max_mse_scale, 1.0, yl)
+}
+
+/// [`decode_bc7_error_bounded`] with the mode 6 and mode 4 trials decoded in groups of texels at the AVX2 and AVX-512
+/// levels: the same answer, since a block's running error reaches the bound after a group exactly when it does after
+/// one of its texels.
+#[inline(always)]
+fn decode_bc7_error_bounded_at<const COLLECT_STATS: bool, const SIMD: u8>(
+    block_bits: u128,
+    source: &RgbaBlock,
+    mode_hint: u8,
+    trust_mode_hint: bool,
+    max_error: u64,
+    stats: Option<&mut Bc7RdoStats>,
+) -> Option<u64> {
+    #[cfg(target_arch = "x86_64")]
+    if SIMD != SIMD_SCALAR && trust_mode_hint && (mode_hint == 6 || mode_hint == 4) {
+        debug_assert!(bc7_block_bits_has_mode(block_bits, mode_hint));
+        if COLLECT_STATS {
+            let mut stats = stats;
+            stat_array_add!(COLLECT_STATS, stats, decode_mode_trials, mode_hint as usize, 1);
+            if mode_hint == 6 {
+                stat_add!(COLLECT_STATS, stats, fused_mode6_trials, 1);
+            } else {
+                stat_add!(COLLECT_STATS, stats, fused_mode4_trials, 1);
+            }
+        }
+        // SAFETY: SIMD names a level only once its features were found (`reduce_entropy_bc7_at`).
+        let error = unsafe {
+            match (SIMD, mode_hint) {
+                (SIMD_AVX512, 6) => simd::mode6_error_avx512(block_bits, source, max_error),
+                (SIMD_AVX512, _) => simd::mode4_error_avx512(block_bits, source, max_error),
+                (_, 6) => simd::mode6_error_avx2(block_bits, source, max_error),
+                _ => simd::mode4_error_avx2(block_bits, source, max_error),
+            }
+        };
+        return (error < max_error).then_some(error);
+    }
+    decode_bc7_error_bounded::<COLLECT_STATS>(block_bits, source, mode_hint, trust_mode_hint, max_error, stats)
 }
 
 #[inline(always)]
@@ -3377,6 +3542,119 @@ mod tests {
             h = h.wrapping_mul(0x100000001b3);
         }
         h
+    }
+
+    /// The levels this CPU runs, scalar first.
+    fn available_simd_levels() -> Vec<Bc7RdoSimd> {
+        [Bc7RdoSimd::Scalar, Bc7RdoSimd::Avx2, Bc7RdoSimd::Avx512]
+            .into_iter()
+            .filter(|&level| level <= simd::detected_simd())
+            .collect()
+    }
+
+    struct XorShift(u64);
+
+    impl XorShift {
+        fn next(&mut self) -> u64 {
+            self.0 ^= self.0 << 13;
+            self.0 ^= self.0 >> 7;
+            self.0 ^= self.0 << 17;
+            self.0
+        }
+    }
+
+    #[cfg(target_arch = "x86_64")]
+    #[test]
+    fn simd_block_errors_match_the_scalar_decoder() {
+        const BLOCKS_PER_MODE: usize = 20_000;
+        /// The mode field of modes 6 and 4: the low bits, a one after `mode` zeros.
+        const MODE_FIELDS: [(u8, u128, u128); 2] = [(6, 0x7F, 0x40), (4, 0x1F, 0x10)];
+        let mut random = XorShift(0x2545_F491_4F6C_DD1D);
+        for (mode, mode_mask, mode_field) in MODE_FIELDS {
+            for _ in 0..BLOCKS_PER_MODE {
+                let bits = ((random.next() as u128) << 64 | random.next() as u128) & !mode_mask | mode_field;
+                let mut source: RgbaBlock = [[0; 4]; 16];
+                for texel in source.iter_mut() {
+                    *texel = random.next().to_le_bytes()[..4].try_into().unwrap();
+                }
+                let scalar = decode_bc7_error_bounded::<false>(bits, &source, mode, true, u64::MAX, None).unwrap();
+                // Unbounded, then bounded anywhere up to twice the error: a vector error under the bound is the
+                // whole error, and it is under the bound exactly when the scalar one is.
+                let bounded = random.next() % (2 * scalar + 1);
+                for level in available_simd_levels().into_iter().skip(1) {
+                    for bound in [u64::MAX, bounded] {
+                        // SAFETY: the level was detected.
+                        let vector = unsafe {
+                            match (level, mode) {
+                                (Bc7RdoSimd::Avx512, 6) => simd::mode6_error_avx512(bits, &source, bound),
+                                (Bc7RdoSimd::Avx512, _) => simd::mode4_error_avx512(bits, &source, bound),
+                                (_, 6) => simd::mode6_error_avx2(bits, &source, bound),
+                                _ => simd::mode4_error_avx2(bits, &source, bound),
+                            }
+                        };
+                        let context = format!("mode {mode} block {bits:032x} bound {bound} at {level:?}");
+                        assert_eq!(vector < bound, scalar < bound, "{context}");
+                        if vector < bound {
+                            assert_eq!(vector, scalar, "{context}");
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn rdo_writes_the_same_blocks_at_every_simd_level() {
+        const BLOCKS_X: usize = 16;
+        const BLOCKS_Y: usize = 12;
+        const LOOKBACK_BYTES: usize = 1024;
+        const LAMBDAS: [f32; 3] = [0.05, 0.5, 2.0];
+        // The gradient fixture, with noisy soft alpha in every third block to bring in mode 4 and mode 6 blocks.
+        let mut rgba_blocks = fixture_rgba_blocks(BLOCKS_X, BLOCKS_Y);
+        let mut random = XorShift(0x9E37_79B9_7F4A_7C15);
+        for (texel_index, texel) in rgba_blocks.iter_mut().enumerate() {
+            if (texel_index / 16) % 3 == 0 {
+                texel[3] = 128 | (random.next() as u8 & 0x7F);
+            }
+        }
+        let encoded = encode_fixture_blocks(&rgba_blocks);
+        let modes: Vec<u8> = encoded.iter().map(|block| get_bc7_mode_bits(bc7_block_bits(*block))).collect();
+        assert!(modes.contains(&6) && modes.contains(&4), "the fixture needs mode 6 and mode 4 blocks: {modes:?}");
+
+        for lambda in LAMBDAS {
+            let params = Bc7RdoParams {
+                lambda,
+                lookback_window_size: LOOKBACK_BYTES,
+                ..Default::default()
+            };
+            let mut expected = encoded.clone();
+            let expected_modified = reduce_entropy_bc7_at::<false>(
+                Bc7RdoSimd::Scalar,
+                &mut expected,
+                &rgba_blocks,
+                BLOCKS_X,
+                BLOCKS_Y,
+                &params,
+                None,
+                None,
+            );
+            assert!(expected_modified > 0, "λ {lambda} left every block as encoded");
+            for level in available_simd_levels().into_iter().skip(1) {
+                let mut blocks = encoded.clone();
+                let modified = reduce_entropy_bc7_at::<false>(
+                    level,
+                    &mut blocks,
+                    &rgba_blocks,
+                    BLOCKS_X,
+                    BLOCKS_Y,
+                    &params,
+                    None,
+                    None,
+                );
+                assert_eq!(modified, expected_modified, "λ {lambda} at {level:?}");
+                assert!(blocks == expected, "λ {lambda} at {level:?} wrote other blocks");
+            }
+        }
     }
 
     #[test]

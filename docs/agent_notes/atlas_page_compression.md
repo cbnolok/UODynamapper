@@ -399,6 +399,16 @@ identical blocks in every row:
 |---|---|---|---|---|
 | pages one after another (before) | 3.75 s | 15.90 s | 16.14 s | 7–9 |
 | pages in parallel | 1.78 s | 9.11 s | 7.95 s | 16–18 |
+| pages in parallel, AVX2 trials | 1.15 s | 6.23 s | 5.07–5.68 s | 15–18 |
+
+Wall times on a full pool vary by 10–20 % from run to run, since 20 pages on 20 threads end unevenly. CPU seconds
+are steadier:
+
+| Decode trials | λ 0.05, look-back 8 | λ 1, look-back 8 | λ 0.05, look-back 64 | λ 1, look-back 64 |
+|---|---|---|---|---|
+| scalar | 29.9 s | 29.8 s | 154.8 s | 135.2 s |
+| AVX2 | 19.4 s | 18.5 s | 104.3 s | 90.3 s |
+| AVX-512 | 20.2 s | 18.8 s | 110.6 s | 91.7 s |
 
 - **Pages in parallel:** the packers encode the chunk's pages (one per thread) as parallel tasks. A page's RDO still
   splits into the same row chunks, sized from the pool's thread count, which a nested task sees unchanged, so the
@@ -408,6 +418,18 @@ identical blocks in every row:
   state, and their size comes from the pool. A machine with another thread count writes other blocks for the same
   settings (the same size and quality to within noise). Fixed chunks would make the output portable, at the cost of
   changing today's bytes.
+- **AVX2 decode trials** (`bc7/rdo_simd.rs`): the mode 6 and mode 4 trials, 99 % of the decodes, interpolate and sum
+  four texels per instruction and test the bound after each group of four, where the scalar decoder tests it after
+  each texel. The errors are non-negative integers, so both cross the bound together and give the same answer: the
+  blocks are bit-identical at every level (`simd_block_errors_match_the_scalar_decoder` on random blocks with random
+  bounds, `rdo_writes_the_same_blocks_at_every_simd_level`, and the digests of all four settings above). The RDO
+  picks AVX2 (with BMI2) at run time and falls back to the scalar code without it; the whole search loop is compiled
+  for the level, so the scalar parts gain too (`ceil` becomes one instruction). CPU drops by a third; the rest is the
+  search itself (enumerating candidates, the hash of tried segments, the rate tests), 37 % of the instructions under
+  callgrind before.
+- **AVX-512 is no faster.** Eight texels per instruction took 1–6 % more CPU than AVX2: this Zen 5 laptop runs AVX-512
+  on 256-bit units, and a trial ends after three texels on average, so a wider group mostly decodes texels it does not
+  need. It stays behind `limit_bc7_rdo_simd(Bc7RdoSimd::Avx512)`; the default stops at AVX2.
 
 ## Reproducing
 
@@ -424,4 +446,5 @@ It runs every codec and the 128-row strips. `--bin strip_levels` runs the levels
 [ec|cc|both] [all|bc1]` the pages at 1× to 4× (`bc1` only BC1 and BC1 with RDO). The PNG filter, the other strip heights and
 the dictionaries were one-off runs with the numbers above. `--bin anim_rdo <dir> <cc|ec> <pages> [λ,...] [look-back,...]
 [stats|parallel]` runs the BC7 RDO on pages sampled from an RGBA8888 `mobile_anim_cc.uddp` or `mobile_anim_ec.uddp`:
-`stats` adds the RDO's counters for one page on one thread, `parallel` runs the pages at once as the packers do.
+`stats` adds the RDO's counters for one page on one thread, `parallel` runs the pages at once as the packers do, and
+`ANIM_RDO_SIMD=scalar|avx2|avx512` sets the highest instruction set.
