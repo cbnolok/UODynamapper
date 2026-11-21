@@ -5,7 +5,7 @@
 //! a RIFE workspace and writes the frame and the in-betweens after it back into the atlas (render.rs).
 //!
 //! A sequence is an entry of the frame atlas of its own, its frames copied from the clip's beside the in-betweens, on
-//! one page when it fits one, else in pieces over several (`reserve_sequence`): the crossfade reads each of two
+//! one page when it fits one, else in pieces over several (`MobileFrameAtlas::reserve`): the crossfade reads each of two
 //! neighbours from its own page, and a sequence drawn keeps all its pages in use. It is keyed by the clip's
 //! stored frames, which a mirrored direction shares with its twin, so the two share the sequence and draw it each
 //! with its own mirroring. A clip drawn plays plain until its sequence is complete, then switches to it: the sequence
@@ -172,7 +172,7 @@ impl MobileInBetweens {
             if !atlas.has_room_sparing(&sizes, now) {
                 continue;
             }
-            entry.state = match atlas.reserve_sequence(AtlasEntry::InBetweens(*key), &sizes, now) {
+            entry.state = match atlas.reserve(AtlasEntry::InBetweens(*key), &sizes, now) {
                 Some((rects, page_evicted)) => {
                     evicted.extend(page_evicted);
                     InBetweenState::Generating {
@@ -496,7 +496,7 @@ mod tests {
         let full_page = [(MOBILE_ATLAS_PAGE_SIZE - FRAME_GUTTER, MOBILE_ATLAS_PAGE_SIZE - FRAME_GUTTER)];
         for body in 0..MOBILE_ATLAS_PAGES {
             let key = ClipKey { body, ..clip_key(0) };
-            assert!(atlas.reserve_clip(AtlasEntry::Clip(key), &full_page, NOW).is_some());
+            assert!(atlas.reserve(AtlasEntry::Clip(key), &full_page, NOW).is_some());
         }
         let key = clip_key(3);
         let resident = |_| Some(&clip);

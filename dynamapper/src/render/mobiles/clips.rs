@@ -97,7 +97,7 @@ impl Clip {
         self.pick(cycles * self.frames.len() as f32)
     }
 
-    /// Marks the pages of the clip's frames in use at `now`: a clip's one page, or the pages a RIFE sequence spans.
+    /// Marks the pages of the clip's frames in use at `now`: one, or several when its frames lie in pieces.
     pub fn touch_pages(&self, atlas: &mut MobileFrameAtlas<AtlasEntry>, now: f64) {
         for frame in &self.frames {
             atlas.touch(frame.rect.layer, now);
@@ -118,7 +118,7 @@ impl Clip {
 enum ClipState {
     Decoding(Task<Option<DecodedClip>>),
     Resident(Clip),
-    /// The package has no such clip, or its frames do not fit a page.
+    /// The package has no such clip, or its frames do not fit the atlas (or one of them a page).
     Missing,
 }
 
@@ -192,7 +192,7 @@ impl MobileClips {
                     })
                 }
                 None => {
-                    warn!("The frames of mobile clip {key:?} do not fit a page of the frame atlas.");
+                    warn!("The frames of mobile clip {key:?} do not fit the frame atlas.");
                     ClipState::Missing
                 }
             };

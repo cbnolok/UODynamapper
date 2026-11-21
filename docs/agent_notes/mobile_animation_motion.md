@@ -42,9 +42,10 @@ CPU version it replaced): no CPU cost or uploads at any refresh rate.
   was before naga's loop bounding was turned off (wgsl_loop_bounding_blocks_unrolling.md). PyTorch on one CPU
   thread: 19 / 49 / 145 / 618 ms — the CPU is a fallback at best.
 - Work is rationed per frame; a clip plays as the 50% fade until its in-betweens are ready.
-- A sequence (a clip's frames and their in-betweens) too big for one 1024² atlas page is stored in pieces over
-  several pages, so large Enhanced creatures (the daemon at ×4) get their in-betweens too. It stays one unit: losing
-  any of its pages drops the whole sequence, which is made again when drawn. A clip alone still needs one page.
+- A clip, or a sequence (a clip's frames and their in-betweens), too big for one 1024² atlas page is stored in pieces
+  over several pages, so large Enhanced creatures (the daemon at ×4) get their in-betweens too, and the daemon's
+  stand facing east, whose frames alone exceed a page, shows at all. It stays one unit: losing any of its pages drops
+  it whole, and it is made again when drawn.
 - The 50% fade still runs between the shorter frames. Expected visible change per display rate: at 30 fps ×2 adds
   ~1 blended frame per pose change, at 144 fps ~6–8.
 

@@ -239,11 +239,9 @@ pub fn sys_draw_mobiles(
             }
             let Some(clip) = clips.get_or_load(drawn.key, &packages.0) else { continue };
             // With a RIFE mode, the clip's sequence with its in-betweens once they are made, mirrored as the clip;
-            // the clip's own page stays in use, as the sequence's frames come from it.
+            // the clip's own pages stay in use, as the sequence's frames come from them.
             let mirrored = clip.mirrored;
-            if let Some(frame) = clip.frames.first() {
-                atlas.touch(frame.rect.layer, now);
-            }
+            clip.touch_pages(&mut atlas, now);
             let clip = in_betweens.shown(drawn.key, clip, in_between_mode, now).unwrap_or(clip);
             let pick = match choice.cycle.lead_secs(clip) {
                 Some(lead_secs) => clip.frame_at_cycles(
