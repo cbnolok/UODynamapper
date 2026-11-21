@@ -5,7 +5,7 @@ use std::collections::HashMap;
 use serde::Deserialize;
 
 /// The 158 tensors the network uses at inference, fp16, named as in Practical-RIFE's IFNet_HDv3.py.
-pub(super) const WEIGHTS_FILE: &[u8] = include_bytes!("../../../../assets/models/rife_v4_25_f16.safetensors");
+pub(super) const WEIGHTS_FILE: &[u8] = include_bytes!("../../models/rife_v4_25_f16.safetensors");
 
 /// Bytes of the little-endian header length that starts a safetensors file.
 const HEADER_LENGTH_BYTES: usize = 8;

@@ -2870,11 +2870,9 @@ version = "0.1.0"
 dependencies = [
  "bevy",
  "bevy_egui",
- "block_compression",
  "bytemuck",
  "chrono",
  "color-eyre",
- "image",
  "indexmap 2.14.2",
  "knuffel",
  "log",
@@ -2896,8 +2894,8 @@ dependencies = [
  "udd-assets",
  "udd-container",
  "uocf",
+ "uot-gpu-compute",
  "uot-kdl",
- "uot-texture-codecs",
  "wgpu",
  "wgpu-profiler",
  "windows",
@@ -7161,6 +7159,7 @@ dependencies = [
  "udd-assets",
  "udd-container",
  "uocf",
+ "uot-gpu-compute",
  "uot-image-postprocess",
  "uot-kdl",
  "uot-texture-codecs",
@@ -7463,6 +7462,23 @@ dependencies = [
  "toml",
  "uocf",
  "uot-logging",
+ "workspace-hack",
+]
+
+[[package]]
+name = "uot-gpu-compute"
+version = "0.1.0"
+dependencies = [
+ "block_compression",
+ "bytemuck",
+ "color-eyre",
+ "image",
+ "pollster 0.4.0",
+ "serde",
+ "serde_json",
+ "udd-assets",
+ "uot-texture-codecs",
+ "wgpu",
  "workspace-hack",
 ]
 

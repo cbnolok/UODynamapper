@@ -19,15 +19,19 @@ use parking_lot::Mutex;
 use crate::app::background::{background_pool, Priority, Task, TaskPoll};
 use super::super::clips::AtlasEntry;
 use super::super::frame_atlas::{AtlasRect, MobileFrameAtlas};
-use super::super::network_shader_module;
-use super::super::rife::{RifeDispatch, RifeModel, RifeWorkspace, RIFE_BLOCKS, RIFE_SIZE_MULTIPLE, RIFE_TIMESTEP_SLOTS};
+use uot_gpu_compute::network_shader_module;
+use uot_gpu_compute::rife::{
+    RifeDispatch, RifeModel, RifePipelines, RifeWorkspace, RIFE_BLOCKS, RIFE_SIZE_MULTIPLE, RIFE_TIMESTEP_SLOTS,
+};
+use super::super::compute_warm_up::{ComputeWarmUp, Warm};
 use super::{InBetweenJob, InBetweenPair, MobileInBetweens};
 
 /// The GPU time the in-betweens may take per frame, estimated (`dispatch_ms`, scaled as timed). A dispatch longer than
 /// the budget runs alone in its frame. On the Radeon 880M the timed work stays within 0.1 ms of it.
 pub const RIFE_FRAME_BUDGET_MS: f64 = 2.0;
-/// A dispatch's estimated cost: a fixed part, and its convolution's multiply-adds. Fitted to rife::tests::benchmark on
-/// the Radeon 880M (one t: 1.31 ms at 64x64, 0.079 GMAC, 121 dispatches; 14.97 ms at 576x512, 5.66 GMAC, 97).
+/// A dispatch's estimated cost: a fixed part, and its convolution's multiply-adds. Fitted to uot-gpu-compute's
+/// rife::tests::benchmark on the Radeon 880M (one t: 1.31 ms at 64x64, 0.079 GMAC, 121 dispatches; 14.97 ms at
+/// 576x512, 5.66 GMAC, 97).
 const DISPATCH_MS: f64 = 0.009;
 const MS_PER_GIGA_MULTIPLY_ADD: f64 = 2.5;
 /// An atlas step's estimated cost per million pixels it runs on, besides the fixed part.
@@ -84,8 +88,12 @@ struct RifeGpu {
 }
 
 impl RifeGpu {
-    fn new(device: &wgpu::Device) -> Result<Self, String> {
-        let model = RifeModel::new(device)?;
+    /// The network on `pipelines` warmed ahead, or on pipelines compiled now.
+    fn new(device: &wgpu::Device, pipelines: Option<RifePipelines>) -> Result<Self, String> {
+        let model = match pipelines {
+            Some(pipelines) => RifeModel::with_pipelines(device, pipelines)?,
+            None => RifeModel::new(device)?,
+        };
         let storage = |binding, read_only| wgpu::BindGroupLayoutEntry {
             binding, visibility: wgpu::ShaderStages::COMPUTE, count: None,
             ty: wgpu::BindingType::Buffer {
@@ -374,13 +382,19 @@ pub fn sys_render_mobile_in_betweens(
     gpu_images: Res<RenderAssets<GpuImage>>,
     render_device: Res<RenderDevice>,
     render_queue: Res<RenderQueue>,
+    mut warm_up: ResMut<ComputeWarmUp>,
 ) {
     let state = &mut *state;
     let device = render_device.wgpu_device();
     if let GpuState::Unloaded = state.gpu && state.active {
+        let pipelines = match warm_up.take_rife() {
+            Warm::Compiling => return,
+            Warm::Ready(pipelines) => Some(pipelines),
+            Warm::Unavailable => None,
+        };
         let device = device.clone();
         state.gpu = GpuState::Loading(background_pool().spawn(Priority::Visible, "rife network load",
-            move || RifeGpu::new(&device)));
+            move || RifeGpu::new(&device, pipelines)));
     }
     if let GpuState::Loading(task) = &mut state.gpu {
         state.gpu = match task.poll() {

@@ -103,8 +103,11 @@ until the hash matches, for good when it doesn't (one debug log per clip). The c
 clip, once a session, nearly all of it reading the atlas pages (the hash itself is under 2 ms on a 17 MB clip). A
 package without the entry loads fine and keeps the client timing for every clip.
 
-The GPU port of the prototype writes them: `dynamapper measure-strides changed|full` (`just measure-mobile-strides`;
-`--source cc|ec`, `--packages DIR` defaulting to the app's `udd_path`, `--output DIR`, `--report DIR`). It hashes every
+The GPU port of the prototype writes them: `udd-cli tool strides measure changed|full FILE...` (`just
+measure-mobile-strides`; `--body N` repeatable, `--output DIR`, `--report DIR`), on the measurement core of
+`lib/support/uot-gpu-compute` (`strides.rs`: plain RGBA frames and anchors) driven over the packages by
+`udd_conv::animation::mobile_strides`, which the inspector's strides panel and the converter GUI's measure step run too.
+Dynamapper only reads the strides. It hashes every
 clip on all threads (13 s for both packages), then measures on the GPU only what it must: `changed` the clips with new
 or other frames than their stride's (a clip sharing the frames of a kept one takes its measurement), dropping the
 strides of clips gone; `full` everything again (about 40 minutes on a Radeon 880M). It rewrites a package only when
@@ -155,7 +158,7 @@ own unsharp mask (`apply_sharpening`).
 ## Block-compressed frame atlas (evaluation, 2026-11-21)
 
 The frame atlas is `Rgba8UnormSrgb`: 8 pages of 1024², 32 MiB. BC7 would make it 8 MiB and BC1 4 MiB. Nothing is
-wired yet. The evaluation is `render/mobiles/block_encode/tests.rs` (`evaluate_block_formats`, ignored), and its
+wired yet. The evaluation is `lib/support/uot-gpu-compute/src/block_encode/tests.rs` (`evaluate_block_formats`, ignored), and its
 sheets and summary are in `uodynamapper-scratch/bc-eval/`.
 
 - **Encoder**: [block_compression](https://github.com/hasenbanck/block_compression) 0.11.0 (MIT), a WGSL port of

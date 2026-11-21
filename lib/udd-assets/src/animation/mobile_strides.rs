@@ -195,6 +195,18 @@ pub trait MobileAnimClips {
     }
 }
 
+/// A Classic or an Enhanced mobile animation package, whichever the file at `path` is.
+pub fn load_mobile_anim_clips(path: &Path) -> eyre::Result<Box<dyn MobileAnimClips + Send + Sync>> {
+    let classic = match crate::animation::mobile_anim_cc::MobileAnimCcPackage::load(path) {
+        Ok(package) => return Ok(Box::new(package)),
+        Err(error) => error,
+    };
+    crate::animation::mobile_anim_ec::MobileAnimEcPackage::load(path)
+        .map(|package| Box::new(package) as Box<dyn MobileAnimClips + Send + Sync>)
+        .map_err(|enhanced| eyre::eyre!("{} is not a mobile animation package: as Classic, {classic:#}; as \
+            Enhanced, {enhanced:#}", path.display()))
+}
+
 /// [`MobileAnimClips::stride_clip_hash`] of each of `clips`, on `threads` threads, in order. `progress` hears of each
 /// clip hashed: how many are done, the clip's index in `clips`, and the time it took.
 pub fn stride_clip_hashes<P: MobileAnimClips + Sync + ?Sized>(package: &P, clips: &[(u32, u16)], threads: usize,

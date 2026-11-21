@@ -24,7 +24,7 @@ const BYTES_PER_MIB: f64 = 1024.0 * 1024.0;
 const BYTE_MAX: f32 = 255.0;
 /// The synthetic frame of the per-pixel test, where it sits in a two-layer atlas, the canvas (larger than the frame
 /// needs, as a shared canvas would be) and the slot.
-const TEST_FRAME: AtlasRect = AtlasRect { layer: 1, x: 5, y: 3, width: 37, height: 29 };
+const TEST_FRAME: SourceRect = SourceRect { layer: 1, x: 5, y: 3, width: 37, height: 29 };
 const TEST_ATLAS_SIZE: (u32, u32, u32) = (64, 48, 2);
 const TEST_CANVAS: (u32, u32) = (48, 40);
 const TEST_SLOT: usize = 2;
@@ -36,7 +36,7 @@ struct Gpu {
 }
 
 fn gpu() -> Option<Gpu> {
-    bevy::tasks::block_on(async {
+    pollster::block_on(async {
         let instance = wgpu::Instance::new(wgpu::InstanceDescriptor::new_without_display_handle());
         let adapter = instance.request_adapter(&wgpu::RequestAdapterOptions {
             power_preference: wgpu::PowerPreference::HighPerformance, ..Default::default()
@@ -284,7 +284,7 @@ fn frame_steps_match_cpu() {
     let (_texture, source) = atlas_texture(&gpu, TEST_ATLAS_SIZE, &atlas);
     let (width, height) = TEST_CANVAS;
     let workspace = UpscaleWorkspace::new(&model, &gpu.device, &source, width, height).unwrap();
-    assert!(workspace.set_frame(&gpu.queue, TEST_SLOT, AtlasRect { width, ..frame }).is_err());
+    assert!(workspace.set_frame(&gpu.queue, TEST_SLOT, SourceRect { width, ..frame }).is_err());
     workspace.set_frame(&gpu.queue, TEST_SLOT, frame).unwrap();
 
     let plane_bytes = (width * height) as u64 * F32_BYTES;
@@ -421,7 +421,7 @@ fn benchmark() {
     for (frame_width, frame_height) in BENCHMARK_FRAMES {
         let (width, height) = upscale_canvas_size(frame_width, frame_height);
         let workspace = UpscaleWorkspace::new(&model, &gpu.device, &source, width, height).unwrap();
-        workspace.set_frame(&gpu.queue, 0, AtlasRect { layer: 0, x: 0, y: 0, width: frame_width, height: frame_height })
+        workspace.set_frame(&gpu.queue, 0, SourceRect { layer: 0, x: 0, y: 0, width: frame_width, height: frame_height })
             .unwrap();
         let stages: Vec<Vec<&UpscaleDispatch>> = vec![
             workspace.prepare(0).iter().collect(), workspace.network().iter().collect(), workspace.finish().iter().collect(),

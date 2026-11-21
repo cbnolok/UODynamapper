@@ -1,4 +1,4 @@
-// BC1's one bit of alpha for the mobiles' frames (render/mobiles/block_encode.rs), one thread per 4x4 block, after
+// BC1's one bit of alpha for the mobiles' frames (uot-gpu-compute block_encode.rs), one thread per 4x4 block, after
 // block_compression's BC1 kernel has written the frame's blocks: that kernel encodes colour only, in the four-colour
 // mode. A block with a transparent texel (alpha under one half) is encoded again here in the three-colour mode, whose
 // fourth index decodes to transparent black; an empty block becomes transparent. An opaque block keeps the kernel's

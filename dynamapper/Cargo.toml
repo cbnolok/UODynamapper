@@ -71,17 +71,11 @@ tracing-subscriber = { version = "0.3", default-features = false, features = [
   "tracing-log",
 ] }
 
-block_compression.workspace = true
+# RIFE, the SPAN upscaler and the BC1/BC7 encoders on the render device, warmed at startup.
+uot-gpu-compute = { path = "../lib/support/uot-gpu-compute" }
 wgpu.workspace = true
 wgpu-profiler = { workspace = true, optional = true }
 workspace-hack.workspace = true
-
-[dev-dependencies]
-# The block encoding evaluation (render/mobiles/block_encode/tests.rs): CPU decoding of the blocks, the CPU BC7
-# encoder for reference, and PNG sheets.
-image = { workspace = true, features = ["png"] }
-uot-texture-codecs = { path = "../lib/support/uot-texture-codecs", features = ["bc7-encode"] }
-
 
 [dependencies.bevy]
 version = "0.20"

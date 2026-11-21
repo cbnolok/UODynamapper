@@ -1,16 +1,14 @@
 //! The mobiles: animated bodies drawn as the clients draw them, with the statics' art sprite shader. The player is
 //! the one mobile so far: the body and mount the settings name, standing, walking or running as it moves.
 
-pub mod block_encode;
 pub mod clips;
+pub mod compute_warm_up;
 pub mod draw;
 pub mod frame_atlas;
 pub mod in_between;
 pub mod pace;
 pub mod placement;
-pub mod rife;
 pub mod rife_in_betweens;
-pub mod upscale;
 
 use std::sync::Arc;
 use bevy::prelude::*;
@@ -105,11 +103,13 @@ impl Plugin for MobileSpritesPlugin {
         let Some(render_app) = app.get_sub_app_mut(RenderApp) else { return };
         render_app.init_resource::<frame_atlas::RenderMobileFrameUploads>()
             .init_resource::<rife_in_betweens::render::RenderInBetweens>()
+            .init_resource::<compute_warm_up::ComputeWarmUp>()
             .add_systems(ExtractSchedule, (
                 frame_atlas::sys_extract_mobile_frame_uploads::<clips::AtlasEntry>,
                 rife_in_betweens::render::sys_extract_mobile_in_betweens,
             ))
             .add_systems(bevy::render::Render, (
+                compute_warm_up::sys_start_compute_warm_up,
                 frame_atlas::sys_render_upload_mobile_frames,
                 rife_in_betweens::render::sys_render_mobile_in_betweens,
             ).chain().in_set(bevy::render::RenderSystems::Queue));
@@ -293,20 +293,4 @@ fn enhanced_choice(package: &MobileAnimEcPackage, strides: Option<&mut MobileStr
 pub fn anim_packages(classic: Option<Arc<MobileAnimCcPackage>>, enhanced: Option<Arc<MobileAnimEcPackage>>)
     -> MobileAnimPackages {
     MobileAnimPackages(AnimPackages { classic, enhanced })
-}
-
-/// Compiles a compute shader of the networks (RIFE, the upscaler) without the loop counters naga adds by default to
-/// end infinite loops: they keep the driver from unrolling the convolutions' constant loops, which turns each
-/// multiply-add into a counter update and a branch and makes the networks several times slower
-/// (docs/agent_notes/wgsl_loop_bounding_blocks_unrolling.md). The bounds checks stay.
-///
-/// # Safety
-///
-/// Every loop in `source` must end: each runs to a compile-time constant or to a uniform's value, counting up by a
-/// positive step.
-unsafe fn network_shader_module(device: &wgpu::Device, label: &str, source: String) -> wgpu::ShaderModule {
-    let descriptor = wgpu::ShaderModuleDescriptor { label: Some(label), source: wgpu::ShaderSource::Wgsl(source.into()) };
-    let checks = wgpu::ShaderRuntimeChecks { force_loop_bounding: false, ..wgpu::ShaderRuntimeChecks::checked() };
-    // SAFETY: the caller guarantees every loop ends, which is all the loop bounding protects against.
-    unsafe { device.create_shader_module_trusted(descriptor, checks) }
 }

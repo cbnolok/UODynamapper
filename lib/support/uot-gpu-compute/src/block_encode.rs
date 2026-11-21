@@ -1,7 +1,8 @@
-//! GPU block compression of the mobiles' frames, for a BC7 or BC1 frame atlas (evaluated in `tests.rs`; not wired to
-//! the atlas yet). BC7 keeps soft alpha (Enhanced, KR); BC1 keeps one bit of it, which is all Classic art and its
-//! in-betweens have. The encoding is block_compression's (a WGSL port of Intel's ISPC Texture Compressor kernels,
-//! MIT): its BC7 as it is, its BC1 followed by [`PUNCH_THROUGH_SHADER`], since that kernel encodes colour only.
+//! GPU block compression of frames, for a BC7 or BC1 frame atlas such as Dynamapper's mobiles' (evaluated in
+//! `tests.rs`; not wired to the atlas yet). BC7 keeps soft alpha (Enhanced, KR); BC1 keeps one bit of it, which is all
+//! Classic art and its in-betweens have. The encoding is block_compression's (a WGSL port of Intel's ISPC Texture
+//! Compressor kernels, MIT): its BC7 as it is, its BC1 followed by [`PUNCH_THROUGH_SHADER`], since that kernel encodes
+//! colour only.
 //!
 //! A frame to encode lies at the top-left corner of a texture whose view is a non-sRGB RGBA8 format (`Rgba8Unorm`)
 //! holding the frame's sRGB-encoded, straight-alpha bytes: an `Rgba8UnormSrgb` texture needs `Rgba8Unorm` among its
@@ -19,7 +20,8 @@ mod tests;
 
 use block_compression::{BC7Settings, CompressionVariant, GpuBlockCompressor};
 use wgpu::util::DeviceExt;
-use super::network_shader_module;
+use crate::network_shader_module;
+use crate::warm_up::CompileReport;
 
 /// Texels per side of a block.
 pub const BLOCK_SIDE: u32 = 4;
@@ -31,7 +33,7 @@ const U32_BYTES: u64 = 4;
 /// Matches the workgroup size of bc1_punch_through.wgsl.
 const PUNCH_THROUGH_WORKGROUP_SIDE: u32 = 8;
 
-const PUNCH_THROUGH_SHADER: &str = include_str!("../../../assets/shaders/block_encode/bc1_punch_through.wgsl");
+const PUNCH_THROUGH_SHADER: &str = include_str!("../shaders/block_encode/bc1_punch_through.wgsl");
 
 /// block_compression's BC7 settings for colour with alpha, fastest to slowest.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -107,6 +109,9 @@ struct PunchThroughFrame {
     workgroups: (u32, u32),
 }
 
+/// The compiles [`MobileBlockEncoder::compile`] reports: block_compression's pipelines, then the BC1 punch-through.
+pub const BLOCK_ENCODER_COMPILES: usize = 2;
+
 /// The encoders and the frames recorded for the next [`MobileBlockEncoder::record`].
 pub struct MobileBlockEncoder {
     device: wgpu::Device,
@@ -119,9 +124,13 @@ pub struct MobileBlockEncoder {
 impl MobileBlockEncoder {
     /// Compiles the encoders' pipelines: block_compression builds all of its BC1 to BC5 and BC7 pipelines here.
     pub fn new(device: &wgpu::Device, queue: &wgpu::Queue) -> Self {
-        let compressor = GpuBlockCompressor::new(device.clone(), queue.clone());
-        // SAFETY: every loop of bc1_punch_through.wgsl runs to a constant, counting up by one.
-        let module = unsafe { network_shader_module(device, "bc1 punch-through", PUNCH_THROUGH_SHADER.to_string()) };
+        Self::compile(device, queue, &mut CompileReport::silent(BLOCK_ENCODER_COMPILES))
+    }
+
+    /// [`MobileBlockEncoder::new`], telling `report` of each of [`BLOCK_ENCODER_COMPILES`].
+    pub fn compile(device: &wgpu::Device, queue: &wgpu::Queue, report: &mut CompileReport) -> Self {
+        let compressor = report.compile("BC1-BC5 and BC7 encoders (block_compression)",
+            || GpuBlockCompressor::new(device.clone(), queue.clone()));
         let entry = |binding, ty| wgpu::BindGroupLayoutEntry {
             binding, visibility: wgpu::ShaderStages::COMPUTE, ty, count: None,
         };
@@ -144,9 +153,13 @@ impl MobileBlockEncoder {
         let layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
             label: Some("bc1 punch-through"), bind_group_layouts: &[Some(&punch_through_layout)], immediate_size: 0,
         });
-        let punch_through = device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
-            label: Some("bc1 punch-through"), layout: Some(&layout), module: &module, entry_point: Some("punch_through"),
-            compilation_options: Default::default(), cache: None,
+        let punch_through = report.compile("BC1 punch-through", || {
+            // SAFETY: every loop of bc1_punch_through.wgsl runs to a constant, counting up by one.
+            let module = unsafe { network_shader_module(device, "bc1 punch-through", PUNCH_THROUGH_SHADER.to_string()) };
+            device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
+                label: Some("bc1 punch-through"), layout: Some(&layout), module: &module,
+                entry_point: Some("punch_through"), compilation_options: Default::default(), cache: None,
+            })
         });
         Self { device: device.clone(), compressor, punch_through_layout, punch_through, punch_through_frames: Vec::new() }
     }

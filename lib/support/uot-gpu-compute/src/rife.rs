@@ -16,7 +16,8 @@ mod tests;
 use bytemuck::{Pod, Zeroable};
 use wgpu::util::DeviceExt;
 use weights::{PackedParams, WEIGHTS_FILE};
-use super::network_shader_module;
+use crate::network_shader_module;
+use crate::warm_up::CompileReport;
 
 /// Frame sides are padded (zeros, right and bottom) to a multiple of this: block 0 works at 1/16 of the frame and
 /// halves it twice more.
@@ -58,8 +59,8 @@ const CONV_THREADS: u32 = 64;
 const PIXEL_THREADS: u32 = 64;
 const F32_BYTES: u64 = 4;
 const PIXEL_TIMESTEP_BYTE: u64 = 20;
-const CONV_SHADER: &str = include_str!("../../../assets/shaders/rife/conv.wgsl");
-const PIXEL_SHADER: &str = include_str!("../../../assets/shaders/rife/pixel.wgsl");
+const CONV_SHADER: &str = include_str!("../shaders/rife/conv.wgsl");
+const PIXEL_SHADER: &str = include_str!("../shaders/rife/pixel.wgsl");
 /// pixel.wgsl's switch between the blend's nearest warp (its default) and Practical-RIFE's bilinear one.
 #[cfg(test)]
 const NEAREST_FINAL_WARP_OVERRIDE: &str = "NEAREST_FINAL_WARP";
@@ -172,6 +173,18 @@ struct PixelUniform {
     _pad: u32,
 }
 
+/// The compiles [`RifePipelines::new`] reports: a convolution variant and tile each (its tiled pass and its
+/// reduction), then the per-pixel steps.
+pub const RIFE_COMPILES: usize = CONV_VARIANTS.len() * TILES.len() + 1;
+
+/// The pipelines, once per device, without the weights: what [`crate::warm_up`] compiles ahead.
+pub struct RifePipelines {
+    conv_layout: wgpu::BindGroupLayout,
+    pixel_layout: wgpu::BindGroupLayout,
+    conv_pipelines: Vec<((ConvKind, Epilogue, Tile), [wgpu::ComputePipeline; 2])>,
+    pixel_pipelines: Vec<(PixelStep, wgpu::ComputePipeline)>,
+}
+
 /// The weights and pipelines, once per device.
 pub struct RifeModel {
     params: wgpu::Buffer,
@@ -206,25 +219,15 @@ fn shader_module(device: &wgpu::Device, label: &str, source: String) -> wgpu::Sh
     unsafe { network_shader_module(device, label, source) }
 }
 
-impl RifeModel {
-    /// Uploads the bundled weights and compiles the pipelines. The blend warps the frames to the nearest pixel
-    /// (pixel.wgsl's `NEAREST_FINAL_WARP`).
-    pub fn new(device: &wgpu::Device) -> Result<Self, String> {
-        Self::with_pixel_constants(device, &[])
-    }
-
-    /// The model with Practical-RIFE's bilinear blend, as the PyTorch reference computes it.
-    #[cfg(test)]
-    pub fn with_bilinear_final_warp(device: &wgpu::Device) -> Result<Self, String> {
-        Self::with_pixel_constants(device, &[(NEAREST_FINAL_WARP_OVERRIDE, 0.0)])
+impl RifePipelines {
+    /// Compiles the pipelines, telling `report` of each of [`RIFE_COMPILES`]. The blend warps the frames to the
+    /// nearest pixel (pixel.wgsl's `NEAREST_FINAL_WARP`).
+    pub fn new(device: &wgpu::Device, report: &mut CompileReport) -> Self {
+        Self::with_pixel_constants(device, &[], report)
     }
 
     /// `constants` sets pixel.wgsl's overridable constants.
-    fn with_pixel_constants(device: &wgpu::Device, constants: &[(&str, f64)]) -> Result<Self, String> {
-        let packed = PackedParams::parse(WEIGHTS_FILE)?;
-        let params = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-            label: Some("rife weights"), contents: bytemuck::cast_slice(&packed.halves), usage: wgpu::BufferUsages::STORAGE,
-        });
+    fn with_pixel_constants(device: &wgpu::Device, constants: &[(&str, f64)], report: &mut CompileReport) -> Self {
         let conv_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: Some("rife convolution"),
             entries: &[uniform_entry(), storage_entry(1, true), storage_entry(2, true), storage_entry(3, false),
@@ -253,23 +256,56 @@ impl RifeModel {
                     if transposed { TRANSPOSED_PHASES } else { 1 },
                     if kind == ConvKind::Stride2 { STRIDE_2 } else { 1 },
                     kind == ConvKind::TransposedShuffle, epilogue as u32);
-                let module = shader_module(device, "rife convolution", constants + CONV_SHADER);
-                let pipeline = |entry_point| device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
-                    label: Some("rife convolution"), layout: Some(&conv_pipeline_layout), module: &module,
-                    entry_point: Some(entry_point), compilation_options: Default::default(), cache: None,
+                let name = format!("RIFE convolution {kind:?} {epilogue:?} {}x{}", tile.m, tile.n);
+                let pipelines = report.compile(&name, || {
+                    let module = shader_module(device, "rife convolution", constants + CONV_SHADER);
+                    let pipeline = |entry_point| device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
+                        label: Some("rife convolution"), layout: Some(&conv_pipeline_layout), module: &module,
+                        entry_point: Some(entry_point), compilation_options: Default::default(), cache: None,
+                    });
+                    [pipeline("main"), pipeline("reduce")]
                 });
-                conv_pipelines.push(((kind, epilogue, tile), [pipeline("main"), pipeline("reduce")]));
+                conv_pipelines.push(((kind, epilogue, tile), pipelines));
             }
         }
         let pixel_pipeline_layout = pipeline_layout(&pixel_layout);
-        let pixel_module = shader_module(device, "rife pixel steps", PIXEL_SHADER.to_string());
-        let pixel_pipelines = PIXEL_STEPS.into_iter().map(|step| (step, device.create_compute_pipeline(
-            &wgpu::ComputePipelineDescriptor {
-                label: Some(step.entry_point()), layout: Some(&pixel_pipeline_layout), module: &pixel_module,
-                entry_point: Some(step.entry_point()),
-                compilation_options: wgpu::PipelineCompilationOptions { constants, ..Default::default() }, cache: None,
-            }))).collect();
+        let pixel_pipelines = report.compile("RIFE pixel steps", || {
+            let pixel_module = shader_module(device, "rife pixel steps", PIXEL_SHADER.to_string());
+            PIXEL_STEPS.into_iter().map(|step| (step, device.create_compute_pipeline(
+                &wgpu::ComputePipelineDescriptor {
+                    label: Some(step.entry_point()), layout: Some(&pixel_pipeline_layout), module: &pixel_module,
+                    entry_point: Some(step.entry_point()),
+                    compilation_options: wgpu::PipelineCompilationOptions { constants, ..Default::default() },
+                    cache: None,
+                }))).collect()
+        });
+        Self { conv_layout, pixel_layout, conv_pipelines, pixel_pipelines }
+    }
+}
+
+impl RifeModel {
+    /// Uploads the bundled weights and compiles the pipelines. The blend warps the frames to the nearest pixel
+    /// (pixel.wgsl's `NEAREST_FINAL_WARP`).
+    pub fn new(device: &wgpu::Device) -> Result<Self, String> {
+        Self::with_pipelines(device, RifePipelines::new(device, &mut CompileReport::silent(RIFE_COMPILES)))
+    }
+
+    /// Uploads the bundled weights for pipelines compiled already ([`crate::warm_up`]).
+    pub fn with_pipelines(device: &wgpu::Device, pipelines: RifePipelines) -> Result<Self, String> {
+        let packed = PackedParams::parse(WEIGHTS_FILE)?;
+        let params = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("rife weights"), contents: bytemuck::cast_slice(&packed.halves),
+            usage: wgpu::BufferUsages::STORAGE,
+        });
+        let RifePipelines { conv_layout, pixel_layout, conv_pipelines, pixel_pipelines } = pipelines;
         Ok(Self { params, packed, conv_layout, pixel_layout, conv_pipelines, pixel_pipelines })
+    }
+
+    /// The model with Practical-RIFE's bilinear blend, as the PyTorch reference computes it.
+    #[cfg(test)]
+    pub fn with_bilinear_final_warp(device: &wgpu::Device) -> Result<Self, String> {
+        Self::with_pipelines(device, RifePipelines::with_pixel_constants(device, &[(NEAREST_FINAL_WARP_OVERRIDE, 0.0)],
+            &mut CompileReport::silent(RIFE_COMPILES)))
     }
 
     /// Bytes of the weights on the GPU.

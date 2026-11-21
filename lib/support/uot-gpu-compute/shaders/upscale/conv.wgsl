@@ -10,7 +10,7 @@
 // that finishes it. RIFE's split sums are left out: every SPAN layer runs at the full canvas size, and splitting
 // measured slower even on the smallest frames.
 //
-// render/mobiles/upscale.rs puts these constants in front of this source, one set per pipeline:
+// upscale.rs puts these constants in front of this source, one set per pipeline:
 //   THREADS                      threads per workgroup
 //   TILE_M, TILE_N, TILE_K       the workgroup's tile
 //   MICRO_M, MICRO_N             one thread's sums, for consecutive pixels and channels; MICRO_N is a multiple of 4

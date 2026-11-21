@@ -1,0 +1,36 @@
+[package]
+name = "uot-gpu-compute"
+version = "0.1.0"
+edition = "2024"
+#resolver = "3"
+
+[lints.clippy]
+collapsible_if = "allow"
+empty_line_after_doc_comments = "allow"
+manual_div_ceil = "allow"
+manual_is_multiple_of = "allow"
+needless_lifetimes = "allow"
+nonminimal_bool = "allow"
+too_many_arguments = "allow"
+type_complexity = "allow"
+
+[dependencies]
+# GPU BC1/BC7 encoding of frames (block_encode.rs); its wgpu is ours (30).
+block_compression.workspace = true
+bytemuck.workspace = true
+color-eyre.workspace = true
+# Waits on wgpu's adapter and device requests where no async runtime runs (the stride measurement, the tests).
+pollster = "0.4"
+serde.workspace = true
+serde_json.workspace = true
+wgpu.workspace = true
+workspace-hack.workspace = true
+
+[dev-dependencies]
+# The block encoding evaluation (block_encode/tests.rs): CPU decoding of the blocks, the CPU BC7 encoder for
+# reference, and PNG sheets.
+image = { workspace = true, features = ["png"] }
+uot-texture-codecs = { path = "../uot-texture-codecs", features = ["bc7-encode"] }
+# Reads the frames it evaluates on from the animation packages; a dev-dependency only, the crate itself depends on
+# no udd crate.
+udd-assets = { path = "../../udd-assets" }

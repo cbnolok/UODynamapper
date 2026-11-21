@@ -229,7 +229,9 @@ hash input is in `docs/dev_wiki/UDDP_FORMATS.md` §3.1.
 now. `plan_strides` sorts stored records against the hashes now (unchanged, changed, new,
 removed); `write_package_strides` replaces the entry by copying the package's other entries as
 stored; `format_stride_table` / `parse_stride_table` are the text form `udd-cli tool strides`
-reads and writes.
+reads and writes; `load_mobile_anim_clips` opens either package. The GPU measurement that writes
+the entry is `udd_conv::animation::mobile_strides` on `uot-gpu-compute` (`udd-cli tool strides
+measure`, the inspector, the converter GUI).
 
 ## `effects_ec.uddp` (metadata version 1)
 

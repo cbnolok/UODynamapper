@@ -6,7 +6,7 @@
 // walk the whole sum, so its sum can be split: each workgroup then adds up one range of rows into `partial`, and
 // `reduce` adds the ranges and finishes the output.
 //
-// render/mobiles/rife.rs puts these constants in front of this source, one set per pipeline:
+// rife.rs puts these constants in front of this source, one set per pipeline:
 //   THREADS                      threads per workgroup
 //   TILE_M, TILE_N, TILE_K       the workgroup's tile
 //   MICRO_M, MICRO_N             one thread's sums, for consecutive pixels and channels; MICRO_N is a multiple of 4

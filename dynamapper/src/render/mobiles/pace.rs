@@ -1,9 +1,8 @@
 //! How fast a mobile's walk and run cycles play. The clients play a clip at its own frame time, whatever the speed of
 //! the steps, so a big Enhanced creature walking a tile in 0.4 s skates. Matched to the ground, a cycle lasts the time
 //! the steps take to cover the clip's stride: how far the body's planted feet travel in one cycle of the clip, measured
-//! offline on the frames (`measure`) and stored in the animation packages with the hash of the frames measured.
-
-pub mod measure;
+//! offline on the frames (`udd-cli tool strides measure`) and stored in the animation packages with the hash of the
+//! frames measured.
 
 use std::collections::hash_map::{Entry, HashMap};
 use std::sync::Arc;

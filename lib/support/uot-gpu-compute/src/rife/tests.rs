@@ -29,7 +29,7 @@ struct Gpu {
 }
 
 fn gpu() -> Option<Gpu> {
-    bevy::tasks::block_on(async {
+    pollster::block_on(async {
         let instance = wgpu::Instance::new(wgpu::InstanceDescriptor::new_without_display_handle());
         let adapter = instance.request_adapter(&wgpu::RequestAdapterOptions {
             power_preference: wgpu::PowerPreference::HighPerformance, ..Default::default()

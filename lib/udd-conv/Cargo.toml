@@ -41,6 +41,8 @@ ddsfile.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 uot-image-postprocess = { path = "../support/uot-image-postprocess" }
+# The stride measurement of the mobile animation packages (animation/mobile_strides.rs), on the GPU.
+uot-gpu-compute = { path = "../support/uot-gpu-compute" }
 workspace-hack.workspace = true
 
 [dev-dependencies]

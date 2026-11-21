@@ -6,8 +6,8 @@
 //!
 //! ```sh
 //! BLOCK_ENCODE_PACKAGES=/path/to/uddp BLOCK_ENCODE_OUTPUT=/path/to/bc-eval \
-//!     cargo test -p dynamapper --bin dynamapper -- --ignored --exact \
-//!     render::mobiles::block_encode::tests::evaluate_block_formats --nocapture
+//!     cargo test -p uot-gpu-compute --lib -- --ignored --exact \
+//!     block_encode::tests::evaluate_block_formats --nocapture
 //! ```
 //!
 //! A sheet shows the frame 4x, nearest, over 50% grey: the source, then each encoding of [`SHEET_FORMATS`] the frame
@@ -16,13 +16,12 @@
 use super::*;
 use std::fmt::Write as _;
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
 use std::time::{Duration, Instant};
 use udd_assets::animation::mobile_anim_cc::{self as anim_cc, MobileAnimCcPackage};
 use udd_assets::animation::mobile_anim_ec::{self as anim_ec, MobileAnimEcPackage};
 use uot_texture_codecs::bc7::{Bc7EncoderBackend, ImageExtent, RawImageFormat};
-use crate::render::mobiles::clips::{decode_clip, AnimPackages, AnimSource, ClipKey, DecodedClip};
-use crate::render::mobiles::rife::{RifeModel, RifeWorkspace, RIFE_ALPHA_CHANNEL, RIFE_IMAGE_CHANNELS};
+use udd_assets::animation::mobile_strides::{MobileAnimClips, MobileClip};
+use crate::rife::{RifeModel, RifeWorkspace, RIFE_ALPHA_CHANNEL, RIFE_IMAGE_CHANNELS};
 
 const PACKAGES_VARIABLE: &str = "BLOCK_ENCODE_PACKAGES";
 const OUTPUT_VARIABLE: &str = "BLOCK_ENCODE_OUTPUT";
@@ -96,7 +95,7 @@ struct Gpu {
 }
 
 fn gpu() -> Option<Gpu> {
-    bevy::tasks::block_on(async {
+    pollster::block_on(async {
         let instance = wgpu::Instance::new(wgpu::InstanceDescriptor::new_without_display_handle());
         let adapter = instance.request_adapter(&wgpu::RequestAdapterOptions {
             power_preference: wgpu::PowerPreference::HighPerformance, ..Default::default()
@@ -577,12 +576,12 @@ fn check_gpu_decoding(gpu: &Gpu, format: MobileBlockFormat, sample: &Sample, blo
 
 /// The two first frames of a clip on a `side` square canvas, by their anchors, if they fit and fill more than half
 /// of it.
-fn canvas_pair(clip: &DecodedClip, side: u32) -> Option<[Vec<u8>; 2]> {
+fn canvas_pair(clip: &MobileClip, side: u32) -> Option<[Vec<u8>; 2]> {
     let frames = clip.frames.get(..2)?;
-    let left = frames.iter().map(|frame| -frame.placement.anchor_x.round() as i32).min()?;
-    let top = frames.iter().map(|frame| -frame.placement.anchor_y.round() as i32).min()?;
-    let right = frames.iter().map(|frame| (frame.placement.width - frame.placement.anchor_x).round() as i32).max()?;
-    let bottom = frames.iter().map(|frame| (frame.placement.height - frame.placement.anchor_y).round() as i32).max()?;
+    let left = frames.iter().map(|frame| -frame.anchor_x).min()?;
+    let top = frames.iter().map(|frame| -frame.anchor_y).min()?;
+    let right = frames.iter().map(|frame| i32::from(frame.width) - frame.anchor_x).max()?;
+    let bottom = frames.iter().map(|frame| i32::from(frame.height) - frame.anchor_y).max()?;
     let extent = (right - left).max(bottom - top);
     if extent > side as i32 || 2 * extent <= side as i32 {
         return None;
@@ -591,9 +590,9 @@ fn canvas_pair(clip: &DecodedClip, side: u32) -> Option<[Vec<u8>; 2]> {
     Some(std::array::from_fn(|index| {
         let frame = &frames[index];
         let mut canvas = vec![0u8; (side * side) as usize * RGBA_BYTES];
-        let x0 = (margin_x - frame.placement.anchor_x.round() as i32 - left) as usize;
-        let y0 = (margin_y - frame.placement.anchor_y.round() as i32 - top) as usize;
-        let row = frame.placement.width as usize * RGBA_BYTES;
+        let x0 = (margin_x - frame.anchor_x - left) as usize;
+        let y0 = (margin_y - frame.anchor_y - top) as usize;
+        let row = usize::from(frame.width) * RGBA_BYTES;
         for (y, source_row) in frame.rgba.chunks_exact(row).enumerate() {
             canvas[((y0 + y) * side as usize + x0) * RGBA_BYTES..][..row].copy_from_slice(source_row);
         }
@@ -674,27 +673,24 @@ fn evaluate_block_formats() {
     let mut summary = String::new();
     writeln!(summary, "GPU timestamps: {}; BC textures: {}", gpu.timestamps, gpu.bc_textures).unwrap();
 
-    let classic = Arc::new(MobileAnimCcPackage::load(folder.join(CLASSIC_PACKAGE)).unwrap());
-    let enhanced = Arc::new(MobileAnimEcPackage::load(folder.join(ENHANCED_PACKAGE)).unwrap());
+    let classic = MobileAnimCcPackage::load(folder.join(CLASSIC_PACKAGE)).unwrap();
+    let enhanced = MobileAnimEcPackage::load(folder.join(ENHANCED_PACKAGE)).unwrap();
     writeln!(summary, "{}", layout_line("Classic", classic.pages().iter().map(|page| format!("{:?}", page.pixel_format))
         .collect(), classic.gutter(), format!("{:?}", classic.packing_mode()),
         classic.frames().iter().filter(|frame| frame.width > 0).map(|frame| (frame.x, frame.y)))).unwrap();
     writeln!(summary, "{}", layout_line("Enhanced", enhanced.pages().iter().map(|page| format!("{:?}", page.pixel_format))
         .collect(), enhanced.gutter(), format!("{:?}", enhanced.packing_mode()),
         enhanced.frames().iter().filter(|frame| frame.width > 0).map(|frame| (frame.x, frame.y)))).unwrap();
-    let packages = AnimPackages { classic: Some(classic.clone()), enhanced: Some(enhanced.clone()) };
 
-    let mut clips: Vec<(String, bool, DecodedClip)> = Vec::new();
+    let mut clips: Vec<(String, bool, MobileClip)> = Vec::new();
     for body in CLASSIC_BODIES {
         let action = classic.movement_action(body as u16, anim_cc::MOVE_WALK, false).expect("a Classic walk");
-        let clip = decode_clip(&packages, ClipKey { source: AnimSource::Classic, body, action, direction: DIRECTION })
-            .expect("Classic frames");
+        let clip = classic.clip(body, action, DIRECTION).unwrap().expect("Classic frames");
         clips.push((format!("Classic body {body} walk"), true, clip));
     }
     for body in ENHANCED_BODIES {
         let action = enhanced.move_action(body, anim_ec::GROUP_PEACE, anim_ec::MOVE_WALK).expect("an Enhanced walk");
-        let clip = decode_clip(&packages, ClipKey { source: AnimSource::Enhanced, body, action, direction: DIRECTION })
-            .expect("Enhanced frames");
+        let clip = enhanced.clip(body, action, DIRECTION).unwrap().expect("Enhanced frames");
         clips.push((format!("Enhanced body {body} walk"), false, clip));
     }
     let mut samples = Vec::new();
@@ -703,8 +699,8 @@ fn evaluate_block_formats() {
             samples.push(Sample {
                 name: format!("{name} frame {index}"),
                 group: if *classic { "Classic frames" } else { "Enhanced frames" }.to_string(),
-                classic: *classic, width: frame.placement.width as u32, height: frame.placement.height as u32,
-                rgba: frame.rgba.to_vec(), sheet: index == 0,
+                classic: *classic, width: u32::from(frame.width), height: u32::from(frame.height),
+                rgba: frame.rgba.clone(), sheet: index == 0,
             });
         }
     }
@@ -716,7 +712,7 @@ fn evaluate_block_formats() {
         let soft = clip.frames.iter().flat_map(|frame| frame.rgba.chunks_exact(RGBA_BYTES))
             .filter(|texel| texel[ALPHA] != 0 && texel[ALPHA] != u8::MAX).count();
         let sizes: Vec<String> = clip.frames.iter().take(FRAMES_PER_CLIP)
-            .map(|frame| format!("{}x{}", frame.placement.width, frame.placement.height)).collect();
+            .map(|frame| format!("{}x{}", frame.width, frame.height)).collect();
         writeln!(summary, "{name} (classic {classic}): {} frames, sizes {sizes:?}; transparent texels {transparent}, \
             {coloured} of them with colour; soft alpha texels {soft}", clip.frames.len()).unwrap();
     }

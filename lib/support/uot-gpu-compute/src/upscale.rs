@@ -23,8 +23,8 @@ mod tests;
 use bytemuck::{Pod, Zeroable};
 use wgpu::util::DeviceExt;
 use weights::{PackedParams, WEIGHTS_FILE};
-use super::frame_atlas::AtlasRect;
-use super::network_shader_module;
+use crate::network_shader_module;
+use crate::warm_up::CompileReport;
 
 /// The transparent texels around the frame on the canvas: Catmull-Rom alpha reaches 1.5 texels past the last opaque
 /// one.
@@ -35,6 +35,16 @@ pub const UPSCALE_OUTPUT_SCALE: u32 = NETWORK_SCALE / BOX_SIDE;
 pub const UPSCALE_FRAME_SLOTS: usize = 4;
 /// Bytes of one output texel (RGBA8).
 pub const UPSCALE_OUTPUT_TEXEL_BYTES: u32 = 4;
+
+/// Where a frame lies in the source atlas: its layer, and its texels on the layer.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct SourceRect {
+    pub layer: u32,
+    pub x: u32,
+    pub y: u32,
+    pub width: u32,
+    pub height: u32,
+}
 
 const NETWORK_SCALE: u32 = 4;
 const BOX_SIDE: u32 = 2;
@@ -72,8 +82,8 @@ const CONV_THREADS: u32 = 64;
 /// Matches THREADS in pixel.wgsl.
 const PIXEL_THREADS: u32 = 64;
 const F32_BYTES: u64 = 4;
-const CONV_SHADER: &str = include_str!("../../../assets/shaders/upscale/conv.wgsl");
-const PIXEL_SHADER: &str = include_str!("../../../assets/shaders/upscale/pixel.wgsl");
+const CONV_SHADER: &str = include_str!("../shaders/upscale/conv.wgsl");
+const PIXEL_SHADER: &str = include_str!("../shaders/upscale/pixel.wgsl");
 
 /// A convolution workgroup's tile: `m` pixels by `n` output channels, `k` rows of the sum staged at a time, each
 /// thread keeping `micro_m` by `micro_n` sums. Every layer has 48 output channels, one tile wide.
@@ -146,6 +156,19 @@ struct PixelUniform {
     row_texels: u32,
 }
 
+/// The compiles [`UpscalePipelines::new`] reports: a convolution variant and tile each, then the per-pixel steps.
+pub const UPSCALE_COMPILES: usize = CONV_VARIANTS.len() * TILES.len() + 1;
+
+/// The pipelines, once per device, without the weights: what [`crate::warm_up`] compiles ahead.
+pub struct UpscalePipelines {
+    conv_layout: wgpu::BindGroupLayout,
+    prepare_layout: wgpu::BindGroupLayout,
+    finish_layout: wgpu::BindGroupLayout,
+    conv_pipelines: Vec<((u32, Epilogue, Tile), wgpu::ComputePipeline)>,
+    prepare_pipeline: wgpu::ComputePipeline,
+    finish_pipeline: wgpu::ComputePipeline,
+}
+
 /// The weights and pipelines, once per device.
 pub struct UpscaleModel {
     params: wgpu::Buffer,
@@ -192,13 +215,9 @@ fn shader_module(device: &wgpu::Device, label: &str, source: String) -> wgpu::Sh
     unsafe { network_shader_module(device, label, source) }
 }
 
-impl UpscaleModel {
-    /// Uploads the bundled weights and compiles the pipelines.
-    pub fn new(device: &wgpu::Device) -> Result<Self, String> {
-        let packed = PackedParams::parse(WEIGHTS_FILE)?;
-        let params = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-            label: Some("upscale weights"), contents: bytemuck::cast_slice(&packed.halves), usage: wgpu::BufferUsages::STORAGE,
-        });
+impl UpscalePipelines {
+    /// Compiles the pipelines, telling `report` of each of [`UPSCALE_COMPILES`].
+    pub fn new(device: &wgpu::Device, report: &mut CompileReport) -> Self {
         let conv_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: Some("upscale convolution"),
             entries: &[uniform_entry(), storage_entry(1, true), storage_entry(2, false)],
@@ -221,21 +240,44 @@ impl UpscaleModel {
                      const TILE_K: u32 = {}u;\nconst MICRO_M: u32 = {}u;\nconst MICRO_N: u32 = {}u;\n\
                      const KERNEL_SIDE: u32 = {side}u;\nconst EPILOGUE: u32 = {}u;\n",
                     tile.m, tile.n, tile.k, tile.micro_m, tile.micro_n, epilogue as u32);
-                let module = shader_module(device, "upscale convolution", constants + CONV_SHADER);
-                let pipeline = device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
-                    label: Some("upscale convolution"), layout: Some(&conv_pipeline_layout), module: &module,
-                    entry_point: Some("main"), compilation_options: Default::default(), cache: None,
+                let name = format!("SPAN convolution {side}x{side} {epilogue:?} {}x{}", tile.m, tile.n);
+                let pipeline = report.compile(&name, || {
+                    let module = shader_module(device, "upscale convolution", constants + CONV_SHADER);
+                    device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
+                        label: Some("upscale convolution"), layout: Some(&conv_pipeline_layout), module: &module,
+                        entry_point: Some("main"), compilation_options: Default::default(), cache: None,
+                    })
                 });
                 conv_pipelines.push(((side, epilogue, tile), pipeline));
             }
         }
-        let pixel_module = shader_module(device, "upscale pixel steps", PIXEL_SHADER.to_string());
-        let pixel_pipeline = |layout, entry_point| device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
-            label: Some(entry_point), layout: Some(&pipeline_layout(layout)), module: &pixel_module,
-            entry_point: Some(entry_point), compilation_options: Default::default(), cache: None,
+        let (prepare_pipeline, finish_pipeline) = report.compile("SPAN pixel steps", || {
+            let pixel_module = shader_module(device, "upscale pixel steps", PIXEL_SHADER.to_string());
+            let pixel_pipeline = |layout, entry_point| device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
+                label: Some(entry_point), layout: Some(&pipeline_layout(layout)), module: &pixel_module,
+                entry_point: Some(entry_point), compilation_options: Default::default(), cache: None,
+            });
+            (pixel_pipeline(&prepare_layout, "prepare"), pixel_pipeline(&finish_layout, "finish"))
         });
-        let prepare_pipeline = pixel_pipeline(&prepare_layout, "prepare");
-        let finish_pipeline = pixel_pipeline(&finish_layout, "finish");
+        Self { conv_layout, prepare_layout, finish_layout, conv_pipelines, prepare_pipeline, finish_pipeline }
+    }
+}
+
+impl UpscaleModel {
+    /// Uploads the bundled weights and compiles the pipelines.
+    pub fn new(device: &wgpu::Device) -> Result<Self, String> {
+        Self::with_pipelines(device, UpscalePipelines::new(device, &mut CompileReport::silent(UPSCALE_COMPILES)))
+    }
+
+    /// Uploads the bundled weights for pipelines compiled already ([`crate::warm_up`]).
+    pub fn with_pipelines(device: &wgpu::Device, pipelines: UpscalePipelines) -> Result<Self, String> {
+        let packed = PackedParams::parse(WEIGHTS_FILE)?;
+        let params = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("upscale weights"), contents: bytemuck::cast_slice(&packed.halves), usage: wgpu::BufferUsages::STORAGE,
+        });
+        let UpscalePipelines {
+            conv_layout, prepare_layout, finish_layout, conv_pipelines, prepare_pipeline, finish_pipeline,
+        } = pipelines;
         Ok(Self {
             params, packed, conv_layout, prepare_layout, finish_layout, conv_pipelines, prepare_pipeline, finish_pipeline,
         })
@@ -349,7 +391,7 @@ fn entry(binding: u32, buffer: &wgpu::Buffer) -> wgpu::BindGroupEntry<'_> {
 }
 
 /// The per-pixel steps' parameters for a canvas and a frame on it.
-fn pixel_uniform(width: u32, height: u32, frame: AtlasRect) -> PixelUniform {
+fn pixel_uniform(width: u32, height: u32, frame: SourceRect) -> PixelUniform {
     let pixels = width * height;
     PixelUniform {
         width, height, pixels, layer: frame.layer, source_x: frame.x, source_y: frame.y, frame_width: frame.width,
@@ -427,7 +469,7 @@ impl UpscaleWorkspace {
         let network_count = planner.pending.len();
 
         let (out_width, out_height) = (width * UPSCALE_OUTPUT_SCALE, height * UPSCALE_OUTPUT_SCALE);
-        let pixel_uniform = pixel_uniform(width, height, AtlasRect { layer: 0, x: 0, y: 0, width: 0, height: 0 });
+        let pixel_uniform = pixel_uniform(width, height, SourceRect { layer: 0, x: 0, y: 0, width: 0, height: 0 });
         let mut pending = planner.pending;
         for _ in 0..UPSCALE_FRAME_SLOTS {
             pending.push(PendingDispatch {
@@ -507,7 +549,7 @@ impl UpscaleWorkspace {
 
     /// Sets the frame a slot's [`UpscaleWorkspace::prepare`] reads from the atlas; it takes effect with the next
     /// queue submission. The frame's top left lands at ([`UPSCALE_BORDER`], [`UPSCALE_BORDER`]) on the canvas.
-    pub fn set_frame(&self, queue: &wgpu::Queue, slot: usize, frame: AtlasRect) -> Result<(), String> {
+    pub fn set_frame(&self, queue: &wgpu::Queue, slot: usize, frame: SourceRect) -> Result<(), String> {
         let (needed_width, needed_height) = upscale_canvas_size(frame.width, frame.height);
         if needed_width > self.width || needed_height > self.height {
             return Err(format!("upscale: a {}x{} frame needs a {needed_width}x{needed_height} canvas, this one is {}x{}",

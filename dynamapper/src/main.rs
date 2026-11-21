@@ -31,10 +31,6 @@ fn main() -> ExitCode {
 
     // Before any package decodes: udd's parallel decodes share the background pool's threads.
     app::background::install_udd_executor();
-    let args: Vec<String> = std::env::args().skip(1).collect();
-    if args.first().is_some_and(|command| command == render::mobiles::pace::measure::COMMAND) {
-        return render::mobiles::pace::measure::run(&args[1..]);
-    }
     console_logger::system("Starting Bevy app.");
     app::run_bevy_app()
 }

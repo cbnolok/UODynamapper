@@ -7,7 +7,7 @@ use serde::Deserialize;
 
 /// The 44 tensors the network uses at inference, fp16, named as in spandrel's SPAN: each Conv3XC already folded into
 /// its `eval_conv`.
-pub(super) const WEIGHTS_FILE: &[u8] = include_bytes!("../../../../assets/models/span_4x_mssim_f16.safetensors");
+pub(super) const WEIGHTS_FILE: &[u8] = include_bytes!("../../models/span_4x_mssim_f16.safetensors");
 
 /// Bytes of the little-endian header length that starts a safetensors file.
 const HEADER_LENGTH_BYTES: usize = 8;

@@ -1,10 +1,10 @@
 # naga's loop bounding stops the driver from unrolling compute loops
 
-Discovered 2026-11-21 while porting the SPAN upscaler (`dynamapper/src/render/mobiles/upscale.rs`).
+Discovered 2026-11-21 while porting the SPAN upscaler (now `lib/support/uot-gpu-compute/src/upscale.rs`).
 
 ## Symptom
 
-A tiled matrix-product kernel (`assets/shaders/upscale/conv.wgsl`, copied from `assets/shaders/rife/conv.wgsl`)
+A tiled matrix-product kernel (`shaders/upscale/conv.wgsl`, copied from `shaders/rife/conv.wgsl`, now in `lib/support/uot-gpu-compute/`)
 ran at about 270 GMAC/s on the Radeon 880M (RADV), far below what its register tile should give.
 
 ## Cause
@@ -27,7 +27,7 @@ It is sound only when every loop in the shader provably ends (constant or unifor
 network went from 105 ms to about 29 ms at 256x256 (3.3x to 3.6x across sizes); the unrolled kernel shows 768
 `v_fmac` per k-step, no scratch, 128 VGPRs. Turning `bounds_checks` off as well gained about 2%, not worth it.
 
-`network_shader_module` in `render/mobiles.rs` does this; it is `unsafe`, and each caller states why its shader's
+`network_shader_module` in `uot-gpu-compute` (`src/lib.rs`) does this; it is `unsafe`, and each caller states why its shader's
 loops end.
 
 ## RIFE
