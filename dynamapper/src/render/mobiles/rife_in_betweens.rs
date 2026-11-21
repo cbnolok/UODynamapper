@@ -366,9 +366,9 @@ mod tests {
             let secs = step as f32 * 0.0137;
             let (plain, expanded) = (clip.frame_at(secs).unwrap(), sequence.frame_at(secs).unwrap());
             assert_eq!(expanded.index, expected(plain), "{secs}");
-            let cycle = CLASSIC_FRAME_SECS * 4.0;
-            let (plain, expanded) = (clip.frame_in_cycle(secs, cycle).unwrap(),
-                sequence.frame_in_cycle(secs, cycle).unwrap());
+            let cycles = secs / (CLASSIC_FRAME_SECS * 4.0);
+            let (plain, expanded) = (clip.frame_at_cycles(cycles).unwrap(),
+                sequence.frame_at_cycles(cycles).unwrap());
             assert_eq!(expanded.index, expected(plain), "{secs}");
         }
     }

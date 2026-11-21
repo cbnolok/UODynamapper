@@ -6,6 +6,7 @@ use crate::{
     app::present_mode_for_vsync,
     render::{mobiles::in_between::MobileInBetweenFrames, view::camera::UiCameraResource},
     world::mobile_motion::MobileStop,
+    render::mobiles::pace::MobileWalkPace,
     prelude::*,
     world::caves::{CaveSurroundings, CaveView},
 };
@@ -81,6 +82,7 @@ pub struct PreferencesDialogState {
     pub cave_surroundings: CaveSurroundings,
     pub mobile_in_between_frames: MobileInBetweenFrames,
     pub mobile_stop: MobileStop,
+    pub mobile_walk_pace: MobileWalkPace,
     /// Timer used to debounce applying settings that cause UI layout shifts (like UI scale).
     pub apply_timer: Timer,
 }
@@ -127,6 +129,7 @@ impl Default for PreferencesDialogState {
             cave_surroundings: CaveSurroundings::Dimmed,
             mobile_in_between_frames: MobileInBetweenFrames::Crossfade,
             mobile_stop: MobileStop::HalfStepLater,
+            mobile_walk_pace: MobileWalkPace::MatchTheGround,
             apply_timer: {
                 let mut t = Timer::from_seconds(0.3, TimerMode::Once);
                 t.pause();
@@ -204,6 +207,7 @@ fn sys_sync_settings_to_state(
         state.cave_surroundings = settings.world_rendering.cave_surroundings;
         state.mobile_in_between_frames = settings.world_rendering.mobile_in_between_frames;
         state.mobile_stop = settings.world_rendering.mobile_stop;
+        state.mobile_walk_pace = settings.world_rendering.mobile_walk_pace;
 
         if wireframe_config.global != settings.app.debug.map_render_wireframe {
             wireframe_config.global = settings.app.debug.map_render_wireframe;
@@ -329,6 +333,9 @@ pub fn sys_render_preferences_dialog(
         }
         if settings.as_ref().world_rendering.mobile_stop != state.mobile_stop {
             settings.world_rendering.mobile_stop = state.mobile_stop;
+        }
+        if settings.as_ref().world_rendering.mobile_walk_pace != state.mobile_walk_pace {
+            settings.world_rendering.mobile_walk_pace = state.mobile_walk_pace;
         }
         if (settings.as_ref().app.window.ui_scale - state.ui_scale).abs() > 0.001 {
             settings.app.window.ui_scale = state.ui_scale;
@@ -675,6 +682,31 @@ pub fn sys_render_preferences_dialog(
                                             "When a mobile whose steps end stands. Half a step later: its legs move on \
                                              for half a step time first. At once: it stands as its last step ends, unless \
                                              a further step is held.",
+                                        );
+                                    if changed {
+                                        state.apply_timer.reset();
+                                        state.apply_timer.unpause();
+                                    }
+                                });
+                                ui.horizontal(|ui| {
+                                    ui.label("Mobile Walk Pace:");
+                                    let mut changed = false;
+                                    egui::ComboBox::from_id_salt("preferences_mobile_walk_pace")
+                                        .selected_text(state.mobile_walk_pace.label())
+                                        .show_ui(ui, |ui| {
+                                            for pace in MobileWalkPace::ALL {
+                                                changed |= ui
+                                                    .selectable_value(&mut state.mobile_walk_pace, pace, pace.label())
+                                                    .changed();
+                                            }
+                                        })
+                                        .response
+                                        .on_hover_text(
+                                            "How fast a mobile's walk and run animations play. Client timing: at the \
+                                             animation's own speed, as the clients play it, so big creatures can slide \
+                                             over the ground. Match the ground: one cycle in the time the steps take to \
+                                             cover the stride measured on its frames, between half and twice its own \
+                                             speed.",
                                         );
                                     if changed {
                                         state.apply_timer.reset();

@@ -23,6 +23,8 @@ use super::network_shader_module;
 pub const RIFE_SIZE_MULTIPLE: u32 = 64;
 /// Channels of one frame: RGB over 50% grey (the only ones the network looks at), premultiplied RGB, alpha.
 pub const RIFE_IMAGE_CHANNELS: u32 = 7;
+/// The alpha among a frame's channels.
+pub const RIFE_ALPHA_CHANNEL: u32 = RIFE_IMAGE_CHANNELS - 1;
 /// The input buffer: frame 0's channels, then frame 1's.
 pub const RIFE_INPUT_CHANNELS: u32 = 2 * RIFE_IMAGE_CHANNELS;
 /// The state buffer: flow t->0 xy and t->1 xy, the mask logit, 8 feature channels.
@@ -656,6 +658,21 @@ impl RifeWorkspace {
     /// The in-between, [`RIFE_IMAGE_CHANNELS`] planes laid out as a frame.
     pub fn merged(&self) -> &wgpu::Buffer {
         self.buffer(Buf::Merged)
+    }
+
+    /// Bytes [`RifeWorkspace::copy_flow_and_alpha`] writes: [`RIFE_FLOW_CHANNELS`] planes, then one.
+    pub fn flow_and_alpha_bytes(&self) -> u64 {
+        (RIFE_FLOW_CHANNELS + 1) as u64 * (self.width * self.height) as u64 * F32_BYTES
+    }
+
+    /// Records copies of the last inference's flow (t->0 xy, t->1 xy, in pixels of the padded frame) and of the
+    /// in-between's alpha into `target` at `offset`, for reading back.
+    pub fn copy_flow_and_alpha(&self, encoder: &mut wgpu::CommandEncoder, target: &wgpu::Buffer, offset: u64) {
+        let plane_bytes = (self.width * self.height) as u64 * F32_BYTES;
+        let flow_bytes = RIFE_FLOW_CHANNELS as u64 * plane_bytes;
+        encoder.copy_buffer_to_buffer(self.state(), 0, target, offset, flow_bytes);
+        encoder.copy_buffer_to_buffer(self.merged(), RIFE_ALPHA_CHANNEL as u64 * plane_bytes, target,
+            offset + flow_bytes, plane_bytes);
     }
 
     /// Sets a slot's t, in (0, 1); it takes effect with the next queue submission.

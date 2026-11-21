@@ -160,6 +160,9 @@ pub struct SectWorldRendering {
     /// When a mobile whose steps end stands: half a step time later, its legs moving on, or as the last step ends
     /// (world/mobile_motion.rs).
     pub mobile_stop: crate::world::mobile_motion::MobileStop,
+    /// How a mobile's walk and run cycles are paced: at the clip's own frame time, as the clients play them, or one
+    /// cycle in the time the steps take to cover its measured stride (render/mobiles/pace.rs).
+    pub mobile_walk_pace: crate::render::mobiles::pace::MobileWalkPace,
     pub land_streaming: SectLandStreaming,
     pub diagnostics: SectWorldRenderingDiagnostics,
     pub shader_simplification: SectWorldRenderingShaderSimplification,
@@ -1153,6 +1156,7 @@ mod tests {
     use crate::world::caves::{CaveSurroundings, CaveView};
     use crate::render::mobiles::in_between::MobileInBetweenFrames;
     use crate::world::mobile_motion::MobileStop;
+    use crate::render::mobiles::pace::MobileWalkPace;
 
     const BUNDLED_GRAPHICS: &str = include_str!("../assets/settings/graphics.toml");
     const BUNDLED_USER_PREFERENCES: &str = include_str!("../assets/settings/user_preferences.toml");
@@ -1469,6 +1473,7 @@ mod tests {
         assert_eq!(settings.cave_surroundings, CaveSurroundings::Dimmed);
         assert_eq!(settings.mobile_in_between_frames, MobileInBetweenFrames::Crossfade);
         assert_eq!(settings.mobile_stop, MobileStop::HalfStepLater);
+        assert_eq!(settings.mobile_walk_pace, MobileWalkPace::MatchTheGround);
     }
 
     /// A cache copy written before the player-floor view existed loads with it off, and a saved opt-in round-trips.
@@ -1578,6 +1583,28 @@ mod tests {
         let load = parse_app_state(WORLD_RENDERING_CONFIG_FILE, &written, &bundled).expect("lenient load");
         assert!(load.warnings.is_empty(), "{:?}", load.warnings);
         assert_eq!(load.value.mobile_stop, MobileStop::AtOnce);
+    }
+
+    /// A cache copy written before the walk pace existed loads it matched to the ground, and client timing round-trips.
+    #[test]
+    fn world_rendering_cache_without_mobile_walk_pace_loads_it_matched_to_the_ground() {
+        let bundled: SectWorldRendering =
+            parse_strict(WORLD_RENDERING_CONFIG_FILE, BUNDLED_WORLD_RENDERING).expect("bundled");
+        let older = BUNDLED_WORLD_RENDERING
+            .lines()
+            .filter(|line| !line.starts_with("mobile_walk_pace"))
+            .collect::<Vec<_>>()
+            .join("\n");
+        let load = parse_app_state(WORLD_RENDERING_CONFIG_FILE, &older, &bundled).expect("lenient load");
+        assert_eq!(load.value.mobile_walk_pace, MobileWalkPace::MatchTheGround);
+
+        let mut picked = bundled.clone();
+        picked.mobile_walk_pace = MobileWalkPace::ClientTiming;
+        let written = toml::to_string_pretty(&picked).expect("serialize");
+        assert!(written.contains("mobile_walk_pace = \"client_timing\""), "{written}");
+        let load = parse_app_state(WORLD_RENDERING_CONFIG_FILE, &written, &bundled).expect("lenient load");
+        assert!(load.warnings.is_empty(), "{:?}", load.warnings);
+        assert_eq!(load.value.mobile_walk_pace, MobileWalkPace::ClientTiming);
     }
 
     #[test]

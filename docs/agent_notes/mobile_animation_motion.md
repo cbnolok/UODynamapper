@@ -88,6 +88,23 @@ remark, 2026-11-21, on body 1409, which the installed clients don't have), and t
 stored frames (the package fills the gap with empty placeholders); the app drops empty frames, so neither the
 in-betweens nor the stride sum see them.
 
+The table is `dynamapper/assets/data/mobile_strides.txt`, bundled into the binary (`render/mobiles/pace.rs`), written
+by the GPU port of the prototype, the ignored test `render::mobiles::pace::measure::write_the_stride_table` (command
+in the module doc and the table's header; about 40 minutes for both packages on a Radeon 880M). It is keyed by source,
+body and action: walk and run of the peace and war groups and, Enhanced, the mounts' mounted moves, so a war mode
+needs no new table. A clip whose side facings disagree by more than 60% of their median, or whose median is under a
+quarter tile, has no entry and keeps the client timing: bodies without planted feet (gazers, slimes, wisps) and small
+creatures measure a few hundredths of a tile, and the clamp would play them at twice their speed. The 2026-11-21 table
+paces 607 of 1914 Classic clips with frames and 887 of 4125 Enhanced ones. Riders never use a stride of their own: the mount's clip is paced
+from the mount's stride and the rider shows the same point of that cycle, with the by-eye Enhanced mounted cycles as
+the fallback. The cycle position is a
+phase accumulator (`MobileCycleClock`), so a cycle length that changes mid-walk doesn't make the frame jump.
+
+The port must feed RIFE exactly what the prototype did: the grey backdrop (RGB over 0.5 grey) covers the whole canvas
+the clip's frames share, and only the padding up to a multiple of 64 stays black. With the grey on each frame's own
+rectangle only, the flow near the feet changed and Classic body 9's walk came out 2.66 tiles instead of 2.79; with the
+canvas grey the port matches the prototype to 0.01 tiles.
+
 ## Upscaling when zoomed
 
 - **Classic**: no neural upscaler — those models are trained on photos/anime, and Classic's hard one-pixel art is what

@@ -5,6 +5,7 @@ pub mod clips;
 pub mod draw;
 pub mod frame_atlas;
 pub mod in_between;
+pub mod pace;
 pub mod placement;
 pub mod rife;
 pub mod rife_in_betweens;
@@ -22,8 +23,9 @@ use crate::render::statics::static_source::StaticArtSourceState;
 use crate::settings::{ClientTextureSource, Settings};
 use crate::world::mobile_motion::{MobileMotion, Movement};
 use crate::world::player::Player;
-use clips::{AnimPackages, AnimSource, MobileClips};
+use clips::{AnimPackages, AnimSource, Clip, MobileClips};
 use draw::{MobileActions, MobileAppearance};
+use pace::{GroundStride, MobileCycleClock, MobileStrides, MobileWalkPace};
 
 /// The animation packages, as loaded at startup (`content`).
 #[derive(Resource, Default)]
@@ -37,17 +39,35 @@ pub struct MobileClipChoice {
     /// The anchor offsets of the body and of the mount, in screen pixels (x right, y down).
     pub body_offset_px: (f32, f32),
     pub mount_offset_px: (f32, f32),
-    /// How a rider and its mount keep in step; none when each layer plays on its own clock.
-    pub mounted_cycle: Option<MountedCycle>,
+    /// How long a cycle of the clips lasts.
+    pub cycle: MobileCycle,
 }
 
-/// The cycle a rider and its mount share: both layers show the same point of it.
-#[derive(Clone, Copy, Debug, PartialEq)]
-pub enum MountedCycle {
+/// How long a mobile's cycle lasts. The lead layer, the mount if it has one, else the body, sets it, and every layer
+/// shows the same point of it ([`MobileCycleClock`]).
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub enum MobileCycle {
+    /// Each layer at its own clip's frame time, not in step.
+    OwnClips,
+    /// The lead clip's own length.
+    #[default]
+    LeadClip,
     /// One cycle every so many seconds.
     Secs(f32),
-    /// The mount clip's own length.
-    MountClip,
+    /// The lead clip paced to the ground.
+    Ground(GroundStride),
+}
+
+impl MobileCycle {
+    /// The seconds of a cycle led by `lead`; none for [`MobileCycle::OwnClips`].
+    pub fn lead_secs(self, lead: &Clip) -> Option<f32> {
+        match self {
+            Self::OwnClips => None,
+            Self::LeadClip => Some(lead.cycle_secs()),
+            Self::Secs(secs) => Some(secs),
+            Self::Ground(stride) => Some(stride.cycle_secs(lead.cycle_secs())),
+        }
+    }
 }
 
 /// Steps per cycle of an Enhanced rider and mount on the move, chosen by eye. The client plays the rider (12 fps) and
@@ -67,6 +87,7 @@ impl Plugin for MobileSpritesPlugin {
         app.init_resource::<MobileClips>()
             .init_resource::<MobileAnimPackages>()
             .init_resource::<rife_in_betweens::MobileInBetweens>()
+            .insert_resource(MobileStrides::bundled())
             .add_systems(Update, (
                 sys_sync_player_appearance,
                 sys_choose_mobile_clips,
@@ -108,13 +129,13 @@ fn sys_sync_player_appearance(
     for (entity, current) in player_q.iter() {
         match (wanted, current) {
             (Some(wanted), current) if current != Some(&wanted) => {
-                commands.entity(entity).insert((wanted, MobileClipChoice::default()));
+                commands.entity(entity).insert((wanted, MobileClipChoice::default(), MobileCycleClock::default()));
                 if current.is_none() {
                     commands.entity(entity).insert(MobileMotion::default());
                 }
             }
             (None, Some(_)) => {
-                commands.entity(entity).remove::<(MobileAppearance, MobileClipChoice, MobileMotion)>();
+                commands.entity(entity).remove::<(MobileAppearance, MobileClipChoice, MobileCycleClock, MobileMotion)>();
             }
             _ => {}
         }
@@ -125,6 +146,8 @@ fn sys_sync_player_appearance(
 /// is missing.
 fn sys_choose_mobile_clips(
     packages: Res<MobileAnimPackages>,
+    strides: Res<MobileStrides>,
+    settings: Res<Settings>,
     art_source: Option<Res<StaticArtSourceState>>,
     mut mobiles_q: Query<(&MobileMotion, &MobileAppearance, &mut MobileClipChoice)>,
 ) {
@@ -133,6 +156,7 @@ fn sys_choose_mobile_clips(
         _ => AnimSource::Classic,
     };
     let packages = &packages.0;
+    let strides = (settings.world_rendering.mobile_walk_pace == MobileWalkPace::MatchTheGround).then_some(&*strides);
     let source = match preferred {
         AnimSource::Enhanced if packages.enhanced.is_some() => Some(AnimSource::Enhanced),
         AnimSource::Classic if packages.classic.is_some() => Some(AnimSource::Classic),
@@ -143,18 +167,29 @@ fn sys_choose_mobile_clips(
     for (motion, appearance, mut choice) in mobiles_q.iter_mut() {
         let chosen = match source {
             Some(AnimSource::Classic) => packages.classic.as_deref()
-                .map(|package| classic_choice(package, appearance, motion)),
+                .map(|package| classic_choice(package, strides, appearance, motion)),
             Some(AnimSource::Enhanced) => packages.enhanced.as_deref()
-                .map(|package| enhanced_choice(package, appearance, motion)),
+                .map(|package| enhanced_choice(package, strides, appearance, motion)),
             None => None,
         }
         .unwrap_or_default();
         if chosen.source != choice.source || chosen.actions != choice.actions
             || chosen.body_offset_px != choice.body_offset_px || chosen.mount_offset_px != choice.mount_offset_px
-            || chosen.mounted_cycle != choice.mounted_cycle {
+            || chosen.cycle != choice.cycle {
             *choice = chosen;
         }
     }
+}
+
+/// The ground pace of `action` of `body` from `source` on the move, when `strides` (the setting on) has its stride: at
+/// the step time of the movement, mounted or not.
+fn ground_stride(strides: Option<&MobileStrides>, source: AnimSource, body: u32, action: Option<u16>,
+    motion: &MobileMotion, mounted: bool) -> Option<GroundStride> {
+    if motion.movement == Movement::Stand {
+        return None;
+    }
+    let tiles = strides?.get(source, body, action?)?;
+    Some(GroundStride { tiles, step_secs: motion.step_secs(mounted) })
 }
 
 fn classic_movement(movement: Movement) -> u8 {
@@ -175,9 +210,10 @@ fn enhanced_movement(movement: Movement) -> u8 {
 
 /// The Classic client's actions (`MobileAnimCcPackage::movement_action`: a UOP body's sequence actions, ClassicUO
 /// `GetGroupForAnimation` for the rest): the body's own, or its mounted ones on a mount,
-/// which moves with its own; the rider sits the mount's offset lower (ClassicUO `Mounts`, `MobileView`).
-fn classic_choice(package: &MobileAnimCcPackage, appearance: &MobileAppearance, motion: &MobileMotion)
-    -> MobileClipChoice {
+/// which moves with its own; the rider sits the mount's offset lower (ClassicUO `Mounts`, `MobileView`). Matched to
+/// the ground (`strides`), the mount's stride, or the body's on foot, paces the cycle.
+fn classic_choice(package: &MobileAnimCcPackage, strides: Option<&MobileStrides>, appearance: &MobileAppearance,
+    motion: &MobileMotion) -> MobileClipChoice {
     let movement = classic_movement(motion.movement);
     let body = u16::try_from(appearance.body).ok();
     let mount = appearance.mount_body.and_then(|mount| u16::try_from(mount).ok());
@@ -191,16 +227,23 @@ fn classic_choice(package: &MobileAnimCcPackage, appearance: &MobileAppearance, 
         actions: body_action.map(|body_action| MobileActions { body_action, mount_action }),
         body_offset_px: (0.0, f32::from(rider_offset_y)),
         mount_offset_px: (0.0, 0.0),
-        // ClassicUO steps the rider and the mount with one frame counter at the same frame time already.
-        mounted_cycle: None,
+        cycle: match mount {
+            // On a mount, the mount's stride paces both; at the clients' timing, ClassicUO steps the rider and the
+            // mount with one frame counter at the same frame time.
+            Some(mount) => ground_stride(strides, AnimSource::Classic, u32::from(mount), mount_action, motion, true)
+                .map_or(MobileCycle::OwnClips, MobileCycle::Ground),
+            None => ground_stride(strides, AnimSource::Classic, appearance.body, body_action, motion, false)
+                .map_or(MobileCycle::LeadClip, MobileCycle::Ground),
+        },
     }
 }
 
 /// The Enhanced client's actions: the body's peace group, or its mounted group on a mount, which plays its own
 /// mounted or peace move; the layers sit where `mobile_layer_offsets` puts them. A rider and its mount share one cycle
-/// ([`MountedCycle`]), not the client's two clocks.
-fn enhanced_choice(package: &MobileAnimEcPackage, appearance: &MobileAppearance, motion: &MobileMotion)
-    -> MobileClipChoice {
+/// ([`MobileCycle`]), not the client's two clocks. Matched to the ground (`strides`), the mount's stride, or the
+/// body's on foot, paces the cycle.
+fn enhanced_choice(package: &MobileAnimEcPackage, strides: Option<&MobileStrides>, appearance: &MobileAppearance,
+    motion: &MobileMotion) -> MobileClipChoice {
     const FLYING_ANIMATIONS: bool = true;
     let movement = enhanced_movement(motion.movement);
     let mount = appearance.mount_body.and_then(|mount| package.body(mount).map(|record| (mount, record)));
@@ -222,12 +265,20 @@ fn enhanced_choice(package: &MobileAnimEcPackage, appearance: &MobileAppearance,
             choice.mount_offset_px = (mount_offset.0 as f32, mount_offset.1 as f32);
         }
     }
-    // The rider and the mount keep in step, paced by the steps on the move.
-    choice.mounted_cycle = mount.map(|_| match motion.movement {
-        Movement::Stand => MountedCycle::MountClip,
-        Movement::Walk => MountedCycle::Secs(ENHANCED_MOUNTED_WALK_CYCLE_STEPS * motion.step_secs(true)),
-        Movement::Run => MountedCycle::Secs(ENHANCED_MOUNTED_RUN_CYCLE_STEPS * motion.step_secs(true)),
-    });
+    // The rider and the mount keep in step, paced by the steps on the move: by the mount's stride, or by eye
+    // without one.
+    choice.cycle = match mount {
+        Some((mount, _)) => match ground_stride(strides, AnimSource::Enhanced, mount, mount_action, motion, true) {
+            Some(stride) => MobileCycle::Ground(stride),
+            None => match motion.movement {
+                Movement::Stand => MobileCycle::LeadClip,
+                Movement::Walk => MobileCycle::Secs(ENHANCED_MOUNTED_WALK_CYCLE_STEPS * motion.step_secs(true)),
+                Movement::Run => MobileCycle::Secs(ENHANCED_MOUNTED_RUN_CYCLE_STEPS * motion.step_secs(true)),
+            },
+        },
+        None => ground_stride(strides, AnimSource::Enhanced, appearance.body, body_action, motion, false)
+            .map_or(MobileCycle::LeadClip, MobileCycle::Ground),
+    };
     choice
 }
 

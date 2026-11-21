@@ -22,7 +22,8 @@ use super::frame_atlas::MobileFrameAtlas;
 use super::in_between::{layer_frames, FrameCrossfade, LayerFrames};
 use super::placement::mobile_card_bounds;
 use super::rife_in_betweens::MobileInBetweens;
-use super::{MobileClipChoice, MountedCycle};
+use super::MobileClipChoice;
+use super::pace::MobileCycleClock;
 
 /// The most frames drawn at once: a mount and its rider for each mobile, here the player alone.
 pub const MAX_MOBILE_INSTANCES: u32 = 2;
@@ -158,7 +159,6 @@ fn shared_state_differs(source: &ArtSpriteMaterial, target: &ArtSpriteMaterial) 
 /// One frame to draw: its clip's current frame at a mobile's place.
 struct DrawnFrame {
     key: ClipKey,
-    is_mount: bool,
     tie_level: u32,
     /// The anchor's offset in screen pixels, x right and y down: a rider's on its mount.
     offset_px: (f32, f32),
@@ -169,7 +169,7 @@ struct DrawnFrame {
 pub fn sys_draw_mobiles(
     mut commands: Commands,
     time: Res<Time>,
-    mobiles_q: Query<(&Transform, &MobileMotion, &MobileAppearance, &MobileClipChoice)>,
+    mut mobiles_q: Query<(&Transform, &MobileMotion, &MobileAppearance, &MobileClipChoice, &mut MobileCycleClock)>,
     draw_assets: Option<ResMut<MobileDrawAssets>>,
     atlas: Option<ResMut<MobileFrameAtlas<AtlasEntry>>>,
     mut clips: ResMut<MobileClips>,
@@ -192,28 +192,23 @@ pub fn sys_draw_mobiles(
     in_betweens.forget(&evicted);
 
     let mut instances = Vec::with_capacity(MAX_MOBILE_INSTANCES as usize);
-    for (transform, motion, appearance, choice) in mobiles_q.iter() {
+    for (transform, motion, appearance, choice, mut clock) in mobiles_q.iter_mut() {
         let (Some(source), Some(actions)) = (choice.source, choice.actions) else { continue };
         let mut frames = Vec::with_capacity(2);
         if let (Some(mount_body), Some(mount_action)) = (appearance.mount_body, actions.mount_action) {
             frames.push(DrawnFrame {
                 key: ClipKey { source, body: mount_body, action: mount_action, direction: motion.facing },
-                is_mount: true,
                 tie_level: MOUNT_TIE_LEVEL,
                 offset_px: choice.mount_offset_px,
             });
         }
         frames.push(DrawnFrame {
             key: ClipKey { source, body: appearance.body, action: actions.body_action, direction: motion.facing },
-            is_mount: false,
             tie_level: RIDER_TIE_LEVEL,
             offset_px: choice.body_offset_px,
         });
-        // The mount comes first, so its clip can set the cycle the rider shares.
-        let mut cycle_secs = match choice.mounted_cycle {
-            Some(MountedCycle::Secs(secs)) => Some(secs),
-            _ => None,
-        };
+        // The mount comes first, so its clip can lead the cycle the rider shares.
+        let mut cycles = None;
         for drawn in frames {
             if instances.len() >= MAX_MOBILE_INSTANCES as usize {
                 break;
@@ -226,11 +221,9 @@ pub fn sys_draw_mobiles(
                 atlas.touch(frame.rect.layer, now);
             }
             let clip = in_betweens.shown(drawn.key, clip, in_between_mode, now).unwrap_or(clip);
-            if drawn.is_mount && choice.mounted_cycle == Some(MountedCycle::MountClip) {
-                cycle_secs = Some(clip.cycle_secs());
-            }
-            let pick = match cycle_secs {
-                Some(cycle_secs) => clip.frame_in_cycle(motion.clip_secs(), cycle_secs),
+            let pick = match choice.cycle.lead_secs(clip) {
+                Some(lead_secs) => clip.frame_at_cycles(
+                    *cycles.get_or_insert_with(|| clock.advance(motion.clip_secs(), lead_secs))),
                 None => clip.frame_at(motion.clip_secs()),
             };
             let Some(frames) = pick.and_then(|pick| layer_frames(in_between_mode, clip, pick)) else { continue };

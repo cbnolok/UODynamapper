@@ -91,9 +91,9 @@ impl Clip {
         self.frame_secs * self.frames.len() as f32
     }
 
-    /// The point of the clip `elapsed_secs` into it when it shows its frames once every `cycle_secs`.
-    pub fn frame_in_cycle(&self, elapsed_secs: f32, cycle_secs: f32) -> Option<FramePick> {
-        self.pick(elapsed_secs / cycle_secs.max(f32::EPSILON) * self.frames.len() as f32)
+    /// The point of the clip `cycles` of its cycle into it (the fraction of a cycle past the whole ones).
+    pub fn frame_at_cycles(&self, cycles: f32) -> Option<FramePick> {
+        self.pick(cycles * self.frames.len() as f32)
     }
 
     /// The point `frames` frames into the clip (whole frames, and the fraction of the next).
@@ -205,7 +205,7 @@ impl MobileClips {
     }
 }
 
-fn decode_clip(packages: &AnimPackages, key: ClipKey) -> Option<DecodedClip> {
+pub(super) fn decode_clip(packages: &AnimPackages, key: ClipKey) -> Option<DecodedClip> {
     match key.source {
         AnimSource::Classic => decode_classic_clip(packages.classic.as_deref()?, key),
         AnimSource::Enhanced => decode_enhanced_clip(packages.enhanced.as_deref()?, key),
@@ -302,14 +302,13 @@ mod tests {
 
     #[test]
     fn a_clip_spreads_its_frames_over_a_cycle() {
-        const CYCLE_SECS: f32 = 0.6;
         let frame = test_frame();
         let clip = Clip { frames: vec![frame; 10], mirrored: false, frame_secs: CLASSIC_FRAME_SECS, stored: 0 };
         assert!((clip.cycle_secs() - CLASSIC_FRAME_SECS * 10.0).abs() < f32::EPSILON);
-        let index_at = |secs: f32| clip.frame_in_cycle(secs, CYCLE_SECS).unwrap().index;
+        let index_at = |cycles: f32| clip.frame_at_cycles(cycles).unwrap().index;
         assert_eq!(index_at(0.0), 0);
-        assert_eq!(index_at(CYCLE_SECS * 0.55), 5);
-        assert_eq!(index_at(CYCLE_SECS * 1.95), 9);
+        assert_eq!(index_at(0.55), 5);
+        assert_eq!(index_at(0.95), 9);
     }
 
     #[test]
@@ -324,8 +323,7 @@ mod tests {
         assert!((pick.t - 0.5).abs() < 1e-4, "{pick:?}");
         assert_eq!(clip.frame_at(0.0).unwrap(), FramePick { index: 0, next: 1, t: 0.0 });
 
-        const CYCLE_SECS: f32 = 0.4;
-        let pick = clip.frame_in_cycle(CYCLE_SECS * 0.6, CYCLE_SECS).unwrap();
+        let pick = clip.frame_at_cycles(0.6).unwrap();
         assert_eq!((pick.index, pick.next), (2, 3));
         assert!((pick.t - 0.4).abs() < 1e-4, "{pick:?}");
 
