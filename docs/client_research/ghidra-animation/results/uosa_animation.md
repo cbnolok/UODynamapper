@@ -333,6 +333,12 @@ Resolving "server body S, action A, direction D" as the client does:
 6. Interval `1 / fps` (16 fps when the action is missing); `fc = 1` for stand actions when idle animation
    is off.
 
+The frame clock is time alone: `UOObjectComponentAnimationMob::Update` 0x00434c90 adds its `dt` argument to the
+frame time (component +0x38) and steps whole intervals off it; nothing in it scales the time by the movement or the
+step. Its caller is the component vtable slot 0x00c9f8d4, not traced further, so a scaled `dt` is **unlikely, not
+excluded**. A walk cycle therefore spans however many steps its frames last, as in the Classic client (ClassicUO:
+`CHARACTER_ANIMATION_DELAY`, 80 ms, across steps). 2026-11-21.
+
 ## AnimationFrame*.uop pixel decoding
 
 ### Asset

@@ -80,6 +80,9 @@ fn client_shadow_world_offset(inst: SpriteInstance, corner: vec2<f32>) -> vec3<f
         inst.local_max.x * BILLBOARD_RIGHT_XZ.y);
     let r0 = min(low.x, high.x);
     let width = abs(high.x - low.x);
+    // A mirrored mobile frame comes with its x bounds reversed (mobiles/placement.rs): its corner 0 is on the right,
+    // so the copy keeps the caster's flip.
+    let along = select(corner.x, 1.0 - corner.x, low.x > high.x);
     let height = abs(high.y - low.y) / pixel_aspect;
     let h = inst.client_shadow_height;
     let drop = h * CLIENT_Z_UNIT;
@@ -91,11 +94,11 @@ fn client_shadow_world_offset(inst: SpriteInstance, corner: vec2<f32>) -> vec3<f
     let u1 = u0 + height;
     var p: vec2<f32>;
     if (corner.y < 0.5) {
-        p = client_shadow_rotate(vec2<f32>(r0, u1)) + vec2<f32>(corner.x * width, 0.0);
+        p = client_shadow_rotate(vec2<f32>(r0, u1)) + vec2<f32>(along * width, 0.0);
     } else if (h == 0.0) {
-        p = vec2<f32>(r0 + corner.x * width, u0);
+        p = vec2<f32>(r0 + along * width, u0);
     } else {
-        p = client_shadow_rotate(vec2<f32>(r0 + corner.x * width, u0));
+        p = client_shadow_rotate(vec2<f32>(r0 + along * width, u0));
     }
     // Back from the pivot to the anchor; Bevy's view looks down -z, so behind is -z.
     var offset = world_from_view * vec3<f32>(p.x, (p.y - drop) * pixel_aspect, -CLIENT_SHADOW_BEHIND);
