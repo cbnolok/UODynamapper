@@ -1,7 +1,9 @@
 //! The mobiles: animated bodies drawn as the clients draw them, with the statics' art sprite shader. The player is
 //! the one mobile so far: the body and mount the settings name, standing, walking or running as it moves.
 
+pub mod bc7_encoding;
 pub mod clips;
+pub mod compute_budget;
 pub mod compute_warm_up;
 pub mod draw;
 pub mod frame_atlas;
@@ -104,6 +106,8 @@ impl Plugin for MobileSpritesPlugin {
         render_app.init_resource::<frame_atlas::RenderMobileFrameUploads>()
             .init_resource::<rife_in_betweens::render::RenderInBetweens>()
             .init_resource::<compute_warm_up::ComputeWarmUp>()
+            .init_resource::<compute_budget::MobileComputeBudget>()
+            .init_resource::<bc7_encoding::MobileBc7Encoder>()
             .add_systems(ExtractSchedule, (
                 frame_atlas::sys_extract_mobile_frame_uploads::<clips::AtlasEntry>,
                 rife_in_betweens::render::sys_extract_mobile_in_betweens,
@@ -111,6 +115,7 @@ impl Plugin for MobileSpritesPlugin {
             ))
             .add_systems(bevy::render::Render, (
                 compute_warm_up::sys_start_compute_warm_up,
+                compute_budget::sys_start_mobile_compute_frame,
                 frame_atlas::sys_render_upload_mobile_frames,
                 rife_in_betweens::render::sys_render_mobile_in_betweens,
             ).chain().in_set(bevy::render::RenderSystems::Queue));

@@ -3,7 +3,7 @@
 //! device, from its frame atlas), for a tool to preview. Between each two frames of the clip, the last toward the
 //! first as the clips loop, `factor - 1` frames at 1/factor, 2/factor, ... of the way, with the blend's nearest warp
 //! ([`RifePipelines::new`]). Each pair lies as the game lays it: both frames on one card with their anchors on one
-//! point, the RGB the network looks at over 50% grey everywhere, the padding too (rife/atlas.wgsl's `pack`); an
+//! point, the RGB the network looks at over 50% grey everywhere, the padding too (rife/frames.wgsl's `pack`); an
 //! in-between comes back with straight alpha, snapped to 0 or 1 for Classic frames (its `store`).
 
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -17,9 +17,9 @@ use crate::{own_device, Gpu};
 
 /// The most frames shown for each of a clip's: its own and one in-between per timestep slot.
 pub const MAX_FACTOR: u32 = RIFE_TIMESTEP_SLOTS as u32 + 1;
-/// The grey the network sees behind the frames (atlas.wgsl's `BACKGROUND_GREY`).
+/// The grey the network sees behind the frames (frames.wgsl's `BACKGROUND_GREY`).
 const BACKDROP_GREY: f32 = 0.5;
-/// A Classic in-between is opaque from this coverage up, as atlas.wgsl's `CLASSIC_ALPHA_SNAP`.
+/// A Classic in-between is opaque from this coverage up, as frames.wgsl's `SNAP_ALPHA`.
 const CLASSIC_ALPHA_SNAP: f32 = 0.5;
 /// The merged planes read back: premultiplied RGB, then alpha.
 const PREMULTIPLIED_CHANNEL: u32 = 3;
@@ -101,7 +101,7 @@ fn pack_pair(first: &StrideFrame, next: &StrideFrame, card: &PairCard, width: u3
 }
 
 /// An in-between's card from its premultiplied RGB and alpha planes, `width` wide: straight alpha, snapped to 0 or 1
-/// with `snap_alpha` (atlas.wgsl's `store`).
+/// with `snap_alpha` (frames.wgsl's `store`).
 fn unpack_card(planes: &[f32], width: u32, height: u32, card: &PairCard, snap_alpha: bool) -> SequenceFrame {
     let plane = (width * height) as usize;
     let mut rgba = vec![0u8; (card.width * card.height) as usize * RGBA_BYTES];

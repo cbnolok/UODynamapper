@@ -1,16 +1,17 @@
 //! The render world's half of the RIFE in-betweens: the network, loaded on the background pool the first time a
 //! RIFE mode is on, a workspace per padded frame size, and each frame the queued jobs worked through in order within
-//! [`RIFE_FRAME_BUDGET_MS`] of estimated GPU time, dispatch by dispatch, in one command buffer submitted before the
-//! frame's draws. A pair of a job packs its two frames from the atlas into the workspace, copies the first into the
-//! sequence, encodes them, and for each t runs the blocks, the blend and the store of the in-between into the sequence
-//! (atlas.wgsl), through a staging buffer and a copy, since the sRGB atlas takes no storage writes. A workspace stays
-//! with the job in the middle of a pair until the pair ends; a job finished goes back to the main world.
+//! the mobiles' compute budget of estimated GPU time (compute_budget.rs; the SPAN upscales take what is left of it),
+//! dispatch by dispatch, in one command buffer submitted before the frame's draws. A pair of a job packs its two frames
+//! from the atlas into the workspace, copies the first into the sequence, encodes them, and for each t runs the blocks,
+//! the blend and the store of the in-between into the sequence (uot-gpu-compute's rife::frames), through a staging
+//! buffer and a copy, since the sRGB atlas takes no storage writes. A workspace stays with the job in the middle of a
+//! pair until the pair ends; a job finished goes back to the main world.
 //!
 //! A clip of the BC7 atlas (frame_atlas.rs) has its in-betweens in that atlas: its first frames are copied as they are,
 //! block by block, through a bounce buffer (a copy within one texture layer is not allowed), and each in-between goes
-//! from the staging rows to rows of its own in a scratch `Rgba8Unorm` texture, cleared to transparent around it. After
-//! the frame's steps the encoder of the warm-up (`MobileBlockEncoder`, BC7 UltraFast) encodes them all in one pass, its
-//! one `compress` of the submission, and their blocks are copied into the atlas. A frame takes the BC7 steps that fit
+//! from the staging rows to rows of its own in the scratch texture of the BC7 encoding it shares with the upscales
+//! (bc7_encoding.rs), cleared to transparent around it. After the frame's steps the encoder encodes them all in one
+//! pass, its one `compress` of the submission, and their blocks are copied into the atlas. A frame takes the BC7 steps that fit
 //! the scratch rows and the bounce buffer, and leaves the rest to the next.
 
 use std::collections::{HashMap, HashSet};
@@ -21,24 +22,24 @@ use bevy::render::render_asset::RenderAssets;
 use bevy::render::renderer::{RenderDevice, RenderQueue};
 use bevy::render::texture::GpuImage;
 use bevy::render::Extract;
-use bytemuck::{Pod, Zeroable};
 use parking_lot::Mutex;
 use crate::app::background::{background_pool, Priority, Task, TaskPoll};
 use crate::render::shader_compiles::begin_shader_compile;
 use super::super::clips::AtlasEntry;
-use super::super::frame_atlas::{AtlasFormat, AtlasRect, MobileFrameAtlas, MOBILE_ATLAS_PAGE_SIZE};
-use uot_gpu_compute::block_encode::{record_copy_to_layer, Bc7Quality, MobileBlockEncoder, MobileBlockFormat,
-    BLOCK_SIDE};
-use uot_gpu_compute::network_shader_module;
+use super::super::bc7_encoding::{bc7_encode_ms, scratch_blocks_offset, Bc7Encoding, MobileBc7Encoder, BC7_BOUNCE_BYTES,
+    BC7_SCRATCH_SIDE, MOBILE_BLOCK_FORMAT};
+use super::super::compute_budget::{steps_within_budget, CostScale, GpuClock, MobileComputeBudget,
+    MOBILE_COMPUTE_FRAME_BUDGET_MS};
+use super::super::frame_atlas::{AtlasFormat, AtlasRect, MobileFrameAtlas};
+use uot_gpu_compute::block_encode::{record_copy_to_layer, BLOCK_SIDE};
+use uot_gpu_compute::rife::frames::{rife_frame_step_stride, rife_output_bytes_per_row, CardFrame, RifeFrameStep};
 use uot_gpu_compute::rife::{
     RifeDispatch, RifeModel, RifePipelines, RifeWorkspace, RIFE_BLOCKS, RIFE_SIZE_MULTIPLE, RIFE_TIMESTEP_SLOTS,
 };
+use uot_gpu_compute::SourceRect;
 use super::super::compute_warm_up::{ComputeWarmUp, Warm};
 use super::{InBetweenJob, InBetweenPair, MobileInBetweens};
 
-/// The GPU time the in-betweens may take per frame, estimated (`dispatch_ms`, scaled as timed). A dispatch longer than
-/// the budget runs alone in its frame. On the Radeon 880M the timed work stays within 0.1 ms of it.
-pub const RIFE_FRAME_BUDGET_MS: f64 = 2.0;
 /// A dispatch's estimated cost: a fixed part, and its convolution's multiply-adds. Fitted to uot-gpu-compute's
 /// rife::tests::benchmark on the Radeon 880M (one t: 1.31 ms at 64x64, 0.079 GMAC, 121 dispatches; 14.97 ms at
 /// 576x512, 5.66 GMAC, 97).
@@ -46,127 +47,28 @@ const DISPATCH_MS: f64 = 0.009;
 const MS_PER_GIGA_MULTIPLY_ADD: f64 = 2.5;
 /// An atlas step's estimated cost per million pixels it runs on, besides the fixed part.
 const ATLAS_STEP_MS_PER_MEGAPIXEL: f64 = 0.5;
-/// The BC7 encode of an in-between, estimated: a fixed part and a part per million pixels (an encode alone on the
-/// Radeon 880M: 0.27 ms at 64x64 and 128x128, 0.53 ms at 256x256; see mobile_animation_motion.md).
-const BC7_ENCODE_MS: f64 = 0.25;
-const BC7_ENCODE_MS_PER_MEGAPIXEL: f64 = 4.0;
-/// The quality of the in-betweens' BC7.
-const IN_BETWEEN_BC7_QUALITY: Bc7Quality = Bc7Quality::UltraFast;
-const IN_BETWEEN_BLOCK_FORMAT: MobileBlockFormat = MobileBlockFormat::Bc7(IN_BETWEEN_BC7_QUALITY);
-/// The scratch texture of the in-betweens to encode, a frame's rows: a page's side square, so any card fits.
-const BC7_SCRATCH_SIDE: u32 = MOBILE_ATLAS_PAGE_SIZE;
-/// The bounce buffer of the first frames' block copies: as large as a page's blocks.
-const BC7_BOUNCE_BYTES: u64 = MOBILE_ATLAS_PAGE_SIZE as u64 * MOBILE_ATLAS_PAGE_SIZE as u64;
 /// The bytes of a BC7 block.
 const BC7_BLOCK_BYTES: u32 = 16;
-/// Where the GPU has timestamp queries, a frame's work now and then is timed and the estimates scaled to match: each
-/// timing moves the scale this much of the way, within these bounds.
-const COST_SCALE_WEIGHT: f64 = 0.25;
-const COST_SCALE_BOUNDS: (f64, f64) = (0.25, 16.0);
-const TIMESTAMPS: u32 = 2;
-const TIMESTAMP_BYTES: u64 = TIMESTAMPS as u64 * std::mem::size_of::<u64>() as u64;
-const NANOS_PER_MS: f64 = 1e6;
 const GIGA: f64 = 1e9;
 const MEGA: f64 = 1e6;
 /// A workspace no job used for this long is freed (1.6 MiB at 64x64, 89 MiB at 576x512).
 const WORKSPACE_IDLE_RELEASE: Duration = Duration::from_secs(20);
-const ATLAS_SHADER: &str = include_str!("../../../../assets/shaders/rife/atlas.wgsl");
-/// Matches THREADS in atlas.wgsl.
-const ATLAS_THREADS: u32 = 64;
-const STAGING_TEXEL_BYTES: u32 = 4;
 
-/// `AtlasStep` in atlas.wgsl.
-#[repr(C)]
-#[derive(Clone, Copy, Debug, Default, Pod, Zeroable)]
-struct AtlasStep {
-    width: u32,
-    height: u32,
-    card_width: u32,
-    card_height: u32,
-    first_layer: u32,
-    first_x: u32,
-    first_y: u32,
-    first_width: u32,
-    first_height: u32,
-    first_offset_x: u32,
-    first_offset_y: u32,
-    next_layer: u32,
-    next_x: u32,
-    next_y: u32,
-    next_width: u32,
-    next_height: u32,
-    next_offset_x: u32,
-    next_offset_y: u32,
-    pitch: u32,
-    snap_alpha: u32,
-}
-
-/// The network and the atlas steps' pipelines.
-struct RifeGpu {
-    model: RifeModel,
-    atlas_layout: wgpu::BindGroupLayout,
-    pack: wgpu::ComputePipeline,
-    copy_frame: wgpu::ComputePipeline,
-    store: wgpu::ComputePipeline,
-}
-
-impl RifeGpu {
-    /// The network on `pipelines` warmed ahead, or on pipelines compiled now.
-    fn new(device: &wgpu::Device, pipelines: Option<RifePipelines>) -> Result<Self, String> {
-        let model = match pipelines {
-            Some(pipelines) => RifeModel::with_pipelines(device, pipelines)?,
-            None => {
-                let _compile = begin_shader_compile("RIFE in-betweens: flow network");
-                RifeModel::new(device)?
-            }
-        };
-        let storage = |binding, read_only| wgpu::BindGroupLayoutEntry {
-            binding, visibility: wgpu::ShaderStages::COMPUTE, count: None,
-            ty: wgpu::BindingType::Buffer {
-                ty: wgpu::BufferBindingType::Storage { read_only }, has_dynamic_offset: false, min_binding_size: None,
-            },
-        };
-        let atlas_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-            label: Some("rife atlas step"),
-            entries: &[
-                wgpu::BindGroupLayoutEntry {
-                    binding: 0, visibility: wgpu::ShaderStages::COMPUTE, count: None,
-                    ty: wgpu::BindingType::Buffer {
-                        ty: wgpu::BufferBindingType::Uniform, has_dynamic_offset: true,
-                        min_binding_size: wgpu::BufferSize::new(std::mem::size_of::<AtlasStep>() as u64),
-                    },
-                },
-                wgpu::BindGroupLayoutEntry {
-                    binding: 1, visibility: wgpu::ShaderStages::COMPUTE, count: None,
-                    ty: wgpu::BindingType::Texture {
-                        sample_type: wgpu::TextureSampleType::Float { filterable: true },
-                        view_dimension: wgpu::TextureViewDimension::D2Array, multisampled: false,
-                    },
-                },
-                storage(2, false),
-                storage(3, true),
-                storage(4, false),
-            ],
-        });
-        let layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-            label: None, bind_group_layouts: &[Some(&atlas_layout)], immediate_size: 0,
-        });
-        let _compile = begin_shader_compile("RIFE in-betweens: atlas steps");
-        // SAFETY: atlas.wgsl's one loop runs to a compile-time constant by a positive step.
-        let module = unsafe { network_shader_module(device, "rife atlas steps", ATLAS_SHADER.to_string()) };
-        let pipeline = |entry_point| device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
-            label: Some(entry_point), layout: Some(&layout), module: &module, entry_point: Some(entry_point),
-            compilation_options: Default::default(), cache: None,
-        });
-        Ok(Self { pack: pipeline("pack"), copy_frame: pipeline("copy_frame"), store: pipeline("store"), model,
-            atlas_layout })
+/// The network on `pipelines` warmed ahead, or on pipelines compiled now.
+fn load_network(device: &wgpu::Device, pipelines: Option<RifePipelines>) -> Result<RifeModel, String> {
+    match pipelines {
+        Some(pipelines) => RifeModel::with_pipelines(device, pipelines),
+        None => {
+            let _compile = begin_shader_compile("RIFE in-betweens: flow network");
+            RifeModel::new(device)
+        }
     }
 }
 
 enum GpuState {
     Unloaded,
-    Loading(Task<Result<RifeGpu, String>>),
-    Ready(Arc<RifeGpu>),
+    Loading(Task<Result<RifeModel, String>>),
+    Ready(Arc<RifeModel>),
     /// Logged; the clips play plain.
     Failed,
 }
@@ -179,125 +81,16 @@ struct Workspace {
 }
 
 impl Workspace {
-    fn new(gpu: &RifeGpu, device: &wgpu::Device, size: UVec2) -> Result<Self, String> {
-        let rife = RifeWorkspace::new(&gpu.model, device, size.x, size.y)?;
+    fn new(gpu: &RifeModel, device: &wgpu::Device, size: UVec2) -> Result<Self, String> {
+        let rife = RifeWorkspace::new(gpu, device, size.x, size.y)?;
         // COPY_DST to be cleared before an in-between of the BC7 atlas.
         let staging = device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("rife atlas staging"), size: staging_pitch_bytes(size.x) as u64 * size.y as u64,
+            label: Some("rife atlas staging"), size: rife_output_bytes_per_row(size.x) as u64 * size.y as u64,
             usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_SRC | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
         Ok(Self { rife, staging, last_used: Instant::now() })
     }
-}
-
-/// Times a frame's work on the GPU, one frame at a time: two timestamps around it, read back once the GPU wrote them.
-struct GpuClock {
-    queries: wgpu::QuerySet,
-    resolved: wgpu::Buffer,
-    readback: wgpu::Buffer,
-    /// The estimate of the frame timed, until its timestamps are read.
-    timing: Option<f64>,
-    /// Whether the readback mapped, once it did.
-    mapped: Arc<Mutex<Option<bool>>>,
-}
-
-impl GpuClock {
-    fn new(device: &wgpu::Device) -> Self {
-        let buffer = |label, usage| device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some(label), size: TIMESTAMP_BYTES, usage, mapped_at_creation: false,
-        });
-        Self {
-            queries: device.create_query_set(&wgpu::QuerySetDescriptor {
-                label: Some("mobile in-betweens"), ty: wgpu::QueryType::Timestamp, count: TIMESTAMPS,
-            }),
-            resolved: buffer("mobile in-betweens timestamps", wgpu::BufferUsages::QUERY_RESOLVE
-                | wgpu::BufferUsages::COPY_SRC),
-            readback: buffer("mobile in-betweens timestamps read", wgpu::BufferUsages::MAP_READ
-                | wgpu::BufferUsages::COPY_DST),
-            timing: None,
-            mapped: Arc::new(Mutex::new(None)),
-        }
-    }
-
-    /// The GPU time of the frame timed, in ms, once read, with its estimate.
-    fn read(&mut self, period_ns: f32) -> Option<(f64, f64)> {
-        let mapped = self.mapped.lock().take()?;
-        let estimate = self.timing.take()?;
-        let measured = mapped.then(|| self.readback.slice(..).get_mapped_range().ok().and_then(|bytes| {
-            let stamps: &[u64] = bytemuck::cast_slice(&bytes);
-            stamps[1].checked_sub(stamps[0]).map(|ticks| ticks as f64 * period_ns as f64 / NANOS_PER_MS)
-        })).flatten();
-        if mapped {
-            self.readback.unmap();
-        }
-        measured.filter(|&ms| ms > 0.0).map(|ms| (ms, estimate))
-    }
-
-    /// An empty pass writing timestamp `index`.
-    fn stamp(&self, encoder: &mut wgpu::CommandEncoder, index: u32) {
-        encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
-            label: Some("mobile in-betweens timestamp"),
-            timestamp_writes: Some(wgpu::ComputePassTimestampWrites {
-                query_set: &self.queries, beginning_of_pass_write_index: Some(index), end_of_pass_write_index: None,
-            }),
-        });
-    }
-
-    /// Resolves the timestamps, after the work: the readback maps once the GPU wrote them.
-    fn resolve(&self, encoder: &mut wgpu::CommandEncoder) {
-        encoder.resolve_query_set(&self.queries, 0..TIMESTAMPS, &self.resolved, 0);
-        encoder.copy_buffer_to_buffer(&self.resolved, 0, &self.readback, 0, TIMESTAMP_BYTES);
-    }
-
-    fn map(&mut self, estimate: f64) {
-        self.timing = Some(estimate);
-        let mapped = self.mapped.clone();
-        self.readback.slice(..).map_async(wgpu::MapMode::Read, move |result| *mapped.lock() = Some(result.is_ok()));
-    }
-}
-
-/// The BC7 encoding of the in-betweens of the BC7 atlas: the encoder, the scratch texture the in-betweens wait in, the
-/// blocks they encode to, and the bounce buffer of the first frames' block copies.
-struct Bc7Encoding {
-    encoder: MobileBlockEncoder,
-    scratch: wgpu::Texture,
-    scratch_view: wgpu::TextureView,
-    blocks: wgpu::Buffer,
-    bounce: wgpu::Buffer,
-}
-
-impl Bc7Encoding {
-    fn new(device: &wgpu::Device, encoder: MobileBlockEncoder) -> Self {
-        let scratch = device.create_texture(&wgpu::TextureDescriptor {
-            label: Some("mobile in-betweens to encode"),
-            size: wgpu::Extent3d { width: BC7_SCRATCH_SIDE, height: BC7_SCRATCH_SIDE, depth_or_array_layers: 1 },
-            mip_level_count: 1, sample_count: 1, dimension: wgpu::TextureDimension::D2,
-            format: wgpu::TextureFormat::Rgba8Unorm,
-            usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST, view_formats: &[],
-        });
-        let scratch_view = scratch.create_view(&wgpu::TextureViewDescriptor::default());
-        let buffer = |label, size, usage| device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some(label), size, usage, mapped_at_creation: false,
-        });
-        Self {
-            encoder,
-            scratch,
-            scratch_view,
-            blocks: buffer("mobile in-between blocks", IN_BETWEEN_BLOCK_FORMAT.encoded_bytes(BC7_SCRATCH_SIDE,
-                BC7_SCRATCH_SIDE), wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_SRC),
-            bounce: buffer("mobile first frame blocks", BC7_BOUNCE_BYTES,
-                wgpu::BufferUsages::COPY_SRC | wgpu::BufferUsages::COPY_DST),
-        }
-    }
-}
-
-enum EncoderState {
-    Unloaded,
-    Compiling(Task<MobileBlockEncoder>),
-    Ready(Box<Bc7Encoding>),
-    /// Logged; the clips of the BC7 atlas play plain.
-    Failed,
 }
 
 /// What a frame's BC7 steps took of the scratch rows and the bounce buffer.
@@ -364,17 +157,14 @@ pub struct RenderInBetweens {
     step_uniforms: Option<wgpu::Buffer>,
     /// None without timestamp queries.
     clock: Option<GpuClock>,
-    /// The GPU time per estimated ms, as timed.
-    cost_scale: f64,
-    /// The BC7 encoding, made the first time a job of the BC7 atlas is listed.
-    bc7: EncoderState,
+    cost_scale: CostScale,
 }
 
 impl Default for RenderInBetweens {
     fn default() -> Self {
         Self { images: Vec::new(), active: false, jobs: Vec::new(), finished: None, gpu: GpuState::Unloaded,
             workspaces: HashMap::new(), progress: HashMap::new(), holders: HashMap::new(), completed: HashSet::new(),
-            step_uniforms: None, clock: None, cost_scale: 1.0, bc7: EncoderState::Unloaded }
+            step_uniforms: None, clock: None, cost_scale: CostScale::default() }
     }
 }
 
@@ -455,33 +245,9 @@ fn step_ms(workspace: &RifeWorkspace, step: PairStep, pair: &InBetweenPair) -> f
     dispatch_ms(multiply_adds, pixels) + encode
 }
 
-fn bc7_encode_ms(pixels: u32) -> f64 {
-    BC7_ENCODE_MS + pixels as f64 / MEGA * BC7_ENCODE_MS_PER_MEGAPIXEL
-}
-
 fn dispatch_ms(multiply_adds: u64, atlas_pixels: u32) -> f64 {
     DISPATCH_MS + multiply_adds as f64 / GIGA * MS_PER_GIGA_MULTIPLY_ADD
         + atlas_pixels as f64 / MEGA * ATLAS_STEP_MS_PER_MEGAPIXEL
-}
-
-/// How many of `costs` (ms, in order) run within what is left of the budget: as many as fit, and at least one when
-/// nothing ran yet this frame.
-fn steps_within_budget(costs: impl IntoIterator<Item = f64>, spent_ms: f64) -> (usize, f64) {
-    let mut spent = spent_ms;
-    let mut count = 0;
-    for cost in costs {
-        if spent + cost > RIFE_FRAME_BUDGET_MS && spent > 0.0 {
-            break;
-        }
-        spent += cost;
-        count += 1;
-    }
-    (count, spent)
-}
-
-/// The bytes of a staging row of a frame `width` wide: a copy into a texture takes rows of a multiple of 256 bytes.
-fn staging_pitch_bytes(width: u32) -> u32 {
-    (width * STAGING_TEXEL_BYTES).next_multiple_of(wgpu::COPY_BYTES_PER_ROW_ALIGNMENT)
 }
 
 fn padded_size(size: UVec2) -> UVec2 {
@@ -491,8 +257,8 @@ fn padded_size(size: UVec2) -> UVec2 {
 /// What a frame records, in order.
 enum Recorded {
     Rife(RifeDispatch),
-    /// An atlas step of a workspace on the atlas of `format`, its uniform the `step`th of the frame.
-    Atlas { workspace: UVec2, format: AtlasFormat, pipeline: wgpu::ComputePipeline, step: usize, workgroups: u32 },
+    /// A frame step of a workspace on the atlas of `format`, its uniform the `uniform`th of the frame.
+    Atlas { workspace: UVec2, format: AtlasFormat, step: RifeFrameStep, uniform: usize },
     /// A workspace's staging rows into the RGBA8 atlas.
     Copy { workspace: UVec2, target: AtlasRect },
     /// A workspace's staging rows cleared to transparent, as far as an in-between padded to blocks reaches.
@@ -517,6 +283,8 @@ pub fn sys_render_mobile_in_betweens(
     render_device: Res<RenderDevice>,
     render_queue: Res<RenderQueue>,
     mut warm_up: ResMut<ComputeWarmUp>,
+    mut budget: ResMut<MobileComputeBudget>,
+    mut bc7: ResMut<MobileBc7Encoder>,
 ) {
     let state = &mut *state;
     let device = render_device.wgpu_device();
@@ -528,13 +296,13 @@ pub fn sys_render_mobile_in_betweens(
         };
         let device = device.clone();
         state.gpu = GpuState::Loading(background_pool().spawn(Priority::Visible, "rife network load",
-            move || RifeGpu::new(&device, pipelines)));
+            move || load_network(&device, pipelines)));
     }
     if let GpuState::Loading(task) = &mut state.gpu {
         state.gpu = match task.poll() {
             TaskPoll::Pending => return,
             TaskPoll::Ready(Ok(gpu)) => {
-                info!("The RIFE network is loaded: {:.1} MB of weights.", gpu.model.weight_bytes() as f64 / MEGA);
+                info!("The RIFE network is loaded: {:.1} MB of weights.", gpu.weight_bytes() as f64 / MEGA);
                 GpuState::Ready(Arc::new(gpu))
             }
             TaskPoll::Ready(Err(error)) => {
@@ -546,20 +314,15 @@ pub fn sys_render_mobile_in_betweens(
     }
     let GpuState::Ready(gpu) = &state.gpu else { return };
     let gpu = gpu.clone();
-    if state.clock.is_none() && device.features().contains(wgpu::Features::TIMESTAMP_QUERY) {
-        state.clock = Some(GpuClock::new(device));
+    if state.clock.is_none() {
+        state.clock = GpuClock::new(device, "mobile in-betweens");
     }
-    let period_ns = render_queue.get_timestamp_period();
-    if let Some((measured, estimate)) = state.clock.as_mut().and_then(|clock| clock.read(period_ns)) {
-        let (low, high) = COST_SCALE_BOUNDS;
-        state.cost_scale += (measured / estimate - state.cost_scale) * COST_SCALE_WEIGHT;
-        state.cost_scale = state.cost_scale.clamp(low, high);
-        debug!("Mobile in-betweens: {measured:.2} ms on the GPU for {estimate:.2} ms estimated; scale {:.2}.",
-            state.cost_scale);
+    if let Some(clock) = state.clock.as_mut() {
+        clock.update_scale(render_queue.get_timestamp_period(), &mut state.cost_scale);
     }
-    let cost_scale = state.cost_scale;
+    let cost_scale = state.cost_scale.get();
     let bc7_listed = state.active && state.jobs.iter().any(|job| job_format(job) == AtlasFormat::Bc7);
-    poll_bc7_encoder(&mut state.bc7, bc7_listed, &mut warm_up, device, &render_queue);
+    bc7.poll(bc7_listed, &mut warm_up, device, &render_queue);
 
     // Forget what the jobs no longer listed left, and the workspaces idle for long.
     let listed = state.jobs.iter().map(|job| job.id).collect::<HashSet<_>>();
@@ -580,14 +343,15 @@ pub fn sys_render_mobile_in_betweens(
     let atlas_of = |format| atlases.iter().find(|(atlas, _)| *atlas == format).map(|(_, image)| *image);
     let mut recorded = Vec::new();
     let mut steps = Vec::new();
-    let mut spent = 0.0;
+    let mut spent = budget.spent_ms();
+    let started = spent;
     let mut finished = Vec::new();
     let mut bc7_room = Bc7Room::default();
     let mut bc7_full = false;
-    let RenderInBetweens { jobs, workspaces, progress, holders, completed, bc7, .. } = &mut *state;
-    let bc7_ready = matches!(bc7, EncoderState::Ready(_));
+    let RenderInBetweens { jobs, workspaces, progress, holders, completed, .. } = &mut *state;
+    let bc7_ready = bc7.ready().is_some();
     for job in jobs.iter() {
-        if completed.contains(&job.id) || spent >= RIFE_FRAME_BUDGET_MS || bc7_full {
+        if completed.contains(&job.id) || spent >= MOBILE_COMPUTE_FRAME_BUDGET_MS || bc7_full {
             continue;
         }
         let format = job_format(job);
@@ -617,7 +381,7 @@ pub fn sys_render_mobile_in_betweens(
         let WorkspaceState::Ready(workspace) = workspace else { continue };
         workspace.last_used = Instant::now();
         let at = progress.entry(job.id).or_default();
-        while at.pair < job.pairs.len() && spent < RIFE_FRAME_BUDGET_MS && !bc7_full {
+        while at.pair < job.pairs.len() && spent < MOBILE_COMPUTE_FRAME_BUDGET_MS && !bc7_full {
             let pair = &job.pairs[at.pair];
             let plan = pair_steps(&workspace.rife, job.factor);
             let costs = plan[at.step..].iter().map(|&step| step_ms(&workspace.rife, step, pair) * cost_scale)
@@ -634,7 +398,7 @@ pub fn sys_render_mobile_in_betweens(
                     bc7_full = true;
                     break;
                 };
-                record_step(&mut recorded, &mut steps, &gpu, workspace, size, format, job, pair, step, room);
+                record_step(&mut recorded, &mut steps, workspace, size, format, job, pair, step, room);
             }
             spent += costs[..count].iter().sum::<f64>();
             at.step += count;
@@ -652,12 +416,12 @@ pub fn sys_render_mobile_in_betweens(
             finished.push(job.id);
         }
     }
+    budget.spend(spent - started);
     if recorded.is_empty() {
         return;
     }
 
-    let stride = (std::mem::size_of::<AtlasStep>() as u64)
-        .next_multiple_of(device.limits().min_uniform_buffer_offset_alignment as u64);
+    let stride = rife_frame_step_stride(device);
     let needed = stride * steps.len().max(1) as u64;
     if state.step_uniforms.as_ref().is_none_or(|buffer| buffer.size() < needed) {
         state.step_uniforms = Some(device.create_buffer(&wgpu::BufferDescriptor {
@@ -669,7 +433,7 @@ pub fn sys_render_mobile_in_betweens(
     let mut bytes = vec![0u8; needed as usize];
     for (index, step) in steps.iter().enumerate() {
         let at = index * stride as usize;
-        bytes[at..at + std::mem::size_of::<AtlasStep>()].copy_from_slice(bytemuck::bytes_of(step));
+        bytes[at..at + step.uniform().len()].copy_from_slice(step.uniform());
     }
     render_queue.write_buffer(uniforms, 0, &bytes);
     let used = recorded.iter().filter_map(|item| match item {
@@ -679,22 +443,13 @@ pub fn sys_render_mobile_in_betweens(
     let bind_groups = used.into_iter().map(|(size, format)| {
         let WorkspaceState::Ready(workspace) = &state.workspaces[&size] else { unreachable!("a step ran on it") };
         let atlas = atlas_of(format).expect("a step ran on it");
-        ((size, format), device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("rife atlas step"), layout: &gpu.atlas_layout, entries: &[
-                wgpu::BindGroupEntry { binding: 0, resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
-                    buffer: uniforms, offset: 0, size: wgpu::BufferSize::new(std::mem::size_of::<AtlasStep>() as u64),
-                }) },
-                wgpu::BindGroupEntry { binding: 1, resource: wgpu::BindingResource::TextureView(&atlas.texture_view) },
-                wgpu::BindGroupEntry { binding: 2, resource: workspace.rife.input().as_entire_binding() },
-                wgpu::BindGroupEntry { binding: 3, resource: workspace.rife.merged().as_entire_binding() },
-                wgpu::BindGroupEntry { binding: 4, resource: workspace.staging.as_entire_binding() },
-            ],
-        }))
+        ((size, format),
+            gpu.frame_bind_group(device, &workspace.rife, &workspace.staging, uniforms, &atlas.texture_view))
     }).collect::<HashMap<_, _>>();
 
     let mut encoder =
         device.create_command_encoder(&wgpu::CommandEncoderDescriptor { label: Some("mobile in-betweens") });
-    let timed = state.clock.as_ref().filter(|clock| clock.timing.is_none());
+    let timed = state.clock.as_ref().filter(|clock| clock.idle());
     if let Some(clock) = timed {
         clock.stamp(&mut encoder, 0);
     }
@@ -708,11 +463,8 @@ pub fn sys_render_mobile_in_betweens(
             while let Some(item) = next.next_if(|item| item.in_pass()) {
                 match item {
                     Recorded::Rife(dispatch) => dispatch.record(&mut pass),
-                    Recorded::Atlas { workspace, format, pipeline, step, workgroups } => {
-                        pass.set_pipeline(pipeline);
-                        pass.set_bind_group(0, &bind_groups[&(*workspace, *format)], &[(*step as u64 * stride) as u32]);
-                        pass.dispatch_workgroups(*workgroups, 1, 1);
-                    }
+                    Recorded::Atlas { workspace, format, step, uniform } => step.record(&gpu, &mut pass,
+                        &bind_groups[&(*workspace, *format)], (*uniform as u64 * stride) as u32),
                     _ => unreachable!("taken while in a pass"),
                 }
             }
@@ -721,10 +473,7 @@ pub fn sys_render_mobile_in_betweens(
             let WorkspaceState::Ready(workspace) = &state.workspaces[workspace] else { unreachable!("a step ran on it") };
             &workspace.staging
         };
-        let bc7_encoding = || {
-            let EncoderState::Ready(encoding) = &state.bc7 else { unreachable!("a BC7 step ran") };
-            encoding
-        };
+        let bc7_encoding = || -> &Bc7Encoding { bc7.ready().expect("a BC7 step ran") };
         match next.next() {
             None => {}
             Some(Recorded::Copy { workspace, target }) => {
@@ -733,7 +482,8 @@ pub fn sys_render_mobile_in_betweens(
                     wgpu::TexelCopyBufferInfo {
                         buffer: staging(workspace),
                         layout: wgpu::TexelCopyBufferLayout {
-                            offset: 0, bytes_per_row: Some(staging_pitch_bytes(target.width)), rows_per_image: None,
+                            offset: 0, bytes_per_row: Some(rife_output_bytes_per_row(target.width)),
+                            rows_per_image: None,
                         },
                     },
                     wgpu::TexelCopyTextureInfo {
@@ -747,7 +497,7 @@ pub fn sys_render_mobile_in_betweens(
             Some(Recorded::ClearStaging { workspace, target }) => {
                 let (_, height) = target.padded_size();
                 encoder.clear_buffer(staging(workspace), 0,
-                    Some(u64::from(staging_pitch_bytes(target.width)) * u64::from(height)));
+                    Some(u64::from(rife_output_bytes_per_row(target.width)) * u64::from(height)));
             }
             Some(Recorded::Scratch { workspace, target, y }) => {
                 let (width, height) = target.padded_size();
@@ -755,7 +505,8 @@ pub fn sys_render_mobile_in_betweens(
                     wgpu::TexelCopyBufferInfo {
                         buffer: staging(workspace),
                         layout: wgpu::TexelCopyBufferLayout {
-                            offset: 0, bytes_per_row: Some(staging_pitch_bytes(target.width)), rows_per_image: None,
+                            offset: 0, bytes_per_row: Some(rife_output_bytes_per_row(target.width)),
+                            rows_per_image: None,
                         },
                     },
                     wgpu::TexelCopyTextureInfo {
@@ -787,10 +538,10 @@ pub fn sys_render_mobile_in_betweens(
     if !encodes.is_empty() {
         // The in-betweens of the BC7 atlas, encoded together: the encoder's one compress of the submission.
         let atlas = atlas_of(AtlasFormat::Bc7).expect("a step ran on it");
-        let EncoderState::Ready(encoding) = &mut state.bc7 else { unreachable!("a BC7 step ran") };
-        let Bc7Encoding { encoder: block_encoder, scratch_view, blocks, .. } = &mut **encoding;
+        let Bc7Encoding { encoder: block_encoder, scratch_view, blocks, .. } =
+            bc7.ready_mut().expect("a BC7 step ran");
         for &(target, y) in &encodes {
-            block_encoder.add_frame_at(IN_BETWEEN_BLOCK_FORMAT, scratch_view, y, target.width, target.height, blocks,
+            block_encoder.add_frame_at(MOBILE_BLOCK_FORMAT, scratch_view, y, target.width, target.height, blocks,
                 scratch_blocks_offset(y));
         }
         {
@@ -800,7 +551,7 @@ pub fn sys_render_mobile_in_betweens(
             block_encoder.record(&mut pass);
         }
         for &(target, y) in &encodes {
-            record_copy_to_layer(&mut encoder, IN_BETWEEN_BLOCK_FORMAT, blocks, scratch_blocks_offset(y), target.width,
+            record_copy_to_layer(&mut encoder, MOBILE_BLOCK_FORMAT, blocks, scratch_blocks_offset(y), target.width,
                 target.height, &atlas.texture, target.layer, target.x, target.y);
         }
     }
@@ -811,7 +562,7 @@ pub fn sys_render_mobile_in_betweens(
     let timed = timed.is_some();
     render_queue.submit([encoder.finish()]);
     if timed && let Some(clock) = state.clock.as_mut() {
-        clock.map(spent / cost_scale);
+        clock.map((spent - started) / cost_scale);
     }
     if let Some(shared) = &state.finished
         && !finished.is_empty() {
@@ -824,47 +575,12 @@ fn job_format(job: &InBetweenJob) -> AtlasFormat {
     job.pairs.first().map_or(AtlasFormat::Rgba8, |pair| pair.first.format)
 }
 
-/// Where the blocks of the in-between at scratch row `y` go: after the blocks of whole scratch rows above it, which
-/// those of the in-betweens above never exceed.
-fn scratch_blocks_offset(y: u32) -> u64 {
-    IN_BETWEEN_BLOCK_FORMAT.encoded_bytes(BC7_SCRATCH_SIDE, y)
-}
-
-/// Starts the BC7 encoder the first time a job of the BC7 atlas is listed (the warm-up's, or one compiled on the
-/// background pool when the warm-up has none), and takes it once compiled.
-fn poll_bc7_encoder(state: &mut EncoderState, listed: bool, warm_up: &mut ComputeWarmUp, device: &wgpu::Device,
-    queue: &wgpu::Queue) {
-    if let EncoderState::Unloaded = state && listed {
-        *state = match warm_up.take_block_encoder() {
-            Warm::Compiling => return,
-            Warm::Ready(encoder) => EncoderState::Ready(Box::new(Bc7Encoding::new(device, encoder))),
-            Warm::Unavailable => {
-                let (device, queue) = (device.clone(), queue.clone());
-                EncoderState::Compiling(background_pool().spawn(Priority::Visible, "bc7 block encoder", move || {
-                    let _compile = begin_shader_compile("Mobile in-betweens: BC7 encoder");
-                    MobileBlockEncoder::new(&device, &queue)
-                }))
-            }
-        };
-    }
-    if let EncoderState::Compiling(task) = state {
-        *state = match task.poll() {
-            TaskPoll::Pending => return,
-            TaskPoll::Ready(encoder) => EncoderState::Ready(Box::new(Bc7Encoding::new(device, encoder))),
-            TaskPoll::Failed => {
-                error!("The BC7 encoder did not compile, so the clips of the BC7 atlas play without in-betweens.");
-                EncoderState::Failed
-            }
-        };
-    }
-}
-
 /// Records `step` of `pair`: a network dispatch, or an atlas step and, for a copy or a store, its copy into the
 /// atlas of `format`. On the BC7 atlas a first frame's blocks are copied as they are, and an in-between goes to the
 /// scratch rows `room` names, to be encoded.
 #[allow(clippy::too_many_arguments)]
-fn record_step(recorded: &mut Vec<Recorded>, steps: &mut Vec<AtlasStep>, gpu: &RifeGpu, workspace: &Workspace,
-    size: UVec2, format: AtlasFormat, job: &InBetweenJob, pair: &InBetweenPair, step: PairStep, room: Bc7Room) {
+fn record_step(recorded: &mut Vec<Recorded>, steps: &mut Vec<RifeFrameStep>, workspace: &Workspace, size: UVec2,
+    format: AtlasFormat, job: &InBetweenJob, pair: &InBetweenPair, step: PairStep, room: Bc7Room) {
     if let Some(dispatch) = rife_dispatch(&workspace.rife, step) {
         recorded.push(Recorded::Rife(dispatch.clone()));
         return;
@@ -874,42 +590,32 @@ fn record_step(recorded: &mut Vec<Recorded>, steps: &mut Vec<AtlasStep>, gpu: &R
         recorded.push(Recorded::Blocks { source: pair.first, target: pair.targets[0], offset: room.bounce_bytes });
         return;
     }
-    let frame =
-        |rect: AtlasRect, offset: UVec2| (rect.layer, rect.x, rect.y, rect.width, rect.height, offset.x, offset.y);
-    let (first_layer, first_x, first_y, first_width, first_height, first_offset_x, first_offset_y) =
-        frame(pair.first, pair.first_offset);
-    let (next_layer, next_x, next_y, next_width, next_height, next_offset_x, next_offset_y) =
-        frame(pair.next, pair.next_offset);
-    let (target, card, pipeline) = match step {
-        PairStep::Pack => (None, pair.card, &gpu.pack),
-        PairStep::CopyFirst =>
-            (Some(pair.targets[0]), UVec2::new(pair.first.width, pair.first.height), &gpu.copy_frame),
-        PairStep::Store(generated) => (Some(pair.targets[generated + 1]), pair.card, &gpu.store),
+    let card_frame = |rect: AtlasRect, offset: UVec2| CardFrame { source: source_rect(rect), offset: offset.into() };
+    let size_pair = size.into();
+    let (target, frame_step) = match step {
+        PairStep::Pack => (None, RifeFrameStep::pack(size_pair, card_frame(pair.first, pair.first_offset),
+            card_frame(pair.next, pair.next_offset))),
+        PairStep::CopyFirst => (Some(pair.targets[0]), RifeFrameStep::copy_frame(size_pair, source_rect(pair.first))),
+        PairStep::Store(generated) =>
+            (Some(pair.targets[generated + 1]), RifeFrameStep::store(size_pair, pair.card.into(), job.snap_alpha)),
         _ => unreachable!("network steps are dispatches"),
     };
-    let mut atlas_step = AtlasStep {
-        width: size.x, height: size.y, card_width: card.x, card_height: card.y,
-        first_layer, first_x, first_y, first_width, first_height, first_offset_x, first_offset_y,
-        next_layer, next_x, next_y, next_width, next_height, next_offset_x, next_offset_y,
-        pitch: staging_pitch_bytes(card.x) / STAGING_TEXEL_BYTES, snap_alpha: job.snap_alpha as u32,
-    };
-    if step == PairStep::CopyFirst {
-        // The frame alone, at the card's corner.
-        (atlas_step.first_offset_x, atlas_step.first_offset_y) = (0, 0);
-    }
-    let threads = if step == PairStep::Pack { size.x * size.y } else { card.x * card.y };
     let bc7_target = target.filter(|_| format == AtlasFormat::Bc7);
     if let Some(target) = bc7_target {
         recorded.push(Recorded::ClearStaging { workspace: size, target });
     }
-    recorded.push(Recorded::Atlas { workspace: size, format, pipeline: pipeline.clone(), step: steps.len(),
-        workgroups: threads.div_ceil(ATLAS_THREADS) });
-    steps.push(atlas_step);
+    recorded.push(Recorded::Atlas { workspace: size, format, step: frame_step, uniform: steps.len() });
+    steps.push(frame_step);
     match (target, bc7_target) {
         (_, Some(target)) => recorded.push(Recorded::Scratch { workspace: size, target, y: room.scratch_rows }),
         (Some(target), None) => recorded.push(Recorded::Copy { workspace: size, target }),
         (None, _) => {}
     }
+}
+
+/// An atlas rectangle as the compute crate takes a frame.
+fn source_rect(rect: AtlasRect) -> SourceRect {
+    SourceRect { layer: rect.layer, x: rect.x, y: rect.y, width: rect.width, height: rect.height }
 }
 
 #[cfg(test)]
@@ -924,20 +630,7 @@ mod tests {
     }
 
     #[test]
-    fn the_budget_takes_what_fits_and_at_least_one_step() {
-        let half = RIFE_FRAME_BUDGET_MS / 2.0;
-        assert_eq!(steps_within_budget([half, half, half], 0.0).0, 2);
-        assert_eq!(steps_within_budget([half, half], half).0, 1);
-        // A step over the budget runs alone in a frame that ran nothing yet, and waits in one that did.
-        let over = RIFE_FRAME_BUDGET_MS * 3.0;
-        assert_eq!(steps_within_budget([over, half], 0.0), (1, over));
-        assert_eq!(steps_within_budget([over], half).0, 0);
-    }
-
-    #[test]
-    fn staging_rows_and_workspaces_are_aligned() {
-        assert_eq!(staging_pitch_bytes(1), wgpu::COPY_BYTES_PER_ROW_ALIGNMENT);
-        assert_eq!(staging_pitch_bytes(65), 2 * wgpu::COPY_BYTES_PER_ROW_ALIGNMENT);
+    fn workspaces_are_padded() {
         assert_eq!(padded_size(UVec2::new(65, 64)), UVec2::new(128, 64));
     }
 
@@ -965,15 +658,8 @@ mod tests {
         assert_eq!(full.take(PairStep::CopyFirst, &pair), None);
         assert_eq!(full, Bc7Room { scratch_rows: BC7_SCRATCH_SIDE - 8, bounce_bytes: BC7_BOUNCE_BYTES - 256 });
         assert_eq!(scratch_blocks_offset(12) - scratch_blocks_offset(0),
-            IN_BETWEEN_BLOCK_FORMAT.encoded_bytes(BC7_SCRATCH_SIDE, 12));
-        assert!(scratch_blocks_offset(BC7_SCRATCH_SIDE) <= IN_BETWEEN_BLOCK_FORMAT.encoded_bytes(BC7_SCRATCH_SIDE,
+            MOBILE_BLOCK_FORMAT.encoded_bytes(BC7_SCRATCH_SIDE, 12));
+        assert!(scratch_blocks_offset(BC7_SCRATCH_SIDE) <= MOBILE_BLOCK_FORMAT.encoded_bytes(BC7_SCRATCH_SIDE,
             BC7_SCRATCH_SIDE));
-    }
-
-    #[test]
-    fn the_shader_reads_an_atlas_step_as_wgsl_lays_it_out() {
-        // Twenty u32.
-        const WGSL_ATLAS_STEP_SIZE: usize = 80;
-        assert_eq!(std::mem::size_of::<AtlasStep>(), WGSL_ATLAS_STEP_SIZE);
     }
 }
