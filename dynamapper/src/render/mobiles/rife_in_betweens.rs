@@ -4,12 +4,13 @@
 //! any clip (in_between.rs). The frames never leave the GPU: the render world packs each pair from the frame atlas into
 //! a RIFE workspace and writes the frame and the in-betweens after it back into the atlas (render.rs).
 //!
-//! A sequence is an entry of the frame atlas of its own, on one page, its frames copied from the clip's beside the
-//! in-betweens, so the crossfade finds every two neighbours on one page as it does a clip's. It is keyed by the clip's
+//! A sequence is an entry of the frame atlas of its own, its frames copied from the clip's beside the in-betweens, on
+//! one page when it fits one, else in pieces over several (`reserve_sequence`): the crossfade reads each of two
+//! neighbours from its own page, and a sequence drawn keeps all its pages in use. It is keyed by the clip's
 //! stored frames, which a mirrored direction shares with its twin, so the two share the sequence and draw it each
 //! with its own mirroring. A clip drawn plays plain until its sequence is complete, then switches to it: the sequence
-//! spans the clip's cycle, so the switch lands on the same point of it. A sequence whose page the atlas empties is
-//! made again when drawn.
+//! spans the clip's cycle, so the switch lands on the same point of it. A sequence one of whose pages the atlas empties
+//! is made again when drawn.
 //!
 //! The main world takes the atlas room and lists the jobs each frame, those of the clips drawn most recently first;
 //! the render world works through them within a GPU budget per frame, dispatch list by dispatch list, and hands back
@@ -81,7 +82,7 @@ enum InBetweenState {
     /// The sequence's frames have their room, and the render world fills them as `job`; none while not queued.
     Generating { sequence: Clip, job: Option<u64> },
     Ready(Clip),
-    /// The sequence does not fit a page.
+    /// The sequence does not fit the atlas, or has a frame larger than a page.
     Missing,
 }
 
@@ -171,7 +172,7 @@ impl MobileInBetweens {
             if !atlas.has_room_sparing(&sizes, now) {
                 continue;
             }
-            entry.state = match atlas.reserve_clip(AtlasEntry::InBetweens(*key), &sizes, now) {
+            entry.state = match atlas.reserve_sequence(AtlasEntry::InBetweens(*key), &sizes, now) {
                 Some((rects, page_evicted)) => {
                     evicted.extend(page_evicted);
                     InBetweenState::Generating {
@@ -186,8 +187,8 @@ impl MobileInBetweens {
                     }
                 }
                 None => {
-                    warn!("The RIFE x{} in-betweens of mobile clip {:?} do not fit a page of the frame atlas, so it \
-                        plays crossfaded.", key.factor, entry.source);
+                    warn!("The RIFE x{} in-betweens of mobile clip {:?} do not fit the frame atlas, so it plays \
+                        crossfaded.", key.factor, entry.source);
                     InBetweenState::Missing
                 }
             };
@@ -213,8 +214,8 @@ impl MobileInBetweens {
                 self.next_job += 1;
                 self.next_job
             });
-            // Its page is in use while it is made, though not drawn yet.
-            atlas.touch(sequence.frames[0].rect.layer, now);
+            // Its pages are in use while it is made, though not drawn yet.
+            sequence.touch_pages(atlas, now);
             let pairs = sequence_pairs(clip, sequence, key.factor);
             let size = pairs.iter().fold(UVec2::ZERO, |size, pair| size.max(pair.card));
             self.jobs.push(InBetweenJob { id, factor: key.factor, snap_alpha: key.source == AnimSource::Classic, size,
@@ -463,6 +464,27 @@ mod tests {
         // Not drawn for a while, it stays known not to fit.
         in_betweens.schedule(&mut atlas, |_| Some(&huge), true, NOW + 1.0 + RIFE_QUEUE_KEEP_SECS);
         assert!(matches!(in_betweens.entries[&huge_key].state, InBetweenState::Missing));
+    }
+
+    #[test]
+    fn a_sequence_larger_than_a_page_is_made_in_pieces() {
+        // Three frames of 300 by 300 at x4: twelve, and a page holds nine.
+        const SIDE: f32 = 300.0;
+        let clip = Clip { frames: three_frame_clip().frames.into_iter().map(|frame| ClipFrame {
+            placement: placement(SIDE, SIDE, SIDE / 2.0, SIDE), ..frame }).collect(), ..three_frame_clip() };
+        let mut in_betweens = MobileInBetweens::default();
+        let mut atlas = atlas();
+        let key = clip_key(3);
+        in_betweens.shown(key, &clip, MobileInBetweenFrames::RifeX4, NOW);
+        in_betweens.schedule(&mut atlas, |_| Some(&clip), true, NOW);
+        let job = in_betweens.jobs[0].clone();
+        let targets = job.pairs.iter().flat_map(|pair| pair.targets.iter().map(|rect| rect.layer)).collect::<Vec<_>>();
+        assert_eq!(targets.len(), 12);
+        assert!(targets.iter().any(|&layer| layer != targets[0]));
+        in_betweens.finished.lock().push(job.id);
+        in_betweens.schedule(&mut atlas, |_| Some(&clip), true, NOW);
+        let sequence = in_betweens.shown(key, &clip, MobileInBetweenFrames::RifeX4, NOW).unwrap();
+        assert_eq!(sequence.frames.iter().map(|frame| frame.rect.layer).collect::<Vec<_>>(), targets);
     }
 
     #[test]

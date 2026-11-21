@@ -75,8 +75,9 @@ pub fn union_placement(a: FramePlacement, b: FramePlacement) -> FramePlacement {
 /// The crossfade of a mobile frame drawn, as the art sprite shader reads it after the frame's sprite instance
 /// (`MobileSpriteInstance`, art/mobile_frames.wesl), in the 0..1 coordinates of an atlas page. While two frames blend,
 /// the sprite's card holds both (`union_placement`) and its `uv_min`..`uv_max` span the card in the coordinates of the
-/// first frame; the next frame lies `next_uv_offset` from them, on the same page, as a clip's frames all do. Each frame
-/// shows inside its own rectangle only. A weight of 0 draws the sprite's frame alone, as a static's.
+/// first frame; the next frame lies `next_uv_offset` from them, on page `next_layer`, the first frame's page but in a
+/// sequence that spans pages (rife_in_betweens.rs). Each frame shows inside its own rectangle only. A weight of 0 draws
+/// the sprite's frame alone, as a static's.
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Default, PartialEq, Pod, Zeroable)]
 pub struct FrameCrossfade {
@@ -90,10 +91,12 @@ pub struct FrameCrossfade {
     pub next_uv_offset: [f32; 2],
     /// The next frame's blend weight, 0..1 (`crossfade_weight`).
     pub next_weight: f32,
-    pub _pad: f32,
+    /// The next frame's page.
+    pub next_layer: u32,
 }
 
-/// What a mobile frame drawn shows: its card's placement, the card's span on its atlas page and the crossfade.
+/// What a mobile frame drawn shows: its card's placement, the card's span on its atlas page and the crossfade, which
+/// names the next frame's page.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct LayerFrames {
     pub layer: u32,
@@ -113,7 +116,7 @@ impl LayerFrames {
             uv_max,
             placement: frame.placement,
             crossfade: FrameCrossfade { frame_uv_min: uv_min.to_array(), frame_uv_max: uv_max.to_array(),
-                ..default() },
+                next_layer: frame.rect.layer, ..default() },
         }
     }
 }
@@ -135,7 +138,8 @@ pub fn layer_frames(mode: MobileInBetweenFrames, clip: &Clip, pick: FramePick) -
         return Some(LayerFrames::alone(next));
     }
     let card = union_placement(frame.placement, next.placement);
-    // The card's top-left corner in the texels of a frame's page: the frame's corner less its place on the card.
+    // The card's top-left corner in the texels of a frame's page: the frame's corner less its place on the card. The
+    // offset between the two frames' corners holds across pages, as each frame is read from its own.
     let card_origin = |frame: &ClipFrame| Vec2::new(frame.rect.x as f32 - (card.anchor_x - frame.placement.anchor_x),
         frame.rect.y as f32 - (card.anchor_y - frame.placement.anchor_y));
     let page_size = MOBILE_ATLAS_PAGE_SIZE as f32;
@@ -154,7 +158,7 @@ pub fn layer_frames(mode: MobileInBetweenFrames, clip: &Clip, pick: FramePick) -
             next_uv_max: next_uv_max.to_array(),
             next_uv_offset: ((card_origin(next) - card_origin(frame)) / page_size).to_array(),
             next_weight: weight,
-            _pad: 0.0,
+            next_layer: next.rect.layer,
         },
     })
 }
@@ -221,6 +225,25 @@ mod tests {
     }
 
     #[test]
+    fn the_next_frame_may_lie_on_another_page() {
+        const NEXT_PAGE: u32 = 5;
+        let same_page = two_frame_clip();
+        let mut clip = same_page.clone();
+        clip.frames[1].rect.layer = NEXT_PAGE;
+        let pick = FramePick { index: 0, next: 1, t: 0.5 };
+        let on_one = layer_frames(MobileInBetweenFrames::Crossfade, &same_page, pick).unwrap();
+        let drawn = layer_frames(MobileInBetweenFrames::Crossfade, &clip, pick).unwrap();
+        assert_eq!(on_one.crossfade.next_layer, on_one.layer);
+        // The card stays on the first frame's page, the next frame is read from its own at the same place.
+        assert_eq!(drawn.crossfade.next_layer, NEXT_PAGE);
+        assert_eq!(drawn, LayerFrames { crossfade: FrameCrossfade { next_layer: NEXT_PAGE, ..on_one.crossfade },
+            ..on_one });
+        // Past the blend, the next frame alone, on its page.
+        let after = layer_frames(MobileInBetweenFrames::Crossfade, &clip, FramePick { t: 0.9, ..pick }).unwrap();
+        assert_eq!((after.layer, after.crossfade.next_layer), (NEXT_PAGE, NEXT_PAGE));
+    }
+
+    #[test]
     fn outside_the_blend_or_off_a_frame_shows_alone() {
         let clip = two_frame_clip();
         let alone = |frame: &ClipFrame| LayerFrames::alone(frame);
@@ -244,7 +267,7 @@ mod tests {
 
     #[test]
     fn the_shader_reads_the_crossfade_as_wgsl_lays_it_out() {
-        // Five vec2<f32>, then two f32 (art/art_bindings.wesl).
+        // Five vec2<f32>, then an f32 and a u32 (art/art_bindings.wesl).
         const WGSL_FRAME_CROSSFADE_SIZE: usize = 48;
         assert_eq!(std::mem::size_of::<FrameCrossfade>(), WGSL_FRAME_CROSSFADE_SIZE);
     }

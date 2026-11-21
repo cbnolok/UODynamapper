@@ -227,7 +227,7 @@ pub fn sys_draw_mobiles(
                 None => clip.frame_at(motion.clip_secs()),
             };
             let Some(frames) = pick.and_then(|pick| layer_frames(in_between_mode, clip, pick)) else { continue };
-            atlas.touch(frames.layer, now);
+            clip.touch_pages(&mut atlas, now);
             // Both frames of an in-between come from the clip, so they share its mirroring.
             instances.push(mobile_instance(transform.translation, frames, mirrored, drawn.offset_px,
                 drawn.tie_level, source, local_lights));

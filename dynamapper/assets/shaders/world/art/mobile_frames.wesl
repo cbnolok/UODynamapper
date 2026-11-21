@@ -1,10 +1,11 @@
 // ============================================================================
 // art::mobile_frames — A mobile's two frames on one card, crossfaded (render/mobiles/in_between.rs), for the mobiles'
 // pipelines (MOBILE_FRAMES). The card spans both frames with their anchors on one point, its uv in the first frame's
-// coordinates; the next frame lies `next_uv_offset` from them. Each frame shows inside its own rectangle only, so a
-// tap never reads a frame's atlas neighbours, and the card holds what a picture of the two frames side by side on a
-// transparent card would. The two taps blend premultiplied on their sRGB-encoded values, as the clients' 8-bit
-// blending would mix the frames; a blend of the linear values brightens the mix of a dark and a light texel.
+// coordinates; the next frame lies `next_uv_offset` from them, on its own page `next_layer`. Each frame shows inside
+// its own rectangle only, so a tap never reads a frame's atlas neighbours, and the card holds what a picture of the
+// two frames side by side on a transparent card would. The two taps blend premultiplied on their sRGB-encoded values,
+// as the clients' 8-bit blending would mix the frames; a blend of the linear values brightens the mix of a dark and a
+// light texel.
 // ============================================================================
 
 import package::shaders::world::art::art_bindings::FrameCrossfade;
@@ -38,13 +39,13 @@ fn mobile_frame_tap(atlas: texture_2d_array<f32>, atlas_sampler: sampler, layer:
     return textureSampleLevel(atlas, atlas_sampler, uv, layer, 0.0);
 }
 
-// One tap of the card at `uv` (the first frame's coordinates): both frames' taps, blended.
+// One tap of the card at `uv` (the first frame's coordinates, on page `layer`): both frames' taps, blended.
 fn mobile_frames_tap(atlas: texture_2d_array<f32>, atlas_sampler: sampler, layer: i32, uv: vec2<f32>,
     crossfade: FrameCrossfade) -> vec4<f32> {
     return mobile_frames_mix(
         mobile_frame_tap(atlas, atlas_sampler, layer, uv, crossfade.frame_uv_min, crossfade.frame_uv_max),
-        mobile_frame_tap(atlas, atlas_sampler, layer, uv + crossfade.next_uv_offset, crossfade.next_uv_min,
-            crossfade.next_uv_max),
+        mobile_frame_tap(atlas, atlas_sampler, i32(crossfade.next_layer), uv + crossfade.next_uv_offset,
+            crossfade.next_uv_min, crossfade.next_uv_max),
         crossfade.next_weight);
 }
 
@@ -89,7 +90,7 @@ fn mobile_frame_client_filtered(atlas: texture_2d_array<f32>, layer: i32, origin
 }
 
 // The client's filter on both frames of the card, blended. `uv`, the card's span `uv_min`..`uv_max` and the
-// derivatives are atlas-normalized, in the first frame's coordinates (client_filtered_atlas_rect).
+// derivatives are atlas-normalized, in the first frame's coordinates on page `layer` (client_filtered_atlas_rect).
 fn mobile_frames_client_filtered(atlas: texture_2d_array<f32>, layer: i32, uv: vec2<f32>, uv_min: vec2<f32>,
     uv_max: vec2<f32>, crossfade: FrameCrossfade, uv_dx: vec2<f32>, uv_dy: vec2<f32>, client_view_scale: f32)
     -> vec4<f32> {
@@ -103,7 +104,7 @@ fn mobile_frames_client_filtered(atlas: texture_2d_array<f32>, layer: i32, uv: v
     let first = mobile_frame_client_filtered(atlas, layer, origin, extent,
         vec2<i32>(round(crossfade.frame_uv_min * atlas_size)), vec2<i32>(round(crossfade.frame_uv_max * atlas_size)),
         px, dx_texels, dy_texels, client_view_scale);
-    let next = mobile_frame_client_filtered(atlas, layer, next_origin, extent,
+    let next = mobile_frame_client_filtered(atlas, i32(crossfade.next_layer), next_origin, extent,
         vec2<i32>(round(crossfade.next_uv_min * atlas_size)), vec2<i32>(round(crossfade.next_uv_max * atlas_size)),
         px, dx_texels, dy_texels, client_view_scale);
     return mobile_frames_mix(first, next, crossfade.next_weight);

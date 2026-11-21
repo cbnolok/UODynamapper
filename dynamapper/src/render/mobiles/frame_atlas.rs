@@ -1,7 +1,8 @@
 //! The mobiles' frame atlas: the frames of the clips in use, packed on shelves into the pages of one 2D array texture.
 //! A clip takes its frames' room on one page. When no page has room, the page used longest ago empties for it, and
-//! the clips on it load again when drawn; a page unused for `IDLE_PAGE_RELEASE_SECS` empties too. Placed frames upload
-//! to the render world rectangle by rectangle.
+//! the clips on it load again when drawn; a page unused for `IDLE_PAGE_RELEASE_SECS` empties too. A sequence larger
+//! than a page (`reserve_sequence`) lies on several, in pieces wherever there is room; it is one entry all the same:
+//! a page of it emptied, it leaves the others too. Placed frames upload to the render world rectangle by rectangle.
 
 use std::hash::Hash;
 use bevy::prelude::*;
@@ -48,7 +49,7 @@ struct Shelf {
     next_x: u32,
 }
 
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 struct Page<K> {
     shelves: Vec<Shelf>,
     next_shelf_y: u32,
@@ -134,36 +135,41 @@ impl<K: Copy + Eq + Hash> MobileFrameAtlas<K> {
     }
 
     /// Makes room for the frames of `clip`, `(width, height)` each, on one page, as `place_clip` does, for pixels the
-    /// GPU writes there itself (the RIFE in-betweens).
+    /// GPU writes there itself.
     pub fn reserve_clip(&mut self, clip: K, sizes: &[(u32, u32)], now: f64) -> Option<(Vec<AtlasRect>, Vec<K>)> {
-        let mut evicted = Vec::new();
-        let layer = match self.page_with_room(sizes) {
-            Some(layer) => layer,
-            None => {
-                if !fits(&mut Page::<K>::empty(), sizes) {
-                    return None;
-                }
-                let layer = self.least_recently_used_page();
-                evicted = std::mem::take(&mut self.pages[layer].clips);
-                self.pages[layer] = Page::empty();
-                layer
-            }
-        };
-        let page = &mut self.pages[layer];
-        let rects = sizes.iter().map(|&(width, height)| {
-            let (x, y) = page.place(width, height).expect("the page was checked to hold the clip");
-            AtlasRect { layer: layer as u32, x, y, width, height }
-        }).collect();
-        page.clips.push(clip);
-        page.last_used = now;
-        Some((rects, evicted))
+        self.reserve(clip, sizes, Placing::OnePage, now)
     }
 
-    /// Whether `reserve_clip` would find room for frames of `sizes` without emptying a page used since `since`.
-    /// Frames no page holds count as room: `reserve_clip` turns them down.
+    /// Makes room for a sequence of frames of `sizes` (the RIFE in-betweens) as `reserve_clip` does when they fit a
+    /// page, else in pieces over several pages: each frame on the page of the one before while it has room, else on
+    /// the first page with room for it, the fullest first, pages emptied as for a clip until all have room. `None`
+    /// when a frame does not fit an empty page or the frames do not fit the atlas.
+    pub fn reserve_sequence(&mut self, sequence: K, sizes: &[(u32, u32)], now: f64)
+        -> Option<(Vec<AtlasRect>, Vec<K>)> {
+        self.reserve(sequence, sizes, Placing::Pieces, now)
+    }
+
+    /// Whether `reserve_sequence` would find room for frames of `sizes` without emptying a page used since `since`.
+    /// Frames the atlas does not hold count as room: `reserve_sequence` turns them down.
     pub fn has_room_sparing(&self, sizes: &[(u32, u32)], since: f64) -> bool {
-        self.page_with_room(sizes).is_some() || self.pages[self.least_recently_used_page()].last_used < since
-            || !fits(&mut Page::<K>::empty(), sizes)
+        reserve_on(&mut self.pages.clone(), sizes, Placing::Pieces, since).is_some()
+            || reserve_on(&mut self.pages.clone(), sizes, Placing::Pieces, f64::INFINITY).is_none()
+    }
+
+    fn reserve(&mut self, entry: K, sizes: &[(u32, u32)], placing: Placing, now: f64)
+        -> Option<(Vec<AtlasRect>, Vec<K>)> {
+        // On a copy of the pages, so that frames the atlas does not hold leave it as it was.
+        let mut pages = self.pages.clone();
+        let (rects, evicted) = reserve_on(&mut pages, sizes, placing, f64::INFINITY)?;
+        for rect in &rects {
+            let page = &mut pages[rect.layer as usize];
+            if !page.clips.contains(&entry) {
+                page.clips.push(entry);
+            }
+            page.last_used = now;
+        }
+        self.pages = pages;
+        Some((rects, evicted))
     }
 
     /// Marks the page of a clip drawn at `now`.
@@ -176,38 +182,107 @@ impl<K: Copy + Eq + Hash> MobileFrameAtlas<K> {
     /// Empties the pages no clip drawn since `now - IDLE_PAGE_RELEASE_SECS`, and returns their clips.
     pub fn release_idle(&mut self, now: f64) -> Vec<K> {
         let mut released = Vec::new();
-        for page in &mut self.pages {
+        for layer in 0..self.pages.len() {
+            let page = &self.pages[layer];
             if !page.is_empty() && now - page.last_used > IDLE_PAGE_RELEASE_SECS {
-                released.append(&mut page.clips);
-                *page = Page::empty();
+                released.extend(empty_page(&mut self.pages, layer));
             }
         }
         released
-    }
-
-    fn page_with_room(&self, sizes: &[(u32, u32)]) -> Option<usize> {
-        // A trial on a copy of each page's shelves, the fullest first, so that the pages fill one by one.
-        let mut order = (0..self.pages.len()).filter(|&layer| !self.pages[layer].is_empty()).collect::<Vec<_>>();
-        order.sort_by_key(|&layer| std::cmp::Reverse(self.pages[layer].next_shelf_y));
-        order.extend((0..self.pages.len()).filter(|&layer| self.pages[layer].is_empty()));
-        order.into_iter().find(|&layer| {
-            let page = &self.pages[layer];
-            let mut trial = Page::<K> { shelves: page.shelves.clone(), next_shelf_y: page.next_shelf_y,
-                last_used: page.last_used, clips: Vec::new() };
-            fits(&mut trial, sizes)
-        })
-    }
-
-    fn least_recently_used_page(&self) -> usize {
-        (0..self.pages.len())
-            .min_by(|&a, &b| self.pages[a].last_used.total_cmp(&self.pages[b].last_used))
-            .expect("the atlas has pages")
     }
 
     /// Hands the uploads staged since the last frame to the extraction.
     pub fn stage_for_extract(&mut self) {
         self.extract_staging = std::mem::take(&mut self.staged);
     }
+}
+
+/// How a reservation lays its frames out: all on one page, or in pieces over several when they do not fit one.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Placing {
+    OnePage,
+    Pieces,
+}
+
+/// Places frames of `sizes` on `pages`, emptying the page used longest ago until they have room, but none used since
+/// `spare_since`: the frames' rectangles and the entries of the pages emptied. None, the pages possibly changed, when
+/// they do not get room. The pages do not list the frames' entry yet.
+fn reserve_on<K: Copy + Eq>(pages: &mut [Page<K>], sizes: &[(u32, u32)], placing: Placing, spare_since: f64)
+    -> Option<(Vec<AtlasRect>, Vec<K>)> {
+    let one_page = fits(&mut Page::<K>::empty(), sizes);
+    let each_fits_a_page = || sizes.iter().all(|&size| fits(&mut Page::<K>::empty(), &[size]));
+    if !one_page && (placing == Placing::OnePage || !each_fits_a_page()) {
+        return None;
+    }
+    let mut evicted = Vec::new();
+    loop {
+        let layers = if one_page {
+            page_with_room(pages, sizes).map(|layer| vec![layer; sizes.len()])
+        } else {
+            pages_with_room(pages, sizes)
+        };
+        if let Some(layers) = layers {
+            let rects = sizes.iter().zip(layers).map(|(&(width, height), layer)| {
+                let (x, y) = pages[layer].place(width, height).expect("the page was checked to hold the frame");
+                AtlasRect { layer: layer as u32, x, y, width, height }
+            }).collect();
+            return Some((rects, evicted));
+        }
+        let layer = (0..pages.len()).filter(|&layer| !pages[layer].is_empty())
+            .min_by(|&a, &b| pages[a].last_used.total_cmp(&pages[b].last_used))?;
+        if pages[layer].last_used >= spare_since {
+            return None;
+        }
+        evicted.extend(empty_page(pages, layer));
+    }
+}
+
+/// The pages in the order they fill: those in use, the fullest first, then the empty ones, so that the pages fill
+/// one by one.
+fn fill_order<K>(pages: &[Page<K>]) -> Vec<usize> {
+    let mut order = (0..pages.len()).filter(|&layer| !pages[layer].is_empty()).collect::<Vec<_>>();
+    order.sort_by_key(|&layer| std::cmp::Reverse(pages[layer].next_shelf_y));
+    order.extend((0..pages.len()).filter(|&layer| pages[layer].is_empty()));
+    order
+}
+
+/// The first page in `fill_order` with room for all frames of `sizes`.
+fn page_with_room<K>(pages: &[Page<K>], sizes: &[(u32, u32)]) -> Option<usize> {
+    // A trial on a copy of each page's shelves.
+    fill_order(pages).into_iter().find(|&layer| {
+        let page = &pages[layer];
+        let mut trial = Page::<K> { shelves: page.shelves.clone(), next_shelf_y: page.next_shelf_y,
+            last_used: page.last_used, clips: Vec::new() };
+        fits(&mut trial, sizes)
+    })
+}
+
+/// The pages of the frames of `sizes` in pieces, tried on a copy: each frame on the page of the one before while it
+/// has room, else on the first page in `fill_order` with room for it. None when a frame finds none.
+fn pages_with_room<K: Clone>(pages: &[Page<K>], sizes: &[(u32, u32)]) -> Option<Vec<usize>> {
+    let mut trial = pages.to_vec();
+    let order = fill_order(pages);
+    let mut current: Option<usize> = None;
+    sizes.iter().map(|&(width, height)| {
+        let layer = current.filter(|&layer| trial[layer].place(width, height).is_some())
+            .or_else(|| order.iter().copied().find(|&layer| trial[layer].place(width, height).is_some()))?;
+        current = Some(layer);
+        Some(layer)
+    }).collect()
+}
+
+/// Empties page `layer` and returns its entries. An entry is one unit, though a sequence's frames may lie on several
+/// pages: it leaves them all, and a page left without entries empties as well.
+fn empty_page<K: Copy + Eq>(pages: &mut [Page<K>], layer: usize) -> Vec<K> {
+    let evicted = std::mem::take(&mut pages[layer].clips);
+    pages[layer] = Page::empty();
+    for page in pages.iter_mut().filter(|page| !page.is_empty()) {
+        page.clips.retain(|entry| !evicted.contains(entry));
+        if page.is_empty() {
+            *page = Page::empty();
+        }
+    }
+    evicted
 }
 
 fn fits<K>(page: &mut Page<K>, sizes: &[(u32, u32)]) -> bool {
@@ -329,5 +404,88 @@ mod tests {
         atlas.place_clip(2, &frames(1, 10), 0.0).unwrap();
         assert!(atlas.release_idle(IDLE_PAGE_RELEASE_SECS).is_empty());
         assert_eq!(atlas.release_idle(IDLE_PAGE_RELEASE_SECS + 1.0), vec![1, 2]);
+    }
+
+    /// The sizes of `count` frames of `side` texels.
+    fn sizes(count: usize, side: u32) -> Vec<(u32, u32)> {
+        vec![(side, side); count]
+    }
+
+    /// A page holds 100 frames of 100 texels (`a_full_atlas_empties_its_least_recently_used_page`).
+    const FRAMES_PER_PAGE: usize = 100;
+
+    fn assert_apart(rects: &[AtlasRect]) {
+        for (i, a) in rects.iter().enumerate() {
+            for b in rects[i + 1..].iter().filter(|b| b.layer == a.layer) {
+                let apart = a.x + a.width < b.x || b.x + b.width < a.x || a.y + a.height < b.y || b.y + b.height < a.y;
+                assert!(apart, "{a:?} overlaps {b:?}");
+            }
+        }
+    }
+
+    #[test]
+    fn a_sequence_larger_than_a_page_lies_in_pieces_and_leaves_as_one() {
+        const CLIP: u32 = 1;
+        const SEQUENCE: u32 = 7;
+        const CLIP_FRAMES: usize = 30;
+        let mut atlas = atlas();
+        let (clip_rects, _) = atlas.place_clip(CLIP, &frames(CLIP_FRAMES, 100), 0.0).unwrap();
+        let sequence = sizes(FRAMES_PER_PAGE * 2 - CLIP_FRAMES, 100);
+        // A clip keeps to one page; a sequence fills the free room of the clip's page, then an empty one.
+        assert!(atlas.reserve_clip(SEQUENCE, &sequence, 1.0).is_none());
+        let (rects, evicted) = atlas.reserve_sequence(SEQUENCE, &sequence, 1.0).unwrap();
+        assert!(evicted.is_empty());
+        let split = FRAMES_PER_PAGE - CLIP_FRAMES;
+        let (first_layer, second_layer) = (clip_rects[0].layer, rects[split].layer);
+        assert!(rects[..split].iter().all(|rect| rect.layer == first_layer));
+        assert!(rects[split..].iter().all(|rect| rect.layer == second_layer));
+        assert_ne!(first_layer, second_layer);
+        assert_apart(&[clip_rects.as_slice(), rects.as_slice()].concat());
+        assert_eq!(atlas.pages[first_layer as usize].clips, vec![CLIP, SEQUENCE]);
+        assert_eq!(atlas.pages[second_layer as usize].clips, vec![SEQUENCE]);
+
+        // The other pages full, clips drawn after; the clip's page drawn since. The sequence's second page is the
+        // least recently used: emptied for a new clip, the sequence leaves the clip's page too, the clip stays.
+        for clip in 10..10 + MOBILE_ATLAS_PAGES - 2 {
+            atlas.place_clip(clip, &frames(FRAMES_PER_PAGE, 100), 2.0 + f64::from(clip)).unwrap();
+        }
+        atlas.touch(first_layer, 50.0);
+        let (rects, evicted) = atlas.place_clip(99, &frames(1, 100), 60.0).unwrap();
+        assert_eq!(evicted, vec![SEQUENCE]);
+        assert_eq!(rects[0].layer, second_layer);
+        assert_eq!(atlas.pages[first_layer as usize].clips, vec![CLIP]);
+    }
+
+    #[test]
+    fn a_page_left_without_entries_empties() {
+        const SEQUENCE: u32 = 7;
+        let mut atlas = atlas();
+        let (rects, _) = atlas.reserve_sequence(SEQUENCE, &sizes(FRAMES_PER_PAGE * 2, 100), 0.0).unwrap();
+        let (first_layer, second_layer) = (rects[0].layer, rects[FRAMES_PER_PAGE].layer);
+        assert_ne!(first_layer, second_layer);
+        // Its first page idle, its second drawn: both empty, as the sequence is one entry.
+        atlas.touch(second_layer, IDLE_PAGE_RELEASE_SECS);
+        assert_eq!(atlas.release_idle(IDLE_PAGE_RELEASE_SECS + 1.0), vec![SEQUENCE]);
+        assert!(atlas.pages.iter().all(|page| page.is_empty() && page.shelves.is_empty()));
+    }
+
+    #[test]
+    fn a_sequence_spares_the_pages_drawn_and_one_too_large_is_turned_down() {
+        const NOW: f64 = 10.0;
+        let mut atlas = atlas();
+        for clip in 0..MOBILE_ATLAS_PAGES {
+            atlas.place_clip(clip, &frames(FRAMES_PER_PAGE, 100), NOW).unwrap();
+        }
+        let sequence = sizes(FRAMES_PER_PAGE * 2, 100);
+        assert!(!atlas.has_room_sparing(&sequence, NOW));
+        assert!(atlas.has_room_sparing(&sequence, NOW + 1.0));
+        // Larger than the atlas, or a frame larger than a page: no room ever, and the atlas stays as it was.
+        let too_many = sizes(FRAMES_PER_PAGE * (MOBILE_ATLAS_PAGES as usize + 1), 100);
+        let too_large = sizes(1, MOBILE_ATLAS_PAGE_SIZE);
+        for sizes in [too_many, too_large] {
+            assert!(atlas.has_room_sparing(&sizes, NOW));
+            assert!(atlas.reserve_sequence(99, &sizes, NOW + 1.0).is_none());
+            assert!(atlas.pages.iter().enumerate().all(|(layer, page)| page.clips == vec![layer as u32]));
+        }
     }
 }

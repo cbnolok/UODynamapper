@@ -96,6 +96,13 @@ impl Clip {
         self.pick(cycles * self.frames.len() as f32)
     }
 
+    /// Marks the pages of the clip's frames in use at `now`: a clip's one page, or the pages a RIFE sequence spans.
+    pub fn touch_pages(&self, atlas: &mut MobileFrameAtlas<AtlasEntry>, now: f64) {
+        for frame in &self.frames {
+            atlas.touch(frame.rect.layer, now);
+        }
+    }
+
     /// The point `frames` frames into the clip (whole frames, and the fraction of the next).
     fn pick(&self, frames: f32) -> Option<FramePick> {
         if self.frames.is_empty() {

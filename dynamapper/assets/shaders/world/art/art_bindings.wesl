@@ -47,8 +47,9 @@ struct SpriteInstance {
 
 // A mobile frame's crossfade (`FrameCrossfade`, render/mobiles/in_between.rs), in the 0..1 coordinates of an atlas
 // page. While the frames blend, the card holds both and the sprite's uv_min..uv_max span it in the first frame's
-// coordinates; the next frame lies next_uv_offset from them, on the same page. Each frame shows inside its own
-// rectangle (art/mobile_frames.wesl). A weight of 0 draws the sprite's frame alone.
+// coordinates; the next frame lies next_uv_offset from them, on page next_layer (another page than the sprite's in a
+// RIFE sequence that spans pages). Each frame shows inside its own rectangle (art/mobile_frames.wesl). A weight of 0
+// draws the sprite's frame alone.
 struct FrameCrossfade {
     frame_uv_min: vec2<f32>,
     frame_uv_max: vec2<f32>,
@@ -56,7 +57,7 @@ struct FrameCrossfade {
     next_uv_max: vec2<f32>,
     next_uv_offset: vec2<f32>,
     next_weight: f32,
-    _pad: f32,
+    next_layer: u32,
 }
 
 // A mobile frame's instance (`MobileSpriteInstance`, render/mobiles/draw.rs): a sprite and its crossfade.
