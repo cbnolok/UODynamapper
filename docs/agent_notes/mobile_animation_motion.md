@@ -214,7 +214,9 @@ The evaluation that chose BC7 UltraFast is `lib/support/uot-gpu-compute/src/bloc
   Intel's ISPC kernels, on wgpu "30" (our 30.0.1, no second wgpu), features `bc15` and `bc7`. `block_encode.rs`
   encodes the sRGB bytes through an `Rgba8Unorm` view, so a `*UnormSrgb` BC texture decodes to the same bytes and
   samples like the RGBA8 atlas; the GPU decode matched the CPU one exactly for BC7. Creating the compressor compiles
-  all its pipelines (38.6 s cold on RADV, 25 ms with Mesa's cache warm), so the warm-up makes it off the frame path.
+  all its pipelines (38.6 s cold on RADV in the app, 21 s alone, nearly all of it BC7; 25 ms with Mesa's cache warm),
+  so the warm-up makes it off the frame path, on a thread of its own and only while a loaded package is BC7
+  (shader_compile_progress.md has each pipeline's time).
 - **Loop bounding**: 0.9.1 turned it back on for BC7 (off gave wrong output on RADV/Navi). Off was 1.3–2× faster on
   the 880M with the same output; it would need a vendored bc7.wgsl.
 - **BC1**: colour only, four-colour mode in the crate; our `bc1_punch_through.wgsl` re-encodes blocks with transparent

@@ -140,6 +140,11 @@ impl AnimPackages {
         Some(AtlasFormat::of(format))
     }
 
+    /// Whether a package loaded has frames of `format`.
+    pub fn has_format(&self, format: AtlasFormat) -> bool {
+        [AnimSource::Classic, AnimSource::Enhanced].into_iter().any(|source| self.format(source) == Some(format))
+    }
+
     /// The atlas formats of the packages loaded, Classic's first; RGBA8 without any.
     pub fn formats(&self) -> Vec<AtlasFormat> {
         let formats: Vec<_> = [AnimSource::Classic, AnimSource::Enhanced].into_iter()

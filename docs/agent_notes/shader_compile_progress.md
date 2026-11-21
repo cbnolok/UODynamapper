@@ -12,13 +12,42 @@ Two sources feed it:
   its fragment (or compute, mesh) shader, as `pbr_opaque_mesh_pipeline (ground.wesl)`.
 - The app's own wgpu compiles outside the cache: hold `begin_shader_compile(name)` around the creation, or call
   `shader_compile_started(name)` and `shader_compile_ended(id)` from any thread (plain data, no Bevy types; meant for a
-  warm-up callback). Fed now: the GPU compute warm-up (`mobiles/compute_warm_up.rs`, a thread of its own at startup),
-  every pipeline of `lib/support/uot-gpu-compute` by its label (`RIFE conv Stride1/Leaky tile 64x32`, `RIFE pixel
-  step: merge`, `upscale conv 3x3/Silu tile 64x48`, `upscale prepare`, `BC7 compressor (every quality; and BC1-BC5)`,
-  `BC1 punch-through`; 27 to 39 s cold, 37 s of it the BC7 compressor, and 0.12 s warm on the Radeon 880M); the RIFE
-  network when the warm-up did not give it, and the atlas steps (`rife_in_betweens/render.rs`, background pool); the
-  static picking MSAA resolve (`gpu_picking.rs`, render thread, only with MSAA). The SPAN and BC pipelines are warmed
-  but not drawn with yet (2026-11-21).
+  warm-up callback). Fed now: the GPU compute warm-up (`mobiles/compute_warm_up.rs`), every pipeline of
+  `lib/support/uot-gpu-compute` by its label: the networks on a thread of their own at startup (`RIFE conv
+  Stride1/Leaky tile 64x32`, `RIFE pixel step: merge`, `upscale conv 3x3/Silu tile 64x48`, `upscale prepare`), and the
+  block encoder on another (`BC7 compressor (every quality; and BC1-BC5)`, `BC1 punch-through`) only while a loaded
+  animation package is BC7, from the first frame one is (below); the RIFE network when the warm-up did not give it,
+  and the atlas steps (`rife_in_betweens/render.rs`, background pool); the static picking MSAA resolve
+  (`gpu_picking.rs`, render thread, only with MSAA). The SPAN pipelines are warmed but not drawn with yet
+  (2026-11-21).
+
+## The GPU compute pipelines, one by one
+
+Measured on the Radeon 880M (RADV STRIX1) in a release probe outside the app (2026-11-21), each pipeline created
+alone in a fresh process; cold is a new empty `MESA_SHADER_CACHE_DIR`, warm the same folder again; the median of 3
+(range):
+
+| pipeline | cold | warm |
+|---|---:|---:|
+| block_compression BC1 | 118 ms (117–121) | 1.5 ms |
+| BC2 | 128 ms (124–130) | 1.5 ms |
+| BC3 | 133 ms (131–144) | 1.7 ms |
+| BC4 | 13 ms (13–14) | 0.7 ms |
+| BC5 | 22 ms (21–24) | 0.7 ms |
+| BC7 (one pipeline for every quality) | 20.64 s (20.54–20.75) | 4.3 ms |
+| `GpuBlockCompressor::new` (all six, serial) | 21.20 s (20.95–21.28) | 24 ms |
+| `MobileBlockEncoder` (the compressor and the BC1 punch-through) | 20.91 / 20.95 s (2 runs) | 25 ms |
+| RIFE and SPAN (`uot_gpu_compute::warm_up`) | 1.29 s (1.29–1.32) | 84 ms |
+
+The naga parse and validation of the modules is 4 ms (bc1_to_5.wgsl) and 10 ms (bc7.wgsl) a process, cold or warm.
+BC1 to BC5 together are 0.4 s, 2 % of the compressor. In the app the compressor took 27 to 50 s cold (37 s in an
+earlier run), with Bevy's own pipelines compiling at the same time on its async compute thread and the machine more or
+less busy.
+
+**RADV compiles pipelines of two threads side by side.** BC7 on one thread and RIFE with SPAN on another: 20.8 s wall
+(20.5–21.1) against 22.2 s (21.9–22.3) one after the other, each as long as alone (RIFE and SPAN 1.32–1.42 s, BC7
+20.4–21.1 s); BC1–BC5 against BC7: 20.7 s against 21.1 s summed. So the block encoder has a thread of its own and
+does not wait for the networks.
 
 ## Cold start: the world waits for the window's pipelines
 

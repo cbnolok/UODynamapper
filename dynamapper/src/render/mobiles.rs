@@ -107,6 +107,7 @@ impl Plugin for MobileSpritesPlugin {
             .add_systems(ExtractSchedule, (
                 frame_atlas::sys_extract_mobile_frame_uploads::<clips::AtlasEntry>,
                 rife_in_betweens::render::sys_extract_mobile_in_betweens,
+                compute_warm_up::sys_extract_block_encoder_wanted,
             ))
             .add_systems(bevy::render::Render, (
                 compute_warm_up::sys_start_compute_warm_up,

@@ -2,7 +2,8 @@
 //! ([`rife`]), the SPAN upscaler ([`upscale`]), the BC1/BC7 block encoder of frames ([`block_encode`]), and the
 //! measurement of a walk cycle's stride with RIFE's flow ([`strides`]). Dynamapper runs the networks on its own
 //! device; the udd tools measure the strides of the animation packages on a device of their own. [`warm_up`]
-//! compiles every pipeline ahead of use. Shaders and weights are embedded in the binary.
+//! compiles the networks' pipelines ahead of use (the block encoder compiles on its own). Shaders and weights are
+//! embedded in the binary.
 
 pub mod block_encode;
 pub mod rife;
