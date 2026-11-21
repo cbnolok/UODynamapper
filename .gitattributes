@@ -38,3 +38,4 @@ AUTHORS text
 *.pyc binary
 *.pdf binary
 *.uddp binary
+*.safetensors binary

@@ -32,3 +32,4 @@ Used as references or sources for Rust translation, which has been incrementally
   - epx: [PixelScalerWin repo](https://github.com/daelsepara/PixelScalerWin) and [Libretro implementation](https://github.com/libretro/RetroArch/blob/master/gfx/video_filters/epx.c)
   - 2xSaI, Super2xSaI, and SuperEagle (SAI variants): [PixelScalerWin repo](https://github.com/daelsepara/PixelScalerWin) and [Libretro implementations folder](https://github.com/libretro/RetroArch/blob/master/gfx/video_filters/)
   - MMPX-style: [Rust crate](https://crates.io/crates/mmpx).
+- Frame interpolation: RIFE (Huang et al., "Real-Time Intermediate Flow Estimation for Video Frame Interpolation", ECCV 2022), ported to wgpu compute shaders from [hzwer/Practical-RIFE](https://github.com/hzwer/Practical-RIFE) (MIT). Weights: v4.25 from the Practical-RIFE model list, stored as fp16.
