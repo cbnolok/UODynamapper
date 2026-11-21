@@ -22,6 +22,28 @@ Program `classic_7.0.103.0_client.exe` (SHA-256 `4d857f2f5f8bf350bc50a87ee66b223
 | 0x00543890 | `UOClassicAnim::GetUopFrameSet` | probable name: requests the frame set asset |
 | 0x00413752 | `UOMobFrameSet::Construct` | the asset object (vtable 0x006db10c) |
 | 0x0041385a | `UOAnimationFrameSetFactory::CreateAsset` | "Failed to get animation frame set" |
+| 0x005a4a00 | `GameLoop_Tick` | calls `TickMobiles` when more than 75 ms passed |
+| 0x005bc160 | `TickMobiles` | step frames, standing, frames in place; see [Pacing and idle](#pacing-and-idle) |
+| 0x005b2310 | `CMobile_StepTicks` | ticks a step lasts, from `animinfo.mul` |
+| 0x005b2f20 | `IsStandAtOnceBody` | bodies 0x50, 0x51 |
+| 0x005b2e80 | `CMobile_AnimatesInPlace` | the frame counter runs while not stepping |
+| 0x005bbf20 | `CMobile_TryIdleFidget` | the idle fidget |
+| 0x005b6e40 | `CMobile_UpdateUopMoveAction` | a UOP body's move action, from `GetObjectLayerFrame` |
+| 0x005b6270 | `CMobile_UopSequenceGroup` | the sequence group of a UOP body |
+| 0x005b6580 | `CMobile_SetUopAction` | sets the action, frame count and frame time |
+| 0x005b6cc0 | `CMobile_PlayAnimation` | a server-style animation |
+| 0x00408114 | `FrameSetLookup_GetMoveAction` | the move action of a sequence group |
+| 0x00597ae0 | `MobTypes_IsPeopleGroup` | `mobtypes.txt` flag 0x400 |
+| 0x00597a00 | `MobTypes_IsLowGroup` | flag 0x40 |
+| 0x005979d0 | `MobTypes_IsLowGroupExtended` | flag 0x20 |
+| 0x00597960 | `MobTypes_CanFly` | flag 0x8, with the flying gate `DAT_00742cf8` |
+| 0x00597870 | `MobTypes_IdleAt8` | flag 0x4 |
+| 0x005977e0 | `MobTypes_IsHuman` | type 3 (HUMAN) |
+| 0x00597780 | `MobTypes_Flag2` | flag 0x2 |
+| 0x005976b0 | `MobTypes_GroupType` | the type; 4 (EQUIPMENT) without a row |
+| 0x0044d250 | `MobTypes_EnsureTable` | allocates the 0x800-row table |
+
+The move-code names (from `GameLoop_Tick` down) are in the global namespace; `NameClassicMoveCode.java` checks them.
 
 ## The frame
 
@@ -85,3 +107,108 @@ Program `classic_7.0.103.0_client.exe` (SHA-256 `4d857f2f5f8bf350bc50a87ee66b223
 - uocf's decoders draw a colour of 0 opaque black, as the client does (since 615cebf5; they drew it
   transparent before). ClassicUO draws it transparent, and the partial hue hues 0 but not 0x0001: new palettes
   store black as 0x0001.
+
+## Directions
+
+`GetMobileMulFrame` and `GetObjectLayerFrame` take the stored direction from the table at 0x007087dc, indexed by
+`direction & 7` (0 north .. 7 north-west): [3, 2, 1, 0, 1, 2, 3, 4], and mirror the frame when the table at
+0x007087fc, [1, 1, 1, 0, 0, 0, 0, 0], says so. World directions 3..7 are stored at 0..4; 0, 1 and 2 show 6, 5 and 4
+mirrored. **confirmed**. ClassicUO's `GetAnimDirection` gives the same mapping.
+
+## Movement actions
+
+### MUL bodies
+
+`GetMobileMulFrame` picks the action of a mobile with no server animation (argument 4 is -1) from the
+`mobtypes.txt` type of the body after `body.def` (`MobTypes_GroupType`; no row is 4, EQUIPMENT, whatever the id),
+then reads frame `counter % n` of `anim*.mul` entry `(body - base) * stride + action * 5 + stored direction +
+offset`. The counter is the mobile's +0x1a0 (see [Pacing and idle](#pacing-and-idle)). **confirmed**.
+
+| Layout | Bodies | Entry | Stand | Walk | Run |
+|---|---|---|---|---|---|
+| monster | type 0 | `body * 110` | 1 (1 frame); 8 (6) with flag 0x4 | 0 (10) | 0; 19 with `MobTypes_CanFly` (10) |
+| sea monster | type 1 | `body * 110` | 2 (1) | 0 (10) | 1 (10) |
+| animal | type 2; type 0 with flag 0x40 | `(body - 200) * 65 + 22000` | 2 (1) | 0 (5) | 1 (5) |
+| people | types 3, 4 and above; type 0 with flag 0x400 | `(body - 400) * 175 + 35000` | 4 (1) | 0 (10) | 2 (10) |
+
+- A type-0 body with flag 0x400 plays action 0 for every movement (10 frames). An animal with flag 0x20 takes the
+  monster rules, flags 0x400 and 0x40 included.
+- A monster flying (mobile +0xcc & 4) plays 19 whatever it does.
+- People: only a HUMAN (`MobTypes_IsHuman` on the body at +0x38) with a mount (+0x188) rides: walk 23, run 24
+  (5 frames), stand 25 (1); EQUIPMENT never does. War mode walks with 15 and stands with 7 or 8 (the two-handed
+  list at 0x00708828); a layer-2 item outside the list at 0x0070887c walks with 1 and runs with 3.
+- No action is tested for frames: idle-at-8, 19 and the animal run 1 are played whether the body has them. A
+  missing frame takes the layout's stand action in `GetObjectLayerFrame`. **probable**.
+
+`MobileAnimCcPackage::movement_action` keeps ClassicUO's rules (`GetGroupForAnimation`) for these bodies, by choice:
+equipment bodies ride there, a body without a row takes a layout from its id range (below 200 monster, below 400
+animal, else people), and 19, 8 and the animal run 1 are taken only when the body has them (else 0, 1 and 2).
+
+### UOP bodies
+
+For a body with `mobtypes.txt` flag 0x10000, `GetObjectLayerFrame` calls `CMobile_UpdateUopMoveAction` when no
+server animation plays. Movement 0 when standing (+0x1a8), else 1 walk or 2 run (+0x1a4); the action is
+`FrameSetLookup_GetMoveAction(group, movement, alternate)` of the body's `AnimationSequence.uop` entry: the movement
+entry of the first group of the parent chain that has one (its alternate action when the layer-2 item's tile
+definition asks), else the default action of the chain's last group. `CMobile_SetUopAction` runs when the action
+changes; the frame time is 1000 / fps of the sequence (62.0 ms for a non-UOP action); the counter wraps at the frame
+count. **confirmed**.
+
+`CMobile_UopSequenceGroup` picks the group: 2 (mounted) when the sequence has group 2 and the mobile rides
+(+0x1fc); a flier (gate and +0xcc & 4) 4 in war, 5 in peace; 0 in war (unless vtable +0xc0); 3 for a running
+`MobTypes_CanFly` body; 6 when `FUN_005d6d30`; else 1 (peace). **confirmed**.
+
+The package keeps the stand, walk and run actions of groups 0, 1 and 2 (`move_actions`, alternate off), so the
+renderer plays them; without a sequence entry it falls back to ClassicUO's fixed UOP actions.
+
+The move actions (stand/walk/run, `-` for a missing group) of the 300 UOP rows of `mobtypes.txt` in the 7.0.103.0
+client folder, as packed (2026-11-21); 181 rows have no sequence entry, 176 of them EQUIPMENT:
+
+| Type | War | Peace | Mounted | Bodies |
+|---|---|---|---|---|
+| monster | 1/0/0 | 1/0/0 | - | 714, 742, 1244, 1248 |
+| monster | 1/0/24 | 25/22/24 | - | 43 bodies: 130, 270, 286, 287 .. 1485 |
+| monster | 1/0/24 | 1/0/24 | - | 1428 |
+| monster | 1/1/1 | 1/1/1 | - | 743, 1245 |
+| monster | 1/1/1 | 25/25/25 | - | 692, 1247 |
+| monster | 1/1/1 | 25/26/26 | - | 1246 |
+| monster | 1/19/19 | 25/19/19 | - | 826 |
+| monster | 1/22/1 | 25/22/1 | - | 832 |
+| monster | 1/22/24 | 25/22/24 | - | 1026 |
+| monster | 25/25/25 | 25/25/25 | - | 725 |
+| animal | 1/0/24 | 25/22/24 | - | 37 bodies: 1069, 1285, 1286, 1287 .. 1542 |
+| animal | 1/0/24 | 25/22/24 | 31/29/30 | 17 bodies: 1254, 1255, 1309, 1401 .. 1552 |
+| animal | 1/22/24 | 25/22/24 | - | 1308, 1408 |
+| animal | 1/24/24 | 25/24/24 | - | 1431 |
+| animal | 25/22/25 | 25/22/25 | - | 831 |
+| animal | 31/0/24 | 31/22/24 | 31/29/30 | 432 |
+| human | 4/0/24 | 4/0/24 | 25/0/2 | 990 |
+| human | 7/15/1 | 37/1/0 | 25/23/24 | 1253 |
+| human | 7/15/3 | 37/1/3 | 25/23/24 | 666 |
+| no sequence | | | | 176 EQUIPMENT rows; humans 667, 694, 695; animals 1409, 1553 |
+
+ClassicUO's fixed UOP actions (walk 22, run 24, stand 25) match only the most common monster and animal rows; body
+714, for one, stands with 1 and walks and runs with 0.
+
+## Pacing and idle
+
+- `GameLoop_Tick` runs `TickMobiles` when more than 75 ms passed since the last run (compared with 0x4c).
+  **confirmed**.
+- While a step runs, `TickMobiles` advances the frame counter +0x1a0 once a tick and counts down +0x19c, the
+  step's ticks from `CMobile_StepTicks`: the `animinfo.mul` byte of the body at 0x00a59e30 (walk) or 0x00a59e31
+  (run, +0x1a4), 2 bytes a body, body 0x32 for one above 1999; mounted (+0x204), the walk byte + (+0x214 / 11) * 2.
+  **confirmed**.
+- More than 2000 ms after the last step (+0x1ac), the mobile stands (+0x1a8) and the counter is reset to 3; bodies
+  0x50 and 0x51 (`IsStandAtOnceBody`) stand at once. Standing, the counter runs only when
+  `CMobile_AnimatesInPlace`: a flier with the flying gate, bodies 0xd, 0xf, 0x10, 0x23e, 0x2b4, 0x57e, 0x593,
+  0x597, 0x598, 0x599 standing, or a body from 400 with a layer-2 item of tile flag 0x800000 (bodies below 400
+  return before that test). A MUL stand action of 1 frame shows frame 0 anyway. **confirmed**.
+- A flier with no step ticks left while the flying gate `DAT_00742cf8` is off stands at once; in peace with nothing
+  playing, its +0x1ac moves back 15000 ms, which makes the idle fidget due. **confirmed** for the code,
+  **probable** for the purpose.
+- `CMobile_TryIdleFidget`: nothing when +0x208 is 1, the mobile rides (+0x188), the count at 0x00afb744 is above 20
+  or 0x00a58bbc is set. More than 15000 ms after the last step, r = rand % (count * 4 + 120); below 2 a fidget
+  plays (action, frames): monster 18 (r 0) or 17, 5; sea monster 4 with 20 or 3 with 15; animal 10 with 3 (r 0
+  without flag 0x2) or 9 with 5; human or equipment 6 (r 0) or 5, 5. A UOP body plays a type-5 action of its
+  sequence group. **confirmed**.
+

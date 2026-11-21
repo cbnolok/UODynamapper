@@ -10,6 +10,10 @@ the uocf writer (`lib/uocf/src/classic/animation/anim_frames.rs`) follows:
 - the UOP entries wrap them in the AMOU container of the Enhanced Client, of which the client reads only the
   frame count, the table offset and each entry's key and data offset.
 
+It also names the code that picks and paces a mobile's movement actions (`NameClassicMoveCode.java`): the
+stored directions, the MUL actions by `mobtypes.txt` type and flag, the UOP move actions from
+`AnimationSequence.uop`, the step pacing and the idle fidget.
+
 Findings: [results/classic_frames.md](results/classic_frames.md), and which UOP bodies can be requested:
 [results/uop_reachability.md](results/uop_reachability.md). Every result is marked **confirmed** (read in
 the code) or **probable** (inferred from the code and the shipped data).
@@ -49,6 +53,25 @@ kept names or conflicts. The second `--apply` reported `changes: none`, and the 
 
 Results of the 2026-11-03 runs: 26 more functions named and tagged, and `DrawMobile` corrected to `DrawCorpse` (no
 mismatches, kept names or conflicts). The second `--apply` reported `changes: none`, and the program was saved.
+
+## NameClassicMoveCode.java
+
+Built like `NameClassicFrameCode.java`, with the same checks, SHA-256 test and CREATE_NEW output:
+
+```
+NameClassicMoveCode.java OUTPUT_FILE [--apply]
+run_ghidra_script(program="classic_7.0.103.0_client.exe", script_name="<abs path>/NameClassicMoveCode.java",
+                  args="<scratch>/classic_moves.md")
+```
+
+- 20 functions: `GameLoop_Tick`, `TickMobiles`, the `CMobile_*` step, idle and UOP move action code,
+  `FrameSetLookup_GetMoveAction` and the `MobTypes_*` queries of `GetMobileMulFrame`. Names go in the global
+  namespace, where they were first set by hand.
+- With `--apply` it tags them `UO_CLASSIC_MOVES` and sets the plate comment `NameClassicMoveCode: UO_CLASSIC_MOVES
+  <name>: <evidence>`, replacing an earlier comment with that prefix. Names of another source are kept.
+
+Results of the 2026-11-21 report-only run: all 20 checks pass; every function already has its name (set by hand,
+`USER_DEFINED`), and would be tagged and get the refreshed plate comment. Not applied.
 
 Probe: `~/ghidra_scripts/ClassicFramesConstProbe20261101.java` (read-only: finds the functions using an
 operand), plus the GhidraMCP decompiler and cross-references.

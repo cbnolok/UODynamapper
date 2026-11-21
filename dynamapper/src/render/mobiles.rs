@@ -143,7 +143,8 @@ fn enhanced_movement(movement: Movement) -> u8 {
     }
 }
 
-/// The Classic client's actions (ClassicUO `GetGroupForAnimation`): the body's own, or its mounted ones on a mount,
+/// The Classic client's actions (`MobileAnimCcPackage::movement_action`: a UOP body's sequence actions, ClassicUO
+/// `GetGroupForAnimation` for the rest): the body's own, or its mounted ones on a mount,
 /// which moves with its own; the rider sits the mount's offset lower (ClassicUO `Mounts`, `MobileView`).
 fn classic_choice(package: &MobileAnimCcPackage, appearance: &MobileAppearance, motion: &MobileMotion)
     -> MobileClipChoice {
