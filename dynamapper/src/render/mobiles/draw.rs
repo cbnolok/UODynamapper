@@ -19,7 +19,7 @@ use crate::world::mobile_motion::MobileMotion;
 use super::clips::{AnimSource, ClipKey, MobileClips};
 use super::frame_atlas::MobileFrameAtlas;
 use super::placement::mobile_card_bounds;
-use super::MobileClipChoice;
+use super::{MobileClipChoice, MountedCycle};
 
 /// The most frames drawn at once: a mount and its rider for each mobile, here the player alone.
 pub const MAX_MOBILE_INSTANCES: u32 = 2;
@@ -144,6 +144,7 @@ fn shared_state_differs(source: &ArtSpriteMaterial, target: &ArtSpriteMaterial) 
 /// One frame to draw: its clip's current frame at a mobile's place.
 struct DrawnFrame {
     key: ClipKey,
+    is_mount: bool,
     tie_level: u32,
     /// The anchor's offset in screen pixels, x right and y down: a rider's on its mount.
     offset_px: (f32, f32),
@@ -180,21 +181,35 @@ pub fn sys_draw_mobiles(
         if let (Some(mount_body), Some(mount_action)) = (appearance.mount_body, actions.mount_action) {
             frames.push(DrawnFrame {
                 key: ClipKey { source, body: mount_body, action: mount_action, direction: motion.facing },
+                is_mount: true,
                 tie_level: MOUNT_TIE_LEVEL,
                 offset_px: choice.mount_offset_px,
             });
         }
         frames.push(DrawnFrame {
             key: ClipKey { source, body: appearance.body, action: actions.body_action, direction: motion.facing },
+            is_mount: false,
             tie_level: RIDER_TIE_LEVEL,
             offset_px: choice.body_offset_px,
         });
+        // The mount comes first, so its clip can set the cycle the rider shares.
+        let mut cycle_secs = match choice.mounted_cycle {
+            Some(MountedCycle::Secs(secs)) => Some(secs),
+            _ => None,
+        };
         for drawn in frames {
             if instances.len() >= MAX_MOBILE_INSTANCES as usize {
                 break;
             }
             let Some(clip) = clips.get_or_load(drawn.key, &packages.0) else { continue };
-            let Some(frame) = clip.frame_at(motion.clip_secs()) else { continue };
+            if drawn.is_mount && choice.mounted_cycle == Some(MountedCycle::MountClip) {
+                cycle_secs = Some(clip.cycle_secs());
+            }
+            let frame = match cycle_secs {
+                Some(cycle_secs) => clip.frame_in_cycle(motion.clip_secs(), cycle_secs),
+                None => clip.frame_at(motion.clip_secs()),
+            };
+            let Some(frame) = frame else { continue };
             atlas.touch(frame.rect.layer, now);
             instances.push(mobile_instance(transform.translation, frame.rect, frame.placement, clip.mirrored,
                 drawn.offset_px, drawn.tie_level, source, local_lights));

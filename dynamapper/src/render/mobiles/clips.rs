@@ -67,6 +67,20 @@ impl Clip {
         let index = (elapsed_secs / self.frame_secs.max(f32::EPSILON)) as usize % self.frames.len();
         self.frames.get(index)
     }
+
+    /// The time the clip takes to show its frames once.
+    pub fn cycle_secs(&self) -> f32 {
+        self.frame_secs * self.frames.len() as f32
+    }
+
+    /// The frame shown `elapsed_secs` into the clip when it shows its frames once every `cycle_secs`.
+    pub fn frame_in_cycle(&self, elapsed_secs: f32, cycle_secs: f32) -> Option<&ClipFrame> {
+        if self.frames.is_empty() {
+            return None;
+        }
+        let index = (elapsed_secs / cycle_secs.max(f32::EPSILON) * self.frames.len() as f32) as usize % self.frames.len();
+        self.frames.get(index)
+    }
 }
 
 enum ClipState {
@@ -225,5 +239,23 @@ mod tests {
         assert_eq!(index_at(0.0), 0);
         assert_eq!(index_at(CLASSIC_FRAME_SECS * 1.5), 1);
         assert_eq!(index_at(CLASSIC_FRAME_SECS * 5.5), 1);
+    }
+
+    #[test]
+    fn a_clip_spreads_its_frames_over_a_cycle() {
+        const CYCLE_SECS: f32 = 0.6;
+        let frame = ClipFrame {
+            rect: AtlasRect { layer: 0, x: 0, y: 0, width: 1, height: 1 },
+            placement: FramePlacement { width: 1.0, height: 1.0, anchor_x: 0.0, anchor_y: 0.0 },
+        };
+        let clip = Clip { frames: vec![frame; 10], mirrored: false, frame_secs: CLASSIC_FRAME_SECS };
+        assert!((clip.cycle_secs() - CLASSIC_FRAME_SECS * 10.0).abs() < f32::EPSILON);
+        let index_at = |secs: f32| {
+            let shown = clip.frame_in_cycle(secs, CYCLE_SECS).unwrap() as *const ClipFrame;
+            clip.frames.iter().position(|frame| std::ptr::eq(frame, shown)).unwrap()
+        };
+        assert_eq!(index_at(0.0), 0);
+        assert_eq!(index_at(CYCLE_SECS * 0.55), 5);
+        assert_eq!(index_at(CYCLE_SECS * 1.95), 9);
     }
 }

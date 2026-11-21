@@ -33,7 +33,24 @@ pub struct MobileClipChoice {
     /// The anchor offsets of the body and of the mount, in screen pixels (x right, y down).
     pub body_offset_px: (f32, f32),
     pub mount_offset_px: (f32, f32),
+    /// How a rider and its mount keep in step; none when each layer plays on its own clock.
+    pub mounted_cycle: Option<MountedCycle>,
 }
+
+/// The cycle a rider and its mount share: both layers show the same point of it.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum MountedCycle {
+    /// One cycle every so many seconds.
+    Secs(f32),
+    /// The mount clip's own length.
+    MountClip,
+}
+
+/// Steps per cycle of an Enhanced rider and mount on the move, chosen by eye. The client plays the rider (12 fps) and
+/// the mount (9 fps) on clocks of their own, so the rider drifts off the mount's stride, and at the mounted step
+/// times the hooves slide; ClassicUO's 2 and 4 steps looked too fast with the Enhanced frames.
+const ENHANCED_MOUNTED_WALK_CYCLE_STEPS: f32 = 3.0;
+const ENHANCED_MOUNTED_RUN_CYCLE_STEPS: f32 = 5.0;
 
 pub struct MobileSpritesPlugin {
     pub registered_by: &'static str,
@@ -121,7 +138,8 @@ fn sys_choose_mobile_clips(
         }
         .unwrap_or_default();
         if chosen.source != choice.source || chosen.actions != choice.actions
-            || chosen.body_offset_px != choice.body_offset_px || chosen.mount_offset_px != choice.mount_offset_px {
+            || chosen.body_offset_px != choice.body_offset_px || chosen.mount_offset_px != choice.mount_offset_px
+            || chosen.mounted_cycle != choice.mounted_cycle {
             *choice = chosen;
         }
     }
@@ -161,11 +179,14 @@ fn classic_choice(package: &MobileAnimCcPackage, appearance: &MobileAppearance, 
         actions: body_action.map(|body_action| MobileActions { body_action, mount_action }),
         body_offset_px: (0.0, f32::from(rider_offset_y)),
         mount_offset_px: (0.0, 0.0),
+        // ClassicUO steps the rider and the mount with one frame counter at the same frame time already.
+        mounted_cycle: None,
     }
 }
 
 /// The Enhanced client's actions: the body's peace group, or its mounted group on a mount, which plays its own
-/// mounted or peace move; the layers sit where `mobile_layer_offsets` puts them.
+/// mounted or peace move; the layers sit where `mobile_layer_offsets` puts them. A rider and its mount share one cycle
+/// ([`MountedCycle`]), not the client's two clocks.
 fn enhanced_choice(package: &MobileAnimEcPackage, appearance: &MobileAppearance, motion: &MobileMotion)
     -> MobileClipChoice {
     const FLYING_ANIMATIONS: bool = true;
@@ -189,6 +210,12 @@ fn enhanced_choice(package: &MobileAnimEcPackage, appearance: &MobileAppearance,
             choice.mount_offset_px = (mount_offset.0 as f32, mount_offset.1 as f32);
         }
     }
+    // The rider and the mount keep in step, paced by the steps on the move.
+    choice.mounted_cycle = mount.map(|_| match motion.movement {
+        Movement::Stand => MountedCycle::MountClip,
+        Movement::Walk => MountedCycle::Secs(ENHANCED_MOUNTED_WALK_CYCLE_STEPS * motion.step_secs(true)),
+        Movement::Run => MountedCycle::Secs(ENHANCED_MOUNTED_RUN_CYCLE_STEPS * motion.step_secs(true)),
+    });
     choice
 }
 
