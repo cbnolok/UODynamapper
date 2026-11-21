@@ -23,7 +23,7 @@ use rayon::prelude::*;
 use udd_container::{
     AddFileRequest, AddOwnedFileRequest, CompressionFlag, DataType, LookupMode, UddpBuilder,
 };
-use uocf::animation_sequence::AnimationSequence;
+use uocf::animation_sequence::{AnimationSequence, STORED_DIRECTION_COUNT};
 use uocf::classic::anim::{AnimFrame, AnimFrameInfo, AnimMap, MAX_ANIM_FILES};
 use uocf::classic::animationframe_cc::AnimationFrameCc;
 use uocf::classic::body_def::BodyDef;
@@ -170,6 +170,8 @@ enum PlannedAnimationSource {
     AnimationFrameUop {
         path: Arc<PathBuf>,
         file_hash: u64,
+        /// Stored direction (0..`STORED_DIRECTION_COUNT`) of the entry's frames.
+        direction: u8,
     },
 }
 
@@ -984,6 +986,7 @@ fn planned_animation_source(candidate: &PresentAnimationCandidate) -> PlannedAni
             PlannedAnimationSource::AnimationFrameUop {
                 path: Arc::clone(path),
                 file_hash: *file_hash,
+                direction: candidate.direction,
             }
         }
     }
@@ -1173,14 +1176,14 @@ fn decode_planned_animation_source_shared(
         PlannedAnimationSource::Mul { file_index, source_index } => {
             anim_map.decode_animation_index(*file_index, *source_index)
         }
-        PlannedAnimationSource::AnimationFrameUop { path, file_hash } => {
+        PlannedAnimationSource::AnimationFrameUop { path, file_hash, direction } => {
             let package = animationframe_packages
                 .get(path)
                 .with_context(|| format!("Classic AnimationFrame package {} not loaded", path.display()))?;
             let data = package.unpack_file_by_hash(*file_hash)?.ok_or_else(|| {
                 eyre::eyre!("Classic AnimationFrame payload {file_hash:016x} not found in {}", path.display())
             })?;
-            Ok(AnimationFrameCc::parse(&data)?.frames)
+            AnimationFrameCc::decode_direction(&data, *direction)
         }
     }
 }
@@ -1388,28 +1391,32 @@ fn decode_classic_animationframe_package(
                 if animation.frames.is_empty() || animation.frames.len() > u16::MAX as usize {
                     return None;
                 }
-                let (body_id, action_id, direction) =
-                    animation_layout_from_source_index(file_index, animation.anim_id)?;
-                Some(PresentAnimationCandidate {
-                    body_id,
-                    action_id,
-                    direction,
-                    file_index,
-                    source_index: animation.anim_id,
-                    flags: MOBILE_ANIM_CC_FLAG_UOP_SOURCE,
-                    frames: PresentAnimationFrames::AnimationFrameUop {
-                        path: Arc::clone(&source_path),
-                        file_hash,
-                        frame_metadata: animation.frames,
-                    },
-                })
+                // The entry holds one action of one body, every stored direction (`uop.rs`).
+                let body_id = u16::try_from(animation.anim_id).ok()?;
+                let action_id = animation.action?;
+                let candidates = (0..STORED_DIRECTION_COUNT as u8)
+                    .filter_map(|direction| {
+                        let frame_metadata = AnimationFrameCc::direction_metadata(&data, direction).ok()?;
+                        (!frame_metadata.is_empty()).then(|| PresentAnimationCandidate {
+                            body_id,
+                            action_id,
+                            direction,
+                            file_index,
+                            source_index: animation.anim_id,
+                            flags: MOBILE_ANIM_CC_FLAG_UOP_SOURCE,
+                            frames: PresentAnimationFrames::AnimationFrameUop {
+                                path: Arc::clone(&source_path),
+                                file_hash,
+                                frame_metadata,
+                            },
+                        })
+                    })
+                    .collect::<Vec<_>>();
+                Some(candidates)
             },
         )
         .collect::<Vec<_>>();
-    let mut candidates = Vec::new();
-    for candidate in parsed.into_iter().flatten() {
-        candidates.push(candidate);
-    }
+    let candidates = parsed.into_iter().flatten().flatten().collect::<Vec<_>>();
     pb.finish_with_message(format!("{file_name} extracted"));
     Ok(candidates)
 }
