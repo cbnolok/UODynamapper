@@ -175,7 +175,7 @@ struct PixelUniform {
 
 /// The compiles [`RifePipelines::new`] reports: a convolution variant and tile each (its tiled pass and its
 /// reduction), then the per-pixel steps.
-pub const RIFE_COMPILES: usize = CONV_VARIANTS.len() * TILES.len() + 1;
+pub const RIFE_COMPILES: usize = CONV_VARIANTS.len() * TILES.len() + PIXEL_STEPS.len();
 
 /// The pipelines, once per device, without the weights: what [`crate::warm_up`] compiles ahead.
 pub struct RifePipelines {
@@ -256,11 +256,11 @@ impl RifePipelines {
                     if transposed { TRANSPOSED_PHASES } else { 1 },
                     if kind == ConvKind::Stride2 { STRIDE_2 } else { 1 },
                     kind == ConvKind::TransposedShuffle, epilogue as u32);
-                let name = format!("RIFE convolution {kind:?} {epilogue:?} {}x{}", tile.m, tile.n);
+                let name = format!("RIFE conv {kind:?}/{epilogue:?} tile {}x{}", tile.m, tile.n);
                 let pipelines = report.compile(&name, || {
-                    let module = shader_module(device, "rife convolution", constants + CONV_SHADER);
+                    let module = shader_module(device, &name, constants + CONV_SHADER);
                     let pipeline = |entry_point| device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
-                        label: Some("rife convolution"), layout: Some(&conv_pipeline_layout), module: &module,
+                        label: Some(&name), layout: Some(&conv_pipeline_layout), module: &module,
                         entry_point: Some(entry_point), compilation_options: Default::default(), cache: None,
                     });
                     [pipeline("main"), pipeline("reduce")]
@@ -269,16 +269,16 @@ impl RifePipelines {
             }
         }
         let pixel_pipeline_layout = pipeline_layout(&pixel_layout);
-        let pixel_pipelines = report.compile("RIFE pixel steps", || {
-            let pixel_module = shader_module(device, "rife pixel steps", PIXEL_SHADER.to_string());
-            PIXEL_STEPS.into_iter().map(|step| (step, device.create_compute_pipeline(
-                &wgpu::ComputePipelineDescriptor {
-                    label: Some(step.entry_point()), layout: Some(&pixel_pipeline_layout), module: &pixel_module,
-                    entry_point: Some(step.entry_point()),
-                    compilation_options: wgpu::PipelineCompilationOptions { constants, ..Default::default() },
-                    cache: None,
-                }))).collect()
-        });
+        let pixel_module = shader_module(device, "RIFE pixel steps", PIXEL_SHADER.to_string());
+        let pixel_pipelines = PIXEL_STEPS.into_iter().map(|step| {
+            let name = format!("RIFE pixel step: {}", step.entry_point());
+            (step, report.compile(&name, || device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
+                label: Some(&name), layout: Some(&pixel_pipeline_layout), module: &pixel_module,
+                entry_point: Some(step.entry_point()),
+                compilation_options: wgpu::PipelineCompilationOptions { constants, ..Default::default() },
+                cache: None,
+            })))
+        }).collect();
         Self { conv_layout, pixel_layout, conv_pipelines, pixel_pipelines }
     }
 }

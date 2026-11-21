@@ -157,7 +157,9 @@ struct PixelUniform {
 }
 
 /// The compiles [`UpscalePipelines::new`] reports: a convolution variant and tile each, then the per-pixel steps.
-pub const UPSCALE_COMPILES: usize = CONV_VARIANTS.len() * TILES.len() + 1;
+pub const UPSCALE_COMPILES: usize = CONV_VARIANTS.len() * TILES.len() + PIXEL_STEP_COMPILES;
+/// The pixel steps' pipelines: prepare and finish.
+const PIXEL_STEP_COMPILES: usize = 2;
 
 /// The pipelines, once per device, without the weights: what [`crate::warm_up`] compiles ahead.
 pub struct UpscalePipelines {
@@ -240,25 +242,27 @@ impl UpscalePipelines {
                      const TILE_K: u32 = {}u;\nconst MICRO_M: u32 = {}u;\nconst MICRO_N: u32 = {}u;\n\
                      const KERNEL_SIDE: u32 = {side}u;\nconst EPILOGUE: u32 = {}u;\n",
                     tile.m, tile.n, tile.k, tile.micro_m, tile.micro_n, epilogue as u32);
-                let name = format!("SPAN convolution {side}x{side} {epilogue:?} {}x{}", tile.m, tile.n);
+                let name = format!("upscale conv {side}x{side}/{epilogue:?} tile {}x{}", tile.m, tile.n);
                 let pipeline = report.compile(&name, || {
-                    let module = shader_module(device, "upscale convolution", constants + CONV_SHADER);
+                    let module = shader_module(device, &name, constants + CONV_SHADER);
                     device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
-                        label: Some("upscale convolution"), layout: Some(&conv_pipeline_layout), module: &module,
+                        label: Some(&name), layout: Some(&conv_pipeline_layout), module: &module,
                         entry_point: Some("main"), compilation_options: Default::default(), cache: None,
                     })
                 });
                 conv_pipelines.push(((side, epilogue, tile), pipeline));
             }
         }
-        let (prepare_pipeline, finish_pipeline) = report.compile("SPAN pixel steps", || {
-            let pixel_module = shader_module(device, "upscale pixel steps", PIXEL_SHADER.to_string());
-            let pixel_pipeline = |layout, entry_point| device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
-                label: Some(entry_point), layout: Some(&pipeline_layout(layout)), module: &pixel_module,
+        let pixel_module = shader_module(device, "upscale pixel steps", PIXEL_SHADER.to_string());
+        let mut pixel_pipeline = |layout, entry_point| {
+            let name = format!("upscale {entry_point}");
+            report.compile(&name, || device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
+                label: Some(&name), layout: Some(&pipeline_layout(layout)), module: &pixel_module,
                 entry_point: Some(entry_point), compilation_options: Default::default(), cache: None,
-            });
-            (pixel_pipeline(&prepare_layout, "prepare"), pixel_pipeline(&finish_layout, "finish"))
-        });
+            }))
+        };
+        let prepare_pipeline = pixel_pipeline(&prepare_layout, "prepare");
+        let finish_pipeline = pixel_pipeline(&finish_layout, "finish");
         Self { conv_layout, prepare_layout, finish_layout, conv_pipelines, prepare_pipeline, finish_pipeline }
     }
 }

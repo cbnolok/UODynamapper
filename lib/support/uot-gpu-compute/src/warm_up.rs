@@ -20,8 +20,9 @@ pub const WARM_UP_COMPILES: usize = RIFE_COMPILES + UPSCALE_COMPILES + BLOCK_ENC
 /// A compile starting or ending.
 #[derive(Debug, Clone, Copy)]
 pub struct PipelineCompile<'a> {
-    /// What compiles: a pipeline, or a few of one shader (`"RIFE convolution Stride1 Leaky 64x32"`, `"BC1
-    /// punch-through"`).
+    /// What compiles, as the pipeline's label: `"RIFE conv Stride1/Leaky tile 64x32"`, `"RIFE pixel step: merge"`,
+    /// `"upscale conv 3x3/Silu tile 64x48"`, `"upscale prepare"`, `"BC7 compressor (every quality; and BC1-BC5)"`,
+    /// `"BC1 punch-through"`. A RIFE conv compiles two pipelines of one shader (`main` and `reduce`).
     pub name: &'a str,
     /// Its place among the compiles of the run (0-based), and how many there are.
     pub index: usize,

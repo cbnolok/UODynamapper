@@ -4,7 +4,8 @@
 //! The RIFE in-betweens take the warmed pipelines when first turned on, and wait for them while they compile, so
 //! nothing compiles twice. SPAN and the encoders are not drawn with yet: their pipelines wait here.
 //!
-//! Each compile is logged as it ends ([`report_compile`]): the place a progress display hooks in.
+//! Each compile shows in the shader-compile overlay while it runs (`render::shader_compiles`), and is logged as it
+//! ends.
 
 use std::thread::JoinHandle;
 use bevy::prelude::*;
@@ -13,6 +14,7 @@ use uot_gpu_compute::block_encode::MobileBlockEncoder;
 use uot_gpu_compute::rife::RifePipelines;
 use uot_gpu_compute::upscale::UpscalePipelines;
 use uot_gpu_compute::{PipelineCompile, WarmPipelines};
+use crate::render::shader_compiles::{shader_compile_ended, shader_compile_started};
 
 const THREAD_NAME: &str = "gpu compute warm-up";
 const MILLIS_PER_SEC: f64 = 1000.0;
@@ -81,9 +83,18 @@ impl ComputeWarmUp {
     }
 }
 
-/// Logs a compile of the warm-up as it ends.
-pub fn report_compile(compile: PipelineCompile) {
-    if compile.done {
+/// Shows each compile of the warm-up in the shader-compile overlay while it runs, and logs it as it ends. The
+/// warm-up compiles one pipeline at a time.
+fn compile_reporter() -> impl FnMut(PipelineCompile) {
+    let mut running = None;
+    move |compile| {
+        if !compile.done {
+            running = Some(shader_compile_started(compile.name));
+            return;
+        }
+        if let Some(id) = running.take() {
+            shader_compile_ended(id);
+        }
         debug!("GPU compute warm-up {}/{}: {} in {:.1} ms.", compile.index + 1, compile.total, compile.name,
             compile.elapsed.as_secs_f64() * MILLIS_PER_SEC);
     }
@@ -101,7 +112,7 @@ pub fn sys_start_compute_warm_up(
     let queue = queue.clone();
     let spawned = std::thread::Builder::new().name(THREAD_NAME.to_string()).spawn(move || {
         let started = std::time::Instant::now();
-        let warmed = uot_gpu_compute::warm_up(&device, &queue, report_compile);
+        let warmed = uot_gpu_compute::warm_up(&device, &queue, compile_reporter());
         info!("The GPU compute pipelines are compiled, in {:.1} s.", started.elapsed().as_secs_f32());
         warmed
     });

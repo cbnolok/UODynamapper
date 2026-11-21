@@ -12,9 +12,13 @@ Two sources feed it:
   its fragment (or compute, mesh) shader, as `pbr_opaque_mesh_pipeline (ground.wesl)`.
 - The app's own wgpu compiles outside the cache: hold `begin_shader_compile(name)` around the creation, or call
   `shader_compile_started(name)` and `shader_compile_ended(id)` from any thread (plain data, no Bevy types; meant for a
-  warm-up callback). Wrapped now: the RIFE network and atlas steps (`rife_in_betweens/render.rs`, background pool) and
-  the static picking MSAA resolve (`gpu_picking.rs`, render thread, only with MSAA). `UpscaleModel` (SPAN) and
-  `MobileBlockEncoder` (BC1/BC7) were not created by the app yet, only by their tests (2026-11-21).
+  warm-up callback). Fed now: the GPU compute warm-up (`mobiles/compute_warm_up.rs`, a thread of its own at startup),
+  every pipeline of `lib/support/uot-gpu-compute` by its label (`RIFE conv Stride1/Leaky tile 64x32`, `RIFE pixel
+  step: merge`, `upscale conv 3x3/Silu tile 64x48`, `upscale prepare`, `BC7 compressor (every quality; and BC1-BC5)`,
+  `BC1 punch-through`; 27 to 39 s cold, 37 s of it the BC7 compressor, and 0.12 s warm on the Radeon 880M); the RIFE
+  network when the warm-up did not give it, and the atlas steps (`rife_in_betweens/render.rs`, background pool); the
+  static picking MSAA resolve (`gpu_picking.rs`, render thread, only with MSAA). The SPAN and BC pipelines are warmed
+  but not drawn with yet (2026-11-21).
 
 ## Cold start: the app freezes, so the overlay cannot show it
 

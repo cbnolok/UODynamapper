@@ -129,7 +129,9 @@ impl MobileBlockEncoder {
 
     /// [`MobileBlockEncoder::new`], telling `report` of each of [`BLOCK_ENCODER_COMPILES`].
     pub fn compile(device: &wgpu::Device, queue: &wgpu::Queue, report: &mut CompileReport) -> Self {
-        let compressor = report.compile("BC1-BC5 and BC7 encoders (block_compression)",
+        // One compile for every BC7 quality (a setting the kernel reads, not a pipeline of its own), with
+        // block_compression's BC1 to BC5 kernels.
+        let compressor = report.compile("BC7 compressor (every quality; and BC1-BC5)",
             || GpuBlockCompressor::new(device.clone(), queue.clone()));
         let entry = |binding, ty| wgpu::BindGroupLayoutEntry {
             binding, visibility: wgpu::ShaderStages::COMPUTE, ty, count: None,
