@@ -326,6 +326,70 @@ A dictionary helps payloads of a few kilobytes, which have no history of their o
 in its first few kilobytes, so the dictionary saves at most 2.6 % and slows every decode. The animation study found the
 same on large bodies (`uddp_anim_format_requirements.md`: ×1.000–1.025).
 
+## BC7 RDO on mobile animation pages
+
+Why packing the mobile animations took 16 minutes (Classic) and 34 minutes (Enhanced) with `--bc7-rdo`, and what the
+RDO gives back (2026-11-21). `--bin anim_rdo` reruns the numbers below.
+
+### Where the time goes
+
+The Classic BC7 pack (1210 pages, `--bc7-rdo --zstd=9`, λ 0.05, look-back 64) took 983 s: BC7 encode 18.5 s, RDO
+920 s. The RDO is 95 % of the pack, about 50 times the encode. Three things add up:
+
+1. **Each block tries thousands of candidates.** The RDO is the ERT of bc7enc_rdo (`ert.cpp`): for each block, every
+   earlier block of the same BC7 mode within the look-back, every run length 16 to 3, and every byte offset, so 105
+   candidates per earlier block. On a Classic page, one block that is not fully transparent ran about 2650 candidate
+   checks, and 94 % of them were decode trials (84 % mode 6, 16 % mode 4). The bound on the trial error stops 99.97 %
+   of the decodes early, but the rate test (the candidate's bits alone already cost more than the best so far) almost
+   never skips one at λ 0.05, since the bits weigh little at that λ.
+2. **The look-back is 64 blocks,** 8 times bc7enc_rdo's default window of 128 bytes (8 blocks). The cost grows with
+   it: on 20 Classic pages, look-back 8 took 27 s of CPU, 16 took 44 s and 64 took 132 s.
+3. **It used 8 of the 20 threads.** The packer encoded a chunk of 20 pages one page after another, and each page's
+   RDO split into row chunks run in parallel. Fully transparent blocks (61 % of a Classic page) cost one decode, so
+   the chunks of a sparse page finish at very different times, and the pool idled until the slowest one ended.
+
+Fully transparent blocks were already cheap: the encoder writes all of them exactly, so the RDO's zero-error skip
+(`Bc7RdoOptions::sparse_atlas`) catches every one.
+
+bc7enc_rdo differs in ways that matter less here: it searches the earlier blocks of every mode, has no error bound or
+rate pruning, and updates its match-continuation and REP0 state after each block, where our port updates it during
+the search.
+
+### What it gives back
+
+20 Classic pages (56.8 Mpx) and 16 Enhanced pages (48.0 Mpx), sampled evenly. Size is the blocks with Zstd 9 (the
+packer's `--zstd=9`), against plain BC7. PSNR is against the RGBA page, RGB over the texels with alpha > 0. CPU is
+seconds of the RDO on the whole pool.
+
+| Look-back | λ | Classic size | Classic PSNR | Enhanced size | Enhanced PSNR | CPU, Classic |
+|---|---|---|---|---|---|---|
+| plain BC7 | | 13.69 MiB | 33.59 dB | 12.02 MiB | 31.95 dB | 4.6 s (encode) |
+| 8 | 0.05 | +0.1 % | 33.59 | +0.0 % | 31.95 | 27 s |
+| | 0.5 | −0.9 % | 33.11 | −0.8 % | 31.72 | 27 s |
+| | 1 | −2.6 % | 32.33 | −2.0 % | 31.28 | 27 s |
+| | 2 | −6.3 % | 30.55 | −4.8 % | 30.12 | 26 s |
+| 16 | 0.05 | +0.2 % | 33.59 | −0.2 % | 31.95 | 45 s |
+| | 0.5 | −0.8 % | 33.03 | −1.6 % | 31.66 | 44 s |
+| | 1 | −2.8 % | 32.13 | −3.1 % | 31.14 | 44 s |
+| | 2 | −6.9 % | 30.21 | −6.4 % | 29.86 | 44 s |
+| 64 | 0.05 (the old default) | +0.2 % | 33.59 | −0.3 % | 31.96 | 132 s |
+| | 0.25 | −0.5 % | 33.32 | −1.3 % | 31.82 | 125 s |
+| | 0.5 | −1.8 % | 32.85 | −2.4 % | 31.56 | 119 s |
+| | 1 | −4.8 % | 31.76 | −4.7 % | 30.89 | 122 s |
+| | 2 | −10.4 % | 29.65 | −9.1 % | 29.42 | 109 s |
+
+- **At λ 0.05 the RDO saves nothing.** It changes 15–22 % of the blocks, but the package is no smaller; it costs 30
+  times the encode. The whole gain of the Classic BC7 package against RGBA8888 (869 MB against 921 MB) comes from BC7.
+- **It saves bytes only at a λ that costs quality:** λ 1 saves about 5 % for 1–2 dB, λ 2 about 10 % for 2.5–4 dB.
+  The other atlas notes found the same on art and land (`2026-11-01-data-track-open-items.md`, item d).
+- **A longer look-back pays per dB:** at λ 1, look-back 64 saves 4.7–4.8 % where 16 saves 2.8–3.1 %, for 0.25–0.4 dB
+  more, at 3 times the CPU.
+
+**RDO is off by default** everywhere: the packers' option defaults are λ 0 (`NO_BC7_RDO_LAMBDA`), `udd-conv-gui`
+starts with it unticked, and `udd-cli pack` applies it only with `--bc7-rdo`. `--bc7-rdo` without `--bc7-rdo-lambda`
+still uses `DEFAULT_BC7_RDO_LAMBDA` 0.05, which the table shows does nothing; λ 1 with look-back 64 is the setting
+worth offering, after a visual check on sprites (`UDDP_FORMATS.md` asks for one).
+
 ## Reproducing
 
 [`atlas_page_compression/`](atlas_page_compression/) is the benchmark, a standalone crate that reads its pages from a
@@ -339,4 +403,6 @@ CARGO_TARGET_DIR=/path/to/scratch cargo run --release -- /path/to/uddp
 It runs every codec and the 128-row strips. `--bin strip_levels` runs the levels and codecs in strips (it reads
 `tex_land_ec.uddp` too), `--bin block_pages <dir> [lanczos|mmpx] [ec|cc|both]` the BC1 and BC7 pages, and `--bin upscaled_pages <dir>
 [ec|cc|both] [all|bc1]` the pages at 1× to 4× (`bc1` only BC1 and BC1 with RDO). The PNG filter, the other strip heights and
-the dictionaries were one-off runs with the numbers above.
+the dictionaries were one-off runs with the numbers above. `--bin anim_rdo <dir> <cc|ec> <pages> [λ,...] [look-back,...]
+[stats|parallel]` runs the BC7 RDO on pages sampled from an RGBA8888 `mobile_anim_cc.uddp` or `mobile_anim_ec.uddp`:
+`stats` adds the RDO's counters for one page on one thread, `parallel` runs the pages at once as the packers do.

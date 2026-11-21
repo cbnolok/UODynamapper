@@ -203,7 +203,7 @@ impl Default for TexLandEcAtlasOptions {
             upscale_512_passes: Vec::new(),
             upscale_profile: None,
             pixel_format: PagePixelFormat::Rgba8888,
-            bc7_rdo_lambda: crate::bc7::DEFAULT_BC7_RDO_LAMBDA,
+            bc7_rdo_lambda: crate::bc7::NO_BC7_RDO_LAMBDA,
             bc7_rdo_lookback_blocks: crate::bc7::DEFAULT_BC7_RDO_LOOKBACK_BLOCKS,
             transcode_kdl_path: None,
             terrain_overrides_kdl_path: None,

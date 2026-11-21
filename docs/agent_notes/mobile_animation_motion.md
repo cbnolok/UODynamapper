@@ -194,8 +194,9 @@ atlas of their clip, in its format. The format is one value of the page-manifest
 Measured on the Radeon 880M (RADV), Britain, four styles, Classic human 400 on horse 200, dog 217, Enhanced daemon 9
 and stygian 826, crossfade / RIFE ×2 / ×4:
 
-- **Packages** (converter default, `--bc7-rdo --zstd=9`): Classic 869 MB (RGBA8888 921 MB), 1210 pages, 983 s to
-  pack; Enhanced 1.93 GB (2.70 GB), 2291 pages, 2048 s (RDO 1884 s). Strides are keyed to the frames' pixels, so none
+- **Packages** (`--bc7-rdo --zstd=9`, λ 0.05, look-back 64; RDO is now off by default, see
+  [atlas_page_compression.md](atlas_page_compression.md#bc7-rdo-on-mobile-animation-pages)): Classic 869 MB
+  (RGBA8888 921 MB), 1210 pages, 983 s to pack; Enhanced 1.93 GB (2.70 GB), 2291 pages, 2048 s (RDO 1884 s). Strides are keyed to the frames' pixels, so none
   carried over (0 of 1914 and 0 of 4125): until `measure-mobile-strides` runs on the BC7 packages, clips step at the
   client timing.
 - **RIFE GPU time per frame**, encode included (timestamp queries, a frame with in-between work): the same with both

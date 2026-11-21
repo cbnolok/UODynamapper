@@ -17,7 +17,9 @@ optimized from the basis-universal implementation.
 - **BC7 RDO pass** (Rate-Distortion Optimization): deliberately allows tiny,
   bounded visual changes to make neighboring BC7 blocks more compressible by the
   outer package compressor (zstd). This keeps textures GPU-ready while improving
-  disk size and streaming locality at no extra VRAM cost.
+  disk size and streaming locality at no extra VRAM cost. It is an opt-in: the
+  packers default to lambda 0 (`NO_BC7_RDO_LAMBDA`), since the default request
+  lambda of 0.05 saves no bytes on the atlas pages measured.
 
 The encoder is inspired by:
 - [basis-universal](https://github.com/BinomialLLC/basis_universal/tree/master/transcoder)

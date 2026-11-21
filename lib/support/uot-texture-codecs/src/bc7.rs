@@ -76,6 +76,9 @@ pub const fn preferred_bc7_encoder_backend() -> Bc7EncoderBackend {
     Bc7EncoderBackend::AnalyticalWide
 }
 
+/// The BC7 RDO lambda that turns RDO off: the packers' default, since RDO is an opt-in.
+pub const NO_BC7_RDO_LAMBDA: f32 = 0.0;
+/// The lambda an RDO request without one gets.
 pub const DEFAULT_BC7_RDO_LAMBDA: f32 = 0.05;
 pub const DEFAULT_BC7_RDO_LOOKBACK_BLOCKS: usize = 64;
 pub const BC7_RDO_LOOKBACK_BLOCK_PRESETS: [usize; 3] = [64, 128, 256];

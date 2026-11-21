@@ -97,12 +97,11 @@ use udd_conv::{
     world_lights::{convert_client_lights_to_world_lights_uddp, WorldLightsOptions},
     CompressionFlag, PagePixelFormat,
 };
+use udd_conv::bc7::NO_BC7_RDO_LAMBDA;
 
 /// The level of a bare `--zstd` where it adds a pass over another encoding (BC7, raw texture pages).
 const DEFAULT_ZSTD_LEVEL: i32 = 7;
 const DEFAULT_ZSTD_LEVEL_VALUE: &str = "7";
-/// The BC7 RDO lambda that turns RDO off.
-const NO_BC7_RDO_LAMBDA: f32 = 0.0;
 const CHUNK_ZSTD_HELP: &str = "Zstd level of the chunks (--zstd=LEVEL). Chunks are compressed with plain Zstd unless --stored; without a level (or without the flag) map chunks use level 19 and statics chunks level 7.";
 const CHUNK_STORED_HELP: &str = "Store the chunks uncompressed: the fastest runtime read, for a package about 6.6x (map) or 2.8x (statics) larger.";
 const LAND_ZSTD_HELP: &str = "Zstd level of the land pages (--zstd=LEVEL), which without a format flag are lossless RGBA8888 with Zstd 19; with --raw, a file-level Zstd pass after that encoding. A bare --zstd keeps level 19.";
