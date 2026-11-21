@@ -57,6 +57,9 @@ const F32_BYTES: u64 = 4;
 const PIXEL_TIMESTEP_BYTE: u64 = 20;
 const CONV_SHADER: &str = include_str!("../../../assets/shaders/rife/conv.wgsl");
 const PIXEL_SHADER: &str = include_str!("../../../assets/shaders/rife/pixel.wgsl");
+/// pixel.wgsl's switch between the blend's nearest warp (its default) and Practical-RIFE's bilinear one.
+#[cfg(test)]
+const NEAREST_FINAL_WARP_OVERRIDE: &str = "NEAREST_FINAL_WARP";
 
 /// A convolution workgroup's tile: `m` pixels by `n` output channels, `k` rows of the sum staged at a time, each
 /// thread keeping `micro_m` by `micro_n` sums.
@@ -194,8 +197,20 @@ fn uniform_entry() -> wgpu::BindGroupLayoutEntry {
 }
 
 impl RifeModel {
-    /// Uploads the bundled weights and compiles the pipelines.
+    /// Uploads the bundled weights and compiles the pipelines. The blend warps the frames to the nearest pixel
+    /// (pixel.wgsl's `NEAREST_FINAL_WARP`).
     pub fn new(device: &wgpu::Device) -> Result<Self, String> {
+        Self::with_pixel_constants(device, &[])
+    }
+
+    /// The model with Practical-RIFE's bilinear blend, as the PyTorch reference computes it.
+    #[cfg(test)]
+    pub fn with_bilinear_final_warp(device: &wgpu::Device) -> Result<Self, String> {
+        Self::with_pixel_constants(device, &[(NEAREST_FINAL_WARP_OVERRIDE, 0.0)])
+    }
+
+    /// `constants` sets pixel.wgsl's overridable constants.
+    fn with_pixel_constants(device: &wgpu::Device, constants: &[(&str, f64)]) -> Result<Self, String> {
         let packed = PackedParams::parse(WEIGHTS_FILE)?;
         let params = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
             label: Some("rife weights"), contents: bytemuck::cast_slice(&packed.halves), usage: wgpu::BufferUsages::STORAGE,
@@ -245,7 +260,8 @@ impl RifeModel {
         let pixel_pipelines = PIXEL_STEPS.into_iter().map(|step| (step, device.create_compute_pipeline(
             &wgpu::ComputePipelineDescriptor {
                 label: Some(step.entry_point()), layout: Some(&pixel_pipeline_layout), module: &pixel_module,
-                entry_point: Some(step.entry_point()), compilation_options: Default::default(), cache: None,
+                entry_point: Some(step.entry_point()),
+                compilation_options: wgpu::PipelineCompilationOptions { constants, ..Default::default() }, cache: None,
             }))).collect();
         Ok(Self { params, packed, conv_layout, pixel_layout, conv_pipelines, pixel_pipelines })
     }
@@ -622,7 +638,8 @@ impl RifeWorkspace {
         &self.buffers[BUFS.iter().position(|&b| b == buf).unwrap()]
     }
 
-    /// The two frames, [`RIFE_INPUT_CHANNELS`] planes; padding must be zero.
+    /// The two frames, [`RIFE_INPUT_CHANNELS`] planes; the padding is zero as PyTorch pads, or the frames' own
+    /// background, as the mobiles' in-betweens give it (atlas.wgsl).
     pub fn input(&self) -> &wgpu::Buffer {
         self.buffer(Buf::Images)
     }

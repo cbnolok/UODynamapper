@@ -10,6 +10,7 @@ use udd_assets::animation::mobile_anim_ec::MobileAnimEcPackage;
 use crate::app::background::{background_pool, Priority, Task, TaskPoll};
 use super::frame_atlas::{AtlasRect, MobileFrameAtlas};
 use super::placement::FramePlacement;
+use super::rife_in_betweens::InBetweenKey;
 
 /// The Classic client's time per frame of a MUL body's animation (ClassicUO `CHARACTER_ANIMATION_DELAY`); UOP bodies
 /// take their sequence's fps (`MobileAnimCcAnimationRecord::fps`).
@@ -31,6 +32,13 @@ pub struct ClipKey {
     pub direction: u8,
 }
 
+/// What a frame atlas entry holds: a clip's frames, or a clip's frames with their RIFE in-betweens (rife_in_betweens.rs).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum AtlasEntry {
+    Clip(ClipKey),
+    InBetweens(InBetweenKey),
+}
+
 /// A frame as decoded: its placement and its straight-alpha RGBA pixels.
 pub struct DecodedFrame {
     pub placement: FramePlacement,
@@ -42,6 +50,7 @@ pub struct DecodedClip {
     pub frames: Vec<DecodedFrame>,
     pub mirrored: bool,
     pub frame_secs: f32,
+    pub stored: u32,
 }
 
 /// A frame of a resident clip.
@@ -66,6 +75,9 @@ pub struct Clip {
     pub frames: Vec<ClipFrame>,
     pub mirrored: bool,
     pub frame_secs: f32,
+    /// Which stored frames the clip shows, among those of its body and action: a Classic clip's stored direction, an
+    /// Enhanced clip's first frame record. A mirrored direction shares its twin's.
+    pub stored: u32,
 }
 
 impl Clip {
@@ -129,8 +141,17 @@ impl MobileClips {
         }
     }
 
+    /// The clip of `key` if resident.
+    pub fn resident(&self, key: ClipKey) -> Option<&Clip> {
+        match self.clips.get(&key) {
+            Some(ClipState::Resident(clip)) => Some(clip),
+            _ => None,
+        }
+    }
+
     /// Places the decoded clips in `atlas`, and forgets the clips of the pages it emptied for them or for idleness.
-    pub fn place_decoded(&mut self, atlas: &mut MobileFrameAtlas<ClipKey>, now: f64) {
+    /// The other entries of those pages come back, for their owner to forget.
+    pub fn place_decoded(&mut self, atlas: &mut MobileFrameAtlas<AtlasEntry>, now: f64) -> Vec<AtlasEntry> {
         let mut evicted = atlas.release_idle(now);
         for (key, state) in self.clips.iter_mut() {
             let ClipState::Decoding(task) = state else { continue };
@@ -145,7 +166,7 @@ impl MobileClips {
             let frames = decoded.frames.iter()
                 .map(|frame| (frame.placement.width as u32, frame.placement.height as u32, frame.rgba.clone()))
                 .collect::<Vec<_>>();
-            *state = match atlas.place_clip(*key, &frames, now) {
+            *state = match atlas.place_clip(AtlasEntry::Clip(*key), &frames, now) {
                 Some((rects, page_evicted)) => {
                     evicted.extend(page_evicted);
                     ClipState::Resident(Clip {
@@ -154,6 +175,7 @@ impl MobileClips {
                             .collect(),
                         mirrored: decoded.mirrored,
                         frame_secs: decoded.frame_secs,
+                        stored: decoded.stored,
                     })
                 }
                 None => {
@@ -162,11 +184,19 @@ impl MobileClips {
                 }
             };
         }
-        for key in evicted {
-            if matches!(self.clips.get(&key), Some(ClipState::Resident(_))) {
-                self.clips.remove(&key);
+        self.forget(evicted)
+    }
+
+    /// Forgets the resident clips of `evicted`, the entries of pages the atlas emptied, and gives back its other
+    /// entries.
+    pub fn forget(&mut self, evicted: Vec<AtlasEntry>) -> Vec<AtlasEntry> {
+        evicted.into_iter().filter(|entry| {
+            let AtlasEntry::Clip(key) = entry else { return true };
+            if matches!(self.clips.get(key), Some(ClipState::Resident(_))) {
+                self.clips.remove(key);
             }
-        }
+            false
+        }).collect()
     }
 
     /// Forgets every clip, as when the packages change.
@@ -204,7 +234,8 @@ fn decode_classic_clip(package: &MobileAnimCcPackage, key: ClipKey) -> Option<De
             })
         })
         .collect::<Option<Vec<_>>>()?;
-    (!frames.is_empty()).then_some(DecodedClip { frames, mirrored, frame_secs: frame_secs_at(animation.fps) })
+    (!frames.is_empty()).then_some(DecodedClip { frames, mirrored, frame_secs: frame_secs_at(animation.fps),
+        stored: u32::from(stored_direction) })
 }
 
 /// The time per frame at `fps` frames a second; `CLASSIC_FRAME_SECS` without an fps (Classic MUL bodies, and
@@ -236,7 +267,8 @@ fn decode_enhanced_clip(package: &MobileAnimEcPackage, key: ClipKey) -> Option<D
         })
         .collect::<Option<Vec<_>>>()?;
     let frame_secs = frame_secs_at(resolved.fps);
-    (!frames.is_empty()).then_some(DecodedClip { frames, mirrored: record.is_mirrored(), frame_secs })
+    (!frames.is_empty()).then_some(DecodedClip { frames, mirrored: record.is_mirrored(), frame_secs,
+        stored: record.frame_start })
 }
 
 #[cfg(test)]
@@ -261,7 +293,7 @@ mod tests {
     #[test]
     fn a_clip_loops_its_frames() {
         let frame = test_frame();
-        let clip = Clip { frames: vec![frame; 4], mirrored: false, frame_secs: CLASSIC_FRAME_SECS };
+        let clip = Clip { frames: vec![frame; 4], mirrored: false, frame_secs: CLASSIC_FRAME_SECS, stored: 0 };
         let index_at = |secs: f32| clip.frame_at(secs).unwrap().index;
         assert_eq!(index_at(0.0), 0);
         assert_eq!(index_at(CLASSIC_FRAME_SECS * 1.5), 1);
@@ -272,7 +304,7 @@ mod tests {
     fn a_clip_spreads_its_frames_over_a_cycle() {
         const CYCLE_SECS: f32 = 0.6;
         let frame = test_frame();
-        let clip = Clip { frames: vec![frame; 10], mirrored: false, frame_secs: CLASSIC_FRAME_SECS };
+        let clip = Clip { frames: vec![frame; 10], mirrored: false, frame_secs: CLASSIC_FRAME_SECS, stored: 0 };
         assert!((clip.cycle_secs() - CLASSIC_FRAME_SECS * 10.0).abs() < f32::EPSILON);
         let index_at = |secs: f32| clip.frame_in_cycle(secs, CYCLE_SECS).unwrap().index;
         assert_eq!(index_at(0.0), 0);
@@ -282,7 +314,7 @@ mod tests {
 
     #[test]
     fn a_pick_names_the_next_frame_and_the_way_to_it() {
-        let clip = Clip { frames: vec![test_frame(); 4], mirrored: false, frame_secs: CLASSIC_FRAME_SECS };
+        let clip = Clip { frames: vec![test_frame(); 4], mirrored: false, frame_secs: CLASSIC_FRAME_SECS, stored: 0 };
         let pick = clip.frame_at(CLASSIC_FRAME_SECS * 1.25).unwrap();
         assert_eq!((pick.index, pick.next), (1, 2));
         assert!((pick.t - 0.25).abs() < 1e-4, "{pick:?}");
@@ -297,7 +329,7 @@ mod tests {
         assert_eq!((pick.index, pick.next), (2, 3));
         assert!((pick.t - 0.4).abs() < 1e-4, "{pick:?}");
 
-        let single = Clip { frames: vec![test_frame()], mirrored: false, frame_secs: CLASSIC_FRAME_SECS };
+        let single = Clip { frames: vec![test_frame()], mirrored: false, frame_secs: CLASSIC_FRAME_SECS, stored: 0 };
         let pick = single.frame_at(CLASSIC_FRAME_SECS * 2.5).unwrap();
         assert_eq!((pick.index, pick.next), (0, 0));
     }

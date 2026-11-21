@@ -143,7 +143,7 @@ files, so one preview can visit several styles, times and sources
 - `{"command":"set","key":K,"value":V}` for an allowlist with typed values:
   `hide_player`, `player_body`, `player_mount_body` (core, the player's drawn
   body and mount; 0 for none); `show_only_player_floor`, `caves`, `cave_surroundings`, `enable_statics`,
-  `enable_static_lights`, `show_hidden_multi_parts`, `mobile_in_between_frames` (`off`/`crossfade`), `mobile_stop` (`half_step_later`/`at_once`)
+  `enable_static_lights`, `show_hidden_multi_parts`, `mobile_in_between_frames` (`off`/`crossfade`/`rife_x2`/`rife_x4`), `mobile_stop` (`half_step_later`/`at_once`)
   (world_rendering);
   `cc_terrain_transitions`, `ec_terrain_transitions` (graphics);
   `light_cover`, `player_floor_rule`, `land_texture_variation` (the active

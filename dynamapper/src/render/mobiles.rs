@@ -7,6 +7,7 @@ pub mod frame_atlas;
 pub mod in_between;
 pub mod placement;
 pub mod rife;
+pub mod rife_in_betweens;
 pub mod upscale;
 
 use std::sync::Arc;
@@ -65,11 +66,13 @@ impl Plugin for MobileSpritesPlugin {
         log_plugin_build(self);
         app.init_resource::<MobileClips>()
             .init_resource::<MobileAnimPackages>()
+            .init_resource::<rife_in_betweens::MobileInBetweens>()
             .add_systems(Update, (
                 sys_sync_player_appearance,
                 sys_choose_mobile_clips,
                 draw::sys_setup_mobile_draw,
                 draw::sys_draw_mobiles,
+                rife_in_betweens::sys_schedule_mobile_in_betweens,
                 frame_atlas::sys_stage_mobile_frame_uploads,
                 draw::sys_sync_mobile_materials
                     .after(crate::render::statics::statics_draw::sys_update_art_materials),
@@ -79,9 +82,15 @@ impl Plugin for MobileSpritesPlugin {
                 .run_if(in_state(AppState::InGame)));
         let Some(render_app) = app.get_sub_app_mut(RenderApp) else { return };
         render_app.init_resource::<frame_atlas::RenderMobileFrameUploads>()
-            .add_systems(ExtractSchedule, frame_atlas::sys_extract_mobile_frame_uploads::<clips::ClipKey>)
-            .add_systems(bevy::render::Render, frame_atlas::sys_render_upload_mobile_frames
-                .in_set(bevy::render::RenderSystems::Queue));
+            .init_resource::<rife_in_betweens::render::RenderInBetweens>()
+            .add_systems(ExtractSchedule, (
+                frame_atlas::sys_extract_mobile_frame_uploads::<clips::AtlasEntry>,
+                rife_in_betweens::render::sys_extract_mobile_in_betweens,
+            ))
+            .add_systems(bevy::render::Render, (
+                frame_atlas::sys_render_upload_mobile_frames,
+                rife_in_betweens::render::sys_render_mobile_in_betweens,
+            ).chain().in_set(bevy::render::RenderSystems::Queue));
     }
 }
 

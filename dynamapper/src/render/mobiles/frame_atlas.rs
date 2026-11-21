@@ -16,7 +16,7 @@ pub const MOBILE_ATLAS_PAGE_SIZE: u32 = 1024;
 /// every direction.
 pub const MOBILE_ATLAS_PAGES: u32 = 8;
 /// The transparent texels kept between frames, so a filtered tap at a frame's edge reads none of its neighbour.
-const FRAME_GUTTER: u32 = 1;
+pub const FRAME_GUTTER: u32 = 1;
 /// A page no drawn clip used for this long empties.
 pub const IDLE_PAGE_RELEASE_SECS: f64 = 300.0;
 const BYTES_PER_TEXEL: u32 = 4;
@@ -125,29 +125,45 @@ impl<K: Copy + Eq + Hash> MobileFrameAtlas<K> {
     /// the frames do not fit an empty page.
     pub fn place_clip(&mut self, clip: K, frames: &[(u32, u32, std::sync::Arc<[u8]>)], now: f64)
         -> Option<(Vec<AtlasRect>, Vec<K>)> {
+        let sizes = frames.iter().map(|(width, height, _)| (*width, *height)).collect::<Vec<_>>();
+        let (rects, evicted) = self.reserve_clip(clip, &sizes, now)?;
+        for (rect, (_, _, rgba)) in rects.iter().zip(frames) {
+            self.staged.push(FrameUpload { rect: *rect, rgba: rgba.clone() });
+        }
+        Some((rects, evicted))
+    }
+
+    /// Makes room for the frames of `clip`, `(width, height)` each, on one page, as `place_clip` does, for pixels the
+    /// GPU writes there itself (the RIFE in-betweens).
+    pub fn reserve_clip(&mut self, clip: K, sizes: &[(u32, u32)], now: f64) -> Option<(Vec<AtlasRect>, Vec<K>)> {
         let mut evicted = Vec::new();
-        let layer = match self.page_with_room(frames) {
+        let layer = match self.page_with_room(sizes) {
             Some(layer) => layer,
             None => {
+                if !fits(&mut Page::<K>::empty(), sizes) {
+                    return None;
+                }
                 let layer = self.least_recently_used_page();
                 evicted = std::mem::take(&mut self.pages[layer].clips);
                 self.pages[layer] = Page::empty();
-                if !fits(&mut Page::<K>::empty(), frames) {
-                    return None;
-                }
                 layer
             }
         };
         let page = &mut self.pages[layer];
-        let rects = frames.iter().map(|(width, height, rgba)| {
-            let (x, y) = page.place(*width, *height).expect("the page was checked to hold the clip");
-            let rect = AtlasRect { layer: layer as u32, x, y, width: *width, height: *height };
-            self.staged.push(FrameUpload { rect, rgba: rgba.clone() });
-            rect
+        let rects = sizes.iter().map(|&(width, height)| {
+            let (x, y) = page.place(width, height).expect("the page was checked to hold the clip");
+            AtlasRect { layer: layer as u32, x, y, width, height }
         }).collect();
         page.clips.push(clip);
         page.last_used = now;
         Some((rects, evicted))
+    }
+
+    /// Whether `reserve_clip` would find room for frames of `sizes` without emptying a page used since `since`.
+    /// Frames no page holds count as room: `reserve_clip` turns them down.
+    pub fn has_room_sparing(&self, sizes: &[(u32, u32)], since: f64) -> bool {
+        self.page_with_room(sizes).is_some() || self.pages[self.least_recently_used_page()].last_used < since
+            || !fits(&mut Page::<K>::empty(), sizes)
     }
 
     /// Marks the page of a clip drawn at `now`.
@@ -169,7 +185,7 @@ impl<K: Copy + Eq + Hash> MobileFrameAtlas<K> {
         released
     }
 
-    fn page_with_room(&self, frames: &[(u32, u32, std::sync::Arc<[u8]>)]) -> Option<usize> {
+    fn page_with_room(&self, sizes: &[(u32, u32)]) -> Option<usize> {
         // A trial on a copy of each page's shelves, the fullest first, so that the pages fill one by one.
         let mut order = (0..self.pages.len()).filter(|&layer| !self.pages[layer].is_empty()).collect::<Vec<_>>();
         order.sort_by_key(|&layer| std::cmp::Reverse(self.pages[layer].next_shelf_y));
@@ -178,7 +194,7 @@ impl<K: Copy + Eq + Hash> MobileFrameAtlas<K> {
             let page = &self.pages[layer];
             let mut trial = Page::<K> { shelves: page.shelves.clone(), next_shelf_y: page.next_shelf_y,
                 last_used: page.last_used, clips: Vec::new() };
-            fits(&mut trial, frames)
+            fits(&mut trial, sizes)
         })
     }
 
@@ -194,8 +210,8 @@ impl<K: Copy + Eq + Hash> MobileFrameAtlas<K> {
     }
 }
 
-fn fits<K>(page: &mut Page<K>, frames: &[(u32, u32, std::sync::Arc<[u8]>)]) -> bool {
-    frames.iter().all(|(width, height, _)| page.place(*width, *height).is_some())
+fn fits<K>(page: &mut Page<K>, sizes: &[(u32, u32)]) -> bool {
+    sizes.iter().all(|&(width, height)| page.place(width, height).is_some())
 }
 
 fn atlas_image() -> Image {
@@ -214,7 +230,7 @@ fn atlas_image() -> Image {
 }
 
 /// Hands the frames placed this frame to the extraction.
-pub fn sys_stage_mobile_frame_uploads(atlas: Option<ResMut<MobileFrameAtlas<super::clips::ClipKey>>>) {
+pub fn sys_stage_mobile_frame_uploads(atlas: Option<ResMut<MobileFrameAtlas<super::clips::AtlasEntry>>>) {
     if let Some(mut atlas) = atlas {
         atlas.stage_for_extract();
     }

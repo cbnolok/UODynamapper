@@ -1,7 +1,8 @@
 //! The GPU port against PyTorch's reference tensors, and its speed. Both need a GPU adapter and are ignored by default;
 //! the comparison also needs the reference export, a folder named by RIFE_REFERENCE_DIR holding `reference.json` and
 //! CHW f32 little-endian tensors computed with the same fp16 weights (the input, each block's accumulated flow, the
-//! mask logit and the merged frame at t = 0.25, 0.5 and 0.75).
+//! mask logit and the merged frame at t = 0.25, 0.5 and 0.75). The comparison blends bilinearly, as Practical-RIFE
+//! does.
 
 use super::*;
 use std::time::{Duration, Instant};
@@ -90,7 +91,7 @@ fn matches_pytorch_reference() {
         return;
     };
     let index: serde_json::Value = serde_json::from_slice(&std::fs::read(directory.join("reference.json")).unwrap()).unwrap();
-    let model = RifeModel::new(&gpu.device).unwrap();
+    let model = RifeModel::with_bilinear_final_warp(&gpu.device).unwrap();
     let mut failures = Vec::new();
     for (case, entry) in index.as_object().unwrap() {
         let width = entry["width"].as_u64().unwrap() as u32;
