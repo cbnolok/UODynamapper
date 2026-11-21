@@ -26,7 +26,11 @@ pub struct AnimationFrameCc {
 pub struct AnimationFrameCcMetadata {
     pub format_id: u32,
     pub version: u32,
+    /// The body (the `%06d` of the entry name).
     pub anim_id: u32,
+    /// The action of the first frame table entry: the `%02d` of the entry name, which every entry of a shipped file
+    /// repeats. `None` without frames.
+    pub action: Option<u16>,
     pub frame_count: u32,
     pub frames: Vec<AnimFrameInfo>,
 }
@@ -71,6 +75,7 @@ impl AnimationFrameCc {
             format_id: parsed.format_id,
             version: parsed.version,
             anim_id: parsed.anim_id,
+            action: parsed.records.first().map(|record| record.action),
             frame_count: parsed.frame_count,
             frames,
         })
@@ -107,6 +112,7 @@ impl AnimationFrameCc {
 
 #[derive(Debug, Clone, Copy)]
 struct AnimationFrameCcRecord {
+    action: u16,
     frame_id: u16,
     frame_start: usize,
 }
@@ -136,9 +142,11 @@ fn parse_header_and_records(data: &[u8]) -> eyre::Result<ParsedAnimationFrameCc>
     let mut records = Vec::with_capacity(frame_count as usize);
     for frame_index in 0..frame_count as usize {
         let entry_start = frame_entry_start(first_frame_address, frame_index)?;
+        let action = read_u16_at(data, entry_start)?;
         let frame_id = read_u16_at(data, entry_start + 2)?;
         let frame_start = frame_data_start(data, first_frame_address, frame_index)?;
         records.push(AnimationFrameCcRecord {
+            action,
             frame_id: normalized_frame_id(frame_id, frame_index),
             frame_start,
         });
@@ -376,6 +384,8 @@ fn read_u32_at(data: &[u8], offset: usize) -> eyre::Result<u32> {
 mod tests {
     use super::*;
 
+    const TEST_ACTION: u16 = 22;
+
     #[test]
     fn parse_reads_frame_entries_without_cursor_seeks() {
         let data = cc_payload(2, 1, 2);
@@ -383,6 +393,7 @@ mod tests {
         let parsed = AnimationFrameCc::parse(&data).expect("payload should parse");
         let metadata = AnimationFrameCc::parse_metadata(&data).expect("metadata should parse");
 
+        assert_eq!(metadata.action, Some(TEST_ACTION));
         assert_eq!(parsed.frame_count, 2);
         assert_eq!(parsed.frames.len(), 2);
         assert_eq!(metadata.frames.len(), 2);
@@ -445,7 +456,7 @@ mod tests {
         push_u32(&mut data, header_size as u32);
 
         for frame_id in frame_ids {
-            push_u16(&mut data, 0);
+            push_u16(&mut data, TEST_ACTION);
             push_u16(&mut data, *frame_id);
             push_u64(&mut data, 0);
             push_u32(&mut data, 0);

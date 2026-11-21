@@ -152,7 +152,9 @@ server animation plays. Movement 0 when standing (+0x1a8), else 1 walk or 2 run 
 entry of the first group of the parent chain that has one (its alternate action when the layer-2 item's tile
 definition asks), else the default action of the chain's last group. `CMobile_SetUopAction` runs when the action
 changes; the frame time is 1000 / fps of the sequence (62.0 ms for a non-UOP action); the counter wraps at the frame
-count. **confirmed**.
+count. **confirmed**. The fps is `GetActionFps` (0x00408d83: the resolved action's, 16 for none) with the flying
+switch `DAT_0074dca5` on, as both callers of `FUN_00407f52` set it to 1; a UOP body without a sequence entry keeps
+the frame time it had. **confirmed**. The package stores that fps on the UOP animation records of these bodies.
 
 `CMobile_UopSequenceGroup` picks the group: 2 (mounted) when the sequence has group 2 and the mobile rides
 (+0x1fc); a flier (gate and +0xcc & 4) 4 in war, 5 in peace; 0 in war (unless vtable +0xc0); 3 for a running

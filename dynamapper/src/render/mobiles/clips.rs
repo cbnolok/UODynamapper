@@ -12,7 +12,8 @@ use super::frame_atlas::{AtlasRect, MobileFrameAtlas};
 use super::placement::FramePlacement;
 use super::rife_in_betweens::InBetweenKey;
 
-/// The Classic client's time per frame of a mobile's animation (ClassicUO `CHARACTER_ANIMATION_DELAY`).
+/// The Classic client's time per frame of a MUL body's animation (ClassicUO `CHARACTER_ANIMATION_DELAY`); UOP bodies
+/// take their sequence's fps (`MobileAnimCcAnimationRecord::fps`).
 pub const CLASSIC_FRAME_SECS: f32 = 0.08;
 
 /// Which client's frames a clip shows.
@@ -233,8 +234,14 @@ fn decode_classic_clip(package: &MobileAnimCcPackage, key: ClipKey) -> Option<De
             })
         })
         .collect::<Option<Vec<_>>>()?;
-    (!frames.is_empty()).then_some(DecodedClip { frames, mirrored, frame_secs: CLASSIC_FRAME_SECS,
+    (!frames.is_empty()).then_some(DecodedClip { frames, mirrored, frame_secs: frame_secs_at(animation.fps),
         stored: u32::from(stored_direction) })
+}
+
+/// The time per frame at `fps` frames a second; `CLASSIC_FRAME_SECS` without an fps (Classic MUL bodies, and
+/// animations no sequence times).
+fn frame_secs_at(fps: f32) -> f32 {
+    if fps > 0.0 { fps.recip() } else { CLASSIC_FRAME_SECS }
 }
 
 /// An Enhanced clip: the package holds every direction, a mirrored one sharing the frames of its stored twin. A
@@ -259,7 +266,7 @@ fn decode_enhanced_clip(package: &MobileAnimEcPackage, key: ClipKey) -> Option<D
             })
         })
         .collect::<Option<Vec<_>>>()?;
-    let frame_secs = if resolved.fps > 0.0 { resolved.fps.recip() } else { CLASSIC_FRAME_SECS };
+    let frame_secs = frame_secs_at(resolved.fps);
     (!frames.is_empty()).then_some(DecodedClip { frames, mirrored: record.is_mirrored(), frame_secs,
         stored: record.frame_start })
 }
@@ -273,6 +280,14 @@ mod tests {
             rect: AtlasRect { layer: 0, x: 0, y: 0, width: 1, height: 1 },
             placement: FramePlacement { width: 1.0, height: 1.0, anchor_x: 0.0, anchor_y: 0.0 },
         }
+    }
+
+    #[test]
+    fn a_classic_clip_takes_the_fps_of_its_uop_sequence_and_the_classic_delay_without_one() {
+        use udd_assets::animation::mobile_anim_cc::NO_SEQUENCE_FPS;
+        const UOP_SEQUENCE_FPS: f32 = 12.0;
+        assert!((frame_secs_at(UOP_SEQUENCE_FPS) - 1.0 / UOP_SEQUENCE_FPS).abs() < f32::EPSILON);
+        assert_eq!(frame_secs_at(NO_SEQUENCE_FPS), CLASSIC_FRAME_SECS);
     }
 
     #[test]

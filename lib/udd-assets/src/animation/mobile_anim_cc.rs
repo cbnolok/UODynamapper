@@ -109,7 +109,7 @@ pub struct MobileAnimCcPageRecord {
     pub pixel_format: PagePixelFormat,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq)]
 pub struct MobileAnimCcAnimationRecord {
     pub body_id: u16,
     pub action_id: u16,
@@ -119,7 +119,17 @@ pub struct MobileAnimCcAnimationRecord {
     pub frame_start: u32,
     pub frame_count: u16,
     pub flags: u16,
+    /// Frames per second the client plays this animation at: for a `MOB_TYPE_FLAG_USES_UOP_FRAMES` body's UOP
+    /// record, the fps of `action_id` in the body's `AnimationSequence.uop` entry (`GetActionFps`, aliases resolved,
+    /// flying animations on; `CMobile_SetUopAction` 0x005b6580 sets the frame time to 1000 / fps, Classic
+    /// 7.0.103.0, confirmed). `NO_SEQUENCE_FPS` for the others: MUL frames, and UOP bodies without a sequence
+    /// entry, whose frame time the client doesn't set there.
+    pub fps: f32,
 }
+
+/// [`MobileAnimCcAnimationRecord::fps`] of an animation no sequence times: the player keeps its own frame time
+/// (ClassicUO's `CHARACTER_ANIMATION_DELAY` for MUL bodies).
+pub const NO_SEQUENCE_FPS: f32 = 0.0;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct MobileAnimCcFrameRecord {
@@ -642,6 +652,7 @@ fn parse_animation_manifest(bytes: &[u8]) -> eyre::Result<Vec<MobileAnimCcAnimat
             frame_start: cursor.read_u32::<LittleEndian>()?,
             frame_count: cursor.read_u16::<LittleEndian>()?,
             flags: cursor.read_u16::<LittleEndian>()?,
+            fps: cursor.read_f32::<LittleEndian>()?,
         });
     }
     Ok(animations)
@@ -746,6 +757,7 @@ mod tests {
 
     #[test]
     fn package_reader_loads_metadata_and_page_payload() {
+        const TEST_FPS: f32 = 12.5;
         let page_manifest = {
             let mut bytes = Vec::new();
             bytes.extend_from_slice(&PAGE_MANIFEST_MAGIC);
@@ -777,6 +789,7 @@ mod tests {
             byteorder::WriteBytesExt::write_u32::<LittleEndian>(&mut bytes, 0).unwrap();
             byteorder::WriteBytesExt::write_u16::<LittleEndian>(&mut bytes, 1).unwrap();
             byteorder::WriteBytesExt::write_u16::<LittleEndian>(&mut bytes, 0).unwrap();
+            byteorder::WriteBytesExt::write_f32::<LittleEndian>(&mut bytes, TEST_FPS).unwrap();
             bytes
         };
         let frame_manifest = {
@@ -851,6 +864,7 @@ mod tests {
 
         assert_eq!(package.pages().len(), 1);
         assert_eq!(package.animation(2, 3, 4).unwrap().source_index, 20);
+        assert_eq!(package.animation(2, 3, 4).unwrap().fps, TEST_FPS);
         assert_eq!(package.animation_frames(package.animation(2, 3, 4).unwrap()).len(), 1);
         assert_eq!(package.body_resolve_record(7).unwrap().resolved_body_id, 8);
         assert_eq!(package.body_type_record(7).unwrap().group_type, 3);
@@ -895,6 +909,7 @@ mod tests {
             animation_bytes.extend_from_slice(&animation.frame_start.to_le_bytes());
             animation_bytes.extend_from_slice(&animation.frame_count.to_le_bytes());
             animation_bytes.extend_from_slice(&animation.flags.to_le_bytes());
+            animation_bytes.extend_from_slice(&animation.fps.to_le_bytes());
         }
         let frames = manifest(FRAME_MANIFEST_MAGIC, 0);
         let mut resolve_bytes = manifest(BODY_RESOLVE_MANIFEST_MAGIC, body_resolve.len());
@@ -950,6 +965,7 @@ mod tests {
             frame_start: 0,
             frame_count: 0,
             flags,
+            fps: NO_SEQUENCE_FPS,
         }
     }
 
@@ -1107,6 +1123,7 @@ mod tests {
             frame_start: 0,
             frame_count: 1,
             flags,
+            fps: NO_SEQUENCE_FPS,
         };
         let (mul, uop) = (record(0), record(MOBILE_ANIM_CC_FLAG_UOP_SOURCE));
 
