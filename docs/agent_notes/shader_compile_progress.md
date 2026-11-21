@@ -20,23 +20,53 @@ Two sources feed it:
   static picking MSAA resolve (`gpu_picking.rs`, render thread, only with MSAA). The SPAN and BC pipelines are warmed
   but not drawn with yet (2026-11-21).
 
-## Cold start: the app freezes, so the overlay cannot show it
+## Cold start: the world waits for the window's pipelines
 
-With Mesa's cache empty (RADV, Radeon 880M, 2026-11-21) the app renders nothing for about 35 s after the scene
-loads; the first frame comes with about 35 of the 45 to 48 startup pipelines ready, and the overlay shows the last ones
-for a second or two. Two causes together:
+With Mesa's cache empty (RADV, Radeon 880M, 2026-11-21) the startup pipelines take about 35 s (up to 48 s with the
+machine busy), most of it the first land/art `main.wesl` pipeline. `app.rs` gives Bevy's async compute pool one thread
+and Bevy compiles its queued pipelines on that pool, in the order it spawned them, so a pipeline waits for every one
+spawned before it. The app did not freeze at the start (frames ran at about 50 fps), but the window stayed blank: the
+blit to the window, egui's pipeline, the tonemapping and the screenshot pipeline were queued in the same frames as the
+world's and came out only at the end, with the overlay of the compiles. Bevy's upscaling prepare calls
+`block_on_render_pipeline` on a view's blit when its key is new; in the first frame that returns at once (the blit's
+shader is not loaded yet), but a blit for a new format requested while compiles are in flight waits for all of them:
+switching to night 8 s into a cold start (the light buffer camera, whose image has its own format, turning on) froze
+the app for 26 to 30 s. No other `block_on` runs on the frame path, in Bevy 0.20 (egui's pipelines are read with
+`get_render_pipeline`) or in the app.
 
-- `app.rs` gives Bevy's async compute pool one thread, and Bevy compiles its queued pipelines on that pool, so they
-  compile one after another.
-- Bevy's upscaling prepare (`bevy_core_pipeline` `upscaling/mod.rs`) calls `block_on_render_pipeline` on its blit
-  pipeline the first time a view's output format is seen. The blit is queued in the same frame as the world's
-  pipelines, behind them on that one thread, so the render world (and with it the main world) waits for all of them.
+`render/world_draw_hold.rs` holds the world back once, at the start: every `Camera3d` (the world camera and the light
+buffer camera) starts active on no render layer, so its pipelines are not even requested but its blit is, until the
+render world reports the window's pipelines ready (every view drawing to a target has requested its blit and no
+pipeline is waiting), at most `HOLD_LIMIT` (10 s); then each gets its own layers and activity back. The first frames
+queue only Bevy's own and the window's pipelines, about 41, ready in 0.6 to 0.9 s even cold; the world's queue behind
+nothing, the window and the overlay draw while they compile (one batch with the GPU compute warm-up, which keeps it
+open) and the world fills in as they arrive. While held, `WaitingRenderPipelines` counts the hold as one pipeline, so
+the export and the control channel's readiness wait for it. Measured from the launch in a headless KWin (below), with
+the 1280 x 800 session at Britain (1488, 1686), each style's afternoon; cold one run each, warm the median of 5:
 
-Bevy pipelines queued after the blit is ready compile without a freeze and show in the overlay (the night pipelines on
-the first switch to night, for example). The logged times of a startup batch include the wait behind the others.
+| start | style | first presented, before | after | world drawn, before | after | longest frame until then, before | after |
+|---|---|---|---|---|---|---|---|
+| cold | Classic | 36.7 s | 2.4 s | 37.2 s | 36.3 s | 331 ms | 302 ms |
+| cold | Enhanced | 35.2 s | 2.9 s | 36.0 s | 36.1 s | 304 ms | 305 ms |
+| cold | KR-like | 35.2 s | 2.7 s | 36.3 s | 36.1 s | 318 ms | 320 ms |
+| cold | UOD-Painterly | 35.2 s | 2.9 s | 36.0 s | 36.2 s | 309 ms | 314 ms |
+| warm | Classic | 3.0 s | 2.3 s | 3.2 s | 3.1 s | 215 ms | 209 ms |
+| warm | Enhanced | 2.8 s | 2.6 s | 3.4 s | 3.4 s | 222 ms | 214 ms |
+| warm | KR-like | 3.5 s | 2.6 s | 3.5 s | 3.3 s | 241 ms | 224 ms |
+| warm | UOD-Painterly | 2.8 s | 2.6 s | 3.4 s | 3.1 s | 221 ms | 218 ms |
+
+The night switch 8 s into a cold start: before, one 26.5 s frame; after, at most 301 ms.
+
+The screenshot is the one thing still behind the batch: Bevy maps its readback buffer in a task on the same async
+compute pool, so a capture requested during the cold compiles completes after them (the frame is captured at once).
 
 ## Testing with a cold cache
 
 Point `MESA_SHADER_CACHE_DIR` at a fresh empty directory under the scratch folder for the launch (never delete
-`~/.cache/mesa_shader_cache`); RADV keeps its pipeline cache there too. The control socket's captures cannot be taken
-during the freeze; the first one completes after it.
+`~/.cache/mesa_shader_cache`); RADV keeps its pipeline cache there too. The control socket's captures cannot time the
+start (see above), Xvfb cannot present with RADV (no DRI3) and ffmpeg cannot grab an XWayland window off the active
+desktop (BadMatch). A private headless KWin works: `dbus-run-session -- kwin_wayland --virtual --xwayland --width 1280
+--height 800 --socket <name> <holder script>` gives a `DISPLAY` with DRI3 where the app presents, and `ffmpeg -f
+x11grab -draw_mouse 0 -window_id <id>` records it. Hold the preview lock around it. About one recording in eight froze
+on one frame while the app ran on (before and after the hold alike): check the recording, not only its timings
+(2026-11-21, scripts under the scratch folder's `cold-start/`).

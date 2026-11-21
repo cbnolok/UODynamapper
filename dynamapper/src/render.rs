@@ -10,6 +10,7 @@ pub mod scene;
 pub mod shader_compiles;
 pub mod statics;
 pub mod view;
+pub mod world_draw_hold;
 
 use crate::prelude::*;
 use bevy::prelude::*;
@@ -42,6 +43,9 @@ impl Plugin for RenderPlugin {
                 registered_by: "RenderPlugin",
             },
             shader_compiles::ShaderCompilesPlugin {
+                registered_by: "RenderPlugin",
+            },
+            world_draw_hold::WorldDrawHoldPlugin {
                 registered_by: "RenderPlugin",
             },
         ));

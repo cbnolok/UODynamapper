@@ -1,9 +1,12 @@
 //! Render pipelines still compiling, counted in the render world and published to the main world. A new target format
 //! or a newly drawn material needs new pipelines, and Bevy skips the draws whose pipeline is not ready yet: the map
 //! export waits for none to be left before a capture, and so does the development control channel after a switch.
+//! While the world cameras are held at the start (`world_draw_hold`) their pipelines are not even requested: the hold
+//! counts as one.
 
 use bevy::prelude::*;
 use bevy::render::{Render, RenderApp, RenderSystems, render_resource::PipelineCache};
+use crate::render::world_draw_hold::ExtractedWorldDrawHold;
 use std::sync::{
     Arc,
     atomic::{AtomicUsize, Ordering},
@@ -33,6 +36,11 @@ pub fn count_waiting_render_pipelines(app: &mut App) {
         .add_systems(Render, sys_count_waiting_pipelines.in_set(RenderSystems::Cleanup));
 }
 
-fn sys_count_waiting_pipelines(cache: Res<PipelineCache>, waiting: Res<WaitingRenderPipelines>) {
-    waiting.0.store(cache.waiting_pipelines().count(), Ordering::Relaxed);
+fn sys_count_waiting_pipelines(
+    cache: Res<PipelineCache>,
+    hold: Option<Res<ExtractedWorldDrawHold>>,
+    waiting: Res<WaitingRenderPipelines>,
+) {
+    let held = hold.is_some_and(|hold| hold.held());
+    waiting.0.store(cache.waiting_pipelines().count() + usize::from(held), Ordering::Relaxed);
 }
