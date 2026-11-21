@@ -2090,6 +2090,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "block_compression"
+version = "0.11.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "f5ca8c67a97492f3c8263ce18d307053f8aa657e8ecbf191484676bb25ae5f4a"
+dependencies = [
+ "bytemuck",
+ "wgpu",
+]
+
+[[package]]
 name = "blocking"
 version = "1.7.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2860,9 +2870,11 @@ version = "0.1.0"
 dependencies = [
  "bevy",
  "bevy_egui",
+ "block_compression",
  "bytemuck",
  "chrono",
  "color-eyre",
+ "image",
  "indexmap 2.14.2",
  "knuffel",
  "log",
@@ -2885,6 +2897,7 @@ dependencies = [
  "udd-container",
  "uocf",
  "uot-kdl",
+ "uot-texture-codecs",
  "wgpu",
  "wgpu-profiler",
  "windows",

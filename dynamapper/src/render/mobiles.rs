@@ -1,6 +1,7 @@
 //! The mobiles: animated bodies drawn as the clients draw them, with the statics' art sprite shader. The player is
 //! the one mobile so far: the body and mount the settings name, standing, walking or running as it moves.
 
+pub mod block_encode;
 pub mod clips;
 pub mod draw;
 pub mod frame_atlas;

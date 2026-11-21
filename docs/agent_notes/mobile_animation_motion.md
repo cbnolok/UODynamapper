@@ -151,3 +151,87 @@ canvas grey the port matches the prototype to 0.01 tiles.
 The CPU FSR 1.1 EASU and RCAS are in `lib/support/uot-image-postprocess/src/upscaling/fsr.rs`; a WESL port of EASU
 (unwired) is in [`proposals/fsr-upscaling/`](proposals/fsr-upscaling/). There is no GPU RCAS; the land shader has its
 own unsharp mask (`apply_sharpening`).
+
+## Block-compressed frame atlas (evaluation, 2026-11-21)
+
+The frame atlas is `Rgba8UnormSrgb`: 8 pages of 1024², 32 MiB. BC7 would make it 8 MiB and BC1 4 MiB. Nothing is
+wired yet. The evaluation is `render/mobiles/block_encode/tests.rs` (`evaluate_block_formats`, ignored), and its
+sheets and summary are in `uodynamapper-scratch/bc-eval/`.
+
+- **Encoder**: [block_compression](https://github.com/hasenbanck/block_compression) 0.11.0 (MIT), a WGSL port of
+  Intel's ISPC kernels. It uses wgpu "30", so it builds against our 30.0.1 with no second wgpu. We use its `bc15` and
+  `bc7` features. `block_encode.rs` wraps it:
+  - It encodes the sRGB bytes through an `Rgba8Unorm` view. An `*UnormSrgb` BC texture then decodes to the same bytes
+    and samples like the RGBA8 atlas. The GPU decoding matched the CPU decoding exactly for BC7, and within 2/255 for
+    BC1.
+  - Frames are padded to 4×4 with transparent texels.
+  - Blocks are copied one row of blocks at a time, because a multi-row copy needs 256-byte rows.
+- **Crate limits**:
+  - Its BC1 is colour only, in the four-colour mode, so it has no punch-through alpha. If both endpoints come out equal,
+    the block decodes index 3 as transparent.
+  - Our `bc1_punch_through.wgsl` pass runs after it: blocks with transparent texels are re-encoded in the three-colour
+    mode, and equal endpoints are fixed. With it, Classic alpha stays exactly 0/255, with no halo and no holes.
+  - Its BC1–BC5 colour loads ignore `texture_y_offset`, so each frame sits at the origin of its own source texture.
+  - It writes its uniforms through the queue when it records, so use one `compress` per submission.
+  - Creating the compressor compiles all its pipelines. The first time on RADV that took 38.6 s; with Mesa's shader
+    cache warm it took 25 ms. It must be created off the frame path.
+- **Loop bounding**:
+  - 0.5.0 turned it off for BC7 to fix an AMD iGPU crash. 0.9.1 turned it back on, because off gave wrong alpha/basic
+    output on RADV/Navi.
+  - On the 880M, off was 1.3–2× faster (UltraFast 0.27 → 0.21 ms, Fast 1.9 → 1.3, Slow 12.4 → 6.1). It matched the
+    bounded output except 2–4 texels out of 863k, with the same metrics.
+  - The speed-up needs a vendored bc7.wgsl, because the crate offers no switch.
+
+Results on the Radeon 880M. Times are GPU per frame, encoded alone. "Shown" is the error on colour × alpha. "Halo"
+counts texels transparent in the source that decode with alpha.
+
+| frames | format | GPU ms | RGB PSNR (α>0) | shown PSNR / max | alpha max | halo (max α) | B/px |
+|---|---|---:|---:|---:|---:|---:|---:|
+| Classic (12, ~3k px) | BC1 + punch-through | 0.007 | 30.0 | 33.8 / 52 | 0 | 0 | 0.5 |
+| Classic | BC7 UltraFast | 0.27 | 37.4 | 41.3 / 24 | 1 (opaque → 254) | 0 | 1 |
+| Classic | BC7 Fast / Slow | 1.9 / 12.4 | 37.9 / 38.1 | 41.8 / 20 | 4 | 0 | 1 |
+| Enhanced (20, ~43k px) | BC7 UltraFast | 0.28 | 33.9 | 38.6 / 80 | 45 | 7090 (32) | 1 |
+| Enhanced | BC7 Fast | 2.0 | 35.8 | 40.3 / 91 | 112 (one block) | 5097 (40) | 1 |
+| Enhanced | BC7 Slow | 13.4 | 36.1 | 40.5 / 91 | 112 | 5072 (40) | 1 |
+| Enhanced | CPU BC7 Analytical (ours, wall ms) | 0.40 | 33.9 | 38.6 / 76 | 48 | 6275 (32) | 1 |
+| in-between 64² / 128² (Classic) | BC7 UltraFast | 0.27 / 0.27 | 34.9 / 38.8 | 42.3 / 46.8 | 1 | 0 | 1 |
+| in-between 64² / 128² | BC1 + punch-through | 0.008 / 0.009 | 27.1 / 31.5 | 34.6 / 39.5 | 0 | 0 | 0.5 |
+| in-between 256² (Enhanced) | BC7 UltraFast / Fast | 0.53 / 3.7 | 33.9 / 35.3 | 43.6 / 44.7 | 42 / 47 | 223 / 173 (16) | 1 |
+
+Observations:
+
+- The halos and the larger alpha errors on Enhanced come from BC7 itself: our CPU encoder shows the same.
+- Fast and slower add 0.5–2 dB for 7–50× the time.
+- The time of small frames is latency, not size: 64² and 128² cost the same.
+- BC1's colour noise on Classic's dithered art is visible at 4× in the sheets, and BC7 UltraFast's is much smaller.
+  The user should judge it from the sheets.
+
+**Recommendation (to confirm)**:
+
+- **Format and quality**: BC7 UltraFast for all sources, in one `Bc7RgbaUnormSrgb` atlas array. BC1 for Classic only
+  as a low-VRAM option, which needs its own array, since one texture has one format.
+- **Generated frames** (RIFE in-betweens, SPAN): encode them on the GPU, where they already are. An in-between costs
+  0.27–0.53 ms on top of RIFE's 1.4–4.8 ms. The in-between path would write to a scratch `Rgba8Unorm` texture
+  instead of the staging rows.
+- **Decoded frames**: the CPU encoder (0.1–0.4 ms wall per frame, multithreaded, about UltraFast quality) or a
+  GPU encode after the upload.
+- **Atlas changes**:
+  - Rects start on multiples of 4 and are padded to whole blocks.
+  - The empty-page fill stays zero: a zero BC7 block is transparent black. A zero BC1 block is opaque black, so BC1
+    pages need `BC1_TRANSPARENT_BLOCK`.
+  - `FRAME_GUTTER` 1 becomes a block wherever filtering can reach past a frame.
+
+**Option: upload BC7 pages without decoding.** These packages are `Rgba8888` pages, while the converter's default is
+BC7, and the option needs BC7 packages. Their layout already fits:
+
+- Packing is `Bc7Oriented`: every one of the 996k Classic and 1.55M Enhanced frames starts on a block corner.
+- Extents are aligned to 4, and the gutter is 4 texels (extruded edge pixels).
+
+The frame's 4-aligned rect of blocks (`uot_texture_codecs::bc7::extract_bc7_subrect`) then copies straight into a BC7
+atlas layer. It needs:
+
+- a public udd-assets call for a frame's raw blocks (page reads and `extract_atlas_subrect_rgba` are crate-private);
+- the atlas rect rules above.
+
+The extruded gutter is outside the frame's rect and isn't copied. No decode or encode is left, and the quality is the
+converter's BC7.
