@@ -80,9 +80,10 @@ the body's travel; summed over the cycle and divided by the tile's screen length
 away from the camera and all small creatures (dogs, rats, cats) give unusable numbers, which the clamp absorbs. So the
 strides are measured offline over every body into a table, not guessed per frame at run time.
 
-A rider and its mount keep one shared cycle, paced by the mount's stride. The sequences already aim for this: mounts'
-mounted move actions run at 12 fps instead of 9 so that the mount's bounce stays in step with the rider (UOP animation
-editor's remark, 2026-11-21; the package has 709 mounted walks/runs at 12 fps). A sequence frame count can exceed the
+A rider and its mount keep one shared cycle, paced by the mount's stride. The sequences already aim for this: a mount's
+ridden run is set to 12 fps instead of 9 so that its bounce stays in step with the rider (UOP animation editor's
+remark, 2026-11-21, on body 1409, which the installed clients don't have), and the riders' mounted walks and runs are
+12 fps too (709 bodies in the Enhanced package). A sequence frame count can exceed the
 stored frames (the package fills the gap with empty placeholders); the app drops empty frames, so neither the
 in-betweens nor the stride sum see them.
 
