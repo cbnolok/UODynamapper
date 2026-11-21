@@ -206,7 +206,9 @@ pub(super) fn show_sequence_panel(app: &mut UocfEditorApp, ui: &mut egui::Ui) {
         let body_type = selected_sequence_id(app);
         match (&app.animations_view.sequence.package, &app.selected_anim_sequence) {
             (Some((path, dialect)), Some((id, _))) => {
-                ui.label(format!("Entry {id} · {}", dialect.label())).on_hover_text(path.display().to_string());
+                // The folder names the client; the dialect is only the layout (a Classic folder reads as Enhanced).
+                ui.label(format!("Entry {id} of {} · {} layout", package_folder_name(path), dialect.label()))
+                    .on_hover_text(path.display().to_string());
             }
             (Some((path, _)), None) => {
                 ui.colored_label(MISSING_COLOUR, format!("No sequence entry {body_type}"))
@@ -225,6 +227,8 @@ pub(super) fn show_sequence_panel(app: &mut UocfEditorApp, ui: &mut egui::Ui) {
         SequenceTab::Ride => show_ride_tab(app, ui),
         SequenceTab::Scan => show_scan_tab(app, ui),
     }
+    // The panel keeps its height whatever the tab shows, so the tab row stays under the pointer.
+    ui.take_available_space();
 }
 
 fn show_save_controls(app: &mut UocfEditorApp, ui: &mut egui::Ui) {
@@ -345,6 +349,11 @@ fn update_stored_frames(app: &mut UocfEditorApp, ctx: &egui::Context) -> Option<
         }
     }
     Some(job.frames_body)
+}
+
+/// The name of the folder holding the package `path` (its client's folder).
+fn package_folder_name(path: &Path) -> String {
+    path.parent().and_then(Path::file_name).map_or_else(|| path.display().to_string(), |name| name.to_string_lossy().into_owned())
 }
 
 fn optional_text(value: Option<impl std::fmt::Display>) -> String {
@@ -553,13 +562,9 @@ fn show_action_editor(app: &mut UocfEditorApp, ui: &mut egui::Ui) {
         return;
     };
     let record = sequence.actions[&action].clone();
-    ui.label(format!(
-        "Plays {} · {} frames at {} fps · cycle {} s",
-        optional_text(summary.resolved),
-        summary.frame_count,
-        summary.fps,
-        cycle_text(&summary)
-    ));
+    // Two short lines, so a longer value never wraps a line and moves the fields under the pointer.
+    ui.label(format!("Plays {} · {} frames at {} fps", optional_text(summary.resolved), summary.frame_count, summary.fps));
+    ui.label(format!("Cycle {} s", cycle_text(&summary)));
     let mut result: Option<Result<bool, String>> = None;
     egui::Grid::new("sequence_action_fields").num_columns(2).show(ui, |ui| {
         ui.label("FPS:");
@@ -902,5 +907,12 @@ mod tests {
         assert_eq!(parse_frames("none"), Ok(BTreeSet::new()));
         assert_eq!(parse_frames(""), Ok(BTreeSet::new()));
         assert!(parse_frames("1,x").is_err());
+    }
+
+    #[test]
+    fn an_entry_names_the_client_folder_of_its_package() {
+        let classic = Path::new("/clients/Ultima Online Classic/AnimationSequence.uop");
+        assert_eq!(package_folder_name(classic), "Ultima Online Classic");
+        assert_eq!(package_folder_name(Path::new("AnimationSequence.uop")), "AnimationSequence.uop");
     }
 }
