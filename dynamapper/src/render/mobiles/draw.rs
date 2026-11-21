@@ -8,8 +8,12 @@ use bevy::prelude::*;
 use bevy::render::storage::ShaderBuffer;
 use bytemuck::Zeroable;
 use crate::render::statics::static_batches::{SpriteInstance, CLIENT_SHADOW_FLAG_CASTS, STATIC_HUE_FLAG_EC_SPRITE};
+use crate::render::lighting::static_lights::RenderStaticLightInstances;
+use crate::render::scene::SceneStateData;
+use crate::render::statics::statics_collect::static_art_billboard_local_light_corners;
 use crate::render::statics::static_placement::{apply_cc_static_world_anchor_translation, StaticDepthClass,
     STATIC_ART_Y_BIAS};
+use crate::settings::Settings;
 use crate::render::statics::statics_draw::{build_art_batch_mesh, ArtSpriteMaterial, ArtSpriteRenderAssets};
 use crate::world::mobile_motion::MobileMotion;
 use super::clips::{AnimSource, ClipKey, MobileClips};
@@ -157,9 +161,16 @@ pub fn sys_draw_mobiles(
     packages: Res<super::MobileAnimPackages>,
     mut storage_buffers: ResMut<Assets<ShaderBuffer>>,
     mut meshes: ResMut<Assets<Mesh>>,
+    settings: Res<Settings>,
+    scene_state: Res<SceneStateData>,
+    static_lights: Option<Res<RenderStaticLightInstances>>,
 ) {
     let (Some(mut draw_assets), Some(mut atlas)) = (draw_assets, atlas) else { return };
     let now = time.elapsed_secs_f64();
+    // The static lights on the cards, as on the statics' when that option is on.
+    let local_lights = static_lights.as_deref()
+        .filter(|_| settings.world_rendering.enable_static_art_local_lights)
+        .map(|lights| (lights, scene_state.map_id));
     clips.place_decoded(&mut atlas, now);
 
     let mut instances = Vec::with_capacity(MAX_MOBILE_INSTANCES as usize);
@@ -186,7 +197,7 @@ pub fn sys_draw_mobiles(
             let Some(frame) = clip.frame_at(motion.clip_secs()) else { continue };
             atlas.touch(frame.rect.layer, now);
             instances.push(mobile_instance(transform.translation, frame.rect, frame.placement, clip.mirrored,
-                drawn.offset_px, drawn.tie_level, source));
+                drawn.offset_px, drawn.tie_level, source, local_lights));
         }
     }
 
@@ -213,7 +224,9 @@ pub fn sys_draw_mobiles(
     }
 }
 
-/// The instance of a frame at a mobile's position `translation` (world x and z the UO x and y, world y its z).
+/// The instance of a frame at a mobile's position `translation` (world x and z the UO x and y, world y its z), lit by
+/// `local_lights` of a map when given.
+#[allow(clippy::too_many_arguments)]
 fn mobile_instance(
     translation: Vec3,
     rect: super::frame_atlas::AtlasRect,
@@ -222,6 +235,7 @@ fn mobile_instance(
     offset_px: (f32, f32),
     tie_level: u32,
     source: AnimSource,
+    local_lights: Option<(&RenderStaticLightInstances, u32)>,
 ) -> SpriteInstance {
     let (world_x, world_z) = apply_cc_static_world_anchor_translation(translation.x, translation.z);
     let bounds = mobile_card_bounds(placement, mirrored, offset_px, MOBILE_PIXEL_RATIO);
@@ -252,7 +266,8 @@ fn mobile_instance(
         client_shadow_flags: CLIENT_SHADOW_FLAG_CASTS,
         client_shadow_height: 0.0,
         client_grunge_anchor: [world_x, world_z],
-        local_light_corners: [0; 4],
+        local_light_corners: local_lights.map_or([0; 4], |(lights, map_id)| static_art_billboard_local_light_corners(
+            true, lights, map_id, world_x, world_z, translation.y, bounds, false)),
         color_rgba: OPAQUE_COLOR,
     }
 }

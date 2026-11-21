@@ -265,7 +265,7 @@ fn static_local_light_rgba(
 /// top (`local_max_y`) at corner z 0. A card showing flat art (`STATIC_FLAG_FLAT_ART`) takes them at the ground points
 /// its corners show, down the view ray at its base height, so the light runs on across neighbouring floor or roof
 /// tiles as over the flat statics.
-fn static_art_billboard_local_light_corners(
+pub(crate) fn static_art_billboard_local_light_corners(
     enabled: bool,
     lights: &super::static_lights::RenderStaticLightInstances,
     map_id: u32,
