@@ -28,6 +28,8 @@ uocf = { path = "../../lib/uocf" }
 udd-assets = { path = "../../lib/udd-assets" }
 udd-conv = { path = "../../lib/udd-conv" }
 udd-container = { path = "../../lib/udd-container" }
+# RIFE in-betweens of the selected clip, on a device of the inspector's own.
+uot-gpu-compute = { path = "../../lib/support/uot-gpu-compute" }
 # Simulates and rasterizes the effects of effects_ec.uddp; `dds` decodes the Hues.uop atlas.
 particle-sim = { path = "../../lib/ec-effects/particle-sim", default-features = false, features = ["dds"] }
 # BC1/BC3/BC7 decoding of effect textures.

@@ -1,5 +1,6 @@
 pub mod details;
 pub mod effects;
+pub mod in_betweens;
 pub mod mobile_anim;
 pub mod strides;
 pub mod table;

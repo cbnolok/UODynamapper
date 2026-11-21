@@ -67,6 +67,8 @@ pub struct InspectorApp {
     pub effects_viewer: Option<crate::ui::effects::EffectsViewer>,
     /// The measured strides of the mobile animation package.
     pub strides_panel: Option<crate::ui::strides::StridesPanel>,
+    /// The RIFE in-betweens of the selected clip.
+    pub in_betweens: crate::ui::in_betweens::InBetweenPreview,
     pub gumps_package: Option<Arc<GumpsPackage>>,
     pub selected_mobile_anim_index: usize,
     pub selected_mobile_anim_frame_index: usize,
@@ -130,6 +132,7 @@ impl InspectorApp {
             mobile_anim_ec_package: None,
             effects_viewer: None,
             strides_panel: None,
+            in_betweens: Default::default(),
             gumps_package: None,
             selected_mobile_anim_index: 0,
             selected_mobile_anim_frame_index: 0,
@@ -605,6 +608,7 @@ impl InspectorApp {
                     };
                 self.strides_panel = stride_package
                     .map(|package| crate::ui::strides::StridesPanel::new(path.clone(), package));
+                self.in_betweens.reset();
                 self.gumps_package = GumpsPackage::from_uddp_package(reader.clone())
                     .ok()
                     .filter(|package| !package.available_gump_ids().is_empty())
@@ -1861,6 +1865,7 @@ mod tests {
             mobile_anim_ec_package: None,
             effects_viewer: None,
             strides_panel: None,
+            in_betweens: Default::default(),
             gumps_package: None,
             selected_mobile_anim_index: 0,
             selected_mobile_anim_frame_index: 0,
@@ -2214,6 +2219,7 @@ mod tests {
             mobile_anim_ec_package: None,
             effects_viewer: None,
             strides_panel: None,
+            in_betweens: Default::default(),
             gumps_package: None,
             selected_mobile_anim_index: 0,
             selected_mobile_anim_frame_index: 0,
@@ -2332,6 +2338,7 @@ mod tests {
             mobile_anim_ec_package: None,
             effects_viewer: None,
             strides_panel: None,
+            in_betweens: Default::default(),
             gumps_package: None,
             selected_mobile_anim_index: 0,
             selected_mobile_anim_frame_index: 0,
@@ -2413,6 +2420,7 @@ mod tests {
             mobile_anim_ec_package: None,
             effects_viewer: None,
             strides_panel: None,
+            in_betweens: Default::default(),
             gumps_package: None,
             selected_mobile_anim_index: 0,
             selected_mobile_anim_frame_index: 0,
@@ -2731,6 +2739,7 @@ mod tests {
             mobile_anim_ec_package: None,
             effects_viewer: None,
             strides_panel: None,
+            in_betweens: Default::default(),
             gumps_package: None,
             selected_mobile_anim_index: 0,
             selected_mobile_anim_frame_index: 0,

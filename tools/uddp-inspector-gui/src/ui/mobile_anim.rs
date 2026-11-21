@@ -27,6 +27,9 @@ const MOBILE_ANIM_LIST_PANEL_DEFAULT_WIDTH: f32 = 300.0;
 const MOBILE_ANIM_SECTION_HEADER_SPACING: f32 = 4.0;
 const MOBILE_ANIM_PLAYBACK_PANEL_MAX_WIDTH: f32 = 560.0;
 const MOBILE_ANIM_PLAYBACK_PREVIEW_GAP: f32 = 12.0;
+/// The in-betweens of Classic frames have their alpha snapped to 0 or 1, as the Classic frames' is (Dynamapper's
+/// `InBetweenJob::snap_alpha`); the Enhanced ones keep RIFE's coverage.
+const CLASSIC_IN_BETWEEN_ALPHA_SNAP: bool = true;
 /// Texture coordinates of a frame preview, and of a mirrored one (flipped horizontally).
 const FRAME_UV: egui::Rect = egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0));
 const MIRRORED_FRAME_UV: egui::Rect = egui::Rect::from_min_max(egui::pos2(1.0, 0.0), egui::pos2(0.0, 1.0));
@@ -245,6 +248,11 @@ pub fn ui_mobile_anim_cc(app: &mut InspectorApp, ctx: &egui::Context, ui: &mut e
         ui.separator();
         crate::ui::strides::ui_selected_clip_strides(app, ctx, ui, u32::from(selected_animation.body_id),
             selected_animation.action_id);
+        ui.separator();
+        let reader_package = package.clone();
+        app.in_betweens.ui(ctx, ui, app.selected_mobile_anim_index, CLASSIC_IN_BETWEEN_ALPHA_SNAP, || {
+            Box::new(move || reader_package.animation_clip(&selected_animation))
+        });
         ui.separator();
         if let Some(frame) = frames.get(app.selected_mobile_anim_frame_index).copied() {
             let page_size = cc_frame_page_size(&package, frame);
@@ -563,6 +571,11 @@ pub fn ui_mobile_anim_ec(app: &mut InspectorApp, ctx: &egui::Context, ui: &mut e
         ui.separator();
         crate::ui::strides::ui_selected_clip_strides(app, ctx, ui, selected_animation.body_id,
             selected_animation.action_id);
+        ui.separator();
+        let reader_package = package.clone();
+        app.in_betweens.ui(ctx, ui, app.selected_mobile_anim_index, !CLASSIC_IN_BETWEEN_ALPHA_SNAP, || {
+            Box::new(move || reader_package.animation_clip(&selected_animation))
+        });
         ui.separator();
         if let Some(frame) = frames.get(app.selected_mobile_anim_frame_index).copied() {
             let page_size = ec_frame_page_size(&package, frame);

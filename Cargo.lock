@@ -7255,6 +7255,7 @@ dependencies = [
  "udd-container",
  "udd-conv",
  "uocf",
+ "uot-gpu-compute",
  "uot-gui",
  "workspace-hack",
  "zstd",
