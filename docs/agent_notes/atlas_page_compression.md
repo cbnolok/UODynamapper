@@ -390,6 +390,25 @@ starts with it unticked, and `udd-cli pack` applies it only with `--bc7-rdo`. `-
 still uses `DEFAULT_BC7_RDO_LAMBDA` 0.05, which the table shows does nothing; λ 1 with look-back 64 is the setting
 worth offering, after a visual check on sprites (`UDDP_FORMATS.md` asks for one).
 
+### Making it faster
+
+The same 20 Classic pages, wall time of the RDO on the whole pool (Ryzen AI 9 365: 10 cores, 20 threads), with
+identical blocks in every row:
+
+| Step | λ 0.05, look-back 8 | λ 0.05, look-back 64 | λ 1, look-back 64 | Threads busy |
+|---|---|---|---|---|
+| pages one after another (before) | 3.75 s | 15.90 s | 16.14 s | 7–9 |
+| pages in parallel | 1.78 s | 9.11 s | 7.95 s | 16–18 |
+
+- **Pages in parallel:** the packers encode the chunk's pages (one per thread) as parallel tasks. A page's RDO still
+  splits into the same row chunks, sized from the pool's thread count, which a nested task sees unchanged, so the
+  blocks are those of the serial loop (`page_chunk_encodes_in_parallel_with_the_bytes_of_a_serial_loop`, Classic and
+  Enhanced). CPU seconds rise 10 %, since the second thread of a core adds less than a core.
+- **The blocks depend on the thread count.** That was so before: the row chunks restart the look-back and the match
+  state, and their size comes from the pool. A machine with another thread count writes other blocks for the same
+  settings (the same size and quality to within noise). Fixed chunks would make the output portable, at the cost of
+  changing today's bytes.
+
 ## Reproducing
 
 [`atlas_page_compression/`](atlas_page_compression/) is the benchmark, a standalone crate that reads its pages from a

@@ -796,6 +796,9 @@ fn encode_and_add_mobile_anim_page_chunk(
     })
 }
 
+/// Encodes the chunk's pages in parallel, one task per page, in page order. A page's BC7 encode and RDO split it as
+/// they would alone (the RDO by rows, sized from the pool's thread count, which a nested task sees unchanged), so the
+/// blocks are those of encoding the pages one after another; the timings are summed over the pages.
 fn encode_mobile_anim_page_chunk(
     pages: &[BuiltMobileAnimPage],
     options: &MobileAnimCcAtlasOptions,
@@ -809,38 +812,42 @@ fn encode_mobile_anim_page_chunk(
         options.bc7_rdo_lookback_blocks,
     );
     let pending_progress = AtomicU64::new(0);
-    let mut encoded_pages = Vec::with_capacity(pages.len());
+    let encoded = pages
+        .par_iter()
+        .map(|page| {
+            let extent = ImageExtent::new(page.record.used_width, page.record.used_height)
+                .map_err(|e| eyre::eyre!("{e}"))?;
+            let (encoded, timings) = encode_for_vram_with_bc7_rdo_options_and_stage_progress_timed(
+                &page.pixels,
+                extent,
+                RawImageFormat::Rgba8888,
+                encoding,
+                &rdo_options,
+                |stage, units| {
+                    let units = units as u64;
+                    add_bc7_progress(pb, &pending_progress, units);
+                    if let Some(progress) = progress {
+                        progress(stage, units);
+                    }
+                },
+            )
+            .map_err(|e| {
+                eyre::eyre!("BC7 encode mobile animation page {}: {e}", page.record.page_index)
+            })?;
+            let encoded_page = (
+                page_entry_path(page.record.page_index, PagePixelFormat::Bc7),
+                encoded.into_bytes().to_vec(),
+                page.record.used_width,
+                page.record.used_height,
+            );
+            Ok((encoded_page, timings))
+        })
+        .collect::<eyre::Result<Vec<_>>>()?;
+    let mut encoded_pages = Vec::with_capacity(encoded.len());
     let mut bc7_timings = Bc7StageTimings::default();
-    for page in pages {
-        let extent = ImageExtent::new(page.record.used_width, page.record.used_height)
-            .map_err(|e| eyre::eyre!("{e}"))?;
-        let (encoded, timings) = encode_for_vram_with_bc7_rdo_options_and_stage_progress_timed(
-            &page.pixels,
-            extent,
-            RawImageFormat::Rgba8888,
-            encoding,
-            &rdo_options,
-            |stage, units| {
-                let units = units as u64;
-                add_bc7_progress(pb, &pending_progress, units);
-                if let Some(progress) = progress {
-                    progress(stage, units);
-                }
-            },
-        )
-        .map_err(|e| {
-            eyre::eyre!("BC7 encode mobile animation page {}: {e}", page.record.page_index)
-        })?;
+    for (encoded_page, timings) in encoded {
         bc7_timings.add_assign(timings);
-        let encoded = encoded
-            .into_bytes()
-            .to_vec();
-        encoded_pages.push((
-            page_entry_path(page.record.page_index, PagePixelFormat::Bc7),
-            encoded,
-            page.record.used_width,
-            page.record.used_height,
-        ));
+        encoded_pages.push(encoded_page);
     }
     flush_bc7_progress(pb, &pending_progress);
     Ok((encoded_pages, bc7_timings))
@@ -3060,6 +3067,101 @@ mod tests {
     use super::*;
     use udd_container::{AddFileRequest, DataType, UddpReader};
     use udd_assets::MobileAnimCcPackage;
+
+    /// Pages whose RDO splits into row chunks (more blocks than the parallel threshold) and changes blocks.
+    const PARALLEL_TEST_PAGES: u32 = 4;
+    const PARALLEL_TEST_PAGE_WIDTH: u32 = 256;
+    const PARALLEL_TEST_PAGE_HEIGHT: u32 = 192;
+    const PARALLEL_TEST_RDO_LAMBDA: f32 = 1.0;
+
+    /// A page of soft noisy sprites on a transparent ground, seeded by the page index.
+    fn parallel_test_pixels(page_index: u32) -> Vec<u8> {
+        let (width, height) = (PARALLEL_TEST_PAGE_WIDTH, PARALLEL_TEST_PAGE_HEIGHT);
+        let mut state = 0x9E37_79B9u32 ^ page_index.wrapping_mul(0x85EB_CA6B);
+        let mut pixels = vec![0u8; (width * height * 4) as usize];
+        for y in 0..height {
+            for x in 0..width {
+                state ^= state << 13;
+                state ^= state >> 17;
+                state ^= state << 5;
+                if (x / 24 + y / 24 + page_index) % 3 == 0 {
+                    continue;
+                }
+                let noise = (state & 0x1F) as u8;
+                let index = ((y * width + x) * 4) as usize;
+                pixels[index..index + 4].copy_from_slice(&[
+                    (x as u8).wrapping_add(noise),
+                    (y as u8).wrapping_add(noise),
+                    0x80u8.wrapping_add(noise),
+                    0xFF,
+                ]);
+            }
+        }
+        pixels
+    }
+
+    #[test]
+    fn page_chunk_encodes_in_parallel_with_the_bytes_of_a_serial_loop() {
+        let options = MobileAnimCcAtlasOptions {
+            atlas_width: PARALLEL_TEST_PAGE_WIDTH,
+            atlas_height: PARALLEL_TEST_PAGE_HEIGHT,
+            gutter: 0,
+            compression: CompressionFlag::None,
+            pixel_format: PagePixelFormat::Bc7,
+            bc7_rdo_lambda: PARALLEL_TEST_RDO_LAMBDA,
+            bc7_rdo_lookback_blocks: crate::bc7::DEFAULT_BC7_RDO_LOOKBACK_BLOCKS,
+            upscale_passes: Vec::new(),
+            upscale_profile: None,
+        };
+        let pages: Vec<BuiltMobileAnimPage> = (0..PARALLEL_TEST_PAGES)
+            .map(|page_index| BuiltMobileAnimPage {
+                record: MobileAnimCcPageRecord {
+                    page_index,
+                    frame_count: 1,
+                    atlas_width: PARALLEL_TEST_PAGE_WIDTH,
+                    atlas_height: PARALLEL_TEST_PAGE_HEIGHT,
+                    used_width: PARALLEL_TEST_PAGE_WIDTH,
+                    used_height: PARALLEL_TEST_PAGE_HEIGHT,
+                    pixel_format: PagePixelFormat::Bc7,
+                },
+                pixels: parallel_test_pixels(page_index),
+            })
+            .collect();
+        let (parallel, _) = encode_mobile_anim_page_chunk(&pages, &options, None, None).unwrap();
+
+        let rdo_options =
+            Bc7RdoOptions::sparse_atlas(options.bc7_rdo_lambda, options.bc7_rdo_lookback_blocks);
+        let encoding = VramTextureEncoding::Bc7(preferred_bc7_encoder_backend());
+        let mut rdo_changed_blocks = false;
+        assert_eq!(parallel.len(), pages.len());
+        for (page, (path, bytes, width, height)) in pages.iter().zip(&parallel) {
+            let extent = ImageExtent::new(page.record.used_width, page.record.used_height).unwrap();
+            let encode = |rdo_options: &Bc7RdoOptions| {
+                encode_for_vram_with_bc7_rdo_options_and_stage_progress_timed(
+                    &page.pixels,
+                    extent,
+                    RawImageFormat::Rgba8888,
+                    encoding,
+                    rdo_options,
+                    |_, _| {},
+                )
+                .unwrap()
+                .0
+                .into_bytes()
+                .to_vec()
+            };
+            let serial = encode(&rdo_options);
+            assert_eq!(path, &page_entry_path(page.record.page_index, PagePixelFormat::Bc7));
+            assert_eq!((*width, *height), (page.record.used_width, page.record.used_height));
+            assert!(bytes == &serial, "page {} differs from the serial encode", page.record.page_index);
+            let plain = encode(&Bc7RdoOptions::sparse_atlas(
+                crate::bc7::NO_BC7_RDO_LAMBDA,
+                options.bc7_rdo_lookback_blocks,
+            ));
+            rdo_changed_blocks |= plain != serial;
+        }
+        assert!(rdo_changed_blocks, "the RDO left every block as encoded, so the test proves nothing");
+    }
 
     fn frame(global_frame_index: u32, width: u16, height: u16) -> DecodedMobileAnimFrame {
         DecodedMobileAnimFrame {
