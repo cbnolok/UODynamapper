@@ -79,9 +79,12 @@ use udd_conv_cli::{
 use udd_conv::conversion_tables::{EC_MOBILE_ANIMATIONS_KDL, EC_TERRAIN_OVERRIDES_KDL, TERRAIN_TRANSCODE_KDL};
 use uocf::utils::bundled_files::{self, BundledFile};
 use crate::app::UddConvApp;
+use udd_conv::animation::mobile_strides::{
+    measure_package_strides, MeasureOptions, StrideJobProgress, StrideProgress,
+};
 use crate::models::{
     AppSettings, AssetPackProgress, AssetPackProgressState, AssetPackTask, GumpsEcSharing, LogLevel, LogMessage,
-    TextureOptimization,
+    StrideMeasurement, TextureOptimization,
 };
 
 struct ConvertingFlagReset {
@@ -146,6 +149,17 @@ impl AssetProgressReporter {
 
     fn cancel_requested(&self) -> bool {
         self.cancel.load(Ordering::Relaxed)
+    }
+
+    /// A step of the job with a bar of its own after the packing: the bar starts over, up to where validation stands.
+    fn set_step(&self, fraction: f32, text: impl Into<String>) {
+        if let Ok(mut progress) = self.progress.lock() {
+            progress.insert(self.task, AssetPackProgress {
+                state: AssetPackProgressState::Running,
+                fraction: fraction.clamp(0.0, 1.0) * VALIDATING_PROGRESS,
+                text: text.into(),
+            });
+        }
     }
 
     fn panic_if_cancelled(&self) {
@@ -325,6 +339,36 @@ fn upscale_filter_passes(filter: UpscaleFilter) -> Vec<UpscalePass> {
 const UNREPORTED_PACKING_PROGRESS: f32 = 0.1;
 /// Where the bar of a packing job stands while the packages it wrote are validated.
 const VALIDATING_PROGRESS: f32 = 0.99;
+
+/// The label of the stride measurement step of the mobile animation jobs on their bar.
+const STRIDES_STEP_LABEL: &str = "Strides";
+
+/// Measures the strides of the mobile animation package just written at `output` as `measurement` says, the clips of
+/// unchanged frames keeping theirs (the repack kept them). Gives what it did, for the job's message.
+fn measure_strides_after_packing(output: &Path, measurement: StrideMeasurement, progress: &AssetProgressReporter)
+    -> eyre::Result<String> {
+    let everything = match measurement {
+        StrideMeasurement::Off => return Ok(String::new()),
+        StrideMeasurement::Changed => false,
+        StrideMeasurement::Full => true,
+    };
+    progress.set_step(0.0, format!("{STRIDES_STEP_LABEL}: loading the package"));
+    let report = |step: StrideProgress| {
+        if let Some(now) = StrideJobProgress::of(step) {
+            progress.set_step(now.fraction, format!("{STRIDES_STEP_LABEL}: {}", now.activity));
+        }
+    };
+    let done = measure_package_strides(output, output, &MeasureOptions { everything, bodies: None }, None, &mut None,
+        &progress.cancel, &report)?;
+    Ok(match done {
+        Some(done) => {
+            log::info!("{}", done.strides.summary());
+            log::info!("{}", done.strides.timing(done.load_secs));
+            format!("; {}", done.strides.summary())
+        }
+        None => "; the stride measurement was cancelled, so the package keeps the strides the repack kept".to_string(),
+    })
+}
 
 /// The extraction label of a job whose images an upscale filter or the upscale profile changes.
 fn extract_label(upscaling: bool, settings: &AppSettings) -> &'static str {
@@ -1201,8 +1245,9 @@ impl UddConvApp {
                 |task_progress| progress.task_progress_with_extract_label(task_progress, extract_label),
                 |build_progress| progress.build_progress(build_progress),
             )?;
+            let strides = measure_strides_after_packing(&output, settings.measure_strides_mobile_anim_cc, &progress)?;
             Ok(format!(
-                "Wrote {} pages for {} packed frames out of {} total frames to {}",
+                "Wrote {} pages for {} packed frames out of {} total frames to {}{strides}",
                 summary.page_count,
                 summary.packed_frame_count,
                 summary.frame_count,
@@ -1260,8 +1305,9 @@ impl UddConvApp {
                 |task_progress| progress.task_progress_with_extract_label(task_progress, extract_label),
                 |build_progress| progress.build_progress(build_progress),
             )?;
+            let strides = measure_strides_after_packing(&output, settings.measure_strides_mobile_anim_ec, &progress)?;
             Ok(format!(
-                "Wrote {} pages for {} packed frames out of {} total frames and {} animation records for {} bodies ({} without a sequence) to {}",
+                "Wrote {} pages for {} packed frames out of {} total frames and {} animation records for {} bodies ({} without a sequence) to {}{strides}",
                 summary.page_count,
                 summary.packed_frame_count,
                 summary.frame_count,

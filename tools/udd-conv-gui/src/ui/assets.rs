@@ -5,7 +5,7 @@ use crate::logic::tasks::{
 };
 use crate::models::{
     AppSettings, AssetPackProgress, AssetPackProgressState, AssetPackTask, GumpsEcSharing, HueRamp,
-    TextureOptimization, DEFAULT_ZSTD_LEVEL,
+    StrideMeasurement, TextureOptimization, DEFAULT_ZSTD_LEVEL,
 };
 use crate::ui::VALIDATE_AFTER_PACKING_TOOLTIP;
 use crate::ui::layout::{card_title, draw_card_grid, page_heading, section_heading, CardGrid};
@@ -179,6 +179,9 @@ impl UddConvApp {
             Some((&mut self.settings.upscale_mobile_anim_cc, None)),
             vec![],
         );
+        ui.add_enabled_ui(!is_busy, |ui| {
+            draw_stride_measurement(ui, &mut self.settings.measure_strides_mobile_anim_cc);
+        });
         if clicked { self.convert_mobile_anim_cc(); }
         if stop_clicked { self.request_cancel_conversion(); }
     }
@@ -292,6 +295,9 @@ impl UddConvApp {
             Some((&mut self.settings.upscale_mobile_anim_ec, None)),
             vec![],
         );
+        ui.add_enabled_ui(!is_busy, |ui| {
+            draw_stride_measurement(ui, &mut self.settings.measure_strides_mobile_anim_ec);
+        });
         if clicked { self.convert_mobile_anim_ec(); }
         if stop_clicked { self.request_cancel_conversion(); }
     }
@@ -671,6 +677,32 @@ const GUMP_UPSCALE_CELL_WIDTH: f32 = 190.0;
 const GUMP_GUMPART_CELL_WIDTH: f32 = 250.0;
 const GUMP_MAX_ID_CELL_WIDTH: f32 = 96.0;
 const GUMP_SHARING_CELL_WIDTH: f32 = 250.0;
+const STRIDE_MEASUREMENT_CELL_WIDTH: f32 = 280.0;
+const STRIDE_MEASUREMENT_TOOLTIP: &str = "After packing, measure the walk and run strides on the GPU (udd-cli tool \
+strides measure) so Dynamapper paces those cycles to the ground. The repack keeps the strides of the clips whose \
+frames did not change; Changed clips measures the new and changed ones, All clips every clip again (a whole package \
+takes tens of minutes). Stop cancels the measurement and leaves the package as packed.";
+
+/// The stride measurement step of a mobile animation card.
+fn draw_stride_measurement(ui: &mut egui::Ui, measurement: &mut StrideMeasurement) {
+    draw_control_cell(ui, "Measure Strides", STRIDE_MEASUREMENT_CELL_WIDTH, |ui| {
+        ui.horizontal(|ui| {
+            for (choice, label) in [
+                (StrideMeasurement::Off, "Off"),
+                (StrideMeasurement::Changed, "Changed clips"),
+                (StrideMeasurement::Full, "All clips"),
+            ] {
+                if ui
+                    .add(egui::Button::selectable(*measurement == choice, label))
+                    .on_hover_text(STRIDE_MEASUREMENT_TOOLTIP)
+                    .clicked()
+                {
+                    *measurement = choice;
+                }
+            }
+        });
+    });
+}
 const GUMP_MAX_ID_DRAG_SPEED: f64 = 10.0;
 /// The Zstd levels a level field accepts.
 const ZSTD_LEVEL_RANGE: std::ops::RangeInclusive<i32> = 1..=22;

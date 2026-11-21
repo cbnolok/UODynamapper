@@ -54,6 +54,8 @@ lights_no_compression = false
 effects_ec_bc7 = false
 effects_ec_strict = false
 validate_after_packing = false
+measure_strides_mobile_anim_cc = "Off"
+measure_strides_mobile_anim_ec = "Off"
 
 [upscale_tex_land_cc_64]
 target_size = 0

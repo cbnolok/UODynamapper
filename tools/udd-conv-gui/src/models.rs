@@ -15,6 +15,17 @@ pub enum TextureOptimization {
     Bc7Zstd,
 }
 
+/// Whether a mobile animation job measures the walk and run strides of the package it wrote, on the GPU (`udd-cli
+/// tool strides measure`). The repack keeps the strides of the clips whose frames did not change either way.
+#[derive(Deserialize, Serialize, Clone, Copy, PartialEq, Eq, Debug)]
+pub enum StrideMeasurement {
+    Off,
+    /// The new and changed clips (`measure changed`).
+    Changed,
+    /// Every clip again (`measure full`; tens of minutes).
+    Full,
+}
+
 /// What the Enhanced gumps job does with the Classic gumps Interface.uop repeats.
 #[derive(Deserialize, Serialize, Clone, Copy, PartialEq, Eq, Debug)]
 pub enum GumpsEcSharing {
@@ -153,6 +164,9 @@ pub struct AppSettings {
     pub tex_land_kr_report: Option<PathBuf>,
     /// Validate each package a packing job writes, as `tool validate` does, once the job succeeds.
     pub validate_after_packing: bool,
+    /// The stride measurement after packing each mobile animation package.
+    pub measure_strides_mobile_anim_cc: StrideMeasurement,
+    pub measure_strides_mobile_anim_ec: StrideMeasurement,
 }
 
 impl Default for AppSettings {
@@ -229,6 +243,8 @@ impl Default for AppSettings {
             paperdoll_ec_report: None,
             tex_land_kr_report: None,
             validate_after_packing: false,
+            measure_strides_mobile_anim_cc: StrideMeasurement::Off,
+            measure_strides_mobile_anim_ec: StrideMeasurement::Off,
         }
     }
 }
