@@ -95,8 +95,8 @@ pub struct FrameCrossfade {
     pub next_layer: u32,
 }
 
-/// What a mobile frame drawn shows: its card's placement, the card's span on its atlas page and the crossfade, which
-/// names the next frame's page.
+/// What a mobile frame drawn shows: its card's placement, the card's span on its atlas page (`layer` as the instance
+/// names it, `AtlasRect::instance_layer`) and the crossfade, which names the next frame's page in the same atlas.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct LayerFrames {
     pub layer: u32,
@@ -111,7 +111,7 @@ impl LayerFrames {
     fn alone(frame: &ClipFrame) -> Self {
         let (uv_min, uv_max) = frame.rect.uv();
         Self {
-            layer: frame.rect.layer,
+            layer: frame.rect.instance_layer(),
             uv_min,
             uv_max,
             placement: frame.placement,
@@ -147,7 +147,7 @@ pub fn layer_frames(mode: MobileInBetweenFrames, clip: &Clip, pick: FramePick) -
     let (frame_uv_min, frame_uv_max) = frame.rect.uv();
     let (next_uv_min, next_uv_max) = next.rect.uv();
     Some(LayerFrames {
-        layer: frame.rect.layer,
+        layer: frame.rect.instance_layer(),
         uv_min,
         uv_max: uv_min + Vec2::new(card.width, card.height) / page_size,
         placement: card,
@@ -167,7 +167,7 @@ pub fn layer_frames(mode: MobileInBetweenFrames, clip: &Clip, pick: FramePick) -
 mod tests {
     use super::*;
     use super::super::clips::CLASSIC_FRAME_SECS;
-    use super::super::frame_atlas::AtlasRect;
+    use super::super::frame_atlas::{AtlasFormat, AtlasRect};
 
     fn placement(width: f32, height: f32, anchor_x: f32, anchor_y: f32) -> FramePlacement {
         FramePlacement { width, height, anchor_x, anchor_y }
@@ -193,7 +193,7 @@ mod tests {
     /// Two frames on one page: a, 3 by 3 at (10, 20) anchored at (2, 3); b, 4 by 4 at (40, 20) anchored at (0, 2).
     fn two_frame_clip() -> Clip {
         let frame = |x: u32, width: u32, height: u32, anchor_x: f32, anchor_y: f32| ClipFrame {
-            rect: AtlasRect { layer: 3, x, y: 20, width, height },
+            rect: AtlasRect { format: AtlasFormat::Rgba8, layer: 3, x, y: 20, width, height },
             placement: placement(width as f32, height as f32, anchor_x, anchor_y),
         };
         Clip { frames: vec![frame(10, 3, 3, 2.0, 3.0), frame(40, 4, 4, 0.0, 2.0)], mirrored: false,

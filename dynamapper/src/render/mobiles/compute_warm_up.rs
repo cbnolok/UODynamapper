@@ -2,7 +2,8 @@
 //! startup on the render device by [`uot_gpu_compute::warm_up`], on a thread of their own: a cold driver cache takes
 //! tens of seconds, which would hold a worker of the background pool (whose jobs are never interrupted) all that time.
 //! The RIFE in-betweens take the warmed pipelines when first turned on, and wait for them while they compile, so
-//! nothing compiles twice. SPAN and the encoders are not drawn with yet: their pipelines wait here.
+//! nothing compiles twice; so does the BC7 encoder of the in-betweens of a BC7 frame atlas. SPAN is not drawn with
+//! yet: its pipelines wait here.
 //!
 //! Each compile shows in the shader-compile overlay while it runs (`render::shader_compiles`), and is logged as it
 //! ends.
@@ -24,8 +25,7 @@ struct Warmed {
     rife: Option<RifePipelines>,
     #[expect(dead_code, reason = "the SPAN upscaler is not wired to the mobiles yet; its pipelines wait for it")]
     upscale: UpscalePipelines,
-    #[expect(dead_code, reason = "the BC encoders are not wired to the frame atlas yet; their pipelines wait for it")]
-    block_encoder: MobileBlockEncoder,
+    block_encoder: Option<MobileBlockEncoder>,
 }
 
 #[derive(Default)]
@@ -64,6 +64,16 @@ impl ComputeWarmUp {
         }
     }
 
+    /// The block encoder, once.
+    pub fn take_block_encoder(&mut self) -> Warm<MobileBlockEncoder> {
+        self.poll();
+        match &mut self.state {
+            WarmUpState::NotStarted | WarmUpState::Compiling(_) => Warm::Compiling,
+            WarmUpState::Ready(warmed) => warmed.block_encoder.take().map_or(Warm::Unavailable, Warm::Ready),
+            WarmUpState::Failed => Warm::Unavailable,
+        }
+    }
+
     /// Takes the warm-up's result once its thread ended.
     fn poll(&mut self) {
         let WarmUpState::Compiling(thread) = &self.state else { return };
@@ -73,7 +83,7 @@ impl ComputeWarmUp {
         let WarmUpState::Compiling(thread) = std::mem::take(&mut self.state) else { unreachable!() };
         self.state = match thread.join() {
             Ok(WarmPipelines { rife, upscale, block_encoder }) => {
-                WarmUpState::Ready(Warmed { rife: Some(rife), upscale, block_encoder })
+                WarmUpState::Ready(Warmed { rife: Some(rife), upscale, block_encoder: Some(block_encoder) })
             }
             Err(_) => {
                 error!("The GPU compute warm-up panicked: the pipelines compile when first used.");

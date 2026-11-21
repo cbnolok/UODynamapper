@@ -166,13 +166,15 @@ impl MobileInBetweens {
                 continue;
             }
             let Some(clip) = resident(entry.source) else { continue };
+            let Some(format) = clip.frames.first().map(|frame| frame.rect.format) else { continue };
             let placements = sequence_placements(&clip.frames, key.factor);
             let sizes = placements.iter().map(|placement| placement_size(*placement)).collect::<Vec<_>>();
             // The pages drawn this frame stay: without one free of them, the sequence waits.
-            if !atlas.has_room_sparing(&sizes, now) {
+            if !atlas.has_room_sparing(format, &sizes, now) {
                 continue;
             }
-            entry.state = match atlas.reserve(AtlasEntry::InBetweens(*key), &sizes, now) {
+            // In its clip's atlas, so the in-betweens take the clip's format.
+            entry.state = match atlas.reserve(AtlasEntry::InBetweens(*key), format, &sizes, now) {
                 Some((rects, page_evicted)) => {
                     evicted.extend(page_evicted);
                     InBetweenState::Generating {
@@ -278,7 +280,7 @@ pub fn sys_schedule_mobile_in_betweens(
 mod tests {
     use super::*;
     use super::super::clips::{FramePick, CLASSIC_FRAME_SECS};
-    use super::super::frame_atlas::{FRAME_GUTTER, MOBILE_ATLAS_PAGES, MOBILE_ATLAS_PAGE_SIZE};
+    use super::super::frame_atlas::{AtlasFormat, FRAME_GUTTER, MOBILE_ATLAS_PAGES, MOBILE_ATLAS_PAGE_SIZE};
 
     const NOW: f64 = 10.0;
 
@@ -293,7 +295,8 @@ mod tests {
     /// Three frames: 3 by 3 anchored at (2, 3), 4 by 4 at (0, 2), 2 by 5 at (1, 5), side by side on page 0.
     fn three_frame_clip() -> Clip {
         let frame = |x: u32, placement: FramePlacement| ClipFrame {
-            rect: AtlasRect { layer: 0, x, y: 0, width: placement.width as u32, height: placement.height as u32 },
+            rect: AtlasRect { format: AtlasFormat::Rgba8, layer: 0, x, y: 0, width: placement.width as u32,
+                height: placement.height as u32 },
             placement,
         };
         Clip {
@@ -306,7 +309,7 @@ mod tests {
     }
 
     fn atlas() -> MobileFrameAtlas<AtlasEntry> {
-        MobileFrameAtlas::new(&mut Assets::<Image>::default())
+        MobileFrameAtlas::new(&mut Assets::<Image>::default(), [AtlasFormat::Rgba8])
     }
 
     #[test]
@@ -329,7 +332,8 @@ mod tests {
         let clip = three_frame_clip();
         let sequence = Clip {
             frames: sequence_placements(&clip.frames, 2).into_iter().enumerate().map(|(index, placement)| ClipFrame {
-                rect: AtlasRect { layer: 1, x: index as u32 * 8, y: 0, width: placement_size(placement).0,
+                rect: AtlasRect { format: AtlasFormat::Rgba8, layer: 1, x: index as u32 * 8, y: 0,
+                    width: placement_size(placement).0,
                     height: placement_size(placement).1 },
                 placement,
             }).collect(),
@@ -496,7 +500,7 @@ mod tests {
         let full_page = [(MOBILE_ATLAS_PAGE_SIZE - FRAME_GUTTER, MOBILE_ATLAS_PAGE_SIZE - FRAME_GUTTER)];
         for body in 0..MOBILE_ATLAS_PAGES {
             let key = ClipKey { body, ..clip_key(0) };
-            assert!(atlas.reserve(AtlasEntry::Clip(key), &full_page, NOW).is_some());
+            assert!(atlas.reserve(AtlasEntry::Clip(key), AtlasFormat::Rgba8, &full_page, NOW).is_some());
         }
         let key = clip_key(3);
         let resident = |_| Some(&clip);

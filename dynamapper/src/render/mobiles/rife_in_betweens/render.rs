@@ -5,6 +5,13 @@
 //! sequence, encodes them, and for each t runs the blocks, the blend and the store of the in-between into the sequence
 //! (atlas.wgsl), through a staging buffer and a copy, since the sRGB atlas takes no storage writes. A workspace stays
 //! with the job in the middle of a pair until the pair ends; a job finished goes back to the main world.
+//!
+//! A clip of the BC7 atlas (frame_atlas.rs) has its in-betweens in that atlas: its first frames are copied as they are,
+//! block by block, through a bounce buffer (a copy within one texture layer is not allowed), and each in-between goes
+//! from the staging rows to rows of its own in a scratch `Rgba8Unorm` texture, cleared to transparent around it. After
+//! the frame's steps the encoder of the warm-up (`MobileBlockEncoder`, BC7 UltraFast) encodes them all in one pass, its
+//! one `compress` of the submission, and their blocks are copied into the atlas. A frame takes the BC7 steps that fit
+//! the scratch rows and the bounce buffer, and leaves the rest to the next.
 
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
@@ -19,7 +26,9 @@ use parking_lot::Mutex;
 use crate::app::background::{background_pool, Priority, Task, TaskPoll};
 use crate::render::shader_compiles::begin_shader_compile;
 use super::super::clips::AtlasEntry;
-use super::super::frame_atlas::{AtlasRect, MobileFrameAtlas};
+use super::super::frame_atlas::{AtlasFormat, AtlasRect, MobileFrameAtlas, MOBILE_ATLAS_PAGE_SIZE};
+use uot_gpu_compute::block_encode::{record_copy_to_layer, Bc7Quality, MobileBlockEncoder, MobileBlockFormat,
+    BLOCK_SIDE};
 use uot_gpu_compute::network_shader_module;
 use uot_gpu_compute::rife::{
     RifeDispatch, RifeModel, RifePipelines, RifeWorkspace, RIFE_BLOCKS, RIFE_SIZE_MULTIPLE, RIFE_TIMESTEP_SLOTS,
@@ -37,6 +46,19 @@ const DISPATCH_MS: f64 = 0.009;
 const MS_PER_GIGA_MULTIPLY_ADD: f64 = 2.5;
 /// An atlas step's estimated cost per million pixels it runs on, besides the fixed part.
 const ATLAS_STEP_MS_PER_MEGAPIXEL: f64 = 0.5;
+/// The BC7 encode of an in-between, estimated: a fixed part and a part per million pixels (an encode alone on the
+/// Radeon 880M: 0.27 ms at 64x64 and 128x128, 0.53 ms at 256x256; see mobile_animation_motion.md).
+const BC7_ENCODE_MS: f64 = 0.25;
+const BC7_ENCODE_MS_PER_MEGAPIXEL: f64 = 4.0;
+/// The quality of the in-betweens' BC7.
+const IN_BETWEEN_BC7_QUALITY: Bc7Quality = Bc7Quality::UltraFast;
+const IN_BETWEEN_BLOCK_FORMAT: MobileBlockFormat = MobileBlockFormat::Bc7(IN_BETWEEN_BC7_QUALITY);
+/// The scratch texture of the in-betweens to encode, a frame's rows: a page's side square, so any card fits.
+const BC7_SCRATCH_SIDE: u32 = MOBILE_ATLAS_PAGE_SIZE;
+/// The bounce buffer of the first frames' block copies: as large as a page's blocks.
+const BC7_BOUNCE_BYTES: u64 = MOBILE_ATLAS_PAGE_SIZE as u64 * MOBILE_ATLAS_PAGE_SIZE as u64;
+/// The bytes of a BC7 block.
+const BC7_BLOCK_BYTES: u32 = 16;
 /// Where the GPU has timestamp queries, a frame's work now and then is timed and the estimates scaled to match: each
 /// timing moves the scale this much of the way, within these bounds.
 const COST_SCALE_WEIGHT: f64 = 0.25;
@@ -159,9 +181,11 @@ struct Workspace {
 impl Workspace {
     fn new(gpu: &RifeGpu, device: &wgpu::Device, size: UVec2) -> Result<Self, String> {
         let rife = RifeWorkspace::new(&gpu.model, device, size.x, size.y)?;
+        // COPY_DST to be cleared before an in-between of the BC7 atlas.
         let staging = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("rife atlas staging"), size: staging_pitch_bytes(size.x) as u64 * size.y as u64,
-            usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_SRC, mapped_at_creation: false,
+            usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_SRC | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
         });
         Ok(Self { rife, staging, last_used: Instant::now() })
     }
@@ -233,6 +257,83 @@ impl GpuClock {
     }
 }
 
+/// The BC7 encoding of the in-betweens of the BC7 atlas: the encoder, the scratch texture the in-betweens wait in, the
+/// blocks they encode to, and the bounce buffer of the first frames' block copies.
+struct Bc7Encoding {
+    encoder: MobileBlockEncoder,
+    scratch: wgpu::Texture,
+    scratch_view: wgpu::TextureView,
+    blocks: wgpu::Buffer,
+    bounce: wgpu::Buffer,
+}
+
+impl Bc7Encoding {
+    fn new(device: &wgpu::Device, encoder: MobileBlockEncoder) -> Self {
+        let scratch = device.create_texture(&wgpu::TextureDescriptor {
+            label: Some("mobile in-betweens to encode"),
+            size: wgpu::Extent3d { width: BC7_SCRATCH_SIDE, height: BC7_SCRATCH_SIDE, depth_or_array_layers: 1 },
+            mip_level_count: 1, sample_count: 1, dimension: wgpu::TextureDimension::D2,
+            format: wgpu::TextureFormat::Rgba8Unorm,
+            usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST, view_formats: &[],
+        });
+        let scratch_view = scratch.create_view(&wgpu::TextureViewDescriptor::default());
+        let buffer = |label, size, usage| device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some(label), size, usage, mapped_at_creation: false,
+        });
+        Self {
+            encoder,
+            scratch,
+            scratch_view,
+            blocks: buffer("mobile in-between blocks", IN_BETWEEN_BLOCK_FORMAT.encoded_bytes(BC7_SCRATCH_SIDE,
+                BC7_SCRATCH_SIDE), wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_SRC),
+            bounce: buffer("mobile first frame blocks", BC7_BOUNCE_BYTES,
+                wgpu::BufferUsages::COPY_SRC | wgpu::BufferUsages::COPY_DST),
+        }
+    }
+}
+
+enum EncoderState {
+    Unloaded,
+    Compiling(Task<MobileBlockEncoder>),
+    Ready(Box<Bc7Encoding>),
+    /// Logged; the clips of the BC7 atlas play plain.
+    Failed,
+}
+
+/// What a frame's BC7 steps took of the scratch rows and the bounce buffer.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+struct Bc7Room {
+    scratch_rows: u32,
+    bounce_bytes: u64,
+}
+
+impl Bc7Room {
+    /// The room taken before `step` of `pair`, if what it needs is left (its in-between's padded rows, or its first
+    /// frame's blocks), and takes that.
+    fn take(&mut self, step: PairStep, pair: &InBetweenPair) -> Option<Bc7Room> {
+        let at = *self;
+        match step {
+            PairStep::CopyFirst => {
+                let (pitch, rows) = block_copy_layout(pair.first);
+                let bytes = u64::from(pitch) * u64::from(rows);
+                (at.bounce_bytes + bytes <= BC7_BOUNCE_BYTES).then(|| self.bounce_bytes += bytes)?;
+            }
+            PairStep::Store(generated) => {
+                let rows = pair.targets[generated + 1].padded_size().1;
+                (at.scratch_rows + rows <= BC7_SCRATCH_SIDE).then(|| self.scratch_rows += rows)?;
+            }
+            _ => {}
+        }
+        Some(at)
+    }
+}
+
+/// The rows of `rect`'s blocks in a buffer: bytes per row (a multiple of 256, for a copy of several rows) and rows.
+fn block_copy_layout(rect: AtlasRect) -> (u32, u32) {
+    let (width, height) = rect.padded_size();
+    ((width / BLOCK_SIDE * BC7_BLOCK_BYTES).next_multiple_of(wgpu::COPY_BYTES_PER_ROW_ALIGNMENT), height / BLOCK_SIDE)
+}
+
 enum WorkspaceState {
     Creating(Task<Result<Workspace, String>>),
     Ready(Workspace),
@@ -249,7 +350,7 @@ struct JobProgress {
 /// The render world's in-betweens: the jobs listed this frame, the network, the workspaces and the jobs' progress.
 #[derive(Resource)]
 pub struct RenderInBetweens {
-    image: Option<Handle<Image>>,
+    images: Vec<(AtlasFormat, Handle<Image>)>,
     active: bool,
     jobs: Vec<InBetweenJob>,
     finished: Option<Arc<Mutex<Vec<u64>>>>,
@@ -265,13 +366,15 @@ pub struct RenderInBetweens {
     clock: Option<GpuClock>,
     /// The GPU time per estimated ms, as timed.
     cost_scale: f64,
+    /// The BC7 encoding, made the first time a job of the BC7 atlas is listed.
+    bc7: EncoderState,
 }
 
 impl Default for RenderInBetweens {
     fn default() -> Self {
-        Self { image: None, active: false, jobs: Vec::new(), finished: None, gpu: GpuState::Unloaded,
+        Self { images: Vec::new(), active: false, jobs: Vec::new(), finished: None, gpu: GpuState::Unloaded,
             workspaces: HashMap::new(), progress: HashMap::new(), holders: HashMap::new(), completed: HashSet::new(),
-            step_uniforms: None, clock: None, cost_scale: 1.0 }
+            step_uniforms: None, clock: None, cost_scale: 1.0, bc7: EncoderState::Unloaded }
     }
 }
 
@@ -281,7 +384,9 @@ pub fn sys_extract_mobile_in_betweens(
     mut render: ResMut<RenderInBetweens>,
 ) {
     let (Some(in_betweens), Some(atlas)) = (in_betweens.as_ref(), atlas.as_ref()) else { return };
-    render.image = Some(atlas.image().clone());
+    if render.images.len() != atlas.images().count() {
+        render.images = atlas.images().map(|(format, image)| (format, image.clone())).collect();
+    }
     render.active = in_betweens.active;
     render.jobs.clone_from(&in_betweens.jobs);
     render.finished = Some(in_betweens.finished.clone());
@@ -331,7 +436,7 @@ fn rife_dispatch(workspace: &RifeWorkspace, step: PairStep) -> Option<&RifeDispa
     }
 }
 
-/// A step's estimated GPU time, in ms.
+/// A step's estimated GPU time, in ms; with its BC7 encode, for an in-between of the BC7 atlas.
 fn step_ms(workspace: &RifeWorkspace, step: PairStep, pair: &InBetweenPair) -> f64 {
     let pixels = match step {
         PairStep::Pack => workspace.size().0 * workspace.size().1,
@@ -340,7 +445,18 @@ fn step_ms(workspace: &RifeWorkspace, step: PairStep, pair: &InBetweenPair) -> f
         _ => 0,
     };
     let multiply_adds = rife_dispatch(workspace, step).map_or(0, RifeDispatch::multiply_adds);
-    dispatch_ms(multiply_adds, pixels)
+    let encode = match step {
+        PairStep::Store(generated) if pair.targets[generated + 1].format == AtlasFormat::Bc7 => {
+            let (width, height) = pair.targets[generated + 1].padded_size();
+            bc7_encode_ms(width * height)
+        }
+        _ => 0.0,
+    };
+    dispatch_ms(multiply_adds, pixels) + encode
+}
+
+fn bc7_encode_ms(pixels: u32) -> f64 {
+    BC7_ENCODE_MS + pixels as f64 / MEGA * BC7_ENCODE_MS_PER_MEGAPIXEL
 }
 
 fn dispatch_ms(multiply_adds: u64, atlas_pixels: u32) -> f64 {
@@ -375,10 +491,23 @@ fn padded_size(size: UVec2) -> UVec2 {
 /// What a frame records, in order.
 enum Recorded {
     Rife(RifeDispatch),
-    /// An atlas step of a workspace, its uniform the `step`th of the frame.
-    Atlas { workspace: UVec2, pipeline: wgpu::ComputePipeline, step: usize, workgroups: u32 },
-    /// A workspace's staging rows into the atlas.
+    /// An atlas step of a workspace on the atlas of `format`, its uniform the `step`th of the frame.
+    Atlas { workspace: UVec2, format: AtlasFormat, pipeline: wgpu::ComputePipeline, step: usize, workgroups: u32 },
+    /// A workspace's staging rows into the RGBA8 atlas.
     Copy { workspace: UVec2, target: AtlasRect },
+    /// A workspace's staging rows cleared to transparent, as far as an in-between padded to blocks reaches.
+    ClearStaging { workspace: UVec2, target: AtlasRect },
+    /// A workspace's staging rows into the scratch texture at row `y`, for their BC7 encode into `target`.
+    Scratch { workspace: UVec2, target: AtlasRect, y: u32 },
+    /// A first frame's blocks into its place in the sequence, through the bounce buffer from byte `offset`.
+    Blocks { source: AtlasRect, target: AtlasRect, offset: u64 },
+}
+
+impl Recorded {
+    /// Whether it records in a compute pass, rather than as a command between passes.
+    fn in_pass(&self) -> bool {
+        matches!(self, Self::Rife(_) | Self::Atlas { .. })
+    }
 }
 
 /// Runs the queued jobs within the frame's budget.
@@ -429,6 +558,8 @@ pub fn sys_render_mobile_in_betweens(
             state.cost_scale);
     }
     let cost_scale = state.cost_scale;
+    let bc7_listed = state.active && state.jobs.iter().any(|job| job_format(job) == AtlasFormat::Bc7);
+    poll_bc7_encoder(&mut state.bc7, bc7_listed, &mut warm_up, device, &render_queue);
 
     // Forget what the jobs no longer listed left, and the workspaces idle for long.
     let listed = state.jobs.iter().map(|job| job.id).collect::<HashSet<_>>();
@@ -443,14 +574,24 @@ pub fn sys_render_mobile_in_betweens(
         WorkspaceState::Failed => listed.is_empty(),
     });
 
-    let Some(atlas) = state.image.as_ref().and_then(|image| gpu_images.get(image)) else { return };
+    let atlases = state.images.iter()
+        .filter_map(|(format, image)| Some((*format, gpu_images.get(image)?)))
+        .collect::<Vec<_>>();
+    let atlas_of = |format| atlases.iter().find(|(atlas, _)| *atlas == format).map(|(_, image)| *image);
     let mut recorded = Vec::new();
     let mut steps = Vec::new();
     let mut spent = 0.0;
     let mut finished = Vec::new();
-    let RenderInBetweens { jobs, workspaces, progress, holders, completed, .. } = &mut *state;
+    let mut bc7_room = Bc7Room::default();
+    let mut bc7_full = false;
+    let RenderInBetweens { jobs, workspaces, progress, holders, completed, bc7, .. } = &mut *state;
+    let bc7_ready = matches!(bc7, EncoderState::Ready(_));
     for job in jobs.iter() {
-        if completed.contains(&job.id) || spent >= RIFE_FRAME_BUDGET_MS {
+        if completed.contains(&job.id) || spent >= RIFE_FRAME_BUDGET_MS || bc7_full {
+            continue;
+        }
+        let format = job_format(job);
+        if atlas_of(format).is_none() || (format == AtlasFormat::Bc7 && !bc7_ready) {
             continue;
         }
         let size = padded_size(job.size);
@@ -476,15 +617,26 @@ pub fn sys_render_mobile_in_betweens(
         let WorkspaceState::Ready(workspace) = workspace else { continue };
         workspace.last_used = Instant::now();
         let at = progress.entry(job.id).or_default();
-        while at.pair < job.pairs.len() && spent < RIFE_FRAME_BUDGET_MS {
+        while at.pair < job.pairs.len() && spent < RIFE_FRAME_BUDGET_MS && !bc7_full {
             let pair = &job.pairs[at.pair];
             let plan = pair_steps(&workspace.rife, job.factor);
-            let (count, now_spent) = steps_within_budget(
-                plan[at.step..].iter().map(|&step| step_ms(&workspace.rife, step, pair) * cost_scale), spent);
-            spent = now_spent;
-            for &step in &plan[at.step..at.step + count] {
-                record_step(&mut recorded, &mut steps, &gpu, workspace, size, job, pair, step);
+            let costs = plan[at.step..].iter().map(|&step| step_ms(&workspace.rife, step, pair) * cost_scale)
+                .collect::<Vec<_>>();
+            let (mut count, _) = steps_within_budget(costs.iter().copied(), spent);
+            for (index, &step) in plan[at.step..at.step + count].iter().enumerate() {
+                let room = match format {
+                    AtlasFormat::Rgba8 => Some(Bc7Room::default()),
+                    AtlasFormat::Bc7 => bc7_room.take(step, pair),
+                };
+                // Out of scratch rows or bounce bytes: the rest waits for the next frame.
+                let Some(room) = room else {
+                    count = index;
+                    bc7_full = true;
+                    break;
+                };
+                record_step(&mut recorded, &mut steps, &gpu, workspace, size, format, job, pair, step, room);
             }
+            spent += costs[..count].iter().sum::<f64>();
             at.step += count;
             if at.step < plan.len() {
                 if at.step > 0 {
@@ -520,9 +672,14 @@ pub fn sys_render_mobile_in_betweens(
         bytes[at..at + std::mem::size_of::<AtlasStep>()].copy_from_slice(bytemuck::bytes_of(step));
     }
     render_queue.write_buffer(uniforms, 0, &bytes);
-    let bind_groups = state.workspaces.iter().filter_map(|(size, workspace)| {
-        let WorkspaceState::Ready(workspace) = workspace else { return None };
-        Some((*size, device.create_bind_group(&wgpu::BindGroupDescriptor {
+    let used = recorded.iter().filter_map(|item| match item {
+        Recorded::Atlas { workspace, format, .. } => Some((*workspace, *format)),
+        _ => None,
+    }).collect::<HashSet<_>>();
+    let bind_groups = used.into_iter().map(|(size, format)| {
+        let WorkspaceState::Ready(workspace) = &state.workspaces[&size] else { unreachable!("a step ran on it") };
+        let atlas = atlas_of(format).expect("a step ran on it");
+        ((size, format), device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("rife atlas step"), layout: &gpu.atlas_layout, entries: &[
                 wgpu::BindGroupEntry { binding: 0, resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
                     buffer: uniforms, offset: 0, size: wgpu::BufferSize::new(std::mem::size_of::<AtlasStep>() as u64),
@@ -532,7 +689,7 @@ pub fn sys_render_mobile_in_betweens(
                 wgpu::BindGroupEntry { binding: 3, resource: workspace.rife.merged().as_entire_binding() },
                 wgpu::BindGroupEntry { binding: 4, resource: workspace.staging.as_entire_binding() },
             ],
-        })))
+        }))
     }).collect::<HashMap<_, _>>();
 
     let mut encoder =
@@ -542,39 +699,109 @@ pub fn sys_render_mobile_in_betweens(
         clock.stamp(&mut encoder, 0);
     }
     let mut next = recorded.iter().peekable();
+    let mut encodes = Vec::new();
     while next.peek().is_some() {
         {
             let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
                 label: Some("mobile in-betweens"), timestamp_writes: None,
             });
-            while let Some(item) = next.next_if(|item| !matches!(item, Recorded::Copy { .. })) {
+            while let Some(item) = next.next_if(|item| item.in_pass()) {
                 match item {
                     Recorded::Rife(dispatch) => dispatch.record(&mut pass),
-                    Recorded::Atlas { workspace, pipeline, step, workgroups } => {
+                    Recorded::Atlas { workspace, format, pipeline, step, workgroups } => {
                         pass.set_pipeline(pipeline);
-                        pass.set_bind_group(0, &bind_groups[workspace], &[(*step as u64 * stride) as u32]);
+                        pass.set_bind_group(0, &bind_groups[&(*workspace, *format)], &[(*step as u64 * stride) as u32]);
                         pass.dispatch_workgroups(*workgroups, 1, 1);
                     }
-                    Recorded::Copy { .. } => unreachable!(),
+                    _ => unreachable!("taken while in a pass"),
                 }
             }
         }
-        if let Some(Recorded::Copy { workspace, target }) = next.next() {
-            let WorkspaceState::Ready(workspace) = &state.workspaces[workspace] else { unreachable!() };
-            encoder.copy_buffer_to_texture(
-                wgpu::TexelCopyBufferInfo {
-                    buffer: &workspace.staging,
-                    layout: wgpu::TexelCopyBufferLayout {
-                        offset: 0, bytes_per_row: Some(staging_pitch_bytes(target.width)), rows_per_image: None,
+        let staging = |workspace| {
+            let WorkspaceState::Ready(workspace) = &state.workspaces[workspace] else { unreachable!("a step ran on it") };
+            &workspace.staging
+        };
+        let bc7_encoding = || {
+            let EncoderState::Ready(encoding) = &state.bc7 else { unreachable!("a BC7 step ran") };
+            encoding
+        };
+        match next.next() {
+            None => {}
+            Some(Recorded::Copy { workspace, target }) => {
+                let atlas = atlas_of(AtlasFormat::Rgba8).expect("a step ran on it");
+                encoder.copy_buffer_to_texture(
+                    wgpu::TexelCopyBufferInfo {
+                        buffer: staging(workspace),
+                        layout: wgpu::TexelCopyBufferLayout {
+                            offset: 0, bytes_per_row: Some(staging_pitch_bytes(target.width)), rows_per_image: None,
+                        },
                     },
-                },
-                wgpu::TexelCopyTextureInfo {
-                    texture: &atlas.texture, mip_level: 0,
-                    origin: wgpu::Origin3d { x: target.x, y: target.y, z: target.layer },
+                    wgpu::TexelCopyTextureInfo {
+                        texture: &atlas.texture, mip_level: 0,
+                        origin: wgpu::Origin3d { x: target.x, y: target.y, z: target.layer },
+                        aspect: wgpu::TextureAspect::All,
+                    },
+                    wgpu::Extent3d { width: target.width, height: target.height, depth_or_array_layers: 1 },
+                );
+            }
+            Some(Recorded::ClearStaging { workspace, target }) => {
+                let (_, height) = target.padded_size();
+                encoder.clear_buffer(staging(workspace), 0,
+                    Some(u64::from(staging_pitch_bytes(target.width)) * u64::from(height)));
+            }
+            Some(Recorded::Scratch { workspace, target, y }) => {
+                let (width, height) = target.padded_size();
+                encoder.copy_buffer_to_texture(
+                    wgpu::TexelCopyBufferInfo {
+                        buffer: staging(workspace),
+                        layout: wgpu::TexelCopyBufferLayout {
+                            offset: 0, bytes_per_row: Some(staging_pitch_bytes(target.width)), rows_per_image: None,
+                        },
+                    },
+                    wgpu::TexelCopyTextureInfo {
+                        texture: &bc7_encoding().scratch, mip_level: 0, origin: wgpu::Origin3d { x: 0, y: *y, z: 0 },
+                        aspect: wgpu::TextureAspect::All,
+                    },
+                    wgpu::Extent3d { width, height, depth_or_array_layers: 1 },
+                );
+                encodes.push((*target, *y));
+            }
+            Some(Recorded::Blocks { source, target, offset }) => {
+                let atlas = atlas_of(AtlasFormat::Bc7).expect("a step ran on it");
+                let bounce = &bc7_encoding().bounce;
+                let (bytes_per_row, _) = block_copy_layout(*source);
+                let (width, height) = source.padded_size();
+                let layout =
+                    wgpu::TexelCopyBufferLayout { offset: *offset, bytes_per_row: Some(bytes_per_row), rows_per_image: None };
+                let extent = wgpu::Extent3d { width, height, depth_or_array_layers: 1 };
+                let at = |rect: &AtlasRect| wgpu::TexelCopyTextureInfo {
+                    texture: &atlas.texture, mip_level: 0, origin: wgpu::Origin3d { x: rect.x, y: rect.y, z: rect.layer },
                     aspect: wgpu::TextureAspect::All,
-                },
-                wgpu::Extent3d { width: target.width, height: target.height, depth_or_array_layers: 1 },
-            );
+                };
+                encoder.copy_texture_to_buffer(at(source), wgpu::TexelCopyBufferInfo { buffer: bounce, layout }, extent);
+                encoder.copy_buffer_to_texture(wgpu::TexelCopyBufferInfo { buffer: bounce, layout }, at(target), extent);
+            }
+            Some(Recorded::Rife(_) | Recorded::Atlas { .. }) => unreachable!("recorded in a pass"),
+        }
+    }
+    if !encodes.is_empty() {
+        // The in-betweens of the BC7 atlas, encoded together: the encoder's one compress of the submission.
+        let atlas = atlas_of(AtlasFormat::Bc7).expect("a step ran on it");
+        let EncoderState::Ready(encoding) = &mut state.bc7 else { unreachable!("a BC7 step ran") };
+        let Bc7Encoding { encoder: block_encoder, scratch_view, blocks, .. } = &mut **encoding;
+        for &(target, y) in &encodes {
+            block_encoder.add_frame_at(IN_BETWEEN_BLOCK_FORMAT, scratch_view, y, target.width, target.height, blocks,
+                scratch_blocks_offset(y));
+        }
+        {
+            let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
+                label: Some("mobile in-betweens BC7"), timestamp_writes: None,
+            });
+            block_encoder.record(&mut pass);
+        }
+        for &(target, y) in &encodes {
+            record_copy_to_layer(&mut encoder, IN_BETWEEN_BLOCK_FORMAT, blocks, scratch_blocks_offset(y), target.width,
+                target.height, &atlas.texture, target.layer, target.x, target.y);
         }
     }
     if let Some(clock) = timed {
@@ -592,13 +819,59 @@ pub fn sys_render_mobile_in_betweens(
     }
 }
 
+/// The atlas of a job's frames, and of its in-betweens.
+fn job_format(job: &InBetweenJob) -> AtlasFormat {
+    job.pairs.first().map_or(AtlasFormat::Rgba8, |pair| pair.first.format)
+}
+
+/// Where the blocks of the in-between at scratch row `y` go: after the blocks of whole scratch rows above it, which
+/// those of the in-betweens above never exceed.
+fn scratch_blocks_offset(y: u32) -> u64 {
+    IN_BETWEEN_BLOCK_FORMAT.encoded_bytes(BC7_SCRATCH_SIDE, y)
+}
+
+/// Starts the BC7 encoder the first time a job of the BC7 atlas is listed (the warm-up's, or one compiled on the
+/// background pool when the warm-up has none), and takes it once compiled.
+fn poll_bc7_encoder(state: &mut EncoderState, listed: bool, warm_up: &mut ComputeWarmUp, device: &wgpu::Device,
+    queue: &wgpu::Queue) {
+    if let EncoderState::Unloaded = state && listed {
+        *state = match warm_up.take_block_encoder() {
+            Warm::Compiling => return,
+            Warm::Ready(encoder) => EncoderState::Ready(Box::new(Bc7Encoding::new(device, encoder))),
+            Warm::Unavailable => {
+                let (device, queue) = (device.clone(), queue.clone());
+                EncoderState::Compiling(background_pool().spawn(Priority::Visible, "bc7 block encoder", move || {
+                    let _compile = begin_shader_compile("Mobile in-betweens: BC7 encoder");
+                    MobileBlockEncoder::new(&device, &queue)
+                }))
+            }
+        };
+    }
+    if let EncoderState::Compiling(task) = state {
+        *state = match task.poll() {
+            TaskPoll::Pending => return,
+            TaskPoll::Ready(encoder) => EncoderState::Ready(Box::new(Bc7Encoding::new(device, encoder))),
+            TaskPoll::Failed => {
+                error!("The BC7 encoder did not compile, so the clips of the BC7 atlas play without in-betweens.");
+                EncoderState::Failed
+            }
+        };
+    }
+}
+
 /// Records `step` of `pair`: a network dispatch, or an atlas step and, for a copy or a store, its copy into the
-/// atlas.
+/// atlas of `format`. On the BC7 atlas a first frame's blocks are copied as they are, and an in-between goes to the
+/// scratch rows `room` names, to be encoded.
 #[allow(clippy::too_many_arguments)]
 fn record_step(recorded: &mut Vec<Recorded>, steps: &mut Vec<AtlasStep>, gpu: &RifeGpu, workspace: &Workspace,
-    size: UVec2, job: &InBetweenJob, pair: &InBetweenPair, step: PairStep) {
+    size: UVec2, format: AtlasFormat, job: &InBetweenJob, pair: &InBetweenPair, step: PairStep, room: Bc7Room) {
     if let Some(dispatch) = rife_dispatch(&workspace.rife, step) {
         recorded.push(Recorded::Rife(dispatch.clone()));
+        return;
+    }
+    if format == AtlasFormat::Bc7 && step == PairStep::CopyFirst {
+        debug_assert_eq!(pair.first.padded_size(), pair.targets[0].padded_size(), "a first frame keeps its size");
+        recorded.push(Recorded::Blocks { source: pair.first, target: pair.targets[0], offset: room.bounce_bytes });
         return;
     }
     let frame =
@@ -625,11 +898,17 @@ fn record_step(recorded: &mut Vec<Recorded>, steps: &mut Vec<AtlasStep>, gpu: &R
         (atlas_step.first_offset_x, atlas_step.first_offset_y) = (0, 0);
     }
     let threads = if step == PairStep::Pack { size.x * size.y } else { card.x * card.y };
-    recorded.push(Recorded::Atlas { workspace: size, pipeline: pipeline.clone(), step: steps.len(),
+    let bc7_target = target.filter(|_| format == AtlasFormat::Bc7);
+    if let Some(target) = bc7_target {
+        recorded.push(Recorded::ClearStaging { workspace: size, target });
+    }
+    recorded.push(Recorded::Atlas { workspace: size, format, pipeline: pipeline.clone(), step: steps.len(),
         workgroups: threads.div_ceil(ATLAS_THREADS) });
     steps.push(atlas_step);
-    if let Some(target) = target {
-        recorded.push(Recorded::Copy { workspace: size, target });
+    match (target, bc7_target) {
+        (_, Some(target)) => recorded.push(Recorded::Scratch { workspace: size, target, y: room.scratch_rows }),
+        (Some(target), None) => recorded.push(Recorded::Copy { workspace: size, target }),
+        (None, _) => {}
     }
 }
 
@@ -660,6 +939,35 @@ mod tests {
         assert_eq!(staging_pitch_bytes(1), wgpu::COPY_BYTES_PER_ROW_ALIGNMENT);
         assert_eq!(staging_pitch_bytes(65), 2 * wgpu::COPY_BYTES_PER_ROW_ALIGNMENT);
         assert_eq!(padded_size(UVec2::new(65, 64)), UVec2::new(128, 64));
+    }
+
+    /// A BC7 pair: a first frame of 13 by 6 (4 by 2 blocks) and in-betweens of 10 by 9 (12 rows padded).
+    fn bc7_pair() -> InBetweenPair {
+        let rect = |width, height| AtlasRect { format: AtlasFormat::Bc7, layer: 1, x: 8, y: 4, width, height };
+        InBetweenPair { first: rect(13, 6), next: rect(13, 6), card: UVec2::new(10, 9),
+            first_offset: UVec2::ZERO, next_offset: UVec2::ZERO, targets: vec![rect(13, 6), rect(10, 9), rect(10, 9)] }
+    }
+
+    #[test]
+    fn bc7_steps_take_scratch_rows_and_bounce_bytes_until_none_are_left() {
+        let pair = bc7_pair();
+        // A first frame's blocks: rows of 4 blocks, in 256 bytes for a copy of several rows.
+        assert_eq!(block_copy_layout(pair.first), (wgpu::COPY_BYTES_PER_ROW_ALIGNMENT, 2));
+        let mut room = Bc7Room::default();
+        assert_eq!(room.take(PairStep::Pack, &pair), Some(Bc7Room::default()));
+        assert_eq!(room.take(PairStep::CopyFirst, &pair), Some(Bc7Room::default()));
+        assert_eq!(room.take(PairStep::Store(0), &pair).unwrap().bounce_bytes, 2 * 256);
+        assert_eq!(room.take(PairStep::Store(1), &pair).unwrap().scratch_rows, 12);
+        assert_eq!(room, Bc7Room { scratch_rows: 24, bounce_bytes: 2 * 256 });
+        // The in-betweens' rows stay within the scratch texture, and their blocks apart.
+        let mut full = Bc7Room { scratch_rows: BC7_SCRATCH_SIDE - 8, bounce_bytes: BC7_BOUNCE_BYTES - 256 };
+        assert_eq!(full.take(PairStep::Store(0), &pair), None);
+        assert_eq!(full.take(PairStep::CopyFirst, &pair), None);
+        assert_eq!(full, Bc7Room { scratch_rows: BC7_SCRATCH_SIDE - 8, bounce_bytes: BC7_BOUNCE_BYTES - 256 });
+        assert_eq!(scratch_blocks_offset(12) - scratch_blocks_offset(0),
+            IN_BETWEEN_BLOCK_FORMAT.encoded_bytes(BC7_SCRATCH_SIDE, 12));
+        assert!(scratch_blocks_offset(BC7_SCRATCH_SIDE) <= IN_BETWEEN_BLOCK_FORMAT.encoded_bytes(BC7_SCRATCH_SIDE,
+            BC7_SCRATCH_SIDE));
     }
 
     #[test]

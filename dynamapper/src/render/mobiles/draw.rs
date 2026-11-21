@@ -1,7 +1,9 @@
 //! The mobiles' sprites: each frame drawn an instance of the statics' art sprite shader, from the mobiles' own frame
 //! atlas and instance buffer. Three material instances copy the statics' opaque, transparent and projected-shadow
 //! ones, so a mobile takes the same lighting, hues and shadows as the art around it; theirs compile the shader with
-//! `MOBILE_FRAMES`, which reads each instance's crossfade beside it (in_between.rs).
+//! `MOBILE_FRAMES`, which reads each instance's crossfade beside it (in_between.rs). The materials bind the RGBA8 frame
+//! atlas as the sprites' first atlas and the BC7 one as the second (`atlas_enhanced`), each in both places when it is
+//! the only one; an instance of a BC7 frame names its page with the second atlas's bit (`AtlasRect::instance_layer`).
 
 use bevy::camera::visibility::NoFrustumCulling;
 use bevy::mesh::MeshTag;
@@ -18,7 +20,7 @@ use crate::settings::Settings;
 use crate::render::statics::statics_draw::{build_art_batch_mesh, ArtSpriteMaterial, ArtSpriteRenderAssets};
 use crate::world::mobile_motion::MobileMotion;
 use super::clips::{AnimSource, AtlasEntry, ClipKey, MobileClips};
-use super::frame_atlas::MobileFrameAtlas;
+use super::frame_atlas::{AtlasFormat, MobileFrameAtlas};
 use super::in_between::{layer_frames, FrameCrossfade, LayerFrames};
 use super::placement::mobile_card_bounds;
 use super::rife_in_betweens::MobileInBetweens;
@@ -81,17 +83,20 @@ pub fn sys_setup_mobile_draw(
     mut materials: ResMut<Assets<ArtSpriteMaterial>>,
     mut storage_buffers: ResMut<Assets<ShaderBuffer>>,
     mut meshes: ResMut<Assets<Mesh>>,
+    packages: Res<super::MobileAnimPackages>,
 ) {
     if existing.is_some() {
         return;
     }
     let Some(art_assets) = art_assets else { return };
-    let atlas = MobileFrameAtlas::<AtlasEntry>::new(&mut images);
+    let atlas = MobileFrameAtlas::<AtlasEntry>::new(&mut images, packages.0.formats());
+    let [first, second] = [[AtlasFormat::Rgba8, AtlasFormat::Bc7], [AtlasFormat::Bc7, AtlasFormat::Rgba8]]
+        .map(|order| order.into_iter().find_map(|format| atlas.image(format)).expect("an atlas exists").clone());
     let instances = storage_buffers.add(ShaderBuffer::from(vec![MobileSpriteInstance::zeroed(); MAX_MOBILE_INSTANCES as usize]));
     let mut copy = |handle: &Handle<ArtSpriteMaterial>| {
         let mut material = materials.get(handle).expect("the statics' sprite materials exist").clone();
-        material.extension.atlas = atlas.image().clone();
-        material.extension.atlas_enhanced = atlas.image().clone();
+        material.extension.atlas = first.clone();
+        material.extension.atlas_enhanced = second.clone();
         material.extension.instances = instances.clone();
         material.extension.mobile_frames = true;
         materials.add(material)

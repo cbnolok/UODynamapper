@@ -1,30 +1,104 @@
-//! The mobiles' frame atlas: the frames of the clips in use, packed on shelves into the pages of one 2D array texture.
-//! An entry (a clip, or a RIFE sequence) takes its frames' room on one page when they fit one, else in pieces over
-//! several wherever there is room; it is one entry all the same: a page of it emptied, it leaves the others too. When
-//! no page has room, the page used longest ago empties for it, and the clips on it load again when drawn; a page
-//! unused for `IDLE_PAGE_RELEASE_SECS` empties too. Placed frames upload to the render world rectangle by rectangle.
+//! The mobiles' frame atlases: the frames of the clips in use, packed on shelves into the pages of a 2D array texture,
+//! one atlas per pixel format the animation packages store (`AtlasFormat`): an RGBA8888 package's frames upload as
+//! RGBA8, a BC7 package's as its BC7 blocks, never decoded. With both packages of one format there is one atlas. An
+//! entry (a clip, or a RIFE sequence) takes its frames' room in its source's atlas, on one page when they fit one,
+//! else in pieces over several wherever there is room; it is one entry all the same: a page of it emptied, it leaves
+//! the others too. When no page has room, the page used longest ago empties for it, and the clips on it load again
+//! when drawn; a page unused for `IDLE_PAGE_RELEASE_SECS` empties too. Placed frames upload to the render world
+//! rectangle by rectangle.
 
 use std::hash::Hash;
+use std::sync::Arc;
 use bevy::prelude::*;
 use bevy::render::render_asset::RenderAssets;
+use bevy::render::render_resource::TextureFormat;
 use bevy::render::renderer::RenderQueue;
 use bevy::render::texture::GpuImage;
 use bevy::render::Extract;
+use udd_assets::tex_art_cc::PagePixelFormat;
+use uot_gpu_compute::block_encode::BLOCK_SIDE;
+use crate::render::assets::art::ART_LAYER_ENHANCED_ATLAS_BIT;
 
 /// The side of a page, in texels.
 pub const MOBILE_ATLAS_PAGE_SIZE: u32 = 1024;
-/// The pages of the atlas: 8 RGBA8 pages are 32 MiB, room for the movements of a few creatures and their riders in
-/// every direction.
+/// The pages of an atlas: 8 RGBA8 pages are 32 MiB (8 BC7 ones 8 MiB), room for the movements of a few creatures and
+/// their riders in every direction.
 pub const MOBILE_ATLAS_PAGES: u32 = 8;
-/// The transparent texels kept between frames, so a filtered tap at a frame's edge reads none of its neighbour.
+/// The transparent texels kept between frames of an RGBA8 atlas, so a filtered tap at a frame's edge reads none of its
+/// neighbour. A BC7 atlas keeps a block (`AtlasFormat::gutter`).
 pub const FRAME_GUTTER: u32 = 1;
 /// A page no drawn clip used for this long empties.
 pub const IDLE_PAGE_RELEASE_SECS: f64 = 300.0;
-const BYTES_PER_TEXEL: u32 = 4;
+const RGBA8_TEXEL_BYTES: u32 = 4;
+const BC7_BLOCK_BYTES: u32 = 16;
 
-/// Where a frame lies in the atlas.
+/// The pixel format of a frame atlas, its packages' pages' (`PagePixelFormat`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum AtlasFormat {
+    /// Straight-alpha RGBA8, sRGB.
+    Rgba8,
+    /// BC7 blocks, sRGB, as a BC7 package stores them: a frame's rectangle starts on a block corner and is padded to
+    /// whole blocks.
+    Bc7,
+}
+
+impl AtlasFormat {
+    pub fn of(format: PagePixelFormat) -> Self {
+        match format {
+            PagePixelFormat::Rgba8888 => Self::Rgba8,
+            PagePixelFormat::Bc7 => Self::Bc7,
+        }
+    }
+
+    pub fn texture_format(self) -> TextureFormat {
+        match self {
+            Self::Rgba8 => TextureFormat::Rgba8UnormSrgb,
+            Self::Bc7 => TextureFormat::Bc7RgbaUnormSrgb,
+        }
+    }
+
+    /// The side a frame's rectangle starts on a multiple of and is padded to: a texel, or a block.
+    pub const fn align(self) -> u32 {
+        match self {
+            Self::Rgba8 => 1,
+            Self::Bc7 => BLOCK_SIDE,
+        }
+    }
+
+    /// The room kept free after a frame, right and below: `FRAME_GUTTER`, or a block, so that a tap past a frame's
+    /// blocks reads none of its neighbour's.
+    pub const fn gutter(self) -> u32 {
+        match self {
+            Self::Rgba8 => FRAME_GUTTER,
+            Self::Bc7 => BLOCK_SIDE,
+        }
+    }
+
+    /// The extent a `width` by `height` frame's pixels cover: the frame, padded to whole blocks for BC7.
+    pub const fn padded(self, width: u32, height: u32) -> (u32, u32) {
+        (width.next_multiple_of(self.align()), height.next_multiple_of(self.align()))
+    }
+
+    /// The bytes of a row of a `width` wide frame's pixels: a row of texels, or of blocks.
+    pub const fn row_bytes(self, width: u32) -> u32 {
+        match self {
+            Self::Rgba8 => width * RGBA8_TEXEL_BYTES,
+            Self::Bc7 => width.div_ceil(BLOCK_SIDE) * BC7_BLOCK_BYTES,
+        }
+    }
+
+    /// The bytes of a `width` by `height` frame's pixels.
+    pub const fn frame_bytes(self, width: u32, height: u32) -> usize {
+        let rows = height.div_ceil(self.align());
+        self.row_bytes(width) as usize * rows as usize
+    }
+}
+
+/// Where a frame lies: its atlas, its page there and its rectangle (`width` by `height` its own size, its pixels
+/// covering `padded_size`).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct AtlasRect {
+    pub format: AtlasFormat,
     pub layer: u32,
     pub x: u32,
     pub y: u32,
@@ -38,6 +112,20 @@ impl AtlasRect {
         let size = MOBILE_ATLAS_PAGE_SIZE as f32;
         (Vec2::new(self.x as f32, self.y as f32) / size,
             Vec2::new((self.x + self.width) as f32, (self.y + self.height) as f32) / size)
+    }
+
+    /// The extent of the frame's pixels: whole blocks in a BC7 atlas.
+    pub fn padded_size(&self) -> (u32, u32) {
+        self.format.padded(self.width, self.height)
+    }
+
+    /// The layer as an instance of the art sprite shader names it: a BC7 atlas binds as the material's second atlas
+    /// (`atlas_enhanced`), whose pages carry `ART_LAYER_ENHANCED_ATLAS_BIT` (art/atlas_pages.wesl).
+    pub fn instance_layer(&self) -> u32 {
+        match self.format {
+            AtlasFormat::Rgba8 => self.layer,
+            AtlasFormat::Bc7 => self.layer | ART_LAYER_ENHANCED_ATLAS_BIT,
+        }
     }
 }
 
@@ -67,9 +155,11 @@ impl<K> Page<K> {
         self.clips.is_empty()
     }
 
-    /// Room for a `width` by `height` frame: on the first shelf it fits, else on a new one.
-    fn place(&mut self, width: u32, height: u32) -> Option<(u32, u32)> {
-        let (padded_width, padded_height) = (width + FRAME_GUTTER, height + FRAME_GUTTER);
+    /// Room for a `width` by `height` frame of `format`: on the first shelf it fits, else on a new one. Every room
+    /// taken is a multiple of `format`'s alignment, so every frame starts on one.
+    fn place(&mut self, format: AtlasFormat, width: u32, height: u32) -> Option<(u32, u32)> {
+        let (width, height) = format.padded(width, height);
+        let (padded_width, padded_height) = (width + format.gutter(), height + format.gutter());
         if padded_width > MOBILE_ATLAS_PAGE_SIZE || padded_height > MOBILE_ATLAS_PAGE_SIZE {
             return None;
         }
@@ -93,54 +183,76 @@ impl<K> Page<K> {
 #[derive(Clone)]
 pub struct FrameUpload {
     pub rect: AtlasRect,
-    /// Straight-alpha RGBA8, `rect.width` by `rect.height`, rows top down.
-    pub rgba: std::sync::Arc<[u8]>,
+    /// The pixels of `rect.padded_size()` in `rect.format`, rows top down: straight-alpha RGBA8, or rows of BC7
+    /// blocks.
+    pub pixels: Arc<[u8]>,
 }
 
-/// The frames' pages, keyed by clip `K`.
-#[derive(Resource)]
-pub struct MobileFrameAtlas<K> {
+/// The pages of one format.
+struct FormatAtlas<K> {
+    format: AtlasFormat,
     image: Handle<Image>,
     pages: Vec<Page<K>>,
+}
+
+/// The frames' atlases, one per format, keyed by clip `K`.
+#[derive(Resource)]
+pub struct MobileFrameAtlas<K> {
+    atlases: Vec<FormatAtlas<K>>,
     /// The uploads placed since the last extraction, then the ones handed to it.
     staged: Vec<FrameUpload>,
     extract_staging: Vec<FrameUpload>,
 }
 
 impl<K: Copy + Eq + Hash> MobileFrameAtlas<K> {
-    pub fn new(images: &mut Assets<Image>) -> Self {
-        Self {
-            image: images.add(atlas_image()),
-            pages: (0..MOBILE_ATLAS_PAGES).map(|_| Page::empty()).collect(),
-            staged: Vec::new(),
-            extract_staging: Vec::new(),
+    /// The atlases of `formats`, one each.
+    pub fn new(images: &mut Assets<Image>, formats: impl IntoIterator<Item = AtlasFormat>) -> Self {
+        let mut atlases: Vec<FormatAtlas<K>> = Vec::new();
+        for format in formats {
+            if atlases.iter().all(|atlas| atlas.format != format) {
+                atlases.push(FormatAtlas { format, image: images.add(atlas_image(format)), pages: empty_pages() });
+            }
         }
+        Self { atlases, staged: Vec::new(), extract_staging: Vec::new() }
     }
 
-    pub fn image(&self) -> &Handle<Image> {
-        &self.image
+    /// The image of the atlas of `format`, if there is one.
+    pub fn image(&self, format: AtlasFormat) -> Option<&Handle<Image>> {
+        self.atlases.iter().find(|atlas| atlas.format == format).map(|atlas| &atlas.image)
     }
 
-    /// Places the frames of `clip`, `(width, height, rgba)` each, as `reserve` does, and stages their uploads.
-    pub fn place_clip(&mut self, clip: K, frames: &[(u32, u32, std::sync::Arc<[u8]>)], now: f64)
+    /// The atlases' formats and images.
+    pub fn images(&self) -> impl Iterator<Item = (AtlasFormat, &Handle<Image>)> {
+        self.atlases.iter().map(|atlas| (atlas.format, &atlas.image))
+    }
+
+    fn pages_of(&mut self, format: AtlasFormat) -> Option<&mut Vec<Page<K>>> {
+        self.atlases.iter_mut().find(|atlas| atlas.format == format).map(|atlas| &mut atlas.pages)
+    }
+
+    /// Places the frames of `clip` in the atlas of `format`, `(width, height, pixels)` each (`FrameUpload::pixels`),
+    /// as `reserve` does, and stages their uploads.
+    pub fn place_clip(&mut self, clip: K, format: AtlasFormat, frames: &[(u32, u32, Arc<[u8]>)], now: f64)
         -> Option<(Vec<AtlasRect>, Vec<K>)> {
         let sizes = frames.iter().map(|(width, height, _)| (*width, *height)).collect::<Vec<_>>();
-        let (rects, evicted) = self.reserve(clip, &sizes, now)?;
-        for (rect, (_, _, rgba)) in rects.iter().zip(frames) {
-            self.staged.push(FrameUpload { rect: *rect, rgba: rgba.clone() });
+        let (rects, evicted) = self.reserve(clip, format, &sizes, now)?;
+        for (rect, (_, _, pixels)) in rects.iter().zip(frames) {
+            self.staged.push(FrameUpload { rect: *rect, pixels: pixels.clone() });
         }
         Some((rects, evicted))
     }
 
-    /// Makes room for the frames of `entry`, `(width, height)` each, for pixels the GPU writes there itself: on the
-    /// first page with room for all, the fullest first; when none has, in pieces, each frame on the page of the one
-    /// before while it has room, else on the first page with room for it. Pages are emptied until the frames have
-    /// room: the entries they held come back, to be dropped by their owner. `None` when a frame does not fit an empty
-    /// page or the frames do not fit the atlas.
-    pub fn reserve(&mut self, entry: K, sizes: &[(u32, u32)], now: f64) -> Option<(Vec<AtlasRect>, Vec<K>)> {
+    /// Makes room in the atlas of `format` for the frames of `entry`, `(width, height)` each, for pixels the GPU
+    /// writes there itself: on the first page with room for all, the fullest first; when none has, in pieces, each
+    /// frame on the page of the one before while it has room, else on the first page with room for it. Pages are
+    /// emptied until the frames have room: the entries they held come back, to be dropped by their owner. `None` when
+    /// a frame does not fit an empty page, the frames do not fit the atlas, or there is no atlas of `format`.
+    pub fn reserve(&mut self, entry: K, format: AtlasFormat, sizes: &[(u32, u32)], now: f64)
+        -> Option<(Vec<AtlasRect>, Vec<K>)> {
+        let atlas_pages = self.pages_of(format)?;
         // On a copy of the pages, so that frames the atlas does not hold leave it as it was.
-        let mut pages = self.pages.clone();
-        let (rects, evicted) = reserve_on(&mut pages, sizes, f64::INFINITY)?;
+        let mut pages = atlas_pages.clone();
+        let (rects, evicted) = reserve_on(&mut pages, format, sizes, f64::INFINITY)?;
         for rect in &rects {
             let page = &mut pages[rect.layer as usize];
             if !page.clips.contains(&entry) {
@@ -148,20 +260,21 @@ impl<K: Copy + Eq + Hash> MobileFrameAtlas<K> {
             }
             page.last_used = now;
         }
-        self.pages = pages;
+        *atlas_pages = pages;
         Some((rects, evicted))
     }
 
-    /// Whether `reserve` would find room for frames of `sizes` without emptying a page used since `since`. Frames the
-    /// atlas does not hold count as room: `reserve` turns them down.
-    pub fn has_room_sparing(&self, sizes: &[(u32, u32)], since: f64) -> bool {
-        reserve_on(&mut self.pages.clone(), sizes, since).is_some()
-            || reserve_on(&mut self.pages.clone(), sizes, f64::INFINITY).is_none()
+    /// Whether `reserve` would find room for frames of `sizes` in the atlas of `format` without emptying a page used
+    /// since `since`. Frames the atlas does not hold count as room: `reserve` turns them down.
+    pub fn has_room_sparing(&self, format: AtlasFormat, sizes: &[(u32, u32)], since: f64) -> bool {
+        let Some(atlas) = self.atlases.iter().find(|atlas| atlas.format == format) else { return true };
+        reserve_on(&mut atlas.pages.clone(), format, sizes, since).is_some()
+            || reserve_on(&mut atlas.pages.clone(), format, sizes, f64::INFINITY).is_none()
     }
 
-    /// Marks the page of a clip drawn at `now`.
-    pub fn touch(&mut self, layer: u32, now: f64) {
-        if let Some(page) = self.pages.get_mut(layer as usize) {
+    /// Marks the page of a frame of a clip drawn at `now`.
+    pub fn touch(&mut self, rect: AtlasRect, now: f64) {
+        if let Some(page) = self.pages_of(rect.format).and_then(|pages| pages.get_mut(rect.layer as usize)) {
             page.last_used = now;
         }
     }
@@ -169,10 +282,12 @@ impl<K: Copy + Eq + Hash> MobileFrameAtlas<K> {
     /// Empties the pages no clip drawn since `now - IDLE_PAGE_RELEASE_SECS`, and returns their clips.
     pub fn release_idle(&mut self, now: f64) -> Vec<K> {
         let mut released = Vec::new();
-        for layer in 0..self.pages.len() {
-            let page = &self.pages[layer];
-            if !page.is_empty() && now - page.last_used > IDLE_PAGE_RELEASE_SECS {
-                released.extend(empty_page(&mut self.pages, layer));
+        for atlas in &mut self.atlases {
+            for layer in 0..atlas.pages.len() {
+                let page = &atlas.pages[layer];
+                if !page.is_empty() && now - page.last_used > IDLE_PAGE_RELEASE_SECS {
+                    released.extend(empty_page(&mut atlas.pages, layer));
+                }
             }
         }
         released
@@ -184,27 +299,32 @@ impl<K: Copy + Eq + Hash> MobileFrameAtlas<K> {
     }
 }
 
-/// Places frames of `sizes` on `pages`, emptying the page used longest ago until they have room, but none used since
-/// `spare_since`: the frames' rectangles and the entries of the pages emptied. None, the pages possibly changed, when
-/// they do not get room. The pages do not list the frames' entry yet.
-fn reserve_on<K: Copy + Eq>(pages: &mut [Page<K>], sizes: &[(u32, u32)], spare_since: f64)
+fn empty_pages<K>() -> Vec<Page<K>> {
+    (0..MOBILE_ATLAS_PAGES).map(|_| Page::empty()).collect()
+}
+
+/// Places frames of `sizes` of `format` on `pages`, emptying the page used longest ago until they have room, but none
+/// used since `spare_since`: the frames' rectangles and the entries of the pages emptied. None, the pages possibly
+/// changed, when they do not get room. The pages do not list the frames' entry yet.
+fn reserve_on<K: Copy + Eq>(pages: &mut [Page<K>], format: AtlasFormat, sizes: &[(u32, u32)], spare_since: f64)
     -> Option<(Vec<AtlasRect>, Vec<K>)> {
-    let one_page = fits(&mut Page::<K>::empty(), sizes);
-    let each_fits_a_page = || sizes.iter().all(|&size| fits(&mut Page::<K>::empty(), &[size]));
+    let one_page = fits(&mut Page::<K>::empty(), format, sizes);
+    let each_fits_a_page = || sizes.iter().all(|&size| fits(&mut Page::<K>::empty(), format, &[size]));
     if !one_page && !each_fits_a_page() {
         return None;
     }
     let mut evicted = Vec::new();
     loop {
         let layers = if one_page {
-            page_with_room(pages, sizes).map(|layer| vec![layer; sizes.len()])
+            page_with_room(pages, format, sizes).map(|layer| vec![layer; sizes.len()])
         } else {
-            pages_with_room(pages, sizes)
+            pages_with_room(pages, format, sizes)
         };
         if let Some(layers) = layers {
             let rects = sizes.iter().zip(layers).map(|(&(width, height), layer)| {
-                let (x, y) = pages[layer].place(width, height).expect("the page was checked to hold the frame");
-                AtlasRect { layer: layer as u32, x, y, width, height }
+                let (x, y) =
+                    pages[layer].place(format, width, height).expect("the page was checked to hold the frame");
+                AtlasRect { format, layer: layer as u32, x, y, width, height }
             }).collect();
             return Some((rects, evicted));
         }
@@ -227,25 +347,25 @@ fn fill_order<K>(pages: &[Page<K>]) -> Vec<usize> {
 }
 
 /// The first page in `fill_order` with room for all frames of `sizes`.
-fn page_with_room<K>(pages: &[Page<K>], sizes: &[(u32, u32)]) -> Option<usize> {
+fn page_with_room<K>(pages: &[Page<K>], format: AtlasFormat, sizes: &[(u32, u32)]) -> Option<usize> {
     // A trial on a copy of each page's shelves.
     fill_order(pages).into_iter().find(|&layer| {
         let page = &pages[layer];
         let mut trial = Page::<K> { shelves: page.shelves.clone(), next_shelf_y: page.next_shelf_y,
             last_used: page.last_used, clips: Vec::new() };
-        fits(&mut trial, sizes)
+        fits(&mut trial, format, sizes)
     })
 }
 
 /// The pages of the frames of `sizes` in pieces, tried on a copy: each frame on the page of the one before while it
 /// has room, else on the first page in `fill_order` with room for it. None when a frame finds none.
-fn pages_with_room<K: Clone>(pages: &[Page<K>], sizes: &[(u32, u32)]) -> Option<Vec<usize>> {
+fn pages_with_room<K: Clone>(pages: &[Page<K>], format: AtlasFormat, sizes: &[(u32, u32)]) -> Option<Vec<usize>> {
     let mut trial = pages.to_vec();
     let order = fill_order(pages);
     let mut current: Option<usize> = None;
     sizes.iter().map(|&(width, height)| {
-        let layer = current.filter(|&layer| trial[layer].place(width, height).is_some())
-            .or_else(|| order.iter().copied().find(|&layer| trial[layer].place(width, height).is_some()))?;
+        let layer = current.filter(|&layer| trial[layer].place(format, width, height).is_some())
+            .or_else(|| order.iter().copied().find(|&layer| trial[layer].place(format, width, height).is_some()))?;
         current = Some(layer);
         Some(layer)
     }).collect()
@@ -265,18 +385,18 @@ fn empty_page<K: Copy + Eq>(pages: &mut [Page<K>], layer: usize) -> Vec<K> {
     evicted
 }
 
-fn fits<K>(page: &mut Page<K>, sizes: &[(u32, u32)]) -> bool {
-    sizes.iter().all(|&(width, height)| page.place(width, height).is_some())
+fn fits<K>(page: &mut Page<K>, format: AtlasFormat, sizes: &[(u32, u32)]) -> bool {
+    sizes.iter().all(|&(width, height)| page.place(format, width, height).is_some())
 }
 
-fn atlas_image() -> Image {
-    use bevy::render::render_resource::{Extent3d, TextureDimension, TextureFormat, TextureViewDescriptor,
-        TextureViewDimension};
-    // No CPU data: the GPU zero-fills the pages, transparent, and the frames upload into them.
+fn atlas_image(format: AtlasFormat) -> Image {
+    use bevy::render::render_resource::{Extent3d, TextureDimension, TextureViewDescriptor, TextureViewDimension};
+    // No CPU data: the GPU zero-fills the pages, transparent (a zero BC7 block decodes to transparent black), and the
+    // frames upload into them.
     let mut image = Image::new_uninit(
         Extent3d { width: MOBILE_ATLAS_PAGE_SIZE, height: MOBILE_ATLAS_PAGE_SIZE, depth_or_array_layers: MOBILE_ATLAS_PAGES },
         TextureDimension::D2,
-        TextureFormat::Rgba8UnormSrgb,
+        format.texture_format(),
         bevy::asset::RenderAssetUsages::RENDER_WORLD,
     );
     image.texture_view_descriptor =
@@ -291,10 +411,10 @@ pub fn sys_stage_mobile_frame_uploads(atlas: Option<ResMut<MobileFrameAtlas<supe
     }
 }
 
-/// The render world's uploads, and the atlas image they go to.
+/// The render world's uploads, and the atlas images they go to.
 #[derive(Resource, Default)]
 pub struct RenderMobileFrameUploads {
-    image: Option<Handle<Image>>,
+    images: Vec<(AtlasFormat, Handle<Image>)>,
     uploads: Vec<FrameUpload>,
 }
 
@@ -303,11 +423,18 @@ pub fn sys_extract_mobile_frame_uploads<K: Copy + Eq + Hash + Send + Sync + 'sta
     mut render_uploads: ResMut<RenderMobileFrameUploads>,
 ) {
     let Some(atlas) = atlas.as_ref() else { return };
-    render_uploads.image = Some(atlas.image.clone());
+    if render_uploads.images.len() != atlas.atlases.len() {
+        render_uploads.images = atlas.images().map(|(format, image)| (format, image.clone())).collect();
+    }
     render_uploads.uploads.extend(atlas.extract_staging.iter().cloned());
 }
 
-/// Writes the uploads into the atlas once its image is on the GPU.
+/// The copy layout of `rect`'s pixels: the bytes of a row (of texels, or of blocks) and the extent they cover.
+fn upload_layout(rect: AtlasRect) -> (u32, (u32, u32)) {
+    (rect.format.row_bytes(rect.width), rect.padded_size())
+}
+
+/// Writes the uploads into their atlases once the images are on the GPU: RGBA8 rows, or BC7 blocks as they are.
 pub fn sys_render_upload_mobile_frames(
     mut render_uploads: ResMut<RenderMobileFrameUploads>,
     gpu_images: Res<RenderAssets<GpuImage>>,
@@ -317,9 +444,16 @@ pub fn sys_render_upload_mobile_frames(
     if render_uploads.uploads.is_empty() {
         return;
     }
-    let Some(gpu_image) = render_uploads.image.as_ref().and_then(|image| gpu_images.get(image)) else { return };
+    let atlas = |format| render_uploads.images.iter().find(|(atlas, _)| *atlas == format)
+        .and_then(|(_, image)| gpu_images.get(image));
+    if render_uploads.uploads.iter().any(|upload| atlas(upload.rect.format).is_none()) {
+        return;
+    }
     for upload in render_uploads.uploads.iter() {
         let rect = upload.rect;
+        let gpu_image = atlas(rect.format).expect("checked above");
+        let (row_bytes, (width, height)) = upload_layout(rect);
+        debug_assert_eq!(upload.pixels.len(), rect.format.frame_bytes(rect.width, rect.height));
         render_queue.write_texture(
             TexelCopyTextureInfo {
                 texture: &gpu_image.texture,
@@ -327,9 +461,9 @@ pub fn sys_render_upload_mobile_frames(
                 origin: Origin3d { x: rect.x, y: rect.y, z: rect.layer },
                 aspect: TextureAspect::All,
             },
-            &upload.rgba,
-            TexelCopyBufferLayout { offset: 0, bytes_per_row: Some(rect.width * BYTES_PER_TEXEL), rows_per_image: None },
-            Extent3d { width: rect.width, height: rect.height, depth_or_array_layers: 1 },
+            &upload.pixels,
+            TexelCopyBufferLayout { offset: 0, bytes_per_row: Some(row_bytes), rows_per_image: None },
+            Extent3d { width, height, depth_or_array_layers: 1 },
         );
     }
     render_uploads.uploads.clear();
@@ -339,13 +473,50 @@ pub fn sys_render_upload_mobile_frames(
 mod tests {
     use super::*;
 
-    fn frames(count: usize, side: u32) -> Vec<(u32, u32, std::sync::Arc<[u8]>)> {
-        (0..count).map(|_| (side, side, std::sync::Arc::from(vec![0u8; (side * side * BYTES_PER_TEXEL) as usize]))).collect()
+    fn frames_of(format: AtlasFormat, count: usize, side: u32) -> Vec<(u32, u32, Arc<[u8]>)> {
+        (0..count).map(|_| (side, side, Arc::from(vec![0u8; format.frame_bytes(side, side)]))).collect()
     }
 
-    fn atlas() -> MobileFrameAtlas<u32> {
-        MobileFrameAtlas { image: Handle::default(), pages: (0..MOBILE_ATLAS_PAGES).map(|_| Page::empty()).collect(),
-            staged: Vec::new(), extract_staging: Vec::new() }
+    fn frames(count: usize, side: u32) -> Vec<(u32, u32, Arc<[u8]>)> {
+        frames_of(AtlasFormat::Rgba8, count, side)
+    }
+
+    fn atlas_of(formats: &[AtlasFormat]) -> MobileFrameAtlas<u32> {
+        MobileFrameAtlas::new(&mut Assets::<Image>::default(), formats.iter().copied())
+    }
+
+    /// An RGBA8 atlas, as the tests before BC7 knew it.
+    struct Rgba8Atlas(MobileFrameAtlas<u32>);
+
+    impl Rgba8Atlas {
+        fn place_clip(&mut self, clip: u32, frames: &[(u32, u32, Arc<[u8]>)], now: f64)
+            -> Option<(Vec<AtlasRect>, Vec<u32>)> {
+            self.0.place_clip(clip, AtlasFormat::Rgba8, frames, now)
+        }
+
+        fn reserve(&mut self, entry: u32, sizes: &[(u32, u32)], now: f64) -> Option<(Vec<AtlasRect>, Vec<u32>)> {
+            self.0.reserve(entry, AtlasFormat::Rgba8, sizes, now)
+        }
+
+        fn has_room_sparing(&self, sizes: &[(u32, u32)], since: f64) -> bool {
+            self.0.has_room_sparing(AtlasFormat::Rgba8, sizes, since)
+        }
+
+        fn touch(&mut self, layer: u32, now: f64) {
+            self.0.touch(AtlasRect { format: AtlasFormat::Rgba8, layer, x: 0, y: 0, width: 0, height: 0 }, now);
+        }
+
+        fn release_idle(&mut self, now: f64) -> Vec<u32> {
+            self.0.release_idle(now)
+        }
+
+        fn pages(&self) -> &[Page<u32>] {
+            &self.0.atlases[0].pages
+        }
+    }
+
+    fn atlas() -> Rgba8Atlas {
+        Rgba8Atlas(atlas_of(&[AtlasFormat::Rgba8]))
     }
 
     #[test]
@@ -360,7 +531,7 @@ mod tests {
                 assert!(apart, "{a:?} overlaps {b:?}");
             }
         }
-        assert_eq!(atlas.staged.len(), 40);
+        assert_eq!(atlas.0.staged.len(), 40);
     }
 
     #[test]
@@ -420,8 +591,8 @@ mod tests {
         assert!(rects[split..].iter().all(|rect| rect.layer == second_layer));
         assert_ne!(first_layer, second_layer);
         assert_apart(&[clip_rects.as_slice(), rects.as_slice()].concat());
-        assert_eq!(atlas.pages[first_layer as usize].clips, vec![CLIP, SEQUENCE]);
-        assert_eq!(atlas.pages[second_layer as usize].clips, vec![SEQUENCE]);
+        assert_eq!(atlas.pages()[first_layer as usize].clips, vec![CLIP, SEQUENCE]);
+        assert_eq!(atlas.pages()[second_layer as usize].clips, vec![SEQUENCE]);
 
         // The other pages full, clips drawn after; the clip's page drawn since. The sequence's second page is the
         // least recently used: emptied for a new clip, the sequence leaves the clip's page too, the clip stays.
@@ -432,7 +603,7 @@ mod tests {
         let (rects, evicted) = atlas.place_clip(99, &frames(1, 100), 60.0).unwrap();
         assert_eq!(evicted, vec![SEQUENCE]);
         assert_eq!(rects[0].layer, second_layer);
-        assert_eq!(atlas.pages[first_layer as usize].clips, vec![CLIP]);
+        assert_eq!(atlas.pages()[first_layer as usize].clips, vec![CLIP]);
     }
 
     #[test]
@@ -465,7 +636,7 @@ mod tests {
         // Its first page idle, its second drawn: both empty, as the sequence is one entry.
         atlas.touch(second_layer, IDLE_PAGE_RELEASE_SECS);
         assert_eq!(atlas.release_idle(IDLE_PAGE_RELEASE_SECS + 1.0), vec![SEQUENCE]);
-        assert!(atlas.pages.iter().all(|page| page.is_empty() && page.shelves.is_empty()));
+        assert!(atlas.pages().iter().all(|page| page.is_empty() && page.shelves.is_empty()));
     }
 
     #[test]
@@ -484,7 +655,83 @@ mod tests {
         for sizes in [too_many, too_large] {
             assert!(atlas.has_room_sparing(&sizes, NOW));
             assert!(atlas.reserve(99, &sizes, NOW + 1.0).is_none());
-            assert!(atlas.pages.iter().enumerate().all(|(layer, page)| page.clips == vec![layer as u32]));
+            assert!(atlas.pages().iter().enumerate().all(|(layer, page)| page.clips == vec![layer as u32]));
         }
+    }
+
+    /// Whether the padded rectangles of `rects`, each with `gutter` free texels right and below, stay apart.
+    fn padded_apart(rects: &[AtlasRect], gutter: u32) -> bool {
+        rects.iter().enumerate().all(|(i, a)| rects[i + 1..].iter().filter(|b| b.layer == a.layer).all(|b| {
+            let ((a_width, a_height), (b_width, b_height)) = (a.padded_size(), b.padded_size());
+            a.x + a_width + gutter <= b.x || b.x + b_width + gutter <= a.x
+                || a.y + a_height + gutter <= b.y || b.y + b_height + gutter <= a.y
+        }))
+    }
+
+    /// A BC7 frame starts on a block corner, its pixels cover whole blocks, and a block stays free between frames;
+    /// its rectangle keeps the frame's own size, for its coordinates.
+    #[test]
+    fn bc7_frames_start_on_blocks_padded_to_whole_blocks_a_block_apart() {
+        const ODD_SIZES: [(u32, u32); 5] = [(1, 1), (5, 7), (13, 3), (16, 16), (37, 61)];
+        let mut atlas = atlas_of(&[AtlasFormat::Bc7]);
+        let frames: Vec<_> = (0..20).map(|index| {
+            let (width, height) = ODD_SIZES[index % ODD_SIZES.len()];
+            (width, height, Arc::from(vec![0u8; AtlasFormat::Bc7.frame_bytes(width, height)]))
+        }).collect();
+        let (rects, _) = atlas.place_clip(1, AtlasFormat::Bc7, &frames, 0.0).unwrap();
+        for (rect, (width, height, _)) in rects.iter().zip(&frames) {
+            assert_eq!(rect.format, AtlasFormat::Bc7);
+            assert_eq!((rect.x % BLOCK_SIDE, rect.y % BLOCK_SIDE), (0, 0), "{rect:?}");
+            assert_eq!((rect.width, rect.height), (*width, *height));
+            assert_eq!(rect.padded_size(), (width.next_multiple_of(BLOCK_SIDE), height.next_multiple_of(BLOCK_SIDE)));
+        }
+        assert!(padded_apart(&rects, BLOCK_SIDE));
+        assert_eq!(AtlasFormat::Bc7.gutter(), BLOCK_SIDE);
+        // An RGBA8 atlas keeps its texel alignment and one texel of gutter.
+        assert_eq!((AtlasFormat::Rgba8.align(), AtlasFormat::Rgba8.gutter()), (1, FRAME_GUTTER));
+        assert_eq!(AtlasFormat::Rgba8.padded(5, 7), (5, 7));
+    }
+
+    /// A BC7 frame's pixels are rows of 16-byte blocks covering its padded size, copied to its block-aligned corner;
+    /// an RGBA8 frame's are rows of its own width, as before.
+    #[test]
+    fn bc7_uploads_copy_whole_blocks_and_rgba8_ones_their_texels() {
+        let bc7 = AtlasRect { format: AtlasFormat::Bc7, layer: 2, x: 8, y: 12, width: 13, height: 6 };
+        // 13 by 6 is 4 by 2 blocks: rows of 64 bytes, over 16 by 8 texels.
+        assert_eq!(upload_layout(bc7), (4 * BC7_BLOCK_BYTES, (16, 8)));
+        assert_eq!(AtlasFormat::Bc7.frame_bytes(13, 6), 4 * 2 * BC7_BLOCK_BYTES as usize);
+        let rgba = AtlasRect { format: AtlasFormat::Rgba8, ..bc7 };
+        assert_eq!(upload_layout(rgba), (13 * RGBA8_TEXEL_BYTES, (13, 6)));
+        assert_eq!(AtlasFormat::Rgba8.frame_bytes(13, 6), (13 * 6 * RGBA8_TEXEL_BYTES) as usize);
+        // The layer an instance names: the BC7 atlas binds as the second one.
+        assert_eq!(rgba.instance_layer(), 2);
+        assert_eq!(bc7.instance_layer(), 2 | ART_LAYER_ENHANCED_ATLAS_BIT);
+    }
+
+    /// Each package's format has its atlas; a format both share has one. Entries of one atlas never evict another's.
+    #[test]
+    fn each_format_has_its_atlas_and_the_formats_do_not_evict_each_other() {
+        assert_eq!(AtlasFormat::of(PagePixelFormat::Rgba8888), AtlasFormat::Rgba8);
+        assert_eq!(AtlasFormat::of(PagePixelFormat::Bc7), AtlasFormat::Bc7);
+        assert_eq!(atlas_of(&[AtlasFormat::Rgba8, AtlasFormat::Rgba8]).atlases.len(), 1);
+        let mut atlas = atlas_of(&[AtlasFormat::Rgba8, AtlasFormat::Bc7]);
+        assert_eq!(atlas.images().map(|(format, _)| format).collect::<Vec<_>>(),
+            vec![AtlasFormat::Rgba8, AtlasFormat::Bc7]);
+        assert_ne!(atlas.image(AtlasFormat::Rgba8), atlas.image(AtlasFormat::Bc7));
+        assert!(atlas_of(&[AtlasFormat::Rgba8]).place_clip(1, AtlasFormat::Bc7, &frames_of(AtlasFormat::Bc7, 1, 8),
+            0.0).is_none());
+        // Both full, Classic RGBA8 drawn earlier: a new Enhanced BC7 clip evicts a BC7 page only.
+        for clip in 0..MOBILE_ATLAS_PAGES {
+            atlas.place_clip(clip, AtlasFormat::Rgba8, &frames(FRAMES_PER_PAGE, 100), 0.0).unwrap();
+            atlas.place_clip(100 + clip, AtlasFormat::Bc7, &frames_of(AtlasFormat::Bc7, 81, 100), 1.0 + f64::from(clip))
+                .unwrap();
+        }
+        let (rects, evicted) =
+            atlas.place_clip(999, AtlasFormat::Bc7, &frames_of(AtlasFormat::Bc7, 1, 100), 20.0).unwrap();
+        assert_eq!(evicted, vec![100]);
+        assert_eq!(rects[0].format, AtlasFormat::Bc7);
+        assert!(atlas.atlases[0].pages.iter().all(|page| page.clips.len() == 1));
+        // Idle pages empty in every atlas.
+        assert_eq!(atlas.release_idle(IDLE_PAGE_RELEASE_SECS + 0.5).len(), MOBILE_ATLAS_PAGES as usize);
     }
 }

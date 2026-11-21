@@ -7,9 +7,9 @@ use std::sync::Arc;
 use bevy::prelude::*;
 use udd_assets::animation::mobile_anim_cc::MobileAnimCcPackage;
 use udd_assets::animation::mobile_anim_ec::MobileAnimEcPackage;
-use udd_assets::animation::mobile_strides::MobileAnimClips;
+use udd_assets::animation::mobile_strides::{MobileAnimClips, StoredFramePixels};
 use crate::app::background::{background_pool, Priority, Task, TaskPoll};
-use super::frame_atlas::{AtlasRect, MobileFrameAtlas};
+use super::frame_atlas::{AtlasFormat, AtlasRect, MobileFrameAtlas};
 use super::placement::FramePlacement;
 use super::rife_in_betweens::InBetweenKey;
 
@@ -40,14 +40,15 @@ pub enum AtlasEntry {
     InBetweens(InBetweenKey),
 }
 
-/// A frame as decoded: its placement and its straight-alpha RGBA pixels.
+/// A frame as read: its placement and its pixels as its package stores them (`FrameUpload::pixels`).
 pub struct DecodedFrame {
     pub placement: FramePlacement,
-    pub rgba: Arc<[u8]>,
+    pub pixels: Arc<[u8]>,
 }
 
-/// A clip as decoded, before it has room in the atlas.
+/// A clip as read, before it has room in the atlas of its format.
 pub struct DecodedClip {
+    pub format: AtlasFormat,
     pub frames: Vec<DecodedFrame>,
     pub mirrored: bool,
     pub frame_secs: f32,
@@ -100,7 +101,7 @@ impl Clip {
     /// Marks the pages of the clip's frames in use at `now`: one, or several when its frames lie in pieces.
     pub fn touch_pages(&self, atlas: &mut MobileFrameAtlas<AtlasEntry>, now: f64) {
         for frame in &self.frames {
-            atlas.touch(frame.rect.layer, now);
+            atlas.touch(frame.rect, now);
         }
     }
 
@@ -127,6 +128,24 @@ enum ClipState {
 pub struct AnimPackages {
     pub classic: Option<Arc<MobileAnimCcPackage>>,
     pub enhanced: Option<Arc<MobileAnimEcPackage>>,
+}
+
+impl AnimPackages {
+    /// The atlas format of `source`'s frames: its package's page format.
+    pub fn format(&self, source: AnimSource) -> Option<AtlasFormat> {
+        let format = match source {
+            AnimSource::Classic => self.classic.as_deref()?.page_pixel_format(),
+            AnimSource::Enhanced => self.enhanced.as_deref()?.page_pixel_format(),
+        };
+        Some(AtlasFormat::of(format))
+    }
+
+    /// The atlas formats of the packages loaded, Classic's first; RGBA8 without any.
+    pub fn formats(&self) -> Vec<AtlasFormat> {
+        let formats: Vec<_> = [AnimSource::Classic, AnimSource::Enhanced].into_iter()
+            .filter_map(|source| self.format(source)).collect();
+        if formats.is_empty() { vec![AtlasFormat::Rgba8] } else { formats }
+    }
 }
 
 /// The clips asked for, by key.
@@ -177,9 +196,9 @@ impl MobileClips {
                 }
             };
             let frames = decoded.frames.iter()
-                .map(|frame| (frame.placement.width as u32, frame.placement.height as u32, frame.rgba.clone()))
+                .map(|frame| (frame.placement.width as u32, frame.placement.height as u32, frame.pixels.clone()))
                 .collect::<Vec<_>>();
-            *state = match atlas.place_clip(AtlasEntry::Clip(*key), &frames, now) {
+            *state = match atlas.place_clip(AtlasEntry::Clip(*key), decoded.format, &frames, now) {
                 Some((rects, page_evicted)) => {
                     evicted.extend(page_evicted);
                     ClipState::Resident(Clip {
@@ -218,15 +237,17 @@ impl MobileClips {
     }
 }
 
-/// The clip of `key` as its package gives it (`MobileAnimClips::clip`: the client's frames, anchors and mirroring),
-/// timed by its fps.
+/// The clip of `key` as its package gives it (`MobileAnimClips::stored_clip`: the client's frames, anchors and
+/// mirroring, the pixels as stored, RGBA8 or BC7 blocks), timed by its fps.
 pub(super) fn decode_clip(packages: &AnimPackages, key: ClipKey) -> Option<DecodedClip> {
+    let format = packages.format(key.source)?;
     let clip = match key.source {
-        AnimSource::Classic => packages.classic.as_deref()?.clip(key.body, key.action, key.direction),
-        AnimSource::Enhanced => packages.enhanced.as_deref()?.clip(key.body, key.action, key.direction),
+        AnimSource::Classic => packages.classic.as_deref()?.stored_clip(key.body, key.action, key.direction),
+        AnimSource::Enhanced => packages.enhanced.as_deref()?.stored_clip(key.body, key.action, key.direction),
     };
     let clip = clip.map_err(|error| warn!("Mobile clip {key:?}: {error:#}")).ok()??;
     Some(DecodedClip {
+        format,
         frames: clip.frames.into_iter().map(|frame| DecodedFrame {
             placement: FramePlacement {
                 width: f32::from(frame.width),
@@ -234,7 +255,10 @@ pub(super) fn decode_clip(packages: &AnimPackages, key: ClipKey) -> Option<Decod
                 anchor_x: frame.anchor_x as f32,
                 anchor_y: frame.anchor_y as f32,
             },
-            rgba: Arc::from(frame.rgba),
+            pixels: Arc::from(match frame.pixels {
+                StoredFramePixels::Rgba8(rgba) => rgba,
+                StoredFramePixels::Bc7Blocks(blocks) => blocks,
+            }),
         }).collect(),
         mirrored: clip.mirrored,
         frame_secs: frame_secs_at(clip.fps),
@@ -254,7 +278,7 @@ mod tests {
 
     fn test_frame() -> ClipFrame {
         ClipFrame {
-            rect: AtlasRect { layer: 0, x: 0, y: 0, width: 1, height: 1 },
+            rect: AtlasRect { format: AtlasFormat::Rgba8, layer: 0, x: 0, y: 0, width: 1, height: 1 },
             placement: FramePlacement { width: 1.0, height: 1.0, anchor_x: 0.0, anchor_y: 0.0 },
         }
     }

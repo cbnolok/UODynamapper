@@ -230,11 +230,15 @@ fn vertex(vertex: Vertex) -> ArtVertexOutput {
 }
 
 // One tap of the sprite's page, from its atlas (art/atlas_pages.wesl). A mobile's two frames, blended while they
-// crossfade (art/mobile_frames.wesl): the mobiles bind their one frame atlas as both atlases.
+// crossfade (art/mobile_frames.wesl), lie in one of the mobiles' frame atlases: the RGBA8 one bound as the first atlas,
+// the BC7 one as the Enhanced (draw.rs).
 fn sprite_page_tap(page: ArtPage, uv: vec2<f32>, instance_index: u32) -> vec4<f32> {
     @if(MOBILE_FRAMES) {
         let crossfade = mobile_instances[instance_index].crossfade;
         if (mobile_frames_blend(crossfade)) {
+            if (page.enhanced) {
+                return mobile_frames_tap(art_atlas_enhanced, art_atlas_sampler, page.layer, uv, crossfade);
+            }
             return mobile_frames_tap(art_atlas, art_atlas_sampler, page.layer, uv, crossfade);
         }
     }
@@ -248,6 +252,10 @@ fn sprite_page_client_filtered(page: ArtPage, uv: vec2<f32>, uv_min: vec2<f32>, 
     @if(MOBILE_FRAMES) {
         let crossfade = mobile_instances[instance_index].crossfade;
         if (mobile_frames_blend(crossfade)) {
+            if (page.enhanced) {
+                return mobile_frames_client_filtered(art_atlas_enhanced, page.layer, uv, uv_min, uv_max, crossfade,
+                    uv_dx, uv_dy, client_view_scale);
+            }
             return mobile_frames_client_filtered(art_atlas, page.layer, uv, uv_min, uv_max, crossfade, uv_dx, uv_dy,
                 client_view_scale);
         }
