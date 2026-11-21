@@ -18,6 +18,7 @@ use crate::render::statics::statics_draw::{build_art_batch_mesh, ArtSpriteMateri
 use crate::world::mobile_motion::MobileMotion;
 use super::clips::{AnimSource, ClipKey, MobileClips};
 use super::frame_atlas::MobileFrameAtlas;
+use super::in_between::MobileInBetweens;
 use super::placement::mobile_card_bounds;
 use super::{MobileClipChoice, MountedCycle};
 
@@ -159,6 +160,7 @@ pub fn sys_draw_mobiles(
     draw_assets: Option<ResMut<MobileDrawAssets>>,
     atlas: Option<ResMut<MobileFrameAtlas<ClipKey>>>,
     mut clips: ResMut<MobileClips>,
+    mut in_betweens: ResMut<MobileInBetweens>,
     packages: Res<super::MobileAnimPackages>,
     mut storage_buffers: ResMut<Assets<ShaderBuffer>>,
     mut meshes: ResMut<Assets<Mesh>>,
@@ -172,6 +174,7 @@ pub fn sys_draw_mobiles(
     let local_lights = static_lights.as_deref()
         .filter(|_| settings.world_rendering.enable_static_art_local_lights)
         .map(|lights| (lights, scene_state.map_id));
+    let in_between_mode = settings.world_rendering.mobile_in_between_frames;
     clips.place_decoded(&mut atlas, now);
 
     let mut instances = Vec::with_capacity(MAX_MOBILE_INSTANCES as usize);
@@ -205,13 +208,18 @@ pub fn sys_draw_mobiles(
             if drawn.is_mount && choice.mounted_cycle == Some(MountedCycle::MountClip) {
                 cycle_secs = Some(clip.cycle_secs());
             }
-            let frame = match cycle_secs {
+            let pick = match cycle_secs {
                 Some(cycle_secs) => clip.frame_in_cycle(motion.clip_secs(), cycle_secs),
                 None => clip.frame_at(motion.clip_secs()),
             };
-            let Some(frame) = frame else { continue };
+            let Some(pick) = pick else { continue };
+            let Some(frame) = clip.frames.get(pick.index) else { continue };
             atlas.touch(frame.rect.layer, now);
-            instances.push(mobile_instance(transform.translation, frame.rect, frame.placement, clip.mirrored,
+            // Both frames of an in-between come from the clip, so they share its mirroring.
+            let (rect, placement) = in_betweens
+                .frame(instances.len(), in_between_mode, drawn.key, clip, pick, &mut atlas)
+                .unwrap_or((frame.rect, frame.placement));
+            instances.push(mobile_instance(transform.translation, rect, placement, clip.mirrored,
                 drawn.offset_px, drawn.tie_level, source, local_lights));
         }
     }

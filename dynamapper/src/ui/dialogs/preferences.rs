@@ -4,7 +4,7 @@ use crate::{
     settings::{AntiAliasingMode, ClientTextureSource, GumpClient, LandTextureSource},
     diagnostics::frame_limiter::{frame_limiter_for_options, FrameLimiterSettings},
     app::present_mode_for_vsync,
-    render::view::camera::UiCameraResource,
+    render::{mobiles::in_between::MobileInBetweenFrames, view::camera::UiCameraResource},
     prelude::*,
     world::caves::{CaveSurroundings, CaveView},
 };
@@ -78,6 +78,7 @@ pub struct PreferencesDialogState {
     pub player_floor_building_only: bool,
     pub caves: CaveView,
     pub cave_surroundings: CaveSurroundings,
+    pub mobile_in_between_frames: MobileInBetweenFrames,
     /// Timer used to debounce applying settings that cause UI layout shifts (like UI scale).
     pub apply_timer: Timer,
 }
@@ -122,6 +123,7 @@ impl Default for PreferencesDialogState {
             player_floor_building_only: false,
             caves: CaveView::HiddenUntilEntered,
             cave_surroundings: CaveSurroundings::Dimmed,
+            mobile_in_between_frames: MobileInBetweenFrames::Crossfade,
             apply_timer: {
                 let mut t = Timer::from_seconds(0.3, TimerMode::Once);
                 t.pause();
@@ -197,6 +199,7 @@ fn sys_sync_settings_to_state(
         state.player_floor_building_only = settings.world_rendering.player_floor_building_only;
         state.caves = settings.world_rendering.caves;
         state.cave_surroundings = settings.world_rendering.cave_surroundings;
+        state.mobile_in_between_frames = settings.world_rendering.mobile_in_between_frames;
 
         if wireframe_config.global != settings.app.debug.map_render_wireframe {
             wireframe_config.global = settings.app.debug.map_render_wireframe;
@@ -316,6 +319,9 @@ pub fn sys_render_preferences_dialog(
         }
         if settings.as_ref().world_rendering.cave_surroundings != state.cave_surroundings {
             settings.world_rendering.cave_surroundings = state.cave_surroundings;
+        }
+        if settings.as_ref().world_rendering.mobile_in_between_frames != state.mobile_in_between_frames {
+            settings.world_rendering.mobile_in_between_frames = state.mobile_in_between_frames;
         }
         if (settings.as_ref().app.window.ui_scale - state.ui_scale).abs() > 0.001 {
             settings.app.window.ui_scale = state.ui_scale;
@@ -619,6 +625,30 @@ pub fn sys_render_preferences_dialog(
                                     state.apply_timer.reset();
                                     state.apply_timer.unpause();
                                 }
+                                ui.horizontal(|ui| {
+                                    ui.label("Mobile In-Between Frames:");
+                                    let mut changed = false;
+                                    egui::ComboBox::from_id_salt("preferences_mobile_in_between_frames")
+                                        .selected_text(state.mobile_in_between_frames.label())
+                                        .show_ui(ui, |ui| {
+                                            for mode in MobileInBetweenFrames::ALL {
+                                                changed |= ui
+                                                    .selectable_value(&mut state.mobile_in_between_frames, mode, mode.label())
+                                                    .changed();
+                                            }
+                                        })
+                                        .response
+                                        .on_hover_text(
+                                            "What the mobiles show between two frames of their animations. Off: each frame \
+                                             until the next, as the clients show them. Crossfade: the two frames blended by \
+                                             the time between them, smoother on a fast display, with a faint double image \
+                                             of what moves.",
+                                        );
+                                    if changed {
+                                        state.apply_timer.reset();
+                                        state.apply_timer.unpause();
+                                    }
+                                });
                                 if ui
                                     .checkbox(&mut state.show_overlay, "Show Performance Overlay")
                                     .changed()

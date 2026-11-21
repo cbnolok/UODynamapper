@@ -153,6 +153,9 @@ pub struct SectWorldRendering {
     /// cave darkened under ClassicUO's cut, or nothing, as the KR client shows a cave (caves.rs). A view setting shared
     /// by every render style.
     pub cave_surroundings: crate::world::caves::CaveSurroundings,
+    /// What the mobiles show between two frames of their animations: each frame until the next, as the clients do,
+    /// or the two crossfaded (render/mobiles/in_between.rs).
+    pub mobile_in_between_frames: crate::render::mobiles::in_between::MobileInBetweenFrames,
     pub land_streaming: SectLandStreaming,
     pub diagnostics: SectWorldRenderingDiagnostics,
     pub shader_simplification: SectWorldRenderingShaderSimplification,
@@ -1144,6 +1147,7 @@ mod tests {
     use super::*;
     use uocf::utils::config_toml::{parse_app_state, parse_strict};
     use crate::world::caves::{CaveSurroundings, CaveView};
+    use crate::render::mobiles::in_between::MobileInBetweenFrames;
 
     const BUNDLED_GRAPHICS: &str = include_str!("../assets/settings/graphics.toml");
     const BUNDLED_USER_PREFERENCES: &str = include_str!("../assets/settings/user_preferences.toml");
@@ -1458,6 +1462,7 @@ mod tests {
         assert!(!settings.player_floor_building_only);
         assert_eq!(settings.caves, CaveView::HiddenUntilEntered);
         assert_eq!(settings.cave_surroundings, CaveSurroundings::Dimmed);
+        assert_eq!(settings.mobile_in_between_frames, MobileInBetweenFrames::Crossfade);
     }
 
     /// A cache copy written before the player-floor view existed loads with it off, and a saved opt-in round-trips.
@@ -1523,6 +1528,28 @@ mod tests {
         let load = parse_app_state(WORLD_RENDERING_CONFIG_FILE, &written, &bundled).expect("lenient load");
         assert!(load.warnings.is_empty(), "{:?}", load.warnings);
         assert_eq!(load.value.cave_surroundings, CaveSurroundings::Black);
+    }
+
+    /// A cache copy written before the mobiles' in-between frames existed loads them crossfaded, and off round-trips.
+    #[test]
+    fn world_rendering_cache_without_mobile_in_between_frames_loads_them_crossfaded() {
+        let bundled: SectWorldRendering =
+            parse_strict(WORLD_RENDERING_CONFIG_FILE, BUNDLED_WORLD_RENDERING).expect("bundled");
+        let older = BUNDLED_WORLD_RENDERING
+            .lines()
+            .filter(|line| !line.starts_with("mobile_in_between_frames"))
+            .collect::<Vec<_>>()
+            .join("\n");
+        let load = parse_app_state(WORLD_RENDERING_CONFIG_FILE, &older, &bundled).expect("lenient load");
+        assert_eq!(load.value.mobile_in_between_frames, MobileInBetweenFrames::Crossfade);
+
+        let mut picked = bundled.clone();
+        picked.mobile_in_between_frames = MobileInBetweenFrames::Off;
+        let written = toml::to_string_pretty(&picked).expect("serialize");
+        assert!(written.contains("mobile_in_between_frames = \"off\""), "{written}");
+        let load = parse_app_state(WORLD_RENDERING_CONFIG_FILE, &written, &bundled).expect("lenient load");
+        assert!(load.warnings.is_empty(), "{:?}", load.warnings);
+        assert_eq!(load.value.mobile_in_between_frames, MobileInBetweenFrames::Off);
     }
 
     #[test]

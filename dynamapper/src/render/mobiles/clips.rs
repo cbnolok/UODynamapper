@@ -43,11 +43,23 @@ pub struct DecodedClip {
     pub frame_secs: f32,
 }
 
-/// A frame of a resident clip.
-#[derive(Clone, Copy, Debug)]
+/// A frame of a resident clip: where it lies in the atlas, and its pixels as decoded, kept for the in-betweens
+/// (in_between.rs).
+#[derive(Clone, Debug)]
 pub struct ClipFrame {
     pub rect: AtlasRect,
     pub placement: FramePlacement,
+    /// Straight-alpha RGBA8, `placement.width` by `placement.height`, rows top down.
+    pub rgba: Arc<[u8]>,
+}
+
+/// The point of a clip shown at a time: the frame `index`, the frame after it, `next` (the first after the last, as
+/// the clips loop), and the fraction `t` (0..1) of the way from the one to the other.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct FramePick {
+    pub index: usize,
+    pub next: usize,
+    pub t: f32,
 }
 
 /// A clip whose frames are in the atlas.
@@ -59,13 +71,9 @@ pub struct Clip {
 }
 
 impl Clip {
-    /// The frame shown `elapsed_secs` into the clip, which loops.
-    pub fn frame_at(&self, elapsed_secs: f32) -> Option<&ClipFrame> {
-        if self.frames.is_empty() {
-            return None;
-        }
-        let index = (elapsed_secs / self.frame_secs.max(f32::EPSILON)) as usize % self.frames.len();
-        self.frames.get(index)
+    /// The point of the clip `elapsed_secs` into it, which loops.
+    pub fn frame_at(&self, elapsed_secs: f32) -> Option<FramePick> {
+        self.pick(elapsed_secs / self.frame_secs.max(f32::EPSILON))
     }
 
     /// The time the clip takes to show its frames once.
@@ -73,13 +81,19 @@ impl Clip {
         self.frame_secs * self.frames.len() as f32
     }
 
-    /// The frame shown `elapsed_secs` into the clip when it shows its frames once every `cycle_secs`.
-    pub fn frame_in_cycle(&self, elapsed_secs: f32, cycle_secs: f32) -> Option<&ClipFrame> {
+    /// The point of the clip `elapsed_secs` into it when it shows its frames once every `cycle_secs`.
+    pub fn frame_in_cycle(&self, elapsed_secs: f32, cycle_secs: f32) -> Option<FramePick> {
+        self.pick(elapsed_secs / cycle_secs.max(f32::EPSILON) * self.frames.len() as f32)
+    }
+
+    /// The point `frames` frames into the clip (whole frames, and the fraction of the next).
+    fn pick(&self, frames: f32) -> Option<FramePick> {
         if self.frames.is_empty() {
             return None;
         }
-        let index = (elapsed_secs / cycle_secs.max(f32::EPSILON) * self.frames.len() as f32) as usize % self.frames.len();
-        self.frames.get(index)
+        let frames = frames.max(0.0);
+        let index = frames as usize % self.frames.len();
+        Some(FramePick { index, next: (index + 1) % self.frames.len(), t: frames.fract() })
     }
 }
 
@@ -138,7 +152,7 @@ impl MobileClips {
                     evicted.extend(page_evicted);
                     ClipState::Resident(Clip {
                         frames: rects.into_iter().zip(&decoded.frames)
-                            .map(|(rect, frame)| ClipFrame { rect, placement: frame.placement })
+                            .map(|(rect, frame)| ClipFrame { rect, placement: frame.placement, rgba: frame.rgba.clone() })
                             .collect(),
                         mirrored: decoded.mirrored,
                         frame_secs: decoded.frame_secs,
@@ -225,17 +239,19 @@ fn decode_enhanced_clip(package: &MobileAnimEcPackage, key: ClipKey) -> Option<D
 mod tests {
     use super::*;
 
-    #[test]
-    fn a_clip_loops_its_frames() {
-        let frame = ClipFrame {
+    fn test_frame() -> ClipFrame {
+        ClipFrame {
             rect: AtlasRect { layer: 0, x: 0, y: 0, width: 1, height: 1 },
             placement: FramePlacement { width: 1.0, height: 1.0, anchor_x: 0.0, anchor_y: 0.0 },
-        };
+            rgba: Arc::from([0u8; 4].as_slice()),
+        }
+    }
+
+    #[test]
+    fn a_clip_loops_its_frames() {
+        let frame = test_frame();
         let clip = Clip { frames: vec![frame; 4], mirrored: false, frame_secs: CLASSIC_FRAME_SECS };
-        let index_at = |secs: f32| {
-            let shown = clip.frame_at(secs).unwrap() as *const ClipFrame;
-            clip.frames.iter().position(|frame| std::ptr::eq(frame, shown)).unwrap()
-        };
+        let index_at = |secs: f32| clip.frame_at(secs).unwrap().index;
         assert_eq!(index_at(0.0), 0);
         assert_eq!(index_at(CLASSIC_FRAME_SECS * 1.5), 1);
         assert_eq!(index_at(CLASSIC_FRAME_SECS * 5.5), 1);
@@ -244,18 +260,34 @@ mod tests {
     #[test]
     fn a_clip_spreads_its_frames_over_a_cycle() {
         const CYCLE_SECS: f32 = 0.6;
-        let frame = ClipFrame {
-            rect: AtlasRect { layer: 0, x: 0, y: 0, width: 1, height: 1 },
-            placement: FramePlacement { width: 1.0, height: 1.0, anchor_x: 0.0, anchor_y: 0.0 },
-        };
+        let frame = test_frame();
         let clip = Clip { frames: vec![frame; 10], mirrored: false, frame_secs: CLASSIC_FRAME_SECS };
         assert!((clip.cycle_secs() - CLASSIC_FRAME_SECS * 10.0).abs() < f32::EPSILON);
-        let index_at = |secs: f32| {
-            let shown = clip.frame_in_cycle(secs, CYCLE_SECS).unwrap() as *const ClipFrame;
-            clip.frames.iter().position(|frame| std::ptr::eq(frame, shown)).unwrap()
-        };
+        let index_at = |secs: f32| clip.frame_in_cycle(secs, CYCLE_SECS).unwrap().index;
         assert_eq!(index_at(0.0), 0);
         assert_eq!(index_at(CYCLE_SECS * 0.55), 5);
         assert_eq!(index_at(CYCLE_SECS * 1.95), 9);
+    }
+
+    #[test]
+    fn a_pick_names_the_next_frame_and_the_way_to_it() {
+        let clip = Clip { frames: vec![test_frame(); 4], mirrored: false, frame_secs: CLASSIC_FRAME_SECS };
+        let pick = clip.frame_at(CLASSIC_FRAME_SECS * 1.25).unwrap();
+        assert_eq!((pick.index, pick.next), (1, 2));
+        assert!((pick.t - 0.25).abs() < 1e-4, "{pick:?}");
+        // The last frame goes on to the first, as the clip loops.
+        let pick = clip.frame_at(CLASSIC_FRAME_SECS * 3.5).unwrap();
+        assert_eq!((pick.index, pick.next), (3, 0));
+        assert!((pick.t - 0.5).abs() < 1e-4, "{pick:?}");
+        assert_eq!(clip.frame_at(0.0).unwrap(), FramePick { index: 0, next: 1, t: 0.0 });
+
+        const CYCLE_SECS: f32 = 0.4;
+        let pick = clip.frame_in_cycle(CYCLE_SECS * 0.6, CYCLE_SECS).unwrap();
+        assert_eq!((pick.index, pick.next), (2, 3));
+        assert!((pick.t - 0.4).abs() < 1e-4, "{pick:?}");
+
+        let single = Clip { frames: vec![test_frame()], mirrored: false, frame_secs: CLASSIC_FRAME_SECS };
+        let pick = single.frame_at(CLASSIC_FRAME_SECS * 2.5).unwrap();
+        assert_eq!((pick.index, pick.next), (0, 0));
     }
 }

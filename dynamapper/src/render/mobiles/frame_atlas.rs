@@ -1,7 +1,8 @@
 //! The mobiles' frame atlas: the frames of the clips in use, packed on shelves into the pages of one 2D array texture.
 //! A clip takes its frames' room on one page. When no page has room, the page used longest ago empties for it, and
-//! the clips on it load again when drawn; a page unused for `IDLE_PAGE_RELEASE_SECS` empties too. Placed frames upload
-//! to the render world rectangle by rectangle.
+//! the clips on it load again when drawn; a page unused for `IDLE_PAGE_RELEASE_SECS` empties too. One more page, after
+//! the clips', holds the in-between frames (in_between.rs) in a slot per mobile frame drawn: no clip goes there and it
+//! never empties. Placed frames upload to the render world rectangle by rectangle.
 
 use std::hash::Hash;
 use bevy::prelude::*;
@@ -12,14 +13,21 @@ use bevy::render::Extract;
 
 /// The side of a page, in texels.
 pub const MOBILE_ATLAS_PAGE_SIZE: u32 = 1024;
-/// The pages of the atlas: 8 RGBA8 pages are 32 MiB, room for the movements of a few creatures and their riders in
-/// every direction.
+/// The pages of the atlas the clips go on: 8 RGBA8 pages are 32 MiB, room for the movements of a few creatures and
+/// their riders in every direction.
 pub const MOBILE_ATLAS_PAGES: u32 = 8;
+/// The page of the in-between frames, after the clips' pages: 4 MiB more.
+pub const IN_BETWEEN_LAYER: u32 = MOBILE_ATLAS_PAGES;
+const ATLAS_LAYERS: u32 = MOBILE_ATLAS_PAGES + 1;
+/// The in-between page's slots, one per mobile frame drawn, stacked down the page: each as wide as the page.
+pub const IN_BETWEEN_SLOTS: u32 = super::draw::MAX_MOBILE_INSTANCES;
+pub const IN_BETWEEN_SLOT_WIDTH: u32 = MOBILE_ATLAS_PAGE_SIZE;
+pub const IN_BETWEEN_SLOT_HEIGHT: u32 = MOBILE_ATLAS_PAGE_SIZE / IN_BETWEEN_SLOTS;
 /// The transparent texels kept between frames, so a filtered tap at a frame's edge reads none of its neighbour.
-const FRAME_GUTTER: u32 = 1;
+pub const FRAME_GUTTER: u32 = 1;
 /// A page no drawn clip used for this long empties.
 pub const IDLE_PAGE_RELEASE_SECS: f64 = 300.0;
-const BYTES_PER_TEXEL: u32 = 4;
+pub const BYTES_PER_TEXEL: u32 = 4;
 
 /// Where a frame lies in the atlas.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -37,6 +45,12 @@ impl AtlasRect {
         let size = MOBILE_ATLAS_PAGE_SIZE as f32;
         (Vec2::new(self.x as f32, self.y as f32) / size,
             Vec2::new((self.x + self.width) as f32, (self.y + self.height) as f32) / size)
+    }
+
+    /// The `width` by `height` rectangle at the top-left corner of the in-between page's `slot`, if it fits the slot.
+    pub fn in_between_slot(slot: u32, width: u32, height: u32) -> Option<Self> {
+        (slot < IN_BETWEEN_SLOTS && width <= IN_BETWEEN_SLOT_WIDTH && height <= IN_BETWEEN_SLOT_HEIGHT)
+            .then_some(Self { layer: IN_BETWEEN_LAYER, x: 0, y: slot * IN_BETWEEN_SLOT_HEIGHT, width, height })
     }
 }
 
@@ -92,7 +106,7 @@ impl<K> Page<K> {
 #[derive(Clone)]
 pub struct FrameUpload {
     pub rect: AtlasRect,
-    /// Straight-alpha RGBA8, `rect.width` by `rect.height`, rows top down.
+    /// Straight-alpha RGBA8, `rect.width` by `rect.height`, rows top down; bytes after them are not read.
     pub rgba: std::sync::Arc<[u8]>,
 }
 
@@ -150,6 +164,18 @@ impl<K: Copy + Eq + Hash> MobileFrameAtlas<K> {
         Some((rects, evicted))
     }
 
+    /// Stages the upload of an in-between frame into its slot's `rect` (`AtlasRect::in_between_slot`).
+    pub fn stage_in_between(&mut self, rect: AtlasRect, rgba: std::sync::Arc<[u8]>) {
+        debug_assert_eq!(rect.layer, IN_BETWEEN_LAYER);
+        self.staged.push(FrameUpload { rect, rgba });
+    }
+
+    /// The uploads staged since the last frame.
+    #[cfg(test)]
+    pub fn staged_uploads(&self) -> usize {
+        self.staged.len()
+    }
+
     /// Marks the page of a clip drawn at `now`.
     pub fn touch(&mut self, layer: u32, now: f64) {
         if let Some(page) = self.pages.get_mut(layer as usize) {
@@ -203,7 +229,7 @@ fn atlas_image() -> Image {
         TextureViewDimension};
     // No CPU data: the GPU zero-fills the pages, transparent, and the frames upload into them.
     let mut image = Image::new_uninit(
-        Extent3d { width: MOBILE_ATLAS_PAGE_SIZE, height: MOBILE_ATLAS_PAGE_SIZE, depth_or_array_layers: MOBILE_ATLAS_PAGES },
+        Extent3d { width: MOBILE_ATLAS_PAGE_SIZE, height: MOBILE_ATLAS_PAGE_SIZE, depth_or_array_layers: ATLAS_LAYERS },
         TextureDimension::D2,
         TextureFormat::Rgba8UnormSrgb,
         bevy::asset::RenderAssetUsages::RENDER_WORLD,
@@ -313,5 +339,15 @@ mod tests {
         atlas.place_clip(2, &frames(1, 10), 0.0).unwrap();
         assert!(atlas.release_idle(IDLE_PAGE_RELEASE_SECS).is_empty());
         assert_eq!(atlas.release_idle(IDLE_PAGE_RELEASE_SECS + 1.0), vec![1, 2]);
+    }
+
+    #[test]
+    fn in_between_slots_split_their_page_apart_from_the_clips() {
+        let rect = AtlasRect::in_between_slot(IN_BETWEEN_SLOTS - 1, 100, 50).unwrap();
+        assert_eq!(rect.layer, IN_BETWEEN_LAYER);
+        assert!(rect.layer >= MOBILE_ATLAS_PAGES);
+        assert!(rect.y + IN_BETWEEN_SLOT_HEIGHT <= MOBILE_ATLAS_PAGE_SIZE);
+        assert!(AtlasRect::in_between_slot(0, IN_BETWEEN_SLOT_WIDTH, IN_BETWEEN_SLOT_HEIGHT + 1).is_none());
+        assert!(AtlasRect::in_between_slot(IN_BETWEEN_SLOTS, 1, 1).is_none());
     }
 }

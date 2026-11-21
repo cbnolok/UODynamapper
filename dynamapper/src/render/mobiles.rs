@@ -4,6 +4,7 @@
 pub mod clips;
 pub mod draw;
 pub mod frame_atlas;
+pub mod in_between;
 pub mod placement;
 
 use std::sync::Arc;
@@ -62,6 +63,7 @@ impl Plugin for MobileSpritesPlugin {
         log_plugin_build(self);
         app.init_resource::<MobileClips>()
             .init_resource::<MobileAnimPackages>()
+            .init_resource::<in_between::MobileInBetweens>()
             .add_systems(Update, (
                 sys_sync_player_appearance,
                 sys_choose_mobile_clips,
