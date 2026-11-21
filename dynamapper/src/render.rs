@@ -7,6 +7,7 @@ pub mod postprocess;
 pub(crate) mod picking;
 pub mod pipeline_readiness;
 pub mod scene;
+pub mod shader_compiles;
 pub mod statics;
 pub mod view;
 
@@ -38,6 +39,9 @@ impl Plugin for RenderPlugin {
                 registered_by: "RenderPlugin",
             },
             lighting::client_night::ClientNightLightingPlugin {
+                registered_by: "RenderPlugin",
+            },
+            shader_compiles::ShaderCompilesPlugin {
                 registered_by: "RenderPlugin",
             },
         ));

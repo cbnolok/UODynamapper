@@ -17,6 +17,7 @@ use bevy::render::Extract;
 use bytemuck::{Pod, Zeroable};
 use parking_lot::Mutex;
 use crate::app::background::{background_pool, Priority, Task, TaskPoll};
+use crate::render::shader_compiles::begin_shader_compile;
 use super::super::clips::AtlasEntry;
 use super::super::frame_atlas::{AtlasRect, MobileFrameAtlas};
 use super::super::network_shader_module;
@@ -85,7 +86,9 @@ struct RifeGpu {
 
 impl RifeGpu {
     fn new(device: &wgpu::Device) -> Result<Self, String> {
+        let compile = begin_shader_compile("RIFE in-betweens: flow network");
         let model = RifeModel::new(device)?;
+        drop(compile);
         let storage = |binding, read_only| wgpu::BindGroupLayoutEntry {
             binding, visibility: wgpu::ShaderStages::COMPUTE, count: None,
             ty: wgpu::BindingType::Buffer {
@@ -117,6 +120,7 @@ impl RifeGpu {
         let layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
             label: None, bind_group_layouts: &[Some(&atlas_layout)], immediate_size: 0,
         });
+        let _compile = begin_shader_compile("RIFE in-betweens: atlas steps");
         // SAFETY: atlas.wgsl's one loop runs to a compile-time constant by a positive step.
         let module = unsafe { network_shader_module(device, "rife atlas steps", ATLAS_SHADER.to_string()) };
         let pipeline = |entry_point| device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
