@@ -1,10 +1,10 @@
 //! The GPU compute pipelines of `uot_gpu_compute`, compiled ahead of use on the render device, each group on a thread
-//! of its own: a cold driver cache takes seconds to tens of seconds, which would hold a worker of the background pool
-//! (whose jobs are never interrupted) all that time. The networks (RIFE, the SPAN upscaler, [`uot_gpu_compute::warm_up`])
-//! compile at startup. The block encoder (block_compression's BC7 compressor, about 21 s cold on the Radeon 880M)
-//! compiles only while a loaded animation package is BC7, the one atlas whose in-betweens it encodes: from the first
-//! frame such a package is loaded, never on the frame path. RADV compiles the two threads' pipelines side by side
-//! without slowing either, so the encoder does not wait for the networks. The RIFE in-betweens take the warmed
+//! of its own (at most three, one per group, each started once): a cold driver cache takes seconds to tens of
+//! seconds, which would hold a worker of the background pool (whose jobs are never interrupted) all that time. RIFE's
+//! and the SPAN upscaler's compile at startup. The block encoder (block_compression's BC7 compressor, about 21 s cold
+//! on the Radeon 880M) compiles only while a loaded animation package is BC7, the one atlas whose in-betweens it
+//! encodes: from the first frame such a package is loaded, never on the frame path. RADV compiles the threads'
+//! pipelines side by side without slowing any, so none waits for another. The RIFE in-betweens take the warmed
 //! pipelines when first turned on, and wait for them while they compile, so nothing compiles twice; so does the BC7
 //! encoder of the in-betweens of a BC7 frame atlas. SPAN is not drawn with yet: its pipelines wait here.
 //!
@@ -16,24 +16,19 @@ use bevy::prelude::*;
 use bevy::render::renderer::{RenderDevice, RenderQueue};
 use bevy::render::Extract;
 use uot_gpu_compute::block_encode::{MobileBlockEncoder, BLOCK_ENCODER_COMPILES};
-use uot_gpu_compute::rife::RifePipelines;
-use uot_gpu_compute::upscale::UpscalePipelines;
+use uot_gpu_compute::rife::{RifePipelines, RIFE_COMPILES};
+use uot_gpu_compute::upscale::{UpscalePipelines, UPSCALE_COMPILES};
 use uot_gpu_compute::warm_up::CompileReport;
-use uot_gpu_compute::{PipelineCompile, WarmPipelines};
+use uot_gpu_compute::PipelineCompile;
 use crate::render::shader_compiles::{shader_compile_ended, shader_compile_started};
 use super::frame_atlas::AtlasFormat;
 use super::MobileAnimPackages;
 
-const NETWORKS_THREAD_NAME: &str = "gpu compute warm-up";
+/// The warm-up's threads, one per group of pipelines.
+const RIFE_THREAD_NAME: &str = "rife warm-up";
+const UPSCALE_THREAD_NAME: &str = "span warm-up";
 const BLOCK_ENCODER_THREAD_NAME: &str = "bc7 encoder warm-up";
 const MILLIS_PER_SEC: f64 = 1000.0;
-
-/// The networks' pipelines warmed, until their users take them.
-struct Warmed {
-    rife: Option<RifePipelines>,
-    #[expect(dead_code, reason = "the SPAN upscaler is not wired to the mobiles yet; its pipelines wait for it")]
-    upscale: UpscalePipelines,
-}
 
 /// A compile on a thread of its own, and its result until taken.
 enum Compile<T> {
@@ -73,7 +68,9 @@ impl<T: Send + 'static> Compile<T> {
 /// The render world's warm-up.
 #[derive(Resource)]
 pub struct ComputeWarmUp {
-    networks: Compile<Warmed>,
+    rife: Compile<Option<RifePipelines>>,
+    /// The SPAN upscaler's, which wait here: it is not wired to the mobiles yet.
+    upscale: Compile<UpscalePipelines>,
     block_encoder: Compile<Option<MobileBlockEncoder>>,
     /// Whether a loaded animation package is BC7, as extracted.
     block_encoder_wanted: bool,
@@ -81,7 +78,10 @@ pub struct ComputeWarmUp {
 
 impl Default for ComputeWarmUp {
     fn default() -> Self {
-        Self { networks: Compile::NotStarted, block_encoder: Compile::NotStarted, block_encoder_wanted: false }
+        Self {
+            rife: Compile::NotStarted, upscale: Compile::NotStarted, block_encoder: Compile::NotStarted,
+            block_encoder_wanted: false,
+        }
     }
 }
 
@@ -97,10 +97,10 @@ pub enum Warm<T> {
 impl ComputeWarmUp {
     /// The RIFE pipelines, once.
     pub fn take_rife(&mut self) -> Warm<RifePipelines> {
-        self.networks.poll(NETWORKS_THREAD_NAME);
-        match &mut self.networks {
+        self.rife.poll(RIFE_THREAD_NAME);
+        match &mut self.rife {
             Compile::NotStarted | Compile::Running(_) => Warm::Compiling,
-            Compile::Ready(warmed) => warmed.rife.take().map_or(Warm::Unavailable, Warm::Ready),
+            Compile::Ready(pipelines) => pipelines.take().map_or(Warm::Unavailable, Warm::Ready),
             Compile::Failed => Warm::Unavailable,
         }
     }
@@ -143,7 +143,8 @@ pub fn sys_extract_block_encoder_wanted(
     warm_up.block_encoder_wanted = packages.as_ref().is_some_and(|packages| packages.0.has_format(AtlasFormat::Bc7));
 }
 
-/// Starts the networks' warm-up on the render device, once, and the block encoder's, once, as soon as it is wanted.
+/// Starts RIFE's and SPAN's warm-ups on the render device, once, and the block encoder's, once, as soon as it is
+/// wanted.
 pub fn sys_start_compute_warm_up(
     mut warm_up: ResMut<ComputeWarmUp>,
     render_device: Res<RenderDevice>,
@@ -151,15 +152,27 @@ pub fn sys_start_compute_warm_up(
 ) {
     let warm_up = &mut *warm_up;
     let device = render_device.wgpu_device();
-    if let Compile::NotStarted = warm_up.networks {
+    if let Compile::NotStarted = warm_up.rife {
         let device = device.clone();
-        warm_up.networks.start(NETWORKS_THREAD_NAME, move || {
+        warm_up.rife.start(RIFE_THREAD_NAME, move || {
             let started = std::time::Instant::now();
-            let WarmPipelines { rife, upscale } = uot_gpu_compute::warm_up(&device, compile_reporter());
-            info!("The GPU compute pipelines are compiled, in {:.1} s.", started.elapsed().as_secs_f32());
-            Warmed { rife: Some(rife), upscale }
+            let pipelines = RifePipelines::new(&device, &mut CompileReport::new(RIFE_COMPILES, compile_reporter()));
+            info!("The RIFE pipelines are compiled, in {:.1} s.", started.elapsed().as_secs_f32());
+            Some(pipelines)
         });
     }
+    if let Compile::NotStarted = warm_up.upscale {
+        let device = device.clone();
+        warm_up.upscale.start(UPSCALE_THREAD_NAME, move || {
+            let started = std::time::Instant::now();
+            let pipelines =
+                UpscalePipelines::new(&device, &mut CompileReport::new(UPSCALE_COMPILES, compile_reporter()));
+            info!("The SPAN upscaler pipelines are compiled, in {:.1} s.", started.elapsed().as_secs_f32());
+            pipelines
+        });
+    }
+    // Joins the thread once it ended, logging a panic; nothing takes them yet.
+    warm_up.upscale.poll(UPSCALE_THREAD_NAME);
     if let Compile::NotStarted = warm_up.block_encoder
         && warm_up.block_encoder_wanted {
         let device = device.clone();

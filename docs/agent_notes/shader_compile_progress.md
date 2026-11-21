@@ -13,10 +13,10 @@ Two sources feed it:
 - The app's own wgpu compiles outside the cache: hold `begin_shader_compile(name)` around the creation, or call
   `shader_compile_started(name)` and `shader_compile_ended(id)` from any thread (plain data, no Bevy types; meant for a
   warm-up callback). Fed now: the GPU compute warm-up (`mobiles/compute_warm_up.rs`), every pipeline of
-  `lib/support/uot-gpu-compute` by its label: the networks on a thread of their own at startup (`RIFE conv
-  Stride1/Leaky tile 64x32`, `RIFE pixel step: merge`, `upscale conv 3x3/Silu tile 64x48`, `upscale prepare`), and the
-  block encoder on another (`BC7 compressor (every quality)`) only while a loaded
-  animation package is BC7, from the first frame one is (below); the RIFE network when the warm-up did not give it,
+  `lib/support/uot-gpu-compute` by its label, on up to three threads side by side: RIFE's at startup (`RIFE conv
+  Stride1/Leaky tile 64x32`, `RIFE pixel step: merge`), SPAN's at startup (`upscale conv 3x3/Silu tile 64x48`,
+  `upscale prepare`), and the block encoder's (`BC7 compressor (every quality)`) only while a loaded animation package
+  is BC7, from the first frame one is (below); the RIFE network when the warm-up did not give it,
   and the atlas steps (`rife_in_betweens/render.rs`, background pool); the static picking MSAA resolve
   (`gpu_picking.rs`, render thread, only with MSAA). The SPAN pipelines are warmed but not drawn with yet
   (2026-11-21).
@@ -48,8 +48,25 @@ less busy.
 
 **RADV compiles pipelines of two threads side by side.** BC7 on one thread and RIFE with SPAN on another: 20.8 s wall
 (20.5–21.1) against 22.2 s (21.9–22.3) one after the other, each as long as alone (RIFE and SPAN 1.32–1.42 s, BC7
-20.4–21.1 s); BC1–BC5 against BC7: 20.7 s against 21.1 s summed. So the block encoder has a thread of its own and
-does not wait for the networks.
+20.4–21.1 s); BC1–BC5 against BC7: 20.7 s against 21.1 s summed. So the block encoder, RIFE and SPAN each have a
+thread of their own and none waits for another.
+
+In the app (dev build, Britain, Desktop 4, one run each on a shared machine, 2026-11-21), the warm-up's threads as
+logged, and the world's land/art pipelines ready (`main.wesl`, `ground.wesl`; the window draws from 2.5 s on):
+
+| build | packages | start | warm-up threads | world pipelines ready |
+|---|---|---|---|---|
+| one thread for all, every package | RGBA8888 | cold | 52.0 s (BC compressor 49.9 s; machine busy) | 50.1–51.1 s |
+| | BC7 | cold | 28.1 s (BC compressor 26.6 s) | 32.3–33.0 s |
+| | either | warm | 0.1–0.3 s | |
+| encoder only with BC7, its own thread | RGBA8888 | cold | networks 1.4 s, no BC compile | 31.3–32.0 s |
+| | BC7 | cold | networks 1.4 s, encoder 29.9 s (with BC1–BC5) | 34.6–35.2 s |
+| three threads, BC7 only | RGBA8888 | cold | RIFE 1.0 s, SPAN 0.5 s, no BC compile | 31.8–32.4 s |
+| | BC7 | cold | RIFE 0.9 s, SPAN 0.5 s, encoder 26.5 s | 32.2–32.9 s |
+| | either | warm | 0.0–0.1 s each | |
+
+The world waits for Bevy's own pipelines, not for these: with the machine quiet the BC7 compile costs the world about
+a second, and with RGBA8888 packages nothing of block_compression compiles at all.
 
 ## Cold start: the world waits for the window's pipelines
 
