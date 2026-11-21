@@ -10,5 +10,6 @@ pub mod player;
 pub mod mobile_motion;
 pub mod player_movement;
 pub mod statics;
+pub mod walk_z;
 pub(crate) mod teleport;
 pub mod z_view;

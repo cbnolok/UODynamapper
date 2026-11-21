@@ -329,6 +329,11 @@ pub fn package_chunk_cell(width: u32, height: u32, x: i32, y: i32) -> Option<(u3
 /// The land z of every cell of the package chunk `chunk_index` (chunks run down each column of chunks first), row by
 /// row: `PACKAGE_CHUNK_CELL_DIM` x `PACKAGE_CHUNK_CELL_DIM` values.
 pub fn read_package_chunk_land_z(package: &UddpReader, chunk_index: u32) -> eyre::Result<Vec<i8>> {
+    Ok(read_package_chunk_land(package, chunk_index)?.into_iter().map(|(_, z)| z).collect())
+}
+
+/// The land tile and z of every cell of the package chunk `chunk_index`, in the order of `read_package_chunk_land_z`.
+pub fn read_package_chunk_land(package: &UddpReader, chunk_index: u32) -> eyre::Result<Vec<(u16, i8)>> {
     const TEXEL_BYTES: usize = std::mem::size_of::<PackedMapTexel>();
     let bytes = package.read_file_by_dense_id_cow(chunk_index).map_err(|error| eyre::eyre!("{error}"))
         .wrap_err_with(|| format!("read map chunk {chunk_index}"))?;
@@ -338,7 +343,7 @@ pub fn read_package_chunk_land_z(package: &UddpReader, chunk_index: u32) -> eyre
     // A borrowed chunk may be unaligned: the texels are read from their bytes.
     Ok(bytes.chunks_exact(TEXEL_BYTES).map(|texel| {
         let texel: PackedMapTexel = bytemuck::pod_read_unaligned(texel);
-        (texel.packed_meta as u8).wrapping_sub(128) as i8
+        (texel.tile_id, (texel.packed_meta as u8).wrapping_sub(128) as i8)
     }).collect())
 }
 

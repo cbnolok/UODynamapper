@@ -6,7 +6,10 @@ use crate::app::system_sets::*;
 use crate::input::{InjectedPointer, effective_cursor_position};
 use crate::prelude::*;
 use crate::world::coords::UOVec4;
-use crate::world::mobile_motion::{step_secs, MobileMotion, Movement};
+use crate::world::mobile_motion::{direction_of_step, step_secs, MobileMotion, Movement};
+use crate::world::statics::StaticsStoreRes;
+use crate::world::walk_z::{nearest_floor_z, step_cell, walk_step, MapWalkCells};
+use crate::content::{MapPlanesRes, TileMetaPackageRes};
 use bevy::prelude::*;
 use bevy::window::PrimaryWindow;
 
@@ -243,6 +246,7 @@ fn sys_player_move(
     settings: Res<Settings>,
     mut chunk_recompute_writer: MessageWriter<RecomputeVisibleChunksEvent>,
     world_geo_data: Res<WorldGeoData>,
+    ground: GroundData,
 ) {
     let body = drawn_body(&settings);
     if let Some(mounted) = body {
@@ -266,12 +270,17 @@ fn sys_player_move(
         let smooth_movement = settings.app.input.smooth_movement;
         if let Some(dir) = move_dir.dir {
             for (mut transform, mut player, motion) in query.iter_mut() {
-                if let (Some(mut motion), Some(mounted)) = (motion, body) {
-                    motion.step(dir, move_dir.run, mounted);
-                }
                 let current_pos = player
                     .current_pos
                     .unwrap_or_else(|| UOVec4::new(0, 0, 0, 0));
+                // A drawn body follows the ground, and turns beside a corner it cannot cut, as the client walks.
+                let (dir, ground_z) = match body.and_then(|_| ground.step(current_pos, dir)) {
+                    Some((dir, z)) => (dir, Some(z)),
+                    None => (dir, None),
+                };
+                if let (Some(mut motion), Some(mounted)) = (motion, body) {
+                    motion.step(dir, move_dir.run, mounted);
+                }
                 // Move by exactly 1.0 per tile/step, ignoring the multiplier for distance.
                 let delta = Vec3::new(dir.x as f32, 0.0, dir.y as f32);
                 if !smooth_movement {
@@ -285,7 +294,13 @@ fn sys_player_move(
                     } else {
                         (u16::MAX as u32, u16::MAX as u32)
                     };
-                let next_pos = advance_horizontal_position(current_pos, dir, max_x, max_y);
+                let mut next_pos = advance_horizontal_position(current_pos, dir, max_x, max_y);
+                if let Some(z) = ground_z {
+                    next_pos.z = z;
+                    if !smooth_movement {
+                        transform.translation.y = crate::world::coords::scale_uo_z_to_bevy_units(f32::from(z));
+                    }
+                }
                 let old_map = player.current_pos.map(|p| p.m);
                 player.current_pos = Some(next_pos);
                 if old_map != Some(next_pos.m) {
@@ -320,6 +335,37 @@ fn sys_player_move(
                 }
             }
         }
+    }
+}
+
+/// The map data a drawn body walks on.
+#[derive(bevy::ecs::system::SystemParam)]
+struct GroundData<'w> {
+    map_planes: Option<Res<'w, MapPlanesRes>>,
+    statics: Option<Res<'w, StaticsStoreRes>>,
+    tilemeta: Option<Res<'w, TileMetaPackageRes>>,
+}
+
+impl GroundData<'_> {
+    /// The step of a walker at `pos` towards `dir`: the step it takes and its z (`walk_step`). A step the client
+    /// would block is taken anyway, the viewer being free to go anywhere, onto the floor nearest the walker's z.
+    /// `None` without the map's data.
+    fn step(&self, pos: UOVec4, dir: IVec2) -> Option<(IVec2, i8)> {
+        let direction = direction_of_step(dir)?;
+        let map = usize::from(pos.m);
+        let plane = self.map_planes.as_ref()?.0.get(map)?.as_ref()?;
+        let mut statics = self.statics.as_ref()?.0.get(map)?.as_ref()?.lock();
+        let tilemeta = &self.tilemeta.as_ref()?.0;
+        let mut cells = MapWalkCells::new(plane.package(), plane.size_cells(), &mut statics, tilemeta);
+        let (x, y, z) = (i32::from(pos.x), i32::from(pos.y), i32::from(pos.z));
+        let (dir, z) = match walk_step(&mut cells, x, y, z, direction) {
+            Some((_, to_x, to_y, to_z)) => (IVec2::new(to_x - x, to_y - y), to_z),
+            None => {
+                let (to_x, to_y) = step_cell(x, y, direction);
+                (dir, nearest_floor_z(&mut cells, to_x, to_y, z).unwrap_or(z))
+            }
+        };
+        Some((dir, z.clamp(i32::from(i8::MIN), i32::from(i8::MAX)) as i8))
     }
 }
 
