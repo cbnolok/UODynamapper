@@ -2,6 +2,7 @@
 //! buffers and transparent batch bindings; never writes the main color/depth.
 use crate::render::statics::{static_batches::{StaticPickTile, StaticChunkBatchKey}, transparent_order::{drawn_batches, StaticTransparentBatchOrder}};
 use crate::render::lighting::client_night;
+use crate::render::shader_compiles::begin_shader_compile;
 use bevy::prelude::*;
 use bevy::core_pipeline::{Core3d, Core3dSystems, core_3d::Transparent3d};
 use bevy::render::{RenderApp, Render, RenderSystems, extract_resource::{ExtractResource, ExtractResourcePlugin},
@@ -193,6 +194,7 @@ fn query_target(device: &RenderDevice, samples: u32) -> QueryTarget {
     let depth = texture(TextureFormat::Depth32Float, TextureUsages::RENDER_ATTACHMENT);
     let depth_view = depth.create_view(&TextureViewDescriptor::default());
     let resolve = (samples > 1).then(|| {
+        let compile = begin_shader_compile("static picking: multisampled ID resolve");
         let module = device.wgpu_device().create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("resolve static pixel IDs"), source: wgpu::ShaderSource::Wgsl(
                 include_str!("../../../assets/shaders/world/art/pick_resolve.wgsl").into()),
@@ -201,6 +203,7 @@ fn query_target(device: &RenderDevice, samples: u32) -> QueryTarget {
             label: Some("resolve static pixel IDs"), layout: None, module: &module, entry_point: Some("resolve"),
             compilation_options: Default::default(), cache: None,
         });
+        drop(compile);
         let output = device.create_buffer(&BufferDescriptor { label: Some("static pixel ID"), size: 4,
             usage: BufferUsages::STORAGE | BufferUsages::COPY_SRC, mapped_at_creation: false });
         let layout = BindGroupLayout::from(pipeline.get_bind_group_layout(0));

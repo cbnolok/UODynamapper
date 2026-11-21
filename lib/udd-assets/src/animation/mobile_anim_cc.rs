@@ -556,7 +556,7 @@ impl MobileAnimCcPackage {
             .iter()
             .find(|page| page.page_index == page_index)
             .map(|page| page.pixel_format)
-            .unwrap_or(PagePixelFormat::Rgba8888);
+            .ok_or_else(|| eyre::eyre!("missing mobile animation atlas page metadata for {page_index}"))?;
         self.page_cache.read_page_bytes(page_index, || {
             read_path_entry(&self.package, &page_entry_path(page_index, fmt))
                 .wrap_err_with(|| format!("unpack mobile animation atlas page {page_index}"))

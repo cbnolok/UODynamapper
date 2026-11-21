@@ -2,6 +2,7 @@ pub mod performance;
 pub mod player_position;
 pub mod cursor;
 pub mod sysmessages;
+pub mod shader_compiles;
 
 use crate::prelude::*;
 use bevy::prelude::*;
@@ -9,6 +10,7 @@ use performance::PerformanceOverlayPlugin;
 use player_position::PlayerPositionOverlayPlugin;
 use cursor::CursorOverlayPlugin;
 use sysmessages::SystemMessagesPlugin;
+use shader_compiles::ShaderCompilesOverlayPlugin;
 
 pub struct OverlaysPlugin {
     pub registered_by: &'static str,
@@ -29,6 +31,9 @@ impl Plugin for OverlaysPlugin {
                 registered_by: "OverlaysPlugin",
             },
             SystemMessagesPlugin {
+                registered_by: "OverlaysPlugin",
+            },
+            ShaderCompilesOverlayPlugin {
                 registered_by: "OverlaysPlugin",
             },
         ));
