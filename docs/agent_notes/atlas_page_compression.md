@@ -431,6 +431,40 @@ are steadier:
   on 256-bit units, and a trial ends after three texels on average, so a wider group mostly decodes texels it does not
   need. It stays behind `limit_bc7_rdo_simd(Bc7RdoSimd::Avx512)`; the default stops at AVX2.
 
+### On the GPU (prototype)
+
+`--bin rdo_gpu_proto` (`rdo_gpu_proto.wgsl`) runs the fixed-offset search in a compute shader. One workgroup of 64
+threads per row chunk (the CPU's chunks) walks the chunk's blocks in order. For each mode 6 or mode 4 block, the threads
+share the candidates: earlier blocks of the same mode in the look-back, × run length, × offset. Each thread keeps its own
+best and its own error bound, and the lowest cost wins, with the earliest candidate on a tie. Each submission walks 256
+blocks of every chunk, about 75 ms of GPU, so the desktop keeps drawing. The shader leaves out:
+
+- the hash of tried segments;
+- the match-continuation and REP0 prices, which the CPU updates during a block's search;
+- the ultrasmooth scales.
+
+Its blocks therefore differ from the CPU's.
+
+Same 20 Classic pages, Radeon 880M (RADV), against the parallel AVX2 CPU RDO on all 20 threads:
+
+| Setting | CPU wall | GPU wall | CPU size | GPU size | CPU PSNR | GPU PSNR |
+|---|---|---|---|---|---|---|
+| λ 0.05, look-back 8 | 1.42 s | 0.22 s | +0.1 % | +0.1 % | 33.59 | 33.59 |
+| λ 1, look-back 8 | 1.28 s | 0.25 s | −2.6 % | −3.1 % | 32.33 | 32.30 |
+| λ 0.05, look-back 64 | 6.28 s | 1.22 s | +0.2 % | +0.1 % | 33.59 | 33.59 |
+| λ 1, look-back 64 | 6.19 s | 1.35 s | −4.8 % | −6.1 % | 31.76 | 31.59 |
+
+- **It is 4.6 to 6.4 times faster** and leaves the CPU free. For the whole Classic package (1210 pages), λ 1 at
+  look-back 64 would take about 80 s instead of about 6 minutes.
+- **Its size and quality are on the CPU's curve.** Without the continuation and REP0 prices it takes a few more
+  matches: 1.3 % smaller for 0.17 dB at λ 1.
+- **A full version** in `uot-gpu-compute`, called by udd-conv, has to choose between two semantics:
+  - port the CPU's exact search (the hash, the continuation and REP0 state that changes within a block's search, the
+    ultrasmooth scales, modes other than 6 and 4 on the CPU), which costs a sequential pass per block;
+  - define its own deterministic RDO, whose output differs from the CPU's and depends on the chunking.
+
+  With RDO off by default, it pays only for someone who opts in at λ 1 or more.
+
 ## Reproducing
 
 [`atlas_page_compression/`](atlas_page_compression/) is the benchmark, a standalone crate that reads its pages from a
@@ -447,4 +481,5 @@ It runs every codec and the 128-row strips. `--bin strip_levels` runs the levels
 the dictionaries were one-off runs with the numbers above. `--bin anim_rdo <dir> <cc|ec> <pages> [λ,...] [look-back,...]
 [stats|parallel]` runs the BC7 RDO on pages sampled from an RGBA8888 `mobile_anim_cc.uddp` or `mobile_anim_ec.uddp`:
 `stats` adds the RDO's counters for one page on one thread, `parallel` runs the pages at once as the packers do, and
-`ANIM_RDO_SIMD=scalar|avx2|avx512` sets the highest instruction set.
+`ANIM_RDO_SIMD=scalar|avx2|avx512` sets the highest instruction set. `--bin rdo_gpu_proto <dir> <cc|ec> <pages> <λ>
+<look-back>` times the GPU prototype against the CPU RDO on the same pages.
