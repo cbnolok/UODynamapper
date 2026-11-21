@@ -2,7 +2,8 @@
 //! in-betweens: GPU time per frame (timestamp queries; each frame in a submission of its own, and the frames of a
 //! group in one pass), the error against the source (RGB where the source has alpha, alpha everywhere; for BC1,
 //! whether every alpha stays 0 or 255), and the bytes against RGBA8. It writes comparison sheets and the summary into
-//! a folder. Ignored: it needs a GPU adapter and the packages.
+//! a folder. Ignored: it needs a GPU adapter and the packages. BC1 takes part with the crate's `bc1` feature
+//! (`--features bc1`).
 //!
 //! ```sh
 //! BLOCK_ENCODE_PACKAGES=/path/to/uddp BLOCK_ENCODE_OUTPUT=/path/to/bc-eval \
@@ -17,10 +18,12 @@ use super::*;
 use std::fmt::Write as _;
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
+use wgpu::util::DeviceExt;
 use udd_assets::animation::mobile_anim_cc::{self as anim_cc, MobileAnimCcPackage};
 use udd_assets::animation::mobile_anim_ec::{self as anim_ec, MobileAnimEcPackage};
 use uot_texture_codecs::bc7::{Bc7EncoderBackend, ImageExtent, RawImageFormat};
 use udd_assets::animation::mobile_strides::{MobileAnimClips, MobileClip};
+use crate::network_shader_module;
 use crate::rife::{RifeModel, RifeWorkspace, RIFE_ALPHA_CHANNEL, RIFE_IMAGE_CHANNELS};
 
 const PACKAGES_VARIABLE: &str = "BLOCK_ENCODE_PACKAGES";
@@ -48,8 +51,17 @@ const IN_BETWEEN_SLOT: usize = 0;
 /// RIFE's backdrop and the Classic alpha snap, as rife/atlas.wgsl gives them.
 const BACKDROP_GREY: f32 = 0.5;
 const CLASSIC_ALPHA_SNAP: f32 = 0.5;
+#[cfg(feature = "bc1")]
 const SHEET_FORMATS: [MobileBlockFormat; 4] = [MobileBlockFormat::Bc7(Bc7Quality::UltraFast),
     MobileBlockFormat::Bc7(Bc7Quality::Fast), MobileBlockFormat::Bc7(Bc7Quality::Basic), MobileBlockFormat::Bc1];
+#[cfg(not(feature = "bc1"))]
+const SHEET_FORMATS: [MobileBlockFormat; 3] = [MobileBlockFormat::Bc7(Bc7Quality::UltraFast),
+    MobileBlockFormat::Bc7(Bc7Quality::Fast), MobileBlockFormat::Bc7(Bc7Quality::Basic)];
+/// The formats evaluated besides BC7's qualities: BC1 with the `bc1` feature.
+#[cfg(feature = "bc1")]
+const OTHER_FORMATS: &[MobileBlockFormat] = &[MobileBlockFormat::Bc1];
+#[cfg(not(feature = "bc1"))]
+const OTHER_FORMATS: &[MobileBlockFormat] = &[];
 const ZOOM: u32 = 4;
 const DIFF_GAIN: f32 = 8.0;
 const SHEET_GREY: u8 = 128;
@@ -137,6 +149,8 @@ fn readback_buffer(gpu: &Gpu, size: u64) -> wgpu::Buffer {
 struct Sample {
     name: String,
     group: String,
+    /// A Classic frame, which BC1 takes (only with the `bc1` feature).
+    #[cfg_attr(not(feature = "bc1"), expect(dead_code, reason = "only BC1 reads it"))]
     classic: bool,
     width: u32,
     height: u32,
@@ -169,12 +183,18 @@ fn upload(gpu: &Gpu, sample: &Sample) -> Source {
 fn format_name(format: MobileBlockFormat) -> String {
     match format {
         MobileBlockFormat::Bc7(quality) => format!("BC7 {quality:?}"),
+        #[cfg(feature = "bc1")]
         MobileBlockFormat::Bc1 => "BC1".to_string(),
     }
 }
 
+#[cfg_attr(not(feature = "bc1"), allow(unused_variables))]
 fn takes(format: MobileBlockFormat, sample: &Sample) -> bool {
-    format != MobileBlockFormat::Bc1 || sample.classic
+    match format {
+        MobileBlockFormat::Bc7(_) => true,
+        #[cfg(feature = "bc1")]
+        MobileBlockFormat::Bc1 => sample.classic,
+    }
 }
 
 /// The encodings of a list of samples in one format, and their GPU times.
@@ -362,6 +382,7 @@ fn decode(format: MobileBlockFormat, sample: &Sample, blocks: &[u8]) -> Vec<u8> 
     let extent = ImageExtent::new(width, height).unwrap();
     let padded = match format {
         MobileBlockFormat::Bc7(_) => uot_texture_codecs::bc7::decode_bc7_to_rgba8888(blocks, extent),
+        #[cfg(feature = "bc1")]
         MobileBlockFormat::Bc1 => uot_texture_codecs::bc1::decode_bc1_to_rgba8888(blocks, extent),
     }.unwrap();
     let row = sample.width as usize * RGBA_BYTES;
@@ -499,6 +520,7 @@ fn check_gpu_decoding(gpu: &Gpu, format: MobileBlockFormat, sample: &Sample, blo
         mip_level_count: 1, sample_count: 1, dimension: wgpu::TextureDimension::D2, format: format.texture_format(),
         usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST, view_formats: &[],
     });
+    #[cfg(feature = "bc1")]
     if format == MobileBlockFormat::Bc1 {
         let blocks_per_layer = (width / BLOCK_SIDE * height / BLOCK_SIDE) as usize;
         gpu.queue.write_texture(
@@ -738,7 +760,7 @@ fn evaluate_block_formats() {
     let unbounded = std::env::var_os(UNBOUNDED_BC7_VARIABLE)
         .map(|path| UnboundedBc7::new(&gpu, &std::fs::read_to_string(path).unwrap()));
     let formats: Vec<MobileBlockFormat> = Bc7Quality::ALL.iter().map(|&quality| MobileBlockFormat::Bc7(quality))
-        .chain([MobileBlockFormat::Bc1]).collect();
+        .chain(OTHER_FORMATS.iter().copied()).collect();
     let mut groups: Vec<String> = samples.iter().map(|sample| sample.group.clone()).collect();
     groups.dedup();
 

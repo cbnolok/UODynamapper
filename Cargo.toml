@@ -50,8 +50,9 @@ toml = { version = "1.1", default-features = false, features = ["display", "pars
 wgpu = { version = "30.0", default-features = false, features = ["vulkan", "wgsl"] }
 wgpu-profiler = "0.28.0"
 wgpu-types = "30.0"
-# GPU BC1/BC7 encoding of frames (uot-gpu-compute block_encode.rs); its wgpu is ours (30).
-block_compression = { version = "0.11", default-features = false, features = ["bc15", "bc7", "wgpu"] }
+# GPU BC7 encoding of frames (uot-gpu-compute block_encode.rs); its wgpu is ours (30). BC1 to BC5 (`bc15`) only with
+# uot-gpu-compute's `bc1` feature: their pipelines would compile with the BC7 one in every app.
+block_compression = { version = "0.11", default-features = false, features = ["bc7", "wgpu"] }
 knuffel = "3"
 bytemuck = { version = "1.*", default-features = false, features = ["derive", "aarch64_simd", "avx512_simd"] }
 byteorder = "1.5"

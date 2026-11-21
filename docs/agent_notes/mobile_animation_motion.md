@@ -188,7 +188,8 @@ atlas of their clip, in its format. The format is one value of the page-manifest
   bounce buffer hold and leaves the rest to the next. The cost model adds 0.25 ms + 4 ms per megapixel for the encode
   of each in-between, inside the same 2 ms budget; the measured scale corrects the rest. The BC7 work holds 6 MiB
   more in the render world (scratch 4 MiB, blocks 1 MiB, bounce 1 MiB).
-- **BC1** stays in `uot-gpu-compute` (with its punch-through pass) but no atlas uses it.
+- **BC1** stays in `uot-gpu-compute` (with its punch-through pass) behind the crate's `bc1` feature, which no app
+  turns on: no atlas uses it.
 
 Measured on the Radeon 880M (RADV), Britain, four styles, Classic human 400 on horse 200, dog 217, Enhanced daemon 9
 and stygian 826, crossfade / RIFE ×2 / ×4:
@@ -211,7 +212,7 @@ The evaluation that chose BC7 UltraFast is `lib/support/uot-gpu-compute/src/bloc
 (`evaluate_block_formats`, ignored); its sheets and summary are in `uodynamapper-scratch/bc-eval/`.
 
 - **Encoder**: [block_compression](https://github.com/hasenbanck/block_compression) 0.11.0 (MIT), a WGSL port of
-  Intel's ISPC kernels, on wgpu "30" (our 30.0.1, no second wgpu), features `bc15` and `bc7`. `block_encode.rs`
+  Intel's ISPC kernels, on wgpu "30" (our 30.0.1, no second wgpu), feature `bc7` (and `bc15` with uot-gpu-compute's `bc1`). `block_encode.rs`
   encodes the sRGB bytes through an `Rgba8Unorm` view, so a `*UnormSrgb` BC texture decodes to the same bytes and
   samples like the RGBA8 atlas; the GPU decode matched the CPU one exactly for BC7. Creating the compressor compiles
   all its pipelines (38.6 s cold on RADV in the app, 21 s alone, nearly all of it BC7; 25 ms with Mesa's cache warm),

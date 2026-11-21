@@ -15,7 +15,7 @@ Two sources feed it:
   warm-up callback). Fed now: the GPU compute warm-up (`mobiles/compute_warm_up.rs`), every pipeline of
   `lib/support/uot-gpu-compute` by its label: the networks on a thread of their own at startup (`RIFE conv
   Stride1/Leaky tile 64x32`, `RIFE pixel step: merge`, `upscale conv 3x3/Silu tile 64x48`, `upscale prepare`), and the
-  block encoder on another (`BC7 compressor (every quality; and BC1-BC5)`, `BC1 punch-through`) only while a loaded
+  block encoder on another (`BC7 compressor (every quality)`) only while a loaded
   animation package is BC7, from the first frame one is (below); the RIFE network when the warm-up did not give it,
   and the atlas steps (`rife_in_betweens/render.rs`, background pool); the static picking MSAA resolve
   (`gpu_picking.rs`, render thread, only with MSAA). The SPAN pipelines are warmed but not drawn with yet
@@ -40,7 +40,9 @@ alone in a fresh process; cold is a new empty `MESA_SHADER_CACHE_DIR`, warm the 
 | RIFE and SPAN (`uot_gpu_compute::warm_up`) | 1.29 s (1.29–1.32) | 84 ms |
 
 The naga parse and validation of the modules is 4 ms (bc1_to_5.wgsl) and 10 ms (bc7.wgsl) a process, cold or warm.
-BC1 to BC5 together are 0.4 s, 2 % of the compressor. In the app the compressor took 27 to 50 s cold (37 s in an
+BC1 to BC5 together are 0.4 s, 2 % of the compressor; they and the BC1 punch-through are behind uot-gpu-compute's
+`bc1` feature (block_compression's `bc15`), which no app turns on (hakari leaves block_compression out of the
+workspace-hack, so dynamapper builds without `bc15`). In the app the compressor took 27 to 50 s cold (37 s in an
 earlier run), with Bevy's own pipelines compiling at the same time on its async compute thread and the machine more or
 less busy.
 

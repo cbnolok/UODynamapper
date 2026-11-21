@@ -2,7 +2,9 @@
 //! `tests.rs`; Dynamapper's BC7 frame atlas encodes its RIFE in-betweens with it, at UltraFast). BC7 keeps soft alpha
 //! (Enhanced, KR); BC1 keeps one bit of it, which is all Classic art and its in-betweens have. The encoding is
 //! block_compression's (a WGSL port of Intel's ISPC Texture Compressor kernels, MIT): its BC7 as it is, its BC1
-//! followed by [`PUNCH_THROUGH_SHADER`], since that kernel encodes colour only.
+//! followed by the punch-through pass (bc1_punch_through.wgsl), since that kernel encodes colour only. BC1 is behind
+//! the crate's `bc1` feature, which turns on block_compression's BC1 to BC5 kernels; without it the compressor builds
+//! BC7's pipeline alone.
 //!
 //! A frame to encode lies at the top-left corner of a texture whose view is a non-sRGB RGBA8 format (`Rgba8Unorm`)
 //! holding the frame's sRGB-encoded, straight-alpha bytes: an `Rgba8UnormSrgb` texture needs `Rgba8Unorm` among its
@@ -13,27 +15,40 @@
 //!
 //! The GPU's zero fill suits a BC7 atlas (a block of zeros has no valid mode and decodes to transparent black) but not
 //! a BC1 one: zero endpoints and indices decode to opaque black, so empty BC1 pages are filled with
-//! [`BC1_TRANSPARENT_BLOCK`].
+//! `BC1_TRANSPARENT_BLOCK`.
 
 #[cfg(test)]
 mod tests;
 
 use block_compression::{BC7Settings, CompressionVariant, GpuBlockCompressor};
+#[cfg(feature = "bc1")]
 use wgpu::util::DeviceExt;
+#[cfg(feature = "bc1")]
 use crate::network_shader_module;
 use crate::warm_up::CompileReport;
 
 /// Texels per side of a block.
 pub const BLOCK_SIDE: u32 = 4;
 const BC7_BLOCK_BYTES: u32 = 16;
+#[cfg(feature = "bc1")]
 const BC1_BLOCK_BYTES: u32 = 8;
 /// A transparent BC1 block: equal endpoints (the three-colour mode) and index 3 everywhere.
+#[cfg(feature = "bc1")]
 pub const BC1_TRANSPARENT_BLOCK: [u8; BC1_BLOCK_BYTES as usize] = [0, 0, 0, 0, 0xff, 0xff, 0xff, 0xff];
+#[cfg(feature = "bc1")]
 const U32_BYTES: u64 = 4;
 /// Matches the workgroup size of bc1_punch_through.wgsl.
+#[cfg(feature = "bc1")]
 const PUNCH_THROUGH_WORKGROUP_SIDE: u32 = 8;
 
+#[cfg(feature = "bc1")]
 const PUNCH_THROUGH_SHADER: &str = include_str!("../shaders/block_encode/bc1_punch_through.wgsl");
+
+/// The compile of block_compression's pipelines, as reported.
+#[cfg(feature = "bc1")]
+const COMPRESSOR_COMPILE: &str = "BC7 compressor (every quality; and BC1-BC5)";
+#[cfg(not(feature = "bc1"))]
+const COMPRESSOR_COMPILE: &str = "BC7 compressor (every quality)";
 
 /// block_compression's BC7 settings for colour with alpha, fastest to slowest.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -65,6 +80,7 @@ pub enum MobileBlockFormat {
     /// 1 byte per texel, soft alpha.
     Bc7(Bc7Quality),
     /// Half a byte per texel; a texel is opaque or transparent (alpha from one half up is opaque).
+    #[cfg(feature = "bc1")]
     Bc1,
 }
 
@@ -73,6 +89,7 @@ impl MobileBlockFormat {
     pub fn texture_format(self) -> wgpu::TextureFormat {
         match self {
             Self::Bc7(_) => wgpu::TextureFormat::Bc7RgbaUnormSrgb,
+            #[cfg(feature = "bc1")]
             Self::Bc1 => wgpu::TextureFormat::Bc1RgbaUnormSrgb,
         }
     }
@@ -80,6 +97,7 @@ impl MobileBlockFormat {
     pub fn block_bytes(self) -> u32 {
         match self {
             Self::Bc7(_) => BC7_BLOCK_BYTES,
+            #[cfg(feature = "bc1")]
             Self::Bc1 => BC1_BLOCK_BYTES,
         }
     }
@@ -93,6 +111,7 @@ impl MobileBlockFormat {
     fn variant(self) -> CompressionVariant {
         match self {
             Self::Bc7(quality) => CompressionVariant::BC7(quality.settings()),
+            #[cfg(feature = "bc1")]
             Self::Bc1 => CompressionVariant::BC1,
         }
     }
@@ -104,39 +123,27 @@ pub fn padded_size(width: u32, height: u32) -> (u32, u32) {
 }
 
 /// A BC1 frame waiting for its alpha pass.
+#[cfg(feature = "bc1")]
 struct PunchThroughFrame {
     bind_group: wgpu::BindGroup,
     workgroups: (u32, u32),
 }
 
-/// The compiles [`MobileBlockEncoder::compile`] reports: block_compression's pipelines, then the BC1 punch-through.
-pub const BLOCK_ENCODER_COMPILES: usize = 2;
-
-/// The encoders and the frames recorded for the next [`MobileBlockEncoder::record`].
-pub struct MobileBlockEncoder {
-    device: wgpu::Device,
-    compressor: GpuBlockCompressor,
-    punch_through_layout: wgpu::BindGroupLayout,
-    punch_through: wgpu::ComputePipeline,
-    punch_through_frames: Vec<PunchThroughFrame>,
+/// The BC1 punch-through pass, and the frames recorded for it.
+#[cfg(feature = "bc1")]
+struct PunchThrough {
+    layout: wgpu::BindGroupLayout,
+    pipeline: wgpu::ComputePipeline,
+    frames: Vec<PunchThroughFrame>,
 }
 
-impl MobileBlockEncoder {
-    /// Compiles the encoders' pipelines: block_compression builds all of its BC1 to BC5 and BC7 pipelines here.
-    pub fn new(device: &wgpu::Device, queue: &wgpu::Queue) -> Self {
-        Self::compile(device, queue, &mut CompileReport::silent(BLOCK_ENCODER_COMPILES))
-    }
-
-    /// [`MobileBlockEncoder::new`], telling `report` of each of [`BLOCK_ENCODER_COMPILES`].
-    pub fn compile(device: &wgpu::Device, queue: &wgpu::Queue, report: &mut CompileReport) -> Self {
-        // One compile for every BC7 quality (a setting the kernel reads, not a pipeline of its own), with
-        // block_compression's BC1 to BC5 kernels.
-        let compressor = report.compile("BC7 compressor (every quality; and BC1-BC5)",
-            || GpuBlockCompressor::new(device.clone(), queue.clone()));
+#[cfg(feature = "bc1")]
+impl PunchThrough {
+    fn compile(device: &wgpu::Device, report: &mut CompileReport) -> Self {
         let entry = |binding, ty| wgpu::BindGroupLayoutEntry {
             binding, visibility: wgpu::ShaderStages::COMPUTE, ty, count: None,
         };
-        let punch_through_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+        let layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: Some("bc1 punch-through"),
             entries: &[
                 entry(0, wgpu::BindingType::Texture {
@@ -152,18 +159,85 @@ impl MobileBlockEncoder {
                 }),
             ],
         });
-        let layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-            label: Some("bc1 punch-through"), bind_group_layouts: &[Some(&punch_through_layout)], immediate_size: 0,
+        let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+            label: Some("bc1 punch-through"), bind_group_layouts: &[Some(&layout)], immediate_size: 0,
         });
-        let punch_through = report.compile("BC1 punch-through", || {
+        let pipeline = report.compile("BC1 punch-through", || {
             // SAFETY: every loop of bc1_punch_through.wgsl runs to a constant, counting up by one.
             let module = unsafe { network_shader_module(device, "bc1 punch-through", PUNCH_THROUGH_SHADER.to_string()) };
             device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
-                label: Some("bc1 punch-through"), layout: Some(&layout), module: &module,
+                label: Some("bc1 punch-through"), layout: Some(&pipeline_layout), module: &module,
                 entry_point: Some("punch_through"), compilation_options: Default::default(), cache: None,
             })
         });
-        Self { device: device.clone(), compressor, punch_through_layout, punch_through, punch_through_frames: Vec::new() }
+        Self { layout, pipeline, frames: Vec::new() }
+    }
+
+    /// Adds the pass over a `width` by `height` frame (padded) at the corner of `source`, its blocks in `output` from
+    /// byte `offset`.
+    fn add_frame(&mut self, device: &wgpu::Device, source: &wgpu::TextureView, width: u32, height: u32,
+        output: &wgpu::Buffer, offset: u64) {
+        let uniforms = [width, height, (offset / U32_BYTES) as u32, 0];
+        let uniforms = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("bc1 punch-through frame"), contents: bytemuck::cast_slice(&uniforms),
+            usage: wgpu::BufferUsages::UNIFORM,
+        });
+        let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("bc1 punch-through"), layout: &self.layout,
+            entries: &[
+                wgpu::BindGroupEntry { binding: 0, resource: wgpu::BindingResource::TextureView(source) },
+                wgpu::BindGroupEntry { binding: 1, resource: output.as_entire_binding() },
+                wgpu::BindGroupEntry { binding: 2, resource: uniforms.as_entire_binding() },
+            ],
+        });
+        let blocks = |side: u32| (side / BLOCK_SIDE).div_ceil(PUNCH_THROUGH_WORKGROUP_SIDE);
+        self.frames.push(PunchThroughFrame { bind_group, workgroups: (blocks(width), blocks(height)) });
+    }
+
+    fn record(&mut self, pass: &mut wgpu::ComputePass<'_>) {
+        if self.frames.is_empty() {
+            return;
+        }
+        pass.set_pipeline(&self.pipeline);
+        for frame in self.frames.drain(..) {
+            pass.set_bind_group(0, &frame.bind_group, &[]);
+            pass.dispatch_workgroups(frame.workgroups.0, frame.workgroups.1, 1);
+        }
+    }
+}
+
+/// The compiles [`MobileBlockEncoder::compile`] reports: block_compression's pipelines, then, with the `bc1` feature,
+/// the BC1 punch-through.
+pub const BLOCK_ENCODER_COMPILES: usize = if cfg!(feature = "bc1") { 2 } else { 1 };
+
+/// The encoders and the frames recorded for the next [`MobileBlockEncoder::record`].
+pub struct MobileBlockEncoder {
+    #[cfg(feature = "bc1")]
+    device: wgpu::Device,
+    compressor: GpuBlockCompressor,
+    #[cfg(feature = "bc1")]
+    punch_through: PunchThrough,
+}
+
+impl MobileBlockEncoder {
+    /// Compiles the encoders' pipelines: block_compression builds its BC7 pipeline here, and its BC1 to BC5 ones with
+    /// the `bc1` feature.
+    pub fn new(device: &wgpu::Device, queue: &wgpu::Queue) -> Self {
+        Self::compile(device, queue, &mut CompileReport::silent(BLOCK_ENCODER_COMPILES))
+    }
+
+    /// [`MobileBlockEncoder::new`], telling `report` of each of [`BLOCK_ENCODER_COMPILES`].
+    pub fn compile(device: &wgpu::Device, queue: &wgpu::Queue, report: &mut CompileReport) -> Self {
+        // One compile for every BC7 quality (a setting the kernel reads, not a pipeline of its own), with
+        // block_compression's BC1 to BC5 kernels when they are on.
+        let compressor = report.compile(COMPRESSOR_COMPILE, || GpuBlockCompressor::new(device.clone(), queue.clone()));
+        Self {
+            #[cfg(feature = "bc1")]
+            device: device.clone(),
+            compressor,
+            #[cfg(feature = "bc1")]
+            punch_through: PunchThrough::compile(device, report),
+        }
     }
 
     /// Adds the encoding of a `width` by `height` frame at the top-left corner of `source` (see the module doc) to
@@ -180,42 +254,23 @@ impl MobileBlockEncoder {
     #[allow(clippy::too_many_arguments)]
     pub fn add_frame_at(&mut self, format: MobileBlockFormat, source: &wgpu::TextureView, y: u32, width: u32,
         height: u32, output: &wgpu::Buffer, offset: u64) {
+        #[cfg(feature = "bc1")]
         assert!(y == 0 || format != MobileBlockFormat::Bc1, "a BC1 frame lies at its texture's corner");
         let (width, height) = padded_size(width, height);
         let blocks_offset = u32::try_from(offset).expect("block offsets fit u32");
         self.compressor.add_compression_task(format.variant(), source, width, height, output, Some(y),
             Some(blocks_offset));
-        if format != MobileBlockFormat::Bc1 {
-            return;
+        #[cfg(feature = "bc1")]
+        if format == MobileBlockFormat::Bc1 {
+            self.punch_through.add_frame(&self.device, source, width, height, output, offset);
         }
-        let uniforms = [width, height, (offset / U32_BYTES) as u32, 0];
-        let uniforms = self.device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-            label: Some("bc1 punch-through frame"), contents: bytemuck::cast_slice(&uniforms),
-            usage: wgpu::BufferUsages::UNIFORM,
-        });
-        let bind_group = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("bc1 punch-through"), layout: &self.punch_through_layout,
-            entries: &[
-                wgpu::BindGroupEntry { binding: 0, resource: wgpu::BindingResource::TextureView(source) },
-                wgpu::BindGroupEntry { binding: 1, resource: output.as_entire_binding() },
-                wgpu::BindGroupEntry { binding: 2, resource: uniforms.as_entire_binding() },
-            ],
-        });
-        let blocks = |side: u32| (side / BLOCK_SIDE).div_ceil(PUNCH_THROUGH_WORKGROUP_SIDE);
-        self.punch_through_frames.push(PunchThroughFrame { bind_group, workgroups: (blocks(width), blocks(height)) });
     }
 
     /// Records the encoding of the frames added since the last call into `pass`.
     pub fn record(&mut self, pass: &mut wgpu::ComputePass<'_>) {
         self.compressor.compress(pass);
-        if self.punch_through_frames.is_empty() {
-            return;
-        }
-        pass.set_pipeline(&self.punch_through);
-        for frame in self.punch_through_frames.drain(..) {
-            pass.set_bind_group(0, &frame.bind_group, &[]);
-            pass.dispatch_workgroups(frame.workgroups.0, frame.workgroups.1, 1);
-        }
+        #[cfg(feature = "bc1")]
+        self.punch_through.record(pass);
     }
 }
 

@@ -37,8 +37,11 @@ platforms = [
 
 # Hakari also simulates every member built with all features. That would force opt-in features on every build:
 # dynamapper's tracy and GPU profiling, and uocf's profiling. These crates stay out of the hack. Bevy is used by dynamapper alone, so its features never differ between builds.
+# block_compression too: uot-gpu-compute's `bc1` feature turns on its BC1 to BC5 kernels, whose pipelines would then
+# compile in dynamapper.
 [final-excludes]
 third-party = [
+    { name = "block_compression" },
     { name = "bevy" },
     { name = "bevy_internal" },
     { name = "bevy_anti_alias" },
