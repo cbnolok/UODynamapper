@@ -107,6 +107,9 @@ The GPU port of the prototype writes them: `udd-cli tool strides measure changed
 measure-mobile-strides`; `--body N` repeatable, `--output DIR`, `--report DIR`), on the measurement core of
 `lib/support/uot-gpu-compute` (`strides.rs`: plain RGBA frames and anchors) driven over the packages by
 `udd_conv::animation::mobile_strides`, which the inspector's strides panel and the converter GUI's measure step run too.
+It blends the in-between with Practical-RIFE's bilinear warp, as the prototype did, not the in-betweens' nearest one:
+the in-between's alpha picks the feet, and the nearest warp's other edges moved Classic body 1's west walk from 1.919
+to 1.935 tiles.
 Dynamapper only reads the strides. It hashes every
 clip on all threads (13 s for both packages), then measures on the GPU only what it must: `changed` the clips with new
 or other frames than their stride's (a clip sharing the frames of a kept one takes its measurement), dropping the

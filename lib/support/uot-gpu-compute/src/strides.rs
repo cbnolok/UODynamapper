@@ -122,10 +122,13 @@ pub struct StrideMeasurer {
 }
 
 impl StrideMeasurer {
-    /// Starts a device of its own and compiles RIFE on it.
+    /// Starts a device of its own and compiles RIFE on it, with Practical-RIFE's bilinear blend: the prototype's,
+    /// which the method was chosen on and the strides were first measured with. The in-betweens' nearest blend
+    /// gives the in-between other edges, so other feet pixels pass the alpha test (Classic body 1's west stride
+    /// 1.935 tiles instead of 1.919).
     pub fn new() -> eyre::Result<Self> {
         let (gpu, adapter) = gpu()?;
-        let model = RifeModel::new(&gpu.device).map_err(|error| eyre::eyre!("RIFE: {error}"))?;
+        let model = RifeModel::with_bilinear_final_warp(&gpu.device).map_err(|error| eyre::eyre!("RIFE: {error}"))?;
         Ok(Self { gpu, adapter, model, workspaces: Vec::new() })
     }
 

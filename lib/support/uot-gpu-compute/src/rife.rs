@@ -62,7 +62,6 @@ const PIXEL_TIMESTEP_BYTE: u64 = 20;
 const CONV_SHADER: &str = include_str!("../shaders/rife/conv.wgsl");
 const PIXEL_SHADER: &str = include_str!("../shaders/rife/pixel.wgsl");
 /// pixel.wgsl's switch between the blend's nearest warp (its default) and Practical-RIFE's bilinear one.
-#[cfg(test)]
 const NEAREST_FINAL_WARP_OVERRIDE: &str = "NEAREST_FINAL_WARP";
 
 /// A convolution workgroup's tile: `m` pixels by `n` output channels, `k` rows of the sum staged at a time, each
@@ -301,8 +300,8 @@ impl RifeModel {
         Ok(Self { params, packed, conv_layout, pixel_layout, conv_pipelines, pixel_pipelines })
     }
 
-    /// The model with Practical-RIFE's bilinear blend, as the PyTorch reference computes it.
-    #[cfg(test)]
+    /// The model with Practical-RIFE's bilinear blend, as the PyTorch reference computes it and the stride
+    /// measurement picks the feet by ([`crate::strides`]).
     pub fn with_bilinear_final_warp(device: &wgpu::Device) -> Result<Self, String> {
         Self::with_pipelines(device, RifePipelines::with_pixel_constants(device, &[(NEAREST_FINAL_WARP_OVERRIDE, 0.0)],
             &mut CompileReport::silent(RIFE_COMPILES)))

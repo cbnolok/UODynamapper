@@ -448,3 +448,31 @@ impl<T> Drop for StrideJob<T> {
         self.cancel.store(true, Ordering::Relaxed);
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The Classic package to measure (`mobile_anim_cc.uddp`).
+    const MOBILE_ANIM_CC_ENV: &str = "UDD_MOBILE_ANIM_CC";
+    /// Classic body 1's walk, and its side facings' strides in the first stride table (the prototype's method).
+    const TABLE_BODY: u32 = 1;
+    const TABLE_ACTION: u16 = 0;
+    const TABLE_FACING_TILES: [f32; STRIDE_FACING_COUNT] = [1.445, 2.105, 1.919];
+    /// The table's three decimals.
+    const TABLE_TOLERANCE_TILES: f32 = 0.0005;
+
+    #[test]
+    #[ignore = "requires a GPU adapter and UDD_MOBILE_ANIM_CC; run explicitly for stride or RIFE changes"]
+    fn a_classic_walk_measures_the_strides_of_the_first_table() {
+        let path = std::env::var_os(MOBILE_ANIM_CC_ENV).unwrap_or_else(|| panic!("set {MOBILE_ANIM_CC_ENV}"));
+        let package = load_mobile_anim_clips(Path::new(&path)).unwrap();
+        let mut measurer = StrideMeasurer::new().unwrap();
+        let measurement =
+            measure_side_clips(&mut measurer, &package.side_clips(TABLE_BODY, TABLE_ACTION).unwrap()).unwrap();
+        for (facing, expected) in measurement.facings.iter().zip(TABLE_FACING_TILES) {
+            let facing = facing.unwrap_or_else(|| panic!("{:?}", measurement.facings));
+            assert!((facing - expected).abs() < TABLE_TOLERANCE_TILES, "{:?}", measurement.facings);
+        }
+    }
+}
