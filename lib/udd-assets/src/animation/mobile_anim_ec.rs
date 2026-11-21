@@ -725,17 +725,33 @@ impl MobileAnimClips for MobileAnimEcPackage {
 impl MobileAnimEcPackage {
     /// [`MobileAnimClips::clip`], each frame made by `frame` from its record and its anchor.
     fn clip_in<F>(&self, body: u32, action: u16, direction: u8,
-        mut frame: impl FnMut(&MobileAnimEcFrameRecord, i32, i32) -> eyre::Result<F>)
+        frame: impl FnMut(&MobileAnimEcFrameRecord, i32, i32) -> eyre::Result<F>)
         -> eyre::Result<Option<MobileClip<F>>> {
         const FLYING_ANIMATIONS: bool = true;
         let Some(resolved) = self.resolve_animation(body, action, direction, FLYING_ANIMATIONS) else { return Ok(None) };
-        let record = resolved.record;
+        self.record_clip_in(resolved.record, resolved.fps, frame)
+    }
+
+    /// The clip of one animation record, played at `fps`.
+    fn record_clip_in<F>(&self, record: &MobileAnimEcAnimationRecord, fps: f32,
+        mut frame: impl FnMut(&MobileAnimEcFrameRecord, i32, i32) -> eyre::Result<F>)
+        -> eyre::Result<Option<MobileClip<F>>> {
         let frames = self.animation_frames(record).iter().enumerate()
             .filter(|(index, stored)| !record.is_frame_skipped(*index as u32) && stored.width > 0 && stored.height > 0)
             .map(|(_, stored)| frame(stored, i32::from(stored.center_x), i32::from(stored.center_y)))
             .collect::<eyre::Result<Vec<_>>>()?;
-        Ok((!frames.is_empty()).then_some(MobileClip { frames, mirrored: record.is_mirrored(), fps: resolved.fps,
+        Ok((!frames.is_empty()).then_some(MobileClip { frames, mirrored: record.is_mirrored(), fps,
             stored: record.frame_start }))
+    }
+
+    /// The clip of one animation record as [`MobileAnimClips::clip`] gives it with flying animations on: what an
+    /// inspector shows for the record. `None` without frames.
+    pub fn animation_clip(&self, record: &MobileAnimEcAnimationRecord) -> eyre::Result<Option<MobileClip>> {
+        let mut pages = PageMemo::default();
+        self.record_clip_in(record, record.fps, |frame, anchor_x, anchor_y| Ok(MobileClipFrame {
+            width: frame.width, height: frame.height, anchor_x, anchor_y,
+            rgba: self.read_frame_rgba_in(frame, &mut pages)?,
+        }))
     }
 }
 

@@ -17,6 +17,7 @@
 
 use std::time::Duration;
 use color_eyre::eyre::{self, WrapErr};
+use crate::{own_device, Gpu};
 use crate::rife::{RifeModel, RifeWorkspace, RIFE_FLOW_CHANNELS, RIFE_IMAGE_CHANNELS, RIFE_SIZE_MULTIPLE};
 
 /// Facings that must measure for a stride.
@@ -53,27 +54,6 @@ const F32_BYTES: u64 = 4;
 /// Workspaces kept for reuse, by frame size.
 const MAX_CACHED_WORKSPACES: usize = 4;
 const POLL_TIMEOUT: Duration = Duration::from_secs(60);
-
-struct Gpu {
-    device: wgpu::Device,
-    queue: wgpu::Queue,
-}
-
-/// A device of the most powerful adapter, and the adapter's description.
-fn gpu() -> eyre::Result<(Gpu, String)> {
-    pollster::block_on(async {
-        let instance = wgpu::Instance::new(wgpu::InstanceDescriptor::new_without_display_handle());
-        let adapter = instance.request_adapter(&wgpu::RequestAdapterOptions {
-            power_preference: wgpu::PowerPreference::HighPerformance, ..Default::default()
-        }).await.wrap_err("no GPU adapter")?;
-        let info = adapter.get_info();
-        let adapter_name = format!("{} ({:?}, {})", info.name, info.backend, info.driver_info);
-        let (device, queue) = adapter.request_device(&wgpu::DeviceDescriptor {
-            required_limits: adapter.limits(), ..Default::default()
-        }).await.wrap_err("no GPU device")?;
-        Ok((Gpu { device, queue }, adapter_name))
-    })
-}
 
 /// The unit screen direction (x right, y down) a body facing `facing` travels in, and the screen pixels of a tile
 /// that way.
@@ -127,7 +107,7 @@ impl StrideMeasurer {
     /// gives the in-between other edges, so other feet pixels pass the alpha test (Classic body 1's west stride
     /// 1.935 tiles instead of 1.919).
     pub fn new() -> eyre::Result<Self> {
-        let (gpu, adapter) = gpu()?;
+        let (gpu, adapter) = own_device()?;
         let model = RifeModel::with_bilinear_final_warp(&gpu.device).map_err(|error| eyre::eyre!("RIFE: {error}"))?;
         Ok(Self { gpu, adapter, model, workspaces: Vec::new() })
     }

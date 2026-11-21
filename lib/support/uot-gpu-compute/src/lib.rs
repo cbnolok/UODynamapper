@@ -1,17 +1,42 @@
 //! GPU compute on plain wgpu, with no app or package format around it: the RIFE frame interpolation network
 //! ([`rife`]), the SPAN upscaler ([`upscale`]), the BC1/BC7 block encoder of frames ([`block_encode`]), and the
-//! measurement of a walk cycle's stride with RIFE's flow ([`strides`]). Dynamapper runs the networks on its own
-//! device; the udd tools measure the strides of the animation packages on a device of their own. [`warm_up`]
-//! compiles the networks' pipelines ahead of use (the block encoder compiles on its own). Shaders and weights are
-//! embedded in the binary.
+//! measurement of a walk cycle's stride with RIFE's flow ([`strides`]), and RIFE in-betweens of a clip's plain RGBA
+//! frames ([`in_betweens`]). Dynamapper runs the networks on its own device; the udd tools measure the strides of the
+//! animation packages and preview the in-betweens on a device of their own. [`warm_up`] compiles the networks'
+//! pipelines ahead of use (the block encoder compiles on its own). Shaders and weights are embedded in the binary.
 
 pub mod block_encode;
+pub mod in_betweens;
 pub mod rife;
 pub mod strides;
 pub mod upscale;
 pub mod warm_up;
 
 pub use warm_up::{warm_up, PipelineCompile, WarmPipelines, WARM_UP_COMPILES};
+
+use color_eyre::eyre::{self, WrapErr};
+
+/// A device of a tool's own, and its queue.
+pub(crate) struct Gpu {
+    pub(crate) device: wgpu::Device,
+    pub(crate) queue: wgpu::Queue,
+}
+
+/// A device of the most powerful adapter, and the adapter's description.
+pub(crate) fn own_device() -> eyre::Result<(Gpu, String)> {
+    pollster::block_on(async {
+        let instance = wgpu::Instance::new(wgpu::InstanceDescriptor::new_without_display_handle());
+        let adapter = instance.request_adapter(&wgpu::RequestAdapterOptions {
+            power_preference: wgpu::PowerPreference::HighPerformance, ..Default::default()
+        }).await.wrap_err("no GPU adapter")?;
+        let info = adapter.get_info();
+        let adapter_name = format!("{} ({:?}, {})", info.name, info.backend, info.driver_info);
+        let (device, queue) = adapter.request_device(&wgpu::DeviceDescriptor {
+            required_limits: adapter.limits(), ..Default::default()
+        }).await.wrap_err("no GPU device")?;
+        Ok((Gpu { device, queue }, adapter_name))
+    })
+}
 
 /// Compiles a compute shader of the networks (RIFE, the upscaler) without the loop counters naga adds by default to
 /// end infinite loops: they keep the driver from unrolling the convolutions' constant loops, which turns each

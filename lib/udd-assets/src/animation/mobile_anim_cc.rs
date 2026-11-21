@@ -716,17 +716,34 @@ impl MobileAnimClips for MobileAnimCcPackage {
 impl MobileAnimCcPackage {
     /// [`MobileAnimClips::clip`], each frame made by `frame` from its record and its anchor.
     fn clip_in<F>(&self, body: u32, action: u16, direction: u8,
-        mut frame: impl FnMut(&MobileAnimCcFrameRecord, i32, i32) -> eyre::Result<F>)
+        frame: impl FnMut(&MobileAnimCcFrameRecord, i32, i32) -> eyre::Result<F>)
         -> eyre::Result<Option<MobileClip<F>>> {
         let Ok(body) = u16::try_from(body) else { return Ok(None) };
         let Some((stored_direction, mirrored)) = classic_stored_direction(direction) else { return Ok(None) };
         let Some(animation) = self.server_body_animation(body, action, stored_direction) else { return Ok(None) };
+        self.record_clip_in(animation, mirrored, frame)
+    }
+
+    /// The clip of one animation record (a stored direction), drawn mirrored when `mirrored`.
+    fn record_clip_in<F>(&self, animation: &MobileAnimCcAnimationRecord, mirrored: bool,
+        mut frame: impl FnMut(&MobileAnimCcFrameRecord, i32, i32) -> eyre::Result<F>)
+        -> eyre::Result<Option<MobileClip<F>>> {
         let frames = self.animation_frames(animation).iter().filter(|record| record.width > 0 && record.height > 0)
             .map(|record| frame(record, i32::from(record.center_x),
                 i32::from(record.height) + i32::from(record.center_y)))
             .collect::<eyre::Result<Vec<_>>>()?;
         Ok((!frames.is_empty()).then_some(MobileClip { frames, mirrored, fps: animation.fps,
-            stored: u32::from(stored_direction) }))
+            stored: u32::from(animation.direction) }))
+    }
+
+    /// The clip of one animation record as [`MobileAnimClips::clip`] gives it, its stored direction unmirrored:
+    /// what an inspector shows for the record. `None` without frames.
+    pub fn animation_clip(&self, animation: &MobileAnimCcAnimationRecord) -> eyre::Result<Option<MobileClip>> {
+        let mut pages = PageMemo::default();
+        self.record_clip_in(animation, false, |frame, anchor_x, anchor_y| Ok(MobileClipFrame {
+            width: frame.width, height: frame.height, anchor_x, anchor_y,
+            rgba: self.read_frame_rgba_in(frame, &mut pages)?,
+        }))
     }
 }
 
