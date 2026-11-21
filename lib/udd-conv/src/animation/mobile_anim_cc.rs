@@ -57,7 +57,7 @@ use udd_assets::mobile_anim_cc::{
     ANIMATION_MANIFEST_MAGIC, BODY_RESOLVE_MANIFEST_MAGIC, BODY_TYPE_MANIFEST_MAGIC, FRAME_MANIFEST_MAGIC,
     MOBILE_ANIM_CC_METADATA_VERSION, MOB_TYPE_FLAG_USES_UOP_FRAMES, MOB_TYPE_GROUP_ANIMAL, MOB_TYPE_GROUP_EQUIPMENT,
     MOB_TYPE_GROUP_HUMAN, MOB_TYPE_GROUP_MONSTER, MOB_TYPE_GROUP_SEA_MONSTER, MOVE_ACTION_GROUP_COUNT,
-    MOVE_ACTION_MOVEMENT_COUNT, NO_MOVE_ACTION, PAGE_MANIFEST_MAGIC,
+    MOVE_ACTION_MOVEMENT_COUNT, NO_MOVE_ACTION, NO_SEQUENCE_FPS, PAGE_MANIFEST_MAGIC,
 };
 use udd_assets::tex_art_cc::PagePixelFormat;
 
@@ -69,6 +69,11 @@ const BC7_PROGRESS_FLUSH_UNITS: u64 = 256;
 const MOBILE_ANIM_CC_FLAG_UNMAPPED_SOURCE_INDEX: u16 = 1 << 15;
 /// Serialized body type record: body id, group type, flags, then the move actions (u16 each).
 const BODY_TYPE_RECORD_SIZE: usize = 7 + MOVE_ACTION_GROUP_COUNT * MOVE_ACTION_MOVEMENT_COUNT * 2;
+/// Serialized animation record: body, action, direction, file, source index, frame start, frame count, flags, fps.
+const ANIMATION_RECORD_SIZE: usize = 24;
+/// The Classic client's flying animation switch for `GetActionFps` (`DAT_0074dca5`), set to 1 by both its callers of
+/// `FUN_00407f52` (Classic 7.0.103.0, confirmed).
+const CLASSIC_FLYING_ANIMATIONS: bool = true;
 const CLASSIC_ANIMATIONFRAME_FILES: &[&str] = &[
     "AnimationFrame1.uop",
     "AnimationFrame2.uop",
@@ -362,7 +367,7 @@ pub fn convert_anim_mul_to_mobile_anim_cc_uddp_from_sources_with_progress(
         total: 1,
     });
     let stage_timer = Instant::now();
-    let (mut planned_frames, animation_records, mut frame_records, skipped_animation_count) =
+    let (mut planned_frames, mut animation_records, mut frame_records, skipped_animation_count) =
         plan_present_animations(&client_dir, &anim_map)?;
     stage_timings.plan = stage_timer.elapsed();
     let stage_timer = Instant::now();
@@ -384,7 +389,8 @@ pub fn convert_anim_mul_to_mobile_anim_cc_uddp_from_sources_with_progress(
     let packed_frame_count = planned_frames.len() as u32;
     let stage_timer = Instant::now();
     let body_resolve_records = build_body_resolve_records(&client_dir)?;
-    let body_type_records = build_body_type_records(&client_dir)?;
+    let (body_type_records, sequences) = build_body_type_records(&client_dir)?;
+    fill_uop_animation_fps(&mut animation_records, &body_type_records, &sequences);
     stage_timings.body_records = stage_timer.elapsed();
     info!(
         "CC mobile animation planning prepared {} frames, {} animations, {} body resolves in {:.3}s",
@@ -552,21 +558,53 @@ fn build_body_resolve_records(client_dir: &Path) -> eyre::Result<Vec<MobileAnimC
 }
 
 /// The `mobtypes.txt` rows, with the move actions of `AnimationSequence.uop` for the UOP-flagged ones (the
-/// client reads them for those bodies only: `CMobile_UpdateUopMoveAction` 0x005b6e40, Classic 7.0.103.0).
-fn build_body_type_records(client_dir: &Path) -> eyre::Result<Vec<MobileAnimCcBodyTypeRecord>> {
+/// client reads them for those bodies only: `CMobile_UpdateUopMoveAction` 0x005b6e40, Classic 7.0.103.0), and the
+/// sequences, loaded only when a row is UOP-flagged.
+fn build_body_type_records(
+    client_dir: &Path,
+) -> eyre::Result<(Vec<MobileAnimCcBodyTypeRecord>, BTreeMap<u32, AnimationSequence>)> {
     let path = client_dir.join("mobtypes.txt");
     if !path.is_file() {
-        return Ok(Vec::new());
+        return Ok((Vec::new(), BTreeMap::new()));
     }
 
     let mut records =
         parse_mobtypes_txt(&fs::read_to_string(&path).wrap_err_with(|| format!("read {}", path.display()))?)?;
+    let mut sequences = BTreeMap::new();
     if records.iter().any(|record| record.flags & MOB_TYPE_FLAG_USES_UOP_FRAMES != 0) {
-        let (sequences, _) =
+        (sequences, _) =
             load_animation_sequences(client_dir, "CC", "UOP bodies keep the fixed movement actions")?;
         fill_uop_move_actions(&mut records, &sequences)?;
     }
-    Ok(records)
+    Ok((records, sequences))
+}
+
+/// Sets the fps of the UOP records of every UOP-flagged body with a sequence entry to `GetActionFps` of the record's
+/// action, flying animations on: `CMobile_SetUopAction` 0x005b6580 sets such a body's frame time to 1000 / that fps
+/// (Classic 7.0.103.0, confirmed; the client turns the fps switch on at startup, `FUN_00407f52`). The others keep
+/// `NO_SEQUENCE_FPS`.
+fn fill_uop_animation_fps(
+    animations: &mut [MobileAnimCcAnimationRecord],
+    body_types: &[MobileAnimCcBodyTypeRecord],
+    sequences: &BTreeMap<u32, AnimationSequence>,
+) {
+    let uop_bodies = body_types
+        .iter()
+        .filter(|record| record.flags & MOB_TYPE_FLAG_USES_UOP_FRAMES != 0)
+        .map(|record| record.body_id)
+        .collect::<HashSet<_>>();
+    let mut timed = 0usize;
+    for animation in animations
+        .iter_mut()
+        .filter(|animation| animation.flags & MOBILE_ANIM_CC_FLAG_UOP_SOURCE != 0)
+        .filter(|animation| uop_bodies.contains(&animation.body_id))
+    {
+        if let Some(sequence) = sequences.get(&u32::from(animation.body_id)) {
+            animation.fps = sequence.action_fps(u32::from(animation.action_id), CLASSIC_FLYING_ANIMATIONS);
+            timed += 1;
+        }
+    }
+    info!("CC UOP animations timed by their sequence fps: {timed}");
 }
 
 /// Sets the move actions of every UOP-flagged record from its body's sequence; the others keep `NO_MOVE_ACTION`.
@@ -925,6 +963,7 @@ fn plan_present_animations(
             frame_start,
             frame_count,
             flags: candidate.flags,
+            fps: NO_SEQUENCE_FPS,
         });
     }
     pb.finish_with_message(format!("Classic mobile animations planned from {source_summary}"));
@@ -2932,7 +2971,7 @@ fn serialize_page_record_manifest(
 pub fn serialize_animation_manifest(
     animations: &[MobileAnimCcAnimationRecord],
 ) -> eyre::Result<Vec<u8>> {
-    let mut bytes = Vec::with_capacity(12 + animations.len() * 20);
+    let mut bytes = Vec::with_capacity(12 + animations.len() * ANIMATION_RECORD_SIZE);
     bytes.extend_from_slice(&ANIMATION_MANIFEST_MAGIC);
     bytes.write_u32::<LittleEndian>(MOBILE_ANIM_CC_METADATA_VERSION)?;
     bytes.write_u32::<LittleEndian>(animations.len() as u32)?;
@@ -2945,6 +2984,7 @@ pub fn serialize_animation_manifest(
         bytes.write_u32::<LittleEndian>(animation.frame_start)?;
         bytes.write_u16::<LittleEndian>(animation.frame_count)?;
         bytes.write_u16::<LittleEndian>(animation.flags)?;
+        bytes.write_f32::<LittleEndian>(animation.fps)?;
     }
     Ok(bytes)
 }
@@ -3329,6 +3369,7 @@ mod tests {
 
     #[test]
     fn serialized_package_roundtrips_through_reader() {
+        const ROUNDTRIP_FPS: f32 = 12.5;
         let options = MobileAnimCcAtlasOptions {
             atlas_width: 16,
             atlas_height: 16,
@@ -3361,7 +3402,8 @@ mod tests {
             source_index: 13,
             frame_start: 0,
             frame_count: 1,
-            flags: 0,
+            flags: MOBILE_ANIM_CC_FLAG_UOP_SOURCE,
+            fps: ROUNDTRIP_FPS,
         }];
         let page_manifest = serialize_page_manifest(&pages, &options).unwrap();
         let animation_manifest = serialize_animation_manifest(&animations).unwrap();
@@ -3413,6 +3455,7 @@ mod tests {
 
         assert_eq!(package.pages().len(), 1);
         assert_eq!(package.animation(1, 2, 3).unwrap().source_index, 13);
+        assert_eq!(package.animation(1, 2, 3).unwrap().fps, ROUNDTRIP_FPS);
         assert_eq!(package.animation_frames(package.animation(1, 2, 3).unwrap())[0].center_y, -1);
         assert_eq!(package.body_resolve_record(7).unwrap().file_index, 2);
         assert_eq!(package.body_type_record(7).unwrap().flags, 0x8000_0001);
@@ -3454,6 +3497,7 @@ mod tests {
             frame_start: 0,
             frame_count: 1,
             flags: 0,
+            fps: NO_SEQUENCE_FPS,
         }];
 
         let mut builder = UddpBuilder::new(LookupMode::VirtualPathHash);
@@ -3565,6 +3609,70 @@ mod tests {
         assert_eq!(record(uop_body), [no_group, [stand as u16, walk as u16, stand as u16], no_group]);
         assert_eq!(record(mul_body), [no_group; MOVE_ACTION_GROUP_COUNT]);
         assert_eq!(record(sequenceless_uop_body), [no_group; MOVE_ACTION_GROUP_COUNT]);
+    }
+
+    #[test]
+    fn uop_animations_of_uop_flagged_bodies_take_their_sequence_fps() {
+        use uocf::animation_sequence::SequenceAction;
+        const WALK_FPS: f32 = 12.0;
+        let (uop_body, unflagged_body, sequenceless_uop_body) = (826u16, 2u16, 667u16);
+        let (walk, run_alias_of_walk, missing) = (22u16, 24u16, 30u16);
+        let action = |alias: Option<u32>, fps: f32| SequenceAction {
+            frame_count: if alias.is_none() { 1 } else { 0 },
+            alias,
+            fps,
+            offsets: Default::default(),
+            extra_offsets: Default::default(),
+            frame_effects: BTreeMap::new(),
+            skipped_frames: Default::default(),
+            base_frame: 0,
+            kr_extra: None,
+        };
+        let sequence = AnimationSequence {
+            stored_id: u32::from(uop_body),
+            offsets: Default::default(),
+            extra_offsets: Default::default(),
+            actions: BTreeMap::from([
+                (u32::from(walk), action(None, WALK_FPS)),
+                (u32::from(run_alias_of_walk), action(Some(u32::from(walk)), 0.0)),
+            ]),
+            groups: BTreeMap::new(),
+            repeated_actions: Vec::new(),
+        };
+        let sequences = [uop_body, unflagged_body]
+            .map(|body| (u32::from(body), sequence.clone()))
+            .into_iter()
+            .collect::<BTreeMap<_, _>>();
+        let body_types = parse_mobtypes_txt(&format!(
+            "{uop_body} monster 10000\n{unflagged_body} monster 0\n{sequenceless_uop_body} human 10000\n"
+        ))
+        .unwrap();
+        let record = |body_id: u16, action_id: u16, flags: u16| MobileAnimCcAnimationRecord {
+            body_id,
+            action_id,
+            direction: 0,
+            file_index: 0,
+            source_index: 0,
+            frame_start: 0,
+            frame_count: 1,
+            flags,
+            fps: NO_SEQUENCE_FPS,
+        };
+        let uop = MOBILE_ANIM_CC_FLAG_UOP_SOURCE;
+        let mut animations = vec![
+            record(uop_body, walk, uop),
+            record(uop_body, run_alias_of_walk, uop),
+            // A missing action resolves to the lowest plain one, as in the client.
+            record(uop_body, missing, uop),
+            record(uop_body, walk, 0),
+            record(unflagged_body, walk, uop),
+            record(sequenceless_uop_body, walk, uop),
+        ];
+
+        fill_uop_animation_fps(&mut animations, &body_types, &sequences);
+
+        let fps = animations.iter().map(|animation| animation.fps).collect::<Vec<_>>();
+        assert_eq!(fps, [WALK_FPS, WALK_FPS, WALK_FPS, NO_SEQUENCE_FPS, NO_SEQUENCE_FPS, NO_SEQUENCE_FPS]);
     }
 
     #[test]

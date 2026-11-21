@@ -56,11 +56,17 @@ Built by `udd-conv` from the Classic `anim*.mul`, `AnimationFrame1..4.uop`, `Bod
 | Entry | Magic | Content |
 |---|---|---|
 | `metadata/pages.bin` | `MAPG` | atlas pages |
-| `metadata/animations.bin` | `MAAN` | `u32 count`, then animation records (body, action, direction, file) |
+| `metadata/animations.bin` | `MAAN` | `u32 count`, then animation records (24 bytes) |
 | `metadata/frames.bin` | `MAFR` | `u32 count`, then frame records |
 | `metadata/body_resolve.bin` | `MABR` | `u32 count`, then the `Body.def` / `Bodyconv.def` records, sorted by body |
 | `metadata/body_types.bin` | `MABT` | `u32 count`, then body type records (25 bytes), sorted by body |
 | `pages/NNNNN.{rgba8888,bc7}` | | atlas page payloads |
+
+Animation record: `u16 body_id, u16 action_id, u8 direction, u8 file_index, u32 source_index, u32 frame_start,
+u16 frame_count, u16 flags, f32 fps`. `fps` is set on the UOP records (flag `MOBILE_ANIM_CC_FLAG_UOP_SOURCE`) of
+the `mobtypes.txt` 0x10000 rows with a sequence: `GetActionFps` of the action in the body's `AnimationSequence.uop`
+entry (aliases resolved, flying animations on), which the client times those bodies by (`CMobile_SetUopAction`
+0x005b6580). It is `NO_SEQUENCE_FPS` (0) on every other record, which the player shows at ClassicUO's 80 ms.
 
 Body type record: `u16 body_id, u8 group_type, u32 flags, u16 move_actions[3][3]` (groups war, peace, mounted;
 movements stand, walk, run): one per `mobtypes.txt` row, `flags` with bit 31 set. `move_actions` is filled for the

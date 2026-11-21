@@ -62,6 +62,13 @@ The original clients pace walk cycles by time, whatever the walking speed: Class
 is one 0.4 s step), but big Enhanced creatures skate visibly, and in-betweens make it more visible because the feet
 never plant.
 
+What each client times a clip by: Classic MUL bodies take a frame every 80 ms in ClassicUO; the client itself advances
+them once a mobile tick, which runs when more than 75 ms passed. Classic UOP bodies (`mobtypes.txt` flag 0x10000) take
+1000 / fps of the action in their `AnimationSequence.uop` entry, aliases resolved (`CMobile_SetUopAction` 0x005b6580,
+Classic 7.0.103.0, [classic_frames.md](../client_research/ghidra-classic-frames/results/classic_frames.md#uop-bodies));
+those entries are the Enhanced client's, which times every body by them (`GetActionFps`). `mobile_anim_cc.uddp`
+stores that fps on the UOP animation records; MUL records and UOP bodies without an entry keep 80 ms.
+
 Choice (user, from `pace_compare.py` videos): **measured stride** over the Enhanced clip timing and over borrowing the
 Classic body's cycle. A walk/run cycle lasts stride_tiles × step_secs, clamped to 0.5–2× the clip's own cycle speed;
 "client timing" stays as a setting.

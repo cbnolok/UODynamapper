@@ -399,7 +399,7 @@ Tilemeta refs keep their true source ids; nothing is substituted at build time.
 - Body records (44 bytes) end with `u16 move_actions[3][3]`: the `GetMoveAction` result for groups war, peace and mounted and movements stand, walk and run. `NO_MOVE_ACTION` (0xFFFF) marks a group the sequence lacks.
 - Animation records (43 bytes) end with `i8 rider_offset_x, i8 rider_offset_y, i16 extra_offset_x, i16 extra_offset_y`: the client's per-direction attachment and layer offsets, with the sequence defaults applied.
 
-`mobile_anim_cc.uddp` body type records (25 bytes, `MABT`) end with the same `u16 move_actions[3][3]`, filled for the `mobtypes.txt` 0x10000 (UOP) rows from the Classic client's `AnimationSequence.uop`, `NO_MOVE_ACTION` elsewhere. Its reader resolves server bodies itself:
+`mobile_anim_cc.uddp` body type records (25 bytes, `MABT`) end with the same `u16 move_actions[3][3]`, filled for the `mobtypes.txt` 0x10000 (UOP) rows from the Classic client's `AnimationSequence.uop`, `NO_MOVE_ACTION` elsewhere. Its animation records (24 bytes, `MAAN`) end with `f32 fps`: on the UOP records of those rows, the sequence fps of the action, which the Classic client times them by (`CMobile_SetUopAction` 0x005b6580); 0 elsewhere, for the player's 80 ms. Its reader resolves server bodies itself:
 
 - `frames_body` applies `Body.def` once, then `Bodyconv.def` (a body and its `anim*.mul` file), or the UOP route for `mobtypes.txt` 0x10000 bodies.
 - `server_body_animation` looks the frames up in that file.
