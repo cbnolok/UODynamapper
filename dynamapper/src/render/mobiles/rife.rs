@@ -16,6 +16,7 @@ mod tests;
 use bytemuck::{Pod, Zeroable};
 use wgpu::util::DeviceExt;
 use weights::{PackedParams, WEIGHTS_FILE};
+use super::network_shader_module;
 
 /// Frame sides are padded (zeros, right and bottom) to a multiple of this: block 0 works at 1/16 of the frame and
 /// halves it twice more.
@@ -196,6 +197,13 @@ fn uniform_entry() -> wgpu::BindGroupLayoutEntry {
     }
 }
 
+/// Compiles conv.wgsl or pixel.wgsl without naga's loop bounding ([`network_shader_module`]).
+fn shader_module(device: &wgpu::Device, label: &str, source: String) -> wgpu::ShaderModule {
+    // SAFETY: every loop in conv.wgsl and pixel.wgsl ends: each runs to a compile-time constant or to a uniform's
+    // value, counting up by a positive step.
+    unsafe { network_shader_module(device, label, source) }
+}
+
 impl RifeModel {
     /// Uploads the bundled weights and compiles the pipelines. The blend warps the frames to the nearest pixel
     /// (pixel.wgsl's `NEAREST_FINAL_WARP`).
@@ -243,9 +251,7 @@ impl RifeModel {
                     if transposed { TRANSPOSED_PHASES } else { 1 },
                     if kind == ConvKind::Stride2 { STRIDE_2 } else { 1 },
                     kind == ConvKind::TransposedShuffle, epilogue as u32);
-                let module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
-                    label: Some("rife convolution"), source: wgpu::ShaderSource::Wgsl((constants + CONV_SHADER).into()),
-                });
+                let module = shader_module(device, "rife convolution", constants + CONV_SHADER);
                 let pipeline = |entry_point| device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
                     label: Some("rife convolution"), layout: Some(&conv_pipeline_layout), module: &module,
                     entry_point: Some(entry_point), compilation_options: Default::default(), cache: None,
@@ -254,9 +260,7 @@ impl RifeModel {
             }
         }
         let pixel_pipeline_layout = pipeline_layout(&pixel_layout);
-        let pixel_module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
-            label: Some("rife pixel steps"), source: wgpu::ShaderSource::Wgsl(PIXEL_SHADER.into()),
-        });
+        let pixel_module = shader_module(device, "rife pixel steps", PIXEL_SHADER.to_string());
         let pixel_pipelines = PIXEL_STEPS.into_iter().map(|step| (step, device.create_compute_pipeline(
             &wgpu::ComputePipelineDescriptor {
                 label: Some(step.entry_point()), layout: Some(&pixel_pipeline_layout), module: &pixel_module,

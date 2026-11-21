@@ -24,6 +24,7 @@ use bytemuck::{Pod, Zeroable};
 use wgpu::util::DeviceExt;
 use weights::{PackedParams, WEIGHTS_FILE};
 use super::frame_atlas::AtlasRect;
+use super::network_shader_module;
 
 /// The transparent texels around the frame on the canvas: Catmull-Rom alpha reaches 1.5 texels past the last opaque
 /// one.
@@ -184,15 +185,11 @@ fn source_entry() -> wgpu::BindGroupLayoutEntry {
     }
 }
 
-/// Compiles a shader without the loop counters naga adds by default to end infinite loops: they keep the driver from
-/// unrolling the convolution's constant loops, which turns each multiply-add into a counter update and a branch and
-/// makes the network several times slower.
+/// Compiles conv.wgsl or pixel.wgsl without naga's loop bounding ([`network_shader_module`]).
 fn shader_module(device: &wgpu::Device, label: &str, source: String) -> wgpu::ShaderModule {
-    let descriptor = wgpu::ShaderModuleDescriptor { label: Some(label), source: wgpu::ShaderSource::Wgsl(source.into()) };
-    let checks = wgpu::ShaderRuntimeChecks { force_loop_bounding: false, ..wgpu::ShaderRuntimeChecks::checked() };
-    // SAFETY: only the loop bounding is off, and every loop in conv.wgsl and pixel.wgsl ends: each runs to a
-    // compile-time constant or to a uniform's value, counting up by a positive step.
-    unsafe { device.create_shader_module_trusted(descriptor, checks) }
+    // SAFETY: every loop in conv.wgsl and pixel.wgsl ends: each runs to a compile-time constant or to a uniform's
+    // value, counting up by a positive step.
+    unsafe { network_shader_module(device, label, source) }
 }
 
 impl UpscaleModel {

@@ -38,7 +38,8 @@ CPU version it replaced): no CPU cost or uploads at any refresh rate.
   ONNX Runtime (separate devices and thread pools), not burn/CubeCL (its own wgpu version).
 - Weights embedded as fp16, 11.3 MB; fp16 vs fp32 changes the output by at most 0.64/255. The port matches PyTorch
   within 0.00025 px of flow and 0.014/255 of colour.
-- Cost on a Radeon 880M per in-between: 2.8 ms (64²), 3.7 (128²), 9.2 (256²), 35 ms (576×512). PyTorch on one CPU
+- Cost on a Radeon 880M per in-between: 1.4 ms (64²), 2.0 (128²), 4.8 (256²), 17 ms (576×512), about half what it
+  was before naga's loop bounding was turned off (wgsl_loop_bounding_blocks_unrolling.md). PyTorch on one CPU
   thread: 19 / 49 / 145 / 618 ms — the CPU is a fallback at best.
 - Work is rationed per frame; a clip plays as the 50% fade until its in-betweens are ready.
 - The 50% fade still runs between the shorter frames. Expected visible change per display rate: at 30 fps ×2 adds

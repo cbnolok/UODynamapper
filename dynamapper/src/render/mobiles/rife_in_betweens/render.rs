@@ -19,6 +19,7 @@ use parking_lot::Mutex;
 use crate::app::background::{background_pool, Priority, Task, TaskPoll};
 use super::super::clips::AtlasEntry;
 use super::super::frame_atlas::{AtlasRect, MobileFrameAtlas};
+use super::super::network_shader_module;
 use super::super::rife::{RifeDispatch, RifeModel, RifeWorkspace, RIFE_BLOCKS, RIFE_SIZE_MULTIPLE, RIFE_TIMESTEP_SLOTS};
 use super::{InBetweenJob, InBetweenPair, MobileInBetweens};
 
@@ -26,9 +27,9 @@ use super::{InBetweenJob, InBetweenPair, MobileInBetweens};
 /// the budget runs alone in its frame. On the Radeon 880M the timed work stays within 0.1 ms of it.
 pub const RIFE_FRAME_BUDGET_MS: f64 = 2.0;
 /// A dispatch's estimated cost: a fixed part, and its convolution's multiply-adds. Fitted to rife::tests::benchmark on
-/// the Radeon 880M (one t: 2.6 ms at 64x64, 0.079 GMAC, 121 dispatches; 30.4 ms at 576x512, 5.66 GMAC, 97).
-const DISPATCH_MS: f64 = 0.018;
-const MS_PER_GIGA_MULTIPLY_ADD: f64 = 5.0;
+/// the Radeon 880M (one t: 1.31 ms at 64x64, 0.079 GMAC, 121 dispatches; 14.97 ms at 576x512, 5.66 GMAC, 97).
+const DISPATCH_MS: f64 = 0.009;
+const MS_PER_GIGA_MULTIPLY_ADD: f64 = 2.5;
 /// An atlas step's estimated cost per million pixels it runs on, besides the fixed part.
 const ATLAS_STEP_MS_PER_MEGAPIXEL: f64 = 0.5;
 /// Where the GPU has timestamp queries, a frame's work now and then is timed and the estimates scaled to match: each
@@ -116,9 +117,8 @@ impl RifeGpu {
         let layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
             label: None, bind_group_layouts: &[Some(&atlas_layout)], immediate_size: 0,
         });
-        let module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
-            label: Some("rife atlas steps"), source: wgpu::ShaderSource::Wgsl(ATLAS_SHADER.into()),
-        });
+        // SAFETY: atlas.wgsl's one loop runs to a compile-time constant by a positive step.
+        let module = unsafe { network_shader_module(device, "rife atlas steps", ATLAS_SHADER.to_string()) };
         let pipeline = |entry_point| device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
             label: Some(entry_point), layout: Some(&layout), module: &module, entry_point: Some(entry_point),
             compilation_options: Default::default(), cache: None,
