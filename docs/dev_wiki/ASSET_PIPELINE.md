@@ -4,7 +4,7 @@ This document collects the package, conversion, and inspection details that are 
 
 The runtime renderer consumes converted `.uddp` packages. Source Ultima Online client files are read by conversion tools, classified, packed, and then accessed by `dynamapper` through runtime package readers.
 
-A typical map setup includes `tilemeta.uddp`, `tex_art_cc.uddp`, `tex_land_cc.uddp`, and the `mapN.uddp` and `staticsN.uddp` packages for each facet. Enhanced textures and other assets such as gumps are built as needed. Set the package directory in `runtime_assets.toml`; see the [README](../../README.md#requirements-and-setup).
+A typical map setup includes `tilemeta.uddp`, `tex_art_cc.uddp`, `tex_land_cc.uddp`, and the `mapN.uddp` and `staticsN.uddp` packages for each facet. Enhanced textures and other assets such as gumps are built as needed. Set the package directory in `runtime_assets.toml`; see the [runtime setup guide](../DEVELOPER_SETUP.md#runtime-packages-and-settings).
 
 ## Main Tools
 

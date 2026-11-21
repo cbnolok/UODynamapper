@@ -1,0 +1,110 @@
+# Dynamapper showcase
+
+[Quick start](../README.md#quick-start) · [Tools showcase](../tools/README.md)
+
+## Britain in four render styles
+
+The afternoon captures use the same position and camera on Trammel. Art and land are listed separately because changing a render preset leaves both source settings in place.
+
+| Classic | Enhanced |
+| --- | --- |
+| ![Britain square in Classic style](images/showcase/britain-classic.webp) | ![Britain square in Enhanced style](images/showcase/britain-enhanced.webp) |
+| Classic art and terrain | Enhanced art and terrain |
+
+| KR-like | UOD-Painterly |
+| --- | --- |
+| ![Britain square in KR-like style](images/showcase/britain-kr-like.webp) | ![Britain square in UOD-Painterly style](images/showcase/britain-uod-painterly.webp) |
+| Enhanced art, Kingdom Reborn terrain | Enhanced art and terrain |
+
+![Britain square at night in KR-like style](images/showcase/kr-like-britain-night.webp)
+
+KR-like night lighting in Britain. [Render style rules](dev_wiki/rendering/STYLE_RULES.md) · [Lighting and shadow research](dev_wiki/rendering/CLIENT_NIGHT_LIGHTING_AND_SHADOWS.md)
+
+## Mixing Classic art with Enhanced and KR terrain
+
+Each pair keeps the style, terrain source, and camera fixed. Compare the statue, stairs, and tree to see what changes when you select Classic art.
+
+| Enhanced art and Enhanced terrain | Classic art and Enhanced terrain |
+| --- | --- |
+| ![Enhanced art over Enhanced terrain in Britain](images/showcase/britain-enhanced.webp) | ![Classic art over Enhanced terrain in Britain](images/showcase/britain-classic-art-enhanced-land.webp) |
+
+| Enhanced art and Kingdom Reborn terrain | Classic art and Kingdom Reborn terrain |
+| --- | --- |
+| ![Enhanced art over Kingdom Reborn terrain in Britain](images/showcase/britain-kr-like.webp) | ![Classic art over Kingdom Reborn terrain in Britain](images/showcase/britain-classic-art-kr-land.webp) |
+| ![Enhanced art over Kingdom Reborn terrain in Minoc](images/showcase/minoc-town-enhanced-art-kr-land.webp) | ![Classic art over Kingdom Reborn terrain in Minoc](images/showcase/minoc-town-classic-art-kr-land.webp) |
+
+Open **F2 → Graphics** to select **Art Texture Source** and **Land Texture Source**. World objects that continue the ground, such as grass and liquids, can take their material and art from the selected terrain source. [Art and terrain source rules](dev_wiki/rendering/STYLE_RULES.md#sources-are-not-part-of-the-style)
+
+## RIFE frame interpolation
+
+![Enhanced Stygian dragon sprite showing two source frames, a crossfade and a RIFE-generated midpoint](images/showcase/anim-rife-stygian.webp)
+
+The two source frames are on the outside. In the middle, the crossfade blends the two wing outlines while RIFE estimates an intermediate pose. Dynamapper runs RIFE on the GPU and generates one or three in-between frames per pair in the ×2 and ×4 modes. The strip is from the offline RIFE comparison used during development.
+
+![Classic wyrm sprite showing source frames, a crossfade and a RIFE midpoint](images/showcase/anim-rife-classic.webp)
+
+The same comparison on a Classic wyrm. Look at the near wing and feet.
+
+![Two animation frames captured from Dynamapper, showing an Enhanced daemon in Britain](images/showcase/anim-daemon.webp)
+
+An Enhanced daemon heads east and west through Britain with RIFE ×4 enabled. See the [animation development notes](agent_notes/mobile_animation_motion.md) for the implementation.
+
+## Animation timing and measured strides
+
+[![Enhanced wyrm walk with client timing on the left and measured stride on the right](images/showcase/anim-stride-wyrm.webp)](images/showcase/anim-stride-wyrm-loop.webp)
+
+Open the [animated side-by-side comparison](images/showcase/anim-stride-wyrm-loop.webp) and follow the feet against the paving. Both panels move over the ground at the same speed. The Enhanced wyrm uses a 1.33-second cycle at client timing and a 0.83-second cycle with the measured stride in this development comparison. The renderer uses a matching stride measurement from the animation package when available.
+
+## Sprite upscaling
+
+![UOCF Editor previewing an original Classic animation frame and its 2× upscaled result](images/showcase/anim-upscale-editor.webp)
+
+The graphical editor previews upscale passes on animation frames. Image packers support ordered upscale profiles for Classic and Enhanced animation frames, gumps, terrain textures and art. See the [upscale profile guide](../tools/udd-conv-cli/README.md#upscale-profiles).
+
+![Enhanced horse sprite enlarged with nearest-neighbor, bicubic and SPAN](images/showcase/anim-upscale-span.webp)
+
+An offline 4× neural upscaling experiment on an Enhanced horse frame. SPAN is shown as development work. The live renderer uses its existing packaged textures and filters.
+
+## Cave entrances
+
+![A cave arch embedded in the hillside north of Britain](images/showcase/world-cave-outside.webp)
+
+North of Britain, the cave arch meets the hillside. From inside, the entrance and the cave floor remain visible, and the outside can be dimmed or drawn in black.
+
+| Dimmed surroundings | Black surroundings |
+| --- | --- |
+| ![Cave interior with the terrain around the entrance dimmed](images/showcase/world-cave-dimmed.webp) | ![Same interior with the cave isolated against black](images/showcase/world-cave-black.webp) |
+
+See the [cave rendering rules](dev_wiki/rendering/STYLE_RULES.md#caves-every-style).
+
+## Floor and room views
+
+| Roof and upper floors visible | Current building cut away | Cutaway across the view |
+| --- | --- | --- |
+| ![Britain riverside building with the roof visible](images/showcase/world-floor-off.webp) | ![The room is visible and the neighboring roof remains](images/showcase/world-floor-building.webp) | ![The room is visible and surrounding structures are cut away as well](images/showcase/world-floor-wide.webp) |
+
+In **F2 → Graphics**, enable **Show Only the Player's Floor**. **Only the Player's Building** keeps the cut to the current building so surrounding roofs and their lights can remain. All three captures use the same camera and player position.
+
+## Zoom range
+
+| Close enough to inspect the paving | Wide enough to read the town layout |
+| --- | --- |
+| ![Close-up of the Britain square planter, stairs, and individual pavers](images/showcase/world-zoom-close.webp) | ![Wide view of Britain with streets, waterways, the castle, and docks](images/showcase/world-zoom-wide.webp) |
+
+Both captures are centered on the same point in Britain. The wide view covers 32 times as much world width as the close view.
+
+## Paperdolls
+
+![Two Enhanced paperdolls showing the same robe and lantern, rendered with 3D-style frames on the left and gumps on the right](images/showcase/ui-paperdolls.webp)
+
+The same outfit in both Enhanced paperdoll modes. The 3D-style frames show the lantern's larger glow. Pack the gump and paperdoll data and set `load_gumps = true` in `assets/settings/runtime_assets.toml` before launching. Press **Ctrl+U** and select **Paperdoll** to preview equipment and hues. The paperdoll's context menu lets you override garment coverage for a robe.
+
+## Live settings
+
+![Land Shader Controls showing the KR-like night preset over Britain](images/showcase/ui-settings.webp)
+
+Open Land Shader Controls with **F3** to switch styles and times of day, and tune lighting and materials for the active preset.
+
+![Graphics options with separate art and terrain choices, animation controls, and building and cave visibility](images/showcase/ui-graphics-options.webp)
+
+Open Options with **F2** to select art and terrain independently and adjust animation, camera, and visibility settings.
