@@ -105,6 +105,28 @@ the 1280 x 800 session at Britain (1488, 1686), each style's afternoon; cold one
 
 The night switch 8 s into a cold start: before, one 26.5 s frame; after, at most 301 ms.
 
+**More async compute threads do not shorten it.** The one thread dates from c3c5bc6e (2026-03-22, "Memory savings"):
+Bevy's default of a thread per CPU left about 20 idle threads, and 0bd65dce/0251834c tried 4 and went back; nothing
+in the app spawns on that pool, only Bevy's pipeline compiles and its screenshot readback. Measured with the pool at
+1, 2, 4 and 20 threads (an environment override in a measurement build, not kept), the same headless KWin as below,
+Enhanced afternoon at Britain (1488, 1686), two runs each (2026-11-21):
+
+| start | async compute threads | world drawn | pipelines done | longest frame until then |
+|---|---:|---:|---:|---:|
+| cold | 1 | 35.8 s | 35.8 s | 394 ms |
+| cold | 2 | 35.1 s | 35.0 s | 267 ms |
+| cold | 4 | 35.3 s | 35.1 s | 252 ms |
+| cold | 20 | 35.2 s | 35.1 s | 235 ms |
+| warm | 1 | 3.4 s | 3.5 s | 251 ms |
+| warm | 2 | 3.4 s | 3.4 s | 242 ms |
+| warm | 4 | 3.4 s | 3.5 s | 237 ms |
+| warm | 20 | 3.4 s | 3.5 s | 221 ms |
+
+(One recording of the 20-thread cold runs never settled; its pipelines were done at 35.1 s like the other.) The cold
+start is one pipeline: the first land/art `main.wesl` pipeline alone takes about 32 s in RADV however many others
+compile beside it, and the rest are ready with it. 0.7 s (2 %) is within the run-to-run spread, so the pool keeps its
+one thread.
+
 The screenshot is the one thing still behind the batch: Bevy maps its readback buffer in a task on the same async
 compute pool, so a capture requested during the cold compiles completes after them (the frame is captured at once).
 
