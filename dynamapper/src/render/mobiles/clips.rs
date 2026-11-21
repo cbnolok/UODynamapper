@@ -148,6 +148,11 @@ impl MobileClips {
         }
     }
 
+    /// Whether the clip of `key` is decoding.
+    pub fn loading(&self, key: ClipKey) -> bool {
+        matches!(self.clips.get(&key), Some(ClipState::Decoding(_)))
+    }
+
     /// The clip of `key` if resident.
     pub fn resident(&self, key: ClipKey) -> Option<&Clip> {
         match self.clips.get(&key) {

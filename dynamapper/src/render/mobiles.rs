@@ -24,7 +24,7 @@ use crate::settings::{ClientTextureSource, Settings};
 use crate::world::mobile_motion::{MobileMotion, Movement};
 use crate::world::player::Player;
 use clips::{AnimPackages, AnimSource, Clip, MobileClips};
-use draw::{MobileActions, MobileAppearance};
+use draw::{MobileActions, MobileAppearance, MobileShownLayers};
 use pace::{GroundStride, MobileCycleClock, MobileStrides, MobileWalkPace};
 
 /// The animation packages, as loaded at startup (`content`).
@@ -129,13 +129,15 @@ fn sys_sync_player_appearance(
     for (entity, current) in player_q.iter() {
         match (wanted, current) {
             (Some(wanted), current) if current != Some(&wanted) => {
-                commands.entity(entity).insert((wanted, MobileClipChoice::default(), MobileCycleClock::default()));
+                commands.entity(entity).insert((wanted, MobileClipChoice::default(), MobileCycleClock::default(),
+                    MobileShownLayers::default()));
                 if current.is_none() {
                     commands.entity(entity).insert(MobileMotion::default());
                 }
             }
             (None, Some(_)) => {
-                commands.entity(entity).remove::<(MobileAppearance, MobileClipChoice, MobileCycleClock, MobileMotion)>();
+                commands.entity(entity)
+                    .remove::<(MobileAppearance, MobileClipChoice, MobileCycleClock, MobileShownLayers, MobileMotion)>();
             }
             _ => {}
         }

@@ -157,6 +157,7 @@ fn shared_state_differs(source: &ArtSpriteMaterial, target: &ArtSpriteMaterial) 
 }
 
 /// One frame to draw: its clip's current frame at a mobile's place.
+#[derive(Clone, Copy, Debug, PartialEq)]
 struct DrawnFrame {
     key: ClipKey,
     tie_level: u32,
@@ -164,12 +165,31 @@ struct DrawnFrame {
     offset_px: (f32, f32),
 }
 
+/// The layers a mobile drew last. It keeps showing them while the clips of its new ones decode (a facing or an action
+/// shown for the first time, or again after the atlas dropped it), so that neither the mount nor its rider drops out
+/// for those frames; the mount's clip often lands a few frames before the rider's.
+#[derive(Component, Debug, Default)]
+pub struct MobileShownLayers(Vec<DrawnFrame>);
+
+/// The layers to draw of `wanted`: while one of their clips is `loading`, the layers shown before if theirs are all
+/// `resident`; else `wanted`, which become the layers shown.
+fn layers_to_draw(wanted: Vec<DrawnFrame>, shown: &mut MobileShownLayers, loading: impl Fn(ClipKey) -> bool,
+    resident: impl Fn(ClipKey) -> bool) -> Vec<DrawnFrame> {
+    let held = !shown.0.is_empty() && shown.0.iter().all(|layer| resident(layer.key));
+    if held && wanted.iter().any(|layer| loading(layer.key)) {
+        return shown.0.clone();
+    }
+    shown.0.clone_from(&wanted);
+    wanted
+}
+
 /// Builds the instances of the mobiles' current frames, and the draw entities for them.
 #[allow(clippy::too_many_arguments)]
 pub fn sys_draw_mobiles(
     mut commands: Commands,
     time: Res<Time>,
-    mut mobiles_q: Query<(&Transform, &MobileMotion, &MobileAppearance, &MobileClipChoice, &mut MobileCycleClock)>,
+    mut mobiles_q: Query<(&Transform, &MobileMotion, &MobileAppearance, &MobileClipChoice, &mut MobileCycleClock,
+        &mut MobileShownLayers)>,
     draw_assets: Option<ResMut<MobileDrawAssets>>,
     atlas: Option<ResMut<MobileFrameAtlas<AtlasEntry>>>,
     mut clips: ResMut<MobileClips>,
@@ -192,7 +212,7 @@ pub fn sys_draw_mobiles(
     in_betweens.forget(&evicted);
 
     let mut instances = Vec::with_capacity(MAX_MOBILE_INSTANCES as usize);
-    for (transform, motion, appearance, choice, mut clock) in mobiles_q.iter_mut() {
+    for (transform, motion, appearance, choice, mut clock, mut shown) in mobiles_q.iter_mut() {
         let (Some(source), Some(actions)) = (choice.source, choice.actions) else { continue };
         let mut frames = Vec::with_capacity(2);
         if let (Some(mount_body), Some(mount_action)) = (appearance.mount_body, actions.mount_action) {
@@ -207,6 +227,10 @@ pub fn sys_draw_mobiles(
             tie_level: RIDER_TIE_LEVEL,
             offset_px: choice.body_offset_px,
         });
+        for drawn in &frames {
+            clips.get_or_load(drawn.key, &packages.0);
+        }
+        let frames = layers_to_draw(frames, &mut shown, |key| clips.loading(key), |key| clips.resident(key).is_some());
         // The mount comes first, so its clip can lead the cycle the rider shares.
         let mut cycles = None;
         for drawn in frames {
@@ -314,5 +338,38 @@ mod tests {
         const WGSL_MOBILE_SPRITE_INSTANCE_SIZE: usize = 192;
         assert_eq!(std::mem::size_of::<SpriteInstance>(), WGSL_SPRITE_INSTANCE_SIZE);
         assert_eq!(std::mem::size_of::<MobileSpriteInstance>(), WGSL_MOBILE_SPRITE_INSTANCE_SIZE);
+    }
+
+    #[test]
+    fn a_turning_rider_keeps_its_layers_until_the_new_clips_are_resident() {
+        use std::cell::RefCell;
+        use std::collections::HashSet;
+        let layers = |facing: u8| {
+            let key = |body| ClipKey { source: AnimSource::Classic, body, action: 0, direction: facing };
+            vec![DrawnFrame { key: key(200), tie_level: MOUNT_TIE_LEVEL, offset_px: (0.0, 0.0) },
+                DrawnFrame { key: key(400), tie_level: RIDER_TIE_LEVEL, offset_px: (0.0, f32::from(facing)) }]
+        };
+        let (east, west) = (layers(2), layers(6));
+        let resident = RefCell::new(east.iter().map(|layer| layer.key).collect::<HashSet<_>>());
+        let loading = RefCell::new(west.iter().map(|layer| layer.key).collect::<HashSet<_>>());
+        let draw = |shown: &mut MobileShownLayers, wanted: &[DrawnFrame]| layers_to_draw(wanted.to_vec(), shown,
+            |key| loading.borrow().contains(&key), |key| resident.borrow().contains(&key));
+        let mut shown = MobileShownLayers::default();
+        assert_eq!(draw(&mut shown, &east), east);
+        // Turned west: the mount's clip lands first, the rider's a few frames later. Until then both stay east.
+        assert_eq!(draw(&mut shown, &west), east);
+        loading.borrow_mut().remove(&west[0].key);
+        resident.borrow_mut().insert(west[0].key);
+        assert_eq!(draw(&mut shown, &west), east);
+        loading.borrow_mut().remove(&west[1].key);
+        resident.borrow_mut().insert(west[1].key);
+        assert_eq!(draw(&mut shown, &west), west);
+        // A clip the package lacks (not loading, never resident) is not waited for; nor are layers no longer resident.
+        let north = layers(0);
+        assert_eq!(draw(&mut shown, &north), north);
+        loading.borrow_mut().extend(east.iter().map(|layer| layer.key));
+        assert_eq!(draw(&mut shown, &east), east);
+        // Nothing shown before, a mobile draws what it has while the rest loads.
+        assert_eq!(draw(&mut MobileShownLayers::default(), &east), east);
     }
 }
