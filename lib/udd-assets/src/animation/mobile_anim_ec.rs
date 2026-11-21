@@ -12,7 +12,10 @@ use crate::common::{
     AtlasCacheOptions, AtlasPageCache,
 };
 use crate::tex_art_cc::{AtlasPackingMode, PagePixelFormat};
-pub use uocf::animation_sequence::{GROUP_MOUNTED, GROUP_PEACE, GROUP_WAR, MOVE_RUN, MOVE_STAND, MOVE_WALK};
+pub use crate::animation::move_actions::{
+    GROUP_MOUNTED, GROUP_PEACE, GROUP_WAR, MOVE_ACTION_GROUPS, MOVE_ACTION_GROUP_COUNT, MOVE_ACTION_MOVEMENTS,
+    MOVE_ACTION_MOVEMENT_COUNT, MOVE_RUN, MOVE_STAND, MOVE_WALK, NO_MOVE_ACTION,
+};
 pub use uocf::enhanced::hues::ShadowPaletteStats;
 
 pub const PAGE_MANIFEST_ENTRY_PATH: &str = "metadata/pages.bin";
@@ -80,15 +83,6 @@ pub const FIRST_STORED_DIRECTION: u8 = uocf::animation_sequence::FIRST_STORED_DI
 /// A mirrored direction `d` shows direction `MIRROR_DIRECTION_SUM - d` flipped horizontally.
 pub const MIRROR_DIRECTION_SUM: u8 = uocf::animation_sequence::MIRROR_DIRECTION_SUM;
 
-/// Sequence groups whose move actions a body record keeps: war, peace and mounted
-/// (`uocf::animation_sequence::GROUP_WAR` ..= `GROUP_MOUNTED`), in that order.
-pub const MOVE_ACTION_GROUPS: [i8; MOVE_ACTION_GROUP_COUNT] = [GROUP_WAR, GROUP_PEACE, GROUP_MOUNTED];
-pub const MOVE_ACTION_GROUP_COUNT: usize = 3;
-/// Movements of a group: stand, walk and run (`uocf::animation_sequence::MOVE_*`), in that order.
-pub const MOVE_ACTION_MOVEMENTS: [u8; MOVE_ACTION_MOVEMENT_COUNT] = [MOVE_STAND, MOVE_WALK, MOVE_RUN];
-pub const MOVE_ACTION_MOVEMENT_COUNT: usize = 3;
-/// `MobileAnimEcBodyRecord::move_actions` entry of a group the sequence does not have.
-pub const NO_MOVE_ACTION: u16 = u16::MAX;
 /// Y offset the client adds to every layer of a mobile (`UOObjectComponentAnimationMob::UpdateFrame`
 /// 0x00436d40, "- 15" in every placement branch; confirmed).
 pub const MOBILE_LAYER_SHIFT_Y: i32 = -15;
@@ -178,9 +172,7 @@ impl MobileAnimEcBodyRecord {
     /// group `group` (`GROUP_WAR`, `GROUP_PEACE`, `GROUP_MOUNTED`); `None` when the sequence has
     /// no such group or the arguments are outside those sets.
     pub fn move_action(&self, group: i8, movement: u8) -> Option<u16> {
-        let group = MOVE_ACTION_GROUPS.iter().position(|&known| known == group)?;
-        let movement = MOVE_ACTION_MOVEMENTS.iter().position(|&known| known == movement)?;
-        Some(self.move_actions[group][movement]).filter(|&action| action != NO_MOVE_ACTION)
+        crate::animation::move_actions::move_action(&self.move_actions, group, movement)
     }
 
     /// Action of this body for `movement` when it is a mount: the client gives the mount group

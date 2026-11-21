@@ -399,12 +399,12 @@ Tilemeta refs keep their true source ids; nothing is substituted at build time.
 - Body records (44 bytes) end with `u16 move_actions[3][3]`: the `GetMoveAction` result for groups war, peace and mounted and movements stand, walk and run. `NO_MOVE_ACTION` (0xFFFF) marks a group the sequence lacks.
 - Animation records (43 bytes) end with `i8 rider_offset_x, i8 rider_offset_y, i16 extra_offset_x, i16 extra_offset_y`: the client's per-direction attachment and layer offsets, with the sequence defaults applied.
 
-`mobile_anim_cc.uddp` keeps its layout. Its reader resolves server bodies itself:
+`mobile_anim_cc.uddp` body type records (25 bytes, `MABT`) end with the same `u16 move_actions[3][3]`, filled for the `mobtypes.txt` 0x10000 (UOP) rows from the Classic client's `AnimationSequence.uop`, `NO_MOVE_ACTION` elsewhere. Its reader resolves server bodies itself:
 
 - `frames_body` applies `Body.def` once, then `Bodyconv.def` (a body and its `anim*.mul` file), or the UOP route for `mobtypes.txt` 0x10000 bodies.
 - `server_body_animation` looks the frames up in that file.
-- `movement_action` gives ClassicUO's peace-mode stand, walk and run actions from the `mobtypes.txt` type and flags.
-- `classic_stored_direction` maps the 8 directions to the 5 stored ones plus mirroring.
+- `movement_action` gives the Classic client's peace-mode stand, walk and run actions: a UOP body's sequence move actions (mounted group when riding and present, else peace), otherwise ClassicUO's rules on the `mobtypes.txt` type and flags, by choice (where the client's `GetMobileMulFrame` differs: [classic_frames.md](../client_research/ghidra-classic-frames/results/classic_frames.md#movement-actions)).
+- `classic_stored_direction` maps the 8 directions to the 5 stored ones plus mirroring (ClassicUO `GetAnimDirection`; the client's tables at 0x007087dc and 0x007087fc agree).
 
 Mobile animation atlas pages store edge-extruded allocation gutters, including BC7 alignment padding, so linear previewers and block compression do not sample transparent-black padding around frame edges. This is an on-disk package invariant, not a runtime repair step.
 

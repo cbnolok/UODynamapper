@@ -46,6 +46,30 @@ available; category paths such as `udd_assets::textures::tex_art_ec` also work.
 - `dynamapper` is the primary consumer at runtime. Tools use it mainly for
   inspection and validation.
 
+## `mobile_anim_cc.uddp` (metadata version 1)
+
+Built by `udd-conv` from the Classic `anim*.mul`, `AnimationFrame1..4.uop`, `Body.def`, `Bodyconv.def`,
+`mobtypes.txt` and `AnimationSequence.uop`, following the client
+(`docs/client_research/ghidra-classic-frames/results/classic_frames.md`). Every metadata entry starts with a
+4-byte magic and the u32 version; all values are little-endian. The reader accepts only version 1.
+
+| Entry | Magic | Content |
+|---|---|---|
+| `metadata/pages.bin` | `MAPG` | atlas pages |
+| `metadata/animations.bin` | `MAAN` | `u32 count`, then animation records (body, action, direction, file) |
+| `metadata/frames.bin` | `MAFR` | `u32 count`, then frame records |
+| `metadata/body_resolve.bin` | `MABR` | `u32 count`, then the `Body.def` / `Bodyconv.def` records, sorted by body |
+| `metadata/body_types.bin` | `MABT` | `u32 count`, then body type records (25 bytes), sorted by body |
+| `pages/NNNNN.{rgba8888,bc7}` | | atlas page payloads |
+
+Body type record: `u16 body_id, u8 group_type, u32 flags, u16 move_actions[3][3]` (groups war, peace, mounted;
+movements stand, walk, run): one per `mobtypes.txt` row, `flags` with bit 31 set. `move_actions` is filled for the
+rows with flag 0x10000 (UOP frames) from the body's `AnimationSequence.uop` entry, as for the Enhanced body records
+below (`FrameSetLookup_GetMoveAction` 0x00408114 is the Classic client's copy of the lookup); `NO_MOVE_ACTION`
+marks a group the sequence lacks, and every entry of another row or of a body without a sequence (or when the
+client folder has no `AnimationSequence.uop`). `MobileAnimCcPackage::movement_action` plays them: the mounted
+group when the mobile rides and the sequence has it, else peace.
+
 ## `mobile_anim_ec.uddp` (metadata version 1)
 
 Built by `udd-conv` from the EC `AnimationFrame1..6.uop`, `AnimationSequence.uop` and the

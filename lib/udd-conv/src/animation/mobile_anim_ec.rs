@@ -25,9 +25,9 @@ use uocf::animation_sequence::{
 use uocf::enhanced::animationframe::{AnimationFrame, AnimationFrameMetadata, DecodedFrame, FrameEntry};
 use uocf::enhanced::hues::ShadowPaletteStats;
 use uocf::enhanced::mobile_body::{MobileBodyDefinition, MobileBodyMap};
-use uocf::uop_container::hash::hash_file_name_single;
 use uocf::uop_container::package::{LoadMode, UopPackage};
 
+use super::animation_sequences::{load_animation_sequences, move_actions};
 use crate::bc7::{
     encode_for_vram_with_bc7_rdo_options_and_stage_progress_timed, Bc7ProgressStage,
     Bc7RdoOptions, Bc7StageTimings, preferred_bc7_encoder_backend, ImageExtent, RawImageFormat,
@@ -54,8 +54,8 @@ use udd_assets::mobile_anim_ec::{
     BODY_FLAG_NO_PLACEHOLDER, BODY_FLAG_NO_SEQUENCE,
     BODY_MANIFEST_ENTRY_PATH, DIRECTION_COUNT, FRAME_HUE_ALL, FRAME_HUE_MASKED, FRAME_HUE_NONE,
     FRAME_MANIFEST_ENTRY_PATH, HUE_MASK_HUEABLE, ITEM_MANIFEST_ENTRY_PATH, MISSING_PAGE_FRAME_INDEX,
-    MISSING_PAGE_INDEX, MISSING_SOURCE_FRAME_INDEX, MOBILE_ANIM_EC_METADATA_VERSION, MOVE_ACTION_GROUPS,
-    MOVE_ACTION_GROUP_COUNT, MOVE_ACTION_MOVEMENTS, MOVE_ACTION_MOVEMENT_COUNT, NO_ALIAS_ACTION, NO_FORCED_HUE,
+    MISSING_PAGE_INDEX, MISSING_SOURCE_FRAME_INDEX, MOBILE_ANIM_EC_METADATA_VERSION,
+    MOVE_ACTION_GROUP_COUNT, MOVE_ACTION_MOVEMENT_COUNT, NO_ALIAS_ACTION, NO_FORCED_HUE,
     NO_MOVE_ACTION, PAGE_FLAG_HUE_MASK, PAGE_MANIFEST_ENTRY_PATH,
     SKIPPED_FRAME_MASK_BITS, SOURCE_HINT_MANIFEST_ENTRY_PATH,
 };
@@ -87,8 +87,6 @@ const BODY_RECORD_SIZE: usize = 26 + MOVE_ACTION_GROUP_COUNT * MOVE_ACTION_MOVEM
 const TILEART_UOP_NAMES: [&str; 2] = ["tileart.uop", "TileArt.uop"];
 const RGBA_CHANNELS: usize = 4;
 const RGBA_ALPHA_CHANNEL: usize = 3;
-/// Highest body type whose `AnimationSequence` entry name is looked up (body ids are u16).
-const MAX_SEQUENCE_BODY_TYPE: u32 = u16::MAX as u32;
 const BC7_PROGRESS_FLUSH_UNITS: u64 = 256;
 const EC_ANIMATIONFRAME_FILES: [&str; 12] = [
     "AnimationFrame1.uop",
@@ -453,7 +451,8 @@ pub fn convert_animationframe_uop_to_mobile_anim_ec_uddp_from_sources_with_progr
     let mut planned_by_body = plan_animationframe_packages(&animationframe_paths)?;
     stage_timings.plan = stage_timer.elapsed();
     let stage_timer = Instant::now();
-    let (sequences, sequence_parse_error_count) = load_animation_sequences(&client_dir)?;
+    let (sequences, sequence_parse_error_count) =
+        load_animation_sequences(&client_dir, "EC", "every EC body uses the no-sequence fallback")?;
     let body_map = load_mobile_body_map(&client_dir)?;
     let mut layout = build_animation_layout(&source_frames_by_body(&planned_by_body), &sequences, &body_map)?;
     let shadow_by_source = shadow_stats_by_source(&planned_by_body);
@@ -1372,73 +1371,6 @@ fn source_frames_by_action(frames: &[SourceFrameIdentity]) -> BTreeMap<u16, Acti
         action_frames.by_number.entry(frame.frame_number).or_insert(*frame);
     }
     by_action
-}
-
-/// Loads every `AnimationSequence` entry, keyed by body type (the entry name). Returns the
-/// sequences and the number of entries that failed to parse.
-fn load_animation_sequences(client_dir: &Path) -> eyre::Result<(BTreeMap<u32, AnimationSequence>, u32)> {
-    let sequence_path = ["AnimationSequence.uop", "animationsequence.uop"]
-        .iter()
-        .map(|name| client_dir.join(name))
-        .find(|path| path.is_file());
-    let Some(sequence_path) = sequence_path else {
-        warn!("AnimationSequence.uop not found in {}; every EC body uses the no-sequence fallback", client_dir.display());
-        return Ok((BTreeMap::new(), 0));
-    };
-    let mut package = UopPackage::load_with_mode(&sequence_path, LoadMode::Lazy)
-        .wrap_err_with(|| format!("load {}", sequence_path.display()))?;
-    let entry_hashes = package
-        .iter_files()
-        .filter(|file| file.has_size())
-        .map(|file| file.filename_hash())
-        .collect::<HashSet<_>>();
-    let mut sequences = BTreeMap::new();
-    let mut named_entry_count = 0usize;
-    let mut parse_error_count = 0u32;
-    for body_type in 0..=MAX_SEQUENCE_BODY_TYPE {
-        let hash = hash_file_name_single(&AnimationSequence::entry_path(body_type));
-        if !entry_hashes.contains(&hash) {
-            continue;
-        }
-        named_entry_count += 1;
-        let Some(data) = package.unpack_file_by_hash_cached(hash)? else {
-            continue;
-        };
-        match AnimationSequence::parse(&data) {
-            Ok(sequence) => {
-                sequences.insert(body_type, sequence);
-            }
-            Err(error) => {
-                parse_error_count += 1;
-                warn!("EC animation sequence of body {body_type} failed to parse: {error}");
-            }
-        }
-    }
-    let unnamed_entry_count = entry_hashes.len() - named_entry_count;
-    if unnamed_entry_count != 0 {
-        warn!("{unnamed_entry_count} AnimationSequence.uop entries have no body type name up to {MAX_SEQUENCE_BODY_TYPE}");
-    }
-    info!("EC mobile animation sequences loaded ({})", sequences.len());
-    Ok((sequences, parse_error_count))
-}
-
-/// Move actions of a body record: `GetMoveAction(group, movement, false)` of `sequence` for each
-/// group and movement, `NO_MOVE_ACTION` where the group is missing or there is no sequence.
-fn move_actions(
-    sequence: Option<&AnimationSequence>,
-) -> eyre::Result<[[u16; MOVE_ACTION_MOVEMENT_COUNT]; MOVE_ACTION_GROUP_COUNT]> {
-    let mut actions = [[NO_MOVE_ACTION; MOVE_ACTION_MOVEMENT_COUNT]; MOVE_ACTION_GROUP_COUNT];
-    let Some(sequence) = sequence else {
-        return Ok(actions);
-    };
-    for (group_actions, &group) in actions.iter_mut().zip(&MOVE_ACTION_GROUPS) {
-        for (action, &movement) in group_actions.iter_mut().zip(&MOVE_ACTION_MOVEMENTS) {
-            if let Some(move_action) = sequence.move_action(group, movement, false) {
-                *action = action_id_u16(move_action)?;
-            }
-        }
-    }
-    Ok(actions)
 }
 
 /// `template` with the layer offsets of `record`'s `direction` as `UpdateFrame` reads them: the

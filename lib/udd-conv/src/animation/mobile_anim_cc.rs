@@ -23,6 +23,7 @@ use rayon::prelude::*;
 use udd_container::{
     AddFileRequest, AddOwnedFileRequest, CompressionFlag, DataType, LookupMode, UddpBuilder,
 };
+use uocf::animation_sequence::AnimationSequence;
 use uocf::classic::anim::{AnimFrame, AnimFrameInfo, AnimMap, MAX_ANIM_FILES};
 use uocf::classic::animationframe_cc::AnimationFrameCc;
 use uocf::classic::body_def::BodyDef;
@@ -30,6 +31,7 @@ use uocf::classic::bodyconv_def::BodyConvDef;
 use uocf::uop_container::package::{LoadMode, UopPackage};
 use uocf::utils::path::find_file_ignoring_case;
 
+use super::animation_sequences::{load_animation_sequences, move_actions};
 use crate::bc7::{
     encode_for_vram_with_bc7_rdo_options_and_stage_progress_timed, Bc7ProgressStage,
     Bc7RdoOptions, Bc7StageTimings, preferred_bc7_encoder_backend, ImageExtent, RawImageFormat,
@@ -53,8 +55,9 @@ use udd_assets::mobile_anim_cc::{
     BODY_RESOLVE_MANIFEST_ENTRY_PATH, BODY_TYPE_MANIFEST_ENTRY_PATH, FRAME_MANIFEST_ENTRY_PATH,
     MISSING_PAGE_FRAME_INDEX, MISSING_PAGE_INDEX, PAGE_MANIFEST_ENTRY_PATH,
     ANIMATION_MANIFEST_MAGIC, BODY_RESOLVE_MANIFEST_MAGIC, BODY_TYPE_MANIFEST_MAGIC, FRAME_MANIFEST_MAGIC,
-    MOBILE_ANIM_CC_METADATA_VERSION, MOB_TYPE_GROUP_ANIMAL, MOB_TYPE_GROUP_EQUIPMENT, MOB_TYPE_GROUP_HUMAN,
-    MOB_TYPE_GROUP_MONSTER, MOB_TYPE_GROUP_SEA_MONSTER, PAGE_MANIFEST_MAGIC,
+    MOBILE_ANIM_CC_METADATA_VERSION, MOB_TYPE_FLAG_USES_UOP_FRAMES, MOB_TYPE_GROUP_ANIMAL, MOB_TYPE_GROUP_EQUIPMENT,
+    MOB_TYPE_GROUP_HUMAN, MOB_TYPE_GROUP_MONSTER, MOB_TYPE_GROUP_SEA_MONSTER, MOVE_ACTION_GROUP_COUNT,
+    MOVE_ACTION_MOVEMENT_COUNT, NO_MOVE_ACTION, PAGE_MANIFEST_MAGIC,
 };
 use udd_assets::tex_art_cc::PagePixelFormat;
 
@@ -64,6 +67,8 @@ pub const DEFAULT_ATLAS_GUTTER: u16 = 4;
 
 const BC7_PROGRESS_FLUSH_UNITS: u64 = 256;
 const MOBILE_ANIM_CC_FLAG_UNMAPPED_SOURCE_INDEX: u16 = 1 << 15;
+/// Serialized body type record: body id, group type, flags, then the move actions (u16 each).
+const BODY_TYPE_RECORD_SIZE: usize = 7 + MOVE_ACTION_GROUP_COUNT * MOVE_ACTION_MOVEMENT_COUNT * 2;
 const CLASSIC_ANIMATIONFRAME_FILES: &[&str] = &[
     "AnimationFrame1.uop",
     "AnimationFrame2.uop",
@@ -546,13 +551,37 @@ fn build_body_resolve_records(client_dir: &Path) -> eyre::Result<Vec<MobileAnimC
     Ok(records.into_values().collect())
 }
 
+/// The `mobtypes.txt` rows, with the move actions of `AnimationSequence.uop` for the UOP-flagged ones (the
+/// client reads them for those bodies only: `CMobile_UpdateUopMoveAction` 0x005b6e40, Classic 7.0.103.0).
 fn build_body_type_records(client_dir: &Path) -> eyre::Result<Vec<MobileAnimCcBodyTypeRecord>> {
     let path = client_dir.join("mobtypes.txt");
     if !path.is_file() {
         return Ok(Vec::new());
     }
 
-    parse_mobtypes_txt(&fs::read_to_string(&path).wrap_err_with(|| format!("read {}", path.display()))?)
+    let mut records =
+        parse_mobtypes_txt(&fs::read_to_string(&path).wrap_err_with(|| format!("read {}", path.display()))?)?;
+    if records.iter().any(|record| record.flags & MOB_TYPE_FLAG_USES_UOP_FRAMES != 0) {
+        let (sequences, _) =
+            load_animation_sequences(client_dir, "CC", "UOP bodies keep the fixed movement actions")?;
+        fill_uop_move_actions(&mut records, &sequences)?;
+    }
+    Ok(records)
+}
+
+/// Sets the move actions of every UOP-flagged record from its body's sequence; the others keep `NO_MOVE_ACTION`.
+fn fill_uop_move_actions(
+    records: &mut [MobileAnimCcBodyTypeRecord],
+    sequences: &BTreeMap<u32, AnimationSequence>,
+) -> eyre::Result<()> {
+    let mut without_sequence = 0usize;
+    for record in records.iter_mut().filter(|record| record.flags & MOB_TYPE_FLAG_USES_UOP_FRAMES != 0) {
+        let sequence = sequences.get(&u32::from(record.body_id));
+        without_sequence += usize::from(sequence.is_none());
+        record.move_actions = move_actions(sequence)?;
+    }
+    info!("CC UOP bodies without an animation sequence: {without_sequence}");
+    Ok(())
 }
 
 fn parse_mobtypes_txt(text: &str) -> eyre::Result<Vec<MobileAnimCcBodyTypeRecord>> {
@@ -577,6 +606,7 @@ fn parse_mobtypes_txt(text: &str) -> eyre::Result<Vec<MobileAnimCcBodyTypeRecord
             body_id,
             group_type,
             flags: 0x8000_0000 | flags,
+            move_actions: [[NO_MOVE_ACTION; MOVE_ACTION_MOVEMENT_COUNT]; MOVE_ACTION_GROUP_COUNT],
         });
     }
     Ok(records.into_values().collect())
@@ -2960,7 +2990,7 @@ pub fn serialize_body_resolve_manifest(
 pub fn serialize_body_type_manifest(
     records: &[MobileAnimCcBodyTypeRecord],
 ) -> eyre::Result<Vec<u8>> {
-    let mut bytes = Vec::with_capacity(12 + records.len() * 7);
+    let mut bytes = Vec::with_capacity(12 + records.len() * BODY_TYPE_RECORD_SIZE);
     bytes.extend_from_slice(&BODY_TYPE_MANIFEST_MAGIC);
     bytes.write_u32::<LittleEndian>(MOBILE_ANIM_CC_METADATA_VERSION)?;
     bytes.write_u32::<LittleEndian>(records.len() as u32)?;
@@ -2968,6 +2998,9 @@ pub fn serialize_body_type_manifest(
         bytes.write_u16::<LittleEndian>(record.body_id)?;
         bytes.push(record.group_type);
         bytes.write_u32::<LittleEndian>(record.flags)?;
+        for &action in record.move_actions.iter().flatten() {
+            bytes.write_u16::<LittleEndian>(action)?;
+        }
     }
     Ok(bytes)
 }
@@ -3341,10 +3374,12 @@ mod tests {
             mount_height: -1,
             flags: BODY_RESOLVE_FLAG_BODY_DEF | BODY_RESOLVE_FLAG_BODYCONV_DEF,
         }];
+        let stand_walk_run = [4, 0, 2];
         let body_type_records = vec![MobileAnimCcBodyTypeRecord {
             body_id: 7,
             group_type: 3,
             flags: 0x8000_0001,
+            move_actions: [[NO_MOVE_ACTION; MOVE_ACTION_MOVEMENT_COUNT], stand_walk_run, stand_walk_run],
         }];
         let body_resolve_manifest = serialize_body_resolve_manifest(&body_resolve_records).unwrap();
         let body_type_manifest = serialize_body_type_manifest(&body_type_records).unwrap();
@@ -3381,6 +3416,7 @@ mod tests {
         assert_eq!(package.animation_frames(package.animation(1, 2, 3).unwrap())[0].center_y, -1);
         assert_eq!(package.body_resolve_record(7).unwrap().file_index, 2);
         assert_eq!(package.body_type_record(7).unwrap().flags, 0x8000_0001);
+        assert_eq!(package.body_type_record(7).unwrap().move_actions, body_type_records[0].move_actions);
         assert_eq!(package.read_page_bytes(0).unwrap().len(), stored_page.len());
     }
 
@@ -3475,16 +3511,60 @@ mod tests {
         .unwrap();
 
         assert_eq!(records.len(), 2);
+        let no_move_actions = [[NO_MOVE_ACTION; MOVE_ACTION_MOVEMENT_COUNT]; MOVE_ACTION_GROUP_COUNT];
         assert_eq!(records[0], MobileAnimCcBodyTypeRecord {
             body_id: 7,
             group_type: 3,
             flags: 0x8000_0001,
+            move_actions: no_move_actions,
         });
         assert_eq!(records[1], MobileAnimCcBodyTypeRecord {
             body_id: 8,
             group_type: 0,
             flags: 0x8000_0002,
+            move_actions: no_move_actions,
         });
+    }
+
+    #[test]
+    fn uop_flagged_rows_take_the_move_actions_of_their_sequence() {
+        use uocf::animation_sequence::{ActionGroup, MoveActions, GROUP_PEACE, MOVE_STAND, MOVE_WALK};
+        let (uop_body, mul_body, sequenceless_uop_body) = (714, 1, 667);
+        let (stand, walk) = (1, 0);
+        let peace = ActionGroup {
+            parent: None,
+            default_action: stand,
+            transitions: BTreeMap::new(),
+            moves: BTreeMap::from([
+                (MOVE_STAND, MoveActions { action: stand, alternate: stand }),
+                (MOVE_WALK, MoveActions { action: walk, alternate: walk }),
+            ]),
+            typed: BTreeMap::new(),
+        };
+        let sequence = AnimationSequence {
+            stored_id: u32::from(uop_body),
+            offsets: Default::default(),
+            extra_offsets: Default::default(),
+            actions: BTreeMap::new(),
+            groups: BTreeMap::from([(GROUP_PEACE, peace)]),
+            repeated_actions: Vec::new(),
+        };
+        let sequences = [uop_body, mul_body]
+            .map(|body| (u32::from(body), sequence.clone()))
+            .into_iter()
+            .collect::<BTreeMap<_, _>>();
+        let mut records = parse_mobtypes_txt(&format!(
+            "{uop_body} monster 10000\n{mul_body} monster 0\n{sequenceless_uop_body} human 10000\n"
+        ))
+        .unwrap();
+        fill_uop_move_actions(&mut records, &sequences).unwrap();
+
+        let no_group = [NO_MOVE_ACTION; MOVE_ACTION_MOVEMENT_COUNT];
+        let record = |body: u16| records.iter().find(|record| record.body_id == body).unwrap().move_actions;
+        // Run takes the default action of the group.
+        assert_eq!(record(uop_body), [no_group, [stand as u16, walk as u16, stand as u16], no_group]);
+        assert_eq!(record(mul_body), [no_group; MOVE_ACTION_GROUP_COUNT]);
+        assert_eq!(record(sequenceless_uop_body), [no_group; MOVE_ACTION_GROUP_COUNT]);
     }
 
     #[test]
